@@ -1290,7 +1290,8 @@ func GetUpstream(repoPath, ref string) (string, error) {
 		// Exit code 128 covers both "no upstream configured" and "upstream
 		// configured but ref not resolvable" (git varies between versions).
 		// Distinguish by re-reading branch.<name>.remote/merge.
-		if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 128 {
+		var exitErr *exec.ExitError
+		if errors.As(err, &exitErr) && exitErr.ExitCode() == 128 {
 			if cfg, ok := readUpstreamConfig(repoPath, ref); ok {
 				return "", &UpstreamMissingError{Ref: ref, Upstream: cfg.short}
 			}

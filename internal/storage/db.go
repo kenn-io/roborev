@@ -1673,7 +1673,7 @@ func (db *DB) migrateReviewJobsConstraintsForAutoDesign() error {
 		return err
 	}
 	defer func() {
-		if rbErr := tx.Rollback(); rbErr != nil && rbErr != sql.ErrTxDone {
+		if rbErr := tx.Rollback(); rbErr != nil && !errors.Is(rbErr, sql.ErrTxDone) {
 			return
 		}
 	}()
