@@ -47,7 +47,8 @@ func silentExit(cmd *cobra.Command, code int) error {
 // points whose error may have originated in concurrent code that could
 // not safely mutate cmd itself.
 func silenceIfExit(cmd *cobra.Command, err error) error {
-	if _, ok := err.(*exitError); ok {
+	var exitErr *exitError
+	if errors.As(err, &exitErr) {
 		cmd.SilenceErrors = true
 	}
 	return err
@@ -77,7 +78,8 @@ func quietExit(cmd *cobra.Command, err error) error {
 		return nil
 	}
 	cmd.SilenceUsage = true
-	if _, ok := err.(*exitError); ok {
+	var exitErr *exitError
+	if errors.As(err, &exitErr) {
 		return err
 	}
 	return &exitError{code: 1, cause: err}

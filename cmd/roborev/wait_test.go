@@ -61,8 +61,8 @@ func newWaitMockHandler(cfg mockConfig) http.HandlerFunc {
 func requireExitCode(t *testing.T, err error, code int) {
 	t.Helper()
 	require.Error(t, err)
-	exitErr, ok := err.(*exitError)
-	assert.True(t, ok)
+	var exitErr *exitError
+	require.ErrorAs(t, err, &exitErr)
 	assert.Equal(t, exitErr.code, code)
 }
 

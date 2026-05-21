@@ -291,7 +291,8 @@ func waitMultiple(
 				if r.err == nil {
 					continue
 				}
-				if _, ok := r.err.(*exitError); !ok {
+				var exitErr *exitError
+				if !errors.As(r.err, &exitErr) {
 					return r.err
 				}
 			}
