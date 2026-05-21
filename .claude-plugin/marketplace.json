@@ -1,0 +1,20 @@
+{
+  "name": "roborev",
+  "description": "Marketplace for roborev agent skills.",
+  "owner": {
+    "name": "roborev",
+    "url": "https://github.com/roborev-dev"
+  },
+  "plugins": [
+    {
+      "name": "roborev",
+      "description": "Agent skills for roborev code review, fix, refine, and response workflows.",
+      "version": "0.55.0",
+      "source": "./",
+      "author": {
+        "name": "roborev",
+        "url": "https://github.com/roborev-dev"
+      }
+    }
+  ]
+}

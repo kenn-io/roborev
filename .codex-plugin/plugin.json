@@ -1,0 +1,43 @@
+{
+  "name": "roborev",
+  "version": "0.55.0",
+  "description": "Agent skills for roborev code review, fix, refine, and response workflows.",
+  "author": {
+    "name": "roborev",
+    "url": "https://github.com/roborev-dev"
+  },
+  "homepage": "https://roborev.io",
+  "repository": "https://github.com/roborev-dev/roborev",
+  "license": "MIT",
+  "keywords": [
+    "code-review",
+    "review",
+    "fix",
+    "refine",
+    "skills",
+    "workflow"
+  ],
+  "skills": "./internal/skills/codex/",
+  "interface": {
+    "displayName": "roborev",
+    "shortDescription": "Review, fix, and respond to roborev findings from Codex.",
+    "longDescription": "Use roborev skills to request code or design reviews, fix open review findings, iterate with refine, and respond to reviews from Codex.",
+    "developerName": "roborev",
+    "category": "Coding",
+    "capabilities": [
+      "Interactive",
+      "Read",
+      "Write"
+    ],
+    "defaultPrompt": [
+      "Review the current branch with roborev.",
+      "Fix open roborev findings.",
+      "Respond to a roborev review."
+    ],
+    "websiteURL": "https://roborev.io",
+    "privacyPolicyURL": "https://roborev.io/privacy",
+    "termsOfServiceURL": "https://roborev.io/terms",
+    "brandColor": "#2563EB",
+    "screenshots": []
+  }
+}

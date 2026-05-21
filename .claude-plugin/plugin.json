@@ -1,0 +1,22 @@
+{
+  "name": "roborev",
+  "displayName": "roborev",
+  "description": "Agent skills for roborev code review, fix, refine, and response workflows.",
+  "version": "0.55.0",
+  "author": {
+    "name": "roborev",
+    "url": "https://github.com/roborev-dev"
+  },
+  "homepage": "https://roborev.io",
+  "repository": "https://github.com/roborev-dev/roborev",
+  "license": "MIT",
+  "keywords": [
+    "code-review",
+    "review",
+    "fix",
+    "refine",
+    "skills",
+    "workflow"
+  ],
+  "skills": "./internal/skills/claude/"
+}
