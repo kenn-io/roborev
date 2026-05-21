@@ -255,8 +255,8 @@ func TestWaitQuietVerdictExitCode(t *testing.T) {
 		stdout, stderr, err := executeReviewCmd("--repo", repo.Dir, "--wait", "--quiet")
 
 		require.Error(t, err, "expected review command to fail in this case")
-		exitErr, ok := err.(*exitError)
-		require.True(t, ok, "expected exitError, got: %T %v", err)
+		var exitErr *exitError
+		require.ErrorAs(t, err, &exitErr)
 		require.Equal(t, 1, exitErr.code, "expected exit code 1")
 		assert.Empty(t, stdout)
 		assert.Empty(t, stderr)

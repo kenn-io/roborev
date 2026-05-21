@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"fmt"
 	"math"
 	"os"
@@ -377,8 +378,8 @@ func (e unknownConfigKeyError) Error() string {
 }
 
 func isUnknownConfigKeyError(err error) bool {
-	_, ok := err.(unknownConfigKeyError)
-	return ok
+	var u unknownConfigKeyError
+	return errors.As(err, &u)
 }
 
 // nestedStructValue resolves a field value to an underlying struct value.

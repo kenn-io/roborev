@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"errors"
 	"time"
 )
 
@@ -13,7 +14,7 @@ func (db *DB) GetOrCreateCommit(repoID int64, sha, author, subject string, times
 	if err == nil {
 		return commit, nil
 	}
-	if err != sql.ErrNoRows {
+	if !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
 

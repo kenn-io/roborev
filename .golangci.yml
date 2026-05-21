@@ -5,6 +5,7 @@ linters:
   default: none
   enable:
     - errcheck
+    - errorlint
     - govet
     - ineffassign
     - modernize

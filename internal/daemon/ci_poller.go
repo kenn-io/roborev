@@ -1273,7 +1273,7 @@ func ghClone(
 		cmd.Env = env
 	}
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("git clone: %s: %s", err, string(out))
+		return fmt.Errorf("git clone: %w: %s", err, string(out))
 	}
 	return nil
 }
@@ -1480,7 +1480,7 @@ func gitFetchCtx(ctx context.Context, repoPath string, env []string) error {
 		cmd.Env = env
 	}
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("%s: %s", err, string(out))
+		return fmt.Errorf("%w: %s", err, string(out))
 	}
 	return nil
 }
@@ -1494,7 +1494,7 @@ func gitFetchPRHead(ctx context.Context, repoPath string, prNumber int, env []st
 		cmd.Env = env
 	}
 	if out, err := cmd.CombinedOutput(); err != nil {
-		return fmt.Errorf("%s: %s", err, string(out))
+		return fmt.Errorf("%w: %s", err, string(out))
 	}
 	return nil
 }

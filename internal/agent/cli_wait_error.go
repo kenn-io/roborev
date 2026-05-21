@@ -15,7 +15,7 @@ type detailedCLIWaitErrorOptions struct {
 
 func formatStreamingCLIWaitError(agentName string, runResult streamingCLIResult, stderr string) error {
 	if runResult.ParseErr != nil {
-		return fmt.Errorf("%s failed: %w (parse error: %v)\nstderr: %s", agentName, runResult.WaitErr, runResult.ParseErr, stderr)
+		return fmt.Errorf("%s failed: %w (parse error: %w)\nstderr: %s", agentName, runResult.WaitErr, runResult.ParseErr, stderr)
 	}
 	return fmt.Errorf("%s failed: %w\nstderr: %s", agentName, runResult.WaitErr, stderr)
 }

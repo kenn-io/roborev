@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -38,7 +39,7 @@ func daemonCmd() *cobra.Command {
 		Use:   "stop",
 		Short: "Stop the daemon",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := stopDaemon(); err == ErrDaemonNotRunning {
+			if err := stopDaemon(); errors.Is(err, ErrDaemonNotRunning) {
 				fmt.Println("Daemon was not running")
 				return nil
 			} else if err != nil {
@@ -54,7 +55,7 @@ func daemonCmd() *cobra.Command {
 		Short: "Restart the daemon",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			wasRunning := true
-			if err := stopDaemon(); err == ErrDaemonNotRunning {
+			if err := stopDaemon(); errors.Is(err, ErrDaemonNotRunning) {
 				wasRunning = false
 			} else if err != nil {
 				return err

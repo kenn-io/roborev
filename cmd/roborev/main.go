@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"os"
 
 	"github.com/spf13/cobra"
@@ -74,7 +75,8 @@ func main() {
 	if err := rootCmd.Execute(); err != nil {
 		// exitError carries a specific exit code; the RunE that returned
 		// it has already silenced cobra's error printing via silentExit.
-		if exitErr, ok := err.(*exitError); ok {
+		var exitErr *exitError
+		if errors.As(err, &exitErr) {
 			os.Exit(exitErr.code)
 		}
 		// All other errors: cobra already printed them.

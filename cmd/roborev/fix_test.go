@@ -579,12 +579,12 @@ func TestFixSingleJobRecoversPostFixDaemonCalls(t *testing.T) {
 			cmd := exec.Command("git", "add", "fix.txt")
 			cmd.Dir = repoPath
 			if out, err := cmd.CombinedOutput(); err != nil {
-				return "", fmt.Errorf("git add: %v (%s)", err, out)
+				return "", fmt.Errorf("git add: %w (%s)", err, out)
 			}
 			cmd = exec.Command("git", "commit", "-m", "fix: apply retry test")
 			cmd.Dir = repoPath
 			if out, err := cmd.CombinedOutput(); err != nil {
-				return "", fmt.Errorf("git commit: %v (%s)", err, out)
+				return "", fmt.Errorf("git commit: %w (%s)", err, out)
 			}
 			return "applied fix", nil
 		},

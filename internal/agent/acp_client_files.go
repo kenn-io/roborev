@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/rand"
+	"errors"
 	"fmt"
 	acp "github.com/coder/acp-go-sdk"
 	"io"
@@ -68,7 +69,7 @@ func readTextFileWindow(path string, startLine int, limit *int, maxBytes int) (s
 
 	for {
 		chunk, readErr := reader.ReadSlice('\n')
-		if readErr == bufio.ErrBufferFull {
+		if errors.Is(readErr, bufio.ErrBufferFull) {
 			if currentLine >= startLine && (limit == nil || selectedLines < *limit) {
 				if err := appendLineChunk(chunk); err != nil {
 					return "", err
@@ -320,7 +321,7 @@ func (c *acpClient) validateAndResolvePath(requestedPath string, forWrite bool) 
 		parentDir := filepath.Dir(absPath)
 		resolvedParent, err := filepath.EvalSymlinks(parentDir)
 		if err != nil {
-			return "", fmt.Errorf("%w: failed to resolve parent directory symlinks for path %s: %v", ErrPathTraversal, requestedPath, err)
+			return "", fmt.Errorf("%w: failed to resolve parent directory symlinks for path %s: %w", ErrPathTraversal, requestedPath, err)
 		}
 
 		// Check if parent directory is within repository root
@@ -354,7 +355,7 @@ func (c *acpClient) validateAndResolvePath(requestedPath string, forWrite bool) 
 		if info.Mode()&os.ModeSymlink != 0 {
 			resolvedTarget, err := filepath.EvalSymlinks(validatedPath)
 			if err != nil {
-				return "", fmt.Errorf("%w: failed to resolve write target symlink for path %s: %v", ErrPathTraversal, requestedPath, err)
+				return "", fmt.Errorf("%w: failed to resolve write target symlink for path %s: %w", ErrPathTraversal, requestedPath, err)
 			}
 			resolvedTarget = filepath.Clean(resolvedTarget)
 			if !pathWithinRoot(resolvedTarget, resolvedRepoRoot) {
@@ -371,7 +372,7 @@ func (c *acpClient) validateAndResolvePath(requestedPath string, forWrite bool) 
 	if err != nil {
 		// If we can't resolve symlinks (e.g., broken symlink or permission issue),
 		// we treat this as an invalid path for security
-		return "", fmt.Errorf("%w: failed to resolve symlinks for path %s: %v", ErrPathTraversal, requestedPath, err)
+		return "", fmt.Errorf("%w: failed to resolve symlinks for path %s: %w", ErrPathTraversal, requestedPath, err)
 	}
 
 	// Check if the resolved path is within the repository root

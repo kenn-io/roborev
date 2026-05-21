@@ -3,6 +3,7 @@ package git
 import (
 	"bytes"
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -320,7 +321,8 @@ func IsAncestor(repoPath, ancestor, descendant string) (bool, error) {
 		return true, nil
 	}
 	// Exit code 1 means "not ancestor", which is not an error
-	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
 		return false, nil
 	}
 	// Any other error (exit code 128, etc.) is a real git error

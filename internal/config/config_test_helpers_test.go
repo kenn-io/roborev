@@ -1,6 +1,7 @@
 package config
 
 import (
+	"errors"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -54,7 +55,8 @@ func execGit(t *testing.T, dir string, args ...string) string {
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {
-		if exitError, ok := err.(*exec.ExitError); ok {
+		var exitError *exec.ExitError
+		if errors.As(err, &exitError) {
 			require.NoError(t, err, "git %v failed\nstderr: %s", args, exitError.Stderr)
 		}
 		require.NoError(t, err, "git %v failed", args)

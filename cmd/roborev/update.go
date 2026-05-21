@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"fmt"
 	"os"
 	"os/exec"
@@ -223,7 +224,7 @@ func restartDaemonAfterUpdate(binDir string, noRestart bool) {
 	}
 
 	stopErr := stopDaemonForUpdate()
-	stopFailed := stopErr != nil && stopErr != ErrDaemonNotRunning
+	stopFailed := stopErr != nil && !errors.Is(stopErr, ErrDaemonNotRunning)
 	if stopFailed {
 		fmt.Printf("warning: failed to stop daemon: %v\n", stopErr)
 	}

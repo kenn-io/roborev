@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"errors"
 	"fmt"
 	"log"
 	"strings"
@@ -324,7 +325,7 @@ func (db *DB) CompleteFixJob(jobID int64, agent, prompt, output, patch string) e
 	// Fetch output_prefix from job (if any)
 	var outputPrefix sql.NullString
 	err = conn.QueryRowContext(ctx, `SELECT output_prefix FROM review_jobs WHERE id = ?`, jobID).Scan(&outputPrefix)
-	if err != nil && err != sql.ErrNoRows {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
 
@@ -399,7 +400,7 @@ func (db *DB) CompleteJob(jobID int64, agent, prompt, output string) error {
 	// Fetch output_prefix from job (if any)
 	var outputPrefix sql.NullString
 	err = conn.QueryRowContext(ctx, `SELECT output_prefix FROM review_jobs WHERE id = ?`, jobID).Scan(&outputPrefix)
-	if err != nil && err != sql.ErrNoRows {
+	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
 
@@ -1061,7 +1062,7 @@ func (db *DB) RemapJob(
 		`SELECT id FROM commits WHERE repo_id = ? AND sha = ?`,
 		repoID, newSHA,
 	).Scan(&commitID)
-	if err == sql.ErrNoRows {
+	if errors.Is(err, sql.ErrNoRows) {
 		result, insertErr := tx.Exec(`
 			INSERT INTO commits (repo_id, sha, author, subject, timestamp)
 			VALUES (?, ?, ?, ?, ?)

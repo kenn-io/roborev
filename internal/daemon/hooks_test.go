@@ -3,6 +3,7 @@ package daemon
 import (
 	"bytes"
 	"encoding/json"
+	"errors"
 	"fmt"
 
 	"github.com/roborev-dev/roborev/internal/config"
@@ -770,7 +771,7 @@ func TestRedactURLError(t *testing.T) {
 	}
 
 	got := redactURLError(urlErr)
-	if got != inner {
+	if !errors.Is(got, inner) {
 		require.Condition(t, func() bool {
 			return false
 		}, "expected inner error, got %v", got)
@@ -782,7 +783,7 @@ func TestRedactURLError(t *testing.T) {
 	}
 
 	plain := fmt.Errorf("some other error")
-	if redactURLError(plain) != plain {
+	if !errors.Is(redactURLError(plain), plain) {
 		require.Condition(t, func() bool {
 			return false
 		}, "non-url.Error should be returned as-is")

@@ -286,7 +286,7 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 	}
 
-	if err := <-serveErrCh; err != http.ErrServerClosed {
+	if err := <-serveErrCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
 		s.configWatcher.Stop()
 		s.workerPool.Stop()
 		return err
@@ -304,7 +304,7 @@ func waitForServerReady(ctx context.Context, ep DaemonEndpoint, timeout time.Dur
 		}
 		select {
 		case err := <-serveErrCh:
-			if err == http.ErrServerClosed && ctx.Err() != nil {
+			if errors.Is(err, http.ErrServerClosed) && ctx.Err() != nil {
 				return false, true, nil
 			}
 			if err == nil {
@@ -326,7 +326,7 @@ func waitForServerReady(ctx context.Context, ep DaemonEndpoint, timeout time.Dur
 	}
 	select {
 	case err := <-serveErrCh:
-		if err == http.ErrServerClosed && ctx.Err() != nil {
+		if errors.Is(err, http.ErrServerClosed) && ctx.Err() != nil {
 			return false, true, nil
 		}
 		if err == nil {
@@ -346,7 +346,7 @@ func awaitServeExitOnUnreadyStartup(serveExited bool, serveErrCh <-chan error) e
 		return nil
 	}
 
-	if err := <-serveErrCh; err != http.ErrServerClosed {
+	if err := <-serveErrCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
 		return err
 	}
 	return nil
