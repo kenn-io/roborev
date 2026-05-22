@@ -627,6 +627,39 @@ func TestGetStaleBatches_StaleClaim(t *testing.T) {
 
 }
 
+func TestUnclaimStaleBatchClaim_OnlyUnclaimsStillStaleClaims(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo, err := db.GetOrCreateRepo("/tmp/test")
+	require.NoError(t, err, "GetOrCreateRepo: %v")
+
+	batch, _ := mustCreateLinkedTerminalJob(t, db, repo.ID, testRepo, 1, testSHA, testSHA, testAgent, testReview, "done")
+
+	claimed, err := db.ClaimBatchForSynthesis(batch.ID)
+	require.NoError(t, err)
+	require.True(t, claimed, "expected claim to succeed")
+
+	setBatchClaimedAt(t, db, batch.ID, -10*time.Minute)
+	unclaimed, err := db.UnclaimStaleBatchClaim(batch.ID, 5*time.Minute)
+	require.NoError(t, err)
+	assert.True(t, unclaimed, "stale claim should be unclaimed")
+
+	claimed, err = db.ClaimBatchForSynthesis(batch.ID)
+	require.NoError(t, err)
+	require.True(t, claimed, "expected claim after stale unclaim to succeed")
+
+	require.NoError(t, db.FinalizeBatch(batch.ID))
+
+	unclaimed, err = db.UnclaimStaleBatchClaim(batch.ID, 5*time.Minute)
+	require.NoError(t, err)
+	assert.False(t, unclaimed, "finalized batch must not be unclaimed")
+
+	claimed, err = db.ClaimBatchForSynthesis(batch.ID)
+	require.NoError(t, err)
+	assert.False(t, claimed, "finalized batch must not be claimable")
+}
+
 func TestDeleteEmptyBatches(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()

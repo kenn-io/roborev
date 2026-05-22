@@ -430,6 +430,31 @@ func (db *DB) UnclaimBatch(batchID int64) error {
 	return err
 }
 
+// UnclaimStaleBatchClaim resets a synthesis claim only if it is still stale.
+// This lets the reconciler recover daemon-crash claims without reopening a
+// batch that another path finalized after GetStaleBatches selected it.
+func (db *DB) UnclaimStaleBatchClaim(batchID int64, maxAge time.Duration) (bool, error) {
+	if maxAge < 0 {
+		maxAge = 0
+	}
+	modifier := fmt.Sprintf("-%d seconds", int(maxAge.Seconds()))
+	result, err := db.Exec(`
+		UPDATE ci_pr_batches
+		SET synthesized = 0, claimed_at = NULL
+		WHERE id = ?
+		  AND synthesized = 1
+		  AND claimed_at IS NOT NULL
+		  AND claimed_at < datetime('now', ?)`, batchID, modifier)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return false, err
+	}
+	return rows > 0, nil
+}
+
 // FinalizeBatch clears claimed_at after a successful post. The batch stays
 // synthesized=1 but with claimed_at=NULL, so GetStaleBatches won't re-pick it.
 func (db *DB) FinalizeBatch(batchID int64) error {

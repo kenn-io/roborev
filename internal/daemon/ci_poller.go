@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"net/url"
 	"os"
 	"os/exec"
@@ -18,6 +19,7 @@ import (
 	"time"
 	"unicode/utf8"
 
+	googlegithub "github.com/google/go-github/v84/github"
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	gitpkg "go.kenn.io/roborev/internal/git"
@@ -50,6 +52,7 @@ type ghPR struct {
 const (
 	prDiscussionMaxComments = 40
 	prDiscussionBodyLimit   = 600
+	staleBatchClaimAge      = 5 * time.Minute
 )
 
 // CIPoller polls GitHub for open PRs and enqueues security reviews.
@@ -1743,11 +1746,17 @@ func (p *CIPoller) reconcileStaleBatches() {
 
 		if updated.CompletedJobs+updated.FailedJobs >= updated.TotalJobs {
 			if updated.Synthesized {
-				// Stale claim: daemon crashed mid-post. Unclaim so
-				// postBatchResults can re-claim via CAS.
+				// Stale claim: daemon crashed mid-post. Unclaim only
+				// if the claim is still stale; another path may have
+				// finalized it after GetStaleBatches selected it.
 				log.Printf("CI poller: unclaiming stale batch %d (claimed_at expired)", updated.ID)
-				if err := p.db.UnclaimBatch(updated.ID); err != nil {
+				unclaimed, err := p.db.UnclaimStaleBatchClaim(updated.ID, staleBatchClaimAge)
+				if err != nil {
 					log.Printf("CI poller: error unclaiming batch %d: %v", batch.ID, err)
+					continue
+				}
+				if !unclaimed {
+					log.Printf("CI poller: stale batch %d was already finalized or reclaimed, skipping post", updated.ID)
 					continue
 				}
 			}
@@ -1829,6 +1838,14 @@ func (p *CIPoller) postBatchResults(batch *storage.CIPRBatch) {
 	if err := p.callPostPRComment(batch.GithubRepo, batch.PRNumber, comment); err != nil {
 		log.Printf("CI poller: error posting batch comment for %s#%d: %v",
 			batch.GithubRepo, batch.PRNumber, err)
+		if isPermanentGitHubAccessError(err) {
+			log.Printf("CI poller: abandoning batch %d for inaccessible GitHub repo/PR %s#%d",
+				batch.ID, batch.GithubRepo, batch.PRNumber)
+			if finalizeErr := p.db.FinalizeBatch(batch.ID); finalizeErr != nil {
+				log.Printf("CI poller: error finalizing inaccessible batch %d: %v", batch.ID, finalizeErr)
+			}
+			return
+		}
 		if err := p.callSetCommitStatus(batch.GithubRepo, batch.HeadSHA, "error", "Review failed to post"); err != nil {
 			log.Printf("CI poller: failed to set error status for %s@%s: %v", batch.GithubRepo, batch.HeadSHA, err)
 		}
@@ -1882,6 +1899,22 @@ func (p *CIPoller) postBatchResults(batch *storage.CIPRBatch) {
 
 	log.Printf("CI poller: posted batch comment on %s#%d (batch %d, %d reviews)",
 		batch.GithubRepo, batch.PRNumber, batch.ID, len(reviews))
+}
+
+func isPermanentGitHubAccessError(err error) bool {
+	var githubErr *googlegithub.ErrorResponse
+	if !errors.As(err, &githubErr) || githubErr.Response == nil {
+		return false
+	}
+	switch githubErr.Response.StatusCode {
+	case http.StatusNotFound, http.StatusGone:
+		return true
+	case http.StatusForbidden:
+		msg := strings.ToLower(githubErr.Message)
+		return strings.Contains(msg, "resource not accessible")
+	default:
+		return false
+	}
 }
 
 // unclaimBatch resets the synthesized flag so the batch can be retried.
