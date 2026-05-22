@@ -40,6 +40,67 @@ if ! command -v gh &> /dev/null; then
     exit 1
 fi
 
+# Set a top-level JSON string field in place using jq.
+# Usage: set_json_field <file> <jq_path> <value>
+set_json_field() {
+    local FILE="$1"
+    local JQ_PATH="$2"
+    local VALUE="$3"
+    local TMP_FILE
+    TMP_FILE=$(mktemp)
+    if ! jq --arg v "$VALUE" "$JQ_PATH = \$v" "$FILE" > "$TMP_FILE"; then
+        rm -f "$TMP_FILE"
+        echo "Error: failed to update $JQ_PATH in $FILE" >&2
+        exit 1
+    fi
+    mv "$TMP_FILE" "$FILE"
+}
+
+# Rewrite the version field in agent plugin manifests in place (no commit).
+# Populates PLUGIN_MANIFESTS with the list of manifests touched.
+update_plugin_manifests_inplace() {
+    local CLAUDE_PLUGIN="$REPO_ROOT/.claude-plugin/plugin.json"
+    local CLAUDE_MARKETPLACE="$REPO_ROOT/.claude-plugin/marketplace.json"
+    local CODEX_PLUGIN="$REPO_ROOT/.codex-plugin/plugin.json"
+
+    PLUGIN_MANIFESTS=()
+    [ -f "$CLAUDE_PLUGIN" ] && PLUGIN_MANIFESTS+=("$CLAUDE_PLUGIN")
+    [ -f "$CLAUDE_MARKETPLACE" ] && PLUGIN_MANIFESTS+=("$CLAUDE_MARKETPLACE")
+    [ -f "$CODEX_PLUGIN" ] && PLUGIN_MANIFESTS+=("$CODEX_PLUGIN")
+
+    if [ ${#PLUGIN_MANIFESTS[@]} -eq 0 ]; then
+        echo "No agent plugin manifests found, skipping update"
+        return 0
+    fi
+
+    if ! command -v jq &> /dev/null; then
+        echo "Error: jq is required to update agent plugin manifests." >&2
+        echo "Install it from https://jqlang.github.io/jq/download/ and re-run." >&2
+        exit 1
+    fi
+
+    echo "Updating agent plugin manifest versions to $VERSION..."
+    [ -f "$CLAUDE_PLUGIN" ] && set_json_field "$CLAUDE_PLUGIN" '.version' "$VERSION"
+    [ -f "$CODEX_PLUGIN" ] && set_json_field "$CODEX_PLUGIN" '.version' "$VERSION"
+    [ -f "$CLAUDE_MARKETPLACE" ] && set_json_field "$CLAUDE_MARKETPLACE" '.plugins[0].version' "$VERSION"
+}
+
+# Commit any plugin manifest edits from update_plugin_manifests_inplace to the current branch.
+# Sets PLUGIN_MANIFESTS_COMMITTED=1 when a commit is made.
+commit_plugin_manifests() {
+    if [ ${#PLUGIN_MANIFESTS[@]} -eq 0 ]; then
+        return 0
+    fi
+
+    git -C "$REPO_ROOT" add "${PLUGIN_MANIFESTS[@]}"
+    if git -C "$REPO_ROOT" diff --cached --quiet; then
+        echo "Agent plugin manifests already at version $VERSION, no changes needed"
+        return 0
+    fi
+    git -C "$REPO_ROOT" commit -m "Update agent plugin manifests for $TAG"
+    PLUGIN_MANIFESTS_COMMITTED=1
+}
+
 # Update nix flake version and vendorHash, creating a PR if changes are needed
 update_nix_flake() {
     local FLAKE_FILE="$REPO_ROOT/flake.nix"
@@ -142,6 +203,11 @@ update_nix_flake() {
 # Update nix flake before creating the release
 update_nix_flake
 
+# Stage agent plugin manifest version bumps in the working tree (commit after confirmation)
+PLUGIN_MANIFESTS=()
+PLUGIN_MANIFESTS_COMMITTED=0
+update_plugin_manifests_inplace
+
 # Create a temp file for the changelog
 CHANGELOG_FILE=$(mktemp)
 trap 'rm -f "$CHANGELOG_FILE"' EXIT
@@ -163,15 +229,27 @@ read -p "Accept this changelog and create release $TAG? [y/N] " -n 1 -r
 echo ""
 
 if [[ ! $REPLY =~ ^[Yy]$ ]]; then
+    # Revert manifest edits so the cancel leaves the working tree clean
+    if [ ${#PLUGIN_MANIFESTS[@]} -gt 0 ]; then
+        git -C "$REPO_ROOT" checkout -- "${PLUGIN_MANIFESTS[@]}"
+    fi
     echo "Release cancelled."
     exit 0
 fi
+
+# Commit plugin manifest updates so the tag points at a commit with the new versions
+commit_plugin_manifests
 
 # Create the tag with changelog as message
 echo "Creating tag $TAG..."
 git tag -a "$TAG" -m "Release $VERSION
 
 $(cat $CHANGELOG_FILE)"
+
+if [ "$PLUGIN_MANIFESTS_COMMITTED" = "1" ]; then
+    echo "Pushing branch to origin..."
+    git push origin HEAD
+fi
 
 echo "Pushing tag to origin..."
 git push origin "$TAG"
