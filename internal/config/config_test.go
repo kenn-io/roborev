@@ -1496,7 +1496,6 @@ func TestResolveSnapshotDir(t *testing.T) {
 	tests := []struct {
 		name       string
 		repoConfig string
-		value      string
 		want       string
 		wantErr    string
 	}{
@@ -1510,30 +1509,29 @@ func TestResolveSnapshotDir(t *testing.T) {
 			want:       filepath.Join("var", "roborev"),
 		},
 		{
-			name:    "value resolver accepts local path",
-			value:   "cache/roborev",
-			want:    filepath.Join("cache", "roborev"),
-			wantErr: "",
+			name:       "accepts local path",
+			repoConfig: `snapshot_dir = "cache/roborev"`,
+			want:       filepath.Join("cache", "roborev"),
 		},
 		{
-			name:    "rejects absolute path",
-			value:   "/tmp/roborev",
-			wantErr: "relative path",
+			name:       "rejects absolute path",
+			repoConfig: `snapshot_dir = "/tmp/roborev"`,
+			wantErr:    "relative path",
 		},
 		{
-			name:    "rejects parent traversal",
-			value:   "../tmp",
-			wantErr: "repo root",
+			name:       "rejects parent traversal",
+			repoConfig: `snapshot_dir = "../tmp"`,
+			wantErr:    "repo root",
 		},
 		{
-			name:    "rejects traversal after clean",
-			value:   "tmp/../../tmp",
-			wantErr: "repo root",
+			name:       "rejects traversal after clean",
+			repoConfig: `snapshot_dir = "tmp/../../tmp"`,
+			wantErr:    "repo root",
 		},
 		{
-			name:    "rejects git dir",
-			value:   ".git/roborev",
-			wantErr: ".git",
+			name:       "rejects git dir",
+			repoConfig: `snapshot_dir = ".git/roborev"`,
+			wantErr:    ".git",
 		},
 	}
 
@@ -1544,15 +1542,7 @@ func TestResolveSnapshotDir(t *testing.T) {
 				repoPath = newTempRepo(t, tt.repoConfig)
 			}
 
-			var (
-				dir string
-				err error
-			)
-			if tt.value != "" {
-				dir, err = ResolveSnapshotDirValue(repoPath, tt.value)
-			} else {
-				dir, err = ResolveSnapshotDir(repoPath)
-			}
+			dir, err := ResolveSnapshotDir(repoPath)
 
 			if tt.wantErr != "" {
 				require.Error(t, err)

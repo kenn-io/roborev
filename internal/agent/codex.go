@@ -8,7 +8,6 @@ import (
 	"io"
 	"log"
 	"os/exec"
-	"strconv"
 	"strings"
 	"sync"
 )
@@ -29,7 +28,6 @@ const codexAutoApproveFlag = "--full-auto"
 const codexIgnoreUserConfigFlag = "--ignore-user-config"
 const codexDisableSkillsConfig = "skills.include_instructions=false"
 const codexReadOnlySandboxConfig = `sandbox_mode="read-only"`
-const codexReviewPermissionsProfile = "roborev_review"
 
 var codexDangerousSupport sync.Map
 var codexAutoApproveSupport sync.Map
@@ -152,14 +150,12 @@ func (a *CodexAgent) CommandLine() string {
 func (a *CodexAgent) buildArgs(
 	repoPath string,
 	agenticMode, autoApprove, sandboxBroken bool,
-	prompt string,
 ) []string {
 	return a.commandArgs(codexArgOptions{
 		repoPath:      repoPath,
 		agenticMode:   agenticMode,
 		autoApprove:   autoApprove,
 		sandboxBroken: sandboxBroken,
-		addDirs:       diffSnapshotDirs(prompt),
 	})
 }
 
@@ -168,7 +164,6 @@ type codexArgOptions struct {
 	agenticMode   bool
 	autoApprove   bool
 	sandboxBroken bool
-	addDirs       []string
 	preview       bool
 }
 
@@ -191,18 +186,13 @@ func (a *CodexAgent) commandArgs(opts codexArgOptions) []string {
 			// need the full bypass flag on broken systems.
 			args = append(args, codexDangerousFlag)
 		} else if sessionID != "" {
-			args = append(args, codexReadOnlyResumeConfigArgs(opts.addDirs)...)
+			args = append(args, "-c", codexReadOnlySandboxConfig)
 		} else {
 			args = append(args, "--sandbox", "read-only")
 		}
 	}
 	if sessionID == "" && !opts.preview {
 		args = append(args, "-C", opts.repoPath)
-	}
-	if sessionID == "" {
-		for _, dir := range opts.addDirs {
-			args = append(args, "--add-dir", dir)
-		}
 	}
 	if a.Model != "" {
 		args = append(args, "-m", a.Model)
@@ -222,27 +212,6 @@ func (a *CodexAgent) commandArgs(opts codexArgOptions) []string {
 		args = append(args, "-")
 	}
 	return args
-}
-
-func codexReadOnlyResumeConfigArgs(addDirs []string) []string {
-	args := []string{"-c", codexReadOnlySandboxConfig}
-	if len(addDirs) == 0 {
-		return args
-	}
-
-	args = append(args,
-		"-c", fmt.Sprintf(`default_permissions="%s"`, codexReviewPermissionsProfile),
-		"-c", fmt.Sprintf(`permissions.%s.filesystem=%s`, codexReviewPermissionsProfile, codexReadOnlyFilesystemConfig(addDirs)),
-	)
-	return args
-}
-
-func codexReadOnlyFilesystemConfig(addDirs []string) string {
-	entries := []string{strconv.Quote(":project_roots") + `={"."="read"}`}
-	for _, dir := range addDirs {
-		entries = append(entries, strconv.Quote(dir)+`="read"`)
-	}
-	return "{" + strings.Join(entries, ",") + "}"
 }
 
 func codexSupportsDangerousFlag(ctx context.Context, command string, ignoreUserConfig bool) (bool, error) {
@@ -369,7 +338,7 @@ func (a *CodexAgent) Review(ctx context.Context, repoPath, commitSHA, prompt str
 	if sandboxBroken && autoApprove {
 		log.Printf("codex: sandbox disabled via config, using %s", codexAutoApproveFlag)
 	}
-	args := runAgent.buildArgs(repoPath, agenticMode, autoApprove, sandboxBroken, prompt)
+	args := runAgent.buildArgs(repoPath, agenticMode, autoApprove, sandboxBroken)
 
 	runResult, runErr := runStreamingCLI(ctx, streamingCLISpec{
 		Name:         "codex",

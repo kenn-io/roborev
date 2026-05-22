@@ -90,17 +90,17 @@ func (a *GeminiAgent) CommandName() string {
 
 func (a *GeminiAgent) CommandLine() string {
 	agenticMode := a.Agentic || AllowUnsafeAgents()
-	args := a.buildArgs(agenticMode, "")
+	args := a.buildArgs(agenticMode)
 	return a.Command + " " + strings.Join(args, " ")
 }
 
-func (a *GeminiAgent) buildArgs(agenticMode bool, prompt string) []string {
-	return a.buildArgsWithModel(a.Model, agenticMode, prompt)
+func (a *GeminiAgent) buildArgs(agenticMode bool) []string {
+	return a.buildArgsWithModel(a.Model, agenticMode)
 }
 
 func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
 	agenticMode := a.Agentic || AllowUnsafeAgents()
-	args := a.buildArgs(agenticMode, prompt)
+	args := a.buildArgs(agenticMode)
 
 	result, stderrStr, err := a.runGemini(ctx, repoPath, prompt, args, output)
 	if err != nil && a.Model == defaultGeminiModel && isModelNotFoundError(stderrStr) {
@@ -109,7 +109,7 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 		// its own default. Non-default models (set via WithModel /
 		// config) fail fast so config errors are surfaced.
 		log.Printf("gemini: model %q not found, retrying without -m flag", a.Model)
-		noModelArgs := a.buildArgsWithModel("", agenticMode, prompt)
+		noModelArgs := a.buildArgsWithModel("", agenticMode)
 		result, _, err = a.runGemini(ctx, repoPath, prompt, noModelArgs, output)
 	}
 	return result, err
@@ -117,7 +117,7 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 
 // buildArgsWithModel builds CLI args with an explicit model override
 // (empty string omits the -m flag entirely).
-func (a *GeminiAgent) buildArgsWithModel(model string, agenticMode bool, prompt string) []string {
+func (a *GeminiAgent) buildArgsWithModel(model string, agenticMode bool) []string {
 	args := []string{"--output-format", "stream-json"}
 
 	if model != "" {
@@ -130,11 +130,6 @@ func (a *GeminiAgent) buildArgsWithModel(model string, agenticMode bool, prompt 
 		args = append(args, "--approval-mode", "plan")
 	}
 
-	// Expose roborev diff snapshot dirs referenced in the prompt so
-	// gemini can read large diff files that live outside the repo.
-	for _, dir := range diffSnapshotDirs(prompt) {
-		args = append(args, "--include-directories", dir)
-	}
 	return args
 }
 

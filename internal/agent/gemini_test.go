@@ -69,7 +69,7 @@ func TestGeminiBuildArgs(t *testing.T) {
 			assert := assert.New(t)
 
 			a := NewGeminiAgent("gemini")
-			args := a.buildArgs(tc.agentic, "")
+			args := a.buildArgs(tc.agentic)
 
 			// Check standalone boolean flags
 			for _, flag := range tc.wantFlags {
@@ -87,33 +87,6 @@ func TestGeminiBuildArgs(t *testing.T) {
 			}
 		})
 	}
-}
-
-func TestGeminiBuildArgsAddsDiffSnapshotDirectory(t *testing.T) {
-	a := NewGeminiAgent("gemini")
-	snapshotDir, err := os.MkdirTemp("", "roborev-snapshot-*")
-	require.NoError(t, err)
-	t.Cleanup(func() { os.RemoveAll(snapshotDir) })
-	diffFile := filepath.Join(snapshotDir, "roborev-snapshot-content.diff")
-	require.NoError(t, os.WriteFile(diffFile, []byte("diff --git a/x b/x\n"), 0o600))
-
-	args := a.buildArgs(false, "Read the diff from: `"+diffFile+"`")
-
-	idx := slices.Index(args, "--include-directories")
-	require.NotEqual(t, -1, idx, "expected --include-directories in args: %v", args)
-	require.Less(t, idx+1, len(args), "expected --include-directories value in args: %v", args)
-	assert.Equal(t, snapshotDir, args[idx+1])
-}
-
-func TestGeminiBuildArgsIgnoresDiffSnapshotOutsidePrivateDirectory(t *testing.T) {
-	a := NewGeminiAgent("gemini")
-	diffFile, err := os.CreateTemp("", "roborev-snapshot-*.diff")
-	require.NoError(t, err)
-	t.Cleanup(func() { os.Remove(diffFile.Name()) })
-
-	args := a.buildArgs(false, "Read the diff from: `"+diffFile.Name()+"`")
-
-	assert.NotContains(t, args, "--include-directories")
 }
 
 func assertFlagValue(t *testing.T, args []string, flag, expectedVal string) {

@@ -2156,17 +2156,7 @@ func ResolveSnapshotDir(repoPath string) (string, error) {
 	} else if repoCfg != nil && strings.TrimSpace(repoCfg.SnapshotDir) != "" {
 		dir = repoCfg.SnapshotDir
 	}
-	return ResolveSnapshotDirValue(repoPath, dir)
-}
-
-// ResolveSnapshotDirValue resolves and validates a configured snapshot dir.
-// The value must stay under the repo root so sandboxed agents can read it via
-// their normal workspace allowlist.
-func ResolveSnapshotDirValue(repoPath, dir string) (string, error) {
 	dir = strings.TrimSpace(dir)
-	if dir == "" {
-		dir = DefaultSnapshotDir
-	}
 	clean := filepath.Clean(dir)
 	if clean == "." || !filepath.IsLocal(clean) {
 		return "", fmt.Errorf("snapshot_dir must be a relative path under the repo root: %s", dir)
