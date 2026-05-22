@@ -1040,8 +1040,8 @@ func TestWriteDiffSnapshotUsesRepoLocalDefaultDir(t *testing.T) {
 	require.NotNil(t, cleanup)
 	defer cleanup()
 
-	assert.True(t, strings.HasPrefix(diffFile, filepath.Join(repoPath, "tmp")+string(os.PathSeparator)),
-		"snapshot path should be under repo tmp, got %s", diffFile)
+	assert.True(t, strings.HasPrefix(diffFile, filepath.Join(repoPath, ".roborev")+string(os.PathSeparator)),
+		"snapshot path should be under repo .roborev, got %s", diffFile)
 	assert.Equal(t, "roborev-snapshot-content.diff", filepath.Base(diffFile))
 	assert.Contains(t, filepath.Base(filepath.Dir(diffFile)), "roborev-snapshot-")
 	_, err = os.Stat(filepath.Join(filepath.Dir(diffFile), snapshotMarkerFile))
@@ -1074,8 +1074,8 @@ func TestWriteDiffSnapshotEnsuresSnapshotDirIgnored(t *testing.T) {
 		relDir     string
 	}{
 		{
-			name:   "default tmp dir",
-			relDir: "tmp",
+			name:   "default .roborev dir",
+			relDir: ".roborev",
 		},
 		{
 			name:       "configured dir",
@@ -1114,7 +1114,7 @@ func TestWriteDiffSnapshotEnsuresSnapshotDirIgnored(t *testing.T) {
 func TestCleanupStaleSnapshotsRemovesOnlyOldSnapshotDirs(t *testing.T) {
 	repoPath, _ := setupTestRepo(t)
 	builder := NewBuilder(nil).ForRepo(repoPath, 0)
-	snapshotRoot := filepath.Join(repoPath, "tmp")
+	snapshotRoot := filepath.Join(repoPath, ".roborev")
 	require.NoError(t, os.MkdirAll(snapshotRoot, 0o755))
 
 	oldSnapshot := filepath.Join(snapshotRoot, "roborev-snapshot-old")
@@ -1166,11 +1166,11 @@ func TestCleanupStaleSnapshotsSkipsActiveSnapshotDirs(t *testing.T) {
 func TestCleanupStaleSnapshotsSkipsTrackedSnapshotDirs(t *testing.T) {
 	repoPath, _ := setupTestRepo(t)
 	builder := NewBuilder(nil).ForRepo(repoPath, 0)
-	snapshotDir := filepath.Join(repoPath, "tmp", "roborev-snapshot-tracked")
+	snapshotDir := filepath.Join(repoPath, ".roborev", "roborev-snapshot-tracked")
 	require.NoError(t, os.MkdirAll(snapshotDir, 0o755))
 	require.NoError(t, writeSnapshotMarker(snapshotDir))
 	require.NoError(t, os.WriteFile(filepath.Join(snapshotDir, "tracked.txt"), []byte("tracked\n"), 0o644))
-	cmd := exec.Command("git", "-C", repoPath, "add", "-f", "tmp/roborev-snapshot-tracked/tracked.txt")
+	cmd := exec.Command("git", "-C", repoPath, "add", "-f", ".roborev/roborev-snapshot-tracked/tracked.txt")
 	require.NoError(t, cmd.Run())
 	cmd = exec.Command("git", "-C", repoPath, "commit", "-m", "track snapshot-like dir")
 	require.NoError(t, cmd.Run())
@@ -1190,7 +1190,7 @@ func TestCleanupStaleSnapshotsContinuesAfterEntryError(t *testing.T) {
 
 	repoPath, _ := setupTestRepo(t)
 	builder := NewBuilder(nil).ForRepo(repoPath, 0)
-	snapshotRoot := filepath.Join(repoPath, "tmp")
+	snapshotRoot := filepath.Join(repoPath, ".roborev")
 	require.NoError(t, os.MkdirAll(snapshotRoot, 0o755))
 
 	badSnapshot := filepath.Join(snapshotRoot, "roborev-snapshot-a-bad")

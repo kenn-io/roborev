@@ -1500,7 +1500,7 @@ func TestResolveSnapshotDir(t *testing.T) {
 		wantErr    string
 	}{
 		{
-			name: "default under repo tmp",
+			name: "default under repo .roborev",
 			want: DefaultSnapshotDir,
 		},
 		{

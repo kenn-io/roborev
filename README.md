@@ -160,7 +160,7 @@ Create `.roborev.toml` in your repo:
 
 ```toml
 agent = "claude-code"
-snapshot_dir = "tmp"
+snapshot_dir = ".roborev"
 review_guidelines = """
 Project-specific review instructions here.
 """

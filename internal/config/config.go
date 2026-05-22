@@ -2129,7 +2129,7 @@ func ResolveModel(explicit string, repoPath string, globalCfg *Config) string {
 
 // DefaultMaxPromptSize is the default maximum prompt size in bytes (200KB)
 const DefaultMaxPromptSize = 200 * 1024
-const DefaultSnapshotDir = "tmp"
+const DefaultSnapshotDir = ".roborev"
 
 // ResolveMaxPromptSize determines the maximum prompt size based on config priority:
 // 1. Per-repo config (max_prompt_size in .roborev.toml)

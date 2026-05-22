@@ -472,9 +472,9 @@ func TestInitNoDaemonEnsuresDefaultSnapshotDirGitignored(t *testing.T) {
 
 	data, err := os.ReadFile(filepath.Join(repo.Root, ".gitignore"))
 	require.NoError(t, err)
-	assert.Contains(t, string(data), "# roborev snapshots\n/tmp/\n")
+	assert.Contains(t, string(data), "# roborev snapshots\n/.roborev/\n")
 
-	check := exec.Command("git", "-C", repo.Root, "check-ignore", "--quiet", "--no-index", "tmp/roborev-snapshot-x/file.diff")
+	check := exec.Command("git", "-C", repo.Root, "check-ignore", "--quiet", "--no-index", ".roborev/roborev-snapshot-x/file.diff")
 	require.NoError(t, check.Run())
 }
 
@@ -513,7 +513,7 @@ func TestInitNoDaemonLeavesExistingSnapshotIgnoreRuleAlone(t *testing.T) {
 	repo := initNoDaemonSetup(t)
 	require.NoError(t, os.WriteFile(
 		filepath.Join(repo.Root, ".gitignore"),
-		[]byte("tmp/\n"),
+		[]byte(".roborev/\n"),
 		0o644,
 	))
 	setupMockServer(t, func(w http.ResponseWriter, r *http.Request) {
@@ -526,7 +526,7 @@ func TestInitNoDaemonLeavesExistingSnapshotIgnoreRuleAlone(t *testing.T) {
 
 	data, err := os.ReadFile(filepath.Join(repo.Root, ".gitignore"))
 	require.NoError(t, err)
-	assert.Equal(t, "tmp/\n", string(data))
+	assert.Equal(t, ".roborev/\n", string(data))
 }
 
 func TestInitNoDaemonRefusesGitignoreSymlink(t *testing.T) {

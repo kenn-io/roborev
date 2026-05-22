@@ -151,7 +151,7 @@ func ensureSnapshotDirIgnored(root string) error {
 	if err != nil {
 		return err
 	}
-	// Respect broader existing rules, e.g. tmp/ or var/, before appending
+	// Respect broader existing rules, e.g. .roborev/ or var/, before appending
 	// roborev's explicit snapshot directory entry.
 	ignored, err := git.CheckIgnoreNoIndex(root, probe)
 	if err != nil {
