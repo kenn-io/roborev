@@ -92,12 +92,12 @@ commit_plugin_manifests() {
         return 0
     fi
 
-    git -C "$REPO_ROOT" add "${PLUGIN_MANIFESTS[@]}"
-    if git -C "$REPO_ROOT" diff --cached --quiet; then
+    git -C "$REPO_ROOT" add -- "${PLUGIN_MANIFESTS[@]}"
+    if git -C "$REPO_ROOT" diff --cached --quiet -- "${PLUGIN_MANIFESTS[@]}"; then
         echo "Agent plugin manifests already at version $VERSION, no changes needed"
         return 0
     fi
-    git -C "$REPO_ROOT" commit -m "Update agent plugin manifests for $TAG"
+    git -C "$REPO_ROOT" commit -m "Update agent plugin manifests for $TAG" -- "${PLUGIN_MANIFESTS[@]}"
     PLUGIN_MANIFESTS_COMMITTED=1
 }
 
