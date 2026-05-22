@@ -1111,6 +1111,44 @@ func TestWriteDiffSnapshotEnsuresSnapshotDirIgnored(t *testing.T) {
 	}
 }
 
+func TestWriteDiffSnapshotRejectsTrackedSnapshotDir(t *testing.T) {
+	repoPath, commits := setupTestRepo(t)
+	targetSHA := commits[len(commits)-1]
+	require.NoError(t, os.MkdirAll(filepath.Join(repoPath, ".roborev"), 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(repoPath, ".roborev", "tracked.txt"), []byte("tracked\n"), 0o644))
+	cmd := exec.Command("git", "-C", repoPath, "add", "-f", ".roborev/tracked.txt")
+	require.NoError(t, cmd.Run())
+	cmd = exec.Command("git", "-C", repoPath, "commit", "-m", "track snapshot dir")
+	require.NoError(t, cmd.Run())
+	builder := NewBuilder(nil).ForRepo(repoPath, 0)
+
+	diffFile, cleanup, err := builder.WriteDiffSnapshot(targetSHA, nil)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "tracked files")
+	assert.Empty(t, diffFile)
+	assert.Nil(t, cleanup)
+}
+
+func TestWriteDiffSnapshotRejectsSnapshotDirSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on Windows due to symlink semantics")
+	}
+
+	repoPath, commits := setupTestRepo(t)
+	targetSHA := commits[len(commits)-1]
+	outside := t.TempDir()
+	require.NoError(t, os.Symlink(outside, filepath.Join(repoPath, ".roborev")))
+	builder := NewBuilder(nil).ForRepo(repoPath, 0)
+
+	diffFile, cleanup, err := builder.WriteDiffSnapshot(targetSHA, nil)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "symlinks")
+	assert.Empty(t, diffFile)
+	assert.Nil(t, cleanup)
+}
+
 func TestCleanupStaleSnapshotsRemovesOnlyOldSnapshotDirs(t *testing.T) {
 	repoPath, _ := setupTestRepo(t)
 	builder := NewBuilder(nil).ForRepo(repoPath, 0)
@@ -1163,7 +1201,7 @@ func TestCleanupStaleSnapshotsSkipsActiveSnapshotDirs(t *testing.T) {
 	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
-func TestCleanupStaleSnapshotsSkipsTrackedSnapshotDirs(t *testing.T) {
+func TestCleanupStaleSnapshotsRejectsTrackedSnapshotDir(t *testing.T) {
 	repoPath, _ := setupTestRepo(t)
 	builder := NewBuilder(nil).ForRepo(repoPath, 0)
 	snapshotDir := filepath.Join(repoPath, ".roborev", "roborev-snapshot-tracked")
@@ -1177,9 +1215,11 @@ func TestCleanupStaleSnapshotsSkipsTrackedSnapshotDirs(t *testing.T) {
 	oldTime := time.Now().Add(-2 * time.Hour)
 	require.NoError(t, os.Chtimes(snapshotDir, oldTime, oldTime))
 
-	require.NoError(t, builder.CleanupStaleSnapshots(time.Hour))
+	err := builder.CleanupStaleSnapshots(time.Hour)
 
-	_, err := os.Stat(snapshotDir)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "tracked files")
+	_, err = os.Stat(snapshotDir)
 	require.NoError(t, err)
 }
 

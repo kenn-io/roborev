@@ -147,6 +147,12 @@ func ensureSnapshotDirIgnored(root string) error {
 	if err != nil {
 		return err
 	}
+	if err := git.ValidateRepoLocalPathNoSymlinks(root, snapshotDir); err != nil {
+		return err
+	}
+	if err := git.EnsureNoTrackedFilesUnder(root, snapshotDir); err != nil {
+		return err
+	}
 	pattern, probe, err := git.IgnorePatternForDir(root, snapshotDir)
 	if err != nil {
 		return err

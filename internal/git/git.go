@@ -161,6 +161,69 @@ func HasTrackedFilesUnder(repoPath, path string) (bool, error) {
 	return strings.TrimSpace(string(out)) != "", nil
 }
 
+// EnsureNoTrackedFilesUnder rejects paths that already contain tracked files.
+func EnsureNoTrackedFilesUnder(repoPath, path string) error {
+	hasTrackedFiles, err := HasTrackedFilesUnder(repoPath, path)
+	if err != nil {
+		return err
+	}
+	if hasTrackedFiles {
+		return fmt.Errorf("snapshot_dir must not contain tracked files: %s", path)
+	}
+	return nil
+}
+
+// ValidateRepoLocalPathNoSymlinks rejects repo-local paths whose existing path
+// components contain symlinks or resolve outside the repository root.
+func ValidateRepoLocalPathNoSymlinks(repoPath, path string) error {
+	absRepo, err := filepath.Abs(repoPath)
+	if err != nil {
+		return err
+	}
+	absPath, err := filepath.Abs(path)
+	if err != nil {
+		return err
+	}
+	rel, err := filepath.Rel(absRepo, absPath)
+	if err != nil {
+		return err
+	}
+	rel = filepath.Clean(rel)
+	if rel == "." || !filepath.IsLocal(rel) {
+		return fmt.Errorf("path must be under the repo root: %s", path)
+	}
+	resolvedRepo, err := filepath.EvalSymlinks(absRepo)
+	if err != nil {
+		return fmt.Errorf("resolve repo root: %w", err)
+	}
+	current := absRepo
+	for part := range strings.SplitSeq(rel, string(filepath.Separator)) {
+		current = filepath.Join(current, part)
+		info, err := os.Lstat(current)
+		if err != nil {
+			if os.IsNotExist(err) {
+				return nil
+			}
+			return err
+		}
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("snapshot_dir must not contain symlinks: %s", current)
+		}
+		resolvedCurrent, err := filepath.EvalSymlinks(current)
+		if err != nil {
+			return err
+		}
+		resolvedRel, err := filepath.Rel(resolvedRepo, resolvedCurrent)
+		if err != nil {
+			return err
+		}
+		if resolvedRel == "." || !filepath.IsLocal(resolvedRel) {
+			return fmt.Errorf("snapshot_dir must stay under the repo root: %s", path)
+		}
+	}
+	return nil
+}
+
 func infoExcludePath(repoPath string) (string, error) {
 	cmd := exec.Command("git", "-C", repoPath, "rev-parse", "--git-path", "info/exclude")
 	out, err := cmd.Output()

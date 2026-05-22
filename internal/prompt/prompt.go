@@ -218,11 +218,17 @@ func (b *Builder) writeExternalDiffSnapshot(diff string) (string, func(), error)
 	if err != nil {
 		return "", nil, fmt.Errorf("resolve snapshot dir: %w", err)
 	}
+	if err := validateSnapshotRoot(b.repoPath, snapshotRoot); err != nil {
+		return "", nil, err
+	}
 	if err := ensureSnapshotRootIgnored(b.repoPath, snapshotRoot); err != nil {
 		return "", nil, fmt.Errorf("ensure snapshot dir ignored: %w", err)
 	}
 	if err := os.MkdirAll(snapshotRoot, 0o755); err != nil {
 		return "", nil, fmt.Errorf("create snapshot root: %w", err)
+	}
+	if err := validateSnapshotRoot(b.repoPath, snapshotRoot); err != nil {
+		return "", nil, err
 	}
 	snapshotLifecycleMu.Lock()
 	dir, err := os.MkdirTemp(snapshotRoot, "roborev-snapshot-*")
@@ -282,6 +288,16 @@ func snapshotIsActive(dir string) bool {
 	return isActiveSnapshotLocked(dir)
 }
 
+func validateSnapshotRoot(repoPath, snapshotRoot string) error {
+	if err := git.ValidateRepoLocalPathNoSymlinks(repoPath, snapshotRoot); err != nil {
+		return fmt.Errorf("validate snapshot dir: %w", err)
+	}
+	if err := git.EnsureNoTrackedFilesUnder(repoPath, snapshotRoot); err != nil {
+		return fmt.Errorf("validate snapshot dir: %w", err)
+	}
+	return nil
+}
+
 func ensureSnapshotRootIgnored(repoPath, snapshotRoot string) error {
 	pattern, probe, err := git.IgnorePatternForDir(repoPath, snapshotRoot)
 	if err != nil {
@@ -317,6 +333,9 @@ func (b *Builder) CleanupStaleSnapshots(olderThan time.Duration) error {
 	snapshotRoot, err := config.ResolveSnapshotDir(b.repoPath)
 	if err != nil {
 		return fmt.Errorf("resolve snapshot dir: %w", err)
+	}
+	if err := validateSnapshotRoot(b.repoPath, snapshotRoot); err != nil {
+		return err
 	}
 	entries, err := os.ReadDir(snapshotRoot)
 	if err != nil {
