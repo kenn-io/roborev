@@ -203,11 +203,6 @@ update_nix_flake() {
 # Update nix flake before creating the release
 update_nix_flake
 
-# Stage agent plugin manifest version bumps in the working tree (commit after confirmation)
-PLUGIN_MANIFESTS=()
-PLUGIN_MANIFESTS_COMMITTED=0
-update_plugin_manifests_inplace
-
 # Create a temp file for the changelog
 CHANGELOG_FILE=$(mktemp)
 trap 'rm -f "$CHANGELOG_FILE"' EXIT
@@ -229,15 +224,16 @@ read -p "Accept this changelog and create release $TAG? [y/N] " -n 1 -r
 echo ""
 
 if [[ ! $REPLY =~ ^[Yy]$ ]]; then
-    # Revert manifest edits so the cancel leaves the working tree clean
-    if [ ${#PLUGIN_MANIFESTS[@]} -gt 0 ]; then
-        git -C "$REPO_ROOT" checkout -- "${PLUGIN_MANIFESTS[@]}"
-    fi
     echo "Release cancelled."
     exit 0
 fi
 
-# Commit plugin manifest updates so the tag points at a commit with the new versions
+# Update and commit agent plugin manifest version bumps so the tag points at a
+# commit with the new versions. Run only after confirmation so that earlier
+# failures (changelog gen, interrupt, etc.) cannot leave the tree dirty.
+PLUGIN_MANIFESTS=()
+PLUGIN_MANIFESTS_COMMITTED=0
+update_plugin_manifests_inplace
 commit_plugin_manifests
 
 # Create the tag with changelog as message
