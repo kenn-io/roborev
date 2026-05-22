@@ -3,6 +3,7 @@ package prompt
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -1042,6 +1043,8 @@ func TestWriteDiffSnapshotUsesRepoLocalDefaultDir(t *testing.T) {
 		"snapshot path should be under repo tmp, got %s", diffFile)
 	assert.Equal(t, "roborev-snapshot-content.diff", filepath.Base(diffFile))
 	assert.Contains(t, filepath.Base(filepath.Dir(diffFile)), "roborev-snapshot-")
+	_, err = os.Stat(filepath.Join(filepath.Dir(diffFile), snapshotMarkerFile))
+	require.NoError(t, err)
 }
 
 func TestWriteDiffSnapshotUsesConfiguredRepoLocalDir(t *testing.T) {
@@ -1108,19 +1111,23 @@ func TestWriteDiffSnapshotEnsuresSnapshotDirIgnored(t *testing.T) {
 }
 
 func TestCleanupStaleSnapshotsRemovesOnlyOldSnapshotDirs(t *testing.T) {
-	repoPath := t.TempDir()
+	repoPath, _ := setupTestRepo(t)
 	builder := NewBuilder(nil).ForRepo(repoPath, 0)
 	snapshotRoot := filepath.Join(repoPath, "tmp")
 	require.NoError(t, os.MkdirAll(snapshotRoot, 0o755))
 
 	oldSnapshot := filepath.Join(snapshotRoot, "roborev-snapshot-old")
 	freshSnapshot := filepath.Join(snapshotRoot, "roborev-snapshot-fresh")
+	userSnapshot := filepath.Join(snapshotRoot, "roborev-snapshot-user")
 	otherDir := filepath.Join(snapshotRoot, "other")
-	for _, dir := range []string{oldSnapshot, freshSnapshot, otherDir} {
+	for _, dir := range []string{oldSnapshot, freshSnapshot, userSnapshot, otherDir} {
 		require.NoError(t, os.MkdirAll(dir, 0o755))
 	}
+	require.NoError(t, writeSnapshotMarker(oldSnapshot))
+	require.NoError(t, writeSnapshotMarker(freshSnapshot))
 	oldTime := time.Now().Add(-2 * time.Hour)
 	require.NoError(t, os.Chtimes(oldSnapshot, oldTime, oldTime))
+	require.NoError(t, os.Chtimes(userSnapshot, oldTime, oldTime))
 
 	require.NoError(t, builder.CleanupStaleSnapshots(time.Hour))
 
@@ -1128,7 +1135,50 @@ func TestCleanupStaleSnapshotsRemovesOnlyOldSnapshotDirs(t *testing.T) {
 	require.ErrorIs(t, err, os.ErrNotExist)
 	_, err = os.Stat(freshSnapshot)
 	require.NoError(t, err)
+	_, err = os.Stat(userSnapshot)
+	require.NoError(t, err)
 	_, err = os.Stat(otherDir)
+	require.NoError(t, err)
+}
+
+func TestCleanupStaleSnapshotsSkipsActiveSnapshotDirs(t *testing.T) {
+	repoPath, commits := setupTestRepo(t)
+	targetSHA := commits[len(commits)-1]
+	builder := NewBuilder(nil).ForRepo(repoPath, 0)
+
+	diffFile, cleanup, err := builder.WriteDiffSnapshot(targetSHA, nil)
+	require.NoError(t, err)
+	require.NotNil(t, cleanup)
+	snapshotDir := filepath.Dir(diffFile)
+	oldTime := time.Now().Add(-2 * time.Hour)
+	require.NoError(t, os.Chtimes(snapshotDir, oldTime, oldTime))
+
+	require.NoError(t, builder.CleanupStaleSnapshots(time.Hour))
+
+	_, err = os.Stat(snapshotDir)
+	require.NoError(t, err)
+	cleanup()
+	_, err = os.Stat(snapshotDir)
+	require.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestCleanupStaleSnapshotsSkipsTrackedSnapshotDirs(t *testing.T) {
+	repoPath, _ := setupTestRepo(t)
+	builder := NewBuilder(nil).ForRepo(repoPath, 0)
+	snapshotDir := filepath.Join(repoPath, "tmp", "roborev-snapshot-tracked")
+	require.NoError(t, os.MkdirAll(snapshotDir, 0o755))
+	require.NoError(t, writeSnapshotMarker(snapshotDir))
+	require.NoError(t, os.WriteFile(filepath.Join(snapshotDir, "tracked.txt"), []byte("tracked\n"), 0o644))
+	cmd := exec.Command("git", "-C", repoPath, "add", "-f", "tmp/roborev-snapshot-tracked/tracked.txt")
+	require.NoError(t, cmd.Run())
+	cmd = exec.Command("git", "-C", repoPath, "commit", "-m", "track snapshot-like dir")
+	require.NoError(t, cmd.Run())
+	oldTime := time.Now().Add(-2 * time.Hour)
+	require.NoError(t, os.Chtimes(snapshotDir, oldTime, oldTime))
+
+	require.NoError(t, builder.CleanupStaleSnapshots(time.Hour))
+
+	_, err := os.Stat(snapshotDir)
 	require.NoError(t, err)
 }
 

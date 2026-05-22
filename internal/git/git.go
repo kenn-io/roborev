@@ -143,6 +143,24 @@ func EnsureLocalExcludePattern(repoPath, pattern string) error {
 	return AppendIgnorePatternFile(excludePath, pattern)
 }
 
+// HasTrackedFilesUnder reports whether git tracks any file at or under path.
+func HasTrackedFilesUnder(repoPath, path string) (bool, error) {
+	rel, err := filepath.Rel(repoPath, path)
+	if err != nil {
+		return false, err
+	}
+	rel = filepath.Clean(rel)
+	if rel == "." || !filepath.IsLocal(rel) {
+		return false, fmt.Errorf("path must be under the repo root: %s", path)
+	}
+	cmd := exec.Command("git", "-C", repoPath, "ls-files", "--", filepath.ToSlash(rel))
+	out, err := cmd.Output()
+	if err != nil {
+		return false, fmt.Errorf("git ls-files: %w", err)
+	}
+	return strings.TrimSpace(string(out)) != "", nil
+}
+
 func infoExcludePath(repoPath string) (string, error) {
 	cmd := exec.Command("git", "-C", repoPath, "rev-parse", "--git-path", "info/exclude")
 	out, err := cmd.Output()

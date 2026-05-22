@@ -10,6 +10,7 @@ import (
 	"path/filepath"
 	"slices"
 	"strings"
+	"sync"
 	"time"
 	"unicode/utf8"
 
@@ -75,6 +76,15 @@ const DiffFilePathPlaceholder = "/tmp/roborev diff placeholder"
 const dirtyTruncatedDiffMarker = "(Diff too large to include in full)"
 
 const DefaultStaleSnapshotAge = 24 * time.Hour
+
+const snapshotMarkerFile = ".roborev-snapshot"
+
+var (
+	activeSnapshotDirs sync.Map
+	// Serializes daemon-wide snapshot cleanup with snapshot directory creation
+	// so cleanup never races a directory before it is marked and registered.
+	snapshotLifecycleMu sync.Mutex
+)
 
 // NewBuilder creates a new prompt builder
 func NewBuilder(db *storage.DB) *Builder {
@@ -214,26 +224,56 @@ func (b *Builder) writeExternalDiffSnapshot(diff string) (string, func(), error)
 	if err := os.MkdirAll(snapshotRoot, 0o755); err != nil {
 		return "", nil, fmt.Errorf("create snapshot root: %w", err)
 	}
+	snapshotLifecycleMu.Lock()
 	dir, err := os.MkdirTemp(snapshotRoot, "roborev-snapshot-*")
 	if err != nil {
+		snapshotLifecycleMu.Unlock()
 		return "", nil, fmt.Errorf("create snapshot dir: %w", err)
 	}
+	if err := writeSnapshotMarker(dir); err != nil {
+		os.RemoveAll(dir)
+		snapshotLifecycleMu.Unlock()
+		return "", nil, fmt.Errorf("write snapshot marker: %w", err)
+	}
+	unregister := registerActiveSnapshot(dir)
+	snapshotLifecycleMu.Unlock()
 	diffFile := dir + string(os.PathSeparator) + "roborev-snapshot-content.diff"
 	f, err := os.OpenFile(diffFile, os.O_WRONLY|os.O_CREATE|os.O_EXCL, 0o600)
 	if err != nil {
+		unregister()
 		os.RemoveAll(dir)
 		return "", nil, fmt.Errorf("create snapshot: %w", err)
 	}
 	_, writeErr := f.WriteString(diff)
 	closeErr := f.Close()
 	if writeErr != nil || closeErr != nil {
+		unregister()
 		os.RemoveAll(dir)
 		if writeErr != nil {
 			return "", nil, fmt.Errorf("write snapshot: %w", writeErr)
 		}
 		return "", nil, fmt.Errorf("close snapshot: %w", closeErr)
 	}
-	return diffFile, func() { os.RemoveAll(dir) }, nil
+	return diffFile, func() {
+		os.RemoveAll(dir)
+		unregister()
+	}, nil
+}
+
+func writeSnapshotMarker(dir string) error {
+	return os.WriteFile(filepath.Join(dir, snapshotMarkerFile), []byte("roborev snapshot\n"), 0o600)
+}
+
+func registerActiveSnapshot(dir string) func() {
+	activeSnapshotDirs.Store(dir, struct{}{})
+	return func() {
+		activeSnapshotDirs.Delete(dir)
+	}
+}
+
+func isActiveSnapshot(dir string) bool {
+	_, ok := activeSnapshotDirs.Load(dir)
+	return ok
 }
 
 func ensureSnapshotRootIgnored(repoPath, snapshotRoot string) error {
@@ -268,6 +308,8 @@ func (b *Builder) CleanupStaleSnapshots(olderThan time.Duration) error {
 	if olderThan <= 0 {
 		olderThan = DefaultStaleSnapshotAge
 	}
+	snapshotLifecycleMu.Lock()
+	defer snapshotLifecycleMu.Unlock()
 	snapshotRoot, err := config.ResolveSnapshotDir(b.repoPath)
 	if err != nil {
 		return fmt.Errorf("resolve snapshot dir: %w", err)
@@ -285,11 +327,27 @@ func (b *Builder) CleanupStaleSnapshots(olderThan time.Duration) error {
 			continue
 		}
 		path := filepath.Join(snapshotRoot, entry.Name())
+		if isActiveSnapshot(path) {
+			continue
+		}
+		if _, err := os.Stat(filepath.Join(path, snapshotMarkerFile)); err != nil {
+			if os.IsNotExist(err) {
+				continue
+			}
+			return fmt.Errorf("stat snapshot marker %s: %w", path, err)
+		}
 		info, err := entry.Info()
 		if err != nil {
 			return fmt.Errorf("stat snapshot dir %s: %w", path, err)
 		}
 		if info.ModTime().After(cutoff) {
+			continue
+		}
+		hasTrackedFiles, err := git.HasTrackedFilesUnder(b.repoPath, path)
+		if err != nil {
+			return fmt.Errorf("check tracked files under snapshot dir %s: %w", path, err)
+		}
+		if hasTrackedFiles {
 			continue
 		}
 		if err := os.RemoveAll(path); err != nil {
