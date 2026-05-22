@@ -81,8 +81,8 @@ const snapshotMarkerFile = ".roborev-snapshot"
 
 var (
 	activeSnapshotDirs sync.Map
-	// Serializes daemon-wide snapshot cleanup with snapshot directory creation
-	// so cleanup never races a directory before it is marked and registered.
+	// Protects the lifecycle window where snapshot directories are created,
+	// marked, and registered before cleanup may consider them stale.
 	snapshotLifecycleMu sync.Mutex
 )
 
@@ -271,9 +271,15 @@ func registerActiveSnapshot(dir string) func() {
 	}
 }
 
-func isActiveSnapshot(dir string) bool {
+func isActiveSnapshotLocked(dir string) bool {
 	_, ok := activeSnapshotDirs.Load(dir)
 	return ok
+}
+
+func snapshotIsActive(dir string) bool {
+	snapshotLifecycleMu.Lock()
+	defer snapshotLifecycleMu.Unlock()
+	return isActiveSnapshotLocked(dir)
 }
 
 func ensureSnapshotRootIgnored(repoPath, snapshotRoot string) error {
@@ -308,8 +314,6 @@ func (b *Builder) CleanupStaleSnapshots(olderThan time.Duration) error {
 	if olderThan <= 0 {
 		olderThan = DefaultStaleSnapshotAge
 	}
-	snapshotLifecycleMu.Lock()
-	defer snapshotLifecycleMu.Unlock()
 	snapshotRoot, err := config.ResolveSnapshotDir(b.repoPath)
 	if err != nil {
 		return fmt.Errorf("resolve snapshot dir: %w", err)
@@ -322,39 +326,44 @@ func (b *Builder) CleanupStaleSnapshots(olderThan time.Duration) error {
 		return fmt.Errorf("read snapshot root: %w", err)
 	}
 	cutoff := time.Now().Add(-olderThan)
+	var errs []error
 	for _, entry := range entries {
 		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "roborev-snapshot-") {
 			continue
 		}
 		path := filepath.Join(snapshotRoot, entry.Name())
-		if isActiveSnapshot(path) {
+		info, err := entry.Info()
+		if err != nil {
+			errs = append(errs, fmt.Errorf("stat snapshot dir %s: %w", path, err))
+			continue
+		}
+		if info.ModTime().After(cutoff) {
+			continue
+		}
+		if snapshotIsActive(path) {
 			continue
 		}
 		if _, err := os.Stat(filepath.Join(path, snapshotMarkerFile)); err != nil {
 			if os.IsNotExist(err) {
 				continue
 			}
-			return fmt.Errorf("stat snapshot marker %s: %w", path, err)
-		}
-		info, err := entry.Info()
-		if err != nil {
-			return fmt.Errorf("stat snapshot dir %s: %w", path, err)
-		}
-		if info.ModTime().After(cutoff) {
+			errs = append(errs, fmt.Errorf("stat snapshot marker %s: %w", path, err))
 			continue
 		}
 		hasTrackedFiles, err := git.HasTrackedFilesUnder(b.repoPath, path)
 		if err != nil {
-			return fmt.Errorf("check tracked files under snapshot dir %s: %w", path, err)
+			errs = append(errs, fmt.Errorf("check tracked files under snapshot dir %s: %w", path, err))
+			continue
 		}
 		if hasTrackedFiles {
 			continue
 		}
 		if err := os.RemoveAll(path); err != nil {
-			return fmt.Errorf("remove stale snapshot dir %s: %w", path, err)
+			errs = append(errs, fmt.Errorf("remove stale snapshot dir %s: %w", path, err))
+			continue
 		}
 	}
-	return nil
+	return errors.Join(errs...)
 }
 
 // BuildDirtyWithSnapshot builds a dirty review prompt, writing the diff to a snapshot file

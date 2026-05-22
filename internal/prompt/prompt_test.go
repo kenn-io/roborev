@@ -5,6 +5,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -1180,6 +1181,36 @@ func TestCleanupStaleSnapshotsSkipsTrackedSnapshotDirs(t *testing.T) {
 
 	_, err := os.Stat(snapshotDir)
 	require.NoError(t, err)
+}
+
+func TestCleanupStaleSnapshotsContinuesAfterEntryError(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("chmod permission behavior is platform-specific")
+	}
+
+	repoPath, _ := setupTestRepo(t)
+	builder := NewBuilder(nil).ForRepo(repoPath, 0)
+	snapshotRoot := filepath.Join(repoPath, "tmp")
+	require.NoError(t, os.MkdirAll(snapshotRoot, 0o755))
+
+	badSnapshot := filepath.Join(snapshotRoot, "roborev-snapshot-a-bad")
+	goodSnapshot := filepath.Join(snapshotRoot, "roborev-snapshot-z-good")
+	for _, dir := range []string{badSnapshot, goodSnapshot} {
+		require.NoError(t, os.MkdirAll(dir, 0o755))
+		require.NoError(t, writeSnapshotMarker(dir))
+	}
+	oldTime := time.Now().Add(-2 * time.Hour)
+	require.NoError(t, os.Chtimes(badSnapshot, oldTime, oldTime))
+	require.NoError(t, os.Chtimes(goodSnapshot, oldTime, oldTime))
+	require.NoError(t, os.Chmod(badSnapshot, 0))
+	defer os.Chmod(badSnapshot, 0o755)
+
+	err := builder.CleanupStaleSnapshots(time.Hour)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "stat snapshot marker")
+	_, err = os.Stat(goodSnapshot)
+	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
 func TestFitPrefixWithSuffixVariantsRejectsNonPositiveLimit(t *testing.T) {
