@@ -1,12 +1,9 @@
 package main
 
 import (
-	"errors"
 	"fmt"
 	"os"
-	"os/exec"
 	"path/filepath"
-	"strings"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/roborev/internal/config"
@@ -150,66 +147,18 @@ func ensureSnapshotDirIgnored(root string) error {
 	if err != nil {
 		return err
 	}
-	rel, err := filepath.Rel(root, snapshotDir)
+	pattern, probe, err := git.IgnorePatternForDir(root, snapshotDir)
 	if err != nil {
 		return err
 	}
-	rel = filepath.Clean(rel)
-	pattern := "/" + filepath.ToSlash(rel) + "/"
-	probe := filepath.ToSlash(filepath.Join(rel, ".roborev-ignore-check"))
 	// Respect broader existing rules, e.g. tmp/ or var/, before appending
 	// roborev's explicit snapshot directory entry.
-	ignored, err := gitCheckIgnoreNoIndex(root, probe)
+	ignored, err := git.CheckIgnoreNoIndex(root, probe)
 	if err != nil {
 		return err
 	}
 	if ignored {
 		return nil
 	}
-	return appendGitignoreEntry(filepath.Join(root, ".gitignore"), pattern)
-}
-
-func gitCheckIgnoreNoIndex(root, path string) (bool, error) {
-	cmd := exec.Command("git", "-C", root, "check-ignore", "--quiet", "--no-index", path)
-	err := cmd.Run()
-	if err == nil {
-		return true, nil
-	}
-	var exitErr *exec.ExitError
-	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
-		return false, nil
-	}
-	return false, err
-}
-
-func appendGitignoreEntry(path, pattern string) error {
-	var prefix string
-	if info, err := os.Lstat(path); err == nil {
-		if info.Mode()&os.ModeSymlink != 0 {
-			return fmt.Errorf("%s is a symlink; refusing to update it", path)
-		}
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-	if data, err := os.ReadFile(path); err == nil {
-		text := string(data)
-		for line := range strings.SplitSeq(text, "\n") {
-			if strings.TrimSpace(line) == pattern {
-				return nil
-			}
-		}
-		if len(text) > 0 && !strings.HasSuffix(text, "\n") {
-			prefix = "\n"
-		}
-	} else if !os.IsNotExist(err) {
-		return err
-	}
-
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return err
-	}
-	defer f.Close()
-	_, err = fmt.Fprintf(f, "%s# roborev snapshots\n%s\n", prefix, pattern)
-	return err
+	return git.AppendIgnorePatternFile(filepath.Join(root, ".gitignore"), pattern)
 }

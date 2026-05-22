@@ -1063,6 +1063,50 @@ func TestWriteDiffSnapshotUsesConfiguredRepoLocalDir(t *testing.T) {
 		"snapshot path should be under configured repo dir, got %s", diffFile)
 }
 
+func TestWriteDiffSnapshotEnsuresSnapshotDirIgnored(t *testing.T) {
+	tests := []struct {
+		name       string
+		repoConfig string
+		relDir     string
+	}{
+		{
+			name:   "default tmp dir",
+			relDir: "tmp",
+		},
+		{
+			name:       "configured dir",
+			repoConfig: `snapshot_dir = "var/roborev"`,
+			relDir:     filepath.Join("var", "roborev"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repoPath, commits := setupTestRepo(t)
+			targetSHA := commits[len(commits)-1]
+			if tt.repoConfig != "" {
+				require.NoError(t, os.WriteFile(
+					filepath.Join(repoPath, ".roborev.toml"),
+					[]byte(tt.repoConfig+"\n"),
+					0o644,
+				))
+			}
+			builder := NewBuilder(nil).ForRepo(repoPath, 0)
+
+			diffFile, cleanup, err := builder.WriteDiffSnapshot(targetSHA, nil)
+			require.NoError(t, err)
+			require.NotNil(t, cleanup)
+			defer cleanup()
+
+			assert.True(t, strings.HasPrefix(diffFile, filepath.Join(repoPath, tt.relDir)+string(os.PathSeparator)),
+				"snapshot path should be under configured repo dir, got %s", diffFile)
+			ignored, err := gitpkg.CheckIgnoreNoIndex(repoPath, filepath.ToSlash(filepath.Join(tt.relDir, "roborev-snapshot-x", "file.diff")))
+			require.NoError(t, err)
+			assert.True(t, ignored)
+		})
+	}
+}
+
 func TestCleanupStaleSnapshotsRemovesOnlyOldSnapshotDirs(t *testing.T) {
 	repoPath := t.TempDir()
 	builder := NewBuilder(nil).ForRepo(repoPath, 0)

@@ -103,6 +103,102 @@ func LocalBranchName(branch string) string {
 	return strings.TrimPrefix(branch, "origin/")
 }
 
+// IgnorePatternForDir returns the root-anchored ignore pattern for dir and a
+// probe path that can be passed to git check-ignore.
+func IgnorePatternForDir(repoPath, dir string) (pattern string, probe string, err error) {
+	rel, err := filepath.Rel(repoPath, dir)
+	if err != nil {
+		return "", "", err
+	}
+	rel = filepath.Clean(rel)
+	if rel == "." || !filepath.IsLocal(rel) {
+		return "", "", fmt.Errorf("ignore directory must be under the repo root: %s", dir)
+	}
+	slashRel := filepath.ToSlash(rel)
+	return "/" + slashRel + "/", filepath.ToSlash(filepath.Join(rel, ".roborev-ignore-check")), nil
+}
+
+// CheckIgnoreNoIndex reports whether path is ignored by git without requiring
+// the path to exist or be tracked in the index.
+func CheckIgnoreNoIndex(repoPath, path string) (bool, error) {
+	cmd := exec.Command("git", "-C", repoPath, "check-ignore", "--quiet", "--no-index", path)
+	err := cmd.Run()
+	if err == nil {
+		return true, nil
+	}
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		return false, nil
+	}
+	return false, err
+}
+
+// EnsureLocalExcludePattern appends pattern to .git/info/exclude when the repo
+// does not already ignore a path via tracked ignore files.
+func EnsureLocalExcludePattern(repoPath, pattern string) error {
+	excludePath, err := infoExcludePath(repoPath)
+	if err != nil {
+		return err
+	}
+	return AppendIgnorePatternFile(excludePath, pattern)
+}
+
+func infoExcludePath(repoPath string) (string, error) {
+	cmd := exec.Command("git", "-C", repoPath, "rev-parse", "--git-path", "info/exclude")
+	out, err := cmd.Output()
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse info/exclude: %w", err)
+	}
+	path := strings.TrimSpace(string(out))
+	if path == "" {
+		return "", fmt.Errorf("git rev-parse info/exclude returned an empty path")
+	}
+	if !filepath.IsAbs(path) {
+		path = filepath.Join(repoPath, path)
+	}
+	return path, nil
+}
+
+// AppendIgnorePatternFile appends roborev's snapshot ignore pattern to an
+// ignore file, refusing symlinks and non-regular files.
+func AppendIgnorePatternFile(path, pattern string) error {
+	var prefix string
+	if info, err := os.Lstat(path); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("%s is a symlink; refusing to update it", path)
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("%s is not a regular file; refusing to update it", path)
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+	if data, err := os.ReadFile(path); err == nil {
+		text := string(data)
+		for line := range strings.SplitSeq(text, "\n") {
+			if strings.TrimSpace(line) == pattern {
+				return nil
+			}
+		}
+		if len(text) > 0 && !strings.HasSuffix(text, "\n") {
+			prefix = "\n"
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return err
+	}
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = fmt.Fprintf(f, "%s# roborev snapshots\n%s\n", prefix, pattern)
+	return err
+}
+
 // IsOnBaseBranch returns true if currentBranch is equivalent to base for the
 // purpose of "already on the base branch" guardrails. Bare local names
 // ("main") match directly. Slash-containing bases are classified by

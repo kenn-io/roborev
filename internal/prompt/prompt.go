@@ -208,6 +208,9 @@ func (b *Builder) writeExternalDiffSnapshot(diff string) (string, func(), error)
 	if err != nil {
 		return "", nil, fmt.Errorf("resolve snapshot dir: %w", err)
 	}
+	if err := ensureSnapshotRootIgnored(b.repoPath, snapshotRoot); err != nil {
+		return "", nil, fmt.Errorf("ensure snapshot dir ignored: %w", err)
+	}
 	if err := os.MkdirAll(snapshotRoot, 0o755); err != nil {
 		return "", nil, fmt.Errorf("create snapshot root: %w", err)
 	}
@@ -231,6 +234,31 @@ func (b *Builder) writeExternalDiffSnapshot(diff string) (string, func(), error)
 		return "", nil, fmt.Errorf("close snapshot: %w", closeErr)
 	}
 	return diffFile, func() { os.RemoveAll(dir) }, nil
+}
+
+func ensureSnapshotRootIgnored(repoPath, snapshotRoot string) error {
+	pattern, probe, err := git.IgnorePatternForDir(repoPath, snapshotRoot)
+	if err != nil {
+		return err
+	}
+	ignored, err := git.CheckIgnoreNoIndex(repoPath, probe)
+	if err != nil {
+		return err
+	}
+	if ignored {
+		return nil
+	}
+	if err := git.EnsureLocalExcludePattern(repoPath, pattern); err != nil {
+		return err
+	}
+	ignored, err = git.CheckIgnoreNoIndex(repoPath, probe)
+	if err != nil {
+		return err
+	}
+	if !ignored {
+		return fmt.Errorf("snapshot dir %s is still not ignored after updating git exclude", snapshotRoot)
+	}
+	return nil
 }
 
 // CleanupStaleSnapshots removes old roborev snapshot directories from the

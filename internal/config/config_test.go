@@ -1533,6 +1533,11 @@ func TestResolveSnapshotDir(t *testing.T) {
 			repoConfig: `snapshot_dir = ".git/roborev"`,
 			wantErr:    ".git",
 		},
+		{
+			name:       "rejects control characters",
+			repoConfig: "snapshot_dir = \"tmp\\nbad\"",
+			wantErr:    "control characters",
+		},
 	}
 
 	for _, tt := range tests {

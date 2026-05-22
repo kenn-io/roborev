@@ -2157,6 +2157,9 @@ func ResolveSnapshotDir(repoPath string) (string, error) {
 		dir = repoCfg.SnapshotDir
 	}
 	dir = strings.TrimSpace(dir)
+	if strings.ContainsFunc(dir, func(r rune) bool { return r < ' ' || r == 0x7f }) {
+		return "", fmt.Errorf("snapshot_dir must not contain control characters: %q", dir)
+	}
 	clean := filepath.Clean(dir)
 	if clean == "." || !filepath.IsLocal(clean) {
 		return "", fmt.Errorf("snapshot_dir must be a relative path under the repo root: %s", dir)
