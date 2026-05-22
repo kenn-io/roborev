@@ -363,7 +363,7 @@ Sanitize untrusted strings before TUI display: `stripControlChars()` for table c
 
 ## Design Constraints
 
-- **Daemon tasks must not modify the git working tree.** Background jobs (reviews, CI polling, synthesis) are read-only with respect to the user's repo checkout. They read source files and write results to the database only. CLI commands like `roborev fix` run synchronously in the foreground and may modify files. Background `fix` jobs run agents in isolated git worktrees (via `internal/worktree`) and store resulting patches in the database — patches are only applied to the working tree when the user explicitly confirms in the TUI.
+- **Daemon tasks must not edit tracked source or apply code changes in the user's git working tree.** Background jobs (reviews, CI polling, synthesis) may read source files, write results to the database, and create ignored repo-local roborev snapshot artifacts under the configured `snapshot_dir` (default `tmp/`) when oversized diffs must be handed to sandboxed agents. Snapshot artifacts are disposable and must be cleaned up best-effort. CLI commands like `roborev fix` run synchronously in the foreground and may modify files. Background `fix` jobs run agents in isolated git worktrees (via `internal/worktree`) and store resulting patches in the database; patches are only applied to the working tree when the user explicitly confirms in the TUI.
 
 ## Agent Skills
 

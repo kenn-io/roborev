@@ -29,7 +29,7 @@ CLI (roborev) -> HTTP API -> Daemon -> Worker Pool -> Agent adapters
 ```
 
 - The daemon is the long-lived control plane. Many CLI commands are thin HTTP clients.
-- Background daemon work must not modify the user's checked-out working tree.
+- Background daemon work must not edit tracked/source files in the user's checked-out working tree or apply agent changes there. It may create ignored, repo-local roborev snapshot artifacts under the configured `snapshot_dir` (default `tmp/`) so sandboxed agents can read oversized diffs; those artifacts must be disposable and best-effort cleaned up.
 - Foreground agentic flows such as `roborev fix` and `roborev refine` may modify code.
 - Isolated background fix work uses temporary git worktrees and stores patches in the DB.
 
@@ -205,7 +205,7 @@ When reviewing or fixing issues:
 - Focus on correctness, concurrency safety, and error handling in daemon/worker code.
 - For storage changes, keep migrations minimal and validate schema and queries.
 - For API changes, preserve HTTP/JSON conventions.
-- For daemon changes, preserve the rule that background jobs must not edit the checked-out working tree.
+- For daemon changes, preserve the rule that background jobs must not edit tracked/source files in the checked-out working tree or apply agent changes there. Ignored repo-local snapshot artifacts are allowed only for oversized diff handoff and must stay under the configured `snapshot_dir`, remain gitignored, and be cleaned up best-effort.
 - When addressing review feedback, update tests if behavior changes.
 - If the user pastes review findings or review text directly into the prompt, treat that as direct fix input and work from the pasted content.
 - Do not invoke review-fetching skills for pasted review text unless the user explicitly asks for that skill or provides only a review/job ID that must be fetched first.
