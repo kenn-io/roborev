@@ -561,8 +561,8 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 		}
 
 		// Build address prompt
-		builder := prompt.NewBuilderWithConfig(nil, cfg)
-		addressPrompt, err := builder.BuildAddressPrompt(repoPath, currentFailedReview, previousAttempts, minSev)
+		builder := prompt.NewBuilderWithConfig(nil, cfg).ForRepo(repoPath, 0)
+		addressPrompt, err := builder.BuildAddressPrompt(currentFailedReview, previousAttempts, minSev)
 		if err != nil {
 			return fmt.Errorf("build address prompt: %w", err)
 		}

@@ -105,11 +105,9 @@ func NewCIPoller(db *storage.DB, cfgGetter ConfigGetter, broadcaster Broadcaster
 	p.mergeBaseFn = gitpkg.GetMergeBase
 	p.loadRepoConfigFn = loadCIRepoConfig
 	p.buildReviewPromptFn = func(repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, minSeverity, additionalContext string, cfg *config.Config) (string, error) {
-		builder := prompt.NewBuilderWithConfig(p.db, cfg)
+		builder := prompt.NewBuilderWithConfig(p.db, cfg).ForRepo(repoPath, repoID)
 		return builder.BuildWithAdditionalContextAndDiffFile(
-			repoPath,
 			gitRef,
-			repoID,
 			contextCount,
 			agentName,
 			reviewType,
@@ -2097,11 +2095,9 @@ func (p *CIPoller) callBuildReviewPrompt(repoPath, gitRef string, repoID int64, 
 	if p.buildReviewPromptFn != nil {
 		return p.buildReviewPromptFn(repoPath, gitRef, repoID, contextCount, agentName, reviewType, minSeverity, additionalContext, cfg)
 	}
-	builder := prompt.NewBuilderWithConfig(p.db, cfg)
+	builder := prompt.NewBuilderWithConfig(p.db, cfg).ForRepo(repoPath, repoID)
 	return builder.BuildWithAdditionalContextAndDiffFile(
-		repoPath,
 		gitRef,
-		repoID,
 		contextCount,
 		agentName,
 		reviewType,

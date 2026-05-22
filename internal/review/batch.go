@@ -157,7 +157,7 @@ func runSingle(
 	result.Agent = resolvedAgent.Name()
 
 	// Build prompt (nil DB = no previous review context)
-	builder := prompt.NewBuilderWithConfig(nil, cfg.GlobalConfig)
+	builder := prompt.NewBuilderWithConfig(nil, cfg.GlobalConfig).ForRepo(cfg.RepoPath, 0)
 
 	// Normalize review type for prompt building
 	promptReviewType := reviewType
@@ -169,7 +169,7 @@ func runSingle(
 		cfg.RepoPath, cfg.GlobalConfig, promptReviewType,
 	)
 	snapResult, err := builder.BuildWithSnapshot(
-		cfg.RepoPath, cfg.GitRef, 0, cfg.ContextCount,
+		cfg.GitRef, cfg.ContextCount,
 		resolvedAgent.Name(), promptReviewType, cfg.MinSeverity, excludes)
 	if err != nil {
 		result.Status = ResultFailed

@@ -594,7 +594,7 @@ func TestWriteDiffSnapshot_WritesExternalReadableTempFile(t *testing.T) {
 	require.NoError(t, err)
 	sha := strings.TrimSpace(string(shaBytes))
 
-	diffFile, cleanup, err := prompt.WriteDiffSnapshot(worktreeDir, sha, nil)
+	diffFile, cleanup, err := prompt.NewBuilder(nil).ForRepo(worktreeDir, 0).WriteDiffSnapshot(sha, nil)
 	require.NoError(t, err)
 	require.NotEmpty(t, diffFile, "expected diff file for worktree-backed review")
 	require.NotNil(t, cleanup)

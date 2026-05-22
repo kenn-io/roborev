@@ -470,18 +470,18 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName
 	}
 
 	// Build prompt
-	pb := prompt.NewBuilderWithConfig(nil, cfg)
+	pb := prompt.NewBuilderWithConfig(nil, cfg).ForRepo(repoPath, 0)
 	var reviewPrompt string
 	var snapshotCleanup func()
 	if diffContent != "" {
 		// Dirty review
-		dirtyResult, dirtyErr := pb.BuildDirtyWithSnapshot(repoPath, diffContent, 0, cfg.ReviewContextCount, a.Name(), reviewType, resolvedMinSev)
+		dirtyResult, dirtyErr := pb.BuildDirtyWithSnapshot(diffContent, cfg.ReviewContextCount, a.Name(), reviewType, resolvedMinSev)
 		reviewPrompt = dirtyResult.Prompt
 		snapshotCleanup = dirtyResult.Cleanup
 		err = dirtyErr
 	} else {
 		excludes := config.ResolveExcludePatterns(repoPath, cfg, reviewType)
-		result, buildErr := pb.BuildWithSnapshot(repoPath, gitRef, 0, cfg.ReviewContextCount, a.Name(), reviewType, resolvedMinSev, excludes)
+		result, buildErr := pb.BuildWithSnapshot(gitRef, cfg.ReviewContextCount, a.Name(), reviewType, resolvedMinSev, excludes)
 		reviewPrompt = result.Prompt
 		snapshotCleanup = result.Cleanup
 		err = buildErr

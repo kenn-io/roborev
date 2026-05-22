@@ -81,7 +81,7 @@ func TestGoldenPrompt_SingleReviewDefault(t *testing.T) {
 	sha := r.commitFile("hello.txt", "hello world\n", "add greeting")
 
 	b := NewBuilder(nil)
-	prompt, err := b.Build(r.dir, sha, 0, 0, "test", "", "")
+	prompt, err := b.ForRepo(r.dir, 0).Build(sha, 0, "test", "", "")
 	require.NoError(t, err)
 
 	assertGolden(t, scrubDynamic(prompt), "single_review_default.golden")
@@ -92,7 +92,7 @@ func TestGoldenPrompt_SingleReviewCodex(t *testing.T) {
 	sha := r.commitFile("hello.txt", "hello world\n", "add greeting")
 
 	b := NewBuilder(nil)
-	prompt, err := b.Build(r.dir, sha, 0, 0, "codex", "", "")
+	prompt, err := b.ForRepo(r.dir, 0).Build(sha, 0, "codex", "", "")
 	require.NoError(t, err)
 
 	assertGolden(t, scrubDynamic(prompt), "single_review_codex.golden")
@@ -114,7 +114,7 @@ func TestGoldenPrompt_RangeWithInRangeReviews(t *testing.T) {
 		"No issues found.\n\nVerdict: PASS")
 
 	b := NewBuilder(db)
-	prompt, err := b.Build(r.dir, baseSHA+".."+commit2, repo.ID, 0, "test", "", "")
+	prompt, err := b.ForRepo(r.dir, repo.ID).Build(baseSHA+".."+commit2, 0, "test", "", "")
 	require.NoError(t, err)
 
 	assertGolden(t, scrubDynamic(prompt), "range_with_in_range_reviews.golden")
@@ -133,7 +133,7 @@ func TestGoldenPrompt_DirtyReview(t *testing.T) {
 		"+added line\n"
 
 	b := NewBuilder(nil)
-	prompt, err := b.BuildDirty(r.dir, diff, 0, 0, "test", "", "")
+	prompt, err := b.ForRepo(r.dir, 0).BuildDirty(diff, 0, "test", "", "")
 	require.NoError(t, err)
 
 	assertGolden(t, scrubDynamic(prompt), "dirty_review.golden")
@@ -155,7 +155,7 @@ func TestGoldenPrompt_AddressWithSplitResponses(t *testing.T) {
 		{Responder: "alice", Response: "Doc comments are optional here", CreatedAt: time.Date(2026, 3, 15, 10, 0, 0, 0, time.UTC)},
 	}
 
-	prompt, err := b.BuildAddressPrompt(r.dir, review, responses, "medium")
+	prompt, err := b.ForRepo(r.dir, 0).BuildAddressPrompt(review, responses, "medium")
 	require.NoError(t, err)
 
 	assertGolden(t, scrubDynamic(prompt), "address_with_split_responses.golden")
@@ -166,7 +166,7 @@ func TestGoldenPrompt_SecurityReview(t *testing.T) {
 	sha := r.commitFile("hello.txt", "hello world\n", "add greeting")
 
 	b := NewBuilder(nil)
-	prompt, err := b.Build(r.dir, sha, 0, 0, "test", "security", "")
+	prompt, err := b.ForRepo(r.dir, 0).Build(sha, 0, "test", "security", "")
 	require.NoError(t, err)
 
 	assertGolden(t, scrubDynamic(prompt), "security_review.golden")
@@ -177,7 +177,7 @@ func TestGoldenPrompt_DesignReview(t *testing.T) {
 	sha := r.commitFile("hello.txt", "hello world\n", "add greeting")
 
 	b := NewBuilder(nil)
-	prompt, err := b.Build(r.dir, sha, 0, 0, "test", "design", "")
+	prompt, err := b.ForRepo(r.dir, 0).Build(sha, 0, "test", "design", "")
 	require.NoError(t, err)
 
 	assertGolden(t, scrubDynamic(prompt), "design_review.golden")
@@ -188,7 +188,7 @@ func TestGoldenPrompt_SingleReviewClaudeCode(t *testing.T) {
 	sha := r.commitFile("hello.txt", "hello world\n", "add greeting")
 
 	b := NewBuilder(nil)
-	prompt, err := b.Build(r.dir, sha, 0, 0, "claude-code", "", "")
+	prompt, err := b.ForRepo(r.dir, 0).Build(sha, 0, "claude-code", "", "")
 	require.NoError(t, err)
 
 	assertGolden(t, scrubDynamic(prompt), "single_review_claude_code.golden")
@@ -199,7 +199,7 @@ func TestGoldenPrompt_SingleReviewGemini(t *testing.T) {
 	sha := r.commitFile("hello.txt", "hello world\n", "add greeting")
 
 	b := NewBuilder(nil)
-	prompt, err := b.Build(r.dir, sha, 0, 0, "gemini", "", "")
+	prompt, err := b.ForRepo(r.dir, 0).Build(sha, 0, "gemini", "", "")
 	require.NoError(t, err)
 
 	assertGolden(t, scrubDynamic(prompt), "single_review_gemini.golden")
@@ -221,7 +221,7 @@ func TestGoldenPrompt_SingleWithPreviousReviews(t *testing.T) {
 		"Found unused variable in a.txt\n\nVerdict: FAIL")
 
 	b := NewBuilder(db)
-	prompt, err := b.Build(r.dir, target, repo.ID, 2, "test", "", "")
+	prompt, err := b.ForRepo(r.dir, repo.ID).Build(target, 2, "test", "", "")
 	require.NoError(t, err)
 
 	assertGolden(t, scrubDynamic(prompt), "single_with_previous_reviews.golden")
@@ -252,7 +252,7 @@ func TestGoldenPrompt_PreviousReviewsWithComments(t *testing.T) {
 		"No issues found.\n\nVerdict: PASS")
 
 	b := NewBuilder(db)
-	prompt, err := b.Build(r.dir, target, repo.ID, 2, "test", "", "")
+	prompt, err := b.ForRepo(r.dir, repo.ID).Build(target, 2, "test", "", "")
 	require.NoError(t, err)
 
 	// The separator between comment-bearing entries and the next entry
@@ -277,7 +277,7 @@ func TestGoldenPrompt_SingleWithGuidelines(t *testing.T) {
 	sha := r.commitFile("hello.txt", "hello world\n", "add greeting")
 
 	b := NewBuilder(nil)
-	prompt, err := b.Build(r.dir, sha, 0, 0, "test", "", "")
+	prompt, err := b.ForRepo(r.dir, 0).Build(sha, 0, "test", "", "")
 	require.NoError(t, err)
 
 	assertGolden(t, scrubDynamic(prompt), "single_with_guidelines.golden")
@@ -289,7 +289,7 @@ func TestGoldenPrompt_SingleWithAdditionalContext(t *testing.T) {
 
 	additional := "## Pull Request Discussion\n\nReviewer noted the greeting should support i18n in a later PR.\n"
 	b := NewBuilder(nil)
-	prompt, err := b.BuildWithAdditionalContext(r.dir, sha, 0, 0, "test", "", "", additional)
+	prompt, err := b.ForRepo(r.dir, 0).BuildWithAdditionalContext(sha, 0, "test", "", "", additional)
 	require.NoError(t, err)
 
 	assertGolden(t, scrubDynamic(prompt), "single_with_additional_context.golden")
@@ -300,7 +300,7 @@ func TestGoldenPrompt_SingleWithSeverityFilter(t *testing.T) {
 	sha := r.commitFile("hello.txt", "hello world\n", "add greeting")
 
 	b := NewBuilder(nil)
-	prompt, err := b.Build(r.dir, sha, 0, 0, "test", "", "medium")
+	prompt, err := b.ForRepo(r.dir, 0).Build(sha, 0, "test", "", "medium")
 	require.NoError(t, err)
 
 	assertGolden(t, scrubDynamic(prompt), "single_with_severity_filter.golden")
@@ -317,7 +317,7 @@ func TestGoldenPrompt_SingleTruncatedDiff(t *testing.T) {
 
 	cfg := &config.Config{DefaultMaxPromptSize: 4000}
 	b := NewBuilderWithConfig(nil, cfg)
-	prompt, err := b.Build(r.dir, sha, 0, 0, "test", "", "")
+	prompt, err := b.ForRepo(r.dir, 0).Build(sha, 0, "test", "", "")
 	require.NoError(t, err)
 
 	assertGolden(t, scrubDynamic(prompt), "single_truncated_diff.golden")
@@ -332,7 +332,7 @@ func TestGoldenPrompt_SingleTruncatedDiffCodex(t *testing.T) {
 
 	cfg := &config.Config{DefaultMaxPromptSize: 4000}
 	b := NewBuilderWithConfig(nil, cfg)
-	prompt, err := b.Build(r.dir, sha, 0, 0, "codex", "", "")
+	prompt, err := b.ForRepo(r.dir, 0).Build(sha, 0, "codex", "", "")
 	require.NoError(t, err)
 
 	assertGolden(t, scrubDynamic(prompt), "single_truncated_diff_codex.golden")
@@ -348,7 +348,7 @@ func TestGoldenPrompt_RangeTruncated(t *testing.T) {
 
 	cfg := &config.Config{DefaultMaxPromptSize: 5000}
 	b := NewBuilderWithConfig(nil, cfg)
-	prompt, err := b.Build(r.dir, baseSHA+".."+headSHA, 0, 0, "test", "", "")
+	prompt, err := b.ForRepo(r.dir, 0).Build(baseSHA+".."+headSHA, 0, "test", "", "")
 	require.NoError(t, err)
 
 	assertGolden(t, scrubDynamic(prompt), "range_truncated.golden")
@@ -364,7 +364,7 @@ func TestGoldenPrompt_DirtyTruncated(t *testing.T) {
 
 	cfg := &config.Config{DefaultMaxPromptSize: 4000}
 	b := NewBuilderWithConfig(nil, cfg)
-	prompt, err := b.BuildDirty(r.dir, diff, 0, 0, "test", "", "")
+	prompt, err := b.ForRepo(r.dir, 0).BuildDirty(diff, 0, "test", "", "")
 	require.NoError(t, err)
 
 	assertGolden(t, scrubDynamic(prompt), "dirty_truncated.golden")
@@ -389,7 +389,7 @@ func TestGoldenPrompt_RangeTruncatedCodexPreservesInRangeReviews(t *testing.T) {
 
 	cfg := &config.Config{DefaultMaxPromptSize: 6000}
 	b := NewBuilderWithConfig(db, cfg)
-	prompt, err := b.Build(r.dir, baseSHA+".."+commit2, repo.ID, 0, "codex", "", "")
+	prompt, err := b.ForRepo(r.dir, repo.ID).Build(baseSHA+".."+commit2, 0, "codex", "", "")
 	require.NoError(t, err)
 
 	// Narrow invariant checks first — these are the regression we just
@@ -417,7 +417,7 @@ func TestGoldenPrompt_AddressWithoutSeverity(t *testing.T) {
 		{Responder: "roborev-fix", Response: "Added doc comment", CreatedAt: time.Date(2026, 3, 15, 9, 0, 0, 0, time.UTC)},
 	}
 
-	prompt, err := b.BuildAddressPrompt(r.dir, review, responses, "")
+	prompt, err := b.ForRepo(r.dir, 0).BuildAddressPrompt(review, responses, "")
 	require.NoError(t, err)
 
 	assertGolden(t, scrubDynamic(prompt), "address_without_severity.golden")
