@@ -184,6 +184,13 @@ func gitCheckIgnoreNoIndex(root, path string) (bool, error) {
 
 func appendGitignoreEntry(path, pattern string) error {
 	var prefix string
+	if info, err := os.Lstat(path); err == nil {
+		if info.Mode()&os.ModeSymlink != 0 {
+			return fmt.Errorf("%s is a symlink; refusing to update it", path)
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
 	if data, err := os.ReadFile(path); err == nil {
 		text := string(data)
 		for line := range strings.SplitSeq(text, "\n") {

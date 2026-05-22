@@ -529,6 +529,28 @@ func TestInitNoDaemonLeavesExistingSnapshotIgnoreRuleAlone(t *testing.T) {
 	assert.Equal(t, "tmp/\n", string(data))
 }
 
+func TestInitNoDaemonRefusesGitignoreSymlink(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on Windows due to symlink semantics")
+	}
+
+	repo := initNoDaemonSetup(t)
+	target := filepath.Join(repo.Root, "target-ignore")
+	require.NoError(t, os.WriteFile(target, []byte(""), 0o644))
+	require.NoError(t, os.Symlink(target, filepath.Join(repo.Root, ".gitignore")))
+	setupMockServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	})
+
+	cmd := initCmd()
+	cmd.SetArgs([]string{"--no-daemon"})
+	err := cmd.Execute()
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), ".gitignore")
+	assert.Contains(t, err.Error(), "symlink")
+}
+
 func TestInstallHookFromLinkedWorktree(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("test uses Unix worktree semantics")
