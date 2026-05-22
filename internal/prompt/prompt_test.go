@@ -1063,6 +1063,31 @@ func TestWriteDiffSnapshotUsesConfiguredRepoLocalDir(t *testing.T) {
 		"snapshot path should be under configured repo dir, got %s", diffFile)
 }
 
+func TestCleanupStaleSnapshotsRemovesOnlyOldSnapshotDirs(t *testing.T) {
+	repoPath := t.TempDir()
+	builder := NewBuilder(nil).ForRepo(repoPath, 0)
+	snapshotRoot := filepath.Join(repoPath, "tmp")
+	require.NoError(t, os.MkdirAll(snapshotRoot, 0o755))
+
+	oldSnapshot := filepath.Join(snapshotRoot, "roborev-snapshot-old")
+	freshSnapshot := filepath.Join(snapshotRoot, "roborev-snapshot-fresh")
+	otherDir := filepath.Join(snapshotRoot, "other")
+	for _, dir := range []string{oldSnapshot, freshSnapshot, otherDir} {
+		require.NoError(t, os.MkdirAll(dir, 0o755))
+	}
+	oldTime := time.Now().Add(-2 * time.Hour)
+	require.NoError(t, os.Chtimes(oldSnapshot, oldTime, oldTime))
+
+	require.NoError(t, builder.CleanupStaleSnapshots(time.Hour))
+
+	_, err := os.Stat(oldSnapshot)
+	require.ErrorIs(t, err, os.ErrNotExist)
+	_, err = os.Stat(freshSnapshot)
+	require.NoError(t, err)
+	_, err = os.Stat(otherDir)
+	require.NoError(t, err)
+}
+
 func TestFitPrefixWithSuffixVariantsRejectsNonPositiveLimit(t *testing.T) {
 	prompt, err := fitPrefixWithSuffixVariants("prefix", 0, "suffix")
 

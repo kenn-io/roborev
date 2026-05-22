@@ -391,6 +391,9 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// Create a per-job builder with the snapshotted config so exclude
 	// patterns are resolved consistently.
 	pb := prompt.NewBuilderWithConfig(wp.db, cfg).ForRepo(effectiveRepoPath, job.RepoID)
+	if err := pb.CleanupStaleSnapshots(prompt.DefaultStaleSnapshotAge); err != nil {
+		log.Printf("[%s] Warning: cleanup stale snapshots for job %d: %v", workerID, job.ID, err)
+	}
 	var reviewPrompt string
 	var promptToPersist string
 	storedPromptValue := job.Prompt

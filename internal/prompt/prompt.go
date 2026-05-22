@@ -7,8 +7,10 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"slices"
 	"strings"
+	"time"
 	"unicode/utf8"
 
 	"go.kenn.io/roborev/internal/config"
@@ -71,6 +73,8 @@ type Builder struct {
 const DiffFilePathPlaceholder = "/tmp/roborev diff placeholder"
 
 const dirtyTruncatedDiffMarker = "(Diff too large to include in full)"
+
+const DefaultStaleSnapshotAge = 24 * time.Hour
 
 // NewBuilder creates a new prompt builder
 func NewBuilder(db *storage.DB) *Builder {
@@ -227,6 +231,44 @@ func (b *Builder) writeExternalDiffSnapshot(diff string) (string, func(), error)
 		return "", nil, fmt.Errorf("close snapshot: %w", closeErr)
 	}
 	return diffFile, func() { os.RemoveAll(dir) }, nil
+}
+
+// CleanupStaleSnapshots removes old roborev snapshot directories from the
+// repo-local snapshot root. It is best-effort cleanup for daemon crashes or
+// process exits that happen before per-job cleanup runs.
+func (b *Builder) CleanupStaleSnapshots(olderThan time.Duration) error {
+	if olderThan <= 0 {
+		olderThan = DefaultStaleSnapshotAge
+	}
+	snapshotRoot, err := config.ResolveSnapshotDir(b.repoPath)
+	if err != nil {
+		return fmt.Errorf("resolve snapshot dir: %w", err)
+	}
+	entries, err := os.ReadDir(snapshotRoot)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return nil
+		}
+		return fmt.Errorf("read snapshot root: %w", err)
+	}
+	cutoff := time.Now().Add(-olderThan)
+	for _, entry := range entries {
+		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), "roborev-snapshot-") {
+			continue
+		}
+		path := filepath.Join(snapshotRoot, entry.Name())
+		info, err := entry.Info()
+		if err != nil {
+			return fmt.Errorf("stat snapshot dir %s: %w", path, err)
+		}
+		if info.ModTime().After(cutoff) {
+			continue
+		}
+		if err := os.RemoveAll(path); err != nil {
+			return fmt.Errorf("remove stale snapshot dir %s: %w", path, err)
+		}
+	}
+	return nil
 }
 
 // BuildDirtyWithSnapshot builds a dirty review prompt, writing the diff to a snapshot file
