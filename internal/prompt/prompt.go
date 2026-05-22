@@ -167,7 +167,7 @@ func (b *Builder) BuildWithSnapshot(repoPath, gitRef string, repoID int64, conte
 	return SnapshotResult{Prompt: p, Cleanup: cleanup}, nil
 }
 
-// WriteDiffSnapshot writes the full diff for a git ref to an external temp
+// WriteDiffSnapshot writes the full diff for a git ref to a repo-local temp
 // file. The file intentionally lives outside .git so sandboxed agents can read
 // it without inlining oversized diffs into the submitted prompt.
 func WriteDiffSnapshot(repoPath, gitRef string, excludes []string) (string, func(), error) {
@@ -186,11 +186,18 @@ func WriteDiffSnapshot(repoPath, gitRef string, excludes []string) (string, func
 	if fullDiff == "" {
 		return "", nil, fmt.Errorf("diff is empty")
 	}
-	return writeExternalDiffSnapshot(fullDiff)
+	return writeExternalDiffSnapshot(repoPath, fullDiff)
 }
 
-func writeExternalDiffSnapshot(diff string) (string, func(), error) {
-	dir, err := os.MkdirTemp("", "roborev-snapshot-*")
+func writeExternalDiffSnapshot(repoPath, diff string) (string, func(), error) {
+	snapshotRoot, err := config.ResolveSnapshotDir(repoPath)
+	if err != nil {
+		return "", nil, fmt.Errorf("resolve snapshot dir: %w", err)
+	}
+	if err := os.MkdirAll(snapshotRoot, 0o755); err != nil {
+		return "", nil, fmt.Errorf("create snapshot root: %w", err)
+	}
+	dir, err := os.MkdirTemp(snapshotRoot, "roborev-snapshot-*")
 	if err != nil {
 		return "", nil, fmt.Errorf("create snapshot dir: %w", err)
 	}
@@ -220,7 +227,7 @@ func (b *Builder) BuildDirtyWithSnapshot(repoPath, diff string, repoID int64, co
 		return SnapshotResult{}, err
 	}
 	if strings.Contains(p, dirtyTruncatedDiffMarker) && len(diff) > 0 {
-		diffFile, cleanup, snapErr := writeExternalDiffSnapshot(diff)
+		diffFile, cleanup, snapErr := writeExternalDiffSnapshot(repoPath, diff)
 		if snapErr != nil {
 			return SnapshotResult{}, fmt.Errorf("dirty diff snapshot: %w", snapErr)
 		}

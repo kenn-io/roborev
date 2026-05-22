@@ -1492,6 +1492,80 @@ func TestResolveMaxPromptSize(t *testing.T) {
 	})
 }
 
+func TestResolveSnapshotDir(t *testing.T) {
+	tests := []struct {
+		name       string
+		repoConfig string
+		value      string
+		want       string
+		wantErr    string
+	}{
+		{
+			name: "default under repo tmp",
+			want: DefaultSnapshotDir,
+		},
+		{
+			name:       "repo config override",
+			repoConfig: `snapshot_dir = "var/roborev"`,
+			want:       filepath.Join("var", "roborev"),
+		},
+		{
+			name:    "value resolver accepts local path",
+			value:   "cache/roborev",
+			want:    filepath.Join("cache", "roborev"),
+			wantErr: "",
+		},
+		{
+			name:    "rejects absolute path",
+			value:   "/tmp/roborev",
+			wantErr: "relative path",
+		},
+		{
+			name:    "rejects parent traversal",
+			value:   "../tmp",
+			wantErr: "repo root",
+		},
+		{
+			name:    "rejects traversal after clean",
+			value:   "tmp/../../tmp",
+			wantErr: "repo root",
+		},
+		{
+			name:    "rejects git dir",
+			value:   ".git/roborev",
+			wantErr: ".git",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repoPath := t.TempDir()
+			if tt.repoConfig != "" {
+				repoPath = newTempRepo(t, tt.repoConfig)
+			}
+
+			var (
+				dir string
+				err error
+			)
+			if tt.value != "" {
+				dir, err = ResolveSnapshotDirValue(repoPath, tt.value)
+			} else {
+				dir, err = ResolveSnapshotDir(repoPath)
+			}
+
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				assert.Empty(t, dir)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, filepath.Join(repoPath, tt.want), dir)
+		})
+	}
+}
+
 func TestResolveAgentForWorkflow(t *testing.T) {
 	tests := []struct {
 		name     string

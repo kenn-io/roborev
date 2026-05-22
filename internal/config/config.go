@@ -988,6 +988,7 @@ type RepoConfig struct {
 	RefineMinSeverity          string   `toml:"refine_min_severity" comment:"Minimum severity for refine in this repo: critical, high, medium, low."`  // Minimum severity for refine: critical, high, medium, low
 	ReviewMinSeverity          string   `toml:"review_min_severity" comment:"Minimum severity for reviews in this repo: critical, high, medium, low."` // Minimum severity for review: critical, high, medium, low
 	ExcludePatterns            []string `toml:"exclude_patterns" comment:"Filenames or glob patterns to exclude from review diffs for this repo."`
+	SnapshotDir                string   `toml:"snapshot_dir" comment:"Repo-local directory for temporary oversized diff snapshots."`
 	PostCommitReview           string   `toml:"post_commit_review" comment:"Automatic post-commit review mode for this repo: commit or branch."` // "commit" (default) or "branch"
 	ReuseReviewSession         *bool    `toml:"reuse_review_session"`
 	ReuseReviewSessionLookback int      `toml:"reuse_review_session_lookback"` // 0 means no candidate cap
@@ -2128,6 +2129,7 @@ func ResolveModel(explicit string, repoPath string, globalCfg *Config) string {
 
 // DefaultMaxPromptSize is the default maximum prompt size in bytes (200KB)
 const DefaultMaxPromptSize = 200 * 1024
+const DefaultSnapshotDir = "tmp"
 
 // ResolveMaxPromptSize determines the maximum prompt size based on config priority:
 // 1. Per-repo config (max_prompt_size in .roborev.toml)
@@ -2143,6 +2145,36 @@ func ResolveMaxPromptSize(repoPath string, globalCfg *Config) int {
 		globalVal = clampPositive(globalCfg.DefaultMaxPromptSize)
 	}
 	return resolve(DefaultMaxPromptSize, repoVal, globalVal)
+}
+
+// ResolveSnapshotDir returns the absolute repo-local directory used for
+// temporary oversized diff snapshots.
+func ResolveSnapshotDir(repoPath string) (string, error) {
+	dir := DefaultSnapshotDir
+	if repoCfg, err := LoadRepoConfig(repoPath); err != nil {
+		return "", err
+	} else if repoCfg != nil && strings.TrimSpace(repoCfg.SnapshotDir) != "" {
+		dir = repoCfg.SnapshotDir
+	}
+	return ResolveSnapshotDirValue(repoPath, dir)
+}
+
+// ResolveSnapshotDirValue resolves and validates a configured snapshot dir.
+// The value must stay under the repo root so sandboxed agents can read it via
+// their normal workspace allowlist.
+func ResolveSnapshotDirValue(repoPath, dir string) (string, error) {
+	dir = strings.TrimSpace(dir)
+	if dir == "" {
+		dir = DefaultSnapshotDir
+	}
+	clean := filepath.Clean(dir)
+	if clean == "." || !filepath.IsLocal(clean) {
+		return "", fmt.Errorf("snapshot_dir must be a relative path under the repo root: %s", dir)
+	}
+	if clean == ".git" || strings.HasPrefix(clean, ".git"+string(filepath.Separator)) {
+		return "", fmt.Errorf("snapshot_dir must not be inside .git: %s", dir)
+	}
+	return filepath.Join(repoPath, clean), nil
 }
 
 // ResolveAgentForWorkflow determines which agent to use based on workflow and level.

@@ -1032,6 +1032,39 @@ func TestBuildDirtyWithSnapshotKeepsReferenceWithinCap(t *testing.T) {
 		"dirty snapshot prompt should include the generated snapshot path")
 }
 
+func TestWriteDiffSnapshotUsesRepoLocalDefaultDir(t *testing.T) {
+	repoPath, commits := setupTestRepo(t)
+	targetSHA := commits[len(commits)-1]
+
+	diffFile, cleanup, err := WriteDiffSnapshot(repoPath, targetSHA, nil)
+	require.NoError(t, err)
+	require.NotNil(t, cleanup)
+	defer cleanup()
+
+	assert.True(t, strings.HasPrefix(diffFile, filepath.Join(repoPath, "tmp")+string(os.PathSeparator)),
+		"snapshot path should be under repo tmp, got %s", diffFile)
+	assert.Equal(t, "roborev-snapshot-content.diff", filepath.Base(diffFile))
+	assert.Contains(t, filepath.Base(filepath.Dir(diffFile)), "roborev-snapshot-")
+}
+
+func TestWriteDiffSnapshotUsesConfiguredRepoLocalDir(t *testing.T) {
+	repoPath, commits := setupTestRepo(t)
+	targetSHA := commits[len(commits)-1]
+	require.NoError(t, os.WriteFile(
+		filepath.Join(repoPath, ".roborev.toml"),
+		[]byte("snapshot_dir = \"var/roborev\"\n"),
+		0o644,
+	))
+
+	diffFile, cleanup, err := WriteDiffSnapshot(repoPath, targetSHA, nil)
+	require.NoError(t, err)
+	require.NotNil(t, cleanup)
+	defer cleanup()
+
+	assert.True(t, strings.HasPrefix(diffFile, filepath.Join(repoPath, "var", "roborev")+string(os.PathSeparator)),
+		"snapshot path should be under configured repo dir, got %s", diffFile)
+}
+
 func TestFitPrefixWithSuffixVariantsRejectsNonPositiveLimit(t *testing.T) {
 	prompt, err := fitPrefixWithSuffixVariants("prefix", 0, "suffix")
 

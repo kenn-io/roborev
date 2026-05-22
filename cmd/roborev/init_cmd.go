@@ -3,7 +3,9 @@ package main
 import (
 	"fmt"
 	"os"
+	"os/exec"
 	"path/filepath"
+	"strings"
 
 	"github.com/spf13/cobra"
 	"go.kenn.io/roborev/internal/config"
@@ -64,7 +66,12 @@ func initCmd() *cobra.Command {
 				}
 			}
 
-			// 4. Install hooks (post-commit + post-rewrite)
+			// 4. Ensure the repo-local snapshot directory stays untracked.
+			if err := ensureSnapshotDirIgnored(root); err != nil {
+				return fmt.Errorf("ensure snapshot dir gitignored: %w", err)
+			}
+
+			// 5. Install hooks (post-commit + post-rewrite)
 			if err := git.EnsureAbsoluteHooksPath(root); err != nil {
 				return fmt.Errorf("normalize hooks path: %w", err)
 			}
@@ -82,7 +89,7 @@ func initCmd() *cobra.Command {
 				fmt.Printf("  Warning: %v\n", err)
 			}
 
-			// 5. Start daemon (or just register if --no-daemon)
+			// 6. Start daemon (or just register if --no-daemon)
 			var initIncomplete bool
 			if noDaemon {
 				// Try to register with an already-running daemon, but don't start one
@@ -110,7 +117,7 @@ func initCmd() *cobra.Command {
 				}
 			}
 
-			// 5. Success message
+			// 7. Success message
 			fmt.Println()
 			if initIncomplete {
 				fmt.Println("Setup incomplete: repo was not registered with the daemon.")
@@ -135,4 +142,65 @@ func initCmd() *cobra.Command {
 	cmd.AddCommand(ghActionCmd())
 
 	return cmd
+}
+
+func ensureSnapshotDirIgnored(root string) error {
+	snapshotDir, err := config.ResolveSnapshotDir(root)
+	if err != nil {
+		return err
+	}
+	rel, err := filepath.Rel(root, snapshotDir)
+	if err != nil {
+		return err
+	}
+	rel = filepath.Clean(rel)
+	pattern := "/" + filepath.ToSlash(rel) + "/"
+	probe := filepath.ToSlash(filepath.Join(rel, ".roborev-ignore-check"))
+	// Respect broader existing rules, e.g. tmp/ or var/, before appending
+	// roborev's explicit snapshot directory entry.
+	ignored, err := gitCheckIgnoreNoIndex(root, probe)
+	if err != nil {
+		return err
+	}
+	if ignored {
+		return nil
+	}
+	return appendGitignoreEntry(filepath.Join(root, ".gitignore"), pattern)
+}
+
+func gitCheckIgnoreNoIndex(root, path string) (bool, error) {
+	cmd := exec.Command("git", "-C", root, "check-ignore", "--quiet", "--no-index", path)
+	err := cmd.Run()
+	if err == nil {
+		return true, nil
+	}
+	if exitErr, ok := err.(*exec.ExitError); ok && exitErr.ExitCode() == 1 {
+		return false, nil
+	}
+	return false, err
+}
+
+func appendGitignoreEntry(path, pattern string) error {
+	var prefix string
+	if data, err := os.ReadFile(path); err == nil {
+		text := string(data)
+		for line := range strings.SplitSeq(text, "\n") {
+			if strings.TrimSpace(line) == pattern {
+				return nil
+			}
+		}
+		if len(text) > 0 && !strings.HasSuffix(text, "\n") {
+			prefix = "\n"
+		}
+	} else if !os.IsNotExist(err) {
+		return err
+	}
+
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	if err != nil {
+		return err
+	}
+	defer f.Close()
+	_, err = fmt.Fprintf(f, "%s# roborev snapshots\n%s\n", prefix, pattern)
+	return err
 }
