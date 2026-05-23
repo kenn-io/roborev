@@ -14,33 +14,57 @@ import (
 
 // Usage holds token consumption data for a single review job.
 // Stored as JSON in the review_jobs.token_usage column.
-// Fields align with agentsview's token-use output.
+// Fields align with agentsview's session-usage output.
 type Usage struct {
-	OutputTokens      int64 `json:"total_output_tokens,omitempty"`
-	PeakContextTokens int64 `json:"peak_context_tokens,omitempty"`
+	OutputTokens      int64   `json:"total_output_tokens,omitempty"`
+	PeakContextTokens int64   `json:"peak_context_tokens,omitempty"`
+	CostUSD           float64 `json:"cost_usd,omitempty"`
+	HasCost           bool    `json:"has_cost,omitempty"`
 }
 
-// agentsviewResponse is the JSON shape returned by
-// `agentsview token-use <session-id>`.
+// agentsviewResponse is the JSON shape returned by both
+// `agentsview session usage <id> --format json` and the deprecated
+// `agentsview token-use <id>`. The session-usage shape is a strict
+// superset of token-use, adding the cost fields.
 type agentsviewResponse struct {
-	SessionID         string `json:"session_id"`
-	Agent             string `json:"agent"`
-	Project           string `json:"project"`
-	OutputTokens      int64  `json:"total_output_tokens"`
-	PeakContextTokens int64  `json:"peak_context_tokens"`
+	SessionID         string  `json:"session_id"`
+	Agent             string  `json:"agent"`
+	Project           string  `json:"project"`
+	OutputTokens      int64   `json:"total_output_tokens"`
+	PeakContextTokens int64   `json:"peak_context_tokens"`
+	CostUSD           float64 `json:"cost_usd"`
+	HasCost           bool    `json:"has_cost"`
 }
 
 // FormatSummary returns a compact human-readable summary like
-// "118.0k ctx · 28.8k out". Returns empty string if no data.
+// "118.0k ctx · 28.8k out · ~$0.42". The cost segment is appended only
+// when a cost estimate is available. Returns empty string when there
+// is neither token nor cost data.
 func (u Usage) FormatSummary() string {
-	if u.PeakContextTokens == 0 && u.OutputTokens == 0 {
-		return ""
+	hasTokens := u.PeakContextTokens != 0 || u.OutputTokens != 0
+	if !hasTokens {
+		// No token counts: show the cost alone when present.
+		return u.FormatCost()
 	}
-	return fmt.Sprintf(
+	s := fmt.Sprintf(
 		"%s ctx · %s out",
 		formatCount(u.PeakContextTokens),
 		formatCount(u.OutputTokens),
 	)
+	if cost := u.FormatCost(); cost != "" {
+		s += " · " + cost
+	}
+	return s
+}
+
+// FormatCost returns the cost estimate like "~$0.42", or "" when no
+// estimate is available. The tilde marks it as a model-pricing
+// estimate, matching agentsview's own rendering.
+func (u Usage) FormatCost() string {
+	if !u.HasCost {
+		return ""
+	}
+	return fmt.Sprintf("~$%.2f", u.CostUSD)
 }
 
 func formatCount(n int64) string {
@@ -54,53 +78,75 @@ func formatCount(n int64) string {
 	}
 }
 
-// minVersion is the minimum agentsview version that supports
-// the token-use subcommand (0.15.0).
+// capability describes which agentsview usage command the installed
+// binary supports.
+type capability int
+
+const (
+	// capNone means agentsview is missing or too old to query.
+	capNone capability = iota
+	// capTokenUse means only the deprecated `token-use` command is
+	// available (agentsview >= 0.15.0, < 0.30.0).
+	capTokenUse
+	// capSessionUsage means `session usage` is available (agentsview
+	// >= 0.30.0). It returns a cost estimate and supersedes token-use.
+	capSessionUsage
+)
+
+// minVersion is the minimum agentsview version that supports the
+// (deprecated) token-use subcommand (0.15.0).
 var minVersion = [3]int{0, 15, 0}
+
+// sessionUsageMinVersion is the minimum agentsview version that
+// supports `session usage` (0.30.0), which returns a cost estimate and
+// replaces token-use.
+var sessionUsageMinVersion = [3]int{0, 30, 0}
 
 // versionRe extracts major.minor.patch from "agentsview vX.Y.Z...".
 var versionRe = regexp.MustCompile(
 	`agentsview v(\d+)\.(\d+)\.(\d+)`,
 )
 
-// parseVersion checks whether the output of `agentsview version`
-// contains a semver >= minVersion. Returns (supported, parsed):
-// supported is true when the version meets the minimum; parsed is
-// true when a version string was found at all (regardless of
-// whether it is new enough).
-func parseVersion(out []byte) (supported, parsed bool) {
+// geVersion reports whether version a is >= version b, comparing
+// major, then minor, then patch.
+func geVersion(a, b [3]int) bool {
+	for i := range 3 {
+		if a[i] != b[i] {
+			return a[i] > b[i]
+		}
+	}
+	return true
+}
+
+// parseVersion inspects the output of `agentsview version` and reports
+// the capability level it supports plus whether a version string was
+// found at all. parsed is false only when no version could be matched,
+// so callers can distinguish "too old" from "unparseable" and retry
+// the latter.
+func parseVersion(out []byte) (level capability, parsed bool) {
 	m := versionRe.FindSubmatch(out)
 	if m == nil {
-		return false, false
+		return capNone, false
 	}
 	var ver [3]int
 	for i := range 3 {
 		ver[i], _ = strconv.Atoi(string(m[i+1]))
 	}
-	for i := range 3 {
-		if ver[i] > minVersion[i] {
-			return true, true
-		}
-		if ver[i] < minVersion[i] {
-			return false, true
-		}
+	switch {
+	case geVersion(ver, sessionUsageMinVersion):
+		return capSessionUsage, true
+	case geVersion(ver, minVersion):
+		return capTokenUse, true
+	default:
+		return capNone, true
 	}
-	return true, true // equal
 }
 
-// versionState tracks the cached probe result.
-type versionState int
-
-const (
-	versionUnchecked versionState = iota
-	versionOK
-	versionTooOld
-)
-
 var (
-	versionMu    sync.Mutex
-	versionProbe versionState
-	cachedBin    string
+	versionMu     sync.Mutex
+	cachedChecked bool
+	cachedCap     capability
+	cachedBin     string
 )
 
 // ResetVersionCache clears the cached version check result.
@@ -108,79 +154,77 @@ var (
 func ResetVersionCache() {
 	versionMu.Lock()
 	defer versionMu.Unlock()
-	versionProbe = versionUnchecked
+	cachedChecked = false
+	cachedCap = capNone
 	cachedBin = ""
 }
 
-// resolveAgentsview checks whether agentsview is installed and new
-// enough. The result is cached keyed to the resolved binary path,
-// so an upgrade, downgrade, or PATH change triggers a fresh probe.
+// resolveAgentsview checks whether agentsview is installed and which
+// usage capability it supports. The result is cached keyed to the
+// resolved binary path, so a PATH change triggers a fresh probe.
 // Transient failures (binary not found, timeout, exec error,
 // unparseable output) leave the cache unchecked so the next call
-// retries.
-func resolveAgentsview(ctx context.Context) (string, bool) {
+// retries. Returns ("", capNone) when agentsview cannot be used.
+func resolveAgentsview(ctx context.Context) (string, capability) {
 	// LookPath is cheap (PATH scan, no exec) — always run it so we
-	// detect installs, upgrades, and PATH changes.
+	// detect installs and PATH changes.
 	bin, err := exec.LookPath("agentsview")
 	if err != nil {
-		return "", false
+		return "", capNone
 	}
 
 	versionMu.Lock()
-	if cachedBin == bin {
-		switch versionProbe {
-		case versionOK:
-			versionMu.Unlock()
-			return bin, true
-		case versionTooOld:
-			versionMu.Unlock()
-			return "", false
+	if cachedChecked && cachedBin == bin {
+		level := cachedCap
+		versionMu.Unlock()
+		if level == capNone {
+			return "", capNone
 		}
+		return bin, level
 	}
 	versionMu.Unlock()
 
-	// Exec runs without holding the lock so concurrent callers are
-	// not blocked by the 5 s command timeout.
+	// Exec runs without holding the lock so concurrent callers are not
+	// blocked by the 5 s command timeout.
 	cmdCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
 	defer cancel()
 
-	out, err := exec.CommandContext(
-		cmdCtx, bin, "version",
-	).Output()
+	out, err := exec.CommandContext(cmdCtx, bin, "version").Output()
 	if err != nil {
-		return "", false
+		return "", capNone
 	}
 
-	supported, parsed := parseVersion(out)
+	level, parsed := parseVersion(out)
 
 	versionMu.Lock()
 	defer versionMu.Unlock()
 
 	// Re-check: another goroutine may have updated the cache.
-	if cachedBin == bin {
-		switch versionProbe {
-		case versionOK:
-			return bin, true
-		case versionTooOld:
-			return "", false
+	if cachedChecked && cachedBin == bin {
+		if cachedCap == capNone {
+			return "", capNone
 		}
+		return bin, cachedCap
 	}
 
-	if supported {
-		versionProbe = versionOK
-		cachedBin = bin
-		return bin, true
-	}
+	// Only cache a parsed result. Unparseable output (parsed=false) is
+	// treated as transient and left unchecked so the next call retries.
 	if parsed {
-		versionProbe = versionTooOld
+		cachedChecked = true
+		cachedCap = level
 		cachedBin = bin
 	}
-	return "", false
+	if level == capNone {
+		return "", capNone
+	}
+	return bin, level
 }
 
-// FetchForSession calls `agentsview token-use <sessionID>` to get
-// token usage. Returns nil (no error) if agentsview is not installed,
-// is too old (< 0.15.0), or the session data is unavailable.
+// FetchForSession queries agentsview for a session's token usage and
+// cost estimate. It calls `session usage` on agentsview >= 0.30.0 and
+// falls back to the deprecated `token-use` on older versions. Returns
+// nil (no error) when agentsview is not installed, is too old, or the
+// session has no usage data.
 func FetchForSession(
 	ctx context.Context, sessionID string,
 ) (*Usage, error) {
@@ -188,33 +232,47 @@ func FetchForSession(
 		return nil, nil
 	}
 
-	binPath, ok := resolveAgentsview(ctx)
-	if !ok {
+	binPath, level := resolveAgentsview(ctx)
+	if level == capNone {
 		return nil, nil
 	}
 
 	cmdCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
 	defer cancel()
 
-	cmd := exec.CommandContext(
-		cmdCtx, binPath, "token-use", sessionID,
-	)
+	var cmd *exec.Cmd
+	if level == capSessionUsage {
+		cmd = exec.CommandContext(
+			cmdCtx, binPath, "session", "usage", sessionID,
+			"--format", "json",
+		)
+	} else {
+		cmd = exec.CommandContext(
+			cmdCtx, binPath, "token-use", sessionID,
+		)
+	}
+
 	out, err := cmd.Output()
 	if err != nil {
 		var exitErr *exec.ExitError
 		if errors.As(err, &exitErr) {
-			stderr := string(exitErr.Stderr)
-			// Session not found: exit 1, no stdout, no stderr
-			if exitErr.ExitCode() == 1 &&
-				len(out) == 0 && len(stderr) == 0 {
+			// agentsview usage exit codes: 2 = session not found,
+			// 3 = found but no token/cost data. Both mean "no usage",
+			// not an error. Legacy token-use (< 0.30.0) signalled
+			// not-found with exit 1 and empty stdout+stderr.
+			switch code := exitErr.ExitCode(); {
+			case code == 2 || code == 3:
 				return nil, nil
+			case code == 1 && len(out) == 0 && len(exitErr.Stderr) == 0:
+				return nil, nil
+			default:
+				return nil, fmt.Errorf(
+					"agentsview usage: exit %d: %s",
+					code, exitErr.Stderr,
+				)
 			}
-			return nil, fmt.Errorf(
-				"agentsview token-use: exit %d: %s",
-				exitErr.ExitCode(), stderr,
-			)
 		}
-		return nil, fmt.Errorf("agentsview token-use: %w", err)
+		return nil, fmt.Errorf("agentsview usage: %w", err)
 	}
 
 	var resp agentsviewResponse
@@ -222,17 +280,20 @@ func FetchForSession(
 		return nil, fmt.Errorf("parse agentsview output: %w", err)
 	}
 
-	if resp.OutputTokens == 0 && resp.PeakContextTokens == 0 {
+	if resp.OutputTokens == 0 && resp.PeakContextTokens == 0 &&
+		!resp.HasCost {
 		return nil, nil
 	}
 	return &Usage{
 		OutputTokens:      resp.OutputTokens,
 		PeakContextTokens: resp.PeakContextTokens,
+		CostUSD:           resp.CostUSD,
+		HasCost:           resp.HasCost,
 	}, nil
 }
 
 // ParseJSON deserializes a token_usage JSON blob from the database.
-// Returns nil for empty/null values.
+// Returns nil for empty/null values or a blob carrying no usage data.
 func ParseJSON(data string) *Usage {
 	if data == "" {
 		return nil
@@ -241,7 +302,7 @@ func ParseJSON(data string) *Usage {
 	if err := json.Unmarshal([]byte(data), &u); err != nil {
 		return nil
 	}
-	if u.OutputTokens == 0 && u.PeakContextTokens == 0 {
+	if u.OutputTokens == 0 && u.PeakContextTokens == 0 && !u.HasCost {
 		return nil
 	}
 	return &u

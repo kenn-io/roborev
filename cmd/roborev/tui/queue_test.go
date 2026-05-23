@@ -631,6 +631,53 @@ func TestTUIJobCellsReviewTypeTag(t *testing.T) {
 	}
 }
 
+func TestTUIJobCellsCost(t *testing.T) {
+	m := model{width: 200}
+	// cells[k] maps to logical column colRef+k (see jobCells copy),
+	// so the cost cell is at colCost-colRef.
+	costIdx := colCost - colRef
+
+	t.Run("priced cost renders", func(t *testing.T) {
+		job := makeJob(1)
+		job.TokenUsage = `{"total_output_tokens":28800,` +
+			`"peak_context_tokens":118000,"cost_usd":0.42,"has_cost":true}`
+		cells := m.jobCells(job)
+		assert.Equal(t, "~$0.42", cells[costIdx])
+	})
+
+	t.Run("no usage blank", func(t *testing.T) {
+		cells := m.jobCells(makeJob(1))
+		assert.Empty(t, cells[costIdx])
+	})
+
+	t.Run("unpriced tokens blank", func(t *testing.T) {
+		job := makeJob(1)
+		job.TokenUsage = `{"total_output_tokens":28800,` +
+			`"peak_context_tokens":118000,"has_cost":false}`
+		cells := m.jobCells(job)
+		assert.Empty(t, cells[costIdx])
+	})
+}
+
+func TestTUIQueueShowsCostColumnByDefault(t *testing.T) {
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	m.width = 200
+	m.height = 30
+	job := makeJob(1, withRef("abc1234"),
+		withRepoName("repo"), withAgent("test"))
+	job.TokenUsage = `{"total_output_tokens":28800,` +
+		`"peak_context_tokens":118000,"cost_usd":0.42,"has_cost":true}`
+	m.jobs = []storage.ReviewJob{job}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	out := stripTestANSI(m.renderQueueView())
+	assert.Contains(t, out, "Cost",
+		"Cost header should be visible by default")
+	assert.Contains(t, out, "~$0.42",
+		"cost value should render in the row")
+}
+
 func TestTUIQueueTableRendersWithinWidth(t *testing.T) {
 
 	widths := []int{80, 100, 120, 200}

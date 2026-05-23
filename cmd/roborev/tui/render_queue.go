@@ -13,6 +13,7 @@ import (
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/tokens"
 	"go.kenn.io/roborev/internal/version"
 )
 
@@ -119,6 +120,7 @@ const (
 	colSessionID                // Session ID
 	colRequestedModel           // Explicitly requested model
 	colRequestedProvider        // Explicitly requested provider
+	colCost                     // Cost estimate (USD)
 	colCount                    // total number of columns
 )
 
@@ -268,7 +270,7 @@ func (m model) renderQueueView() string {
 		visCols := m.visibleColumns()
 
 		// Compute per-column max content widths, using cache when data hasn't changed.
-		allHeaders := [colCount]string{"", "JobID", "Ref", "Branch", "Repo", "Agent", "Queued", "Elapsed", "Status", "P/F", "Closed", "Session", "Req Model", "Req Provider"}
+		allHeaders := [colCount]string{"", "JobID", "Ref", "Branch", "Repo", "Agent", "Queued", "Elapsed", "Status", "P/F", "Closed", "Session", "Req Model", "Req Provider", "Cost"}
 		allFullRows := make([][]string, len(visibleJobList))
 		for i, job := range visibleJobList {
 			cells := m.jobCells(job)
@@ -327,6 +329,7 @@ func (m model) renderQueueView() string {
 			colSessionID:         min(max(contentWidth[colSessionID], 7), 12),          // "Session" header = 7, cap at 12
 			colRequestedModel:    min(max(contentWidth[colRequestedModel], 9), 24),     // "Req Model" header = 9
 			colRequestedProvider: min(max(contentWidth[colRequestedProvider], 12), 24), // "Req Provider" header = 12
+			colCost:              max(contentWidth[colCost], 4),                        // "Cost" header = 4
 		}
 
 		// Flexible columns absorb excess space
@@ -613,7 +616,7 @@ func (m model) renderQueueView() string {
 
 // jobCells returns plain text cell values for a job row.
 // Order: ref, branch, repo, agent, queued, elapsed, status, pf, handled,
-// session, requested model, requested provider.
+// session, requested model, requested provider, cost.
 func (m model) jobCells(job storage.ReviewJob) []string {
 	ref := shortJobRef(job)
 	if !config.IsDefaultReviewType(job.ReviewType) {
@@ -667,7 +670,15 @@ func (m model) jobCells(job storage.ReviewJob) []string {
 	requestedModel := stripControlChars(job.RequestedModel)
 	requestedProvider := stripControlChars(job.RequestedProvider)
 
-	return []string{ref, branch, repo, agentName, enqueued, elapsed, status, verdict, handled, sessionID, requestedModel, requestedProvider}
+	// Cost estimate from the stored agentsview usage blob; blank when
+	// no priced estimate is available (old agentsview, unpriced model,
+	// or usage not yet fetched for a running/queued job).
+	cost := ""
+	if tu := tokens.ParseJSON(job.TokenUsage); tu != nil {
+		cost = tu.FormatCost()
+	}
+
+	return []string{ref, branch, repo, agentName, enqueued, elapsed, status, verdict, handled, sessionID, requestedModel, requestedProvider, cost}
 }
 
 // statusLabel returns a capitalized display label for the job status.
@@ -840,7 +851,7 @@ func migrateColumnConfig(cfg *config.Config) bool {
 
 // toggleableColumns is the ordered list of columns the user can show/hide.
 // colSel and colJobID are always visible and not included here.
-var toggleableColumns = []int{colRef, colBranch, colRepo, colAgent, colQueued, colElapsed, colStatus, colPF, colHandled, colSessionID, colRequestedModel, colRequestedProvider}
+var toggleableColumns = []int{colRef, colBranch, colRepo, colAgent, colQueued, colElapsed, colStatus, colPF, colHandled, colCost, colSessionID, colRequestedModel, colRequestedProvider}
 
 // columnNames maps column constants to display names.
 var columnNames = map[int]string{
@@ -856,6 +867,7 @@ var columnNames = map[int]string{
 	colSessionID:         "Session",
 	colRequestedModel:    "Req Model",
 	colRequestedProvider: "Req Provider",
+	colCost:              "Cost",
 }
 
 // columnConfigNames maps column constants to config file names (lowercase).
@@ -872,6 +884,7 @@ var columnConfigNames = map[int]string{
 	colSessionID:         "session_id",
 	colRequestedModel:    "requested_model",
 	colRequestedProvider: "requested_provider",
+	colCost:              "cost",
 }
 
 // drainFlexOverflow reduces flex column widths to absorb overflow,
