@@ -101,6 +101,10 @@ If all reviews are skipped, inform the user there is nothing to fix.
 
 If the review has `comments`, respect any developer feedback (false positives, preferred approaches).
 
+The actionable closure set is exactly the non-skipped failing job IDs collected
+in steps 1-2. Keep this original job list separate from any jobs created later
+by commit hooks or follow-up reviews.
+
 ### 3. Fix all findings
 
 If a finding's context is unclear from the review output alone and `job.git_ref` is not `"dirty"`, run `git show <git_ref>` to see the original diff. Only do this when needed — the review output usually contains enough detail (file paths, line numbers, descriptions) to fix findings directly.
@@ -124,8 +128,18 @@ Or whatever test command the project uses. If tests fail, fix the regressions be
 
 ### 5. Record comments and close reviews
 
-For each job that was fixed, record a summary comment and then close it.
-Run these as **separate commands**, but only run `roborev close` after
+Closure ordering is mandatory. After fixes are verified, comment on and close
+exactly the original actionable job IDs from steps 1-2 before waiting on,
+fetching, or responding to any new review created by commit hooks. Do not treat
+a post-fix auto-review as a prerequisite for closing the original addressed
+reviews; handle that new review in a separate `/roborev-fix` cycle.
+
+If repository policy requires committing before close comments can reference a
+SHA, perform step 6 first, then immediately return here and close the original
+job set. Otherwise, close before committing.
+
+For each original job that was fixed, record a summary comment and then close
+it. Run these as **separate commands**, but only run `roborev close` after
 confirming the comment succeeded:
 
 ```bash
@@ -140,6 +154,18 @@ The comment should reference each finding by severity and file, state what was f
 
 Follow the project's commit conventions (see CLAUDE.md). If the project
 instructs you to always commit, do so without asking.
+
+### 7. Audit original closures
+
+Before the final response, explicitly audit the original actionable job IDs and
+verify each reports `closed=true`:
+
+```bash
+roborev show --job <job_id> --json
+```
+
+Do not rely on `roborev list --open` for this audit; unrelated open reviews can
+obscure whether the original closure set was handled.
 
 ## Examples
 
@@ -167,7 +193,8 @@ Agent:
    - `roborev close 1019`
    - `roborev comment --commenter roborev-fix --job 1021 "Fixed missing validation"`
    - `roborev close 1021`
-7. Commits the changes per project conventions
+7. Commits the changes per project conventions, or commits before step 6 if repository policy requires a SHA in close comments
+8. Audits jobs 1019 and 1021 with `roborev show --job <job_id> --json` and verifies `closed=true`
 
 **Explicit job IDs:**
 
@@ -181,7 +208,8 @@ Agent:
 5. Records comment and closes review:
    - `roborev comment --commenter roborev-fix --job 1019 "Fixed null check in foo.go and error handling in bar.go"`
    - `roborev close 1019`
-6. Commits the changes per project conventions
+6. Commits the changes per project conventions, or commits before step 5 if repository policy requires a SHA in close comments
+7. Audits job 1019 with `roborev show --job 1019 --json` and verifies `closed=true`
 
 ## See also
 
