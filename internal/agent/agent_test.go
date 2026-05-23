@@ -550,6 +550,85 @@ func TestGetAvailableTriesBackupBeforeChain(t *testing.T) {
 	assert.Equal(t, "claude-code", resolved.Name())
 }
 
+func TestGetAvailablePrefersAntigravityForGemini(t *testing.T) {
+	fakeBin := t.TempDir()
+	for _, bin := range []string{"agy", "gemini"} {
+		name := bin
+		if runtime.GOOS == "windows" {
+			name += ".exe"
+		}
+		p := filepath.Join(fakeBin, name)
+		require.NoError(t, os.WriteFile(p, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	}
+	t.Setenv("PATH", fakeBin)
+
+	originalRegistry := registry
+	registry = map[string]Agent{
+		"gemini": NewGeminiAgent(""),
+	}
+	t.Cleanup(func() { registry = originalRegistry })
+
+	resolved, err := GetAvailable("gemini")
+	require.NoError(t, err)
+	require.IsType(t, &GeminiAgent{}, resolved)
+	gemini := resolved.(*GeminiAgent)
+	assert.Equal(t, "gemini", gemini.Name())
+	assert.Equal(t, "agy", gemini.CommandName())
+	assert.True(t, gemini.CommandAuto)
+}
+
+func TestGeminiWithModelUsesLegacyCommandWhenAutoSelectedAntigravity(t *testing.T) {
+	fakeBin := t.TempDir()
+	for _, bin := range []string{"agy", "gemini"} {
+		name := bin
+		if runtime.GOOS == "windows" {
+			name += ".exe"
+		}
+		p := filepath.Join(fakeBin, name)
+		require.NoError(t, os.WriteFile(p, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	}
+	t.Setenv("PATH", fakeBin)
+
+	originalRegistry := registry
+	registry = map[string]Agent{
+		"gemini": NewGeminiAgent(""),
+	}
+	t.Cleanup(func() { registry = originalRegistry })
+
+	resolved, err := GetAvailable("gemini")
+	require.NoError(t, err)
+
+	withModel := resolved.WithModel("gemini-1.5-pro")
+	require.IsType(t, &GeminiAgent{}, withModel)
+	gemini := withModel.(*GeminiAgent)
+	assert.Equal(t, "gemini", gemini.CommandName())
+	assert.True(t, gemini.ModelExplicit)
+	assert.False(t, gemini.CommandAuto)
+}
+
+func TestGetAvailableFallsBackToGeminiWhenAntigravityMissing(t *testing.T) {
+	fakeBin := t.TempDir()
+	name := "gemini"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	p := filepath.Join(fakeBin, name)
+	require.NoError(t, os.WriteFile(p, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	t.Setenv("PATH", fakeBin)
+
+	originalRegistry := registry
+	registry = map[string]Agent{
+		"gemini": NewGeminiAgent(""),
+	}
+	t.Cleanup(func() { registry = originalRegistry })
+
+	resolved, err := GetAvailable("gemini")
+	require.NoError(t, err)
+	require.IsType(t, &GeminiAgent{}, resolved)
+	gemini := resolved.(*GeminiAgent)
+	assert.Equal(t, "gemini", gemini.CommandName())
+}
+
 func TestGetAvailableBackupSkipsDuplicateAndEmpty(t *testing.T) {
 	// Backup that matches preferred or is empty should be skipped.
 	fakeBin := t.TempDir()

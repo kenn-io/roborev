@@ -63,7 +63,7 @@ func resolveAvailableBackupWithConfig(preferred string, backups []string, cfg *c
 		registryMu.RUnlock()
 		if inReg && isAvailableWithConfig(backup, cfg) {
 			agent, _ := Get(backup)
-			return applyCommandOverrides(agent, cfg), true
+			return applyAvailableCommand(agent, cfg), true
 		}
 	}
 	return nil, false
@@ -92,8 +92,7 @@ func isAvailableWithConfig(name string, cfg *config.Config) bool {
 		}
 	}
 	// Fall back to the default (hardcoded) command.
-	_, err := exec.LookPath(ca.CommandName())
-	return err == nil
+	return firstAvailableCommand(ca) != ""
 }
 
 // GetAvailableWithConfig resolves an available agent while honoring runtime ACP config.
@@ -149,7 +148,7 @@ func GetAvailableWithConfig(repoPath string, preferred string, cfg *config.Confi
 		}
 		if isAvailableWithConfig(preferred, cfg) {
 			a, _ := Get(preferred)
-			return applyCommandOverrides(a, cfg), nil
+			return applyAvailableCommand(a, cfg), nil
 		}
 	}
 
@@ -174,6 +173,16 @@ func GetAvailableWithConfig(repoPath string, preferred string, cfg *config.Confi
 	}
 
 	return applyCommandOverrides(resolved, cfg), nil
+}
+
+func applyAvailableCommand(a Agent, cfg *config.Config) Agent {
+	if a == nil {
+		return nil
+	}
+	if commandOverrideForAgent(a.Name(), cfg) != "" {
+		return applyCommandOverrides(a, cfg)
+	}
+	return applyResolvedCommand(a)
 }
 
 func applyACPAgentConfigOverride(cfg *config.ACPAgentConfig, override *config.ACPAgentConfig) {

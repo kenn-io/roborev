@@ -89,6 +89,68 @@ func TestGeminiBuildArgs(t *testing.T) {
 	}
 }
 
+func TestGeminiAntigravityBuildArgs(t *testing.T) {
+	tests := []struct {
+		name         string
+		agentic      bool
+		wantFlag     string
+		unwantedArgs []string
+	}{
+		{
+			name:     "ReviewMode",
+			agentic:  false,
+			wantFlag: "--sandbox",
+			unwantedArgs: []string{
+				"--output-format",
+				"--approval-mode",
+				"-m",
+				"--dangerously-skip-permissions",
+			},
+		},
+		{
+			name:     "AgenticMode",
+			agentic:  true,
+			wantFlag: "--dangerously-skip-permissions",
+			unwantedArgs: []string{
+				"--output-format",
+				"--approval-mode",
+				"-m",
+				"--sandbox",
+			},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			a := NewGeminiAgent("agy").WithModel("gemini-1.5-pro").(*GeminiAgent)
+			args := a.buildArgs(tc.agentic)
+
+			assert.Contains(t, args, "--print")
+			assertFlagValue(t, args, "--print-timeout", "30m")
+			assert.Contains(t, args, tc.wantFlag)
+			for _, unwanted := range tc.unwantedArgs {
+				assert.NotContains(t, args, unwanted)
+			}
+		})
+	}
+}
+
+func TestGeminiDetectsAntigravityCommandNames(t *testing.T) {
+	tests := []string{
+		"agy",
+		"agy.exe",
+		"/usr/local/bin/agy",
+		`C:\Users\marius\AppData\Local\bin\agy.exe`,
+	}
+
+	for _, command := range tests {
+		t.Run(command, func(t *testing.T) {
+			a := NewGeminiAgent(command)
+			assert.True(t, a.usesAntigravity())
+		})
+	}
+}
+
 func assertFlagValue(t *testing.T, args []string, flag, expectedVal string) {
 	t.Helper()
 	assert := assert.New(t)
@@ -237,6 +299,41 @@ No issues found in the code.
 			}
 		})
 	}
+}
+
+func TestGeminiAntigravityReviewPlainText(t *testing.T) {
+	skipIfWindows(t)
+
+	scriptPath := writeTempCommand(t, `#!/bin/sh
+cat > "$STDIN_FILE"
+echo "Plain text review output"
+echo "No issues found."
+`)
+
+	stdinFile := filepath.Join(t.TempDir(), "stdin")
+	t.Setenv("STDIN_FILE", stdinFile)
+	a := NewGeminiAgent(scriptPath)
+	a.Command = filepath.Join(filepath.Dir(scriptPath), "agy")
+	require.NoError(t, os.Rename(scriptPath, a.Command))
+
+	var output bytes.Buffer
+	res, err := a.Review(context.Background(), t.TempDir(), "sha", "prompt", &output)
+
+	require.NoError(t, err)
+	assert.Equal(t, "Plain text review output\nNo issues found.", res)
+	assert.Contains(t, output.String(), "Plain text review output")
+	stdinBytes, readErr := os.ReadFile(stdinFile)
+	require.NoError(t, readErr)
+	assert.Equal(t, "prompt\n", string(stdinBytes))
+}
+
+func TestGeminiAntigravityExplicitModelFailsClearly(t *testing.T) {
+	a := NewGeminiAgent("agy").WithModel("gemini-1.5-pro")
+
+	_, err := a.Review(context.Background(), t.TempDir(), "sha", "prompt", nil)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not support explicit Gemini model selection")
 }
 
 func TestGemini_Review_Integration(t *testing.T) {

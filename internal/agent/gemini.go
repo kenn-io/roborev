@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os/exec"
+	"path"
 	"strings"
 )
 
@@ -31,10 +33,12 @@ const defaultGeminiModel = "gemini-3.1-pro-preview"
 
 // GeminiAgent runs code reviews using the Gemini CLI
 type GeminiAgent struct {
-	Command   string         // The gemini command to run (default: "gemini")
-	Model     string         // Model to use (e.g., "gemini-3.1-pro-preview")
-	Reasoning ReasoningLevel // Reasoning level (for future support)
-	Agentic   bool           // Whether agentic mode is enabled (allow file edits)
+	Command       string         // The gemini-compatible command to run (default: "gemini"; "agy" is preferred at resolution time)
+	Model         string         // Model to use (e.g., "gemini-3.1-pro-preview")
+	ModelExplicit bool           // Whether Model came from WithModel/config rather than the built-in default
+	CommandAuto   bool           // Whether Command was selected from compatible command candidates
+	Reasoning     ReasoningLevel // Reasoning level (for future support)
+	Agentic       bool           // Whether agentic mode is enabled (allow file edits)
 }
 
 // NewGeminiAgent creates a new Gemini agent
@@ -55,10 +59,12 @@ func (a *GeminiAgent) clone(opts ...agentCloneOption) *GeminiAgent {
 		opts...,
 	)
 	return &GeminiAgent{
-		Command:   cfg.Command,
-		Model:     cfg.Model,
-		Reasoning: cfg.Reasoning,
-		Agentic:   cfg.Agentic,
+		Command:       cfg.Command,
+		Model:         cfg.Model,
+		ModelExplicit: a.ModelExplicit,
+		CommandAuto:   a.CommandAuto,
+		Reasoning:     cfg.Reasoning,
+		Agentic:       cfg.Agentic,
 	}
 }
 
@@ -77,7 +83,15 @@ func (a *GeminiAgent) WithModel(model string) Agent {
 	if model == "" {
 		return a
 	}
-	return a.clone(withClonedModel(model))
+	clone := a.clone(withClonedModel(model))
+	clone.ModelExplicit = true
+	if clone.usesAntigravity() && clone.CommandAuto {
+		if _, err := exec.LookPath("gemini"); err == nil {
+			clone.Command = "gemini"
+			clone.CommandAuto = false
+		}
+	}
+	return clone
 }
 
 func (a *GeminiAgent) Name() string {
@@ -86,6 +100,13 @@ func (a *GeminiAgent) Name() string {
 
 func (a *GeminiAgent) CommandName() string {
 	return a.Command
+}
+
+func (a *GeminiAgent) CommandNames() []string {
+	if a.Command == "gemini" {
+		return []string{"agy", "gemini"}
+	}
+	return []string{a.Command}
 }
 
 func (a *GeminiAgent) CommandLine() string {
@@ -99,6 +120,10 @@ func (a *GeminiAgent) buildArgs(agenticMode bool) []string {
 }
 
 func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
+	if a.usesAntigravity() && a.ModelExplicit {
+		return "", fmt.Errorf("antigravity CLI does not support explicit Gemini model selection; remove the model override or configure gemini_cmd to the legacy gemini CLI")
+	}
+
 	agenticMode := a.Agentic || AllowUnsafeAgents()
 	args := a.buildArgs(agenticMode)
 
@@ -118,6 +143,10 @@ func (a *GeminiAgent) Review(ctx context.Context, repoPath, commitSHA, prompt st
 // buildArgsWithModel builds CLI args with an explicit model override
 // (empty string omits the -m flag entirely).
 func (a *GeminiAgent) buildArgsWithModel(model string, agenticMode bool) []string {
+	if a.usesAntigravity() {
+		return a.buildAntigravityArgs(agenticMode)
+	}
+
 	args := []string{"--output-format", "stream-json"}
 
 	if model != "" {
@@ -133,9 +162,35 @@ func (a *GeminiAgent) buildArgsWithModel(model string, agenticMode bool) []strin
 	return args
 }
 
+func (a *GeminiAgent) usesAntigravity() bool {
+	return commandBaseName(a.Command) == "agy"
+}
+
+func commandBaseName(command string) string {
+	base := strings.ToLower(path.Base(strings.ReplaceAll(command, "\\", "/")))
+	base = strings.TrimSuffix(base, ".exe")
+	return base
+}
+
+func (a *GeminiAgent) buildAntigravityArgs(agenticMode bool) []string {
+	args := []string{"--print", "--print-timeout", "30m"}
+
+	if agenticMode {
+		args = append(args, "--dangerously-skip-permissions")
+	} else {
+		args = append(args, "--sandbox")
+	}
+
+	return args
+}
+
 // runGemini executes the Gemini CLI with the given args and returns
 // the review result, captured stderr, and any error.
 func (a *GeminiAgent) runGemini(ctx context.Context, repoPath, prompt string, args []string, output io.Writer) (string, string, error) {
+	if a.usesAntigravity() {
+		return a.runAntigravity(ctx, repoPath, prompt, args, output)
+	}
+
 	runResult, runErr := runStreamingCLI(ctx, streamingCLISpec{
 		Name:         "gemini",
 		Command:      a.Command,
@@ -169,6 +224,48 @@ func (a *GeminiAgent) runGemini(ctx context.Context, repoPath, prompt string, ar
 	}
 
 	return "No review output generated", runResult.Stderr, nil
+}
+
+func (a *GeminiAgent) runAntigravity(ctx context.Context, repoPath, prompt string, args []string, output io.Writer) (string, string, error) {
+	runResult, runErr := runStreamingCLI(ctx, streamingCLISpec{
+		Name:         "antigravity",
+		Command:      a.Command,
+		Args:         args,
+		Dir:          repoPath,
+		Stdin:        strings.NewReader(strings.TrimRight(prompt, "\n") + "\n"),
+		Output:       output,
+		StreamStderr: true,
+		Parse: func(r io.Reader, sw *syncWriter) (string, error) {
+			return parseAntigravityOutput(r, sw)
+		},
+	})
+	if runErr != nil {
+		return "", "", runErr
+	}
+
+	if runResult.WaitErr != nil {
+		return "", runResult.Stderr, formatStreamingCLIWaitError("antigravity", runResult, truncateStderr(runResult.Stderr))
+	}
+
+	if runResult.ParseErr != nil {
+		return "", runResult.Stderr, runResult.ParseErr
+	}
+
+	if runResult.Result != "" {
+		return runResult.Result, runResult.Stderr, nil
+	}
+
+	return "No review output generated", runResult.Stderr, nil
+}
+
+func parseAntigravityOutput(r io.Reader, sw *syncWriter) (string, error) {
+	var buf strings.Builder
+	if sw == nil {
+		_, err := io.Copy(&buf, r)
+		return strings.TrimSpace(buf.String()), err
+	}
+	_, err := io.Copy(io.MultiWriter(&buf, sw), r)
+	return strings.TrimSpace(buf.String()), err
 }
 
 // isModelNotFoundError returns true if stderr indicates the requested

@@ -87,6 +87,13 @@ type CommandAgent interface {
 	CommandName() string
 }
 
+// CommandCandidatesAgent is implemented by command agents that can run
+// through more than one compatible executable, ordered by preference.
+type CommandCandidatesAgent interface {
+	CommandAgent
+	CommandNames() []string
+}
+
 // SessionAgent is implemented by agents that can resume an existing session.
 type SessionAgent interface {
 	WithSessionID(sessionID string) Agent
@@ -198,8 +205,7 @@ func IsAvailable(name string) bool {
 
 	// Check if agent implements CommandAgent interface
 	if ca, ok := a.(CommandAgent); ok {
-		_, err := exec.LookPath(ca.CommandName())
-		return err == nil
+		return firstAvailableCommand(ca) != ""
 	}
 
 	// Non-command agents (like test) are always available
@@ -235,7 +241,8 @@ func GetAvailable(preferred string, backups ...string) (Agent, error) {
 
 	// Try preferred agent first
 	if preferred != "" && IsAvailable(preferred) {
-		return Get(preferred)
+		a, _ := Get(preferred)
+		return applyResolvedCommand(a), nil
 	}
 
 	// Try backup agents before the hardcoded fallback chain.
@@ -248,13 +255,15 @@ func GetAvailable(preferred string, backups ...string) (Agent, error) {
 		_, ok := registry[b]
 		registryMu.RUnlock()
 		if ok && IsAvailable(b) {
-			return Get(b)
+			a, _ := Get(b)
+			return applyResolvedCommand(a), nil
 		}
 	}
 
 	for _, name := range fallbackAgentOrder {
 		if name != preferred && IsAvailable(name) {
-			return Get(name)
+			a, _ := Get(name)
+			return applyResolvedCommand(a), nil
 		}
 	}
 
@@ -272,7 +281,47 @@ func GetAvailable(preferred string, backups ...string) (Agent, error) {
 		return nil, fmt.Errorf("no agents available (install one of: %s)\nYou may need to run 'roborev daemon restart' from a shell that has access to your agents", strings.Join(installHintAgentNames(), ", "))
 	}
 
-	return Get(available[0])
+	a, _ := Get(available[0])
+	return applyResolvedCommand(a), nil
+}
+
+func firstAvailableCommand(a CommandAgent) string {
+	if candidates, ok := a.(CommandCandidatesAgent); ok {
+		for _, command := range candidates.CommandNames() {
+			if command == "" {
+				continue
+			}
+			if _, err := exec.LookPath(command); err == nil {
+				return command
+			}
+		}
+		return ""
+	}
+
+	command := a.CommandName()
+	if command == "" {
+		return ""
+	}
+	if _, err := exec.LookPath(command); err == nil {
+		return command
+	}
+	return ""
+}
+
+func applyResolvedCommand(a Agent) Agent {
+	ca, ok := a.(CommandAgent)
+	if !ok {
+		return a
+	}
+	command := firstAvailableCommand(ca)
+	if command == "" || command == ca.CommandName() {
+		return a
+	}
+	spec, ok := agentSpecsByName[resolveAlias(a.Name())]
+	if !ok || spec.CloneWithCommand == nil {
+		return a
+	}
+	return spec.CloneWithCommand(a, command)
 }
 
 // syncWriter wraps an io.Writer with mutex protection for concurrent writes.

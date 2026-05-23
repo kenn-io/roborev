@@ -57,6 +57,16 @@ var allAgentSpecs = []agentSpec{
 		Name:           "gemini",
 		DefaultCommand: "gemini",
 		FallbackRank:   3,
+		CloneWithCommand: func(a Agent, command string) Agent {
+			agent, ok := a.(*GeminiAgent)
+			if !ok {
+				return a
+			}
+			clone := *agent
+			clone.Command = command
+			clone.CommandAuto = true
+			return &clone
+		},
 	},
 	{
 		Name:           "copilot",
