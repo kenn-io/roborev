@@ -1841,6 +1841,9 @@ func (p *CIPoller) postBatchResults(batch *storage.CIPRBatch) {
 		if isPermanentGitHubAccessError(err) {
 			log.Printf("CI poller: abandoning batch %d for inaccessible GitHub repo/PR %s#%d",
 				batch.ID, batch.GithubRepo, batch.PRNumber)
+			if statusErr := p.callSetCommitStatus(batch.GithubRepo, batch.HeadSHA, "error", "Review failed to post"); statusErr != nil {
+				log.Printf("CI poller: failed to set error status for inaccessible %s@%s: %v", batch.GithubRepo, batch.HeadSHA, statusErr)
+			}
 			if finalizeErr := p.db.FinalizeBatch(batch.ID); finalizeErr != nil {
 				log.Printf("CI poller: error finalizing inaccessible batch %d: %v", batch.ID, finalizeErr)
 			}

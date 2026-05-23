@@ -898,12 +898,16 @@ func TestCIPollerPostBatchResults_PermanentGitHubAccessErrorFinalizesBatch(t *te
 			Message:  "Resource not accessible by integration",
 		})
 	}
-	h.Poller.setCommitStatusFn = func(string, string, string, string) error {
-		return nil
-	}
+	statuses := h.CaptureCommitStatuses()
 
 	h.Poller.postBatchResults(batch)
 	h.AssertBatchState(t, batch.ID, 1, false)
+	require.NotEmpty(t, *statuses)
+	last := (*statuses)[len(*statuses)-1]
+	assert.Equal(t, "acme/api", last.Repo)
+	assert.Equal(t, "head-sha", last.SHA)
+	assert.Equal(t, "error", last.State)
+	assert.Equal(t, "Review failed to post", last.Desc)
 
 	h.Poller.postBatchResults(batch)
 	assert.Equal(t, 1, postAttempts, "finalized inaccessible batch should not be retried")
