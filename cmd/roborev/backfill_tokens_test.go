@@ -34,12 +34,34 @@ func TestBackfillCandidates(t *testing.T) {
 			wantIDs: []int64{1},
 		},
 		{
-			name: "skip job that already has token data",
+			name: "skip job that already has token data and cost",
+			jobs: []storage.ReviewJob{
+				{
+					ID: 1, Status: storage.JobStatusDone,
+					SessionID: "s1", StartedAt: timePtr(now),
+					TokenUsage: `{"peak_context_tokens":100,"cost_usd":0.12,"has_cost":true}`,
+				},
+			},
+			wantIDs: nil,
+		},
+		{
+			name: "include job with token data but no cost",
 			jobs: []storage.ReviewJob{
 				{
 					ID: 1, Status: storage.JobStatusDone,
 					SessionID: "s1", StartedAt: timePtr(now),
 					TokenUsage: `{"peak_context_tokens":100}`,
+				},
+			},
+			wantIDs: []int64{1},
+		},
+		{
+			name: "skip job that already has cost",
+			jobs: []storage.ReviewJob{
+				{
+					ID: 1, Status: storage.JobStatusDone,
+					SessionID: "s1", StartedAt: timePtr(now),
+					TokenUsage: `{"peak_context_tokens":100,"cost_usd":0,"has_cost":true}`,
 				},
 			},
 			wantIDs: nil,

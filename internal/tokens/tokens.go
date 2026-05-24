@@ -86,10 +86,10 @@ const (
 	// capNone means agentsview is missing or too old to query.
 	capNone capability = iota
 	// capTokenUse means only the deprecated `token-use` command is
-	// available (agentsview >= 0.15.0, < 0.30.0).
+	// available.
 	capTokenUse
-	// capSessionUsage means `session usage` is available (agentsview
-	// >= 0.30.0). It returns a cost estimate and supersedes token-use.
+	// capSessionUsage means `session usage` is available. It returns a
+	// cost estimate and supersedes token-use.
 	capSessionUsage
 )
 
@@ -97,9 +97,10 @@ const (
 // (deprecated) token-use subcommand (0.15.0).
 var minVersion = [3]int{0, 15, 0}
 
-// sessionUsageMinVersion is the minimum agentsview version that
-// supports `session usage` (0.30.0), which returns a cost estimate and
-// replaces token-use.
+// sessionUsageMinVersion is the tagged agentsview version that
+// supports `session usage`, which returns a cost estimate and replaces
+// token-use. Some prerelease builds below this tag also support the
+// command, so resolveAgentsview probes for it before falling back.
 var sessionUsageMinVersion = [3]int{0, 30, 0}
 
 // versionRe extracts major.minor.patch from "agentsview vX.Y.Z...".
@@ -195,6 +196,9 @@ func resolveAgentsview(ctx context.Context) (string, capability) {
 	}
 
 	level, parsed := parseVersion(out)
+	if level == capTokenUse && hasSessionUsageCommand(ctx, bin) {
+		level = capSessionUsage
+	}
 
 	versionMu.Lock()
 	defer versionMu.Unlock()
@@ -220,11 +224,21 @@ func resolveAgentsview(ctx context.Context) (string, capability) {
 	return bin, level
 }
 
+func hasSessionUsageCommand(ctx context.Context, binPath string) bool {
+	cmdCtx, cancel := context.WithTimeout(ctx, 5*time.Second)
+	defer cancel()
+
+	cmd := exec.CommandContext(
+		cmdCtx, binPath, "session", "usage", "--help",
+	)
+	return cmd.Run() == nil
+}
+
 // FetchForSession queries agentsview for a session's token usage and
-// cost estimate. It calls `session usage` on agentsview >= 0.30.0 and
-// falls back to the deprecated `token-use` on older versions. Returns
-// nil (no error) when agentsview is not installed, is too old, or the
-// session has no usage data.
+// cost estimate. It calls `session usage` when supported and falls back
+// to the deprecated `token-use` on older versions. Returns nil (no
+// error) when agentsview is not installed, is too old, or the session
+// has no usage data.
 func FetchForSession(
 	ctx context.Context, sessionID string,
 ) (*Usage, error) {

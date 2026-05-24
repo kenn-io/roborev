@@ -265,9 +265,33 @@ exit 99
 	assert.InDelta(t, 0.42, usage.CostUSD, 1e-9)
 }
 
+func TestFetchForSessionUsesSessionUsageWhenPrereleaseSupportsIt(t *testing.T) {
+	installFakeAgentsview(t, `#!/bin/sh
+if [ "$1" = "version" ]; then
+  echo "agentsview v0.29.0-22-ga31468b4 (commit a31468b4, built 2026-05-23)"
+  exit 0
+fi
+if [ "$1" = "session" ] && [ "$2" = "usage" ]; then
+  echo '{"session_id":"s","agent":"codex","total_output_tokens":28800,"peak_context_tokens":118000,"cost_usd":0.42,"has_cost":true}'
+  exit 0
+fi
+echo "unexpected args: $@" >&2
+exit 99
+`)
+
+	usage, err := FetchForSession(context.Background(), "s")
+	require.NoError(t, err)
+	require.NotNil(t, usage)
+	assert.Equal(t, int64(28800), usage.OutputTokens)
+	assert.Equal(t, int64(118000), usage.PeakContextTokens)
+	assert.True(t, usage.HasCost)
+	assert.InDelta(t, 0.42, usage.CostUSD, 1e-9)
+}
+
 func TestFetchForSessionFallsBackToTokenUse(t *testing.T) {
-	// agentsview in [0.15.0, 0.30.0): FetchForSession falls back to
-	// the deprecated token-use command, which emits no cost. The
+	// agentsview in [0.15.0, before session usage support):
+	// FetchForSession falls back to the deprecated token-use command.
+	// The legacy output here has no cost, matching older builds. The
 	// script errors on `session usage`, so success proves the fallback.
 	installFakeAgentsview(t, `#!/bin/sh
 if [ "$1" = "version" ]; then
@@ -331,6 +355,10 @@ if [ "$1" = "version" ]; then
   echo "agentsview v0.15.0 (commit abc, built 2026-01-01)"
   exit 0
 fi
+if [ "$1" = "token-use" ]; then
+  exit 0
+fi
+exit 99
 `
 	require.NoError(t, os.WriteFile(bin, []byte(script), 0o755))
 

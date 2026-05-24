@@ -17,7 +17,7 @@ func backfillTokensCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "backfill-tokens",
 		Short: "Backfill token usage for completed jobs via agentsview",
-		Long: `Scan completed jobs that have a session ID but no token usage data,
+		Long: `Scan completed jobs that have a session ID but missing token cost data,
 and attempt to fetch token consumption from agentsview.
 
 This is best-effort: jobs whose session files have been deleted
@@ -106,8 +106,8 @@ will be skipped.`,
 }
 
 // backfillCandidates filters jobs to those eligible for token
-// backfill: completed, has a session ID, no existing token data,
-// and the session was not reused by another started job.
+// backfill: completed, has a session ID, missing cost data, and the
+// session was not reused by another started job.
 func backfillCandidates(
 	jobs []storage.ReviewJob,
 ) []storage.ReviewJob {
@@ -127,7 +127,7 @@ func backfillCandidates(
 		if !job.HasViewableOutput() {
 			continue
 		}
-		if job.TokenUsage != "" {
+		if !needsTokenCostBackfill(job.TokenUsage) {
 			continue
 		}
 		if job.SessionID == "" {
@@ -139,4 +139,9 @@ func backfillCandidates(
 		out = append(out, job)
 	}
 	return out
+}
+
+func needsTokenCostBackfill(tokenUsage string) bool {
+	usage := tokens.ParseJSON(tokenUsage)
+	return usage == nil || !usage.HasCost
 }
