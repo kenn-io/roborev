@@ -116,7 +116,7 @@ func AgentInstallCmd(agentName string) string {
 	case "codex":
 		return "npm install -g @openai/codex@latest"
 	case "opencode":
-		return "go install github.com/opencode-ai/opencode@latest"
+		return "npm install -g opencode-ai@latest"
 	case "cursor":
 		return "echo 'Cursor agent is not available in CI" +
 			" environments; choose a different agent'"

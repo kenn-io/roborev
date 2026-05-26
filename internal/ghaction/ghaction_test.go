@@ -202,7 +202,7 @@ func TestGenerate(t *testing.T) {
 				Agents: []string{"opencode"},
 			},
 			wantStrs: []string{
-				"opencode-ai/opencode@latest",
+				"opencode-ai@latest",
 				"ANTHROPIC_API_KEY",
 				"different model provider",
 			},
@@ -246,7 +246,7 @@ func TestGenerate(t *testing.T) {
 			},
 			wantStrs: []string{
 				"@anthropic-ai/claude-code@latest",
-				"opencode-ai/opencode@latest",
+				"opencode-ai@latest",
 			},
 			envChecks: func(t *testing.T, env map[string]string) {
 				assert.Contains(t, env, "ANTHROPIC_API_KEY", "expected ANTHROPIC_API_KEY in env")

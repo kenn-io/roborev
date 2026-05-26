@@ -186,7 +186,7 @@ See [configuration guide](https://roborev.io/configuration/) for all options.
 | Claude Code | `npm install -g @anthropic-ai/claude-code` |
 | Gemini | `curl -fsSL https://antigravity.google/cli/install.sh \| bash` (preferred Antigravity CLI) or `npm install -g @google/gemini-cli` |
 | Copilot | `npm install -g @github/copilot` |
-| OpenCode | `go install github.com/opencode-ai/opencode@latest` |
+| OpenCode | `npm install -g opencode-ai@latest` ([anomalyco/opencode](https://github.com/anomalyco/opencode)) |
 | Cursor | [cursor.com](https://www.cursor.com/) |
 | Kiro | [kiro.dev](https://kiro.dev/) |
 | Kilo | `npm install -g @kilocode/cli` |
