@@ -12,6 +12,7 @@ import (
 )
 
 var copilotAllowAllToolsSupport sync.Map
+var copilotStreamOffSupport sync.Map
 
 // copilotSupportsAllowAllTools checks whether the copilot binary supports
 // the --allow-all-tools flag needed for non-interactive tool approval.
@@ -27,6 +28,23 @@ func copilotSupportsAllowAllTools(ctx context.Context, command string) (bool, er
 		return false, fmt.Errorf("check %s --help: %w: %s", command, err, output)
 	}
 	copilotAllowAllToolsSupport.Store(command, supported)
+	return supported, nil
+}
+
+// copilotSupportsStreamOff checks whether the copilot binary supports
+// disabling streaming output so stdout remains pipe-capturable.
+// Results are cached per command path.
+func copilotSupportsStreamOff(ctx context.Context, command string) (bool, error) {
+	if cached, ok := copilotStreamOffSupport.Load(command); ok {
+		return cached.(bool), nil
+	}
+	cmd := exec.CommandContext(ctx, command, "--help")
+	output, err := cmd.CombinedOutput()
+	supported := strings.Contains(string(output), "--stream")
+	if err != nil && !supported {
+		return false, fmt.Errorf("check %s --help: %w: %s", command, err, output)
+	}
+	copilotStreamOffSupport.Store(command, supported)
 	return supported, nil
 }
 
@@ -50,7 +68,7 @@ var copilotReviewDenyTools = []string{
 // In review mode, destructive tools are denied. In agentic mode, all tools
 // are allowed without restriction.
 func (a *CopilotAgent) buildArgs(agenticMode bool) []string {
-	return a.commandArgs(agenticMode, true)
+	return a.commandArgs(agenticMode, true, true)
 }
 
 // CopilotAgent runs code reviews using the GitHub Copilot CLI
@@ -116,24 +134,24 @@ func (a *CopilotAgent) CommandName() string {
 
 func (a *CopilotAgent) CommandLine() string {
 	agenticMode := a.Agentic || AllowUnsafeAgents()
-	args := a.commandArgs(agenticMode, false)
+	args := a.commandArgs(agenticMode, false, false)
 	return a.Command + " " + strings.Join(args, " ")
 }
 
 func (a *CopilotAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
 	agenticMode := a.Agentic || AllowUnsafeAgents()
 
-	supported, err := copilotSupportsAllowAllTools(ctx, a.Command)
+	supportsAllowAllTools, err := copilotSupportsAllowAllTools(ctx, a.Command)
 	if err != nil {
 		log.Printf("copilot: cannot detect --allow-all-tools support: %v", err)
 	}
 
-	var args []string
-	if supported {
-		args = a.commandArgs(agenticMode, true)
-	} else {
-		args = a.commandArgs(agenticMode, false)
+	supportsStreamOff, err := copilotSupportsStreamOff(ctx, a.Command)
+	if err != nil {
+		log.Printf("copilot: cannot detect --stream support: %v", err)
 	}
+
+	args := a.commandArgs(agenticMode, supportsAllowAllTools, supportsStreamOff)
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Stdin = strings.NewReader(prompt)
@@ -164,10 +182,13 @@ func (a *CopilotAgent) Review(ctx context.Context, repoPath, commitSHA, prompt s
 	return result, nil
 }
 
-func (a *CopilotAgent) commandArgs(agenticMode, includePermissions bool) []string {
+func (a *CopilotAgent) commandArgs(agenticMode, includePermissions, includeStreamOff bool) []string {
 	args := []string{}
 	if includePermissions {
 		args = append(args, "-s", "--allow-all-tools")
+	}
+	if includeStreamOff {
+		args = append(args, "--stream", "off")
 	}
 	if a.Model != "" {
 		args = append(args, "--model", a.Model)

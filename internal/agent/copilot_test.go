@@ -32,6 +32,28 @@ func TestCopilotSupportsAllowAllTools(t *testing.T) {
 	})
 }
 
+func TestCopilotSupportsStreamOff(t *testing.T) {
+	skipIfWindows(t)
+
+	t.Run("supported", func(t *testing.T) {
+		mock := mockAgentCLI(t, MockCLIOpts{
+			HelpOutput: "Usage: copilot [flags]\n\n  --stream string  Control streaming output",
+		})
+		supported, err := copilotSupportsStreamOff(context.Background(), mock.CmdPath)
+		require.NoError(t, err)
+		assert.True(t, supported)
+	})
+
+	t.Run("not supported", func(t *testing.T) {
+		mock := mockAgentCLI(t, MockCLIOpts{
+			HelpOutput: "Usage: copilot [flags]\n\n  --model  Model to use",
+		})
+		supported, err := copilotSupportsStreamOff(context.Background(), mock.CmdPath)
+		require.NoError(t, err)
+		assert.False(t, supported)
+	})
+}
+
 func TestCopilotBuildArgs(t *testing.T) {
 	a := NewCopilotAgent("copilot")
 
@@ -40,6 +62,7 @@ func TestCopilotBuildArgs(t *testing.T) {
 		args := a.buildArgs(false)
 		assert.Contains(args, "-s")
 		assert.Contains(args, "--allow-all-tools")
+		assertArgPair(t, args, "--stream", "off")
 		// Verify deny-tool pairs exist for each denied tool
 		for _, tool := range copilotReviewDenyTools {
 			found := false
@@ -58,6 +81,7 @@ func TestCopilotBuildArgs(t *testing.T) {
 		args := a.buildArgs(true)
 		assert.Contains(args, "-s")
 		assert.Contains(args, "--allow-all-tools")
+		assertArgPair(t, args, "--stream", "off")
 		assert.NotContains(args, "--deny-tool")
 	})
 
@@ -159,10 +183,10 @@ func TestCopilotReview(t *testing.T) {
 func TestCopilotReviewPermissionFlags(t *testing.T) {
 	skipIfWindows(t)
 
-	t.Run("review mode passes permission flags", func(t *testing.T) {
+	t.Run("review mode passes permission and stream flags", func(t *testing.T) {
 		assert := assert.New(t)
 		mock := mockAgentCLI(t, MockCLIOpts{
-			HelpOutput:   "--allow-all-tools",
+			HelpOutput:   "--allow-all-tools\n--stream",
 			CaptureArgs:  true,
 			CaptureStdin: true,
 			StdoutLines:  []string{"review output"},
@@ -174,6 +198,7 @@ func TestCopilotReviewPermissionFlags(t *testing.T) {
 
 		args := readFileContent(t, mock.ArgsFile)
 		assert.Contains(args, "--allow-all-tools")
+		assert.Contains(args, "--stream off")
 		assert.Contains(args, "-s")
 		assert.Contains(args, "--deny-tool")
 		assertFileContent(t, mock.StdinFile, "prompt")
@@ -227,9 +252,22 @@ func TestCopilotReviewPermissionFlags(t *testing.T) {
 
 		args := readFileContent(t, mock.ArgsFile)
 		assert.NotContains(t, args, "--allow-all-tools")
+		assert.NotContains(t, args, "--stream")
 		assert.NotContains(t, args, "--deny-tool")
 		assert.NotContains(t, args, "-s")
 	})
+}
+
+func assertArgPair(t *testing.T, args []string, flag, value string) {
+	t.Helper()
+
+	pairs := make([]string, 0)
+	for i := 0; i+1 < len(args); i++ {
+		if args[i] == flag {
+			pairs = append(pairs, args[i]+" "+args[i+1])
+		}
+	}
+	assert.Contains(t, pairs, flag+" "+value)
 }
 
 // readFileContent reads a file and returns its trimmed content.
