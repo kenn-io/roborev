@@ -85,20 +85,60 @@ update_plugin_manifests_inplace() {
     [ -f "$CLAUDE_MARKETPLACE" ] && set_json_field "$CLAUDE_MARKETPLACE" '.plugins[0].version' "$VERSION"
 }
 
-# Commit any plugin manifest edits from update_plugin_manifests_inplace to the current branch.
-# Sets PLUGIN_MANIFESTS_COMMITTED=1 when a commit is made.
-commit_plugin_manifests() {
+# Update agent plugin manifest versions on a release branch and open a PR.
+# Mirrors update_nix_flake so all changes to main go through pull requests.
+update_plugin_manifests_pr() {
+    local BRANCH_NAME="release/$TAG-plugin-update"
+
+    # Save current ref to return to later (handles detached HEAD)
+    local ORIGINAL_REF
+    ORIGINAL_REF=$(git -C "$REPO_ROOT" symbolic-ref --short -q HEAD 2>/dev/null) || \
+        ORIGINAL_REF=$(git -C "$REPO_ROOT" rev-parse HEAD)
+
+    PLUGIN_MANIFESTS=()
+    update_plugin_manifests_inplace
+
     if [ ${#PLUGIN_MANIFESTS[@]} -eq 0 ]; then
         return 0
     fi
 
-    git -C "$REPO_ROOT" add -- "${PLUGIN_MANIFESTS[@]}"
-    if git -C "$REPO_ROOT" diff --cached --quiet -- "${PLUGIN_MANIFESTS[@]}"; then
+    if git -C "$REPO_ROOT" diff --quiet -- "${PLUGIN_MANIFESTS[@]}"; then
         echo "Agent plugin manifests already at version $VERSION, no changes needed"
         return 0
     fi
-    git -C "$REPO_ROOT" commit -m "Update agent plugin manifests for $TAG" -- "${PLUGIN_MANIFESTS[@]}"
-    PLUGIN_MANIFESTS_COMMITTED=1
+
+    echo "Creating PR for plugin manifest updates..."
+
+    # Ensure we return to original ref and discard manifest edits even on failure
+    cleanup_plugin_branch() {
+        git -C "$REPO_ROOT" checkout -- "${PLUGIN_MANIFESTS[@]}" 2>/dev/null || true
+        git -C "$REPO_ROOT" checkout "$ORIGINAL_REF" 2>/dev/null || true
+    }
+    trap cleanup_plugin_branch EXIT
+
+    # Create/reset branch for the PR (-B forces creation even if exists)
+    git -C "$REPO_ROOT" checkout -B "$BRANCH_NAME"
+    git -C "$REPO_ROOT" add -- "${PLUGIN_MANIFESTS[@]}"
+    # Only commit if there are staged changes (handles retry case)
+    if ! git -C "$REPO_ROOT" diff --cached --quiet; then
+        git -C "$REPO_ROOT" commit -m "Update agent plugin manifests for $TAG"
+    fi
+    git -C "$REPO_ROOT" push -u origin "$BRANCH_NAME" --force-with-lease
+
+    # Create the PR (skip if an open PR already exists)
+    if [ -n "$(gh pr list --state open --head "$BRANCH_NAME" --json number --jq '.[0].number' 2>/dev/null)" ]; then
+        echo "Open PR for $BRANCH_NAME already exists, skipping creation"
+    else
+        gh pr create \
+            --title "Update agent plugin manifests for $TAG" \
+            --body "Updates agent plugin manifest versions to $VERSION for the $TAG release." \
+            --base main
+        echo "PR created for plugin manifest updates"
+    fi
+
+    # Return to original ref and clear trap
+    trap - EXIT
+    git -C "$REPO_ROOT" checkout "$ORIGINAL_REF"
 }
 
 # Update nix flake version and vendorHash, creating a PR if changes are needed
@@ -200,8 +240,11 @@ update_nix_flake() {
     fi
 }
 
-# Update nix flake before creating the release
+# Update nix flake and plugin manifests via PRs before creating the release.
+# Both functions create branches and open PRs against main; the tag itself is
+# created on whatever main currently is and pushed below.
 update_nix_flake
+update_plugin_manifests_pr
 
 # Create a temp file for the changelog
 CHANGELOG_FILE=$(mktemp)
@@ -228,24 +271,12 @@ if [[ ! $REPLY =~ ^[Yy]$ ]]; then
     exit 0
 fi
 
-# Update and commit agent plugin manifest version bumps so the tag points at a
-# commit with the new versions. Run only after confirmation so that earlier
-# failures (changelog gen, interrupt, etc.) cannot leave the tree dirty.
-PLUGIN_MANIFESTS=()
-PLUGIN_MANIFESTS_COMMITTED=0
-update_plugin_manifests_inplace
-commit_plugin_manifests
-
-# Create the tag with changelog as message
+# Create the tag with changelog as message. The tag points at main as-is;
+# plugin manifest and flake.nix version bumps land via the PRs created above.
 echo "Creating tag $TAG..."
 git tag -a "$TAG" -m "Release $VERSION
 
 $(cat $CHANGELOG_FILE)"
-
-if [ "$PLUGIN_MANIFESTS_COMMITTED" = "1" ]; then
-    echo "Pushing branch to origin..."
-    git push origin HEAD
-fi
 
 echo "Pushing tag to origin..."
 git push origin "$TAG"
