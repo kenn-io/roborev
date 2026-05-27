@@ -349,29 +349,32 @@ func TestUpdaterCheckForUpdateSkipsNetworkWithFreshCache(t *testing.T) {
 	assert.Equal(t, 0, requests)
 }
 
-func TestUpdaterCheckForUpdateFallsBackToReleaseBodyChecksum(t *testing.T) {
-	const releaseVersion = "v1.3.0"
+func TestUpdaterCheckForUpdateUsesHTMLRedirect(t *testing.T) {
+	const releaseTag = "v1.3.0"
 	const assetName = "roborev_1.3.0_darwin_arm64.tar.gz"
 	const checksum = "abc123def456789012345678901234567890123456789012345678901234abcd"
 
-	releaseBody, err := json.Marshal(Release{
-		TagName: releaseVersion,
-		Body:    fmt.Sprintf("%s  %s", checksum, assetName),
-		Assets: []Asset{
-			{Name: assetName, Size: 42, BrowserDownloadURL: "https://downloads.example/" + assetName},
-			{Name: "SHA256SUMS", Size: 12, BrowserDownloadURL: "https://downloads.example/SHA256SUMS"},
-		},
-	})
-	require.NoError(t, err)
+	downloadURL := fmt.Sprintf("%s/%s/%s", githubReleaseDownloadBase, releaseTag, assetName)
+	checksumsURL := fmt.Sprintf("%s/%s/SHA256SUMS", githubReleaseDownloadBase, releaseTag)
 
 	updater := NewUpdater(Deps{
 		Client: &http.Client{
 			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 				switch req.URL.String() {
-				case githubAPIURL:
-					return newHTTPResponse(http.StatusOK, string(releaseBody)), nil
-				case "https://downloads.example/SHA256SUMS":
-					return newHTTPResponse(http.StatusInternalServerError, "boom"), nil
+				case githubLatestReleaseURL:
+					resp := newHTTPResponse(http.StatusFound, "")
+					resp.Header.Set("Location", "https://github.com/roborev-dev/roborev/releases/tag/"+releaseTag)
+					resp.Request = req
+					return resp, nil
+				case downloadURL:
+					if req.Method != http.MethodHead {
+						return nil, fmt.Errorf("expected HEAD for %s, got %s", req.URL, req.Method)
+					}
+					resp := newHTTPResponse(http.StatusOK, "")
+					resp.ContentLength = 42
+					return resp, nil
+				case checksumsURL:
+					return newHTTPResponse(http.StatusOK, fmt.Sprintf("%s  %s\n", checksum, assetName)), nil
 				default:
 					return nil, fmt.Errorf("unexpected request to %s", req.URL.String())
 				}
@@ -388,10 +391,124 @@ func TestUpdaterCheckForUpdateFallsBackToReleaseBodyChecksum(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, info)
 	assert.Equal(t, "v1.2.0", info.CurrentVersion)
-	assert.Equal(t, releaseVersion, info.LatestVersion)
+	assert.Equal(t, releaseTag, info.LatestVersion)
 	assert.Equal(t, assetName, info.AssetName)
+	assert.Equal(t, downloadURL, info.DownloadURL)
+	assert.Equal(t, int64(42), info.Size)
 	assert.Equal(t, checksum, info.Checksum)
 	assert.False(t, info.IsDevBuild)
+}
+
+func TestResolveLatestTag(t *testing.T) {
+	tests := []struct {
+		name       string
+		status     int
+		location   string
+		wantTag    string
+		wantErrSub string
+	}{
+		{
+			name:     "valid 302 redirect",
+			status:   http.StatusFound,
+			location: "https://github.com/roborev-dev/roborev/releases/tag/v0.55.0",
+			wantTag:  "v0.55.0",
+		},
+		{
+			name:     "pre-release tag",
+			status:   http.StatusFound,
+			location: "https://github.com/roborev-dev/roborev/releases/tag/v0.9.0-rc1",
+			wantTag:  "v0.9.0-rc1",
+		},
+		{
+			name:       "200 OK is not a redirect",
+			status:     http.StatusOK,
+			wantErrSub: "expected redirect",
+		},
+		{
+			name:       "redirect target without /tag/",
+			status:     http.StatusFound,
+			location:   "https://github.com/roborev-dev/roborev/releases",
+			wantErrSub: "unexpected redirect target",
+		},
+		{
+			name:       "empty tag after /tag/",
+			status:     http.StatusFound,
+			location:   "https://github.com/roborev-dev/roborev/releases/tag/",
+			wantErrSub: "empty tag",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			updater := NewUpdater(Deps{
+				Client: &http.Client{
+					Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+						resp := newHTTPResponse(tt.status, "")
+						resp.Request = req
+						if tt.location != "" {
+							resp.Header.Set("Location", tt.location)
+						}
+						return resp, nil
+					}),
+				},
+			})
+
+			tag, err := updater.resolveLatestTag("https://example.invalid/releases/latest")
+			if tt.wantErrSub != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErrSub)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantTag, tag)
+		})
+	}
+}
+
+func TestFetchContentLength(t *testing.T) {
+	tests := []struct {
+		name       string
+		status     int
+		size       int64
+		wantSize   int64
+		wantErrSub string
+	}{
+		{
+			name:     "200 with Content-Length",
+			status:   http.StatusOK,
+			size:     1234,
+			wantSize: 1234,
+		},
+		{
+			name:       "404",
+			status:     http.StatusNotFound,
+			wantErrSub: "404",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			updater := NewUpdater(Deps{
+				Client: &http.Client{
+					Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+						if req.Method != http.MethodHead {
+							return nil, fmt.Errorf("expected HEAD, got %s", req.Method)
+						}
+						resp := newHTTPResponse(tt.status, "")
+						resp.ContentLength = tt.size
+						return resp, nil
+					}),
+				},
+			})
+
+			size, err := updater.fetchContentLength("https://example.invalid/asset")
+			if tt.wantErrSub != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErrSub)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantSize, size)
+		})
+	}
 }
 
 func TestUpdaterPerformUpdateInstallsBinary(t *testing.T) {
@@ -444,73 +561,6 @@ func TestUpdaterPerformUpdateInstallsBinary(t *testing.T) {
 	assert.NotEmpty(t, reporter.progress)
 }
 
-func TestFindAssets(t *testing.T) {
-	standardAssets := []Asset{
-		{Name: "roborev_linux_amd64.tar.gz", Size: 1000, BrowserDownloadURL: "https://example.com/linux_amd64"},
-		{Name: "roborev_darwin_arm64.tar.gz", Size: 2000, BrowserDownloadURL: "https://example.com/darwin_arm64"},
-		{Name: "SHA256SUMS", Size: 500, BrowserDownloadURL: "https://example.com/checksums"},
-		{Name: "roborev_darwin_amd64.tar.gz", Size: 3000, BrowserDownloadURL: "https://example.com/darwin_amd64"},
-		{Name: "roborev_windows_amd64.zip", Size: 4000, BrowserDownloadURL: "https://example.com/windows"},
-	}
-
-	noChecksumsAssets := []Asset{
-		{Name: "roborev_linux_amd64.tar.gz", Size: 1000, BrowserDownloadURL: "https://example.com/linux"},
-		{Name: "roborev_darwin_arm64.tar.gz", Size: 2000, BrowserDownloadURL: "https://example.com/darwin"},
-	}
-
-	tests := []struct {
-		name          string
-		assets        []Asset
-		assetName     string
-		wantAsset     *Asset
-		wantChecksums *Asset
-	}{
-		{
-			name:          "find darwin_arm64 (second in list)",
-			assets:        standardAssets,
-			assetName:     "roborev_darwin_arm64.tar.gz",
-			wantAsset:     &Asset{BrowserDownloadURL: "https://example.com/darwin_arm64", Size: 2000},
-			wantChecksums: &Asset{BrowserDownloadURL: "https://example.com/checksums", Size: 500},
-		},
-		{
-			name:          "find linux_amd64 (first in list)",
-			assets:        standardAssets,
-			assetName:     "roborev_linux_amd64.tar.gz",
-			wantAsset:     &Asset{BrowserDownloadURL: "https://example.com/linux_amd64", Size: 1000},
-			wantChecksums: &Asset{BrowserDownloadURL: "https://example.com/checksums", Size: 500},
-		},
-		{
-			name:          "find darwin_amd64 (after checksums)",
-			assets:        standardAssets,
-			assetName:     "roborev_darwin_amd64.tar.gz",
-			wantAsset:     &Asset{BrowserDownloadURL: "https://example.com/darwin_amd64", Size: 3000},
-			wantChecksums: &Asset{BrowserDownloadURL: "https://example.com/checksums", Size: 500},
-		},
-		{
-			name:          "asset not found",
-			assets:        standardAssets,
-			assetName:     "roborev_freebsd_amd64.tar.gz",
-			wantAsset:     nil,
-			wantChecksums: &Asset{BrowserDownloadURL: "https://example.com/checksums", Size: 500},
-		},
-		{
-			name:          "no checksums file",
-			assets:        noChecksumsAssets,
-			assetName:     "roborev_darwin_arm64.tar.gz",
-			wantAsset:     &Asset{BrowserDownloadURL: "https://example.com/darwin", Size: 2000},
-			wantChecksums: nil,
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			asset, checksums := findAssets(tt.assets, tt.assetName)
-			checkAsset(t, asset, tt.wantAsset)
-			checkAsset(t, checksums, tt.wantChecksums)
-		})
-	}
-}
-
 func createTestArchive(t *testing.T, path string, entries []archiveEntry) {
 	t.Helper()
 	require.NoError(t, os.WriteFile(path, createTestArchiveBytes(t, entries), 0644))
@@ -549,18 +599,6 @@ func createTestArchiveBytes(t *testing.T, entries []archiveEntry) []byte {
 	require.NoError(t, tw.Close())
 	require.NoError(t, gzw.Close())
 	return buf.Bytes()
-}
-
-func checkAsset(t *testing.T, got *Asset, want *Asset) {
-	t.Helper()
-	if want == nil {
-		require.Nil(t, got)
-		return
-	}
-
-	require.NotNil(t, got)
-	assert.Equal(t, want.BrowserDownloadURL, got.BrowserDownloadURL)
-	assert.Equal(t, want.Size, got.Size)
 }
 
 func skipUnlessTargetOS(t *testing.T, target string) {
