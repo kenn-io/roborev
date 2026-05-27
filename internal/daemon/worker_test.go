@@ -825,7 +825,7 @@ func TestProcessJob_LargeDiffUsesExternalSnapshotWithoutOversizedPrompt(t *testi
 		ReviewFn: func(ctx context.Context, repoPath, commitSHA, p string, output io.Writer) (string, error) {
 			agentCalled = true
 			capturedPrompt = p
-			require.LessOrEqual(t, len(p), 4096, "submitted prompt must stay within configured cap")
+			require.LessOrEqual(t, len(p), 6000, "submitted prompt must stay within configured cap")
 			match := snapshotRE.FindStringSubmatch(p)
 			require.NotNil(t, match, "large diff prompt should reference a snapshot file")
 			snapshotPath := match[1]
@@ -840,7 +840,10 @@ func TestProcessJob_LargeDiffUsesExternalSnapshotWithoutOversizedPrompt(t *testi
 
 	tc := newWorkerTestContext(t, 1)
 	cfg := config.DefaultConfig()
-	cfg.DefaultMaxPromptSize = 4096
+	// Keep the cap above the system-prompt size so the snapshot-reference
+	// fallback still fits; the large diff below far exceeds it either way,
+	// so the external-snapshot path still triggers.
+	cfg.DefaultMaxPromptSize = 6000
 	tc.reconfigurePool(cfg)
 
 	var content strings.Builder

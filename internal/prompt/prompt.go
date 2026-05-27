@@ -52,6 +52,23 @@ IMPORTANT: You are being invoked by roborev to perform this review directly. Do 
 Return only the final review content. Do NOT include process narration, progress updates, or front matter such as "Reviewing the diff..." or "I'm checking...".
 If you use tools while reviewing, finish all tool use before emitting the final review, and put the final review only after the last tool call.`
 
+// toolchainVerificationInstruction tells reviewers to base version- and
+// availability-related findings on the repo's actual toolchain and dependency
+// manifests rather than stale model memory. Models err both ways: flagging
+// valid recent additions (e.g. Go's sync.WaitGroup.Go) as "nonexistent", and
+// missing real calls to APIs that do not exist for the configured versions.
+// Checking the manifests keeps the call accurate in both directions.
+const toolchainVerificationInstruction = `
+
+IMPORTANT: Judge whether a feature or API exists from the project's toolchain and dependency manifests, not your own memory, which may be stale. This cuts both ways: do not flag valid recent features as broken, and do not miss calls to APIs that genuinely do not exist for the project's versions.
+
+Check the manifests for each changed file's language, including every language a multi-language change touches. Common ones:
+
+- Go: go.mod / go.sum.
+- TypeScript / JavaScript: package.json, a lockfile (yarn.lock, package-lock.json, pnpm-lock.yaml), tsconfig.json.
+- Python: pyproject.toml, requirements.txt, uv/pixi lockfiles.
+- Other languages: the equivalent manifests (Cargo.toml, pom.xml, build.gradle, Gemfile).`
+
 // HistoricalReviewContext holds a commit SHA and its associated review (if any) plus responses.
 type HistoricalReviewContext struct {
 	SHA       string
@@ -475,6 +492,10 @@ func (b *Builder) BuildDirty(diff string, contextCount int, agentName, reviewTyp
 				return "", err
 			}
 		}
+		// Only inline a sample of the oversized diff when a meaningful chunk
+		// fits; below this floor we keep just the "too large" marker. The floor
+		// is relative to remaining budget, so a larger system prompt shrinks
+		// maxDiffLen and can drop the inline sample entirely under a small cap.
 		if maxDiffLen > 1000 {
 			emptyFallbackOptional := sizingView.Optional
 			sampleBody := "X\n"

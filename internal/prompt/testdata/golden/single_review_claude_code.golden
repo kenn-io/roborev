@@ -32,6 +32,15 @@ IMPORTANT: You are being invoked by roborev to perform this review directly. Do 
 Return only the final review content. Do NOT include process narration, progress updates, or front matter such as "Reviewing the diff..." or "I'm checking...".
 If you use tools while reviewing, finish all tool use before emitting the final review, and put the final review only after the last tool call.
 
+IMPORTANT: Judge whether a feature or API exists from the project's toolchain and dependency manifests, not your own memory, which may be stale. This cuts both ways: do not flag valid recent features as broken, and do not miss calls to APIs that genuinely do not exist for the project's versions.
+
+Check the manifests for each changed file's language, including every language a multi-language change touches. Common ones:
+
+- Go: go.mod / go.sum.
+- TypeScript / JavaScript: package.json, a lockfile (yarn.lock, package-lock.json, pnpm-lock.yaml), tsconfig.json.
+- Python: pyproject.toml, requirements.txt, uv/pixi lockfiles.
+- Other languages: the equivalent manifests (Cargo.toml, pom.xml, build.gradle, Gemfile).
+
 Current date: GOLDEN_DATE (UTC)
 
 ## Current Commit

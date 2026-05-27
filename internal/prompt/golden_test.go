@@ -310,12 +310,14 @@ func TestGoldenPrompt_SingleTruncatedDiff(t *testing.T) {
 	r := newGoldenTestRepo(t)
 	r.commitFile("base.txt", "base\n", "initial")
 
-	// A large change that will exceed the tiny prompt cap and trigger
-	// the commit fallback rendering.
+	// A large change that exceeds the prompt cap and triggers the commit
+	// fallback rendering. The cap is kept above the system-prompt size so the
+	// truncated prompt still carries commit metadata and a diff view command,
+	// rather than truncating the system prompt itself.
 	large := strings.Repeat("line of content added\n", 800)
 	sha := r.commitFile("big.txt", large, "huge change")
 
-	cfg := &config.Config{DefaultMaxPromptSize: 4000}
+	cfg := &config.Config{DefaultMaxPromptSize: 5500}
 	b := NewBuilderWithConfig(nil, cfg)
 	prompt, err := b.ForRepo(r.dir, 0).Build(sha, 0, "test", "", "")
 	require.NoError(t, err)

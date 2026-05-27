@@ -336,8 +336,9 @@ func (c AddressTemplateContext) Clone() AddressTemplateContext {
 }
 
 type SystemTemplateContext struct {
-	NoSkillsInstruction string
-	CurrentDate         string
+	NoSkillsInstruction              string
+	ToolchainVerificationInstruction string
+	CurrentDate                      string
 }
 
 type MarkdownSection struct {

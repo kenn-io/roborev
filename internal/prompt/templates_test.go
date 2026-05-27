@@ -237,6 +237,83 @@ func TestGetSystemPrompt_Instructions(t *testing.T) {
 	}
 }
 
+func TestGetSystemPrompt_ToolchainVerificationInstruction(t *testing.T) {
+	fixedTime := time.Date(2030, 6, 15, 0, 0, 0, 0, time.UTC)
+	mockNow := func() time.Time { return fixedTime }
+
+	const marker = "toolchain and dependency manifests"
+
+	tests := []systemPromptTestCase{
+		{
+			name:         "Codex review includes toolchain-verification instruction",
+			agent:        "codex",
+			command:      "review",
+			wantContains: []string{marker},
+		},
+		{
+			name:         "Claude review includes toolchain-verification instruction",
+			agent:        "claude-code",
+			command:      "review",
+			wantContains: []string{marker},
+		},
+		{
+			name:         "Gemini review includes toolchain-verification instruction",
+			agent:        "gemini",
+			command:      "review",
+			wantContains: []string{marker},
+		},
+		{
+			name:         "Range inherits toolchain-verification instruction",
+			agent:        "codex",
+			command:      "range",
+			wantContains: []string{marker},
+		},
+		{
+			name:         "Dirty inherits toolchain-verification instruction",
+			agent:        "claude-code",
+			command:      "dirty",
+			wantContains: []string{marker},
+		},
+		{
+			name:         "Security includes toolchain-verification instruction",
+			agent:        "claude-code",
+			command:      "security",
+			wantContains: []string{marker},
+		},
+		{
+			name:         "Design review includes toolchain-verification instruction",
+			agent:        "claude-code",
+			command:      "design-review",
+			wantContains: []string{marker},
+		},
+		{
+			name:         "Default fallback review includes toolchain-verification instruction",
+			agent:        "test",
+			command:      "review",
+			wantContains: []string{marker},
+		},
+		{
+			name:            "Address (fix) excludes toolchain-verification instruction",
+			agent:           "claude-code",
+			command:         "address",
+			wantNotContains: []string{marker},
+		},
+		{
+			name:            "Gemini run excludes toolchain-verification instruction",
+			agent:           "gemini",
+			command:         "run",
+			wantNotContains: []string{marker},
+		},
+	}
+
+	for _, tc := range tests {
+		t.Run(tc.name, func(t *testing.T) {
+			got := getSystemPrompt(tc.agent, tc.command, mockNow)
+			tc.assert(t, got)
+		})
+	}
+}
+
 func TestGetSystemPrompt_Exported(t *testing.T) {
 	assert := assert.New(t)
 	before := time.Now().UTC().Truncate(24 * time.Hour)
