@@ -3537,7 +3537,7 @@ func TestIsMarkerOnlyOutput(t *testing.T) {
 func TestCIConfig_ResolvedBatchTimeout(t *testing.T) {
 	t.Run("default", func(t *testing.T) {
 		c := CIConfig{}
-		assert.Equal(t, 3*time.Minute, c.ResolvedBatchTimeout())
+		assert.Equal(t, 15*time.Minute, c.ResolvedBatchTimeout())
 	})
 	t.Run("custom", func(t *testing.T) {
 		c := CIConfig{BatchTimeout: "5m"}
@@ -3549,11 +3549,11 @@ func TestCIConfig_ResolvedBatchTimeout(t *testing.T) {
 	})
 	t.Run("invalid_falls_back", func(t *testing.T) {
 		c := CIConfig{BatchTimeout: "garbage"}
-		assert.Equal(t, 3*time.Minute, c.ResolvedBatchTimeout())
+		assert.Equal(t, 15*time.Minute, c.ResolvedBatchTimeout())
 	})
 	t.Run("negative_falls_back", func(t *testing.T) {
 		c := CIConfig{BatchTimeout: "-5m"}
-		assert.Equal(t, 3*time.Minute, c.ResolvedBatchTimeout())
+		assert.Equal(t, 15*time.Minute, c.ResolvedBatchTimeout())
 	})
 }
 
