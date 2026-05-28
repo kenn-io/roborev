@@ -91,6 +91,10 @@ func TestValidateClassifyAgent_CodexRejected(t *testing.T) {
 	assert.Contains(t, strings.ToLower(err.Error()), "structured output")
 }
 
+func TestValidateClassifyAgent_PiAccepted(t *testing.T) {
+	require.NoError(t, ValidateClassifyAgent("pi"))
+}
+
 func TestGetAvailableSchemaExactWithConfigUsesCommandOverride(t *testing.T) {
 	fakeBin := t.TempDir()
 	wrapper := filepath.Join(fakeBin, "claude-wrapper")
