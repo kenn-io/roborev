@@ -6,6 +6,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+
 	"go.kenn.io/roborev/internal/storage"
 )
 

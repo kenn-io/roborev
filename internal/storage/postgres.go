@@ -730,7 +730,7 @@ type PulledJob struct {
 // PullJobs fetches jobs from PostgreSQL updated after the given cursor.
 // Cursor format: "updated_at id" (space-separated) or empty for first pull.
 // Returns jobs not from the given machineID (to avoid echo).
-func (p *PgPool) PullJobs(ctx context.Context, excludeMachineID string, cursor string, limit int) ([]PulledJob, string, error) {
+func (p *PgPool) PullJobs(ctx context.Context, excludeMachineID, cursor string, limit int) ([]PulledJob, string, error) {
 	var cursorTime time.Time
 	var cursorID int64
 
@@ -905,7 +905,7 @@ func (p *PgPool) PullResponses(ctx context.Context, excludeMachineID string, aft
 	defer rows.Close()
 
 	var responses []PulledResponse
-	var lastID = afterID
+	lastID := afterID
 
 	for rows.Next() {
 		var r PulledResponse

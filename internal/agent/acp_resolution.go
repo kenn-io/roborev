@@ -105,7 +105,7 @@ func isAvailableWithConfig(name string, cfg *config.Config) bool {
 //
 // Optional backup agent names are tried after the preferred agent but
 // before the hardcoded fallback chain (see GetAvailable).
-func GetAvailableWithConfig(repoPath string, preferred string, cfg *config.Config, backups ...string) (Agent, error) {
+func GetAvailableWithConfig(repoPath, preferred string, cfg *config.Config, backups ...string) (Agent, error) {
 	rawPreferred := strings.TrimSpace(preferred)
 	preferred = resolveAlias(rawPreferred)
 
@@ -188,7 +188,7 @@ func applyAvailableCommand(a Agent, cfg *config.Config) Agent {
 	return applyAgentConfigOverrides(resolved, cfg)
 }
 
-func applyACPAgentConfigOverride(cfg *config.ACPAgentConfig, override *config.ACPAgentConfig) {
+func applyACPAgentConfigOverride(cfg, override *config.ACPAgentConfig) {
 	if cfg == nil || override == nil {
 		return
 	}

@@ -7,6 +7,7 @@ import (
 	"github.com/mattn/go-runewidth"
 	"github.com/muesli/ansi"
 	"github.com/stretchr/testify/assert"
+
 	"go.kenn.io/roborev/internal/storage"
 )
 

@@ -7,14 +7,15 @@ import (
 	"encoding/json"
 	"encoding/pem"
 	"fmt"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"net/http"
 	"net/http/httptest"
 	"strings"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const (
@@ -333,6 +334,7 @@ func TestTokenCaching(t *testing.T) {
 		}, "expected still 1 server call (cached), got %d", mock.callCount)
 	}
 }
+
 func TestTokenRefreshOnExpiry(t *testing.T) {
 	mock := &mockServer{
 		t: t,
@@ -386,6 +388,7 @@ func TestTokenRefreshOnExpiry(t *testing.T) {
 		}, "expected 2 server calls (refresh), got %d", mock.callCount)
 	}
 }
+
 func TestTokenExchangeError(t *testing.T) {
 	tp, _ := setupMockProvider(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusUnauthorized)

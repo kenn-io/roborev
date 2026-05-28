@@ -2,14 +2,6 @@ package daemon
 
 import (
 	"fmt"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"go.kenn.io/roborev/internal/config"
-	gitpkg "go.kenn.io/roborev/internal/git"
-	"go.kenn.io/roborev/internal/storage"
-	"go.kenn.io/roborev/internal/testenv"
-	"go.kenn.io/roborev/internal/testutil"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -20,6 +12,15 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/config"
+	gitpkg "go.kenn.io/roborev/internal/git"
+	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testenv"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 // listJobsResponse is the JSON shape returned by GET /api/jobs.
@@ -191,7 +192,7 @@ func TestHandleEnqueueExcludedBranch(t *testing.T) {
 	// Create .roborev.toml with excluded_branches
 	repoConfig := filepath.Join(repoDir, ".roborev.toml")
 	configContent := `excluded_branches = ["wip-feature", "draft"]`
-	if err := os.WriteFile(repoConfig, []byte(configContent), 0644); err != nil {
+	if err := os.WriteFile(repoConfig, []byte(configContent), 0o644); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "Failed to write repo config: %v", err)
@@ -278,7 +279,7 @@ func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
 	// Write repo config with excluded_commit_patterns
 	repoConfig := filepath.Join(repoDir, ".roborev.toml")
 	configContent := `excluded_commit_patterns = ["[skip review]", "[wip]"]`
-	if err := os.WriteFile(repoConfig, []byte(configContent), 0644); err != nil {
+	if err := os.WriteFile(repoConfig, []byte(configContent), 0o644); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "Failed to write repo config: %v", err)
@@ -714,7 +715,7 @@ func TestFindReusableSessionIDRejectsReusedBranchNameFromUnrelatedHistory(t *tes
 		}, "git rm failed: %v\n%s", err, out)
 	}
 	unrelatedFile := filepath.Join(repoDir, "unrelated.txt")
-	if err := os.WriteFile(unrelatedFile, []byte("unrelated\n"), 0644); err != nil {
+	if err := os.WriteFile(unrelatedFile, []byte("unrelated\n"), 0o644); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "WriteFile failed: %v", err)
@@ -848,7 +849,7 @@ func TestFindReusableSessionIDRejectsCandidateThatIsTooOldOnBranch(t *testing.T)
 
 	for i := range 51 {
 		nextFile := filepath.Join(repoDir, fmt.Sprintf("commit-%02d.txt", i))
-		if err := os.WriteFile(nextFile, fmt.Appendf(nil, "%d\n", i), 0644); err != nil {
+		if err := os.WriteFile(nextFile, fmt.Appendf(nil, "%d\n", i), 0o644); err != nil {
 			require.Condition(t, func() bool {
 				return false
 			}, "WriteFile failed: %v", err)
@@ -948,7 +949,7 @@ func TestFindReusableSessionIDFallsBackToOlderValidCandidate(t *testing.T) {
 		}, "git rm failed: %v\n%s", err, out)
 	}
 	unrelatedFile := filepath.Join(repoDir, "unrelated-newer.txt")
-	if err := os.WriteFile(unrelatedFile, []byte("unrelated newer\n"), 0644); err != nil {
+	if err := os.WriteFile(unrelatedFile, []byte("unrelated newer\n"), 0o644); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "WriteFile failed: %v", err)
@@ -1093,7 +1094,7 @@ func TestFindReusableSessionIDUsesConfigurableLookback(t *testing.T) {
 		}
 
 		unrelatedFile := filepath.Join(repoDir, fmt.Sprintf("unrelated-%02d.txt", i))
-		if err := os.WriteFile(unrelatedFile, fmt.Appendf(nil, "unrelated %02d\n", i), 0644); err != nil {
+		if err := os.WriteFile(unrelatedFile, fmt.Appendf(nil, "unrelated %02d\n", i), 0o644); err != nil {
 			require.Condition(t, func() bool {
 				return false
 			}, "WriteFile failed: %v", err)
@@ -1869,14 +1870,14 @@ func TestHandleEnqueueAgentAvailability(t *testing.T) {
 	gitOnlyDir := t.TempDir()
 	if runtime.GOOS == "windows" {
 		wrapper := fmt.Sprintf("@\"%s\" %%*\r\n", gitPath)
-		if err := os.WriteFile(filepath.Join(gitOnlyDir, "git.cmd"), []byte(wrapper), 0755); err != nil {
+		if err := os.WriteFile(filepath.Join(gitOnlyDir, "git.cmd"), []byte(wrapper), 0o755); err != nil {
 			require.Condition(t, func() bool {
 				return false
 			}, err)
 		}
 	} else {
 		wrapper := fmt.Sprintf("#!/bin/sh\nexec '%s' \"$@\"\n", gitPath)
-		if err := os.WriteFile(filepath.Join(gitOnlyDir, "git"), []byte(wrapper), 0755); err != nil {
+		if err := os.WriteFile(filepath.Join(gitOnlyDir, "git"), []byte(wrapper), 0o755); err != nil {
 			require.Condition(t, func() bool {
 				return false
 			}, err)
@@ -1975,7 +1976,7 @@ func TestHandleEnqueueAgentAvailability(t *testing.T) {
 					name = bin + ".cmd"
 					content = "@exit /b 0\r\n"
 				}
-				if err := os.WriteFile(filepath.Join(mockDir, name), []byte(content), 0755); err != nil {
+				if err := os.WriteFile(filepath.Join(mockDir, name), []byte(content), 0o755); err != nil {
 					require.Condition(t, func() bool {
 						return false
 					}, err)
@@ -2041,7 +2042,7 @@ func TestHandleEnqueueWorktreeGitDirIsolation(t *testing.T) {
 
 	// Make a new commit in the worktree so HEAD differs (commit B)
 	wtFile := filepath.Join(worktreeDir, "worktree-file.txt")
-	if err := os.WriteFile(wtFile, []byte("worktree content"), 0644); err != nil {
+	if err := os.WriteFile(wtFile, []byte("worktree content"), 0o644); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "write file: %v", err)
@@ -2137,7 +2138,7 @@ func TestHandleEnqueueRangeFromRootCommit(t *testing.T) {
 
 	// Add a second commit so we have a range
 	testFile := filepath.Join(repoDir, "second.txt")
-	if err := os.WriteFile(testFile, []byte("second"), 0644); err != nil {
+	if err := os.WriteFile(testFile, []byte("second"), 0o644); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, err)
@@ -2309,7 +2310,6 @@ func TestHandleListJobsJobTypeFilter(t *testing.T) {
 			assert.Condition(t, func() bool {
 				return false
 			}, "Expected job_type 'fix', got %q", resp.Jobs[0].JobType)
-
 		}
 	})
 
@@ -2733,7 +2733,6 @@ func TestHandleEnqueueCompactReasoning(t *testing.T) {
 			return false
 		}, "compact job reasoning = %q, want %q (fix default)",
 			job.Reasoning, "standard")
-
 	}
 }
 
@@ -2896,7 +2895,6 @@ func TestHandleListJobsSlashNormalization(t *testing.T) {
 				return false
 			}, "Expected 3 jobs with forward-slash prefix, got %d",
 				len(resp.Jobs))
-
 		}
 		for _, j := range resp.Jobs {
 			if !strings.HasPrefix(j.RepoPath, ws+"/") {
@@ -2904,7 +2902,6 @@ func TestHandleListJobsSlashNormalization(t *testing.T) {
 					return false
 				}, "Job %d repo_path %q should be under %s",
 					j.ID, j.RepoPath, ws)
-
 			}
 		}
 	})

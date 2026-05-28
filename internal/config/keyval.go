@@ -213,7 +213,7 @@ func GetConfigValue(cfg any, key string) (string, error) {
 
 // SetConfigValue sets a value on a config struct by its TOML key.
 // Converts the string value to the appropriate Go type.
-func SetConfigValue(cfg any, key string, value string) error {
+func SetConfigValue(cfg any, key, value string) error {
 	v := reflect.ValueOf(cfg)
 	if v.Kind() == reflect.Pointer {
 		v = v.Elem()

@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/testutil"
 )
 
@@ -163,7 +164,6 @@ func TestEmbedSnippet(t *testing.T) {
 				return false
 			}, "snippet should come right after shebang, got:\n%s",
 				result)
-
 		}
 		if !strings.Contains(result, "echo 'user code'") {
 			assert.Condition(t, func() bool {
@@ -196,7 +196,6 @@ func TestEmbedSnippet(t *testing.T) {
 				return false
 			}, "snippet should be prepended, got:\n%s",
 				result)
-
 		}
 	})
 
@@ -210,7 +209,6 @@ func TestEmbedSnippet(t *testing.T) {
 				return false
 			}, "shebang should get trailing newline, got:\n%q",
 				result)
-
 		}
 		if !strings.Contains(result, "SNIPPET") {
 			assert.Condition(t, func() bool {
@@ -287,7 +285,7 @@ func TestNeedsUpgrade(t *testing.T) {
 			filepath.Join(repo.HooksDir, hookPostRewrite),
 			[]byte("#!/bin/sh\n# roborev hook\n"+
 				"roborev remap\n"),
-			0755,
+			0o755,
 		)
 		if !NeedsUpgrade(
 			repo.Root, hookPostRewrite,
@@ -307,7 +305,7 @@ func TestNeedsUpgrade(t *testing.T) {
 			[]byte("#!/bin/sh\n# roborev "+
 				PostRewriteVersionMarker+
 				"\nroborev remap\n"),
-			0755,
+			0o755,
 		)
 		if NeedsUpgrade(
 			repo.Root, hookPostRewrite,
@@ -363,13 +361,12 @@ func TestNotInstalled(t *testing.T) {
 			hookPath := filepath.Join(
 				repo.Root, ".git", "hooks", hookPostCommit,
 			)
-			os.MkdirAll(hookPath, 0755)
+			os.MkdirAll(hookPath, 0o755)
 			if NotInstalled(repo.Root, hookPostCommit) {
 				assert.Condition(t, func() bool {
 					return false
 				}, "non-ENOENT error should not report "+
 					"as not installed")
-
 			}
 		},
 	)
@@ -418,7 +415,7 @@ func TestMissing(t *testing.T) {
 			[]byte("#!/bin/sh\n# roborev "+
 				PostRewriteVersionMarker+
 				"\nroborev remap\n"),
-			0755,
+			0o755,
 		)
 		if Missing(repo.Root, hookPostRewrite) {
 			assert.Condition(t, func() bool {
@@ -455,12 +452,11 @@ func TestMissing(t *testing.T) {
 			prPath := filepath.Join(
 				repo.Root, ".git", "hooks", hookPostRewrite,
 			)
-			os.MkdirAll(prPath, 0755)
+			os.MkdirAll(prPath, 0o755)
 			if Missing(repo.Root, hookPostRewrite) {
 				assert.Condition(t, func() bool {
 					return false
 				}, "non-ENOENT error should return false")
-
 			}
 		},
 	)
@@ -583,7 +579,7 @@ func TestInstall(t *testing.T) {
 			hookPath := filepath.Join(repo.HooksDir, tc.hookName)
 
 			if tc.initialContent != "" {
-				if err := os.WriteFile(hookPath, []byte(tc.initialContent), 0755); err != nil {
+				if err := os.WriteFile(hookPath, []byte(tc.initialContent), 0o755); err != nil {
 					require.Condition(t, func() bool {
 						return false
 					}, err)
@@ -628,7 +624,7 @@ func TestInstall(t *testing.T) {
 				repo := setupHooksRepo(t)
 				hookPath := filepath.Join(repo.HooksDir, hookPostCommit)
 				existing := shebang + "\necho 'custom'\n"
-				os.WriteFile(hookPath, []byte(existing), 0755)
+				os.WriteFile(hookPath, []byte(existing), 0o755)
 
 				if err := Install(repo.HooksDir, hookPostCommit, false); err != nil {
 					require.Condition(t, func() bool {
@@ -674,7 +670,7 @@ func TestInstall_ReReadError(t *testing.T) {
 		"# roborev post-commit hook\n" +
 		"ROBOREV=\"/usr/local/bin/roborev\"\n" +
 		"\"$ROBOREV\" enqueue --quiet 2>/dev/null\n"
-	os.WriteFile(hookPath, []byte(outdated), 0755)
+	os.WriteFile(hookPath, []byte(outdated), 0o755)
 
 	origReadFile := ReadFile
 	ReadFile = func(string) ([]byte, error) {
@@ -729,7 +725,6 @@ func TestInstallAll(t *testing.T) {
 			assert.Condition(t, func() bool {
 				return false
 			}, "%s should contain version marker", name)
-
 		}
 	}
 }
@@ -828,7 +823,7 @@ func TestUninstall(t *testing.T) {
 			repo := setupHooksRepo(t)
 			hookPath := filepath.Join(repo.HooksDir, tc.hookName)
 
-			if err := os.WriteFile(hookPath, []byte(tc.initialContent), 0755); err != nil {
+			if err := os.WriteFile(hookPath, []byte(tc.initialContent), 0o755); err != nil {
 				require.Condition(t, func() bool {
 					return false
 				}, err)
@@ -1005,7 +1000,7 @@ func TestIsRoborevSnippetLine(t *testing.T) {
 func setupHooksRepo(t *testing.T) *testutil.TestRepo {
 	t.Helper()
 	repo := testutil.NewTestRepo(t)
-	if err := os.MkdirAll(repo.HooksDir, 0755); err != nil {
+	if err := os.MkdirAll(repo.HooksDir, 0o755); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, err)
@@ -1060,7 +1055,7 @@ func assertFileNotContains(t *testing.T, path string, substrings ...string) {
 	}
 }
 
-func assertFileEquals(t *testing.T, path string, expected string) {
+func assertFileEquals(t *testing.T, path, expected string) {
 	t.Helper()
 	str := readFileForAssert(t, path)
 	if str != expected {
@@ -1070,7 +1065,7 @@ func assertFileEquals(t *testing.T, path string, expected string) {
 	}
 }
 
-func assertFileHasPrefix(t *testing.T, path string, prefix string) {
+func assertFileHasPrefix(t *testing.T, path, prefix string) {
 	t.Helper()
 	str := readFileForAssert(t, path)
 	if !strings.HasPrefix(str, prefix) {

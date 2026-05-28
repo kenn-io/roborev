@@ -365,7 +365,7 @@ func (u *Updater) installBinary(srcPath, dstPath string) error {
 	}
 
 	if u.deps.GOOS != "windows" {
-		if err := os.Chmod(dstPath, 0755); err != nil {
+		if err := os.Chmod(dstPath, 0o755); err != nil {
 			return fmt.Errorf("chmod %s: %w", filepath.Base(dstPath), err)
 		}
 	}
@@ -513,7 +513,7 @@ func (u *Updater) downloadFile(url, dest string, totalSize int64, progressFn fun
 }
 
 func extractTarGz(archivePath, destDir string) error {
-	if err := os.MkdirAll(destDir, 0755); err != nil {
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
 		return err
 	}
 
@@ -563,9 +563,9 @@ func extractTarEntry(tr *tar.Reader, header *tar.Header, destDir string) error {
 
 	switch header.Typeflag {
 	case tar.TypeDir:
-		return os.MkdirAll(target, 0755)
+		return os.MkdirAll(target, 0o755)
 	case tar.TypeReg:
-		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
+		if err := os.MkdirAll(filepath.Dir(target), 0o755); err != nil {
 			return err
 		}
 		outFile, err := os.Create(target)
@@ -694,10 +694,10 @@ func (u *Updater) saveCache(version string) error {
 	}
 
 	cachePath := filepath.Join(u.deps.CacheDir(), cacheFileName)
-	if err := os.MkdirAll(filepath.Dir(cachePath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(cachePath), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(cachePath, data, 0644)
+	return os.WriteFile(cachePath, data, 0o644)
 }
 
 func parseVersion(raw string) parsedVersion {

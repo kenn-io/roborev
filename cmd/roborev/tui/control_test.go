@@ -15,6 +15,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -1134,7 +1135,7 @@ func TestRemoveStaleSocket_NonexistentPath(t *testing.T) {
 
 func TestRemoveStaleSocket_RegularFileRefused(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "file.txt")
-	require.NoError(t, os.WriteFile(path, []byte("data"), 0600))
+	require.NoError(t, os.WriteFile(path, []byte("data"), 0o600))
 
 	err := removeStaleSocket(path)
 	require.Error(t, err, "expected error for regular file")
@@ -1268,7 +1269,7 @@ func TestCleanupStaleTUIRuntimes_NonSocketPreserved(t *testing.T) {
 	// Write metadata pointing to a regular file (not a socket).
 	// Cleanup should remove the metadata but not the file.
 	filePath := filepath.Join(tmpDir, "tui.999999999.sock")
-	require.NoError(os.WriteFile(filePath, []byte{}, 0600))
+	require.NoError(os.WriteFile(filePath, []byte{}, 0o600))
 
 	info := TUIRuntimeInfo{
 		PID:        999999999,

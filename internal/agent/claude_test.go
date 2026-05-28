@@ -23,7 +23,7 @@ func toolsArgValue(t *testing.T, args []string) string {
 	return ""
 }
 
-func assertTools(t *testing.T, args []string, want []string, dontWant []string) {
+func assertTools(t *testing.T, args, want, dontWant []string) {
 	t.Helper()
 	assert := assert.New(t)
 

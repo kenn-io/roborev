@@ -407,7 +407,7 @@ func TestWriteWorkflow_ExistingFile_NoForce(t *testing.T) {
 	outPath := filepath.Join(dir, "roborev.yml")
 
 	if err := os.WriteFile(
-		outPath, []byte("existing"), 0644); err != nil {
+		outPath, []byte("existing"), 0o644); err != nil {
 		require.NoError(t, err)
 	}
 
@@ -426,7 +426,7 @@ func TestWriteWorkflow_ExistingFile_Force(t *testing.T) {
 	outPath := filepath.Join(dir, "roborev.yml")
 
 	if err := os.WriteFile(
-		outPath, []byte("existing"), 0644); err != nil {
+		outPath, []byte("existing"), 0o644); err != nil {
 		require.NoError(t, err)
 	}
 

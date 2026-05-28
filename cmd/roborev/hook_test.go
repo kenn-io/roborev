@@ -17,6 +17,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/githook"
 	"go.kenn.io/roborev/internal/testutil"
 )
@@ -121,11 +122,11 @@ func TestUninstallHookCmd(t *testing.T) {
 			}
 
 			if len(tt.initialHooks) > 0 {
-				err := os.MkdirAll(repo.HooksDir, 0755)
+				err := os.MkdirAll(repo.HooksDir, 0o755)
 				require.NoError(t, err)
 				for name, content := range tt.initialHooks {
 					path := filepath.Join(repo.HooksDir, name)
-					err = os.WriteFile(path, []byte(content), 0755)
+					err = os.WriteFile(path, []byte(content), 0o755)
 					require.NoError(t, err)
 				}
 			}
@@ -309,9 +310,9 @@ func TestInitNoDaemon(t *testing.T) {
 				w.WriteHeader(200)
 			},
 			setupFiles: func(t *testing.T, repo *testutil.TestRepo) {
-				err := os.MkdirAll(repo.HooksDir, 0755)
+				err := os.MkdirAll(repo.HooksDir, 0o755)
 				require.NoError(t, err)
-				err = os.WriteFile(filepath.Join(repo.HooksDir, "post-commit"), []byte(githook.GeneratePostCommit()), 0755)
+				err = os.WriteFile(filepath.Join(repo.HooksDir, "post-commit"), []byte(githook.GeneratePostCommit()), 0o755)
 				require.NoError(t, err)
 			},
 			postCheck: func(t *testing.T, repo *testutil.TestRepo) {
@@ -328,11 +329,11 @@ func TestInitNoDaemon(t *testing.T) {
 				w.WriteHeader(200)
 			},
 			setupFiles: func(t *testing.T, repo *testutil.TestRepo) {
-				os.MkdirAll(repo.HooksDir, 0755)
+				os.MkdirAll(repo.HooksDir, 0o755)
 				os.WriteFile(
 					filepath.Join(repo.HooksDir, "post-commit"),
 					[]byte("#!/usr/bin/env python3\nprint('hello')\n"),
-					0755,
+					0o755,
 				)
 			},
 			expectContains: []string{
@@ -346,9 +347,9 @@ func TestInitNoDaemon(t *testing.T) {
 				w.WriteHeader(200)
 			},
 			setupFiles: func(t *testing.T, repo *testutil.TestRepo) {
-				os.MkdirAll(repo.HooksDir, 0755)
-				os.Chmod(repo.HooksDir, 0555)
-				t.Cleanup(func() { os.Chmod(repo.HooksDir, 0755) })
+				os.MkdirAll(repo.HooksDir, 0o755)
+				os.Chmod(repo.HooksDir, 0o555)
+				t.Cleanup(func() { os.Chmod(repo.HooksDir, 0o755) })
 			},
 			expectError:   true,
 			errorContains: "install hooks",
@@ -359,14 +360,14 @@ func TestInitNoDaemon(t *testing.T) {
 				w.WriteHeader(200)
 			},
 			setupFiles: func(t *testing.T, repo *testutil.TestRepo) {
-				os.MkdirAll(repo.HooksDir, 0755)
+				os.MkdirAll(repo.HooksDir, 0o755)
 				os.WriteFile(
 					filepath.Join(repo.HooksDir, "post-commit"),
 					[]byte("#!/usr/bin/env python3\nprint('hello')\n"),
-					0755,
+					0o755,
 				)
 				// Create post-rewrite as a directory so writing it fails.
-				os.MkdirAll(filepath.Join(repo.HooksDir, "post-rewrite"), 0755)
+				os.MkdirAll(filepath.Join(repo.HooksDir, "post-rewrite"), 0o755)
 			},
 			expectError:   true,
 			errorContains: "install hooks",
@@ -603,7 +604,7 @@ func TestInstallHookFromLinkedWorktree(t *testing.T) {
 	// no hooks installed yet.
 	repo := testutil.NewTestRepoWithCommit(t)
 	customHooks := filepath.Join(repo.Root, ".githooks")
-	require.NoError(t, os.MkdirAll(customHooks, 0755))
+	require.NoError(t, os.MkdirAll(customHooks, 0o755))
 
 	runGit := func(dir string, args ...string) string {
 		t.Helper()
@@ -654,7 +655,7 @@ func TestUninstallHookFromLinkedWorktree(t *testing.T) {
 	// installed hooks.
 	repo := testutil.NewTestRepoWithCommit(t)
 	customHooks := filepath.Join(repo.Root, ".githooks")
-	require.NoError(t, os.MkdirAll(customHooks, 0755))
+	require.NoError(t, os.MkdirAll(customHooks, 0o755))
 
 	runGit := func(dir string, args ...string) string {
 		t.Helper()
@@ -682,7 +683,7 @@ func TestUninstallHookFromLinkedWorktree(t *testing.T) {
 		}
 		require.NoError(t, os.WriteFile(
 			filepath.Join(customHooks, name),
-			[]byte(content), 0755))
+			[]byte(content), 0o755))
 	}
 
 	// Create a linked worktree.

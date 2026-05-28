@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
@@ -460,7 +461,7 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName
 	}
 
 	// Use consistent output writer, respecting --quiet
-	var out = cmd.OutOrStdout()
+	out := cmd.OutOrStdout()
 	if quiet {
 		out = io.Discard
 	}

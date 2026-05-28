@@ -204,15 +204,12 @@ func TestBatchMarkSynced(t *testing.T) {
 		// Empty slices should not error
 		if err := h.db.MarkJobsSynced([]int64{}); err != nil {
 			require.NoError(t, err)
-
 		}
 		if err := h.db.MarkReviewsSynced([]int64{}); err != nil {
 			require.NoError(t, err)
-
 		}
 		if err := h.db.MarkCommentsSynced([]int64{}); err != nil {
 			require.NoError(t, err)
-
 		}
 	})
 }

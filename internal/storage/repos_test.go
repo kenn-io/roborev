@@ -2,12 +2,13 @@ package storage
 
 import (
 	"database/sql"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"path/filepath"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 // setupDBAndRepo is a helper that opens a test database and creates a repository.

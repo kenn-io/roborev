@@ -3,9 +3,9 @@ package main
 import (
 	"encoding/binary"
 	"testing"
+	"unicode/utf16"
 
 	"github.com/stretchr/testify/require"
-	"unicode/utf16"
 )
 
 func TestIsRoborevDaemonCommandForUpdate(t *testing.T) {

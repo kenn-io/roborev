@@ -109,9 +109,9 @@ func (r *TestGitRepo) Run(args ...string) string {
 func (r *TestGitRepo) CommitFile(name, content, msg string) string {
 	r.t.Helper()
 	fullPath := filepath.Join(r.Dir, name)
-	err := os.MkdirAll(filepath.Dir(fullPath), 0755)
+	err := os.MkdirAll(filepath.Dir(fullPath), 0o755)
 	require.NoError(r.t, err)
-	err = os.WriteFile(fullPath, []byte(content), 0644)
+	err = os.WriteFile(fullPath, []byte(content), 0o644)
 	require.NoError(r.t, err)
 	r.Run("add", name)
 	r.Run("commit", "-m", msg)
@@ -167,9 +167,9 @@ func writeFiles(t *testing.T, dir string, files map[string]string) {
 	t.Helper()
 	for path, content := range files {
 		fullPath := filepath.Join(dir, path)
-		err := os.MkdirAll(filepath.Dir(fullPath), 0755)
+		err := os.MkdirAll(filepath.Dir(fullPath), 0o755)
 		require.NoError(t, err, "mkdir: %v")
-		err = os.WriteFile(fullPath, []byte(content), 0644)
+		err = os.WriteFile(fullPath, []byte(content), 0o644)
 		require.NoError(t, err, "write %s: %v", path, err)
 	}
 }

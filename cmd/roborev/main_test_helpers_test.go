@@ -56,8 +56,8 @@ func (r *GitTestRepo) Run(args ...string) string {
 func (r *GitTestRepo) CommitFile(name, content, msg string) string {
 	r.t.Helper()
 	path := filepath.Join(r.Dir, name)
-	require.NoError(r.t, os.MkdirAll(filepath.Dir(path), 0755))
-	require.NoError(r.t, os.WriteFile(path, []byte(content), 0644))
+	require.NoError(r.t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(r.t, os.WriteFile(path, []byte(content), 0o644))
 	r.Run("add", name)
 	r.Run("commit", "-m", msg)
 	return r.Run("rev-parse", "HEAD")
@@ -170,12 +170,12 @@ func NewMockDaemon(t *testing.T, hooks MockRefineHooks) *MockDaemon {
 	tmpDir := t.TempDir()
 	t.Setenv("ROBOREV_DATA_DIR", tmpDir)
 
-	require.NoError(t, os.MkdirAll(tmpDir, 0755), "failed to create data dir")
+	require.NoError(t, os.MkdirAll(tmpDir, 0o755), "failed to create data dir")
 	mockAddr := ts.URL[7:] // strip "http://"
 	daemonInfo := daemon.RuntimeInfo{Addr: mockAddr, PID: os.Getpid(), Version: version.Version}
 	data, err := json.Marshal(daemonInfo)
 	require.NoError(t, err, "failed to marshal daemon.json")
-	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "daemon.json"), data, 0644), "failed to write daemon.json")
+	require.NoError(t, os.WriteFile(filepath.Join(tmpDir, "daemon.json"), data, 0o644), "failed to write daemon.json")
 
 	origServerAddr := serverAddr
 	origGetAnyRunningDaemon := getAnyRunningDaemon

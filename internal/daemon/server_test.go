@@ -4,14 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"go.kenn.io/roborev/internal/agent"
-	"go.kenn.io/roborev/internal/config"
-	"go.kenn.io/roborev/internal/storage"
-	"go.kenn.io/roborev/internal/testenv"
-	"go.kenn.io/roborev/internal/testutil"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -20,6 +12,15 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/agent"
+	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testenv"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 // safeRecorder wraps httptest.ResponseRecorder with mutex protection for concurrent access

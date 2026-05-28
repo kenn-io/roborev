@@ -38,9 +38,20 @@ issues:
   max-issues-per-linter: 0
   max-same-issues: 0
 formatters:
+  enable:
+    - gci
+    - gofumpt
   exclusions:
     generated: lax
     paths:
       - third_party$
       - builtin$
       - examples$
+  settings:
+    gci:
+      sections:
+        - standard
+        - default
+        - prefix(go.kenn.io/roborev)
+    gofumpt:
+      extra-rules: true

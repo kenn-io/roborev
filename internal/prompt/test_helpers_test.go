@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 )
@@ -86,7 +87,7 @@ func setupTestRepo(t *testing.T) (string, []string) {
 	for i := 1; i <= 6; i++ {
 		filename := filepath.Join(r.dir, "file.txt")
 		content := strings.Repeat("x", i) // Different content each time
-		require.NoError(t, os.WriteFile(filename, []byte(content), 0644))
+		require.NoError(t, os.WriteFile(filename, []byte(content), 0o644))
 		r.git("add", "file.txt")
 		r.git("commit", "-m", "commit "+string(rune('0'+i)))
 
@@ -370,9 +371,9 @@ func setupGuidelinesRepo(t *testing.T, defaultBranch, baseGuidelines, branchGuid
 	// Initial commit with base guidelines
 	if baseGuidelines != "" {
 		toml := `review_guidelines = """` + "\n" + baseGuidelines + "\n" + `"""` + "\n"
-		require.NoError(t, os.WriteFile(filepath.Join(r.dir, ".roborev.toml"), []byte(toml), 0644), "write .roborev.toml")
+		require.NoError(t, os.WriteFile(filepath.Join(r.dir, ".roborev.toml"), []byte(toml), 0o644), "write .roborev.toml")
 	} else {
-		require.NoError(t, os.WriteFile(filepath.Join(r.dir, "README.md"), []byte("init"), 0644), "write README.md")
+		require.NoError(t, os.WriteFile(filepath.Join(r.dir, "README.md"), []byte("init"), 0o644), "write README.md")
 	}
 	r.git("add", "-A")
 	r.git("commit", "-m", "initial")
@@ -389,7 +390,7 @@ func setupGuidelinesRepo(t *testing.T, defaultBranch, baseGuidelines, branchGuid
 	if branchGuidelines != "" {
 		r.git("checkout", "-b", "feature-branch")
 		toml := `review_guidelines = """` + "\n" + branchGuidelines + "\n" + `"""` + "\n"
-		require.NoError(t, os.WriteFile(filepath.Join(r.dir, ".roborev.toml"), []byte(toml), 0644), "write .roborev.toml")
+		require.NoError(t, os.WriteFile(filepath.Join(r.dir, ".roborev.toml"), []byte(toml), 0o644), "write .roborev.toml")
 		r.git("add", ".roborev.toml")
 		r.git("commit", "-m", "update guidelines on branch")
 		featureSHA = r.git("rev-parse", "HEAD")

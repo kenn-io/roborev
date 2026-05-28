@@ -13,6 +13,7 @@ import (
 	"github.com/muesli/termenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -448,7 +449,6 @@ func TestRenderMarkdownLinesNoColor(t *testing.T) {
 }
 
 func TestReflowHelpRows(t *testing.T) {
-
 	tests := []struct {
 		name     string
 		items    []helpItem
@@ -490,7 +490,6 @@ func TestReflowHelpRows(t *testing.T) {
 }
 
 func TestRenderHelpTableLinesWithinWidth(t *testing.T) {
-
 	// Real help row sets used by the TUI views.
 	helpSets := map[string][][]helpItem{
 		"queue": {

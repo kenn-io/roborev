@@ -11,8 +11,9 @@ import (
 	"strings"
 	"time"
 
-	"go.kenn.io/roborev/internal/config"
 	_ "modernc.org/sqlite"
+
+	"go.kenn.io/roborev/internal/config"
 )
 
 const schema = `
@@ -140,7 +141,7 @@ func DefaultDBPath() string {
 func Open(dbPath string) (*DB, error) {
 	// Ensure directory exists
 	dir := filepath.Dir(dbPath)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, fmt.Errorf("create db directory: %w", err)
 	}
 

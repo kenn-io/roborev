@@ -12,7 +12,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func setupOldSchemaDB(t *testing.T, dbPath string, schema string, seedData string) {
+func setupOldSchemaDB(t *testing.T, dbPath, schema, seedData string) {
 	t.Helper()
 	rawDB, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)")
 	if err != nil {

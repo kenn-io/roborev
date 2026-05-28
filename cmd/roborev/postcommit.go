@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/git"
@@ -174,17 +175,17 @@ func hookLog(repo, outcome, message string) {
 	}
 	data = append(data, '\n')
 
-	if err := os.MkdirAll(filepath.Dir(logPath), 0700); err != nil {
+	if err := os.MkdirAll(filepath.Dir(logPath), 0o700); err != nil {
 		return
 	}
 	f, err := os.OpenFile(
-		logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0600,
+		logPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o600,
 	)
 	if err != nil {
 		return
 	}
 	defer f.Close()
-	_ = f.Chmod(0600)
+	_ = f.Chmod(0o600)
 	_, _ = f.Write(data)
 }
 

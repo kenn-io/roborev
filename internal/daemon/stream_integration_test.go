@@ -3,16 +3,18 @@
 package daemon
 
 import (
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"go.kenn.io/roborev/internal/config"
-	"go.kenn.io/roborev/internal/storage"
-	"go.kenn.io/roborev/internal/testutil"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 func waitForEventType(t *testing.T, ch <-chan Event, eventType string, timeout time.Duration) Event {

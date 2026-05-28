@@ -6,13 +6,14 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/config"
 )
 
 func TestResolveWorkflowModelForAgentSkipsGenericDefaultModel(t *testing.T) {
 	t.Parallel()
 
-	mkCfg := func(workflow string, workflowAgent string, workflowModel string) *config.Config {
+	mkCfg := func(workflow, workflowAgent, workflowModel string) *config.Config {
 		cfg := &config.Config{
 			DefaultAgent: "codex",
 			DefaultModel: "gpt-5.4",

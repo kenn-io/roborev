@@ -25,7 +25,7 @@ func AnyMatch(patterns []string, path string) (bool, error) {
 // AllMatch reports whether every path in paths matches at least one pattern
 // in patterns. Returns false for an empty path list (nothing to match).
 // Returns an error if any pattern is malformed.
-func AllMatch(patterns []string, paths []string) (bool, error) {
+func AllMatch(patterns, paths []string) (bool, error) {
 	if len(paths) == 0 {
 		return false, nil
 	}

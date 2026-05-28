@@ -40,13 +40,13 @@ func TestResolveRepoIdentifier(t *testing.T) {
 
 		tmpDir := t.TempDir()
 		orgDir := filepath.Join(tmpDir, "org")
-		require.NoError(t, os.Mkdir(orgDir, 0755), "Failed to create org dir")
+		require.NoError(t, os.Mkdir(orgDir, 0o755), "Failed to create org dir")
 
 		// Ensure we are in a safe directory (tmpDir) before modifying permissions of orgDir
 		chdir(t, tmpDir)
 
-		require.NoError(t, os.Chmod(orgDir, 0000), "Failed to chmod")
-		defer func() { _ = os.Chmod(orgDir, 0755) }()
+		require.NoError(t, os.Chmod(orgDir, 0o000), "Failed to chmod")
+		defer func() { _ = os.Chmod(orgDir, 0o755) }()
 
 		// The test expects "org/project" because it can't stat "org" to see if it's a repo,
 		// so it treats it as a name string.
@@ -58,7 +58,7 @@ func TestResolveRepoIdentifier(t *testing.T) {
 		root := newTestGitRepo(t).Dir
 		// Create common structure: root/sub/dir
 		subDir := filepath.Join(root, "sub", "dir")
-		require.NoError(t, os.MkdirAll(subDir, 0755))
+		require.NoError(t, os.MkdirAll(subDir, 0o755))
 
 		// Also create a non-git temp dir for that one case
 		nonGitDir := t.TempDir()

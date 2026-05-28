@@ -7,6 +7,7 @@ import (
 
 	"github.com/atotto/clipboard"
 	osc52 "github.com/aymanbagabas/go-osc52/v2"
+
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/streamfmt"
@@ -121,14 +122,17 @@ type logTickMsg struct{}
 // displayTickMsg triggers a local repaint without polling the daemon.
 type displayTickMsg struct{}
 
-type tickMsg time.Time
-type jobsMsg struct {
-	jobs    []storage.ReviewJob
-	hasMore bool
-	append  bool             // true to append to existing jobs, false to replace
-	seq     int              // fetch sequence number — stale responses (seq < model.fetchSeq) are discarded
-	stats   storage.JobStats // aggregate counts from server
-}
+type (
+	tickMsg time.Time
+	jobsMsg struct {
+		jobs    []storage.ReviewJob
+		hasMore bool
+		append  bool             // true to append to existing jobs, false to replace
+		seq     int              // fetch sequence number — stale responses (seq < model.fetchSeq) are discarded
+		stats   storage.JobStats // aggregate counts from server
+	}
+)
+
 type statusMsg struct {
 	status storage.DaemonStatus
 	gen    uint64 // fetch generation — discard if < model.fetchGen
@@ -143,17 +147,20 @@ type promptMsg struct {
 	review *storage.Review
 	jobID  int64 // The job ID that was requested (for stale response detection)
 }
-type closedMsg bool
-type closedResultMsg struct {
-	jobID            int64 // job ID for queue view rollback
-	reviewID         int64 // review ID for review view rollback
-	reviewView       bool  // true if from review view (rollback currentReview)
-	restoreSelection bool
-	oldState         bool
-	newState         bool   // the requested state (for pendingClosed validation)
-	seq              uint64 // request sequence number (for distinguishing same-state rapid toggles)
-	err              error
-}
+type (
+	closedMsg       bool
+	closedResultMsg struct {
+		jobID            int64 // job ID for queue view rollback
+		reviewID         int64 // review ID for review view rollback
+		reviewView       bool  // true if from review view (rollback currentReview)
+		restoreSelection bool
+		oldState         bool
+		newState         bool   // the requested state (for pendingClosed validation)
+		seq              uint64 // request sequence number (for distinguishing same-state rapid toggles)
+		err              error
+	}
+)
+
 type cancelResultMsg struct {
 	jobID            int64
 	oldState         storage.JobStatus
@@ -171,16 +178,22 @@ type rerunResultMsg struct {
 	oldVerdict    *string
 	err           error
 }
-type errMsg error
-type statusErrMsg struct {
-	err error
-	gen uint64
-}
-type configSaveErrMsg struct{ err error }
-type jobsErrMsg struct {
-	err error
-	seq int // fetch sequence number for staleness check
-}
+type (
+	errMsg       error
+	statusErrMsg struct {
+		err error
+		gen uint64
+	}
+)
+
+type (
+	configSaveErrMsg struct{ err error }
+	jobsErrMsg       struct {
+		err error
+		seq int // fetch sequence number for staleness check
+	}
+)
+
 type paginationErrMsg struct {
 	err error
 	seq int // fetch sequence number for staleness check

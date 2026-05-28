@@ -5,6 +5,7 @@ import (
 	"strings"
 
 	"github.com/mattn/go-runewidth"
+
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -377,6 +378,7 @@ func helpLines(tasksEnabled, noQuit bool) []string {
 	}
 	return lines
 }
+
 func (m model) helpMaxScroll() int {
 	reservedLines := 3 // title + blank + help hint
 	visibleLines := max(m.height-reservedLines, 5)
@@ -386,6 +388,7 @@ func (m model) helpMaxScroll() int {
 	}
 	return maxScroll
 }
+
 func (m model) renderHelpView() string {
 	var b strings.Builder
 

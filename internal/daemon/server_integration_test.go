@@ -3,15 +3,17 @@
 package daemon
 
 import (
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"go.kenn.io/roborev/internal/storage"
-	"go.kenn.io/roborev/internal/testutil"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 func TestHandleEnqueueReviewTypeNormalization(t *testing.T) {

@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -565,7 +566,7 @@ func writeRoborevConfig(t *testing.T, repo *TestGitRepo, content string) {
 	t.Helper()
 	err := os.WriteFile(
 		filepath.Join(repo.Dir, ".roborev.toml"),
-		[]byte(content), 0644,
+		[]byte(content), 0o644,
 	)
 	require.NoError(t, err, "write .roborev.toml: %v")
 }
@@ -849,23 +850,23 @@ func TestFindChildGitRepos(t *testing.T) {
 	parent := t.TempDir()
 
 	regularRepo := filepath.Join(parent, "regular")
-	os.Mkdir(regularRepo, 0755)
-	os.Mkdir(filepath.Join(regularRepo, ".git"), 0755)
+	os.Mkdir(regularRepo, 0o755)
+	os.Mkdir(filepath.Join(regularRepo, ".git"), 0o755)
 
 	worktreeRepo := filepath.Join(parent, "worktree")
-	os.Mkdir(worktreeRepo, 0755)
+	os.Mkdir(worktreeRepo, 0o755)
 	os.WriteFile(
 		filepath.Join(worktreeRepo, ".git"),
 		[]byte("gitdir: /some/main/.git/worktrees/wt"),
-		0644,
+		0o644,
 	)
 
 	plainDir := filepath.Join(parent, "plain")
-	os.Mkdir(plainDir, 0755)
+	os.Mkdir(plainDir, 0o755)
 
 	hiddenDir := filepath.Join(parent, ".hidden")
-	os.Mkdir(hiddenDir, 0755)
-	os.Mkdir(filepath.Join(hiddenDir, ".git"), 0755)
+	os.Mkdir(hiddenDir, 0o755)
+	os.Mkdir(filepath.Join(hiddenDir, ".git"), 0o755)
 
 	repos := findChildGitRepos(parent)
 
@@ -885,8 +886,8 @@ func TestFindChildGitReposHintPaths(t *testing.T) {
 	parent := t.TempDir()
 
 	repoDir := filepath.Join(parent, "my-repo")
-	os.Mkdir(repoDir, 0755)
-	os.Mkdir(filepath.Join(repoDir, ".git"), 0755)
+	os.Mkdir(repoDir, 0o755)
+	os.Mkdir(filepath.Join(repoDir, ".git"), 0o755)
 
 	_, _, err := executeReviewCmd("--repo", parent)
 	require.Error(t, err, "Expected error for non-git directory")

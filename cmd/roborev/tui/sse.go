@@ -8,6 +8,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+
 	"go.kenn.io/roborev/internal/daemon"
 )
 
@@ -111,7 +112,7 @@ func sseReadLoop(
 // sseCh or stopCh is closed, then delivers an sseEventMsg (or nil on
 // stop) to the Bubbletea event loop. Accepting stopCh avoids the need
 // to close sseCh on reconnect, which would race with the producer goroutine.
-func waitForSSE(sseCh <-chan struct{}, stopCh <-chan struct{}) tea.Cmd {
+func waitForSSE(sseCh, stopCh <-chan struct{}) tea.Cmd {
 	return func() tea.Msg {
 		select {
 		case <-sseCh:

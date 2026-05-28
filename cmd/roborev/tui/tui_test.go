@@ -4,17 +4,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/stretchr/testify/assert"
-	"go.kenn.io/roborev/internal/config"
-	"go.kenn.io/roborev/internal/daemon"
-	"go.kenn.io/roborev/internal/storage"
-	"go.kenn.io/roborev/internal/version"
-
-	// testServerAddr is a placeholder address used in tests that don't make real HTTP calls.
-	// Tests that need actual HTTP should use httptest.NewServer and pass ts.URL.
-	"github.com/stretchr/testify/require"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
@@ -25,8 +14,19 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	tea "github.com/charmbracelet/bubbletea"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/daemon"
+	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/version"
 )
 
+// testServerAddr is a placeholder address used in tests that don't make real HTTP calls.
+// Tests that need actual HTTP should use httptest.NewServer and pass ts.URL.
 const testServerAddr = "http://test.invalid:9999"
 
 // testEndpoint is a DaemonEndpoint parsed from testServerAddr.
@@ -616,7 +616,7 @@ func TestTUIHideClosedMalformedConfigNotOverwritten(t *testing.T) {
 	// Write malformed TOML that LoadGlobal will fail to parse
 	malformed := []byte(`this is not valid toml {{{`)
 	configPath := filepath.Join(tmpDir, "config.toml")
-	if err := os.WriteFile(configPath, malformed, 0644); err != nil {
+	if err := os.WriteFile(configPath, malformed, 0o644); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "write malformed config: %v", err)
@@ -1235,14 +1235,12 @@ func TestHandleFixKeyRejectsFixJob(t *testing.T) {
 			return false
 		}, "Expected flash 'Cannot fix a fix job', got %q",
 			updated.flashMessage)
-
 	}
 	if updated.currentView != viewQueue {
 		assert.Condition(t, func() bool {
 			return false
 		}, "Expected view to stay on queue, got %d",
 			updated.currentView)
-
 	}
 }
 
@@ -1560,7 +1558,7 @@ func TestNewModelLoadsMouseDisabledFromConfig(t *testing.T) {
 	tmpDir := setupTuiTestEnv(t)
 
 	configPath := filepath.Join(tmpDir, "config.toml")
-	if err := os.WriteFile(configPath, []byte("mouse_enabled = false\n"), 0644); err != nil {
+	if err := os.WriteFile(configPath, []byte("mouse_enabled = false\n"), 0o644); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "write config: %v", err)
@@ -1578,6 +1576,7 @@ func TestNewModelLoadsMouseDisabledFromConfig(t *testing.T) {
 		}, "expected startup options without mouse capture when disabled, got %d options", len(programOptionsForModel(m)))
 	}
 }
+
 func TestTUISelection(t *testing.T) {
 	t.Run("MaintainedOnInsert", func(t *testing.T) {
 		m := newModel(testEndpoint, withExternalIODisabled())
@@ -1598,7 +1597,6 @@ func TestTUISelection(t *testing.T) {
 
 		// Should still be on job ID=2, now at index 3
 		assertSelection(t, m, 3, 2)
-
 	})
 	t.Run("ClampsOnRemoval", func(t *testing.T) {
 		m := newModel(testEndpoint, withExternalIODisabled())
@@ -1619,7 +1617,6 @@ func TestTUISelection(t *testing.T) {
 
 		// Should clamp to last valid index and update selectedJobID
 		assertSelection(t, m, 1, 2)
-
 	})
 	t.Run("FirstJobOnEmpty", func(t *testing.T) {
 		m := newModel(testEndpoint, withExternalIODisabled())
@@ -1638,7 +1635,6 @@ func TestTUISelection(t *testing.T) {
 
 		// Should select first job
 		assertSelection(t, m, 0, 5)
-
 	})
 	t.Run("EmptyList", func(t *testing.T) {
 		m := newModel(testEndpoint, withExternalIODisabled())
@@ -1654,7 +1650,6 @@ func TestTUISelection(t *testing.T) {
 
 		// Empty list should have selectedIdx=-1 (no valid selection)
 		assertSelection(t, m, -1, 0)
-
 	})
 	t.Run("MaintainedOnLargeBatch", func(t *testing.T) {
 		m := newModel(testEndpoint, withExternalIODisabled())
@@ -1675,7 +1670,6 @@ func TestTUISelection(t *testing.T) {
 
 		// Should still follow job ID=1, now at index 30
 		assertSelection(t, m, 30, 1)
-
 	})
 }
 
@@ -1684,7 +1678,7 @@ func TestTUIHideClosed(t *testing.T) {
 		tmpDir := setupTuiTestEnv(t)
 
 		configPath := filepath.Join(tmpDir, "config.toml")
-		if err := os.WriteFile(configPath, []byte("hide_addressed_by_default = true\n"), 0644); err != nil {
+		if err := os.WriteFile(configPath, []byte("hide_addressed_by_default = true\n"), 0o644); err != nil {
 			require.Condition(t, func() bool {
 				return false
 			}, "write config: %v", err)
@@ -1696,7 +1690,6 @@ func TestTUIHideClosed(t *testing.T) {
 				return false
 			}, "hideClosed should be true when config sets hide_addressed_by_default = true")
 		}
-
 	})
 	t.Run("Toggle", func(t *testing.T) {
 		m := newModel(testEndpoint, withExternalIODisabled())
@@ -1726,7 +1719,6 @@ func TestTUIHideClosed(t *testing.T) {
 				return false
 			}, "hideClosed should be false after pressing 'h' again")
 		}
-
 	})
 	t.Run("FiltersJobs", func(t *testing.T) {
 		m := newModel(testEndpoint, withExternalIODisabled())
@@ -1780,7 +1772,6 @@ func TestTUIHideClosed(t *testing.T) {
 				return false
 			}, "Expected visible jobs 2 and 5, got %d and %d", visible[0].ID, visible[1].ID)
 		}
-
 	})
 	t.Run("SelectionMovesToVisible", func(t *testing.T) {
 		m := newModel(testEndpoint, withExternalIODisabled())
@@ -1801,7 +1792,6 @@ func TestTUIHideClosed(t *testing.T) {
 
 		// Selection should move to first visible job (ID=2)
 		assertSelection(t, m2, 1, 2)
-
 	})
 	t.Run("RefreshRevalidatesSelection", func(t *testing.T) {
 		m := newModel(testEndpoint, withExternalIODisabled())
@@ -1827,7 +1817,6 @@ func TestTUIHideClosed(t *testing.T) {
 
 		// Selection should move to job 2 since job 1 is now hidden
 		assertSelection(t, m2, 1, 2)
-
 	})
 	t.Run("RefreshPreservesSelectionInReviewView", func(t *testing.T) {
 		// When in review view, a job refresh should NOT move selectedIdx
@@ -1891,7 +1880,6 @@ func TestTUIHideClosed(t *testing.T) {
 		m2, _ := pressKey(m, 'j')
 
 		assertSelection(t, m2, 3, 4)
-
 	})
 	t.Run("withRepoFilter", func(t *testing.T) {
 		m := newModel(testEndpoint, withExternalIODisabled())
@@ -1918,7 +1906,6 @@ func TestTUIHideClosed(t *testing.T) {
 				return false
 			}, "Expected visible job ID=1, got %d", visible[0].ID)
 		}
-
 	})
 	t.Run("ClearRepoFilterRefetches", func(t *testing.T) {
 		// Scenario: hide closed enabled, then filter by repo, then press escape
@@ -1980,7 +1967,6 @@ func TestTUIHideClosed(t *testing.T) {
 				return false
 			}, "loadingJobs should be set when refetching after clearing repo filter")
 		}
-
 	})
 	t.Run("EnableTriggersRefetch", func(t *testing.T) {
 		m := newModel(testEndpoint, withExternalIODisabled())
@@ -2009,7 +1995,6 @@ func TestTUIHideClosed(t *testing.T) {
 				return false
 			}, "Command should be returned to fetch all jobs when enabling hideClosed")
 		}
-
 	})
 	t.Run("DisableRefetches", func(t *testing.T) {
 		m := newModel(testEndpoint, withExternalIODisabled())
@@ -2038,7 +2023,6 @@ func TestTUIHideClosed(t *testing.T) {
 				return false
 			}, "Expected a refetch command when disabling hideClosed")
 		}
-
 	})
 	t.Run("ValidConfigNotMutated", func(t *testing.T) {
 		tmpDir := setupTuiTestEnv(t)
@@ -2046,7 +2030,7 @@ func TestTUIHideClosed(t *testing.T) {
 		// Write a valid config with the hide-closed default enabled
 		validConfig := []byte("hide_addressed_by_default = true\n")
 		configPath := filepath.Join(tmpDir, "config.toml")
-		if err := os.WriteFile(configPath, validConfig, 0644); err != nil {
+		if err := os.WriteFile(configPath, validConfig, 0o644); err != nil {
 			require.Condition(t, func() bool {
 				return false
 			}, "write config: %v", err)
@@ -2090,7 +2074,6 @@ func TestTUIHideClosed(t *testing.T) {
 				return false
 			}, "valid config was mutated:\n  before: %q\n  after:  %q", validConfig, got)
 		}
-
 	})
 }
 
@@ -2110,7 +2093,6 @@ func TestTUIFlashMessage(t *testing.T) {
 				return false
 			}, "Expected flash message to appear in queue view")
 		}
-
 	})
 	t.Run("NotShownInDifferentView", func(t *testing.T) {
 		m := newModel(testEndpoint, withExternalIODisabled())
@@ -2128,7 +2110,6 @@ func TestTUIFlashMessage(t *testing.T) {
 				return false
 			}, "Flash message should not appear when viewing different view than where it was triggered")
 		}
-
 	})
 }
 

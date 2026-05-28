@@ -79,7 +79,7 @@ func closeOnContextDone(ctx context.Context, c io.Closer) func() {
 }
 
 func contextProcessError(
-	ctx context.Context, tracker *subprocessTracker, runErr error, parseErr error,
+	ctx context.Context, tracker *subprocessTracker, runErr, parseErr error,
 ) error {
 	ctxErr := ctx.Err()
 	if ctxErr == nil {

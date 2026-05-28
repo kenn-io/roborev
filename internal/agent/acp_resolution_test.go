@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/config"
 )
 
@@ -53,7 +54,7 @@ func TestIsConfiguredACPAgentName(t *testing.T) {
 		content := `[acp]
 name = "repo-acp"
 `
-		err := os.WriteFile(configPath, []byte(content), 0644)
+		err := os.WriteFile(configPath, []byte(content), 0o644)
 		require.NoError(t, err)
 
 		// With repo config, should match repo-acp

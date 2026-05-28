@@ -3,11 +3,12 @@
 package daemon
 
 import (
-	"github.com/stretchr/testify/assert"
 	"math"
 	"net/http"
 	"sync/atomic"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
 )
 
 func TestKillDaemonMakesHTTPForLoopback(t *testing.T) {

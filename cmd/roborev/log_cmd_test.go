@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/streamfmt"
 )
 
@@ -87,10 +88,10 @@ func TestLogCmd_RawFlag(t *testing.T) {
 
 	// Create a log file at the expected path.
 	logDir := filepath.Join(dir, "logs", "jobs")
-	os.MkdirAll(logDir, 0755)
+	os.MkdirAll(logDir, 0o755)
 	logPath := filepath.Join(logDir, "42.log")
 	rawContent := `{"type":"assistant"}` + "\n"
-	os.WriteFile(logPath, []byte(rawContent), 0644)
+	os.WriteFile(logPath, []byte(rawContent), 0o644)
 
 	var buf bytes.Buffer
 	cmd := logCmd()

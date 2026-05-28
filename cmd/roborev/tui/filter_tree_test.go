@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -440,7 +441,6 @@ func TestTUIManualExpandFailureDoesNotBlockSearch(t *testing.T) {
 }
 
 func TestTUITreeFilterSelectBranchTriggersRefetch(t *testing.T) {
-
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewFilter
 	setupFilterTree(&m, []treeFilterNode{
@@ -470,7 +470,6 @@ func TestTUITreeFilterSelectBranchTriggersRefetch(t *testing.T) {
 }
 
 func TestTUIBranchBackfillDoneSetWhenNoNullsRemain(t *testing.T) {
-
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.branchBackfillDone = false
 
@@ -482,7 +481,6 @@ func TestTUIBranchBackfillDoneSetWhenNoNullsRemain(t *testing.T) {
 }
 
 func TestTUIBranchBackfillDoneSetEvenWhenNullsRemain(t *testing.T) {
-
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.branchBackfillDone = false
 
@@ -494,7 +492,6 @@ func TestTUIBranchBackfillDoneSetEvenWhenNullsRemain(t *testing.T) {
 }
 
 func TestTUIBranchBackfillIsOneTimeOperation(t *testing.T) {
-
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.branchBackfillDone = false
 
@@ -512,7 +509,6 @@ func TestTUIBranchBackfillIsOneTimeOperation(t *testing.T) {
 }
 
 func TestTUIBranchBackfillDoneStaysTrueAfterNewJobs(t *testing.T) {
-
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.branchBackfillDone = true
 
@@ -639,8 +635,12 @@ func TestTUIFilterEnterClearsBranchMode(t *testing.T) {
 	m.currentView = viewFilter
 	m.filterBranchMode = true
 	setupFilterTree(&m, []treeFilterNode{
-		{name: "repo-a", rootPaths: []string{"/path/to/repo-a"}, count: 5,
-			children: []branchFilterItem{{name: "main", count: 3}}},
+		{
+			name:      "repo-a",
+			rootPaths: []string{"/path/to/repo-a"},
+			count:     5,
+			children:  []branchFilterItem{{name: "main", count: 3}},
+		},
 	})
 
 	m.filterSelectedIdx = 1
@@ -652,7 +652,6 @@ func TestTUIFilterEnterClearsBranchMode(t *testing.T) {
 }
 
 func TestTUILockedBranchPreservedOnRepoSelect(t *testing.T) {
-
 	nodes := []treeFilterNode{
 		makeNode("repo-a", 3),
 	}
@@ -667,11 +666,9 @@ func TestTUILockedBranchPreservedOnRepoSelect(t *testing.T) {
 
 		"Locked branch filter changed: got %q, want %q",
 		m2.activeBranchFilter, "locked-branch")
-
 }
 
 func TestTUILockedRepoPreservedOnBranchSelect(t *testing.T) {
-
 	node := makeNode("repo-a", 2)
 	node.children = []branchFilterItem{
 		{name: "feature-x", count: 2},
@@ -689,5 +686,4 @@ func TestTUILockedRepoPreservedOnBranchSelect(t *testing.T) {
 
 		"Locked repo filter changed: got %v, want [/locked/repo]",
 		m2.activeRepoFilter)
-
 }

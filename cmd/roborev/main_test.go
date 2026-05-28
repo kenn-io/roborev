@@ -22,6 +22,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/git"
@@ -782,7 +783,7 @@ func TestDaemonStopInvalidPID(t *testing.T) {
 	// Port 59999 is unlikely to be in use and will get connection refused quickly
 	daemonInfo := daemon.RuntimeInfo{PID: 0, Addr: "127.0.0.1:59999"}
 	data, _ := json.Marshal(daemonInfo)
-	if err := os.WriteFile(filepath.Join(tmpDir, "daemon.json"), data, 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(tmpDir, "daemon.json"), data, 0o644); err != nil {
 		require.NoError(t, err, "write daemon.json: %v")
 	}
 
@@ -802,7 +803,7 @@ func TestDaemonStopCorruptedFile(t *testing.T) {
 	tmpDir := setupIsolatedDataDir(t)
 
 	// Create corrupted daemon.json
-	if err := os.WriteFile(filepath.Join(tmpDir, "daemon.json"), []byte("not valid json"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(tmpDir, "daemon.json"), []byte("not valid json"), 0o644); err != nil {
 		require.NoError(t, err, "write daemon.json: %v")
 	}
 
@@ -821,7 +822,7 @@ func TestDaemonStopTruncatedFile(t *testing.T) {
 
 	// Create truncated daemon.json (partial JSON that triggers io.ErrUnexpectedEOF)
 	// A JSON object that ends abruptly mid-string causes io.ErrUnexpectedEOF
-	if err := os.WriteFile(filepath.Join(tmpDir, "daemon.json"), []byte(`{"pid": 123, "addr": "127.0.0.1:7373`), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(tmpDir, "daemon.json"), []byte(`{"pid": 123, "addr": "127.0.0.1:7373`), 0o644); err != nil {
 		require.NoError(t, err, "write daemon.json: %v")
 	}
 
@@ -848,16 +849,16 @@ func TestDaemonStopUnreadableFileSkipped(t *testing.T) {
 	daemonInfo := daemon.RuntimeInfo{PID: 12345, Addr: "127.0.0.1:7373"}
 	data, _ := json.Marshal(daemonInfo)
 	daemonPath := filepath.Join(tmpDir, "daemon.json")
-	if err := os.WriteFile(daemonPath, data, 0644); err != nil {
+	if err := os.WriteFile(daemonPath, data, 0o644); err != nil {
 		require.NoError(t, err, "write daemon.json: %v")
 	}
 
 	// Remove read permission
-	if err := os.Chmod(daemonPath, 0000); err != nil {
+	if err := os.Chmod(daemonPath, 0o000); err != nil {
 		require.NoError(t, err, "chmod daemon.json: %v")
 	}
 	// Restore permission for cleanup
-	defer func() { _ = os.Chmod(daemonPath, 0644) }()
+	defer func() { _ = os.Chmod(daemonPath, 0o644) }()
 
 	// Probe whether chmod 0000 actually blocks reads on this filesystem
 	// (some filesystems like Windows or certain ACL-based systems may not enforce this)

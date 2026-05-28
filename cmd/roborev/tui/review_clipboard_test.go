@@ -9,6 +9,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -111,7 +112,6 @@ func TestTUIYankCopyShowsFriendlyMessageWhenNoClipboardTool(t *testing.T) {
 }
 
 func TestTUIYankFlashViewNotAffectedByViewChange(t *testing.T) {
-
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.width = 80
@@ -197,7 +197,6 @@ func TestTUIFetchReviewAndCopyIncludesComments(t *testing.T) {
 }
 
 func TestTUIFetchReviewAndCopy404(t *testing.T) {
-
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	})

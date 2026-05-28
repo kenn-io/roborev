@@ -44,7 +44,7 @@ func writeRepoConfig(t *testing.T, dir string, cfg map[string]string) {
 // writeTestFile writes content to a file in the given directory.
 func writeTestFile(t *testing.T, dir, filename, content string) {
 	t.Helper()
-	err := os.WriteFile(filepath.Join(dir, filename), []byte(content), 0644)
+	err := os.WriteFile(filepath.Join(dir, filename), []byte(content), 0o644)
 	require.NoError(t, err, "failed to write %s", filename)
 }
 

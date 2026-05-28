@@ -27,7 +27,7 @@ func shortJobRef(job storage.ReviewJob) string {
 	return shortRef(job.GitRef)
 }
 
-func formatAgentLabel(agent string, model string) string {
+func formatAgentLabel(agent, model string) string {
 	if model != "" {
 		return fmt.Sprintf("%s: %s", agent, model)
 	}

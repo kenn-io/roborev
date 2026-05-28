@@ -14,12 +14,12 @@ var templateFS embed.FS
 // If a specific template exists for the agent, it uses that.
 // Otherwise, it falls back to the default templates.
 // Supported prompt types: review, range, dirty, address, design-review, run, security
-func GetSystemPrompt(agentName string, promptType string) string {
+func GetSystemPrompt(agentName, promptType string) string {
 	return getSystemPrompt(agentName, promptType, time.Now)
 }
 
 // getSystemPrompt is the internal implementation that accepts a time provider
-func getSystemPrompt(agentName string, promptType string, now func() time.Time) string {
+func getSystemPrompt(agentName, promptType string, now func() time.Time) string {
 	// Normalize agent name
 	agentName = strings.ToLower(agentName)
 	if agentName == "claude" {

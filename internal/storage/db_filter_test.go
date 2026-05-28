@@ -2,11 +2,12 @@ package storage
 
 import (
 	"fmt"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestJobCounts(t *testing.T) {
@@ -133,7 +134,6 @@ func TestListReposWithReviewCounts(t *testing.T) {
 	})
 
 	t.Run("counts include all job statuses", func(t *testing.T) {
-
 		claimed, _ := db.ClaimJob("worker-1")
 		if claimed != nil {
 			db.CompleteJob(claimed.ID, "codex", "prompt", "output")
@@ -441,7 +441,6 @@ func TestWithBranchOrEmpty(t *testing.T) {
 }
 
 func TestListJobsAndGetJobByIDReturnAgentic(t *testing.T) {
-
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -558,7 +557,6 @@ func TestListReposWithReviewCountsByBranch(t *testing.T) {
 	})
 
 	t.Run("filter by (none) branch", func(t *testing.T) {
-
 		commit4 := createCommit(t, db, repo1.ID, "jkl012")
 		enqueueJob(t, db, repo1.ID, commit4.ID, "jkl012")
 
@@ -611,7 +609,6 @@ func TestListBranchesWithCounts(t *testing.T) {
 	})
 
 	t.Run("filter by single repo", func(t *testing.T) {
-
 		result, err := db.ListBranchesWithCounts([]string{repo1.RootPath})
 		require.NoError(t, err, "ListBranchesWithCounts failed: %v")
 
@@ -620,7 +617,6 @@ func TestListBranchesWithCounts(t *testing.T) {
 	})
 
 	t.Run("filter by multiple repos", func(t *testing.T) {
-
 		result, err := db.ListBranchesWithCounts([]string{repo1.RootPath, repo2.RootPath})
 		require.NoError(t, err, "ListBranchesWithCounts failed: %v")
 
@@ -638,7 +634,6 @@ func TestListBranchesWithCounts(t *testing.T) {
 }
 
 func TestListJobsVerdictForBranchRangeReview(t *testing.T) {
-
 	db := openTestDB(t)
 	defer db.Close()
 
@@ -939,7 +934,6 @@ func TestPrefixFilterWithSpecialChars(t *testing.T) {
 	})
 
 	t.Run("backslash prefix matches normalized Windows path", func(t *testing.T) {
-
 		createRepo(t, db, `C:\Users\dev\workspace\project-a`)
 		rA, _ := db.GetRepoByPath(`C:\Users\dev\workspace\project-a`)
 		cA := createCommit(t, db, rA.ID, "win-a")
@@ -965,7 +959,6 @@ func TestPrefixFilterWithSpecialChars(t *testing.T) {
 		require.NoError(t, err, "ListReposWithReviewCounts with backslash prefix should not error: %v")
 		assert.Len(t, repos, 1)
 		assert.Equal(t, 1, total)
-
 	})
 }
 

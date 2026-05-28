@@ -234,7 +234,7 @@ func ghListRepos(ctx context.Context, owner, token, rawBaseURL string) ([]string
 
 // applyExclusions filters repos matching any of the exclusion patterns.
 // Matching is case-insensitive. Invalid patterns are logged once and skipped.
-func applyExclusions(repos []string, patterns []string) []string {
+func applyExclusions(repos, patterns []string) []string {
 	if len(patterns) == 0 {
 		return repos
 	}

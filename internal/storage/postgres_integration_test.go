@@ -5,19 +5,19 @@ package storage
 import (
 	"context"
 	"fmt"
-
-	"github.com/stretchr/testify/assert"
-	"go.kenn.io/roborev/internal/config"
-
-	// getIntegrationPostgresURL returns the postgres URL for integration tests.
-	// Set via TEST_POSTGRES_URL environment variable or use default from docker-compose.test.yml
-	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/config"
 )
 
+// getIntegrationPostgresURL returns the postgres URL for integration tests.
+// Set via TEST_POSTGRES_URL environment variable or use default from docker-compose.test.yml
 func getIntegrationPostgresURL() string {
 	if url := os.Getenv("TEST_POSTGRES_URL"); url != "" {
 		return url
@@ -310,7 +310,6 @@ func startSyncWorkerNoSync(
 			return false
 		}, "SyncWorker.Start failed for %s: %v",
 			machineName, err)
-
 	}
 	t.Cleanup(func() { worker.Stop() })
 
@@ -1436,7 +1435,6 @@ func TestIntegration_SyncNowWithProgressAbort(t *testing.T) {
 		}, "Expected partial push (abort after 1 batch), "+
 			"but pushed %d/%d jobs",
 			stats.PushedJobs, numJobs)
-
 	}
 
 	t.Logf("Progress abort test passed: pushed %d/%d jobs "+

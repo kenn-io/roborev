@@ -31,7 +31,7 @@ func tuiRuntimePath(pid int) string {
 func WriteTUIRuntime(info TUIRuntimeInfo) error {
 	path := tuiRuntimePath(info.PID)
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
 
@@ -64,7 +64,7 @@ func WriteTUIRuntime(info TUIRuntimeInfo) error {
 	if err := os.Rename(tmpPath, path); err != nil {
 		return err
 	}
-	if err := os.Chmod(path, 0600); err != nil {
+	if err := os.Chmod(path, 0o600); err != nil {
 		return err
 	}
 

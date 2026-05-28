@@ -185,5 +185,4 @@ func TestConfigureSubprocessDoesNotMarkCanceledWhenProcessAlreadyExited(t *testi
 		require.ErrorIs(t, err, os.ErrProcessDone, "expected os.ErrProcessDone, got %v", err)
 	}
 	require.False(t, tracker.canceledByContext.Load(), "tracker should stay false when cancel runs after process exit")
-
 }

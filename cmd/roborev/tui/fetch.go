@@ -11,6 +11,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
 	daemonclient "go.kenn.io/roborev/internal/daemon_client"
@@ -896,6 +897,7 @@ func (m model) fetchCommitMsg(job *storage.ReviewJob) tea.Cmd {
 		return commitMsgMsg{jobID: jobID, content: sanitizeForDisplay(content.String())}
 	}
 }
+
 func (m model) fetchPatch(jobID int64) tea.Cmd {
 	return func() tea.Msg {
 		patch, err := m.loadPatch(jobID)

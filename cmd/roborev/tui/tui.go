@@ -19,6 +19,7 @@ import (
 	"github.com/charmbracelet/lipgloss/table"
 	"github.com/mattn/go-runewidth"
 	"github.com/muesli/termenv"
+
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
 	daemonclient "go.kenn.io/roborev/internal/daemon_client"

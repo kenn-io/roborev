@@ -476,7 +476,7 @@ func (db *DB) CompleteJob(jobID int64, agent, prompt, output string) error {
 // Pass empty workerID to skip the ownership check (for admin/test callers).
 // Returns true if the job was actually updated (false when ownership or status
 // check prevented the update).
-func (db *DB) FailJob(jobID int64, workerID string, errorMsg string) (bool, error) {
+func (db *DB) FailJob(jobID int64, workerID, errorMsg string) (bool, error) {
 	now := time.Now().Format(time.RFC3339)
 	var result sql.Result
 	var err error
@@ -872,7 +872,7 @@ func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions) (s
 }
 
 // ListJobs returns jobs with optional status, repo, branch, and closed filters.
-func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int, opts ...ListJobsOption) ([]ReviewJob, error) {
+func (db *DB) ListJobs(statusFilter, repoFilter string, limit, offset int, opts ...ListJobsOption) ([]ReviewJob, error) {
 	query := `
 		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.session_id, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.prompt, j.retry_count,
@@ -993,7 +993,7 @@ func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
 func (db *DB) GetJobCounts() (queued, running, done, failed, canceled, applied, rebased, skipped int, err error) {
 	rows, err := db.Query(`SELECT status, COUNT(*) FROM review_jobs GROUP BY status`)
 	if err != nil {
-		return
+		return queued, running, done, failed, canceled, applied, rebased, skipped, err
 	}
 	defer rows.Close()
 
@@ -1001,7 +1001,7 @@ func (db *DB) GetJobCounts() (queued, running, done, failed, canceled, applied, 
 		var status string
 		var count int
 		if err = rows.Scan(&status, &count); err != nil {
-			return
+			return queued, running, done, failed, canceled, applied, rebased, skipped, err
 		}
 		switch JobStatus(status) {
 		case JobStatusQueued:
@@ -1023,7 +1023,7 @@ func (db *DB) GetJobCounts() (queued, running, done, failed, canceled, applied, 
 		}
 	}
 	err = rows.Err()
-	return
+	return queued, running, done, failed, canceled, applied, rebased, skipped, err
 }
 
 // UpdateJobBranch sets the branch field for a job that doesn't have one.

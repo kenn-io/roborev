@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/config"
 )
 
@@ -22,7 +23,7 @@ func installFakeGHAuthToken(t *testing.T, token string) {
 	dir := t.TempDir()
 	scriptPath := filepath.Join(dir, "gh")
 	script := "#!/bin/sh\nif [ \"$1\" = \"auth\" ] && [ \"$2\" = \"token\" ]; then\n  printf '%s\\n' " + "'" + token + "'\n  exit 0\nfi\nexit 1\n"
-	require.NoError(t, os.WriteFile(scriptPath, []byte(script), 0755))
+	require.NoError(t, os.WriteFile(scriptPath, []byte(script), 0o755))
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
@@ -91,7 +92,7 @@ func setupFakeGitHubEvent(t *testing.T, event map[string]any) {
 	t.Helper()
 	eventFile := filepath.Join(t.TempDir(), "event.json")
 	data, _ := json.Marshal(event)
-	if err := os.WriteFile(eventFile, data, 0644); err != nil {
+	if err := os.WriteFile(eventFile, data, 0o644); err != nil {
 		require.NoError(t, err)
 	}
 	t.Setenv("GITHUB_EVENT_PATH", eventFile)
@@ -120,7 +121,6 @@ func TestDetectGitRef_NoEnv(t *testing.T) {
 
 	_, err := detectGitRef()
 	require.Error(t, err)
-
 }
 
 func TestDetectPRNumber_EventJSON(t *testing.T) {
@@ -152,7 +152,6 @@ func TestDetectPRNumber_NoEnv(t *testing.T) {
 
 	_, err := detectPRNumber()
 	require.Error(t, err)
-
 }
 
 func TestExtractHeadSHA(t *testing.T) {

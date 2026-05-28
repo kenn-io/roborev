@@ -123,7 +123,7 @@ func ResolveWorkflowModelForAgent(
 	)
 }
 
-func workflowModelComparableAgentName(name string, repoPath string, cfg *config.Config) string {
+func workflowModelComparableAgentName(name, repoPath string, cfg *config.Config) string {
 	name = strings.TrimSpace(name)
 	if isConfiguredACPAgentName(name, cfg, repoPath) {
 		return defaultACPName

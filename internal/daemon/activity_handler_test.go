@@ -2,11 +2,12 @@ package daemon
 
 import (
 	"encoding/json"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"net/http"
 	"net/http/httptest"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 type activityResponse struct {
@@ -38,7 +39,6 @@ func TestHandleActivity_MethodNotAllowed(t *testing.T) {
 	w := requestActivity(s, http.MethodPost, "")
 	assert.Equal(t, http.StatusMethodNotAllowed, w.Code,
 		"assertion failed", "expected 405, got %d", w.Code)
-
 }
 
 func TestHandleActivity_Limits(t *testing.T) {
@@ -86,5 +86,4 @@ func TestHandleActivity_NilActivityLog(t *testing.T) {
 	resp := decodeActivityResponse(t, w)
 	assert.Empty(t, resp.Entries,
 		"assertion failed", "expected 0 entries with nil log, got %d", len(resp.Entries))
-
 }

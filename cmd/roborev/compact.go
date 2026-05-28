@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
@@ -655,12 +656,12 @@ func writeCompactMetadata(consolidatedJobID int64, sourceJobIDs []int64) error {
 	}
 
 	dataDir := config.DataDir()
-	if err := os.MkdirAll(dataDir, 0755); err != nil {
+	if err := os.MkdirAll(dataDir, 0o755); err != nil {
 		return fmt.Errorf("create data directory: %w", err)
 	}
 
 	path := filepath.Join(dataDir, getCompactMetadataFilename(consolidatedJobID))
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := os.WriteFile(path, data, 0o644); err != nil {
 		return fmt.Errorf("write metadata file: %w", err)
 	}
 

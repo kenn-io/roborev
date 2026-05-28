@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -113,7 +114,6 @@ func TestGetCommentsForJob(t *testing.T) {
 
 		_, err := getCommentsForJob(42)
 		require.Error(t, err)
-
 	})
 }
 
@@ -265,7 +265,7 @@ func TestFindJobForCommit(t *testing.T) {
 			setupTest: func(t *testing.T) (string, []MockStep) {
 				tmpDir := normalizeTestPath(t, t.TempDir())
 				repoPath := filepath.Join(tmpDir, "repo")
-				if err := os.MkdirAll(repoPath, 0755); err != nil {
+				if err := os.MkdirAll(repoPath, 0o755); err != nil {
 					require.NoError(t, err)
 				}
 				return repoPath, []MockStep{

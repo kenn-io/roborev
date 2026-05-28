@@ -11,6 +11,7 @@ import (
 	xansi "github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-runewidth"
 	"github.com/muesli/termenv"
+
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/streamfmt"
 )
@@ -341,7 +342,7 @@ func newMarkdownCache(tabWidth int) *markdownCache {
 // Fence detection follows CommonMark rules: 0-3 spaces of indentation
 // followed by 3+ backticks or 3+ tildes. A closing fence must use the
 // same character and be at least as long as the opening fence.
-func truncateLongLines(text string, maxWidth int, tabWidth int) string {
+func truncateLongLines(text string, maxWidth, tabWidth int) string {
 	if maxWidth <= 0 {
 		return text
 	}

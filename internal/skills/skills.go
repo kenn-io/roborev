@@ -265,7 +265,7 @@ func installAgent(spec agentSpec) (InstallResult, error) {
 	}
 
 	skillsDir := agentSkillsDir(home, spec)
-	if err := os.MkdirAll(skillsDir, 0755); err != nil {
+	if err := os.MkdirAll(skillsDir, 0o755); err != nil {
 		return result, fmt.Errorf("create skills dir: %w", err)
 	}
 
@@ -278,14 +278,14 @@ func installAgent(spec agentSpec) (InstallResult, error) {
 		skillName := skill.DirName
 		skillDir := filepath.Join(skillsDir, skillName)
 
-		if err := os.MkdirAll(skillDir, 0755); err != nil {
+		if err := os.MkdirAll(skillDir, 0o755); err != nil {
 			return result, fmt.Errorf("create %s dir: %w", skillName, err)
 		}
 
 		destPath := filepath.Join(skillDir, "SKILL.md")
 		existed := fileExists(destPath)
 
-		if err := os.WriteFile(destPath, skill.Content, 0644); err != nil {
+		if err := os.WriteFile(destPath, skill.Content, 0o644); err != nil {
 			return result, fmt.Errorf("write %s/SKILL.md: %w", skillName, err)
 		}
 

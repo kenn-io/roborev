@@ -11,6 +11,7 @@ import (
 	"time"
 
 	acp "github.com/coder/acp-go-sdk"
+
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/version"
 )
@@ -129,7 +130,6 @@ func (a *ACPAgent) WithReasoning(level ReasoningLevel) Agent {
 }
 
 func (a *ACPAgent) WithAgentic(agentic bool) Agent {
-
 	// Set the appropriate mode based on agentic flag
 	mode := a.ReadOnlyMode
 	if agentic && a.AutoApproveMode != "" {

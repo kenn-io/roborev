@@ -20,7 +20,7 @@ var ErrAllFailed = errors.New(
 
 // getAvailableWithConfig is a variable for dependency injection in tests.
 // It wraps agent.GetAvailableWithConfig with repoPath as the first parameter.
-var getAvailableWithConfig = func(repoPath string, preferred string, cfg *config.Config, backups ...string) (agent.Agent, error) {
+var getAvailableWithConfig = func(repoPath, preferred string, cfg *config.Config, backups ...string) (agent.Agent, error) {
 	return agent.GetAvailableWithConfig(repoPath, preferred, cfg, backups...)
 }
 

@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/githook"
 	"go.kenn.io/roborev/internal/testutil"
 )
@@ -78,7 +79,7 @@ func TestInitCmdCreatesHooksDirectory(t *testing.T) {
 
 	info, err := os.Stat(repo.HookPath)
 	require.NoError(t, err)
-	assert.NotZero(t, info.Mode()&0111, "post-commit hook is not executable")
+	assert.NotZero(t, info.Mode()&0o111, "post-commit hook is not executable")
 }
 
 func TestInitCmdUpgradesOutdatedHook(t *testing.T) {

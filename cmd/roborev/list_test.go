@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -26,7 +27,7 @@ type listTestCase struct {
 	args          []string
 	handler       http.HandlerFunc
 	repoSetup     func(t *testing.T) repoSetupResult
-	check         func(t *testing.T, output string, query string, repo *TestGitRepo, wd string)
+	check         func(t *testing.T, output, query string, repo *TestGitRepo, wd string)
 	wantOutput    []string
 	notWantOutput []string
 	wantError     string
@@ -104,7 +105,7 @@ func TestListCommand(t *testing.T) {
 			name:    "json output passes through raw response",
 			args:    []string{"--json"},
 			handler: jobsHandler(testJobs, true),
-			check: func(t *testing.T, output string, query string, repo *TestGitRepo, wd string) {
+			check: func(t *testing.T, output, query string, repo *TestGitRepo, wd string) {
 				var parsed []storage.ReviewJob
 				require.NoError(t, json.Unmarshal([]byte(output), &parsed), "json output not valid JSON\noutput: %s", output)
 				assert.Len(t, parsed, 2)
@@ -171,7 +172,7 @@ func TestListCommand(t *testing.T) {
 				return repoSetupResult{workingDir: worktreeDir, repo: repo, extraArgs: nil}
 			},
 			handler: jobsHandler([]storage.ReviewJob{}, false),
-			check: func(t *testing.T, output string, query string, repo *TestGitRepo, wd string) {
+			check: func(t *testing.T, output, query string, repo *TestGitRepo, wd string) {
 				assert.Contains(t, query, url.QueryEscape(repo.Dir), "expected main repo path in query")
 				assert.Contains(t, query, "branch=wt-branch", "expected branch in query")
 				assert.NotContains(t, query, url.QueryEscape(wd), "expected worktree path NOT in query")
@@ -218,7 +219,7 @@ func TestListCommand(t *testing.T) {
 				return repoSetupResult{workingDir: worktreeDir, repo: repo, extraArgs: []string{"--repo", worktreeDir}}
 			},
 			handler: jobsHandler([]storage.ReviewJob{}, false),
-			check: func(t *testing.T, output string, query string, repo *TestGitRepo, wd string) {
+			check: func(t *testing.T, output, query string, repo *TestGitRepo, wd string) {
 				assert.Contains(t, query, url.QueryEscape(repo.Dir), "expected main repo path in query")
 				assert.NotContains(t, query, url.QueryEscape(wd), "expected worktree path NOT in query")
 			},

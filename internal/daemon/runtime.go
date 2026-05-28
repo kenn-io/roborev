@@ -72,7 +72,7 @@ func WriteRuntime(ep DaemonEndpoint, version string) error {
 
 	path := RuntimePath()
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return err
 	}
 
@@ -112,7 +112,7 @@ func WriteRuntime(ep DaemonEndpoint, version string) error {
 	// Set permissions to 0644 explicitly. This intentionally ignores umask
 	// because the runtime file must be readable by other processes (CLI commands
 	// discovering the daemon). The file contains only PID/port/version, not secrets.
-	if err := os.Chmod(path, 0644); err != nil {
+	if err := os.Chmod(path, 0o644); err != nil {
 		return err
 	}
 

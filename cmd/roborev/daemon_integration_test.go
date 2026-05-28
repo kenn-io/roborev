@@ -6,16 +6,17 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"go.kenn.io/roborev/internal/daemon"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/daemon"
 )
 
 func TestDaemonRunStartsAndShutdownsCleanly(t *testing.T) {
@@ -127,7 +128,7 @@ func setupTestDaemon(t *testing.T) (string, string) {
 	t.Setenv("ROBOREV_DATA_DIR", tmpDir)
 
 	// Write minimal config
-	if err := os.WriteFile(configPath, []byte(`max_workers = 1`), 0644); err != nil {
+	if err := os.WriteFile(configPath, []byte(`max_workers = 1`), 0o644); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "write config: %v", err)
@@ -327,7 +328,6 @@ func TestDaemonSignalCleanup(t *testing.T) {
 				return false
 			}, "expected signal.Stop (cleanup) to be"+
 				" called after signal shutdown")
-
 		}
 	case <-time.After(5 * time.Second):
 		require.Condition(t, func() bool {

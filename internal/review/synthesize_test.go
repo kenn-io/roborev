@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 )
@@ -272,7 +273,7 @@ func TestSynthesize_PassesGlobalConfigToResolver(t *testing.T) {
 	var seenAgent string
 	var seenCfg *config.Config
 	cap := newCapturingAgent()
-	getAvailableWithConfig = func(repoPath string, agentName string, cfg *config.Config, backups ...string) (agent.Agent, error) {
+	getAvailableWithConfig = func(repoPath, agentName string, cfg *config.Config, backups ...string) (agent.Agent, error) {
 		seenAgent = agentName
 		seenCfg = cfg
 		return cap, nil

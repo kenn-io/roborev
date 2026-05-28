@@ -4,7 +4,6 @@ import (
 	"bytes"
 	"context"
 	"fmt"
-	acp "github.com/coder/acp-go-sdk"
 	"io"
 	"os"
 	"os/exec"
@@ -13,6 +12,8 @@ import (
 	"sync"
 	"syscall"
 	"unicode/utf8"
+
+	acp "github.com/coder/acp-go-sdk"
 )
 
 type acpTerminal struct {
@@ -270,7 +271,6 @@ func (bw *boundedWriter) trimToMaxSizeLocked() {
 }
 
 func (c *acpClient) CreateTerminal(ctx context.Context, params acp.CreateTerminalRequest) (acp.CreateTerminalResponse, error) {
-
 	// Validate session ID
 	if err := c.validateSessionID(params.SessionId); err != nil {
 		return acp.CreateTerminalResponse{}, err
@@ -425,7 +425,6 @@ func (c *acpClient) CreateTerminal(ctx context.Context, params acp.CreateTermina
 }
 
 func (c *acpClient) KillTerminal(ctx context.Context, params acp.KillTerminalRequest) (acp.KillTerminalResponse, error) {
-
 	// Validate session ID
 	if err := c.validateSessionID(params.SessionId); err != nil {
 		return acp.KillTerminalResponse{}, err
@@ -445,7 +444,6 @@ func (c *acpClient) KillTerminal(ctx context.Context, params acp.KillTerminalReq
 }
 
 func (c *acpClient) TerminalOutput(ctx context.Context, params acp.TerminalOutputRequest) (acp.TerminalOutputResponse, error) {
-
 	// Validate session ID
 	if err := c.validateSessionID(params.SessionId); err != nil {
 		return acp.TerminalOutputResponse{}, err
@@ -479,7 +477,6 @@ func (c *acpClient) TerminalOutput(ctx context.Context, params acp.TerminalOutpu
 }
 
 func (c *acpClient) ReleaseTerminal(ctx context.Context, params acp.ReleaseTerminalRequest) (acp.ReleaseTerminalResponse, error) {
-
 	// Validate session ID
 	if err := c.validateSessionID(params.SessionId); err != nil {
 		return acp.ReleaseTerminalResponse{}, err
@@ -500,7 +497,6 @@ func (c *acpClient) ReleaseTerminal(ctx context.Context, params acp.ReleaseTermi
 }
 
 func (c *acpClient) WaitForTerminalExit(ctx context.Context, params acp.WaitForTerminalExitRequest) (acp.WaitForTerminalExitResponse, error) {
-
 	// Validate session ID
 	if err := c.validateSessionID(params.SessionId); err != nil {
 		return acp.WaitForTerminalExitResponse{}, err

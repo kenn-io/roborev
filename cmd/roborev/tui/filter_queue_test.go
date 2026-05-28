@@ -5,6 +5,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/assert"
+
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -107,7 +108,6 @@ func TestTUIMultiPathFilterStatusCounts(t *testing.T) {
 }
 
 func TestTUIBranchFilterApplied(t *testing.T) {
-
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
@@ -130,7 +130,6 @@ func TestTUIBranchFilterApplied(t *testing.T) {
 }
 
 func TestTUIBranchFilterNone(t *testing.T) {
-
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
@@ -152,7 +151,6 @@ func TestTUIBranchFilterNone(t *testing.T) {
 }
 
 func TestTUIBranchFilterCombinedWithRepoFilter(t *testing.T) {
-
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
@@ -174,7 +172,6 @@ func TestTUIBranchFilterCombinedWithRepoFilter(t *testing.T) {
 }
 
 func TestTUINavigateDownNoLoadMoreWhenBranchFiltered(t *testing.T) {
-
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{makeJob(1, withBranch("feature"))}
@@ -192,7 +189,6 @@ func TestTUINavigateDownNoLoadMoreWhenBranchFiltered(t *testing.T) {
 }
 
 func TestTUINavigateJKeyNoLoadMoreWhenBranchFiltered(t *testing.T) {
-
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{makeJob(1, withBranch("feature"))}
@@ -210,7 +206,6 @@ func TestTUINavigateJKeyNoLoadMoreWhenBranchFiltered(t *testing.T) {
 }
 
 func TestTUIPageDownNoLoadMoreWhenBranchFiltered(t *testing.T) {
-
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{makeJob(1, withBranch("feature"))}
@@ -229,7 +224,6 @@ func TestTUIPageDownNoLoadMoreWhenBranchFiltered(t *testing.T) {
 }
 
 func TestTUIBranchFilterClearTriggersRefetch(t *testing.T) {
-
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.currentView = viewQueue
@@ -424,7 +418,7 @@ func TestTUIAutoRepoFilterUsesRenamedRepoDisplayName(t *testing.T) {
 
 	m2, cmd := updateModel(t, m, repoNamesMsg{
 		names: map[string][]string{
-			"new-service": []string{oldRoot},
+			"new-service": {oldRoot},
 		},
 	})
 
@@ -447,10 +441,10 @@ func TestTUIAutoRepoFilterFallsBackToIdentity(t *testing.T) {
 
 	m2, cmd := updateModel(t, m, repoNamesMsg{
 		names: map[string][]string{
-			"old-service": []string{oldRoot},
+			"old-service": {oldRoot},
 		},
 		identities: map[string][]string{
-			identity: []string{oldRoot},
+			identity: {oldRoot},
 		},
 	})
 
@@ -474,10 +468,10 @@ func TestTUIAutoRepoFilterPrefersIdentityOverDisplayName(t *testing.T) {
 
 	m2, cmd := updateModel(t, m, repoNamesMsg{
 		names: map[string][]string{
-			"service": []string{wrongRoot},
+			"service": {wrongRoot},
 		},
 		identities: map[string][]string{
-			identity: []string{expectedRoot},
+			identity: {expectedRoot},
 		},
 	})
 
@@ -500,10 +494,10 @@ func TestTUIAutoRepoFilterKeepsTrackedCloneWithSharedIdentity(t *testing.T) {
 
 	m2, cmd := updateModel(t, m, repoNamesMsg{
 		names: map[string][]string{
-			"service": []string{currentRoot, otherRoot},
+			"service": {currentRoot, otherRoot},
 		},
 		identities: map[string][]string{
-			identity: []string{currentRoot, otherRoot},
+			identity: {currentRoot, otherRoot},
 		},
 	})
 

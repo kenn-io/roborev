@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 
 	tea "github.com/charmbracelet/bubbletea"
+
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -141,7 +142,7 @@ var controlMutationCommands = map[string]bool{
 }
 
 // isControlCommand returns true and the message type for known commands.
-func isControlCommand(cmd string) (isQuery bool, isMutation bool) {
+func isControlCommand(cmd string) (isQuery, isMutation bool) {
 	return controlQueryCommands[cmd], controlMutationCommands[cmd]
 }
 

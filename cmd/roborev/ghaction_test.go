@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/testutil"
 )
@@ -94,7 +95,7 @@ func TestGhActionCmd(t *testing.T) {
 			repo, outPath := setupGhActionTest(t)
 
 			if tt.repoConfig != "" {
-				require.NoError(t, os.WriteFile(filepath.Join(repo.Root, ".roborev.toml"), []byte(tt.repoConfig), 0644), "failed to write repo config")
+				require.NoError(t, os.WriteFile(filepath.Join(repo.Root, ".roborev.toml"), []byte(tt.repoConfig), 0o644), "failed to write repo config")
 				_ = repo // Avoid unused variable warning
 			}
 
@@ -136,8 +137,8 @@ func TestGhActionCmd_ForceOverwrite(t *testing.T) {
 
 	_, outPath := setupGhActionTest(t)
 
-	require.NoError(t, os.MkdirAll(filepath.Dir(outPath), 0755), "failed to create directory")
-	require.NoError(t, os.WriteFile(outPath, []byte("existing content"), 0644), "failed to write existing content")
+	require.NoError(t, os.MkdirAll(filepath.Dir(outPath), 0o755), "failed to create directory")
+	require.NoError(t, os.WriteFile(outPath, []byte("existing content"), 0o644), "failed to write existing content")
 
 	// Without --force should fail
 	cmd := ghActionCmd()

@@ -13,7 +13,7 @@ import (
 
 func appendToFile(t *testing.T, path, content string) {
 	t.Helper()
-	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0644)
+	f, err := os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0o644)
 	require.NoError(t, err, "failed to open file")
 	defer f.Close()
 	_, err = fmt.Fprintln(f, content)
@@ -36,7 +36,7 @@ func TestProdLogBarrierViolations(t *testing.T) {
 				logPath := filepath.Join(dir, "activity.log")
 				err := os.WriteFile(logPath, []byte(
 					`{"event":"job.completed","component":"worker"}`+"\n",
-				), 0644)
+				), 0o644)
 				require.NoError(t, err, "failed to write initial file")
 			},
 			mutate: func(t *testing.T, dir string) {
@@ -65,7 +65,7 @@ func TestProdLogBarrierViolations(t *testing.T) {
 				t.Helper()
 				runtimePath := filepath.Join(dir,
 					fmt.Sprintf("daemon.%d.json", os.Getpid()))
-				err := os.WriteFile(runtimePath, []byte("{}"), 0644)
+				err := os.WriteFile(runtimePath, []byte("{}"), 0o644)
 				require.NoError(t, err, "failed to write runtime file")
 			},
 			wantViolations: []string{
@@ -89,7 +89,7 @@ func TestProdLogBarrierViolations(t *testing.T) {
 				t.Helper()
 				runtimePath := filepath.Join(dir,
 					fmt.Sprintf("daemon.%d.json", os.Getpid()))
-				err := os.WriteFile(runtimePath, []byte("{}"), 0644)
+				err := os.WriteFile(runtimePath, []byte("{}"), 0o644)
 				require.NoError(t, err, "failed to write initial runtime file")
 			},
 		},
@@ -99,14 +99,14 @@ func TestProdLogBarrierViolations(t *testing.T) {
 				t.Helper()
 				runtimePath := filepath.Join(dir,
 					fmt.Sprintf("daemon.%d.json", os.Getpid()))
-				err := os.WriteFile(runtimePath, []byte("{}"), 0644)
+				err := os.WriteFile(runtimePath, []byte("{}"), 0o644)
 				require.NoError(t, err, "failed to write initial runtime file")
 			},
 			mutate: func(t *testing.T, dir string) {
 				t.Helper()
 				runtimePath := filepath.Join(dir,
 					fmt.Sprintf("daemon.%d.json", os.Getpid()))
-				err := os.WriteFile(runtimePath, []byte(`{"pid":999}`), 0644)
+				err := os.WriteFile(runtimePath, []byte(`{"pid":999}`), 0o644)
 				require.NoError(t, err, "failed to modify runtime file")
 			},
 			wantViolationCount: 1,
@@ -123,7 +123,7 @@ func TestProdLogBarrierViolations(t *testing.T) {
 				logPath := filepath.Join(dir, "activity.log")
 				err := os.WriteFile(logPath, []byte(
 					`{"event":"job.completed","component":"worker"}`+"\n",
-				), 0644)
+				), 0o644)
 				require.NoError(t, err, "failed to write initial file")
 			},
 			mutate: func(t *testing.T, dir string) {

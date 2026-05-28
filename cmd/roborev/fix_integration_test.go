@@ -16,6 +16,7 @@ import (
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -254,15 +255,19 @@ func (a *failOnNthAgent) Review(ctx context.Context, repoPath, commitSHA, prompt
 	}
 	return a.inner.Review(ctx, repoPath, commitSHA, prompt, output)
 }
+
 func (a *failOnNthAgent) WithReasoning(level agent.ReasoningLevel) agent.Agent {
 	return &failOnNthAgent{inner: a.inner.WithReasoning(level).(*agent.TestAgent), failOn: a.failOn, calls: a.calls}
 }
+
 func (a *failOnNthAgent) WithAgentic(agentic bool) agent.Agent {
 	return a
 }
+
 func (a *failOnNthAgent) WithModel(model string) agent.Agent {
 	return a
 }
+
 func (a *failOnNthAgent) WithSessionID(id string) agent.Agent {
 	return &failOnNthAgent{inner: a.inner.WithSessionID(id).(*agent.TestAgent), failOn: a.failOn, calls: a.calls}
 }
@@ -281,12 +286,15 @@ func (a *namedAgent) Name() string { return a.name }
 func (a *namedAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
 	return a.inner.Review(ctx, repoPath, commitSHA, prompt, output)
 }
+
 func (a *namedAgent) WithReasoning(level agent.ReasoningLevel) agent.Agent {
 	return &namedAgent{name: a.name, inner: a.inner.WithReasoning(level)}
 }
+
 func (a *namedAgent) WithAgentic(agentic bool) agent.Agent {
 	return &namedAgent{name: a.name, inner: a.inner.WithAgentic(agentic)}
 }
+
 func (a *namedAgent) WithModel(model string) agent.Agent {
 	return &namedAgent{name: a.name, inner: a.inner.WithModel(model)}
 }
@@ -301,12 +309,15 @@ type namedSessionAgent struct {
 func (a *namedSessionAgent) WithReasoning(level agent.ReasoningLevel) agent.Agent {
 	return &namedSessionAgent{namedAgent: namedAgent{name: a.name, inner: a.inner.WithReasoning(level)}}
 }
+
 func (a *namedSessionAgent) WithAgentic(agentic bool) agent.Agent {
 	return &namedSessionAgent{namedAgent: namedAgent{name: a.name, inner: a.inner.WithAgentic(agentic)}}
 }
+
 func (a *namedSessionAgent) WithModel(model string) agent.Agent {
 	return &namedSessionAgent{namedAgent: namedAgent{name: a.name, inner: a.inner.WithModel(model)}}
 }
+
 func (a *namedSessionAgent) WithSessionID(id string) agent.Agent {
 	if sa, ok := a.inner.(agent.SessionAgent); ok {
 		return &namedSessionAgent{namedAgent: namedAgent{name: a.name, inner: sa.WithSessionID(id)}}

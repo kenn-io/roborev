@@ -81,9 +81,9 @@ func TestOpenJobLog_TightensPermissivePerms(t *testing.T) {
 	// Pre-create dir and file with permissive modes, simulating
 	// an install upgraded from a version that used 0755/0644.
 	dir := JobLogDir()
-	require.NoError(os.MkdirAll(dir, 0755))
+	require.NoError(os.MkdirAll(dir, 0o755))
 	path := JobLogPath(500)
-	require.NoError(os.WriteFile(path, []byte("old"), 0644))
+	require.NoError(os.WriteFile(path, []byte("old"), 0o644))
 
 	f := openJobLog(500)
 	require.NotNil(f, "openJobLog returned nil")
@@ -95,7 +95,7 @@ func TestOpenJobLog_TightensPermissivePerms(t *testing.T) {
 
 func createLogFile(t *testing.T, path, content string, mtime time.Time) {
 	t.Helper()
-	require.NoError(t, os.WriteFile(path, []byte(content), 0644))
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 	require.NoError(t, os.Chtimes(path, mtime, mtime))
 }
 
@@ -107,7 +107,7 @@ func TestCleanJobLogs(t *testing.T) {
 		setupTestEnv(t)
 
 		dir := JobLogDir()
-		require.NoError(os.MkdirAll(dir, 0755))
+		require.NoError(os.MkdirAll(dir, 0o755))
 
 		// Create an "old" log file by writing and then back-dating its mtime
 		oldPath := filepath.Join(dir, "1.log")
@@ -197,12 +197,12 @@ func TestJobLogWriter(t *testing.T) {
 		})
 
 		logsDir := filepath.Join(filepath.Dir(JobLogDir()))
-		if err := os.MkdirAll(logsDir, 0700); err != nil {
+		if err := os.MkdirAll(logsDir, 0o700); err != nil {
 			require.Condition(t, func() bool {
 				return false
 			}, "MkdirAll: %v", err)
 		}
-		if err := os.WriteFile(JobLogDir(), []byte("blocked"), 0600); err != nil {
+		if err := os.WriteFile(JobLogDir(), []byte("blocked"), 0o600); err != nil {
 			require.Condition(t, func() bool {
 				return false
 			}, "WriteFile: %v", err)
@@ -254,12 +254,12 @@ func TestJobLogWriter(t *testing.T) {
 		})
 
 		logsDir := filepath.Join(filepath.Dir(JobLogDir()))
-		if err := os.MkdirAll(logsDir, 0700); err != nil {
+		if err := os.MkdirAll(logsDir, 0o700); err != nil {
 			require.Condition(t, func() bool {
 				return false
 			}, "MkdirAll: %v", err)
 		}
-		if err := os.WriteFile(JobLogDir(), []byte("blocked"), 0600); err != nil {
+		if err := os.WriteFile(JobLogDir(), []byte("blocked"), 0o600); err != nil {
 			require.Condition(t, func() bool {
 				return false
 			}, "WriteFile: %v", err)

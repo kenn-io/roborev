@@ -11,8 +11,10 @@ import (
 	"sync"
 )
 
-var copilotAllowAllToolsSupport sync.Map
-var copilotStreamOffSupport sync.Map
+var (
+	copilotAllowAllToolsSupport sync.Map
+	copilotStreamOffSupport     sync.Map
+)
 
 // copilotSupportsAllowAllTools checks whether the copilot binary supports
 // the --allow-all-tools flag needed for non-interactive tool approval.

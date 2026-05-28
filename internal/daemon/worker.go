@@ -811,18 +811,18 @@ func applyCodexReviewSettings(a agent.Agent, job *storage.ReviewJob, cfg *config
 
 // failOrRetry attempts to retry the job, or marks it as failed if max retries reached.
 // This is used for non-agent errors (e.g., prompt build failures) where switching agents won't help.
-func (wp *WorkerPool) failOrRetry(workerID string, job *storage.ReviewJob, agentName string, errorMsg string) {
+func (wp *WorkerPool) failOrRetry(workerID string, job *storage.ReviewJob, agentName, errorMsg string) {
 	wp.failOrRetryInner(workerID, job, agentName, errorMsg, false)
 }
 
 // failOrRetryAgent is like failOrRetry but allows failover to a backup agent
 // when retries are exhausted. Used for agent-execution errors where switching
 // agents may resolve the issue.
-func (wp *WorkerPool) failOrRetryAgent(workerID string, job *storage.ReviewJob, agentName string, errorMsg string) {
+func (wp *WorkerPool) failOrRetryAgent(workerID string, job *storage.ReviewJob, agentName, errorMsg string) {
 	wp.failOrRetryInner(workerID, job, agentName, errorMsg, true)
 }
 
-func (wp *WorkerPool) failOrRetryInner(workerID string, job *storage.ReviewJob, agentName string, errorMsg string, agentError bool) {
+func (wp *WorkerPool) failOrRetryInner(workerID string, job *storage.ReviewJob, agentName, errorMsg string, agentError bool) {
 	// Quota and session-limit errors skip retries entirely — cool down
 	// the agent and attempt failover or fail. Behavior matches the
 	// original isQuotaError branch; classification now lives in

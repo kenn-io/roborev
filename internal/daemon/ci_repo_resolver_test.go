@@ -10,12 +10,13 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/config"
 )
 
 func TestRepoResolver_Matching(t *testing.T) {
 	// acmeRepos is a common set of repos returned by the mock API for "acme".
-	acmeRepos := func(_ context.Context, owner string, _ string) ([]string, error) {
+	acmeRepos := func(_ context.Context, owner, _ string) ([]string, error) {
 		if owner == "acme" {
 			return []string{"acme/api", "acme/web", "acme/docs", "acme/api-gateway"}, nil
 		}
@@ -31,7 +32,7 @@ func TestRepoResolver_Matching(t *testing.T) {
 	}{
 		{
 			name: "exact only, no API calls",
-			listReposFn: func(_ context.Context, _ string, _ string) ([]string, error) {
+			listReposFn: func(_ context.Context, _, _ string) ([]string, error) {
 				t.Error("listReposFn should not be called for exact-only config")
 				return nil, fmt.Errorf("should not be called")
 			},
@@ -51,7 +52,7 @@ func TestRepoResolver_Matching(t *testing.T) {
 		},
 		{
 			name: "wildcard star matches all",
-			listReposFn: func(_ context.Context, owner string, _ string) ([]string, error) {
+			listReposFn: func(_ context.Context, owner, _ string) ([]string, error) {
 				if owner == "myorg" {
 					return []string{"myorg/api", "myorg/web", "myorg/docs"}, nil
 				}
@@ -64,7 +65,7 @@ func TestRepoResolver_Matching(t *testing.T) {
 		},
 		{
 			name: "exclusion patterns",
-			listReposFn: func(_ context.Context, _ string, _ string) ([]string, error) {
+			listReposFn: func(_ context.Context, _, _ string) ([]string, error) {
 				return []string{"acme/api", "acme/web", "acme/internal-tools", "acme/internal-docs", "acme/archived-v1"}, nil
 			},
 			ci: &config.CIConfig{
@@ -75,7 +76,7 @@ func TestRepoResolver_Matching(t *testing.T) {
 		},
 		{
 			name: "exclusion applies to exact entries",
-			listReposFn: func(_ context.Context, _ string, _ string) ([]string, error) {
+			listReposFn: func(_ context.Context, _, _ string) ([]string, error) {
 				t.Error("listReposFn should not be called for exact-only config")
 				return nil, fmt.Errorf("should not be called")
 			},
@@ -87,7 +88,7 @@ func TestRepoResolver_Matching(t *testing.T) {
 		},
 		{
 			name: "max repos cap",
-			listReposFn: func(_ context.Context, _ string, _ string) ([]string, error) {
+			listReposFn: func(_ context.Context, _, _ string) ([]string, error) {
 				repos := make([]string, 200)
 				for i := range repos {
 					repos[i] = fmt.Sprintf("acme/repo-%03d", i)
@@ -105,7 +106,7 @@ func TestRepoResolver_Matching(t *testing.T) {
 		},
 		{
 			name: "deduplication of exact and wildcard",
-			listReposFn: func(_ context.Context, _ string, _ string) ([]string, error) {
+			listReposFn: func(_ context.Context, _, _ string) ([]string, error) {
 				return []string{"acme/api", "acme/web"}, nil
 			},
 			ci: &config.CIConfig{
@@ -124,7 +125,7 @@ func TestRepoResolver_Matching(t *testing.T) {
 		},
 		{
 			name: "case insensitive wildcard matching",
-			listReposFn: func(_ context.Context, _ string, _ string) ([]string, error) {
+			listReposFn: func(_ context.Context, _, _ string) ([]string, error) {
 				return []string{"Acme/API", "Acme/Web", "Acme/Docs"}, nil
 			},
 			ci: &config.CIConfig{
@@ -134,7 +135,7 @@ func TestRepoResolver_Matching(t *testing.T) {
 		},
 		{
 			name: "case insensitive exclusion",
-			listReposFn: func(_ context.Context, _ string, _ string) ([]string, error) {
+			listReposFn: func(_ context.Context, _, _ string) ([]string, error) {
 				return []string{"Acme/API", "Acme/Internal-Tools", "Acme/Web"}, nil
 			},
 			ci: &config.CIConfig{
@@ -152,7 +153,7 @@ func TestRepoResolver_Matching(t *testing.T) {
 		},
 		{
 			name: "case insensitive dedup",
-			listReposFn: func(_ context.Context, _ string, _ string) ([]string, error) {
+			listReposFn: func(_ context.Context, _, _ string) ([]string, error) {
 				return []string{"Acme/Api", "Acme/Web"}, nil
 			},
 			ci: &config.CIConfig{
@@ -172,7 +173,7 @@ func TestRepoResolver_Matching(t *testing.T) {
 		},
 		{
 			name: "max repos preserves explicit entries",
-			listReposFn: func(_ context.Context, _ string, _ string) ([]string, error) {
+			listReposFn: func(_ context.Context, _, _ string) ([]string, error) {
 				repos := make([]string, 20)
 				for i := range repos {
 					repos[i] = fmt.Sprintf("acme/aaa-%02d", i)
@@ -192,7 +193,7 @@ func TestRepoResolver_Matching(t *testing.T) {
 		},
 		{
 			name: "API failure falls back to exact entries",
-			listReposFn: func(_ context.Context, _ string, _ string) ([]string, error) {
+			listReposFn: func(_ context.Context, _, _ string) ([]string, error) {
 				return nil, fmt.Errorf("network error")
 			},
 			ci: &config.CIConfig{
@@ -222,7 +223,7 @@ func TestRepoResolver_Matching(t *testing.T) {
 func TestRepoResolver_TokenFnCalled(t *testing.T) {
 	var tokenOwners []string
 	r := &RepoResolver{
-		listReposFn: func(_ context.Context, _ string, _ string) ([]string, error) {
+		listReposFn: func(_ context.Context, _, _ string) ([]string, error) {
 			return []string{"acme/api"}, nil
 		},
 	}
@@ -244,7 +245,7 @@ func TestRepoResolver_TokenFnCalled(t *testing.T) {
 func TestRepoResolver_CacheHit(t *testing.T) {
 	var calls int
 	r := &RepoResolver{
-		listReposFn: func(_ context.Context, _ string, _ string) ([]string, error) {
+		listReposFn: func(_ context.Context, _, _ string) ([]string, error) {
 			calls++
 			return []string{"acme/api", "acme/web"}, nil
 		},
@@ -269,7 +270,7 @@ func TestRepoResolver_CacheHit(t *testing.T) {
 func TestRepoResolver_CacheInvalidationOnConfigChange(t *testing.T) {
 	var calls int
 	r := &RepoResolver{
-		listReposFn: func(_ context.Context, _ string, _ string) ([]string, error) {
+		listReposFn: func(_ context.Context, _, _ string) ([]string, error) {
 			calls++
 			return []string{"acme/api"}, nil
 		},
@@ -289,7 +290,7 @@ func TestRepoResolver_CacheInvalidationOnConfigChange(t *testing.T) {
 func TestRepoResolver_CacheInvalidationOnTTLExpiry(t *testing.T) {
 	var calls int
 	r := &RepoResolver{
-		listReposFn: func(_ context.Context, _ string, _ string) ([]string, error) {
+		listReposFn: func(_ context.Context, _, _ string) ([]string, error) {
 			calls++
 			return []string{"acme/api"}, nil
 		},
@@ -320,7 +321,7 @@ func TestRepoResolver_CacheInvalidationOnTTLExpiry(t *testing.T) {
 func TestRepoResolver_CacheInvalidationOnMaxReposChange(t *testing.T) {
 	var calls int
 	r := &RepoResolver{
-		listReposFn: func(_ context.Context, _ string, _ string) ([]string, error) {
+		listReposFn: func(_ context.Context, _, _ string) ([]string, error) {
 			calls++
 			repos := make([]string, 20)
 			for i := range repos {
@@ -346,7 +347,7 @@ func TestRepoResolver_CacheInvalidationOnMaxReposChange(t *testing.T) {
 func TestRepoResolver_APIFailureFallback(t *testing.T) {
 	var calls int
 	r := &RepoResolver{
-		listReposFn: func(_ context.Context, _ string, _ string) ([]string, error) {
+		listReposFn: func(_ context.Context, _, _ string) ([]string, error) {
 			calls++
 			return nil, fmt.Errorf("network error")
 		},
@@ -373,7 +374,7 @@ func TestRepoResolver_APIFailureFallback(t *testing.T) {
 func TestRepoResolver_EmptyResultsCached(t *testing.T) {
 	var calls int
 	r := &RepoResolver{
-		listReposFn: func(_ context.Context, _ string, _ string) ([]string, error) {
+		listReposFn: func(_ context.Context, _, _ string) ([]string, error) {
 			calls++
 			return []string{}, nil
 		},
@@ -400,7 +401,7 @@ func TestRepoResolver_EmptyResultsCached(t *testing.T) {
 func TestRepoResolver_DegradedFallsBackToStaleCache(t *testing.T) {
 	callCount := 0
 	r := &RepoResolver{
-		listReposFn: func(_ context.Context, _ string, _ string) ([]string, error) {
+		listReposFn: func(_ context.Context, _, _ string) ([]string, error) {
 			callCount++
 			if callCount == 1 {
 				return []string{"acme/api", "acme/web"}, nil
@@ -431,7 +432,7 @@ func TestRepoResolver_DegradedFallsBackToStaleCache(t *testing.T) {
 
 func TestRepoResolver_CancelledContextReturnsError(t *testing.T) {
 	r := &RepoResolver{
-		listReposFn: func(ctx context.Context, _ string, _ string) ([]string, error) {
+		listReposFn: func(ctx context.Context, _, _ string) ([]string, error) {
 			return nil, ctx.Err()
 		},
 	}
@@ -449,7 +450,7 @@ func TestRepoResolver_CancelledContextReturnsError(t *testing.T) {
 
 func TestRepoResolver_DeadlineExceededReturnsError(t *testing.T) {
 	r := &RepoResolver{
-		listReposFn: func(ctx context.Context, _ string, _ string) ([]string, error) {
+		listReposFn: func(ctx context.Context, _, _ string) ([]string, error) {
 			return nil, ctx.Err()
 		},
 	}

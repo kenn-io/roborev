@@ -50,7 +50,7 @@ func writeTempCommand(t *testing.T, script string) string {
 
 	tmpDir := t.TempDir()
 	path := filepath.Join(tmpDir, "cmd")
-	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0755)
+	f, err := os.OpenFile(path, os.O_CREATE|os.O_WRONLY|os.O_TRUNC, 0o755)
 	if err != nil {
 		t.Fatalf("write temp command: %v", err)
 	}
@@ -153,7 +153,7 @@ func mockAgentCLI(t *testing.T, opts MockCLIOpts) *MockCLIResult {
 
 	if opts.HelpOutput != "" {
 		helpFile := filepath.Join(tmpDir, "help_output.txt")
-		if err := os.WriteFile(helpFile, []byte(opts.HelpOutput), 0644); err != nil {
+		if err := os.WriteFile(helpFile, []byte(opts.HelpOutput), 0o644); err != nil {
 			t.Fatalf("write help output file: %v", err)
 		}
 		script.WriteString(fmt.Sprintf(`case "$*" in *--help*) cat %q; exit 0;; esac`, helpFile) + "\n")
@@ -180,7 +180,7 @@ func mockAgentCLI(t *testing.T, opts MockCLIOpts) *MockCLIResult {
 		if !strings.HasSuffix(content, "\n") {
 			content += "\n"
 		}
-		if err := os.WriteFile(stdoutFile, []byte(content), 0644); err != nil {
+		if err := os.WriteFile(stdoutFile, []byte(content), 0o644); err != nil {
 			t.Fatalf("write stdout file: %v", err)
 		}
 		script.WriteString(fmt.Sprintf(`cat %q`, stdoutFile) + "\n")
@@ -192,7 +192,7 @@ func mockAgentCLI(t *testing.T, opts MockCLIOpts) *MockCLIResult {
 		if !strings.HasSuffix(content, "\n") {
 			content += "\n"
 		}
-		if err := os.WriteFile(stderrFile, []byte(content), 0644); err != nil {
+		if err := os.WriteFile(stderrFile, []byte(content), 0o644); err != nil {
 			t.Fatalf("write stderr file: %v", err)
 		}
 		script.WriteString(fmt.Sprintf(`cat %q >&2`, stderrFile) + "\n")

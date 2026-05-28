@@ -3,16 +3,17 @@
 package daemon
 
 import (
-	"github.com/stretchr/testify/assert"
-	"go.kenn.io/roborev/internal/storage"
-	"go.kenn.io/roborev/internal/testutil"
-
-	// waitForJobStatus polls until the job reaches one of the given statuses.
-	"github.com/stretchr/testify/require"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
+// waitForJobStatus polls until the job reaches one of the given statuses.
 func (c *workerTestContext) waitForJobStatus(t *testing.T, jobID int64, statuses ...storage.JobStatus) *storage.ReviewJob {
 	t.Helper()
 

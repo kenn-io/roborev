@@ -17,7 +17,6 @@ func TestValidateSessionID(t *testing.T) {
 	t.Parallel()
 
 	t.Run("Valid session ID matching agent session", func(t *testing.T) {
-
 		agent := &ACPAgent{
 			SessionID: "test-session-123",
 		}
@@ -32,7 +31,6 @@ func TestValidateSessionID(t *testing.T) {
 	})
 
 	t.Run("Invalid session ID not matching agent session", func(t *testing.T) {
-
 		agent := &ACPAgent{
 			SessionID: "test-session-123",
 		}
@@ -47,7 +45,6 @@ func TestValidateSessionID(t *testing.T) {
 	})
 
 	t.Run("Empty agent session ID rejects non-empty request session ID", func(t *testing.T) {
-
 		agent := &ACPAgent{
 			SessionID: "",
 		}
@@ -63,7 +60,6 @@ func TestValidateSessionID(t *testing.T) {
 	})
 
 	t.Run("Empty request session ID with non-empty agent session", func(t *testing.T) {
-
 		agent := &ACPAgent{
 			SessionID: "test-session-123",
 		}
@@ -79,7 +75,6 @@ func TestValidateSessionID(t *testing.T) {
 	})
 
 	t.Run("Both session IDs empty", func(t *testing.T) {
-
 		agent := &ACPAgent{
 			SessionID: "",
 		}
@@ -143,7 +138,6 @@ func TestValidateAndResolvePathUsesClientRepoRootPrecedence(t *testing.T) {
 
 	assert.True(t, pathWithinRoot(resolvedPath, resolvedClientRoot), "Expected resolved path %q to be under client repo root %q", resolvedPath, resolvedClientRoot)
 	assert.False(t, pathWithinRoot(resolvedPath, resolvedAgentRoot), "Expected resolved path %q to avoid agent repo root %q", resolvedPath, resolvedAgentRoot)
-
 }
 
 func TestValidateConfiguredSessionCapabilities(t *testing.T) {
@@ -226,7 +220,6 @@ func TestSessionUpdateValidatesSessionID(t *testing.T) {
 		require.NoError(t, err, "Expected valid SessionUpdate to succeed, got: %v")
 	}
 	assert.Equal(t, "hello", client.result.String(), "Expected session output to be appended, got: %q", client.result.String())
-
 }
 
 // TestSessionUpdateRejectsBeforeSessionEstablished verifies that an early

@@ -46,7 +46,7 @@ func openTestDB(t *testing.T) *DB {
 	require.NoError(t, err, "Failed to read template DB: %v")
 
 	dbPath := filepath.Join(t.TempDir(), "test.db")
-	err = os.WriteFile(dbPath, data, 0644)
+	err = os.WriteFile(dbPath, data, 0o644)
 	require.NoError(t, err, "Failed to write test DB: %v")
 
 	db, err := Open(dbPath)
@@ -129,7 +129,6 @@ func backdateJobStart(t *testing.T, db *DB, jobID int64, d time.Duration) {
 	startTime := time.Now().Add(-d).UTC().Format(time.RFC3339)
 	_, err := db.Exec(`UPDATE review_jobs SET status = 'running', started_at = ? WHERE id = ?`, startTime, jobID)
 	require.NoError(t, err, "failed to backdate job: %v")
-
 }
 
 func backdateJobStartWithOffset(t *testing.T, db *DB, jobID int64, d time.Duration, loc *time.Location) {
@@ -137,14 +136,12 @@ func backdateJobStartWithOffset(t *testing.T, db *DB, jobID int64, d time.Durati
 	startTime := time.Now().Add(-d).In(loc).Format(time.RFC3339)
 	_, err := db.Exec(`UPDATE review_jobs SET status = 'running', started_at = ? WHERE id = ?`, startTime, jobID)
 	require.NoError(t, err, "failed to backdate job with offset: %v")
-
 }
 
 func setJobBranch(t *testing.T, db *DB, jobID int64, branch string) {
 	t.Helper()
 	_, err := db.Exec(`UPDATE review_jobs SET branch = ? WHERE id = ?`, branch, jobID)
 	require.NoError(t, err, "failed to set job branch: %v")
-
 }
 
 func createJobChain(t *testing.T, db *DB, repoPath, sha string) (*Repo, *Commit, *ReviewJob) {

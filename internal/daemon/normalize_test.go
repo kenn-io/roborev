@@ -207,7 +207,6 @@ func TestGetNormalizer(t *testing.T) {
 			if tc.wantType != "" {
 				assert.Equal(t, tc.wantType, result.Type, "Normalizer for %q: got type %q, want %q", tc.agent, result.Type, tc.wantType)
 			}
-
 		})
 	}
 }

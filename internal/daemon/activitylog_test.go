@@ -4,12 +4,13 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"maps"
 	"os"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func createTestActivityLog(t *testing.T) (*ActivityLog, string) {
@@ -70,7 +71,6 @@ func TestActivityLog_RecentN(t *testing.T) {
 	got = al.RecentN(100)
 	assert.Len(t, got, 10,
 		"expected 10 entries, got %d", len(got))
-
 }
 
 func TestActivityLog_RingBuffer(t *testing.T) {
@@ -90,7 +90,6 @@ func TestActivityLog_RingBuffer(t *testing.T) {
 	oldest := recent[activityLogCapacity-1]
 	want := fmt.Sprintf("msg %d", total-activityLogCapacity)
 	assert.Equal(t, want, oldest.Message, "oldest = %q, want %q", oldest.Message, want)
-
 }
 
 func TestActivityLog_FileFormat(t *testing.T) {
@@ -169,7 +168,6 @@ func TestActivityLog_DetailsCopied(t *testing.T) {
 	assert.Equal(t, "original", again[0].Details["key"],
 		"ring buffer mutated via returned entry: got %q, want %q",
 		again[0].Details["key"], "original")
-
 }
 
 func TestActivityLog_RecentN_Negative(t *testing.T) {
@@ -183,7 +181,6 @@ func TestActivityLog_RecentN_Negative(t *testing.T) {
 	got = al.RecentN(0)
 	assert.Nil(t, got,
 		"RecentN(0) = %v, want nil", got)
-
 }
 
 func TestActivityLog_FileTruncation(t *testing.T) {
@@ -191,7 +188,7 @@ func TestActivityLog_FileTruncation(t *testing.T) {
 	path := filepath.Join(dir, "activity.log")
 
 	data := make([]byte, maxActivityLogSize+1)
-	if err := os.WriteFile(path, data, 0644); err != nil {
+	if err := os.WriteFile(path, data, 0o644); err != nil {
 		require.NoError(t, err, "write seed file: %v")
 	}
 
@@ -209,7 +206,6 @@ func TestActivityLog_FileTruncation(t *testing.T) {
 	assert.LessOrEqual(t, info.Size(), int64(1024),
 		"file should be small after truncation, got %d bytes",
 		info.Size())
-
 }
 
 func TestActivityLog_RuntimeRotation(t *testing.T) {
@@ -240,11 +236,9 @@ func TestActivityLog_RuntimeRotation(t *testing.T) {
 
 			"file should be under cap after rotation, got %d bytes",
 			info.Size())
-
 }
 
 func TestActivityLog_RotationRecovery(t *testing.T) {
-
 	dir := t.TempDir()
 	path := filepath.Join(dir, "activity.log")
 

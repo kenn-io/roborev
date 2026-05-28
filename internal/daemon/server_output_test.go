@@ -2,11 +2,6 @@ package daemon
 
 import (
 	"fmt"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"go.kenn.io/roborev/internal/storage"
-	"go.kenn.io/roborev/internal/testutil"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -14,6 +9,12 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 // jobOutputResponse covers the union of fields returned by GET /api/job/output
@@ -187,14 +188,14 @@ func TestHandleJobLog(t *testing.T) {
 	t.Run("returns log content with headers", func(t *testing.T) {
 		// Create a log file
 		logDir := JobLogDir()
-		if err := os.MkdirAll(logDir, 0755); err != nil {
+		if err := os.MkdirAll(logDir, 0o755); err != nil {
 			require.Condition(t, func() bool {
 				return false
 			}, "MkdirAll: %v", err)
 		}
 		logContent := `{"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]}}` + "\n"
 		if err := os.WriteFile(
-			JobLogPath(job.ID), []byte(logContent), 0644,
+			JobLogPath(job.ID), []byte(logContent), 0o644,
 		); err != nil {
 			require.Condition(t, func() bool {
 				return false
@@ -311,7 +312,7 @@ func TestHandleJobLogOffset(t *testing.T) {
 	}
 
 	logDir := JobLogDir()
-	if err := os.MkdirAll(logDir, 0755); err != nil {
+	if err := os.MkdirAll(logDir, 0o755); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "MkdirAll: %v", err)
@@ -320,7 +321,7 @@ func TestHandleJobLogOffset(t *testing.T) {
 	line2 := `{"type":"assistant","message":{"content":[{"type":"text","text":"second"}]}}` + "\n"
 	logContent := line1 + line2
 	if err := os.WriteFile(
-		JobLogPath(job.ID), []byte(logContent), 0644,
+		JobLogPath(job.ID), []byte(logContent), 0o644,
 	); err != nil {
 		require.Condition(t, func() bool {
 			return false
@@ -348,7 +349,6 @@ func TestHandleJobLogOffset(t *testing.T) {
 				return false
 			}, "expected full content, got %q",
 				w.Body.String())
-
 		}
 
 		// X-Log-Offset should equal file size.
@@ -364,7 +364,6 @@ func TestHandleJobLogOffset(t *testing.T) {
 				return false
 			}, "X-Log-Offset = %d, want %d",
 				offset, len(logContent))
-
 		}
 	})
 
@@ -391,7 +390,6 @@ func TestHandleJobLogOffset(t *testing.T) {
 				return false
 			}, "expected second line only, got %q",
 				w.Body.String())
-
 		}
 	})
 
@@ -418,7 +416,6 @@ func TestHandleJobLogOffset(t *testing.T) {
 				return false
 			}, "expected empty body, got %q",
 				w.Body.String())
-
 		}
 	})
 
@@ -463,7 +460,6 @@ func TestHandleJobLogOffset(t *testing.T) {
 				return false
 			}, "expected full content after clamp, got %q",
 				w.Body.String())
-
 		}
 	})
 
@@ -500,7 +496,7 @@ func TestHandleJobLogOffset(t *testing.T) {
 		if err := os.WriteFile(
 			JobLogPath(job2.ID),
 			[]byte(completeLine+partialLine),
-			0644,
+			0o644,
 		); err != nil {
 			require.Condition(t, func() bool {
 				return false
@@ -530,7 +526,6 @@ func TestHandleJobLogOffset(t *testing.T) {
 				return false
 			}, "expected only complete line, got %q",
 				body)
-
 		}
 
 		// X-Log-Offset should point past the newline.
@@ -546,7 +541,6 @@ func TestHandleJobLogOffset(t *testing.T) {
 				return false
 			}, "X-Log-Offset = %d, want %d",
 				offset, len(completeLine))
-
 		}
 	})
 }

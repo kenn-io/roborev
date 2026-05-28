@@ -105,7 +105,7 @@ func LocalBranchName(branch string) string {
 
 // IgnorePatternForDir returns the root-anchored ignore pattern for dir and a
 // probe path that can be passed to git check-ignore.
-func IgnorePatternForDir(repoPath, dir string) (pattern string, probe string, err error) {
+func IgnorePatternForDir(repoPath, dir string) (pattern, probe string, err error) {
 	rel, err := filepath.Rel(repoPath, dir)
 	if err != nil {
 		return "", "", err

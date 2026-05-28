@@ -18,7 +18,7 @@ func initTestGitRepo(t *testing.T) string {
 	return tmpDir
 }
 
-func gitRevParse(t *testing.T, dir string, ref string) string {
+func gitRevParse(t *testing.T, dir, ref string) string {
 	t.Helper()
 	cmd := exec.Command("git", "-C", dir, "rev-parse", ref)
 	out, err := cmd.Output()

@@ -12,6 +12,7 @@ import (
 
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
+
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
@@ -1028,7 +1029,7 @@ func runRefineAllBranches(
 // Priority: CLI flag > config file > default (true for refine).
 // Refine defaults to true because it fundamentally requires file modifications.
 // Users can disable with --allow-unsafe-agents=false or config if they want (though refine won't work).
-func resolveAllowUnsafeAgents(flag bool, flagChanged bool, cfg *config.Config) bool {
+func resolveAllowUnsafeAgents(flag, flagChanged bool, cfg *config.Config) bool {
 	// If user explicitly set the CLI flag, honor their choice
 	if flagChanged {
 		return flag

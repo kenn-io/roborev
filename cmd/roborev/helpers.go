@@ -7,6 +7,7 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+
 	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/githook"
 	"go.kenn.io/roborev/internal/storage"
@@ -116,7 +117,7 @@ func shortJobRef(job storage.ReviewJob) string {
 
 // resolveReasoningWithFast returns the effective reasoning value, applying
 // the --fast shorthand only when --reasoning wasn't explicitly set.
-func resolveReasoningWithFast(reasoning string, fast bool, reasoningExplicitlySet bool) string {
+func resolveReasoningWithFast(reasoning string, fast, reasoningExplicitlySet bool) string {
 	if fast && !reasoningExplicitlySet {
 		return "fast"
 	}

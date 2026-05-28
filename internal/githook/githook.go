@@ -42,8 +42,10 @@ func HasRealErrors(err error) bool {
 // Version markers identify the current hook template version.
 // Bump these when the hook template changes to trigger
 // upgrade warnings and auto-upgrades.
-const PostCommitVersionMarker = "post-commit hook v4"
-const PostRewriteVersionMarker = "post-rewrite hook v2"
+const (
+	PostCommitVersionMarker  = "post-commit hook v4"
+	PostRewriteVersionMarker = "post-rewrite hook v2"
+)
 
 // VersionMarker returns the current version marker for a hook.
 func VersionMarker(hookName string) string {
@@ -311,7 +313,7 @@ func Install(hooksDir, hookName string, force bool) error {
 	}
 
 	if err := os.WriteFile(
-		hookPath, []byte(hookContent), 0755,
+		hookPath, []byte(hookContent), 0o755,
 	); err != nil {
 		return fmt.Errorf("write %s hook: %w", hookName, err)
 	}
@@ -418,7 +420,7 @@ func Uninstall(hookPath string) error {
 			newContent += "\n"
 		}
 		if err := os.WriteFile(
-			hookPath, []byte(newContent), 0755,
+			hookPath, []byte(newContent), 0o755,
 		); err != nil {
 			return fmt.Errorf("write %s: %w", hookName, err)
 		}

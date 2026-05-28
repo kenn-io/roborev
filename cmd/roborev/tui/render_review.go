@@ -8,6 +8,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	xansi "github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-runewidth"
+
 	"go.kenn.io/roborev/internal/tokens"
 )
 
@@ -262,6 +263,7 @@ func (m model) renderReviewView() string {
 
 	return b.String()
 }
+
 func (m model) renderPromptView() string {
 	var b strings.Builder
 
@@ -345,6 +347,7 @@ func (m model) renderPromptView() string {
 
 	return b.String()
 }
+
 func (m model) renderRespondView() string {
 	var b strings.Builder
 
@@ -419,6 +422,7 @@ func (m model) renderRespondView() string {
 
 	return b.String()
 }
+
 func (m model) renderCommitMsgView() string {
 	var b strings.Builder
 
