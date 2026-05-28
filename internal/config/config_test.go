@@ -35,6 +35,7 @@ func TestDefaultConfig(t *testing.T) {
 	}, "Expected MouseEnabled to default to true")
 	assert.True(t, cfg.Agent.Codex.DisableReviewSkills, "expected Codex review skills to be disabled by default")
 	assert.True(t, cfg.Agent.Codex.IgnoreReviewUserConfig, "expected Codex review user config to be ignored by default")
+	assert.Equal(t, "npm:@nqbao/pi-json-schema@0.1.1", cfg.Agent.Pi.JSONSchemaExtension)
 
 }
 
@@ -132,6 +133,20 @@ func TestSaveAndLoadGlobal(t *testing.T) {
 		return loaded.MaxWorkers == 8
 	}, "Expected MaxWorkers 8, got %d", loaded.MaxWorkers)
 
+}
+
+func TestLoadGlobalPiJSONSchemaExtension(t *testing.T) {
+	testenv.SetDataDir(t)
+
+	path := filepath.Join(DataDir(), "config.toml")
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, []byte(`[agent.pi]
+jsonschemaextension = "/opt/roborev/pi-json-schema/index.ts"
+`), 0o600))
+
+	cfg, err := LoadGlobalFrom(path)
+	require.NoError(t, err)
+	assert.Equal(t, "/opt/roborev/pi-json-schema/index.ts", cfg.Agent.Pi.JSONSchemaExtension)
 }
 
 func TestSaveAndLoadGlobalAutoFilterBranch(t *testing.T) {

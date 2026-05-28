@@ -76,3 +76,21 @@ func TestAgentSpecsCommandOverrides(t *testing.T) {
 		})
 	}
 }
+
+func TestApplyAgentConfigOverridesPiJSONSchemaExtension(t *testing.T) {
+	t.Parallel()
+
+	agent := NewPiAgent("pi")
+	overridden := applyAgentConfigOverrides(agent, &config.Config{
+		Agent: config.AgentConfig{
+			Pi: config.PiConfig{
+				JSONSchemaExtension: "/opt/roborev/pi-json-schema/index.ts",
+			},
+		},
+	})
+
+	pi, ok := overridden.(*PiAgent)
+	require.True(t, ok)
+	assert.Equal(t, "/opt/roborev/pi-json-schema/index.ts", pi.JSONSchemaExtension)
+	assert.Equal(t, config.DefaultPiJSONSchemaExtension, agent.JSONSchemaExtension)
+}

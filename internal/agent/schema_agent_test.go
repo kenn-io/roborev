@@ -118,6 +118,36 @@ func TestGetAvailableSchemaExactWithConfigUsesCommandOverride(t *testing.T) {
 	assert.Equal(t, wrapper, resolved.(*ClaudeAgent).CommandName())
 }
 
+func TestGetAvailableSchemaExactWithConfigAppliesPiJSONSchemaExtension(t *testing.T) {
+	fakeBin := t.TempDir()
+	wrapper := filepath.Join(fakeBin, "pi-wrapper")
+	if runtime.GOOS == "windows" {
+		wrapper += ".exe"
+	}
+	require.NoError(t, os.WriteFile(wrapper, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	t.Setenv("PATH", t.TempDir())
+
+	originalRegistry := registry
+	registry = map[string]Agent{
+		"pi": NewPiAgent(""),
+	}
+	t.Cleanup(func() { registry = originalRegistry })
+
+	resolved, err := GetAvailableSchemaExactWithConfig("pi", &config.Config{
+		PiCmd: wrapper,
+		Agent: config.AgentConfig{
+			Pi: config.PiConfig{
+				JSONSchemaExtension: "/opt/roborev/pi-json-schema/index.ts",
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.IsType(t, &PiAgent{}, resolved)
+	pi := resolved.(*PiAgent)
+	assert.Equal(t, wrapper, pi.CommandName())
+	assert.Equal(t, "/opt/roborev/pi-json-schema/index.ts", pi.JSONSchemaExtension)
+}
+
 func TestGetAvailableSchemaWithConfigFallsBackToAvailableSchemaAgent(t *testing.T) {
 	fakeBin := t.TempDir()
 	codexBin := filepath.Join(fakeBin, "codex")

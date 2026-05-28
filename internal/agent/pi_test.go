@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/roborev/internal/config"
 )
 
 func TestParsePiJSON(t *testing.T) {
@@ -146,7 +147,7 @@ printf '%%s\n' '{"design_review":false,"reason":"pi schema"}' > "$json_output"
 		"--no-themes",
 		"--no-context-files",
 		"--extension",
-		piJSONSchemaExtension,
+		config.DefaultPiJSONSchemaExtension,
 		"--json-fallback",
 		"none",
 		"-p",

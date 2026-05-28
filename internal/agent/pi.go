@@ -11,16 +11,19 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+
+	"go.kenn.io/roborev/internal/config"
 )
 
 // PiAgent runs code reviews using the pi CLI
 type PiAgent struct {
-	Command   string         // The pi command to run (default: "pi")
-	Model     string         // Model to use (provider/model format or just model)
-	Provider  string         // Explicit provider (optional)
-	Reasoning ReasoningLevel // Reasoning level
-	Agentic   bool           // Agentic mode
-	SessionID string         // Existing session ID to resume
+	Command             string         // The pi command to run (default: "pi")
+	Model               string         // Model to use (provider/model format or just model)
+	Provider            string         // Explicit provider (optional)
+	Reasoning           ReasoningLevel // Reasoning level
+	Agentic             bool           // Agentic mode
+	SessionID           string         // Existing session ID to resume
+	JSONSchemaExtension string         // Pi extension source for classifier schema output
 }
 
 // NewPiAgent creates a new pi agent
@@ -28,7 +31,11 @@ func NewPiAgent(command string) *PiAgent {
 	if command == "" {
 		command = "pi"
 	}
-	return &PiAgent{Command: command, Reasoning: ReasoningStandard}
+	return &PiAgent{
+		Command:             command,
+		Reasoning:           ReasoningStandard,
+		JSONSchemaExtension: config.DefaultPiJSONSchemaExtension,
+	}
 }
 
 func (a *PiAgent) clone(opts ...agentCloneOption) *PiAgent {
@@ -41,12 +48,13 @@ func (a *PiAgent) clone(opts ...agentCloneOption) *PiAgent {
 		opts...,
 	)
 	return &PiAgent{
-		Command:   cfg.Command,
-		Model:     cfg.Model,
-		Provider:  a.Provider,
-		Reasoning: cfg.Reasoning,
-		Agentic:   cfg.Agentic,
-		SessionID: cfg.SessionID,
+		Command:             cfg.Command,
+		Model:               cfg.Model,
+		Provider:            a.Provider,
+		Reasoning:           cfg.Reasoning,
+		Agentic:             cfg.Agentic,
+		SessionID:           cfg.SessionID,
+		JSONSchemaExtension: a.JSONSchemaExtension,
 	}
 }
 
@@ -124,8 +132,6 @@ func (a *PiAgent) thinkingLevel() string {
 	}
 }
 
-const piJSONSchemaExtension = "npm:@nqbao/pi-json-schema@0.1.1"
-
 func (a *PiAgent) classifyArgs(promptPath, outputPath string, schema json.RawMessage) []string {
 	args := []string{
 		"--no-session",
@@ -135,7 +141,7 @@ func (a *PiAgent) classifyArgs(promptPath, outputPath string, schema json.RawMes
 		"--no-prompt-templates",
 		"--no-themes",
 		"--no-context-files",
-		"--extension", piJSONSchemaExtension,
+		"--extension", a.jsonSchemaExtension(),
 		"--json-schema", string(schema),
 		"--json-output", outputPath,
 		"--json-fallback", "none",
@@ -154,6 +160,13 @@ func (a *PiAgent) classifyArgs(promptPath, outputPath string, schema json.RawMes
 		"@"+promptPath,
 		"Classify according to the attached instructions and write the result with the structured JSON output tool.",
 	)
+}
+
+func (a *PiAgent) jsonSchemaExtension() string {
+	if ext := strings.TrimSpace(a.JSONSchemaExtension); ext != "" {
+		return ext
+	}
+	return config.DefaultPiJSONSchemaExtension
 }
 
 // ClassifyWithSchema runs a single constrained Pi invocation and returns the

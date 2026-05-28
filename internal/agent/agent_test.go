@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/testenv"
 )
 
@@ -411,6 +412,7 @@ func TestSessionAgentsPreserveStateAcrossCloneMethods(t *testing.T) {
 				assert.Equal(t, "claude-sonnet-4", pi.Model)
 				assert.Equal(t, ReasoningThorough, pi.Reasoning)
 				assert.True(t, pi.Agentic)
+				assert.Equal(t, config.DefaultPiJSONSchemaExtension, pi.JSONSchemaExtension)
 			},
 		},
 	}

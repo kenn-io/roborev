@@ -230,6 +230,22 @@ func applyCommandOverrides(a Agent, cfg *config.Config) Agent {
 	return spec.CloneWithCommand(a, override)
 }
 
+func applyAgentConfigOverrides(a Agent, cfg *config.Config) Agent {
+	if cfg == nil || a == nil {
+		return a
+	}
+	if pi, ok := a.(*PiAgent); ok {
+		ext := strings.TrimSpace(cfg.Agent.Pi.JSONSchemaExtension)
+		if ext == "" || ext == pi.JSONSchemaExtension {
+			return a
+		}
+		clone := *pi
+		clone.JSONSchemaExtension = ext
+		return &clone
+	}
+	return a
+}
+
 func installHintAgentNames() []string {
 	return slices.Clone(fallbackAgentOrder)
 }

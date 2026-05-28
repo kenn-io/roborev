@@ -172,17 +172,20 @@ func GetAvailableWithConfig(repoPath string, preferred string, cfg *config.Confi
 		return resolved, nil
 	}
 
-	return applyCommandOverrides(resolved, cfg), nil
+	return applyAgentConfigOverrides(applyCommandOverrides(resolved, cfg), cfg), nil
 }
 
 func applyAvailableCommand(a Agent, cfg *config.Config) Agent {
 	if a == nil {
 		return nil
 	}
+	var resolved Agent
 	if commandOverrideForAgent(a.Name(), cfg) != "" {
-		return applyCommandOverrides(a, cfg)
+		resolved = applyCommandOverrides(a, cfg)
+	} else {
+		resolved = applyResolvedCommand(a)
 	}
-	return applyResolvedCommand(a)
+	return applyAgentConfigOverrides(resolved, cfg)
 }
 
 func applyACPAgentConfigOverride(cfg *config.ACPAgentConfig, override *config.ACPAgentConfig) {

@@ -59,8 +59,13 @@ type CodexConfig struct {
 	IgnoreReviewUserConfig bool `toml:"ignore_review_user_config" comment:"Pass --ignore-user-config to Codex for review jobs."`
 }
 
+type PiConfig struct {
+	JSONSchemaExtension string `toml:"jsonschemaextension" comment:"Pi extension source for classifier JSON schema output."`
+}
+
 type AgentConfig struct {
 	Codex CodexConfig `toml:"codex"`
+	Pi    PiConfig    `toml:"pi"`
 }
 
 // Config holds the daemon configuration
@@ -1097,6 +1102,8 @@ type RepoConfig struct {
 	ACP *ACPAgentConfig `toml:"acp"`
 }
 
+const DefaultPiJSONSchemaExtension = "npm:@nqbao/pi-json-schema@0.1.1"
+
 // DefaultConfig returns the default configuration
 func DefaultConfig() *Config {
 	cfg := &Config{
@@ -1115,6 +1122,9 @@ func DefaultConfig() *Config {
 			Codex: CodexConfig{
 				DisableReviewSkills:    true,
 				IgnoreReviewUserConfig: true,
+			},
+			Pi: PiConfig{
+				JSONSchemaExtension: DefaultPiJSONSchemaExtension,
 			},
 		},
 	}
