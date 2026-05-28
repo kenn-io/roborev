@@ -3,11 +3,14 @@ package daemon
 import (
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 )
@@ -23,6 +26,7 @@ func TestPublicClassifierSkipReason(t *testing.T) {
 		{"wrapped timeout", errors.New("x: " + context.DeadlineExceeded.Error()), "classifier failed"},
 		{"not registered", errors.New(`classifier "fake" not registered: no such agent`), "classifier unavailable"},
 		{"not installed", errors.New(`classifier "claude-code" not installed (CLI not on PATH)`), "classifier unavailable"},
+		{"no schema agents available", errors.New(`no schema-capable classifier agents available (install one of: claude-code)`), "classifier unavailable"},
 		{"not a schema agent", errors.New(`classify_agent "gemini" is not a SchemaAgent`), "classifier unavailable"},
 		{"schema lost", errors.New(`classify_agent "claude-code" lost SchemaAgent capability after WithReasoning/WithModel`), "classifier unavailable"},
 		{"exec stderr leak", errors.New(`/nix/store/abc/bin/claude: not found: /home/user/creds`), "classifier failed"},
@@ -66,6 +70,26 @@ func TestComposeClassifyErrorDetail(t *testing.T) {
 		assert.Empty(t, composeClassifyErrorDetail(nil, nil))
 		assert.Empty(t, composeClassifyErrorDetail(nil, backupCfg),
 			"no primary error means no failure to report")
+	})
+}
+
+func TestClassifyAgentDefaulted(t *testing.T) {
+	t.Run("default when unset", func(t *testing.T) {
+		assert.True(t, classifyAgentDefaulted(t.TempDir(), &config.Config{}))
+	})
+
+	t.Run("global classify agent is explicit", func(t *testing.T) {
+		assert.False(t, classifyAgentDefaulted(t.TempDir(), &config.Config{
+			ClassifyAgent: "claude-code",
+		}))
+	})
+
+	t.Run("repo classify agent is explicit", func(t *testing.T) {
+		repoPath := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(repoPath, ".roborev.toml"),
+			[]byte("classify_agent = \"claude-code\"\n"), 0o644))
+
+		assert.False(t, classifyAgentDefaulted(repoPath, &config.Config{}))
 	})
 }
 

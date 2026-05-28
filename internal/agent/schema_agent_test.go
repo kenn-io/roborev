@@ -4,17 +4,46 @@ import (
 	"context"
 	"encoding/json"
 	"io"
+	"os"
+	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	"go.kenn.io/roborev/internal/config"
 )
 
 type fakeSchemaAgent struct {
 	*TestAgent
-	result json.RawMessage
-	err    error
+	name    string
+	command string
+	result  json.RawMessage
+	err     error
+}
+
+func (f *fakeSchemaAgent) Name() string {
+	if f.name != "" {
+		return f.name
+	}
+	return f.TestAgent.Name()
+}
+
+func (f *fakeSchemaAgent) CommandName() string {
+	return f.command
+}
+
+func (f *fakeSchemaAgent) WithReasoning(level ReasoningLevel) Agent {
+	return f
+}
+
+func (f *fakeSchemaAgent) WithAgentic(agentic bool) Agent {
+	return f
+}
+
+func (f *fakeSchemaAgent) WithModel(model string) Agent {
+	return f
 }
 
 func (f *fakeSchemaAgent) ClassifyWithSchema(
@@ -60,4 +89,52 @@ func TestValidateClassifyAgent_CodexRejected(t *testing.T) {
 	err := ValidateClassifyAgent("codex")
 	require.Error(t, err)
 	assert.Contains(t, strings.ToLower(err.Error()), "structured output")
+}
+
+func TestGetAvailableSchemaExactWithConfigUsesCommandOverride(t *testing.T) {
+	fakeBin := t.TempDir()
+	wrapper := filepath.Join(fakeBin, "claude-wrapper")
+	if runtime.GOOS == "windows" {
+		wrapper += ".exe"
+	}
+	require.NoError(t, os.WriteFile(wrapper, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	t.Setenv("PATH", t.TempDir())
+
+	originalRegistry := registry
+	registry = map[string]Agent{
+		"claude-code": NewClaudeAgent(""),
+	}
+	t.Cleanup(func() { registry = originalRegistry })
+
+	resolved, err := GetAvailableSchemaExactWithConfig("claude", &config.Config{
+		ClaudeCodeCmd: wrapper,
+	})
+	require.NoError(t, err)
+	require.IsType(t, &ClaudeAgent{}, resolved)
+	assert.Equal(t, wrapper, resolved.(*ClaudeAgent).CommandName())
+}
+
+func TestGetAvailableSchemaWithConfigFallsBackToAvailableSchemaAgent(t *testing.T) {
+	fakeBin := t.TempDir()
+	codexBin := filepath.Join(fakeBin, "codex")
+	if runtime.GOOS == "windows" {
+		codexBin += ".exe"
+	}
+	require.NoError(t, os.WriteFile(codexBin, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	t.Setenv("PATH", fakeBin)
+
+	originalRegistry := registry
+	registry = map[string]Agent{
+		"claude-code": NewClaudeAgent("definitely-not-on-path"),
+		"codex": &fakeSchemaAgent{
+			TestAgent: NewTestAgent(),
+			name:      "codex",
+			command:   "codex",
+		},
+	}
+	t.Cleanup(func() { registry = originalRegistry })
+
+	resolved, err := GetAvailableSchemaWithConfig("claude-code", nil)
+	require.NoError(t, err)
+	assert.Equal(t, "codex", resolved.Name())
 }

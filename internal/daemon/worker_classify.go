@@ -60,6 +60,7 @@ func isClassifierConfigError(err error) bool {
 	msg := err.Error()
 	return strings.Contains(msg, "not registered") ||
 		strings.Contains(msg, "not installed") ||
+		strings.Contains(msg, "no schema-capable classifier agents available") ||
 		strings.Contains(msg, "not a SchemaAgent") ||
 		strings.Contains(msg, "lost SchemaAgent capability")
 }
@@ -111,50 +112,61 @@ func (wp *WorkerPool) processClassifyJob(ctx context.Context, workerID string, j
 		wp.completeClassifyAsSkip(workerID, job, "classifier unavailable", err.Error())
 		return
 	}
+	defaultedPrimary := classifyAgentDefaulted(job.RepoPath, cfg)
 	backup, backupErr := config.ResolveBackupClassifyAgent(job.RepoPath, cfg)
 	if backupErr != nil {
 		log.Printf("[%s] classifier backup agent invalid (%v); ignoring", workerID, backupErr)
 		backup = ""
 	}
 
-	tryAgent := func(name, model string) (bool, string, error) {
-		// Use Get (NOT GetAvailable). GetAvailable falls back to a
-		// hardcoded chain of installed agents when the requested name is
-		// missing — for the classifier, that would silently route
-		// untrusted commit text through a different model than the user
-		// configured. Classify must fail closed when the configured
-		// agent isn't usable; the explicit classify_backup_agent is the
-		// only acceptable fallback.
-		ag, err := agent.Get(name)
+	tryAgent := func(name, model string) (bool, string, string, error) {
+		// Explicit classify_agent values fail closed: do not silently
+		// route classifier input through an unrelated agent. The built-in
+		// default is different; it should behave like normal roborev
+		// agent selection and only run an installed schema-capable agent.
+		var ag agent.SchemaAgent
+		var err error
+		if defaultedPrimary && agent.CanonicalName(name) == agent.CanonicalName(primary) {
+			ag, err = agent.GetAvailableSchemaWithConfig(primary, cfg, backup)
+		} else {
+			ag, err = agent.GetAvailableSchemaExactWithConfig(name, cfg)
+		}
 		if err != nil {
-			return false, "", fmt.Errorf("classifier %q not registered: %w", name, err)
+			return false, "", "", err
 		}
-		if !agent.IsAvailable(name) {
-			return false, "", fmt.Errorf("classifier %q not installed (CLI not on PATH)", name)
-		}
-		sa, ok := ag.(agent.SchemaAgent)
-		if !ok {
-			return false, "", fmt.Errorf("classify_agent %q is not a SchemaAgent", name)
+		selectedName := ag.Name()
+		if defaultedPrimary && agent.CanonicalName(name) == agent.CanonicalName(primary) {
+			resolvedName := agent.CanonicalName(selectedName)
+			switch {
+			case backup != "" && resolvedName == agent.CanonicalName(backup):
+				model = config.ResolveBackupClassifyModel(job.RepoPath, cfg)
+			case resolvedName != agent.CanonicalName(primary):
+				model = ""
+			}
 		}
 		level := agent.ParseReasoningLevel(config.ResolveClassifyReasoning("", job.RepoPath, cfg))
-		ag = sa.WithReasoning(level)
+		configured := ag.WithReasoning(level)
 		if model != "" {
-			ag = ag.WithModel(model)
+			configured = configured.WithModel(model)
 		}
-		sa, ok = ag.(agent.SchemaAgent)
+		sa, ok := configured.(agent.SchemaAgent)
 		if !ok {
-			return false, "", fmt.Errorf("classify_agent %q lost SchemaAgent capability after WithReasoning/WithModel", name)
+			return false, "", selectedName, fmt.Errorf("classify_agent %q lost SchemaAgent capability after WithReasoning/WithModel", name)
 		}
-		return newClassifierAdapter(sa, maxBytes).Decide(classifyCtx, in)
+		yes, reason, err := newClassifierAdapter(sa, maxBytes).Decide(classifyCtx, in)
+		return yes, reason, selectedName, err
 	}
 
 	primaryModel := config.ResolveClassifyModel("", job.RepoPath, cfg)
-	yes, reason, err := tryAgent(primary, primaryModel)
-	if err != nil && backup != "" && backup != primary {
+	yes, reason, selected, err := tryAgent(primary, primaryModel)
+	if err != nil &&
+		backup != "" &&
+		agent.CanonicalName(backup) != agent.CanonicalName(primary) &&
+		agent.CanonicalName(selected) != agent.CanonicalName(backup) {
 		backupModel := config.ResolveBackupClassifyModel(job.RepoPath, cfg)
 		log.Printf("[%s] classifier primary %q (model=%q) failed (%v); trying backup %q (model=%q)",
 			workerID, primary, primaryModel, err, backup, backupModel)
-		yes, reason, err = tryAgent(backup, backupModel)
+		yes, reason, _, err = tryAgent(backup, backupModel)
 	}
 	if err != nil {
 		log.Printf("[%s] classifier error for job %d: %v", workerID, job.ID, err)
@@ -164,6 +176,13 @@ func (wp *WorkerPool) processClassifyJob(ctx context.Context, workerID string, j
 		return
 	}
 	wp.applyClassifyVerdict(workerID, job, yes, reason)
+}
+
+func classifyAgentDefaulted(repoPath string, globalCfg *config.Config) bool {
+	if repoCfg, err := config.LoadRepoConfig(repoPath); err == nil && repoCfg != nil && repoCfg.ClassifyAgent != "" {
+		return false
+	}
+	return globalCfg == nil || globalCfg.ClassifyAgent == ""
 }
 
 // applyClassifyVerdict converts the classify row in place — a separate
