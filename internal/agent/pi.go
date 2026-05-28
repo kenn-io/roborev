@@ -124,7 +124,7 @@ func (a *PiAgent) thinkingLevel() string {
 	}
 }
 
-const piJSONSchemaExtension = "npm:@nqbao/pi-json-schema"
+const piJSONSchemaExtension = "npm:@nqbao/pi-json-schema@0.1.1"
 
 func (a *PiAgent) classifyArgs(promptPath, outputPath string, schema json.RawMessage) []string {
 	args := []string{
