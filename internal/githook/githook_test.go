@@ -764,6 +764,60 @@ func TestInstall(t *testing.T) {
 	})
 }
 
+func TestInstallWithOptionsUpdatesCurrentHookBinary(t *testing.T) {
+	t.Parallel()
+	if runtime.GOOS == "windows" {
+		t.Skip("test checks Unix exec bits")
+	}
+
+	newBinary := filepath.Join(t.TempDir(), "roborev")
+	require.NoError(t, os.WriteFile(newBinary, []byte("#!/bin/sh\nexit 0\n"), 0755))
+
+	t.Run("standalone hook", func(t *testing.T) {
+		t.Parallel()
+		repo := setupHooksRepo(t)
+		hookPath := filepath.Join(repo.HooksDir, hookPostCommit)
+		require.NoError(t, os.WriteFile(
+			hookPath,
+			[]byte(GeneratePostCommitWithBinary("/old/roborev")),
+			0755,
+		))
+
+		err := InstallWithOptions(repo.HooksDir, hookPostCommit, InstallOptions{
+			BinaryPath: newBinary,
+		})
+		require.NoError(t, err)
+
+		assertFileContains(t, hookPath, fmt.Sprintf("ROBOREV=%q", newBinary))
+		assertFileNotContains(t, hookPath, `ROBOREV="/old/roborev"`)
+	})
+
+	t.Run("embedded hook preserves user content", func(t *testing.T) {
+		t.Parallel()
+		repo := setupHooksRepo(t)
+		hookPath := filepath.Join(repo.HooksDir, hookPostCommit)
+		require.NoError(t, os.WriteFile(
+			hookPath,
+			[]byte(shebang+
+				generateEmbeddablePostCommitWithBinary("/old/roborev")+
+				"echo 'user code'\n"),
+			0755,
+		))
+
+		err := InstallWithOptions(repo.HooksDir, hookPostCommit, InstallOptions{
+			BinaryPath: newBinary,
+		})
+		require.NoError(t, err)
+
+		assertFileContains(t, hookPath,
+			fmt.Sprintf("ROBOREV=%q", newBinary),
+			"echo 'user code'",
+			"_roborev_hook() {",
+		)
+		assertFileNotContains(t, hookPath, `ROBOREV="/old/roborev"`)
+	})
+}
+
 func assertInstallResult(t *testing.T, hookPath string, tc installTestCase) {
 	t.Helper()
 	if tc.expectExact != "" {

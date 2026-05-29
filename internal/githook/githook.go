@@ -458,40 +458,33 @@ func InstallWithOptions(hooksDir, hookName string, opts InstallOptions) error {
 				generateEmbeddableWithBinary(hookName, resolution.Path),
 			)
 		} else if strings.Contains(existingStr, versionMarker) {
-			fmt.Printf(
-				"%s hook already installed (current)\n",
-				hookName,
-			)
-			return nil
+			if !hookUsesBinary(existingStr, resolution.Path) {
+				hookContent, err = renderUpdatedHookContent(
+					hookPath,
+					hookName,
+					existingStr,
+					resolution.Path,
+				)
+				if err != nil {
+					return err
+				}
+			} else {
+				fmt.Printf(
+					"%s hook already installed (current)\n",
+					hookName,
+				)
+				return nil
+			}
 		} else {
-			// Upgrade: remove old snippet, embed new one
-			if !isShellHook(existingStr) {
-				return fmt.Errorf(
-					"%s hook: %w; add the roborev snippet "+
-						"manually or use --force to overwrite",
-					hookName, ErrNonShellHook)
+			hookContent, err = renderUpdatedHookContent(
+				hookPath,
+				hookName,
+				existingStr,
+				resolution.Path,
+			)
+			if err != nil {
+				return err
 			}
-			if rmErr := Uninstall(hookPath); rmErr != nil {
-				return fmt.Errorf(
-					"upgrade %s: %w", hookName, rmErr,
-				)
-			}
-			updated, readErr := ReadFile(hookPath)
-			if readErr != nil && !os.IsNotExist(readErr) {
-				return fmt.Errorf(
-					"re-read %s after cleanup: %w",
-					hookName, readErr,
-				)
-			}
-			if readErr == nil {
-				remaining := string(updated)
-				hookContent = embedSnippet(
-					remaining,
-					generateEmbeddableWithBinary(hookName, resolution.Path),
-				)
-			}
-			// If file was deleted (snippet-only), hookContent
-			// is the fresh standalone content.
 		}
 	}
 
@@ -502,6 +495,39 @@ func InstallWithOptions(hooksDir, hookName string, opts InstallOptions) error {
 	}
 	fmt.Printf("Installed %s hook at %s\n", hookName, hookPath)
 	return nil
+}
+
+func hookUsesBinary(content, roborevPath string) bool {
+	return strings.Contains(content, fmt.Sprintf("ROBOREV=%q", roborevPath))
+}
+
+func renderUpdatedHookContent(
+	hookPath, hookName, existingStr, roborevPath string,
+) (string, error) {
+	if !isShellHook(existingStr) {
+		return "", fmt.Errorf(
+			"%s hook: %w; add the roborev snippet "+
+				"manually or use --force to overwrite",
+			hookName, ErrNonShellHook)
+	}
+	if rmErr := Uninstall(hookPath); rmErr != nil {
+		return "", fmt.Errorf("upgrade %s: %w", hookName, rmErr)
+	}
+	updated, readErr := ReadFile(hookPath)
+	if readErr != nil && !os.IsNotExist(readErr) {
+		return "", fmt.Errorf(
+			"re-read %s after cleanup: %w",
+			hookName, readErr,
+		)
+	}
+	if readErr == nil {
+		return embedSnippet(
+			string(updated),
+			generateEmbeddableWithBinary(hookName, roborevPath),
+		), nil
+	}
+	// If the old roborev block was the whole file, Uninstall removes it.
+	return generateContentWithBinary(hookName, roborevPath), nil
 }
 
 // InstallAll installs both post-commit and post-rewrite hooks.
