@@ -87,21 +87,23 @@ update_plugin_manifests_inplace() {
 
 # Update agent plugin manifest versions on a release branch and open a PR.
 # Mirrors update_nix_flake so all changes to main go through pull requests.
-# Skips when no plugin-relevant content has changed since the previous tag.
+# Skips when no shipped skill content has changed since the previous tag.
 update_plugin_manifests_pr() {
     local BRANCH_NAME="release/$TAG-plugin-update"
 
-    # Skip the bump entirely if nothing the plugin distributes has changed
-    # since the most recent release tag. The version field is metadata only.
+    # Skip the bump entirely if no shipped skill content has changed since the
+    # most recent release tag. Only the skill directories are checked: the
+    # manifests carry nothing but the prior release's version bump (the version
+    # field is metadata only), and that bump lands after the tag via this very
+    # PR. Including the manifest dirs here would make every release look
+    # "changed" and permanently defeat the skip.
     local LAST_TAG
     LAST_TAG=$(git -C "$REPO_ROOT" describe --tags --abbrev=0 HEAD 2>/dev/null || echo "")
     if [ -n "$LAST_TAG" ]; then
         if git -C "$REPO_ROOT" diff --quiet "$LAST_TAG..HEAD" -- \
                 internal/skills/claude/ \
-                internal/skills/codex/ \
-                .claude-plugin/ \
-                .codex-plugin/; then
-            echo "No skill or plugin manifest changes since $LAST_TAG, skipping plugin manifest update"
+                internal/skills/codex/; then
+            echo "No skill changes since $LAST_TAG, skipping plugin manifest update"
             return 0
         fi
     fi
