@@ -8,6 +8,35 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 )
 
+// commandHeaderLines renders the "Command: <cmd>" header for a job, honoring
+// the cmdExpanded toggle. Collapsed (default) returns a single line truncated
+// to the terminal width; expanded wraps the full command across as many lines
+// as needed. Returns nil when the job has no representative command line.
+// The length of the result is the header height, so the renderers and the
+// *VisibleLines helpers stay in agreement on layout.
+func (m model) commandHeaderLines(job *storage.ReviewJob) []string {
+	cmdLine := commandLineForJob(job)
+	if cmdLine == "" {
+		return nil
+	}
+	cmdText := "Command: " + cmdLine
+	if m.width <= 0 {
+		return []string{statusStyle.Render(cmdText)}
+	}
+	if m.cmdExpanded {
+		wrapped := wrapLine(cmdText, m.width)
+		lines := make([]string, len(wrapped))
+		for i, ln := range wrapped {
+			lines[i] = statusStyle.Render(ln)
+		}
+		return lines
+	}
+	if runewidth.StringWidth(cmdText) > m.width {
+		cmdText = runewidth.Truncate(cmdText, m.width, "…")
+	}
+	return []string{statusStyle.Render(cmdText)}
+}
+
 func (m model) renderLogView() string {
 	var b strings.Builder
 
@@ -31,14 +60,11 @@ func (m model) renderLogView() string {
 	b.WriteString(titleStyle.Render(title))
 	b.WriteString("\x1b[K\n")
 
-	// Show command line below title (dimmed, like Prompt view)
+	// Show command line below title (dimmed, like Prompt view). Collapsed by
+	// default; press i to expand the full command (wrapped) via cmdExpanded.
 	headerLines := 1
-	if cmdLine := commandLineForJob(job); cmdLine != "" {
-		cmdText := "Command: " + cmdLine
-		if m.width > 0 && runewidth.StringWidth(cmdText) > m.width {
-			cmdText = runewidth.Truncate(cmdText, m.width, "…")
-		}
-		b.WriteString(statusStyle.Render(cmdText))
+	for _, line := range m.commandHeaderLines(job) {
+		b.WriteString(line)
 		b.WriteString("\x1b[K\n")
 		headerLines++
 	}
@@ -59,7 +85,7 @@ func (m model) renderLogView() string {
 	// Calculate visible area (must match logVisibleLines())
 	logHelp := m.logHelpRows()
 	logHelpLines := len(reflowHelpRows(logHelp, m.width))
-	reservedLines := (2 + logHelpLines) + headerLines // title + cmd(0-1) + sep + status + help(N)
+	reservedLines := (2 + logHelpLines) + headerLines // title + cmd(N, in headerLines) + sep + status + help(N)
 	visibleLines := max(m.height-reservedLines, 1)
 
 	// Clamp scroll
@@ -299,6 +325,7 @@ func helpLines(tasksEnabled, noQuit bool) []string {
 				{"↑/↓", "Scroll content"},
 				{"←/→", "Previous / next prompt"},
 				{"PgUp/PgDn", "Page through content"},
+				{"i", "Expand/collapse command line"},
 				{"p", "Switch to review / back to queue"},
 				{"esc/q", "Back to queue"},
 			},
@@ -310,6 +337,7 @@ func helpLines(tasksEnabled, noQuit bool) []string {
 				{"←/→", "Previous / next log"},
 				{"PgUp/PgDn", "Page through output"},
 				{"g", "Toggle follow mode / jump to top"},
+				{"i", "Expand/collapse command line"},
 				{"x", "Cancel job"},
 				{"esc/q", "Back to queue"},
 			},

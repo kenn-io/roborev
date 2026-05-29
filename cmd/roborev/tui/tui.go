@@ -395,6 +395,11 @@ type model struct {
 	logLoading        bool                 // True while a fetch is in-flight
 	logFetchSeq       uint64               // Monotonic seq to drop stale responses
 
+	// cmdExpanded toggles full (wrapped) display of the agent command-line
+	// header shown in the Log and Prompt views. Collapsed (default) shows a
+	// single line truncated to the terminal width.
+	cmdExpanded bool
+
 	// Glamour markdown render cache (pointer so View's value receiver can update it)
 	mdCache *markdownCache
 

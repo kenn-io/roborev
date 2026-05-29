@@ -277,14 +277,11 @@ func (m model) renderPromptView() string {
 	}
 	b.WriteString("\x1b[K\n") // Clear to end of line
 
-	// Show command line (computed from job params, dimmed, below title, truncated to fit)
+	// Show command line (computed from job params, dimmed, below title).
+	// Collapsed by default; press i to expand the full command via cmdExpanded.
 	headerLines := 1
-	if cmdLine := commandLineForJob(review.Job); cmdLine != "" {
-		cmdText := "Command: " + cmdLine
-		if m.width > 0 && runewidth.StringWidth(cmdText) > m.width {
-			cmdText = runewidth.Truncate(cmdText, m.width, "…")
-		}
-		b.WriteString(statusStyle.Render(cmdText))
+	for _, line := range m.commandHeaderLines(review.Job) {
+		b.WriteString(line)
 		b.WriteString("\x1b[K\n")
 		headerLines++
 	}
@@ -300,9 +297,9 @@ func (m model) renderPromptView() string {
 		lines = sanitizeLines(wrapText(review.Prompt, wrapWidth))
 	}
 
-	// Reserve: title + command(0-1) + scroll indicator(1) + help(N) + margin(1)
+	// Reserve: title + command(N, headerLines) + scroll indicator(1) + help(N) + margin(1)
 	promptHelpRows := [][]helpItem{
-		{{"↑/↓", "scroll"}, {"←/→", "prev/next"}, {"p", "toggle prompt/review"}, {"?", "commands"}, {"esc", "back"}},
+		{{"↑/↓", "scroll"}, {"←/→", "prev/next"}, {"i", "expand cmd"}, {"p", "toggle prompt/review"}, {"?", "commands"}, {"esc", "back"}},
 	}
 	promptHelpLines := len(reflowHelpRows(promptHelpRows, m.width))
 	visibleLines := max(m.height-(2+promptHelpLines)-headerLines, 1)

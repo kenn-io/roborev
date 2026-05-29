@@ -115,6 +115,12 @@ func (m model) handleGlobalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handlePageDownKey()
 	case "p":
 		return m.handlePromptKey()
+	case "i":
+		if m.currentView == viewKindPrompt {
+			m.cmdExpanded = !m.cmdExpanded
+			return m, tea.ClearScreen
+		}
+		return m, nil
 	case "a":
 		return m.handleCloseKey()
 	case "x":

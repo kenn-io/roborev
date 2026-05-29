@@ -150,12 +150,11 @@ func (m *model) logVisibleLines() int {
 	// title + separator + status + help(N)
 	helpRows := m.logHelpRows()
 	reserved := 3 + len(reflowHelpRows(helpRows, m.width))
-	if job := m.logViewLookupJob(); job != nil {
-		if commandLineForJob(job) != "" {
-			reserved++
-		}
-		reserved += len(classifyReasoningLines(job, m.width))
-	}
+	job := m.logViewLookupJob()
+	// Command header may span multiple lines when expanded; classify rows
+	// add their own reasoning header lines.
+	reserved += len(m.commandHeaderLines(job))
+	reserved += len(classifyReasoningLines(job, m.width))
 	return max(m.height-reserved, 1)
 }
 
@@ -163,6 +162,7 @@ func (m *model) logVisibleLines() int {
 func (m *model) logHelpRows() [][]helpItem {
 	helpRow := []helpItem{
 		{"↑/↓", "scroll"}, {"←/→", "prev/next"}, {"g", "toggle top/bottom"},
+		{"i", "expand cmd"},
 	}
 	if m.logStreaming {
 		helpRow = append(helpRow, helpItem{"x", "cancel"})
