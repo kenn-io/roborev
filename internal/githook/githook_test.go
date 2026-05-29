@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"io/fs"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -95,6 +96,128 @@ func TestGeneratePostRewrite(t *testing.T) {
 	assert.True(t, strings.HasPrefix(content, shebang), "hook should start with #!/bin/sh")
 	assert.Contains(t, content, PostRewriteVersionMarker, "hook should contain version marker")
 	assert.Contains(t, content, "remap --quiet", "hook should call remap --quiet")
+}
+
+func TestResolveRoborevPathPrefersVersionManagerShim(t *testing.T) {
+	tests := []struct {
+		name        string
+		executable  string
+		pathRoborev string
+		manager     string
+	}{
+		{
+			name:        "mise go backend",
+			executable:  "/Users/alice/.local/share/mise/installs/go-go-kenn-io-roborev-cmd-roborev/1.2.3/bin/roborev",
+			pathRoborev: "/Users/alice/.local/share/mise/shims/roborev",
+			manager:     "mise",
+		},
+		{
+			name:        "mise registry backend",
+			executable:  "/Users/alice/.local/share/mise/installs/roborev/1.2.3/bin/roborev",
+			pathRoborev: "/Users/alice/.local/share/mise/shims/roborev",
+			manager:     "mise",
+		},
+		{
+			name:        "mise github backend",
+			executable:  "/Users/alice/.local/share/mise/installs/github-roborev-dev-roborev/1.2.3/roborev",
+			pathRoborev: "/Users/alice/.local/share/mise/shims/roborev",
+			manager:     "mise",
+		},
+		{
+			name:        "homebrew macos",
+			executable:  "/opt/homebrew/Cellar/roborev/1.2.3/bin/roborev",
+			pathRoborev: "/opt/homebrew/bin/roborev",
+			manager:     "Homebrew",
+		},
+		{
+			name:        "homebrew linux",
+			executable:  "/home/linuxbrew/.linuxbrew/Cellar/roborev/1.2.3/bin/roborev",
+			pathRoborev: "/home/linuxbrew/.linuxbrew/bin/roborev",
+			manager:     "Homebrew",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			deps := stubRoborevPathDeps(t, tt.executable, tt.pathRoborev)
+
+			resolution, err := resolveRoborevPathWithDeps("", deps)
+			require.NoError(t, err)
+			assert.Equal(t, tt.pathRoborev, resolution.Path)
+			assert.Contains(t, resolution.Notice, tt.manager)
+			assert.Contains(t, resolution.Notice, "versioned binary")
+		})
+	}
+}
+
+func TestResolveRoborevPathWarnsForVersionedInstallWithoutShim(t *testing.T) {
+	current := "/Users/alice/.local/share/mise/installs/go-go-kenn-io-roborev-cmd-roborev/1.2.3/bin/roborev"
+	deps := stubRoborevPathDeps(t, current, "")
+
+	resolution, err := resolveRoborevPathWithDeps("", deps)
+	require.NoError(t, err)
+	assert.Equal(t, current, resolution.Path)
+	assert.Contains(t, resolution.Notice, "Warning")
+	assert.Contains(t, resolution.Notice, "mise")
+	assert.Contains(t, resolution.Notice, "--binary")
+}
+
+func TestResolveRoborevPathDoesNotGuessUnsupportedManagers(t *testing.T) {
+	tests := []struct {
+		name        string
+		executable  string
+		pathRoborev string
+	}{
+		{
+			name:        "rtx has no standard roborev plugin",
+			executable:  "/Users/alice/.local/share/rtx/installs/roborev/1.2.3/bin/roborev",
+			pathRoborev: "/Users/alice/.local/share/rtx/shims/roborev",
+		},
+		{
+			name:        "asdf has no standard roborev plugin",
+			executable:  "/Users/alice/.asdf/installs/roborev/1.2.3/bin/roborev",
+			pathRoborev: "/Users/alice/.asdf/shims/roborev",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			deps := stubRoborevPathDeps(t, tt.executable, tt.pathRoborev)
+
+			resolution, err := resolveRoborevPathWithDeps("", deps)
+			require.NoError(t, err)
+			assert.Equal(t, tt.executable, resolution.Path)
+			assert.Empty(t, resolution.Notice)
+		})
+	}
+}
+
+func TestResolveRoborevPathUsesExplicitBinary(t *testing.T) {
+	binPath := filepath.Join(t.TempDir(), "roborev")
+	require.NoError(t, os.WriteFile(binPath, []byte("#!/bin/sh\nexit 0\n"), 0755))
+
+	resolution, err := ResolveRoborevPath(binPath)
+	require.NoError(t, err)
+	assert.Equal(t, binPath, resolution.Path)
+	assert.Empty(t, resolution.Notice)
+}
+
+func stubRoborevPathDeps(t *testing.T, current, pathRoborev string) binaryResolverDeps {
+	t.Helper()
+
+	return binaryResolverDeps{
+		executable: func() (string, error) {
+			return current, nil
+		},
+		lookPath: func(file string) (string, error) {
+			require.Equal(t, "roborev", file)
+			if pathRoborev == "" {
+				return "", exec.ErrNotFound
+			}
+			return pathRoborev, nil
+		},
+		userHomeDir: os.UserHomeDir,
+	}
 }
 
 func TestGenerateEmbeddablePostCommit(t *testing.T) {

@@ -14,6 +14,7 @@ import (
 func initCmd() *cobra.Command {
 	var agent string
 	var noDaemon bool
+	var hookBinary string
 
 	cmd := &cobra.Command{
 		Use:   "init",
@@ -80,7 +81,16 @@ func initCmd() *cobra.Command {
 			if err := os.MkdirAll(hooksDir, 0755); err != nil {
 				return fmt.Errorf("create hooks directory: %w", err)
 			}
-			if err := githook.InstallAll(hooksDir, false); err != nil {
+			binaryResolution, err := githook.ResolveRoborevPath(hookBinary)
+			if err != nil {
+				return fmt.Errorf("resolve hook binary: %w", err)
+			}
+			if binaryResolution.Notice != "" {
+				fmt.Printf("  %s\n", binaryResolution.Notice)
+			}
+			if err := githook.InstallAllWithOptions(hooksDir, githook.InstallOptions{
+				BinaryPath: binaryResolution.Path,
+			}); err != nil {
 				if githook.HasRealErrors(err) {
 					return fmt.Errorf("install hooks: %w", err)
 				}
@@ -135,6 +145,7 @@ func initCmd() *cobra.Command {
 
 	cmd.Flags().StringVar(&agent, "agent", "", "default agent (codex, claude-code, gemini, copilot, opencode, cursor, kiro, kilo)")
 	cmd.Flags().BoolVar(&noDaemon, "no-daemon", false, "skip auto-starting daemon (useful with systemd/launchd)")
+	cmd.Flags().StringVar(&hookBinary, "binary", "", "roborev binary path to bake into git hooks (for version-manager shims)")
 	registerAgentCompletion(cmd)
 
 	cmd.AddCommand(ghActionCmd())

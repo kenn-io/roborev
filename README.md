@@ -31,6 +31,10 @@ git commit -m "..."   # Reviews happen automatically
 roborev tui           # View reviews in interactive UI
 ```
 
+If roborev is managed by a version manager, `roborev init` tries to
+install hooks with the stable shim/symlink. You can also choose the exact
+binary path with `roborev init --binary ~/.local/share/mise/shims/roborev`.
+
 ![roborev review](https://raw.githubusercontent.com/roborev-dev/roborev-docs/main/public/tui-review.svg)
 
 ## Features

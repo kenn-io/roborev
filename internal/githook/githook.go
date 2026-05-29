@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 
 	"go.kenn.io/roborev/internal/git"
@@ -18,6 +19,32 @@ import (
 // ErrNonShellHook is returned when a hook uses a non-shell
 // interpreter and cannot be safely modified.
 var ErrNonShellHook = errors.New("non-shell interpreter")
+
+// BinaryResolution describes the roborev binary path to bake into hooks.
+type BinaryResolution struct {
+	Path   string
+	Notice string
+}
+
+// InstallOptions configures hook installation.
+type InstallOptions struct {
+	Force      bool
+	BinaryPath string
+}
+
+type binaryResolverDeps struct {
+	executable  func() (string, error)
+	lookPath    func(string) (string, error)
+	userHomeDir func() (string, error)
+}
+
+func defaultBinaryResolverDeps() binaryResolverDeps {
+	return binaryResolverDeps{
+		executable:  os.Executable,
+		lookPath:    exec.LookPath,
+		userHomeDir: os.UserHomeDir,
+	}
+}
 
 // HasRealErrors returns true if err contains any error that
 // is not ErrNonShellHook. Use this instead of errors.Is when
@@ -123,26 +150,164 @@ func Missing(repoPath, hookName string) bool {
 	)
 }
 
-// resolveRoborevPath returns the absolute path to the running
-// roborev binary, falling back to a PATH lookup.
-func resolveRoborevPath() string {
-	roborevPath, err := os.Executable()
-	if err == nil {
-		if resolved, err := filepath.EvalSymlinks(roborevPath); err == nil {
-			roborevPath = resolved
+// ResolveRoborevPath returns the roborev path to bake into git hooks.
+// When override is empty, it lightly probes common version managers and
+// prefers their stable shim/symlink over a versioned install path.
+func ResolveRoborevPath(override string) (BinaryResolution, error) {
+	return resolveRoborevPathWithDeps(override, defaultBinaryResolverDeps())
+}
+
+func resolveRoborevPathWithDeps(override string, deps binaryResolverDeps) (BinaryResolution, error) {
+	override = strings.TrimSpace(override)
+	if override != "" {
+		path, err := normalizeOverridePath(override, deps)
+		if err != nil {
+			return BinaryResolution{}, err
 		}
-		return roborevPath
+		return BinaryResolution{Path: path}, nil
 	}
-	roborevPath, _ = exec.LookPath("roborev")
+
+	current, err := deps.executable()
+	roborevPath, _ := deps.lookPath("roborev")
+	if err != nil {
+		if roborevPath == "" {
+			roborevPath = "roborev"
+		}
+		return BinaryResolution{Path: roborevPath}, nil
+	}
+
+	if roborevPath != "" {
+		if manager, ok := managedBinaryShim(current, roborevPath); ok {
+			return BinaryResolution{
+				Path: roborevPath,
+				Notice: fmt.Sprintf(
+					"Detected roborev managed by %s; installing hooks with %s instead of versioned binary %s",
+					manager, roborevPath, current,
+				),
+			}, nil
+		}
+	}
+
+	if manager := versionedManagerInstall(current); manager != "" {
+		return BinaryResolution{
+			Path: current,
+			Notice: fmt.Sprintf(
+				"Warning: roborev appears to be running from a versioned %s install (%s); use --binary to install hooks with a stable shim if available",
+				manager, current,
+			),
+		}, nil
+	}
+
+	return BinaryResolution{Path: current}, nil
+}
+
+// resolveRoborevPath returns the path to use in generated hooks. It is kept
+// for callers that only need the legacy default behavior.
+func resolveRoborevPath() string {
+	resolution, err := ResolveRoborevPath("")
+	if err == nil {
+		return resolution.Path
+	}
+	roborevPath, _ := exec.LookPath("roborev")
 	if roborevPath == "" {
 		roborevPath = "roborev"
 	}
 	return roborevPath
 }
 
+func normalizeOverridePath(raw string, deps binaryResolverDeps) (string, error) {
+	path := expandHome(raw, deps)
+	if !hasPathSeparator(path) {
+		resolved, err := deps.lookPath(path)
+		if err != nil {
+			return "", fmt.Errorf("find %s on PATH: %w", path, err)
+		}
+		path = resolved
+	} else if !filepath.IsAbs(path) {
+		abs, err := filepath.Abs(path)
+		if err != nil {
+			return "", fmt.Errorf("resolve %s: %w", raw, err)
+		}
+		path = abs
+	}
+	info, err := os.Stat(path)
+	if err != nil {
+		return "", fmt.Errorf("stat %s: %w", path, err)
+	}
+	if info.IsDir() {
+		return "", fmt.Errorf("%s is a directory, not a binary", path)
+	}
+	if runtime.GOOS != "windows" && info.Mode()&0111 == 0 {
+		return "", fmt.Errorf("%s is not executable", path)
+	}
+	return path, nil
+}
+
+func expandHome(path string, deps binaryResolverDeps) string {
+	if path == "~" || strings.HasPrefix(path, "~/") {
+		home, err := deps.userHomeDir()
+		if err == nil && home != "" {
+			if path == "~" {
+				return home
+			}
+			return filepath.Join(home, path[2:])
+		}
+	}
+	return path
+}
+
+func hasPathSeparator(path string) bool {
+	return strings.ContainsRune(path, os.PathSeparator) ||
+		(os.PathSeparator != '/' && strings.ContainsRune(path, '/'))
+}
+
+func managedBinaryShim(current, pathRoborev string) (string, bool) {
+	current = filepath.ToSlash(current)
+	pathRoborev = filepath.ToSlash(pathRoborev)
+	switch {
+	case isMiseManagedRoborev(current) &&
+		strings.Contains(pathRoborev, "/mise/shims/roborev"):
+		return "mise", true
+	case strings.Contains(current, "/Cellar/roborev/") &&
+		isHomebrewBin(pathRoborev):
+		return "Homebrew", true
+	default:
+		return "", false
+	}
+}
+
+func versionedManagerInstall(current string) string {
+	current = filepath.ToSlash(current)
+	switch {
+	case isMiseManagedRoborev(current):
+		return "mise"
+	case strings.Contains(current, "/Cellar/roborev/"):
+		return "Homebrew"
+	default:
+		return ""
+	}
+}
+
+func isMiseManagedRoborev(path string) bool {
+	return strings.Contains(path, "/mise/installs/") &&
+		strings.HasSuffix(path, "/roborev")
+}
+
+func isHomebrewBin(path string) bool {
+	return strings.HasSuffix(path, "/bin/roborev") &&
+		(strings.HasPrefix(path, "/opt/homebrew/") ||
+			strings.HasPrefix(path, "/usr/local/") ||
+			strings.HasPrefix(path, "/home/linuxbrew/.linuxbrew/"))
+}
+
 // GeneratePostCommit returns a standalone post-commit hook
 // (with shebang, suitable for fresh installs).
 func GeneratePostCommit() string {
+	return GeneratePostCommitWithBinary(resolveRoborevPath())
+}
+
+// GeneratePostCommitWithBinary returns a post-commit hook using roborevPath.
+func GeneratePostCommitWithBinary(roborevPath string) string {
 	return fmt.Sprintf(`#!/bin/sh
 # roborev %s - auto-reviews every commit
 ROBOREV=%q
@@ -151,12 +316,17 @@ if [ ! -x "$ROBOREV" ]; then
     [ -z "$ROBOREV" ] || [ ! -x "$ROBOREV" ] && exit 0
 fi
 "$ROBOREV" post-commit 2>/dev/null
-`, PostCommitVersionMarker, resolveRoborevPath())
+`, PostCommitVersionMarker, roborevPath)
 }
 
 // GeneratePostRewrite returns a standalone post-rewrite hook
 // (with shebang, suitable for fresh installs).
 func GeneratePostRewrite() string {
+	return GeneratePostRewriteWithBinary(resolveRoborevPath())
+}
+
+// GeneratePostRewriteWithBinary returns a post-rewrite hook using roborevPath.
+func GeneratePostRewriteWithBinary(roborevPath string) string {
 	return fmt.Sprintf(`#!/bin/sh
 # roborev %s - remaps reviews after rebase/amend
 ROBOREV=%q
@@ -165,7 +335,7 @@ if [ ! -x "$ROBOREV" ]; then
     [ -z "$ROBOREV" ] || [ ! -x "$ROBOREV" ] && exit 0
 fi
 "$ROBOREV" remap --quiet 2>/dev/null
-`, PostRewriteVersionMarker, resolveRoborevPath())
+`, PostRewriteVersionMarker, roborevPath)
 }
 
 // generateEmbeddablePostCommit returns a function-wrapped
@@ -173,6 +343,10 @@ fi
 // Uses return instead of exit so it doesn't terminate the
 // parent script.
 func generateEmbeddablePostCommit() string {
+	return generateEmbeddablePostCommitWithBinary(resolveRoborevPath())
+}
+
+func generateEmbeddablePostCommitWithBinary(roborevPath string) string {
 	return fmt.Sprintf(`# roborev %s - auto-reviews every commit
 _roborev_hook() {
 ROBOREV=%q
@@ -183,12 +357,16 @@ fi
 "$ROBOREV" post-commit 2>/dev/null
 }
 _roborev_hook
-`, PostCommitVersionMarker, resolveRoborevPath())
+`, PostCommitVersionMarker, roborevPath)
 }
 
 // generateEmbeddablePostRewrite returns a function-wrapped
 // snippet without shebang, for embedding in existing hooks.
 func generateEmbeddablePostRewrite() string {
+	return generateEmbeddablePostRewriteWithBinary(resolveRoborevPath())
+}
+
+func generateEmbeddablePostRewriteWithBinary(roborevPath string) string {
 	return fmt.Sprintf(`# roborev %s - remaps reviews after rebase/amend
 _roborev_remap() {
 ROBOREV=%q
@@ -199,30 +377,26 @@ fi
 "$ROBOREV" remap --quiet 2>/dev/null
 }
 _roborev_remap
-`, PostRewriteVersionMarker, resolveRoborevPath())
+`, PostRewriteVersionMarker, roborevPath)
 }
 
-// generateContent returns the standalone hook content for the
-// given hook name.
-func generateContent(hookName string) string {
+func generateContentWithBinary(hookName, roborevPath string) string {
 	switch hookName {
 	case "post-commit":
-		return GeneratePostCommit()
+		return GeneratePostCommitWithBinary(roborevPath)
 	case "post-rewrite":
-		return GeneratePostRewrite()
+		return GeneratePostRewriteWithBinary(roborevPath)
 	default:
 		return ""
 	}
 }
 
-// generateEmbeddable returns the embeddable snippet for the
-// given hook name.
-func generateEmbeddable(hookName string) string {
+func generateEmbeddableWithBinary(hookName, roborevPath string) string {
 	switch hookName {
 	case "post-commit":
-		return generateEmbeddablePostCommit()
+		return generateEmbeddablePostCommitWithBinary(roborevPath)
 	case "post-rewrite":
-		return generateEmbeddablePostRewrite()
+		return generateEmbeddablePostRewriteWithBinary(roborevPath)
 	default:
 		return ""
 	}
@@ -252,12 +426,23 @@ func embedSnippet(existing, snippet string) string {
 //   - Existing with old version: remove old, embed new
 //   - force=true: overwrite unconditionally
 func Install(hooksDir, hookName string, force bool) error {
+	return InstallWithOptions(hooksDir, hookName, InstallOptions{
+		Force: force,
+	})
+}
+
+// InstallWithOptions installs or upgrades a single hook with options.
+func InstallWithOptions(hooksDir, hookName string, opts InstallOptions) error {
 	hookPath := filepath.Join(hooksDir, hookName)
 	versionMarker := VersionMarker(hookName)
-	hookContent := generateContent(hookName)
+	resolution, err := ResolveRoborevPath(opts.BinaryPath)
+	if err != nil {
+		return err
+	}
+	hookContent := generateContentWithBinary(hookName, resolution.Path)
 
 	existing, err := os.ReadFile(hookPath)
-	if err == nil && !force {
+	if err == nil && !opts.Force {
 		existingStr := string(existing)
 		if !strings.Contains(
 			strings.ToLower(existingStr), "roborev",
@@ -270,7 +455,7 @@ func Install(hooksDir, hookName string, force bool) error {
 			}
 			hookContent = embedSnippet(
 				existingStr,
-				generateEmbeddable(hookName),
+				generateEmbeddableWithBinary(hookName, resolution.Path),
 			)
 		} else if strings.Contains(existingStr, versionMarker) {
 			fmt.Printf(
@@ -302,7 +487,7 @@ func Install(hooksDir, hookName string, force bool) error {
 				remaining := string(updated)
 				hookContent = embedSnippet(
 					remaining,
-					generateEmbeddable(hookName),
+					generateEmbeddableWithBinary(hookName, resolution.Path),
 				)
 			}
 			// If file was deleted (snippet-only), hookContent
@@ -322,9 +507,17 @@ func Install(hooksDir, hookName string, force bool) error {
 // InstallAll installs both post-commit and post-rewrite hooks.
 // It attempts all hooks and returns a joined error if any fail.
 func InstallAll(hooksDir string, force bool) error {
+	return InstallAllWithOptions(hooksDir, InstallOptions{
+		Force: force,
+	})
+}
+
+// InstallAllWithOptions installs both post-commit and post-rewrite hooks.
+// It attempts all hooks and returns a joined error if any fail.
+func InstallAllWithOptions(hooksDir string, opts InstallOptions) error {
 	var errs []error
 	for _, name := range []string{"post-commit", "post-rewrite"} {
-		if err := Install(hooksDir, name, force); err != nil {
+		if err := InstallWithOptions(hooksDir, name, opts); err != nil {
 			errs = append(errs, err)
 		}
 	}

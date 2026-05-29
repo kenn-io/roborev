@@ -478,6 +478,29 @@ func TestInitNoDaemonEnsuresDefaultSnapshotDirGitignored(t *testing.T) {
 	require.NoError(t, check.Run())
 }
 
+func TestInitNoDaemonWithBinaryInstallsHooksUsingSpecifiedBinary(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping on Windows due to shell script stubs")
+	}
+
+	repo := initNoDaemonSetup(t)
+	binPath := filepath.Join(t.TempDir(), "roborev")
+	require.NoError(t, os.WriteFile(binPath, []byte("#!/bin/sh\nexit 0\n"), 0755))
+	setupMockServer(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(200)
+	})
+
+	cmd := initCmd()
+	cmd.SetArgs([]string{"--no-daemon", "--binary", binPath})
+	require.NoError(t, cmd.Execute())
+
+	for _, hookName := range []string{"post-commit", "post-rewrite"} {
+		content, err := os.ReadFile(filepath.Join(repo.HooksDir, hookName))
+		require.NoError(t, err)
+		assert.Contains(t, string(content), fmt.Sprintf("ROBOREV=%q", binPath))
+	}
+}
+
 func TestInitNoDaemonEnsuresConfiguredSnapshotDirGitignored(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("skipping on Windows due to shell script stubs")

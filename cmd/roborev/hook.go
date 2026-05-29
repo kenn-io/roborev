@@ -12,6 +12,7 @@ import (
 
 func installHookCmd() *cobra.Command {
 	var force bool
+	var hookBinary string
 
 	cmd := &cobra.Command{
 		Use:   "install-hook",
@@ -34,11 +35,22 @@ func installHookCmd() *cobra.Command {
 				return fmt.Errorf("create hooks directory: %w", err)
 			}
 
-			return githook.InstallAll(hooksDir, force)
+			binaryResolution, err := githook.ResolveRoborevPath(hookBinary)
+			if err != nil {
+				return fmt.Errorf("resolve hook binary: %w", err)
+			}
+			if binaryResolution.Notice != "" {
+				fmt.Println(binaryResolution.Notice)
+			}
+			return githook.InstallAllWithOptions(hooksDir, githook.InstallOptions{
+				Force:      force,
+				BinaryPath: binaryResolution.Path,
+			})
 		},
 	}
 
 	cmd.Flags().BoolVar(&force, "force", false, "overwrite existing hook")
+	cmd.Flags().StringVar(&hookBinary, "binary", "", "roborev binary path to bake into git hooks (for version-manager shims)")
 
 	return cmd
 }
