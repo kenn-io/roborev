@@ -5,6 +5,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -232,8 +233,7 @@ func (m model) handleColumnOptionsInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "j":
 		// Move current column down in order
 		if isColumn(m.colOptionsIdx) && isColumn(m.colOptionsIdx+1) {
-			m.colOptionsList[m.colOptionsIdx], m.colOptionsList[m.colOptionsIdx+1] =
-				m.colOptionsList[m.colOptionsIdx+1], m.colOptionsList[m.colOptionsIdx]
+			m.colOptionsList[m.colOptionsIdx], m.colOptionsList[m.colOptionsIdx+1] = m.colOptionsList[m.colOptionsIdx+1], m.colOptionsList[m.colOptionsIdx]
 			m.colOptionsIdx++
 			m.syncColumnOrderFromOptions()
 			m.colOptionsDirty = true
@@ -244,8 +244,7 @@ func (m model) handleColumnOptionsInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "k":
 		// Move current column up in order
 		if isColumn(m.colOptionsIdx) && isColumn(m.colOptionsIdx-1) {
-			m.colOptionsList[m.colOptionsIdx], m.colOptionsList[m.colOptionsIdx-1] =
-				m.colOptionsList[m.colOptionsIdx-1], m.colOptionsList[m.colOptionsIdx]
+			m.colOptionsList[m.colOptionsIdx], m.colOptionsList[m.colOptionsIdx-1] = m.colOptionsList[m.colOptionsIdx-1], m.colOptionsList[m.colOptionsIdx]
 			m.colOptionsIdx--
 			m.syncColumnOrderFromOptions()
 			m.colOptionsDirty = true

@@ -2,18 +2,18 @@ package daemon
 
 import (
 	"context"
-
-	"github.com/stretchr/testify/assert"
-	"go.kenn.io/roborev/internal/config"
-
-	// configWatcherHarness encapsulates the watcher, broadcaster, temp paths, and event channel.
-	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/config"
 )
 
+// configWatcherHarness encapsulates the watcher, broadcaster, temp paths, and event channel.
 type configWatcherHarness struct {
 	Watcher     *ConfigWatcher
 	Broadcaster Broadcaster
@@ -101,7 +101,7 @@ func (h *configWatcherHarness) waitForReload(t *testing.T) {
 
 func writeTestFile(t *testing.T, path, content string) {
 	t.Helper()
-	if err := os.WriteFile(path, []byte(content), 0644); err != nil {
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "Failed to write %s: %v", filepath.Base(path), err)

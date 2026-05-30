@@ -6,19 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	googlegithub "github.com/google/go-github/v84/github"
-	ghpkg "go.kenn.io/roborev/internal/github"
 	"net/http"
 	"net/http/httptest"
-
-	"github.com/stretchr/testify/assert"
-	"go.kenn.io/roborev/internal/config"
-	"go.kenn.io/roborev/internal/review"
-	"go.kenn.io/roborev/internal/storage"
-	"go.kenn.io/roborev/internal/testutil"
-
-	// ciPollerHarness bundles DB, repo, config, and poller for CI poller tests.
-	"github.com/stretchr/testify/require"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -26,8 +15,19 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	googlegithub "github.com/google/go-github/v84/github"
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/config"
+	ghpkg "go.kenn.io/roborev/internal/github"
+	"go.kenn.io/roborev/internal/review"
+	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
+// ciPollerHarness bundles DB, repo, config, and poller for CI poller tests.
 type ciPollerHarness struct {
 	DB       *storage.DB
 	RepoPath string
@@ -44,7 +44,7 @@ func installFakeGHAuthToken(t *testing.T, token string) {
 	dir := t.TempDir()
 	scriptPath := filepath.Join(dir, "gh")
 	script := "#!/bin/sh\nif [ \"$1\" = \"auth\" ] && [ \"$2\" = \"token\" ]; then\n  printf '%s\\n' " + "'" + token + "'\n  exit 0\nfi\nexit 1\n"
-	require.NoError(t, os.WriteFile(scriptPath, []byte(script), 0755))
+	require.NoError(t, os.WriteFile(scriptPath, []byte(script), 0o755))
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
 }
 
@@ -993,7 +993,7 @@ func TestCIPollerProcessPR_WhitespaceReasoning(t *testing.T) {
 	h.stubProcessPRGit()
 	h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) { return "base-sha", nil }
 
-	if err := os.WriteFile(h.RepoPath+"/.roborev.toml", []byte("[ci]\nreasoning = \"   \"\n"), 0644); err != nil {
+	if err := os.WriteFile(h.RepoPath+"/.roborev.toml", []byte("[ci]\nreasoning = \"   \"\n"), 0o644); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "write .roborev.toml: %v", err)
@@ -1034,7 +1034,7 @@ func TestCIPollerProcessPR_InvalidReasoning(t *testing.T) {
 	h.stubProcessPRGit()
 	h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) { return "base-sha", nil }
 
-	if err := os.WriteFile(h.RepoPath+"/.roborev.toml", []byte("[ci]\nreasoning = \"invalid\"\n"), 0644); err != nil {
+	if err := os.WriteFile(h.RepoPath+"/.roborev.toml", []byte("[ci]\nreasoning = \"invalid\"\n"), 0o644); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "write .roborev.toml: %v", err)
@@ -1932,7 +1932,6 @@ func TestCIPollerFindOrCloneRepo_AutoClones(t *testing.T) {
 			return false
 		}, "expected same repo ID on reuse: got %d, want %d",
 			repo2.ID, repo.ID)
-
 	}
 }
 
@@ -1990,7 +1989,6 @@ func TestCIPollerFindOrCloneRepo_ReusesExistingDir(t *testing.T) {
 		assert.Condition(t, func() bool {
 			return false
 		}, "repo.RootPath=%q, want %q", repo.RootPath, filepath.ToSlash(clonePath))
-
 	}
 }
 
@@ -2286,7 +2284,6 @@ func TestCloneRemoteMatches(t *testing.T) {
 				return false
 			}, "expected nil error for missing config, got: %v",
 				err)
-
 		}
 		if ok {
 			assert.Condition(t, func() bool {
@@ -2427,7 +2424,6 @@ func TestOwnerRepoFromURL(t *testing.T) {
 					return false
 				}, "ownerRepoFromURL(%q) = %q, want %q",
 					tt.url, got, tt.want)
-
 			}
 		})
 	}
@@ -2454,7 +2450,6 @@ func TestCIPollerEnsureClone_RejectsMalformedRepo(t *testing.T) {
 			assert.Condition(t, func() bool {
 				return false
 			}, "ensureClone(%q) should have failed", input)
-
 		}
 	}
 }
@@ -2631,7 +2626,7 @@ func TestCIPollerProcessPR_RepoOverrides(t *testing.T) {
 	h.stubProcessPRGit()
 	h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) { return "base-sha", nil }
 
-	if err := os.WriteFile(h.RepoPath+"/.roborev.toml", []byte("[ci]\nagents = [\"codex\"]\nreview_types = [\"review\"]\nreasoning = \"fast\"\n"), 0644); err != nil {
+	if err := os.WriteFile(h.RepoPath+"/.roborev.toml", []byte("[ci]\nagents = [\"codex\"]\nreview_types = [\"review\"]\nreasoning = \"fast\"\n"), 0o644); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "write .roborev.toml: %v", err)
@@ -2867,7 +2862,7 @@ func TestResolveMinSeverity(t *testing.T) {
 				dir = t.TempDir()
 			}
 			if tt.repoConfig != "" && dir != "" {
-				if err := os.WriteFile(filepath.Join(dir, ".roborev.toml"), []byte(tt.repoConfig), 0644); err != nil {
+				if err := os.WriteFile(filepath.Join(dir, ".roborev.toml"), []byte(tt.repoConfig), 0o644); err != nil {
 					require.Condition(t, func() bool {
 						return false
 					}, "write config: %v", err)
@@ -2909,7 +2904,7 @@ func initGitRepoWithOrigin(t *testing.T) (dir string, runGit func(args ...string
 	runGit("init", "-b", "main")
 	runGit("config", "user.email", "test@test.com")
 	runGit("config", "user.name", "Test")
-	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("init"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(dir, "README.md"), []byte("init"), 0o644); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "write README.md: %v", err)
@@ -2927,7 +2922,7 @@ func TestLoadCIRepoConfig_LoadsFromDefaultBranch(t *testing.T) {
 
 	// Commit .roborev.toml on main with CI agents override
 	if err := os.WriteFile(filepath.Join(dir, ".roborev.toml"),
-		[]byte("[ci]\nagents = [\"claude\"]\n"), 0644); err != nil {
+		[]byte("[ci]\nagents = [\"claude\"]\n"), 0o644); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "write .roborev.toml: %v", err)
@@ -2951,7 +2946,7 @@ func TestLoadCIRepoConfig_FallsBackWhenNoConfigOnDefaultBranch(t *testing.T) {
 
 	// No .roborev.toml on origin/main, but put one in the working tree
 	if err := os.WriteFile(filepath.Join(dir, ".roborev.toml"),
-		[]byte("[ci]\nagents = [\"codex\"]\n"), 0644); err != nil {
+		[]byte("[ci]\nagents = [\"codex\"]\n"), 0o644); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "write .roborev.toml: %v", err)
@@ -2972,7 +2967,7 @@ func TestLoadCIRepoConfig_PropagatesParseError(t *testing.T) {
 
 	// Commit invalid TOML on main
 	if err := os.WriteFile(filepath.Join(dir, ".roborev.toml"),
-		[]byte("this is not valid toml [[["), 0644); err != nil {
+		[]byte("this is not valid toml [[["), 0o644); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "write .roborev.toml: %v", err)
@@ -2983,7 +2978,7 @@ func TestLoadCIRepoConfig_PropagatesParseError(t *testing.T) {
 
 	// Also put valid config in working tree -- should NOT be used
 	if err := os.WriteFile(filepath.Join(dir, ".roborev.toml"),
-		[]byte("[ci]\nagents = [\"codex\"]\n"), 0644); err != nil {
+		[]byte("[ci]\nagents = [\"codex\"]\n"), 0o644); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "write .roborev.toml: %v", err)
@@ -3812,7 +3807,7 @@ func TestCIPollerProcessPR_RepoReviewsMapOverride(
 		"codex = [\"security\"]\n"
 	if err := os.WriteFile(
 		filepath.Join(h.RepoPath, ".roborev.toml"),
-		[]byte(repoConfig), 0644,
+		[]byte(repoConfig), 0o644,
 	); err != nil {
 		require.Condition(t, func() bool {
 			return false
@@ -3885,7 +3880,7 @@ func TestCIPollerProcessPR_RepoEmptyReviewsDisables(
 		"[ci.reviews]\n"
 	if err := os.WriteFile(
 		filepath.Join(h.RepoPath, ".roborev.toml"),
-		[]byte(repoConfig), 0644,
+		[]byte(repoConfig), 0o644,
 	); err != nil {
 		require.Condition(t, func() bool {
 			return false
@@ -3920,7 +3915,6 @@ func TestCIPollerProcessPR_RepoEmptyReviewsDisables(
 			return false
 		}, "expected no batch when repo disables reviews "+
 			"via empty [ci.reviews]")
-
 	}
 }
 
@@ -4101,13 +4095,11 @@ func TestCIPollerPollRepo_SkipsCancelWhenPRStillOpen(t *testing.T) {
 		assert.Condition(t, func() bool {
 			return false
 		}, "batch for still-open PR #99 should not be canceled")
-
 	}
 	if len(canceledJobs) != 0 {
 		assert.Condition(t, func() bool {
 			return false
 		}, "expected 0 jobs canceled, got %d", len(canceledJobs))
-
 	}
 
 	_ = batch99
@@ -4235,7 +4227,6 @@ func TestCIPollerProcessPR_EmptyMatrixStillCancelsSuperseded(t *testing.T) {
 			return false
 		}, "expected 1 superseded job canceled, got %d",
 			len(canceledJobs))
-
 	}
 
 	// No new batch should have been created
@@ -4249,7 +4240,6 @@ func TestCIPollerProcessPR_EmptyMatrixStillCancelsSuperseded(t *testing.T) {
 		require.Condition(t, func() bool {
 			return false
 		}, "expected no batch for empty matrix after supersede")
-
 	}
 }
 
@@ -4306,7 +4296,6 @@ func TestCIPollerProcessPR_AgentFailureSetsErrorStatus(t *testing.T) {
 		require.Condition(t, func() bool {
 			return false
 		}, "expected 1 status call, got %d", len(*statuses))
-
 	}
 	sc := (*statuses)[0]
 	if sc.State != "error" {
@@ -4323,7 +4312,6 @@ func TestCIPollerProcessPR_AgentFailureSetsErrorStatus(t *testing.T) {
 		assert.Condition(t, func() bool {
 			return false
 		}, "desc=%q, want substring 'agent'", sc.Desc)
-
 	}
 }
 

@@ -2,17 +2,18 @@ package config
 
 import (
 	"fmt"
-	"reflect"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"go.kenn.io/roborev/internal/testenv"
 	"os"
 	"path/filepath"
+	"reflect"
 	"sort"
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/testenv"
 )
 
 func TestMain(m *testing.M) {
@@ -36,7 +37,6 @@ func TestDefaultConfig(t *testing.T) {
 	assert.True(t, cfg.Agent.Codex.DisableReviewSkills, "expected Codex review skills to be disabled by default")
 	assert.True(t, cfg.Agent.Codex.IgnoreReviewUserConfig, "expected Codex review user config to be ignored by default")
 	assert.Equal(t, "npm:@nqbao/pi-json-schema@0.1.1", cfg.Agent.Pi.JSONSchemaExtension)
-
 }
 
 func TestDataDir(t *testing.T) {
@@ -107,7 +107,6 @@ func TestResolveAgent(t *testing.T) {
 	assert.Condition(t, func() bool {
 		return agent == "codex"
 	}, "Expected 'codex' (explicit), got '%s'", agent)
-
 }
 
 func TestSaveAndLoadGlobal(t *testing.T) {
@@ -132,7 +131,6 @@ func TestSaveAndLoadGlobal(t *testing.T) {
 	assert.Condition(t, func() bool {
 		return loaded.MaxWorkers == 8
 	}, "Expected MaxWorkers 8, got %d", loaded.MaxWorkers)
-
 }
 
 func TestLoadGlobalPiJSONSchemaExtension(t *testing.T) {
@@ -169,14 +167,13 @@ func TestSaveAndLoadGlobalAutoFilterBranch(t *testing.T) {
 	assert.Condition(t, func() bool {
 		return loaded.AutoFilterBranch
 	}, "AutoFilterBranch should be true after round-trip")
-
 }
 
 func TestLoadGlobalAutoFilterBranchFromTOML(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
 	{
-		err := os.WriteFile(path, []byte("auto_filter_branch = true\n"), 0644)
+		err := os.WriteFile(path, []byte("auto_filter_branch = true\n"), 0o644)
 		require.Condition(t, func() bool {
 			return err == nil
 		}, "write config: %v", err)
@@ -189,7 +186,6 @@ func TestLoadGlobalAutoFilterBranchFromTOML(t *testing.T) {
 	assert.Condition(t, func() bool {
 		return cfg.AutoFilterBranch
 	}, "AutoFilterBranch should be true when loaded from TOML")
-
 }
 
 func TestSaveAndLoadGlobalMouseEnabled(t *testing.T) {
@@ -212,14 +208,13 @@ func TestSaveAndLoadGlobalMouseEnabled(t *testing.T) {
 	assert.Condition(t, func() bool {
 		return !loaded.MouseEnabled
 	}, "MouseEnabled should be false after round-trip")
-
 }
 
 func TestLoadGlobalMouseEnabledFromTOML(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "config.toml")
 	{
-		err := os.WriteFile(path, []byte("mouse_enabled = false\n"), 0644)
+		err := os.WriteFile(path, []byte("mouse_enabled = false\n"), 0o644)
 		require.Condition(t, func() bool {
 			return err == nil
 		}, "write config: %v", err)
@@ -232,7 +227,6 @@ func TestLoadGlobalMouseEnabledFromTOML(t *testing.T) {
 	assert.Condition(t, func() bool {
 		return !cfg.MouseEnabled
 	}, "MouseEnabled should be false when loaded from TOML")
-
 }
 
 func TestLoadRepoConfigWithGuidelines(t *testing.T) {
@@ -261,7 +255,6 @@ All public APIs must have documentation comments.
 	assert.Condition(t, func() bool {
 		return strings.Contains(cfg.ReviewGuidelines, "composition over inheritance")
 	}, "Expected guidelines to contain 'composition over inheritance'")
-
 }
 
 func TestLoadRepoConfigNoGuidelines(t *testing.T) {
@@ -277,7 +270,6 @@ func TestLoadRepoConfigNoGuidelines(t *testing.T) {
 	assert.Condition(t, func() bool {
 		return cfg.ReviewGuidelines == ""
 	}, "Expected empty guidelines, got '%s'", cfg.ReviewGuidelines)
-
 }
 
 func TestLoadRepoConfigMissing(t *testing.T) {
@@ -291,7 +283,6 @@ func TestLoadRepoConfigMissing(t *testing.T) {
 	assert.Condition(t, func() bool {
 		return cfg == nil
 	}, "Expected nil config when file doesn't exist")
-
 }
 
 func TestResolveJobTimeout(t *testing.T) {
@@ -538,7 +529,6 @@ func TestFixEmptyReasoningSelectsStandardAgent(t *testing.T) {
 	assert.Condition(t, func() bool {
 		return model == ""
 	}, "expected empty model (none configured), got %q", model)
-
 }
 
 func TestIsBranchExcluded(t *testing.T) {
@@ -827,7 +817,6 @@ func TestAllCommitMessagesExcluded(t *testing.T) {
 					return false
 				}, "AllCommitMessagesExcluded() = %v, want %v",
 					got, tt.want)
-
 			}
 		})
 	}
@@ -1010,7 +999,7 @@ postgres_url = "postgres://roborev:pass@localhost:5432/roborev"
 interval = "10m"
 machine_name = "test-machine"
 connect_timeout = "10s"
-`), 0644)
+`), 0o644)
 		require.Condition(t, func() bool {
 			return err == nil
 		}, "Failed to write config: %v", err)
@@ -1035,7 +1024,6 @@ connect_timeout = "10s"
 	assert.Condition(t, func() bool {
 		return cfg.Sync.ConnectTimeout == "10s"
 	}, "Expected ConnectTimeout '10s', got '%s'", cfg.Sync.ConnectTimeout)
-
 }
 
 func TestGetDisplayName(t *testing.T) {
@@ -1140,7 +1128,7 @@ func TestReadRoborevID(t *testing.T) {
 
 	t.Run("valid file", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(tmpDir, ".roborev-id"), []byte("my-project\n"), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(tmpDir, ".roborev-id"), []byte("my-project\n"), 0o644); err != nil {
 			require.Condition(t, func() bool {
 				return false
 			}, err)
@@ -1160,7 +1148,7 @@ func TestReadRoborevID(t *testing.T) {
 
 	t.Run("valid file with whitespace", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(tmpDir, ".roborev-id"), []byte("  my-project  \n\n"), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(tmpDir, ".roborev-id"), []byte("  my-project  \n\n"), 0o644); err != nil {
 			require.Condition(t, func() bool {
 				return false
 			}, err)
@@ -1180,7 +1168,7 @@ func TestReadRoborevID(t *testing.T) {
 
 	t.Run("invalid file content", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(tmpDir, ".roborev-id"), []byte(".invalid-start"), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(tmpDir, ".roborev-id"), []byte(".invalid-start"), 0o644); err != nil {
 			require.Condition(t, func() bool {
 				return false
 			}, err)
@@ -1200,7 +1188,7 @@ func TestReadRoborevID(t *testing.T) {
 
 	t.Run("empty file", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(tmpDir, ".roborev-id"), []byte(""), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(tmpDir, ".roborev-id"), []byte(""), 0o644); err != nil {
 			require.Condition(t, func() bool {
 				return false
 			}, err)
@@ -1222,7 +1210,7 @@ func TestReadRoborevID(t *testing.T) {
 func TestResolveRepoIdentity(t *testing.T) {
 	t.Run("uses roborev-id when present", func(t *testing.T) {
 		tmpDir := t.TempDir()
-		if err := os.WriteFile(filepath.Join(tmpDir, ".roborev-id"), []byte("my-custom-id"), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(tmpDir, ".roborev-id"), []byte("my-custom-id"), 0o644); err != nil {
 			require.Condition(t, func() bool {
 				return false
 			}, err)
@@ -1303,7 +1291,7 @@ func TestResolveRepoIdentity(t *testing.T) {
 	t.Run("skips invalid roborev-id and uses remote", func(t *testing.T) {
 		tmpDir := t.TempDir()
 		// Write invalid content (starts with dot)
-		if err := os.WriteFile(filepath.Join(tmpDir, ".roborev-id"), []byte(".invalid"), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(tmpDir, ".roborev-id"), []byte(".invalid"), 0o644); err != nil {
 			require.Condition(t, func() bool {
 				return false
 			}, err)
@@ -1754,7 +1742,8 @@ func TestResolveWorkflowModel(t *testing.T) {
 		// Skips generic repo model
 		{
 			"skips repo generic model",
-			M{"model": "gpt-5.4"}, nil,
+			M{"model": "gpt-5.4"},
+			nil,
 			"fix", "fast", "",
 		},
 		// Uses workflow-specific model from global config
@@ -1778,13 +1767,15 @@ func TestResolveWorkflowModel(t *testing.T) {
 		// Uses workflow-specific model from repo config
 		{
 			"repo fix_model",
-			M{"model": "gpt-5.4", "fix_model": "gemini-2.5-pro"}, nil,
+			M{"model": "gpt-5.4", "fix_model": "gemini-2.5-pro"},
+			nil,
 			"fix", "fast", "gemini-2.5-pro",
 		},
 		// Uses level-specific model from repo config
 		{
 			"repo fix_model_fast",
-			M{"fix_model_fast": "claude-3"}, nil,
+			M{"fix_model_fast": "claude-3"},
+			nil,
 			"fix", "fast", "claude-3",
 		},
 		// Repo beats global for workflow-specific
@@ -1797,7 +1788,8 @@ func TestResolveWorkflowModel(t *testing.T) {
 		// Review workflow isolation
 		{
 			"review workflow uses review_model",
-			M{"fix_model": "fix-only", "review_model": "review-only"}, nil,
+			M{"fix_model": "fix-only", "review_model": "review-only"},
+			nil,
 			"review", "standard", "review-only",
 		},
 		// Skips both global default_model and repo generic model
@@ -2033,7 +2025,7 @@ enabled = true
 repos = ["myorg/*", "other/repo"]
 exclude_repos = ["myorg/archived-*", "myorg/internal-*"]
 max_repos = 50
-`), 0644); err != nil {
+`), 0o644); err != nil {
 			require.Condition(t, func() bool {
 				return false
 			}, err)
@@ -2310,7 +2302,7 @@ github_app_private_key = "~/.roborev/app.pem"
 [ci.github_app_installations]
 Wesm = 111111
 RoboRev-Dev = 222222
-`), 0644)
+`), 0o644)
 		require.Condition(t, func() bool {
 			return err == nil
 		}, err)
@@ -2334,7 +2326,6 @@ RoboRev-Dev = 222222
 			return got == 222222
 		}, "got %d, want 222222 for normalized 'roborev-dev'", got)
 	}
-
 }
 
 func TestGitHubAppConfigured_MultiInstall(t *testing.T) {
@@ -2395,7 +2386,7 @@ func TestGitHubAppPrivateKeyResolved_TildeExpansion(t *testing.T) {
 	pemFile := filepath.Join(dir, "test.pem")
 	pemContent := "-----BEGIN RSA PRIVATE KEY-----\nfakekey\n-----END RSA PRIVATE KEY-----"
 	{
-		err := os.WriteFile(pemFile, []byte(pemContent), 0600)
+		err := os.WriteFile(pemFile, []byte(pemContent), 0o600)
 		require.Condition(t, func() bool {
 			return err == nil
 		}, err)
@@ -2438,12 +2429,12 @@ func TestGitHubAppPrivateKeyResolved_TildeExpansion(t *testing.T) {
 		t.Setenv("USERPROFILE", fakeHome) // Windows compatibility
 
 		fakePem := filepath.Join(fakeHome, ".roborev", "test.pem")
-		if err := os.MkdirAll(filepath.Dir(fakePem), 0700); err != nil {
+		if err := os.MkdirAll(filepath.Dir(fakePem), 0o700); err != nil {
 			require.Condition(t, func() bool {
 				return false
 			}, err)
 		}
-		if err := os.WriteFile(fakePem, []byte(pemContent), 0600); err != nil {
+		if err := os.WriteFile(fakePem, []byte(pemContent), 0o600); err != nil {
 			require.Condition(t, func() bool {
 				return false
 			}, err)
@@ -2567,7 +2558,6 @@ func TestHideClosedDefaultPersistence(t *testing.T) {
 	assert.Condition(t, func() bool {
 		return !reloaded.HideClosedByDefault
 	}, "Expected HideClosedByDefault to be false")
-
 }
 
 func TestAdvancedTasksEnabledPersistence(t *testing.T) {
@@ -2605,7 +2595,6 @@ func TestAdvancedTasksEnabledPersistence(t *testing.T) {
 	assert.Condition(t, func() bool {
 		return !reloaded.Advanced.TasksEnabled
 	}, "Expected Advanced.TasksEnabled to be false")
-
 }
 
 func TestSaveGlobalWritesDocumentedSettings(t *testing.T) {
@@ -2641,7 +2630,6 @@ func TestSaveGlobalWritesDocumentedSettings(t *testing.T) {
 		require.Condition(t, func() bool {
 			return strings.Contains(got, want)
 		}, "saved config missing documented setting %q:\n%s", want, got)
-
 	}
 }
 
@@ -2651,14 +2639,14 @@ func TestHideAddressedDeprecatedMigration(t *testing.T) {
 	// Write a config using the deprecated hide_addressed_by_default key
 	cfgPath := GlobalConfigPath()
 	{
-		err := os.MkdirAll(filepath.Dir(cfgPath), 0755)
+		err := os.MkdirAll(filepath.Dir(cfgPath), 0o755)
 		require.Condition(t, func() bool {
 			return err == nil
 		}, "mkdir failed: %v", err)
 	}
 	{
 
-		err := os.WriteFile(cfgPath, []byte("hide_addressed_by_default = true\n"), 0644)
+		err := os.WriteFile(cfgPath, []byte("hide_addressed_by_default = true\n"), 0o644)
 		require.Condition(t, func() bool {
 			return err == nil
 		}, "WriteFile failed: %v", err)
@@ -2675,7 +2663,6 @@ func TestHideAddressedDeprecatedMigration(t *testing.T) {
 	assert.Condition(t, func() bool {
 		return !loaded.HideAddressedByDefault
 	}, "Expected HideAddressedByDefault to be cleared after migration")
-
 }
 
 func TestHideAddressedDoesNotOverrideExplicitNewKey(t *testing.T) {
@@ -2684,7 +2671,7 @@ func TestHideAddressedDoesNotOverrideExplicitNewKey(t *testing.T) {
 	// Both deprecated and new key set — explicit new key should win
 	cfgPath := GlobalConfigPath()
 	{
-		err := os.MkdirAll(filepath.Dir(cfgPath), 0755)
+		err := os.MkdirAll(filepath.Dir(cfgPath), 0o755)
 		require.Condition(t, func() bool {
 			return err == nil
 		}, "mkdir failed: %v", err)
@@ -2692,7 +2679,7 @@ func TestHideAddressedDoesNotOverrideExplicitNewKey(t *testing.T) {
 
 	content := "hide_addressed_by_default = true\nhide_closed_by_default = false\n"
 	{
-		err := os.WriteFile(cfgPath, []byte(content), 0644)
+		err := os.WriteFile(cfgPath, []byte(content), 0o644)
 		require.Condition(t, func() bool {
 			return err == nil
 		}, "WriteFile failed: %v", err)
@@ -2708,16 +2695,15 @@ func TestHideAddressedDoesNotOverrideExplicitNewKey(t *testing.T) {
 	assert.Condition(t, func() bool {
 		return !loaded.HideAddressedByDefault
 	}, "Expected HideAddressedByDefault to be cleared after migration")
-
 }
 
 func TestHiddenColumnsExplicitEmptyBecomesSentinel(t *testing.T) {
 	testenv.SetDataDir(t)
 
 	cfgPath := GlobalConfigPath()
-	require.NoError(t, os.MkdirAll(filepath.Dir(cfgPath), 0755))
+	require.NoError(t, os.MkdirAll(filepath.Dir(cfgPath), 0o755))
 	require.NoError(t, os.WriteFile(cfgPath,
-		[]byte("hidden_columns = []\n"), 0644))
+		[]byte("hidden_columns = []\n"), 0o644))
 
 	loaded, err := LoadGlobal()
 	require.NoError(t, err)
@@ -2730,9 +2716,9 @@ func TestHiddenColumnsRenamedOnlyDoesNotBecomeSentinel(t *testing.T) {
 	testenv.SetDataDir(t)
 
 	cfgPath := GlobalConfigPath()
-	require.NoError(t, os.MkdirAll(filepath.Dir(cfgPath), 0755))
+	require.NoError(t, os.MkdirAll(filepath.Dir(cfgPath), 0o755))
 	require.NoError(t, os.WriteFile(cfgPath,
-		[]byte("hidden_columns = [\"handled\"]\n"), 0644))
+		[]byte("hidden_columns = [\"handled\"]\n"), 0o644))
 
 	loaded, err := LoadGlobal()
 	require.NoError(t, err)
@@ -2746,14 +2732,12 @@ func TestIsDefaultReviewType(t *testing.T) {
 		assert.Condition(t, func() bool {
 			return IsDefaultReviewType(rt)
 		}, "expected %q to be default review type", rt)
-
 	}
 	nonDefaults := []string{"security", "design", "bogus"}
 	for _, rt := range nonDefaults {
 		assert.Condition(t, func() bool {
 			return !IsDefaultReviewType(rt)
 		}, "expected %q to NOT be default review type", rt)
-
 	}
 }
 
@@ -2924,7 +2908,6 @@ func TestResolvedReviewMatrix(t *testing.T) {
 					return false
 				}, "matrix[%d] = %v, want %v",
 					i, got, want[i])
-
 			}
 		}
 	})
@@ -2963,7 +2946,6 @@ func TestResolvedReviewMatrix(t *testing.T) {
 					return false
 				}, "matrix[%d] = %v, want %v",
 					i, got, want[i])
-
 			}
 		}
 	})
@@ -3273,7 +3255,6 @@ func TestResolvedThrottleInterval(t *testing.T) {
 					return false
 				}, "ResolvedThrottleInterval() = %v, want %v",
 					got, tt.want)
-
 			}
 		})
 	}
@@ -3291,7 +3272,7 @@ throttle_interval = "30m"
 [ci.reviews]
 codex = ["security", "default"]
 gemini = ["default"]
-`), 0644)
+`), 0o644)
 		require.Condition(t, func() bool {
 			return err == nil
 		}, err)
@@ -3316,7 +3297,6 @@ gemini = ["default"]
 			codexTypes[0] == "security" &&
 			codexTypes[1] == "default"
 	}, "got codex types %v", codexTypes)
-
 }
 
 func TestIsThrottleBypassed(t *testing.T) {
@@ -3344,7 +3324,6 @@ func TestIsThrottleBypassed(t *testing.T) {
 					return false
 				}, "IsThrottleBypassed(%q) = %v, want %v",
 					tt.login, got, tt.want)
-
 			}
 		})
 	}
@@ -3378,7 +3357,6 @@ gemini = ["default"]
 		return len(cfg.CI.Reviews) == 2
 	}, "got %d review entries, want 2",
 		len(cfg.CI.Reviews))
-
 }
 
 func TestResolveMinSeverity(t *testing.T) {
@@ -3479,7 +3457,6 @@ func TestSeverityInstruction(t *testing.T) {
 						return false
 					}, "SeverityInstruction(%q) = %q, want empty",
 						tt.minSeverity, got)
-
 				}
 				return
 			}
@@ -3488,21 +3465,18 @@ func TestSeverityInstruction(t *testing.T) {
 					return false
 				}, "SeverityInstruction(%q) = empty, want non-empty",
 					tt.minSeverity)
-
 			}
 			if !strings.Contains(got, tt.wantSubstr) {
 				assert.Condition(t, func() bool {
 					return false
 				}, "SeverityInstruction(%q) = %q, missing %q",
 					tt.minSeverity, got, tt.wantSubstr)
-
 			}
 			if !strings.Contains(got, SeverityThresholdMarker) {
 				assert.Condition(t, func() bool {
 					return false
 				}, "SeverityInstruction(%q) missing threshold marker %q",
 					tt.minSeverity, SeverityThresholdMarker)
-
 			}
 		})
 	}

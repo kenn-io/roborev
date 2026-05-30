@@ -5,12 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-
-	"github.com/stretchr/testify/assert"
-	"go.kenn.io/roborev/internal/config"
-
-	// quote wraps a string in platform-appropriate shell quoting (matches shellEscape output).
-	"github.com/stretchr/testify/require"
 	"log"
 	"net/http"
 	"net/http/httptest"
@@ -22,8 +16,14 @@ import (
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/config"
 )
 
+// quote wraps a string in platform-appropriate shell quoting (matches shellEscape output).
 func quote(s string) string {
 	return shellEscape(s)
 }
@@ -459,7 +459,6 @@ func TestResolveCommand(t *testing.T) {
 }
 
 func TestHookRunnerFiresHooks(t *testing.T) {
-
 	tmpDir := t.TempDir()
 	markerFile := filepath.Join(tmpDir, "hook-fired")
 
@@ -489,7 +488,6 @@ func TestHookRunnerFiresHooks(t *testing.T) {
 }
 
 func TestHookRunnerWorkingDirectory(t *testing.T) {
-
 	tmpDir := t.TempDir()
 	markerFile := filepath.Join(tmpDir, "pwd-test")
 
@@ -540,7 +538,6 @@ func TestHookRunnerWorkingDirectory(t *testing.T) {
 }
 
 func TestHookRunnerNoMatchDoesNotFire(t *testing.T) {
-
 	tmpDir := t.TempDir()
 	markerFile := filepath.Join(tmpDir, "should-not-exist")
 
@@ -791,7 +788,6 @@ func TestRedactURLError(t *testing.T) {
 }
 
 func TestHooksSliceNotAliased(t *testing.T) {
-
 	// Verify that repo hooks don't leak into the global config's Hooks slice
 	tmpDir := t.TempDir()
 	markerGlobal := filepath.Join(tmpDir, "global-fired")
@@ -837,7 +833,6 @@ command = "`+touchCmd(markerRepo)+`"
 }
 
 func TestHookRunnerGlobalAndRepoHooksBothFire(t *testing.T) {
-
 	// Both global and per-repo hooks should fire for the same event
 	globalDir := t.TempDir()
 	repoDir := t.TempDir()
@@ -873,7 +868,6 @@ command = "`+touchCmd(repoMarker)+`"
 }
 
 func TestHookRunnerRepoOnlyHooks(t *testing.T) {
-
 	// Repo hooks fire even when there are no global hooks
 	repoDir := t.TempDir()
 	markerFile := filepath.Join(repoDir, "repo-only")
@@ -902,7 +896,6 @@ command = "`+touchCmd(markerFile)+`"
 }
 
 func TestHookRunnerRepoHookDoesNotFireForOtherRepo(t *testing.T) {
-
 	// A repo's hooks should not fire for events from a different repo
 	repoA := t.TempDir()
 	repoB := t.TempDir()
@@ -967,7 +960,7 @@ func TestHookRunnerStopUnsubscribes(t *testing.T) {
 // writeRepoConfig writes a .roborev.toml file into repoDir, failing the test on error.
 func writeRepoConfig(t *testing.T, repoDir, content string) {
 	t.Helper()
-	if err := os.WriteFile(filepath.Join(repoDir, ".roborev.toml"), []byte(content), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(repoDir, ".roborev.toml"), []byte(content), 0o644); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "failed to write .roborev.toml: %v", err)

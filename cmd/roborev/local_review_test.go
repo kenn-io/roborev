@@ -7,9 +7,9 @@ import (
 	"testing"
 
 	"github.com/spf13/cobra"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/testutil"
 )
 
@@ -36,7 +36,7 @@ func newReviewHarness(t *testing.T) *reviewHarness {
 func (h *reviewHarness) writeConfig(content string) {
 	h.t.Helper()
 	path := filepath.Join(h.Dir, ".roborev.toml")
-	err := os.WriteFile(path, []byte(content), 0644)
+	err := os.WriteFile(path, []byte(content), 0o644)
 	require.NoError(h.t, err)
 }
 
@@ -135,7 +135,7 @@ func TestLocalReviewWithDirtyDiff(t *testing.T) {
 
 	// Create a new file to make the repo dirty
 	newFile := filepath.Join(h.Dir, "newfile.go")
-	err := os.WriteFile(newFile, []byte("package main\nfunc test() {}"), 0644)
+	err := os.WriteFile(newFile, []byte("package main\nfunc test() {}"), 0o644)
 	require.NoError(t, err)
 
 	err = h.run(runOpts{Dirty: true, Agent: "test", Reasoning: "fast"})
@@ -271,5 +271,4 @@ func TestLocalReviewSkipsDaemon(t *testing.T) {
 
 	err := h.run(runOpts{Agent: "test", Reasoning: "fast"})
 	require.NoError(t, err, "Expected --local to work without daemon, got: %v")
-
 }

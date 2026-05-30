@@ -12,6 +12,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/testutil"
@@ -35,19 +36,23 @@ func (m *mockAgent) Review(
 	}
 	return out, m.err
 }
+
 func (m *mockAgent) WithReasoning(
 	_ agent.ReasoningLevel,
 ) agent.Agent {
 	return m
 }
+
 func (m *mockAgent) WithAgentic(_ bool) agent.Agent {
 	return m
 }
+
 func (m *mockAgent) WithModel(model string) agent.Agent {
 	c := *m
 	c.model = model
 	return &c
 }
+
 func (m *mockAgent) CommandLine() string {
 	return m.name
 }
@@ -384,6 +389,7 @@ func (p *promptCapture) Review(
 	p.lastPrompt = prompt
 	return "ok", nil
 }
+
 func (p *promptCapture) WithReasoning(
 	_ agent.ReasoningLevel,
 ) agent.Agent {

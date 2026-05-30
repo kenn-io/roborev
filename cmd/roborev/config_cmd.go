@@ -9,6 +9,7 @@ import (
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
+
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/git"
 )
@@ -22,9 +23,7 @@ const (
 	scopeLocal
 )
 
-var (
-	errNotGitRepository = errors.New("not in a git repository")
-)
+var errNotGitRepository = errors.New("not in a git repository")
 
 // RepoResolver provides filesystem and git context.
 type RepoResolver interface {

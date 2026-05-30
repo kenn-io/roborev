@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/version"
 )
@@ -26,7 +27,6 @@ func TestCreateMockRefineHandler_MethodEnforcement(t *testing.T) {
 		wantMethod string
 		wantStatus int
 	}{
-
 		{
 			name:       "GET /api/status returns 200",
 			method:     http.MethodGet,
@@ -127,7 +127,6 @@ func TestCreateMockRefineHandler_MethodEnforcement(t *testing.T) {
 			w := httptest.NewRecorder()
 			handler.ServeHTTP(w, req)
 			assert.Equal(t, tt.wantStatus, w.Code, "got status %d, want %d", w.Code, tt.wantStatus)
-
 		})
 	}
 }
@@ -152,11 +151,9 @@ func TestCreateMockRefineHandler_405ResponseBody(t *testing.T) {
 
 		"got error %q, want %q",
 		resp["error"], "method not allowed")
-
 }
 
 func TestNewMockDaemon_ServerWiring(t *testing.T) {
-
 	md := NewMockDaemon(t, MockRefineHooks{})
 	defer md.Close()
 
@@ -434,7 +431,6 @@ func (b *MockDaemonBuilder) WithJobs(jobs []storage.ReviewJob) *MockDaemonBuilde
 }
 
 func (b *MockDaemonBuilder) Build() *httptest.Server {
-
 	if _, ok := b.handlers["/api/review"]; !ok && len(b.reviews) > 0 {
 		b.handlers["/api/review"] = func(w http.ResponseWriter, r *http.Request) {
 			jobIDStr := r.URL.Query().Get("job_id")
@@ -447,7 +443,6 @@ func (b *MockDaemonBuilder) Build() *httptest.Server {
 			if review, ok := b.reviews[jobID]; ok {
 				json.NewEncoder(w).Encode(review)
 			} else {
-
 				http.Error(w, fmt.Sprintf("review for job %d not found", jobID), http.StatusNotFound)
 			}
 		}

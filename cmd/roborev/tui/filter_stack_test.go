@@ -6,6 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/assert"
+
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -30,7 +31,6 @@ func TestTUIFilterClearWithEsc(t *testing.T) {
 }
 
 func TestTUIFilterClearWithEscLayered(t *testing.T) {
-
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
@@ -55,7 +55,6 @@ func TestTUIFilterClearWithEscLayered(t *testing.T) {
 }
 
 func TestTUIFilterClearHideClosedOnly(t *testing.T) {
-
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
@@ -73,7 +72,6 @@ func TestTUIFilterClearHideClosedOnly(t *testing.T) {
 }
 
 func TestTUIFilterEscapeWhileLoadingFiresNewFetch(t *testing.T) {
-
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
@@ -99,7 +97,6 @@ func TestTUIFilterEscapeWhileLoadingFiresNewFetch(t *testing.T) {
 }
 
 func TestTUIFilterEscapeWhilePaginationDiscardsAppend(t *testing.T) {
-
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
@@ -222,7 +219,6 @@ func TestTUIFilterStackEscapeOrder(t *testing.T) {
 }
 
 func TestTUIFilterStackTitleBarOrder(t *testing.T) {
-
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
@@ -251,7 +247,7 @@ func TestTUIFilterStackTitleUsesRepoDisplayName(t *testing.T) {
 	m.activeRepoFilter = []string{"/workspace/old-service"}
 	m.filterStack = []string{"repo"}
 	m.repoNames = map[string][]string{
-		"new-service": []string{"/workspace/old-service"},
+		"new-service": {"/workspace/old-service"},
 	}
 
 	output := m.View()
@@ -261,7 +257,6 @@ func TestTUIFilterStackTitleUsesRepoDisplayName(t *testing.T) {
 }
 
 func TestTUIFilterStackReverseOrder(t *testing.T) {
-
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{
@@ -332,7 +327,6 @@ func TestTUIReconnectClearsFetchFailed(t *testing.T) {
 }
 
 func TestTUILockedFilterModalBlocksAll(t *testing.T) {
-
 	nodes := []treeFilterNode{
 		makeNode("repo-a", 3),
 	}
@@ -351,7 +345,6 @@ func TestTUILockedFilterModalBlocksAll(t *testing.T) {
 }
 
 func TestTUIPopFilterSkipsLockedWalksBack(t *testing.T) {
-
 	m := initFilterModel(nil)
 	m.activeRepoFilter = []string{"/unlocked/repo"}
 	m.activeBranchFilter = "locked-branch"
@@ -367,7 +360,6 @@ func TestTUIPopFilterSkipsLockedWalksBack(t *testing.T) {
 }
 
 func TestTUIPopFilterAllLocked(t *testing.T) {
-
 	m := initFilterModel(nil)
 	m.activeRepoFilter = []string{"/locked/repo"}
 	m.activeBranchFilter = "locked-branch"
@@ -381,7 +373,6 @@ func TestTUIPopFilterAllLocked(t *testing.T) {
 }
 
 func TestTUIEscapeWithLockedFilters(t *testing.T) {
-
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.jobs = []storage.ReviewJob{

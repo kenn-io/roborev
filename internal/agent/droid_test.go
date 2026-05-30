@@ -2,12 +2,13 @@ package agent
 
 import (
 	"context"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestDroidBuildArgs(t *testing.T) {
@@ -76,7 +77,6 @@ func TestDroidName(t *testing.T) {
 	a := NewDroidAgent("")
 	require.Equal(t, "droid", a.Name(), "expected name 'droid', got %s", a.Name())
 	require.Equal(t, "droid", a.CommandName(), "expected command name 'droid', got %s", a.CommandName())
-
 }
 
 func TestDroidWithAgentic(t *testing.T) {
@@ -86,7 +86,6 @@ func TestDroidWithAgentic(t *testing.T) {
 	a2 := a.WithAgentic(true).(*DroidAgent)
 	require.True(t, a2.Agentic, "expected agentic after WithAgentic(true)")
 	require.False(t, a.Agentic, "original should be unchanged")
-
 }
 
 func TestDroidReviewOutcomes(t *testing.T) {
@@ -137,7 +136,6 @@ func TestDroidReviewOutcomes(t *testing.T) {
 
 			if tt.exactMatch {
 				require.Equal(t, tt.wantResult, result, "expected exact result %q, got %q", tt.wantResult, result)
-
 			} else if !strings.Contains(result, tt.wantResult) {
 				require.Contains(t, result, tt.wantResult, "expected result to contain %q, got %q", tt.wantResult, result)
 			}

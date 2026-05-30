@@ -376,7 +376,7 @@ func TestACPAuthEdgeCases(t *testing.T) {
 	t.Run("Path validation blocks writes to symlinks escaping repo root", func(t *testing.T) {
 		externalDir := t.TempDir()
 		externalTarget := filepath.Join(externalDir, "outside.txt")
-		if err := os.WriteFile(externalTarget, []byte("outside"), 0644); err != nil {
+		if err := os.WriteFile(externalTarget, []byte("outside"), 0o644); err != nil {
 			require.NoError(t, err, "Failed to create external target: %v", err)
 		}
 
@@ -392,7 +392,7 @@ func TestACPAuthEdgeCases(t *testing.T) {
 
 	t.Run("Path validation allows writes to symlinks that resolve inside repo root", func(t *testing.T) {
 		internalTarget := filepath.Join(tempDir, "inside.txt")
-		if err := os.WriteFile(internalTarget, []byte("inside"), 0644); err != nil {
+		if err := os.WriteFile(internalTarget, []byte("inside"), 0o644); err != nil {
 			require.NoError(t, err, "Failed to create internal target: %v", err)
 		}
 		defer os.Remove(internalTarget)
@@ -410,7 +410,7 @@ func TestACPAuthEdgeCases(t *testing.T) {
 
 	t.Run("Path validation allows valid paths", func(t *testing.T) {
 		validFile := filepath.Join(tempDir, "valid.txt")
-		err := os.WriteFile(validFile, []byte("test"), 0644)
+		err := os.WriteFile(validFile, []byte("test"), 0o644)
 		require.NoError(t, err, "Failed to create test file: %v", err)
 		defer os.Remove(validFile)
 

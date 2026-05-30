@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/version"
@@ -25,7 +26,7 @@ func createRepoWithConfig(t *testing.T, configContent string) string {
 	t.Helper()
 	repoPath := t.TempDir()
 	if configContent != "" {
-		if err := os.WriteFile(filepath.Join(repoPath, ".roborev.toml"), []byte(configContent), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(repoPath, ".roborev.toml"), []byte(configContent), 0o644); err != nil {
 			require.NoError(t, err)
 		}
 	}

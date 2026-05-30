@@ -5,19 +5,19 @@ package storage
 import (
 	"context"
 	"fmt"
-
-	"github.com/stretchr/testify/assert"
-	"go.kenn.io/roborev/internal/config"
-
-	// getIntegrationPostgresURL returns the postgres URL for integration tests.
-	// Set via TEST_POSTGRES_URL environment variable or use default from docker-compose.test.yml
-	"github.com/stretchr/testify/require"
 	"os"
 	"path/filepath"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/config"
 )
 
+// getIntegrationPostgresURL returns the postgres URL for integration tests.
+// Set via TEST_POSTGRES_URL environment variable or use default from docker-compose.test.yml
 func getIntegrationPostgresURL() string {
 	if url := os.Getenv("TEST_POSTGRES_URL"); url != "" {
 		return url
@@ -310,7 +310,6 @@ func startSyncWorkerNoSync(
 			return false
 		}, "SyncWorker.Start failed for %s: %v",
 			machineName, err)
-
 	}
 	t.Cleanup(func() { worker.Stop() })
 
@@ -367,6 +366,14 @@ func waitCondition(t *testing.T, timeout time.Duration, msg string, condition fu
 	require.Condition(t, func() bool {
 		return false
 	}, "Timeout waiting for: %s", msg)
+}
+
+func jobUUIDSet(jobs []ReviewJob) map[string]bool {
+	uuids := make(map[string]bool, len(jobs))
+	for _, job := range jobs {
+		uuids[job.UUID] = true
+	}
+	return uuids
 }
 
 // TestIntegration_MigrationV6Idempotent verifies the v5→v6 migration
@@ -544,6 +551,104 @@ func TestIntegration_PullFromRemote(t *testing.T) {
 			return false
 		}, "Expected job UUID '%s', got %s", remoteJobUUID, jobs[0].UUID)
 	}
+}
+
+func TestIntegration_SyncPullsLateVisibleJobBeforeCursor(t *testing.T) {
+	env := newIntegrationEnv(t, 30*time.Second)
+
+	repoIdentity := "git@github.com:test/late-visible.git"
+	nodeA := env.setupNode("late-visible-a", repoIdentity, "1h")
+	nodeB := env.setupNode("late-visible-b", repoIdentity, "1h")
+
+	createCompletedReview(t, nodeB.DB, nodeB.Repo.ID, "late_01", "Bob", "First", "prompt", "output")
+	createCompletedReview(t, nodeB.DB, nodeB.Repo.ID, "late_02", "Bob", "Second", "prompt", "output")
+	_, err := nodeB.Worker.SyncNow()
+	require.NoError(t, err)
+	_, err = nodeA.Worker.SyncNow()
+	require.NoError(t, err)
+
+	cursor, err := nodeA.DB.GetSyncState(SyncStateLastJobCursor)
+	require.NoError(t, err)
+	cursorTime, _, ok := parseTimestampIDCursor(cursor)
+	require.True(t, ok)
+
+	machineB, err := nodeB.DB.GetMachineID()
+	require.NoError(t, err)
+	pgRepoID, err := env.Pool.GetOrCreateRepo(env.Ctx, repoIdentity)
+	require.NoError(t, err)
+	lateUUID := "11111111-1111-1111-1111-111111111111"
+	_, err = env.Pool.pool.Exec(env.Ctx, `
+		INSERT INTO roborev.review_jobs (
+			uuid, repo_id, git_ref, agent, job_type, review_type, status,
+			enqueued_at, source_machine_id, updated_at
+		) VALUES ($1, $2, $3, 'test', 'review', '', 'done', $4, $5, $6)
+	`, lateUUID, pgRepoID, "late_stale", cursorTime.Add(-10*time.Second), machineB, cursorTime.Add(-10*time.Second))
+	require.NoError(t, err)
+
+	_, err = nodeA.Worker.SyncNow()
+	require.NoError(t, err)
+
+	jobs, err := nodeA.DB.ListJobs("", "", 1000, 0)
+	require.NoError(t, err)
+	assert.Contains(t, jobUUIDSet(jobs), lateUUID)
+}
+
+func TestIntegration_SyncPullsLateVisibleResponseBeforeCursor(t *testing.T) {
+	env := newIntegrationEnv(t, 30*time.Second)
+
+	repoIdentity := "git@github.com:test/late-response.git"
+	nodeA := env.setupNode("late-response-a", repoIdentity, "1h")
+	nodeB := env.setupNode("late-response-b", repoIdentity, "1h")
+
+	jobB, _ := createCompletedReview(t, nodeB.DB, nodeB.Repo.ID, "resp_01", "Bob", "First", "prompt", "output")
+	_, err := nodeB.Worker.SyncNow()
+	require.NoError(t, err)
+	_, err = nodeA.Worker.SyncNow()
+	require.NoError(t, err)
+
+	machineB, err := nodeB.DB.GetMachineID()
+	require.NoError(t, err)
+
+	tx, err := env.Pool.pool.Begin(env.Ctx)
+	require.NoError(t, err)
+	defer tx.Rollback(env.Ctx)
+
+	lateUUID := "33333333-3333-3333-3333-333333333333"
+	_, err = tx.Exec(env.Ctx, `
+		INSERT INTO roborev.responses (uuid, job_uuid, responder, response, source_machine_id, created_at)
+		VALUES ($1, $2, 'human', 'late response', $3, clock_timestamp())
+	`, lateUUID, jobB.UUID, machineB)
+	require.NoError(t, err)
+
+	highUUID := "44444444-4444-4444-4444-444444444444"
+	_, err = env.Pool.pool.Exec(env.Ctx, `
+		INSERT INTO roborev.responses (uuid, job_uuid, responder, response, source_machine_id, created_at)
+		VALUES ($1, $2, 'human', 'high response', $3, clock_timestamp())
+	`, highUUID, jobB.UUID, machineB)
+	require.NoError(t, err)
+
+	_, err = nodeA.Worker.SyncNow()
+	require.NoError(t, err)
+
+	err = tx.Commit(env.Ctx)
+	require.NoError(t, err)
+
+	_, err = nodeA.Worker.SyncNow()
+	require.NoError(t, err)
+
+	rows, err := nodeA.DB.Query(`SELECT uuid FROM responses WHERE uuid IN (?, ?)`, lateUUID, highUUID)
+	require.NoError(t, err)
+	defer rows.Close()
+
+	uuids := map[string]bool{}
+	for rows.Next() {
+		var uuid string
+		require.NoError(t, rows.Scan(&uuid))
+		uuids[uuid] = true
+	}
+	require.NoError(t, rows.Err())
+	assert.Contains(t, uuids, highUUID)
+	assert.Contains(t, uuids, lateUUID)
 }
 
 func TestIntegration_FinalPush(t *testing.T) {
@@ -1436,7 +1541,6 @@ func TestIntegration_SyncNowWithProgressAbort(t *testing.T) {
 		}, "Expected partial push (abort after 1 batch), "+
 			"but pushed %d/%d jobs",
 			stats.PushedJobs, numJobs)
-
 	}
 
 	t.Logf("Progress abort test passed: pushed %d/%d jobs "+

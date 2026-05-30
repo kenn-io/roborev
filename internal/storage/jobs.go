@@ -993,7 +993,7 @@ func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
 func (db *DB) GetJobCounts() (queued, running, done, failed, canceled, applied, rebased, skipped int, err error) {
 	rows, err := db.Query(`SELECT status, COUNT(*) FROM review_jobs GROUP BY status`)
 	if err != nil {
-		return
+		return queued, running, done, failed, canceled, applied, rebased, skipped, err
 	}
 	defer rows.Close()
 
@@ -1001,7 +1001,7 @@ func (db *DB) GetJobCounts() (queued, running, done, failed, canceled, applied, 
 		var status string
 		var count int
 		if err = rows.Scan(&status, &count); err != nil {
-			return
+			return queued, running, done, failed, canceled, applied, rebased, skipped, err
 		}
 		switch JobStatus(status) {
 		case JobStatusQueued:
@@ -1023,7 +1023,7 @@ func (db *DB) GetJobCounts() (queued, running, done, failed, canceled, applied, 
 		}
 	}
 	err = rows.Err()
-	return
+	return queued, running, done, failed, canceled, applied, rebased, skipped, err
 }
 
 // UpdateJobBranch sets the branch field for a job that doesn't have one.

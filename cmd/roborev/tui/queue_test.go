@@ -12,6 +12,7 @@ import (
 	"github.com/charmbracelet/lipgloss"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -500,7 +501,6 @@ func TestTUITasksViewShowsQueuedColumn(t *testing.T) {
 }
 
 func TestTUIQueueNavigationBoundaries(t *testing.T) {
-
 	m := newQueueTestModel(
 		withQueueTestJobs(makeJob(1), makeJob(2), makeJob(3)),
 		withQueueTestSelection(0),
@@ -523,7 +523,6 @@ func TestTUIQueueNavigationBoundaries(t *testing.T) {
 }
 
 func TestTUIQueueNavigationBoundariesWithFilter(t *testing.T) {
-
 	m := newQueueTestModel(
 		withQueueTestJobs(makeJob(1, withRepoPath("/repo1")), makeJob(2, withRepoPath("/repo2"))),
 		withQueueTestSelection(1),
@@ -537,7 +536,6 @@ func TestTUIQueueNavigationBoundariesWithFilter(t *testing.T) {
 }
 
 func TestTUINavigateDownTriggersLoadMore(t *testing.T) {
-
 	m := newQueueTestModel(
 		withQueueTestJobs(makeJob(1)),
 		withQueueTestSelection(0),
@@ -551,7 +549,6 @@ func TestTUINavigateDownTriggersLoadMore(t *testing.T) {
 }
 
 func TestTUINavigateDownNoLoadMoreWhenFiltered(t *testing.T) {
-
 	m := newQueueTestModel(
 		withQueueTestJobs(makeJob(1, withRepoPath("/path/to/repo"))),
 		withQueueTestSelection(0),
@@ -679,7 +676,6 @@ func TestTUIQueueShowsCostColumnByDefault(t *testing.T) {
 }
 
 func TestTUIQueueTableRendersWithinWidth(t *testing.T) {
-
 	widths := []int{80, 100, 120, 200}
 	for _, w := range widths {
 		t.Run(fmt.Sprintf("width=%d", w), func(t *testing.T) {
@@ -710,7 +706,6 @@ func TestTUIQueueTableRendersWithinWidth(t *testing.T) {
 }
 
 func TestStatusColumnAutoWidth(t *testing.T) {
-
 	tests := []struct {
 		name      string
 		statuses  []storage.JobStatus
@@ -893,7 +888,6 @@ func TestTUIPageDownBlockedWhileLoadingJobs(t *testing.T) {
 }
 
 func TestTUIPageUpDownMovesSelection(t *testing.T) {
-
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.hideClosed = true
@@ -1110,7 +1104,6 @@ func TestTUIJobsMsgHideClosedFilledViewportDoesNotAutoPaginate(t *testing.T) {
 }
 
 func TestTUIEmptyQueueRendersPaddedHeight(t *testing.T) {
-
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 100
 	m.height = 20
@@ -1127,7 +1120,6 @@ func TestTUIEmptyQueueRendersPaddedHeight(t *testing.T) {
 }
 
 func TestTUIEmptyQueueWithFilterRendersPaddedHeight(t *testing.T) {
-
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 100
 	m.height = 20
@@ -1144,7 +1136,6 @@ func TestTUIEmptyQueueWithFilterRendersPaddedHeight(t *testing.T) {
 }
 
 func TestTUILoadingJobsShowsLoadingMessage(t *testing.T) {
-
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 100
 	m.height = 20
@@ -1159,7 +1150,6 @@ func TestTUILoadingJobsShowsLoadingMessage(t *testing.T) {
 }
 
 func TestTUILoadingShowsForLoadingMore(t *testing.T) {
-
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 100
 	m.height = 20
@@ -1173,7 +1163,6 @@ func TestTUILoadingShowsForLoadingMore(t *testing.T) {
 }
 
 func TestTUIQueueNoScrollIndicatorPads(t *testing.T) {
-
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 100
 	m.height = 30
@@ -1448,7 +1437,6 @@ func TestTUIClosedHideClosedStats(t *testing.T) {
 }
 
 func TestTUIQueueNavigationSequences(t *testing.T) {
-
 	threeJobs := []storage.ReviewJob{
 		makeJob(1),
 		makeJob(2),
@@ -1521,7 +1509,6 @@ func assertFlashMessage(t *testing.T, m model, view viewKind, msg string) {
 }
 
 func TestTUIQueueNarrowWidthFlexAllocation(t *testing.T) {
-
 	for _, w := range []int{20, 30, 40} {
 		t.Run(fmt.Sprintf("width=%d", w), func(t *testing.T) {
 			m := newModel(localhostEndpoint, withExternalIODisabled())
@@ -1539,7 +1526,6 @@ func TestTUIQueueNarrowWidthFlexAllocation(t *testing.T) {
 }
 
 func TestTUIQueueLongCellContent(t *testing.T) {
-
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 80
 	m.height = 20
@@ -1566,7 +1552,6 @@ func TestTUIQueueLongCellContent(t *testing.T) {
 }
 
 func TestTUIQueueLongAgentName(t *testing.T) {
-
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 100
 	m.height = 20
@@ -1592,7 +1577,6 @@ func TestTUIQueueLongAgentName(t *testing.T) {
 }
 
 func TestTUIQueueWideCharacterWidth(t *testing.T) {
-
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 100
 	m.height = 20
@@ -1619,7 +1603,6 @@ func TestTUIQueueWideCharacterWidth(t *testing.T) {
 }
 
 func TestTUIQueueAgentColumnCapped(t *testing.T) {
-
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 120
 	m.height = 20
@@ -1653,7 +1636,6 @@ func TestTUIQueueAgentColumnCapped(t *testing.T) {
 }
 
 func TestTUITasksFlexOvershootHandled(t *testing.T) {
-
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewTasks
 	m.width = 50
@@ -1680,7 +1662,6 @@ func TestTUITasksFlexOvershootHandled(t *testing.T) {
 }
 
 func TestTUIQueueFlexOvershootHandled(t *testing.T) {
-
 	tests := []struct {
 		name   string
 		width  int
@@ -1722,7 +1703,6 @@ func TestTUIQueueFlexOvershootHandled(t *testing.T) {
 }
 
 func TestTUIQueueFlexColumnsGetContentWidth(t *testing.T) {
-
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width = 120
 	m.height = 20
@@ -1751,7 +1731,6 @@ func TestTUIQueueFlexColumnsGetContentWidth(t *testing.T) {
 }
 
 func TestTUITasksStaleSelectionNoPanic(t *testing.T) {
-
 	m := newTuiModel("http://localhost")
 	m.currentView = tuiViewTasks
 	m.width = 120
@@ -1767,7 +1746,6 @@ func TestTUITasksStaleSelectionNoPanic(t *testing.T) {
 }
 
 func TestTUITasksNarrowWidthFlexAllocation(t *testing.T) {
-
 	for _, w := range []int{20, 30, 40} {
 		t.Run(fmt.Sprintf("width=%d", w), func(t *testing.T) {
 			m := newTuiModel("http://localhost")
@@ -1977,7 +1955,6 @@ func TestColumnBordersRendered(t *testing.T) {
 }
 
 func TestQueueColWidthCacheColdStart(t *testing.T) {
-
 	m := newTuiModel("http://localhost")
 	m.width = 120
 	m.height = 24
@@ -2312,7 +2289,6 @@ func TestMigrateColumnConfig(t *testing.T) {
 }
 
 func TestParseColumnOrderAppendsMissing(t *testing.T) {
-
 	oldCustom := []string{"repo", "ref", "agent", "status", "queued", "elapsed", "branch", "closed"}
 	got := parseColumnOrder(oldCustom)
 
@@ -2339,7 +2315,6 @@ func TestParseColumnOrderAppendsMissing(t *testing.T) {
 }
 
 func TestDefaultColumnOrderDetection(t *testing.T) {
-
 	defaultOrder := make([]int, len(toggleableColumns))
 	copy(defaultOrder, toggleableColumns)
 

@@ -158,7 +158,6 @@ func TestTUIFilterSearchByRepoPath(t *testing.T) {
 
 func TestTUIFilterSearchByDisplayName(t *testing.T) {
 	m := initFilterModel([]treeFilterNode{
-
 		{name: "My Project", rootPaths: []string{"/home/user/my-project-repo"}, count: 2},
 
 		{name: "frontend", rootPaths: []string{"/path/to/frontend"}, count: 1},

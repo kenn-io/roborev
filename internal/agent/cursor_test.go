@@ -2,10 +2,11 @@ package agent
 
 import (
 	"context"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestCursorBuildArgs_Table(t *testing.T) {
@@ -98,7 +99,6 @@ func TestCursorReviewPassesModelFlag(t *testing.T) {
 }
 
 func TestCursorParseStreamJSON(t *testing.T) {
-
 	tests := []struct {
 		name           string
 		input          string
@@ -128,7 +128,6 @@ func TestCursorParseStreamJSON(t *testing.T) {
 			res, err := cursor.parseStreamJSON(strings.NewReader(tt.input), nil)
 			require.NoError(t, err)
 			assert.Equal(t, tt.expectedResult, res, "expected %q, got %q", tt.expectedResult, res)
-
 		})
 	}
 }
@@ -144,7 +143,6 @@ func TestCursorWithChaining(t *testing.T) {
 
 	assert.True(t, cursor.Agentic, "expected agentic true")
 	assert.Equal(t, "agent", cursor.Command, "expected command 'agent', got %q", cursor.Command)
-
 }
 
 func TestCursorReviewPipesPromptViaStdin(t *testing.T) {

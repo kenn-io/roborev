@@ -3,10 +3,6 @@ package daemon
 import (
 	"encoding/json"
 	"fmt"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"go.kenn.io/roborev/internal/testenv"
 	"math"
 	"net"
 	"net/http"
@@ -17,6 +13,11 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/testenv"
 )
 
 const (
@@ -50,7 +51,7 @@ func createRuntimeFile(t *testing.T, dir string, pid int, data *runtimeData) str
 		}, "Failed to marshal runtime data: %v", err)
 	}
 	path := filepath.Join(dir, fmt.Sprintf("daemon.%d.json", pid))
-	if err := os.WriteFile(path, bytes, 0644); err != nil {
+	if err := os.WriteFile(path, bytes, 0o644); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "Failed to write runtime file: %v", err)
@@ -261,8 +262,8 @@ func TestListAllRuntimesSkipsUnreadableFiles(t *testing.T) {
 		PID:  math.MaxInt32 - 1,
 		Addr: "127.0.0.1:7374",
 	})
-	os.Chmod(unreadablePath, 0000)
-	t.Cleanup(func() { os.Chmod(unreadablePath, 0644) })
+	os.Chmod(unreadablePath, 0o000)
+	t.Cleanup(func() { os.Chmod(unreadablePath, 0o644) })
 
 	// Probe whether chmod 0000 actually blocks reads on this filesystem
 	if f, probeErr := os.Open(unreadablePath); probeErr == nil {
@@ -533,7 +534,7 @@ func TestCleanupZombieDaemonsPreservesTargetSocket(t *testing.T) {
 	require.NoError(t, err)
 	runtimePath := filepath.Join(
 		dataDir, fmt.Sprintf("daemon.%d.json", stalePID))
-	require.NoError(t, os.WriteFile(runtimePath, runtimeJSON, 0644))
+	require.NoError(t, os.WriteFile(runtimePath, runtimeJSON, 0o644))
 
 	mockIdentifyProcess(t, func(pid int) processIdentity {
 		return processNotRoborev
@@ -583,7 +584,7 @@ func TestListAllRuntimesWithGlobMetacharacters(t *testing.T) {
 	tmpDir := t.TempDir()
 	// Create a subdirectory with brackets (glob metacharacter)
 	dataDir := filepath.Join(tmpDir, "data[test]")
-	if err := os.Mkdir(dataDir, 0755); err != nil {
+	if err := os.Mkdir(dataDir, 0o755); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "Failed to create test directory: %v", err)

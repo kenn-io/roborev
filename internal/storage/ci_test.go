@@ -2,11 +2,12 @@ package storage
 
 import (
 	"database/sql"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"sync"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const (
@@ -397,7 +398,6 @@ func TestIncrementBatchCompleted(t *testing.T) {
 	updated, err = db.IncrementBatchCompleted(batch.ID)
 	require.NoError(t, err, "IncrementBatchCompleted: %v")
 	assert.Equal(t, 2, updated.CompletedJobs, "got CompletedJobs=%d, want 2", updated.CompletedJobs)
-
 }
 
 func TestIncrementBatchFailed(t *testing.T) {
@@ -437,7 +437,6 @@ func TestIncrementBatchConcurrent(t *testing.T) {
 
 	finalBatch := getBatch(t, db, batch.ID)
 	assert.Equal(t, n, finalBatch.CompletedJobs, "got CompletedJobs=%d, want %d", finalBatch.CompletedJobs, n)
-
 }
 
 func TestGetBatchReviews(t *testing.T) {
@@ -492,7 +491,6 @@ func TestGetCIBatchByJobID(t *testing.T) {
 	notFound, err := db.GetCIBatchByJobID(99999)
 	require.NoError(t, err, "GetCIBatchByJobID: %v")
 	assert.Nil(t, notFound, "expected nil for unknown job ID")
-
 }
 
 func TestListCIBatchesByJobID_Multiple(t *testing.T) {
@@ -549,7 +547,6 @@ func TestClaimBatchForSynthesis(t *testing.T) {
 	require.NoError(t, err, "ClaimBatchForSynthesis (after unclaim): %v")
 
 	assert.True(t, claimed, "expected claim after unclaim to succeed")
-
 }
 
 func TestFinalizeBatch_PreventsStaleRepost(t *testing.T) {
@@ -599,7 +596,6 @@ func TestFinalizeBatch_PreventsStaleRepost(t *testing.T) {
 	claimed, err = db.ClaimBatchForSynthesis(batch.ID)
 	require.NoError(t, err)
 	assert.False(t, claimed, "should not be able to re-claim a finalized batch")
-
 }
 
 func TestGetStaleBatches_StaleClaim(t *testing.T) {
@@ -624,7 +620,6 @@ func TestGetStaleBatches_StaleClaim(t *testing.T) {
 		}
 	}
 	assert.True(t, found, "stale claimed batch should appear in GetStaleBatches")
-
 }
 
 func TestUnclaimStaleBatchClaim_OnlyUnclaimsStillStaleClaims(t *testing.T) {
@@ -711,7 +706,6 @@ func TestCancelJob_ReturnsErrNoRowsForTerminalJobs(t *testing.T) {
 
 		err := db.CancelJob(job.ID)
 		require.ErrorIs(t, err, sql.ErrNoRows, "expected sql.ErrNoRows, got: %v", err)
-
 	})
 
 	t.Run("QueuedJob_Succeeds", func(t *testing.T) {
@@ -793,7 +787,6 @@ func TestLatestBatchTimeForPR(t *testing.T) {
 		ts, err := db.LatestBatchTimeForPR(testRepo, 99)
 		require.NoError(t, err, "LatestBatchTimeForPR: %v")
 		assert.True(t, ts.IsZero(), "expected zero time, got %v", ts)
-
 	})
 
 	t.Run("returns latest batch time", func(t *testing.T) {
@@ -834,7 +827,6 @@ func TestLatestBatchTimeForPR(t *testing.T) {
 		ts, err := db.LatestBatchTimeForPR(testRepo, 999)
 		require.NoError(t, err, "LatestBatchTimeForPR: %v")
 		assert.True(t, ts.IsZero(), "expected zero time for different PR, got %v", ts)
-
 	})
 }
 

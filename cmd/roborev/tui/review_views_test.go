@@ -1,11 +1,13 @@
 package tui
 
 import (
+	"testing"
+
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/storage"
-	"testing"
 )
 
 func TestTUIEscapeFromReviewTriggersRefreshWithHideClosed(t *testing.T) {

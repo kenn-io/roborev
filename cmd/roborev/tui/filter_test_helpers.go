@@ -1,9 +1,10 @@
 package tui
 
 import (
+	"testing"
+
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
-	"testing"
 )
 
 type testModelOption func(*model)

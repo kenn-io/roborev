@@ -15,12 +15,12 @@ import (
 )
 
 // PostgreSQL schema version - increment when schema changes
-const pgSchemaVersion = 13
+const pgSchemaVersion = 14
 
 // pgSchemaName is the PostgreSQL schema used to isolate roborev tables
 const pgSchemaName = "roborev"
 
-//go:embed schemas/postgres_v13.sql
+//go:embed schemas/postgres_v14.sql
 var pgSchemaSQL string
 
 // pgSchemaStatements returns the individual DDL statements for schema creation.
@@ -342,11 +342,32 @@ func (p *PgPool) EnsureSchema(ctx context.Context) error {
 				return fmt.Errorf("v13 migration (add retry_not_before): %w", err)
 			}
 		}
+		if currentVersion < 14 {
+			if _, err = p.pool.Exec(ctx, `ALTER TABLE responses ADD COLUMN IF NOT EXISTS inserted_at TIMESTAMP WITH TIME ZONE`); err != nil {
+				return fmt.Errorf("v14 migration (add inserted_at): %w", err)
+			}
+			if _, err = p.pool.Exec(ctx, `UPDATE responses SET inserted_at = created_at WHERE inserted_at IS NULL`); err != nil {
+				return fmt.Errorf("v14 migration (backfill inserted_at): %w", err)
+			}
+			if _, err = p.pool.Exec(ctx, `ALTER TABLE responses ALTER COLUMN inserted_at SET DEFAULT clock_timestamp()`); err != nil {
+				return fmt.Errorf("v14 migration (set inserted_at default): %w", err)
+			}
+			if _, err = p.pool.Exec(ctx, `ALTER TABLE responses ALTER COLUMN inserted_at SET NOT NULL`); err != nil {
+				return fmt.Errorf("v14 migration (set inserted_at not null): %w", err)
+			}
+			if _, err = p.pool.Exec(ctx, `CREATE INDEX IF NOT EXISTS idx_responses_inserted ON responses(inserted_at)`); err != nil {
+				return fmt.Errorf("v14 migration (add inserted_at index): %w", err)
+			}
+		}
 		// Update version
 		_, err = p.pool.Exec(ctx, `INSERT INTO schema_version (version) VALUES ($1) ON CONFLICT (version) DO NOTHING`, pgSchemaVersion)
 		if err != nil {
 			return fmt.Errorf("update schema version: %w", err)
 		}
+	}
+
+	if _, err := p.pool.Exec(ctx, `CREATE INDEX IF NOT EXISTS idx_responses_inserted ON responses(inserted_at)`); err != nil {
+		return fmt.Errorf("ensure response inserted_at index: %w", err)
 	}
 
 	// Auto-design dedup indexes are created unconditionally (with IF
@@ -643,7 +664,7 @@ func (p *PgPool) UpsertJob(ctx context.Context, j SyncableJob, pgRepoID int64, p
 			uuid, repo_id, commit_id, git_ref, session_id, agent, model, provider, requested_model, requested_provider, reasoning, job_type, review_type, patch_id, status, agentic,
 			enqueued_at, started_at, finished_at, prompt, diff_content, error, token_usage,
 			worktree_path, min_severity, source_machine_id, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, NOW())
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, clock_timestamp())
 		ON CONFLICT (uuid) DO UPDATE SET
 			status = EXCLUDED.status,
 			finished_at = EXCLUDED.finished_at,
@@ -659,7 +680,7 @@ func (p *PgPool) UpsertJob(ctx context.Context, j SyncableJob, pgRepoID int64, p
 			token_usage = COALESCE(EXCLUDED.token_usage, review_jobs.token_usage),
 			worktree_path = COALESCE(EXCLUDED.worktree_path, review_jobs.worktree_path),
 			min_severity = EXCLUDED.min_severity,
-			updated_at = NOW()
+			updated_at = clock_timestamp()
 	`, j.UUID, pgRepoID, pgCommitID, j.GitRef, nullString(j.SessionID), j.Agent, nullString(j.Model), nullString(j.Provider), nullString(j.RequestedModel), nullString(j.RequestedProvider), nullString(j.Reasoning),
 		defaultStr(j.JobType, "review"), j.ReviewType, nullString(j.PatchID), j.Status, j.Agentic, j.EnqueuedAt, j.StartedAt, j.FinishedAt,
 		nullString(j.Prompt), j.DiffContent, nullString(j.Error), nullString(j.TokenUsage), nullString(j.WorktreePath), normalizeMinSeverityForWrite(j.MinSeverity), j.SourceMachineID)
@@ -672,11 +693,11 @@ func (p *PgPool) UpsertReview(ctx context.Context, r SyncableReview) error {
 		INSERT INTO reviews (
 			uuid, job_uuid, agent, prompt, output, closed,
 			updated_by_machine_id, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, clock_timestamp())
 		ON CONFLICT (uuid) DO UPDATE SET
 			closed = EXCLUDED.closed,
 			updated_by_machine_id = EXCLUDED.updated_by_machine_id,
-			updated_at = NOW()
+			updated_at = clock_timestamp()
 	`, r.UUID, r.JobUUID, r.Agent, r.Prompt, r.Output, r.Closed,
 		r.UpdatedByMachineID, r.CreatedAt)
 	return err
@@ -886,45 +907,64 @@ type PulledResponse struct {
 	Response        string
 	SourceMachineID string
 	CreatedAt       time.Time
+	InsertedAt      time.Time
 }
 
-// PullResponses fetches responses from PostgreSQL created after the given ID cursor.
-func (p *PgPool) PullResponses(ctx context.Context, excludeMachineID string, afterID int64, limit int) ([]PulledResponse, int64, error) {
+// PullResponses fetches responses from PostgreSQL inserted after the given cursor.
+// Cursor format: "inserted_at id" (space-separated) or empty for first pull.
+func (p *PgPool) PullResponses(ctx context.Context, excludeMachineID string, cursor string, limit int) ([]PulledResponse, string, error) {
+	var cursorTime time.Time
+	var cursorID int64
+	if cursor != "" {
+		var ok bool
+		cursorTime, cursorID, ok = parseTimestampIDCursor(cursor)
+		if !ok {
+			cursor = ""
+		}
+	}
+
 	rows, err := p.pool.Query(ctx, `
 		SELECT
-			r.uuid, r.job_uuid, r.responder, r.response, r.source_machine_id, r.created_at, r.id
+			r.uuid, r.job_uuid, r.responder, r.response, r.source_machine_id, r.created_at, r.inserted_at, r.id
 		FROM responses r
 		WHERE (r.source_machine_id IS NULL OR r.source_machine_id != $1)
-		AND r.id > $2
-		ORDER BY r.id
-		LIMIT $3
-	`, excludeMachineID, afterID, limit)
+		AND (r.inserted_at > $2 OR (r.inserted_at = $2 AND r.id > $3))
+		ORDER BY r.inserted_at, r.id
+		LIMIT $4
+	`, excludeMachineID, cursorTime, cursorID, limit)
 	if err != nil {
-		return nil, afterID, fmt.Errorf("query responses: %w", err)
+		return nil, cursor, fmt.Errorf("query responses: %w", err)
 	}
 	defer rows.Close()
 
 	var responses []PulledResponse
-	var lastID = afterID
+	var lastInsertedAt time.Time
+	var lastID int64
 
 	for rows.Next() {
 		var r PulledResponse
 
 		err := rows.Scan(
-			&r.UUID, &r.JobUUID, &r.Responder, &r.Response, &r.SourceMachineID, &r.CreatedAt, &lastID,
+			&r.UUID, &r.JobUUID, &r.Responder, &r.Response, &r.SourceMachineID, &r.CreatedAt, &r.InsertedAt, &lastID,
 		)
 		if err != nil {
-			return nil, afterID, fmt.Errorf("scan response: %w", err)
+			return nil, cursor, fmt.Errorf("scan response: %w", err)
 		}
 
+		lastInsertedAt = r.InsertedAt
 		responses = append(responses, r)
 	}
 
 	if err := rows.Err(); err != nil {
-		return nil, afterID, fmt.Errorf("rows error: %w", err)
+		return nil, cursor, fmt.Errorf("rows error: %w", err)
 	}
 
-	return responses, lastID, nil
+	newCursor := cursor
+	if len(responses) > 0 {
+		newCursor = formatTimestampIDCursor(lastInsertedAt, lastID)
+	}
+
+	return responses, newCursor, nil
 }
 
 // nullString returns nil if s is empty, otherwise returns s
@@ -957,11 +997,11 @@ func (p *PgPool) BatchUpsertReviews(ctx context.Context, reviews []SyncableRevie
 			INSERT INTO reviews (
 				uuid, job_uuid, agent, prompt, output, closed,
 				updated_by_machine_id, created_at, updated_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, NOW())
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, clock_timestamp())
 			ON CONFLICT (uuid) DO UPDATE SET
 				closed = EXCLUDED.closed,
 				updated_by_machine_id = EXCLUDED.updated_by_machine_id,
-				updated_at = NOW()
+				updated_at = clock_timestamp()
 		`, r.UUID, r.JobUUID, r.Agent, r.Prompt, r.Output, r.Closed,
 			r.UpdatedByMachineID, r.CreatedAt)
 	}
@@ -1044,7 +1084,7 @@ func (p *PgPool) BatchUpsertJobs(ctx context.Context, jobs []JobWithPgIDs) ([]bo
 				uuid, repo_id, commit_id, git_ref, session_id, agent, reasoning, job_type, review_type, patch_id, status, agentic,
 				enqueued_at, started_at, finished_at, prompt, diff_content, error, token_usage,
 				worktree_path, min_severity, source_machine_id, updated_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, NOW())
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, clock_timestamp())
 			ON CONFLICT (uuid) DO UPDATE SET
 				status = EXCLUDED.status,
 				finished_at = EXCLUDED.finished_at,
@@ -1056,7 +1096,7 @@ func (p *PgPool) BatchUpsertJobs(ctx context.Context, jobs []JobWithPgIDs) ([]bo
 				token_usage = COALESCE(EXCLUDED.token_usage, review_jobs.token_usage),
 				worktree_path = COALESCE(EXCLUDED.worktree_path, review_jobs.worktree_path),
 				min_severity = EXCLUDED.min_severity,
-				updated_at = NOW()
+				updated_at = clock_timestamp()
 		`, j.UUID, jw.PgRepoID, jw.PgCommitID, j.GitRef, nullString(j.SessionID), j.Agent, nullString(j.Reasoning),
 			defaultStr(j.JobType, "review"), j.ReviewType, nullString(j.PatchID), j.Status, j.Agentic, j.EnqueuedAt, j.StartedAt, j.FinishedAt,
 			nullString(j.Prompt), j.DiffContent, nullString(j.Error), nullString(j.TokenUsage), nullString(j.WorktreePath), normalizeMinSeverityForWrite(j.MinSeverity), j.SourceMachineID)

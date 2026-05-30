@@ -105,9 +105,11 @@ var (
 	registry   = make(map[string]Agent)
 )
 
-var allowUnsafeAgents atomic.Bool
-var codexSandboxDisabled atomic.Bool
-var anthropicAPIKey atomic.Value
+var (
+	allowUnsafeAgents    atomic.Bool
+	codexSandboxDisabled atomic.Bool
+	anthropicAPIKey      atomic.Value
+)
 
 func AllowUnsafeAgents() bool {
 	return allowUnsafeAgents.Load()

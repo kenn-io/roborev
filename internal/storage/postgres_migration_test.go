@@ -16,6 +16,9 @@ import (
 //go:embed schemas/postgres_v11.sql
 var postgresV11Schema string
 
+//go:embed schemas/postgres_v13.sql
+var postgresV13Schema string
+
 // openTestPgPoolRawAtVersion bootstraps a fresh Postgres test pool at the
 // given older schema version by running only the corresponding embedded
 // schema file and seeding schema_version. It deliberately does NOT call
@@ -34,13 +37,12 @@ func openTestPgPoolRawAtVersion(t *testing.T, version int) *PgPool {
 	_, err = pool.pool.Exec(ctx, `DROP SCHEMA IF EXISTS roborev CASCADE`)
 	require.NoError(t, err, "drop existing roborev schema")
 
-	var schemaSQL string
-	switch version {
-	case 11:
-		schemaSQL = postgresV11Schema
-	default:
-		t.Fatalf("openTestPgPoolRawAtVersion: no embedded schema for version %d", version)
+	schemas := map[int]string{
+		11: postgresV11Schema,
+		13: postgresV13Schema,
 	}
+	schemaSQL, ok := schemas[version]
+	require.Truef(t, ok, "openTestPgPoolRawAtVersion: no embedded schema for version %d", version)
 
 	for _, stmt := range strings.Split(schemaSQL, ";") {
 		s := strings.TrimSpace(stmt)
@@ -73,20 +75,25 @@ func openTestPgPoolRawAtVersion(t *testing.T, version int) *PgPool {
 func pgxPool(p *PgPool) *pgxpool.Pool { return p.pool }
 
 func TestPostgresMigration_SkipReasonAndClassify(t *testing.T) {
-	prevVersion := pgSchemaVersion - 1
-
-	oldPool := openTestPgPoolRawAtVersion(t, prevVersion)
+	oldPool := openTestPgPoolRawAtVersion(t, 11)
 	ctx := context.Background()
 
 	var repoID int
 	require.NoError(t, pgxPool(oldPool).QueryRow(ctx,
 		`INSERT INTO roborev.repos (identity) VALUES ($1) RETURNING id`,
 		"git@example.com:owner/test-repo.git").Scan(&repoID))
+	jobUUID := uuid.New().String()
 	_, err := pgxPool(oldPool).Exec(ctx, `
 		INSERT INTO roborev.review_jobs
 		  (uuid, repo_id, git_ref, agent, status, enqueued_at, source_machine_id)
 		VALUES ($1, $2, 'abc', 'test', 'done', NOW(), $3)
-	`, uuid.New().String(), repoID, uuid.New().String())
+	`, jobUUID, repoID, uuid.New().String())
+	require.NoError(t, err)
+	_, err = pgxPool(oldPool).Exec(ctx, `
+		INSERT INTO roborev.responses
+		  (uuid, job_uuid, responder, response, source_machine_id, created_at)
+		VALUES ($1, $2, 'human', 'legacy response', $3, NOW())
+	`, uuid.New().String(), jobUUID, uuid.New().String())
 	require.NoError(t, err)
 
 	pg := openTestPgPool(t)
@@ -95,6 +102,9 @@ func TestPostgresMigration_SkipReasonAndClassify(t *testing.T) {
 	var n int
 	require.NoError(t, pgxPool(pg).QueryRow(ctx,
 		`SELECT COUNT(*) FROM roborev.review_jobs WHERE git_ref = 'abc'`).Scan(&n))
+	require.Equal(t, 1, n)
+	require.NoError(t, pgxPool(pg).QueryRow(ctx,
+		`SELECT COUNT(*) FROM roborev.responses WHERE inserted_at IS NOT NULL`).Scan(&n))
 	require.Equal(t, 1, n)
 
 	machineID := uuid.New().String()
@@ -105,4 +115,44 @@ func TestPostgresMigration_SkipReasonAndClassify(t *testing.T) {
 		VALUES ($1, $2, 'after', 'test', 'review', 'design', 'skipped', NOW(), $3, 'trivial', 'auto_design')
 	`, uuid.New().String(), repoID, machineID)
 	require.NoError(t, err)
+}
+
+func TestPostgresMigration_ResponseInsertedAt(t *testing.T) {
+	oldPool := openTestPgPoolRawAtVersion(t, 13)
+	ctx := context.Background()
+
+	var repoID int
+	require.NoError(t, pgxPool(oldPool).QueryRow(ctx,
+		`INSERT INTO roborev.repos (identity) VALUES ($1) RETURNING id`,
+		"git@example.com:owner/response-migration.git").Scan(&repoID))
+	jobUUID := uuid.New().String()
+	_, err := pgxPool(oldPool).Exec(ctx, `
+		INSERT INTO roborev.review_jobs
+		  (uuid, repo_id, git_ref, agent, status, enqueued_at, source_machine_id)
+		VALUES ($1, $2, 'abc', 'test', 'done', NOW(), $3)
+	`, jobUUID, repoID, uuid.New().String())
+	require.NoError(t, err)
+	_, err = pgxPool(oldPool).Exec(ctx, `
+		INSERT INTO roborev.responses
+		  (uuid, job_uuid, responder, response, source_machine_id, created_at)
+		VALUES ($1, $2, 'human', 'legacy response', $3, NOW())
+	`, uuid.New().String(), jobUUID, uuid.New().String())
+	require.NoError(t, err)
+
+	pg := openTestPgPool(t)
+	defer pg.Close()
+
+	var n int
+	require.NoError(t, pgxPool(pg).QueryRow(ctx,
+		`SELECT COUNT(*) FROM roborev.responses WHERE inserted_at IS NOT NULL`).Scan(&n))
+	require.Equal(t, 1, n)
+
+	var indexExists bool
+	require.NoError(t, pgxPool(pg).QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM pg_indexes
+			WHERE schemaname = 'roborev' AND indexname = 'idx_responses_inserted'
+		)
+	`).Scan(&indexExists))
+	require.True(t, indexExists)
 }

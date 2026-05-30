@@ -15,6 +15,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -25,7 +26,7 @@ func createTestGitRepo(t *testing.T) (string, func(args ...string)) {
 		tmpDir = resolved
 	}
 	repoDir := filepath.Join(tmpDir, "repo")
-	require.NoError(t, os.MkdirAll(repoDir, 0755))
+	require.NoError(t, os.MkdirAll(repoDir, 0o755))
 	run := func(args ...string) {
 		t.Helper()
 		cmd := exec.Command("git", args...)
@@ -37,7 +38,7 @@ func createTestGitRepo(t *testing.T) (string, func(args ...string)) {
 	run("config", "user.email", "test@test.com")
 	run("config", "user.name", "Test")
 	testFile := filepath.Join(repoDir, "test.txt")
-	require.NoError(t, os.WriteFile(testFile, []byte("test"), 0644))
+	require.NoError(t, os.WriteFile(testFile, []byte("test"), 0o644))
 	run("add", ".")
 	run("commit", "-m", "initial")
 	return repoDir, run
@@ -145,7 +146,6 @@ func TestHTTPClientWaitForReviewUsesJobID(t *testing.T) {
 }
 
 func TestFindJobForCommit(t *testing.T) {
-
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
 	}

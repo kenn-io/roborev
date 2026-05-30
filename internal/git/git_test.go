@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/testenv"
 )
 
@@ -74,9 +75,9 @@ func (r *TestRepo) CommitAll(msg string) {
 func (r *TestRepo) WriteFile(filename, content string) {
 	r.T.Helper()
 	path := filepath.Join(r.Dir, filename)
-	err := os.MkdirAll(filepath.Dir(path), 0755)
+	err := os.MkdirAll(filepath.Dir(path), 0o755)
 	require.NoError(r.T, err)
-	err = os.WriteFile(path, []byte(content), 0644)
+	err = os.WriteFile(path, []byte(content), 0o644)
 	require.NoError(r.T, err)
 }
 
@@ -100,10 +101,10 @@ func (r *TestRepo) AddWorktree(branchName string) *TestRepo {
 func (r *TestRepo) InstallHook(name, script string) {
 	r.T.Helper()
 	hooksDir := filepath.Join(r.Dir, ".git", "hooks")
-	err := os.MkdirAll(hooksDir, 0755)
+	err := os.MkdirAll(hooksDir, 0o755)
 	require.NoError(r.T, err)
 	hookPath := filepath.Join(hooksDir, name)
-	err = os.WriteFile(hookPath, []byte(script), 0755)
+	err = os.WriteFile(hookPath, []byte(script), 0o755)
 	require.NoError(r.T, err)
 }
 
@@ -174,7 +175,6 @@ func TestNormalizeMSYSPath(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			result := normalizeMSYSPath(tt.input)
 			assert.Equal(t, tt.expected, result, "Expected %s, got %s", tt.expected, result)
-
 		})
 	}
 }
@@ -379,7 +379,7 @@ func TestEnsureAbsoluteHooksPath(t *testing.T) {
 			t.Setenv("GIT_CONFIG_GLOBAL", globalCfg)
 			err := os.WriteFile(globalCfg, []byte(
 				"[core]\n\thooksPath = .githooks\n",
-			), 0644)
+			), 0o644)
 			require.NoError(t, err)
 
 			repo := NewTestRepo(t)
@@ -496,7 +496,6 @@ func TestGetCommitInfo(t *testing.T) {
 
 		assert.Empty(t, info.Body, "expected empty body, got '%s'", info.Body)
 		assert.Equal(t, "Test Author", info.Author, "expected author 'Test Author', got '%s'", info.Author)
-
 	})
 
 	t.Run("commit with subject and body", func(t *testing.T) {
@@ -1752,7 +1751,7 @@ func TestCommitErrorHookFailedFalseForGPGSigningFailure(t *testing.T) {
 		repo.WriteFile("fail-gpg.bat", "@echo off\nexit /b 1\n")
 	} else {
 		repo.WriteFile("fail-gpg", "#!/bin/sh\nexit 1\n")
-		err := os.Chmod(dummyGPG, 0755)
+		err := os.Chmod(dummyGPG, 0o755)
 		require.NoError(t, err, "failed to chmod fail-gpg")
 	}
 
@@ -1786,7 +1785,6 @@ func TestHasCommitHooksIgnoresDirectories(t *testing.T) {
 	err = os.MkdirAll(filepath.Join(hooksDir, "pre-commit"), 0o755)
 	require.NoError(t, err, "failed to create pre-commit directory")
 	require.False(t, hasCommitHooks(repo.Dir), "expected directory named pre-commit not to be treated as hook file")
-
 }
 
 func setupAncestorTest(t *testing.T) (*TestRepo, string, string, string) {
@@ -1848,7 +1846,6 @@ func TestIsAncestor(t *testing.T) {
 		repo, _, _, _ := setupAncestorTest(t)
 		_, err := IsAncestor(repo.Dir, "badbadbadbadbadbadbadbadbadbadbadbadbad", "HEAD")
 		require.Error(t, err, "bad object should return error")
-
 	})
 }
 
@@ -1875,7 +1872,6 @@ func TestGetPatchID(t *testing.T) {
 
 		assert.NotEqual(t, sha1, sha2, "SHAs should differ after rebase")
 		assert.Equal(t, patchID1, patchID2, "patch-ids should match: %s != %s", patchID1, patchID2)
-
 	})
 
 	t.Run("different for modified commits", func(t *testing.T) {
@@ -2008,7 +2004,6 @@ func TestWorktreePathForBranch(t *testing.T) {
 	t.Run("returns error for invalid repo path", func(t *testing.T) {
 		_, _, err := WorktreePathForBranch("/nonexistent/repo", "main")
 		require.Error(t, err, "expected error for invalid repo path, got nil")
-
 	})
 
 	t.Run("git worktree add succeeds on pre-existing empty directory", func(t *testing.T) {

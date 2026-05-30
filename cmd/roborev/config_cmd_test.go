@@ -113,7 +113,7 @@ func (s *stubRepoResolver) SetWorkingDirError(err error) {
 func createFakeGitRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	err := os.Mkdir(filepath.Join(dir, ".git"), 0755)
+	err := os.Mkdir(filepath.Join(dir, ".git"), 0o755)
 	require.NoError(t, err, "create .git dir: %v", err)
 	return dir
 }
@@ -131,13 +131,13 @@ func setupConfigEnv(t *testing.T, globalTOML, localTOML string) configEnv {
 
 	if globalTOML != "" {
 		globalPath := filepath.Join(dataDir, "config.toml")
-		require.NoError(t, os.WriteFile(globalPath, []byte(globalTOML), 0644), "write global config")
+		require.NoError(t, os.WriteFile(globalPath, []byte(globalTOML), 0o644), "write global config")
 	}
 
 	repoDir := createFakeGitRepo(t)
 	if localTOML != "" {
 		localPath := filepath.Join(repoDir, ".roborev.toml")
-		require.NoError(t, os.WriteFile(localPath, []byte(localTOML), 0644), "write local config")
+		require.NoError(t, os.WriteFile(localPath, []byte(localTOML), 0o644), "write local config")
 	}
 
 	resolver := &stubRepoResolver{}
@@ -206,7 +206,7 @@ func TestRepoRoot(t *testing.T) {
 	t.Run("falls back to filesystem when git resolver fails", func(t *testing.T) {
 		repoDir := createFakeGitRepo(t)
 		nestedDir := filepath.Join(repoDir, "nested", "deeper")
-		require.NoError(t, os.MkdirAll(nestedDir, 0755), "create nested dir")
+		require.NoError(t, os.MkdirAll(nestedDir, 0o755), "create nested dir")
 
 		resolver := &stubRepoResolver{}
 		resolver.SetGitError(errors.New(errGitStub))
@@ -253,7 +253,7 @@ func TestGetValueForScopeMergedPrefersLocal(t *testing.T) {
 	env := setupConfigEnv(t, "review_agent = \"global-agent\"\n", "review_agent = \"local-agent\"\n")
 
 	nestedDir := filepath.Join(env.RepoDir, "a", "b")
-	require.NoError(t, os.MkdirAll(nestedDir, 0755), "create nested dir")
+	require.NoError(t, os.MkdirAll(nestedDir, 0o755), "create nested dir")
 
 	env.Resolver.SetGitError(errors.New(errGitStub))
 	env.Resolver.SetWorkingDir(nestedDir)

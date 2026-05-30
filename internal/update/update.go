@@ -365,7 +365,7 @@ func (u *Updater) installBinary(srcPath, dstPath string) error {
 	}
 
 	if u.deps.GOOS != "windows" {
-		if err := os.Chmod(dstPath, 0755); err != nil {
+		if err := os.Chmod(dstPath, 0o755); err != nil {
 			return fmt.Errorf("chmod %s: %w", filepath.Base(dstPath), err)
 		}
 	}
@@ -513,14 +513,15 @@ func (u *Updater) downloadFile(url, dest string, totalSize int64, progressFn fun
 }
 
 func extractTarGz(archivePath, destDir string) error {
-	if err := os.MkdirAll(destDir, 0755); err != nil {
+	if err := os.MkdirAll(destDir, 0o755); err != nil {
 		return err
 	}
 
-	absDestDir, err := filepath.Abs(destDir)
+	root, err := os.OpenRoot(destDir)
 	if err != nil {
-		return fmt.Errorf("resolve dest dir: %w", err)
+		return fmt.Errorf("open extraction root: %w", err)
 	}
+	defer root.Close()
 
 	file, err := os.Open(archivePath)
 	if err != nil {
@@ -543,7 +544,7 @@ func extractTarGz(archivePath, destDir string) error {
 		if err != nil {
 			return err
 		}
-		if err := extractTarEntry(tr, header, absDestDir); err != nil {
+		if err := extractTarEntry(tr, header, root); err != nil {
 			return err
 		}
 	}
@@ -551,8 +552,8 @@ func extractTarGz(archivePath, destDir string) error {
 	return nil
 }
 
-func extractTarEntry(tr *tar.Reader, header *tar.Header, destDir string) error {
-	target, err := sanitizeTarPath(destDir, header.Name)
+func extractTarEntry(tr *tar.Reader, header *tar.Header, root *os.Root) error {
+	name, err := sanitizeTarPath(header.Name)
 	if err != nil {
 		return fmt.Errorf("invalid tar entry %q: %w", header.Name, err)
 	}
@@ -563,12 +564,16 @@ func extractTarEntry(tr *tar.Reader, header *tar.Header, destDir string) error {
 
 	switch header.Typeflag {
 	case tar.TypeDir:
-		return os.MkdirAll(target, 0755)
+		return root.MkdirAll(name, 0o755)
 	case tar.TypeReg:
-		if err := os.MkdirAll(filepath.Dir(target), 0755); err != nil {
-			return err
+		parent := filepath.Dir(name)
+		if parent != "." {
+			if err := root.MkdirAll(parent, 0o755); err != nil {
+				return err
+			}
 		}
-		outFile, err := os.Create(target)
+		mode := os.FileMode(header.Mode).Perm()
+		outFile, err := root.OpenFile(name, os.O_WRONLY|os.O_CREATE|os.O_TRUNC, mode)
 		if err != nil {
 			return err
 		}
@@ -576,7 +581,7 @@ func extractTarEntry(tr *tar.Reader, header *tar.Header, destDir string) error {
 		if _, err := io.Copy(outFile, tr); err != nil {
 			return err
 		}
-		return os.Chmod(target, os.FileMode(header.Mode))
+		return root.Chmod(name, mode)
 	default:
 		return nil
 	}
@@ -587,33 +592,13 @@ func isTarLink(header *tar.Header) bool {
 }
 
 // sanitizeTarPath validates and sanitizes a tar entry path to prevent directory traversal.
-func sanitizeTarPath(destDir, name string) (string, error) {
-	if strings.HasPrefix(name, "/") {
-		return "", fmt.Errorf("absolute path not allowed")
-	}
-
+func sanitizeTarPath(name string) (string, error) {
 	cleanName := filepath.Clean(name)
-	if filepath.IsAbs(cleanName) {
-		return "", fmt.Errorf("absolute path not allowed")
-	}
-	if strings.HasPrefix(cleanName, "..") || strings.Contains(cleanName, string(filepath.Separator)+"..") {
-		return "", fmt.Errorf("path traversal not allowed")
-	}
-
-	target := filepath.Join(destDir, cleanName)
-	absTarget, err := filepath.Abs(target)
-	if err != nil {
-		return "", err
-	}
-	absDestDir, err := filepath.Abs(destDir)
-	if err != nil {
-		return "", err
-	}
-	if !strings.HasPrefix(absTarget, absDestDir+string(filepath.Separator)) && absTarget != absDestDir {
+	if !filepath.IsLocal(cleanName) {
 		return "", fmt.Errorf("path escapes destination directory")
 	}
 
-	return target, nil
+	return cleanName, nil
 }
 
 func copyFile(src, dst string) (err error) {
@@ -694,10 +679,10 @@ func (u *Updater) saveCache(version string) error {
 	}
 
 	cachePath := filepath.Join(u.deps.CacheDir(), cacheFileName)
-	if err := os.MkdirAll(filepath.Dir(cachePath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(cachePath), 0o755); err != nil {
 		return err
 	}
-	return os.WriteFile(cachePath, data, 0644)
+	return os.WriteFile(cachePath, data, 0o644)
 }
 
 func parseVersion(raw string) parsedVersion {

@@ -63,7 +63,7 @@ func TestReadCompactMetadata(t *testing.T) {
 
 			if tt.mockFile != nil {
 				path := compactMetadataPath(tt.jobID)
-				if err := os.WriteFile(path, tt.mockFile, 0644); err != nil {
+				if err := os.WriteFile(path, tt.mockFile, 0o644); err != nil {
 					require.NoError(t, err, "Setup failed: %v")
 				}
 			}
@@ -90,7 +90,7 @@ func TestDeleteCompactMetadata(t *testing.T) {
 
 		// Create a metadata file
 		path := compactMetadataPath(jobID)
-		if err := os.WriteFile(path, []byte(`{"source_job_ids":[1,2,3]}`), 0644); err != nil {
+		if err := os.WriteFile(path, []byte(`{"source_job_ids":[1,2,3]}`), 0o644); err != nil {
 			require.NoError(t, err, "Failed to write metadata file: %v")
 		}
 

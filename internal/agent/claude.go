@@ -24,12 +24,16 @@ type ClaudeAgent struct {
 	SessionID string         // Existing session ID to resume
 }
 
-const claudeDangerousFlag = "--dangerously-skip-permissions"
-const claudeEffortFlag = "--effort"
+const (
+	claudeDangerousFlag = "--dangerously-skip-permissions"
+	claudeEffortFlag    = "--effort"
+)
 
-var claudeDangerousSupport sync.Map
-var claudeEffortSupport sync.Map
-var claudeToolsSupport sync.Map
+var (
+	claudeDangerousSupport sync.Map
+	claudeEffortSupport    sync.Map
+	claudeToolsSupport     sync.Map
+)
 
 // NewClaudeAgent creates a new Claude Code agent
 func NewClaudeAgent(command string) *ClaudeAgent {
@@ -547,7 +551,8 @@ func (a *ClaudeAgent) classifyArgs(schema json.RawMessage) []string {
 	// or any other local file. The schema constraint pins output to
 	// {design_review, reason} regardless. Never pass
 	// --dangerously-skip-permissions.
-	args := []string{"-p", "--output-format", "stream-json", "--verbose",
+	args := []string{
+		"-p", "--output-format", "stream-json", "--verbose",
 		"--json-schema", string(schema),
 		"--tools", "",
 	}

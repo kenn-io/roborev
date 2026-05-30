@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -298,7 +299,6 @@ func TestWaitMultipleJobIDs(t *testing.T) {
 
 	_, err := runWait(t, "--job", "10", "20")
 	require.NoError(t, err)
-
 }
 
 func TestWaitMultipleJobIDsOneFails(t *testing.T) {

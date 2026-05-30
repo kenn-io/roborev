@@ -51,7 +51,7 @@ func NewActivityLog(path string) (*ActivityLog, error) {
 
 func newActivityLogWithConfig(path string, maxSize int64, checkInterval int) (*ActivityLog, error) {
 	dir := filepath.Dir(path)
-	if err := os.MkdirAll(dir, 0755); err != nil {
+	if err := os.MkdirAll(dir, 0o755); err != nil {
 		return nil, err
 	}
 
@@ -60,7 +60,7 @@ func newActivityLogWithConfig(path string, maxSize int64, checkInterval int) (*A
 	}
 
 	file, err := os.OpenFile(
-		path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644,
+		path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644,
 	)
 	if err != nil {
 		return nil, err
@@ -181,13 +181,13 @@ func (a *ActivityLog) maybeRotate() {
 
 	a.file.Close()
 	f, err := os.OpenFile(
-		a.path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0644,
+		a.path, os.O_CREATE|os.O_TRUNC|os.O_WRONLY, 0o644,
 	)
 	if err != nil {
 		log.Printf("Activity log: rotate reopen failed, retrying append: %v", err)
 		// Fall back to append mode so logging isn't permanently disabled
 		f, err = os.OpenFile(
-			a.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0644,
+			a.path, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644,
 		)
 		if err != nil {
 			log.Printf("Activity log: fallback reopen also failed: %v", err)

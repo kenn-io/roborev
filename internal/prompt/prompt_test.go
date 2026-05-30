@@ -13,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/config"
 	gitpkg "go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/storage"
@@ -196,7 +197,7 @@ func TestBuildPromptWithNoParentCommits(t *testing.T) {
 	// Create a repo with just one commit
 	r := newTestRepo(t)
 
-	if err := os.WriteFile(filepath.Join(r.dir, "file.txt"), []byte("content"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(r.dir, "file.txt"), []byte("content"), 0o644); err != nil {
 		require.NoError(t, err)
 	}
 	r.git("add", "file.txt")
@@ -258,7 +259,7 @@ All public APIs must have documentation comments.
 """
 `
 	configPath := filepath.Join(repoPath, ".roborev.toml")
-	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+	if err := os.WriteFile(configPath, []byte(configContent), 0o644); err != nil {
 		require.NoError(t, err, "Failed to write config: %v", err)
 	}
 
@@ -285,7 +286,7 @@ func TestBuildPromptWithoutProjectGuidelines(t *testing.T) {
 	// Create .roborev.toml WITHOUT review guidelines
 	configContent := `agent = "codex"`
 	configPath := filepath.Join(repoPath, ".roborev.toml")
-	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+	if err := os.WriteFile(configPath, []byte(configContent), 0o644); err != nil {
 		require.NoError(t, err, "Failed to write config: %v", err)
 	}
 
@@ -320,7 +321,7 @@ func TestBuildPromptGuidelinesOrder(t *testing.T) {
 	// Create .roborev.toml with review guidelines
 	configContent := `review_guidelines = "Test guideline"`
 	configPath := filepath.Join(repoPath, ".roborev.toml")
-	if err := os.WriteFile(configPath, []byte(configContent), 0644); err != nil {
+	if err := os.WriteFile(configPath, []byte(configContent), 0o644); err != nil {
 		require.NoError(t, err, "Failed to write config: %v", err)
 	}
 
@@ -1631,7 +1632,7 @@ func TestLoadGuidelines(t *testing.T) {
 			setupFilesystem: func(t *testing.T, dir string) {
 				t.Helper()
 				if err := os.WriteFile(filepath.Join(dir, ".roborev.toml"),
-					[]byte("review_guidelines = \"Filesystem rule.\"\n"), 0644); err != nil {
+					[]byte("review_guidelines = \"Filesystem rule.\"\n"), 0o644); err != nil {
 					require.NoError(t, err, "write .roborev.toml: %v", err)
 				}
 			},
@@ -1643,7 +1644,7 @@ func TestLoadGuidelines(t *testing.T) {
 			setupGit: func(t *testing.T, r *testRepo) {
 				t.Helper()
 				if err := os.WriteFile(filepath.Join(r.dir, ".roborev.toml"),
-					[]byte("review_guidelines = INVALID[[["), 0644); err != nil {
+					[]byte("review_guidelines = INVALID[[["), 0o644); err != nil {
 					require.NoError(t, err, "write .roborev.toml: %v", err)
 				}
 				r.git("add", "-A")
@@ -1655,7 +1656,7 @@ func TestLoadGuidelines(t *testing.T) {
 			setupFilesystem: func(t *testing.T, dir string) {
 				t.Helper()
 				if err := os.WriteFile(filepath.Join(dir, ".roborev.toml"),
-					[]byte("review_guidelines = \"Filesystem guideline\"\n"), 0644); err != nil {
+					[]byte("review_guidelines = \"Filesystem guideline\"\n"), 0o644); err != nil {
 					require.NoError(t, err, "write .roborev.toml: %v", err)
 				}
 			},
@@ -1667,7 +1668,7 @@ func TestLoadGuidelines(t *testing.T) {
 			setupGit: func(t *testing.T, r *testRepo) {
 				t.Helper()
 				if err := os.WriteFile(filepath.Join(r.dir, ".roborev.toml"),
-					[]byte("review_guidelines = \"From main\"\n"), 0644); err != nil {
+					[]byte("review_guidelines = \"From main\"\n"), 0o644); err != nil {
 					require.NoError(t, err, "write .roborev.toml: %v", err)
 				}
 				r.git("add", "-A")
@@ -1682,17 +1683,17 @@ func TestLoadGuidelines(t *testing.T) {
 				blobSHA := r.git("rev-parse", "HEAD:.roborev.toml")
 				objPath := filepath.Join(r.dir, ".git", "objects",
 					blobSHA[:2], blobSHA[2:])
-				if err := os.Chmod(objPath, 0644); err != nil {
+				if err := os.Chmod(objPath, 0o644); err != nil {
 					require.NoError(t, err, "chmod: %v", err)
 				}
-				if err := os.WriteFile(objPath, []byte("corrupt"), 0444); err != nil {
+				if err := os.WriteFile(objPath, []byte("corrupt"), 0o444); err != nil {
 					require.NoError(t, err, "write corrupt blob: %v", err)
 				}
 			},
 			setupFilesystem: func(t *testing.T, dir string) {
 				t.Helper()
 				if err := os.WriteFile(filepath.Join(dir, ".roborev.toml"),
-					[]byte("review_guidelines = \"Filesystem fallback.\"\n"), 0644); err != nil {
+					[]byte("review_guidelines = \"Filesystem fallback.\"\n"), 0o644); err != nil {
 					require.NoError(t, err, "write .roborev.toml: %v", err)
 				}
 			},

@@ -15,6 +15,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
@@ -227,7 +228,7 @@ func TestRunRefineBranchReviewUsesEmptyAgent(t *testing.T) {
 func TestRefineLoopStaysOnFailedFixChain(t *testing.T) {
 	repoDir, _ := setupRefineRepo(t)
 
-	if err := os.WriteFile(filepath.Join(repoDir, "second.txt"), []byte("second"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(repoDir, "second.txt"), []byte("second"), 0o644); err != nil {
 		require.NoError(t, err)
 	}
 	execGit(t, repoDir, "add", "second.txt")
@@ -255,7 +256,7 @@ func TestRefineLoopStaysOnFailedFixChain(t *testing.T) {
 	agent.Register(&functionalMockAgent{nameVal: "test", reviewFunc: func(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
 		changeCount++
 		change := fmt.Sprintf("fix %d", changeCount)
-		if err := os.WriteFile(filepath.Join(repoPath, "fix.txt"), []byte(change), 0644); err != nil {
+		if err := os.WriteFile(filepath.Join(repoPath, "fix.txt"), []byte(change), 0o644); err != nil {
 			return "", err
 		}
 		if output != nil {

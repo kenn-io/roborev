@@ -8,6 +8,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -396,6 +397,7 @@ func mustParsePromptTestTime(t *testing.T, value string) time.Time {
 	require.NoError(t, err)
 	return parsed
 }
+
 func TestRenderAddressPromptOmitsOptionalSectionsWhenEmpty(t *testing.T) {
 	body, err := renderAddressPrompt(addressPromptView{ReviewFindings: "finding", JobID: 1})
 	require.NoError(t, err)

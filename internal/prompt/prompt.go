@@ -1360,7 +1360,7 @@ func SplitResponses(responses []storage.Response) (toolAttempts, userComments []
 			userComments = append(userComments, r)
 		}
 	}
-	return
+	return toolAttempts, userComments
 }
 
 func FormatToolAttempts(attempts []storage.Response) string {

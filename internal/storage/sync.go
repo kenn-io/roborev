@@ -15,7 +15,7 @@ const (
 	SyncStateMachineID        = "machine_id"
 	SyncStateLastJobCursor    = "last_job_cursor"    // ID of last synced job
 	SyncStateLastReviewCursor = "last_review_cursor" // Composite cursor for reviews (updated_at,id)
-	SyncStateLastResponseID   = "last_response_id"   // ID of last synced response
+	SyncStateLastResponseID   = "last_response_id"   // inserted_at/id cursor of last synced response
 	SyncStateSyncTargetID     = "sync_target_id"     // Database ID of last synced Postgres
 )
 

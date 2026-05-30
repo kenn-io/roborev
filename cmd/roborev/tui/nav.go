@@ -2,6 +2,7 @@ package tui
 
 import (
 	tea "github.com/charmbracelet/bubbletea"
+
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -161,7 +162,9 @@ func (m *model) logVisibleLines() int {
 // logHelpRows returns the help row items for the log view.
 func (m *model) logHelpRows() [][]helpItem {
 	helpRow := []helpItem{
-		{"↑/↓", "scroll"}, {"←/→", "prev/next"}, {"g", "toggle top/bottom"},
+		{"↑/↓", "scroll"},
+		{"←/→", "prev/next"},
+		{"g", "toggle top/bottom"},
 		{"i", "expand cmd"},
 	}
 	if m.logStreaming {

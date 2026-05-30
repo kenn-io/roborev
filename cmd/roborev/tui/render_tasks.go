@@ -2,14 +2,16 @@ package tui
 
 import (
 	"fmt"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/lipgloss/table"
-	"github.com/mattn/go-runewidth"
-	"go.kenn.io/roborev/internal/storage"
 	"maps"
 	"path/filepath"
 	"strings"
 	"time"
+
+	"github.com/charmbracelet/lipgloss"
+	"github.com/charmbracelet/lipgloss/table"
+	"github.com/mattn/go-runewidth"
+
+	"go.kenn.io/roborev/internal/storage"
 )
 
 // Task view column constants (prefixed tcol to avoid collision with queue's col constants).
@@ -413,6 +415,7 @@ func (m model) renderTasksView() string {
 
 	return b.String()
 }
+
 func (m model) renderTasksHelpOverlay(b *strings.Builder) string {
 	help := []string{
 		"",
@@ -450,6 +453,7 @@ func (m model) renderTasksHelpOverlay(b *strings.Builder) string {
 	b.WriteString("\x1b[K\x1b[J")
 	return b.String()
 }
+
 func (m model) renderPatchView() string {
 	var b strings.Builder
 
@@ -522,6 +526,7 @@ func (m model) renderPatchView() string {
 	b.WriteString("\x1b[K\x1b[J")
 	return b.String()
 }
+
 func (m model) renderWorktreeConfirmView() string {
 	var b strings.Builder
 

@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/lipgloss/table"
+
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
@@ -29,10 +30,16 @@ func (m model) getVisibleJobs() []storage.ReviewJob {
 	}
 	return visible
 }
+
 func (m model) queueHelpRows() [][]helpItem {
 	row1 := []helpItem{
-		{"x", "cancel"}, {"r", "rerun"}, {"l", "log"}, {"p", "prompt"},
-		{"c", "comment"}, {"y", "copy"}, {"m", "commit"},
+		{"x", "cancel"},
+		{"r", "rerun"},
+		{"l", "log"},
+		{"p", "prompt"},
+		{"c", "comment"},
+		{"y", "copy"},
+		{"m", "commit"},
 	}
 	if m.tasksWorkflowEnabled() {
 		row1 = append(row1, helpItem{"F", "fix"})
@@ -60,6 +67,7 @@ func (m model) queueHelpRows() [][]helpItem {
 	}
 	return [][]helpItem{row1, row2}
 }
+
 func (m model) queueHelpLines() int {
 	return len(reflowHelpRows(m.queueHelpRows(), m.width))
 }
@@ -81,10 +89,12 @@ func (m model) queueVisibleRows() int {
 	visibleRows := max(m.height-reserved, 3)
 	return visibleRows
 }
+
 func (m model) canPaginate() bool {
 	return m.hasMore && !m.loadingMore && !m.loadingJobs &&
 		len(m.activeRepoFilter) <= 1 && m.activeBranchFilter != branchNone
 }
+
 func (m model) getVisibleSelectedIdx() int {
 	if m.selectedIdx < 0 {
 		return -1
@@ -813,11 +823,15 @@ func migrateColumnConfig(cfg *config.Config) bool {
 	// Old default orders → reset
 	oldDefaults := [][]string{
 		// status before queued (pre-rename)
-		{"ref", "branch", "repo", "agent",
-			"status", "queued", "elapsed", "closed"},
+		{
+			"ref", "branch", "repo", "agent",
+			"status", "queued", "elapsed", "closed",
+		},
 		// combined status without pf column
-		{"ref", "branch", "repo", "agent",
-			"queued", "elapsed", "status", "closed"},
+		{
+			"ref", "branch", "repo", "agent",
+			"queued", "elapsed", "status", "closed",
+		},
 	}
 	for _, old := range oldDefaults {
 		if slices.Equal(cfg.ColumnOrder, old) {

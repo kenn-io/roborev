@@ -4,12 +4,6 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"go.kenn.io/roborev/internal/config"
-	"go.kenn.io/roborev/internal/storage"
-	"go.kenn.io/roborev/internal/testutil"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -19,6 +13,13 @@ import (
 	"strings"
 	"testing"
 	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 func TestHandleBatchJobs(t *testing.T) {
@@ -149,7 +150,7 @@ func TestHandleRemap(t *testing.T) {
 
 	// Set up a git repo so the remap route can resolve paths.
 	repoDir := filepath.Join(tmpDir, "remap-repo")
-	if err := os.MkdirAll(repoDir, 0755); err != nil {
+	if err := os.MkdirAll(repoDir, 0o755); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, err)
@@ -256,7 +257,7 @@ func TestHandleRemap(t *testing.T) {
 	t.Run("remap with unregistered repo returns 404", func(t *testing.T) {
 		// Create a valid git repo that is NOT registered in the DB
 		unregistered := filepath.Join(tmpDir, "unregistered-repo")
-		if err := os.MkdirAll(unregistered, 0755); err != nil {
+		if err := os.MkdirAll(unregistered, 0o755); err != nil {
 			require.Condition(t, func() bool {
 				return false
 			}, err)
@@ -491,7 +492,6 @@ func TestHandleGetReviewJobIDParsing(t *testing.T) {
 					return false
 				}, "expected status %d, got %d: %s",
 					tt.wantStatus, w.Code, w.Body.String())
-
 			}
 		})
 	}
@@ -931,7 +931,6 @@ func TestHandleFixJobStaleValidation(t *testing.T) {
 						return false
 					}, "Expected job %d status %s, got %s",
 						fixJob.ID, status, got.Status)
-
 				}
 
 				req := testutil.MakeJSONRequest(
@@ -1129,14 +1128,14 @@ func TestHandleFixJobAgentAvailability(t *testing.T) {
 	gitOnlyDir := t.TempDir()
 	if runtime.GOOS == "windows" {
 		wrapper := fmt.Sprintf("@\"%s\" %%*\r\n", gitPath)
-		if err := os.WriteFile(filepath.Join(gitOnlyDir, "git.cmd"), []byte(wrapper), 0755); err != nil {
+		if err := os.WriteFile(filepath.Join(gitOnlyDir, "git.cmd"), []byte(wrapper), 0o755); err != nil {
 			require.Condition(t, func() bool {
 				return false
 			}, err)
 		}
 	} else {
 		wrapper := fmt.Sprintf("#!/bin/sh\nexec '%s' \"$@\"\n", gitPath)
-		if err := os.WriteFile(filepath.Join(gitOnlyDir, "git"), []byte(wrapper), 0755); err != nil {
+		if err := os.WriteFile(filepath.Join(gitOnlyDir, "git"), []byte(wrapper), 0o755); err != nil {
 			require.Condition(t, func() bool {
 				return false
 			}, err)
@@ -1180,7 +1179,7 @@ func TestHandleFixJobAgentAvailability(t *testing.T) {
 					name = bin + ".cmd"
 					content = "@exit /b 0\r\n"
 				}
-				if err := os.WriteFile(filepath.Join(mockDir, name), []byte(content), 0755); err != nil {
+				if err := os.WriteFile(filepath.Join(mockDir, name), []byte(content), 0o755); err != nil {
 					require.Condition(t, func() bool {
 						return false
 					}, err)

@@ -1,11 +1,12 @@
 package storage
 
 import (
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"path/filepath"
 	"regexp"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestGetOrCreateRepoByIdentity(t *testing.T) {
@@ -296,7 +297,6 @@ func TestCommitsMigration_SameSHADifferentRepos(t *testing.T) {
 	// Verify duplicate in same repo is still rejected
 	_, err = db.Exec(`INSERT INTO commits (repo_id, sha, author, subject, timestamp) VALUES (1, 'abc123', 'Author', 'Subject', '2024-01-01T00:00:00Z')`)
 	require.Error(t, err, "Expected error inserting duplicate SHA in same repo, but got none")
-
 }
 
 func TestDuplicateRepoIdentity_MigrationSuccess(t *testing.T) {

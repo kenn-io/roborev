@@ -149,8 +149,10 @@ var allAgentSpecs = []agentSpec{
 	},
 }
 
-var agentSpecsByName = buildAgentSpecsByName()
-var fallbackAgentOrder = buildFallbackAgentOrder(allAgentSpecs)
+var (
+	agentSpecsByName   = buildAgentSpecsByName()
+	fallbackAgentOrder = buildFallbackAgentOrder(allAgentSpecs)
+)
 
 func buildAgentSpecsByName() map[string]agentSpec {
 	specs := make(map[string]agentSpec, len(allAgentSpecs))

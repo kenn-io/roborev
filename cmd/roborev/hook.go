@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
+
 	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/githook"
 )
@@ -31,7 +32,7 @@ func installHookCmd() *cobra.Command {
 				return fmt.Errorf("get hooks path: %w", err)
 			}
 
-			if err := os.MkdirAll(hooksDir, 0755); err != nil {
+			if err := os.MkdirAll(hooksDir, 0o755); err != nil {
 				return fmt.Errorf("create hooks directory: %w", err)
 			}
 

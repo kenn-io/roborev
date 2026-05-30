@@ -7,11 +7,12 @@ import (
 	"crypto/rand"
 	"errors"
 	"fmt"
-	acp "github.com/coder/acp-go-sdk"
 	"io"
 	"os"
 	"path/filepath"
 	"strings"
+
+	acp "github.com/coder/acp-go-sdk"
 )
 
 func readTextFileWindow(path string, startLine int, limit *int, maxBytes int) (string, error) {
@@ -202,7 +203,6 @@ func createTempFileWithPerm(parentDir, baseName string, perm os.FileMode) (*os.F
 }
 
 func (c *acpClient) ReadTextFile(ctx context.Context, params acp.ReadTextFileRequest) (acp.ReadTextFileResponse, error) {
-
 	// Validate session ID
 	if err := c.validateSessionID(params.SessionId); err != nil {
 		return acp.ReadTextFileResponse{}, err
@@ -253,7 +253,6 @@ func (c *acpClient) ReadTextFile(ctx context.Context, params acp.ReadTextFileReq
 }
 
 func (c *acpClient) WriteTextFile(ctx context.Context, params acp.WriteTextFileRequest) (acp.WriteTextFileResponse, error) {
-
 	// Validate session ID
 	if err := c.validateSessionID(params.SessionId); err != nil {
 		return acp.WriteTextFileResponse{}, err

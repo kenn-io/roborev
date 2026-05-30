@@ -2,17 +2,18 @@ package daemon
 
 import (
 	"encoding/json"
-
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
-	"go.kenn.io/roborev/internal/storage"
-	"go.kenn.io/roborev/internal/testutil"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
 	"os/exec"
 	"path/filepath"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 func TestHandleListRepos(t *testing.T) {
@@ -393,7 +394,6 @@ func TestHandleListReposSlashNormalization(t *testing.T) {
 				return false
 			}, "Expected 2 repos with forward-slash prefix, got %d",
 				len(response.Repos))
-
 		}
 		if response.TotalCount != 3 {
 			assert.Condition(t, func() bool {

@@ -180,13 +180,13 @@ func (s *Server) Start(ctx context.Context) error {
 		if ep.IsUnix() {
 			socketPath := ep.Address
 			socketDir := filepath.Dir(socketPath)
-			if err := os.MkdirAll(socketDir, 0700); err != nil {
+			if err := os.MkdirAll(socketDir, 0o700); err != nil {
 				s.configWatcher.Stop()
 				return fmt.Errorf("create socket directory: %w", err)
 			}
 			// Verify the parent directory has safe permissions (owner-only)
 			if fi, err := os.Stat(socketDir); err == nil {
-				if perm := fi.Mode().Perm(); perm&0077 != 0 {
+				if perm := fi.Mode().Perm(); perm&0o077 != 0 {
 					s.configWatcher.Stop()
 					return fmt.Errorf("socket directory %s has unsafe permissions %o (must not be group/world accessible)", socketDir, perm)
 				}
@@ -198,7 +198,7 @@ func (s *Server) Start(ctx context.Context) error {
 				s.configWatcher.Stop()
 				return fmt.Errorf("listen on %s: %w", ep, err)
 			}
-			if err := os.Chmod(socketPath, 0600); err != nil {
+			if err := os.Chmod(socketPath, 0o600); err != nil {
 				_ = listener.Close()
 				s.configWatcher.Stop()
 				return fmt.Errorf("chmod socket: %w", err)
@@ -409,7 +409,7 @@ func getSystemdListener() (net.Listener, DaemonEndpoint, error) {
 			_ = listener.Close()
 			return nil, ep, fmt.Errorf("socket activation: %w", err)
 		}
-		if perm := fi.Mode().Perm(); perm&0077 != 0 {
+		if perm := fi.Mode().Perm(); perm&0o077 != 0 {
 			_ = listener.Close()
 			return nil, ep, fmt.Errorf(
 				"socket activation: socket %q has unsafe permissions: %04o",
@@ -2717,6 +2717,7 @@ func (s *Server) humaStreamEvents(
 		}
 	}}, nil
 }
+
 func rawJSONOutput(status int, body any) (*RawJSONOutput, error) {
 	return &RawJSONOutput{
 		Status: status,

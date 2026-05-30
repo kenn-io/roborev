@@ -14,6 +14,7 @@ import (
 	"github.com/mattn/go-runewidth"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -60,7 +61,6 @@ func TestTUIToggleClosedNoReview(t *testing.T) {
 
 	errMsg := assertMsgType[errMsg](t, msg)
 	assert.Equal(t, "no review for this job", errMsg.Error(), "Expected 'no review for this job', got: %v", errMsg)
-
 }
 
 func TestTUICloseFromReviewView_Navigation(t *testing.T) {
@@ -78,7 +78,6 @@ func TestTUICloseFromReviewView_Navigation(t *testing.T) {
 			initialIdx:   1,
 			initialJobID: 2,
 			actions: func(m model) model {
-
 				m2, _ := pressKey(m, 'a')
 
 				assertSelection(t, m2, 1, 2)
@@ -346,7 +345,6 @@ func TestTUIClosedSuccessNoRollback(t *testing.T) {
 		}
 	}
 	require.NoError(t, m.err, "Expected no error, got %v", m.err)
-
 }
 
 func TestTUIClosedToggleMovesSelectionWithHideActive(t *testing.T) {
@@ -368,7 +366,6 @@ func TestTUIClosedToggleMovesSelectionWithHideActive(t *testing.T) {
 
 	prevIdx := m.findPrevVisibleJob(m.selectedIdx)
 	assert.Equal(t, 2, prevIdx, "Expected prev visible job at index 2, got %d", prevIdx)
-
 }
 
 func TestTUIClosedRollbackRestoresSelectionAfterHideClosedMove(t *testing.T) {
@@ -838,11 +835,9 @@ func TestTUICancelJobNotFound(t *testing.T) {
 		"expected not-found response to include error")
 	assert.Equal(t, storage.JobStatusQueued, result.oldState, "Expected oldState=queued for rollback, got %s", result.oldState)
 	assert.Nil(t, result.oldFinishedAt, "Expected oldFinishedAt=nil for queued job, got %v", result.oldFinishedAt)
-
 }
 
 func TestTUICancelRollbackOnError(t *testing.T) {
-
 	startTime := time.Now().Add(-5 * time.Minute)
 	m := setupTestModel([]storage.ReviewJob{
 		makeJob(42, withStatus(storage.JobStatusRunning), withStartedAt(startTime), withFinishedAt(nil)),
@@ -868,11 +863,9 @@ func TestTUICancelRollbackOnError(t *testing.T) {
 
 	require.Error(t, m2.err,
 		"expected cancel error on rollback")
-
 }
 
 func TestTUICancelRollbackWithNonNilFinishedAt(t *testing.T) {
-
 	startTime := time.Now().Add(-5 * time.Minute)
 	originalFinished := time.Now().Add(-2 * time.Minute)
 	m := setupTestModel([]storage.ReviewJob{
@@ -900,11 +893,9 @@ func TestTUICancelRollbackWithNonNilFinishedAt(t *testing.T) {
 		"expected finishedAt to be restored")
 	require.Error(t, m2.err,
 		"expected rollback error on save failure")
-
 }
 
 func TestTUICancelOptimisticUpdate(t *testing.T) {
-
 	startTime := time.Now().Add(-5 * time.Minute)
 	m := setupTestModel([]storage.ReviewJob{
 		makeJob(42, withStatus(storage.JobStatusRunning), withStartedAt(startTime), withFinishedAt(nil)),
@@ -920,11 +911,9 @@ func TestTUICancelOptimisticUpdate(t *testing.T) {
 
 	assert.NotNil(t, m2.jobs[0].FinishedAt, "expected optimistic cancel to set finishedAt")
 	assert.NotNil(t, cmd, "expected cancel command to be returned")
-
 }
 
 func TestTUICancelOnlyRunningOrQueued(t *testing.T) {
-
 	testCases := []storage.JobStatus{
 		storage.JobStatusDone,
 		storage.JobStatusFailed,
@@ -948,7 +937,6 @@ func TestTUICancelOnlyRunningOrQueued(t *testing.T) {
 				assert.True(t, m2.jobs[0].FinishedAt != nil && m2.jobs[0].FinishedAt.Equal(finishedAt), "Expected FinishedAt to remain unchanged")
 			}
 			assert.Nil(t, cmd, "Expected no command for non-cancellable job, got %v", cmd)
-
 		})
 	}
 }
@@ -991,7 +979,6 @@ func TestTUIRespondTextPreservation(t *testing.T) {
 		assert.Empty(t, m.commentText, "Expected text cleared for different job, got %q", m.commentText)
 	}
 	assert.Equal(t, int64(2), m.commentJobID, "Expected commentJobID=2, got %d", m.commentJobID)
-
 }
 
 func TestTUIRespondSuccessClearsOnlyMatchingJob(t *testing.T) {
@@ -1015,7 +1002,6 @@ func TestTUIRespondSuccessClearsOnlyMatchingJob(t *testing.T) {
 		assert.Empty(t, m.commentText, "Expected text cleared for matching job, got %q", m.commentText)
 	}
 	assert.Equal(t, int64(0), m.commentJobID, "Expected commentJobID=0 after success, got %d", m.commentJobID)
-
 }
 
 func TestTUIRespondBackspaceMultiByte(t *testing.T) {
@@ -1031,7 +1017,6 @@ func TestTUIRespondBackspaceMultiByte(t *testing.T) {
 
 	m, _ = pressSpecial(m, tea.KeyBackspace)
 	assert.Equal(t, "Hello ", m.commentText, "Expected commentText='Hello ' after second backspace, got %q", m.commentText)
-
 }
 
 func isValidUTF8(s string) bool {
@@ -1085,7 +1070,6 @@ func TestTUIRespondViewTruncationMultiByte(t *testing.T) {
 	}
 	assert.NotEqual(t, expectedWidth, 0,
 		"expected content area to produce visual width")
-
 }
 
 func TestTUIRespondViewTabExpansion(t *testing.T) {
@@ -1127,7 +1111,6 @@ func TestCancelKeyMovesSelectionWithHideClosed(t *testing.T) {
 			"selected index should move away from hidden canceled job")
 	assert.True(t, m2.isJobVisible(m2.jobs[m2.selectedIdx]),
 		"selected job should remain visible after selection move")
-
 }
 
 func TestClosedKeyUpdatesStatsOptimistically(t *testing.T) {
@@ -1192,13 +1175,11 @@ func assertSelection(t *testing.T, m model, idx int, jobID int64) {
 	t.Helper()
 	assert.Equal(t, idx, m.selectedIdx, "Expected selectedIdx=%d, got %d", idx, m.selectedIdx)
 	assert.Equal(t, jobID, m.selectedJobID, "Expected selectedJobID=%d, got %d", jobID, m.selectedJobID)
-
 }
 
 func assertView(t *testing.T, m model, view viewKind) {
 	t.Helper()
 	assert.Equal(t, view, m.currentView, "Expected view=%d, got %d", view, m.currentView)
-
 }
 
 func withStartedAt(t time.Time) func(*storage.ReviewJob) {
@@ -1245,5 +1226,4 @@ func assertJobStats(t *testing.T, m model, closed, open int) {
 	t.Helper()
 	require.Equal(t, m.jobStats.Closed, closed, "expected Closed=%d, got %d", closed, m.jobStats.Closed)
 	require.Equal(t, m.jobStats.Open, open, "expected Open=%d, got %d", open, m.jobStats.Open)
-
 }

@@ -21,7 +21,6 @@ func TestGetKnownJobUUIDs(t *testing.T) {
 	})
 
 	t.Run("returns UUIDs of jobs with UUIDs", func(t *testing.T) {
-
 		job1 := h.createPendingJob("abc123")
 		job2 := h.createPendingJob("def456")
 
@@ -325,7 +324,6 @@ func TestGetReviewsToSync_TimestampComparison(t *testing.T) {
 }
 
 func TestSessionID_SyncRoundTrip(t *testing.T) {
-
 	src := newSyncTestHelper(t)
 
 	job := src.createCompletedJob("session-sync-sha")
@@ -388,7 +386,6 @@ func TestSessionID_SyncRoundTrip(t *testing.T) {
 }
 
 func TestGetCommentsToSync_LegacyCommentsExcluded(t *testing.T) {
-
 	h := newSyncTestHelper(t)
 	job := h.createCompletedJob("legacy-resp-sha")
 
@@ -425,7 +422,6 @@ func TestGetCommentsToSync_LegacyCommentsExcluded(t *testing.T) {
 
 	assert.True(t, foundJobResp)
 	assert.False(t, foundLegacyResp, "Expected legacy response (job_id IS NULL) to be EXCLUDED from sync")
-
 }
 
 func TestGetJobsToSync_IncludesSkipped(t *testing.T) {

@@ -11,6 +11,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	godiff "github.com/sourcegraph/go-diff/diff"
+
 	daemonclient "go.kenn.io/roborev/internal/daemon_client"
 	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/storage"
@@ -317,8 +318,10 @@ func (m model) applyFixPatchInWorktree(jobID int64) tea.Cmd {
 		cmd := exec.Command("git", "-C", jobDetail.RepoPath, "worktree", "add", wtDir, jobDetail.Branch)
 		if out, cmdErr := cmd.CombinedOutput(); cmdErr != nil {
 			os.RemoveAll(wtDir)
-			return applyPatchResultMsg{jobID: jobID,
-				err: fmt.Errorf("git worktree add: %w: %s", cmdErr, out)}
+			return applyPatchResultMsg{
+				jobID: jobID,
+				err:   fmt.Errorf("git worktree add: %w: %s", cmdErr, out),
+			}
 		}
 
 		result := m.checkApplyCommitPatch(jobID, jobDetail, wtDir, patch)
@@ -359,12 +362,16 @@ func (m model) checkApplyCommitPatch(jobID int64, jobDetail *storage.ReviewJob, 
 	}
 	dirty, dirtyErr := dirtyPatchFiles(targetDir, patchedFiles)
 	if dirtyErr != nil {
-		return applyPatchResultMsg{jobID: jobID,
-			err: fmt.Errorf("checking dirty files: %w", dirtyErr)}
+		return applyPatchResultMsg{
+			jobID: jobID,
+			err:   fmt.Errorf("checking dirty files: %w", dirtyErr),
+		}
 	}
 	if len(dirty) > 0 {
-		return applyPatchResultMsg{jobID: jobID,
-			err: fmt.Errorf("uncommitted changes in patch files: %s — stash or commit first", strings.Join(dirty, ", "))}
+		return applyPatchResultMsg{
+			jobID: jobID,
+			err:   fmt.Errorf("uncommitted changes in patch files: %s — stash or commit first", strings.Join(dirty, ", ")),
+		}
 	}
 
 	// Dry-run check — only trigger rebase on actual merge conflicts
@@ -393,8 +400,10 @@ func (m model) checkApplyCommitPatch(jobID int64, jobDetail *storage.ReviewJob, 
 		commitMsg = fmt.Sprintf("fix: apply roborev fix for %s (job #%d)", ref, jobID)
 	}
 	if err := commitPatch(targetDir, patch, commitMsg); err != nil {
-		return applyPatchResultMsg{jobID: jobID, parentJobID: parentJobID, success: true,
-			commitFailed: true, err: fmt.Errorf("patch applied but commit failed: %w", err)}
+		return applyPatchResultMsg{
+			jobID: jobID, parentJobID: parentJobID, success: true,
+			commitFailed: true, err: fmt.Errorf("patch applied but commit failed: %w", err),
+		}
 	}
 
 	// Mark the fix job as applied on the server
@@ -406,8 +415,10 @@ func (m model) checkApplyCommitPatch(jobID int64, jobDetail *storage.ReviewJob, 
 		err = apiStatusError(resp.StatusCode(), resp.Status(), resp.Body)
 	}
 	if err != nil {
-		return applyPatchResultMsg{jobID: jobID, parentJobID: parentJobID, success: true,
-			err: fmt.Errorf("patch applied and committed but failed to mark applied: %w", err)}
+		return applyPatchResultMsg{
+			jobID: jobID, parentJobID: parentJobID, success: true,
+			err: fmt.Errorf("patch applied and committed but failed to mark applied: %w", err),
+		}
 	}
 
 	return applyPatchResultMsg{jobID: jobID, parentJobID: parentJobID, success: true}

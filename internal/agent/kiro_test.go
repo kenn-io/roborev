@@ -3,11 +3,12 @@ package agent
 import (
 	"bytes"
 	"context"
-	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 	"os"
 	"strings"
 	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func TestStripKiroOutput(t *testing.T) {
@@ -123,7 +124,6 @@ func TestKiroName(t *testing.T) {
 	a := NewKiroAgent("")
 	require.Equal(t, "kiro", a.Name(), "expected name 'kiro', got %s", a.Name())
 	require.Equal(t, "kiro-cli", a.CommandName(), "expected command name 'kiro-cli', got %s", a.CommandName())
-
 }
 
 func TestKiroCommandLine(t *testing.T) {
@@ -148,7 +148,6 @@ func TestKiroWithAgentic(t *testing.T) {
 	a2 := a.WithAgentic(true).(*KiroAgent)
 	require.True(t, a2.Agentic, "expected agentic after WithAgentic(true)")
 	require.False(t, a.Agentic, "original should be unchanged")
-
 }
 
 func TestKiroWithReasoning(t *testing.T) {
@@ -156,14 +155,12 @@ func TestKiroWithReasoning(t *testing.T) {
 	b := a.WithReasoning(ReasoningThorough).(*KiroAgent)
 	assert.Equal(t, ReasoningThorough, b.Reasoning, "expected thorough reasoning, got %q", b.Reasoning)
 	assert.Equal(t, ReasoningStandard, a.Reasoning, "original reasoning should be unchanged")
-
 }
 
 func TestKiroWithModelIsNoop(t *testing.T) {
 	a := NewKiroAgent("kiro-cli")
 	b := a.WithModel("some-model")
 	assert.Equal(t, a, b, "WithModel should return the same agent (kiro does not support model selection)")
-
 }
 
 func TestKiroReviewSuccess(t *testing.T) {
@@ -228,7 +225,6 @@ func TestKiroReviewEmptyOutput(t *testing.T) {
 	result, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "review this commit", nil)
 	require.NoError(t, err)
 	require.Equal(t, "No review output generated", result, "unexpected result: %q", result)
-
 }
 
 func TestKiroPassesPromptAsArg(t *testing.T) {
@@ -426,5 +422,4 @@ func TestKiroWithChaining(t *testing.T) {
 
 	require.True(t, kiro.Agentic, "expected agentic true")
 	require.Equal(t, "kiro-cli", kiro.Command, "expected command 'kiro-cli', got %q", kiro.Command)
-
 }

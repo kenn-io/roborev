@@ -6,6 +6,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/assert"
+
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -139,7 +140,6 @@ func TestTUIFilterPreselectsMultiPathReordered(t *testing.T) {
 }
 
 func TestTUIFilterAggregatedDisplayName(t *testing.T) {
-
 	m := initFilterModel([]treeFilterNode{
 		{name: "backend", rootPaths: []string{"/path/to/backend-dev", "/path/to/backend-prod"}, count: 2},
 		{name: "frontend", rootPaths: []string{"/path/to/frontend"}, count: 1},
@@ -256,7 +256,6 @@ func TestTUIFilterViewScrollWindow(t *testing.T) {
 }
 
 func TestTUIFilterLoadingRendersPaddedHeight(t *testing.T) {
-
 	m := initFilterModel(nil)
 	m.width = 100
 	m.height = 20
@@ -290,7 +289,6 @@ func TestTUIRightArrowRetriesAfterFailedLoad(t *testing.T) {
 }
 
 func TestTUIWindowResizeNoLoadMoreWhenMultiRepoFiltered(t *testing.T) {
-
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{makeJob(1, withRepoPath("/repo1"))}

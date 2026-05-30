@@ -37,8 +37,8 @@ func setupTestEnv(t *testing.T) string {
 func createMockSkill(t *testing.T, homeDir string, agent Agent, skill string) {
 	t.Helper()
 	dir := filepath.Join(homeDir, "."+string(agent), "skills", skill)
-	require.NoError(t, os.MkdirAll(dir, 0755))
-	require.NoError(t, os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("old"), 0644))
+	require.NoError(t, os.MkdirAll(dir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(dir, "SKILL.md"), []byte("old"), 0o644))
 }
 
 func expectedSkillDirNames(t *testing.T) []string {
@@ -107,7 +107,7 @@ func TestInstallWhenDirExists(t *testing.T) {
 		t.Run(tc.displayName, func(t *testing.T) {
 			tmpHome := setupTestEnv(t)
 			agentDir := filepath.Join(tmpHome, tc.configDir)
-			require.NoError(t, os.MkdirAll(agentDir, 0755))
+			require.NoError(t, os.MkdirAll(agentDir, 0o755))
 
 			results, err := Install()
 			require.NoError(t, err, "Install failed")
@@ -227,7 +227,7 @@ func TestInstallRemovesLegacySkills(t *testing.T) {
 		t.Run(tc.displayName, func(t *testing.T) {
 			tmpHome := setupTestEnv(t)
 
-			require.NoError(t, os.MkdirAll(filepath.Join(tmpHome, tc.configDir), 0755))
+			require.NoError(t, os.MkdirAll(filepath.Join(tmpHome, tc.configDir), 0o755))
 			createMockSkill(t, tmpHome, tc.agent, "roborev-address")
 
 			_, err := Install()
@@ -250,8 +250,8 @@ func TestUpdateRemovesLegacySkills(t *testing.T) {
 
 	// Plant the legacy skill
 	legacyDir := filepath.Join(tmpHome, ".claude", "skills", "roborev-address")
-	require.NoError(t, os.MkdirAll(legacyDir, 0755))
-	require.NoError(t, os.WriteFile(filepath.Join(legacyDir, "SKILL.md"), []byte("old"), 0644))
+	require.NoError(t, os.MkdirAll(legacyDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(legacyDir, "SKILL.md"), []byte("old"), 0o644))
 
 	_, err := Update()
 	require.NoError(t, err)

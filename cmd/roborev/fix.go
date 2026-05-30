@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
@@ -1027,7 +1028,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 	}
 
 	// Set up output
-	var underlying = io.Discard
+	underlying := io.Discard
 	var fmtr *streamfmt.Formatter
 	if !opts.quiet {
 		fmtr = streamfmt.New(cmd.OutOrStdout(), streamfmt.WriterIsTerminal(cmd.OutOrStdout()))
@@ -1335,7 +1336,7 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 
 		prompt := buildBatchFixPrompt(batch, minSev)
 
-		var underlying = io.Discard
+		underlying := io.Discard
 		var fmtr *streamfmt.Formatter
 		if !opts.quiet {
 			fmtr = streamfmt.New(cmd.OutOrStdout(), streamfmt.WriterIsTerminal(cmd.OutOrStdout()))
@@ -1430,8 +1431,10 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 // batchPromptOverhead is the fixed size of the batch prompt header + footer.
 var batchPromptOverhead = len(batchPromptHeader + batchPromptFooter)
 
-const batchPromptHeader = "# Batch Fix Request\n\nThe following reviews found issues that need to be fixed.\nAddress all findings across all reviews in a single pass.\n\n"
-const batchPromptFooter = "## Instructions\n\nPlease apply fixes for all the findings above.\nFocus on the highest priority items first.\nAfter making changes, verify the code compiles/passes linting,\nrun relevant tests, and create a git commit summarizing all changes.\n"
+const (
+	batchPromptHeader = "# Batch Fix Request\n\nThe following reviews found issues that need to be fixed.\nAddress all findings across all reviews in a single pass.\n\n"
+	batchPromptFooter = "## Instructions\n\nPlease apply fixes for all the findings above.\nFocus on the highest priority items first.\nAfter making changes, verify the code compiles/passes linting,\nrun relevant tests, and create a git commit summarizing all changes.\n"
+)
 
 // batchEntrySize returns the size of a single entry in the batch prompt.
 // The index parameter is the 1-based position in the batch.

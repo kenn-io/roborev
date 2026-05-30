@@ -22,9 +22,9 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
@@ -573,7 +573,7 @@ func TestFixSingleJobRecoversPostFixDaemonCalls(t *testing.T) {
 		NameStr: "test",
 		ReviewFn: func(_ context.Context, repoPath, _, _ string, _ io.Writer) (string, error) {
 			fixPath := filepath.Join(repoPath, "fix.txt")
-			if err := os.WriteFile(fixPath, []byte("fixed\n"), 0644); err != nil {
+			if err := os.WriteFile(fixPath, []byte("fixed\n"), 0o644); err != nil {
 				return "", fmt.Errorf("write fix: %w", err)
 			}
 			cmd := exec.Command("git", "add", "fix.txt")
@@ -1161,6 +1161,7 @@ func TestRunFixOpenOrdering(t *testing.T) {
 		assert.Contains(t, out, "[30 20 10]")
 	})
 }
+
 func TestRunFixOpenRequery(t *testing.T) {
 	repo := createTestRepo(t, map[string]string{"f.txt": "x"})
 	repoBranch := strings.TrimSpace(repo.Run("rev-parse", "--abbrev-ref", "HEAD"))
@@ -1362,7 +1363,7 @@ func TestFixJobDirectUnbornHead(t *testing.T) {
 			NameStr: "test",
 			ReviewFn: func(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
 				// Simulate agent creating the first commit
-				if err := os.WriteFile(filepath.Join(repoPath, "fix.txt"), []byte("fixed"), 0644); err != nil {
+				if err := os.WriteFile(filepath.Join(repoPath, "fix.txt"), []byte("fixed"), 0o644); err != nil {
 					return "", fmt.Errorf("write file: %w", err)
 				}
 				c := exec.Command("git", "add", ".")
@@ -1605,7 +1606,6 @@ func TestSplitIntoBatches(t *testing.T) {
 			}, "severity filter should not reduce batch count: "+
 				"without=%d, with=%d",
 				len(batchesNoSev), len(batchesWithSev))
-
 		}
 		// Verify the prompt respects the size estimate
 		for i, batch := range batchesWithSev {
@@ -1615,7 +1615,6 @@ func TestSplitIntoBatches(t *testing.T) {
 					return false
 				}, "batch %d prompt size %d exceeds limit 1200",
 					i, len(p))
-
 			}
 		}
 	})
@@ -2087,6 +2086,7 @@ func TestRunFixList(t *testing.T) {
 		assert.False(t, gotIDs[0] != 30 || gotIDs[1] != 20 || gotIDs[2] != 10)
 	})
 }
+
 func TestTruncateString(t *testing.T) {
 	tests := []struct {
 		s      string
@@ -2697,7 +2697,7 @@ func TestResolveFixAgentSkipsDefaultModel(t *testing.T) {
 	if err := os.WriteFile(cfgPath, []byte(`
 default_agent = "codex"
 default_model = "gpt-5.4"
-`), 0644); err != nil {
+`), 0o644); err != nil {
 		require.NoError(t, err)
 	}
 
@@ -2765,7 +2765,7 @@ func TestResolveFixAgentUsesWorkflowModel(t *testing.T) {
 default_agent = "codex"
 default_model = "gpt-5.4"
 fix_model = "gemini-2.5-pro"
-`), 0644); err != nil {
+`), 0o644); err != nil {
 		require.NoError(t, err)
 	}
 
@@ -2786,7 +2786,6 @@ fix_model = "gemini-2.5-pro"
 
 		"expected workflow-specific model 'gemini-2.5-pro', got %q",
 		modelStr)
-
 }
 
 func TestResolveFixAgentSkipsDefaultModelForConfiguredFixAgent(t *testing.T) {
@@ -2801,7 +2800,7 @@ func TestResolveFixAgentSkipsDefaultModelForConfiguredFixAgent(t *testing.T) {
 default_agent = "codex"
 default_model = "gpt-5.4"
 fix_agent = "claude"
-`), 0644); err != nil {
+`), 0o644); err != nil {
 		require.NoError(t, err)
 	}
 
@@ -2824,7 +2823,7 @@ func TestResolveFixAgentFallbackUsesDefaultModelForActualAgent(t *testing.T) {
 default_agent = "codex"
 default_model = "gpt-5.4"
 fix_agent = "claude"
-`), 0644); err != nil {
+`), 0o644); err != nil {
 		require.NoError(t, err)
 	}
 
@@ -2848,7 +2847,7 @@ func TestResolveFixAgentUsesRepoWorkflowModel(t *testing.T) {
 	if err := os.WriteFile(cfgPath, []byte(`
 default_agent = "codex"
 default_model = "gpt-5.4"
-`), 0644); err != nil {
+`), 0o644); err != nil {
 		require.NoError(t, err)
 	}
 
@@ -2857,7 +2856,7 @@ default_model = "gpt-5.4"
 	repoConfigPath := filepath.Join(repoDir, ".roborev.toml")
 	if err := os.WriteFile(repoConfigPath, []byte(`
 fix_model_fast = "claude-sonnet"
-`), 0644); err != nil {
+`), 0o644); err != nil {
 		require.NoError(t, err)
 	}
 
@@ -2875,7 +2874,7 @@ fix_model_fast = "claude-sonnet"
 	repoConfigPath2 := filepath.Join(repoDir, ".roborev.toml")
 	if err := os.WriteFile(repoConfigPath2, []byte(`
 model = "repo-default"
-`), 0644); err != nil {
+`), 0o644); err != nil {
 		require.NoError(t, err)
 	}
 
@@ -2884,7 +2883,6 @@ model = "repo-default"
 
 		"expected empty model (repo generic should be skipped), got %q",
 		modelStr)
-
 }
 
 func TestResolveFixAgentSameAsDefault(t *testing.T) {
@@ -2928,7 +2926,7 @@ func TestResolveFixAgentSameAsDefault(t *testing.T) {
 				"default_agent = %q\ndefault_model = \"gpt-5.4\"\n",
 				tt.defaultAgent,
 			)
-			if err := os.WriteFile(cfgPath, []byte(cfgContent), 0644); err != nil {
+			if err := os.WriteFile(cfgPath, []byte(cfgContent), 0o644); err != nil {
 				require.NoError(t, err)
 			}
 			cfg, err := config.LoadGlobal()
@@ -3123,24 +3121,33 @@ func TestFilterReachableJobs(t *testing.T) {
 		{
 			name: "range ref matching branch included",
 			jobs: []storage.ReviewJob{
-				{ID: 5, GitRef: otherSHA + ".." + mainSHA,
-					Branch: defaultBranch},
+				{
+					ID:     5,
+					GitRef: otherSHA + ".." + mainSHA,
+					Branch: defaultBranch,
+				},
 			},
 			wantIDs: []int64{5},
 		},
 		{
 			name: "range ref unreachable end different branch excluded",
 			jobs: []storage.ReviewJob{
-				{ID: 5, GitRef: mainSHA + ".." + otherSHA,
-					Branch: "other-branch"},
+				{
+					ID:     5,
+					GitRef: mainSHA + ".." + otherSHA,
+					Branch: "other-branch",
+				},
 			},
 			wantIDs: nil,
 		},
 		{
 			name: "range ref unreachable end same branch included (rebase)",
 			jobs: []storage.ReviewJob{
-				{ID: 5, GitRef: mainSHA + ".." + otherSHA,
-					Branch: defaultBranch},
+				{
+					ID:     5,
+					GitRef: mainSHA + ".." + otherSHA,
+					Branch: defaultBranch,
+				},
 			},
 			wantIDs: []int64{5},
 		},
@@ -3161,24 +3168,33 @@ func TestFilterReachableJobs(t *testing.T) {
 		{
 			name: "task ref matching branch included",
 			jobs: []storage.ReviewJob{
-				{ID: 7, GitRef: "run", Branch: defaultBranch,
-					JobType: storage.JobTypeTask},
+				{
+					ID:     7,
+					GitRef: "run", Branch: defaultBranch,
+					JobType: storage.JobTypeTask,
+				},
 			},
 			wantIDs: []int64{7},
 		},
 		{
 			name: "task ref different branch excluded",
 			jobs: []storage.ReviewJob{
-				{ID: 8, GitRef: "analyze", Branch: "other-branch",
-					JobType: storage.JobTypeTask},
+				{
+					ID:     8,
+					GitRef: "analyze", Branch: "other-branch",
+					JobType: storage.JobTypeTask,
+				},
 			},
 			wantIDs: nil,
 		},
 		{
 			name: "task ref no branch excluded",
 			jobs: []storage.ReviewJob{
-				{ID: 9, GitRef: "custom-label",
-					JobType: storage.JobTypeTask},
+				{
+					ID:      9,
+					GitRef:  "custom-label",
+					JobType: storage.JobTypeTask,
+				},
 			},
 			wantIDs: nil,
 		},
@@ -3337,7 +3353,7 @@ func TestRunFixOpenFiltersUnreachableJobs(t *testing.T) {
 	cmd.Dir = worktreeDir
 	_ = cmd.Run()
 	wtFile := filepath.Join(worktreeDir, "wt-file.txt")
-	require.NoError(t, os.WriteFile(wtFile, []byte("wt"), 0644))
+	require.NoError(t, os.WriteFile(wtFile, []byte("wt"), 0o644))
 	cmd = exec.Command("git", "add", "wt-file.txt")
 	cmd.Dir = worktreeDir
 	require.NoError(t, cmd.Run())

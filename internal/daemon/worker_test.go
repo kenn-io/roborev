@@ -5,14 +5,21 @@ import (
 	"context"
 	"database/sql"
 	"fmt"
+	"io"
 	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"regexp"
 	"runtime"
+	"strings"
+	"sync/atomic"
+	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	gitpkg "go.kenn.io/roborev/internal/git"
@@ -20,18 +27,11 @@ import (
 	"go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
-
-	// workerTestContext encapsulates the common setup for worker pool tests.
-	"github.com/stretchr/testify/require"
-	"io"
-	"strings"
-	"sync/atomic"
-	"testing"
-	"time"
 )
 
 const testWorkerID = "test-worker"
 
+// workerTestContext encapsulates the common setup for worker pool tests.
 type workerTestContext struct {
 	DB          *storage.DB
 	TmpDir      string
@@ -1113,7 +1113,6 @@ func TestResolveBackupAgent_AliasMatchesPrimary(t *testing.T) {
 			return false
 		}, "resolveBackupAgent() = %q, want empty (alias match)",
 			got)
-
 	}
 }
 

@@ -172,7 +172,7 @@ func WrapText(text string, width int) []string {
 // Prose lines outside code blocks are left intact for glamour to
 // word-wrap naturally.
 func TruncateLongLines(
-	text string, maxWidth int, tabWidth int,
+	text string, maxWidth, tabWidth int,
 ) string {
 	if maxWidth <= 0 {
 		return text

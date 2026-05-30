@@ -14,6 +14,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/prompt/analyze"
@@ -300,7 +301,7 @@ func TestMarkJobClosed(t *testing.T) {
 
 func TestRunFixAgent(t *testing.T) {
 	tmpDir := t.TempDir()
-	if err := os.MkdirAll(filepath.Join(tmpDir, ".git"), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Join(tmpDir, ".git"), 0o755); err != nil {
 		require.NoError(t, err, "MkdirAll: %v")
 	}
 
@@ -548,7 +549,7 @@ func TestGetBranchFiles(t *testing.T) {
 	t.Run("reads from git not working tree", func(t *testing.T) {
 		repo := setupBranchTestRepo(t)
 		// Modify working tree — should NOT affect branch analysis
-		_ = os.WriteFile(filepath.Join(repo.Dir, "new.go"), []byte("DIRTY"), 0644)
+		_ = os.WriteFile(filepath.Join(repo.Dir, "new.go"), []byte("DIRTY"), 0o644)
 
 		files, err := getBranchFiles(cmd, repo.Dir, analyzeOptions{
 			branch:     "HEAD",

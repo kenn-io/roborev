@@ -4,8 +4,9 @@ import (
 	"strings"
 	"testing"
 
-	"go.kenn.io/roborev/internal/storage"
 	"github.com/stretchr/testify/assert"
+
+	"go.kenn.io/roborev/internal/storage"
 )
 
 // cmdHeaderLine returns the rendered "Command:" header line from a full view,

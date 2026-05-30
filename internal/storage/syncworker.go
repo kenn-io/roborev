@@ -4,8 +4,7 @@ import (
 	"context"
 	"fmt"
 	"log"
-	"strconv"
-	"strings"
+	"os"
 	"sync"
 	"time"
 
@@ -557,6 +556,14 @@ func (w *SyncWorker) doSync() error {
 // Smaller batches mean more frequent commits and better progress visibility.
 const syncBatchSize = 25
 
+// defaultSyncCursorLookback re-reads a timestamp overlap to avoid missing rows
+// whose transaction becomes visible after a newer timestamp has advanced the
+// local cursor. PostgreSQL NOW() is transaction-start time, so visible rows can
+// arrive behind the cursor when a transaction commits late.
+const defaultSyncCursorLookback = 5 * time.Minute
+
+const syncCursorLookbackEnv = "ROBOREV_SYNC_CURSOR_LOOKBACK"
+
 // pushChangesWithStats pushes local changes and returns statistics
 func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pushPullStats, error) {
 	stats := pushPullStats{}
@@ -706,9 +713,11 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 	if err != nil {
 		return stats, fmt.Errorf("get job cursor: %w", err)
 	}
+	jobQueryCursor := rewindTimestampIDCursor(jobCursor, syncCursorLookback())
+	maxJobCursor := jobCursor
 
 	for {
-		jobs, newCursor, err := pool.PullJobs(ctx, machineID, jobCursor, 100)
+		jobs, newCursor, err := pool.PullJobs(ctx, machineID, jobQueryCursor, 100)
 		if err != nil {
 			return stats, fmt.Errorf("pull jobs: %w", err)
 		}
@@ -724,8 +733,9 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 			stats.Jobs++
 		}
 
-		jobCursor = newCursor
-		if err := w.db.SetSyncState(SyncStateLastJobCursor, jobCursor); err != nil {
+		jobQueryCursor = newCursor
+		maxJobCursor = maxTimestampIDCursor(maxJobCursor, newCursor)
+		if err := w.db.SetSyncState(SyncStateLastJobCursor, maxJobCursor); err != nil {
 			return stats, fmt.Errorf("save job cursor: %w", err)
 		}
 
@@ -741,6 +751,8 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 	if err != nil {
 		return stats, fmt.Errorf("get review cursor: %w", err)
 	}
+	reviewQueryCursor := rewindTimestampIDCursor(reviewCursor, syncCursorLookback())
+	maxReviewCursor := reviewCursor
 
 	knownJobUUIDs, err := w.db.GetKnownJobUUIDs()
 	if err != nil {
@@ -748,7 +760,7 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 	}
 
 	for {
-		reviews, newCursor, err := pool.PullReviews(ctx, machineID, knownJobUUIDs, reviewCursor, 100)
+		reviews, newCursor, err := pool.PullReviews(ctx, machineID, knownJobUUIDs, reviewQueryCursor, 100)
 		if err != nil {
 			return stats, fmt.Errorf("pull reviews: %w", err)
 		}
@@ -775,8 +787,9 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 			stats.Reviews++
 		}
 
-		reviewCursor = newCursor
-		if err := w.db.SetSyncState(SyncStateLastReviewCursor, reviewCursor); err != nil {
+		reviewQueryCursor = newCursor
+		maxReviewCursor = maxTimestampIDCursor(maxReviewCursor, newCursor)
+		if err := w.db.SetSyncState(SyncStateLastReviewCursor, maxReviewCursor); err != nil {
 			return stats, fmt.Errorf("save review cursor: %w", err)
 		}
 
@@ -790,20 +803,11 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 	if err != nil {
 		return stats, fmt.Errorf("get response cursor: %w", err)
 	}
-	var responseID int64
-	if responseIDStr != "" {
-		parsed, err := strconv.ParseInt(
-			strings.TrimSpace(responseIDStr), 10, 64,
-		)
-		if err != nil {
-			log.Printf("Sync: malformed response cursor %q, resetting to 0", responseIDStr)
-		} else {
-			responseID = parsed
-		}
-	}
+	responseQueryCursor := rewindResponseCursor(responseIDStr, syncCursorLookback())
+	maxResponseCursor := responseCursorForMax(responseIDStr)
 
 	for {
-		responses, newID, err := pool.PullResponses(ctx, machineID, responseID, 100)
+		responses, newCursor, err := pool.PullResponses(ctx, machineID, responseQueryCursor, 100)
 		if err != nil {
 			return stats, fmt.Errorf("pull responses: %w", err)
 		}
@@ -827,8 +831,9 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 			stats.Responses++
 		}
 
-		responseID = newID
-		if err := w.db.SetSyncState(SyncStateLastResponseID, fmt.Sprintf("%d", responseID)); err != nil {
+		responseQueryCursor = newCursor
+		maxResponseCursor = maxTimestampIDCursor(maxResponseCursor, newCursor)
+		if err := w.db.SetSyncState(SyncStateLastResponseID, maxResponseCursor); err != nil {
 			return stats, fmt.Errorf("save response cursor: %w", err)
 		}
 
@@ -842,6 +847,86 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 	}
 
 	return stats, nil
+}
+
+func rewindTimestampIDCursor(cursor string, lookback time.Duration) string {
+	if cursor == "" || lookback <= 0 {
+		return cursor
+	}
+	cursorTime, cursorID, ok := parseTimestampIDCursor(cursor)
+	if !ok {
+		return cursor
+	}
+	return formatTimestampIDCursor(cursorTime.Add(-lookback), cursorID)
+}
+
+func syncCursorLookback() time.Duration {
+	raw := os.Getenv(syncCursorLookbackEnv)
+	if raw == "" {
+		return defaultSyncCursorLookback
+	}
+	lookback, err := time.ParseDuration(raw)
+	if err != nil || lookback < 0 {
+		return defaultSyncCursorLookback
+	}
+	return lookback
+}
+
+func rewindResponseCursor(cursor string, lookback time.Duration) string {
+	if cursor == "" {
+		return ""
+	}
+	if _, _, ok := parseTimestampIDCursor(cursor); !ok {
+		// Older versions stored response cursors as an ID only. Re-read from
+		// the beginning once so lower-ID late commits are not stranded.
+		return ""
+	}
+	return rewindTimestampIDCursor(cursor, lookback)
+}
+
+func responseCursorForMax(cursor string) string {
+	if _, _, ok := parseTimestampIDCursor(cursor); ok {
+		return cursor
+	}
+	return ""
+}
+
+func maxTimestampIDCursor(a, b string) string {
+	if a == "" {
+		return b
+	}
+	if b == "" {
+		return a
+	}
+	aTime, aID, aOK := parseTimestampIDCursor(a)
+	bTime, bID, bOK := parseTimestampIDCursor(b)
+	if !aOK {
+		return b
+	}
+	if !bOK {
+		return a
+	}
+	if bTime.After(aTime) || (bTime.Equal(aTime) && bID > aID) {
+		return b
+	}
+	return a
+}
+
+func parseTimestampIDCursor(cursor string) (time.Time, int64, bool) {
+	var ts string
+	var id int64
+	if _, err := fmt.Sscanf(cursor, "%s %d", &ts, &id); err != nil {
+		return time.Time{}, 0, false
+	}
+	cursorTime, err := time.Parse(time.RFC3339Nano, ts)
+	if err != nil {
+		return time.Time{}, 0, false
+	}
+	return cursorTime, id, true
+}
+
+func formatTimestampIDCursor(cursorTime time.Time, cursorID int64) string {
+	return fmt.Sprintf("%s %d", cursorTime.Format(time.RFC3339Nano), cursorID)
 }
 
 // pullJob inserts a pulled job into SQLite, creating repo/commit as needed

@@ -11,6 +11,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/testenv"
 )
 
@@ -32,7 +33,7 @@ func runTestGit(t *testing.T, dir string, args ...string) string {
 
 func writeTestFile(t *testing.T, dir, name, content string) {
 	t.Helper()
-	require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0644), "failed to write %s", name)
+	require.NoError(t, os.WriteFile(filepath.Join(dir, name), []byte(content), 0o644), "failed to write %s", name)
 }
 
 // setupGitRepo creates a minimal git repo with one commit and returns its path.
@@ -246,7 +247,7 @@ func TestGitmodulesUsesFileProtocol(t *testing.T) {
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
 			gitmodulesPath := filepath.Join(t.TempDir(), ".gitmodules")
-			require.NoError(t, os.WriteFile(gitmodulesPath, fmt.Appendf(nil, tpl, tc.key, tc.url), 0644))
+			require.NoError(t, os.WriteFile(gitmodulesPath, fmt.Appendf(nil, tpl, tc.key, tc.url), 0o644))
 
 			usesFileProtocol, err := gitmodulesUsesFileProtocol(gitmodulesPath)
 			require.NoError(t, err)
@@ -264,7 +265,7 @@ func TestRepoUsesFileProtocolSubmodulesNested(t *testing.T) {
 	writeTestFile(t, dir, ".gitmodules", string(fmt.Appendf(nil, tpl, "https://example.com/repo.git")))
 
 	nestedPath := filepath.Join(dir, "sub", ".gitmodules")
-	if err := os.MkdirAll(filepath.Dir(nestedPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(nestedPath), 0o755); err != nil {
 		require.NoError(t, err, "mkdir nested: %v", err)
 	}
 	writeTestFile(t, dir, "sub/.gitmodules", string(fmt.Appendf(nil, tpl, "file:///tmp/repo")))
@@ -303,10 +304,10 @@ func TestFindGitmodulesPathsSkipsUnreadableNestedDir(t *testing.T) {
 	writeTestFile(t, dir, ".gitmodules", "[submodule]\n")
 
 	nested := filepath.Join(dir, "sub", "deep")
-	require.NoError(t, os.MkdirAll(nested, 0755))
+	require.NoError(t, os.MkdirAll(nested, 0o755))
 	writeTestFile(t, dir, "sub/deep/.gitmodules", "[submodule]\n")
-	require.NoError(t, os.Chmod(nested, 0000))
-	t.Cleanup(func() { os.Chmod(nested, 0755) })
+	require.NoError(t, os.Chmod(nested, 0o000))
+	t.Cleanup(func() { os.Chmod(nested, 0o755) })
 	requireUnreadable(t, nested)
 
 	paths, err := findGitmodulesPaths(dir)
@@ -319,9 +320,9 @@ func TestFindGitmodulesPathsErrorsOnUnreadableRoot(t *testing.T) {
 
 	dir := t.TempDir()
 	inner := filepath.Join(dir, "repo")
-	require.NoError(t, os.MkdirAll(inner, 0755))
-	require.NoError(t, os.Chmod(inner, 0000))
-	t.Cleanup(func() { os.Chmod(inner, 0755) })
+	require.NoError(t, os.MkdirAll(inner, 0o755))
+	require.NoError(t, os.Chmod(inner, 0o000))
+	t.Cleanup(func() { os.Chmod(inner, 0o755) })
 	requireUnreadable(t, inner)
 
 	_, err := findGitmodulesPaths(inner)
@@ -337,12 +338,12 @@ func TestRepoUsesFileProtocolSkipsUnreadableNestedGitmodules(t *testing.T) {
 		fmt.Sprintf(tpl, "https://example.com/repo.git"))
 
 	nested := filepath.Join(dir, "sub")
-	require.NoError(t, os.MkdirAll(nested, 0755))
+	require.NoError(t, os.MkdirAll(nested, 0o755))
 	nestedFile := filepath.Join(nested, ".gitmodules")
 	require.NoError(t, os.WriteFile(nestedFile,
-		fmt.Appendf(nil, tpl, "file:///tmp/repo"), 0644))
-	require.NoError(t, os.Chmod(nestedFile, 0000))
-	t.Cleanup(func() { os.Chmod(nestedFile, 0644) })
+		fmt.Appendf(nil, tpl, "file:///tmp/repo"), 0o644))
+	require.NoError(t, os.Chmod(nestedFile, 0o000))
+	t.Cleanup(func() { os.Chmod(nestedFile, 0o644) })
 	requireUnreadable(t, nestedFile)
 
 	usesFileProtocol, err := repoUsesFileProtocolSubmodules(dir)
@@ -355,9 +356,9 @@ func TestRepoUsesFileProtocolErrorsOnUnreadableTopLevel(t *testing.T) {
 
 	dir := t.TempDir()
 	topLevel := filepath.Join(dir, ".gitmodules")
-	require.NoError(t, os.WriteFile(topLevel, []byte("[submodule]\n"), 0644))
-	require.NoError(t, os.Chmod(topLevel, 0000))
-	t.Cleanup(func() { os.Chmod(topLevel, 0644) })
+	require.NoError(t, os.WriteFile(topLevel, []byte("[submodule]\n"), 0o644))
+	require.NoError(t, os.Chmod(topLevel, 0o000))
+	t.Cleanup(func() { os.Chmod(topLevel, 0o644) })
 	requireUnreadable(t, topLevel)
 
 	_, err := repoUsesFileProtocolSubmodules(dir)

@@ -10,6 +10,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
@@ -149,7 +150,6 @@ func (m *mockDaemonClient) WithJob(id int64, gitRef string, status storage.JobSt
 var _ daemon.Client = (*mockDaemonClient)(nil)
 
 func TestSelectRefineAgentCodexFallback(t *testing.T) {
-
 	t.Setenv("PATH", "")
 
 	_, err := selectRefineAgent("", nil, "codex", agent.ReasoningFast, "")
@@ -160,7 +160,6 @@ func TestSelectRefineAgentCodexFallback(t *testing.T) {
 }
 
 func TestResolveAllowUnsafeAgents(t *testing.T) {
-
 	boolTrue := true
 	boolFalse := false
 
@@ -775,7 +774,7 @@ fi
 exit 0
 `)
 
-	if err := os.WriteFile(filepath.Join(repo.Root, "new.txt"), []byte("hello"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo.Root, "new.txt"), []byte("hello"), 0o644); err != nil {
 		require.NoError(t, err)
 	}
 
@@ -799,7 +798,7 @@ func TestCommitWithHookRetryExhausted(t *testing.T) {
 	repo.WriteNamedHook("pre-commit",
 		"#!/bin/sh\necho 'always fails' >&2\nexit 1\n")
 
-	if err := os.WriteFile(filepath.Join(repo.Root, "new.txt"), []byte("hello"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo.Root, "new.txt"), []byte("hello"), 0o644); err != nil {
 		require.NoError(t, err)
 	}
 
@@ -833,12 +832,12 @@ func TestCommitWithHookRetrySkipsAddPhaseError(t *testing.T) {
 
 	repo.WriteNamedHook("pre-commit", "#!/bin/sh\nexit 0\n")
 
-	if err := os.WriteFile(filepath.Join(repo.Root, "new.txt"), []byte("hello"), 0644); err != nil {
+	if err := os.WriteFile(filepath.Join(repo.Root, "new.txt"), []byte("hello"), 0o644); err != nil {
 		require.NoError(t, err)
 	}
 
 	lockFile := filepath.Join(repo.Root, ".git", "index.lock")
-	if err := os.WriteFile(lockFile, []byte(""), 0644); err != nil {
+	if err := os.WriteFile(lockFile, []byte(""), 0o644); err != nil {
 		require.NoError(t, err)
 	}
 	defer os.Remove(lockFile)
@@ -915,7 +914,6 @@ func TestResolveReasoningWithFast(t *testing.T) {
 }
 
 func TestApplyModelForAgent_BackupKeepsOwnModel(t *testing.T) {
-
 	t.Cleanup(testutil.MockExecutableIsolated(t, "codex", 0))
 
 	selected, err := selectRefineAgent(
@@ -966,7 +964,6 @@ func TestApplyModelForAgent_EmptyModelPreservesAgentDefault(t *testing.T) {
 	codexAgent, ok := result.(*agent.CodexAgent)
 	assert.True(t, ok)
 	assert.Equal(t, "o3", codexAgent.Model, "agent model should remain %q, got %q", "o3", codexAgent.Model)
-
 }
 
 func TestApplyModelForAgent_SameAgentPrimaryAndBackup(t *testing.T) {
@@ -996,7 +993,6 @@ func TestApplyModelForAgent_SameAgentPrimaryAndBackup(t *testing.T) {
 
 	assert.Equal(t, "primary-model", model)
 	assert.Equal(t, "primary-model", codexAgent.Model, "expected agent model %q, got %q", "primary-model", codexAgent.Model)
-
 }
 
 func TestApplyModelForAgentFallbackUsesDefaultModelForActualAgent(t *testing.T) {

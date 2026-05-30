@@ -77,10 +77,10 @@ func isConnRefused(err error) bool {
 // This must only be called for managed directories (the
 // default data dir), never for arbitrary user-supplied paths.
 func ensureSocketDir(dir string) error {
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return fmt.Errorf("create socket directory: %w", err)
 	}
-	if err := os.Chmod(dir, 0700); err != nil {
+	if err := os.Chmod(dir, 0o700); err != nil {
 		return fmt.Errorf("chmod socket directory: %w", err)
 	}
 	return nil
@@ -92,7 +92,7 @@ func startControlListener(
 	// Ensure the parent directory exists for custom socket paths.
 	// Permission tightening is handled separately by ensureSocketDir
 	// for the default managed directory only.
-	if err := os.MkdirAll(filepath.Dir(socketPath), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(socketPath), 0o755); err != nil {
 		return nil, fmt.Errorf("create socket directory: %w", err)
 	}
 
@@ -109,7 +109,7 @@ func startControlListener(
 	}
 
 	// Restrict socket permissions to owner-only.
-	if err := os.Chmod(socketPath, 0600); err != nil {
+	if err := os.Chmod(socketPath, 0o600); err != nil {
 		ln.Close()
 		return nil, fmt.Errorf("chmod socket: %w", err)
 	}

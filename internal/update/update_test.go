@@ -49,8 +49,6 @@ func (r *testReporter) Progress(downloaded, total int64) {
 }
 
 func TestSanitizeTarPath(t *testing.T) {
-	destDir := t.TempDir()
-
 	tests := []struct {
 		name     string
 		path     string
@@ -73,7 +71,7 @@ func TestSanitizeTarPath(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			skipUnlessTargetOS(t, tt.targetOS)
 
-			_, err := sanitizeTarPath(destDir, tt.path)
+			_, err := sanitizeTarPath(tt.path)
 			if tt.wantErr {
 				require.Error(t, err)
 				return
@@ -111,6 +109,28 @@ func TestExtractTarGzSymlinkSkipped(t *testing.T) {
 	require.NoError(t, extractTarGz(archivePath, extractDir))
 	requirePathExists(t, filepath.Join(extractDir, "normal.txt"))
 	requirePathMissing(t, filepath.Join(extractDir, "evil-link"))
+}
+
+func TestExtractTarGzExistingSymlinkDoesNotEscapeDestination(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation requires elevated privileges on Windows")
+	}
+
+	tmpDir := t.TempDir()
+	archivePath := filepath.Join(tmpDir, "archive.tar.gz")
+	extractDir := filepath.Join(tmpDir, "extract")
+	outsideDir := filepath.Join(tmpDir, "outside")
+	outsideFile := filepath.Join(outsideDir, "pwned")
+
+	require.NoError(t, os.MkdirAll(extractDir, 0o755))
+	require.NoError(t, os.MkdirAll(outsideDir, 0o755))
+	require.NoError(t, os.Symlink(outsideDir, filepath.Join(extractDir, "link")))
+	createTestArchive(t, archivePath, []archiveEntry{
+		{Name: "link/pwned", Content: "owned"},
+	})
+
+	require.Error(t, extractTarGz(archivePath, extractDir))
+	requirePathMissing(t, outsideFile)
 }
 
 func TestExtractChecksum(t *testing.T) {
@@ -518,14 +538,14 @@ func TestUpdaterPerformUpdateInstallsBinary(t *testing.T) {
 	}
 
 	archiveData := createTestArchiveBytes(t, []archiveEntry{
-		{Name: binaryName, Content: "new-binary", Mode: 0755},
+		{Name: binaryName, Content: "new-binary", Mode: 0o755},
 	})
 	sum := sha256.Sum256(archiveData)
 	expectedChecksum := hex.EncodeToString(sum[:])
 
 	binDir := t.TempDir()
 	currentBinary := filepath.Join(binDir, binaryName)
-	require.NoError(t, os.WriteFile(currentBinary, []byte("old-binary"), 0755))
+	require.NoError(t, os.WriteFile(currentBinary, []byte("old-binary"), 0o755))
 
 	updater := NewUpdater(Deps{
 		Client: &http.Client{
@@ -563,7 +583,7 @@ func TestUpdaterPerformUpdateInstallsBinary(t *testing.T) {
 
 func createTestArchive(t *testing.T, path string, entries []archiveEntry) {
 	t.Helper()
-	require.NoError(t, os.WriteFile(path, createTestArchiveBytes(t, entries), 0644))
+	require.NoError(t, os.WriteFile(path, createTestArchiveBytes(t, entries), 0o644))
 }
 
 func createTestArchiveBytes(t *testing.T, entries []archiveEntry) []byte {
@@ -576,7 +596,7 @@ func createTestArchiveBytes(t *testing.T, entries []archiveEntry) []byte {
 	for _, entry := range entries {
 		mode := entry.Mode
 		if mode == 0 {
-			mode = 0644
+			mode = 0o644
 		}
 		typeFlag := entry.TypeFlag
 		if typeFlag == 0 {
@@ -632,7 +652,7 @@ func writeCachedCheck(t *testing.T, cacheDir string, cached cachedCheck) {
 	t.Helper()
 	data, err := json.Marshal(cached)
 	require.NoError(t, err)
-	require.NoError(t, os.WriteFile(filepath.Join(cacheDir, cacheFileName), data, 0644))
+	require.NoError(t, os.WriteFile(filepath.Join(cacheDir, cacheFileName), data, 0o644))
 }
 
 func newHTTPResponse(statusCode int, body string) *http.Response {

@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -60,7 +61,6 @@ func TestCommentJobFlag(t *testing.T) {
 			if !tt.wantErr {
 				daemonFromHandler(t, mockCommentHandler(t, &receivedJobID))
 			} else {
-
 				_ = mockCommentHandler(t, nil)
 			}
 

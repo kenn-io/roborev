@@ -14,11 +14,11 @@ import (
 	"github.com/coder/acp-go-sdk"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/config"
 )
 
 func TestACPAgent(t *testing.T) {
-
 	acpAgent := NewACPAgent("test-acp-agent")
 
 	assert.Equal(t, "acp", acpAgent.Name())
@@ -276,7 +276,6 @@ func terminalExists(client *acpClient, terminalID string) bool {
 }
 
 func TestACPAgentTerminalFunctionality(t *testing.T) {
-
 	agent := &ACPAgent{
 		SessionID:       "test-session",
 		ReadOnlyMode:    "read-only",
@@ -610,7 +609,6 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 }
 
 func TestACPNoDoubleMutexUnlockPanics(t *testing.T) {
-
 	agent := &ACPAgent{
 		SessionID:       "test-session",
 		ReadOnlyMode:    "read-only",
@@ -629,7 +627,6 @@ func TestACPNoDoubleMutexUnlockPanics(t *testing.T) {
 	if err != nil {
 		t.Logf("Expected error for non-existent terminal: %v", err)
 	}
-
 }
 
 func TestBoundedWriter(t *testing.T) {
@@ -850,7 +847,6 @@ func TestReadTextFileWindow(t *testing.T) {
 			got, err := readTextFileWindow(testPath, tc.startLine, tc.limit, maxACPTextFileBytes)
 			require.NoError(t, err, "readTextFileWindow failed: %v")
 			require.Equal(t, tc.expected, got, "expected %q, got %q", tc.expected, got)
-
 		})
 	}
 
@@ -871,7 +867,6 @@ func TestReadTextFileWindow(t *testing.T) {
 }
 
 func TestACPAliasCollisionFixed(t *testing.T) {
-
 	fakeBin := t.TempDir()
 	agentBin := "agent"
 	if runtime.GOOS == "windows" {
@@ -929,7 +924,6 @@ func TestGetAvailableWithConfigPassesBackupsThrough(t *testing.T) {
 }
 
 func TestACPNameDoesNotMatchCanonicalRequest(t *testing.T) {
-
 	fakeBin := t.TempDir()
 	binName := "claude"
 	if runtime.GOOS == "windows" {

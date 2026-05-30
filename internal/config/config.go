@@ -14,6 +14,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	tomlv2 "github.com/pelletier/go-toml/v2"
+
 	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/review/autotype"
 )
@@ -515,8 +516,10 @@ func RegisterClassifyAgentValidator(fn func(name string) error) {
 	classifyAgentValidator = fn
 }
 
-const DefaultClassifyAgent = "claude-code"
-const DefaultClassifyReasoning = "fast"
+const (
+	DefaultClassifyAgent     = "claude-code"
+	DefaultClassifyReasoning = "fast"
+)
 
 // ResolveClassifyAgent returns the agent name to use for classification.
 // Priority: CLI flag > per-repo classify_agent > global classify_agent > default.
@@ -2138,9 +2141,11 @@ func ResolveModel(explicit string, repoPath string, globalCfg *Config) string {
 	return resolve("", strings.TrimSpace(explicit), repoVal, globalVal)
 }
 
-// DefaultMaxPromptSize is the default maximum prompt size in bytes (200KB)
-const DefaultMaxPromptSize = 200 * 1024
-const DefaultSnapshotDir = ".roborev"
+const (
+	// DefaultMaxPromptSize is the default maximum prompt size in bytes (200KB)
+	DefaultMaxPromptSize = 200 * 1024
+	DefaultSnapshotDir   = ".roborev"
+)
 
 // ResolveMaxPromptSize determines the maximum prompt size based on config priority:
 // 1. Per-repo config (max_prompt_size in .roborev.toml)
@@ -2438,7 +2443,7 @@ func SaveGlobal(cfg *Config) error {
 
 // SaveGlobalTo saves the global configuration to a specific path.
 func SaveGlobalTo(path string, cfg *Config) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
 
@@ -2461,7 +2466,7 @@ func SaveGlobalTo(path string, cfg *Config) error {
 	if err := f.Close(); err != nil {
 		return err
 	}
-	if err := os.Chmod(tmpPath, 0600); err != nil {
+	if err := os.Chmod(tmpPath, 0o600); err != nil {
 		return err
 	}
 	return os.Rename(tmpPath, path)
@@ -2469,7 +2474,7 @@ func SaveGlobalTo(path string, cfg *Config) error {
 
 // SaveRepoConfigTo saves a per-repo configuration to a specific path.
 func SaveRepoConfigTo(path string, cfg *RepoConfig) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0755); err != nil {
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
 
@@ -2478,7 +2483,7 @@ func SaveRepoConfigTo(path string, cfg *RepoConfig) error {
 		return err
 	}
 
-	mode := os.FileMode(0644)
+	mode := os.FileMode(0o644)
 	if info, err := os.Stat(path); err == nil {
 		mode = info.Mode()
 	}

@@ -8,6 +8,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/streamfmt"
 )
@@ -40,7 +41,6 @@ func hasMsgType(msgs []tea.Msg, typeName string) bool {
 }
 
 func TestTUILogVisibleLinesWithCommandHeader(t *testing.T) {
-
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.height = 30
 	m.logJobID = 1
@@ -59,7 +59,6 @@ func TestTUILogVisibleLinesWithCommandHeader(t *testing.T) {
 }
 
 func TestTUILogPagingUsesLogVisibleLines(t *testing.T) {
-
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewLog
 	m.logJobID = 1
@@ -98,7 +97,6 @@ func TestTUILogPagingUsesLogVisibleLines(t *testing.T) {
 }
 
 func TestTUILogPagingNoHeader(t *testing.T) {
-
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewLog
 	m.logJobID = 1
@@ -126,7 +124,6 @@ func TestTUILogPagingNoHeader(t *testing.T) {
 }
 
 func TestTUILogLoadingGuard(t *testing.T) {
-
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewLog
 	m.logJobID = 1
@@ -141,7 +138,6 @@ func TestTUILogLoadingGuard(t *testing.T) {
 }
 
 func TestTUILogErrorDroppedOutsideLogView(t *testing.T) {
-
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 	m.logFetchSeq = 3
@@ -159,7 +155,6 @@ func TestTUILogErrorDroppedOutsideLogView(t *testing.T) {
 }
 
 func TestTUILogViewLookupFixJob(t *testing.T) {
-
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewLog
 	m.logJobID = 42
@@ -184,7 +179,6 @@ func TestTUILogViewLookupFixJob(t *testing.T) {
 }
 
 func TestTUILogCancelFixJob(t *testing.T) {
-
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewLog
 	m.logJobID = 42
@@ -209,7 +203,6 @@ func TestTUILogCancelFixJob(t *testing.T) {
 }
 
 func TestTUILogVisibleLinesFixJob(t *testing.T) {
-
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewLog
 	m.logJobID = 42
@@ -238,11 +231,9 @@ func TestTUILogVisibleLinesFixJob(t *testing.T) {
 	}
 	visWithout := m.logVisibleLines()
 	assert.Equal(t, visWithout-1, visWithCmd, "logVisibleLines mismatch: with cmd=%d, without=%d (expected difference of 1)", visWithCmd, visWithout)
-
 }
 
 func TestTUILogNavFromTasks(t *testing.T) {
-
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewLog
 	m.logJobID = 20
@@ -271,7 +262,6 @@ func TestTUILogNavFromTasks(t *testing.T) {
 	m3, cmd := pressSpecial(m, tea.KeyRight)
 	require.NotNil(t, cmd, "expected command from right arrow nav")
 	assert.Equal(t, 0, m3.fixSelectedIdx, "fixSelectedIdx should be 0, got %d", m3.fixSelectedIdx)
-
 }
 
 func TestTUILogOutputTable(t *testing.T) {
@@ -514,7 +504,6 @@ func TestTUILogOutputTable(t *testing.T) {
 }
 
 func TestMouseDisabledInContentViews(t *testing.T) {
-
 	contentViews := []struct {
 		name     string
 		view     viewKind
@@ -651,7 +640,6 @@ func TestMouseDisabledInContentViews(t *testing.T) {
 }
 
 func TestMouseNotToggledWithinContentViews(t *testing.T) {
-
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewReview
 	m.height = 30

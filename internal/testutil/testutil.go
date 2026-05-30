@@ -49,11 +49,11 @@ func (r *TestRepo) WriteHook(content string) {
 // WriteNamedHook writes a hook with the given name and content.
 func (r *TestRepo) WriteNamedHook(name, content string) {
 	r.t.Helper()
-	if err := os.MkdirAll(r.HooksDir, 0755); err != nil {
+	if err := os.MkdirAll(r.HooksDir, 0o755); err != nil {
 		r.t.Fatal(err)
 	}
 	hookPath := filepath.Join(r.HooksDir, name)
-	if err := os.WriteFile(hookPath, []byte(content), 0755); err != nil {
+	if err := os.WriteFile(hookPath, []byte(content), 0o755); err != nil {
 		r.t.Fatal(err)
 	}
 }
@@ -93,7 +93,7 @@ func mockScriptInPath(t *testing.T, binName, scriptContent string, mode pathMode
 
 	path := filepath.Join(tmpBin, executableName(binName))
 	content := []byte(scriptContent)
-	if err := os.WriteFile(path, content, 0755); err != nil {
+	if err := os.WriteFile(path, content, 0o755); err != nil {
 		t.Fatal(err)
 	}
 

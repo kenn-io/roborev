@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/testutil"
 )
 
@@ -34,7 +35,6 @@ func assertEventFields(t *testing.T, got Event, expected Event) {
 	assert.Equal(t, expected.SHA, got.SHA, "event sha")
 	assert.Equal(t, expected.Agent, got.Agent, "event agent")
 	assert.Equal(t, expected.Verdict, got.Verdict, "event verdict")
-
 }
 
 func assertNoEventWithin(t *testing.T, ch <-chan Event, duration time.Duration) {

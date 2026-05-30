@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
+
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/githook"
@@ -35,7 +36,7 @@ func initCmd() *cobra.Command {
 
 			// 2. Create config directory and default config
 			configDir := config.DataDir()
-			if err := os.MkdirAll(configDir, 0755); err != nil {
+			if err := os.MkdirAll(configDir, 0o755); err != nil {
 				return fmt.Errorf("create config dir: %w", err)
 			}
 
@@ -78,7 +79,7 @@ func initCmd() *cobra.Command {
 			if err != nil {
 				return fmt.Errorf("get hooks path: %w", err)
 			}
-			if err := os.MkdirAll(hooksDir, 0755); err != nil {
+			if err := os.MkdirAll(hooksDir, 0o755); err != nil {
 				return fmt.Errorf("create hooks directory: %w", err)
 			}
 			binaryResolution, err := githook.ResolveRoborevPath(hookBinary)

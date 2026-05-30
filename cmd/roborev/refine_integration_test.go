@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/testutil"
 )
 
@@ -143,7 +144,6 @@ func TestValidateRefineContext(t *testing.T) {
 			assert.NotEmpty(t, repoPath, "expected non-empty repoPath")
 			assert.Equal(t, tt.wantBr, currentBranch, "expected branch %q", tt.wantBr)
 			assert.Equal(t, expectedBase, mergeBase, "expected merge base %q", expectedBase)
-
 		})
 	}
 }

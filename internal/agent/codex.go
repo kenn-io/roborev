@@ -23,15 +23,19 @@ type CodexAgent struct {
 	IgnoreUserConfig          bool           // Whether to pass --ignore-user-config
 }
 
-const codexDangerousFlag = "--dangerously-bypass-approvals-and-sandbox"
-const codexAutoApproveFlag = "--full-auto"
-const codexIgnoreUserConfigFlag = "--ignore-user-config"
-const codexDisableSkillsConfig = "skills.include_instructions=false"
-const codexReadOnlySandboxConfig = `sandbox_mode="read-only"`
+const (
+	codexDangerousFlag         = "--dangerously-bypass-approvals-and-sandbox"
+	codexAutoApproveFlag       = "--full-auto"
+	codexIgnoreUserConfigFlag  = "--ignore-user-config"
+	codexDisableSkillsConfig   = "skills.include_instructions=false"
+	codexReadOnlySandboxConfig = `sandbox_mode="read-only"`
+)
 
-var codexDangerousSupport sync.Map
-var codexAutoApproveSupport sync.Map
-var codexIgnoreUserConfigSupport sync.Map
+var (
+	codexDangerousSupport        sync.Map
+	codexAutoApproveSupport      sync.Map
+	codexIgnoreUserConfigSupport sync.Map
+)
 
 // errNoCodexJSON indicates no valid codex --json events were parsed.
 var errNoCodexJSON = errors.New("no valid codex --json events parsed from output")

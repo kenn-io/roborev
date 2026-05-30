@@ -15,6 +15,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/githook"
@@ -134,7 +135,6 @@ func TestPostCommitRejectsPositionalArgs(t *testing.T) {
 func TestEnqueueRejectsPositionalArgs(t *testing.T) {
 	_, _, err := executeEnqueueAliasCmd("abc123")
 	require.Error(t, err)
-
 }
 
 func TestPostCommitLogsSuccess(t *testing.T) {
@@ -188,7 +188,7 @@ func TestPostCommitLogsSkipRebase(t *testing.T) {
 		gitDir = filepath.Join(repo.Dir, gitDir)
 	}
 	require.NoError(t, os.MkdirAll(
-		filepath.Join(gitDir, "rebase-merge"), 0755))
+		filepath.Join(gitDir, "rebase-merge"), 0o755))
 
 	_, _, err := executePostCommitCmd("--repo", repo.Dir)
 	require.NoError(t, err)
@@ -300,7 +300,6 @@ func TestPostCommitTimesOutOnSlowDaemon(t *testing.T) {
 
 		"command took %v; should return promptly via timeout",
 		elapsed)
-
 }
 
 func TestEnqueueAliasIsHidden(t *testing.T) {
@@ -427,7 +426,7 @@ func TestPostCommitSkipsEnqueueDuringRebase(t *testing.T) {
 				gitDir = filepath.Join(r.repo.Dir, gitDir)
 			}
 			require.NoError(t, os.MkdirAll(
-				filepath.Join(gitDir, tt.sentinel), 0755))
+				filepath.Join(gitDir, tt.sentinel), 0o755))
 
 			_, _, err := executePostCommitCmd("--repo", r.repo.Dir)
 			require.NoError(t, err)
@@ -457,7 +456,7 @@ esac
 `, marker)
 	require.NoError(t, os.WriteFile(
 		filepath.Join(binDir, "roborev"),
-		[]byte(script), 0755))
+		[]byte(script), 0o755))
 	return binDir
 }
 
@@ -467,7 +466,7 @@ func installMockHook(t *testing.T, repoDir, mockBinDir string) {
 	t.Helper()
 	hooksDir, err := git.GetHooksPath(repoDir)
 	require.NoError(t, err)
-	require.NoError(t, os.MkdirAll(hooksDir, 0755))
+	require.NoError(t, os.MkdirAll(hooksDir, 0o755))
 
 	hookContent := githook.GeneratePostCommit()
 	mockBin := filepath.Join(mockBinDir, "roborev")
@@ -480,7 +479,7 @@ func installMockHook(t *testing.T, repoDir, mockBinDir string) {
 	}
 	require.NoError(t, os.WriteFile(
 		filepath.Join(hooksDir, "post-commit"),
-		[]byte(strings.Join(lines, "\n")), 0755))
+		[]byte(strings.Join(lines, "\n")), 0o755))
 }
 
 // TestPostCommitDoesNotEnqueueDuringRebase runs a real clean git rebase with
@@ -552,7 +551,7 @@ func TestPostCommitDoesNotEnqueueDuringRebase(t *testing.T) {
 			// Create 3 feature commits with actual file changes.
 			for i := 1; i <= 3; i++ {
 				f := filepath.Join(r.repo.Dir, fmt.Sprintf("branch%d.txt", i))
-				require.NoError(t, os.WriteFile(f, fmt.Appendf(nil, "content %d", i), 0644))
+				require.NoError(t, os.WriteFile(f, fmt.Appendf(nil, "content %d", i), 0o644))
 				gitCmd("add", f)
 				gitCmd("commit", "-m", fmt.Sprintf("feature commit %d", i))
 			}

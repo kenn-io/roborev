@@ -31,20 +31,20 @@ func JobLogPath(jobID int64) string {
 
 func openJobLogFile(jobID int64, flags int) (*os.File, error) {
 	dir := JobLogDir()
-	if err := os.MkdirAll(dir, 0700); err != nil {
+	if err := os.MkdirAll(dir, 0o700); err != nil {
 		return nil, fmt.Errorf("create job log dir %s: %w", dir, err)
 	}
 	// Tighten pre-existing directories from older installs.
-	if err := os.Chmod(dir, 0700); err != nil {
+	if err := os.Chmod(dir, 0o700); err != nil {
 		log.Printf("Warning: cannot chmod job log dir: %v", err)
 	}
 	path := JobLogPath(jobID)
-	f, err := os.OpenFile(path, flags, 0600)
+	f, err := os.OpenFile(path, flags, 0o600)
 	if err != nil {
 		return nil, fmt.Errorf("open job log file for job %d: %w", jobID, err)
 	}
 	// Tighten pre-existing files from older installs.
-	if err := f.Chmod(0600); err != nil {
+	if err := f.Chmod(0o600); err != nil {
 		log.Printf("Warning: cannot chmod job log file: %v", err)
 	}
 	return f, nil

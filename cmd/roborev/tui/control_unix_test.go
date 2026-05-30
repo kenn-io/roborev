@@ -33,7 +33,7 @@ func TestControlSocketPermissions(t *testing.T) {
 	assert.NotZero(t, info.Mode().Type()&os.ModeSocket,
 		"expected socket type, got %s", info.Mode().Type())
 	perm := info.Mode().Perm()
-	assert.Zero(t, perm&0077,
+	assert.Zero(t, perm&0o077,
 		"socket permissions %o allow group/other access", perm)
 }
 
@@ -41,13 +41,13 @@ func TestEnsureSocketDirTightensExistingDir(t *testing.T) {
 	socketDir := t.TempDir()
 
 	// Simulate a pre-existing data directory created with 0755.
-	require.NoError(t, os.Chmod(socketDir, 0755))
+	require.NoError(t, os.Chmod(socketDir, 0o755))
 
 	require.NoError(t, ensureSocketDir(socketDir))
 
 	di, err := os.Stat(socketDir)
 	require.NoError(t, err, "stat socket dir")
-	assert.Equal(t, os.FileMode(0700), di.Mode().Perm(),
+	assert.Equal(t, os.FileMode(0o700), di.Mode().Perm(),
 		"socket directory should be tightened to 0700")
 }
 
