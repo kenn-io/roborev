@@ -239,7 +239,7 @@ func normalizeOverridePath(raw string, deps binaryResolverDeps) (string, error) 
 	if info.IsDir() {
 		return "", fmt.Errorf("%s is a directory, not a binary", path)
 	}
-	if runtime.GOOS != "windows" && info.Mode()&0111 == 0 {
+	if runtime.GOOS != "windows" && info.Mode()&0o111 == 0 {
 		return "", fmt.Errorf("%s is not executable", path)
 	}
 	return path, nil

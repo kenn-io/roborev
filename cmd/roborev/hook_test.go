@@ -486,7 +486,7 @@ func TestInitNoDaemonWithBinaryInstallsHooksUsingSpecifiedBinary(t *testing.T) {
 
 	repo := initNoDaemonSetup(t)
 	binPath := filepath.Join(t.TempDir(), "roborev")
-	require.NoError(t, os.WriteFile(binPath, []byte("#!/bin/sh\nexit 0\n"), 0755))
+	require.NoError(t, os.WriteFile(binPath, []byte("#!/bin/sh\nexit 0\n"), 0o755))
 	setupMockServer(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(200)
 	})

@@ -85,6 +85,32 @@ func TestRewindResponseCursorRewindsTimestampAndResetsLegacyID(t *testing.T) {
 	assert.Equal(t, cursor, responseCursorForMax(cursor))
 }
 
+func TestUpsertPulledReviewSkipsStaleRemoteUpdate(t *testing.T) {
+	h := newSyncTestHelper(t)
+	job := h.createCompletedJob("stale-review-sha")
+	review, err := h.db.GetReviewByJobID(job.ID)
+	require.NoError(t, err)
+
+	require.NoError(t, h.db.MarkReviewClosed(review.ID, true))
+
+	err = h.db.UpsertPulledReview(PulledReview{
+		UUID:               review.UUID,
+		JobUUID:            job.UUID,
+		Agent:              review.Agent,
+		Prompt:             review.Prompt,
+		Output:             review.Output,
+		Closed:             false,
+		UpdatedByMachineID: GenerateUUID(),
+		CreatedAt:          review.CreatedAt,
+		UpdatedAt:          time.Now().Add(-time.Hour),
+	})
+	require.NoError(t, err)
+
+	review, err = h.db.GetReviewByJobID(job.ID)
+	require.NoError(t, err)
+	assert.True(t, review.Closed)
+}
+
 // TestClearAllSyncedAt verifies that ClearAllSyncedAt clears synced_at
 // on all tables (jobs, reviews, responses).
 func TestClearAllSyncedAt(t *testing.T) {

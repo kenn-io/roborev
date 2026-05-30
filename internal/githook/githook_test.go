@@ -195,7 +195,7 @@ func TestResolveRoborevPathDoesNotGuessUnsupportedManagers(t *testing.T) {
 
 func TestResolveRoborevPathUsesExplicitBinary(t *testing.T) {
 	binPath := filepath.Join(t.TempDir(), "roborev")
-	require.NoError(t, os.WriteFile(binPath, []byte("#!/bin/sh\nexit 0\n"), 0755))
+	require.NoError(t, os.WriteFile(binPath, []byte("#!/bin/sh\nexit 0\n"), 0o755))
 
 	resolution, err := ResolveRoborevPath(binPath)
 	require.NoError(t, err)
@@ -770,7 +770,7 @@ func TestInstallWithOptionsUpdatesCurrentHookBinary(t *testing.T) {
 	}
 
 	newBinary := filepath.Join(t.TempDir(), "roborev")
-	require.NoError(t, os.WriteFile(newBinary, []byte("#!/bin/sh\nexit 0\n"), 0755))
+	require.NoError(t, os.WriteFile(newBinary, []byte("#!/bin/sh\nexit 0\n"), 0o755))
 
 	t.Run("standalone hook", func(t *testing.T) {
 		t.Parallel()
@@ -779,7 +779,7 @@ func TestInstallWithOptionsUpdatesCurrentHookBinary(t *testing.T) {
 		require.NoError(t, os.WriteFile(
 			hookPath,
 			[]byte(GeneratePostCommitWithBinary("/old/roborev")),
-			0755,
+			0o755,
 		))
 
 		err := InstallWithOptions(repo.HooksDir, hookPostCommit, InstallOptions{
@@ -800,7 +800,7 @@ func TestInstallWithOptionsUpdatesCurrentHookBinary(t *testing.T) {
 			[]byte(shebang+
 				generateEmbeddablePostCommitWithBinary("/old/roborev")+
 				"echo 'user code'\n"),
-			0755,
+			0o755,
 		))
 
 		err := InstallWithOptions(repo.HooksDir, hookPostCommit, InstallOptions{

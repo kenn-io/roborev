@@ -643,6 +643,14 @@ func (db *DB) UpsertPulledJob(j PulledJob, repoID int64, commitID *int64) error 
 			min_severity = excluded.min_severity,
 			updated_at = excluded.updated_at,
 			synced_at = ?
+			WHERE review_jobs.status NOT IN ('applied', 'rebased')
+			OR datetime(
+				CASE WHEN review_jobs.updated_at GLOB '*[+-][0-9][0-9]:[0-9][0-9]' OR review_jobs.updated_at LIKE '%Z'
+					THEN review_jobs.updated_at ELSE review_jobs.updated_at || 'Z' END
+			) < datetime(
+				CASE WHEN excluded.updated_at GLOB '*[+-][0-9][0-9]:[0-9][0-9]' OR excluded.updated_at LIKE '%Z'
+					THEN excluded.updated_at ELSE excluded.updated_at || 'Z' END
+			)
 	`, j.UUID, repoID, commitID, j.GitRef, nullStr(j.SessionID), j.Agent, nullStr(j.Model), nullStr(j.Provider), nullStr(j.RequestedModel), nullStr(j.RequestedProvider), j.Reasoning, j.JobType,
 		j.ReviewType, nullStr(j.PatchID), j.Status, j.Agentic, j.EnqueuedAt.Format(time.RFC3339),
 		nullTimeStr(j.StartedAt), nullTimeStr(j.FinishedAt),
@@ -675,6 +683,13 @@ func (db *DB) UpsertPulledReview(r PulledReview) error {
 			updated_by_machine_id = excluded.updated_by_machine_id,
 			updated_at = excluded.updated_at,
 			synced_at = ?
+			WHERE datetime(
+				CASE WHEN reviews.updated_at GLOB '*[+-][0-9][0-9]:[0-9][0-9]' OR reviews.updated_at LIKE '%Z'
+					THEN reviews.updated_at ELSE reviews.updated_at || 'Z' END
+			) < datetime(
+				CASE WHEN excluded.updated_at GLOB '*[+-][0-9][0-9]:[0-9][0-9]' OR excluded.updated_at LIKE '%Z'
+					THEN excluded.updated_at ELSE excluded.updated_at || 'Z' END
+			)
 	`, r.UUID, jobID, r.Agent, r.Prompt, r.Output, r.Closed,
 		r.UpdatedByMachineID, r.CreatedAt.Format(time.RFC3339), r.UpdatedAt.Format(time.RFC3339), now, now)
 	return err

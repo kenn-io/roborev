@@ -376,6 +376,22 @@ func jobUUIDSet(jobs []ReviewJob) map[string]bool {
 	return uuids
 }
 
+func requireLocalJobByUUID(t *testing.T, db *DB, uuid string) ReviewJob {
+	t.Helper()
+	jobs, err := db.ListJobs("", "", 1000, 0)
+	require.NoError(t, err)
+	var found *ReviewJob
+	for _, job := range jobs {
+		if job.UUID == uuid {
+			j := job
+			found = &j
+			break
+		}
+	}
+	require.NotNil(t, found, "job UUID %s not found", uuid)
+	return *found
+}
+
 // TestIntegration_MigrationV6Idempotent verifies the v5→v6 migration
 // (addressed→closed rename) succeeds when the reviews table already
 // has the closed column. This happens when legacy schema_version
@@ -591,6 +607,45 @@ func TestIntegration_SyncPullsLateVisibleJobBeforeCursor(t *testing.T) {
 	jobs, err := nodeA.DB.ListJobs("", "", 1000, 0)
 	require.NoError(t, err)
 	assert.Contains(t, jobUUIDSet(jobs), lateUUID)
+}
+
+func TestIntegration_SyncLookbackDoesNotRevertAppliedFixJob(t *testing.T) {
+	t.Setenv(syncCursorLookbackEnv, "1h")
+	env := newIntegrationEnv(t, 30*time.Second)
+
+	repoIdentity := "git@github.com:test/lookback-applied.git"
+	nodeA := env.setupNode("lookback-applied-a", repoIdentity, "1h")
+	nodeB := env.setupNode("lookback-applied-b", repoIdentity, "1h")
+
+	commit, err := nodeB.DB.GetOrCreateCommit(nodeB.Repo.ID, "fix_01", "Bob", "Fix patch", time.Now())
+	require.NoError(t, err)
+	fixJob, err := nodeB.DB.EnqueueJob(EnqueueOpts{
+		RepoID:   nodeB.Repo.ID,
+		CommitID: commit.ID,
+		GitRef:   "fix_01",
+		Agent:    "test",
+		JobType:  JobTypeFix,
+	})
+	require.NoError(t, err)
+	_, err = nodeB.DB.Exec(`UPDATE review_jobs SET status = 'running', started_at = datetime('now') WHERE id = ?`, fixJob.ID)
+	require.NoError(t, err)
+	require.NoError(t, nodeB.DB.CompleteJob(fixJob.ID, "test", "prompt", "patch output"))
+
+	_, err = nodeB.Worker.SyncNow()
+	require.NoError(t, err)
+	_, err = nodeA.Worker.SyncNow()
+	require.NoError(t, err)
+
+	localFixJob := requireLocalJobByUUID(t, nodeA.DB, fixJob.UUID)
+	assert.Equal(t, JobStatusDone, localFixJob.Status)
+
+	require.NoError(t, nodeA.DB.MarkJobApplied(localFixJob.ID))
+
+	_, err = nodeA.Worker.SyncNow()
+	require.NoError(t, err)
+
+	localFixJob = requireLocalJobByUUID(t, nodeA.DB, fixJob.UUID)
+	assert.Equal(t, JobStatusApplied, localFixJob.Status)
 }
 
 func TestIntegration_SyncPullsLateVisibleResponseBeforeCursor(t *testing.T) {
