@@ -16,10 +16,11 @@
           default = pkgs.buildGoModule {
             pname = "roborev";
             version = "0.56.0";
+            go = pkgs.go_1_26;
 
             src = ./.;
 
-            vendorHash = "sha256-b6B4hR84k3rluvfIP8gRdJpfepiH7xKCRKblbKTHHWc=";
+            vendorHash = "sha256-m20cB7/HbvsaMC0D1jzDS5yurzLF1SD/Dvk1ee5oAaU=";
 
             subPackages = [ "cmd/roborev" ];
 
@@ -46,7 +47,7 @@
 
         devShells.default = pkgs.mkShell {
           buildInputs = with pkgs; [
-            go
+            go_1_26
             gopls
             gotools
           ];
