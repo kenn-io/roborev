@@ -1,14 +1,15 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"path/filepath"
 
 	"github.com/spf13/cobra"
+	gitrepo "go.kenn.io/kit/git/repo"
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/ghaction"
-	"go.kenn.io/roborev/internal/git"
 )
 
 func ghActionCmd() *cobra.Command {
@@ -37,7 +38,7 @@ Review types, reasoning level, severity filter, and other ` +
 After generating the workflow, add repository secrets ` +
 			`for your agent API keys.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			root, err := git.GetRepoRoot(".")
+			root, err := gitrepo.Root(context.TODO(), ".")
 			if err != nil {
 				return fmt.Errorf(
 					"not a git repository - " +

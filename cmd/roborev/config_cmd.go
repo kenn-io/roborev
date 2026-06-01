@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -9,9 +10,9 @@ import (
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
+	gitrepo "go.kenn.io/kit/git/repo"
 
 	"go.kenn.io/roborev/internal/config"
-	"go.kenn.io/roborev/internal/git"
 )
 
 // configScope represents which configuration source to read/write.
@@ -34,7 +35,7 @@ type RepoResolver interface {
 type defaultRepoResolver struct{}
 
 func (defaultRepoResolver) RepoRoot() (string, error) {
-	return git.GetRepoRoot(".")
+	return gitrepo.Root(context.TODO(), ".")
 }
 
 func (defaultRepoResolver) WorkingDir() (string, error) {

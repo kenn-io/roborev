@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -12,9 +13,9 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	gitrepo "go.kenn.io/kit/git/repo"
 
 	"go.kenn.io/roborev/internal/daemon"
-	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -111,7 +112,7 @@ func runInsights(cmd *cobra.Command, opts insightsOptions) error {
 		}
 	}
 
-	if _, err := git.GetRepoRoot(repoPath); err != nil {
+	if _, err := gitrepo.Root(context.TODO(), repoPath); err != nil {
 		if opts.repoPath == "" {
 			return fmt.Errorf("not in a git repository (use --repo to specify one)")
 		}

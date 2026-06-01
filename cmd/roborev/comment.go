@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
@@ -13,8 +14,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
-
-	"go.kenn.io/roborev/internal/git"
+	gitrepo "go.kenn.io/kit/git/repo"
 )
 
 func commentCmd() *cobra.Command {
@@ -56,8 +56,8 @@ Examples:
 			} else {
 				// Auto-detect: try git object first, then job ID
 				// A numeric string could be either - check if it resolves as a git object first
-				if root, err := git.GetRepoRoot("."); err == nil {
-					if resolved, err := git.ResolveSHA(root, ref); err == nil {
+				if root, err := gitrepo.Root(context.TODO(), "."); err == nil {
+					if resolved, err := gitrepo.Resolve(context.TODO(), root, ref); err == nil {
 						sha = resolved
 					}
 				}

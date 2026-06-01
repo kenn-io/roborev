@@ -15,6 +15,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	gitrepo "go.kenn.io/kit/git/repo"
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
@@ -251,6 +252,8 @@ func showAnalysisPrompt(cmd *cobra.Command, typeName string) error {
 }
 
 func runAnalysis(cmd *cobra.Command, typeName string, filePatterns []string, opts analyzeOptions) error {
+	ctx := cmd.Context()
+
 	// Validate analysis type
 	analysisType := analyze.GetType(typeName)
 	if analysisType == nil {
@@ -264,7 +267,7 @@ func runAnalysis(cmd *cobra.Command, typeName string, filePatterns []string, opt
 	}
 
 	repoRoot := workDir
-	if root, err := git.GetRepoRoot(workDir); err == nil {
+	if root, err := gitrepo.Root(ctx, workDir); err == nil {
 		repoRoot = root
 	}
 
@@ -273,7 +276,7 @@ func runAnalysis(cmd *cobra.Command, typeName string, filePatterns []string, opt
 	if opts.branch != "" {
 		// Branch mode: discover changed files from git
 		var err error
-		files, err = getBranchFiles(cmd, repoRoot, opts)
+		files, err = getBranchFiles(ctx, cmd, repoRoot, opts)
 		if err != nil {
 			return err
 		}
@@ -303,15 +306,15 @@ func runAnalysis(cmd *cobra.Command, typeName string, filePatterns []string, opt
 
 	// Per-file mode: create one job per file
 	if opts.perFile {
-		return runPerFileAnalysis(cmd, ep, repoRoot, analysisType, files, opts, maxPromptSize)
+		return runPerFileAnalysis(ctx, cmd, ep, repoRoot, analysisType, files, opts, maxPromptSize)
 	}
 
 	// Standard mode: all files in one job
-	return runSingleAnalysis(cmd, ep, repoRoot, analysisType, files, opts, maxPromptSize)
+	return runSingleAnalysis(ctx, cmd, ep, repoRoot, analysisType, files, opts, maxPromptSize)
 }
 
 // runSingleAnalysis creates a single analysis job for all files
-func runSingleAnalysis(cmd *cobra.Command, ep daemon.DaemonEndpoint, repoRoot string, analysisType *analyze.AnalysisType, files map[string]string, opts analyzeOptions, maxPromptSize int) error {
+func runSingleAnalysis(ctx context.Context, cmd *cobra.Command, ep daemon.DaemonEndpoint, repoRoot string, analysisType *analyze.AnalysisType, files map[string]string, opts analyzeOptions, maxPromptSize int) error {
 	if !opts.quiet && !opts.jsonOutput {
 		cmd.Printf("Analyzing %d file(s) with %q analysis...\n", len(files), analysisType.Name)
 	}
@@ -345,7 +348,7 @@ func runSingleAnalysis(cmd *cobra.Command, ep daemon.DaemonEndpoint, repoRoot st
 	}
 
 	// Enqueue the job
-	job, err := enqueueAnalysisJob(ep, repoRoot, fullPrompt, outputPrefix, analysisType.Name, opts)
+	job, err := enqueueAnalysisJob(ctx, ep, repoRoot, fullPrompt, outputPrefix, analysisType.Name, opts)
 	if err != nil {
 		return err
 	}
@@ -380,7 +383,7 @@ func runSingleAnalysis(cmd *cobra.Command, ep daemon.DaemonEndpoint, repoRoot st
 }
 
 // runPerFileAnalysis creates one analysis job per file
-func runPerFileAnalysis(cmd *cobra.Command, ep daemon.DaemonEndpoint, repoRoot string, analysisType *analyze.AnalysisType, files map[string]string, opts analyzeOptions, maxPromptSize int) error {
+func runPerFileAnalysis(ctx context.Context, cmd *cobra.Command, ep daemon.DaemonEndpoint, repoRoot string, analysisType *analyze.AnalysisType, files map[string]string, opts analyzeOptions, maxPromptSize int) error {
 	// Sort files for deterministic order
 	fileNames := make([]string, 0, len(files))
 	for name := range files {
@@ -416,7 +419,7 @@ func runPerFileAnalysis(cmd *cobra.Command, ep daemon.DaemonEndpoint, repoRoot s
 			}
 		}
 
-		job, err := enqueueAnalysisJob(ep, repoRoot, fullPrompt, outputPrefix, analysisType.Name, opts)
+		job, err := enqueueAnalysisJob(ctx, ep, repoRoot, fullPrompt, outputPrefix, analysisType.Name, opts)
 		if err != nil {
 			return fmt.Errorf("enqueue job for %s: %w", fileName, err)
 		}
@@ -502,8 +505,8 @@ func buildOutputPrefix(analysisType string, filePaths []string) string {
 }
 
 // enqueueAnalysisJob sends a job to the daemon
-func enqueueAnalysisJob(ep daemon.DaemonEndpoint, repoRoot, prompt, outputPrefix, label string, opts analyzeOptions) (*storage.ReviewJob, error) {
-	branch := git.GetCurrentBranch(repoRoot)
+func enqueueAnalysisJob(ctx context.Context, ep daemon.DaemonEndpoint, repoRoot, prompt, outputPrefix, label string, opts analyzeOptions) (*storage.ReviewJob, error) {
+	branch := gitrepo.CurrentBranch(ctx, repoRoot)
 	if opts.branch != "" && opts.branch != "HEAD" {
 		branch = opts.branch
 	}
@@ -598,7 +601,7 @@ func runAnalyzeAndFix(cmd *cobra.Command, ep daemon.DaemonEndpoint, repoRoot str
 	}
 
 	// Get HEAD before running fix agent (errors are non-fatal, just skip verification)
-	headBefore, headErr := git.ResolveSHA(repoRoot, "HEAD")
+	headBefore, headErr := gitrepo.Resolve(ctx, repoRoot, "HEAD")
 	canVerifyCommits := headErr == nil
 
 	// Run the fix agent locally in agentic mode
@@ -609,14 +612,14 @@ func runAnalyzeAndFix(cmd *cobra.Command, ep daemon.DaemonEndpoint, repoRoot str
 	// Check if a commit was created (only if we could get HEAD before)
 	var commitCreated bool
 	if canVerifyCommits {
-		headAfter, err := git.ResolveSHA(repoRoot, "HEAD")
+		headAfter, err := gitrepo.Resolve(ctx, repoRoot, "HEAD")
 		if err == nil && headBefore != headAfter {
 			commitCreated = true
 		}
 
 		// If no commit was created, check for uncommitted changes and retry with commit instructions
 		if !commitCreated {
-			hasChanges, err := git.HasUncommittedChanges(repoRoot)
+			hasChanges, err := gitrepo.HasUncommittedChanges(ctx, repoRoot)
 			if err == nil && hasChanges {
 				if !opts.quiet {
 					cmd.Println("\nNo commit was created. Re-running agent with commit instructions...")
@@ -631,7 +634,7 @@ func runAnalyzeAndFix(cmd *cobra.Command, ep daemon.DaemonEndpoint, repoRoot str
 				}
 
 				// Check again if commit was created
-				headFinal, err := git.ResolveSHA(repoRoot, "HEAD")
+				headFinal, err := gitrepo.Resolve(ctx, repoRoot, "HEAD")
 				if err == nil && headFinal != headAfter {
 					commitCreated = true
 				}
@@ -645,7 +648,7 @@ func runAnalyzeAndFix(cmd *cobra.Command, ep daemon.DaemonEndpoint, repoRoot str
 		} else if commitCreated {
 			cmd.Println("\nChanges committed successfully.")
 		} else {
-			hasChanges, err := git.HasUncommittedChanges(repoRoot)
+			hasChanges, err := gitrepo.HasUncommittedChanges(ctx, repoRoot)
 			if err == nil && hasChanges {
 				cmd.Println("\nWarning: Changes were made but not committed. Please review and commit manually.")
 			} else if err == nil {
@@ -656,7 +659,7 @@ func runAnalyzeAndFix(cmd *cobra.Command, ep daemon.DaemonEndpoint, repoRoot str
 
 	// Ensure the fix commit gets a review enqueued
 	if commitCreated {
-		if head, err := git.ResolveSHA(repoRoot, "HEAD"); err == nil {
+		if head, err := gitrepo.Resolve(ctx, repoRoot, "HEAD"); err == nil {
 			if err := enqueueIfNeeded(ctx, ep.BaseURL(), repoRoot, head); err != nil && !opts.quiet {
 				cmd.Printf("Warning: could not enqueue review for fix commit: %v\n", err)
 			}
@@ -964,15 +967,15 @@ func expandAndReadFiles(workDir, repoRoot string, patterns []string) (map[string
 
 // getBranchFiles discovers files changed on a branch and reads their contents.
 // When opts.branch is "HEAD", uses the current branch. Otherwise uses the named branch.
-func getBranchFiles(cmd *cobra.Command, repoRoot string, opts analyzeOptions) (map[string]string, error) {
+func getBranchFiles(ctx context.Context, cmd *cobra.Command, repoRoot string, opts analyzeOptions) (map[string]string, error) {
 	// Determine which branch to analyze
 	targetRef := "HEAD"
-	branchLabel := git.GetCurrentBranch(repoRoot)
+	branchLabel := gitrepo.CurrentBranch(ctx, repoRoot)
 	if opts.branch != "HEAD" {
 		targetRef = opts.branch
 		branchLabel = opts.branch
 		// Verify the ref exists
-		if _, err := git.ResolveSHA(repoRoot, targetRef); err != nil {
+		if _, err := gitrepo.Resolve(ctx, repoRoot, targetRef); err != nil {
 			return nil, fmt.Errorf("cannot resolve branch %q: %w", opts.branch, err)
 		}
 	}
@@ -1003,7 +1006,7 @@ func getBranchFiles(cmd *cobra.Command, repoRoot string, opts analyzeOptions) (m
 	}
 	if base == "" {
 		var err error
-		base, err = git.GetDefaultBranch(repoRoot)
+		base, err = gitrepo.DefaultBranch(ctx, repoRoot)
 		if err != nil {
 			return nil, fmt.Errorf("cannot determine base branch: %w", err)
 		}
@@ -1011,7 +1014,7 @@ func getBranchFiles(cmd *cobra.Command, repoRoot string, opts analyzeOptions) (m
 
 	// Validate not on base branch (only when analyzing current branch)
 	if targetRef == "HEAD" {
-		currentBranch := git.GetCurrentBranch(repoRoot)
+		currentBranch := gitrepo.CurrentBranch(ctx, repoRoot)
 		if git.IsOnBaseBranch(repoRoot, currentBranch, base) {
 			return nil, fmt.Errorf("already on %s - switch to a feature branch first", currentBranch)
 		}

@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -15,9 +16,9 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	gitrepo "go.kenn.io/kit/git/repo"
 
 	"go.kenn.io/roborev/internal/daemon"
-	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/githook"
 )
 
@@ -464,7 +465,7 @@ esac
 // the ROBOREV= line patched to point at a mock binary.
 func installMockHook(t *testing.T, repoDir, mockBinDir string) {
 	t.Helper()
-	hooksDir, err := git.GetHooksPath(repoDir)
+	hooksDir, err := gitrepo.HooksPath(context.Background(), repoDir)
 	require.NoError(t, err)
 	require.NoError(t, os.MkdirAll(hooksDir, 0o755))
 

@@ -1,10 +1,11 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 
-	"go.kenn.io/roborev/internal/git"
+	gitrepo "go.kenn.io/kit/git/repo"
 )
 
 // currentRepoRoots captures the worktree root used for local git/file
@@ -27,11 +28,11 @@ func resolveCurrentRepoRoots() (currentRepoRoots, error) {
 		worktreeRoot: workDir,
 		mainRepoRoot: workDir,
 	}
-	if root, err := git.GetRepoRoot(workDir); err == nil {
+	if root, err := gitrepo.Root(context.TODO(), workDir); err == nil {
 		roots.worktreeRoot = root
 		roots.mainRepoRoot = root
 	}
-	if root, err := git.GetMainRepoRoot(workDir); err == nil {
+	if root, err := gitrepo.MainRoot(context.TODO(), workDir); err == nil {
 		roots.mainRepoRoot = root
 	}
 
@@ -45,5 +46,5 @@ func resolveCurrentBranchFilter(worktreeRoot, branch string, allBranches bool) s
 	if branch != "" {
 		return branch
 	}
-	return git.GetCurrentBranch(worktreeRoot)
+	return gitrepo.CurrentBranch(context.TODO(), worktreeRoot)
 }

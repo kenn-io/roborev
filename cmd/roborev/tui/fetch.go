@@ -11,6 +11,7 @@ import (
 	"time"
 
 	tea "github.com/charmbracelet/bubbletea"
+	gitrepo "go.kenn.io/kit/git/repo"
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
@@ -558,7 +559,7 @@ func (m model) loadResponses(jobID int64, review *storage.Review) []storage.Resp
 	if review.Job != nil && review.Job.CommitID != nil {
 		commitID := *review.Job.CommitID
 		legacyParams = &daemonclient.ListCommentsParams{CommitId: &commitID}
-	} else if review.Job != nil && git.LooksLikeSHA(review.Job.GitRef) {
+	} else if review.Job != nil && gitrepo.LooksLikeSHA(review.Job.GitRef) {
 		sha := review.Job.GitRef
 		legacyParams = &daemonclient.ListCommentsParams{Sha: &sha}
 	}
@@ -861,10 +862,10 @@ func (m model) fetchCommitMsg(job *storage.ReviewJob) tea.Cmd {
 			for i, sha := range commits {
 				info, err := git.GetCommitInfo(job.RepoPath, sha)
 				if err != nil {
-					fmt.Fprintf(&content, "%d. %s: (error: %v)\n\n", i+1, git.ShortSHA(sha), err)
+					fmt.Fprintf(&content, "%d. %s: (error: %v)\n\n", i+1, gitrepo.ShortSHA(sha), err)
 					continue
 				}
-				fmt.Fprintf(&content, "%d. %s %s\n", i+1, git.ShortSHA(info.SHA), info.Subject)
+				fmt.Fprintf(&content, "%d. %s %s\n", i+1, gitrepo.ShortSHA(info.SHA), info.Subject)
 				fmt.Fprintf(&content, "   Author: %s | %s\n", info.Author, info.Timestamp.Format("2006-01-02 15:04"))
 				if info.Body != "" {
 					// Indent body

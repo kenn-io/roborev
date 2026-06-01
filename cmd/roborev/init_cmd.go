@@ -6,6 +6,7 @@ import (
 	"path/filepath"
 
 	"github.com/spf13/cobra"
+	gitrepo "go.kenn.io/kit/git/repo"
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/git"
@@ -26,10 +27,11 @@ func initCmd() *cobra.Command {
   - Installs post-commit hook
   - Starts the daemon (unless --no-daemon)`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
 			fmt.Println("Initializing roborev...")
 
 			// 1. Ensure we're in a git repo
-			root, err := git.GetRepoRoot(".")
+			root, err := gitrepo.Root(ctx, ".")
 			if err != nil {
 				return fmt.Errorf("not a git repository - run this from inside a git repo")
 			}
@@ -72,10 +74,10 @@ func initCmd() *cobra.Command {
 			}
 
 			// 5. Install hooks (post-commit + post-rewrite)
-			if err := git.EnsureAbsoluteHooksPath(root); err != nil {
+			if err := gitrepo.EnsureAbsoluteHooksPath(ctx, root); err != nil {
 				return fmt.Errorf("normalize hooks path: %w", err)
 			}
-			hooksDir, err := git.GetHooksPath(root)
+			hooksDir, err := gitrepo.HooksPath(ctx, root)
 			if err != nil {
 				return fmt.Errorf("get hooks path: %w", err)
 			}

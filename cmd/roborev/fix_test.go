@@ -78,10 +78,6 @@ func closeConnNoResponse(t *testing.T, w http.ResponseWriter) {
 	_ = conn.Close()
 }
 
-func ptrInt64(v int64) *int64 {
-	return &v
-}
-
 func TestBuildGenericFixPrompt(t *testing.T) {
 	analysisOutput := `## Issues Found
 - Long function in main.go:50
@@ -438,7 +434,7 @@ func TestAddJobResponseAvoidsDuplicatePostAfterConnectionDrop(t *testing.T) {
 			responsesMu.Lock()
 			responses = append(responses, storage.Response{
 				ID:        int64(len(responses) + 1),
-				JobID:     ptrInt64(123),
+				JobID:     new(int64(123)),
 				Responder: req["commenter"].(string),
 				Response:  req["comment"].(string),
 			})
@@ -3234,7 +3230,7 @@ func TestFilterReachableJobs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := filterReachableJobs(
+			got := filterReachableJobs(t.Context(),
 				repo.Dir, tt.branchOverride, tt.jobs,
 			)
 			var gotIDs []int64
@@ -3297,7 +3293,7 @@ func TestFilterReachableJobsDetachedHead(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := filterReachableJobs(repo.Dir, "", tt.jobs)
+			got := filterReachableJobs(t.Context(), repo.Dir, "", tt.jobs)
 			var gotIDs []int64
 			for _, j := range got {
 				gotIDs = append(gotIDs, j.ID)
@@ -3321,7 +3317,7 @@ func TestFilterReachableJobsDetachedMergeHead(t *testing.T) {
 		{ID: 1, GitRef: featureSHA},
 		{ID: 2, GitRef: baseSHA + ".." + featureSHA},
 	}
-	got := filterReachableJobs(repo.Dir, "", jobs)
+	got := filterReachableJobs(t.Context(), repo.Dir, "", jobs)
 
 	var gotIDs []int64
 	for _, j := range got {
@@ -3631,7 +3627,7 @@ func TestFilterReachableJobsFeatureBranch(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := filterReachableJobs(repo.Dir, "", tt.jobs)
+			got := filterReachableJobs(t.Context(), repo.Dir, "", tt.jobs)
 			var gotIDs []int64
 			for _, j := range got {
 				gotIDs = append(gotIDs, j.ID)

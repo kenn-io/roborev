@@ -7,7 +7,7 @@ import (
 	"sync"
 	"time"
 
-	"go.kenn.io/roborev/internal/git"
+	gitrepo "go.kenn.io/kit/git/repo"
 )
 
 // TestAgentCall records a single Review() invocation for assertion in tests.
@@ -132,7 +132,7 @@ func (a *TestAgent) Review(ctx context.Context, repoPath, commitSHA, prompt stri
 		return "", fmt.Errorf("test agent configured to fail")
 	}
 
-	shortSHA := git.ShortSHA(commitSHA)
+	shortSHA := gitrepo.ShortSHA(commitSHA)
 	sessionLine := fmt.Sprintf(`{"type":"session","id":%q}`+"\n", sessionID)
 	body := fmt.Sprintf("%s\n\nCommit: %s\nRepo: %s", a.Output, shortSHA, repoPath)
 	streamed := sessionLine + body

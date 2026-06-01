@@ -1,6 +1,7 @@
 package config
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"net/url"
@@ -14,6 +15,7 @@ import (
 
 	"github.com/BurntSushi/toml"
 	tomlv2 "github.com/pelletier/go-toml/v2"
+	gitrepo "go.kenn.io/kit/git/repo"
 
 	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/review/autotype"
@@ -1667,7 +1669,7 @@ func ResolveExcludePatternsLocal(
 // .roborev.toml not yet committed). This mirrors loadGuidelines
 // to prevent untrusted branches from controlling review scope.
 func loadRepoExcludePatterns(repoPath string) []string {
-	if defaultBranch, err := git.GetDefaultBranch(repoPath); err == nil {
+	if defaultBranch, err := gitrepo.DefaultBranch(context.TODO(), repoPath); err == nil {
 		cfg, err := LoadRepoConfigFromRef(repoPath, defaultBranch)
 		if err != nil {
 			if IsConfigParseError(err) {

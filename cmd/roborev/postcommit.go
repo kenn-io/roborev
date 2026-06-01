@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	gitrepo "go.kenn.io/kit/git/repo"
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
@@ -44,11 +45,12 @@ func postCommitCmd() *cobra.Command {
 		SilenceErrors: true,
 		SilenceUsage:  true,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
 			if repoPath == "" {
 				repoPath = "."
 			}
 
-			root, err := git.GetRepoRoot(repoPath)
+			root, err := gitrepo.Root(ctx, repoPath)
 			if err != nil {
 				hookLog(repoPath, "skip", "not a git repo")
 				return nil
@@ -61,7 +63,7 @@ func postCommitCmd() *cobra.Command {
 
 			// Migrate stale relative core.hooksPath to absolute
 			// so linked worktrees resolve hooks correctly.
-			_ = git.EnsureAbsoluteHooksPath(root)
+			_ = gitrepo.EnsureAbsoluteHooksPath(ctx, root)
 
 			if err := ensureDaemon(); err != nil {
 				hookLog(root, "fail", fmt.Sprintf(
@@ -71,13 +73,13 @@ func postCommitCmd() *cobra.Command {
 			}
 
 			var gitRef string
-			if ref, ok := tryBranchReview(root, baseBranch); ok {
+			if ref, ok := tryBranchReview(ctx, root, baseBranch); ok {
 				gitRef = ref
 			} else {
 				gitRef = "HEAD"
 			}
 
-			branchName := git.GetCurrentBranch(root)
+			branchName := gitrepo.CurrentBranch(ctx, root)
 
 			reqBody, _ := json.Marshal(daemon.EnqueueRequest{
 				RepoPath: root,

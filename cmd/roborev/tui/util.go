@@ -4,15 +4,16 @@ import (
 	"fmt"
 	"strings"
 
-	"go.kenn.io/roborev/internal/git"
+	gitrepo "go.kenn.io/kit/git/repo"
+
 	"go.kenn.io/roborev/internal/storage"
 )
 
 func shortRef(ref string) string {
 	if before, after, ok := strings.Cut(ref, ".."); ok {
-		return git.ShortSHA(before) + ".." + git.ShortSHA(after)
+		return gitrepo.ShortSHA(before) + ".." + gitrepo.ShortSHA(after)
 	}
-	return git.ShortSHA(ref)
+	return gitrepo.ShortSHA(ref)
 }
 
 func shortJobRef(job storage.ReviewJob) string {

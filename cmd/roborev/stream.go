@@ -11,8 +11,7 @@ import (
 	"os/signal"
 
 	"github.com/spf13/cobra"
-
-	"go.kenn.io/roborev/internal/git"
+	gitrepo "go.kenn.io/kit/git/repo"
 )
 
 func streamCmd() *cobra.Command {
@@ -37,7 +36,7 @@ Examples:
 
 			// Resolve repo filter if set - use main repo root for worktree compatibility
 			if repoFilter != "" {
-				root, err := git.GetMainRepoRoot(repoFilter)
+				root, err := gitrepo.MainRoot(context.TODO(), repoFilter)
 				if err != nil {
 					return fmt.Errorf("resolve repo path: %w", err)
 				}

@@ -139,7 +139,7 @@ func TestBuildSelectedResponse_NoSelection(t *testing.T) {
 func TestBuildSelectedResponse_WithSelection(t *testing.T) {
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.jobs = []storage.ReviewJob{
-		makeJob(42, withAgent("codex"), withClosed(boolPtr(false))),
+		makeJob(42, withAgent("codex"), withClosed(new(false))),
 	}
 	m.selectedIdx = 0
 	m.selectedJobID = 42
@@ -462,8 +462,8 @@ func TestHandleCtrlSelectJob_HiddenByClosed(t *testing.T) {
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.hideClosed = true
 	m.jobs = []storage.ReviewJob{
-		makeJob(10, withClosed(boolPtr(false))),
-		makeJob(20, withClosed(boolPtr(true))),
+		makeJob(10, withClosed(new(false))),
+		makeJob(20, withClosed(new(true))),
 	}
 
 	params, _ := json.Marshal(map[string]int64{"job_id": 20})
@@ -521,9 +521,9 @@ func TestHandleCtrlCloseReview_NonSelectedNoReflow(t *testing.T) {
 	m.hideClosed = true
 	closed := false
 	m.jobs = []storage.ReviewJob{
-		makeJob(1, withClosed(boolPtr(false))),
+		makeJob(1, withClosed(new(false))),
 		makeJob(2, withClosed(&closed)),
-		makeJob(3, withClosed(boolPtr(false))),
+		makeJob(3, withClosed(new(false))),
 	}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
@@ -557,7 +557,7 @@ func TestHandleCtrlCloseReview_ClearsSelectionWhenNoneVisible(t *testing.T) {
 	m.hideClosed = true
 	// Only one visible job — closing it leaves no visible jobs.
 	m.jobs = []storage.ReviewJob{
-		makeJob(1, withClosed(boolPtr(false))),
+		makeJob(1, withClosed(new(false))),
 	}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
@@ -578,7 +578,7 @@ func TestHandleCtrlCloseReview_RollbackRestoresSelection(t *testing.T) {
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.hideClosed = true
 	m.jobs = []storage.ReviewJob{
-		makeJob(1, withClosed(boolPtr(false))),
+		makeJob(1, withClosed(new(false))),
 	}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
@@ -620,9 +620,9 @@ func TestHandleCtrlCancelJob_NonSelectedNoReflow(t *testing.T) {
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.hideClosed = true
 	m.jobs = []storage.ReviewJob{
-		makeJob(1, withClosed(boolPtr(false))),
+		makeJob(1, withClosed(new(false))),
 		makeJob(2, withStatus(storage.JobStatusRunning)),
-		makeJob(3, withClosed(boolPtr(false))),
+		makeJob(3, withClosed(new(false))),
 	}
 	m.selectedIdx = 0
 	m.selectedJobID = 1
@@ -760,7 +760,7 @@ func TestHandleCtrlRerunJob_ClearsClosedAndVerdict(t *testing.T) {
 	m.jobs = []storage.ReviewJob{
 		makeJob(8,
 			withStatus(storage.JobStatusDone),
-			withClosed(boolPtr(true)),
+			withClosed(new(true)),
 			func(j *storage.ReviewJob) { j.Verdict = &verdict },
 		),
 	}
@@ -799,7 +799,7 @@ func TestHandleRerunKey_ClearsClosedAndVerdict(t *testing.T) {
 	m.jobs = []storage.ReviewJob{
 		makeJob(10,
 			withStatus(storage.JobStatusDone),
-			withClosed(boolPtr(true)),
+			withClosed(new(true)),
 			func(j *storage.ReviewJob) { j.Verdict = &verdict },
 		),
 	}

@@ -1,6 +1,6 @@
 module go.kenn.io/roborev
 
-go 1.25.0
+go 1.26.3
 
 require (
 	github.com/BurntSushi/toml v1.6.0
@@ -28,6 +28,7 @@ require (
 	github.com/sourcegraph/go-diff v0.8.0
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
+	go.kenn.io/kit v0.1.0
 	golang.org/x/term v0.43.0
 	gopkg.in/yaml.v3 v3.0.1
 	modernc.org/sqlite v1.50.1

@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -9,9 +10,9 @@ import (
 	"text/tabwriter"
 
 	"github.com/spf13/cobra"
+	gitrepo "go.kenn.io/kit/git/repo"
 
 	"go.kenn.io/roborev/internal/config"
-	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -58,7 +59,7 @@ func resolvePathToGitRoot(path string) string {
 		return path
 	}
 
-	repoRoot, err := git.GetRepoRoot(absPath)
+	repoRoot, err := gitrepo.Root(context.TODO(), absPath)
 	if err != nil {
 		// Not a git repo or git error, fall back to absolute path
 		return absPath
@@ -74,7 +75,7 @@ func resolveRepoFlag(path string) (string, error) {
 	if path == "" || path == "." {
 		path = "."
 	}
-	root, err := git.GetMainRepoRoot(path)
+	root, err := gitrepo.MainRoot(context.TODO(), path)
 	if err != nil || root == "" {
 		return "", fmt.Errorf("not inside a git repository")
 	}
@@ -87,7 +88,7 @@ func resolveRepoFlag(path string) (string, error) {
 // with NoOptDefVal="HEAD".
 func resolveBranchFlag(value, repoPath string) (string, error) {
 	if value == "HEAD" {
-		branch := git.GetCurrentBranch(repoPath)
+		branch := gitrepo.CurrentBranch(context.TODO(), repoPath)
 		if branch == "" {
 			return "", fmt.Errorf("could not detect current branch")
 		}
@@ -397,7 +398,7 @@ func resolveMoveTargetPath(p string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("resolve path: %w", err)
 	}
-	if root, err := git.GetRepoRoot(abs); err == nil && root != "" {
+	if root, err := gitrepo.Root(context.TODO(), abs); err == nil && root != "" {
 		return filepath.ToSlash(root), nil
 	}
 	return filepath.ToSlash(abs), nil

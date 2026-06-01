@@ -2,6 +2,7 @@ package prompt
 
 import (
 	"bytes"
+	"context"
 	"encoding/xml"
 	"errors"
 	"fmt"
@@ -13,6 +14,8 @@ import (
 	"sync"
 	"time"
 	"unicode/utf8"
+
+	gitrepo "go.kenn.io/kit/git/repo"
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/git"
@@ -437,7 +440,7 @@ func (b *Builder) BuildDirty(diff string, contextCount int, agentName, reviewTyp
 
 	// Get previous reviews for context (use HEAD as reference point)
 	if contextCount > 0 && b.db != nil {
-		headSHA, err := git.ResolveSHA(b.repoPath, "HEAD")
+		headSHA, err := gitrepo.Resolve(context.TODO(), b.repoPath, "HEAD")
 		if err == nil {
 			contexts, err := b.getPreviousReviewContexts(headSHA, contextCount)
 			if err == nil && len(contexts) > 0 {
@@ -981,7 +984,7 @@ func (b *Builder) buildSinglePrompt(sha string, contextCount int, agentName, rev
 	ctx.optional.PreviousAttempts = previousAttemptViewsFromContexts(b.previousAttemptContexts(sha))
 
 	// Current commit section
-	shortSHA := git.ShortSHA(sha)
+	shortSHA := gitrepo.ShortSHA(sha)
 
 	// Get commit info
 	info, err := git.GetCommitInfo(b.repoPath, sha)
@@ -1110,7 +1113,7 @@ func (b *Builder) buildRangePrompt(rangeRef string, contextCount int, agentName,
 
 	entries := make([]commitRangeEntryView, 0, len(commits))
 	for _, commitSHA := range commits {
-		short := git.ShortSHA(commitSHA)
+		short := gitrepo.ShortSHA(commitSHA)
 		info, err := git.GetCommitInfo(b.repoPath, commitSHA)
 		if err == nil {
 			entries = append(entries, commitRangeEntryView{Commit: short, Subject: escapeXML(info.Subject)})
@@ -1240,7 +1243,7 @@ func LoadGuidelines(repoPath string) string {
 	// Load review guidelines from the default branch (origin/main,
 	// origin/master, etc.). Branch-specific guidelines are intentionally
 	// ignored to prevent prompt injection from untrusted PR authors.
-	if defaultBranch, err := git.GetDefaultBranch(repoPath); err == nil {
+	if defaultBranch, err := gitrepo.DefaultBranch(context.TODO(), repoPath); err == nil {
 		cfg, err := config.LoadRepoConfigFromRef(repoPath, defaultBranch)
 		if err != nil {
 			if config.IsConfigParseError(err) {

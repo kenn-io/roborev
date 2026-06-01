@@ -131,7 +131,7 @@ func TestValidateRefineContext(t *testing.T) {
 				since = tt.sinceArg
 			}
 
-			repoPath, currentBranch, _, mergeBase, err := validateRefineContext(repo.Root, since, tt.branchArg)
+			repoPath, currentBranch, _, mergeBase, err := validateRefineContext(t.Context(), repo.Root, since, tt.branchArg)
 
 			if tt.wantErr != "" {
 				require.Error(t, err, "expected error containing %q", tt.wantErr)

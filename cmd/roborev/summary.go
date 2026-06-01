@@ -2,6 +2,7 @@ package main
 
 import (
 	"cmp"
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -13,8 +14,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	gitrepo "go.kenn.io/kit/git/repo"
 
-	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -52,13 +53,13 @@ Examples:
 
 			// Auto-resolve repo from cwd when not specified (unless --all)
 			if !allRepos && repoPath == "" {
-				root, err := git.GetMainRepoRoot(".")
+				root, err := gitrepo.MainRoot(context.TODO(), ".")
 				if err != nil {
 					return fmt.Errorf("not in a git repo; use --all for all repos or --repo to specify one")
 				}
 				repoPath = root
 			} else if repoPath != "" {
-				if root, err := git.GetMainRepoRoot(repoPath); err == nil {
+				if root, err := gitrepo.MainRoot(context.TODO(), repoPath); err == nil {
 					repoPath = root
 				}
 			}

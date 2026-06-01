@@ -6,8 +6,8 @@ import (
 	"unicode"
 
 	tea "github.com/charmbracelet/bubbletea"
+	gitrepo "go.kenn.io/kit/git/repo"
 
-	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -183,7 +183,7 @@ func (m model) handleCommentOpenKey() (tea.Model, tea.Cmd) {
 				m.commentText = ""
 			}
 			m.commentJobID = job.ID
-			m.commentCommit = git.ShortSHA(job.GitRef)
+			m.commentCommit = gitrepo.ShortSHA(job.GitRef)
 			m.commentFromView = viewQueue
 			m.currentView = viewKindComment
 		}
@@ -195,7 +195,7 @@ func (m model) handleCommentOpenKey() (tea.Model, tea.Cmd) {
 		m.commentJobID = m.currentReview.JobID
 		m.commentCommit = ""
 		if m.currentReview.Job != nil {
-			m.commentCommit = git.ShortSHA(
+			m.commentCommit = gitrepo.ShortSHA(
 				m.currentReview.Job.GitRef)
 		}
 		m.commentFromView = viewReview

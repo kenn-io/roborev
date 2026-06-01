@@ -1055,7 +1055,7 @@ func TestTUIJobsMsgHideClosedUnderfilledViewportAutoPaginates(t *testing.T) {
 	jobs := make([]storage.ReviewJob, 0, 25)
 	var id int64 = 200
 	for range 13 {
-		jobs = append(jobs, makeJob(id, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))))
+		jobs = append(jobs, makeJob(id, withStatus(storage.JobStatusDone), withClosed(new(false))))
 		id--
 	}
 	for range 12 {
@@ -1084,7 +1084,7 @@ func TestTUIJobsMsgHideClosedFilledViewportDoesNotAutoPaginate(t *testing.T) {
 	jobs := make([]storage.ReviewJob, 0, 26)
 	var id int64 = 300
 	for range 21 {
-		jobs = append(jobs, makeJob(id, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))))
+		jobs = append(jobs, makeJob(id, withStatus(storage.JobStatusDone), withClosed(new(false))))
 		id--
 	}
 	for range 5 {
@@ -1200,28 +1200,28 @@ func TestTUIJobClosedTransitions(t *testing.T) {
 	}{
 		{
 			name:           "Late error ignored (same state, diff seq)",
-			initialJobs:    []storage.ReviewJob{makeJob(1, withClosed(boolPtr(false)))},
+			initialJobs:    []storage.ReviewJob{makeJob(1, withClosed(new(false)))},
 			initialPending: map[int64]pendingState{1: {newState: true, seq: 3}},
 			msg: closedResultMsg{
 				jobID: 1, oldState: false, newState: true, seq: 1,
 				err: fmt.Errorf("late error"),
 			},
 			wantPending:      true,
-			wantPendingState: boolPtr(true),
-			wantClosed:       boolPtr(true),
+			wantPendingState: new(true),
+			wantClosed:       new(true),
 			wantError:        false,
 		},
 		{
 			name:           "Stale error response ignored",
-			initialJobs:    []storage.ReviewJob{makeJob(1, withClosed(boolPtr(true)))},
+			initialJobs:    []storage.ReviewJob{makeJob(1, withClosed(new(true)))},
 			initialPending: map[int64]pendingState{1: {newState: true, seq: 1}},
 			msg: closedResultMsg{
 				jobID: 1, oldState: true, newState: false, seq: 0,
 				err: fmt.Errorf("network error"),
 			},
 			wantPending:      true,
-			wantPendingState: boolPtr(true),
-			wantClosed:       boolPtr(true),
+			wantPendingState: new(true),
+			wantClosed:       new(true),
 			wantError:        false,
 		},
 		{
@@ -1237,21 +1237,21 @@ func TestTUIJobClosedTransitions(t *testing.T) {
 			initialPending: map[int64]pendingState{1: {newState: true, seq: 1}},
 			msg:            jobsMsg{jobs: []storage.ReviewJob{makeJob(1)}},
 			wantPending:    true,
-			wantClosed:     boolPtr(true),
+			wantClosed:     new(true),
 		},
 		{
 			name:           "Not cleared by stale response (mismatched newState)",
-			initialJobs:    []storage.ReviewJob{makeJob(1, withClosed(boolPtr(false)))},
+			initialJobs:    []storage.ReviewJob{makeJob(1, withClosed(new(false)))},
 			initialPending: map[int64]pendingState{1: {newState: true, seq: 1}},
 			msg: closedResultMsg{
 				jobID: 1, oldState: true, newState: false, seq: 0,
 			},
 			wantPending:      true,
-			wantPendingState: boolPtr(true),
+			wantPendingState: new(true),
 		},
 		{
 			name:           "Not cleared on success (waits for refresh)",
-			initialJobs:    []storage.ReviewJob{makeJob(1, withClosed(boolPtr(false)))},
+			initialJobs:    []storage.ReviewJob{makeJob(1, withClosed(new(false)))},
 			initialPending: map[int64]pendingState{1: {newState: true, seq: 1}},
 			msg: closedResultMsg{
 				jobID: 1, oldState: false, newState: true, seq: 1,
@@ -1260,30 +1260,30 @@ func TestTUIJobClosedTransitions(t *testing.T) {
 		},
 		{
 			name:           "Cleared by jobs refresh",
-			initialJobs:    []storage.ReviewJob{makeJob(1, withClosed(boolPtr(false)))},
+			initialJobs:    []storage.ReviewJob{makeJob(1, withClosed(new(false)))},
 			initialPending: map[int64]pendingState{1: {newState: true, seq: 1}},
-			msg:            jobsMsg{jobs: []storage.ReviewJob{makeJob(1, withClosed(boolPtr(true)))}},
+			msg:            jobsMsg{jobs: []storage.ReviewJob{makeJob(1, withClosed(new(true)))}},
 			wantPending:    false,
-			wantClosed:     boolPtr(true),
+			wantClosed:     new(true),
 		},
 		{
 			name:           "Not cleared by stale jobs refresh",
-			initialJobs:    []storage.ReviewJob{makeJob(1, withClosed(boolPtr(false)))},
+			initialJobs:    []storage.ReviewJob{makeJob(1, withClosed(new(false)))},
 			initialPending: map[int64]pendingState{1: {newState: true, seq: 1}},
-			msg:            jobsMsg{jobs: []storage.ReviewJob{makeJob(1, withClosed(boolPtr(false)))}},
+			msg:            jobsMsg{jobs: []storage.ReviewJob{makeJob(1, withClosed(new(false)))}},
 			wantPending:    true,
-			wantClosed:     boolPtr(true),
+			wantClosed:     new(true),
 		},
 		{
 			name:           "Cleared on current error",
-			initialJobs:    []storage.ReviewJob{makeJob(1, withClosed(boolPtr(true)))},
+			initialJobs:    []storage.ReviewJob{makeJob(1, withClosed(new(true)))},
 			initialPending: map[int64]pendingState{1: {newState: false, seq: 1}},
 			msg: closedResultMsg{
 				jobID: 1, oldState: true, newState: false, seq: 1,
 				err: fmt.Errorf("server error"),
 			},
 			wantPending: false,
-			wantClosed:  boolPtr(true),
+			wantClosed:  new(true),
 			wantError:   true,
 		},
 	}
@@ -1378,7 +1378,7 @@ func TestTUIClosedHideClosedStats(t *testing.T) {
 	}{
 		{
 			name:           "HideClosed stats not double counted",
-			initialJobs:    []storage.ReviewJob{makeJob(1, withClosed(boolPtr(false)))},
+			initialJobs:    []storage.ReviewJob{makeJob(1, withClosed(new(false)))},
 			initialStats:   storage.JobStats{Done: 10, Closed: 6, Open: 4},
 			initialPending: map[int64]pendingState{1: {newState: true, seq: 1}},
 			msg: jobsMsg{
@@ -1390,11 +1390,11 @@ func TestTUIClosedHideClosedStats(t *testing.T) {
 		},
 		{
 			name:           "HideClosed pending not cleared when server lags",
-			initialJobs:    []storage.ReviewJob{makeJob(1, withClosed(boolPtr(false)))},
+			initialJobs:    []storage.ReviewJob{makeJob(1, withClosed(new(false)))},
 			initialStats:   storage.JobStats{Done: 10, Closed: 6, Open: 4},
 			initialPending: map[int64]pendingState{1: {newState: true, seq: 1}},
 			msg: jobsMsg{
-				jobs:  []storage.ReviewJob{makeJob(1, withClosed(boolPtr(false)))},
+				jobs:  []storage.ReviewJob{makeJob(1, withClosed(new(false)))},
 				stats: storage.JobStats{Done: 10, Closed: 5, Open: 5},
 			},
 			wantPending: true,

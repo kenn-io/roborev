@@ -1,14 +1,14 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"strconv"
 	"sync"
 
 	"github.com/spf13/cobra"
-
-	"go.kenn.io/roborev/internal/git"
+	gitrepo "go.kenn.io/kit/git/repo"
 )
 
 func waitCmd() *cobra.Command {
@@ -84,8 +84,8 @@ Examples:
 					jobID = id
 				} else {
 					// Try to resolve as git ref first (handles numeric SHAs like "123456")
-					if repoRoot, err := git.GetRepoRoot("."); err == nil {
-						if _, err := git.ResolveSHA(repoRoot, arg); err == nil {
+					if repoRoot, err := gitrepo.Root(context.TODO(), "."); err == nil {
+						if _, err := gitrepo.Resolve(context.TODO(), repoRoot, arg); err == nil {
 							ref = arg
 						}
 					}
@@ -105,8 +105,8 @@ Examples:
 			// Validate git ref before contacting daemon
 			var sha string
 			if ref != "" {
-				repoRoot, _ := git.GetRepoRoot(".")
-				resolved, err := git.ResolveSHA(repoRoot, ref)
+				repoRoot, _ := gitrepo.Root(context.TODO(), ".")
+				resolved, err := gitrepo.Resolve(context.TODO(), repoRoot, ref)
 				if err != nil {
 					return fmt.Errorf("invalid git ref: %s", ref)
 				}
@@ -120,9 +120,9 @@ Examples:
 
 			// If we have a ref to resolve, use findJobForCommit
 			if sha != "" && jobID == 0 {
-				mainRoot, _ := git.GetMainRepoRoot(".")
+				mainRoot, _ := gitrepo.MainRoot(context.TODO(), ".")
 				if mainRoot == "" {
-					mainRoot, _ = git.GetRepoRoot(".")
+					mainRoot, _ = gitrepo.Root(context.TODO(), ".")
 				}
 				job, err := findJobForCommit(mainRoot, sha)
 				if err != nil {
@@ -179,7 +179,7 @@ func waitMultiple(
 	forceJobID, quiet bool,
 ) error {
 	// Phase 1: Local validation (no daemon contact).
-	repoRoot, _ := git.GetRepoRoot(".")
+	repoRoot, _ := gitrepo.Root(context.TODO(), ".")
 	resolved := make([]resolvedArg, 0, len(args))
 	for _, arg := range args {
 		if forceJobID {
@@ -192,7 +192,7 @@ func waitMultiple(
 			// Try git ref first
 			var sha string
 			if repoRoot != "" {
-				if s, err := git.ResolveSHA(repoRoot, arg); err == nil {
+				if s, err := gitrepo.Resolve(context.TODO(), repoRoot, arg); err == nil {
 					sha = s
 				}
 			}
@@ -223,7 +223,7 @@ func waitMultiple(
 			jobIDs = append(jobIDs, r.jobID)
 			continue
 		}
-		mainRoot, _ := git.GetMainRepoRoot(".")
+		mainRoot, _ := gitrepo.MainRoot(context.TODO(), ".")
 		if mainRoot == "" {
 			mainRoot = repoRoot
 		}

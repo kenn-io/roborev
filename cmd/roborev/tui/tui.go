@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"log"
 	"net"
@@ -19,6 +20,7 @@ import (
 	"github.com/charmbracelet/lipgloss/table"
 	"github.com/mattn/go-runewidth"
 	"github.com/muesli/termenv"
+	gitrepo "go.kenn.io/kit/git/repo"
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
@@ -535,10 +537,10 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 		}
 
 		// Detect current repo/branch for filter sort priority
-		if repoRoot, err := git.GetMainRepoRoot("."); err == nil && repoRoot != "" {
+		if repoRoot, err := gitrepo.MainRoot(context.TODO(), "."); err == nil && repoRoot != "" {
 			cwdRepoRoot = repoRoot
 			cwdRepoIdentity = config.ResolveRepoIdentity(repoRoot, nil)
-			cwdBranch = git.GetCurrentBranch(".")
+			cwdBranch = gitrepo.CurrentBranch(context.TODO(), ".")
 		}
 	}
 

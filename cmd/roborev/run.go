@@ -14,10 +14,10 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	gitrepo "go.kenn.io/kit/git/repo"
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
-	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -127,7 +127,7 @@ func runPrompt(cmd *cobra.Command, args []string, agentName, modelStr, reasoning
 
 	// Try to use git repo root if available
 	repoRoot := workDir
-	if root, err := git.GetRepoRoot(workDir); err == nil {
+	if root, err := gitrepo.Root(context.TODO(), workDir); err == nil {
 		repoRoot = root
 	}
 

@@ -260,10 +260,6 @@ func TestGetAvailableWithConfigResolvedACPBranchFallsBackWhenConfiguredCommandMi
 	require.Equal(t, defaultACPCommand, commandAgent.CommandName(), "Expected fallback to canonical command %q, got %q", defaultACPCommand, commandAgent.CommandName())
 }
 
-func intPtr(i int) *int {
-	return &i
-}
-
 func terminalCount(client *acpClient) int {
 	client.terminalsMutex.Lock()
 	defer client.terminalsMutex.Unlock()
@@ -314,7 +310,7 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 			SessionId:       "test-session",
 			Command:         cmd,
 			Args:            args,
-			OutputByteLimit: intPtr(5),
+			OutputByteLimit: new(5),
 		})
 		require.NoError(t, err, "Failed to create terminal: %v")
 
@@ -402,7 +398,7 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 		})
 		require.NoError(t, err, "WaitForTerminalExit failed: %v")
 
-		require.Equal(t, intPtr(0), waitResp.ExitCode, "Expected exit code 0, got %+v", waitResp)
+		require.Equal(t, new(0), waitResp.ExitCode, "Expected exit code 0, got %+v", waitResp)
 
 		require.True(t, terminalExists(client, resp.TerminalId), "Expected terminal %s to persist after completion", resp.TerminalId)
 
@@ -412,7 +408,7 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 		})
 		require.NoError(t, err, "TerminalOutput failed: %v")
 
-		require.Equal(t, intPtr(0), outputResp.ExitStatus.ExitCode, "Expected terminal output to include exit status 0, got %+v", outputResp.ExitStatus)
+		require.Equal(t, new(0), outputResp.ExitStatus.ExitCode, "Expected terminal output to include exit status 0, got %+v", outputResp.ExitStatus)
 
 		_, err = client.ReleaseTerminal(context.Background(), acp.ReleaseTerminalRequest{
 			SessionId:  "test-session",
@@ -581,7 +577,7 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 			require.Condition(t, func() bool { return false }, "addTerminal blocked while WaitForTerminalExit was waiting")
 		}
 
-		blockedTerminal.setExitStatus(&acp.TerminalExitStatus{ExitCode: intPtr(0)})
+		blockedTerminal.setExitStatus(&acp.TerminalExitStatus{ExitCode: new(0)})
 		close(blockedDone)
 
 		select {
@@ -598,7 +594,7 @@ func TestACPAgentTerminalFunctionality(t *testing.T) {
 
 		select {
 		case resp := <-waitResp:
-			require.Equal(t, intPtr(0), resp.ExitCode, "Expected exit code 0, got %+v", resp)
+			require.Equal(t, new(0), resp.ExitCode, "Expected exit code 0, got %+v", resp)
 		default:
 			require.Condition(t, func() bool { return false }, "missing WaitForTerminalExit response")
 		}
@@ -824,7 +820,7 @@ func TestReadTextFileWindow(t *testing.T) {
 		{
 			name:      "apply limit",
 			startLine: 1,
-			limit:     intPtr(1),
+			limit:     new(1),
 			expected:  "line2",
 		},
 		{
@@ -836,7 +832,7 @@ func TestReadTextFileWindow(t *testing.T) {
 		{
 			name:      "zero limit returns empty",
 			startLine: 0,
-			limit:     intPtr(0),
+			limit:     new(0),
 			expected:  "",
 		},
 	}

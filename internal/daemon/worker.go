@@ -12,6 +12,8 @@ import (
 	"sync/atomic"
 	"time"
 
+	gitworktree "go.kenn.io/kit/git/worktree"
+
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	gitpkg "go.kenn.io/roborev/internal/git"
@@ -19,7 +21,6 @@ import (
 	"go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/tokens"
-	"go.kenn.io/roborev/internal/worktree"
 )
 
 // WorkerPool manages a pool of review workers
@@ -607,15 +608,23 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// For fix jobs, create an isolated worktree to run the agent in.
 	// The agent modifies files in the worktree; afterwards we capture the diff as a patch.
 	reviewRepoPath := effectiveRepoPath
-	var fixWorktree *worktree.Worktree
+	var fixWorktree *gitworktree.Worktree
 	if job.IsFixJob() {
-		wt, wtErr := worktree.Create(job.RepoPath, job.GitRef)
+		wt, wtErr := gitworktree.Create(ctx, job.RepoPath, job.GitRef, gitworktree.Options{
+			Prefix:         "roborev-worktree-",
+			InitSubmodules: true,
+			PullLFS:        true,
+		})
 		if wtErr != nil {
 			log.Printf("[%s] Error creating worktree for fix job %d: %v", workerID, job.ID, wtErr)
 			wp.failOrRetry(workerID, job, agentName, fmt.Sprintf("create worktree: %v", wtErr))
 			return
 		}
-		defer wt.Close()
+		defer func() {
+			if err := wt.Close(context.Background()); err != nil {
+				log.Printf("[%s] Warning: remove worktree for fix job %d: %v", workerID, job.ID, err)
+			}
+		}()
 		fixWorktree = wt
 		reviewRepoPath = wt.Dir
 		log.Printf("[%s] Fix job %d: running agent in worktree %s", workerID, job.ID, wt.Dir)
@@ -668,7 +677,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	var fixPatch string
 	if job.IsFixJob() {
 		var patchErr error
-		fixPatch, patchErr = fixWorktree.CapturePatch()
+		fixPatch, patchErr = fixWorktree.CapturePatch(ctx)
 		if patchErr != nil {
 			log.Printf("[%s] Fix job %d: patch capture failed: %v", workerID, job.ID, patchErr)
 			wp.failOrRetry(workerID, job, agentName, fmt.Sprintf("patch capture: %v", patchErr))

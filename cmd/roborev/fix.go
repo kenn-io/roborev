@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	gitrepo "go.kenn.io/kit/git/repo"
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
@@ -91,8 +92,9 @@ Examples:
 			// effort: runs from a CLI path the user invokes
 			// directly, unlike the post-commit hook which can't
 			// self-heal when hooks are already misresolved.
-			if root, err := git.GetRepoRoot("."); err == nil {
-				_ = git.EnsureAbsoluteHooksPath(root)
+			ctx := cmd.Context()
+			if root, err := gitrepo.Root(ctx, "."); err == nil {
+				_ = gitrepo.EnsureAbsoluteHooksPath(ctx, root)
 			}
 
 			if allBranches && branch != "" {
@@ -326,8 +328,8 @@ type fixJobResult struct {
 }
 
 // detectNewCommit checks whether HEAD has moved past headBefore.
-func detectNewCommit(repoRoot, headBefore string) (string, bool) {
-	head, err := git.ResolveSHA(repoRoot, "HEAD")
+func detectNewCommit(ctx context.Context, repoRoot, headBefore string) (string, bool) {
+	head, err := gitrepo.Resolve(ctx, repoRoot, "HEAD")
 	if err != nil {
 		return "", false
 	}
@@ -345,11 +347,11 @@ func fixJobDirect(ctx context.Context, params fixJobParams, prompt string) (*fix
 		out = io.Discard
 	}
 
-	headBefore, err := git.ResolveSHA(params.RepoRoot, "HEAD")
+	headBefore, err := gitrepo.Resolve(ctx, params.RepoRoot, "HEAD")
 	if err != nil {
 		// Only proceed if this is specifically an unborn HEAD (empty repo).
 		// Other errors (corrupt repo, permissions, non-git dir) should surface.
-		if !git.IsUnbornHead(params.RepoRoot) {
+		if !gitrepo.IsUnbornHead(ctx, params.RepoRoot) {
 			return nil, fmt.Errorf("resolve HEAD: %w", err)
 		}
 		// Unborn HEAD (empty repo) - run agent and check outcome
@@ -358,11 +360,11 @@ func fixJobDirect(ctx context.Context, params fixJobParams, prompt string) (*fix
 			return nil, fmt.Errorf("fix agent failed: %w", agentErr)
 		}
 		// Check if the agent created the first commit
-		if headAfter, resolveErr := git.ResolveSHA(params.RepoRoot, "HEAD"); resolveErr == nil {
+		if headAfter, resolveErr := gitrepo.Resolve(ctx, params.RepoRoot, "HEAD"); resolveErr == nil {
 			return &fixJobResult{CommitCreated: true, NewCommitSHA: headAfter, AgentOutput: agentOutput}, nil
 		}
 		// Still no commit - check working tree
-		hasChanges, hcErr := git.HasUncommittedChanges(params.RepoRoot)
+		hasChanges, hcErr := gitrepo.HasUncommittedChanges(ctx, params.RepoRoot)
 		if hcErr != nil {
 			return nil, fmt.Errorf("failed to check working tree state: %w", hcErr)
 		}
@@ -374,12 +376,12 @@ func fixJobDirect(ctx context.Context, params fixJobParams, prompt string) (*fix
 		return nil, fmt.Errorf("fix agent failed: %w", agentErr)
 	}
 
-	if sha, ok := detectNewCommit(params.RepoRoot, headBefore); ok {
+	if sha, ok := detectNewCommit(ctx, params.RepoRoot, headBefore); ok {
 		return &fixJobResult{CommitCreated: true, NewCommitSHA: sha, AgentOutput: agentOutput}, nil
 	}
 
 	// No commit - retry if there are uncommitted changes
-	hasChanges, err := git.HasUncommittedChanges(params.RepoRoot)
+	hasChanges, err := gitrepo.HasUncommittedChanges(ctx, params.RepoRoot)
 	if err != nil || !hasChanges {
 		return &fixJobResult{NoChanges: (err == nil && !hasChanges), AgentOutput: agentOutput}, nil
 	}
@@ -417,19 +419,19 @@ func fixJobDirect(ctx context.Context, params fixJobParams, prompt string) (*fix
 			// cooldown expires — the success path emits the same
 			// warning, and bare cooldown text would otherwise hide
 			// the regression.
-			if hasChanges, _ := git.HasUncommittedChanges(params.RepoRoot); hasChanges {
+			if hasChanges, _ := gitrepo.HasUncommittedChanges(ctx, params.RepoRoot); hasChanges {
 				fmt.Fprintln(out, "Warning: Changes were made but not committed. Please review and commit manually.")
 			}
 			return nil, &agentLimitError{Classification: cls}
 		}
 		fmt.Fprintf(out, "Warning: commit agent failed: %v\n", retryErr)
 	}
-	if sha, ok := detectNewCommit(params.RepoRoot, headBefore); ok {
+	if sha, ok := detectNewCommit(ctx, params.RepoRoot, headBefore); ok {
 		return &fixJobResult{CommitCreated: true, NewCommitSHA: sha, AgentOutput: agentOutput}, nil
 	}
 
 	// Still no commit - report whether changes remain
-	hasChanges, _ = git.HasUncommittedChanges(params.RepoRoot)
+	hasChanges, _ = gitrepo.HasUncommittedChanges(ctx, params.RepoRoot)
 	return &fixJobResult{NoChanges: !hasChanges, AgentOutput: agentOutput}, nil
 }
 
@@ -603,7 +605,7 @@ func runFixOpen(cmd *cobra.Command, branch string, allBranches, explicitBranch, 
 			if explicitBranch {
 				filterBranch = branch
 			}
-			jobs = filterReachableJobs(roots.worktreeRoot, filterBranch, jobs)
+			jobs = filterReachableJobs(ctx, roots.worktreeRoot, filterBranch, jobs)
 		}
 
 		// Filter out jobs we've already processed
@@ -650,16 +652,17 @@ func runFixOpen(cmd *cobra.Command, branch string, allBranches, explicitBranch, 
 // is auto-detected. Callers that want all branches (--all-branches)
 // skip this function entirely.
 func filterReachableJobs(
+	ctx context.Context,
 	worktreeRoot, branchOverride string,
 	jobs []storage.ReviewJob,
 ) []storage.ReviewJob {
 	matchBranch := branchOverride
 	if matchBranch == "" {
-		matchBranch = git.GetCurrentBranch(worktreeRoot)
+		matchBranch = gitrepo.CurrentBranch(ctx, worktreeRoot)
 	}
 	var detachedRefs map[string]struct{}
 	if matchBranch == "" {
-		detachedRefs = detachedHeadReviewRefs(worktreeRoot)
+		detachedRefs = detachedHeadReviewRefs(ctx, worktreeRoot)
 	}
 	var filtered []storage.ReviewJob
 	for _, j := range jobs {
@@ -667,7 +670,7 @@ func filterReachableJobs(
 			filtered = append(filtered, j)
 			continue
 		}
-		if len(detachedRefs) > 0 && jobMatchesDetachedRef(worktreeRoot, detachedRefs, j) {
+		if len(detachedRefs) > 0 && jobMatchesDetachedRef(ctx, worktreeRoot, detachedRefs, j) {
 			filtered = append(filtered, j)
 		}
 	}
@@ -684,8 +687,8 @@ func branchMatch(matchBranch, jobBranch string) bool {
 	return jobBranch == matchBranch
 }
 
-func detachedHeadReviewRefs(worktreeRoot string) map[string]struct{} {
-	head, err := git.ResolveSHA(worktreeRoot, "HEAD")
+func detachedHeadReviewRefs(ctx context.Context, worktreeRoot string) map[string]struct{} {
+	head, err := gitrepo.Resolve(ctx, worktreeRoot, "HEAD")
 	if err != nil {
 		return nil
 	}
@@ -712,7 +715,7 @@ func detachedHeadReviewRefs(worktreeRoot string) map[string]struct{} {
 	return refs
 }
 
-func jobMatchesDetachedRef(worktreeRoot string, refs map[string]struct{}, job storage.ReviewJob) bool {
+func jobMatchesDetachedRef(ctx context.Context, worktreeRoot string, refs map[string]struct{}, job storage.ReviewJob) bool {
 	if job.GitRef == "" || job.GitRef == "dirty" {
 		return false
 	}
@@ -720,7 +723,7 @@ func jobMatchesDetachedRef(worktreeRoot string, refs map[string]struct{}, job st
 	if _, end, ok := git.ParseRange(ref); ok {
 		ref = end
 	}
-	sha, err := git.ResolveSHA(worktreeRoot, ref)
+	sha, err := gitrepo.Resolve(ctx, worktreeRoot, ref)
 	if err != nil {
 		return false
 	}
@@ -819,7 +822,7 @@ func runFixList(
 		if explicitBranch {
 			filterBranch = branch
 		}
-		jobs = filterReachableJobs(
+		jobs = filterReachableJobs(ctx,
 			roots.worktreeRoot, filterBranch, jobs,
 		)
 	}
@@ -857,7 +860,7 @@ func runFixList(
 
 		// Format the output with all available information
 		cmd.Printf("Job #%d\n", id)
-		cmd.Printf("  Git Ref:  %s\n", git.ShortSHA(job.GitRef))
+		cmd.Printf("  Git Ref:  %s\n", gitrepo.ShortSHA(job.GitRef))
 		if job.Branch != "" {
 			cmd.Printf("  Branch:   %s\n", job.Branch)
 		}
@@ -1085,7 +1088,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		} else if result.NoChanges {
 			cmd.Println("\nNo changes were made by the fix agent.")
 		} else {
-			hasChanges, err := git.HasUncommittedChanges(repoRoot)
+			hasChanges, err := gitrepo.HasUncommittedChanges(ctx, repoRoot)
 			if err == nil && hasChanges {
 				cmd.Println("\nWarning: Changes were made but not committed. Please review and commit manually.")
 			}
@@ -1102,7 +1105,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 	// Add response and mark as closed
 	responseText := "Fix applied via `roborev fix` command"
 	if result.CommitCreated {
-		responseText = fmt.Sprintf("Fix applied via `roborev fix` command (commit: %s)", git.ShortSHA(result.NewCommitSHA))
+		responseText = fmt.Sprintf("Fix applied via `roborev fix` command (commit: %s)", gitrepo.ShortSHA(result.NewCommitSHA))
 	}
 
 	if err := addJobResponse(ctx, addr, jobID, "roborev-fix", responseText); err != nil {
@@ -1173,7 +1176,7 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 			if explicitBranch {
 				filterBranch = branch
 			}
-			jobs = filterReachableJobs(roots.worktreeRoot, filterBranch, jobs)
+			jobs = filterReachableJobs(ctx, roots.worktreeRoot, filterBranch, jobs)
 		}
 
 		var newIDs []int64
@@ -1389,7 +1392,7 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 			} else if result.NoChanges {
 				cmd.Println("No changes were made by the fix agent.")
 			} else {
-				if hasChanges, hcErr := git.HasUncommittedChanges(roots.worktreeRoot); hcErr == nil && hasChanges {
+				if hasChanges, hcErr := gitrepo.HasUncommittedChanges(ctx, roots.worktreeRoot); hcErr == nil && hasChanges {
 					cmd.Println("Warning: Changes were made but not committed. Please review and commit manually.")
 				}
 			}
@@ -1409,7 +1412,7 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 		}
 		responseText := fmt.Sprintf("Fix applied via `roborev fix %s`", flagLabel)
 		if result.CommitCreated {
-			responseText = fmt.Sprintf("Fix applied via `roborev fix %s` (commit: %s)", flagLabel, git.ShortSHA(result.NewCommitSHA))
+			responseText = fmt.Sprintf("Fix applied via `roborev fix %s` (commit: %s)", flagLabel, gitrepo.ShortSHA(result.NewCommitSHA))
 		}
 		for _, e := range batch {
 			if addErr := addJobResponse(ctx, batchAddr, e.jobID, "roborev-fix", responseText); addErr != nil && !opts.quiet {
@@ -1440,7 +1443,7 @@ const (
 // The index parameter is the 1-based position in the batch.
 func batchEntrySize(index int, e batchEntry) int {
 	toolAttempts, userComments := prompt.SplitResponses(e.comments)
-	size := len(fmt.Sprintf("## Review %d (Job %d — %s)\n\n%s\n\n", index, e.jobID, git.ShortSHA(e.job.GitRef), e.review.Output))
+	size := len(fmt.Sprintf("## Review %d (Job %d — %s)\n\n%s\n\n", index, e.jobID, gitrepo.ShortSHA(e.job.GitRef), e.review.Output))
 	size += len(prompt.FormatToolAttempts(toolAttempts))
 	size += len(prompt.FormatUserComments(userComments))
 	return size
@@ -1504,7 +1507,7 @@ func buildBatchFixPrompt(entries []batchEntry, minSeverity string) string {
 
 	for i, e := range entries {
 		toolAttempts, userComments := prompt.SplitResponses(e.comments)
-		fmt.Fprintf(&sb, "## Review %d (Job %d — %s)\n\n", i+1, e.jobID, git.ShortSHA(e.job.GitRef))
+		fmt.Fprintf(&sb, "## Review %d (Job %d — %s)\n\n", i+1, e.jobID, gitrepo.ShortSHA(e.job.GitRef))
 		sb.WriteString(e.review.Output)
 		sb.WriteString("\n\n")
 		sb.WriteString(prompt.FormatToolAttempts(toolAttempts))
@@ -1628,7 +1631,7 @@ func fetchComments(ctx context.Context, serverAddr string, jobID, commitID int64
 		var legacyURL string
 		if commitID > 0 {
 			legacyURL = fmt.Sprintf("%s/api/comments?commit_id=%d", addr, commitID)
-		} else if git.LooksLikeSHA(gitRef) {
+		} else if gitrepo.LooksLikeSHA(gitRef) {
 			legacyURL = fmt.Sprintf("%s/api/comments?sha=%s", addr, gitRef)
 		}
 		if legacyURL != "" {
@@ -1778,7 +1781,7 @@ func enqueueIfNeeded(ctx context.Context, serverAddr, repoPath, sha string) erro
 		return nil
 	}
 
-	branchName := git.GetCurrentBranch(repoPath)
+	branchName := gitrepo.CurrentBranch(ctx, repoPath)
 
 	reqBody, _ := json.Marshal(daemon.EnqueueRequest{
 		RepoPath: repoPath,

@@ -17,7 +17,7 @@ func TestTUIEscapeFromReviewTriggersRefreshWithHideClosed(t *testing.T) {
 	m.loadingJobs = false
 
 	m.jobs = []storage.ReviewJob{
-		makeJob(1, withClosed(boolPtr(false))),
+		makeJob(1, withClosed(new(false))),
 	}
 	m.currentReview = makeReview(1, &storage.ReviewJob{ID: 1})
 
@@ -48,7 +48,7 @@ func TestTUIEscapeFromReviewNoRefreshWithoutHideClosed(t *testing.T) {
 	m.loadingJobs = false
 
 	m.jobs = []storage.ReviewJob{
-		makeJob(1, withClosed(boolPtr(false))),
+		makeJob(1, withClosed(new(false))),
 	}
 	m.currentReview = makeReview(1, &storage.ReviewJob{ID: 1})
 

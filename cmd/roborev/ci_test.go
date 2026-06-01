@@ -209,8 +209,6 @@ func TestResolveReviewTypes_EmptyFlag(t *testing.T) {
 	assert.Empty(t, types)
 }
 
-func boolPtr(v bool) *bool { return &v }
-
 func TestResolveCIUpsertComments(t *testing.T) {
 	tests := []struct {
 		name   string
@@ -237,7 +235,7 @@ func TestResolveCIUpsertComments(t *testing.T) {
 		{
 			name: "repo true overrides global false",
 			repo: &config.RepoConfig{
-				CI: config.RepoCIConfig{UpsertComments: boolPtr(true)},
+				CI: config.RepoCIConfig{UpsertComments: new(true)},
 			},
 			global: &config.Config{CI: config.CIConfig{UpsertComments: false}},
 			want:   true,
@@ -245,7 +243,7 @@ func TestResolveCIUpsertComments(t *testing.T) {
 		{
 			name: "repo false overrides global true",
 			repo: &config.RepoConfig{
-				CI: config.RepoCIConfig{UpsertComments: boolPtr(false)},
+				CI: config.RepoCIConfig{UpsertComments: new(false)},
 			},
 			global: &config.Config{CI: config.CIConfig{UpsertComments: true}},
 			want:   false,

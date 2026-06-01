@@ -66,8 +66,7 @@ func isInlineEmbeddedStructField(field reflect.StructField) bool {
 
 // collectSensitiveKeys walks struct fields and records TOML keys tagged sensitive:"true".
 func collectSensitiveKeys(t reflect.Type, prefix string, out map[string]bool) {
-	for i := 0; i < t.NumField(); i++ {
-		field := t.Field(i)
+	for field := range t.Fields() {
 		tagKey := getTOMLKey(field)
 		ft, ftIsStruct := structType(field.Type)
 

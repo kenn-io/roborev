@@ -413,7 +413,7 @@ func TestPerFileAnalysis(t *testing.T) {
 	cmd, output := newTestCmd(t)
 
 	analysisType := analyze.GetType("refactor")
-	err = runPerFileAnalysis(cmd, mustParseEndpoint(t, ts.URL), tmpDir, analysisType, files, analyzeOptions{quiet: false}, config.DefaultMaxPromptSize)
+	err = runPerFileAnalysis(t.Context(), cmd, mustParseEndpoint(t, ts.URL), tmpDir, analysisType, files, analyzeOptions{quiet: false}, config.DefaultMaxPromptSize)
 	require.NoError(t, err, "runPerFileAnalysis")
 
 	// Should have created 3 jobs (one per file)
@@ -442,7 +442,7 @@ func TestEnqueueAnalysisJob(t *testing.T) {
 		},
 	})
 
-	job, err := enqueueAnalysisJob(mustParseEndpoint(t, ts.URL), "/repo", "test prompt", "", "test-fixtures", analyzeOptions{agentName: "test"})
+	job, err := enqueueAnalysisJob(t.Context(), mustParseEndpoint(t, ts.URL), "/repo", "test prompt", "", "test-fixtures", analyzeOptions{agentName: "test"})
 	require.NoError(t, err, "enqueueAnalysisJob")
 
 	assert.Equal(t, int64(42), job.ID, "job.ID")
@@ -468,7 +468,7 @@ func TestEnqueueSecurityAnalysisJobUsesSecurityReviewType(t *testing.T) {
 		},
 	})
 
-	_, err := enqueueAnalysisJob(mustParseEndpoint(t, ts.URL), repo.Dir, "test prompt", "", "security", analyzeOptions{agentName: "test"})
+	_, err := enqueueAnalysisJob(t.Context(), mustParseEndpoint(t, ts.URL), repo.Dir, "test prompt", "", "security", analyzeOptions{agentName: "test"})
 	require.NoError(t, err, "enqueueAnalysisJob")
 
 	assert.Equal(t, "security", gotReviewType, "security analysis should resolve security workflow config")
@@ -498,7 +498,7 @@ func TestEnqueueAnalysisJobBranchName(t *testing.T) {
 	t.Run("no branch flag uses current branch", func(t *testing.T) {
 		ts, gotBranch := captureBranch(t)
 
-		_, err := enqueueAnalysisJob(mustParseEndpoint(t, ts.URL), repo.Dir, "prompt", "", "refactor", analyzeOptions{})
+		_, err := enqueueAnalysisJob(t.Context(), mustParseEndpoint(t, ts.URL), repo.Dir, "prompt", "", "refactor", analyzeOptions{})
 		require.NoError(t, err, "enqueueAnalysisJob")
 		assert.Equal(t, "test-current", *gotBranch, "expected branch 'test-current'")
 	})
@@ -506,7 +506,7 @@ func TestEnqueueAnalysisJobBranchName(t *testing.T) {
 	t.Run("branch=HEAD uses current branch", func(t *testing.T) {
 		ts, gotBranch := captureBranch(t)
 
-		_, err := enqueueAnalysisJob(mustParseEndpoint(t, ts.URL), repo.Dir, "prompt", "", "refactor", analyzeOptions{branch: "HEAD"})
+		_, err := enqueueAnalysisJob(t.Context(), mustParseEndpoint(t, ts.URL), repo.Dir, "prompt", "", "refactor", analyzeOptions{branch: "HEAD"})
 		require.NoError(t, err, "enqueueAnalysisJob")
 		assert.Equal(t, "test-current", *gotBranch, "expected branch 'test-current'")
 	})
@@ -514,7 +514,7 @@ func TestEnqueueAnalysisJobBranchName(t *testing.T) {
 	t.Run("named branch overrides current branch", func(t *testing.T) {
 		ts, gotBranch := captureBranch(t)
 
-		_, err := enqueueAnalysisJob(mustParseEndpoint(t, ts.URL), repo.Dir, "prompt", "", "refactor", analyzeOptions{branch: "feature-xyz"})
+		_, err := enqueueAnalysisJob(t.Context(), mustParseEndpoint(t, ts.URL), repo.Dir, "prompt", "", "refactor", analyzeOptions{branch: "feature-xyz"})
 		require.NoError(t, err, "enqueueAnalysisJob")
 		assert.Equal(t, "feature-xyz", *gotBranch, "expected branch 'feature-xyz'")
 	})
@@ -537,7 +537,7 @@ func TestGetBranchFiles(t *testing.T) {
 
 	t.Run("filters to code files only", func(t *testing.T) {
 		repo := setupBranchTestRepo(t)
-		files, err := getBranchFiles(cmd, repo.Dir, analyzeOptions{
+		files, err := getBranchFiles(t.Context(), cmd, repo.Dir, analyzeOptions{
 			branch:     "HEAD",
 			baseBranch: "main",
 		})
@@ -551,7 +551,7 @@ func TestGetBranchFiles(t *testing.T) {
 		// Modify working tree — should NOT affect branch analysis
 		_ = os.WriteFile(filepath.Join(repo.Dir, "new.go"), []byte("DIRTY"), 0o644)
 
-		files, err := getBranchFiles(cmd, repo.Dir, analyzeOptions{
+		files, err := getBranchFiles(t.Context(), cmd, repo.Dir, analyzeOptions{
 			branch:     "HEAD",
 			baseBranch: "main",
 		})
@@ -566,7 +566,7 @@ func TestGetBranchFiles(t *testing.T) {
 		// Switch back to main, analyze feature branch by name
 		repo.Run("checkout", "main")
 
-		files, err := getBranchFiles(cmd, repo.Dir, analyzeOptions{
+		files, err := getBranchFiles(t.Context(), cmd, repo.Dir, analyzeOptions{
 			branch:     "feature",
 			baseBranch: "main",
 		})
@@ -579,7 +579,7 @@ func TestGetBranchFiles(t *testing.T) {
 		repo.Run("checkout", "-b", "docs-only", "main")
 		repo.CommitFile("readme.md", "# Hello", "add readme")
 
-		_, err := getBranchFiles(cmd, repo.Dir, analyzeOptions{
+		_, err := getBranchFiles(t.Context(), cmd, repo.Dir, analyzeOptions{
 			branch:     "HEAD",
 			baseBranch: "main",
 		})
@@ -591,7 +591,7 @@ func TestGetBranchFiles(t *testing.T) {
 		repo := setupBranchTestRepo(t)
 		repo.Run("checkout", "main")
 
-		_, err := getBranchFiles(cmd, repo.Dir, analyzeOptions{
+		_, err := getBranchFiles(t.Context(), cmd, repo.Dir, analyzeOptions{
 			branch:     "HEAD",
 			baseBranch: "main",
 		})
@@ -622,7 +622,7 @@ func TestGetBranchFiles(t *testing.T) {
 		repo.Run("checkout", "-b", "feature", "--track", "upstream/main")
 		repo.CommitFile("only-new.go", "package main\nfunc New() {}", "feature work")
 
-		files, err := getBranchFiles(cmd, repo.Dir, analyzeOptions{branch: "HEAD"})
+		files, err := getBranchFiles(t.Context(), cmd, repo.Dir, analyzeOptions{branch: "HEAD"})
 		require.NoError(t, err)
 		// b.go was already merged to upstream/main; must not be analyzed.
 		assert.NotContains(t, files, "b.go",
@@ -639,7 +639,7 @@ func TestGetBranchFiles(t *testing.T) {
 		repo.Run("remote", "add", "upstream", remote.Dir)
 		repo.Run("push", "-u", "upstream", "main")
 
-		_, err := getBranchFiles(cmd, repo.Dir, analyzeOptions{branch: "HEAD"})
+		_, err := getBranchFiles(t.Context(), cmd, repo.Dir, analyzeOptions{branch: "HEAD"})
 		require.Error(t, err, "expected error when on base branch")
 		assert.Contains(t, err.Error(), "already on main", "unexpected error")
 	})
@@ -684,7 +684,7 @@ func TestAnalyzeJSONOutput(t *testing.T) {
 
 		cmd, output := newTestCmd(t)
 
-		err := runSingleAnalysis(cmd, mustParseEndpoint(t, ts.URL), tmpDir, analysisType, files, analyzeOptions{jsonOutput: true}, config.DefaultMaxPromptSize)
+		err := runSingleAnalysis(t.Context(), cmd, mustParseEndpoint(t, ts.URL), tmpDir, analysisType, files, analyzeOptions{jsonOutput: true}, config.DefaultMaxPromptSize)
 		require.NoError(t, err, "runSingleAnalysis: %v")
 
 		var result AnalyzeResult
@@ -711,7 +711,7 @@ func TestAnalyzeJSONOutput(t *testing.T) {
 
 		cmd, output := newTestCmd(t)
 
-		err := runPerFileAnalysis(cmd, mustParseEndpoint(t, ts.URL), tmpDir, analysisType, files, analyzeOptions{jsonOutput: true}, config.DefaultMaxPromptSize)
+		err := runPerFileAnalysis(t.Context(), cmd, mustParseEndpoint(t, ts.URL), tmpDir, analysisType, files, analyzeOptions{jsonOutput: true}, config.DefaultMaxPromptSize)
 		require.NoError(t, err, "runPerFileAnalysis")
 
 		var result AnalyzeResult

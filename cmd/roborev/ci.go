@@ -11,9 +11,9 @@ import (
 	"strings"
 
 	"github.com/spf13/cobra"
+	gitrepo "go.kenn.io/kit/git/repo"
 
 	"go.kenn.io/roborev/internal/config"
-	"go.kenn.io/roborev/internal/git"
 	ghpkg "go.kenn.io/roborev/internal/github"
 	"go.kenn.io/roborev/internal/review"
 )
@@ -141,7 +141,7 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 	}
 
 	// Determine repo root
-	root, err := git.GetRepoRoot(".")
+	root, err := gitrepo.Root(context.TODO(), ".")
 	if err != nil {
 		return fmt.Errorf(
 			"not a git repository — " +

@@ -12,6 +12,8 @@ import (
 
 	"github.com/mattn/go-isatty"
 	"github.com/spf13/cobra"
+	gitrepo "go.kenn.io/kit/git/repo"
+	gitworktree "go.kenn.io/kit/git/worktree"
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
@@ -20,7 +22,6 @@ import (
 	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/streamfmt"
-	"go.kenn.io/roborev/internal/worktree"
 )
 
 // postCommitWaitDelay is the delay after creating a commit before checking
@@ -126,7 +127,10 @@ Use --all-branches to discover and refine all branches with failed reviews.`,
 				return fmt.Errorf("get working directory: %w", err)
 			}
 
-			return runRefine(RunContext{WorkingDir: cwd}, opts)
+			return runRefine(RunContext{
+				Context:    cmd.Context(),
+				WorkingDir: cwd,
+			}, opts)
 		},
 	}
 
@@ -213,9 +217,9 @@ func (t *stepTimer) stopLive() {
 // If branchFlag is non-empty, validates that the user is on that branch.
 // This validation happens before any daemon interaction.
 func validateRefineContext(
-	cwd, since, branchFlag string,
+	ctx context.Context, cwd, since, branchFlag string,
 ) (repoPath, currentBranch, base, mergeBase string, err error) {
-	repoPath, err = git.GetRepoRoot(cwd)
+	repoPath, err = gitrepo.Root(ctx, cwd)
 	if err != nil {
 		return "", "", "", "",
 			fmt.Errorf("not in a git repository: %w", err)
@@ -237,7 +241,7 @@ func validateRefineContext(
 			)
 	}
 
-	currentBranch = git.GetCurrentBranch(repoPath)
+	currentBranch = gitrepo.CurrentBranch(ctx, repoPath)
 
 	// --branch: validate the user is on the expected branch
 	if branchFlag != "" && currentBranch != branchFlag {
@@ -252,7 +256,7 @@ func validateRefineContext(
 		// --since provides an explicit merge base, so upstream/default-branch
 		// resolution is unnecessary. Skip it so a misconfigured or unfetched
 		// upstream doesn't block an otherwise-valid --since invocation.
-		mergeBase, err = git.ResolveSHA(repoPath, since)
+		mergeBase, err = gitrepo.Resolve(ctx, repoPath, since)
 		if err != nil {
 			return "", "", "", "",
 				fmt.Errorf(
@@ -260,9 +264,9 @@ func validateRefineContext(
 					since, err,
 				)
 		}
-		isAncestor, ancestorErr := git.IsAncestor(
-			repoPath, mergeBase, "HEAD",
-		)
+		isAncestor, ancestorErr := gitrepo.IsAncestor(ctx,
+			repoPath, mergeBase, "HEAD")
+
 		if ancestorErr != nil {
 			return "", "", "", "",
 				fmt.Errorf(
@@ -303,7 +307,7 @@ func validateRefineContext(
 			}
 		}
 		if base == "" {
-			base, err = git.GetDefaultBranch(repoPath)
+			base, err = gitrepo.DefaultBranch(ctx, repoPath)
 			if err != nil {
 				return "", "", "", "",
 					fmt.Errorf(
@@ -338,15 +342,21 @@ func validateRefineContext(
 // RunContext encapsulates the runtime context for the refine command,
 // allowing tests to override the working directory and polling interval.
 type RunContext struct {
+	Context         context.Context
 	WorkingDir      string
 	PollInterval    time.Duration
 	PostCommitDelay time.Duration
 }
 
-func runRefine(ctx RunContext, opts refineOptions) error {
+func runRefine(runCtx RunContext, opts refineOptions) error {
+	ctx := runCtx.Context
+	if ctx == nil {
+		ctx = context.TODO()
+	}
+
 	// 1. Validate git and branch context (before touching daemon)
 	repoPath, currentBranch, base, mergeBase, err := validateRefineContext(
-		ctx.WorkingDir, opts.since, opts.branch,
+		ctx, runCtx.WorkingDir, opts.since, opts.branch,
 	)
 	if err != nil {
 		return err
@@ -385,21 +395,21 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 	if err != nil {
 		return fmt.Errorf("cannot connect to daemon: %w", err)
 	}
-	if ctx.PollInterval > 0 {
-		client.SetPollInterval(ctx.PollInterval)
+	if runCtx.PollInterval > 0 {
+		client.SetPollInterval(runCtx.PollInterval)
 	}
 
 	// Determine delays
 	commitWaitDelay := postCommitWaitDelay
-	if ctx.PostCommitDelay > 0 {
-		commitWaitDelay = ctx.PostCommitDelay
+	if runCtx.PostCommitDelay > 0 {
+		commitWaitDelay = runCtx.PostCommitDelay
 	}
 
 	// Print branch context after successful connection
 	if opts.since != "" {
-		fmt.Printf("Refining commits since %s on branch %q\n", git.ShortSHA(mergeBase), currentBranch)
+		fmt.Printf("Refining commits since %s on branch %q\n", gitrepo.ShortSHA(mergeBase), currentBranch)
 	} else {
-		fmt.Printf("Refining branch %q (diverged from %s at %s)\n", currentBranch, base, git.ShortSHA(mergeBase))
+		fmt.Printf("Refining branch %q (diverged from %s at %s)\n", currentBranch, base, gitrepo.ShortSHA(mergeBase))
 	}
 
 	allowUnsafe := resolveAllowUnsafeAgents(opts.allowUnsafeAgents, opts.unsafeFlagChanged, cfg)
@@ -491,7 +501,7 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 			} else {
 				// No pending commit jobs and no failed reviews - check for branch review
 				// Resolve HEAD to SHA to ensure stable rangeRef (avoids stale results if HEAD moves)
-				headSHA, err := git.ResolveSHA(repoPath, "HEAD")
+				headSHA, err := gitrepo.Resolve(ctx, repoPath, "HEAD")
 				if err != nil {
 					return fmt.Errorf("cannot resolve HEAD: %w", err)
 				}
@@ -570,14 +580,18 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 
 		// Record pre-agent state for safety checks
 		wasCleanBefore := git.IsWorkingTreeClean(repoPath)
-		headBefore, err := git.ResolveSHA(repoPath, "HEAD")
+		headBefore, err := gitrepo.Resolve(ctx, repoPath, "HEAD")
 		if err != nil {
 			return fmt.Errorf("cannot determine HEAD: %w", err)
 		}
-		branchBefore := git.GetCurrentBranch(repoPath)
+		branchBefore := gitrepo.CurrentBranch(ctx, repoPath)
 
 		// Create temp worktree to isolate agent from user's working tree
-		wt, err := worktree.Create(repoPath, "HEAD")
+		wt, err := gitworktree.Create(ctx, repoPath, "HEAD", gitworktree.Options{
+			Prefix:         "roborev-worktree-",
+			InitSubmodules: true,
+			PullLFS:        true,
+		})
 		if err != nil {
 			return fmt.Errorf("create worktree: %w", err)
 		}
@@ -601,7 +615,7 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 		if liveTimer {
 			timer.startLive(fmt.Sprintf("Addressing review (job %d)...", currentFailedReview.JobID))
 		}
-		fixCtx, fixCancel := context.WithTimeout(context.Background(), 1*time.Hour)
+		fixCtx, fixCancel := context.WithTimeout(ctx, 1*time.Hour)
 		output, agentErr := addressAgent.Review(fixCtx, worktreePath, "HEAD", addressPrompt, agentOutput)
 		fixCancel()
 		if fmtr != nil {
@@ -619,23 +633,23 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 
 		// Safety checks on main repo (before applying any changes)
 		if wasCleanBefore && !git.IsWorkingTreeClean(repoPath) {
-			wt.Close()
+			_ = wt.Close(ctx)
 			return fmt.Errorf("working tree changed during refine - aborting to prevent data loss")
 		}
-		headAfterAgent, resolveErr := git.ResolveSHA(repoPath, "HEAD")
+		headAfterAgent, resolveErr := gitrepo.Resolve(ctx, repoPath, "HEAD")
 		if resolveErr != nil {
-			wt.Close()
+			_ = wt.Close(ctx)
 			return fmt.Errorf("cannot determine HEAD after agent run: %w", resolveErr)
 		}
-		branchAfterAgent := git.GetCurrentBranch(repoPath)
+		branchAfterAgent := gitrepo.CurrentBranch(ctx, repoPath)
 		if headAfterAgent != headBefore || branchAfterAgent != branchBefore {
-			wt.Close()
+			_ = wt.Close(ctx)
 			return fmt.Errorf("HEAD changed during refine (was %s on %s, now %s on %s) - aborting to prevent applying patch to wrong commit",
-				git.ShortSHA(headBefore), branchBefore, git.ShortSHA(headAfterAgent), branchAfterAgent)
+				gitrepo.ShortSHA(headBefore), branchBefore, gitrepo.ShortSHA(headAfterAgent), branchAfterAgent)
 		}
 
 		if agentErr != nil {
-			wt.Close()
+			_ = wt.Close(ctx)
 			fmt.Printf("Agent error: %v\n", agentErr)
 			fmt.Println("Will retry in next iteration")
 			continue
@@ -643,7 +657,7 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 
 		// Check if agent made changes in worktree
 		if git.IsWorkingTreeClean(worktreePath) {
-			wt.Close()
+			_ = wt.Close(ctx)
 
 			// When severity filtering is active and the agent
 			// signals all findings are below threshold, treat as
@@ -678,26 +692,26 @@ func runRefine(ctx RunContext, opts refineOptions) error {
 		}
 
 		// Capture patch from worktree and apply to main repo
-		patch, err := wt.CapturePatch()
+		patch, err := wt.CapturePatch(ctx)
 		if err != nil {
-			wt.Close()
+			_ = wt.Close(ctx)
 			return fmt.Errorf("capture worktree patch: %w", err)
 		}
-		if err := worktree.ApplyPatch(repoPath, patch); err != nil {
-			wt.Close()
+		if err := gitworktree.ApplyPatch(ctx, repoPath, patch); err != nil {
+			_ = wt.Close(ctx)
 			return fmt.Errorf("apply worktree patch: %w", err)
 		}
-		wt.Close()
+		_ = wt.Close(ctx)
 
 		commitMsg := fmt.Sprintf("Address review findings (job %d)\n\n%s", currentFailedReview.JobID, summarizeAgentOutput(output))
-		newCommit, err := commitWithHookRetry(repoPath, commitMsg, addressAgent, opts.quiet)
+		newCommit, err := commitWithHookRetry(ctx, repoPath, commitMsg, addressAgent, opts.quiet)
 		if err != nil {
 			return fmt.Errorf("failed to commit changes: %w", err)
 		}
-		fmt.Printf("Created commit %s\n", git.ShortSHA(newCommit))
+		fmt.Printf("Created commit %s\n", gitrepo.ShortSHA(newCommit))
 
 		// Add response recording what was done
-		responseText := fmt.Sprintf("Created commit %s to address findings\n\n%s", git.ShortSHA(newCommit), output)
+		responseText := fmt.Sprintf("Created commit %s to address findings\n\n%s", gitrepo.ShortSHA(newCommit), output)
 		if err := client.AddComment(currentFailedReview.JobID, "roborev-refine", responseText); err != nil {
 			fmt.Printf("Warning: failed to add comment to job %d: %v\n", currentFailedReview.JobID, err)
 		}
@@ -750,7 +764,7 @@ func runRefineList(
 	}
 	ctx := cmd.Context()
 	if ctx == nil {
-		ctx = context.Background()
+		ctx = context.TODO()
 	}
 
 	workDir, err := os.Getwd()
@@ -762,19 +776,19 @@ func runRefineList(
 	// worktrees resolve their own branch, not the main worktree's).
 	// Use the main repo root for daemon API queries (jobs are stored
 	// under the main repo path).
-	worktreeRoot, err := git.GetRepoRoot(workDir)
+	worktreeRoot, err := gitrepo.Root(ctx, workDir)
 	if err != nil {
 		return fmt.Errorf("not in a git repository: %w", err)
 	}
 	apiRoot := worktreeRoot
-	if root, err := git.GetMainRepoRoot(workDir); err == nil {
+	if root, err := gitrepo.MainRoot(ctx, workDir); err == nil {
 		apiRoot = root
 	}
 
 	// Determine effective branch filter
 	effectiveBranch := opts.branch
 	if !opts.allBranches && effectiveBranch == "" {
-		effectiveBranch = git.GetCurrentBranch(worktreeRoot)
+		effectiveBranch = gitrepo.CurrentBranch(ctx, worktreeRoot)
 	}
 
 	// Empty string for allBranches means no branch filter
@@ -823,7 +837,7 @@ func runRefineList(
 		}
 
 		cmd.Printf("Job #%d\n", job.ID)
-		cmd.Printf("  Git Ref:  %s\n", git.ShortSHA(job.GitRef))
+		cmd.Printf("  Git Ref:  %s\n", gitrepo.ShortSHA(job.GitRef))
 		if job.Branch != "" {
 			cmd.Printf("  Branch:   %s\n", job.Branch)
 		}
@@ -861,7 +875,12 @@ func runRefineList(
 func runRefineAllBranches(
 	cmd *cobra.Command, opts refineOptions,
 ) error {
-	repoPath, err := git.GetRepoRoot(".")
+	ctx := cmd.Context()
+	if ctx == nil {
+		ctx = context.TODO()
+	}
+
+	repoPath, err := gitrepo.Root(ctx, ".")
 	if err != nil {
 		return fmt.Errorf("not in a git repository: %w", err)
 	}
@@ -881,28 +900,23 @@ func runRefineAllBranches(
 	if err := ensureDaemon(); err != nil {
 		return fmt.Errorf("daemon not running: %w", err)
 	}
-	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.Background()
-	}
-
 	// Use main repo root for API queries
 	apiRepoRoot := repoPath
-	if root, err := git.GetMainRepoRoot(repoPath); err == nil {
+	if root, err := gitrepo.MainRoot(ctx, repoPath); err == nil {
 		apiRepoRoot = root
 	}
 
-	originalBranch := git.GetCurrentBranch(repoPath)
+	originalBranch := gitrepo.CurrentBranch(ctx, repoPath)
 	var originalHEAD string
 	if originalBranch == "" {
-		if git.IsUnbornHead(repoPath) {
+		if gitrepo.IsUnbornHead(ctx, repoPath) {
 			return fmt.Errorf(
 				"cannot run --all-branches from an unborn HEAD " +
 					"(no commits on current branch)",
 			)
 		}
 		// Detached HEAD — capture SHA for restore after processing.
-		originalHEAD, err = git.ResolveSHA(repoPath, "HEAD")
+		originalHEAD, err = gitrepo.Resolve(ctx, repoPath, "HEAD")
 		if err != nil {
 			return fmt.Errorf("cannot resolve HEAD: %w", err)
 		}
@@ -974,7 +988,10 @@ func runRefineAllBranches(
 		branchOpts.branch = b
 		branchOpts.allBranches = false
 
-		if err := runRefine(RunContext{WorkingDir: repoPath}, branchOpts); err != nil {
+		if err := runRefine(RunContext{
+			Context:    ctx,
+			WorkingDir: repoPath,
+		}, branchOpts); err != nil {
 			fmt.Printf(
 				"Warning: refine on %q: %v\n", b, err,
 			)
@@ -1005,12 +1022,12 @@ func runRefineAllBranches(
 		if err := git.CheckoutBranch(repoPath, originalHEAD); err != nil {
 			return fmt.Errorf(
 				"cannot restore detached HEAD %s: %w",
-				git.ShortSHA(originalHEAD), err,
+				gitrepo.ShortSHA(originalHEAD), err,
 			)
 		}
 		fmt.Printf(
 			"\nRestored to detached HEAD at %s\n",
-			git.ShortSHA(originalHEAD),
+			gitrepo.ShortSHA(originalHEAD),
 		)
 	}
 
@@ -1051,7 +1068,7 @@ func findFailedReviewForBranch(client daemon.Client, commits []string, skip map[
 	for _, sha := range commits {
 		review, err := client.GetReviewBySHA(sha)
 		if err != nil {
-			return nil, fmt.Errorf("fetching review for %s: %w", git.ShortSHA(sha), err)
+			return nil, fmt.Errorf("fetching review for %s: %w", gitrepo.ShortSHA(sha), err)
 		}
 		if review == nil {
 			continue
@@ -1122,25 +1139,24 @@ func summarizeAgentOutput(output string) string {
 	return strings.Join(summary, "\n")
 }
 
-// Worktree creation and patch operations are in internal/worktree package.
-
 // commitWithHookRetry attempts git.CreateCommit and, on failure,
 // runs the agent to fix whatever the hook complained about. Only
 // retries when a hook (pre-commit, commit-msg, etc.) caused the
 // failure — other commit failures (missing identity, empty commit,
 // lockfile) are returned immediately. Retries up to 3 total attempts.
 func commitWithHookRetry(
+	ctx context.Context,
 	repoPath, commitMsg string,
 	fixAgent agent.Agent,
 	quiet bool,
 ) (string, error) {
 	const maxAttempts = 3
 
-	expectedHead, err := git.ResolveSHA(repoPath, "HEAD")
+	expectedHead, err := gitrepo.Resolve(ctx, repoPath, "HEAD")
 	if err != nil {
 		return "", fmt.Errorf("cannot determine HEAD: %w", err)
 	}
-	expectedBranch := git.GetCurrentBranch(repoPath)
+	expectedBranch := gitrepo.CurrentBranch(ctx, repoPath)
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
 		sha, err := git.CreateCommit(repoPath, commitMsg)
@@ -1173,7 +1189,7 @@ func commitWithHookRetry(
 		}
 
 		if err := verifyRepoState(
-			repoPath, expectedHead, expectedBranch,
+			ctx, repoPath, expectedHead, expectedBranch,
 		); err != nil {
 			return "", fmt.Errorf(
 				"aborting hook retry: %w", err,
@@ -1195,7 +1211,7 @@ func commitWithHookRetry(
 		}
 
 		fixCtx, cancel := context.WithTimeout(
-			context.Background(), 5*time.Minute,
+			ctx, 5*time.Minute,
 		)
 		_, agentErr := fixAgent.Review(
 			fixCtx, repoPath, "HEAD", fixPrompt, agentOutput,
@@ -1209,7 +1225,7 @@ func commitWithHookRetry(
 		}
 
 		if err := verifyRepoState(
-			repoPath, expectedHead, expectedBranch,
+			ctx, repoPath, expectedHead, expectedBranch,
 		); err != nil {
 			return "", fmt.Errorf(
 				"agent changed repo state during hook fix: %w",
@@ -1225,19 +1241,19 @@ func commitWithHookRetry(
 // verifyRepoState checks that HEAD and current branch match expected
 // values. Returns an error describing the drift if they don't.
 func verifyRepoState(
-	repoPath, expectedHead, expectedBranch string,
+	ctx context.Context, repoPath, expectedHead, expectedBranch string,
 ) error {
-	currentHead, err := git.ResolveSHA(repoPath, "HEAD")
+	currentHead, err := gitrepo.Resolve(ctx, repoPath, "HEAD")
 	if err != nil {
 		return fmt.Errorf("cannot verify HEAD: %w", err)
 	}
-	currentBranch := git.GetCurrentBranch(repoPath)
+	currentBranch := gitrepo.CurrentBranch(ctx, repoPath)
 	if currentHead != expectedHead ||
 		currentBranch != expectedBranch {
 		return fmt.Errorf(
 			"HEAD was %s on %s, now %s on %s",
-			git.ShortSHA(expectedHead), expectedBranch,
-			git.ShortSHA(currentHead), currentBranch,
+			gitrepo.ShortSHA(expectedHead), expectedBranch,
+			gitrepo.ShortSHA(currentHead), currentBranch,
 		)
 	}
 	return nil

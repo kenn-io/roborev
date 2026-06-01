@@ -6,7 +6,6 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"go.kenn.io/roborev/internal/storage"
-	"go.kenn.io/roborev/internal/testutil"
 )
 
 func TestIsTaskJob(t *testing.T) {
@@ -20,7 +19,7 @@ func TestIsTaskJob(t *testing.T) {
 		// Explicit JobType
 		{
 			name: "explicit: single commit review by job_type",
-			job:  storage.ReviewJob{JobType: storage.JobTypeReview, CommitID: testutil.Ptr(int64(1)), GitRef: "abc123"},
+			job:  storage.ReviewJob{JobType: storage.JobTypeReview, CommitID: new(int64(1)), GitRef: "abc123"},
 			want: false,
 		},
 		{
@@ -30,7 +29,7 @@ func TestIsTaskJob(t *testing.T) {
 		},
 		{
 			name: "explicit: dirty review by job_type with diff content",
-			job:  storage.ReviewJob{JobType: storage.JobTypeDirty, GitRef: "dirty", DiffContent: testutil.Ptr("diff")},
+			job:  storage.ReviewJob{JobType: storage.JobTypeDirty, GitRef: "dirty", DiffContent: new("diff")},
 			want: false,
 		},
 		{
@@ -56,7 +55,7 @@ func TestIsTaskJob(t *testing.T) {
 		// Inferred JobType
 		{
 			name: "inferred: single commit review",
-			job:  storage.ReviewJob{CommitID: testutil.Ptr(int64(1)), GitRef: "abc123"},
+			job:  storage.ReviewJob{CommitID: new(int64(1)), GitRef: "abc123"},
 			want: false,
 		},
 		{
@@ -66,7 +65,7 @@ func TestIsTaskJob(t *testing.T) {
 		},
 		{
 			name: "inferred: dirty review with diff content",
-			job:  storage.ReviewJob{GitRef: "dirty", DiffContent: testutil.Ptr("diff")},
+			job:  storage.ReviewJob{GitRef: "dirty", DiffContent: new("diff")},
 			want: false,
 		},
 		{
@@ -138,12 +137,12 @@ func TestIsDirtyJob(t *testing.T) {
 		},
 		{
 			name: "inferred: diff content set",
-			job:  storage.ReviewJob{GitRef: "some-ref", DiffContent: testutil.Ptr("diff")},
+			job:  storage.ReviewJob{GitRef: "some-ref", DiffContent: new("diff")},
 			want: true,
 		},
 		{
 			name: "inferred: normal commit",
-			job:  storage.ReviewJob{GitRef: "abc123", CommitID: testutil.Ptr(int64(1))},
+			job:  storage.ReviewJob{GitRef: "abc123", CommitID: new(int64(1))},
 			want: false,
 		},
 		{
@@ -175,7 +174,7 @@ func TestIsReviewJob(t *testing.T) {
 		{name: "explicit: compact", job: storage.ReviewJob{JobType: storage.JobTypeCompact, GitRef: "compact"}, want: false},
 		{name: "explicit: fix", job: storage.ReviewJob{JobType: storage.JobTypeFix, GitRef: "abc123"}, want: false},
 		// Inferred (empty job_type from old data)
-		{name: "inferred: commit review", job: storage.ReviewJob{CommitID: testutil.Ptr(int64(1)), GitRef: "abc123"}, want: true},
+		{name: "inferred: commit review", job: storage.ReviewJob{CommitID: new(int64(1)), GitRef: "abc123"}, want: true},
 		{name: "inferred: dirty", job: storage.ReviewJob{GitRef: "dirty"}, want: true},
 		{name: "inferred: range", job: storage.ReviewJob{GitRef: "abc..def"}, want: true},
 		{name: "inferred: task label", job: storage.ReviewJob{GitRef: "run:lint"}, want: false},

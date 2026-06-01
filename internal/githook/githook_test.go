@@ -350,7 +350,7 @@ func TestNeedsUpgrade(t *testing.T) {
 			"#!/bin/sh\n# roborev post-commit hook\n" +
 				"roborev enqueue\n",
 		)
-		if !NeedsUpgrade(
+		if !NeedsUpgrade(t.Context(),
 			repo.Root, hookPostCommit, PostCommitVersionMarker,
 		) {
 			assert.Condition(t, func() bool {
@@ -367,7 +367,7 @@ func TestNeedsUpgrade(t *testing.T) {
 				PostCommitVersionMarker +
 				"\nroborev enqueue\n",
 		)
-		if NeedsUpgrade(
+		if NeedsUpgrade(t.Context(),
 			repo.Root, hookPostCommit, PostCommitVersionMarker,
 		) {
 			assert.Condition(t, func() bool {
@@ -379,7 +379,7 @@ func TestNeedsUpgrade(t *testing.T) {
 	t.Run("no hook", func(t *testing.T) {
 		t.Parallel()
 		repo := setupHooksRepo(t)
-		if NeedsUpgrade(
+		if NeedsUpgrade(t.Context(),
 			repo.Root, hookPostCommit, PostCommitVersionMarker,
 		) {
 			assert.Condition(t, func() bool {
@@ -392,7 +392,7 @@ func TestNeedsUpgrade(t *testing.T) {
 		t.Parallel()
 		repo := setupHooksRepo(t)
 		repo.WriteHook("#!/bin/sh\necho hello\n")
-		if NeedsUpgrade(
+		if NeedsUpgrade(t.Context(),
 			repo.Root, hookPostCommit, PostCommitVersionMarker,
 		) {
 			assert.Condition(t, func() bool {
@@ -410,7 +410,7 @@ func TestNeedsUpgrade(t *testing.T) {
 				"roborev remap\n"),
 			0o755,
 		)
-		if !NeedsUpgrade(
+		if !NeedsUpgrade(t.Context(),
 			repo.Root, hookPostRewrite,
 			PostRewriteVersionMarker,
 		) {
@@ -430,7 +430,7 @@ func TestNeedsUpgrade(t *testing.T) {
 				"\nroborev remap\n"),
 			0o755,
 		)
-		if NeedsUpgrade(
+		if NeedsUpgrade(t.Context(),
 			repo.Root, hookPostRewrite,
 			PostRewriteVersionMarker,
 		) {
@@ -446,7 +446,7 @@ func TestNotInstalled(t *testing.T) {
 	t.Run("hook file absent", func(t *testing.T) {
 		t.Parallel()
 		repo := testutil.NewTestRepo(t)
-		if !NotInstalled(repo.Root, hookPostCommit) {
+		if !NotInstalled(t.Context(), repo.Root, hookPostCommit) {
 			assert.Condition(t, func() bool {
 				return false
 			}, "absent hook should be not installed")
@@ -457,7 +457,7 @@ func TestNotInstalled(t *testing.T) {
 		t.Parallel()
 		repo := testutil.NewTestRepo(t)
 		repo.WriteHook("#!/bin/sh\necho hello\n")
-		if !NotInstalled(repo.Root, hookPostCommit) {
+		if !NotInstalled(t.Context(), repo.Root, hookPostCommit) {
 			assert.Condition(t, func() bool {
 				return false
 			}, "non-roborev hook should be not installed")
@@ -468,7 +468,7 @@ func TestNotInstalled(t *testing.T) {
 		t.Parallel()
 		repo := testutil.NewTestRepo(t)
 		repo.WriteHook(GeneratePostCommit())
-		if NotInstalled(repo.Root, hookPostCommit) {
+		if NotInstalled(t.Context(), repo.Root, hookPostCommit) {
 			assert.Condition(t, func() bool {
 				return false
 			}, "roborev hook should be installed")
@@ -486,7 +486,7 @@ func TestNotInstalled(t *testing.T) {
 				repo.Root, ".git", "hooks", hookPostCommit,
 			)
 			os.MkdirAll(hookPath, 0o755)
-			if NotInstalled(repo.Root, hookPostCommit) {
+			if NotInstalled(t.Context(), repo.Root, hookPostCommit) {
 				assert.Condition(t, func() bool {
 					return false
 				}, "non-ENOENT error should not report "+
@@ -508,7 +508,7 @@ func TestMissing(t *testing.T) {
 					PostCommitVersionMarker + "\n" +
 					"roborev enqueue\n",
 			)
-			if !Missing(repo.Root, hookPostRewrite) {
+			if !Missing(t.Context(), repo.Root, hookPostRewrite) {
 				assert.Condition(t, func() bool {
 					return false
 				}, "should detect missing post-rewrite")
@@ -519,7 +519,7 @@ func TestMissing(t *testing.T) {
 	t.Run("no post-commit hook at all", func(t *testing.T) {
 		t.Parallel()
 		repo := testutil.NewTestRepo(t)
-		if Missing(repo.Root, hookPostRewrite) {
+		if Missing(t.Context(), repo.Root, hookPostRewrite) {
 			assert.Condition(t, func() bool {
 				return false
 			}, "should not warn without post-commit")
@@ -542,7 +542,7 @@ func TestMissing(t *testing.T) {
 				"\nroborev remap\n"),
 			0o755,
 		)
-		if Missing(repo.Root, hookPostRewrite) {
+		if Missing(t.Context(), repo.Root, hookPostRewrite) {
 			assert.Condition(t, func() bool {
 				return false
 			}, "should not warn when present")
@@ -553,7 +553,7 @@ func TestMissing(t *testing.T) {
 		t.Parallel()
 		repo := testutil.NewTestRepo(t)
 		repo.WriteHook("#!/bin/sh\necho hello\n")
-		if Missing(repo.Root, hookPostRewrite) {
+		if Missing(t.Context(), repo.Root, hookPostRewrite) {
 			assert.Condition(t, func() bool {
 				return false
 			}, "should not warn for non-roborev")
@@ -579,7 +579,7 @@ func TestMissing(t *testing.T) {
 				repo.Root, ".git", "hooks", hookPostRewrite,
 			)
 			os.MkdirAll(prPath, 0o755)
-			if Missing(repo.Root, hookPostRewrite) {
+			if Missing(t.Context(), repo.Root, hookPostRewrite) {
 				assert.Condition(t, func() bool {
 					return false
 				}, "non-ENOENT error should return false")

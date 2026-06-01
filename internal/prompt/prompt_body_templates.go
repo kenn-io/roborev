@@ -6,7 +6,8 @@ import (
 	"strings"
 	"text/template"
 
-	"go.kenn.io/roborev/internal/git"
+	gitrepo "go.kenn.io/kit/git/repo"
+
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -514,7 +515,7 @@ func renderDirtyTruncatedDiffFallback(body string) (string, error) {
 func previousReviewViews(contexts []HistoricalReviewContext) []previousReviewView {
 	views := make([]previousReviewView, 0, len(contexts))
 	for _, ctx := range contexts {
-		view := previousReviewView{Commit: git.ShortSHA(ctx.SHA)}
+		view := previousReviewView{Commit: gitrepo.ShortSHA(ctx.SHA)}
 		if ctx.Review != nil {
 			view.Available = true
 			view.Output = ctx.Review.Output
@@ -544,7 +545,7 @@ func inRangeReviewViews(contexts []HistoricalReviewContext) []InRangeReviewTempl
 			verdictLabel = "failed"
 		}
 		view := InRangeReviewTemplateContext{
-			Commit:  git.ShortSHA(ctx.SHA),
+			Commit:  gitrepo.ShortSHA(ctx.SHA),
 			Agent:   ctx.Review.Agent,
 			Verdict: verdictLabel,
 			Output:  ctx.Review.Output,

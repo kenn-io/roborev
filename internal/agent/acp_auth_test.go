@@ -13,11 +13,6 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-// Helper function to create int pointers for testing
-func authTestIntPtr(i int) *int {
-	return &i
-}
-
 const (
 	authAllowOnceOptionID    acp.PermissionOptionId = "allow-once-id"
 	authAllowAlwaysOptionID  acp.PermissionOptionId = "allow-always-id"
@@ -423,13 +418,13 @@ func TestACPAuthEdgeCases(t *testing.T) {
 	t.Run("Numeric parameter validation", func(t *testing.T) {
 		_, err := client.ReadTextFile(context.Background(), acp.ReadTextFileRequest{
 			Path: "test.txt",
-			Line: authTestIntPtr(-1),
+			Line: new(-1),
 		})
 		require.Error(t, err, "Expected error for negative line number, got nil")
 
 		_, err = client.ReadTextFile(context.Background(), acp.ReadTextFileRequest{
 			Path:  "test.txt",
-			Limit: authTestIntPtr(-1),
+			Limit: new(-1),
 		})
 		require.Error(t, err, "Expected error for negative limit, got nil")
 
@@ -440,13 +435,13 @@ func TestACPAuthEdgeCases(t *testing.T) {
 
 		_, err = client.ReadTextFile(context.Background(), acp.ReadTextFileRequest{
 			Path: "test.txt",
-			Line: authTestIntPtr(2000000),
+			Line: new(2000000),
 		})
 		require.Error(t, err, "Expected error for excessively large line number, got nil")
 
 		_, err = client.ReadTextFile(context.Background(), acp.ReadTextFileRequest{
 			Path:  "test.txt",
-			Limit: authTestIntPtr(2000000),
+			Limit: new(2000000),
 		})
 		require.Error(t, err, "Expected error for excessively large limit, got nil")
 	})

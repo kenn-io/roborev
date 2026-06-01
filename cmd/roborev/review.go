@@ -14,6 +14,7 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	gitrepo "go.kenn.io/kit/git/repo"
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
@@ -67,6 +68,7 @@ Examples:
   roborev review --branch --type security  # Security review of branch
 `,
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
+			ctx := cmd.Context()
 			// In quiet mode, any error becomes a silent non-zero exit
 			// (hook backgrounds the call, so output would be noise).
 			if quiet {
@@ -82,7 +84,7 @@ Examples:
 			}
 
 			// Get repo root
-			root, err := git.GetRepoRoot(repoPath)
+			root, err := gitrepo.Root(ctx, repoPath)
 			if err != nil {
 				if quiet {
 					return nil // Not a repo - silent exit for hooks
@@ -136,7 +138,7 @@ Examples:
 			// Runs after validation so invalid args don't
 			// cause side effects.
 			if !quiet {
-				autoInstallHooks(root)
+				autoInstallHooks(ctx, root)
 			}
 
 			// Ensure daemon is running (skip for --local mode)
@@ -152,11 +154,11 @@ Examples:
 			if branch != "" {
 				// Branch review - review all commits since diverging from base
 				targetRef := "HEAD"
-				targetLabel := git.GetCurrentBranch(root)
+				targetLabel := gitrepo.CurrentBranch(ctx, root)
 				if branch != "HEAD" {
 					targetRef = branch
 					targetLabel = branch
-					if _, err := git.ResolveSHA(root, targetRef); err != nil {
+					if _, err := gitrepo.Resolve(ctx, root, targetRef); err != nil {
 						return fmt.Errorf("cannot resolve branch %q: %w", branch, err)
 					}
 				}
@@ -186,7 +188,7 @@ Examples:
 				}
 				if base == "" {
 					var err error
-					base, err = git.GetDefaultBranch(root)
+					base, err = gitrepo.DefaultBranch(ctx, root)
 					if err != nil {
 						return fmt.Errorf("cannot determine base branch: %w", err)
 					}
@@ -197,7 +199,7 @@ Examples:
 				// override, a trunk-shaped upstream, or GetDefaultBranch — never a
 				// self-counterpart, so this check fires only for true trunk cases.
 				if targetRef == "HEAD" {
-					currentBranch := git.GetCurrentBranch(root)
+					currentBranch := gitrepo.CurrentBranch(ctx, root)
 					if git.IsOnBaseBranch(root, currentBranch, base) {
 						return fmt.Errorf("already on %s - create a feature branch first", currentBranch)
 					}
@@ -227,7 +229,7 @@ Examples:
 				}
 			} else if since != "" {
 				// Review commits since a specific commit (exclusive)
-				sinceCommit, err := git.ResolveSHA(root, since)
+				sinceCommit, err := gitrepo.Resolve(ctx, root, since)
 				if err != nil {
 					return fmt.Errorf("invalid --since commit %q: %w", since, err)
 				}
@@ -248,7 +250,7 @@ Examples:
 				}
 			} else if dirty {
 				// Dirty review - capture uncommitted changes
-				hasChanges, err := git.HasUncommittedChanges(root)
+				hasChanges, err := gitrepo.HasUncommittedChanges(ctx, root)
 				if err != nil {
 					return fmt.Errorf("check uncommitted changes: %w", err)
 				}
@@ -291,7 +293,7 @@ Examples:
 
 			// Get branch name for tracking. When --branch=<name> targets
 			// a different branch, use that name instead of the checked-out branch.
-			branchName := git.GetCurrentBranch(root)
+			branchName := gitrepo.CurrentBranch(ctx, root)
 			if branch != "" && branch != "HEAD" {
 				branchName = branch
 			}
@@ -495,8 +497,7 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName
 	}
 
 	// Run review with output writer
-	ctx := context.Background()
-	_, err = a.Review(ctx, repoPath, gitRef, reviewPrompt, out)
+	_, err = a.Review(cmd.Context(), repoPath, gitRef, reviewPrompt, out)
 	if err != nil {
 		return fmt.Errorf("review failed: %w", err)
 	}
@@ -529,7 +530,7 @@ func findChildGitRepos(dir string) []string {
 // tryBranchReview checks the repo config for post_commit_review = "branch".
 // When set, it returns a merge-base..HEAD range ref for the current branch.
 // Returns ("", false) silently on any error — hooks must never block commits.
-func tryBranchReview(root, baseBranchOverride string) (string, bool) {
+func tryBranchReview(ctx context.Context, root, baseBranchOverride string) (string, bool) {
 	mode := config.ResolvePostCommitReview(root)
 	if mode != "branch" {
 		return "", false
@@ -554,14 +555,14 @@ func tryBranchReview(root, baseBranchOverride string) (string, bool) {
 	}
 	if base == "" {
 		var err error
-		base, err = git.GetDefaultBranch(root)
+		base, err = gitrepo.DefaultBranch(ctx, root)
 		if err != nil {
 			return "", false
 		}
 	}
 
 	// Don't branch-review in detached HEAD or on the base branch
-	current := git.GetCurrentBranch(root)
+	current := gitrepo.CurrentBranch(ctx, root)
 	if current == "" || git.IsOnBaseBranch(root, current, base) {
 		return "", false
 	}

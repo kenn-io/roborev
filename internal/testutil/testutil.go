@@ -345,8 +345,10 @@ func DecodeJSON(t *testing.T, w *httptest.ResponseRecorder, v any) {
 }
 
 // Ptr returns a pointer to the given value.
+//
+//go:fix inline
 func Ptr[T any](v T) *T {
-	return &v
+	return new(v)
 }
 
 // MapKeys returns the keys of the map m.

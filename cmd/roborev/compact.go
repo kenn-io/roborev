@@ -15,11 +15,11 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	gitrepo "go.kenn.io/kit/git/repo"
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
-	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -343,7 +343,7 @@ func runCompact(cmd *cobra.Command, opts compactOptions) error {
 		if explicitBranch {
 			filterBranch = branchFilter
 		}
-		allJobs = filterReachableJobs(
+		allJobs = filterReachableJobs(ctx,
 			roots.worktreeRoot, filterBranch, allJobs,
 		)
 	}
@@ -505,7 +505,7 @@ func buildCompactPrompt(jobReviews []jobReview, branch, repoRoot string) string 
 	for i, jr := range jobReviews {
 		fmt.Fprintf(&sb, "--- Review %d (Job %d", i+1, jr.jobID)
 		if jr.job.GitRef != "" {
-			fmt.Fprintf(&sb, " — %s", git.ShortSHA(jr.job.GitRef))
+			fmt.Fprintf(&sb, " — %s", gitrepo.ShortSHA(jr.job.GitRef))
 		}
 		sb.WriteString(") ---\n")
 		sb.WriteString(jr.review.Output)
@@ -542,7 +542,7 @@ func buildCompactOutputPrefix(jobCount int, branch string, jobIDs []int64) strin
 
 func enqueueCompactJob(repoRoot, prompt, outputPrefix, label, branch string, opts compactOptions) (*storage.ReviewJob, error) {
 	if branch == "" {
-		branch = git.GetCurrentBranch(repoRoot)
+		branch = gitrepo.CurrentBranch(context.TODO(), repoRoot)
 	}
 
 	reqBody, err := json.Marshal(daemon.EnqueueRequest{

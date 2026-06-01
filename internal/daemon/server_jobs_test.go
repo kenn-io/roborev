@@ -619,7 +619,7 @@ func TestHandleEnqueueReusesPreviousBranchSessionWhenEnabled(t *testing.T) {
 	require.NotNil(t, candidate, "expected reusable session candidate")
 	assert.Equal(t, "session-123", candidate.SessionID, "candidate session_id")
 
-	reused := server.findReusableSessionID(repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, "", sha)
+	reused := server.findReusableSessionID(t.Context(), repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, "", sha)
 	if reused != "session-123" {
 		require.Condition(t, func() bool {
 			return false
@@ -774,7 +774,7 @@ func TestFindReusableSessionIDRejectsReusedBranchNameFromUnrelatedHistory(t *tes
 	}
 	targetSHA := testutil.GetHeadSHA(t, repoDir)
 
-	if got := server.findReusableSessionID(repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, "", targetSHA); got != "" {
+	if got := server.findReusableSessionID(t.Context(), repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, "", targetSHA); got != "" {
 		require.Condition(t, func() bool {
 			return false
 		}, "findReusableSessionID() = %q, want empty for unrelated history", got)
@@ -867,7 +867,7 @@ func TestFindReusableSessionIDRejectsCandidateThatIsTooOldOnBranch(t *testing.T)
 	}
 	targetSHA := testutil.GetHeadSHA(t, repoDir)
 
-	if got := server.findReusableSessionID(repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, "", targetSHA); got != "" {
+	if got := server.findReusableSessionID(t.Context(), repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, "", targetSHA); got != "" {
 		require.Condition(t, func() bool {
 			return false
 		}, "findReusableSessionID() = %q, want empty for old candidate", got)
@@ -1007,7 +1007,7 @@ func TestFindReusableSessionIDFallsBackToOlderValidCandidate(t *testing.T) {
 	}
 	targetSHA := testutil.GetHeadSHA(t, repoDir)
 
-	if got := server.findReusableSessionID(repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, "", targetSHA); got != "session-valid" {
+	if got := server.findReusableSessionID(t.Context(), repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, "", targetSHA); got != "session-valid" {
 		require.Condition(t, func() bool {
 			return false
 		}, "findReusableSessionID() = %q, want %q", got, "session-valid")
@@ -1155,21 +1155,21 @@ func TestFindReusableSessionIDUsesConfigurableLookback(t *testing.T) {
 	}
 	targetSHA := testutil.GetHeadSHA(t, repoDir)
 
-	if got := server.findReusableSessionID(repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, "", targetSHA); got != "session-valid" {
+	if got := server.findReusableSessionID(t.Context(), repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, "", targetSHA); got != "session-valid" {
 		require.Condition(t, func() bool {
 			return false
 		}, "findReusableSessionID() with default lookback = %q, want %q", got, "session-valid")
 	}
 
 	server.configWatcher.Config().ReuseReviewSessionLookback = 10
-	if got := server.findReusableSessionID(repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, "", targetSHA); got != "" {
+	if got := server.findReusableSessionID(t.Context(), repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, "", targetSHA); got != "" {
 		require.Condition(t, func() bool {
 			return false
 		}, "findReusableSessionID() with capped lookback = %q, want empty", got)
 	}
 
 	server.configWatcher.Config().ReuseReviewSessionLookback = 12
-	if got := server.findReusableSessionID(repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, "", targetSHA); got != "session-valid" {
+	if got := server.findReusableSessionID(t.Context(), repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, "", targetSHA); got != "session-valid" {
 		require.Condition(t, func() bool {
 			return false
 		}, "findReusableSessionID() with expanded lookback = %q, want %q", got, "session-valid")
@@ -1299,7 +1299,7 @@ func TestFindReusableSessionIDLookbackIgnoresUnusableRefs(t *testing.T) {
 		}, "failed to seed malformed session candidate: %v", err)
 	}
 
-	if got := server.findReusableSessionID(repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, "", targetSHA); got != "session-valid" {
+	if got := server.findReusableSessionID(t.Context(), repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, "", targetSHA); got != "session-valid" {
 		require.Condition(t, func() bool {
 			return false
 		}, "findReusableSessionID() with unusable newer refs = %q, want %q", got, "session-valid")
@@ -1401,7 +1401,7 @@ func TestFindReusableSessionIDSkipsInvalidStoredSessionID(t *testing.T) {
 		}, "failed to seed invalid session_id: %v", err)
 	}
 
-	if got := server.findReusableSessionID(repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, "", targetSHA); got != "session-valid" {
+	if got := server.findReusableSessionID(t.Context(), repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, "", targetSHA); got != "session-valid" {
 		require.Condition(t, func() bool {
 			return false
 		}, "findReusableSessionID() with invalid stored session_id = %q, want %q", got, "session-valid")
@@ -2060,11 +2060,7 @@ func TestHandleEnqueueWorktreeGitDirIsolation(t *testing.T) {
 	}
 	commitB := testutil.GetHeadSHA(t, worktreeDir)
 
-	if commitA == commitB {
-		require.Condition(t, func() bool {
-			return false
-		}, "test setup error: commits A and B should differ")
-	}
+	require.NotEqual(t, commitA, commitB, "test setup error: commits A and B should differ")
 
 	enqueue := func(t *testing.T) storage.ReviewJob {
 		t.Helper()
@@ -2087,7 +2083,7 @@ func TestHandleEnqueueWorktreeGitDirIsolation(t *testing.T) {
 		return job
 	}
 
-	t.Run("leaked GIT_DIR resolves wrong commit", func(t *testing.T) {
+	t.Run("leaked GIT_DIR is ignored", func(t *testing.T) {
 		// Set GIT_DIR to the main repo's .git dir, simulating a post-commit hook.
 		// t.Setenv restores the original value after the subtest.
 		mainGitDir := filepath.Join(mainRepo, ".git")
@@ -2095,13 +2091,9 @@ func TestHandleEnqueueWorktreeGitDirIsolation(t *testing.T) {
 
 		job := enqueue(t)
 
-		// With GIT_DIR leaked, git resolves HEAD from the main repo (commit A)
-		// instead of the worktree (commit B). This is the bug.
-		if job.GitRef != commitA {
-			assert.Condition(t, func() bool {
-				return false
-			}, "expected leaked GIT_DIR to resolve commit A (%s), got %s", commitA, job.GitRef)
-		}
+		// Kit's git runner strips inherited GIT_* variables, so the request
+		// resolves HEAD from the worktree even when the process env is polluted.
+		assert.Equal(t, commitB, job.GitRef)
 	})
 
 	t.Run("cleared GIT_DIR resolves correct commit", func(t *testing.T) {
@@ -2113,11 +2105,7 @@ func TestHandleEnqueueWorktreeGitDirIsolation(t *testing.T) {
 		job := enqueue(t)
 
 		// Without GIT_DIR, git uses cmd.Dir correctly and resolves the worktree's HEAD.
-		if job.GitRef != commitB {
-			assert.Condition(t, func() bool {
-				return false
-			}, "expected worktree commit B (%s), got %s", commitB, job.GitRef)
-		}
+		assert.Equal(t, commitB, job.GitRef)
 	})
 }
 

@@ -20,6 +20,7 @@ import (
 	"github.com/coreos/go-systemd/v22/activation"
 	"github.com/coreos/go-systemd/v22/daemon"
 	"github.com/danielgtaylor/huma/v2"
+	gitrepo "go.kenn.io/kit/git/repo"
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
@@ -282,7 +283,7 @@ func (s *Server) Start(ctx context.Context) error {
 	// where repos are fetch-only and don't need local hooks).
 	if s.ciPoller == nil {
 		if repos, err := s.db.ListRepos(); err == nil {
-			go logHookWarnings(repos)
+			go logHookWarnings(ctx, repos)
 		}
 	}
 
@@ -352,13 +353,13 @@ func awaitServeExitOnUnreadyStartup(serveExited bool, serveErrCh <-chan error) e
 	return nil
 }
 
-func logHookWarnings(repos []storage.Repo) {
+func logHookWarnings(ctx context.Context, repos []storage.Repo) {
 	for _, repo := range repos {
-		if githook.NeedsUpgrade(repo.RootPath, "post-commit", githook.PostCommitVersionMarker) {
+		if githook.NeedsUpgrade(ctx, repo.RootPath, "post-commit", githook.PostCommitVersionMarker) {
 			log.Printf("Warning: outdated post-commit hook in %s -- run 'roborev init' to upgrade", repo.RootPath)
 		}
-		if githook.NeedsUpgrade(repo.RootPath, "post-rewrite", githook.PostRewriteVersionMarker) ||
-			githook.Missing(repo.RootPath, "post-rewrite") {
+		if githook.NeedsUpgrade(ctx, repo.RootPath, "post-rewrite", githook.PostRewriteVersionMarker) ||
+			githook.Missing(ctx, repo.RootPath, "post-rewrite") {
 			log.Printf("Warning: missing or outdated post-rewrite hook in %s -- run 'roborev init' to install", repo.RootPath)
 		}
 	}
@@ -593,6 +594,7 @@ func validateRerunAgent(repoPath string, agentName string, cfg *config.Config) e
 }
 
 func (s *Server) findReusableSessionID(
+	ctx context.Context,
 	repoPath string, repoID int64, branch, agentName, reviewType, worktreePath, targetSHA string,
 ) string {
 	cfg := s.configWatcher.Config()
@@ -623,7 +625,7 @@ func (s *Server) findReusableSessionID(
 			continue
 		}
 
-		isAncestor, err := git.IsAncestor(repoPath, candidateSHA, targetSHA)
+		isAncestor, err := gitrepo.IsAncestor(ctx, repoPath, candidateSHA, targetSHA)
 		if err != nil {
 			log.Printf("enqueue: validate reusable session failed for job %d (%q -> %q): %v", candidate.ID, candidateSHA, targetSHA, err)
 			continue
@@ -1374,7 +1376,7 @@ func (s *Server) humaEnqueue(
 	}
 	req.ReviewType = canonical[0]
 
-	checkoutRoot, err := git.GetRepoRoot(req.RepoPath)
+	checkoutRoot, err := gitrepo.Root(ctx, req.RepoPath)
 	if err != nil {
 		return rawJSONOutput(
 			http.StatusBadRequest,
@@ -1382,7 +1384,7 @@ func (s *Server) humaEnqueue(
 		)
 	}
 
-	repoRoot, err := git.GetMainRepoRoot(req.RepoPath)
+	repoRoot, err := gitrepo.MainRoot(ctx, req.RepoPath)
 	if err != nil {
 		return rawJSONOutput(
 			http.StatusBadRequest,
@@ -1395,7 +1397,7 @@ func (s *Server) humaEnqueue(
 		worktreePath = filepath.Clean(checkoutRoot)
 	}
 
-	currentBranch := git.GetCurrentBranch(checkoutRoot)
+	currentBranch := gitrepo.CurrentBranch(ctx, checkoutRoot)
 	branchToCheck := currentBranch
 	if req.JobType == storage.JobTypeInsights {
 		if req.Branch != "" {
@@ -1597,12 +1599,12 @@ func (s *Server) humaEnqueue(
 			)
 		}
 	} else if isDirty {
-		targetSHA, _ := git.ResolveSHA(checkoutRoot, "HEAD")
+		targetSHA, _ := gitrepo.Resolve(ctx, checkoutRoot, "HEAD")
 		job, err = s.db.EnqueueJob(storage.EnqueueOpts{
 			RepoID: repo.ID,
 			GitRef: gitRef,
 			Branch: req.Branch,
-			SessionID: s.findReusableSessionID(
+			SessionID: s.findReusableSessionID(ctx,
 				checkoutRoot, repo.ID, req.Branch, agentName,
 				req.ReviewType, worktreePath, targetSHA,
 			),
@@ -1625,12 +1627,11 @@ func (s *Server) humaEnqueue(
 		}
 	} else if isRange {
 		parts := strings.SplitN(gitRef, "..", 2)
-		startSHA, err := git.ResolveSHA(checkoutRoot, parts[0])
+		startSHA, err := gitrepo.Resolve(ctx, checkoutRoot, parts[0])
 		if err != nil {
 			if before, ok := strings.CutSuffix(parts[0], "^"); ok {
-				if _, resolveErr := git.ResolveSHA(
-					checkoutRoot, before+"^{commit}",
-				); resolveErr == nil {
+				if _, resolveErr := gitrepo.Resolve(ctx,
+					checkoutRoot, before+"^{commit}"); resolveErr == nil {
 					startSHA = git.EmptyTreeSHA
 					err = nil
 				}
@@ -1642,7 +1643,7 @@ func (s *Server) humaEnqueue(
 				)
 			}
 		}
-		endSHA, err := git.ResolveSHA(checkoutRoot, parts[1])
+		endSHA, err := gitrepo.Resolve(ctx, checkoutRoot, parts[1])
 		if err != nil {
 			return rawJSONOutput(
 				http.StatusBadRequest,
@@ -1678,7 +1679,7 @@ func (s *Server) humaEnqueue(
 			RepoID: repo.ID,
 			GitRef: fullRef,
 			Branch: req.Branch,
-			SessionID: s.findReusableSessionID(
+			SessionID: s.findReusableSessionID(ctx,
 				checkoutRoot, repo.ID, req.Branch, agentName,
 				req.ReviewType, worktreePath, endSHA,
 			),
@@ -1699,7 +1700,7 @@ func (s *Server) humaEnqueue(
 			)
 		}
 	} else {
-		sha, err := git.ResolveSHA(checkoutRoot, gitRef)
+		sha, err := gitrepo.Resolve(ctx, checkoutRoot, gitRef)
 		if err != nil {
 			return rawJSONOutput(
 				http.StatusBadRequest,
@@ -1740,7 +1741,7 @@ func (s *Server) humaEnqueue(
 			CommitID: commit.ID,
 			GitRef:   sha,
 			Branch:   req.Branch,
-			SessionID: s.findReusableSessionID(
+			SessionID: s.findReusableSessionID(ctx,
 				checkoutRoot, repo.ID, req.Branch, agentName,
 				req.ReviewType, worktreePath, sha,
 			),
@@ -1841,7 +1842,7 @@ func (s *Server) humaRegisterRepo(
 		return nil, huma.Error400BadRequest("repo_path is required")
 	}
 
-	repoRoot, err := git.GetMainRepoRoot(input.Body.RepoPath)
+	repoRoot, err := gitrepo.MainRoot(ctx, input.Body.RepoPath)
 	if err != nil {
 		return nil, huma.Error400BadRequest(
 			fmt.Sprintf("not a git repository: %v", err),
@@ -1904,7 +1905,7 @@ func (s *Server) humaRemap(
 		return nil, huma.Error400BadRequest("repo_path is required")
 	}
 
-	repoRoot, err := git.GetMainRepoRoot(input.Body.RepoPath)
+	repoRoot, err := gitrepo.MainRoot(ctx, input.Body.RepoPath)
 	if err != nil {
 		return nil, huma.Error400BadRequest(
 			fmt.Sprintf("not a git repository: %s", input.Body.RepoPath),
@@ -2069,7 +2070,7 @@ func (s *Server) humaFixJob(
 
 		commitID := parentJob.CommitIDValue()
 		var fallbackSHA string
-		if commitID == 0 && git.LooksLikeSHA(parentJob.GitRef) {
+		if commitID == 0 && gitrepo.LooksLikeSHA(parentJob.GitRef) {
 			fallbackSHA = parentJob.GitRef
 		}
 		comments, commentsErr := s.db.GetAllCommentsForJob(

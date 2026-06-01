@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -10,8 +11,8 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	gitrepo "go.kenn.io/kit/git/repo"
 
-	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/tokens"
 )
@@ -58,15 +59,15 @@ Examples:
 				}
 				// Default to HEAD
 				sha := "HEAD"
-				root, rootErr := git.GetRepoRoot(".")
+				root, rootErr := gitrepo.Root(context.TODO(), ".")
 				if rootErr != nil {
 					return fmt.Errorf("not in a git repository; use a job ID instead (e.g., roborev show 42)")
 				}
-				if resolved, err := git.ResolveSHA(root, sha); err == nil {
+				if resolved, err := gitrepo.Resolve(context.TODO(), root, sha); err == nil {
 					sha = resolved
 				}
 				queryURL = addr + "/api/review?sha=" + sha
-				displayRef = git.ShortSHA(sha)
+				displayRef = gitrepo.ShortSHA(sha)
 			} else {
 				arg := args[0]
 				var isJobID bool
@@ -76,8 +77,8 @@ Examples:
 					isJobID = true
 				} else {
 					// Try to resolve as SHA first (handles numeric SHAs like "123456")
-					if root, err := git.GetRepoRoot("."); err == nil {
-						if resolved, err := git.ResolveSHA(root, arg); err == nil {
+					if root, err := gitrepo.Root(context.TODO(), "."); err == nil {
+						if resolved, err := gitrepo.Resolve(context.TODO(), root, arg); err == nil {
 							resolvedSHA = resolved
 						}
 					}
@@ -98,7 +99,7 @@ Examples:
 						sha = resolvedSHA
 					}
 					queryURL = addr + "/api/review?sha=" + sha
-					displayRef = git.ShortSHA(sha)
+					displayRef = gitrepo.ShortSHA(sha)
 				}
 			}
 
@@ -195,7 +196,7 @@ func fetchShowComments(client *http.Client, addr string, review storage.Review) 
 	var legacyURL string
 	if review.Job != nil && review.Job.CommitID != nil {
 		legacyURL = addr + fmt.Sprintf("/api/comments?commit_id=%d", *review.Job.CommitID)
-	} else if review.Job != nil && git.LooksLikeSHA(review.Job.GitRef) {
+	} else if review.Job != nil && gitrepo.LooksLikeSHA(review.Job.GitRef) {
 		legacyURL = addr + fmt.Sprintf("/api/comments?sha=%s", review.Job.GitRef)
 	}
 	if legacyURL != "" {

@@ -1,14 +1,15 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
 	"strings"
 
 	"github.com/spf13/cobra"
+	gitrepo "go.kenn.io/kit/git/repo"
 
-	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/githook"
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -95,7 +96,7 @@ func shortRef(ref string) string {
 		}
 		return ref
 	}
-	return git.ShortSHA(ref)
+	return gitrepo.ShortSHA(ref)
 }
 
 // shortJobRef returns a display-friendly ref for a job, handling special job types.
@@ -128,15 +129,15 @@ func resolveReasoningWithFast(reasoning string, fast bool, reasoningExplicitlySe
 // companion hooks (e.g. post-rewrite when post-commit
 // exists). It does NOT install hooks from scratch so that
 // explicit uninstall-hook is respected.
-func autoInstallHooks(repoPath string) {
-	hooksDir, err := git.GetHooksPath(repoPath)
+func autoInstallHooks(ctx context.Context, repoPath string) {
+	hooksDir, err := gitrepo.HooksPath(ctx, repoPath)
 	if err != nil {
 		return
 	}
 	for _, name := range []string{"post-commit", "post-rewrite"} {
 		marker := githook.VersionMarker(name)
-		if githook.NeedsUpgrade(repoPath, name, marker) ||
-			githook.Missing(repoPath, name) {
+		if githook.NeedsUpgrade(ctx, repoPath, name, marker) ||
+			githook.Missing(ctx, repoPath, name) {
 			if err := githook.Install(hooksDir, name, false); err != nil {
 				// Non-shell hooks are a persistent condition;
 				// don't warn on every invocation.

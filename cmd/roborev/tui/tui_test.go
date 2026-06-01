@@ -118,9 +118,6 @@ func updateModel(t *testing.T, m model, msg tea.Msg) (model, tea.Cmd) {
 	return newModel, cmd
 }
 
-// boolPtr returns a pointer to a bool value.
-func boolPtr(b bool) *bool { return &b }
-
 // makeJob creates a storage.ReviewJob with the given ID and sensible defaults.
 // Optional functional options can override specific fields.
 func makeJob(id int64, opts ...func(*storage.ReviewJob)) storage.ReviewJob {
@@ -663,7 +660,7 @@ func TestTUIIsJobVisibleRespectsPendingClosed(t *testing.T) {
 
 	// Job with Closed=false but pendingClosed=true should be hidden
 	m.jobs = []storage.ReviewJob{
-		makeJob(1, withClosed(boolPtr(false))),
+		makeJob(1, withClosed(new(false))),
 	}
 	m.pendingClosed[1] = pendingState{newState: true, seq: 1}
 
@@ -675,7 +672,7 @@ func TestTUIIsJobVisibleRespectsPendingClosed(t *testing.T) {
 
 	// Job with Closed=true but pendingClosed=false should be visible
 	m.jobs = []storage.ReviewJob{
-		makeJob(2, withClosed(boolPtr(true))),
+		makeJob(2, withClosed(new(true))),
 	}
 	m.pendingClosed[2] = pendingState{newState: false, seq: 1}
 
@@ -687,7 +684,7 @@ func TestTUIIsJobVisibleRespectsPendingClosed(t *testing.T) {
 
 	// Job with no pendingClosed entry falls back to job.Closed
 	m.jobs = []storage.ReviewJob{
-		makeJob(3, withClosed(boolPtr(true))),
+		makeJob(3, withClosed(new(true))),
 	}
 	delete(m.pendingClosed, 3)
 
@@ -1726,11 +1723,11 @@ func TestTUIHideClosed(t *testing.T) {
 		m.hideClosed = true
 
 		m.jobs = []storage.ReviewJob{
-			makeJob(1, withClosed(boolPtr(true))),             // hidden: closed
-			makeJob(2, withClosed(boolPtr(false))),            // visible
+			makeJob(1, withClosed(new(true))),                 // hidden: closed
+			makeJob(2, withClosed(new(false))),                // visible
 			makeJob(3, withStatus(storage.JobStatusFailed)),   // hidden: failed
 			makeJob(4, withStatus(storage.JobStatusCanceled)), // hidden: canceled
-			makeJob(5, withClosed(boolPtr(false))),            // visible
+			makeJob(5, withClosed(new(false))),                // visible
 		}
 
 		// Check visibility
@@ -1778,9 +1775,9 @@ func TestTUIHideClosed(t *testing.T) {
 		m.currentView = viewQueue
 
 		m.jobs = []storage.ReviewJob{
-			makeJob(1, withClosed(boolPtr(true))),  // will be hidden
-			makeJob(2, withClosed(boolPtr(false))), // will be visible
-			makeJob(3, withClosed(boolPtr(false))), // will be visible
+			makeJob(1, withClosed(new(true))),  // will be hidden
+			makeJob(2, withClosed(new(false))), // will be visible
+			makeJob(3, withClosed(new(false))), // will be visible
 		}
 
 		// Select the first job (closed)
@@ -1799,8 +1796,8 @@ func TestTUIHideClosed(t *testing.T) {
 		m.hideClosed = true
 
 		m.jobs = []storage.ReviewJob{
-			makeJob(1, withClosed(boolPtr(false))),
-			makeJob(2, withClosed(boolPtr(false))),
+			makeJob(1, withClosed(new(false))),
+			makeJob(2, withClosed(new(false))),
 		}
 		m.selectedIdx = 0
 		m.selectedJobID = 1
@@ -1809,8 +1806,8 @@ func TestTUIHideClosed(t *testing.T) {
 
 		m2, _ := updateModel(t, m, jobsMsg{
 			jobs: []storage.ReviewJob{
-				makeJob(1, withClosed(boolPtr(true))),  // now closed (hidden)
-				makeJob(2, withClosed(boolPtr(false))), // still visible
+				makeJob(1, withClosed(new(true))),  // now closed (hidden)
+				makeJob(2, withClosed(new(false))), // still visible
 			},
 			hasMore: false,
 		})
@@ -1828,11 +1825,11 @@ func TestTUIHideClosed(t *testing.T) {
 		m.hideClosed = true
 
 		m.jobs = []storage.ReviewJob{
-			makeJob(1, withClosed(boolPtr(false))),
-			makeJob(2, withClosed(boolPtr(false))),
-			makeJob(3, withClosed(boolPtr(false))),
-			makeJob(4, withClosed(boolPtr(false))),
-			makeJob(5, withClosed(boolPtr(false))),
+			makeJob(1, withClosed(new(false))),
+			makeJob(2, withClosed(new(false))),
+			makeJob(3, withClosed(new(false))),
+			makeJob(4, withClosed(new(false))),
+			makeJob(5, withClosed(new(false))),
 		}
 		// User is viewing job 3 (index 2)
 		m.selectedIdx = 2
@@ -1849,11 +1846,11 @@ func TestTUIHideClosed(t *testing.T) {
 		// Simulate a job refresh where job 3 is now closed
 		m2, _ := updateModel(t, m, jobsMsg{
 			jobs: []storage.ReviewJob{
-				makeJob(1, withClosed(boolPtr(false))),
-				makeJob(2, withClosed(boolPtr(false))),
-				makeJob(3, withClosed(boolPtr(true))),
-				makeJob(4, withClosed(boolPtr(false))),
-				makeJob(5, withClosed(boolPtr(false))),
+				makeJob(1, withClosed(new(false))),
+				makeJob(2, withClosed(new(false))),
+				makeJob(3, withClosed(new(true))),
+				makeJob(4, withClosed(new(false))),
+				makeJob(5, withClosed(new(false))),
 			},
 			hasMore: false,
 		})
@@ -1868,10 +1865,10 @@ func TestTUIHideClosed(t *testing.T) {
 		m.hideClosed = true
 
 		m.jobs = []storage.ReviewJob{
-			makeJob(1, withClosed(boolPtr(false))),          // visible
-			makeJob(2, withClosed(boolPtr(true))),           // hidden
+			makeJob(1, withClosed(new(false))),              // visible
+			makeJob(2, withClosed(new(true))),               // hidden
 			makeJob(3, withStatus(storage.JobStatusFailed)), // hidden
-			makeJob(4, withClosed(boolPtr(false))),          // visible
+			makeJob(4, withClosed(new(false))),              // visible
 		}
 		m.selectedIdx = 0
 		m.selectedJobID = 1
@@ -1888,9 +1885,9 @@ func TestTUIHideClosed(t *testing.T) {
 		m.activeRepoFilter = []string{"/repo/a"}
 
 		m.jobs = []storage.ReviewJob{
-			makeJob(1, withRepoPath("/repo/a"), withClosed(boolPtr(false))),          // visible: matches repo, not closed
-			makeJob(2, withRepoPath("/repo/b"), withClosed(boolPtr(false))),          // hidden: wrong repo
-			makeJob(3, withRepoPath("/repo/a"), withClosed(boolPtr(true))),           // hidden: closed
+			makeJob(1, withRepoPath("/repo/a"), withClosed(new(false))),              // visible: matches repo, not closed
+			makeJob(2, withRepoPath("/repo/b"), withClosed(new(false))),              // hidden: wrong repo
+			makeJob(3, withRepoPath("/repo/a"), withClosed(new(true))),               // hidden: closed
 			makeJob(4, withRepoPath("/repo/a"), withStatus(storage.JobStatusFailed)), // hidden: failed
 		}
 
@@ -1918,7 +1915,7 @@ func TestTUIHideClosed(t *testing.T) {
 		m.loadingJobs = false // Simulate that initial load has completed
 
 		m.jobs = []storage.ReviewJob{
-			makeJob(1, withRepoPath("/repo/a"), withClosed(boolPtr(false))),
+			makeJob(1, withRepoPath("/repo/a"), withClosed(new(false))),
 		}
 		m.selectedIdx = 0
 		m.selectedJobID = 1
@@ -1974,7 +1971,7 @@ func TestTUIHideClosed(t *testing.T) {
 		m.hideClosed = false
 
 		m.jobs = []storage.ReviewJob{
-			makeJob(1, withClosed(boolPtr(false))),
+			makeJob(1, withClosed(new(false))),
 		}
 		m.selectedIdx = 0
 		m.selectedJobID = 1
@@ -2002,7 +1999,7 @@ func TestTUIHideClosed(t *testing.T) {
 		m.hideClosed = true // Already enabled
 
 		m.jobs = []storage.ReviewJob{
-			makeJob(1, withClosed(boolPtr(false))),
+			makeJob(1, withClosed(new(false))),
 		}
 		m.selectedIdx = 0
 		m.selectedJobID = 1

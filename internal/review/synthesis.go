@@ -5,7 +5,7 @@ import (
 	"sort"
 	"strings"
 
-	"go.kenn.io/roborev/internal/git"
+	gitrepo "go.kenn.io/kit/git/repo"
 )
 
 // severityAbove maps a minimum severity to the instruction
@@ -94,7 +94,7 @@ func FormatSynthesizedComment(
 	var b strings.Builder
 	fmt.Fprintf(&b,
 		"## roborev: Combined Review (`%s`)\n\n",
-		git.ShortSHA(headSHA))
+		gitrepo.ShortSHA(headSHA))
 	b.WriteString(output)
 
 	agentSet := make(map[string]struct{})
@@ -133,7 +133,7 @@ func FormatRawBatchComment(
 	var b strings.Builder
 	fmt.Fprintf(&b,
 		"## roborev: Combined Review (`%s`)\n\n",
-		git.ShortSHA(headSHA))
+		gitrepo.ShortSHA(headSHA))
 	b.WriteString(
 		"> Synthesis unavailable. " +
 			"Showing individual review outputs.\n\n")
@@ -200,14 +200,14 @@ func FormatAllFailedComment(
 	if allSkipped {
 		fmt.Fprintf(&b,
 			"## roborev: Review Skipped (`%s`)\n\n",
-			git.ShortSHA(headSHA))
+			gitrepo.ShortSHA(headSHA))
 		b.WriteString(
 			"All review agents were skipped " +
 				"due to quota exhaustion or timeout.\n\n")
 	} else {
 		fmt.Fprintf(&b,
 			"## roborev: Review Failed (`%s`)\n\n",
-			git.ShortSHA(headSHA))
+			gitrepo.ShortSHA(headSHA))
 		b.WriteString(
 			"All review jobs in this batch failed.\n\n")
 	}

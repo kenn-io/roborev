@@ -9,8 +9,6 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 )
 
-func timePtr(t time.Time) *time.Time { return &t }
-
 func TestBackfillCandidates(t *testing.T) {
 	now := time.Now()
 
@@ -29,7 +27,7 @@ func TestBackfillCandidates(t *testing.T) {
 			jobs: []storage.ReviewJob{
 				{
 					ID: 1, Status: storage.JobStatusDone,
-					SessionID: "s1", StartedAt: timePtr(now),
+					SessionID: "s1", StartedAt: new(now),
 				},
 			},
 			wantIDs: []int64{1},
@@ -39,7 +37,7 @@ func TestBackfillCandidates(t *testing.T) {
 			jobs: []storage.ReviewJob{
 				{
 					ID: 1, Status: storage.JobStatusDone,
-					SessionID: "s1", StartedAt: timePtr(now),
+					SessionID: "s1", StartedAt: new(now),
 					TokenUsage: `{"peak_context_tokens":100,"cost_usd":0.12,"has_cost":true}`,
 				},
 			},
@@ -50,7 +48,7 @@ func TestBackfillCandidates(t *testing.T) {
 			jobs: []storage.ReviewJob{
 				{
 					ID: 1, Status: storage.JobStatusDone,
-					SessionID: "s1", StartedAt: timePtr(now),
+					SessionID: "s1", StartedAt: new(now),
 					TokenUsage: `{"peak_context_tokens":100}`,
 				},
 			},
@@ -61,7 +59,7 @@ func TestBackfillCandidates(t *testing.T) {
 			jobs: []storage.ReviewJob{
 				{
 					ID: 1, Status: storage.JobStatusDone,
-					SessionID: "s1", StartedAt: timePtr(now),
+					SessionID: "s1", StartedAt: new(now),
 					TokenUsage: `{"peak_context_tokens":100,"cost_usd":0,"has_cost":true}`,
 				},
 			},
@@ -72,7 +70,7 @@ func TestBackfillCandidates(t *testing.T) {
 			jobs: []storage.ReviewJob{
 				{
 					ID: 1, Status: storage.JobStatusDone,
-					StartedAt: timePtr(now),
+					StartedAt: new(now),
 				},
 			},
 			wantIDs: nil,
@@ -92,11 +90,11 @@ func TestBackfillCandidates(t *testing.T) {
 			jobs: []storage.ReviewJob{
 				{
 					ID: 1, Status: storage.JobStatusDone,
-					SessionID: "s1", StartedAt: timePtr(now),
+					SessionID: "s1", StartedAt: new(now),
 				},
 				{
 					ID: 2, Status: storage.JobStatusDone,
-					SessionID: "s1", StartedAt: timePtr(now),
+					SessionID: "s1", StartedAt: new(now),
 				},
 			},
 			wantIDs: nil,
@@ -106,7 +104,7 @@ func TestBackfillCandidates(t *testing.T) {
 			jobs: []storage.ReviewJob{
 				{
 					ID: 1, Status: storage.JobStatusDone,
-					SessionID: "s1", StartedAt: timePtr(now),
+					SessionID: "s1", StartedAt: new(now),
 				},
 				{
 					ID: 2, Status: storage.JobStatusCanceled,
@@ -120,11 +118,11 @@ func TestBackfillCandidates(t *testing.T) {
 			jobs: []storage.ReviewJob{
 				{
 					ID: 1, Status: storage.JobStatusDone,
-					SessionID: "s1", StartedAt: timePtr(now),
+					SessionID: "s1", StartedAt: new(now),
 				},
 				{
 					ID: 2, Status: storage.JobStatusCanceled,
-					SessionID: "s1", StartedAt: timePtr(now),
+					SessionID: "s1", StartedAt: new(now),
 				},
 			},
 			wantIDs: nil,
@@ -134,11 +132,11 @@ func TestBackfillCandidates(t *testing.T) {
 			jobs: []storage.ReviewJob{
 				{
 					ID: 1, Status: storage.JobStatusDone,
-					SessionID: "s1", StartedAt: timePtr(now),
+					SessionID: "s1", StartedAt: new(now),
 				},
 				{
 					ID: 2, Status: storage.JobStatusFailed,
-					SessionID: "s1", StartedAt: timePtr(now),
+					SessionID: "s1", StartedAt: new(now),
 				},
 			},
 			wantIDs: nil,
@@ -148,11 +146,11 @@ func TestBackfillCandidates(t *testing.T) {
 			jobs: []storage.ReviewJob{
 				{
 					ID: 1, Status: storage.JobStatusDone,
-					SessionID: "s1", StartedAt: timePtr(now),
+					SessionID: "s1", StartedAt: new(now),
 				},
 				{
 					ID: 2, Status: storage.JobStatusDone,
-					SessionID: "s2", StartedAt: timePtr(now),
+					SessionID: "s2", StartedAt: new(now),
 				},
 			},
 			wantIDs: []int64{1, 2},
@@ -162,11 +160,11 @@ func TestBackfillCandidates(t *testing.T) {
 			jobs: []storage.ReviewJob{
 				{
 					ID: 1, Status: storage.JobStatusApplied,
-					SessionID: "s1", StartedAt: timePtr(now),
+					SessionID: "s1", StartedAt: new(now),
 				},
 				{
 					ID: 2, Status: storage.JobStatusRebased,
-					SessionID: "s2", StartedAt: timePtr(now),
+					SessionID: "s2", StartedAt: new(now),
 				},
 			},
 			wantIDs: []int64{1, 2},

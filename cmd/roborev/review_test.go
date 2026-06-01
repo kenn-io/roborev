@@ -579,7 +579,7 @@ func TestTryBranchReview(t *testing.T) {
 		repo.Run("checkout", "-b", "feature")
 		repo.CommitFile("feature.txt", "feature", "feature commit")
 
-		_, ok := tryBranchReview(repo.Dir, "")
+		_, ok := tryBranchReview(t.Context(), repo.Dir, "")
 		assert.False(t, ok)
 	})
 
@@ -591,7 +591,7 @@ func TestTryBranchReview(t *testing.T) {
 		repo.CommitFile("feature.txt", "feature", "feature commit")
 		writeRoborevConfig(t, repo, `post_commit_review = "commit"`)
 
-		_, ok := tryBranchReview(repo.Dir, "")
+		_, ok := tryBranchReview(t.Context(), repo.Dir, "")
 		assert.False(t, ok)
 	})
 
@@ -604,7 +604,7 @@ func TestTryBranchReview(t *testing.T) {
 		repo.CommitFile("feature.txt", "feature", "feature commit")
 		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
 
-		ref, ok := tryBranchReview(repo.Dir, "")
+		ref, ok := tryBranchReview(t.Context(), repo.Dir, "")
 		require.True(t, ok, "expected true with branch config")
 
 		assert.Contains(t, ref, mainSHA)
@@ -622,7 +622,7 @@ func TestTryBranchReview(t *testing.T) {
 		repo.CommitFile("c.txt", "c", "third feature commit")
 		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
 
-		ref, ok := tryBranchReview(repo.Dir, "")
+		ref, ok := tryBranchReview(t.Context(), repo.Dir, "")
 		require.True(t, ok, "expected true")
 
 		want := mainSHA + "..HEAD"
@@ -635,7 +635,7 @@ func TestTryBranchReview(t *testing.T) {
 		repo.CommitFile("file.txt", "content", "initial")
 		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
 
-		_, ok := tryBranchReview(repo.Dir, "")
+		_, ok := tryBranchReview(t.Context(), repo.Dir, "")
 		assert.False(t, ok)
 	})
 
@@ -648,7 +648,7 @@ func TestTryBranchReview(t *testing.T) {
 		repo.CommitFile("feature.txt", "feature", "feature commit")
 		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
 
-		ref, ok := tryBranchReview(repo.Dir, "develop")
+		ref, ok := tryBranchReview(t.Context(), repo.Dir, "develop")
 		require.True(t, ok, "expected true with baseBranch override")
 
 		want := developSHA + "..HEAD"
@@ -667,7 +667,7 @@ func TestTryBranchReview(t *testing.T) {
 		repo.CommitFile("feature.txt", "feature", "feature commit")
 		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
 
-		ref, ok := tryBranchReview(repo.Dir, "")
+		ref, ok := tryBranchReview(t.Context(), repo.Dir, "")
 		require.True(t, ok, "expected branch base config to enable branch review")
 		assert.Equal(t, mainSHA+"..HEAD", ref)
 	})
@@ -680,7 +680,7 @@ func TestTryBranchReview(t *testing.T) {
 		repo.Run("checkout", sha)
 		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
 
-		_, ok := tryBranchReview(repo.Dir, "")
+		_, ok := tryBranchReview(t.Context(), repo.Dir, "")
 		assert.False(t, ok)
 	})
 
@@ -705,7 +705,7 @@ func TestTryBranchReview(t *testing.T) {
 		repo.CommitFile("second.txt", "second", "unpushed commit")
 		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
 
-		ref, ok := tryBranchReview(repo.Dir, "")
+		ref, ok := tryBranchReview(t.Context(), repo.Dir, "")
 		require.True(t, ok, "feature tracking origin/feature with unpushed commits must still enqueue a review")
 		// Merge-base range runs from origin/main (trunk), covering BOTH the
 		// pushed and unpushed feature commits — the documented --branch
@@ -730,7 +730,7 @@ func TestTryBranchReview(t *testing.T) {
 		repo.Run("config", "branch.feature.merge", "refs/heads/main")
 		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
 
-		ref, ok := tryBranchReview(repo.Dir, "")
+		ref, ok := tryBranchReview(t.Context(), repo.Dir, "")
 		assert.False(t, ok, "must skip when upstream is configured but missing")
 		assert.Empty(t, ref)
 	})
@@ -747,7 +747,7 @@ func TestTryBranchReview(t *testing.T) {
 		repo.Run("push", "-u", "upstream", "main")
 		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
 
-		_, ok := tryBranchReview(repo.Dir, "")
+		_, ok := tryBranchReview(t.Context(), repo.Dir, "")
 		assert.False(t, ok, "local main tracking upstream/main must be treated as base branch")
 	})
 
@@ -770,7 +770,7 @@ func TestTryBranchReview(t *testing.T) {
 		repo.Run("config", "branch.feature.base", "main")
 		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
 
-		ref, ok := tryBranchReview(repo.Dir, "")
+		ref, ok := tryBranchReview(t.Context(), repo.Dir, "")
 		require.True(t, ok, "expected branch review with stale local main")
 		assert.Equal(t, freshOriginSHA+"..HEAD", ref,
 			"range must start at origin/main, not stale local main")
@@ -802,7 +802,7 @@ func TestTryBranchReview(t *testing.T) {
 		repo.CommitFile("feature.txt", "only-new-commit", "feature commit")
 		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
 
-		ref, ok := tryBranchReview(repo.Dir, "")
+		ref, ok := tryBranchReview(t.Context(), repo.Dir, "")
 		require.True(t, ok, "expected branch review to run")
 
 		upstreamSHA := repo.Run("rev-parse", "upstream/main")

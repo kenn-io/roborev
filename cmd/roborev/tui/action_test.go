@@ -134,9 +134,9 @@ func TestTUICloseFromReviewView_Navigation(t *testing.T) {
 	for _, tc := range cases {
 		t.Run(tc.name, func(t *testing.T) {
 			jobs := []storage.ReviewJob{
-				makeJob(1, withClosed(boolPtr(false))),
-				makeJob(2, withClosed(boolPtr(false))),
-				makeJob(3, withClosed(boolPtr(false))),
+				makeJob(1, withClosed(new(false))),
+				makeJob(2, withClosed(new(false))),
+				makeJob(3, withClosed(new(false))),
 			}
 
 			m := setupTestModel(jobs, func(m *model) {
@@ -221,7 +221,7 @@ func TestTUICloseReviewInBackgroundServerError(t *testing.T) {
 
 func TestTUIClosedRollbackOnError(t *testing.T) {
 	m := setupTestModel([]storage.ReviewJob{
-		makeJob(42, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		makeJob(42, withStatus(storage.JobStatusDone), withClosed(new(false))),
 	}, func(m *model) {
 		m.selectedIdx = 0
 		m.selectedJobID = 42
@@ -257,7 +257,7 @@ func TestTUIClosedRollbackOnError(t *testing.T) {
 
 func TestTUIClosedRollbackAfterPollRefresh(t *testing.T) {
 	m := setupTestModel([]storage.ReviewJob{
-		makeJob(42, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		makeJob(42, withStatus(storage.JobStatusDone), withClosed(new(false))),
 	}, func(m *model) {
 		m.currentView = viewQueue
 		m.selectedIdx = 0
@@ -273,7 +273,7 @@ func TestTUIClosedRollbackAfterPollRefresh(t *testing.T) {
 	pollMsg := jobsMsg{
 		jobs: []storage.ReviewJob{
 			makeJob(42, withStatus(storage.JobStatusDone),
-				withClosed(boolPtr(false))),
+				withClosed(new(false))),
 		},
 		stats: storage.JobStats{Done: 1, Closed: 0, Open: 1},
 	}
@@ -295,7 +295,7 @@ func TestTUIClosedRollbackAfterPollRefresh(t *testing.T) {
 
 func TestTUIClosedPollConfirmsNoDoubleCount(t *testing.T) {
 	m := setupTestModel([]storage.ReviewJob{
-		makeJob(42, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		makeJob(42, withStatus(storage.JobStatusDone), withClosed(new(false))),
 	}, func(m *model) {
 		m.currentView = viewQueue
 		m.selectedIdx = 0
@@ -311,7 +311,7 @@ func TestTUIClosedPollConfirmsNoDoubleCount(t *testing.T) {
 	pollMsg := jobsMsg{
 		jobs: []storage.ReviewJob{
 			makeJob(42, withStatus(storage.JobStatusDone),
-				withClosed(boolPtr(true))),
+				withClosed(new(true))),
 		},
 		stats: storage.JobStats{Done: 1, Closed: 1, Open: 0},
 	}
@@ -322,7 +322,7 @@ func TestTUIClosedPollConfirmsNoDoubleCount(t *testing.T) {
 
 func TestTUIClosedSuccessNoRollback(t *testing.T) {
 	m := setupTestModel([]storage.ReviewJob{
-		makeJob(42, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		makeJob(42, withStatus(storage.JobStatusDone), withClosed(new(false))),
 	})
 
 	*m.jobs[0].Closed = true
@@ -349,9 +349,9 @@ func TestTUIClosedSuccessNoRollback(t *testing.T) {
 
 func TestTUIClosedToggleMovesSelectionWithHideActive(t *testing.T) {
 	m := setupTestModel([]storage.ReviewJob{
-		makeJob(1, withClosed(boolPtr(false))),
-		makeJob(2, withClosed(boolPtr(false))),
-		makeJob(3, withClosed(boolPtr(false))),
+		makeJob(1, withClosed(new(false))),
+		makeJob(2, withClosed(new(false))),
+		makeJob(3, withClosed(new(false))),
 	}, func(m *model) {
 		m.currentView = viewQueue
 		m.hideClosed = true
@@ -359,7 +359,7 @@ func TestTUIClosedToggleMovesSelectionWithHideActive(t *testing.T) {
 		m.selectedJobID = 2
 	})
 
-	m.jobs[1].Closed = boolPtr(true)
+	m.jobs[1].Closed = new(true)
 	assert.
 		False(t, m.isJobVisible(m.jobs[1]),
 			"closed job should be hidden")
@@ -370,9 +370,9 @@ func TestTUIClosedToggleMovesSelectionWithHideActive(t *testing.T) {
 
 func TestTUIClosedRollbackRestoresSelectionAfterHideClosedMove(t *testing.T) {
 	m := setupTestModel([]storage.ReviewJob{
-		makeJob(1, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
-		makeJob(2, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
-		makeJob(3, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		makeJob(1, withStatus(storage.JobStatusDone), withClosed(new(false))),
+		makeJob(2, withStatus(storage.JobStatusDone), withClosed(new(false))),
+		makeJob(3, withStatus(storage.JobStatusDone), withClosed(new(false))),
 	}, func(m *model) {
 		m.currentView = viewQueue
 		m.hideClosed = true
@@ -407,9 +407,9 @@ func TestTUIClosedRollbackRestoresSelectionAfterHideClosedMove(t *testing.T) {
 
 func TestTUIClosedRollbackAfterPollRefreshRestoresSelection(t *testing.T) {
 	m := setupTestModel([]storage.ReviewJob{
-		makeJob(1, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
-		makeJob(2, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
-		makeJob(3, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		makeJob(1, withStatus(storage.JobStatusDone), withClosed(new(false))),
+		makeJob(2, withStatus(storage.JobStatusDone), withClosed(new(false))),
+		makeJob(3, withStatus(storage.JobStatusDone), withClosed(new(false))),
 	}, func(m *model) {
 		m.currentView = viewQueue
 		m.hideClosed = true
@@ -425,9 +425,9 @@ func TestTUIClosedRollbackAfterPollRefreshRestoresSelection(t *testing.T) {
 
 	m, _ = updateModel(t, m, jobsMsg{
 		jobs: []storage.ReviewJob{
-			makeJob(1, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
-			makeJob(2, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
-			makeJob(3, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+			makeJob(1, withStatus(storage.JobStatusDone), withClosed(new(false))),
+			makeJob(2, withStatus(storage.JobStatusDone), withClosed(new(false))),
+			makeJob(3, withStatus(storage.JobStatusDone), withClosed(new(false))),
 		},
 		stats: storage.JobStats{Done: 3, Closed: 0, Open: 3},
 	})
@@ -447,9 +447,9 @@ func TestTUIClosedRollbackAfterPollRefreshRestoresSelection(t *testing.T) {
 
 func TestTUIClosedRollbackRestoresSelectionAfterLeavingQueue(t *testing.T) {
 	m := setupTestModel([]storage.ReviewJob{
-		makeJob(1, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
-		makeJob(2, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
-		makeJob(3, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		makeJob(1, withStatus(storage.JobStatusDone), withClosed(new(false))),
+		makeJob(2, withStatus(storage.JobStatusDone), withClosed(new(false))),
+		makeJob(3, withStatus(storage.JobStatusDone), withClosed(new(false))),
 	}, func(m *model) {
 		m.currentView = viewQueue
 		m.hideClosed = true
@@ -487,11 +487,11 @@ func TestCloseFromReviewViewRefreshPreservesAnchor(t *testing.T) {
 
 	// 5 open jobs; user is on the last one (index 4, ID 1).
 	m := setupTestModel([]storage.ReviewJob{
-		makeJob(5, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
-		makeJob(4, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
-		makeJob(3, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
-		makeJob(2, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
-		makeJob(1, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		makeJob(5, withStatus(storage.JobStatusDone), withClosed(new(false))),
+		makeJob(4, withStatus(storage.JobStatusDone), withClosed(new(false))),
+		makeJob(3, withStatus(storage.JobStatusDone), withClosed(new(false))),
+		makeJob(2, withStatus(storage.JobStatusDone), withClosed(new(false))),
+		makeJob(1, withStatus(storage.JobStatusDone), withClosed(new(false))),
 	}, func(m *model) {
 		m.currentView = viewReview
 		m.hideClosed = true
@@ -515,10 +515,10 @@ func TestCloseFromReviewViewRefreshPreservesAnchor(t *testing.T) {
 	// out server-side because closed=false was sent).
 	m, _ = updateModel(t, m, jobsMsg{
 		jobs: []storage.ReviewJob{
-			makeJob(5, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
-			makeJob(4, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
-			makeJob(3, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
-			makeJob(2, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+			makeJob(5, withStatus(storage.JobStatusDone), withClosed(new(false))),
+			makeJob(4, withStatus(storage.JobStatusDone), withClosed(new(false))),
+			makeJob(3, withStatus(storage.JobStatusDone), withClosed(new(false))),
+			makeJob(2, withStatus(storage.JobStatusDone), withClosed(new(false))),
 		},
 		stats: storage.JobStats{Done: 5, Closed: 1, Open: 4},
 	})
@@ -553,11 +553,11 @@ func TestNormalizeResyncsStaleJobID(t *testing.T) {
 	assert := assert.New(t)
 
 	m := setupTestModel([]storage.ReviewJob{
-		makeJob(5, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
-		makeJob(4, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
-		makeJob(3, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
-		makeJob(2, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
-		makeJob(1, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		makeJob(5, withStatus(storage.JobStatusDone), withClosed(new(false))),
+		makeJob(4, withStatus(storage.JobStatusDone), withClosed(new(false))),
+		makeJob(3, withStatus(storage.JobStatusDone), withClosed(new(false))),
+		makeJob(2, withStatus(storage.JobStatusDone), withClosed(new(false))),
+		makeJob(1, withStatus(storage.JobStatusDone), withClosed(new(false))),
 	}, func(m *model) {
 		m.currentView = viewReview
 		m.hideClosed = true
@@ -574,10 +574,10 @@ func TestNormalizeResyncsStaleJobID(t *testing.T) {
 	// Refresh removes Job 3 from the middle.
 	m, _ = updateModel(t, m, jobsMsg{
 		jobs: []storage.ReviewJob{
-			makeJob(5, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
-			makeJob(4, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
-			makeJob(2, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
-			makeJob(1, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+			makeJob(5, withStatus(storage.JobStatusDone), withClosed(new(false))),
+			makeJob(4, withStatus(storage.JobStatusDone), withClosed(new(false))),
+			makeJob(2, withStatus(storage.JobStatusDone), withClosed(new(false))),
+			makeJob(1, withStatus(storage.JobStatusDone), withClosed(new(false))),
 		},
 	})
 
@@ -600,9 +600,9 @@ func TestPromptFromReviewRefreshPreservesAnchor(t *testing.T) {
 	assert := assert.New(t)
 
 	m := setupTestModel([]storage.ReviewJob{
-		makeJob(3, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
-		makeJob(2, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
-		makeJob(1, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		makeJob(3, withStatus(storage.JobStatusDone), withClosed(new(false))),
+		makeJob(2, withStatus(storage.JobStatusDone), withClosed(new(false))),
+		makeJob(1, withStatus(storage.JobStatusDone), withClosed(new(false))),
 	}, func(m *model) {
 		m.currentView = viewKindPrompt
 		m.promptFromQueue = false // opened from review
@@ -618,8 +618,8 @@ func TestPromptFromReviewRefreshPreservesAnchor(t *testing.T) {
 	// Refresh removes Job 1.
 	m, _ = updateModel(t, m, jobsMsg{
 		jobs: []storage.ReviewJob{
-			makeJob(3, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
-			makeJob(2, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+			makeJob(3, withStatus(storage.JobStatusDone), withClosed(new(false))),
+			makeJob(2, withStatus(storage.JobStatusDone), withClosed(new(false))),
 		},
 	})
 
@@ -642,9 +642,9 @@ func TestLogFromReviewRefreshPreservesAnchor(t *testing.T) {
 	assert := assert.New(t)
 
 	m := setupTestModel([]storage.ReviewJob{
-		makeJob(3, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
-		makeJob(2, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
-		makeJob(1, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		makeJob(3, withStatus(storage.JobStatusDone), withClosed(new(false))),
+		makeJob(2, withStatus(storage.JobStatusDone), withClosed(new(false))),
+		makeJob(1, withStatus(storage.JobStatusDone), withClosed(new(false))),
 	}, func(m *model) {
 		m.currentView = viewLog
 		m.logFromView = viewQueue // real value from review→prompt→log
@@ -657,8 +657,8 @@ func TestLogFromReviewRefreshPreservesAnchor(t *testing.T) {
 	// Refresh removes Job 1.
 	m, _ = updateModel(t, m, jobsMsg{
 		jobs: []storage.ReviewJob{
-			makeJob(3, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
-			makeJob(2, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+			makeJob(3, withStatus(storage.JobStatusDone), withClosed(new(false))),
+			makeJob(2, withStatus(storage.JobStatusDone), withClosed(new(false))),
 		},
 	})
 
@@ -674,7 +674,7 @@ func TestReviewAnchoredEmptyRefreshPreservesJobID(t *testing.T) {
 	assert := assert.New(t)
 
 	m := setupTestModel([]storage.ReviewJob{
-		makeJob(1, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		makeJob(1, withStatus(storage.JobStatusDone), withClosed(new(false))),
 	}, func(m *model) {
 		m.currentView = viewKindPrompt
 		m.promptFromQueue = false
@@ -701,7 +701,7 @@ func TestLogReviewAnchoredEmptyRefreshPreservesJobID(t *testing.T) {
 	assert := assert.New(t)
 
 	m := setupTestModel([]storage.ReviewJob{
-		makeJob(1, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		makeJob(1, withStatus(storage.JobStatusDone), withClosed(new(false))),
 	}, func(m *model) {
 		m.currentView = viewLog
 		m.logReviewAnchored = true
@@ -725,9 +725,9 @@ func TestPromptFromQueueRefreshNormalizesSelection(t *testing.T) {
 	assert := assert.New(t)
 
 	m := setupTestModel([]storage.ReviewJob{
-		makeJob(3, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
-		makeJob(2, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
-		makeJob(1, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		makeJob(3, withStatus(storage.JobStatusDone), withClosed(new(false))),
+		makeJob(2, withStatus(storage.JobStatusDone), withClosed(new(false))),
+		makeJob(1, withStatus(storage.JobStatusDone), withClosed(new(false))),
 	}, func(m *model) {
 		m.currentView = viewKindPrompt
 		m.promptFromQueue = true
@@ -739,8 +739,8 @@ func TestPromptFromQueueRefreshNormalizesSelection(t *testing.T) {
 	// Refresh removes Job 1 (server-side filter).
 	m, _ = updateModel(t, m, jobsMsg{
 		jobs: []storage.ReviewJob{
-			makeJob(3, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
-			makeJob(2, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+			makeJob(3, withStatus(storage.JobStatusDone), withClosed(new(false))),
+			makeJob(2, withStatus(storage.JobStatusDone), withClosed(new(false))),
 		},
 	})
 
@@ -755,9 +755,9 @@ func TestLogViewRefreshNormalizesSelection(t *testing.T) {
 	assert := assert.New(t)
 
 	m := setupTestModel([]storage.ReviewJob{
-		makeJob(3, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
-		makeJob(2, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
-		makeJob(1, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		makeJob(3, withStatus(storage.JobStatusDone), withClosed(new(false))),
+		makeJob(2, withStatus(storage.JobStatusDone), withClosed(new(false))),
+		makeJob(1, withStatus(storage.JobStatusDone), withClosed(new(false))),
 	}, func(m *model) {
 		m.currentView = viewLog
 		m.logFromView = viewQueue
@@ -769,8 +769,8 @@ func TestLogViewRefreshNormalizesSelection(t *testing.T) {
 	// Refresh removes Job 1.
 	m, _ = updateModel(t, m, jobsMsg{
 		jobs: []storage.ReviewJob{
-			makeJob(3, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
-			makeJob(2, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+			makeJob(3, withStatus(storage.JobStatusDone), withClosed(new(false))),
+			makeJob(2, withStatus(storage.JobStatusDone), withClosed(new(false))),
 		},
 	})
 
@@ -1092,9 +1092,9 @@ func TestTUIRespondViewTabExpansion(t *testing.T) {
 
 func TestCancelKeyMovesSelectionWithHideClosed(t *testing.T) {
 	m := setupTestModel([]storage.ReviewJob{
-		makeJob(1, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		makeJob(1, withStatus(storage.JobStatusDone), withClosed(new(false))),
 		makeJob(2, withStatus(storage.JobStatusRunning)),
-		makeJob(3, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+		makeJob(3, withStatus(storage.JobStatusDone), withClosed(new(false))),
 	}, func(m *model) {
 		m.currentView = viewQueue
 		m.hideClosed = true
@@ -1116,9 +1116,9 @@ func TestCancelKeyMovesSelectionWithHideClosed(t *testing.T) {
 func TestClosedKeyUpdatesStatsOptimistically(t *testing.T) {
 	m := setupTestModel([]storage.ReviewJob{
 		makeJob(1, withStatus(storage.JobStatusDone),
-			withClosed(boolPtr(false))),
+			withClosed(new(false))),
 		makeJob(2, withStatus(storage.JobStatusDone),
-			withClosed(boolPtr(false))),
+			withClosed(new(false))),
 	}, func(m *model) {
 		m.currentView = viewQueue
 		m.selectedIdx = 0
@@ -1138,7 +1138,7 @@ func TestClosedKeyUpdatesStatsOptimistically(t *testing.T) {
 func TestClosedKeyUpdatesStatsFromReviewView(t *testing.T) {
 	m := setupTestModel([]storage.ReviewJob{
 		makeJob(1, withStatus(storage.JobStatusDone),
-			withClosed(boolPtr(false))),
+			withClosed(new(false))),
 	}, func(m *model) {
 		m.currentView = viewReview
 		m.currentReview = &storage.Review{

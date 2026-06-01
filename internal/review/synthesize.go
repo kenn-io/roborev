@@ -7,9 +7,10 @@ import (
 	"log"
 	"time"
 
+	gitrepo "go.kenn.io/kit/git/repo"
+
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
-	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -103,11 +104,11 @@ func formatSingleResult(
 		storage.ParseVerdict(r.Output) == "P" {
 		header = fmt.Sprintf(
 			"## roborev: Review Passed (`%s`)\n\n",
-			git.ShortSHA(headSHA))
+			gitrepo.ShortSHA(headSHA))
 	} else {
 		header = fmt.Sprintf(
 			"## roborev: Review Complete (`%s`)\n\n",
-			git.ShortSHA(headSHA))
+			gitrepo.ShortSHA(headSHA))
 	}
 
 	output := r.Output
