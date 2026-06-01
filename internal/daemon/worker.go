@@ -400,7 +400,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// Build the prompt (or use pre-stored prompt for task/compact jobs).
 	// Create a per-job builder with the snapshotted config so exclude
 	// patterns are resolved consistently.
-	pb := prompt.NewBuilderWithConfig(wp.db, cfg).ForRepo(effectiveRepoPath, job.RepoID)
+	pb := prompt.NewBuilderWithConfig(wp.db, cfg).WithContext(ctx).ForRepo(effectiveRepoPath, job.RepoID)
 	if err := pb.CleanupStaleSnapshots(prompt.DefaultStaleSnapshotAge); err != nil {
 		log.Printf("[%s] Warning: cleanup stale snapshots for job %d: %v", workerID, job.ID, err)
 	}
@@ -416,7 +416,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		promptToPersist = storedPromptValue
 		var cleanup func()
 		excludes := config.ResolveExcludePatterns(
-			effectiveRepoPath, cfg, job.ReviewType,
+			ctx, effectiveRepoPath, cfg, job.ReviewType,
 		)
 		reviewPrompt, cleanup, err = preparePrebuiltPrompt(
 			effectiveRepoPath, job, reviewPrompt, excludes,
@@ -468,7 +468,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			// Normal job - build prompt from git ref, writing a diff
 			// snapshot file when the diff is too large to inline.
 			excludes := config.ResolveExcludePatterns(
-				effectiveRepoPath, cfg, job.ReviewType,
+				ctx, effectiveRepoPath, cfg, job.ReviewType,
 			)
 			snapResult, snapErr := pb.BuildWithSnapshot(
 				job.GitRef, cfg.ReviewContextCount, job.Agent,

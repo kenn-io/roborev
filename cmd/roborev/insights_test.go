@@ -109,7 +109,7 @@ func TestRunInsights_EnqueuesInsightsJob(t *testing.T) {
 	cmd.SetOut(&bytes.Buffer{})
 	cmd.SetErr(&bytes.Buffer{})
 
-	err := runInsights(cmd, insightsOptions{
+	err := runInsights(t.Context(), cmd, insightsOptions{
 		repoPath: repo.Dir,
 		branch:   "main",
 		since:    "7d",

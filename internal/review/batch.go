@@ -157,7 +157,7 @@ func runSingle(
 	result.Agent = resolvedAgent.Name()
 
 	// Build prompt (nil DB = no previous review context)
-	builder := prompt.NewBuilderWithConfig(nil, cfg.GlobalConfig).ForRepo(cfg.RepoPath, 0)
+	builder := prompt.NewBuilderWithConfig(nil, cfg.GlobalConfig).WithContext(ctx).ForRepo(cfg.RepoPath, 0)
 
 	// Normalize review type for prompt building
 	promptReviewType := reviewType
@@ -166,7 +166,7 @@ func runSingle(
 	}
 
 	excludes := config.ResolveExcludePatterns(
-		cfg.RepoPath, cfg.GlobalConfig, promptReviewType,
+		ctx, cfg.RepoPath, cfg.GlobalConfig, promptReviewType,
 	)
 	snapResult, err := builder.BuildWithSnapshot(
 		cfg.GitRef, cfg.ContextCount,

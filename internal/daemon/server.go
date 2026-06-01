@@ -1526,7 +1526,7 @@ func (s *Server) humaEnqueue(
 		}
 
 		insightsPrompt, reviewCount, err := s.buildInsightsPrompt(
-			repoRoot, req.Branch, since,
+			ctx, repoRoot, req.Branch, since,
 		)
 		if err != nil {
 			if s.errorLog != nil {

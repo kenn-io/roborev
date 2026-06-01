@@ -491,6 +491,10 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 	for _, o := range opts {
 		o(&opt)
 	}
+	ctx := opt.ctx
+	if ctx == nil {
+		ctx = context.Background()
+	}
 
 	daemonVersion := "?"
 	hideClosed := false
@@ -537,10 +541,10 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 		}
 
 		// Detect current repo/branch for filter sort priority
-		if repoRoot, err := gitrepo.MainRoot(context.TODO(), "."); err == nil && repoRoot != "" {
+		if repoRoot, err := gitrepo.MainRoot(ctx, "."); err == nil && repoRoot != "" {
 			cwdRepoRoot = repoRoot
 			cwdRepoIdentity = config.ResolveRepoIdentity(repoRoot, nil)
-			cwdBranch = gitrepo.CurrentBranch(context.TODO(), ".")
+			cwdBranch = gitrepo.CurrentBranch(ctx, ".")
 		}
 	}
 
@@ -990,6 +994,7 @@ func (m model) View() string {
 
 // Config holds resolved parameters for running the TUI.
 type Config struct {
+	Context       context.Context
 	Endpoint      daemon.DaemonEndpoint
 	RepoFilter    string
 	BranchFilter  string
@@ -1013,6 +1018,9 @@ func Run(cfg Config) error {
 	CleanupStaleTUIRuntimes()
 
 	var opts []option
+	if cfg.Context != nil {
+		opts = append(opts, withContext(cfg.Context))
+	}
 	if cfg.RepoFilter != "" {
 		opts = append(opts, withRepoFilter(cfg.RepoFilter))
 	}

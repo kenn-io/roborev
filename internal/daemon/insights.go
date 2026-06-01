@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -15,7 +16,7 @@ import (
 const maxInsightsReviews = 100
 
 func (s *Server) buildInsightsPrompt(
-	repoRoot, branch string, since time.Time,
+	ctx context.Context, repoRoot, branch string, since time.Time,
 ) (string, int, error) {
 	reviews, err := s.fetchInsightsReviews(repoRoot, branch, since)
 	if err != nil {
@@ -27,7 +28,7 @@ func (s *Server) buildInsightsPrompt(
 
 	cfg := s.configWatcher.Config()
 	maxPromptSize := config.ResolveMaxPromptSize(repoRoot, cfg)
-	guidelines := prompt.LoadGuidelines(repoRoot)
+	guidelines := prompt.LoadGuidelines(ctx, repoRoot)
 
 	promptText := prompt.BuildInsightsPrompt(prompt.InsightsData{
 		Reviews:       reviews,

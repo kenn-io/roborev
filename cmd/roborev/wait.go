@@ -47,6 +47,7 @@ Examples:
   roborev wait --sha HEAD~1      # Wait for job matching HEAD~1`,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
+			ctx := cmd.Context()
 			// In quiet mode (post-commit hook), collapse any error into a
 			// silent non-zero exit so the hook doesn't write to stderr.
 			if quiet {
@@ -63,7 +64,7 @@ Examples:
 
 			// Multiple args: wait for all concurrently
 			if len(args) > 1 {
-				return waitMultiple(cmd, args, forceJobID, quiet)
+				return waitMultiple(ctx, cmd, args, forceJobID, quiet)
 			}
 
 			// Resolve the target to a job ID (local validation first,
@@ -84,8 +85,8 @@ Examples:
 					jobID = id
 				} else {
 					// Try to resolve as git ref first (handles numeric SHAs like "123456")
-					if repoRoot, err := gitrepo.Root(context.TODO(), "."); err == nil {
-						if _, err := gitrepo.Resolve(context.TODO(), repoRoot, arg); err == nil {
+					if repoRoot, err := gitrepo.Root(ctx, "."); err == nil {
+						if _, err := gitrepo.Resolve(ctx, repoRoot, arg); err == nil {
 							ref = arg
 						}
 					}
@@ -105,8 +106,8 @@ Examples:
 			// Validate git ref before contacting daemon
 			var sha string
 			if ref != "" {
-				repoRoot, _ := gitrepo.Root(context.TODO(), ".")
-				resolved, err := gitrepo.Resolve(context.TODO(), repoRoot, ref)
+				repoRoot, _ := gitrepo.Root(ctx, ".")
+				resolved, err := gitrepo.Resolve(ctx, repoRoot, ref)
 				if err != nil {
 					return fmt.Errorf("invalid git ref: %s", ref)
 				}
@@ -120,9 +121,9 @@ Examples:
 
 			// If we have a ref to resolve, use findJobForCommit
 			if sha != "" && jobID == 0 {
-				mainRoot, _ := gitrepo.MainRoot(context.TODO(), ".")
+				mainRoot, _ := gitrepo.MainRoot(ctx, ".")
 				if mainRoot == "" {
-					mainRoot, _ = gitrepo.Root(context.TODO(), ".")
+					mainRoot, _ = gitrepo.Root(ctx, ".")
 				}
 				job, err := findJobForCommit(mainRoot, sha)
 				if err != nil {
@@ -174,12 +175,13 @@ type resolvedArg struct {
 // concurrently. Returns exit code 1 if any job fails or has a FAIL
 // verdict.
 func waitMultiple(
+	ctx context.Context,
 	cmd *cobra.Command,
 	args []string,
 	forceJobID, quiet bool,
 ) error {
 	// Phase 1: Local validation (no daemon contact).
-	repoRoot, _ := gitrepo.Root(context.TODO(), ".")
+	repoRoot, _ := gitrepo.Root(ctx, ".")
 	resolved := make([]resolvedArg, 0, len(args))
 	for _, arg := range args {
 		if forceJobID {
@@ -192,7 +194,7 @@ func waitMultiple(
 			// Try git ref first
 			var sha string
 			if repoRoot != "" {
-				if s, err := gitrepo.Resolve(context.TODO(), repoRoot, arg); err == nil {
+				if s, err := gitrepo.Resolve(ctx, repoRoot, arg); err == nil {
 					sha = s
 				}
 			}
@@ -223,7 +225,7 @@ func waitMultiple(
 			jobIDs = append(jobIDs, r.jobID)
 			continue
 		}
-		mainRoot, _ := gitrepo.MainRoot(context.TODO(), ".")
+		mainRoot, _ := gitrepo.MainRoot(ctx, ".")
 		if mainRoot == "" {
 			mainRoot = repoRoot
 		}

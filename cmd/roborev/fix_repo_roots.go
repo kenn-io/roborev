@@ -18,7 +18,7 @@ type currentRepoRoots struct {
 // resolveCurrentRepoRoots resolves repo roots from the current working
 // directory. Outside a git repo, both roots fall back to the working
 // directory so existing fix/compact behavior stays unchanged.
-func resolveCurrentRepoRoots() (currentRepoRoots, error) {
+func resolveCurrentRepoRoots(ctx context.Context) (currentRepoRoots, error) {
 	workDir, err := os.Getwd()
 	if err != nil {
 		return currentRepoRoots{}, fmt.Errorf("get working directory: %w", err)
@@ -28,23 +28,23 @@ func resolveCurrentRepoRoots() (currentRepoRoots, error) {
 		worktreeRoot: workDir,
 		mainRepoRoot: workDir,
 	}
-	if root, err := gitrepo.Root(context.TODO(), workDir); err == nil {
+	if root, err := gitrepo.Root(ctx, workDir); err == nil {
 		roots.worktreeRoot = root
 		roots.mainRepoRoot = root
 	}
-	if root, err := gitrepo.MainRoot(context.TODO(), workDir); err == nil {
+	if root, err := gitrepo.MainRoot(ctx, workDir); err == nil {
 		roots.mainRepoRoot = root
 	}
 
 	return roots, nil
 }
 
-func resolveCurrentBranchFilter(worktreeRoot, branch string, allBranches bool) string {
+func resolveCurrentBranchFilter(ctx context.Context, worktreeRoot, branch string, allBranches bool) string {
 	if allBranches {
 		return ""
 	}
 	if branch != "" {
 		return branch
 	}
-	return gitrepo.CurrentBranch(context.TODO(), worktreeRoot)
+	return gitrepo.CurrentBranch(ctx, worktreeRoot)
 }

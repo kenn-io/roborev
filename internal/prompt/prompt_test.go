@@ -611,7 +611,7 @@ func singleCommitPromptPrefixLen(t *testing.T, repoPath, sha string) int {
 	sb.WriteString(GetSystemPrompt("codex", "review"))
 	sb.WriteString("\n")
 	guidelines, err := renderOptionalSectionsPrefix(optionalSectionsView{
-		ProjectGuidelines: buildProjectGuidelinesSectionView(LoadGuidelines(repoPath)),
+		ProjectGuidelines: buildProjectGuidelinesSectionView(LoadGuidelines(t.Context(), repoPath)),
 	})
 	require.NoError(t, err)
 	sb.WriteString(guidelines)
@@ -637,7 +637,7 @@ func rangePromptPrefixLen(t *testing.T, repoPath, rangeRef string) int {
 	sb.WriteString(GetSystemPrompt("codex", "range"))
 	sb.WriteString("\n")
 	guidelines, err := renderOptionalSectionsPrefix(optionalSectionsView{
-		ProjectGuidelines: buildProjectGuidelinesSectionView(LoadGuidelines(repoPath)),
+		ProjectGuidelines: buildProjectGuidelinesSectionView(LoadGuidelines(t.Context(), repoPath)),
 	})
 	require.NoError(t, err)
 	sb.WriteString(guidelines)
@@ -1707,7 +1707,7 @@ func TestLoadGuidelines(t *testing.T) {
 				tt.setupFilesystem(t, ctx.Dir)
 			}
 
-			guidelines := LoadGuidelines(ctx.Dir)
+			guidelines := LoadGuidelines(t.Context(), ctx.Dir)
 			if tt.wantContains != "" {
 				assertContains(t, guidelines, tt.wantContains, "missing expected guidelines")
 			}

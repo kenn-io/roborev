@@ -40,7 +40,7 @@ func TestRunRefineAgentErrorRetriesWithoutApplyingChanges(t *testing.T) {
 	// Capture HEAD before running refine
 	headBefore := gitRevParse(t, repoDir, "HEAD")
 
-	ctx := defaultTestRunContext(repoDir)
+	ctx := defaultTestRunContext(t, repoDir)
 
 	output := captureStdout(t, func() {
 		// With 2 iterations and a failing agent, should exhaust iterations
@@ -209,7 +209,7 @@ func TestRunRefineBranchReviewUsesEmptyAgent(t *testing.T) {
 		ID: 1, JobID: 7, Output: "No issues found.",
 	}
 
-	ctx := defaultTestRunContext(repoDir)
+	ctx := defaultTestRunContext(t, repoDir)
 
 	err := runRefine(ctx, refineOptions{
 		agentName:     "test",
@@ -266,7 +266,7 @@ func TestRefineLoopStaysOnFailedFixChain(t *testing.T) {
 	}})
 	defer agent.Register(agent.NewTestAgent())
 
-	ctx := defaultTestRunContext(repoDir)
+	ctx := defaultTestRunContext(t, repoDir)
 
 	err := runRefine(ctx, refineOptions{agentName: "test", maxIterations: 2, quiet: true})
 	require.Error(t, err)

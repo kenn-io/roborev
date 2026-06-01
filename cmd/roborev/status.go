@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"log"
@@ -177,7 +176,7 @@ func statusCmd() *cobra.Command {
 			}
 
 			// Check for outdated hooks in current repo
-			if root, err := gitrepo.Root(context.TODO(), "."); err == nil {
+			if root, err := gitrepo.Root(cmd.Context(), "."); err == nil {
 				if githook.NeedsUpgrade(cmd.Context(), root, "post-commit", githook.PostCommitVersionMarker) {
 					fmt.Println()
 					fmt.Println("Warning: post-commit hook is outdated -- run 'roborev init' to upgrade")

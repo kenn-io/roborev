@@ -2,7 +2,6 @@ package main
 
 import (
 	"bufio"
-	"context"
 	"fmt"
 	"io"
 	"os"
@@ -51,11 +50,12 @@ func remapCmd() *cobra.Command {
 space-separated) and updates review jobs to point at the
 new commits. Called automatically by the post-rewrite hook.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			gitCwd, err := gitrepo.Root(context.TODO(), ".")
+			ctx := cmd.Context()
+			gitCwd, err := gitrepo.Root(ctx, ".")
 			if err != nil {
 				return fmt.Errorf("not a git repository: %w", err)
 			}
-			repoRoot, err := gitrepo.MainRoot(context.TODO(), ".")
+			repoRoot, err := gitrepo.MainRoot(ctx, ".")
 			if err != nil {
 				repoRoot = gitCwd
 			}

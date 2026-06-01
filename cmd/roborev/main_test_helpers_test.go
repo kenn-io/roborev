@@ -540,6 +540,7 @@ func runWithOutput(t *testing.T, dir string, fn func(cmd *cobra.Command) error) 
 
 	var output bytes.Buffer
 	cmd := &cobra.Command{}
+	cmd.SetContext(t.Context())
 	cmd.SetOut(&output)
 	err = fn(cmd)
 	return output.String(), err

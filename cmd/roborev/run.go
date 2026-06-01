@@ -127,7 +127,7 @@ func runPrompt(cmd *cobra.Command, args []string, agentName, modelStr, reasoning
 
 	// Try to use git repo root if available
 	repoRoot := workDir
-	if root, err := gitrepo.Root(context.TODO(), workDir); err == nil {
+	if root, err := gitrepo.Root(cmd.Context(), workDir); err == nil {
 		repoRoot = root
 	}
 

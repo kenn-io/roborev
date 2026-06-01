@@ -2,7 +2,6 @@ package main
 
 import (
 	"cmp"
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -44,6 +43,7 @@ Examples:
   roborev summary --repo /path/to/repo
   roborev summary --json              # Structured output for scripting`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
 			if err := ensureDaemon(); err != nil {
 				return fmt.Errorf("daemon not running: %w", err)
 			}
@@ -53,13 +53,13 @@ Examples:
 
 			// Auto-resolve repo from cwd when not specified (unless --all)
 			if !allRepos && repoPath == "" {
-				root, err := gitrepo.MainRoot(context.TODO(), ".")
+				root, err := gitrepo.MainRoot(ctx, ".")
 				if err != nil {
 					return fmt.Errorf("not in a git repo; use --all for all repos or --repo to specify one")
 				}
 				repoPath = root
 			} else if repoPath != "" {
-				if root, err := gitrepo.MainRoot(context.TODO(), repoPath); err == nil {
+				if root, err := gitrepo.MainRoot(ctx, repoPath); err == nil {
 					repoPath = root
 				}
 			}

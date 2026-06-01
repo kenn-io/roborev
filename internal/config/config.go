@@ -1624,11 +1624,12 @@ func ResolveShowClassifyJobs(repoPath string, globalCfg *Config) bool {
 // Security reviews skip repo-level patterns entirely so a
 // compromised default branch cannot suppress files from review.
 func ResolveExcludePatterns(
+	ctx context.Context,
 	repoPath string, globalCfg *Config, reviewType string,
 ) []string {
 	var repo []string
 	if reviewType != "security" {
-		repo = loadRepoExcludePatterns(repoPath)
+		repo = loadRepoExcludePatterns(ctx, repoPath)
 	}
 	var global []string
 	if globalCfg != nil {
@@ -1668,8 +1669,8 @@ func ResolveExcludePatternsLocal(
 // when no default branch config exists (e.g., no remote, or
 // .roborev.toml not yet committed). This mirrors loadGuidelines
 // to prevent untrusted branches from controlling review scope.
-func loadRepoExcludePatterns(repoPath string) []string {
-	if defaultBranch, err := gitrepo.DefaultBranch(context.TODO(), repoPath); err == nil {
+func loadRepoExcludePatterns(ctx context.Context, repoPath string) []string {
+	if defaultBranch, err := gitrepo.DefaultBranch(ctx, repoPath); err == nil {
 		cfg, err := LoadRepoConfigFromRef(repoPath, defaultBranch)
 		if err != nil {
 			if IsConfigParseError(err) {

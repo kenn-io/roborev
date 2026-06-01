@@ -24,7 +24,7 @@ func TestResolveRepoIdentifier(t *testing.T) {
 
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
-				assertPath(t, resolveRepoIdentifier(tt.input), tt.want)
+				assertPath(t, resolveRepoIdentifier(t.Context(), tt.input), tt.want)
 			})
 		}
 	})
@@ -50,7 +50,7 @@ func TestResolveRepoIdentifier(t *testing.T) {
 
 		// The test expects "org/project" because it can't stat "org" to see if it's a repo,
 		// so it treats it as a name string.
-		assertPath(t, resolveRepoIdentifier("org/project"), "org/project")
+		assertPath(t, resolveRepoIdentifier(t.Context(), "org/project"), "org/project")
 	})
 
 	// 3. Git repo resolution
@@ -106,7 +106,7 @@ func TestResolveRepoIdentifier(t *testing.T) {
 		for _, tt := range tests {
 			t.Run(tt.name, func(t *testing.T) {
 				chdir(t, tt.dir)
-				got := resolveRepoIdentifier(tt.input)
+				got := resolveRepoIdentifier(t.Context(), tt.input)
 				assertPath(t, got, tt.want)
 			})
 		}

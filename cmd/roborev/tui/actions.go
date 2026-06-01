@@ -271,6 +271,7 @@ func (m model) triggerFix(parentJobID int64, prompt, gitRef string) tea.Cmd {
 // needWorktree if the branch is not checked out anywhere.
 func (m model) applyFixPatch(jobID int64) tea.Cmd {
 	return func() tea.Msg {
+		ctx := m.apiContext()
 		patch, jobDetail, err := m.loadPatchAndJob(jobID)
 		if err != nil {
 			return applyPatchResultMsg{jobID: jobID, err: err}
@@ -278,7 +279,7 @@ func (m model) applyFixPatch(jobID int64) tea.Cmd {
 
 		// Resolve the target directory: if the branch has its own worktree,
 		// apply the patch there instead of the main repo path.
-		targetDir, checkedOut, wtErr := gitrepo.WorktreePathForBranch(context.TODO(), jobDetail.RepoPath, jobDetail.Branch)
+		targetDir, checkedOut, wtErr := gitrepo.WorktreePathForBranch(ctx, jobDetail.RepoPath, jobDetail.Branch)
 		if wtErr != nil {
 			return applyPatchResultMsg{jobID: jobID, err: wtErr}
 		}
@@ -290,7 +291,7 @@ func (m model) applyFixPatch(jobID int64) tea.Cmd {
 			}
 		}
 
-		return m.checkApplyCommitPatch(jobID, jobDetail, targetDir, patch)
+		return m.checkApplyCommitPatch(ctx, jobID, jobDetail, targetDir, patch)
 	}
 }
 
@@ -298,6 +299,7 @@ func (m model) applyFixPatch(jobID int64) tea.Cmd {
 // patch there, commits, and removes the worktree. The commit persists on the branch.
 func (m model) applyFixPatchInWorktree(jobID int64) tea.Cmd {
 	return func() tea.Msg {
+		ctx := m.apiContext()
 		patch, jobDetail, err := m.loadPatchAndJob(jobID)
 		if err != nil {
 			return applyPatchResultMsg{jobID: jobID, err: err}
@@ -325,7 +327,7 @@ func (m model) applyFixPatchInWorktree(jobID int64) tea.Cmd {
 			}
 		}
 
-		result := m.checkApplyCommitPatch(jobID, jobDetail, wtDir, patch)
+		result := m.checkApplyCommitPatch(ctx, jobID, jobDetail, wtDir, patch)
 
 		// Keep the worktree if patch was applied but commit failed, so the user can recover.
 		if result.commitFailed {
@@ -355,7 +357,7 @@ func (m model) loadPatchAndJob(jobID int64) (string, *storage.ReviewJob, error) 
 
 // checkApplyCommitPatch validates, applies, commits, and marks a patch as applied.
 // Shared by both applyFixPatch (existing worktree) and applyFixPatchInWorktree (temp worktree).
-func (m model) checkApplyCommitPatch(jobID int64, jobDetail *storage.ReviewJob, targetDir, patch string) applyPatchResultMsg {
+func (m model) checkApplyCommitPatch(ctx context.Context, jobID int64, jobDetail *storage.ReviewJob, targetDir, patch string) applyPatchResultMsg {
 	// Check for uncommitted changes in files the patch touches
 	patchedFiles, pfErr := patchFiles(patch)
 	if pfErr != nil {
@@ -376,7 +378,7 @@ func (m model) checkApplyCommitPatch(jobID int64, jobDetail *storage.ReviewJob, 
 	}
 
 	// Dry-run check — only trigger rebase on actual merge conflicts
-	if err := gitworktree.CheckPatch(context.TODO(), targetDir, patch); err != nil {
+	if err := gitworktree.CheckPatch(ctx, targetDir, patch); err != nil {
 		var conflictErr *gitworktree.PatchConflictError
 		if errors.As(err, &conflictErr) {
 			return applyPatchResultMsg{jobID: jobID, rebase: true, err: err}
@@ -385,7 +387,7 @@ func (m model) checkApplyCommitPatch(jobID int64, jobDetail *storage.ReviewJob, 
 	}
 
 	// Apply the patch
-	if err := gitworktree.ApplyPatch(context.TODO(), targetDir, patch); err != nil {
+	if err := gitworktree.ApplyPatch(ctx, targetDir, patch); err != nil {
 		return applyPatchResultMsg{jobID: jobID, err: err}
 	}
 

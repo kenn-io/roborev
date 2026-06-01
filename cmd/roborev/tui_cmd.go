@@ -50,7 +50,7 @@ to the current branch. Use = syntax for explicit values:
 			}
 
 			if cmd.Flags().Changed("repo") {
-				resolved, err := resolveRepoFlag(repoFilter)
+				resolved, err := resolveRepoFlag(cmd.Context(), repoFilter)
 				if err != nil {
 					return fmt.Errorf("--repo: %w", err)
 				}
@@ -62,7 +62,7 @@ to the current branch. Use = syntax for explicit values:
 					branchRepo = repoFilter
 				}
 				resolved, err := resolveBranchFlag(
-					branchFilter, branchRepo,
+					cmd.Context(), branchFilter, branchRepo,
 				)
 				if err != nil {
 					return fmt.Errorf("--branch: %w", err)
@@ -71,6 +71,7 @@ to the current branch. Use = syntax for explicit values:
 			}
 
 			return tui.Run(tui.Config{
+				Context:       cmd.Context(),
 				Endpoint:      ep,
 				RepoFilter:    repoFilter,
 				BranchFilter:  branchFilter,

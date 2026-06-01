@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"context"
 	"errors"
 	"io"
 	"time"
@@ -317,6 +318,10 @@ func withBranchFilter(branch string) option {
 	return func(o *options) { o.branchFilter = branch }
 }
 
+func withContext(ctx context.Context) option {
+	return func(o *options) { o.ctx = ctx }
+}
+
 // withExternalIODisabled disables daemon/config/git calls in newModel.
 func withExternalIODisabled() option {
 	return func(o *options) { o.disableExternalIO = true }
@@ -344,6 +349,7 @@ func withCwdRepoIdentity(identity string) option {
 
 // options holds optional overrides for the TUI model, set from CLI flags.
 type options struct {
+	ctx               context.Context
 	repoFilter        string // --repo flag: lock filter to this repo path
 	branchFilter      string // --branch flag: lock filter to this branch
 	noQuit            bool   // --no-quit flag: suppress keyboard quit

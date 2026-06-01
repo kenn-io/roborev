@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -99,7 +100,7 @@ func (m *mockDaemonClient) WaitForReview(jobID int64) (*storage.Review, error) {
 	return m.reviews[job.GitRef], nil
 }
 
-func (m *mockDaemonClient) FindJobForCommit(repoPath, sha string) (*storage.ReviewJob, error) {
+func (m *mockDaemonClient) FindJobForCommit(ctx context.Context, repoPath, sha string) (*storage.ReviewJob, error) {
 	for _, job := range m.jobs {
 		if job.GitRef == sha {
 			return job, nil
@@ -108,7 +109,7 @@ func (m *mockDaemonClient) FindJobForCommit(repoPath, sha string) (*storage.Revi
 	return nil, nil
 }
 
-func (m *mockDaemonClient) FindPendingJobForRef(repoPath, gitRef string) (*storage.ReviewJob, error) {
+func (m *mockDaemonClient) FindPendingJobForRef(ctx context.Context, repoPath, gitRef string) (*storage.ReviewJob, error) {
 	for _, job := range m.jobs {
 		if job.GitRef == gitRef {
 			if job.Status == storage.JobStatusQueued || job.Status == storage.JobStatusRunning {
@@ -505,7 +506,7 @@ func TestFindPendingJobForBranch(t *testing.T) {
 			client := newMockDaemonClient()
 			tt.setup(client)
 
-			pending, err := findPendingJobForBranch(client, "/repo", tt.commits)
+			pending, err := findPendingJobForBranch(t.Context(), client, "/repo", tt.commits)
 			require.NoError(t, err, "findPendingJobForBranch failed: %v")
 
 			if tt.wantJobID == 0 {

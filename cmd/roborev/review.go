@@ -395,6 +395,8 @@ Examples:
 
 // runLocalReview runs a review directly without the daemon
 func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName, model, provider, reasoning, reviewType string, quiet bool, minSeverity string) error {
+	ctx := cmd.Context()
+
 	// Load config
 	cfg, err := config.LoadGlobal()
 	if err != nil {
@@ -473,7 +475,7 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName
 	}
 
 	// Build prompt
-	pb := prompt.NewBuilderWithConfig(nil, cfg).ForRepo(repoPath, 0)
+	pb := prompt.NewBuilderWithConfig(nil, cfg).WithContext(ctx).ForRepo(repoPath, 0)
 	var reviewPrompt string
 	var snapshotCleanup func()
 	if diffContent != "" {
@@ -483,7 +485,7 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName
 		snapshotCleanup = dirtyResult.Cleanup
 		err = dirtyErr
 	} else {
-		excludes := config.ResolveExcludePatterns(repoPath, cfg, reviewType)
+		excludes := config.ResolveExcludePatterns(ctx, repoPath, cfg, reviewType)
 		result, buildErr := pb.BuildWithSnapshot(gitRef, cfg.ReviewContextCount, a.Name(), reviewType, resolvedMinSev, excludes)
 		reviewPrompt = result.Prompt
 		snapshotCleanup = result.Cleanup

@@ -83,6 +83,7 @@ type HistoricalReviewContext struct {
 type Builder struct {
 	db        *storage.DB
 	globalCfg *config.Config // optional global config for exclude patterns
+	ctx       context.Context
 	repoPath  string
 	repoID    int64
 }
@@ -119,6 +120,13 @@ func NewBuilderWithConfig(
 	return &Builder{db: db, globalCfg: globalCfg}
 }
 
+// WithContext returns a builder that uses ctx for git operations.
+func (b *Builder) WithContext(ctx context.Context) *Builder {
+	next := *b
+	next.ctx = ctx
+	return &next
+}
+
 // ForRepo returns a builder scoped to a repository.
 func (b *Builder) ForRepo(repoPath string, repoID int64) *Builder {
 	next := *b
@@ -139,8 +147,15 @@ func (b *Builder) resolveExcludes(
 	reviewType string,
 ) []string {
 	return config.ResolveExcludePatterns(
-		b.repoPath, b.globalCfg, reviewType,
+		b.context(), b.repoPath, b.globalCfg, reviewType,
 	)
+}
+
+func (b *Builder) context() context.Context {
+	if b.ctx != nil {
+		return b.ctx
+	}
+	return context.Background()
 }
 
 // Build constructs a review prompt for a commit or range with context from previous reviews.
@@ -440,7 +455,7 @@ func (b *Builder) BuildDirty(diff string, contextCount int, agentName, reviewTyp
 
 	// Get previous reviews for context (use HEAD as reference point)
 	if contextCount > 0 && b.db != nil {
-		headSHA, err := gitrepo.Resolve(context.TODO(), b.repoPath, "HEAD")
+		headSHA, err := gitrepo.Resolve(b.context(), b.repoPath, "HEAD")
 		if err == nil {
 			contexts, err := b.getPreviousReviewContexts(headSHA, contextCount)
 			if err == nil && len(contexts) > 0 {
@@ -662,9 +677,9 @@ func (b *Builder) newPromptBuildContext(agentName, reviewType, minSeverity, defa
 	}
 }
 
-func defaultOptionalSections(repoPath, additionalContext string) optionalSectionsView {
+func defaultOptionalSections(ctx context.Context, repoPath, additionalContext string) optionalSectionsView {
 	return optionalSectionsView{
-		ProjectGuidelines: buildProjectGuidelinesSectionView(LoadGuidelines(repoPath)),
+		ProjectGuidelines: buildProjectGuidelinesSectionView(LoadGuidelines(ctx, repoPath)),
 		AdditionalContext: buildAdditionalContextSection(additionalContext),
 	}
 }
@@ -970,7 +985,7 @@ func selectRichestRangePromptView(limit int, view TemplateContext, variants []di
 
 // buildSinglePrompt constructs a prompt for a single commit
 func (b *Builder) buildSinglePrompt(sha string, contextCount int, agentName, reviewType string, opts buildOpts) (string, error) {
-	ctx := b.newPromptBuildContext(agentName, reviewType, opts.minSeverity, "review", defaultOptionalSections(b.repoPath, opts.additionalContext))
+	ctx := b.newPromptBuildContext(agentName, reviewType, opts.minSeverity, "review", defaultOptionalSections(b.context(), b.repoPath, opts.additionalContext))
 
 	// Get previous reviews if requested
 	if contextCount > 0 && b.db != nil {
@@ -1085,7 +1100,7 @@ func (b *Builder) buildSinglePrompt(sha string, contextCount int, agentName, rev
 
 // buildRangePrompt constructs a prompt for a commit range
 func (b *Builder) buildRangePrompt(rangeRef string, contextCount int, agentName, reviewType string, opts buildOpts) (string, error) {
-	ctx := b.newPromptBuildContext(agentName, reviewType, opts.minSeverity, "range", defaultOptionalSections(b.repoPath, opts.additionalContext))
+	ctx := b.newPromptBuildContext(agentName, reviewType, opts.minSeverity, "range", defaultOptionalSections(b.context(), b.repoPath, opts.additionalContext))
 
 	// Get previous reviews from before the range start
 	if contextCount > 0 && b.db != nil {
@@ -1239,11 +1254,11 @@ func orderedPreviousReviewViews(contexts []HistoricalReviewContext) []previousRe
 // LoadGuidelines loads review guidelines from the repo's default
 // branch, falling back to filesystem config when the default branch
 // has no .roborev.toml.
-func LoadGuidelines(repoPath string) string {
+func LoadGuidelines(ctx context.Context, repoPath string) string {
 	// Load review guidelines from the default branch (origin/main,
 	// origin/master, etc.). Branch-specific guidelines are intentionally
 	// ignored to prevent prompt injection from untrusted PR authors.
-	if defaultBranch, err := gitrepo.DefaultBranch(context.TODO(), repoPath); err == nil {
+	if defaultBranch, err := gitrepo.DefaultBranch(ctx, repoPath); err == nil {
 		cfg, err := config.LoadRepoConfigFromRef(repoPath, defaultBranch)
 		if err != nil {
 			if config.IsConfigParseError(err) {

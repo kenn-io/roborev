@@ -268,7 +268,7 @@ func enqueueConsolidation(ctx context.Context, cmd *cobra.Command, repoRoot stri
 	resolved.agentName = agentName
 	resolved.model = model
 	resolved.reasoning = reasoning
-	job, err := enqueueCompactJob(repoRoot, prompt, outputPrefix, label, branchFilter, resolved)
+	job, err := enqueueCompactJob(ctx, repoRoot, prompt, outputPrefix, label, branchFilter, resolved)
 	if err != nil {
 		return 0, fmt.Errorf("enqueue verification job: %w", err)
 	}
@@ -315,13 +315,13 @@ func runCompact(cmd *cobra.Command, opts compactOptions) error {
 		ctx = context.Background()
 	}
 
-	roots, err := resolveCurrentRepoRoots()
+	roots, err := resolveCurrentRepoRoots(ctx)
 	if err != nil {
 		return err
 	}
 
 	branchFilter := resolveCurrentBranchFilter(
-		roots.worktreeRoot, opts.branch, opts.allBranches,
+		ctx, roots.worktreeRoot, opts.branch, opts.allBranches,
 	)
 	explicitBranch := opts.branch != ""
 
@@ -540,9 +540,9 @@ func buildCompactOutputPrefix(jobCount int, branch string, jobIDs []int64) strin
 	return sb.String()
 }
 
-func enqueueCompactJob(repoRoot, prompt, outputPrefix, label, branch string, opts compactOptions) (*storage.ReviewJob, error) {
+func enqueueCompactJob(ctx context.Context, repoRoot, prompt, outputPrefix, label, branch string, opts compactOptions) (*storage.ReviewJob, error) {
 	if branch == "" {
-		branch = gitrepo.CurrentBranch(context.TODO(), repoRoot)
+		branch = gitrepo.CurrentBranch(ctx, repoRoot)
 	}
 
 	reqBody, err := json.Marshal(daemon.EnqueueRequest{

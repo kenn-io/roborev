@@ -264,7 +264,7 @@ func TestFindJobForCommit(t *testing.T) {
 			client := mockAPI(t, func(w http.ResponseWriter, r *http.Request) {
 				handler(t, w, r)
 			})
-			job, err := client.FindJobForCommit(tc.queryRepo, sha)
+			job, err := client.FindJobForCommit(t.Context(), tc.queryRepo, sha)
 			require.NoError(err, "FindJobForCommit failed")
 
 			if tc.expectNotFound {
@@ -351,7 +351,7 @@ func TestFindPendingJobForRef(t *testing.T) {
 				writeTestJSON(t, w, map[string]any{"jobs": jobs})
 			})
 
-			job, err := client.FindPendingJobForRef("/test/repo", "abc123..def456")
+			job, err := client.FindPendingJobForRef(t.Context(), "/test/repo", "abc123..def456")
 			require.NoError(err, "FindPendingJobForRef failed")
 
 			if tc.expectNotFound {

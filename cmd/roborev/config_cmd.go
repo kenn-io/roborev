@@ -32,10 +32,12 @@ type RepoResolver interface {
 	WorkingDir() (string, error)
 }
 
-type defaultRepoResolver struct{}
+type defaultRepoResolver struct {
+	ctx context.Context
+}
 
-func (defaultRepoResolver) RepoRoot() (string, error) {
-	return gitrepo.Root(context.TODO(), ".")
+func (r defaultRepoResolver) RepoRoot() (string, error) {
+	return gitrepo.Root(r.ctx, ".")
 }
 
 func (defaultRepoResolver) WorkingDir() (string, error) {
@@ -210,7 +212,7 @@ func configGetCmd() *cobra.Command {
 			if err != nil {
 				return err
 			}
-			val, err := getValueForScope(defaultRepoResolver{}, args[0], scope)
+			val, err := getValueForScope(defaultRepoResolver{ctx: cmd.Context()}, args[0], scope)
 			if err != nil {
 				return err
 			}
@@ -244,7 +246,7 @@ func configSetCmd() *cobra.Command {
 			}
 
 			// Default (and --local): set in local config
-			repoPath, err := requireRepoRoot(defaultRepoResolver{})
+			repoPath, err := requireRepoRoot(defaultRepoResolver{ctx: cmd.Context()})
 			if err != nil {
 				if errors.Is(err, errNotGitRepository) {
 					return fmt.Errorf("%w (use --global for global config)", errNotGitRepository)
@@ -278,9 +280,9 @@ func configListCmd() *cobra.Command {
 			case scopeGlobal:
 				return listGlobalConfig()
 			case scopeLocal:
-				return listLocalConfig(defaultRepoResolver{})
+				return listLocalConfig(defaultRepoResolver{ctx: cmd.Context()})
 			default:
-				return listMergedConfig(defaultRepoResolver{}, showOrigin)
+				return listMergedConfig(defaultRepoResolver{ctx: cmd.Context()}, showOrigin)
 			}
 		},
 	}

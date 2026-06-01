@@ -351,7 +351,7 @@ type RunContext struct {
 func runRefine(runCtx RunContext, opts refineOptions) error {
 	ctx := runCtx.Context
 	if ctx == nil {
-		ctx = context.TODO()
+		return fmt.Errorf("run refine: missing context")
 	}
 
 	// 1. Validate git and branch context (before touching daemon)
@@ -471,7 +471,7 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 
 		if currentFailedReview == nil {
 			// Check for pending jobs before triggering a branch review
-			pendingJob, err := findPendingJobForBranch(client, repoPath, commits)
+			pendingJob, err := findPendingJobForBranch(ctx, client, repoPath, commits)
 			if err != nil {
 				return fmt.Errorf("error checking pending jobs: %w", err)
 			}
@@ -512,7 +512,7 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 				// the ADDRESSING agent (which fixes code), not the REVIEW agent.
 				// We use the SHA-based rangeRef to ensure we only reuse jobs for the
 				// exact same HEAD - if HEAD has moved, we want a fresh review.
-				existingJob, err := client.FindPendingJobForRef(repoPath, rangeRef)
+				existingJob, err := client.FindPendingJobForRef(ctx, repoPath, rangeRef)
 				if err != nil {
 					return fmt.Errorf("error checking for existing branch review: %w", err)
 				}
@@ -724,7 +724,7 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 		// Wait for new commit to be reviewed
 		time.Sleep(commitWaitDelay)
 
-		newJob, err := client.FindJobForCommit(repoPath, newCommit)
+		newJob, err := client.FindJobForCommit(ctx, repoPath, newCommit)
 		if err != nil || newJob == nil {
 			currentFailedReview = nil
 			continue
@@ -763,9 +763,6 @@ func runRefineList(
 		return fmt.Errorf("daemon not running: %w", err)
 	}
 	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.TODO()
-	}
 
 	workDir, err := os.Getwd()
 	if err != nil {
@@ -876,9 +873,6 @@ func runRefineAllBranches(
 	cmd *cobra.Command, opts refineOptions,
 ) error {
 	ctx := cmd.Context()
-	if ctx == nil {
-		ctx = context.TODO()
-	}
 
 	repoPath, err := gitrepo.Root(ctx, ".")
 	if err != nil {
@@ -1102,9 +1096,9 @@ func findFailedReviewForBranch(client daemon.Client, commits []string, skip map[
 
 // findPendingJobForBranch finds a queued or running job for any of the given commits.
 // Returns the first pending job found (oldest commit first), or nil if all jobs are complete.
-func findPendingJobForBranch(client daemon.Client, repoPath string, commits []string) (*storage.ReviewJob, error) {
+func findPendingJobForBranch(ctx context.Context, client daemon.Client, repoPath string, commits []string) (*storage.ReviewJob, error) {
 	for _, sha := range commits {
-		job, err := client.FindJobForCommit(repoPath, sha)
+		job, err := client.FindJobForCommit(ctx, repoPath, sha)
 		if err != nil {
 			return nil, err
 		}

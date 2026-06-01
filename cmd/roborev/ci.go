@@ -141,7 +141,7 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 	}
 
 	// Determine repo root
-	root, err := gitrepo.Root(context.TODO(), ".")
+	root, err := gitrepo.Root(ctx, ".")
 	if err != nil {
 		return fmt.Errorf(
 			"not a git repository — " +

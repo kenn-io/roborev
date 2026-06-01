@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"fmt"
 	"path/filepath"
 
@@ -38,7 +37,7 @@ Review types, reasoning level, severity filter, and other ` +
 After generating the workflow, add repository secrets ` +
 			`for your agent API keys.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			root, err := gitrepo.Root(context.TODO(), ".")
+			root, err := gitrepo.Root(cmd.Context(), ".")
 			if err != nil {
 				return fmt.Errorf(
 					"not a git repository - " +

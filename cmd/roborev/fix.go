@@ -125,12 +125,12 @@ Examples:
 				return fmt.Errorf("--batch-size must be >= 1")
 			}
 			if list {
-				roots, err := resolveCurrentRepoRoots()
+				roots, err := resolveCurrentRepoRoots(ctx)
 				if err != nil {
 					return err
 				}
 				effectiveBranch := resolveCurrentBranchFilter(
-					roots.worktreeRoot, branch, allBranches,
+					ctx, roots.worktreeRoot, branch, allBranches,
 				)
 				return runFixList(
 					cmd, effectiveBranch,
@@ -147,7 +147,7 @@ Examples:
 				classify:    agent.ClassifyLimit,
 			}
 
-			roots, err := resolveCurrentRepoRoots()
+			roots, err := resolveCurrentRepoRoots(ctx)
 			if err != nil {
 				return err
 			}
@@ -171,7 +171,7 @@ Examples:
 				}
 				if len(jobIDs) == 0 {
 					effectiveBranch := resolveCurrentBranchFilter(
-						roots.worktreeRoot, branch, allBranches,
+						ctx, roots.worktreeRoot, branch, allBranches,
 					)
 					return runFixBatch(cmd, nil, effectiveBranch, allBranches, branch != "", newestFirst, batchSize, opts, tracker)
 				}
@@ -184,7 +184,7 @@ Examples:
 				// --all-branches: empty string (no filter)
 				// default: current branch
 				effectiveBranch := resolveCurrentBranchFilter(
-					roots.worktreeRoot, branch, allBranches,
+					ctx, roots.worktreeRoot, branch, allBranches,
 				)
 				return runFixOpen(cmd, effectiveBranch, allBranches, branch != "", newestFirst, opts, tracker)
 			}
@@ -509,7 +509,12 @@ func runFixWithSeen(cmd *cobra.Command, jobIDs []int64, opts fixOptions, seen ma
 		return err
 	}
 
-	roots, err := resolveCurrentRepoRoots()
+	ctx := cmd.Context()
+	if ctx == nil {
+		return fmt.Errorf("run fix: missing context")
+	}
+
+	roots, err := resolveCurrentRepoRoots(ctx)
 	if err != nil {
 		return err
 	}
@@ -575,7 +580,7 @@ func runFixOpen(cmd *cobra.Command, branch string, allBranches, explicitBranch, 
 		ctx = context.Background()
 	}
 
-	roots, err := resolveCurrentRepoRoots()
+	roots, err := resolveCurrentRepoRoots(ctx)
 	if err != nil {
 		return err
 	}
@@ -802,7 +807,7 @@ func runFixList(
 		ctx = context.Background()
 	}
 
-	roots, err := resolveCurrentRepoRoots()
+	roots, err := resolveCurrentRepoRoots(ctx)
 	if err != nil {
 		return err
 	}
@@ -1152,7 +1157,7 @@ func runFixBatch(cmd *cobra.Command, jobIDs []int64, branch string, allBranches,
 		ctx = context.Background()
 	}
 
-	roots, err := resolveCurrentRepoRoots()
+	roots, err := resolveCurrentRepoRoots(ctx)
 	if err != nil {
 		return err
 	}

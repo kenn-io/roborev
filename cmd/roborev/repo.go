@@ -20,17 +20,17 @@ import (
 // If the identifier is ".", "..", or an existing path on disk, it will try to
 // resolve it to the git repository root. This allows display names like "org/project"
 // to be treated as names rather than paths.
-func resolveRepoIdentifier(identifier string) string {
+func resolveRepoIdentifier(ctx context.Context, identifier string) string {
 	// Special cases that are always paths
 	if identifier == "." || identifier == ".." ||
 		strings.HasPrefix(identifier, "./") ||
 		strings.HasPrefix(identifier, "../") {
-		return resolvePathToGitRoot(identifier)
+		return resolvePathToGitRoot(ctx, identifier)
 	}
 
 	// Check if it's an absolute path (works on both Unix and Windows)
 	if filepath.IsAbs(identifier) {
-		return resolvePathToGitRoot(identifier)
+		return resolvePathToGitRoot(ctx, identifier)
 	}
 
 	// For identifiers containing path separators (/ or \), check if they exist on disk.
@@ -40,7 +40,7 @@ func resolveRepoIdentifier(identifier string) string {
 	if strings.ContainsAny(identifier, "/\\") {
 		if _, err := os.Stat(identifier); err == nil {
 			// Path exists on disk, treat as path
-			return resolvePathToGitRoot(identifier)
+			return resolvePathToGitRoot(ctx, identifier)
 		}
 		// Path doesn't exist or isn't accessible (permission denied, etc.)
 		// Treat as a name since user didn't use explicit path syntax
@@ -53,13 +53,13 @@ func resolveRepoIdentifier(identifier string) string {
 
 // resolvePathToGitRoot resolves a filesystem path to its git repository root.
 // If not in a git repo, returns the absolute path.
-func resolvePathToGitRoot(path string) string {
+func resolvePathToGitRoot(ctx context.Context, path string) string {
 	absPath, err := filepath.Abs(path)
 	if err != nil {
 		return path
 	}
 
-	repoRoot, err := gitrepo.Root(context.TODO(), absPath)
+	repoRoot, err := gitrepo.Root(ctx, absPath)
 	if err != nil {
 		// Not a git repo or git error, fall back to absolute path
 		return absPath
@@ -71,11 +71,11 @@ func resolvePathToGitRoot(path string) string {
 // resolveRepoFlag resolves a --repo flag value to the main repo root.
 // An empty or "." value resolves to the current directory's repo.
 // Used by tui and review commands that accept --repo with NoOptDefVal=".".
-func resolveRepoFlag(path string) (string, error) {
+func resolveRepoFlag(ctx context.Context, path string) (string, error) {
 	if path == "" || path == "." {
 		path = "."
 	}
-	root, err := gitrepo.MainRoot(context.TODO(), path)
+	root, err := gitrepo.MainRoot(ctx, path)
 	if err != nil || root == "" {
 		return "", fmt.Errorf("not inside a git repository")
 	}
@@ -86,9 +86,9 @@ func resolveRepoFlag(path string) (string, error) {
 // "HEAD" (the NoOptDefVal) resolves to the current branch. Any other value
 // is returned as-is. Used by tui and review commands that accept --branch
 // with NoOptDefVal="HEAD".
-func resolveBranchFlag(value, repoPath string) (string, error) {
+func resolveBranchFlag(ctx context.Context, value, repoPath string) (string, error) {
 	if value == "HEAD" {
-		branch := gitrepo.CurrentBranch(context.TODO(), repoPath)
+		branch := gitrepo.CurrentBranch(ctx, repoPath)
 		if branch == "" {
 			return "", fmt.Errorf("could not detect current branch")
 		}
@@ -181,7 +181,7 @@ Examples:
 `,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			identifier := resolveRepoIdentifier(args[0])
+			identifier := resolveRepoIdentifier(cmd.Context(), args[0])
 
 			dbPath := storage.DefaultDBPath()
 			if dbPath == "" {
@@ -266,7 +266,7 @@ Examples:
 `,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			identifier := resolveRepoIdentifier(args[0])
+			identifier := resolveRepoIdentifier(cmd.Context(), args[0])
 			newName := args[1]
 
 			if newName == "" {
@@ -344,10 +344,10 @@ Examples:
 `,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			identifier := resolveRepoIdentifier(args[0])
+			identifier := resolveRepoIdentifier(cmd.Context(), args[0])
 			newPathArg := args[1]
 
-			newPath, err := resolveMoveTargetPath(newPathArg)
+			newPath, err := resolveMoveTargetPath(cmd.Context(), newPathArg)
 			if err != nil {
 				return err
 			}
@@ -393,12 +393,12 @@ Examples:
 //   - bare identifiers (treated as relative to cwd)
 //
 // If the resolved path is inside a git repository, the repo root is returned.
-func resolveMoveTargetPath(p string) (string, error) {
+func resolveMoveTargetPath(ctx context.Context, p string) (string, error) {
 	abs, err := filepath.Abs(p)
 	if err != nil {
 		return "", fmt.Errorf("resolve path: %w", err)
 	}
-	if root, err := gitrepo.Root(context.TODO(), abs); err == nil && root != "" {
+	if root, err := gitrepo.Root(ctx, abs); err == nil && root != "" {
 		return filepath.ToSlash(root), nil
 	}
 	return filepath.ToSlash(abs), nil
@@ -426,7 +426,7 @@ Examples:
 `,
 		Args: cobra.ExactArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			identifier := resolveRepoIdentifier(args[0])
+			identifier := resolveRepoIdentifier(cmd.Context(), args[0])
 
 			dbPath := storage.DefaultDBPath()
 			if dbPath == "" {
@@ -533,8 +533,8 @@ Examples:
 `,
 		Args: cobra.ExactArgs(2),
 		RunE: func(cmd *cobra.Command, args []string) error {
-			sourceIdent := resolveRepoIdentifier(args[0])
-			targetIdent := resolveRepoIdentifier(args[1])
+			sourceIdent := resolveRepoIdentifier(cmd.Context(), args[0])
+			targetIdent := resolveRepoIdentifier(cmd.Context(), args[1])
 
 			dbPath := storage.DefaultDBPath()
 			if dbPath == "" {

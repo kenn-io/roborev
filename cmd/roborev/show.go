@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"encoding/json"
 	"fmt"
 	"net/http"
@@ -41,6 +40,7 @@ Examples:
   roborev show --prompt 42  # Show the prompt sent to the agent`,
 		Args: cobra.MaximumNArgs(1),
 		RunE: func(cmd *cobra.Command, args []string) error {
+			ctx := cmd.Context()
 			// Ensure daemon is running (and restart if version mismatch)
 			if err := ensureDaemon(); err != nil {
 				return fmt.Errorf("daemon not running: %w", err)
@@ -59,11 +59,11 @@ Examples:
 				}
 				// Default to HEAD
 				sha := "HEAD"
-				root, rootErr := gitrepo.Root(context.TODO(), ".")
+				root, rootErr := gitrepo.Root(ctx, ".")
 				if rootErr != nil {
 					return fmt.Errorf("not in a git repository; use a job ID instead (e.g., roborev show 42)")
 				}
-				if resolved, err := gitrepo.Resolve(context.TODO(), root, sha); err == nil {
+				if resolved, err := gitrepo.Resolve(ctx, root, sha); err == nil {
 					sha = resolved
 				}
 				queryURL = addr + "/api/review?sha=" + sha
@@ -77,8 +77,8 @@ Examples:
 					isJobID = true
 				} else {
 					// Try to resolve as SHA first (handles numeric SHAs like "123456")
-					if root, err := gitrepo.Root(context.TODO(), "."); err == nil {
-						if resolved, err := gitrepo.Resolve(context.TODO(), root, arg); err == nil {
+					if root, err := gitrepo.Root(ctx, "."); err == nil {
+						if resolved, err := gitrepo.Resolve(ctx, root, arg); err == nil {
 							resolvedSHA = resolved
 						}
 					}

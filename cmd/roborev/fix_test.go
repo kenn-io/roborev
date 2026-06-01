@@ -2205,7 +2205,7 @@ func TestResolveCurrentRepoRoots(t *testing.T) {
 	resolvedWorktreeDir, err := filepath.EvalSymlinks(worktreeDir)
 	require.NoError(t, err)
 
-	roots, err := resolveCurrentRepoRoots()
+	roots, err := resolveCurrentRepoRoots(t.Context())
 	require.NoError(t, err)
 	assert.Equal(t, resolvedWorktreeDir, roots.worktreeRoot)
 	assert.Equal(t, repo.Dir, roots.mainRepoRoot)
@@ -2214,19 +2214,19 @@ func TestResolveCurrentRepoRoots(t *testing.T) {
 func TestResolveCurrentBranchFilter(t *testing.T) {
 	t.Run("uses worktree branch when branch omitted", func(t *testing.T) {
 		_, worktreeDir := setupWorktree(t)
-		assert.Equal(t, "wt-branch", resolveCurrentBranchFilter(worktreeDir, "", false))
+		assert.Equal(t, "wt-branch", resolveCurrentBranchFilter(t.Context(), worktreeDir, "", false))
 	})
 
 	t.Run("returns explicit branch", func(t *testing.T) {
 		repo := newTestGitRepo(t)
 		repo.CommitFile("a.txt", "a", "initial")
-		assert.Equal(t, "feature/custom", resolveCurrentBranchFilter(repo.Dir, "feature/custom", false))
+		assert.Equal(t, "feature/custom", resolveCurrentBranchFilter(t.Context(), repo.Dir, "feature/custom", false))
 	})
 
 	t.Run("returns empty string for all branches", func(t *testing.T) {
 		repo := newTestGitRepo(t)
 		repo.CommitFile("a.txt", "a", "initial")
-		assert.Empty(t, resolveCurrentBranchFilter(repo.Dir, "", true))
+		assert.Empty(t, resolveCurrentBranchFilter(t.Context(), repo.Dir, "", true))
 	})
 }
 

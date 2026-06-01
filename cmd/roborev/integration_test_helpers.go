@@ -28,8 +28,11 @@ func gitRevParse(t *testing.T, dir string, ref string) string {
 	return strings.TrimSpace(string(out))
 }
 
-func defaultTestRunContext(repoDir string) RunContext {
+func defaultTestRunContext(t *testing.T, repoDir string) RunContext {
+	t.Helper()
+
 	return RunContext{
+		Context:         t.Context(),
 		WorkingDir:      repoDir,
 		PollInterval:    1 * time.Millisecond,
 		PostCommitDelay: 1 * time.Millisecond,

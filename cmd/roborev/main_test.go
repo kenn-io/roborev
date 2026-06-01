@@ -99,8 +99,11 @@ func setupRefineRepo(t *testing.T) (string, string) {
 	return repo.Dir, headSHA
 }
 
-func newFastRunContext(repoDir string) RunContext {
+func newFastRunContext(t *testing.T, repoDir string) RunContext {
+	t.Helper()
+
 	return RunContext{
+		Context:         t.Context(),
 		WorkingDir:      repoDir,
 		PollInterval:    1 * time.Millisecond,
 		PostCommitDelay: 1 * time.Millisecond,
@@ -218,7 +221,7 @@ func TestRunRefineSurfacesResponseErrors(t *testing.T) {
 	})
 	defer md.Close()
 
-	ctx := newFastRunContext(repoDir)
+	ctx := newFastRunContext(t, repoDir)
 
 	err := runRefine(ctx, refineOptions{agentName: "test", maxIterations: 1, quiet: true})
 	require.Error(t, err, "expected error, got nil")
@@ -243,7 +246,7 @@ func TestRunRefineFailsOnInvalidGlobalConfigBeforeDaemonStartup(t *testing.T) {
 		getAnyRunningDaemon = origGetAnyRunningDaemon
 	})
 
-	ctx := newFastRunContext(repoDir)
+	ctx := newFastRunContext(t, repoDir)
 
 	err = runRefine(ctx, refineOptions{agentName: "test", maxIterations: 1, quiet: true})
 	require.Error(t, err, "expected config load error")
@@ -277,7 +280,7 @@ func TestRunRefineFailsOnInvalidRepoConfigBeforeDaemonStartup(t *testing.T) {
 		getAnyRunningDaemon = origGetAnyRunningDaemon
 	})
 
-	ctx := newFastRunContext(repoDir)
+	ctx := newFastRunContext(t, repoDir)
 
 	err = runRefine(ctx, refineOptions{
 		agentName:     "test",
@@ -303,7 +306,7 @@ func TestRunRefineQuietNonTTYTimerOutput(t *testing.T) {
 	isTerminal = func(fd uintptr) bool { return false }
 	defer func() { isTerminal = origIsTerminal }()
 
-	ctx := newFastRunContext(repoDir)
+	ctx := newFastRunContext(t, repoDir)
 
 	output := captureStdout(t, func() {
 		err := runRefine(ctx, refineOptions{agentName: "test", maxIterations: 1, quiet: true})
@@ -333,7 +336,7 @@ func TestRunRefineStopsLiveTimerOnAgentError(t *testing.T) {
 	}})
 	defer agent.Register(agent.NewTestAgent())
 
-	ctx := newFastRunContext(repoDir)
+	ctx := newFastRunContext(t, repoDir)
 
 	output := captureStdout(t, func() {
 		err := runRefine(ctx, refineOptions{agentName: "test", maxIterations: 1, quiet: true})
@@ -596,7 +599,7 @@ func TestRefinePendingJobWaitDoesNotConsumeIteration(t *testing.T) {
 	}
 	md.State.nextJobID = 2
 
-	ctx := newFastRunContext(repoDir)
+	ctx := newFastRunContext(t, repoDir)
 
 	// Run refine with maxIterations=1. If waiting on the pending job consumed
 	// an iteration, this would fail with "max iterations reached". Since the
