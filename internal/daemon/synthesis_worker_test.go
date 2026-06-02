@@ -4,8 +4,10 @@ import (
 	"context"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -230,6 +232,46 @@ func TestConfigureSynthesisAgentKeepsPrimaryModelWhenBackupMatchesPrimary(t *tes
 	configuredSynth, ok := configured.(*synthesisEntrypointTestAgent)
 	require.True(t, ok)
 	assert.Equal("primary-model", configuredSynth.model)
+}
+
+func TestConfigureSynthesisAgentKeepsPrimaryModelForConfiguredACPAlias(t *testing.T) {
+	assert := assert.New(t)
+	tc := newWorkerTestContext(t, 1)
+
+	binDir := t.TempDir()
+	const acpCommand = "primary-acp"
+	acpBinary := acpCommand
+	if runtime.GOOS == "windows" {
+		acpBinary += ".exe"
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(binDir, acpBinary), []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	tc.Pool.cfgGetter.Config().ACP = &config.ACPAgentConfig{
+		Name:    "primary-acp",
+		Command: acpCommand,
+	}
+
+	_, _, synthJob := enqueuePanelRun(t, tc, "configured-acp-panel", []memberSpec{
+		{name: "m0", agent: "test"},
+	})
+	_, err := tc.DB.Exec(
+		`UPDATE review_jobs
+		 SET status = 'running', worker_id = ?, agent = ?, model = ?, backup_agent = ?, backup_model = ?
+		 WHERE id = ?`,
+		testWorkerID, "primary-acp", "primary-model", "acp", "backup-model", synthJob.ID,
+	)
+	require.NoError(t, err)
+	job, err := tc.DB.GetJobByID(synthJob.ID)
+	require.NoError(t, err)
+
+	configured, agentName, err := tc.Pool.configureSynthesisAgent(testWorkerID, job)
+	require.NoError(t, err)
+
+	assert.Equal("acp", agentName)
+	configuredACP, ok := configured.(*agent.ACPAgent)
+	require.True(t, ok)
+	assert.Equal("primary-model", configuredACP.Model)
 }
 
 // TestSynthesisAllFailedRendersHeadSHA covers F11: the all-failed review header

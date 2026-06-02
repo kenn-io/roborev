@@ -210,8 +210,19 @@ func (s *Server) descriptorForDirty(in freezeInputs) (targetDescriptor, *RawJSON
 	}
 
 	targetSHA, _ := git.ResolveSHA(in.checkoutRoot, "HEAD")
+	var commitID int64
+	if targetSHA != "" {
+		if info, err := git.GetCommitInfo(in.repoRoot, targetSHA); err == nil {
+			if commit, err := s.db.GetOrCreateCommit(
+				in.repo.ID, targetSHA, info.Author, info.Subject, info.Timestamp,
+			); err == nil {
+				commitID = commit.ID
+			}
+		}
+	}
 	return targetDescriptor{
 		repoID:            in.repo.ID,
+		commitID:          commitID,
 		gitRef:            in.gitRef,
 		branch:            in.req.Branch,
 		sessionSHA:        targetSHA,

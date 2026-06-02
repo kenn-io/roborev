@@ -121,6 +121,11 @@ type ReviewJob struct {
 	// attached by the listing handler for collapsed panel display. Nil for
 	// non-panel jobs and member rows.
 	PanelSummary *PanelSummary `json:"panel_summary,omitempty"`
+
+	// ReusableSessionTarget is a joined, non-serialized SHA used only by
+	// session-reuse candidate validation. Dirty jobs keep GitRef="dirty" and
+	// carry their base HEAD through this field.
+	ReusableSessionTarget string `json:"-"`
 }
 
 // IsDirtyJob returns true if this is a dirty review (uncommitted changes).

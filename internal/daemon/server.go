@@ -653,7 +653,10 @@ func (s *Server) findReusableSessionID(
 
 	const maxSessionReuseDistance = 50
 	for _, candidate := range candidates {
-		candidateSHA := reusableSessionTarget(candidate.GitRef)
+		candidateSHA := strings.TrimSpace(candidate.ReusableSessionTarget)
+		if candidateSHA == "" {
+			candidateSHA = reusableSessionTarget(candidate.GitRef)
+		}
 		if candidateSHA == "" {
 			continue
 		}

@@ -83,7 +83,7 @@ func TestEnqueueDirtyUnchanged(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(storage.JobTypeDirty, stored.JobType)
 	assert.Equal("dirty", stored.GitRef)
-	assert.Zero(stored.CommitIDValue(), "dirty job must not reference a commit row")
+	assert.NotZero(stored.CommitIDValue(), "dirty job stores base HEAD for session reuse")
 
 	// GetJobByID does not hydrate diff_content; the worker reads it via ClaimJob,
 	// so verify the stored diff survives through the worker's view.

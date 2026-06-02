@@ -803,10 +803,12 @@ func TestFindReusableSessionCandidatesIncludesDirtyReviewJobs(t *testing.T) {
 	defer db.Close()
 
 	repo := createRepo(t, db, "/tmp/session-dirty-candidates")
+	commit := createCommit(t, db, repo.ID, "dirty-base-sha")
 	branch := "feature/session"
 	dirtyJob := createCompletedJobWithOptions(t, db, EnqueueOpts{
 		RepoID:     repo.ID,
-		GitRef:     "dirty-base-sha",
+		CommitID:   commit.ID,
+		GitRef:     "dirty",
 		Branch:     branch,
 		Agent:      "codex",
 		ReviewType: "default",
@@ -827,6 +829,7 @@ func TestFindReusableSessionCandidatesIncludesDirtyReviewJobs(t *testing.T) {
 	require.Len(t, candidates, 1)
 	assert.Equal(dirtyJob.ID, candidates[0].ID)
 	assert.Equal("session-dirty", candidates[0].SessionID)
+	assert.Equal("dirty", candidates[0].GitRef)
 }
 
 func setJobSession(t *testing.T, db *DB, jobID int64, sessionID string) {

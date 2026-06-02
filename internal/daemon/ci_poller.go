@@ -2328,6 +2328,12 @@ func appendPanelPRFooter(body string, review *storage.Review, members []storage.
 	if footer == "" {
 		return body
 	}
+	if len(footer)+len(panelCommentTruncSuffix) > reviewpkg.MaxCommentLen {
+		footer = formatCompactPanelPRFooter(review.Job, review.Agent, members, includeCosts)
+	}
+	if len(footer)+len(panelCommentTruncSuffix) > reviewpkg.MaxCommentLen {
+		footer = truncateUTF8(footer, reviewpkg.MaxCommentLen-len(panelCommentTruncSuffix))
+	}
 	body = truncatePanelPRBodyForFooter(body, footer)
 	return strings.TrimRight(body, "\n") + footer
 }
@@ -2352,6 +2358,26 @@ func formatPanelPRFooter(job *storage.ReviewJob, synthesisAgent string, members 
 		"Panel: " + panelName,
 		"Synthesis: " + formatPanelSynthesis(job, synthesisAgent, includeCosts),
 		"Members: " + formatPanelSubagents(members, includeCosts),
+	}
+	if total := formatPanelTotal(job, members, includeCosts); total != "" {
+		footer = append(footer, "Total: "+total)
+	}
+	footer = append(footer, fmt.Sprintf("Job: %d", job.ID))
+	return fmt.Sprintf("\n\n---\n*%s*\n", strings.Join(footer, " | "))
+}
+
+func formatCompactPanelPRFooter(job *storage.ReviewJob, synthesisAgent string, members []storage.BatchReviewResult, includeCosts bool) string {
+	if job == nil {
+		return ""
+	}
+	panelName := job.PanelName
+	if panelName == "" {
+		panelName = "panel"
+	}
+	footer := []string{
+		"Panel: " + panelName,
+		"Synthesis: " + formatPanelSynthesis(job, synthesisAgent, includeCosts),
+		fmt.Sprintf("Members: %d members (details omitted; footer too large)", len(members)),
 	}
 	if total := formatPanelTotal(job, members, includeCosts); total != "" {
 		footer = append(footer, "Total: "+total)

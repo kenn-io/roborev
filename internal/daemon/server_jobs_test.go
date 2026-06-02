@@ -675,6 +675,53 @@ func TestHandleEnqueueReusesPreviousBranchSessionWhenEnabled(t *testing.T) {
 	}
 }
 
+func TestFindReusableSessionIDUsesDirtyBaseCommit(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	repo := testutil.InitTestRepo(t)
+	repoRoot := repo.Path()
+	baseSHA := repo.HeadSHA()
+
+	reuseSessions := true
+	server.configWatcher.Config().ReuseReviewSession = &reuseSessions
+
+	storedRepo, err := db.GetOrCreateRepo(repoRoot)
+	require.NoError(t, err)
+	commit, err := db.GetOrCreateCommit(storedRepo.ID, baseSHA, "Author", "Subject", time.Now())
+	require.NoError(t, err)
+
+	const dirtyDiff = "diff --git a/base.txt b/base.txt\n" +
+		"--- a/base.txt\n" +
+		"+++ b/base.txt\n" +
+		"@@ -1 +1 @@\n" +
+		"-base\n" +
+		"+dirty\n"
+	prevJob, err := db.EnqueueJob(storage.EnqueueOpts{
+		RepoID:      storedRepo.ID,
+		CommitID:    commit.ID,
+		GitRef:      "dirty",
+		Branch:      "feature/session",
+		Agent:       "test",
+		ReviewType:  config.ReviewTypeDefault,
+		JobType:     storage.JobTypeDirty,
+		DiffContent: dirtyDiff,
+	})
+	require.NoError(t, err)
+	claimed, err := db.ClaimJob("test-worker")
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	require.Equal(t, prevJob.ID, claimed.ID)
+	require.NoError(t, db.CompleteJob(prevJob.ID, "test", "prompt", "No issues found."))
+	_, err = db.Exec(`UPDATE review_jobs SET session_id = ? WHERE id = ?`, "session-dirty", prevJob.ID)
+	require.NoError(t, err)
+
+	reused := server.findReusableSessionID(
+		t.Context(), repoRoot, storedRepo.ID, "feature/session", "test",
+		config.ReviewTypeDefault, "", baseSHA,
+	)
+
+	assert.Equal(t, "session-dirty", reused)
+}
+
 func TestFindReusableSessionIDRejectsReusedBranchNameFromUnrelatedHistory(t *testing.T) {
 	server, db, tmpDir := newTestServer(t)
 
@@ -1243,7 +1290,6 @@ func TestFindReusableSessionIDLookbackIgnoresUnusableRefs(t *testing.T) {
 
 	dirtyJob, err := db.EnqueueJob(storage.EnqueueOpts{
 		RepoID:     repo.ID,
-		CommitID:   validCommit.ID,
 		GitRef:     "dirty",
 		Branch:     "feature/session",
 		Agent:      "test",

@@ -460,6 +460,32 @@ func TestFormatPanelPRComment_DoesNotTruncateWhenCommentFits(t *testing.T) {
 	assert.NotContains(t, comment, "...(truncated)")
 }
 
+func TestAppendPanelPRFooterBoundsOversizedFooter(t *testing.T) {
+	storedReview := &storage.Review{
+		Job: &storage.ReviewJob{
+			ID:        42,
+			PanelName: "ci",
+			Agent:     "codex",
+		},
+	}
+	members := make([]storage.BatchReviewResult, 0, 250)
+	for i := range 250 {
+		members = append(members, storage.BatchReviewResult{
+			PanelMemberName: fmt.Sprintf("member-%03d-%s", i, strings.Repeat("x", 400)),
+			Agent:           "codex",
+			ReviewType:      "default",
+			Status:          string(storage.JobStatusDone),
+		})
+	}
+
+	comment := appendPanelPRFooter("body\n", storedReview, members, false)
+
+	assert.LessOrEqual(t, len(comment), review.MaxCommentLen)
+	assert.True(t, utf8.ValidString(comment), "bounded comment must be valid UTF-8")
+	assert.Contains(t, comment, "Panel: ci")
+	assert.Contains(t, comment, "Job: 42")
+}
+
 func TestCIPollerProcessPR_EnqueuesMatrix(t *testing.T) {
 	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
 	h.Cfg.CI.ReviewTypes = []string{"security", "review"}

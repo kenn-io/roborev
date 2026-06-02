@@ -144,19 +144,20 @@ func (db *DB) FindReusableSessionCandidates(
 		reviewType = "default"
 	}
 	query := `
-		SELECT id, git_ref, session_id
-		FROM review_jobs
-		WHERE repo_id = ?
-		  AND branch = ?
-		  AND agent = ?
-		  AND status = 'done'
-		  AND COALESCE(NULLIF(job_type, ''), 'review') IN ('review', 'range', 'dirty')
-		  AND COALESCE(panel_role, '') = ''
-		  AND session_id IS NOT NULL
-		  AND session_id <> ''
-		  AND COALESCE(NULLIF(review_type, ''), 'default') = ?
-		  AND COALESCE(worktree_path, '') = ?
-		ORDER BY COALESCE(finished_at, updated_at, enqueued_at) DESC, id DESC`
+		SELECT j.id, j.git_ref, j.session_id, COALESCE(c.sha, '')
+		FROM review_jobs j
+		LEFT JOIN commits c ON c.id = j.commit_id
+		WHERE j.repo_id = ?
+		  AND j.branch = ?
+		  AND j.agent = ?
+		  AND j.status = 'done'
+		  AND COALESCE(NULLIF(j.job_type, ''), 'review') IN ('review', 'range', 'dirty')
+		  AND COALESCE(j.panel_role, '') = ''
+		  AND j.session_id IS NOT NULL
+		  AND j.session_id <> ''
+		  AND COALESCE(NULLIF(j.review_type, ''), 'default') = ?
+		  AND COALESCE(j.worktree_path, '') = ?
+		ORDER BY COALESCE(j.finished_at, j.updated_at, j.enqueued_at) DESC, j.id DESC`
 	baseArgs := []any{repoID, branch, agent, reviewType, worktreePath}
 	if limit <= 0 {
 		jobs, _, err := db.scanReusableSessionCandidates(query, baseArgs, 0)
@@ -208,13 +209,16 @@ func (db *DB) scanReusableSessionCandidates(query string, args []any, remaining 
 		scanned++
 		var job ReviewJob
 		var sessionID sql.NullString
-		if err := rows.Scan(&job.ID, &job.GitRef, &sessionID); err != nil {
+		var commitSHA string
+		if err := rows.Scan(&job.ID, &job.GitRef, &sessionID, &commitSHA); err != nil {
 			return nil, 0, err
 		}
-		if !sessionID.Valid || !agent.IsValidResumeSessionID(sessionID.String) || reusableSessionCandidateTarget(job.GitRef) == "" {
+		target := reusableSessionCandidateTarget(job.GitRef, commitSHA)
+		if !sessionID.Valid || !agent.IsValidResumeSessionID(sessionID.String) || target == "" {
 			continue
 		}
 		job.SessionID = sessionID.String
+		job.ReusableSessionTarget = target
 		jobs = append(jobs, job)
 		if remaining > 0 && len(jobs) >= remaining {
 			break
@@ -226,10 +230,13 @@ func (db *DB) scanReusableSessionCandidates(query string, args []any, remaining 
 	return jobs, scanned, nil
 }
 
-func reusableSessionCandidateTarget(gitRef string) string {
+func reusableSessionCandidateTarget(gitRef, commitSHA string) string {
 	gitRef = strings.TrimSpace(gitRef)
-	if gitRef == "" || gitRef == "dirty" {
+	if gitRef == "" {
 		return ""
+	}
+	if gitRef == "dirty" {
+		return strings.TrimSpace(commitSHA)
 	}
 	if strings.Contains(gitRef, "..") {
 		parts := strings.SplitN(gitRef, "..", 2)
