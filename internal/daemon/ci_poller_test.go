@@ -3023,15 +3023,14 @@ func TestProcessPRCreatesPanelRun(t *testing.T) {
 	assert.Equal(1, designMemberCount(members), "exactly one design member")
 }
 
-// TestProcessPRSynthesisCarriesMinSeverity verifies the CI min_severity
-// threshold reaches the synthesis job, not just the members. The synthesis
-// worker passes job.MinSeverity into BuildSynthesisPrompt; an empty value would
-// drop the threshold and let low-severity member findings resurface in the final
-// PR comment.
-func TestProcessPRSynthesisCarriesMinSeverity(t *testing.T) {
+// TestProcessPRSynthesisAndMembersUseSeparateMinSeverity verifies the CI
+// min_severity threshold reaches only the synthesis job, while member reviews
+// use the review_min_severity setting from normal review config.
+func TestProcessPRSynthesisAndMembersUseSeparateMinSeverity(t *testing.T) {
 	assert := assert.New(t)
 	p, db, _, repo, cfg := newCIPanelGitHarness(t)
 	cfg.CI.MinSeverity = "high"
+	cfg.ReviewMinSeverity = "medium"
 	p.loadRepoConfigFn = func(string) (*config.RepoConfig, error) { return &config.RepoConfig{}, nil }
 
 	base := repo.HeadSHA()
@@ -3052,12 +3051,11 @@ func TestProcessPRSynthesisCarriesMinSeverity(t *testing.T) {
 	require.NotNil(t, synth, "synthesis job exists")
 	assert.Equal("high", synth.MinSeverity, "synthesis carries the CI min_severity")
 
-	// Members carry it too (sanity that the threshold is wired on both paths).
 	members, err := db.GetPanelMembers(panel.PanelRunUUID)
 	require.NoError(t, err)
 	require.NotEmpty(t, members)
 	for _, m := range members {
-		assert.Equal("high", m.MinSeverity, "member %d carries min_severity", m.ID)
+		assert.Equal("medium", m.MinSeverity, "member %d carries review_min_severity", m.ID)
 	}
 }
 

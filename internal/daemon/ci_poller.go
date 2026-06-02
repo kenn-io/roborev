@@ -392,7 +392,7 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 
 	memberOpts, synthOpts := p.buildPanelOpts(
 		buildPanelOptsInput{
-			repo: repo, cfg: cfg, ghRepo: ghRepo, gitRef: gitRef,
+			repo: repo, repoCfg: repoCfg, cfg: cfg, ghRepo: ghRepo, gitRef: gitRef,
 			prNumber: pr.Number, panelName: ciPanelName(repoCfg, cfg),
 			prDiscussionContext: prDiscussionContext,
 			members:             members, synth: synth,
@@ -797,6 +797,7 @@ func (p *CIPoller) commitWarrantsDesign(
 // it within the positional-param limit.
 type buildPanelOptsInput struct {
 	repo                *storage.Repo
+	repoCfg             *config.RepoConfig
 	cfg                 *config.Config
 	ghRepo              string
 	gitRef              string
@@ -815,12 +816,13 @@ type buildPanelOptsInput struct {
 // CreateCIPanelRun stamps the shared panel_run_uuid and enforces the roles, so
 // PanelRunUUID is left empty here.
 func (p *CIPoller) buildPanelOpts(in buildPanelOptsInput) ([]storage.EnqueueOpts, storage.EnqueueOpts) {
-	minSeverity := resolveMinSeverity(in.cfg.CI.MinSeverity, in.repo.RootPath, in.ghRepo)
+	synthesisMinSeverity := resolveMinSeverity(in.cfg.CI.MinSeverity, in.repo.RootPath, in.ghRepo)
+	reviewMinSeverity := resolveCIReviewMinSeverity(in.repoCfg, in.cfg, in.ghRepo)
 	memberOpts := make([]storage.EnqueueOpts, 0, len(in.members))
 	for i, m := range in.members {
 		storedPrompt, err := p.callBuildReviewPrompt(
 			in.repo.RootPath, in.gitRef, in.repo.ID, in.cfg.ReviewContextCount,
-			m.Agent, m.ReviewType, minSeverity, in.prDiscussionContext, in.cfg,
+			m.Agent, m.ReviewType, reviewMinSeverity, in.prDiscussionContext, in.cfg,
 		)
 		if err != nil {
 			log.Printf("CI poller: failed to prebuild prompt for %s#%d (member=%s, agent=%s): %v; enqueuing without stored prompt",
@@ -836,7 +838,7 @@ func (p *CIPoller) buildPanelOpts(in buildPanelOptsInput) ([]storage.EnqueueOpts
 			Provider:              m.Provider,
 			Reasoning:             m.Reasoning,
 			ReviewType:            m.ReviewType,
-			MinSeverity:           minSeverity,
+			MinSeverity:           reviewMinSeverity,
 			Prompt:                storedPrompt,
 			PromptPrebuilt:        storedPrompt != "",
 			JobType:               storage.JobTypeRange,
@@ -856,7 +858,7 @@ func (p *CIPoller) buildPanelOpts(in buildPanelOptsInput) ([]storage.EnqueueOpts
 		Reasoning:    in.synth.Reasoning,
 		BackupAgent:  in.synth.BackupAgent,
 		BackupModel:  in.synth.BackupModel,
-		MinSeverity:  minSeverity,
+		MinSeverity:  synthesisMinSeverity,
 		JobType:      storage.JobTypeSynthesis,
 		PanelRole:    storage.PanelRoleSynthesis,
 		PanelName:    in.panelName,
@@ -1958,6 +1960,26 @@ func resolveMinSeverity(globalMinSeverity, repoPath, ghRepo string) string {
 		return normalized
 	}
 	log.Printf("CI poller: invalid global min_severity %q, ignoring", minSeverity)
+	return ""
+}
+
+// resolveCIReviewMinSeverity determines the effective min_severity for member
+// review prompts/jobs from the already-loaded repo/global review config.
+func resolveCIReviewMinSeverity(repoCfg *config.RepoConfig, cfg *config.Config, ghRepo string) string {
+	minSeverity := ""
+	if cfg != nil {
+		minSeverity = cfg.ReviewMinSeverity
+	}
+	if repoCfg != nil && strings.TrimSpace(repoCfg.ReviewMinSeverity) != "" {
+		minSeverity = repoCfg.ReviewMinSeverity
+	}
+	if strings.TrimSpace(minSeverity) == "" {
+		return ""
+	}
+	if normalized, err := config.NormalizeMinSeverity(minSeverity); err == nil {
+		return normalized
+	}
+	log.Printf("CI poller: invalid review_min_severity %q for %s, ignoring", minSeverity, ghRepo)
 	return ""
 }
 

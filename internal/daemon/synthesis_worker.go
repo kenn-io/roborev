@@ -52,6 +52,10 @@ func (wp *WorkerPool) processSynthesisJob(
 		// label the review with that member's agent when no panel-level severity
 		// filter needs to be applied, or when the member already passed and
 		// there are no findings to filter.
+		if config.IsMarkerOnlyOutput(succeeded[0].Output) {
+			wp.completeSynthesis(workerID, job, succeeded[0].Agent, "", "No issues found.")
+			return
+		}
 		if !singleSuccessCanPassthrough(job.MinSeverity) &&
 			storage.ParseVerdict(succeeded[0].Output) != "P" {
 			wp.synthesizeSucceededResults(ctx, workerID, job, succeeded)
