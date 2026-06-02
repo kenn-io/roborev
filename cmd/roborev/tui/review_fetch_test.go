@@ -7,6 +7,7 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -151,4 +152,61 @@ func TestTUIFetchReviewNoFallbackForRangeReview(t *testing.T) {
 	for _, path := range requestedPaths {
 		assert.NotContains(t, path, "sha=")
 	}
+}
+
+func TestTUIFetchReviewNoFallbackForDirtyReviewWithCommitID(t *testing.T) {
+	requestedPaths := []string{}
+	commitID := int64(42)
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
+		requestedPaths = append(requestedPaths, r.URL.String())
+
+		if r.URL.Path == "/api/review" {
+			review := storage.Review{
+				ID:     1,
+				JobID:  42,
+				Agent:  "test",
+				Output: "Dirty review output",
+				Job: &storage.ReviewJob{
+					ID:       42,
+					CommitID: &commitID,
+					GitRef:   "dirty",
+					JobType:  storage.JobTypeDirty,
+					RepoPath: "/test/repo",
+				},
+			}
+			json.NewEncoder(w).Encode(review)
+			return
+		}
+
+		if r.URL.Path == "/api/comments" {
+			if r.URL.Query().Get("commit_id") != "" {
+				json.NewEncoder(w).Encode(map[string]any{
+					"responses": []storage.Response{
+						{ID: 2, Responder: "bob", Response: "base commit comment"},
+					},
+				})
+				return
+			}
+			json.NewEncoder(w).Encode(map[string]any{
+				"responses": []storage.Response{
+					{ID: 1, Responder: "alice", Response: "dirty job comment"},
+				},
+			})
+			return
+		}
+
+		w.WriteHeader(http.StatusNotFound)
+	})
+	cmd := m.fetchReview(42)
+	msg := cmd()
+
+	reviewMsg, ok := msg.(reviewMsg)
+	assert.True(t, ok)
+
+	for _, path := range requestedPaths {
+		assert.NotContains(t, path, "commit_id=42")
+		assert.NotContains(t, path, "sha=dirty")
+	}
+	require.Len(t, reviewMsg.responses, 1)
+	assert.Equal(t, "dirty job comment", reviewMsg.responses[0].Response)
 }

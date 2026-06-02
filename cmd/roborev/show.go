@@ -300,10 +300,13 @@ func fetchShowComments(client *http.Client, addr string, review storage.Review) 
 	// Also fetch legacy commit-based comments and merge.
 	// Prefer commit_id (unambiguous), fall back to SHA for legacy jobs.
 	var legacyURL string
-	if review.Job != nil && review.Job.CommitID != nil {
-		legacyURL = addr + fmt.Sprintf("/api/comments?commit_id=%d", *review.Job.CommitID)
-	} else if review.Job != nil && gitrepo.LooksLikeSHA(review.Job.GitRef) {
-		legacyURL = addr + fmt.Sprintf("/api/comments?sha=%s", review.Job.GitRef)
+	if review.Job != nil {
+		commitID, fallbackSHA := review.Job.LegacyCommentLookupTarget()
+		if commitID > 0 {
+			legacyURL = addr + fmt.Sprintf("/api/comments?commit_id=%d", commitID)
+		} else if fallbackSHA != "" {
+			legacyURL = addr + fmt.Sprintf("/api/comments?sha=%s", fallbackSHA)
+		}
 	}
 	if legacyURL != "" {
 		if resp, err := client.Get(legacyURL); err != nil {

@@ -227,6 +227,71 @@ func TestShowIncludesComments(t *testing.T) {
 	assert.Contains(t, output, "This is expected")
 }
 
+func TestShowDirtyReviewSkipsBaseCommitLegacyComments(t *testing.T) {
+	tests := []struct {
+		name string
+		args []string
+	}{
+		{name: "text", args: []string{"--job", "42"}},
+		{name: "json", args: []string{"--job", "42", "--json"}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			repo := newTestGitRepo(t)
+			repo.CommitFile("file.txt", "content", "initial commit")
+			commitID := int64(42)
+			review := storage.Review{
+				ID: 1, JobID: 42, Output: "Dirty review output", Agent: "test",
+				Job: &storage.ReviewJob{
+					ID:       42,
+					CommitID: &commitID,
+					GitRef:   "dirty",
+					JobType:  storage.JobTypeDirty,
+				},
+			}
+			var sawLegacy bool
+			daemonFromHandler(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				switch r.URL.Path {
+				case "/api/review":
+					assert.NoError(json.NewEncoder(w).Encode(review))
+				case "/api/comments":
+					switch r.URL.RawQuery {
+					case "job_id=42":
+						assert.NoError(json.NewEncoder(w).Encode(map[string]any{
+							"responses": []storage.Response{{
+								ID:        1,
+								Responder: "alice",
+								Response:  "dirty job comment",
+								CreatedAt: time.Date(2026, 6, 1, 10, 30, 0, 0, time.UTC),
+							}},
+						}))
+					case "commit_id=42":
+						sawLegacy = true
+						assert.NoError(json.NewEncoder(w).Encode(map[string]any{
+							"responses": []storage.Response{{
+								ID:        2,
+								Responder: "bob",
+								Response:  "base commit comment",
+								CreatedAt: time.Date(2026, 6, 1, 10, 31, 0, 0, time.UTC),
+							}},
+						}))
+					default:
+						http.Error(w, "unexpected query: "+r.URL.RawQuery, http.StatusBadRequest)
+					}
+				}
+			}))
+
+			chdir(t, repo.Dir)
+			output := runShowCmd(t, tt.args...)
+
+			assert.False(sawLegacy, "dirty show must not fetch legacy comments for the base commit")
+			assert.Contains(output, "dirty job comment")
+			assert.NotContains(output, "base commit comment")
+		})
+	}
+}
+
 func TestShowNoComments(t *testing.T) {
 	repo := newTestGitRepo(t)
 	repo.CommitFile("file.txt", "content", "initial commit")

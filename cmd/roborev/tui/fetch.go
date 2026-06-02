@@ -558,12 +558,13 @@ func (m model) loadResponses(jobID int64, review *storage.Review) []storage.Resp
 	// Also fetch legacy commit-based responses and merge.
 	// Prefer commit_id (unambiguous), fall back to SHA for legacy jobs.
 	var legacyParams *daemonclient.ListCommentsParams
-	if review.Job != nil && review.Job.CommitID != nil {
-		commitID := *review.Job.CommitID
-		legacyParams = &daemonclient.ListCommentsParams{CommitId: &commitID}
-	} else if review.Job != nil && gitrepo.LooksLikeSHA(review.Job.GitRef) {
-		sha := review.Job.GitRef
-		legacyParams = &daemonclient.ListCommentsParams{Sha: &sha}
+	if review.Job != nil {
+		commitID, fallbackSHA := review.Job.LegacyCommentLookupTarget()
+		if commitID > 0 {
+			legacyParams = &daemonclient.ListCommentsParams{CommitId: &commitID}
+		} else if fallbackSHA != "" {
+			legacyParams = &daemonclient.ListCommentsParams{Sha: &fallbackSHA}
+		}
 	}
 	if legacyParams != nil {
 		var legacyResult struct {
