@@ -797,6 +797,38 @@ func TestFindReusableSessionCandidatesIncludesRangeReviewJobs(t *testing.T) {
 	assert.Equal("session-range", candidates[0].SessionID)
 }
 
+func TestFindReusableSessionCandidatesIncludesDirtyReviewJobs(t *testing.T) {
+	assert := assert.New(t)
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, "/tmp/session-dirty-candidates")
+	branch := "feature/session"
+	dirtyJob := createCompletedJobWithOptions(t, db, EnqueueOpts{
+		RepoID:     repo.ID,
+		GitRef:     "dirty-base-sha",
+		Branch:     branch,
+		Agent:      "codex",
+		ReviewType: "default",
+		JobType:    JobTypeDirty,
+		DiffContent: "diff --git a/file.go b/file.go\n" +
+			"--- a/file.go\n" +
+			"+++ b/file.go\n" +
+			"@@ -1 +1 @@\n" +
+			"-old\n" +
+			"+new\n",
+	}, "dirty output")
+	setJobSession(t, db, dirtyJob.ID, "session-dirty")
+
+	candidates, err := db.FindReusableSessionCandidates(
+		repo.ID, branch, "codex", "default", "", 10,
+	)
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	assert.Equal(dirtyJob.ID, candidates[0].ID)
+	assert.Equal("session-dirty", candidates[0].SessionID)
+}
+
 func setJobSession(t *testing.T, db *DB, jobID int64, sessionID string) {
 	t.Helper()
 	_, err := db.Exec(`UPDATE review_jobs SET session_id = ? WHERE id = ?`, sessionID, jobID)

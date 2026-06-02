@@ -291,6 +291,27 @@ func TestAwaitServeExitOnUnreadyStartupWaitsForServeExit(t *testing.T) {
 	}
 }
 
+func TestServerStartReadinessFailureDoesNotLeavePanelSweep(t *testing.T) {
+	testenv.SetDataDir(t)
+
+	db, _ := testutil.OpenTestDBWithDir(t)
+	cfg := config.DefaultConfig()
+	cfg.ServerAddr = "127.0.0.1:0"
+	server := NewServer(db, cfg, "")
+	t.Cleanup(func() { _ = server.Close() })
+
+	server.httpServer.Handler = http.NotFoundHandler()
+
+	err := server.Start(context.Background())
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "failed to become ready")
+
+	server.sweepMu.Lock()
+	sweepCancel := server.sweepCancel
+	server.sweepMu.Unlock()
+	assert.Nil(t, sweepCancel, "panel sweep must not remain active after startup readiness failure")
+}
+
 func TestServerStartSupportsIPv6LoopbackBindAddr(t *testing.T) {
 	ln, err := net.Listen("tcp", "[::1]:0")
 	if err != nil {

@@ -240,16 +240,6 @@ func (s *Server) Start(ctx context.Context) error {
 	// Start worker pool before advertising availability.
 	s.workerPool.Start()
 
-	// Backstop for a missed worker release of a panel synthesis gate. Own the
-	// cancel so Stop halts the sweep even when Start received a context the
-	// caller never cancels (the worker pool and CI poller are likewise stopped
-	// explicitly in stopOnce0).
-	sweepCtx, cancelSweep := context.WithCancel(ctx)
-	s.sweepMu.Lock()
-	s.sweepCancel = cancelSweep
-	s.sweepMu.Unlock()
-	go s.runPanelSweep(sweepCtx, panelSweepInterval)
-
 	ready, serveExited, err := waitForServerReady(ctx, ep, 2*time.Second, serveErrCh)
 	if err != nil {
 		_ = listener.Close()
@@ -265,6 +255,8 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 		return nil
 	}
+
+	s.startPanelSweep(ctx)
 
 	// Write runtime info only after the HTTP server is accepting requests.
 	if err := WriteRuntime(ep, version.Version); err != nil {
@@ -301,10 +293,36 @@ func (s *Server) Start(ctx context.Context) error {
 
 	if err := <-serveErrCh; err != nil && !errors.Is(err, http.ErrServerClosed) {
 		s.configWatcher.Stop()
+		s.stopPanelSweep()
 		s.workerPool.Stop()
 		return err
 	}
 	return nil
+}
+
+func (s *Server) startPanelSweep(ctx context.Context) {
+	// Backstop for a missed worker release of a panel synthesis gate. Own the
+	// cancel so Stop halts the sweep even when Start received a context the
+	// caller never cancels (the worker pool and CI poller are likewise stopped
+	// explicitly in stopOnce0).
+	sweepCtx, cancelSweep := context.WithCancel(ctx)
+	s.sweepMu.Lock()
+	if s.sweepCancel != nil {
+		s.sweepCancel()
+	}
+	s.sweepCancel = cancelSweep
+	s.sweepMu.Unlock()
+	go s.runPanelSweep(sweepCtx, panelSweepInterval)
+}
+
+func (s *Server) stopPanelSweep() {
+	s.sweepMu.Lock()
+	sweepCancel := s.sweepCancel
+	s.sweepCancel = nil
+	s.sweepMu.Unlock()
+	if sweepCancel != nil {
+		sweepCancel()
+	}
 }
 
 func waitForServerReady(ctx context.Context, ep DaemonEndpoint, timeout time.Duration, serveErrCh <-chan error) (bool, bool, error) {
@@ -484,12 +502,7 @@ func (s *Server) stopOnce0() error {
 	}
 
 	// Stop the panel sweep goroutine
-	s.sweepMu.Lock()
-	sweepCancel := s.sweepCancel
-	s.sweepMu.Unlock()
-	if sweepCancel != nil {
-		sweepCancel()
-	}
+	s.stopPanelSweep()
 
 	// Stop worker pool
 	s.workerPool.Stop()

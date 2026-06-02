@@ -277,17 +277,24 @@ func (wp *WorkerPool) configureSynthesisAgent(
 }
 
 func synthesisSelectedBackupAgent(job *storage.ReviewJob, selectedAgent string) bool {
-	backupAgent := strings.TrimSpace(job.BackupAgent)
-	selectedAgent = strings.TrimSpace(selectedAgent)
-	if backupAgent == "" || selectedAgent == "" {
+	if !synthesisAgentNameMatches(selectedAgent, job.BackupAgent) {
 		return false
 	}
-	if agent.CanonicalName(selectedAgent) == agent.CanonicalName(backupAgent) {
+	return !synthesisAgentNameMatches(selectedAgent, job.Agent)
+}
+
+func synthesisAgentNameMatches(selectedAgent, configuredAgent string) bool {
+	selectedAgent = strings.TrimSpace(selectedAgent)
+	configuredAgent = strings.TrimSpace(configuredAgent)
+	if selectedAgent == "" || configuredAgent == "" {
+		return false
+	}
+	if agent.CanonicalName(selectedAgent) == agent.CanonicalName(configuredAgent) {
 		return true
 	}
-	resolvedBackup, err := agent.Get(backupAgent)
+	resolvedConfigured, err := agent.Get(configuredAgent)
 	if err != nil {
 		return false
 	}
-	return agent.CanonicalName(selectedAgent) == agent.CanonicalName(resolvedBackup.Name())
+	return agent.CanonicalName(selectedAgent) == agent.CanonicalName(resolvedConfigured.Name())
 }

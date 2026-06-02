@@ -340,6 +340,24 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 		assert.NotContains(t, body, "Review type:  | Agent:", "panel comments should not use the empty synthesis review_type footer")
 	})
 
+	t.Run("footer uses synthesis review agent", func(t *testing.T) {
+		h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+		comments := h.CaptureComments()
+		const headSHA = "facefeed1234567"
+		_, synth, _ := h.seedCIPanelRun(t, "acme/api", 20, headSHA, "base.."+headSHA,
+			[]jobSpec{{Agent: "codex", ReviewType: "default", Status: "done", Output: "x"}})
+		_, err := h.DB.Exec(`UPDATE review_jobs SET agent = ? WHERE id = ?`, "codex", synth.ID)
+		require.NoError(t, err)
+		h.markJobDoneWithReview(t, synth.ID, "claude-code", "Medium issue found.")
+
+		h.Poller.handleReviewCompleted(ciEvent(synth.ID, "review.completed"))
+
+		require.Len(t, *comments, 1)
+		body := (*comments)[0].Body
+		assert.Contains(t, body, "Synthesis: claude-code")
+		assert.NotContains(t, body, "Synthesis: codex")
+	})
+
 	t.Run("headed pass output keeps result text", func(t *testing.T) {
 		h := newCIPollerHarness(t, "https://github.com/acme/api.git")
 		comments := h.CaptureComments()

@@ -1574,7 +1574,7 @@ func (p *CIPoller) panelCommentBody(row *storage.CIPanel, members []storage.Batc
 	}
 	includeCosts := p.resolveIncludeCosts(row.GithubRepo)
 	if strings.HasPrefix(strings.TrimSpace(rev.Output), "## roborev:") {
-		return appendPanelPRFooter(rev.Output, rev.Job, members, includeCosts)
+		return appendPanelPRFooter(rev.Output, rev, members, includeCosts)
 	}
 	verdict := storage.ParseVerdict(rev.Output)
 	if rev.Job != nil && rev.Job.Verdict != nil {
@@ -2316,18 +2316,21 @@ func formatPanelPRCommentWithHead(review *storage.Review, verdict string, member
 		b.WriteString("No issues found.\n")
 	}
 
-	return appendPanelPRFooter(b.String(), review.Job, members, includeCosts)
+	return appendPanelPRFooter(b.String(), review, members, includeCosts)
 }
 
-func appendPanelPRFooter(body string, job *storage.ReviewJob, members []storage.BatchReviewResult, includeCosts bool) string {
-	footer := formatPanelPRFooter(job, members, includeCosts)
+func appendPanelPRFooter(body string, review *storage.Review, members []storage.BatchReviewResult, includeCosts bool) string {
+	if review == nil {
+		return body
+	}
+	footer := formatPanelPRFooter(review.Job, review.Agent, members, includeCosts)
 	if footer == "" {
 		return body
 	}
 	return strings.TrimRight(body, "\n") + footer
 }
 
-func formatPanelPRFooter(job *storage.ReviewJob, members []storage.BatchReviewResult, includeCosts bool) string {
+func formatPanelPRFooter(job *storage.ReviewJob, synthesisAgent string, members []storage.BatchReviewResult, includeCosts bool) string {
 	if job == nil {
 		return ""
 	}
@@ -2337,7 +2340,7 @@ func formatPanelPRFooter(job *storage.ReviewJob, members []storage.BatchReviewRe
 	}
 	footer := []string{
 		"Panel: " + panelName,
-		"Synthesis: " + formatPanelSynthesis(job, includeCosts),
+		"Synthesis: " + formatPanelSynthesis(job, synthesisAgent, includeCosts),
 		"Members: " + formatPanelSubagents(members, includeCosts),
 	}
 	if total := formatPanelTotal(job, members, includeCosts); total != "" {
@@ -2347,11 +2350,14 @@ func formatPanelPRFooter(job *storage.ReviewJob, members []storage.BatchReviewRe
 	return fmt.Sprintf("\n\n---\n*%s*\n", strings.Join(footer, " | "))
 }
 
-func formatPanelSynthesis(job *storage.ReviewJob, includeCosts bool) string {
+func formatPanelSynthesis(job *storage.ReviewJob, synthesisAgent string, includeCosts bool) string {
 	if job == nil {
 		return "unknown"
 	}
-	parts := []string{job.Agent}
+	if strings.TrimSpace(synthesisAgent) == "" {
+		synthesisAgent = job.Agent
+	}
+	parts := []string{synthesisAgent}
 	if runtime := formatRuntime(job.StartedAt, job.FinishedAt); runtime != "" {
 		parts = append(parts, runtime)
 	}

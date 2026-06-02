@@ -200,6 +200,38 @@ func TestConfigureSynthesisAgentUsesStoredBackupWhenPrimaryUnavailable(t *testin
 	assert.Equal("backup-model", configuredBackup.model)
 }
 
+func TestConfigureSynthesisAgentKeepsPrimaryModelWhenBackupMatchesPrimary(t *testing.T) {
+	assert := assert.New(t)
+	tc := newWorkerTestContext(t, 1)
+
+	const synthAgent = "synth-primary-is-backup"
+	synth := &synthesisEntrypointTestAgent{name: synthAgent}
+	agent.Register(synth)
+	t.Cleanup(func() { agent.Unregister(synthAgent) })
+
+	_, _, synthJob := enqueuePanelRun(t, tc, "same-agent-backup-panel", []memberSpec{
+		{name: "m0", agent: "test"},
+	})
+	_, err := tc.DB.Exec(
+		`UPDATE review_jobs
+		 SET status = 'running', worker_id = ?, agent = ?, model = ?, backup_agent = ?, backup_model = ?
+		 WHERE id = ?`,
+		testWorkerID, synthAgent, "primary-model", synthAgent, "backup-model", synthJob.ID,
+	)
+	require.NoError(t, err)
+	job, err := tc.DB.GetJobByID(synthJob.ID)
+	require.NoError(t, err)
+
+	configured, agentName, err := tc.Pool.configureSynthesisAgent(testWorkerID, job)
+	require.NoError(t, err)
+
+	assert.Equal(synthAgent, agentName)
+	assert.Equal(synthAgent, configured.Name())
+	configuredSynth, ok := configured.(*synthesisEntrypointTestAgent)
+	require.True(t, ok)
+	assert.Equal("primary-model", configuredSynth.model)
+}
+
 // TestSynthesisAllFailedRendersHeadSHA covers F11: the all-failed review header
 // must render the head SHA, never the merge base. processSynthesisJob frames the
 // synthesis on the frozen mergeBase..headSHA range, and FormatAllFailedComment
