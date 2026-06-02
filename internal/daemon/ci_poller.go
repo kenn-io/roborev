@@ -2332,6 +2332,7 @@ func appendPanelPRFooter(body string, review *storage.Review, members []storage.
 	if footer == "" {
 		return body
 	}
+	body = stripGenericSynthesisFooter(body)
 	if len(footer)+len(panelCommentTruncSuffix) > reviewpkg.MaxCommentLen {
 		footer = formatCompactPanelPRFooter(review.Job, review.Agent, members, includeCosts)
 	}
@@ -2340,6 +2341,38 @@ func appendPanelPRFooter(body string, review *storage.Review, members []storage.
 	}
 	body = truncatePanelPRBodyForFooter(body, footer)
 	return strings.TrimRight(body, "\n") + footer
+}
+
+func stripGenericSynthesisFooter(body string) string {
+	const marker = "\n\n---\n*Synthesized from "
+	idx := strings.LastIndex(body, marker)
+	if idx < 0 {
+		return body
+	}
+	if !isGenericSynthesisFooterBlock(body[idx:]) {
+		return body
+	}
+	return strings.TrimRight(body[:idx], "\n")
+}
+
+func isGenericSynthesisFooterBlock(block string) bool {
+	lines := strings.Split(strings.TrimSpace(block), "\n")
+	if len(lines) < 2 {
+		return false
+	}
+	if lines[0] != "---" || !strings.HasPrefix(lines[1], "*Synthesized from ") || !strings.HasSuffix(lines[1], "*") {
+		return false
+	}
+	for _, line := range lines[2:] {
+		line = strings.TrimSpace(line)
+		if line == "" {
+			continue
+		}
+		if !strings.HasPrefix(line, "*Note: ") || !strings.HasSuffix(line, "*") {
+			return false
+		}
+	}
+	return true
 }
 
 func truncatePanelPRBodyForFooter(body string, footer string) string {
