@@ -336,8 +336,37 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 		assert.NotContains(t, body, "Review type:  | Agent:", "panel comments should not use the empty synthesis review_type footer")
 	})
 
-	t.Run("plain output footer includes runtime and cost", func(t *testing.T) {
+	t.Run("plain output footer hides cost by default", func(t *testing.T) {
 		h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+		comments := h.CaptureComments()
+		_, synth, members := h.seedCIPanelRun(t, "acme/api", 18, "headsha3333", "base..headsha3333",
+			[]jobSpec{
+				{Agent: "codex", ReviewType: "default", Status: "done", Output: "x"},
+				{Agent: "codex", ReviewType: "security", Status: "done", Output: "y"},
+			})
+		setJobTiming(t, h.DB, members[0].ID, "2026-06-01T18:00:00Z", "2026-06-01T18:04:32Z")
+		setJobTiming(t, h.DB, members[1].ID, "2026-06-01T18:00:00Z", "2026-06-01T18:02:08Z")
+		setJobTiming(t, h.DB, synth.ID, "2026-06-01T18:04:40Z", "2026-06-01T18:04:58Z")
+		require.NoError(t, h.DB.SaveJobTokenUsage(members[0].ID, `{"cost_usd":0.11,"has_cost":true}`))
+		require.NoError(t, h.DB.SaveJobTokenUsage(members[1].ID, `{"cost_usd":0.06,"has_cost":true}`))
+		require.NoError(t, h.DB.SaveJobTokenUsage(synth.ID, `{"cost_usd":0.03,"has_cost":true}`))
+		h.completeSynthesisWithReview(t, synth.ID, "Medium issue found.")
+
+		h.Poller.handleReviewCompleted(ciEvent(synth.ID, "review.completed"))
+
+		require.Len(t, *comments, 1)
+		body := (*comments)[0].Body
+		assert.Contains(t, body, "Synthesis: test, 18s")
+		assert.Contains(t, body, "codex (codex/default, done, 4m32s)")
+		assert.Contains(t, body, "codex (codex/security, done, 2m8s)")
+		assert.Contains(t, body, "Total: 6m58s")
+		assert.NotContains(t, body, "~$")
+		assert.NotContains(t, body, "cost partial")
+	})
+
+	t.Run("plain output footer includes runtime and cost when enabled", func(t *testing.T) {
+		h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+		h.Cfg.CI.IncludeCosts = true
 		comments := h.CaptureComments()
 		_, synth, members := h.seedCIPanelRun(t, "acme/api", 16, "headsha1111", "base..headsha1111",
 			[]jobSpec{
@@ -362,8 +391,9 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 		assert.Contains(t, body, "Total: 6m58s, ~$0.20")
 	})
 
-	t.Run("plain output footer shows partial cost", func(t *testing.T) {
+	t.Run("plain output footer shows partial cost when enabled", func(t *testing.T) {
 		h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+		h.Cfg.CI.IncludeCosts = true
 		comments := h.CaptureComments()
 		_, synth, members := h.seedCIPanelRun(t, "acme/api", 17, "headsha2222", "base..headsha2222",
 			[]jobSpec{

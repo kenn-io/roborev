@@ -1574,7 +1574,7 @@ func (p *CIPoller) panelCommentBody(row *storage.CIPanel, members []storage.Batc
 	if rev.Job != nil && rev.Job.Verdict != nil {
 		verdict = *rev.Job.Verdict
 	}
-	return formatPanelPRComment(rev, verdict, members)
+	return formatPanelPRComment(rev, verdict, members, p.resolveIncludeCosts(row.GithubRepo))
 }
 
 // handlePanelPostError resolves a failed comment post: a permanent GitHub access
@@ -2276,7 +2276,7 @@ func toReviewResult(
 	}
 }
 
-func formatPanelPRComment(review *storage.Review, verdict string, members []storage.BatchReviewResult) string {
+func formatPanelPRComment(review *storage.Review, verdict string, members []storage.BatchReviewResult, includeCosts bool) string {
 	var b strings.Builder
 
 	switch verdict {
@@ -2307,10 +2307,10 @@ func formatPanelPRComment(review *storage.Review, verdict string, members []stor
 		}
 		footer := []string{
 			"Panel: " + panelName,
-			"Synthesis: " + formatPanelSynthesis(review.Job),
-			"Members: " + formatPanelSubagents(members),
+			"Synthesis: " + formatPanelSynthesis(review.Job, includeCosts),
+			"Members: " + formatPanelSubagents(members, includeCosts),
 		}
-		if total := formatPanelTotal(review.Job, members); total != "" {
+		if total := formatPanelTotal(review.Job, members, includeCosts); total != "" {
 			footer = append(footer, "Total: "+total)
 		}
 		footer = append(footer, fmt.Sprintf("Job: %d", review.Job.ID))
@@ -2319,7 +2319,7 @@ func formatPanelPRComment(review *storage.Review, verdict string, members []stor
 	return b.String()
 }
 
-func formatPanelSynthesis(job *storage.ReviewJob) string {
+func formatPanelSynthesis(job *storage.ReviewJob, includeCosts bool) string {
 	if job == nil {
 		return "unknown"
 	}
@@ -2327,13 +2327,15 @@ func formatPanelSynthesis(job *storage.ReviewJob) string {
 	if runtime := formatRuntime(job.StartedAt, job.FinishedAt); runtime != "" {
 		parts = append(parts, runtime)
 	}
-	if cost := formatCost(job.TokenUsage); cost != "" {
-		parts = append(parts, cost)
+	if includeCosts {
+		if cost := formatCost(job.TokenUsage); cost != "" {
+			parts = append(parts, cost)
+		}
 	}
 	return strings.Join(parts, ", ")
 }
 
-func formatPanelSubagents(members []storage.BatchReviewResult) string {
+func formatPanelSubagents(members []storage.BatchReviewResult, includeCosts bool) string {
 	if len(members) == 0 {
 		return "none"
 	}
@@ -2355,15 +2357,17 @@ func formatPanelSubagents(members []storage.BatchReviewResult) string {
 		if runtime := formatRuntimeStrings(m.StartedAt, m.FinishedAt); runtime != "" {
 			detail += ", " + runtime
 		}
-		if cost := formatCost(m.TokenUsage); cost != "" {
-			detail += ", " + cost
+		if includeCosts {
+			if cost := formatCost(m.TokenUsage); cost != "" {
+				detail += ", " + cost
+			}
 		}
 		parts = append(parts, fmt.Sprintf("%s (%s)", name, detail))
 	}
 	return strings.Join(parts, ", ")
 }
 
-func formatPanelTotal(synth *storage.ReviewJob, members []storage.BatchReviewResult) string {
+func formatPanelTotal(synth *storage.ReviewJob, members []storage.BatchReviewResult, includeCosts bool) string {
 	var runtime time.Duration
 	if synth != nil {
 		runtime += runtimeFromTimes(synth.StartedAt, synth.FinishedAt)
@@ -2377,13 +2381,15 @@ func formatPanelTotal(synth *storage.ReviewJob, members []storage.BatchReviewRes
 		parts = append(parts, runtime.Round(time.Second).String())
 	}
 
-	cost, priced, total := panelTotalCost(synth, members)
-	switch priced {
-	case 0:
-	case total:
-		parts = append(parts, tokens.Usage{CostUSD: cost, HasCost: true}.FormatCost())
-	default:
-		parts = append(parts, "cost partial "+tokens.Usage{CostUSD: cost, HasCost: true}.FormatCost())
+	if includeCosts {
+		cost, priced, total := panelTotalCost(synth, members)
+		switch priced {
+		case 0:
+		case total:
+			parts = append(parts, tokens.Usage{CostUSD: cost, HasCost: true}.FormatCost())
+		default:
+			parts = append(parts, "cost partial "+tokens.Usage{CostUSD: cost, HasCost: true}.FormatCost())
+		}
 	}
 
 	if len(parts) == 0 {
@@ -2492,4 +2498,17 @@ func (p *CIPoller) resolveUpsertComments(ghRepo string) bool {
 		}
 	}
 	return p.cfgGetter.Config().CI.UpsertComments
+}
+
+// resolveIncludeCosts determines whether CI PR comments should include token
+// cost estimates for the given repo. Per-repo config takes priority over global.
+func (p *CIPoller) resolveIncludeCosts(ghRepo string) bool {
+	var repoCfg *config.RepoConfig
+	repo, err := p.findLocalRepo(ghRepo)
+	if err == nil && repo != nil {
+		if loaded, loadErr := loadCIRepoConfig(repo.RootPath); loadErr == nil {
+			repoCfg = loaded
+		}
+	}
+	return config.ResolveCIIncludeCosts(repoCfg, p.cfgGetter.Config())
 }

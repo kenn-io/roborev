@@ -167,6 +167,10 @@ type CIConfig struct {
 	// comment and patches it. Default: false (create a new comment each run).
 	UpsertComments bool `toml:"upsert_comments"`
 
+	// IncludeCosts includes token cost estimates in CI PR comment footers.
+	// Default: false (omit costs from GitHub comments).
+	IncludeCosts bool `toml:"include_costs"`
+
 	// BatchTimeout is how long to wait for all batch jobs to complete before
 	// posting results with available reviews. Jobs still running after this
 	// timeout are canceled. Default: "15m". Set to "0" to disable.
@@ -340,6 +344,10 @@ type RepoCIConfig struct {
 	// UpsertComments overrides the global ci.upsert_comments setting.
 	// Use a pointer so we can distinguish "not set" from "explicitly false".
 	UpsertComments *bool `toml:"upsert_comments" comment:"Override whether CI updates an existing PR comment instead of creating a new one."`
+
+	// IncludeCosts overrides the global ci.include_costs setting.
+	// Use a pointer so we can distinguish "not set" from "explicitly false".
+	IncludeCosts *bool `toml:"include_costs" comment:"Override whether CI PR comments include token cost estimates."`
 }
 
 // ResolveCIAgents determines which agents to use for CI review execution.
@@ -445,6 +453,23 @@ func ResolveCIUpsertComments(
 	var globalVal *bool
 	if globalCfg != nil {
 		globalVal = &globalCfg.CI.UpsertComments
+	}
+	return resolveBool(false, repoVal, globalVal)
+}
+
+// ResolveCIIncludeCosts determines whether CI PR comments should include costs.
+// Priority: repo [ci].include_costs > global [ci].include_costs > false.
+func ResolveCIIncludeCosts(
+	repoCfg *RepoConfig,
+	globalCfg *Config,
+) bool {
+	var repoVal *bool
+	if repoCfg != nil {
+		repoVal = repoCfg.CI.IncludeCosts
+	}
+	var globalVal *bool
+	if globalCfg != nil {
+		globalVal = &globalCfg.CI.IncludeCosts
 	}
 	return resolveBool(false, repoVal, globalVal)
 }

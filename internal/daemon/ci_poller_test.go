@@ -438,7 +438,7 @@ func TestFormatPanelPRComment_TruncationUTF8Safe(t *testing.T) {
 		},
 	}
 
-	comment := formatPanelPRComment(storedReview, "F", nil)
+	comment := formatPanelPRComment(storedReview, "F", nil, false)
 
 	require.True(t, utf8.ValidString(comment), "truncated panel comment is not valid UTF-8")
 	assert.Contains(t, comment, "...(truncated)", "expected truncation suffix")
@@ -454,7 +454,7 @@ func TestFormatPanelPRComment_DoesNotTruncateBelowMax(t *testing.T) {
 		},
 	}
 
-	comment := formatPanelPRComment(storedReview, "F", nil)
+	comment := formatPanelPRComment(storedReview, "F", nil, false)
 
 	assert.NotContains(t, comment, "...(truncated)")
 }
@@ -3230,4 +3230,40 @@ func TestResolveUpsertComments_RepoEnablesOverGlobal(t *testing.T) {
 			return false
 		}, "expected repo config (true) to override global (false)")
 	}
+}
+
+func TestResolveIncludeCosts_DefaultFalse(t *testing.T) {
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	assert.False(t, h.Poller.resolveIncludeCosts("acme/api"))
+}
+
+func TestResolveIncludeCosts_GlobalTrue(t *testing.T) {
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	h.Cfg.CI.IncludeCosts = true
+	assert.True(t, h.Poller.resolveIncludeCosts("acme/api"))
+}
+
+func TestResolveIncludeCosts_RepoOverridesGlobal(t *testing.T) {
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	h.Cfg.CI.IncludeCosts = true
+
+	tomlPath := filepath.Join(h.RepoPath, ".roborev.toml")
+	err := os.WriteFile(tomlPath, []byte(
+		"[ci]\ninclude_costs = false\n",
+	), 0o644)
+	require.NoError(t, err)
+
+	assert.False(t, h.Poller.resolveIncludeCosts("acme/api"))
+}
+
+func TestResolveIncludeCosts_RepoEnablesOverGlobal(t *testing.T) {
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+
+	tomlPath := filepath.Join(h.RepoPath, ".roborev.toml")
+	err := os.WriteFile(tomlPath, []byte(
+		"[ci]\ninclude_costs = true\n",
+	), 0o644)
+	require.NoError(t, err)
+
+	assert.True(t, h.Poller.resolveIncludeCosts("acme/api"))
 }

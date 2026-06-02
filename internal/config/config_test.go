@@ -3299,6 +3299,30 @@ gemini = ["default"]
 	}, "got codex types %v", codexTypes)
 }
 
+func TestResolveCIIncludeCosts(t *testing.T) {
+	t.Run("default false", func(t *testing.T) {
+		assert.False(t, ResolveCIIncludeCosts(nil, &Config{}))
+	})
+
+	t.Run("global true", func(t *testing.T) {
+		cfg := &Config{CI: CIConfig{IncludeCosts: true}}
+		assert.True(t, ResolveCIIncludeCosts(nil, cfg))
+	})
+
+	t.Run("repo false overrides global true", func(t *testing.T) {
+		repoFalse := false
+		repoCfg := &RepoConfig{CI: RepoCIConfig{IncludeCosts: &repoFalse}}
+		globalCfg := &Config{CI: CIConfig{IncludeCosts: true}}
+		assert.False(t, ResolveCIIncludeCosts(repoCfg, globalCfg))
+	})
+
+	t.Run("repo true overrides global false", func(t *testing.T) {
+		repoTrue := true
+		repoCfg := &RepoConfig{CI: RepoCIConfig{IncludeCosts: &repoTrue}}
+		assert.True(t, ResolveCIIncludeCosts(repoCfg, &Config{}))
+	})
+}
+
 func TestIsThrottleBypassed(t *testing.T) {
 	ci := CIConfig{
 		ThrottleBypassUsers: []string{"wesm", "mariusvniekerk"},
