@@ -2,10 +2,11 @@
 # roborev installer
 # Usage: curl -fsSL https://raw.githubusercontent.com/roborev-dev/roborev/main/scripts/install.sh | bash
 
-set -e
+set -euo pipefail
 
 REPO="roborev-dev/roborev"
 BINARY_NAME="roborev"
+ROBOREV_INSTALL_TMPDIR=""
 
 # Colors
 RED='\033[0;31m'
@@ -93,8 +94,10 @@ install_from_release() {
     local install_dir="$3"
 
     info "Fetching latest release..."
-    local version=$(get_latest_version)
-
+    local version
+    if ! version=$(get_latest_version); then
+        return 1
+    fi
     if [ -z "$version" ]; then
         return 1
     fi
@@ -103,27 +106,50 @@ install_from_release() {
 
     local platform="${os}_${arch}"
     local filename="roborev_${version#v}_${platform}.tar.gz"
+    local binary="$BINARY_NAME"
+    if [ "$os" = "windows" ]; then
+        filename="roborev_${version#v}_${platform}.zip"
+        binary="roborev.exe"
+    fi
     local url="https://github.com/${REPO}/releases/download/${version}/${filename}"
 
-    local tmpdir=$(mktemp -d)
-    trap "rm -rf $tmpdir" EXIT
+    local tmpdir
+    tmpdir=$(mktemp -d)
+    ROBOREV_INSTALL_TMPDIR="$tmpdir"
+    trap 'rm -rf "$ROBOREV_INSTALL_TMPDIR"' EXIT
+    local archive_path="$tmpdir/release.tar.gz"
+    if [ "$os" = "windows" ]; then
+        archive_path="$tmpdir/release.zip"
+    fi
 
     info "Downloading ${filename}..."
-    if ! download "$url" "$tmpdir/release.tar.gz"; then
+    if ! download "$url" "$archive_path"; then
         return 1
     fi
 
     info "Extracting..."
-    tar -xzf "$tmpdir/release.tar.gz" -C "$tmpdir"
+    if [ "$os" = "windows" ]; then
+        if command -v unzip &>/dev/null; then
+            unzip -q "$archive_path" -d "$tmpdir"
+        elif command -v powershell.exe &>/dev/null; then
+            ROBOREV_ARCHIVE_PATH="$archive_path" ROBOREV_EXTRACT_DIR="$tmpdir" powershell.exe -NoProfile -Command "Expand-Archive -LiteralPath \$env:ROBOREV_ARCHIVE_PATH -DestinationPath \$env:ROBOREV_EXTRACT_DIR -Force"
+        elif command -v powershell &>/dev/null; then
+            ROBOREV_ARCHIVE_PATH="$archive_path" ROBOREV_EXTRACT_DIR="$tmpdir" powershell -NoProfile -Command "Expand-Archive -LiteralPath \$env:ROBOREV_ARCHIVE_PATH -DestinationPath \$env:ROBOREV_EXTRACT_DIR -Force"
+        else
+            error "Neither unzip nor PowerShell found for extracting ${filename}"
+        fi
+    else
+        tar -xzf "$archive_path" -C "$tmpdir"
+    fi
 
     # Install binary
-    if [ -f "$tmpdir/roborev" ]; then
+    if [ -f "$tmpdir/$binary" ]; then
         if [ -w "$install_dir" ]; then
-            mv "$tmpdir/roborev" "$install_dir/"
+            mv "$tmpdir/$binary" "$install_dir/"
         else
-            sudo mv "$tmpdir/roborev" "$install_dir/"
+            sudo mv "$tmpdir/$binary" "$install_dir/"
         fi
-        chmod +x "$install_dir/roborev"
+        chmod +x "$install_dir/$binary"
     fi
 
     # macOS code signing
@@ -153,9 +179,12 @@ main() {
     info "Installing roborev..."
     echo
 
-    local os=$(detect_os)
-    local arch=$(detect_arch)
-    local install_dir=$(find_install_dir)
+    local os
+    local arch
+    local install_dir
+    os=$(detect_os)
+    arch=$(detect_arch)
+    install_dir=$(find_install_dir)
 
     info "Platform: ${os}/${arch}"
     info "Install directory: ${install_dir}"

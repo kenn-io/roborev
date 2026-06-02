@@ -141,7 +141,7 @@ function Install-Roborev {
     Write-Info "Latest version: $version"
 
     $versionNum = $version.TrimStart('v')
-    $archiveName = "roborev_${versionNum}_windows_${arch}.tar.gz"
+    $archiveName = "roborev_${versionNum}_windows_${arch}.zip"
     $downloadUrl = "https://github.com/$repo/releases/download/$version/$archiveName"
 
     $installDir = Get-InstallDir
@@ -221,8 +221,7 @@ function Install-Roborev {
         }
 
         Write-Info "Extracting..."
-        # Windows 10+ has tar built-in
-        tar -xzf $archivePath -C $tmpDir
+        Expand-Archive -LiteralPath $archivePath -DestinationPath $tmpDir -Force
 
         # Move binary to install dir
         $binaryPath = Join-Path $tmpDir $binaryName
