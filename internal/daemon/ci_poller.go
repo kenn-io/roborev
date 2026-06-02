@@ -501,6 +501,10 @@ func (p *CIPoller) resolveCIMembers(
 		if err != nil {
 			return nil, config.SynthesisSpec{}, fmt.Errorf("resolve CI panel %q: %w", panelName, err)
 		}
+		members, err = p.resolveCINamedPanelMembers(repoCfg, cfg, members)
+		if err != nil {
+			return nil, config.SynthesisSpec{}, err
+		}
 		return members, synth, nil
 	}
 	return p.resolveCIMatrixMembers(repo, repoCfg, cfg, ghRepo)
@@ -553,6 +557,59 @@ func (p *CIPoller) resolveCIMatrixMembers(
 		return nil, config.SynthesisSpec{}, fmt.Errorf("resolve CI synthesis: %w", err)
 	}
 	return members, synth, nil
+}
+
+func (p *CIPoller) resolveCINamedPanelMembers(
+	repoCfg *config.RepoConfig,
+	cfg *config.Config,
+	members []config.ResolvedMember,
+) ([]config.ResolvedMember, error) {
+	out := make([]config.ResolvedMember, len(members))
+	copy(out, members)
+	for i := range out {
+		resolvedAgent, resolvedModel, err := p.resolveCIPanelMemberExecution(
+			repoCfg, cfg, out[i],
+		)
+		if err != nil {
+			return nil, err
+		}
+		out[i].Agent = resolvedAgent
+		out[i].Model = resolvedModel
+	}
+	return out, nil
+}
+
+func (p *CIPoller) resolveCIPanelMemberExecution(
+	repoCfg *config.RepoConfig,
+	cfg *config.Config,
+	member config.ResolvedMember,
+) (string, string, error) {
+	workflow := workflowForPanelReviewType(member.ReviewType)
+	resolution, err := agent.ResolveWorkflowConfigFromConfig(
+		member.Agent, repoCfg, cfg, workflow, member.Reasoning,
+	)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve workflow config: %w", err)
+	}
+	resolvedAgent := resolution.PreferredAgent
+	if p.agentResolverFn != nil {
+		name, err := p.agentResolverFn(resolvedAgent)
+		if err != nil {
+			return "", "", fmt.Errorf("%w for type=%s: %w", errNoCIAgent, member.ReviewType, err)
+		}
+		resolvedAgent = name
+	} else if resolved, err := agent.GetAvailableWithConfigFromConfig(
+		repoCfg, resolvedAgent, cfg, resolution.BackupAgent,
+	); err != nil {
+		return "", "", fmt.Errorf("%w for type=%s: %w", errNoCIAgent, member.ReviewType, err)
+	} else {
+		resolvedAgent = resolved.Name()
+	}
+	model := member.Model
+	if !resolution.AgentMatches(resolvedAgent, member.Agent) {
+		model = resolution.ModelForSelectedAgent(resolvedAgent, cfg.CI.Model)
+	}
+	return resolvedAgent, model, nil
 }
 
 // resolveMatrixMemberAgent resolves the effective agent and model for one

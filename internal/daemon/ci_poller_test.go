@@ -3177,6 +3177,50 @@ func TestProcessPRNamedPanelMembers(t *testing.T) {
 	}
 }
 
+func TestProcessPRNamedPanelMemberUsesBackupModelWhenPreferredUnavailable(t *testing.T) {
+	assert := assert.New(t)
+	p, db, _, repo, cfg := newCIPanelGitHarness(t)
+
+	const primaryAgent = "ci-panel-unavailable-primary"
+	agent.Register(&unavailableSynthesisCommandAgent{
+		name:    primaryAgent,
+		command: "roborev-missing-ci-panel-primary",
+	})
+	t.Cleanup(func() { agent.Unregister(primaryAgent) })
+
+	p.agentResolverFn = nil
+	cfg.CI.Panel = "ci"
+	cfg.ReviewBackupAgent = "test"
+	cfg.ReviewBackupModel = "named-panel-backup-model"
+	cfg.Review = config.ReviewConfig{
+		Subagents: map[string]config.SubagentSpec{
+			"rev": {Agent: primaryAgent, ReviewType: "review"},
+		},
+		Panels: map[string]config.PanelSpec{
+			"ci": {Members: []string{"rev"}, SynthesisAgent: "test"},
+		},
+	}
+	p.loadRepoConfigFn = func(string) (*config.RepoConfig, error) { return &config.RepoConfig{}, nil }
+
+	base := repo.HeadSHA()
+	head := repo.CommitFile("app.go", "package app\n", "feat: app")
+	p.mergeBaseFn = func(_, _, _ string) (string, error) { return base, nil }
+
+	err := p.processPR(context.Background(), "acme/api", ghPR{
+		Number: 15, HeadRefOid: head, BaseRefName: "main",
+	}, cfg)
+	require.NoError(t, err, "processPR")
+
+	panel, err := db.GetCIPanelByPRSHA("acme/api", 15, head)
+	require.NoError(t, err)
+	require.NotNil(t, panel)
+	members, err := db.GetPanelMembers(panel.PanelRunUUID)
+	require.NoError(t, err)
+	require.Len(t, members, 1)
+	assert.Equal("test", members[0].Agent)
+	assert.Equal("named-panel-backup-model", members[0].Model)
+}
+
 // TestProcessPRAutoDesignAppendsNoneWhenNotWarranted verifies that an enabled
 // auto-design router appends no design member when no commit in the range
 // warrants one (a trivial doc/test change that the heuristics skip).
