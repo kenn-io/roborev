@@ -198,9 +198,10 @@ jobs:
           path: dist/*.tar.gz
 ```
 
-Keep the existing `update-homebrew` job after this release job. Its
-`needs: release`, artifact download, checksum calculation, formula
-update, verification, and push steps stay unchanged.
+Keep the existing `update-homebrew` job after this release job. Preserve
+its artifact download, formula update, verification, and push behavior.
+Quote the checksum script's file paths and `$GITHUB_OUTPUT` writes so
+the edited workflow passes actionlint.
 
 - [ ] **Step 3: Validate edited workflow**
 

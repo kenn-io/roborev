@@ -9,107 +9,49 @@ permissions:
   contents: write
 
 jobs:
-  build:
+  release:
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - goos: linux
-            goarch: amd64
-          - goos: linux
-            goarch: arm64
-          - goos: darwin
-            goarch: amd64
-          - goos: darwin
-            goarch: arm64
-          - goos: windows
-            goarch: amd64
-          - goos: windows
-            goarch: arm64
-
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c  # v6.4.0
         with:
           go-version: '1.26.3'
 
-      - name: Build
-        env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: 0
+      - name: Resolve release notes
+        id: release_notes
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
-          EXT=""
-          if [ "$GOOS" = "windows" ]; then EXT=".exe"; fi
+          TAG_NAME="${GITHUB_REF#refs/tags/}"
+          ARGS="release --clean"
 
-          mkdir -p dist
-          LDFLAGS="-s -w -X github.com/roborev-dev/roborev/internal/version.Version=v${VERSION}"
-          go build -ldflags="$LDFLAGS" -o dist/roborev${EXT} ./cmd/roborev
+          TAG_TYPE=$(git cat-file -t "$TAG_NAME")
+          if [ "$TAG_TYPE" = "tag" ]; then
+            TAG_MSG=$(git tag -l --format='%(contents:body)' "$TAG_NAME")
+            if [ -n "$TAG_MSG" ]; then
+              printf '%s\n' "$TAG_MSG" > release-notes.md
+              ARGS="$ARGS --release-notes=release-notes.md"
+            fi
+          else
+            echo "Warning: $TAG_NAME is a lightweight tag, using GoReleaser-generated notes"
+          fi
 
-          cd dist
-          ARCHIVE="roborev_${VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz"
-          tar czf "$ARCHIVE" roborev${EXT}
-          rm roborev${EXT}
+          echo "args=$ARGS" >> "$GITHUB_OUTPUT"
+
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89  # v7.2.2
+        with:
+          distribution: goreleaser
+          version: '~> v2'
+          args: ${{ steps.release_notes.outputs.args }}
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
-          name: roborev-${{ matrix.goos }}-${{ matrix.goarch }}
+          name: roborev-release-tarballs
           path: dist/*.tar.gz
-
-  release:
-    needs: build
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
-
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
-        with:
-          path: artifacts
-          merge-multiple: true
-
-      - name: Generate checksums
-        run: |
-          cd artifacts
-          sha256sum *.tar.gz > SHA256SUMS
-          cat SHA256SUMS
-
-      - name: Get tag message
-        id: tag_message
-        run: |
-          TAG_NAME="${GITHUB_REF#refs/tags/}"
-
-          # Only extract message from annotated tags (type "tag"), not lightweight tags (type "commit")
-          TAG_TYPE=$(git cat-file -t "$TAG_NAME")
-          if [ "$TAG_TYPE" != "tag" ]; then
-            echo "Warning: $TAG_NAME is a lightweight tag, using auto-generated notes"
-            echo "has_body=false" >> $GITHUB_OUTPUT
-            exit 0
-          fi
-
-          # Get the tag message body (our changelog), skipping the first line ("Release X.Y.Z")
-          TAG_MSG=$(git tag -l --format='%(contents:body)' "$TAG_NAME")
-
-          if [ -n "$TAG_MSG" ]; then
-            # Use unique delimiter to avoid conflicts with tag message content
-            DELIM="TAGMSG_$(date +%s%N)"
-            echo "body<<$DELIM" >> $GITHUB_OUTPUT
-            echo "$TAG_MSG" >> $GITHUB_OUTPUT
-            echo "$DELIM" >> $GITHUB_OUTPUT
-            echo "has_body=true" >> $GITHUB_OUTPUT
-          else
-            echo "has_body=false" >> $GITHUB_OUTPUT
-          fi
-
-      - name: Create Release
-        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda  # v3.0.0
-        with:
-          files: |
-            artifacts/*.tar.gz
-            artifacts/SHA256SUMS
-          body: ${{ steps.tag_message.outputs.has_body == 'true' && steps.tag_message.outputs.body || '' }}
-          generate_release_notes: ${{ steps.tag_message.outputs.has_body != 'true' }}
 
   update-homebrew:
     needs: release
@@ -124,7 +66,7 @@ jobs:
         id: sha256
         run: |
           VERSION=${GITHUB_REF#refs/tags/v}
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
           # Verify all expected artifacts exist
           for platform in darwin_amd64 darwin_arm64 linux_amd64 linux_arm64; do
@@ -138,12 +80,19 @@ jobs:
           done
 
           # macOS
-          echo "darwin_amd64=$(sha256sum artifacts/roborev_${VERSION}_darwin_amd64.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
-          echo "darwin_arm64=$(sha256sum artifacts/roborev_${VERSION}_darwin_arm64.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+          darwin_amd64=$(sha256sum "artifacts/roborev_${VERSION}_darwin_amd64.tar.gz" | cut -d' ' -f1)
+          darwin_arm64=$(sha256sum "artifacts/roborev_${VERSION}_darwin_arm64.tar.gz" | cut -d' ' -f1)
 
           # Linux
-          echo "linux_amd64=$(sha256sum artifacts/roborev_${VERSION}_linux_amd64.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
-          echo "linux_arm64=$(sha256sum artifacts/roborev_${VERSION}_linux_arm64.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+          linux_amd64=$(sha256sum "artifacts/roborev_${VERSION}_linux_amd64.tar.gz" | cut -d' ' -f1)
+          linux_arm64=$(sha256sum "artifacts/roborev_${VERSION}_linux_arm64.tar.gz" | cut -d' ' -f1)
+
+          {
+            echo "darwin_amd64=$darwin_amd64"
+            echo "darwin_arm64=$darwin_arm64"
+            echo "linux_amd64=$linux_amd64"
+            echo "linux_arm64=$linux_arm64"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Checkout tap repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
