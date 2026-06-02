@@ -211,6 +211,9 @@ func resolveCommand(hook config.HookConfig, event Event) string {
 	if hook.Type == "beads" {
 		return beadsCommand(event)
 	}
+	if hook.Type == "lint" {
+		return lintCommand(event)
+	}
 	return interpolate(hook.Command, event)
 }
 
@@ -233,6 +236,21 @@ func beadsCommand(event Event) string {
 			return fmt.Sprintf("bd create %s -p 2", shellEscape(title))
 		}
 		return "" // No issue for passing reviews
+	default:
+		return ""
+	}
+}
+
+// lintCommand generates a roborev lint command for the lint built-in hook.
+// Runs semgrep on changed files and logs findings.
+func lintCommand(event Event) string {
+	if event.Repo == "" {
+		return ""
+	}
+	switch event.Type {
+	case "review.completed":
+		repo := shellEscape(event.Repo)
+		return fmt.Sprintf("cd %s && roborev lint --diff --quiet 2>&1", repo)
 	default:
 		return ""
 	}
