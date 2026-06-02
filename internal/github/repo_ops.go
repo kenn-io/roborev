@@ -91,6 +91,22 @@ func (c *Client) ListOwnerRepos(ctx context.Context, owner string, limit int) ([
 	return userRepos, nil
 }
 
+func (c *Client) GetRepositoryFullName(ctx context.Context, ghRepo string) (string, error) {
+	owner, repo, err := parseRepo(ghRepo)
+	if err != nil {
+		return "", err
+	}
+	got, _, err := c.api.Repositories.Get(ctx, owner, repo)
+	if err != nil {
+		return "", fmt.Errorf("get repository: %w", err)
+	}
+	fullName := strings.TrimSpace(got.GetFullName())
+	if fullName == "" {
+		return ghRepo, nil
+	}
+	return fullName, nil
+}
+
 func (c *Client) SetCommitStatus(ctx context.Context, ghRepo, sha, state, description string) error {
 	owner, repo, err := parseRepo(ghRepo)
 	if err != nil {

@@ -22,8 +22,9 @@ var errSynthesisCanceled = errors.New("synthesis canceled")
 // processSynthesisJob executes a panel synthesis job against the run's member
 // reviews. It runs read-only against job.RepoPath (no worktree) and picks one of
 // three branches: all members failed -> durable fail review (no agent); exactly
-// one member succeeded -> passthrough that member's output (no agent); two or
-// more succeeded -> a single verify+dedupe agent call.
+// one member succeeded -> passthrough that member's output unless min-severity
+// filtering requires a synthesis pass; two or more succeeded -> a single
+// verify+dedupe agent call.
 func (wp *WorkerPool) processSynthesisJob(
 	ctx context.Context, workerID string, job *storage.ReviewJob,
 ) {
@@ -48,7 +49,12 @@ func (wp *WorkerPool) processSynthesisJob(
 			reviewpkg.FormatAllFailedComment(results, headOf(job.GitRef)))
 	case 1:
 		// Exactly one member produced output — pass it through verbatim and
-		// label the review with that member's agent.
+		// label the review with that member's agent when no panel-level
+		// severity filter needs to be applied.
+		if !singleSuccessCanPassthrough(job.MinSeverity) {
+			wp.synthesizeSucceededResults(ctx, workerID, job, succeeded)
+			return
+		}
 		wp.completeSynthesis(workerID, job, succeeded[0].Agent, "", succeeded[0].Output)
 	default:
 		if allMembersPassed(results, succeeded) {
@@ -59,23 +65,41 @@ func (wp *WorkerPool) processSynthesisJob(
 			return
 		}
 		// Two or more succeeded — combine and deduplicate via one agent call.
-		// Mirror processJob's quota gate: an agent already in cooldown must fail
-		// over instead of burning another quota-exhausted call. The no-agent
-		// branches above skip this check because they never invoke an agent.
-		canonicalAgent := agent.CanonicalName(job.Agent)
-		if wp.isAgentCoolingDown(canonicalAgent) {
-			wp.failoverOrFail(workerID, job, canonicalAgent,
-				fmt.Sprintf("agent %s quota cooldown active", canonicalAgent))
-			return
-		}
-		prompt := reviewpkg.BuildSynthesisPrompt(succeeded, job.MinSeverity)
-		out, resolvedAgent, runErr := wp.runSynthesisAgent(ctx, workerID, job, prompt)
-		if runErr != nil {
-			// runSynthesisAgent already handled the failure/cancel.
-			return
-		}
-		wp.completeSynthesis(workerID, job, resolvedAgent, prompt, out)
+		wp.synthesizeSucceededResults(ctx, workerID, job, succeeded)
 	}
+}
+
+func singleSuccessCanPassthrough(minSeverity string) bool {
+	switch strings.ToLower(strings.TrimSpace(minSeverity)) {
+	case "", "low":
+		return true
+	default:
+		return false
+	}
+}
+
+func (wp *WorkerPool) synthesizeSucceededResults(
+	ctx context.Context,
+	workerID string,
+	job *storage.ReviewJob,
+	succeeded []reviewpkg.ReviewResult,
+) {
+	// Mirror processJob's quota gate: an agent already in cooldown must fail
+	// over instead of burning another quota-exhausted call. The no-agent
+	// branches skip this check because they never invoke an agent.
+	canonicalAgent := agent.CanonicalName(job.Agent)
+	if wp.isAgentCoolingDown(canonicalAgent) {
+		wp.failoverOrFail(workerID, job, canonicalAgent,
+			fmt.Sprintf("agent %s quota cooldown active", canonicalAgent))
+		return
+	}
+	prompt := reviewpkg.BuildSynthesisPrompt(succeeded, job.MinSeverity)
+	out, resolvedAgent, runErr := wp.runSynthesisAgent(ctx, workerID, job, prompt)
+	if runErr != nil {
+		// runSynthesisAgent already handled the failure/cancel.
+		return
+	}
+	wp.completeSynthesis(workerID, job, resolvedAgent, prompt, out)
 }
 
 // headOf returns the head side of a git ref range: the part after the last

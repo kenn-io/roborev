@@ -92,6 +92,7 @@ type synthesisEntrypointTestAgent struct {
 	name         string
 	model        string
 	streamLine   string
+	result       string
 	synthPrompt  string
 	reviewCalled bool
 }
@@ -109,6 +110,9 @@ func (a *synthesisEntrypointTestAgent) Synthesize(ctx context.Context, prompt st
 		if _, err := io.WriteString(output, a.streamLine+"\n"); err != nil {
 			return "", err
 		}
+	}
+	if a.result != "" {
+		return a.result, nil
 	}
 	return "## Review Findings\n\n- **Severity**: Medium\n- **Location**: file.go:1\n- **Problem**: combined\n- **Fix**: fix", nil
 }
@@ -376,6 +380,49 @@ func TestSynthesisSingleSuccessPassthrough(t *testing.T) {
 	assert.Equal("P", storage.ParseVerdict(review.Output), "verdict carried from member output")
 	assert.Equal(memberAgent, review.Agent, "review labeled with the surviving member's agent")
 	assert.False(synthCalled, "passthrough must not invoke an agent")
+}
+
+func TestSynthesisSingleSuccessWithMinSeverityUsesFilterPrompt(t *testing.T) {
+	assert := assert.New(t)
+	tc := newWorkerTestContext(t, 1)
+
+	const memberAgent = "panel-single-minsev-member"
+	registerPassingAgent(t, memberAgent)
+
+	synthAgent := &synthesisEntrypointTestAgent{
+		name:   "panel-single-minsev-synth",
+		result: "No Medium, High, or Critical findings remain.",
+	}
+	agent.Register(synthAgent)
+	t.Cleanup(func() { agent.Unregister(synthAgent.name) })
+
+	runUUID, members, synthJob := enqueuePanelRun(t, tc, "single-success-minsev-panel", []memberSpec{
+		{name: "m0", agent: memberAgent},
+		{name: "m1", agent: memberAgent},
+	})
+	setSynthesisAgent(t, tc, runUUID, synthAgent.name)
+	_, err := tc.DB.Exec(
+		"UPDATE review_jobs SET min_severity = ? WHERE id = ?",
+		"medium", synthJob.ID,
+	)
+	require.NoError(t, err)
+	const memberOutput = "## Review Findings\n\n- Severity: Low\n- Location: low.go:1\n- Problem: low-only\n- Fix: low fix"
+	completeMember(t, tc, members[0].ID, memberAgent, memberOutput)
+	failMember(t, tc, members[1].ID)
+
+	synth := releaseAndClaimSynthesis(t, tc, runUUID)
+	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+
+	tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
+	review, err := tc.DB.GetReviewByJobID(synth.ID)
+	require.NoError(t, err)
+	assert.Equal("No Medium, High, or Critical findings remain.", review.Output)
+	assert.Equal(synthAgent.name, review.Agent)
+	assert.False(synthAgent.reviewCalled, "synthesis must use the synthesis entrypoint")
+	assert.Contains(synthAgent.synthPrompt, "Review 1: Agent="+memberAgent)
+	assert.Contains(synthAgent.synthPrompt, "Severity: Low")
+	assert.Contains(synthAgent.synthPrompt, "Omit findings below medium severity")
+	assert.Contains(synthAgent.synthPrompt, "Only include Medium, High, and Critical findings.")
 }
 
 func TestSynthesisAllPassingSkipsAgent(t *testing.T) {

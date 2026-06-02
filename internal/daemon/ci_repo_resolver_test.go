@@ -26,6 +26,7 @@ func TestRepoResolver_Matching(t *testing.T) {
 	tests := []struct {
 		name        string
 		listReposFn func(context.Context, string, string) ([]string, error)
+		canonicalFn func(context.Context, string, string) (string, error)
 		ci          *config.CIConfig
 		wantRepos   []string                   // expected repos (sorted); nil means don't check
 		checkExtra  func(*testing.T, []string) // optional extra assertions
@@ -172,6 +173,25 @@ func TestRepoResolver_Matching(t *testing.T) {
 			},
 		},
 		{
+			name: "moved exact repo deduped against wildcard canonical repo",
+			listReposFn: func(_ context.Context, owner string, _ string) ([]string, error) {
+				if owner == "kenn-io" {
+					return []string{"kenn-io/kit", "kenn-io/roborev"}, nil
+				}
+				return nil, fmt.Errorf("unknown owner: %s", owner)
+			},
+			canonicalFn: func(_ context.Context, repo, _ string) (string, error) {
+				if repo == "roborev-dev/roborev" {
+					return "kenn-io/roborev", nil
+				}
+				return repo, nil
+			},
+			ci: &config.CIConfig{
+				Repos: []string{"roborev-dev/roborev", "kenn-io/*"},
+			},
+			wantRepos: []string{"kenn-io/kit", "kenn-io/roborev"},
+		},
+		{
 			name: "max repos preserves explicit entries",
 			listReposFn: func(_ context.Context, _ string, _ string) ([]string, error) {
 				repos := make([]string, 20)
@@ -205,7 +225,7 @@ func TestRepoResolver_Matching(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			r := &RepoResolver{listReposFn: tt.listReposFn}
+			r := &RepoResolver{listReposFn: tt.listReposFn, canonicalRepoFn: tt.canonicalFn}
 
 			repos, err := r.Resolve(context.Background(), tt.ci, nil)
 			require.NoError(t, err)

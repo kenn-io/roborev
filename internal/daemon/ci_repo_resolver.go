@@ -37,6 +37,12 @@ type RepoResolver struct {
 	// listReposFn is a test seam. When non-nil it replaces the real
 	// GitHub repo list call. Signature: (ctx, owner, token) -> []nameWithOwner.
 	listReposFn func(ctx context.Context, owner, token string) ([]string, error)
+
+	// canonicalRepoFn is a test seam / production hook for resolving exact repo
+	// config entries through GitHub redirects, e.g. after a repository transfer.
+	// Nil disables canonicalization, which keeps unit tests hermetic unless they
+	// opt in.
+	canonicalRepoFn func(ctx context.Context, ghRepo, token string) (string, error)
 }
 
 // githubTokenFn resolves an auth token for a given owner.
@@ -102,11 +108,12 @@ func (r *RepoResolver) buildCacheKey(ci *config.CIConfig) string {
 // GitHub API once per owner for wildcards, applies matching and
 // exclusions, deduplicates, and enforces max_repos.
 //
-// The returned degraded flag is true when one or more API calls failed
-// during wildcard expansion. The caller should avoid caching degraded
-// results so that the next poll retries the failed API calls.
+// The returned degraded flag is true when one or more GitHub API calls failed
+// during exact-repo canonicalization or wildcard expansion. The caller should
+// avoid caching degraded results so that the next poll retries the failed calls.
 func (r *RepoResolver) expand(ctx context.Context, ci *config.CIConfig, tokenFn githubTokenFn) ([]string, bool, error) {
 	var exact []string
+	var degraded bool
 	// owner → list of full patterns like "owner/pattern"
 	wildcardsByOwner := make(map[string][]string)
 
@@ -123,19 +130,29 @@ func (r *RepoResolver) expand(ctx context.Context, ci *config.CIConfig, tokenFn 
 		}
 	}
 
-	// Deduplicate exact entries
+	// Deduplicate exact entries. Canonicalize them first when the poller has
+	// wired a GitHub lookup, so an old moved name like "old/repo" can collapse
+	// into the same key as a wildcard-expanded "new/repo".
 	seen := make(map[string]bool, len(exact))
 	var exactResult []string
 	for _, e := range exact {
-		lower := strings.ToLower(e)
+		canonical, canonicalErr := r.canonicalizeExactRepo(ctx, e, tokenFn)
+		if canonicalErr != nil {
+			if ctx.Err() != nil {
+				return nil, false, ctx.Err()
+			}
+			log.Printf("CI repo resolver: failed to canonicalize repo %q: %v (using configured name)", e, canonicalErr)
+			degraded = true
+			canonical = e
+		}
+		lower := strings.ToLower(canonical)
 		if !seen[lower] {
 			seen[lower] = true
-			exactResult = append(exactResult, e)
+			exactResult = append(exactResult, canonical)
 		}
 	}
 
 	// Expand wildcards by owner
-	var degraded bool
 	var wildcardResult []string
 	for owner, patterns := range wildcardsByOwner {
 		if ctx.Err() != nil {
@@ -220,6 +237,29 @@ func (r *RepoResolver) callListRepos(ctx context.Context, owner, token string) (
 	return ghListRepos(ctx, owner, token, r.baseURL)
 }
 
+func (r *RepoResolver) canonicalizeExactRepo(ctx context.Context, ghRepo string, tokenFn githubTokenFn) (string, error) {
+	if r.canonicalRepoFn == nil {
+		return ghRepo, nil
+	}
+	owner, _, ok := strings.Cut(ghRepo, "/")
+	if !ok || owner == "" {
+		return ghRepo, nil
+	}
+	var token string
+	if tokenFn != nil {
+		token = tokenFn(owner)
+	}
+	canonical, err := r.canonicalRepoFn(ctx, ghRepo, token)
+	if err != nil {
+		return "", err
+	}
+	canonical = strings.TrimSpace(canonical)
+	if canonical == "" {
+		return ghRepo, nil
+	}
+	return canonical, nil
+}
+
 func ghListRepos(ctx context.Context, owner, token, rawBaseURL string) ([]string, error) {
 	apiBaseURL, err := ghpkg.GitHubAPIBaseURL(rawBaseURL)
 	if err != nil {
@@ -230,6 +270,18 @@ func ghListRepos(ctx context.Context, owner, token, rawBaseURL string) ([]string
 		return nil, err
 	}
 	return client.ListOwnerRepos(ctx, owner, 1000)
+}
+
+func ghCanonicalRepo(ctx context.Context, ghRepo, token, rawBaseURL string) (string, error) {
+	apiBaseURL, err := ghpkg.GitHubAPIBaseURL(rawBaseURL)
+	if err != nil {
+		return "", err
+	}
+	client, err := ghpkg.NewClient(token, ghpkg.WithBaseURL(apiBaseURL))
+	if err != nil {
+		return "", err
+	}
+	return client.GetRepositoryFullName(ctx, ghRepo)
 }
 
 // applyExclusions filters repos matching any of the exclusion patterns.

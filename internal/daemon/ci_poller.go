@@ -150,6 +150,9 @@ func NewCIPoller(db *storage.DB, cfgGetter ConfigGetter, broadcaster Broadcaster
 	// Create repo resolver after token provider setup so
 	// githubAPIBaseURL() returns the correct Enterprise URL.
 	p.repoResolver = &RepoResolver{baseURL: p.githubAPIBaseURL()}
+	p.repoResolver.canonicalRepoFn = func(ctx context.Context, ghRepo, token string) (string, error) {
+		return ghCanonicalRepo(ctx, ghRepo, token, p.repoResolver.baseURL)
+	}
 
 	return p
 }
