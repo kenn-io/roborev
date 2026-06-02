@@ -186,7 +186,9 @@ install_from_go() {
     fi
 
     info "Installing via 'go install'..."
-    go install "go.kenn.io/roborev/cmd/roborev@latest"
+    if ! go install "go.kenn.io/roborev/cmd/roborev@latest"; then
+        return 1
+    fi
 
     return 0
 }

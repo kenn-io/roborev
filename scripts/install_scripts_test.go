@@ -39,5 +39,8 @@ func TestShellInstallerUsesModulePathForGoInstallFallback(t *testing.T) {
 	shellInstaller, err := os.ReadFile("install.sh")
 	require.NoError(t, err)
 
-	assert.Contains(t, string(shellInstaller), `go install "go.kenn.io/roborev/cmd/roborev@latest"`)
+	shell := string(shellInstaller)
+
+	assert.Contains(t, shell, `if ! go install "go.kenn.io/roborev/cmd/roborev@latest"; then`)
+	assert.Contains(t, shell, `return 1`)
 }
