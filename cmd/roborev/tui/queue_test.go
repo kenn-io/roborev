@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"maps"
 	"net/http"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -2983,8 +2984,17 @@ func TestFetchPanelMembersEmptyRun(t *testing.T) {
 func withTestColor(t *testing.T) {
 	t.Helper()
 	prev := lipgloss.ColorProfile()
+	prevNoColor, hadNoColor := os.LookupEnv("NO_COLOR")
+	require.NoError(t, os.Unsetenv("NO_COLOR"))
 	lipgloss.SetColorProfile(termenv.ANSI256)
-	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
+	t.Cleanup(func() {
+		if hadNoColor {
+			_ = os.Setenv("NO_COLOR", prevNoColor)
+		} else {
+			_ = os.Unsetenv("NO_COLOR")
+		}
+		lipgloss.SetColorProfile(prev)
+	})
 }
 
 func TestRenderShowsDisclosureAndConnectorsWhenExpanded(t *testing.T) {

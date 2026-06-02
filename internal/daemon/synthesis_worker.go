@@ -241,7 +241,7 @@ func (wp *WorkerPool) configureSynthesisAgent(
 	workerID string, job *storage.ReviewJob,
 ) (agent.Agent, string, error) {
 	cfg := wp.cfgGetter.Config()
-	baseAgent, err := agent.GetAvailableWithConfig(job.RepoPath, job.Agent, cfg)
+	baseAgent, err := agent.GetAvailableWithConfig(job.RepoPath, job.Agent, cfg, job.BackupAgent)
 	if err != nil {
 		wp.failOrRetryAgent(workerID, job, job.Agent, fmt.Sprintf("get agent: %v", err))
 		return nil, "", err
@@ -253,9 +253,14 @@ func (wp *WorkerPool) configureSynthesisAgent(
 	}
 	reasoningLevel := agent.ParseReasoningLevel(reasoning)
 
+	model := job.Model
+	if synthesisSelectedBackupAgent(job, baseAgent.Name()) {
+		model = job.BackupModel
+	}
+
 	// Synthesis reads the repo to verify findings but must never edit it.
 	a := applyCodexReviewSettings(
-		baseAgent.WithReasoning(reasoningLevel).WithAgentic(false).WithModel(job.Model),
+		baseAgent.WithReasoning(reasoningLevel).WithAgentic(false).WithModel(model),
 		job, cfg,
 	)
 	if job.Provider != "" {
@@ -269,4 +274,20 @@ func (wp *WorkerPool) configureSynthesisAgent(
 		log.Printf("[%s] Error saving command line for job %d: %v", workerID, job.ID, err)
 	}
 	return a, agentName, nil
+}
+
+func synthesisSelectedBackupAgent(job *storage.ReviewJob, selectedAgent string) bool {
+	backupAgent := strings.TrimSpace(job.BackupAgent)
+	selectedAgent = strings.TrimSpace(selectedAgent)
+	if backupAgent == "" || selectedAgent == "" {
+		return false
+	}
+	if agent.CanonicalName(selectedAgent) == agent.CanonicalName(backupAgent) {
+		return true
+	}
+	resolvedBackup, err := agent.Get(backupAgent)
+	if err != nil {
+		return false
+	}
+	return agent.CanonicalName(selectedAgent) == agent.CanonicalName(resolvedBackup.Name())
 }

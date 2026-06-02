@@ -340,6 +340,23 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 		assert.NotContains(t, body, "Review type:  | Agent:", "panel comments should not use the empty synthesis review_type footer")
 	})
 
+	t.Run("headed pass output keeps result text", func(t *testing.T) {
+		h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+		comments := h.CaptureComments()
+		const headSHA = "1234567feedface"
+		_, synth, _ := h.seedCIPanelRun(t, "acme/api", 19, headSHA, "base.."+headSHA,
+			[]jobSpec{{Agent: "test", ReviewType: "review", Status: "done", Output: "No issues found."}})
+		h.completeSynthesisWithReview(t, synth.ID, "No issues found.")
+
+		h.Poller.handleReviewCompleted(ciEvent(synth.ID, "review.completed"))
+
+		require.Len(t, *comments, 1)
+		body := (*comments)[0].Body
+		assert.Contains(t, body, "## roborev: Combined Review (`"+git.ShortSHA(headSHA)+"`)")
+		assert.Contains(t, body, "No issues found.")
+		assert.Contains(t, body, "Panel: ci")
+	})
+
 	t.Run("plain output footer hides cost by default", func(t *testing.T) {
 		h := newCIPollerHarness(t, "https://github.com/acme/api.git")
 		comments := h.CaptureComments()

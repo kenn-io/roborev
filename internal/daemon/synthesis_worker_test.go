@@ -88,6 +88,7 @@ func registerNeverCalledAgent(t *testing.T, name string, called *bool) {
 
 type synthesisEntrypointTestAgent struct {
 	name         string
+	model        string
 	streamLine   string
 	synthPrompt  string
 	reviewCalled bool
@@ -114,9 +115,35 @@ func (a *synthesisEntrypointTestAgent) WithReasoning(agent.ReasoningLevel) agent
 
 func (a *synthesisEntrypointTestAgent) WithAgentic(bool) agent.Agent { return a }
 
-func (a *synthesisEntrypointTestAgent) WithModel(string) agent.Agent { return a }
+func (a *synthesisEntrypointTestAgent) WithModel(model string) agent.Agent {
+	a.model = model
+	return a
+}
 
 func (a *synthesisEntrypointTestAgent) CommandLine() string { return a.name }
+
+type unavailableSynthesisCommandAgent struct {
+	name    string
+	command string
+}
+
+func (a *unavailableSynthesisCommandAgent) Name() string { return a.name }
+
+func (a *unavailableSynthesisCommandAgent) Review(context.Context, string, string, string, io.Writer) (string, error) {
+	return "", fmt.Errorf("unavailable synthesis primary should not run")
+}
+
+func (a *unavailableSynthesisCommandAgent) WithReasoning(agent.ReasoningLevel) agent.Agent {
+	return a
+}
+
+func (a *unavailableSynthesisCommandAgent) WithAgentic(bool) agent.Agent { return a }
+
+func (a *unavailableSynthesisCommandAgent) WithModel(string) agent.Agent { return a }
+
+func (a *unavailableSynthesisCommandAgent) CommandLine() string { return a.command }
+
+func (a *unavailableSynthesisCommandAgent) CommandName() string { return a.command }
 
 func TestHeadOf(t *testing.T) {
 	assert := assert.New(t)
@@ -124,6 +151,53 @@ func TestHeadOf(t *testing.T) {
 	assert.Equal("plainsha", headOf("plainsha"), "plain ref is unchanged")
 	assert.Equal("c", headOf("a..b..c"), "uses the part after the last ..")
 	assert.Empty(headOf(""), "empty ref stays empty")
+}
+
+func TestConfigureSynthesisAgentUsesStoredBackupWhenPrimaryUnavailable(t *testing.T) {
+	assert := assert.New(t)
+	tc := newWorkerTestContext(t, 1)
+
+	const primaryAgent = "synth-primary-unavailable"
+	agent.Register(&unavailableSynthesisCommandAgent{
+		name:    primaryAgent,
+		command: "roborev-test-missing-synthesis-primary",
+	})
+	t.Cleanup(func() { agent.Unregister(primaryAgent) })
+
+	const backupAgent = "synth-explicit-backup"
+	backup := &synthesisEntrypointTestAgent{name: backupAgent}
+	agent.Register(backup)
+	t.Cleanup(func() { agent.Unregister(backupAgent) })
+
+	_, _, synthJob := enqueuePanelRun(t, tc, "backup-panel", []memberSpec{
+		{name: "m0", agent: "test"},
+	})
+	t.Setenv("PATH", t.TempDir())
+	originalCodex, err := agent.Get("codex")
+	require.NoError(t, err)
+	agent.Register(&agent.FakeAgent{NameStr: "codex"})
+	t.Cleanup(func() { agent.Register(originalCodex) })
+
+	_, err = tc.DB.Exec(
+		`UPDATE review_jobs
+		 SET status = 'running', worker_id = ?, agent = ?, model = ?, backup_agent = ?, backup_model = ?
+		 WHERE id = ?`,
+		testWorkerID, primaryAgent, "primary-model", backupAgent, "backup-model", synthJob.ID,
+	)
+	require.NoError(t, err)
+	synth, err := tc.DB.GetJobByID(synthJob.ID)
+	require.NoError(t, err)
+	require.Equal(t, primaryAgent, synth.Agent)
+	require.Equal(t, backupAgent, synth.BackupAgent)
+
+	configured, agentName, err := tc.Pool.configureSynthesisAgent(testWorkerID, synth)
+	require.NoError(t, err)
+
+	assert.Equal(backupAgent, agentName)
+	assert.Equal(backupAgent, configured.Name())
+	configuredBackup, ok := configured.(*synthesisEntrypointTestAgent)
+	require.True(t, ok)
+	assert.Equal("backup-model", configuredBackup.model)
 }
 
 // TestSynthesisAllFailedRendersHeadSHA covers F11: the all-failed review header

@@ -2309,9 +2309,11 @@ func formatPanelPRCommentWithHead(review *storage.Review, verdict string, member
 	if len(output) > reviewpkg.MaxCommentLen {
 		output = truncateUTF8(output, maxLen) + truncSuffix
 	}
-	if verdict != "P" && output != "" {
+	if output != "" && (verdict != "P" || headSHA != "") {
 		b.WriteString(output)
 		b.WriteString("\n")
+	} else if verdict == "P" && headSHA != "" {
+		b.WriteString("No issues found.\n")
 	}
 
 	return appendPanelPRFooter(b.String(), review.Job, members, includeCosts)
