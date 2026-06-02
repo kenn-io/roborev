@@ -345,7 +345,7 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 		assert.NotContains(t, body, "Review type:  | Agent:", "panel comments should not use the empty synthesis review_type footer")
 	})
 
-	t.Run("headed synthesized output drops generic synthesis footer", func(t *testing.T) {
+	t.Run("clean synthesis body gets one panel footer", func(t *testing.T) {
 		h := newCIPollerHarness(t, "https://github.com/acme/api.git")
 		comments := h.CaptureComments()
 		const headSHA = "b00cdbf1234567"
@@ -354,15 +354,7 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 				{Agent: "codex", ReviewType: "default", Status: "done", Output: "No issues found."},
 				{Agent: "codex", ReviewType: "security", Status: "done", Output: "No issues found."},
 			})
-		output := reviewpkg.FormatSynthesizedComment(
-			"No issues found.",
-			[]reviewpkg.ReviewResult{
-				{Agent: "codex", ReviewType: "default", Status: reviewpkg.ResultDone},
-				{Agent: "codex", ReviewType: "security", Status: reviewpkg.ResultDone},
-			},
-			headSHA,
-		)
-		h.completeSynthesisWithReview(t, synth.ID, output)
+		h.completeSynthesisWithReview(t, synth.ID, "No issues found.")
 
 		h.Poller.handleReviewCompleted(ciEvent(synth.ID, "review.completed"))
 
@@ -370,7 +362,7 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 		body := (*comments)[0].Body
 		assert.Contains(t, body, "## roborev: Combined Review (`"+git.ShortSHA(headSHA)+"`)")
 		assert.Contains(t, body, "No issues found.")
-		assert.NotContains(t, body, "Synthesized from", "CI panel footer already carries panel provenance")
+		assert.NotContains(t, body, "Synthesized from", "persisted synthesis output is body-only")
 		assert.Contains(t, body, "Panel: ci")
 		assert.Contains(t, body, "Members: codex (codex/default, done), codex (codex/security, done)")
 		assert.Equal(t, 1, strings.Count(body, "\n\n---\n*"), "only the panel footer should remain")

@@ -60,10 +60,7 @@ func (wp *WorkerPool) processSynthesisJob(
 		wp.completeSynthesis(workerID, job, succeeded[0].Agent, "", succeeded[0].Output)
 	default:
 		if allMembersPassed(results, succeeded) {
-			out := reviewpkg.FormatSynthesizedComment(
-				"No issues found.", results, headOf(job.GitRef),
-			)
-			wp.completeSynthesis(workerID, job, job.Agent, "", out)
+			wp.completeSynthesis(workerID, job, job.Agent, "", "No issues found.")
 			return
 		}
 		// Two or more succeeded — combine and deduplicate via one agent call.

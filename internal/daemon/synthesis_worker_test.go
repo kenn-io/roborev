@@ -486,8 +486,7 @@ func TestSynthesisAllPassingSkipsAgent(t *testing.T) {
 	tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
 	review, err := tc.DB.GetReviewByJobID(synth.ID)
 	require.NoError(t, err)
-	assert.Contains(review.Output, "## roborev: Combined Review")
-	assert.Contains(review.Output, "No issues found.")
+	assert.Equal("No issues found.", review.Output, "stored synthesis output is body content; renderers add headers and footers")
 	assert.Equal("P", storage.ParseVerdict(review.Output))
 	assert.False(synthCalled, "clean panels must not invoke an extra synthesis agent")
 }
