@@ -1556,9 +1556,10 @@ func (p *CIPoller) postPanelRun(ctx context.Context, row *storage.CIPanel) {
 
 // panelCommentBody picks the PR comment body from the synthesis job status,
 // applying the F11 wrapper rule. Synthesis done -> the persisted review (wrapped
-// with a verdict header only when it lacks a `## roborev:` one); synthesis failed
-// or its review missing -> the raw-member fallback, which already carries the
-// header and renders row.HeadSHA. SHAs always come from row.HeadSHA.
+// with a verdict header only when it lacks a `## roborev:` one, but always with
+// a panel footer); synthesis failed or its review missing -> the raw-member
+// fallback, which already carries the header and renders row.HeadSHA. SHAs
+// always come from row.HeadSHA.
 func (p *CIPoller) panelCommentBody(row *storage.CIPanel, members []storage.BatchReviewResult) string {
 	raw := func() string {
 		return reviewpkg.FormatRawBatchComment(toReviewResults(members), row.HeadSHA)
@@ -1571,14 +1572,15 @@ func (p *CIPoller) panelCommentBody(row *storage.CIPanel, members []storage.Batc
 	if err != nil || rev == nil {
 		return raw() // review unexpectedly missing -> raw fallback
 	}
+	includeCosts := p.resolveIncludeCosts(row.GithubRepo)
 	if strings.HasPrefix(strings.TrimSpace(rev.Output), "## roborev:") {
-		return rev.Output // already headed (all-failed/passthrough); do not re-wrap
+		return appendPanelPRFooter(rev.Output, rev.Job, members, includeCosts)
 	}
 	verdict := storage.ParseVerdict(rev.Output)
 	if rev.Job != nil && rev.Job.Verdict != nil {
 		verdict = *rev.Job.Verdict
 	}
-	return formatPanelPRComment(rev, verdict, members, p.resolveIncludeCosts(row.GithubRepo))
+	return formatPanelPRComment(rev, verdict, members, includeCosts)
 }
 
 // handlePanelPostError resolves a failed comment post: a permanent GitHub access
@@ -2304,23 +2306,35 @@ func formatPanelPRComment(review *storage.Review, verdict string, members []stor
 		b.WriteString("\n")
 	}
 
-	if review.Job != nil {
-		panelName := review.Job.PanelName
-		if panelName == "" {
-			panelName = "panel"
-		}
-		footer := []string{
-			"Panel: " + panelName,
-			"Synthesis: " + formatPanelSynthesis(review.Job, includeCosts),
-			"Members: " + formatPanelSubagents(members, includeCosts),
-		}
-		if total := formatPanelTotal(review.Job, members, includeCosts); total != "" {
-			footer = append(footer, "Total: "+total)
-		}
-		footer = append(footer, fmt.Sprintf("Job: %d", review.Job.ID))
-		fmt.Fprintf(&b, "\n---\n*%s*\n", strings.Join(footer, " | "))
+	return appendPanelPRFooter(b.String(), review.Job, members, includeCosts)
+}
+
+func appendPanelPRFooter(body string, job *storage.ReviewJob, members []storage.BatchReviewResult, includeCosts bool) string {
+	footer := formatPanelPRFooter(job, members, includeCosts)
+	if footer == "" {
+		return body
 	}
-	return b.String()
+	return strings.TrimRight(body, "\n") + footer
+}
+
+func formatPanelPRFooter(job *storage.ReviewJob, members []storage.BatchReviewResult, includeCosts bool) string {
+	if job == nil {
+		return ""
+	}
+	panelName := job.PanelName
+	if panelName == "" {
+		panelName = "panel"
+	}
+	footer := []string{
+		"Panel: " + panelName,
+		"Synthesis: " + formatPanelSynthesis(job, includeCosts),
+		"Members: " + formatPanelSubagents(members, includeCosts),
+	}
+	if total := formatPanelTotal(job, members, includeCosts); total != "" {
+		footer = append(footer, "Total: "+total)
+	}
+	footer = append(footer, fmt.Sprintf("Job: %d", job.ID))
+	return fmt.Sprintf("\n\n---\n*%s*\n", strings.Join(footer, " | "))
 }
 
 func formatPanelSynthesis(job *storage.ReviewJob, includeCosts bool) string {

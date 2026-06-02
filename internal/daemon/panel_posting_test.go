@@ -447,6 +447,8 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 		body := (*comments)[0].Body
 		assert.Equal(t, 1, strings.Count(body, "## roborev:"), "no double header")
 		assert.Contains(t, body, "Already headed.")
+		assert.Contains(t, body, "Panel: ci")
+		assert.Contains(t, body, "Members: test (test/review, done)")
 	})
 }
 
