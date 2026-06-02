@@ -192,6 +192,20 @@ func TestRepoResolver_Matching(t *testing.T) {
 			wantRepos: []string{"kenn-io/kit", "kenn-io/roborev"},
 		},
 		{
+			name: "exclusion applies to original exact repo before canonicalization",
+			canonicalFn: func(_ context.Context, repo, _ string) (string, error) {
+				if repo == "old-org/repo" {
+					return "new-org/repo", nil
+				}
+				return repo, nil
+			},
+			ci: &config.CIConfig{
+				Repos:        []string{"old-org/repo"},
+				ExcludeRepos: []string{"old-org/repo"},
+			},
+			wantRepos: []string{},
+		},
+		{
 			name: "max repos preserves explicit entries",
 			listReposFn: func(_ context.Context, _ string, _ string) ([]string, error) {
 				repos := make([]string, 20)

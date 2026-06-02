@@ -425,6 +425,42 @@ func TestSynthesisSingleSuccessWithMinSeverityUsesFilterPrompt(t *testing.T) {
 	assert.Contains(synthAgent.synthPrompt, "Only include Medium, High, and Critical findings.")
 }
 
+func TestSynthesisSinglePassingSuccessWithMinSeverityPassthrough(t *testing.T) {
+	assert := assert.New(t)
+	tc := newWorkerTestContext(t, 1)
+
+	const memberAgent = "panel-single-minsev-pass-member"
+	registerPassingAgent(t, memberAgent)
+
+	var synthCalled bool
+	const synthAgent = "panel-single-minsev-pass-synth"
+	registerNeverCalledAgent(t, synthAgent, &synthCalled)
+
+	runUUID, members, synthJob := enqueuePanelRun(t, tc, "single-success-minsev-pass-panel", []memberSpec{
+		{name: "m0", agent: memberAgent},
+		{name: "m1", agent: memberAgent},
+	})
+	setSynthesisAgent(t, tc, runUUID, synthAgent)
+	_, err := tc.DB.Exec(
+		"UPDATE review_jobs SET min_severity = ? WHERE id = ?",
+		"medium", synthJob.ID,
+	)
+	require.NoError(t, err)
+	const memberOutput = "## Review\n\nNo issues found."
+	completeMember(t, tc, members[0].ID, memberAgent, memberOutput)
+	failMember(t, tc, members[1].ID)
+
+	synth := releaseAndClaimSynthesis(t, tc, runUUID)
+	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+
+	tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
+	review, err := tc.DB.GetReviewByJobID(synth.ID)
+	require.NoError(t, err)
+	assert.Equal(memberOutput, review.Output, "passing single-success output needs no severity filter")
+	assert.Equal(memberAgent, review.Agent, "passthrough remains labeled with the surviving member")
+	assert.False(synthCalled, "passing single-success min-severity panel must not invoke synthesis")
+}
+
 func TestSynthesisAllPassingSkipsAgent(t *testing.T) {
 	assert := assert.New(t)
 	tc := newWorkerTestContext(t, 1)

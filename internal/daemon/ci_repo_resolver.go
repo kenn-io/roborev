@@ -116,6 +116,7 @@ func (r *RepoResolver) expand(ctx context.Context, ci *config.CIConfig, tokenFn 
 	var degraded bool
 	// owner → list of full patterns like "owner/pattern"
 	wildcardsByOwner := make(map[string][]string)
+	exclusionPatterns := validExclusionPatterns(ci.ExcludeRepos)
 
 	for _, entry := range ci.Repos {
 		owner, repoPattern, ok := strings.Cut(entry, "/")
@@ -136,6 +137,9 @@ func (r *RepoResolver) expand(ctx context.Context, ci *config.CIConfig, tokenFn 
 	seen := make(map[string]bool, len(exact))
 	var exactResult []string
 	for _, e := range exact {
+		if repoMatchesExclusionPatterns(e, exclusionPatterns) {
+			continue
+		}
 		canonical, canonicalErr := r.canonicalizeExactRepo(ctx, e, tokenFn)
 		if canonicalErr != nil {
 			if ctx.Err() != nil {
@@ -196,8 +200,8 @@ func (r *RepoResolver) expand(ctx context.Context, ci *config.CIConfig, tokenFn 
 	}
 
 	// Apply exclusions to both sets
-	exactResult = applyExclusions(exactResult, ci.ExcludeRepos)
-	wildcardResult = applyExclusions(wildcardResult, ci.ExcludeRepos)
+	exactResult = applyExclusionsWithPatterns(exactResult, exclusionPatterns)
+	wildcardResult = applyExclusionsWithPatterns(wildcardResult, exclusionPatterns)
 
 	// Enforce max_repos: explicit repos have priority over wildcard-expanded repos.
 	maxRepos := ci.ResolvedMaxRepos()
@@ -287,8 +291,12 @@ func ghCanonicalRepo(ctx context.Context, ghRepo, token, rawBaseURL string) (str
 // applyExclusions filters repos matching any of the exclusion patterns.
 // Matching is case-insensitive. Invalid patterns are logged once and skipped.
 func applyExclusions(repos []string, patterns []string) []string {
+	return applyExclusionsWithPatterns(repos, validExclusionPatterns(patterns))
+}
+
+func validExclusionPatterns(patterns []string) []string {
 	if len(patterns) == 0 {
-		return repos
+		return nil
 	}
 
 	// Pre-validate and lowercase patterns once to avoid repeated
@@ -302,25 +310,31 @@ func applyExclusions(repos []string, patterns []string) []string {
 		}
 		valid = append(valid, lower)
 	}
+	return valid
+}
+
+func applyExclusionsWithPatterns(repos []string, valid []string) []string {
 	if len(valid) == 0 {
 		return repos
 	}
 
 	filtered := repos[:0]
 	for _, repo := range repos {
-		repoLower := strings.ToLower(repo)
-		excluded := false
-		for _, pattern := range valid {
-			if matched, _ := path.Match(pattern, repoLower); matched {
-				excluded = true
-				break
-			}
-		}
-		if !excluded {
+		if !repoMatchesExclusionPatterns(repo, valid) {
 			filtered = append(filtered, repo)
 		}
 	}
 	return filtered
+}
+
+func repoMatchesExclusionPatterns(repo string, valid []string) bool {
+	repoLower := strings.ToLower(repo)
+	for _, pattern := range valid {
+		if matched, _ := path.Match(pattern, repoLower); matched {
+			return true
+		}
+	}
+	return false
 }
 
 // isGlobPattern returns true if the string contains glob metacharacters.

@@ -492,11 +492,13 @@ default_panel = "solo"
 [review.subagents.only]
 agent = "test"
 model = "member-model"
+reasoning = "fast"
 review_type = "default"
 
 [review.panels.solo]
 members = ["only"]
-synthesis_agent = "test"
+synthesis_agent = "synthesis-exec"
+synthesis_model = "synth-model"
 synthesis_backup_agent = "claude-code"
 synthesis_backup_model = "opus"
 `
@@ -513,14 +515,17 @@ synthesis_backup_model = "opus"
 	synth, err := db.GetSynthesisJob(resp.PanelRunUUID)
 	require.NoError(t, err)
 	require.NotNil(t, synth)
-	assert.Equal("member-model", synth.Model, "single-member parent surfaces member model")
+	assert.Equal("synthesis-exec", synth.Agent, "single-member synthesis keeps execution agent")
+	assert.Equal("synth-model", synth.Model, "single-member synthesis keeps execution model")
+	assert.Equal("standard", synth.Reasoning, "single-member synthesis keeps execution reasoning")
 	assert.Equal("claude-code", synth.BackupAgent, "single-member must not clear backup agent")
 	assert.Equal("opus", synth.BackupModel, "single-member must not clear backup model")
 }
 
-// TestEnqueueSingleMemberParentAgent verifies a one-member panel surfaces the
-// member's agent on the parent (synthesis) row so the CLI displays it.
-func TestEnqueueSingleMemberParentAgent(t *testing.T) {
+// TestEnqueueSingleMemberSynthesisKeepsExecutionAgent verifies a one-member
+// panel keeps the configured synthesis agent on the parent row. Member display
+// identity remains available from the member rows.
+func TestEnqueueSingleMemberSynthesisKeepsExecutionAgent(t *testing.T) {
 	assert := assert.New(t)
 	server, db, _ := newTestServer(t)
 
@@ -535,7 +540,7 @@ review_type = "default"
 
 [review.panels.solo]
 members = ["only"]
-synthesis_agent = "test"
+synthesis_agent = "synthesis-exec"
 `
 	repo := testutil.NewGitRepo(t)
 	repo.WriteFile(".roborev.toml", single)
@@ -553,8 +558,8 @@ synthesis_agent = "test"
 
 	synth, err := db.GetJobByID(resp.ID)
 	require.NoError(t, err)
-	assert.Equal(members[0].Agent, synth.Agent, "parent row carries the member's agent")
-	assert.Equal("test", synth.Agent)
+	assert.Equal("test", members[0].Agent, "member row carries the member's agent")
+	assert.Equal("synthesis-exec", synth.Agent, "parent row carries the synthesis execution agent")
 }
 
 // TestEnqueuePanelUndefinedIsHardError verifies an undefined --panel is a 400

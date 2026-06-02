@@ -406,7 +406,7 @@ func (s *Server) enqueuePanelRun(ctx context.Context, in panelRunInputs) (*RawJS
 
 	runUUID := uuid.NewString()
 	memberOpts := panelMemberOpts(in.descriptor, in.panelName, runUUID, members)
-	synthOpts := panelSynthesisOpts(in.descriptor, in.panelName, runUUID, synth, members)
+	synthOpts := panelSynthesisOpts(in.descriptor, in.panelName, runUUID, synth)
 
 	memberJobs, synthJob, err := s.db.EnqueuePanelRun(memberOpts, synthOpts)
 	if err != nil {
@@ -484,14 +484,12 @@ func panelMemberOpts(
 
 // panelSynthesisOpts overlays the synthesis spec and panel fields onto the
 // frozen base opts. The synthesis BackupAgent/BackupModel are persisted so the
-// worker can prefer them on synthesis failover. For a single-member panel it
-// surfaces the member's agent/model/reasoning on the parent row, because the CLI
-// reads job.Agent for display; that override does not touch the backups.
+// worker can prefer them on synthesis failover.
 // EnqueuePanelRun enforces JobTypeSynthesis/PanelRoleSynthesis/ClaimBlocked, but
 // they are set here too so the opts are self-describing.
 func panelSynthesisOpts(
 	descriptor targetDescriptor, panelName, runUUID string,
-	synth config.SynthesisSpec, members []config.ResolvedMember,
+	synth config.SynthesisSpec,
 ) storage.EnqueueOpts {
 	o := descriptor.baseOpts()
 	o.JobType = storage.JobTypeSynthesis
@@ -499,8 +497,5 @@ func panelSynthesisOpts(
 	o.BackupAgent, o.BackupModel = synth.BackupAgent, synth.BackupModel
 	o.PanelRunUUID, o.PanelRole = runUUID, storage.PanelRoleSynthesis
 	o.PanelName, o.ClaimBlocked = panelName, true
-	if len(members) == 1 {
-		o.Agent, o.Model, o.Reasoning = members[0].Agent, members[0].Model, members[0].Reasoning
-	}
 	return o
 }

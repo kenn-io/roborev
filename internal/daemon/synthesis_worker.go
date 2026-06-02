@@ -49,9 +49,11 @@ func (wp *WorkerPool) processSynthesisJob(
 			reviewpkg.FormatAllFailedComment(results, headOf(job.GitRef)))
 	case 1:
 		// Exactly one member produced output — pass it through verbatim and
-		// label the review with that member's agent when no panel-level
-		// severity filter needs to be applied.
-		if !singleSuccessCanPassthrough(job.MinSeverity) {
+		// label the review with that member's agent when no panel-level severity
+		// filter needs to be applied, or when the member already passed and
+		// there are no findings to filter.
+		if !singleSuccessCanPassthrough(job.MinSeverity) &&
+			storage.ParseVerdict(succeeded[0].Output) != "P" {
 			wp.synthesizeSucceededResults(ctx, workerID, job, succeeded)
 			return
 		}
