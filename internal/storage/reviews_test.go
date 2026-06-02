@@ -771,6 +771,32 @@ func TestFindReusableSessionCandidatesExcludesPanelAndNonReviewJobs(t *testing.T
 	assert.NotEqual(fix.ID, candidates[0].ID)
 }
 
+func TestFindReusableSessionCandidatesIncludesRangeReviewJobs(t *testing.T) {
+	assert := assert.New(t)
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, "/tmp/session-range-candidates")
+	branch := "feature/session"
+	rangeJob := createCompletedJobWithOptions(t, db, EnqueueOpts{
+		RepoID:     repo.ID,
+		GitRef:     "base..head",
+		Branch:     branch,
+		Agent:      "codex",
+		ReviewType: "default",
+		JobType:    JobTypeRange,
+	}, "range output")
+	setJobSession(t, db, rangeJob.ID, "session-range")
+
+	candidates, err := db.FindReusableSessionCandidates(
+		repo.ID, branch, "codex", "default", "", 10,
+	)
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	assert.Equal(rangeJob.ID, candidates[0].ID)
+	assert.Equal("session-range", candidates[0].SessionID)
+}
+
 func setJobSession(t *testing.T, db *DB, jobID int64, sessionID string) {
 	t.Helper()
 	_, err := db.Exec(`UPDATE review_jobs SET session_id = ? WHERE id = ?`, sessionID, jobID)

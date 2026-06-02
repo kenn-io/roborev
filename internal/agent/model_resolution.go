@@ -49,6 +49,9 @@ func ResolveWorkflowConfigFromConfig(
 	globalCfg *config.Config,
 	workflow, reasoning string,
 ) (WorkflowConfig, error) {
+	if repoCfg == nil {
+		repoCfg = &config.RepoConfig{}
+	}
 	return WorkflowConfig{
 		RepoConfig:     repoCfg,
 		GlobalConfig:   globalCfg,

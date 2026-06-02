@@ -56,6 +56,15 @@ func isConfiguredACPAgentNameWithConfig(name string, acpCfg *config.ACPAgentConf
 
 func configuredACPAgent(repoPath string, cfg *config.Config) *ACPAgent {
 	acpCfg := config.ResolveACPAgentConfig(repoPath, cfg)
+	return configuredACPAgentWithConfig(acpCfg)
+}
+
+func configuredACPAgentFromConfig(repoCfg *config.RepoConfig, cfg *config.Config) *ACPAgent {
+	acpCfg := config.ResolveACPAgentConfigFromConfig(repoCfg, cfg)
+	return configuredACPAgentWithConfig(acpCfg)
+}
+
+func configuredACPAgentWithConfig(acpCfg *config.ACPAgentConfig) *ACPAgent {
 	resolved := NewACPAgentFromConfig(acpCfg)
 	// Keep a stable canonical name in runtime state.
 	resolved.agentName = defaultACPName
@@ -116,11 +125,18 @@ func isAvailableWithConfig(name string, cfg *config.Config) bool {
 // Optional backup agent names are tried after the preferred agent but
 // before the hardcoded fallback chain (see GetAvailable).
 func GetAvailableWithConfig(repoPath string, preferred string, cfg *config.Config, backups ...string) (Agent, error) {
+	repoCfg, _ := config.LoadRepoConfig(repoPath)
+	return GetAvailableWithConfigFromConfig(repoCfg, preferred, cfg, backups...)
+}
+
+// GetAvailableWithConfigFromConfig resolves an available agent using already
+// loaded repo config, never reading repo config from the working tree.
+func GetAvailableWithConfigFromConfig(repoCfg *config.RepoConfig, preferred string, cfg *config.Config, backups ...string) (Agent, error) {
 	rawPreferred := strings.TrimSpace(preferred)
 	preferred = resolveAlias(rawPreferred)
 
-	if isConfiguredACPAgentName(rawPreferred, cfg, repoPath) {
-		acpAgent := configuredACPAgent(repoPath, cfg)
+	if isConfiguredACPAgentNameFromConfig(rawPreferred, cfg, repoCfg) {
+		acpAgent := configuredACPAgentFromConfig(repoCfg, cfg)
 		if _, err := exec.LookPath(acpAgent.CommandName()); err == nil {
 			return acpAgent, nil
 		}
@@ -175,7 +191,7 @@ func GetAvailableWithConfig(repoPath string, preferred string, cfg *config.Confi
 		return nil, err
 	}
 	if resolved.Name() == defaultACPName {
-		configured := configuredACPAgent(repoPath, cfg)
+		configured := configuredACPAgentFromConfig(repoCfg, cfg)
 		if _, err := exec.LookPath(configured.CommandName()); err == nil {
 			return configured, nil
 		}

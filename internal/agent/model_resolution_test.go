@@ -328,3 +328,28 @@ func TestResolveWorkflowConfigIgnoresMalformedRepoConfig(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "gemini", resolution.PreferredAgent)
 }
+
+func TestResolveWorkflowConfigFromConfigNilRepoConfigDoesNotReadCWD(t *testing.T) {
+	cwd := t.TempDir()
+	err := os.WriteFile(
+		filepath.Join(cwd, ".roborev.toml"),
+		[]byte("review_model = \"cwd-model\"\nreview_backup_model = \"cwd-backup\"\n"),
+		0o644,
+	)
+	require.NoError(t, err)
+	t.Chdir(cwd)
+
+	cfg := &config.Config{
+		DefaultAgent:      "codex",
+		DefaultModel:      "global-model",
+		ReviewBackupAgent: "claude",
+		ReviewBackupModel: "global-backup",
+	}
+	resolution, err := ResolveWorkflowConfigFromConfig(
+		"", nil, cfg, "review", "standard",
+	)
+	require.NoError(t, err)
+
+	require.Equal(t, "global-model", resolution.ModelForSelectedAgent("codex", ""))
+	require.Equal(t, "global-backup", resolution.ModelForSelectedAgent("claude-code", ""))
+}

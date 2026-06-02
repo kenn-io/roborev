@@ -576,8 +576,8 @@ func (p *CIPoller) resolveMatrixMemberAgent(
 			return "", "", fmt.Errorf("%w for type=%s: %w", errNoCIAgent, entry.ReviewType, err)
 		}
 		resolvedAgent = name
-	} else if resolved, err := agent.GetAvailableWithConfig(
-		repo.RootPath, resolvedAgent, cfg, resolution.BackupAgent,
+	} else if resolved, err := agent.GetAvailableWithConfigFromConfig(
+		repoCfg, resolvedAgent, cfg, resolution.BackupAgent,
 	); err != nil {
 		return "", "", fmt.Errorf("%w for type=%s: %w", errNoCIAgent, entry.ReviewType, err)
 	} else {

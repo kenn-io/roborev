@@ -2661,6 +2661,42 @@ func TestResolveCIMatrixMembersUsesPassedRepoConfigForAgentModel(t *testing.T) {
 	assert.Equal(t, "default-branch-model", members[0].Model)
 }
 
+func TestResolveMatrixMemberAgentUsesPassedRepoConfigForACPAvailability(t *testing.T) {
+	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+	binDir := t.TempDir()
+	acpCmd := filepath.Join(binDir, "branch-acp")
+	require.NoError(t, os.WriteFile(acpCmd, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	t.Setenv("PATH", binDir)
+
+	localConfig := "[acp]\n" +
+		"name = \"branch-acp\"\n" +
+		"command = \"missing-local-acp\"\n" +
+		"model = \"local-model\"\n"
+	require.NoError(
+		t,
+		os.WriteFile(filepath.Join(h.RepoPath, ".roborev.toml"), []byte(localConfig), 0o644),
+	)
+
+	repoCfg := &config.RepoConfig{
+		ACP: &config.ACPAgentConfig{
+			Name:    "branch-acp",
+			Command: "branch-acp",
+			Model:   "branch-model",
+		},
+	}
+
+	resolvedAgent, resolvedModel, err := h.Poller.resolveMatrixMemberAgent(
+		h.Repo,
+		repoCfg,
+		h.Cfg,
+		config.AgentReviewType{Agent: "branch-acp", ReviewType: "default"},
+		"standard",
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "acp", resolvedAgent)
+	assert.Equal(t, "branch-model", resolvedModel)
+}
+
 func TestCIPollerProcessPR_RepoReviewsMapOverride(
 	t *testing.T,
 ) {
