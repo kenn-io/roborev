@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"unicode/utf8"
 
 	googlegithub "github.com/google/go-github/v84/github"
 	"github.com/stretchr/testify/assert"
@@ -491,6 +492,28 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 		assert.Contains(t, body, "Panel: ci")
 		assert.Contains(t, body, "Members: test (test/review, done)")
 		assert.NotContains(t, body, "Head:", "reviewed head belongs in the title, not the footer")
+	})
+
+	t.Run("prefixed output is bounded with footer", func(t *testing.T) {
+		h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+		comments := h.CaptureComments()
+		const headSHA = "7654321feedface"
+		_, synth, _ := h.seedCIPanelRun(t, "acme/api", 21, headSHA, "base.."+headSHA,
+			[]jobSpec{{Agent: "test", ReviewType: "review", Status: "done", Output: "x"}})
+		output := "## roborev: Combined Review (`7654321`)\n\n" +
+			strings.Repeat("ü", reviewpkg.MaxCommentLen)
+		h.completeSynthesisWithReview(t, synth.ID, output)
+
+		h.Poller.handleReviewCompleted(ciEvent(synth.ID, "review.completed"))
+
+		require.Len(t, *comments, 1)
+		body := (*comments)[0].Body
+		assert.LessOrEqual(t, len(body), reviewpkg.MaxCommentLen)
+		assert.True(t, utf8.ValidString(body), "truncated comment must be valid UTF-8")
+		assert.Equal(t, 1, strings.Count(body, "## roborev:"), "no double header")
+		assert.Contains(t, body, "...(truncated)")
+		assert.Contains(t, body, "Panel: ci")
+		assert.Contains(t, body, "Members: test (test/review, done)")
 	})
 }
 

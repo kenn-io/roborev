@@ -444,8 +444,8 @@ func TestFormatPanelPRComment_TruncationUTF8Safe(t *testing.T) {
 	assert.Contains(t, comment, "...(truncated)", "expected truncation suffix")
 }
 
-func TestFormatPanelPRComment_DoesNotTruncateBelowMax(t *testing.T) {
-	output := strings.Repeat("x", review.MaxCommentLen-1)
+func TestFormatPanelPRComment_DoesNotTruncateWhenCommentFits(t *testing.T) {
+	output := strings.Repeat("x", review.MaxCommentLen-1000)
 	storedReview := &storage.Review{
 		Output: output,
 		Job: &storage.ReviewJob{
@@ -456,6 +456,7 @@ func TestFormatPanelPRComment_DoesNotTruncateBelowMax(t *testing.T) {
 
 	comment := formatPanelPRComment(storedReview, "F", nil, false)
 
+	assert.LessOrEqual(t, len(comment), review.MaxCommentLen)
 	assert.NotContains(t, comment, "...(truncated)")
 }
 

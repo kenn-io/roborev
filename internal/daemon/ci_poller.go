@@ -2304,10 +2304,9 @@ func formatPanelPRCommentWithHead(review *storage.Review, verdict string, member
 	}
 
 	output := review.Output
-	const truncSuffix = "\n\n...(truncated)"
-	maxLen := reviewpkg.MaxCommentLen - len(truncSuffix)
+	maxLen := reviewpkg.MaxCommentLen - len(panelCommentTruncSuffix)
 	if len(output) > reviewpkg.MaxCommentLen {
-		output = truncateUTF8(output, maxLen) + truncSuffix
+		output = truncateUTF8(output, maxLen) + panelCommentTruncSuffix
 	}
 	if output != "" && (verdict != "P" || headSHA != "") {
 		b.WriteString(output)
@@ -2319,6 +2318,8 @@ func formatPanelPRCommentWithHead(review *storage.Review, verdict string, member
 	return appendPanelPRFooter(b.String(), review, members, includeCosts)
 }
 
+const panelCommentTruncSuffix = "\n\n...(truncated)"
+
 func appendPanelPRFooter(body string, review *storage.Review, members []storage.BatchReviewResult, includeCosts bool) string {
 	if review == nil {
 		return body
@@ -2327,7 +2328,16 @@ func appendPanelPRFooter(body string, review *storage.Review, members []storage.
 	if footer == "" {
 		return body
 	}
+	body = truncatePanelPRBodyForFooter(body, footer)
 	return strings.TrimRight(body, "\n") + footer
+}
+
+func truncatePanelPRBodyForFooter(body string, footer string) string {
+	if len(body)+len(footer) <= reviewpkg.MaxCommentLen {
+		return body
+	}
+	maxBodyLen := max(reviewpkg.MaxCommentLen-len(footer)-len(panelCommentTruncSuffix), 0)
+	return truncateUTF8(body, maxBodyLen) + panelCommentTruncSuffix
 }
 
 func formatPanelPRFooter(job *storage.ReviewJob, synthesisAgent string, members []storage.BatchReviewResult, includeCosts bool) string {
