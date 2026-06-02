@@ -214,6 +214,9 @@ func resolveCommand(hook config.HookConfig, event Event) string {
 	if hook.Type == "lint" {
 		return lintCommand(event)
 	}
+	if hook.Type == "mutate" {
+		return mutateCommand(event)
+	}
 	return interpolate(hook.Command, event)
 }
 
@@ -251,6 +254,21 @@ func lintCommand(event Event) string {
 	case "review.completed":
 		repo := shellEscape(event.Repo)
 		return fmt.Sprintf("cd %s && roborev lint --diff --quiet 2>&1", repo)
+	default:
+		return ""
+	}
+}
+
+// mutateCommand generates a roborev mutate command for the mutate built-in hook.
+// Runs mutation testing on the repo and logs the score.
+func mutateCommand(event Event) string {
+	if event.Repo == "" {
+		return ""
+	}
+	switch event.Type {
+	case "review.completed":
+		repo := shellEscape(event.Repo)
+		return fmt.Sprintf("cd %s && roborev mutate --quiet 2>&1", repo)
 	default:
 		return ""
 	}
