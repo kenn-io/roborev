@@ -1259,6 +1259,26 @@ func TestDrainAndDropOldCIBatchTables(t *testing.T) {
 	require.NoError(t, db.drainAndDropOldCIBatchTables())
 }
 
+func TestDrainAndDropOldCIBatchTablesHandlesMissingJoinTable(t *testing.T) {
+	db := openTestDB(t)
+	t.Cleanup(func() { db.Close() })
+
+	_, err := db.Exec(`
+		CREATE TABLE ci_pr_batches (
+			id INTEGER PRIMARY KEY AUTOINCREMENT,
+			github_repo TEXT,
+			pr_number INTEGER,
+			head_sha TEXT,
+			total_jobs INTEGER NOT NULL DEFAULT 0
+		)
+	`)
+	require.NoError(t, err)
+
+	require.NoError(t, db.drainAndDropOldCIBatchTables())
+	assert.False(t, legacyTableExists(t, db, "ci_pr_batches"))
+	assert.False(t, legacyTableExists(t, db, "ci_pr_batch_jobs"))
+}
+
 func TestPatchIDMigration(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()

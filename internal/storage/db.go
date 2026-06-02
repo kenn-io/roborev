@@ -957,28 +957,46 @@ func (db *DB) migrate() error {
 // The method guards on table existence, so once the tables are gone it is
 // a clean no-op — safe to call on every Open().
 func (db *DB) drainAndDropOldCIBatchTables() error {
-	var count int
-	if err := db.QueryRow(
-		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='ci_pr_batches'`,
-	).Scan(&count); err != nil {
+	tx, err := db.Begin()
+	if err != nil {
 		return fmt.Errorf("drain old CI batch tables: %w", err)
 	}
-	if count == 0 {
-		return nil
+	defer func() { _ = tx.Rollback() }()
+
+	hasBatchJobs, err := sqliteTableExistsTx(tx, "ci_pr_batch_jobs")
+	if err != nil {
+		return fmt.Errorf("drain old CI batch tables: %w", err)
+	}
+	if hasBatchJobs {
+		if _, err := tx.Exec(`UPDATE review_jobs SET status='canceled', error='superseded by panel migration'
+		 WHERE status IN ('queued','running') AND id IN (SELECT job_id FROM ci_pr_batch_jobs)`); err != nil {
+			return fmt.Errorf("drain old CI batch tables: %w", err)
+		}
 	}
 
 	stmts := []string{
-		`UPDATE review_jobs SET status='canceled', error='superseded by panel migration'
-		 WHERE status IN ('queued','running') AND id IN (SELECT job_id FROM ci_pr_batch_jobs)`,
 		`DROP TABLE IF EXISTS ci_pr_batch_jobs`,
 		`DROP TABLE IF EXISTS ci_pr_batches`,
 	}
 	for _, stmt := range stmts {
-		if _, err := db.Exec(stmt); err != nil {
+		if _, err := tx.Exec(stmt); err != nil {
 			return fmt.Errorf("drain old CI batch tables: %w", err)
 		}
 	}
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("drain old CI batch tables: %w", err)
+	}
 	return nil
+}
+
+func sqliteTableExistsTx(tx *sql.Tx, name string) (bool, error) {
+	var count int
+	if err := tx.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name=?`, name,
+	).Scan(&count); err != nil {
+		return false, err
+	}
+	return count > 0, nil
 }
 
 // hasUniqueIndexOnShaOnly checks if commits table has a unique constraint on just sha
