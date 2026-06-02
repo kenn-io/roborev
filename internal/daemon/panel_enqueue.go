@@ -10,6 +10,7 @@ import (
 	"time"
 
 	"github.com/google/uuid"
+	gitrepo "go.kenn.io/kit/git/repo"
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/git"
@@ -118,11 +119,11 @@ func (s *Server) buildTargetDescriptor(
 	case kindPrompt:
 		return s.descriptorForPrompt(in), nil
 	case kindDirty:
-		return s.descriptorForDirty(in)
+		return s.descriptorForDirty(ctx, in)
 	case kindRange:
-		return s.descriptorForRange(in)
+		return s.descriptorForRange(ctx, in)
 	default:
-		return s.descriptorForSingleCommit(in)
+		return s.descriptorForSingleCommit(ctx, in)
 	}
 }
 
@@ -193,7 +194,9 @@ func (s *Server) descriptorForPrompt(in freezeInputs) targetDescriptor {
 // descriptorForDirty freezes an uncommitted-changes target. The diff-size and
 // required-diff checks stay here as early returns. sessionSHA is HEAD so session
 // reuse keys on the working-tree base commit.
-func (s *Server) descriptorForDirty(in freezeInputs) (targetDescriptor, *RawJSONOutput) {
+func (s *Server) descriptorForDirty(
+	ctx context.Context, in freezeInputs,
+) (targetDescriptor, *RawJSONOutput) {
 	if in.req.DiffContent == "" {
 		out, _ := rawJSONOutput(http.StatusBadRequest,
 			ErrorResponse{Error: "diff_content required for dirty review"})
@@ -209,7 +212,7 @@ func (s *Server) descriptorForDirty(in freezeInputs) (targetDescriptor, *RawJSON
 		return targetDescriptor{}, out
 	}
 
-	targetSHA, _ := git.ResolveSHA(in.checkoutRoot, "HEAD")
+	targetSHA, _ := gitrepo.Resolve(ctx, in.checkoutRoot, "HEAD")
 	var commitID int64
 	if targetSHA != "" {
 		if info, err := git.GetCommitInfo(in.repoRoot, targetSHA); err == nil {
@@ -237,13 +240,15 @@ func (s *Server) descriptorForDirty(in freezeInputs) (targetDescriptor, *RawJSON
 // descriptorForRange freezes a commit-range target. It resolves the endpoints to
 // SHAs (supporting the "<first>^.." empty-tree fallback), applies the
 // all-commits-excluded skip, and freezes git_ref to "<startSHA>..<endSHA>".
-func (s *Server) descriptorForRange(in freezeInputs) (targetDescriptor, *RawJSONOutput) {
+func (s *Server) descriptorForRange(
+	ctx context.Context, in freezeInputs,
+) (targetDescriptor, *RawJSONOutput) {
 	parts := strings.SplitN(in.gitRef, "..", 2)
-	startSHA, err := git.ResolveSHA(in.checkoutRoot, parts[0])
+	startSHA, err := gitrepo.Resolve(ctx, in.checkoutRoot, parts[0])
 	if err != nil {
 		if before, ok := strings.CutSuffix(parts[0], "^"); ok {
-			if _, resolveErr := git.ResolveSHA(
-				in.checkoutRoot, before+"^{commit}",
+			if _, resolveErr := gitrepo.Resolve(
+				ctx, in.checkoutRoot, before+"^{commit}",
 			); resolveErr == nil {
 				startSHA = git.EmptyTreeSHA
 				err = nil
@@ -255,7 +260,7 @@ func (s *Server) descriptorForRange(in freezeInputs) (targetDescriptor, *RawJSON
 			return targetDescriptor{}, out
 		}
 	}
-	endSHA, err := git.ResolveSHA(in.checkoutRoot, parts[1])
+	endSHA, err := gitrepo.Resolve(ctx, in.checkoutRoot, parts[1])
 	if err != nil {
 		out, _ := rawJSONOutput(http.StatusBadRequest,
 			ErrorResponse{Error: fmt.Sprintf("invalid end commit: %v", err)})
@@ -308,8 +313,10 @@ func (s *Server) rangeExclusionSkip(repoRoot, checkoutRoot, fullRef string) *Raw
 // descriptorForSingleCommit freezes a single-commit target: it resolves the SHA,
 // applies the commit-message exclusion skip, creates/loads the commit row, and
 // records the patch id and commit subject.
-func (s *Server) descriptorForSingleCommit(in freezeInputs) (targetDescriptor, *RawJSONOutput) {
-	sha, err := git.ResolveSHA(in.checkoutRoot, in.gitRef)
+func (s *Server) descriptorForSingleCommit(
+	ctx context.Context, in freezeInputs,
+) (targetDescriptor, *RawJSONOutput) {
+	sha, err := gitrepo.Resolve(ctx, in.checkoutRoot, in.gitRef)
 	if err != nil {
 		out, _ := rawJSONOutput(http.StatusBadRequest,
 			ErrorResponse{Error: fmt.Sprintf("invalid commit: %v", err)})
