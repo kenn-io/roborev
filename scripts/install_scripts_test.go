@@ -23,3 +23,21 @@ func TestWindowsInstallersUseZipReleaseAssets(t *testing.T) {
 	assert.Contains(t, powerShell, `$archiveName = "roborev_${versionNum}_windows_${arch}.zip"`)
 	assert.Contains(t, powerShell, `Expand-Archive -LiteralPath $archivePath -DestinationPath $tmpDir -Force`)
 }
+
+func TestShellInstallerFailsReleasePathOnExtractionOrMissingBinary(t *testing.T) {
+	shellInstaller, err := os.ReadFile("install.sh")
+	require.NoError(t, err)
+
+	shell := string(shellInstaller)
+
+	assert.Contains(t, shell, `if ! unzip -q "$archive_path" -d "$tmpdir"; then`)
+	assert.Contains(t, shell, `if ! tar -xzf "$archive_path" -C "$tmpdir"; then`)
+	assert.Contains(t, shell, `if [ ! -f "$tmpdir/$binary" ]; then`)
+}
+
+func TestShellInstallerUsesModulePathForGoInstallFallback(t *testing.T) {
+	shellInstaller, err := os.ReadFile("install.sh")
+	require.NoError(t, err)
+
+	assert.Contains(t, string(shellInstaller), `go install "go.kenn.io/roborev/cmd/roborev@latest"`)
+}

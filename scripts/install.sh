@@ -130,26 +130,43 @@ install_from_release() {
     info "Extracting..."
     if [ "$os" = "windows" ]; then
         if command -v unzip &>/dev/null; then
-            unzip -q "$archive_path" -d "$tmpdir"
+            if ! unzip -q "$archive_path" -d "$tmpdir"; then
+                return 1
+            fi
         elif command -v powershell.exe &>/dev/null; then
-            ROBOREV_ARCHIVE_PATH="$archive_path" ROBOREV_EXTRACT_DIR="$tmpdir" powershell.exe -NoProfile -Command "Expand-Archive -LiteralPath \$env:ROBOREV_ARCHIVE_PATH -DestinationPath \$env:ROBOREV_EXTRACT_DIR -Force"
+            if ! ROBOREV_ARCHIVE_PATH="$archive_path" ROBOREV_EXTRACT_DIR="$tmpdir" powershell.exe -NoProfile -Command "Expand-Archive -LiteralPath \$env:ROBOREV_ARCHIVE_PATH -DestinationPath \$env:ROBOREV_EXTRACT_DIR -Force"; then
+                return 1
+            fi
         elif command -v powershell &>/dev/null; then
-            ROBOREV_ARCHIVE_PATH="$archive_path" ROBOREV_EXTRACT_DIR="$tmpdir" powershell -NoProfile -Command "Expand-Archive -LiteralPath \$env:ROBOREV_ARCHIVE_PATH -DestinationPath \$env:ROBOREV_EXTRACT_DIR -Force"
+            if ! ROBOREV_ARCHIVE_PATH="$archive_path" ROBOREV_EXTRACT_DIR="$tmpdir" powershell -NoProfile -Command "Expand-Archive -LiteralPath \$env:ROBOREV_ARCHIVE_PATH -DestinationPath \$env:ROBOREV_EXTRACT_DIR -Force"; then
+                return 1
+            fi
         else
-            error "Neither unzip nor PowerShell found for extracting ${filename}"
+            warn "Neither unzip nor PowerShell found for extracting ${filename}"
+            return 1
         fi
     else
-        tar -xzf "$archive_path" -C "$tmpdir"
+        if ! tar -xzf "$archive_path" -C "$tmpdir"; then
+            return 1
+        fi
     fi
 
     # Install binary
-    if [ -f "$tmpdir/$binary" ]; then
-        if [ -w "$install_dir" ]; then
-            mv "$tmpdir/$binary" "$install_dir/"
-        else
-            sudo mv "$tmpdir/$binary" "$install_dir/"
+    if [ ! -f "$tmpdir/$binary" ]; then
+        warn "Downloaded release did not contain ${binary}"
+        return 1
+    fi
+    if [ -w "$install_dir" ]; then
+        if ! mv "$tmpdir/$binary" "$install_dir/"; then
+            return 1
         fi
-        chmod +x "$install_dir/$binary"
+    else
+        if ! sudo mv "$tmpdir/$binary" "$install_dir/"; then
+            return 1
+        fi
+    fi
+    if ! chmod +x "$install_dir/$binary"; then
+        return 1
     fi
 
     # macOS code signing
@@ -169,7 +186,7 @@ install_from_go() {
     fi
 
     info "Installing via 'go install'..."
-    go install "github.com/${REPO}/cmd/roborev@latest"
+    go install "go.kenn.io/roborev/cmd/roborev@latest"
 
     return 0
 }
