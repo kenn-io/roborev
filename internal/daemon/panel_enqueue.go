@@ -12,6 +12,7 @@ import (
 	"github.com/google/uuid"
 	gitrepo "go.kenn.io/kit/git/repo"
 
+	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/storage"
@@ -395,9 +396,10 @@ type panelRunInputs struct {
 // enqueuePanelRun resolves the selected panel and fans the frozen target out
 // into N member jobs plus one claim-blocked synthesis job in a single
 // transaction. It returns the PanelEnqueueResponse (201) or an early *RawJSONOutput
-// (400 for an undefined panel, 500 for an insert failure). Per-member and
-// synthesis agent availability is deferred to worker time (failover), so this
-// path never runs the single-agent availability gate.
+// (400 for an undefined panel, 500 for an insert failure). Synthesis agent
+// availability is deferred to worker time (failover). Member execution fields
+// are resolved up front so a selected backup agent receives its own model
+// instead of the preferred agent's model.
 func (s *Server) enqueuePanelRun(ctx context.Context, in panelRunInputs) (*RawJSONOutput, error) {
 	members, synth, err := config.ResolvePanel(in.panelName, in.resolutionPath, in.cfg)
 	if err != nil {
@@ -405,7 +407,7 @@ func (s *Server) enqueuePanelRun(ctx context.Context, in panelRunInputs) (*RawJS
 	}
 
 	runUUID := uuid.NewString()
-	memberOpts := panelMemberOpts(in.descriptor, in.panelName, runUUID, members)
+	memberOpts := panelMemberOpts(in.descriptor, in.panelName, runUUID, members, in.resolutionPath, in.cfg)
 	synthOpts := panelSynthesisOpts(in.descriptor, in.panelName, runUUID, synth)
 
 	memberJobs, synthJob, err := s.db.EnqueuePanelRun(memberOpts, synthOpts)
@@ -467,12 +469,14 @@ func panelHasDesignMember(members []config.ResolvedMember) bool {
 // /review_type and panel fields onto the frozen base opts.
 func panelMemberOpts(
 	descriptor targetDescriptor, panelName, runUUID string, members []config.ResolvedMember,
+	repoPath string, cfg *config.Config,
 ) []storage.EnqueueOpts {
 	out := make([]storage.EnqueueOpts, len(members))
 	for i, m := range members {
 		o := descriptor.baseOpts()
 		cfgJSON, _ := json.Marshal(m)
-		o.Agent, o.Model, o.Provider = m.Agent, m.Model, m.Provider
+		o.Agent, o.Model = resolvePanelMemberExecution(m, descriptor, repoPath, cfg)
+		o.Provider = m.Provider
 		o.Reasoning, o.ReviewType = m.Reasoning, m.ReviewType
 		o.PanelRunUUID, o.PanelRole = runUUID, storage.PanelRoleMember
 		o.PanelName, o.PanelMemberName, o.PanelMemberIndex = panelName, m.Name, m.Index
@@ -480,6 +484,40 @@ func panelMemberOpts(
 		out[i] = o
 	}
 	return out
+}
+
+func resolvePanelMemberExecution(
+	m config.ResolvedMember, descriptor targetDescriptor, repoPath string, cfg *config.Config,
+) (string, string) {
+	agentName, model := m.Agent, m.Model
+	resolution, err := agent.ResolveWorkflowConfig(
+		m.Agent, repoPath, cfg, workflowForPanelReviewType(m.ReviewType), m.Reasoning,
+	)
+	if err != nil {
+		return agentName, model
+	}
+	selected, err := agent.GetAvailableWithConfig(
+		repoPath, resolution.PreferredAgent, cfg, resolution.BackupAgent,
+	)
+	if err != nil {
+		return agentName, model
+	}
+	selectedName := selected.Name()
+	if !resolution.AgentMatches(selectedName, agentName) {
+		model = resolution.ModelForSelectedAgent(selectedName, descriptor.requestedModel)
+	}
+	return selectedName, model
+}
+
+func workflowForPanelReviewType(reviewType string) string {
+	switch reviewType {
+	case config.ReviewTypeSecurity:
+		return "security"
+	case config.ReviewTypeDesign:
+		return "design"
+	default:
+		return "review"
+	}
 }
 
 // panelSynthesisOpts overlays the synthesis spec and panel fields onto the

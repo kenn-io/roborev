@@ -22,6 +22,7 @@ import (
 	// ciPollerHarness bundles DB, repo, config, and poller for CI poller tests.
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	ghpkg "go.kenn.io/roborev/internal/github"
 	"go.kenn.io/roborev/internal/review"
@@ -3023,6 +3024,55 @@ func TestProcessPRCreatesPanelRun(t *testing.T) {
 	assert.Equal(1, designMemberCount(members), "exactly one design member")
 }
 
+func TestProcessPRAutoDesignUsesConfiguredBackupModel(t *testing.T) {
+	assert := assert.New(t)
+	p, db, _, repo, cfg := newCIPanelGitHarness(t)
+
+	const primaryAgent = "ci-design-unavailable-primary"
+	agent.Register(&unavailableSynthesisCommandAgent{
+		name:    primaryAgent,
+		command: "roborev-missing-ci-design-primary",
+	})
+	t.Cleanup(func() { agent.Unregister(primaryAgent) })
+
+	cfg.DesignAgent = primaryAgent
+	cfg.DesignBackupAgent = "test"
+	cfg.DesignBackupModel = "design-backup-model"
+	p.loadRepoConfigFn = func(string) (*config.RepoConfig, error) {
+		enabled := true
+		rc := &config.RepoConfig{}
+		rc.AutoDesignReview.Enabled = &enabled
+		return rc, nil
+	}
+
+	base := repo.HeadSHA()
+	head := repo.CommitFile("db/migrations/002_orders.sql",
+		"CREATE TABLE orders(id INT);\n", "feat: add orders table")
+	p.mergeBaseFn = func(_, _, _ string) (string, error) { return base, nil }
+
+	err := p.processPR(context.Background(), "acme/api", ghPR{
+		Number: 14, HeadRefOid: head, BaseRefName: "main",
+	}, cfg)
+	require.NoError(t, err, "processPR")
+
+	panel, err := db.GetCIPanelByPRSHA("acme/api", 14, head)
+	require.NoError(t, err)
+	require.NotNil(t, panel)
+	members, err := db.GetPanelMembers(panel.PanelRunUUID)
+	require.NoError(t, err)
+
+	var design *storage.ReviewJob
+	for i := range members {
+		if members[i].ReviewType == "design" {
+			design = &members[i]
+			break
+		}
+	}
+	require.NotNil(t, design, "design member appended")
+	assert.Equal("test", design.Agent)
+	assert.Equal("design-backup-model", design.Model)
+}
+
 // TestProcessPRSynthesisAndMembersUseSeparateMinSeverity verifies the CI
 // min_severity threshold reaches only the synthesis job, while member reviews
 // use the review_min_severity setting from normal review config.
@@ -3056,6 +3106,35 @@ func TestProcessPRSynthesisAndMembersUseSeparateMinSeverity(t *testing.T) {
 	require.NotEmpty(t, members)
 	for _, m := range members {
 		assert.Equal("medium", m.MinSeverity, "member %d carries review_min_severity", m.ID)
+	}
+}
+
+func TestProcessPRMemberMinSeverityInvalidRepoFallsBackToGlobal(t *testing.T) {
+	assert := assert.New(t)
+	p, db, _, repo, cfg := newCIPanelGitHarness(t)
+	cfg.ReviewMinSeverity = "medium"
+	p.loadRepoConfigFn = func(string) (*config.RepoConfig, error) {
+		return &config.RepoConfig{ReviewMinSeverity: "not-a-severity"}, nil
+	}
+
+	base := repo.HeadSHA()
+	head := repo.CommitFile("app.go", "package app\n", "feat: app")
+	p.mergeBaseFn = func(_, _, _ string) (string, error) { return base, nil }
+
+	err := p.processPR(context.Background(), "acme/api", ghPR{
+		Number: 13, HeadRefOid: head, BaseRefName: "main",
+	}, cfg)
+	require.NoError(t, err, "processPR")
+
+	panel, err := db.GetCIPanelByPRSHA("acme/api", 13, head)
+	require.NoError(t, err)
+	require.NotNil(t, panel)
+
+	members, err := db.GetPanelMembers(panel.PanelRunUUID)
+	require.NoError(t, err)
+	require.NotEmpty(t, members)
+	for _, m := range members {
+		assert.Equal("medium", m.MinSeverity, "member %d falls back to global review_min_severity", m.ID)
 	}
 }
 

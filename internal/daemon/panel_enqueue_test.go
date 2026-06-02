@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 )
@@ -434,6 +435,49 @@ func TestEnqueuePanelWhenDefaultAgentUnavailable(t *testing.T) {
 	synth, err := db.GetJobByID(resp.ID)
 	require.NoError(t, err)
 	assert.Equal(storage.JobTypeSynthesis, synth.JobType)
+}
+
+func TestEnqueuePanelMemberUsesBackupModelWhenPreferredUnavailable(t *testing.T) {
+	assert := assert.New(t)
+	server, db, _ := newTestServer(t)
+
+	const primaryAgent = "panel-unavailable-primary"
+	agent.Register(&unavailableSynthesisCommandAgent{
+		name:    primaryAgent,
+		command: "roborev-missing-panel-primary",
+	})
+	t.Cleanup(func() { agent.Unregister(primaryAgent) })
+
+	const panelWithBackup = `
+review_backup_agent = "test"
+review_backup_model = "backup-model"
+
+[review]
+default_panel = "solo"
+
+[review.subagents.only]
+agent = "panel-unavailable-primary"
+review_type = "default"
+
+[review.panels.solo]
+members = ["only"]
+synthesis_agent = "test"
+`
+	repo := testutil.NewGitRepo(t)
+	repo.WriteFile(".roborev.toml", panelWithBackup)
+	repo.CommitFile("a.txt", "a", "add a")
+
+	resp := enqueuePanelViaHTTP(t, server, EnqueueRequest{
+		RepoPath: repo.Path(),
+		GitRef:   "HEAD",
+		Agent:    "test",
+	})
+
+	members, err := db.GetPanelMembers(resp.PanelRunUUID)
+	require.NoError(t, err)
+	require.Len(t, members, 1)
+	assert.Equal("test", members[0].Agent)
+	assert.Equal("backup-model", members[0].Model)
 }
 
 // TestEnqueuePanelSynthesisBackupPersisted verifies a panel's

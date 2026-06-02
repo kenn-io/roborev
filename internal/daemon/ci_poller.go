@@ -690,6 +690,23 @@ func ciReasoning(repoCfg *config.RepoConfig) string {
 	return "thorough"
 }
 
+func resolveCIAutoDesignAgent(repoCfg *config.RepoConfig, cfg *config.Config) (string, string) {
+	reasoning := ciReasoning(repoCfg)
+	resolution, err := agent.ResolveWorkflowConfigFromConfig(
+		"", repoCfg, cfg, "design", reasoning,
+	)
+	if err != nil || resolution.PreferredAgent == "" {
+		return config.DesignAgentFromConfig(repoCfg, cfg)
+	}
+	chosen, err := agent.GetAvailableWithConfigFromConfig(
+		repoCfg, resolution.PreferredAgent, cfg, resolution.BackupAgent,
+	)
+	if err != nil {
+		return resolution.PreferredAgent, resolution.ModelForSelectedAgent(resolution.PreferredAgent, "")
+	}
+	return chosen.Name(), resolution.ModelForSelectedAgent(chosen.Name(), "")
+}
+
 // maybeAppendDesignMember appends exactly one whole-range design member to the
 // panel when auto-design is enabled (resolved off the default branch, F12) and
 // no member already covers the "design" review type (F8). It reproduces only
@@ -729,7 +746,7 @@ func (p *CIPoller) maybeAppendDesignMember(
 		if !p.commitWarrantsDesign(ctx, repo.RootPath, sha, hh) {
 			continue
 		}
-		designAgent, designModel := config.DesignAgentFromConfig(repoCfg, cfg)
+		designAgent, designModel := resolveCIAutoDesignAgent(repoCfg, cfg)
 		return append(members, config.ResolvedMember{
 			Name:       "design",
 			Index:      len(members),
@@ -1966,21 +1983,25 @@ func resolveMinSeverity(globalMinSeverity, repoPath, ghRepo string) string {
 // resolveCIReviewMinSeverity determines the effective min_severity for member
 // review prompts/jobs from the already-loaded repo/global review config.
 func resolveCIReviewMinSeverity(repoCfg *config.RepoConfig, cfg *config.Config, ghRepo string) string {
-	minSeverity := ""
+	globalMinSeverity := ""
 	if cfg != nil {
-		minSeverity = cfg.ReviewMinSeverity
+		globalMinSeverity = cfg.ReviewMinSeverity
+	}
+	normalizedGlobal := ""
+	if strings.TrimSpace(globalMinSeverity) != "" {
+		if normalized, err := config.NormalizeMinSeverity(globalMinSeverity); err == nil {
+			normalizedGlobal = normalized
+		} else {
+			log.Printf("CI poller: invalid global review_min_severity %q, ignoring", globalMinSeverity)
+		}
 	}
 	if repoCfg != nil && strings.TrimSpace(repoCfg.ReviewMinSeverity) != "" {
-		minSeverity = repoCfg.ReviewMinSeverity
+		if normalized, err := config.NormalizeMinSeverity(repoCfg.ReviewMinSeverity); err == nil {
+			return normalized
+		}
+		log.Printf("CI poller: invalid review_min_severity %q for %s, using global", repoCfg.ReviewMinSeverity, ghRepo)
 	}
-	if strings.TrimSpace(minSeverity) == "" {
-		return ""
-	}
-	if normalized, err := config.NormalizeMinSeverity(minSeverity); err == nil {
-		return normalized
-	}
-	log.Printf("CI poller: invalid review_min_severity %q for %s, ignoring", minSeverity, ghRepo)
-	return ""
+	return normalizedGlobal
 }
 
 func (p *CIPoller) callListOpenPRs(ctx context.Context, ghRepo string) ([]ghPR, error) {
