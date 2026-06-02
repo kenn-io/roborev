@@ -1518,12 +1518,13 @@ func (p *CIPoller) postPanelRun(ctx context.Context, row *storage.CIPanel) {
 		return // another path is posting this run
 	}
 
-	// F13: do not comment on a closed/merged PR; finalize and never retry.
+	// F13: do not comment on a closed/merged PR. Drop the mapping so reopening
+	// the same HEAD can enqueue a fresh review/comment.
 	if !p.callIsPROpen(ctx, row.GithubRepo, row.PRNumber) {
 		log.Printf("CI poller: PR %s#%d is closed/merged, abandoning panel %d",
 			row.GithubRepo, row.PRNumber, row.ID)
-		if err := p.db.MarkPanelPosted(row.ID); err != nil {
-			log.Printf("CI poller: error finalizing closed-PR panel %d: %v", row.ID, err)
+		if err := p.db.DeleteCIPanel(row.ID); err != nil {
+			log.Printf("CI poller: error deleting closed-PR panel %d: %v", row.ID, err)
 		}
 		return
 	}

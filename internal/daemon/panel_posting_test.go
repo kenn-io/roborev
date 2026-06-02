@@ -232,22 +232,26 @@ func TestSynthesisCanceledDoesNotPostRawFallback(t *testing.T) {
 	assert.NotNil(row.RetiredAt, "canceled synthesis records retirement for throttle memory")
 }
 
-// TestPanelClosedPRPostsNothing covers F13: a closed/merged PR is finalized
-// without a comment and without leaving a retryable claim.
+// TestPanelClosedPRPostsNothing covers F13: a closed/merged PR is abandoned
+// without a comment and without suppressing a same-HEAD reopen.
 func TestPanelClosedPRPostsNothing(t *testing.T) {
 	assert := assert.New(t)
 	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
 	h.Poller.isPROpenFn = func(string, int) bool { return false }
 	comments := h.CaptureComments()
 
-	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 7, "headsha333", "base..headsha333",
+	_, synth, _ := h.seedCIPanelRun(t, "acme/api", 7, "headsha333", "base..headsha333",
 		[]jobSpec{{Agent: "test", ReviewType: "review", Status: "done", Output: "F"}})
 	h.completeSynthesisWithReview(t, synth.ID, "## Combined\nfindings")
 
 	h.Poller.handleReviewCompleted(ciEvent(synth.ID, "review.completed"))
 
 	assert.Empty(*comments, "no comment on a closed PR")
-	assert.True(h.panelPostedAt(t, panel.ID), "closed PR finalizes the row")
+	_, err := h.DB.GetCIPanelByPRSHA("acme/api", 7, "headsha333")
+	require.ErrorIs(t, err, sql.ErrNoRows, "closed PR deletes the mapping")
+	reviewed, err := h.Poller.alreadyReviewedPR("acme/api", ghPR{Number: 7, HeadRefOid: "headsha333"})
+	require.NoError(t, err)
+	assert.False(reviewed, "same-HEAD reopen must be reviewable")
 }
 
 // TestPanelPermanentPostErrorAbandons covers the permanent-GitHub-error path: an
