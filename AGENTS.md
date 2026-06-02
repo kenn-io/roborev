@@ -205,6 +205,11 @@ Test conventions:
 - Commit after completing each piece of work; do not wait to be asked.
 - When committing, stage ALL modified files related to the work (including formatting-only and ancillary updates).
 - Before committing, run `git diff` and `git status` to verify nothing is unintentionally left unstaged.
+- PR descriptions should not use a standalone "Test Plan" section by
+  default. If verification commands were actually run, list them under
+  "Verification" as evidence. If verification is redundant or already
+  visible in CI, keep the PR body shorter instead of writing a ritual
+  checklist.
 
 ## Review / Refine Guidance
 
