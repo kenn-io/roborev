@@ -16,12 +16,12 @@ import (
 
 func mutateCmd() *cobra.Command {
 	var (
-		lang      string
-		jsonOut   bool
-		diff      bool
-		branch    string
+		lang       string
+		jsonOut    bool
+		diff       bool
+		branch     string
 		baseBranch string
-		quiet     bool
+		quiet      bool
 	)
 
 	cmd := &cobra.Command{
@@ -187,7 +187,10 @@ func printMutationResults(cmd *cobra.Command, r *mutate.Result) {
 	cmd.Printf("Score:  %.1f%%  [%s]\n\n", r.Score*100, bar)
 
 	// Breakdown
-	type kv struct{ K string; V int }
+	type kv struct {
+		K string
+		V int
+	}
 	items := []kv{
 		{"Killed", r.Killed},
 		{"Survived", r.Survived},

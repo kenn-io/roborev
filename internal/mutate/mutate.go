@@ -25,14 +25,14 @@ type Backend interface {
 
 // Result holds the outcome of a mutation testing run.
 type Result struct {
-	Backend      string  `json:"backend"`
-	Total        int     `json:"total"`
-	Killed       int     `json:"killed"`
-	Survived     int     `json:"survived"`
-	Timeouted    int     `json:"timeouted"`
-	Suspicious   int     `json:"suspicious"`
-	Score        float64 `json:"score"` // 0.0 to 1.0
-	Output       string  `json:"output"`
+	Backend    string  `json:"backend"`
+	Total      int     `json:"total"`
+	Killed     int     `json:"killed"`
+	Survived   int     `json:"survived"`
+	Timeouted  int     `json:"timeouted"`
+	Suspicious int     `json:"suspicious"`
+	Score      float64 `json:"score"` // 0.0 to 1.0
+	Output     string  `json:"output"`
 }
 
 // Detect returns the best available backend for the given directory.
