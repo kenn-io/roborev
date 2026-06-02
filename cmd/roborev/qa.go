@@ -20,6 +20,10 @@ func qaCmd() *cobra.Command {
 		jsonOut         bool
 		maxLintFindings int
 		minMutateScore  float64
+		diff            bool
+		branch          string
+		baseBranch      string
+		quiet           bool
 	)
 
 	cmd := &cobra.Command{
@@ -37,25 +41,43 @@ thresholds — the command exits non-zero if any gate fails.
 
 Examples:
   roborev qa                              # run all phases
+  roborev qa --diff                       # only changed files (CI mode)
   roborev qa --skip-mutate                # lint only
   roborev qa --fail-lint 5                # max 5 lint findings
   roborev qa --fail-mutate 0.70           # require 70% mutation score
   roborev qa --json                       # machine-readable output
+  roborev qa --diff --json                # CI-friendly: changed files, JSON
   roborev qa --skip-mutate --fail-lint 0  # zero-tolerance lint
 `,
 		Args: cobra.ArbitraryArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			workDir, _ := os.Getwd()
-			opts := qa.Options{
-				SkipLint:        skipLint,
-				SkipMutate:      skipMutate,
-				MaxLintFindings: maxLintFindings,
-				MinMutateScore:  minMutateScore,
-				Paths:           args,
-			}
-			if len(opts.Paths) == 0 {
-				opts.Paths = []string{"."}
-			}
+					workDir, _ := os.Getwd()
+
+					// Resolve paths: if --diff, get changed files
+					var paths []string
+					if diff {
+						changed, err := getChangedFiles(workDir, branch, baseBranch)
+						if err != nil {
+							return fmt.Errorf("get changed files: %w", err)
+						}
+						paths = changed
+						if len(paths) == 0 && !quiet {
+							cmd.Println("No changed files to analyze.")
+							return nil
+						}
+					} else if len(args) > 0 {
+						paths = args
+					} else {
+						paths = []string{"."}
+					}
+
+					opts := qa.Options{
+						SkipLint:        skipLint,
+						SkipMutate:      skipMutate,
+						MaxLintFindings: maxLintFindings,
+						MinMutateScore:  minMutateScore,
+						Paths:           paths,
+					}
 
 			// Run phases sequentially
 			if !jsonOut {
@@ -163,6 +185,10 @@ Examples:
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
 	cmd.Flags().IntVar(&maxLintFindings, "fail-lint", 0, "Fail if lint findings exceed N (0 = no gate)")
 	cmd.Flags().Float64Var(&minMutateScore, "fail-mutate", 0, "Fail if mutation score below this (0.0-1.0, 0 = no gate)")
+	cmd.Flags().BoolVar(&diff, "diff", false, "Only analyze changed files (CI mode)")
+	cmd.Flags().StringVar(&branch, "branch", "", "Branch to diff against (default: current)")
+	cmd.Flags().StringVar(&baseBranch, "base", "", "Base branch for --diff (default: auto-detect)")
+	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "Suppress output")
 
 	return cmd
 }

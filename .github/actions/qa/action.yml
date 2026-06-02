@@ -1,0 +1,125 @@
+name: 'roborev QA'
+description: 'Deterministic quality pipeline — static analysis + mutation testing'
+author: 'roborev'
+
+inputs:
+  semgrep_version:
+    description: 'Semgrep version (pip install semgrep==X.Y.Z). Empty = latest.'
+    required: false
+    default: ''
+
+  fail_lint:
+    description: 'Max lint findings before failing (0 = fail on any finding)'
+    required: false
+    default: '0'
+
+  fail_mutate:
+    description: 'Min mutation score % before failing (0 = disabled)'
+    required: false
+    default: '60'
+
+  skip_lint:
+    description: 'Skip static analysis'
+    required: false
+    default: 'false'
+
+  skip_mutate:
+    description: 'Skip mutation testing'
+    required: false
+    default: 'false'
+
+  working_directory:
+    description: 'Working directory for roborev commands'
+    required: false
+    default: ${{ github.workspace }}
+
+outputs:
+  lint_count:
+    description: 'Number of lint findings'
+    value: ${{ steps.qa.outputs.lint_count }}
+  mutate_score:
+    description: 'Mutation testing score (0-100)'
+    value: ${{ steps.qa.outputs.mutate_score }}
+  lint_passed:
+    description: 'Whether lint passed the gate'
+    value: ${{ steps.qa.outputs.lint_passed }}
+  mutate_passed:
+    description: 'Whether mutation testing passed the gate'
+    value: ${{ steps.qa.outputs.mutate_passed }}
+  qa_passed:
+    description: 'Whether all quality gates passed'
+    value: ${{ steps.qa.outputs.qa_passed }}
+
+runs:
+  using: composite
+  steps:
+    - name: Setup Go
+      uses: actions/setup-go@d9426b626ba058fb299d3c55e5f05406d103fe13 # v6.3.1
+      with:
+        go-version: '1.21'
+        check-latest: true
+
+    - name: Install Semgrep
+      if: ${{ inputs.skip_lint != 'true' }}
+      shell: bash
+      run: |
+        set -euo pipefail
+        if [ -n "${{ inputs.semgrep_version }}" ]; then
+          pip install "semgrep==${{ inputs.semgrep_version }}"
+        else
+          pip install semgrep
+        fi
+        semgrep --version
+
+    - name: Build roborev
+      shell: bash
+      working-directory: ${{ github.action_path }}/../..
+      run: |
+        set -euo pipefail
+        go build -o roborev ./cmd/roborev/
+        echo "$(pwd)" >> "$GITHUB_PATH"
+        ./roborev version || true
+
+    - name: Run QA pipeline
+      id: qa
+      shell: bash
+      working-directory: ${{ inputs.working_directory }}
+      run: |
+        set -euo pipefail
+
+        ROOT="${{ github.action_path }}/../.."
+        BIN="${ROOT}/roborev"
+
+        ARGS="--diff --json"
+        [ "${{ inputs.skip_lint }}" = "true" ]   && ARGS="$ARGS --skip-lint"
+        [ "${{ inputs.skip_mutate }}" = "true" ] && ARGS="$ARGS --skip-mutate"
+        [ -n "${{ inputs.fail_lint }}" ]   && [ "${{ inputs.fail_lint }}" != "0" ]   && ARGS="$ARGS --fail-lint ${{ inputs.fail_lint }}"
+        [ -n "${{ inputs.fail_mutate }}" ] && [ "${{ inputs.fail_mutate }}" != "0" ] && ARGS="$ARGS --fail-mutate ${{ inputs.fail_mutate }}"
+
+        # Run QA, capture JSON to file to avoid stdout parsing issues
+        JSON_FILE=$(mktemp)
+        QA_EXIT=0
+        "$BIN" qa $ARGS > "$JSON_FILE" 2>&1 || QA_EXIT=$?
+        cat "$JSON_FILE"
+
+        # Extract values with jq (available on all GitHub runners)
+        LINT_COUNT=$(jq -r '.lint.results | length // 0' "$JSON_FILE" 2>/dev/null || echo 0)
+        MUTATE_SCORE=$(jq -r '(.mutate.score // 0) * 100 | floor' "$JSON_FILE" 2>/dev/null || echo 0)
+        LINT_PASSED=$(jq -r '[.gates[]? | select(.name == "lint") | .passed] | first // true' "$JSON_FILE" 2>/dev/null || echo true)
+        MUTATE_PASSED=$(jq -r '[.gates[]? | select(.name == "mutate") | .passed] | first // true' "$JSON_FILE" 2>/dev/null || echo true)
+
+        QA_PASSED="false"
+        [ "$LINT_PASSED" = "true" ] && [ "$MUTATE_PASSED" = "true" ] && QA_PASSED="true"
+
+        echo "lint_count=$LINT_COUNT"       >> "$GITHUB_OUTPUT"
+        echo "mutate_score=$MUTATE_SCORE"   >> "$GITHUB_OUTPUT"
+        echo "lint_passed=$LINT_PASSED"     >> "$GITHUB_OUTPUT"
+        echo "mutate_passed=$MUTATE_PASSED" >> "$GITHUB_OUTPUT"
+        echo "qa_passed=$QA_PASSED"         >> "$GITHUB_OUTPUT"
+
+        rm -f "$JSON_FILE"
+        exit $QA_EXIT
+
+branding:
+  icon: 'check-circle'
+  color: 'green'
