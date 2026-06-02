@@ -183,7 +183,11 @@ func TestGetAvailableWithConfigEmptyRepoPathDoesNotReadCWD(t *testing.T) {
 	t.Chdir(cwd)
 
 	fakeBin := t.TempDir()
-	globalACP := filepath.Join(fakeBin, "global-acp")
+	globalACPName := "global-acp"
+	if runtime.GOOS == "windows" {
+		globalACPName += ".exe"
+	}
+	globalACP := filepath.Join(fakeBin, globalACPName)
 	require.NoError(t, os.WriteFile(globalACP, []byte("#!/bin/sh\nexit 0\n"), 0o755))
 	t.Setenv("PATH", fakeBin)
 

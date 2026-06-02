@@ -33,6 +33,49 @@ func normalizeMSYSPath(path string) string {
 	return filepath.FromSlash(path)
 }
 
+var gitRepoEnvKeys = map[string]struct{}{
+	"GIT_DIR":                          {},
+	"GIT_WORK_TREE":                    {},
+	"GIT_INDEX_FILE":                   {},
+	"GIT_OBJECT_DIRECTORY":             {},
+	"GIT_ALTERNATE_OBJECT_DIRECTORIES": {},
+	"GIT_COMMON_DIR":                   {},
+	"GIT_CEILING_DIRECTORIES":          {},
+	"GIT_NAMESPACE":                    {},
+	"GIT_PREFIX":                       {},
+	"GIT_QUARANTINE_PATH":              {},
+	"GIT_DISCOVERY_ACROSS_FILESYSTEM":  {},
+	"GIT_CONFIG_PARAMETERS":            {},
+	"GIT_CONFIG_COUNT":                 {},
+	"GIT_CONFIG_GLOBAL":                {},
+	"GIT_CONFIG_SYSTEM":                {},
+	"GIT_EXTERNAL_DIFF":                {},
+	"GIT_DIFF_OPTS":                    {},
+}
+
+var gitRepoEnvPrefixes = []string{
+	"GIT_CONFIG_KEY_",
+	"GIT_CONFIG_VALUE_",
+}
+
+func cleanGitRepoEnv(env []string) []string {
+	result := make([]string, 0, len(env))
+	for _, entry := range env {
+		key, _, _ := strings.Cut(entry, "=")
+		upper := strings.ToUpper(key)
+		if _, ok := gitRepoEnvKeys[upper]; ok {
+			continue
+		}
+		if slices.ContainsFunc(gitRepoEnvPrefixes, func(prefix string) bool {
+			return strings.HasPrefix(upper, prefix)
+		}) {
+			continue
+		}
+		result = append(result, entry)
+	}
+	return result
+}
+
 // CommitInfo holds metadata about a commit
 type CommitInfo struct {
 	SHA       string
@@ -477,6 +520,7 @@ func IsUnbornHead(repoPath string) bool {
 func ResolveSHA(repoPath, ref string) (string, error) {
 	cmd := exec.Command("git", "rev-parse", ref)
 	cmd.Dir = repoPath
+	cmd.Env = cleanGitRepoEnv(os.Environ())
 
 	out, err := cmd.Output()
 	if err != nil {

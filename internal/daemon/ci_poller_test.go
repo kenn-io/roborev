@@ -2664,7 +2664,11 @@ func TestResolveCIMatrixMembersUsesPassedRepoConfigForAgentModel(t *testing.T) {
 func TestResolveMatrixMemberAgentUsesPassedRepoConfigForACPAvailability(t *testing.T) {
 	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
 	binDir := t.TempDir()
-	acpCmd := filepath.Join(binDir, "branch-acp")
+	acpCmdName := "branch-acp"
+	if runtime.GOOS == "windows" {
+		acpCmdName += ".exe"
+	}
+	acpCmd := filepath.Join(binDir, acpCmdName)
 	require.NoError(t, os.WriteFile(acpCmd, []byte("#!/bin/sh\nexit 0\n"), 0o755))
 	t.Setenv("PATH", binDir)
 
