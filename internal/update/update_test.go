@@ -2,6 +2,7 @@ package update
 
 import (
 	"archive/tar"
+	"archive/zip"
 	"bytes"
 	"compress/gzip"
 	"crypto/sha256"
@@ -186,6 +187,52 @@ func TestUpdaterPerformUpdateInstallsBinary(t *testing.T) {
 	assert.NotEmpty(t, reporter.progress)
 }
 
+func TestUpdaterPerformUpdateInstallsWindowsZipBinary(t *testing.T) {
+	const binaryName = "roborev.exe"
+	const assetName = "roborev_1.3.0_windows_amd64.zip"
+
+	archiveData := createTestZipArchiveBytes(t, []archiveEntry{
+		{Name: binaryName, Content: "new-windows-binary", Mode: 0o755},
+	})
+	sum := sha256.Sum256(archiveData)
+	expectedChecksum := hex.EncodeToString(sum[:])
+
+	binDir := t.TempDir()
+	currentBinary := filepath.Join(binDir, binaryName)
+	require.NoError(t, os.WriteFile(currentBinary, []byte("old-windows-binary"), 0o755))
+
+	updater := NewUpdater(Deps{
+		Client: &http.Client{
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				require.Equal(t, "https://downloads.example/"+assetName, req.URL.String())
+				return newBinaryResponse(http.StatusOK, archiveData), nil
+			}),
+		},
+		Version:    "v1.2.0",
+		GOOS:       "windows",
+		GOARCH:     "amd64",
+		Executable: func() (string, error) { return currentBinary, nil },
+		CacheDir:   t.TempDir,
+	})
+
+	reporter := &testReporter{}
+	err := updater.PerformUpdate(&UpdateInfo{
+		AssetName:   assetName,
+		DownloadURL: "https://downloads.example/" + assetName,
+		Size:        int64(len(archiveData)),
+		Checksum:    expectedChecksum,
+	}, reporter)
+	require.NoError(t, err)
+
+	installed, readErr := os.ReadFile(currentBinary)
+	require.NoError(t, readErr)
+	assert.Equal(t, "new-windows-binary", string(installed))
+	requirePathMissing(t, currentBinary+".old")
+	assert.Contains(t, reporter.steps.String(), "Downloading")
+	assert.Contains(t, reporter.steps.String(), "Installing "+binaryName+"... OK")
+	assert.NotEmpty(t, reporter.progress)
+}
+
 func createTestArchiveBytes(t *testing.T, entries []archiveEntry) []byte {
 	t.Helper()
 
@@ -218,6 +265,31 @@ func createTestArchiveBytes(t *testing.T, entries []archiveEntry) []byte {
 
 	require.NoError(t, tw.Close())
 	require.NoError(t, gzw.Close())
+	return buf.Bytes()
+}
+
+func createTestZipArchiveBytes(t *testing.T, entries []archiveEntry) []byte {
+	t.Helper()
+
+	var buf bytes.Buffer
+	zw := zip.NewWriter(&buf)
+
+	for _, entry := range entries {
+		mode := entry.Mode
+		if mode == 0 {
+			mode = 0o644
+		}
+		header := &zip.FileHeader{Name: entry.Name}
+		header.SetMode(os.FileMode(mode))
+		writer, err := zw.CreateHeader(header)
+		require.NoError(t, err)
+		if len(entry.Content) > 0 {
+			_, err := writer.Write([]byte(entry.Content))
+			require.NoError(t, err)
+		}
+	}
+
+	require.NoError(t, zw.Close())
 	return buf.Bytes()
 }
 
