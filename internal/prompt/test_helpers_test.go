@@ -305,6 +305,14 @@ func setupLargeCommitAuthorRepo(t *testing.T, authorLen int) (string, string) {
 	return r.dir, r.git("rev-parse", "HEAD")
 }
 
+func (r *testRepo) commitWithMessage(message string) {
+	r.t.Helper()
+	msgPath := filepath.Join(r.dir, "commit-message.txt")
+	require.NoError(r.t, os.WriteFile(msgPath, []byte(message), 0o644))
+	r.git("commit", "--quiet", "-F", msgPath)
+	require.NoError(r.t, os.Remove(msgPath))
+}
+
 func setupLargeRangeMetadataRepo(t *testing.T, commitCount, subjectLen int) (string, string) {
 	t.Helper()
 	r := newTestRepo(t)
@@ -324,7 +332,7 @@ func setupLargeRangeMetadataRepo(t *testing.T, commitCount, subjectLen int) (str
 			[]byte(strings.Repeat("x\n", i+2)), 0o644,
 		))
 		r.git("add", "base.txt")
-		r.git("commit", "-m", subject)
+		r.commitWithMessage(subject + "\n")
 	}
 
 	endSHA := r.git("rev-parse", "HEAD")
