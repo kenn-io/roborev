@@ -38,8 +38,9 @@ issues and lint catches mechanical problems, mutation testing verifies
 your test suite can actually catch real bugs.
 
 Supported backends:
-  Python: mutmut (pip install mutmut)
-  Go:     ooze  (go install github.com/gtramontina/ooze@latest)
+  JavaScript/TypeScript: stryker (npm install @stryker-mutator/core)
+  Python:               mutmut  (pip install mutmut)
+  Go:                   go-mutesting (go install github.com/zimmski/go-mutesting/...)
 
 Examples:
   roborev mutate                         # auto-detect language, run on project
@@ -72,11 +73,13 @@ Examples:
 				return fmt.Errorf(
 					"no supported project detected in %s\n\n"+
 						"Currently supported:\n"+
-						"  Python: projects with pyproject.toml, setup.cfg, or .py files\n"+
-						"  Go:     projects with go.mod or .go files\n\n"+
+						"  JavaScript/TypeScript: projects with package.json, tsconfig.json, or .js/.ts files\n"+
+						"  Python:               projects with pyproject.toml, setup.cfg, or .py files\n"+
+						"  Go:                   projects with go.mod or .go files\n\n"+
 						"Install the mutation testing tool for your language:\n"+
+						"  JS/TS:  npm install @stryker-mutator/core\n"+
 						"  Python: pip install mutmut\n"+
-						"  Go:     go install github.com/gtramontina/ooze@latest",
+						"  Go:     go install github.com/zimmski/go-mutesting/cmd/go-mutesting@latest",
 					repoRoot,
 				)
 			}
@@ -87,8 +90,9 @@ Examples:
 				return fmt.Errorf(
 					"mutation testing tool for %s not found\n\n"+
 						"Install the appropriate tool:\n"+
+						"  JS/TS:  npm install @stryker-mutator/core\n"+
 						"  Python: pip install mutmut\n"+
-						"  Go:     go install github.com/gtramontina/ooze@latest",
+						"  Go:     go install github.com/zimmski/go-mutesting/cmd/go-mutesting@latest",
 					detectedLang,
 				)
 			}
@@ -146,7 +150,7 @@ Examples:
 		},
 	}
 
-	cmd.Flags().StringVar(&lang, "lang", "", "Force language backend: python, go")
+	cmd.Flags().StringVar(&lang, "lang", "", "Force language backend: javascript, python, go")
 	cmd.Flags().BoolVar(&jsonOut, "json", false, "Output as JSON")
 	cmd.Flags().BoolVar(&diff, "diff", false, "Only show mutants in changed files")
 	cmd.Flags().StringVar(&branch, "branch", "", "Branch to diff against (default: current)")
@@ -159,6 +163,8 @@ Examples:
 func matchesLanguage(path, lang string) bool {
 	ext := strings.ToLower(filepath.Ext(path))
 	switch lang {
+	case "javascript":
+		return ext == ".js" || ext == ".ts" || ext == ".jsx" || ext == ".tsx" || ext == ".mjs" || ext == ".cjs"
 	case "python":
 		return ext == ".py"
 	case "go":

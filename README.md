@@ -97,6 +97,43 @@ Available types: `test-fixtures`, `duplication`, `refactor`, `complexity`,
 Analysis jobs appear in the review queue. Use `roborev fix <id>` to
 apply findings later, or pass `--fix` to apply immediately.
 
+## Deterministic Quality Pipeline
+
+Complementing roborev's AI-powered review, three deterministic commands
+provide reproducible, tool-backed quality gates:
+
+```bash
+# Static analysis with Semgrep — catches security bugs and code smells
+roborev lint                          # Run on all files with default severity
+roborev lint --diff                   # Only changed files (like a CI pre-commit)
+roborev lint --severity ERROR --json  # Machine-readable output for dashboards
+```
+
+```bash
+# Mutation testing — measures how well your tests catch real bugs
+roborev mutate                        # Auto-detect language and run
+roborev mutate --lang javascript      # Force JS/TS with Stryker
+roborev mutate --lang python          # Force Python with mutmut
+roborev mutate --lang go              # Force Go with go-mutesting
+roborev mutate --json                 # Machine-readable output
+```
+
+```bash
+# Unified QA pipeline — runs lint + mutate with configurable gates
+roborev qa                            # Run both, print summary with bar chart
+roborev qa --skip-mutate              # Lint only
+roborev qa --fail-lint 5              # Fail if > 5 lint findings
+roborev qa --fail-mutate 60           # Fail if mutation score < 60%
+roborev qa --json                     # JSON output for CI/CD integration
+```
+
+Supported languages for mutation testing:
+| Language | Tool | Install |
+|----------|------|---------|
+| JavaScript/TypeScript | Stryker | `npm install @stryker-mutator/core` |
+| Python | mutmut | `pip install mutmut` |
+| Go | go-mutesting | `go install github.com/zimmski/go-mutesting/cmd/go-mutesting@latest` |
+
 ## Installation
 
 **Shell Script (macOS / Linux):**
@@ -150,6 +187,9 @@ If the hook rewrites files, re-stage them and re-run `git commit`. Use
 | `roborev fix` | Fix open reviews (or specify job IDs) |
 | `roborev refine` | Auto-fix loop: fix, re-review, repeat |
 | `roborev analyze <type>` | Run code analysis with optional auto-fix |
+| `roborev lint` | Run deterministic static analysis (Semgrep) |
+| `roborev mutate` | Run mutation testing to measure test quality |
+| `roborev qa` | Unified quality pipeline: lint + mutation testing |
 | `roborev compact` | Verify and consolidate open review findings |
 | `roborev show [sha]` | Display review for commit |
 | `roborev run "<task>"` | Execute a task with an AI agent |

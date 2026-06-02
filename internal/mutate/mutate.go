@@ -39,6 +39,14 @@ type Result struct {
 // It checks file extensions to determine the primary language and
 // picks the first available backend.
 func Detect(dir string) Backend {
+	// Check for JavaScript/TypeScript project
+	if hasJSProject(dir) {
+		js := &strykerBackend{}
+		if js.Available() {
+			return js
+		}
+	}
+
 	// Check for Python project
 	if hasPythonProject(dir) {
 		py := &mutmutBackend{}
@@ -60,6 +68,9 @@ func Detect(dir string) Backend {
 
 // DetectLanguage returns the detected primary language for the directory.
 func DetectLanguage(dir string) string {
+	if hasJSProject(dir) {
+		return "javascript"
+	}
 	if hasPythonProject(dir) {
 		return "python"
 	}
@@ -72,6 +83,11 @@ func DetectLanguage(dir string) string {
 // AllAvailable returns all installed and usable backends.
 func AllAvailable() []Backend {
 	var backends []Backend
+
+	js := &strykerBackend{}
+	if js.Available() {
+		backends = append(backends, js)
+	}
 
 	py := &mutmutBackend{}
 	if py.Available() {
