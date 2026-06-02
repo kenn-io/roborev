@@ -47,6 +47,15 @@ func (r *testRepo) configure() {
 	r.t.Helper()
 	r.git("config", "user.email", testGitEmail)
 	r.git("config", "user.name", testGitUser)
+	r.git("config", "gc.auto", "0")
+	r.git("config", "maintenance.auto", "false")
+}
+
+func TestNewTestRepoDisablesGitAutoMaintenance(t *testing.T) {
+	r := newTestRepo(t)
+
+	assert.Equal(t, "0", r.git("config", "--get", "gc.auto"))
+	assert.Equal(t, "false", r.git("config", "--get", "maintenance.auto"))
 }
 
 func (r *testRepo) git(args ...string) string {
