@@ -53,14 +53,102 @@ jobs:
           name: roborev-release-tarballs
           path: dist/*.tar.gz
 
+      - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: roborev-linux-packages
+          path: |
+            dist/*.deb
+            dist/*.rpm
+          if-no-files-found: error
+
+  publish-package-artifacts:
+    needs: release
+    runs-on: ubuntu-latest
+    permissions:
+      actions: read
+      contents: read
+      id-token: write
+    steps:
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: roborev-linux-packages
+          path: packages
+
+      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
+        with:
+          name: roborev-release-tarballs
+          path: tarballs
+
+      - name: Authenticate to Google Cloud
+        uses: google-github-actions/auth@7c6bc770dae815cd3e89ee6cdf493a5fab2cc093  # v3
+        with:
+          project_id: ${{ vars.KENN_PACKAGES_PROJECT }}
+          workload_identity_provider: ${{ vars.KENN_PACKAGES_WIF_PROVIDER }}
+
+      - name: Set up Google Cloud SDK
+        uses: google-github-actions/setup-gcloud@aa5489c8933f4cc7a4f7d45035b3b1440c9c10db  # v3.0.1
+
+      - name: Upload packages to Artifact Registry
+        shell: bash
+        env:
+          KENN_PACKAGES_PROJECT: ${{ vars.KENN_PACKAGES_PROJECT }}
+          KENN_PACKAGES_LOCATION: ${{ vars.KENN_PACKAGES_LOCATION }}
+          KENN_PACKAGES_APT_REPOSITORY: ${{ vars.KENN_PACKAGES_APT_REPOSITORY }}
+          KENN_PACKAGES_BIN_REPOSITORY: ${{ vars.KENN_PACKAGES_BIN_REPOSITORY }}
+          KENN_PACKAGES_YUM_REPOSITORY: ${{ vars.KENN_PACKAGES_YUM_REPOSITORY }}
+        run: |
+          set -euo pipefail
+
+          VERSION=${GITHUB_REF#refs/tags/v}
+          shopt -s nullglob
+          tarballs=(tarballs/*.tar.gz)
+          debs=(packages/*.deb)
+          rpms=(packages/*.rpm)
+
+          if [ "${#tarballs[@]}" -eq 0 ]; then
+            printf 'ERROR: no release tarballs found in tarballs\n' >&2
+            exit 1
+          fi
+          if [ "${#debs[@]}" -eq 0 ]; then
+            printf 'ERROR: no Debian packages found in packages\n' >&2
+            exit 1
+          fi
+          if [ "${#rpms[@]}" -eq 0 ]; then
+            printf 'ERROR: no RPM packages found in packages\n' >&2
+            exit 1
+          fi
+
+          gcloud artifacts generic upload \
+            --project="$KENN_PACKAGES_PROJECT" \
+            --location="$KENN_PACKAGES_LOCATION" \
+            --repository="$KENN_PACKAGES_BIN_REPOSITORY" \
+            --package=roborev \
+            --version="$VERSION" \
+            --source-directory=tarballs \
+            --skip-existing
+
+          for deb in "${debs[@]}"; do
+            gcloud artifacts apt upload "$KENN_PACKAGES_APT_REPOSITORY" \
+              --project="$KENN_PACKAGES_PROJECT" \
+              --location="$KENN_PACKAGES_LOCATION" \
+              --source="$deb"
+          done
+
+          for rpm in "${rpms[@]}"; do
+            gcloud artifacts yum upload "$KENN_PACKAGES_YUM_REPOSITORY" \
+              --project="$KENN_PACKAGES_PROJECT" \
+              --location="$KENN_PACKAGES_LOCATION" \
+              --source="$rpm"
+          done
+
   update-homebrew:
     needs: release
     runs-on: ubuntu-latest
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
+          name: roborev-release-tarballs
           path: artifacts
-          merge-multiple: true
 
       - name: Compute SHA256 for all binaries
         id: sha256
