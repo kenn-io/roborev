@@ -71,10 +71,31 @@ func configuredACPAgentWithConfig(acpCfg *config.ACPAgentConfig) *ACPAgent {
 	return resolved
 }
 
-func resolveAvailableBackupWithConfig(preferred string, backups []string, cfg *config.Config) (Agent, bool) {
+// resolveAvailableBackupWithConfig returns the first backup agent whose
+// command resolves to an available binary. A configured ACP backup (the
+// literal "acp" or a custom [acp].name) is resolved through the same
+// configured-ACP path as the preferred agent, so [acp].command is honored
+// instead of requiring the hardcoded acp-agent binary on PATH.
+func resolveAvailableBackupWithConfig(
+	preferred string,
+	backups []string,
+	repoCfg *config.RepoConfig,
+	cfg *config.Config,
+) (Agent, bool) {
 	for _, backup := range backups {
-		backup = resolveAlias(backup)
-		if backup == "" || backup == preferred {
+		raw := strings.TrimSpace(backup)
+		if raw == "" {
+			continue
+		}
+		if isConfiguredACPAgentNameFromConfig(raw, cfg, repoCfg) {
+			acpAgent := configuredACPAgentFromConfig(repoCfg, cfg)
+			if _, err := exec.LookPath(acpAgent.CommandName()); err == nil {
+				return acpAgent, true
+			}
+			continue
+		}
+		backup = resolveAlias(raw)
+		if backup == preferred {
 			continue
 		}
 		registryMu.RLock()
@@ -154,7 +175,7 @@ func GetAvailableWithConfigFromConfig(repoCfg *config.RepoConfig, preferred stri
 
 		// ACP unavailable — try backup agents with config-aware
 		// availability so *_cmd overrides are honored.
-		if backup, ok := resolveAvailableBackupWithConfig("", backups, cfg); ok {
+		if backup, ok := resolveAvailableBackupWithConfig("", backups, repoCfg, cfg); ok {
 			return backup, nil
 		}
 
@@ -185,7 +206,7 @@ func GetAvailableWithConfigFromConfig(repoCfg *config.RepoConfig, preferred stri
 	// fallback chain. This runs regardless of whether preferred is
 	// set so that backup-only configurations (preferred="" with a
 	// backup_agent) still honor *_cmd overrides.
-	if backup, ok := resolveAvailableBackupWithConfig(preferred, backups, cfg); ok {
+	if backup, ok := resolveAvailableBackupWithConfig(preferred, backups, repoCfg, cfg); ok {
 		return backup, nil
 	}
 
