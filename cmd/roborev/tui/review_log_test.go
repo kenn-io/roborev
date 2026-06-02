@@ -520,7 +520,7 @@ func TestMouseDisabledInContentViews(t *testing.T) {
 				m.jobs = []storage.ReviewJob{
 					makeJob(1, withStatus(storage.JobStatusRunning)),
 				}
-				m.selectedIdx = 0
+				m.selectedIdx, m.selectedJobID = 0, 1
 			},
 		},
 		{
@@ -531,7 +531,7 @@ func TestMouseDisabledInContentViews(t *testing.T) {
 				m.jobs = []storage.ReviewJob{
 					makeJob(1, withStatus(storage.JobStatusDone)),
 				}
-				m.selectedIdx = 0
+				m.selectedIdx, m.selectedJobID = 0, 1
 
 				m.currentReview = &storage.Review{
 					ID:     1,

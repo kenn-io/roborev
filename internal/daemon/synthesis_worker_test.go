@@ -1,0 +1,575 @@
+package daemon
+
+import (
+	"context"
+	"fmt"
+	"io"
+	"os/exec"
+	"path/filepath"
+	"testing"
+	"time"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/agent"
+	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/tokens"
+)
+
+// markMemberRunning transitions a queued member job to running so that the
+// status-guarded CompleteJob/FailJob transitions take effect by ID.
+func markMemberRunning(t *testing.T, tc *workerTestContext, jobID int64) {
+	t.Helper()
+	_, err := tc.DB.Exec(
+		"UPDATE review_jobs SET status = 'running', worker_id = ? WHERE id = ?",
+		testWorkerID, jobID,
+	)
+	require.NoError(t, err)
+}
+
+// completeMember drives a specific member to a done review with the given output.
+func completeMember(t *testing.T, tc *workerTestContext, jobID int64, ag, output string) {
+	t.Helper()
+	markMemberRunning(t, tc, jobID)
+	require.NoError(t, tc.DB.CompleteJob(jobID, ag, "", output))
+}
+
+// failMember drives a specific member to terminal failure.
+func failMember(t *testing.T, tc *workerTestContext, jobID int64) {
+	t.Helper()
+	markMemberRunning(t, tc, jobID)
+	ok, err := tc.DB.FailJob(jobID, testWorkerID, "boom")
+	require.NoError(t, err)
+	require.True(t, ok, "FailJob should mark the running member failed")
+}
+
+// setSynthesisAgent points the run's synthesis job at a specific agent so tests
+// can attach a uniquely-named FakeAgent without clobbering the global "test"
+// agent that the rest of the package relies on.
+func setSynthesisAgent(t *testing.T, tc *workerTestContext, runUUID, agentName string) {
+	t.Helper()
+	_, err := tc.DB.Exec(
+		"UPDATE review_jobs SET agent = ? WHERE panel_run_uuid = ? AND panel_role = 'synthesis'",
+		agentName, runUUID,
+	)
+	require.NoError(t, err)
+}
+
+// releaseAndClaimSynthesis releases the gated synthesis job for the run and
+// claims it, asserting the claimed job is the synthesis row.
+func releaseAndClaimSynthesis(
+	t *testing.T, tc *workerTestContext, runUUID string,
+) *storage.ReviewJob {
+	t.Helper()
+	require.NoError(t, tc.DB.MaybeReleasePanelSynthesis(runUUID))
+	claimed, err := tc.DB.ClaimJob(testWorkerID)
+	require.NoError(t, err)
+	require.NotNil(t, claimed, "expected the released synthesis job to be claimable")
+	require.True(t, claimed.IsSynthesisJob(), "claimed job must be the synthesis row")
+	return claimed
+}
+
+// registerNeverCalledAgent registers a FakeAgent that flips *called and fails
+// the test if it is ever invoked. Used to prove the no-agent branches.
+func registerNeverCalledAgent(t *testing.T, name string, called *bool) {
+	t.Helper()
+	agent.Register(&agent.FakeAgent{
+		NameStr: name,
+		ReviewFn: func(_ context.Context, _, _, _ string, _ io.Writer) (string, error) {
+			*called = true
+			assert.Fail(t, "synthesis agent must not be invoked in the no-agent branch")
+			return "", nil
+		},
+	})
+	t.Cleanup(func() { agent.Unregister(name) })
+}
+
+type synthesisEntrypointTestAgent struct {
+	name         string
+	streamLine   string
+	synthPrompt  string
+	reviewCalled bool
+}
+
+func (a *synthesisEntrypointTestAgent) Name() string { return a.name }
+
+func (a *synthesisEntrypointTestAgent) Review(context.Context, string, string, string, io.Writer) (string, error) {
+	a.reviewCalled = true
+	return "", fmt.Errorf("review entrypoint should not be used for synthesis")
+}
+
+func (a *synthesisEntrypointTestAgent) Synthesize(ctx context.Context, prompt string, output io.Writer) (string, error) {
+	a.synthPrompt = prompt
+	if output != nil && a.streamLine != "" {
+		if _, err := io.WriteString(output, a.streamLine+"\n"); err != nil {
+			return "", err
+		}
+	}
+	return "## Review Findings\n\n- **Severity**: Medium\n- **Location**: file.go:1\n- **Problem**: combined\n- **Fix**: fix", nil
+}
+
+func (a *synthesisEntrypointTestAgent) WithReasoning(agent.ReasoningLevel) agent.Agent { return a }
+
+func (a *synthesisEntrypointTestAgent) WithAgentic(bool) agent.Agent { return a }
+
+func (a *synthesisEntrypointTestAgent) WithModel(string) agent.Agent { return a }
+
+func (a *synthesisEntrypointTestAgent) CommandLine() string { return a.name }
+
+func TestHeadOf(t *testing.T) {
+	assert := assert.New(t)
+	assert.Equal("headsha", headOf("basesha..headsha"), "range returns the head side")
+	assert.Equal("plainsha", headOf("plainsha"), "plain ref is unchanged")
+	assert.Equal("c", headOf("a..b..c"), "uses the part after the last ..")
+	assert.Empty(headOf(""), "empty ref stays empty")
+}
+
+// TestSynthesisAllFailedRendersHeadSHA covers F11: the all-failed review header
+// must render the head SHA, never the merge base. processSynthesisJob frames the
+// synthesis on the frozen mergeBase..headSHA range, and FormatAllFailedComment
+// short-SHAs its argument, so passing the raw range would render the base.
+func TestSynthesisAllFailedRendersHeadSHA(t *testing.T) {
+	assert := assert.New(t)
+	tc := newWorkerTestContext(t, 1)
+
+	const memberAgent = "panel-headsha-member"
+	registerPassingAgent(t, memberAgent)
+	var synthCalled bool
+	const synthAgent = "synth-headsha"
+	registerNeverCalledAgent(t, synthAgent, &synthCalled)
+
+	runUUID, members, synth := enqueuePanelRun(t, tc, "headsha-panel", []memberSpec{
+		{name: "m0", agent: memberAgent},
+	})
+	setSynthesisAgent(t, tc, runUUID, synthAgent)
+
+	// Frame the synthesis on a base..head range with distinguishable short SHAs.
+	const baseSHA = "1111111aaaaaa"
+	const headSHA = "2222222bbbbbb"
+	_, err := tc.DB.Exec(
+		"UPDATE review_jobs SET git_ref = ? WHERE id = ?",
+		baseSHA+".."+headSHA, synth.ID,
+	)
+	require.NoError(t, err)
+	for _, m := range members {
+		failMember(t, tc, m.ID)
+	}
+
+	claimed := releaseAndClaimSynthesis(t, tc, runUUID)
+	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, claimed)
+
+	review, err := tc.DB.GetReviewByJobID(synth.ID)
+	require.NoError(t, err)
+	assert.Contains(review.Output, "2222222", "all-failed header renders the head short SHA")
+	assert.NotContains(review.Output, "1111111", "all-failed header must not render the base SHA")
+	assert.False(synthCalled)
+}
+
+func TestSynthesisAllFailed(t *testing.T) {
+	assert := assert.New(t)
+	tc := newWorkerTestContext(t, 1)
+
+	const memberAgent = "panel-all-failed"
+	registerPassingAgent(t, memberAgent)
+
+	var synthCalled bool
+	const synthAgent = "synth-all-failed"
+	registerNeverCalledAgent(t, synthAgent, &synthCalled)
+
+	runUUID, members, _ := enqueuePanelRun(t, tc, "all-failed-panel", []memberSpec{
+		{name: "m0", agent: memberAgent},
+		{name: "m1", agent: memberAgent},
+	})
+	setSynthesisAgent(t, tc, runUUID, synthAgent)
+	for _, m := range members {
+		failMember(t, tc, m.ID)
+	}
+
+	synth := releaseAndClaimSynthesis(t, tc, runUUID)
+	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+
+	tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
+	review, err := tc.DB.GetReviewByJobID(synth.ID)
+	require.NoError(t, err)
+	assert.Contains(review.Output, "Review Failed")
+	assert.Contains(review.Output, "All review jobs in this batch failed")
+	assert.False(synthCalled, "no agent should run when every member failed")
+}
+
+func TestSynthesisSingleSuccessPassthrough(t *testing.T) {
+	assert := assert.New(t)
+	tc := newWorkerTestContext(t, 1)
+
+	const memberAgent = "panel-single"
+	registerPassingAgent(t, memberAgent)
+
+	var synthCalled bool
+	const synthAgent = "synth-single"
+	registerNeverCalledAgent(t, synthAgent, &synthCalled)
+
+	runUUID, members, _ := enqueuePanelRun(t, tc, "single-success-panel", []memberSpec{
+		{name: "m0", agent: memberAgent},
+		{name: "m1", agent: memberAgent},
+	})
+	setSynthesisAgent(t, tc, runUUID, synthAgent)
+	const memberAOutput = "## Review\nNo issues found."
+	completeMember(t, tc, members[0].ID, memberAgent, memberAOutput)
+	failMember(t, tc, members[1].ID)
+
+	synth := releaseAndClaimSynthesis(t, tc, runUUID)
+	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+
+	tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
+	review, err := tc.DB.GetReviewByJobID(synth.ID)
+	require.NoError(t, err)
+	assert.Equal(memberAOutput, review.Output, "passthrough must emit member output verbatim")
+	assert.Equal("P", storage.ParseVerdict(review.Output), "verdict carried from member output")
+	assert.Equal(memberAgent, review.Agent, "review labeled with the surviving member's agent")
+	assert.False(synthCalled, "passthrough must not invoke an agent")
+}
+
+func TestSynthesisAllPassingSkipsAgent(t *testing.T) {
+	assert := assert.New(t)
+	tc := newWorkerTestContext(t, 1)
+
+	const memberAgent = "panel-all-pass"
+	registerPassingAgent(t, memberAgent)
+
+	var synthCalled bool
+	const synthAgent = "synth-all-pass"
+	registerNeverCalledAgent(t, synthAgent, &synthCalled)
+
+	runUUID, members, _ := enqueuePanelRun(t, tc, "all-pass-panel", []memberSpec{
+		{name: "m0", agent: memberAgent},
+		{name: "m1", agent: memberAgent},
+	})
+	setSynthesisAgent(t, tc, runUUID, synthAgent)
+	completeMember(t, tc, members[0].ID, memberAgent, "No issues found.")
+	completeMember(t, tc, members[1].ID, memberAgent, "No findings to report.")
+
+	synth := releaseAndClaimSynthesis(t, tc, runUUID)
+	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+
+	tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
+	review, err := tc.DB.GetReviewByJobID(synth.ID)
+	require.NoError(t, err)
+	assert.Contains(review.Output, "## roborev: Combined Review")
+	assert.Contains(review.Output, "No issues found.")
+	assert.Equal("P", storage.ParseVerdict(review.Output))
+	assert.False(synthCalled, "clean panels must not invoke an extra synthesis agent")
+}
+
+func TestSynthesisUsesSynthesisEntrypoint(t *testing.T) {
+	assert := assert.New(t)
+	tc := newWorkerTestContext(t, 1)
+
+	const memberAgent = "panel-synthesis-entrypoint-member"
+	registerPassingAgent(t, memberAgent)
+
+	synthAgent := &synthesisEntrypointTestAgent{name: "panel-synthesis-entrypoint"}
+	agent.Register(synthAgent)
+	t.Cleanup(func() { agent.Unregister(synthAgent.name) })
+
+	runUUID, members, synth := enqueuePanelRun(t, tc, "entrypoint-panel", []memberSpec{
+		{name: "m0", agent: memberAgent},
+		{name: "m1", agent: memberAgent},
+	})
+	setSynthesisAgent(t, tc, runUUID, synthAgent.name)
+	completeMember(t, tc, members[0].ID, memberAgent, "Review #1\n\n## Review Findings\n\n- Severity: Medium\n- Location: a.go:1\n- Problem: A\n- Fix: Fix A")
+	completeMember(t, tc, members[1].ID, memberAgent, "Review #2\n\n## Review Findings\n\n- Severity: Medium\n- Location: b.go:2\n- Problem: B\n- Fix: Fix B")
+
+	claimed := releaseAndClaimSynthesis(t, tc, runUUID)
+	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, claimed)
+
+	tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
+	review, err := tc.DB.GetReviewByJobID(synth.ID)
+	require.NoError(t, err)
+	assert.Contains(review.Output, "combined")
+	assert.False(synthAgent.reviewCalled, "synthesis must not use the code-review entrypoint")
+	assert.Contains(synthAgent.synthPrompt, "Review #1")
+	assert.NotContains(synthAgent.synthPrompt, "Review the code changes in commit")
+}
+
+func TestSynthesisCapturesTokenUsage(t *testing.T) {
+	assert := assert.New(t)
+	tc := newWorkerTestContext(t, 1)
+
+	const memberAgent = "panel-synthesis-token-member"
+	registerPassingAgent(t, memberAgent)
+
+	synthAgent := &synthesisEntrypointTestAgent{
+		name:       "panel-synthesis-token",
+		streamLine: `{"type":"thread.started","thread_id":"synth-session-123"}`,
+	}
+	agent.Register(synthAgent)
+	t.Cleanup(func() { agent.Unregister(synthAgent.name) })
+
+	var fetchedSession string
+	tc.Pool.tokenUsageFetcher = func(ctx context.Context, sessionID string) (*tokens.Usage, error) {
+		fetchedSession = sessionID
+		return &tokens.Usage{CostUSD: 0.03, HasCost: true}, nil
+	}
+
+	runUUID, members, synth := enqueuePanelRun(t, tc, "synthesis-token-panel", []memberSpec{
+		{name: "m0", agent: memberAgent},
+		{name: "m1", agent: memberAgent},
+	})
+	setSynthesisAgent(t, tc, runUUID, synthAgent.name)
+	completeMember(t, tc, members[0].ID, memberAgent, "Review #1\n\n## Review Findings\n\n- Severity: Medium\n- Location: a.go:1\n- Problem: A\n- Fix: Fix A")
+	completeMember(t, tc, members[1].ID, memberAgent, "Review #2\n\n## Review Findings\n\n- Severity: Medium\n- Location: b.go:2\n- Problem: B\n- Fix: Fix B")
+
+	claimed := releaseAndClaimSynthesis(t, tc, runUUID)
+	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, claimed)
+
+	updated := tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
+	assert.Equal("synth-session-123", fetchedSession)
+	assert.Contains(updated.TokenUsage, `"cost_usd":0.03`)
+	assert.Contains(updated.TokenUsage, `"has_cost":true`)
+}
+
+func TestSynthesisAutoClosesPassingReview(t *testing.T) {
+	tests := []struct {
+		name       string
+		enabled    bool
+		wantClosed bool
+	}{
+		{name: "enabled", enabled: true, wantClosed: true},
+		{name: "disabled", enabled: false, wantClosed: false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tc := newWorkerTestContext(t, 1)
+			cfg := config.DefaultConfig()
+			cfg.AutoClosePassingReviews = tt.enabled
+			tc.reconfigurePool(cfg)
+
+			const memberAgent = "panel-auto-close"
+			registerPassingAgent(t, memberAgent)
+
+			runUUID, members, _ := enqueuePanelRun(t, tc, "auto-close", []memberSpec{
+				{name: "only", agent: memberAgent},
+			})
+			completeMember(t, tc, members[0].ID, memberAgent, "No issues found.")
+
+			synth := releaseAndClaimSynthesis(t, tc, runUUID)
+			tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+
+			review, err := tc.DB.GetReviewByJobID(synth.ID)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantClosed, review.Closed)
+		})
+	}
+}
+
+func TestSynthesisMultiVerifyDedupe(t *testing.T) {
+	assert := assert.New(t)
+	tc := newWorkerTestContext(t, 1)
+
+	const memberAgent = "panel-multi-member"
+	registerPassingAgent(t, memberAgent)
+
+	var captured string
+	const synthAgent = "synth-multi"
+	agent.Register(&agent.FakeAgent{
+		NameStr: synthAgent,
+		ReviewFn: func(_ context.Context, _, _, prompt string, _ io.Writer) (string, error) {
+			captured = prompt
+			return "## Combined\nConsolidated finding.", nil
+		},
+	})
+	t.Cleanup(func() { agent.Unregister(synthAgent) })
+
+	sub, ch := tc.Broadcaster.Subscribe("")
+	defer tc.Broadcaster.Unsubscribe(sub)
+
+	runUUID, members, _ := enqueuePanelRun(t, tc, "multi-panel", []memberSpec{
+		{name: "m0", agent: memberAgent},
+		{name: "m1", agent: memberAgent},
+	})
+	setSynthesisAgent(t, tc, runUUID, synthAgent)
+	completeMember(t, tc, members[0].ID, memberAgent, "Finding A in alpha.go")
+	completeMember(t, tc, members[1].ID, memberAgent, "Finding B in beta.go")
+
+	synth := releaseAndClaimSynthesis(t, tc, runUUID)
+	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+
+	tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
+	review, err := tc.DB.GetReviewByJobID(synth.ID)
+	require.NoError(t, err)
+	assert.Equal("## Combined\nConsolidated finding.", review.Output)
+
+	assert.Contains(captured, "Do not call tools or run commands")
+	assert.Contains(captured, "Only combine the input review results according to these rules")
+	assert.Contains(captured, "Finding A in alpha.go")
+	assert.Contains(captured, "Finding B in beta.go")
+
+	assertCompletedBroadcast(t, ch, synth.ID)
+}
+
+// assertCompletedBroadcast drains the channel until it sees a review.completed
+// event for jobID, failing if none arrives within a short deadline. A deadline
+// (rather than a fail-on-first-empty default) keeps the helper correct even if
+// the broadcast is not already buffered when it is called.
+func assertCompletedBroadcast(t *testing.T, ch <-chan Event, jobID int64) {
+	t.Helper()
+	deadline := time.After(2 * time.Second)
+	for {
+		select {
+		case ev := <-ch:
+			if ev.Type == "review.completed" && ev.JobID == jobID {
+				return
+			}
+		case <-deadline:
+			assert.Fail(t, "expected a review.completed event for the synthesis job")
+			return
+		}
+	}
+}
+
+func TestSynthesisPassthroughIgnoresAgentCooldown(t *testing.T) {
+	assert := assert.New(t)
+	tc := newWorkerTestContext(t, 1)
+
+	const memberAgent = "panel-cooldown-member"
+	registerPassingAgent(t, memberAgent)
+
+	var synthCalled bool
+	const synthAgent = "synth-cooldown"
+	registerNeverCalledAgent(t, synthAgent, &synthCalled)
+
+	// Put the synthesis agent in cooldown — the passthrough branch must ignore
+	// it because it never invokes the agent.
+	tc.Pool.cooldownAgent(synthAgent, time.Now().Add(time.Hour))
+
+	runUUID, members, _ := enqueuePanelRun(t, tc, "cooldown-panel", []memberSpec{
+		{name: "m0", agent: memberAgent},
+		{name: "m1", agent: memberAgent},
+	})
+	setSynthesisAgent(t, tc, runUUID, synthAgent)
+	completeMember(t, tc, members[0].ID, memberAgent, "## Review\nNo issues found.")
+	failMember(t, tc, members[1].ID)
+
+	synth := releaseAndClaimSynthesis(t, tc, runUUID)
+	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+
+	tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
+	assert.False(synthCalled, "cooldown must not block the no-agent passthrough branch")
+}
+
+func TestSynthesisMemberFetchErrorRetries(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+
+	const memberAgent = "panel-fetch-err"
+	registerPassingAgent(t, memberAgent)
+	const synthAgent = "synth-fetch-err"
+	registerPassingAgent(t, synthAgent)
+
+	runUUID, members, _ := enqueuePanelRun(t, tc, "fetch-err-panel", []memberSpec{
+		{name: "m0", agent: memberAgent},
+	})
+	setSynthesisAgent(t, tc, runUUID, synthAgent)
+	completeMember(t, tc, members[0].ID, memberAgent, "Finding")
+
+	synth := releaseAndClaimSynthesis(t, tc, runUUID)
+
+	// Drop the reviews table so GetPanelMemberReviews errors mid-query while the
+	// review_jobs table (and the failover path) stays intact. This drives the
+	// real load-error branch rather than mocking it.
+	_, err := tc.DB.Exec("DROP TABLE reviews")
+	require.NoError(t, err)
+
+	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+
+	// A storage error must retry (queued), never complete the synthesis job as
+	// an all-failed review.
+	got, err := tc.DB.GetJobByID(synth.ID)
+	require.NoError(t, err)
+	assert.NotEqual(t, storage.JobStatusDone, got.Status, "load error must not complete the job")
+	assert.Equal(t, storage.JobStatusQueued, got.Status, "load error should retry the job")
+}
+
+// TestSynthesisMultiSuccessRespectsCooldown verifies the agent-backed synthesis
+// branch honors the quota cooldown gate (the no-agent branches intentionally do
+// not — see TestSynthesisPassthroughIgnoresAgentCooldown).
+func TestSynthesisMultiSuccessRespectsCooldown(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+
+	const memberAgent = "panel-cd-member"
+	registerPassingAgent(t, memberAgent)
+
+	var called bool
+	const synthAgent = "synth-cd-multi"
+	registerNeverCalledAgent(t, synthAgent, &called)
+
+	// Cool the synthesis agent: the multi-success branch must divert instead of
+	// invoking a quota-exhausted agent.
+	tc.Pool.cooldownAgent(synthAgent, time.Now().Add(time.Hour))
+
+	runUUID, members, _ := enqueuePanelRun(t, tc, "cd-multi-panel", []memberSpec{
+		{name: "m0", agent: memberAgent},
+		{name: "m1", agent: memberAgent},
+	})
+	setSynthesisAgent(t, tc, runUUID, synthAgent)
+	completeMember(t, tc, members[0].ID, memberAgent, "Finding A")
+	completeMember(t, tc, members[1].ID, memberAgent, "Finding B")
+
+	synth := releaseAndClaimSynthesis(t, tc, runUUID)
+	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+
+	assert.False(t, called, "multi-success synthesis must not invoke an agent in cooldown")
+	got, err := tc.DB.GetJobByID(synth.ID)
+	require.NoError(t, err)
+	assert.NotEqual(t, storage.JobStatusDone, got.Status,
+		"cooldown must divert before completing the synthesis")
+}
+
+// TestSynthesisRunsAgainstWorktree verifies the synthesis agent runs against the
+// reviewed checkout: a panel whose synthesis carries a worktree path must hand
+// that worktree, not the main repo, to the agent.
+func TestSynthesisRunsAgainstWorktree(t *testing.T) {
+	assert := assert.New(t)
+	tc := newWorkerTestContext(t, 1)
+
+	worktreePath := filepath.Join(t.TempDir(), "wt")
+	out, err := exec.Command(
+		"git", "-C", tc.TmpDir, "worktree", "add", "--detach", worktreePath, "HEAD",
+	).CombinedOutput()
+	require.NoError(t, err, "git worktree add failed: %s", out)
+
+	const memberAgent = "panel-wt-member"
+	registerPassingAgent(t, memberAgent)
+
+	var capturedPath string
+	const synthAgent = "synth-wt"
+	agent.Register(&agent.FakeAgent{
+		NameStr: synthAgent,
+		ReviewFn: func(_ context.Context, repoPath, _, _ string, _ io.Writer) (string, error) {
+			capturedPath = repoPath
+			return "## Combined\nDone.", nil
+		},
+	})
+	t.Cleanup(func() { agent.Unregister(synthAgent) })
+
+	runUUID, members, _ := enqueuePanelRun(t, tc, "wt-panel", []memberSpec{
+		{name: "m0", agent: memberAgent},
+		{name: "m1", agent: memberAgent},
+	})
+	setSynthesisAgent(t, tc, runUUID, synthAgent)
+	_, err = tc.DB.Exec(
+		"UPDATE review_jobs SET worktree_path = ? WHERE panel_run_uuid = ? AND panel_role = 'synthesis'",
+		worktreePath, runUUID,
+	)
+	require.NoError(t, err)
+
+	completeMember(t, tc, members[0].ID, memberAgent, "Finding A")
+	completeMember(t, tc, members[1].ID, memberAgent, "Finding B")
+
+	synth := releaseAndClaimSynthesis(t, tc, runUUID)
+	require.Equal(t, worktreePath, synth.WorktreePath, "precondition: synthesis carries the worktree")
+	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+
+	assert.Equal(worktreePath, capturedPath,
+		"synthesis agent must run against the reviewed worktree, not the main repo")
+}

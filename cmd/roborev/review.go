@@ -27,6 +27,25 @@ import (
 // MaxDirtyDiffSize is the maximum size of a dirty diff in bytes (200KB)
 const MaxDirtyDiffSize = 200 * 1024
 
+// describeEnqueue formats the post-enqueue confirmation line. The
+// "Enqueued job <id>" token is preserved verbatim (skills parse it). For a
+// panel run the id is the synthesis (parent) job and the line notes the panel
+// name and reviewer count; memberCount is 0 for a single-agent review.
+func describeEnqueue(job storage.ReviewJob, memberCount int, dirty bool) string {
+	if memberCount > 0 {
+		name := job.PanelName
+		if name == "" {
+			name = "panel"
+		}
+		return fmt.Sprintf("Enqueued job %d (panel: %s, %d reviewers) for %s",
+			job.ID, name, memberCount, shortRef(job.GitRef))
+	}
+	if dirty {
+		return fmt.Sprintf("Enqueued dirty review job %d (agent: %s)", job.ID, job.Agent)
+	}
+	return fmt.Sprintf("Enqueued job %d for %s (agent: %s)", job.ID, shortRef(job.GitRef), job.Agent)
+}
+
 func reviewCmd() *cobra.Command {
 	var (
 		repoPath    string
@@ -45,6 +64,7 @@ func reviewCmd() *cobra.Command {
 		local       bool
 		provider    string
 		minSeverity string
+		panel       string
 	)
 
 	cmd := &cobra.Command{
@@ -300,6 +320,11 @@ Examples:
 
 			// Handle --local mode: run agent directly without daemon
 			if local {
+				// Panels are resolved daemon-side, so --local can only run a
+				// single agent. Warn rather than silently dropping the panel.
+				if panel != "" && panel != "none" && !quiet {
+					cmd.PrintErrf("Note: --panel %q is ignored with --local (panels require the daemon); running a single-agent review.\n", panel)
+				}
 				return runLocalReview(cmd, root, gitRef, diffContent, agent, model, provider, reasoning, reviewType, quiet, minSeverity)
 			}
 
@@ -315,6 +340,7 @@ Examples:
 				ReviewType:  reviewType,
 				DiffContent: diffContent,
 				MinSeverity: minSeverity,
+				Panel:       panel,
 			}
 
 			reqBody, _ := json.Marshal(reqFields)
@@ -346,15 +372,19 @@ Examples:
 				return fmt.Errorf("review failed: %s", body)
 			}
 
-			var job storage.ReviewJob
-			_ = json.Unmarshal(body, &job)
+			// A panel enqueue returns a PanelEnqueueResponse: the embedded
+			// synthesis job plus member_job_ids. A single-agent enqueue returns
+			// a bare ReviewJob (no member_job_ids). Decoding into the embedded
+			// shape handles both.
+			var enq struct {
+				storage.ReviewJob
+				MemberJobIDs []int64 `json:"member_job_ids"`
+			}
+			_ = json.Unmarshal(body, &enq)
+			job := enq.ReviewJob
 
 			if !quiet {
-				if dirty {
-					cmd.Printf("Enqueued dirty review job %d (agent: %s)\n", job.ID, job.Agent)
-				} else {
-					cmd.Printf("Enqueued job %d for %s (agent: %s)\n", job.ID, shortRef(job.GitRef), job.Agent)
-				}
+				cmd.Println(describeEnqueue(job, len(enq.MemberJobIDs), dirty))
 			}
 
 			// If --wait, poll until job completes and show result.
@@ -386,6 +416,7 @@ Examples:
 	cmd.Flags().StringVar(&reviewType, "type", "", "review type (security, design) — changes system prompt")
 	cmd.Flags().StringVar(&provider, "provider", "", "provider for pi agent (e.g. anthropic, openai)")
 	cmd.Flags().StringVar(&minSeverity, "min-severity", "", "minimum severity threshold: critical, high, medium, low")
+	cmd.Flags().StringVar(&panel, "panel", "", "review panel to fan out to (config panel name; 'none' forces single-agent)")
 	registerAgentCompletion(cmd)
 	registerReasoningCompletion(cmd)
 	registerReviewTypeCompletion(cmd)

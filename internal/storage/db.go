@@ -60,7 +60,9 @@ CREATE TABLE IF NOT EXISTS review_jobs (
   review_type TEXT NOT NULL DEFAULT '',
   provider TEXT,
   skip_reason TEXT,
-  source TEXT
+  source TEXT,
+  backup_agent TEXT NOT NULL DEFAULT '',
+  backup_model TEXT NOT NULL DEFAULT ''
 );
 
 CREATE TABLE IF NOT EXISTS reviews (
@@ -91,41 +93,35 @@ CREATE TABLE IF NOT EXISTS ci_pr_reviews (
   UNIQUE(github_repo, pr_number, head_sha)
 );
 
-CREATE TABLE IF NOT EXISTS ci_pr_batches (
+-- The retired ci_pr_batches / ci_pr_batch_jobs tables (the panel-based
+-- predecessor's tracking) are deliberately NOT created here. Existing
+-- databases have them dropped by drainAndDropOldCIBatchTables (F14).
+
+-- ci_pr_panels maps a PR HEAD to the panel run that reviews it and to that
+-- run's synthesis job. It is the panel-based successor to ci_pr_batches.
+-- synthesis_job_id is nullable so the creating transaction (CreateCIPanelRun)
+-- can backfill it after enqueuing the run.
+CREATE TABLE IF NOT EXISTS ci_pr_panels (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   github_repo TEXT NOT NULL,
   pr_number INTEGER NOT NULL,
   head_sha TEXT NOT NULL,
-  total_jobs INTEGER NOT NULL,
-  completed_jobs INTEGER NOT NULL DEFAULT 0,
-  failed_jobs INTEGER NOT NULL DEFAULT 0,
-  synthesized INTEGER NOT NULL DEFAULT 0,
-  claimed_at TIMESTAMP,
+  panel_run_uuid TEXT NOT NULL,
+  synthesis_job_id INTEGER,
   created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-  updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+  posting_claimed_at TIMESTAMP,
+  posted_at TIMESTAMP,
+  retired_at TIMESTAMP,
   UNIQUE(github_repo, pr_number, head_sha)
 );
-
-CREATE TABLE IF NOT EXISTS ci_pr_batch_jobs (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  batch_id INTEGER NOT NULL REFERENCES ci_pr_batches(id),
-  job_id INTEGER NOT NULL REFERENCES review_jobs(id),
-  created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
--- Uniqueness is enforced by idx_ci_pr_batch_jobs_uniq, created by
--- ensureCIPRBatchJobsUniqueIndex. Keeping the constraint out of the
--- table definition lets the migration also dedupe pre-existing rows
--- on upgraded databases before installing the constraint.
 
 CREATE INDEX IF NOT EXISTS idx_review_jobs_status ON review_jobs(status);
 CREATE INDEX IF NOT EXISTS idx_review_jobs_repo ON review_jobs(repo_id);
 CREATE INDEX IF NOT EXISTS idx_review_jobs_git_ref ON review_jobs(git_ref);
 CREATE INDEX IF NOT EXISTS idx_commits_sha ON commits(sha);
-CREATE INDEX IF NOT EXISTS idx_ci_pr_batch_jobs_batch ON ci_pr_batch_jobs(batch_id);
 -- Partial unique indexes for auto-design dedup are created by
 -- migrateReviewJobsConstraintsForAutoDesign — placing them here would
 -- break legacy-schema migrations where the source column doesn't yet exist.
-CREATE INDEX IF NOT EXISTS idx_ci_pr_batch_jobs_job ON ci_pr_batch_jobs(job_id);
 `
 
 type DB struct {
@@ -360,7 +356,8 @@ func (db *DB) migrate() error {
 				prompt TEXT,
 				retry_count INTEGER NOT NULL DEFAULT 0,
 				diff_content TEXT,
-				agentic INTEGER NOT NULL DEFAULT 0
+				agentic INTEGER NOT NULL DEFAULT 0,
+				output_prefix TEXT
 			)
 		`)
 		if err != nil {
@@ -368,8 +365,8 @@ func (db *DB) migrate() error {
 		}
 
 		// Check which optional columns exist in source table
-		var hasDiffContent, hasReasoning, hasAgentic, hasModel, hasProvider, hasRequestedModel, hasRequestedProvider, hasBranch, hasSessionID bool
-		checkRows, checkErr := tx.Query(`SELECT name FROM pragma_table_info('review_jobs') WHERE name IN ('diff_content', 'reasoning', 'agentic', 'model', 'provider', 'requested_model', 'requested_provider', 'branch', 'session_id')`)
+		var hasDiffContent, hasReasoning, hasAgentic, hasModel, hasProvider, hasRequestedModel, hasRequestedProvider, hasBranch, hasSessionID, hasOutputPrefix bool
+		checkRows, checkErr := tx.Query(`SELECT name FROM pragma_table_info('review_jobs') WHERE name IN ('diff_content', 'reasoning', 'agentic', 'model', 'provider', 'requested_model', 'requested_provider', 'branch', 'session_id', 'output_prefix')`)
 		if checkErr == nil {
 			for checkRows.Next() {
 				var colName string
@@ -393,6 +390,8 @@ func (db *DB) migrate() error {
 					hasBranch = true
 				case "session_id":
 					hasSessionID = true
+				case "output_prefix":
+					hasOutputPrefix = true
 				}
 			}
 			checkRows.Close()
@@ -431,6 +430,9 @@ func (db *DB) migrate() error {
 		}
 		if hasAgentic {
 			baseCols = append(baseCols, "agentic")
+		}
+		if hasOutputPrefix {
+			baseCols = append(baseCols, "output_prefix")
 		}
 		cols := strings.Join(baseCols, ", ")
 		insertSQL = fmt.Sprintf(`INSERT INTO review_jobs_new (%s) SELECT %s FROM review_jobs`, cols, cols)
@@ -810,6 +812,32 @@ func (db *DB) migrate() error {
 		}
 	}
 
+	// Migration: add backup_agent column to review_jobs if missing.
+	// Job-level failover override (F7): when set, the worker prefers this over
+	// the workflow-resolved backup agent for this job's failover.
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'backup_agent'`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check backup_agent column: %w", err)
+	}
+	if count == 0 {
+		_, err = db.Exec(`ALTER TABLE review_jobs ADD COLUMN backup_agent TEXT NOT NULL DEFAULT ''`)
+		if err != nil {
+			return fmt.Errorf("add backup_agent column: %w", err)
+		}
+	}
+
+	// Migration: add backup_model column to review_jobs if missing (F7).
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'backup_model'`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check backup_model column: %w", err)
+	}
+	if count == 0 {
+		_, err = db.Exec(`ALTER TABLE review_jobs ADD COLUMN backup_model TEXT NOT NULL DEFAULT ''`)
+		if err != nil {
+			return fmt.Errorf("add backup_model column: %w", err)
+		}
+	}
+
 	// Migration: add retry_not_before column to review_jobs if missing.
 	// ClaimJob skips jobs whose retry_not_before is in the future so the
 	// retry backoff is enforced at the queue level, regardless of which
@@ -825,6 +853,57 @@ func (db *DB) migrate() error {
 		}
 	}
 
+	// Migration: add panel columns to review_jobs if missing.
+	// Subagent review panels: a panel run is N member jobs + 1 synthesis
+	// job sharing panel_run_uuid. Six columns sync as ordinary job
+	// columns (the min_severity template); claim_blocked is local-only —
+	// it gates ClaimJob while a synthesis job waits on its members and
+	// never needs to cross machines.
+	for _, col := range []struct {
+		name string
+		def  string
+	}{
+		{"panel_run_uuid", "TEXT"},
+		{"panel_role", "TEXT"},
+		{"panel_name", "TEXT"},
+		{"panel_member_name", "TEXT"},
+		{"panel_member_index", "INTEGER"},
+		{"panel_member_config_json", "TEXT"},
+		{"claim_blocked", "INTEGER NOT NULL DEFAULT 0"},
+	} {
+		err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = ?`, col.name).Scan(&count)
+		if err != nil {
+			return fmt.Errorf("check %s column: %w", col.name, err)
+		}
+		if count == 0 {
+			_, err = db.Exec(fmt.Sprintf(`ALTER TABLE review_jobs ADD COLUMN %s %s`, col.name, col.def))
+			if err != nil {
+				return fmt.Errorf("add %s column: %w", col.name, err)
+			}
+		}
+	}
+
+	// The panel composite index is created later, after
+	// migrateReviewJobsConstraintsForAutoDesign: that migration rebuilds
+	// review_jobs via DROP+RENAME on legacy DBs, which would drop an index
+	// created here. The panel COLUMNS are added above (before the rebuild),
+	// so the rebuild preserves them through the live schema; only the index
+	// must wait until after the rebuild.
+
+	// Migration: add retired_at column to ci_pr_panels if missing. Retired rows
+	// are old active CI panel mappings canceled during supersede/throttle
+	// cleanup; they remain for throttle memory but are not postable.
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('ci_pr_panels') WHERE name = 'retired_at'`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check retired_at column: %w", err)
+	}
+	if count == 0 {
+		_, err = db.Exec(`ALTER TABLE ci_pr_panels ADD COLUMN retired_at TIMESTAMP`)
+		if err != nil {
+			return fmt.Errorf("add retired_at column: %w", err)
+		}
+	}
+
 	// Run sync-related migrations
 	if err := db.migrateSyncColumns(); err != nil {
 		return err
@@ -837,106 +916,67 @@ func (db *DB) migrate() error {
 		return fmt.Errorf("migrate review_jobs constraints for auto design: %w", err)
 	}
 
-	// Idempotent batch attach: enforce that any (batch_id, job_id)
-	// pair appears at most once. Without this, a race in
-	// AttachJobAndBumpTotal could insert the same link twice and
-	// double-bump total_jobs/completed_jobs/failed_jobs. Skip when
-	// pre-existing duplicates would block index creation.
-	if err := db.ensureCIPRBatchJobsUniqueIndex(); err != nil {
-		return fmt.Errorf("ensure ci_pr_batch_jobs unique index: %w", err)
+	// Panel composite index — created AFTER the rebuild above so a legacy-DB
+	// table rebuild (DROP+RENAME) cannot drop it. Used to fetch a run's
+	// members in order and locate its synthesis row.
+	if _, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_review_jobs_panel ON review_jobs(panel_run_uuid, panel_role, panel_member_index)`); err != nil {
+		return fmt.Errorf("create idx_review_jobs_panel: %w", err)
+	}
+
+	// Partial index for the safety sweep: locate stuck synthesis rows (still
+	// claim_blocked) cheaply. claim_blocked is local-only, so this index is
+	// SQLite-only. Created here, after the legacy rebuild, for the same reason
+	// as idx_review_jobs_panel above.
+	if _, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_review_jobs_synth_blocked
+		ON review_jobs(panel_run_uuid)
+		WHERE panel_role = 'synthesis' AND claim_blocked = 1`); err != nil {
+		return fmt.Errorf("create idx_review_jobs_synth_blocked: %w", err)
+	}
+
+	// Retire the old CI batch subsystem (F14): cancel any in-flight
+	// batch jobs, then drop ci_pr_batch_jobs and ci_pr_batches. Runs
+	// every Open() and is a no-op once the tables are gone. Placed last
+	// so it observes the final review_jobs state after the rebuilds above.
+	if err := db.drainAndDropOldCIBatchTables(); err != nil {
+		return err
 	}
 
 	return nil
 }
 
-// ensureCIPRBatchJobsUniqueIndex guarantees that ci_pr_batch_jobs
-// carries a UNIQUE index on (batch_id, job_id). AttachJobAndBumpTotal
-// relies on this to make INSERT OR IGNORE idempotent — without the
-// index, a crashed-then-retried producer could double-link and
-// double-bump batch counters.
+// drainAndDropOldCIBatchTables retires the legacy CI batch tracking
+// subsystem (finding F14). It is a one-way migration: ci_pr_batches and
+// ci_pr_batch_jobs are dropped permanently in favor of ci_pr_panels.
 //
-// Any pre-existing duplicate rows are removed before the index is
-// created so the constraint always lands. Duplicates are rare (they
-// only happen on DBs that ran the earlier buggy AttachJobAndBumpTotal
-// concurrently with itself), so the cleanup keeps the oldest row by
-// id and drops the extras — the oldest matches the row the old code
-// would have linked first. ci_pr_batch_jobs has no dependents, so
-// deleting rows here is safe.
+// Before dropping, any batch jobs still queued or running are marked
+// canceled so they don't keep occupying a worker for a workflow that no
+// longer posts results. Worker-side cancellation of an already-running
+// job is best-effort: the migration only flips the DB status; the worker
+// observes that flip on its next cancellation check and stops.
 //
-// When duplicates are removed, the affected batches' total_jobs /
-// completed_jobs / failed_jobs counters were previously inflated by
-// the double-attach. Recalculate them from the remaining links so
-// synthesis isn't stuck waiting on a phantom extra job.
-func (db *DB) ensureCIPRBatchJobsUniqueIndex() error {
-	// Capture affected batches BEFORE deletion so we can recalculate
-	// their counters afterward.
-	affectedRows, err := db.Query(`
-		SELECT DISTINCT batch_id FROM ci_pr_batch_jobs
-		WHERE (batch_id, job_id) IN (
-			SELECT batch_id, job_id FROM ci_pr_batch_jobs
-			GROUP BY batch_id, job_id HAVING COUNT(*) > 1
-		)
-	`)
-	if err != nil {
-		return fmt.Errorf("query affected batches: %w", err)
+// The method guards on table existence, so once the tables are gone it is
+// a clean no-op — safe to call on every Open().
+func (db *DB) drainAndDropOldCIBatchTables() error {
+	var count int
+	if err := db.QueryRow(
+		`SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='ci_pr_batches'`,
+	).Scan(&count); err != nil {
+		return fmt.Errorf("drain old CI batch tables: %w", err)
 	}
-	var affected []int64
-	for affectedRows.Next() {
-		var id int64
-		if scanErr := affectedRows.Scan(&id); scanErr != nil {
-			affectedRows.Close()
-			return fmt.Errorf("scan affected batch: %w", scanErr)
+	if count == 0 {
+		return nil
+	}
+
+	stmts := []string{
+		`UPDATE review_jobs SET status='canceled', error='superseded by panel migration'
+		 WHERE status IN ('queued','running') AND id IN (SELECT job_id FROM ci_pr_batch_jobs)`,
+		`DROP TABLE IF EXISTS ci_pr_batch_jobs`,
+		`DROP TABLE IF EXISTS ci_pr_batches`,
+	}
+	for _, stmt := range stmts {
+		if _, err := db.Exec(stmt); err != nil {
+			return fmt.Errorf("drain old CI batch tables: %w", err)
 		}
-		affected = append(affected, id)
-	}
-	affectedRows.Close()
-	if err := affectedRows.Err(); err != nil {
-		return fmt.Errorf("iterate affected batches: %w", err)
-	}
-
-	res, err := db.Exec(`
-		DELETE FROM ci_pr_batch_jobs
-		WHERE id NOT IN (
-			SELECT MIN(id) FROM ci_pr_batch_jobs GROUP BY batch_id, job_id
-		)
-	`)
-	if err != nil {
-		return fmt.Errorf("dedupe ci_pr_batch_jobs: %w", err)
-	}
-	if removed, rowsErr := res.RowsAffected(); rowsErr == nil && removed > 0 {
-		log.Printf("ci_pr_batch_jobs: removed %d duplicate (batch_id, job_id) rows across %d batches",
-			removed, len(affected))
-	}
-
-	// Recalculate counters for each affected batch. The CASE clauses
-	// mirror AttachJobAndBumpTotal/ReconcileBatch so terminal statuses
-	// (done, skipped, applied, rebased) contribute to completed_jobs
-	// and failed/canceled to failed_jobs.
-	for _, batchID := range affected {
-		if _, err := db.Exec(`
-			UPDATE ci_pr_batches SET
-				total_jobs = (
-					SELECT COUNT(*) FROM ci_pr_batch_jobs WHERE batch_id = ?
-				),
-				completed_jobs = (
-					SELECT COALESCE(SUM(CASE WHEN j.status IN ('done','skipped','applied','rebased') THEN 1 ELSE 0 END), 0)
-					FROM ci_pr_batch_jobs bj JOIN review_jobs j ON j.id = bj.job_id
-					WHERE bj.batch_id = ?
-				),
-				failed_jobs = (
-					SELECT COALESCE(SUM(CASE WHEN j.status IN ('failed','canceled') THEN 1 ELSE 0 END), 0)
-					FROM ci_pr_batch_jobs bj JOIN review_jobs j ON j.id = bj.job_id
-					WHERE bj.batch_id = ?
-				)
-			WHERE id = ?
-		`, batchID, batchID, batchID, batchID); err != nil {
-			return fmt.Errorf("recalc counters for batch %d: %w", batchID, err)
-		}
-	}
-
-	if _, err := db.Exec(`CREATE UNIQUE INDEX IF NOT EXISTS idx_ci_pr_batch_jobs_uniq
-		ON ci_pr_batch_jobs(batch_id, job_id)`); err != nil {
-		return fmt.Errorf("create unique index: %w", err)
 	}
 	return nil
 }
@@ -1624,6 +1664,20 @@ func demoteConflictingAutoDesignJobs(tx *sql.Tx, sourceRepoID, targetRepoID int6
 
 // ResetStaleJobs marks all running jobs as queued (for daemon restart)
 func (db *DB) ResetStaleJobs() error {
+	if _, err := db.Exec(`
+		UPDATE ci_pr_panels
+		SET created_at = datetime('now'), posting_claimed_at = NULL
+		WHERE posted_at IS NULL
+		  AND retired_at IS NULL
+		  AND EXISTS (
+			SELECT 1
+			FROM review_jobs j
+			WHERE j.panel_run_uuid = ci_pr_panels.panel_run_uuid
+			  AND j.status IN ('queued', 'running')
+		  )
+	`); err != nil {
+		return err
+	}
 	_, err := db.Exec(`
 		UPDATE review_jobs
 		SET status = 'queued', worker_id = NULL, started_at = NULL

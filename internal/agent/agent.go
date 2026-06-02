@@ -99,6 +99,12 @@ type SessionAgent interface {
 	WithSessionID(sessionID string) Agent
 }
 
+// SynthesisAgent is implemented by agents that can combine review outputs
+// without wrapping the prompt as a code-review request.
+type SynthesisAgent interface {
+	Synthesize(ctx context.Context, prompt string, output io.Writer) (result string, err error)
+}
+
 // Registry holds available agents
 var (
 	registryMu sync.RWMutex

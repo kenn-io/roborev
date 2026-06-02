@@ -16,6 +16,28 @@ var severityAbove = map[string]string{
 	"medium":   "Only include Medium, High, and Critical findings.",
 }
 
+// VerifyDedupePreamble returns the static instruction block shared by the CLI
+// compact command and the panel synthesis worker: verify each finding against
+// the current codebase, consolidate duplicates, and emit only verified
+// findings. The text is byte-preserved so both call sites emit identical
+// instructions.
+func VerifyDedupePreamble() string {
+	return "## Instructions\n\n" +
+		"1. **Verify each finding against the current codebase:**\n" +
+		"   - Search the codebase to check if the issue still exists\n" +
+		"   - Use wide code search patterns (grep, find files, read context)\n" +
+		"   - Mark findings as VERIFIED or FALSE_POSITIVE\n\n" +
+		"2. **Consolidate related findings:**\n" +
+		"   - Group findings that address the same underlying issue\n" +
+		"   - Merge duplicate findings from different reviews\n" +
+		"   - Provide a single comprehensive description for each group\n\n" +
+		"3. **Output format:**\n" +
+		"   - List only VERIFIED findings in your output\n" +
+		"   - Use the same severity levels (Critical, High, Medium, Low)\n" +
+		"   - Include file and line references where possible\n" +
+		"   - Explain what the issue is and why it matters\n\n"
+}
+
 // BuildSynthesisPrompt creates the prompt for the synthesis agent.
 // When minSeverity is non-empty (and not "low"), a filtering
 // instruction is appended.
@@ -27,6 +49,8 @@ func BuildSynthesisPrompt(
 	b.WriteString(
 		"You are combining multiple code review outputs " +
 			"into a single GitHub PR comment.\nRules:\n" +
+			"- Do not call tools or run commands\n" +
+			"- Only combine the input review results according to these rules\n" +
 			"- Deduplicate findings reported by multiple agents\n" +
 			"- Organize by severity (Critical > High > Medium > Low)\n" +
 			"- Preserve file/line references\n" +

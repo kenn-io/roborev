@@ -37,6 +37,15 @@ type reviewJobScanFields struct {
 	Closed            sql.NullInt64
 	WorktreePath      string
 	MinSeverity       string
+	BackupAgent       string
+	BackupModel       string
+	PanelRunUUID      sql.NullString
+	PanelRole         sql.NullString
+	PanelName         sql.NullString
+	PanelMemberName   sql.NullString
+	PanelMemberIndex  sql.NullInt64
+	PanelMemberConfig sql.NullString
+	ClaimBlocked      int
 	SkipReason        sql.NullString
 	Source            sql.NullString
 }
@@ -127,6 +136,27 @@ func applyReviewJobScan(job *ReviewJob, fields reviewJobScanFields) {
 	}
 	job.WorktreePath = fields.WorktreePath
 	job.MinSeverity = fields.MinSeverity
+	job.BackupAgent = fields.BackupAgent
+	job.BackupModel = fields.BackupModel
+	if fields.PanelRunUUID.Valid {
+		job.PanelRunUUID = fields.PanelRunUUID.String
+	}
+	if fields.PanelRole.Valid {
+		job.PanelRole = fields.PanelRole.String
+	}
+	if fields.PanelName.Valid {
+		job.PanelName = fields.PanelName.String
+	}
+	if fields.PanelMemberName.Valid {
+		job.PanelMemberName = fields.PanelMemberName.String
+	}
+	if fields.PanelMemberIndex.Valid {
+		job.PanelMemberIndex = int(fields.PanelMemberIndex.Int64)
+	}
+	if fields.PanelMemberConfig.Valid {
+		job.PanelMemberConfigJSON = fields.PanelMemberConfig.String
+	}
+	job.ClaimBlocked = fields.ClaimBlocked != 0
 	if fields.SkipReason.Valid {
 		job.SkipReason = fields.SkipReason.String
 	}

@@ -88,6 +88,11 @@ When the review completes, read and parse the output. Extract the job ID from
 the `Enqueued job <id> for ...` line or the review header — you will need it
 for commenting and closing later.
 
+**Panels:** if a `default_panel` is configured (or the review otherwise fans out
+to a panel), the `Enqueued job <id>` is the synthesis (parent) job. Gate every
+pass/fail decision on the parent's verdict, and comment on and close that parent
+— never an individual member job. A re-review re-runs the same panel.
+
 If the command output contains an error (daemon not running, repo not
 initialized, review errored), report it. Suggest `roborev status` to check the
 daemon or `roborev init` if the repo is not initialized.
@@ -137,6 +142,9 @@ ROBOREV_COMMENT
 # Only if the comment above succeeded:
 roborev close <job_id>
 ```
+
+For a panel review, `<job_id>` is the synthesis parent; closing it closes the
+review — do not close individual member jobs.
 
 **Important:** Always pass the comment text via a heredoc as shown above, never
 by interpolating dynamic text directly into a shell string. Review-derived

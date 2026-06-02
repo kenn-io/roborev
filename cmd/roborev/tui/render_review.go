@@ -9,8 +9,32 @@ import (
 	xansi "github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-runewidth"
 
+	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/tokens"
 )
+
+// panelReviewHeader summarizes a panel run for the review-detail header. With
+// members loaded: "3 reviewers: default P, security F, design P". Without them
+// (parent opened before its members were fetched): a PanelSummary fallback,
+// "3 reviewers: 2 ok · 1 failed", so the header is never dropped.
+func panelReviewHeader(job storage.ReviewJob, members []storage.ReviewJob) string {
+	if len(members) > 0 {
+		parts := make([]string, 0, len(members))
+		for _, mem := range members {
+			v := "·"
+			if mem.Verdict != nil && *mem.Verdict != "" {
+				v = *mem.Verdict
+			}
+			parts = append(parts, fmt.Sprintf("%s %s", mem.PanelMemberName, v))
+		}
+		return fmt.Sprintf("%d reviewers: %s", len(members), strings.Join(parts, ", "))
+	}
+	s := job.PanelSummary
+	if s == nil {
+		return ""
+	}
+	return fmt.Sprintf("%d reviewers: %s", s.MembersTotal, panelOutcomeSplit(s))
+}
 
 func (m model) renderReviewView() string {
 	var b strings.Builder
@@ -97,8 +121,14 @@ func (m model) renderReviewView() string {
 		b.WriteString("\x1b[K\n") // Clear to end of line
 	}
 
-	// Build content: review output + responses
+	// Build content: panel header (synthesis parent only) + review output + responses
 	var content strings.Builder
+	if review.Job != nil && review.Job.IsSynthesisJob() {
+		if header := panelReviewHeader(*review.Job, m.panelMembers[review.Job.PanelRunUUID]); header != "" {
+			content.WriteString(sanitizeForDisplay(header))
+			content.WriteString("\n\n")
+		}
+	}
 	content.WriteString(review.Output)
 
 	// Append responses if any

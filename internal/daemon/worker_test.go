@@ -1141,6 +1141,65 @@ func TestResolveBackupIgnoresMalformedRepoConfig(t *testing.T) {
 	assert.Equal(t, "backup-model", pool.resolveBackupModel(job))
 }
 
+// TestResolveBackupPrefersStoredJobBackup verifies F7: an explicit per-job
+// backup (job.BackupAgent) wins over the workflow resolution, and both backup
+// functions gate on the SAME presence check (job.BackupAgent != ""). When a
+// stored backup agent is present, resolveBackupModel returns the stored model
+// verbatim — even when empty — never the workflow backup model (which is
+// resolved for a different agent). With no stored backup, both functions fall
+// through to the workflow resolution. Uses registered agent names (codex,
+// claude-code) so agent.Get resolves deterministically from the registry,
+// independent of PATH.
+func TestResolveBackupPrefersStoredJobBackup(t *testing.T) {
+	assert := assert.New(t)
+
+	// Workflow backup uses the "test" agent (always available) so the
+	// fallthrough case returns a concrete value, proving it is distinct from
+	// the stored path.
+	cfg := config.DefaultConfig()
+	cfg.ReviewBackupAgent = "test"
+	cfg.ReviewBackupModel = "review-model"
+	pool := NewWorkerPool(nil, NewStaticConfig(cfg), 1, NewBroadcaster(), nil, nil)
+	repoPath := t.TempDir()
+
+	// Stored backup agent present, stored model empty: stored agent wins and
+	// the empty stored model is returned, NOT the workflow "review-model".
+	stored := &storage.ReviewJob{
+		Agent: "codex", RepoPath: repoPath,
+		BackupAgent: "claude-code", BackupModel: "",
+	}
+	assert.Equal("claude-code", pool.resolveBackupAgent(stored))
+	assert.Empty(pool.resolveBackupModel(stored))
+
+	// Stored backup agent present, stored model set: the stored model wins.
+	storedWithModel := &storage.ReviewJob{
+		Agent: "codex", RepoPath: repoPath,
+		BackupAgent: "claude-code", BackupModel: "opus",
+	}
+	assert.Equal("claude-code", pool.resolveBackupAgent(storedWithModel))
+	assert.Equal("opus", pool.resolveBackupModel(storedWithModel))
+
+	// No stored backup: both functions fall through to the workflow resolution.
+	none := &storage.ReviewJob{Agent: "codex", RepoPath: repoPath}
+	assert.Equal("test", pool.resolveBackupAgent(none))
+	assert.Equal("review-model", pool.resolveBackupModel(none))
+
+	// Synthesis backups are explicit opt-in. Without a stored synthesis backup,
+	// the job must not inherit the generic review backup workflow.
+	synthesisNoBackup := &storage.ReviewJob{
+		Agent: "codex", RepoPath: repoPath, JobType: storage.JobTypeSynthesis,
+	}
+	assert.Empty(pool.resolveBackupAgent(synthesisNoBackup))
+	assert.Empty(pool.resolveBackupModel(synthesisNoBackup))
+
+	synthesisStored := &storage.ReviewJob{
+		Agent: "codex", RepoPath: repoPath, JobType: storage.JobTypeSynthesis,
+		BackupAgent: "claude-code", BackupModel: "opus",
+	}
+	assert.Equal("claude-code", pool.resolveBackupAgent(synthesisStored))
+	assert.Equal("opus", pool.resolveBackupModel(synthesisStored))
+}
+
 func TestFailOrRetryInner_QuotaSkipsRetries(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)

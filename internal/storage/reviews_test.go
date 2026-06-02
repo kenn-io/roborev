@@ -344,6 +344,72 @@ func TestGetJobsWithReviewsByIDsPreservesMinSeverity(t *testing.T) {
 	assert.Equal(t, "high", res.Job.MinSeverity)
 }
 
+// TestGetJobsWithReviewsByIDsPreservesBackup verifies the batch getter hydrates
+// backup_agent/backup_model (they were omitted from the SELECT entirely).
+func TestGetJobsWithReviewsByIDsPreservesBackup(t *testing.T) {
+	assert := assert.New(t)
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, "/tmp/backup-batch-test")
+
+	job := createCompletedJobWithOptions(t, db, EnqueueOpts{
+		RepoID:      repo.ID,
+		GitRef:      "bkp123",
+		Agent:       "codex",
+		BackupAgent: "claude-code",
+		BackupModel: "opus",
+		MinSeverity: "high",
+	}, "No issues found.")
+
+	results, err := db.GetJobsWithReviewsByIDs([]int64{job.ID})
+	require.NoError(t, err)
+
+	res, ok := results[job.ID]
+	require.True(t, ok)
+	assert.Equal("claude-code", res.Job.BackupAgent)
+	assert.Equal("opus", res.Job.BackupModel)
+	assert.Equal("high", res.Job.MinSeverity)
+}
+
+// TestSingleReviewGettersPreserveBackupAndMinSeverity verifies that the
+// single-review getters carry backup_agent/backup_model/min_severity through
+// hydration. The columns are scanned into the scan-fields struct so
+// applyReviewJobScan does not clobber them back to zero.
+func TestSingleReviewGettersPreserveBackupAndMinSeverity(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, "/tmp/backup-single-test")
+	commit := createCommit(t, db, repo.ID, "bkp456")
+
+	job := createCompletedJobWithOptions(t, db, EnqueueOpts{
+		RepoID:      repo.ID,
+		CommitID:    commit.ID,
+		GitRef:      "bkp456",
+		Agent:       "codex",
+		BackupAgent: "claude-code",
+		BackupModel: "opus",
+		MinSeverity: "high",
+	}, "No issues found.")
+
+	assertCarried := func(name string, rev *Review) {
+		assert := assert.New(t)
+		require.NotNil(t, rev.Job, name)
+		assert.Equal("claude-code", rev.Job.BackupAgent, name)
+		assert.Equal("opus", rev.Job.BackupModel, name)
+		assert.Equal("high", rev.Job.MinSeverity, name)
+	}
+
+	byJob, err := db.GetReviewByJobID(job.ID)
+	require.NoError(t, err)
+	assertCarried("GetReviewByJobID", byJob)
+
+	bySHA, err := db.GetReviewByCommitSHA("bkp456")
+	require.NoError(t, err)
+	assertCarried("GetReviewByCommitSHA", bySHA)
+}
+
 func TestGetJobsWithReviewsByIDsPopulatesVerdict(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
@@ -529,6 +595,112 @@ func TestGetReviewByCommitSHAIncludesBranch(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, review.Job)
 	assert.Equal(t, "feature/x", review.Job.Branch)
+}
+
+// TestGetReviewByCommitSHAIgnoresNonReviewJobs verifies that a newer non-review
+// job sharing the same git_ref (e.g. a fix job, which inherits the parent's ref)
+// does not shadow an existing completed review. The lookup must still resolve the
+// canonical SHA-review row, not return ErrNoRows.
+func TestGetReviewByCommitSHAIgnoresNonReviewJobs(t *testing.T) {
+	assert := assert.New(t)
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, "/tmp/shadow-test")
+	commit := createCommit(t, db, repo.ID, "shadow123")
+
+	reviewJob := createCompletedJobWithOptions(t, db, EnqueueOpts{
+		RepoID:   repo.ID,
+		CommitID: commit.ID,
+		GitRef:   "shadow123",
+		Agent:    "codex",
+	}, "No issues found.")
+
+	// A newer fix job inherits the parent's git_ref. Without scoping the
+	// lookup to review-producing job types, this shadows the real review.
+	fixJob, err := db.EnqueueJob(EnqueueOpts{
+		RepoID:      repo.ID,
+		GitRef:      "shadow123",
+		Agent:       "codex",
+		JobType:     JobTypeFix,
+		ParentJobID: reviewJob.ID,
+	})
+	require.NoError(t, err)
+	assert.Greater(fixJob.ID, reviewJob.ID, "fix job is newer")
+
+	review, err := db.GetReviewByCommitSHA("shadow123")
+	require.NoError(t, err, "fix job must not shadow the review")
+	require.NotNil(t, review.Job)
+	assert.Equal(reviewJob.ID, review.JobID, "resolves the canonical review job")
+	assert.Equal("No issues found.", review.Output)
+}
+
+// TestGetReviewByCommitSHAResolvesSynthesisOverMember verifies that for a panel
+// run, a newer synthesis job (a review-producing type) is resolved as the
+// canonical review for the SHA, never an individual member job.
+func TestGetReviewByCommitSHAResolvesSynthesisOverMember(t *testing.T) {
+	assert := assert.New(t)
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, "/tmp/synthesis-canonical")
+	runUUID := GenerateUUID()
+
+	member := createCompletedJobWithOptions(t, db, EnqueueOpts{
+		RepoID:       repo.ID,
+		GitRef:       "synth123",
+		Agent:        "codex",
+		JobType:      JobTypeReview,
+		PanelRunUUID: runUUID,
+		PanelRole:    PanelRoleMember,
+	}, "member output")
+
+	synth := createCompletedJobWithOptions(t, db, EnqueueOpts{
+		RepoID:       repo.ID,
+		GitRef:       "synth123",
+		Agent:        "codex",
+		JobType:      JobTypeSynthesis,
+		PanelRunUUID: runUUID,
+		PanelRole:    PanelRoleSynthesis,
+	}, "synthesis output")
+	assert.Greater(synth.ID, member.ID, "synthesis is newer than the member")
+
+	review, err := db.GetReviewByCommitSHA("synth123")
+	require.NoError(t, err)
+	assert.Equal(synth.ID, review.JobID, "synthesis is the canonical review")
+	assert.Equal("synthesis output", review.Output)
+}
+
+func TestGetAllReviewsForGitRefExcludesPanelMembers(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, "/tmp/panel-previous-attempts")
+	runUUID := GenerateUUID()
+
+	member := createCompletedJobWithOptions(t, db, EnqueueOpts{
+		RepoID:       repo.ID,
+		GitRef:       "panel-ref",
+		Agent:        "codex",
+		JobType:      JobTypeReview,
+		PanelRunUUID: runUUID,
+		PanelRole:    PanelRoleMember,
+	}, "member output")
+	synth := createCompletedJobWithOptions(t, db, EnqueueOpts{
+		RepoID:       repo.ID,
+		GitRef:       "panel-ref",
+		Agent:        "codex",
+		JobType:      JobTypeSynthesis,
+		PanelRunUUID: runUUID,
+		PanelRole:    PanelRoleSynthesis,
+	}, "synthesis output")
+
+	reviews, err := db.GetAllReviewsForGitRef("panel-ref")
+	require.NoError(t, err)
+
+	require.Len(t, reviews, 1, "panel member reviews must not feed sibling prompts")
+	assert.Equal(t, synth.ID, reviews[0].JobID)
+	assert.NotEqual(t, member.ID, reviews[0].JobID)
 }
 
 // verifyComment helper checks if a comment matches expected values.

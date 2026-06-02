@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -176,6 +177,20 @@ func (a *ACPAgent) WithModel(model string) Agent {
 
 // Review implements the main review functionality using ACP SDK
 func (a *ACPAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
+	reviewPrompt := fmt.Sprintf("Review the code changes in commit %s.\n\nRepository: %s\n\nPrompt: %s",
+		commitSHA, repoPath, prompt)
+	return a.runPrompt(ctx, repoPath, reviewPrompt, output, true)
+}
+
+// Synthesize combines supplied review outputs without wrapping the prompt as a
+// code review or advertising repository capabilities.
+func (a *ACPAgent) Synthesize(ctx context.Context, prompt string, output io.Writer) (string, error) {
+	return a.runPrompt(ctx, "", prompt, output, false)
+}
+
+func (a *ACPAgent) runPrompt(
+	ctx context.Context, repoPath, prompt string, output io.Writer, exposeRepo bool,
+) (string, error) {
 	// Set timeout context
 	var cancel context.CancelFunc
 	var err error
@@ -230,6 +245,21 @@ func (a *ACPAgent) Review(ctx context.Context, repoPath, commitSHA, prompt strin
 		return "", fmt.Errorf("failed to start ACP agent: %w", err)
 	}
 
+	repoRoot := ""
+	cwd := os.TempDir()
+	clientCapabilities := acp.ClientCapabilities{}
+	if exposeRepo {
+		repoRoot = repoPath
+		cwd = repoPath
+		clientCapabilities = acp.ClientCapabilities{
+			Fs: acp.FileSystemCapabilities{
+				ReadTextFile:  true,
+				WriteTextFile: true,
+			},
+			Terminal: true,
+		}
+	}
+
 	// Defer cleanup in proper order: terminals -> pipes -> process
 	// Create a client that handles agent responses
 	client := &acpClient{
@@ -237,7 +267,7 @@ func (a *ACPAgent) Review(ctx context.Context, repoPath, commitSHA, prompt strin
 		output:         output,
 		result:         &bytes.Buffer{},
 		sessionID:      "",
-		repoRoot:       repoPath,
+		repoRoot:       repoRoot,
 		terminals:      make(map[string]*acpTerminal),
 		nextTerminalID: 1,
 	}
@@ -274,13 +304,7 @@ func (a *ACPAgent) Review(ctx context.Context, repoPath, commitSHA, prompt strin
 			Name:    "roborev",
 			Version: version.Version,
 		},
-		ClientCapabilities: acp.ClientCapabilities{
-			Fs: acp.FileSystemCapabilities{
-				ReadTextFile:  true,
-				WriteTextFile: true,
-			},
-			Terminal: true,
-		},
+		ClientCapabilities: clientCapabilities,
 	})
 	if err != nil {
 		// Check process state to provide better error context
@@ -293,7 +317,7 @@ func (a *ACPAgent) Review(ctx context.Context, repoPath, commitSHA, prompt strin
 
 	// Create a new session
 	sessionResp, err := conn.NewSession(ctx, acp.NewSessionRequest{
-		Cwd:        repoPath,
+		Cwd:        cwd,
 		McpServers: []acp.McpServer{},
 	})
 	if err != nil {
@@ -329,8 +353,7 @@ func (a *ACPAgent) Review(ctx context.Context, repoPath, commitSHA, prompt strin
 	promptRequest := acp.PromptRequest{
 		SessionId: sessionResp.SessionId,
 		Prompt: []acp.ContentBlock{
-			acp.TextBlock(fmt.Sprintf("Review the code changes in commit %s.\n\nRepository: %s\n\nPrompt: %s",
-				commitSHA, repoPath, prompt)),
+			acp.TextBlock(prompt),
 		},
 	}
 

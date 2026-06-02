@@ -532,7 +532,7 @@ func TestCloseFromReviewViewRefreshPreservesAnchor(t *testing.T) {
 
 	// → (next newer) should navigate to the immediate adjacent review
 	// (Job 2 at index 3), not skip it.
-	nextIdx := m.findNextViewableJob()
+	nextIdx := m.stepVisibleJobIndex(-1, eligibleReviewRow)
 	assert.Equal(3, nextIdx,
 		"next viewable should be Job 2 (adjacent to closed Job 1)")
 	assert.Equal(int64(2), m.jobs[nextIdx].ID)
@@ -630,7 +630,7 @@ func TestPromptFromReviewRefreshPreservesAnchor(t *testing.T) {
 		"selectedJobID should be unchanged in prompt-from-review")
 
 	// → from this position should find the adjacent review (Job 2).
-	nextIdx := m.findNextViewableJob()
+	nextIdx := m.stepVisibleJobIndex(-1, eligibleReviewRow)
 	assert.Equal(1, nextIdx,
 		"next viewable should be Job 2 (adjacent to removed Job 1)")
 }

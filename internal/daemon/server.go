@@ -49,6 +49,8 @@ type Server struct {
 	socketActivated bool // true if started via systemd socket activation
 	stopOnce        sync.Once
 	stopErr         error
+	sweepMu         sync.Mutex         // protects sweepCancel (written by Start, read by Stop)
+	sweepCancel     context.CancelFunc // cancels the panel sweep goroutine on Stop
 
 	// Cached machine ID to avoid INSERT on every status request
 	machineIDMu sync.Mutex
@@ -237,6 +239,16 @@ func (s *Server) Start(ctx context.Context) error {
 
 	// Start worker pool before advertising availability.
 	s.workerPool.Start()
+
+	// Backstop for a missed worker release of a panel synthesis gate. Own the
+	// cancel so Stop halts the sweep even when Start received a context the
+	// caller never cancels (the worker pool and CI poller are likewise stopped
+	// explicitly in stopOnce0).
+	sweepCtx, cancelSweep := context.WithCancel(ctx)
+	s.sweepMu.Lock()
+	s.sweepCancel = cancelSweep
+	s.sweepMu.Unlock()
+	go s.runPanelSweep(sweepCtx, panelSweepInterval)
 
 	ready, serveExited, err := waitForServerReady(ctx, ep, 2*time.Second, serveErrCh)
 	if err != nil {
@@ -469,6 +481,14 @@ func (s *Server) stopOnce0() error {
 	// Stop CI poller
 	if s.ciPoller != nil {
 		s.ciPoller.Stop()
+	}
+
+	// Stop the panel sweep goroutine
+	s.sweepMu.Lock()
+	sweepCancel := s.sweepCancel
+	s.sweepMu.Unlock()
+	if sweepCancel != nil {
+		sweepCancel()
 	}
 
 	// Stop worker pool
@@ -859,6 +879,13 @@ func (s *Server) humaListJobs(
 		limit = maxLimit
 	}
 
+	// A panel_run expansion returns the full run (members + synthesis). Without
+	// an explicit caller limit, default to unlimited so a run with >=50 rows is
+	// not silently truncated. An explicit limit is still honored.
+	if input.PanelRun != "" && input.Limit == limitNotProvided {
+		limit = 0
+	}
+
 	offset := max(input.Offset, 0)
 	if limit == 0 {
 		offset = 0
@@ -918,6 +945,20 @@ func (s *Server) humaListJobs(
 		)
 	}
 
+	// Panels: panel_run returns a full run (members + synthesis) for
+	// expansion. Otherwise the listing is parent-only — member rows are
+	// excluded so list/wait/fix-discovery resolve to the synthesis parent,
+	// never an individual reviewer — the same caller-driven exclusion
+	// mechanism that fix jobs use via exclude_job_type.
+	if input.PanelRun != "" {
+		listOpts = append(listOpts, storage.WithPanelRun(input.PanelRun))
+	} else {
+		listOpts = append(
+			listOpts,
+			storage.WithExcludePanelRole(storage.PanelRoleMember),
+		)
+	}
+
 	jobs, err := s.db.ListJobs(
 		input.Status, repo, fetchLimit, offset, listOpts...,
 	)
@@ -932,6 +973,8 @@ func (s *Server) humaListJobs(
 		hasMore = true
 		jobs = jobs[:limit]
 	}
+
+	attachPanelSummaries(s.db, jobs)
 
 	// Stats use same repo/branch filters but ignore closed
 	// and pagination.
@@ -954,6 +997,13 @@ func (s *Server) humaListJobs(
 			statsOpts, storage.WithRepoPrefix(repoPrefix),
 		)
 	}
+	// Stats describe the same parent-only population as the listing, so member
+	// rows are excluded here too — a panel run counts as its synthesis parent,
+	// not N+1 reviewers — keeping the queue header consistent with the rows.
+	statsOpts = append(
+		statsOpts,
+		storage.WithExcludePanelRole(storage.PanelRoleMember),
+	)
 	stats, statsErr := s.db.CountJobStats(repo, statsOpts...)
 	if statsErr != nil {
 		log.Printf(
@@ -1175,6 +1225,17 @@ func (s *Server) humaCancelJob(
 		)
 	}
 
+	// Best-effort panel routing: load the target first so we can cascade a
+	// synthesis-parent cancel to its members and release the synthesis when a
+	// member is canceled directly. A load error leaves job nil; the cancel
+	// below still returns the correct 404/500 for the target. A not-found here
+	// is expected (the cancel reports it); log only a real lookup failure so a
+	// transient DB error that downgrades a panel cancel leaves a trace.
+	job, jobErr := s.db.GetJobByID(input.Body.JobID)
+	if jobErr != nil && !errors.Is(jobErr, sql.ErrNoRows) {
+		log.Printf("cancel job %d: panel routing lookup failed: %v",
+			input.Body.JobID, jobErr)
+	}
 	if err := s.db.CancelJob(input.Body.JobID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, huma.Error404NotFound(
@@ -1185,8 +1246,18 @@ func (s *Server) humaCancelJob(
 			fmt.Sprintf("cancel job: %v", err),
 		)
 	}
-
 	s.workerPool.CancelJob(input.Body.JobID)
+
+	s.retireCIPanelForCanceledSynthesis(job)
+
+	// Cancel the synthesis parent BEFORE cascading to its members. A running
+	// member that observes cancellation can release the synthesis gate; if that
+	// raced ahead of the parent's own cancel, a worker could still claim and
+	// complete the synthesis despite the user's cancel. Canceling the parent
+	// first makes the later MaybeReleasePanelSynthesis a no-op on an
+	// already-terminal row.
+	s.cascadeCancelPanelMembers(job)
+	s.releaseSynthesisIfCanceledMember(job)
 
 	resp := &CancelJobOutput{}
 	resp.Body.Success = true
@@ -1211,6 +1282,19 @@ func (s *Server) humaRerunJob(
 		}
 		return nil, huma.Error500InternalServerError(
 			fmt.Sprintf("load job: %v", err),
+		)
+	}
+
+	// Rerunning a panel synthesis parent spawns a brand-new panel run (fresh
+	// members + a re-blocked synthesis) rather than re-queueing the parent in
+	// place, so the new run gets fresh member reviews to synthesize.
+	// rerunPanelRun enforces the terminal-state guard.
+	if job.IsSynthesisJob() {
+		return s.rerunPanelRun(job)
+	}
+	if job.PanelRole == storage.PanelRoleMember {
+		return nil, huma.Error400BadRequest(
+			"panel members cannot be rerun directly; rerun the panel synthesis job",
 		)
 	}
 
@@ -1480,311 +1564,195 @@ func (s *Server) humaEnqueue(
 			ErrorResponse{Error: fmt.Sprintf("resolve workflow config: %v", err)},
 		)
 	}
+	// The descriptor is agent-independent, so freeze it before resolving the
+	// single-review agent. Selecting a panel ahead of the single-agent
+	// availability gate means a panel run is never rejected because the
+	// unrelated default/requested single-review agent is unavailable.
+	descriptor, early := s.buildTargetDescriptor(ctx, freezeInputs{
+		repo:              repo,
+		req:               req,
+		gitRef:            gitRef,
+		checkoutRoot:      checkoutRoot,
+		repoRoot:          repoRoot,
+		worktreePath:      worktreePath,
+		normalizedMinSev:  normalizedMinSev,
+		requestedModel:    requestedModel,
+		requestedProvider: requestedProvider,
+	})
+	if early != nil {
+		return early, nil
+	}
+
+	merged := config.MergedReviewConfig(resolutionPath, cfg)
+	panelName := selectPanelForTarget(descriptor, req, merged)
+	if panelName != "" {
+		return s.enqueuePanelRun(ctx, panelRunInputs{
+			descriptor:     descriptor,
+			req:            req,
+			panelName:      panelName,
+			gitRef:         gitRef,
+			resolutionPath: resolutionPath,
+			cfg:            cfg,
+			repo:           repo,
+		})
+	}
+
+	return s.enqueueSingleAgent(ctx, singleAgentInputs{
+		descriptor:     descriptor,
+		req:            req,
+		repo:           repo,
+		gitRef:         gitRef,
+		checkoutRoot:   checkoutRoot,
+		worktreePath:   worktreePath,
+		resolutionPath: resolutionPath,
+		cfg:            cfg,
+		workflow:       workflow,
+		reasoning:      reasoning,
+		requestedModel: requestedModel,
+	})
+}
+
+// singleAgentInputs groups the inputs threaded from humaEnqueue into the
+// single-agent enqueue path. It keeps enqueueSingleAgent within the
+// positional-param limit.
+type singleAgentInputs struct {
+	descriptor     targetDescriptor
+	req            EnqueueRequest
+	repo           *storage.Repo
+	gitRef         string
+	checkoutRoot   string
+	worktreePath   string
+	resolutionPath string
+	cfg            *config.Config
+	workflow       string
+	reasoning      string
+	requestedModel string
+}
+
+// resolveSingleAgent resolves the single-review agent for the no-panel path:
+// it applies the workflow config plus the availability gate (with failover
+// backup) and returns the chosen agent name and effective model. A non-nil
+// early response is a hard return (400 for an unknown agent, 503 when none is
+// available, 400 when the workflow config cannot be resolved).
+func (s *Server) resolveSingleAgent(
+	in singleAgentInputs,
+) (string, string, *RawJSONOutput) {
 	resolution, err := agent.ResolveWorkflowConfig(
-		req.Agent, resolutionPath, cfg, workflow, reasoning,
+		in.req.Agent, in.resolutionPath, in.cfg, in.workflow, in.reasoning,
 	)
 	if err != nil {
-		return rawJSONOutput(
+		out, _ := rawJSONOutput(
 			http.StatusBadRequest,
 			ErrorResponse{Error: fmt.Sprintf("resolve workflow config: %v", err)},
 		)
+		return "", "", out
 	}
 	agentName := resolution.PreferredAgent
-	if resolved, err := agent.GetAvailableWithConfig(
-		resolutionPath, agentName, cfg, resolution.BackupAgent,
-	); err != nil {
+	resolved, err := agent.GetAvailableWithConfig(
+		in.resolutionPath, agentName, in.cfg, resolution.BackupAgent,
+	)
+	if err != nil {
 		var unknownErr *agent.UnknownAgentError
 		if errors.As(err, &unknownErr) {
-			return rawJSONOutput(
+			out, _ := rawJSONOutput(
 				http.StatusBadRequest,
 				ErrorResponse{Error: fmt.Sprintf("invalid agent: %v", err)},
 			)
+			return "", "", out
 		}
-		return rawJSONOutput(
+		out, _ := rawJSONOutput(
 			http.StatusServiceUnavailable,
 			ErrorResponse{Error: fmt.Sprintf("no review agent available: %v", err)},
 		)
-	} else {
-		agentName = resolved.Name()
+		return "", "", out
+	}
+	agentName = resolved.Name()
+	return agentName, resolution.ModelForSelectedAgent(agentName, in.requestedModel), nil
+}
+
+// enqueueSingleAgent resolves the single-review agent, enqueues one job from the
+// frozen descriptor, and runs the shared tail (auto-design dispatch, activity
+// log, broadcast). This is the no-panel path; it must stay behaviorally
+// identical to the pre-panel handler.
+func (s *Server) enqueueSingleAgent(
+	ctx context.Context, in singleAgentInputs,
+) (*RawJSONOutput, error) {
+	agentName, model, early := s.resolveSingleAgent(in)
+	if early != nil {
+		return early, nil
 	}
 
-	model := resolution.ModelForSelectedAgent(agentName, requestedModel)
-
-	if req.JobType == storage.JobTypeInsights {
-		if req.Since == "" {
-			return rawJSONOutput(
-				http.StatusBadRequest,
-				ErrorResponse{Error: "since is required for insights jobs"},
-			)
-		}
-		since, err := time.Parse(time.RFC3339, req.Since)
-		if err != nil {
-			return rawJSONOutput(
-				http.StatusBadRequest,
-				ErrorResponse{Error: "since must be RFC3339"},
-			)
-		}
-
-		insightsPrompt, reviewCount, err := s.buildInsightsPrompt(
-			ctx, repoRoot, req.Branch, since,
+	o := in.descriptor.baseOpts()
+	o.Agent = agentName
+	o.Model = model
+	o.Provider = in.descriptor.requestedProvider
+	o.Reasoning = in.reasoning
+	o.ReviewType = in.req.ReviewType
+	if in.descriptor.sessionSHA != "" {
+		o.SessionID = s.findReusableSessionID(ctx,
+			in.checkoutRoot, in.repo.ID, in.req.Branch, agentName,
+			in.req.ReviewType, in.worktreePath, in.descriptor.sessionSHA,
 		)
-		if err != nil {
-			if s.errorLog != nil {
-				s.errorLog.LogError(
-					"server",
-					fmt.Sprintf("build insights prompt: %v", err),
-					0,
-				)
-			}
-			return rawJSONOutput(
-				http.StatusInternalServerError,
-				ErrorResponse{Error: fmt.Sprintf("build insights prompt: %v", err)},
-			)
-		}
-		if reviewCount == 0 {
-			return rawJSONOutput(http.StatusOK, EnqueueSkippedResponse{
-				Skipped: true,
-				Reason:  "No failing reviews found in the specified time window.",
-			})
-		}
-		req.CustomPrompt = insightsPrompt
 	}
 
-	isPrompt := req.CustomPrompt != ""
-	isDirty := !isPrompt && gitRef == "dirty"
-	isRange := !isPrompt && !isDirty && strings.Contains(gitRef, "..")
-
-	if isDirty && req.DiffContent == "" {
+	job, err := s.db.EnqueueJob(o)
+	if err != nil {
 		return rawJSONOutput(
-			http.StatusBadRequest,
-			ErrorResponse{Error: "diff_content required for dirty review"},
+			http.StatusInternalServerError,
+			ErrorResponse{Error: fmt.Sprintf("enqueue job: %v", err)},
 		)
 	}
-
-	const maxDiffSize = 200 * 1024
-	if isDirty && len(req.DiffContent) > maxDiffSize {
-		return rawJSONOutput(
-			http.StatusBadRequest,
-			ErrorResponse{Error: fmt.Sprintf(
-				"diff_content too large (%d bytes, max %d)",
-				len(req.DiffContent), maxDiffSize,
-			)},
-		)
+	if in.descriptor.commitSubject != "" {
+		job.CommitSubject = in.descriptor.commitSubject
 	}
+	job.RepoPath = in.repo.RootPath
+	job.RepoName = in.repo.Name
 
-	var job *storage.ReviewJob
-	if isPrompt {
-		job, err = s.db.EnqueueJob(storage.EnqueueOpts{
-			RepoID:            repo.ID,
-			Branch:            req.Branch,
-			Agent:             agentName,
-			Model:             model,
-			Reasoning:         reasoning,
-			ReviewType:        req.ReviewType,
-			Prompt:            req.CustomPrompt,
-			OutputPrefix:      req.OutputPrefix,
-			Agentic:           req.Agentic,
-			Label:             gitRef,
-			JobType:           req.JobType,
-			Provider:          requestedProvider,
-			RequestedModel:    requestedModel,
-			RequestedProvider: requestedProvider,
-			WorktreePath:      worktreePath,
-			MinSeverity:       normalizedMinSev,
-		})
-		if err != nil {
-			return rawJSONOutput(
-				http.StatusInternalServerError,
-				ErrorResponse{Error: fmt.Sprintf("enqueue prompt job: %v", err)},
-			)
-		}
-	} else if isDirty {
-		targetSHA, _ := gitrepo.Resolve(ctx, checkoutRoot, "HEAD")
-		job, err = s.db.EnqueueJob(storage.EnqueueOpts{
-			RepoID: repo.ID,
-			GitRef: gitRef,
-			Branch: req.Branch,
-			SessionID: s.findReusableSessionID(ctx,
-				checkoutRoot, repo.ID, req.Branch, agentName,
-				req.ReviewType, worktreePath, targetSHA,
-			),
-			Agent:             agentName,
-			Model:             model,
-			Reasoning:         reasoning,
-			ReviewType:        req.ReviewType,
-			DiffContent:       req.DiffContent,
-			Provider:          requestedProvider,
-			RequestedModel:    requestedModel,
-			RequestedProvider: requestedProvider,
-			WorktreePath:      worktreePath,
-			MinSeverity:       normalizedMinSev,
-		})
-		if err != nil {
-			return rawJSONOutput(
-				http.StatusInternalServerError,
-				ErrorResponse{Error: fmt.Sprintf("enqueue dirty job: %v", err)},
-			)
-		}
-	} else if isRange {
-		parts := strings.SplitN(gitRef, "..", 2)
-		startSHA, err := gitrepo.Resolve(ctx, checkoutRoot, parts[0])
-		if err != nil {
-			if before, ok := strings.CutSuffix(parts[0], "^"); ok {
-				if _, resolveErr := gitrepo.Resolve(ctx,
-					checkoutRoot, before+"^{commit}"); resolveErr == nil {
-					startSHA = git.EmptyTreeSHA
-					err = nil
-				}
-			}
-			if err != nil {
-				return rawJSONOutput(
-					http.StatusBadRequest,
-					ErrorResponse{Error: fmt.Sprintf("invalid start commit: %v", err)},
-				)
-			}
-		}
-		endSHA, err := gitrepo.Resolve(ctx, checkoutRoot, parts[1])
-		if err != nil {
-			return rawJSONOutput(
-				http.StatusBadRequest,
-				ErrorResponse{Error: fmt.Sprintf("invalid end commit: %v", err)},
-			)
-		}
+	s.finishSingleEnqueue(ctx, job, agentName, in)
+	return rawJSONOutput(http.StatusCreated, job)
+}
 
-		fullRef := startSHA + ".." + endSHA
-		if rangeCommits, rcErr := git.GetRangeCommits(
-			checkoutRoot, fullRef,
-		); rcErr == nil && len(rangeCommits) > 0 {
-			messages := make([]string, 0, len(rangeCommits))
-			allRead := true
-			for _, rc := range rangeCommits {
-				ci, ciErr := git.GetCommitInfo(repoRoot, rc)
-				if ciErr != nil {
-					allRead = false
-					break
-				}
-				messages = append(messages, ci.Subject+"\n"+ci.Body)
-			}
-			if allRead && config.AllCommitMessagesExcluded(
-				repoRoot, messages,
-			) {
-				return rawJSONOutput(http.StatusOK, EnqueueSkippedResponse{
-					Skipped: true,
-					Reason:  "all commits in range match excluded patterns",
-				})
-			}
-		}
-
-		job, err = s.db.EnqueueJob(storage.EnqueueOpts{
-			RepoID: repo.ID,
-			GitRef: fullRef,
-			Branch: req.Branch,
-			SessionID: s.findReusableSessionID(ctx,
-				checkoutRoot, repo.ID, req.Branch, agentName,
-				req.ReviewType, worktreePath, endSHA,
-			),
-			Agent:             agentName,
-			Model:             model,
-			Reasoning:         reasoning,
-			ReviewType:        req.ReviewType,
-			Provider:          requestedProvider,
-			RequestedModel:    requestedModel,
-			RequestedProvider: requestedProvider,
-			WorktreePath:      worktreePath,
-			MinSeverity:       normalizedMinSev,
-		})
-		if err != nil {
-			return rawJSONOutput(
-				http.StatusInternalServerError,
-				ErrorResponse{Error: fmt.Sprintf("enqueue job: %v", err)},
-			)
-		}
-	} else {
-		sha, err := gitrepo.Resolve(ctx, checkoutRoot, gitRef)
-		if err != nil {
-			return rawJSONOutput(
-				http.StatusBadRequest,
-				ErrorResponse{Error: fmt.Sprintf("invalid commit: %v", err)},
-			)
-		}
-
-		info, err := git.GetCommitInfo(repoRoot, sha)
-		if err != nil {
-			return rawJSONOutput(
-				http.StatusBadRequest,
-				ErrorResponse{Error: fmt.Sprintf("get commit info: %v", err)},
-			)
-		}
-
-		fullMessage := info.Subject + "\n" + info.Body
-		if config.IsCommitMessageExcluded(repoRoot, fullMessage) {
-			return rawJSONOutput(http.StatusOK, EnqueueSkippedResponse{
-				Skipped: true,
-				Reason:  "commit message matches an excluded pattern",
-			})
-		}
-
-		commit, err := s.db.GetOrCreateCommit(
-			repo.ID, sha, info.Author, info.Subject, info.Timestamp,
-		)
-		if err != nil {
-			return rawJSONOutput(
-				http.StatusInternalServerError,
-				ErrorResponse{Error: fmt.Sprintf("get commit: %v", err)},
-			)
-		}
-
-		patchID := git.GetPatchID(checkoutRoot, sha)
-
-		job, err = s.db.EnqueueJob(storage.EnqueueOpts{
-			RepoID:   repo.ID,
-			CommitID: commit.ID,
-			GitRef:   sha,
-			Branch:   req.Branch,
-			SessionID: s.findReusableSessionID(ctx,
-				checkoutRoot, repo.ID, req.Branch, agentName,
-				req.ReviewType, worktreePath, sha,
-			),
-			Agent:             agentName,
-			Model:             model,
-			Reasoning:         reasoning,
-			ReviewType:        req.ReviewType,
-			PatchID:           patchID,
-			Provider:          requestedProvider,
-			RequestedModel:    requestedModel,
-			RequestedProvider: requestedProvider,
-			WorktreePath:      worktreePath,
-			MinSeverity:       normalizedMinSev,
-		})
-		if err != nil {
-			return rawJSONOutput(
-				http.StatusInternalServerError,
-				ErrorResponse{Error: fmt.Sprintf("enqueue job: %v", err)},
-			)
-		}
-		job.CommitSubject = commit.Subject
-	}
-
-	job.RepoPath = repo.RootPath
-	job.RepoName = repo.Name
-
+// finishSingleEnqueue runs the no-panel post-enqueue side effects: auto-design
+// dispatch for default reviews, the activity-log entry, and the SSE broadcast.
+func (s *Server) finishSingleEnqueue(
+	ctx context.Context, job *storage.ReviewJob,
+	agentName string, in singleAgentInputs,
+) {
 	if job.JobType == storage.JobTypeReview &&
-		config.IsDefaultReviewType(req.ReviewType) {
+		config.IsDefaultReviewType(in.req.ReviewType) {
 		if err := s.maybeDispatchAutoDesign(ctx, job); err != nil {
 			log.Printf("auto-design dispatch failed: %v", err)
 		}
 	}
 
+	s.logEnqueueSideEffects(job, enqueueSideEffectInputs{
+		repo:       in.repo,
+		gitRef:     in.gitRef,
+		agentName:  agentName,
+		reviewType: in.req.ReviewType,
+	})
+}
+
+type enqueueSideEffectInputs struct {
+	repo       *storage.Repo
+	gitRef     string
+	agentName  string
+	reviewType string
+}
+
+func (s *Server) logEnqueueSideEffects(
+	job *storage.ReviewJob, in enqueueSideEffectInputs,
+) {
 	if s.activityLog != nil {
 		s.activityLog.Log(
 			"job.enqueued", "server",
 			fmt.Sprintf("job %d enqueued for %s", job.ID, job.GitRef),
 			map[string]string{
 				"job_id":      strconv.FormatInt(job.ID, 10),
-				"repo":        repo.Name,
-				"ref":         gitRef,
-				"agent":       agentName,
-				"review_type": req.ReviewType,
+				"repo":        in.repo.Name,
+				"ref":         in.gitRef,
+				"agent":       in.agentName,
+				"review_type": in.reviewType,
 			},
 		)
 	}
@@ -1793,13 +1761,11 @@ func (s *Server) humaEnqueue(
 		Type:     "job.enqueued",
 		TS:       time.Now(),
 		JobID:    job.ID,
-		Repo:     repo.RootPath,
-		RepoName: repo.Name,
+		Repo:     in.repo.RootPath,
+		RepoName: in.repo.Name,
 		SHA:      job.GitRef,
-		Agent:    agentName,
+		Agent:    in.agentName,
 	})
-
-	return rawJSONOutput(http.StatusCreated, job)
 }
 
 func (s *Server) humaBatchJobs(

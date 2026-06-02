@@ -104,16 +104,22 @@ func (m model) handleGlobalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleHomeKey()
 	case "up":
 		return m.handleUpKey()
-	case "j", "left":
+	case "j":
 		return m.handlePrevKey()
+	case "left":
+		return m.handleLeftKey()
 	case "down":
 		return m.handleDownKey()
-	case "k", "right":
+	case "k":
 		return m.handleNextKey()
+	case "right":
+		return m.handleRightKey()
 	case "pgup":
 		return m.handlePageUpKey()
 	case "pgdown":
 		return m.handlePageDownKey()
+	case " ":
+		return m.handleToggleExpand()
 	case "p":
 		return m.handlePromptKey()
 	case "i":
@@ -206,10 +212,9 @@ func (m model) handleQuitKey() (tea.Model, tea.Cmd) {
 func (m model) handleHomeKey() (tea.Model, tea.Cmd) {
 	switch m.currentView {
 	case viewQueue:
-		firstVisible := m.findFirstVisibleJob()
-		if firstVisible >= 0 {
-			m.selectedIdx = firstVisible
-			m.updateSelectedJobID()
+		rows := m.visibleQueueRows()
+		if len(rows) > 0 {
+			m = m.moveSelectionToJobID(rows[0].job.ID)
 		}
 	case viewReview:
 		m.reviewScroll = 0
@@ -223,16 +228,94 @@ func (m model) handleHomeKey() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// handleToggleExpand toggles the selected panel parent. No-op off the queue or
+// on a non-parent row. Dispatches a member fetch the first time an uncached
+// panel is expanded; a failed fetch leaves the panel uncached so a later expand
+// retries.
+func (m model) handleToggleExpand() (tea.Model, tea.Cmd) {
+	if m.currentView != viewQueue {
+		return m, nil
+	}
+	rows := m.visibleQueueRows()
+	idx := m.selectedRowIndex(rows)
+	if idx < 0 || !rows[idx].hasChildren {
+		return m, nil
+	}
+	uuid := rows[idx].job.PanelRunUUID
+	m.queueColGen++
+	if m.expandedPanels[uuid] {
+		delete(m.expandedPanels, uuid)
+		return m, nil
+	}
+	m.expandedPanels[uuid] = true
+	if _, ok := m.panelMembers[uuid]; !ok {
+		return m, m.fetchPanelMembers(uuid)
+	}
+	return m, nil
+}
+
+func (m model) handleRightKey() (tea.Model, tea.Cmd) {
+	if m.currentView != viewQueue {
+		return m.handleNextKey()
+	}
+	rows := m.visibleQueueRows()
+	idx := m.selectedRowIndex(rows)
+	if idx < 0 || !rows[idx].hasChildren {
+		return m.handleNextKey()
+	}
+	uuid := rows[idx].job.PanelRunUUID
+	if m.expandedPanels[uuid] {
+		return m, nil
+	}
+	m.queueColGen++
+	m.expandedPanels[uuid] = true
+	if _, ok := m.panelMembers[uuid]; !ok {
+		return m, m.fetchPanelMembers(uuid)
+	}
+	return m, nil
+}
+
+func (m model) handleLeftKey() (tea.Model, tea.Cmd) {
+	if m.currentView != viewQueue {
+		return m.handlePrevKey()
+	}
+	rows := m.visibleQueueRows()
+	idx := m.selectedRowIndex(rows)
+	if idx < 0 {
+		return m.handlePrevKey()
+	}
+	row := rows[idx]
+	if row.hasChildren {
+		if m.expandedPanels[row.job.PanelRunUUID] {
+			m.queueColGen++
+			delete(m.expandedPanels, row.job.PanelRunUUID)
+		}
+		return m, nil
+	}
+	if row.depth == 1 && row.job.PanelRunUUID != "" {
+		for i := idx - 1; i >= 0; i-- {
+			parent := rows[i]
+			if parent.depth == 0 && parent.job.PanelRunUUID == row.job.PanelRunUUID {
+				m.queueColGen++
+				delete(m.expandedPanels, row.job.PanelRunUUID)
+				m = m.moveSelectionToJobID(parent.job.ID)
+				return m, nil
+			}
+		}
+	}
+	return m.handlePrevKey()
+}
+
 func (m model) handleUpKey() (tea.Model, tea.Cmd) {
 	switch m.currentView {
 	case viewQueue:
-		nextIdx := m.findNextVisibleJob(m.selectedIdx)
-		if nextIdx >= 0 {
-			m.selectedIdx = nextIdx
-			m.updateSelectedJobID()
-		} else {
+		prevID := m.selectedJobID
+		m = m.moveQueueSelection(-1)
+		// id unchanged after a clamped move ⇒ already at the top; re-flash the boundary hint.
+		if m.selectedJobID == prevID {
 			m.setFlash("No newer review", 2*time.Second, viewQueue)
 		}
+		return m, nil
 	case viewReview:
 		if m.reviewScroll > 0 {
 			m.reviewScroll--
@@ -253,91 +336,175 @@ func (m model) handleUpKey() (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// contentNavBoundary applies the direction-specific behavior when no eligible
+// row exists. dir is the nav direction (-1 = newer, +1 = older), the single
+// source of truth from which older is derived. The "newer" direction flashes;
+// the "older" direction resumes pagination (parent-only — gated on
+// selectedIdx >= 0 so a member never sets paginateNav, since the handlers_msg
+// resume is parent-only) or flashes. The returned cmd is non-nil only when
+// pagination was started.
+//
+// Intentional v1 limitation: older-nav from a selected member (selectedIdx ==
+// -1) never paginates — it flashes the boundary instead. Resuming pagination
+// from a member would require new parent-anchored resume state to re-find the
+// member's panel after the page lands, which v1 does not implement. The
+// selectedIdx >= 0 gate enforces this no-op (see TestMemberAtBoundaryDoesNotPaginate).
+func (m *model) contentNavBoundary(view viewKind, dir int) tea.Cmd {
+	older := dir > 0
+	verb := "newer"
+	if older {
+		verb = "older"
+	}
+	label := "review"
+	if view == viewLog {
+		label = "log"
+	}
+	if older && m.canPaginate() && m.selectedIdx >= 0 {
+		m.loadingMore = true
+		m.paginateNav = view
+		return m.fetchMoreJobs()
+	}
+	m.setFlash("No "+verb+" "+label, 2*time.Second, view)
+	return nil
+}
+
+// resolveAbsentSelection handles a content-nav step whose selection left the
+// flattened rows (present=false). An absent member flashes and stops (ok=false,
+// nil cmd → flash-and-stay). An absent parent/normal job hidden by hide-closed
+// or a filter falls back to the adjacent visible job (ok=true), or stops at the
+// boundary via contentNavBoundary (ok=false, cmd set). The returned job is
+// meaningful only when ok is true.
+func (m *model) resolveAbsentSelection(
+	view viewKind, dir int, eligible func(storage.ReviewJob) bool,
+) (storage.ReviewJob, tea.Cmd, bool) {
+	if m.selectedIsMember() {
+		m.setFlash("Selection no longer visible", 2*time.Second, view)
+		return storage.ReviewJob{}, nil, false
+	}
+	idx := m.stepVisibleJobIndex(dir, eligible)
+	if idx < 0 {
+		return storage.ReviewJob{}, m.contentNavBoundary(view, dir), false
+	}
+	return m.jobs[idx], nil, true
+}
+
+// stepReviewNav walks the flattened rows for the queue-origin review view in
+// direction dir (-1 = newer, +1 = older) and opens the target review, or
+// flashes/paginates at the boundary. Never indexes m.jobs by a stale index.
+func (m model) stepReviewNav(dir int) (tea.Model, tea.Cmd) {
+	job, found, present := m.contentNavStep(dir, eligibleReviewRow)
+	if !present {
+		fallbackJob, cmd, ok := m.resolveAbsentSelection(viewReview, dir, eligibleReviewRow)
+		if !ok {
+			return m, cmd
+		}
+		job = fallbackJob
+	} else if !found {
+		return m, m.contentNavBoundary(viewReview, dir)
+	}
+	m.closeFixPanel()
+	m = m.moveSelectionToJobID(job.ID)
+	m.reviewScroll = 0
+	switch job.Status {
+	case storage.JobStatusDone:
+		return m, m.fetchReview(job.ID)
+	case storage.JobStatusFailed:
+		m.currentBranch = ""
+		m.currentReview = &storage.Review{
+			Agent:  job.Agent,
+			Output: "Job failed:\n\n" + job.Error,
+			Job:    &job,
+		}
+	}
+	return m, nil
+}
+
+// stepPromptNav walks the flattened rows for the queue-origin prompt view in
+// direction dir (-1 = newer, +1 = older) and opens the target prompt, or
+// flashes/paginates at the boundary.
+func (m model) stepPromptNav(dir int) (tea.Model, tea.Cmd) {
+	job, found, present := m.contentNavStep(dir, eligiblePromptRow)
+	if !present {
+		fallbackJob, cmd, ok := m.resolveAbsentSelection(viewKindPrompt, dir, eligiblePromptRow)
+		if !ok {
+			return m, cmd
+		}
+		job = fallbackJob
+	} else if !found {
+		return m, m.contentNavBoundary(viewKindPrompt, dir)
+	}
+	m = m.moveSelectionToJobID(job.ID)
+	m.promptScroll = 0
+	if job.Status == storage.JobStatusDone {
+		return m, m.fetchReviewForPrompt(job.ID)
+	}
+	if (job.Status == storage.JobStatusRunning || job.Status == storage.JobStatusQueued) && job.Prompt != "" {
+		m.currentReview = &storage.Review{
+			Agent:  job.Agent,
+			Prompt: job.Prompt,
+			Job:    &job,
+		}
+	}
+	return m, nil
+}
+
+// stepLogNav walks the flattened rows for the queue-origin log view in direction
+// dir (-1 = newer, +1 = older) and opens the target log, or flashes/paginates
+// at the boundary.
+func (m model) stepLogNav(dir int) (tea.Model, tea.Cmd) {
+	job, found, present := m.contentNavStep(dir, eligibleLogRow)
+	if !present {
+		fallbackJob, cmd, ok := m.resolveAbsentSelection(viewLog, dir, eligibleLogRow)
+		if !ok {
+			return m, cmd
+		}
+		job = fallbackJob
+	} else if !found {
+		return m, m.contentNavBoundary(viewLog, dir)
+	}
+	m = m.moveSelectionToJobID(job.ID)
+	m.logStreaming = false
+	return m.openLogView(job.ID, job.Status, m.logFromView)
+}
+
 func (m model) handleNextKey() (tea.Model, tea.Cmd) {
 	switch m.currentView {
 	case viewQueue:
-		nextIdx := m.findNextVisibleJob(m.selectedIdx)
-		if nextIdx >= 0 {
-			m.selectedIdx = nextIdx
-			m.updateSelectedJobID()
-		}
+		return m.moveQueueSelection(-1), nil
 	case viewReview:
-		nextIdx := m.findNextViewableJob()
-		if nextIdx >= 0 {
-			m.closeFixPanel()
-			m.selectedIdx = nextIdx
-			m.updateSelectedJobID()
-			m.reviewScroll = 0
-			job := m.jobs[nextIdx]
-			switch job.Status {
-			case storage.JobStatusDone:
-				return m, m.fetchReview(job.ID)
-			case storage.JobStatusFailed:
-				m.currentBranch = ""
-				m.currentReview = &storage.Review{
-					Agent:  job.Agent,
-					Output: "Job failed:\n\n" + job.Error,
-					Job:    &job,
-				}
-			}
-		} else {
-			m.setFlash("No newer review", 2*time.Second, viewReview)
-		}
+		return m.stepReviewNav(-1)
 	case viewKindPrompt:
-		nextIdx := m.findNextPromptableJob()
-		if nextIdx >= 0 {
-			m.selectedIdx = nextIdx
-			m.updateSelectedJobID()
-			m.promptScroll = 0
-			job := m.jobs[nextIdx]
-			if job.Status == storage.JobStatusDone {
-				return m, m.fetchReviewForPrompt(job.ID)
-			} else if (job.Status == storage.JobStatusRunning || job.Status == storage.JobStatusQueued) && job.Prompt != "" {
-				m.currentReview = &storage.Review{
-					Agent:  job.Agent,
-					Prompt: job.Prompt,
-					Job:    &job,
-				}
-			}
-		} else {
-			m.setFlash("No newer review", 2*time.Second, viewKindPrompt)
-		}
+		return m.stepPromptNav(-1)
 	case viewLog:
 		if m.logFromView == viewTasks {
-			idx := m.findNextLoggableFixJob()
-			if idx >= 0 {
-				m.fixSelectedIdx = idx
-				job := m.fixJobs[idx]
-				m.logStreaming = false
-				return m.openLogView(
-					job.ID, job.Status, viewTasks,
-				)
-			}
-		} else {
-			nextIdx := m.findNextLoggableJob()
-			if nextIdx >= 0 {
-				m.selectedIdx = nextIdx
-				m.updateSelectedJobID()
-				job := m.jobs[nextIdx]
-				m.logStreaming = false
-				return m.openLogView(
-					job.ID, job.Status, m.logFromView,
-				)
-			}
+			return m.nextFixLog()
 		}
-		m.setFlash("No newer log", 2*time.Second, viewLog)
+		return m.stepLogNav(-1)
 	}
+	return m, nil
+}
+
+// nextFixLog steps to the next (newer) tasks-origin fix-job log, or flashes the
+// boundary. Tasks-origin log nav is index-based over m.fixJobs and unchanged.
+func (m model) nextFixLog() (tea.Model, tea.Cmd) {
+	idx := m.findNextLoggableFixJob()
+	if idx >= 0 {
+		m.fixSelectedIdx = idx
+		job := m.fixJobs[idx]
+		m.logStreaming = false
+		return m.openLogView(job.ID, job.Status, viewTasks)
+	}
+	m.setFlash("No newer log", 2*time.Second, viewLog)
 	return m, nil
 }
 
 func (m model) handleDownKey() (tea.Model, tea.Cmd) {
 	switch m.currentView {
 	case viewQueue:
-		prevIdx := m.findPrevVisibleJob(m.selectedIdx)
-		if prevIdx >= 0 {
-			m.selectedIdx = prevIdx
-			m.updateSelectedJobID()
-			if cmd := m.maybePrefetch(prevIdx); cmd != nil {
+		prevID := m.selectedJobID
+		m = m.moveQueueSelection(+1)
+		if m.selectedJobID != prevID {
+			if cmd := m.maybePrefetch(m.selectedIdx); cmd != nil {
 				return m, cmd
 			}
 		} else if m.canPaginate() {
@@ -367,95 +534,47 @@ func (m model) handleDownKey() (tea.Model, tea.Cmd) {
 func (m model) handlePrevKey() (tea.Model, tea.Cmd) {
 	switch m.currentView {
 	case viewQueue:
-		prevIdx := m.findPrevVisibleJob(m.selectedIdx)
-		if prevIdx >= 0 {
-			m.selectedIdx = prevIdx
-			m.updateSelectedJobID()
-			if cmd := m.maybePrefetch(prevIdx); cmd != nil {
-				return m, cmd
-			}
-		} else if m.canPaginate() {
-			m.loadingMore = true
-			return m, m.fetchMoreJobs()
-		}
+		return m.prevQueueSelection()
 	case viewReview:
-		prevIdx := m.findPrevViewableJob()
-		if prevIdx >= 0 {
-			m.closeFixPanel()
-			m.selectedIdx = prevIdx
-			m.updateSelectedJobID()
-			m.reviewScroll = 0
-			job := m.jobs[prevIdx]
-			switch job.Status {
-			case storage.JobStatusDone:
-				return m, m.fetchReview(job.ID)
-			case storage.JobStatusFailed:
-				m.currentBranch = ""
-				m.currentReview = &storage.Review{
-					Agent:  job.Agent,
-					Output: "Job failed:\n\n" + job.Error,
-					Job:    &job,
-				}
-			}
-		} else if m.canPaginate() {
-			m.loadingMore = true
-			m.paginateNav = viewReview
-			return m, m.fetchMoreJobs()
-		} else {
-			m.setFlash("No older review", 2*time.Second, viewReview)
-		}
+		return m.stepReviewNav(+1)
 	case viewKindPrompt:
-		prevIdx := m.findPrevPromptableJob()
-		if prevIdx >= 0 {
-			m.selectedIdx = prevIdx
-			m.updateSelectedJobID()
-			m.promptScroll = 0
-			job := m.jobs[prevIdx]
-			if job.Status == storage.JobStatusDone {
-				return m, m.fetchReviewForPrompt(job.ID)
-			} else if (job.Status == storage.JobStatusRunning || job.Status == storage.JobStatusQueued) && job.Prompt != "" {
-				m.currentReview = &storage.Review{
-					Agent:  job.Agent,
-					Prompt: job.Prompt,
-					Job:    &job,
-				}
-			}
-		} else if m.canPaginate() {
-			m.loadingMore = true
-			m.paginateNav = viewKindPrompt
-			return m, m.fetchMoreJobs()
-		} else {
-			m.setFlash("No older review", 2*time.Second, viewKindPrompt)
-		}
+		return m.stepPromptNav(+1)
 	case viewLog:
 		if m.logFromView == viewTasks {
-			idx := m.findPrevLoggableFixJob()
-			if idx >= 0 {
-				m.fixSelectedIdx = idx
-				job := m.fixJobs[idx]
-				m.logStreaming = false
-				return m.openLogView(
-					job.ID, job.Status, viewTasks,
-				)
-			}
-		} else {
-			prevIdx := m.findPrevLoggableJob()
-			if prevIdx >= 0 {
-				m.selectedIdx = prevIdx
-				m.updateSelectedJobID()
-				job := m.jobs[prevIdx]
-				m.logStreaming = false
-				return m.openLogView(
-					job.ID, job.Status, m.logFromView,
-				)
-			} else if m.canPaginate() {
-				m.loadingMore = true
-				m.paginateNav = viewLog
-				return m, m.fetchMoreJobs()
-			}
+			return m.prevFixLog()
 		}
-		m.setFlash("No older log", 2*time.Second, viewLog)
+		return m.stepLogNav(+1)
 	}
+	return m, nil
+}
+
+// prevQueueSelection moves the queue cursor to the older (higher-index) row,
+// prefetching when near the end or resuming pagination at the bottom boundary.
+func (m model) prevQueueSelection() (tea.Model, tea.Cmd) {
+	prevID := m.selectedJobID
+	m = m.moveQueueSelection(+1)
+	if m.selectedJobID != prevID {
+		if cmd := m.maybePrefetch(m.selectedIdx); cmd != nil {
+			return m, cmd
+		}
+	} else if m.canPaginate() {
+		m.loadingMore = true
+		return m, m.fetchMoreJobs()
+	}
+	return m, nil
+}
+
+// prevFixLog steps to the previous (older) tasks-origin fix-job log, or flashes
+// the boundary. Tasks-origin log nav is index-based over m.fixJobs and unchanged.
+func (m model) prevFixLog() (tea.Model, tea.Cmd) {
+	idx := m.findPrevLoggableFixJob()
+	if idx >= 0 {
+		m.fixSelectedIdx = idx
+		job := m.fixJobs[idx]
+		m.logStreaming = false
+		return m.openLogView(job.ID, job.Status, viewTasks)
+	}
+	m.setFlash("No older log", 2*time.Second, viewLog)
 	return m, nil
 }
 
@@ -463,14 +582,7 @@ func (m model) handlePageUpKey() (tea.Model, tea.Cmd) {
 	pageSize := max(1, m.height-10)
 	switch m.currentView {
 	case viewQueue:
-		for range pageSize {
-			nextIdx := m.findNextVisibleJob(m.selectedIdx)
-			if nextIdx < 0 {
-				break
-			}
-			m.selectedIdx = nextIdx
-		}
-		m.updateSelectedJobID()
+		return m.moveQueueSelection(-pageSize), nil
 	case viewReview:
 		if m.mdCache != nil && m.reviewScroll > m.mdCache.lastReviewMaxScroll {
 			m.reviewScroll = m.mdCache.lastReviewMaxScroll
@@ -493,16 +605,10 @@ func (m model) handlePageDownKey() (tea.Model, tea.Cmd) {
 	pageSize := max(1, m.height-10)
 	switch m.currentView {
 	case viewQueue:
-		reachedEnd := false
-		for range pageSize {
-			prevIdx := m.findPrevVisibleJob(m.selectedIdx)
-			if prevIdx < 0 {
-				reachedEnd = true
-				break
-			}
-			m.selectedIdx = prevIdx
-		}
-		m.updateSelectedJobID()
+		rows := m.visibleQueueRows()
+		idx := m.selectedRowIndex(rows)
+		reachedEnd := idx >= 0 && idx+pageSize >= len(rows)
+		m = m.moveQueueSelection(+pageSize)
 		if reachedEnd && m.canPaginate() {
 			m.loadingMore = true
 			return m, m.fetchMoreJobs()

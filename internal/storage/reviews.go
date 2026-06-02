@@ -21,7 +21,8 @@ func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.closed, rv.uuid, rv.verdict_bool,
 		       j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.session_id, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.model, j.provider, j.requested_model, j.requested_provider, j.job_type, j.review_type, j.patch_id,
-		       rp.root_path, rp.name, c.subject, j.token_usage, COALESCE(j.min_severity, '')
+		       rp.root_path, rp.name, c.subject, j.token_usage, COALESCE(j.min_severity, ''), COALESCE(j.backup_agent, ''), COALESCE(j.backup_model, ''),
+		       COALESCE(j.panel_run_uuid, ''), COALESCE(j.panel_role, ''), COALESCE(j.panel_name, ''), COALESCE(j.panel_member_name, ''), j.panel_member_index, COALESCE(j.panel_member_config_json, ''), COALESCE(j.claim_blocked, 0)
 		FROM reviews rv
 		JOIN review_jobs j ON j.id = rv.job_id
 		JOIN repos rp ON rp.id = j.repo_id
@@ -30,7 +31,8 @@ func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 	`, jobID).Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &reviewFields.CreatedAt, &reviewFields.Closed, &reviewFields.UUID, &reviewFields.VerdictBool,
 		&job.ID, &job.RepoID, &jobFields.CommitID, &job.GitRef, &jobFields.Branch, &jobFields.SessionID, &job.Agent, &job.Reasoning, &job.Status, &jobFields.EnqueuedAt,
 		&jobFields.StartedAt, &jobFields.FinishedAt, &jobFields.WorkerID, &jobFields.Error, &jobFields.Model, &jobFields.Provider, &jobFields.RequestedModel, &jobFields.RequestedProvider, &jobFields.JobType, &jobFields.ReviewType, &jobFields.PatchID,
-		&job.RepoPath, &job.RepoName, &jobFields.CommitSubject, &jobFields.TokenUsage, &job.MinSeverity)
+		&job.RepoPath, &job.RepoName, &jobFields.CommitSubject, &jobFields.TokenUsage, &jobFields.MinSeverity, &jobFields.BackupAgent, &jobFields.BackupModel,
+		&jobFields.PanelRunUUID, &jobFields.PanelRole, &jobFields.PanelName, &jobFields.PanelMemberName, &jobFields.PanelMemberIndex, &jobFields.PanelMemberConfig, &jobFields.ClaimBlocked)
 	if err != nil {
 		return nil, err
 	}
@@ -43,38 +45,33 @@ func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 	return &r, nil
 }
 
-// GetReviewByCommitSHA finds the most recent review by commit SHA (searches git_ref field)
+// GetReviewByCommitSHA finds the review for a commit SHA (searches git_ref
+// field). It first resolves the latest review-producing JOB for the ref (newest
+// enqueued first), then returns that job's review. The first query is restricted
+// to canonical SHA-review job types (review/range/dirty/synthesis/compact) so a
+// newer job that merely inherits the ref but produces no SHA review — a fix or
+// task job (fix jobs copy the parent's git_ref) — cannot shadow a real review.
+// Panel member jobs are also excluded so SHA resolution lands on the synthesis
+// (canonical) job, never an individual reviewer — members are reached explicitly
+// by job id (GetReviewByJobID). When the latest qualifying job has no review row
+// yet (e.g. a queued/running/failed synthesis), this returns sql.ErrNoRows — the
+// "no review yet" signal callers already handle — instead of a stale older
+// review.
 func (db *DB) GetReviewByCommitSHA(sha string) (*Review, error) {
-	var r Review
-	var reviewFields reviewScanFields
-	var job ReviewJob
-	var jobFields reviewJobScanFields
+	var jobID int64
 	err := db.QueryRow(`
-		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.closed, rv.uuid, rv.verdict_bool,
-		       j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.session_id, j.agent, j.reasoning, j.status, j.enqueued_at,
-		       j.started_at, j.finished_at, j.worker_id, j.error, j.model, j.provider, j.requested_model, j.requested_provider, j.job_type, j.review_type, j.patch_id,
-		       rp.root_path, rp.name, c.subject, j.token_usage, COALESCE(j.min_severity, '')
-		FROM reviews rv
-		JOIN review_jobs j ON j.id = rv.job_id
-		JOIN repos rp ON rp.id = j.repo_id
-		LEFT JOIN commits c ON c.id = j.commit_id
+		SELECT j.id
+		FROM review_jobs j
 		WHERE j.git_ref = ?
-		ORDER BY rv.created_at DESC
+		  AND j.job_type IN ('review','range','dirty','synthesis','compact')
+		  AND COALESCE(j.panel_role, '') != 'member'
+		ORDER BY j.enqueued_at DESC, j.id DESC
 		LIMIT 1
-	`, sha).Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &reviewFields.CreatedAt, &reviewFields.Closed, &reviewFields.UUID, &reviewFields.VerdictBool,
-		&job.ID, &job.RepoID, &jobFields.CommitID, &job.GitRef, &jobFields.Branch, &jobFields.SessionID, &job.Agent, &job.Reasoning, &job.Status, &jobFields.EnqueuedAt,
-		&jobFields.StartedAt, &jobFields.FinishedAt, &jobFields.WorkerID, &jobFields.Error, &jobFields.Model, &jobFields.Provider, &jobFields.RequestedModel, &jobFields.RequestedProvider, &jobFields.JobType, &jobFields.ReviewType, &jobFields.PatchID,
-		&job.RepoPath, &job.RepoName, &jobFields.CommitSubject, &jobFields.TokenUsage, &job.MinSeverity)
+	`, sha).Scan(&jobID)
 	if err != nil {
 		return nil, err
 	}
-	applyReviewScan(&r, reviewFields)
-	applyReviewJobScan(&job, jobFields)
-	applyJobVerdict(&job, reviewFields.VerdictBool, r.Output)
-
-	r.Job = &job
-
-	return &r, nil
+	return db.GetReviewByJobID(jobID)
 }
 
 // GetAllReviewsForGitRef returns all reviews for a git ref (commit SHA or range) for re-review context
@@ -84,6 +81,7 @@ func (db *DB) GetAllReviewsForGitRef(gitRef string) ([]Review, error) {
 		FROM reviews rv
 		JOIN review_jobs j ON j.id = rv.job_id
 		WHERE j.git_ref = ?
+		  AND COALESCE(j.panel_role, '') != 'member'
 		ORDER BY rv.created_at ASC
 	`, gitRef)
 	if err != nil {
@@ -308,7 +306,9 @@ func (db *DB) GetJobsWithReviewsByIDs(jobIDs []int64) (map[int64]JobWithReview, 
 	jobQuery := fmt.Sprintf(`
 		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.session_id, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, COALESCE(j.agentic, 0),
-		       r.root_path, r.name, c.subject, j.model, j.job_type, j.review_type, COALESCE(j.min_severity, '')
+		       r.root_path, r.name, c.subject, j.model, j.job_type, j.review_type, COALESCE(j.min_severity, ''),
+		       COALESCE(j.backup_agent, ''), COALESCE(j.backup_model, ''),
+		       COALESCE(j.panel_run_uuid, ''), COALESCE(j.panel_role, ''), COALESCE(j.panel_name, ''), COALESCE(j.panel_member_name, ''), j.panel_member_index, COALESCE(j.panel_member_config_json, ''), COALESCE(j.claim_blocked, 0)
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN commits c ON c.id = j.commit_id
@@ -328,7 +328,9 @@ func (db *DB) GetJobsWithReviewsByIDs(jobIDs []int64) (map[int64]JobWithReview, 
 
 		if err := rows.Scan(&j.ID, &j.RepoID, &fields.CommitID, &j.GitRef, &fields.Branch, &fields.SessionID, &j.Agent, &j.Reasoning, &j.Status, &fields.EnqueuedAt,
 			&fields.StartedAt, &fields.FinishedAt, &fields.WorkerID, &fields.Error, &fields.Agentic,
-			&j.RepoPath, &j.RepoName, &fields.CommitSubject, &fields.Model, &fields.JobType, &fields.ReviewType, &fields.MinSeverity); err != nil {
+			&j.RepoPath, &j.RepoName, &fields.CommitSubject, &fields.Model, &fields.JobType, &fields.ReviewType, &fields.MinSeverity,
+			&fields.BackupAgent, &fields.BackupModel,
+			&fields.PanelRunUUID, &fields.PanelRole, &fields.PanelName, &fields.PanelMemberName, &fields.PanelMemberIndex, &fields.PanelMemberConfig, &fields.ClaimBlocked); err != nil {
 			return nil, fmt.Errorf("scan job: %w", err)
 		}
 		applyReviewJobScan(&j, fields)

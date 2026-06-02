@@ -19,6 +19,21 @@ type EnqueueRequest struct {
 	JobType      string `json:"job_type,omitempty"`      // Explicit job type (review/range/dirty/task/insights/compact/fix)
 	Provider     string `json:"provider,omitempty"`      // Provider for pi agent (e.g., "anthropic")
 	MinSeverity  string `json:"min_severity,omitempty"`  // Minimum severity filter: critical, high, medium, low
+	Panel        string `json:"panel,omitempty"`         // Panel name; "none" forces single-agent
+	Source       string `json:"source,omitempty"`        // Provenance, e.g. "post_commit" (empty = foreground)
+}
+
+// PanelEnqueueResponse is returned when an enqueue fans out into a panel run.
+// It embeds the synthesis job (the run handle = its ID) and lists the member
+// job IDs and the shared run uuid.
+type PanelEnqueueResponse struct {
+	// ReviewJob is the synthesis job (handle = ID). Its own "panel_run_uuid"
+	// json tag is intentionally shadowed by PanelRunUUID below: encoding/json
+	// keeps the shallower field, so PanelRunUUID is the authoritative response
+	// key and (unlike the embedded omitempty field) is always emitted.
+	*storage.ReviewJob
+	PanelRunUUID string  `json:"panel_run_uuid"`
+	MemberJobIDs []int64 `json:"member_job_ids"`
 }
 
 type ErrorResponse struct {
@@ -66,6 +81,7 @@ type ListJobsInput struct {
 	JobType            string `query:"job_type" doc:"Filter by job type"`
 	ExcludeJobType     string `query:"exclude_job_type" doc:"Exclude jobs of this type"`
 	HideClassifyJobs   string `query:"hide_classify_jobs" doc:"Hide auto-design-router rows (job_type=classify and status=skipped)" enum:"true,false,"`
+	PanelRun           string `query:"panel_run" doc:"Return all jobs (members + synthesis) of one panel run"`
 	RepoPrefix         string `query:"repo_prefix" doc:"Filter repos by path prefix"`
 	Limit              int    `query:"limit" default:"-999999" doc:"Max results (default 50, 0=unlimited, max 10000)"`
 	Offset             int    `query:"offset" default:"-1" doc:"Skip N results (requires limit>0)"`

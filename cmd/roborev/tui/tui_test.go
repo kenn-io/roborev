@@ -168,6 +168,29 @@ func withReviewType(rt string) func(*storage.ReviewJob) {
 	return func(j *storage.ReviewJob) { j.ReviewType = rt }
 }
 
+func withSynthesis(runUUID string, summary storage.PanelSummary) func(*storage.ReviewJob) {
+	return func(j *storage.ReviewJob) {
+		j.JobType = storage.JobTypeSynthesis
+		j.PanelRole = storage.PanelRoleSynthesis
+		j.PanelRunUUID = runUUID
+		s := summary
+		j.PanelSummary = &s
+	}
+}
+
+func withPanelMember(runUUID, memberName string, index int) func(*storage.ReviewJob) {
+	return func(j *storage.ReviewJob) {
+		j.PanelRole = storage.PanelRoleMember
+		j.PanelRunUUID = runUUID
+		j.PanelMemberName = memberName
+		j.PanelMemberIndex = index
+	}
+}
+
+func withVerdict(v string) func(*storage.ReviewJob) {
+	return func(j *storage.ReviewJob) { verdict := v; j.Verdict = &verdict }
+}
+
 // makeReview creates a storage.Review linked to the given job.
 func makeReview(id int64, job *storage.ReviewJob, opts ...func(*storage.Review)) *storage.Review {
 	r := &storage.Review{
@@ -1217,7 +1240,7 @@ func TestHandleFixKeyRejectsFixJob(t *testing.T) {
 			JobType: storage.JobTypeFix,
 		},
 	}
-	m.selectedIdx = 0
+	m.selectedIdx, m.selectedJobID = 0, 10
 
 	result, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
 	updated := result.(model)

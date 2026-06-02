@@ -1,0 +1,272 @@
+package daemon
+
+import (
+	"context"
+	"errors"
+	"fmt"
+	"io"
+	"log"
+	"strings"
+	"time"
+
+	"go.kenn.io/roborev/internal/agent"
+	reviewpkg "go.kenn.io/roborev/internal/review"
+	"go.kenn.io/roborev/internal/storage"
+)
+
+// errSynthesisCanceled signals that the synthesis agent run was canceled, so the
+// caller must not store a review (the job is already terminal).
+var errSynthesisCanceled = errors.New("synthesis canceled")
+
+// processSynthesisJob executes a panel synthesis job against the run's member
+// reviews. It runs read-only against job.RepoPath (no worktree) and picks one of
+// three branches: all members failed -> durable fail review (no agent); exactly
+// one member succeeded -> passthrough that member's output (no agent); two or
+// more succeeded -> a single verify+dedupe agent call.
+func (wp *WorkerPool) processSynthesisJob(
+	ctx context.Context, workerID string, job *storage.ReviewJob,
+) {
+	rows, err := wp.db.GetPanelMemberReviews(job.PanelRunUUID)
+	if err != nil {
+		// A storage error must NOT masquerade as an all-failed synthesized
+		// review. Use the non-agent retry/fail path: a DB read failure is not an
+		// agent fault, so it must not trigger backup-agent failover (a different
+		// agent cannot fix a storage error).
+		wp.failOrRetry(workerID, job, job.Agent, fmt.Sprintf("load panel members: %v", err))
+		return
+	}
+	results := toReviewResults(rows)
+	succeeded := filterSucceeded(results)
+
+	switch len(succeeded) {
+	case 0:
+		// Every member failed — emit a durable fail review with no agent call.
+		// The comment renders the head SHA (FormatAllFailedComment short-SHAs its
+		// arg), so pass the head side of the frozen mergeBase..headSHA range.
+		wp.completeSynthesis(workerID, job, job.Agent, "",
+			reviewpkg.FormatAllFailedComment(results, headOf(job.GitRef)))
+	case 1:
+		// Exactly one member produced output — pass it through verbatim and
+		// label the review with that member's agent.
+		wp.completeSynthesis(workerID, job, succeeded[0].Agent, "", succeeded[0].Output)
+	default:
+		if allMembersPassed(results, succeeded) {
+			out := reviewpkg.FormatSynthesizedComment(
+				"No issues found.", results, headOf(job.GitRef),
+			)
+			wp.completeSynthesis(workerID, job, job.Agent, "", out)
+			return
+		}
+		// Two or more succeeded — combine and deduplicate via one agent call.
+		// Mirror processJob's quota gate: an agent already in cooldown must fail
+		// over instead of burning another quota-exhausted call. The no-agent
+		// branches above skip this check because they never invoke an agent.
+		canonicalAgent := agent.CanonicalName(job.Agent)
+		if wp.isAgentCoolingDown(canonicalAgent) {
+			wp.failoverOrFail(workerID, job, canonicalAgent,
+				fmt.Sprintf("agent %s quota cooldown active", canonicalAgent))
+			return
+		}
+		prompt := reviewpkg.BuildSynthesisPrompt(succeeded, job.MinSeverity)
+		out, resolvedAgent, runErr := wp.runSynthesisAgent(ctx, workerID, job, prompt)
+		if runErr != nil {
+			// runSynthesisAgent already handled the failure/cancel.
+			return
+		}
+		wp.completeSynthesis(workerID, job, resolvedAgent, prompt, out)
+	}
+}
+
+// headOf returns the head side of a git ref range: the part after the last
+// ".." when present, else the ref unchanged. A panel synthesis job's GitRef is
+// the frozen mergeBase..headSHA range; formatters short-SHA their argument, so
+// callers that render a single SHA must pass the head side, not the whole range.
+func headOf(gitRef string) string {
+	if i := strings.LastIndex(gitRef, ".."); i >= 0 {
+		return gitRef[i+2:]
+	}
+	return gitRef
+}
+
+// filterSucceeded keeps member results that completed with non-empty output.
+func filterSucceeded(results []reviewpkg.ReviewResult) []reviewpkg.ReviewResult {
+	out := make([]reviewpkg.ReviewResult, 0, len(results))
+	for _, r := range results {
+		if r.Status == reviewpkg.ResultDone && strings.TrimSpace(r.Output) != "" {
+			out = append(out, r)
+		}
+	}
+	return out
+}
+
+// allMembersPassed reports whether every panel member completed successfully
+// with a passing review. A clean panel does not need an extra agent synthesis
+// pass: there are no findings to verify or deduplicate.
+func allMembersPassed(
+	results []reviewpkg.ReviewResult,
+	succeeded []reviewpkg.ReviewResult,
+) bool {
+	if len(results) == 0 || len(results) != len(succeeded) {
+		return false
+	}
+	for _, r := range succeeded {
+		if storage.ParseVerdict(r.Output) != "P" {
+			return false
+		}
+	}
+	return true
+}
+
+// completeSynthesis stores the synthesis review, guards against the cancel race,
+// and broadcasts review.completed. The done-path mirrors processJob's tail.
+func (wp *WorkerPool) completeSynthesis(
+	workerID string, job *storage.ReviewJob, agentName, prompt, output string,
+) {
+	if err := wp.db.CompleteJob(job.ID, agentName, prompt, output); err != nil {
+		log.Printf("[%s] Error storing synthesis review for job %d: %v", workerID, job.ID, err)
+		return
+	}
+
+	// CompleteJob no-ops when status != running (cancel race). Confirm the job
+	// actually completed before broadcasting so downstream counters stay sane.
+	j, err := wp.db.GetJobByID(job.ID)
+	if err != nil {
+		log.Printf("[%s] Synthesis job %d: failed to verify status: %v", workerID, job.ID, err)
+		return
+	}
+	if j.Status != storage.JobStatusDone {
+		log.Printf("[%s] Synthesis job %d not completed (status=%s), skipping broadcast",
+			workerID, job.ID, j.Status)
+		return
+	}
+	wp.autoClosePassingReview(workerID, job, output)
+
+	log.Printf("[%s] Completed synthesis job %d %s panel=%s",
+		workerID, job.ID, job.RepoName, job.PanelName)
+
+	wp.broadcaster.Broadcast(Event{
+		Type:     "review.completed",
+		TS:       time.Now(),
+		JobID:    job.ID,
+		Repo:     job.RepoPath,
+		RepoName: job.RepoName,
+		SHA:      job.GitRef,
+		Agent:    agentName,
+		Verdict:  storage.ParseVerdict(output),
+		Findings: output,
+	})
+}
+
+// runSynthesisAgent invokes the configured agent read-only (non-agentic) to
+// combine and deduplicate member findings. It returns the agent output and the
+// resolved agent name (which may differ from job.Agent after alias/fallback
+// resolution, so the caller labels the stored review and completed broadcast
+// consistently with the started broadcast). On failure it returns an error
+// after routing through failOrRetryAgent; cancel returns errSynthesisCanceled
+// so the caller stores nothing.
+func (wp *WorkerPool) runSynthesisAgent(
+	ctx context.Context, workerID string, job *storage.ReviewJob, prompt string,
+) (string, string, error) {
+	if err := wp.db.SaveJobPrompt(job.ID, prompt); err != nil {
+		log.Printf("[%s] Error saving synthesis prompt for job %d: %v", workerID, job.ID, err)
+	}
+
+	a, agentName, err := wp.configureSynthesisAgent(workerID, job)
+	if err != nil {
+		return "", "", err
+	}
+
+	wp.broadcaster.Broadcast(Event{
+		Type:     "review.started",
+		TS:       time.Now(),
+		JobID:    job.ID,
+		Repo:     job.RepoPath,
+		RepoName: job.RepoName,
+		SHA:      job.GitRef,
+		Agent:    agentName,
+	})
+
+	normalizer := GetNormalizer(agentName)
+	outputWriter := wp.outputBuffers.Writer(job.ID, normalizer)
+	defer func() {
+		outputWriter.Flush()
+		wp.outputBuffers.CloseJob(job.ID)
+	}()
+	jobLog := newJobLogWriter(job.ID)
+	defer func() {
+		if cErr := jobLog.Close(); cErr != nil {
+			log.Printf("[%s] Warning: close job log for job %d: %v", workerID, job.ID, cErr)
+		}
+	}()
+	agentOutput := io.MultiWriter(jobLog, outputWriter)
+	sessionWriter := agent.NewSessionCaptureWriter(agentOutput, func(sessionID string) {
+		if err := wp.db.SaveJobSessionID(job.ID, workerID, sessionID); err != nil {
+			log.Printf("[%s] Error saving session ID for synthesis job %d: %v", workerID, job.ID, err)
+		}
+	})
+	agentOutput = sessionWriter
+
+	// Verify findings against the reviewed checkout: a panel enqueued from a
+	// linked worktree must synthesize against that worktree, not the main repo.
+	repoPath := resolveEffectiveRepoPath(workerID, job)
+	var output string
+	if synthAgent, ok := a.(agent.SynthesisAgent); ok {
+		output, err = synthAgent.Synthesize(ctx, prompt, agentOutput)
+	} else {
+		output, err = a.Review(ctx, repoPath, job.GitRef, prompt, agentOutput)
+	}
+	sessionWriter.Flush()
+	if sessionID := sessionWriter.SessionID(); sessionID != "" {
+		if saveErr := wp.db.SaveJobSessionID(job.ID, workerID, sessionID); saveErr != nil {
+			log.Printf("[%s] Error persisting session ID for synthesis job %d: %v", workerID, job.ID, saveErr)
+		}
+	}
+	if err != nil {
+		if errors.Is(ctx.Err(), context.Canceled) {
+			// Job was canceled mid-run; it is already terminal. Don't fail it.
+			log.Printf("[%s] Synthesis job %d canceled during agent run", workerID, job.ID)
+			return "", agentName, errSynthesisCanceled
+		}
+		wp.failOrRetryAgent(workerID, job, agentName, fmt.Sprintf("agent: %v", err))
+		return "", agentName, err
+	}
+	wp.captureTokenUsageForSession(context.Background(), workerID, job, sessionWriter.SessionID())
+	return output, agentName, nil
+}
+
+// configureSynthesisAgent resolves and configures the read-only synthesis agent,
+// returning the agent and its resolved name. Failures route through
+// failOrRetryAgent before returning the error.
+func (wp *WorkerPool) configureSynthesisAgent(
+	workerID string, job *storage.ReviewJob,
+) (agent.Agent, string, error) {
+	cfg := wp.cfgGetter.Config()
+	baseAgent, err := agent.GetAvailableWithConfig(job.RepoPath, job.Agent, cfg)
+	if err != nil {
+		wp.failOrRetryAgent(workerID, job, job.Agent, fmt.Sprintf("get agent: %v", err))
+		return nil, "", err
+	}
+
+	reasoning := strings.ToLower(strings.TrimSpace(job.Reasoning))
+	if reasoning == "" {
+		reasoning = "thorough"
+	}
+	reasoningLevel := agent.ParseReasoningLevel(reasoning)
+
+	// Synthesis reads the repo to verify findings but must never edit it.
+	a := applyCodexReviewSettings(
+		baseAgent.WithReasoning(reasoningLevel).WithAgentic(false).WithModel(job.Model),
+		job, cfg,
+	)
+	if job.Provider != "" {
+		if pa, ok := a.(*agent.PiAgent); ok {
+			a = pa.WithProvider(job.Provider)
+		}
+	}
+
+	agentName := a.Name()
+	if err := wp.db.SaveJobCommandLine(job.ID, a.CommandLine()); err != nil {
+		log.Printf("[%s] Error saving command line for job %d: %v", workerID, job.ID, err)
+	}
+	return a, agentName, nil
+}

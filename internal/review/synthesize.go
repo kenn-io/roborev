@@ -144,8 +144,13 @@ func runSynthesis(
 		ctx, 5*time.Minute)
 	defer cancel()
 
-	output, err := synthAgent.Review(
-		synthCtx, opts.RepoPath, opts.GitRef, synthPrompt, nil)
+	var output string
+	if sa, ok := synthAgent.(agent.SynthesisAgent); ok {
+		output, err = sa.Synthesize(synthCtx, synthPrompt, nil)
+	} else {
+		output, err = synthAgent.Review(
+			synthCtx, opts.RepoPath, opts.GitRef, synthPrompt, nil)
+	}
 	if err != nil {
 		return "", fmt.Errorf("synthesis review: %w", err)
 	}

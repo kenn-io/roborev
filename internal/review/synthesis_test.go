@@ -138,11 +138,15 @@ func TestBuildSynthesisPrompt_Basic(t *testing.T) {
 
 	assertContainsAll(t, prompt, []string{
 		"combining multiple code review outputs",
+		"Do not call tools or run commands",
+		"Only combine the input review results according to these rules",
 		"Agent=codex",
 		"Agent=gemini",
 		"Found XSS vulnerability",
 		"No issues found.",
 	})
+	assert.NotContains(t, prompt, "Verify each finding")
+	assert.NotContains(t, prompt, "current codebase")
 }
 
 func TestBuildSynthesisPrompt_Severity(t *testing.T) {

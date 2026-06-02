@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"io"
@@ -53,6 +54,10 @@ type WorkerPool struct {
 	// field directly after construction (test-only access).
 	classify agent.LimitClassifier
 
+	// tokenUsageFetcher looks up captured session usage. Defaults to
+	// tokens.FetchForSession; tests substitute a deterministic fetcher.
+	tokenUsageFetcher func(context.Context, string) (*tokens.Usage, error)
+
 	// Output capture for tail command
 	outputBuffers *OutputBuffer
 
@@ -72,20 +77,21 @@ type WorkerPool struct {
 // NewWorkerPool creates a new worker pool
 func NewWorkerPool(db *storage.DB, cfgGetter ConfigGetter, numWorkers int, broadcaster Broadcaster, errorLog *ErrorLog, activityLog *ActivityLog) *WorkerPool {
 	return &WorkerPool{
-		db:             db,
-		cfgGetter:      cfgGetter,
-		broadcaster:    broadcaster,
-		errorLog:       errorLog,
-		activityLog:    activityLog,
-		numWorkers:     numWorkers,
-		stopCh:         make(chan struct{}),
-		readyCh:        make(chan struct{}),
-		runningJobs:    make(map[int64]context.CancelFunc),
-		pendingCancels: make(map[int64]bool),
-		agentCooldowns: make(map[string]time.Time),
-		outputBuffers:  NewOutputBuffer(512*1024, 4*1024*1024), // 512KB/job, 4MB total
-		classify:       agent.ClassifyLimit,
-		retryBackoff:   2 * time.Second,
+		db:                db,
+		cfgGetter:         cfgGetter,
+		broadcaster:       broadcaster,
+		errorLog:          errorLog,
+		activityLog:       activityLog,
+		numWorkers:        numWorkers,
+		stopCh:            make(chan struct{}),
+		readyCh:           make(chan struct{}),
+		runningJobs:       make(map[int64]context.CancelFunc),
+		pendingCancels:    make(map[int64]bool),
+		agentCooldowns:    make(map[string]time.Time),
+		outputBuffers:     NewOutputBuffer(512*1024, 4*1024*1024), // 512KB/job, 4MB total
+		classify:          agent.ClassifyLimit,
+		tokenUsageFetcher: tokens.FetchForSession,
+		retryBackoff:      2 * time.Second,
 	}
 }
 
@@ -271,6 +277,22 @@ func (wp *WorkerPool) unregisterRunningJob(jobID int64) {
 	wp.runningJobsMu.Unlock()
 }
 
+// resolveEffectiveRepoPath returns the checkout a job should run against: its
+// worktree when set and still a valid checkout of the same repo, otherwise the
+// main repo path. Both normal reviews and panel synthesis use this so they read
+// and verify against the reviewed checkout.
+func resolveEffectiveRepoPath(workerID string, job *storage.ReviewJob) string {
+	if job.WorktreePath == "" {
+		return job.RepoPath
+	}
+	if !gitpkg.ValidateWorktreeForRepo(job.WorktreePath, job.RepoPath) {
+		log.Printf("[%s] Worktree %s invalid or gone for job %d, using main repo",
+			workerID, job.WorktreePath, job.ID)
+		return job.RepoPath
+	}
+	return job.WorktreePath
+}
+
 func (wp *WorkerPool) worker(id int) {
 	defer wp.wg.Done()
 	workerID := fmt.Sprintf("worker-%d", id)
@@ -367,6 +389,15 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	wp.registerRunningJob(job.ID, cancel)
 	defer wp.unregisterRunningJob(job.ID)
 
+	// Synthesis jobs route to their own handler before the cooldown gate: the
+	// all-failed and passthrough branches call no agent, so a synthesis-agent
+	// quota cooldown must not skip or fail them. Placing this after
+	// registerRunningJob keeps synthesis jobs cancellable.
+	if job.IsSynthesisJob() {
+		wp.processSynthesisJob(ctx, workerID, job)
+		return
+	}
+
 	// Skip immediately if the agent is in quota cooldown.
 	// Resolve alias so "claude" checks cooldown for "claude-code".
 	canonicalAgent := agent.CanonicalName(job.Agent)
@@ -387,15 +418,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 
 	// Resolve effective repo path: use worktree if available, still exists,
 	// and is a valid git checkout for the same repository.
-	effectiveRepoPath := job.RepoPath
-	if job.WorktreePath != "" {
-		if !gitpkg.ValidateWorktreeForRepo(job.WorktreePath, job.RepoPath) {
-			log.Printf("[%s] Worktree %s invalid or gone for job %d, using main repo",
-				workerID, job.WorktreePath, job.ID)
-		} else {
-			effectiveRepoPath = job.WorktreePath
-		}
-	}
+	effectiveRepoPath := resolveEffectiveRepoPath(workerID, job)
 
 	// Build the prompt (or use pre-stored prompt for task/compact jobs).
 	// Create a per-job builder with the snapshotted config so exclude
@@ -486,6 +509,10 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		wp.failOrRetry(workerID, job, job.Agent, fmt.Sprintf("build prompt: %v", err))
 		return
 	}
+	// Panel members carry trusted reviewer instructions resolved at enqueue
+	// time. Append them after every prompt path (snapshot/dirty/range) and
+	// before promptToPersist defaults, so they persist and show in the view.
+	reviewPrompt += memberInstructionSuffix(job)
 	if promptToPersist == "" {
 		promptToPersist = reviewPrompt
 	}
@@ -655,6 +682,8 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 				Agent:        agentName,
 				WorktreePath: eventWorktreePath,
 			})
+			// Member canceled is terminal — release the panel synthesis.
+			wp.releaseIfPanelMember(job)
 			return // Job already marked as canceled in DB, nothing more to do
 		}
 		if errors.Is(err, context.DeadlineExceeded) || ctx.Err() == context.DeadlineExceeded {
@@ -736,40 +765,12 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		}
 	}
 
-	// Auto-close passing reviews when configured.
-	if job.IsReviewJob() && storage.ParseVerdict(output) == "P" {
-		cfg := wp.cfgGetter.Config()
-		if config.ResolveAutoClosePassingReviews(job.RepoPath, cfg) {
-			if err := wp.db.MarkReviewClosedByJobID(job.ID, true); err != nil {
-				log.Printf("[%s] Warning: auto-close passing review for job %d: %v", workerID, job.ID, err)
-			}
-		}
-	}
+	wp.autoClosePassingReview(workerID, job, output)
 
-	// Fetch token usage from agentsview (best-effort).
-	// Only collect for fresh sessions (where we captured a new session ID).
-	// Resumed sessions report cumulative totals across all turns, which
-	// would overcount if assigned to a single job.
-	capturedSession := ""
-	if sessionWriter != nil {
-		capturedSession = sessionWriter.SessionID()
-	}
-	wasResumed := job.SessionID != "" && capturedSession == job.SessionID
-	if capturedSession != "" && !wasResumed {
-		usage, tokenErr := tokens.FetchForSession(
-			context.Background(), capturedSession,
-		)
-		if tokenErr != nil {
-			log.Printf("[%s] Warning: fetch token usage for job %d: %v",
-				workerID, job.ID, tokenErr)
-		} else if usage != nil {
-			j := tokens.ToJSON(usage)
-			if err := wp.db.SaveJobTokenUsage(job.ID, j); err != nil {
-				log.Printf("[%s] Warning: save token usage for job %d: %v",
-					workerID, job.ID, err)
-			}
-		}
-	}
+	wp.captureTokenUsageForSession(context.Background(), workerID, job, sessionWriter.SessionID())
+
+	// Member done — release the panel synthesis once all members are terminal.
+	wp.releaseIfPanelMember(job)
 
 	log.Printf("[%s] Completed job %d %s %sreview/%s",
 		workerID, job.ID, job.RepoName, rtTag, agentName)
@@ -801,6 +802,22 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		Findings:     output,
 		WorktreePath: eventWorktreePath,
 	})
+}
+
+func (wp *WorkerPool) autoClosePassingReview(workerID string, job *storage.ReviewJob, output string) {
+	if !job.IsReviewJob() && !job.IsSynthesisJob() {
+		return
+	}
+	if storage.ParseVerdict(output) != "P" {
+		return
+	}
+	cfg := wp.cfgGetter.Config()
+	if !config.ResolveAutoClosePassingReviews(job.RepoPath, cfg) {
+		return
+	}
+	if err := wp.db.MarkReviewClosedByJobID(job.ID, true); err != nil {
+		log.Printf("[%s] Warning: auto-close passing review for job %d: %v", workerID, job.ID, err)
+	}
 }
 
 func applyCodexReviewSettings(a agent.Agent, job *storage.ReviewJob, cfg *config.Config) agent.Agent {
@@ -971,10 +988,28 @@ func failoverWorkflow(job *storage.ReviewJob) string {
 	return "review"
 }
 
-// resolveBackupAgent determines the backup agent for a job from config.
-// Returns the canonicalized backup agent name, or "" if none is
-// available or it's the same as the job's current agent.
+// resolveBackupAgent determines the backup agent for a job. An explicit
+// per-job backup (job.BackupAgent) is preferred and returned canonicalized.
+// Otherwise it falls back to the workflow config, returning the canonicalized
+// backup agent name, or "" if none is available or it's the same as the job's
+// current agent.
 func (wp *WorkerPool) resolveBackupAgent(job *storage.ReviewJob) string {
+	// An explicit per-job backup wins, for reliability: the enqueuer (e.g. a CI
+	// panel synthesis) chose this failover deliberately. Canonicalize the alias
+	// (e.g. "claude" -> "claude-code") via the registry; fall back to the raw
+	// value if the name is unknown so the override is never silently dropped.
+	// Gate on PRESENCE only (job.BackupAgent != "") so resolveBackupModel agrees
+	// on whether the stored backup is in play. Note: agent.Get resolves from the
+	// registry, not PATH, so this does not require local installation.
+	if job.BackupAgent != "" {
+		if resolved, err := agent.Get(job.BackupAgent); err == nil {
+			return resolved.Name()
+		}
+		return job.BackupAgent
+	}
+	if job.JobType == storage.JobTypeSynthesis {
+		return ""
+	}
 	cfg := wp.cfgGetter.Config()
 	resolution, err := agent.ResolveWorkflowConfig(
 		"", job.RepoPath, cfg, failoverWorkflow(job), "",
@@ -1000,6 +1035,16 @@ func (wp *WorkerPool) resolveBackupAgent(job *storage.ReviewJob) string {
 // resolveBackupModel determines the backup model for a job from config.
 // Returns the configured backup model, or "" if none is set.
 func (wp *WorkerPool) resolveBackupModel(job *storage.ReviewJob) string {
+	// Stored backup agent present => use the stored model, even if empty. Never
+	// fall through to the workflow backup model, which is resolved for a
+	// different agent (the user's F7 guardrail). Same presence gate as
+	// resolveBackupAgent so the two never disagree.
+	if job.BackupAgent != "" {
+		return job.BackupModel
+	}
+	if job.JobType == storage.JobTypeSynthesis {
+		return ""
+	}
 	cfg := wp.cfgGetter.Config()
 	resolution, err := agent.ResolveWorkflowConfig(
 		"", job.RepoPath, cfg, failoverWorkflow(job), "",
@@ -1029,6 +1074,69 @@ func (wp *WorkerPool) broadcastFailed(job *storage.ReviewJob, agentName, errorMs
 		Error:        errorMsg,
 		WorktreePath: wtPath,
 	})
+	// broadcastFailed is the terminal-failure chokepoint (never reached on
+	// retry/failover), so a member that finally fails releases its panel's
+	// synthesis here. No-op for non-member and synthesis jobs (role gate).
+	wp.releaseIfPanelMember(job)
+}
+
+// memberInstructionSuffix returns the trusted reviewer-instruction block to
+// append to a panel member's review prompt. It returns "" for a non-member job,
+// or when the member config is missing/unparseable or carries no instructions.
+func memberInstructionSuffix(job *storage.ReviewJob) string {
+	if job.PanelRole != storage.PanelRoleMember || job.PanelMemberConfigJSON == "" {
+		return ""
+	}
+	var m config.ResolvedMember
+	if json.Unmarshal([]byte(job.PanelMemberConfigJSON), &m) != nil || m.Instructions == "" {
+		return ""
+	}
+	return fmt.Sprintf(
+		"\n\n## Additional reviewer instructions (panel: %s / member: %s)\n%s\n",
+		job.PanelName, job.PanelMemberName, m.Instructions,
+	)
+}
+
+// releaseIfPanelMember releases a panel run's blocked synthesis job when this
+// member reaches a terminal state. MaybeReleasePanelSynthesis is idempotent and
+// only releases once every member is terminal, so calling it on each member's
+// terminal transition is safe; the Task 7 sweep is the backstop.
+func (wp *WorkerPool) releaseIfPanelMember(job *storage.ReviewJob) {
+	if job.PanelRole == storage.PanelRoleMember && job.PanelRunUUID != "" {
+		if err := wp.db.MaybeReleasePanelSynthesis(job.PanelRunUUID); err != nil {
+			log.Printf("panel %s: release synthesis: %v", job.PanelRunUUID, err)
+		}
+	}
+}
+
+func (wp *WorkerPool) captureTokenUsageForSession(
+	ctx context.Context, workerID string, job *storage.ReviewJob, capturedSession string,
+) {
+	// Fetch token usage from agentsview (best-effort).
+	// Only collect for fresh sessions (where we captured a new session ID).
+	// Resumed sessions report cumulative totals across all turns, which
+	// would overcount if assigned to a single job.
+	wasResumed := job.SessionID != "" && capturedSession == job.SessionID
+	if capturedSession == "" || wasResumed {
+		return
+	}
+	fetcher := wp.tokenUsageFetcher
+	if fetcher == nil {
+		fetcher = tokens.FetchForSession
+	}
+	usage, tokenErr := fetcher(ctx, capturedSession)
+	if tokenErr != nil {
+		log.Printf("[%s] Warning: fetch token usage for job %d: %v",
+			workerID, job.ID, tokenErr)
+		return
+	}
+	if usage == nil {
+		return
+	}
+	if err := wp.db.SaveJobTokenUsage(job.ID, tokens.ToJSON(usage)); err != nil {
+		log.Printf("[%s] Warning: save token usage for job %d: %v",
+			workerID, job.ID, err)
+	}
 }
 
 // defaultCooldown is the fallback duration when the error message doesn't

@@ -15,12 +15,12 @@ import (
 )
 
 // PostgreSQL schema version - increment when schema changes
-const pgSchemaVersion = 14
+const pgSchemaVersion = 15
 
 // pgSchemaName is the PostgreSQL schema used to isolate roborev tables
 const pgSchemaName = "roborev"
 
-//go:embed schemas/postgres_v14.sql
+//go:embed schemas/postgres_v15.sql
 var pgSchemaSQL string
 
 // pgSchemaStatements returns the individual DDL statements for schema creation.
@@ -186,6 +186,10 @@ func (p *PgPool) EnsureSchema(ctx context.Context) error {
 		_, err = p.pool.Exec(ctx, `CREATE INDEX IF NOT EXISTS idx_review_jobs_patch_id ON review_jobs(patch_id)`)
 		if err != nil {
 			return fmt.Errorf("create patch_id index: %w", err)
+		}
+		_, err = p.pool.Exec(ctx, `CREATE INDEX IF NOT EXISTS idx_review_jobs_panel ON review_jobs(panel_run_uuid, panel_role, panel_member_index)`)
+		if err != nil {
+			return fmt.Errorf("create panel index: %w", err)
 		}
 	} else if currentVersion > pgSchemaVersion {
 		return fmt.Errorf("database schema version %d is newer than supported version %d", currentVersion, pgSchemaVersion)
@@ -357,6 +361,26 @@ func (p *PgPool) EnsureSchema(ctx context.Context) error {
 			}
 			if _, err = p.pool.Exec(ctx, `CREATE INDEX IF NOT EXISTS idx_responses_inserted ON responses(inserted_at)`); err != nil {
 				return fmt.Errorf("v14 migration (add inserted_at index): %w", err)
+			}
+		}
+		if currentVersion < 15 {
+			// Panel columns + job-level failover override (backup_agent,
+			// backup_model): the branch's schema work as a single migration
+			// on top of main's v14 (inserted_at).
+			for _, stmt := range []string{
+				`ALTER TABLE review_jobs ADD COLUMN IF NOT EXISTS panel_run_uuid TEXT`,
+				`ALTER TABLE review_jobs ADD COLUMN IF NOT EXISTS panel_role TEXT`,
+				`ALTER TABLE review_jobs ADD COLUMN IF NOT EXISTS panel_name TEXT`,
+				`ALTER TABLE review_jobs ADD COLUMN IF NOT EXISTS panel_member_name TEXT`,
+				`ALTER TABLE review_jobs ADD COLUMN IF NOT EXISTS panel_member_index INTEGER`,
+				`ALTER TABLE review_jobs ADD COLUMN IF NOT EXISTS panel_member_config_json TEXT`,
+				`CREATE INDEX IF NOT EXISTS idx_review_jobs_panel ON review_jobs(panel_run_uuid, panel_role, panel_member_index)`,
+				`ALTER TABLE review_jobs ADD COLUMN IF NOT EXISTS backup_agent TEXT NOT NULL DEFAULT ''`,
+				`ALTER TABLE review_jobs ADD COLUMN IF NOT EXISTS backup_model TEXT NOT NULL DEFAULT ''`,
+			} {
+				if _, err = p.pool.Exec(ctx, stmt); err != nil {
+					return fmt.Errorf("v15 migration (panel + backup columns): %w", err)
+				}
 			}
 		}
 		// Update version
@@ -663,8 +687,10 @@ func (p *PgPool) UpsertJob(ctx context.Context, j SyncableJob, pgRepoID int64, p
 		INSERT INTO review_jobs (
 			uuid, repo_id, commit_id, git_ref, session_id, agent, model, provider, requested_model, requested_provider, reasoning, job_type, review_type, patch_id, status, agentic,
 			enqueued_at, started_at, finished_at, prompt, diff_content, error, token_usage,
-			worktree_path, min_severity, source_machine_id, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, clock_timestamp())
+			worktree_path, min_severity,
+			panel_run_uuid, panel_role, panel_name, panel_member_name, panel_member_index, panel_member_config_json,
+			source_machine_id, backup_agent, backup_model, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, clock_timestamp())
 		ON CONFLICT (uuid) DO UPDATE SET
 			status = EXCLUDED.status,
 			finished_at = EXCLUDED.finished_at,
@@ -680,10 +706,20 @@ func (p *PgPool) UpsertJob(ctx context.Context, j SyncableJob, pgRepoID int64, p
 			token_usage = COALESCE(EXCLUDED.token_usage, review_jobs.token_usage),
 			worktree_path = COALESCE(EXCLUDED.worktree_path, review_jobs.worktree_path),
 			min_severity = EXCLUDED.min_severity,
+			backup_agent = EXCLUDED.backup_agent,
+			backup_model = EXCLUDED.backup_model,
+			panel_run_uuid = EXCLUDED.panel_run_uuid,
+			panel_role = EXCLUDED.panel_role,
+			panel_name = EXCLUDED.panel_name,
+			panel_member_name = EXCLUDED.panel_member_name,
+			panel_member_index = EXCLUDED.panel_member_index,
+			panel_member_config_json = EXCLUDED.panel_member_config_json,
 			updated_at = clock_timestamp()
 	`, j.UUID, pgRepoID, pgCommitID, j.GitRef, nullString(j.SessionID), j.Agent, nullString(j.Model), nullString(j.Provider), nullString(j.RequestedModel), nullString(j.RequestedProvider), nullString(j.Reasoning),
 		defaultStr(j.JobType, "review"), j.ReviewType, nullString(j.PatchID), j.Status, j.Agentic, j.EnqueuedAt, j.StartedAt, j.FinishedAt,
-		nullString(j.Prompt), j.DiffContent, nullString(j.Error), nullString(j.TokenUsage), nullString(j.WorktreePath), normalizeMinSeverityForWrite(j.MinSeverity), j.SourceMachineID)
+		nullString(j.Prompt), j.DiffContent, nullString(j.Error), nullString(j.TokenUsage), nullString(j.WorktreePath), normalizeMinSeverityForWrite(j.MinSeverity),
+		nullString(j.PanelRunUUID), nullString(j.PanelRole), nullString(j.PanelName), nullString(j.PanelMemberName), j.PanelMemberIndex, nullString(j.PanelMemberConfigJSON),
+		j.SourceMachineID, j.BackupAgent, j.BackupModel)
 	return err
 }
 
@@ -716,36 +752,44 @@ func (p *PgPool) InsertResponse(ctx context.Context, r SyncableResponse) error {
 
 // PulledJob represents a job pulled from PostgreSQL
 type PulledJob struct {
-	UUID              string
-	RepoIdentity      string
-	CommitSHA         string
-	CommitAuthor      string
-	CommitSubject     string
-	CommitTimestamp   time.Time
-	GitRef            string
-	SessionID         string
-	Agent             string
-	Model             string
-	Provider          string
-	RequestedModel    string
-	RequestedProvider string
-	Reasoning         string
-	JobType           string
-	ReviewType        string
-	PatchID           string
-	Status            string
-	Agentic           bool
-	EnqueuedAt        time.Time
-	StartedAt         *time.Time
-	FinishedAt        *time.Time
-	Prompt            string
-	DiffContent       *string
-	Error             string
-	TokenUsage        string
-	WorktreePath      string
-	MinSeverity       string
-	SourceMachineID   string
-	UpdatedAt         time.Time
+	UUID                  string
+	RepoIdentity          string
+	CommitSHA             string
+	CommitAuthor          string
+	CommitSubject         string
+	CommitTimestamp       time.Time
+	GitRef                string
+	SessionID             string
+	Agent                 string
+	Model                 string
+	Provider              string
+	RequestedModel        string
+	RequestedProvider     string
+	Reasoning             string
+	JobType               string
+	ReviewType            string
+	PatchID               string
+	Status                string
+	Agentic               bool
+	EnqueuedAt            time.Time
+	StartedAt             *time.Time
+	FinishedAt            *time.Time
+	Prompt                string
+	DiffContent           *string
+	Error                 string
+	TokenUsage            string
+	WorktreePath          string
+	MinSeverity           string
+	BackupAgent           string
+	BackupModel           string
+	PanelRunUUID          string
+	PanelRole             string
+	PanelName             string
+	PanelMemberName       string
+	PanelMemberIndex      int
+	PanelMemberConfigJSON string
+	SourceMachineID       string
+	UpdatedAt             time.Time
 }
 
 // PullJobs fetches jobs from PostgreSQL updated after the given cursor.
@@ -769,7 +813,9 @@ func (p *PgPool) PullJobs(ctx context.Context, excludeMachineID string, cursor s
 			j.git_ref, COALESCE(j.session_id, ''), j.agent, COALESCE(j.model, ''), COALESCE(j.provider, ''), COALESCE(j.requested_model, ''), COALESCE(j.requested_provider, ''), COALESCE(j.reasoning, ''), COALESCE(j.job_type, 'review'), COALESCE(j.review_type, ''), COALESCE(j.patch_id, ''), j.status, j.agentic,
 			j.enqueued_at, j.started_at, j.finished_at,
 			COALESCE(j.prompt, ''), j.diff_content, COALESCE(j.error, ''), COALESCE(j.token_usage, ''),
-			COALESCE(j.worktree_path, ''), COALESCE(j.min_severity, ''), j.source_machine_id, j.updated_at, j.id
+			COALESCE(j.worktree_path, ''), COALESCE(j.min_severity, ''), COALESCE(j.backup_agent, ''), COALESCE(j.backup_model, ''),
+			COALESCE(j.panel_run_uuid, ''), COALESCE(j.panel_role, ''), COALESCE(j.panel_name, ''), COALESCE(j.panel_member_name, ''), COALESCE(j.panel_member_index, 0), COALESCE(j.panel_member_config_json, ''),
+			j.source_machine_id, j.updated_at, j.id
 		FROM review_jobs j
 		JOIN repos r ON j.repo_id = r.id
 		LEFT JOIN commits c ON j.commit_id = c.id
@@ -796,7 +842,9 @@ func (p *PgPool) PullJobs(ctx context.Context, excludeMachineID string, cursor s
 			&j.GitRef, &j.SessionID, &j.Agent, &j.Model, &j.Provider, &j.RequestedModel, &j.RequestedProvider, &j.Reasoning, &j.JobType, &j.ReviewType, &j.PatchID, &j.Status, &j.Agentic,
 			&j.EnqueuedAt, &j.StartedAt, &j.FinishedAt,
 			&j.Prompt, &diffContent, &j.Error, &j.TokenUsage,
-			&j.WorktreePath, &j.MinSeverity, &j.SourceMachineID, &j.UpdatedAt, &lastID,
+			&j.WorktreePath, &j.MinSeverity, &j.BackupAgent, &j.BackupModel,
+			&j.PanelRunUUID, &j.PanelRole, &j.PanelName, &j.PanelMemberName, &j.PanelMemberIndex, &j.PanelMemberConfigJSON,
+			&j.SourceMachineID, &j.UpdatedAt, &lastID,
 		)
 		if err != nil {
 			return nil, cursor, fmt.Errorf("scan job: %w", err)
@@ -1081,14 +1129,20 @@ func (p *PgPool) BatchUpsertJobs(ctx context.Context, jobs []JobWithPgIDs) ([]bo
 		j := jw.Job
 		batch.Queue(`
 			INSERT INTO review_jobs (
-				uuid, repo_id, commit_id, git_ref, session_id, agent, reasoning, job_type, review_type, patch_id, status, agentic,
+				uuid, repo_id, commit_id, git_ref, session_id, agent, model, provider, requested_model, requested_provider, reasoning, job_type, review_type, patch_id, status, agentic,
 				enqueued_at, started_at, finished_at, prompt, diff_content, error, token_usage,
-				worktree_path, min_severity, source_machine_id, updated_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, clock_timestamp())
+				worktree_path, min_severity,
+				panel_run_uuid, panel_role, panel_name, panel_member_name, panel_member_index, panel_member_config_json,
+				source_machine_id, backup_agent, backup_model, updated_at
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, clock_timestamp())
 			ON CONFLICT (uuid) DO UPDATE SET
 				status = EXCLUDED.status,
 				finished_at = EXCLUDED.finished_at,
 				error = EXCLUDED.error,
+				model = EXCLUDED.model,
+				provider = EXCLUDED.provider,
+				requested_model = EXCLUDED.requested_model,
+				requested_provider = EXCLUDED.requested_provider,
 				git_ref = EXCLUDED.git_ref,
 				session_id = COALESCE(EXCLUDED.session_id, review_jobs.session_id),
 				commit_id = EXCLUDED.commit_id,
@@ -1096,10 +1150,20 @@ func (p *PgPool) BatchUpsertJobs(ctx context.Context, jobs []JobWithPgIDs) ([]bo
 				token_usage = COALESCE(EXCLUDED.token_usage, review_jobs.token_usage),
 				worktree_path = COALESCE(EXCLUDED.worktree_path, review_jobs.worktree_path),
 				min_severity = EXCLUDED.min_severity,
+				backup_agent = EXCLUDED.backup_agent,
+				backup_model = EXCLUDED.backup_model,
+				panel_run_uuid = EXCLUDED.panel_run_uuid,
+				panel_role = EXCLUDED.panel_role,
+				panel_name = EXCLUDED.panel_name,
+				panel_member_name = EXCLUDED.panel_member_name,
+				panel_member_index = EXCLUDED.panel_member_index,
+				panel_member_config_json = EXCLUDED.panel_member_config_json,
 				updated_at = clock_timestamp()
-		`, j.UUID, jw.PgRepoID, jw.PgCommitID, j.GitRef, nullString(j.SessionID), j.Agent, nullString(j.Reasoning),
+		`, j.UUID, jw.PgRepoID, jw.PgCommitID, j.GitRef, nullString(j.SessionID), j.Agent, nullString(j.Model), nullString(j.Provider), nullString(j.RequestedModel), nullString(j.RequestedProvider), nullString(j.Reasoning),
 			defaultStr(j.JobType, "review"), j.ReviewType, nullString(j.PatchID), j.Status, j.Agentic, j.EnqueuedAt, j.StartedAt, j.FinishedAt,
-			nullString(j.Prompt), j.DiffContent, nullString(j.Error), nullString(j.TokenUsage), nullString(j.WorktreePath), normalizeMinSeverityForWrite(j.MinSeverity), j.SourceMachineID)
+			nullString(j.Prompt), j.DiffContent, nullString(j.Error), nullString(j.TokenUsage), nullString(j.WorktreePath), normalizeMinSeverityForWrite(j.MinSeverity),
+			nullString(j.PanelRunUUID), nullString(j.PanelRole), nullString(j.PanelName), nullString(j.PanelMemberName), j.PanelMemberIndex, nullString(j.PanelMemberConfigJSON),
+			j.SourceMachineID, j.BackupAgent, j.BackupModel)
 	}
 
 	br := p.pool.SendBatch(ctx, batch)

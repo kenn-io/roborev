@@ -27,13 +27,25 @@ When the user invokes `$roborev-respond <job_id> [message]`:
 
 ### 1. Validate input
 
-If no job_id is provided, inform the user that a job ID is required. Suggest `roborev status` or `roborev fix --open --list` to find job IDs.
+If no job_id is provided, inform the user that a job ID is required. Suggest `roborev status` or `roborev fix --list` to find job IDs. Discovery surfaces synthesis parents (and non-panel reviews), never individual panel members, so the job ID you comment on and close is the parent.
+
+If a job_id is provided, inspect it before closing:
+
+```bash
+roborev show --job <job_id> --json
+```
+
+If `job.panel_role` is `"member"`, do **not** comment on or close that job.
+Resolve the synthesis parent for the same `job.panel_run_uuid` if it is already
+known from the conversation or discovery output; otherwise ask the user for the
+synthesis parent ID. Only continue once the resolved job ID is a synthesis
+parent or a non-panel review.
 
 ### 2. Record the comment and close the review
 
 **If a message is provided**, immediately execute:
 ```bash
-roborev comment --job <job_id> "<message>" && roborev close <job_id>
+roborev comment --job <resolved_job_id> "<message>" && roborev close <resolved_job_id>
 ```
 
 If the message contains quotes or special characters, escape them properly in the bash command.

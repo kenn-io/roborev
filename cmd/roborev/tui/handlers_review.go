@@ -48,6 +48,10 @@ func (m model) handlePromptKey() (tea.Model, tea.Cmd) {
 
 func (m model) handleCloseKey() (tea.Model, tea.Cmd) {
 	if m.currentView == viewReview && m.currentReview != nil && m.currentReview.ID > 0 {
+		if m.currentReview.Job != nil && m.currentReview.Job.PanelRole == storage.PanelRoleMember {
+			m.setFlash("Select the panel's synthesis row to close the panel", 3*time.Second, m.currentView)
+			return m, nil
+		}
 		oldState := m.currentReview.Closed
 		newState := !oldState
 		m.closedSeq++
@@ -64,6 +68,10 @@ func (m model) handleCloseKey() (tea.Model, tea.Cmd) {
 		}
 		return m, m.closeReview(m.currentReview.ID, jobID, newState, oldState, seq)
 	} else if job, ok := m.selectedJob(); m.currentView == viewQueue && ok {
+		if job.PanelRole == storage.PanelRoleMember {
+			m.setFlash("Select the panel's synthesis row to close the panel", 3*time.Second, m.currentView)
+			return m, nil
+		}
 		if job.Status == storage.JobStatusDone && job.Closed != nil {
 			oldState := *job.Closed
 			newState := !oldState
@@ -96,6 +104,10 @@ func (m model) handleCloseKey() (tea.Model, tea.Cmd) {
 func (m model) handleCancelKey() (tea.Model, tea.Cmd) {
 	job, ok := m.selectedJob()
 	if m.currentView != viewQueue || !ok {
+		return m, nil
+	}
+	if job.PanelRole == storage.PanelRoleMember {
+		m.setFlash("Select the panel's synthesis row to cancel the panel", 3*time.Second, m.currentView)
 		return m, nil
 	}
 	if job.Status == storage.JobStatusRunning || job.Status == storage.JobStatusQueued {
@@ -133,6 +145,10 @@ func (m model) handleCancelKey() (tea.Model, tea.Cmd) {
 func (m model) handleRerunKey() (tea.Model, tea.Cmd) {
 	job, ok := m.selectedJob()
 	if m.currentView != viewQueue || !ok {
+		return m, nil
+	}
+	if job.PanelRole == storage.PanelRoleMember {
+		m.setFlash("Select the panel's synthesis row to rerun the panel", 3*time.Second, m.currentView)
 		return m, nil
 	}
 	if job.Status == storage.JobStatusDone || job.Status == storage.JobStatusFailed || job.Status == storage.JobStatusCanceled {

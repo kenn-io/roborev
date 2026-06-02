@@ -68,6 +68,34 @@ func (a *capturingAgent) Review(
 }
 func (a *capturingAgent) CommandLine() string { return "capture" }
 
+type synthesisEntrypointAgent struct {
+	commonMockAgent
+	synthPrompt  string
+	reviewCalled bool
+}
+
+func newSynthesisEntrypointAgent() *synthesisEntrypointAgent {
+	a := &synthesisEntrypointAgent{}
+	a.self = a
+	return a
+}
+
+func (a *synthesisEntrypointAgent) Name() string { return "synthesis-entrypoint" }
+func (a *synthesisEntrypointAgent) Review(
+	_ context.Context, _, _, _ string, _ io.Writer,
+) (string, error) {
+	a.reviewCalled = true
+	return "", errors.New("review entrypoint should not be used for synthesis")
+}
+
+func (a *synthesisEntrypointAgent) Synthesize(
+	_ context.Context, prompt string, _ io.Writer,
+) (string, error) {
+	a.synthPrompt = prompt
+	return "synthesized output", nil
+}
+func (a *synthesisEntrypointAgent) CommandLine() string { return "synthesis-entrypoint" }
+
 func TestSynthesize_Formatting(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -264,6 +292,38 @@ func TestSynthesize_PassesGitRefToAgent(t *testing.T) {
 		})
 	require.NoError(t, err)
 	assert.Equal(t, "aaa111..bbb222", cap.capturedGitRef, "gitRef")
+}
+
+func TestSynthesize_UsesSynthesisEntrypoint(t *testing.T) {
+	synth := newSynthesisEntrypointAgent()
+	agent.Register(synth)
+	t.Cleanup(func() { agent.Unregister("synthesis-entrypoint") })
+
+	results := []ReviewResult{
+		{
+			Agent:      "codex",
+			ReviewType: "default",
+			Status:     "done",
+			Output:     "Found issue A",
+		},
+		{
+			Agent:      "codex",
+			ReviewType: "security",
+			Status:     "done",
+			Output:     "Found issue B",
+		},
+	}
+
+	comment, err := Synthesize(context.Background(), results, SynthesizeOpts{
+		Agent:   "synthesis-entrypoint",
+		GitRef:  "aaa111..bbb222",
+		HeadSHA: "bbb222",
+	})
+	require.NoError(t, err)
+	assertContains(t, comment, "synthesized output")
+	assert.False(t, synth.reviewCalled, "standalone synthesis must not use code-review entrypoint")
+	assertContains(t, synth.synthPrompt, "Found issue A")
+	assert.NotContains(t, synth.synthPrompt, "Review the code changes in commit")
 }
 
 func TestSynthesize_PassesGlobalConfigToResolver(t *testing.T) {

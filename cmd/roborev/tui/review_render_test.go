@@ -390,3 +390,43 @@ func TestTUIVisibleLinesCalculationTable(t *testing.T) {
 		})
 	}
 }
+
+func TestPanelReviewHeaderSummarizesMembers(t *testing.T) {
+	job := makeJob(10, withSynthesis("R", storage.PanelSummary{MembersTotal: 2}))
+	members := []storage.ReviewJob{
+		makeJob(11, withPanelMember("R", "default", 0), withVerdict("P")),
+		makeJob(12, withPanelMember("R", "security", 1), withVerdict("F")),
+	}
+	header := panelReviewHeader(job, members)
+	assert.Contains(t, header, "2 reviewers")
+	assert.Contains(t, header, "default P")
+	assert.Contains(t, header, "security F")
+}
+
+func TestPanelReviewHeaderFallsBackToSummary(t *testing.T) {
+	// Opening a parent that was never expanded (members not cached) must still
+	// render a header — from PanelSummary — never dropped.
+	job := makeJob(10, withSynthesis("R", storage.PanelSummary{MembersTotal: 3, MembersSucceeded: 2, MembersFailed: 1}))
+	header := panelReviewHeader(job, nil)
+	assert.Contains(t, header, "3 reviewers")
+	assert.Contains(t, header, "2 ok")
+	assert.Contains(t, header, "1 failed")
+}
+
+func TestRenderReviewPrefixesPanelHeader(t *testing.T) {
+	job := makeJob(10, withRef("syn"), withStatus(storage.JobStatusDone),
+		withSynthesis("R", storage.PanelSummary{MembersTotal: 2, MembersSucceeded: 2}))
+	review := makeReview(1, &job, withReviewOutput("Synthesized findings"))
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	m.width, m.height = 120, 30
+	m.currentView = viewReview
+	m.currentReview = review
+	m.panelMembers = map[string][]storage.ReviewJob{"R": {
+		makeJob(11, withPanelMember("R", "default", 0), withVerdict("P")),
+		makeJob(12, withPanelMember("R", "security", 1), withVerdict("F")),
+	}}
+	out := stripANSI(m.renderReviewView())
+	assert.Contains(t, out, "2 reviewers")
+	assert.Contains(t, out, "default P")
+	assert.Contains(t, out, "Synthesized findings")
+}

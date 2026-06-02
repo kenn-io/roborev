@@ -301,39 +301,47 @@ func PreferAutoClone(repos []Repo) *Repo {
 
 // SyncableJob contains job data needed for sync
 type SyncableJob struct {
-	ID                int64
-	UUID              string
-	RepoID            int64
-	RepoIdentity      string
-	CommitID          *int64
-	CommitSHA         string
-	CommitAuthor      string
-	CommitSubject     string
-	CommitTimestamp   time.Time
-	GitRef            string
-	SessionID         string
-	Agent             string
-	Model             string
-	Provider          string
-	RequestedModel    string
-	RequestedProvider string
-	Reasoning         string
-	JobType           string
-	ReviewType        string
-	PatchID           string
-	Status            string
-	Agentic           bool
-	EnqueuedAt        time.Time
-	StartedAt         *time.Time
-	FinishedAt        *time.Time
-	Prompt            string
-	DiffContent       *string
-	Error             string
-	TokenUsage        string
-	WorktreePath      string
-	MinSeverity       string
-	SourceMachineID   string
-	UpdatedAt         time.Time
+	ID                    int64
+	UUID                  string
+	RepoID                int64
+	RepoIdentity          string
+	CommitID              *int64
+	CommitSHA             string
+	CommitAuthor          string
+	CommitSubject         string
+	CommitTimestamp       time.Time
+	GitRef                string
+	SessionID             string
+	Agent                 string
+	Model                 string
+	Provider              string
+	RequestedModel        string
+	RequestedProvider     string
+	Reasoning             string
+	JobType               string
+	ReviewType            string
+	PatchID               string
+	Status                string
+	Agentic               bool
+	EnqueuedAt            time.Time
+	StartedAt             *time.Time
+	FinishedAt            *time.Time
+	Prompt                string
+	DiffContent           *string
+	Error                 string
+	TokenUsage            string
+	WorktreePath          string
+	MinSeverity           string
+	BackupAgent           string
+	BackupModel           string
+	PanelRunUUID          string
+	PanelRole             string
+	PanelName             string
+	PanelMemberName       string
+	PanelMemberIndex      int
+	PanelMemberConfigJSON string
+	SourceMachineID       string
+	UpdatedAt             time.Time
 }
 
 // GetJobsToSync returns terminal jobs that need to be pushed to PostgreSQL.
@@ -346,7 +354,9 @@ func (db *DB) GetJobsToSync(machineID string, limit int) ([]SyncableJob, error) 
 			j.git_ref, COALESCE(j.session_id, ''), j.agent, COALESCE(j.model, ''), COALESCE(j.provider, ''), COALESCE(j.requested_model, ''), COALESCE(j.requested_provider, ''), COALESCE(j.reasoning, ''), COALESCE(j.job_type, 'review'), COALESCE(j.review_type, ''), COALESCE(j.patch_id, ''), j.status, j.agentic,
 			j.enqueued_at, COALESCE(j.started_at, ''), COALESCE(j.finished_at, ''),
 			COALESCE(j.prompt, ''), j.diff_content, COALESCE(j.error, ''), COALESCE(j.token_usage, ''),
-			COALESCE(j.worktree_path, ''), COALESCE(j.min_severity, ''), j.source_machine_id, j.updated_at
+			COALESCE(j.worktree_path, ''), COALESCE(j.min_severity, ''), COALESCE(j.backup_agent, ''), COALESCE(j.backup_model, ''),
+			COALESCE(j.panel_run_uuid, ''), COALESCE(j.panel_role, ''), COALESCE(j.panel_name, ''), COALESCE(j.panel_member_name, ''), COALESCE(j.panel_member_index, 0), COALESCE(j.panel_member_config_json, ''),
+			j.source_machine_id, j.updated_at
 		FROM review_jobs j
 		JOIN repos r ON j.repo_id = r.id
 		LEFT JOIN commits c ON j.commit_id = c.id
@@ -381,7 +391,9 @@ func (db *DB) GetJobsToSync(machineID string, limit int) ([]SyncableJob, error) 
 			&j.GitRef, &j.SessionID, &j.Agent, &j.Model, &j.Provider, &j.RequestedModel, &j.RequestedProvider, &j.Reasoning, &j.JobType, &j.ReviewType, &j.PatchID, &j.Status, &j.Agentic,
 			&enqueuedAt, &startedAt, &finishedAt,
 			&j.Prompt, &diffContent, &j.Error, &j.TokenUsage,
-			&j.WorktreePath, &j.MinSeverity, &j.SourceMachineID, &updatedAt,
+			&j.WorktreePath, &j.MinSeverity, &j.BackupAgent, &j.BackupModel,
+			&j.PanelRunUUID, &j.PanelRole, &j.PanelName, &j.PanelMemberName, &j.PanelMemberIndex, &j.PanelMemberConfigJSON,
+			&j.SourceMachineID, &updatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan job: %w", err)
@@ -624,8 +636,10 @@ func (db *DB) UpsertPulledJob(j PulledJob, repoID int64, commitID *int64) error 
 		INSERT INTO review_jobs (
 			uuid, repo_id, commit_id, git_ref, session_id, agent, model, provider, requested_model, requested_provider, reasoning, job_type, review_type, patch_id, status, agentic,
 			enqueued_at, started_at, finished_at, prompt, diff_content, error, token_usage,
-			worktree_path, min_severity, source_machine_id, updated_at, synced_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			worktree_path, min_severity, backup_agent, backup_model,
+			panel_run_uuid, panel_role, panel_name, panel_member_name, panel_member_index, panel_member_config_json,
+			source_machine_id, updated_at, synced_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(uuid) DO UPDATE SET
 			status = excluded.status,
 			finished_at = excluded.finished_at,
@@ -641,6 +655,14 @@ func (db *DB) UpsertPulledJob(j PulledJob, repoID int64, commitID *int64) error 
 			token_usage = COALESCE(excluded.token_usage, review_jobs.token_usage),
 			worktree_path = COALESCE(excluded.worktree_path, review_jobs.worktree_path),
 			min_severity = excluded.min_severity,
+			backup_agent = excluded.backup_agent,
+			backup_model = excluded.backup_model,
+			panel_run_uuid = excluded.panel_run_uuid,
+			panel_role = excluded.panel_role,
+			panel_name = excluded.panel_name,
+			panel_member_name = excluded.panel_member_name,
+			panel_member_index = excluded.panel_member_index,
+			panel_member_config_json = excluded.panel_member_config_json,
 			updated_at = excluded.updated_at,
 			synced_at = ?
 			WHERE review_jobs.status NOT IN ('applied', 'rebased')
@@ -655,7 +677,9 @@ func (db *DB) UpsertPulledJob(j PulledJob, repoID int64, commitID *int64) error 
 		j.ReviewType, nullStr(j.PatchID), j.Status, j.Agentic, j.EnqueuedAt.Format(time.RFC3339),
 		nullTimeStr(j.StartedAt), nullTimeStr(j.FinishedAt),
 		nullStr(j.Prompt), j.DiffContent, nullStr(j.Error), nullStr(j.TokenUsage),
-		nullStr(j.WorktreePath), normalizeMinSeverityForWrite(j.MinSeverity), j.SourceMachineID, j.UpdatedAt.Format(time.RFC3339), now, now)
+		nullStr(j.WorktreePath), normalizeMinSeverityForWrite(j.MinSeverity), j.BackupAgent, j.BackupModel,
+		nullStr(j.PanelRunUUID), nullStr(j.PanelRole), nullStr(j.PanelName), nullStr(j.PanelMemberName), j.PanelMemberIndex, nullStr(j.PanelMemberConfigJSON),
+		j.SourceMachineID, j.UpdatedAt.Format(time.RFC3339), now, now)
 	return err
 }
 

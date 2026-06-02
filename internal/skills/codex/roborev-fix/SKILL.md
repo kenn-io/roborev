@@ -43,7 +43,7 @@ directly. Do not re-fetch reviews that are already present in the
 conversation. When reusing pasted findings, collect any job IDs mentioned
 alongside them — step 5 needs these to comment on and close the reviews.
 If job IDs are missing from the pasted output, discover them via
-`roborev fix --open --list` and match each pasted finding to the correct
+`roborev fix --list` and match each pasted finding to the correct
 job by commit SHA or reviewed file paths. If a finding cannot be
 confidently matched to a specific job, ask the user for the job ID
 rather than closing the wrong review.
@@ -59,10 +59,10 @@ If no job IDs are provided and no findings are in the conversation, discover
 open reviews:
 
 ```bash
-roborev fix --open --list
+roborev fix --list
 ```
 
-This prints one line per open job with its ID, commit SHA, agent, and summary.
+This lists each open job with its ID, commit SHA/ref, agent, and summary (a panel review shows as its synthesis parent).
 Collect the job IDs from the output.
 
 If the command fails, report the error to the user. Common causes: the daemon
@@ -92,6 +92,19 @@ The JSON output has this structure:
   - Each comment has `responder` (who left it) and `response` (the text)
   - Comments from `roborev-fix` or `roborev-refine` are automated tool records
   - All other comments are from the developer (user feedback)
+
+A discovered open job may be a **synthesis (panel) parent**. Its `output` and
+`job.verdict` are the synthesized result across the panel's reviewers, so fix
+from the parent exactly as you would a single review. When the job is a panel,
+`show --json` also includes an additive top-level `panel` block:
+
+- `run_uuid`, `name`, `synthesis_job_id`
+- `members`: array of reviewers, each with `job_id`, `name`, `agent`,
+  `review_type`, `status`, and `verdict` (empty or absent until the member finishes)
+
+Discovery lists parents only (synthesis jobs and non-panel reviews), never
+individual members. Comment on and close the parent. Drill into a member's own
+review (`show --json --job <member_job_id>`) only if the user explicitly asks.
 
 Skip any reviews where `job.verdict` is `"P"` (passing reviews have no findings to fix).
 Skip any reviews where `job.verdict` is empty or missing (the review may have errored and is not actionable).
@@ -183,7 +196,7 @@ Agent:
 User: `$roborev-fix`
 
 Agent:
-1. Runs `roborev fix --open --list` and finds 2 open reviews: job 1019 and job 1021
+1. Runs `roborev fix --list` and finds 2 open reviews: job 1019 and job 1021
 2. Fetches both reviews with `roborev show --job 1019 --json` and `roborev show --job 1021 --json`
 3. Runs `git show <git_ref>` for one review where the finding lacked enough context
 4. Fixes all 3 findings across both reviews, sorted by severity, grouped by file

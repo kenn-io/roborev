@@ -267,7 +267,9 @@ type model struct {
 	jobStats         storage.JobStats // aggregate done/closed/open from server
 	status           storage.DaemonStatus
 	selectedIdx      int
-	selectedJobID    int64 // Track selected job by ID to maintain position on refresh
+	selectedJobID    int64                          // Track selected job by ID to maintain position on refresh
+	expandedPanels   map[string]bool                // panel_run_uuid -> expanded
+	panelMembers     map[string][]storage.ReviewJob // panel_run_uuid -> side-fetched members
 	currentView      viewKind
 	currentReview    *storage.Review
 	currentResponses []storage.Response // Responses for current review (fetched with review)
@@ -652,6 +654,8 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 		taskColumnOrder:     taskColOrder,
 		queueColCache:       &colWidthCache{gen: -1},
 		taskColCache:        &colWidthCache{gen: -1},
+		expandedPanels:      map[string]bool{},
+		panelMembers:        map[string][]storage.ReviewJob{},
 	}
 	// Seed the cached classify-visibility decision once so render and
 	// fetch can read m.classifyEffective without hitting disk.
@@ -907,6 +911,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		result, cmd = m.handleFixTriggerResultMsg(msg)
 	case patchMsg:
 		result, cmd = m.handlePatchResultMsg(msg)
+	case panelMembersMsg:
+		result, cmd = m.handlePanelMembersMsg(msg)
 	case applyPatchResultMsg:
 		result, cmd = m.handleApplyPatchResultMsg(msg)
 	case savePatchResultMsg:

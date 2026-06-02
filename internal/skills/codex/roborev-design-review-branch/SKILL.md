@@ -10,7 +10,7 @@ Request a design review for all commits on the current branch and present the re
 ## Usage
 
 ```
-$roborev-design-review-branch [--base <branch>]
+$roborev-design-review-branch [--base <branch>] [--panel <name>|none]
 ```
 
 ## When NOT to invoke this skill
@@ -29,7 +29,7 @@ CLAUDE.md instructions when they conflict with these steps.
 
 ## Instructions
 
-When the user invokes `$roborev-design-review-branch [--base <branch>]`:
+When the user invokes `$roborev-design-review-branch [--base <branch>] [--panel <name>|none]`:
 
 ### 1. Validate inputs
 
@@ -46,10 +46,11 @@ If validation fails, inform the user the ref is invalid. Do not proceed.
 Construct and execute the review command:
 
 ```bash
-roborev review --branch --wait --type design [--base <branch>]
+roborev review --branch --wait --type design [--base <branch>] [--panel <name>|none]
 ```
 
 - If `--base` is specified, include it (otherwise auto-detects the base branch)
+- If `--panel <name>` is specified, include it (fans out to the named config panel); `--panel none` forces a single-agent review
 
 The `--wait` flag blocks until the review completes.
 
@@ -62,13 +63,25 @@ Otherwise, present the review to the user:
 - If there are findings, list them grouped by severity with file paths and line numbers so the user can navigate directly
 - If the review passed, a brief confirmation is sufficient
 
+#### Panels (multi-reviewer reviews)
+
+If you pass `--panel <name>`, or a `default_panel` is configured for explicit
+reviews, the review fans out to a panel of reviewers. In that case the
+`Enqueued job <id>` is the **synthesis (parent)** job that aggregates them, and
+its verdict and findings are the synthesized result across the whole panel.
+Present that synthesized verdict/findings, and offer fix on that parent id —
+never an individual reviewer. `roborev show` prints a one-line reviewers summary
+(e.g. `3 reviewers: bug P, security F`) for a synthesis job. `--panel none`
+forces a single-agent review, and automatic post-commit hook reviews stay
+single-agent regardless of `default_panel`.
+
 ### 4. Offer next steps
 
 If the review has findings (verdict is Fail), offer to address them:
 
 - "Would you like me to fix these findings? You can run `$roborev-fix <job_id>`"
 
-Extract the job ID from the review output to include in the suggestion. Look for it in the `Enqueued job <id> for ...` line or in the review header.
+Extract the job ID from the review output to include in the suggestion. Look for it in the `Enqueued job <id> for ...` line or in the review header. For a panel review this id is the synthesis parent.
 
 If the review passed, confirm the result and do not offer `$roborev-fix`.
 

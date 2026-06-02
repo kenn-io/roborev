@@ -1,8 +1,10 @@
 package tui
 
 import (
+	"encoding/json"
 	"fmt"
 	"maps"
+	"net/http"
 	"slices"
 	"strings"
 	"testing"
@@ -10,6 +12,7 @@ import (
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
+	"github.com/muesli/termenv"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -599,6 +602,12 @@ func TestTUIJobCellsContent(t *testing.T) {
 		assert.Equal(t, "P", cells[7])
 		assert.Equal(t, "yes", cells[8])
 	})
+
+	t.Run("panel member handled value is blank", func(t *testing.T) {
+		member := makeJob(11, withPanelMember("R", "security", 1), withClosed(new(false)))
+		cells := m.jobCells(member)
+		assert.Empty(t, cells[8])
+	})
 }
 
 func TestTUIJobCellsReviewTypeTag(t *testing.T) {
@@ -654,6 +663,20 @@ func TestTUIJobCellsCost(t *testing.T) {
 		cells := m.jobCells(job)
 		assert.Empty(t, cells[costIdx])
 	})
+
+	t.Run("panel parent sums priced member costs", func(t *testing.T) {
+		parent := makeJob(10, withSynthesis("R", storage.PanelSummary{
+			MembersTotal: 2, MembersTerminal: 2, MembersSucceeded: 2,
+		}))
+		memberA := makeJob(11, withPanelMember("R", "default", 0))
+		memberA.TokenUsage = `{"cost_usd":0.10,"has_cost":true}`
+		memberB := makeJob(12, withPanelMember("R", "security", 1))
+		memberB.TokenUsage = `{"cost_usd":0.25,"has_cost":true}`
+		m.panelMembers = map[string][]storage.ReviewJob{"R": {memberA, memberB}}
+
+		cells := m.jobCells(parent)
+		assert.Equal(t, "~$0.35", cells[costIdx])
+	})
 }
 
 func TestTUIQueueShowsCostColumnByDefault(t *testing.T) {
@@ -673,6 +696,77 @@ func TestTUIQueueShowsCostColumnByDefault(t *testing.T) {
 		"Cost header should be visible by default")
 	assert.Contains(t, out, "~$0.42",
 		"cost value should render in the row")
+}
+
+func TestTUIQueueCollapsedPanelShowsAggregatedMemberCost(t *testing.T) {
+	parent := makeJob(10, withRef("syn"), withStatus(storage.JobStatusDone),
+		withSynthesis("R", storage.PanelSummary{MembersTotal: 2, MembersTerminal: 2, MembersSucceeded: 2}))
+	memberA := makeJob(11, withPanelMember("R", "default", 0), withStatus(storage.JobStatusDone))
+	memberA.TokenUsage = `{"cost_usd":0.10,"has_cost":true}`
+	memberB := makeJob(12, withPanelMember("R", "security", 1), withStatus(storage.JobStatusDone))
+	memberB.TokenUsage = `{"cost_usd":0.25,"has_cost":true}`
+
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	m.width = 200
+	m.height = 30
+	m.jobs = []storage.ReviewJob{parent}
+	m.panelMembers = map[string][]storage.ReviewJob{"R": {memberA, memberB}}
+	m.selectedIdx = 0
+	m.selectedJobID = parent.ID
+
+	out := stripTestANSI(m.renderQueueView())
+	assert.False(t, m.expandedPanels["R"], "panel remains collapsed")
+	assert.Contains(t, out, "~$0.35", "collapsed parent row shows summed member costs")
+}
+
+func TestTUIQueueCollapsedPanelShowsSummaryCostBeforeExpansion(t *testing.T) {
+	parent := makeJob(10, withRef("syn"), withStatus(storage.JobStatusDone),
+		withSynthesis("R", storage.PanelSummary{
+			MembersTotal:        2,
+			MembersTerminal:     2,
+			MembersSucceeded:    2,
+			MembersCostUSD:      0.35,
+			MembersCostComplete: true,
+		}))
+	parent.TokenUsage = `{"cost_usd":0.05,"has_cost":true}`
+
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	m.width = 200
+	m.height = 30
+	m.jobs = []storage.ReviewJob{parent}
+	m.panelMembers = map[string][]storage.ReviewJob{}
+	m.selectedIdx = 0
+	m.selectedJobID = parent.ID
+
+	out := stripTestANSI(m.renderQueueView())
+	assert.False(t, m.expandedPanels["R"], "panel remains collapsed")
+	assert.Contains(t, out, "~$0.40", "collapsed parent row uses panel_summary cost before member fetch")
+}
+
+func TestTUIQueueCollapsedPanelUsesSummaryCostWhenMemberCacheStale(t *testing.T) {
+	parent := makeJob(10, withRef("syn"), withStatus(storage.JobStatusDone),
+		withSynthesis("R", storage.PanelSummary{
+			MembersTotal:        2,
+			MembersTerminal:     2,
+			MembersSucceeded:    2,
+			MembersCostUSD:      0.35,
+			MembersCostComplete: true,
+		}))
+	parent.TokenUsage = `{"cost_usd":0.05,"has_cost":true}`
+	memberA := makeJob(11, withPanelMember("R", "default", 0), withStatus(storage.JobStatusDone))
+	memberB := makeJob(12, withPanelMember("R", "security", 1), withStatus(storage.JobStatusDone))
+
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	m.width = 200
+	m.height = 30
+	m.jobs = []storage.ReviewJob{parent}
+	m.panelMembers = map[string][]storage.ReviewJob{"R": {memberA, memberB}}
+	m.selectedIdx = 0
+	m.selectedJobID = parent.ID
+
+	out := stripTestANSI(m.renderQueueView())
+	assert.False(t, m.expandedPanels["R"], "panel remains collapsed")
+	assert.Contains(t, out, "~$0.40", "complete panel_summary cost wins over stale cached members")
 }
 
 func TestTUIQueueTableRendersWithinWidth(t *testing.T) {
@@ -2153,11 +2247,9 @@ func TestVerdictColor(t *testing.T) {
 }
 
 func TestClosedKeyShortcut(t *testing.T) {
-	boolPtr := func(b bool) *bool { return &b }
-
 	newTestModel := func() model {
 		return setupTestModel([]storage.ReviewJob{
-			makeJob(1, withStatus(storage.JobStatusDone), withClosed(boolPtr(false))),
+			makeJob(1, withStatus(storage.JobStatusDone), withClosed(new(false))),
 		}, func(m *model) {
 			m.currentView = viewQueue
 			m.selectedIdx = 0
@@ -2574,4 +2666,728 @@ func TestJobCells_Skipped(t *testing.T) {
 	assert.Contains(joined, "skipped")
 	assert.Contains(joined, "design")
 	assert.Contains(joined, "trivial")
+}
+
+func TestQueueRenderUnchangedWithoutPanels(t *testing.T) {
+	jobs := []storage.ReviewJob{
+		makeJob(3, withRef("aaa1111"), withStatus(storage.JobStatusDone)),
+		makeJob(2, withRef("bbb2222"), withStatus(storage.JobStatusRunning)),
+		makeJob(1, withRef("ccc3333"), withStatus(storage.JobStatusFailed)),
+	}
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	m.width, m.height = 120, 30
+	m.jobs = jobs
+	m.selectedIdx, m.selectedJobID = 0, 3
+
+	rows := m.visibleQueueRows()
+	assert.Len(t, rows, 3)
+	for i, r := range rows {
+		assert.Equal(t, jobs[i].ID, r.job.ID)
+		assert.Equal(t, 0, r.depth)
+		assert.False(t, r.hasChildren)
+	}
+	out := stripTestANSI(m.renderQueueView())
+	for _, ref := range []string{"aaa1111", "bbb2222", "ccc3333"} {
+		assert.Contains(t, out, ref)
+	}
+}
+
+func seededPanelModel(t *testing.T) model {
+	t.Helper()
+	parent := makeJob(10, withRef("syn"), withStatus(storage.JobStatusDone),
+		withSynthesis("R", storage.PanelSummary{MembersTotal: 2, MembersTerminal: 2, MembersSucceeded: 2}))
+	top := makeJob(20, withRef("top"), withStatus(storage.JobStatusDone))
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	m.width, m.height = 120, 30
+	m.jobs = []storage.ReviewJob{top, parent} // newest-first: 20 then 10
+	m.panelMembers = map[string][]storage.ReviewJob{"R": {
+		makeJob(11, withRef("m0"), withPanelMember("R", "default", 0), withStatus(storage.JobStatusDone)),
+		makeJob(12, withRef("m1"), withPanelMember("R", "security", 1), withStatus(storage.JobStatusDone)),
+	}}
+	m.selectedJobID, m.selectedIdx = 20, 0
+	return m
+}
+
+func TestSelectedJobResolvesMember(t *testing.T) {
+	m := seededPanelModel(t)
+	m.expandedPanels["R"] = true
+	m.selectedJobID = 12 // a member, not in m.jobs
+	job, ok := m.selectedJob()
+	assert.True(t, ok, "selectedJob resolves a member by id")
+	assert.Equal(t, int64(12), job.ID)
+}
+
+func TestNavSkipsCollapsedMembers(t *testing.T) {
+	m := seededPanelModel(t)            // collapsed: visible rows = [20, 10]
+	m, _ = pressSpecial(m, tea.KeyDown) // 20 -> 10
+	assert.Equal(t, int64(10), m.selectedJobID)
+	m, _ = pressSpecial(m, tea.KeyDown) // no visible row below; members collapsed
+	assert.Equal(t, int64(10), m.selectedJobID, "collapsed members are not navigable")
+}
+
+func TestNavWalksExpandedMembers(t *testing.T) {
+	assert := assert.New(t)
+	m := seededPanelModel(t)
+	m.expandedPanels["R"] = true // visible rows = [20, 10, 11, 12]
+	m.selectedJobID, m.selectedIdx = 10, 1
+	m, _ = pressSpecial(m, tea.KeyDown)
+	assert.Equal(int64(11), m.selectedJobID, "down steps into first member")
+	m, _ = pressSpecial(m, tea.KeyDown)
+	assert.Equal(int64(12), m.selectedJobID)
+	m, _ = pressSpecial(m, tea.KeyUp)
+	assert.Equal(int64(11), m.selectedJobID, "up walks back over members")
+}
+
+func TestPrevNextKeysWalkFlattenedRows(t *testing.T) {
+	m := seededPanelModel(t)
+	m.expandedPanels["R"] = true
+	m.selectedJobID, m.selectedIdx = 10, 1
+	m, _ = pressKey(m, 'j') // prev == down
+	assert.Equal(t, int64(11), m.selectedJobID)
+	m, _ = pressKey(m, 'k') // next == up
+	assert.Equal(t, int64(10), m.selectedJobID)
+}
+
+func TestSelectionRestoredByIDAfterRefresh(t *testing.T) {
+	m := seededPanelModel(t)
+	m.expandedPanels["R"] = true
+	m.selectedJobID = 12 // a member is selected
+	reordered := []storage.ReviewJob{m.jobs[1], m.jobs[0]}
+	m2, _ := m.Update(jobsMsg{jobs: reordered, append: false, seq: m.fetchSeq})
+	assert.Equal(t, int64(12), m2.(model).selectedJobID, "selection survives refresh by id")
+}
+
+func TestMutatingActionsBlockedOnMember(t *testing.T) {
+	for _, key := range []rune{'r', 'a', 'x'} {
+		m := seededPanelModel(t)
+		m.expandedPanels["R"] = true
+		m.selectedJobID = 11 // a member
+		m2, cmd := pressKey(m, key)
+		assert.Nil(t, cmd, "key %q must not act on a member", string(key))
+		assert.NotEmpty(t, m2.flashMessage, "key %q flashes a parent hint on a member", string(key))
+	}
+}
+
+func TestMemberCloseDoesNotTouchParentStatsOrSelection(t *testing.T) {
+	assert := assert.New(t)
+	m := seededPanelModel(t)
+	m.expandedPanels["R"] = true
+	m.hideClosed = true
+	m.jobStats = storage.JobStats{Open: 5, Closed: 2}
+	closed := false
+	m.panelMembers["R"][0].Closed = &closed // member 11 is closable
+	m.selectedJobID = 11
+	before := m.jobStats
+	m2, _ := pressKey(m, 'a') // close
+	assert.Equal(before, m2.jobStats, "member close must not change parent-only stats (server excludes members)")
+	assert.Equal(int64(11), m2.selectedJobID, "member close must not move selection under hideClosed")
+	assert.NotEmpty(m2.flashMessage)
+}
+
+func TestBoundaryFlashWithExpandedPanel(t *testing.T) {
+	assert := assert.New(t)
+	// rows when expanded: [20 (top), 10 (parent), 11, 12 (last member)]
+	m := seededPanelModel(t)
+	m.expandedPanels["R"] = true
+
+	// Up at the very top (row 20) is a no-op that re-flashes the top boundary.
+	m.selectedJobID, m.selectedIdx = 20, 0
+	m, _ = pressSpecial(m, tea.KeyUp)
+	assert.Equal(int64(20), m.selectedJobID, "Up at the top stays put")
+	assert.NotEmpty(m.flashMessage, "Up at the top boundary flashes")
+
+	// Down on the last member (row 12) is a no-op at the bottom boundary.
+	m.flashMessage = ""
+	m.selectedJobID = 12
+	m, _ = pressSpecial(m, tea.KeyDown)
+	assert.Equal(int64(12), m.selectedJobID, "Down on the last member stays put")
+	assert.NotEmpty(m.flashMessage, "Down at the bottom boundary flashes")
+}
+
+func TestSpaceTogglesPanelParent(t *testing.T) {
+	m := seededPanelModel(t)
+	m.selectedJobID, m.selectedIdx = 10, 1 // the synthesis parent
+	m, _ = pressKey(m, ' ')
+	assert.True(t, m.expandedPanels["R"], "space expands a panel parent")
+	m, _ = pressKey(m, ' ')
+	assert.False(t, m.expandedPanels["R"], "space again collapses")
+}
+
+func TestRightArrowExpandsPanelParent(t *testing.T) {
+	m := seededPanelModel(t)
+	m.selectedJobID, m.selectedIdx = 10, 1 // the synthesis parent
+
+	m, _ = pressSpecial(m, tea.KeyRight)
+
+	assert.True(t, m.expandedPanels["R"], "right arrow expands a collapsed panel parent")
+	assert.Equal(t, int64(10), m.selectedJobID, "expanding keeps the parent selected")
+}
+
+func TestLeftArrowCollapsesExpandedPanelParent(t *testing.T) {
+	m := seededPanelModel(t)
+	m.expandedPanels["R"] = true
+	m.selectedJobID, m.selectedIdx = 10, 1 // the synthesis parent
+
+	m, _ = pressSpecial(m, tea.KeyLeft)
+
+	assert.False(t, m.expandedPanels["R"], "left arrow collapses an expanded panel parent")
+	assert.Equal(t, int64(10), m.selectedJobID, "collapsing keeps the parent selected")
+}
+
+func TestLeftArrowOnPanelMemberCollapsesParent(t *testing.T) {
+	m := seededPanelModel(t)
+	m.expandedPanels["R"] = true
+	m.selectedJobID, m.selectedIdx = 11, -1 // first member
+
+	m, _ = pressSpecial(m, tea.KeyLeft)
+
+	assert.False(t, m.expandedPanels["R"], "left arrow on a member collapses its panel")
+	assert.Equal(t, int64(10), m.selectedJobID, "left arrow on a member selects the parent")
+}
+
+func TestPanelArrowKeysFallBackToNavigationOnPlainRows(t *testing.T) {
+	m := seededPanelModel(t)
+	m.selectedJobID, m.selectedIdx = 20, 0 // standalone job above the panel
+
+	m, _ = pressSpecial(m, tea.KeyLeft)
+	assert.Equal(t, int64(10), m.selectedJobID, "left arrow still moves down on plain rows")
+
+	plain := newModel(localhostEndpoint, withExternalIODisabled())
+	plain.jobs = []storage.ReviewJob{
+		makeJob(30, withRef("newer")),
+		makeJob(20, withRef("middle")),
+		makeJob(10, withRef("older")),
+	}
+	plain.selectedJobID, plain.selectedIdx = 20, 1
+
+	plain, _ = pressSpecial(plain, tea.KeyRight)
+	assert.Equal(t, int64(30), plain.selectedJobID, "right arrow still moves up on plain rows")
+}
+
+func TestSpaceNoOpOnNonParent(t *testing.T) {
+	m := seededPanelModel(t)
+	m.selectedJobID, m.selectedIdx = 20, 0 // a standalone job
+	before := len(m.expandedPanels)
+	m, cmd := pressKey(m, ' ')
+	assert.Len(t, m.expandedPanels, before, "space does nothing on a non-panel row")
+	assert.Nil(t, cmd)
+}
+
+func TestExpandFetchesMembersWhenUncached(t *testing.T) {
+	m := seededPanelModel(t)
+	delete(m.panelMembers, "R") // not yet fetched
+	m.selectedJobID, m.selectedIdx = 10, 1
+	m, cmd := pressKey(m, ' ')
+	assert.True(t, m.expandedPanels["R"])
+	assert.NotNil(t, cmd, "expanding an unfetched panel dispatches a member fetch")
+}
+
+func TestExpandUsesCacheWhenPresent(t *testing.T) {
+	m := seededPanelModel(t) // members for R already cached
+	m.selectedJobID, m.selectedIdx = 10, 1
+	_, cmd := pressKey(m, ' ')
+	assert.Nil(t, cmd, "no refetch when members are already cached")
+}
+
+func TestPanelMembersMsgSuccessCaches(t *testing.T) {
+	m := seededPanelModel(t)
+	delete(m.panelMembers, "R")
+	fetched := []storage.ReviewJob{
+		makeJob(11, withPanelMember("R", "default", 0)),
+		makeJob(12, withPanelMember("R", "security", 1)),
+	}
+	updated, _ := m.Update(panelMembersMsg{runUUID: "R", members: fetched})
+	m2 := updated.(model)
+	assert.Len(t, m2.panelMembers["R"], 2)
+}
+
+func TestPanelMembersMsgErrorDoesNotCache(t *testing.T) {
+	m := seededPanelModel(t)
+	delete(m.panelMembers, "R")
+	updated, _ := m.Update(panelMembersMsg{runUUID: "R", err: assert.AnError})
+	m2 := updated.(model)
+	_, cached := m2.panelMembers["R"]
+	assert.False(t, cached, "a failed fetch is not cached, so a later expand refetches")
+	assert.NotEmpty(t, m2.flashMessage, "fetch failure is surfaced via flash")
+}
+
+func TestCollapseKeepsParentSelected(t *testing.T) {
+	m := seededPanelModel(t)
+	m.expandedPanels["R"] = true           // members 11,12 visible
+	m.selectedJobID, m.selectedIdx = 10, 1 // the parent is selected
+	m, _ = pressKey(m, ' ')                // collapse
+	assert.False(t, m.expandedPanels["R"])
+	assert.Equal(t, int64(10), m.selectedJobID, "collapsing keeps the parent row selected")
+}
+
+func TestFetchPanelMembersFiltersAndSorts(t *testing.T) {
+	assert := assert.New(t)
+	// The server returns the full run: a synthesis row plus two members given
+	// out of order (index 1 before index 0). The cmd must drop the synthesis
+	// row and sort the survivors by member index.
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal("/api/jobs", r.URL.Path)
+		assert.Equal("R", r.URL.Query().Get("panel_run"))
+		jobs := []storage.ReviewJob{
+			makeJob(10, withSynthesis("R", storage.PanelSummary{MembersTotal: 2})),
+			makeJob(12, withPanelMember("R", "security", 1)),
+			makeJob(11, withPanelMember("R", "default", 0)),
+		}
+		assert.NoError(json.NewEncoder(w).Encode(map[string]any{"jobs": jobs}))
+	})
+
+	msg, ok := m.fetchPanelMembers("R")().(panelMembersMsg)
+	require.True(t, ok)
+	require.NoError(t, msg.err)
+	assert.Equal("R", msg.runUUID)
+	require.Len(t, msg.members, 2) // synthesis row filtered out; gates the indexing below
+	assert.Equal(0, msg.members[0].PanelMemberIndex)
+	assert.Equal(1, msg.members[1].PanelMemberIndex)
+	assert.Equal("default", msg.members[0].PanelMemberName)  // index 0 first
+	assert.Equal("security", msg.members[1].PanelMemberName) // index 1 second
+	assert.Equal(int64(11), msg.members[0].ID)
+	assert.Equal(int64(12), msg.members[1].ID)
+}
+
+func TestFetchPanelMembersServerError(t *testing.T) {
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
+		w.WriteHeader(http.StatusInternalServerError)
+	})
+
+	msg, ok := m.fetchPanelMembers("R")().(panelMembersMsg)
+	require.True(t, ok)
+	require.ErrorContains(t, msg.err, "list panel members:")
+	assert.Empty(t, msg.members)
+}
+
+func TestFetchPanelMembersEmptyRun(t *testing.T) {
+	// A run with only a synthesis row (no members yet) yields no members
+	// and no error.
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
+		jobs := []storage.ReviewJob{
+			makeJob(10, withSynthesis("R", storage.PanelSummary{MembersTotal: 0})),
+		}
+		assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"jobs": jobs}))
+	})
+
+	msg, ok := m.fetchPanelMembers("R")().(panelMembersMsg)
+	require.True(t, ok)
+	require.NoError(t, msg.err)
+	assert.Empty(t, msg.members)
+}
+
+// withTestColor forces the global lipgloss color profile on for the duration of
+// a test (restored afterwards), so the unicode disclosure/connector glyphs are
+// emitted by the queue render path. The TUI color predicate keys on the global
+// lipgloss profile, which defaults to Ascii under `go test` (non-TTY stdout).
+func withTestColor(t *testing.T) {
+	t.Helper()
+	prev := lipgloss.ColorProfile()
+	lipgloss.SetColorProfile(termenv.ANSI256)
+	t.Cleanup(func() { lipgloss.SetColorProfile(prev) })
+}
+
+func TestRenderShowsDisclosureAndConnectorsWhenExpanded(t *testing.T) {
+	withTestColor(t)
+	m := seededPanelModel(t)
+	m.expandedPanels["R"] = true
+	out := stripTestANSI(m.renderQueueView())
+	assert.Contains(t, out, "▾", "expanded parent shows the open disclosure")
+	assert.Contains(t, out, "└─", "last member shows the └─ connector")
+}
+
+func TestRenderShowsTerminalOutcomeSplit(t *testing.T) {
+	parent := makeJob(10, withRef("syn"), withStatus(storage.JobStatusDone),
+		withSynthesis("R", storage.PanelSummary{MembersTotal: 3, MembersTerminal: 3, MembersSucceeded: 2, MembersFailed: 1}))
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	m.width, m.height = 120, 30
+	m.jobs = []storage.ReviewJob{parent}
+	m.selectedJobID, m.selectedIdx = 10, 0
+	out := stripTestANSI(m.renderQueueView())
+	assert.Contains(t, out, "2 ok")
+	assert.Contains(t, out, "1 failed")
+}
+
+func TestRenderNoDisclosureColumnWhenNoPanels(t *testing.T) {
+	jobs := []storage.ReviewJob{makeJob(1, withRef("plain"), withStatus(storage.JobStatusDone))}
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	m.width, m.height = 120, 30
+	m.jobs = jobs
+	m.selectedJobID, m.selectedIdx = 1, 0
+	out := stripTestANSI(m.renderQueueView())
+	assert.NotContains(t, out, "▸")
+	assert.NotContains(t, out, "▾")
+	assert.NotContains(t, out, "space", "no expand hint when the page has no panels")
+}
+
+func TestExpandHintOnlyWhenParentSelected(t *testing.T) {
+	m := seededPanelModel(t)               // jobs = [20 standalone, 10 parent]
+	m.selectedJobID, m.selectedIdx = 20, 0 // standalone selected
+	assert.NotContains(t, stripTestANSI(m.renderQueueView()), "space",
+		"no expand hint while a non-parent row is selected")
+	m.selectedJobID, m.selectedIdx = 10, 1 // parent selected
+	assert.Contains(t, stripTestANSI(m.renderQueueView()), "space",
+		"expand hint appears only when the selected row is a panel parent")
+}
+
+// TestQueueHelpLinesAccountForExpandHint proves the help-height reservation
+// (queueHelpLines) counts the same rows renderQueueView draws: the base rows
+// when a non-parent is selected, and the rows plus the "space — expand" hint
+// when a panel parent is selected. width=100 is chosen because the hint reflows
+// the help onto one more line there (base 2 lines vs hinted 3) — the case the
+// off-by-one bug bit; width=120 (the seeded default) is the no-reflow case where
+// the two counts coincide.
+func TestQueueHelpLinesAccountForExpandHint(t *testing.T) {
+	for _, w := range []int{100, 120} {
+		t.Run(fmt.Sprintf("width=%d", w), func(t *testing.T) {
+			m := seededPanelModel(t) // jobs = [20 standalone, 10 parent]
+			m.width = w
+
+			base := len(reflowHelpRows(m.queueHelpRows(), w))
+			hinted := len(reflowHelpRows(withExpandHint(m.queueHelpRows()), w))
+
+			// Non-parent selected: reservation must equal the base help height.
+			m.selectedJobID, m.selectedIdx = 20, 0
+			assert.Equal(t, base, m.queueHelpLines(),
+				"non-parent selection must reserve the base help height")
+
+			// Panel parent selected: reservation must equal the hinted height,
+			// matching the withExpandHint row renderQueueView appends.
+			m.selectedJobID, m.selectedIdx = 10, 1
+			assert.Equal(t, hinted, m.queueHelpLines(),
+				"panel-parent selection must reserve height for the expand hint")
+		})
+	}
+
+	// At width=100 the hint genuinely costs an extra reflowed line, so the two
+	// reservations differ — this is the regression the fix addresses.
+	m := seededPanelModel(t)
+	m.width = 100
+	assert.Less(t, len(reflowHelpRows(m.queueHelpRows(), 100)),
+		len(reflowHelpRows(withExpandHint(m.queueHelpRows()), 100)),
+		"width=100 must be a width where the expand hint adds a reflow line")
+}
+
+func TestEnterOnInProgressParentFlashesProgress(t *testing.T) {
+	parent := makeJob(10, withStatus(storage.JobStatusRunning),
+		withSynthesis("R", storage.PanelSummary{MembersTotal: 3, MembersTerminal: 2}))
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	m.jobs = []storage.ReviewJob{parent}
+	m.selectedJobID, m.selectedIdx = 10, 0
+	m2, cmd := pressSpecial(m, tea.KeyEnter)
+	assert.Nil(t, cmd, "no review fetch while the panel is still synthesizing")
+	assert.Contains(t, m2.flashMessage, "2/3", "flash reports reviewer progress")
+}
+
+func TestEnterOnFailedParentOpensError(t *testing.T) {
+	assert := assert.New(t)
+	parent := makeJob(10, withStatus(storage.JobStatusFailed),
+		withSynthesis("R", storage.PanelSummary{MembersTotal: 3, MembersTerminal: 3, MembersFailed: 3}))
+	parent.Error = "synthesis boom"
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	m.jobs = []storage.ReviewJob{parent}
+	m.selectedJobID, m.selectedIdx = 10, 0
+	m2, _ := pressSpecial(m, tea.KeyEnter)
+	assert.Equal(viewReview, m2.currentView, "failed synthesis parent opens its error detail")
+	assert.NotNil(m2.currentReview)
+	assert.Contains(m2.currentReview.Output, "synthesis boom", "shows the failure, not a synthesizing flash")
+	assert.NotContains(m2.flashMessage, "synthesizing", "must not flash still-synthesizing for a failed parent")
+}
+
+func TestPanelMembersNeedFetch(t *testing.T) {
+	assert := assert.New(t)
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	assert.True(m.panelMembersNeedFetch("R"), "uncached run needs a fetch")
+	m.panelMembers = map[string][]storage.ReviewJob{"R": {
+		makeJob(11, withPanelMember("R", "default", 0), withStatus(storage.JobStatusDone)),
+		makeJob(12, withPanelMember("R", "security", 1), withStatus(storage.JobStatusDone)),
+	}}
+	assert.False(m.panelMembersNeedFetch("R"), "all-terminal cache is fresh, no refetch")
+	m.panelMembers["R"][1].Status = storage.JobStatusRunning
+	assert.True(m.panelMembersNeedFetch("R"), "non-terminal cached member triggers a refetch")
+}
+
+func TestEnterOnDoneParentFetchesSynthesisReview(t *testing.T) {
+	parent := makeJob(10, withStatus(storage.JobStatusDone),
+		withSynthesis("R", storage.PanelSummary{MembersTotal: 3, MembersTerminal: 3, MembersSucceeded: 3}))
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	m.jobs = []storage.ReviewJob{parent}
+	m.selectedJobID, m.selectedIdx = 10, 0
+	_, cmd := pressSpecial(m, tea.KeyEnter)
+	assert.NotNil(t, cmd, "done parent opens the synthesized review")
+}
+
+func TestEnterOnMemberFetchesMemberReview(t *testing.T) {
+	m := seededPanelModel(t) // members 11,12 done
+	m.expandedPanels["R"] = true
+	m.selectedJobID = 11 // a member row
+	_, cmd := pressSpecial(m, tea.KeyEnter)
+	assert.NotNil(t, cmd, "enter on a done member opens that member's review")
+}
+
+func TestStaleExpandedPanelRunsTriggersOnNonTerminal(t *testing.T) {
+	m := seededPanelModel(t)
+	m.expandedPanels["R"] = true
+	m.panelMembers["R"][0].Status = storage.JobStatusRunning // one member still running
+	runs := m.staleExpandedPanelRuns()
+	assert.Equal(t, []string{"R"}, runs, "expanded panel with a running member is stale")
+}
+
+func TestStaleExpandedPanelRunsSkipsAllTerminal(t *testing.T) {
+	m := seededPanelModel(t) // members 11,12 both Done
+	m.expandedPanels["R"] = true
+	assert.Empty(t, m.staleExpandedPanelRuns(), "all-terminal panel does not refetch")
+}
+
+func TestStaleExpandedPanelRunsSkipsCollapsed(t *testing.T) {
+	m := seededPanelModel(t)
+	m.panelMembers["R"][0].Status = storage.JobStatusRunning
+	// R is NOT expanded
+	assert.Empty(t, m.staleExpandedPanelRuns(), "collapsed panel does not refetch")
+}
+
+func TestJobsRefreshRefetchesStalePanel(t *testing.T) {
+	m := seededPanelModel(t)
+	m.expandedPanels["R"] = true
+	m.panelMembers["R"][0].Status = storage.JobStatusRunning
+	updated, cmd := m.Update(jobsMsg{jobs: m.jobs, append: false, seq: m.fetchSeq})
+	_ = updated
+	assert.NotNil(t, cmd, "refresh dispatches a member refetch for the stale expanded panel")
+}
+
+func TestRefreshedMembersKeepSelection(t *testing.T) {
+	m := seededPanelModel(t)
+	m.expandedPanels["R"] = true
+	m.selectedJobID = 12 // a member selected
+	fresh := []storage.ReviewJob{
+		makeJob(11, withPanelMember("R", "default", 0), withStatus(storage.JobStatusDone)),
+		makeJob(12, withPanelMember("R", "security", 1), withStatus(storage.JobStatusDone)),
+	}
+	updated, _ := m.Update(panelMembersMsg{runUUID: "R", members: fresh})
+	assert.Equal(t, int64(12), updated.(model).selectedJobID, "refreshed members keep the selected id")
+}
+
+func TestStaleExpandedPanelRunsSortsMultipleRuns(t *testing.T) {
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	summary := storage.PanelSummary{MembersTotal: 1}
+	// Two synthesis parents listed Z-before-A so the result order proves the
+	// sort rather than echoing insertion or map-iteration order.
+	m.jobs = []storage.ReviewJob{
+		makeJob(20, withRef("synZ"), withStatus(storage.JobStatusRunning), withSynthesis("Z", summary)),
+		makeJob(10, withRef("synA"), withStatus(storage.JobStatusRunning), withSynthesis("A", summary)),
+	}
+	m.panelMembers = map[string][]storage.ReviewJob{
+		"A": {makeJob(11, withPanelMember("A", "default", 0), withStatus(storage.JobStatusRunning))},
+		"Z": {makeJob(21, withPanelMember("Z", "default", 0), withStatus(storage.JobStatusRunning))},
+	}
+	m.expandedPanels["Z"] = true
+	m.expandedPanels["A"] = true
+	assert.Equal(t, []string{"A", "Z"}, m.staleExpandedPanelRuns(),
+		"multiple stale runs are returned in sorted order")
+}
+
+func TestContentNavWalksFlattenedRowsFromMember(t *testing.T) {
+	assert := assert.New(t)
+	m := seededPanelModel(t)                // jobs [20,10]; members 11,12 (all Done)
+	m.expandedPanels["R"] = true            // flattened: [20, 10, 11, 12]
+	m.selectedJobID, m.selectedIdx = 11, -1 // viewing member 11's review
+	m.currentView = viewReview
+	m, _ = pressKey(m, 'j') // prev/older → steps to 12 (next member)
+	assert.Equal(int64(12), m.selectedJobID, "older steps to the next member")
+	m, _ = pressKey(m, 'k') // next/newer → back to 11
+	assert.Equal(int64(11), m.selectedJobID, "newer steps back over members")
+	m, _ = pressKey(m, 'k') // newer → parent 10
+	assert.Equal(int64(10), m.selectedJobID, "newer steps from first member to its parent")
+}
+
+// TestMemberAtBoundaryDoesNotPaginate guards the selectedIdx >= 0 clause in
+// contentNavBoundary: a member (selectedIdx == -1) at the bottom boundary must
+// flash rather than resume pagination, since the pagination-resume path in
+// handlers_msg.go is parent-only. canPaginate() is otherwise satisfied here
+// (hasMore, not loading, no repo/branch filter), so the gate is the decisive
+// factor — the guard assertion below keeps the test from going vacuous.
+func TestMemberAtBoundaryDoesNotPaginate(t *testing.T) {
+	assert := assert.New(t)
+	m := seededPanelModel(t)
+	m.expandedPanels["R"] = true            // flattened: [20, 10, 11, 12]
+	m.hasMore = true                        // canPaginate() would be satisfiable for a parent
+	m.loadingJobs = false                   // seeded model marks the initial fetch in-flight
+	m.selectedJobID, m.selectedIdx = 12, -1 // last member, bottom row (no eligible row below)
+	m.currentView = viewReview
+	assert.True(m.canPaginate(), "the selectedIdx gate must be the only thing blocking pagination")
+	m, _ = pressKey(m, 'j') // older
+	assert.Zero(m.paginateNav, "a member at the boundary must not trigger pagination")
+	assert.False(m.loadingMore, "no pagination load for a member at the boundary")
+	assert.NotEmpty(m.flashMessage, "flashes the boundary message instead")
+}
+
+func TestContentNavFromMemberSkipsIneligible(t *testing.T) {
+	// In log view a queued member is ineligible (log predicate = not queued).
+	// Log view binds j/k to scrolling; ←/→ are its prev/next (handlers_modal.go).
+	m := seededPanelModel(t)
+	m.panelMembers["R"][1].Status = storage.JobStatusQueued // member 12 queued
+	m.expandedPanels["R"] = true
+	m.selectedJobID, m.selectedIdx = 11, -1
+	m.currentView = viewLog
+	m.logFromView = viewQueue
+	m, _ = pressSpecial(m, tea.KeyLeft) // older from 11 → 12 is queued (skip) → none below
+	assert.Equal(t, int64(11), m.selectedJobID, "queued member is skipped in log nav")
+	assert.NotEmpty(t, m.flashMessage)
+}
+
+func TestContentNavSelectionGoneFlashesStable(t *testing.T) {
+	// Selection id not present in the flattened rows (panel collapsed under us):
+	// flash and keep the current view stable; do not jump to a parent index.
+	m := seededPanelModel(t)
+	m.selectedJobID, m.selectedIdx = 11, -1 // member, but R is NOT expanded → 11 not in rows
+	m.currentView = viewReview
+	before := m.currentReview
+	m, _ = pressKey(m, 'k')
+	assert.Equal(t, int64(11), m.selectedJobID, "selection unchanged when gone from rows")
+	assert.Equal(t, viewReview, m.currentView, "view stays stable")
+	assert.Equal(t, before, m.currentReview, "no review swap")
+	assert.NotEmpty(t, m.flashMessage)
+}
+
+func TestContentNavParentOnlyUnchanged(t *testing.T) {
+	// With no panels, content nav must behave exactly as before (parent list).
+	jobs := []storage.ReviewJob{
+		makeJob(3, withStatus(storage.JobStatusDone)),
+		makeJob(2, withStatus(storage.JobStatusDone)),
+		makeJob(1, withStatus(storage.JobStatusDone)),
+	}
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	m.jobs = jobs
+	m.selectedJobID, m.selectedIdx = 2, 1
+	m.currentView = viewReview
+	m, _ = pressKey(m, 'j') // older → job 1
+	assert.Equal(t, int64(1), m.selectedJobID)
+	m, _ = pressKey(m, 'k') // newer → job 2
+	m, _ = pressKey(m, 'k') // newer → job 3
+	assert.Equal(t, int64(3), m.selectedJobID)
+}
+
+func TestPageKeysStillScrollInReview(t *testing.T) {
+	m := seededPanelModel(t)
+	m.expandedPanels["R"] = true
+	m.selectedJobID, m.selectedIdx = 11, -1
+	m.currentView = viewReview
+	m.reviewScroll = 5
+	m, _ = pressSpecial(m, tea.KeyPgUp)
+	assert.Equal(t, int64(11), m.selectedJobID, "PgUp does not step reviews")
+	assert.Less(t, m.reviewScroll, 5, "PgUp still scrolls the review body")
+}
+
+// TestContentNavParentHiddenByHideClosedRecovers covers the T7 regression: a
+// normal/parent review hidden from the flattened rows by hide-closed (the
+// review was closed while open) must fall back to positional nav and open the
+// adjacent visible review, not strand the user with a "no longer visible" flash.
+// Both directions recover from the hidden anchor over m.jobs.
+func TestContentNavParentHiddenByHideClosedRecovers(t *testing.T) {
+	// Newest-first, all standalone Done jobs (no panels). Job 2 is closed, so
+	// hide-closed removes it from the flattened rows; jobs 3 and 1 stay visible.
+	newHidden := func() model {
+		m := newModel(localhostEndpoint, withExternalIODisabled())
+		m.jobs = []storage.ReviewJob{
+			makeJob(3, withStatus(storage.JobStatusDone), withClosed(new(false))),
+			makeJob(2, withStatus(storage.JobStatusDone), withClosed(new(true))),
+			makeJob(1, withStatus(storage.JobStatusDone), withClosed(new(false))),
+		}
+		m.hideClosed = true
+		// Anchor on the hidden parent (job 2 at m.jobs index 1), as if its
+		// review was just closed while open in the review view.
+		m.selectedJobID, m.selectedIdx = 2, 1
+		m.currentView = viewReview
+		m.currentReview = &storage.Review{ID: 20, Job: &m.jobs[1]}
+		return m
+	}
+
+	tests := []struct {
+		name    string
+		key     rune
+		wantID  int64
+		wantIdx int
+	}{
+		{"older recovers to adjacent visible review", 'j', 1, 2},
+		{"newer recovers to adjacent visible review", 'k', 3, 0},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			m := newHidden()
+			assert.False(m.selectedIsMember(), "the hidden selection is a parent, not a member")
+			assert.Negative(m.selectedRowIndex(m.visibleQueueRows()),
+				"the hidden parent is not in the flattened rows")
+
+			m, cmd := pressKey(m, tt.key)
+			assert.Equal(tt.wantID, m.selectedJobID, "recovers to the adjacent visible review")
+			assert.Equal(tt.wantIdx, m.selectedIdx, "selectedIdx is re-derived from the recovered job")
+			assert.NotNil(cmd, "the recovered review is fetched")
+			assert.Empty(m.flashMessage, "positional recovery does not flash 'no longer visible'")
+		})
+	}
+}
+
+// TestContentNavHiddenMemberFlashesStable covers the complementary case: a
+// selected panel member whose panel collapsed (so it is in panelMembers but not
+// m.jobs and not in the flattened rows) keeps flash-and-stay — no positional
+// jump, since a member has no m.jobs anchor.
+func TestContentNavHiddenMemberFlashesStable(t *testing.T) {
+	assert := assert.New(t)
+	m := seededPanelModel(t)                // members 11,12 in panelMembers, not m.jobs
+	m.selectedJobID, m.selectedIdx = 11, -1 // member, but R is NOT expanded → 11 absent from rows
+	m.currentView = viewReview
+	before := m.currentReview
+
+	assert.True(m.selectedIsMember(), "selection is a side-fetched member")
+	m, cmd := pressKey(m, 'j') // older
+	assert.Equal(int64(11), m.selectedJobID, "an absent member stays put")
+	assert.Equal(viewReview, m.currentView, "view stays stable")
+	assert.Equal(before, m.currentReview, "no review swap for an absent member")
+	assert.Nil(cmd, "no fetch for an absent member")
+	assert.NotEmpty(m.flashMessage, "flashes 'Selection no longer visible'")
+}
+
+// TestContentNavParentOmittedFromJobsRecovers covers the real hide-closed flow
+// where the closed parent is dropped from m.jobs entirely by a server-side
+// refresh (not merely marked closed in place). selectedIdx is preserved and now
+// points at the shifted successor, so the positional fallback must start there
+// rather than at selectedIdx+dir, or older-nav skips the true-adjacent review.
+func TestContentNavParentOmittedFromJobsRecovers(t *testing.T) {
+	// Originally [4,3,2,1] with job 3 selected (idx 1). Job 3 was closed and a
+	// refresh omitted it: m.jobs is now [4,2,1] but selectedIdx stays 1 (now
+	// job 2). selectedJobID 3 is absent from m.jobs.
+	newOmitted := func() model {
+		m := newModel(localhostEndpoint, withExternalIODisabled())
+		m.jobs = []storage.ReviewJob{
+			makeJob(4, withStatus(storage.JobStatusDone)),
+			makeJob(2, withStatus(storage.JobStatusDone)),
+			makeJob(1, withStatus(storage.JobStatusDone)),
+		}
+		omitted := makeJob(3, withStatus(storage.JobStatusDone))
+		m.selectedJobID, m.selectedIdx = 3, 1
+		m.currentView = viewReview
+		m.currentReview = &storage.Review{ID: 30, Job: &omitted}
+		return m
+	}
+
+	tests := []struct {
+		name   string
+		key    rune
+		wantID int64
+	}{
+		{"older lands on the true-adjacent review, not skipping it", 'j', 2},
+		{"newer lands on the adjacent newer review", 'k', 4},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			m := newOmitted()
+			assert.False(m.selectedIsMember(), "an omitted parent is not a member")
+			m, cmd := pressKey(m, tt.key)
+			assert.Equal(tt.wantID, m.selectedJobID, "recovers to the adjacent review without skipping")
+			assert.NotNil(cmd, "the recovered review is fetched")
+			assert.Empty(m.flashMessage, "omitted-parent recovery does not flash")
+		})
+	}
 }

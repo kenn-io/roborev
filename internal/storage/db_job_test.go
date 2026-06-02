@@ -1727,3 +1727,94 @@ func TestGetJobCounts_IncludesSkipped(t *testing.T) {
 	assert.Equal(t, 0, rebased)
 	assert.Equal(t, 1, skipped)
 }
+
+func TestBackupColumnsRoundTrip(t *testing.T) {
+	assert := assert.New(t)
+	db := openTestDB(t)
+	t.Cleanup(func() { db.Close() })
+
+	repo := createRepo(t, db, "/tmp/backup-rt")
+	commit := createCommit(t, db, repo.ID, "abc123")
+
+	job, err := db.EnqueueJob(EnqueueOpts{
+		RepoID:      repo.ID,
+		CommitID:    commit.ID,
+		GitRef:      "abc123",
+		Agent:       "test",
+		JobType:     JobTypeReview,
+		BackupAgent: "claude-code",
+		BackupModel: "opus",
+	})
+	require.NoError(t, err)
+	assert.Equal("claude-code", job.BackupAgent)
+	assert.Equal("opus", job.BackupModel)
+
+	got, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal("claude-code", got.BackupAgent)
+	assert.Equal("opus", got.BackupModel)
+
+	// ListJobs and ClaimJob build the same full ReviewJob and must round-trip too.
+	jobs, err := db.ListJobs("", "", 0, 0)
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	assert.Equal("claude-code", jobs[0].BackupAgent)
+	assert.Equal("opus", jobs[0].BackupModel)
+
+	claimed := claimJob(t, db, "worker-1")
+	assert.Equal("claude-code", claimed.BackupAgent)
+	assert.Equal("opus", claimed.BackupModel)
+}
+
+func TestGetJobsToSyncIncludesBackupColumns(t *testing.T) {
+	assert := assert.New(t)
+	db := openTestDB(t)
+	t.Cleanup(func() { db.Close() })
+	machineID, err := db.GetMachineID()
+	require.NoError(t, err)
+
+	repo := createRepo(t, db, "/tmp/backup-sync")
+	commit := createCommit(t, db, repo.ID, "abc123")
+	job, err := db.EnqueueJob(EnqueueOpts{
+		RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123", Agent: "test",
+		JobType: JobTypeReview, BackupAgent: "gemini", BackupModel: "gemini-2.5-pro",
+	})
+	require.NoError(t, err)
+	setStatus(t, db, job.ID, JobStatusDone)
+
+	jobs, err := db.GetJobsToSync(machineID, 100)
+	require.NoError(t, err)
+	require.Len(t, jobs, 1)
+	assert.Equal("gemini", jobs[0].BackupAgent)
+	assert.Equal("gemini-2.5-pro", jobs[0].BackupModel)
+}
+
+func TestUpsertPulledJobRoundTripsBackupColumns(t *testing.T) {
+	assert := assert.New(t)
+	db := openTestDB(t)
+	t.Cleanup(func() { db.Close() })
+	repo := createRepo(t, db, "/tmp/backup-pull")
+
+	pulled := PulledJob{
+		UUID:            "backup-uuid-1",
+		GitRef:          "abc123",
+		Agent:           "test",
+		Reasoning:       "thorough",
+		JobType:         JobTypeReview,
+		Status:          "done",
+		EnqueuedAt:      time.Now(),
+		UpdatedAt:       time.Now(),
+		SourceMachineID: "remote-machine",
+		BackupAgent:     "copilot",
+		BackupModel:     "gpt-5",
+	}
+	require.NoError(t, db.UpsertPulledJob(pulled, repo.ID, nil))
+
+	var ba, bm string
+	row := db.QueryRow(
+		`SELECT COALESCE(backup_agent,''), COALESCE(backup_model,'') FROM review_jobs WHERE uuid = 'backup-uuid-1'`,
+	)
+	require.NoError(t, row.Scan(&ba, &bm))
+	assert.Equal("copilot", ba)
+	assert.Equal("gpt-5", bm)
+}

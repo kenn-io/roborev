@@ -38,14 +38,22 @@ const (
 
 // JobType classifies what kind of work a review job represents.
 const (
-	JobTypeReview   = "review"   // Single commit review
-	JobTypeRange    = "range"    // Commit range review
-	JobTypeDirty    = "dirty"    // Uncommitted changes review
-	JobTypeTask     = "task"     // Run/analyze/design/custom prompt
-	JobTypeInsights = "insights" // Historical review insights analysis
-	JobTypeCompact  = "compact"  // Consolidated review verification
-	JobTypeFix      = "fix"      // Background fix using worktree
-	JobTypeClassify = "classify" // Routing classifier that decides whether to enqueue a design review
+	JobTypeReview    = "review"    // Single commit review
+	JobTypeRange     = "range"     // Commit range review
+	JobTypeDirty     = "dirty"     // Uncommitted changes review
+	JobTypeTask      = "task"      // Run/analyze/design/custom prompt
+	JobTypeInsights  = "insights"  // Historical review insights analysis
+	JobTypeCompact   = "compact"   // Consolidated review verification
+	JobTypeFix       = "fix"       // Background fix using worktree
+	JobTypeClassify  = "classify"  // Routing classifier that decides whether to enqueue a design review
+	JobTypeSynthesis = "synthesis" // Panel synthesis job: produces the canonical review from member reviews
+)
+
+// Panel roles classify a review_jobs row within a panel run. These values
+// must equal the bare string literals used in the panel SQL predicates.
+const (
+	PanelRoleMember    = "member"
+	PanelRoleSynthesis = "synthesis"
 )
 
 type ReviewJob struct {
@@ -61,7 +69,7 @@ type ReviewJob struct {
 	RequestedModel    string     `json:"requested_model,omitempty"`    // Explicitly requested model; empty means reevaluate on rerun
 	RequestedProvider string     `json:"requested_provider,omitempty"` // Explicitly requested provider; empty means reevaluate on rerun
 	Reasoning         string     `json:"reasoning,omitempty"`          // thorough, standard, fast (default: thorough)
-	JobType           string     `json:"job_type"`                     // review, range, dirty, task, insights, compact, fix
+	JobType           string     `json:"job_type"`                     // one of the JobType* constants above
 	Status            JobStatus  `json:"status"`
 	EnqueuedAt        time.Time  `json:"enqueued_at"`
 	StartedAt         *time.Time `json:"started_at,omitempty"`
@@ -83,7 +91,20 @@ type ReviewJob struct {
 	WorktreePath      string     `json:"worktree_path,omitempty"` // Worktree checkout path (empty = use RepoPath)
 	CommandLine       string     `json:"command_line,omitempty"`  // Actual agent command line used for this run
 	MinSeverity       string     `json:"min_severity,omitempty"`
-	TokenUsage        string     `json:"token_usage,omitempty"` // JSON blob from agentsview (token consumption)
+	// Job-level failover override (F7): when set, the worker prefers these
+	// over the workflow-resolved backup agent/model for this job's failover.
+	BackupAgent string `json:"backup_agent,omitempty"`
+	BackupModel string `json:"backup_model,omitempty"`
+	// Panel relation (subagent review panels). Synced columns group member
+	// + synthesis jobs of one panel run; ClaimBlocked is local-only.
+	PanelRunUUID          string `json:"panel_run_uuid,omitempty"`
+	PanelRole             string `json:"panel_role,omitempty"` // "" (non-panel), "member", or "synthesis"
+	PanelName             string `json:"panel_name,omitempty"`
+	PanelMemberName       string `json:"panel_member_name,omitempty"`
+	PanelMemberIndex      int    `json:"panel_member_index,omitempty"`
+	PanelMemberConfigJSON string `json:"panel_member_config_json,omitempty"`
+	ClaimBlocked          bool   `json:"claim_blocked,omitempty"` // local-only scheduling gate
+	TokenUsage            string `json:"token_usage,omitempty"`   // JSON blob from agentsview (token consumption)
 	// Sync fields
 	UUID            string     `json:"uuid,omitempty"`              // Globally unique identifier for sync
 	SourceMachineID string     `json:"source_machine_id,omitempty"` // Machine that created this job
@@ -96,6 +117,10 @@ type ReviewJob struct {
 	CommitSubject string  `json:"commit_subject,omitempty"` // empty for ranges
 	Closed        *bool   `json:"closed,omitempty"`         // nil if no review yet
 	Verdict       *string `json:"verdict,omitempty"`        // P/F parsed from review output
+	// PanelSummary is the member breakdown for a synthesis (parent) row,
+	// attached by the listing handler for collapsed panel display. Nil for
+	// non-panel jobs and member rows.
+	PanelSummary *PanelSummary `json:"panel_summary,omitempty"`
 }
 
 // IsDirtyJob returns true if this is a dirty review (uncommitted changes).
@@ -179,6 +204,14 @@ func (j ReviewJob) IsReviewJob() bool {
 // IsFixJob returns true if this is a background fix job.
 func (j ReviewJob) IsFixJob() bool {
 	return j.JobType == JobTypeFix
+}
+
+// IsSynthesisJob returns true if this is a panel synthesis (parent) job.
+// A synthesis job carries the canonical, verdict-parseable review for a
+// panel run. It is neither a git-prompt job (review/range/dirty) nor a
+// stored-prompt job (task/compact/fix) — it has its own worker path.
+func (j ReviewJob) IsSynthesisJob() bool {
+	return j.JobType == JobTypeSynthesis
 }
 
 // HasViewableOutput returns true if this job has completed and its review/patch

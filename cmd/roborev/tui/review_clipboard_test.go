@@ -135,12 +135,12 @@ func TestTUIYankFromQueueRequiresCompletedJob(t *testing.T) {
 		makeJob(1, withRef("abc123"), withAgent("test"), withStatus(storage.JobStatusRunning)),
 		makeJob(2, withRef("def456"), withAgent("test")),
 	}
-	m.selectedIdx = 0
+	m.selectedIdx, m.selectedJobID = 0, 1
 
 	_, cmd := pressKey(m, 'y')
 	assert.Nil(t, cmd)
 
-	m.selectedIdx = 1
+	m.selectedIdx, m.selectedJobID = 1, 2
 	_, cmd = pressKey(m, 'y')
 	assert.NotNil(t, cmd)
 }

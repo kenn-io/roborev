@@ -85,6 +85,7 @@ func postCommitCmd() *cobra.Command {
 				RepoPath: root,
 				GitRef:   gitRef,
 				Branch:   branchName,
+				Source:   "post_commit",
 			})
 
 			ep := getDaemonEndpoint()

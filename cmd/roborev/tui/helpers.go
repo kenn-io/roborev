@@ -76,14 +76,49 @@ func (m model) renderFlash(view viewKind) string {
 	return flashStyle.Render(m.flashMessage)
 }
 
-// selectedJob returns a pointer to the currently selected job,
-// or nil and false if no valid selection exists.
+// selectedJob returns the currently selected job (a panel parent / standalone
+// job in m.jobs, or a side-fetched panel member), resolved by selectedJobID.
+// selectedJobID is the single selection identity; selectedIdx is a render hint
+// only. Returns nil,false when nothing is selected or the id is not loaded.
 func (m *model) selectedJob() (*storage.ReviewJob, bool) {
-	if len(m.jobs) == 0 || m.selectedIdx < 0 ||
-		m.selectedIdx >= len(m.jobs) {
+	if m.selectedJobID == 0 {
 		return nil, false
 	}
-	return &m.jobs[m.selectedIdx], true
+	for i := range m.jobs {
+		if m.jobs[i].ID == m.selectedJobID {
+			return &m.jobs[i], true
+		}
+	}
+	for _, members := range m.panelMembers {
+		for i := range members {
+			if members[i].ID == m.selectedJobID {
+				return &members[i], true
+			}
+		}
+	}
+	return nil, false
+}
+
+// selectedIsMember reports whether selectedJobID names a side-fetched panel
+// member (present in panelMembers, absent from m.jobs). Used to keep a member
+// selected across a parents-only refresh, since the member is not in m.jobs.
+func (m *model) selectedIsMember() bool {
+	if m.selectedJobID == 0 {
+		return false
+	}
+	for i := range m.jobs {
+		if m.jobs[i].ID == m.selectedJobID {
+			return false
+		}
+	}
+	for _, members := range m.panelMembers {
+		for i := range members {
+			if members[i].ID == m.selectedJobID {
+				return true
+			}
+		}
+	}
+	return false
 }
 
 // selectJobByID restores selection to a specific job if it is still loaded.

@@ -10,6 +10,7 @@ import (
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/charmbracelet/lipgloss"
 	"github.com/charmbracelet/lipgloss/table"
+	"github.com/muesli/termenv"
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
@@ -29,6 +30,70 @@ func (m model) getVisibleJobs() []storage.ReviewJob {
 		}
 	}
 	return visible
+}
+
+// visibleQueueRows is the flattened, filtered render/nav source: parents from
+// getVisibleJobs (filters already applied) expanded into member rows per the
+// expanded set and side-fetched members. With expandedPanels/panelMembers empty
+// this is the filtered job list 1:1 (all depth 0).
+func (m model) visibleQueueRows() []queueRow {
+	return flattenQueueRows(m.getVisibleJobs(), m.expandedPanels, m.panelMembers)
+}
+
+// anyPanelRow reports whether any visible row is an expandable panel parent.
+// It gates every panel-only render affordance (tree slot, disclosure column,
+// banding, panel cell) so a panel-free page renders byte-identical to before.
+func anyPanelRow(rows []queueRow) bool {
+	for i := range rows {
+		if rows[i].hasChildren {
+			return true
+		}
+	}
+	return false
+}
+
+// queueColorEnabled reports whether the queue should render the unicode tree
+// glyphs (vs the ASCII fallbacks). It keys on the same global lipgloss color
+// profile that drives every AdaptiveColor style on the queue, so glyph color
+// and cell color stay consistent (NO_COLOR / ROBOREV_COLOR_MODE=none → false).
+func queueColorEnabled() bool {
+	return lipgloss.ColorProfile() != termenv.Ascii
+}
+
+// queueTreeSlot returns the leading tree marker for a row, with a trailing
+// separator space: the disclosure glyph for a depth-0 row or the ├─/└─
+// connector for a depth-1 member. Only prefixed when the page has panels.
+func queueTreeSlot(r queueRow, color bool) string {
+	if r.depth == 1 {
+		return childConnector(r.lastChild, color) + " "
+	}
+	return disclosureGlyph(r.hasChildren, r.expanded, color) + " "
+}
+
+// decorateRefCell prefixes the ref cell with the tree slot and, for a panel
+// parent, appends the live/terminal panel status cell. The summary text is
+// sanitized so it cannot inject terminal escapes into the single-line cell.
+func decorateRefCell(ref string, r queueRow, color bool) string {
+	ref = queueTreeSlot(r, color) + ref
+	if r.depth == 0 && r.hasChildren {
+		if cell := stripControlChars(panelStatusCell(r.job)); cell != "" {
+			ref = ref + "  " + cell
+		}
+	}
+	return ref
+}
+
+// withExpandHint returns the help rows with a "space — expand" entry appended
+// to the last row. Used only when the selected row is a panel parent.
+func withExpandHint(rows [][]helpItem) [][]helpItem {
+	if len(rows) == 0 {
+		return [][]helpItem{{{"space", "expand"}}}
+	}
+	out := make([][]helpItem, len(rows))
+	copy(out, rows)
+	last := len(out) - 1
+	out[last] = append(append([]helpItem(nil), out[last]...), helpItem{"space", "expand"})
+	return out
 }
 
 func (m model) queueHelpRows() [][]helpItem {
@@ -68,8 +133,22 @@ func (m model) queueHelpRows() [][]helpItem {
 	return [][]helpItem{row1, row2}
 }
 
+// selectedRowHasChildren reports whether the currently selected visible row is
+// an expandable panel parent. Shared by queueHelpLines (height reservation) and
+// renderQueueView (the expand-hint gate) so the reserved help height can never
+// drift from the help actually drawn.
+func (m model) selectedRowHasChildren() bool {
+	rows := m.visibleQueueRows()
+	idx := visibleSelectedRowIndex(rows, m.selectedJobID)
+	return idx >= 0 && rows[idx].hasChildren
+}
+
 func (m model) queueHelpLines() int {
-	return len(reflowHelpRows(m.queueHelpRows(), m.width))
+	rows := m.queueHelpRows()
+	if m.selectedRowHasChildren() {
+		rows = withExpandHint(rows)
+	}
+	return len(reflowHelpRows(rows, m.width))
 }
 
 // queueCompact returns true when chrome should be hidden
@@ -93,6 +172,22 @@ func (m model) queueVisibleRows() int {
 func (m model) canPaginate() bool {
 	return m.hasMore && !m.loadingMore && !m.loadingJobs &&
 		len(m.activeRepoFilter) <= 1 && m.activeBranchFilter != branchNone
+}
+
+// visibleSelectedRowIndex returns the index of selectedJobID within the
+// flattened visible rows, or -1 when the id is 0 or not present. This is the
+// render/windowing cursor; selectedJobID is the authoritative selection identity
+// (kept in sync with selectedIdx by the nav handlers).
+func visibleSelectedRowIndex(rows []queueRow, selectedJobID int64) int {
+	if selectedJobID == 0 {
+		return -1
+	}
+	for i := range rows {
+		if rows[i].job.ID == selectedJobID {
+			return i
+		}
+	}
+	return -1
 }
 
 func (m model) getVisibleSelectedIdx() int {
@@ -133,6 +228,23 @@ const (
 	colCost                     // Cost estimate (USD)
 	colCount                    // total number of columns
 )
+
+// queueWindowStart returns the [start,end) slice of the flattened rows to show,
+// centering selIdx within a viewport of visibleRows lines. selIdx<0 (no/offscreen
+// selection) anchors at the top. Shared by renderQueueView and the mouse handler
+// so the render window and click-hit-testing can never drift apart.
+func queueWindowStart(total, selIdx, visibleRows int) (start, end int) {
+	if total <= visibleRows {
+		return 0, total
+	}
+	start = max(selIdx-visibleRows/2, 0)
+	end = start + visibleRows
+	if end > total {
+		end = total
+		start = max(end-visibleRows, 0)
+	}
+	return start, end
+}
 
 func (m model) renderQueueView() string {
 	var b strings.Builder
@@ -220,8 +332,16 @@ func (m model) renderQueueView() string {
 		b.WriteString("\x1b[K\n") // Clear line 3
 	}
 
-	visibleJobList := m.getVisibleJobs()
-	visibleSelectedIdx := m.getVisibleSelectedIdx()
+	rows := m.visibleQueueRows()
+	visibleSelectedIdx := visibleSelectedRowIndex(rows, m.selectedJobID)
+	hasAnyPanel := anyPanelRow(rows)
+	treeColor := queueColorEnabled()
+	// The expand hint is cursor-contextual: it shows only when the selected row
+	// is itself a panel parent, not merely because the page has panels. This is
+	// the same predicate as selectedRowHasChildren (over the same rows and
+	// selectedJobID), which queueHelpLines uses to reserve the help height; the
+	// two must stay in lockstep so the reservation matches what we draw below.
+	selectedHasChildren := visibleSelectedIdx >= 0 && rows[visibleSelectedIdx].hasChildren
 
 	visibleRows := m.queueVisibleRows()
 
@@ -230,7 +350,7 @@ func (m model) renderQueueView() string {
 	start := 0
 	end := 0
 
-	if len(visibleJobList) == 0 {
+	if len(rows) == 0 {
 		if m.loadingJobs || m.loadingMore {
 			b.WriteString("Loading...")
 			b.WriteString("\x1b[K\n")
@@ -255,39 +375,32 @@ func (m model) renderQueueView() string {
 	} else {
 		// Calculate ID column width based on max ID
 		idWidth := 5 // minimum width (fits "JobID" header)
-		for _, job := range visibleJobList {
-			w := len(fmt.Sprintf("%d", job.ID))
+		for _, r := range rows {
+			w := len(fmt.Sprintf("%d", r.job.ID))
 			if w > idWidth {
 				idWidth = w
 			}
 		}
 
-		// Determine which jobs to show, keeping selected item visible
-		start = 0
-		end = len(visibleJobList)
-
-		if len(visibleJobList) > visibleRows {
-			// Center the selected item when possible
-			start = max(visibleSelectedIdx-visibleRows/2, 0)
-			end = start + visibleRows
-			if end > len(visibleJobList) {
-				end = len(visibleJobList)
-				start = end - visibleRows
-			}
-		}
+		// Determine which jobs to show, keeping selected item visible.
+		start, end = queueWindowStart(len(rows), visibleSelectedIdx, visibleRows)
 
 		// Determine visible columns (respects hidden columns)
 		visCols := m.visibleColumns()
 
 		// Compute per-column max content widths, using cache when data hasn't changed.
 		allHeaders := [colCount]string{"", "JobID", "Ref", "Branch", "Repo", "Agent", "Queued", "Elapsed", "Status", "P/F", "Closed", "Session", "Req Model", "Req Provider", "Cost"}
-		allFullRows := make([][]string, len(visibleJobList))
-		for i, job := range visibleJobList {
+		allFullRows := make([][]string, len(rows))
+		for i := range rows {
+			job := rows[i].job
 			cells := m.jobCells(job)
 			fullRow := make([]string, colCount)
 			fullRow[colSel] = "  "
 			fullRow[colJobID] = fmt.Sprintf("%d", job.ID)
 			copy(fullRow[colRef:], cells)
+			if hasAnyPanel {
+				fullRow[colRef] = decorateRefCell(fullRow[colRef], rows[i], treeColor)
+			}
 			allFullRows[i] = fullRow
 		}
 
@@ -440,9 +553,9 @@ func (m model) renderQueueView() string {
 		}
 
 		// Build visible rows for the window
-		windowJobs := visibleJobList[start:end]
-		rows := make([][]string, 0, end-start)
-		for i := range windowJobs {
+		windowRows := rows[start:end]
+		tableRows := make([][]string, 0, end-start)
+		for i := range windowRows {
 			sel := "  "
 			if start+i == visibleSelectedIdx {
 				sel = "> "
@@ -454,7 +567,7 @@ func (m model) renderQueueView() string {
 			for vi, c := range visCols {
 				row[vi] = fullRow[c]
 			}
-			rows = append(rows, row)
+			tableRows = append(tableRows, row)
 		}
 
 		// Compute the selected row index within the visible window
@@ -462,6 +575,14 @@ func (m model) renderQueueView() string {
 
 		// Find the last visible table column index (for padding logic)
 		lastVisCol := len(visCols) - 1
+
+		// Group banding: a panel parent and its members share one zebra band so
+		// the nesting reads as a group. Only computed (and applied) when the page
+		// has panels, so a panel-free page keeps its original un-banded bytes.
+		var bands []bool
+		if hasAnyPanel {
+			bands = groupBanding(rows)
+		}
 
 		t := table.New().
 			BorderTop(false).
@@ -523,9 +644,20 @@ func (m model) renderQueueView() string {
 					return s
 				}
 
+				// Group banding for non-selected rows: every other panel group
+				// gets a subtle background so a parent and its members read as
+				// one block. Foreground per-cell coloring is applied on top.
+				if absIdx := start + row; bands != nil && absIdx < len(bands) && bands[absIdx] {
+					bg := lipgloss.AdaptiveColor{Light: "254", Dark: "236"} // subtle zebra band
+					s = s.Background(bg)
+					if bordersOn {
+						s = s.BorderBackground(bg)
+					}
+				}
+
 				// Per-cell coloring for non-selected rows
-				if row >= 0 && row < len(windowJobs) {
-					job := windowJobs[row]
+				if row >= 0 && row < len(windowRows) {
+					job := windowRows[row].job
 					switch logicalCol {
 					case colStatus:
 						if c := statusColor(job.Status); c != nil {
@@ -557,7 +689,7 @@ func (m model) renderQueueView() string {
 			}
 		}
 		t = t.Headers(headers...)
-		t = t.Rows(rows...)
+		t = t.Rows(tableRows...)
 
 		tableStr := t.Render()
 
@@ -584,13 +716,13 @@ func (m model) renderQueueView() string {
 		}
 
 		// Build scroll indicator if needed
-		if len(visibleJobList) > visibleRows || m.hasMore || m.loadingMore {
+		if len(rows) > visibleRows || m.hasMore || m.loadingMore {
 			if m.loadingMore {
-				scrollInfo = fmt.Sprintf("[showing %d-%d of %d] Loading more...", start+1, end, len(visibleJobList))
+				scrollInfo = fmt.Sprintf("[showing %d-%d of %d] Loading more...", start+1, end, len(rows))
 			} else if m.hasMore && len(m.activeRepoFilter) <= 1 {
-				scrollInfo = fmt.Sprintf("[showing %d-%d of %d+] scroll down to load more", start+1, end, len(visibleJobList))
-			} else if len(visibleJobList) > visibleRows {
-				scrollInfo = fmt.Sprintf("[showing %d-%d of %d]", start+1, end, len(visibleJobList))
+				scrollInfo = fmt.Sprintf("[showing %d-%d of %d+] scroll down to load more", start+1, end, len(rows))
+			} else if len(rows) > visibleRows {
+				scrollInfo = fmt.Sprintf("[showing %d-%d of %d]", start+1, end, len(rows))
 			}
 		}
 	}
@@ -608,8 +740,13 @@ func (m model) renderQueueView() string {
 		}
 		b.WriteString("\x1b[K\n") // Clear to end of line
 
-		// Help
-		b.WriteString(renderHelpTable(m.queueHelpRows(), m.width))
+		// Help. The expand hint is appended only when the selected row is a
+		// panel parent (cursor-contextual), so a panel-free page is unchanged.
+		helpRows := m.queueHelpRows()
+		if selectedHasChildren {
+			helpRows = withExpandHint(helpRows)
+		}
+		b.WriteString(renderHelpTable(helpRows, m.width))
 	}
 
 	output := b.String()
@@ -664,7 +801,7 @@ func (m model) jobCells(job storage.ReviewJob) []string {
 	}
 
 	handled := ""
-	if job.Closed != nil {
+	if job.PanelRole != storage.PanelRoleMember && job.Closed != nil {
 		if *job.Closed {
 			handled = "yes"
 		} else {
@@ -680,15 +817,56 @@ func (m model) jobCells(job storage.ReviewJob) []string {
 	requestedModel := stripControlChars(job.RequestedModel)
 	requestedProvider := stripControlChars(job.RequestedProvider)
 
-	// Cost estimate from the stored agentsview usage blob; blank when
-	// no priced estimate is available (old agentsview, unpriced model,
-	// or usage not yet fetched for a running/queued job).
-	cost := ""
-	if tu := tokens.ParseJSON(job.TokenUsage); tu != nil {
-		cost = tu.FormatCost()
-	}
+	cost := m.jobCostCell(job)
 
 	return []string{ref, branch, repo, agentName, enqueued, elapsed, status, verdict, handled, sessionID, requestedModel, requestedProvider, cost}
+}
+
+// jobCostCell renders the stored priced estimate for a row. For a panel parent,
+// it adds cached member costs only when every cached member has a priced cost,
+// avoiding a misleading partial panel total.
+func (m model) jobCostCell(job storage.ReviewJob) string {
+	total := 0.0
+	hasCost := false
+	if tu := tokens.ParseJSON(job.TokenUsage); tu != nil && tu.HasCost {
+		total += tu.CostUSD
+		hasCost = true
+	}
+
+	if !job.IsSynthesisJob() || job.PanelRunUUID == "" {
+		if !hasCost {
+			return ""
+		}
+		return tokens.Usage{CostUSD: total, HasCost: true}.FormatCost()
+	}
+
+	members := m.panelMembers[job.PanelRunUUID]
+	if len(members) == 0 {
+		if job.PanelSummary != nil && job.PanelSummary.MembersCostComplete {
+			return tokens.Usage{CostUSD: total + job.PanelSummary.MembersCostUSD, HasCost: true}.FormatCost()
+		}
+		if !hasCost {
+			return ""
+		}
+		return tokens.Usage{CostUSD: total, HasCost: true}.FormatCost()
+	}
+
+	memberTotal := 0.0
+	for _, member := range members {
+		tu := tokens.ParseJSON(member.TokenUsage)
+		if tu == nil || !tu.HasCost {
+			if job.PanelSummary != nil && job.PanelSummary.MembersCostComplete {
+				return tokens.Usage{CostUSD: total + job.PanelSummary.MembersCostUSD, HasCost: true}.FormatCost()
+			}
+			if !hasCost {
+				return ""
+			}
+			return tokens.Usage{CostUSD: total, HasCost: true}.FormatCost()
+		}
+		memberTotal += tu.CostUSD
+	}
+
+	return tokens.Usage{CostUSD: total + memberTotal, HasCost: true}.FormatCost()
 }
 
 // statusLabel returns a capitalized display label for the job status.

@@ -6,6 +6,7 @@ import (
 	"io"
 	"log"
 	"slices"
+	"sort"
 	"strings"
 	"time"
 
@@ -85,7 +86,13 @@ func (m model) handleJobsMsg(msg jobsMsg) (tea.Model, tea.Cmd) {
 	}
 
 	// Selection management
-	if len(m.jobs) == 0 {
+	if m.selectedIsMember() {
+		// A panel member is selected. Members are side-fetched and absent
+		// from the parents-only m.jobs, so keep the id authoritative and
+		// leave selectedIdx as a no-op hint; moveQueueSelection re-derives
+		// the cursor from the flattened rows on the next nav key.
+		m.selectedIdx = -1
+	} else if len(m.jobs) == 0 {
 		m.selectedIdx = -1
 		if !m.isReviewAnchored() {
 			m.selectedJobID = 0
@@ -175,7 +182,7 @@ func (m model) handleJobsMsg(msg jobsMsg) (tea.Model, tea.Cmd) {
 		m.paginateNav = 0
 		switch nav {
 		case viewReview:
-			nextIdx := m.findPrevViewableJob()
+			nextIdx := m.stepVisibleJobIndex(1, eligibleReviewRow)
 			if nextIdx >= 0 {
 				m.selectedIdx = nextIdx
 				m.updateSelectedJobID()
@@ -194,7 +201,7 @@ func (m model) handleJobsMsg(msg jobsMsg) (tea.Model, tea.Cmd) {
 				}
 			}
 		case viewKindPrompt:
-			nextIdx := m.findPrevPromptableJob()
+			nextIdx := m.stepVisibleJobIndex(1, eligiblePromptRow)
 			if nextIdx >= 0 {
 				m.selectedIdx = nextIdx
 				m.updateSelectedJobID()
@@ -211,7 +218,7 @@ func (m model) handleJobsMsg(msg jobsMsg) (tea.Model, tea.Cmd) {
 				}
 			}
 		case viewLog:
-			nextIdx := m.findPrevLoggableJob()
+			nextIdx := m.stepVisibleJobIndex(1, eligibleLogRow)
 			if nextIdx >= 0 {
 				m.selectedIdx = nextIdx
 				m.updateSelectedJobID()
@@ -225,7 +232,54 @@ func (m model) handleJobsMsg(msg jobsMsg) (tea.Model, tea.Cmd) {
 		m.paginateNav = 0
 	}
 
-	return m, m.consumeSSEPendingRefresh()
+	cmds := []tea.Cmd{m.consumeSSEPendingRefresh()}
+	for _, uuid := range m.staleExpandedPanelRuns() {
+		cmds = append(cmds, m.fetchPanelMembers(uuid))
+	}
+	return m, tea.Batch(cmds...)
+}
+
+// staleExpandedPanelRuns returns the panel_run_uuids of expanded panels whose
+// synthesis parent is still in m.jobs and whose cached members include at least
+// one non-terminal (queued/running) row, so the cache should be refreshed.
+// Collapsed and all-terminal panels are skipped; nil when nothing is expanded.
+func (m model) staleExpandedPanelRuns() []string {
+	if len(m.expandedPanels) == 0 {
+		return nil
+	}
+	visible := make(map[string]bool, len(m.jobs))
+	for i := range m.jobs {
+		if u := m.jobs[i].PanelRunUUID; u != "" && m.jobs[i].IsSynthesisJob() {
+			visible[u] = true
+		}
+	}
+	var runs []string
+	for uuid := range m.expandedPanels {
+		if !visible[uuid] {
+			continue
+		}
+		for _, mem := range m.panelMembers[uuid] {
+			if mem.Status == storage.JobStatusQueued || mem.Status == storage.JobStatusRunning {
+				runs = append(runs, uuid)
+				break
+			}
+		}
+	}
+	sort.Strings(runs)
+	return runs
+}
+
+// handlePanelMembersMsg caches side-fetched panel members on success. On error
+// it flashes and leaves the panel uncached, so a later expand retries.
+func (m model) handlePanelMembersMsg(msg panelMembersMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		m.setFlash("Couldn't load panel members — collapse and expand to retry",
+			3*time.Second, viewQueue)
+		return m, nil
+	}
+	m.panelMembers[msg.runUUID] = msg.members
+	m.queueColGen++
+	return m, nil
 }
 
 // handleStatusMsg processes daemon status updates.

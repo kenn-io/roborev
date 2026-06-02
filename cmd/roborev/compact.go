@@ -20,6 +20,7 @@ import (
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
+	"go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -474,22 +475,7 @@ func buildCompactPrompt(jobReviews []jobReview, branch, repoRoot string) string 
 		sb.WriteString("\n\n")
 	}
 
-	sb.WriteString("## Instructions\n\n")
-	sb.WriteString("1. **Verify each finding against the current codebase:**\n")
-	sb.WriteString("   - Search the codebase to check if the issue still exists\n")
-	sb.WriteString("   - Use wide code search patterns (grep, find files, read context)\n")
-	sb.WriteString("   - Mark findings as VERIFIED or FALSE_POSITIVE\n\n")
-
-	sb.WriteString("2. **Consolidate related findings:**\n")
-	sb.WriteString("   - Group findings that address the same underlying issue\n")
-	sb.WriteString("   - Merge duplicate findings from different reviews\n")
-	sb.WriteString("   - Provide a single comprehensive description for each group\n\n")
-
-	sb.WriteString("3. **Output format:**\n")
-	sb.WriteString("   - List only VERIFIED findings in your output\n")
-	sb.WriteString("   - Use the same severity levels (Critical, High, Medium, Low)\n")
-	sb.WriteString("   - Include file and line references where possible\n")
-	sb.WriteString("   - Explain what the issue is and why it matters\n\n")
+	sb.WriteString(review.VerifyDedupePreamble())
 
 	sb.WriteString("## Open Review Findings\n\n")
 	reviewWord := "review"

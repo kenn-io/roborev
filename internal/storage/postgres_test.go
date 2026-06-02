@@ -787,6 +787,80 @@ func TestIntegration_BatchUpsertJobs(t *testing.T) {
 		require.NotNil(t, found, "expected job %s in pull results", wtJobUUID)
 		assert.Equal(t, "/worktrees/feature-x", found.WorktreePath)
 	})
+
+	t.Run("model provider fields round-trip through batch upsert and pull", func(t *testing.T) {
+		jobUUID := uuid.NewString()
+		machineID := uuid.NewString()
+		commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{
+			RepoID: repoID, SHA: "batch-model-provider-sha",
+		})
+		jobs := []JobWithPgIDs{{
+			Job: SyncableJob{
+				UUID:                  jobUUID,
+				RepoIdentity:          "https://github.com/test/batch-jobs-test.git",
+				CommitSHA:             "batch-model-provider-sha",
+				GitRef:                "batch-model-provider-sha",
+				Agent:                 "codex",
+				Model:                 "gpt-5.5",
+				Provider:              "openai",
+				RequestedModel:        "requested-model",
+				RequestedProvider:     "requested-provider",
+				Status:                "done",
+				JobType:               JobTypeReview,
+				ReviewType:            "security",
+				PanelRunUUID:          "run-model-provider",
+				PanelRole:             PanelRoleMember,
+				PanelMemberName:       "security",
+				PanelMemberIndex:      0,
+				PanelMemberConfigJSON: `{"name":"security"}`,
+				SourceMachineID:       machineID,
+				EnqueuedAt:            time.Now(),
+			},
+			PgRepoID:   repoID,
+			PgCommitID: &commitID,
+		}}
+
+		success, err := pool.BatchUpsertJobs(ctx, jobs)
+		require.NoError(t, err)
+		assert.Equal(t, 1, countSuccesses(success))
+
+		var model, provider, requestedModel, requestedProvider *string
+		err = pool.pool.QueryRow(ctx,
+			`SELECT model, provider, requested_model, requested_provider FROM review_jobs WHERE uuid = $1`, jobUUID,
+		).Scan(&model, &provider, &requestedModel, &requestedProvider)
+		require.NoError(t, err)
+		require.NotNil(t, model)
+		require.NotNil(t, provider)
+		require.NotNil(t, requestedModel)
+		require.NotNil(t, requestedProvider)
+		assert.Equal(t, "gpt-5.5", *model)
+		assert.Equal(t, "openai", *provider)
+		assert.Equal(t, "requested-model", *requestedModel)
+		assert.Equal(t, "requested-provider", *requestedProvider)
+
+		var updatedAt time.Time
+		var rowID int64
+		err = pool.pool.QueryRow(ctx,
+			`SELECT updated_at, id FROM review_jobs WHERE uuid = $1`, jobUUID,
+		).Scan(&updatedAt, &rowID)
+		require.NoError(t, err)
+		cursor := fmt.Sprintf("%s %d", updatedAt.Format(time.RFC3339Nano), rowID-1)
+
+		pulled, _, err := pool.PullJobs(ctx, uuid.NewString(), cursor, 100)
+		require.NoError(t, err)
+		var found *PulledJob
+		for i := range pulled {
+			if pulled[i].UUID == jobUUID {
+				found = &pulled[i]
+				break
+			}
+		}
+		require.NotNil(t, found, "expected job %s in pull results", jobUUID)
+		assert.Equal(t, "gpt-5.5", found.Model)
+		assert.Equal(t, "openai", found.Provider)
+		assert.Equal(t, "requested-model", found.RequestedModel)
+		assert.Equal(t, "requested-provider", found.RequestedProvider)
+	})
 }
 
 func TestIntegration_BatchUpsertReviews(t *testing.T) {

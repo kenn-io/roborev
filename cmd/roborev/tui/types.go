@@ -276,6 +276,15 @@ type patchMsg struct {
 	err   error
 }
 
+// panelMembersMsg delivers the side-fetched member rows for a panel run, or an
+// error. On error the handler leaves the panel uncached so a later expand
+// retries.
+type panelMembersMsg struct {
+	runUUID string
+	members []storage.ReviewJob
+	err     error
+}
+
 type savePatchResultMsg struct {
 	path string
 	err  error

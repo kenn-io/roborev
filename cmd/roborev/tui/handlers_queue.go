@@ -10,23 +10,15 @@ import (
 )
 
 func (m *model) handleQueueMouseClick(_ int, y int) {
-	visibleJobList := m.getVisibleJobs()
-	if len(visibleJobList) == 0 {
+	rows := m.visibleQueueRows()
+	if len(rows) == 0 {
 		return
 	}
 
 	visibleRows := m.queueVisibleRows()
-	start := 0
-	end := len(visibleJobList)
-	if len(visibleJobList) > visibleRows {
-		visibleSelectedIdx := max(m.getVisibleSelectedIdx(), 0)
-		start = max(visibleSelectedIdx-visibleRows/2, 0)
-		end = start + visibleRows
-		if end > len(visibleJobList) {
-			end = len(visibleJobList)
-			start = max(end-visibleRows, 0)
-		}
-	}
+	// Same window math as renderQueueView so a clicked screen row maps back to
+	// the job actually drawn there.
+	start, end := queueWindowStart(len(rows), visibleSelectedRowIndex(rows, m.selectedJobID), visibleRows)
 	headerRows := 5 // title, status, update, header, separator
 	if m.queueCompact() {
 		headerRows = 1 // title only
@@ -40,14 +32,21 @@ func (m *model) handleQueueMouseClick(_ int, y int) {
 		return
 	}
 
-	targetJobID := visibleJobList[visibleIdx].ID
+	*m = m.moveSelectionToJobID(rows[visibleIdx].job.ID)
+}
+
+// moveSelectionToJobID sets selectedJobID to id (authoritative) and resyncs
+// selectedIdx best-effort (the m.jobs index, or -1 for a panel member).
+func (m model) moveSelectionToJobID(id int64) model {
+	m.selectedJobID = id
+	m.selectedIdx = -1
 	for i := range m.jobs {
-		if m.jobs[i].ID == targetJobID {
+		if m.jobs[i].ID == id {
 			m.selectedIdx = i
-			m.selectedJobID = targetJobID
-			return
+			break
 		}
 	}
+	return m
 }
 
 func (m model) tasksVisibleWindow(totalJobs int) (int, int, int) {
@@ -93,10 +92,13 @@ func (m model) handleEnterKey() (tea.Model, tea.Cmd) {
 	if m.currentView != viewQueue || !ok {
 		return m, nil
 	}
+	if mm, handled := m.panelInProgressFlash(*job); handled {
+		return mm, nil
+	}
 	switch job.Status {
 	case storage.JobStatusDone:
 		m.reviewFromView = viewQueue
-		return m, m.fetchReview(job.ID)
+		return m, m.enterReviewCmd(*job)
 	case storage.JobStatusFailed:
 		m.currentBranch = ""
 		jobCopy := *job
@@ -110,7 +112,32 @@ func (m model) handleEnterKey() (tea.Model, tea.Cmd) {
 		m.reviewScroll = 0
 		return m, nil
 	}
-	var status string
+	return m.flashNoReviewYet(*job), nil
+}
+
+// panelInProgressFlash flashes live reviewer progress for a synthesis parent
+// that is still queued or running (so there is no review to open yet) and
+// reports whether it handled the key; handled=false means the job is openable
+// or terminal-without-output (failed/canceled), which the caller resolves —
+// gating on panelInProgress (not HasViewableOutput) lets a failed synthesis
+// parent fall through to its error detail instead of a stale "synthesizing".
+func (m model) panelInProgressFlash(job storage.ReviewJob) (model, bool) {
+	if !job.IsSynthesisJob() || !panelInProgress(job) {
+		return m, false
+	}
+	done, total := 0, 0
+	if s := job.PanelSummary; s != nil {
+		done, total = s.MembersTerminal, s.MembersTotal
+	}
+	m.setFlash(fmt.Sprintf("Panel still synthesizing — %d/%d reviewers done", done, total),
+		2*time.Second, viewQueue)
+	return m, true
+}
+
+// flashNoReviewYet flashes that a job whose status has no review to open yet
+// (queued/running/canceled) cannot be opened.
+func (m model) flashNoReviewYet(job storage.ReviewJob) model {
+	status := string(job.Status)
 	switch job.Status {
 	case storage.JobStatusQueued:
 		status = "queued"
@@ -118,11 +145,39 @@ func (m model) handleEnterKey() (tea.Model, tea.Cmd) {
 		status = "in progress"
 	case storage.JobStatusCanceled:
 		status = "canceled"
-	default:
-		status = string(job.Status)
 	}
 	m.setFlash(fmt.Sprintf("Job #%d is %s — no review yet", job.ID, status), 2*time.Second, viewQueue)
-	return m, nil
+	return m
+}
+
+// enterReviewCmd fetches the review for a done job opened from the queue. For a
+// synthesis parent whose members are missing or cached with a non-terminal
+// (possibly stale) row, it also side-fetches them so the review-detail header
+// shows fresh per-member verdicts rather than a PanelSummary fallback or a
+// status captured while a member was still running; a member's own review does
+// not trigger a member fetch.
+func (m model) enterReviewCmd(job storage.ReviewJob) tea.Cmd {
+	if job.IsSynthesisJob() && m.panelMembersNeedFetch(job.PanelRunUUID) {
+		return tea.Batch(m.fetchReview(job.ID), m.fetchPanelMembers(job.PanelRunUUID))
+	}
+	return m.fetchReview(job.ID)
+}
+
+// panelMembersNeedFetch reports whether a synthesis run's members should be
+// (re)fetched before showing its review header: either not cached yet, or
+// cached with a non-terminal (queued/running) row whose status may be stale.
+// Mirrors the non-terminal predicate in staleExpandedPanelRuns.
+func (m model) panelMembersNeedFetch(runUUID string) bool {
+	members, ok := m.panelMembers[runUUID]
+	if !ok {
+		return true
+	}
+	for _, mem := range members {
+		if mem.Status == storage.JobStatusQueued || mem.Status == storage.JobStatusRunning {
+			return true
+		}
+	}
+	return false
 }
 
 func (m model) handleFilterOpenKey() (tea.Model, tea.Cmd) {
