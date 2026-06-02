@@ -93,6 +93,34 @@ func TestGetDaemonEndpointAvoidsDefaultDaemonPortInTests(t *testing.T) {
 	assert.Equal(t, "127.0.0.1:1", got.Address)
 }
 
+func TestGetDaemonEndpointIgnoresCachedDefaultFromEmptyServerFlagInTests(t *testing.T) {
+	exe, err := os.Executable()
+	require.NoError(t, err)
+	if !isGoTestBinaryPath(exe) {
+		t.Skipf("expected go test binary path, got %q", exe)
+	}
+
+	origServerAddr := serverAddr
+	origParsed := parsedServerEndpoint
+	origGetAnyRunningDaemon := getAnyRunningDaemon
+	serverAddr = ""
+	parsedServerEndpoint = nil
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+		return nil, os.ErrNotExist
+	}
+	t.Cleanup(func() {
+		serverAddr = origServerAddr
+		parsedServerEndpoint = origParsed
+		getAnyRunningDaemon = origGetAnyRunningDaemon
+	})
+
+	require.NoError(t, validateServerFlag())
+
+	got := getDaemonEndpoint()
+	assert.Equal(t, "tcp", got.Network)
+	assert.Equal(t, "127.0.0.1:1", got.Address)
+}
+
 func TestEnsureDaemonRestartsWhenManualLegacyProbeHasNoVersion(t *testing.T) {
 	t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "")
 

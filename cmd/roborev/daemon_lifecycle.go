@@ -83,6 +83,10 @@ func fallbackDaemonEndpoint() daemon.DaemonEndpoint {
 // validateServerFlag parses and validates the --server flag value.
 // Called from PersistentPreRunE so invalid values fail fast.
 func validateServerFlag() error {
+	parsedServerEndpoint = nil
+	if serverAddr == "" {
+		return nil
+	}
 	ep, err := daemon.ParseEndpoint(serverAddr)
 	if err != nil {
 		return fmt.Errorf("invalid --server address %q: %w", serverAddr, err)
@@ -110,9 +114,6 @@ func getDaemonEndpoint() daemon.DaemonEndpoint {
 		return info.Endpoint()
 	}
 	// Nothing running: use default
-	if parsedServerEndpoint != nil {
-		return *parsedServerEndpoint
-	}
 	return fallbackDaemonEndpoint()
 }
 
