@@ -26,6 +26,10 @@ archives:
       - roborev
     formats:
       - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
     name_template: >-
       {{ .ProjectName }}_
       {{- .Version }}_
