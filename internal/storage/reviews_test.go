@@ -703,6 +703,80 @@ func TestGetAllReviewsForGitRefExcludesPanelMembers(t *testing.T) {
 	assert.NotEqual(t, member.ID, reviews[0].JobID)
 }
 
+func TestFindReusableSessionCandidatesExcludesPanelAndNonReviewJobs(t *testing.T) {
+	assert := assert.New(t)
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, "/tmp/session-candidates")
+	branch := "feature/session"
+	runUUID := GenerateUUID()
+
+	normalCommit := createCommit(t, db, repo.ID, "session-normal")
+	normal := createCompletedJobWithOptions(t, db, EnqueueOpts{
+		RepoID:     repo.ID,
+		CommitID:   normalCommit.ID,
+		GitRef:     "session-normal",
+		Branch:     branch,
+		Agent:      "codex",
+		ReviewType: "default",
+		JobType:    JobTypeReview,
+	}, "normal output")
+	setJobSession(t, db, normal.ID, "session-normal")
+
+	member := createCompletedJobWithOptions(t, db, EnqueueOpts{
+		RepoID:       repo.ID,
+		GitRef:       "session-member",
+		Branch:       branch,
+		Agent:        "codex",
+		ReviewType:   "default",
+		JobType:      JobTypeReview,
+		PanelRunUUID: runUUID,
+		PanelRole:    PanelRoleMember,
+	}, "member output")
+	setJobSession(t, db, member.ID, "session-member")
+
+	synth := createCompletedJobWithOptions(t, db, EnqueueOpts{
+		RepoID:       repo.ID,
+		GitRef:       "session-synthesis",
+		Branch:       branch,
+		Agent:        "codex",
+		ReviewType:   "default",
+		JobType:      JobTypeSynthesis,
+		PanelRunUUID: runUUID,
+		PanelRole:    PanelRoleSynthesis,
+	}, "synthesis output")
+	setJobSession(t, db, synth.ID, "session-synthesis")
+
+	fix := createCompletedJobWithOptions(t, db, EnqueueOpts{
+		RepoID:      repo.ID,
+		GitRef:      "session-fix",
+		Branch:      branch,
+		Agent:       "codex",
+		ReviewType:  "default",
+		JobType:     JobTypeFix,
+		ParentJobID: normal.ID,
+	}, "fix output")
+	setJobSession(t, db, fix.ID, "session-fix")
+
+	candidates, err := db.FindReusableSessionCandidates(
+		repo.ID, branch, "codex", "default", "", 10,
+	)
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	assert.Equal(normal.ID, candidates[0].ID)
+	assert.Equal("session-normal", candidates[0].SessionID)
+	assert.NotEqual(member.ID, candidates[0].ID)
+	assert.NotEqual(synth.ID, candidates[0].ID)
+	assert.NotEqual(fix.ID, candidates[0].ID)
+}
+
+func setJobSession(t *testing.T, db *DB, jobID int64, sessionID string) {
+	t.Helper()
+	_, err := db.Exec(`UPDATE review_jobs SET session_id = ? WHERE id = ?`, sessionID, jobID)
+	require.NoError(t, err)
+}
+
 // verifyComment helper checks if a comment matches expected values.
 func verifyComment(t *testing.T, actual Response, expectedUser, expectedMsg string) {
 	t.Helper()

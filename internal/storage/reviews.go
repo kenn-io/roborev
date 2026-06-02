@@ -150,6 +150,8 @@ func (db *DB) FindReusableSessionCandidates(
 		  AND branch = ?
 		  AND agent = ?
 		  AND status = 'done'
+		  AND COALESCE(NULLIF(job_type, ''), 'review') = 'review'
+		  AND COALESCE(panel_role, '') = ''
 		  AND session_id IS NOT NULL
 		  AND session_id <> ''
 		  AND COALESCE(NULLIF(review_type, ''), 'default') = ?
