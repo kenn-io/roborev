@@ -531,7 +531,7 @@ func (p *CIPoller) resolveCIMatrixMembers(
 
 	members := make([]config.ResolvedMember, 0, len(matrix))
 	for i, entry := range matrix {
-		resolvedAgent, resolvedModel, err := p.resolveMatrixMemberAgent(repo, cfg, entry, reasoning)
+		resolvedAgent, resolvedModel, err := p.resolveMatrixMemberAgent(repo, repoCfg, cfg, entry, reasoning)
 		if err != nil {
 			return nil, config.SynthesisSpec{}, err
 		}
@@ -555,13 +555,17 @@ func (p *CIPoller) resolveCIMatrixMembers(
 // resolveMatrixMemberAgent resolves the effective agent and model for one
 // matrix entry through workflow config, honoring the test agentResolverFn seam.
 func (p *CIPoller) resolveMatrixMemberAgent(
-	repo *storage.Repo, cfg *config.Config, entry config.AgentReviewType, reasoning string,
+	repo *storage.Repo,
+	repoCfg *config.RepoConfig,
+	cfg *config.Config,
+	entry config.AgentReviewType,
+	reasoning string,
 ) (string, string, error) {
 	workflow := "review"
 	if !config.IsDefaultReviewType(entry.ReviewType) {
 		workflow = entry.ReviewType
 	}
-	resolution, err := agent.ResolveWorkflowConfig(entry.Agent, repo.RootPath, cfg, workflow, reasoning)
+	resolution, err := agent.ResolveWorkflowConfigFromConfig(entry.Agent, repoCfg, cfg, workflow, reasoning)
 	if err != nil {
 		return "", "", fmt.Errorf("resolve workflow config: %w", err)
 	}

@@ -2625,6 +2625,42 @@ func TestCIPollerProcessPR_ReviewsMapMatrix(t *testing.T) {
 	}
 }
 
+func TestResolveCIMatrixMembersUsesPassedRepoConfigForAgentModel(t *testing.T) {
+	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+	h.Cfg.DefaultAgent = "global-agent"
+	h.Cfg.DefaultModel = "global-model"
+	h.Cfg.CI.Agents = []string{""}
+	h.Cfg.CI.ReviewTypes = []string{"default"}
+	h.Poller.agentResolverFn = func(name string) (string, error) {
+		return name, nil
+	}
+
+	localConfig := "review_agent = \"working-tree-agent\"\n" +
+		"review_model = \"working-tree-model\"\n"
+	require.NoError(
+		t,
+		os.WriteFile(filepath.Join(h.RepoPath, ".roborev.toml"), []byte(localConfig), 0o644),
+	)
+
+	repoCfg := &config.RepoConfig{
+		ReviewAgent: "default-branch-agent",
+		ReviewModel: "default-branch-model",
+		CI: config.RepoCIConfig{
+			Agents:      []string{""},
+			ReviewTypes: []string{"default"},
+			Reasoning:   "standard",
+		},
+	}
+
+	members, _, err := h.Poller.resolveCIMatrixMembers(
+		h.Repo, repoCfg, h.Cfg, "acme/api",
+	)
+	require.NoError(t, err)
+	require.Len(t, members, 1)
+	assert.Equal(t, "default-branch-agent", members[0].Agent)
+	assert.Equal(t, "default-branch-model", members[0].Model)
+}
+
 func TestCIPollerProcessPR_RepoReviewsMapOverride(
 	t *testing.T,
 ) {

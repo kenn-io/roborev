@@ -10,6 +10,7 @@ import (
 // shared by CLI, daemon, and batch review callers.
 type WorkflowConfig struct {
 	RepoPath       string
+	RepoConfig     *config.RepoConfig
 	GlobalConfig   *config.Config
 	Workflow       string
 	Reasoning      string
@@ -29,19 +30,42 @@ func ResolveWorkflowConfig(
 	globalCfg *config.Config,
 	workflow, reasoning string,
 ) (WorkflowConfig, error) {
+	repoCfg, _ := config.LoadRepoConfig(repoPath)
+	resolution, err := ResolveWorkflowConfigFromConfig(
+		cliAgent, repoCfg, globalCfg, workflow, reasoning,
+	)
+	if err != nil {
+		return WorkflowConfig{}, err
+	}
+	resolution.RepoPath = repoPath
+	return resolution, nil
+}
+
+// ResolveWorkflowConfigFromConfig resolves workflow agent/model context from
+// already-loaded config, never reading the working tree.
+func ResolveWorkflowConfigFromConfig(
+	cliAgent string,
+	repoCfg *config.RepoConfig,
+	globalCfg *config.Config,
+	workflow, reasoning string,
+) (WorkflowConfig, error) {
 	return WorkflowConfig{
-		RepoPath:       repoPath,
+		RepoConfig:     repoCfg,
 		GlobalConfig:   globalCfg,
 		Workflow:       workflow,
 		Reasoning:      reasoning,
-		PreferredAgent: config.ResolveAgentForWorkflow(cliAgent, repoPath, globalCfg, workflow, reasoning),
-		BackupAgent:    config.ResolveBackupAgentForWorkflow(repoPath, globalCfg, workflow),
+		PreferredAgent: config.ResolveAgentForWorkflowFromConfig(cliAgent, repoCfg, globalCfg, workflow, reasoning),
+		BackupAgent:    config.ResolveBackupAgentForWorkflowFromConfig(repoCfg, globalCfg, workflow),
 	}, nil
 }
 
 // AgentMatches reports whether two agent names refer to the same logical
 // agent after alias and ACP-name normalization.
 func (w WorkflowConfig) AgentMatches(left, right string) bool {
+	if w.RepoConfig != nil {
+		return workflowModelComparableAgentNameFromConfig(left, w.RepoConfig, w.GlobalConfig) ==
+			workflowModelComparableAgentNameFromConfig(right, w.RepoConfig, w.GlobalConfig)
+	}
 	return workflowModelComparableAgentName(left, w.RepoPath, w.GlobalConfig) ==
 		workflowModelComparableAgentName(right, w.RepoPath, w.GlobalConfig)
 }
@@ -56,6 +80,11 @@ func (w WorkflowConfig) UsesBackupAgent(selectedAgent string) bool {
 
 // BackupModel returns the workflow backup model override, if any.
 func (w WorkflowConfig) BackupModel() string {
+	if w.RepoConfig != nil {
+		return config.ResolveBackupModelForWorkflowFromConfig(
+			w.RepoConfig, w.GlobalConfig, w.Workflow,
+		)
+	}
 	return config.ResolveBackupModelForWorkflow(
 		w.RepoPath, w.GlobalConfig, w.Workflow,
 	)
@@ -72,14 +101,22 @@ func (w WorkflowConfig) ModelForSelectedAgent(
 		strings.TrimSpace(cliModel) == "" {
 		return w.BackupModel()
 	}
-	model := ResolveWorkflowModelForAgent(
-		selectedAgent, cliModel, w.RepoPath,
-		w.GlobalConfig, w.Workflow, w.Reasoning,
-	)
+	var model string
+	if w.RepoConfig != nil {
+		model = ResolveWorkflowModelForAgentFromConfig(
+			selectedAgent, cliModel, w.RepoConfig,
+			w.GlobalConfig, w.Workflow, w.Reasoning,
+		)
+	} else {
+		model = ResolveWorkflowModelForAgent(
+			selectedAgent, cliModel, w.RepoPath,
+			w.GlobalConfig, w.Workflow, w.Reasoning,
+		)
+	}
 	// For ACP agents with no workflow model, fall back to configured ACP model
 	if model == "" &&
-		isConfiguredACPAgentName(selectedAgent, w.GlobalConfig, w.RepoPath) {
-		acpCfg := config.ResolveACPAgentConfig(w.RepoPath, w.GlobalConfig)
+		w.isConfiguredACPAgentName(selectedAgent) {
+		acpCfg := w.resolveACPAgentConfig()
 		if acpCfg != nil && acpCfg.Model != "" {
 			return acpCfg.Model
 		}
@@ -97,29 +134,43 @@ func ResolveWorkflowModelForAgent(
 	globalCfg *config.Config,
 	workflow, level string,
 ) string {
+	repoCfg, _ := config.LoadRepoConfig(repoPath)
+	return ResolveWorkflowModelForAgentFromConfig(
+		selectedAgent, cliModel, repoCfg, globalCfg, workflow, level,
+	)
+}
+
+// ResolveWorkflowModelForAgentFromConfig is the config-taking core of
+// ResolveWorkflowModelForAgent, never reading the working tree.
+func ResolveWorkflowModelForAgentFromConfig(
+	selectedAgent, cliModel string,
+	repoCfg *config.RepoConfig,
+	globalCfg *config.Config,
+	workflow, level string,
+) string {
 	if s := strings.TrimSpace(cliModel); s != "" {
-		return config.ResolveModelForWorkflow(
-			s, repoPath, globalCfg, workflow, level,
+		return config.ResolveModelForWorkflowFromConfig(
+			s, repoCfg, globalCfg, workflow, level,
 		)
 	}
 
 	selectedAgent = strings.TrimSpace(selectedAgent)
 	if selectedAgent == "" {
-		return config.ResolveModelForWorkflow(
-			"", repoPath, globalCfg, workflow, level,
+		return config.ResolveModelForWorkflowFromConfig(
+			"", repoCfg, globalCfg, workflow, level,
 		)
 	}
 
-	defaultAgent := config.ResolveAgent("", repoPath, globalCfg)
-	if workflowModelComparableAgentName(selectedAgent, repoPath, globalCfg) !=
-		workflowModelComparableAgentName(defaultAgent, repoPath, globalCfg) {
-		return config.ResolveWorkflowModel(
-			repoPath, globalCfg, workflow, level,
+	defaultAgent := config.ResolveAgentFromConfig("", repoCfg, globalCfg)
+	if workflowModelComparableAgentNameFromConfig(selectedAgent, repoCfg, globalCfg) !=
+		workflowModelComparableAgentNameFromConfig(defaultAgent, repoCfg, globalCfg) {
+		return config.ResolveWorkflowModelFromConfig(
+			repoCfg, globalCfg, workflow, level,
 		)
 	}
 
-	return config.ResolveModelForWorkflow(
-		"", repoPath, globalCfg, workflow, level,
+	return config.ResolveModelForWorkflowFromConfig(
+		"", repoCfg, globalCfg, workflow, level,
 	)
 }
 
@@ -129,4 +180,26 @@ func workflowModelComparableAgentName(name string, repoPath string, cfg *config.
 		return defaultACPName
 	}
 	return CanonicalName(name)
+}
+
+func workflowModelComparableAgentNameFromConfig(name string, repoCfg *config.RepoConfig, cfg *config.Config) string {
+	name = strings.TrimSpace(name)
+	if isConfiguredACPAgentNameFromConfig(name, cfg, repoCfg) {
+		return defaultACPName
+	}
+	return CanonicalName(name)
+}
+
+func (w WorkflowConfig) isConfiguredACPAgentName(name string) bool {
+	if w.RepoConfig != nil {
+		return isConfiguredACPAgentNameFromConfig(name, w.GlobalConfig, w.RepoConfig)
+	}
+	return isConfiguredACPAgentName(name, w.GlobalConfig, w.RepoPath)
+}
+
+func (w WorkflowConfig) resolveACPAgentConfig() *config.ACPAgentConfig {
+	if w.RepoConfig != nil {
+		return config.ResolveACPAgentConfigFromConfig(w.RepoConfig, w.GlobalConfig)
+	}
+	return config.ResolveACPAgentConfig(w.RepoPath, w.GlobalConfig)
 }

@@ -692,6 +692,20 @@ func ResolveAgent(explicit string, repoPath string, globalCfg *Config) string {
 	return resolve("codex", explicit, repoVal, globalVal)
 }
 
+// ResolveAgentFromConfig is the config-taking core of ResolveAgent: it resolves
+// entirely from the passed repoCfg and globalCfg, never reading the working tree.
+func ResolveAgentFromConfig(explicit string, repoCfg *RepoConfig, globalCfg *Config) string {
+	var repoVal string
+	if repoCfg != nil {
+		repoVal = repoCfg.Agent
+	}
+	var globalVal string
+	if globalCfg != nil {
+		globalVal = globalCfg.DefaultAgent
+	}
+	return resolve("codex", explicit, repoVal, globalVal)
+}
+
 // clampPositive returns v if v > 0, otherwise 0.
 func clampPositive(v int) int {
 	if v > 0 {
@@ -979,6 +993,19 @@ func ResolveACPAgentConfig(repoPath string, globalCfg *Config) *ACPAgentConfig {
 		return globalCfg.ACP
 	}
 
+	return nil
+}
+
+// ResolveACPAgentConfigFromConfig is the config-taking core of
+// ResolveACPAgentConfig. Repo-level ACP config completely overrides global ACP
+// config when present.
+func ResolveACPAgentConfigFromConfig(repoCfg *RepoConfig, globalCfg *Config) *ACPAgentConfig {
+	if repoCfg != nil && repoCfg.ACP != nil {
+		return repoCfg.ACP
+	}
+	if globalCfg != nil && globalCfg.ACP != nil {
+		return globalCfg.ACP
+	}
 	return nil
 }
 

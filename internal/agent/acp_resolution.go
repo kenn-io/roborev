@@ -21,13 +21,23 @@ func defaultACPAgentConfig() *config.ACPAgentConfig {
 }
 
 func isConfiguredACPAgentName(name string, cfg *config.Config, repoPath string) bool {
+	return isConfiguredACPAgentNameWithConfig(
+		name, config.ResolveACPAgentConfig(repoPath, cfg),
+	)
+}
+
+func isConfiguredACPAgentNameFromConfig(name string, cfg *config.Config, repoCfg *config.RepoConfig) bool {
+	return isConfiguredACPAgentNameWithConfig(
+		name, config.ResolveACPAgentConfigFromConfig(repoCfg, cfg),
+	)
+}
+
+func isConfiguredACPAgentNameWithConfig(name string, acpCfg *config.ACPAgentConfig) bool {
 	rawName := strings.TrimSpace(name)
 	if rawName == defaultACPName {
 		return true
 	}
 
-	// Check if there's a configured ACP name in either repo or global config
-	acpCfg := config.ResolveACPAgentConfig(repoPath, cfg)
 	if acpCfg == nil {
 		return false
 	}

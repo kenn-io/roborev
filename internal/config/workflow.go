@@ -509,7 +509,13 @@ func ResolveWorkflowModelFromConfig(
 //  5. "" (no backup)
 func ResolveBackupAgentForWorkflow(repoPath string, globalCfg *Config, workflow string) string {
 	repoCfg, _ := LoadRepoConfig(repoPath)
+	return ResolveBackupAgentForWorkflowFromConfig(repoCfg, globalCfg, workflow)
+}
 
+// ResolveBackupAgentForWorkflowFromConfig is the config-taking core of
+// ResolveBackupAgentForWorkflow: it resolves entirely from the passed repoCfg
+// and globalCfg, never reading the working tree.
+func ResolveBackupAgentForWorkflowFromConfig(repoCfg *RepoConfig, globalCfg *Config, workflow string) string {
 	// Repo layer: workflow-specific > generic
 	if repoCfg != nil {
 		if s := lookupFieldByTag(reflect.ValueOf(*repoCfg), workflow+"_backup_agent"); s != "" {
@@ -543,7 +549,13 @@ func ResolveBackupAgentForWorkflow(repoPath string, globalCfg *Config, workflow 
 //  5. "" (no override — agent uses its default)
 func ResolveBackupModelForWorkflow(repoPath string, globalCfg *Config, workflow string) string {
 	repoCfg, _ := LoadRepoConfig(repoPath)
+	return ResolveBackupModelForWorkflowFromConfig(repoCfg, globalCfg, workflow)
+}
 
+// ResolveBackupModelForWorkflowFromConfig is the config-taking core of
+// ResolveBackupModelForWorkflow: it resolves entirely from the passed repoCfg
+// and globalCfg, never reading the working tree.
+func ResolveBackupModelForWorkflowFromConfig(repoCfg *RepoConfig, globalCfg *Config, workflow string) string {
 	// Repo layer: workflow-specific > generic
 	if repoCfg != nil {
 		if s := lookupFieldByTag(reflect.ValueOf(*repoCfg), workflow+"_backup_model"); s != "" {
