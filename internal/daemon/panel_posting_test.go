@@ -317,7 +317,8 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 	t.Run("plain output footer includes panel members", func(t *testing.T) {
 		h := newCIPollerHarness(t, "https://github.com/acme/api.git")
 		comments := h.CaptureComments()
-		_, synth, _ := h.seedCIPanelRun(t, "acme/api", 14, "headsha999", "base..headsha999",
+		const headSHA = "9999999cccccc"
+		_, synth, _ := h.seedCIPanelRun(t, "acme/api", 14, headSHA, "base.."+headSHA,
 			[]jobSpec{
 				{Agent: "codex", ReviewType: "default", Status: "done", Output: "x"},
 				{Agent: "codex", ReviewType: "security", Status: "done", Output: "y"},
@@ -333,6 +334,8 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 		assert.Contains(t, body, "Synthesis: test")
 		assert.NotContains(t, body, "Total: unknown")
 		assert.Contains(t, body, "Job: ")
+		assert.Contains(t, body, "Head: "+git.ShortSHA(headSHA))
+		assert.NotContains(t, body, "base", "footer must show reviewed head, not merge base")
 		assert.NotContains(t, body, "Review type:  | Agent:", "panel comments should not use the empty synthesis review_type footer")
 	})
 

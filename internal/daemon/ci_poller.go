@@ -1574,13 +1574,13 @@ func (p *CIPoller) panelCommentBody(row *storage.CIPanel, members []storage.Batc
 	}
 	includeCosts := p.resolveIncludeCosts(row.GithubRepo)
 	if strings.HasPrefix(strings.TrimSpace(rev.Output), "## roborev:") {
-		return appendPanelPRFooter(rev.Output, rev.Job, members, includeCosts)
+		return appendPanelPRFooter(rev.Output, rev.Job, members, includeCosts, row.HeadSHA)
 	}
 	verdict := storage.ParseVerdict(rev.Output)
 	if rev.Job != nil && rev.Job.Verdict != nil {
 		verdict = *rev.Job.Verdict
 	}
-	return formatPanelPRComment(rev, verdict, members, includeCosts)
+	return formatPanelPRCommentWithHead(rev, verdict, members, includeCosts, row.HeadSHA)
 }
 
 // handlePanelPostError resolves a failed comment post: a permanent GitHub access
@@ -2283,6 +2283,10 @@ func toReviewResult(
 }
 
 func formatPanelPRComment(review *storage.Review, verdict string, members []storage.BatchReviewResult, includeCosts bool) string {
+	return formatPanelPRCommentWithHead(review, verdict, members, includeCosts, "")
+}
+
+func formatPanelPRCommentWithHead(review *storage.Review, verdict string, members []storage.BatchReviewResult, includeCosts bool, headSHA string) string {
 	var b strings.Builder
 
 	switch verdict {
@@ -2306,18 +2310,18 @@ func formatPanelPRComment(review *storage.Review, verdict string, members []stor
 		b.WriteString("\n")
 	}
 
-	return appendPanelPRFooter(b.String(), review.Job, members, includeCosts)
+	return appendPanelPRFooter(b.String(), review.Job, members, includeCosts, headSHA)
 }
 
-func appendPanelPRFooter(body string, job *storage.ReviewJob, members []storage.BatchReviewResult, includeCosts bool) string {
-	footer := formatPanelPRFooter(job, members, includeCosts)
+func appendPanelPRFooter(body string, job *storage.ReviewJob, members []storage.BatchReviewResult, includeCosts bool, headSHA string) string {
+	footer := formatPanelPRFooter(job, members, includeCosts, headSHA)
 	if footer == "" {
 		return body
 	}
 	return strings.TrimRight(body, "\n") + footer
 }
 
-func formatPanelPRFooter(job *storage.ReviewJob, members []storage.BatchReviewResult, includeCosts bool) string {
+func formatPanelPRFooter(job *storage.ReviewJob, members []storage.BatchReviewResult, includeCosts bool, headSHA string) string {
 	if job == nil {
 		return ""
 	}
@@ -2332,6 +2336,9 @@ func formatPanelPRFooter(job *storage.ReviewJob, members []storage.BatchReviewRe
 	}
 	if total := formatPanelTotal(job, members, includeCosts); total != "" {
 		footer = append(footer, "Total: "+total)
+	}
+	if headSHA != "" {
+		footer = append(footer, "Head: "+gitpkg.ShortSHA(headSHA))
 	}
 	footer = append(footer, fmt.Sprintf("Job: %d", job.ID))
 	return fmt.Sprintf("\n\n---\n*%s*\n", strings.Join(footer, " | "))
