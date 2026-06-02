@@ -50,3 +50,5 @@ REPORT.md
 *.db
 .codex
 .antigravitycli/
+# roborev snapshots
+/.roborev/
