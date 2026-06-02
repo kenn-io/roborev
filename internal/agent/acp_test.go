@@ -172,6 +172,37 @@ func TestGetAvailableWithConfigResolvesACPAlias(t *testing.T) {
 	require.Equal(t, "go", acpAgent.Command, "Expected ACP command from config, got %q", acpAgent.Command)
 }
 
+func TestGetAvailableWithConfigEmptyRepoPathDoesNotReadCWD(t *testing.T) {
+	cwd := t.TempDir()
+	err := os.WriteFile(
+		filepath.Join(cwd, ".roborev.toml"),
+		[]byte("[acp]\nname = \"cwd-acp\"\ncommand = \"cwd-acp\"\n"),
+		0o644,
+	)
+	require.NoError(t, err)
+	t.Chdir(cwd)
+
+	fakeBin := t.TempDir()
+	globalACP := filepath.Join(fakeBin, "global-acp")
+	require.NoError(t, os.WriteFile(globalACP, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	t.Setenv("PATH", fakeBin)
+
+	cfg := &config.Config{
+		ACP: &config.ACPAgentConfig{
+			Name:    "global-acp",
+			Command: "global-acp",
+		},
+	}
+
+	resolved, err := GetAvailableWithConfig("", "global-acp", cfg)
+	require.NoError(t, err)
+
+	acpAgent, ok := resolved.(*ACPAgent)
+	require.True(t, ok, "Expected ACP agent, got %T", resolved)
+	require.Equal(t, "acp", acpAgent.Name())
+	require.Equal(t, "global-acp", acpAgent.Command)
+}
+
 func TestGetAvailableWithConfigResolvesConfiguredACPNameAlias(t *testing.T) {
 	fakeBin := t.TempDir()
 	binName := defaultACPCommand

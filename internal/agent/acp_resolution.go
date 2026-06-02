@@ -125,7 +125,10 @@ func isAvailableWithConfig(name string, cfg *config.Config) bool {
 // Optional backup agent names are tried after the preferred agent but
 // before the hardcoded fallback chain (see GetAvailable).
 func GetAvailableWithConfig(repoPath string, preferred string, cfg *config.Config, backups ...string) (Agent, error) {
-	repoCfg, _ := config.LoadRepoConfig(repoPath)
+	var repoCfg *config.RepoConfig
+	if strings.TrimSpace(repoPath) != "" {
+		repoCfg, _ = config.LoadRepoConfig(repoPath)
+	}
 	return GetAvailableWithConfigFromConfig(repoCfg, preferred, cfg, backups...)
 }
 
