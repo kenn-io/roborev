@@ -47,8 +47,6 @@ var gitRepoEnvKeys = map[string]struct{}{
 	"GIT_DISCOVERY_ACROSS_FILESYSTEM":  {},
 	"GIT_CONFIG_PARAMETERS":            {},
 	"GIT_CONFIG_COUNT":                 {},
-	"GIT_CONFIG_GLOBAL":                {},
-	"GIT_CONFIG_SYSTEM":                {},
 	"GIT_EXTERNAL_DIFF":                {},
 	"GIT_DIFF_OPTS":                    {},
 }

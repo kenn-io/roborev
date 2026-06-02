@@ -117,6 +117,30 @@ func runGit(t *testing.T, dir string, args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
+func TestCleanGitRepoEnvPreservesGlobalSystemConfigSelectors(t *testing.T) {
+	env := []string{
+		"GIT_DIR=/tmp/wrong/.git",
+		"GIT_WORK_TREE=/tmp/wrong",
+		"GIT_CONFIG_GLOBAL=/tmp/global.gitconfig",
+		"GIT_CONFIG_SYSTEM=/tmp/system.gitconfig",
+		"GIT_CONFIG_COUNT=1",
+		"GIT_CONFIG_KEY_0=safe.directory",
+		"GIT_CONFIG_VALUE_0=*",
+		"PATH=/bin",
+	}
+
+	cleaned := strings.Join(cleanGitRepoEnv(env), "\n")
+
+	assert.NotContains(t, cleaned, "GIT_DIR=")
+	assert.NotContains(t, cleaned, "GIT_WORK_TREE=")
+	assert.NotContains(t, cleaned, "GIT_CONFIG_COUNT=")
+	assert.NotContains(t, cleaned, "GIT_CONFIG_KEY_0=")
+	assert.NotContains(t, cleaned, "GIT_CONFIG_VALUE_0=")
+	assert.Contains(t, cleaned, "GIT_CONFIG_GLOBAL=/tmp/global.gitconfig")
+	assert.Contains(t, cleaned, "GIT_CONFIG_SYSTEM=/tmp/system.gitconfig")
+	assert.Contains(t, cleaned, "PATH=/bin")
+}
+
 func TestIsUnbornHead(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
