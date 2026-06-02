@@ -1011,8 +1011,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 	var commitID int64
 	var gitRef string
 	if job != nil {
-		commitID = job.CommitIDValue()
-		gitRef = job.GitRef
+		commitID, gitRef = job.LegacyCommentLookupTarget()
 	}
 	comments, commentsErr := fetchComments(ctx, addr, jobID, commitID, gitRef)
 	if commentsErr != nil && !opts.quiet {
@@ -1268,8 +1267,7 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 		var batchCommitID int64
 		var batchGitRef string
 		if job != nil {
-			batchCommitID = job.CommitIDValue()
-			batchGitRef = job.GitRef
+			batchCommitID, batchGitRef = job.LegacyCommentLookupTarget()
 		}
 		comments, commentsErr := fetchComments(ctx, batchAddr, id, batchCommitID, batchGitRef)
 		if commentsErr != nil && !opts.quiet {
@@ -1633,10 +1631,11 @@ func fetchComments(ctx context.Context, serverAddr string, jobID, commitID int64
 		// Also fetch legacy commit-based comments and merge.
 		// Prefer commit_id (unambiguous), fall back to SHA only when
 		// gitRef looks like a hex SHA (not a task label like "run").
+		commitID, gitRef = legacyCommentLookupTarget(commitID, gitRef)
 		var legacyURL string
 		if commitID > 0 {
 			legacyURL = fmt.Sprintf("%s/api/comments?commit_id=%d", addr, commitID)
-		} else if gitrepo.LooksLikeSHA(gitRef) {
+		} else if gitRef != "" {
 			legacyURL = fmt.Sprintf("%s/api/comments?sha=%s", addr, gitRef)
 		}
 		if legacyURL != "" {
@@ -1659,6 +1658,17 @@ func fetchComments(ctx context.Context, serverAddr string, jobID, commitID int64
 
 		return responses, nil
 	})
+}
+
+func legacyCommentLookupTarget(commitID int64, gitRef string) (int64, string) {
+	var commitIDPtr *int64
+	if commitID > 0 {
+		commitIDPtr = &commitID
+	}
+	return storage.ReviewJob{
+		CommitID: commitIDPtr,
+		GitRef:   gitRef,
+	}.LegacyCommentLookupTarget()
 }
 
 // buildGenericFixPrompt creates a fix prompt without knowing the analysis type.

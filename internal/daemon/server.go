@@ -2050,11 +2050,7 @@ func (s *Server) humaFixJob(
 			)
 		}
 
-		commitID := parentJob.CommitIDValue()
-		var fallbackSHA string
-		if commitID == 0 && gitrepo.LooksLikeSHA(parentJob.GitRef) {
-			fallbackSHA = parentJob.GitRef
-		}
+		commitID, fallbackSHA := parentJob.LegacyCommentLookupTarget()
 		comments, commentsErr := s.db.GetAllCommentsForJob(
 			req.ParentJobID, commitID, fallbackSHA,
 		)

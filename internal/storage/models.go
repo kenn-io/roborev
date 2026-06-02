@@ -3,6 +3,8 @@ package storage
 import (
 	"strings"
 	"time"
+
+	gitrepo "go.kenn.io/kit/git/repo"
 )
 
 type Repo struct {
@@ -217,6 +219,24 @@ func (j ReviewJob) IsFixJob() bool {
 // stored-prompt job (task/compact/fix) — it has its own worker path.
 func (j ReviewJob) IsSynthesisJob() bool {
 	return j.JobType == JobTypeSynthesis
+}
+
+// LegacyCommentLookupTarget returns the legacy commit-comment lookup key for
+// this job. Only single-commit review rows are eligible: dirty jobs may carry a
+// base HEAD commit_id for session reuse, but that base is not the reviewed
+// subject and must not pull commit-scoped comments into dirty-review prompts.
+func (j ReviewJob) LegacyCommentLookupTarget() (commitID int64, fallbackSHA string) {
+	if j.IsDirtyJob() || strings.Contains(j.GitRef, "..") ||
+		j.UsesStoredPrompt() || j.IsSynthesisJob() {
+		return 0, ""
+	}
+	if j.CommitID != nil {
+		return *j.CommitID, ""
+	}
+	if gitrepo.LooksLikeSHA(j.GitRef) {
+		return 0, j.GitRef
+	}
+	return 0, ""
 }
 
 // HasViewableOutput returns true if this job has completed and its review/patch

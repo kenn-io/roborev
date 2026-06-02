@@ -153,6 +153,38 @@ func TestBuildBatchFixPromptSplitsMixedResponses(t *testing.T) {
 	assert.Contains(t, p, "Found HIGH bug in foo.go")
 }
 
+func TestFetchCommentsSkipsLegacyLookupForDirtyJob(t *testing.T) {
+	assert := assert.New(t)
+	var sawLegacy bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.RawQuery {
+		case "job_id=11":
+			assert.NoError(json.NewEncoder(w).Encode(struct {
+				Responses []storage.Response `json:"responses"`
+			}{
+				Responses: []storage.Response{{Responder: "alice", Response: "job comment"}},
+			}))
+		case "commit_id=42":
+			sawLegacy = true
+			assert.NoError(json.NewEncoder(w).Encode(struct {
+				Responses []storage.Response `json:"responses"`
+			}{
+				Responses: []storage.Response{{Responder: "bob", Response: "base commit comment"}},
+			}))
+		default:
+			http.Error(w, "unexpected query: "+r.URL.RawQuery, http.StatusBadRequest)
+		}
+	}))
+	defer server.Close()
+
+	got, err := fetchComments(context.Background(), server.URL, 11, 42, "dirty")
+	require.NoError(t, err)
+
+	require.Len(t, got, 1)
+	assert.Equal("alice", got[0].Responder)
+	assert.False(sawLegacy, "dirty jobs must not fetch legacy comments for the base commit")
+}
+
 func TestBuildGenericCommitPrompt(t *testing.T) {
 	prompt := buildGenericCommitPrompt()
 

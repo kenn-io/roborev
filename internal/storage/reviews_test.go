@@ -177,6 +177,31 @@ func TestGetAllCommentsForJob(t *testing.T) {
 		assert.Equal(t, "bob", all[1].Responder)
 	})
 
+	t.Run("dirty job skips base commit legacy comments", func(t *testing.T) {
+		diff := "diff --git a/file.go b/file.go\n+dirty\n"
+		dirtyJob, err := db.EnqueueJob(EnqueueOpts{
+			RepoID:      job.RepoID,
+			CommitID:    commit.ID,
+			GitRef:      "dirty",
+			Agent:       "test",
+			JobType:     JobTypeDirty,
+			DiffContent: diff,
+		})
+		require.NoError(t, err)
+		_, err = db.Exec(
+			`INSERT INTO responses (job_id, responder, response, uuid, source_machine_id, created_at)
+			 VALUES (?, ?, ?, ?, ?, ?)`,
+			dirtyJob.ID, "dana", "Dirty job comment", GenerateUUID(), machineID, t3,
+		)
+		require.NoError(t, err)
+
+		commitID, fallbackSHA := dirtyJob.LegacyCommentLookupTarget()
+		all, err := db.GetAllCommentsForJob(dirtyJob.ID, commitID, fallbackSHA)
+		require.NoError(t, err)
+		require.Len(t, all, 1)
+		assert.Equal(t, "dana", all[0].Responder)
+	})
+
 	t.Run("skips fallback when SHA is empty", func(t *testing.T) {
 		// Callers pass "" when gitRef is not a valid SHA (e.g. ranges).
 		all, err := db.GetAllCommentsForJob(job.ID, 0, "")

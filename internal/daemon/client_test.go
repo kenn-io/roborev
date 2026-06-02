@@ -94,6 +94,38 @@ func TestHTTPClientAddComment(t *testing.T) {
 	assert.Equal("Fixed the issue", received.Comment)
 }
 
+func TestHTTPClientGetAllCommentsForJobSkipsLegacyLookupForDirtyJob(t *testing.T) {
+	assert := assert.New(t)
+	var sawLegacy bool
+	client := mockAPI(t, func(w http.ResponseWriter, r *http.Request) {
+		assertRequest(t, r, http.MethodGet, "/api/comments")
+		switch r.URL.RawQuery {
+		case "job_id=11":
+			writeTestJSON(t, w, struct {
+				Responses []storage.Response `json:"responses"`
+			}{
+				Responses: []storage.Response{{Responder: "alice", Response: "job comment"}},
+			})
+		case "commit_id=42":
+			sawLegacy = true
+			writeTestJSON(t, w, struct {
+				Responses []storage.Response `json:"responses"`
+			}{
+				Responses: []storage.Response{{Responder: "bob", Response: "base commit comment"}},
+			})
+		default:
+			http.Error(w, "unexpected query: "+r.URL.RawQuery, http.StatusBadRequest)
+		}
+	})
+
+	got, err := client.GetAllCommentsForJob(11, 42, "dirty")
+	require.NoError(t, err)
+
+	require.Len(t, got, 1)
+	assert.Equal("alice", got[0].Responder)
+	assert.False(sawLegacy, "dirty jobs must not fetch legacy comments for the base commit")
+}
+
 func TestHTTPClientMarkReviewClosed(t *testing.T) {
 	assert := assert.New(t)
 

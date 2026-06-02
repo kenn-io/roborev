@@ -224,3 +224,59 @@ func TestUsesStoredPrompt(t *testing.T) {
 		})
 	}
 }
+
+func TestLegacyCommentLookupTarget(t *testing.T) {
+	commitID := int64(42)
+	diff := "diff"
+
+	tests := []struct {
+		name         string
+		job          storage.ReviewJob
+		wantCommitID int64
+		wantFallback string
+	}{
+		{
+			name:         "single commit uses commit id",
+			job:          storage.ReviewJob{JobType: storage.JobTypeReview, CommitID: &commitID, GitRef: "abc1234"},
+			wantCommitID: commitID,
+		},
+		{
+			name:         "legacy commit job uses commit id",
+			job:          storage.ReviewJob{CommitID: &commitID, GitRef: "abc1234"},
+			wantCommitID: commitID,
+		},
+		{
+			name:         "sha fallback when no commit id",
+			job:          storage.ReviewJob{JobType: storage.JobTypeReview, GitRef: "abc1234"},
+			wantFallback: "abc1234",
+		},
+		{
+			name: "dirty skips commit id",
+			job:  storage.ReviewJob{JobType: storage.JobTypeDirty, CommitID: &commitID, GitRef: "dirty"},
+		},
+		{
+			name: "dirty inferred by diff skips commit id",
+			job:  storage.ReviewJob{CommitID: &commitID, GitRef: "abc1234", DiffContent: &diff},
+		},
+		{
+			name: "range skips commit id",
+			job:  storage.ReviewJob{JobType: storage.JobTypeRange, CommitID: &commitID, GitRef: "abc1234..def5678"},
+		},
+		{
+			name: "task skips commit id",
+			job:  storage.ReviewJob{JobType: storage.JobTypeTask, CommitID: &commitID, GitRef: "run"},
+		},
+		{
+			name: "fix skips commit id",
+			job:  storage.ReviewJob{JobType: storage.JobTypeFix, CommitID: &commitID, GitRef: "abc1234"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			gotCommitID, gotFallback := tt.job.LegacyCommentLookupTarget()
+			assert.Equal(t, tt.wantCommitID, gotCommitID)
+			assert.Equal(t, tt.wantFallback, gotFallback)
+		})
+	}
+}

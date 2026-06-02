@@ -398,10 +398,11 @@ func (c *HTTPClient) GetAllCommentsForJob(jobID, commitID int64, gitRef string) 
 	// Also fetch legacy commit-based comments.
 	// Prefer commit_id (unambiguous), fall back to SHA only when
 	// gitRef looks like a hex commit SHA (not a task label).
+	commitID, gitRef = legacyCommentLookupTarget(commitID, gitRef)
 	var legacyURL string
 	if commitID > 0 {
 		legacyURL = fmt.Sprintf("%s/api/comments?commit_id=%d", c.baseURL, commitID)
-	} else if gitrepo.LooksLikeSHA(gitRef) {
+	} else if gitRef != "" {
 		legacyURL = fmt.Sprintf("%s/api/comments?sha=%s", c.baseURL, gitRef)
 	}
 	if legacyURL != "" {
@@ -420,6 +421,17 @@ func (c *HTTPClient) GetAllCommentsForJob(jobID, commitID int64, gitRef string) 
 	}
 
 	return responses, nil
+}
+
+func legacyCommentLookupTarget(commitID int64, gitRef string) (int64, string) {
+	var commitIDPtr *int64
+	if commitID > 0 {
+		commitIDPtr = &commitID
+	}
+	return storage.ReviewJob{
+		CommitID: commitIDPtr,
+		GitRef:   gitRef,
+	}.LegacyCommentLookupTarget()
 }
 
 // RemapResult is the response from POST /api/remap.
