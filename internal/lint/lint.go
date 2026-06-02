@@ -10,6 +10,26 @@ import (
 	"strings"
 )
 
+// StringOrSlice handles Semgrep fields that can be either a single
+// string or a JSON array (e.g. `"cwe": "CWE-123"` or `"cwe": ["CWE-123"]`).
+type StringOrSlice []string
+
+func (s *StringOrSlice) UnmarshalJSON(data []byte) error {
+	// Try array first
+	var arr []string
+	if err := json.Unmarshal(data, &arr); err == nil {
+		*s = arr
+		return nil
+	}
+	// Fall back to single string
+	var str string
+	if err := json.Unmarshal(data, &str); err != nil {
+		return fmt.Errorf("string_or_slice: expected string or array, got %s", string(data))
+	}
+	*s = []string{str}
+	return nil
+}
+
 // Finding represents a single Semgrep finding.
 type Finding struct {
 	CheckID  string   `json:"check_id"`
@@ -35,13 +55,15 @@ type Extra struct {
 }
 
 // Metadata carries classification data from the Semgrep rule.
+// Field types use StringOrSlice to handle Semgrep's inconsistent
+// JSON output (sometimes a single string, sometimes an array).
 type Metadata struct {
-	CWE                []string `json:"cwe"`
-	OWASP              []string `json:"owasp"`
-	Category           string   `json:"category"`
-	Technology         []string `json:"technology"`
-	Confidence         string   `json:"confidence"`
-	VulnerabilityClass []string `json:"vulnerability_class"`
+	CWE                StringOrSlice `json:"cwe"`
+	OWASP              StringOrSlice `json:"owasp"`
+	Category           string        `json:"category"`
+	Technology         StringOrSlice `json:"technology"`
+	Confidence         string        `json:"confidence"`
+	VulnerabilityClass StringOrSlice `json:"vulnerability_class"`
 }
 
 // Report holds the full Semgrep scan output.

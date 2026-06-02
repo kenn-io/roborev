@@ -73,6 +73,7 @@ func main() {
 	rootCmd.AddCommand(versionCmd())
 	rootCmd.AddCommand(lintCmd())
 	rootCmd.AddCommand(mutateCmd())
+	rootCmd.AddCommand(qaCmd())
 
 	if err := rootCmd.Execute(); err != nil {
 		// exitError carries a specific exit code; the RunE that returned
