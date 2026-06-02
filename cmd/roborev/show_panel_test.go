@@ -11,9 +11,6 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 )
 
-//go:fix inline
-func strptr(s string) *string { return new(s) }
-
 // TestFetchPanelMembersRequestsFullRun verifies show requests the full member
 // list (limit=0) so a panel with >=50 rows is not truncated, and that the
 // synthesis row is filtered out of the returned members.

@@ -68,6 +68,18 @@ var ErrJobNotFound = fmt.Errorf("job not found")
 // Set once by validateServerFlag, read by getDaemonEndpoint.
 var parsedServerEndpoint *daemon.DaemonEndpoint
 
+func defaultDaemonEndpoint() daemon.DaemonEndpoint {
+	return daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373"}
+}
+
+func fallbackDaemonEndpoint() daemon.DaemonEndpoint {
+	exe, err := os.Executable()
+	if err == nil && shouldRefuseAutoStartDaemon(exe) {
+		return daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:1"}
+	}
+	return defaultDaemonEndpoint()
+}
+
 // validateServerFlag parses and validates the --server flag value.
 // Called from PersistentPreRunE so invalid values fail fast.
 func validateServerFlag() error {
@@ -89,7 +101,7 @@ func getDaemonEndpoint() daemon.DaemonEndpoint {
 		}
 		ep, err := daemon.ParseEndpoint(serverAddr)
 		if err != nil {
-			return daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373"}
+			return fallbackDaemonEndpoint()
 		}
 		return ep
 	}
@@ -101,7 +113,7 @@ func getDaemonEndpoint() daemon.DaemonEndpoint {
 	if parsedServerEndpoint != nil {
 		return *parsedServerEndpoint
 	}
-	return daemon.DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373"}
+	return fallbackDaemonEndpoint()
 }
 
 // getDaemonHTTPClient returns an HTTP client configured for the daemon endpoint.

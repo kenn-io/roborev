@@ -6,6 +6,7 @@ package testenv
 import (
 	"fmt"
 	"os"
+	"path/filepath"
 	"testing"
 )
 
@@ -28,7 +29,7 @@ func RunIsolatedMain(m *testing.M) int {
 	}
 	defer cleanupTempDir()
 
-	configureGitForTests()
+	configureGitForTests(tmpDir)
 
 	restoreDataDir := setDataDirEnv(tmpDir)
 	defer restoreDataDir()
@@ -85,13 +86,19 @@ func setDataDirEnv(dir string) func() {
 	}
 }
 
-func configureGitForTests() {
+func configureGitForTests(tmpDir string) {
 	// Prevent global/system git config from leaking into tests.
 	// Without this, commit.gpgsign=true in global config triggers
 	// gpg-agent/pinentry during test commits. os.DevNull is
 	// cross-platform (/dev/null on Unix, NUL on Windows).
 	_ = os.Setenv("GIT_CONFIG_GLOBAL", os.DevNull)
 	_ = os.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+	// Git also reads the default global ignore file from XDG_CONFIG_HOME
+	// independently of GIT_CONFIG_GLOBAL. Keep that out of the user's real
+	// ~/.config so personal excludes cannot change test behavior.
+	xdgConfigHome := filepath.Join(tmpDir, "xdg-config")
+	_ = os.MkdirAll(xdgConfigHome, 0o755)
+	_ = os.Setenv("XDG_CONFIG_HOME", xdgConfigHome)
 	// Never allow git to prompt for input (passwords, passphrases, etc).
 	// If something unexpected tries to prompt, fail fast instead of blocking.
 	_ = os.Setenv("GIT_TERMINAL_PROMPT", "0")
