@@ -125,12 +125,21 @@ func findExecutable(name string) string {
 	if p, err := exec.LookPath(name); err == nil {
 		return p
 	}
-	// Check common pip/uv install locations
+	// Check common install locations
 	home, _ := os.UserHomeDir()
+	gopath := os.Getenv("GOPATH")
+	if gopath == "" {
+		if home != "" {
+			gopath = filepath.Join(home, "go")
+		}
+	}
 	candidates := []string{
 		filepath.Join(home, ".local/bin", name),
 		filepath.Join(home, ".local/share/uv/python", name),
 		filepath.Join(home, "Library/Python/3.13/bin", name),
+	}
+	if gopath != "" {
+		candidates = append(candidates, filepath.Join(gopath, "bin", name))
 	}
 	for _, c := range candidates {
 		if _, err := os.Stat(c); err == nil {

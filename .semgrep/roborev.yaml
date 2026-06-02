@@ -1,0 +1,135 @@
+rules:
+  # ──────────────────────────────────────────
+  # Go security rules for roborev codebase
+  # ──────────────────────────────────────────
+
+  - id: roborev.shell-escape-required
+    patterns:
+      - pattern: |
+          fmt.Sprintf($CMD, ...)
+      - pattern-not: |
+          fmt.Sprintf("...", ...)
+    message: |
+      Dynamic format strings with user-controlled data may need shell escaping.
+      Use shellEscape() or sanitize input before interpolating into commands.
+    languages: [go]
+    severity: WARNING
+    metadata:
+      category: security
+      confidence: LOW
+      technology: [go]
+      cwe: "CWE-78"
+
+  - id: roborev.exec-command-context
+    patterns:
+      - pattern: |
+          exec.Command(...)
+      - pattern-not: |
+          exec.CommandContext($CTX, ...)
+    message: |
+      Consider using exec.CommandContext instead of exec.Command to support
+      cancellation and timeouts. This prevents orphaned subprocesses.
+    languages: [go]
+    severity: INFO
+    metadata:
+      category: best-practice
+      confidence: MEDIUM
+      technology: [go]
+
+  # ──────────────────────────────────────────
+  # Cobra command conventions
+  # ──────────────────────────────────────────
+
+  - id: roborev.cobra-runE-error-wrapping
+    patterns:
+      - pattern: |
+          return $ERR
+      - pattern-inside: |
+          RunE: func(cmd *cobra.Command, args []string) error {
+            ...
+          }
+      - metavariable-regex:
+          metavariable: $ERR
+          regex: ^(fmt\.Errorf|errors\.New)\(
+    message: |
+      Cobra RunE errors should use fmt.Errorf with %w to wrap underlying
+      errors, preserving the error chain for debugging.
+    languages: [go]
+    severity: INFO
+    metadata:
+      category: best-practice
+      confidence: MEDIUM
+      technology: [go]
+
+  - id: roborev.cobra-help-text
+    patterns:
+      - pattern: |
+          Long: ``
+    message: |
+      Cobra commands should include Long help text with usage examples.
+      This improves discoverability and user experience.
+    languages: [go]
+    severity: INFO
+    metadata:
+      category: maintainability
+      confidence: HIGH
+      technology: [go]
+
+  # ──────────────────────────────────────────
+  # Testing conventions
+  # ──────────────────────────────────────────
+
+  - id: roborev.test-function-naming
+    patterns:
+      - pattern: |
+          func Test$FUNC($T *testing.T) {
+            ...
+          }
+    message: |
+      Test function detected. Ensure test functions follow the TestXxx
+      naming convention and are in _test.go files.
+    languages: [go]
+    severity: INFO
+    metadata:
+      category: maintainability
+      confidence: HIGH
+      technology: [go]
+
+  # ──────────────────────────────────────────
+  # Package conventions
+  # ──────────────────────────────────────────
+
+  - id: roborev.package-comment
+    patterns:
+      - pattern: |
+          package $NAME
+      - pattern-not-regex: '^// Package \w+'
+    paths:
+      include:
+        - "internal/*.go"
+        - "cmd/roborev/*.go"
+    message: |
+      Internal packages should have a package comment starting with
+      "// Package name ..." describing the package's purpose.
+    languages: [go]
+    severity: INFO
+    metadata:
+      category: maintainability
+      confidence: MEDIUM
+      technology: [go]
+
+  - id: roborev.no-init-functions
+    patterns:
+      - pattern: |
+          func init() {
+            ...
+          }
+    message: |
+      Avoid init() functions when possible. They make code harder to test
+      and reason about. Prefer explicit initialization functions.
+    languages: [go]
+    severity: INFO
+    metadata:
+      category: best-practice
+      confidence: MEDIUM
+      technology: [go]

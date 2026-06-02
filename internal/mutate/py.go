@@ -78,35 +78,67 @@ func (b *mutmutBackend) parseResults(r *Result, output string) {
 }
 
 func (b *mutmutBackend) parseSummaryLine(r *Result, line string) {
+	// Strip trailing punctuation from each token to handle
+	// mutmut output like "8 survived. 0 timeout."
 	fields := strings.Fields(strings.ToLower(line))
+	clean := make([]string, len(fields))
 	for i, f := range fields {
+		clean[i] = strings.TrimRight(f, ".,;:!")
+	}
+	for i, f := range clean {
 		switch f {
 		case "killed":
-			if i+1 < len(fields) {
-				if n, err := strconv.Atoi(fields[i+1]); err == nil {
-					r.Killed = n
-				}
+			// "Killed 42 out of 50" — count follows
+			if n := parseNumAfter(clean, i); n >= 0 {
+				r.Killed = n
+			}
+			// "42 killed" — count precedes
+			if n := parseNumBefore(clean, i); n >= 0 {
+				r.Killed = n
 			}
 		case "survived":
-			if i+1 < len(fields) {
-				if n, err := strconv.Atoi(fields[i+1]); err == nil {
-					r.Survived = n
-				}
+			if n := parseNumAfter(clean, i); n >= 0 {
+				r.Survived = n
+			}
+			if n := parseNumBefore(clean, i); n >= 0 {
+				r.Survived = n
 			}
 		case "timeout":
-			if i+1 < len(fields) {
-				if n, err := strconv.Atoi(fields[i+1]); err == nil {
-					r.Timeouted = n
-				}
+			if n := parseNumAfter(clean, i); n >= 0 {
+				r.Timeouted = n
+			}
+			if n := parseNumBefore(clean, i); n >= 0 {
+				r.Timeouted = n
 			}
 		case "suspicious":
-			if i+1 < len(fields) {
-				if n, err := strconv.Atoi(fields[i+1]); err == nil {
-					r.Suspicious = n
-				}
+			if n := parseNumAfter(clean, i); n >= 0 {
+				r.Suspicious = n
+			}
+			if n := parseNumBefore(clean, i); n >= 0 {
+				r.Suspicious = n
 			}
 		}
 	}
+}
+
+// parseNumAfter returns the integer at clean[i+1], or -1 if not found.
+func parseNumAfter(clean []string, i int) int {
+	if i+1 < len(clean) {
+		if n, err := strconv.Atoi(clean[i+1]); err == nil {
+			return n
+		}
+	}
+	return -1
+}
+
+// parseNumBefore returns the integer at clean[i-1], or -1 if not found.
+func parseNumBefore(clean []string, i int) int {
+	if i-1 >= 0 {
+		if n, err := strconv.Atoi(clean[i-1]); err == nil {
+			return n
+		}
+	}
+	return -1
 }
 
 func (b *mutmutBackend) tryResultsCommand(r *Result) {
@@ -123,21 +155,74 @@ func (b *mutmutBackend) tryResultsCommand(r *Result) {
 	}
 }
 
-// goBackend wraps ooze (Go mutation testing).
+// goBackend wraps go-mutesting (Go mutation testing CLI).
 type goBackend struct {
 	path string
 }
 
-func (b *goBackend) Name() string { return "ooze" }
+func (b *goBackend) Name() string { return "go-mutesting" }
 
 func (b *goBackend) Available() bool {
-	b.path = findExecutable("ooze")
+	b.path = findExecutable("go-mutesting")
 	return b.path != ""
 }
 
 func (b *goBackend) Run(files []string) (*Result, error) {
-	return &Result{
-		Backend: "ooze",
-		Output:  "Go mutation testing requires ooze. Install: go install github.com/gtramontina/ooze@latest",
-	}, nil
+	args := []string{"./..."}
+
+	cmd := exec.Command(b.path, args...)
+	out, err := cmd.CombinedOutput()
+	output := string(out)
+
+	result := &Result{
+		Backend: "go-mutesting",
+		Output:  output,
+	}
+
+	if err != nil {
+		if len(out) == 0 {
+			return result, fmt.Errorf("go-mutesting failed: %w", err)
+		}
+	}
+
+	b.parseResults(result, output)
+	return result, nil
+}
+
+// parseResults extracts mutation counts from go-mutesting output.
+// Format: "The mutation score is 0.850 (17 passed, 3 failed, 0 duplicated, 0 skipped, total is 20)"
+func (b *goBackend) parseResults(r *Result, output string) {
+	lines := strings.Split(output, "\n")
+	for _, line := range lines {
+		lower := strings.ToLower(line)
+		if strings.Contains(lower, "mutation score") && strings.Contains(lower, "passed") {
+			// Parse: "mutation score is N (X passed, Y failed, Z duplicated, W skipped, total is T)"
+			b.parseMutationScore(r, lower)
+			break
+		}
+	}
+}
+
+func (b *goBackend) parseMutationScore(r *Result, line string) {
+	fields := strings.Fields(line)
+	for i, f := range fields {
+		switch {
+		case f == "passed" && i > 0:
+			if n, err := strconv.Atoi(fields[i-1]); err == nil {
+				r.Killed = n
+			}
+		case f == "failed" && i > 0:
+			if n, err := strconv.Atoi(fields[i-1]); err == nil {
+				r.Survived = n
+			}
+		case f == "total" && i+2 < len(fields) && fields[i+1] == "is":
+			if n, err := strconv.Atoi(fields[i+2]); err == nil {
+				r.Total = n
+			}
+		}
+	}
+
+	if r.Total > 0 {
+		r.Score = float64(r.Killed) / float64(r.Total)
+	}
 }
