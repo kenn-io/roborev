@@ -363,6 +363,11 @@ official release over a dev build.
 Use --no-restart when daemon lifecycle is managed externally (for example,
 launchd or systemd).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if update.IsDisabled() {
+				fmt.Println(update.DisabledMessage)
+				return nil
+			}
+
 			fmt.Println("Checking for updates...")
 
 			info, err := update.CheckForUpdate(true) // Force check, ignore cache

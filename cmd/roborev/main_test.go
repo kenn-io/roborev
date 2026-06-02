@@ -27,6 +27,7 @@ import (
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/update"
 	"go.kenn.io/roborev/internal/version"
 )
 
@@ -679,6 +680,23 @@ func TestFilterGitEnv(t *testing.T) {
 	for i, got := range filtered {
 		assert.Equal(t, got, want[i])
 	}
+}
+
+func TestUpdateCmdDisabledBuildPrintsPackageManagerGuidance(t *testing.T) {
+	origDisabled := update.Disabled
+	update.Disabled = "true"
+	t.Cleanup(func() {
+		update.Disabled = origDisabled
+	})
+
+	cmd := updateCmd()
+	output := captureStdout(t, func() {
+		require.NoError(t, cmd.Execute())
+	})
+
+	assert.Contains(t, output, "disabled in this build")
+	assert.Contains(t, output, "package manager")
+	assert.NotContains(t, output, "Checking for updates")
 }
 
 func TestIsGoTestBinaryPath(t *testing.T) {

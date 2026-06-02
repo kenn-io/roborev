@@ -6,6 +6,7 @@ import (
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -36,6 +37,22 @@ var (
 	checksumPattern    = regexp.MustCompile(`(?i)[a-f0-9]{64}`)
 	semverBasePattern  = regexp.MustCompile(`^\d+(?:\.\d+)+`)
 )
+
+// Disabled is a build-time string set with -ldflags -X to disable self-updates.
+var Disabled = "false"
+
+// DisabledMessage explains why the self-updater is unavailable in this build.
+const DisabledMessage = "roborev update is disabled in this build; use your package manager to update roborev"
+
+// IsDisabled reports whether self-update behavior is disabled for this build.
+func IsDisabled() bool {
+	switch strings.ToLower(strings.TrimSpace(Disabled)) {
+	case "1", "true", "yes", "on":
+		return true
+	default:
+		return false
+	}
+}
 
 // UpdateInfo contains information about an available update
 type UpdateInfo struct {
@@ -156,6 +173,10 @@ func defaultUpdater() *Updater {
 
 // CheckForUpdate checks if a newer version is available.
 func (u *Updater) CheckForUpdate(forceCheck bool) (*UpdateInfo, error) {
+	if IsDisabled() {
+		return nil, nil
+	}
+
 	build := u.currentBuild()
 
 	// Don't nag on dev builds. Explicit `roborev update` still works.
@@ -174,6 +195,10 @@ func (u *Updater) CheckForUpdate(forceCheck bool) (*UpdateInfo, error) {
 
 // PerformUpdate downloads and installs the update.
 func (u *Updater) PerformUpdate(info *UpdateInfo, reporter Reporter) error {
+	if IsDisabled() {
+		return errors.New(DisabledMessage)
+	}
+
 	reporter = normalizeReporter(reporter)
 
 	if info.Checksum == "" {

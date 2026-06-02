@@ -48,6 +48,78 @@ func (r *testReporter) Progress(downloaded, total int64) {
 	r.progress = append(r.progress, downloaded, total)
 }
 
+func TestIsDisabled(t *testing.T) {
+	origDisabled := Disabled
+	t.Cleanup(func() {
+		Disabled = origDisabled
+	})
+
+	tests := []struct {
+		value string
+		want  bool
+	}{
+		{value: "", want: false},
+		{value: "false", want: false},
+		{value: "true", want: true},
+		{value: "TRUE", want: true},
+		{value: "1", want: true},
+		{value: "yes", want: true},
+		{value: "on", want: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.value, func(t *testing.T) {
+			Disabled = tt.value
+			assert.Equal(t, tt.want, IsDisabled())
+		})
+	}
+}
+
+func TestCheckForUpdateDisabledSkipsReleaseFetch(t *testing.T) {
+	origDisabled := Disabled
+	Disabled = "true"
+	t.Cleanup(func() {
+		Disabled = origDisabled
+	})
+
+	client := &http.Client{Transport: roundTripFunc(func(*http.Request) (*http.Response, error) {
+		return nil, fmt.Errorf("release fetch should be skipped")
+	})}
+	updater := NewUpdater(Deps{
+		Client:   client,
+		Version:  "v1.2.3",
+		CacheDir: t.TempDir,
+	})
+
+	info, err := updater.CheckForUpdate(true)
+
+	require.NoError(t, err)
+	assert.Nil(t, info)
+}
+
+func TestPerformUpdateDisabledReturnsError(t *testing.T) {
+	origDisabled := Disabled
+	Disabled = "true"
+	t.Cleanup(func() {
+		Disabled = origDisabled
+	})
+
+	updater := NewUpdater(Deps{
+		MkdirTemp: func(string, string) (string, error) {
+			return "", fmt.Errorf("temp dir should not be created")
+		},
+	})
+
+	err := updater.PerformUpdate(&UpdateInfo{
+		AssetName: "roborev.tar.gz",
+		Checksum:  strings.Repeat("a", 64),
+	}, &testReporter{})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "disabled in this build")
+	assert.Contains(t, err.Error(), "package manager")
+}
+
 func TestSanitizeTarPath(t *testing.T) {
 	tests := []struct {
 		name     string
