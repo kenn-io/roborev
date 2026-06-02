@@ -329,12 +329,13 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 
 		require.Len(t, *comments, 1)
 		body := (*comments)[0].Body
+		assert.Contains(t, body, "## roborev: Combined Review (`"+git.ShortSHA(headSHA)+"`)")
 		assert.Contains(t, body, "Panel: ci")
 		assert.Contains(t, body, "Members: codex (codex/default, done), codex (codex/security, done)")
 		assert.Contains(t, body, "Synthesis: test")
 		assert.NotContains(t, body, "Total: unknown")
 		assert.Contains(t, body, "Job: ")
-		assert.Contains(t, body, "Head: "+git.ShortSHA(headSHA))
+		assert.NotContains(t, body, "Head:", "reviewed head belongs in the title, not the footer")
 		assert.NotContains(t, body, "base", "footer must show reviewed head, not merge base")
 		assert.NotContains(t, body, "Review type:  | Agent:", "panel comments should not use the empty synthesis review_type footer")
 	})
@@ -440,7 +441,8 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 	t.Run("prefixed output is not re-wrapped", func(t *testing.T) {
 		h := newCIPollerHarness(t, "https://github.com/acme/api.git")
 		comments := h.CaptureComments()
-		_, synth, _ := h.seedCIPanelRun(t, "acme/api", 10, "headsha666", "base..headsha666",
+		const headSHA = "abc1234feedface"
+		_, synth, _ := h.seedCIPanelRun(t, "acme/api", 10, headSHA, "base.."+headSHA,
 			[]jobSpec{{Agent: "test", ReviewType: "review", Status: "done", Output: "x"}})
 		h.completeSynthesisWithReview(t, synth.ID, "## roborev: Combined Review (`abc1234`)\n\nAlready headed.")
 
@@ -449,9 +451,11 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 		require.Len(t, *comments, 1)
 		body := (*comments)[0].Body
 		assert.Equal(t, 1, strings.Count(body, "## roborev:"), "no double header")
+		assert.Contains(t, body, "## roborev: Combined Review (`"+git.ShortSHA(headSHA)+"`)")
 		assert.Contains(t, body, "Already headed.")
 		assert.Contains(t, body, "Panel: ci")
 		assert.Contains(t, body, "Members: test (test/review, done)")
+		assert.NotContains(t, body, "Head:", "reviewed head belongs in the title, not the footer")
 	})
 }
 
