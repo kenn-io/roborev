@@ -219,7 +219,7 @@ func TestRerunPanelPreservesStoredPrompt(t *testing.T) {
 	}
 }
 
-func TestRerunPanelPreservesPrebuiltPromptFlag(t *testing.T) {
+func TestRerunPanelClearsPrebuiltReviewPrompt(t *testing.T) {
 	assert := assert.New(t)
 	server, db, _ := newTestServer(t)
 	repo, err := db.GetOrCreateRepo(t.TempDir())
@@ -244,8 +244,8 @@ func TestRerunPanelPreservesPrebuiltPromptFlag(t *testing.T) {
 
 	_, newMembers := rerunAndLoadNewRun(t, server, db, runUUID, synthJob.ID)
 	require.Len(t, newMembers, 1)
-	assert.Equal(prompt, newMembers[0].Prompt, "prebuilt prompt copied")
-	assert.True(newMembers[0].PromptPrebuilt, "prebuilt prompt flag copied")
+	assert.Empty(newMembers[0].Prompt, "review prompt should be rebuilt on rerun")
+	assert.False(newMembers[0].PromptPrebuilt, "prebuilt prompt flag should be cleared")
 }
 
 func TestRerunPanelPreservesSynthesisBackup(t *testing.T) {

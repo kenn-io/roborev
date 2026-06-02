@@ -73,11 +73,15 @@ func (s *Server) rerunPanelRun(job *storage.ReviewJob) (*RerunJobOutput, error) 
 // panelRerunMemberOpts clones one member job into fresh EnqueueOpts for a new
 // run. It copies the full frozen target (commit/diff/patch/severity/worktree),
 // the resolved agent/model/provider/reasoning/review_type, the stored Prompt
-// (non-empty only for stored-prompt panels, so their reruns don't lose it; the
-// worker hard-fails a stored-prompt job with an empty prompt), and the member's
-// panel identity (name/index/config), reassigning only the run UUID. diff is the
-// member's stored dirty diff (empty for commit/range targets).
+// only for prompt-native job types, and the member's panel identity
+// (name/index/config), reassigning only the run UUID. Review/range/dirty prompts
+// are rebuilt by the worker so reruns do not reuse stale prebuilt prompts. diff
+// is the member's stored dirty diff (empty for commit/range targets).
 func panelRerunMemberOpts(m storage.ReviewJob, runUUID, diff string) storage.EnqueueOpts {
+	prompt := ""
+	if m.UsesStoredPrompt() {
+		prompt = m.Prompt
+	}
 	return storage.EnqueueOpts{
 		RepoID:                m.RepoID,
 		CommitID:              m.CommitIDValue(),
@@ -92,8 +96,8 @@ func panelRerunMemberOpts(m storage.ReviewJob, runUUID, diff string) storage.Enq
 		ReviewType:            m.ReviewType,
 		PatchID:               m.PatchID,
 		DiffContent:           diff,
-		Prompt:                m.Prompt,
-		PromptPrebuilt:        m.PromptPrebuilt,
+		Prompt:                prompt,
+		PromptPrebuilt:        false,
 		OutputPrefix:          m.OutputPrefix,
 		Agentic:               m.Agentic,
 		JobType:               m.JobType,
