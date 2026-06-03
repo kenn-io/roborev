@@ -80,7 +80,19 @@ func setupRepoAndJob(t *testing.T, db *storage.DB, tmpDir string) *storage.Revie
 			return false
 		}, "GetOrCreateRepo failed: %v", err)
 	}
-	return testutil.CreateTestJobWithSHA(t, db, repo, sha, "test")
+	commit, err := db.GetOrCreateCommit(repo.ID, sha, testutil.GitUserName, "test commit", time.Now())
+	require.NoError(t, err)
+	job, err := db.EnqueueJob(storage.EnqueueOpts{
+		RepoID:         repo.ID,
+		CommitID:       commit.ID,
+		GitRef:         sha,
+		Agent:          "test",
+		Prompt:         "prebuilt review prompt",
+		PromptPrebuilt: true,
+		JobType:        storage.JobTypeReview,
+	})
+	require.NoError(t, err)
+	return job
 }
 
 func TestBroadcasterIntegrationWithWorker(t *testing.T) {
