@@ -3,6 +3,7 @@ package agent
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -146,7 +147,12 @@ func TestGetAvailableWithConfigACPAsBackup(t *testing.T) {
 	// an absolute path so it stays resolvable while PATH is isolated below to
 	// make the preferred agent's default binary unavailable.
 	acpBin := filepath.Join(t.TempDir(), "fake-acp")
-	require.NoError(t, os.WriteFile(acpBin, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	script := "#!/bin/sh\nexit 0\n"
+	if runtime.GOOS == "windows" {
+		acpBin += ".cmd"
+		script = "@echo off\r\nexit /b 0\r\n"
+	}
+	require.NoError(t, os.WriteFile(acpBin, []byte(script), 0o755))
 	t.Setenv("PATH", t.TempDir())
 
 	t.Run("literal acp backup honors [acp].command", func(t *testing.T) {

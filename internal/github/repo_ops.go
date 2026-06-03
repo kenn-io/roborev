@@ -20,6 +20,12 @@ type OpenPullRequest struct {
 	AuthorLogin string
 }
 
+type PullRequestInfo struct {
+	Number     int
+	State      string
+	HeadRefOID string
+}
+
 func (c *Client) ListOpenPullRequests(ctx context.Context, ghRepo string, limit int) ([]OpenPullRequest, error) {
 	owner, repo, err := parseRepo(ghRepo)
 	if err != nil {
@@ -59,16 +65,28 @@ func (c *Client) ListOpenPullRequests(ctx context.Context, ghRepo string, limit 
 }
 
 func (c *Client) IsPullRequestOpen(ctx context.Context, ghRepo string, prNumber int) (bool, error) {
-	owner, repo, err := parseRepo(ghRepo)
+	pr, err := c.GetPullRequest(ctx, ghRepo, prNumber)
 	if err != nil {
 		return false, err
+	}
+	return strings.EqualFold(pr.State, "open"), nil
+}
+
+func (c *Client) GetPullRequest(ctx context.Context, ghRepo string, prNumber int) (PullRequestInfo, error) {
+	owner, repo, err := parseRepo(ghRepo)
+	if err != nil {
+		return PullRequestInfo{}, err
 	}
 
 	pr, _, err := c.api.PullRequests.Get(ctx, owner, repo, prNumber)
 	if err != nil {
-		return false, fmt.Errorf("get pull request: %w", err)
+		return PullRequestInfo{}, fmt.Errorf("get pull request: %w", err)
 	}
-	return strings.EqualFold(pr.GetState(), "open"), nil
+	return PullRequestInfo{
+		Number:     pr.GetNumber(),
+		State:      pr.GetState(),
+		HeadRefOID: pr.GetHead().GetSHA(),
+	}, nil
 }
 
 func (c *Client) ListOwnerRepos(ctx context.Context, owner string, limit int) ([]string, error) {

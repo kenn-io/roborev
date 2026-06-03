@@ -72,6 +72,9 @@ func newCIPollerHarness(t *testing.T, identity string) *ciPollerHarness {
 	// Default to assuming PR is open so tests don't shell out to `gh pr view`.
 	// Tests that need specific isPROpen behavior can override this.
 	p.isPROpenFn = func(string, int) bool { return true }
+	p.prPostTargetFn = func(_ context.Context, ghRepo string, prNumber int) (panelPostTarget, error) {
+		return panelPostTarget{Open: p.isPROpenFn == nil || p.isPROpenFn(ghRepo, prNumber)}, nil
+	}
 	return &ciPollerHarness{DB: db, RepoPath: repo.RootPath, Repo: repo, Cfg: cfg, Poller: p}
 }
 
@@ -602,6 +605,10 @@ func TestRetrySweepReenqueuesAfterTransient(t *testing.T) {
 	h.Cfg.CI.ReviewTypes = []string{"security"}
 	h.Cfg.CI.Agents = []string{"codex"}
 	h.Poller = NewCIPoller(h.DB, NewStaticConfig(h.Cfg), nil)
+	h.Poller.isPROpenFn = func(string, int) bool { return true }
+	h.Poller.prPostTargetFn = func(_ context.Context, ghRepo string, prNumber int) (panelPostTarget, error) {
+		return panelPostTarget{Open: h.Poller.isPROpenFn == nil || h.Poller.isPROpenFn(ghRepo, prNumber)}, nil
+	}
 	h.stubProcessPRGit()
 	h.Poller.mergeBaseFn = func(_, _, ref2 string) (string, error) { return "base-" + ref2, nil }
 	comments := h.CaptureComments()
@@ -3644,6 +3651,28 @@ func TestClosedPRCleansUpDeferredAttempt(t *testing.T) {
 	attempt, err = h.DB.GetReviewAttempt("acme/api", prNum, headSHA)
 	require.NoError(t, err)
 	assert.Nil(attempt, "closed-PR cleanup deletes the deferred attempt for a fresh reopen")
+}
+
+func TestRetryDueReviewAttemptDeletesAdvancedHead(t *testing.T) {
+	assert := assert.New(t)
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+
+	const oldSHA = "olddeferred0001"
+	const newSHA = "newdeferred0001"
+	const prNum = 31
+	now := time.Now()
+	created, err := h.DB.ReserveReviewAttempt("acme/api", prNum, oldSHA, now.Add(-time.Hour))
+	require.NoError(t, err)
+	require.True(t, created, "attempt row reserved")
+	require.NoError(t, h.DB.DeferReviewAttempt("acme/api", prNum, oldSHA,
+		"transient", "provider unavailable", "old-run", now.Add(-time.Minute), false))
+
+	h.Poller.retryDueReviewAttempts(context.Background(), "acme/api",
+		[]ghPR{{Number: prNum, HeadRefOid: newSHA, BaseRefName: "main"}}, h.Cfg)
+
+	attempt, err := h.DB.GetReviewAttempt("acme/api", prNum, oldSHA)
+	require.NoError(t, err)
+	assert.Nil(attempt, "advanced PR head deletes the stale deferred attempt")
 }
 
 // TestReconcileStuckAttempt covers the crash/stuck reconcile: a pending attempt

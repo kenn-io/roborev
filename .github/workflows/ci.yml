@@ -38,7 +38,7 @@ jobs:
           # go test on Windows can exit 1 due to temp .exe cleanup
           # ("go: remove ...\.exe: Access is denied") even when all
           # tests pass. Only suppress that specific pattern.
-          go test -shuffle=on -tags integration ./... 2>&1 | Tee-Object -Variable testOut
+          go test -timeout 30m -shuffle=on -tags integration ./... 2>&1 | Tee-Object -Variable testOut
           $exitCode = $LASTEXITCODE
           if ($exitCode -ne 0) {
             $failed = $testOut | Select-String "^FAIL\s"

@@ -10,9 +10,15 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestReviewAttemptsTableExists(t *testing.T) {
+func openReviewAttemptsTestDB(t *testing.T) *DB {
+	t.Helper()
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
+	return db
+}
+
+func TestReviewAttemptsTableExists(t *testing.T) {
+	db := openReviewAttemptsTestDB(t)
 	insert := `INSERT INTO ci_pr_review_attempts
 		(github_repo, pr_number, head_sha, attempt, first_attempt_at, next_attempt_at,
 		 last_error_class, consecutive_genuine_attempts, last_error_excerpt,
@@ -29,7 +35,7 @@ func TestReviewAttemptsTableExists(t *testing.T) {
 
 func TestReviewAttemptLifecycle(t *testing.T) {
 	assert := assert.New(t)
-	db := openTestDB(t)
+	db := openReviewAttemptsTestDB(t)
 	now := time.Now()
 
 	created, err := db.ReserveReviewAttempt("o/r", 7, "sha1", now)
@@ -74,7 +80,7 @@ func TestReviewAttemptLifecycle(t *testing.T) {
 
 func TestGetDueReviewAttempts(t *testing.T) {
 	assert := assert.New(t)
-	db := openTestDB(t)
+	db := openReviewAttemptsTestDB(t)
 	now := time.Now()
 
 	// Row A: deferred in the past -> due.
@@ -119,7 +125,7 @@ func TestGetDueReviewAttempts(t *testing.T) {
 
 func TestGetNonTerminalAttemptPRs(t *testing.T) {
 	assert := assert.New(t)
-	db := openTestDB(t)
+	db := openReviewAttemptsTestDB(t)
 	now := time.Now()
 
 	// PR 1 has two non-terminal HEADs (pending + deferred) that must collapse
@@ -156,7 +162,7 @@ func TestGetNonTerminalAttemptPRs(t *testing.T) {
 
 func TestGetPendingReviewAttempts(t *testing.T) {
 	assert := assert.New(t)
-	db := openTestDB(t)
+	db := openReviewAttemptsTestDB(t)
 	now := time.Now()
 
 	// PR 1: pending (fresh reserve) -> included.
@@ -191,7 +197,7 @@ func TestGetPendingReviewAttempts(t *testing.T) {
 }
 
 func TestDeleteReviewAttemptScopesToOneRow(t *testing.T) {
-	db := openTestDB(t)
+	db := openReviewAttemptsTestDB(t)
 	now := time.Now()
 
 	created, err := db.ReserveReviewAttempt("o/r", 5, "x", now)
@@ -214,7 +220,7 @@ func TestDeleteReviewAttemptScopesToOneRow(t *testing.T) {
 
 func TestRearmStuckReviewAttempt(t *testing.T) {
 	assert := assert.New(t)
-	db := openTestDB(t)
+	db := openReviewAttemptsTestDB(t)
 	now := time.Now()
 
 	// A HEAD that accumulated a genuine-failure streak, then got claimed by the
@@ -255,7 +261,7 @@ func TestRearmStuckReviewAttempt(t *testing.T) {
 }
 
 func TestClaimDueReviewAttemptIsExclusive(t *testing.T) {
-	db := openTestDB(t)
+	db := openReviewAttemptsTestDB(t)
 	now := time.Now()
 	// reserve + defer the row so it is due:
 	created, err := db.ReserveReviewAttempt("o/r", 9, "s", now)

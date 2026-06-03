@@ -46,6 +46,29 @@ func TestReconcilePanelPostingDroppedEvent(t *testing.T) {
 	assert.Len(*comments, 1, "still exactly one comment after a second reconcile")
 }
 
+func TestReconcilePanelPostingBackfillsMissingAttempt(t *testing.T) {
+	assert := assert.New(t)
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	comments := h.CaptureComments()
+	statuses := h.CaptureCommitStatuses()
+
+	const headSHA = "headrec-missing-attempt"
+	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 23, headSHA, "base.."+headSHA,
+		[]jobSpec{{Agent: "test", ReviewType: "review", Status: "done", Output: "Finding U"}})
+	h.completeSynthesisWithReview(t, synth.ID, "## Combined\nVerified finding U.")
+	require.NoError(t, h.DB.DeleteReviewAttempt("acme/api", 23, headSHA))
+
+	h.Poller.reconcilePanelPosting(context.Background(), "acme/api")
+
+	assert.Len(*comments, 1, "reconcile posts terminal panel after attempt backfill")
+	assert.True(h.panelPostedAt(t, panel.ID), "panel finalized after reconcile")
+	assert.NotEmpty(*statuses, "commit status set")
+	attempt, err := h.DB.GetReviewAttempt("acme/api", 23, headSHA)
+	require.NoError(t, err)
+	require.NotNil(t, attempt)
+	assert.Equal("done", attempt.State, "backfilled attempt is marked done")
+}
+
 // TestReconcilePanelPostingStaleClaim covers reclaiming a claim whose holder
 // crashed mid-post: a terminal-unposted run with a posting_claimed_at older than
 // panelPostingStaleWindow is reclaimed and posted by the reconcile.

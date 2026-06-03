@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"database/sql"
 	"net/http"
 	"strings"
@@ -231,6 +232,9 @@ func TestSynthesisCanceledDoesNotPostRawFallback(t *testing.T) {
 	row, err := h.DB.GetCIPanelByPRSHA("acme/api", 16, "headsha-canceled")
 	require.NoError(t, err)
 	assert.NotNil(row.RetiredAt, "canceled synthesis records retirement for throttle memory")
+	attempt, err := h.DB.GetReviewAttempt("acme/api", 16, "headsha-canceled")
+	require.NoError(t, err)
+	assert.Nil(attempt, "canceled synthesis deletes the reserved retry attempt")
 }
 
 // TestPanelClosedPRPostsNothing covers F13: a closed/merged PR is abandoned
@@ -253,6 +257,57 @@ func TestPanelClosedPRPostsNothing(t *testing.T) {
 	reviewed, err := h.Poller.alreadyReviewedPR("acme/api", ghPR{Number: 7, HeadRefOid: "headsha333"})
 	require.NoError(t, err)
 	assert.False(reviewed, "same-HEAD reopen must be reviewable")
+}
+
+func TestPanelStalePRHeadPostsNothing(t *testing.T) {
+	assert := assert.New(t)
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	comments := h.CaptureComments()
+	statuses := h.CaptureCommitStatuses()
+
+	const reviewedHead = "headsha-stale"
+	h.Poller.prPostTargetFn = func(context.Context, string, int) (panelPostTarget, error) {
+		return panelPostTarget{Open: true, HeadSHA: "new-headsha"}, nil
+	}
+	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 18, reviewedHead, "base.."+reviewedHead,
+		[]jobSpec{{Agent: "test", ReviewType: "review", Status: "done", Output: "Stale finding"}})
+	h.completeSynthesisWithReview(t, synth.ID, "## Combined\nstale finding")
+
+	h.Poller.handleReviewCompleted(ciEvent(synth.ID, "review.completed"))
+
+	assert.Empty(*comments, "stale-head panel must not post a PR comment")
+	assert.Empty(*statuses, "stale-head panel must not set commit status")
+	assert.False(h.panelPostedAt(t, panel.ID), "stale-head panel is not marked posted")
+	assert.True(h.panelRetiredAt(t, panel.ID), "stale-head panel is retired")
+	attempt, err := h.DB.GetReviewAttempt("acme/api", 18, reviewedHead)
+	require.NoError(t, err)
+	assert.Nil(attempt, "stale-head panel deletes its attempt row")
+}
+
+func TestPanelRepoIdentityMismatchPostsNothing(t *testing.T) {
+	assert := assert.New(t)
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	comments := h.CaptureComments()
+	statuses := h.CaptureCommitStatuses()
+
+	const headSHA = "headsha-mismatch"
+	h.Poller.prPostTargetFn = func(context.Context, string, int) (panelPostTarget, error) {
+		return panelPostTarget{Open: true, HeadSHA: headSHA}, nil
+	}
+	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 19, headSHA, "base.."+headSHA,
+		[]jobSpec{{Agent: "test", ReviewType: "review", Status: "done", Output: "Private finding"}})
+	require.NoError(t, h.DB.SetRepoIdentity(h.Repo.ID, "https://github.com/other/private.git"))
+	h.completeSynthesisWithReview(t, synth.ID, "## Combined\nprivate finding")
+
+	h.Poller.handleReviewCompleted(ciEvent(synth.ID, "review.completed"))
+
+	assert.Empty(*comments, "repo mismatch must not post a PR comment")
+	assert.Empty(*statuses, "repo mismatch must not set commit status")
+	assert.False(h.panelPostedAt(t, panel.ID), "repo mismatch panel is not marked posted")
+	assert.True(h.panelRetiredAt(t, panel.ID), "repo mismatch panel is retired")
+	attempt, err := h.DB.GetReviewAttempt("acme/api", 19, headSHA)
+	require.NoError(t, err)
+	assert.Nil(attempt, "repo mismatch deletes its attempt row")
 }
 
 // TestPanelPermanentPostErrorAbandons covers the permanent-GitHub-error path: an
@@ -732,15 +787,10 @@ func TestPostPanelRunTransientGiveUp(t *testing.T) {
 	assert.Equal("done", attempt.State, "transient give-up marks the attempt done")
 }
 
-// TestFinalizePanelRunMissingAttemptRowFailsSafe covers the fail-fast invariant:
-// every finalized panel has a reserved attempt row (CreateCIPanelRun reserves it
-// on enqueue). When that row is missing — an invariant violation — finalize must
-// NOT post a comment or set a status; it releases the posting claim so a later
-// sweep can retry, leaving the panel neither posted nor retired. seedCIPanelRun
-// reserves the row, so the test deletes it to force the violation. Without the
-// fail-fast bail the run would dereference the nil attempt (panic) on the defer
-// path or post against a nil streak — see the comment below.
-func TestFinalizePanelRunMissingAttemptRowFailsSafe(t *testing.T) {
+// TestFinalizePanelRunBackfillsMissingAttemptRow covers upgrade-boundary panel
+// rows that predate reserve-on-enqueue. A terminal panel with no attempt row
+// must self-heal and still post instead of remaining active/unposted forever.
+func TestFinalizePanelRunBackfillsMissingAttemptRow(t *testing.T) {
 	assert := assert.New(t)
 	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
 	comments := h.CaptureComments()
@@ -760,16 +810,15 @@ func TestFinalizePanelRunMissingAttemptRowFailsSafe(t *testing.T) {
 	// Drive finalize through the real event path.
 	h.Poller.handleReviewCompleted(ciEvent(synth.ID, "review.completed"))
 
-	assert.Empty(*comments, "missing-attempt invariant violation posts no comment")
-	assert.Empty(*statuses, "missing-attempt invariant violation sets no commit status")
-	assert.False(h.panelPostedAt(t, panel.ID), "fail-safe bail does not finalize the panel")
-	assert.False(h.panelRetiredAt(t, panel.ID), "fail-safe bail does not retire the panel")
+	assert.Len(*comments, 1, "missing attempt row is backfilled and comment still posts")
+	assert.Len(*statuses, 1, "commit status is set after backfill")
+	assert.True(h.panelPostedAt(t, panel.ID), "panel finalized after backfill")
+	assert.False(h.panelRetiredAt(t, panel.ID), "posted panel is not retired")
 
-	// The bail releases the posting claim, so a later sweep can reclaim and retry
-	// the still-unposted, non-retired row.
-	won, err := h.DB.ClaimPanelForPosting(panel.ID, panelPostingStaleWindow)
+	attempt, err := h.DB.GetReviewAttempt("acme/api", 86, headSHA)
 	require.NoError(t, err)
-	assert.True(won, "released claim lets a later sweep reclaim the panel for retry")
+	require.NotNil(t, attempt)
+	assert.Equal("done", attempt.State, "backfilled attempt is marked done")
 }
 
 // TestPanelMemberEventIgnored verifies a member job's event posts nothing: only

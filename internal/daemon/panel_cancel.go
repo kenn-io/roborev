@@ -34,6 +34,10 @@ func (s *Server) retireCIPanelForCanceledSynthesis(job *storage.ReviewJob) {
 	if err := s.db.MarkPanelRetired(panel.ID); err != nil {
 		log.Printf("cancel cascade: retire CI panel %d: %v", panel.ID, err)
 	}
+	if err := s.db.DeleteReviewAttempt(panel.GithubRepo, panel.PRNumber, panel.HeadSHA); err != nil {
+		log.Printf("cancel cascade: delete CI review attempt for %s#%d@%s: %v",
+			panel.GithubRepo, panel.PRNumber, panel.HeadSHA, err)
+	}
 }
 
 // cascadePanelMembers cancels every member of a synthesis parent's run. It is a

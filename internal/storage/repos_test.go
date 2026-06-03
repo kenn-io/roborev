@@ -452,6 +452,8 @@ func TestListRepos(t *testing.T) {
 
 func TestGetRepoByID(t *testing.T) {
 	db, repo := setupDBAndRepo(t, "getbyid-test")
+	const identity = "https://github.com/acme/api.git"
+	require.NoError(t, db.SetRepoIdentity(repo.ID, identity))
 
 	t.Run("found", func(t *testing.T) {
 		found, err := db.GetRepoByID(repo.ID)
@@ -459,6 +461,7 @@ func TestGetRepoByID(t *testing.T) {
 
 		assert.Equal(t, found.ID, repo.ID)
 		assert.Equal(t, found.RootPath, repo.RootPath)
+		assert.Equal(t, identity, found.Identity)
 	})
 
 	t.Run("not found", func(t *testing.T) {

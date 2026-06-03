@@ -421,11 +421,13 @@ func (db *DB) ListRepos() ([]Repo, error) {
 func (db *DB) GetRepoByID(id int64) (*Repo, error) {
 	var repo Repo
 	var createdAt string
-	err := db.QueryRow(`SELECT id, root_path, name, created_at FROM repos WHERE id = ?`, id).
-		Scan(&repo.ID, &repo.RootPath, &repo.Name, &createdAt)
+	var identity sql.NullString
+	err := db.QueryRow(`SELECT id, root_path, name, created_at, identity FROM repos WHERE id = ?`, id).
+		Scan(&repo.ID, &repo.RootPath, &repo.Name, &createdAt, &identity)
 	if err != nil {
 		return nil, err
 	}
+	repo.Identity = identity.String
 	repo.CreatedAt = parseSQLiteTime(createdAt)
 	return &repo, nil
 }

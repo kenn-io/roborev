@@ -58,6 +58,11 @@ type ghPR struct {
 	Author      ghPRAuthor `json:"author"`
 }
 
+type panelPostTarget struct {
+	Open    bool
+	HeadSHA string
+}
+
 const (
 	prDiscussionMaxComments = 40
 	prDiscussionBodyLimit   = 600
@@ -90,6 +95,7 @@ type CIPoller struct {
 	agentResolverFn     func(name string) (string, error)      // returns resolved agent name
 	jobCancelFn         func(jobID int64)                      // kills running worker process (optional)
 	isPROpenFn          func(ghRepo string, prNumber int) bool // checks if a PR is still open
+	prPostTargetFn      func(context.Context, string, int) (panelPostTarget, error)
 
 	repoResolver *RepoResolver
 
@@ -1604,9 +1610,7 @@ func (p *CIPoller) handleReviewCanceled(event Event) {
 		log.Printf("CI poller: error checking canceled CI panel for job %d: %v", event.JobID, err)
 		return
 	}
-	if err := p.db.MarkPanelRetired(row.ID); err != nil {
-		log.Printf("CI poller: error retiring canceled panel %d: %v", row.ID, err)
-	}
+	p.retirePanelAndDeleteAttempt(row, "canceled")
 }
 
 // routePanelEvent posts a panel run when jobID is its synthesis parent. Member
@@ -1635,21 +1639,7 @@ func (p *CIPoller) postPanelRun(ctx context.Context, row *storage.CIPanel) {
 		return // another path is posting this run
 	}
 
-	// F13: do not comment on a closed/merged PR. Drop the mapping AND the
-	// reserve-on-enqueue attempt row so reopening the same HEAD can enqueue a
-	// fresh review/comment (the attempt row would otherwise keep
-	// alreadyReviewedPR returning true). Bulk closed-PR cleanup is Task 10; this
-	// is the single abandonment site the posting path already owns.
-	if !p.callIsPROpen(ctx, row.GithubRepo, row.PRNumber) {
-		log.Printf("CI poller: PR %s#%d is closed/merged, abandoning panel %d",
-			row.GithubRepo, row.PRNumber, row.ID)
-		if err := p.db.DeleteCIPanel(row.ID); err != nil {
-			log.Printf("CI poller: error deleting closed-PR panel %d: %v", row.ID, err)
-		}
-		if err := p.db.DeleteReviewAttempt(row.GithubRepo, row.PRNumber, row.HeadSHA); err != nil {
-			log.Printf("CI poller: error deleting closed-PR review attempt for %s#%d@%s: %v",
-				row.GithubRepo, row.PRNumber, gitpkg.ShortSHA(row.HeadSHA), err)
-		}
+	if !p.guardPanelPostTarget(ctx, row) {
 		return
 	}
 
@@ -1663,30 +1653,123 @@ func (p *CIPoller) postPanelRun(ctx context.Context, row *storage.CIPanel) {
 	p.finalizePanelRun(row, members)
 }
 
+// guardPanelPostTarget verifies the panel is still safe to publish before any
+// PR comment is sent. It fails closed on GitHub lookup errors, drops closed or
+// stale-head rows, and refuses known repo-identity mismatches so review text
+// from one repository cannot be posted to another repository's PR.
+func (p *CIPoller) guardPanelPostTarget(ctx context.Context, row *storage.CIPanel) bool {
+	target, err := p.callPanelPostTarget(ctx, row.GithubRepo, row.PRNumber)
+	if err != nil {
+		log.Printf("CI poller: error verifying PR target for panel %d (%s#%d@%s): %v",
+			row.ID, row.GithubRepo, row.PRNumber, gitpkg.ShortSHA(row.HeadSHA), err)
+		p.releasePanelClaim(row.ID)
+		return false
+	}
+	if !target.Open {
+		log.Printf("CI poller: PR %s#%d is closed/merged, abandoning panel %d",
+			row.GithubRepo, row.PRNumber, row.ID)
+		p.deletePanelAndAttempt(row, "closed-PR")
+		return false
+	}
+	if target.HeadSHA != "" && !strings.EqualFold(target.HeadSHA, row.HeadSHA) {
+		log.Printf("CI poller: PR %s#%d advanced from reviewed HEAD %s to %s, retiring panel %d without posting",
+			row.GithubRepo, row.PRNumber, gitpkg.ShortSHA(row.HeadSHA), gitpkg.ShortSHA(target.HeadSHA), row.ID)
+		p.retirePanelAndDeleteAttempt(row, "stale-head")
+		return false
+	}
+	match, err := p.panelRunMatchesTargetRepo(row)
+	if err != nil {
+		log.Printf("CI poller: error verifying repo identity for panel %d (%s#%d@%s): %v",
+			row.ID, row.GithubRepo, row.PRNumber, gitpkg.ShortSHA(row.HeadSHA), err)
+		p.releasePanelClaim(row.ID)
+		return false
+	}
+	if !match {
+		log.Printf("CI poller: repo identity mismatch for panel %d (%s#%d@%s), retiring without posting",
+			row.ID, row.GithubRepo, row.PRNumber, gitpkg.ShortSHA(row.HeadSHA))
+		p.retirePanelAndDeleteAttempt(row, "repo-mismatch")
+		return false
+	}
+	return true
+}
+
+func (p *CIPoller) panelRunMatchesTargetRepo(row *storage.CIPanel) (bool, error) {
+	synth, err := p.db.GetSynthesisJob(row.PanelRunUUID)
+	if err != nil {
+		return false, err
+	}
+	if synth == nil {
+		return false, fmt.Errorf("synthesis job missing for panel run %s", row.PanelRunUUID)
+	}
+	if ok, err := p.jobMatchesGithubRepo(synth, row.GithubRepo); err != nil || !ok {
+		return ok, err
+	}
+
+	members, err := p.db.GetPanelMembers(row.PanelRunUUID)
+	if err != nil {
+		return false, err
+	}
+	for i := range members {
+		ok, err := p.jobMatchesGithubRepo(&members[i], row.GithubRepo)
+		if err != nil || !ok {
+			return ok, err
+		}
+	}
+	return true, nil
+}
+
+func (p *CIPoller) jobMatchesGithubRepo(job *storage.ReviewJob, ghRepo string) (bool, error) {
+	repo, err := p.db.GetRepoByID(job.RepoID)
+	if err != nil {
+		return false, err
+	}
+	if strings.TrimSpace(repo.Identity) == "" {
+		return false, fmt.Errorf("repo %d has no identity", repo.ID)
+	}
+	ownerRepo := ownerRepoFromURLForBase(repo.Identity, p.githubAPIBaseURL())
+	if ownerRepo == "" {
+		return false, fmt.Errorf("repo %d identity %q is not on configured GitHub host", repo.ID, repo.Identity)
+	}
+	return strings.EqualFold(strings.TrimSuffix(ownerRepo, ".git"), strings.TrimSuffix(ghRepo, ".git")), nil
+}
+
+func (p *CIPoller) deletePanelAndAttempt(row *storage.CIPanel, reason string) {
+	if err := p.db.DeleteCIPanel(row.ID); err != nil {
+		log.Printf("CI poller: error deleting %s panel %d: %v", reason, row.ID, err)
+	}
+	if err := p.db.DeleteReviewAttempt(row.GithubRepo, row.PRNumber, row.HeadSHA); err != nil {
+		log.Printf("CI poller: error deleting %s review attempt for %s#%d@%s: %v",
+			reason, row.GithubRepo, row.PRNumber, gitpkg.ShortSHA(row.HeadSHA), err)
+	}
+}
+
+func (p *CIPoller) retirePanelAndDeleteAttempt(row *storage.CIPanel, reason string) {
+	if err := p.db.MarkPanelRetired(row.ID); err != nil {
+		log.Printf("CI poller: error retiring %s panel %d: %v", reason, row.ID, err)
+	}
+	if err := p.db.DeleteReviewAttempt(row.GithubRepo, row.PRNumber, row.HeadSHA); err != nil {
+		log.Printf("CI poller: error deleting %s review attempt for %s#%d@%s: %v",
+			reason, row.GithubRepo, row.PRNumber, gitpkg.ShortSHA(row.HeadSHA), err)
+	}
+}
+
 // finalizePanelRun classifies a claimed panel run's member outcomes against the
 // HEAD's retry state and resolves it without ever posting a terminal "Review
 // Failed" for a provider outage. A successful or all-skipped run posts as
 // before; a genuine give-up posts a blocking soft note; a transient/genuine
 // defer posts nothing, sets a pending status, and retires the run so a later
-// retry sweep re-enqueues. Every finalized panel has a reserved attempt row
-// (CreateCIPanelRun reserves it atomically on enqueue): a missing row is an
-// invariant violation, so it is treated as an error — the posting claim is
-// released for a later retry and nothing is posted. The poster already holds the
-// posting claim, so the transient defer retires the run before any status is
-// set — the all-failed "failure" status path is therefore unreachable for an
-// all-transient panel.
+// retry sweep re-enqueues. Current runs reserve the attempt row atomically in
+// CreateCIPanelRun; upgrade-boundary rows may predate that invariant, so a
+// missing attempt is backfilled before outcome classification. The poster
+// already holds the posting claim, so the transient defer retires the run before
+// any status is set — the all-failed "failure" status path is therefore
+// unreachable for an all-transient panel.
 func (p *CIPoller) finalizePanelRun(row *storage.CIPanel, members []storage.BatchReviewResult) {
 	results := toReviewResults(members)
-	attempt, err := p.db.GetReviewAttempt(row.GithubRepo, row.PRNumber, row.HeadSHA)
+	attempt, err := p.ensureReviewAttempt(row)
 	if err != nil {
 		log.Printf("CI poller: error loading review attempt for %s#%d@%s: %v",
 			row.GithubRepo, row.PRNumber, gitpkg.ShortSHA(row.HeadSHA), err)
-		p.releasePanelClaim(row.ID)
-		return
-	}
-	if attempt == nil {
-		log.Printf("CI poller: review attempt row missing for already-created panel run %s (%s#%d@%s); releasing claim for retry",
-			row.PanelRunUUID, row.GithubRepo, row.PRNumber, gitpkg.ShortSHA(row.HeadSHA))
 		p.releasePanelClaim(row.ID)
 		return
 	}
@@ -1705,6 +1788,36 @@ func (p *CIPoller) finalizePanelRun(row *storage.CIPanel, members []storage.Batc
 	case OutcomeDeferGenuine:
 		p.deferGenuinePanel(row, attempt, out.LastErrorExcerpt)
 	}
+}
+
+// ensureReviewAttempt returns the durable retry state for row, creating the
+// first-attempt row when an active panel predates reserve-on-enqueue. That
+// compatibility backfill lets terminal unposted panels created during an
+// upgrade be posted by the next event/reconcile pass instead of remaining
+// active forever.
+func (p *CIPoller) ensureReviewAttempt(row *storage.CIPanel) (*storage.ReviewAttempt, error) {
+	attempt, err := p.db.GetReviewAttempt(row.GithubRepo, row.PRNumber, row.HeadSHA)
+	if err != nil || attempt != nil {
+		return attempt, err
+	}
+
+	firstAt := row.CreatedAt
+	if firstAt.IsZero() {
+		firstAt = time.Now()
+	}
+	if _, err := p.db.ReserveReviewAttempt(row.GithubRepo, row.PRNumber, row.HeadSHA, firstAt); err != nil {
+		return nil, err
+	}
+	attempt, err = p.db.GetReviewAttempt(row.GithubRepo, row.PRNumber, row.HeadSHA)
+	if err != nil {
+		return nil, err
+	}
+	if attempt == nil {
+		return nil, fmt.Errorf("review attempt row missing after backfill for panel run %s", row.PanelRunUUID)
+	}
+	log.Printf("CI poller: backfilled missing review attempt for %s#%d@%s (panel %d)",
+		row.GithubRepo, row.PRNumber, gitpkg.ShortSHA(row.HeadSHA), row.ID)
+	return attempt, nil
 }
 
 // postPanelComment posts the combined/synthesis comment (or the all-skipped
@@ -2146,6 +2259,10 @@ func (p *CIPoller) retryDueReviewAttempt(
 		return false // closed/absent: Task 10 cleans up deferred attempts for closed PRs
 	}
 	if pr.HeadRefOid != attempt.HeadSHA {
+		if err := p.db.DeleteReviewAttempt(ghRepo, attempt.PRNumber, attempt.HeadSHA); err != nil {
+			log.Printf("CI poller: error deleting stale deferred attempt for %s#%d@%s after PR advanced to %s: %v",
+				ghRepo, attempt.PRNumber, gitpkg.ShortSHA(attempt.HeadSHA), gitpkg.ShortSHA(pr.HeadRefOid), err)
+		}
 		return false // PR advanced; the new HEAD already has its own attempt
 	}
 	claimed, _, _, err := p.db.ClaimDueReviewAttempt(ghRepo, attempt.PRNumber, attempt.HeadSHA, now)
@@ -2546,6 +2663,18 @@ func (p *CIPoller) callIsPROpen(
 	return p.isPROpen(ctx, ghRepo, prNumber)
 }
 
+func (p *CIPoller) callPanelPostTarget(
+	ctx context.Context, ghRepo string, prNumber int,
+) (panelPostTarget, error) {
+	if p.prPostTargetFn != nil {
+		return p.prPostTargetFn(ctx, ghRepo, prNumber)
+	}
+	if p.isPROpenFn != nil {
+		return panelPostTarget{Open: p.isPROpenFn(ghRepo, prNumber)}, nil
+	}
+	return p.panelPostTarget(ctx, ghRepo, prNumber)
+}
+
 func (p *CIPoller) callListPRDiscussionComments(ctx context.Context, ghRepo string, prNumber int) ([]ghpkg.PRDiscussionComment, error) {
 	if p.listPRDiscussionFn != nil {
 		return p.listPRDiscussionFn(ctx, ghRepo, prNumber)
@@ -2577,6 +2706,26 @@ func (p *CIPoller) isPROpen(
 		return true
 	}
 	return open
+}
+
+func (p *CIPoller) panelPostTarget(
+	ctx context.Context, ghRepo string, prNumber int,
+) (panelPostTarget, error) {
+	ctx, cancel := context.WithTimeout(ctx, 30*time.Second)
+	defer cancel()
+
+	client, err := p.githubClientForRepo(ghRepo)
+	if err != nil {
+		return panelPostTarget{}, err
+	}
+	pr, err := client.GetPullRequest(ctx, ghRepo, prNumber)
+	if err != nil {
+		return panelPostTarget{}, err
+	}
+	return panelPostTarget{
+		Open:    strings.EqualFold(pr.State, "open"),
+		HeadSHA: pr.HeadRefOID,
+	}, nil
 }
 
 func (p *CIPoller) buildPRDiscussionContext(ctx context.Context, ghRepo string, prNumber int) (string, error) {
