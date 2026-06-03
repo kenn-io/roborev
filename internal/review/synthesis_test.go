@@ -390,6 +390,29 @@ func TestSkippedAgentNote(t *testing.T) {
 	})
 }
 
+func TestGiveUpAndSoftNoteComments(t *testing.T) {
+	assert := assert.New(t)
+	g := FormatTransientGiveUpComment("abc1234def", "429 too many requests")
+	assert.Contains(g, "## roborev: Review Unavailable (`abc1234`)")
+	assert.Contains(g, "3 days")
+	assert.Contains(g, "429 too many requests")
+
+	s := FormatGenuineSoftNoteComment("abc1234def", "model not supported")
+	assert.Contains(s, "## roborev: Review Unavailable (`abc1234`)")
+	assert.Contains(s, "next commit")
+	assert.Contains(s, "model not supported")
+}
+
+func TestTransientMemberRendersSkipped(t *testing.T) {
+	r := ReviewResult{
+		Agent: "codex", ReviewType: "default",
+		Status: ResultFailed, Error: OutageErrorPrefix + "429",
+	}
+	out := FormatRawBatchComment([]ReviewResult{r}, "abc1234def")
+	assert.Contains(t, out, "provider unavailable")
+	assert.NotContains(t, out, "Review failed. Check CI logs")
+}
+
 func TestBuildSynthesisPrompt_IncludesSkipped(t *testing.T) {
 	reviews := []ReviewResult{
 		{

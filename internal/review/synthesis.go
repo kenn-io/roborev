@@ -79,6 +79,8 @@ func BuildSynthesisPrompt(
 			b.WriteString(" [SKIPPED]")
 		} else if IsQuotaFailure(r) {
 			b.WriteString(" [SKIPPED]")
+		} else if IsTransientFailure(r) {
+			b.WriteString(" [SKIPPED]")
 		} else if r.Status == ResultFailed {
 			b.WriteString(" [FAILED]")
 		}
@@ -92,6 +94,9 @@ func BuildSynthesisPrompt(
 		} else if IsQuotaFailure(r) {
 			b.WriteString(
 				"(review skipped — agent quota exhausted)")
+		} else if IsTransientFailure(r) {
+			b.WriteString(
+				"(review skipped - provider unavailable)")
 		} else if r.Output != "" {
 			output := r.Output
 			if len(output) > maxPerReview {
@@ -169,6 +174,8 @@ func FormatRawBatchComment(
 		status := r.Status
 		if IsQuotaFailure(r) {
 			status = "skipped (quota)"
+		} else if IsTransientFailure(r) {
+			status = "skipped (provider unavailable)"
 		} else if r.Skipped || r.Status == ResultSkipped {
 			status = "skipped (auto-design)"
 		}
@@ -184,6 +191,9 @@ func FormatRawBatchComment(
 		} else if IsQuotaFailure(r) {
 			b.WriteString(
 				"Review skipped — agent quota exhausted.\n\n")
+		} else if IsTransientFailure(r) {
+			b.WriteString(
+				"Review skipped — provider temporarily unavailable.\n\n")
 		} else if r.Status == ResultFailed {
 			b.WriteString(
 				"**Error:** Review failed. " +
@@ -245,6 +255,10 @@ func FormatAllFailedComment(
 			fmt.Fprintf(&b,
 				"- **%s** (%s): skipped (timeout)\n",
 				r.Agent, r.ReviewType)
+		} else if IsTransientFailure(r) {
+			fmt.Fprintf(&b,
+				"- **%s** (%s): skipped (provider unavailable)\n",
+				r.Agent, r.ReviewType)
 		} else {
 			fmt.Fprintf(&b,
 				"- **%s** (%s): failed\n",
@@ -261,6 +275,45 @@ func FormatAllFailedComment(
 	}
 
 	return b.String()
+}
+
+// FormatTransientGiveUpComment is posted after the 3-day transient retry cap.
+// It explains that the AI provider was repeatedly unavailable and includes a
+// one-line excerpt of the last error encountered.
+func FormatTransientGiveUpComment(headSHA, lastErrExcerpt string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "## roborev: Review Unavailable (`%s`)\n\n", gitrepo.ShortSHA(headSHA))
+	b.WriteString("roborev tried to review this PR for 3 days but the AI provider " +
+		"was repeatedly unavailable, so no review was produced.\n\n")
+	if strings.TrimSpace(lastErrExcerpt) != "" {
+		fmt.Fprintf(&b, "Last error: `%s`\n", oneLineExcerpt(lastErrExcerpt))
+	}
+	return b.String()
+}
+
+// FormatGenuineSoftNoteComment is posted after bounded genuine failures. It
+// notes the agent repeatedly failed to run and that roborev will retry on the
+// next commit, with a one-line excerpt of the last error.
+func FormatGenuineSoftNoteComment(headSHA, lastErrExcerpt string) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "## roborev: Review Unavailable (`%s`)\n\n", gitrepo.ShortSHA(headSHA))
+	b.WriteString("The review agent repeatedly failed to run (likely an agent or " +
+		"configuration error). roborev will try again on the next commit.\n\n")
+	if strings.TrimSpace(lastErrExcerpt) != "" {
+		fmt.Fprintf(&b, "Last error: `%s`\n", oneLineExcerpt(lastErrExcerpt))
+	}
+	return b.String()
+}
+
+// oneLineExcerpt collapses whitespace and truncates for a single-line excerpt.
+func oneLineExcerpt(s string) string {
+	s = strings.ReplaceAll(strings.ReplaceAll(s, "\n", " "), "\r", "")
+	s = strings.TrimSpace(s)
+	const max = 200
+	if len(s) > max {
+		s = TrimPartialRune(s[:max]) + "..."
+	}
+	return s
 }
 
 // IsQuotaFailure returns true if a review's error indicates a
