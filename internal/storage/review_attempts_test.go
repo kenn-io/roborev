@@ -72,6 +72,110 @@ func TestReviewAttemptLifecycle(t *testing.T) {
 	assert.Nil(a)
 }
 
+func TestGetDueReviewAttempts(t *testing.T) {
+	assert := assert.New(t)
+	db := openTestDB(t)
+	now := time.Now()
+
+	// Row A: deferred in the past -> due.
+	created, err := db.ReserveReviewAttempt("o/r", 1, "a", now)
+	require.NoError(t, err)
+	require.True(t, created)
+	require.NoError(t, db.DeferReviewAttempt("o/r", 1, "a", "transient", "e", "u",
+		now.Add(-time.Minute), false))
+
+	// Row B: deferred in the future -> not yet due (guards the <= comparison).
+	created, err = db.ReserveReviewAttempt("o/r", 2, "b", now)
+	require.NoError(t, err)
+	require.True(t, created)
+	require.NoError(t, db.DeferReviewAttempt("o/r", 2, "b", "transient", "e", "u",
+		now.Add(time.Hour), false))
+
+	// Row C: pending only, next_attempt_at NULL -> excluded (guards state and
+	// the NULL-guard; a fresh row must never read as due).
+	created, err = db.ReserveReviewAttempt("o/r", 3, "c", now)
+	require.NoError(t, err)
+	require.True(t, created)
+
+	// Row D: done -> terminal, excluded (also exercises MarkReviewAttemptDone).
+	created, err = db.ReserveReviewAttempt("o/r", 4, "d", now)
+	require.NoError(t, err)
+	require.True(t, created)
+	require.NoError(t, db.MarkReviewAttemptDone("o/r", 4, "d"))
+
+	// Cross-repo due row -> must be excluded by repo scoping.
+	created, err = db.ReserveReviewAttempt("o/r2", 1, "a", now)
+	require.NoError(t, err)
+	require.True(t, created)
+	require.NoError(t, db.DeferReviewAttempt("o/r2", 1, "a", "transient", "e", "u",
+		now.Add(-time.Minute), false))
+
+	due, err := db.GetDueReviewAttempts("o/r", now)
+	require.NoError(t, err)
+	assert.Len(due, 1)
+	assert.Equal("a", due[0].HeadSHA)
+	assert.Equal("deferred", due[0].State)
+}
+
+func TestGetNonTerminalAttemptPRs(t *testing.T) {
+	assert := assert.New(t)
+	db := openTestDB(t)
+	now := time.Now()
+
+	// PR 1 has two non-terminal HEADs (pending + deferred) that must collapse
+	// to a single ref (asserts DISTINCT).
+	created, err := db.ReserveReviewAttempt("o/r", 1, "a", now)
+	require.NoError(t, err)
+	require.True(t, created)
+	created, err = db.ReserveReviewAttempt("o/r", 1, "b", now)
+	require.NoError(t, err)
+	require.True(t, created)
+	require.NoError(t, db.DeferReviewAttempt("o/r", 1, "b", "transient", "e", "u",
+		now.Add(-time.Minute), false))
+
+	// PR 2 is done -> terminal, excluded.
+	created, err = db.ReserveReviewAttempt("o/r", 2, "c", now)
+	require.NoError(t, err)
+	require.True(t, created)
+	require.NoError(t, db.MarkReviewAttemptDone("o/r", 2, "c"))
+
+	// PR 3 is deferred -> included.
+	created, err = db.ReserveReviewAttempt("o/r", 3, "d", now)
+	require.NoError(t, err)
+	require.True(t, created)
+	require.NoError(t, db.DeferReviewAttempt("o/r", 3, "d", "transient", "e", "u",
+		now.Add(-time.Minute), false))
+
+	refs, err := db.GetNonTerminalAttemptPRs("o/r")
+	require.NoError(t, err)
+	assert.ElementsMatch([]PanelPRRef{
+		{GithubRepo: "o/r", PRNumber: 1},
+		{GithubRepo: "o/r", PRNumber: 3},
+	}, refs)
+}
+
+func TestDeleteReviewAttemptScopesToOneRow(t *testing.T) {
+	db := openTestDB(t)
+	now := time.Now()
+
+	created, err := db.ReserveReviewAttempt("o/r", 5, "x", now)
+	require.NoError(t, err)
+	require.True(t, created)
+	created, err = db.ReserveReviewAttempt("o/r", 5, "y", now)
+	require.NoError(t, err)
+	require.True(t, created)
+
+	require.NoError(t, db.DeleteReviewAttempt("o/r", 5, "x"))
+
+	deleted, err := db.GetReviewAttempt("o/r", 5, "x")
+	require.NoError(t, err)
+	assert.Nil(t, deleted)
+
+	survivor, err := db.GetReviewAttempt("o/r", 5, "y")
+	require.NoError(t, err)
+	assert.NotNil(t, survivor)
+}
+
 func TestClaimDueReviewAttemptIsExclusive(t *testing.T) {
 	db := openTestDB(t)
 	now := time.Now()
