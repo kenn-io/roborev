@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -75,8 +76,36 @@ func scanReviewAttempt(row sqlScanner) (*ReviewAttempt, error) {
 // double-enqueue. The initial row is attempt=1, state='pending',
 // next_attempt_at=NULL, with empty error fields and a zero genuine streak.
 func (db *DB) ReserveReviewAttempt(repo string, pr int, sha string, now time.Time) (bool, error) {
+	res, err := reserveReviewAttemptExec(context.Background(), db, repo, pr, sha, now)
+	if err != nil {
+		return false, err
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("reserve review attempt rows: %w", err)
+	}
+	return n == 1, nil
+}
+
+// reserveReviewAttemptTx reserves the attempt row inside a caller-owned
+// transaction (used by CreateCIPanelRun so the panel run and its retry-attempt
+// row are created atomically). The INSERT is idempotent
+// (ON CONFLICT DO NOTHING), so re-enqueuing an existing (pending) attempt is a
+// no-op rather than resetting its state. RowsAffected is intentionally ignored:
+// the caller has already established it owns this (repo, pr, sha) via the panel
+// reservation, so whether the row was new or pre-existing does not change the
+// outcome.
+func reserveReviewAttemptTx(ctx context.Context, exec execer, repo string, pr int, sha string, now time.Time) error {
+	_, err := reserveReviewAttemptExec(ctx, exec, repo, pr, sha, now)
+	return err
+}
+
+// reserveReviewAttemptExec runs the idempotent attempt-row INSERT against any
+// execer (the pooled *DB or a transaction connection), keeping the SQL in one
+// place for both ReserveReviewAttempt and reserveReviewAttemptTx.
+func reserveReviewAttemptExec(ctx context.Context, exec execer, repo string, pr int, sha string, now time.Time) (sql.Result, error) {
 	ts := now.Format(time.RFC3339)
-	res, err := db.Exec(`
+	res, err := exec.ExecContext(ctx, `
 		INSERT INTO ci_pr_review_attempts
 			(github_repo, pr_number, head_sha, attempt, first_attempt_at,
 			 next_attempt_at, last_error_class, consecutive_genuine_attempts,
@@ -85,13 +114,9 @@ func (db *DB) ReserveReviewAttempt(repo string, pr int, sha string, now time.Tim
 		ON CONFLICT(github_repo, pr_number, head_sha) DO NOTHING`,
 		repo, pr, sha, ts, ts)
 	if err != nil {
-		return false, fmt.Errorf("reserve review attempt: %w", err)
+		return nil, fmt.Errorf("reserve review attempt: %w", err)
 	}
-	n, err := res.RowsAffected()
-	if err != nil {
-		return false, fmt.Errorf("reserve review attempt rows: %w", err)
-	}
-	return n == 1, nil
+	return res, nil
 }
 
 // GetReviewAttempt returns the attempt row for a (repo, pr, sha), or nil when

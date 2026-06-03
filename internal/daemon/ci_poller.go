@@ -298,6 +298,13 @@ func (p *CIPoller) pollRepo(ctx context.Context, ghRepo string, cfg *config.Conf
 		}
 	}
 
+	// Retry sweep: re-enqueue a fresh panel run for any deferred attempt whose
+	// next_attempt_at is due (a prior run hit a provider outage and Task 8
+	// retired it). Placed after processPR so the normal poll handles new HEADs
+	// first; the ClaimDueReviewAttempt CAS guarantees only one sweep re-enqueues
+	// a given attempt.
+	p.retryDueReviewAttempts(ctx, ghRepo, prs, cfg)
+
 	// Dropped-event / crash recovery (spec §10): post any run whose synthesis
 	// went terminal but whose posting event was lost. Placed after processPR so a
 	// run that just went terminal this poll gets its recovery pass on the next one
@@ -326,6 +333,18 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 		return nil
 	}
 
+	return p.enqueuePanelRun(ctx, ghRepo, pr, cfg)
+}
+
+// enqueuePanelRun runs the post-gate panel enqueue for a PR HEAD: find/clone the
+// repo, fetch, compute the frozen merge-base range, supersede older runs,
+// resolve members + synthesis, build the panel opts, create the run, and set the
+// pending status. It is the shared enqueue core for both the normal poll (after
+// processPR's dedup/throttle gates) and the retry sweep (after it claims a due
+// deferred attempt), so the two paths build identical runs. The attempt row is
+// reserved atomically inside CreateCIPanelRun; the sweep's already-claimed
+// (pending) attempt is left intact by that idempotent reserve.
+func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, cfg *config.Config) error {
 	// Find local repo matching this GitHub repo (auto-clones if needed).
 	repo, err := p.findOrCloneRepo(ctx, ghRepo)
 	if err != nil {
@@ -448,12 +467,24 @@ func (p *CIPoller) loadCIRepoConfigFor(repoPath, ghRepo string) (*config.RepoCon
 	return repoCfg, nil
 }
 
-// alreadyReviewedPR reports whether this PR HEAD already has a panel run. A
-// panel-mapping row for the (repo, pr, sha) means another poll already enqueued
-// or posted the run. Legacy ci_pr_reviews rows are intentionally ignored: the
-// legacy CI poster is gone, so those rows cannot be allowed to suppress panel
-// creation for in-flight upgrade leftovers.
+// alreadyReviewedPR reports whether this PR HEAD already has an in-flight,
+// deferred, or completed review attempt — so the normal poll does NOT enqueue a
+// duplicate. The attempt row (reserved on enqueue) is the authoritative gate: a
+// non-nil row in ANY state ('pending', 'deferred', or 'done') means this HEAD is
+// already owned. A 'deferred' row belongs to the retry sweep, never a fresh poll
+// enqueue, so it must suppress here too. The active-panel-mapping check is kept
+// as a fallback for in-flight runs that predate the attempts row (created before
+// reserve-on-enqueue, or on a DB where the row was lost). Legacy ci_pr_reviews
+// rows are intentionally ignored: the legacy CI poster is gone, so those rows
+// cannot be allowed to suppress panel creation for in-flight upgrade leftovers.
 func (p *CIPoller) alreadyReviewedPR(ghRepo string, pr ghPR) (bool, error) {
+	attempt, err := p.db.GetReviewAttempt(ghRepo, pr.Number, pr.HeadRefOid)
+	if err != nil {
+		return false, fmt.Errorf("check review attempt: %w", err)
+	}
+	if attempt != nil {
+		return true, nil
+	}
 	if _, err := p.db.GetActiveCIPanelByPRSHA(ghRepo, pr.Number, pr.HeadRefOid); err == nil {
 		return true, nil
 	} else if !errors.Is(err, sql.ErrNoRows) {
@@ -1597,13 +1628,20 @@ func (p *CIPoller) postPanelRun(ctx context.Context, row *storage.CIPanel) {
 		return // another path is posting this run
 	}
 
-	// F13: do not comment on a closed/merged PR. Drop the mapping so reopening
-	// the same HEAD can enqueue a fresh review/comment.
+	// F13: do not comment on a closed/merged PR. Drop the mapping AND the
+	// reserve-on-enqueue attempt row so reopening the same HEAD can enqueue a
+	// fresh review/comment (the attempt row would otherwise keep
+	// alreadyReviewedPR returning true). Bulk closed-PR cleanup is Task 10; this
+	// is the single abandonment site the posting path already owns.
 	if !p.callIsPROpen(ctx, row.GithubRepo, row.PRNumber) {
 		log.Printf("CI poller: PR %s#%d is closed/merged, abandoning panel %d",
 			row.GithubRepo, row.PRNumber, row.ID)
 		if err := p.db.DeleteCIPanel(row.ID); err != nil {
 			log.Printf("CI poller: error deleting closed-PR panel %d: %v", row.ID, err)
+		}
+		if err := p.db.DeleteReviewAttempt(row.GithubRepo, row.PRNumber, row.HeadSHA); err != nil {
+			log.Printf("CI poller: error deleting closed-PR review attempt for %s#%d@%s: %v",
+				row.GithubRepo, row.PRNumber, gitpkg.ShortSHA(row.HeadSHA), err)
 		}
 		return
 	}
@@ -2044,6 +2082,76 @@ func parseBatchReviewTime(value string) (time.Time, bool) {
 		}
 	}
 	return time.Time{}, false
+}
+
+// retryDueReviewAttempts re-enqueues a fresh panel run for each deferred review
+// attempt whose next_attempt_at is due. For every due attempt it finds the
+// matching open PR (by number) in the poll's open-PR list: a closed PR (absent
+// from the list) is left for Task 10's cleanup, and a PR whose HEAD has moved on
+// is skipped because the new HEAD already has its own attempt via the normal
+// poll. For an open PR still at the attempt's HEAD it claims the attempt with the
+// ClaimDueReviewAttempt CAS (so only one sweep wins) and, on a win, runs the
+// shared enqueuePanelRun core to create a new panel run for the same repo/pr/sha.
+// The new run flows through the same finalize path: success posts and marks the
+// attempt done, another outage defers again with the next backoff.
+func (p *CIPoller) retryDueReviewAttempts(ctx context.Context, ghRepo string, prs []ghPR, cfg *config.Config) {
+	now := time.Now()
+	due, err := p.db.GetDueReviewAttempts(ghRepo, now)
+	if err != nil {
+		log.Printf("CI poller: error listing due review attempts for %s: %v", ghRepo, err)
+		return
+	}
+	if len(due) == 0 {
+		return
+	}
+	openByNumber := make(map[int]ghPR, len(prs))
+	for _, pr := range prs {
+		openByNumber[pr.Number] = pr
+	}
+	retried := 0
+	for i := range due {
+		if p.retryDueReviewAttempt(ctx, ghRepo, &due[i], openByNumber, cfg, now) {
+			retried++
+		}
+	}
+	if retried > 0 {
+		log.Printf("CI poller: re-enqueued %d due review attempt(s) for %s", retried, ghRepo)
+	}
+}
+
+// retryDueReviewAttempt re-enqueues one due deferred attempt and reports whether
+// a fresh panel run was created. It skips a closed PR (absent from the open list,
+// left for Task 10) and a PR whose HEAD has moved past the attempt's SHA (the new
+// HEAD owns its own attempt). On an open PR still at the attempt's HEAD it claims
+// the attempt (CAS); only the winner enqueues, so concurrent sweeps cannot
+// double-enqueue. A claim loss or an enqueue error leaves the attempt deferred
+// for a later sweep.
+func (p *CIPoller) retryDueReviewAttempt(
+	ctx context.Context, ghRepo string, attempt *storage.ReviewAttempt,
+	openByNumber map[int]ghPR, cfg *config.Config, now time.Time,
+) bool {
+	pr, open := openByNumber[attempt.PRNumber]
+	if !open {
+		return false // closed/absent: Task 10 cleans up deferred attempts for closed PRs
+	}
+	if pr.HeadRefOid != attempt.HeadSHA {
+		return false // PR advanced; the new HEAD already has its own attempt
+	}
+	claimed, _, _, err := p.db.ClaimDueReviewAttempt(ghRepo, attempt.PRNumber, attempt.HeadSHA, now)
+	if err != nil {
+		log.Printf("CI poller: error claiming due review attempt for %s#%d@%s: %v",
+			ghRepo, attempt.PRNumber, gitpkg.ShortSHA(attempt.HeadSHA), err)
+		return false
+	}
+	if !claimed {
+		return false // another sweep won the CAS
+	}
+	if err := p.enqueuePanelRun(ctx, ghRepo, pr, cfg); err != nil {
+		log.Printf("CI poller: error re-enqueuing panel run for %s#%d@%s: %v",
+			ghRepo, attempt.PRNumber, gitpkg.ShortSHA(attempt.HeadSHA), err)
+		return false
+	}
+	return true
 }
 
 // cleanupClosedPRPanels cancels and removes every still-active panel run whose PR

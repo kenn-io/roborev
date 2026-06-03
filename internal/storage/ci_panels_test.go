@@ -618,10 +618,11 @@ func TestCreateCIPanelRunAtomicity(t *testing.T) {
 	require.NoError(t, err)
 
 	// Call sequence: call 1 = retired-row cleanup, call 2 = INSERT OR IGNORE
-	// mapping, calls 3..len+2 = member inserts, call len+3 = synthesis insert.
-	// Failing on the synthesis insert proves the mapping row AND every member
-	// job row roll back together.
-	failing := &failingExecer{inner: conn, failAt: len(members) + 3}
+	// mapping, call 3 = reserve attempt row, calls 4..len+3 = member inserts,
+	// call len+4 = synthesis insert. Failing on the synthesis insert proves the
+	// mapping row, the reserved attempt row, AND every member job row roll back
+	// together.
+	failing := &failingExecer{inner: conn, failAt: len(members) + 4}
 	_, _, _, err = db.createCIPanelRunTx(ctx, failing, "o/r", 11, "atomicsha", members, synthesis, machineID, time.Now())
 	require.Error(t, err)
 	require.ErrorContains(t, err, "insert panel synthesis")
@@ -629,9 +630,12 @@ func TestCreateCIPanelRunAtomicity(t *testing.T) {
 	_, rbErr := conn.ExecContext(ctx, "ROLLBACK")
 	require.NoError(t, rbErr)
 
-	// Full rollback: no mapping row and no job rows for the repo.
+	// Full rollback: no mapping row, no attempt row, and no job rows for the repo.
 	assert.Equal(0, countCIPanels(t, db, "o/r", 11), "no orphan mapping")
 	assert.Equal(0, countRepoJobs(t, db, repo.ID), "no orphan jobs")
 	_, err = db.GetCIPanelByPRSHA("o/r", 11, "atomicsha")
 	require.ErrorIs(t, err, sql.ErrNoRows)
+	attempt, err := db.GetReviewAttempt("o/r", 11, "atomicsha")
+	require.NoError(t, err)
+	assert.Nil(attempt, "reserved attempt row rolls back with the failed run")
 }

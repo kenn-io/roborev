@@ -175,6 +175,16 @@ func (db *DB) createCIPanelRunTx(ctx context.Context, exec execer, githubRepo st
 		return false, nil, nil, nil // another poller owns this PR/HEAD; roll back, create nothing
 	}
 
+	// Reserve the retry-attempt row in the SAME transaction so the durable
+	// review state and the panel run are created atomically: a winning panel
+	// reservation always yields exactly one attempt row, and a concurrent loser
+	// (n==0 above) never reaches here. The INSERT is idempotent
+	// (ON CONFLICT DO NOTHING) so the retry sweep's re-enqueue of an
+	// already-claimed (pending) attempt is a harmless no-op rather than a clobber.
+	if err := reserveReviewAttemptTx(ctx, exec, githubRepo, prNumber, headSHA, now); err != nil {
+		return false, nil, nil, err
+	}
+
 	// F9: stamp the run uuid onto every job before enqueuePanelRunTx, which
 	// enforces role/gate but NOT the run uuid.
 	for i := range members {

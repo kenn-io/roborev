@@ -555,6 +555,115 @@ func TestCIPollerPollRepo_UsesPRListAndProcessesEach(t *testing.T) {
 	assert.True(t, h.hasPanel(t, "acme/api", 8, "22222222bbbbbbbb"), "expected panel for PR 8")
 }
 
+// drivedPanelOutcome resolves the panel run for a PR HEAD and drives every
+// member to terminal status with the spec'd outcome, then drives the synthesis
+// job: "transient" fails each member with an outage error and fails the
+// synthesis (the all-transient defer path), while "done" completes each member
+// and the synthesis with a stored review (the post path). It returns the
+// synthesis job ID so the caller can fire its review.completed/failed event.
+func (h *ciPollerHarness) drivePanelOutcome(t *testing.T, ghRepo string, pr int, headSHA, outcome string) int64 {
+	t.Helper()
+	panel, err := h.DB.GetCIPanelByPRSHA(ghRepo, pr, headSHA)
+	require.NoError(t, err)
+	members, err := h.DB.GetPanelMembers(panel.PanelRunUUID)
+	require.NoError(t, err)
+	require.NotEmpty(t, members, "panel has at least one member")
+	synth, err := h.DB.GetSynthesisJob(panel.PanelRunUUID)
+	require.NoError(t, err)
+	require.NotNil(t, synth)
+
+	switch outcome {
+	case "transient":
+		outage := review.OutageErrorPrefix + "429 Too Many Requests"
+		for i := range members {
+			h.markJobFailed(t, members[i].ID, outage)
+		}
+		h.markJobFailed(t, synth.ID, "synthesis released after all members failed")
+	case "done":
+		for i := range members {
+			h.markJobDoneWithReview(t, members[i].ID, members[i].Agent, "finding")
+		}
+		h.markJobDoneWithReview(t, synth.ID, "test", "## Combined\nVerified.")
+	default:
+		t.Fatalf("unknown outcome %q", outcome)
+	}
+	return synth.ID
+}
+
+// TestRetrySweepReenqueuesAfterTransient is the end-to-end retry-sweep test: an
+// initial panel run that finishes all-transient defers without a comment
+// (Task 8), then advancing time past next_attempt_at and running the retry
+// sweep re-enqueues a fresh panel run for the SAME (repo, pr, sha); when that
+// run succeeds a real combined comment is posted. The attempt transitions
+// pending -> deferred -> pending -> done across the lifecycle.
+func TestRetrySweepReenqueuesAfterTransient(t *testing.T) {
+	assert := assert.New(t)
+	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+	h.Cfg.CI.ReviewTypes = []string{"security"}
+	h.Cfg.CI.Agents = []string{"codex"}
+	h.Poller = NewCIPoller(h.DB, NewStaticConfig(h.Cfg), nil)
+	h.stubProcessPRGit()
+	h.Poller.mergeBaseFn = func(_, _, ref2 string) (string, error) { return "base-" + ref2, nil }
+	comments := h.CaptureComments()
+	statuses := h.CaptureCommitStatuses()
+
+	const headSHA = "retrysweep000001"
+	pr := ghPR{Number: 90, HeadRefOid: headSHA, BaseRefName: "main"}
+
+	// First run: reserve-on-enqueue creates the attempt row (pending).
+	require.NoError(t, h.Poller.processPR(context.Background(), "acme/api", pr, h.Cfg))
+	first, err := h.DB.GetCIPanelByPRSHA("acme/api", 90, headSHA)
+	require.NoError(t, err)
+	attempt, err := h.DB.GetReviewAttempt("acme/api", 90, headSHA)
+	require.NoError(t, err)
+	require.NotNil(t, attempt, "reserve-on-enqueue created the attempt row")
+	assert.Equal("pending", attempt.State, "attempt starts pending")
+
+	// First run finishes all-transient -> deferred, no comment, run retired.
+	synthID := h.drivePanelOutcome(t, "acme/api", 90, headSHA, "transient")
+	h.Poller.handleReviewFailed(ciEvent(synthID, "review.failed"))
+
+	assert.Empty(*comments, "all-transient first run posts no comment")
+	assert.True(h.panelRetiredAt(t, first.ID), "first run retired after defer")
+	attempt, err = h.DB.GetReviewAttempt("acme/api", 90, headSHA)
+	require.NoError(t, err)
+	require.NotNil(t, attempt)
+	assert.Equal("deferred", attempt.State, "attempt deferred for retry")
+	require.NotNil(t, attempt.NextAttemptAt, "defer schedules a next attempt")
+
+	// Advance time: backdate next_attempt_at so the sweep sees it as due.
+	_, err = h.DB.Exec(`UPDATE ci_pr_review_attempts SET next_attempt_at = datetime('now','-1 hour')
+		WHERE github_repo = ? AND pr_number = ? AND head_sha = ?`, "acme/api", 90, headSHA)
+	require.NoError(t, err)
+
+	// Retry sweep re-enqueues a fresh panel run for the same (repo, pr, sha).
+	h.Poller.retryDueReviewAttempts(context.Background(), "acme/api", []ghPR{pr}, h.Cfg)
+
+	attempt, err = h.DB.GetReviewAttempt("acme/api", 90, headSHA)
+	require.NoError(t, err)
+	require.NotNil(t, attempt)
+	assert.Equal("pending", attempt.State, "claimed due attempt flips back to pending")
+	assert.Equal(2, attempt.Attempt, "retry sweep bumps the attempt count")
+
+	second, err := h.DB.GetActiveCIPanelByPRSHA("acme/api", 90, headSHA)
+	require.NoError(t, err)
+	assert.NotEqual(first.PanelRunUUID, second.PanelRunUUID, "sweep created a fresh panel run")
+
+	// The re-enqueued run succeeds -> real combined comment posted, attempt done.
+	synthID = h.drivePanelOutcome(t, "acme/api", 90, headSHA, "done")
+	h.Poller.handleReviewCompleted(ciEvent(synthID, "review.completed"))
+
+	require.Len(t, *comments, 1, "successful re-run posts exactly one combined comment")
+	assert.Contains((*comments)[0].Body, "## roborev:", "combined comment header")
+	assert.True(h.panelPostedAt(t, second.ID), "re-run panel finalized")
+	assert.Equal("success", (*statuses)[len(*statuses)-1].State, "successful re-run sets success status")
+
+	attempt, err = h.DB.GetReviewAttempt("acme/api", 90, headSHA)
+	require.NoError(t, err)
+	require.NotNil(t, attempt)
+	assert.Equal("done", attempt.State, "attempt ends done after a successful re-run")
+}
+
 func TestCIPollerStartStopHealth(t *testing.T) {
 	db := testutil.OpenTestDB(t)
 	cfg := config.DefaultConfig()
