@@ -212,6 +212,48 @@ func TestDeleteReviewAttemptScopesToOneRow(t *testing.T) {
 	assert.NotNil(t, survivor)
 }
 
+func TestRearmStuckReviewAttempt(t *testing.T) {
+	assert := assert.New(t)
+	db := openTestDB(t)
+	now := time.Now()
+
+	// A HEAD that accumulated a genuine-failure streak, then got claimed by the
+	// retry sweep (-> 'pending') and stranded when the re-enqueue failed.
+	created, err := db.ReserveReviewAttempt("o/r", 1, "a", now)
+	require.NoError(t, err)
+	require.True(t, created)
+	require.NoError(t, db.DeferReviewAttempt("o/r", 1, "a", "genuine", "bad model", "uuid1",
+		now.Add(-time.Minute), true))
+	require.NoError(t, db.DeferReviewAttempt("o/r", 1, "a", "genuine", "bad model", "uuid1",
+		now.Add(-time.Minute), true))
+	claimed, _, _, err := db.ClaimDueReviewAttempt("o/r", 1, "a", now)
+	require.NoError(t, err)
+	require.True(t, claimed)
+	before, err := db.GetReviewAttempt("o/r", 1, "a")
+	require.NoError(t, err)
+	require.Equal(t, "pending", before.State)
+	require.Equal(t, 2, before.ConsecutiveGenuineAttempts)
+
+	// Re-arm re-defers the row but PRESERVES the genuine streak and error fields:
+	// a failed enqueue must not reset progress toward genuine give-up.
+	next := now.Add(time.Hour)
+	rearmed, err := db.RearmStuckReviewAttempt("o/r", 1, "a", next)
+	require.NoError(t, err)
+	assert.True(rearmed)
+	after, err := db.GetReviewAttempt("o/r", 1, "a")
+	require.NoError(t, err)
+	assert.Equal("deferred", after.State)
+	assert.Equal(2, after.ConsecutiveGenuineAttempts) // not reset to 0
+	assert.Equal("genuine", after.LastErrorClass)
+	assert.Equal("bad model", after.LastErrorExcerpt)
+	assert.NotNil(after.NextAttemptAt)
+
+	// CAS: the row is no longer 'pending', so a second re-arm is a no-op.
+	rearmedAgain, err := db.RearmStuckReviewAttempt("o/r", 1, "a", next)
+	require.NoError(t, err)
+	assert.False(rearmedAgain)
+}
+
 func TestClaimDueReviewAttemptIsExclusive(t *testing.T) {
 	db := openTestDB(t)
 	now := time.Now()

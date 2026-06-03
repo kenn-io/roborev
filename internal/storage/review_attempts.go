@@ -164,6 +164,35 @@ func (db *DB) DeferReviewAttempt(repo string, pr int, sha, errClass, excerpt, la
 	return nil
 }
 
+// RearmStuckReviewAttempt re-defers a 'pending' attempt that the crash/stuck
+// reconcile found stranded — claimed by the retry sweep (state flipped to
+// 'pending', attempt bumped) but then CreateCIPanelRun failed or the daemon
+// crashed before any panel run existed. Unlike DeferReviewAttempt it preserves
+// consecutive_genuine_attempts and the recorded error fields: a failed enqueue
+// is an infrastructure hiccup, not a fresh review failure, so the genuine
+// give-up streak must survive untouched (routing through DeferReviewAttempt with
+// bumpGenuine=false would reset it to zero and defeat genuine give-up). The
+// WHERE state='pending' guard is a compare-and-swap — if a concurrent writer
+// already moved the row out of 'pending' (e.g. a late finalization), this is a
+// no-op. Returns whether the row was re-armed.
+func (db *DB) RearmStuckReviewAttempt(repo string, pr int, sha string, nextAttemptAt time.Time) (bool, error) {
+	res, err := db.Exec(`
+		UPDATE ci_pr_review_attempts
+		SET state = 'deferred', next_attempt_at = ?, updated_at = ?
+		WHERE github_repo = ? AND pr_number = ? AND head_sha = ?
+		  AND state = 'pending'`,
+		nextAttemptAt.Format(time.RFC3339), time.Now().Format(time.RFC3339),
+		repo, pr, sha)
+	if err != nil {
+		return false, fmt.Errorf("rearm stuck review attempt: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return false, fmt.Errorf("rearm stuck review attempt rows: %w", err)
+	}
+	return n == 1, nil
+}
+
 // ClaimDueReviewAttempt atomically claims a deferred HEAD whose next_attempt_at
 // is due (<= now), flipping it to 'pending' and bumping attempt. The
 // UPDATE ... WHERE state='deferred' AND <due> is the contention point: only the

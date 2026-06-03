@@ -3673,8 +3673,12 @@ func TestReconcileStuckAttempt(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, "deferred", stuck.State)
 	require.NotEmpty(t, stuck.LastPanelRunUUID, "deferral recorded the retired run uuid")
+	// Seed a non-zero genuine streak so the re-arm's preservation is observable:
+	// a failed re-enqueue is an infrastructure hiccup and must not reset progress
+	// toward genuine give-up.
 	_, err = h.DB.Exec(`UPDATE ci_pr_review_attempts
-		SET state='pending', next_attempt_at=NULL WHERE github_repo=? AND pr_number=? AND head_sha=?`,
+		SET state='pending', next_attempt_at=NULL, consecutive_genuine_attempts=2
+		WHERE github_repo=? AND pr_number=? AND head_sha=?`,
 		"acme/api", stuckPR, stuckSHA)
 	require.NoError(t, err)
 
@@ -3693,6 +3697,8 @@ func TestReconcileStuckAttempt(t *testing.T) {
 	require.NotNil(t, stuck)
 	assert.Equal("deferred", stuck.State, "stuck pending attempt is re-deferred")
 	assert.NotNil(stuck.NextAttemptAt, "re-defer schedules a next attempt for the retry sweep")
+	assert.Equal(2, stuck.ConsecutiveGenuineAttempts,
+		"re-arm preserves the genuine streak instead of resetting it")
 
 	live, err := h.DB.GetReviewAttempt("acme/api", livePR, liveSHA)
 	require.NoError(t, err)
