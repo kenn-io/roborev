@@ -78,20 +78,20 @@ type WorkerPool struct {
 // NewWorkerPool creates a new worker pool
 func NewWorkerPool(db *storage.DB, cfgGetter ConfigGetter, numWorkers int, broadcaster Broadcaster, errorLog *ErrorLog, activityLog *ActivityLog) *WorkerPool {
 	return &WorkerPool{
-		db:                db,
-		cfgGetter:         cfgGetter,
-		broadcaster:       broadcaster,
-		errorLog:          errorLog,
-		activityLog:       activityLog,
-		numWorkers:        numWorkers,
-		stopCh:            make(chan struct{}),
-		readyCh:           make(chan struct{}),
-		runningJobs:       make(map[int64]context.CancelFunc),
-		pendingCancels:    make(map[int64]bool),
-		agentCooldowns:    make(map[string]time.Time),
-		outputBuffers:     NewOutputBuffer(512*1024, 4*1024*1024), // 512KB/job, 4MB total
-		classify:          agent.ClassifyLimit,
-		retryBackoff:      2 * time.Second,
+		db:             db,
+		cfgGetter:      cfgGetter,
+		broadcaster:    broadcaster,
+		errorLog:       errorLog,
+		activityLog:    activityLog,
+		numWorkers:     numWorkers,
+		stopCh:         make(chan struct{}),
+		readyCh:        make(chan struct{}),
+		runningJobs:    make(map[int64]context.CancelFunc),
+		pendingCancels: make(map[int64]bool),
+		agentCooldowns: make(map[string]time.Time),
+		outputBuffers:  NewOutputBuffer(512*1024, 4*1024*1024), // 512KB/job, 4MB total
+		classify:       agent.ClassifyLimit,
+		retryBackoff:   2 * time.Second,
 	}
 }
 
