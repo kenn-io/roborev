@@ -1,7 +1,7 @@
 # Resilient CI Review — Design
 
 Date: 2026-06-02
-Status: Pending final approval (revised after spec-review round 1)
+Status: Pending final approval (revised after spec-review round 2)
 
 ## Problem
 
@@ -84,9 +84,9 @@ wins); quota/timeout members are always counted as skips, never failures:**
 2. **No success, ≥1 transient** → *defer* (see retry); no comment; status
    `pending`. (3-day cap below.)
 3. **No success, no transient, ≥1 genuine** → bounded-genuine path: defer with
-   short backoff while `attempt < genuineMaxAttempts`; once exhausted, post the
-   soft non-terminal "Review unavailable" note (status `success` + note).
-   Quota/timeout members are subtracted as skips.
+   short backoff while `consecutive_genuine_attempts < genuineMaxAttempts`; once
+   reached, post the soft non-terminal "Review unavailable" note (status
+   `success` + note). Quota/timeout members are subtracted as skips.
 4. **No success, all skips (quota/timeout only)** → terminal: post the existing
    "Review Skipped" note (status `success` + note); mark `done`. Not retried
    (preserves today's quota behavior).
@@ -110,6 +110,7 @@ New table `ci_pr_review_attempts`, `UNIQUE(github_repo, pr_number, head_sha)`:
 | first_attempt_at    | ts   | when attempt 1 was enqueued (drives 3-day cap)     |
 | next_attempt_at     | ts   | when the retry sweep may enqueue the next run      |
 | last_error_class    | text | transient \| genuine \| quota                      |
+| consecutive_genuine_attempts | int | genuine streak; reset on transient/all-skip/success |
 | last_error_excerpt  | text | sanitized last-failure excerpt for give-up comment |
 | last_panel_run_uuid | text | most recent run (debug + refetch member errors)    |
 | state               | text | pending \| deferred \| done                        |
@@ -143,10 +144,18 @@ New table `ci_pr_review_attempts`, `UNIQUE(github_repo, pr_number, head_sha)`:
   (not snapshotted), so a config fix between attempts is picked up
   automatically; `last_panel_run_uuid` links the most recent run for debugging
   and member-error refetch.
-- **Closed/merged PR cleanup deletes the attempts row** (alongside the existing
-  `DeleteCIPanel`), so reopening the PR at the same HEAD SHA starts a fresh
-  review — matching today's panel-deletion behavior. (Do NOT mark it `done`,
-  which would suppress the reopen forever.)
+- **Closed/merged PR cleanup must cover deferred attempts.** Today's
+  `cleanupClosedPRPanels` is panel-driven — it enumerates PRs with *active*
+  panels via `GetPendingPanelPRs`. A `deferred` attempt has already retired its
+  panel, so it is invisible to that sweep. Cleanup must therefore also enumerate
+  PRs that have non-terminal (`pending`/`deferred`) attempts rows, confirm
+  closed via `callIsPROpen`, and **delete** those rows (mirroring
+  `DeleteCIPanel`). Deleting — not marking `done` — is what lets a reopen at the
+  same HEAD SHA start fresh.
+- **Retry-sweep close check**: `retryDueReviewAttempts` calls `callIsPROpen`
+  before enqueuing a due attempt; if the PR is closed it deletes the attempts
+  row instead of enqueuing (stops wasted retries on closed PRs; a later reopen
+  starts fresh).
 - **Crash recovery** — a reconcile sweep finds `pending` rows whose latest
   panel run is missing or terminal-without-post (e.g. a crash between claim and
   panel create) and re-defers them with a fresh `next_attempt_at`.
@@ -160,6 +169,10 @@ New table `ci_pr_review_attempts`, `UNIQUE(github_repo, pr_number, head_sha)`:
 - `delay(n) = min(base * 2^(n-1), 1h)`, `base = 2m`; after the 1h cap, hourly.
 - Transient hard cap: `now - first_attempt_at > 72h` → give up (3-day comment).
 - Genuine: `genuineMaxAttempts = 3`, short backoff (base 2m), then soft note.
+- `consecutive_genuine_attempts` increments on each genuine defer and resets to
+  0 on any non-genuine outcome (transient defer, all-skip terminal, success), so
+  a prior transient outage never burns the genuine budget. (`last_error_class`
+  records only the latest class, not the streak across mixed outcomes.)
 - Constants live in one place (a small `retry` helper) and are unit tested.
 
 ### 5. Comment templates (`internal/review/synthesis.go`)
@@ -175,9 +188,11 @@ New table `ci_pr_review_attempts`, `UNIQUE(github_repo, pr_number, head_sha)`:
 ## Edge cases
 - **Mixed success**: ≥1 member succeeded → always post the real review now; do
   not defer.
-- **PR closed/merged mid-retry**: closed-PR cleanup deletes both the panel
-  mapping (existing `DeleteCIPanel`) and the attempts row, so a reopen at the
-  same HEAD SHA starts fresh (no permanent suppression).
+- **PR closed/merged mid-retry**: a `deferred` attempt has no active panel, so
+  closed-PR cleanup is **attempts-driven, not panel-driven** — it enumerates
+  non-terminal attempts rows for the PR, confirms closed, and deletes them (and
+  the retry sweep deletes a due attempt whose PR is closed). A reopen at the
+  same HEAD SHA then starts fresh — no permanent suppression.
 - **New HEAD push during retry**: supersede retires the in-flight run and
   deletes the attempts row for the old SHA; the new SHA starts fresh at
   attempt 1.
@@ -196,9 +211,11 @@ New table `ci_pr_review_attempts`, `UNIQUE(github_repo, pr_number, head_sha)`:
   due-for-retry query, including CAS contention, on SQLite (and Postgres under
   the `postgres` tag).
 - Integration (daemon): defer → retry → success posts a real review;
-  all-genuine → soft note after `genuineMaxAttempts`; simulated >3-day
+  all-genuine → soft note after `genuineMaxAttempts`; a genuine streak reset by
+  an intervening transient does not prematurely give up; simulated >3-day
   transient → give-up comment; partial success renders transient members as
-  skipped; closed-then-reopened PR at same SHA re-reviews.
+  skipped; closed-while-deferred (no active panel) deletes the attempts row so a
+  reopen at the same SHA re-reviews.
 
 ## Out of scope
 - Changing per-job retry counts or the failover/cooldown mechanism.
