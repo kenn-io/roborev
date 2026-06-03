@@ -1723,7 +1723,8 @@ func (p *CIPoller) deferTransientPanel(row *storage.CIPanel, attempt *storage.Re
 // the give-up cap: it records a deferral (bumping the consecutive-genuine
 // streak), sets a pending status, posts NO comment, and retires the run.
 func (p *CIPoller) deferGenuinePanel(row *storage.CIPanel, attempt *storage.ReviewAttempt, excerpt string) {
-	p.recordDeferral(row, attempt, "genuine", excerpt, time.Now(), true)
+	now := time.Now()
+	p.recordDeferral(row, attempt, "genuine", excerpt, now, true)
 }
 
 // recordDeferral defers the HEAD's attempt to the next backoff (when a row

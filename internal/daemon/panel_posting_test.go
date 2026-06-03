@@ -679,6 +679,58 @@ func TestPostPanelRunGenuineGiveUp(t *testing.T) {
 	assert.Equal("done", attempt.State, "give-up marks the attempt done")
 }
 
+// TestPostPanelRunTransientGiveUp covers the transient give-up: an all-transient
+// panel whose first attempt is older than the 3-day retry wall stops deferring
+// and posts a non-blocking transient note instead, sets a success (non-failing)
+// status, finalizes the attempt as done, and marks the panel posted (not retired).
+func TestPostPanelRunTransientGiveUp(t *testing.T) {
+	assert := assert.New(t)
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	comments := h.CaptureComments()
+	statuses := h.CaptureCommitStatuses()
+
+	const headSHA = "transientgiveup1"
+	created, err := h.DB.ReserveReviewAttempt("acme/api", 85, headSHA, time.Now())
+	require.NoError(t, err)
+	require.True(t, created, "attempt row reserved")
+	// Backdate first_attempt_at past the transient wall so TransientExhausted is
+	// true (the wall is a strict threshold to exceed).
+	oldFirst := time.Now().Add(-(reviewpkg.DefaultRetrySchedule.TransientWall + time.Hour)).Format(time.RFC3339)
+	_, err = h.DB.Exec(`UPDATE ci_pr_review_attempts SET first_attempt_at = ?
+		WHERE github_repo = ? AND pr_number = ? AND head_sha = ?`,
+		oldFirst, "acme/api", 85, headSHA)
+	require.NoError(t, err)
+
+	outage := reviewpkg.OutageErrorPrefix + "429 too many requests"
+	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 85, headSHA, "base.."+headSHA,
+		[]jobSpec{{Agent: "test", ReviewType: "review", Status: "failed", Error: outage}})
+	h.markJobFailed(t, synth.ID, "synthesis released after all members failed")
+
+	h.Poller.handleReviewFailed(ciEvent(synth.ID, "review.failed"))
+
+	require.Len(t, *comments, 1, "transient give-up posts one note after the wall")
+	body := (*comments)[0].Body
+	assert.Contains(body, "## roborev: Review Unavailable", "transient give-up note header")
+	assert.Contains(body, "3 days", "transient note explains the 3-day wall")
+	assert.Contains(body, "provider", "transient note blames the AI provider")
+	assert.NotContains(body, "next commit", "must be the transient note, not the genuine soft note")
+	assert.NotContains(body, "Review Failed", "give-up note is not a terminal Review Failed comment")
+	assert.NotContains(body, "Check CI logs", "give-up note is not a terminal failure comment")
+
+	require.Len(t, *statuses, 1, "transient give-up sets exactly one status")
+	assert.Equal("success", (*statuses)[0].State, "give-up status is non-failing")
+	assert.NotEqual("failure", (*statuses)[0].State, "give-up status is never failure")
+	assert.NotEqual("error", (*statuses)[0].State, "give-up status is never error")
+
+	assert.True(h.panelPostedAt(t, panel.ID), "give-up finalizes the panel (posted_at set)")
+	assert.False(h.panelRetiredAt(t, panel.ID), "give-up posts the panel, it is not retired")
+
+	attempt, err := h.DB.GetReviewAttempt("acme/api", 85, headSHA)
+	require.NoError(t, err)
+	require.NotNil(t, attempt)
+	assert.Equal("done", attempt.State, "transient give-up marks the attempt done")
+}
+
 // TestPostPanelRunPostsWhenAttemptMissing covers the no-row interim (attempts are
 // reserved on enqueue in a later task): with no attempt row, a successful panel
 // still posts and finalizes, and an all-transient panel still defers without a
