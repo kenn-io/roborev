@@ -96,7 +96,7 @@ func BuildSynthesisPrompt(
 				"(review skipped — agent quota exhausted)")
 		} else if IsTransientFailure(r) {
 			b.WriteString(
-				"(review skipped - provider unavailable)")
+				"(review skipped — provider unavailable)")
 		} else if r.Output != "" {
 			output := r.Output
 			if len(output) > maxPerReview {
@@ -305,13 +305,14 @@ func FormatGenuineSoftNoteComment(headSHA, lastErrExcerpt string) string {
 	return b.String()
 }
 
-// oneLineExcerpt collapses whitespace and truncates for a single-line excerpt.
+// oneLineExcerpt flattens a message to a single line (newlines to spaces,
+// carriage returns dropped) and truncates to 200 bytes for inline display.
 func oneLineExcerpt(s string) string {
 	s = strings.ReplaceAll(strings.ReplaceAll(s, "\n", " "), "\r", "")
 	s = strings.TrimSpace(s)
 	const max = 200
 	if len(s) > max {
-		s = TrimPartialRune(s[:max]) + "..."
+		s = strings.TrimRight(TrimPartialRune(s[:max]), " ") + "..."
 	}
 	return s
 }

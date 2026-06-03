@@ -349,6 +349,21 @@ func TestFormatAllFailedComment(t *testing.T) {
 		assertContainsAll(t, comment, []string{"Review Skipped"})
 		assert.NotContains(t, comment, "Check CI logs", "all-quota should not mention CI logs")
 	})
+
+	t.Run("transient member", func(t *testing.T) {
+		reviews := []ReviewResult{
+			{
+				Agent:      "codex",
+				ReviewType: "default",
+				Status:     ResultFailed,
+				Error:      OutageErrorPrefix + "429",
+			},
+		}
+		comment := FormatAllFailedComment(
+			reviews, "ccc333444555")
+
+		assert.Contains(t, comment, "skipped (provider unavailable)")
+	})
 }
 
 func TestSkippedAgentNote(t *testing.T) {
@@ -403,6 +418,17 @@ func TestGiveUpAndSoftNoteComments(t *testing.T) {
 	assert.Contains(s, "model not supported")
 }
 
+func TestGiveUpAndSoftNoteCommentsSuppressEmptyExcerpt(t *testing.T) {
+	assert := assert.New(t)
+	g := FormatTransientGiveUpComment("abc1234def", "   ")
+	assert.Contains(g, "## roborev: Review Unavailable (`abc1234`)")
+	assert.NotContains(g, "Last error")
+
+	s := FormatGenuineSoftNoteComment("abc1234def", "")
+	assert.Contains(s, "## roborev: Review Unavailable (`abc1234`)")
+	assert.NotContains(s, "Last error")
+}
+
 func TestTransientMemberRendersSkipped(t *testing.T) {
 	r := ReviewResult{
 		Agent: "codex", ReviewType: "default",
@@ -435,5 +461,21 @@ func TestBuildSynthesisPrompt_IncludesSkipped(t *testing.T) {
 		"Auto-design-review skipped",
 		"trivial diff",
 		"[SKIPPED]",
+	})
+}
+
+func TestBuildSynthesisPrompt_TransientSkipped(t *testing.T) {
+	reviews := []ReviewResult{
+		{
+			Agent:      "codex",
+			ReviewType: "default",
+			Status:     ResultFailed,
+			Error:      OutageErrorPrefix + "429",
+		},
+	}
+	prompt := BuildSynthesisPrompt(reviews, "")
+	assertContainsAll(t, prompt, []string{
+		"[SKIPPED]",
+		"provider unavailable",
 	})
 }
