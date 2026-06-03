@@ -619,9 +619,10 @@ func validateClaudeClassifyJSON(label string, raw json.RawMessage) (json.RawMess
 }
 
 // parseClaudeClassifyStream reads Claude's stream-json output and returns the
-// schema-constrained classifier JSON. Claude Code 2.1.161 emits JSON Schema
-// output as a direct StructuredOutput tool-use block instead of the older final
-// result field, so accept both shapes and ignore assistant prose.
+// schema-constrained classifier JSON. Claude Code versions observed at 2.1.161
+// can emit JSON Schema output as a direct StructuredOutput tool-use block
+// instead of the older final result field, so accept both shapes and ignore
+// assistant prose.
 func parseClaudeClassifyStream(r io.Reader) (json.RawMessage, error) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 1<<20), 1<<22)
