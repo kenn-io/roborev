@@ -105,6 +105,29 @@ CREATE TABLE IF NOT EXISTS roborev.responses (
   inserted_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT clock_timestamp()
 );
 
+-- ci_pr_review_attempts is the durable source of truth for whether a
+-- (github_repo, pr_number, head_sha) is being reviewed and, when an
+-- AI-provider outage defers it, when to retry. One row per reviewed HEAD.
+-- next_attempt_at is NULL while a run is in-flight/pending and set when
+-- deferred; state is one of 'pending', 'deferred', 'done'. Like the other
+-- ci_pr_* tables this is local CI-poller state and is NOT sync-replicated.
+CREATE TABLE IF NOT EXISTS roborev.ci_pr_review_attempts (
+  id BIGSERIAL PRIMARY KEY,
+  github_repo TEXT NOT NULL,
+  pr_number INTEGER NOT NULL,
+  head_sha TEXT NOT NULL,
+  attempt INTEGER NOT NULL DEFAULT 1,
+  first_attempt_at TIMESTAMPTZ NOT NULL,
+  next_attempt_at TIMESTAMPTZ,
+  last_error_class TEXT NOT NULL DEFAULT '',
+  consecutive_genuine_attempts INTEGER NOT NULL DEFAULT 0,
+  last_error_excerpt TEXT NOT NULL DEFAULT '',
+  last_panel_run_uuid TEXT NOT NULL DEFAULT '',
+  state TEXT NOT NULL DEFAULT 'pending',
+  updated_at TIMESTAMPTZ NOT NULL,
+  UNIQUE(github_repo, pr_number, head_sha)
+);
+
 CREATE INDEX IF NOT EXISTS idx_review_jobs_source ON roborev.review_jobs(source_machine_id);
 CREATE INDEX IF NOT EXISTS idx_review_jobs_updated ON roborev.review_jobs(updated_at);
 -- Note: idx_review_jobs_branch, idx_review_jobs_job_type,

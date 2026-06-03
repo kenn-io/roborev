@@ -115,6 +115,28 @@ CREATE TABLE IF NOT EXISTS ci_pr_panels (
   UNIQUE(github_repo, pr_number, head_sha)
 );
 
+-- ci_pr_review_attempts is the durable source of truth for whether a
+-- (github_repo, pr_number, head_sha) is being reviewed and, when an
+-- AI-provider outage defers it, when to retry. One row per reviewed HEAD.
+-- next_attempt_at is NULL while a run is in-flight/pending and set when
+-- deferred; state is one of 'pending', 'deferred', 'done'.
+CREATE TABLE IF NOT EXISTS ci_pr_review_attempts (
+  id INTEGER PRIMARY KEY AUTOINCREMENT,
+  github_repo TEXT NOT NULL,
+  pr_number INTEGER NOT NULL,
+  head_sha TEXT NOT NULL,
+  attempt INTEGER NOT NULL DEFAULT 1,
+  first_attempt_at TEXT NOT NULL,
+  next_attempt_at TEXT,
+  last_error_class TEXT NOT NULL DEFAULT '',
+  consecutive_genuine_attempts INTEGER NOT NULL DEFAULT 0,
+  last_error_excerpt TEXT NOT NULL DEFAULT '',
+  last_panel_run_uuid TEXT NOT NULL DEFAULT '',
+  state TEXT NOT NULL DEFAULT 'pending',
+  updated_at TEXT NOT NULL,
+  UNIQUE(github_repo, pr_number, head_sha)
+);
+
 CREATE INDEX IF NOT EXISTS idx_review_jobs_status ON review_jobs(status);
 CREATE INDEX IF NOT EXISTS idx_review_jobs_repo ON review_jobs(repo_id);
 CREATE INDEX IF NOT EXISTS idx_review_jobs_git_ref ON review_jobs(git_ref);
