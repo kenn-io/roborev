@@ -48,6 +48,14 @@ type limitRule struct {
 // internal/daemon/worker.go so detection for Gemini and Codex is
 // byte-for-byte unchanged.
 //
+// The transient/outage substrings below were added from captured
+// provider outage strings (HTTP 429, stream disconnects, 5xx) and
+// remain observation-driven: only wording seen in real failures is
+// listed, never speculative phrases that could also match policy or
+// config-validation errors. A transient classification only triggers a
+// local retry with backoff (no cooldown), so the bar is deliberately
+// kept high to avoid retrying deterministic failures forever.
+//
 // TODO: add a LimitKindSession rule for Claude's 5-hour cap once the
 // exact error wording is captured from a real session-cap failure.
 // Speculative substrings ("usage limit", "limit reached", etc.) are
@@ -67,6 +75,19 @@ var defaultLimitRules = []limitRule{
 	{Agents: []string{"*"}, Substring: "exhausted your capacity", Kind: LimitKindQuota},
 	{Agents: []string{"*"}, Substring: "capacity exhausted", Kind: LimitKindQuota},
 	{Agents: []string{"*"}, Substring: "capacity_exhausted", Kind: LimitKindQuota},
+	// Transient/outage — observed provider wording only (no speculative
+	// substrings; see the no-speculative note above). Retried with backoff.
+	{Agents: []string{"*"}, Substring: "too many requests", Kind: LimitKindTransient},
+	{Agents: []string{"*"}, Substring: "status: 429", Kind: LimitKindTransient},
+	{Agents: []string{"*"}, Substring: "status 429", Kind: LimitKindTransient},
+	{Agents: []string{"*"}, Substring: "stream disconnected before completion", Kind: LimitKindTransient},
+	{Agents: []string{"*"}, Substring: "stream reported failure: reconnecting", Kind: LimitKindTransient},
+	{Agents: []string{"*"}, Substring: "500 internal server error", Kind: LimitKindTransient},
+	{Agents: []string{"*"}, Substring: "502 bad gateway", Kind: LimitKindTransient},
+	{Agents: []string{"*"}, Substring: "503 service unavailable", Kind: LimitKindTransient},
+	{Agents: []string{"*"}, Substring: "service unavailable", Kind: LimitKindTransient},
+	// Codex ChatGPT-account usage cap — a quota skip, not a hard failure.
+	{Agents: []string{"codex"}, Substring: "you've hit your usage limit", Kind: LimitKindQuota},
 }
 
 // ClassifyLimit inspects an agent error message and returns a

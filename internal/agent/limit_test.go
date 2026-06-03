@@ -72,6 +72,49 @@ func TestClassifyLimitNegativeCases(t *testing.T) {
 	}
 }
 
+func TestClassifyLimitTransientAndUsage(t *testing.T) {
+	cases := []struct {
+		name, agent, msg string
+		want             LimitKind
+	}{
+		{
+			"codex 429 retry limit", "codex",
+			`codex stream reported failure: exceeded retry limit, last status: 429 Too Many Requests, request id: abc`,
+			LimitKindTransient,
+		},
+		{
+			"codex stream disconnect", "codex",
+			`codex stream reported failure: Reconnecting... 2/5 (stream disconnected before completion: An error occurred while processing your request ... help.openai.com)`,
+			LimitKindTransient,
+		},
+		{
+			"gemini 429 capacity", "gemini",
+			`Attempt 1 failed with status 429. No capacity available for model gemini-3.1-pro-preview on the server`,
+			LimitKindTransient,
+		},
+		{"http 503", "codex", `agent: codex failed: 503 Service Unavailable`, LimitKindTransient},
+		{
+			"codex usage limit -> quota", "codex",
+			`codex stream reported failure: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Mar 2nd, 2026 1:22 PM.`,
+			LimitKindQuota,
+		},
+		// Genuine/deterministic MUST NOT be transient:
+		{
+			"model not supported", "codex",
+			`codex stream reported failure: {"detail":"The 'devstral-2' model is not supported when using Codex with a ChatGPT account."}`,
+			LimitKindNone,
+		},
+		{"unknown option", "droid", `agent: droid failed: error: unknown option '-C'`, LimitKindNone},
+		{"stdin not a terminal", "codex", `agent: codex failed: Error: stdin is not a terminal`, LimitKindNone},
+		{"context window", "codex", `Codex ran out of room in the model's context window.`, LimitKindNone},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, ClassifyLimit(tc.agent, tc.msg).Kind)
+		})
+	}
+}
+
 func TestClassifyLimitWithRulesIsolatesSyntheticPattern(t *testing.T) {
 	// Synthetic rule used only inside this test — does not pollute
 	// defaultLimitRules.
