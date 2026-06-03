@@ -370,6 +370,7 @@ func fetchForSessionHTTP(
 	if err != nil {
 		return nil, fmt.Errorf("usage endpoint request: %w", err)
 	}
+	req.Header.Set("Accept", "application/json")
 	client := cfg.Client
 	if client == nil {
 		client = http.DefaultClient
