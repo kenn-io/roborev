@@ -269,15 +269,15 @@ func TestClaimDueReviewAttemptIsExclusive(t *testing.T) {
 	require.True(t, created)
 	require.NoError(t, db.DeferReviewAttempt("o/r", 9, "s", "transient", "x", "u",
 		now.Add(-time.Minute), false))
-	var wins int32
+	var wins atomic.Int32
 	var wg sync.WaitGroup
 	for range 8 {
 		wg.Go(func() {
 			if ok, _, _, _ := db.ClaimDueReviewAttempt("o/r", 9, "s", now); ok {
-				atomic.AddInt32(&wins, 1)
+				wins.Add(1)
 			}
 		})
 	}
 	wg.Wait()
-	assert.Equal(t, int32(1), atomic.LoadInt32(&wins))
+	assert.Equal(t, int32(1), wins.Load())
 }
