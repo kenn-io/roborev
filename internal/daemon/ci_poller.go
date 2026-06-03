@@ -1615,6 +1615,53 @@ func (p *CIPoller) postPanelRun(ctx context.Context, row *storage.CIPanel) {
 		return
 	}
 
+	p.finalizePanelRun(row, members)
+}
+
+// finalizePanelRun classifies a claimed panel run's member outcomes against the
+// HEAD's retry state and resolves it without ever posting a terminal "Review
+// Failed" for a provider outage. A successful or all-skipped run posts as
+// before; a genuine give-up posts a non-blocking soft note; a transient/genuine
+// defer posts nothing, sets a pending status, and retires the run so a later
+// retry sweep re-enqueues. The attempt row may not exist yet (it is reserved on
+// enqueue in a later task); when absent, the genuine streak defaults to 0 and
+// the attempt-state writes (defer/done) are skipped, so the run still classifies
+// and posts/skips correctly. The poster already holds the posting claim, so the
+// transient defer retires the run before any status is set — the all-failed
+// "failure" status path is therefore unreachable for an all-transient panel.
+func (p *CIPoller) finalizePanelRun(row *storage.CIPanel, members []storage.BatchReviewResult) {
+	results := toReviewResults(members)
+	attempt, err := p.db.GetReviewAttempt(row.GithubRepo, row.PRNumber, row.HeadSHA)
+	if err != nil {
+		log.Printf("CI poller: error loading review attempt for %s#%d@%s: %v",
+			row.GithubRepo, row.PRNumber, gitpkg.ShortSHA(row.HeadSHA), err)
+		p.releasePanelClaim(row.ID)
+		return
+	}
+	consecutiveGenuine := 0
+	if attempt != nil {
+		consecutiveGenuine = attempt.ConsecutiveGenuineAttempts
+	}
+
+	out := classifyPanelOutcome(results, consecutiveGenuine)
+	switch out.Kind {
+	case OutcomePost, OutcomeAllSkip:
+		p.postPanelComment(row, members, attempt)
+	case OutcomeGenuineGiveUp:
+		p.postPanelGiveUp(row, attempt,
+			reviewpkg.FormatGenuineSoftNoteComment(row.HeadSHA, out.LastErrorExcerpt))
+	case OutcomeDeferTransient:
+		p.deferTransientPanel(row, attempt, out.LastErrorExcerpt)
+	case OutcomeDeferGenuine:
+		p.deferGenuinePanel(row, attempt, out.LastErrorExcerpt)
+	}
+}
+
+// postPanelComment posts the combined/synthesis comment (or the all-skipped
+// summary, both via panelCommentBody), sets the commit status, marks the
+// attempt done when a row exists, and finalizes the panel row. This is the
+// pre-existing posting path, now invoked only for OutcomePost/OutcomeAllSkip.
+func (p *CIPoller) postPanelComment(row *storage.CIPanel, members []storage.BatchReviewResult, attempt *storage.ReviewAttempt) {
 	body := p.panelCommentBody(row, members)
 	if err := p.callPostPRComment(row.GithubRepo, row.PRNumber, body); err != nil {
 		p.handlePanelPostError(row, err)
@@ -1627,11 +1674,98 @@ func (p *CIPoller) postPanelRun(ctx context.Context, row *storage.CIPanel) {
 		log.Printf("CI poller: failed to set %s status for %s@%s: %v",
 			state, row.GithubRepo, row.HeadSHA, err)
 	}
+	p.markAttemptDone(row, attempt)
 	if err := p.db.MarkPanelPosted(row.ID); err != nil {
 		log.Printf("CI poller: warning: failed to finalize panel %d: %v", row.ID, err)
 	}
 	log.Printf("CI poller: posted panel comment on %s#%d (panel %d, %d members)",
 		row.GithubRepo, row.PRNumber, row.ID, len(members))
+}
+
+// postPanelGiveUp posts a non-blocking give-up note (a HEAD that exhausted its
+// transient retry wall or genuine-failure streak), sets a non-failing success
+// status so the note never blocks a required check, marks the attempt done, and
+// finalizes the panel row. A comment-post failure routes through the same
+// permanent/transient handling as a normal post.
+func (p *CIPoller) postPanelGiveUp(row *storage.CIPanel, attempt *storage.ReviewAttempt, body string) {
+	if err := p.callPostPRComment(row.GithubRepo, row.PRNumber, body); err != nil {
+		p.handlePanelPostError(row, err)
+		return
+	}
+	if err := p.callSetCommitStatus(row.GithubRepo, row.HeadSHA, "success", "Review unavailable"); err != nil {
+		log.Printf("CI poller: failed to set give-up status for %s@%s: %v",
+			row.GithubRepo, gitpkg.ShortSHA(row.HeadSHA), err)
+	}
+	p.markAttemptDone(row, attempt)
+	if err := p.db.MarkPanelPosted(row.ID); err != nil {
+		log.Printf("CI poller: warning: failed to finalize give-up panel %d: %v", row.ID, err)
+	}
+	log.Printf("CI poller: posted give-up note on %s#%d (panel %d)",
+		row.GithubRepo, row.PRNumber, row.ID)
+}
+
+// deferTransientPanel handles an all-transient panel (no successful member, ≥1
+// provider outage). It posts the transient give-up note once the 3-day retry
+// wall is exhausted (only measurable when an attempt row exists); otherwise it
+// records a deferral with the next backoff, sets a pending status, posts NO
+// comment, and retires the panel run so a later retry sweep re-enqueues a fresh
+// run. With no attempt row the wall cannot be exhausted, so it always defers.
+func (p *CIPoller) deferTransientPanel(row *storage.CIPanel, attempt *storage.ReviewAttempt, excerpt string) {
+	now := time.Now()
+	if attempt != nil && reviewpkg.DefaultRetrySchedule.TransientExhausted(now.Sub(attempt.FirstAttemptAt)) {
+		p.postPanelGiveUp(row, attempt, reviewpkg.FormatTransientGiveUpComment(row.HeadSHA, excerpt))
+		return
+	}
+	p.recordDeferral(row, attempt, "transient", excerpt, now, false)
+}
+
+// deferGenuinePanel handles a genuine-failure panel whose streak has not yet hit
+// the give-up cap: it records a deferral (bumping the consecutive-genuine
+// streak), sets a pending status, posts NO comment, and retires the run.
+func (p *CIPoller) deferGenuinePanel(row *storage.CIPanel, attempt *storage.ReviewAttempt, excerpt string) {
+	p.recordDeferral(row, attempt, "genuine", excerpt, time.Now(), true)
+}
+
+// recordDeferral defers the HEAD's attempt to the next backoff (when a row
+// exists), sets a non-blocking pending status, and retires the panel run
+// without posting. errClass is "transient" or "genuine"; bumpGenuine increments
+// the consecutive-genuine streak (genuine) or resets it (transient). Retiring
+// the run removes it from the active set without a comment; the attempt row (not
+// the panel) is the durable retry state a later sweep acts on.
+func (p *CIPoller) recordDeferral(
+	row *storage.CIPanel, attempt *storage.ReviewAttempt, errClass, excerpt string, now time.Time, bumpGenuine bool,
+) {
+	if attempt != nil {
+		nextAt := now.Add(reviewpkg.DefaultRetrySchedule.NextDelay(attempt.Attempt))
+		if err := p.db.DeferReviewAttempt(row.GithubRepo, row.PRNumber, row.HeadSHA,
+			errClass, excerpt, row.PanelRunUUID, nextAt, bumpGenuine); err != nil {
+			log.Printf("CI poller: error deferring %s attempt for %s#%d@%s: %v",
+				errClass, row.GithubRepo, row.PRNumber, gitpkg.ShortSHA(row.HeadSHA), err)
+		}
+	}
+	if err := p.callSetCommitStatus(row.GithubRepo, row.HeadSHA, "pending",
+		"Review pending — provider unavailable, retrying"); err != nil {
+		log.Printf("CI poller: failed to set pending status for %s@%s: %v",
+			row.GithubRepo, gitpkg.ShortSHA(row.HeadSHA), err)
+	}
+	if err := p.db.MarkPanelRetired(row.ID); err != nil {
+		log.Printf("CI poller: error retiring deferred panel %d: %v", row.ID, err)
+	}
+	log.Printf("CI poller: deferred %s panel run for %s#%d (panel %d, retrying)",
+		errClass, row.GithubRepo, row.PRNumber, row.ID)
+}
+
+// markAttemptDone marks the HEAD's attempt terminal when a row exists. A missing
+// row is a no-op: in the no-reserve interim the finalize path still posts/skips
+// correctly without an attempt to close.
+func (p *CIPoller) markAttemptDone(row *storage.CIPanel, attempt *storage.ReviewAttempt) {
+	if attempt == nil {
+		return
+	}
+	if err := p.db.MarkReviewAttemptDone(row.GithubRepo, row.PRNumber, row.HeadSHA); err != nil {
+		log.Printf("CI poller: error marking review attempt done for %s#%d@%s: %v",
+			row.GithubRepo, row.PRNumber, gitpkg.ShortSHA(row.HeadSHA), err)
+	}
 }
 
 // panelCommentBody picks the PR comment body from the synthesis job status,
@@ -1694,9 +1828,12 @@ func (p *CIPoller) releasePanelClaim(id int64) {
 // panelCommitStatus computes the GitHub commit status from a panel run's member
 // outcomes, mirroring postBatchResults' §9 switch. Status reflects whether the
 // review process ran, never the synthesis verdict: a Fail verdict still posts
-// success, and quota/timeout skips are success-with-note rather than failures
-// (so quota exhaustion never blocks a PR). The "jobs" are the member rows; the
-// synthesis is consolidation, not a reviewer.
+// success, and quota/timeout/transient-outage skips are success-with-note rather
+// than failures (so quota exhaustion or a provider outage never counts as a
+// genuine failure here). The "jobs" are the member rows; the synthesis is
+// consolidation, not a reviewer. Note: an all-transient panel never reaches this
+// function for its status — finalizePanelRun defers and sets a pending status
+// before posting — so the all-failed "error" arm is unreachable for one.
 func panelCommitStatus(members []storage.BatchReviewResult) (state, desc string) {
 	results := toReviewResults(members)
 	completed := 0
@@ -1711,8 +1848,9 @@ func panelCommitStatus(members []storage.BatchReviewResult) (state, desc string)
 	}
 	quotaSkips := reviewpkg.CountQuotaFailures(results)
 	timeoutSkips := reviewpkg.CountTimeoutCancellations(results)
-	skippedTotal := quotaSkips + timeoutSkips
-	realFailures := max(failedMembers-quotaSkips-timeoutSkips, 0)
+	transientSkips := reviewpkg.CountTransientFailures(results)
+	skippedTotal := quotaSkips + timeoutSkips + transientSkips
+	realFailures := max(failedMembers-quotaSkips-timeoutSkips-transientSkips, 0)
 
 	state = "success"
 	desc = "Review complete"

@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	googlegithub "github.com/google/go-github/v84/github"
@@ -562,6 +563,162 @@ func TestPanelRawFallbackRendersHeadSHA(t *testing.T) {
 	body := (*comments)[0].Body
 	assert.Contains(body, git.ShortSHA(headSHA), "renders the head short SHA")
 	assert.NotContains(body, "1111111", "must not render the merge-base SHA")
+}
+
+// panelRetiredAt reports whether the panel row's retired_at is set.
+func (h *ciPollerHarness) panelRetiredAt(t *testing.T, id int64) bool {
+	t.Helper()
+	var retiredAt *string
+	err := h.DB.QueryRow(`SELECT retired_at FROM ci_pr_panels WHERE id = ?`, id).Scan(&retiredAt)
+	require.NoError(t, err)
+	return retiredAt != nil
+}
+
+// TestPostPanelRunDefersTransient covers the non-blocking transient policy: an
+// all-transient panel (no member succeeded; every failure is a provider outage)
+// posts NO comment, sets a pending status, defers the attempt, and retires the
+// panel run so a later sweep re-enqueues — never a terminal "Review Failed".
+func TestPostPanelRunDefersTransient(t *testing.T) {
+	assert := assert.New(t)
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	comments := h.CaptureComments()
+	statuses := h.CaptureCommitStatuses()
+
+	const headSHA = "transient1234567"
+	created, err := h.DB.ReserveReviewAttempt("acme/api", 80, headSHA, time.Now())
+	require.NoError(t, err)
+	require.True(t, created, "attempt row reserved")
+
+	outage := reviewpkg.OutageErrorPrefix + "429 Too Many Requests"
+	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 80, headSHA, "base.."+headSHA,
+		[]jobSpec{{Agent: "test", ReviewType: "review", Status: "failed", Error: outage}})
+	h.markJobFailed(t, synth.ID, "synthesis released after all members failed")
+
+	h.Poller.handleReviewFailed(ciEvent(synth.ID, "review.failed"))
+
+	assert.Empty(*comments, "transient defer must not post a comment")
+	require.Len(t, *statuses, 1, "transient defer sets exactly one status")
+	assert.Equal("pending", (*statuses)[0].State, "transient defer status is pending, never failure")
+	assert.False(h.panelPostedAt(t, panel.ID), "deferred panel is not marked posted")
+	assert.True(h.panelRetiredAt(t, panel.ID), "deferred panel is retired (removed from active set)")
+
+	attempt, err := h.DB.GetReviewAttempt("acme/api", 80, headSHA)
+	require.NoError(t, err)
+	require.NotNil(t, attempt)
+	assert.Equal("deferred", attempt.State, "attempt deferred for retry")
+	assert.Equal("transient", attempt.LastErrorClass, "deferral records the transient class")
+	assert.Equal(0, attempt.ConsecutiveGenuineAttempts, "transient defer does not bump the genuine streak")
+	assert.NotNil(attempt.NextAttemptAt, "transient defer schedules a next attempt")
+}
+
+// TestPostPanelRunDefersGenuine covers the genuine-failure defer: a genuine
+// failure below the give-up cap posts nothing, sets pending, bumps the
+// consecutive-genuine streak, and retires the run.
+func TestPostPanelRunDefersGenuine(t *testing.T) {
+	assert := assert.New(t)
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	comments := h.CaptureComments()
+	statuses := h.CaptureCommitStatuses()
+
+	const headSHA = "genuine12345678"
+	_, err := h.DB.ReserveReviewAttempt("acme/api", 81, headSHA, time.Now())
+	require.NoError(t, err)
+
+	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 81, headSHA, "base.."+headSHA,
+		[]jobSpec{{Agent: "test", ReviewType: "review", Status: "failed", Error: "bad model config"}})
+	h.markJobFailed(t, synth.ID, "synthesis released after all members failed")
+
+	h.Poller.handleReviewFailed(ciEvent(synth.ID, "review.failed"))
+
+	assert.Empty(*comments, "genuine defer must not post a comment")
+	require.Len(t, *statuses, 1)
+	assert.Equal("pending", (*statuses)[0].State, "genuine defer status is pending")
+	assert.True(h.panelRetiredAt(t, panel.ID), "deferred panel is retired")
+
+	attempt, err := h.DB.GetReviewAttempt("acme/api", 81, headSHA)
+	require.NoError(t, err)
+	require.NotNil(t, attempt)
+	assert.Equal("deferred", attempt.State)
+	assert.Equal("genuine", attempt.LastErrorClass)
+	assert.Equal(1, attempt.ConsecutiveGenuineAttempts, "genuine defer bumps the streak")
+}
+
+// TestPostPanelRunGenuineGiveUp covers the genuine give-up: once the
+// consecutive-genuine streak reaches the cap, the run posts a non-blocking soft
+// note, sets a success (non-failing) status, and finalizes the attempt as done.
+func TestPostPanelRunGenuineGiveUp(t *testing.T) {
+	assert := assert.New(t)
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	comments := h.CaptureComments()
+	statuses := h.CaptureCommitStatuses()
+
+	const headSHA = "giveup123456789"
+	_, err := h.DB.ReserveReviewAttempt("acme/api", 82, headSHA, time.Now())
+	require.NoError(t, err)
+	// Drive the streak to one below the cap so this attempt (streak+1) hits it.
+	_, err = h.DB.Exec(`UPDATE ci_pr_review_attempts SET consecutive_genuine_attempts = ?
+		WHERE github_repo = ? AND pr_number = ? AND head_sha = ?`,
+		reviewpkg.DefaultRetrySchedule.GenuineMax-1, "acme/api", 82, headSHA)
+	require.NoError(t, err)
+
+	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 82, headSHA, "base.."+headSHA,
+		[]jobSpec{{Agent: "test", ReviewType: "review", Status: "failed", Error: "still broken"}})
+	h.markJobFailed(t, synth.ID, "synthesis released after all members failed")
+
+	h.Poller.handleReviewFailed(ciEvent(synth.ID, "review.failed"))
+
+	require.Len(t, *comments, 1, "give-up posts a soft note")
+	assert.Contains((*comments)[0].Body, "## roborev: Review Unavailable", "give-up note header")
+	require.Len(t, *statuses, 1)
+	assert.Equal("success", (*statuses)[0].State, "give-up status is non-failing")
+	assert.True(h.panelPostedAt(t, panel.ID), "give-up finalizes the panel")
+
+	attempt, err := h.DB.GetReviewAttempt("acme/api", 82, headSHA)
+	require.NoError(t, err)
+	require.NotNil(t, attempt)
+	assert.Equal("done", attempt.State, "give-up marks the attempt done")
+}
+
+// TestPostPanelRunPostsWhenAttemptMissing covers the no-row interim (attempts are
+// reserved on enqueue in a later task): with no attempt row, a successful panel
+// still posts and finalizes, and an all-transient panel still defers without a
+// comment (the wall can never be exhausted without a row).
+func TestPostPanelRunPostsWhenAttemptMissing(t *testing.T) {
+	t.Run("success posts without attempt row", func(t *testing.T) {
+		assert := assert.New(t)
+		h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+		comments := h.CaptureComments()
+		statuses := h.CaptureCommitStatuses()
+
+		panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 83, "noattempt0000001", "base..noattempt0000001",
+			[]jobSpec{{Agent: "test", ReviewType: "review", Status: "done", Output: "Finding A"}})
+		h.completeSynthesisWithReview(t, synth.ID, "## Combined\nVerified.")
+
+		h.Poller.handleReviewCompleted(ciEvent(synth.ID, "review.completed"))
+
+		require.Len(t, *comments, 1, "success posts even without an attempt row")
+		assert.Equal("success", (*statuses)[0].State)
+		assert.True(h.panelPostedAt(t, panel.ID))
+	})
+
+	t.Run("all-transient defers without attempt row", func(t *testing.T) {
+		assert := assert.New(t)
+		h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+		comments := h.CaptureComments()
+		statuses := h.CaptureCommitStatuses()
+
+		outage := reviewpkg.OutageErrorPrefix + "stream disconnected"
+		panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 84, "noattempt0000002", "base..noattempt0000002",
+			[]jobSpec{{Agent: "test", ReviewType: "review", Status: "failed", Error: outage}})
+		h.markJobFailed(t, synth.ID, "synthesis released")
+
+		h.Poller.handleReviewFailed(ciEvent(synth.ID, "review.failed"))
+
+		assert.Empty(*comments, "no comment without an attempt row either")
+		require.Len(t, *statuses, 1)
+		assert.Equal("pending", (*statuses)[0].State, "still pending, never failure")
+		assert.True(h.panelRetiredAt(t, panel.ID), "still retired without an attempt row")
+	})
 }
 
 // TestPanelMemberEventIgnored verifies a member job's event posts nothing: only
