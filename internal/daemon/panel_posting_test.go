@@ -644,8 +644,8 @@ func TestPostPanelRunDefersGenuine(t *testing.T) {
 }
 
 // TestPostPanelRunGenuineGiveUp covers the genuine give-up: once the
-// consecutive-genuine streak reaches the cap, the run posts a non-blocking soft
-// note, sets a success (non-failing) status, and finalizes the attempt as done.
+// consecutive-genuine streak reaches the cap, the run posts a soft note, sets a
+// blocking status, and finalizes the attempt as done.
 func TestPostPanelRunGenuineGiveUp(t *testing.T) {
 	assert := assert.New(t)
 	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
@@ -670,7 +670,8 @@ func TestPostPanelRunGenuineGiveUp(t *testing.T) {
 	require.Len(t, *comments, 1, "give-up posts a soft note")
 	assert.Contains((*comments)[0].Body, "## roborev: Review Unavailable", "give-up note header")
 	require.Len(t, *statuses, 1)
-	assert.Equal("success", (*statuses)[0].State, "give-up status is non-failing")
+	assert.Equal("error", (*statuses)[0].State, "genuine give-up status blocks required checks")
+	assert.Equal("All reviews failed", (*statuses)[0].Desc)
 	assert.True(h.panelPostedAt(t, panel.ID), "give-up finalizes the panel")
 
 	attempt, err := h.DB.GetReviewAttempt("acme/api", 82, headSHA)

@@ -112,6 +112,9 @@ func TestSupersedePriorPanels(t *testing.T) {
 		[]jobSpec{{Agent: "test", ReviewType: "review"}}) // members left queued (cancelable)
 	synthID = synth.ID
 	require.Len(t, members, 1)
+	attempt, err := h.DB.GetReviewAttempt("acme/api", 7, "oldsha")
+	require.NoError(t, err)
+	require.NotNil(t, attempt, "panel run reserves an attempt row")
 
 	h.Poller.supersedePriorPanels("acme/api", 7, "newsha")
 
@@ -124,6 +127,9 @@ func TestSupersedePriorPanels(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(rows, "stale mapping deleted")
 	assert.False(synthMappingActiveAtCancel, "synthesis cancellation must not observe an active stale mapping")
+	attempt, err = h.DB.GetReviewAttempt("acme/api", 7, "oldsha")
+	require.NoError(t, err)
+	assert.Nil(attempt, "superseding an old HEAD deletes its retry attempt row")
 	_ = panel
 }
 

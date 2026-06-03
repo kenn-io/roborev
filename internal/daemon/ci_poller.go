@@ -1666,7 +1666,7 @@ func (p *CIPoller) postPanelRun(ctx context.Context, row *storage.CIPanel) {
 // finalizePanelRun classifies a claimed panel run's member outcomes against the
 // HEAD's retry state and resolves it without ever posting a terminal "Review
 // Failed" for a provider outage. A successful or all-skipped run posts as
-// before; a genuine give-up posts a non-blocking soft note; a transient/genuine
+// before; a genuine give-up posts a blocking soft note; a transient/genuine
 // defer posts nothing, sets a pending status, and retires the run so a later
 // retry sweep re-enqueues. Every finalized panel has a reserved attempt row
 // (CreateCIPanelRun reserves it atomically on enqueue): a missing row is an
@@ -1698,7 +1698,8 @@ func (p *CIPoller) finalizePanelRun(row *storage.CIPanel, members []storage.Batc
 		p.postPanelComment(row, members)
 	case OutcomeGenuineGiveUp:
 		p.postPanelGiveUp(row,
-			reviewpkg.FormatGenuineSoftNoteComment(row.HeadSHA, out.LastErrorExcerpt))
+			reviewpkg.FormatGenuineSoftNoteComment(row.HeadSHA, out.LastErrorExcerpt),
+			"error", "All reviews failed")
 	case OutcomeDeferTransient:
 		p.deferTransientPanel(row, attempt, out.LastErrorExcerpt)
 	case OutcomeDeferGenuine:
@@ -1731,17 +1732,17 @@ func (p *CIPoller) postPanelComment(row *storage.CIPanel, members []storage.Batc
 		row.GithubRepo, row.PRNumber, row.ID, len(members))
 }
 
-// postPanelGiveUp posts a non-blocking give-up note (a HEAD that exhausted its
-// transient retry wall or genuine-failure streak), sets a non-failing success
-// status so the note never blocks a required check, marks the attempt done, and
-// finalizes the panel row. A comment-post failure routes through the same
-// permanent/transient handling as a normal post.
-func (p *CIPoller) postPanelGiveUp(row *storage.CIPanel, body string) {
+// postPanelGiveUp posts a give-up note, sets the requested commit status, marks
+// the attempt done, and finalizes the panel row. Transient/provider-unavailable
+// give-up remains non-blocking; deterministic genuine give-up is blocking. A
+// comment-post failure routes through the same permanent/transient handling as a
+// normal post.
+func (p *CIPoller) postPanelGiveUp(row *storage.CIPanel, body, statusState, statusDesc string) {
 	if err := p.callPostPRComment(row.GithubRepo, row.PRNumber, body); err != nil {
 		p.handlePanelPostError(row, err)
 		return
 	}
-	if err := p.callSetCommitStatus(row.GithubRepo, row.HeadSHA, "success", "Review unavailable"); err != nil {
+	if err := p.callSetCommitStatus(row.GithubRepo, row.HeadSHA, statusState, statusDesc); err != nil {
 		log.Printf("CI poller: failed to set give-up status for %s@%s: %v",
 			row.GithubRepo, gitpkg.ShortSHA(row.HeadSHA), err)
 	}
@@ -1761,7 +1762,8 @@ func (p *CIPoller) postPanelGiveUp(row *storage.CIPanel, body string) {
 func (p *CIPoller) deferTransientPanel(row *storage.CIPanel, attempt *storage.ReviewAttempt, excerpt string) {
 	now := time.Now()
 	if reviewpkg.DefaultRetrySchedule.TransientExhausted(now.Sub(attempt.FirstAttemptAt)) {
-		p.postPanelGiveUp(row, reviewpkg.FormatTransientGiveUpComment(row.HeadSHA, excerpt))
+		p.postPanelGiveUp(row, reviewpkg.FormatTransientGiveUpComment(row.HeadSHA, excerpt),
+			"success", "Review unavailable")
 		return
 	}
 	p.recordDeferral(row, attempt, "transient", excerpt, now, false)
@@ -1942,6 +1944,10 @@ func (p *CIPoller) supersedePriorPanels(ghRepo string, prNumber int, newHeadSHA 
 		if err := p.db.MarkPanelRetired(row.ID); err != nil {
 			log.Printf("CI poller: supersede: retire mapping %s: %v", row.PanelRunUUID, err)
 			continue
+		}
+		if err := p.db.DeleteReviewAttempt(ghRepo, prNumber, row.HeadSHA); err != nil {
+			log.Printf("CI poller: supersede: delete review attempt for %s#%d@%s: %v",
+				ghRepo, prNumber, gitpkg.ShortSHA(row.HeadSHA), err)
 		}
 		cancelPanelRunParentFirst(p.db, p.jobCancelFn, synth)
 		superseded++
