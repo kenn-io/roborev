@@ -227,8 +227,9 @@ func FormatAllFailedComment(
 ) string {
 	quotaSkips := CountQuotaFailures(reviews)
 	timeoutSkips := CountTimeoutCancellations(reviews)
+	transientSkips := CountTransientFailures(reviews)
 	allSkipped := len(reviews) > 0 &&
-		quotaSkips+timeoutSkips == len(reviews)
+		quotaSkips+timeoutSkips+transientSkips == len(reviews)
 
 	var b strings.Builder
 	if allSkipped {
@@ -237,7 +238,8 @@ func FormatAllFailedComment(
 			gitrepo.ShortSHA(headSHA))
 		b.WriteString(
 			"All review agents were skipped " +
-				"due to quota exhaustion or timeout.\n\n")
+				"due to quota exhaustion, timeout, or provider " +
+				"unavailability.\n\n")
 	} else {
 		fmt.Fprintf(&b,
 			"## roborev: Review Failed (`%s`)\n\n",

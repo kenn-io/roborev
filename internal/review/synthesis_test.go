@@ -350,7 +350,8 @@ func TestFormatAllFailedComment(t *testing.T) {
 		assert.NotContains(t, comment, "Check CI logs", "all-quota should not mention CI logs")
 	})
 
-	t.Run("transient member", func(t *testing.T) {
+	t.Run("all transient renders as skipped", func(t *testing.T) {
+		assert := assert.New(t)
 		reviews := []ReviewResult{
 			{
 				Agent:      "codex",
@@ -362,7 +363,59 @@ func TestFormatAllFailedComment(t *testing.T) {
 		comment := FormatAllFailedComment(
 			reviews, "ccc333444555")
 
-		assert.Contains(t, comment, "skipped (provider unavailable)")
+		assert.Contains(comment, "skipped (provider unavailable)")
+		// A batch where every member is a transient skip must read as
+		// "Review Skipped", not the contradictory "Review Failed" header.
+		assert.Contains(comment, "Review Skipped")
+		assert.NotContains(comment, "Review Failed")
+		assert.NotContains(comment, "Check CI logs")
+	})
+
+	t.Run("mixed skips (quota, timeout, transient)", func(t *testing.T) {
+		assert := assert.New(t)
+		reviews := []ReviewResult{
+			{
+				Agent: "codex", ReviewType: "default", Status: ResultFailed,
+				Error: QuotaErrorPrefix + "exhausted",
+			},
+			{
+				Agent: "gemini", ReviewType: "security", Status: "canceled",
+				Error: TimeoutErrorPrefix + "deadline",
+			},
+			{
+				Agent: "claude-code", ReviewType: "default", Status: ResultFailed,
+				Error: OutageErrorPrefix + "503 service unavailable",
+			},
+		}
+		comment := FormatAllFailedComment(
+			reviews, "ddd444555666")
+
+		assert.Contains(comment, "Review Skipped")
+		assert.NotContains(comment, "Review Failed")
+		assert.NotContains(comment, "Check CI logs")
+	})
+
+	t.Run("transient plus genuine failure stays failed", func(t *testing.T) {
+		assert := assert.New(t)
+		reviews := []ReviewResult{
+			{
+				Agent: "codex", ReviewType: "default", Status: ResultFailed,
+				Error: OutageErrorPrefix + "429",
+			},
+			{
+				Agent: "gemini", ReviewType: "default", Status: ResultFailed,
+				Error: "crashed",
+			},
+		}
+		comment := FormatAllFailedComment(
+			reviews, "eee555666777")
+
+		// A genuine failure alongside a transient skip is not all-skipped.
+		assert.Contains(comment, "Review Failed")
+		assert.Contains(comment, "Check CI logs")
+		// The transient member is still labelled as a skip, the genuine one as failed.
+		assert.Contains(comment, "skipped (provider unavailable)")
+		assert.Contains(comment, "**gemini** (default): failed")
 	})
 }
 

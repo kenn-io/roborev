@@ -98,6 +98,15 @@ func TestClassifyLimitTransientAndUsage(t *testing.T) {
 			`codex stream reported failure: You've hit your usage limit. Visit https://chatgpt.com/codex/settings/usage to purchase more credits or try again at Mar 2nd, 2026 1:22 PM.`,
 			LimitKindQuota,
 		},
+		{
+			// Usage-cap text wrapped in a 429/Too Many Requests envelope must
+			// still classify as quota: the codex usage-limit rule precedes the
+			// generic transient rules, so first-match-wins keeps it quota. This
+			// fails if the codex rule is moved back below the transient rules.
+			"codex usage limit wrapped in 429 stays quota", "codex",
+			`codex stream reported failure: You've hit your usage limit, last status: 429 Too Many Requests`,
+			LimitKindQuota,
+		},
 		// Genuine/deterministic MUST NOT be transient:
 		{"bare service unavailable not transient", "codex", `agent: codex failed: service unavailable`, LimitKindNone},
 		{
