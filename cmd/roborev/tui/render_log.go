@@ -71,12 +71,11 @@ func (m model) renderLogView() string {
 	}
 
 	// For auto-design-router rows (classify-typed, or terminal skipped
-	// design reviews) the streamed agent log is empty — the classifier
-	// runs as a one-shot SchemaAgent.Decide call, not a streaming chat.
-	// Surface the classifier's verdict and reasoning here so 'l' on a
-	// classify/skipped row actually shows something useful. Truncated
-	// to m.width so each returned string occupies exactly one terminal
-	// row, keeping the log content area aligned with logVisibleLines.
+	// design reviews), surface the classifier verdict and reasoning above
+	// any raw log lines. The header remains useful when the log file was
+	// cleaned up or the classifier failed before producing output.
+	// Truncated to m.width so each returned string occupies exactly one
+	// terminal row, keeping the log content area aligned with logVisibleLines.
 	for _, line := range classifyReasoningLines(job, m.width) {
 		b.WriteString(line)
 		b.WriteString("\x1b[K\n")

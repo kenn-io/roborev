@@ -92,6 +92,12 @@ func (wp *WorkerPool) processClassifyJob(ctx context.Context, workerID string, j
 	classifyCtx, cancel := context.WithTimeout(ctx, timeout)
 	defer cancel()
 	maxBytes := config.ResolveClassifierMaxPromptSize(job.RepoPath, cfg)
+	jobLog := newJobLogWriter(job.ID)
+	defer func() {
+		if err := jobLog.Close(); err != nil {
+			log.Printf("[%s] Warning: close job log for classify job %d: %v", workerID, job.ID, err)
+		}
+	}()
 
 	if yes, reason, set := getTestClassifierVerdict(); set {
 		wp.applyClassifyVerdict(workerID, job, yes, reason)
@@ -153,7 +159,10 @@ func (wp *WorkerPool) processClassifyJob(ctx context.Context, workerID string, j
 		if !ok {
 			return false, "", selectedName, fmt.Errorf("classify_agent %q lost SchemaAgent capability after WithReasoning/WithModel", name)
 		}
-		yes, reason, err := newClassifierAdapter(sa, maxBytes).Decide(classifyCtx, in)
+		if err := wp.db.SaveJobCommandLine(job.ID, sa.CommandLine()); err != nil {
+			log.Printf("[%s] Error saving classifier command line for job %d: %v", workerID, job.ID, err)
+		}
+		yes, reason, err := newClassifierAdapter(sa, maxBytes, jobLog).Decide(classifyCtx, in)
 		return yes, reason, selectedName, err
 	}
 

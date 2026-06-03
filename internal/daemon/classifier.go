@@ -33,13 +33,14 @@ var classifySchema = json.RawMessage(`{
 type classifierAdapter struct {
 	agent    agent.SchemaAgent
 	maxBytes int
+	output   io.Writer
 }
 
-func newClassifierAdapter(a agent.SchemaAgent, maxBytes int) *classifierAdapter {
+func newClassifierAdapter(a agent.SchemaAgent, maxBytes int, output io.Writer) *classifierAdapter {
 	if maxBytes <= 0 {
 		maxBytes = 20 * 1024
 	}
-	return &classifierAdapter{agent: a, maxBytes: maxBytes}
+	return &classifierAdapter{agent: a, maxBytes: maxBytes, output: output}
 }
 
 type classifyResult struct {
@@ -61,7 +62,11 @@ func (c *classifierAdapter) Decide(ctx context.Context, in autotype.Input) (bool
 		return false, "", fmt.Errorf("build prompt: %w", err)
 	}
 
-	raw, err := c.agent.ClassifyWithSchema(ctx, in.RepoPath, in.GitRef, p, classifySchema, io.Discard)
+	logOutput := c.output
+	if logOutput == nil {
+		logOutput = io.Discard
+	}
+	raw, err := c.agent.ClassifyWithSchema(ctx, in.RepoPath, in.GitRef, p, classifySchema, logOutput)
 	if err != nil {
 		return false, "", fmt.Errorf("classifier agent: %w", err)
 	}

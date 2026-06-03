@@ -481,6 +481,55 @@ func TestProcessJob_UsesStoredReviewPromptOverride(t *testing.T) {
 	assert.Equal(t, job.Prompt, updated.Prompt)
 }
 
+func TestProcessJob_PromotedAutoDesignAppendsExistingClassifierLog(t *testing.T) {
+	setupTestEnv(t)
+	tc := newWorkerTestContext(t, 1)
+
+	reviewer := &agent.FakeAgent{
+		NameStr: "fake-reviewer",
+		ReviewFn: func(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
+			if output != nil {
+				_, err := io.WriteString(output, "design review progress\n")
+				require.NoError(t, err)
+			}
+			return "review output", nil
+		},
+	}
+	agent.Register(reviewer)
+	t.Cleanup(func() { agent.Unregister("fake-reviewer") })
+
+	commit, err := tc.DB.GetOrCreateCommit(tc.Repo.ID, "promoted-log", "Author", "s", time.Now())
+	require.NoError(t, err)
+	jobID, err := tc.DB.EnqueueAutoDesignJob(storage.EnqueueOpts{
+		RepoID:     tc.Repo.ID,
+		CommitID:   commit.ID,
+		GitRef:     "promoted-log",
+		Agent:      "fake-reviewer",
+		JobType:    storage.JobTypeReview,
+		ReviewType: "design",
+	})
+	require.NoError(t, err)
+	require.NotZero(t, jobID)
+	_, err = tc.DB.Exec(
+		"UPDATE review_jobs SET prompt = ?, prompt_prebuilt = 1 WHERE id = ?",
+		"prebuilt design review prompt",
+		jobID,
+	)
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(JobLogDir(), 0o700))
+	require.NoError(t, os.WriteFile(JobLogPath(jobID), []byte("classifier progress\n"), 0o600))
+
+	claimed, err := tc.DB.ClaimJob("worker-promoted-log")
+	require.NoError(t, err)
+	assert.Equal(t, "auto_design", claimed.Source)
+	tc.Pool.processJob("worker-promoted-log", claimed)
+
+	data, err := os.ReadFile(JobLogPath(jobID))
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "classifier progress")
+	assert.Contains(t, string(data), "design review progress")
+}
+
 func TestApplyCodexReviewSettingsOnlyForReviewJobs(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Agent.Codex.DisableReviewSkills = true

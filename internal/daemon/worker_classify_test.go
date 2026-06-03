@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
@@ -147,6 +148,49 @@ func TestResolveClassifyDiff_SkipsFetchForEmptyRef(t *testing.T) {
 		RepoPath: "/somewhere",
 	}
 	assert.Empty(t, resolveClassifyDiff("worker-4", job))
+}
+
+func TestProcessClassifyJob_WritesStandardLogAndCommandLine(t *testing.T) {
+	setupTestEnv(t)
+	tc := newWorkerTestContext(t, 1)
+
+	classifier := &fakeSchemaAgent{
+		name:        "fake-schema",
+		commandLine: "fake-schema classify --json",
+		result:      []byte(`{"design_review": false, "reason": "local change"}`),
+		logOutput:   "classifier progress\n",
+	}
+	agent.Register(classifier)
+	t.Cleanup(func() { agent.Unregister("fake-schema") })
+
+	cfg := config.DefaultConfig()
+	cfg.ClassifyAgent = "fake-schema"
+	tc.Pool.cfgGetter = NewStaticConfig(cfg)
+
+	_, err := tc.DB.GetOrCreateCommit(tc.Repo.ID, "classify-log", "Author", "s", time.Now())
+	require.NoError(t, err)
+	jobID, err := tc.DB.EnqueueAutoDesignJob(storage.EnqueueOpts{
+		RepoID:     tc.Repo.ID,
+		GitRef:     "classify-log",
+		JobType:    storage.JobTypeClassify,
+		ReviewType: "design",
+	})
+	require.NoError(t, err)
+	claimed, err := tc.DB.ClaimJob("worker-classify-log")
+	require.NoError(t, err)
+	require.Equal(t, jobID, claimed.ID)
+
+	tc.Pool.processClassifyJob(context.Background(), "worker-classify-log", claimed)
+
+	data, err := os.ReadFile(JobLogPath(jobID))
+	require.NoError(t, err)
+	assert.Contains(t, string(data), "classifier progress")
+
+	got, err := tc.DB.GetJobByID(jobID)
+	require.NoError(t, err)
+	assert.Equal(t, "fake-schema classify --json", got.CommandLine)
+	assert.Equal(t, storage.JobStatusSkipped, got.Status)
+	assert.Equal(t, "local change", got.SkipReason)
 }
 
 // waitForEvent reads one event from ch within timeout.

@@ -115,6 +115,13 @@ func ParseJobIDFromLogName(name string) (int64, bool) {
 	return id, true
 }
 
+type jobLogOpenMode int
+
+const (
+	jobLogTruncate jobLogOpenMode = iota
+	jobLogAppend
+)
+
 // jobLogWriter retries transient log-file open/write failures while buffering
 // a bounded amount of output in memory so jobs still get on-disk logs once the
 // filesystem recovers.
@@ -130,8 +137,16 @@ type jobLogWriter struct {
 }
 
 func newJobLogWriter(jobID int64) *jobLogWriter {
+	return newJobLogWriterWithMode(jobID, jobLogTruncate)
+}
+
+func newAppendingJobLogWriter(jobID int64) *jobLogWriter {
+	return newJobLogWriterWithMode(jobID, jobLogAppend)
+}
+
+func newJobLogWriterWithMode(jobID int64, mode jobLogOpenMode) *jobLogWriter {
 	w := &jobLogWriter{jobID: jobID}
-	w.tryOpenLocked(true)
+	w.tryOpenLocked(mode == jobLogTruncate)
 	return w
 }
 

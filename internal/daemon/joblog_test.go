@@ -188,6 +188,36 @@ func TestJobLogWriter(t *testing.T) {
 		}
 	})
 
+	t.Run("append_mode_preserves_existing_log", func(t *testing.T) {
+		setupTestEnv(t)
+		require.NoError(t, os.MkdirAll(JobLogDir(), 0o700))
+		require.NoError(t, os.WriteFile(JobLogPath(205), []byte("classifier\n"), 0o600))
+
+		w := newAppendingJobLogWriter(205)
+		_, err := w.Write([]byte("review\n"))
+		require.NoError(t, err)
+		require.NoError(t, w.Close())
+
+		data, err := os.ReadFile(JobLogPath(205))
+		require.NoError(t, err)
+		assert.Equal(t, "classifier\nreview\n", string(data))
+	})
+
+	t.Run("default_mode_truncates_existing_log", func(t *testing.T) {
+		setupTestEnv(t)
+		require.NoError(t, os.MkdirAll(JobLogDir(), 0o700))
+		require.NoError(t, os.WriteFile(JobLogPath(206), []byte("old\n"), 0o600))
+
+		w := newJobLogWriter(206)
+		_, err := w.Write([]byte("new\n"))
+		require.NoError(t, err)
+		require.NoError(t, w.Close())
+
+		data, err := os.ReadFile(JobLogPath(206))
+		require.NoError(t, err)
+		assert.Equal(t, "new\n", string(data))
+	})
+
 	t.Run("retries_after_initial_open_failure", func(t *testing.T) {
 		setupTestEnv(t)
 		prevRetry := jobLogOpenRetryInterval
