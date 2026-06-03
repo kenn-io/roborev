@@ -99,6 +99,7 @@ func TestClassifyLimitTransientAndUsage(t *testing.T) {
 			LimitKindQuota,
 		},
 		// Genuine/deterministic MUST NOT be transient:
+		{"bare service unavailable not transient", "codex", `agent: codex failed: service unavailable`, LimitKindNone},
 		{
 			"model not supported", "codex",
 			`codex stream reported failure: {"detail":"The 'devstral-2' model is not supported when using Codex with a ChatGPT account."}`,

@@ -75,6 +75,10 @@ var defaultLimitRules = []limitRule{
 	{Agents: []string{"*"}, Substring: "exhausted your capacity", Kind: LimitKindQuota},
 	{Agents: []string{"*"}, Substring: "capacity exhausted", Kind: LimitKindQuota},
 	{Agents: []string{"*"}, Substring: "capacity_exhausted", Kind: LimitKindQuota},
+	// Agent-specific rules precede the generic "*" rules so the more
+	// specific intent wins under first-match-wins (classifyLimitWithRules).
+	// Codex ChatGPT-account usage cap — a quota skip, not a hard failure.
+	{Agents: []string{"codex"}, Substring: "you've hit your usage limit", Kind: LimitKindQuota},
 	// Transient/outage — observed provider wording only (no speculative
 	// substrings; see the no-speculative note above). Retried with backoff.
 	{Agents: []string{"*"}, Substring: "too many requests", Kind: LimitKindTransient},
@@ -85,9 +89,6 @@ var defaultLimitRules = []limitRule{
 	{Agents: []string{"*"}, Substring: "500 internal server error", Kind: LimitKindTransient},
 	{Agents: []string{"*"}, Substring: "502 bad gateway", Kind: LimitKindTransient},
 	{Agents: []string{"*"}, Substring: "503 service unavailable", Kind: LimitKindTransient},
-	{Agents: []string{"*"}, Substring: "service unavailable", Kind: LimitKindTransient},
-	// Codex ChatGPT-account usage cap — a quota skip, not a hard failure.
-	{Agents: []string{"codex"}, Substring: "you've hit your usage limit", Kind: LimitKindQuota},
 }
 
 // ClassifyLimit inspects an agent error message and returns a
