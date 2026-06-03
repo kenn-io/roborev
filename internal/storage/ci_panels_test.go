@@ -215,32 +215,53 @@ func TestGetActivePanelsForPR(t *testing.T) {
 }
 
 // TestGetTimedOutPanels covers the timeout sweep selection: only un-posted runs
-// whose created_at is older than maxAge are returned. A recent un-posted run and
-// an old POSTED run are both excluded. Rows are backdated via raw SQL.
+// with a running member older than maxAge are returned. Panel created_at is not
+// the timeout clock because CI throttling uses it as the immutable review-attempt
+// time. A recent running member, an old posted run, and an old queued member are
+// all excluded.
 func TestGetTimedOutPanels(t *testing.T) {
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
 
-	oldUnposted := seedPanelRow(t, db, "o/r", 1, "old-unposted")
-	recentUnposted := seedPanelRow(t, db, "o/r", 2, "recent-unposted")
-	oldPosted := seedPanelRow(t, db, "o/r", 3, "old-posted")
+	repo := createRepo(t, db, "/tmp/ci-panel-timeouts")
+	seedRun := func(pr int, head string, startedAt string) (*CIPanel, *ReviewJob) {
+		t.Helper()
+		members := []EnqueueOpts{{
+			RepoID: repo.ID, GitRef: "base..head", Agent: "test",
+			PanelMemberIndex: 0,
+		}}
+		synthesis := EnqueueOpts{RepoID: repo.ID, GitRef: "base..head", Agent: "test"}
+		created, memberJobs, _, err := db.CreateCIPanelRun("o/r", pr, head, members, synthesis)
+		require.NoError(t, err)
+		require.True(t, created)
+		require.Len(t, memberJobs, 1)
+		_, err = db.Exec(`UPDATE review_jobs SET status = 'running', started_at = ? WHERE id = ?`,
+			startedAt, memberJobs[0].ID)
+		require.NoError(t, err)
+		panel, err := db.GetCIPanelByPRSHA("o/r", pr, head)
+		require.NoError(t, err)
+		return panel, memberJobs[0]
+	}
 
-	// Backdate both "old" rows an hour; leave the recent one at now.
-	_, err := db.Exec("UPDATE ci_pr_panels SET created_at = datetime('now','-1 hour') WHERE id IN (?, ?)",
-		oldUnposted, oldPosted)
+	oldUnposted, _ := seedRun(1, "old-unposted", time.Now().Add(-1*time.Hour).Format(time.RFC3339))
+	recentUnposted, _ := seedRun(2, "recent-unposted", time.Now().Format(time.RFC3339))
+	oldPosted, _ := seedRun(3, "old-posted", time.Now().Add(-1*time.Hour).Format(time.RFC3339))
+	queuedOld, queuedMember := seedRun(4, "queued-old", time.Now().Add(-1*time.Hour).Format(time.RFC3339))
+	_, err := db.Exec(`UPDATE review_jobs SET status = 'queued', started_at = NULL WHERE id = ?`, queuedMember.ID)
 	require.NoError(t, err)
-	require.NoError(t, db.MarkPanelPosted(oldPosted))
+	require.NoError(t, db.MarkPanelPosted(oldPosted.ID))
 	_ = recentUnposted
+	_ = queuedOld
 
 	rows, err := db.GetTimedOutPanels("o/r", 5*time.Minute)
 	require.NoError(t, err)
 	require.Len(t, rows, 1, "only the old un-posted run times out")
-	assert.Equal("run-old-unposted", rows[0].PanelRunUUID,
-		"the recent run and the old-but-posted run are excluded")
+	assert.Equal(oldUnposted.PanelRunUUID, rows[0].PanelRunUUID,
+		"the recent, posted, and queued runs are excluded")
 }
 
-func TestResetStaleJobsRefreshesActiveCIPanelTimeouts(t *testing.T) {
+func TestResetStaleJobsPreservesCIPanelCreatedAtAndClearsTimeoutRuntime(t *testing.T) {
 	assert := assert.New(t)
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -258,12 +279,16 @@ func TestResetStaleJobsRefreshesActiveCIPanelTimeouts(t *testing.T) {
 
 	_, err = db.Exec("UPDATE ci_pr_panels SET created_at = datetime('now','-1 hour') WHERE github_repo = 'o/r' AND pr_number = 12")
 	require.NoError(t, err)
+	createdBefore, err := db.LatestPanelTimeForPR("o/r", 12)
+	require.NoError(t, err)
 
 	claimed, err := db.ClaimJob("worker-before-restart")
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
 	assert.Equal(memberJobs[0].ID, claimed.ID)
 	assert.Equal(JobStatusRunning, claimed.Status)
+	_, err = db.Exec("UPDATE review_jobs SET started_at = datetime('now','-1 hour') WHERE id = ?", memberJobs[0].ID)
+	require.NoError(t, err)
 
 	rows, err := db.GetTimedOutPanels("o/r", 5*time.Minute)
 	require.NoError(t, err)
@@ -275,10 +300,13 @@ func TestResetStaleJobsRefreshesActiveCIPanelTimeouts(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(JobStatusQueued, recovered.Status)
 	assert.Nil(recovered.StartedAt)
+	createdAfter, err := db.LatestPanelTimeForPR("o/r", 12)
+	require.NoError(t, err)
+	assert.Equal(createdBefore, createdAfter, "restart recovery must not extend CI throttle time")
 
 	rows, err = db.GetTimedOutPanels("o/r", 5*time.Minute)
 	require.NoError(t, err)
-	assert.Empty(rows, "restart recovery refreshes active panel timeout clock")
+	assert.Empty(rows, "restart recovery clears running-member timeout clock")
 }
 
 // TestDeleteCIPanelByRun covers F13: deleting by panel_run_uuid removes the

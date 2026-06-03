@@ -1712,7 +1712,7 @@ func demoteConflictingAutoDesignJobs(tx *sql.Tx, sourceRepoID, targetRepoID int6
 func (db *DB) ResetStaleJobs() error {
 	if _, err := db.Exec(`
 		UPDATE ci_pr_panels
-		SET created_at = datetime('now'), posting_claimed_at = NULL
+		SET posting_claimed_at = NULL
 		WHERE posted_at IS NULL
 		  AND retired_at IS NULL
 		  AND EXISTS (

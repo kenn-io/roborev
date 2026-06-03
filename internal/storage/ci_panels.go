@@ -276,18 +276,27 @@ func (db *DB) GetActivePanelsForPR(githubRepo string, prNumber int) ([]CIPanel, 
 	return panels, rows.Err()
 }
 
-// GetTimedOutPanels returns the un-posted panel runs whose created_at is older
-// than maxAge — the timeout sweep's candidate set. The cutoff uses SQLite
-// datetime arithmetic (datetime('now', ?)) rather than a Go-formatted timestamp
-// compared lexically: a 'T'-vs-space mismatch at offset 10 would otherwise make
-// every fresh row read as timed out (the bug that bit task A4's CAS).
+// GetTimedOutPanels returns the un-posted panel runs with at least one running
+// member whose own started_at is older than maxAge — the timeout sweep's
+// candidate set. The cutoff uses SQLite datetime arithmetic (datetime('now', ?))
+// rather than a Go-formatted timestamp compared lexically: a 'T'-vs-space
+// mismatch at offset 10 would otherwise make fresh timestamps sort as timed out.
+// Panel created_at remains the immutable CI throttle clock, so restart recovery
+// must not use it as runtime state.
 func (db *DB) GetTimedOutPanels(githubRepo string, maxAge time.Duration) ([]CIPanel, error) {
 	cutoff := fmt.Sprintf("-%d seconds", int64(maxAge.Seconds()))
 	rows, err := db.Query(`SELECT `+ciPanelColumns+`
 		FROM ci_pr_panels
 		WHERE github_repo = ? AND posted_at IS NULL
 		  AND retired_at IS NULL
-		  AND datetime(created_at) < datetime('now', ?)`,
+		  AND EXISTS (
+		      SELECT 1 FROM review_jobs j
+		      WHERE j.panel_run_uuid = ci_pr_panels.panel_run_uuid
+		        AND j.panel_role = 'member'
+		        AND j.status = 'running'
+		        AND j.started_at IS NOT NULL
+		        AND datetime(j.started_at) < datetime('now', ?)
+		  )`,
 		githubRepo, cutoff)
 	if err != nil {
 		return nil, err
