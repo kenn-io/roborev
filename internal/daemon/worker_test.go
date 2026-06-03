@@ -950,6 +950,22 @@ func TestTransientFinalFailureGetsOutagePrefix(t *testing.T) {
 		"want %q prefix, got %q", review.OutageErrorPrefix, updated.Error)
 }
 
+func TestNonTransientFinalFailureNoOutagePrefix(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	job := tc.createAndClaimJobWithAgent(t, "no-outage-test", testWorkerID, "test")
+	job = tc.exhaustRetries(t, job, testWorkerID, "test") // drive retry_count to max
+	// A genuine agent error that classifies as LimitKindNone (no quota/transient/
+	// context-window substrings) hits the same retry-exhaustion FailJob site as
+	// the transient case above, but must be stored verbatim without the prefix.
+	finalErr := "agent: codex failed: exit status 1 (parse error: unexpected token)"
+	tc.Pool.failOrRetryAgent(testWorkerID, job, "codex", finalErr)
+	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusFailed)
+	assert.False(t, strings.HasPrefix(updated.Error, review.OutageErrorPrefix),
+		"non-transient final failure must not get %q prefix, got %q",
+		review.OutageErrorPrefix, updated.Error)
+	assert.Equal(t, finalErr, updated.Error, "raw error should be stored verbatim")
+}
+
 func TestWorkerPoolCancelJobFinalCheckDeadlockSafe(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	job := tc.createAndClaimJob(t, "deadlock-test", testWorkerID)
