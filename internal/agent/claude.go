@@ -2,6 +2,7 @@ package agent
 
 import (
 	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"fmt"
@@ -571,12 +572,61 @@ func (a *ClaudeAgent) classifyArgs(schema json.RawMessage) []string {
 	return args
 }
 
+type claudeStructuredOutputBlock struct {
+	Type   string          `json:"type"`
+	Name   string          `json:"name,omitempty"`
+	Input  json.RawMessage `json:"input,omitempty"`
+	Caller struct {
+		Type string `json:"type,omitempty"`
+	} `json:"caller,omitempty"`
+}
+
+func extractClaudeStructuredOutput(raw json.RawMessage) (json.RawMessage, bool, error) {
+	if len(raw) == 0 {
+		return nil, false, nil
+	}
+	var blocks []claudeStructuredOutputBlock
+	if err := json.Unmarshal(raw, &blocks); err != nil {
+		return nil, false, nil
+	}
+	for _, block := range blocks {
+		if block.Type != "tool_use" || block.Name != "StructuredOutput" {
+			continue
+		}
+		if block.Caller.Type != "direct" {
+			return nil, true, fmt.Errorf("claude structured output tool use has non-direct caller %q", block.Caller.Type)
+		}
+		if len(bytes.TrimSpace(block.Input)) == 0 || bytes.Equal(bytes.TrimSpace(block.Input), []byte("null")) {
+			return nil, true, fmt.Errorf("claude structured output tool use is missing input")
+		}
+		return block.Input, true, nil
+	}
+	return nil, false, nil
+}
+
+func validateClaudeClassifyJSON(label string, raw json.RawMessage) (json.RawMessage, error) {
+	trimmed := bytes.TrimSpace(raw)
+	if len(trimmed) == 0 {
+		return nil, fmt.Errorf("claude %s is empty", label)
+	}
+	if !json.Valid(trimmed) {
+		return nil, fmt.Errorf("claude %s is not valid JSON: %q", label, string(raw))
+	}
+	if trimmed[0] != '{' {
+		return nil, fmt.Errorf("claude %s is not a JSON object: %q", label, string(trimmed))
+	}
+	return json.RawMessage(append([]byte(nil), trimmed...)), nil
+}
+
 // parseClaudeClassifyStream reads Claude's stream-json output and returns the
-// final `result` field as raw JSON.
+// schema-constrained classifier JSON. Claude Code 2.1.161 emits JSON Schema
+// output as a direct StructuredOutput tool-use block instead of the older final
+// result field, so accept both shapes and ignore assistant prose.
 func parseClaudeClassifyStream(r io.Reader) (json.RawMessage, error) {
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 1<<20), 1<<22)
-	var final string
+	var final json.RawMessage
+	var finalLabel string
 	var found bool
 	for scanner.Scan() {
 		line := scanner.Bytes()
@@ -587,8 +637,20 @@ func parseClaudeClassifyStream(r io.Reader) (json.RawMessage, error) {
 		if err := json.Unmarshal(line, &msg); err != nil {
 			continue
 		}
+		if msg.Type == "assistant" {
+			structured, ok, err := extractClaudeStructuredOutput(msg.Message.Content)
+			if err != nil {
+				return nil, err
+			}
+			if ok {
+				final = structured
+				finalLabel = "structured output"
+				found = true
+			}
+		}
 		if msg.Type == "result" && msg.Result != "" {
-			final = msg.Result
+			final = json.RawMessage(msg.Result)
+			finalLabel = "result"
 			found = true
 		}
 	}
@@ -596,12 +658,9 @@ func parseClaudeClassifyStream(r io.Reader) (json.RawMessage, error) {
 		return nil, fmt.Errorf("read stream: %w", err)
 	}
 	if !found {
-		return nil, fmt.Errorf("no result event in claude stream")
+		return nil, fmt.Errorf("no result or structured output event in claude stream")
 	}
-	if !json.Valid([]byte(final)) {
-		return nil, fmt.Errorf("claude result is not valid JSON: %q", final)
-	}
-	return json.RawMessage(final), nil
+	return validateClaudeClassifyJSON(finalLabel, final)
 }
 
 // ClassifyWithSchema runs a single constrained Claude Code invocation and

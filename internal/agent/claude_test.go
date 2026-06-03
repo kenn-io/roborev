@@ -887,7 +887,7 @@ func TestClaudeClassify_BuildsArgs(t *testing.T) {
 	assert.Empty(got[idx+1], "classify must pass --tools \"\" to disable file/tool access")
 }
 
-func TestClaudeClassify_ParseResult(t *testing.T) {
+func TestClaudeClassify_ParseResult_OldResultEvent(t *testing.T) {
 	stream := `{"type":"system","subtype":"init"}
 {"type":"assistant","message":{"content":[{"type":"text","text":"partial"}]}}
 {"type":"result","result":"{\"design_review\":true,\"reason\":\"new package\"}"}
@@ -897,16 +897,32 @@ func TestClaudeClassify_ParseResult(t *testing.T) {
 	assert.JSONEq(t, `{"design_review":true,"reason":"new package"}`, string(out))
 }
 
-func TestClaudeClassify_ParseResult_NoResult(t *testing.T) {
+func TestClaudeClassify_ParseResult_StructuredOutputToolUse(t *testing.T) {
+	stream := `{"type":"system","subtype":"init","tools":["StructuredOutput"]}
+{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_123","name":"StructuredOutput","input":{"design_review":true,"reason":"new public endpoint"},"caller":{"type":"direct"}}]}}
+{"type":"result","subtype":"success","stop_reason":"tool_use"}
+`
+	out, err := parseClaudeClassifyStream(strings.NewReader(stream))
+	require.NoError(t, err)
+	assert.JSONEq(t, `{"design_review":true,"reason":"new public endpoint"}`, string(out))
+}
+
+func TestClaudeClassify_ParseResult_AssistantProseFails(t *testing.T) {
 	stream := `{"type":"system","subtype":"init"}
-{"type":"assistant","message":{"content":[{"type":"text","text":"hello"}]}}
+{"type":"assistant","message":{"content":[{"type":"text","text":"{\"design_review\":true,\"reason\":\"prose\"}"}]}}
 `
 	_, err := parseClaudeClassifyStream(strings.NewReader(stream))
-	assert.Error(t, err)
+	assert.ErrorContains(t, err, "no result or structured output event")
 }
 
 func TestClaudeClassify_ParseResult_InvalidJSON(t *testing.T) {
 	stream := `{"type":"result","result":"not valid json"}` + "\n"
 	_, err := parseClaudeClassifyStream(strings.NewReader(stream))
-	assert.Error(t, err)
+	assert.ErrorContains(t, err, "claude result is not valid JSON")
+}
+
+func TestClaudeClassify_ParseResult_InvalidStructuredOutput(t *testing.T) {
+	stream := `{"type":"assistant","message":{"content":[{"type":"tool_use","id":"toolu_123","name":"StructuredOutput","input":"not valid classifier JSON","caller":{"type":"direct"}}]}}` + "\n"
+	_, err := parseClaudeClassifyStream(strings.NewReader(stream))
+	assert.ErrorContains(t, err, "claude structured output is not a JSON object")
 }
