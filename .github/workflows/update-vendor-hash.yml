@@ -1,0 +1,175 @@
+name: Update Nix Vendor Hash
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - go.mod
+      - go.sum
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
+jobs:
+  check:
+    name: Check
+    if: github.event.pull_request.user.login == 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    outputs:
+      needed: ${{ steps.check.outputs.needed }}
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+          persist-credentials: false
+
+      - name: Determine if update is needed
+        id: check
+        run: |
+          if git log -1 --format='%s' | grep -q '^chore: update Nix vendorHash'; then
+            echo "needed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "needed=true" >> "$GITHUB_OUTPUT"
+
+  update-vendor-hash:
+    name: Update Vendor Hash
+    needs: check
+    if: needs.check.outputs.needed == 'true'
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          ref: ${{ github.event.pull_request.head.ref }}
+          fetch-depth: 0
+
+      - uses: cachix/install-nix-action@8aa03977d8d733052d78f4e008a241fd1dbf36b3  # v31.10.6
+
+      - name: Tidy Go modules
+        run: nix develop -c go mod tidy
+
+      - name: Compute new vendorHash
+        id: compute
+        run: |
+          hash_count=$(grep -c 'vendorHash = "sha256-' flake.nix || true)
+          if [ "$hash_count" -ne 1 ]; then
+            echo "::error::Expected exactly one vendorHash in flake.nix, found $hash_count"
+            exit 1
+          fi
+
+          old_hash=$(grep -oP 'vendorHash = "\Ksha256-[^"]+' flake.nix)
+          fake_hash="sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
+
+          restore_old_hash() {
+            sed -i "s|vendorHash = \"$fake_hash\";|vendorHash = \"$old_hash\";|" flake.nix
+          }
+
+          sed -i "s|vendorHash = \"sha256-[^\"]*\";|vendorHash = \"$fake_hash\";|" flake.nix
+
+          set +e
+          output=$(nix build '.#default' --no-link -L 2>&1)
+          status=$?
+          set -e
+
+          if [ "$status" -eq 0 ]; then
+            restore_old_hash
+            echo "::error::nix build succeeded with a fake vendorHash"
+            exit 1
+          fi
+
+          new_hash=$(grep -m1 -oP 'got:\s+\Ksha256-[A-Za-z0-9+/=]+' <<< "$output" || true)
+          if [ -z "$new_hash" ]; then
+            restore_old_hash
+            echo "::error::Failed to extract vendorHash from nix build output"
+            echo "$output"
+            exit 1
+          fi
+
+          sed -i "s|vendorHash = \"$fake_hash\";|vendorHash = \"$new_hash\";|" flake.nix
+
+          if git diff --quiet -- go.mod go.sum flake.nix; then
+            echo "changed=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          echo "changed=true" >> "$GITHUB_OUTPUT"
+
+      - name: Verify build
+        if: steps.compute.outputs.changed == 'true'
+        run: nix build '.#default' --no-link -L
+
+      - name: Commit changes
+        if: steps.compute.outputs.changed == 'true'
+        uses: actions/github-script@3a2844b7e9c422d3c10d287c895573f7108da1b3  # v9.0.0
+        env:
+          HEAD_REF: ${{ github.event.pull_request.head.ref }}
+        with:
+          script: |
+            const fs = require('fs')
+            const { execFileSync } = require('child_process')
+
+            const owner = context.repo.owner
+            const repo = context.repo.repo
+            const files = ['go.mod', 'go.sum', 'flake.nix']
+            const changed = execFileSync('git', ['diff', '--name-only', '--', ...files], { encoding: 'utf8' })
+              .trim()
+              .split('\n')
+              .filter(Boolean)
+
+            if (changed.length === 0) {
+              core.info('No changes to commit')
+              return
+            }
+
+            const parentSha = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim()
+            const { data: parent } = await github.rest.git.getCommit({
+              owner,
+              repo,
+              commit_sha: parentSha,
+            })
+
+            const tree = changed.map((path) => ({
+              path,
+              mode: '100644',
+              type: 'blob',
+              content: fs.readFileSync(path, 'utf8'),
+            }))
+
+            const { data: nextTree } = await github.rest.git.createTree({
+              owner,
+              repo,
+              base_tree: parent.tree.sha,
+              tree,
+            })
+
+            const { data: nextCommit } = await github.rest.git.createCommit({
+              owner,
+              repo,
+              message: 'chore: update Nix vendorHash for Go dependency changes',
+              tree: nextTree.sha,
+              parents: [parentSha],
+            })
+
+            const verified = nextCommit.verification?.verified === true
+            const reason = nextCommit.verification?.reason ?? 'unknown'
+            if (!verified) {
+              core.setFailed(`Created commit ${nextCommit.sha} is not verified: ${reason}`)
+              return
+            }
+
+            await github.rest.git.updateRef({
+              owner,
+              repo,
+              ref: `heads/${process.env.HEAD_REF}`,
+              sha: nextCommit.sha,
+            })
+
+            core.info(`Created verified commit ${nextCommit.sha}`)
