@@ -530,6 +530,15 @@ func TestProcessJob_PromotedAutoDesignAppendsExistingClassifierLog(t *testing.T)
 	assert.Contains(t, string(data), "design review progress")
 }
 
+func TestShouldAppendReviewJobLogForAutoDesignWithoutExistingLog(t *testing.T) {
+	setupTestEnv(t)
+	job := &storage.ReviewJob{ID: 909, Source: "auto_design"}
+
+	assert.False(t, JobLogExists(job.ID))
+	assert.True(t, shouldAppendReviewJobLog(job))
+	assert.False(t, shouldAppendReviewJobLog(&storage.ReviewJob{ID: 910}))
+}
+
 func TestApplyCodexReviewSettingsOnlyForReviewJobs(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Agent.Codex.DisableReviewSkills = true

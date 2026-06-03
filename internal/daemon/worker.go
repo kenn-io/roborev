@@ -619,7 +619,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// transient filesystem failures so resource pressure does not permanently
 	// disable logging for the rest of the job.
 	var jobLog *jobLogWriter
-	if job.Source == "auto_design" && JobLogExists(job.ID) {
+	if shouldAppendReviewJobLog(job) {
 		jobLog = newAppendingJobLogWriter(job.ID)
 	} else {
 		jobLog = newJobLogWriter(job.ID)
@@ -807,6 +807,10 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		Findings:     output,
 		WorktreePath: eventWorktreePath,
 	})
+}
+
+func shouldAppendReviewJobLog(job *storage.ReviewJob) bool {
+	return job.Source == "auto_design"
 }
 
 func (wp *WorkerPool) autoClosePassingReview(workerID string, job *storage.ReviewJob, output string) {

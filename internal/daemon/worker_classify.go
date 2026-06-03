@@ -93,13 +93,19 @@ func (wp *WorkerPool) processClassifyJob(ctx context.Context, workerID string, j
 	defer cancel()
 	maxBytes := config.ResolveClassifierMaxPromptSize(job.RepoPath, cfg)
 	jobLog := newJobLogWriter(job.ID)
-	defer func() {
+	closeJobLog := func() {
+		if jobLog == nil {
+			return
+		}
 		if err := jobLog.Close(); err != nil {
 			log.Printf("[%s] Warning: close job log for classify job %d: %v", workerID, job.ID, err)
 		}
-	}()
+		jobLog = nil
+	}
+	defer closeJobLog()
 
 	if yes, reason, set := getTestClassifierVerdict(); set {
+		closeJobLog()
 		wp.applyClassifyVerdict(workerID, job, yes, reason)
 		return
 	}
@@ -115,6 +121,7 @@ func (wp *WorkerPool) processClassifyJob(ctx context.Context, workerID string, j
 	primary, err := config.ResolveClassifyAgent("", job.RepoPath, cfg)
 	if err != nil {
 		log.Printf("[%s] classifier config error for job %d: %v", workerID, job.ID, err)
+		closeJobLog()
 		wp.completeClassifyAsSkip(workerID, job, "classifier unavailable", err.Error())
 		return
 	}
@@ -179,11 +186,13 @@ func (wp *WorkerPool) processClassifyJob(ctx context.Context, workerID string, j
 	}
 	if err != nil {
 		log.Printf("[%s] classifier error for job %d: %v", workerID, job.ID, err)
+		closeJobLog()
 		wp.completeClassifyAsSkip(workerID, job,
 			publicClassifierSkipReason(err),
 			composeClassifyErrorDetail(err, backupErr))
 		return
 	}
+	closeJobLog()
 	wp.applyClassifyVerdict(workerID, job, yes, reason)
 }
 
