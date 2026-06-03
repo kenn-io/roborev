@@ -340,7 +340,7 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 		assert.Contains(t, body, "Members: codex (codex/default, done), codex (codex/security, done)")
 		assert.Contains(t, body, "Synthesis: test")
 		assert.NotContains(t, body, "Total: unknown")
-		assert.Contains(t, body, "Job: ")
+		assert.NotContains(t, body, "Job:", "synthesis footer must not leak a job ID that confuses local fixing agents")
 		assert.NotContains(t, body, "Head:", "reviewed head belongs in the title, not the footer")
 		assert.NotContains(t, body, "base", "footer must show reviewed head, not merge base")
 		assert.NotContains(t, body, "Review type:  | Agent:", "panel comments should not use the empty synthesis review_type footer")

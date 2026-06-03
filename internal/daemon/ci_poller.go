@@ -2604,7 +2604,6 @@ func formatPanelPRFooter(job *storage.ReviewJob, synthesisAgent string, members 
 	if total := formatPanelTotal(job, members, includeCosts); total != "" {
 		footer = append(footer, "Total: "+total)
 	}
-	footer = append(footer, fmt.Sprintf("Job: %d", job.ID))
 	return fmt.Sprintf("\n\n---\n*%s*\n", strings.Join(footer, " | "))
 }
 
@@ -2624,7 +2623,6 @@ func formatCompactPanelPRFooter(job *storage.ReviewJob, synthesisAgent string, m
 	if total := formatPanelTotal(job, members, includeCosts); total != "" {
 		footer = append(footer, "Total: "+total)
 	}
-	footer = append(footer, fmt.Sprintf("Job: %d", job.ID))
 	return fmt.Sprintf("\n\n---\n*%s*\n", strings.Join(footer, " | "))
 }
 
