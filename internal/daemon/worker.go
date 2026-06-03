@@ -810,7 +810,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 }
 
 func shouldAppendReviewJobLog(job *storage.ReviewJob) bool {
-	return job.Source == "auto_design"
+	return job.Source == "auto_design" && job.RetryCount == 0
 }
 
 func (wp *WorkerPool) autoClosePassingReview(workerID string, job *storage.ReviewJob, output string) {

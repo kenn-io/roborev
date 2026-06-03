@@ -124,9 +124,28 @@ func hasGitMetadata(dir string) (bool, error) {
 		if err != nil {
 			return false, err
 		}
-		return strings.HasPrefix(strings.TrimSpace(string(data)), "gitdir:"), nil
+		return hasGitFileMetadata(dir, data)
 	}
 
+	return hasGitDirMetadata(gitPath)
+}
+
+func hasGitFileMetadata(dir string, data []byte) (bool, error) {
+	gitDir, ok := strings.CutPrefix(strings.TrimSpace(string(data)), "gitdir:")
+	if !ok {
+		return false, nil
+	}
+	gitDir = strings.TrimSpace(gitDir)
+	if gitDir == "" {
+		return false, nil
+	}
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(dir, gitDir)
+	}
+	return hasGitDirMetadata(gitDir)
+}
+
+func hasGitDirMetadata(gitPath string) (bool, error) {
 	headInfo, err := os.Stat(filepath.Join(gitPath, "HEAD"))
 	if err != nil {
 		if os.IsNotExist(err) {

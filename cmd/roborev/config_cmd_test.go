@@ -243,6 +243,36 @@ func TestRepoRoot(t *testing.T) {
 		require.NoError(t, err)
 		require.Empty(t, got)
 	})
+
+	t.Run("ignores malformed gitdir file", func(t *testing.T) {
+		parent := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(parent, ".git"), []byte("gitdir:\n"), 0o644))
+		nested := filepath.Join(parent, "nested")
+		require.NoError(t, os.Mkdir(nested, 0o755))
+
+		resolver := &stubRepoResolver{}
+		resolver.SetGitError(errors.New(errGitStub))
+		resolver.SetWorkingDir(nested)
+
+		got, err := repoRoot(resolver)
+		require.NoError(t, err)
+		require.Empty(t, got)
+	})
+
+	t.Run("ignores gitdir file with missing target", func(t *testing.T) {
+		parent := t.TempDir()
+		require.NoError(t, os.WriteFile(filepath.Join(parent, ".git"), []byte("gitdir: missing\n"), 0o644))
+		nested := filepath.Join(parent, "nested")
+		require.NoError(t, os.Mkdir(nested, 0o755))
+
+		resolver := &stubRepoResolver{}
+		resolver.SetGitError(errors.New(errGitStub))
+		resolver.SetWorkingDir(nested)
+
+		got, err := repoRoot(resolver)
+		require.NoError(t, err)
+		require.Empty(t, got)
+	})
 }
 
 func TestRequireRepoRoot(t *testing.T) {

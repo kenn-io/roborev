@@ -616,6 +616,16 @@ func TestShouldAppendReviewJobLogForAutoDesignWithoutExistingLog(t *testing.T) {
 	assert.False(t, shouldAppendReviewJobLog(&storage.ReviewJob{ID: 910}))
 }
 
+func TestShouldAppendReviewJobLogOnlyForFirstAutoDesignAttempt(t *testing.T) {
+	job := &storage.ReviewJob{
+		ID:         909,
+		Source:     "auto_design",
+		RetryCount: 1,
+	}
+
+	assert.False(t, shouldAppendReviewJobLog(job))
+}
+
 func TestApplyCodexReviewSettingsOnlyForReviewJobs(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Agent.Codex.DisableReviewSkills = true
