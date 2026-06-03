@@ -115,11 +115,17 @@ CREATE TABLE IF NOT EXISTS ci_pr_panels (
   UNIQUE(github_repo, pr_number, head_sha)
 );
 
--- ci_pr_review_attempts is the durable source of truth for whether a
--- (github_repo, pr_number, head_sha) is being reviewed and, when an
--- AI-provider outage defers it, when to retry. One row per reviewed HEAD.
--- next_attempt_at is NULL while a run is in-flight/pending and set when
--- deferred; state is one of 'pending', 'deferred', 'done'.
+-- ci_pr_review_attempts holds local CI-poller retry state keyed by
+-- (github_repo, pr_number, head_sha). It is the durable source of truth for
+-- whether a HEAD is being reviewed and, when an AI-provider outage defers it,
+-- when to retry. One row per reviewed HEAD. next_attempt_at is NULL while a
+-- run is in-flight or pending and set once deferred. state is one of
+-- 'pending', 'deferred', or 'done'. This table is created in both the SQLite
+-- and Postgres backends for schema parity per the design, but it is NOT
+-- registered in any sync cursor (not sync-replicated). Avoid inline
+-- semicolons in this comment -- pgSchemaStatements splits the embedded
+-- Postgres schema on semicolons, so a literal one here would fragment the
+-- comment into a bad statement.
 CREATE TABLE IF NOT EXISTS ci_pr_review_attempts (
   id INTEGER PRIMARY KEY AUTOINCREMENT,
   github_repo TEXT NOT NULL,

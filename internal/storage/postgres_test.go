@@ -66,6 +66,50 @@ func TestPgSchemaStatementsContainsRequiredIndexes(t *testing.T) {
 	}
 }
 
+func TestPgSchemaStatementsSplitsCleanly(t *testing.T) {
+	assert := assert.New(t)
+	stmts := pgSchemaStatements()
+
+	// Exactly one statement should create the attempts table. A literal
+	// semicolon in the preceding comment would fragment the comment and
+	// either drop or duplicate this statement.
+	attemptsCount := 0
+	for _, stmt := range stmts {
+		if strings.Contains(stmt, "CREATE TABLE IF NOT EXISTS roborev.ci_pr_review_attempts") {
+			attemptsCount++
+		}
+	}
+	assert.Equal(1, attemptsCount,
+		"expected exactly one ci_pr_review_attempts CREATE TABLE statement")
+
+	// No returned statement may be a leaked prose fragment. Every real
+	// statement in this schema starts with an uppercase SQL keyword (CREATE,
+	// ALTER, ...). A comment fragmented by an inline semicolon would leave a
+	// chunk whose first non-comment line is lowercase prose (e.g. "state is
+	// one of ..."). This catches semicolon-in-comment fragmentation for any
+	// table, not just ci_pr_review_attempts.
+	for _, stmt := range stmts {
+		first := firstNonCommentLine(stmt)
+		require.NotEmpty(t, first, "statement had no code line: %q", stmt)
+		c := first[0]
+		assert.False(c >= 'a' && c <= 'z',
+			"statement starts with lowercase prose (leaked comment fragment): %q", stmt)
+	}
+}
+
+// firstNonCommentLine returns the first line of stmt, trimmed, that is neither
+// blank nor a SQL line comment (a line starting with "--").
+func firstNonCommentLine(stmt string) string {
+	for line := range strings.SplitSeq(stmt, "\n") {
+		line = strings.TrimSpace(line)
+		if line == "" || strings.HasPrefix(line, "--") {
+			continue
+		}
+		return line
+	}
+	return ""
+}
+
 // Integration tests require a live PostgreSQL instance.
 // Run with: TEST_POSTGRES_URL=postgres://... go test -run Integration
 
