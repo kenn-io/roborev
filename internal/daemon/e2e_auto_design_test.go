@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -118,6 +119,11 @@ func (e *autoDesignE2E) eventuallyAutoDesignMatches(sha, desc string, pred func(
 
 func (e *autoDesignE2E) waitForAutoDesign(sha string, pred func(*storage.ReviewJob) bool) *storage.ReviewJob {
 	e.t.Helper()
+	return waitForAutoDesignJob(e.t, e.db, e.row.ID, sha, pred)
+}
+
+func waitForAutoDesignJob(t *testing.T, db *storage.DB, repoID int64, sha string, pred func(*storage.ReviewJob) bool) *storage.ReviewJob {
+	t.Helper()
 	deadline := time.Now().Add(4 * time.Second)
 	for {
 		for _, st := range []storage.JobStatus{
@@ -127,8 +133,8 @@ func (e *autoDesignE2E) waitForAutoDesign(sha string, pred func(*storage.ReviewJ
 			storage.JobStatusFailed,
 			storage.JobStatusSkipped,
 		} {
-			jobs, err := e.db.ListJobsByStatus(e.row.ID, st)
-			require.NoError(e.t, err)
+			jobs, err := db.ListJobsByStatus(repoID, st)
+			require.NoError(t, err)
 			for i := range jobs {
 				j := jobs[i]
 				if j.GitRef == sha && j.ReviewType == "design" && j.Source == "auto_design" && pred(&j) {
@@ -461,6 +467,53 @@ classifier_timeout_seconds = 1
 		time.Sleep(25 * time.Millisecond)
 	}
 	assert.EqualValues(1, snap.ClassifierFailed)
+}
+
+func TestE2EAutoDesign_HTTPClassifierFailurePreservesPrimaryReview(t *testing.T) {
+	e := newAutoDesignE2E(t)
+
+	var body strings.Builder
+	for range 40 {
+		body.WriteString("\tdo()\n")
+	}
+	sha := e.repo.CommitFile("src/noop.go", "package src\n\nfunc a() {\n"+body.String()+"}\n",
+		"feat: tweak")
+
+	require.NoError(t, os.WriteFile(filepath.Join(e.repo.Path(), ".roborev.toml"),
+		[]byte(`agent = "test"
+classify_agent = "no-such-agent"
+
+[auto_design_review]
+enabled = true
+classifier_timeout_seconds = 1
+`), 0o644))
+
+	req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", EnqueueRequest{
+		RepoPath: e.repo.Path(),
+		GitRef:   sha,
+		Agent:    "test",
+	})
+	w := httptest.NewRecorder()
+	e.srv.httpServer.Handler.ServeHTTP(w, req)
+	require.Equal(t, http.StatusCreated, w.Code)
+
+	var primary storage.ReviewJob
+	require.NoError(t, json.NewDecoder(w.Body).Decode(&primary))
+	assert.Equal(t, sha, primary.GitRef)
+	assert.Equal(t, storage.JobTypeReview, primary.JobType)
+	assert.NotEqual(t, "auto_design", primary.Source)
+
+	got := waitForAutoDesignJob(t, e.db, primary.RepoID, sha,
+		func(j *storage.ReviewJob) bool { return j.Status == storage.JobStatusSkipped })
+	require.NotNil(t, got, "auto_design row for %s never reached skipped status", sha)
+	assert.Equal(t, "auto_design", got.Source)
+	assert.Equal(t, "classifier unavailable", got.SkipReason)
+
+	after, err := e.db.GetJobByID(primary.ID)
+	require.NoError(t, err)
+	assert.Equal(t, storage.JobTypeReview, after.JobType)
+	assert.NotEqual(t, "auto_design", after.Source)
+	assert.NotEqual(t, storage.JobStatusFailed, after.Status)
 }
 
 // e2eAutoDesignAgentCols returns the (agent, model) pair persisted on
