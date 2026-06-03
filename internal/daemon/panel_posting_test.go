@@ -731,46 +731,44 @@ func TestPostPanelRunTransientGiveUp(t *testing.T) {
 	assert.Equal("done", attempt.State, "transient give-up marks the attempt done")
 }
 
-// TestPostPanelRunPostsWhenAttemptMissing covers the no-row interim (attempts are
-// reserved on enqueue in a later task): with no attempt row, a successful panel
-// still posts and finalizes, and an all-transient panel still defers without a
-// comment (the wall can never be exhausted without a row).
-func TestPostPanelRunPostsWhenAttemptMissing(t *testing.T) {
-	t.Run("success posts without attempt row", func(t *testing.T) {
-		assert := assert.New(t)
-		h := newCIPollerHarness(t, "https://github.com/acme/api.git")
-		comments := h.CaptureComments()
-		statuses := h.CaptureCommitStatuses()
+// TestFinalizePanelRunMissingAttemptRowFailsSafe covers the fail-fast invariant:
+// every finalized panel has a reserved attempt row (CreateCIPanelRun reserves it
+// on enqueue). When that row is missing — an invariant violation — finalize must
+// NOT post a comment or set a status; it releases the posting claim so a later
+// sweep can retry, leaving the panel neither posted nor retired. seedCIPanelRun
+// reserves the row, so the test deletes it to force the violation. Without the
+// fail-fast bail the run would dereference the nil attempt (panic) on the defer
+// path or post against a nil streak — see the comment below.
+func TestFinalizePanelRunMissingAttemptRowFailsSafe(t *testing.T) {
+	assert := assert.New(t)
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	comments := h.CaptureComments()
+	statuses := h.CaptureCommitStatuses()
 
-		panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 83, "noattempt0000001", "base..noattempt0000001",
-			[]jobSpec{{Agent: "test", ReviewType: "review", Status: "done", Output: "Finding A"}})
-		h.completeSynthesisWithReview(t, synth.ID, "## Combined\nVerified.")
+	const headSHA = "missingattempt01"
+	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 86, headSHA, "base.."+headSHA,
+		[]jobSpec{{Agent: "test", ReviewType: "review", Status: "done", Output: "Finding A"}})
+	h.completeSynthesisWithReview(t, synth.ID, "## Combined\nVerified.")
 
-		h.Poller.handleReviewCompleted(ciEvent(synth.ID, "review.completed"))
+	// Force the invariant violation: delete the reserve-on-enqueue attempt row.
+	require.NoError(t, h.DB.DeleteReviewAttempt("acme/api", 86, headSHA))
+	gone, err := h.DB.GetReviewAttempt("acme/api", 86, headSHA)
+	require.NoError(t, err)
+	require.Nil(t, gone, "attempt row deleted to force the missing-row invariant")
 
-		require.Len(t, *comments, 1, "success posts even without an attempt row")
-		assert.Equal("success", (*statuses)[0].State)
-		assert.True(h.panelPostedAt(t, panel.ID))
-	})
+	// Drive finalize through the real event path.
+	h.Poller.handleReviewCompleted(ciEvent(synth.ID, "review.completed"))
 
-	t.Run("all-transient defers without attempt row", func(t *testing.T) {
-		assert := assert.New(t)
-		h := newCIPollerHarness(t, "https://github.com/acme/api.git")
-		comments := h.CaptureComments()
-		statuses := h.CaptureCommitStatuses()
+	assert.Empty(*comments, "missing-attempt invariant violation posts no comment")
+	assert.Empty(*statuses, "missing-attempt invariant violation sets no commit status")
+	assert.False(h.panelPostedAt(t, panel.ID), "fail-safe bail does not finalize the panel")
+	assert.False(h.panelRetiredAt(t, panel.ID), "fail-safe bail does not retire the panel")
 
-		outage := reviewpkg.OutageErrorPrefix + "stream disconnected"
-		panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 84, "noattempt0000002", "base..noattempt0000002",
-			[]jobSpec{{Agent: "test", ReviewType: "review", Status: "failed", Error: outage}})
-		h.markJobFailed(t, synth.ID, "synthesis released")
-
-		h.Poller.handleReviewFailed(ciEvent(synth.ID, "review.failed"))
-
-		assert.Empty(*comments, "no comment without an attempt row either")
-		require.Len(t, *statuses, 1)
-		assert.Equal("pending", (*statuses)[0].State, "still pending, never failure")
-		assert.True(h.panelRetiredAt(t, panel.ID), "still retired without an attempt row")
-	})
+	// The bail releases the posting claim, so a later sweep can reclaim and retry
+	// the still-unposted, non-retired row.
+	won, err := h.DB.ClaimPanelForPosting(panel.ID, panelPostingStaleWindow)
+	require.NoError(t, err)
+	assert.True(won, "released claim lets a later sweep reclaim the panel for retry")
 }
 
 // TestPanelMemberEventIgnored verifies a member job's event posts nothing: only

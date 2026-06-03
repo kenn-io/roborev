@@ -555,7 +555,7 @@ func TestCIPollerPollRepo_UsesPRListAndProcessesEach(t *testing.T) {
 	assert.True(t, h.hasPanel(t, "acme/api", 8, "22222222bbbbbbbb"), "expected panel for PR 8")
 }
 
-// drivedPanelOutcome resolves the panel run for a PR HEAD and drives every
+// drivePanelOutcome resolves the panel run for a PR HEAD and drives every
 // member to terminal status with the spec'd outcome, then drives the synthesis
 // job: "transient" fails each member with an outage error and fails the
 // synthesis (the all-transient defer path), while "done" completes each member
