@@ -19,7 +19,12 @@ func TestIsTransientFailure(t *testing.T) {
 	assert.False(IsTransientFailure(genuine))
 	assert.False(IsTransientFailure(timeout))
 	assert.False(IsTransientFailure(success))
+
+	transient2 := ReviewResult{Status: ResultFailed, Error: OutageErrorPrefix + "503 service unavailable"}
 	assert.Equal(1, CountTransientFailures([]ReviewResult{transient, quota, genuine, timeout, success}))
+	assert.Equal(2, CountTransientFailures([]ReviewResult{transient, quota, transient2, genuine, success}))
+	assert.Equal(0, CountTransientFailures(nil))
+	assert.Equal(0, CountTransientFailures([]ReviewResult{}))
 
 	// IsGenuineFailure: only the deterministic failure qualifies.
 	assert.True(IsGenuineFailure(genuine))
