@@ -95,10 +95,12 @@ func findRepoRoot(resolver RepoResolver) (string, error) {
 	}
 
 	for {
-		if _, err := os.Stat(filepath.Join(dir, ".git")); err == nil {
-			return dir, nil
-		} else if !os.IsNotExist(err) {
+		ok, err := hasGitMetadata(dir)
+		if err != nil {
 			return "", err
+		}
+		if ok {
+			return dir, nil
 		}
 		parent := filepath.Dir(dir)
 		if parent == dir {
@@ -106,6 +108,33 @@ func findRepoRoot(resolver RepoResolver) (string, error) {
 		}
 		dir = parent
 	}
+}
+
+func hasGitMetadata(dir string) (bool, error) {
+	gitPath := filepath.Join(dir, ".git")
+	info, err := os.Stat(gitPath)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	if !info.IsDir() {
+		data, err := os.ReadFile(gitPath)
+		if err != nil {
+			return false, err
+		}
+		return strings.HasPrefix(strings.TrimSpace(string(data)), "gitdir:"), nil
+	}
+
+	headInfo, err := os.Stat(filepath.Join(gitPath, "HEAD"))
+	if err != nil {
+		if os.IsNotExist(err) {
+			return false, nil
+		}
+		return false, err
+	}
+	return !headInfo.IsDir(), nil
 }
 
 // getValueForScope retrieves a single config key value from the appropriate scope.

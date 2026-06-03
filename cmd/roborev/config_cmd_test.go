@@ -113,8 +113,10 @@ func (s *stubRepoResolver) SetWorkingDirError(err error) {
 func createFakeGitRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()
-	err := os.Mkdir(filepath.Join(dir, ".git"), 0o755)
+	gitDir := filepath.Join(dir, ".git")
+	err := os.Mkdir(gitDir, 0o755)
 	require.NoError(t, err, "create .git dir: %v", err)
+	require.NoError(t, os.WriteFile(filepath.Join(gitDir, "HEAD"), []byte("ref: refs/heads/main\n"), 0o644))
 	return dir
 }
 
@@ -221,6 +223,21 @@ func TestRepoRoot(t *testing.T) {
 		resolver := &stubRepoResolver{}
 		resolver.SetGitError(errors.New(errGitStub))
 		resolver.SetWorkingDir(t.TempDir())
+
+		got, err := repoRoot(resolver)
+		require.NoError(t, err)
+		require.Empty(t, got)
+	})
+
+	t.Run("ignores invalid git metadata in parent directory", func(t *testing.T) {
+		parent := t.TempDir()
+		require.NoError(t, os.Mkdir(filepath.Join(parent, ".git"), 0o755))
+		nested := filepath.Join(parent, "nested")
+		require.NoError(t, os.Mkdir(nested, 0o755))
+
+		resolver := &stubRepoResolver{}
+		resolver.SetGitError(errors.New(errGitStub))
+		resolver.SetWorkingDir(nested)
 
 		got, err := repoRoot(resolver)
 		require.NoError(t, err)
