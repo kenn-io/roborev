@@ -31,7 +31,7 @@ require (
 	go.kenn.io/kit v0.1.3-0.20260602160159-24a948bfdcc9
 	golang.org/x/term v0.43.0
 	gopkg.in/yaml.v3 v3.0.1
-	modernc.org/sqlite v1.50.1
+	modernc.org/sqlite v1.51.0
 )
 
 require (
