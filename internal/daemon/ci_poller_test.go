@@ -69,6 +69,7 @@ func newCIPollerHarness(t *testing.T, identity string) *ciPollerHarness {
 	// agent binaries from the developer environment.
 	cfg.CI.SynthesisAgent = "test"
 	p := NewCIPoller(db, NewStaticConfig(cfg), nil)
+	stubCIPollerGitHubSideEffects(p)
 	// Default to assuming PR is open so tests don't shell out to `gh pr view`.
 	// Tests that need specific isPROpen behavior can override this.
 	p.isPROpenFn = func(string, int) bool { return true }
@@ -82,10 +83,56 @@ func newCIPollerHarness(t *testing.T, identity string) *ciPollerHarness {
 // call real git. mergeBaseFn returns "base-" + ref2.
 // Also stubs agent resolution so tests don't need real agents in PATH.
 func (h *ciPollerHarness) stubProcessPRGit() {
+	stubCIPollerGitHubSideEffects(h.Poller)
 	h.Poller.gitFetchFn = func(context.Context, string, []string) error { return nil }
 	h.Poller.gitFetchPRHeadFn = func(context.Context, string, int, []string) error { return nil }
 	h.Poller.mergeBaseFn = func(_, _, ref2 string) (string, error) { return "base-" + ref2, nil }
 	h.Poller.agentResolverFn = func(name string) (string, error) { return name, nil }
+}
+
+func stubCIPollerGitHubSideEffects(p *CIPoller) {
+	p.listTrustedActorsFn = func(context.Context, string) (map[string]struct{}, error) {
+		return nil, nil
+	}
+	p.listPRDiscussionFn = func(context.Context, string, int) ([]ghpkg.PRDiscussionComment, error) {
+		return nil, nil
+	}
+	p.setCommitStatusFn = func(string, string, string, string) error {
+		return nil
+	}
+}
+
+func TestCIPollerHarnessProcessPRGitStubsGitHubSideEffects(t *testing.T) {
+	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+	h.Cfg.CI.ReviewTypes = []string{"security"}
+	h.Cfg.CI.Agents = []string{"codex"}
+	h.Poller = NewCIPoller(h.DB, NewStaticConfig(h.Cfg), nil)
+
+	discussionCalls := 0
+	statusCalls := 0
+	h.Poller.listTrustedActorsFn = func(context.Context, string) (map[string]struct{}, error) {
+		discussionCalls++
+		return map[string]struct{}{"alice": {}}, nil
+	}
+	h.Poller.listPRDiscussionFn = func(context.Context, string, int) ([]ghpkg.PRDiscussionComment, error) {
+		discussionCalls++
+		return nil, nil
+	}
+	h.Poller.setCommitStatusFn = func(string, string, string, string) error {
+		statusCalls++
+		return nil
+	}
+
+	h.stubProcessPRGit()
+
+	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
+		Number:      42,
+		HeadRefOid:  "head-sha-123",
+		BaseRefName: "main",
+	}, h.Cfg)
+	require.NoError(t, err)
+	assert.Equal(t, 0, discussionCalls)
+	assert.Equal(t, 0, statusCalls)
 }
 
 // panelMembers returns the member jobs of the panel run for a PR at a HEAD SHA.
@@ -496,9 +543,7 @@ func TestCIPollerProcessPR_EnqueuesMatrix(t *testing.T) {
 	h.Cfg.CI.Agents = []string{"codex", "gemini"}
 	h.Cfg.CI.Model = "gpt-test"
 	h.Poller = NewCIPoller(h.DB, NewStaticConfig(h.Cfg), nil)
-	h.Poller.gitFetchFn = func(context.Context, string, []string) error { return nil }
-	h.Poller.gitFetchPRHeadFn = func(context.Context, string, int, []string) error { return nil }
-	h.Poller.agentResolverFn = func(name string) (string, error) { return name, nil }
+	h.stubProcessPRGit()
 	h.Poller.mergeBaseFn = func(_, ref1, ref2 string) (string, error) {
 		if ref1 != "origin/main" {
 			require.Condition(t, func() bool {
@@ -1945,6 +1990,7 @@ func TestCIPollerProcessPR_AutoClonesUnknownRepo(t *testing.T) {
 	cfg.CI.ReviewTypes = []string{"security"}
 	cfg.CI.Agents = []string{"codex"}
 	p := NewCIPoller(db, NewStaticConfig(cfg), nil)
+	stubCIPollerGitHubSideEffects(p)
 
 	// Stub git operations
 	p.gitFetchFn = func(context.Context, string, []string) error {
@@ -3085,6 +3131,7 @@ func newCIPanelGitHarness(t *testing.T) (*CIPoller, *storage.DB, *storage.Repo, 
 	p.gitFetchPRHeadFn = func(context.Context, string, int, []string) error { return nil }
 	p.agentResolverFn = func(name string) (string, error) { return name, nil }
 	p.isPROpenFn = func(string, int) bool { return true }
+	stubCIPollerGitHubSideEffects(p)
 	return p, db, row, repo, cfg
 }
 
