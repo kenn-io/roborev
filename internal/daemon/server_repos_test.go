@@ -58,7 +58,7 @@ func TestHandleResolveRepo(t *testing.T) {
 	})
 
 	t.Run("path inside tracked repo resolves to root", func(t *testing.T) {
-		nestedPath := filepath.Join(repo.Root, "src", "pkg")
+		nestedPath := filepath.Join(stored.RootPath, "src", "pkg")
 		require.NoError(t, os.MkdirAll(nestedPath, 0o755))
 		req := httptest.NewRequest(
 			http.MethodGet,
