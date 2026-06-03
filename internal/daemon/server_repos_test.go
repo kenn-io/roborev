@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -12,6 +13,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	gitrepo "go.kenn.io/kit/git/repo"
 
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
@@ -21,7 +23,9 @@ func TestHandleResolveRepo(t *testing.T) {
 	server, db, _ := newTestServer(t)
 	repo := testutil.NewTestRepo(t)
 	identity := "https://github.com/test/resolve-repo.git"
-	stored, err := db.GetOrCreateRepo(repo.Root, identity)
+	registeredRoot, err := gitrepo.MainRoot(context.Background(), repo.Root)
+	require.NoError(t, err)
+	stored, err := db.GetOrCreateRepo(registeredRoot, identity)
 	require.NoError(t, err)
 
 	t.Run("tracked repo returns repo metadata", func(t *testing.T) {
