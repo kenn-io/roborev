@@ -37,7 +37,7 @@ func TestDefaultConfig(t *testing.T) {
 	assert.True(t, cfg.Agent.Codex.DisableReviewSkills, "expected Codex review skills to be disabled by default")
 	assert.True(t, cfg.Agent.Codex.IgnoreReviewUserConfig, "expected Codex review user config to be ignored by default")
 	assert.Equal(t, "npm:@nqbao/pi-json-schema@0.1.1", cfg.Agent.Pi.JSONSchemaExtension)
-	assert.Equal(t, DefaultCostEndpoint, cfg.Cost.Endpoint)
+	assert.Empty(t, cfg.Cost.Endpoint)
 	assert.Equal(t, "10s", cfg.Cost.Timeout)
 	assert.Equal(t, 10*time.Second, cfg.Cost.ResolvedTimeout())
 }

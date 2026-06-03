@@ -401,7 +401,6 @@ type RepoConfig struct {
 
 const (
 	DefaultPiJSONSchemaExtension = "npm:@nqbao/pi-json-schema@0.1.1"
-	DefaultCostEndpoint          = "http://127.0.0.1:8080/api/v1/sessions/{session_id}/usage"
 )
 
 // DefaultConfig returns the default configuration
@@ -419,8 +418,7 @@ func DefaultConfig() *Config {
 		OpenCodeCmd:        "opencode",
 		MouseEnabled:       true,
 		Cost: CostConfig{
-			Endpoint: DefaultCostEndpoint,
-			Timeout:  "10s",
+			Timeout: "10s",
 		},
 		Agent: AgentConfig{
 			Codex: CodexConfig{

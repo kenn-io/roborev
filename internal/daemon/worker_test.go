@@ -51,7 +51,6 @@ func newWorkerTestContext(t *testing.T, workers int) *workerTestContext {
 	testutil.InitTestGitRepo(t, tmpDir)
 
 	cfg := config.DefaultConfig()
-	cfg.Cost.Endpoint = ""
 	if workers > 0 {
 		cfg.MaxWorkers = workers
 	}
