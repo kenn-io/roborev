@@ -54,8 +54,9 @@ type WorkerPool struct {
 	// field directly after construction (test-only access).
 	classify agent.LimitClassifier
 
-	// tokenUsageFetcher looks up captured session usage. Defaults to
-	// tokens.FetchForSession; tests substitute a deterministic fetcher.
+	// tokenUsageFetcher looks up captured session usage. Nil uses the
+	// configured tokens.FetchForSessionWithConfig path; tests substitute a
+	// deterministic fetcher.
 	tokenUsageFetcher func(context.Context, string) (*tokens.Usage, error)
 
 	// Output capture for tail command
@@ -90,7 +91,6 @@ func NewWorkerPool(db *storage.DB, cfgGetter ConfigGetter, numWorkers int, broad
 		agentCooldowns:    make(map[string]time.Time),
 		outputBuffers:     NewOutputBuffer(512*1024, 4*1024*1024), // 512KB/job, 4MB total
 		classify:          agent.ClassifyLimit,
-		tokenUsageFetcher: tokens.FetchForSession,
 		retryBackoff:      2 * time.Second,
 	}
 }
@@ -1137,7 +1137,16 @@ func (wp *WorkerPool) captureTokenUsageForSession(
 	}
 	fetcher := wp.tokenUsageFetcher
 	if fetcher == nil {
-		fetcher = tokens.FetchForSession
+		cfg := wp.cfgGetter.Config()
+		fetcher = func(ctx context.Context, sessionID string) (*tokens.Usage, error) {
+			return tokens.FetchForSessionWithConfig(
+				ctx, sessionID,
+				tokens.FetchConfig{
+					Endpoint: cfg.Cost.Endpoint,
+					Timeout:  cfg.Cost.ResolvedTimeout(),
+				},
+			)
+		}
 	}
 	usage, tokenErr := fetcher(ctx, capturedSession)
 	if tokenErr != nil {

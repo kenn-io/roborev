@@ -5,9 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
+	"net/http"
+	"net/url"
 	"os/exec"
 	"regexp"
 	"strconv"
+	"strings"
 	"sync"
 	"time"
 )
@@ -22,6 +26,15 @@ type Usage struct {
 	HasCost           bool    `json:"has_cost,omitempty"`
 }
 
+// FetchConfig configures session usage lookup. When Endpoint is set,
+// roborev fetches usage over HTTP using a URL template containing
+// "{session_id}". An empty Endpoint preserves the agentsview CLI path.
+type FetchConfig struct {
+	Endpoint string
+	Timeout  time.Duration
+	Client   *http.Client
+}
+
 // agentsviewResponse is the JSON shape returned by both
 // `agentsview session usage <id> --format json` and the deprecated
 // `agentsview token-use <id>`. The session-usage shape is a strict
@@ -32,8 +45,20 @@ type agentsviewResponse struct {
 	Project           string  `json:"project"`
 	OutputTokens      int64   `json:"total_output_tokens"`
 	PeakContextTokens int64   `json:"peak_context_tokens"`
+	HasTokenData      bool    `json:"has_token_data"`
 	CostUSD           float64 `json:"cost_usd"`
 	HasCost           bool    `json:"has_cost"`
+}
+
+type httpUsageResponse struct {
+	SessionID         string   `json:"session_id"`
+	Agent             string   `json:"agent"`
+	Project           string   `json:"project"`
+	OutputTokens      *int64   `json:"total_output_tokens"`
+	PeakContextTokens *int64   `json:"peak_context_tokens"`
+	HasTokenData      *bool    `json:"has_token_data"`
+	CostUSD           *float64 `json:"cost_usd"`
+	HasCost           *bool    `json:"has_cost"`
 }
 
 // FormatSummary returns a compact human-readable summary like
@@ -242,6 +267,23 @@ func hasSessionUsageCommand(ctx context.Context, binPath string) bool {
 func FetchForSession(
 	ctx context.Context, sessionID string,
 ) (*Usage, error) {
+	return FetchForSessionWithConfig(ctx, sessionID, FetchConfig{})
+}
+
+// FetchForSessionWithConfig queries a configured HTTP endpoint when
+// provided; otherwise it uses the agentsview CLI path.
+func FetchForSessionWithConfig(
+	ctx context.Context, sessionID string, cfg FetchConfig,
+) (*Usage, error) {
+	if cfg.Endpoint != "" {
+		return fetchForSessionHTTP(ctx, sessionID, cfg)
+	}
+	return fetchForSessionCLI(ctx, sessionID)
+}
+
+func fetchForSessionCLI(
+	ctx context.Context, sessionID string,
+) (*Usage, error) {
 	if sessionID == "" {
 		return nil, nil
 	}
@@ -304,6 +346,100 @@ func FetchForSession(
 		CostUSD:           resp.CostUSD,
 		HasCost:           resp.HasCost,
 	}, nil
+}
+
+func fetchForSessionHTTP(
+	ctx context.Context, sessionID string, cfg FetchConfig,
+) (*Usage, error) {
+	if sessionID == "" {
+		return nil, nil
+	}
+	endpoint, err := expandEndpoint(cfg.Endpoint, sessionID)
+	if err != nil {
+		return nil, err
+	}
+
+	timeout := cfg.Timeout
+	if timeout <= 0 {
+		timeout = 10 * time.Second
+	}
+	reqCtx, cancel := context.WithTimeout(ctx, timeout)
+	defer cancel()
+
+	req, err := http.NewRequestWithContext(reqCtx, http.MethodGet, endpoint, nil)
+	if err != nil {
+		return nil, fmt.Errorf("usage endpoint request: %w", err)
+	}
+	client := cfg.Client
+	if client == nil {
+		client = http.DefaultClient
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, fmt.Errorf("usage endpoint request: %w", err)
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return nil, nil
+	}
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(io.LimitReader(resp.Body, 2048))
+		detail := strings.TrimSpace(string(body))
+		if detail == "" {
+			return nil, fmt.Errorf("usage endpoint HTTP %s", resp.Status)
+		}
+		return nil, fmt.Errorf("usage endpoint HTTP %s: %s", resp.Status, detail)
+	}
+
+	var respBody httpUsageResponse
+	if err := json.NewDecoder(resp.Body).Decode(&respBody); err != nil {
+		return nil, fmt.Errorf("parse usage endpoint output: %w", err)
+	}
+	return usageFromHTTPResponse(respBody)
+}
+
+func expandEndpoint(template, sessionID string) (string, error) {
+	const placeholder = "{session_id}"
+	if !strings.Contains(template, placeholder) {
+		return "", fmt.Errorf("usage endpoint missing %s placeholder", placeholder)
+	}
+	endpoint := strings.ReplaceAll(
+		template, placeholder, url.PathEscape(sessionID),
+	)
+	if _, err := url.ParseRequestURI(endpoint); err != nil {
+		return "", fmt.Errorf("usage endpoint URL: %w", err)
+	}
+	return endpoint, nil
+}
+
+func usageFromHTTPResponse(resp httpUsageResponse) (*Usage, error) {
+	if resp.HasTokenData == nil {
+		return nil, fmt.Errorf("usage endpoint schema: missing has_token_data")
+	}
+	if resp.HasCost == nil {
+		return nil, fmt.Errorf("usage endpoint schema: missing has_cost")
+	}
+
+	usage := &Usage{}
+	if *resp.HasTokenData {
+		if resp.OutputTokens == nil || resp.PeakContextTokens == nil {
+			return nil, fmt.Errorf("usage endpoint schema: missing token counts")
+		}
+		usage.OutputTokens = *resp.OutputTokens
+		usage.PeakContextTokens = *resp.PeakContextTokens
+	}
+	if *resp.HasCost {
+		if resp.CostUSD == nil {
+			return nil, fmt.Errorf("usage endpoint schema: missing cost_usd")
+		}
+		usage.CostUSD = *resp.CostUSD
+		usage.HasCost = true
+	}
+	if usage.OutputTokens == 0 && usage.PeakContextTokens == 0 && !usage.HasCost {
+		return nil, nil
+	}
+	return usage, nil
 }
 
 // ParseJSON deserializes a token_usage JSON blob from the database.

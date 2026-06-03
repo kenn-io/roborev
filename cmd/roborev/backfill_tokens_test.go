@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -181,4 +182,15 @@ func TestBackfillCandidates(t *testing.T) {
 			assert.Equal(t, tt.wantIDs, gotIDs)
 		})
 	}
+}
+
+func TestBackfillCostFetchConfig(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.Cost.Endpoint = "https://usage.example.test/api/v1/sessions/{session_id}/usage"
+	cfg.Cost.Timeout = "250ms"
+
+	got := backfillCostFetchConfig(cfg)
+
+	assert.Equal(t, "https://usage.example.test/api/v1/sessions/{session_id}/usage", got.Endpoint)
+	assert.Equal(t, 250*time.Millisecond, got.Timeout)
 }

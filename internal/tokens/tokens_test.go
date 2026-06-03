@@ -3,11 +3,14 @@ package tokens
 import (
 	"context"
 	"fmt"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -263,6 +266,154 @@ exit 99
 	assert.Equal(t, int64(118000), usage.PeakContextTokens)
 	assert.True(t, usage.HasCost)
 	assert.InDelta(t, 0.42, usage.CostUSD, 1e-9)
+}
+
+func TestFetchForSessionWithConfigUsesHTTPEndpoint(t *testing.T) {
+	var gotPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.EscapedPath()
+		assert.Equal(t, http.MethodGet, r.Method)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"session_id":"codex:s/1","agent":"codex",`+
+			`"project":"roborev","total_output_tokens":28800,`+
+			`"peak_context_tokens":118000,"has_token_data":true,`+
+			`"cost_usd":0.42,"has_cost":true}`)
+	}))
+	t.Cleanup(server.Close)
+
+	usage, err := FetchForSessionWithConfig(
+		context.Background(), "codex:s/1",
+		FetchConfig{
+			Endpoint: server.URL + "/api/v1/sessions/{session_id}/usage",
+			Timeout:  time.Second,
+		},
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, usage)
+	assert.Equal(t, "/api/v1/sessions/codex:s%2F1/usage", gotPath)
+	assert.Equal(t, int64(28800), usage.OutputTokens)
+	assert.Equal(t, int64(118000), usage.PeakContextTokens)
+	assert.True(t, usage.HasCost)
+	assert.InDelta(t, 0.42, usage.CostUSD, 1e-9)
+}
+
+func TestFetchForSessionWithConfigHonorsUsageFlags(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"session_id":"s","agent":"codex",`+
+			`"total_output_tokens":999,"peak_context_tokens":888,`+
+			`"has_token_data":false,"cost_usd":0.0,"has_cost":true}`)
+	}))
+	t.Cleanup(server.Close)
+
+	usage, err := FetchForSessionWithConfig(
+		context.Background(), "s",
+		FetchConfig{
+			Endpoint: server.URL + "/usage/{session_id}",
+			Timeout:  time.Second,
+		},
+	)
+
+	require.NoError(t, err)
+	require.NotNil(t, usage)
+	assert.Zero(t, usage.OutputTokens)
+	assert.Zero(t, usage.PeakContextTokens)
+	assert.True(t, usage.HasCost)
+	assert.InDelta(t, 0.0, usage.CostUSD, 1e-9)
+}
+
+func TestFetchForSessionWithConfigHTTPNotFoundMeansNoUsage(t *testing.T) {
+	server := httptest.NewServer(http.NotFoundHandler())
+	t.Cleanup(server.Close)
+
+	usage, err := FetchForSessionWithConfig(
+		context.Background(), "missing",
+		FetchConfig{
+			Endpoint: server.URL + "/usage/{session_id}",
+			Timeout:  time.Second,
+		},
+	)
+
+	require.NoError(t, err)
+	assert.Nil(t, usage)
+}
+
+func TestFetchForSessionWithConfigHTTPStatusErrorReportsExactStatus(t *testing.T) {
+	tests := []struct {
+		name   string
+		status int
+		body   string
+	}{
+		{
+			name:   "unauthorized",
+			status: http.StatusUnauthorized,
+			body:   `{"error":{"code":"unauthorized"}}`,
+		},
+		{
+			name:   "unprocessable entity",
+			status: http.StatusUnprocessableEntity,
+			body:   `{"error":{"code":"invalid_session_id"}}`,
+		},
+		{
+			name:   "internal server error",
+			status: http.StatusInternalServerError,
+			body:   `{"error":{"code":"usage_query_failed"}}`,
+		},
+		{
+			name:   "service unavailable without body",
+			status: http.StatusServiceUnavailable,
+			body:   "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+				if tt.body == "" {
+					w.WriteHeader(tt.status)
+					return
+				}
+				http.Error(w, tt.body, tt.status)
+			}))
+			t.Cleanup(server.Close)
+
+			usage, err := FetchForSessionWithConfig(
+				context.Background(), "s",
+				FetchConfig{
+					Endpoint: server.URL + "/usage/{session_id}",
+					Timeout:  time.Second,
+				},
+			)
+
+			require.Error(t, err)
+			assert.Nil(t, usage)
+			assert.Contains(t, err.Error(), fmt.Sprintf("HTTP %d %s", tt.status, http.StatusText(tt.status)))
+			if tt.body != "" {
+				assert.Contains(t, err.Error(), tt.body)
+			}
+		})
+	}
+}
+
+func TestFetchForSessionWithConfigRejectsBadSchema(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"session_id":"s","has_token_data":true,"has_cost":false}`)
+	}))
+	t.Cleanup(server.Close)
+
+	usage, err := FetchForSessionWithConfig(
+		context.Background(), "s",
+		FetchConfig{
+			Endpoint: server.URL + "/usage/{session_id}",
+			Timeout:  time.Second,
+		},
+	)
+
+	require.Error(t, err)
+	assert.Nil(t, usage)
+	assert.Contains(t, err.Error(), "missing token counts")
 }
 
 func TestFetchForSessionUsesSessionUsageWhenPrereleaseSupportsIt(t *testing.T) {

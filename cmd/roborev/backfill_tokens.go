@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/tokens"
 )
@@ -24,6 +25,12 @@ and attempt to fetch token consumption from agentsview.
 This is best-effort: jobs whose session files have been deleted
 will be skipped.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.LoadGlobal()
+			if err != nil {
+				return fmt.Errorf("load config: %w", err)
+			}
+			fetchConfig := backfillCostFetchConfig(cfg)
+
 			db, err := storage.Open(storage.DefaultDBPath())
 			if err != nil {
 				return fmt.Errorf("open database: %w", err)
@@ -46,8 +53,8 @@ will be skipped.`,
 				ctx, cancel := context.WithTimeout(
 					context.Background(), 15*time.Second,
 				)
-				usage, fetchErr := tokens.FetchForSession(
-					ctx, job.SessionID,
+				usage, fetchErr := tokens.FetchForSessionWithConfig(
+					ctx, job.SessionID, fetchConfig,
 				)
 				cancel()
 
@@ -104,6 +111,16 @@ will be skipped.`,
 		"show what would be updated without writing",
 	)
 	return cmd
+}
+
+func backfillCostFetchConfig(cfg *config.Config) tokens.FetchConfig {
+	if cfg == nil {
+		cfg = config.DefaultConfig()
+	}
+	return tokens.FetchConfig{
+		Endpoint: cfg.Cost.Endpoint,
+		Timeout:  cfg.Cost.ResolvedTimeout(),
+	}
 }
 
 // backfillCandidates filters jobs to those eligible for token

@@ -37,6 +37,9 @@ func TestDefaultConfig(t *testing.T) {
 	assert.True(t, cfg.Agent.Codex.DisableReviewSkills, "expected Codex review skills to be disabled by default")
 	assert.True(t, cfg.Agent.Codex.IgnoreReviewUserConfig, "expected Codex review user config to be ignored by default")
 	assert.Equal(t, "npm:@nqbao/pi-json-schema@0.1.1", cfg.Agent.Pi.JSONSchemaExtension)
+	assert.Equal(t, DefaultCostEndpoint, cfg.Cost.Endpoint)
+	assert.Equal(t, "10s", cfg.Cost.Timeout)
+	assert.Equal(t, 10*time.Second, cfg.Cost.ResolvedTimeout())
 }
 
 func TestDataDir(t *testing.T) {
@@ -145,6 +148,42 @@ jsonschemaextension = "/opt/roborev/pi-json-schema/index.ts"
 	cfg, err := LoadGlobalFrom(path)
 	require.NoError(t, err)
 	assert.Equal(t, "/opt/roborev/pi-json-schema/index.ts", cfg.Agent.Pi.JSONSchemaExtension)
+}
+
+func TestLoadGlobalCostConfigFromTOML(t *testing.T) {
+	testenv.SetDataDir(t)
+
+	path := filepath.Join(DataDir(), "config.toml")
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, []byte(`[cost]
+endpoint = "https://usage.example.test/api/v1/sessions/{session_id}/usage"
+timeout = "250ms"
+`), 0o600))
+
+	cfg, err := LoadGlobalFrom(path)
+	require.NoError(t, err)
+	assert.Equal(t, "https://usage.example.test/api/v1/sessions/{session_id}/usage", cfg.Cost.Endpoint)
+	assert.Equal(t, "250ms", cfg.Cost.Timeout)
+	assert.Equal(t, 250*time.Millisecond, cfg.Cost.ResolvedTimeout())
+}
+
+func TestCostConfigResolvedTimeoutFallsBackToDefault(t *testing.T) {
+	tests := []struct {
+		name    string
+		timeout string
+	}{
+		{name: "empty", timeout: ""},
+		{name: "invalid", timeout: "tomorrow"},
+		{name: "zero", timeout: "0"},
+		{name: "negative", timeout: "-1s"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := CostConfig{Timeout: tt.timeout}
+			assert.Equal(t, 10*time.Second, cfg.ResolvedTimeout())
+		})
+	}
 }
 
 func TestSaveAndLoadGlobalAutoFilterBranch(t *testing.T) {

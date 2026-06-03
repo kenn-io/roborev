@@ -68,6 +68,24 @@ type AgentConfig struct {
 	Pi    PiConfig    `toml:"pi"`
 }
 
+type CostConfig struct {
+	Endpoint string `toml:"endpoint" comment:"HTTP usage endpoint template for cost/token lookup. Use {session_id}; set empty to use agentsview CLI lookup only."`
+	Timeout  string `toml:"timeout" comment:"Timeout for HTTP usage endpoint lookups."`
+}
+
+// ResolvedTimeout returns the HTTP usage lookup timeout.
+func (c CostConfig) ResolvedTimeout() time.Duration {
+	const defaultTimeout = 10 * time.Second
+	if c.Timeout == "" {
+		return defaultTimeout
+	}
+	d, err := time.ParseDuration(c.Timeout)
+	if err != nil || d <= 0 {
+		return defaultTimeout
+	}
+	return d
+}
+
 // Config holds the daemon configuration
 type Config struct {
 	ServerAddr                 string `toml:"server_addr"`
@@ -193,6 +211,9 @@ type Config struct {
 
 	// CI poller configuration
 	CI CIConfig `toml:"ci"`
+
+	// Cost/token usage lookup configuration
+	Cost CostConfig `toml:"cost"`
 
 	// Agent-specific behavior
 	Agent AgentConfig `toml:"agent"`
@@ -378,7 +399,10 @@ type RepoConfig struct {
 	ACP *ACPAgentConfig `toml:"acp"`
 }
 
-const DefaultPiJSONSchemaExtension = "npm:@nqbao/pi-json-schema@0.1.1"
+const (
+	DefaultPiJSONSchemaExtension = "npm:@nqbao/pi-json-schema@0.1.1"
+	DefaultCostEndpoint          = "http://127.0.0.1:8080/api/v1/sessions/{session_id}/usage"
+)
 
 // DefaultConfig returns the default configuration
 func DefaultConfig() *Config {
@@ -394,6 +418,10 @@ func DefaultConfig() *Config {
 		PiCmd:              "pi",
 		OpenCodeCmd:        "opencode",
 		MouseEnabled:       true,
+		Cost: CostConfig{
+			Endpoint: DefaultCostEndpoint,
+			Timeout:  "10s",
+		},
 		Agent: AgentConfig{
 			Codex: CodexConfig{
 				DisableReviewSkills:    true,

@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -27,6 +29,7 @@ import (
 	"go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
+	"go.kenn.io/roborev/internal/tokens"
 )
 
 const testWorkerID = "test-worker"
@@ -48,6 +51,7 @@ func newWorkerTestContext(t *testing.T, workers int) *workerTestContext {
 	testutil.InitTestGitRepo(t, tmpDir)
 
 	cfg := config.DefaultConfig()
+	cfg.Cost.Endpoint = ""
 	if workers > 0 {
 		cfg.MaxWorkers = workers
 	}
@@ -439,6 +443,80 @@ func TestProcessJob_CapturesSessionID(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestProcessJob_FetchesConfiguredSessionUsageEndpoint(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+	sessionID := "codex:thread/789"
+
+	var gotPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.EscapedPath()
+		assert.Equal(t, http.MethodGet, r.Method)
+		w.Header().Set("Content-Type", "application/json")
+		fmt.Fprint(w, `{"session_id":"codex:thread/789","agent":"codex",`+
+			`"project":"roborev","total_output_tokens":28800,`+
+			`"peak_context_tokens":118000,"has_token_data":true,`+
+			`"cost_usd":0.42,"has_cost":true}`)
+	}))
+	t.Cleanup(server.Close)
+
+	cfg := config.DefaultConfig()
+	cfg.Cost.Endpoint = server.URL + "/api/v1/sessions/{session_id}/usage"
+	cfg.Cost.Timeout = "1s"
+	tc.reconfigurePool(cfg)
+
+	agentName := "configured-session-usage-endpoint"
+	agent.Register(&sessionStreamingTestAgent{
+		name:       agentName,
+		streamLine: fmt.Sprintf(`{"type":"thread.started","thread_id":%q}`, sessionID),
+	})
+	t.Cleanup(func() { agent.Unregister(agentName) })
+
+	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, agentName)
+	tc.Pool.processJob(testWorkerID, job)
+
+	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
+	assert.Equal(t, sessionID, updated.SessionID)
+	assert.Equal(t, "/api/v1/sessions/codex:thread%2F789/usage", gotPath)
+
+	usage := tokens.ParseJSON(updated.TokenUsage)
+	require.NotNil(t, usage)
+	assert.Equal(t, int64(28800), usage.OutputTokens)
+	assert.Equal(t, int64(118000), usage.PeakContextTokens)
+	assert.True(t, usage.HasCost)
+	assert.InDelta(t, 0.42, usage.CostUSD, 1e-9)
+}
+
+func TestProcessJob_UsageEndpointFailureKeepsCompletedJob(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+	sessionID := "codex:thread/fail"
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, `{"error":{"code":"usage_query_failed"}}`, http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(server.Close)
+
+	cfg := config.DefaultConfig()
+	cfg.Cost.Endpoint = server.URL + "/api/v1/sessions/{session_id}/usage"
+	cfg.Cost.Timeout = "1s"
+	tc.reconfigurePool(cfg)
+
+	agentName := "failing-session-usage-endpoint"
+	agent.Register(&sessionStreamingTestAgent{
+		name:       agentName,
+		streamLine: fmt.Sprintf(`{"type":"thread.started","thread_id":%q}`, sessionID),
+	})
+	t.Cleanup(func() { agent.Unregister(agentName) })
+
+	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, agentName)
+	tc.Pool.processJob(testWorkerID, job)
+
+	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
+	assert.Equal(t, sessionID, updated.SessionID)
+	assert.Empty(t, updated.TokenUsage)
 }
 
 func TestProcessJob_UsesStoredReviewPromptOverride(t *testing.T) {
