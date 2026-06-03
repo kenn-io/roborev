@@ -293,6 +293,7 @@ func TestHumaOpenAPISpec(t *testing.T) {
 		"/api/review":            "get",
 		"/api/comments":          "get",
 		"/api/repos":             "get",
+		"/api/repos/resolve":     "get",
 		"/api/branches":          "get",
 		"/api/status":            "get",
 		"/api/summary":           "get",

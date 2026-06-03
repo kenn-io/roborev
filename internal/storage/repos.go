@@ -141,11 +141,13 @@ func (db *DB) GetRepoByPath(rootPath string) (*Repo, error) {
 
 	var repo Repo
 	var createdAt string
-	err = db.QueryRow(`SELECT id, root_path, name, created_at FROM repos WHERE root_path = ?`, absPath).
-		Scan(&repo.ID, &repo.RootPath, &repo.Name, &createdAt)
+	var identityNullable sql.NullString
+	err = db.QueryRow(`SELECT id, root_path, name, identity, created_at FROM repos WHERE root_path = ?`, absPath).
+		Scan(&repo.ID, &repo.RootPath, &repo.Name, &identityNullable, &createdAt)
 	if err != nil {
 		return nil, err
 	}
+	repo.Identity = identityNullable.String
 	repo.CreatedAt = parseSQLiteTime(createdAt)
 	return &repo, nil
 }

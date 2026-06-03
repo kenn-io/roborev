@@ -230,6 +230,28 @@ type ListReposOutput struct {
 	}
 }
 
+// -- GET /api/repos/resolve --
+
+// ResolveRepoInput holds query parameters for resolving a tracked repo.
+type ResolveRepoInput struct {
+	Path string `query:"path" doc:"Absolute path or path inside a repository"`
+}
+
+// ResolvedRepo is the tracked repo metadata returned by GET /api/repos/resolve.
+type ResolvedRepo struct {
+	RootPath string `json:"root_path"`
+	Identity string `json:"identity"`
+	Name     string `json:"name"`
+}
+
+// ResolveRepoOutput is the response for GET /api/repos/resolve.
+type ResolveRepoOutput struct {
+	Body struct {
+		Tracked bool          `json:"tracked"`
+		Repo    *ResolvedRepo `json:"repo,omitempty"`
+	}
+}
+
 // -- GET /api/branches --
 
 // ListBranchesInput holds query parameters for listing branches.

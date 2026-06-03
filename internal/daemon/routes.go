@@ -60,6 +60,13 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 			o.Tags = []string{"repos"}
 		})
 
+	huma.Get(api, "/api/repos/resolve", s.humaResolveRepo,
+		func(o *huma.Operation) {
+			o.OperationID = "resolve-repo"
+			o.Summary = "Resolve whether a path belongs to a tracked repo"
+			o.Tags = []string{"repos"}
+		})
+
 	huma.Get(api, "/api/branches", s.humaListBranches,
 		func(o *huma.Operation) {
 			o.OperationID = "list-branches"

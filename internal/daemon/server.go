@@ -1128,6 +1128,39 @@ func (s *Server) humaListRepos(
 	return resp, nil
 }
 
+func (s *Server) humaResolveRepo(
+	ctx context.Context, input *ResolveRepoInput,
+) (*ResolveRepoOutput, error) {
+	path := strings.TrimSpace(input.Path)
+	if path == "" {
+		return nil, huma.Error400BadRequest("path is required")
+	}
+
+	lookupPath := path
+	if repoRoot, err := gitrepo.MainRoot(ctx, path); err == nil {
+		lookupPath = repoRoot
+	}
+
+	repo, err := s.db.GetRepoByPath(lookupPath)
+	if errors.Is(err, sql.ErrNoRows) {
+		return &ResolveRepoOutput{}, nil
+	}
+	if err != nil {
+		return nil, huma.Error500InternalServerError(
+			fmt.Sprintf("lookup repo: %v", err),
+		)
+	}
+
+	resp := &ResolveRepoOutput{}
+	resp.Body.Tracked = true
+	resp.Body.Repo = &ResolvedRepo{
+		RootPath: repo.RootPath,
+		Identity: repo.Identity,
+		Name:     repo.Name,
+	}
+	return resp, nil
+}
+
 func (s *Server) humaListBranches(
 	ctx context.Context, input *ListBranchesInput,
 ) (*ListBranchesOutput, error) {
