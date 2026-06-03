@@ -607,6 +607,70 @@ func TestProcessJob_PromotedAutoDesignAppendsExistingClassifierLog(t *testing.T)
 	assert.Contains(t, string(data), "design review progress")
 }
 
+func TestProcessJob_RetriedAutoDesignTruncatesPreviousReviewLog(t *testing.T) {
+	setupTestEnv(t)
+	tc := newWorkerTestContext(t, 1)
+
+	reviewer := &agent.FakeAgent{
+		NameStr: "fake-reviewer",
+		ReviewFn: func(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
+			if output != nil {
+				_, err := io.WriteString(output, "retry review progress\n")
+				require.NoError(t, err)
+			}
+			return "retry review output", nil
+		},
+	}
+	agent.Register(reviewer)
+	t.Cleanup(func() { agent.Unregister("fake-reviewer") })
+
+	commit, err := tc.DB.GetOrCreateCommit(tc.Repo.ID, "promoted-retry-log", "Author", "s", time.Now())
+	require.NoError(t, err)
+	jobID, err := tc.DB.EnqueueAutoDesignJob(storage.EnqueueOpts{
+		RepoID:     tc.Repo.ID,
+		CommitID:   commit.ID,
+		GitRef:     "promoted-retry-log",
+		Agent:      "fake-reviewer",
+		JobType:    storage.JobTypeReview,
+		ReviewType: "design",
+	})
+	require.NoError(t, err)
+	_, err = tc.DB.Exec(
+		"UPDATE review_jobs SET prompt = ?, prompt_prebuilt = 1 WHERE id = ?",
+		"prebuilt design review prompt",
+		jobID,
+	)
+	require.NoError(t, err)
+	require.NoError(t, os.MkdirAll(JobLogDir(), 0o700))
+	require.NoError(t, os.WriteFile(
+		JobLogPath(jobID),
+		[]byte("classifier progress\nstale failed review\n"),
+		0o600,
+	))
+
+	firstClaim, err := tc.DB.ClaimJob("worker-first-attempt")
+	require.NoError(t, err)
+	require.Equal(t, jobID, firstClaim.ID)
+	tc.Pool.failOrRetryInner("worker-first-attempt", firstClaim, "fake-reviewer", "connection reset", true)
+
+	retryCount, err := tc.DB.GetJobRetryCount(jobID)
+	require.NoError(t, err)
+	require.Equal(t, 1, retryCount)
+
+	retryClaim, err := tc.DB.ClaimJob("worker-retry-attempt")
+	require.NoError(t, err)
+	require.Equal(t, jobID, retryClaim.ID)
+
+	tc.Pool.processJob("worker-retry-attempt", retryClaim)
+
+	data, err := os.ReadFile(JobLogPath(jobID))
+	require.NoError(t, err)
+	logText := string(data)
+	assert.NotContains(t, logText, "classifier progress")
+	assert.NotContains(t, logText, "stale failed review")
+	assert.Contains(t, logText, "retry review progress")
+}
+
 func TestShouldAppendReviewJobLogForAutoDesignWithoutExistingLog(t *testing.T) {
 	setupTestEnv(t)
 	job := &storage.ReviewJob{ID: 909, Source: "auto_design"}
