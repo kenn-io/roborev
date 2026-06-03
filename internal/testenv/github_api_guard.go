@@ -15,8 +15,10 @@ type githubAPIGuardTransport struct {
 	base http.RoundTripper
 }
 
-var githubAPIGuardMu sync.Mutex
-var defaultGitHubAPIGuardBaseTransport = http.DefaultTransport
+var (
+	githubAPIGuardMu                   sync.Mutex
+	defaultGitHubAPIGuardBaseTransport = http.DefaultTransport
+)
 
 // InstallGitHubAPIGuard blocks Go HTTP requests to api.github.com for tests.
 func InstallGitHubAPIGuard() {
