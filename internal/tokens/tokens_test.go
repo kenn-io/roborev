@@ -273,11 +273,7 @@ func TestFetchForSessionWithConfigUsesHTTPEndpoint(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.EscapedPath()
 		assert.Equal(t, http.MethodGet, r.Method)
-		if r.Header.Get("Accept") != "application/json" {
-			w.Header().Set("Content-Type", "text/html")
-			fmt.Fprint(w, "<!doctype html>")
-			return
-		}
+		assert.Equal(t, "application/json", r.Header.Get("Accept"))
 		w.Header().Set("Content-Type", "application/json")
 		fmt.Fprint(w, `{"session_id":"codex:s/1","agent":"codex",`+
 			`"project":"roborev","total_output_tokens":28800,`+
