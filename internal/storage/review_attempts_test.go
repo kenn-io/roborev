@@ -154,6 +154,42 @@ func TestGetNonTerminalAttemptPRs(t *testing.T) {
 	}, refs)
 }
 
+func TestGetPendingReviewAttempts(t *testing.T) {
+	assert := assert.New(t)
+	db := openTestDB(t)
+	now := time.Now()
+
+	// PR 1: pending (fresh reserve) -> included.
+	created, err := db.ReserveReviewAttempt("o/r", 1, "a", now)
+	require.NoError(t, err)
+	require.True(t, created)
+
+	// PR 2: deferred -> excluded (only pending rows are reconcile candidates).
+	created, err = db.ReserveReviewAttempt("o/r", 2, "b", now)
+	require.NoError(t, err)
+	require.True(t, created)
+	require.NoError(t, db.DeferReviewAttempt("o/r", 2, "b", "transient", "e", "u",
+		now.Add(-time.Minute), false))
+
+	// PR 3: done -> excluded (terminal).
+	created, err = db.ReserveReviewAttempt("o/r", 3, "c", now)
+	require.NoError(t, err)
+	require.True(t, created)
+	require.NoError(t, db.MarkReviewAttemptDone("o/r", 3, "c"))
+
+	// Cross-repo pending row -> excluded by repo scoping.
+	created, err = db.ReserveReviewAttempt("o/r2", 9, "z", now)
+	require.NoError(t, err)
+	require.True(t, created)
+
+	pending, err := db.GetPendingReviewAttempts("o/r")
+	require.NoError(t, err)
+	assert.Len(pending, 1)
+	assert.Equal("a", pending[0].HeadSHA)
+	assert.Equal("pending", pending[0].State)
+	assert.Equal(1, pending[0].PRNumber)
+}
+
 func TestDeleteReviewAttemptScopesToOneRow(t *testing.T) {
 	db := openTestDB(t)
 	now := time.Now()

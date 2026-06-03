@@ -298,6 +298,13 @@ func (p *CIPoller) pollRepo(ctx context.Context, ghRepo string, cfg *config.Conf
 		}
 	}
 
+	// Crash/stuck reconcile: re-arm any attempt stranded in 'pending' with no live
+	// panel (a CAS-claimed retry whose CreateCIPanelRun failed, or a crash between
+	// claim and enqueue) so the retry sweep below picks it up. Placed before the
+	// retry sweep so a row re-deferred this poll becomes a sweep candidate next
+	// poll (a freshly re-deferred future next_attempt_at is not yet due).
+	p.reconcileStuckAttempts(ghRepo)
+
 	// Retry sweep: re-enqueue a fresh panel run for any deferred attempt whose
 	// next_attempt_at is due (a prior run hit a provider outage and Task 8
 	// retired it). Placed after processPR so the normal poll handles new HEADs
@@ -2156,23 +2163,76 @@ func (p *CIPoller) retryDueReviewAttempt(
 	return true
 }
 
-// cleanupClosedPRPanels cancels and removes every still-active panel run whose PR
-// has closed/merged (spec §10, F13). It is the panel successor to the batch
-// closed-PR cleanup: for each pending PR absent from the open list AND confirmed
-// closed by callIsPROpen (the list may be truncated at 100), it cancels the run
-// parent-first and deletes its mapping. This stops still-running members of a
-// PR closed mid-flight from burning agent quota.
+// cleanupClosedPRPanels cancels and removes every still-active panel run AND
+// every non-terminal review attempt whose PR has closed/merged (spec §10, F13,
+// Task 10). It unions two PR sets: the panel-PR set (un-posted active runs) and
+// the attempt-PR set (pending/deferred attempts). A DEFERRED attempt whose panel
+// was retired has no active panel, so it is invisible to the panel-PR set —
+// enumerating non-terminal attempts catches it so a reopen at the same HEAD gets
+// a fresh review. Each PR is open-checked at most once (the union dedups), so a
+// PR present in both sets never double-calls the GitHub API. For each PR absent
+// from the open list AND confirmed closed by callIsPROpen (the list may be
+// truncated at 100) it cancels the run parent-first, deletes its mapping, and
+// deletes the PR's attempt rows. Per-PR errors are logged and the sweep continues.
 func (p *CIPoller) cleanupClosedPRPanels(ctx context.Context, ghRepo string, openPRs map[int]bool) {
-	refs, err := p.db.GetPendingPanelPRs(ghRepo)
+	prNumbers, err := p.closedPRCleanupCandidates(ghRepo)
 	if err != nil {
-		log.Printf("CI poller: error listing pending panel PRs for %s: %v", ghRepo, err)
+		log.Printf("CI poller: error listing closed-PR cleanup candidates for %s: %v", ghRepo, err)
 		return
 	}
-	for _, ref := range refs {
-		if openPRs[ref.PRNumber] || p.callIsPROpen(ctx, ghRepo, ref.PRNumber) {
+	for _, prNumber := range prNumbers {
+		if openPRs[prNumber] || p.callIsPROpen(ctx, ghRepo, prNumber) {
 			continue
 		}
-		p.cancelClosedPRPanelRuns(ghRepo, ref.PRNumber)
+		p.cancelClosedPRPanelRuns(ghRepo, prNumber)
+		p.deleteClosedPRAttempts(ghRepo, prNumber)
+	}
+}
+
+// closedPRCleanupCandidates returns the deduplicated PR numbers to open-check for
+// closed-PR cleanup: the union of PRs with an un-posted panel run
+// (GetPendingPanelPRs) and PRs with a non-terminal attempt
+// (GetNonTerminalAttemptPRs). Unioning the two sets means a PR in both is
+// open-checked once. A failure to list either set is returned so the caller logs
+// and skips the sweep this poll.
+func (p *CIPoller) closedPRCleanupCandidates(ghRepo string) ([]int, error) {
+	panelRefs, err := p.db.GetPendingPanelPRs(ghRepo)
+	if err != nil {
+		return nil, fmt.Errorf("list pending panel PRs: %w", err)
+	}
+	attemptRefs, err := p.db.GetNonTerminalAttemptPRs(ghRepo)
+	if err != nil {
+		return nil, fmt.Errorf("list non-terminal attempt PRs: %w", err)
+	}
+	seen := make(map[int]bool, len(panelRefs)+len(attemptRefs))
+	prNumbers := make([]int, 0, len(panelRefs)+len(attemptRefs))
+	for _, ref := range panelRefs {
+		if !seen[ref.PRNumber] {
+			seen[ref.PRNumber] = true
+			prNumbers = append(prNumbers, ref.PRNumber)
+		}
+	}
+	for _, ref := range attemptRefs {
+		if !seen[ref.PRNumber] {
+			seen[ref.PRNumber] = true
+			prNumbers = append(prNumbers, ref.PRNumber)
+		}
+	}
+	return prNumbers, nil
+}
+
+// deleteClosedPRAttempts removes every attempt row for a confirmed-closed PR so a
+// reopen at the same HEAD enqueues a fresh review (the attempt row would
+// otherwise keep alreadyReviewedPR returning true). Best-effort: errors log and
+// the sweep continues.
+func (p *CIPoller) deleteClosedPRAttempts(ghRepo string, prNumber int) {
+	n, err := p.db.DeleteReviewAttemptsForPR(ghRepo, prNumber)
+	if err != nil {
+		log.Printf("CI poller: error deleting attempts for closed PR %s#%d: %v", ghRepo, prNumber, err)
+		return
+	}
+	if n > 0 {
+		log.Printf("CI poller: deleted %d review attempt(s) for closed PR %s#%d", n, ghRepo, prNumber)
 	}
 }
 
@@ -2198,6 +2258,83 @@ func (p *CIPoller) cancelClosedPRPanelRuns(ghRepo string, prNumber int) {
 		cancelPanelRunParentFirst(p.db, p.jobCancelFn, synth)
 		log.Printf("CI poller: canceled panel run for closed PR %s#%d", ghRepo, prNumber)
 	}
+}
+
+// reconcileStuckAttempts re-arms review attempts stranded in 'pending' with no
+// live panel — the claimed-then-failed-enqueue / crash-between-claim-and-enqueue
+// gap the Task 9 review noted (the retry sweep only selects 'deferred', so
+// nothing re-arms a stuck 'pending' row). For each pending attempt whose current
+// HEAD panel is MISSING, or RETIRED with a terminal-without-post synthesis, it
+// re-defers (state='deferred', next_attempt_at = now + backoff) so the retry
+// sweep re-enqueues it. It is deliberately CONSERVATIVE: an attempt with a LIVE
+// in-flight panel (synthesis queued/running), a just-posted panel, or a
+// non-retired terminal-unposted panel (which reconcilePanelPosting owns) is left
+// untouched, as is any 'deferred'/'done' row. Per-attempt errors log and the
+// sweep continues; an indeterminate lookup leaves the attempt alone.
+func (p *CIPoller) reconcileStuckAttempts(ghRepo string) {
+	pending, err := p.db.GetPendingReviewAttempts(ghRepo)
+	if err != nil {
+		log.Printf("CI poller: error listing pending review attempts for %s: %v", ghRepo, err)
+		return
+	}
+	now := time.Now()
+	rearmed := 0
+	for i := range pending {
+		attempt := &pending[i]
+		if !p.attemptStuck(attempt) {
+			continue
+		}
+		nextAt := now.Add(reviewpkg.DefaultRetrySchedule.NextDelay(attempt.Attempt))
+		if err := p.db.DeferReviewAttempt(ghRepo, attempt.PRNumber, attempt.HeadSHA,
+			attempt.LastErrorClass, attempt.LastErrorExcerpt, attempt.LastPanelRunUUID, nextAt, false); err != nil {
+			log.Printf("CI poller: error re-deferring stuck attempt for %s#%d@%s: %v",
+				ghRepo, attempt.PRNumber, gitpkg.ShortSHA(attempt.HeadSHA), err)
+			continue
+		}
+		rearmed++
+	}
+	if rearmed > 0 {
+		log.Printf("CI poller: re-deferred %d stuck pending attempt(s) for %s", rearmed, ghRepo)
+	}
+}
+
+// attemptStuck reports whether a 'pending' attempt is genuinely stranded with no
+// live panel and should be re-deferred. The attempt's current HEAD panel
+// (GetCIPanelByPRSHA, the single mapping per repo/pr/head_sha) is authoritative:
+//   - no panel row -> the run is MISSING (a re-enqueue that failed after deleting
+//     the prior retired mapping, or a crash before any run was created) -> stuck.
+//   - panel posted -> the run finished or is being posted (the attempt will be
+//     marked done) -> NOT stuck.
+//   - panel not retired -> either LIVE (synthesis queued/running) or a
+//     terminal-unposted run that reconcilePanelPosting owns -> NOT stuck.
+//   - panel retired + unposted -> confirm via the synthesis job that the run is
+//     terminal-without-post; a terminal (or absent) synthesis is stuck, while a
+//     (rare) still-live synthesis on a retired row is left alone.
+//
+// Any lookup error returns false so an indeterminate state never re-defers a
+// possibly-live attempt.
+func (p *CIPoller) attemptStuck(attempt *storage.ReviewAttempt) bool {
+	panel, err := p.db.GetCIPanelByPRSHA(attempt.GithubRepo, attempt.PRNumber, attempt.HeadSHA)
+	if errors.Is(err, sql.ErrNoRows) {
+		return true // no run for this HEAD: missing/absent
+	}
+	if err != nil {
+		log.Printf("CI poller: reconcile: get panel for %s#%d@%s: %v",
+			attempt.GithubRepo, attempt.PRNumber, gitpkg.ShortSHA(attempt.HeadSHA), err)
+		return false
+	}
+	if panel.PostedAt != nil || panel.RetiredAt == nil {
+		return false // posted (done/posting) or live/posting-owned: not stuck
+	}
+	synth, err := p.db.GetSynthesisJob(panel.PanelRunUUID)
+	if err != nil {
+		log.Printf("CI poller: reconcile: get synthesis for %s: %v", panel.PanelRunUUID, err)
+		return false
+	}
+	if synth == nil {
+		return true // retired, unposted, no synthesis row: terminal-without-post
+	}
+	return isRerunnableStatus(synth.Status) // retired + terminal synthesis: stuck
 }
 
 // reconcilePanelPosting posts any terminal-but-unposted panel run for ghRepo

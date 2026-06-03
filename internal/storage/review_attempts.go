@@ -267,6 +267,32 @@ func (db *DB) GetNonTerminalAttemptPRs(repo string) ([]PanelPRRef, error) {
 	return refs, rows.Err()
 }
 
+// GetPendingReviewAttempts returns every attempt for a repo still in the
+// 'pending' state — a HEAD that is reserved or claimed but not yet deferred or
+// done. The crash/stuck reconcile uses this set to find attempts stranded in
+// 'pending' with no live panel (the retry sweep only selects 'deferred', so a
+// pending row whose CreateCIPanelRun failed after the claim has nothing to
+// re-arm it). Repo-scoped to match the per-repo poll loop.
+func (db *DB) GetPendingReviewAttempts(repo string) ([]ReviewAttempt, error) {
+	rows, err := db.Query(`SELECT `+reviewAttemptColumns+`
+		FROM ci_pr_review_attempts
+		WHERE github_repo = ? AND state = 'pending'`, repo)
+	if err != nil {
+		return nil, fmt.Errorf("get pending review attempts: %w", err)
+	}
+	defer rows.Close()
+
+	var attempts []ReviewAttempt
+	for rows.Next() {
+		a, err := scanReviewAttempt(rows)
+		if err != nil {
+			return nil, fmt.Errorf("scan pending review attempt: %w", err)
+		}
+		attempts = append(attempts, *a)
+	}
+	return attempts, rows.Err()
+}
+
 // GetDueReviewAttempts returns the deferred attempts whose next_attempt_at is
 // due (<= now) — the retry sweep's candidate set. The due comparison uses
 // SQLite datetime() arithmetic on both sides, mirroring GetTimedOutPanels, so

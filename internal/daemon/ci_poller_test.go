@@ -3600,3 +3600,103 @@ func TestResolveIncludeCosts_RepoEnablesOverGlobal(t *testing.T) {
 
 	assert.True(t, h.Poller.resolveIncludeCosts("acme/api"))
 }
+
+// TestClosedPRCleansUpDeferredAttempt covers the closed-PR cleanup gap Task 10
+// closes: a DEFERRED attempt whose panel was RETIRED has no active panel, so it
+// is invisible to the panel-driven sweep (GetPendingPanelPRs). When its PR
+// closes, the attempt-PR sweep must still delete the attempt so a reopen at the
+// same HEAD gets a fresh review.
+func TestClosedPRCleansUpDeferredAttempt(t *testing.T) {
+	assert := assert.New(t)
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	h.CaptureComments()
+	h.CaptureCommitStatuses()
+
+	const headSHA = "closeddefer00001"
+	const prNum = 5
+	created, err := h.DB.ReserveReviewAttempt("acme/api", prNum, headSHA, time.Now())
+	require.NoError(t, err)
+	require.True(t, created, "attempt row reserved")
+
+	// Drive an all-transient run so finalize defers the attempt and retires the
+	// panel (leaving a deferred attempt with no active panel).
+	outage := review.OutageErrorPrefix + "429 Too Many Requests"
+	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", prNum, headSHA, "base.."+headSHA,
+		[]jobSpec{{Agent: "test", ReviewType: "review", Status: "failed", Error: outage}})
+	h.markJobFailed(t, synth.ID, "synthesis released after all members failed")
+	h.Poller.handleReviewFailed(ciEvent(synth.ID, "review.failed"))
+
+	require.True(t, h.panelRetiredAt(t, panel.ID), "panel retired after transient defer")
+	attempt, err := h.DB.GetReviewAttempt("acme/api", prNum, headSHA)
+	require.NoError(t, err)
+	require.NotNil(t, attempt)
+	require.Equal(t, "deferred", attempt.State, "attempt deferred with no active panel")
+
+	// The retired panel must NOT appear in the panel-driven closed-PR sweep set.
+	panelRefs, err := h.DB.GetPendingPanelPRs("acme/api")
+	require.NoError(t, err)
+	assert.Empty(panelRefs, "retired panel is invisible to the panel-PR sweep")
+
+	// PR 5 has closed: absent from openPRs and the PR-open check returns false.
+	h.Poller.isPROpenFn = func(string, int) bool { return false }
+	h.Poller.cleanupClosedPRPanels(context.Background(), "acme/api", map[int]bool{})
+
+	attempt, err = h.DB.GetReviewAttempt("acme/api", prNum, headSHA)
+	require.NoError(t, err)
+	assert.Nil(attempt, "closed-PR cleanup deletes the deferred attempt for a fresh reopen")
+}
+
+// TestReconcileStuckAttempt covers the crash/stuck reconcile: a pending attempt
+// whose latest panel run is retired+terminal-unposted (or missing) is re-deferred
+// so the retry sweep re-enqueues it, while a pending attempt with a LIVE
+// (queued/running) panel is left untouched.
+func TestReconcileStuckAttempt(t *testing.T) {
+	assert := assert.New(t)
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	h.CaptureCommitStatuses() // keep the defer setup from shelling to real GitHub
+
+	// Stuck case: a deferred-then-claimed attempt left pending after a failed
+	// re-enqueue. Drive an all-transient run (defers + retires the panel), then
+	// flip the attempt back to pending to mimic ClaimDueReviewAttempt winning the
+	// CAS but CreateCIPanelRun failing — leaving pending with a retired,
+	// terminal-synthesis, unposted panel and no live run.
+	const stuckSHA = "stuckpending0001"
+	const stuckPR = 11
+	_, err := h.DB.ReserveReviewAttempt("acme/api", stuckPR, stuckSHA, time.Now())
+	require.NoError(t, err)
+	outage := review.OutageErrorPrefix + "429 Too Many Requests"
+	_, synth, _ := h.seedCIPanelRun(t, "acme/api", stuckPR, stuckSHA, "base.."+stuckSHA,
+		[]jobSpec{{Agent: "test", ReviewType: "review", Status: "failed", Error: outage}})
+	h.markJobFailed(t, synth.ID, "synthesis released after all members failed")
+	h.Poller.handleReviewFailed(ciEvent(synth.ID, "review.failed"))
+	stuck, err := h.DB.GetReviewAttempt("acme/api", stuckPR, stuckSHA)
+	require.NoError(t, err)
+	require.Equal(t, "deferred", stuck.State)
+	require.NotEmpty(t, stuck.LastPanelRunUUID, "deferral recorded the retired run uuid")
+	_, err = h.DB.Exec(`UPDATE ci_pr_review_attempts
+		SET state='pending', next_attempt_at=NULL WHERE github_repo=? AND pr_number=? AND head_sha=?`,
+		"acme/api", stuckPR, stuckSHA)
+	require.NoError(t, err)
+
+	// Live case: a pending attempt with an in-flight (queued synthesis) panel.
+	const liveSHA = "livepending00001"
+	const livePR = 12
+	_, err = h.DB.ReserveReviewAttempt("acme/api", livePR, liveSHA, time.Now())
+	require.NoError(t, err)
+	_, _, _ = h.seedCIPanelRun(t, "acme/api", livePR, liveSHA, "base.."+liveSHA,
+		[]jobSpec{{Agent: "test", ReviewType: "review", Status: "running"}})
+
+	h.Poller.reconcileStuckAttempts("acme/api")
+
+	stuck, err = h.DB.GetReviewAttempt("acme/api", stuckPR, stuckSHA)
+	require.NoError(t, err)
+	require.NotNil(t, stuck)
+	assert.Equal("deferred", stuck.State, "stuck pending attempt is re-deferred")
+	assert.NotNil(stuck.NextAttemptAt, "re-defer schedules a next attempt for the retry sweep")
+
+	live, err := h.DB.GetReviewAttempt("acme/api", livePR, liveSHA)
+	require.NoError(t, err)
+	require.NotNil(t, live)
+	assert.Equal("pending", live.State, "live in-flight attempt is left untouched")
+	assert.Nil(live.NextAttemptAt, "live attempt keeps its NULL next_attempt_at")
+}
