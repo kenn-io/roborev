@@ -3715,6 +3715,46 @@ func TestRetryDueReviewAttemptDeletesAdvancedHead(t *testing.T) {
 	assert.Nil(attempt, "advanced PR head deletes the stale deferred attempt")
 }
 
+func TestRetryDueReviewAttemptFetchesPRMissingFromOpenPage(t *testing.T) {
+	assert := assert.New(t)
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	h.Cfg.CI.ReviewTypes = []string{"security"}
+	h.Cfg.CI.Agents = []string{"codex"}
+	h.stubProcessPRGit()
+	h.CaptureCommitStatuses()
+
+	const headSHA = "offpage00000001"
+	const prNum = 132
+	now := time.Now()
+	created, err := h.DB.ReserveReviewAttempt("acme/api", prNum, headSHA, now.Add(-time.Hour))
+	require.NoError(t, err)
+	require.True(t, created, "attempt row reserved")
+	require.NoError(t, h.DB.DeferReviewAttempt("acme/api", prNum, headSHA,
+		"transient", "provider unavailable", "old-run", now.Add(-time.Minute), false))
+
+	var lookedUp []int
+	h.Poller.prPostTargetFn = func(_ context.Context, ghRepo string, prNumber int) (panelPostTarget, error) {
+		assert.Equal("acme/api", ghRepo)
+		lookedUp = append(lookedUp, prNumber)
+		return panelPostTarget{Open: true, HeadSHA: headSHA, BaseRefName: "main"}, nil
+	}
+
+	h.Poller.retryDueReviewAttempts(context.Background(), "acme/api",
+		[]ghPR{{Number: 1, HeadRefOid: "other-head", BaseRefName: "main"}}, h.Cfg)
+
+	assert.Equal([]int{prNum}, lookedUp, "missing PR is checked directly before skipping")
+	attempt, err := h.DB.GetReviewAttempt("acme/api", prNum, headSHA)
+	require.NoError(t, err)
+	require.NotNil(t, attempt)
+	assert.Equal("pending", attempt.State, "directly confirmed open attempt is claimed for retry")
+	assert.Equal(2, attempt.Attempt, "retry sweep bumps the attempt count")
+
+	panel, err := h.DB.GetActiveCIPanelByPRSHA("acme/api", prNum, headSHA)
+	require.NoError(t, err)
+	assert.Equal(headSHA, panel.HeadSHA)
+	assert.Equal("base-"+headSHA+".."+headSHA, h.panelMembers(t, "acme/api", prNum, headSHA)[0].GitRef)
+}
+
 // TestReconcileStuckAttempt covers the crash/stuck reconcile: a pending attempt
 // whose latest panel run is retired+terminal-unposted (or missing) is re-deferred
 // so the retry sweep re-enqueues it, while a pending attempt with a LIVE

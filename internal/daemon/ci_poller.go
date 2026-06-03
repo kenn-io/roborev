@@ -59,8 +59,9 @@ type ghPR struct {
 }
 
 type panelPostTarget struct {
-	Open    bool
-	HeadSHA string
+	Open        bool
+	HeadSHA     string
+	BaseRefName string
 }
 
 const (
@@ -2267,19 +2268,19 @@ func (p *CIPoller) retryDueReviewAttempts(ctx context.Context, ghRepo string, pr
 }
 
 // retryDueReviewAttempt re-enqueues one due deferred attempt and reports whether
-// a fresh panel run was created. It skips a closed PR (absent from the open list,
-// left for Task 10) and a PR whose HEAD has moved past the attempt's SHA (the new
-// HEAD owns its own attempt). On an open PR still at the attempt's HEAD it claims
-// the attempt (CAS); only the winner enqueues, so concurrent sweeps cannot
+// a fresh panel run was created. For attempts absent from the first open-PR page
+// it fetches the PR directly before deciding whether the PR is closed, advanced,
+// or still retryable. On an open PR still at the attempt's HEAD it claims the
+// attempt (CAS); only the winner enqueues, so concurrent sweeps cannot
 // double-enqueue. A claim loss or an enqueue error leaves the attempt deferred
 // for a later sweep.
 func (p *CIPoller) retryDueReviewAttempt(
 	ctx context.Context, ghRepo string, attempt *storage.ReviewAttempt,
 	openByNumber map[int]ghPR, cfg *config.Config, now time.Time,
 ) bool {
-	pr, open := openByNumber[attempt.PRNumber]
-	if !open {
-		return false // closed/absent: Task 10 cleans up deferred attempts for closed PRs
+	pr, ok := p.retryAttemptPR(ctx, ghRepo, attempt, openByNumber)
+	if !ok {
+		return false
 	}
 	if pr.HeadRefOid != attempt.HeadSHA {
 		if err := p.db.DeleteReviewAttempt(ghRepo, attempt.PRNumber, attempt.HeadSHA); err != nil {
@@ -2307,6 +2308,39 @@ func (p *CIPoller) retryDueReviewAttempt(
 		return false
 	}
 	return true
+}
+
+func (p *CIPoller) retryAttemptPR(
+	ctx context.Context, ghRepo string, attempt *storage.ReviewAttempt,
+	openByNumber map[int]ghPR,
+) (ghPR, bool) {
+	if pr, open := openByNumber[attempt.PRNumber]; open {
+		return pr, true
+	}
+
+	target, err := p.callPanelPostTarget(ctx, ghRepo, attempt.PRNumber)
+	if err != nil {
+		log.Printf("CI poller: error checking due review attempt PR %s#%d@%s: %v",
+			ghRepo, attempt.PRNumber, gitpkg.ShortSHA(attempt.HeadSHA), err)
+		return ghPR{}, false
+	}
+	if !target.Open {
+		p.deleteClosedPRAttempts(ghRepo, attempt.PRNumber)
+		return ghPR{}, false
+	}
+
+	headSHA := strings.TrimSpace(target.HeadSHA)
+	baseRefName := strings.TrimSpace(target.BaseRefName)
+	if headSHA == "" || baseRefName == "" {
+		log.Printf("CI poller: due review attempt PR %s#%d@%s direct lookup missing refs, leaving deferred",
+			ghRepo, attempt.PRNumber, gitpkg.ShortSHA(attempt.HeadSHA))
+		return ghPR{}, false
+	}
+	return ghPR{
+		Number:      attempt.PRNumber,
+		HeadRefOid:  headSHA,
+		BaseRefName: baseRefName,
+	}, true
 }
 
 // cleanupClosedPRPanels cancels and removes every still-active panel run AND
@@ -2746,8 +2780,9 @@ func (p *CIPoller) panelPostTarget(
 		return panelPostTarget{}, err
 	}
 	return panelPostTarget{
-		Open:    strings.EqualFold(pr.State, "open"),
-		HeadSHA: pr.HeadRefOID,
+		Open:        strings.EqualFold(pr.State, "open"),
+		HeadSHA:     pr.HeadRefOID,
+		BaseRefName: pr.BaseRefName,
 	}, nil
 }
 

@@ -21,9 +21,10 @@ type OpenPullRequest struct {
 }
 
 type PullRequestInfo struct {
-	Number     int
-	State      string
-	HeadRefOID string
+	Number      int
+	State       string
+	HeadRefOID  string
+	BaseRefName string
 }
 
 func (c *Client) ListOpenPullRequests(ctx context.Context, ghRepo string, limit int) ([]OpenPullRequest, error) {
@@ -83,9 +84,10 @@ func (c *Client) GetPullRequest(ctx context.Context, ghRepo string, prNumber int
 		return PullRequestInfo{}, fmt.Errorf("get pull request: %w", err)
 	}
 	return PullRequestInfo{
-		Number:     pr.GetNumber(),
-		State:      pr.GetState(),
-		HeadRefOID: pr.GetHead().GetSHA(),
+		Number:      pr.GetNumber(),
+		State:       pr.GetState(),
+		HeadRefOID:  pr.GetHead().GetSHA(),
+		BaseRefName: pr.GetBase().GetRef(),
 	}, nil
 }
 
