@@ -848,6 +848,21 @@ func (wp *WorkerPool) failOrRetryAgent(workerID string, job *storage.ReviewJob, 
 	wp.failOrRetryInner(workerID, job, agentName, errorMsg, true)
 }
 
+// finalErrorMsg tags the stored error with review.OutageErrorPrefix when an
+// agent failure classifies as a transient provider outage (429 /
+// stream-disconnect / 5xx) so the CI batch layer can treat it as retryable
+// rather than a genuine failure. Non-agent and non-transient errors are
+// returned unchanged.
+func (wp *WorkerPool) finalErrorMsg(agentName, errorMsg string, agentError bool) string {
+	if !agentError {
+		return errorMsg
+	}
+	if wp.classify(agent.CanonicalName(agentName), errorMsg).Kind == agent.LimitKindTransient {
+		return review.OutageError(errorMsg)
+	}
+	return errorMsg
+}
+
 func (wp *WorkerPool) failOrRetryInner(workerID string, job *storage.ReviewJob, agentName string, errorMsg string, agentError bool) {
 	// Quota and session-limit errors skip retries entirely — cool down
 	// the agent and attempt failover or fail. Behavior matches the
@@ -891,7 +906,7 @@ func (wp *WorkerPool) failOrRetryInner(workerID string, job *storage.ReviewJob, 
 	retried, err := wp.db.RetryJob(job.ID, workerID, maxRetries, wp.retryBackoff)
 	if err != nil {
 		log.Printf("[%s] Error retrying job: %v", workerID, err)
-		if updated, fErr := wp.db.FailJob(job.ID, workerID, errorMsg); fErr != nil {
+		if updated, fErr := wp.db.FailJob(job.ID, workerID, wp.finalErrorMsg(agentName, errorMsg, agentError)); fErr != nil {
 			log.Printf("[%s] Error failing job %d: %v", workerID, job.ID, fErr)
 		} else if updated {
 			wp.broadcastFailed(job, agentName, errorMsg)
@@ -926,7 +941,7 @@ func (wp *WorkerPool) failOrRetryInner(workerID string, job *storage.ReviewJob, 
 		}
 
 		// No backup or failover failed -- mark as failed
-		if updated, fErr := wp.db.FailJob(job.ID, workerID, errorMsg); fErr != nil {
+		if updated, fErr := wp.db.FailJob(job.ID, workerID, wp.finalErrorMsg(agentName, errorMsg, agentError)); fErr != nil {
 			log.Printf("[%s] Error failing job %d: %v", workerID, job.ID, fErr)
 		} else if updated {
 			log.Printf("[%s] Job %d %s %sreview/%s failed after %d retries",

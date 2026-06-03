@@ -938,6 +938,18 @@ func TestFailOrRetryAgent_ContextWindowErrorFailsWithoutRetry(t *testing.T) {
 	assert.Contains(t, updated.Error, "context window")
 }
 
+func TestTransientFinalFailureGetsOutagePrefix(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	job := tc.createAndClaimJobWithAgent(t, "outage-test", testWorkerID, "test")
+	job = tc.exhaustRetries(t, job, testWorkerID, "test") // drive retry_count to max
+	// No backup configured -> failOrRetryAgent must FailJob with the outage prefix.
+	tc.Pool.failOrRetryAgent(testWorkerID, job, "codex",
+		"agent: codex failed: exit status 1 (parse error: codex stream reported failure: exceeded retry limit, last status: 429 Too Many Requests)")
+	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusFailed)
+	assert.True(t, strings.HasPrefix(updated.Error, review.OutageErrorPrefix),
+		"want %q prefix, got %q", review.OutageErrorPrefix, updated.Error)
+}
+
 func TestWorkerPoolCancelJobFinalCheckDeadlockSafe(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	job := tc.createAndClaimJob(t, "deadlock-test", testWorkerID)

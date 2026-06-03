@@ -2,7 +2,10 @@
 // batch execution, synthesis, and comment formatting.
 package review
 
-import "unicode/utf8"
+import (
+	"strings"
+	"unicode/utf8"
+)
 
 // ReviewResult holds the outcome of a single review in a batch.
 // Decoupled from storage.BatchReviewResult for daemon-free use.
@@ -65,6 +68,19 @@ func TrimPartialRune(s string) string {
 // fails due to agent quota exhaustion rather than a real error.
 // Matches the prefix set by internal/daemon/worker.go.
 const QuotaErrorPrefix = "quota: "
+
+// OutageErrorPrefix is prepended to error messages when a review failed due to
+// a transient provider outage (429 / stream-disconnect / 5xx), so the batch
+// layer can treat it as retryable rather than a genuine failure.
+const OutageErrorPrefix = "outage: "
+
+// OutageError prepends OutageErrorPrefix unless already present.
+func OutageError(msg string) string {
+	if strings.HasPrefix(msg, OutageErrorPrefix) {
+		return msg
+	}
+	return OutageErrorPrefix + msg
+}
 
 // TimeoutErrorPrefix is prepended to error messages when a batch job
 // is canceled because the batch exceeded its timeout and results were
