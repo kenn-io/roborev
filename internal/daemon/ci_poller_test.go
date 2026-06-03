@@ -3189,6 +3189,46 @@ func TestProcessPRAutoDesignUsesConfiguredBackupModel(t *testing.T) {
 	assert.Equal("design-backup-model", design.Model)
 }
 
+func TestProcessPRAutoDesignUsesCIModelOverride(t *testing.T) {
+	assert := assert.New(t)
+	p, db, _, repo, cfg := newCIPanelGitHarness(t)
+	cfg.CI.Model = "ci-model-override"
+	cfg.DesignAgent = "test"
+	p.loadRepoConfigFn = func(string) (*config.RepoConfig, error) {
+		enabled := true
+		rc := &config.RepoConfig{}
+		rc.AutoDesignReview.Enabled = &enabled
+		return rc, nil
+	}
+
+	base := repo.HeadSHA()
+	head := repo.CommitFile("db/migrations/003_payments.sql",
+		"CREATE TABLE payments(id INT);\n", "feat: add payments table")
+	p.mergeBaseFn = func(_, _, _ string) (string, error) { return base, nil }
+
+	err := p.processPR(context.Background(), "acme/api", ghPR{
+		Number: 15, HeadRefOid: head, BaseRefName: "main",
+	}, cfg)
+	require.NoError(t, err, "processPR")
+
+	panel, err := db.GetCIPanelByPRSHA("acme/api", 15, head)
+	require.NoError(t, err)
+	require.NotNil(t, panel)
+	members, err := db.GetPanelMembers(panel.PanelRunUUID)
+	require.NoError(t, err)
+
+	var design *storage.ReviewJob
+	for i := range members {
+		if members[i].ReviewType == "design" {
+			design = &members[i]
+			break
+		}
+	}
+	require.NotNil(t, design, "design member appended")
+	assert.Equal("test", design.Agent)
+	assert.Equal("ci-model-override", design.Model)
+}
+
 // TestProcessPRSynthesisAndMembersUseSeparateMinSeverity verifies the CI
 // min_severity threshold reaches only the synthesis job, while member reviews
 // use the review_min_severity setting from normal review config.
