@@ -24,8 +24,8 @@ const (
 	// none failed transiently, and at least one failed genuinely, but the
 	// consecutive-genuine streak has not yet hit the give-up cap.
 	OutcomeDeferGenuine
-	// OutcomeGenuineGiveUp posts the non-blocking genuine-failure soft note: a
-	// genuine failure recurred up to the give-up cap.
+	// OutcomeGenuineGiveUp posts a genuine-failure soft note with a blocking
+	// commit status: a genuine failure recurred up to the give-up cap.
 	OutcomeGenuineGiveUp
 	// OutcomeAllSkip posts the all-skipped summary: every member was a
 	// quota/timeout skip (or the member set was empty), with no real result.
