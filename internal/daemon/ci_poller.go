@@ -1654,14 +1654,19 @@ func (p *CIPoller) postPanelRun(ctx context.Context, row *storage.CIPanel) {
 }
 
 // guardPanelPostTarget verifies the panel is still safe to publish before any
-// PR comment is sent. It fails closed on GitHub lookup errors, drops closed or
-// stale-head rows, and refuses known repo-identity mismatches so review text
-// from one repository cannot be posted to another repository's PR.
+// PR comment is sent. It retries transient GitHub lookup errors, abandons
+// permanent access errors, drops closed or stale-head rows, and refuses known
+// repo-identity mismatches so review text from one repository cannot be posted
+// to another repository's PR.
 func (p *CIPoller) guardPanelPostTarget(ctx context.Context, row *storage.CIPanel) bool {
 	target, err := p.callPanelPostTarget(ctx, row.GithubRepo, row.PRNumber)
 	if err != nil {
 		log.Printf("CI poller: error verifying PR target for panel %d (%s#%d@%s): %v",
 			row.ID, row.GithubRepo, row.PRNumber, gitpkg.ShortSHA(row.HeadSHA), err)
+		if isPermanentGitHubAccessError(err) {
+			p.abandonPanelPost(row, "Review failed to post", "inaccessible GitHub repo/PR")
+			return false
+		}
 		p.releasePanelClaim(row.ID)
 		return false
 	}
@@ -1957,24 +1962,34 @@ func (p *CIPoller) panelCommentBody(row *storage.CIPanel, members []storage.Batc
 }
 
 // handlePanelPostError resolves a failed comment post: a permanent GitHub access
-// error abandons the run (error status + posted_at, never retry); any other
-// (transient) error sets an error status and releases the claim for a later sweep.
+// error abandons the run (error status + terminal attempt + posted_at, never
+// retry); any other (transient) error sets an error status and releases the
+// claim for a later sweep.
 func (p *CIPoller) handlePanelPostError(row *storage.CIPanel, postErr error) {
 	log.Printf("CI poller: error posting panel comment for %s#%d: %v",
 		row.GithubRepo, row.PRNumber, postErr)
+	if isPermanentGitHubAccessError(postErr) {
+		p.abandonPanelPost(row, "Review failed to post", "inaccessible GitHub repo/PR")
+		return
+	}
 	if statusErr := p.callSetCommitStatus(row.GithubRepo, row.HeadSHA, "error", "Review failed to post"); statusErr != nil {
 		log.Printf("CI poller: failed to set error status for %s@%s: %v",
 			row.GithubRepo, row.HeadSHA, statusErr)
 	}
-	if isPermanentGitHubAccessError(postErr) {
-		log.Printf("CI poller: abandoning panel %d for inaccessible GitHub repo/PR %s#%d",
-			row.ID, row.GithubRepo, row.PRNumber)
-		if err := p.db.MarkPanelPosted(row.ID); err != nil {
-			log.Printf("CI poller: error finalizing inaccessible panel %d: %v", row.ID, err)
-		}
-		return
-	}
 	p.releasePanelClaim(row.ID)
+}
+
+func (p *CIPoller) abandonPanelPost(row *storage.CIPanel, statusDesc, reason string) {
+	if statusErr := p.callSetCommitStatus(row.GithubRepo, row.HeadSHA, "error", statusDesc); statusErr != nil {
+		log.Printf("CI poller: failed to set error status for %s@%s: %v",
+			row.GithubRepo, row.HeadSHA, statusErr)
+	}
+	p.markAttemptDone(row)
+	log.Printf("CI poller: abandoning panel %d for %s %s#%d",
+		row.ID, reason, row.GithubRepo, row.PRNumber)
+	if err := p.db.MarkPanelPosted(row.ID); err != nil {
+		log.Printf("CI poller: error finalizing abandoned panel %d: %v", row.ID, err)
+	}
 }
 
 // releasePanelClaim clears a panel's posting lease so a later sweep retries.

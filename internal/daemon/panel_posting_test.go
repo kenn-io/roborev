@@ -332,9 +332,50 @@ func TestPanelPermanentPostErrorAbandons(t *testing.T) {
 	require.NotEmpty(t, *statuses, "error status set on permanent failure")
 	assert.Equal("error", (*statuses)[len(*statuses)-1].State, "permanent error status")
 	assert.True(h.panelPostedAt(t, panel.ID), "permanent error abandons (posted_at set)")
+	attempt, err := h.DB.GetReviewAttempt("acme/api", 8, "headsha444")
+	require.NoError(t, err)
+	require.NotNil(t, attempt)
+	assert.Equal("done", attempt.State, "permanent error marks attempt terminal")
 
 	// posted_at is set, so the CAS (posted_at IS NULL) bars any retry even though
 	// the claim is intentionally left in place.
+	won, err := h.DB.ClaimPanelForPosting(panel.ID, panelPostingStaleWindow)
+	require.NoError(t, err)
+	assert.False(won, "abandoned panel cannot be reclaimed for posting")
+}
+
+// TestPanelPermanentPreflightErrorAbandons covers the permanent-GitHub-error
+// path before posting: an inaccessible repo/PR during target validation must
+// abandon the panel instead of releasing the claim for endless retry.
+func TestPanelPermanentPreflightErrorAbandons(t *testing.T) {
+	assert := assert.New(t)
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	comments := h.CaptureComments()
+	statuses := h.CaptureCommitStatuses()
+	h.Poller.prPostTargetFn = func(context.Context, string, int) (panelPostTarget, error) {
+		return panelPostTarget{}, &googlegithub.ErrorResponse{
+			Response: &http.Response{StatusCode: http.StatusForbidden},
+			Message:  "Resource not accessible by integration",
+		}
+	}
+
+	const headSHA = "headsha-preflight"
+	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 20, headSHA, "base.."+headSHA,
+		[]jobSpec{{Agent: "test", ReviewType: "review", Status: "done", Output: "private finding"}})
+	h.completeSynthesisWithReview(t, synth.ID, "## Combined\nprivate finding")
+
+	h.Poller.handleReviewCompleted(ciEvent(synth.ID, "review.completed"))
+
+	assert.Empty(*comments, "permanent preflight failure must not post a PR comment")
+	require.NotEmpty(t, *statuses, "error status set on permanent preflight failure")
+	assert.Equal("error", (*statuses)[len(*statuses)-1].State, "permanent preflight status")
+	assert.True(h.panelPostedAt(t, panel.ID), "permanent preflight error abandons (posted_at set)")
+
+	attempt, err := h.DB.GetReviewAttempt("acme/api", 20, headSHA)
+	require.NoError(t, err)
+	require.NotNil(t, attempt)
+	assert.Equal("done", attempt.State, "permanent preflight error marks attempt terminal")
+
 	won, err := h.DB.ClaimPanelForPosting(panel.ID, panelPostingStaleWindow)
 	require.NoError(t, err)
 	assert.False(won, "abandoned panel cannot be reclaimed for posting")
