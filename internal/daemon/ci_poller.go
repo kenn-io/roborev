@@ -2285,6 +2285,9 @@ func (p *CIPoller) reconcileStuckAttempts(ghRepo string) {
 			continue
 		}
 		nextAt := now.Add(reviewpkg.DefaultRetrySchedule.NextDelay(attempt.Attempt))
+		// DeferReviewAttempt sets state='deferred' unconditionally; that is safe here
+		// because GetPendingReviewAttempts already filtered to 'pending' rows and the
+		// only concurrent re-arm (the retry sweep) runs later in this same goroutine.
 		if err := p.db.DeferReviewAttempt(ghRepo, attempt.PRNumber, attempt.HeadSHA,
 			attempt.LastErrorClass, attempt.LastErrorExcerpt, attempt.LastPanelRunUUID, nextAt, false); err != nil {
 			log.Printf("CI poller: error re-deferring stuck attempt for %s#%d@%s: %v",
