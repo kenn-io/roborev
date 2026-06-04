@@ -147,18 +147,14 @@ func TestValidateConfiguredSessionCapabilities(t *testing.T) {
 		err := validateConfiguredMode("plan", nil)
 		require.Error(t, err, "Expected error when mode is configured but session mode capability is absent")
 
-		if !strings.Contains(err.Error(), "does not support session modes") {
-			require.Failf(t, "unexpected error", "Expected unsupported mode capability error, got: %v", err)
-		}
+		assert.Contains(t, err.Error(), "does not support session modes")
 	})
 
 	t.Run("Configured model requires model capability", func(t *testing.T) {
-		err := validateConfiguredModel("model-x", nil)
+		_, err := validateConfiguredModel("model-x", nil)
 		require.Error(t, err, "Expected error when model is configured but session model capability is absent")
 
-		if !strings.Contains(err.Error(), "does not support session models") {
-			require.Failf(t, "unexpected error", "Expected unsupported model capability error, got: %v", err)
-		}
+		assert.Contains(t, err.Error(), "does not support session models")
 	})
 
 	t.Run("Mode and model validation succeeds when available", func(t *testing.T) {
@@ -168,20 +164,99 @@ func TestValidateConfiguredSessionCapabilities(t *testing.T) {
 			},
 			CurrentModeId: acp.SessionModeId("plan"),
 		}
-		modelState := &acp.SessionModelState{
-			AvailableModels: []acp.ModelInfo{
-				{ModelId: acp.ModelId("model-x"), Name: "Model X"},
-			},
-			CurrentModelId: acp.ModelId("model-x"),
-		}
 
-		if err := validateConfiguredMode("plan", modeState); err != nil {
-			require.NoError(t, err, "Expected mode validation success, got: %v")
-		}
-		if err := validateConfiguredModel("model-x", modelState); err != nil {
-			require.NoError(t, err, "Expected model validation success, got: %v")
-		}
+		require.NoError(t, validateConfiguredMode("plan", modeState), "Expected mode validation success")
+
+		modelConfigID, err := validateConfiguredModel("model-x", []acp.SessionConfigOption{
+			modelConfigOption(acp.SessionConfigId("model"), "model-x"),
+		})
+		require.NoError(t, err, "Expected model validation success")
+		assert.Equal(t, acp.SessionConfigId("model"), modelConfigID)
 	})
+
+	t.Run("Model validation supports grouped options", func(t *testing.T) {
+		modelConfigID, err := validateConfiguredModel("model-y", []acp.SessionConfigOption{
+			groupedModelConfigOption(acp.SessionConfigId("model"), "model-x", "model-y"),
+		})
+
+		require.NoError(t, err, "Expected grouped model validation success")
+		assert.Equal(t, acp.SessionConfigId("model"), modelConfigID)
+	})
+
+	t.Run("Configured model must be in the advertised options", func(t *testing.T) {
+		_, err := validateConfiguredModel("model-z", []acp.SessionConfigOption{
+			modelConfigOption(acp.SessionConfigId("model"), "model-x"),
+		})
+
+		require.Error(t, err, "Expected unavailable model validation error")
+		assert.EqualError(t, err, "model model-z is not available")
+	})
+
+	t.Run("Explicit non-model category is not treated as model by ID fallback", func(t *testing.T) {
+		modeCategory := acp.SessionConfigOptionCategoryMode
+		options := acp.SessionConfigSelectOptionsUngrouped{{
+			Name:  "Model X",
+			Value: acp.SessionConfigValueId("model-x"),
+		}}
+
+		_, err := validateConfiguredModel("model-x", []acp.SessionConfigOption{{
+			Select: &acp.SessionConfigOptionSelect{
+				Category: &modeCategory,
+				Id:       acp.SessionConfigId("model"),
+				Name:     "Mode",
+				Options:  acp.SessionConfigSelectOptions{Ungrouped: &options},
+				Type:     "select",
+			},
+		}})
+
+		require.Error(t, err, "Expected explicitly non-model option to be ignored")
+		assert.Contains(t, err.Error(), "does not support session models")
+	})
+}
+
+func modelConfigOption(configID acp.SessionConfigId, values ...string) acp.SessionConfigOption {
+	category := acp.SessionConfigOptionCategoryModel
+	options := make(acp.SessionConfigSelectOptionsUngrouped, 0, len(values))
+	for _, value := range values {
+		options = append(options, acp.SessionConfigSelectOption{
+			Name:  value,
+			Value: acp.SessionConfigValueId(value),
+		})
+	}
+	return acp.SessionConfigOption{
+		Select: &acp.SessionConfigOptionSelect{
+			Category: &category,
+			Id:       configID,
+			Name:     "Model",
+			Options:  acp.SessionConfigSelectOptions{Ungrouped: &options},
+			Type:     "select",
+		},
+	}
+}
+
+func groupedModelConfigOption(configID acp.SessionConfigId, values ...string) acp.SessionConfigOption {
+	category := acp.SessionConfigOptionCategoryModel
+	options := make([]acp.SessionConfigSelectOption, 0, len(values))
+	for _, value := range values {
+		options = append(options, acp.SessionConfigSelectOption{
+			Name:  value,
+			Value: acp.SessionConfigValueId(value),
+		})
+	}
+	groups := acp.SessionConfigSelectOptionsGrouped{{
+		Group:   acp.SessionConfigGroupId("default"),
+		Name:    "Default",
+		Options: options,
+	}}
+	return acp.SessionConfigOption{
+		Select: &acp.SessionConfigOptionSelect{
+			Category: &category,
+			Id:       configID,
+			Name:     "Model",
+			Options:  acp.SessionConfigSelectOptions{Grouped: &groups},
+			Type:     "select",
+		},
+	}
 }
 
 func TestSessionUpdateValidatesSessionID(t *testing.T) {

@@ -173,29 +173,60 @@ func validateConfiguredMode(configuredMode string, modes *acp.SessionModeState) 
 	return nil
 }
 
-// configuredModelIsAvailable checks if the configured model ID is available in the list of available
-// models from the ACP agent session response.
-func configuredModelIsAvailable(modelId string, modelInfo []acp.ModelInfo) bool {
-	acpModelId := acp.ModelId(modelId)
-	for _, m := range modelInfo {
-		if m.ModelId == acpModelId {
-			return true
+func validateConfiguredModel(configuredModel string, configOptions []acp.SessionConfigOption) (acp.SessionConfigId, error) {
+	if configuredModel == "" {
+		return "", nil
+	}
+
+	modelOption, ok := findModelConfigOption(configOptions)
+	if !ok {
+		return "", fmt.Errorf("agent does not support session models (configured model: %s)", configuredModel)
+	}
+	if !configuredModelIsAvailable(configuredModel, modelOption.Options) {
+		return "", fmt.Errorf("model %s is not available", configuredModel)
+	}
+	return modelOption.Id, nil
+}
+
+func findModelConfigOption(configOptions []acp.SessionConfigOption) (acp.SessionConfigOptionSelect, bool) {
+	for _, option := range configOptions {
+		if option.Select == nil {
+			continue
+		}
+		if option.Select.Category != nil {
+			if *option.Select.Category == acp.SessionConfigOptionCategoryModel {
+				return *option.Select, true
+			}
+			continue
+		}
+		if strings.EqualFold(string(option.Select.Id), "model") {
+			return *option.Select, true
+		}
+	}
+	return acp.SessionConfigOptionSelect{}, false
+}
+
+// configuredModelIsAvailable checks if the configured model value is available
+// in the ACP model config option advertised by the agent session response.
+func configuredModelIsAvailable(modelID string, options acp.SessionConfigSelectOptions) bool {
+	configuredValue := acp.SessionConfigValueId(modelID)
+	if options.Ungrouped != nil {
+		for _, option := range *options.Ungrouped {
+			if option.Value == configuredValue {
+				return true
+			}
+		}
+	}
+	if options.Grouped != nil {
+		for _, group := range *options.Grouped {
+			for _, option := range group.Options {
+				if option.Value == configuredValue {
+					return true
+				}
+			}
 		}
 	}
 	return false
-}
-
-func validateConfiguredModel(configuredModel string, models *acp.SessionModelState) error {
-	if configuredModel == "" {
-		return nil
-	}
-	if models == nil {
-		return fmt.Errorf("agent does not support session models (configured model: %s)", configuredModel)
-	}
-	if !configuredModelIsAvailable(configuredModel, models.AvailableModels) {
-		return fmt.Errorf("model %s is not available", configuredModel)
-	}
-	return nil
 }
 
 func (a *ACPAgent) mutatingOperationsAllowed() bool {

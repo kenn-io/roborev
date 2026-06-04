@@ -339,11 +339,16 @@ func (a *ACPAgent) runPrompt(
 	}
 
 	if a.Model != "" {
-		if err := validateConfiguredModel(a.Model, sessionResp.Models); err != nil {
+		modelConfigID, err := validateConfiguredModel(a.Model, sessionResp.ConfigOptions)
+		if err != nil {
 			return "", err
 		}
 
-		_, err = conn.UnstableSetSessionModel(ctx, acp.UnstableSetSessionModelRequest{SessionId: sessionResp.SessionId, ModelId: acp.UnstableModelId(a.Model)})
+		_, err = conn.SetSessionConfigOption(ctx, acp.SetSessionConfigOptionRequest{ValueId: &acp.SetSessionConfigOptionValueId{
+			SessionId: sessionResp.SessionId,
+			ConfigId:  modelConfigID,
+			Value:     acp.SessionConfigValueId(a.Model),
+		}})
 		if err != nil {
 			return "", fmt.Errorf("failed to set session model: %w", err)
 		}
