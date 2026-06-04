@@ -192,3 +192,89 @@ func TestRecordStopTriggersFailedReviewWithoutRepoConfig(t *testing.T) {
 	assert.Equal("failed_reviews", resp.TriggeredBy)
 	assert.Equal(1, resp.FailedReviewCount)
 }
+
+func TestRecordPostToolUseFirstCommitWithoutBaselineDoesNotCount(t *testing.T) {
+	assert := assert.New(t)
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("main.go", "package main\n", "initial")
+
+	closed := false
+	verdict := "F"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{
+			Jobs: []storage.ReviewJob{
+				{Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict},
+			},
+		}))
+	}))
+	t.Cleanup(server.Close)
+
+	store := &StateStore{
+		path:     filepath.Join(t.TempDir(), "state.json"),
+		sessions: map[string]SessionState{},
+	}
+	// The first observed command runs a commit that failed: HEAD is unchanged,
+	// but the repo's existing commit makes the latest reflog entry look like a
+	// commit. Without a recorded HEAD baseline this must not count, so it must
+	// not trip the commit threshold even with an actionable failed review.
+	resp, err := store.Record(Request{
+		Event: Input{
+			SessionID:     "session-1",
+			CWD:           repo.Path(),
+			HookEventName: "PostToolUse",
+			ToolName:      "Bash",
+			ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"git commit -m test"`)},
+		},
+		CommitThreshold:       1,
+		FailedReviewThreshold: 0,
+		Instruction:           "Run roborev fix.",
+		RoborevServerAddr:     server.URL,
+	})
+
+	require.NoError(t, err)
+	assert.False(resp.Triggered, "a failed first commit must not trigger a prompt")
+	assert.Equal(0, store.sessions["session-1"].CommitCount)
+	assert.Equal(0, store.sessions["session-1"].CommitCountSincePrompt)
+}
+
+func TestRecordPostToolUseCountsCommitAfterBaseline(t *testing.T) {
+	assert := assert.New(t)
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("main.go", "package main\n", "initial")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{Jobs: []storage.ReviewJob{}}))
+	}))
+	t.Cleanup(server.Close)
+
+	store := &StateStore{
+		path:     filepath.Join(t.TempDir(), "state.json"),
+		sessions: map[string]SessionState{},
+	}
+	base := Request{
+		Event: Input{
+			SessionID:     "session-1",
+			CWD:           repo.Path(),
+			HookEventName: "PostToolUse",
+			ToolName:      "Bash",
+			ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"git status"`)},
+		},
+		CommitThreshold:   5,
+		Instruction:       "Run roborev fix.",
+		RoborevServerAddr: server.URL,
+	}
+
+	// First observation establishes the HEAD baseline without counting.
+	_, err := store.Record(base)
+	require.NoError(t, err)
+	assert.Equal(0, store.sessions["session-1"].CommitCount)
+
+	// A real commit moves HEAD; the next commit command counts it.
+	repo.CommitFile("feature.go", "package main\n", "second")
+	commit := base
+	commit.Event.ToolInput = map[string]json.RawMessage{"command": json.RawMessage(`"git commit -m second"`)}
+	_, err = store.Record(commit)
+
+	require.NoError(t, err)
+	assert.Equal(1, store.sessions["session-1"].CommitCount)
+}

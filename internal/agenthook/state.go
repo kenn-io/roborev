@@ -209,14 +209,13 @@ func (s *StateStore) recordPostToolUse(req Request) (Response, error) {
 	}
 	headKey := repoHeadKey(repoRoot, branch)
 	previousHead := st.RepoHeads[headKey]
+	// Count commits only against a HEAD baseline recorded earlier in the
+	// session; the first observation merely establishes that baseline below.
+	// Counting on the first observation would misfire when a failed commit
+	// command leaves an unrelated older commit as the latest reflog entry.
 	increment := 0
-	if commitCommand {
-		switch {
-		case previousHead != "" && previousHead != head:
-			increment = countNewCommits(repoRoot, previousHead, head)
-		case previousHead == "" && latestReflogLooksLikeCommit(repoRoot):
-			increment = 1
-		}
+	if commitCommand && previousHead != "" && previousHead != head {
+		increment = countNewCommits(repoRoot, previousHead, head)
 	}
 
 	st.RepoHeads[headKey] = head
@@ -416,17 +415,6 @@ func countNewCommits(repoRoot, oldHead, newHead string) int {
 		return 1
 	}
 	return n
-}
-
-func latestReflogLooksLikeCommit(repoRoot string) bool {
-	out, err := gitOutput(repoRoot, "reflog", "-1", "--format=%gs")
-	if err != nil {
-		return false
-	}
-	action := strings.ToLower(strings.TrimSpace(out))
-	return strings.HasPrefix(action, "commit") ||
-		strings.HasPrefix(action, "cherry-pick") ||
-		strings.HasPrefix(action, "revert")
 }
 
 func gitOutput(cwd string, args ...string) (string, error) {
