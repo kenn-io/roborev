@@ -832,6 +832,62 @@ func TestIntegration_BatchUpsertJobs(t *testing.T) {
 		assert.Equal(t, "/worktrees/feature-x", found.WorktreePath)
 	})
 
+	t.Run("source round-trips through batch upsert and pull", func(t *testing.T) {
+		jobUUID := uuid.NewString()
+		machineID := uuid.NewString()
+		commitSHA := "batch-source-sha-" + jobUUID
+		commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{
+			RepoID: repoID, SHA: commitSHA,
+		})
+		jobs := []JobWithPgIDs{{
+			Job: SyncableJob{
+				UUID:            jobUUID,
+				RepoIdentity:    "https://github.com/test/batch-jobs-test.git",
+				CommitSHA:       commitSHA,
+				GitRef:          commitSHA,
+				Agent:           "test",
+				Status:          "done",
+				Source:          JobSourceCI,
+				SourceMachineID: machineID,
+				EnqueuedAt:      time.Now(),
+			},
+			PgRepoID:   repoID,
+			PgCommitID: &commitID,
+		}}
+
+		success, err := pool.BatchUpsertJobs(ctx, jobs)
+		require.NoError(t, err)
+		assert.Equal(t, 1, countSuccesses(success))
+
+		var storedSource *string
+		err = pool.pool.QueryRow(ctx,
+			`SELECT source FROM review_jobs WHERE uuid = $1`, jobUUID,
+		).Scan(&storedSource)
+		require.NoError(t, err)
+		require.NotNil(t, storedSource)
+		assert.Equal(t, JobSourceCI, *storedSource)
+
+		var updatedAt time.Time
+		var rowID int64
+		err = pool.pool.QueryRow(ctx,
+			`SELECT updated_at, id FROM review_jobs WHERE uuid = $1`, jobUUID,
+		).Scan(&updatedAt, &rowID)
+		require.NoError(t, err)
+		cursor := fmt.Sprintf("%s %d", updatedAt.Format(time.RFC3339Nano), rowID-1)
+
+		pulled, _, err := pool.PullJobs(ctx, uuid.NewString(), cursor, 100)
+		require.NoError(t, err)
+		var found *PulledJob
+		for i := range pulled {
+			if pulled[i].UUID == jobUUID {
+				found = &pulled[i]
+				break
+			}
+		}
+		require.NotNil(t, found, "expected job %s in pull results", jobUUID)
+		assert.Equal(t, JobSourceCI, found.Source)
+	})
+
 	t.Run("model provider fields round-trip through batch upsert and pull", func(t *testing.T) {
 		jobUUID := uuid.NewString()
 		machineID := uuid.NewString()
@@ -1227,4 +1283,50 @@ func TestIntegration_UpsertJob_BackfillsModel(t *testing.T) {
 	assert.Nil(t, providerCleared, "Expected empty provider upsert to clear existing provider")
 	assert.Nil(t, requestedModelCleared, "Expected empty requested_model upsert to clear existing requested model")
 	assert.Nil(t, requestedProviderCleared, "Expected empty requested_provider upsert to clear existing requested provider")
+}
+
+func TestIntegration_UpsertJob_PreservesSource(t *testing.T) {
+	pool := openTestPgPool(t)
+	ctx := t.Context()
+
+	machineID := uuid.NewString()
+	jobUUID := uuid.NewString()
+	repoIdentity := "test-repo-source-" + time.Now().Format("20060102150405")
+
+	defer func() {
+		pool.pool.Exec(ctx, `DELETE FROM review_jobs WHERE uuid = $1`, jobUUID)
+		pool.pool.Exec(ctx, `DELETE FROM repos WHERE identity = $1`, repoIdentity)
+		pool.pool.Exec(ctx, `DELETE FROM machines WHERE machine_id = $1`, machineID)
+	}()
+
+	require.NoError(t, pool.RegisterMachine(ctx, machineID, "test"))
+	repoID, err := pool.GetOrCreateRepo(ctx, repoIdentity)
+	require.NoError(t, err)
+
+	job := SyncableJob{
+		UUID:            jobUUID,
+		RepoIdentity:    repoIdentity,
+		GitRef:          "HEAD",
+		Agent:           "test-agent",
+		Status:          "done",
+		Source:          JobSourceCI,
+		SourceMachineID: machineID,
+		EnqueuedAt:      time.Now(),
+	}
+	require.NoError(t, pool.UpsertJob(ctx, job, repoID, nil))
+
+	var source *string
+	require.NoError(t, pool.pool.QueryRow(ctx,
+		`SELECT source FROM review_jobs WHERE uuid = $1`, jobUUID,
+	).Scan(&source))
+	require.NotNil(t, source)
+	assert.Equal(t, JobSourceCI, *source)
+
+	job.Source = ""
+	require.NoError(t, pool.UpsertJob(ctx, job, repoID, nil))
+	require.NoError(t, pool.pool.QueryRow(ctx,
+		`SELECT source FROM review_jobs WHERE uuid = $1`, jobUUID,
+	).Scan(&source))
+	require.NotNil(t, source)
+	assert.Equal(t, JobSourceCI, *source)
 }

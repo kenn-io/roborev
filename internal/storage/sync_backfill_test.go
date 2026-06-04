@@ -259,6 +259,40 @@ func TestGetJobsToSync_IncludesWorktreePath(t *testing.T) {
 	assert.Equal(t, "/worktrees/feature-branch", found.WorktreePath)
 }
 
+func TestGetJobsToSync_IncludesSource(t *testing.T) {
+	h := newSyncTestHelper(t)
+
+	commit, err := h.db.GetOrCreateCommit(h.repo.ID, "source-sync-abc", "Author", "Subject", time.Now())
+	require.NoError(t, err)
+
+	job, err := h.db.EnqueueJob(EnqueueOpts{
+		RepoID:   h.repo.ID,
+		CommitID: commit.ID,
+		GitRef:   "source-sync-abc",
+		Agent:    "test",
+		Source:   JobSourceCI,
+	})
+	require.NoError(t, err)
+
+	claimed, err := h.db.ClaimJob("w-sync-source")
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+	require.NoError(t, h.db.CompleteJob(job.ID, "test", "prompt", "PASS"))
+
+	jobs, err := h.db.GetJobsToSync(h.machineID, 10)
+	require.NoError(t, err)
+
+	var found *SyncableJob
+	for i := range jobs {
+		if jobs[i].UUID == job.UUID {
+			found = &jobs[i]
+			break
+		}
+	}
+	require.NotNil(t, found, "expected job %s in sync results", job.UUID)
+	assert.Equal(t, JobSourceCI, found.Source)
+}
+
 func TestUpsertPulledJob_PreservesWorktreePath(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
@@ -300,6 +334,41 @@ func TestUpsertPulledJob_PreservesWorktreePath(t *testing.T) {
 	).Scan(&wt)
 	require.NoError(t, err)
 	assert.Equal(t, "/worktrees/my-branch", wt)
+}
+
+func TestUpsertPulledJob_PreservesSource(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo, err := db.GetOrCreateRepo("/test/repo-source-sync")
+	require.NoError(t, err)
+
+	jobUUID := "test-uuid-source-" + time.Now().Format("20060102150405")
+	pulledJob := PulledJob{
+		UUID:            jobUUID,
+		RepoIdentity:    "/test/repo-source-sync",
+		GitRef:          "HEAD",
+		Agent:           "test-agent",
+		Status:          "done",
+		Source:          JobSourceCI,
+		SourceMachineID: "test-machine",
+		EnqueuedAt:      time.Now(),
+		UpdatedAt:       time.Now(),
+	}
+	require.NoError(t, db.UpsertPulledJob(pulledJob, repo.ID, nil))
+
+	var source string
+	require.NoError(t, db.QueryRow(
+		`SELECT COALESCE(source, '') FROM review_jobs WHERE uuid = ?`, jobUUID,
+	).Scan(&source))
+	assert.Equal(t, JobSourceCI, source)
+
+	pulledJob.Source = ""
+	require.NoError(t, db.UpsertPulledJob(pulledJob, repo.ID, nil))
+	require.NoError(t, db.QueryRow(
+		`SELECT COALESCE(source, '') FROM review_jobs WHERE uuid = ?`, jobUUID,
+	).Scan(&source))
+	assert.Equal(t, JobSourceCI, source)
 }
 
 func TestUpsertPulledJob_ClearsModelAndProviderFields(t *testing.T) {
