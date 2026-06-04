@@ -299,7 +299,10 @@ type preparedJobCheckout struct {
 	promptRepoPath string
 	// agentRepoPath is the checkout used as the agent cwd.
 	agentRepoPath string
-	cleanup       func()
+	// eventWorktreePath is the caller-provided worktree path safe to expose
+	// to event consumers and hooks. Internal CI checkouts must stay private.
+	eventWorktreePath string
+	cleanup           func()
 }
 
 func (wp *WorkerPool) prepareJobCheckout(
@@ -311,9 +314,14 @@ func (wp *WorkerPool) prepareJobCheckout(
 	}
 	if !requiresCIWorktree {
 		repoPath := resolveEffectiveRepoPath(workerID, job)
+		eventWorktreePath := ""
+		if job.WorktreePath != "" && repoPath == job.WorktreePath {
+			eventWorktreePath = job.WorktreePath
+		}
 		return preparedJobCheckout{
-			promptRepoPath: repoPath,
-			agentRepoPath:  repoPath,
+			promptRepoPath:    repoPath,
+			agentRepoPath:     repoPath,
+			eventWorktreePath: eventWorktreePath,
 		}, nil
 	}
 	agentRepoPath, cleanup, err := wp.createCIExactCheckout(ctx, workerID, job)
@@ -686,11 +694,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		return
 	}
 
-	// Use the effective worktree path for events (empty when worktree is gone or not a worktree job).
-	eventWorktreePath := ""
-	if checkout.agentRepoPath != job.RepoPath {
-		eventWorktreePath = checkout.agentRepoPath
-	}
+	eventWorktreePath := checkout.eventWorktreePath
 
 	// Broadcast started event
 	wp.broadcaster.Broadcast(Event{

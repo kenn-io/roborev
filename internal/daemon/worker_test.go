@@ -416,13 +416,24 @@ func TestWorkerCIPanelMemberRunsAgainstReviewedHeadWorktree(t *testing.T) {
 	require.True(t, created)
 	require.Len(t, members, 1)
 
-	pool := NewWorkerPool(db, NewStaticConfig(config.DefaultConfig()), 1, NewBroadcaster(), nil, nil)
+	broadcaster := NewBroadcaster()
+	_, eventCh := broadcaster.Subscribe("")
+	pool := NewWorkerPool(db, NewStaticConfig(config.DefaultConfig()), 1, broadcaster, nil, nil)
 	claimed, err := db.ClaimJob(testWorkerID)
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
 	require.Equal(t, members[0].ID, claimed.ID)
 
 	pool.processJob(testWorkerID, claimed)
+
+	startedEvent, ok := waitForEvent(t, eventCh, time.Second)
+	require.True(t, ok, "expected review.started event")
+	require.Equal(t, "review.started", startedEvent.Type)
+	assert.Empty(t, startedEvent.WorktreePath, "CI exact worktree should not be exposed to hooks or event consumers")
+	completedEvent, ok := waitForEvent(t, eventCh, time.Second)
+	require.True(t, ok, "expected review.completed event")
+	require.Equal(t, "review.completed", completedEvent.Type)
+	assert.Empty(t, completedEvent.WorktreePath, "CI exact worktree should not be exposed to hooks or event consumers")
 
 	stored := repo.RevParse("HEAD")
 	assert.Equal(t, staleHead, stored, "shared CI clone checkout should not move")
