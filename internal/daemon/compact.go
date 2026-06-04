@@ -82,6 +82,8 @@ func IsValidCompactOutput(output string) bool {
 var (
 	compactFileLinePattern        = regexp.MustCompile(`(?i)\b[\w./-]+\.(go|py|js|ts|tsx|jsx|java|rb|rs|c|cc|cpp|h|hpp|cs|php|swift|kt|m|mm|sql|yaml|yml|json|toml|md):\d+\b`)
 	compactPositiveRemainingCount = regexp.MustCompile(`\b[1-9]\d* (?:verified )?findings? remains?\b`)
+	compactFindingHeadingPattern  = regexp.MustCompile(`(?im)^#{1,6}\s*(review findings|verified findings|findings)\b`)
+	compactSeverityHeadingPattern = regexp.MustCompile(`(?im)^#{1,6}\s*(?:\*\*)?\s*(critical|high|medium|low)\b`)
 )
 
 func reportsRemainingFindingsWithoutDetails(output string) bool {
@@ -162,12 +164,21 @@ func mentionsRemainingFindings(lower string) bool {
 }
 
 func hasActionableCompactFinding(output, lower string) bool {
-	if compactFileLinePattern.MatchString(output) {
+	if hasStructuredCompactFinding(lower) {
 		return true
 	}
 
-	return strings.Contains(lower, "**severity**:") &&
-		(strings.Contains(lower, "**location**:") ||
-			strings.Contains(lower, "**problem**:") ||
-			strings.Contains(lower, "**fix**:"))
+	return compactFindingHeadingPattern.MatchString(output) &&
+		compactSeverityHeadingPattern.MatchString(output) &&
+		compactFileLinePattern.MatchString(output)
+}
+
+func hasStructuredCompactFinding(lower string) bool {
+	hasSeverity := strings.Contains(lower, "**severity**:")
+	hasLocation := strings.Contains(lower, "**location**:") ||
+		strings.Contains(lower, "**files**:")
+	hasDetails := strings.Contains(lower, "**problem**:") ||
+		strings.Contains(lower, "**issue**:") ||
+		strings.Contains(lower, "**fix**:")
+	return hasSeverity && hasLocation && hasDetails
 }

@@ -177,6 +177,24 @@ Done. All 6 reviews have been verified against the current codebase: 4 previousl
 			"0 verified findings were dropped; 5 verified findings remain.",
 			false,
 		},
+		{
+			"remaining_count_with_file_line_without_findings",
+			"5 verified findings remain: cmd/foo.go:42",
+			false,
+		},
+		{
+			"review_findings_with_explicit_block",
+			`Verdict: Fail
+
+## Verified Findings
+
+### **Medium Severity**
+
+#### 1. State leak
+**Files:** cmd/roborev/compact.go:42
+**Issue:** The compact job closes source jobs before preserving actionable findings.`,
+			true,
+		},
 		{"empty", "", false},
 		{"whitespace", "   \n  ", false},
 		{"error_prefix", "Error: something broke", false},

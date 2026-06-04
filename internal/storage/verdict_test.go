@@ -72,6 +72,41 @@ var verdictTests = []verdictTestCase{
 		want:   VerdictPass,
 	},
 	{
+		name:   "SimplePass/compact no verified findings remain",
+		output: "No verified findings remain.",
+		want:   VerdictPass,
+	},
+	{
+		name:   "SimplePass/compact zero findings",
+		output: "0 findings.",
+		want:   VerdictPass,
+	},
+	{
+		name:   "SimplePass/compact zero findings remain",
+		output: "0 findings remain.",
+		want:   VerdictPass,
+	},
+	{
+		name:   "SimplePass/compact zero word findings",
+		output: "zero findings.",
+		want:   VerdictPass,
+	},
+	{
+		name:   "SimplePass/compact zero word findings remain",
+		output: "zero findings remain.",
+		want:   VerdictPass,
+	},
+	{
+		name:   "SimplePass/compact all previous findings addressed",
+		output: "All previous findings have been addressed.",
+		want:   VerdictPass,
+	},
+	{
+		name:   "SimplePass/compact all findings resolved",
+		output: "All findings have been resolved.",
+		want:   VerdictPass,
+	},
+	{
 		name:   "SimplePass/bullet no issues found",
 		output: "- No issues found.",
 		want:   VerdictPass,

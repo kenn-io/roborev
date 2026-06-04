@@ -78,6 +78,9 @@ func ParseVerdict(output string) string {
 		if isExplicitVerdictValue(normalized, "pass") {
 			return verdictPass
 		}
+		if isNoFindingVerdictLine(normalized) {
+			return verdictPass
+		}
 		if !hasPassPrefix(normalized) {
 			continue
 		}
@@ -110,6 +113,27 @@ func hasPassPrefix(line string) bool {
 		}
 	}
 	return false
+}
+
+func isNoFindingVerdictLine(line string) bool {
+	line = strings.TrimRight(line, ".!?")
+	line = strings.Join(strings.Fields(line), " ")
+	switch line {
+	case "all previous findings have been addressed",
+		"all findings have been resolved",
+		"no verified findings remain",
+		"0 findings",
+		"0 findings remain",
+		"0 verified findings",
+		"0 verified findings remain",
+		"zero findings",
+		"zero findings remain",
+		"zero verified findings",
+		"zero verified findings remain":
+		return true
+	default:
+		return false
+	}
 }
 
 func isExplicitVerdictValue(line, value string) bool {

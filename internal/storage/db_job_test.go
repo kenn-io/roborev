@@ -163,6 +163,31 @@ func TestReviewVerdictComputation(t *testing.T) {
 		assert.Equal(t, "P", *review.Job.Verdict)
 	})
 
+	t.Run("compact no remaining output stores pass verdict", func(t *testing.T) {
+		env := setupJobEnv(t, "/tmp/test-repo", "verdict-compact-clean")
+		_, err := env.db.ClaimJob("worker-1")
+		require.NoError(t, err)
+		require.NoError(t, env.db.CompleteJob(
+			env.job.ID, "codex", "the prompt",
+			"## Compact Analysis\n\n---\n\n0 findings remain.",
+		))
+
+		review, err := env.db.GetReviewByJobID(env.job.ID)
+		require.NoError(t, err, "GetReviewByJobID failed")
+
+		assert.NotNil(t, review.Job.Verdict)
+		assert.Equal(t, "P", *review.Job.Verdict)
+
+		var vb sql.NullInt64
+		err = env.db.QueryRow(
+			`SELECT verdict_bool FROM reviews WHERE job_id = ?`,
+			env.job.ID,
+		).Scan(&vb)
+		require.NoError(t, err)
+		assert.True(t, vb.Valid, "verdict_bool should be set")
+		assert.Equal(t, int64(1), vb.Int64)
+	})
+
 	t.Run("verdict nil when output is empty", func(t *testing.T) {
 		env := setupJobEnv(t, "/tmp/test-repo", "verdict-empty")
 		_, err := env.db.ClaimJob("worker-1")
