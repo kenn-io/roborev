@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"math"
 	"os"
-	"path/filepath"
 	"reflect"
 	"sort"
 	"strconv"
@@ -155,9 +154,12 @@ func LoadRawGlobal() (map[string]any, error) {
 	return LoadRawTOML(GlobalConfigPath())
 }
 
-// LoadRawRepo loads the repo config file as a raw TOML map.
+// LoadRawRepo loads the repo config file as a raw TOML map. It applies the
+// same linked-worktree fallback as LoadRepoConfig (via RepoConfigPath) so
+// explicit-key detection sees the authoritative config even when it lives only
+// in the main checkout.
 func LoadRawRepo(repoPath string) (map[string]any, error) {
-	return LoadRawTOML(filepath.Join(repoPath, ".roborev.toml"))
+	return LoadRawTOML(RepoConfigPath(repoPath))
 }
 
 // LoadRawTOML loads a TOML file as a raw map.

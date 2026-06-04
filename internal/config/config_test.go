@@ -397,6 +397,31 @@ func TestLoadRepoConfigSymlink(t *testing.T) {
 	assert.Equal(t, "copilot", cfg.Agent)
 }
 
+// TestLoadRawRepoWorktreeFallback verifies that raw-config loading (used for
+// explicit-key detection) applies the same main-checkout fallback as
+// LoadRepoConfig when .roborev.toml exists only in the main checkout.
+func TestLoadRawRepoWorktreeFallback(t *testing.T) {
+	main := t.TempDir()
+	execGit(t, main, "init")
+	execGit(t, main, "config", "user.email", "t@example.com")
+	execGit(t, main, "config", "user.name", "t")
+	writeTestFile(t, main, "base.txt", "base\n")
+	execGit(t, main, "add", ".")
+	execGit(t, main, "commit", "-m", "init")
+
+	writeTestFile(t, main, ".gitignore", ".roborev.toml\n")
+	writeRepoConfigStr(t, main, "reuse_review_session_lookback = 5\n")
+
+	wt := filepath.Join(t.TempDir(), "wt")
+	execGit(t, main, "worktree", "add", wt, "HEAD")
+
+	raw, err := LoadRawRepo(wt)
+	require.NoError(t, err)
+	require.NotNil(t, raw, "expected raw config to fall back to main checkout")
+	assert.True(t, IsKeyInTOMLFile(raw, "reuse_review_session_lookback"),
+		"explicit key should be detected via the main-checkout fallback")
+}
+
 func TestResolveJobTimeout(t *testing.T) {
 	tests := []struct {
 		name         string

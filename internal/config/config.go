@@ -520,48 +520,52 @@ func (c *Config) migrateDeprecated(md toml.MetaData) {
 	}
 }
 
-// LoadRepoConfig loads per-repo config from .roborev.toml.
+// RepoConfigPath returns the .roborev.toml path that should be read for
+// repoPath, applying the linked-worktree fallback.
 //
-// When repoPath has no .roborev.toml, it falls back to the main repository
-// root. This matters for linked worktrees: a .roborev.toml that is gitignored
-// (or otherwise untracked) lives only in the main checkout's working tree, so
-// it is invisible from a worktree's directory. The fallback resolves the main
-// root via the git common dir and loads the config from there.
-func LoadRepoConfig(repoPath string) (*RepoConfig, error) {
-	cfg, found, err := loadRepoConfigAt(repoPath)
-	if err != nil {
-		return nil, err
-	}
-	if found {
-		return cfg, nil
+// A .roborev.toml that is gitignored (or otherwise untracked) lives only in
+// the main checkout's working tree, so it is invisible from a worktree's
+// directory. When repoPath has no .roborev.toml of its own, this resolves the
+// main repository root via the git common dir and returns its config path if
+// one exists there. Otherwise it returns repoPath's own (possibly nonexistent)
+// config path, so callers keep their existing "file missing" behavior.
+//
+// All per-repo config loaders (decoded and raw) route through this so they
+// agree on which file is authoritative.
+func RepoConfigPath(repoPath string) string {
+	local := filepath.Join(repoPath, ".roborev.toml")
+	if _, err := os.Stat(local); err == nil {
+		return local
 	}
 
-	// Not present at repoPath. If repoPath is a worktree, the config may live
-	// only in the main checkout (e.g. gitignored). Resolve the main root and
-	// retry there. Any resolution failure (not a git repo, etc.) leaves the
-	// original "no repo config" result intact.
+	// Not present (or unreadable) at repoPath. If repoPath is a worktree, the
+	// config may live only in the main checkout. Any resolution failure (not a
+	// git repo, etc.) falls through to the local path.
 	mainRoot, err := git.GetMainRepoRoot(repoPath)
 	if err != nil || mainRoot == "" || mainRoot == repoPath {
-		return nil, nil
+		return local
 	}
-	cfg, _, err = loadRepoConfigAt(mainRoot)
-	return cfg, err
+	mainPath := filepath.Join(mainRoot, ".roborev.toml")
+	if _, err := os.Stat(mainPath); err == nil {
+		return mainPath
+	}
+	return local
 }
 
-// loadRepoConfigAt loads .roborev.toml from a single directory. found reports
-// whether the file existed (regardless of parse outcome).
-func loadRepoConfigAt(dir string) (cfg *RepoConfig, found bool, err error) {
-	path := filepath.Join(dir, ".roborev.toml")
-	if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
-		return nil, false, nil
+// LoadRepoConfig loads per-repo config from .roborev.toml, applying the
+// linked-worktree fallback via RepoConfigPath.
+func LoadRepoConfig(repoPath string) (*RepoConfig, error) {
+	path := RepoConfigPath(repoPath)
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return nil, nil // No repo config
 	}
 
-	var loaded RepoConfig
-	if _, err := toml.DecodeFile(path, &loaded); err != nil {
-		return nil, true, err
+	var cfg RepoConfig
+	if _, err := toml.DecodeFile(path, &cfg); err != nil {
+		return nil, err
 	}
 
-	return &loaded, true, nil
+	return &cfg, nil
 }
 
 // ValidateRepoConfig returns any repo-config load or parse error for repoPath.
