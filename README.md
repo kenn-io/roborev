@@ -43,6 +43,8 @@ binary path with `roborev init --binary ~/.local/share/mise/shims/roborev`.
   git hooks. No workflow changes required.
 - **Auto-Fix** - `roborev fix` feeds review findings to an agent that
   applies fixes and commits. `roborev refine` iterates until reviews pass.
+- **Agent Hook** - Optional Codex and Claude Code harness hooks can prompt
+  active sessions to run `$roborev-fix` when roborev has open failed reviews.
 - **Code Analysis** - Built-in analysis types (duplication, complexity,
   refactoring, test fixtures, dead code, security) that agents can fix
   automatically.
@@ -69,6 +71,12 @@ with `roborev fix`.
 `roborev fix` shows the review findings to an agent, which applies
 changes and commits. The new commit gets reviewed automatically,
 closing the loop.
+
+For Codex and Claude Code sessions, `roborev agent-hook install` can add an
+optional harness hook that prompts the active session to invoke `$roborev-fix`
+after configured turn, commit, or failed-review thresholds are met. The hook
+uses a separate local `roborev-agent-hook` daemon for session counters; it does
+not run inside the main roborev daemon.
 
 For fully automated iteration (advanced feature), use `refine`:
 
@@ -150,6 +158,7 @@ If the hook rewrites files, re-stage them and re-run `git commit`. Use
 | `roborev fix` | Fix open reviews (or specify job IDs) |
 | `roborev refine` | Auto-fix loop: fix, re-review, repeat |
 | `roborev analyze <type>` | Run code analysis with optional auto-fix |
+| `roborev agent-hook install` | Install optional Codex/Claude agent harness hooks |
 | `roborev compact` | Verify and consolidate open review findings |
 | `roborev show [sha]` | Display review for commit |
 | `roborev run "<task>"` | Execute a task with an AI agent |
@@ -181,6 +190,9 @@ See [configuration guide](https://roborev.io/configuration/) for all options.
 | `ROBOREV_DATA_DIR` | Override default data directory (`~/.roborev`) |
 | `ROBOREV_COLOR_MODE` | TUI color theme: `auto` (default), `dark`, `light`, `none` |
 | `ROBOREV_SYNC_CURSOR_LOOKBACK` | PostgreSQL sync cursor overlap duration (default `5m`) |
+| `ROBOREV_AGENT_HOOK_TURN_THRESHOLD` | Override agent-hook Stop threshold |
+| `ROBOREV_AGENT_HOOK_COMMIT_THRESHOLD` | Override agent-hook commit threshold |
+| `ROBOREV_AGENT_HOOK_FAILED_REVIEW_THRESHOLD` | Override agent-hook failed-review threshold |
 | `NO_COLOR` | Set to any value to disable all color output ([no-color.org](https://no-color.org)) |
 
 ## Supported Agents
@@ -279,6 +291,7 @@ Full documentation available at **[roborev.io](https://roborev.io)**:
 - [Auto-Fixing with Refine](https://roborev.io/guides/auto-fixing/)
 - [Code Analysis and Assisted Refactoring](https://roborev.io/guides/assisted-refactoring/)
 - [Hooks](https://roborev.io/guides/hooks/)
+- [Agent Hook](docs/agent-hook.md)
 - [Agent Skills](https://roborev.io/guides/agent-skills/)
 - [PostgreSQL Sync](https://roborev.io/guides/postgres-sync/)
 

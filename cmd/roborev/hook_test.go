@@ -235,8 +235,10 @@ func initNoDaemonSetup(t *testing.T) *testutil.TestRepo {
 	t.Helper()
 
 	tmpHome := t.TempDir()
+	tmpXDGConfig := t.TempDir()
 	t.Setenv("HOME", tmpHome)
 	t.Setenv("USERPROFILE", tmpHome)
+	t.Setenv("XDG_CONFIG_HOME", tmpXDGConfig)
 	t.Setenv("ROBOREV_DATA_DIR", filepath.Join(tmpHome, ".roborev"))
 
 	repo := testutil.NewTestRepo(t)

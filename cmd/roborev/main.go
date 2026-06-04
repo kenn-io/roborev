@@ -62,6 +62,7 @@ func main() {
 	rootCmd.AddCommand(skillsCmd())
 	rootCmd.AddCommand(syncCmd())
 	rootCmd.AddCommand(remapCmd())
+	rootCmd.AddCommand(agentHookCmd())
 	rootCmd.AddCommand(checkAgentsCmd())
 	rootCmd.AddCommand(ciCmd())
 	rootCmd.AddCommand(logCmd())

@@ -55,6 +55,13 @@ type AdvancedConfig struct {
 	TasksEnabled bool `toml:"tasks_enabled" comment:"Enable the advanced Tasks workflow in the TUI."` // Enables advanced TUI tasks workflow
 }
 
+type AgentHookConfig struct {
+	TurnThreshold         int    `toml:"turn_threshold" comment:"Stop hook threshold; 0 disables Stop-based prompting."`
+	CommitThreshold       int    `toml:"commit_threshold" comment:"PostToolUse commit threshold; 0 disables commit-based prompting."`
+	FailedReviewThreshold int    `toml:"failed_review_threshold" comment:"Open failed roborev review threshold; 0 disables review-based prompting."`
+	Instruction           string `toml:"instruction" comment:"Instruction emitted when the agent hook decides a review/fix pass is needed."`
+}
+
 type CodexConfig struct {
 	DisableReviewSkills    bool `toml:"disable_review_skills" comment:"Disable Codex skill instructions for review jobs."`
 	IgnoreReviewUserConfig bool `toml:"ignore_review_user_config" comment:"Pass --ignore-user-config to Codex for review jobs."`
@@ -224,6 +231,9 @@ type Config struct {
 
 	// Subagent review panels (opt-in)
 	Review ReviewConfig `toml:"review"`
+
+	// Optional agent harness hook integration
+	AgentHook AgentHookConfig `toml:"agent_hook"`
 
 	// Diff exclusion patterns (filenames or glob patterns to exclude from review diffs)
 	ExcludePatterns []string `toml:"exclude_patterns" comment:"Filenames or glob patterns to exclude from review diffs globally."`
@@ -420,6 +430,12 @@ func DefaultConfig() *Config {
 		MouseEnabled:       true,
 		Cost: CostConfig{
 			Timeout: "10s",
+		},
+		AgentHook: AgentHookConfig{
+			TurnThreshold:         5,
+			CommitThreshold:       0,
+			FailedReviewThreshold: 4,
+			Instruction:           "Invoke the $roborev-fix skill now.",
 		},
 		Agent: AgentConfig{
 			Codex: CodexConfig{

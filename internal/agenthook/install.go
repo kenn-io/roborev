@@ -1,0 +1,441 @@
+package agenthook
+
+import (
+	"encoding/json"
+	"errors"
+	"fmt"
+	"io"
+	"os"
+	"path/filepath"
+	"strings"
+	"time"
+)
+
+type InstallOptions struct {
+	Agent            string
+	Command          string
+	CodexConfigPath  string
+	ClaudeConfigPath string
+	Timeout          time.Duration
+	DryRun           bool
+}
+
+type DumpOptions struct {
+	Agent      string
+	Command    string
+	ConfigPath string
+	Timeout    time.Duration
+}
+
+type installSpec struct {
+	Event          string
+	Matcher        string
+	Command        string
+	Timeout        int
+	IncludeTimeout bool
+}
+
+func RunInstall(opts InstallOptions, stdout io.Writer) error {
+	agent := strings.ToLower(strings.TrimSpace(opts.Agent))
+	if agent == "" {
+		agent = "all"
+	}
+	if agent != "all" && agent != "codex" && agent != "claude" {
+		return fmt.Errorf("agent must be codex, claude, or all")
+	}
+	if opts.Timeout < 0 {
+		return fmt.Errorf("timeout must be >= 0")
+	}
+	command, err := resolveInstallCommand(opts.Command)
+	if err != nil {
+		return err
+	}
+
+	if agent == "all" || agent == "codex" {
+		changed, err := installSpecs(opts.CodexConfigPath, codexSpecs(command, opts.Timeout), opts.DryRun)
+		if err != nil {
+			return err
+		}
+		printInstallResult(stdout, "Codex", opts.CodexConfigPath, changed, opts.DryRun)
+	}
+	if agent == "all" || agent == "claude" {
+		changed, err := installSpecs(opts.ClaudeConfigPath, claudeSpecs(command), opts.DryRun)
+		if err != nil {
+			return err
+		}
+		printInstallResult(stdout, "Claude", opts.ClaudeConfigPath, changed, opts.DryRun)
+	}
+	return nil
+}
+
+func RunDump(opts DumpOptions, stdout io.Writer) error {
+	agent := strings.ToLower(strings.TrimSpace(opts.Agent))
+	if opts.Timeout < 0 {
+		return fmt.Errorf("timeout must be >= 0")
+	}
+	command, err := resolveInstallCommand(opts.Command)
+	if err != nil {
+		return err
+	}
+
+	path := opts.ConfigPath
+	var specs []installSpec
+	switch agent {
+	case "codex":
+		if path == "" {
+			path = DefaultCodexHooksPath()
+		}
+		specs = codexSpecs(command, opts.Timeout)
+	case "claude":
+		if path == "" {
+			path = DefaultClaudeSettingsPath()
+		}
+		specs = claudeSpecs(command)
+	default:
+		return fmt.Errorf("agent must be codex or claude")
+	}
+
+	root, _, _, err := planSpecs(path, specs)
+	if err != nil {
+		return err
+	}
+	body, err := marshalJSONConfig(root)
+	if err != nil {
+		return fmt.Errorf("encode %s: %w", path, err)
+	}
+	_, err = stdout.Write(body)
+	return err
+}
+
+func resolveInstallCommand(command string) (string, error) {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		return defaultInstallCommand()
+	}
+	return command, nil
+}
+
+func printInstallResult(stdout io.Writer, name, path string, changed, dryRun bool) {
+	switch {
+	case dryRun && changed:
+		fmt.Fprintf(stdout, "would update %s agent hooks in %s\n", name, path)
+	case dryRun:
+		fmt.Fprintf(stdout, "%s agent hooks already installed in %s\n", name, path)
+	case changed:
+		fmt.Fprintf(stdout, "installed %s agent hooks in %s\n", name, path)
+	default:
+		fmt.Fprintf(stdout, "%s agent hooks already installed in %s\n", name, path)
+	}
+}
+
+func codexSpecs(command string, timeout time.Duration) []installSpec {
+	secs := int(timeout.Seconds())
+	return []installSpec{
+		{
+			Event:          "PostToolUse",
+			Matcher:        "^Bash$",
+			Command:        command,
+			Timeout:        secs,
+			IncludeTimeout: true,
+		},
+		{
+			Event:          "Stop",
+			Command:        command,
+			Timeout:        secs,
+			IncludeTimeout: true,
+		},
+	}
+}
+
+func claudeSpecs(command string) []installSpec {
+	return []installSpec{
+		{
+			Event:   "PostToolUse",
+			Matcher: "Bash",
+			Command: command,
+		},
+		{
+			Event:   "Stop",
+			Command: command,
+		},
+	}
+}
+
+func installSpecs(path string, specs []installSpec, dryRun bool) (bool, error) {
+	root, mode, changed, err := planSpecs(path, specs)
+	if err != nil {
+		return false, err
+	}
+	if !changed || dryRun {
+		return changed, nil
+	}
+	if err := writeJSONConfig(path, root, mode); err != nil {
+		return false, err
+	}
+	return true, nil
+}
+
+func planSpecs(path string, specs []installSpec) (map[string]any, os.FileMode, bool, error) {
+	if path == "" {
+		return nil, 0, false, fmt.Errorf("config path is required")
+	}
+	root, mode, err := readJSONConfig(path)
+	if err != nil {
+		return nil, 0, false, err
+	}
+	hooks, err := configObject(root)
+	if err != nil {
+		return nil, 0, false, err
+	}
+
+	changed := false
+	for _, spec := range specs {
+		specChanged, err := ensureSpec(hooks, spec)
+		if err != nil {
+			return nil, 0, false, fmt.Errorf("%s hook: %w", spec.Event, err)
+		}
+		changed = changed || specChanged
+	}
+	return root, mode, changed, nil
+}
+
+func readJSONConfig(path string) (map[string]any, os.FileMode, error) {
+	body, err := os.ReadFile(path)
+	if errors.Is(err, os.ErrNotExist) {
+		return map[string]any{}, 0o600, nil
+	}
+	if err != nil {
+		return nil, 0, fmt.Errorf("read %s: %w", path, err)
+	}
+	mode := os.FileMode(0o600)
+	if info, err := os.Stat(path); err == nil {
+		mode = info.Mode().Perm()
+	}
+	if len(strings.TrimSpace(string(body))) == 0 {
+		return map[string]any{}, mode, nil
+	}
+	var root map[string]any
+	if err := json.Unmarshal(body, &root); err != nil {
+		return nil, 0, fmt.Errorf("decode %s: %w", path, err)
+	}
+	if root == nil {
+		root = map[string]any{}
+	}
+	return root, mode, nil
+}
+
+func marshalJSONConfig(root map[string]any) ([]byte, error) {
+	body, err := json.MarshalIndent(root, "", "  ")
+	if err != nil {
+		return nil, err
+	}
+	return append(body, '\n'), nil
+}
+
+func writeJSONConfig(path string, root map[string]any, mode os.FileMode) error {
+	body, err := marshalJSONConfig(root)
+	if err != nil {
+		return fmt.Errorf("encode %s: %w", path, err)
+	}
+	writePath := path
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		writePath = resolved
+	}
+	dir := filepath.Dir(writePath)
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("create %s: %w", dir, err)
+	}
+	tmp, err := os.CreateTemp(dir, "."+filepath.Base(writePath)+".tmp-*")
+	if err != nil {
+		return fmt.Errorf("create temp config: %w", err)
+	}
+	tmpPath := tmp.Name()
+	defer os.Remove(tmpPath)
+	if _, err := tmp.Write(body); err != nil {
+		_ = tmp.Close()
+		return fmt.Errorf("write temp config: %w", err)
+	}
+	if err := tmp.Close(); err != nil {
+		return fmt.Errorf("close temp config: %w", err)
+	}
+	if err := os.Chmod(tmpPath, mode); err != nil {
+		return fmt.Errorf("chmod temp config: %w", err)
+	}
+	if err := os.Rename(tmpPath, writePath); err != nil {
+		return fmt.Errorf("replace %s: %w", path, err)
+	}
+	return nil
+}
+
+func configObject(root map[string]any) (map[string]any, error) {
+	raw, ok := root["hooks"]
+	if !ok || raw == nil {
+		hooks := map[string]any{}
+		root["hooks"] = hooks
+		return hooks, nil
+	}
+	hooks, ok := raw.(map[string]any)
+	if !ok {
+		return nil, fmt.Errorf("hooks must be an object")
+	}
+	return hooks, nil
+}
+
+func ensureSpec(hooks map[string]any, spec installSpec) (bool, error) {
+	entries, err := eventEntries(hooks, spec.Event)
+	if err != nil {
+		return false, err
+	}
+	idx, err := findEntry(entries, spec.Matcher)
+	if err != nil {
+		return false, err
+	}
+
+	commandHook := map[string]any{
+		"type":    "command",
+		"command": spec.Command,
+	}
+	if spec.IncludeTimeout {
+		commandHook["timeout"] = spec.Timeout
+	}
+
+	if idx == -1 {
+		entry := map[string]any{
+			"hooks": []any{commandHook},
+		}
+		if spec.Matcher != "" {
+			entry["matcher"] = spec.Matcher
+		}
+		hooks[spec.Event] = append(entries, entry)
+		return true, nil
+	}
+
+	entry := entries[idx].(map[string]any)
+	entryHookList, err := entryHooks(entry)
+	if err != nil {
+		return false, err
+	}
+	if existing := findCommandHookIn(entryHookList, spec.Command); existing != nil {
+		return updateCommandHookFields(existing, spec), nil
+	}
+	entry["hooks"] = append(entryHookList, commandHook)
+	hooks[spec.Event] = entries
+	return true, nil
+}
+
+func eventEntries(hooks map[string]any, event string) ([]any, error) {
+	raw, ok := hooks[event]
+	if !ok || raw == nil {
+		entries := []any{}
+		hooks[event] = entries
+		return entries, nil
+	}
+	entries, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("%s must be an array", event)
+	}
+	return entries, nil
+}
+
+func findCommandHookIn(hooks []any, command string) map[string]any {
+	for _, rawHook := range hooks {
+		hook, ok := rawHook.(map[string]any)
+		if !ok {
+			continue
+		}
+		if hook["type"] == "command" && hook["command"] == command {
+			return hook
+		}
+	}
+	return nil
+}
+
+func updateCommandHookFields(hook map[string]any, spec installSpec) bool {
+	if !spec.IncludeTimeout {
+		return false
+	}
+	if curr, ok := hook["timeout"]; ok {
+		if currNum, ok := curr.(float64); ok && int(currNum) == spec.Timeout {
+			return false
+		}
+	}
+	hook["timeout"] = spec.Timeout
+	return true
+}
+
+func findEntry(entries []any, matcher string) (int, error) {
+	for i, rawEntry := range entries {
+		entry, ok := rawEntry.(map[string]any)
+		if !ok {
+			return -1, fmt.Errorf("hook entry must be an object")
+		}
+		rawMatcher, hasMatcher := entry["matcher"]
+		if matcher == "" && (!hasMatcher || rawMatcher == "") {
+			return i, nil
+		}
+		if matcher != "" && rawMatcher == matcher {
+			return i, nil
+		}
+	}
+	return -1, nil
+}
+
+func entryHooks(entry map[string]any) ([]any, error) {
+	raw, ok := entry["hooks"]
+	if !ok || raw == nil {
+		return []any{}, nil
+	}
+	hooks, ok := raw.([]any)
+	if !ok {
+		return nil, fmt.Errorf("entry hooks must be an array")
+	}
+	return hooks, nil
+}
+
+func defaultInstallCommand() (string, error) {
+	exe, err := os.Executable()
+	if err != nil {
+		return "", fmt.Errorf("resolve current executable: %w", err)
+	}
+	exe, err = filepath.Abs(exe)
+	if err != nil {
+		return "", fmt.Errorf("resolve current executable: %w", err)
+	}
+	return shellQuote(exe) + " agent-hook run", nil
+}
+
+func DefaultCodexHooksPath() string {
+	if dir := os.Getenv("CODEX_HOME"); dir != "" {
+		return filepath.Join(dir, "hooks.json")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ""
+	}
+	return filepath.Join(home, ".codex", "hooks.json")
+}
+
+func DefaultClaudeSettingsPath() string {
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ""
+	}
+	return filepath.Join(home, ".claude", "settings.json")
+}
+
+func shellQuote(s string) string {
+	if s == "" {
+		return "''"
+	}
+	if strings.IndexFunc(s, unsafeShellRune) == -1 {
+		return s
+	}
+	return "'" + strings.ReplaceAll(s, "'", "'\\''") + "'"
+}
+
+func unsafeShellRune(r rune) bool {
+	return r != '/' && r != '.' && r != '-' && r != '_' && r != '+' && r != ':' &&
+		(r < '0' || r > '9') &&
+		(r < 'A' || r > 'Z') &&
+		(r < 'a' || r > 'z')
+}
