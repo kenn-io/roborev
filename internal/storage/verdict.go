@@ -122,6 +122,8 @@ func isNoFindingVerdictLine(line string) bool {
 	case "all previous findings have been addressed",
 		"all findings have been resolved",
 		"no verified findings remain",
+		"no findings remain",
+		"no remaining findings",
 		"0 findings",
 		"0 findings remain",
 		"0 verified findings",

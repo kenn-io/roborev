@@ -10,6 +10,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/storage"
 )
 
 func setupTestEnv(t *testing.T) string {
@@ -205,6 +207,32 @@ Done. All 6 reviews have been verified against the current codebase: 4 previousl
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			assert.Equal(t, tt.want, IsValidCompactOutput(tt.input), "IsValidCompactOutput result mismatch")
+		})
+	}
+}
+
+func TestCleanCompactOutputsParseAsPassVerdicts(t *testing.T) {
+	outputs := []string{
+		"All previous findings have been addressed.",
+		"All findings have been resolved.",
+		"No issues found.",
+		"No verified findings remain.",
+		"No findings remain.",
+		"No remaining findings.",
+		"0 findings.",
+		"0 findings remain.",
+		"0 verified findings.",
+		"0 verified findings remain.",
+		"zero findings.",
+		"zero findings remain.",
+		"zero verified findings.",
+		"zero verified findings remain.",
+	}
+
+	for _, output := range outputs {
+		t.Run(output, func(t *testing.T) {
+			require.True(t, IsValidCompactOutput(output))
+			assert.Equal(t, "P", storage.ParseVerdict(output))
 		})
 	}
 }

@@ -169,7 +169,7 @@ func TestReviewVerdictComputation(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, env.db.CompleteJob(
 			env.job.ID, "codex", "the prompt",
-			"## Compact Analysis\n\n---\n\n0 findings remain.",
+			"## Compact Analysis\n\n---\n\nNo remaining findings.",
 		))
 
 		review, err := env.db.GetReviewByJobID(env.job.ID)

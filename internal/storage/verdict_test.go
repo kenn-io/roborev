@@ -77,6 +77,11 @@ var verdictTests = []verdictTestCase{
 		want:   VerdictPass,
 	},
 	{
+		name:   "SimplePass/compact no remaining findings",
+		output: "No remaining findings.",
+		want:   VerdictPass,
+	},
+	{
 		name:   "SimplePass/compact zero findings",
 		output: "0 findings.",
 		want:   VerdictPass,
