@@ -324,6 +324,79 @@ func TestLoadRepoConfigMissing(t *testing.T) {
 	}, "Expected nil config when file doesn't exist")
 }
 
+// TestLoadRepoConfigWorktreeFallback verifies that a .roborev.toml living only
+// in the main checkout (e.g. gitignored, so absent from a linked worktree's
+// working tree) is still loaded when LoadRepoConfig is called against the
+// worktree directory.
+func TestLoadRepoConfigWorktreeFallback(t *testing.T) {
+	main := t.TempDir()
+	execGit(t, main, "init")
+	execGit(t, main, "config", "user.email", "t@example.com")
+	execGit(t, main, "config", "user.name", "t")
+	writeTestFile(t, main, "base.txt", "base\n")
+	execGit(t, main, "add", ".")
+	execGit(t, main, "commit", "-m", "init")
+
+	// Config exists only in the main checkout and is gitignored, so it is
+	// untracked and will not appear in a worktree's working tree.
+	writeTestFile(t, main, ".gitignore", ".roborev.toml\n")
+	writeRepoConfigStr(t, main, `agent = "claude-code"`)
+
+	wt := filepath.Join(t.TempDir(), "wt")
+	execGit(t, main, "worktree", "add", wt, "HEAD")
+
+	// Sanity: the worktree really lacks its own config.
+	_, statErr := os.Stat(filepath.Join(wt, ".roborev.toml"))
+	require.True(t, os.IsNotExist(statErr), "worktree should not contain .roborev.toml")
+
+	cfg, err := LoadRepoConfig(wt)
+	require.NoError(t, err)
+	require.NotNil(t, cfg, "expected fallback to main checkout config")
+	assert.Equal(t, "claude-code", cfg.Agent)
+}
+
+// TestLoadRepoConfigWorktreeLocalWins verifies that a worktree's own
+// .roborev.toml takes precedence over the main checkout's config.
+func TestLoadRepoConfigWorktreeLocalWins(t *testing.T) {
+	main := t.TempDir()
+	execGit(t, main, "init")
+	execGit(t, main, "config", "user.email", "t@example.com")
+	execGit(t, main, "config", "user.name", "t")
+	writeTestFile(t, main, "base.txt", "base\n")
+	execGit(t, main, "add", ".")
+	execGit(t, main, "commit", "-m", "init")
+
+	writeTestFile(t, main, ".gitignore", ".roborev.toml\n")
+	writeRepoConfigStr(t, main, `agent = "codex"`)
+
+	wt := filepath.Join(t.TempDir(), "wt")
+	execGit(t, main, "worktree", "add", wt, "HEAD")
+	writeRepoConfigStr(t, wt, `agent = "gemini"`)
+
+	cfg, err := LoadRepoConfig(wt)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.Equal(t, "gemini", cfg.Agent, "worktree-local config should win over main")
+}
+
+// TestLoadRepoConfigSymlink verifies that a .roborev.toml that is a symlink to
+// a config file elsewhere is followed and loaded.
+func TestLoadRepoConfigSymlink(t *testing.T) {
+	target := t.TempDir()
+	writeTestFile(t, target, "shared.toml", `agent = "copilot"`)
+
+	repo := t.TempDir()
+	require.NoError(t, os.Symlink(
+		filepath.Join(target, "shared.toml"),
+		filepath.Join(repo, ".roborev.toml"),
+	))
+
+	cfg, err := LoadRepoConfig(repo)
+	require.NoError(t, err)
+	require.NotNil(t, cfg, "expected symlinked config to be loaded")
+	assert.Equal(t, "copilot", cfg.Agent)
+}
+
 func TestResolveJobTimeout(t *testing.T) {
 	tests := []struct {
 		name         string

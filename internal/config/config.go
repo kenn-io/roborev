@@ -520,19 +520,48 @@ func (c *Config) migrateDeprecated(md toml.MetaData) {
 	}
 }
 
-// LoadRepoConfig loads per-repo config from .roborev.toml
+// LoadRepoConfig loads per-repo config from .roborev.toml.
+//
+// When repoPath has no .roborev.toml, it falls back to the main repository
+// root. This matters for linked worktrees: a .roborev.toml that is gitignored
+// (or otherwise untracked) lives only in the main checkout's working tree, so
+// it is invisible from a worktree's directory. The fallback resolves the main
+// root via the git common dir and loads the config from there.
 func LoadRepoConfig(repoPath string) (*RepoConfig, error) {
-	path := filepath.Join(repoPath, ".roborev.toml")
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return nil, nil // No repo config
-	}
-
-	var cfg RepoConfig
-	if _, err := toml.DecodeFile(path, &cfg); err != nil {
+	cfg, found, err := loadRepoConfigAt(repoPath)
+	if err != nil {
 		return nil, err
 	}
+	if found {
+		return cfg, nil
+	}
 
-	return &cfg, nil
+	// Not present at repoPath. If repoPath is a worktree, the config may live
+	// only in the main checkout (e.g. gitignored). Resolve the main root and
+	// retry there. Any resolution failure (not a git repo, etc.) leaves the
+	// original "no repo config" result intact.
+	mainRoot, err := git.GetMainRepoRoot(repoPath)
+	if err != nil || mainRoot == "" || mainRoot == repoPath {
+		return nil, nil
+	}
+	cfg, _, err = loadRepoConfigAt(mainRoot)
+	return cfg, err
+}
+
+// loadRepoConfigAt loads .roborev.toml from a single directory. found reports
+// whether the file existed (regardless of parse outcome).
+func loadRepoConfigAt(dir string) (cfg *RepoConfig, found bool, err error) {
+	path := filepath.Join(dir, ".roborev.toml")
+	if _, statErr := os.Stat(path); os.IsNotExist(statErr) {
+		return nil, false, nil
+	}
+
+	var loaded RepoConfig
+	if _, err := toml.DecodeFile(path, &loaded); err != nil {
+		return nil, true, err
+	}
+
+	return &loaded, true, nil
 }
 
 // ValidateRepoConfig returns any repo-config load or parse error for repoPath.
