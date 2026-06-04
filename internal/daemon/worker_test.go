@@ -15,6 +15,7 @@ import (
 	"regexp"
 	"runtime"
 	"strings"
+	"sync"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -356,6 +357,242 @@ func TestWorkerPoolCancelJobConcurrentRegister(t *testing.T) {
 	}
 
 	tc.Pool.unregisterRunningJob(job.ID)
+}
+
+func TestWorkerCIPanelMemberRunsAgainstReviewedHeadWorktree(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+
+	db := testutil.OpenTestDB(t)
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("go.mod", "module github.com/wesm/middleman\n", "old module")
+	staleHead := repo.HeadSHA()
+	baseSHA := repo.CommitFile("README.md", "base\n", "base")
+	repo.CommitFile("go.mod", "module go.kenn.io/middleman\n", "module migration")
+	headSHA := repo.CommitFile("internal/testenv/githubguard/githubguard.go", "package githubguard\n", "guard")
+	repo.Checkout("--detach", staleHead)
+
+	storedRepo, err := db.GetOrCreateRepo(repo.Path(), "https://github.com/kenn-io/middleman.git")
+	require.NoError(t, err)
+
+	const agentName = "ci-module-reader"
+	var (
+		agentRepoPath string
+		agentHead     string
+		moduleLine    string
+	)
+	agent.Register(&agent.FakeAgent{
+		NameStr: agentName,
+		ReviewFn: func(ctx context.Context, repoPath, commitSHA, reviewPrompt string, output io.Writer) (string, error) {
+			agentRepoPath = repoPath
+			headOut, err := exec.CommandContext(ctx, "git", "-C", repoPath, "rev-parse", "HEAD").Output()
+			if err != nil {
+				return "", err
+			}
+			agentHead = strings.TrimSpace(string(headOut))
+			data, err := os.ReadFile(filepath.Join(repoPath, "go.mod"))
+			if err != nil {
+				return "", err
+			}
+			moduleLine = strings.TrimSpace(string(data))
+			return "No issues found.", nil
+		},
+	})
+	t.Cleanup(func() { agent.Unregister(agentName) })
+
+	gitRef := baseSHA + ".." + headSHA
+	created, members, _, err := db.CreateCIPanelRun("kenn-io/middleman", 20446, headSHA,
+		[]storage.EnqueueOpts{{
+			RepoID:           storedRepo.ID,
+			GitRef:           gitRef,
+			Agent:            agentName,
+			JobType:          storage.JobTypeRange,
+			PanelName:        "ci",
+			PanelMemberName:  "module-reader",
+			PanelMemberIndex: 0,
+		}},
+		storage.EnqueueOpts{RepoID: storedRepo.ID, GitRef: gitRef, Agent: "test", PanelName: "ci"},
+	)
+	require.NoError(t, err)
+	require.True(t, created)
+	require.Len(t, members, 1)
+
+	pool := NewWorkerPool(db, NewStaticConfig(config.DefaultConfig()), 1, NewBroadcaster(), nil, nil)
+	claimed, err := db.ClaimJob(testWorkerID)
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	require.Equal(t, members[0].ID, claimed.ID)
+
+	pool.processJob(testWorkerID, claimed)
+
+	stored := repo.RevParse("HEAD")
+	assert.Equal(t, staleHead, stored, "shared CI clone checkout should not move")
+	assert.Equal(t, headSHA, agentHead, "agent should run in a checkout of the reviewed PR head")
+	assert.Equal(t, "module go.kenn.io/middleman", moduleLine)
+	assert.NotEqual(t, repo.Path(), agentRepoPath, "agent should not run in the stale shared clone")
+	require.NotEmpty(t, agentRepoPath)
+	_, statErr := os.Stat(agentRepoPath)
+	require.ErrorIs(t, statErr, os.ErrNotExist, "temporary CI worktree should be removed after the job")
+	tcJob, err := db.GetJobByID(claimed.ID)
+	require.NoError(t, err)
+	assert.Equal(t, storage.JobStatusDone, tcJob.Status)
+}
+
+func TestCleanupStaleCIWorktreesRemovesOrphanedDetachedWorktree(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+
+	repo := testutil.NewGitRepo(t)
+	headSHA := repo.CommitFile("marker.txt", "head\n", "head")
+
+	pool := NewWorkerPool(nil, NewStaticConfig(config.DefaultConfig()), 1, NewBroadcaster(), nil, nil)
+	worktreeDir, normalCleanup, err := pool.createCIExactCheckout(context.Background(), testWorkerID, &storage.ReviewJob{
+		ID:       42,
+		RepoPath: repo.Path(),
+		GitRef:   headSHA,
+	})
+	require.NoError(t, err)
+	require.NotEmpty(t, worktreeDir)
+	require.NotNil(t, normalCleanup)
+	t.Cleanup(func() {
+		if _, err := os.Stat(worktreeDir); err == nil {
+			normalCleanup()
+		}
+	})
+	markerPath, err := ciWorktreeMarkerPath(worktreeDir)
+	require.NoError(t, err)
+	assert.FileExists(t, markerPath)
+	_, rootMarkerErr := os.Stat(filepath.Join(worktreeDir, ciWorktreeRepoMarker))
+	require.ErrorIs(t, rootMarkerErr, os.ErrNotExist, "CI marker should not be agent-visible in the worktree")
+
+	listBefore := repo.Run("worktree", "list", "--porcelain")
+	require.Contains(t, listBefore, worktreeDir)
+
+	require.NoError(t, cleanupStaleCIWorktrees(context.Background()))
+
+	_, statErr := os.Stat(worktreeDir)
+	require.ErrorIs(t, statErr, os.ErrNotExist, "stale CI worktree directory should be removed")
+	listAfter := repo.Run("worktree", "list", "--porcelain")
+	assert.NotContains(t, listAfter, worktreeDir)
+}
+
+func TestWorkerCIPanelMembersAtDifferentHeadsRunConcurrentlyInSeparateWorktrees(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+
+	db := testutil.OpenTestDB(t)
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("go.mod", "module example.com/ci\n", "module")
+	staleHead := repo.HeadSHA()
+	baseSHA := repo.CommitFile("README.md", "base\n", "base")
+	headA := repo.CommitFile("marker.txt", "A\n", "marker A")
+	headB := repo.CommitFile("marker.txt", "B\n", "marker B")
+	repo.Checkout("--detach", staleHead)
+
+	storedRepo, err := db.GetOrCreateRepo(repo.Path(), "https://github.com/acme/api.git")
+	require.NoError(t, err)
+
+	const agentName = "ci-concurrent-reader"
+	started := make(chan struct{}, 2)
+	release := make(chan struct{})
+	var mu sync.Mutex
+	seenMarkers := map[string]string{}
+	seenPaths := map[string]string{}
+	agent.Register(&agent.FakeAgent{
+		NameStr: agentName,
+		ReviewFn: func(ctx context.Context, repoPath, commitSHA, reviewPrompt string, output io.Writer) (string, error) {
+			headOut, err := exec.CommandContext(ctx, "git", "-C", repoPath, "rev-parse", "HEAD").Output()
+			if err != nil {
+				return "", err
+			}
+			head := strings.TrimSpace(string(headOut))
+			data, err := os.ReadFile(filepath.Join(repoPath, "marker.txt"))
+			if err != nil {
+				return "", err
+			}
+			mu.Lock()
+			seenMarkers[head] = strings.TrimSpace(string(data))
+			seenPaths[head] = repoPath
+			mu.Unlock()
+			started <- struct{}{}
+			select {
+			case <-ctx.Done():
+				return "", ctx.Err()
+			case <-release:
+			}
+			return "No issues found.", nil
+		},
+	})
+	t.Cleanup(func() { agent.Unregister(agentName) })
+
+	createRun := func(pr int, head, gitRef string) *storage.ReviewJob {
+		t.Helper()
+		created, members, _, err := db.CreateCIPanelRun("acme/api", pr, head,
+			[]storage.EnqueueOpts{{
+				RepoID:           storedRepo.ID,
+				GitRef:           gitRef,
+				Agent:            agentName,
+				JobType:          storage.JobTypeRange,
+				PanelName:        "ci",
+				PanelMemberName:  fmt.Sprintf("reader-%d", pr),
+				PanelMemberIndex: 0,
+			}},
+			storage.EnqueueOpts{RepoID: storedRepo.ID, GitRef: gitRef, Agent: "test", PanelName: "ci"},
+		)
+		require.NoError(t, err)
+		require.True(t, created)
+		require.Len(t, members, 1)
+		return members[0]
+	}
+	memberA := createRun(1, headA, baseSHA+".."+headA)
+	memberB := createRun(2, headB, headA+".."+headB)
+
+	claimedA, err := db.ClaimJob("worker-ci-a")
+	require.NoError(t, err)
+	require.NotNil(t, claimedA)
+	require.Equal(t, memberA.ID, claimedA.ID)
+	claimedB, err := db.ClaimJob("worker-ci-b")
+	require.NoError(t, err)
+	require.NotNil(t, claimedB)
+	require.Equal(t, memberB.ID, claimedB.ID)
+
+	pool := NewWorkerPool(db, NewStaticConfig(config.DefaultConfig()), 2, NewBroadcaster(), nil, nil)
+	var wg sync.WaitGroup
+	wg.Add(2)
+	go func() {
+		defer wg.Done()
+		pool.processJob("worker-ci-a", claimedA)
+	}()
+	go func() {
+		defer wg.Done()
+		pool.processJob("worker-ci-b", claimedB)
+	}()
+
+	var releaseOnce sync.Once
+	releaseAgents := func() {
+		releaseOnce.Do(func() { close(release) })
+	}
+	defer releaseAgents()
+
+	deadline := time.After(5 * time.Second)
+	for received := range 2 {
+		select {
+		case <-started:
+		case <-deadline:
+			require.Equal(t, 2, received, "timed out waiting for concurrent CI agents to start")
+		}
+	}
+	releaseAgents()
+	wg.Wait()
+
+	mu.Lock()
+	assert.Equal(t, "A", seenMarkers[headA])
+	assert.Equal(t, "B", seenMarkers[headB])
+	assert.NotEqual(t, seenPaths[headA], seenPaths[headB])
+	mu.Unlock()
+	assert.Equal(t, staleHead, repo.RevParse("HEAD"), "shared CI clone checkout should not move")
+	for _, id := range []int64{claimedA.ID, claimedB.ID} {
+		job, err := db.GetJobByID(id)
+		require.NoError(t, err)
+		assert.Equal(t, storage.JobStatusDone, job.Status)
+	}
 }
 
 type sessionStreamingTestAgent struct {

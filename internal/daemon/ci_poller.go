@@ -1536,6 +1536,8 @@ func (p *CIPoller) listOpenPRs(ctx context.Context, ghRepo string) ([]ghPR, erro
 
 // gitFetchCtx runs git fetch in the repo with context for cancellation.
 func gitFetchCtx(ctx context.Context, repoPath string, env []string) error {
+	unlock := lockGitMetadata(repoPath)
+	defer unlock()
 	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "fetch", "--quiet")
 	if env != nil {
 		cmd.Env = env
@@ -1549,6 +1551,8 @@ func gitFetchCtx(ctx context.Context, repoPath string, env []string) error {
 // gitFetchPRHead fetches the head commit for a GitHub PR. This is needed
 // for fork-based PRs where the head commit isn't in the normal fetch refs.
 func gitFetchPRHead(ctx context.Context, repoPath string, prNumber int, env []string) error {
+	unlock := lockGitMetadata(repoPath)
+	defer unlock()
 	ref := fmt.Sprintf("pull/%d/head", prNumber)
 	cmd := exec.CommandContext(ctx, "git", "-C", repoPath, "fetch", "origin", ref, "--quiet")
 	if env != nil {

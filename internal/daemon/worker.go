@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"database/sql"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -277,10 +278,9 @@ func (wp *WorkerPool) unregisterRunningJob(jobID int64) {
 	wp.runningJobsMu.Unlock()
 }
 
-// resolveEffectiveRepoPath returns the checkout a job should run against: its
-// worktree when set and still a valid checkout of the same repo, otherwise the
-// main repo path. Both normal reviews and panel synthesis use this so they read
-// and verify against the reviewed checkout.
+// resolveEffectiveRepoPath returns the non-CI checkout a job should run
+// against: its worktree when set and still a valid checkout of the same repo,
+// otherwise the main repo path.
 func resolveEffectiveRepoPath(workerID string, job *storage.ReviewJob) string {
 	if job.WorktreePath == "" {
 		return job.RepoPath
@@ -291,6 +291,74 @@ func resolveEffectiveRepoPath(workerID string, job *storage.ReviewJob) string {
 		return job.RepoPath
 	}
 	return job.WorktreePath
+}
+
+func (wp *WorkerPool) prepareJobCheckout(
+	ctx context.Context, workerID string, job *storage.ReviewJob,
+) (string, func(), error) {
+	requiresCIWorktree, err := wp.jobRequiresCIExactCheckout(job)
+	if err != nil {
+		return "", nil, err
+	}
+	if !requiresCIWorktree {
+		return resolveEffectiveRepoPath(workerID, job), nil, nil
+	}
+	return wp.createCIExactCheckout(ctx, workerID, job)
+}
+
+func (wp *WorkerPool) jobRequiresCIExactCheckout(job *storage.ReviewJob) (bool, error) {
+	if wp.db == nil || job == nil || job.PanelRunUUID == "" || job.IsFixJob() {
+		return false, nil
+	}
+	if _, err := wp.db.GetCIPanelByRunUUID(job.PanelRunUUID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return false, nil
+		}
+		return false, fmt.Errorf("lookup CI panel run: %w", err)
+	}
+	return true, nil
+}
+
+func (wp *WorkerPool) createCIExactCheckout(
+	ctx context.Context, workerID string, job *storage.ReviewJob,
+) (string, func(), error) {
+	headRef := strings.TrimSpace(headOf(job.GitRef))
+	if headRef == "" {
+		return "", nil, fmt.Errorf("CI job %d has empty checkout ref", job.ID)
+	}
+	parentDir := ciWorktreeParentDir()
+	if err := os.MkdirAll(parentDir, 0o755); err != nil {
+		return "", nil, fmt.Errorf("create CI worktree parent: %w", err)
+	}
+	unlock := lockGitMetadata(job.RepoPath)
+	wt, createErr := gitworktree.Create(ctx, job.RepoPath, headRef, gitworktree.Options{
+		ParentDir:      parentDir,
+		Prefix:         fmt.Sprintf("%s%d-", ciWorktreePrefix, job.ID),
+		InitSubmodules: true,
+		PullLFS:        true,
+	})
+	if createErr == nil {
+		createErr = writeCIWorktreeMarker(wt.Dir, job.RepoPath)
+		if createErr != nil {
+			_ = wt.Close(context.Background())
+			createErr = fmt.Errorf("write CI worktree marker: %w", createErr)
+		}
+	}
+	unlock()
+	if createErr != nil {
+		return "", nil, createErr
+	}
+	log.Printf("[%s] CI job %d: running agent in exact checkout %s (%s)",
+		workerID, job.ID, wt.Dir, gitpkg.ShortRef(headRef))
+	cleanup := func() {
+		unlock := lockGitMetadata(job.RepoPath)
+		defer unlock()
+		if err := wt.Close(context.Background()); err != nil {
+			log.Printf("[%s] Warning: remove CI worktree for job %d: %v",
+				workerID, job.ID, err)
+		}
+	}
+	return wt.Dir, cleanup, nil
 }
 
 func (wp *WorkerPool) worker(id int) {
@@ -416,9 +484,18 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		return
 	}
 
-	// Resolve effective repo path: use worktree if available, still exists,
-	// and is a valid git checkout for the same repository.
-	effectiveRepoPath := resolveEffectiveRepoPath(workerID, job)
+	// Resolve the checkout to review. CI panel jobs run in a detached
+	// worktree at the reviewed head so free-form agent reads cannot observe a
+	// stale shared clone checkout.
+	effectiveRepoPath, checkoutCleanup, err := wp.prepareJobCheckout(ctx, workerID, job)
+	if checkoutCleanup != nil {
+		defer checkoutCleanup()
+	}
+	if err != nil {
+		log.Printf("[%s] Error preparing checkout: %v", workerID, err)
+		wp.failOrRetry(workerID, job, job.Agent, fmt.Sprintf("prepare checkout: %v", err))
+		return
+	}
 
 	// Build the prompt (or use pre-stored prompt for task/compact jobs).
 	// Create a per-job builder with the snapshotted config so exclude
@@ -430,7 +507,6 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	var reviewPrompt string
 	var promptToPersist string
 	storedPromptValue := job.Prompt
-	var err error
 	if job.PromptPrebuilt && storedPromptValue != "" {
 		// CI-enqueued review with prebuilt prompt (includes PR
 		// discussion context and system prompt). Use as-is so the

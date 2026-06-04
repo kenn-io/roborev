@@ -101,6 +101,15 @@ func (db *DB) GetCIPanelBySynthesisJobID(jobID int64) (*CIPanel, error) {
 	return scanCIPanel(row)
 }
 
+// GetCIPanelByRunUUID returns the CI panel mapping for a panel run UUID.
+// Returns sql.ErrNoRows when the panel run is not CI-owned.
+func (db *DB) GetCIPanelByRunUUID(panelRunUUID string) (*CIPanel, error) {
+	row := db.QueryRow(`SELECT `+ciPanelColumns+`
+		FROM ci_pr_panels
+		WHERE panel_run_uuid = ?`, panelRunUUID)
+	return scanCIPanel(row)
+}
+
 // CreateCIPanelRun atomically reserves the ci_pr_panels row, inserts the run's
 // member + synthesis jobs (sharing one generated panel_run_uuid), and backfills
 // synthesis_job_id — all in one BEGIN IMMEDIATE transaction. Returns

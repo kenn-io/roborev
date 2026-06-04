@@ -237,6 +237,10 @@ func (s *Server) Start(ctx context.Context) error {
 		serveErrCh <- s.httpServer.Serve(listener)
 	}()
 
+	if err := cleanupStaleCIWorktrees(ctx); err != nil {
+		log.Printf("Warning: failed to clean up stale CI worktrees: %v", err)
+	}
+
 	// Start worker pool before advertising availability.
 	s.workerPool.Start()
 

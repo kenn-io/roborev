@@ -20,11 +20,10 @@ import (
 var errSynthesisCanceled = errors.New("synthesis canceled")
 
 // processSynthesisJob executes a panel synthesis job against the run's member
-// reviews. It runs read-only against job.RepoPath (no worktree) and picks one of
-// three branches: all members failed -> durable fail review (no agent); exactly
-// one member succeeded -> passthrough that member's output unless min-severity
-// filtering requires a synthesis pass; two or more succeeded -> a single
-// verify+dedupe agent call.
+// reviews. It picks one of three branches: all members failed -> durable fail
+// review (no agent); exactly one member succeeded -> passthrough that member's
+// output unless min-severity filtering requires a synthesis pass; two or more
+// succeeded -> a single verify+dedupe agent call.
 func (wp *WorkerPool) processSynthesisJob(
 	ctx context.Context, workerID string, job *storage.ReviewJob,
 ) {
@@ -234,13 +233,22 @@ func (wp *WorkerPool) runSynthesisAgent(
 	})
 	agentOutput = sessionWriter
 
-	// Verify findings against the reviewed checkout: a panel enqueued from a
-	// linked worktree must synthesize against that worktree, not the main repo.
-	repoPath := resolveEffectiveRepoPath(workerID, job)
 	var output string
 	if synthAgent, ok := a.(agent.SynthesisAgent); ok {
 		output, err = synthAgent.Synthesize(ctx, prompt, agentOutput)
 	} else {
+		// Verify findings against the reviewed checkout: a panel enqueued from a
+		// linked worktree must synthesize against that worktree, and CI panels
+		// get a detached checkout at the reviewed head instead of the stale
+		// shared clone.
+		repoPath, checkoutCleanup, checkoutErr := wp.prepareJobCheckout(ctx, workerID, job)
+		if checkoutCleanup != nil {
+			defer checkoutCleanup()
+		}
+		if checkoutErr != nil {
+			wp.failOrRetry(workerID, job, agentName, fmt.Sprintf("prepare checkout: %v", checkoutErr))
+			return "", agentName, checkoutErr
+		}
 		output, err = a.Review(ctx, repoPath, job.GitRef, prompt, agentOutput)
 	}
 	sessionWriter.Flush()
