@@ -174,8 +174,9 @@ func TestDaemonShutdownBySignal(t *testing.T) {
 
 	// 1. Build a test binary
 	binPath := filepath.Join(tmpDir, "roborev-test")
-	// Use "." since we are in cmd/roborev package
-	buildCmd := exec.Command("go", "build", "-o", binPath, ".")
+	// Use "." since we are in cmd/roborev package. The built daemon runs in a
+	// subprocess, so compile kit's test telemetry disable tag into that binary.
+	buildCmd := exec.Command("go", "build", "-tags", "kit_posthog_disabled", "-o", binPath, ".")
 	if out, err := buildCmd.CombinedOutput(); err != nil {
 		require.Condition(t, func() bool {
 			return false
