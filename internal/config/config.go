@@ -526,9 +526,15 @@ func (c *Config) migrateDeprecated(md toml.MetaData) {
 // A .roborev.toml that is gitignored (or otherwise untracked) lives only in
 // the main checkout's working tree, so it is invisible from a worktree's
 // directory. When repoPath has no .roborev.toml of its own, this resolves the
-// main repository root via the git common dir and returns its config path if
-// one exists there. Otherwise it returns repoPath's own (possibly nonexistent)
-// config path, so callers keep their existing "file missing" behavior.
+// main repository root via the git common dir and returns its config path.
+//
+// The fallback applies only when the main config is untracked. A tracked
+// .roborev.toml is a versioned, branch-specific file: a worktree on a branch
+// that removed it (or predates it) must not silently inherit the main
+// checkout's branch copy, so in that case the worktree's own absence wins.
+//
+// Otherwise it returns repoPath's own (possibly nonexistent) config path, so
+// callers keep their existing "file missing" behavior.
 //
 // All per-repo config loaders (decoded and raw) route through this so they
 // agree on which file is authoritative.
@@ -546,10 +552,16 @@ func RepoConfigPath(repoPath string) string {
 		return local
 	}
 	mainPath := filepath.Join(mainRoot, ".roborev.toml")
-	if _, err := os.Stat(mainPath); err == nil {
-		return mainPath
+	if _, err := os.Stat(mainPath); err != nil {
+		return local
 	}
-	return local
+	// Only inherit an untracked (gitignored/machine-local) main config. A
+	// tracked file belongs to the main checkout's branch, not this worktree.
+	tracked, err := git.HasTrackedFilesUnder(mainRoot, mainPath)
+	if err != nil || tracked {
+		return local
+	}
+	return mainPath
 }
 
 // LoadRepoConfig loads per-repo config from .roborev.toml, applying the

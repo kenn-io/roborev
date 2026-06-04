@@ -355,6 +355,38 @@ func TestLoadRepoConfigWorktreeFallback(t *testing.T) {
 	assert.Equal(t, "claude-code", cfg.Agent)
 }
 
+// TestLoadRepoConfigWorktreeNoFallbackForTracked verifies that a tracked
+// .roborev.toml in the main checkout is NOT inherited by a worktree on a
+// branch that lacks it. A tracked file is branch-specific, so the worktree's
+// own absence must win.
+func TestLoadRepoConfigWorktreeNoFallbackForTracked(t *testing.T) {
+	main := t.TempDir()
+	execGit(t, main, "init")
+	execGit(t, main, "config", "user.email", "t@example.com")
+	execGit(t, main, "config", "user.name", "t")
+	writeTestFile(t, main, "base.txt", "base\n")
+	execGit(t, main, "add", ".")
+	execGit(t, main, "commit", "-m", "init")
+
+	// Create the worktree from a commit that has no .roborev.toml, then add a
+	// tracked .roborev.toml only on the main checkout's branch.
+	wt := filepath.Join(t.TempDir(), "wt")
+	execGit(t, main, "worktree", "add", "-b", "feature", wt, "HEAD")
+
+	writeRepoConfigStr(t, main, `agent = "claude-code"`)
+	execGit(t, main, "add", ".roborev.toml")
+	execGit(t, main, "commit", "-m", "add config on main")
+
+	// The worktree branch never received the tracked file, so it must not
+	// inherit the main checkout's branch copy.
+	_, statErr := os.Stat(filepath.Join(wt, ".roborev.toml"))
+	require.True(t, os.IsNotExist(statErr), "worktree should not contain .roborev.toml")
+
+	cfg, err := LoadRepoConfig(wt)
+	require.NoError(t, err)
+	assert.Nil(t, cfg, "tracked main config must not leak into a worktree on a branch that lacks it")
+}
+
 // TestLoadRepoConfigWorktreeLocalWins verifies that a worktree's own
 // .roborev.toml takes precedence over the main checkout's config.
 func TestLoadRepoConfigWorktreeLocalWins(t *testing.T) {
