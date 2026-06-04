@@ -237,6 +237,48 @@ func TestRecordPostToolUseFirstCommitWithoutBaselineDoesNotCount(t *testing.T) {
 	assert.Equal(0, store.sessions["session-1"].CommitCountSincePrompt)
 }
 
+func TestRecordPreToolUseBaselineLetsFirstCommitCount(t *testing.T) {
+	assert := assert.New(t)
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("main.go", "package main\n", "initial")
+
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{Jobs: []storage.ReviewJob{}}))
+	}))
+	t.Cleanup(server.Close)
+
+	store := &StateStore{
+		path:     filepath.Join(t.TempDir(), "state.json"),
+		sessions: map[string]SessionState{},
+	}
+	req := Request{
+		Event: Input{
+			SessionID:     "session-1",
+			CWD:           repo.Path(),
+			HookEventName: "PreToolUse",
+			ToolName:      "Bash",
+			ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"git commit -m second"`)},
+		},
+		CommitThreshold:   5,
+		Instruction:       "Run roborev fix.",
+		RoborevServerAddr: server.URL,
+	}
+
+	pre, err := store.Record(req)
+	require.NoError(t, err)
+	assert.False(pre.Triggered)
+	assert.Equal(0, store.sessions["session-1"].CommitCount)
+
+	repo.CommitFile("feature.go", "package main\n", "second")
+	post := req
+	post.Event.HookEventName = "PostToolUse"
+	_, err = store.Record(post)
+
+	require.NoError(t, err)
+	assert.Equal(1, store.sessions["session-1"].CommitCount)
+	assert.Equal(1, store.sessions["session-1"].CommitCountSincePrompt)
+}
+
 func TestRecordPostToolUseCountsCommitAfterBaseline(t *testing.T) {
 	assert := assert.New(t)
 	repo := testutil.NewGitRepo(t)

@@ -90,6 +90,8 @@ func (s *StateStore) saveLocked() error {
 
 func (s *StateStore) Record(req Request) (Response, error) {
 	switch req.Event.HookEventName {
+	case "PreToolUse":
+		return s.recordPreToolUse(req)
 	case "", "Stop":
 		return s.recordStop(req)
 	case "PostToolUse":
@@ -171,6 +173,57 @@ func (s *StateStore) recordStop(req Request) (Response, error) {
 		resp.Reason = buildStopReason(req, st)
 	}
 	return resp, nil
+}
+
+func (s *StateStore) recordPreToolUse(req Request) (Response, error) {
+	if req.Event.ToolName != "" && req.Event.ToolName != "Bash" {
+		return Response{
+			SessionID:             req.Event.SessionID,
+			CommitThreshold:       req.CommitThreshold,
+			FailedReviewThreshold: req.FailedReviewThreshold,
+			Skipped:               true,
+		}, nil
+	}
+	if !IsCommitProducingCommand(req.Event.Command()) {
+		return Response{
+			SessionID:             req.Event.SessionID,
+			CommitThreshold:       req.CommitThreshold,
+			FailedReviewThreshold: req.FailedReviewThreshold,
+			Skipped:               true,
+		}, nil
+	}
+
+	repoRoot, head, ok := currentGitHead(req.Event.CWD)
+	if !ok {
+		return Response{
+			SessionID:             req.Event.SessionID,
+			CommitThreshold:       req.CommitThreshold,
+			FailedReviewThreshold: req.FailedReviewThreshold,
+			Skipped:               true,
+		}, nil
+	}
+	branch := currentGitBranch(repoRoot)
+
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	st := s.sessions[req.Event.SessionID]
+	if st.RepoHeads == nil {
+		st.RepoHeads = map[string]string{}
+	}
+	st.RepoHeads[repoHeadKey(repoRoot, branch)] = head
+	st.LastCWD = req.Event.CWD
+	st.LastSeenAt = time.Now().UTC()
+	s.sessions[req.Event.SessionID] = st
+	if err := s.saveLocked(); err != nil {
+		return Response{}, err
+	}
+
+	return Response{
+		SessionID:             req.Event.SessionID,
+		CommitThreshold:       req.CommitThreshold,
+		FailedReviewThreshold: req.FailedReviewThreshold,
+	}, nil
 }
 
 func (s *StateStore) recordPostToolUse(req Request) (Response, error) {

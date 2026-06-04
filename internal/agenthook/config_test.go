@@ -10,6 +10,7 @@ import (
 )
 
 func TestResolveOptionsUsesDefaultsWithoutConfig(t *testing.T) {
+	clearAgentHookEnv(t)
 	opts, err := ResolveOptions(Options{ConfigPath: filepath.Join(t.TempDir(), "missing.toml")}, map[string]bool{"config": true})
 
 	require.NoError(t, err)
@@ -20,6 +21,7 @@ func TestResolveOptionsUsesDefaultsWithoutConfig(t *testing.T) {
 }
 
 func TestResolveOptionsUsesGlobalAgentHookConfig(t *testing.T) {
+	clearAgentHookEnv(t)
 	path := writeAgentHookConfig(t, `
 [agent_hook]
 turn_threshold = 6
@@ -38,6 +40,7 @@ instruction = "Run roborev fix."
 }
 
 func TestResolveOptionsAllowsZeroTurnThresholdFromConfig(t *testing.T) {
+	clearAgentHookEnv(t)
 	path := writeAgentHookConfig(t, `
 [agent_hook]
 turn_threshold = 0
@@ -111,6 +114,7 @@ instruction = "config instruction"
 }
 
 func TestResolveOptionsRejectsNegativeThresholds(t *testing.T) {
+	clearAgentHookEnv(t)
 	for _, tc := range []struct {
 		name    string
 		opts    Options
@@ -131,6 +135,7 @@ func TestResolveOptionsRejectsNegativeThresholds(t *testing.T) {
 }
 
 func TestResolveOptionsIgnoresSpikeJSONAndLegacyEnvAliases(t *testing.T) {
+	clearAgentHookEnv(t)
 	dir := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(dir, "agent-hook.json"), []byte(`{"turn_threshold":99}`), 0o600))
 	t.Setenv("ROBOREV_HOOK_TURN_THRESHOLD", "99")
@@ -146,4 +151,18 @@ func writeAgentHookConfig(t *testing.T, body string) string {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	require.NoError(t, os.WriteFile(path, []byte(body), 0o600))
 	return path
+}
+
+func clearAgentHookEnv(t *testing.T) {
+	t.Helper()
+	for _, name := range []string{
+		TurnThresholdEnv,
+		CommitThresholdEnv,
+		FailedReviewThresholdEnv,
+		InstructionEnv,
+		RoborevServerEnv,
+		DaemonAddrEnv,
+	} {
+		t.Setenv(name, "")
+	}
 }

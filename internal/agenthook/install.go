@@ -132,6 +132,13 @@ func codexSpecs(command string, timeout time.Duration) []installSpec {
 	secs := int(timeout.Seconds())
 	return []installSpec{
 		{
+			Event:          "PreToolUse",
+			Matcher:        "^Bash$",
+			Command:        command,
+			Timeout:        secs,
+			IncludeTimeout: true,
+		},
+		{
 			Event:          "PostToolUse",
 			Matcher:        "^Bash$",
 			Command:        command,
@@ -149,6 +156,11 @@ func codexSpecs(command string, timeout time.Duration) []installSpec {
 
 func claudeSpecs(command string) []installSpec {
 	return []installSpec{
+		{
+			Event:   "PreToolUse",
+			Matcher: "Bash",
+			Command: command,
+		},
 		{
 			Event:   "PostToolUse",
 			Matcher: "Bash",

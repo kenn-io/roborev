@@ -34,8 +34,10 @@ func TestAgentHookDumpCodexCreatesHookConfig(t *testing.T) {
 
 	var root map[string]any
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &root))
+	assertAgentHookCommandCount(t, root, "PreToolUse", command, 1)
 	assertAgentHookCommandCount(t, root, "PostToolUse", command, 1)
 	assertAgentHookCommandCount(t, root, "Stop", command, 1)
+	assert.Equal("^Bash$", firstAgentHookMatcher(t, root, "PreToolUse"))
 	assert.Equal("^Bash$", firstAgentHookMatcher(t, root, "PostToolUse"))
 	assert.InDelta(10, firstAgentHookCommandTimeout(t, root, "Stop", command), 0)
 }
