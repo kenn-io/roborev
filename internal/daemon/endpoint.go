@@ -1,25 +1,17 @@
 package daemon
 
 import (
-	"context"
 	"fmt"
 	"net"
 	"net/http"
-	"os"
-	"path/filepath"
-	"runtime"
 	"strings"
 	"time"
+
+	kitdaemon "go.kenn.io/kit/daemon"
 )
 
 // MaxUnixPathLen is the platform socket path length limit.
-// macOS/BSD: 104, Linux: 108.
-var MaxUnixPathLen = func() int {
-	if runtime.GOOS == "darwin" {
-		return 104
-	}
-	return 108
-}()
+var MaxUnixPathLen = kitdaemon.MaxUnixPathLen
 
 // DaemonEndpoint encapsulates the transport type and address for the daemon.
 type DaemonEndpoint struct {
@@ -27,107 +19,64 @@ type DaemonEndpoint struct {
 	Address string // "127.0.0.1:7373" or "/tmp/roborev-1000/daemon.sock"
 }
 
+func (e DaemonEndpoint) kitEndpoint() kitdaemon.Endpoint {
+	return kitdaemon.Endpoint{Network: e.Network, Address: e.Address}
+}
+
+func daemonEndpointFromKit(ep kitdaemon.Endpoint) DaemonEndpoint {
+	return DaemonEndpoint{Network: ep.Network, Address: ep.Address}
+}
+
 // ParseEndpoint parses a server_addr config value into a DaemonEndpoint.
 func ParseEndpoint(serverAddr string) (DaemonEndpoint, error) {
-	if serverAddr == "" {
-		return DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373"}, nil
+	raw := serverAddr
+	if raw == "" {
+		raw = "127.0.0.1:7373"
 	}
 
-	if after, ok := strings.CutPrefix(serverAddr, "http://"); ok {
-		return parseTCPEndpoint(after)
+	ep, err := kitdaemon.ParseEndpoint(raw, kitdaemon.ParseEndpointOptions{
+		DefaultTCPAddress: "127.0.0.1:7373",
+		DefaultUnixPath:   DefaultSocketPath(),
+		TCPPolicy:         kitdaemon.RequireLoopback,
+	})
+	if err != nil {
+		if !strings.HasPrefix(raw, "unix://") {
+			return DaemonEndpoint{}, fmt.Errorf(
+				"daemon address %q must use a loopback host (127.0.0.1, localhost, or [::1]): %w",
+				raw, err)
+		}
+		return DaemonEndpoint{}, err
 	}
-
-	if strings.HasPrefix(serverAddr, "unix://") {
-		return parseUnixEndpoint(serverAddr)
-	}
-
-	return parseTCPEndpoint(serverAddr)
-}
-
-func parseTCPEndpoint(addr string) (DaemonEndpoint, error) {
-	if !isLoopbackAddr(addr) {
-		return DaemonEndpoint{}, fmt.Errorf(
-			"daemon address %q must use a loopback host (127.0.0.1, localhost, or [::1])", addr)
-	}
-	return DaemonEndpoint{Network: "tcp", Address: addr}, nil
-}
-
-func parseUnixEndpoint(raw string) (DaemonEndpoint, error) {
-	path := strings.TrimPrefix(raw, "unix://")
-
-	if path == "" {
-		path = DefaultSocketPath()
-		// Fall through to validate the auto-generated path too
-	}
-
-	if !filepath.IsAbs(path) {
-		return DaemonEndpoint{}, fmt.Errorf(
-			"unix socket path %q must be absolute", path)
-	}
-
-	if strings.ContainsRune(path, 0) {
-		return DaemonEndpoint{}, fmt.Errorf(
-			"unix socket path contains null byte")
-	}
-
-	if len(path) >= MaxUnixPathLen {
-		return DaemonEndpoint{}, fmt.Errorf(
-			"unix socket path %q (%d bytes) exceeds platform limit of %d bytes",
-			path, len(path), MaxUnixPathLen)
-	}
-
-	return DaemonEndpoint{Network: "unix", Address: path}, nil
+	return daemonEndpointFromKit(ep), nil
 }
 
 // DefaultSocketPath returns the auto-generated socket path under os.TempDir(),
-// or $XDG_RUNTIME_DIR when it is an absolute path to an existing directory
-// and the resulting socket path fits within MaxUnixPathLen.
+// or $XDG_RUNTIME_DIR when a safe path is available.
 func DefaultSocketPath() string {
-	xdg := os.Getenv("XDG_RUNTIME_DIR")
-	if xdg != "" && filepath.IsAbs(xdg) {
-		if info, err := os.Stat(xdg); err == nil && info.IsDir() {
-			p := filepath.Join(xdg, "roborev", "daemon.sock")
-			if len(p) < MaxUnixPathLen {
-				return p
-			}
-		}
-	}
-	return filepath.Join(os.TempDir(), fmt.Sprintf("roborev-%d", os.Getuid()), "daemon.sock")
+	return kitdaemon.DefaultSocketPath(daemonServiceName)
 }
 
 // IsUnix returns true if this endpoint uses a Unix domain socket.
 func (e DaemonEndpoint) IsUnix() bool {
-	return e.Network == "unix"
+	return e.kitEndpoint().IsUnix()
 }
 
 // BaseURL returns the HTTP base URL for constructing API requests.
 func (e DaemonEndpoint) BaseURL() string {
-	if e.IsUnix() {
-		return "http://localhost"
-	}
-	return "http://" + e.Address
+	return e.kitEndpoint().BaseURL()
 }
 
 // HTTPClient returns an http.Client configured for this endpoint's transport.
 func (e DaemonEndpoint) HTTPClient(timeout time.Duration) *http.Client {
-	if e.IsUnix() {
-		return &http.Client{
-			Timeout: timeout,
-			Transport: &http.Transport{
-				DialContext: func(ctx context.Context, _, _ string) (net.Conn, error) {
-					return (&net.Dialer{}).DialContext(ctx, "unix", e.Address)
-				},
-				DisableKeepAlives: true,
-				Proxy:             nil, // Unix sockets are local; never proxy
-			},
-		}
-	}
-	return &http.Client{Timeout: timeout}
+	return e.kitEndpoint().HTTPClient(kitdaemon.HTTPClientOptions{
+		Timeout:           timeout,
+		DisableKeepAlives: e.IsUnix(),
+	})
 }
 
 // Listener creates a net.Listener bound to this endpoint.
 func (e DaemonEndpoint) Listener() (net.Listener, error) {
-	return net.Listen(e.Network, e.Address)
+	return e.kitEndpoint().Listen()
 }
 
 // String returns a human-readable representation for logging.
@@ -138,22 +87,10 @@ func (e DaemonEndpoint) String() string {
 // ConfigAddr returns a ParseEndpoint-compatible string suitable for
 // persisting in config or runtime metadata files.
 func (e DaemonEndpoint) ConfigAddr() string {
-	if e.IsUnix() {
-		return "unix://" + e.Address
-	}
-	return e.Address
+	return e.kitEndpoint().ConfigAddress()
 }
 
 // Port returns the TCP port, or 0 for Unix sockets.
 func (e DaemonEndpoint) Port() int {
-	if e.IsUnix() {
-		return 0
-	}
-	_, portStr, err := net.SplitHostPort(e.Address)
-	if err != nil {
-		return 0
-	}
-	port := 0
-	_, _ = fmt.Sscanf(portStr, "%d", &port)
-	return port
+	return e.kitEndpoint().Port()
 }

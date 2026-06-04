@@ -83,7 +83,7 @@ func (b *ProdLogBarrier) checkRuntimeFile() []string {
 		if !b.runtime.exists {
 			return []string{
 				fmt.Sprintf(
-					"test wrote daemon.%d.json to prod data dir",
+					"test wrote daemon.%d.json to prod runtime dir",
 					b.pid,
 				),
 			}
@@ -91,7 +91,7 @@ func (b *ProdLogBarrier) checkRuntimeFile() []string {
 		if info.Size() != b.runtime.size || !info.ModTime().Equal(b.runtime.mtime) {
 			return []string{
 				fmt.Sprintf(
-					"test modified daemon.%d.json in prod data dir"+
+					"test modified daemon.%d.json in prod runtime dir"+
 						" (size %d→%d, mtime %s→%s)",
 					b.pid, b.runtime.size, info.Size(),
 					b.runtime.mtime.Format(time.RFC3339Nano),
@@ -104,7 +104,7 @@ func (b *ProdLogBarrier) checkRuntimeFile() []string {
 	if b.runtime.exists {
 		return []string{
 			fmt.Sprintf(
-				"test deleted daemon.%d.json from prod data dir",
+				"test deleted daemon.%d.json from prod runtime dir",
 				b.pid,
 			),
 		}
@@ -221,7 +221,9 @@ func newFileSnapshot(name, path string) fileSnapshot {
 
 func newRuntimeSnapshot(prodDataDir string, pid int) runtimeSnapshot {
 	snapshot := runtimeSnapshot{
-		path: filepath.Join(prodDataDir, fmt.Sprintf("daemon.%d.json", pid)),
+		path: filepath.Join(
+			prodDataDir, "runtime", fmt.Sprintf("daemon.%d.json", pid),
+		),
 	}
 	if info, err := os.Stat(snapshot.path); err == nil {
 		snapshot.exists = true

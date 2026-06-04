@@ -124,7 +124,7 @@ func setupTestDaemon(t *testing.T) (string, string) {
 	dbPath := filepath.Join(tmpDir, "test.db")
 	configPath := filepath.Join(tmpDir, "config.toml")
 
-	// Isolate runtime dir to avoid writing to real ~/.roborev/daemon.json
+	// Isolate runtime dir to avoid writing to the real daemon runtime store.
 	t.Setenv("ROBOREV_DATA_DIR", tmpDir)
 
 	// Write minimal config
@@ -189,7 +189,7 @@ func TestDaemonShutdownBySignal(t *testing.T) {
 		"--config", configPath,
 		"--addr", "127.0.0.1:0",
 	)
-	// Important: Set ROBOREV_DATA_DIR so it writes runtime file to our tmpDir
+	// Important: Set ROBOREV_DATA_DIR so it writes runtime files under our tmpDir
 	cmd.Env = append(os.Environ(), "ROBOREV_DATA_DIR="+tmpDir)
 
 	// Capture output for debugging
@@ -220,8 +220,8 @@ func TestDaemonShutdownBySignal(t *testing.T) {
 	})
 
 	// 3. Wait for daemon to be ready
-	// The daemon writes daemon.<pid>.json
-	daemonJSON := filepath.Join(tmpDir, fmt.Sprintf("daemon.%d.json", cmd.Process.Pid))
+	// The daemon writes runtime/daemon.<pid>.json
+	daemonJSON := filepath.Join(tmpDir, "runtime", fmt.Sprintf("daemon.%d.json", cmd.Process.Pid))
 	if !waitFor(t, 5*time.Second, func() bool {
 		_, err := os.Stat(daemonJSON)
 		return err == nil

@@ -63,13 +63,15 @@ func TestProdLogBarrierViolations(t *testing.T) {
 			name: "detects daemon runtime file creation",
 			mutate: func(t *testing.T, dir string) {
 				t.Helper()
-				runtimePath := filepath.Join(dir,
+				runtimeDir := filepath.Join(dir, "runtime")
+				require.NoError(t, os.MkdirAll(runtimeDir, 0o755))
+				runtimePath := filepath.Join(runtimeDir,
 					fmt.Sprintf("daemon.%d.json", os.Getpid()))
 				err := os.WriteFile(runtimePath, []byte("{}"), 0o644)
 				require.NoError(t, err, "failed to write runtime file")
 			},
 			wantViolations: []string{
-				fmt.Sprintf("test wrote daemon.%d.json to prod data dir", os.Getpid()),
+				fmt.Sprintf("test wrote daemon.%d.json to prod runtime dir", os.Getpid()),
 			},
 		},
 		{
@@ -87,7 +89,9 @@ func TestProdLogBarrierViolations(t *testing.T) {
 			name: "ignores pre-existing runtime file",
 			setup: func(t *testing.T, dir string) {
 				t.Helper()
-				runtimePath := filepath.Join(dir,
+				runtimeDir := filepath.Join(dir, "runtime")
+				require.NoError(t, os.MkdirAll(runtimeDir, 0o755))
+				runtimePath := filepath.Join(runtimeDir,
 					fmt.Sprintf("daemon.%d.json", os.Getpid()))
 				err := os.WriteFile(runtimePath, []byte("{}"), 0o644)
 				require.NoError(t, err, "failed to write initial runtime file")
@@ -97,14 +101,16 @@ func TestProdLogBarrierViolations(t *testing.T) {
 			name: "detects pre-existing runtime mutation",
 			setup: func(t *testing.T, dir string) {
 				t.Helper()
-				runtimePath := filepath.Join(dir,
+				runtimeDir := filepath.Join(dir, "runtime")
+				require.NoError(t, os.MkdirAll(runtimeDir, 0o755))
+				runtimePath := filepath.Join(runtimeDir,
 					fmt.Sprintf("daemon.%d.json", os.Getpid()))
 				err := os.WriteFile(runtimePath, []byte("{}"), 0o644)
 				require.NoError(t, err, "failed to write initial runtime file")
 			},
 			mutate: func(t *testing.T, dir string) {
 				t.Helper()
-				runtimePath := filepath.Join(dir,
+				runtimePath := filepath.Join(dir, "runtime",
 					fmt.Sprintf("daemon.%d.json", os.Getpid()))
 				err := os.WriteFile(runtimePath, []byte(`{"pid":999}`), 0o644)
 				require.NoError(t, err, "failed to modify runtime file")

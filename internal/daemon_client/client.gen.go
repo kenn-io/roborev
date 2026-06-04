@@ -206,6 +206,7 @@ type DaemonStatus struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema              *string           `json:"$schema,omitempty"`
 	ActiveWorkers       int64             `json:"active_workers"`
+	Address             *string           `json:"address,omitempty"`
 	AppliedJobs         int64             `json:"applied_jobs"`
 	AutoDesign          *AutoDesignStatus `json:"auto_design,omitempty"`
 	CanceledJobs        int64             `json:"canceled_jobs"`
@@ -215,6 +216,8 @@ type DaemonStatus struct {
 	FailedJobs          int64             `json:"failed_jobs"`
 	MachineId           *string           `json:"machine_id,omitempty"`
 	MaxWorkers          int64             `json:"max_workers"`
+	Network             *string           `json:"network,omitempty"`
+	Port                *int64            `json:"port,omitempty"`
 	QueuedJobs          int64             `json:"queued_jobs"`
 	RebasedJobs         int64             `json:"rebased_jobs"`
 	RunningJobs         int64             `json:"running_jobs"`
@@ -425,6 +428,7 @@ type OverviewStats struct {
 type PingInfo struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema  *string `json:"$schema,omitempty"`
+	Ok      bool    `json:"ok"`
 	Pid     *int64  `json:"pid,omitempty"`
 	Service string  `json:"service"`
 	Version string  `json:"version"`

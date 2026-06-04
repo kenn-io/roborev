@@ -29,8 +29,8 @@ func TestKillDaemonMakesHTTPForLoopback(t *testing.T) {
 	})
 
 	info := &RuntimeInfo{
-		PID:  math.MaxInt32,
-		Addr: addr, // Loopback address from test server
+		PID:     math.MaxInt32,
+		Address: addr, // Loopback address from test server
 	}
 
 	// This should make HTTP request since address is loopback

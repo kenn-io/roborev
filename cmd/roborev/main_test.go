@@ -778,104 +778,6 @@ func TestDaemonStopNotRunning(t *testing.T) {
 	assert.Equal(t, err, ErrDaemonNotRunning)
 }
 
-// TestDaemonStopInvalidPID verifies stopDaemon handles invalid PID in daemon.json
-func TestDaemonStopInvalidPID(t *testing.T) {
-	tmpDir := setupIsolatedDataDir(t)
-
-	// Create daemon.json with PID 0 and an address on a port that's definitely not in use
-	// Port 59999 is unlikely to be in use and will get connection refused quickly
-	daemonInfo := daemon.RuntimeInfo{PID: 0, Addr: "127.0.0.1:59999"}
-	data, _ := json.Marshal(daemonInfo)
-	if err := os.WriteFile(filepath.Join(tmpDir, "daemon.json"), data, 0o644); err != nil {
-		require.NoError(t, err, "write daemon.json: %v")
-	}
-
-	// ListAllRuntimes validates files and removes invalid ones (pid <= 0),
-	// so it returns an empty list, and stopDaemon returns ErrDaemonNotRunning.
-	// The key is that the invalid file gets cleaned up.
-	err := stopDaemon()
-	assert.Equal(t, err, ErrDaemonNotRunning)
-
-	// Verify daemon.json was cleaned up
-	_, statErr := os.Stat(filepath.Join(tmpDir, "daemon.json"))
-	assert.True(t, os.IsNotExist(statErr), "daemon.json should be cleaned up")
-}
-
-// TestDaemonStopCorruptedFile verifies stopDaemon cleans up malformed daemon.json
-func TestDaemonStopCorruptedFile(t *testing.T) {
-	tmpDir := setupIsolatedDataDir(t)
-
-	// Create corrupted daemon.json
-	if err := os.WriteFile(filepath.Join(tmpDir, "daemon.json"), []byte("not valid json"), 0o644); err != nil {
-		require.NoError(t, err, "write daemon.json: %v")
-	}
-
-	err := stopDaemon()
-	assert.Equal(t, err, ErrDaemonNotRunning)
-
-	// Verify daemon.json was cleaned up
-	_, statErr := os.Stat(filepath.Join(tmpDir, "daemon.json"))
-	assert.True(t, os.IsNotExist(statErr), "daemon.json should be cleaned up")
-}
-
-// TestDaemonStopTruncatedFile verifies stopDaemon cleans up truncated daemon.json
-// (yields io.ErrUnexpectedEOF during JSON decode)
-func TestDaemonStopTruncatedFile(t *testing.T) {
-	tmpDir := setupIsolatedDataDir(t)
-
-	// Create truncated daemon.json (partial JSON that triggers io.ErrUnexpectedEOF)
-	// A JSON object that ends abruptly mid-string causes io.ErrUnexpectedEOF
-	if err := os.WriteFile(filepath.Join(tmpDir, "daemon.json"), []byte(`{"pid": 123, "addr": "127.0.0.1:7373`), 0o644); err != nil {
-		require.NoError(t, err, "write daemon.json: %v")
-	}
-
-	err := stopDaemon()
-	assert.Equal(t, err, ErrDaemonNotRunning)
-
-	// Verify daemon.json was cleaned up
-	_, statErr := os.Stat(filepath.Join(tmpDir, "daemon.json"))
-	assert.True(t, os.IsNotExist(statErr), "daemon.json should be cleaned up")
-}
-
-// TestDaemonStopUnreadableFileSkipped verifies stopDaemon skips unreadable files
-// With the new per-PID runtime file pattern, ListAllRuntimes continues scanning
-// even when some files are unreadable. This allows daemon discovery to work even
-// if some runtime files are temporarily inaccessible.
-func TestDaemonStopUnreadableFileSkipped(t *testing.T) {
-	if os.Geteuid() == 0 {
-		t.Skip("skipping permission test when running as root")
-	}
-
-	tmpDir := setupIsolatedDataDir(t)
-
-	// Create daemon.json with valid content
-	daemonInfo := daemon.RuntimeInfo{PID: 12345, Addr: "127.0.0.1:7373"}
-	data, _ := json.Marshal(daemonInfo)
-	daemonPath := filepath.Join(tmpDir, "daemon.json")
-	if err := os.WriteFile(daemonPath, data, 0o644); err != nil {
-		require.NoError(t, err, "write daemon.json: %v")
-	}
-
-	// Remove read permission
-	if err := os.Chmod(daemonPath, 0o000); err != nil {
-		require.NoError(t, err, "chmod daemon.json: %v")
-	}
-	// Restore permission for cleanup
-	defer func() { _ = os.Chmod(daemonPath, 0o644) }()
-
-	// Probe whether chmod 0000 actually blocks reads on this filesystem
-	// (some filesystems like Windows or certain ACL-based systems may not enforce this)
-	if f, probeErr := os.Open(daemonPath); probeErr == nil {
-		f.Close()
-		t.Skip("filesystem does not enforce chmod 0000 read restrictions")
-	}
-
-	err := stopDaemon()
-	// With the new behavior, unreadable files are skipped during ListAllRuntimes.
-	// Since no readable daemon files exist, stopDaemon returns ErrDaemonNotRunning.
-	assert.Equal(t, err, ErrDaemonNotRunning)
-}
-
 func TestUpdateCmdHasNoRestartFlag(t *testing.T) {
 	cmd := updateCmd()
 
@@ -943,7 +845,7 @@ func TestRestartDaemonAfterUpdateNoRestart(t *testing.T) {
 	s := stubRestartVars(t)
 
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
-		return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
+		return &daemon.RuntimeInfo{PID: 100, Address: "127.0.0.1:7373"}, nil
 	}
 
 	output := captureStdout(t, func() {
@@ -962,10 +864,10 @@ func TestRestartDaemonAfterUpdateManagerRestarted(t *testing.T) {
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
 		getCalls++
 		if getCalls == 1 {
-			return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
+			return &daemon.RuntimeInfo{PID: 100, Address: "127.0.0.1:7373"}, nil
 		}
 		// After stop, an external manager restarted with a new PID.
-		return &daemon.RuntimeInfo{PID: 200, Addr: "127.0.0.1:7373"}, nil
+		return &daemon.RuntimeInfo{PID: 200, Address: "127.0.0.1:7373"}, nil
 	}
 
 	output := captureStdout(t, func() {
@@ -981,7 +883,7 @@ func TestRestartDaemonAfterUpdateStopFailureSamePID(t *testing.T) {
 	s := stubRestartVars(t)
 
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
-		return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
+		return &daemon.RuntimeInfo{PID: 100, Address: "127.0.0.1:7373"}, nil
 	}
 	stopDaemonForUpdate = func() error {
 		s.stopCalls++
@@ -1005,7 +907,7 @@ func TestWaitForDaemonExitProbeErrorWithRuntimePresentTimesOut(t *testing.T) {
 		return nil, os.ErrNotExist
 	}
 	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
-		return []*daemon.RuntimeInfo{{PID: 100, Addr: "127.0.0.1:7373"}}, nil
+		return []*daemon.RuntimeInfo{{PID: 100, Address: "127.0.0.1:7373"}}, nil
 	}
 	isPIDAliveForUpdate = func(pid int) bool {
 		return pid == 100
@@ -1023,7 +925,7 @@ func TestWaitForDaemonExitProbeErrorWithStaleRuntimeExits(t *testing.T) {
 		return nil, os.ErrNotExist
 	}
 	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
-		return []*daemon.RuntimeInfo{{PID: 100, Addr: "127.0.0.1:7373"}}, nil
+		return []*daemon.RuntimeInfo{{PID: 100, Address: "127.0.0.1:7373"}}, nil
 	}
 	// PID is dead; runtime entry is stale.
 	isPIDAliveForUpdate = func(int) bool {
@@ -1081,7 +983,7 @@ func TestWaitForDaemonExitDetectsUnresponsiveManagerHandoffFromRuntimePID(t *tes
 	}
 	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
 		return []*daemon.RuntimeInfo{
-			{PID: 200, Addr: "127.0.0.1:7373"},
+			{PID: 200, Address: "127.0.0.1:7373"},
 		}, nil
 	}
 	isPIDAliveForUpdate = func(pid int) bool {
@@ -1141,15 +1043,15 @@ func TestRestartDaemonAfterUpdateStopFailureManagerRestartNeedsCleanup(t *testin
 		getCalls++
 		// Initial probe sees old daemon.
 		if getCalls == 1 {
-			return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
+			return &daemon.RuntimeInfo{PID: 100, Address: "127.0.0.1:7373"}, nil
 		}
 		// During first wait loop, manager PID appears but old runtime still exists.
 		if s.killCalls == 0 {
-			return &daemon.RuntimeInfo{PID: 200, Addr: "127.0.0.1:7373"}, nil
+			return &daemon.RuntimeInfo{PID: 200, Address: "127.0.0.1:7373"}, nil
 		}
 		// After forced kill and manual start, readiness probe succeeds.
 		if s.startCalls > 0 {
-			return &daemon.RuntimeInfo{PID: 300, Addr: "127.0.0.1:7373"}, nil
+			return &daemon.RuntimeInfo{PID: 300, Address: "127.0.0.1:7373"}, nil
 		}
 		// During second wait loop after kill, no daemon responds.
 		return nil, os.ErrNotExist
@@ -1158,8 +1060,8 @@ func TestRestartDaemonAfterUpdateStopFailureManagerRestartNeedsCleanup(t *testin
 		if s.killCalls == 0 {
 			// Before cleanup, one original PID still exists.
 			return []*daemon.RuntimeInfo{
-				{PID: 100, Addr: "127.0.0.1:7373"},
-				{PID: 101, Addr: "127.0.0.1:7373"},
+				{PID: 100, Address: "127.0.0.1:7373"},
+				{PID: 101, Address: "127.0.0.1:7373"},
 			}, nil
 		}
 		// Cleanup removed old daemons.
@@ -1186,19 +1088,19 @@ func TestRestartDaemonAfterUpdateManagerRestartedAfterKill(t *testing.T) {
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
 		if s.killCalls == 0 {
 			// Before forced kill, old daemon stays on the same PID.
-			return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
+			return &daemon.RuntimeInfo{PID: 100, Address: "127.0.0.1:7373"}, nil
 		}
 		// After forced kill, external manager restarts the daemon.
-		return &daemon.RuntimeInfo{PID: 500, Addr: "127.0.0.1:7373"}, nil
+		return &daemon.RuntimeInfo{PID: 500, Address: "127.0.0.1:7373"}, nil
 	}
 	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
 		if s.killCalls == 0 {
 			return []*daemon.RuntimeInfo{
-				{PID: 100, Addr: "127.0.0.1:7373"},
+				{PID: 100, Address: "127.0.0.1:7373"},
 			}, nil
 		}
 		return []*daemon.RuntimeInfo{
-			{PID: 500, Addr: "127.0.0.1:7373"},
+			{PID: 500, Address: "127.0.0.1:7373"},
 		}, nil
 	}
 
@@ -1218,7 +1120,7 @@ func TestRestartDaemonAfterUpdateManagerHandoffUnresponsiveUsesRuntimePID(t *tes
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
 		getCalls++
 		if getCalls == 1 {
-			return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
+			return &daemon.RuntimeInfo{PID: 100, Address: "127.0.0.1:7373"}, nil
 		}
 		// Replacement daemon is not yet responsive.
 		return nil, os.ErrNotExist
@@ -1230,12 +1132,12 @@ func TestRestartDaemonAfterUpdateManagerHandoffUnresponsiveUsesRuntimePID(t *tes
 		if listCalls == 1 {
 			// Initial snapshot for stop validation.
 			return []*daemon.RuntimeInfo{
-				{PID: 100, Addr: "127.0.0.1:7373"},
+				{PID: 100, Address: "127.0.0.1:7373"},
 			}, nil
 		}
 		// Runtime handoff to manager-restarted PID.
 		return []*daemon.RuntimeInfo{
-			{PID: 200, Addr: "127.0.0.1:7373"},
+			{PID: 200, Address: "127.0.0.1:7373"},
 		}, nil
 	}
 	isPIDAliveForUpdate = func(pid int) bool {
@@ -1260,12 +1162,12 @@ func TestRestartDaemonAfterUpdateManagerHandoffAfterKillNotReadyWarnsNoStart(t *
 		if s.killCalls == 0 {
 			// Initial probe + first wait loop see only the old daemon,
 			// forcing timeout and kill fallback.
-			return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
+			return &daemon.RuntimeInfo{PID: 100, Address: "127.0.0.1:7373"}, nil
 		}
 		if !handoffSeen {
 			// After kill fallback, handoff PID appears once.
 			handoffSeen = true
-			return &daemon.RuntimeInfo{PID: 500, Addr: "127.0.0.1:7373"}, nil
+			return &daemon.RuntimeInfo{PID: 500, Address: "127.0.0.1:7373"}, nil
 		}
 		// Replacement remains unresponsive during readiness polling.
 		return nil, os.ErrNotExist
@@ -1274,11 +1176,11 @@ func TestRestartDaemonAfterUpdateManagerHandoffAfterKillNotReadyWarnsNoStart(t *
 	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
 		if s.killCalls == 0 {
 			return []*daemon.RuntimeInfo{
-				{PID: 100, Addr: "127.0.0.1:7373"},
+				{PID: 100, Address: "127.0.0.1:7373"},
 			}, nil
 		}
 		return []*daemon.RuntimeInfo{
-			{PID: 500, Addr: "127.0.0.1:7373"},
+			{PID: 500, Address: "127.0.0.1:7373"},
 		}, nil
 	}
 
@@ -1302,23 +1204,23 @@ func TestRestartDaemonAfterUpdateManagerRestartedAfterKillWithLingeringInitialPI
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
 		if s.killCalls == 0 {
 			// Before forced kill, old daemon stays on the same PID.
-			return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
+			return &daemon.RuntimeInfo{PID: 100, Address: "127.0.0.1:7373"}, nil
 		}
 		// After forced kill, external manager restarts one daemon PID.
-		return &daemon.RuntimeInfo{PID: 500, Addr: "127.0.0.1:7373"}, nil
+		return &daemon.RuntimeInfo{PID: 500, Address: "127.0.0.1:7373"}, nil
 	}
 	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
 		if s.killCalls == 0 {
 			// Initial runtime snapshot includes multiple daemon PIDs.
 			return []*daemon.RuntimeInfo{
-				{PID: 100, Addr: "127.0.0.1:7373"},
-				{PID: 101, Addr: "127.0.0.1:7373"},
+				{PID: 100, Address: "127.0.0.1:7373"},
+				{PID: 101, Address: "127.0.0.1:7373"},
 			}, nil
 		}
 		// After kill, previousPID is gone but another initial PID remains.
 		return []*daemon.RuntimeInfo{
-			{PID: 101, Addr: "127.0.0.1:7373"},
-			{PID: 500, Addr: "127.0.0.1:7373"},
+			{PID: 101, Address: "127.0.0.1:7373"},
+			{PID: 500, Address: "127.0.0.1:7373"},
 		}, nil
 	}
 	stopDaemonForUpdate = func() error {
@@ -1344,7 +1246,7 @@ func TestRestartDaemonAfterUpdateStopFailedPreviousPIDExitedButInitialPIDLingeri
 		getCalls++
 		if getCalls == 1 {
 			// Initial probe sees previous PID.
-			return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
+			return &daemon.RuntimeInfo{PID: 100, Address: "127.0.0.1:7373"}, nil
 		}
 		// previousPID exited quickly; no replacement PID observed.
 		return nil, os.ErrNotExist
@@ -1354,19 +1256,19 @@ func TestRestartDaemonAfterUpdateStopFailedPreviousPIDExitedButInitialPIDLingeri
 		case 0:
 			// Initial snapshot includes multiple daemon PIDs.
 			return []*daemon.RuntimeInfo{
-				{PID: 100, Addr: "127.0.0.1:7373"},
-				{PID: 101, Addr: "127.0.0.1:7373"},
+				{PID: 100, Address: "127.0.0.1:7373"},
+				{PID: 101, Address: "127.0.0.1:7373"},
 			}, nil
 		case 1:
 			// waitForDaemonExit still sees previous PID.
 			return []*daemon.RuntimeInfo{
-				{PID: 100, Addr: "127.0.0.1:7373"},
-				{PID: 101, Addr: "127.0.0.1:7373"},
+				{PID: 100, Address: "127.0.0.1:7373"},
+				{PID: 101, Address: "127.0.0.1:7373"},
 			}, nil
 		default:
 			// previousPID gone, but another initial PID lingers.
 			return []*daemon.RuntimeInfo{
-				{PID: 101, Addr: "127.0.0.1:7373"},
+				{PID: 101, Address: "127.0.0.1:7373"},
 			}, nil
 		}
 	}
@@ -1393,7 +1295,7 @@ func TestRestartDaemonAfterUpdateStopFailedInitialSnapshotErrorWithLingeringRunt
 		getCalls++
 		if getCalls == 1 {
 			// Initial probe sees previous PID.
-			return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
+			return &daemon.RuntimeInfo{PID: 100, Address: "127.0.0.1:7373"}, nil
 		}
 		// After stop attempt, daemon probe fails.
 		return nil, os.ErrNotExist
@@ -1409,7 +1311,7 @@ func TestRestartDaemonAfterUpdateStopFailedInitialSnapshotErrorWithLingeringRunt
 		case 2:
 			// waitForDaemonExit still sees previous PID.
 			return []*daemon.RuntimeInfo{
-				{PID: 100, Addr: "127.0.0.1:7373"},
+				{PID: 100, Address: "127.0.0.1:7373"},
 			}, nil
 		case 3:
 			// previousPID is now gone from runtime files.
@@ -1417,7 +1319,7 @@ func TestRestartDaemonAfterUpdateStopFailedInitialSnapshotErrorWithLingeringRunt
 		default:
 			// Verification after stop failure finds another lingering runtime.
 			return []*daemon.RuntimeInfo{
-				{PID: 101, Addr: "127.0.0.1:7373"},
+				{PID: 101, Address: "127.0.0.1:7373"},
 			}, nil
 		}
 	}
@@ -1444,12 +1346,12 @@ func TestRestartDaemonAfterUpdateStopFailedHandoffNotReadyWarnsNoStart(t *testin
 		if s.killCalls == 0 {
 			// Initial probe + first wait loop see only the old daemon,
 			// forcing timeout and kill fallback.
-			return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
+			return &daemon.RuntimeInfo{PID: 100, Address: "127.0.0.1:7373"}, nil
 		}
 		if !handoffSeen {
 			// Second wait loop sees manager handoff PID once.
 			handoffSeen = true
-			return &daemon.RuntimeInfo{PID: 500, Addr: "127.0.0.1:7373"}, nil
+			return &daemon.RuntimeInfo{PID: 500, Address: "127.0.0.1:7373"}, nil
 		}
 		// Replacement remains unresponsive during readiness polling.
 		return nil, os.ErrNotExist
@@ -1458,12 +1360,12 @@ func TestRestartDaemonAfterUpdateStopFailedHandoffNotReadyWarnsNoStart(t *testin
 	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
 		if s.killCalls == 0 {
 			return []*daemon.RuntimeInfo{
-				{PID: 100, Addr: "127.0.0.1:7373"},
+				{PID: 100, Address: "127.0.0.1:7373"},
 			}, nil
 		}
 		// previousPID is gone; only replacement PID runtime remains.
 		return []*daemon.RuntimeInfo{
-			{PID: 500, Addr: "127.0.0.1:7373"},
+			{PID: 500, Address: "127.0.0.1:7373"},
 		}, nil
 	}
 
@@ -1494,10 +1396,10 @@ func TestRestartDaemonAfterUpdateStopFailedPreExistingPIDNotAcceptedAsHandoff(t 
 		getCalls++
 		if getCalls == 1 {
 			// Initial probe sees previous PID.
-			return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
+			return &daemon.RuntimeInfo{PID: 100, Address: "127.0.0.1:7373"}, nil
 		}
 		// Existing daemon PID 200 remains responsive throughout.
-		return &daemon.RuntimeInfo{PID: 200, Addr: "127.0.0.1:7373"}, nil
+		return &daemon.RuntimeInfo{PID: 200, Address: "127.0.0.1:7373"}, nil
 	}
 
 	var listCalls int
@@ -1506,13 +1408,13 @@ func TestRestartDaemonAfterUpdateStopFailedPreExistingPIDNotAcceptedAsHandoff(t 
 		if listCalls == 1 {
 			// Initial snapshot already includes PID 200.
 			return []*daemon.RuntimeInfo{
-				{PID: 100, Addr: "127.0.0.1:7373"},
-				{PID: 200, Addr: "127.0.0.1:7373"},
+				{PID: 100, Address: "127.0.0.1:7373"},
+				{PID: 200, Address: "127.0.0.1:7373"},
 			}, nil
 		}
 		// previousPID disappeared, but pre-existing PID 200 remains.
 		return []*daemon.RuntimeInfo{
-			{PID: 200, Addr: "127.0.0.1:7373"},
+			{PID: 200, Address: "127.0.0.1:7373"},
 		}, nil
 	}
 	isPIDAliveForUpdate = func(pid int) bool {
@@ -1555,13 +1457,13 @@ func TestRestartDaemonAfterUpdateProbeFailFallback(t *testing.T) {
 			return nil, os.ErrNotExist
 		}
 		// After manual start, daemon responds with new PID.
-		return &daemon.RuntimeInfo{PID: 300, Addr: "127.0.0.1:7373"}, nil
+		return &daemon.RuntimeInfo{PID: 300, Address: "127.0.0.1:7373"}, nil
 	}
 	// Runtime files exist with a known PID.
 	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
 		if getCalls <= 3 {
 			return []*daemon.RuntimeInfo{
-				{PID: 100, Addr: "127.0.0.1:7373"},
+				{PID: 100, Address: "127.0.0.1:7373"},
 			}, nil
 		}
 		return nil, nil
@@ -1605,14 +1507,14 @@ func TestRestartDaemonAfterUpdateExitsQuickly(t *testing.T) {
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
 		getCalls++
 		if getCalls == 1 {
-			return &daemon.RuntimeInfo{PID: 100, Addr: "127.0.0.1:7373"}, nil
+			return &daemon.RuntimeInfo{PID: 100, Address: "127.0.0.1:7373"}, nil
 		}
 		if getCalls == 2 {
 			// Daemon exited after stop.
 			return nil, os.ErrNotExist
 		}
 		// After manual start, daemon is ready.
-		return &daemon.RuntimeInfo{PID: 400, Addr: "127.0.0.1:7373"}, nil
+		return &daemon.RuntimeInfo{PID: 400, Address: "127.0.0.1:7373"}, nil
 	}
 
 	output := captureStdout(t, func() {

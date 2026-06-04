@@ -1300,7 +1300,7 @@ func TestRunFixOpenRecoversFromDaemonRestartOnRequery(t *testing.T) {
 		case "/api/review/close":
 			w.WriteHeader(http.StatusOK)
 		case "/api/ping":
-			writeJSON(w, daemon.PingInfo{Service: "roborev", Version: version.Version})
+			writeJSON(w, daemon.PingInfo{OK: true, Service: "roborev", Version: version.Version})
 		default:
 			http.NotFound(w, r)
 		}

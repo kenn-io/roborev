@@ -163,7 +163,7 @@ func (s *Server) Start(ctx context.Context) error {
 		if listener != nil {
 			_ = listener.Close()
 		}
-		return fmt.Errorf("daemon already running (pid %d on %s)", info.PID, info.Addr)
+		return fmt.Errorf("daemon already running (pid %d on %s)", info.PID, info.Address)
 	}
 
 	// Reset stale jobs from previous runs
@@ -2356,6 +2356,7 @@ func (s *Server) humaPing(
 	ctx context.Context, input *struct{},
 ) (*PingOutput, error) {
 	return &PingOutput{Body: PingInfo{
+		OK:      true,
 		Service: daemonServiceName,
 		Version: version.Version,
 		PID:     os.Getpid(),

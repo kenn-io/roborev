@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -16,6 +17,8 @@ import (
 	"runtime"
 	"syscall"
 	"time"
+
+	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
@@ -41,9 +44,11 @@ var (
 		if runtime.GOOS == "windows" {
 			newBinary += ".exe"
 		}
-		startCmd := exec.Command(newBinary, "daemon", "run")
-		startCmd.Env = filterGitEnv(os.Environ())
-		return startCmd.Start()
+		return kitdaemon.StartDetached(context.Background(), kitdaemon.StartDetachedOptions{
+			Executable: newBinary,
+			Args:       []string{"daemon", "run"},
+			Env:        filterGitEnv(os.Environ()),
+		})
 	}
 
 	// setupSignalHandler allows tests to mock signal handling
@@ -208,8 +213,8 @@ func ensureDaemon() error {
 		return nil
 	}
 
-	// Try the configured default address for manual/legacy daemon runs that do
-	// not have a runtime file yet.
+	// Try the configured default address for manual daemon runs that do not
+	// have a runtime file yet.
 	ep := getDaemonEndpoint()
 	if probe, err := daemon.ProbeDaemon(ep, 2*time.Second); err == nil {
 		if !skipVersionCheck {
@@ -238,36 +243,26 @@ func startDaemon() error {
 		fmt.Println("Starting daemon...")
 	}
 
-	// Use the current executable with "daemon run" subcommand
-	exe, err := os.Executable()
-	if err != nil {
-		return fmt.Errorf("failed to find executable: %w", err)
+	manager := kitdaemon.Manager{
+		Store:    daemon.RuntimeStore(),
+		Discover: daemon.DiscoverOptions(1 * time.Second),
+		Start: func(ctx context.Context) error {
+			exe, err := os.Executable()
+			if err != nil {
+				return fmt.Errorf("failed to find executable: %w", err)
+			}
+			return kitdaemon.StartDetached(ctx, kitdaemon.StartDetachedOptions{
+				Executable:      exe,
+				Args:            []string{"daemon", "run"},
+				Env:             filterGitEnv(os.Environ()),
+				RefuseEphemeral: os.Getenv("ROBOREV_TEST_ALLOW_AUTOSTART") != "1",
+			})
+		},
 	}
-	if shouldRefuseAutoStartDaemon(exe) {
-		return fmt.Errorf(
-			"refusing to auto-start daemon from ephemeral binary (%s); "+
-				"use the installed roborev binary instead",
-			filepath.Base(exe),
-		)
-	}
-
-	cmd := exec.Command(exe, "daemon", "run")
-	cmd.Env = filterGitEnv(os.Environ())
-	cmd.Stdout = nil
-	cmd.Stderr = nil
-	if err := cmd.Start(); err != nil {
+	if _, _, err := manager.Ensure(context.Background(), 3*time.Second); err != nil {
 		return fmt.Errorf("failed to start daemon: %w", err)
 	}
-
-	// Wait for daemon to publish a responsive runtime entry.
-	for range 30 {
-		time.Sleep(100 * time.Millisecond)
-		if _, err := daemon.GetAnyRunningDaemon(); err == nil {
-			return nil
-		}
-	}
-
-	return fmt.Errorf("daemon failed to start")
+	return nil
 }
 
 // stopDaemon stops any running daemons.

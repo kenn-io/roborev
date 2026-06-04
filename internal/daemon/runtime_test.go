@@ -27,8 +27,7 @@ const (
 
 type runtimeData struct {
 	PID     int    `json:"pid"`
-	Addr    string `json:"addr"`
-	Port    int    `json:"port"`
+	Address string `json:"address"`
 	Version string `json:"version"`
 }
 
@@ -39,8 +38,7 @@ func createRuntimeFile(t *testing.T, dir string, pid int, data *runtimeData) str
 	if data == nil {
 		data = &runtimeData{
 			PID:     pid,
-			Addr:    defaultTestAddr,
-			Port:    defaultTestPort,
+			Address: defaultTestAddr,
 			Version: "test",
 		}
 	}
@@ -178,15 +176,10 @@ func TestRuntimeInfoReadWrite(t *testing.T) {
 			}, "ReadRuntime failed: %v", err)
 		}
 
-		if info.Addr != defaultTestAddr {
+		if info.Address != defaultTestAddr {
 			assert.Condition(t, func() bool {
 				return false
-			}, "Expected addr '%s', got '%s'", defaultTestAddr, info.Addr)
-		}
-		if info.Port != defaultTestPort {
-			assert.Condition(t, func() bool {
-				return false
-			}, "Expected port %d, got %d", defaultTestPort, info.Port)
+			}, "Expected addr '%s', got '%s'", defaultTestAddr, info.Address)
 		}
 		if info.PID == 0 {
 			assert.Condition(t, func() bool {
@@ -232,8 +225,8 @@ func TestKillDaemonSkipsHTTPForNonLoopback(t *testing.T) {
 	// through to killProcess (which returns true because of the mock).
 	// This must complete promptly without attempting network connections.
 	info := &RuntimeInfo{
-		PID:  os.Getpid(),          // Existing PID, but mocked as not-roborev
-		Addr: "192.168.1.100:7373", // Non-loopback address
+		PID:     os.Getpid(),          // Existing PID, but mocked as not-roborev
+		Address: "192.168.1.100:7373", // Non-loopback address
 	}
 
 	result := KillDaemon(info)
@@ -252,15 +245,17 @@ func TestListAllRuntimesSkipsUnreadableFiles(t *testing.T) {
 		t.Skip("chmod 0000 doesn't block reads on Windows")
 	}
 
-	dataDir := testenv.SetDataDir(t)
+	_ = testenv.SetDataDir(t)
+	runtimeDir := runtimeStore().Dir
+	require.NoError(t, os.MkdirAll(runtimeDir, 0o700))
 
 	// Create a valid runtime file
-	createRuntimeFile(t, dataDir, math.MaxInt32, nil)
+	createRuntimeFile(t, runtimeDir, math.MaxInt32, nil)
 
 	// Create an unreadable runtime file
-	unreadablePath := createRuntimeFile(t, dataDir, math.MaxInt32-1, &runtimeData{
-		PID:  math.MaxInt32 - 1,
-		Addr: "127.0.0.1:7374",
+	unreadablePath := createRuntimeFile(t, runtimeDir, math.MaxInt32-1, &runtimeData{
+		PID:     math.MaxInt32 - 1,
+		Address: "127.0.0.1:7374",
 	})
 	os.Chmod(unreadablePath, 0o000)
 	t.Cleanup(func() { os.Chmod(unreadablePath, 0o644) })
@@ -396,6 +391,7 @@ func TestProbeDaemonPrefersPing(t *testing.T) {
 	addr, mux := startMockDaemon(t)
 	mux.HandleFunc("/api/ping", func(w http.ResponseWriter, r *http.Request) {
 		_ = json.NewEncoder(w).Encode(PingInfo{
+			OK:      true,
 			Service: daemonServiceName,
 			Version: "v-test",
 			PID:     123,
@@ -420,79 +416,6 @@ func TestProbeDaemonPrefersPing(t *testing.T) {
 	}
 }
 
-func TestProbeDaemonFallsBackToLegacyStatus(t *testing.T) {
-	addr, mux := startMockDaemon(t)
-	mux.HandleFunc("/api/ping", func(w http.ResponseWriter, r *http.Request) {
-		w.WriteHeader(http.StatusNotFound)
-	})
-	mux.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
-		_ = json.NewEncoder(w).Encode(map[string]string{"version": "v-legacy"})
-	})
-
-	info, err := ProbeDaemon(DaemonEndpoint{Network: "tcp", Address: addr}, time.Second)
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "ProbeDaemon legacy fallback failed: %v", err)
-	}
-	if info.Version != "v-legacy" {
-		require.Condition(t, func() bool {
-			return false
-		}, "ProbeDaemon version = %q, want %q", info.Version, "v-legacy")
-	}
-}
-
-func TestIsDaemonAliveLegacyStatusCodes(t *testing.T) {
-	tests := []struct {
-		name       string
-		statusCode int
-		wantAlive  bool
-	}{
-		// 2xx - success, daemon is alive
-		{"200 OK", http.StatusOK, true},
-		{"201 Created", http.StatusCreated, true},
-		{"204 No Content", http.StatusNoContent, true},
-
-		// 5xx - server error, daemon is alive but having issues
-		{"500 Internal Server Error", http.StatusInternalServerError, true},
-		{"502 Bad Gateway", http.StatusBadGateway, true},
-		{"503 Service Unavailable", http.StatusServiceUnavailable, true},
-
-		// 3xx - redirect, likely different service
-		{"301 Moved Permanently", http.StatusMovedPermanently, false},
-		{"302 Found", http.StatusFound, false},
-
-		// 4xx - client error, likely different service (auth proxy, unrelated API)
-		{"400 Bad Request", http.StatusBadRequest, false},
-		{"401 Unauthorized", http.StatusUnauthorized, false},
-		{"403 Forbidden", http.StatusForbidden, false},
-		{"404 Not Found", http.StatusNotFound, false},
-		{"405 Method Not Allowed", http.StatusMethodNotAllowed, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			t.Parallel()
-			addr, mux := startMockDaemon(t)
-			mux.HandleFunc("/api/ping", func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(http.StatusNotFound)
-			})
-			mux.HandleFunc("/api/status", func(w http.ResponseWriter, r *http.Request) {
-				w.WriteHeader(tt.statusCode)
-				if tt.statusCode >= 200 && tt.statusCode < 300 {
-					_ = json.NewEncoder(w).Encode(map[string]string{"version": "v-legacy"})
-				}
-			})
-			got := IsDaemonAlive(DaemonEndpoint{Network: "tcp", Address: addr})
-			if got != tt.wantAlive {
-				assert.Condition(t, func() bool {
-					return false
-				}, "IsDaemonAlive with %d = %v, want %v", tt.statusCode, got, tt.wantAlive)
-			}
-		})
-	}
-}
-
 func TestCleanupZombieDaemonsPreservesTargetSocket(t *testing.T) {
 	// Regression test: when a zombie's socket matches the target
 	// (e.g. a systemd-managed socket), cleanup must remove the
@@ -503,7 +426,7 @@ func TestCleanupZombieDaemonsPreservesTargetSocket(t *testing.T) {
 		t.Skip("Unix sockets not supported on Windows")
 	}
 
-	dataDir := testenv.SetDataDir(t)
+	_ = testenv.SetDataDir(t)
 	assert := assert.New(t)
 
 	// Create a real Unix socket as the "target" (stands in for the
@@ -526,14 +449,15 @@ func TestCleanupZombieDaemonsPreservesTargetSocket(t *testing.T) {
 	stalePID := os.Getpid()
 	runtimeJSON, err := json.Marshal(map[string]any{
 		"pid":     stalePID,
-		"addr":    socketPath,
-		"port":    0,
+		"address": socketPath,
 		"network": "unix",
 		"version": "stale",
 	})
 	require.NoError(t, err)
+	runtimeDir := runtimeStore().Dir
+	require.NoError(t, os.MkdirAll(runtimeDir, 0o700))
 	runtimePath := filepath.Join(
-		dataDir, fmt.Sprintf("daemon.%d.json", stalePID))
+		runtimeDir, fmt.Sprintf("daemon.%d.json", stalePID))
 	require.NoError(t, os.WriteFile(runtimePath, runtimeJSON, 0o644))
 
 	mockIdentifyProcess(t, func(pid int) processIdentity {
@@ -551,32 +475,21 @@ func TestRuntimeInfo_Endpoint(t *testing.T) {
 	assert := assert.New(t)
 
 	// TCP with explicit network
-	info := RuntimeInfo{PID: 1, Addr: "127.0.0.1:7373", Port: 7373, Network: "tcp"}
+	info := RuntimeInfo{PID: 1, Address: "127.0.0.1:7373", Network: "tcp"}
 	ep := info.Endpoint()
 	assert.Equal("tcp", ep.Network)
 	assert.Equal("127.0.0.1:7373", ep.Address)
 
 	// Unix
-	info = RuntimeInfo{PID: 1, Addr: "/tmp/test.sock", Port: 0, Network: "unix"}
+	info = RuntimeInfo{PID: 1, Address: "/tmp/test.sock", Network: "unix"}
 	ep = info.Endpoint()
 	assert.Equal("unix", ep.Network)
 	assert.Equal("/tmp/test.sock", ep.Address)
 
-	// Empty network defaults to TCP (backwards compat)
-	info = RuntimeInfo{PID: 1, Addr: "127.0.0.1:7373", Port: 7373, Network: ""}
+	// Empty network follows the kit runtime default.
+	info = RuntimeInfo{PID: 1, Address: "127.0.0.1:7373", Network: ""}
 	ep = info.Endpoint()
 	assert.Equal("tcp", ep.Network)
-}
-
-func TestRuntimeInfo_BackwardsCompat_NoNetworkField(t *testing.T) {
-	// Simulate old JSON without "network" field
-	data := []byte(`{"pid": 1234, "addr": "127.0.0.1:7373", "port": 7373, "version": "0.47.0"}`)
-	var info RuntimeInfo
-	require.NoError(t, json.Unmarshal(data, &info))
-	assert.Empty(t, info.Network)
-	ep := info.Endpoint()
-	assert.Equal(t, "tcp", ep.Network)
-	assert.Equal(t, "127.0.0.1:7373", ep.Address)
 }
 
 func TestListAllRuntimesWithGlobMetacharacters(t *testing.T) {
@@ -592,9 +505,11 @@ func TestListAllRuntimesWithGlobMetacharacters(t *testing.T) {
 
 	// Set ROBOREV_DATA_DIR to the directory with metacharacters
 	t.Setenv("ROBOREV_DATA_DIR", dataDir)
+	runtimeDir := runtimeStore().Dir
+	require.NoError(t, os.MkdirAll(runtimeDir, 0o700))
 
 	// Create a valid runtime file
-	createRuntimeFile(t, dataDir, math.MaxInt32, nil)
+	createRuntimeFile(t, runtimeDir, math.MaxInt32, nil)
 
 	// ListAllRuntimes should work despite glob metacharacters in path
 	runtimes, err := ListAllRuntimes()

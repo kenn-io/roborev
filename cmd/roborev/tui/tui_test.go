@@ -51,7 +51,7 @@ func testEndpointFromURL(rawURL string) daemon.DaemonEndpoint {
 
 // setupTuiTestEnv isolates the test from the production roborev environment
 // by setting ROBOREV_DATA_DIR to a temp directory. This prevents tests from
-// reading production daemon.json or affecting production state.
+// reading the production daemon runtime store or affecting production state.
 func setupTuiTestEnv(t *testing.T) string {
 	t.Helper()
 	tmpDir := t.TempDir()

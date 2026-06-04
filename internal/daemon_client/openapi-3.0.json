@@ -342,6 +342,9 @@
             "format": "int64",
             "type": "integer"
           },
+          "address": {
+            "type": "string"
+          },
           "applied_jobs": {
             "format": "int64",
             "type": "integer"
@@ -373,6 +376,13 @@
             "type": "string"
           },
           "max_workers": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "network": {
+            "type": "string"
+          },
+          "port": {
             "format": "int64",
             "type": "integer"
           },
@@ -1022,6 +1032,9 @@
             "readOnly": true,
             "type": "string"
           },
+          "ok": {
+            "type": "boolean"
+          },
           "pid": {
             "format": "int64",
             "type": "integer"
@@ -1034,6 +1047,7 @@
           }
         },
         "required": [
+          "ok",
           "service",
           "version"
         ],

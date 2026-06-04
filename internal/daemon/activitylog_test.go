@@ -133,7 +133,7 @@ func TestActivityLog_Details(t *testing.T) {
 
 	details := map[string]string{
 		"version": "1.0.0",
-		"addr":    "127.0.0.1:7373",
+		"address": "127.0.0.1:7373",
 		"pid":     "1234",
 	}
 	al.Log("daemon.started", "server", "started", details)

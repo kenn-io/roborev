@@ -343,11 +343,11 @@ func TestServerStartSupportsIPv6LoopbackBindAddr(t *testing.T) {
 
 		info, err := ReadRuntime()
 		if err == nil {
-			host, _, splitErr := net.SplitHostPort(info.Addr)
+			host, _, splitErr := net.SplitHostPort(info.Address)
 			if splitErr != nil {
 				require.Condition(t, func() bool {
 					return false
-				}, "runtime addr %q is invalid: %v", info.Addr, splitErr)
+				}, "runtime addr %q is invalid: %v", info.Address, splitErr)
 			}
 			if host != "::1" {
 				require.Condition(t, func() bool {

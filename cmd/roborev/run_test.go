@@ -54,7 +54,7 @@ func newRunTestServer(t *testing.T, cfg mockServerConfig) *httptest.Server {
 
 		switch r.URL.Path {
 		case "/api/ping":
-			writeJSON(w, daemon.PingInfo{Service: "roborev", Version: version.Version})
+			writeJSON(w, daemon.PingInfo{OK: true, Service: "roborev", Version: version.Version})
 		case "/api/status":
 			// Required for ensureDaemon()
 			writeJSON(w, map[string]string{"version": version.Version})
