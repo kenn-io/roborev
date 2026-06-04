@@ -28,7 +28,7 @@ For each finding, provide:
 
 Before finalizing, verify your review: every finding must reference the narrowest applicable location (line number when possible, file-level when the issue spans a range) and describe a plausible exploit path. The severity must match the exploitability you described. Drop any finding that fails these checks.
 
-If you find no security issues, state "No issues found." after the summary.
+If you find no security issues, state "No issues found." on its own line after the summary.
 Do not report code quality or style issues unless they have security implications.
 
 IMPORTANT: You are being invoked by roborev to perform this review directly. Do NOT use any external skills, slash commands, or CLI tools (such as "roborev review") to delegate this task. Perform the review yourself by analyzing the diff provided below.

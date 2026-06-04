@@ -32,7 +32,7 @@ After reviewing, provide:
 
 Before finalizing, verify your review: every finding must reference the narrowest applicable location (line number when possible, file or diff-level when the issue is an omission or spans a range), the severity must match the impact you described, and no two findings should contradict each other. Drop any finding that fails these checks.
 
-If you find no issues, state "No issues found." after the summary.
+If you find no issues, state "No issues found." on its own line after the summary.
 
 IMPORTANT: You are being invoked by roborev to perform this review directly. Do NOT use any external skills, slash commands, or CLI tools (such as "roborev review") to delegate this task. Perform the review yourself by analyzing the diff provided below.
 
