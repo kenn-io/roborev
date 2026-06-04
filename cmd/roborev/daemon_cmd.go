@@ -15,6 +15,7 @@ import (
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/telemetry"
 	"go.kenn.io/roborev/internal/version"
 )
 
@@ -149,6 +150,16 @@ func daemonRunCmd() *cobra.Command {
 			defer db.Close()
 			log.Printf("Database: %s", dbPath)
 
+			telemetryReporter := telemetry.NewReporterOrDisabled(telemetry.Options{
+				Database: db,
+				Version:  version.Version,
+			})
+			defer func() {
+				if err := telemetryReporter.Close(); err != nil {
+					log.Printf("Warning: close telemetry: %v", err)
+				}
+			}()
+
 			// Start sync worker if enabled
 			var syncWorker *storage.SyncWorker
 			if cfg.Sync.Enabled {
@@ -184,6 +195,7 @@ func daemonRunCmd() *cobra.Command {
 
 			// Create and start server
 			server := daemon.NewServer(db, cfg, configPath)
+			server.SetTelemetry(telemetryReporter)
 			if syncWorker != nil {
 				server.SetSyncWorker(syncWorker)
 			}

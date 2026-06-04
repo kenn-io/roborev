@@ -28,6 +28,7 @@ import (
 	"go.kenn.io/roborev/internal/githook"
 	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/telemetry"
 	"go.kenn.io/roborev/internal/version"
 )
 
@@ -43,6 +44,9 @@ type Server struct {
 	hookRunner      *HookRunner
 	errorLog        *ErrorLog
 	activityLog     *ActivityLog
+	telemetry       telemetry.Client
+	telemetryOnce   sync.Once
+	telemetryStop   chan struct{}
 	startTime       time.Time
 	endpointMu      sync.Mutex // protects endpoint (written by Start, read by Stop)
 	endpoint        DaemonEndpoint
@@ -56,6 +60,8 @@ type Server struct {
 	machineIDMu sync.Mutex
 	machineID   string
 }
+
+const dailyTelemetryInterval = 24 * time.Hour
 
 // NewServer creates a new daemon server
 func NewServer(db *storage.DB, cfg *config.Config, configPath string) *Server {
@@ -91,6 +97,7 @@ func NewServer(db *storage.DB, cfg *config.Config, configPath string) *Server {
 		hookRunner:    hookRunner,
 		errorLog:      errorLog,
 		activityLog:   activityLog,
+		telemetryStop: make(chan struct{}),
 		startTime:     time.Now(),
 	}
 
@@ -266,6 +273,9 @@ func (s *Server) Start(ctx context.Context) error {
 	if err := WriteRuntime(ep, version.Version); err != nil {
 		log.Printf("Warning: failed to write runtime info: %v", err)
 	}
+
+	s.captureDaemonStartedTelemetry(cfg)
+	s.startDailyTelemetryLoop(ctx, cfg)
 
 	// Notify systemd that the daemon is ready. No-op when not running
 	// under systemd (NOTIFY_SOCKET is unset).
@@ -484,6 +494,9 @@ func (s *Server) stopOnce0() error {
 	// Remove runtime info
 	RemoveRuntime()
 
+	// Stop telemetry loop
+	close(s.telemetryStop)
+
 	// Stop config watcher
 	s.configWatcher.Stop()
 
@@ -543,6 +556,85 @@ func (s *Server) ConfigWatcher() *ConfigWatcher {
 // Broadcaster returns the server's event broadcaster (for use by external components)
 func (s *Server) Broadcaster() Broadcaster {
 	return s.broadcaster
+}
+
+// SetTelemetry sets the anonymous telemetry client used for daemon lifecycle events.
+func (s *Server) SetTelemetry(client telemetry.Client) {
+	s.telemetry = client
+}
+
+func (s *Server) captureDaemonStartedTelemetry(cfg *config.Config) {
+	s.captureTelemetryEvent(telemetry.EventDaemonStarted, cfg)
+}
+
+func (s *Server) startDailyTelemetryLoop(ctx context.Context, cfg *config.Config) {
+	if s.telemetry == nil || !s.telemetry.Enabled() {
+		return
+	}
+
+	s.telemetryOnce.Do(func() {
+		if s.telemetry == nil || !s.telemetry.Enabled() {
+			return
+		}
+
+		s.captureDailyTelemetry(cfg)
+
+		go func() {
+			ticker := time.NewTicker(dailyTelemetryInterval)
+			defer ticker.Stop()
+
+			for {
+				select {
+				case <-ctx.Done():
+					return
+				case <-s.telemetryStop:
+					return
+				case <-ticker.C:
+					s.captureDailyTelemetry(cfg)
+				}
+			}
+		}()
+	})
+}
+
+func (s *Server) captureDailyTelemetry(cfg *config.Config) {
+	s.captureTelemetryEvent(telemetry.EventDaemonActive, cfg)
+}
+
+func (s *Server) captureTelemetryEvent(event string, cfg *config.Config) {
+	if s.telemetry == nil || !s.telemetry.Enabled() {
+		return
+	}
+
+	props := s.telemetryProperties(cfg)
+	if err := s.telemetry.Capture(event, props); err != nil {
+		log.Printf("Warning: capture telemetry event: %v", err)
+	}
+}
+
+func (s *Server) telemetryProperties(cfg *config.Config) map[string]any {
+	repoCount := 0
+	if repos, err := s.db.ListRepos(); err != nil {
+		log.Printf("Warning: failed to count repos for telemetry: %v", err)
+	} else {
+		repoCount = len(repos)
+	}
+	reviewCount := 0
+	if err := s.db.QueryRow(`SELECT COUNT(*) FROM reviews`).Scan(&reviewCount); err != nil {
+		log.Printf("Warning: failed to count reviews for telemetry: %v", err)
+	}
+
+	props := map[string]any{
+		"repo_count":   repoCount,
+		"review_count": reviewCount,
+	}
+	if cfg != nil {
+		props["sync_enabled"] = cfg.Sync.Enabled
+		props["ci_enabled"] = cfg.CI.Enabled
+		props["auto_design_enabled"] = cfg.AutoDesignReview.Enabled
+	}
+
+	return props
 }
 
 // SetSyncWorker sets the sync worker for triggering manual syncs

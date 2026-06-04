@@ -105,6 +105,31 @@ func TestGetMachineID_EmptyValueRegeneration(t *testing.T) {
 	a.Equal(id, stored, "Stored ID %q doesn't match returned ID %q", stored, id)
 }
 
+func TestGetOrCreateSyncStateValue(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	db := openTestDB(t)
+	defer db.Close()
+
+	createCalls := 0
+	first, err := db.GetOrCreateSyncStateValue(" test_key ", func() (string, error) {
+		createCalls++
+		return " first_value ", nil
+	})
+	require.NoError(err)
+
+	second, err := db.GetOrCreateSyncStateValue("test_key", func() (string, error) {
+		createCalls++
+		return "second_value", nil
+	})
+	require.NoError(err)
+
+	assert.Equal("first_value", first)
+	assert.Equal(first, second)
+	assert.Equal(1, createCalls)
+}
+
 func TestSyncWorker_StartStopStart(t *testing.T) {
 	// This test verifies that SyncWorker can be started, stopped, and restarted
 	// without issues (channel reinitialization on restart).

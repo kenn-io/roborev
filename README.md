@@ -240,6 +240,19 @@ instead. For native (non-proxy) mode, configure `ANTHROPIC_API_KEY` via
 roborev's config (it is re-injected from roborev's stored key, not inherited
 from the operator's shell).
 
+## Telemetry
+
+roborev sends limited anonymous telemetry to PostHog when the daemon starts
+and once every 24 hours while the daemon remains running: `daemon_started`
+and `daemon_active` with repo count, review count, sync enabled, CI
+enabled, and auto-design enabled, plus `application=roborev`, version, OS/arch,
+`$process_person_profile=false`, `$geoip_disable=true`, and an anonymous install
+ID.
+It does not send repo names, paths, remotes, prompts, review output, provider
+tokens, usernames, or IP geolocation. Set `ROBOREV_TELEMETRY_ENABLED=0` to
+disable it. `TELEMETRY_ENABLED=0` is also honored. Telemetry is always disabled
+inside Go test processes, regardless of environment variables.
+
 ## Security Model
 
 roborev delegates code review and fix tasks to AI coding agents that

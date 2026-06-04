@@ -45,6 +45,58 @@ func (db *DB) SetSyncState(key, value string) error {
 	return nil
 }
 
+// GetOrCreateSyncStateValue returns a durable key/value entry, creating it when absent.
+// Empty stored values are treated as missing and replaced.
+func (db *DB) GetOrCreateSyncStateValue(key string, create func() (string, error)) (string, error) {
+	key = strings.TrimSpace(key)
+	if key == "" {
+		return "", errors.New("sync state key is required")
+	}
+	if create == nil {
+		return "", errors.New("sync state create func is required")
+	}
+
+	value, err := db.GetSyncState(key)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(value) != "" {
+		return value, nil
+	}
+
+	created, err := create()
+	if err != nil {
+		return "", err
+	}
+	created = strings.TrimSpace(created)
+	if created == "" {
+		return "", errors.New("created sync state value is required")
+	}
+
+	if value == "" {
+		_, err = db.Exec(`
+			INSERT OR IGNORE INTO sync_state (key, value) VALUES (?, ?)
+		`, key, created)
+	} else {
+		_, err = db.Exec(`UPDATE sync_state SET value = ? WHERE key = ?`, created, key)
+	}
+	if err != nil {
+		return "", fmt.Errorf("create sync state %s: %w", key, err)
+	}
+
+	value, err = db.GetSyncState(key)
+	if err != nil {
+		return "", err
+	}
+	if strings.TrimSpace(value) == "" {
+		if err := db.SetSyncState(key, created); err != nil {
+			return "", err
+		}
+		return created, nil
+	}
+	return value, nil
+}
+
 // GetMachineID returns this machine's unique identifier, creating one if it doesn't exist.
 // Uses INSERT OR IGNORE + SELECT to ensure concurrency-safe behavior.
 // Treats empty values as missing and regenerates.
