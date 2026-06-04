@@ -177,6 +177,52 @@ func TestRerunSynthesisCreatesNewRun(t *testing.T) {
 	assert.True(newSynth.ClaimBlocked, "new synthesis re-blocked until members finish")
 }
 
+func TestRerunCIPanelPreservesExactCheckoutSource(t *testing.T) {
+	assert := assert.New(t)
+	server, db, tmpDir := newTestServer(t)
+	repo, err := db.GetOrCreateRepo(tmpDir)
+	require.NoError(t, err)
+	commit, err := db.GetOrCreateCommit(repo.ID, "headsha", "A", "S", time.Now())
+	require.NoError(t, err)
+
+	gitRef := "base..headsha"
+	created, _, oldSynth, err := db.CreateCIPanelRun("acme/api", 77, "headsha",
+		[]storage.EnqueueOpts{{
+			RepoID:           repo.ID,
+			CommitID:         commit.ID,
+			GitRef:           gitRef,
+			Agent:            "ci-member",
+			JobType:          storage.JobTypeRange,
+			PanelName:        "ci",
+			PanelMemberName:  "m0",
+			PanelMemberIndex: 0,
+		}},
+		storage.EnqueueOpts{
+			RepoID: repo.ID, CommitID: commit.ID, GitRef: gitRef,
+			Agent: "ci-synth", PanelName: "ci",
+		},
+	)
+	require.NoError(t, err)
+	require.True(t, created)
+
+	oldPanel, err := db.GetCIPanelBySynthesisJobID(oldSynth.ID)
+	require.NoError(t, err)
+	_, err = db.Exec("UPDATE review_jobs SET source = NULL WHERE panel_run_uuid = ?", oldPanel.PanelRunUUID)
+	require.NoError(t, err)
+
+	newUUID, newMembers := rerunAndLoadNewRun(t, server, db, oldPanel.PanelRunUUID, oldSynth.ID)
+	require.Len(t, newMembers, 1)
+
+	assert.Equal(storage.JobSourceCI, newMembers[0].Source, "rerun CI members should retain exact-checkout metadata")
+	requiresExact, err := server.workerPool.jobRequiresCIExactCheckout(&newMembers[0])
+	require.NoError(t, err)
+	assert.True(requiresExact, "rerun CI members should still use exact checkouts")
+
+	newSynth, err := db.GetSynthesisJob(newUUID)
+	require.NoError(t, err)
+	assert.Equal(storage.JobSourceCI, newSynth.Source, "rerun CI synthesis should retain CI source metadata")
+}
+
 func TestRerunPanelPreservesStoredPrompt(t *testing.T) {
 	assert := assert.New(t)
 	server, db, _ := newTestServer(t)

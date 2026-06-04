@@ -295,10 +295,14 @@ func resolveEffectiveRepoPath(workerID string, job *storage.ReviewJob) string {
 
 type preparedJobCheckout struct {
 	// promptRepoPath is the trusted checkout used for prompt-side config,
-	// excludes, max-prompt sizing, and snapshot creation.
+	// excludes, max-prompt sizing, and snapshot_dir config.
 	promptRepoPath string
 	// agentRepoPath is the checkout used as the agent cwd.
 	agentRepoPath string
+	// snapshotTarget controls where oversized diff snapshot files are written.
+	// CI writes them into the exact agent checkout while resolving snapshot_dir
+	// from the trusted prompt checkout.
+	snapshotTarget prompt.SnapshotTarget
 	// eventWorktreePath is the caller-provided worktree path safe to expose
 	// to event consumers and hooks. Internal CI checkouts must stay private.
 	eventWorktreePath string
@@ -331,12 +335,22 @@ func (wp *WorkerPool) prepareJobCheckout(
 	return preparedJobCheckout{
 		promptRepoPath: job.RepoPath,
 		agentRepoPath:  agentRepoPath,
-		cleanup:        cleanup,
+		snapshotTarget: prompt.SnapshotTarget{
+			RepoPath:       agentRepoPath,
+			ConfigRepoPath: job.RepoPath,
+		},
+		cleanup: cleanup,
 	}, nil
 }
 
 func (wp *WorkerPool) jobRequiresCIExactCheckout(job *storage.ReviewJob) (bool, error) {
-	if wp.db == nil || job == nil || job.PanelRunUUID == "" || job.IsFixJob() {
+	if job == nil || job.PanelRunUUID == "" || job.IsFixJob() {
+		return false, nil
+	}
+	if job.Source == storage.JobSourceCI {
+		return true, nil
+	}
+	if wp.db == nil {
 		return false, nil
 	}
 	if _, err := wp.db.GetCIPanelByRunUUID(job.PanelRunUUID); err != nil {
@@ -514,8 +528,9 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	}
 
 	// Resolve checkouts for this job. CI panel jobs run agents in a detached
-	// worktree at the reviewed head, but prompt-side config and snapshots stay
-	// tied to the trusted shared clone checkout.
+	// worktree at the reviewed head; prompt-side config stays tied to the
+	// trusted shared clone, while snapshots are written where the agent can read
+	// them.
 	checkout, err := wp.prepareJobCheckout(ctx, workerID, job)
 	if checkout.cleanup != nil {
 		defer checkout.cleanup()
@@ -547,7 +562,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			ctx, checkout.promptRepoPath, cfg, job.ReviewType,
 		)
 		reviewPrompt, cleanup, err = preparePrebuiltPrompt(
-			checkout.promptRepoPath, job, reviewPrompt, excludes,
+			checkout.promptRepoPath, checkout.snapshotTarget, job, reviewPrompt, excludes,
 		)
 		if cleanup != nil {
 			defer cleanup()
@@ -586,7 +601,10 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 
 		if job.DiffContent != nil {
 			// Dirty job - use pre-captured diff
-			dirtyResult, dirtyErr := pb.BuildDirtyWithSnapshot(*job.DiffContent, cfg.ReviewContextCount, job.Agent, job.ReviewType, minSev)
+			dirtyResult, dirtyErr := pb.BuildDirtyWithSnapshotTarget(
+				*job.DiffContent, cfg.ReviewContextCount, job.Agent, job.ReviewType, minSev,
+				checkout.snapshotTarget,
+			)
 			if dirtyResult.Cleanup != nil {
 				defer dirtyResult.Cleanup()
 			}
@@ -598,9 +616,9 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			excludes := config.ResolveExcludePatterns(
 				ctx, checkout.promptRepoPath, cfg, job.ReviewType,
 			)
-			snapResult, snapErr := pb.BuildWithSnapshot(
+			snapResult, snapErr := pb.BuildWithSnapshotTarget(
 				job.GitRef, cfg.ReviewContextCount, job.Agent,
-				job.ReviewType, minSev, excludes,
+				job.ReviewType, minSev, excludes, checkout.snapshotTarget,
 			)
 			if snapResult.Cleanup != nil {
 				defer snapResult.Cleanup()
@@ -1379,13 +1397,14 @@ func (wp *WorkerPool) failoverOrFail(
 }
 
 func preparePrebuiltPrompt(
-	repoPath string, job *storage.ReviewJob, reviewPrompt string, excludes []string,
+	repoPath string, snapshotTarget prompt.SnapshotTarget,
+	job *storage.ReviewJob, reviewPrompt string, excludes []string,
 ) (string, func(), error) {
 	if !strings.Contains(reviewPrompt, prompt.DiffFilePathPlaceholder) {
 		return reviewPrompt, nil, nil
 	}
 	builder := prompt.NewBuilder(nil).ForRepo(repoPath, job.RepoID)
-	diffFile, cleanup, err := builder.WriteDiffSnapshot(job.GitRef, excludes)
+	diffFile, cleanup, err := builder.WriteDiffSnapshotTarget(job.GitRef, excludes, snapshotTarget)
 	if err != nil {
 		return "", nil, fmt.Errorf("prepare diff snapshot for prebuilt prompt: %w", err)
 	}

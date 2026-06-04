@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"database/sql"
+	"errors"
 	"fmt"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -41,6 +43,11 @@ func (s *Server) rerunPanelRun(job *storage.ReviewJob) (*RerunJobOutput, error) 
 	if len(members) == 0 {
 		return nil, huma.Error400BadRequest("panel run has no members to rerun")
 	}
+	source, err := s.panelRerunSource(job)
+	if err != nil {
+		return nil, huma.Error500InternalServerError(
+			fmt.Sprintf("resolve panel rerun source: %v", err))
+	}
 
 	runUUID := uuid.NewString()
 	memberOpts := make([]storage.EnqueueOpts, len(members))
@@ -50,7 +57,7 @@ func (s *Server) rerunPanelRun(job *storage.ReviewJob) (*RerunJobOutput, error) 
 			return nil, huma.Error500InternalServerError(
 				fmt.Sprintf("load member diff: %v", diffErr))
 		}
-		memberOpts[i] = panelRerunMemberOpts(members[i], runUUID, diff)
+		memberOpts[i] = panelRerunMemberOpts(members[i], runUUID, diff, source)
 	}
 
 	synthDiff, err := s.db.GetJobDiffContent(job.ID)
@@ -58,7 +65,7 @@ func (s *Server) rerunPanelRun(job *storage.ReviewJob) (*RerunJobOutput, error) 
 		return nil, huma.Error500InternalServerError(
 			fmt.Sprintf("load synthesis diff: %v", err))
 	}
-	synthOpts := panelRerunSynthesisOpts(job, runUUID, synthDiff)
+	synthOpts := panelRerunSynthesisOpts(job, runUUID, synthDiff, source)
 
 	if _, _, err := s.db.EnqueuePanelRun(memberOpts, synthOpts); err != nil {
 		return nil, huma.Error500InternalServerError(
@@ -70,6 +77,19 @@ func (s *Server) rerunPanelRun(job *storage.ReviewJob) (*RerunJobOutput, error) 
 	return resp, nil
 }
 
+func (s *Server) panelRerunSource(job *storage.ReviewJob) (string, error) {
+	if job.Source != "" {
+		return job.Source, nil
+	}
+	if _, err := s.db.GetCIPanelByRunUUID(job.PanelRunUUID); err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return "", nil
+		}
+		return "", err
+	}
+	return storage.JobSourceCI, nil
+}
+
 // panelRerunMemberOpts clones one member job into fresh EnqueueOpts for a new
 // run. It copies the full frozen target (commit/diff/patch/severity/worktree),
 // the resolved agent/model/provider/reasoning/review_type, the stored Prompt
@@ -77,7 +97,7 @@ func (s *Server) rerunPanelRun(job *storage.ReviewJob) (*RerunJobOutput, error) 
 // (name/index/config), reassigning only the run UUID. Review/range/dirty prompts
 // are rebuilt by the worker so reruns do not reuse stale prebuilt prompts. diff
 // is the member's stored dirty diff (empty for commit/range targets).
-func panelRerunMemberOpts(m storage.ReviewJob, runUUID, diff string) storage.EnqueueOpts {
+func panelRerunMemberOpts(m storage.ReviewJob, runUUID, diff, source string) storage.EnqueueOpts {
 	prompt := ""
 	if m.UsesStoredPrompt() {
 		prompt = m.Prompt
@@ -98,6 +118,7 @@ func panelRerunMemberOpts(m storage.ReviewJob, runUUID, diff string) storage.Enq
 		DiffContent:           diff,
 		Prompt:                prompt,
 		PromptPrebuilt:        false,
+		Source:                source,
 		OutputPrefix:          m.OutputPrefix,
 		Agentic:               m.Agentic,
 		JobType:               m.JobType,
@@ -117,7 +138,7 @@ func panelRerunMemberOpts(m storage.ReviewJob, runUUID, diff string) storage.Enq
 // panelRerunSynthesisOpts clones the synthesis parent into fresh EnqueueOpts for
 // a new run. EnqueuePanelRun re-enforces JobType=synthesis, role=synthesis, and
 // ClaimBlocked, but they are set here too so the opts are self-describing.
-func panelRerunSynthesisOpts(job *storage.ReviewJob, runUUID, diff string) storage.EnqueueOpts {
+func panelRerunSynthesisOpts(job *storage.ReviewJob, runUUID, diff, source string) storage.EnqueueOpts {
 	return storage.EnqueueOpts{
 		RepoID:            job.RepoID,
 		CommitID:          job.CommitIDValue(),
@@ -133,6 +154,7 @@ func panelRerunSynthesisOpts(job *storage.ReviewJob, runUUID, diff string) stora
 		PatchID:           job.PatchID,
 		DiffContent:       diff,
 		OutputPrefix:      job.OutputPrefix,
+		Source:            source,
 		Agentic:           job.Agentic,
 		JobType:           storage.JobTypeSynthesis,
 		WorktreePath:      job.WorktreePath,

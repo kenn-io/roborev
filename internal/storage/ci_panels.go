@@ -198,8 +198,10 @@ func (db *DB) createCIPanelRunTx(ctx context.Context, exec execer, githubRepo st
 	// enforces role/gate but NOT the run uuid.
 	for i := range members {
 		members[i].PanelRunUUID = runUUID
+		members[i].Source = JobSourceCI
 	}
 	synthesis.PanelRunUUID = runUUID
+	synthesis.Source = JobSourceCI
 
 	mems, syn, err := db.enqueuePanelRunTx(ctx, exec, members, synthesis, machineID, now)
 	if err != nil {

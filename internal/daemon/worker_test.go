@@ -448,14 +448,14 @@ func TestWorkerCIPanelMemberRunsAgainstReviewedHeadWorktree(t *testing.T) {
 	assert.Equal(t, storage.JobStatusDone, tcJob.Status)
 }
 
-func TestWorkerCIPanelPromptSnapshotIgnoresPRHeadExcludeConfig(t *testing.T) {
+func TestWorkerCIPanelPromptSnapshotUsesTrustedConfigAndAgentCheckout(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 
 	db := testutil.OpenTestDB(t)
 	repo := testutil.NewGitRepo(t)
 	baseSHA := repo.CommitFile("README.md", "base\n", "base")
 	repo.Checkout("-b", "pr-head")
-	repo.WriteFile(".roborev.toml", "exclude_patterns = [\"secret.txt\"]\n")
+	repo.WriteFile(".roborev.toml", "exclude_patterns = [\"secret.txt\"]\nsnapshot_dir = \"pr-controlled-snapshots\"\n")
 	repo.WriteFile("secret.txt", "SECRET_SENTINEL_FROM_PR\n")
 	var big strings.Builder
 	for range 400 {
@@ -530,9 +530,10 @@ func TestWorkerCIPanelPromptSnapshotIgnoresPRHeadExcludeConfig(t *testing.T) {
 	require.NotEqual(t, repo.Path(), agentRepoPath, "agent should still run in the exact PR-head worktree")
 	require.NotEmpty(t, snapshotPath)
 	snapshotRoot := filepath.Clean(filepath.Dir(filepath.Dir(snapshotPath)))
-	assert.Equal(t, filepath.Join(repo.Path(), ".roborev"), snapshotRoot,
-		"CI snapshots should be created under the trusted shared checkout")
-	assert.NotContains(t, snapshotPath, agentRepoPath)
+	assert.Equal(t, filepath.Join(agentRepoPath, ".roborev"), snapshotRoot,
+		"CI snapshots should be created where the exact-checkout agent can read them")
+	assert.NotContains(t, snapshotPath, "pr-controlled-snapshots",
+		"PR-head snapshot_dir must not control CI snapshot placement")
 	assert.Contains(t, snapshotContent, "SECRET_SENTINEL_FROM_PR",
 		"PR-head exclude_patterns must not suppress files from CI diff snapshots")
 }
@@ -1204,6 +1205,7 @@ func TestPreparePrebuiltPrompt_ReplacesDiffFilePlaceholder(t *testing.T) {
 
 	reviewPrompt, cleanup, err := preparePrebuiltPrompt(
 		tc.TmpDir,
+		prompt.SnapshotTarget{},
 		job,
 		"## Pull Request Discussion\n\n### Diff\n\nRead the diff from: `"+prompt.DiffFilePathPlaceholder+"`\n",
 		nil,
@@ -1228,6 +1230,7 @@ func TestPreparePrebuiltPrompt_RequotesDiffPathWithSingleQuote(t *testing.T) {
 
 	reviewPrompt, cleanup, err := preparePrebuiltPrompt(
 		repoPath,
+		prompt.SnapshotTarget{},
 		job,
 		"### Diff\n\nRead the diff from: `"+prompt.DiffFilePathPlaceholder+"`\n",
 		nil,
@@ -1253,6 +1256,7 @@ func TestPreparePrebuiltPrompt_AllowsUnsafeModeByStillWritingDiffFile(t *testing
 
 	reviewPrompt, cleanup, err := preparePrebuiltPrompt(
 		tc.TmpDir,
+		prompt.SnapshotTarget{},
 		job,
 		"### Diff\n\nRead the diff from: `"+prompt.DiffFilePathPlaceholder+"`\n",
 		nil,

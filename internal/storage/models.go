@@ -58,6 +58,12 @@ const (
 	PanelRoleSynthesis = "synthesis"
 )
 
+// Job source values identify daemon-created automation rows.
+const (
+	JobSourceAutoDesign = "auto_design"
+	JobSourceCI         = "ci"
+)
+
 type ReviewJob struct {
 	ID                int64      `json:"id"`
 	RepoID            int64      `json:"repo_id"`
@@ -87,7 +93,7 @@ type ReviewJob struct {
 	PatchID           string     `json:"patch_id,omitempty"`      // Stable patch-id for rebase tracking
 	OutputPrefix      string     `json:"output_prefix,omitempty"` // Prefix to prepend to review output
 	SkipReason        string     `json:"skip_reason,omitempty"`   // Reason a design review was skipped (status=skipped only)
-	Source            string     `json:"source,omitempty"`        // "auto_design" for auto-dispatched rows; empty for explicit/user rows
+	Source            string     `json:"source,omitempty"`        // Automation source; empty for explicit/user rows
 	ParentJobID       *int64     `json:"parent_job_id,omitempty"` // Job being fixed (for fix jobs)
 	Patch             *string    `json:"patch,omitempty"`         // Generated diff patch (for completed fix jobs)
 	WorktreePath      string     `json:"worktree_path,omitempty"` // Worktree checkout path (empty = use RepoPath)

@@ -79,6 +79,7 @@ type EnqueueOpts struct {
 	PromptPrebuilt    bool   // Prompt is prebuilt and should be used as-is by the worker
 	Label             string // Display label in TUI for task jobs (default: "prompt")
 	JobType           string // Explicit job type (review/range/dirty/task/compact/fix); inferred if empty
+	Source            string // Automation source (empty = explicit/user row)
 	ParentJobID       int64  // Parent job being fixed (for fix jobs)
 	WorktreePath      string // Worktree checkout path (empty = use main repo root)
 	MinSeverity       string // Minimum severity filter (canonical: critical/high/medium/low or empty)
@@ -180,8 +181,8 @@ func (db *DB) insertJobTx(ctx context.Context, exec execer, opts EnqueueOpts, ui
 		INSERT INTO review_jobs (repo_id, commit_id, git_ref, branch, session_id, agent, model, provider, requested_model, requested_provider, reasoning,
 			status, job_type, review_type, patch_id, diff_content, prompt, agentic, prompt_prebuilt, output_prefix,
 			parent_job_id, uuid, source_machine_id, updated_at, worktree_path, min_severity, backup_agent, backup_model,
-			panel_run_uuid, panel_role, panel_name, panel_member_name, panel_member_index, panel_member_config_json, claim_blocked)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+			panel_run_uuid, panel_role, panel_name, panel_member_name, panel_member_index, panel_member_config_json, claim_blocked, source)
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		opts.RepoID, commitIDParam, gitRef, nullString(opts.Branch), nullString(opts.SessionID),
 		opts.Agent, nullString(opts.Model), nullString(opts.Provider), nullString(opts.RequestedModel), nullString(opts.RequestedProvider), reasoning,
 		jobType, opts.ReviewType, nullString(opts.PatchID),
@@ -189,7 +190,7 @@ func (db *DB) insertJobTx(ctx context.Context, exec execer, opts EnqueueOpts, ui
 		nullString(opts.OutputPrefix), parentJobIDParam,
 		uid, machineID, nowStr, opts.WorktreePath, normalizeMinSeverityForWrite(opts.MinSeverity), opts.BackupAgent, opts.BackupModel,
 		nullString(opts.PanelRunUUID), nullString(opts.PanelRole), nullString(opts.PanelName),
-		nullString(opts.PanelMemberName), opts.PanelMemberIndex, nullString(opts.PanelMemberConfigJSON), claimBlockedInt)
+		nullString(opts.PanelMemberName), opts.PanelMemberIndex, nullString(opts.PanelMemberConfigJSON), claimBlockedInt, nullString(opts.Source))
 	if err != nil {
 		return nil, err
 	}
@@ -230,6 +231,7 @@ func (db *DB) insertJobTx(ctx context.Context, exec execer, opts EnqueueOpts, ui
 		PanelMemberIndex:      opts.PanelMemberIndex,
 		PanelMemberConfigJSON: opts.PanelMemberConfigJSON,
 		ClaimBlocked:          opts.ClaimBlocked,
+		Source:                opts.Source,
 	}
 	if opts.ParentJobID > 0 {
 		job.ParentJobID = &opts.ParentJobID

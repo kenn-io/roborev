@@ -207,14 +207,32 @@ type SnapshotResult struct {
 	Cleanup func()
 }
 
+// SnapshotTarget controls where oversized diff snapshot files are written.
+// The zero value writes snapshots under the builder repo using that repo's
+// snapshot_dir config. Set RepoPath to write under a different checkout, and
+// ConfigRepoPath to resolve snapshot_dir from a trusted checkout.
+type SnapshotTarget struct {
+	RepoPath       string
+	ConfigRepoPath string
+}
+
 // BuildWithSnapshot builds a review prompt, automatically writing a diff snapshot file
 // when the diff is too large to inline.
 func (b *Builder) BuildWithSnapshot(gitRef string, contextCount int, agentName, reviewType, minSeverity string, excludes []string) (SnapshotResult, error) {
+	return b.BuildWithSnapshotTarget(gitRef, contextCount, agentName, reviewType, minSeverity, excludes, SnapshotTarget{})
+}
+
+// BuildWithSnapshotTarget is like BuildWithSnapshot, but lets callers place the
+// snapshot under a different checkout while preserving trusted config resolution.
+func (b *Builder) BuildWithSnapshotTarget(
+	gitRef string, contextCount int, agentName, reviewType, minSeverity string,
+	excludes []string, target SnapshotTarget,
+) (SnapshotResult, error) {
 	p, err := b.BuildWithDiffFile(gitRef, contextCount, agentName, reviewType, minSeverity, "")
 	if !errors.Is(err, ErrDiffTruncatedNoFile) {
 		return SnapshotResult{Prompt: p}, err
 	}
-	diffFile, cleanup, writeErr := b.WriteDiffSnapshot(gitRef, excludes)
+	diffFile, cleanup, writeErr := b.WriteDiffSnapshotTarget(gitRef, excludes, target)
 	if writeErr != nil {
 		return SnapshotResult{}, fmt.Errorf("write diff snapshot: %w", writeErr)
 	}
@@ -230,6 +248,12 @@ func (b *Builder) BuildWithSnapshot(gitRef string, contextCount int, agentName, 
 // file. The file intentionally lives outside .git so sandboxed agents can read
 // it without inlining oversized diffs into the submitted prompt.
 func (b *Builder) WriteDiffSnapshot(gitRef string, excludes []string) (string, func(), error) {
+	return b.WriteDiffSnapshotTarget(gitRef, excludes, SnapshotTarget{})
+}
+
+// WriteDiffSnapshotTarget is like WriteDiffSnapshot, but writes the snapshot
+// under target.RepoPath while resolving snapshot_dir from target.ConfigRepoPath.
+func (b *Builder) WriteDiffSnapshotTarget(gitRef string, excludes []string, target SnapshotTarget) (string, func(), error) {
 	var (
 		fullDiff string
 		err      error
@@ -245,24 +269,52 @@ func (b *Builder) WriteDiffSnapshot(gitRef string, excludes []string) (string, f
 	if fullDiff == "" {
 		return "", nil, fmt.Errorf("diff is empty")
 	}
-	return b.writeExternalDiffSnapshot(fullDiff)
+	return b.writeExternalDiffSnapshotTarget(fullDiff, target)
 }
 
-func (b *Builder) writeExternalDiffSnapshot(diff string) (string, func(), error) {
-	snapshotRoot, err := config.ResolveSnapshotDir(b.repoPath)
+func (b *Builder) writeExternalDiffSnapshotTarget(diff string, target SnapshotTarget) (string, func(), error) {
+	repoPath, snapshotRoot, err := b.resolveSnapshotTarget(target)
 	if err != nil {
-		return "", nil, fmt.Errorf("resolve snapshot dir: %w", err)
-	}
-	if err := validateSnapshotRoot(b.repoPath, snapshotRoot); err != nil {
 		return "", nil, err
 	}
-	if err := ensureSnapshotRootIgnored(b.repoPath, snapshotRoot); err != nil {
+	return writeExternalDiffSnapshot(repoPath, snapshotRoot, diff)
+}
+
+func (b *Builder) resolveSnapshotTarget(target SnapshotTarget) (string, string, error) {
+	repoPath := target.RepoPath
+	if repoPath == "" {
+		repoPath = b.repoPath
+	}
+	configRepoPath := target.ConfigRepoPath
+	if configRepoPath == "" {
+		configRepoPath = repoPath
+	}
+	configuredRoot, err := config.ResolveSnapshotDir(configRepoPath)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve snapshot dir: %w", err)
+	}
+	rel, err := filepath.Rel(configRepoPath, configuredRoot)
+	if err != nil {
+		return "", "", fmt.Errorf("resolve snapshot dir relative path: %w", err)
+	}
+	rel = filepath.Clean(rel)
+	if rel == "." || !filepath.IsLocal(rel) {
+		return "", "", fmt.Errorf("snapshot_dir must be under the config repo root: %s", configuredRoot)
+	}
+	return repoPath, filepath.Join(repoPath, rel), nil
+}
+
+func writeExternalDiffSnapshot(repoPath, snapshotRoot, diff string) (string, func(), error) {
+	if err := validateSnapshotRoot(repoPath, snapshotRoot); err != nil {
+		return "", nil, err
+	}
+	if err := ensureSnapshotRootIgnored(repoPath, snapshotRoot); err != nil {
 		return "", nil, fmt.Errorf("ensure snapshot dir ignored: %w", err)
 	}
 	if err := os.MkdirAll(snapshotRoot, 0o755); err != nil {
 		return "", nil, fmt.Errorf("create snapshot root: %w", err)
 	}
-	if err := validateSnapshotRoot(b.repoPath, snapshotRoot); err != nil {
+	if err := validateSnapshotRoot(repoPath, snapshotRoot); err != nil {
 		return "", nil, err
 	}
 	snapshotLifecycleMu.Lock()
@@ -423,12 +475,21 @@ func (b *Builder) CleanupStaleSnapshots(olderThan time.Duration) error {
 // BuildDirtyWithSnapshot builds a dirty review prompt, writing the diff to a snapshot file
 // when it's too large to inline.
 func (b *Builder) BuildDirtyWithSnapshot(diff string, contextCount int, agentName, reviewType, minSeverity string) (SnapshotResult, error) {
+	return b.BuildDirtyWithSnapshotTarget(diff, contextCount, agentName, reviewType, minSeverity, SnapshotTarget{})
+}
+
+// BuildDirtyWithSnapshotTarget is like BuildDirtyWithSnapshot, but lets callers
+// place the snapshot under a different checkout while preserving trusted config
+// resolution.
+func (b *Builder) BuildDirtyWithSnapshotTarget(
+	diff string, contextCount int, agentName, reviewType, minSeverity string, target SnapshotTarget,
+) (SnapshotResult, error) {
 	p, err := b.BuildDirty(diff, contextCount, agentName, reviewType, minSeverity)
 	if err != nil {
 		return SnapshotResult{}, err
 	}
 	if strings.Contains(p, dirtyTruncatedDiffMarker) && len(diff) > 0 {
-		diffFile, cleanup, snapErr := b.writeExternalDiffSnapshot(diff)
+		diffFile, cleanup, snapErr := b.writeExternalDiffSnapshotTarget(diff, target)
 		if snapErr != nil {
 			return SnapshotResult{}, fmt.Errorf("dirty diff snapshot: %w", snapErr)
 		}
