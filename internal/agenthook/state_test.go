@@ -22,6 +22,7 @@ func TestIsCommitProducingCommand(t *testing.T) {
 	}{
 		{name: "commit", command: "git commit -m test", want: true},
 		{name: "cherry pick with git options", command: "git -C /tmp/repo cherry-pick abc123", want: true},
+		{name: "commit with quoted path option", command: `git -C "/tmp/repo with spaces" commit -m test`, want: true},
 		{name: "revert with config option", command: "git -c user.name=test revert abc123", want: true},
 		{name: "status", command: "git status", want: false},
 		{name: "empty", command: "", want: false},
@@ -191,6 +192,55 @@ func TestRecordStopTriggersFailedReviewWithoutRepoConfig(t *testing.T) {
 	assert.True(resp.Triggered)
 	assert.Equal("failed_reviews", resp.TriggeredBy)
 	assert.Equal(1, resp.FailedReviewCount)
+}
+
+func TestRecordStopTriggersFailedReviewOnDetachedHead(t *testing.T) {
+	assert := assert.New(t)
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("main.go", "package main\n", "initial")
+	repo.RunGit("checkout", "--detach")
+
+	closed := false
+	verdict := "F"
+	requests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		requests++
+		assert.Equal("/api/jobs", r.URL.Path)
+		assert.Equal(repo.Path(), r.URL.Query().Get("repo"))
+		assert.Empty(r.URL.Query().Get("branch"))
+		assert.Empty(r.URL.Query().Get("branch_include_empty"))
+		assert.Equal("false", r.URL.Query().Get("closed"))
+		assert.Equal("done", r.URL.Query().Get("status"))
+		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{
+			Jobs: []storage.ReviewJob{
+				{Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict},
+			},
+		}))
+	}))
+	t.Cleanup(server.Close)
+
+	store := &StateStore{
+		path:     filepath.Join(t.TempDir(), "state.json"),
+		sessions: map[string]SessionState{},
+	}
+	resp, err := store.Record(Request{
+		Event: Input{
+			SessionID:     "session-1",
+			CWD:           repo.Path(),
+			HookEventName: "Stop",
+		},
+		Threshold:             5,
+		FailedReviewThreshold: 1,
+		Instruction:           "Run roborev fix.",
+		RoborevServerAddr:     server.URL,
+	})
+
+	require.NoError(t, err)
+	assert.False(resp.Skipped)
+	assert.True(resp.Triggered)
+	assert.Equal("failed_reviews", resp.TriggeredBy)
+	assert.Equal(1, resp.FailedReviewCount)
+	assert.Equal(1, requests)
 }
 
 func TestRecordPostToolUseFirstCommitWithoutBaselineDoesNotCount(t *testing.T) {

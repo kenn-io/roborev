@@ -481,7 +481,7 @@ func gitOutput(cwd string, args ...string) (string, error) {
 }
 
 func IsCommitProducingCommand(command string) bool {
-	fields := strings.Fields(command)
+	fields := shellFields(command)
 	for i := range len(fields) {
 		if !isGitToken(fields[i]) {
 			continue
@@ -514,6 +514,61 @@ func IsCommitProducingCommand(command string) bool {
 	return false
 }
 
+func shellFields(command string) []string {
+	var fields []string
+	var b strings.Builder
+	var quote rune
+	escaped := false
+	inToken := false
+	for _, r := range command {
+		if escaped {
+			b.WriteRune(r)
+			inToken = true
+			escaped = false
+			continue
+		}
+		if quote != 0 {
+			if r == quote {
+				quote = 0
+				inToken = true
+				continue
+			}
+			if quote != '\'' && r == '\\' {
+				escaped = true
+				inToken = true
+				continue
+			}
+			b.WriteRune(r)
+			inToken = true
+			continue
+		}
+		switch r {
+		case '\\':
+			escaped = true
+			inToken = true
+		case '\'', '"', '`':
+			quote = r
+			inToken = true
+		case ' ', '\t', '\r', '\n', ';', '&', '|', '(', ')', '{', '}', '[', ']', '<', '>':
+			if inToken {
+				fields = append(fields, b.String())
+				b.Reset()
+				inToken = false
+			}
+		default:
+			b.WriteRune(r)
+			inToken = true
+		}
+	}
+	if escaped {
+		b.WriteRune('\\')
+	}
+	if inToken {
+		fields = append(fields, b.String())
+	}
+	return fields
+}
+
 func isGitToken(token string) bool {
 	token = cleanShellToken(token)
 	return token == "git" || strings.HasSuffix(token, "/git")
@@ -537,7 +592,7 @@ type jobsResponse struct {
 }
 
 func countOpenFailedReviews(ctx context.Context, repoRoot, branch, configuredAddr string) (int, bool) {
-	if repoRoot == "" || branch == "" {
+	if repoRoot == "" {
 		return 0, false
 	}
 	ep, ok := roborevEndpoint(configuredAddr)
@@ -547,8 +602,10 @@ func countOpenFailedReviews(ctx context.Context, repoRoot, branch, configuredAdd
 	client := ep.HTTPClient(2 * time.Second)
 	values := url.Values{}
 	values.Set("repo", repoRoot)
-	values.Set("branch", branch)
-	values.Set("branch_include_empty", "true")
+	if branch != "" {
+		values.Set("branch", branch)
+		values.Set("branch_include_empty", "true")
+	}
 	values.Set("status", "done")
 	values.Set("closed", "false")
 	values.Set("limit", "10000")
