@@ -8,6 +8,8 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
+	"slices"
 	"strings"
 
 	"go.kenn.io/roborev/internal/config"
@@ -74,5 +76,98 @@ func IsValidCompactOutput(output string) bool {
 		}
 	}
 
-	return true
+	return !reportsRemainingFindingsWithoutDetails(output)
+}
+
+var (
+	compactFileLinePattern        = regexp.MustCompile(`(?i)\b[\w./-]+\.(go|py|js|ts|tsx|jsx|java|rb|rs|c|cc|cpp|h|hpp|cs|php|swift|kt|m|mm|sql|yaml|yml|json|toml|md):\d+\b`)
+	compactPositiveRemainingCount = regexp.MustCompile(`\b[1-9]\d* (?:verified )?findings? remains?\b`)
+)
+
+func reportsRemainingFindingsWithoutDetails(output string) bool {
+	lower := strings.ToLower(output)
+	if reportsNoRemainingFindings(lower) {
+		return false
+	}
+	if !mentionsRemainingFindings(lower) {
+		return false
+	}
+	return !hasActionableCompactFinding(output, lower)
+}
+
+func reportsNoRemainingFindings(lower string) bool {
+	if compactPositiveRemainingCount.MatchString(lower) {
+		return false
+	}
+	return slices.ContainsFunc(compactNormalizedStatements(lower), isNoRemainingCompactStatement)
+}
+
+func compactNormalizedStatements(lower string) []string {
+	parts := strings.FieldsFunc(lower, func(r rune) bool {
+		switch r {
+		case '\n', '\r', '.', '!', '?', ',', ';', ':':
+			return true
+		default:
+			return false
+		}
+	})
+
+	statements := make([]string, 0, len(parts))
+	for _, part := range parts {
+		statement := strings.Trim(part, "-*_`> \t")
+		statement = strings.Join(strings.Fields(statement), " ")
+		if statement != "" {
+			statements = append(statements, statement)
+		}
+	}
+	return statements
+}
+
+func isNoRemainingCompactStatement(statement string) bool {
+	switch statement {
+	case "all previous findings have been addressed",
+		"all findings have been resolved",
+		"no issues found",
+		"no verified findings remain",
+		"no findings remain",
+		"no remaining findings",
+		"0 findings",
+		"0 findings remain",
+		"0 verified findings",
+		"0 verified findings remain",
+		"zero findings",
+		"zero findings remain",
+		"zero verified findings",
+		"zero verified findings remain":
+		return true
+	default:
+		return false
+	}
+}
+
+func mentionsRemainingFindings(lower string) bool {
+	remainingPhrases := []string{
+		"findings remain",
+		"finding remains",
+		"verified findings",
+		"verified finding",
+		"verdict: fail",
+	}
+	for _, phrase := range remainingPhrases {
+		if strings.Contains(lower, phrase) {
+			return true
+		}
+	}
+	return false
+}
+
+func hasActionableCompactFinding(output, lower string) bool {
+	if compactFileLinePattern.MatchString(output) {
+		return true
+	}
+
+	return strings.Contains(lower, "**severity**:") &&
+		(strings.Contains(lower, "**location**:") ||
+			strings.Contains(lower, "**problem**:") ||
+			strings.Contains(lower, "**fix**:"))
 }

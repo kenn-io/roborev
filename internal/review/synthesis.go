@@ -16,11 +16,11 @@ var severityAbove = map[string]string{
 	"medium":   "Only include Medium, High, and Critical findings.",
 }
 
-// VerifyDedupePreamble returns the static instruction block shared by the CLI
-// compact command and the panel synthesis worker: verify each finding against
-// the current codebase, consolidate duplicates, and emit only verified
-// findings. The text is byte-preserved so both call sites emit identical
-// instructions.
+// VerifyDedupePreamble returns the instruction block used by the compact
+// command's consolidation prompt: verify each finding against the current
+// codebase, consolidate duplicates, and re-emit every still-valid finding
+// using the regular review output format so downstream verdict parsing and
+// fix flows keep working.
 func VerifyDedupePreamble() string {
 	return "## Instructions\n\n" +
 		"1. **Verify each finding against the current codebase:**\n" +
@@ -32,10 +32,11 @@ func VerifyDedupePreamble() string {
 		"   - Merge duplicate findings from different reviews\n" +
 		"   - Provide a single comprehensive description for each group\n\n" +
 		"3. **Output format:**\n" +
-		"   - List only VERIFIED findings in your output\n" +
-		"   - Use the same severity levels (Critical, High, Medium, Low)\n" +
-		"   - Include file and line references where possible\n" +
-		"   - Explain what the issue is and why it matters\n\n"
+		"   - Use the review output format above, including verdict-compatible finding structure\n" +
+		"   - Every verified finding that still applies must be repeated in the compact output\n" +
+		"   - Separate repeated findings with the same `---` delimiter used by regular reviews\n" +
+		"   - Counts, totals, and summaries may accompany repeated findings, but must not replace them\n" +
+		"   - The summary may mention how many prior findings were dropped as fixed, duplicates, or false positives\n\n"
 }
 
 // BuildSynthesisPrompt creates the prompt for the synthesis agent.

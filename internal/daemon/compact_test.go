@@ -120,6 +120,63 @@ func TestIsValidCompactOutput(t *testing.T) {
 		want  bool
 	}{
 		{"real_review", "No issues found.", true},
+		{"no_verified_findings_remain", "No verified findings remain.", true},
+		{"zero_findings", "0 findings.", true},
+		{"zero_findings_remain", "0 findings remain.", true},
+		{"zero_word_findings", "zero findings.", true},
+		{"zero_word_findings_remain", "zero findings remain.", true},
+		{"no_issues_with_dropped_verified_findings_summary", "No issues found.\nSummary: Dropped 4 previously reported verified findings because they no longer reproduce.", true},
+		{
+			"remaining_count_without_findings",
+			`Verdict: Fail
+
+## Compact Analysis
+
+Verified and consolidated 6 open reviews from branch main
+
+Original jobs: 46, 45, 44, 41, 40, 38
+
+---
+
+Done. All 6 reviews have been verified against the current codebase: 4 previously-reported issues are fixed, 5 verified findings remain (1 high, 2 medium, 2 low).`,
+			false,
+		},
+		{
+			"review_findings_with_actionable_entry",
+			`## Review Findings
+
+- **Severity**: High
+- **Location**: cmd/roborev/compact.go:42
+- **Problem**: Source jobs can be closed after a count-only compact result.
+- **Fix**: Reject compact output that says findings remain without listing them.`,
+			true,
+		},
+		{
+			"review_findings_header_with_remaining_count_only",
+			`Verdict: Fail
+
+## Review Findings
+
+5 verified findings remain.`,
+			false,
+		},
+		{
+			"ten_verified_findings_without_details",
+			`Verdict: Fail
+
+10 verified findings remain.`,
+			false,
+		},
+		{
+			"negated_resolved_phrase_with_remaining_count",
+			"Not all findings have been resolved: 5 verified findings remain.",
+			false,
+		},
+		{
+			"dropped_zero_summary_with_remaining_count",
+			"0 verified findings were dropped; 5 verified findings remain.",
+			false,
+		},
 		{"empty", "", false},
 		{"whitespace", "   \n  ", false},
 		{"error_prefix", "Error: something broke", false},

@@ -34,6 +34,21 @@ func TestIsValidConsolidatedReview(t *testing.T) {
 			want:   true,
 		},
 		{
+			name: "invalid_remaining_count_without_findings",
+			output: `Verdict: Fail
+
+## Compact Analysis
+
+Verified and consolidated 6 open reviews from branch main
+
+Original jobs: 46, 45, 44, 41, 40, 38
+
+---
+
+Done. All 6 reviews have been verified against the current codebase: 4 previously-reported issues are fixed, 5 verified findings remain (1 high, 2 medium, 2 low).`,
+			want: false,
+		},
+		{
 			name:   "invalid_empty",
 			output: "",
 			want:   false,
@@ -253,6 +268,15 @@ func TestBuildCompactPrompt(t *testing.T) {
 				"Job 123",
 				"Finding 1: Issue in main.go",
 				"abc123d", // short SHA
+				"Do not include any front matter",
+				"Use the review output format above",
+				"Every verified finding that still applies must be repeated",
+				"Separate repeated findings with the same `---` delimiter",
+				"may mention how many prior findings were dropped",
+			},
+			wantNotContain: []string{
+				"If verified findings remain, format it exactly like this",
+				"     - **Severity**: High/Medium/Low",
 			},
 		},
 		{
@@ -287,7 +311,7 @@ func TestBuildCompactPrompt(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := buildCompactPrompt(tt.jobReviews, tt.branch, "")
+			got := buildCompactPrompt(tt.jobReviews, tt.branch, "", "codex")
 
 			for _, want := range tt.wantContains {
 				assert.Contains(t, got, want, "buildCompactPrompt() missing")

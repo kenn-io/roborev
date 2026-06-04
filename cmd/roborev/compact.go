@@ -20,6 +20,7 @@ import (
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
+	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -216,9 +217,6 @@ func fetchJobBatch(ctx context.Context, ids []int64) (map[int64]storage.JobWithR
 // enqueueConsolidation creates and enqueues a consolidation job.
 // Returns the job ID for tracking.
 func enqueueConsolidation(ctx context.Context, cmd *cobra.Command, repoRoot string, jobReviews []jobReview, branchFilter string, opts compactOptions) (int64, error) {
-	// Build verification prompt
-	prompt := buildCompactPrompt(jobReviews, branchFilter, repoRoot)
-
 	// Resolve agent/model/reasoning using "fix" workflow so compact
 	// uses the same config as `roborev fix`.  Pass the resolved values
 	// to the daemon so it doesn't re-resolve under the "review" workflow.
@@ -236,6 +234,9 @@ func enqueueConsolidation(ctx context.Context, cmd *cobra.Command, repoRoot stri
 	agentName := config.ResolveAgentForWorkflow(
 		opts.agentName, repoRoot, cfg, "fix", reasoning,
 	)
+	// Build verification prompt after agent resolution so compact can reuse
+	// the selected agent's regular review output contract.
+	compactPrompt := buildCompactPrompt(jobReviews, branchFilter, repoRoot, agentName)
 	// Resolve model locally for display; the daemon re-resolves with
 	// its own canonical-agent comparison to skip generic default_model
 	// when the agent was overridden on CLI.
@@ -269,7 +270,7 @@ func enqueueConsolidation(ctx context.Context, cmd *cobra.Command, repoRoot stri
 	resolved.agentName = agentName
 	resolved.model = model
 	resolved.reasoning = reasoning
-	job, err := enqueueCompactJob(ctx, repoRoot, prompt, outputPrefix, label, branchFilter, resolved)
+	job, err := enqueueCompactJob(ctx, repoRoot, compactPrompt, outputPrefix, label, branchFilter, resolved)
 	if err != nil {
 		return 0, fmt.Errorf("enqueue verification job: %w", err)
 	}
@@ -461,8 +462,13 @@ func runCompact(cmd *cobra.Command, opts compactOptions) error {
 	return nil
 }
 
-func buildCompactPrompt(jobReviews []jobReview, branch, repoRoot string) string {
+func buildCompactPrompt(jobReviews []jobReview, branch, repoRoot, agentName string) string {
 	var sb strings.Builder
+
+	if reviewPrompt := strings.TrimSpace(prompt.GetSystemPrompt(agentName, "review")); reviewPrompt != "" {
+		sb.WriteString(reviewPrompt)
+		sb.WriteString("\n\n")
+	}
 
 	sb.WriteString("# Verification and Consolidation Request\n\n")
 	sb.WriteString("You are a code reviewer tasked with verifying and consolidating previous review findings.\n\n")
@@ -500,11 +506,10 @@ func buildCompactPrompt(jobReviews []jobReview, branch, repoRoot string) string 
 
 	sb.WriteString("## Expected Output\n\n")
 	sb.WriteString("Provide a consolidated review output containing only verified findings.\n")
-	sb.WriteString("Format it exactly like a code review, with:\n")
-	sb.WriteString("- Brief summary of findings\n")
-	sb.WriteString("- Each verified finding with severity, file/line, description\n")
-	sb.WriteString("- NO false positives or already-fixed issues\n\n")
-	sb.WriteString("If NO findings remain after verification, state \"All previous findings have been addressed.\"\n")
+	sb.WriteString("Use the same general structure as regular reviews so verdict parsing and downstream fix flows continue to work.\n")
+	sb.WriteString("Do not include false positives or already-fixed issues as findings.\n")
+	sb.WriteString("If any verified findings remain, repeat each remaining finding in the final review output; do not output only counts, totals, or a summary.\n")
+	sb.WriteString("If NO findings remain after verification, use the no-issues form from the regular review format.\n")
 
 	return sb.String()
 }
