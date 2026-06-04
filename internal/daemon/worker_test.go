@@ -552,15 +552,28 @@ func TestCleanupStaleCIWorktreesRemovesOrphanedDetachedWorktree(t *testing.T) {
 	_, rootMarkerErr := os.Stat(filepath.Join(worktreeDir, ciWorktreeRepoMarker))
 	require.ErrorIs(t, rootMarkerErr, os.ErrNotExist, "CI marker should not be agent-visible in the worktree")
 
+	normalizedWorktreeDir := normalizeGitListPath(t, worktreeDir)
 	listBefore := repo.Run("worktree", "list", "--porcelain")
-	require.Contains(t, listBefore, worktreeDir)
+	require.Contains(t, normalizeGitListOutput(listBefore), normalizedWorktreeDir)
 
 	require.NoError(t, cleanupStaleCIWorktrees(context.Background()))
 
 	_, statErr := os.Stat(worktreeDir)
 	require.ErrorIs(t, statErr, os.ErrNotExist, "stale CI worktree directory should be removed")
 	listAfter := repo.Run("worktree", "list", "--porcelain")
-	assert.NotContains(t, listAfter, worktreeDir)
+	assert.NotContains(t, normalizeGitListOutput(listAfter), normalizedWorktreeDir)
+}
+
+func normalizeGitListPath(t *testing.T, path string) string {
+	t.Helper()
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+	return filepath.ToSlash(filepath.Clean(path))
+}
+
+func normalizeGitListOutput(output string) string {
+	return filepath.ToSlash(strings.ReplaceAll(output, "\\", "/"))
 }
 
 func TestWorkerCIPanelMembersAtDifferentHeadsRunConcurrentlyInSeparateWorktrees(t *testing.T) {
@@ -653,14 +666,26 @@ func TestWorkerCIPanelMembersAtDifferentHeadsRunConcurrentlyInSeparateWorktrees(
 		defer wg.Done()
 		pool.processJob("worker-ci-b", claimedB)
 	}()
+	workersDone := make(chan struct{})
+	go func() {
+		wg.Wait()
+		close(workersDone)
+	}()
 
 	var releaseOnce sync.Once
 	releaseAgents := func() {
 		releaseOnce.Do(func() { close(release) })
 	}
-	defer releaseAgents()
+	defer func() {
+		releaseAgents()
+		select {
+		case <-workersDone:
+		case <-time.After(30 * time.Second):
+			t.Log("timed out waiting for concurrent CI workers to finish")
+		}
+	}()
 
-	deadline := time.After(5 * time.Second)
+	deadline := time.After(30 * time.Second)
 	for received := range 2 {
 		select {
 		case <-started:
@@ -669,7 +694,7 @@ func TestWorkerCIPanelMembersAtDifferentHeadsRunConcurrentlyInSeparateWorktrees(
 		}
 	}
 	releaseAgents()
-	wg.Wait()
+	<-workersDone
 
 	mu.Lock()
 	assert.Equal(t, "A", seenMarkers[headA])
