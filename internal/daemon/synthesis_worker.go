@@ -241,15 +241,15 @@ func (wp *WorkerPool) runSynthesisAgent(
 		// linked worktree must synthesize against that worktree, and CI panels
 		// get a detached checkout at the reviewed head instead of the stale
 		// shared clone.
-		repoPath, checkoutCleanup, checkoutErr := wp.prepareJobCheckout(ctx, workerID, job)
-		if checkoutCleanup != nil {
-			defer checkoutCleanup()
+		checkout, checkoutErr := wp.prepareJobCheckout(ctx, workerID, job)
+		if checkout.cleanup != nil {
+			defer checkout.cleanup()
 		}
 		if checkoutErr != nil {
 			wp.failOrRetry(workerID, job, agentName, fmt.Sprintf("prepare checkout: %v", checkoutErr))
 			return "", agentName, checkoutErr
 		}
-		output, err = a.Review(ctx, repoPath, job.GitRef, prompt, agentOutput)
+		output, err = a.Review(ctx, checkout.agentRepoPath, job.GitRef, prompt, agentOutput)
 	}
 	sessionWriter.Flush()
 	if sessionID := sessionWriter.SessionID(); sessionID != "" {

@@ -293,17 +293,38 @@ func resolveEffectiveRepoPath(workerID string, job *storage.ReviewJob) string {
 	return job.WorktreePath
 }
 
+type preparedJobCheckout struct {
+	// promptRepoPath is the trusted checkout used for prompt-side config,
+	// excludes, max-prompt sizing, and snapshot creation.
+	promptRepoPath string
+	// agentRepoPath is the checkout used as the agent cwd.
+	agentRepoPath string
+	cleanup       func()
+}
+
 func (wp *WorkerPool) prepareJobCheckout(
 	ctx context.Context, workerID string, job *storage.ReviewJob,
-) (string, func(), error) {
+) (preparedJobCheckout, error) {
 	requiresCIWorktree, err := wp.jobRequiresCIExactCheckout(job)
 	if err != nil {
-		return "", nil, err
+		return preparedJobCheckout{}, err
 	}
 	if !requiresCIWorktree {
-		return resolveEffectiveRepoPath(workerID, job), nil, nil
+		repoPath := resolveEffectiveRepoPath(workerID, job)
+		return preparedJobCheckout{
+			promptRepoPath: repoPath,
+			agentRepoPath:  repoPath,
+		}, nil
 	}
-	return wp.createCIExactCheckout(ctx, workerID, job)
+	agentRepoPath, cleanup, err := wp.createCIExactCheckout(ctx, workerID, job)
+	if err != nil {
+		return preparedJobCheckout{}, err
+	}
+	return preparedJobCheckout{
+		promptRepoPath: job.RepoPath,
+		agentRepoPath:  agentRepoPath,
+		cleanup:        cleanup,
+	}, nil
 }
 
 func (wp *WorkerPool) jobRequiresCIExactCheckout(job *storage.ReviewJob) (bool, error) {
@@ -484,12 +505,12 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		return
 	}
 
-	// Resolve the checkout to review. CI panel jobs run in a detached
-	// worktree at the reviewed head so free-form agent reads cannot observe a
-	// stale shared clone checkout.
-	effectiveRepoPath, checkoutCleanup, err := wp.prepareJobCheckout(ctx, workerID, job)
-	if checkoutCleanup != nil {
-		defer checkoutCleanup()
+	// Resolve checkouts for this job. CI panel jobs run agents in a detached
+	// worktree at the reviewed head, but prompt-side config and snapshots stay
+	// tied to the trusted shared clone checkout.
+	checkout, err := wp.prepareJobCheckout(ctx, workerID, job)
+	if checkout.cleanup != nil {
+		defer checkout.cleanup()
 	}
 	if err != nil {
 		log.Printf("[%s] Error preparing checkout: %v", workerID, err)
@@ -500,7 +521,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// Build the prompt (or use pre-stored prompt for task/compact jobs).
 	// Create a per-job builder with the snapshotted config so exclude
 	// patterns are resolved consistently.
-	pb := prompt.NewBuilderWithConfig(wp.db, cfg).WithContext(ctx).ForRepo(effectiveRepoPath, job.RepoID)
+	pb := prompt.NewBuilderWithConfig(wp.db, cfg).WithContext(ctx).ForRepo(checkout.promptRepoPath, job.RepoID)
 	if err := pb.CleanupStaleSnapshots(prompt.DefaultStaleSnapshotAge); err != nil {
 		log.Printf("[%s] Warning: cleanup stale snapshots for job %d: %v", workerID, job.ID, err)
 	}
@@ -515,10 +536,10 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		promptToPersist = storedPromptValue
 		var cleanup func()
 		excludes := config.ResolveExcludePatterns(
-			ctx, effectiveRepoPath, cfg, job.ReviewType,
+			ctx, checkout.promptRepoPath, cfg, job.ReviewType,
 		)
 		reviewPrompt, cleanup, err = preparePrebuiltPrompt(
-			effectiveRepoPath, job, reviewPrompt, excludes,
+			checkout.promptRepoPath, job, reviewPrompt, excludes,
 		)
 		if cleanup != nil {
 			defer cleanup()
@@ -546,7 +567,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		// Resolve effective min-severity: job-level override wins, then cascade.
 		minSev := job.MinSeverity
 		if minSev == "" {
-			resolved, resErr := config.ResolveReviewMinSeverity("", effectiveRepoPath, cfg)
+			resolved, resErr := config.ResolveReviewMinSeverity("", checkout.promptRepoPath, cfg)
 			if resErr != nil {
 				log.Printf("[%s] Error resolving min-severity: %v", workerID, resErr)
 				wp.failOrRetry(workerID, job, job.Agent, fmt.Sprintf("resolve min-severity: %v", resErr))
@@ -567,7 +588,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			// Normal job - build prompt from git ref, writing a diff
 			// snapshot file when the diff is too large to inline.
 			excludes := config.ResolveExcludePatterns(
-				ctx, effectiveRepoPath, cfg, job.ReviewType,
+				ctx, checkout.promptRepoPath, cfg, job.ReviewType,
 			)
 			snapResult, snapErr := pb.BuildWithSnapshot(
 				job.GitRef, cfg.ReviewContextCount, job.Agent,
@@ -656,7 +677,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// Enforce the final submission size after all prompt transformations.
 	// Oversized prompts are deterministic and should never be sent to any
 	// agent just to discover a context-window failure.
-	maxPromptSize := config.ResolveMaxPromptSize(effectiveRepoPath, cfg)
+	maxPromptSize := config.ResolveMaxPromptSize(checkout.promptRepoPath, cfg)
 	if maxPromptSize > 0 && len(reviewPrompt) > maxPromptSize {
 		wp.failoverOrFailNonRetryableAgent(
 			workerID, job, agentName,
@@ -667,8 +688,8 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 
 	// Use the effective worktree path for events (empty when worktree is gone or not a worktree job).
 	eventWorktreePath := ""
-	if effectiveRepoPath != job.RepoPath {
-		eventWorktreePath = effectiveRepoPath
+	if checkout.agentRepoPath != job.RepoPath {
+		eventWorktreePath = checkout.agentRepoPath
 	}
 
 	// Broadcast started event
@@ -715,7 +736,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 
 	// For fix jobs, create an isolated worktree to run the agent in.
 	// The agent modifies files in the worktree; afterwards we capture the diff as a patch.
-	reviewRepoPath := effectiveRepoPath
+	reviewRepoPath := checkout.agentRepoPath
 	var fixWorktree *gitworktree.Worktree
 	if job.IsFixJob() {
 		wt, wtErr := gitworktree.Create(ctx, job.RepoPath, job.GitRef, gitworktree.Options{

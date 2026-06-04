@@ -437,6 +437,95 @@ func TestWorkerCIPanelMemberRunsAgainstReviewedHeadWorktree(t *testing.T) {
 	assert.Equal(t, storage.JobStatusDone, tcJob.Status)
 }
 
+func TestWorkerCIPanelPromptSnapshotIgnoresPRHeadExcludeConfig(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+
+	db := testutil.OpenTestDB(t)
+	repo := testutil.NewGitRepo(t)
+	baseSHA := repo.CommitFile("README.md", "base\n", "base")
+	repo.Checkout("-b", "pr-head")
+	repo.WriteFile(".roborev.toml", "exclude_patterns = [\"secret.txt\"]\n")
+	repo.WriteFile("secret.txt", "SECRET_SENTINEL_FROM_PR\n")
+	var big strings.Builder
+	for range 400 {
+		big.WriteString(strings.Repeat("large diff content ", 8))
+		big.WriteString("\n")
+	}
+	repo.WriteFile("big.txt", big.String())
+	repo.RunGit("add", ".roborev.toml", "secret.txt", "big.txt")
+	repo.RunGit("commit", "-m", "pr adds untrusted config and files")
+	headSHA := repo.HeadSHA()
+	repo.Checkout("main")
+
+	storedRepo, err := db.GetOrCreateRepo(repo.Path(), "https://github.com/acme/api.git")
+	require.NoError(t, err)
+
+	const agentName = "ci-snapshot-reader"
+	var (
+		agentRepoPath   string
+		snapshotPath    string
+		snapshotContent string
+	)
+	snapshotRE := regexp.MustCompile("`([^`]+roborev-snapshot-[^`]+\\.diff)`")
+	agent.Register(&agent.FakeAgent{
+		NameStr: agentName,
+		ReviewFn: func(ctx context.Context, repoPath, commitSHA, reviewPrompt string, output io.Writer) (string, error) {
+			agentRepoPath = repoPath
+			match := snapshotRE.FindStringSubmatch(reviewPrompt)
+			if match == nil {
+				return "", fmt.Errorf("review prompt did not reference a snapshot file")
+			}
+			snapshotPath = match[1]
+			data, err := os.ReadFile(snapshotPath)
+			if err != nil {
+				return "", err
+			}
+			snapshotContent = string(data)
+			return "No issues found.", nil
+		},
+	})
+	t.Cleanup(func() { agent.Unregister(agentName) })
+
+	cfg := config.DefaultConfig()
+	cfg.DefaultMaxPromptSize = 6000
+	gitRef := baseSHA + ".." + headSHA
+	created, members, _, err := db.CreateCIPanelRun("acme/api", 104, headSHA,
+		[]storage.EnqueueOpts{{
+			RepoID:           storedRepo.ID,
+			GitRef:           gitRef,
+			Agent:            agentName,
+			JobType:          storage.JobTypeRange,
+			PanelName:        "ci",
+			PanelMemberName:  "snapshot-reader",
+			PanelMemberIndex: 0,
+		}},
+		storage.EnqueueOpts{RepoID: storedRepo.ID, GitRef: gitRef, Agent: "test", PanelName: "ci"},
+	)
+	require.NoError(t, err)
+	require.True(t, created)
+	require.Len(t, members, 1)
+
+	pool := NewWorkerPool(db, NewStaticConfig(cfg), 1, NewBroadcaster(), nil, nil)
+	claimed, err := db.ClaimJob(testWorkerID)
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	require.Equal(t, members[0].ID, claimed.ID)
+
+	pool.processJob(testWorkerID, claimed)
+
+	job, err := db.GetJobByID(claimed.ID)
+	require.NoError(t, err)
+	require.Equal(t, storage.JobStatusDone, job.Status)
+	require.NotEqual(t, repo.Path(), agentRepoPath, "agent should still run in the exact PR-head worktree")
+	require.NotEmpty(t, snapshotPath)
+	snapshotRoot := filepath.Clean(filepath.Dir(filepath.Dir(snapshotPath)))
+	assert.Equal(t, filepath.Join(repo.Path(), ".roborev"), snapshotRoot,
+		"CI snapshots should be created under the trusted shared checkout")
+	assert.NotContains(t, snapshotPath, agentRepoPath)
+	assert.Contains(t, snapshotContent, "SECRET_SENTINEL_FROM_PR",
+		"PR-head exclude_patterns must not suppress files from CI diff snapshots")
+}
+
 func TestCleanupStaleCIWorktreesRemovesOrphanedDetachedWorktree(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 
