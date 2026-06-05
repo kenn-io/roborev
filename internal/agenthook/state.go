@@ -9,6 +9,7 @@ import (
 	"net/url"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -961,6 +962,7 @@ func shellFields(command string) []string {
 	var b strings.Builder
 	var quote rune
 	escaped := false
+	backslashEscapes := runtime.GOOS != "windows"
 	expansionDepth := 0
 	inToken := false
 	pendingExpansion := false
@@ -977,7 +979,7 @@ func shellFields(command string) []string {
 				inToken = true
 				continue
 			}
-			if quote != '\'' && r == '\\' {
+			if quote != '\'' && backslashEscapes && r == '\\' {
 				escaped = true
 				inToken = true
 				continue
@@ -1007,7 +1009,11 @@ func shellFields(command string) []string {
 		}
 		switch r {
 		case '\\':
-			escaped = true
+			if backslashEscapes {
+				escaped = true
+			} else {
+				b.WriteRune(r)
+			}
 			inToken = true
 		case '$':
 			b.WriteRune(r)
