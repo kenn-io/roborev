@@ -3,6 +3,7 @@ package agenthook
 import (
 	"bytes"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -56,6 +57,80 @@ func TestRunInstallCodexIsIdempotent(t *testing.T) {
 	}, &second)
 	require.NoError(t, err)
 	assert.Contains(t, second.String(), "Codex agent hooks already installed")
+}
+
+func TestRunInstallMigratesStaleRoborevHookCommand(t *testing.T) {
+	assert := assert.New(t)
+	path := filepath.Join(t.TempDir(), "hooks.json")
+	oldCommand := "/old/versioned/1.2.3/bin/roborev agent-hook run"
+	newCommand := "/stable/bin/roborev agent-hook run"
+
+	// A config left by an earlier install carries the old absolute-path command.
+	writeJSONFile(t, path, map[string]any{
+		"hooks": map[string]any{
+			"PostToolUse": []any{map[string]any{
+				"matcher": "^Bash$",
+				"hooks":   []any{commandHookJSON(oldCommand, 10)},
+			}},
+			"Stop": []any{map[string]any{
+				"hooks": []any{commandHookJSON(oldCommand, 10)},
+			}},
+		},
+	})
+
+	var out bytes.Buffer
+	err := RunInstall(InstallOptions{
+		Agent:           "codex",
+		Command:         newCommand,
+		CodexConfigPath: path,
+		Timeout:         10 * time.Second,
+	}, &out)
+	require.NoError(t, err)
+
+	// The stale command is replaced in place, not appended beside: each event
+	// keeps exactly one command hook, carrying the new path.
+	root := readJSONFile(t, path)
+	assertCommandCount(t, root, "PostToolUse", newCommand, 1)
+	assertCommandCount(t, root, "PostToolUse", oldCommand, 0)
+	assertCommandCount(t, root, "Stop", newCommand, 1)
+	assertCommandCount(t, root, "Stop", oldCommand, 0)
+	assert.Contains(out.String(), "installed Codex agent hooks", "migrating a stale command counts as a change")
+}
+
+func TestUpsertCommandHookCollapsesDuplicatesAndKeepsOthers(t *testing.T) {
+	assert := assert.New(t)
+	spec := installSpec{
+		Event: "PostToolUse", Matcher: "^Bash$",
+		Command: "/new/roborev agent-hook run", Timeout: 10, IncludeTimeout: true,
+	}
+	commandHook := map[string]any{"type": "command", "command": spec.Command, "timeout": spec.Timeout}
+	list := []any{
+		commandHookJSON("/old/a/roborev agent-hook run", 10),
+		map[string]any{"type": "command", "command": "/usr/bin/other-tool run"},
+		commandHookJSON("/old/b/roborev agent-hook run", 10),
+	}
+
+	updated, changed := upsertCommandHook(list, commandHook, spec)
+
+	assert.True(changed)
+	// Both stale roborev hooks collapse into one new command at the first one's
+	// slot; the unrelated tool hook is preserved.
+	commands := make([]string, 0, len(updated))
+	for _, raw := range updated {
+		commands = append(commands, raw.(map[string]any)["command"].(string))
+	}
+	assert.Equal([]string{spec.Command, "/usr/bin/other-tool run"}, commands)
+}
+
+func TestAgentHookNoticeTranslatesBinaryFlag(t *testing.T) {
+	assert := assert.New(t)
+	notice := "Warning: roborev appears to be running from a versioned mise install (/x); " +
+		"use --binary to install hooks with a stable shim if available"
+
+	got := agentHookNotice(notice)
+	assert.NotContains(got, "--binary", "agent-hook commands have no --binary flag")
+	assert.Contains(got, "--command", "the override flag is translated to --command")
+	assert.Empty(agentHookNotice(""), "an empty notice stays empty")
 }
 
 func TestResolveHookCommandOverrideIsVerbatim(t *testing.T) {
@@ -131,4 +206,24 @@ func eventEntriesForTest(t *testing.T, root map[string]any, event string) []any 
 	entries, ok := hooks[event].([]any)
 	require.True(t, ok)
 	return entries
+}
+
+func commandHookJSON(command string, timeout int) map[string]any {
+	return map[string]any{"type": "command", "command": command, "timeout": float64(timeout)}
+}
+
+func writeJSONFile(t *testing.T, path string, v any) {
+	t.Helper()
+	body, err := json.Marshal(v)
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, body, 0o600))
+}
+
+func readJSONFile(t *testing.T, path string) map[string]any {
+	t.Helper()
+	body, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var root map[string]any
+	require.NoError(t, json.Unmarshal(body, &root))
+	return root
 }

@@ -329,12 +329,10 @@ func ensureSpec(hooks map[string]any, spec installSpec) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	if existing := findCommandHookIn(entryHookList, spec.Command); existing != nil {
-		return updateCommandHookFields(existing, spec), nil
-	}
-	entry["hooks"] = append(entryHookList, commandHook)
+	updated, changed := upsertCommandHook(entryHookList, commandHook, spec)
+	entry["hooks"] = updated
 	hooks[spec.Event] = entries
-	return true, nil
+	return changed, nil
 }
 
 func eventEntries(hooks map[string]any, event string) ([]any, error) {
@@ -351,30 +349,70 @@ func eventEntries(hooks map[string]any, event string) ([]any, error) {
 	return entries, nil
 }
 
-func findCommandHookIn(hooks []any, command string) map[string]any {
-	for _, rawHook := range hooks {
-		hook, ok := rawHook.(map[string]any)
-		if !ok {
+// upsertCommandHook installs commandHook into list, collapsing any prior roborev
+// agent-hook command hooks - including ones carrying a stale binary path from an
+// earlier install - into this single hook rather than appending a duplicate
+// beside them. Non-roborev hooks are left untouched. It reports whether the list
+// changed.
+func upsertCommandHook(list []any, commandHook map[string]any, spec installSpec) ([]any, bool) {
+	updated := make([]any, 0, len(list)+1)
+	placed := false
+	changed := false
+	for _, raw := range list {
+		hook, ok := raw.(map[string]any)
+		if !ok || !replaceableCommandHook(hook, spec) {
+			updated = append(updated, raw)
 			continue
 		}
-		if hook["type"] == "command" && hook["command"] == command {
-			return hook
+		if placed {
+			changed = true // drop a duplicate roborev hook left by an earlier install
+			continue
 		}
+		placed = true
+		if commandHookCurrent(hook, spec) {
+			updated = append(updated, hook)
+			continue
+		}
+		updated = append(updated, commandHook)
+		changed = true
 	}
-	return nil
+	if !placed {
+		updated = append(updated, commandHook)
+		changed = true
+	}
+	return updated, changed
 }
 
-func updateCommandHookFields(hook map[string]any, spec installSpec) bool {
-	if !spec.IncludeTimeout {
+// replaceableCommandHook reports whether an existing command hook should be
+// replaced by the spec's command: either it already uses the exact command (an
+// idempotent re-install) or it is a roborev agent-hook command that may carry a
+// stale binary path from a prior install.
+func replaceableCommandHook(hook map[string]any, spec installSpec) bool {
+	if hook["type"] != "command" {
 		return false
 	}
-	if curr, ok := hook["timeout"]; ok {
-		if currNum, ok := curr.(float64); ok && int(currNum) == spec.Timeout {
-			return false
-		}
+	cmd, _ := hook["command"].(string)
+	return cmd == spec.Command || isRoborevAgentHookCommand(cmd)
+}
+
+// commandHookCurrent reports whether hook already matches spec exactly, so it
+// needs no rewrite.
+func commandHookCurrent(hook map[string]any, spec installSpec) bool {
+	if cmd, _ := hook["command"].(string); cmd != spec.Command {
+		return false
 	}
-	hook["timeout"] = spec.Timeout
-	return true
+	if !spec.IncludeTimeout {
+		return true
+	}
+	curr, ok := hook["timeout"].(float64)
+	return ok && int(curr) == spec.Timeout
+}
+
+// isRoborevAgentHookCommand reports whether a hook command invokes roborev's
+// agent-hook runner, regardless of binary path or quoting, so an install can
+// replace command hooks that carry a stale or versioned roborev path.
+func isRoborevAgentHookCommand(command string) bool {
+	return strings.Contains(command, "agent-hook run") && strings.Contains(command, "roborev")
 }
 
 func findEntry(entries []any, matcher string) (int, error) {
@@ -419,7 +457,15 @@ func ResolveHookCommand(override string) (command, notice string, err error) {
 	if err != nil {
 		return "", "", fmt.Errorf("resolve roborev binary: %w", err)
 	}
-	return shellQuote(res.Path) + " agent-hook run", res.Notice, nil
+	return shellQuote(res.Path) + " agent-hook run", agentHookNotice(res.Notice), nil
+}
+
+// agentHookNotice adapts a binary-resolution notice for agent-hook commands. The
+// shared resolver phrases its stable-binary guidance for the git hooks' --binary
+// flag; agent-hook install and dump expose --command instead, so the flag name is
+// translated to avoid pointing users at a flag these commands do not have.
+func agentHookNotice(notice string) string {
+	return strings.ReplaceAll(notice, "--binary", "--command")
 }
 
 func defaultInstallCommand() (string, error) {
