@@ -536,3 +536,63 @@ func TestRecordPostToolUseCountsCommitAfterBaseline(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(1, store.sessions["session-1"].CommitCount)
 }
+
+func TestRecordPostToolUseCommitTriggersWhenReviewLagsBehindCommit(t *testing.T) {
+	assert := assert.New(t)
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("main.go", "package main\n", "initial")
+
+	failed := false
+	closed := false
+	verdict := "F"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		jobs := []storage.ReviewJob{}
+		if failed {
+			jobs = append(jobs, storage.ReviewJob{Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict})
+		}
+		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{Jobs: jobs}))
+	}))
+	t.Cleanup(server.Close)
+
+	store := &StateStore{
+		path:     filepath.Join(t.TempDir(), "state.json"),
+		sessions: map[string]SessionState{},
+	}
+	base := Request{
+		Event: Input{
+			SessionID:     "session-1",
+			CWD:           repo.Path(),
+			HookEventName: "PostToolUse",
+			ToolName:      "Bash",
+			ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"git status"`)},
+		},
+		CommitThreshold:   1,
+		Instruction:       "Run roborev fix.",
+		RoborevServerAddr: server.URL,
+	}
+
+	// Establish the HEAD baseline without counting.
+	_, err := store.Record(base)
+	require.NoError(t, err)
+
+	// A real commit crosses the threshold, but its review has not landed yet, so
+	// nothing prompts and the counter stays at the threshold.
+	repo.CommitFile("feature.go", "package main\n", "second")
+	commit := base
+	commit.Event.ToolInput = map[string]json.RawMessage{"command": json.RawMessage(`"git commit -m second"`)}
+	atCommit, err := store.Record(commit)
+	require.NoError(t, err)
+	assert.False(atCommit.Triggered, "no prompt while the commit's review is still pending")
+	assert.Equal(1, store.sessions["session-1"].CommitCountSincePrompt)
+
+	// The failed review becomes visible on a later, non-commit tool call: the
+	// already-met threshold must prompt now rather than waiting for a new commit.
+	failed = true
+	later := base
+	later.Event.ToolInput = map[string]json.RawMessage{"command": json.RawMessage(`"go test ./..."`)}
+	atLater, err := store.Record(later)
+	require.NoError(t, err)
+	assert.True(atLater.Triggered, "a met commit threshold must prompt once reviews appear")
+	assert.Equal("commit", atLater.TriggeredBy)
+	assert.Equal(0, store.sessions["session-1"].CommitCountSincePrompt, "counters reset after prompting")
+}

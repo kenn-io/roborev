@@ -284,7 +284,14 @@ func (s *StateStore) recordPostToolUse(req Request) (Response, error) {
 	}
 
 	actionableReviews := hasActionableFailedReviews(failedReviewCount, haveFailedReviewCount)
-	commitTriggered := thresholdReady(st.CommitCountSincePrompt, req.CommitThreshold) && increment > 0 && actionableReviews
+	// The commit reminder fires once the threshold is met and actionable failed
+	// reviews exist; it does not require a commit in this exact event. Reviews
+	// are produced asynchronously, so the failures for the commit that crossed
+	// the threshold usually only become visible on a later tool call. Requiring
+	// a fresh commit here would drop those reminders until the next commit.
+	// thresholdReady already implies a real commit was counted since the last
+	// prompt, and triggering resets the counters, so this cannot fire spuriously.
+	commitTriggered := thresholdReady(st.CommitCountSincePrompt, req.CommitThreshold) && actionableReviews
 	if commitTriggered {
 		st.CommitTriggeredAt = now
 	}
