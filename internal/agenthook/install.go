@@ -9,6 +9,8 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+
+	"go.kenn.io/roborev/internal/githook"
 )
 
 type InstallOptions struct {
@@ -404,16 +406,25 @@ func entryHooks(entry map[string]any) ([]any, error) {
 	return hooks, nil
 }
 
+// ResolveHookCommand returns the command to install for agent hooks. With an
+// empty override it resolves the roborev binary the way git hooks do - preferring
+// a stable shim over a versioned or temporary install path - and returns any
+// advisory notice from that resolution so callers can surface it. A non-empty
+// override is used verbatim with no notice, letting callers pin an exact command.
+func ResolveHookCommand(override string) (command, notice string, err error) {
+	if override = strings.TrimSpace(override); override != "" {
+		return override, "", nil
+	}
+	res, err := githook.ResolveRoborevPath("")
+	if err != nil {
+		return "", "", fmt.Errorf("resolve roborev binary: %w", err)
+	}
+	return shellQuote(res.Path) + " agent-hook run", res.Notice, nil
+}
+
 func defaultInstallCommand() (string, error) {
-	exe, err := os.Executable()
-	if err != nil {
-		return "", fmt.Errorf("resolve current executable: %w", err)
-	}
-	exe, err = filepath.Abs(exe)
-	if err != nil {
-		return "", fmt.Errorf("resolve current executable: %w", err)
-	}
-	return shellQuote(exe) + " agent-hook run", nil
+	command, _, err := ResolveHookCommand("")
+	return command, err
 }
 
 func DefaultCodexHooksPath() string {

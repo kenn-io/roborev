@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -55,6 +56,27 @@ func TestRunInstallCodexIsIdempotent(t *testing.T) {
 	}, &second)
 	require.NoError(t, err)
 	assert.Contains(t, second.String(), "Codex agent hooks already installed")
+}
+
+func TestResolveHookCommandOverrideIsVerbatim(t *testing.T) {
+	assert := assert.New(t)
+
+	command, notice, err := ResolveHookCommand("/custom/roborev agent-hook run")
+	require.NoError(t, err)
+	assert.Equal("/custom/roborev agent-hook run", command, "an override is used verbatim")
+	assert.Empty(notice, "an override yields no advisory notice")
+}
+
+func TestResolveHookCommandBlankOverrideResolvesBinary(t *testing.T) {
+	assert := assert.New(t)
+
+	// A blank override falls back to binary resolution rather than installing an
+	// empty command. The resolved path is appended with the run subcommand.
+	command, _, err := ResolveHookCommand("   ")
+	require.NoError(t, err)
+	assert.NotEmpty(command)
+	assert.True(strings.HasSuffix(command, " agent-hook run"),
+		"resolved command should invoke agent-hook run, got %q", command)
 }
 
 func assertCommandCount(t *testing.T, root map[string]any, event, command string, want int) {

@@ -124,6 +124,14 @@ func agentHookInstallCmd() *cobra.Command {
 		Args:                  cobra.NoArgs,
 		DisableFlagsInUseLine: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			command, notice, err := agenthook.ResolveHookCommand(opts.Command)
+			if err != nil {
+				return err
+			}
+			if notice != "" {
+				fmt.Fprintln(cmd.OutOrStdout(), notice)
+			}
+			opts.Command = command
 			return agenthook.RunInstall(opts, cmd.OutOrStdout())
 		},
 	}
@@ -144,6 +152,16 @@ func agentHookDumpCmd() *cobra.Command {
 		Args:                  cobra.NoArgs,
 		DisableFlagsInUseLine: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			command, notice, err := agenthook.ResolveHookCommand(opts.Command)
+			if err != nil {
+				return err
+			}
+			// Notices are advisory warnings; keep them off stdout so the dumped
+			// JSON config stays clean for piping.
+			if notice != "" {
+				fmt.Fprintln(cmd.ErrOrStderr(), notice)
+			}
+			opts.Command = command
 			return agenthook.RunDump(opts, cmd.OutOrStdout())
 		},
 	}
