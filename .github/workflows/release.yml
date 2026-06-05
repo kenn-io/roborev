@@ -9,7 +9,29 @@ permissions:
   contents: write
 
 jobs:
+  validate-tag:
+    runs-on: ubuntu-latest
+    outputs:
+      tag_name: ${{ steps.validate.outputs.tag_name }}
+      version: ${{ steps.validate.outputs.version }}
+    steps:
+      - name: Validate release tag
+        id: validate
+        run: |
+          TAG_NAME="${GITHUB_REF#refs/tags/}"
+          if [[ ! "$TAG_NAME" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "Invalid release tag: $TAG_NAME"
+            echo "Expected format: vMAJOR.MINOR.PATCH"
+            exit 1
+          fi
+
+          {
+            echo "tag_name=$TAG_NAME"
+            echo "version=${TAG_NAME#v}"
+          } >> "$GITHUB_OUTPUT"
+
   build:
+    needs: validate-tag
     runs-on: ubuntu-latest
     strategy:
       matrix:
@@ -39,27 +61,34 @@ jobs:
           GOOS: ${{ matrix.goos }}
           GOARCH: ${{ matrix.goarch }}
           CGO_ENABLED: 0
+          VERSION: ${{ needs.validate-tag.outputs.version }}
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
           EXT=""
           if [ "$GOOS" = "windows" ]; then EXT=".exe"; fi
 
           mkdir -p dist
-          LDFLAGS="-s -w -X github.com/roborev-dev/roborev/internal/version.Version=v${VERSION}"
+          LDFLAGS="-s -w -X go.kenn.io/roborev/internal/version.Version=v${VERSION}"
           go build -ldflags="$LDFLAGS" -o dist/roborev${EXT} ./cmd/roborev
 
           cd dist
-          ARCHIVE="roborev_${VERSION}_${{ matrix.goos }}_${{ matrix.goarch }}.tar.gz"
-          tar czf "$ARCHIVE" roborev${EXT}
+          ARCHIVE="roborev_${VERSION}_${GOOS}_${GOARCH}.tar.gz"
+          if [ "$GOOS" = "windows" ]; then
+            ARCHIVE="roborev_${VERSION}_${GOOS}_${GOARCH}.zip"
+            zip -q "$ARCHIVE" roborev${EXT}
+          else
+            tar czf "$ARCHIVE" roborev${EXT}
+          fi
           rm roborev${EXT}
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
           name: roborev-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: dist/*.tar.gz
+          path: dist/*
 
   release:
-    needs: build
+    needs:
+      - build
+      - validate-tag
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
@@ -72,19 +101,19 @@ jobs:
       - name: Generate checksums
         run: |
           cd artifacts
-          sha256sum *.tar.gz > SHA256SUMS
+          sha256sum ./*.tar.gz ./*.zip > SHA256SUMS
           cat SHA256SUMS
 
       - name: Get tag message
         id: tag_message
+        env:
+          TAG_NAME: ${{ needs.validate-tag.outputs.tag_name }}
         run: |
-          TAG_NAME="${GITHUB_REF#refs/tags/}"
-
           # Only extract message from annotated tags (type "tag"), not lightweight tags (type "commit")
           TAG_TYPE=$(git cat-file -t "$TAG_NAME")
           if [ "$TAG_TYPE" != "tag" ]; then
             echo "Warning: $TAG_NAME is a lightweight tag, using auto-generated notes"
-            echo "has_body=false" >> $GITHUB_OUTPUT
+            echo "has_body=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
 
@@ -94,12 +123,14 @@ jobs:
           if [ -n "$TAG_MSG" ]; then
             # Use unique delimiter to avoid conflicts with tag message content
             DELIM="TAGMSG_$(date +%s%N)"
-            echo "body<<$DELIM" >> $GITHUB_OUTPUT
-            echo "$TAG_MSG" >> $GITHUB_OUTPUT
-            echo "$DELIM" >> $GITHUB_OUTPUT
-            echo "has_body=true" >> $GITHUB_OUTPUT
+            {
+              echo "body<<$DELIM"
+              printf '%s\n' "$TAG_MSG"
+              echo "$DELIM"
+              echo "has_body=true"
+            } >> "$GITHUB_OUTPUT"
           else
-            echo "has_body=false" >> $GITHUB_OUTPUT
+            echo "has_body=false" >> "$GITHUB_OUTPUT"
           fi
 
       - name: Create Release
@@ -107,13 +138,18 @@ jobs:
         with:
           files: |
             artifacts/*.tar.gz
+            artifacts/*.zip
             artifacts/SHA256SUMS
           body: ${{ steps.tag_message.outputs.has_body == 'true' && steps.tag_message.outputs.body || '' }}
           generate_release_notes: ${{ steps.tag_message.outputs.has_body != 'true' }}
 
   update-homebrew:
-    needs: release
+    needs:
+      - release
+      - validate-tag
     runs-on: ubuntu-latest
+    env:
+      VERSION: ${{ needs.validate-tag.outputs.version }}
     steps:
       - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
         with:
@@ -123,8 +159,7 @@ jobs:
       - name: Compute SHA256 for all binaries
         id: sha256
         run: |
-          VERSION=${GITHUB_REF#refs/tags/v}
-          echo "version=$VERSION" >> $GITHUB_OUTPUT
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
 
           # Verify all expected artifacts exist
           for platform in darwin_amd64 darwin_arm64 linux_amd64 linux_arm64; do
@@ -138,12 +173,19 @@ jobs:
           done
 
           # macOS
-          echo "darwin_amd64=$(sha256sum artifacts/roborev_${VERSION}_darwin_amd64.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
-          echo "darwin_arm64=$(sha256sum artifacts/roborev_${VERSION}_darwin_arm64.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+          darwin_amd64=$(sha256sum "artifacts/roborev_${VERSION}_darwin_amd64.tar.gz" | cut -d' ' -f1)
+          darwin_arm64=$(sha256sum "artifacts/roborev_${VERSION}_darwin_arm64.tar.gz" | cut -d' ' -f1)
 
           # Linux
-          echo "linux_amd64=$(sha256sum artifacts/roborev_${VERSION}_linux_amd64.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
-          echo "linux_arm64=$(sha256sum artifacts/roborev_${VERSION}_linux_arm64.tar.gz | cut -d' ' -f1)" >> $GITHUB_OUTPUT
+          linux_amd64=$(sha256sum "artifacts/roborev_${VERSION}_linux_amd64.tar.gz" | cut -d' ' -f1)
+          linux_arm64=$(sha256sum "artifacts/roborev_${VERSION}_linux_arm64.tar.gz" | cut -d' ' -f1)
+
+          {
+            echo "darwin_amd64=$darwin_amd64"
+            echo "darwin_arm64=$darwin_arm64"
+            echo "linux_amd64=$linux_amd64"
+            echo "linux_arm64=$linux_arm64"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Checkout tap repository
         uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
@@ -277,5 +319,5 @@ jobs:
           fi
 
           git add Formula/roborev.rb
-          git commit -m "Update roborev to v${{ steps.sha256.outputs.version }}"
+          git commit -m "Update roborev to v${VERSION}"
           git push
