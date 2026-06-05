@@ -663,7 +663,13 @@ func shellFields(command string) []string {
 	expansionDepth := 0
 	inToken := false
 	pendingExpansion := false
-	for _, r := range command {
+	runes := []rune(command)
+	for i, r := range runes {
+		var next rune
+		hasNext := i+1 < len(runes)
+		if hasNext {
+			next = runes[i+1]
+		}
 		if escaped {
 			b.WriteRune(r)
 			inToken = true
@@ -676,7 +682,7 @@ func shellFields(command string) []string {
 				inToken = true
 				continue
 			}
-			if quote != '\'' && r == '\\' {
+			if quote != '\'' && r == '\\' && hasNext && backslashEscapesInQuote(quote, next) {
 				escaped = true
 				inToken = true
 				continue
@@ -706,7 +712,11 @@ func shellFields(command string) []string {
 		}
 		switch r {
 		case '\\':
-			escaped = true
+			if hasNext && backslashEscapesUnquoted(b.String(), next) {
+				escaped = true
+			} else {
+				b.WriteRune(r)
+			}
 			inToken = true
 		case '$':
 			b.WriteRune(r)
@@ -733,6 +743,45 @@ func shellFields(command string) []string {
 		fields = append(fields, b.String())
 	}
 	return fields
+}
+
+func backslashEscapesInQuote(quote, next rune) bool {
+	switch quote {
+	case '"':
+		return next == '$' || next == '`' || next == '"' || next == '\\' || next == '\n' || next == '\r'
+	case '`':
+		return next == '$' || next == '`' || next == '\\' || next == '\n' || next == '\r'
+	default:
+		return false
+	}
+}
+
+func backslashEscapesUnquoted(token string, next rune) bool {
+	if isWindowsDriveToken(token) && !isShellFieldDelimiter(next) && !isShellQuote(next) {
+		return false
+	}
+	return true
+}
+
+func isWindowsDriveToken(token string) bool {
+	return len(token) >= 2 && isASCIIAlpha(rune(token[0])) && token[1] == ':'
+}
+
+func isASCIIAlpha(r rune) bool {
+	return ('a' <= r && r <= 'z') || ('A' <= r && r <= 'Z')
+}
+
+func isShellQuote(r rune) bool {
+	return r == '\'' || r == '"' || r == '`'
+}
+
+func isShellFieldDelimiter(r rune) bool {
+	switch r {
+	case ' ', '\t', '\r', '\n', ';', '&', '|', '[', ']', '<', '>':
+		return true
+	default:
+		return false
+	}
 }
 
 func isGitToken(token string) bool {

@@ -44,6 +44,34 @@ func TestIsCommitProducingCommand(t *testing.T) {
 	}
 }
 
+func TestShellFieldsPreservesWindowsPathSeparators(t *testing.T) {
+	for _, tc := range []struct {
+		name    string
+		command string
+		want    []string
+	}{
+		{
+			name:    "unquoted windows path",
+			command: `git -C C:\Users\runneradmin\AppData\Local\Temp\repo commit -m x`,
+			want:    []string{"git", "-C", `C:\Users\runneradmin\AppData\Local\Temp\repo`, "commit", "-m", "x"},
+		},
+		{
+			name:    "double quoted windows path",
+			command: `git -C "C:\Users\runneradmin\AppData\Local\Temp\repo" commit -m x`,
+			want:    []string{"git", "-C", `C:\Users\runneradmin\AppData\Local\Temp\repo`, "commit", "-m", "x"},
+		},
+		{
+			name:    "posix escaped spaces",
+			command: `git -C repo\ with\ spaces commit -m x`,
+			want:    []string{"git", "-C", "repo with spaces", "commit", "-m", "x"},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, shellFields(tc.command))
+		})
+	}
+}
+
 func TestCommandGitDir(t *testing.T) {
 	base := t.TempDir()
 	sub := filepath.Join(base, "sub")
