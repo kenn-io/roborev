@@ -231,7 +231,6 @@ func (s *StateStore) recordPreToolUse(req Request) (Response, error) {
 	if st.RepoHeads == nil {
 		st.RepoHeads = map[string]string{}
 	}
-	migrateLegacyDetachedCommitSequence(&st, scope)
 	ensureLineageKey(&st, scope)
 	recordSequenceHeads(&st, scope, commitSequenceKeys(scope))
 	st.LastCWD = req.Event.CWD
@@ -288,7 +287,6 @@ func (s *StateStore) recordPostToolUse(req Request) (Response, error) {
 	if st.RepoHeads == nil {
 		st.RepoHeads = map[string]string{}
 	}
-	migrateLegacyDetachedCommitSequence(&st, scope)
 	lineageKey := ensureLineageKey(&st, scope)
 	sequenceKeys := commitSequenceKeys(scope)
 	// Count commits only against a HEAD baseline recorded earlier in the
@@ -429,11 +427,7 @@ func commitSequenceKeys(scope hookScope) []string {
 }
 
 func promptResetKeys(scope hookScope) []string {
-	keys := commitSequenceKeys(scope)
-	// Clear the legacy repo/branch key too. Older state files used this key even
-	// for detached HEAD, where the new worktree key is more precise.
-	keys = append(keys, repoHeadKey(scope.TrackedRepoRoot, scope.Branch))
-	return uniqueStrings(keys)
+	return commitSequenceKeys(scope)
 }
 
 func recordSequenceHeads(st *SessionState, scope hookScope, keys []string) {
@@ -442,41 +436,6 @@ func recordSequenceHeads(st *SessionState, scope hookScope, keys []string) {
 	}
 	for _, key := range keys {
 		st.RepoHeads[key] = scope.Head
-	}
-}
-
-func migrateLegacyDetachedCommitSequence(st *SessionState, scope hookScope) {
-	if scope.Branch != "" {
-		return
-	}
-	legacyKey := repoHeadKey(scope.TrackedRepoRoot, "")
-	if legacyKey == "" || legacyKey == scope.WorktreeKey {
-		return
-	}
-	if shas := st.CommitSHAsSincePrompt[legacyKey]; len(shas) > 0 {
-		if st.CommitSHAsSincePrompt == nil {
-			st.CommitSHAsSincePrompt = map[string][]string{}
-		}
-		st.CommitSHAsSincePrompt[scope.WorktreeKey] = appendUniqueCommitSHAs(
-			st.CommitSHAsSincePrompt[scope.WorktreeKey], shas,
-		)
-		delete(st.CommitSHAsSincePrompt, legacyKey)
-	}
-	if count := st.CommitCountsSincePrompt[legacyKey]; count != 0 {
-		if st.CommitCountsSincePrompt == nil {
-			st.CommitCountsSincePrompt = map[string]int{}
-		}
-		st.CommitCountsSincePrompt[scope.WorktreeKey] += count
-		delete(st.CommitCountsSincePrompt, legacyKey)
-	}
-	if head := st.RepoHeads[legacyKey]; head != "" {
-		if st.RepoHeads == nil {
-			st.RepoHeads = map[string]string{}
-		}
-		if st.RepoHeads[scope.WorktreeKey] == "" {
-			st.RepoHeads[scope.WorktreeKey] = head
-		}
-		delete(st.RepoHeads, legacyKey)
 	}
 }
 
