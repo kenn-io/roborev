@@ -288,7 +288,23 @@ func (s *StateStore) recordPostToolUse(req Request) (Response, error) {
 	if st.RepoHeads == nil {
 		st.RepoHeads = map[string]string{}
 	}
+	priorLineageKey := ""
+	if st.WorktreeLineageKeys != nil {
+		priorLineageKey = st.WorktreeLineageKeys[scope.WorktreeKey]
+	}
 	lineageKey := ensureLineageKey(&st, scope)
+	preserveDetachedRewriteLineage := false
+	if commitCommand && scope.Branch != "" && detachedLineageKey(priorLineageKey) && lineageKey != priorLineageKey {
+		previousWorktreeHead := st.RepoHeads[scope.WorktreeKey]
+		if previousWorktreeHead != "" &&
+			previousWorktreeHead != scope.Head &&
+			!refReachableFromHead(scope.WorktreeRoot, previousWorktreeHead, scope.Head) &&
+			commitsSincePromptForKey(st, scope.WorktreeKey) > 0 {
+			preserveDetachedRewriteLineage = true
+			lineageKey = priorLineageKey
+			st.WorktreeLineageKeys[scope.WorktreeKey] = priorLineageKey
+		}
+	}
 	sequenceKeys := commitSequenceKeys(scope, lineageKey)
 	// Count commits only against a HEAD baseline recorded earlier in the
 	// session; the first observation merely establishes that baseline below.
@@ -312,8 +328,12 @@ func (s *StateStore) recordPostToolUse(req Request) (Response, error) {
 				delete(st.CommitCountsSincePrompt, key)
 				eventNewCommits = appendUniqueCommitSHAs(eventNewCommits, []string{scope.Head})
 				if key == scope.WorktreeKey {
-					st.WorktreeLineageKeys[key] = scope.CandidateLineageKey
-					lineageKey = scope.CandidateLineageKey
+					if preserveDetachedRewriteLineage {
+						st.WorktreeLineageKeys[key] = lineageKey
+					} else {
+						st.WorktreeLineageKeys[key] = scope.CandidateLineageKey
+						lineageKey = scope.CandidateLineageKey
+					}
 				}
 				continue
 			}

@@ -1154,6 +1154,93 @@ func TestRecordPostToolUseCommitSliceSurvivesBranchAttachment(t *testing.T) {
 	assert.NotEqual(repoHeadKey(repo.Path(), "feature/attached"), st.WorktreeLineageKeys[key])
 }
 
+func TestRecordPostToolUseAmendAfterBranchAttachmentKeepsDetachedCommitThreshold(t *testing.T) {
+	assert := assert.New(t)
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("main.go", "package main\n", "initial")
+	repo.RunGit("checkout", "--detach")
+
+	failed := false
+	closed := false
+	verdict := "F"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/repos/resolve" {
+			assert.NoError(json.NewEncoder(w).Encode(map[string]any{
+				"tracked": true,
+				"repo": map[string]string{
+					"root_path": repo.Path(),
+					"name":      filepath.Base(repo.Path()),
+				},
+			}))
+			return
+		}
+		jobs := []storage.ReviewJob{}
+		if failed {
+			jobs = append(jobs, storage.ReviewJob{
+				Status:  storage.JobStatusDone,
+				Closed:  &closed,
+				Verdict: &verdict,
+				Branch:  r.URL.Query().Get("branch"),
+			})
+		}
+		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{Jobs: jobs}))
+	}))
+	t.Cleanup(server.Close)
+
+	store := &StateStore{
+		path:     filepath.Join(t.TempDir(), "state.json"),
+		sessions: map[string]SessionState{},
+	}
+	baseReq := Request{
+		Event: Input{
+			SessionID:     "session-1",
+			CWD:           repo.Path(),
+			HookEventName: "PostToolUse",
+			ToolName:      "Bash",
+			ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"git status"`)},
+		},
+		CommitThreshold:   2,
+		Instruction:       "Run roborev fix.",
+		RoborevServerAddr: server.URL,
+	}
+
+	_, err := store.Record(baseReq)
+	require.NoError(t, err)
+	repo.CommitFile("feature-a.go", "package main\n", "detached")
+	commitReq := baseReq
+	commitReq.Event.ToolInput = map[string]json.RawMessage{"command": json.RawMessage(`"git commit -m detached"`)}
+	resp, err := store.Record(commitReq)
+	require.NoError(t, err)
+	assert.False(resp.Triggered)
+
+	repo.RunGit("checkout", "-B", "feature/attached")
+	checkoutReq := baseReq
+	checkoutReq.Event.ToolInput = map[string]json.RawMessage{"command": json.RawMessage(`"git checkout -B feature/attached"`)}
+	_, err = store.Record(checkoutReq)
+	require.NoError(t, err)
+
+	repo.CommitFile("feature-b.go", "package main\n", "attached")
+	commitReq.Event.ToolInput = map[string]json.RawMessage{"command": json.RawMessage(`"git commit -m attached"`)}
+	resp, err = store.Record(commitReq)
+	require.NoError(t, err)
+	assert.False(resp.Triggered)
+
+	repo.WriteFile("feature-b.go", "package main\nconst amended = true\n")
+	repo.RunGit("add", "feature-b.go")
+	repo.RunGit("commit", "--amend", "-m", "attached amended")
+	failed = true
+	commitReq.Event.ToolInput = map[string]json.RawMessage{"command": json.RawMessage(`"git commit --amend -m attached amended"`)}
+	resp, err = store.Record(commitReq)
+	require.NoError(t, err)
+
+	assert.True(resp.Triggered, "amend must preserve detached-to-branch pending commit continuity")
+	assert.Equal("commit", resp.TriggeredBy)
+	key := worktreeSequenceKey(repo.Path(), repo.Path())
+	branchKey := repoHeadKey(repo.Path(), "feature/attached")
+	assert.Empty(store.sessions["session-1"].CommitSHAsSincePrompt[key])
+	assert.Empty(store.sessions["session-1"].CommitSHAsSincePrompt[branchKey])
+}
+
 func TestRecordPostToolUseDetachedFailedReviewDedupeScopesByWorktree(t *testing.T) {
 	assert := assert.New(t)
 	repo := testutil.NewGitRepo(t)
