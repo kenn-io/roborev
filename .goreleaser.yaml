@@ -1,0 +1,67 @@
+version: 2
+
+project_name: roborev
+
+changelog:
+  disable: true
+
+release:
+  mode: keep-existing
+
+builds:
+  - id: roborev
+    main: ./cmd/roborev
+    binary: roborev
+    env:
+      - CGO_ENABLED=0
+    flags:
+      - -trimpath
+    ldflags:
+      - -s -w -X go.kenn.io/roborev/internal/version.Version=v{{ .Version }}
+    goos:
+      - linux
+      - darwin
+      - windows
+    goarch:
+      - amd64
+      - arm64
+
+archives:
+  - id: roborev
+    ids:
+      - roborev
+    formats:
+      - tar.gz
+    format_overrides:
+      - goos: windows
+        formats:
+          - zip
+    name_template: >-
+      {{ .ProjectName }}_
+      {{- .Version }}_
+      {{- .Os }}_
+      {{- .Arch }}
+
+checksum:
+  name_template: SHA256SUMS
+
+nfpms:
+  - id: roborev-linux-packages
+    ids:
+      - roborev
+    package_name: roborev
+    file_name_template: "{{ .ProjectName }}_{{ .Version }}_linux_{{ .Arch }}"
+    vendor: roborev
+    homepage: https://github.com/roborev-dev/roborev
+    maintainer: roborev contributors
+    description: Continuous code review for AI coding agents.
+    license: MIT
+    formats:
+      - deb
+      - rpm
+    bindir: /usr/bin
+    contents:
+      - src: packaging/systemd/roborev.service
+        dst: /usr/lib/systemd/user/roborev.service
+      - src: packaging/systemd/roborev.socket
+        dst: /usr/lib/systemd/user/roborev.socket

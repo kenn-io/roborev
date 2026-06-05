@@ -30,122 +30,61 @@ jobs:
             echo "version=${TAG_NAME#v}"
           } >> "$GITHUB_OUTPUT"
 
-  build:
+  create-release:
     needs: validate-tag
     runs-on: ubuntu-latest
-    strategy:
-      matrix:
-        include:
-          - goos: linux
-            goarch: amd64
-          - goos: linux
-            goarch: arm64
-          - goos: darwin
-            goarch: amd64
-          - goos: darwin
-            goarch: arm64
-          - goos: windows
-            goarch: amd64
-          - goos: windows
-            goarch: arm64
-
     steps:
       - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          fetch-depth: 0
+
+      - name: Create GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG_NAME: ${{ needs.validate-tag.outputs.tag_name }}
+        run: |
+          if gh release view "$TAG_NAME" >/dev/null 2>&1; then
+            echo "Release $TAG_NAME already exists"
+            exit 0
+          fi
+
+          gh release create "$TAG_NAME" \
+            --verify-tag \
+            --title "$TAG_NAME" \
+            --notes-from-tag
+
+  goreleaser:
+    needs:
+      - create-release
+      - validate-tag
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
+        with:
+          fetch-depth: 0
 
       - uses: actions/setup-go@4a3601121dd01d1626a1e23e37211e3254c1c06c  # v6.4.0
         with:
           go-version: '1.26.3'
 
-      - name: Build
+      - name: Run GoReleaser
+        uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89  # v7.2.2
+        with:
+          distribution: goreleaser
+          version: '~> v2'
+          args: release --clean
         env:
-          GOOS: ${{ matrix.goos }}
-          GOARCH: ${{ matrix.goarch }}
-          CGO_ENABLED: 0
-          VERSION: ${{ needs.validate-tag.outputs.version }}
-        run: |
-          EXT=""
-          if [ "$GOOS" = "windows" ]; then EXT=".exe"; fi
-
-          mkdir -p dist
-          LDFLAGS="-s -w -X go.kenn.io/roborev/internal/version.Version=v${VERSION}"
-          go build -ldflags="$LDFLAGS" -o dist/roborev${EXT} ./cmd/roborev
-
-          cd dist
-          ARCHIVE="roborev_${VERSION}_${GOOS}_${GOARCH}.tar.gz"
-          if [ "$GOOS" = "windows" ]; then
-            ARCHIVE="roborev_${VERSION}_${GOOS}_${GOARCH}.zip"
-            zip -q "$ARCHIVE" roborev${EXT}
-          else
-            tar czf "$ARCHIVE" roborev${EXT}
-          fi
-          rm roborev${EXT}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
       - uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
         with:
-          name: roborev-${{ matrix.goos }}-${{ matrix.goarch }}
-          path: dist/*
-
-  release:
-    needs:
-      - build
-      - validate-tag
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@de0fac2e4500dabe0009e67214ff5f5447ce83dd  # v6.0.2
-
-      - uses: actions/download-artifact@3e5f45b2cfb9172054b4087a40e8e0b5a5461e7c  # v8.0.1
-        with:
-          path: artifacts
-          merge-multiple: true
-
-      - name: Generate checksums
-        run: |
-          cd artifacts
-          sha256sum -- *.tar.gz *.zip > SHA256SUMS
-          cat SHA256SUMS
-
-      - name: Get tag message
-        id: tag_message
-        env:
-          TAG_NAME: ${{ needs.validate-tag.outputs.tag_name }}
-        run: |
-          # Only extract message from annotated tags (type "tag"), not lightweight tags (type "commit")
-          TAG_TYPE=$(git cat-file -t "$TAG_NAME")
-          if [ "$TAG_TYPE" != "tag" ]; then
-            echo "Warning: $TAG_NAME is a lightweight tag, using auto-generated notes"
-            echo "has_body=false" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          # Get the tag message body (our changelog), skipping the first line ("Release X.Y.Z")
-          TAG_MSG=$(git tag -l --format='%(contents:body)' "$TAG_NAME")
-
-          if [ -n "$TAG_MSG" ]; then
-            # Use unique delimiter to avoid conflicts with tag message content
-            DELIM="TAGMSG_$(date +%s%N)"
-            {
-              echo "body<<$DELIM"
-              printf '%s\n' "$TAG_MSG"
-              echo "$DELIM"
-              echo "has_body=true"
-            } >> "$GITHUB_OUTPUT"
-          else
-            echo "has_body=false" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Create Release
-        uses: softprops/action-gh-release@b4309332981a82ec1c5618f44dd2e27cc8bfbfda  # v3.0.0
-        with:
-          files: |
-            artifacts/*.tar.gz
-            artifacts/*.zip
-            artifacts/SHA256SUMS
-          body: ${{ steps.tag_message.outputs.has_body == 'true' && steps.tag_message.outputs.body || '' }}
-          generate_release_notes: ${{ steps.tag_message.outputs.has_body != 'true' }}
+          name: roborev-release-tarballs
+          path: dist/*.tar.gz
 
   update-homebrew:
+    if: github.repository == 'kenn-io/roborev'
     needs:
-      - release
+      - goreleaser
       - validate-tag
     runs-on: ubuntu-latest
     env:
