@@ -55,6 +55,7 @@ CREATE TABLE IF NOT EXISTS review_jobs (
   prompt TEXT,
   retry_count INTEGER NOT NULL DEFAULT 0,
   diff_content TEXT,
+  dirty_files TEXT,
   output_prefix TEXT,
   job_type TEXT NOT NULL DEFAULT 'review',
   review_type TEXT NOT NULL DEFAULT '',
@@ -252,6 +253,18 @@ func (db *DB) migrate() error {
 		}
 	}
 
+	// Migration: add dirty_files column to review_jobs if missing (for dirty review metadata)
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'dirty_files'`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check dirty_files column: %w", err)
+	}
+	if count == 0 {
+		_, err = db.Exec(`ALTER TABLE review_jobs ADD COLUMN dirty_files TEXT`)
+		if err != nil {
+			return fmt.Errorf("add dirty_files column: %w", err)
+		}
+	}
+
 	// Migration: add reasoning column to review_jobs if missing
 	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'reasoning'`).Scan(&count)
 	if err != nil {
@@ -384,6 +397,7 @@ func (db *DB) migrate() error {
 				prompt TEXT,
 				retry_count INTEGER NOT NULL DEFAULT 0,
 				diff_content TEXT,
+				dirty_files TEXT,
 				agentic INTEGER NOT NULL DEFAULT 0,
 				output_prefix TEXT
 			)
@@ -393,8 +407,8 @@ func (db *DB) migrate() error {
 		}
 
 		// Check which optional columns exist in source table
-		var hasDiffContent, hasReasoning, hasAgentic, hasModel, hasProvider, hasRequestedModel, hasRequestedProvider, hasBranch, hasSessionID, hasOutputPrefix bool
-		checkRows, checkErr := tx.Query(`SELECT name FROM pragma_table_info('review_jobs') WHERE name IN ('diff_content', 'reasoning', 'agentic', 'model', 'provider', 'requested_model', 'requested_provider', 'branch', 'session_id', 'output_prefix')`)
+		var hasDiffContent, hasDirtyFiles, hasReasoning, hasAgentic, hasModel, hasProvider, hasRequestedModel, hasRequestedProvider, hasBranch, hasSessionID, hasOutputPrefix bool
+		checkRows, checkErr := tx.Query(`SELECT name FROM pragma_table_info('review_jobs') WHERE name IN ('diff_content', 'dirty_files', 'reasoning', 'agentic', 'model', 'provider', 'requested_model', 'requested_provider', 'branch', 'session_id', 'output_prefix')`)
 		if checkErr == nil {
 			for checkRows.Next() {
 				var colName string
@@ -402,6 +416,8 @@ func (db *DB) migrate() error {
 				switch colName {
 				case "diff_content":
 					hasDiffContent = true
+				case "dirty_files":
+					hasDirtyFiles = true
 				case "reasoning":
 					hasReasoning = true
 				case "agentic":
@@ -455,6 +471,9 @@ func (db *DB) migrate() error {
 		baseCols = append(baseCols, "status", "enqueued_at", "started_at", "finished_at", "worker_id", "error", "prompt", "retry_count")
 		if hasDiffContent {
 			baseCols = append(baseCols, "diff_content")
+		}
+		if hasDirtyFiles {
+			baseCols = append(baseCols, "dirty_files")
 		}
 		if hasAgentic {
 			baseCols = append(baseCols, "agentic")

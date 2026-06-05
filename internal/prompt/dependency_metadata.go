@@ -71,6 +71,12 @@ func buildDependencyMetadataSection(files []string) string {
 	return b.String()
 }
 
+// HasDependencyMetadataFiles reports whether files contains dependency metadata
+// that buildDependencyMetadataSection will summarize.
+func HasDependencyMetadataFiles(files []string) bool {
+	return len(changedDependencyMetadataFiles(files)) > 0
+}
+
 func changedDependencyMetadataFiles(files []string) []string {
 	seen := make(map[string]struct{}, len(files))
 	for _, file := range files {

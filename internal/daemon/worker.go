@@ -599,10 +599,14 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			minSev = resolved
 		}
 
-		if job.DiffContent != nil {
+		if job.IsDirtyJob() {
 			// Dirty job - use pre-captured diff
-			dirtyResult, dirtyErr := pb.BuildDirtyWithSnapshotTarget(
-				*job.DiffContent, cfg.ReviewContextCount, job.Agent, job.ReviewType, minSev,
+			diffContent := ""
+			if job.DiffContent != nil {
+				diffContent = *job.DiffContent
+			}
+			dirtyResult, dirtyErr := pb.BuildDirtyWithSnapshotTargetAndFiles(
+				diffContent, job.DirtyFiles, cfg.ReviewContextCount, job.Agent, job.ReviewType, minSev,
 				checkout.snapshotTarget,
 			)
 			if dirtyResult.Cleanup != nil {

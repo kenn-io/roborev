@@ -1120,6 +1120,36 @@ func TestReenqueueJob_ClearsPrebuiltPrompt(t *testing.T) {
 	assert.Empty(t, updated.Prompt, "rerun should clear stored prompt")
 }
 
+func TestReenqueueJob_PreservesDirtyFiles(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, "/tmp/rerun-dirty-files")
+	job, err := db.EnqueueJob(EnqueueOpts{
+		RepoID:     repo.ID,
+		GitRef:     "dirty",
+		Agent:      "test",
+		JobType:    JobTypeDirty,
+		DirtyFiles: []string{"frontend/package-lock.json"},
+	})
+	require.NoError(t, err)
+
+	claimed, err := db.ClaimJob("worker-1")
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+	require.NoError(t, db.CompleteJob(job.ID, "test", "prompt", "review output"))
+
+	err = db.ReenqueueJob(job.ID, ReenqueueOpts{})
+	require.NoError(t, err)
+
+	reclaimed, err := db.ClaimJob("worker-2")
+	require.NoError(t, err)
+	require.Equal(t, job.ID, reclaimed.ID)
+	assert.Equal(t, []string{"frontend/package-lock.json"}, reclaimed.DirtyFiles)
+	assert.Nil(t, reclaimed.DiffContent)
+	assert.False(t, reclaimed.PromptPrebuilt)
+}
+
 func TestReenqueueJob_PreservesTaskPrompt(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()

@@ -87,6 +87,7 @@ type ReviewJob struct {
 	Prompt            string     `json:"prompt,omitempty"`
 	RetryCount        int        `json:"retry_count"`
 	DiffContent       *string    `json:"diff_content,omitempty"`  // For dirty reviews (uncommitted changes)
+	DirtyFiles        []string   `json:"dirty_files,omitempty"`   // Unfiltered dirty file names for prompt metadata
 	Agentic           bool       `json:"agentic"`                 // Enable agentic mode (allow file edits)
 	PromptPrebuilt    bool       `json:"prompt_prebuilt"`         // Prompt was set at enqueue time and should be used as-is
 	ReviewType        string     `json:"review_type,omitempty"`   // Review type (e.g., "security") - changes system prompt

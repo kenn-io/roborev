@@ -921,6 +921,40 @@ func TestProcessJob_UsesStoredReviewPromptOverride(t *testing.T) {
 	assert.Equal(t, job.Prompt, updated.Prompt)
 }
 
+func TestProcessJob_BuildsDirtyPromptFromPersistedDirtyFiles(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+
+	var capturedPrompt string
+	agentName := "dirty-files-prompt-capture"
+	agent.Register(&agent.FakeAgent{
+		NameStr: agentName,
+		ReviewFn: func(ctx context.Context, repoPath, commitSHA, reviewPrompt string, output io.Writer) (string, error) {
+			capturedPrompt = reviewPrompt
+			return "No issues found.", nil
+		},
+	})
+	t.Cleanup(func() { agent.Unregister(agentName) })
+
+	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
+		RepoID:     tc.Repo.ID,
+		GitRef:     "dirty",
+		Agent:      agentName,
+		JobType:    storage.JobTypeDirty,
+		DirtyFiles: []string{"go.sum"},
+	})
+	require.NoError(t, err)
+
+	claimed, err := tc.DB.ClaimJob(testWorkerID)
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+
+	tc.Pool.processJob(testWorkerID, claimed)
+
+	tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
+	assert.Contains(t, capturedPrompt, "## Dependency Metadata")
+	assert.Contains(t, capturedPrompt, "go.sum changed")
+}
+
 func TestProcessJob_PromotedAutoDesignAppendsExistingClassifierLog(t *testing.T) {
 	setupTestEnv(t)
 	tc := newWorkerTestContext(t, 1)

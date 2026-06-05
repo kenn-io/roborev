@@ -57,7 +57,12 @@ func (s *Server) rerunPanelRun(job *storage.ReviewJob) (*RerunJobOutput, error) 
 			return nil, huma.Error500InternalServerError(
 				fmt.Sprintf("load member diff: %v", diffErr))
 		}
-		memberOpts[i] = panelRerunMemberOpts(members[i], runUUID, diff, source)
+		dirtyFiles, filesErr := s.db.GetJobDirtyFiles(members[i].ID)
+		if filesErr != nil {
+			return nil, huma.Error500InternalServerError(
+				fmt.Sprintf("load member dirty files: %v", filesErr))
+		}
+		memberOpts[i] = panelRerunMemberOpts(members[i], runUUID, diff, dirtyFiles, source)
 	}
 
 	synthDiff, err := s.db.GetJobDiffContent(job.ID)
@@ -65,7 +70,12 @@ func (s *Server) rerunPanelRun(job *storage.ReviewJob) (*RerunJobOutput, error) 
 		return nil, huma.Error500InternalServerError(
 			fmt.Sprintf("load synthesis diff: %v", err))
 	}
-	synthOpts := panelRerunSynthesisOpts(job, runUUID, synthDiff, source)
+	synthDirtyFiles, err := s.db.GetJobDirtyFiles(job.ID)
+	if err != nil {
+		return nil, huma.Error500InternalServerError(
+			fmt.Sprintf("load synthesis dirty files: %v", err))
+	}
+	synthOpts := panelRerunSynthesisOpts(job, runUUID, synthDiff, synthDirtyFiles, source)
 
 	if _, _, err := s.db.EnqueuePanelRun(memberOpts, synthOpts); err != nil {
 		return nil, huma.Error500InternalServerError(
@@ -97,7 +107,7 @@ func (s *Server) panelRerunSource(job *storage.ReviewJob) (string, error) {
 // (name/index/config), reassigning only the run UUID. Review/range/dirty prompts
 // are rebuilt by the worker so reruns do not reuse stale prebuilt prompts. diff
 // is the member's stored dirty diff (empty for commit/range targets).
-func panelRerunMemberOpts(m storage.ReviewJob, runUUID, diff, source string) storage.EnqueueOpts {
+func panelRerunMemberOpts(m storage.ReviewJob, runUUID, diff string, dirtyFiles []string, source string) storage.EnqueueOpts {
 	prompt := ""
 	if m.UsesStoredPrompt() {
 		prompt = m.Prompt
@@ -116,6 +126,7 @@ func panelRerunMemberOpts(m storage.ReviewJob, runUUID, diff, source string) sto
 		ReviewType:            m.ReviewType,
 		PatchID:               m.PatchID,
 		DiffContent:           diff,
+		DirtyFiles:            dirtyFiles,
 		Prompt:                prompt,
 		PromptPrebuilt:        false,
 		Source:                source,
@@ -138,7 +149,7 @@ func panelRerunMemberOpts(m storage.ReviewJob, runUUID, diff, source string) sto
 // panelRerunSynthesisOpts clones the synthesis parent into fresh EnqueueOpts for
 // a new run. EnqueuePanelRun re-enforces JobType=synthesis, role=synthesis, and
 // ClaimBlocked, but they are set here too so the opts are self-describing.
-func panelRerunSynthesisOpts(job *storage.ReviewJob, runUUID, diff, source string) storage.EnqueueOpts {
+func panelRerunSynthesisOpts(job *storage.ReviewJob, runUUID, diff string, dirtyFiles []string, source string) storage.EnqueueOpts {
 	return storage.EnqueueOpts{
 		RepoID:            job.RepoID,
 		CommitID:          job.CommitIDValue(),
@@ -153,6 +164,7 @@ func panelRerunSynthesisOpts(job *storage.ReviewJob, runUUID, diff, source strin
 		ReviewType:        job.ReviewType,
 		PatchID:           job.PatchID,
 		DiffContent:       diff,
+		DirtyFiles:        dirtyFiles,
 		OutputPrefix:      job.OutputPrefix,
 		Source:            source,
 		Agentic:           job.Agentic,

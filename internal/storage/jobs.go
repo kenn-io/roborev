@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -55,7 +56,7 @@ func parseSQLiteTime(s string) time.Time {
 // EnqueueOpts contains options for creating any type of review job.
 // The job type is inferred from which fields are set (in priority order):
 //   - Prompt != "" → "task" (custom prompt job)
-//   - DiffContent != "" → "dirty" (uncommitted changes)
+//   - DiffContent != "" or DirtyFiles != empty → "dirty" (uncommitted changes)
 //   - CommitID > 0 → "review" (single commit)
 //   - otherwise → "range" (commit range)
 type EnqueueOpts struct {
@@ -73,6 +74,7 @@ type EnqueueOpts struct {
 	ReviewType        string // e.g. "security" — changes which system prompt is used
 	PatchID           string // Stable patch-id for rebase tracking
 	DiffContent       string // For dirty reviews (captured at enqueue time)
+	DirtyFiles        []string
 	Prompt            string // For task jobs (pre-stored prompt)
 	OutputPrefix      string // Prefix to prepend to review output
 	Agentic           bool   // Allow file edits and command execution
@@ -129,7 +131,7 @@ func (db *DB) insertJobTx(ctx context.Context, exec execer, opts EnqueueOpts, ui
 		switch {
 		case opts.Prompt != "":
 			jobType = JobTypeTask
-		case opts.DiffContent != "":
+		case opts.DiffContent != "" || len(opts.DirtyFiles) > 0:
 			jobType = JobTypeDirty
 		case opts.CommitID > 0:
 			jobType = JobTypeReview
@@ -171,6 +173,10 @@ func (db *DB) insertJobTx(ctx context.Context, exec execer, opts EnqueueOpts, ui
 	if opts.PromptPrebuilt {
 		promptPrebuiltInt = 1
 	}
+	dirtyFilesJSON, err := encodeDirtyFiles(opts.DirtyFiles)
+	if err != nil {
+		return nil, err
+	}
 
 	claimBlockedInt := 0
 	if opts.ClaimBlocked {
@@ -179,14 +185,14 @@ func (db *DB) insertJobTx(ctx context.Context, exec execer, opts EnqueueOpts, ui
 
 	result, err := exec.ExecContext(ctx, `
 		INSERT INTO review_jobs (repo_id, commit_id, git_ref, branch, session_id, agent, model, provider, requested_model, requested_provider, reasoning,
-			status, job_type, review_type, patch_id, diff_content, prompt, agentic, prompt_prebuilt, output_prefix,
+			status, job_type, review_type, patch_id, diff_content, dirty_files, prompt, agentic, prompt_prebuilt, output_prefix,
 			parent_job_id, uuid, source_machine_id, updated_at, worktree_path, min_severity, backup_agent, backup_model,
 			panel_run_uuid, panel_role, panel_name, panel_member_name, panel_member_index, panel_member_config_json, claim_blocked, source)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		opts.RepoID, commitIDParam, gitRef, nullString(opts.Branch), nullString(opts.SessionID),
 		opts.Agent, nullString(opts.Model), nullString(opts.Provider), nullString(opts.RequestedModel), nullString(opts.RequestedProvider), reasoning,
 		jobType, opts.ReviewType, nullString(opts.PatchID),
-		nullString(opts.DiffContent), nullString(opts.Prompt), agenticInt, promptPrebuiltInt,
+		nullString(opts.DiffContent), nullString(dirtyFilesJSON), nullString(opts.Prompt), agenticInt, promptPrebuiltInt,
 		nullString(opts.OutputPrefix), parentJobIDParam,
 		uid, machineID, nowStr, opts.WorktreePath, normalizeMinSeverityForWrite(opts.MinSeverity), opts.BackupAgent, opts.BackupModel,
 		nullString(opts.PanelRunUUID), nullString(opts.PanelRole), nullString(opts.PanelName),
@@ -211,6 +217,7 @@ func (db *DB) insertJobTx(ctx context.Context, exec execer, opts EnqueueOpts, ui
 		JobType:               jobType,
 		ReviewType:            opts.ReviewType,
 		PatchID:               opts.PatchID,
+		DirtyFiles:            append([]string(nil), opts.DirtyFiles...),
 		Status:                JobStatusQueued,
 		EnqueuedAt:            now,
 		Prompt:                opts.Prompt,
@@ -360,7 +367,7 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 	var fields reviewJobScanFields
 	err = db.QueryRow(`
 		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.session_id, j.agent, j.model, j.provider, j.requested_model, j.requested_provider, j.reasoning, j.status, j.enqueued_at,
-		       r.root_path, r.name, c.subject, j.diff_content, j.prompt, COALESCE(j.agentic, 0), COALESCE(j.prompt_prebuilt, 0), j.job_type, j.review_type,
+		       r.root_path, r.name, c.subject, j.diff_content, j.dirty_files, j.prompt, COALESCE(j.agentic, 0), COALESCE(j.prompt_prebuilt, 0), j.job_type, j.review_type,
 		       j.output_prefix, j.patch_id, j.parent_job_id, COALESCE(j.worktree_path, ''), j.command_line, COALESCE(j.min_severity, ''), COALESCE(j.backup_agent, ''), COALESCE(j.backup_model, ''),
 		       COALESCE(j.panel_run_uuid, ''), COALESCE(j.panel_role, ''), COALESCE(j.panel_name, ''), COALESCE(j.panel_member_name, ''), j.panel_member_index, COALESCE(j.panel_member_config_json, ''), COALESCE(j.claim_blocked, 0), COALESCE(j.source, ''), j.retry_count
 		FROM review_jobs j
@@ -370,7 +377,7 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 		ORDER BY j.started_at DESC
 		LIMIT 1
 	`, workerID).Scan(&job.ID, &job.RepoID, &fields.CommitID, &job.GitRef, &fields.Branch, &fields.SessionID, &job.Agent, &fields.Model, &fields.Provider, &fields.RequestedModel, &fields.RequestedProvider, &job.Reasoning, &job.Status, &fields.EnqueuedAt,
-		&job.RepoPath, &job.RepoName, &fields.CommitSubject, &fields.DiffContent, &fields.Prompt, &fields.Agentic, &fields.PromptPrebuilt, &fields.JobType, &fields.ReviewType,
+		&job.RepoPath, &job.RepoName, &fields.CommitSubject, &fields.DiffContent, &fields.DirtyFiles, &fields.Prompt, &fields.Agentic, &fields.PromptPrebuilt, &fields.JobType, &fields.ReviewType,
 		&fields.OutputPrefix, &fields.PatchID, &fields.ParentJobID, &fields.WorktreePath, &fields.CommandLine, &fields.MinSeverity, &fields.BackupAgent, &fields.BackupModel,
 		&fields.PanelRunUUID, &fields.PanelRole, &fields.PanelName, &fields.PanelMemberName, &fields.PanelMemberIndex, &fields.PanelMemberConfig, &fields.ClaimBlocked, &fields.Source, &job.RetryCount)
 	if err != nil {
@@ -1022,7 +1029,7 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		       COALESCE(j.agentic, 0), COALESCE(j.prompt_prebuilt, 0), r.root_path, r.name, c.subject, rv.closed, rv.output,
 		       rv.verdict_bool, j.source_machine_id, j.uuid, j.model, j.job_type, j.review_type, j.patch_id,
 		       j.parent_job_id, j.provider, j.requested_model, j.requested_provider, j.token_usage, COALESCE(j.worktree_path, ''),
-		       j.command_line, COALESCE(j.min_severity, ''), COALESCE(j.backup_agent, ''), COALESCE(j.backup_model, ''),
+		       j.command_line, j.dirty_files, COALESCE(j.min_severity, ''), COALESCE(j.backup_agent, ''), COALESCE(j.backup_model, ''),
 		       COALESCE(j.skip_reason, ''), COALESCE(j.source, ''),
 		       COALESCE(j.panel_run_uuid, ''), COALESCE(j.panel_role, ''), COALESCE(j.panel_name, ''), COALESCE(j.panel_member_name, ''), j.panel_member_index, COALESCE(j.panel_member_config_json, ''), COALESCE(j.claim_blocked, 0)
 		FROM review_jobs j
@@ -1063,7 +1070,7 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 			&fields.Agentic, &fields.PromptPrebuilt, &j.RepoPath, &j.RepoName, &fields.CommitSubject, &fields.Closed, &output,
 			&verdictBool, &fields.SourceMachineID, &fields.UUID, &fields.Model, &fields.JobType, &fields.ReviewType, &fields.PatchID,
 			&fields.ParentJobID, &fields.Provider, &fields.RequestedModel, &fields.RequestedProvider, &fields.TokenUsage, &fields.WorktreePath,
-			&fields.CommandLine, &fields.MinSeverity, &fields.BackupAgent, &fields.BackupModel,
+			&fields.CommandLine, &fields.DirtyFiles, &fields.MinSeverity, &fields.BackupAgent, &fields.BackupModel,
 			&fields.SkipReason, &fields.Source,
 			&fields.PanelRunUUID, &fields.PanelRole, &fields.PanelName, &fields.PanelMemberName, &fields.PanelMemberIndex, &fields.PanelMemberConfig, &fields.ClaimBlocked)
 		if err != nil {
@@ -1115,7 +1122,7 @@ func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
 		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.session_id, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.prompt, COALESCE(j.agentic, 0),
 		       r.root_path, r.name, c.subject, j.model, j.provider, j.requested_model, j.requested_provider, j.job_type, j.review_type, j.patch_id, COALESCE(j.output_prefix, ''),
-		       j.parent_job_id, j.patch, j.token_usage, COALESCE(j.worktree_path, ''), j.command_line, COALESCE(j.min_severity, ''), COALESCE(j.backup_agent, ''), COALESCE(j.backup_model, ''),
+		       j.parent_job_id, j.patch, j.token_usage, j.dirty_files, COALESCE(j.worktree_path, ''), j.command_line, COALESCE(j.min_severity, ''), COALESCE(j.backup_agent, ''), COALESCE(j.backup_model, ''),
 		       COALESCE(j.skip_reason, ''), COALESCE(j.source, ''),
 		       COALESCE(j.panel_run_uuid, ''), COALESCE(j.panel_role, ''), COALESCE(j.panel_name, ''), COALESCE(j.panel_member_name, ''), j.panel_member_index, COALESCE(j.panel_member_config_json, ''), COALESCE(j.claim_blocked, 0)
 		FROM review_jobs j
@@ -1125,7 +1132,7 @@ func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
 	`, id).Scan(&j.ID, &j.RepoID, &fields.CommitID, &j.GitRef, &fields.Branch, &fields.SessionID, &j.Agent, &j.Reasoning, &j.Status, &fields.EnqueuedAt,
 		&fields.StartedAt, &fields.FinishedAt, &fields.WorkerID, &fields.Error, &fields.Prompt, &fields.Agentic,
 		&j.RepoPath, &j.RepoName, &fields.CommitSubject, &fields.Model, &fields.Provider, &fields.RequestedModel, &fields.RequestedProvider, &fields.JobType, &fields.ReviewType, &fields.PatchID, &fields.OutputPrefix,
-		&fields.ParentJobID, &fields.Patch, &fields.TokenUsage, &fields.WorktreePath, &fields.CommandLine, &fields.MinSeverity, &fields.BackupAgent, &fields.BackupModel,
+		&fields.ParentJobID, &fields.Patch, &fields.TokenUsage, &fields.DirtyFiles, &fields.WorktreePath, &fields.CommandLine, &fields.MinSeverity, &fields.BackupAgent, &fields.BackupModel,
 		&fields.SkipReason, &fields.Source,
 		&fields.PanelRunUUID, &fields.PanelRole, &fields.PanelName, &fields.PanelMemberName, &fields.PanelMemberIndex, &fields.PanelMemberConfig, &fields.ClaimBlocked)
 	if err != nil {
@@ -1150,6 +1157,22 @@ func (db *DB) GetJobDiffContent(jobID int64) (string, error) {
 		return "", fmt.Errorf("get job diff content: %w", err)
 	}
 	return diff, nil
+}
+
+// GetJobDirtyFiles returns the stored unfiltered dirty file names for a job.
+func (db *DB) GetJobDirtyFiles(jobID int64) ([]string, error) {
+	var files sql.NullString
+	err := db.QueryRow(
+		"SELECT dirty_files FROM review_jobs WHERE id = ?",
+		jobID,
+	).Scan(&files)
+	if err != nil {
+		return nil, fmt.Errorf("get job dirty files: %w", err)
+	}
+	if !files.Valid {
+		return nil, nil
+	}
+	return decodeDirtyFiles(files.String), nil
 }
 
 // GetJobCounts returns counts of jobs by status
@@ -1839,4 +1862,26 @@ func (db *DB) HasAutoDesignSlotForCommit(repoID int64, sha string) (bool, error)
 		return false, fmt.Errorf("query auto-design slot: %w", err)
 	}
 	return n > 0, nil
+}
+
+func encodeDirtyFiles(files []string) (string, error) {
+	if len(files) == 0 {
+		return "", nil
+	}
+	data, err := json.Marshal(files)
+	if err != nil {
+		return "", fmt.Errorf("encode dirty files: %w", err)
+	}
+	return string(data), nil
+}
+
+func decodeDirtyFiles(data string) []string {
+	if data == "" {
+		return nil
+	}
+	var files []string
+	if err := json.Unmarshal([]byte(data), &files); err != nil {
+		return nil
+	}
+	return files
 }

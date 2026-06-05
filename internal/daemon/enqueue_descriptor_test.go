@@ -94,6 +94,47 @@ func TestEnqueueDirtyUnchanged(t *testing.T) {
 	assert.Equal(diff, *claimed.DiffContent)
 }
 
+func TestEnqueueDirtyRejectsEmptyNonMetadataDiff(t *testing.T) {
+	server, _, _ := newTestServer(t)
+
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("a.txt", "a", "add a")
+
+	req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", EnqueueRequest{
+		RepoPath:   repo.Path(),
+		GitRef:     "dirty",
+		Agent:      "test",
+		DirtyFiles: []string{".cache/generated.bin"},
+	})
+	w := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), "diff_content required")
+}
+
+func TestEnqueueDirtyMetadataOnlyPersistsDirtyFiles(t *testing.T) {
+	server, db, _ := newTestServer(t)
+
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("a.txt", "a", "add a")
+
+	job := enqueueViaHTTP(t, server, EnqueueRequest{
+		RepoPath:   repo.Path(),
+		GitRef:     "dirty",
+		Agent:      "test",
+		DirtyFiles: []string{"go.sum"},
+	})
+
+	claimed, err := db.ClaimJob("worker")
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+	assert.Equal(t, storage.JobTypeDirty, claimed.JobType)
+	assert.Nil(t, claimed.DiffContent)
+	assert.Equal(t, []string{"go.sum"}, claimed.DirtyFiles)
+	assert.False(t, claimed.PromptPrebuilt, "dirty metadata should be rebuilt by the worker")
+}
+
 // TestEnqueueRangeUnchanged pins the range enqueue path: the symbolic
 // "<a>..<b>" request is frozen to "<sha>..<sha>" and classified as a range.
 func TestEnqueueRangeUnchanged(t *testing.T) {

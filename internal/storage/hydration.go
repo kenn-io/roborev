@@ -29,6 +29,7 @@ type reviewJobScanFields struct {
 	ParentJobID       sql.NullInt64
 	Patch             sql.NullString
 	DiffContent       sql.NullString
+	DirtyFiles        sql.NullString
 	OutputPrefix      sql.NullString
 	CommandLine       sql.NullString
 	TokenUsage        sql.NullString
@@ -92,6 +93,9 @@ func applyReviewJobScan(job *ReviewJob, fields reviewJobScanFields) {
 	}
 	if fields.DiffContent.Valid {
 		job.DiffContent = &fields.DiffContent.String
+	}
+	if fields.DirtyFiles.Valid {
+		job.DirtyFiles = decodeDirtyFiles(fields.DirtyFiles.String)
 	}
 	if fields.OutputPrefix.Valid {
 		job.OutputPrefix = fields.OutputPrefix.String

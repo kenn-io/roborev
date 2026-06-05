@@ -380,6 +380,7 @@ type SyncableJob struct {
 	FinishedAt            *time.Time
 	Prompt                string
 	DiffContent           *string
+	DirtyFiles            []string
 	Error                 string
 	TokenUsage            string
 	WorktreePath          string
@@ -406,7 +407,7 @@ func (db *DB) GetJobsToSync(machineID string, limit int) ([]SyncableJob, error) 
 			j.commit_id, COALESCE(c.sha, ''), COALESCE(c.author, ''), COALESCE(c.subject, ''), COALESCE(c.timestamp, ''),
 			j.git_ref, COALESCE(j.session_id, ''), j.agent, COALESCE(j.model, ''), COALESCE(j.provider, ''), COALESCE(j.requested_model, ''), COALESCE(j.requested_provider, ''), COALESCE(j.reasoning, ''), COALESCE(j.job_type, 'review'), COALESCE(j.review_type, ''), COALESCE(j.patch_id, ''), j.status, j.agentic,
 			j.enqueued_at, COALESCE(j.started_at, ''), COALESCE(j.finished_at, ''),
-			COALESCE(j.prompt, ''), j.diff_content, COALESCE(j.error, ''), COALESCE(j.token_usage, ''),
+			COALESCE(j.prompt, ''), j.diff_content, j.dirty_files, COALESCE(j.error, ''), COALESCE(j.token_usage, ''),
 			COALESCE(j.worktree_path, ''), COALESCE(j.source, ''), COALESCE(j.min_severity, ''), COALESCE(j.backup_agent, ''), COALESCE(j.backup_model, ''),
 			COALESCE(j.panel_run_uuid, ''), COALESCE(j.panel_role, ''), COALESCE(j.panel_name, ''), COALESCE(j.panel_member_name, ''), COALESCE(j.panel_member_index, 0), COALESCE(j.panel_member_config_json, ''),
 			j.source_machine_id, j.updated_at
@@ -437,13 +438,14 @@ func (db *DB) GetJobsToSync(machineID string, limit int) ([]SyncableJob, error) 
 		var enqueuedAt, startedAt, finishedAt, commitTimestamp, updatedAt string
 		var commitID sql.NullInt64
 		var diffContent sql.NullString
+		var dirtyFiles sql.NullString
 
 		err := rows.Scan(
 			&j.ID, &j.UUID, &j.RepoID, &j.RepoIdentity,
 			&commitID, &j.CommitSHA, &j.CommitAuthor, &j.CommitSubject, &commitTimestamp,
 			&j.GitRef, &j.SessionID, &j.Agent, &j.Model, &j.Provider, &j.RequestedModel, &j.RequestedProvider, &j.Reasoning, &j.JobType, &j.ReviewType, &j.PatchID, &j.Status, &j.Agentic,
 			&enqueuedAt, &startedAt, &finishedAt,
-			&j.Prompt, &diffContent, &j.Error, &j.TokenUsage,
+			&j.Prompt, &diffContent, &dirtyFiles, &j.Error, &j.TokenUsage,
 			&j.WorktreePath, &j.Source, &j.MinSeverity, &j.BackupAgent, &j.BackupModel,
 			&j.PanelRunUUID, &j.PanelRole, &j.PanelName, &j.PanelMemberName, &j.PanelMemberIndex, &j.PanelMemberConfigJSON,
 			&j.SourceMachineID, &updatedAt,
@@ -457,6 +459,9 @@ func (db *DB) GetJobsToSync(machineID string, limit int) ([]SyncableJob, error) 
 		}
 		if diffContent.Valid {
 			j.DiffContent = &diffContent.String
+		}
+		if dirtyFiles.Valid {
+			j.DirtyFiles = decodeDirtyFiles(dirtyFiles.String)
 		}
 		j.EnqueuedAt = parseSQLiteTime(enqueuedAt)
 		if startedAt != "" {
@@ -685,14 +690,18 @@ func (db *DB) MarkCommentsSynced(responseIDs []int64) error {
 // Sets synced_at to prevent re-pushing. Requires repo to exist.
 func (db *DB) UpsertPulledJob(j PulledJob, repoID int64, commitID *int64) error {
 	now := time.Now().UTC().Format(time.RFC3339)
-	_, err := db.Exec(`
+	dirtyFilesJSON, err := encodeDirtyFiles(j.DirtyFiles)
+	if err != nil {
+		return err
+	}
+	_, err = db.Exec(`
 		INSERT INTO review_jobs (
 			uuid, repo_id, commit_id, git_ref, session_id, agent, model, provider, requested_model, requested_provider, reasoning, job_type, review_type, patch_id, status, agentic,
-			enqueued_at, started_at, finished_at, prompt, diff_content, error, token_usage,
+			enqueued_at, started_at, finished_at, prompt, diff_content, dirty_files, error, token_usage,
 			worktree_path, source, min_severity, backup_agent, backup_model,
 			panel_run_uuid, panel_role, panel_name, panel_member_name, panel_member_index, panel_member_config_json,
 			source_machine_id, updated_at, synced_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(uuid) DO UPDATE SET
 			status = excluded.status,
 			finished_at = excluded.finished_at,
@@ -705,6 +714,7 @@ func (db *DB) UpsertPulledJob(j PulledJob, repoID int64, commitID *int64) error 
 			session_id = COALESCE(excluded.session_id, review_jobs.session_id),
 			commit_id = excluded.commit_id,
 			patch_id = excluded.patch_id,
+			dirty_files = COALESCE(excluded.dirty_files, review_jobs.dirty_files),
 			token_usage = COALESCE(excluded.token_usage, review_jobs.token_usage),
 			worktree_path = COALESCE(excluded.worktree_path, review_jobs.worktree_path),
 			source = COALESCE(excluded.source, review_jobs.source),
@@ -730,7 +740,7 @@ func (db *DB) UpsertPulledJob(j PulledJob, repoID int64, commitID *int64) error 
 	`, j.UUID, repoID, commitID, j.GitRef, nullStr(j.SessionID), j.Agent, nullStr(j.Model), nullStr(j.Provider), nullStr(j.RequestedModel), nullStr(j.RequestedProvider), j.Reasoning, j.JobType,
 		j.ReviewType, nullStr(j.PatchID), j.Status, j.Agentic, j.EnqueuedAt.Format(time.RFC3339),
 		nullTimeStr(j.StartedAt), nullTimeStr(j.FinishedAt),
-		nullStr(j.Prompt), j.DiffContent, nullStr(j.Error), nullStr(j.TokenUsage),
+		nullStr(j.Prompt), j.DiffContent, nullStr(dirtyFilesJSON), nullStr(j.Error), nullStr(j.TokenUsage),
 		nullStr(j.WorktreePath), nullStr(j.Source), normalizeMinSeverityForWrite(j.MinSeverity), j.BackupAgent, j.BackupModel,
 		nullStr(j.PanelRunUUID), nullStr(j.PanelRole), nullStr(j.PanelName), nullStr(j.PanelMemberName), j.PanelMemberIndex, nullStr(j.PanelMemberConfigJSON),
 		j.SourceMachineID, j.UpdatedAt.Format(time.RFC3339), now, now)

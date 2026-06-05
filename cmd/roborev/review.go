@@ -301,7 +301,7 @@ Examples:
 						len(diffContent), MaxDirtyDiffSize)
 				}
 
-				if diffContent == "" && len(dirtyFiles) == 0 {
+				if diffContent == "" && !prompt.HasDependencyMetadataFiles(dirtyFiles) {
 					return fmt.Errorf("no changes to review (diff is empty)")
 				}
 
