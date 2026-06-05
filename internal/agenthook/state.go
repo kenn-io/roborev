@@ -362,57 +362,55 @@ func applyFailedReviewTrigger(
 }
 
 func buildStopReason(req Request, st SessionState) string {
-	instruction := strings.TrimSpace(req.Instruction)
-	if instruction == "" {
-		instruction = DefaultInstruction
-	}
-	var b strings.Builder
-	b.WriteString(instruction)
-	b.WriteString("\n\n")
-	fmt.Fprintf(&b, "roborev agent-hook counted %d Stop hooks for session %s.", st.Count, req.Event.SessionID)
-	if req.Event.CWD != "" {
-		fmt.Fprintf(&b, " Current working directory: %s.", req.Event.CWD)
-	}
-	return b.String()
+	return buildPromptReason(req, fmt.Sprintf("%s reached.", countPhrase(st.Count, "Stop hook", "Stop hooks")))
 }
 
 func buildCommitReason(req Request, st SessionState) string {
-	instruction := strings.TrimSpace(req.Instruction)
-	if instruction == "" {
-		instruction = DefaultInstruction
+	detail := fmt.Sprintf("%s reached", countPhrase(st.CommitCount, "commit", "commits"))
+	if repoName := repoDisplayName(st.LastCommitRepo); repoName != "" {
+		detail += " in " + repoName
 	}
-	var b strings.Builder
-	b.WriteString(instruction)
-	b.WriteString("\n\n")
-	fmt.Fprintf(&b, "roborev agent-hook counted %d commits for session %s.", st.CommitCount, req.Event.SessionID)
-	if st.LastCommitRepo != "" {
-		fmt.Fprintf(&b, " Last commit repository: %s.", st.LastCommitRepo)
-	}
-	if req.Event.CWD != "" {
-		fmt.Fprintf(&b, " Current working directory: %s.", req.Event.CWD)
-	}
-	return b.String()
+	return buildPromptReason(req, detail+".")
 }
 
 func buildFailedReviewReason(req Request, st SessionState) string {
+	detail := countPhrase(st.FailedReviewCount, "open failed roborev review", "open failed roborev reviews")
+	if branch := strings.TrimSpace(st.LastFailedReviewBranch); branch != "" {
+		detail += " on " + branch
+	} else if repoName := repoDisplayName(st.LastFailedReviewRepo); repoName != "" {
+		detail += " in " + repoName
+	}
+	return buildPromptReason(req, detail+".")
+}
+
+func buildPromptReason(req Request, detail string) string {
 	instruction := strings.TrimSpace(req.Instruction)
 	if instruction == "" {
 		instruction = DefaultInstruction
 	}
-	var b strings.Builder
-	b.WriteString(instruction)
-	b.WriteString("\n\n")
-	fmt.Fprintf(&b, "roborev agent-hook counted %d non-closed failed roborev reviews for session %s.", st.FailedReviewCount, req.Event.SessionID)
-	if st.LastFailedReviewRepo != "" {
-		fmt.Fprintf(&b, " Review repository: %s.", st.LastFailedReviewRepo)
+	if strings.TrimSpace(detail) == "" {
+		return instruction
 	}
-	if st.LastFailedReviewBranch != "" {
-		fmt.Fprintf(&b, " Review branch: %s.", st.LastFailedReviewBranch)
+	return instruction + " " + detail
+}
+
+func countPhrase(count int, singular, plural string) string {
+	if count == 1 {
+		return fmt.Sprintf("1 %s", singular)
 	}
-	if req.Event.CWD != "" {
-		fmt.Fprintf(&b, " Current working directory: %s.", req.Event.CWD)
+	return fmt.Sprintf("%d %s", count, plural)
+}
+
+func repoDisplayName(repoPath string) string {
+	repoPath = strings.TrimSpace(repoPath)
+	if repoPath == "" {
+		return ""
 	}
-	return b.String()
+	base := filepath.Base(filepath.Clean(repoPath))
+	if base == "." || base == string(filepath.Separator) {
+		return ""
+	}
+	return base
 }
 
 func currentGitHead(cwd string) (string, string, bool) {

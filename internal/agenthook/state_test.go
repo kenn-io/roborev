@@ -48,6 +48,43 @@ func TestRepoHeadKey(t *testing.T) {
 	assert.NotEqual(repoHeadKey("/repo", "main"), repoHeadKey("/repo", "feature"))
 }
 
+func TestBuildHookReasonsAreCompactOneLine(t *testing.T) {
+	assert := assert.New(t)
+	req := Request{
+		Instruction: "Invoke the $roborev-fix skill now.",
+		Event: Input{
+			SessionID: "019e94d7-4320-73a3-8833-e697eb1ea5cb",
+			CWD:       "/Users/wesm/.superset/worktrees/roborev/agent-hook-integration",
+		},
+	}
+	st := SessionState{
+		Count:                  4,
+		CommitCount:            2,
+		FailedReviewCount:      1,
+		LastCommitRepo:         "/Users/wesm/.superset/worktrees/roborev/agent-hook-integration",
+		LastFailedReviewRepo:   "/Users/wesm/.superset/worktrees/roborev/agent-hook-integration",
+		LastFailedReviewBranch: "agent-hook-integration",
+	}
+
+	failed := buildFailedReviewReason(req, st)
+	assert.Equal("Invoke the $roborev-fix skill now. 1 open failed roborev review on agent-hook-integration.", failed)
+	assert.NotContains(failed, "\n")
+	assert.NotContains(failed, req.Event.SessionID)
+	assert.NotContains(failed, "/Users/wesm")
+
+	stop := buildStopReason(req, st)
+	assert.Equal("Invoke the $roborev-fix skill now. 4 Stop hooks reached.", stop)
+	assert.NotContains(stop, "\n")
+	assert.NotContains(stop, req.Event.SessionID)
+	assert.NotContains(stop, "/Users/wesm")
+
+	commit := buildCommitReason(req, st)
+	assert.Equal("Invoke the $roborev-fix skill now. 2 commits reached in agent-hook-integration.", commit)
+	assert.NotContains(commit, "\n")
+	assert.NotContains(commit, req.Event.SessionID)
+	assert.NotContains(commit, "/Users/wesm")
+}
+
 func TestRecordStopTracksReminderPromptCount(t *testing.T) {
 	assert := assert.New(t)
 	repo := testutil.NewGitRepo(t)
