@@ -74,9 +74,10 @@ instruction = "Invoke the $roborev-fix skill now."
 `turn_threshold` controls Stop hook prompting; `0` disables it.
 `commit_threshold` controls Bash `PostToolUse` prompting after commit-producing
 commands; `0` disables it. `failed_review_threshold` controls prompting when
-open failed roborev reviews are visible for the current repo/branch; `0`
-disables it. Commit baselines are tracked per repo and branch, so switching
-branches does not carry a stale commit count.
+open failed roborev reviews are visible for the current checkout; `0` disables
+it. Commit baselines are tracked by branch and by worktree, so detached
+worktrees keep their own commit sequence and attaching a branch later does not
+drop the detached history.
 
 Command flags override environment variables, which override TOML config:
 

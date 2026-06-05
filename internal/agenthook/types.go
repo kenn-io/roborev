@@ -62,24 +62,26 @@ type Response struct {
 }
 
 type SessionState struct {
-	Count                       int               `json:"count"`
-	StopCountSincePrompt        int               `json:"stop_count_since_prompt,omitempty"`
-	CommitCount                 int               `json:"commit_count,omitempty"`
-	CommitCountsSincePrompt     map[string]int    `json:"commit_counts_since_prompt,omitempty"`
-	FailedReviewCount           int               `json:"failed_review_count,omitempty"`
-	FailedReviewTriggeredCounts map[string]int    `json:"failed_review_triggered_counts,omitempty"`
-	ReminderPromptCount         int               `json:"remind_count,omitempty"`
-	LastTurnID                  string            `json:"last_turn_id,omitempty"`
-	LastCWD                     string            `json:"last_cwd,omitempty"`
-	LastCommitRepo              string            `json:"last_commit_repo,omitempty"`
-	LastCommitHead              string            `json:"last_commit_head,omitempty"`
-	LastFailedReviewRepo        string            `json:"last_failed_review_repo,omitempty"`
-	LastFailedReviewBranch      string            `json:"last_failed_review_branch,omitempty"`
-	RepoHeads                   map[string]string `json:"repo_heads,omitempty"`
-	LastSeenAt                  time.Time         `json:"last_seen_at,omitzero"`
-	TriggeredAt                 time.Time         `json:"triggered_at,omitzero"`
-	CommitTriggeredAt           time.Time         `json:"commit_triggered_at,omitzero"`
-	FailedReviewTriggeredAt     time.Time         `json:"failed_review_triggered_at,omitzero"`
+	Count                       int                 `json:"count"`
+	StopCountSincePrompt        int                 `json:"stop_count_since_prompt,omitempty"`
+	CommitCount                 int                 `json:"commit_count,omitempty"`
+	CommitCountsSincePrompt     map[string]int      `json:"commit_counts_since_prompt,omitempty"`
+	CommitSHAsSincePrompt       map[string][]string `json:"commit_shas_since_prompt,omitempty"`
+	FailedReviewCount           int                 `json:"failed_review_count,omitempty"`
+	FailedReviewTriggeredCounts map[string]int      `json:"failed_review_triggered_counts,omitempty"`
+	ReminderPromptCount         int                 `json:"remind_count,omitempty"`
+	LastTurnID                  string              `json:"last_turn_id,omitempty"`
+	LastCWD                     string              `json:"last_cwd,omitempty"`
+	LastCommitRepo              string              `json:"last_commit_repo,omitempty"`
+	LastCommitHead              string              `json:"last_commit_head,omitempty"`
+	LastFailedReviewRepo        string              `json:"last_failed_review_repo,omitempty"`
+	LastFailedReviewBranch      string              `json:"last_failed_review_branch,omitempty"`
+	RepoHeads                   map[string]string   `json:"repo_heads,omitempty"`
+	WorktreeLineageKeys         map[string]string   `json:"worktree_lineage_keys,omitempty"`
+	LastSeenAt                  time.Time           `json:"last_seen_at,omitzero"`
+	TriggeredAt                 time.Time           `json:"triggered_at,omitzero"`
+	CommitTriggeredAt           time.Time           `json:"commit_triggered_at,omitzero"`
+	FailedReviewTriggeredAt     time.Time           `json:"failed_review_triggered_at,omitzero"`
 }
 
 type Snapshot struct {
