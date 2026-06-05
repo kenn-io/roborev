@@ -775,7 +775,7 @@ func HasUncommittedChanges(repoPath string) (bool, error) {
 // GetDirtyFilesChanged returns changed file names for staged, unstaged, and
 // untracked working-tree changes before review diff exclusions are applied.
 func GetDirtyFilesChanged(repoPath string) ([]string, error) {
-	cmd := exec.Command("git", "status", "--porcelain")
+	cmd := exec.Command("git", "status", "--porcelain=v1", "-uall")
 	cmd.Dir = repoPath
 
 	out, err := cmd.Output()

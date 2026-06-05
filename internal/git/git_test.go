@@ -1004,6 +1004,18 @@ func TestGetDirtyFilesChangedIncludesExcludedDependencyMetadata(t *testing.T) {
 	assert.Contains(t, files, "package-lock.json")
 }
 
+func TestGetDirtyFilesChangedExpandsUntrackedDirectories(t *testing.T) {
+	repo := NewTestRepoWithCommit(t)
+	repo.WriteFile("frontend/package-lock.json", "lock\n")
+	repo.WriteFile("frontend/src/index.js", "console.log('x')\n")
+
+	files, err := GetDirtyFilesChanged(repo.Dir)
+	require.NoError(t, err)
+	assert.Contains(t, files, "frontend/package-lock.json")
+	assert.Contains(t, files, "frontend/src/index.js")
+	assert.NotContains(t, files, "frontend/")
+}
+
 func TestFormatExcludeArgs(t *testing.T) {
 	assert.Nil(t, FormatExcludeArgs(nil))
 	assert.Nil(t, FormatExcludeArgs([]string{}))
