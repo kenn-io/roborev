@@ -226,6 +226,83 @@ func TestRecordPostToolUseCommitReminderStaysInCommitRepo(t *testing.T) {
 	assert.Equal("commit", inA.TriggeredBy)
 }
 
+func commitsSincePrompt(st SessionState) int {
+	total := 0
+	for _, c := range st.CommitCountsSincePrompt {
+		total += c
+	}
+	return total
+}
+
+func TestRecordPostToolUseFailedReviewPromptKeepsOtherRepoCommitReminder(t *testing.T) {
+	assert := assert.New(t)
+	repoA := testutil.NewGitRepo(t)
+	repoA.CommitFile("a.go", "package main\n", "initial A")
+	repoB := testutil.NewGitRepo(t)
+	repoB.CommitFile("b.go", "package main\n", "initial B")
+
+	var aReady, bReady atomic.Bool
+	bReady.Store(true)
+	closed := false
+	verdict := "F"
+	// Repo B has two failed reviews (meets FailedReviewThreshold); repo A has one
+	// once its review lands - actionable for the commit reminder but below the
+	// failed-review threshold, so only the commit path can prompt repo A.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		repoParam := r.URL.Query().Get("repo")
+		n := 0
+		switch {
+		case repoParam == repoB.Path() && bReady.Load():
+			n = 2
+		case repoParam == repoA.Path() && aReady.Load():
+			n = 1
+		}
+		jobs := make([]storage.ReviewJob, 0, n)
+		for i := 0; i < n; i++ {
+			jobs = append(jobs, storage.ReviewJob{Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict})
+		}
+		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{Jobs: jobs}))
+	}))
+	t.Cleanup(server.Close)
+
+	store := &StateStore{path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	post := func(cwd, command string) Response {
+		resp, err := store.Record(Request{
+			Event: Input{
+				SessionID:     "session-1",
+				CWD:           cwd,
+				HookEventName: "PostToolUse",
+				ToolName:      "Bash",
+				ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"` + command + `"`)},
+			},
+			CommitThreshold:       1,
+			FailedReviewThreshold: 2,
+			Instruction:           "Run roborev fix.",
+			RoborevServerAddr:     server.URL,
+		})
+		require.NoError(t, err)
+		return resp
+	}
+
+	// Repo A: a commit crosses the commit threshold while A's review is pending.
+	post(repoA.Path(), "git status")
+	repoA.CommitFile("a2.go", "package main\n", "second A")
+	assert.False(post(repoA.Path(), "git commit -m second").Triggered, "A's commit reminder waits for its review")
+
+	// Repo B reaches the failed-review threshold and prompts. That prompt must
+	// not clear repo A's deferred commit reminder.
+	bResp := post(repoB.Path(), "go test ./...")
+	assert.True(bResp.Triggered, "repo B's failed-review threshold prompts")
+	assert.Equal("failed_reviews", bResp.TriggeredBy)
+
+	// Back in repo A once its review appears: the commit reminder still fires,
+	// since A's single review is below the failed-review threshold.
+	aReady.Store(true)
+	inA := post(repoA.Path(), "go test ./...")
+	assert.True(inA.Triggered, "A's commit reminder survives repo B's failed-review prompt")
+	assert.Equal("commit", inA.TriggeredBy)
+}
+
 func TestRecordStopTracksReminderPromptCount(t *testing.T) {
 	assert := assert.New(t)
 	repo := testutil.NewGitRepo(t)
@@ -555,7 +632,7 @@ func TestRecordPostToolUseFirstCommitWithoutBaselineDoesNotCount(t *testing.T) {
 	require.NoError(t, err)
 	assert.False(resp.Triggered, "a failed first commit must not trigger a prompt")
 	assert.Equal(0, store.sessions["session-1"].CommitCount)
-	assert.Equal(0, store.sessions["session-1"].CommitCountSincePrompt)
+	assert.Equal(0, commitsSincePrompt(store.sessions["session-1"]))
 }
 
 func TestRecordPreToolUseBaselineLetsFirstCommitCount(t *testing.T) {
@@ -597,7 +674,7 @@ func TestRecordPreToolUseBaselineLetsFirstCommitCount(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(1, store.sessions["session-1"].CommitCount)
-	assert.Equal(1, store.sessions["session-1"].CommitCountSincePrompt)
+	assert.Equal(1, commitsSincePrompt(store.sessions["session-1"]))
 }
 
 func TestRecordPostToolUseCountsCommitAfterBaseline(t *testing.T) {
@@ -688,7 +765,7 @@ func TestRecordPostToolUseCommitTriggersWhenReviewLagsBehindCommit(t *testing.T)
 	atCommit, err := store.Record(commit)
 	require.NoError(t, err)
 	assert.False(atCommit.Triggered, "no prompt while the commit's review is still pending")
-	assert.Equal(1, store.sessions["session-1"].CommitCountSincePrompt)
+	assert.Equal(1, commitsSincePrompt(store.sessions["session-1"]))
 
 	// The failed review becomes visible on a later, non-commit tool call: the
 	// already-met threshold must prompt now rather than waiting for a new commit.
@@ -699,5 +776,5 @@ func TestRecordPostToolUseCommitTriggersWhenReviewLagsBehindCommit(t *testing.T)
 	require.NoError(t, err)
 	assert.True(atLater.Triggered, "a met commit threshold must prompt once reviews appear")
 	assert.Equal("commit", atLater.TriggeredBy)
-	assert.Equal(0, store.sessions["session-1"].CommitCountSincePrompt, "counters reset after prompting")
+	assert.Equal(0, commitsSincePrompt(store.sessions["session-1"]), "counters reset after prompting")
 }

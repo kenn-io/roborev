@@ -150,7 +150,7 @@ func (s *StateStore) recordStop(req Request) (Response, error) {
 	promptTriggered := stopTriggered || failedReviewTriggered
 	if promptTriggered {
 		st.ReminderPromptCount++
-		resetPromptCounters(&st)
+		resetPromptCounters(&st, repoHeadKey(repoRoot, branch))
 	}
 	s.sessions[req.Event.SessionID] = st
 	if err := s.saveLocked(); err != nil {
@@ -279,30 +279,26 @@ func (s *StateStore) recordPostToolUse(req Request) (Response, error) {
 	st.LastSeenAt = now
 	if increment > 0 {
 		st.CommitCount += increment
-		// CommitCountSincePrompt tracks one checkout at a time. When commits move
-		// to a different repo/branch, restart it so an unmet count from the prior
-		// checkout cannot leak into this one.
-		if st.CommitCountKey != headKey {
-			st.CommitCountSincePrompt = 0
-			st.CommitCountKey = headKey
+		// CommitCountsSincePrompt is keyed by repo/branch so a deferred reminder
+		// for one checkout is never advanced, consumed, or reset by another.
+		if st.CommitCountsSincePrompt == nil {
+			st.CommitCountsSincePrompt = map[string]int{}
 		}
-		st.CommitCountSincePrompt += increment
+		st.CommitCountsSincePrompt[headKey] += increment
 		st.LastCommitRepo = repoRoot
 		st.LastCommitHead = head
 	}
 
 	actionableReviews := hasActionableFailedReviews(failedReviewCount, haveFailedReviewCount)
-	// The commit reminder fires once the threshold is met and actionable failed
-	// reviews exist; it does not require a commit in this exact event. Reviews
-	// are produced asynchronously, so the failures for the commit that crossed
-	// the threshold usually only become visible on a later tool call. It only
-	// fires for the checkout that accumulated the commits (CommitCountKey) so a
-	// deferred reminder for one repo/branch is not consumed by unrelated failed
-	// reviews after switching to another. thresholdReady implies a real commit
-	// was counted since the last prompt, and triggering resets the counter.
-	commitTriggered := st.CommitCountKey == headKey &&
-		thresholdReady(st.CommitCountSincePrompt, req.CommitThreshold) &&
-		actionableReviews
+	// The commit reminder fires once this checkout's threshold is met and
+	// actionable failed reviews exist; it does not require a commit in this exact
+	// event, because reviews are produced asynchronously and the failures for the
+	// commit that crossed the threshold usually only land on a later tool call.
+	// The count is keyed by repo/branch, so a deferred reminder for one checkout
+	// is not consumed or reset by activity in another. thresholdReady implies a
+	// real commit was counted for this checkout since its last prompt, and
+	// triggering resets that checkout's count.
+	commitTriggered := thresholdReady(st.CommitCountsSincePrompt[headKey], req.CommitThreshold) && actionableReviews
 	if commitTriggered {
 		st.CommitTriggeredAt = now
 	}
@@ -310,7 +306,7 @@ func (s *StateStore) recordPostToolUse(req Request) (Response, error) {
 	promptTriggered := commitTriggered || failedReviewTriggered
 	if promptTriggered {
 		st.ReminderPromptCount++
-		resetPromptCounters(&st)
+		resetPromptCounters(&st, headKey)
 	}
 	s.sessions[req.Event.SessionID] = st
 	if err := s.saveLocked(); err != nil {
@@ -347,9 +343,13 @@ func thresholdReady(countSincePrompt, threshold int) bool {
 	return threshold > 0 && countSincePrompt >= threshold
 }
 
-func resetPromptCounters(st *SessionState) {
+// resetPromptCounters restarts the per-prompt counters after a reminder fires.
+// StopCountSincePrompt is session-wide, but the commit count is cleared only for
+// key (the checkout being prompted) so a prompt in one repo/branch cannot
+// discard a deferred commit reminder owed to another.
+func resetPromptCounters(st *SessionState, key string) {
 	st.StopCountSincePrompt = 0
-	st.CommitCountSincePrompt = 0
+	delete(st.CommitCountsSincePrompt, key)
 }
 
 func repoHeadKey(repoRoot, branch string) string {

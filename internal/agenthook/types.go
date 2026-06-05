@@ -65,8 +65,7 @@ type SessionState struct {
 	Count                       int               `json:"count"`
 	StopCountSincePrompt        int               `json:"stop_count_since_prompt,omitempty"`
 	CommitCount                 int               `json:"commit_count,omitempty"`
-	CommitCountSincePrompt      int               `json:"commit_count_since_prompt,omitempty"`
-	CommitCountKey              string            `json:"commit_count_key,omitempty"`
+	CommitCountsSincePrompt     map[string]int    `json:"commit_counts_since_prompt,omitempty"`
 	FailedReviewCount           int               `json:"failed_review_count,omitempty"`
 	FailedReviewTriggeredCounts map[string]int    `json:"failed_review_triggered_counts,omitempty"`
 	ReminderPromptCount         int               `json:"remind_count,omitempty"`
