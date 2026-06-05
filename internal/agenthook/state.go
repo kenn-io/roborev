@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"unicode"
 
 	gitcmd "go.kenn.io/kit/git/cmd"
 	gitrepo "go.kenn.io/kit/git/repo"
@@ -278,6 +279,13 @@ func (s *StateStore) recordPostToolUse(req Request) (Response, error) {
 	st.LastSeenAt = now
 	if increment > 0 {
 		st.CommitCount += increment
+		// CommitCountSincePrompt tracks one checkout at a time. When commits move
+		// to a different repo/branch, restart it so an unmet count from the prior
+		// checkout cannot leak into this one.
+		if st.CommitCountKey != headKey {
+			st.CommitCountSincePrompt = 0
+			st.CommitCountKey = headKey
+		}
 		st.CommitCountSincePrompt += increment
 		st.LastCommitRepo = repoRoot
 		st.LastCommitHead = head
@@ -287,11 +295,14 @@ func (s *StateStore) recordPostToolUse(req Request) (Response, error) {
 	// The commit reminder fires once the threshold is met and actionable failed
 	// reviews exist; it does not require a commit in this exact event. Reviews
 	// are produced asynchronously, so the failures for the commit that crossed
-	// the threshold usually only become visible on a later tool call. Requiring
-	// a fresh commit here would drop those reminders until the next commit.
-	// thresholdReady already implies a real commit was counted since the last
-	// prompt, and triggering resets the counters, so this cannot fire spuriously.
-	commitTriggered := thresholdReady(st.CommitCountSincePrompt, req.CommitThreshold) && actionableReviews
+	// the threshold usually only become visible on a later tool call. It only
+	// fires for the checkout that accumulated the commits (CommitCountKey) so a
+	// deferred reminder for one repo/branch is not consumed by unrelated failed
+	// reviews after switching to another. thresholdReady implies a real commit
+	// was counted since the last prompt, and triggering resets the counter.
+	commitTriggered := st.CommitCountKey == headKey &&
+		thresholdReady(st.CommitCountSincePrompt, req.CommitThreshold) &&
+		actionableReviews
 	if commitTriggered {
 		st.CommitTriggeredAt = now
 	}
@@ -357,14 +368,21 @@ func applyFailedReviewTrigger(
 	st.FailedReviewCount = count
 	st.LastFailedReviewRepo = repoRoot
 	st.LastFailedReviewBranch = branch
+	// failedReviewCount is scoped to the current repo/branch, so dedup the prompt
+	// per repo/branch. A single session-wide counter would let a prompt in one
+	// repo/branch suppress prompts in another with an equal or lower count.
+	key := repoHeadKey(repoRoot, branch)
 	if count < req.FailedReviewThreshold {
-		st.FailedReviewTriggeredCount = 0
+		delete(st.FailedReviewTriggeredCounts, key)
 		return false
 	}
-	if !thresholdReady(count-st.FailedReviewTriggeredCount, req.FailedReviewThreshold) {
+	if !thresholdReady(count-st.FailedReviewTriggeredCounts[key], req.FailedReviewThreshold) {
 		return false
 	}
-	st.FailedReviewTriggeredCount = count
+	if st.FailedReviewTriggeredCounts == nil {
+		st.FailedReviewTriggeredCounts = map[string]int{}
+	}
+	st.FailedReviewTriggeredCounts[key] = count
 	st.FailedReviewTriggeredAt = now
 	return true
 }
@@ -375,7 +393,7 @@ func buildStopReason(req Request, st SessionState) string {
 
 func buildCommitReason(req Request, st SessionState) string {
 	detail := fmt.Sprintf("%s reached", countPhrase(st.CommitCount, "commit", "commits"))
-	if repoName := repoDisplayName(st.LastCommitRepo); repoName != "" {
+	if repoName := quotedLabel(repoDisplayName(st.LastCommitRepo)); repoName != "" {
 		detail += " in " + repoName
 	}
 	return buildPromptReason(req, detail+".")
@@ -383,12 +401,42 @@ func buildCommitReason(req Request, st SessionState) string {
 
 func buildFailedReviewReason(req Request, st SessionState) string {
 	detail := countPhrase(st.FailedReviewCount, "open failed roborev review", "open failed roborev reviews")
-	if branch := strings.TrimSpace(st.LastFailedReviewBranch); branch != "" {
+	if branch := quotedLabel(st.LastFailedReviewBranch); branch != "" {
 		detail += " on " + branch
-	} else if repoName := repoDisplayName(st.LastFailedReviewRepo); repoName != "" {
+	} else if repoName := quotedLabel(repoDisplayName(st.LastFailedReviewRepo)); repoName != "" {
 		detail += " in " + repoName
 	}
 	return buildPromptReason(req, detail+".")
+}
+
+// sanitizeLabel makes an untrusted git branch or repo (directory) name safe to
+// embed in agent-facing hook text. Both are attacker-influenced, so it drops
+// control characters and double quotes that could inject new instruction lines
+// or break out of delimiting, collapses whitespace, and caps the length so a
+// hostile name cannot flood or steer the active agent.
+func sanitizeLabel(raw string) string {
+	cleaned := strings.Map(func(r rune) rune {
+		if r == '"' || unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, raw)
+	cleaned = strings.Join(strings.Fields(cleaned), " ")
+	const maxRunes = 64
+	if runes := []rune(cleaned); len(runes) > maxRunes {
+		cleaned = strings.TrimSpace(string(runes[:maxRunes]))
+	}
+	return cleaned
+}
+
+// quotedLabel returns raw sanitized and wrapped in quotes so it renders as a
+// clearly delimited data token, or "" when nothing usable remains.
+func quotedLabel(raw string) string {
+	clean := sanitizeLabel(raw)
+	if clean == "" {
+		return ""
+	}
+	return fmt.Sprintf("%q", clean)
 }
 
 func buildPromptReason(req Request, detail string) string {
