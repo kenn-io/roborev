@@ -99,6 +99,37 @@ func TestBuildPromptWithAdditionalContextAndPreviousAttemptsPreservesSectionOrde
 	assert.Less(t, previousAttemptsPos, currentCommitPos)
 }
 
+func TestBuildRangePromptSummarizesExcludedDependencyMetadata(t *testing.T) {
+	repo := newTestRepo(t)
+	require.NoError(t, os.MkdirAll(filepath.Join(repo.dir, "frontend"), 0o755))
+	repo.writeFile("frontend/package.json", `{"dependencies":{"react":"18.2.0"}}`+"\n")
+	repo.writeFile("frontend/package-lock.json", `{"packages":{"":{"dependencies":{"react":"18.2.0"}}}}`+"\n")
+	repo.writeFile("go.mod", "module example.com/app\n\nrequire github.com/jackc/pgx/v5 v5.9.0\n")
+	repo.writeFile("go.sum", "github.com/jackc/pgx/v5 v5.9.0 h1:old\n")
+	repo.git("add", "-A")
+	repo.git("commit", "-m", "add dependency metadata")
+	baseSHA := repo.git("rev-parse", "HEAD")
+
+	repo.writeFile("frontend/package.json", `{"dependencies":{"react":"18.3.1"}}`+"\n")
+	repo.writeFile("frontend/package-lock.json", `{"packages":{"":{"dependencies":{"react":"18.3.1"}}}}`+"\n")
+	repo.writeFile("go.mod", "module example.com/app\n\nrequire github.com/jackc/pgx/v5 v5.10.0\n")
+	repo.writeFile("go.sum", "github.com/jackc/pgx/v5 v5.10.0 h1:new\n")
+	repo.git("add", "-A")
+	repo.git("commit", "-m", "bump dependency metadata")
+
+	rangeRef := baseSHA + ".." + repo.git("rev-parse", "HEAD")
+	prompt, err := NewBuilder(nil).ForRepo(repo.dir, 0).Build(rangeRef, 0, "test", "", "")
+	require.NoError(t, err)
+
+	assertContains(t, prompt, "## Dependency Metadata", "expected dependency metadata summary")
+	assertContains(t, prompt, "frontend/package-lock.json changed", "expected lockfile change summary")
+	assertContains(t, prompt, "go.sum changed", "expected checksum change summary")
+	assertContains(t, prompt, "frontend/package.json", "manifest body should remain in main diff")
+	assertContains(t, prompt, "go.mod", "manifest body should remain in main diff")
+	assertNotContains(t, prompt, `-"github.com/jackc/pgx/v5 v5.9.0 h1:old"`, "go.sum body should stay out of main diff")
+	assertNotContains(t, prompt, `-"packages"`, "package-lock body should stay out of main diff")
+}
+
 func TestOrderedPreviousReviewViewsRendersOldestFirst(t *testing.T) {
 	views := orderedPreviousReviewViews([]HistoricalReviewContext{
 		{SHA: "ccccccc", Review: &storage.Review{Output: "newest"}},

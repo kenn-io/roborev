@@ -1058,6 +1058,9 @@ func (b *Builder) buildSinglePrompt(sha string, contextCount int, agentName, rev
 
 	// Include previous review attempts for this same commit (for re-reviews)
 	ctx.optional.PreviousAttempts = previousAttemptViewsFromContexts(b.previousAttemptContexts(sha))
+	if files, err := git.GetFilesChanged(b.repoPath, sha); err == nil {
+		ctx.optional.DependencyMetadata = buildDependencyMetadataSection(files)
+	}
 
 	// Current commit section
 	shortSHA := gitrepo.ShortSHA(sha)
@@ -1181,6 +1184,9 @@ func (b *Builder) buildRangePrompt(rangeRef string, contextCount int, agentName,
 	commits, err := git.GetRangeCommits(b.repoPath, rangeRef)
 	if err != nil {
 		return "", fmt.Errorf("get range commits: %w", err)
+	}
+	if files, err := git.GetRangeFilesChanged(b.repoPath, rangeRef); err == nil {
+		ctx.optional.DependencyMetadata = buildDependencyMetadataSection(files)
 	}
 
 	// Include per-commit reviews for commits inside the range so the agent

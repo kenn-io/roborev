@@ -6,6 +6,7 @@ These guidelines supplement the default review criteria and may add repo-specifi
 
 {{end}}{{end}}
 {{define "additional_context"}}{{- .AdditionalContext -}}{{end}}
+{{define "dependency_metadata"}}{{- .DependencyMetadata -}}{{end}}
 {{define "review_comments"}}{{if .}}Comments on this review:
 {{range .}}- {{.Responder}}: {{printf "%q" .Response}}
 {{end}}
@@ -50,7 +51,7 @@ responses from developers. Use this context to:
 
 {{template "review_comments" .Comments}}
 {{- end}}{{end}}{{end}}
-{{define "optional_sections"}}{{template "project_guidelines" .}}{{template "additional_context" .}}{{template "previous_reviews" .}}{{template "in_range_reviews" .}}{{template "previous_review_attempts" .}}{{end}}
+{{define "optional_sections"}}{{template "project_guidelines" .}}{{template "additional_context" .}}{{template "dependency_metadata" .}}{{template "previous_reviews" .}}{{template "in_range_reviews" .}}{{template "previous_review_attempts" .}}{{end}}
 {{define "current_commit_required"}}## Current Commit
 
 **Commit:** {{.Commit}}

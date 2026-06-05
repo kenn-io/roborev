@@ -58,11 +58,12 @@ const (
 )
 
 type ReviewOptionalContext struct {
-	ProjectGuidelines *MarkdownSection
-	AdditionalContext string
-	PreviousReviews   []PreviousReviewTemplateContext
-	InRangeReviews    []InRangeReviewTemplateContext
-	PreviousAttempts  []ReviewAttemptTemplateContext
+	ProjectGuidelines  *MarkdownSection
+	AdditionalContext  string
+	DependencyMetadata string
+	PreviousReviews    []PreviousReviewTemplateContext
+	InRangeReviews     []InRangeReviewTemplateContext
+	PreviousAttempts   []ReviewAttemptTemplateContext
 }
 
 func (o ReviewOptionalContext) Clone() ReviewOptionalContext {
@@ -89,6 +90,7 @@ func (o ReviewOptionalContext) Clone() ReviewOptionalContext {
 func (o ReviewOptionalContext) IsEmpty() bool {
 	return o.ProjectGuidelines == nil &&
 		o.AdditionalContext == "" &&
+		o.DependencyMetadata == "" &&
 		len(o.PreviousReviews) == 0 &&
 		len(o.InRangeReviews) == 0 &&
 		len(o.PreviousAttempts) == 0
@@ -112,6 +114,8 @@ func (o *ReviewOptionalContext) TrimNext() bool {
 		o.InRangeReviews = nil
 	case len(o.PreviousReviews) > 0:
 		o.PreviousReviews = nil
+	case o.DependencyMetadata != "":
+		o.DependencyMetadata = ""
 	case o.AdditionalContext != "":
 		o.AdditionalContext = ""
 	case o.ProjectGuidelines != nil:

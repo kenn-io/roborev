@@ -901,12 +901,45 @@ func GetDirtyDiff(
 	return result.String(), nil
 }
 
-// excludedPathPatterns contains pathspec patterns for generated directories that
-// add noise to code reviews. Dependency lockfiles and checksum manifests stay in
-// review diffs because reviewers need them to validate manifest changes.
+// excludedPathPatterns contains pathspec patterns for generated or mechanical
+// files that add noise to code reviews. Prompt construction summarizes omitted
+// dependency metadata separately so reviewers can still verify manifest/lockfile
+// consistency without inlining large lockfile bodies.
 // Uses :(exclude,glob)**/ form so patterns match at any directory depth.
 // Directory patterns use :(exclude) without glob since git recognizes them as trees.
 var excludedPathPatterns = []string{
+	// JavaScript / Node
+	":(exclude,glob)**/package-lock.json",
+	":(exclude,glob)**/yarn.lock",
+	":(exclude,glob)**/pnpm-lock.yaml",
+	":(exclude,glob)**/bun.lockb",
+	":(exclude,glob)**/bun.lock",
+	// Python
+	":(exclude,glob)**/uv.lock",
+	":(exclude,glob)**/poetry.lock",
+	":(exclude,glob)**/Pipfile.lock",
+	":(exclude,glob)**/pdm.lock",
+	// Go
+	":(exclude,glob)**/go.sum",
+	// Rust
+	":(exclude,glob)**/Cargo.lock",
+	":(exclude,glob)**/cargo.lock", // lowercase for case-insensitive filesystems
+	// Ruby
+	":(exclude,glob)**/Gemfile.lock",
+	// PHP
+	":(exclude,glob)**/composer.lock",
+	// .NET
+	":(exclude,glob)**/packages.lock.json",
+	// Dart / Flutter
+	":(exclude,glob)**/pubspec.lock",
+	// Elixir
+	":(exclude,glob)**/mix.lock",
+	// Swift
+	":(exclude,glob)**/Package.resolved",
+	// iOS / macOS
+	":(exclude,glob)**/Podfile.lock",
+	// Nix
+	":(exclude,glob)**/flake.lock",
 	":(exclude,glob)**/.beads/**",
 	":(exclude,glob)**/.gocache/**",
 	":(exclude,glob)**/.cache/**",
