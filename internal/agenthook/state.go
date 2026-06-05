@@ -668,17 +668,29 @@ func countOpenFailedReviews(ctx context.Context, repoRoot, branch, head, configu
 }
 
 // failedReviewCountsForHead reports whether an open failed review returned by
-// the jobs query counts toward the current checkout. Branchful queries ask the
-// daemon for the current branch plus branchless jobs (branch_include_empty), so
-// a job carrying a branch belongs to the queried branch, while a branchless job
-// counts only when its reviewed ref is reachable from HEAD. That reachability
-// gate keeps stale or unrelated detached reviews from prompting $roborev-fix on
-// a branch they have nothing to do with.
+// the jobs query counts toward the current checkout. branch_include_empty makes
+// branchful queries also return branchless jobs, so the reachability gate used
+// for detached HEAD must apply to those too - otherwise a stale or unrelated
+// detached review would prompt $roborev-fix on a branch it does not belong to.
+//
+//   - A job carrying a branch belongs to the queried branch (the daemon already
+//     scoped the query to it).
+//   - On detached HEAD, only branchless reviews reachable from HEAD are ours.
+//   - On a branch, a branchless review counts unless it pins a concrete ref that
+//     is unreachable from HEAD; reviews with no ref (repo-level or dirty) still
+//     count, matching the long-standing reminder behavior.
 func failedReviewCountsForHead(repoRoot, branch, head string, job storage.ReviewJob) bool {
 	if strings.TrimSpace(job.Branch) != "" {
 		return branch != ""
 	}
-	return head != "" && detachedReviewMatches(repoRoot, head, job)
+	if branch == "" {
+		return head != "" && detachedReviewMatches(repoRoot, head, job)
+	}
+	ref := strings.TrimSpace(job.GitRef)
+	if ref == "" || ref == "dirty" || head == "" {
+		return true
+	}
+	return detachedReviewMatches(repoRoot, head, job)
 }
 
 func detachedReviewMatches(repoRoot, head string, job storage.ReviewJob) bool {
