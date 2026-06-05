@@ -3,10 +3,9 @@ package telemetry
 import (
 	"testing"
 
-	kittelemetry "go.kenn.io/kit/telemetry"
-
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	kittelemetry "go.kenn.io/kit/telemetry"
 )
 
 func TestEnabledFromEnvHonorsRoborevAndGenericOptOut(t *testing.T) {
