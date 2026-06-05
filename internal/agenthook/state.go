@@ -102,7 +102,7 @@ func (s *StateStore) Record(req Request) (Response, error) {
 }
 
 func (s *StateStore) recordStop(req Request) (Response, error) {
-	repoRoot, _, ok := currentGitHead(req.Event.CWD)
+	repoRoot, head, ok := currentGitHead(req.Event.CWD)
 	if !ok {
 		return Response{
 			SessionID:             req.Event.SessionID,
@@ -113,7 +113,7 @@ func (s *StateStore) recordStop(req Request) (Response, error) {
 	}
 	branch := currentGitBranch(repoRoot)
 	failedReviewCount, haveFailedReviewCount := countOpenFailedReviews(
-		context.Background(), mainRepoRoot(repoRoot), branch, req.RoborevServerAddr,
+		context.Background(), mainRepoRoot(repoRoot), branch, head, req.RoborevServerAddr,
 	)
 
 	s.mu.Lock()
@@ -248,7 +248,7 @@ func (s *StateStore) recordPostToolUse(req Request) (Response, error) {
 
 	branch := currentGitBranch(repoRoot)
 	failedReviewCount, haveFailedReviewCount := countOpenFailedReviews(
-		context.Background(), mainRepoRoot(repoRoot), branch, req.RoborevServerAddr,
+		context.Background(), mainRepoRoot(repoRoot), branch, head, req.RoborevServerAddr,
 	)
 	command := req.Event.Command()
 	commitCommand := IsCommitProducingCommand(command)
@@ -549,7 +549,7 @@ func shellFields(command string) []string {
 		case '\'', '"', '`':
 			quote = r
 			inToken = true
-		case ' ', '\t', '\r', '\n', ';', '&', '|', '(', ')', '{', '}', '[', ']', '<', '>':
+		case ' ', '\t', '\r', '\n', ';', '&', '|', '[', ']', '<', '>':
 			if inToken {
 				fields = append(fields, b.String())
 				b.Reset()
@@ -591,7 +591,7 @@ type jobsResponse struct {
 	Jobs []storage.ReviewJob `json:"jobs"`
 }
 
-func countOpenFailedReviews(ctx context.Context, repoRoot, branch, configuredAddr string) (int, bool) {
+func countOpenFailedReviews(ctx context.Context, repoRoot, branch, head, configuredAddr string) (int, bool) {
 	if repoRoot == "" {
 		return 0, false
 	}
@@ -605,6 +605,8 @@ func countOpenFailedReviews(ctx context.Context, repoRoot, branch, configuredAdd
 	if branch != "" {
 		values.Set("branch", branch)
 		values.Set("branch_include_empty", "true")
+	} else if head != "" {
+		values.Set("git_ref", head)
 	}
 	values.Set("status", "done")
 	values.Set("closed", "false")
