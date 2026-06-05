@@ -20,31 +20,12 @@ jobs:
         with:
           go-version: '1.26.3'
 
-      - name: Resolve release notes
-        id: release_notes
-        run: |
-          TAG_NAME="${GITHUB_REF#refs/tags/}"
-          ARGS="release --clean"
-
-          TAG_TYPE=$(git cat-file -t "$TAG_NAME")
-          if [ "$TAG_TYPE" = "tag" ]; then
-            TAG_MSG=$(git tag -l --format='%(contents:body)' "$TAG_NAME")
-            if [ -n "$TAG_MSG" ]; then
-              printf '%s\n' "$TAG_MSG" > release-notes.md
-              ARGS="$ARGS --release-notes=release-notes.md"
-            fi
-          else
-            echo "Warning: $TAG_NAME is a lightweight tag, using GoReleaser-generated notes"
-          fi
-
-          echo "args=$ARGS" >> "$GITHUB_OUTPUT"
-
       - name: Run GoReleaser
         uses: goreleaser/goreleaser-action@5daf1e915a5f0af01ddbcd89a43b8061ff4f1a89  # v7.2.2
         with:
           distribution: goreleaser
           version: '~> v2'
-          args: ${{ steps.release_notes.outputs.args }}
+          args: release --clean
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
