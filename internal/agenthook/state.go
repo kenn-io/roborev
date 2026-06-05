@@ -157,6 +157,7 @@ func (s *StateStore) recordStop(req Request) (Response, error) {
 	st.LastTurnID = req.Event.TurnID
 	st.LastCWD = req.Event.CWD
 	st.LastSeenAt = now
+	recordSequenceHeads(&st, scope, []string{scope.WorktreeKey})
 
 	actionableReviews := hasActionableFailedReviews(failedReviewCount, haveFailedReviewCount)
 	stopTriggered := thresholdReady(st.StopCountSincePrompt, req.Threshold) && actionableReviews
@@ -489,7 +490,7 @@ func ensureLineageKey(st *SessionState, scope hookScope) string {
 		if st.RepoHeads != nil {
 			previousHead = st.RepoHeads[scope.WorktreeKey]
 		}
-		reachable := previousHead == "" || refReachableFromHead(scope.WorktreeRoot, previousHead, scope.Head)
+		reachable := previousHead != "" && refReachableFromHead(scope.WorktreeRoot, previousHead, scope.Head)
 		if scope.Branch == "" && detachedLineageKey(prior) && reachable {
 			return prior
 		}

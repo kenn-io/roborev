@@ -331,6 +331,56 @@ func TestRecordStopFailedReviewPromptUsesNewDetachedLineageKey(t *testing.T) {
 	assert.Equal("failed_reviews", detachedResp.TriggeredBy)
 }
 
+func TestRecordStopFailedReviewPromptDoesNotReuseStaleDetachedLineage(t *testing.T) {
+	assert := assert.New(t)
+	repo := testutil.NewGitRepo(t)
+	base := repo.CommitFile("base.go", "package main\n", "base")
+	firstHead := repo.CommitFile("first.go", "package main\n", "first")
+	repo.RunGit("checkout", "--detach", firstHead)
+
+	reviewRef := firstHead
+	closed := false
+	verdict := "F"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{
+			Jobs: []storage.ReviewJob{
+				{Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: reviewRef},
+			},
+		}))
+	}))
+	t.Cleanup(server.Close)
+
+	store := &StateStore{path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	stop := func() Response {
+		resp, err := store.Record(Request{
+			Event: Input{
+				SessionID:     "session-1",
+				CWD:           repo.Path(),
+				HookEventName: "Stop",
+			},
+			FailedReviewThreshold: 1,
+			Instruction:           "Run roborev fix.",
+			RoborevServerAddr:     server.URL,
+		})
+		require.NoError(t, err)
+		return resp
+	}
+
+	firstResp := stop()
+	assert.True(firstResp.Triggered)
+	worktreeKey := worktreeSequenceKey(repo.Path(), repo.Path())
+	assert.Equal(firstHead, store.sessions["session-1"].RepoHeads[worktreeKey])
+	delete(store.sessions["session-1"].RepoHeads, worktreeKey)
+
+	repo.RunGit("checkout", "-B", "unrelated", base)
+	secondHead := repo.CommitFile("second.go", "package main\n", "second")
+	repo.RunGit("checkout", "--detach", secondHead)
+	reviewRef = secondHead
+	secondResp := stop()
+	assert.True(secondResp.Triggered, "unrelated detached checkout must not inherit stale detached failed-review dedupe")
+	assert.Equal("failed_reviews", secondResp.TriggeredBy)
+}
+
 func TestRecordPostToolUseCommitReminderStaysInCommitRepo(t *testing.T) {
 	assert := assert.New(t)
 	repoA := testutil.NewGitRepo(t)
