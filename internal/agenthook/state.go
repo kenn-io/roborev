@@ -231,6 +231,7 @@ func (s *StateStore) recordPreToolUse(req Request) (Response, error) {
 	if st.RepoHeads == nil {
 		st.RepoHeads = map[string]string{}
 	}
+	migrateLegacyDetachedCommitSequence(&st, scope)
 	ensureLineageKey(&st, scope)
 	recordSequenceHeads(&st, scope, commitSequenceKeys(scope))
 	st.LastCWD = req.Event.CWD
@@ -287,6 +288,7 @@ func (s *StateStore) recordPostToolUse(req Request) (Response, error) {
 	if st.RepoHeads == nil {
 		st.RepoHeads = map[string]string{}
 	}
+	migrateLegacyDetachedCommitSequence(&st, scope)
 	lineageKey := ensureLineageKey(&st, scope)
 	sequenceKeys := commitSequenceKeys(scope)
 	// Count commits only against a HEAD baseline recorded earlier in the
@@ -443,6 +445,41 @@ func recordSequenceHeads(st *SessionState, scope hookScope, keys []string) {
 	}
 }
 
+func migrateLegacyDetachedCommitSequence(st *SessionState, scope hookScope) {
+	if scope.Branch != "" {
+		return
+	}
+	legacyKey := repoHeadKey(scope.TrackedRepoRoot, "")
+	if legacyKey == "" || legacyKey == scope.WorktreeKey {
+		return
+	}
+	if shas := st.CommitSHAsSincePrompt[legacyKey]; len(shas) > 0 {
+		if st.CommitSHAsSincePrompt == nil {
+			st.CommitSHAsSincePrompt = map[string][]string{}
+		}
+		st.CommitSHAsSincePrompt[scope.WorktreeKey] = appendUniqueCommitSHAs(
+			st.CommitSHAsSincePrompt[scope.WorktreeKey], shas,
+		)
+		delete(st.CommitSHAsSincePrompt, legacyKey)
+	}
+	if count := st.CommitCountsSincePrompt[legacyKey]; count != 0 {
+		if st.CommitCountsSincePrompt == nil {
+			st.CommitCountsSincePrompt = map[string]int{}
+		}
+		st.CommitCountsSincePrompt[scope.WorktreeKey] += count
+		delete(st.CommitCountsSincePrompt, legacyKey)
+	}
+	if head := st.RepoHeads[legacyKey]; head != "" {
+		if st.RepoHeads == nil {
+			st.RepoHeads = map[string]string{}
+		}
+		if st.RepoHeads[scope.WorktreeKey] == "" {
+			st.RepoHeads[scope.WorktreeKey] = head
+		}
+		delete(st.RepoHeads, legacyKey)
+	}
+}
+
 func lineageSequenceKey(repoRoot, branch, worktreeRoot, head string) string {
 	if branch != "" {
 		return repoHeadKey(repoRoot, branch)
@@ -459,16 +496,27 @@ func ensureLineageKey(st *SessionState, scope hookScope) string {
 	}
 	prior := st.WorktreeLineageKeys[scope.WorktreeKey]
 	if prior != "" {
+		if prior == scope.CandidateLineageKey {
+			return prior
+		}
 		previousHead := ""
 		if st.RepoHeads != nil {
 			previousHead = st.RepoHeads[scope.WorktreeKey]
 		}
-		if previousHead == "" || refReachableFromHead(scope.WorktreeRoot, previousHead, scope.Head) {
+		reachable := previousHead == "" || refReachableFromHead(scope.WorktreeRoot, previousHead, scope.Head)
+		if scope.Branch == "" && reachable {
+			return prior
+		}
+		if scope.Branch != "" && detachedLineageKey(prior) && reachable {
 			return prior
 		}
 	}
 	st.WorktreeLineageKeys[scope.WorktreeKey] = scope.CandidateLineageKey
 	return scope.CandidateLineageKey
+}
+
+func detachedLineageKey(key string) bool {
+	return strings.Contains(key, "\x00lineage\x00") || strings.Contains(key, "\x00detached\x00")
 }
 
 func commitsSincePromptForKey(st SessionState, key string) int {

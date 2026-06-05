@@ -244,6 +244,51 @@ func TestApplyFailedReviewTriggerScopesDedupPerRepoBranch(t *testing.T) {
 	assert.True(applyFailedReviewTrigger(req, &st, "/repoA", "feature", repoHeadKey("/repoA", "feature"), 1, true, now))
 }
 
+func TestRecordPostToolUseFailedReviewPromptUsesNewBranchLineageKey(t *testing.T) {
+	assert := assert.New(t)
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("main.go", "package main\n", "initial")
+
+	closed := false
+	verdict := "F"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{
+			Jobs: []storage.ReviewJob{
+				{Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict},
+			},
+		}))
+	}))
+	t.Cleanup(server.Close)
+
+	store := &StateStore{path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	post := func() Response {
+		resp, err := store.Record(Request{
+			Event: Input{
+				SessionID:     "session-1",
+				CWD:           repo.Path(),
+				HookEventName: "PostToolUse",
+				ToolName:      "Bash",
+				ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"go test ./..."`)},
+			},
+			FailedReviewThreshold: 1,
+			Instruction:           "Run roborev fix.",
+			RoborevServerAddr:     server.URL,
+		})
+		require.NoError(t, err)
+		return resp
+	}
+
+	mainResp := post()
+	assert.True(mainResp.Triggered)
+	assert.Equal("failed_reviews", mainResp.TriggeredBy)
+
+	repo.RunGit("checkout", "-b", "feature/lineage")
+	repo.CommitFile("feature.go", "package main\n", "feature")
+	featureResp := post()
+	assert.True(featureResp.Triggered, "a descendant branch must not reuse main's failed-review dedupe key")
+	assert.Equal("failed_reviews", featureResp.TriggeredBy)
+}
+
 func TestRecordPostToolUseCommitReminderStaysInCommitRepo(t *testing.T) {
 	assert := assert.New(t)
 	repoA := testutil.NewGitRepo(t)
@@ -1252,4 +1297,53 @@ func TestRecordPostToolUseAmendPreservesDeferredCommitReminder(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(atLater.Triggered, "amended deferred commit must prompt once reviews appear")
 	assert.Equal("commit", atLater.TriggeredBy)
+}
+
+func TestRecordPostToolUseDetachedLegacyPendingCommitTriggersReminder(t *testing.T) {
+	assert := assert.New(t)
+	repo := testutil.NewGitRepo(t)
+	head := repo.CommitFile("main.go", "package main\n", "initial")
+	repo.RunGit("checkout", "--detach")
+
+	closed := false
+	verdict := "F"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{
+			Jobs: []storage.ReviewJob{
+				{Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: head},
+			},
+		}))
+	}))
+	t.Cleanup(server.Close)
+
+	legacyKey := repoHeadKey(repo.Path(), "")
+	worktreeKey := worktreeSequenceKey(repo.Path(), repo.Path())
+	store := &StateStore{
+		path: filepath.Join(t.TempDir(), "state.json"),
+		sessions: map[string]SessionState{
+			"session-1": {
+				CommitSHAsSincePrompt: map[string][]string{legacyKey: {head}},
+				RepoHeads:             map[string]string{legacyKey: head},
+			},
+		},
+	}
+
+	resp, err := store.Record(Request{
+		Event: Input{
+			SessionID:     "session-1",
+			CWD:           repo.Path(),
+			HookEventName: "PostToolUse",
+			ToolName:      "Bash",
+			ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"go test ./..."`)},
+		},
+		CommitThreshold:   1,
+		Instruction:       "Run roborev fix.",
+		RoborevServerAddr: server.URL,
+	})
+	require.NoError(t, err)
+
+	assert.True(resp.Triggered, "legacy detached pending commits must remain eligible after upgrade")
+	assert.Equal("commit", resp.TriggeredBy)
+	assert.Empty(store.sessions["session-1"].CommitSHAsSincePrompt[legacyKey])
+	assert.Empty(store.sessions["session-1"].CommitSHAsSincePrompt[worktreeKey])
 }
