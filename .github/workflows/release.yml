@@ -101,7 +101,7 @@ jobs:
       - name: Generate checksums
         run: |
           cd artifacts
-          sha256sum ./*.tar.gz ./*.zip > SHA256SUMS
+          sha256sum -- *.tar.gz *.zip > SHA256SUMS
           cat SHA256SUMS
 
       - name: Get tag message
