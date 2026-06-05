@@ -1,6 +1,7 @@
 package agenthook
 
 import (
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -47,6 +48,38 @@ func TestRepoHeadKey(t *testing.T) {
 	assert.Equal("/repo", repoHeadKey("/repo", ""))
 	assert.Equal("/repo\x00main", repoHeadKey("/repo", "main"))
 	assert.NotEqual(repoHeadKey("/repo", "main"), repoHeadKey("/repo", "feature"))
+}
+
+func TestCountOpenFailedReviewsExcludesUnreachableBranchlessReviews(t *testing.T) {
+	assert := assert.New(t)
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("base.txt", "base\n", "base")
+	reachable := repo.CommitFile("a.txt", "a\n", "on current branch")
+	head := repo.CommitFile("b.txt", "b\n", "head")
+	repo.Checkout("-b", "other", reachable)
+	unreachable := repo.CommitFile("c.txt", "c\n", "divergent")
+
+	closed := false
+	verdict := "F"
+	job := func(branch, ref string) storage.ReviewJob {
+		return storage.ReviewJob{
+			Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: branch, GitRef: ref,
+		}
+	}
+	jobs := []storage.ReviewJob{
+		job("main", head),    // on the queried branch -> counts
+		job("", reachable),   // branchless but reachable from HEAD -> counts
+		job("", unreachable), // unrelated branchless review -> must NOT count
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{Jobs: jobs}))
+	}))
+	t.Cleanup(server.Close)
+
+	count, ok := countOpenFailedReviews(context.Background(), repo.Path(), "main", head, server.URL)
+
+	assert.True(ok)
+	assert.Equal(2, count, "an unrelated branchless review must not count on a branch query")
 }
 
 func TestBuildHookReasonsAreCompactOneLine(t *testing.T) {
