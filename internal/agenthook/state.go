@@ -613,6 +613,14 @@ func gitInvocation(fields []string, start int) ([]string, int) {
 // cannot evaluate, and paths that do not exist fall back to cwd. This keeps repo
 // and HEAD tracking pointed at the repository a commit actually lands in - for
 // example `git -C ./submodule commit` from a superproject - rather than cwd.
+//
+// Security: cwd and command arrive in the local agent hook payload, so this path
+// is influenced only by the same user the daemon already runs as, and it feeds a
+// read-only os.Stat plus read-only `git` reads in directories that user controls -
+// never a write or a privileged read. There is no trust boundary to cross, and
+// pinning the result under a base directory would defeat the cross-repo/submodule
+// resolution above, so the static-analysis path-injection flag on the cwd -> path
+// flow is a false positive.
 func commandGitDir(cwd, command string) string {
 	chdirs, ok := commitInvocationChdirs(shellFields(command))
 	if !ok {
