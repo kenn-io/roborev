@@ -10,7 +10,6 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
-	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -483,9 +482,6 @@ func lineageSequenceKey(repoRoot, branch, worktreeRoot, head string) string {
 		return repoHeadKey(repoRoot, branch)
 	}
 	worktreeRoot = filepath.Clean(worktreeRoot)
-	if baseSHA := nearestReachableBranchSHA(worktreeRoot, head); baseSHA != "" {
-		return repoRoot + "\x00lineage\x00" + worktreeRoot + "\x00" + baseSHA
-	}
 	return repoRoot + "\x00detached\x00" + worktreeRoot + "\x00" + head
 }
 
@@ -833,52 +829,6 @@ func newCommitSHAs(repoRoot, oldHead, newHead string) ([]string, bool) {
 		return []string{newHead}, true
 	}
 	return shas, true
-}
-
-func nearestReachableBranchSHA(repoRoot, head string) string {
-	if repoRoot == "" || head == "" {
-		return ""
-	}
-	out, err := gitOutput(repoRoot, "for-each-ref", "--format=%(refname)%00%(objectname)", "refs/heads", "refs/remotes")
-	if err != nil {
-		return ""
-	}
-	bestSHA := ""
-	bestDistance := int(^uint(0) >> 1)
-	for line := range strings.SplitSeq(out, "\n") {
-		ref, sha, ok := strings.Cut(strings.TrimSpace(line), "\x00")
-		if !ok {
-			continue
-		}
-		if strings.HasSuffix(ref, "/HEAD") {
-			continue
-		}
-		sha = strings.TrimSpace(sha)
-		if sha == "" || !refReachableFromHead(repoRoot, sha, head) {
-			continue
-		}
-		distance := revListCount(repoRoot, sha+".."+head)
-		if distance < 0 {
-			continue
-		}
-		if bestSHA == "" || distance < bestDistance {
-			bestSHA = sha
-			bestDistance = distance
-		}
-	}
-	return bestSHA
-}
-
-func revListCount(repoRoot, refRange string) int {
-	out, err := gitOutput(repoRoot, "rev-list", "--count", refRange)
-	if err != nil {
-		return -1
-	}
-	n, err := strconv.Atoi(strings.TrimSpace(out))
-	if err != nil {
-		return -1
-	}
-	return n
 }
 
 func gitOutput(cwd string, args ...string) (string, error) {

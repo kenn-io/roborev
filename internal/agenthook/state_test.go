@@ -1412,6 +1412,55 @@ func TestRecordPostToolUseDetachedFailedReviewDedupeScopesByWorktree(t *testing.
 	assert.Equal("failed_reviews", second.TriggeredBy)
 }
 
+func TestRecordPostToolUseDetachedFailedReviewDedupeScopesByDetachedHead(t *testing.T) {
+	assert := assert.New(t)
+	repo := testutil.NewGitRepo(t)
+	base := repo.CommitFile("main.go", "package main\n", "initial")
+	repo.RunGit("checkout", "--detach", base)
+	firstHead := repo.CommitFile("first.go", "package main\n", "first detached")
+
+	reviewRef := firstHead
+	closed := false
+	verdict := "F"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{
+			Jobs: []storage.ReviewJob{
+				{Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: reviewRef},
+			},
+		}))
+	}))
+	t.Cleanup(server.Close)
+
+	store := &StateStore{path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	post := func() Response {
+		resp, err := store.Record(Request{
+			Event: Input{
+				SessionID:     "session-1",
+				CWD:           repo.Path(),
+				HookEventName: "PostToolUse",
+				ToolName:      "Bash",
+				ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"go test ./..."`)},
+			},
+			FailedReviewThreshold: 1,
+			Instruction:           "Run roborev fix.",
+			RoborevServerAddr:     server.URL,
+		})
+		require.NoError(t, err)
+		return resp
+	}
+
+	first := post()
+	assert.True(first.Triggered)
+	assert.Equal("failed_reviews", first.TriggeredBy)
+
+	repo.RunGit("checkout", "--detach", base)
+	secondHead := repo.CommitFile("second.go", "package main\n", "second detached")
+	reviewRef = secondHead
+	second := post()
+	assert.True(second.Triggered, "sibling detached histories from the same base must not share failed-review dedupe")
+	assert.Equal("failed_reviews", second.TriggeredBy)
+}
+
 func TestRecordPostToolUseCountsCommitInOtherRepoViaDashC(t *testing.T) {
 	assert := assert.New(t)
 	outer := testutil.NewGitRepo(t)
