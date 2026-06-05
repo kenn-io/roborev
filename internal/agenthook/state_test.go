@@ -68,6 +68,8 @@ func TestCountOpenFailedReviewsExcludesUnreachableBranchlessReviews(t *testing.T
 	}
 	jobs := []storage.ReviewJob{
 		job("main", head),    // on the queried branch -> counts
+		job("", ""),          // branchless, no ref (repo-level) -> counts
+		job("", "dirty"),     // branchless dirty working-tree review -> counts
 		job("", reachable),   // branchless but reachable from HEAD -> counts
 		job("", unreachable), // unrelated branchless review -> must NOT count
 	}
@@ -79,7 +81,7 @@ func TestCountOpenFailedReviewsExcludesUnreachableBranchlessReviews(t *testing.T
 	count, ok := countOpenFailedReviews(context.Background(), repo.Path(), "main", head, server.URL)
 
 	assert.True(ok)
-	assert.Equal(2, count, "an unrelated branchless review must not count on a branch query")
+	assert.Equal(4, count, "only the unreachable branchless review must be excluded on a branch query")
 }
 
 func TestBuildHookReasonsAreCompactOneLine(t *testing.T) {
