@@ -291,6 +291,14 @@ func OpenAPISpec() ([]byte, error) {
 	return json.MarshalIndent(api.OpenAPI(), "", "  ")
 }
 
+// OpenAPISpecYAML returns the daemon OpenAPI document as YAML generated from
+// the Huma route registry.
+func OpenAPISpecYAML() ([]byte, error) {
+	mux := http.NewServeMux()
+	api := (&Server{}).registerHumaAPI(mux)
+	return api.OpenAPI().YAML()
+}
+
 // OpenAPISpec30 returns a downgraded OpenAPI 3.0 document for generators that
 // do not yet support Huma's default OpenAPI 3.1 output.
 func OpenAPISpec30() ([]byte, error) {
@@ -305,6 +313,13 @@ func OpenAPISpec30() ([]byte, error) {
 		return nil, err
 	}
 	return json.MarshalIndent(formatted, "", "  ")
+}
+
+// OpenAPISpec30YAML returns a downgraded OpenAPI 3.0 document as YAML.
+func OpenAPISpec30YAML() ([]byte, error) {
+	mux := http.NewServeMux()
+	api := (&Server{}).registerHumaAPI(mux)
+	return api.OpenAPI().DowngradeYAML()
 }
 
 func jsonResponses(

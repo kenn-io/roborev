@@ -7,6 +7,9 @@ bin/
 # Generated protobuf (optional - can keep or ignore)
 proto/*.pb.go
 
+# Generated OpenAPI specs used as codegen intermediates
+pkg/client/spec/openapi.json
+
 # Test/build artifacts
 *.out
 coverage.out

@@ -15,7 +15,7 @@ ACP_TEST_MODEL ?=
 # A mismatched version can silently apply different formatting/fixes.
 GOLANGCI_LINT_VERSION := 2.12.2
 
-.PHONY: build install clean test test-git-isolation test-integration test-acp-integration test-acp-integration-codex test-acp-integration-claude test-acp-integration-gemini test-postgres test-all postgres-up postgres-down test-postgres-ci lint lint-ci check-golangci-lint print-golangci-lint-version install-hooks
+.PHONY: build install clean test test-git-isolation test-integration test-acp-integration test-acp-integration-codex test-acp-integration-claude test-acp-integration-gemini test-postgres test-all postgres-up postgres-down test-postgres-ci api-generate lint lint-ci check-golangci-lint print-golangci-lint-version install-hooks
 
 build:
 	@mkdir -p bin
@@ -30,6 +30,10 @@ install:
 
 clean:
 	rm -rf bin/
+
+# Regenerate the checked-in OpenAPI document and public Go client.
+api-generate:
+	go generate ./pkg/client/generated
 
 # Unit tests only (excludes integration and postgres tests)
 test:

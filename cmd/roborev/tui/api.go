@@ -11,7 +11,7 @@ import (
 	"strings"
 
 	"go.kenn.io/roborev/internal/daemon"
-	daemonclient "go.kenn.io/roborev/internal/daemon_client"
+	roborevclient "go.kenn.io/roborev/pkg/client"
 )
 
 // errNotFound is returned for 404 daemon API responses.
@@ -40,10 +40,10 @@ func readErrorBody(body io.Reader, status string) string {
 func newDaemonAPI(
 	ep daemon.DaemonEndpoint,
 	httpClient *http.Client,
-) *daemonclient.ClientWithResponses {
-	client, err := daemonclient.NewClientWithResponses(
+) *roborevclient.Client {
+	client, err := roborevclient.NewWithHTTPClient(
 		ep.BaseURL(),
-		daemonclient.WithHTTPClient(httpClient),
+		httpClient,
 	)
 	if err != nil {
 		panic(fmt.Sprintf("create daemon API client for %q: %v", ep.BaseURL(), err))
@@ -53,6 +53,10 @@ func newDaemonAPI(
 
 func readErrorBytes(body []byte, status string) string {
 	return readErrorBody(bytes.NewReader(body), status)
+}
+
+func apiStatus(statusCode int) string {
+	return fmt.Sprintf("%d %s", statusCode, http.StatusText(statusCode))
 }
 
 func apiStatusError(statusCode int, status string, body []byte) error {

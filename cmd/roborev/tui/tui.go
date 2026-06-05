@@ -24,10 +24,10 @@ import (
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
-	daemonclient "go.kenn.io/roborev/internal/daemon_client"
 	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/streamfmt"
+	roborevclient "go.kenn.io/roborev/pkg/client"
 )
 
 // Tick intervals for local redraws and fallback polling.
@@ -261,7 +261,7 @@ type model struct {
 	endpoint         daemon.DaemonEndpoint
 	daemonVersion    string
 	client           *http.Client
-	api              *daemonclient.ClientWithResponses
+	api              *roborevclient.Client
 	glamourStyle     gansi.StyleConfig // detected once at init
 	jobs             []storage.ReviewJob
 	jobStats         storage.JobStats // aggregate done/closed/open from server

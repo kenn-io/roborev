@@ -17,11 +17,11 @@ import (
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
-	daemonclient "go.kenn.io/roborev/internal/daemon_client"
 	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/streamfmt"
 	"go.kenn.io/roborev/internal/update"
+	daemonclient "go.kenn.io/roborev/pkg/client/generated"
 )
 
 func (m model) tick() tea.Cmd {
@@ -68,13 +68,13 @@ type branchListResult struct {
 }
 
 func (m model) loadJobsPage(params neturl.Values) (*jobsPageResult, error) {
-	apiParams := listJobsParams(params)
+	apiParams := daemonclient.ListJobsRequestOptions{Query: listJobsQuery(params)}
 	resp, err := m.api.ListJobsWithResponse(m.apiContext(), &apiParams)
-	if err != nil {
+	if err != nil && resp == nil {
 		return nil, err
 	}
-	if resp.StatusCode() != http.StatusOK {
-		return nil, apiStatusError(resp.StatusCode(), resp.Status(), resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, apiStatusError(resp.StatusCode, apiStatus(resp.StatusCode), resp.Body)
 	}
 	var result jobsPageResult
 	if err := decodeAPIBody(resp.Body, &result); err != nil {
@@ -85,16 +85,19 @@ func (m model) loadJobsPage(params neturl.Values) (*jobsPageResult, error) {
 
 func (m model) loadRepoList(branchFilter string) (*repoListResult, bool, error) {
 	branchFiltered := branchFilter != "" && branchFilter != branchNone
-	var params daemonclient.ListReposParams
+	var query daemonclient.ListReposQuery
 	if branchFiltered {
-		params.Branch = &branchFilter
+		query.Branch = &branchFilter
 	}
-	resp, err := m.api.ListReposWithResponse(m.apiContext(), &params)
-	if err != nil {
+	resp, err := m.api.ListReposWithResponse(
+		m.apiContext(),
+		&daemonclient.ListReposRequestOptions{Query: &query},
+	)
+	if err != nil && resp == nil {
 		return nil, false, err
 	}
-	if resp.StatusCode() != http.StatusOK {
-		return nil, false, apiStatusError(resp.StatusCode(), resp.Status(), resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, false, apiStatusError(resp.StatusCode, apiStatus(resp.StatusCode), resp.Body)
 	}
 	var result repoListResult
 	if err := decodeAPIBody(resp.Body, &result); err != nil {
@@ -104,17 +107,19 @@ func (m model) loadRepoList(branchFilter string) (*repoListResult, bool, error) 
 }
 
 func (m model) loadBranchList(rootPaths []string) (*branchListResult, error) {
-	var params daemonclient.ListBranchesParams
+	var query daemonclient.ListBranchesQuery
 	if len(rootPaths) > 0 {
-		repos := append([]string(nil), rootPaths...)
-		params.Repo = &repos
+		query.Repo = append([]string(nil), rootPaths...)
 	}
-	resp, err := m.api.ListBranchesWithResponse(m.apiContext(), &params)
-	if err != nil {
+	resp, err := m.api.ListBranchesWithResponse(
+		m.apiContext(),
+		&daemonclient.ListBranchesRequestOptions{Query: &query},
+	)
+	if err != nil && resp == nil {
 		return nil, err
 	}
-	if resp.StatusCode() != http.StatusOK {
-		return nil, apiStatusError(resp.StatusCode(), resp.Status(), resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return nil, apiStatusError(resp.StatusCode, apiStatus(resp.StatusCode), resp.Body)
 	}
 	var result branchListResult
 	if err := decodeAPIBody(resp.Body, &result); err != nil {
@@ -123,8 +128,8 @@ func (m model) loadBranchList(rootPaths []string) (*branchListResult, error) {
 	return &result, nil
 }
 
-func listJobsParams(values neturl.Values) daemonclient.ListJobsParams {
-	params := daemonclient.ListJobsParams{}
+func listJobsQuery(values neturl.Values) *daemonclient.ListJobsQuery {
+	query := daemonclient.ListJobsQuery{}
 	setStringParam := func(key string, dst **string) {
 		if value := values.Get(key); value != "" {
 			*dst = &value
@@ -138,35 +143,34 @@ func listJobsParams(values neturl.Values) daemonclient.ListJobsParams {
 		}
 	}
 
-	setIntParam("id", &params.Id)
-	setStringParam("status", &params.Status)
+	setIntParam("id", &query.ID)
+	setStringParam("status", &query.Status)
 	// repo is repeatable: a display name spanning multiple repos sends one
 	// value per path, scoped server-side via an IN clause.
 	if repos := values["repo"]; len(repos) > 0 {
-		paths := append([]string(nil), repos...)
-		params.Repo = &paths
+		query.Repo = append([]string(nil), repos...)
 	}
-	setStringParam("git_ref", &params.GitRef)
-	setStringParam("branch", &params.Branch)
+	setStringParam("git_ref", &query.GitRef)
+	setStringParam("branch", &query.Branch)
 	if value := values.Get("branch_include_empty"); value != "" {
-		typed := daemonclient.ListJobsParamsBranchIncludeEmpty(value)
-		params.BranchIncludeEmpty = &typed
+		typed := daemonclient.ListJobsQueryBranchIncludeEmpty(value)
+		query.BranchIncludeEmpty = &typed
 	}
 	if value := values.Get("closed"); value != "" {
-		typed := daemonclient.ListJobsParamsClosed(value)
-		params.Closed = &typed
+		typed := daemonclient.ListJobsQueryClosed(value)
+		query.Closed = &typed
 	}
-	setStringParam("job_type", &params.JobType)
-	setStringParam("exclude_job_type", &params.ExcludeJobType)
+	setStringParam("job_type", &query.JobType)
+	setStringParam("exclude_job_type", &query.ExcludeJobType)
 	if value := values.Get("hide_classify_jobs"); value != "" {
-		typed := daemonclient.ListJobsParamsHideClassifyJobs(value)
-		params.HideClassifyJobs = &typed
+		typed := daemonclient.ListJobsQueryHideClassifyJobs(value)
+		query.HideClassifyJobs = &typed
 	}
-	setStringParam("repo_prefix", &params.RepoPrefix)
-	setIntParam("limit", &params.Limit)
-	setIntParam("offset", &params.Offset)
-	setIntParam("before", &params.Before)
-	return params
+	setStringParam("repo_prefix", &query.RepoPrefix)
+	setIntParam("limit", &query.Limit)
+	setIntParam("offset", &query.Offset)
+	setIntParam("before", &query.Before)
+	return &query
 }
 
 func (m model) fetchJobs() tea.Cmd {
@@ -280,12 +284,12 @@ func (m model) fetchStatus() tea.Cmd {
 	gen := m.fetchGen
 	return func() tea.Msg {
 		resp, err := m.api.GetStatusWithResponse(m.apiContext())
-		if err != nil {
+		if err != nil && resp == nil {
 			return statusErrMsg{err: err, gen: gen}
 		}
-		if resp.StatusCode() != http.StatusOK {
+		if resp.StatusCode != http.StatusOK {
 			return statusErrMsg{
-				err: apiStatusError(resp.StatusCode(), resp.Status(), resp.Body),
+				err: apiStatusError(resp.StatusCode, apiStatus(resp.StatusCode), resp.Body),
 				gen: gen,
 			}
 		}
@@ -503,11 +507,16 @@ func (m model) backfillBranches() tea.Cmd {
 			}
 
 			for _, bf := range toBackfill {
-				resp, err := m.api.UpdateJobBranchWithResponse(m.apiContext(), daemonclient.UpdateJobBranchRequest{
-					JobId:  bf.id,
-					Branch: bf.branch,
-				})
-				if err == nil && resp.StatusCode() == http.StatusOK {
+				resp, err := m.api.UpdateJobBranchWithResponse(
+					m.apiContext(),
+					&daemonclient.UpdateJobBranchRequestOptions{
+						Body: &daemonclient.UpdateJobBranchRequest{
+							JobID:  bf.id,
+							Branch: bf.branch,
+						},
+					},
+				)
+				if err == nil && resp.StatusCode == http.StatusOK {
 					var updateResult struct {
 						Updated bool `json:"updated"`
 					}
@@ -527,13 +536,13 @@ func (m model) backfillBranches() tea.Cmd {
 func (m model) loadReview(jobID int64) (*storage.Review, error) {
 	resp, err := m.api.GetReviewWithResponse(
 		m.apiContext(),
-		&daemonclient.GetReviewParams{JobId: &jobID},
+		&daemonclient.GetReviewRequestOptions{Query: &daemonclient.GetReviewQuery{JobID: &jobID}},
 	)
-	if err != nil {
+	if err != nil && resp == nil {
 		return nil, err
 	}
-	if resp.StatusCode() != http.StatusOK {
-		err := apiStatusError(resp.StatusCode(), resp.Status(), resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		err := apiStatusError(resp.StatusCode, apiStatus(resp.StatusCode), resp.Body)
 		if errors.Is(err, errNotFound) {
 			return nil, fmt.Errorf("no review found")
 		}
@@ -556,7 +565,7 @@ func (m model) loadResponses(jobID int64, review *storage.Review) []storage.Resp
 		Responses []storage.Response `json:"responses"`
 	}
 	if err := m.loadComments(
-		&daemonclient.ListCommentsParams{JobId: &jobID},
+		&daemonclient.ListCommentsQuery{JobID: &jobID},
 		&jobResult,
 	); err == nil {
 		responses = jobResult.Responses
@@ -564,13 +573,13 @@ func (m model) loadResponses(jobID int64, review *storage.Review) []storage.Resp
 
 	// Also fetch legacy commit-based responses and merge.
 	// Prefer commit_id (unambiguous), fall back to SHA for legacy jobs.
-	var legacyParams *daemonclient.ListCommentsParams
+	var legacyParams *daemonclient.ListCommentsQuery
 	if review.Job != nil {
 		commitID, fallbackSHA := review.Job.LegacyCommentLookupTarget()
 		if commitID > 0 {
-			legacyParams = &daemonclient.ListCommentsParams{CommitId: &commitID}
+			legacyParams = &daemonclient.ListCommentsQuery{CommitID: &commitID}
 		} else if fallbackSHA != "" {
-			legacyParams = &daemonclient.ListCommentsParams{Sha: &fallbackSHA}
+			legacyParams = &daemonclient.ListCommentsQuery{Sha: &fallbackSHA}
 		}
 	}
 	if legacyParams != nil {
@@ -589,13 +598,13 @@ func (m model) loadPatch(jobID int64) (string, error) {
 	jobIDParam := strconv.FormatInt(jobID, 10)
 	resp, err := m.api.GetJobPatchWithResponse(
 		m.apiContext(),
-		&daemonclient.GetJobPatchParams{JobId: &jobIDParam},
+		&daemonclient.GetJobPatchRequestOptions{Query: &daemonclient.GetJobPatchQuery{JobID: &jobIDParam}},
 	)
-	if err != nil {
+	if err != nil && resp == nil {
 		return "", err
 	}
-	if resp.StatusCode() != http.StatusOK {
-		err := apiStatusError(resp.StatusCode(), resp.Status(), resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		err := apiStatusError(resp.StatusCode, apiStatus(resp.StatusCode), resp.Body)
 		if errors.Is(err, errNotFound) {
 			return "", fmt.Errorf("no patch available")
 		}
@@ -609,15 +618,18 @@ func (m model) loadPatch(jobID int64) (string, error) {
 }
 
 func (m model) loadComments(
-	params *daemonclient.ListCommentsParams,
+	query *daemonclient.ListCommentsQuery,
 	out any,
 ) error {
-	resp, err := m.api.ListCommentsWithResponse(m.apiContext(), params)
-	if err != nil {
+	resp, err := m.api.ListCommentsWithResponse(
+		m.apiContext(),
+		&daemonclient.ListCommentsRequestOptions{Query: query},
+	)
+	if err != nil && resp == nil {
 		return err
 	}
-	if resp.StatusCode() != http.StatusOK {
-		return apiStatusError(resp.StatusCode(), resp.Status(), resp.Body)
+	if resp.StatusCode != http.StatusOK {
+		return apiStatusError(resp.StatusCode, apiStatus(resp.StatusCode), resp.Body)
 	}
 	return decodeAPIBody(resp.Body, out)
 }

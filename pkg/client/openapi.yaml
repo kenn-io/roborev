@@ -1,0 +1,2536 @@
+components:
+  schemas:
+    ActivityEntry:
+      additionalProperties: false
+      properties:
+        component:
+          type: string
+        details:
+          additionalProperties:
+            type: string
+          type: object
+        event:
+          type: string
+        message:
+          type: string
+        ts:
+          format: date-time
+          type: string
+      required:
+        - ts
+        - event
+        - component
+        - message
+      type: object
+    ActivityOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/ActivityOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        entries:
+          items:
+            $ref: "#/components/schemas/ActivityEntry"
+          type:
+            - array
+            - "null"
+      required:
+        - entries
+      type: object
+    AddCommentRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/AddCommentRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        comment:
+          type: string
+        commenter:
+          type: string
+        job_id:
+          format: int64
+          type: integer
+        sha:
+          type: string
+      required:
+        - commenter
+        - comment
+      type: object
+    AgentStats:
+      additionalProperties: false
+      properties:
+        agent:
+          type: string
+        errors:
+          format: int64
+          type: integer
+        failed:
+          format: int64
+          type: integer
+        median_duration_secs:
+          format: double
+          type: number
+        pass_rate:
+          format: double
+          type: number
+        passed:
+          format: int64
+          type: integer
+        total:
+          format: int64
+          type: integer
+      required:
+        - agent
+        - total
+        - passed
+        - failed
+        - errors
+        - pass_rate
+        - median_duration_secs
+      type: object
+    AutoDesignStatus:
+      additionalProperties: false
+      properties:
+        classifier_failed:
+          format: int64
+          type: integer
+        enabled:
+          type: boolean
+        skipped_classifier:
+          format: int64
+          type: integer
+        skipped_heuristic:
+          format: int64
+          type: integer
+        triggered_classifier:
+          format: int64
+          type: integer
+        triggered_heuristic:
+          format: int64
+          type: integer
+      required:
+        - enabled
+        - triggered_heuristic
+        - skipped_heuristic
+        - triggered_classifier
+        - skipped_classifier
+        - classifier_failed
+      type: object
+    BackfillTokensRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/BackfillTokensRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        dry_run:
+          type: boolean
+        sessions:
+          items:
+            $ref: "#/components/schemas/SessionUsagePayload"
+          type:
+            - array
+            - "null"
+      required:
+        - sessions
+      type: object
+    BatchJobsOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/BatchJobsOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        results:
+          additionalProperties:
+            $ref: "#/components/schemas/JobWithReview"
+          type: object
+      required:
+        - results
+      type: object
+    BatchJobsRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/BatchJobsRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        job_ids:
+          items:
+            format: int64
+            type: integer
+          type:
+            - array
+            - "null"
+      required:
+        - job_ids
+      type: object
+    BranchWithCount:
+      additionalProperties: false
+      properties:
+        count:
+          format: int64
+          type: integer
+        name:
+          type: string
+      required:
+        - name
+        - count
+      type: object
+    CancelJobOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/CancelJobOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        success:
+          type: boolean
+      required:
+        - success
+      type: object
+    CancelJobRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/CancelJobRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        job_id:
+          format: int64
+          type: integer
+      required:
+        - job_id
+      type: object
+    CloseReviewOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/CloseReviewOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        success:
+          type: boolean
+      required:
+        - success
+      type: object
+    CloseReviewRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/CloseReviewRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        closed:
+          type: boolean
+        job_id:
+          format: int64
+          type: integer
+      required:
+        - job_id
+        - closed
+      type: object
+    ComponentHealth:
+      additionalProperties: false
+      properties:
+        healthy:
+          type: boolean
+        message:
+          type: string
+        name:
+          type: string
+      required:
+        - name
+        - healthy
+      type: object
+    DaemonStatus:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/DaemonStatus.json
+          format: uri
+          readOnly: true
+          type: string
+        active_workers:
+          format: int64
+          type: integer
+        address:
+          type: string
+        applied_jobs:
+          format: int64
+          type: integer
+        auto_design:
+          $ref: "#/components/schemas/AutoDesignStatus"
+        canceled_jobs:
+          format: int64
+          type: integer
+        completed_jobs:
+          format: int64
+          type: integer
+        config_reload_counter:
+          format: int64
+          minimum: 0
+          type: integer
+        config_reloaded_at:
+          type: string
+        failed_jobs:
+          format: int64
+          type: integer
+        machine_id:
+          type: string
+        max_workers:
+          format: int64
+          type: integer
+        network:
+          type: string
+        port:
+          format: int64
+          type: integer
+        queued_jobs:
+          format: int64
+          type: integer
+        rebased_jobs:
+          format: int64
+          type: integer
+        running_jobs:
+          format: int64
+          type: integer
+        skipped_jobs:
+          format: int64
+          type: integer
+        version:
+          type: string
+      required:
+        - version
+        - queued_jobs
+        - running_jobs
+        - completed_jobs
+        - failed_jobs
+        - canceled_jobs
+        - applied_jobs
+        - rebased_jobs
+        - skipped_jobs
+        - active_workers
+        - max_workers
+      type: object
+    DurationStats:
+      additionalProperties: false
+      properties:
+        queue_p50_secs:
+          format: double
+          type: number
+        queue_p90_secs:
+          format: double
+          type: number
+        queue_p99_secs:
+          format: double
+          type: number
+        review_p50_secs:
+          format: double
+          type: number
+        review_p90_secs:
+          format: double
+          type: number
+        review_p99_secs:
+          format: double
+          type: number
+      required:
+        - review_p50_secs
+        - review_p90_secs
+        - review_p99_secs
+        - queue_p50_secs
+        - queue_p90_secs
+        - queue_p99_secs
+      type: object
+    EnqueueRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/EnqueueRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        agent:
+          type: string
+        agentic:
+          type: boolean
+        branch:
+          type: string
+        commit_sha:
+          type: string
+        custom_prompt:
+          type: string
+        diff_content:
+          type: string
+        dirty_files:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        git_ref:
+          type: string
+        job_type:
+          type: string
+        min_severity:
+          type: string
+        model:
+          type: string
+        output_prefix:
+          type: string
+        panel:
+          type: string
+        provider:
+          type: string
+        reasoning:
+          type: string
+        repo_path:
+          type: string
+        review_type:
+          type: string
+        since:
+          type: string
+        source:
+          type: string
+      required:
+        - repo_path
+      type: object
+    EnqueueSkippedResponse:
+      additionalProperties: false
+      properties:
+        reason:
+          type: string
+        skipped:
+          type: boolean
+      required:
+        - skipped
+        - reason
+      type: object
+    ErrorDetail:
+      additionalProperties: false
+      properties:
+        location:
+          description: Where the error occurred, e.g. 'body.items[3].tags' or 'path.thing-id'
+          type: string
+        message:
+          description: Error message text
+          type: string
+        value:
+          description: The value at the given location
+      type: object
+    ErrorEntry:
+      additionalProperties: false
+      properties:
+        component:
+          type: string
+        job_id:
+          format: int64
+          type: integer
+        level:
+          type: string
+        message:
+          type: string
+        ts:
+          format: date-time
+          type: string
+      required:
+        - ts
+        - level
+        - component
+        - message
+      type: object
+    ErrorModel:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/ErrorModel.json
+          format: uri
+          readOnly: true
+          type: string
+        detail:
+          description: A human-readable explanation specific to this occurrence of the problem.
+          examples:
+            - Property foo is required but is missing.
+          type: string
+        errors:
+          description: Optional list of individual error details
+          items:
+            $ref: "#/components/schemas/ErrorDetail"
+          type:
+            - array
+            - "null"
+        instance:
+          description: A URI reference that identifies the specific occurrence of the problem.
+          examples:
+            - https://example.com/error-log/abc123
+          format: uri
+          type: string
+        status:
+          description: HTTP status code
+          examples:
+            - 400
+          format: int64
+          type: integer
+        title:
+          description: A short, human-readable summary of the problem type. This value should not change between occurrences of the error.
+          examples:
+            - Bad Request
+          type: string
+        type:
+          default: about:blank
+          description: A URI reference to human-readable documentation for the error.
+          examples:
+            - https://example.com/errors/example
+          format: uri
+          type: string
+      type: object
+    ErrorResponse:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/ErrorResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        error:
+          type: string
+      required:
+        - error
+      type: object
+    FailureStats:
+      additionalProperties: false
+      properties:
+        errors:
+          additionalProperties:
+            format: int64
+            type: integer
+          type: object
+        retries:
+          format: int64
+          type: integer
+        total:
+          format: int64
+          type: integer
+      required:
+        - total
+        - retries
+        - errors
+      type: object
+    FixJobRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/FixJobRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        git_ref:
+          type: string
+        parent_job_id:
+          format: int64
+          type: integer
+        prompt:
+          type: string
+        stale_job_id:
+          format: int64
+          type: integer
+      required:
+        - parent_job_id
+      type: object
+    HealthStatus:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/HealthStatus.json
+          format: uri
+          readOnly: true
+          type: string
+        components:
+          items:
+            $ref: "#/components/schemas/ComponentHealth"
+          type:
+            - array
+            - "null"
+        error_count_24h:
+          format: int64
+          type: integer
+        healthy:
+          type: boolean
+        recent_errors:
+          items:
+            $ref: "#/components/schemas/ErrorEntry"
+          type:
+            - array
+            - "null"
+        uptime:
+          type: string
+        version:
+          type: string
+      required:
+        - healthy
+        - uptime
+        - version
+        - components
+        - recent_errors
+        - error_count_24h
+      type: object
+    JobIDRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/JobIDRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        job_id:
+          format: int64
+          type: integer
+      required:
+        - job_id
+      type: object
+    JobStats:
+      additionalProperties: false
+      properties:
+        closed:
+          format: int64
+          type: integer
+        done:
+          format: int64
+          type: integer
+        open:
+          format: int64
+          type: integer
+      required:
+        - done
+        - closed
+        - open
+      type: object
+    JobStatusOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/JobStatusOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        status:
+          type: string
+      required:
+        - status
+      type: object
+    JobTypeStats:
+      additionalProperties: false
+      properties:
+        applied:
+          format: int64
+          type: integer
+        count:
+          format: int64
+          type: integer
+        rebased:
+          format: int64
+          type: integer
+        type:
+          type: string
+      required:
+        - type
+        - count
+      type: object
+    JobWithReview:
+      additionalProperties: false
+      properties:
+        job:
+          $ref: "#/components/schemas/ReviewJob"
+        review:
+          $ref: "#/components/schemas/Review"
+      required:
+        - job
+      type: object
+    ListBranchesOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/ListBranchesOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        branches:
+          items:
+            $ref: "#/components/schemas/BranchWithCount"
+          type:
+            - array
+            - "null"
+        nulls_remaining:
+          format: int64
+          type: integer
+        total_count:
+          format: int64
+          type: integer
+      required:
+        - branches
+        - total_count
+        - nulls_remaining
+      type: object
+    ListCommentsOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/ListCommentsOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        responses:
+          items:
+            $ref: "#/components/schemas/Response"
+          type:
+            - array
+            - "null"
+      required:
+        - responses
+      type: object
+    ListJobsOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/ListJobsOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        has_more:
+          type: boolean
+        jobs:
+          items:
+            $ref: "#/components/schemas/ReviewJob"
+          type:
+            - array
+            - "null"
+        stats:
+          $ref: "#/components/schemas/JobStats"
+      required:
+        - jobs
+        - has_more
+      type: object
+    ListReposOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/ListReposOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        repos:
+          items:
+            $ref: "#/components/schemas/RepoWithCount"
+          type:
+            - array
+            - "null"
+        total_count:
+          format: int64
+          type: integer
+      required:
+        - repos
+        - total_count
+      type: object
+    OverviewStats:
+      additionalProperties: false
+      properties:
+        applied:
+          format: int64
+          type: integer
+        canceled:
+          format: int64
+          type: integer
+        done:
+          format: int64
+          type: integer
+        failed:
+          format: int64
+          type: integer
+        queued:
+          format: int64
+          type: integer
+        rebased:
+          format: int64
+          type: integer
+        running:
+          format: int64
+          type: integer
+        total:
+          format: int64
+          type: integer
+      required:
+        - total
+        - queued
+        - running
+        - done
+        - failed
+        - canceled
+        - applied
+        - rebased
+      type: object
+    PanelSummary:
+      additionalProperties: false
+      properties:
+        members_canceled:
+          format: int64
+          type: integer
+        members_cost_complete:
+          type: boolean
+        members_cost_usd:
+          format: double
+          type: number
+        members_failed:
+          format: int64
+          type: integer
+        members_skipped:
+          format: int64
+          type: integer
+        members_succeeded:
+          format: int64
+          type: integer
+        members_terminal:
+          format: int64
+          type: integer
+        members_total:
+          format: int64
+          type: integer
+        panel_run_uuid:
+          type: string
+      required:
+        - panel_run_uuid
+        - members_total
+        - members_terminal
+        - members_succeeded
+        - members_failed
+        - members_canceled
+        - members_skipped
+      type: object
+    PingInfo:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/PingInfo.json
+          format: uri
+          readOnly: true
+          type: string
+        ok:
+          type: boolean
+        pid:
+          format: int64
+          type: integer
+        service:
+          type: string
+        version:
+          type: string
+      required:
+        - ok
+        - service
+        - version
+      type: object
+    RegisterRepoRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/RegisterRepoRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        repo_path:
+          type: string
+      required:
+        - repo_path
+      type: object
+    RemapMapping:
+      additionalProperties: false
+      properties:
+        author:
+          type: string
+        new_sha:
+          type: string
+        old_sha:
+          type: string
+        patch_id:
+          type: string
+        subject:
+          type: string
+        timestamp:
+          type: string
+      required:
+        - old_sha
+        - new_sha
+        - patch_id
+        - author
+        - subject
+        - timestamp
+      type: object
+    RemapRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/RemapRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        mappings:
+          items:
+            $ref: "#/components/schemas/RemapMapping"
+          type:
+            - array
+            - "null"
+        repo_path:
+          type: string
+      required:
+        - repo_path
+        - mappings
+      type: object
+    RemapResult:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/RemapResult.json
+          format: uri
+          readOnly: true
+          type: string
+        remapped:
+          format: int64
+          type: integer
+        skipped:
+          format: int64
+          type: integer
+      required:
+        - remapped
+        - skipped
+      type: object
+    Repo:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/Repo.json
+          format: uri
+          readOnly: true
+          type: string
+        created_at:
+          format: date-time
+          type: string
+        id:
+          format: int64
+          type: integer
+        identity:
+          type: string
+        name:
+          type: string
+        root_path:
+          type: string
+      required:
+        - id
+        - root_path
+        - name
+        - created_at
+      type: object
+    RepoSummary:
+      additionalProperties: false
+      properties:
+        addressed:
+          format: int64
+          type: integer
+        failed:
+          format: int64
+          type: integer
+        name:
+          type: string
+        passed:
+          format: int64
+          type: integer
+        path:
+          type: string
+        total:
+          format: int64
+          type: integer
+      required:
+        - name
+        - path
+        - total
+        - passed
+        - failed
+        - addressed
+      type: object
+    RepoWithCount:
+      additionalProperties: false
+      properties:
+        count:
+          format: int64
+          type: integer
+        identity:
+          type: string
+        name:
+          type: string
+        root_path:
+          type: string
+      required:
+        - name
+        - root_path
+        - count
+      type: object
+    RerunJobOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/RerunJobOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        success:
+          type: boolean
+      required:
+        - success
+      type: object
+    RerunJobRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/RerunJobRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        job_id:
+          format: int64
+          type: integer
+      required:
+        - job_id
+      type: object
+    ResolveRepoOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/ResolveRepoOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        repo:
+          $ref: "#/components/schemas/ResolvedRepo"
+        tracked:
+          type: boolean
+      required:
+        - tracked
+      type: object
+    ResolvedRepo:
+      additionalProperties: false
+      properties:
+        identity:
+          type: string
+        name:
+          type: string
+        root_path:
+          type: string
+      required:
+        - root_path
+        - identity
+        - name
+      type: object
+    Response:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/Response.json
+          format: uri
+          readOnly: true
+          type: string
+        commit_id:
+          format: int64
+          type: integer
+        created_at:
+          format: date-time
+          type: string
+        id:
+          format: int64
+          type: integer
+        job_id:
+          format: int64
+          type: integer
+        responder:
+          type: string
+        response:
+          type: string
+        source_machine_id:
+          type: string
+        synced_at:
+          format: date-time
+          type: string
+        uuid:
+          type: string
+      required:
+        - id
+        - responder
+        - response
+        - created_at
+      type: object
+    Review:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/Review.json
+          format: uri
+          readOnly: true
+          type: string
+        agent:
+          type: string
+        closed:
+          type: boolean
+        created_at:
+          format: date-time
+          type: string
+        id:
+          format: int64
+          type: integer
+        job:
+          $ref: "#/components/schemas/ReviewJob"
+        job_id:
+          format: int64
+          type: integer
+        output:
+          type: string
+        prompt:
+          type: string
+        synced_at:
+          format: date-time
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+        updated_by_machine_id:
+          type: string
+        uuid:
+          type: string
+        verdict_bool:
+          format: int64
+          type: integer
+      required:
+        - id
+        - job_id
+        - agent
+        - prompt
+        - output
+        - created_at
+        - closed
+      type: object
+    ReviewJob:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/ReviewJob.json
+          format: uri
+          readOnly: true
+          type: string
+        agent:
+          type: string
+        agentic:
+          type: boolean
+        backup_agent:
+          type: string
+        backup_model:
+          type: string
+        branch:
+          type: string
+        claim_blocked:
+          type: boolean
+        closed:
+          type: boolean
+        command_line:
+          type: string
+        commit_id:
+          format: int64
+          type: integer
+        commit_subject:
+          type: string
+        diff_content:
+          type: string
+        dirty_files:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        enqueued_at:
+          format: date-time
+          type: string
+        error:
+          type: string
+        finished_at:
+          format: date-time
+          type: string
+        git_ref:
+          type: string
+        id:
+          format: int64
+          type: integer
+        job_type:
+          type: string
+        min_severity:
+          type: string
+        model:
+          type: string
+        output_prefix:
+          type: string
+        panel_member_config_json:
+          type: string
+        panel_member_index:
+          format: int64
+          type: integer
+        panel_member_name:
+          type: string
+        panel_name:
+          type: string
+        panel_role:
+          type: string
+        panel_run_uuid:
+          type: string
+        panel_summary:
+          $ref: "#/components/schemas/PanelSummary"
+        parent_job_id:
+          format: int64
+          type: integer
+        patch:
+          type: string
+        patch_id:
+          type: string
+        prompt:
+          type: string
+        prompt_prebuilt:
+          type: boolean
+        provider:
+          type: string
+        reasoning:
+          type: string
+        repo_id:
+          format: int64
+          type: integer
+        repo_name:
+          type: string
+        repo_path:
+          type: string
+        requested_model:
+          type: string
+        requested_provider:
+          type: string
+        retry_count:
+          format: int64
+          type: integer
+        review_type:
+          type: string
+        session_id:
+          type: string
+        skip_reason:
+          type: string
+        source:
+          type: string
+        source_machine_id:
+          type: string
+        started_at:
+          format: date-time
+          type: string
+        status:
+          type: string
+        synced_at:
+          format: date-time
+          type: string
+        token_usage:
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+        uuid:
+          type: string
+        verdict:
+          type: string
+        worker_id:
+          type: string
+        worktree_path:
+          type: string
+      required:
+        - id
+        - repo_id
+        - git_ref
+        - agent
+        - job_type
+        - status
+        - enqueued_at
+        - retry_count
+        - agentic
+        - prompt_prebuilt
+      type: object
+    SessionUsagePayload:
+      additionalProperties: false
+      properties:
+        agent:
+          type: string
+        cost_usd:
+          format: double
+          type: number
+        has_cost:
+          type:
+            - boolean
+            - "null"
+        has_token_data:
+          type:
+            - boolean
+            - "null"
+        peak_context_tokens:
+          format: int64
+          type: integer
+        project:
+          type: string
+        session_id:
+          type: string
+        total_output_tokens:
+          format: int64
+          type: integer
+      required:
+        - session_id
+        - has_token_data
+        - has_cost
+      type: object
+    Summary:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/Summary.json
+          format: uri
+          readOnly: true
+          type: string
+        agents:
+          items:
+            $ref: "#/components/schemas/AgentStats"
+          type:
+            - array
+            - "null"
+        branch:
+          type: string
+        duration:
+          $ref: "#/components/schemas/DurationStats"
+        failures:
+          $ref: "#/components/schemas/FailureStats"
+        job_types:
+          items:
+            $ref: "#/components/schemas/JobTypeStats"
+          type:
+            - array
+            - "null"
+        overview:
+          $ref: "#/components/schemas/OverviewStats"
+        repo_path:
+          type: string
+        repos:
+          items:
+            $ref: "#/components/schemas/RepoSummary"
+          type:
+            - array
+            - "null"
+        since:
+          format: date-time
+          type: string
+        verdicts:
+          $ref: "#/components/schemas/VerdictStats"
+      required:
+        - since
+        - overview
+        - verdicts
+        - agents
+        - duration
+        - job_types
+        - failures
+      type: object
+    SyncStatusOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/SyncStatusOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        connected:
+          type: boolean
+        enabled:
+          type: boolean
+        message:
+          type: string
+      required:
+        - enabled
+        - connected
+        - message
+      type: object
+    TokenResult:
+      additionalProperties: false
+      properties:
+        agent:
+          type: string
+        job_id:
+          format: int64
+          type: integer
+        reason:
+          type: string
+        session_id:
+          type: string
+        status:
+          type: string
+        summary:
+          type: string
+      required:
+        - session_id
+        - status
+      type: object
+    TokenSummary:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/TokenSummary.json
+          format: uri
+          readOnly: true
+          type: string
+        failed:
+          format: int64
+          type: integer
+        results:
+          items:
+            $ref: "#/components/schemas/TokenResult"
+          type:
+            - array
+            - "null"
+        skipped:
+          format: int64
+          type: integer
+        total:
+          format: int64
+          type: integer
+        updated:
+          format: int64
+          type: integer
+      required:
+        - total
+        - updated
+        - skipped
+        - failed
+        - results
+      type: object
+    UpdateJobBranchOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/UpdateJobBranchOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        success:
+          type: boolean
+        updated:
+          type: boolean
+      required:
+        - success
+        - updated
+      type: object
+    UpdateJobBranchRequest:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/UpdateJobBranchRequest.json
+          format: uri
+          readOnly: true
+          type: string
+        branch:
+          type: string
+        job_id:
+          format: int64
+          type: integer
+      required:
+        - job_id
+        - branch
+      type: object
+    VerdictStats:
+      additionalProperties: false
+      properties:
+        addressed:
+          format: int64
+          type: integer
+        failed:
+          format: int64
+          type: integer
+        pass_rate:
+          format: double
+          type: number
+        passed:
+          format: int64
+          type: integer
+        resolution_rate:
+          format: double
+          type: number
+        total:
+          format: int64
+          type: integer
+      required:
+        - total
+        - passed
+        - failed
+        - addressed
+        - pass_rate
+        - resolution_rate
+      type: object
+info:
+  title: roborev
+  version: dev
+openapi: 3.1.0
+paths:
+  /api/activity:
+    get:
+      operationId: list-activity
+      parameters:
+        - description: Maximum entries to return
+          explode: false
+          in: query
+          name: limit
+          schema:
+            description: Maximum entries to return
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ActivityOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: List recent daemon activity
+      tags:
+        - daemon
+  /api/branches:
+    get:
+      operationId: list-branches
+      parameters:
+        - description: Filter to branches in these repo paths
+          explode: true
+          in: query
+          name: repo
+          schema:
+            description: Filter to branches in these repo paths
+            items:
+              type: string
+            type:
+              - array
+              - "null"
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListBranchesOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: List branches with job counts
+      tags:
+        - repos
+  /api/comment:
+    post:
+      operationId: add-comment
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/AddCommentRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Response"
+          description: Created
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Add a comment to a job or commit
+      tags:
+        - comments
+  /api/comments:
+    get:
+      operationId: list-comments
+      parameters:
+        - description: List comments by job ID
+          explode: false
+          in: query
+          name: job_id
+          schema:
+            default: -1
+            description: List comments by job ID
+            format: int64
+            type: integer
+        - description: List comments by commit ID
+          explode: false
+          in: query
+          name: commit_id
+          schema:
+            default: -1
+            description: List comments by commit ID
+            format: int64
+            type: integer
+        - description: List comments by commit SHA
+          explode: false
+          in: query
+          name: sha
+          schema:
+            description: List comments by commit SHA
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListCommentsOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: List comments for a job or commit
+      tags:
+        - comments
+  /api/enqueue:
+    post:
+      operationId: enqueue-job
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/EnqueueRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReviewJob"
+                  - $ref: "#/components/schemas/EnqueueSkippedResponse"
+        "201":
+          content:
+            application/json:
+              schema:
+                oneOf:
+                  - $ref: "#/components/schemas/ReviewJob"
+                  - $ref: "#/components/schemas/EnqueueSkippedResponse"
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "413":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Enqueue a daemon job
+      tags:
+        - jobs
+  /api/health:
+    get:
+      operationId: get-health
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get daemon health
+      tags:
+        - daemon
+  /api/job/applied:
+    post:
+      operationId: mark-job-applied
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JobIDRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobStatusOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Mark a fix job as applied
+      tags:
+        - jobs
+  /api/job/cancel:
+    post:
+      operationId: cancel-job
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CancelJobRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CancelJobOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Cancel a queued or running job
+      tags:
+        - jobs
+  /api/job/fix:
+    post:
+      operationId: create-fix-job
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/FixJobRequest"
+        required: true
+      responses:
+        "201":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReviewJob"
+          description: Created
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "404":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "503":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Create a background fix job
+      tags:
+        - jobs
+  /api/job/log:
+    get:
+      operationId: get-job-log
+      parameters:
+        - description: Job ID
+          explode: false
+          in: query
+          name: job_id
+          schema:
+            description: Job ID
+            type: string
+        - description: Byte offset into the log file
+          explode: false
+          in: query
+          name: offset
+          schema:
+            description: Byte offset into the log file
+            type: string
+      responses:
+        "200":
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get raw job log bytes
+      tags:
+        - jobs
+  /api/job/output:
+    get:
+      operationId: get-job-output
+      parameters:
+        - description: Job ID
+          explode: false
+          in: query
+          name: job_id
+          schema:
+            description: Job ID
+            type: string
+        - description: Stream output as NDJSON when set to 1
+          explode: false
+          in: query
+          name: stream
+          schema:
+            description: Stream output as NDJSON when set to 1
+            type: string
+      responses:
+        "200":
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get or stream in-memory job output
+      tags:
+        - jobs
+  /api/job/patch:
+    get:
+      operationId: get-job-patch
+      parameters:
+        - description: Job ID
+          explode: false
+          in: query
+          name: job_id
+          schema:
+            description: Job ID
+            type: string
+      responses:
+        "200":
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get a stored fix patch
+      tags:
+        - jobs
+  /api/job/rebased:
+    post:
+      operationId: mark-job-rebased
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/JobIDRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/JobStatusOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Mark a fix job as rebased
+      tags:
+        - jobs
+  /api/job/rerun:
+    post:
+      operationId: rerun-job
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RerunJobRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RerunJobOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Re-enqueue a completed or failed job
+      tags:
+        - jobs
+  /api/job/update-branch:
+    post:
+      operationId: update-job-branch
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UpdateJobBranchRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/UpdateJobBranchOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Update a job branch
+      tags:
+        - jobs
+  /api/jobs:
+    get:
+      operationId: list-jobs
+      parameters:
+        - description: Return a single job by ID
+          explode: false
+          in: query
+          name: id
+          schema:
+            default: -1
+            description: Return a single job by ID
+            format: int64
+            type: integer
+        - description: Filter by job status
+          explode: false
+          in: query
+          name: status
+          schema:
+            description: Filter by job status
+            type: string
+        - description: Filter by repo root path (repeatable)
+          explode: true
+          in: query
+          name: repo
+          schema:
+            description: Filter by repo root path (repeatable)
+            items:
+              type: string
+            type:
+              - array
+              - "null"
+        - description: Filter by git ref
+          explode: false
+          in: query
+          name: git_ref
+          schema:
+            description: Filter by git ref
+            type: string
+        - description: Filter by branch name
+          explode: false
+          in: query
+          name: branch
+          schema:
+            description: Filter by branch name
+            type: string
+        - description: Include jobs with no branch when filtering by branch
+          explode: false
+          in: query
+          name: branch_include_empty
+          schema:
+            description: Include jobs with no branch when filtering by branch
+            enum:
+              - "true"
+              - "false"
+              - ""
+            type: string
+        - description: Filter by review closed state
+          explode: false
+          in: query
+          name: closed
+          schema:
+            description: Filter by review closed state
+            enum:
+              - "true"
+              - "false"
+              - ""
+            type: string
+        - description: Filter by job type
+          explode: false
+          in: query
+          name: job_type
+          schema:
+            description: Filter by job type
+            type: string
+        - description: Exclude jobs of this type
+          explode: false
+          in: query
+          name: exclude_job_type
+          schema:
+            description: Exclude jobs of this type
+            type: string
+        - description: Hide auto-design-router rows (job_type=classify and status=skipped)
+          explode: false
+          in: query
+          name: hide_classify_jobs
+          schema:
+            description: Hide auto-design-router rows (job_type=classify and status=skipped)
+            enum:
+              - "true"
+              - "false"
+              - ""
+            type: string
+        - description: Return all jobs (members + synthesis) of one panel run
+          explode: false
+          in: query
+          name: panel_run
+          schema:
+            description: Return all jobs (members + synthesis) of one panel run
+            type: string
+        - description: Filter repos by path prefix
+          explode: false
+          in: query
+          name: repo_prefix
+          schema:
+            description: Filter repos by path prefix
+            type: string
+        - description: Max results (default 50, 0=unlimited, max 10000)
+          explode: false
+          in: query
+          name: limit
+          schema:
+            default: -999999
+            description: Max results (default 50, 0=unlimited, max 10000)
+            format: int64
+            type: integer
+        - description: Skip N results (requires limit>0)
+          explode: false
+          in: query
+          name: offset
+          schema:
+            default: -1
+            description: Skip N results (requires limit>0)
+            format: int64
+            type: integer
+        - description: "Cursor: return jobs with ID < this value"
+          explode: false
+          in: query
+          name: before
+          schema:
+            default: -1
+            description: "Cursor: return jobs with ID < this value"
+            format: int64
+            type: integer
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListJobsOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: List review jobs
+      tags:
+        - jobs
+  /api/jobs/batch:
+    post:
+      operationId: batch-jobs
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BatchJobsRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/BatchJobsOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Fetch jobs with reviews by ID
+      tags:
+        - jobs
+  /api/ping:
+    get:
+      operationId: ping
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PingInfo"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get daemon liveness identity
+      tags:
+        - daemon
+  /api/remap:
+    post:
+      operationId: remap-jobs
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RemapRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/RemapResult"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Remap jobs after git history rewrite
+      tags:
+        - jobs
+  /api/repos:
+    get:
+      operationId: list-repos
+      parameters:
+        - description: Filter to repos with jobs on this branch
+          explode: false
+          in: query
+          name: branch
+          schema:
+            description: Filter to repos with jobs on this branch
+            type: string
+        - description: Filter repos by path prefix
+          explode: false
+          in: query
+          name: prefix
+          schema:
+            description: Filter repos by path prefix
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ListReposOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: List repos with job counts
+      tags:
+        - repos
+  /api/repos/register:
+    post:
+      operationId: register-repo
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/RegisterRepoRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Repo"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Register a repository
+      tags:
+        - repos
+  /api/repos/resolve:
+    get:
+      operationId: resolve-repo
+      parameters:
+        - description: Absolute path or path inside a repository
+          explode: false
+          in: query
+          name: path
+          schema:
+            description: Absolute path or path inside a repository
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ResolveRepoOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Resolve whether a path belongs to a tracked repo
+      tags:
+        - repos
+  /api/review:
+    get:
+      operationId: get-review
+      parameters:
+        - description: Look up review by job ID
+          explode: false
+          in: query
+          name: job_id
+          schema:
+            default: -1
+            description: Look up review by job ID
+            format: int64
+            type: integer
+        - description: Look up review by commit SHA
+          explode: false
+          in: query
+          name: sha
+          schema:
+            description: Look up review by commit SHA
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Review"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get a review by job ID or SHA
+      tags:
+        - reviews
+  /api/review/close:
+    post:
+      operationId: close-review
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/CloseReviewRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CloseReviewOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Close or reopen a review
+      tags:
+        - reviews
+  /api/status:
+    get:
+      operationId: get-status
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DaemonStatus"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get daemon status
+      tags:
+        - daemon
+  /api/stream/events:
+    get:
+      operationId: stream-events
+      parameters:
+        - description: Filter events by repo root path
+          explode: false
+          in: query
+          name: repo
+          schema:
+            description: Filter events by repo root path
+            type: string
+      responses:
+        "200":
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Stream daemon events
+      tags:
+        - daemon
+  /api/summary:
+    get:
+      operationId: get-summary
+      parameters:
+        - description: "Time window (e.g. 7d, 24h). Default: 7d"
+          explode: false
+          in: query
+          name: since
+          schema:
+            description: "Time window (e.g. 7d, 24h). Default: 7d"
+            type: string
+        - description: Filter by repo root path
+          explode: false
+          in: query
+          name: repo
+          schema:
+            description: Filter by repo root path
+            type: string
+        - description: Filter by branch name
+          explode: false
+          in: query
+          name: branch
+          schema:
+            description: Filter by branch name
+            type: string
+        - description: Include per-repo breakdown
+          explode: false
+          in: query
+          name: all
+          schema:
+            description: Include per-repo breakdown
+            enum:
+              - "true"
+              - "false"
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Summary"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get review summary statistics
+      tags:
+        - daemon
+  /api/sync/now:
+    post:
+      operationId: sync-now
+      parameters:
+        - description: Stream sync progress as NDJSON when set to 1
+          explode: false
+          in: query
+          name: stream
+          schema:
+            description: Stream sync progress as NDJSON when set to 1
+            type: string
+      responses:
+        "200":
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Run an immediate sync
+      tags:
+        - sync
+  /api/sync/status:
+    get:
+      operationId: get-sync-status
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SyncStatusOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get sync worker status
+      tags:
+        - sync
+  /api/tokens/backfill:
+    post:
+      operationId: backfill-tokens
+      requestBody:
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/BackfillTokensRequest"
+        required: true
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/TokenSummary"
+          description: OK
+        "400":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+        "500":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+      summary: Backfill token usage from AgentsView payloads
+      tags:
+        - jobs
