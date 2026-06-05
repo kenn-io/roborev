@@ -18,6 +18,7 @@ import (
 
 	"go.kenn.io/roborev/internal/config"
 	roborevdaemon "go.kenn.io/roborev/internal/daemon"
+	roborevgit "go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -517,7 +518,9 @@ func shellFields(command string) []string {
 	var b strings.Builder
 	var quote rune
 	escaped := false
+	expansionDepth := 0
 	inToken := false
+	pendingExpansion := false
 	for _, r := range command {
 		if escaped {
 			b.WriteRune(r)
@@ -540,9 +543,32 @@ func shellFields(command string) []string {
 			inToken = true
 			continue
 		}
+		if pendingExpansion && (r == '(' || r == '{') {
+			b.WriteRune(r)
+			expansionDepth++
+			inToken = true
+			pendingExpansion = false
+			continue
+		}
+		pendingExpansion = false
+		if expansionDepth > 0 {
+			if r == '$' {
+				pendingExpansion = true
+			}
+			if r == ')' || r == '}' {
+				expansionDepth--
+			}
+			b.WriteRune(r)
+			inToken = true
+			continue
+		}
 		switch r {
 		case '\\':
 			escaped = true
+			inToken = true
+		case '$':
+			b.WriteRune(r)
+			pendingExpansion = true
 			inToken = true
 		case '\'', '"', '`':
 			quote = r
@@ -603,8 +629,6 @@ func countOpenFailedReviews(ctx context.Context, repoRoot, branch, head, configu
 	if branch != "" {
 		values.Set("branch", branch)
 		values.Set("branch_include_empty", "true")
-	} else if head != "" {
-		values.Set("git_ref", head)
 	}
 	values.Set("status", "done")
 	values.Set("closed", "false")
@@ -633,11 +657,42 @@ func countOpenFailedReviews(ctx context.Context, repoRoot, branch, head, configu
 		if job.Closed != nil && *job.Closed {
 			continue
 		}
+		if branch == "" && head != "" && !detachedReviewMatches(repoRoot, head, job) {
+			continue
+		}
 		if job.Verdict != nil && strings.EqualFold(*job.Verdict, "F") {
 			count++
 		}
 	}
 	return count, true
+}
+
+func detachedReviewMatches(repoRoot, head string, job storage.ReviewJob) bool {
+	if strings.TrimSpace(job.Branch) != "" {
+		return false
+	}
+	ref := strings.TrimSpace(job.GitRef)
+	if ref == "" || ref == "dirty" {
+		return false
+	}
+	if ref == head {
+		return true
+	}
+	if _, end, ok := roborevgit.ParseRange(ref); ok {
+		return refReachableFromHead(repoRoot, strings.TrimSpace(end), head)
+	}
+	return refReachableFromHead(repoRoot, ref, head)
+}
+
+func refReachableFromHead(repoRoot, ref, head string) bool {
+	if ref == "" || head == "" {
+		return false
+	}
+	if ref == head {
+		return true
+	}
+	ok, err := roborevgit.IsAncestor(repoRoot, ref, head)
+	return err == nil && ok
 }
 
 func roborevEndpoint(configuredAddr string) (roborevdaemon.DaemonEndpoint, bool) {
