@@ -306,6 +306,9 @@ func (s *StateStore) recordPostToolUse(req Request) (Response, error) {
 	// real commit was counted for this checkout since its last prompt, and
 	// triggering resets that checkout's count.
 	commitTriggered := thresholdReady(st.CommitCountsSincePrompt[headKey], req.CommitThreshold) && actionableReviews
+	// Capture this checkout's count before resetPromptCounters clears it, so the
+	// reminder text reports the triggering repo's commits, not session-wide totals.
+	triggeringCommitCount := st.CommitCountsSincePrompt[headKey]
 	if commitTriggered {
 		st.CommitTriggeredAt = now
 	}
@@ -337,7 +340,7 @@ func (s *StateStore) recordPostToolUse(req Request) (Response, error) {
 		resp.Reason = buildFailedReviewReason(req, st)
 	case commitTriggered:
 		resp.TriggeredBy = "commit"
-		resp.Reason = buildCommitReason(req, st)
+		resp.Reason = buildCommitReason(req, triggeringCommitCount, repoRoot)
 	}
 	return resp, nil
 }
@@ -398,9 +401,14 @@ func buildStopReason(req Request, st SessionState) string {
 	return buildPromptReason(req, fmt.Sprintf("%s reached.", countPhrase(st.Count, "Stop hook", "Stop hooks")))
 }
 
-func buildCommitReason(req Request, st SessionState) string {
-	detail := fmt.Sprintf("%s reached", countPhrase(st.CommitCount, "commit", "commits"))
-	if repoName := quotedLabel(repoDisplayName(st.LastCommitRepo)); repoName != "" {
+// buildCommitReason describes the commit reminder for the checkout that triggered
+// it. count and repo come from the triggering repo/branch (CommitCountsSincePrompt
+// before it is reset), not the session-wide totals, so a deferred reminder for one
+// repo reports that repo and its count rather than whichever repo committed most
+// recently.
+func buildCommitReason(req Request, count int, repo string) string {
+	detail := fmt.Sprintf("%s reached", countPhrase(count, "commit", "commits"))
+	if repoName := quotedLabel(repoDisplayName(repo)); repoName != "" {
 		detail += " in " + repoName
 	}
 	return buildPromptReason(req, detail+".")

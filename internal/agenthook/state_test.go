@@ -148,7 +148,7 @@ func TestBuildHookReasonsAreCompactOneLine(t *testing.T) {
 	assert.NotContains(stop, req.Event.SessionID)
 	assert.NotContains(stop, "/Users/wesm")
 
-	commit := buildCommitReason(req, st)
+	commit := buildCommitReason(req, st.CommitCount, st.LastCommitRepo)
 	assert.Equal(`Invoke the $roborev-fix skill now. 2 commits reached in "agent-hook-integration".`, commit)
 	assert.NotContains(commit, "\n")
 	assert.NotContains(commit, req.Event.SessionID)
@@ -802,6 +802,66 @@ func TestRecordPostToolUseCountsCommitInOtherRepoViaDashC(t *testing.T) {
 	assert.Equal(inner.Path(), st.LastCommitRepo, "the commit is attributed to the -C target repo")
 	assert.True(resp.Triggered, "the commit reminder fires for the -C target repo")
 	assert.Equal("commit", resp.TriggeredBy)
+}
+
+func TestRecordPostToolUseCommitReasonReportsTriggeringRepo(t *testing.T) {
+	assert := assert.New(t)
+	repoA := testutil.NewGitRepo(t)
+	repoA.CommitFile("a.go", "package main\n", "A initial")
+	repoB := testutil.NewGitRepo(t)
+	repoB.CommitFile("b.go", "package main\n", "B initial")
+
+	var aReviewVisible atomic.Bool
+	closed := false
+	verdict := "F"
+	// Repo A's failed review only becomes visible after its commit, deferring A's
+	// commit reminder. Repo B has no failed reviews; its later commit advances the
+	// session-wide CommitCount and LastCommitRepo to B.
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		jobs := []storage.ReviewJob{}
+		if r.URL.Query().Get("repo") == repoA.Path() && aReviewVisible.Load() {
+			jobs = append(jobs, storage.ReviewJob{Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict})
+		}
+		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{Jobs: jobs}))
+	}))
+	t.Cleanup(server.Close)
+
+	store := &StateStore{path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	post := func(repo *testutil.TestRepo, command string) Response {
+		resp, err := store.Record(Request{
+			Event: Input{
+				SessionID:     "session-1",
+				CWD:           repo.Path(),
+				HookEventName: "PostToolUse",
+				ToolName:      "Bash",
+				ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"` + command + `"`)},
+			},
+			CommitThreshold:   1,
+			Instruction:       "Run roborev fix.",
+			RoborevServerAddr: server.URL,
+		})
+		require.NoError(t, err)
+		return resp
+	}
+
+	// Commit in A while its review is still pending: the reminder is deferred.
+	post(repoA, "git status")
+	repoA.CommitFile("a2.go", "package main\n", "A second")
+	assert.False(post(repoA, "git commit -m a2").Triggered, "A's reminder waits for its review")
+
+	// Commit in B: advances the session-wide count and last-commit repo to B.
+	post(repoB, "git status")
+	repoB.CommitFile("b2.go", "package main\n", "B second")
+	assert.False(post(repoB, "git commit -m b2").Triggered, "B has no failed reviews")
+
+	// A's review lands; the deferred reminder must report A and A's count, not B's.
+	aReviewVisible.Store(true)
+	resp := post(repoA, "go test ./...")
+	assert.True(resp.Triggered)
+	assert.Equal("commit", resp.TriggeredBy)
+	assert.Contains(resp.Reason, repoDisplayName(repoA.Path()), "reminder names the triggering repo")
+	assert.NotContains(resp.Reason, repoDisplayName(repoB.Path()), "reminder must not name the most-recent-commit repo")
+	assert.Contains(resp.Reason, "1 commit ", "reports A's single deferred commit, not the session total of 2")
 }
 
 func TestRecordPostToolUseCommitTriggersWhenReviewLagsBehindCommit(t *testing.T) {
