@@ -542,82 +542,83 @@ func gitOutput(cwd string, args ...string) (string, error) {
 }
 
 func IsCommitProducingCommand(command string) bool {
-	fields := shellFields(command)
-	for i := range len(fields) {
-		if !isGitToken(fields[i]) {
-			continue
-		}
-		j := i + 1
-		for j < len(fields) {
-			token := cleanShellToken(fields[j])
-			if token == "-c" {
-				j += 2
-				continue
-			}
-			if token == "-C" || token == "--git-dir" || token == "--work-tree" {
-				j += 2
-				continue
-			}
-			if strings.HasPrefix(token, "--git-dir=") || strings.HasPrefix(token, "--work-tree=") {
-				j++
-				continue
-			}
-			if strings.HasPrefix(token, "-") {
-				j++
-				continue
-			}
-			break
-		}
-		if j < len(fields) && isCommitSubcommand(cleanShellToken(fields[j])) {
-			return true
-		}
-	}
-	return false
+	_, ok := commitInvocationChdirs(shellFields(command))
+	return ok
 }
 
-// commandGitDir returns the working directory a git command operates on, honoring
-// -C path options applied cumulatively and relative to cwd, the way git does. A -C
-// path is used only when it resolves to an existing directory: shell expansions
-// such as $(...) or ${VAR}, which the hook cannot evaluate, and paths that do not
-// exist fall back to cwd. This keeps repo and HEAD tracking pointed at the
-// repository a commit actually lands in - for example `git -C ./submodule commit`
-// from a superproject - rather than the hook payload cwd.
-func commandGitDir(cwd, command string) string {
-	fields := shellFields(command)
+// commitInvocationChdirs scans fields for the first git invocation whose
+// subcommand is commit, cherry-pick or revert, returning that invocation's -C
+// path arguments (in order) and whether such an invocation exists. It performs no
+// filesystem access, keeping IsCommitProducingCommand a pure predicate; commandGitDir
+// resolves the paths only for the invocation that produces a commit. Keying both
+// off the same invocation aligns them in a chained Bash command:
+// `git status && git -C sub commit` yields sub's paths, while
+// `git -C sub status && git commit` yields none.
+func commitInvocationChdirs(fields []string) ([]string, bool) {
 	for i := range fields {
 		if !isGitToken(fields[i]) {
 			continue
 		}
-		return resolveGitChdir(cwd, fields[i+1:])
+		chdirs, sub := gitInvocation(fields, i)
+		if sub < len(fields) && isCommitSubcommand(cleanShellToken(fields[sub])) {
+			return chdirs, true
+		}
 	}
-	return cwd
+	return nil, false
 }
 
-// resolveGitChdir folds the -C options preceding a git subcommand into a working
-// directory. Parsing is deliberately forgiving: any token it does not recognize
-// ends the walk and returns the directory resolved so far, so a misread option
-// only forgoes the -C adjustment and falls back to cwd rather than misbehaving.
-func resolveGitChdir(cwd string, options []string) string {
-	dir := cwd
-	for j := 0; j < len(options); j++ {
-		token := cleanShellToken(options[j])
-		if token == "-C" {
-			if j+1 >= len(options) {
-				break
+// gitInvocation walks the global options of the git invocation whose git token is
+// fields[start], collecting its -C path arguments in order, and returns those
+// paths together with the index of the subcommand token (the first non-option
+// token), or len(fields) when the invocation has none.
+func gitInvocation(fields []string, start int) ([]string, int) {
+	var chdirs []string
+	j := start + 1
+	for j < len(fields) {
+		token := cleanShellToken(fields[j])
+		switch {
+		case token == "-C":
+			if j+1 >= len(fields) {
+				return chdirs, len(fields)
 			}
-			dir = existingDir(dir, cleanShellToken(options[j+1]))
+			chdirs = append(chdirs, cleanShellToken(fields[j+1]))
+			j += 2
+		case token == "-c" || token == "--git-dir" || token == "--work-tree":
+			j += 2 // option takes a separate argument we do not use
+		case strings.HasPrefix(token, "--git-dir=") || strings.HasPrefix(token, "--work-tree="):
 			j++
-			continue
+		case strings.HasPrefix(token, "-"):
+			j++
+		default:
+			return chdirs, j // first non-option token is the subcommand
 		}
-		if strings.HasPrefix(token, "-") {
-			// -c, --git-dir and --work-tree take a separate argument; skipping it
-			// keeps a later -C reachable. Other flags carry no argument we track.
-			if token == "-c" || token == "--git-dir" || token == "--work-tree" {
-				j++
-			}
-			continue
-		}
-		break // first non-option token is the subcommand
+	}
+	return chdirs, j
+}
+
+// commandGitDir returns the working directory the commit-producing git invocation
+// in command operates on, honoring that invocation's -C options applied
+// cumulatively and relative to cwd, the way git does. In a chained Bash command it
+// resolves the same invocation whose subcommand is commit/cherry-pick/revert, not
+// merely the first git token. A -C path is used only when it resolves to an
+// existing directory: shell expansions such as $(...) or ${VAR}, which the hook
+// cannot evaluate, and paths that do not exist fall back to cwd. This keeps repo
+// and HEAD tracking pointed at the repository a commit actually lands in - for
+// example `git -C ./submodule commit` from a superproject - rather than cwd.
+func commandGitDir(cwd, command string) string {
+	chdirs, ok := commitInvocationChdirs(shellFields(command))
+	if !ok {
+		return cwd
+	}
+	return resolveChdirs(cwd, chdirs)
+}
+
+// resolveChdirs folds -C path arguments into a working directory, each resolved
+// against the directory established by the previous one, as git applies them.
+func resolveChdirs(cwd string, chdirs []string) string {
+	dir := cwd
+	for _, path := range chdirs {
+		dir = existingDir(dir, path)
 	}
 	return dir
 }

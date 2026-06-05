@@ -32,7 +32,10 @@ func TestIsCommitProducingCommand(t *testing.T) {
 		{name: "commit with command-substituted config option", command: "git -c core.worktree=$(pwd) commit -m test", want: true},
 		{name: "commit with command-substituted path option", command: "git -C $(git rev-parse --show-toplevel) commit -m test", want: true},
 		{name: "revert with config option", command: "git -c user.name=test revert abc123", want: true},
+		{name: "chained add then commit", command: "git add -A && git commit -m x", want: true},
+		{name: "chained status then commit", command: "git status && git -C sub commit -m x", want: true},
 		{name: "status", command: "git status", want: false},
+		{name: "chained non-commit git commands", command: "git status && git -C sub log", want: false},
 		{name: "empty", command: "", want: false},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
@@ -58,6 +61,9 @@ func TestCommandGitDir(t *testing.T) {
 		{name: "shell-expanded path falls back to cwd", command: "git -C ${REPO_DIR} commit -m x", want: base},
 		{name: "config option before -C is skipped", command: "git -c user.name=t -C sub commit", want: sub},
 		{name: "non-git command keeps cwd", command: "ls -C sub", want: base},
+		{name: "chained -C non-commit before plain commit", command: "git -C sub status && git commit -m x", want: base},
+		{name: "chained plain non-commit before -C commit", command: "git status && git -C sub commit -m x", want: sub},
+		{name: "chained -C add before -C commit", command: "git -C sub add -A && git -C sub commit -m x", want: sub},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.want, commandGitDir(base, tc.command))
