@@ -93,6 +93,18 @@ func TestCommitsSincePromptAddsLegacyCountToSHASequence(t *testing.T) {
 	assert.Equal(t, 3, commitsSincePromptForKey(st, "seq"))
 }
 
+func TestCommitsSincePromptForKeysCountsUniqueSHAsAcrossKeys(t *testing.T) {
+	st := SessionState{
+		CommitCountsSincePrompt: map[string]int{"branch": 1},
+		CommitSHAsSincePrompt: map[string][]string{
+			"worktree": {"sha-1", "sha-2"},
+			"branch":   {"sha-2", "sha-3"},
+		},
+	}
+
+	assert.Equal(t, 4, commitsSincePromptForKeys(st, []string{"worktree", "branch"}))
+}
+
 func TestCountOpenFailedReviewsExcludesUnreachableBranchlessReviews(t *testing.T) {
 	assert := assert.New(t)
 	repo := testutil.NewGitRepo(t)
@@ -779,6 +791,68 @@ func TestRecordStopSkipsUntrackedRepo(t *testing.T) {
 	assert.False(resp.Triggered)
 	assert.Equal(0, jobRequests, "untracked repos should not query reviews")
 	assert.Empty(store.sessions, "untracked repos should not mutate hook state")
+}
+
+func TestRecordPreToolUseBaselinesUntrackedRepoForLaterPostCommitRegistration(t *testing.T) {
+	assert := assert.New(t)
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("main.go", "package main\n", "initial")
+
+	resolveCalls := 0
+	closed := false
+	verdict := "F"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/repos/resolve" {
+			resolveCalls++
+			tracked := resolveCalls > 1
+			resp := map[string]any{"tracked": tracked}
+			if tracked {
+				resp["repo"] = map[string]string{
+					"root_path": repo.Path(),
+					"name":      filepath.Base(repo.Path()),
+				}
+			}
+			assert.NoError(json.NewEncoder(w).Encode(resp))
+			return
+		}
+		assert.Equal("/api/jobs", r.URL.Path)
+		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{
+			Jobs: []storage.ReviewJob{
+				{Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main"},
+			},
+		}))
+	}))
+	t.Cleanup(server.Close)
+
+	store := &StateStore{
+		path:     filepath.Join(t.TempDir(), "state.json"),
+		sessions: map[string]SessionState{},
+	}
+	req := Request{
+		Event: Input{
+			SessionID:     "session-1",
+			CWD:           repo.Path(),
+			HookEventName: "PreToolUse",
+			ToolName:      "Bash",
+			ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"git commit -m feature"`)},
+		},
+		CommitThreshold:   1,
+		Instruction:       "Run roborev fix.",
+		RoborevServerAddr: server.URL,
+	}
+
+	pre, err := store.Record(req)
+	require.NoError(t, err)
+	assert.False(pre.Skipped, "commit baseline must be recorded even before daemon registration")
+
+	repo.CommitFile("feature.go", "package main\n", "feature")
+	postReq := req
+	postReq.Event.HookEventName = "PostToolUse"
+	post, err := store.Record(postReq)
+	require.NoError(t, err)
+
+	assert.True(post.Triggered, "first commit after baseline should count once the repo is registered")
+	assert.Equal("commit", post.TriggeredBy)
 }
 
 func TestRecordStopTriggersFailedReviewOnDetachedHead(t *testing.T) {

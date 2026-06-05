@@ -33,6 +33,7 @@ type hookScope struct {
 	Branch              string
 	WorktreeKey         string
 	CandidateLineageKey string
+	Tracked             bool
 }
 
 type trackedRepoResolution struct {
@@ -123,6 +124,14 @@ func (s *StateStore) Record(req Request) (Response, error) {
 func (s *StateStore) recordStop(req Request) (Response, error) {
 	scope, ok := resolveHookScope(context.Background(), req.Event.CWD, req.RoborevServerAddr)
 	if !ok {
+		return Response{
+			SessionID:             req.Event.SessionID,
+			Threshold:             req.Threshold,
+			FailedReviewThreshold: req.FailedReviewThreshold,
+			Skipped:               true,
+		}, nil
+	}
+	if !scope.Tracked {
 		return Response{
 			SessionID:             req.Event.SessionID,
 			Threshold:             req.Threshold,
@@ -278,9 +287,12 @@ func (s *StateStore) recordPostToolUse(req Request) (Response, error) {
 		}, nil
 	}
 
-	failedReviewCount, haveFailedReviewCount := countOpenFailedReviews(
-		context.Background(), scope.TrackedRepoRoot, scope.Branch, scope.Head, req.RoborevServerAddr,
-	)
+	failedReviewCount, haveFailedReviewCount := 0, false
+	if scope.Tracked {
+		failedReviewCount, haveFailedReviewCount = countOpenFailedReviews(
+			context.Background(), scope.TrackedRepoRoot, scope.Branch, scope.Head, req.RoborevServerAddr,
+		)
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -367,7 +379,7 @@ func (s *StateStore) recordPostToolUse(req Request) (Response, error) {
 	// The count is keyed by both worktree and branch, so a deferred reminder for
 	// one checkout is not consumed or reset by unrelated activity. thresholdReady
 	// implies a real commit was counted for this checkout since its last prompt.
-	commitCountSincePrompt := maxCommitsSincePromptForKeys(st, sequenceKeys)
+	commitCountSincePrompt := commitsSincePromptForKeys(st, sequenceKeys)
 	commitTriggered := thresholdReady(commitCountSincePrompt, req.CommitThreshold) && actionableReviews
 	// Capture this checkout's count before resetPromptCounters clears it, so the
 	// reminder text reports the triggering repo's commits, not session-wide totals.
@@ -510,12 +522,18 @@ func commitsSincePromptForKey(st SessionState, key string) int {
 	return len(st.CommitSHAsSincePrompt[key]) + st.CommitCountsSincePrompt[key]
 }
 
-func maxCommitsSincePromptForKeys(st SessionState, keys []string) int {
-	maxCount := 0
+func commitsSincePromptForKeys(st SessionState, keys []string) int {
+	seen := map[string]bool{}
+	legacyCount := 0
 	for _, key := range keys {
-		maxCount = max(maxCount, commitsSincePromptForKey(st, key))
+		for _, sha := range st.CommitSHAsSincePrompt[key] {
+			if sha != "" {
+				seen[sha] = true
+			}
+		}
+		legacyCount += st.CommitCountsSincePrompt[key]
 	}
-	return maxCount
+	return len(seen) + legacyCount
 }
 
 func pendingCommitSHAsAfterRewrite(repoRoot string, existing []string, newHead string) []string {
@@ -711,11 +729,11 @@ func resolveHookScope(ctx context.Context, cwd, configuredAddr string) (hookScop
 		return hookScope{}, false
 	}
 	trackedRoot := mainRepoRoot(worktreeRoot)
+	tracked := true
 	if resolved, known := resolveTrackedRepo(ctx, worktreeRoot, configuredAddr); known {
 		if !resolved.Tracked {
-			return hookScope{}, false
-		}
-		if strings.TrimSpace(resolved.RootPath) != "" {
+			tracked = false
+		} else if strings.TrimSpace(resolved.RootPath) != "" {
 			trackedRoot = strings.TrimSpace(resolved.RootPath)
 		}
 	}
@@ -727,6 +745,7 @@ func resolveHookScope(ctx context.Context, cwd, configuredAddr string) (hookScop
 		Branch:              branch,
 		WorktreeKey:         worktreeSequenceKey(trackedRoot, worktreeRoot),
 		CandidateLineageKey: lineageSequenceKey(trackedRoot, branch, worktreeRoot, head),
+		Tracked:             tracked,
 	}, true
 }
 
