@@ -61,7 +61,8 @@ func RunDaemon(addr string, stderr io.Writer) error {
 	}
 
 	mux := http.NewServeMux()
-	registerRoutes(mux, state)
+	shutdown := make(chan struct{}, 1)
+	registerRoutes(mux, state, shutdown)
 	server := &http.Server{Handler: mux}
 	errCh := make(chan error, 1)
 	go func() {
@@ -72,19 +73,23 @@ func RunDaemon(addr string, stderr io.Writer) error {
 	signal.Notify(sigCh, os.Interrupt, syscall.SIGTERM)
 	defer signal.Stop(sigCh)
 
+	var reason string
 	select {
 	case sig := <-sigCh:
-		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
-		defer cancel()
-		_ = server.Shutdown(ctx)
-		fmt.Fprintf(stderr, "%s daemon stopped after %s\n", ServiceName, sig)
-		return nil
+		reason = sig.String()
+	case <-shutdown:
+		reason = "shutdown request"
 	case err := <-errCh:
 		if errors.Is(err, http.ErrServerClosed) {
 			return nil
 		}
 		return err
 	}
+	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	defer cancel()
+	_ = server.Shutdown(ctx)
+	fmt.Fprintf(stderr, "%s daemon stopped after %s\n", ServiceName, reason)
+	return nil
 }
 
 func parseDaemonEndpoint(raw string) (kitdaemon.Endpoint, error) {
@@ -99,12 +104,23 @@ func parseDaemonEndpoint(raw string) (kitdaemon.Endpoint, error) {
 	})
 }
 
-func registerRoutes(mux *http.ServeMux, state *StateStore) {
+func registerRoutes(mux *http.ServeMux, state *StateStore, shutdown chan<- struct{}) {
 	mux.Handle(kitdaemon.DefaultPingPath, kitdaemon.NewPingHandler(kitdaemon.PingHandlerOptions{
 		Service: ServiceName,
 		Version: version.Version,
 		PID:     os.Getpid(),
 	}))
+	mux.HandleFunc("/api/shutdown", func(w http.ResponseWriter, r *http.Request) {
+		if r.Method != http.MethodPost {
+			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)
+			return
+		}
+		writeJSON(w, map[string]bool{"ok": true})
+		select {
+		case shutdown <- struct{}{}:
+		default:
+		}
+	})
 	mux.HandleFunc("/api/hook", func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodPost {
 			http.Error(w, "method not allowed", http.StatusMethodNotAllowed)

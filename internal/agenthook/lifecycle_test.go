@@ -4,8 +4,11 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"os/exec"
+	"strings"
 	"testing"
 	"time"
 
@@ -124,6 +127,77 @@ func TestWaitForDaemonsExitWaitsForLiveProcess(t *testing.T) {
 
 	require.Error(t, err, "must not report shutdown while the process is still alive")
 	assert.ErrorIs(t, err, context.Canceled)
+}
+
+func TestRequestDaemonShutdownPostsToEndpoint(t *testing.T) {
+	type reqInfo struct{ method, path string }
+	got := make(chan reqInfo, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		got <- reqInfo{r.Method, r.URL.Path}
+		_, _ = w.Write([]byte(`{"ok":true}`))
+	}))
+	t.Cleanup(server.Close)
+	rec := kitdaemon.RuntimeRecord{
+		Network: "tcp", Address: strings.TrimPrefix(server.URL, "http://"), Service: ServiceName,
+	}
+
+	err := requestDaemonShutdown(context.Background(), rec)
+
+	require.NoError(t, err)
+	select {
+	case info := <-got:
+		assert.Equal(t, http.MethodPost, info.method)
+		assert.Equal(t, "/api/shutdown", info.path)
+	default:
+		require.Fail(t, "shutdown endpoint received no request")
+	}
+}
+
+func TestRequestDaemonShutdownReportsServerError(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "boom", http.StatusInternalServerError)
+	}))
+	t.Cleanup(server.Close)
+	rec := kitdaemon.RuntimeRecord{
+		Network: "tcp", Address: strings.TrimPrefix(server.URL, "http://"), Service: ServiceName,
+	}
+
+	err := requestDaemonShutdown(context.Background(), rec)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "500")
+}
+
+// TestStopDaemonForceKillsWhenShutdownUnreachable verifies the cross-platform
+// fallback: when the shutdown endpoint cannot be reached but the daemon process
+// is still alive, stopDaemon terminates it with os.Kill instead of erroring.
+func TestStopDaemonForceKillsWhenShutdownUnreachable(t *testing.T) {
+	if _, err := exec.LookPath("sleep"); err != nil {
+		t.Skip("sleep not available")
+	}
+	cmd := exec.Command("sleep", "60")
+	require.NoError(t, cmd.Start())
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+
+	// Bind then immediately release a loopback port so nothing answers the
+	// shutdown request, forcing stopDaemon down the force-kill fallback.
+	closed := httptest.NewServer(http.HandlerFunc(func(http.ResponseWriter, *http.Request) {}))
+	addr := strings.TrimPrefix(closed.URL, "http://")
+	closed.Close()
+	rec := kitdaemon.RuntimeRecord{
+		PID: cmd.Process.Pid, Network: "tcp", Address: addr, Service: ServiceName,
+	}
+
+	require.NoError(t, stopDaemon(context.Background(), rec))
+
+	select {
+	case <-done:
+	case <-time.After(2 * time.Second):
+		_ = cmd.Process.Kill()
+		<-done
+		require.Fail(t, "fallback did not terminate the daemon process")
+	}
 }
 
 func writeRuntimeRecord(t *testing.T, rec kitdaemon.RuntimeRecord) {

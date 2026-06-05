@@ -5,9 +5,10 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"net/http"
 	"os"
 	"slices"
-	"syscall"
+	"strings"
 	"time"
 
 	kitdaemon "go.kenn.io/kit/daemon"
@@ -256,12 +257,8 @@ func stopLiveDaemons(ctx context.Context) ([]int, error) {
 	}
 	stopped := make([]int, 0, len(records))
 	for _, rec := range records {
-		process, err := os.FindProcess(rec.PID)
-		if err != nil {
-			return nil, fmt.Errorf("find agent hook daemon pid %d: %w", rec.PID, err)
-		}
-		if err := process.Signal(syscall.SIGTERM); err != nil {
-			return nil, fmt.Errorf("stop agent hook daemon pid %d: %w", rec.PID, err)
+		if err := stopDaemon(ctx, rec); err != nil {
+			return nil, err
 		}
 		stopped = append(stopped, rec.PID)
 	}
@@ -271,7 +268,59 @@ func stopLiveDaemons(ctx context.Context) ([]int, error) {
 	return stopped, nil
 }
 
-// waitForDaemonsExit blocks until every signaled pid has exited. Waiting on
+// stopDaemon asks the daemon described by rec to exit. It first posts to the
+// HTTP shutdown endpoint, which the daemon serves over the same transport as
+// every other request and therefore works on every platform - including
+// Windows, where os.Process.Signal cannot deliver SIGTERM. If the endpoint is
+// unreachable (a wedged daemon, or one built before the endpoint existed), it
+// falls back to os.Kill, which maps to TerminateProcess on Windows and SIGKILL
+// elsewhere. A daemon that has already exited counts as stopped.
+func stopDaemon(ctx context.Context, rec kitdaemon.RuntimeRecord) error {
+	shutdownErr := requestDaemonShutdown(ctx, rec)
+	if shutdownErr == nil {
+		return nil
+	}
+	if !kitdaemon.ProcessAlive(rec.PID) {
+		return nil
+	}
+	process, err := os.FindProcess(rec.PID)
+	if err != nil {
+		return fmt.Errorf("find agent hook daemon pid %d: %w", rec.PID, err)
+	}
+	if err := process.Kill(); err != nil {
+		return fmt.Errorf("force-stop agent hook daemon pid %d after shutdown request failed (%w): %w", rec.PID, shutdownErr, err)
+	}
+	return nil
+}
+
+// requestDaemonShutdown posts to the daemon's shutdown endpoint, asking it to
+// stop gracefully. It reaches the daemon over its Unix socket or loopback TCP
+// endpoint, so it behaves identically on Windows and Unix.
+func requestDaemonShutdown(ctx context.Context, rec kitdaemon.RuntimeRecord) error {
+	ep := rec.Endpoint()
+	client := ep.HTTPClient(kitdaemon.HTTPClientOptions{
+		Timeout:               5 * time.Second,
+		ResponseHeaderTimeout: 5 * time.Second,
+		DisableKeepAlives:     true,
+	})
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, ep.BaseURL()+"/api/shutdown", nil)
+	if err != nil {
+		return err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		body, _ := io.ReadAll(resp.Body)
+		return fmt.Errorf("agent hook daemon returned %d: %s", resp.StatusCode, strings.TrimSpace(string(body)))
+	}
+	_, _ = io.Copy(io.Discard, resp.Body)
+	return nil
+}
+
+// waitForDaemonsExit blocks until every pid asked to stop has exited. Waiting on
 // process exit rather than endpoint liveness ensures a stopped daemon finishes
 // unwinding its shutdown defers - including removing its Unix socket - before a
 // replacement binds the same path. Otherwise the old daemon's deferred socket
