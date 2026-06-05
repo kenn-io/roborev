@@ -169,7 +169,7 @@ func (s *StateStore) recordStop(req Request) (Response, error) {
 	promptTriggered := stopTriggered || failedReviewTriggered
 	if promptTriggered {
 		st.ReminderPromptCount++
-		resetPromptCountersForKeys(&st, promptResetKeys(scope))
+		resetPromptCountersForKeys(&st, promptResetKeys(scope, lineageKey))
 	}
 	s.sessions[req.Event.SessionID] = st
 	if err := s.saveLocked(); err != nil {
@@ -231,8 +231,8 @@ func (s *StateStore) recordPreToolUse(req Request) (Response, error) {
 	if st.RepoHeads == nil {
 		st.RepoHeads = map[string]string{}
 	}
-	ensureLineageKey(&st, scope)
-	recordSequenceHeads(&st, scope, commitSequenceKeys(scope))
+	lineageKey := ensureLineageKey(&st, scope)
+	recordSequenceHeads(&st, scope, commitSequenceKeys(scope, lineageKey))
 	st.LastCWD = req.Event.CWD
 	st.LastSeenAt = time.Now().UTC()
 	s.sessions[req.Event.SessionID] = st
@@ -288,7 +288,7 @@ func (s *StateStore) recordPostToolUse(req Request) (Response, error) {
 		st.RepoHeads = map[string]string{}
 	}
 	lineageKey := ensureLineageKey(&st, scope)
-	sequenceKeys := commitSequenceKeys(scope)
+	sequenceKeys := commitSequenceKeys(scope, lineageKey)
 	// Count commits only against a HEAD baseline recorded earlier in the
 	// session; the first observation merely establishes that baseline below.
 	// Counting on the first observation would misfire when a failed commit
@@ -305,7 +305,9 @@ func (s *StateStore) recordPostToolUse(req Request) (Response, error) {
 				if st.CommitSHAsSincePrompt == nil {
 					st.CommitSHAsSincePrompt = map[string][]string{}
 				}
-				st.CommitSHAsSincePrompt[key] = []string{scope.Head}
+				st.CommitSHAsSincePrompt[key] = pendingCommitSHAsAfterRewrite(
+					scope.WorktreeRoot, st.CommitSHAsSincePrompt[key], scope.Head,
+				)
 				delete(st.CommitCountsSincePrompt, key)
 				eventNewCommits = appendUniqueCommitSHAs(eventNewCommits, []string{scope.Head})
 				if key == scope.WorktreeKey {
@@ -358,7 +360,7 @@ func (s *StateStore) recordPostToolUse(req Request) (Response, error) {
 	promptTriggered := commitTriggered || failedReviewTriggered
 	if promptTriggered {
 		st.ReminderPromptCount++
-		resetPromptCountersForKeys(&st, promptResetKeys(scope))
+		resetPromptCountersForKeys(&st, promptResetKeys(scope, lineageKey))
 	}
 	s.sessions[req.Event.SessionID] = st
 	if err := s.saveLocked(); err != nil {
@@ -418,16 +420,19 @@ func worktreeSequenceKey(repoRoot, worktreeRoot string) string {
 	return repoRoot + "\x00worktree\x00" + filepath.Clean(worktreeRoot)
 }
 
-func commitSequenceKeys(scope hookScope) []string {
-	keys := []string{scope.WorktreeKey}
-	if scope.Branch != "" {
-		keys = append(keys, repoHeadKey(scope.TrackedRepoRoot, scope.Branch))
+func commitSequenceKeys(scope hookScope, lineageKey string) []string {
+	if scope.Branch == "" {
+		return []string{scope.WorktreeKey}
 	}
-	return uniqueStrings(keys)
+	branchKey := repoHeadKey(scope.TrackedRepoRoot, scope.Branch)
+	if detachedLineageKey(lineageKey) {
+		return uniqueStrings([]string{scope.WorktreeKey, branchKey})
+	}
+	return []string{branchKey}
 }
 
-func promptResetKeys(scope hookScope) []string {
-	return commitSequenceKeys(scope)
+func promptResetKeys(scope hookScope, lineageKey string) []string {
+	return commitSequenceKeys(scope, lineageKey)
 }
 
 func recordSequenceHeads(st *SessionState, scope hookScope, keys []string) {
@@ -443,10 +448,11 @@ func lineageSequenceKey(repoRoot, branch, worktreeRoot, head string) string {
 	if branch != "" {
 		return repoHeadKey(repoRoot, branch)
 	}
+	worktreeRoot = filepath.Clean(worktreeRoot)
 	if baseSHA := nearestReachableBranchSHA(worktreeRoot, head); baseSHA != "" {
-		return repoRoot + "\x00lineage\x00" + baseSHA
+		return repoRoot + "\x00lineage\x00" + worktreeRoot + "\x00" + baseSHA
 	}
-	return repoRoot + "\x00detached\x00" + head
+	return repoRoot + "\x00detached\x00" + worktreeRoot + "\x00" + head
 }
 
 func ensureLineageKey(st *SessionState, scope hookScope) string {
@@ -488,6 +494,16 @@ func maxCommitsSincePromptForKeys(st SessionState, keys []string) int {
 		maxCount = max(maxCount, commitsSincePromptForKey(st, key))
 	}
 	return maxCount
+}
+
+func pendingCommitSHAsAfterRewrite(repoRoot string, existing []string, newHead string) []string {
+	kept := make([]string, 0, len(existing)+1)
+	for _, sha := range existing {
+		if refReachableFromHead(repoRoot, sha, newHead) {
+			kept = appendUniqueCommitSHAs(kept, []string{sha})
+		}
+	}
+	return appendUniqueCommitSHAs(kept, []string{newHead})
 }
 
 func appendUniqueCommitSHAs(existing, incoming []string) []string {
