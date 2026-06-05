@@ -749,6 +749,23 @@ type jobsResponse struct {
 	Jobs []storage.ReviewJob `json:"jobs"`
 }
 
+// countsAsFailedReview reports whether job is a review whose F verdict should
+// drive the failed-review reminder. Review (single/range/dirty), synthesis, and
+// compact jobs produce meaningful P/F verdicts; task, insights, fix, and classify
+// jobs do not. A fix job in particular stores a verdict parsed from its own output
+// (see storage.DB.CompleteFixJob), so counting it would make the hook keep
+// prompting $roborev-fix for a job that is not a failing review. The empty
+// job_type is counted for legacy jobs recorded before job_type existed.
+func countsAsFailedReview(job storage.ReviewJob) bool {
+	switch job.JobType {
+	case storage.JobTypeReview, storage.JobTypeRange, storage.JobTypeDirty,
+		storage.JobTypeCompact, storage.JobTypeSynthesis, "":
+		return true
+	default:
+		return false
+	}
+}
+
 func countOpenFailedReviews(ctx context.Context, repoRoot, branch, head, configuredAddr string) (int, bool) {
 	if repoRoot == "" {
 		return 0, false
@@ -789,6 +806,9 @@ func countOpenFailedReviews(ctx context.Context, repoRoot, branch, head, configu
 			continue
 		}
 		if job.Closed != nil && *job.Closed {
+			continue
+		}
+		if !countsAsFailedReview(job) {
 			continue
 		}
 		if !failedReviewCountsForHead(repoRoot, branch, head, job) {
