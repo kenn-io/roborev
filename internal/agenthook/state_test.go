@@ -1186,3 +1186,70 @@ func TestRecordPostToolUseCommitTriggersWhenReviewLagsBehindCommit(t *testing.T)
 	assert.Equal("commit", atLater.TriggeredBy)
 	assert.Equal(0, commitsSincePrompt(store.sessions["session-1"]), "counters reset after prompting")
 }
+
+func TestRecordPostToolUseAmendPreservesDeferredCommitReminder(t *testing.T) {
+	assert := assert.New(t)
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("main.go", "package main\n", "initial")
+
+	failed := false
+	closed := false
+	verdict := "F"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		jobs := []storage.ReviewJob{}
+		if failed {
+			jobs = append(jobs, storage.ReviewJob{Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict})
+		}
+		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{Jobs: jobs}))
+	}))
+	t.Cleanup(server.Close)
+
+	store := &StateStore{
+		path:     filepath.Join(t.TempDir(), "state.json"),
+		sessions: map[string]SessionState{},
+	}
+	base := Request{
+		Event: Input{
+			SessionID:     "session-1",
+			CWD:           repo.Path(),
+			HookEventName: "PostToolUse",
+			ToolName:      "Bash",
+			ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"git status"`)},
+		},
+		CommitThreshold:   1,
+		Instruction:       "Run roborev fix.",
+		RoborevServerAddr: server.URL,
+	}
+
+	_, err := store.Record(base)
+	require.NoError(t, err)
+
+	repo.CommitFile("feature.go", "package main\n", "second")
+	commit := base
+	commit.Event.ToolInput = map[string]json.RawMessage{"command": json.RawMessage(`"git commit -m second"`)}
+	atCommit, err := store.Record(commit)
+	require.NoError(t, err)
+	assert.False(atCommit.Triggered, "no prompt while the commit's review is still pending")
+
+	repo.WriteFile("feature.go", "package main\nconst feature = true\n")
+	repo.RunGit("add", "feature.go")
+	repo.RunGit("commit", "--amend", "-m", "second amended")
+	amended := repo.HeadSHA()
+	amend := base
+	amend.Event.ToolInput = map[string]json.RawMessage{"command": json.RawMessage(`"git commit --amend -m second amended"`)}
+	atAmend, err := store.Record(amend)
+	require.NoError(t, err)
+	assert.False(atAmend.Triggered, "amend still waits for the commit's review")
+
+	key := worktreeSequenceKey(repo.Path(), repo.Path())
+	assert.Equal([]string{amended}, store.sessions["session-1"].CommitSHAsSincePrompt[key])
+	assert.Equal(1, commitsSincePrompt(store.sessions["session-1"]), "amend keeps one pending commit reminder")
+
+	failed = true
+	later := base
+	later.Event.ToolInput = map[string]json.RawMessage{"command": json.RawMessage(`"go test ./..."`)}
+	atLater, err := store.Record(later)
+	require.NoError(t, err)
+	assert.True(atLater.Triggered, "amended deferred commit must prompt once reviews appear")
+	assert.Equal("commit", atLater.TriggeredBy)
+}

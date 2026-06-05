@@ -302,8 +302,12 @@ func (s *StateStore) recordPostToolUse(req Request) (Response, error) {
 			}
 			newCommits, continuous := newCommitSHAs(scope.WorktreeRoot, previousHead, scope.Head)
 			if !continuous {
-				delete(st.CommitSHAsSincePrompt, key)
+				if st.CommitSHAsSincePrompt == nil {
+					st.CommitSHAsSincePrompt = map[string][]string{}
+				}
+				st.CommitSHAsSincePrompt[key] = []string{scope.Head}
 				delete(st.CommitCountsSincePrompt, key)
+				eventNewCommits = appendUniqueCommitSHAs(eventNewCommits, []string{scope.Head})
 				if key == scope.WorktreeKey {
 					st.WorktreeLineageKeys[key] = scope.CandidateLineageKey
 					lineageKey = scope.CandidateLineageKey
