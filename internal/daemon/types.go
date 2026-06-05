@@ -3,24 +3,25 @@ package daemon
 import "go.kenn.io/roborev/internal/storage"
 
 type EnqueueRequest struct {
-	RepoPath     string `json:"repo_path"`
-	CommitSHA    string `json:"commit_sha,omitempty"` // Single commit (for backwards compat)
-	GitRef       string `json:"git_ref,omitempty"`    // Single commit, range like "abc..def", or "dirty"
-	Branch       string `json:"branch,omitempty"`     // Branch name at time of job creation
-	Since        string `json:"since,omitempty"`      // RFC3339 lower bound for insights datasets
-	Agent        string `json:"agent,omitempty"`
-	Model        string `json:"model,omitempty"`         // Model to use (for opencode: provider/model format)
-	DiffContent  string `json:"diff_content,omitempty"`  // Pre-captured diff for dirty reviews
-	Reasoning    string `json:"reasoning,omitempty"`     // Reasoning level: thorough, standard, fast
-	ReviewType   string `json:"review_type,omitempty"`   // Review type (e.g., "security") — changes system prompt
-	CustomPrompt string `json:"custom_prompt,omitempty"` // Custom prompt for ad-hoc agent work
-	Agentic      bool   `json:"agentic,omitempty"`       // Enable agentic mode (allow file edits)
-	OutputPrefix string `json:"output_prefix,omitempty"` // Prefix to prepend to review output
-	JobType      string `json:"job_type,omitempty"`      // Explicit job type (review/range/dirty/task/insights/compact/fix)
-	Provider     string `json:"provider,omitempty"`      // Provider for pi agent (e.g., "anthropic")
-	MinSeverity  string `json:"min_severity,omitempty"`  // Minimum severity filter: critical, high, medium, low
-	Panel        string `json:"panel,omitempty"`         // Panel name; "none" forces single-agent
-	Source       string `json:"source,omitempty"`        // Provenance, e.g. "post_commit" (empty = foreground)
+	RepoPath     string   `json:"repo_path"`
+	CommitSHA    string   `json:"commit_sha,omitempty"` // Single commit (for backwards compat)
+	GitRef       string   `json:"git_ref,omitempty"`    // Single commit, range like "abc..def", or "dirty"
+	Branch       string   `json:"branch,omitempty"`     // Branch name at time of job creation
+	Since        string   `json:"since,omitempty"`      // RFC3339 lower bound for insights datasets
+	Agent        string   `json:"agent,omitempty"`
+	Model        string   `json:"model,omitempty"`         // Model to use (for opencode: provider/model format)
+	DiffContent  string   `json:"diff_content,omitempty"`  // Pre-captured diff for dirty reviews
+	DirtyFiles   []string `json:"dirty_files,omitempty"`   // Unfiltered dirty file names for prompt metadata
+	Reasoning    string   `json:"reasoning,omitempty"`     // Reasoning level: thorough, standard, fast
+	ReviewType   string   `json:"review_type,omitempty"`   // Review type (e.g., "security") — changes system prompt
+	CustomPrompt string   `json:"custom_prompt,omitempty"` // Custom prompt for ad-hoc agent work
+	Agentic      bool     `json:"agentic,omitempty"`       // Enable agentic mode (allow file edits)
+	OutputPrefix string   `json:"output_prefix,omitempty"` // Prefix to prepend to review output
+	JobType      string   `json:"job_type,omitempty"`      // Explicit job type (review/range/dirty/task/insights/compact/fix)
+	Provider     string   `json:"provider,omitempty"`      // Provider for pi agent (e.g., "anthropic")
+	MinSeverity  string   `json:"min_severity,omitempty"`  // Minimum severity filter: critical, high, medium, low
+	Panel        string   `json:"panel,omitempty"`         // Panel name; "none" forces single-agent
+	Source       string   `json:"source,omitempty"`        // Provenance, e.g. "post_commit" (empty = foreground)
 }
 
 // PanelEnqueueResponse is returned when an enqueue fans out into a panel run.

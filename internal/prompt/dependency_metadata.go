@@ -93,7 +93,7 @@ func changedDependencyMetadataFiles(files []string) []string {
 func dependencyMetadataLine(file string, metadata []string) string {
 	switch filepath.Base(file) {
 	case "package.json":
-		if !anyCompanionChanged(file, metadata, "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb", "bun.lock") {
+		if !anyFileChanged(metadata, "package-lock.json", "yarn.lock", "pnpm-lock.yaml", "bun.lockb", "bun.lock") {
 			return file + " changed; no JavaScript lockfile change detected"
 		}
 	case "go.mod":
@@ -102,6 +102,15 @@ func dependencyMetadataLine(file string, metadata []string) string {
 		}
 	}
 	return file + " changed"
+}
+
+func anyFileChanged(metadata []string, names ...string) bool {
+	for _, candidate := range metadata {
+		if slices.Contains(names, filepath.Base(candidate)) {
+			return true
+		}
+	}
+	return false
 }
 
 func anyCompanionChanged(file string, metadata []string, names ...string) bool {

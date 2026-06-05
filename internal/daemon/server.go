@@ -1833,6 +1833,15 @@ func (s *Server) enqueueSingleAgent(
 	o.Provider = in.descriptor.requestedProvider
 	o.Reasoning = in.reasoning
 	o.ReviewType = in.req.ReviewType
+	if prompt, err := buildDirtyPrebuiltPrompt(in.resolutionPath, in.repo.ID, in.descriptor, in.cfg, agentName, in.req.ReviewType); err != nil {
+		return rawJSONOutput(
+			http.StatusInternalServerError,
+			ErrorResponse{Error: fmt.Sprintf("build dirty prompt: %v", err)},
+		)
+	} else if prompt != "" {
+		o.Prompt = prompt
+		o.PromptPrebuilt = true
+	}
 	if in.descriptor.sessionSHA != "" {
 		o.SessionID = s.findReusableSessionID(ctx,
 			in.checkoutRoot, in.repo.ID, in.req.Branch, agentName,

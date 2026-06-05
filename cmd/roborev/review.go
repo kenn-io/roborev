@@ -170,6 +170,7 @@ Examples:
 
 			var gitRef string
 			var diffContent string
+			var dirtyFiles []string
 
 			if branch != "" {
 				// Branch review - review all commits since diverging from base
@@ -277,6 +278,10 @@ Examples:
 				if !hasChanges {
 					return fmt.Errorf("no uncommitted changes to review")
 				}
+				dirtyFiles, err = git.GetDirtyFilesChanged(root)
+				if err != nil {
+					return fmt.Errorf("get dirty files: %w", err)
+				}
 
 				// Generate dirty diff (includes untracked files).
 				// Use working-tree repo config (not default branch) for
@@ -296,7 +301,7 @@ Examples:
 						len(diffContent), MaxDirtyDiffSize)
 				}
 
-				if diffContent == "" {
+				if diffContent == "" && len(dirtyFiles) == 0 {
 					return fmt.Errorf("no changes to review (diff is empty)")
 				}
 
@@ -325,7 +330,7 @@ Examples:
 				if panel != "" && panel != "none" && !quiet {
 					cmd.PrintErrf("Note: --panel %q is ignored with --local (panels require the daemon); running a single-agent review.\n", panel)
 				}
-				return runLocalReview(cmd, root, gitRef, diffContent, agent, model, provider, reasoning, reviewType, quiet, minSeverity)
+				return runLocalReview(cmd, root, gitRef, diffContent, dirtyFiles, agent, model, provider, reasoning, reviewType, quiet, minSeverity)
 			}
 
 			// Build request body
@@ -339,6 +344,7 @@ Examples:
 				Reasoning:   reasoning,
 				ReviewType:  reviewType,
 				DiffContent: diffContent,
+				DirtyFiles:  dirtyFiles,
 				MinSeverity: minSeverity,
 				Panel:       panel,
 			}
@@ -425,7 +431,7 @@ Examples:
 }
 
 // runLocalReview runs a review directly without the daemon
-func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName, model, provider, reasoning, reviewType string, quiet bool, minSeverity string) error {
+func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent string, dirtyFiles []string, agentName, model, provider, reasoning, reviewType string, quiet bool, minSeverity string) error {
 	ctx := cmd.Context()
 
 	// Load config
@@ -509,9 +515,9 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent, agentName
 	pb := prompt.NewBuilderWithConfig(nil, cfg).WithContext(ctx).ForRepo(repoPath, 0)
 	var reviewPrompt string
 	var snapshotCleanup func()
-	if diffContent != "" {
+	if diffContent != "" || len(dirtyFiles) > 0 {
 		// Dirty review
-		dirtyResult, dirtyErr := pb.BuildDirtyWithSnapshot(diffContent, cfg.ReviewContextCount, a.Name(), reviewType, resolvedMinSev)
+		dirtyResult, dirtyErr := pb.BuildDirtyWithSnapshotAndFiles(diffContent, dirtyFiles, cfg.ReviewContextCount, a.Name(), reviewType, resolvedMinSev)
 		reviewPrompt = dirtyResult.Prompt
 		snapshotCleanup = dirtyResult.Cleanup
 		err = dirtyErr

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"net/http"
+	"slices"
 	"strings"
 	"time"
 
@@ -15,6 +16,7 @@ import (
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/git"
+	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -31,6 +33,7 @@ type targetDescriptor struct {
 	sessionSHA        string // SHA to key session reuse on ("" for prompt jobs)
 	patchID           string
 	diffContent       string
+	dirtyFiles        []string
 	minSeverity       string
 	worktreePath      string
 	jobType           string // req.JobType for prompt; "" lets EnqueueJob infer dirty/range/review
@@ -198,7 +201,7 @@ func (s *Server) descriptorForPrompt(in freezeInputs) targetDescriptor {
 func (s *Server) descriptorForDirty(
 	ctx context.Context, in freezeInputs,
 ) (targetDescriptor, *RawJSONOutput) {
-	if in.req.DiffContent == "" {
+	if in.req.DiffContent == "" && len(in.req.DirtyFiles) == 0 {
 		out, _ := rawJSONOutput(http.StatusBadRequest,
 			ErrorResponse{Error: "diff_content required for dirty review"})
 		return targetDescriptor{}, out
@@ -231,6 +234,8 @@ func (s *Server) descriptorForDirty(
 		branch:            in.req.Branch,
 		sessionSHA:        targetSHA,
 		diffContent:       in.req.DiffContent,
+		dirtyFiles:        slices.Clone(in.req.DirtyFiles),
+		jobType:           storage.JobTypeDirty,
 		minSeverity:       in.normalizedMinSev,
 		worktreePath:      in.worktreePath,
 		requestedModel:    in.requestedModel,
@@ -407,7 +412,11 @@ func (s *Server) enqueuePanelRun(ctx context.Context, in panelRunInputs) (*RawJS
 	}
 
 	runUUID := uuid.NewString()
-	memberOpts := panelMemberOpts(in.descriptor, in.panelName, runUUID, members, in.resolutionPath, in.cfg)
+	memberOpts, err := panelMemberOpts(in.descriptor, in.panelName, runUUID, members, in.resolutionPath, in.cfg)
+	if err != nil {
+		return rawJSONOutput(http.StatusInternalServerError,
+			ErrorResponse{Error: fmt.Sprintf("build panel member opts: %v", err)})
+	}
 	synthOpts := panelSynthesisOpts(in.descriptor, in.panelName, runUUID, synth)
 
 	memberJobs, synthJob, err := s.db.EnqueuePanelRun(memberOpts, synthOpts)
@@ -470,7 +479,7 @@ func panelHasDesignMember(members []config.ResolvedMember) bool {
 func panelMemberOpts(
 	descriptor targetDescriptor, panelName, runUUID string, members []config.ResolvedMember,
 	repoPath string, cfg *config.Config,
-) []storage.EnqueueOpts {
+) ([]storage.EnqueueOpts, error) {
 	out := make([]storage.EnqueueOpts, len(members))
 	for i, m := range members {
 		o := descriptor.baseOpts()
@@ -478,12 +487,41 @@ func panelMemberOpts(
 		o.Agent, o.Model = resolvePanelMemberExecution(m, descriptor, repoPath, cfg)
 		o.Provider = m.Provider
 		o.Reasoning, o.ReviewType = m.Reasoning, m.ReviewType
+		prompt, err := buildDirtyPrebuiltPrompt(repoPath, descriptor.repoID, descriptor, cfg, o.Agent, o.ReviewType)
+		if err != nil {
+			return nil, err
+		}
+		if prompt != "" {
+			o.Prompt = prompt
+			o.PromptPrebuilt = true
+		}
 		o.PanelRunUUID, o.PanelRole = runUUID, storage.PanelRoleMember
 		o.PanelName, o.PanelMemberName, o.PanelMemberIndex = panelName, m.Name, m.Index
 		o.PanelMemberConfigJSON = string(cfgJSON)
 		out[i] = o
 	}
-	return out
+	return out, nil
+}
+
+func buildDirtyPrebuiltPrompt(
+	repoPath string,
+	repoID int64,
+	descriptor targetDescriptor,
+	cfg *config.Config,
+	agentName, reviewType string,
+) (string, error) {
+	if descriptor.gitRef != "dirty" || len(descriptor.dirtyFiles) == 0 {
+		return "", nil
+	}
+	builder := prompt.NewBuilderWithConfig(nil, cfg).ForRepo(repoPath, repoID)
+	return builder.BuildDirtyWithFiles(
+		descriptor.diffContent,
+		descriptor.dirtyFiles,
+		cfg.ReviewContextCount,
+		agentName,
+		reviewType,
+		descriptor.minSeverity,
+	)
 }
 
 func resolvePanelMemberExecution(

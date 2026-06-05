@@ -486,6 +486,25 @@ func TestBuildDirtyWithReviewAlias(t *testing.T) {
 	assertContains(t, prompt, "uncommitted changes", "Expected dirty system prompt for reviewType=review alias, got wrong prompt type")
 }
 
+func TestBuildDirtyWithFilesSummarizesExcludedDependencyMetadata(t *testing.T) {
+	b := NewBuilder(nil)
+	repoPath := t.TempDir()
+
+	prompt, err := b.ForRepo(repoPath, 0).BuildDirtyWithFiles(
+		"",
+		[]string{"package-lock.json", "go.sum"},
+		0,
+		"test",
+		"",
+		"",
+	)
+	require.NoError(t, err)
+
+	assertContains(t, prompt, "## Dependency Metadata", "expected dependency metadata summary")
+	assertContains(t, prompt, "package-lock.json changed", "expected dirty lockfile summary")
+	assertContains(t, prompt, "go.sum changed", "expected dirty checksum summary")
+}
+
 func TestBuildRangeWithReviewAlias(t *testing.T) {
 	repoPath, commits := setupTestRepo(t)
 	// Use a two-commit range

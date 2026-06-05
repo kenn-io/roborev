@@ -478,13 +478,30 @@ func (b *Builder) BuildDirtyWithSnapshot(diff string, contextCount int, agentNam
 	return b.BuildDirtyWithSnapshotTarget(diff, contextCount, agentName, reviewType, minSeverity, SnapshotTarget{})
 }
 
+// BuildDirtyWithSnapshotAndFiles is like BuildDirtyWithSnapshot, but includes
+// unfiltered dirty file names so metadata for excluded lockfiles/checksums can
+// still be summarized.
+func (b *Builder) BuildDirtyWithSnapshotAndFiles(
+	diff string, changedFiles []string, contextCount int, agentName, reviewType, minSeverity string,
+) (SnapshotResult, error) {
+	return b.BuildDirtyWithSnapshotTargetAndFiles(diff, changedFiles, contextCount, agentName, reviewType, minSeverity, SnapshotTarget{})
+}
+
 // BuildDirtyWithSnapshotTarget is like BuildDirtyWithSnapshot, but lets callers
 // place the snapshot under a different checkout while preserving trusted config
 // resolution.
 func (b *Builder) BuildDirtyWithSnapshotTarget(
 	diff string, contextCount int, agentName, reviewType, minSeverity string, target SnapshotTarget,
 ) (SnapshotResult, error) {
-	p, err := b.BuildDirty(diff, contextCount, agentName, reviewType, minSeverity)
+	return b.BuildDirtyWithSnapshotTargetAndFiles(diff, nil, contextCount, agentName, reviewType, minSeverity, target)
+}
+
+// BuildDirtyWithSnapshotTargetAndFiles is like BuildDirtyWithSnapshotTarget,
+// but includes unfiltered dirty file names for dependency metadata summaries.
+func (b *Builder) BuildDirtyWithSnapshotTargetAndFiles(
+	diff string, changedFiles []string, contextCount int, agentName, reviewType, minSeverity string, target SnapshotTarget,
+) (SnapshotResult, error) {
+	p, err := b.BuildDirtyWithFiles(diff, changedFiles, contextCount, agentName, reviewType, minSeverity)
 	if err != nil {
 		return SnapshotResult{}, err
 	}
@@ -507,7 +524,15 @@ func (b *Builder) BuildDirtyWithSnapshotTarget(
 // The diff is provided directly since it was captured at enqueue time.
 // reviewType selects the system prompt variant (e.g., "security"); any default alias (see config.IsDefaultReviewType) uses the standard prompt.
 func (b *Builder) BuildDirty(diff string, contextCount int, agentName, reviewType, minSeverity string) (string, error) {
+	return b.BuildDirtyWithFiles(diff, nil, contextCount, agentName, reviewType, minSeverity)
+}
+
+// BuildDirtyWithFiles constructs a dirty review prompt and includes unfiltered
+// dirty file names for dependency metadata summaries. The diff itself may have
+// review exclusions applied.
+func (b *Builder) BuildDirtyWithFiles(diff string, changedFiles []string, contextCount int, agentName, reviewType, minSeverity string) (string, error) {
 	ctx := b.newPromptBuildContext(agentName, reviewType, minSeverity, "dirty", optionalSectionsView{})
+	ctx.optional.DependencyMetadata = buildDependencyMetadataSection(changedFiles)
 
 	// Add project-specific guidelines if configured
 	if repoCfg, err := config.LoadRepoConfig(b.repoPath); err == nil && repoCfg != nil {

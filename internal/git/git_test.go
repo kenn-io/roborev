@@ -993,6 +993,17 @@ func TestGetDirtyDiffStagedThenDeleted(t *testing.T) {
 	assert.Contains(t, diff, "staged content", "expected staged diff to include content")
 }
 
+func TestGetDirtyFilesChangedIncludesExcludedDependencyMetadata(t *testing.T) {
+	repo := NewTestRepoWithCommit(t)
+	repo.WriteFile("package-lock.json", "lock\n")
+	repo.WriteFile("go.sum", "sum\n")
+
+	files, err := GetDirtyFilesChanged(repo.Dir)
+	require.NoError(t, err)
+	assert.Contains(t, files, "go.sum")
+	assert.Contains(t, files, "package-lock.json")
+}
+
 func TestFormatExcludeArgs(t *testing.T) {
 	assert.Nil(t, FormatExcludeArgs(nil))
 	assert.Nil(t, FormatExcludeArgs([]string{}))

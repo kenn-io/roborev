@@ -772,6 +772,48 @@ func HasUncommittedChanges(repoPath string) (bool, error) {
 	return len(strings.TrimSpace(string(out))) > 0, nil
 }
 
+// GetDirtyFilesChanged returns changed file names for staged, unstaged, and
+// untracked working-tree changes before review diff exclusions are applied.
+func GetDirtyFilesChanged(repoPath string) ([]string, error) {
+	cmd := exec.Command("git", "status", "--porcelain")
+	cmd.Dir = repoPath
+
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git status: %w", err)
+	}
+
+	seen := make(map[string]struct{})
+	for raw := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
+		line := strings.TrimSpace(raw)
+		if line == "" {
+			continue
+		}
+		path := strings.TrimSpace(line[2:])
+		if before, after, ok := strings.Cut(path, " -> "); ok {
+			seen[normalizeStatusPath(before)] = struct{}{}
+			seen[normalizeStatusPath(after)] = struct{}{}
+			continue
+		}
+		seen[normalizeStatusPath(path)] = struct{}{}
+	}
+
+	files := make([]string, 0, len(seen))
+	for file := range seen {
+		if file != "" {
+			files = append(files, file)
+		}
+	}
+	slices.Sort(files)
+	return files, nil
+}
+
+func normalizeStatusPath(path string) string {
+	path = strings.TrimSpace(path)
+	path = strings.Trim(path, `"`)
+	return path
+}
+
 // EmptyTreeSHA is the SHA of an empty tree in git, used for diffing against
 // the root commit or repos with no commits.
 const EmptyTreeSHA = "4b825dc642cb6eb9a060e54bf8d69288fbee4904"
