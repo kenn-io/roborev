@@ -470,7 +470,7 @@ func ensureLineageKey(st *SessionState, scope hookScope) string {
 			previousHead = st.RepoHeads[scope.WorktreeKey]
 		}
 		reachable := previousHead == "" || refReachableFromHead(scope.WorktreeRoot, previousHead, scope.Head)
-		if scope.Branch == "" && reachable {
+		if scope.Branch == "" && detachedLineageKey(prior) && reachable {
 			return prior
 		}
 		if scope.Branch != "" && detachedLineageKey(prior) && reachable {

@@ -289,6 +289,48 @@ func TestRecordPostToolUseFailedReviewPromptUsesNewBranchLineageKey(t *testing.T
 	assert.Equal("failed_reviews", featureResp.TriggeredBy)
 }
 
+func TestRecordStopFailedReviewPromptUsesNewDetachedLineageKey(t *testing.T) {
+	assert := assert.New(t)
+	repo := testutil.NewGitRepo(t)
+	head := repo.CommitFile("main.go", "package main\n", "initial")
+
+	closed := false
+	verdict := "F"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{
+			Jobs: []storage.ReviewJob{
+				{Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: head},
+			},
+		}))
+	}))
+	t.Cleanup(server.Close)
+
+	store := &StateStore{path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	stop := func() Response {
+		resp, err := store.Record(Request{
+			Event: Input{
+				SessionID:     "session-1",
+				CWD:           repo.Path(),
+				HookEventName: "Stop",
+			},
+			FailedReviewThreshold: 1,
+			Instruction:           "Run roborev fix.",
+			RoborevServerAddr:     server.URL,
+		})
+		require.NoError(t, err)
+		return resp
+	}
+
+	mainResp := stop()
+	assert.True(mainResp.Triggered)
+	assert.Equal("failed_reviews", mainResp.TriggeredBy)
+
+	repo.RunGit("checkout", "--detach")
+	detachedResp := stop()
+	assert.True(detachedResp.Triggered, "detached HEAD must not reuse a prior branch failed-review dedupe key")
+	assert.Equal("failed_reviews", detachedResp.TriggeredBy)
+}
+
 func TestRecordPostToolUseCommitReminderStaysInCommitRepo(t *testing.T) {
 	assert := assert.New(t)
 	repoA := testutil.NewGitRepo(t)
