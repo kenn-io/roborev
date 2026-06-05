@@ -177,8 +177,15 @@ func TestStopDaemonForceKillsWhenShutdownUnreachable(t *testing.T) {
 	}
 	cmd := exec.Command("sleep", "60")
 	require.NoError(t, cmd.Start())
-	done := make(chan error, 1)
-	go func() { done <- cmd.Wait() }()
+	exited := make(chan struct{})
+	go func() {
+		_ = cmd.Wait()
+		close(exited)
+	}()
+	t.Cleanup(func() {
+		_ = cmd.Process.Kill()
+		<-exited
+	})
 
 	// Bind then immediately release a loopback port so nothing answers the
 	// shutdown request, forcing stopDaemon down the force-kill fallback.
@@ -192,10 +199,8 @@ func TestStopDaemonForceKillsWhenShutdownUnreachable(t *testing.T) {
 	require.NoError(t, stopDaemon(context.Background(), rec))
 
 	select {
-	case <-done:
+	case <-exited:
 	case <-time.After(2 * time.Second):
-		_ = cmd.Process.Kill()
-		<-done
 		require.Fail(t, "fallback did not terminate the daemon process")
 	}
 }
