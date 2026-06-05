@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -36,6 +37,30 @@ func TestIsCommitProducingCommand(t *testing.T) {
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			assert.Equal(t, tc.want, IsCommitProducingCommand(tc.command))
+		})
+	}
+}
+
+func TestCommandGitDir(t *testing.T) {
+	base := t.TempDir()
+	sub := filepath.Join(base, "sub")
+	require.NoError(t, os.Mkdir(sub, 0o755))
+
+	for _, tc := range []struct {
+		name    string
+		command string
+		want    string
+	}{
+		{name: "no chdir option keeps cwd", command: "git commit -m x", want: base},
+		{name: "absolute -C to existing dir", command: "git -C " + sub + " commit -m x", want: sub},
+		{name: "relative -C to existing dir", command: "git -C sub commit -m x", want: sub},
+		{name: "missing dir falls back to cwd", command: "git -C " + filepath.Join(base, "nope") + " commit", want: base},
+		{name: "shell-expanded path falls back to cwd", command: "git -C ${REPO_DIR} commit -m x", want: base},
+		{name: "config option before -C is skipped", command: "git -c user.name=t -C sub commit", want: sub},
+		{name: "non-git command keeps cwd", command: "ls -C sub", want: base},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			assert.Equal(t, tc.want, commandGitDir(base, tc.command))
 		})
 	}
 }
@@ -717,6 +742,60 @@ func TestRecordPostToolUseCountsCommitAfterBaseline(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(1, store.sessions["session-1"].CommitCount)
+}
+
+func TestRecordPostToolUseCountsCommitInOtherRepoViaDashC(t *testing.T) {
+	assert := assert.New(t)
+	outer := testutil.NewGitRepo(t)
+	outer.CommitFile("outer.go", "package main\n", "outer initial")
+	inner := testutil.NewGitRepo(t)
+	inner.CommitFile("inner.go", "package main\n", "inner initial")
+
+	// A failed review exists for the inner repo - the one the -C commit lands in.
+	closed := false
+	verdict := "F"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		jobs := []storage.ReviewJob{}
+		if r.URL.Query().Get("repo") == inner.Path() {
+			jobs = append(jobs, storage.ReviewJob{Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict})
+		}
+		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{Jobs: jobs}))
+	}))
+	t.Cleanup(server.Close)
+
+	cmd, err := json.Marshal(`git -C "` + inner.Path() + `" commit -m feature`)
+	require.NoError(t, err)
+	store := &StateStore{path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	req := Request{
+		Event: Input{
+			SessionID:     "session-1",
+			CWD:           outer.Path(),
+			HookEventName: "PreToolUse",
+			ToolName:      "Bash",
+			ToolInput:     map[string]json.RawMessage{"command": cmd},
+		},
+		CommitThreshold:   1,
+		Instruction:       "Run roborev fix.",
+		RoborevServerAddr: server.URL,
+	}
+
+	// The baseline records the inner repo's HEAD even though the hook cwd is outer.
+	pre, err := store.Record(req)
+	require.NoError(t, err)
+	assert.False(pre.Triggered)
+
+	inner.CommitFile("feature.go", "package main\n", "inner feature")
+
+	post := req
+	post.Event.HookEventName = "PostToolUse"
+	resp, err := store.Record(post)
+	require.NoError(t, err)
+
+	st := store.sessions["session-1"]
+	assert.Equal(1, st.CommitCount, "the -C target repo's commit is counted")
+	assert.Equal(inner.Path(), st.LastCommitRepo, "the commit is attributed to the -C target repo")
+	assert.True(resp.Triggered, "the commit reminder fires for the -C target repo")
+	assert.Equal("commit", resp.TriggeredBy)
 }
 
 func TestRecordPostToolUseCommitTriggersWhenReviewLagsBehindCommit(t *testing.T) {

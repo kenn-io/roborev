@@ -195,7 +195,7 @@ func (s *StateStore) recordPreToolUse(req Request) (Response, error) {
 		}, nil
 	}
 
-	repoRoot, head, ok := currentGitHead(req.Event.CWD)
+	repoRoot, head, ok := currentGitHead(commandGitDir(req.Event.CWD, req.Event.Command()))
 	if !ok {
 		return Response{
 			SessionID:             req.Event.SessionID,
@@ -238,7 +238,16 @@ func (s *StateStore) recordPostToolUse(req Request) (Response, error) {
 		}, nil
 	}
 
-	repoRoot, head, ok := currentGitHead(req.Event.CWD)
+	command := req.Event.Command()
+	commitCommand := IsCommitProducingCommand(command)
+	// Only commit commands move HEAD, so only they need the effective working
+	// directory resolved from -C options; every other command tracks the cwd repo.
+	gitDir := req.Event.CWD
+	if commitCommand {
+		gitDir = commandGitDir(req.Event.CWD, command)
+	}
+
+	repoRoot, head, ok := currentGitHead(gitDir)
 	if !ok {
 		return Response{
 			SessionID:             req.Event.SessionID,
@@ -252,8 +261,6 @@ func (s *StateStore) recordPostToolUse(req Request) (Response, error) {
 	failedReviewCount, haveFailedReviewCount := countOpenFailedReviews(
 		context.Background(), mainRepoRoot(repoRoot), branch, head, req.RoborevServerAddr,
 	)
-	command := req.Event.Command()
-	commitCommand := IsCommitProducingCommand(command)
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -566,6 +573,69 @@ func IsCommitProducingCommand(command string) bool {
 		}
 	}
 	return false
+}
+
+// commandGitDir returns the working directory a git command operates on, honoring
+// -C path options applied cumulatively and relative to cwd, the way git does. A -C
+// path is used only when it resolves to an existing directory: shell expansions
+// such as $(...) or ${VAR}, which the hook cannot evaluate, and paths that do not
+// exist fall back to cwd. This keeps repo and HEAD tracking pointed at the
+// repository a commit actually lands in - for example `git -C ./submodule commit`
+// from a superproject - rather than the hook payload cwd.
+func commandGitDir(cwd, command string) string {
+	fields := shellFields(command)
+	for i := range fields {
+		if !isGitToken(fields[i]) {
+			continue
+		}
+		return resolveGitChdir(cwd, fields[i+1:])
+	}
+	return cwd
+}
+
+// resolveGitChdir folds the -C options preceding a git subcommand into a working
+// directory. Parsing is deliberately forgiving: any token it does not recognize
+// ends the walk and returns the directory resolved so far, so a misread option
+// only forgoes the -C adjustment and falls back to cwd rather than misbehaving.
+func resolveGitChdir(cwd string, options []string) string {
+	dir := cwd
+	for j := 0; j < len(options); j++ {
+		token := cleanShellToken(options[j])
+		if token == "-C" {
+			if j+1 >= len(options) {
+				break
+			}
+			dir = existingDir(dir, cleanShellToken(options[j+1]))
+			j++
+			continue
+		}
+		if strings.HasPrefix(token, "-") {
+			// -c, --git-dir and --work-tree take a separate argument; skipping it
+			// keeps a later -C reachable. Other flags carry no argument we track.
+			if token == "-c" || token == "--git-dir" || token == "--work-tree" {
+				j++
+			}
+			continue
+		}
+		break // first non-option token is the subcommand
+	}
+	return dir
+}
+
+// existingDir resolves path against base (absolute paths are used as-is) and
+// returns it only when it names an existing directory; otherwise it returns base.
+func existingDir(base, path string) string {
+	if path == "" {
+		return base
+	}
+	resolved := path
+	if !filepath.IsAbs(resolved) {
+		resolved = filepath.Join(base, resolved)
+	}
+	if info, err := os.Stat(resolved); err == nil && info.IsDir() {
+		return resolved
+	}
+	return base
 }
 
 func shellFields(command string) []string {
