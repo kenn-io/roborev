@@ -160,6 +160,9 @@ Test conventions:
 - ACP adapter integration tests use `//go:build integration && acp`.
 - Shared helpers live in `internal/testenv/`, `internal/testutil/`, and package-local `*_test_helpers*.go`.
 - In tests with more than three assertions, prefer `assert := assert.New(t)` to make grouped assertions cleaner.
+- Test packages that run git or use git repo helpers from `internal/testutil`
+  must define `TestMain` and call `testenv.RunIsolatedMain`; the
+  `test-git-isolation` pre-commit hook enforces this.
 - `assert.True*` / `require.True*` / `assert.False*` / `require.False*` should only be used for actual boolean values (fields, return values); never use them as comparisons (e.g., `assert.True(t, x == y)` should be `assert.Equal(t, y, x)`).
 - Do not use `assert.Fail`/`require.Fail` in tests.
 - Prefer `assert.Equal` for explicit expectations.

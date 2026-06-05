@@ -9,7 +9,7 @@ ACP_TEST_DISABLE_MODE ?=
 ACP_TEST_MODE ?=
 ACP_TEST_MODEL ?=
 
-.PHONY: build install clean test test-integration test-acp-integration test-acp-integration-codex test-acp-integration-claude test-acp-integration-gemini test-postgres test-all postgres-up postgres-down test-postgres-ci lint lint-ci install-hooks
+.PHONY: build install clean test test-git-isolation test-integration test-acp-integration test-acp-integration-codex test-acp-integration-claude test-acp-integration-gemini test-postgres test-all postgres-up postgres-down test-postgres-ci lint lint-ci install-hooks
 
 build:
 	@mkdir -p bin
@@ -28,6 +28,9 @@ clean:
 # Unit tests only (excludes integration and postgres tests)
 test:
 	go test ./...
+
+test-git-isolation:
+	go test -run '^TestGitUsingTestPackagesUseIsolatedTestMain$$' .
 
 # Unit + slow integration tests (no postgres required)
 test-integration:

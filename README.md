@@ -130,11 +130,11 @@ go install go.kenn.io/roborev/cmd/roborev@latest
 ## Developer Setup
 
 This repo uses [`prek`](https://prek.j178.dev/) for local pre-commit checks.
-The hook is a local system hook that runs `make lint`, so pre-commit can apply
-`golangci-lint --fix` automatically instead of using the upstream
-`golangci-lint` pre-commit repository. The hook is configured with
-`always_run = true`, so it runs on every commit, not just commits that touch
-Go files.
+The hooks are local system hooks. They run a fast Git-test isolation guard and
+`make lint`, so pre-commit can apply `golangci-lint --fix` automatically
+instead of using the upstream `golangci-lint` pre-commit repository. The hooks
+are configured with `always_run = true`, so they run on every commit, not just
+commits that touch Go files.
 
 ```bash
 brew install prek     # or use your preferred prek install method
