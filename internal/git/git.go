@@ -42,11 +42,41 @@ type CommitInfo struct {
 	Timestamp time.Time
 }
 
-// GetCommitInfo and IsAncestor are implemented in gogit.go using the pure-Go
-// go-git library: they take explicit commit refs, where go-git matches the CLI
-// while avoiding a subprocess spawn. ResolveSHA and GetCurrentBranch stay on the
-// git CLI below because they resolve HEAD relative to the working tree, which
-// go-git does not handle correctly inside linked worktrees.
+// GetCommitInfo retrieves commit metadata
+func GetCommitInfo(repoPath, sha string) (*CommitInfo, error) {
+	// Use record separator (ASCII 30) to delimit fields - won't appear in commit messages
+	const rs = "\x1e"
+	cmd := exec.Command("git", "log", "-1", "--format=%H"+rs+"%an"+rs+"%s"+rs+"%aI"+rs+"%b", sha)
+	cmd.Dir = repoPath
+
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git log: %w", err)
+	}
+
+	parts := strings.SplitN(strings.TrimSuffix(string(out), "\n"), rs, 5)
+	if len(parts) < 4 {
+		return nil, fmt.Errorf("unexpected git log output: %s", out)
+	}
+
+	ts, err := time.Parse(time.RFC3339, parts[3])
+	if err != nil {
+		ts = time.Now() // Fallback
+	}
+
+	var body string
+	if len(parts) >= 5 {
+		body = strings.TrimSpace(parts[4])
+	}
+
+	return &CommitInfo{
+		SHA:       parts[0],
+		Author:    parts[1],
+		Subject:   parts[2],
+		Body:      body,
+		Timestamp: ts,
+	}, nil
+}
 
 // GetCurrentBranch returns the current branch name, or empty string if detached HEAD.
 // Uses symbolic-ref (without --short) and strips refs/heads/ directly, because both
@@ -454,6 +484,26 @@ func ResolveSHA(repoPath, ref string) (string, error) {
 	}
 
 	return strings.TrimSpace(string(out)), nil
+}
+
+// IsAncestor checks if ancestor is an ancestor of descendant.
+// Returns (true, nil) if ancestor is reachable from descendant via the commit graph.
+// Returns (false, nil) if ancestor is not an ancestor (git exits with status 1).
+// Returns (false, error) for git errors (e.g., bad object, repo issues).
+func IsAncestor(repoPath, ancestor, descendant string) (bool, error) {
+	cmd := exec.Command("git", "merge-base", "--is-ancestor", ancestor, descendant)
+	cmd.Dir = repoPath
+	err := cmd.Run()
+	if err == nil {
+		return true, nil
+	}
+	// Exit code 1 means "not ancestor", which is not an error
+	var exitErr *exec.ExitError
+	if errors.As(err, &exitErr) && exitErr.ExitCode() == 1 {
+		return false, nil
+	}
+	// Any other error (exit code 128, etc.) is a real git error
+	return false, fmt.Errorf("git merge-base --is-ancestor: %w", err)
 }
 
 // GetRepoRoot returns the root directory of the git repository
