@@ -1,19 +1,19 @@
 package testutil
 
 import (
+	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
 	"testing"
-)
+	"time"
 
-type testRepoOptions struct {
-	dir           string
-	initArgs      []string
-	configureUser bool
-	resolvePath   bool
-}
+	gogit "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing/object"
+)
 
 // TestRepo encapsulates a temporary git repository for tests.
 type TestRepo struct {
@@ -25,15 +25,106 @@ type TestRepo struct {
 	t            *testing.T
 }
 
-func newTestRepo(t *testing.T, opts testRepoOptions) *TestRepo {
-	t.Helper()
+const mainGoContent = "package main\n\nfunc main() {\n\tprintln(\"hello\")\n}\n"
 
-	dir := opts.dir
-	if dir == "" {
-		dir = t.TempDir()
-	} else if err := os.MkdirAll(dir, 0o755); err != nil {
-		t.Fatalf("create repo dir %q: %v", dir, err)
+// Creating a git repository costs several git subprocess spawns (init, config,
+// add, commit, ...). On Windows each spawn is ~50ms, and the suite builds 160+
+// repos, so that setup dominates Windows test time. Instead we build each
+// distinct repo "shape" exactly once per test process and copy the resulting
+// directory tree (a few small files) into each test's own temp dir. Copying is
+// ~9x faster than re-running git per repo and spawns no processes at all.
+
+var (
+	templateMu   sync.Mutex
+	templateDirs = map[string]string{}
+)
+
+// templateFor returns the path to a cached template repository for key,
+// building it once via build the first time it is requested. The template
+// persists for the process lifetime (the OS reclaims the temp dir); it is only
+// ever read from after creation, so concurrent callers safely share it.
+func templateFor(key string, build func(dir string)) string {
+	templateMu.Lock()
+	defer templateMu.Unlock()
+	if dir, ok := templateDirs[key]; ok {
+		return dir
 	}
+	dir, err := os.MkdirTemp("", "roborev-tmpl-"+key+"-*")
+	if err != nil {
+		panic("testutil: create template dir: " + err.Error())
+	}
+	build(dir)
+	templateDirs[key] = dir
+	return dir
+}
+
+// mustGit runs a git command for template construction, panicking on failure.
+// Templates are built once and a failure is unrecoverable, so a panic (rather
+// than a *testing.T error) keeps this usable from the cached, test-independent
+// build path.
+func mustGit(dir string, args ...string) {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		panic(fmt.Sprintf("testutil: template git %v failed: %v\n%s", args, err, out))
+	}
+}
+
+func mustWrite(dir, name, content string) {
+	path := filepath.Join(dir, name)
+	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		panic(fmt.Sprintf("testutil: mkdir for %q: %v", name, err))
+	}
+	if err := os.WriteFile(path, []byte(content), 0o644); err != nil {
+		panic(fmt.Sprintf("testutil: write %q: %v", name, err))
+	}
+}
+
+func configureTemplateUser(dir string) {
+	mustGit(dir, "config", "user.email", GitUserEmail)
+	mustGit(dir, "config", "user.name", GitUserName)
+}
+
+// copyTree recursively copies the contents of src into dst. Files are written
+// 0644 and directories 0755 regardless of source mode: git does not require its
+// object files to stay read-only, and writable copies avoid read-only-file
+// removal failures during test cleanup on Windows.
+func copyTree(dst, src string) error {
+	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, 0o644)
+	})
+}
+
+// instantiateInto copies the template identified by key into dir.
+func instantiateInto(t *testing.T, dir, key string, build func(dir string)) {
+	t.Helper()
+	tmpl := templateFor(key, build)
+	if err := copyTree(dir, tmpl); err != nil {
+		t.Fatalf("instantiate template %s into %q: %v", key, dir, err)
+	}
+}
+
+// newRepoFromTemplate builds a TestRepo rooted at a fresh temp dir populated
+// from the named template.
+func newRepoFromTemplate(t *testing.T, key string, resolvePath bool, build func(dir string)) *TestRepo {
+	t.Helper()
+	dir := t.TempDir()
+	instantiateInto(t, dir, key, build)
 
 	repo := &TestRepo{
 		Root:     dir,
@@ -42,24 +133,13 @@ func newTestRepo(t *testing.T, opts testRepoOptions) *TestRepo {
 		HookPath: filepath.Join(dir, ".git", "hooks", "post-commit"),
 		t:        t,
 	}
-
-	if len(opts.initArgs) > 0 {
-		runGit(t, repo.Root, nil, opts.initArgs...)
-	}
-
-	if opts.configureUser {
-		repo.Config("user.email", GitUserEmail)
-		repo.Config("user.name", GitUserName)
-	}
-
-	if opts.resolvePath {
-		resolvedPath, err := filepath.EvalSymlinks(repo.Root)
+	if resolvePath {
+		resolved, err := filepath.EvalSymlinks(dir)
 		if err != nil {
-			resolvedPath = repo.Root
+			resolved = dir
 		}
-		repo.resolvedPath = resolvedPath
+		repo.resolvedPath = resolved
 	}
-
 	return repo
 }
 
@@ -93,9 +173,8 @@ func (r *TestRepo) Run(args ...string) string {
 // NewTestRepo creates a temporary git repository.
 func NewTestRepo(t *testing.T) *TestRepo {
 	t.Helper()
-	return newTestRepo(t, testRepoOptions{
-		dir:      t.TempDir(),
-		initArgs: []string{"init"},
+	return newRepoFromTemplate(t, "init", false, func(dir string) {
+		mustGit(dir, "init")
 	})
 }
 
@@ -103,34 +182,26 @@ func NewTestRepo(t *testing.T) *TestRepo {
 // initial commit, suitable for tests that need a valid git history.
 func NewTestRepoWithCommit(t *testing.T) *TestRepo {
 	t.Helper()
-
-	repo := newTestRepo(t, testRepoOptions{
-		dir:           t.TempDir(),
-		initArgs:      []string{"init"},
-		configureUser: true,
+	return newRepoFromTemplate(t, "with-commit", false, func(dir string) {
+		mustGit(dir, "init")
+		configureTemplateUser(dir)
+		mustWrite(dir, "main.go", mainGoContent)
+		mustGit(dir, "add", "main.go")
+		mustGit(dir, "commit", "-m", "initial commit")
 	})
-
-	repo.WriteFile("main.go", "package main\n\nfunc main() {\n\tprintln(\"hello\")\n}\n")
-	repo.RunGit("add", "main.go")
-	repo.RunGit("commit", "-m", "initial commit")
-
-	return repo
 }
 
 // InitTestRepo creates a standard test repository with an initial commit on the main branch.
 func InitTestRepo(t *testing.T) *TestRepo {
 	t.Helper()
-
-	repo := newTestRepo(t, testRepoOptions{
-		dir:           t.TempDir(),
-		initArgs:      []string{"init"},
-		configureUser: true,
+	return newRepoFromTemplate(t, "main-base", false, func(dir string) {
+		mustGit(dir, "init")
+		configureTemplateUser(dir)
+		mustGit(dir, "symbolic-ref", "HEAD", "refs/heads/main")
+		mustWrite(dir, "base.txt", "base")
+		mustGit(dir, "add", "base.txt")
+		mustGit(dir, "commit", "-m", "base commit")
 	})
-
-	repo.SymbolicRef("HEAD", "refs/heads/main")
-	repo.CommitFile("base.txt", "base", "base commit")
-
-	return repo
 }
 
 func (r *TestRepo) Path() string {
@@ -171,13 +242,33 @@ func (r *TestRepo) WriteFile(name, content string) {
 }
 
 // CommitFile writes a file, stages it, commits, and returns the new HEAD SHA.
+// The stage+commit is done in-process with go-git rather than two `git`
+// subprocesses: this helper is called hundreds of times across the suite, and
+// on Windows each spawn costs ~50ms. Test repos are always plain checkouts (not
+// linked worktrees), so go-git handles them correctly.
 func (r *TestRepo) CommitFile(filename, content, msg string) string {
 	r.t.Helper()
 
 	r.WriteFile(filename, content)
-	r.RunGit("add", filename)
-	r.RunGit("commit", "-m", msg)
-	return r.HeadSHA()
+
+	repo, err := gogit.PlainOpen(r.Root)
+	if err != nil {
+		r.t.Fatalf("open repo %q: %v", r.Root, err)
+	}
+	wt, err := repo.Worktree()
+	if err != nil {
+		r.t.Fatalf("worktree: %v", err)
+	}
+	if _, err := wt.Add(filepath.ToSlash(filename)); err != nil {
+		r.t.Fatalf("git add %s: %v", filename, err)
+	}
+	hash, err := wt.Commit(msg, &gogit.CommitOptions{
+		Author: &object.Signature{Name: GitUserName, Email: GitUserEmail, When: time.Now()},
+	})
+	if err != nil {
+		r.t.Fatalf("commit: %v", err)
+	}
+	return hash.String()
 }
 
 // Config sets a git config value.
@@ -201,11 +292,9 @@ func (r *TestRepo) SymbolicRef(ref, target string) {
 
 func NewGitRepo(t *testing.T) *TestRepo {
 	t.Helper()
-	return newTestRepo(t, testRepoOptions{
-		dir:           t.TempDir(),
-		initArgs:      []string{"init", "-b", "main"},
-		configureUser: true,
-		resolvePath:   true,
+	return newRepoFromTemplate(t, "init-main", true, func(dir string) {
+		mustGit(dir, "init", "-b", "main")
+		configureTemplateUser(dir)
 	})
 }
 
@@ -214,13 +303,16 @@ func NewGitRepo(t *testing.T) *TestRepo {
 // a test file, and makes an initial commit.
 func InitTestGitRepo(t *testing.T, dir string) {
 	t.Helper()
-
-	repo := newTestRepo(t, testRepoOptions{
-		dir:           dir,
-		initArgs:      []string{"init"},
-		configureUser: true,
+	if err := os.MkdirAll(dir, 0o755); err != nil {
+		t.Fatalf("create repo dir %q: %v", dir, err)
+	}
+	instantiateInto(t, dir, "test-commit", func(d string) {
+		mustGit(d, "init")
+		configureTemplateUser(d)
+		mustWrite(d, "test.txt", "test content")
+		mustGit(d, "add", "test.txt")
+		mustGit(d, "commit", "-m", "initial commit")
 	})
-	repo.CommitFile("test.txt", "test content", "initial commit")
 }
 
 // GetHeadSHA returns the HEAD commit SHA for the git repo at dir.
