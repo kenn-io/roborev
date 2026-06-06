@@ -112,11 +112,23 @@ func TestConfiguredACPAgent(t *testing.T) {
 }
 
 func TestGetAvailableWithConfigACPAgent(t *testing.T) {
+	// Use a real, resolvable fake executable rather than a bare command name
+	// like "echo": on Windows "echo" is a cmd.exe builtin, not a PATH binary,
+	// so exec.LookPath fails and ACP resolution falls back to the default
+	// agent. An absolute path to a tiny script is available on every platform.
+	acpBin := filepath.Join(t.TempDir(), "fake-acp")
+	script := "#!/bin/sh\nexit 0\n"
+	if runtime.GOOS == "windows" {
+		acpBin += ".cmd"
+		script = "@echo off\r\nexit /b 0\r\n"
+	}
+	require.NoError(t, os.WriteFile(acpBin, []byte(script), 0o755))
+
 	t.Run("resolves configured ACP agent name", func(t *testing.T) {
 		cfg := &config.Config{
 			ACP: &config.ACPAgentConfig{
 				Name:    "my-acp",
-				Command: "echo", // Use echo which is always available
+				Command: acpBin,
 			},
 		}
 
@@ -127,11 +139,11 @@ func TestGetAvailableWithConfigACPAgent(t *testing.T) {
 		assert.Equal(t, defaultACPName, agent.Name())
 	})
 
-	t.Run("resolves default acp name with echo command", func(t *testing.T) {
+	t.Run("resolves default acp name with configured command", func(t *testing.T) {
 		cfg := &config.Config{
 			ACP: &config.ACPAgentConfig{
 				Name:    defaultACPName,
-				Command: "echo",
+				Command: acpBin,
 			},
 		}
 
