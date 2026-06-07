@@ -701,8 +701,8 @@ type ListJobsParams struct {
 	// Status Filter by job status
 	Status *string `form:"status,omitempty" json:"status,omitempty"`
 
-	// Repo Filter by repo root path
-	Repo *string `form:"repo,omitempty" json:"repo,omitempty"`
+	// Repo Filter by repo root path (repeatable)
+	Repo *[]string `form:"repo,omitempty" json:"repo,omitempty"`
 
 	// GitRef Filter by git ref
 	GitRef *string `form:"git_ref,omitempty" json:"git_ref,omitempty"`
@@ -2254,7 +2254,7 @@ func NewListJobsRequest(server string, params *ListJobsParams) (*http.Request, e
 
 		if params.Repo != nil {
 
-			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "repo", *params.Repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "repo", *params.Repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 				return nil, err

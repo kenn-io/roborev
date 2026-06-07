@@ -120,6 +120,11 @@ func TestTUIFilterChangeFetchesFirstPageOnly(t *testing.T) {
 }
 
 func TestTUIMultiPathFilterStatusCounts(t *testing.T) {
+	// A display name spanning multiple repos is scoped server-side via an IN
+	// clause and paginated, so the status counts come from the server
+	// aggregate (jobStats), not from counting the loaded page. The loaded
+	// page below is deliberately smaller and would yield different counts if
+	// the line still tallied client-side.
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.height = 20
 	m.daemonVersion = "test"
@@ -130,11 +135,8 @@ func TestTUIMultiPathFilterStatusCounts(t *testing.T) {
 	m.jobs = []storage.ReviewJob{
 		{ID: 1, RepoPath: "/path/to/backend-dev", Status: storage.JobStatusDone, Closed: &addrTrue},
 		{ID: 2, RepoPath: "/path/to/backend-prod", Status: storage.JobStatusDone, Closed: &addrFalse},
-		{ID: 3, RepoPath: "/path/to/backend-prod", Status: storage.JobStatusDone, Closed: &addrFalse},
-		{ID: 4, RepoPath: "/path/to/frontend", Status: storage.JobStatusDone, Closed: &addrTrue},
-		{ID: 5, RepoPath: "/path/to/frontend", Status: storage.JobStatusDone, Closed: &addrTrue},
 	}
-
+	m.jobStats = storage.JobStats{Done: 3, Closed: 1, Open: 2}
 	m.activeRepoFilter = []string{"/path/to/backend-dev", "/path/to/backend-prod"}
 
 	output := m.renderQueueView()

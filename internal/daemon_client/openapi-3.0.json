@@ -2507,13 +2507,17 @@
             }
           },
           {
-            "description": "Filter by repo root path",
-            "explode": false,
+            "description": "Filter by repo root path (repeatable)",
+            "explode": true,
             "in": "query",
             "name": "repo",
             "schema": {
-              "description": "Filter by repo root path",
-              "type": "string"
+              "description": "Filter by repo root path (repeatable)",
+              "items": {
+                "type": "string"
+              },
+              "nullable": true,
+              "type": "array"
             }
           },
           {

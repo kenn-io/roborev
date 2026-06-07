@@ -77,6 +77,34 @@ func TestHandleListJobsWithFilter(t *testing.T) {
 	}
 }
 
+func TestHandleListJobsMultiRepoFilter(t *testing.T) {
+	assert := assert.New(t)
+	server, db, tmpDir := newTestServer(t)
+
+	repo1, _ := seedRepoWithJobs(t, db, filepath.Join(tmpDir, "repo1"), 3, "repo1")
+	repo2, _ := seedRepoWithJobs(t, db, filepath.Join(tmpDir, "repo2"), 2, "repo2")
+	seedRepoWithJobs(t, db, filepath.Join(tmpDir, "repo3"), 4, "repo3") // excluded
+
+	multi := "repo=" + url.QueryEscape(repo1.RootPath) +
+		"&repo=" + url.QueryEscape(repo2.RootPath)
+
+	t.Run("repeated repo params scope server-side via IN clause", func(t *testing.T) {
+		resp := fetchJobs(t, server, multi)
+		assert.Len(resp.Jobs, 5, "only repo1 + repo2 jobs, repo3 excluded")
+		for _, job := range resp.Jobs {
+			assert.Contains([]string{"repo1", "repo2"}, job.RepoName)
+		}
+	})
+
+	t.Run("multi-repo paginates instead of loading everything", func(t *testing.T) {
+		// This is the crash fix: a display name spanning repos returns a
+		// bounded page rather than every matching job in one response.
+		resp := fetchJobs(t, server, multi+"&limit=2")
+		assert.Len(resp.Jobs, 2, "respects the page limit")
+		assert.True(resp.HasMore, "more jobs remain in the scoped set")
+	})
+}
+
 func TestListJobsPagination(t *testing.T) {
 	server, db, _ := newTestServer(t)
 

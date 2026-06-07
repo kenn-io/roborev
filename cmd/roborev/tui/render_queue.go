@@ -278,11 +278,12 @@ func (m model) renderQueueView() string {
 	b.WriteString("\x1b[K\n") // Clear to end of line
 
 	if !compact {
-		// Status line - use server-side aggregate counts for paginated views,
-		// fall back to client-side counting for multi-repo filters (which load all jobs)
+		// Status line - use server-side aggregate counts for paginated views
+		// (including multi-repo display names, scoped via an IN clause). Only
+		// the "(none)" branch sentinel still loads all jobs to count locally.
 		var statusLine string
 		var done, closed, open int
-		if len(m.activeRepoFilter) > 1 || m.activeBranchFilter == branchNone {
+		if m.activeBranchFilter == branchNone {
 			// Client-side filtered views load all jobs, so count locally
 			for _, job := range m.jobs {
 				if len(m.activeRepoFilter) > 0 && !m.repoMatchesFilter(job.RepoPath) {

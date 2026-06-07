@@ -968,9 +968,25 @@ func (s *Server) humaListJobs(
 		return resp, nil
 	}
 
-	repo := input.Repo
-	if repo != "" {
-		repo = filepath.ToSlash(filepath.Clean(repo))
+	// repo is repeatable: a display name spanning multiple repos sends one
+	// ?repo= per path. A single path uses the positional equality filter
+	// (fast path); multiple paths use an IN clause via WithRepoPaths so the
+	// daemon scopes server-side instead of returning every job.
+	var repoPaths []string
+	for _, p := range input.Repo {
+		if p != "" {
+			repoPaths = append(repoPaths, filepath.ToSlash(filepath.Clean(p)))
+		}
+	}
+	var repo string
+	var repoPathsFilter []string
+	switch len(repoPaths) {
+	case 0:
+		// no repo filter
+	case 1:
+		repo = repoPaths[0]
+	default:
+		repoPathsFilter = repoPaths
 	}
 	repoPrefix := input.RepoPrefix
 	if repoPrefix != "" {
@@ -1046,7 +1062,10 @@ func (s *Server) humaListJobs(
 	if input.HideClassifyJobs == "true" {
 		listOpts = append(listOpts, storage.WithHideClassifyJobs())
 	}
-	if repoPrefix != "" && repo == "" {
+	if len(repoPathsFilter) > 0 {
+		listOpts = append(listOpts, storage.WithRepoPaths(repoPathsFilter))
+	}
+	if repoPrefix != "" && len(repoPaths) == 0 {
 		listOpts = append(
 			listOpts, storage.WithRepoPrefix(repoPrefix),
 		)
@@ -1104,7 +1123,10 @@ func (s *Server) humaListJobs(
 			)
 		}
 	}
-	if repoPrefix != "" && repo == "" {
+	if len(repoPathsFilter) > 0 {
+		statsOpts = append(statsOpts, storage.WithRepoPaths(repoPathsFilter))
+	}
+	if repoPrefix != "" && len(repoPaths) == 0 {
 		statsOpts = append(
 			statsOpts, storage.WithRepoPrefix(repoPrefix),
 		)

@@ -850,6 +850,7 @@ type listJobsOptions struct {
 	excludeJobType     string
 	hideClassifyJobs   bool
 	repoPrefix         string
+	repoPaths          []string
 	beforeCursor       *int64
 	panelRun           string
 	excludePanelRole   string
@@ -913,6 +914,14 @@ func WithRepoPrefix(prefix string) ListJobsOption {
 	}
 }
 
+// WithRepoPaths filters jobs to the given set of repo root paths via an
+// IN clause. Used for display names that map to multiple repos, so the
+// daemon scopes the query server-side instead of returning every job for
+// the client to filter. An empty slice disables the filter.
+func WithRepoPaths(paths []string) ListJobsOption {
+	return func(o *listJobsOptions) { o.repoPaths = paths }
+}
+
 // WithPanelRun filters jobs to a single panel run (member + synthesis rows).
 func WithPanelRun(uuid string) ListJobsOption {
 	return func(o *listJobsOptions) { o.panelRun = uuid }
@@ -951,11 +960,21 @@ func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions) (s
 		conditions = append(conditions, "j.status = ?")
 		args = append(args, statusFilter)
 	}
-	if repoFilter != "" {
+	// Repo scoping precedence: a single positional repoFilter wins, then a
+	// multi-repo IN set (display names spanning repos), then a path prefix.
+	// At most one applies so the clauses never compound into an empty result.
+	switch {
+	case repoFilter != "":
 		conditions = append(conditions, "r.root_path = ?")
 		args = append(args, repoFilter)
-	}
-	if repoFilter == "" && o.repoPrefix != "" {
+	case len(o.repoPaths) > 0:
+		placeholders := make([]string, len(o.repoPaths))
+		for i, p := range o.repoPaths {
+			placeholders[i] = "?"
+			args = append(args, p)
+		}
+		conditions = append(conditions, "r.root_path IN ("+strings.Join(placeholders, ",")+")")
+	case o.repoPrefix != "":
 		conditions = append(conditions, "r.root_path LIKE ? || '/%' ESCAPE '!'")
 		args = append(args, o.repoPrefix)
 	}

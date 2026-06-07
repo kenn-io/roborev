@@ -303,6 +303,55 @@ func TestListJobsWithRepoFilter(t *testing.T) {
 	}
 }
 
+func TestListJobsWithRepoPaths(t *testing.T) {
+	assert := assert.New(t)
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo1, _ := seedJobs(t, db, "/tmp/repo1", 3)
+	repo2, _ := seedJobs(t, db, "/tmp/repo2", 2)
+	repo3, _ := seedJobs(t, db, "/tmp/repo3", 4) // excluded by the filters below
+
+	// IN clause scopes to the two named repos (3 + 2), excluding repo3.
+	jobs, err := db.ListJobs("", "", 0, 0,
+		WithRepoPaths([]string{repo1.RootPath, repo2.RootPath}))
+	require.NoError(t, err)
+	assert.Len(jobs, 5)
+	for _, job := range jobs {
+		assert.Contains([]string{"repo1", "repo2"}, job.RepoName)
+	}
+
+	// A single-element set behaves like the positional equality filter.
+	jobs, err = db.ListJobs("", "", 0, 0, WithRepoPaths([]string{repo1.RootPath}))
+	require.NoError(t, err)
+	assert.Len(jobs, 3)
+
+	// The positional repoFilter takes precedence over WithRepoPaths, so the
+	// two never compound into an empty result.
+	jobs, err = db.ListJobs("", repo1.RootPath, 0, 0,
+		WithRepoPaths([]string{repo2.RootPath}))
+	require.NoError(t, err)
+	assert.Len(jobs, 3)
+	for _, job := range jobs {
+		assert.Equal("repo1", job.RepoName)
+	}
+
+	// CountJobStats honors the same multi-repo scoping. Complete repo1's
+	// oldest job (claimed first) so exactly one done job exists.
+	claimed := claimJob(t, db, "worker-1")
+	require.Equal(t, "repo1", claimed.RepoName)
+	require.NoError(t, db.CompleteJob(claimed.ID, "codex", "prompt", "output"))
+
+	inScope, err := db.CountJobStats("",
+		WithRepoPaths([]string{repo1.RootPath, repo2.RootPath}))
+	require.NoError(t, err)
+	assert.Equal(1, inScope.Done, "repo1's done job counted when repo1 is in scope")
+
+	outOfScope, err := db.CountJobStats("", WithRepoPaths([]string{repo3.RootPath}))
+	require.NoError(t, err)
+	assert.Equal(0, outOfScope.Done, "repo1's done job excluded when only repo3 is in scope")
+}
+
 func TestListJobsWithGitRefFilter(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()

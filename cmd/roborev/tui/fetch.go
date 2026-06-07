@@ -140,7 +140,12 @@ func listJobsParams(values neturl.Values) daemonclient.ListJobsParams {
 
 	setIntParam("id", &params.Id)
 	setStringParam("status", &params.Status)
-	setStringParam("repo", &params.Repo)
+	// repo is repeatable: a display name spanning multiple repos sends one
+	// value per path, scoped server-side via an IN clause.
+	if repos := values["repo"]; len(repos) > 0 {
+		paths := append([]string(nil), repos...)
+		params.Repo = &paths
+	}
 	setStringParam("git_ref", &params.GitRef)
 	setStringParam("branch", &params.Branch)
 	if value := values.Get("branch_include_empty"); value != "" {
@@ -179,12 +184,12 @@ func (m model) fetchJobs() tea.Cmd {
 		// limit=0 (no pagination) only when client-side filtering is required.
 		params := neturl.Values{}
 
-		// Repo filter: single repo can use API filter; multiple repos need client-side
+		// Repo filter: one ?repo= per path. A display name spanning multiple
+		// repos is scoped server-side via an IN clause, so it paginates like a
+		// single repo rather than loading every job for client-side filtering.
 		needsAllJobs := false
-		if len(m.activeRepoFilter) == 1 {
-			params.Set("repo", m.activeRepoFilter[0])
-		} else if len(m.activeRepoFilter) > 1 {
-			needsAllJobs = true // Multiple repos (shared display name) - filter client-side
+		for _, path := range m.activeRepoFilter {
+			params.Add("repo", path)
 		}
 
 		// Branch filter: use server-side for real branch names.
@@ -237,16 +242,18 @@ func (m model) fetchJobs() tea.Cmd {
 func (m model) fetchMoreJobs() tea.Cmd {
 	seq := m.fetchSeq
 	return func() tea.Msg {
-		// Only fetch more when not doing client-side filtering that loads all jobs
-		if len(m.activeRepoFilter) > 1 || m.activeBranchFilter == branchNone {
-			return nil // Multi-repo or "(none)" branch filter loads everything
+		// Only fetch more when not doing client-side filtering that loads all jobs.
+		// Multi-repo display names paginate server-side via repeated repo params;
+		// the "(none)" branch sentinel still loads everything client-side.
+		if m.activeBranchFilter == branchNone {
+			return nil
 		}
 		offset := len(m.jobs)
 		params := neturl.Values{}
 		params.Set("limit", "50")
 		params.Set("offset", fmt.Sprintf("%d", offset))
-		if len(m.activeRepoFilter) == 1 {
-			params.Set("repo", m.activeRepoFilter[0])
+		for _, path := range m.activeRepoFilter {
+			params.Add("repo", path)
 		}
 		if m.activeBranchFilter != "" && m.activeBranchFilter != branchNone {
 			params.Set("branch", m.activeBranchFilter)
