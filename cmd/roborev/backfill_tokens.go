@@ -8,6 +8,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"go.kenn.io/roborev/internal/backfill"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/tokens"
@@ -44,7 +45,7 @@ will be skipped.`,
 				return fmt.Errorf("list jobs: %w", err)
 			}
 
-			candidates := backfillCandidates(jobs)
+			candidates := backfill.TokenCandidates(jobs)
 
 			var total, updated, skipped, failed int
 			for _, job := range candidates {
@@ -69,7 +70,7 @@ will be skipped.`,
 					skipped++
 					continue
 				}
-				mergedUsage := mergeBackfillTokenUsage(job.TokenUsage, usage)
+				mergedUsage := backfill.MergeTokenUsage(job.TokenUsage, usage)
 
 				if dryRun {
 					fmt.Printf(
@@ -123,66 +124,4 @@ func backfillCostFetchConfig(cfg *config.Config) tokens.FetchConfig {
 		Timeout:    cfg.Cost.ResolvedTimeout(),
 		RequireCLI: true,
 	}
-}
-
-// backfillCandidates filters jobs to those eligible for token
-// backfill: completed, has a session ID, missing cost data, and the
-// session was not reused by another started job.
-func backfillCandidates(
-	jobs []storage.ReviewJob,
-) []storage.ReviewJob {
-	// Count jobs that actually started per session ID. If
-	// multiple jobs ran on the same session, it was resumed
-	// and agentsview totals are cumulative — skip to avoid
-	// overcounting.
-	sessionCount := make(map[string]int)
-	for _, job := range jobs {
-		if job.SessionID != "" && job.StartedAt != nil {
-			sessionCount[job.SessionID]++
-		}
-	}
-
-	var out []storage.ReviewJob
-	for _, job := range jobs {
-		if !job.HasViewableOutput() {
-			continue
-		}
-		if !needsTokenCostBackfill(job.TokenUsage) {
-			continue
-		}
-		if job.SessionID == "" {
-			continue
-		}
-		if sessionCount[job.SessionID] > 1 {
-			continue
-		}
-		out = append(out, job)
-	}
-	return out
-}
-
-func mergeBackfillTokenUsage(existingJSON string, fetched *tokens.Usage) *tokens.Usage {
-	if fetched == nil {
-		return tokens.ParseJSON(existingJSON)
-	}
-	merged := *fetched
-	existing := tokens.ParseJSON(existingJSON)
-	if existing == nil {
-		return &merged
-	}
-
-	if merged.OutputTokens == 0 && merged.PeakContextTokens == 0 {
-		merged.OutputTokens = existing.OutputTokens
-		merged.PeakContextTokens = existing.PeakContextTokens
-	}
-	if !merged.HasCost && existing.HasCost {
-		merged.CostUSD = existing.CostUSD
-		merged.HasCost = true
-	}
-	return &merged
-}
-
-func needsTokenCostBackfill(tokenUsage string) bool {
-	usage := tokens.ParseJSON(tokenUsage)
-	return usage == nil || !usage.HasCost
 }

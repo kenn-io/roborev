@@ -8,6 +8,7 @@ import (
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/danielgtaylor/huma/v2/adapters/humago"
 
+	"go.kenn.io/roborev/internal/backfill"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/version"
 )
@@ -172,6 +173,19 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 			o.OperationID = "sync-now"
 			o.Summary = "Run an immediate sync"
 			o.Tags = []string{"sync"}
+		})
+
+	huma.Post(api, "/api/tokens/backfill", s.humaBackfillTokens,
+		func(o *huma.Operation) {
+			o.OperationID = "backfill-tokens"
+			o.Summary = "Backfill token usage from AgentsView payloads"
+			o.Tags = []string{"jobs"}
+			o.MaxBodyBytes = 10 << 20
+			o.Responses = jsonResponses(map[string]*huma.Schema{
+				"200": jsonSchema(api, backfill.TokenSummary{}),
+				"400": errorSchema,
+				"500": errorSchema,
+			})
 		})
 
 	huma.Post(api, "/api/job/cancel", s.humaCancelJob,

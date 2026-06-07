@@ -14,6 +14,7 @@ import (
 
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
+	"go.kenn.io/roborev/internal/tokens"
 )
 
 // serveHuma sends a request through the server's mux (which
@@ -272,6 +273,130 @@ func TestHumaCloseReview(t *testing.T) {
 	})
 }
 
+func TestHumaBackfillTokensUpdatesMatchingEligibleJob(t *testing.T) {
+	srv, db, _ := newTestServer(t)
+	repo := testutil.CreateTestRepo(t, db)
+	job := testutil.CreateCompletedReview(
+		t, db, repo.ID, "usage-sha", "test-agent", "review text",
+	)
+	existing := `{"total_output_tokens":28800,"peak_context_tokens":118000}`
+	_, err := db.Exec(
+		`UPDATE review_jobs SET session_id = ?, token_usage = ? WHERE id = ?`,
+		"session-1", existing, job.ID,
+	)
+	require.NoError(t, err)
+
+	body, err := json.Marshal(map[string]any{
+		"sessions": []map[string]any{
+			{
+				"session_id":     "session-1",
+				"has_token_data": false,
+				"has_cost":       true,
+				"cost_usd":       0.42,
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	rr := serveHuma(
+		t, srv, http.MethodPost, "/api/tokens/backfill", body,
+	)
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+
+	var resp struct {
+		Total   int `json:"total"`
+		Updated int `json:"updated"`
+		Skipped int `json:"skipped"`
+		Failed  int `json:"failed"`
+		Results []struct {
+			SessionID string `json:"session_id"`
+			JobID     int64  `json:"job_id"`
+			Status    string `json:"status"`
+		} `json:"results"`
+	}
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+	assert.Equal(t, 1, resp.Total)
+	assert.Equal(t, 1, resp.Updated)
+	assert.Zero(t, resp.Skipped)
+	assert.Zero(t, resp.Failed)
+	require.Len(t, resp.Results, 1)
+	assert.Equal(t, "session-1", resp.Results[0].SessionID)
+	assert.Equal(t, job.ID, resp.Results[0].JobID)
+	assert.Equal(t, "updated", resp.Results[0].Status)
+
+	updated, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	usage := tokens.ParseJSON(updated.TokenUsage)
+	require.NotNil(t, usage)
+	assert.Equal(t, int64(28800), usage.OutputTokens)
+	assert.Equal(t, int64(118000), usage.PeakContextTokens)
+	assert.True(t, usage.HasCost)
+	assert.InDelta(t, 0.42, usage.CostUSD, 1e-9)
+}
+
+func TestHumaBackfillTokensSkipsReusedSession(t *testing.T) {
+	srv, db, _ := newTestServer(t)
+	repo := testutil.CreateTestRepo(t, db)
+	first := testutil.CreateCompletedReview(
+		t, db, repo.ID, "reuse-1", "test-agent", "review text",
+	)
+	second := testutil.CreateCompletedReview(
+		t, db, repo.ID, "reuse-2", "test-agent", "review text",
+	)
+	_, err := db.Exec(
+		`UPDATE review_jobs SET session_id = ? WHERE id IN (?, ?)`,
+		"reused-session", first.ID, second.ID,
+	)
+	require.NoError(t, err)
+
+	body, err := json.Marshal(map[string]any{
+		"sessions": []map[string]any{
+			{
+				"session_id":          "reused-session",
+				"has_token_data":      true,
+				"total_output_tokens": 100,
+				"peak_context_tokens": 200,
+				"has_cost":            true,
+				"cost_usd":            0.10,
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	rr := serveHuma(
+		t, srv, http.MethodPost, "/api/tokens/backfill", body,
+	)
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+
+	var resp struct {
+		Total   int `json:"total"`
+		Updated int `json:"updated"`
+		Skipped int `json:"skipped"`
+		Failed  int `json:"failed"`
+		Results []struct {
+			SessionID string `json:"session_id"`
+			Status    string `json:"status"`
+			Reason    string `json:"reason"`
+		} `json:"results"`
+	}
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+	assert.Equal(t, 1, resp.Total)
+	assert.Zero(t, resp.Updated)
+	assert.Equal(t, 1, resp.Skipped)
+	assert.Zero(t, resp.Failed)
+	require.Len(t, resp.Results, 1)
+	assert.Equal(t, "reused-session", resp.Results[0].SessionID)
+	assert.Equal(t, "skipped", resp.Results[0].Status)
+	assert.Equal(t, "no eligible job", resp.Results[0].Reason)
+
+	firstUpdated, err := db.GetJobByID(first.ID)
+	require.NoError(t, err)
+	secondUpdated, err := db.GetJobByID(second.ID)
+	require.NoError(t, err)
+	assert.Empty(t, firstUpdated.TokenUsage)
+	assert.Empty(t, secondUpdated.TokenUsage)
+}
+
 func TestHumaOpenAPISpec(t *testing.T) {
 	srv, _, _ := newTestServer(t)
 
@@ -318,6 +443,7 @@ func TestHumaOpenAPISpec(t *testing.T) {
 		"/api/job/fix":           "post",
 		"/api/job/applied":       "post",
 		"/api/job/rebased":       "post",
+		"/api/tokens/backfill":   "post",
 	}
 	for p, method := range wantPaths {
 		pathObj, exists := paths[p]

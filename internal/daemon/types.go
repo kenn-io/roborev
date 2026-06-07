@@ -1,6 +1,10 @@
 package daemon
 
-import "go.kenn.io/roborev/internal/storage"
+import (
+	"go.kenn.io/roborev/internal/backfill"
+	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/tokens"
+)
 
 type EnqueueRequest struct {
 	RepoPath     string   `json:"repo_path"`
@@ -448,6 +452,22 @@ type JobPatchInput struct {
 // SyncNowInput holds query parameters for POST /api/sync/now.
 type SyncNowInput struct {
 	Stream string `query:"stream" doc:"Stream sync progress as NDJSON when set to 1"`
+}
+
+// BackfillTokensRequest is the request body for POST /api/tokens/backfill.
+type BackfillTokensRequest struct {
+	DryRun   bool                         `json:"dry_run,omitempty"`
+	Sessions []tokens.SessionUsagePayload `json:"sessions"`
+}
+
+// BackfillTokensInput is the request body for POST /api/tokens/backfill.
+type BackfillTokensInput struct {
+	Body BackfillTokensRequest
+}
+
+// BackfillTokensOutput is the response for POST /api/tokens/backfill.
+type BackfillTokensOutput struct {
+	Body backfill.TokenSummary
 }
 
 // StreamEventsInput holds query parameters for GET /api/stream/events.

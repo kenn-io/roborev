@@ -49,14 +49,16 @@ type agentsviewResponse struct {
 	HasCost           bool    `json:"has_cost"`
 }
 
-type httpUsageResponse struct {
+// SessionUsagePayload is the JSON shape returned by AgentsView's
+// session-usage API and accepted by roborev's token backfill endpoint.
+type SessionUsagePayload struct {
 	SessionID         string   `json:"session_id"`
-	Agent             string   `json:"agent"`
-	Project           string   `json:"project"`
-	OutputTokens      *int64   `json:"total_output_tokens"`
-	PeakContextTokens *int64   `json:"peak_context_tokens"`
+	Agent             string   `json:"agent,omitempty"`
+	Project           string   `json:"project,omitempty"`
+	OutputTokens      *int64   `json:"total_output_tokens,omitempty"`
+	PeakContextTokens *int64   `json:"peak_context_tokens,omitempty"`
 	HasTokenData      *bool    `json:"has_token_data"`
-	CostUSD           *float64 `json:"cost_usd"`
+	CostUSD           *float64 `json:"cost_usd,omitempty"`
 	HasCost           *bool    `json:"has_cost"`
 }
 
@@ -283,11 +285,11 @@ func fetchForSessionHTTP(
 		return nil, fmt.Errorf("usage endpoint HTTP %s: %s", resp.Status, detail)
 	}
 
-	var respBody httpUsageResponse
+	var respBody SessionUsagePayload
 	if err := json.NewDecoder(resp.Body).Decode(&respBody); err != nil {
 		return nil, fmt.Errorf("parse usage endpoint output: %w", err)
 	}
-	return usageFromHTTPResponse(respBody)
+	return UsageFromSessionPayload(respBody)
 }
 
 func expandEndpoint(template, sessionID string) (string, error) {
@@ -304,7 +306,9 @@ func expandEndpoint(template, sessionID string) (string, error) {
 	return endpoint, nil
 }
 
-func usageFromHTTPResponse(resp httpUsageResponse) (*Usage, error) {
+// UsageFromSessionPayload validates an AgentsView session-usage payload
+// and converts it to roborev's stored usage shape.
+func UsageFromSessionPayload(resp SessionUsagePayload) (*Usage, error) {
 	if resp.HasTokenData == nil {
 		return nil, fmt.Errorf("usage endpoint schema: missing has_token_data")
 	}

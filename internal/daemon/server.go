@@ -23,12 +23,14 @@ import (
 	gitrepo "go.kenn.io/kit/git/repo"
 
 	"go.kenn.io/roborev/internal/agent"
+	"go.kenn.io/roborev/internal/backfill"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/githook"
 	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/telemetry"
+	"go.kenn.io/roborev/internal/tokens"
 	"go.kenn.io/roborev/internal/version"
 )
 
@@ -1609,6 +1611,40 @@ func (s *Server) humaAddComment(
 	}
 
 	return &AddCommentOutput{Body: resp}, nil
+}
+
+func (s *Server) humaBackfillTokens(
+	_ context.Context, input *BackfillTokensInput,
+) (*BackfillTokensOutput, error) {
+	if len(input.Body.Sessions) == 0 {
+		return nil, huma.Error400BadRequest("sessions are required")
+	}
+
+	sessions := make([]backfill.SessionUsage, 0, len(input.Body.Sessions))
+	for _, payload := range input.Body.Sessions {
+		payload.SessionID = strings.TrimSpace(payload.SessionID)
+		if payload.SessionID == "" {
+			return nil, huma.Error400BadRequest("session_id is required")
+		}
+		usage, err := tokens.UsageFromSessionPayload(payload)
+		if err != nil {
+			return nil, huma.Error400BadRequest(err.Error())
+		}
+		sessions = append(sessions, backfill.SessionUsage{
+			SessionID: payload.SessionID,
+			Usage:     usage,
+		})
+	}
+
+	summary, err := backfill.ApplyTokenUsage(
+		s.db, sessions, input.Body.DryRun,
+	)
+	if err != nil {
+		return nil, huma.Error500InternalServerError(
+			fmt.Sprintf("backfill tokens: %v", err),
+		)
+	}
+	return &BackfillTokensOutput{Body: summary}, nil
 }
 
 func (s *Server) humaEnqueue(

@@ -6,6 +6,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 
+	"go.kenn.io/roborev/internal/backfill"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/tokens"
@@ -175,7 +176,7 @@ func TestBackfillCandidates(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := backfillCandidates(tt.jobs)
+			got := backfill.TokenCandidates(tt.jobs)
 			var gotIDs []int64
 			for _, j := range got {
 				gotIDs = append(gotIDs, j.ID)
@@ -201,7 +202,7 @@ func TestMergeBackfillTokenUsagePreservesExistingCountsForCostOnlyFetch(t *testi
 	existing := `{"total_output_tokens":28800,"peak_context_tokens":118000}`
 	fetched := &tokens.Usage{CostUSD: 0.42, HasCost: true}
 
-	got := mergeBackfillTokenUsage(existing, fetched)
+	got := backfill.MergeTokenUsage(existing, fetched)
 
 	assert.Equal(t, int64(28800), got.OutputTokens)
 	assert.Equal(t, int64(118000), got.PeakContextTokens)
