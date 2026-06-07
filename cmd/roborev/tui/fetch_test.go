@@ -18,18 +18,19 @@ func TestListJobsParamsRepeatedRepo(t *testing.T) {
 	values.Add("repo", "/path/to/backend-dev")
 	values.Add("repo", "/path/to/backend-prod")
 
-	params := listJobsParams(values)
+	query := listJobsQuery(values)
 
-	require.NotNil(t, params.Repo, "repeated repo values produce a slice filter")
+	require.NotNil(t, query)
 	assert.Equal(
 		[]string{"/path/to/backend-dev", "/path/to/backend-prod"},
-		*params.Repo,
+		query.Repo,
 	)
 }
 
 func TestListJobsParamsNoRepo(t *testing.T) {
-	params := listJobsParams(neturl.Values{})
-	assert.Nil(t, params.Repo, "absent repo means no filter")
+	query := listJobsQuery(neturl.Values{})
+	require.NotNil(t, query)
+	assert.Nil(t, query.Repo, "absent repo means no filter")
 }
 
 // A display name spanning multiple repos must scope the jobs query
