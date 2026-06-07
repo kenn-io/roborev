@@ -27,6 +27,7 @@ import (
 type listJobsResponse struct {
 	Jobs    []storage.ReviewJob `json:"jobs"`
 	HasMore bool                `json:"has_more"`
+	Stats   storage.JobStats    `json:"stats"`
 }
 
 // fetchJobs calls GET /api/jobs via the mux, asserts HTTP 200,
@@ -2336,7 +2337,7 @@ func TestHandleListJobsJobTypeFilter(t *testing.T) {
 	})
 
 	// Create a fix job parented to the review
-	db.EnqueueJob(storage.EnqueueOpts{
+	fixJob, _ := db.EnqueueJob(storage.EnqueueOpts{
 		RepoID:      repo.ID,
 		CommitID:    commit.ID,
 		GitRef:      "jt-abc",
@@ -2344,6 +2345,13 @@ func TestHandleListJobsJobTypeFilter(t *testing.T) {
 		JobType:     storage.JobTypeFix,
 		ParentJobID: reviewJob.ID,
 	})
+	_, err := db.Exec(
+		`UPDATE review_jobs SET status = 'running' WHERE id IN (?, ?)`,
+		reviewJob.ID, fixJob.ID,
+	)
+	require.NoError(t, err)
+	require.NoError(t, db.CompleteJob(reviewJob.ID, "test", "prompt", "review done"))
+	require.NoError(t, db.CompleteJob(fixJob.ID, "test", "prompt", "fix done"))
 
 	t.Run("job_type=fix returns only fix jobs", func(t *testing.T) {
 		req := httptest.NewRequest(
@@ -2359,7 +2367,8 @@ func TestHandleListJobsJobTypeFilter(t *testing.T) {
 		}
 
 		var resp struct {
-			Jobs []storage.ReviewJob `json:"jobs"`
+			Jobs  []storage.ReviewJob `json:"jobs"`
+			Stats storage.JobStats    `json:"stats"`
 		}
 		testutil.DecodeJSON(t, w, &resp)
 
@@ -2389,7 +2398,8 @@ func TestHandleListJobsJobTypeFilter(t *testing.T) {
 		}
 
 		var resp struct {
-			Jobs []storage.ReviewJob `json:"jobs"`
+			Jobs  []storage.ReviewJob `json:"jobs"`
+			Stats storage.JobStats    `json:"stats"`
 		}
 		testutil.DecodeJSON(t, w, &resp)
 
@@ -2414,7 +2424,8 @@ func TestHandleListJobsJobTypeFilter(t *testing.T) {
 		}
 
 		var resp struct {
-			Jobs []storage.ReviewJob `json:"jobs"`
+			Jobs  []storage.ReviewJob `json:"jobs"`
+			Stats storage.JobStats    `json:"stats"`
 		}
 		testutil.DecodeJSON(t, w, &resp)
 
@@ -2428,6 +2439,11 @@ func TestHandleListJobsJobTypeFilter(t *testing.T) {
 				return false
 			}, "Expected non-fix job, got fix")
 		}
+		assert.Equal(t, storage.JobStats{
+			Done:   1,
+			Closed: 0,
+			Open:   1,
+		}, resp.Stats)
 	})
 
 	t.Run("hide_classify_jobs=true hides classify and skipped rows", func(t *testing.T) {

@@ -1123,6 +1123,20 @@ func (s *Server) humaListJobs(
 			)
 		}
 	}
+	if input.JobType != "" {
+		statsOpts = append(
+			statsOpts, storage.WithJobType(input.JobType),
+		)
+	}
+	if input.ExcludeJobType != "" {
+		statsOpts = append(
+			statsOpts,
+			storage.WithExcludeJobType(input.ExcludeJobType),
+		)
+	}
+	if input.HideClassifyJobs == "true" {
+		statsOpts = append(statsOpts, storage.WithHideClassifyJobs())
+	}
 	if len(repoPathsFilter) > 0 {
 		statsOpts = append(statsOpts, storage.WithRepoPaths(repoPathsFilter))
 	}
