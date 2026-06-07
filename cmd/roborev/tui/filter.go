@@ -249,14 +249,21 @@ func (m *model) reconcileAutoRepoFilter() bool {
 	}
 
 	m.activeRepoFilter = copyStrings(rootPaths)
+	m.resetQueueForFilterChange()
+	m.recomputeClassifyEffective()
+	return true
+}
+
+func (m *model) resetQueueForFilterChange() {
+	m.jobs = nil
 	m.hasMore = false
+	m.loadingMore = false
+	m.paginateNav = 0
 	m.selectedIdx = -1
 	m.selectedJobID = 0
 	m.fetchSeq++
 	m.queueColGen++
 	m.loadingJobs = true
-	m.recomputeClassifyEffective()
-	return true
 }
 
 // isJobVisible checks if a job passes all active filters

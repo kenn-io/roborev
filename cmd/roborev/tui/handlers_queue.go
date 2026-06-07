@@ -411,19 +411,7 @@ func (m model) handleHideClosedKey() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.hideClosed = !m.hideClosed
-	m.queueColGen++
-	if len(m.jobs) > 0 {
-		if m.selectedIdx < 0 || m.selectedIdx >= len(m.jobs) || !m.isJobVisible(m.jobs[m.selectedIdx]) {
-			m.selectedIdx = m.findFirstVisibleJob()
-			m.updateSelectedJobID()
-		}
-		if m.getVisibleSelectedIdx() < 0 && m.findFirstVisibleJob() >= 0 {
-			m.selectedIdx = m.findFirstVisibleJob()
-			m.updateSelectedJobID()
-		}
-	}
-	m.fetchSeq++
-	m.loadingJobs = true
+	m.resetQueueForFilterChange()
 	return m, m.fetchJobs()
 }
 
@@ -438,8 +426,6 @@ func (m model) handleToggleClassifyKey() (tea.Model, tea.Cmd) {
 	next := !m.shouldShowClassifyJobs()
 	m.classifyOverride = &next
 	m.recomputeClassifyEffective()
-	m.queueColGen++
-	m.fetchSeq++
-	m.loadingJobs = true
+	m.resetQueueForFilterChange()
 	return m, m.fetchJobs()
 }

@@ -249,12 +249,7 @@ func (m model) handleCtrlSetFilter(
 		}
 	}
 
-	m.hasMore = false
-	m.selectedIdx = -1
-	m.selectedJobID = 0
-	m.fetchSeq++
-	m.queueColGen++
-	m.loadingJobs = true
+	m.resetQueueForFilterChange()
 	m.recomputeClassifyEffective()
 	return m, controlResponse{OK: true}, m.fetchJobs()
 }
@@ -295,12 +290,7 @@ func (m model) handleCtrlClearFilter(
 		m.removeFilterFromStack(filterTypeBranch)
 	}
 
-	m.hasMore = false
-	m.selectedIdx = -1
-	m.selectedJobID = 0
-	m.fetchSeq++
-	m.queueColGen++
-	m.loadingJobs = true
+	m.resetQueueForFilterChange()
 	m.recomputeClassifyEffective()
 	return m, controlResponse{OK: true}, m.fetchJobs()
 }
@@ -318,17 +308,7 @@ func (m model) handleCtrlSetHideClosed(
 	}
 
 	m.hideClosed = params.HideClosed
-	m.queueColGen++
-	if len(m.jobs) > 0 {
-		if m.selectedIdx < 0 ||
-			m.selectedIdx >= len(m.jobs) ||
-			!m.isJobVisible(m.jobs[m.selectedIdx]) {
-			m.selectedIdx = m.findFirstVisibleJob()
-			m.updateSelectedJobID()
-		}
-	}
-	m.fetchSeq++
-	m.loadingJobs = true
+	m.resetQueueForFilterChange()
 	return m, controlResponse{OK: true}, m.fetchJobs()
 }
 

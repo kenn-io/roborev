@@ -1,10 +1,14 @@
 package tui
 
 import (
+	"encoding/json"
+	"net/http"
+	"strconv"
 	"testing"
 
 	tea "github.com/charmbracelet/bubbletea"
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -80,6 +84,39 @@ func TestTUIFilterToZeroVisibleJobs(t *testing.T) {
 
 	assert.Equal(t, -1, m3.selectedIdx)
 	assert.EqualValues(t, 0, m3.selectedJobID)
+}
+
+func TestTUIFilterChangeFetchesFirstPageOnly(t *testing.T) {
+	var gotLimit string
+	var gotRepo string
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
+		gotLimit = r.URL.Query().Get("limit")
+		gotRepo = r.URL.Query().Get("repo")
+		assert.NoError(t, json.NewEncoder(w).Encode(jobsPageResult{}))
+	})
+	m.currentView = viewFilter
+	m.heightDetected = true
+	m.height = 40
+	setupFilterTree(&m, []treeFilterNode{
+		{
+			name:      "kata",
+			rootPaths: []string{"/workspace/kata"},
+			count:     1429,
+		},
+	})
+	m.filterSelectedIdx = 1
+	m.jobs = make([]storage.ReviewJob, 1429)
+	m.loadingJobs = false
+
+	m2, cmd := pressSpecial(m, tea.KeyEnter)
+	require.NotNil(t, cmd)
+	msg := cmd()
+	_, ok := msg.(jobsMsg)
+	require.True(t, ok)
+
+	assert.Empty(t, m2.jobs)
+	assert.Equal(t, "/workspace/kata", gotRepo)
+	assert.Equal(t, strconv.Itoa(m2.queueVisibleRows()+queuePrefetchBuffer), gotLimit)
 }
 
 func TestTUIMultiPathFilterStatusCounts(t *testing.T) {

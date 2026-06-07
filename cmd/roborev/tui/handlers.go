@@ -652,22 +652,13 @@ func (m model) handleEscKey() (tea.Model, tea.Cmd) {
 	if m.currentView == viewQueue && len(m.filterStack) > 0 {
 		popped := m.popFilter()
 		if popped == filterTypeRepo || popped == filterTypeBranch {
-			m.hasMore = false
-			m.selectedIdx = -1
-			m.selectedJobID = 0
-			m.fetchSeq++
-			m.loadingJobs = true
+			m.resetQueueForFilterChange()
 			return m, m.fetchJobs()
 		}
 		return m, nil
 	} else if m.currentView == viewQueue && m.hideClosed {
 		m.hideClosed = false
-		m.queueColGen++
-		m.hasMore = false
-		m.selectedIdx = -1
-		m.selectedJobID = 0
-		m.fetchSeq++
-		m.loadingJobs = true
+		m.resetQueueForFilterChange()
 		return m, m.fetchJobs()
 	} else if m.currentView == viewReview {
 		// If fix panel is open (unfocused), esc closes it rather than leaving the review

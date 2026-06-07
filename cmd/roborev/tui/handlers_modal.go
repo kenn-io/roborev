@@ -167,12 +167,7 @@ func (m model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		m.currentView = viewQueue
 		m.filterSearch = ""
 		m.filterBranchMode = false
-		m.hasMore = false
-		m.selectedIdx = -1
-		m.selectedJobID = 0
-		m.fetchSeq++
-		m.queueColGen++
-		m.loadingJobs = true
+		m.resetQueueForFilterChange()
 		// activeRepoFilter may have changed; refresh the cached
 		// classify visibility so the next render/fetch sees the
 		// repo-scoped value without hitting disk on the hot path.

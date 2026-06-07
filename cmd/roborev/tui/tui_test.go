@@ -1810,8 +1810,9 @@ func TestTUIHideClosed(t *testing.T) {
 		// Toggle hide closed
 		m2, _ := pressKey(m, 'h')
 
-		// Selection should move to first visible job (ID=2)
-		assertSelection(t, m2, 1, 2)
+		assertSelection(t, m2, -1, 0)
+		assert.Empty(t, m2.jobs)
+		assert.True(t, m2.loadingJobs)
 	})
 	t.Run("RefreshRevalidatesSelection", func(t *testing.T) {
 		m := newModel(testEndpoint, withExternalIODisabled())
@@ -1967,12 +1968,7 @@ func TestTUIHideClosed(t *testing.T) {
 			}, "Expected empty filter stack, got %v", m2.filterStack)
 		}
 
-		// jobs should be preserved (so fetchJobs limit stays large enough)
-		if len(m2.jobs) != 1 {
-			assert.Condition(t, func() bool {
-				return false
-			}, "Expected jobs to be preserved after escape, got %d jobs", len(m2.jobs))
-		}
+		assert.Empty(t, m2.jobs)
 
 		// A refetch command should be returned
 		if cmd == nil {
