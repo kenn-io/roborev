@@ -171,7 +171,7 @@ func (m model) queueVisibleRows() int {
 
 func (m model) canPaginate() bool {
 	return m.hasMore && !m.loadingMore && !m.loadingJobs &&
-		len(m.activeRepoFilter) <= 1 && m.activeBranchFilter != branchNone
+		m.activeBranchFilter != branchNone
 }
 
 // visibleSelectedRowIndex returns the index of selectedJobID within the
@@ -720,7 +720,7 @@ func (m model) renderQueueView() string {
 		if len(rows) > visibleRows || m.hasMore || m.loadingMore {
 			if m.loadingMore {
 				scrollInfo = fmt.Sprintf("[showing %d-%d of %d] Loading more...", start+1, end, len(rows))
-			} else if m.hasMore && len(m.activeRepoFilter) <= 1 {
+			} else if m.hasMore && m.activeBranchFilter != branchNone {
 				scrollInfo = fmt.Sprintf("[showing %d-%d of %d+] scroll down to load more", start+1, end, len(rows))
 			} else if len(rows) > visibleRows {
 				scrollInfo = fmt.Sprintf("[showing %d-%d of %d]", start+1, end, len(rows))

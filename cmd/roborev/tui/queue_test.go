@@ -526,7 +526,7 @@ func TestTUIQueueNavigationBoundaries(t *testing.T) {
 	assertFlashMessage(t, m3, viewQueue, "No older review")
 }
 
-func TestTUIQueueNavigationBoundariesWithFilter(t *testing.T) {
+func TestTUIQueueNavigationBoundariesWithMultiRepoFilter(t *testing.T) {
 	m := newQueueTestModel(
 		withQueueTestJobs(makeJob(1, withRepoPath("/repo1")), makeJob(2, withRepoPath("/repo2"))),
 		withQueueTestSelection(1),
@@ -534,9 +534,10 @@ func TestTUIQueueNavigationBoundariesWithFilter(t *testing.T) {
 	)
 	m.activeRepoFilter = []string{"/repo1", "/repo2"}
 
-	m2, _ := pressSpecial(m, tea.KeyDown)
+	m2, cmd := pressSpecial(m, tea.KeyDown)
 
-	assertFlashMessage(t, m2, viewQueue, "No older review")
+	assert.True(t, m2.loadingMore)
+	assert.NotNil(t, cmd)
 }
 
 func TestTUINavigateDownTriggersLoadMore(t *testing.T) {
@@ -552,7 +553,7 @@ func TestTUINavigateDownTriggersLoadMore(t *testing.T) {
 	assert.NotNil(t, cmd)
 }
 
-func TestTUINavigateDownNoLoadMoreWhenFiltered(t *testing.T) {
+func TestTUINavigateDownLoadsMoreWhenMultiRepoFiltered(t *testing.T) {
 	m := newQueueTestModel(
 		withQueueTestJobs(makeJob(1, withRepoPath("/path/to/repo"))),
 		withQueueTestSelection(0),
@@ -562,8 +563,8 @@ func TestTUINavigateDownNoLoadMoreWhenFiltered(t *testing.T) {
 
 	m2, cmd := pressSpecial(m, tea.KeyDown)
 
-	assert.False(t, m2.loadingMore)
-	assert.Nil(t, cmd)
+	assert.True(t, m2.loadingMore)
+	assert.NotNil(t, cmd)
 }
 
 func TestTUIJobCellsContent(t *testing.T) {
@@ -964,6 +965,44 @@ func TestTUIPaginationAllowedWhenNotLoadingJobs(t *testing.T) {
 	assert.NotNil(t, cmd)
 }
 
+func TestTUIPaginationAllowedForMultiRepoFilter(t *testing.T) {
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	m.currentView = viewQueue
+	m.loadingJobs = false
+	m.hasMore = true
+	m.loadingMore = false
+	m.activeRepoFilter = []string{"/repo/a", "/repo/b"}
+
+	m.jobs = []storage.ReviewJob{
+		makeJob(1, withRepoPath("/repo/a")),
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	m2, cmd := pressKey(m, 'j')
+
+	assert.True(t, m2.loadingMore)
+	assert.NotNil(t, cmd)
+}
+
+func TestTUIPaginationBlockedForNoneBranchFilter(t *testing.T) {
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	m.currentView = viewQueue
+	m.loadingJobs = false
+	m.hasMore = true
+	m.loadingMore = false
+	m.activeBranchFilter = branchNone
+
+	m.jobs = []storage.ReviewJob{makeJob(1)}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	m2, cmd := pressKey(m, 'j')
+
+	assert.False(t, m2.loadingMore)
+	assert.Nil(t, cmd)
+}
+
 func TestTUIPageDownBlockedWhileLoadingJobs(t *testing.T) {
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
@@ -1086,15 +1125,15 @@ func TestTUIResizeBehavior(t *testing.T) {
 			wantLoading:   true,
 		},
 		{
-			name:          "No Refetch Multi-Repo Filter Active",
+			name:          "Refetch Multi-Repo Filter Active",
 			initialHeight: 20,
 			jobsCount:     3,
 			loadingJobs:   false,
 			loadingMore:   false,
 			activeFilters: []string{"/repo1", "/repo2"},
 			msg:           tea.WindowSizeMsg{Height: 40},
-			wantCmd:       false,
-			wantLoading:   false,
+			wantCmd:       true,
+			wantLoading:   true,
 		},
 	}
 

@@ -510,7 +510,7 @@ func (m model) handleDownKey() (tea.Model, tea.Cmd) {
 		} else if m.canPaginate() {
 			m.loadingMore = true
 			return m, m.fetchMoreJobs()
-		} else if !m.hasMore || len(m.activeRepoFilter) > 1 {
+		} else if !m.hasMore || m.activeBranchFilter == branchNone {
 			m.setFlash("No older review", 2*time.Second, viewQueue)
 		}
 	case viewReview:

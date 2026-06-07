@@ -210,7 +210,7 @@ func TestTUIBranchFilterCombinedWithRepoFilter(t *testing.T) {
 	assert.False(t, len(visible) > 0 && (visible[0].RepoPath != "/path/to/repo-a" || visible[0].Branch != "main"))
 }
 
-func TestTUINavigateDownNoLoadMoreWhenBranchFiltered(t *testing.T) {
+func TestTUINavigateDownLoadsMoreWhenBranchFiltered(t *testing.T) {
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{makeJob(1, withBranch("feature"))}
@@ -218,16 +218,17 @@ func TestTUINavigateDownNoLoadMoreWhenBranchFiltered(t *testing.T) {
 	m.selectedJobID = 1
 	m.hasMore = true
 	m.loadingMore = false
+	m.loadingJobs = false
 	m.activeBranchFilter = "feature"
 	m.currentView = viewQueue
 
 	m2, cmd := pressSpecial(m, tea.KeyDown)
 
-	assert.False(t, m2.loadingMore)
-	assert.Nil(t, cmd)
+	assert.True(t, m2.loadingMore)
+	assert.NotNil(t, cmd)
 }
 
-func TestTUINavigateJKeyNoLoadMoreWhenBranchFiltered(t *testing.T) {
+func TestTUINavigateJKeyLoadsMoreWhenBranchFiltered(t *testing.T) {
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{makeJob(1, withBranch("feature"))}
@@ -235,16 +236,17 @@ func TestTUINavigateJKeyNoLoadMoreWhenBranchFiltered(t *testing.T) {
 	m.selectedJobID = 1
 	m.hasMore = true
 	m.loadingMore = false
+	m.loadingJobs = false
 	m.activeBranchFilter = "feature"
 	m.currentView = viewQueue
 
 	m2, cmd := pressKey(m, 'j')
 
-	assert.False(t, m2.loadingMore)
-	assert.Nil(t, cmd)
+	assert.True(t, m2.loadingMore)
+	assert.NotNil(t, cmd)
 }
 
-func TestTUIPageDownNoLoadMoreWhenBranchFiltered(t *testing.T) {
+func TestTUIPageDownLoadsMoreWhenBranchFiltered(t *testing.T) {
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{makeJob(1, withBranch("feature"))}
@@ -252,14 +254,15 @@ func TestTUIPageDownNoLoadMoreWhenBranchFiltered(t *testing.T) {
 	m.selectedJobID = 1
 	m.hasMore = true
 	m.loadingMore = false
+	m.loadingJobs = false
 	m.activeBranchFilter = "feature"
 	m.currentView = viewQueue
 	m.height = 20
 
 	m2, cmd := pressSpecial(m, tea.KeyPgDown)
 
-	assert.False(t, m2.loadingMore)
-	assert.Nil(t, cmd)
+	assert.True(t, m2.loadingMore)
+	assert.NotNil(t, cmd)
 }
 
 func TestTUIBranchFilterClearTriggersRefetch(t *testing.T) {

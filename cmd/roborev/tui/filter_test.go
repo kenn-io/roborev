@@ -288,7 +288,7 @@ func TestTUIRightArrowRetriesAfterFailedLoad(t *testing.T) {
 	assert.NotNil(t, cmd)
 }
 
-func TestTUIWindowResizeNoLoadMoreWhenMultiRepoFiltered(t *testing.T) {
+func TestTUIWindowResizeLoadsMoreWhenMultiRepoFiltered(t *testing.T) {
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 
 	m.jobs = []storage.ReviewJob{makeJob(1, withRepoPath("/repo1"))}
@@ -303,11 +303,10 @@ func TestTUIWindowResizeNoLoadMoreWhenMultiRepoFiltered(t *testing.T) {
 	m2, cmd := updateModel(t, m, tea.WindowSizeMsg{Width: 120, Height: 50})
 
 	assert.False(t, m2.loadingMore)
-	assert.False(t, m2.loadingJobs)
+	assert.True(t, m2.loadingJobs)
 	assert.Equal(t, 50, m2.height)
 	assert.True(t, m2.heightDetected)
-
-	_ = cmd
+	assert.NotNil(t, cmd)
 }
 
 func TestTUIBKeyFallsBackToFirstRepo(t *testing.T) {

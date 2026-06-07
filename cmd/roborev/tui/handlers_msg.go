@@ -958,7 +958,7 @@ func (m model) handleWindowSizeMsg(
 	// If terminal can show more jobs than we have, re-fetch to fill
 	if !m.loadingMore && !m.loadingJobs &&
 		len(m.jobs) > 0 && m.hasMore &&
-		len(m.activeRepoFilter) <= 1 {
+		m.activeBranchFilter != branchNone {
 		newVisibleRows := m.queueVisibleRows() + queuePrefetchBuffer
 		if newVisibleRows > len(m.jobs) {
 			m.loadingJobs = true
