@@ -194,6 +194,7 @@ func TestBackfillCostFetchConfig(t *testing.T) {
 
 	assert.Equal(t, "https://usage.example.test/api/v1/sessions/{session_id}/usage", got.Endpoint)
 	assert.Equal(t, 250*time.Millisecond, got.Timeout)
+	assert.True(t, got.RequireCLI)
 }
 
 func TestMergeBackfillTokenUsagePreservesExistingCountsForCostOnlyFetch(t *testing.T) {

@@ -82,26 +82,6 @@ func TestFormatCost(t *testing.T) {
 		"a genuine zero cost still renders")
 }
 
-func TestGeVersion(t *testing.T) {
-	tests := []struct {
-		a, b [3]int
-		want bool
-	}{
-		{[3]int{0, 30, 0}, [3]int{0, 30, 0}, true},
-		{[3]int{0, 30, 1}, [3]int{0, 30, 0}, true},
-		{[3]int{0, 29, 9}, [3]int{0, 30, 0}, false},
-		{[3]int{1, 0, 0}, [3]int{0, 30, 0}, true},
-		{[3]int{0, 15, 0}, [3]int{0, 15, 0}, true},
-		{[3]int{0, 14, 9}, [3]int{0, 15, 0}, false},
-		{[3]int{2, 0, 0}, [3]int{1, 99, 99}, true},
-	}
-	for _, tt := range tests {
-		t.Run(fmt.Sprintf("%v_ge_%v", tt.a, tt.b), func(t *testing.T) {
-			assert.Equal(t, tt.want, geVersion(tt.a, tt.b))
-		})
-	}
-}
-
 func TestParseJSON(t *testing.T) {
 	t.Run("empty string", func(t *testing.T) {
 		assert.Nil(t, ParseJSON(""))
@@ -144,77 +124,15 @@ func TestParseJSON(t *testing.T) {
 	})
 }
 
-func TestParseVersion(t *testing.T) {
-	tests := []struct {
-		name       string
-		output     string
-		wantLevel  capability
-		wantParsed bool
-	}{
-		{
-			"below token-use min",
-			"agentsview v0.14.9 (commit abc, built 2026-01-01)",
-			capNone, true,
-		},
-		{
-			"token-use min",
-			"agentsview v0.15.0 (commit abc, built 2026-01-01)",
-			capTokenUse, true,
-		},
-		{
-			"token-use range",
-			"agentsview v0.29.0 (commit abc, built 2026-05-10)",
-			capTokenUse, true,
-		},
-		{
-			"session usage min",
-			"agentsview v0.30.0 (commit abc, built 2026-05-23)",
-			capSessionUsage, true,
-		},
-		{
-			"session usage newer patch",
-			"agentsview v0.31.2 (commit abc, built 2026-06-01)",
-			capSessionUsage, true,
-		},
-		{
-			"major bump",
-			"agentsview v1.0.0 (commit abc, built 2026-01-01)",
-			capSessionUsage, true,
-		},
-		{
-			"dev suffix at session min",
-			"agentsview v0.30.0-1-g891cb62 (commit 891cb62, built 2026-05-23)",
-			capSessionUsage, true,
-		},
-		{
-			"very old",
-			"agentsview v0.10.0 (commit abc, built 2026-01-01)",
-			capNone, true,
-		},
-		{"unparseable", "something unexpected", capNone, false},
-		{"empty", "", capNone, false},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			level, parsed := parseVersion([]byte(tt.output))
-			assert.Equal(t, tt.wantLevel, level, "level")
-			assert.Equal(t, tt.wantParsed, parsed, "parsed")
-		})
-	}
-}
-
 // installFakeAgentsview writes an executable "agentsview" shell script
-// into a fresh temp dir, prepends it to PATH, and resets the version
-// cache. Lets FetchForSession/resolveAgentsview run without a real
-// agentsview install. Skips on Windows (scripts are POSIX shell).
+// into a fresh temp dir and prepends it to PATH. Lets FetchForSession
+// run without a real agentsview install. Skips on Windows (scripts are
+// POSIX shell).
 func installFakeAgentsview(t *testing.T, script string) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
 		t.Skip("test uses shell scripts")
 	}
-	ResetVersionCache()
-	t.Cleanup(ResetVersionCache)
 
 	dir := t.TempDir()
 	bin := filepath.Join(dir, "agentsview")
@@ -225,32 +143,27 @@ func installFakeAgentsview(t *testing.T, script string) {
 	require.NoError(t, err)
 }
 
-func TestFetchForSessionSkipsOldVersion(t *testing.T) {
-	// agentsview too old (< 0.15.0): FetchForSession returns nil
-	// without invoking any usage command (which could spawn a server).
+func TestFetchForSessionSurfacesTokenUseFailureAfterSessionUsageFallback(t *testing.T) {
 	installFakeAgentsview(t, `#!/bin/sh
-if [ "$1" = "version" ]; then
-  echo "agentsview v0.14.0 (commit abc, built 2026-01-01)"
-  exit 0
+if [ "$1" = "session" ] && [ "$2" = "usage" ]; then
+  echo "unknown command: session usage" >&2
+  exit 1
 fi
-echo "ERROR: should not be called" >&2
+echo "unexpected args: $@" >&2
 exit 99
 `)
 
 	usage, err := FetchForSession(context.Background(), "test-session-id")
-	require.NoError(t, err)
+	require.Error(t, err)
 	assert.Nil(t, usage)
+	assert.Contains(t, err.Error(), "agentsview token-use: exit 99")
+	assert.Contains(t, err.Error(), "unexpected args: token-use test-session-id")
 }
 
-func TestFetchForSessionUsesSessionUsageOnNewVersion(t *testing.T) {
-	// agentsview >= 0.30.0: FetchForSession calls `session usage` and
-	// captures the cost estimate. The script errors on any other
-	// subcommand, so reaching the JSON proves command selection.
+func TestFetchForSessionUsesSessionUsage(t *testing.T) {
+	// The script errors on any other subcommand, so reaching the JSON
+	// proves command selection.
 	installFakeAgentsview(t, `#!/bin/sh
-if [ "$1" = "version" ]; then
-  echo "agentsview v0.30.0 (commit abc, built 2026-05-23)"
-  exit 0
-fi
 if [ "$1" = "session" ] && [ "$2" = "usage" ]; then
   echo '{"session_id":"s","agent":"codex","total_output_tokens":28800,"peak_context_tokens":118000,"cost_usd":0.42,"has_cost":true}'
   exit 0
@@ -440,15 +353,55 @@ exit 99
 	assert.InDelta(t, 0.42, usage.CostUSD, 1e-9)
 }
 
-func TestFetchForSessionFallsBackToTokenUse(t *testing.T) {
-	// agentsview in [0.15.0, before session usage support):
-	// FetchForSession falls back to the deprecated token-use command.
-	// The legacy output here has no cost, matching older builds. The
-	// script errors on `session usage`, so success proves the fallback.
+func TestFetchForSessionUsesSessionUsageForHeadBuild(t *testing.T) {
 	installFakeAgentsview(t, `#!/bin/sh
 if [ "$1" = "version" ]; then
-  echo "agentsview v0.15.0 (commit abc, built 2026-01-01)"
+  echo "agentsview HEAD (commit a31468b4, built 2026-06-07)"
   exit 0
+fi
+if [ "$1" = "session" ] && [ "$2" = "usage" ]; then
+  echo '{"session_id":"s","agent":"codex","total_output_tokens":28800,"peak_context_tokens":118000,"cost_usd":0.42,"has_cost":true}'
+  exit 0
+fi
+echo "unexpected args: $@" >&2
+exit 99
+`)
+
+	usage, err := FetchForSession(context.Background(), "s")
+	require.NoError(t, err)
+	require.NotNil(t, usage)
+	assert.Equal(t, int64(28800), usage.OutputTokens)
+	assert.Equal(t, int64(118000), usage.PeakContextTokens)
+	assert.True(t, usage.HasCost)
+	assert.InDelta(t, 0.42, usage.CostUSD, 1e-9)
+}
+
+func TestFetchForSessionSurfacesSessionUsageFailureForHeadBuild(t *testing.T) {
+	installFakeAgentsview(t, `#!/bin/sh
+if [ "$1" = "version" ]; then
+  echo "agentsview HEAD (commit a31468b4, built 2026-06-07)"
+  exit 0
+fi
+if [ "$1" = "session" ] && [ "$2" = "usage" ]; then
+  echo "usage exploded" >&2
+  exit 42
+fi
+echo "unexpected args: $@" >&2
+exit 99
+`)
+
+	usage, err := FetchForSession(context.Background(), "s")
+	require.Error(t, err)
+	assert.Nil(t, usage)
+	assert.Contains(t, err.Error(), "agentsview usage: exit 42")
+	assert.Contains(t, err.Error(), "usage exploded")
+}
+
+func TestFetchForSessionFallsBackToTokenUseWhenSessionUsageIsMissing(t *testing.T) {
+	installFakeAgentsview(t, `#!/bin/sh
+if [ "$1" = "session" ] && [ "$2" = "usage" ]; then
+  echo "unknown command: session usage" >&2
+  exit 1
 fi
 if [ "$1" = "token-use" ]; then
   echo '{"session_id":"s","agent":"codex","total_output_tokens":1000,"peak_context_tokens":2000}'
@@ -463,7 +416,7 @@ exit 99
 	require.NotNil(t, usage)
 	assert.Equal(t, int64(1000), usage.OutputTokens)
 	assert.Equal(t, int64(2000), usage.PeakContextTokens)
-	assert.False(t, usage.HasCost, "token-use output carries no cost")
+	assert.False(t, usage.HasCost)
 }
 
 func TestFetchForSessionExitCodesMeanNoUsage(t *testing.T) {
@@ -486,138 +439,33 @@ exit %d
 	}
 }
 
-func TestResolveAgentsviewRetriesAfterTransientFailure(t *testing.T) {
+func TestFetchForSessionSkipsMissingAgentsviewByDefault(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("test uses shell scripts")
+		t.Skip("PATH handling differs on Windows")
 	}
 
-	ResetVersionCache()
-	t.Cleanup(ResetVersionCache)
-
-	// First call: agentsview not on PATH → transient failure.
 	t.Setenv("PATH", t.TempDir())
-	_, level := resolveAgentsview(context.Background())
-	assert.Equal(t, capNone, level, "should fail when binary is absent")
 
-	// Install a valid agentsview and retry — should succeed.
-	dir := t.TempDir()
-	bin := filepath.Join(dir, "agentsview")
-	script := `#!/bin/sh
-if [ "$1" = "version" ]; then
-  echo "agentsview v0.15.0 (commit abc, built 2026-01-01)"
-  exit 0
-fi
-if [ "$1" = "token-use" ]; then
-  exit 0
-fi
-exit 99
-`
-	require.NoError(t, os.WriteFile(bin, []byte(script), 0o755))
+	usage, err := FetchForSession(context.Background(), "s")
 
-	origPath := os.Getenv("PATH")
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+origPath)
-
-	path, level := resolveAgentsview(context.Background())
-	assert.Equal(t, capTokenUse, level, "should succeed after binary appears")
-	assert.Equal(t, bin, path)
+	require.NoError(t, err)
+	assert.Nil(t, usage)
 }
 
-func TestResolveAgentsviewCachesTooOldPermanently(t *testing.T) {
+func TestFetchForSessionWithConfigRequiresAgentsviewWhenRequested(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("test uses shell scripts")
+		t.Skip("PATH handling differs on Windows")
 	}
 
-	ResetVersionCache()
-	t.Cleanup(ResetVersionCache)
+	t.Setenv("PATH", t.TempDir())
 
-	dir := t.TempDir()
-	bin := filepath.Join(dir, "agentsview")
-	script := `#!/bin/sh
-echo "agentsview v0.14.0 (commit abc, built 2026-01-01)"
-`
-	require.NoError(t, os.WriteFile(bin, []byte(script), 0o755))
+	usage, err := FetchForSessionWithConfig(
+		context.Background(), "s", FetchConfig{RequireCLI: true},
+	)
 
-	origPath := os.Getenv("PATH")
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+origPath)
-
-	_, level := resolveAgentsview(context.Background())
-	assert.Equal(t, capNone, level)
-
-	// Even if we "upgrade" the script, the too-old result is cached.
-	script2 := `#!/bin/sh
-echo "agentsview v0.30.0 (commit abc, built 2026-05-23)"
-`
-	require.NoError(t, os.WriteFile(bin, []byte(script2), 0o755))
-
-	_, level = resolveAgentsview(context.Background())
-	assert.Equal(t, capNone, level, "too-old should be cached permanently")
-}
-
-func TestResolveAgentsviewInvalidatesCacheOnPathChange(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("test uses shell scripts")
-	}
-
-	ResetVersionCache()
-	t.Cleanup(ResetVersionCache)
-
-	// First call: agentsview at dir1 is too old → cached.
-	dir1 := t.TempDir()
-	bin1 := filepath.Join(dir1, "agentsview")
-	script1 := "#!/bin/sh\necho 'agentsview v0.14.0 (commit abc)'\n"
-	require.NoError(t, os.WriteFile(bin1, []byte(script1), 0o755))
-
-	origPath := os.Getenv("PATH")
-	t.Setenv("PATH", dir1+string(os.PathListSeparator)+origPath)
-
-	_, level := resolveAgentsview(context.Background())
-	assert.Equal(t, capNone, level)
-
-	// "Upgrade" by placing a new binary earlier in PATH.
-	dir2 := t.TempDir()
-	bin2 := filepath.Join(dir2, "agentsview")
-	script2 := "#!/bin/sh\necho 'agentsview v0.30.0 (commit def)'\n"
-	require.NoError(t, os.WriteFile(bin2, []byte(script2), 0o755))
-
-	t.Setenv("PATH", dir2+string(os.PathListSeparator)+origPath)
-
-	path, level := resolveAgentsview(context.Background())
-	assert.Equal(t, capSessionUsage, level, "new path should trigger re-probe")
-	assert.Equal(t, bin2, path)
-}
-
-func TestResolveAgentsviewRetriesAfterUnparseableOutput(t *testing.T) {
-	if runtime.GOOS == "windows" {
-		t.Skip("test uses shell scripts")
-	}
-
-	ResetVersionCache()
-	t.Cleanup(ResetVersionCache)
-
-	// First call: agentsview returns unparseable version output.
-	dir := t.TempDir()
-	bin := filepath.Join(dir, "agentsview")
-	script := "#!/bin/sh\necho 'something unexpected'\n"
-	require.NoError(t, os.WriteFile(bin, []byte(script), 0o755))
-
-	origPath := os.Getenv("PATH")
-	t.Setenv("PATH", dir+string(os.PathListSeparator)+origPath)
-
-	_, level := resolveAgentsview(context.Background())
-	assert.Equal(t, capNone, level, "unparseable should fail")
-
-	// Replace with valid version — should succeed because unparseable
-	// output was NOT cached as too-old.
-	dir2 := t.TempDir()
-	bin2 := filepath.Join(dir2, "agentsview")
-	script2 := "#!/bin/sh\necho 'agentsview v0.15.0 (commit abc)'\n"
-	require.NoError(t, os.WriteFile(bin2, []byte(script2), 0o755))
-
-	t.Setenv("PATH", dir2+string(os.PathListSeparator)+origPath)
-
-	path, level := resolveAgentsview(context.Background())
-	assert.NotEqual(t, capNone, level, "should succeed after valid version appears")
-	assert.NotEmpty(t, path)
+	require.Error(t, err)
+	assert.Nil(t, usage)
+	assert.Contains(t, err.Error(), "agentsview lookup")
 }
 
 func TestToJSON(t *testing.T) {

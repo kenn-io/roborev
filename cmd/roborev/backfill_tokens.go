@@ -119,8 +119,9 @@ func backfillCostFetchConfig(cfg *config.Config) tokens.FetchConfig {
 		cfg = config.DefaultConfig()
 	}
 	return tokens.FetchConfig{
-		Endpoint: cfg.Cost.Endpoint,
-		Timeout:  cfg.Cost.ResolvedTimeout(),
+		Endpoint:   cfg.Cost.Endpoint,
+		Timeout:    cfg.Cost.ResolvedTimeout(),
+		RequireCLI: true,
 	}
 }
 
