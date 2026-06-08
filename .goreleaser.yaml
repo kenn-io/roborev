@@ -32,10 +32,17 @@ archives:
       - roborev
     formats:
       - tar.gz
+    # Windows ships both zip and tar.gz. The kit self-updater (roborev >= 0.57)
+    # downloads the zip; roborev <= 0.56 shipped its own updater that only looks
+    # for a windows tar.gz asset, so dropping the tar.gz strands those users on
+    # "no release asset found for windows/amd64" (issue #816). Keep the tar.gz as
+    # a compatibility shim; it can be removed once the <= 0.56 Windows population
+    # has migrated onto the kit updater.
     format_overrides:
       - goos: windows
         formats:
           - zip
+          - tar.gz
     name_template: >-
       {{ .ProjectName }}_
       {{- .Version }}_
