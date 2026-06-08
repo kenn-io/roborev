@@ -13,6 +13,7 @@ import (
 	"strings"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -31,12 +32,10 @@ func TestGitUsingTestPackagesUseIsolatedTestMain(t *testing.T) {
 			return walkErr
 		}
 		if d.IsDir() {
-			switch d.Name() {
-			case ".git", ".direnv", "bin", "node_modules", "tmp", "vendor":
+			if path != root && shouldSkipWalkDir(d.Name()) {
 				return filepath.SkipDir
-			default:
-				return nil
 			}
+			return nil
 		}
 		if !strings.HasSuffix(path, "_test.go") {
 			return nil
@@ -92,6 +91,43 @@ func TestGitUsingTestPackagesUseIsolatedTestMain(t *testing.T) {
 	sort.Strings(missing)
 
 	require.Empty(t, missing, "Git-using test packages must call testenv.RunIsolatedMain in TestMain:\n%s", strings.Join(missing, "\n"))
+}
+
+// shouldSkipWalkDir reports whether the repository walk should skip a directory
+// instead of descending into it. The go tool ignores directories whose names
+// begin with "." or "_" and any directory named "testdata"; none of those hold
+// buildable packages. We additionally skip dependency and build caches that can
+// contain third-party *_test.go files (for example the module cache under
+// .gocache or agent worktrees under .claude/worktrees), which are not part of
+// this repository's own source tree.
+func shouldSkipWalkDir(name string) bool {
+	if name == "testdata" {
+		return true
+	}
+	if strings.HasPrefix(name, ".") || strings.HasPrefix(name, "_") {
+		return true
+	}
+	switch name {
+	case "bin", "node_modules", "tmp", "vendor":
+		return true
+	default:
+		return false
+	}
+}
+
+func TestShouldSkipWalkDir(t *testing.T) {
+	assert := assert.New(t)
+	skip := []string{
+		".git", ".direnv", ".claude", ".gocache", ".github", ".ruff_cache",
+		"_build", "testdata", "bin", "node_modules", "tmp", "vendor",
+	}
+	keep := []string{"cmd", "internal", "scripts", "agent", "daemon", "git", "roborev"}
+	for _, name := range skip {
+		assert.True(shouldSkipWalkDir(name), "expected %q to be skipped", name)
+	}
+	for _, name := range keep {
+		assert.False(shouldSkipWalkDir(name), "expected %q to be walked", name)
+	}
 }
 
 func repoRootFromWorkingDir(t *testing.T) string {

@@ -9,7 +9,13 @@ ACP_TEST_DISABLE_MODE ?=
 ACP_TEST_MODE ?=
 ACP_TEST_MODEL ?=
 
-.PHONY: build install clean test test-git-isolation test-integration test-acp-integration test-acp-integration-codex test-acp-integration-claude test-acp-integration-gemini test-postgres test-all postgres-up postgres-down test-postgres-ci lint lint-ci install-hooks
+# Pinned golangci-lint version. Single source of truth: CI reads it via
+# `make print-golangci-lint-version` (see .github/workflows/ci.yml), and
+# `make lint`/`make lint-ci` refuse to run unless the local binary matches.
+# A mismatched version can silently apply different formatting/fixes.
+GOLANGCI_LINT_VERSION := 2.12.2
+
+.PHONY: build install clean test test-git-isolation test-integration test-acp-integration test-acp-integration-codex test-acp-integration-claude test-acp-integration-gemini test-postgres test-all postgres-up postgres-down test-postgres-ci lint lint-ci check-golangci-lint print-golangci-lint-version install-hooks
 
 build:
 	@mkdir -p bin
@@ -125,19 +131,34 @@ test-postgres: postgres-up
 test-all: test-integration test-postgres
 
 # Lint Go code and auto-fix where possible (local development)
-lint:
+# Verify golangci-lint is installed and exactly matches the pinned version.
+# Fails loudly on mismatch rather than letting a different version silently
+# reformat files or report different findings than CI.
+check-golangci-lint:
 	@if ! command -v golangci-lint >/dev/null 2>&1; then \
-		echo "golangci-lint not found. Install with: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.10.1" >&2; \
+		echo "golangci-lint not found. Install the pinned version:" >&2; \
+		echo "  go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v$(GOLANGCI_LINT_VERSION)" >&2; \
+		exit 1; \
+	fi; \
+	have="$$(golangci-lint version --short 2>/dev/null)"; \
+	if [ "$$have" != "$(GOLANGCI_LINT_VERSION)" ]; then \
+		echo "Error: golangci-lint version mismatch (must match CI)." >&2; \
+		echo "  found:    $${have:-unknown}" >&2; \
+		echo "  required: $(GOLANGCI_LINT_VERSION)" >&2; \
+		echo "Install the pinned version:" >&2; \
+		echo "  go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v$(GOLANGCI_LINT_VERSION)" >&2; \
 		exit 1; \
 	fi
+
+# Print the pinned golangci-lint version (consumed by CI to stay in lockstep).
+print-golangci-lint-version:
+	@echo "$(GOLANGCI_LINT_VERSION)"
+
+lint: check-golangci-lint
 	golangci-lint run --fix ./...
 
 # Lint Go code without fixing (for CI)
-lint-ci:
-	@if ! command -v golangci-lint >/dev/null 2>&1; then \
-		echo "golangci-lint not found. Install with: go install github.com/golangci/golangci-lint/v2/cmd/golangci-lint@v2.10.1" >&2; \
-		exit 1; \
-	fi
+lint-ci: check-golangci-lint
 	golangci-lint run ./...
 
 # Install pre-commit hooks via prek.
