@@ -21,6 +21,7 @@ func TestListJobsParamsRepeatedRepo(t *testing.T) {
 	query := listJobsQuery(values)
 
 	require.NotNil(t, query)
+	require.NotNil(t, query.Repo, "repeated repo values produce a slice filter")
 	assert.Equal(
 		[]string{"/path/to/backend-dev", "/path/to/backend-prod"},
 		query.Repo,
