@@ -54,10 +54,36 @@ function Invoke-WebRequestCompat {
     }
 }
 
+function Get-FinalUrl {
+    # Returns the URL that ultimately responded to a request, after any
+    # redirects were followed. The property differs by PowerShell edition:
+    # Windows PowerShell 5.x exposes HttpWebResponse.ResponseUri, while
+    # PowerShell 7+ exposes HttpResponseMessage.RequestMessage.RequestUri.
+    param($Response)
+    try {
+        if ($Response.BaseResponse.ResponseUri) {
+            return $Response.BaseResponse.ResponseUri.AbsoluteUri
+        }
+    } catch {}
+    try {
+        if ($Response.BaseResponse.RequestMessage.RequestUri) {
+            return $Response.BaseResponse.RequestMessage.RequestUri.AbsoluteUri
+        }
+    } catch {}
+    return $null
+}
+
 function Get-LatestVersion {
-    # Use the HTML /releases/latest endpoint, which 302-redirects to
-    # /releases/tag/<version>. Unlike api.github.com it is not rate-limited
-    # at 60 req/hr per IP, so users behind shared NAT / VPN don't get 403.
+    # Resolve the latest release tag by following the /releases/latest
+    # 302 redirect to /releases/tag/<version> and reading the final URL.
+    # Using the HTML endpoint (not api.github.com) avoids the 60 req/hr
+    # per-IP rate limit, so users behind shared NAT / VPN don't get 403.
+    #
+    # We let Invoke-WebRequest follow the redirect rather than inspecting
+    # the Location header with MaximumRedirection=0: in Windows PowerShell
+    # 5.x that throws a System.InvalidOperationException (not a WebException
+    # with a usable .Response), which broke the install. A HEAD request
+    # follows the redirect without downloading the release page body.
     $url = "https://github.com/$repo/releases/latest"
 
     if ($PSVersionTable.PSVersion.Major -lt 6) {
@@ -66,34 +92,26 @@ function Get-LatestVersion {
 
     $params = @{
         Uri = $url
-        MaximumRedirection = 0
+        Method = 'Head'
         ErrorAction = 'Stop'
     }
     if ($PSVersionTable.PSVersion.Major -lt 6) {
         $params.UseBasicParsing = $true
     }
 
-    $location = $null
+    $finalUrl = $null
     try {
-        # PowerShell 7+ returns the 302 as a normal response.
         $response = Invoke-WebRequest @params
-        $location = $response.Headers.Location
+        $finalUrl = Get-FinalUrl $response
     } catch {
-        # PowerShell 5.x throws System.Net.WebException for 3xx when
-        # MaximumRedirection=0. The Location header lives on the response.
-        if ($_.Exception.Response) {
-            $location = $_.Exception.Response.Headers['Location']
-        } else {
-            throw "Failed to fetch latest version: $_"
-        }
+        throw "Failed to fetch latest version: $_"
     }
 
-    if ($location -is [array]) { $location = $location[0] }
-    if (-not $location) {
-        throw "Failed to fetch latest version: no Location header from $url"
+    if (-not $finalUrl) {
+        throw "Failed to fetch latest version: could not resolve release URL from $url"
     }
-    if ($location -notmatch '/releases/tag/([^/]+)/?$') {
-        throw "Failed to fetch latest version: unexpected redirect target $location"
+    if ($finalUrl -notmatch '/releases/tag/([^/]+)/?$') {
+        throw "Failed to fetch latest version: unexpected release URL $finalUrl"
     }
     return $Matches[1]
 }
