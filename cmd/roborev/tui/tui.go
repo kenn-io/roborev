@@ -747,13 +747,26 @@ func (m *model) getDisplayName(repoPath, defaultName string) string {
 // updateDisplayNameCache refreshes display names for the given repo paths.
 // Called on each jobs fetch to pick up config changes without restart.
 func (m *model) updateDisplayNameCache(jobs []storage.ReviewJob) {
+	for _, repoPath := range uniqueJobRepoPaths(jobs) {
+		// Always refresh to pick up config changes
+		m.displayNames[repoPath] = config.GetDisplayName(repoPath)
+	}
+}
+
+func uniqueJobRepoPaths(jobs []storage.ReviewJob) []string {
+	seen := make(map[string]struct{})
+	paths := make([]string, 0)
 	for _, job := range jobs {
 		if job.RepoPath == "" {
 			continue
 		}
-		// Always refresh to pick up config changes
-		m.displayNames[job.RepoPath] = config.GetDisplayName(job.RepoPath)
+		if _, ok := seen[job.RepoPath]; ok {
+			continue
+		}
+		seen[job.RepoPath] = struct{}{}
+		paths = append(paths, job.RepoPath)
 	}
+	return paths
 }
 
 // getBranchForJob returns the branch name for a job, falling back to git lookup
