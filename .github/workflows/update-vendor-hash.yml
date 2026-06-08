@@ -17,7 +17,7 @@ concurrency:
 jobs:
   check:
     name: Check
-    if: github.event.pull_request.user.login == 'dependabot[bot]' && github.event.pull_request.head.repo.full_name == github.repository
+    if: github.event.pull_request.user.login == 'renovate[bot]' && github.event.pull_request.head.repo.full_name == github.repository
     runs-on: ubuntu-latest
     outputs:
       needed: ${{ steps.check.outputs.needed }}
