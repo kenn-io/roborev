@@ -60,41 +60,7 @@ jobs:
       - name: Compute new vendorHash
         id: compute
         run: |
-          hash_count=$(grep -c 'vendorHash = "sha256-' flake.nix || true)
-          if [ "$hash_count" -ne 1 ]; then
-            echo "::error::Expected exactly one vendorHash in flake.nix, found $hash_count"
-            exit 1
-          fi
-
-          old_hash=$(grep -oP 'vendorHash = "\Ksha256-[^"]+' flake.nix)
-          fake_hash="sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
-
-          restore_old_hash() {
-            sed -i "s|vendorHash = \"$fake_hash\";|vendorHash = \"$old_hash\";|" flake.nix
-          }
-
-          sed -i "s|vendorHash = \"sha256-[^\"]*\";|vendorHash = \"$fake_hash\";|" flake.nix
-
-          set +e
-          output=$(nix build '.#default' --no-link -L 2>&1)
-          status=$?
-          set -e
-
-          if [ "$status" -eq 0 ]; then
-            restore_old_hash
-            echo "::error::nix build succeeded with a fake vendorHash"
-            exit 1
-          fi
-
-          new_hash=$(grep -m1 -oP 'got:\s+\Ksha256-[A-Za-z0-9+/=]+' <<< "$output" || true)
-          if [ -z "$new_hash" ]; then
-            restore_old_hash
-            echo "::error::Failed to extract vendorHash from nix build output"
-            echo "$output"
-            exit 1
-          fi
-
-          sed -i "s|vendorHash = \"$fake_hash\";|vendorHash = \"$new_hash\";|" flake.nix
+          bash scripts/update-nix-vendor-hash.sh
 
           if git diff --quiet -- go.mod go.sum flake.nix; then
             echo "changed=false" >> "$GITHUB_OUTPUT"
@@ -102,10 +68,6 @@ jobs:
           fi
 
           echo "changed=true" >> "$GITHUB_OUTPUT"
-
-      - name: Verify build
-        if: steps.compute.outputs.changed == 'true'
-        run: nix build '.#default' --no-link -L
 
       - name: Commit changes
         if: steps.compute.outputs.changed == 'true'
