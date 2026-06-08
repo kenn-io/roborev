@@ -3,10 +3,15 @@
   "extends": ["config:recommended"],
   "dependencyDashboard": true,
   "enabledManagers": ["github-actions", "gomod"],
+  "osvVulnerabilityAlerts": true,
   "minimumReleaseAge": "7 days",
   "minimumReleaseAgeBehaviour": "timestamp-required",
   "prCreation": "not-pending",
   "internalChecksFilter": "strict",
+  "vulnerabilityAlerts": {
+    "minimumReleaseAge": null,
+    "prCreation": "immediate"
+  },
   "packageRules": [
     {
       "matchManagers": ["gomod"],
