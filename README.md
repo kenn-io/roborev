@@ -138,12 +138,14 @@ commits that touch Go files.
 
 ```bash
 brew install prek     # or use your preferred prek install method
+mise use --global npm:renovate@latest
 prek install          # install the local git hook
 prek run --all-files  # run the configured checks manually
 ```
 
 If the hook rewrites files, re-stage them and re-run `git commit`. Use
-`make lint-ci` when you want a non-mutating lint check.
+`make lint-ci` when you want a non-mutating lint check. Use
+`make check-renovate-config` to validate `renovate.json` directly.
 
 ## Commands
 

@@ -18,3 +18,11 @@ language = "system"
 entry = "make lint"
 pass_filenames = false
 always_run = true
+
+[[repos.hooks]]
+id = "renovate-config-validator"
+name = "renovate config validator"
+language = "system"
+entry = "make check-renovate-config"
+pass_filenames = false
+always_run = true
