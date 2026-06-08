@@ -3,7 +3,6 @@
   "extends": ["config:recommended"],
   "dependencyDashboard": true,
   "enabledManagers": ["github-actions", "gomod"],
-  "schedule": ["before 5am on monday"],
   "minimumReleaseAge": "7 days",
   "minimumReleaseAgeBehaviour": "timestamp-required",
   "prCreation": "not-pending",
