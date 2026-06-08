@@ -93,7 +93,7 @@ func TestStreamEventsRawReturnsBeforeStreamCloses(t *testing.T) {
 	line, err := bufio.NewReader(resp.Body).ReadString('\n')
 	require.NoError(t, err)
 	assert.Equal(http.StatusOK, resp.StatusCode)
-	assert.Equal("{\"type\":\"ready\"}\n", line)
+	assert.JSONEq(`{"type":"ready"}`, line)
 }
 
 func TestRawHelpersRouteRequests(t *testing.T) {
