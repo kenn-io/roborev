@@ -15,6 +15,8 @@ import (
 	"go.kenn.io/roborev/internal/config"
 )
 
+const piJSONSchemaInstallCommand = "pi install npm:@nqbao/pi-json-schema"
+
 // PiAgent runs code reviews using the pi CLI
 type PiAgent struct {
 	Command             string         // The pi command to run (default: "pi")
@@ -212,7 +214,13 @@ func (a *PiAgent) ClassifyWithSchema(
 		if ctxErr := contextProcessError(ctx, tracker, err, nil); ctxErr != nil {
 			return nil, ctxErr
 		}
-		return nil, fmt.Errorf("pi classifier failed: %w\nstderr: %s", err, strings.TrimSpace(stderrBuf.String()))
+		stderr := strings.TrimSpace(stderrBuf.String())
+		if piMissingJSONSchemaExtension(stderr) {
+			return nil, fmt.Errorf(
+				"pi classifier failed: %w\nstderr: %s\n\nPi JSON Schema extension is required for classify_agent = \"pi\". Install it with: %s",
+				err, stderr, piJSONSchemaInstallCommand)
+		}
+		return nil, fmt.Errorf("pi classifier failed: %w\nstderr: %s", err, stderr)
 	}
 
 	result, err := os.ReadFile(outputPath)
@@ -224,6 +232,16 @@ func (a *PiAgent) ClassifyWithSchema(
 		return nil, fmt.Errorf("pi classifier output is not valid JSON: %q", string(result))
 	}
 	return json.RawMessage(result), nil
+}
+
+func piMissingJSONSchemaExtension(stderr string) bool {
+	msg := strings.ToLower(stderr)
+	if !strings.Contains(msg, "unknown option") && !strings.Contains(msg, "unrecognized option") {
+		return false
+	}
+	return strings.Contains(msg, "--json-schema") ||
+		strings.Contains(msg, "--json-output") ||
+		strings.Contains(msg, "--json-fallback")
 }
 
 func (a *PiAgent) Review(

@@ -212,6 +212,17 @@ See [configuration guide](https://roborev.io/configuration/) for all options.
 
 roborev auto-detects installed agents.
 
+To use Pi as the auto-design routing classifier (`classify_agent = "pi"`),
+install the JSON Schema output extension too:
+
+```bash
+pi install npm:@nqbao/pi-json-schema
+```
+
+roborev loads this extension explicitly when it invokes the classifier. Keeping
+it installed in Pi makes the classifier setup visible in `pi list` and avoids
+runtime package-fetch surprises in offline or locked-down environments.
+
 ### Routing Claude Code to a proxy (Ollama, LiteLLM, etc.)
 
 The `claude-code` agent accepts a model spec of the form `<model>@<base_url>`.

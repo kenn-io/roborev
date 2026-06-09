@@ -216,6 +216,28 @@ exit 12
 	assert.Contains(t, err.Error(), "boom")
 }
 
+func TestPiClassifyWithSchemaHintsMissingJSONSchemaExtension(t *testing.T) {
+	skipIfWindows(t)
+
+	script := `#!/bin/sh
+case "$1" in *etxtbsy*) exit 0;; esac
+echo "unknown option --json-schema" >&2
+exit 2
+`
+
+	_, err := NewPiAgent(writeTempCommand(t, script)).ClassifyWithSchema(
+		context.Background(),
+		t.TempDir(),
+		"HEAD",
+		"classify me",
+		jsonRaw(`{"type":"object"}`),
+		nil,
+	)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "Pi JSON Schema extension")
+	assert.Contains(t, err.Error(), "pi install npm:@nqbao/pi-json-schema")
+}
+
 func jsonRaw(s string) []byte {
 	return []byte(s)
 }
