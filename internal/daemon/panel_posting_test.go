@@ -209,6 +209,43 @@ func TestSynthesisFailedPostsRawFallback(t *testing.T) {
 	assert.NotEmpty(*statuses, "commit status set")
 }
 
+// TestSynthesisQuotaFailureDefersInsteadOfRawFallback covers the quota-exhausted
+// synthesis case: the members produced real review output but the consolidation
+// step failed on quota exhaustion. Rather than posting the degraded "Synthesis
+// unavailable" raw fallback, the run defers for a later retry (when quota
+// resets) — no comment, a pending status, a deferred attempt, and a retired
+// panel — so the PR eventually gets a properly synthesized comment.
+func TestSynthesisQuotaFailureDefersInsteadOfRawFallback(t *testing.T) {
+	assert := assert.New(t)
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	comments := h.CaptureComments()
+	statuses := h.CaptureCommitStatuses()
+
+	const headSHA = "synthquota123456"
+	created, err := h.DB.ReserveReviewAttempt("acme/api", 90, headSHA, time.Now())
+	require.NoError(t, err)
+	require.True(t, created, "attempt row reserved")
+
+	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 90, headSHA, "base.."+headSHA,
+		[]jobSpec{{Agent: "test", ReviewType: "review", Status: "done", Output: "Member finding X"}})
+	h.markJobFailed(t, synth.ID, reviewpkg.QuotaErrorPrefix+"agent test quota exhausted")
+
+	h.Poller.handleReviewFailed(ciEvent(synth.ID, "review.failed"))
+
+	assert.Empty(*comments, "synthesis quota failure must not post the degraded raw fallback")
+	require.Len(t, *statuses, 1, "synthesis quota defer sets exactly one status")
+	assert.Equal("pending", (*statuses)[0].State, "synthesis quota defer status is pending, never failure")
+	assert.False(h.panelPostedAt(t, panel.ID), "deferred panel is not marked posted")
+	assert.True(h.panelRetiredAt(t, panel.ID), "deferred panel is retired (removed from active set)")
+
+	attempt, err := h.DB.GetReviewAttempt("acme/api", 90, headSHA)
+	require.NoError(t, err)
+	require.NotNil(t, attempt)
+	assert.Equal("deferred", attempt.State, "attempt deferred for retry")
+	assert.Equal("transient", attempt.LastErrorClass, "quota defer records the retryable class")
+	assert.NotNil(attempt.NextAttemptAt, "quota defer schedules a next attempt")
+}
+
 func TestSynthesisCanceledDoesNotPostRawFallback(t *testing.T) {
 	assert := assert.New(t)
 	h := newCIPollerHarness(t, "https://github.com/acme/api.git")

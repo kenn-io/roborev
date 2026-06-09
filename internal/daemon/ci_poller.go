@@ -1793,7 +1793,7 @@ func (p *CIPoller) finalizePanelRun(row *storage.CIPanel, members []storage.Batc
 	}
 	consecutiveGenuine := attempt.ConsecutiveGenuineAttempts
 
-	out := classifyPanelOutcome(results, consecutiveGenuine)
+	out := classifyPanelOutcome(results, p.synthesisFailureResult(row), consecutiveGenuine)
 	switch out.Kind {
 	case OutcomePost, OutcomeAllSkip:
 		p.postPanelComment(row, members)
@@ -1805,6 +1805,26 @@ func (p *CIPoller) finalizePanelRun(row *storage.CIPanel, members []storage.Batc
 		p.deferTransientPanel(row, attempt, out.LastErrorExcerpt)
 	case OutcomeDeferGenuine:
 		p.deferGenuinePanel(row, attempt, out.LastErrorExcerpt)
+	}
+}
+
+// synthesisFailureResult returns the panel's synthesis job as a ReviewResult
+// when that job is in a FAILED state, so finalize can defer (rather than post
+// the degraded raw-member fallback) when the consolidation step failed on quota
+// exhaustion or a transient provider outage. It returns nil when the synthesis
+// job is done, missing, or unreadable: a done synthesis posts, and a load error
+// must never block posting on a transient DB hiccup. classifyPanelOutcome only
+// acts on the quota/transient sub-cases, so a genuine synthesis failure still
+// falls through to the raw fallback.
+func (p *CIPoller) synthesisFailureResult(row *storage.CIPanel) *reviewpkg.ReviewResult {
+	synth, err := p.db.GetSynthesisJob(row.PanelRunUUID)
+	if err != nil || synth == nil || synth.Status != storage.JobStatusFailed {
+		return nil
+	}
+	return &reviewpkg.ReviewResult{
+		Agent:  synth.Agent,
+		Status: reviewpkg.ResultFailed,
+		Error:  synth.Error,
 	}
 }
 

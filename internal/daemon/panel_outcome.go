@@ -42,11 +42,21 @@ type PanelOutcome struct {
 }
 
 // classifyPanelOutcome decides a panel run's finalize outcome from its member
-// results and the HEAD's consecutive-genuine streak. It is PURE: no DB, no
-// network, so it unit-tests fast. consecutiveGenuine is the streak recorded
-// BEFORE this attempt (0 when no attempt row exists yet).
+// results, the synthesis job's outcome, and the HEAD's consecutive-genuine
+// streak. It is PURE: no DB, no network, so it unit-tests fast.
+// consecutiveGenuine is the streak recorded BEFORE this attempt (0 when no
+// attempt row exists yet). synthesis is the synthesis job's outcome as a
+// ReviewResult, or nil when it is not in a failed state (done/missing).
 //
 // Precedence, applied in order:
+//  0. synthesis failed on quota exhaustion or a transient provider outage ->
+//     OutcomeDeferTransient. The consolidation step could not run, not that the
+//     reviews are unusable, so wait for the real synthesis (when quota resets or
+//     the provider recovers) rather than post the degraded "Synthesis
+//     unavailable" raw fallback. A genuine synthesis failure is NOT caught here;
+//     it falls through to the member rules below, where a member with output
+//     still posts the raw fallback (retrying a deterministic error would not
+//     help).
 //  1. any done member with non-empty output -> OutcomePost (a partial review is
 //     better than nothing once any reviewer landed real output).
 //  2. else any transient-outage failure -> OutcomeDeferTransient (wait for the
@@ -54,7 +64,13 @@ type PanelOutcome struct {
 //  3. else any genuine failure -> OutcomeGenuineGiveUp when this attempt would
 //     hit the give-up cap (consecutiveGenuine+1), otherwise OutcomeDeferGenuine.
 //  4. else (all quota/timeout skips, or empty) -> OutcomeAllSkip.
-func classifyPanelOutcome(results []reviewpkg.ReviewResult, consecutiveGenuine int) PanelOutcome {
+func classifyPanelOutcome(
+	results []reviewpkg.ReviewResult, synthesis *reviewpkg.ReviewResult, consecutiveGenuine int,
+) PanelOutcome {
+	if synthesis != nil &&
+		(reviewpkg.IsQuotaFailure(*synthesis) || reviewpkg.IsTransientFailure(*synthesis)) {
+		return PanelOutcome{Kind: OutcomeDeferTransient, LastErrorExcerpt: synthesis.Error}
+	}
 	if hasReviewOutput(results) {
 		return PanelOutcome{Kind: OutcomePost}
 	}
