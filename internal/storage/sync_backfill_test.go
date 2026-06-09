@@ -293,6 +293,60 @@ func TestGetJobsToSync_IncludesSource(t *testing.T) {
 	assert.Equal(t, JobSourceCI, found.Source)
 }
 
+// TestUpsertPulledJob_TerminalRerunClearsStaleCost guards the priced-to-unpriced
+// rerun across sync. A cleared token_usage binds as NULL, so a plain COALESCE
+// upsert would preserve a prior attempt's cost; since command_line is not synced,
+// the cost fallback in costEligible would then count that stale value. A terminal
+// pull must overwrite token_usage, while a non-terminal (requeued) pull preserves
+// it until the re-attempt completes.
+func TestUpsertPulledJob_TerminalRerunClearsStaleCost(t *testing.T) {
+	assert := assert.New(t)
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo, err := db.GetOrCreateRepo("/test/repo-cost-sync")
+	require.NoError(t, err)
+
+	base := time.Now().UTC()
+	uuid := "cost-sync-rerun-uuid"
+	priced := PulledJob{
+		UUID:            uuid,
+		RepoIdentity:    "/test/repo-cost-sync",
+		GitRef:          "HEAD",
+		Agent:           "codex",
+		Status:          string(JobStatusDone),
+		TokenUsage:      `{"cost_usd":2.50,"has_cost":true}`,
+		SourceMachineID: "machine-a",
+		EnqueuedAt:      base,
+		UpdatedAt:       base,
+	}
+	require.NoError(t, db.UpsertPulledJob(priced, repo.ID, nil))
+
+	tokenUsage := func() string {
+		var tu string
+		require.NoError(t, db.QueryRow(
+			`SELECT COALESCE(token_usage, '') FROM review_jobs WHERE uuid = ?`, uuid).Scan(&tu))
+		return tu
+	}
+	require.Contains(t, tokenUsage(), "2.50", "priced cost stored on first pull")
+
+	// A newer non-terminal (requeued) pull must not wipe a recorded cost: the
+	// re-attempt has not completed, so the prior cost stands until it does.
+	requeued := priced
+	requeued.Status = string(JobStatusQueued)
+	requeued.TokenUsage = ""
+	requeued.UpdatedAt = base.Add(1 * time.Minute)
+	require.NoError(t, db.UpsertPulledJob(requeued, repo.ID, nil))
+	assert.Contains(tokenUsage(), "2.50", "queued rerun pull preserves the prior cost")
+
+	// A newer terminal pull that reports no cost clears the stale value.
+	rerunDone := priced
+	rerunDone.TokenUsage = ""
+	rerunDone.UpdatedAt = base.Add(2 * time.Minute)
+	require.NoError(t, db.UpsertPulledJob(rerunDone, repo.ID, nil))
+	assert.Empty(tokenUsage(), "terminal unpriced rerun pull clears the stale cost")
+}
+
 func TestUpsertPulledJob_PreservesWorktreePath(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()

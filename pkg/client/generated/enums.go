@@ -8,19 +8,37 @@ import (
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 )
 
+// GetCostQueryBranchEmpty Only jobs with empty/unset branch
+type GetCostQueryBranchEmpty string
+
+const (
+	False GetCostQueryBranchEmpty = "false"
+	True  GetCostQueryBranchEmpty = "true"
+)
+
+// Validate checks if the GetCostQueryBranchEmpty value is valid
+func (g GetCostQueryBranchEmpty) Validate() error {
+	switch g {
+	case False, True:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid GetCostQueryBranchEmpty value, got: %v", g))
+	}
+}
+
 // ListJobsQueryBranchIncludeEmpty Include jobs with no branch when filtering by branch
 type ListJobsQueryBranchIncludeEmpty string
 
 const (
-	Empty ListJobsQueryBranchIncludeEmpty = ""
-	False ListJobsQueryBranchIncludeEmpty = "false"
-	True  ListJobsQueryBranchIncludeEmpty = "true"
+	Empty                                ListJobsQueryBranchIncludeEmpty = ""
+	ListJobsQueryBranchIncludeEmptyFalse ListJobsQueryBranchIncludeEmpty = "false"
+	ListJobsQueryBranchIncludeEmptyTrue  ListJobsQueryBranchIncludeEmpty = "true"
 )
 
 // Validate checks if the ListJobsQueryBranchIncludeEmpty value is valid
 func (l ListJobsQueryBranchIncludeEmpty) Validate() error {
 	switch l {
-	case Empty, False, True:
+	case Empty, ListJobsQueryBranchIncludeEmptyFalse, ListJobsQueryBranchIncludeEmptyTrue:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ListJobsQueryBranchIncludeEmpty value, got: %v", l))

@@ -27,6 +27,10 @@ type ListCommentsResponse = ListCommentsOutputBody
 
 type ListCommentsErrorResponse = ErrorModel
 
+type GetCostResponse = CostAggregate
+
+type GetCostErrorResponse = ErrorModel
+
 type EnqueueJobResponse struct {
 	EnqueueJob_Response_OneOf *EnqueueJob_Response_OneOf `json:"-"`
 }
@@ -235,6 +239,13 @@ type ListCommentsResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *ListCommentsResponse
+}
+
+type GetCostResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *GetCostResponse
 }
 
 type EnqueueJobResp struct {

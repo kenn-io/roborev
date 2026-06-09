@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"database/sql"
+	"fmt"
 	"net/http"
 	"strings"
 	"testing"
@@ -73,6 +74,17 @@ func setJobTiming(t *testing.T, db *storage.DB, jobID int64, startedAt, finished
 	t.Helper()
 	_, err := db.Exec(`UPDATE review_jobs SET started_at = ?, finished_at = ? WHERE id = ?`, startedAt, finishedAt, jobID)
 	require.NoError(t, err)
+}
+
+// seedJobCost prices a job the way the worker does — token usage scoped to the
+// job's captured session — by assigning a session id and storing the usage
+// blob against it.
+func seedJobCost(t *testing.T, db *storage.DB, jobID int64, tokenUsageJSON string) {
+	t.Helper()
+	sessionID := fmt.Sprintf("sess-%d", jobID)
+	_, err := db.Exec(`UPDATE review_jobs SET session_id = ? WHERE id = ?`, sessionID, jobID)
+	require.NoError(t, err)
+	require.NoError(t, db.SaveJobTokenUsage(jobID, sessionID, tokenUsageJSON))
 }
 
 // panelPostedAt reports whether the panel row's posted_at is set.
@@ -511,9 +523,9 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 		setJobTiming(t, h.DB, members[0].ID, "2026-06-01T18:00:00Z", "2026-06-01T18:04:32Z")
 		setJobTiming(t, h.DB, members[1].ID, "2026-06-01T18:00:00Z", "2026-06-01T18:02:08Z")
 		setJobTiming(t, h.DB, synth.ID, "2026-06-01T18:04:40Z", "2026-06-01T18:04:58Z")
-		require.NoError(t, h.DB.SaveJobTokenUsage(members[0].ID, `{"cost_usd":0.11,"has_cost":true}`))
-		require.NoError(t, h.DB.SaveJobTokenUsage(members[1].ID, `{"cost_usd":0.06,"has_cost":true}`))
-		require.NoError(t, h.DB.SaveJobTokenUsage(synth.ID, `{"cost_usd":0.03,"has_cost":true}`))
+		seedJobCost(t, h.DB, members[0].ID, `{"cost_usd":0.11,"has_cost":true}`)
+		seedJobCost(t, h.DB, members[1].ID, `{"cost_usd":0.06,"has_cost":true}`)
+		seedJobCost(t, h.DB, synth.ID, `{"cost_usd":0.03,"has_cost":true}`)
 		h.completeSynthesisWithReview(t, synth.ID, "Medium issue found.")
 
 		h.Poller.handleReviewCompleted(ciEvent(synth.ID, "review.completed"))
@@ -540,9 +552,9 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 		setJobTiming(t, h.DB, members[0].ID, "2026-06-01T18:00:00Z", "2026-06-01T18:04:32Z")
 		setJobTiming(t, h.DB, members[1].ID, "2026-06-01T18:00:00Z", "2026-06-01T18:02:08Z")
 		setJobTiming(t, h.DB, synth.ID, "2026-06-01T18:04:40Z", "2026-06-01T18:04:58Z")
-		require.NoError(t, h.DB.SaveJobTokenUsage(members[0].ID, `{"cost_usd":0.11,"has_cost":true}`))
-		require.NoError(t, h.DB.SaveJobTokenUsage(members[1].ID, `{"cost_usd":0.06,"has_cost":true}`))
-		require.NoError(t, h.DB.SaveJobTokenUsage(synth.ID, `{"cost_usd":0.03,"has_cost":true}`))
+		seedJobCost(t, h.DB, members[0].ID, `{"cost_usd":0.11,"has_cost":true}`)
+		seedJobCost(t, h.DB, members[1].ID, `{"cost_usd":0.06,"has_cost":true}`)
+		seedJobCost(t, h.DB, synth.ID, `{"cost_usd":0.03,"has_cost":true}`)
 		h.completeSynthesisWithReview(t, synth.ID, "Medium issue found.")
 
 		h.Poller.handleReviewCompleted(ciEvent(synth.ID, "review.completed"))
@@ -566,7 +578,7 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 			})
 		setJobTiming(t, h.DB, members[0].ID, "2026-06-01T18:00:00Z", "2026-06-01T18:04:32Z")
 		setJobTiming(t, h.DB, members[1].ID, "2026-06-01T18:00:00Z", "2026-06-01T18:01:14Z")
-		require.NoError(t, h.DB.SaveJobTokenUsage(members[0].ID, `{"cost_usd":0.11,"has_cost":true}`))
+		seedJobCost(t, h.DB, members[0].ID, `{"cost_usd":0.11,"has_cost":true}`)
 		h.completeSynthesisWithReview(t, synth.ID, "Medium issue found.")
 
 		h.Poller.handleReviewCompleted(ciEvent(synth.ID, "review.completed"))

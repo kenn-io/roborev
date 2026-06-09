@@ -297,7 +297,7 @@ func TestTUIQueueCompactMode(t *testing.T) {
 
 	output := m.View().Content
 
-	assert.Contains(t, output, "roborev queue")
+	assert.Contains(t, output, "roborev")
 
 	assert.NotContains(t, output, "JobID")
 

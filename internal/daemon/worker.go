@@ -343,6 +343,17 @@ func (wp *WorkerPool) prepareJobCheckout(
 	}, nil
 }
 
+// markAgentInvoked records that an agent is being invoked for this attempt. Call
+// it only after all pre-agent gates pass, immediately before the agent runs, so
+// a job that fails a gate is never counted as an agent run. This is the synced
+// cost-eligibility signal (and stores the command line for TUI display); a
+// failed write only under-reports cost, so it is logged, not fatal.
+func (wp *WorkerPool) markAgentInvoked(workerID string, job *storage.ReviewJob, a agent.Agent) {
+	if err := wp.db.MarkJobAgentInvoked(job.ID, workerID, a.CommandLine()); err != nil {
+		log.Printf("[%s] Error marking agent invoked for job %d: %v", workerID, job.ID, err)
+	}
+}
+
 func (wp *WorkerPool) jobRequiresCIExactCheckout(job *storage.ReviewJob) (bool, error) {
 	if job == nil || job.PanelRunUUID == "" || job.IsFixJob() {
 		return false, nil
@@ -698,12 +709,6 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		log.Printf("[%s] Agent %s not available, using %s", workerID, job.Agent, agentName)
 	}
 
-	// Store the actual command line so the TUI displays what the
-	// daemon executes, not a client-side reconstruction.
-	if err := wp.db.SaveJobCommandLine(job.ID, a.CommandLine()); err != nil {
-		log.Printf("[%s] Error saving command line: %v", workerID, err)
-	}
-
 	// Enforce the final submission size after all prompt transformations.
 	// Oversized prompts are deterministic and should never be sent to any
 	// agent just to discover a context-window failure.
@@ -784,6 +789,10 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		reviewRepoPath = wt.Dir
 		log.Printf("[%s] Fix job %d: running agent in worktree %s", workerID, job.ID, wt.Dir)
 	}
+
+	// Record that an agent is being invoked, now that all pre-agent gates
+	// (prompt size, worktree creation) have passed.
+	wp.markAgentInvoked(workerID, job, a)
 
 	// Run the review
 	log.Printf("[%s] Running %s %sreview (job %d)...",
@@ -1289,7 +1298,7 @@ func (wp *WorkerPool) captureTokenUsageForSession(
 	if usage == nil {
 		return
 	}
-	if err := wp.db.SaveJobTokenUsage(job.ID, tokens.ToJSON(usage)); err != nil {
+	if err := wp.db.SaveJobTokenUsage(job.ID, capturedSession, tokens.ToJSON(usage)); err != nil {
 		log.Printf("[%s] Warning: save token usage for job %d: %v",
 			workerID, job.ID, err)
 	}

@@ -1399,6 +1399,44 @@ func (s *Server) humaGetSummary(
 	return &GetSummaryOutput{Body: summary}, nil
 }
 
+// costOptionsFromInput maps request params to storage.CostOptions. An empty
+// since means all-time (zero Time); a malformed since is an error.
+func costOptionsFromInput(input *GetCostInput) (storage.CostOptions, error) {
+	opts := storage.CostOptions{
+		RepoPaths:   input.Repo,
+		Branch:      input.Branch,
+		BranchEmpty: input.BranchEmpty == "true",
+	}
+	if input.Since != "" {
+		d, err := parseDuration(input.Since)
+		if err != nil {
+			return storage.CostOptions{}, err
+		}
+		opts.Since = time.Now().Add(-d)
+	}
+	return opts, nil
+}
+
+func (s *Server) humaGetCost(
+	ctx context.Context, input *GetCostInput,
+) (*GetCostOutput, error) {
+	opts, err := costOptionsFromInput(input)
+	if err != nil {
+		return nil, huma.Error400BadRequest(
+			fmt.Sprintf("invalid since value: %s", input.Since),
+		)
+	}
+
+	cost, err := s.db.GetCostAggregate(opts)
+	if err != nil {
+		return nil, huma.Error500InternalServerError(
+			fmt.Sprintf("get cost: %v", err),
+		)
+	}
+
+	return &GetCostOutput{Body: cost}, nil
+}
+
 func (s *Server) humaCancelJob(
 	ctx context.Context, input *CancelJobInput,
 ) (*CancelJobOutput, error) {

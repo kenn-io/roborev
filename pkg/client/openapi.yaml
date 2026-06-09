@@ -272,6 +272,33 @@ components:
         - name
         - healthy
       type: object
+    CostAggregate:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/CostAggregate.json
+          format: uri
+          readOnly: true
+          type: string
+        complete:
+          type: boolean
+        jobs_total:
+          format: int64
+          type: integer
+        jobs_with_cost:
+          format: int64
+          type: integer
+        total_usd:
+          format: double
+          type: number
+      required:
+        - total_usd
+        - jobs_with_cost
+        - jobs_total
+        - complete
+      type: object
     DaemonStatus:
       additionalProperties: false
       properties:
@@ -1382,6 +1409,8 @@ components:
             - "null"
         branch:
           type: string
+        cost:
+          $ref: "#/components/schemas/CostAggregate"
         duration:
           $ref: "#/components/schemas/DurationStats"
         failures:
@@ -1415,6 +1444,7 @@ components:
         - duration
         - job_types
         - failures
+        - cost
       type: object
     SyncStatusOutputBody:
       additionalProperties: false
@@ -1691,6 +1721,61 @@ paths:
       summary: List comments for a job or commit
       tags:
         - comments
+  /api/cost:
+    get:
+      operationId: get-cost
+      parameters:
+        - description: Repo root paths (repeatable)
+          explode: true
+          in: query
+          name: repo
+          schema:
+            description: Repo root paths (repeatable)
+            items:
+              type: string
+            type:
+              - array
+              - "null"
+        - description: Filter by branch name
+          explode: false
+          in: query
+          name: branch
+          schema:
+            description: Filter by branch name
+            type: string
+        - description: Only jobs with empty/unset branch
+          explode: false
+          in: query
+          name: branch_empty
+          schema:
+            description: Only jobs with empty/unset branch
+            enum:
+              - "true"
+              - "false"
+            type: string
+        - description: Time window (e.g. 7d); default all-time
+          explode: false
+          in: query
+          name: since
+          schema:
+            description: Time window (e.g. 7d); default all-time
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/CostAggregate"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Get aggregate review cost
+      tags:
+        - daemon
   /api/enqueue:
     post:
       operationId: enqueue-job

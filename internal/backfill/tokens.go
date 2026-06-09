@@ -141,7 +141,7 @@ func ApplyTokenUsage(
 			result.Agent = job.Agent
 			result.Summary = merged.FormatSummary()
 			if !dryRun {
-				if err := db.SaveJobTokenUsage(job.ID, tokens.ToJSON(merged)); err != nil {
+				if err := db.SaveJobTokenUsage(job.ID, job.SessionID, tokens.ToJSON(merged)); err != nil {
 					result.Status = ResultFailed
 					result.Reason = err.Error()
 					summary.Failed++

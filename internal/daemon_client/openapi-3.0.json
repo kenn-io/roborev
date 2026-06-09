@@ -328,6 +328,40 @@
         ],
         "type": "object"
       },
+      "CostAggregate": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "example": "https://example.com/CostAggregate.json",
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "complete": {
+            "type": "boolean"
+          },
+          "jobs_total": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "jobs_with_cost": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "total_usd": {
+            "format": "double",
+            "type": "number"
+          }
+        },
+        "required": [
+          "total_usd",
+          "jobs_with_cost",
+          "jobs_total",
+          "complete"
+        ],
+        "type": "object"
+      },
       "DaemonStatus": {
         "additionalProperties": false,
         "properties": {
@@ -487,6 +521,13 @@
           "diff_content": {
             "type": "string"
           },
+          "dirty_files": {
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
+          },
           "git_ref": {
             "type": "string"
           },
@@ -502,6 +543,9 @@
           "output_prefix": {
             "type": "string"
           },
+          "panel": {
+            "type": "string"
+          },
           "provider": {
             "type": "string"
           },
@@ -515,6 +559,9 @@
             "type": "string"
           },
           "since": {
+            "type": "string"
+          },
+          "source": {
             "type": "string"
           }
         },
@@ -1022,6 +1069,55 @@
         ],
         "type": "object"
       },
+      "PanelSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "members_canceled": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "members_cost_complete": {
+            "type": "boolean"
+          },
+          "members_cost_usd": {
+            "format": "double",
+            "type": "number"
+          },
+          "members_failed": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "members_skipped": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "members_succeeded": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "members_terminal": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "members_total": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "panel_run_uuid": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "panel_run_uuid",
+          "members_total",
+          "members_terminal",
+          "members_succeeded",
+          "members_failed",
+          "members_canceled",
+          "members_skipped"
+        ],
+        "type": "object"
+      },
       "PingInfo": {
         "additionalProperties": false,
         "properties": {
@@ -1291,6 +1387,48 @@
         ],
         "type": "object"
       },
+      "ResolveRepoOutputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "example": "https://example.com/ResolveRepoOutputBody.json",
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "repo": {
+            "$ref": "#/components/schemas/ResolvedRepo"
+          },
+          "tracked": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "tracked"
+        ],
+        "type": "object"
+      },
+      "ResolvedRepo": {
+        "additionalProperties": false,
+        "properties": {
+          "identity": {
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "root_path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "root_path",
+          "identity",
+          "name"
+        ],
+        "type": "object"
+      },
       "Response": {
         "additionalProperties": false,
         "properties": {
@@ -1425,8 +1563,17 @@
           "agentic": {
             "type": "boolean"
           },
+          "backup_agent": {
+            "type": "string"
+          },
+          "backup_model": {
+            "type": "string"
+          },
           "branch": {
             "type": "string"
+          },
+          "claim_blocked": {
+            "type": "boolean"
           },
           "closed": {
             "type": "boolean"
@@ -1443,6 +1590,13 @@
           },
           "diff_content": {
             "type": "string"
+          },
+          "dirty_files": {
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
           },
           "enqueued_at": {
             "format": "date-time",
@@ -1473,6 +1627,28 @@
           },
           "output_prefix": {
             "type": "string"
+          },
+          "panel_member_config_json": {
+            "type": "string"
+          },
+          "panel_member_index": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "panel_member_name": {
+            "type": "string"
+          },
+          "panel_name": {
+            "type": "string"
+          },
+          "panel_role": {
+            "type": "string"
+          },
+          "panel_run_uuid": {
+            "type": "string"
+          },
+          "panel_summary": {
+            "$ref": "#/components/schemas/PanelSummary"
           },
           "parent_job_id": {
             "format": "int64",
@@ -1596,6 +1772,9 @@
           "branch": {
             "type": "string"
           },
+          "cost": {
+            "$ref": "#/components/schemas/CostAggregate"
+          },
           "duration": {
             "$ref": "#/components/schemas/DurationStats"
           },
@@ -1637,7 +1816,8 @@
           "agents",
           "duration",
           "job_types",
-          "failures"
+          "failures",
+          "cost"
         ],
         "type": "object"
       },
@@ -1956,6 +2136,87 @@
         "summary": "List comments for a job or commit",
         "tags": [
           "comments"
+        ]
+      }
+    },
+    "/api/cost": {
+      "get": {
+        "operationId": "get-cost",
+        "parameters": [
+          {
+            "description": "Repo root paths (repeatable)",
+            "explode": true,
+            "in": "query",
+            "name": "repo",
+            "schema": {
+              "description": "Repo root paths (repeatable)",
+              "items": {
+                "type": "string"
+              },
+              "nullable": true,
+              "type": "array"
+            }
+          },
+          {
+            "description": "Filter by branch name",
+            "explode": false,
+            "in": "query",
+            "name": "branch",
+            "schema": {
+              "description": "Filter by branch name",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Only jobs with empty/unset branch",
+            "explode": false,
+            "in": "query",
+            "name": "branch_empty",
+            "schema": {
+              "description": "Only jobs with empty/unset branch",
+              "enum": [
+                "true",
+                "false"
+              ],
+              "type": "string"
+            }
+          },
+          {
+            "description": "Time window (e.g. 7d); default all-time",
+            "explode": false,
+            "in": "query",
+            "name": "since",
+            "schema": {
+              "description": "Time window (e.g. 7d); default all-time",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/CostAggregate"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Get aggregate review cost",
+        "tags": [
+          "daemon"
         ]
       }
     },
@@ -2606,6 +2867,16 @@
             }
           },
           {
+            "description": "Return all jobs (members + synthesis) of one panel run",
+            "explode": false,
+            "in": "query",
+            "name": "panel_run",
+            "schema": {
+              "description": "Return all jobs (members + synthesis) of one panel run",
+              "type": "string"
+            }
+          },
+          {
             "description": "Filter repos by path prefix",
             "explode": false,
             "in": "query",
@@ -2882,6 +3153,49 @@
           }
         },
         "summary": "Register a repository",
+        "tags": [
+          "repos"
+        ]
+      }
+    },
+    "/api/repos/resolve": {
+      "get": {
+        "operationId": "resolve-repo",
+        "parameters": [
+          {
+            "description": "Absolute path or path inside a repository",
+            "explode": false,
+            "in": "query",
+            "name": "path",
+            "schema": {
+              "description": "Absolute path or path inside a repository",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ResolveRepoOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Resolve whether a path belongs to a tracked repo",
         "tags": [
           "repos"
         ]

@@ -47,6 +47,10 @@ type ClientInterface interface {
 	ListComments(ctx context.Context, options *ListCommentsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListCommentsResponse, error)
 	ListCommentsWithResponse(ctx context.Context, options *ListCommentsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListCommentsResp, error)
 
+	// GetCost Get aggregate review cost
+	GetCost(ctx context.Context, options *GetCostRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCostResponse, error)
+	GetCostWithResponse(ctx context.Context, options *GetCostRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCostResp, error)
+
 	// EnqueueJob Enqueue a daemon job
 	EnqueueJob(ctx context.Context, options *EnqueueJobRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EnqueueJobResponseJSON, error)
 	EnqueueJobWithResponse(ctx context.Context, options *EnqueueJobRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EnqueueJobResp, error)
@@ -411,6 +415,76 @@ func (c *Client) ListComments(ctx context.Context, options *ListCommentsRequestO
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/comments")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// GetCost Get aggregate review cost
+func (c *Client) GetCost(ctx context.Context, options *GetCostRequestOptions, reqEditors ...runtime.RequestEditorFn) (*GetCostResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"branch":       {Style: "form", Explode: &[]bool{false}[0]},
+		"branch_empty": {Style: "form", Explode: &[]bool{false}[0]},
+		"since":        {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/cost",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*GetCostResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(GetCostErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "GetCostErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(GetCostResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "GetCostResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/cost")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

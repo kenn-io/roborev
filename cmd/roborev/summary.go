@@ -230,6 +230,18 @@ func printSummary(cmd *cobra.Command, s storage.Summary) {
 		cmd.Println()
 	}
 
+	// Cost (windowed, like the rest of summary)
+	if s.Cost.JobsTotal > 0 {
+		cmd.Println("Cost")
+		if s.Cost.Complete {
+			cmd.Printf("  Approx: ~$%.2f\n", s.Cost.TotalUSD)
+		} else {
+			cmd.Printf("  Approx: ~$%.2f  (%d/%d jobs reported cost)\n",
+				s.Cost.TotalUSD, s.Cost.JobsWithCost, s.Cost.JobsTotal)
+		}
+		cmd.Println()
+	}
+
 	if s.Overview.Total == 0 {
 		cmd.Println("No review data for this time window.")
 	}

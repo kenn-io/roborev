@@ -263,7 +263,9 @@ type model struct {
 	api              *roborevclient.Client
 	glamourStyle     gansi.StyleConfig // detected once at init
 	jobs             []storage.ReviewJob
-	jobStats         storage.JobStats // aggregate done/closed/open from server
+	jobStats         storage.JobStats       // aggregate done/closed/open from server
+	cost             *storage.CostAggregate // approx agent spend for the active filter scope; nil = hidden
+	costSeq          int                    // fetchSeq of the stored cost; segment hides until it matches m.fetchSeq
 	status           storage.DaemonStatus
 	selectedIdx      int
 	selectedJobID    int64                          // Track selected job by ID to maintain position on refresh
@@ -849,6 +851,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		result, cmd = m.handleJobsMsg(msg)
 	case statusMsg:
 		result, cmd = m.handleStatusMsg(msg)
+	case costMsg:
+		result, cmd = m.handleCostMsg(msg)
 	case updateCheckMsg:
 		result, cmd = m.handleUpdateCheckMsg(msg)
 	case reviewMsg:

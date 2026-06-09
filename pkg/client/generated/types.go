@@ -175,6 +175,15 @@ func (c ComponentHealth) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(c))
 }
 
+type CostAggregate struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema       *string `json:"$schema,omitempty"`
+	Complete     bool    `json:"complete"`
+	JobsTotal    int64   `json:"jobs_total"`
+	JobsWithCost int64   `json:"jobs_with_cost"`
+	TotalUsd     float64 `json:"total_usd"`
+}
+
 type DaemonStatus struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema              *string           `json:"$schema,omitempty"`
@@ -904,6 +913,7 @@ type Summary struct {
 	Schema   *string        `json:"$schema,omitempty"`
 	Agents   []AgentStats   `json:"agents,omitempty" validate:"required"`
 	Branch   *string        `json:"branch,omitempty"`
+	Cost     CostAggregate  `json:"cost"`
 	Duration DurationStats  `json:"duration"`
 	Failures FailureStats   `json:"failures"`
 	JobTypes []JobTypeStats `json:"job_types,omitempty" validate:"required"`
@@ -921,6 +931,11 @@ func (s Summary) Validate() error {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("Agents[%d]", i), err)
 			}
+		}
+	}
+	if v, ok := any(s.Cost).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Cost", err)
 		}
 	}
 	if v, ok := any(s.Duration).(runtime.Validator); ok {

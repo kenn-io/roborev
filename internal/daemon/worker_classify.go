@@ -166,9 +166,7 @@ func (wp *WorkerPool) processClassifyJob(ctx context.Context, workerID string, j
 		if !ok {
 			return false, "", selectedName, fmt.Errorf("classify_agent %q lost SchemaAgent capability after WithReasoning/WithModel", name)
 		}
-		if err := wp.db.SaveJobCommandLine(job.ID, sa.CommandLine()); err != nil {
-			log.Printf("[%s] Error saving classifier command line for job %d: %v", workerID, job.ID, err)
-		}
+		wp.markAgentInvoked(workerID, job, sa)
 		yes, reason, err := newClassifierAdapter(sa, maxBytes, jobLog).Decide(classifyCtx, in)
 		return yes, reason, selectedName, err
 	}

@@ -847,6 +847,25 @@ func (db *DB) migrate() error {
 		}
 	}
 
+	// Migration: add agent_invoked column to review_jobs if missing.
+	// agent_invoked is the authoritative "an agent actually ran this attempt"
+	// signal for cost eligibility: the worker sets it immediately before the agent
+	// call (after all pre-agent gates) and it syncs across machines. Rows that
+	// predate the column keep the default 0 and are not backfilled — a historical
+	// run that recorded token usage is still counted via the token_usage fallback
+	// in costEligible, and command_line is too unreliable a signal to seed from
+	// (it is written before some pre-agent failures, so it would re-introduce the
+	// over-count this marker exists to avoid).
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'agent_invoked'`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check agent_invoked column: %w", err)
+	}
+	if count == 0 {
+		if _, err = db.Exec(`ALTER TABLE review_jobs ADD COLUMN agent_invoked INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return fmt.Errorf("add agent_invoked column: %w", err)
+		}
+	}
+
 	// Migration: add min_severity column to review_jobs if missing
 	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'min_severity'`).Scan(&count)
 	if err != nil {
@@ -1727,7 +1746,11 @@ func demoteConflictingAutoDesignJobs(tx *sql.Tx, sourceRepoID, targetRepoID int6
 	return nil
 }
 
-// ResetStaleJobs marks all running jobs as queued (for daemon restart)
+// ResetStaleJobs marks all running jobs as queued (for daemon restart).
+// session_id and token_usage are cleared so a job interrupted mid-run (which
+// may have streamed a session id, or had a late usage write land on it) does
+// not carry the prior attempt's cost into the requeued run, matching the
+// other requeue paths (ReenqueueJob, RetryJob, FailoverJob).
 func (db *DB) ResetStaleJobs() error {
 	if _, err := db.Exec(`
 		UPDATE ci_pr_panels
@@ -1745,7 +1768,8 @@ func (db *DB) ResetStaleJobs() error {
 	}
 	_, err := db.Exec(`
 		UPDATE review_jobs
-		SET status = 'queued', worker_id = NULL, started_at = NULL
+		SET status = 'queued', worker_id = NULL, started_at = NULL,
+		    session_id = NULL, token_usage = NULL, command_line = NULL, agent_invoked = 0, synced_at = NULL
 		WHERE status = 'running'
 	`)
 	return err

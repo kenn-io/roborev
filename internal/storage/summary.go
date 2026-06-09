@@ -25,6 +25,7 @@ type Summary struct {
 	JobTypes []JobTypeStats `json:"job_types"`
 	Failures FailureStats   `json:"failures"`
 	Repos    []RepoSummary  `json:"repos,omitempty"`
+	Cost     CostAggregate  `json:"cost"`
 }
 
 // OverviewStats contains job counts by status.
@@ -172,6 +173,19 @@ func (db *DB) GetSummary(opts SummaryOptions) (*Summary, error) {
 	}
 
 	s.Failures, err = summaryFailures(tx, where, args)
+	if err != nil {
+		return nil, err
+	}
+
+	var costRepos []string
+	if opts.RepoPath != "" {
+		costRepos = []string{opts.RepoPath}
+	}
+	s.Cost, err = costAggregate(tx, CostOptions{
+		RepoPaths: costRepos,
+		Branch:    opts.Branch,
+		Since:     opts.Since,
+	})
 	if err != nil {
 		return nil, err
 	}

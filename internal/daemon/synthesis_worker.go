@@ -235,6 +235,10 @@ func (wp *WorkerPool) runSynthesisAgent(
 
 	var output string
 	if synthAgent, ok := a.(agent.SynthesisAgent); ok {
+		// No pre-agent gate on this path; mark immediately before the agent runs
+		// to keep the "set only when an agent actually runs" invariant adjacent
+		// to the call.
+		wp.markAgentInvoked(workerID, job, a)
 		output, err = synthAgent.Synthesize(ctx, prompt, agentOutput)
 	} else {
 		// Verify findings against the reviewed checkout: a panel enqueued from a
@@ -249,6 +253,9 @@ func (wp *WorkerPool) runSynthesisAgent(
 			wp.failOrRetry(workerID, job, agentName, fmt.Sprintf("prepare checkout: %v", checkoutErr))
 			return "", agentName, checkoutErr
 		}
+		// Checkout succeeded and the agent is about to run; mark it invoked only
+		// now so a checkout failure above is never miscounted as an agent run.
+		wp.markAgentInvoked(workerID, job, a)
 		output, err = a.Review(ctx, checkout.agentRepoPath, job.GitRef, prompt, agentOutput)
 	}
 	sessionWriter.Flush()
@@ -306,9 +313,6 @@ func (wp *WorkerPool) configureSynthesisAgent(
 	}
 
 	agentName := a.Name()
-	if err := wp.db.SaveJobCommandLine(job.ID, a.CommandLine()); err != nil {
-		log.Printf("[%s] Error saving command line for job %d: %v", workerID, job.ID, err)
-	}
 	return a, agentName, nil
 }
 

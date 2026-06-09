@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/internal/tokens"
 )
 
@@ -86,6 +87,76 @@ func registerNeverCalledAgent(t *testing.T, name string, called *bool) {
 		},
 	})
 	t.Cleanup(func() { agent.Unregister(name) })
+}
+
+// jobAgentInvoked reads the raw agent_invoked cost-eligibility marker for a job.
+func jobAgentInvoked(t *testing.T, tc *workerTestContext, jobID int64) bool {
+	t.Helper()
+	var invoked int
+	require.NoError(t, tc.DB.QueryRow(
+		`SELECT agent_invoked FROM review_jobs WHERE id = ?`, jobID).Scan(&invoked))
+	return invoked == 1
+}
+
+// TestRunSynthesisAgentMarksInvokedOnlyWhenAgentRuns is the regression for the
+// pre-agent over-count: a synthesis job whose checkout fails before the agent
+// runs must not be marked agent_invoked, while one whose agent actually runs
+// must be. The marker moved out of configureSynthesisAgent (which precedes the
+// checkout gate) to immediately before each agent call.
+func TestRunSynthesisAgentMarksInvokedOnlyWhenAgentRuns(t *testing.T) {
+	t.Run("checkout failure is not counted as an agent run", func(t *testing.T) {
+		tc := newWorkerTestContext(t, 1)
+		const synthAgent = "synth-checkout-fail"
+		registerPassingAgent(t, synthAgent)
+
+		_, _, synth := enqueuePanelRun(t, tc, "checkout-fail-panel", []memberSpec{
+			{name: "m0", agent: "test"},
+		})
+		// The passing agent is not a SynthesisAgent, so the regular Review path
+		// runs prepareJobCheckout. Force a CI exact checkout (source=ci) at a head
+		// that cannot resolve so the checkout fails before the agent runs, with
+		// retries pre-exhausted and no backup so the failure is terminal: FailJob
+		// preserves agent_invoked, whereas a requeue would clear it and mask a
+		// marker leaked during agent configuration.
+		_, err := tc.DB.Exec(
+			`UPDATE review_jobs SET status='running', worker_id=?, retry_count=?, agent=?, backup_agent='', source=?, git_ref=? WHERE id=?`,
+			testWorkerID, maxRetries, synthAgent, storage.JobSourceCI,
+			"deadbeefdeadbeefdeadbeefdeadbeefdeadbeef", synth.ID)
+		require.NoError(t, err)
+		job, err := tc.DB.GetJobByID(synth.ID)
+		require.NoError(t, err)
+
+		_, _, runErr := tc.Pool.runSynthesisAgent(context.Background(), testWorkerID, job, "prompt")
+		require.Error(t, runErr, "checkout must fail before the agent runs")
+
+		failed, err := tc.DB.GetJobByID(synth.ID)
+		require.NoError(t, err)
+		assert.Equal(t, storage.JobStatusFailed, failed.Status, "retries exhausted -> terminal failed")
+		assert.False(t, jobAgentInvoked(t, tc, synth.ID),
+			"a checkout failure that never ran an agent must not be counted, even at terminal failure")
+	})
+
+	t.Run("successful synthesis run is counted", func(t *testing.T) {
+		tc := newWorkerTestContext(t, 1)
+		const synthAgent = "synth-runs-ok"
+		registerPassingAgent(t, synthAgent)
+
+		_, _, synth := enqueuePanelRun(t, tc, "runs-ok-panel", []memberSpec{
+			{name: "m0", agent: "test"},
+		})
+		sha := testutil.GetHeadSHA(t, tc.TmpDir)
+		_, err := tc.DB.Exec(
+			`UPDATE review_jobs SET status='running', worker_id=?, agent=?, source='', git_ref=? WHERE id=?`,
+			testWorkerID, synthAgent, sha, synth.ID)
+		require.NoError(t, err)
+		job, err := tc.DB.GetJobByID(synth.ID)
+		require.NoError(t, err)
+
+		_, _, runErr := tc.Pool.runSynthesisAgent(context.Background(), testWorkerID, job, "prompt")
+		require.NoError(t, runErr)
+		assert.True(t, jobAgentInvoked(t, tc, synth.ID),
+			"a synthesis agent that actually runs must be marked agent_invoked")
+	})
 }
 
 type synthesisEntrypointTestAgent struct {

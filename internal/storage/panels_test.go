@@ -434,15 +434,15 @@ func TestGetPanelSummaries(t *testing.T) {
 	setStatus(t, db, a[0].ID, JobStatusDone)
 	setStatus(t, db, a[1].ID, JobStatusFailed)
 	setStatus(t, db, a[2].ID, JobStatusSkipped)
-	require.NoError(t, db.SaveJobTokenUsage(a[0].ID, `{"cost_usd":0.10,"has_cost":true}`))
-	require.NoError(t, db.SaveJobTokenUsage(a[1].ID, `{"cost_usd":0.25,"has_cost":true}`))
-	require.NoError(t, db.SaveJobTokenUsage(a[2].ID, `{"cost_usd":0.05,"has_cost":true}`))
+	seedCost(t, db, a[0].ID, `{"cost_usd":0.10,"has_cost":true}`)
+	seedCost(t, db, a[1].ID, `{"cost_usd":0.25,"has_cost":true}`)
+	seedCost(t, db, a[2].ID, `{"cost_usd":0.05,"has_cost":true}`)
 
 	// Run B: 2 members — done + canceled (all terminal; 1 succeeded).
 	_, b := enqueuePanelRun(t, db, repo.ID, "run-B", 2)
 	setStatus(t, db, b[0].ID, JobStatusDone)
 	setStatus(t, db, b[1].ID, JobStatusCanceled)
-	require.NoError(t, db.SaveJobTokenUsage(b[0].ID, `{"cost_usd":0.20,"has_cost":true}`))
+	seedCost(t, db, b[0].ID, `{"cost_usd":0.20,"has_cost":true}`)
 
 	// Run C: 2 members — done + running (1 terminal of 2).
 	_, c := enqueuePanelRun(t, db, repo.ID, "run-C", 2)

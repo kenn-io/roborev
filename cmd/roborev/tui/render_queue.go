@@ -12,6 +12,7 @@ import (
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
 	"charm.land/lipgloss/v2/table"
+	xansi "github.com/charmbracelet/x/ansi"
 	"github.com/muesli/termenv"
 
 	"go.kenn.io/roborev/internal/agent"
@@ -268,42 +269,184 @@ func (m model) queueFullRowCells(r queueRow, hasAnyPanel, treeColor bool) []stri
 	return fullRow
 }
 
-func (m model) renderQueueView() string {
-	var b strings.Builder
-	compact := m.queueCompact()
+// costSegmentText returns the bare approximate-cost text (no separator) and
+// whether to show it. Coverage is dropped when complete. The segment hides while
+// the stored cost predates the active filter generation (m.costSeq != m.fetchSeq),
+// so a filter change cannot briefly show the prior scope's spend before the
+// refreshed cost arrives.
+func (m model) costSegmentText() (string, bool) {
+	if m.cost == nil || m.cost.JobsTotal == 0 || m.costSeq != m.fetchSeq {
+		return "", false
+	}
+	if m.cost.Complete {
+		return fmt.Sprintf("~$%.2f", m.cost.TotalUSD), true
+	}
+	return fmt.Sprintf("~$%.2f (%d/%d)", m.cost.TotalUSD, m.cost.JobsWithCost, m.cost.JobsTotal), true
+}
 
-	// Title with version, optional update notification, and filter indicators (in stack order)
-	var title strings.Builder
-	fmt.Fprintf(&title, "roborev queue (%s)", version.Version)
+// statusSeg is one segment of the queue status line. Segments with a lower prio
+// are dropped first when the line does not fit the terminal width.
+type statusSeg struct {
+	rendered string // already styled; display width measured with xansi
+	prio     int
+}
+
+// fitStatusSegments joins rendered segments in slice order with sep, dropping
+// the lowest-prio segment until the result fits within width. The single
+// highest-prio segment is always kept; callers truncate as a final guard.
+func fitStatusSegments(segs []statusSeg, sep string, width int) string {
+	keep := make([]bool, len(segs))
+	for i := range keep {
+		keep[i] = true
+	}
+	join := func() string {
+		parts := make([]string, 0, len(segs))
+		for i, s := range segs {
+			if keep[i] {
+				parts = append(parts, s.rendered)
+			}
+		}
+		return strings.Join(parts, sep)
+	}
+	for width > 0 && xansi.StringWidth(join()) > width {
+		lowest, kept := -1, 0
+		for i := range segs {
+			if !keep[i] {
+				continue
+			}
+			kept++
+			if lowest == -1 || segs[i].prio < segs[lowest].prio {
+				lowest = i
+			}
+		}
+		if kept <= 1 {
+			break
+		}
+		keep[lowest] = false
+	}
+	return join()
+}
+
+// renderQueueStatusLine builds the width-adaptive status line (line 2 of the
+// queue header). Segments are dropped lowest-priority-first until the line fits
+// m.width: Completed and Closed go before Workers, while Open and approximate
+// cost are kept longest. Version info lives in the title bar, so it never
+// appears here.
+func (m model) renderQueueStatusLine(done, closed, open int) string {
+	width := m.width
+	if width <= 0 {
+		width = 100
+	}
+	sep := statusStyle.Render(" | ")
+
+	segs := []statusSeg{
+		{rendered: statusStyle.Render(fmt.Sprintf("Workers: %d/%d", m.status.ActiveWorkers, m.status.MaxWorkers)), prio: 30},
+		{rendered: statusStyle.Render(fmt.Sprintf("Completed: %d", done)), prio: 10},
+		{rendered: statusStyle.Render(fmt.Sprintf("Closed: %d", closed)), prio: 20},
+		{rendered: statusStyle.Render(fmt.Sprintf("Open: %d", open)), prio: 90},
+	}
+	if text, ok := m.costSegmentText(); ok {
+		segs = append(segs, statusSeg{rendered: statusStyle.Render(text), prio: 80})
+	}
+
+	line := fitStatusSegments(segs, sep, width)
+	if xansi.StringWidth(line) > width {
+		line = xansi.Truncate(line, width, "")
+	}
+	return line
+}
+
+// titleFilters renders the active repo/branch filter chips (in stack order) in
+// the title style, each with a leading space, or "" when no filter is active.
+func (m model) titleFilters() string {
+	var chips strings.Builder
 	for _, filterType := range m.filterStack {
 		switch filterType {
 		case filterTypeRepo:
 			if len(m.activeRepoFilter) > 0 {
-				filterName := m.repoFilterDisplayName()
-				fmt.Fprintf(&title, " [f: %s]", filterName)
+				fmt.Fprintf(&chips, " [f: %s]", m.repoFilterDisplayName())
 			}
 		case filterTypeBranch:
 			if m.activeBranchFilter != "" {
-				fmt.Fprintf(&title, " [b: %s]", m.activeBranchFilter)
+				fmt.Fprintf(&chips, " [b: %s]", m.activeBranchFilter)
 			}
 		}
 	}
+	if chips.Len() == 0 {
+		return ""
+	}
+	return titleStyle.Render(chips.String())
+}
+
+// fitTitleLeft fits the left side of the title (app + filters + the
+// hiding-closed flag) to width. On overflow it drops the hiding-closed flag
+// first, then truncates with an ellipsis so the leftmost, most important
+// filters (repo before branch) survive longest.
+func fitTitleLeft(app, filters, hideClosed string, width int) string {
+	if full := app + filters + hideClosed; xansi.StringWidth(full) <= width {
+		return full
+	}
+	if withFilters := app + filters; xansi.StringWidth(withFilters) <= width {
+		return withFilters
+	}
+	return xansi.Truncate(app+filters, width, "…")
+}
+
+// renderQueueTitle builds line 1 of the queue header. The app name and active
+// filter chips take the prominent left space; the client version is reference
+// info, right-aligned and dimmed, and is the first thing dropped when the line
+// is tight (then the hiding-closed flag, then filter text truncates). On a
+// daemon/client version mismatch the daemon version is shown in red inside the
+// parentheses ("roborev (<client>, Daemon: <daemon>)") in place of the
+// right-aligned version, so the warning is prominent and self-explanatory.
+func (m model) renderQueueTitle() string {
+	width := m.width
+	if width <= 0 {
+		width = 100
+	}
+
+	var app string
+	if m.versionMismatch {
+		daemonVersion := m.daemonVersion
+		if daemonVersion == "" {
+			daemonVersion = "?"
+		}
+		app = titleStyle.Render("roborev ("+version.Version+", ") +
+			errorStyle.Render("Daemon: "+daemonVersion) +
+			titleStyle.Render(")")
+	} else {
+		app = titleStyle.Render("roborev")
+	}
+
+	filters := m.titleFilters()
+	hideClosed := ""
 	if m.hideClosed {
-		title.WriteString(" [hiding closed]")
+		hideClosed = titleStyle.Render(" [hiding closed]")
 	}
-	b.WriteString(titleStyle.Render(title.String()))
-	// In compact mode, show version mismatch inline since the status area is hidden
-	if compact && m.versionMismatch {
-		b.WriteString(" ")
-		b.WriteString(m.renderDaemonStatus())
+
+	// Matching: right-align the dimmed version when there is room for it (with
+	// at least two spaces of separation); otherwise it drops out entirely.
+	if !m.versionMismatch {
+		right := statusStyle.Render(version.Version)
+		full := app + filters + hideClosed
+		if gap := width - xansi.StringWidth(full) - xansi.StringWidth(right); gap >= 2 {
+			return full + strings.Repeat(" ", gap) + right
+		}
 	}
+	return fitTitleLeft(app, filters, hideClosed, width)
+}
+
+func (m model) renderQueueView() string {
+	var b strings.Builder
+	compact := m.queueCompact()
+
+	b.WriteString(m.renderQueueTitle())
 	b.WriteString("\x1b[K\n") // Clear to end of line
 
 	if !compact {
 		// Status line - use server-side aggregate counts for paginated views
 		// (including multi-repo display names, scoped via an IN clause). Only
 		// the "(none)" branch sentinel still loads all jobs to count locally.
-		var statusLine string
 		var done, closed, open int
 		if m.activeBranchFilter == branchNone {
 			// Client-side filtered views load all jobs, so count locally
@@ -330,16 +473,7 @@ func (m model) renderQueueView() string {
 			closed = m.jobStats.Closed
 			open = m.jobStats.Open
 		}
-		b.WriteString(m.renderDaemonStatus())
-		if len(m.activeRepoFilter) > 0 || m.activeBranchFilter != "" {
-			statusLine = fmt.Sprintf(" | Completed: %d | Closed: %d | Open: %d",
-				done, closed, open)
-		} else {
-			statusLine = fmt.Sprintf(" | Workers: %d/%d | Completed: %d | Closed: %d | Open: %d",
-				m.status.ActiveWorkers, m.status.MaxWorkers,
-				done, closed, open)
-		}
-		b.WriteString(statusStyle.Render(statusLine))
+		b.WriteString(m.renderQueueStatusLine(done, closed, open))
 		b.WriteString("\x1b[K\n") // Clear status line
 
 		// Update notification on line 3 (above the table)

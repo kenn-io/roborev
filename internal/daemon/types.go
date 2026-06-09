@@ -298,6 +298,21 @@ type GetSummaryOutput struct {
 	Body *storage.Summary
 }
 
+// -- GET /api/cost --
+
+// GetCostInput holds query parameters for the cost endpoint.
+type GetCostInput struct {
+	Repo        []string `query:"repo,explode" doc:"Repo root paths (repeatable)"`
+	Branch      string   `query:"branch" doc:"Filter by branch name"`
+	BranchEmpty string   `query:"branch_empty" doc:"Only jobs with empty/unset branch" enum:"true,false"`
+	Since       string   `query:"since" doc:"Time window (e.g. 7d); default all-time"`
+}
+
+// GetCostOutput is the response for GET /api/cost.
+type GetCostOutput struct {
+	Body storage.CostAggregate
+}
+
 // RawJSONOutput is used by endpoints with union response shapes while their
 // core behavior is represented by Huma request types.
 type RawJSONOutput struct {

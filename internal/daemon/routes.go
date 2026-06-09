@@ -89,6 +89,13 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 			o.Tags = []string{"daemon"}
 		})
 
+	huma.Get(api, "/api/cost", s.humaGetCost,
+		func(o *huma.Operation) {
+			o.OperationID = "get-cost"
+			o.Summary = "Get aggregate review cost"
+			o.Tags = []string{"daemon"}
+		})
+
 	huma.Get(api, "/api/health", s.humaGetHealth,
 		func(o *huma.Operation) {
 			o.OperationID = "get-health"

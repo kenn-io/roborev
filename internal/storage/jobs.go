@@ -396,10 +396,23 @@ func (db *DB) SaveJobPrompt(jobID int64, prompt string) error {
 	return err
 }
 
-// SaveJobCommandLine stores the actual agent command line used for
-// this execution. Purely informational — reconstructed on each run.
-func (db *DB) SaveJobCommandLine(jobID int64, cmdLine string) error {
-	_, err := db.Exec(`UPDATE review_jobs SET command_line = ? WHERE id = ?`, cmdLine, jobID)
+// MarkJobAgentInvoked records that an agent was actually invoked for this
+// attempt and stores the command line that was executed. The worker calls it
+// immediately before the agent runs — after all pre-agent gates (prompt size,
+// worktree creation) — so jobs that fail a gate are never marked. agent_invoked
+// is the authoritative, synced "an agent ran" signal for cost eligibility (see
+// costEligible); command_line stays a local display/debug field. Attempt resets
+// clear both. Set fresh on each run.
+//
+// The update is scoped to the current attempt (status='running' and the given
+// workerID), so a stale worker unwinding after a cancel/retry cannot stamp the
+// marker onto a row a new attempt now owns — that would wrongly make the
+// terminal row cost-eligible. Mirrors SaveJobSessionID.
+func (db *DB) MarkJobAgentInvoked(jobID int64, workerID, cmdLine string) error {
+	_, err := db.Exec(
+		`UPDATE review_jobs SET command_line = ?, agent_invoked = 1
+		 WHERE id = ? AND status = 'running' AND worker_id = ?`,
+		cmdLine, jobID, workerID)
 	return err
 }
 
@@ -433,15 +446,26 @@ func (db *DB) SaveJobPatch(jobID int64, patch string) error {
 	return err
 }
 
-// SaveJobTokenUsage stores a JSON blob of token consumption data.
-func (db *DB) SaveJobTokenUsage(jobID int64, tokenUsageJSON string) error {
+// SaveJobTokenUsage stores a JSON blob of token consumption data, scoped to
+// the attempt that produced it. The write only lands if the row still carries
+// sessionID, so a delayed usage fetch from a prior attempt cannot stamp its
+// cost onto a row that was re-enqueued (and cleared) and is now running or
+// done under a different session.
+//
+// It also clears synced_at to invalidate the push cursor directly. A job is
+// marked terminal before its cost is captured, so this write can land in the
+// same RFC3339 second as a prior sync mark; updated_at vs synced_at is only
+// second-precise, so the cursor would compare equal and never re-select the
+// row. A NULL synced_at always re-selects it, so the cost reaches PostgreSQL.
+func (db *DB) SaveJobTokenUsage(jobID int64, sessionID, tokenUsageJSON string) error {
 	if tokenUsageJSON == "" {
 		return nil
 	}
 	now := time.Now().Format(time.RFC3339)
 	_, err := db.Exec(
-		`UPDATE review_jobs SET token_usage = ?, updated_at = ? WHERE id = ?`,
-		tokenUsageJSON, now, jobID,
+		`UPDATE review_jobs SET token_usage = ?, updated_at = ?, synced_at = NULL
+		 WHERE id = ? AND session_id = ?`,
+		tokenUsageJSON, now, jobID, sessionID,
 	)
 	return err
 }
@@ -728,9 +752,18 @@ func (db *DB) ReenqueueJob(jobID int64, opts ReenqueueOpts) error {
 	// only for review jobs so they rebuild from current git/config state.
 	// Stored-prompt jobs (task, compact, fix, insights) keep their prompt
 	// since the worker needs it and cannot regenerate it from git.
+	//
+	// synced_at is cleared because this attempt's cost metadata is cleared: if
+	// the rerun completes unpriced in the same RFC3339 second as the prior
+	// sync, the second-precise updated_at vs synced_at comparison would compare
+	// equal and never re-push, leaving stale spend in PostgreSQL. A NULL
+	// synced_at always re-selects the row (see SaveJobTokenUsage, which clears
+	// it on the symmetric cost-write path). The other attempt resets (RetryJob,
+	// FailoverJob, ResetStaleJobs, PromoteClassifyToDesignReview) clear it for
+	// the same reason.
 	result, err := conn.ExecContext(ctx, `
 		UPDATE review_jobs
-		SET status = 'queued', worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = 0, patch = NULL, session_id = NULL, model = ?, provider = ?,
+		SET status = 'queued', worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = 0, patch = NULL, session_id = NULL, token_usage = NULL, command_line = NULL, agent_invoked = 0, synced_at = NULL, model = ?, provider = ?,
 		    prompt_prebuilt = 0,
 		    prompt = CASE WHEN job_type IN ('task', 'compact', 'fix', 'insights') THEN prompt ELSE NULL END,
 		    skip_reason = NULL,
@@ -775,13 +808,13 @@ func (db *DB) RetryJob(jobID int64, workerID string, maxRetries int, retryBackof
 	if workerID != "" {
 		result, err = db.Exec(`
 			UPDATE review_jobs
-			SET status = 'queued', worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = retry_count + 1, session_id = NULL, retry_not_before = ?
+			SET status = 'queued', worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = retry_count + 1, session_id = NULL, token_usage = NULL, command_line = NULL, agent_invoked = 0, synced_at = NULL, retry_not_before = ?
 			WHERE id = ? AND retry_count < ? AND status = 'running' AND worker_id = ?
 		`, notBefore, jobID, maxRetries, workerID)
 	} else {
 		result, err = db.Exec(`
 			UPDATE review_jobs
-			SET status = 'queued', worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = retry_count + 1, session_id = NULL, retry_not_before = ?
+			SET status = 'queued', worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = retry_count + 1, session_id = NULL, token_usage = NULL, command_line = NULL, agent_invoked = 0, synced_at = NULL, retry_not_before = ?
 			WHERE id = ? AND retry_count < ? AND status = 'running'
 		`, notBefore, jobID, maxRetries)
 	}
@@ -818,6 +851,10 @@ func (db *DB) FailoverJob(jobID int64, workerID, backupAgent, backupModel string
 		    finished_at = NULL,
 		    error = NULL,
 		    session_id = NULL,
+		    token_usage = NULL,
+		    command_line = NULL,
+		    agent_invoked = 0,
+		    synced_at = NULL,
 		    retry_not_before = NULL
 		WHERE id = ?
 		  AND status = 'running'
@@ -1487,6 +1524,11 @@ func (db *DB) PromoteClassifyToDesignReview(classifyJobID int64, workerID, agent
 		    worker_id = NULL,
 		    started_at = NULL,
 		    finished_at = NULL,
+		    session_id = NULL,
+		    token_usage = NULL,
+		    command_line = NULL,
+		    agent_invoked = 0,
+		    synced_at = NULL,
 		    prompt = NULL,
 		    prompt_prebuilt = 0,
 		    error = NULL,

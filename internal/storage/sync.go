@@ -375,6 +375,7 @@ type SyncableJob struct {
 	PatchID               string
 	Status                string
 	Agentic               bool
+	AgentInvoked          bool
 	EnqueuedAt            time.Time
 	StartedAt             *time.Time
 	FinishedAt            *time.Time
@@ -396,6 +397,9 @@ type SyncableJob struct {
 	PanelMemberConfigJSON string
 	SourceMachineID       string
 	UpdatedAt             time.Time
+	UpdatedAtRaw          string
+	StartedAtRaw          string
+	FinishedAtRaw         string
 }
 
 // GetJobsToSync returns terminal jobs that need to be pushed to PostgreSQL.
@@ -405,7 +409,7 @@ func (db *DB) GetJobsToSync(machineID string, limit int) ([]SyncableJob, error) 
 		SELECT
 			j.id, j.uuid, j.repo_id, COALESCE(r.identity, ''),
 			j.commit_id, COALESCE(c.sha, ''), COALESCE(c.author, ''), COALESCE(c.subject, ''), COALESCE(c.timestamp, ''),
-			j.git_ref, COALESCE(j.session_id, ''), j.agent, COALESCE(j.model, ''), COALESCE(j.provider, ''), COALESCE(j.requested_model, ''), COALESCE(j.requested_provider, ''), COALESCE(j.reasoning, ''), COALESCE(j.job_type, 'review'), COALESCE(j.review_type, ''), COALESCE(j.patch_id, ''), j.status, j.agentic,
+			j.git_ref, COALESCE(j.session_id, ''), j.agent, COALESCE(j.model, ''), COALESCE(j.provider, ''), COALESCE(j.requested_model, ''), COALESCE(j.requested_provider, ''), COALESCE(j.reasoning, ''), COALESCE(j.job_type, 'review'), COALESCE(j.review_type, ''), COALESCE(j.patch_id, ''), j.status, j.agentic, j.agent_invoked,
 			j.enqueued_at, COALESCE(j.started_at, ''), COALESCE(j.finished_at, ''),
 			COALESCE(j.prompt, ''), j.diff_content, j.dirty_files, COALESCE(j.error, ''), COALESCE(j.token_usage, ''),
 			COALESCE(j.worktree_path, ''), COALESCE(j.source, ''), COALESCE(j.min_severity, ''), COALESCE(j.backup_agent, ''), COALESCE(j.backup_model, ''),
@@ -443,7 +447,7 @@ func (db *DB) GetJobsToSync(machineID string, limit int) ([]SyncableJob, error) 
 		err := rows.Scan(
 			&j.ID, &j.UUID, &j.RepoID, &j.RepoIdentity,
 			&commitID, &j.CommitSHA, &j.CommitAuthor, &j.CommitSubject, &commitTimestamp,
-			&j.GitRef, &j.SessionID, &j.Agent, &j.Model, &j.Provider, &j.RequestedModel, &j.RequestedProvider, &j.Reasoning, &j.JobType, &j.ReviewType, &j.PatchID, &j.Status, &j.Agentic,
+			&j.GitRef, &j.SessionID, &j.Agent, &j.Model, &j.Provider, &j.RequestedModel, &j.RequestedProvider, &j.Reasoning, &j.JobType, &j.ReviewType, &j.PatchID, &j.Status, &j.Agentic, &j.AgentInvoked,
 			&enqueuedAt, &startedAt, &finishedAt,
 			&j.Prompt, &diffContent, &dirtyFiles, &j.Error, &j.TokenUsage,
 			&j.WorktreePath, &j.Source, &j.MinSeverity, &j.BackupAgent, &j.BackupModel,
@@ -470,16 +474,19 @@ func (db *DB) GetJobsToSync(machineID string, limit int) ([]SyncableJob, error) 
 				j.StartedAt = &t
 			}
 		}
+		j.StartedAtRaw = startedAt
 		if finishedAt != "" {
 			t := parseSQLiteTime(finishedAt)
 			if !t.IsZero() {
 				j.FinishedAt = &t
 			}
 		}
+		j.FinishedAtRaw = finishedAt
 		if commitTimestamp != "" {
 			j.CommitTimestamp = parseSQLiteTime(commitTimestamp)
 		}
 		j.UpdatedAt = parseSQLiteTime(updatedAt)
+		j.UpdatedAtRaw = updatedAt
 
 		jobs = append(jobs, j)
 	}
@@ -493,23 +500,107 @@ func (db *DB) MarkJobSynced(jobID int64) error {
 	return err
 }
 
-// MarkJobsSynced updates the synced_at timestamp for multiple jobs
-func (db *DB) MarkJobsSynced(jobIDs []int64) error {
-	if len(jobIDs) == 0 {
+// JobSyncMark identifies a pushed job by the snapshot fields that distinguish
+// the exact terminal attempt that was pushed. MarkJobsSynced restores synced_at
+// only when the row still matches all of them.
+type JobSyncMark struct {
+	ID            int64
+	UpdatedAt     string // raw updated_at string from the pushed snapshot
+	TokenUsage    string // token_usage from the pushed snapshot ("" when NULL)
+	Status        string // status from the pushed snapshot (always terminal)
+	SessionID     string // session_id from the pushed snapshot ("" when NULL)
+	AgentInvoked  bool   // agent_invoked from the pushed snapshot
+	Agent         string // agent from the pushed snapshot
+	Model         string // model from the pushed snapshot ("" when NULL)
+	Provider      string // provider from the pushed snapshot ("" when NULL)
+	Error         string // error from the pushed snapshot ("" when NULL)
+	StartedAtRaw  string // raw started_at string from the pushed snapshot ("" when NULL)
+	FinishedAtRaw string // raw finished_at string from the pushed snapshot ("" when NULL)
+}
+
+// NewJobSyncMark captures the snapshot fields MarkJobsSynced compares to confirm
+// a row still matches what was pushed. Keeping the field set in one place keeps
+// the push loop and the WHERE clause in agreement.
+func NewJobSyncMark(j SyncableJob) JobSyncMark {
+	return JobSyncMark{
+		ID:            j.ID,
+		UpdatedAt:     j.UpdatedAtRaw,
+		TokenUsage:    j.TokenUsage,
+		Status:        j.Status,
+		SessionID:     j.SessionID,
+		AgentInvoked:  j.AgentInvoked,
+		Agent:         j.Agent,
+		Model:         j.Model,
+		Provider:      j.Provider,
+		Error:         j.Error,
+		StartedAtRaw:  j.StartedAtRaw,
+		FinishedAtRaw: j.FinishedAtRaw,
+	}
+}
+
+// MarkJobsSynced advances synced_at only for jobs whose pushed snapshot still
+// matches the current row. Any change since the snapshot leaves the row eligible
+// for the next push instead of stranding it behind an advanced cursor; a missed
+// match only costs a redundant re-push next cycle, which is safe.
+//
+// The guard compares fields that distinguish the pushed terminal attempt:
+//
+//   - updated_at and token_usage: a job is marked terminal before its token usage
+//     is captured, and both writes use second precision, so a capture in the same
+//     second leaves updated_at byte-identical while token_usage changes from NULL
+//     to the cost. A capture that lands after this mark is handled at the source:
+//     SaveJobTokenUsage clears synced_at so the row re-selects regardless.
+//   - status, session_id, agent_invoked: an attempt reset (ReenqueueJob, RetryJob,
+//     FailoverJob, ResetStaleJobs, PromoteClassifyToDesignReview) clears cost
+//     metadata and synced_at in the same second. updated_at and token_usage alone
+//     can still match the snapshot (e.g. an unpriced row re-enqueued in the same
+//     second leaves both unchanged), so without these the stale mark would
+//     overwrite the reset's synced_at = NULL and strand the cleared-cost state.
+//     status moves off the terminal push set on every reset; session_id and
+//     agent_invoked further pin the attempt against a same-second re-completion.
+//   - agent, model, provider, error, started_at, finished_at: for sessionless,
+//     unpriced attempts, the fields above can all match again after a reset plus
+//     same-second terminal re-completion. These attempt metadata fields keep a
+//     stale pushed snapshot from marking the new terminal attempt synced.
+//
+// All compared fields are stable on a terminal row that was not reset, so the
+// tighter guard never wrongly skips an unchanged row.
+func (db *DB) MarkJobsSynced(marks []JobSyncMark) error {
+	if len(marks) == 0 {
 		return nil
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	placeholders := make([]string, len(jobIDs))
-	args := make([]any, len(jobIDs)+1)
-	args[0] = now
-	for i, id := range jobIDs {
-		placeholders[i] = "?"
-		args[i+1] = id
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin mark jobs synced: %w", err)
 	}
-	query := fmt.Sprintf(`UPDATE review_jobs SET synced_at = ? WHERE id IN (%s)`,
-		strings.Join(placeholders, ","))
-	_, err := db.Exec(query, args...)
-	return err
+	defer func() { _ = tx.Rollback() }()
+
+	stmt, err := tx.Prepare(
+		`UPDATE review_jobs SET synced_at = ?
+		 WHERE id = ? AND updated_at = ? AND COALESCE(token_usage, '') = ?
+		   AND status = ? AND COALESCE(session_id, '') = ? AND agent_invoked = ?
+		   AND agent = ? AND COALESCE(model, '') = ? AND COALESCE(provider, '') = ?
+		   AND COALESCE(error, '') = ? AND COALESCE(started_at, '') = ?
+		   AND COALESCE(finished_at, '') = ?`)
+	if err != nil {
+		return fmt.Errorf("prepare mark jobs synced: %w", err)
+	}
+	defer stmt.Close()
+
+	for _, m := range marks {
+		invoked := 0
+		if m.AgentInvoked {
+			invoked = 1
+		}
+		if _, err := stmt.Exec(
+			now, m.ID, m.UpdatedAt, m.TokenUsage, m.Status, m.SessionID, invoked,
+			m.Agent, m.Model, m.Provider, m.Error, m.StartedAtRaw, m.FinishedAtRaw,
+		); err != nil {
+			return fmt.Errorf("mark job %d synced: %w", m.ID, err)
+		}
+	}
+	return tx.Commit()
 }
 
 // SyncableReview contains review data needed for sync
@@ -696,12 +787,12 @@ func (db *DB) UpsertPulledJob(j PulledJob, repoID int64, commitID *int64) error 
 	}
 	_, err = db.Exec(`
 		INSERT INTO review_jobs (
-			uuid, repo_id, commit_id, git_ref, session_id, agent, model, provider, requested_model, requested_provider, reasoning, job_type, review_type, patch_id, status, agentic,
+			uuid, repo_id, commit_id, git_ref, session_id, agent, model, provider, requested_model, requested_provider, reasoning, job_type, review_type, patch_id, status, agentic, agent_invoked,
 			enqueued_at, started_at, finished_at, prompt, diff_content, dirty_files, error, token_usage,
 			worktree_path, source, min_severity, backup_agent, backup_model,
 			panel_run_uuid, panel_role, panel_name, panel_member_name, panel_member_index, panel_member_config_json,
 			source_machine_id, updated_at, synced_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(uuid) DO UPDATE SET
 			status = excluded.status,
 			finished_at = excluded.finished_at,
@@ -711,11 +802,12 @@ func (db *DB) UpsertPulledJob(j PulledJob, repoID int64, commitID *int64) error 
 			requested_model = excluded.requested_model,
 			requested_provider = excluded.requested_provider,
 			git_ref = excluded.git_ref,
-			session_id = COALESCE(excluded.session_id, review_jobs.session_id),
+			session_id = CASE WHEN excluded.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased') THEN excluded.session_id ELSE COALESCE(excluded.session_id, review_jobs.session_id) END,
 			commit_id = excluded.commit_id,
 			patch_id = excluded.patch_id,
 			dirty_files = COALESCE(excluded.dirty_files, review_jobs.dirty_files),
-			token_usage = COALESCE(excluded.token_usage, review_jobs.token_usage),
+			token_usage = CASE WHEN excluded.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased') THEN excluded.token_usage ELSE COALESCE(excluded.token_usage, review_jobs.token_usage) END,
+			agent_invoked = CASE WHEN excluded.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased') THEN excluded.agent_invoked ELSE (review_jobs.agent_invoked OR excluded.agent_invoked) END,
 			worktree_path = COALESCE(excluded.worktree_path, review_jobs.worktree_path),
 			source = COALESCE(excluded.source, review_jobs.source),
 			min_severity = excluded.min_severity,
@@ -738,7 +830,7 @@ func (db *DB) UpsertPulledJob(j PulledJob, repoID int64, commitID *int64) error 
 					THEN excluded.updated_at ELSE excluded.updated_at || 'Z' END
 			)
 	`, j.UUID, repoID, commitID, j.GitRef, nullStr(j.SessionID), j.Agent, nullStr(j.Model), nullStr(j.Provider), nullStr(j.RequestedModel), nullStr(j.RequestedProvider), j.Reasoning, j.JobType,
-		j.ReviewType, nullStr(j.PatchID), j.Status, j.Agentic, j.EnqueuedAt.Format(time.RFC3339),
+		j.ReviewType, nullStr(j.PatchID), j.Status, j.Agentic, j.AgentInvoked, j.EnqueuedAt.Format(time.RFC3339),
 		nullTimeStr(j.StartedAt), nullTimeStr(j.FinishedAt),
 		nullStr(j.Prompt), j.DiffContent, nullStr(dirtyFilesJSON), nullStr(j.Error), nullStr(j.TokenUsage),
 		nullStr(j.WorktreePath), nullStr(j.Source), normalizeMinSeverityForWrite(j.MinSeverity), j.BackupAgent, j.BackupModel,

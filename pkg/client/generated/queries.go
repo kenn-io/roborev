@@ -27,6 +27,35 @@ type ListCommentsQuery struct {
 	Sha *string `json:"sha,omitempty"`
 }
 
+type GetCostQuery struct {
+	// Repo Repo root paths (repeatable)
+	Repo []string `json:"repo,omitempty"`
+
+	// Branch Filter by branch name
+	Branch *string `json:"branch,omitempty"`
+
+	// BranchEmpty Only jobs with empty/unset branch
+	BranchEmpty *GetCostQueryBranchEmpty `json:"branch_empty,omitempty"`
+
+	// Since Time window (e.g. 7d); default all-time
+	Since *string `json:"since,omitempty"`
+}
+
+func (g GetCostQuery) Validate() error {
+	var errors runtime.ValidationErrors
+	if g.BranchEmpty != nil {
+		if v, ok := any(g.BranchEmpty).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("BranchEmpty", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type GetJobLogQuery struct {
 	// JobID Job ID
 	JobID *string `json:"job_id,omitempty"`

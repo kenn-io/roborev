@@ -368,15 +368,22 @@ func TestRetryJob(t *testing.T) {
 	// Claim the job (makes it running)
 	claimJob(t, db, "worker-1")
 
+	// A prior attempt's agent_invoked marker must not survive the retry: it
+	// gates cost eligibility, so a stale marker could miscount a re-attempt
+	// that fails before selecting an agent.
+	require.NoError(t, db.MarkJobAgentInvoked(job.ID, "worker-1", "codex review retry123"))
+
 	// Retry should succeed (retry_count: 0 -> 1)
 	retried, err := db.RetryJob(job.ID, "", 3, 0)
 	require.NoError(t, err, "RetryJob failed: %v")
 
 	assert.True(t, retried)
 
-	// Verify job is queued with retry_count=1
+	// Verify job is queued with retry_count=1 and the agent-ran marker cleared
 	updatedJob, _ := db.GetJobByID(job.ID)
 	assert.Equal(t, JobStatusQueued, updatedJob.Status)
+	assert.Empty(t, updatedJob.CommandLine, "retry clears the prior attempt's command line")
+	assert.False(t, getJobAgentInvoked(t, db, job.ID), "retry clears the agent_invoked marker")
 	count, _ := db.GetJobRetryCount(job.ID)
 	assert.Equal(t, 1, count)
 
@@ -513,6 +520,7 @@ func TestFailoverJob(t *testing.T) {
 
 		// Claim to make it running
 		claimJob(t, db, "worker-1")
+		require.NoError(t, db.MarkJobAgentInvoked(job.ID, "worker-1", "primary review fo-abc123"))
 
 		// Failover should succeed
 		ok, err := db.FailoverJob(job.ID, "worker-1", "backup", "")
@@ -520,12 +528,14 @@ func TestFailoverJob(t *testing.T) {
 
 		assert.True(t, ok)
 
-		// Verify: agent swapped, retry_count reset, status queued
+		// Verify: agent swapped, retry_count reset, status queued, marker cleared
 		updated, err := db.GetJobByID(job.ID)
 		require.NoError(t, err, "GetJobByID: %v")
 
 		assert.Equal(t, "backup", updated.Agent)
 		assert.Equal(t, JobStatusQueued, updated.Status)
+		assert.Empty(t, updated.CommandLine, "failover clears the prior agent's command line")
+		assert.False(t, getJobAgentInvoked(t, db, job.ID), "failover clears the agent_invoked marker")
 		count, _ := db.GetJobRetryCount(job.ID)
 		assert.Equal(t, 0, count)
 	})
@@ -1380,6 +1390,41 @@ func TestSaveJobSessionID_StaleWorkerIgnored(t *testing.T) {
 	assert.Equal(t, "session-B", j.SessionID)
 }
 
+// TestMarkJobAgentInvoked_StaleWorkerIgnored verifies the agent-ran marker is
+// scoped to the current attempt: a worker that calls MarkJobAgentInvoked after
+// its attempt was canceled and re-claimed by another worker must not set the
+// marker on the new attempt's row, which would wrongly make it cost-eligible.
+func TestMarkJobAgentInvoked_StaleWorkerIgnored(t *testing.T) {
+	assert := assert.New(t)
+	db := openTestDB(t)
+	defer db.Close()
+
+	_, _, job := createJobChain(t, db, "/tmp/test-repo", "invoked-race")
+
+	claimJob(t, db, "worker-A")
+	require.NoError(t, db.MarkJobAgentInvoked(job.ID, "worker-A", "codex review x"),
+		"MarkJobAgentInvoked (worker-A)")
+	assert.True(getJobAgentInvoked(t, db, job.ID), "owning worker sets the marker")
+
+	// Cancel + reenqueue hands the row to a new attempt and clears the marker.
+	require.NoError(t, db.CancelJob(job.ID), "CancelJob")
+	require.NoError(t, db.ReenqueueJob(job.ID, ReenqueueOpts{}), "ReenqueueJob")
+	assert.False(getJobAgentInvoked(t, db, job.ID), "reenqueue clears the marker")
+
+	claimJob(t, db, "worker-B")
+
+	// The stale worker-A write must not land on the row worker-B now owns.
+	require.NoError(t, db.MarkJobAgentInvoked(job.ID, "worker-A", "stale review x"),
+		"MarkJobAgentInvoked (stale worker-A)")
+	assert.False(getJobAgentInvoked(t, db, job.ID),
+		"stale worker does not set the marker on the new attempt")
+
+	// The current owner can still set it.
+	require.NoError(t, db.MarkJobAgentInvoked(job.ID, "worker-B", "codex review x"),
+		"MarkJobAgentInvoked (worker-B)")
+	assert.True(getJobAgentInvoked(t, db, job.ID), "current owner sets the marker")
+}
+
 func TestMinSeverityRoundTrip(t *testing.T) {
 	assert := assert.New(t)
 	db := openTestDB(t)
@@ -1493,6 +1538,13 @@ func TestPromoteClassifyToDesignReview_HappyPath(t *testing.T) {
 		"classifier retry: timeout", jobID)
 	require.NoError(t, err)
 
+	// The classifier attempt left a session id and the agent_invoked marker
+	// behind. Both must clear on promotion so the design attempt captures a
+	// fresh session (the token-usage write is session-scoped) and is not counted
+	// as having run an agent until it actually selects one.
+	setJobSession(t, db, jobID, "classify-sess")
+	require.NoError(t, db.MarkJobAgentInvoked(jobID, "w1", "codex classify abc"))
+
 	require.NoError(t, db.PromoteClassifyToDesignReview(jobID, "w1", "claude-code", ""))
 
 	j, err := db.GetJobByID(jobID)
@@ -1504,6 +1556,10 @@ func TestPromoteClassifyToDesignReview_HappyPath(t *testing.T) {
 	assert.Empty(t, j.WorkerID, "worker_id cleared so a new worker can claim")
 	assert.Nil(t, j.StartedAt, "started_at cleared")
 	assert.Empty(t, j.Error, "error cleared")
+	assert.Empty(t, j.SessionID, "session id cleared so the design attempt captures a fresh one")
+	assert.Empty(t, j.CommandLine, "command line cleared on promotion")
+	assert.False(t, getJobAgentInvoked(t, db, jobID),
+		"agent_invoked marker cleared so promotion is not counted as an agent run")
 }
 
 func TestPromoteClassifyToDesignReview_StaleWorkerNoOps(t *testing.T) {

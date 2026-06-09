@@ -138,6 +138,10 @@ type statusMsg struct {
 	status storage.DaemonStatus
 	gen    uint64 // fetch generation — discard if < model.fetchGen
 }
+type costMsg struct {
+	cost *storage.CostAggregate // nil = hide segment (error or unexpressible scope)
+	seq  int                    // fetch sequence — stale responses (seq < model.fetchSeq) discarded
+}
 type reviewMsg struct {
 	review     *storage.Review
 	responses  []storage.Response // Responses for this review

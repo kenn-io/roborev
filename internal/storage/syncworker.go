@@ -582,7 +582,6 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 	if len(jobs) > 0 {
 		// Resolve PostgreSQL repo and commit IDs for each job
 		var preparedJobs []JobWithPgIDs
-		var preparedJobIDs []int64
 		for _, j := range jobs {
 			if j.RepoIdentity == "" {
 				log.Printf("Sync: job %s has no repo identity, skipping", j.UUID)
@@ -610,7 +609,6 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 				PgRepoID:   pgRepoID,
 				PgCommitID: pgCommitID,
 			})
-			preparedJobIDs = append(preparedJobIDs, j.ID)
 		}
 
 		// Batch insert jobs
@@ -620,16 +618,19 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 				log.Printf("Sync: batch upsert jobs error: %v", err)
 			}
 
-			// Only mark successfully synced jobs
-			var syncedJobIDs []int64
+			// Only mark successfully synced jobs. Carry each job's pushed
+			// snapshot so MarkJobsSynced skips rows changed since (a token-usage
+			// capture that lands after the job went terminal, or an attempt reset
+			// in the same second).
+			var syncedMarks []JobSyncMark
 			for i, ok := range success {
 				if ok {
-					syncedJobIDs = append(syncedJobIDs, preparedJobIDs[i])
+					syncedMarks = append(syncedMarks, NewJobSyncMark(preparedJobs[i].Job))
 					stats.Jobs++
 				}
 			}
-			if len(syncedJobIDs) > 0 {
-				if err := w.db.MarkJobsSynced(syncedJobIDs); err != nil {
+			if len(syncedMarks) > 0 {
+				if err := w.db.MarkJobsSynced(syncedMarks); err != nil {
 					log.Printf("Sync: failed to mark jobs synced: %v", err)
 				}
 			}

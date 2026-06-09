@@ -87,6 +87,28 @@ func mockServerModel(t *testing.T, handler http.HandlerFunc) (*httptest.Server, 
 	return ts, newModel(testEndpointFromURL(ts.URL), withExternalIODisabled())
 }
 
+// jobsMsgFromBatch executes a fetchJobs-derived command and returns the message
+// from its jobs command. fetchJobs batches the jobs fetch with a cost fetch
+// (tea.Batch(jobsCmd, fetchCost)), so the command yields a tea.BatchMsg whose
+// first command is the jobs fetch. Running only batch[0] keeps the cost request
+// from overwriting query params recorded by tests that inspect the jobs request.
+func jobsMsgFromBatch(t *testing.T, cmd tea.Cmd) tea.Msg {
+	t.Helper()
+	require.NotNil(t, cmd, "expected a fetch command")
+	msg := cmd()
+	batch, ok := msg.(tea.BatchMsg)
+	require.True(t, ok, "fetchJobs should return a tea.BatchMsg, got %T", msg)
+	require.NotEmpty(t, batch, "batch should contain the jobs command")
+	return batch[0]()
+}
+
+// fetchJobsMessage runs fetchJobs and returns the jobs message. These tests
+// assert on the jobs result, so it executes only the jobs command in the batch.
+func fetchJobsMessage(t *testing.T, m model) tea.Msg {
+	t.Helper()
+	return jobsMsgFromBatch(t, m.fetchJobs())
+}
+
 // pressKey simulates pressing a rune key and returns the updated model.
 func pressKey(m model, r rune) (model, tea.Cmd) {
 	updated, cmd := m.Update(keyPressMsg(r))
@@ -253,8 +275,7 @@ func TestTUIFetchJobsSuccess(t *testing.T) {
 		jobs := []storage.ReviewJob{{ID: 1, GitRef: "abc123", Agent: "test"}}
 		json.NewEncoder(w).Encode(map[string]any{"jobs": jobs})
 	})
-	cmd := m.fetchJobs()
-	msg := cmd()
+	msg := fetchJobsMessage(t, m)
 
 	jobs, ok := msg.(jobsMsg)
 	if !ok {
@@ -273,8 +294,7 @@ func TestTUIFetchJobsError(t *testing.T) {
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	})
-	cmd := m.fetchJobs()
-	msg := cmd()
+	msg := fetchJobsMessage(t, m)
 
 	_, ok := msg.(jobsErrMsg)
 	if !ok {
@@ -293,8 +313,7 @@ func TestTUIHTTPTimeout(t *testing.T) {
 	// Override with short timeout for test (10x shorter than server delay)
 	m.client.Timeout = 50 * time.Millisecond
 
-	cmd := m.fetchJobs()
-	msg := cmd()
+	msg := fetchJobsMessage(t, m)
 
 	_, ok := msg.(jobsErrMsg)
 	if !ok {
@@ -863,7 +882,7 @@ func TestTUIVersionMismatchDetection(t *testing.T) {
 		}
 	})
 
-	t.Run("displays error banner in queue view when mismatched", func(t *testing.T) {
+	t.Run("shows daemon version in title when mismatched", func(t *testing.T) {
 		m := newModel(testEndpoint, withExternalIODisabled())
 		m.width = 100
 		m.height = 30
@@ -873,21 +892,8 @@ func TestTUIVersionMismatchDetection(t *testing.T) {
 
 		output := m.View().Content
 
-		if !strings.Contains(output, "Daemon: old-version") {
-			assert.Condition(t, func() bool {
-				return false
-			}, "Expected queue view to show daemon version")
-		}
-		if !strings.Contains(output, "[MISMATCH]") {
-			assert.Condition(t, func() bool {
-				return false
-			}, "Expected queue view to show mismatch badge")
-		}
-		if strings.Contains(output, "VERSION MISMATCH") {
-			assert.Condition(t, func() bool {
-				return false
-			}, "Expected queue view to move mismatch warning out of footer")
-		}
+		assert.Contains(t, output, "Daemon: old-version", "queue title must show the daemon version on mismatch")
+		assert.NotContains(t, output, "[MISMATCH]", "the [MISMATCH] badge was replaced by the red title callout")
 	})
 
 	t.Run("does not display daemon status in review view when mismatched", func(t *testing.T) {

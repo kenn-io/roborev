@@ -385,6 +385,336 @@ func TestSessionID_SyncRoundTrip(t *testing.T) {
 	assert.False(t, !gotSessionID.Valid || gotSessionID.String != "agent-session-abc")
 }
 
+// TestAgentInvoked_SyncRoundTrip verifies the agent_invoked marker survives a
+// full push/pull cycle: GetJobsToSync must export it (push side) and
+// UpsertPulledJob must import it (pull side). The marker carries the "an agent
+// ran" cost-eligibility signal across machines, since command_line is not synced.
+func TestAgentInvoked_SyncRoundTrip(t *testing.T) {
+	src := newSyncTestHelper(t)
+
+	job := src.createCompletedJob("agent-invoked-sync-sha")
+	setJobAgentInvoked(t, src.db, job.ID)
+
+	exported, err := src.db.GetJobsToSync(src.machineID, 10)
+	require.NoError(t, err, "GetJobsToSync: %v")
+
+	var syncJob *SyncableJob
+	for i := range exported {
+		if exported[i].ID == job.ID {
+			syncJob = &exported[i]
+			break
+		}
+	}
+	require.NotNil(t, syncJob)
+	assert.True(t, syncJob.AgentInvoked, "push side exports the agent_invoked marker")
+
+	dst := newSyncTestHelper(t)
+	pulled := PulledJob{
+		UUID:            syncJob.UUID,
+		RepoIdentity:    syncJob.RepoIdentity,
+		CommitSHA:       syncJob.CommitSHA,
+		CommitAuthor:    syncJob.CommitAuthor,
+		CommitSubject:   syncJob.CommitSubject,
+		CommitTimestamp: syncJob.CommitTimestamp,
+		GitRef:          syncJob.GitRef,
+		SessionID:       syncJob.SessionID,
+		Agent:           syncJob.Agent,
+		Model:           syncJob.Model,
+		Reasoning:       syncJob.Reasoning,
+		JobType:         syncJob.JobType,
+		ReviewType:      syncJob.ReviewType,
+		PatchID:         syncJob.PatchID,
+		Status:          syncJob.Status,
+		Agentic:         syncJob.Agentic,
+		AgentInvoked:    syncJob.AgentInvoked,
+		EnqueuedAt:      syncJob.EnqueuedAt,
+		StartedAt:       syncJob.StartedAt,
+		FinishedAt:      syncJob.FinishedAt,
+		Prompt:          syncJob.Prompt,
+		DiffContent:     syncJob.DiffContent,
+		Error:           syncJob.Error,
+		SourceMachineID: syncJob.SourceMachineID,
+		UpdatedAt:       syncJob.UpdatedAt,
+	}
+	require.NoError(t, dst.db.UpsertPulledJob(pulled, dst.repo.ID, nil),
+		"UpsertPulledJob: %v")
+
+	var gotInvoked int
+	require.NoError(t, dst.db.QueryRow(
+		`SELECT agent_invoked FROM review_jobs WHERE uuid = ?`, syncJob.UUID).Scan(&gotInvoked),
+		"query imported agent_invoked: %v")
+	assert.Equal(t, 1, gotInvoked, "pull side imports the agent_invoked marker")
+}
+
+// TestUpsertPulledJob_SessionTerminalOverwrite verifies the SQLite pull path
+// treats session_id like token_usage and agent_invoked: a terminal row
+// overwrites it (including to empty), so a rerun whose terminal attempt captured
+// no session cannot retain the prior attempt's session id and reattach stale
+// cost to it. A non-terminal row still preserves an existing session.
+func TestUpsertPulledJob_SessionTerminalOverwrite(t *testing.T) {
+	assert := assert.New(t)
+	dst := newSyncTestHelper(t)
+
+	t1 := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	t2 := time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC)
+
+	pull := func(uuid, sessionID, status string, updatedAt time.Time) {
+		started := updatedAt.Add(-time.Minute)
+		var finished *time.Time
+		if status != "running" && status != "queued" {
+			finished = &updatedAt
+		}
+		pj := PulledJob{
+			UUID:            uuid,
+			GitRef:          "ref-" + uuid,
+			SessionID:       sessionID,
+			Agent:           "test",
+			JobType:         "review",
+			Status:          status,
+			EnqueuedAt:      t1,
+			StartedAt:       &started,
+			FinishedAt:      finished,
+			SourceMachineID: "remote-machine",
+			UpdatedAt:       updatedAt,
+		}
+		require.NoError(t, dst.db.UpsertPulledJob(pj, dst.repo.ID, nil),
+			"UpsertPulledJob(%s, status=%s)", uuid, status)
+	}
+
+	sessionOf := func(uuid string) string {
+		var s sql.NullString
+		require.NoError(t, dst.db.QueryRow(
+			`SELECT session_id FROM review_jobs WHERE uuid = ?`, uuid).Scan(&s))
+		return s.String
+	}
+
+	// A terminal rerun overwrites the synced session, even when empty.
+	pull("term-uuid", "session-1", "done", t1)
+	require.Equal(t, "session-1", sessionOf("term-uuid"), "first sync stores the session")
+	pull("term-uuid", "", "done", t2)
+	assert.Empty(sessionOf("term-uuid"),
+		"terminal rerun with no session clears the stale session id")
+
+	// A non-terminal update preserves an existing session.
+	pull("run-uuid", "keep-me", "done", t1)
+	pull("run-uuid", "", "running", t2)
+	assert.Equal("keep-me", sessionOf("run-uuid"),
+		"non-terminal update preserves the existing session id")
+}
+
+// TestUpsertPulledJob_SkippedRerunOverwritesStaleMarkers verifies that a
+// skipped row — a synced, rerun-eligible terminal state — overwrites the
+// per-attempt markers (session_id, token_usage, agent_invoked) instead of
+// merging them. A rerun that ends in skip after a priced attempt must not
+// retain the prior attempt's cost, session, or agent-ran markers.
+func TestUpsertPulledJob_SkippedRerunOverwritesStaleMarkers(t *testing.T) {
+	assert := assert.New(t)
+	dst := newSyncTestHelper(t)
+
+	t1 := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
+	t2 := time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC)
+	started := t1.Add(-time.Minute)
+	const uuid = "skip-rerun-uuid"
+
+	// Attempt 1: a priced agent run synced as done.
+	require.NoError(t, dst.db.UpsertPulledJob(PulledJob{
+		UUID:            uuid,
+		GitRef:          "ref",
+		SessionID:       "session-1",
+		Agent:           "test",
+		JobType:         "review",
+		Status:          "done",
+		AgentInvoked:    true,
+		TokenUsage:      `{"cost_usd":5.0,"has_cost":true}`,
+		EnqueuedAt:      t1,
+		StartedAt:       &started,
+		FinishedAt:      &t1,
+		SourceMachineID: "remote-machine",
+		UpdatedAt:       t1,
+	}, dst.repo.ID, nil), "UpsertPulledJob (done)")
+
+	// Attempt 2: a rerun that ends in skip, with the markers cleared at source.
+	require.NoError(t, dst.db.UpsertPulledJob(PulledJob{
+		UUID:            uuid,
+		GitRef:          "ref",
+		SessionID:       "",
+		Agent:           "test",
+		JobType:         "review",
+		Status:          "skipped",
+		AgentInvoked:    false,
+		TokenUsage:      "",
+		EnqueuedAt:      t1,
+		FinishedAt:      &t2,
+		SourceMachineID: "remote-machine",
+		UpdatedAt:       t2,
+	}, dst.repo.ID, nil), "UpsertPulledJob (skipped)")
+
+	var session, tokenUsage sql.NullString
+	var invoked int
+	require.NoError(t, dst.db.QueryRow(
+		`SELECT session_id, token_usage, agent_invoked FROM review_jobs WHERE uuid = ?`,
+		uuid).Scan(&session, &tokenUsage, &invoked))
+
+	assert.Empty(session.String, "skipped rerun clears the stale session id")
+	assert.Empty(tokenUsage.String, "skipped rerun clears the stale token usage")
+	assert.Equal(0, invoked, "skipped rerun clears the stale agent_invoked marker")
+}
+
+// TestReenqueueClearsSyncedAtForSameSecondRerun reproduces the priced-to-unpriced
+// rerun race: an attempt synced as priced, then rerun and completed unpriced
+// within the same RFC3339 second, must still be pushed so PostgreSQL drops the
+// stale cost. The second-precise updated_at vs synced_at comparison compares
+// equal in that window; ReenqueueJob clears synced_at so the row re-selects
+// regardless of timestamp granularity.
+func TestReenqueueClearsSyncedAtForSameSecondRerun(t *testing.T) {
+	assert := assert.New(t)
+	h := newSyncTestHelper(t)
+
+	pending := func() []int64 {
+		jobs, err := h.db.GetJobsToSync(h.machineID, 100)
+		require.NoError(t, err)
+		ids := make([]int64, len(jobs))
+		for i, j := range jobs {
+			ids[i] = j.ID
+		}
+		return ids
+	}
+
+	job := h.createCompletedJob("same-second-rerun-sha")
+	// Attempt 1 ran an agent and recorded cost.
+	seedCost(t, h.db, job.ID, `{"cost_usd":5.0,"has_cost":true}`)
+
+	// It was synced. Pin updated_at and synced_at to the same RFC3339 second —
+	// the worst case for the second-precise sync comparison.
+	const sameSecond = "2024-01-01T00:00:00Z"
+	_, err := h.db.Exec(
+		`UPDATE review_jobs SET updated_at = ?, synced_at = ? WHERE id = ?`,
+		sameSecond, sameSecond, job.ID)
+	require.NoError(t, err)
+	assert.NotContains(pending(), job.ID,
+		"a fully-synced row (updated_at == synced_at) is not pending")
+
+	// Rerun clears the prior attempt's cost metadata, and with it synced_at.
+	require.NoError(t, h.db.ReenqueueJob(job.ID, ReenqueueOpts{}))
+	assert.False(getJobAgentInvoked(t, h.db, job.ID), "rerun clears the agent-ran marker")
+
+	// Attempt 2 completes unpriced, in the same second as the prior sync mark.
+	claimed, err := h.db.ClaimJob("worker")
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	require.NoError(t, h.db.CompleteJob(job.ID, "test", "prompt", "output"))
+	_, err = h.db.Exec(`UPDATE review_jobs SET updated_at = ? WHERE id = ?`, sameSecond, job.ID)
+	require.NoError(t, err)
+
+	assert.Contains(pending(), job.ID,
+		"cleared cost state must re-sync even when updated_at == prior synced_at")
+}
+
+// TestResetPathsClearSyncedAt guards the invariant for every attempt reset that
+// clears cost metadata: clearing token_usage/agent_invoked must also clear
+// synced_at, or a same-second rerun can leave stale spend in PostgreSQL (see
+// TestReenqueueClearsSyncedAtForSameSecondRerun for the end-to-end behavior).
+func TestResetPathsClearSyncedAt(t *testing.T) {
+	cases := []struct {
+		name  string
+		setup func(t *testing.T, db *DB) int64
+		reset func(t *testing.T, db *DB, jobID int64)
+	}{
+		{
+			name: "reenqueue",
+			setup: func(t *testing.T, db *DB) int64 {
+				_, _, job := createJobChain(t, db, "/tmp/reset-reenqueue", "sha")
+				setJobStatus(t, db, job.ID, JobStatusDone)
+				return job.ID
+			},
+			reset: func(t *testing.T, db *DB, jobID int64) {
+				require.NoError(t, db.ReenqueueJob(jobID, ReenqueueOpts{}))
+			},
+		},
+		{
+			name: "retry-scoped",
+			setup: func(t *testing.T, db *DB) int64 {
+				_, _, job := createJobChain(t, db, "/tmp/reset-retry-scoped", "sha")
+				claimJob(t, db, "worker-1")
+				return job.ID
+			},
+			reset: func(t *testing.T, db *DB, jobID int64) {
+				ok, err := db.RetryJob(jobID, "worker-1", 3, 0)
+				require.NoError(t, err)
+				require.True(t, ok)
+			},
+		},
+		{
+			// RetryJob has a separate unscoped SQL branch (empty workerID) that
+			// must clear synced_at too.
+			name: "retry-unscoped",
+			setup: func(t *testing.T, db *DB) int64 {
+				_, _, job := createJobChain(t, db, "/tmp/reset-retry-unscoped", "sha")
+				claimJob(t, db, "worker-1")
+				return job.ID
+			},
+			reset: func(t *testing.T, db *DB, jobID int64) {
+				ok, err := db.RetryJob(jobID, "", 3, 0)
+				require.NoError(t, err)
+				require.True(t, ok)
+			},
+		},
+		{
+			name: "failover",
+			setup: func(t *testing.T, db *DB) int64 {
+				_, _, job := createJobChain(t, db, "/tmp/reset-failover", "sha")
+				claimJob(t, db, "worker-1")
+				return job.ID
+			},
+			reset: func(t *testing.T, db *DB, jobID int64) {
+				ok, err := db.FailoverJob(jobID, "worker-1", "backup", "")
+				require.NoError(t, err)
+				require.True(t, ok)
+			},
+		},
+		{
+			name: "promote-classify",
+			setup: func(t *testing.T, db *DB) int64 {
+				return seedRunningClassify(t, db, "/tmp/reset-promote", "sha", "w1")
+			},
+			reset: func(t *testing.T, db *DB, jobID int64) {
+				require.NoError(t, db.PromoteClassifyToDesignReview(jobID, "w1", "claude-code", ""))
+			},
+		},
+		{
+			name: "reset-stale",
+			setup: func(t *testing.T, db *DB) int64 {
+				_, _, job := createJobChain(t, db, "/tmp/reset-stale", "sha")
+				claimJob(t, db, "worker-1")
+				return job.ID
+			},
+			reset: func(t *testing.T, db *DB, jobID int64) {
+				require.NoError(t, db.ResetStaleJobs())
+			},
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			db := openTestDB(t)
+			defer db.Close()
+
+			jobID := tc.setup(t, db)
+			_, err := db.Exec(`UPDATE review_jobs SET synced_at = ? WHERE id = ?`,
+				"2024-01-01T00:00:00Z", jobID)
+			require.NoError(t, err)
+
+			tc.reset(t, db, jobID)
+
+			var syncedAt sql.NullString
+			require.NoError(t, db.QueryRow(
+				`SELECT synced_at FROM review_jobs WHERE id = ?`, jobID).Scan(&syncedAt))
+			assert.False(t, syncedAt.Valid,
+				"%s must clear synced_at when it clears cost metadata", tc.name)
+		})
+	}
+}
+
 func TestGetCommentsToSync_LegacyCommentsExcluded(t *testing.T) {
 	h := newSyncTestHelper(t)
 	job := h.createCompletedJob("legacy-resp-sha")

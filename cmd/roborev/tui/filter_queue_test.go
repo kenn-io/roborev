@@ -109,9 +109,7 @@ func TestTUIFilterChangeFetchesFirstPageOnly(t *testing.T) {
 	m.loadingJobs = false
 
 	m2, cmd := pressSpecial(m, tea.KeyEnter)
-	require.NotNil(t, cmd)
-	msg := cmd()
-	_, ok := msg.(jobsMsg)
+	_, ok := jobsMsgFromBatch(t, cmd).(jobsMsg)
 	require.True(t, ok)
 
 	assert.Empty(t, m2.jobs)

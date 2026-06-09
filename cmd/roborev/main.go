@@ -67,6 +67,7 @@ func main() {
 	rootCmd.AddCommand(ciCmd())
 	rootCmd.AddCommand(logCmd())
 	rootCmd.AddCommand(summaryCmd())
+	rootCmd.AddCommand(costCmd())
 	rootCmd.AddCommand(backfillVerdictsCmd())
 	rootCmd.AddCommand(configCmd())
 	rootCmd.AddCommand(backfillTokensCmd())

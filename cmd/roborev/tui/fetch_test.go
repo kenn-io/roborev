@@ -60,9 +60,7 @@ func TestFetchJobsMultiRepoUsesRepeatedRepoAndPaginates(t *testing.T) {
 		"/path/to/backend-dev", "/path/to/backend-prod",
 	}
 
-	cmd := m.fetchJobs()
-	require.NotNil(t, cmd)
-	_, ok := cmd().(jobsMsg)
+	_, ok := fetchJobsMessage(t, m).(jobsMsg)
 	require.True(t, ok)
 
 	require.NotNil(t, jobsQuery, "jobs endpoint should have been called")

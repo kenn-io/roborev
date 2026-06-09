@@ -17,6 +17,24 @@ import (
 	"github.com/oapi-codegen/runtime"
 )
 
+// Defines values for GetCostParamsBranchEmpty.
+const (
+	GetCostParamsBranchEmptyFalse GetCostParamsBranchEmpty = "false"
+	GetCostParamsBranchEmptyTrue  GetCostParamsBranchEmpty = "true"
+)
+
+// Valid indicates whether the value is a known member of the GetCostParamsBranchEmpty enum.
+func (e GetCostParamsBranchEmpty) Valid() bool {
+	switch e {
+	case GetCostParamsBranchEmptyFalse:
+		return true
+	case GetCostParamsBranchEmptyTrue:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ListJobsParamsBranchIncludeEmpty.
 const (
 	ListJobsParamsBranchIncludeEmptyEmpty ListJobsParamsBranchIncludeEmpty = ""
@@ -82,16 +100,16 @@ func (e ListJobsParamsHideClassifyJobs) Valid() bool {
 
 // Defines values for GetSummaryParamsAll.
 const (
-	GetSummaryParamsAllFalse GetSummaryParamsAll = "false"
-	GetSummaryParamsAllTrue  GetSummaryParamsAll = "true"
+	False GetSummaryParamsAll = "false"
+	True  GetSummaryParamsAll = "true"
 )
 
 // Valid indicates whether the value is a known member of the GetSummaryParamsAll enum.
 func (e GetSummaryParamsAll) Valid() bool {
 	switch e {
-	case GetSummaryParamsAllFalse:
+	case False:
 		return true
-	case GetSummaryParamsAllTrue:
+	case True:
 		return true
 	default:
 		return false
@@ -201,6 +219,16 @@ type ComponentHealth struct {
 	Name    string  `json:"name"`
 }
 
+// CostAggregate defines model for CostAggregate.
+type CostAggregate struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema       *string `json:"$schema,omitempty"`
+	Complete     bool    `json:"complete"`
+	JobsTotal    int64   `json:"jobs_total"`
+	JobsWithCost int64   `json:"jobs_with_cost"`
+	TotalUsd     float64 `json:"total_usd"`
+}
+
 // DaemonStatus defines model for DaemonStatus.
 type DaemonStatus struct {
 	// Schema A URL to the JSON Schema for this object.
@@ -238,23 +266,26 @@ type DurationStats struct {
 // EnqueueRequest defines model for EnqueueRequest.
 type EnqueueRequest struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema       *string `json:"$schema,omitempty"`
-	Agent        *string `json:"agent,omitempty"`
-	Agentic      *bool   `json:"agentic,omitempty"`
-	Branch       *string `json:"branch,omitempty"`
-	CommitSha    *string `json:"commit_sha,omitempty"`
-	CustomPrompt *string `json:"custom_prompt,omitempty"`
-	DiffContent  *string `json:"diff_content,omitempty"`
-	GitRef       *string `json:"git_ref,omitempty"`
-	JobType      *string `json:"job_type,omitempty"`
-	MinSeverity  *string `json:"min_severity,omitempty"`
-	Model        *string `json:"model,omitempty"`
-	OutputPrefix *string `json:"output_prefix,omitempty"`
-	Provider     *string `json:"provider,omitempty"`
-	Reasoning    *string `json:"reasoning,omitempty"`
-	RepoPath     string  `json:"repo_path"`
-	ReviewType   *string `json:"review_type,omitempty"`
-	Since        *string `json:"since,omitempty"`
+	Schema       *string   `json:"$schema,omitempty"`
+	Agent        *string   `json:"agent,omitempty"`
+	Agentic      *bool     `json:"agentic,omitempty"`
+	Branch       *string   `json:"branch,omitempty"`
+	CommitSha    *string   `json:"commit_sha,omitempty"`
+	CustomPrompt *string   `json:"custom_prompt,omitempty"`
+	DiffContent  *string   `json:"diff_content,omitempty"`
+	DirtyFiles   *[]string `json:"dirty_files,omitempty"`
+	GitRef       *string   `json:"git_ref,omitempty"`
+	JobType      *string   `json:"job_type,omitempty"`
+	MinSeverity  *string   `json:"min_severity,omitempty"`
+	Model        *string   `json:"model,omitempty"`
+	OutputPrefix *string   `json:"output_prefix,omitempty"`
+	Panel        *string   `json:"panel,omitempty"`
+	Provider     *string   `json:"provider,omitempty"`
+	Reasoning    *string   `json:"reasoning,omitempty"`
+	RepoPath     string    `json:"repo_path"`
+	ReviewType   *string   `json:"review_type,omitempty"`
+	Since        *string   `json:"since,omitempty"`
+	Source       *string   `json:"source,omitempty"`
 }
 
 // EnqueueSkippedResponse defines model for EnqueueSkippedResponse.
@@ -424,6 +455,19 @@ type OverviewStats struct {
 	Total    int64 `json:"total"`
 }
 
+// PanelSummary defines model for PanelSummary.
+type PanelSummary struct {
+	MembersCanceled     int64    `json:"members_canceled"`
+	MembersCostComplete *bool    `json:"members_cost_complete,omitempty"`
+	MembersCostUsd      *float64 `json:"members_cost_usd,omitempty"`
+	MembersFailed       int64    `json:"members_failed"`
+	MembersSkipped      int64    `json:"members_skipped"`
+	MembersSucceeded    int64    `json:"members_succeeded"`
+	MembersTerminal     int64    `json:"members_terminal"`
+	MembersTotal        int64    `json:"members_total"`
+	PanelRunUuid        string   `json:"panel_run_uuid"`
+}
+
 // PingInfo defines model for PingInfo.
 type PingInfo struct {
 	// Schema A URL to the JSON Schema for this object.
@@ -510,6 +554,21 @@ type RerunJobRequest struct {
 	JobId  int64   `json:"job_id"`
 }
 
+// ResolveRepoOutputBody defines model for ResolveRepoOutputBody.
+type ResolveRepoOutputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema  *string       `json:"$schema,omitempty"`
+	Repo    *ResolvedRepo `json:"repo,omitempty"`
+	Tracked bool          `json:"tracked"`
+}
+
+// ResolvedRepo defines model for ResolvedRepo.
+type ResolvedRepo struct {
+	Identity string `json:"identity"`
+	Name     string `json:"name"`
+	RootPath string `json:"root_path"`
+}
+
 // Response defines model for Response.
 type Response struct {
 	// Schema A URL to the JSON Schema for this object.
@@ -547,51 +606,62 @@ type Review struct {
 // ReviewJob defines model for ReviewJob.
 type ReviewJob struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema            *string    `json:"$schema,omitempty"`
-	Agent             string     `json:"agent"`
-	Agentic           bool       `json:"agentic"`
-	Branch            *string    `json:"branch,omitempty"`
-	Closed            *bool      `json:"closed,omitempty"`
-	CommandLine       *string    `json:"command_line,omitempty"`
-	CommitId          *int64     `json:"commit_id,omitempty"`
-	CommitSubject     *string    `json:"commit_subject,omitempty"`
-	DiffContent       *string    `json:"diff_content,omitempty"`
-	EnqueuedAt        time.Time  `json:"enqueued_at"`
-	Error             *string    `json:"error,omitempty"`
-	FinishedAt        *time.Time `json:"finished_at,omitempty"`
-	GitRef            string     `json:"git_ref"`
-	Id                int64      `json:"id"`
-	JobType           string     `json:"job_type"`
-	MinSeverity       *string    `json:"min_severity,omitempty"`
-	Model             *string    `json:"model,omitempty"`
-	OutputPrefix      *string    `json:"output_prefix,omitempty"`
-	ParentJobId       *int64     `json:"parent_job_id,omitempty"`
-	Patch             *string    `json:"patch,omitempty"`
-	PatchId           *string    `json:"patch_id,omitempty"`
-	Prompt            *string    `json:"prompt,omitempty"`
-	PromptPrebuilt    bool       `json:"prompt_prebuilt"`
-	Provider          *string    `json:"provider,omitempty"`
-	Reasoning         *string    `json:"reasoning,omitempty"`
-	RepoId            int64      `json:"repo_id"`
-	RepoName          *string    `json:"repo_name,omitempty"`
-	RepoPath          *string    `json:"repo_path,omitempty"`
-	RequestedModel    *string    `json:"requested_model,omitempty"`
-	RequestedProvider *string    `json:"requested_provider,omitempty"`
-	RetryCount        int64      `json:"retry_count"`
-	ReviewType        *string    `json:"review_type,omitempty"`
-	SessionId         *string    `json:"session_id,omitempty"`
-	SkipReason        *string    `json:"skip_reason,omitempty"`
-	Source            *string    `json:"source,omitempty"`
-	SourceMachineId   *string    `json:"source_machine_id,omitempty"`
-	StartedAt         *time.Time `json:"started_at,omitempty"`
-	Status            string     `json:"status"`
-	SyncedAt          *time.Time `json:"synced_at,omitempty"`
-	TokenUsage        *string    `json:"token_usage,omitempty"`
-	UpdatedAt         *time.Time `json:"updated_at,omitempty"`
-	Uuid              *string    `json:"uuid,omitempty"`
-	Verdict           *string    `json:"verdict,omitempty"`
-	WorkerId          *string    `json:"worker_id,omitempty"`
-	WorktreePath      *string    `json:"worktree_path,omitempty"`
+	Schema                *string       `json:"$schema,omitempty"`
+	Agent                 string        `json:"agent"`
+	Agentic               bool          `json:"agentic"`
+	BackupAgent           *string       `json:"backup_agent,omitempty"`
+	BackupModel           *string       `json:"backup_model,omitempty"`
+	Branch                *string       `json:"branch,omitempty"`
+	ClaimBlocked          *bool         `json:"claim_blocked,omitempty"`
+	Closed                *bool         `json:"closed,omitempty"`
+	CommandLine           *string       `json:"command_line,omitempty"`
+	CommitId              *int64        `json:"commit_id,omitempty"`
+	CommitSubject         *string       `json:"commit_subject,omitempty"`
+	DiffContent           *string       `json:"diff_content,omitempty"`
+	DirtyFiles            *[]string     `json:"dirty_files,omitempty"`
+	EnqueuedAt            time.Time     `json:"enqueued_at"`
+	Error                 *string       `json:"error,omitempty"`
+	FinishedAt            *time.Time    `json:"finished_at,omitempty"`
+	GitRef                string        `json:"git_ref"`
+	Id                    int64         `json:"id"`
+	JobType               string        `json:"job_type"`
+	MinSeverity           *string       `json:"min_severity,omitempty"`
+	Model                 *string       `json:"model,omitempty"`
+	OutputPrefix          *string       `json:"output_prefix,omitempty"`
+	PanelMemberConfigJson *string       `json:"panel_member_config_json,omitempty"`
+	PanelMemberIndex      *int64        `json:"panel_member_index,omitempty"`
+	PanelMemberName       *string       `json:"panel_member_name,omitempty"`
+	PanelName             *string       `json:"panel_name,omitempty"`
+	PanelRole             *string       `json:"panel_role,omitempty"`
+	PanelRunUuid          *string       `json:"panel_run_uuid,omitempty"`
+	PanelSummary          *PanelSummary `json:"panel_summary,omitempty"`
+	ParentJobId           *int64        `json:"parent_job_id,omitempty"`
+	Patch                 *string       `json:"patch,omitempty"`
+	PatchId               *string       `json:"patch_id,omitempty"`
+	Prompt                *string       `json:"prompt,omitempty"`
+	PromptPrebuilt        bool          `json:"prompt_prebuilt"`
+	Provider              *string       `json:"provider,omitempty"`
+	Reasoning             *string       `json:"reasoning,omitempty"`
+	RepoId                int64         `json:"repo_id"`
+	RepoName              *string       `json:"repo_name,omitempty"`
+	RepoPath              *string       `json:"repo_path,omitempty"`
+	RequestedModel        *string       `json:"requested_model,omitempty"`
+	RequestedProvider     *string       `json:"requested_provider,omitempty"`
+	RetryCount            int64         `json:"retry_count"`
+	ReviewType            *string       `json:"review_type,omitempty"`
+	SessionId             *string       `json:"session_id,omitempty"`
+	SkipReason            *string       `json:"skip_reason,omitempty"`
+	Source                *string       `json:"source,omitempty"`
+	SourceMachineId       *string       `json:"source_machine_id,omitempty"`
+	StartedAt             *time.Time    `json:"started_at,omitempty"`
+	Status                string        `json:"status"`
+	SyncedAt              *time.Time    `json:"synced_at,omitempty"`
+	TokenUsage            *string       `json:"token_usage,omitempty"`
+	UpdatedAt             *time.Time    `json:"updated_at,omitempty"`
+	Uuid                  *string       `json:"uuid,omitempty"`
+	Verdict               *string       `json:"verdict,omitempty"`
+	WorkerId              *string       `json:"worker_id,omitempty"`
+	WorktreePath          *string       `json:"worktree_path,omitempty"`
 }
 
 // Summary defines model for Summary.
@@ -600,6 +670,7 @@ type Summary struct {
 	Schema   *string         `json:"$schema,omitempty"`
 	Agents   *[]AgentStats   `json:"agents"`
 	Branch   *string         `json:"branch,omitempty"`
+	Cost     CostAggregate   `json:"cost"`
 	Duration DurationStats   `json:"duration"`
 	Failures FailureStats    `json:"failures"`
 	JobTypes *[]JobTypeStats `json:"job_types"`
@@ -669,6 +740,24 @@ type ListCommentsParams struct {
 	Sha *string `form:"sha,omitempty" json:"sha,omitempty"`
 }
 
+// GetCostParams defines parameters for GetCost.
+type GetCostParams struct {
+	// Repo Repo root paths (repeatable)
+	Repo *[]string `form:"repo,omitempty" json:"repo,omitempty"`
+
+	// Branch Filter by branch name
+	Branch *string `form:"branch,omitempty" json:"branch,omitempty"`
+
+	// BranchEmpty Only jobs with empty/unset branch
+	BranchEmpty *GetCostParamsBranchEmpty `form:"branch_empty,omitempty" json:"branch_empty,omitempty"`
+
+	// Since Time window (e.g. 7d); default all-time
+	Since *string `form:"since,omitempty" json:"since,omitempty"`
+}
+
+// GetCostParamsBranchEmpty defines parameters for GetCost.
+type GetCostParamsBranchEmpty string
+
 // GetJobLogParams defines parameters for GetJobLog.
 type GetJobLogParams struct {
 	// JobId Job ID
@@ -725,6 +814,9 @@ type ListJobsParams struct {
 	// HideClassifyJobs Hide auto-design-router rows (job_type=classify and status=skipped)
 	HideClassifyJobs *ListJobsParamsHideClassifyJobs `form:"hide_classify_jobs,omitempty" json:"hide_classify_jobs,omitempty"`
 
+	// PanelRun Return all jobs (members + synthesis) of one panel run
+	PanelRun *string `form:"panel_run,omitempty" json:"panel_run,omitempty"`
+
 	// RepoPrefix Filter repos by path prefix
 	RepoPrefix *string `form:"repo_prefix,omitempty" json:"repo_prefix,omitempty"`
 
@@ -754,6 +846,12 @@ type ListReposParams struct {
 
 	// Prefix Filter repos by path prefix
 	Prefix *string `form:"prefix,omitempty" json:"prefix,omitempty"`
+}
+
+// ResolveRepoParams defines parameters for ResolveRepo.
+type ResolveRepoParams struct {
+	// Path Absolute path or path inside a repository
+	Path *string `form:"path,omitempty" json:"path,omitempty"`
 }
 
 // GetReviewParams defines parameters for GetReview.
@@ -918,6 +1016,9 @@ type ClientInterface interface {
 	// ListComments request
 	ListComments(ctx context.Context, params *ListCommentsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// GetCost request
+	GetCost(ctx context.Context, params *GetCostParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// EnqueueJobWithBody request with any body
 	EnqueueJobWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -988,6 +1089,9 @@ type ClientInterface interface {
 	RegisterRepoWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	RegisterRepo(ctx context.Context, body RegisterRepoJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ResolveRepo request
+	ResolveRepo(ctx context.Context, params *ResolveRepoParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// GetReview request
 	GetReview(ctx context.Context, params *GetReviewParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1063,6 +1167,18 @@ func (c *Client) AddComment(ctx context.Context, body AddCommentJSONRequestBody,
 
 func (c *Client) ListComments(ctx context.Context, params *ListCommentsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListCommentsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetCost(ctx context.Context, params *GetCostParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetCostRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -1397,6 +1513,18 @@ func (c *Client) RegisterRepo(ctx context.Context, body RegisterRepoJSONRequestB
 	return c.Client.Do(req)
 }
 
+func (c *Client) ResolveRepo(ctx context.Context, params *ResolveRepoParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewResolveRepoRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) GetReview(ctx context.Context, params *GetReviewParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetReviewRequest(c.Server, params)
 	if err != nil {
@@ -1688,6 +1816,103 @@ func NewListCommentsRequest(server string, params *ListCommentsParams) (*http.Re
 		if params.Sha != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "sha", *params.Sha, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetCostRequest generates requests for GetCost
+func NewGetCostRequest(server string, params *GetCostParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/cost")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Repo != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "repo", *params.Repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Branch != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "branch", *params.Branch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.BranchEmpty != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "branch_empty", *params.BranchEmpty, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Since != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "since", *params.Since, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 				return nil, err
@@ -2380,6 +2605,22 @@ func NewListJobsRequest(server string, params *ListJobsParams) (*http.Request, e
 
 		}
 
+		if params.PanelRun != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "panel_run", *params.PanelRun, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
 		if params.RepoPrefix != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "repo_prefix", *params.RepoPrefix, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
@@ -2663,6 +2904,55 @@ func NewRegisterRepoRequestWithBody(server string, contentType string, body io.R
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewResolveRepoRequest generates requests for ResolveRepo
+func NewResolveRepoRequest(server string, params *ResolveRepoParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/repos/resolve")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Path != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "path", *params.Path, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -3078,6 +3368,9 @@ type ClientWithResponsesInterface interface {
 	// ListCommentsWithResponse request
 	ListCommentsWithResponse(ctx context.Context, params *ListCommentsParams, reqEditors ...RequestEditorFn) (*ListCommentsResponse, error)
 
+	// GetCostWithResponse request
+	GetCostWithResponse(ctx context.Context, params *GetCostParams, reqEditors ...RequestEditorFn) (*GetCostResponse, error)
+
 	// EnqueueJobWithBodyWithResponse request with any body
 	EnqueueJobWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*EnqueueJobResponse, error)
 
@@ -3148,6 +3441,9 @@ type ClientWithResponsesInterface interface {
 	RegisterRepoWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RegisterRepoResponse, error)
 
 	RegisterRepoWithResponse(ctx context.Context, body RegisterRepoJSONRequestBody, reqEditors ...RequestEditorFn) (*RegisterRepoResponse, error)
+
+	// ResolveRepoWithResponse request
+	ResolveRepoWithResponse(ctx context.Context, params *ResolveRepoParams, reqEditors ...RequestEditorFn) (*ResolveRepoResponse, error)
 
 	// GetReviewWithResponse request
 	GetReviewWithResponse(ctx context.Context, params *GetReviewParams, reqEditors ...RequestEditorFn) (*GetReviewResponse, error)
@@ -3259,6 +3555,29 @@ func (r ListCommentsResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r ListCommentsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetCostResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *CostAggregate
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r GetCostResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetCostResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -3664,6 +3983,29 @@ func (r RegisterRepoResponse) StatusCode() int {
 	return 0
 }
 
+type ResolveRepoResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *ResolveRepoOutputBody
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r ResolveRepoResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ResolveRepoResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type GetReviewResponse struct {
 	Body                          []byte
 	HTTPResponse                  *http.Response
@@ -3865,6 +4207,15 @@ func (c *ClientWithResponses) ListCommentsWithResponse(ctx context.Context, para
 		return nil, err
 	}
 	return ParseListCommentsResponse(rsp)
+}
+
+// GetCostWithResponse request returning *GetCostResponse
+func (c *ClientWithResponses) GetCostWithResponse(ctx context.Context, params *GetCostParams, reqEditors ...RequestEditorFn) (*GetCostResponse, error) {
+	rsp, err := c.GetCost(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetCostResponse(rsp)
 }
 
 // EnqueueJobWithBodyWithResponse request with arbitrary body returning *EnqueueJobResponse
@@ -4100,6 +4451,15 @@ func (c *ClientWithResponses) RegisterRepoWithResponse(ctx context.Context, body
 	return ParseRegisterRepoResponse(rsp)
 }
 
+// ResolveRepoWithResponse request returning *ResolveRepoResponse
+func (c *ClientWithResponses) ResolveRepoWithResponse(ctx context.Context, params *ResolveRepoParams, reqEditors ...RequestEditorFn) (*ResolveRepoResponse, error) {
+	rsp, err := c.ResolveRepo(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseResolveRepoResponse(rsp)
+}
+
 // GetReviewWithResponse request returning *GetReviewResponse
 func (c *ClientWithResponses) GetReviewWithResponse(ctx context.Context, params *GetReviewParams, reqEditors ...RequestEditorFn) (*GetReviewResponse, error) {
 	rsp, err := c.GetReview(ctx, params, reqEditors...)
@@ -4286,6 +4646,39 @@ func ParseListCommentsResponse(rsp *http.Response) (*ListCommentsResponse, error
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest ListCommentsOutputBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetCostResponse parses an HTTP response from a GetCostWithResponse call
+func ParseGetCostResponse(rsp *http.Response) (*GetCostResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetCostResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest CostAggregate
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
@@ -4879,6 +5272,39 @@ func ParseRegisterRepoResponse(rsp *http.Response) (*RegisterRepoResponse, error
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest Repo
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseResolveRepoResponse parses an HTTP response from a ResolveRepoWithResponse call
+func ParseResolveRepoResponse(rsp *http.Response) (*ResolveRepoResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ResolveRepoResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ResolveRepoOutputBody
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

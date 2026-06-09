@@ -82,7 +82,7 @@ will be skipped.`,
 				}
 
 				j := tokens.ToJSON(mergedUsage)
-				if err := db.SaveJobTokenUsage(job.ID, j); err != nil {
+				if err := db.SaveJobTokenUsage(job.ID, job.SessionID, j); err != nil {
 					log.Printf(
 						"job %d: save error: %v", job.ID, err,
 					)

@@ -659,3 +659,25 @@ func TestServerStop_StopsCIPoller(t *testing.T) {
 		}, "expected poller stopped after Server.Stop, got (%v, %q)", healthy, msg)
 	}
 }
+
+func TestCostOptionsFromInput(t *testing.T) {
+	assert := assert.New(t)
+
+	opts, err := costOptionsFromInput(&GetCostInput{
+		Repo:        []string{"/a", "/b"},
+		BranchEmpty: "true",
+	})
+	require.NoError(t, err)
+	assert.Equal([]string{"/a", "/b"}, opts.RepoPaths)
+	assert.True(opts.BranchEmpty)
+	assert.True(opts.Since.IsZero(), "empty since means all-time")
+
+	opts, err = costOptionsFromInput(&GetCostInput{Branch: "main", Since: "7d"})
+	require.NoError(t, err)
+	assert.Equal("main", opts.Branch)
+	assert.False(opts.BranchEmpty)
+	assert.False(opts.Since.IsZero())
+
+	_, err = costOptionsFromInput(&GetCostInput{Since: "bogus"})
+	assert.Error(err)
+}

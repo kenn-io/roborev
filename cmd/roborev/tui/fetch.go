@@ -183,7 +183,7 @@ func (m model) fetchJobs() tea.Cmd {
 	currentJobCount := len(m.jobs)
 	seq := m.fetchSeq
 
-	return func() tea.Msg {
+	jobsCmd := func() tea.Msg {
 		// Build URL with server-side filters where possible, falling back to
 		// limit=0 (no pagination) only when client-side filtering is required.
 		params := neturl.Values{}
@@ -241,6 +241,9 @@ func (m model) fetchJobs() tea.Cmd {
 		}
 		return jobsMsg{jobs: result.Jobs, hasMore: result.HasMore, append: false, seq: seq, stats: result.Stats}
 	}
+	// fetchCost must always return a non-nil command: tests (fetchJobsMessage)
+	// rely on this staying a 2-element BatchMsg whose first command is jobsCmd.
+	return tea.Batch(jobsCmd, m.fetchCost())
 }
 
 func (m model) fetchMoreJobs() tea.Cmd {
@@ -277,6 +280,40 @@ func (m model) fetchMoreJobs() tea.Cmd {
 			}
 		}
 		return jobsMsg{jobs: result.Jobs, hasMore: result.HasMore, append: true, seq: seq}
+	}
+}
+
+// fetchCost retrieves the approximate cost aggregate for the active filter scope.
+// It rides the same fetchSeq stale guard as fetchJobs so a response that arrives
+// after a filter change is discarded. Any error, non-200, or decode failure
+// yields a nil cost so the queue-header segment hides rather than showing stale
+// or bogus data.
+func (m model) fetchCost() tea.Cmd {
+	seq := m.fetchSeq
+	var query daemonclient.GetCostQuery
+	if len(m.activeRepoFilter) > 0 {
+		query.Repo = append([]string(nil), m.activeRepoFilter...)
+	}
+	if m.activeBranchFilter == branchNone {
+		be := daemonclient.True
+		query.BranchEmpty = &be
+	} else if m.activeBranchFilter != "" {
+		branch := m.activeBranchFilter
+		query.Branch = &branch
+	}
+	return func() tea.Msg {
+		resp, err := m.api.GetCostWithResponse(
+			m.apiContext(),
+			&daemonclient.GetCostRequestOptions{Query: &query},
+		)
+		if err != nil || resp == nil || resp.StatusCode != http.StatusOK {
+			return costMsg{cost: nil, seq: seq}
+		}
+		var c storage.CostAggregate
+		if err := decodeAPIBody(resp.Body, &c); err != nil {
+			return costMsg{cost: nil, seq: seq}
+		}
+		return costMsg{cost: &c, seq: seq}
 	}
 }
 

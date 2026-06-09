@@ -282,6 +282,19 @@ func (m model) handlePanelMembersMsg(msg panelMembersMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// handleCostMsg stores the latest cost aggregate, discarding responses from
+// before a filter change (same fetchSeq guard as handleJobsMsg). It records the
+// response's fetchSeq so costSegmentText can hide the segment after a later
+// filter change until the matching cost response arrives.
+func (m model) handleCostMsg(msg costMsg) (tea.Model, tea.Cmd) {
+	if msg.seq < m.fetchSeq {
+		return m, nil
+	}
+	m.cost = msg.cost
+	m.costSeq = msg.seq
+	return m, nil
+}
+
 // handleStatusMsg processes daemon status updates.
 func (m model) handleStatusMsg(msg statusMsg) (tea.Model, tea.Cmd) {
 	if msg.gen < m.fetchGen {

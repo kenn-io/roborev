@@ -144,6 +144,45 @@ func setJobBranch(t *testing.T, db *DB, jobID int64, branch string) {
 	require.NoError(t, err, "failed to set job branch: %v")
 }
 
+// setJobAgentInvoked marks a job as having actually invoked an agent, which is
+// what cost eligibility keys on. Cost-eligible test jobs must set it; no-agent
+// rows leave it unset. It writes the marker directly (like the other seed
+// helpers) rather than through MarkJobAgentInvoked: that method scopes the write
+// to the running attempt (status='running' + worker_id), but cost tests seed
+// terminal rows that no longer satisfy that scope. The scoping itself is covered
+// by TestMarkJobAgentInvoked_StaleWorkerIgnored.
+func setJobAgentInvoked(t *testing.T, db *DB, jobID int64) {
+	t.Helper()
+	_, err := db.Exec(
+		`UPDATE review_jobs SET command_line = ?, agent_invoked = 1 WHERE id = ?`,
+		fmt.Sprintf("test-agent review %d", jobID), jobID)
+	require.NoError(t, err, "failed to mark job agent-invoked")
+}
+
+// getJobAgentInvoked reads the raw agent_invoked marker for a job. The
+// ReviewJob model does not expose it (it gates cost eligibility, it is not a
+// display field), so attempt-reset tests read the column directly.
+func getJobAgentInvoked(t *testing.T, db *DB, jobID int64) bool {
+	t.Helper()
+	var invoked int
+	require.NoError(t, db.QueryRow(
+		`SELECT agent_invoked FROM review_jobs WHERE id = ?`, jobID).Scan(&invoked),
+		"failed to read agent_invoked")
+	return invoked == 1
+}
+
+// seedCost prices a job the way the worker does: an agent ran (agent_invoked
+// set) and token usage is written scoped to the attempt's captured session, so
+// the helper assigns a session id (via setJobSession, defined in
+// reviews_test.go) and stores the usage blob against it.
+func seedCost(t *testing.T, db *DB, jobID int64, tokenUsageJSON string) {
+	t.Helper()
+	setJobAgentInvoked(t, db, jobID)
+	sessionID := fmt.Sprintf("sess-%d", jobID)
+	setJobSession(t, db, jobID, sessionID)
+	require.NoError(t, db.SaveJobTokenUsage(jobID, sessionID, tokenUsageJSON))
+}
+
 func createJobChain(t *testing.T, db *DB, repoPath, sha string) (*Repo, *Commit, *ReviewJob) {
 	t.Helper()
 	repo := createRepo(t, db, repoPath)

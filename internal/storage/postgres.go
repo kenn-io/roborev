@@ -15,12 +15,12 @@ import (
 )
 
 // PostgreSQL schema version - increment when schema changes
-const pgSchemaVersion = 16
+const pgSchemaVersion = 17
 
 // pgSchemaName is the PostgreSQL schema used to isolate roborev tables
 const pgSchemaName = "roborev"
 
-//go:embed schemas/postgres_v16.sql
+//go:embed schemas/postgres_v17.sql
 var pgSchemaSQL string
 
 // pgSchemaStatements returns the individual DDL statements for schema creation.
@@ -388,6 +388,15 @@ func (p *PgPool) EnsureSchema(ctx context.Context) error {
 				return fmt.Errorf("v16 migration (add dirty_files): %w", err)
 			}
 		}
+		if currentVersion < 17 {
+			// agent_invoked: authoritative, synced "an agent ran" signal for cost
+			// eligibility. Rows that predate the column keep the default FALSE and
+			// are not backfilled — a historical run that recorded token usage is
+			// still counted via the token_usage fallback in costEligible.
+			if _, err = p.pool.Exec(ctx, `ALTER TABLE review_jobs ADD COLUMN IF NOT EXISTS agent_invoked BOOLEAN NOT NULL DEFAULT FALSE`); err != nil {
+				return fmt.Errorf("v17 migration (add agent_invoked): %w", err)
+			}
+		}
 		// Update version
 		_, err = p.pool.Exec(ctx, `INSERT INTO schema_version (version) VALUES ($1) ON CONFLICT (version) DO NOTHING`, pgSchemaVersion)
 		if err != nil {
@@ -698,8 +707,8 @@ func (p *PgPool) UpsertJob(ctx context.Context, j SyncableJob, pgRepoID int64, p
 			enqueued_at, started_at, finished_at, prompt, diff_content, dirty_files, error, token_usage,
 			worktree_path, source, min_severity,
 			panel_run_uuid, panel_role, panel_name, panel_member_name, panel_member_index, panel_member_config_json,
-			source_machine_id, backup_agent, backup_model, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, clock_timestamp())
+			source_machine_id, backup_agent, backup_model, agent_invoked, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, clock_timestamp())
 		ON CONFLICT (uuid) DO UPDATE SET
 			status = EXCLUDED.status,
 			finished_at = EXCLUDED.finished_at,
@@ -709,11 +718,12 @@ func (p *PgPool) UpsertJob(ctx context.Context, j SyncableJob, pgRepoID int64, p
 			requested_model = EXCLUDED.requested_model,
 			requested_provider = EXCLUDED.requested_provider,
 			git_ref = EXCLUDED.git_ref,
-			session_id = COALESCE(EXCLUDED.session_id, review_jobs.session_id),
+			session_id = CASE WHEN EXCLUDED.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased') THEN EXCLUDED.session_id ELSE COALESCE(EXCLUDED.session_id, review_jobs.session_id) END,
 			commit_id = EXCLUDED.commit_id,
 			patch_id = EXCLUDED.patch_id,
 			dirty_files = COALESCE(EXCLUDED.dirty_files, review_jobs.dirty_files),
-			token_usage = COALESCE(EXCLUDED.token_usage, review_jobs.token_usage),
+			token_usage = CASE WHEN EXCLUDED.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased') THEN EXCLUDED.token_usage ELSE COALESCE(EXCLUDED.token_usage, review_jobs.token_usage) END,
+			agent_invoked = CASE WHEN EXCLUDED.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased') THEN EXCLUDED.agent_invoked ELSE (review_jobs.agent_invoked OR EXCLUDED.agent_invoked) END,
 			worktree_path = COALESCE(EXCLUDED.worktree_path, review_jobs.worktree_path),
 			source = COALESCE(EXCLUDED.source, review_jobs.source),
 			min_severity = EXCLUDED.min_severity,
@@ -730,7 +740,7 @@ func (p *PgPool) UpsertJob(ctx context.Context, j SyncableJob, pgRepoID int64, p
 		defaultStr(j.JobType, "review"), j.ReviewType, nullString(j.PatchID), j.Status, j.Agentic, j.EnqueuedAt, j.StartedAt, j.FinishedAt,
 		nullString(j.Prompt), j.DiffContent, nullString(dirtyFilesJSON), nullString(j.Error), nullString(j.TokenUsage), nullString(j.WorktreePath), nullString(j.Source), normalizeMinSeverityForWrite(j.MinSeverity),
 		nullString(j.PanelRunUUID), nullString(j.PanelRole), nullString(j.PanelName), nullString(j.PanelMemberName), j.PanelMemberIndex, nullString(j.PanelMemberConfigJSON),
-		j.SourceMachineID, j.BackupAgent, j.BackupModel)
+		j.SourceMachineID, j.BackupAgent, j.BackupModel, j.AgentInvoked)
 	return err
 }
 
@@ -782,6 +792,7 @@ type PulledJob struct {
 	PatchID               string
 	Status                string
 	Agentic               bool
+	AgentInvoked          bool
 	EnqueuedAt            time.Time
 	StartedAt             *time.Time
 	FinishedAt            *time.Time
@@ -823,7 +834,7 @@ func (p *PgPool) PullJobs(ctx context.Context, excludeMachineID string, cursor s
 	rows, err := p.pool.Query(ctx, `
 		SELECT
 			j.uuid, r.identity, COALESCE(c.sha, ''), COALESCE(c.author, ''), COALESCE(c.subject, ''), COALESCE(c.timestamp, '1970-01-01'::timestamptz),
-			j.git_ref, COALESCE(j.session_id, ''), j.agent, COALESCE(j.model, ''), COALESCE(j.provider, ''), COALESCE(j.requested_model, ''), COALESCE(j.requested_provider, ''), COALESCE(j.reasoning, ''), COALESCE(j.job_type, 'review'), COALESCE(j.review_type, ''), COALESCE(j.patch_id, ''), j.status, j.agentic,
+			j.git_ref, COALESCE(j.session_id, ''), j.agent, COALESCE(j.model, ''), COALESCE(j.provider, ''), COALESCE(j.requested_model, ''), COALESCE(j.requested_provider, ''), COALESCE(j.reasoning, ''), COALESCE(j.job_type, 'review'), COALESCE(j.review_type, ''), COALESCE(j.patch_id, ''), j.status, j.agentic, COALESCE(j.agent_invoked, FALSE),
 			j.enqueued_at, j.started_at, j.finished_at,
 			COALESCE(j.prompt, ''), j.diff_content, j.dirty_files, COALESCE(j.error, ''), COALESCE(j.token_usage, ''),
 			COALESCE(j.worktree_path, ''), COALESCE(j.source, ''), COALESCE(j.min_severity, ''), COALESCE(j.backup_agent, ''), COALESCE(j.backup_model, ''),
@@ -853,7 +864,7 @@ func (p *PgPool) PullJobs(ctx context.Context, excludeMachineID string, cursor s
 
 		err := rows.Scan(
 			&j.UUID, &j.RepoIdentity, &j.CommitSHA, &j.CommitAuthor, &j.CommitSubject, &j.CommitTimestamp,
-			&j.GitRef, &j.SessionID, &j.Agent, &j.Model, &j.Provider, &j.RequestedModel, &j.RequestedProvider, &j.Reasoning, &j.JobType, &j.ReviewType, &j.PatchID, &j.Status, &j.Agentic,
+			&j.GitRef, &j.SessionID, &j.Agent, &j.Model, &j.Provider, &j.RequestedModel, &j.RequestedProvider, &j.Reasoning, &j.JobType, &j.ReviewType, &j.PatchID, &j.Status, &j.Agentic, &j.AgentInvoked,
 			&j.EnqueuedAt, &j.StartedAt, &j.FinishedAt,
 			&j.Prompt, &diffContent, &dirtyFiles, &j.Error, &j.TokenUsage,
 			&j.WorktreePath, &j.Source, &j.MinSeverity, &j.BackupAgent, &j.BackupModel,
@@ -1154,8 +1165,8 @@ func (p *PgPool) BatchUpsertJobs(ctx context.Context, jobs []JobWithPgIDs) ([]bo
 				enqueued_at, started_at, finished_at, prompt, diff_content, dirty_files, error, token_usage,
 				worktree_path, source, min_severity,
 				panel_run_uuid, panel_role, panel_name, panel_member_name, panel_member_index, panel_member_config_json,
-				source_machine_id, backup_agent, backup_model, updated_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, clock_timestamp())
+				source_machine_id, backup_agent, backup_model, agent_invoked, updated_at
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, clock_timestamp())
 			ON CONFLICT (uuid) DO UPDATE SET
 				status = EXCLUDED.status,
 				finished_at = EXCLUDED.finished_at,
@@ -1165,11 +1176,12 @@ func (p *PgPool) BatchUpsertJobs(ctx context.Context, jobs []JobWithPgIDs) ([]bo
 				requested_model = EXCLUDED.requested_model,
 				requested_provider = EXCLUDED.requested_provider,
 				git_ref = EXCLUDED.git_ref,
-				session_id = COALESCE(EXCLUDED.session_id, review_jobs.session_id),
+				session_id = CASE WHEN EXCLUDED.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased') THEN EXCLUDED.session_id ELSE COALESCE(EXCLUDED.session_id, review_jobs.session_id) END,
 				commit_id = EXCLUDED.commit_id,
 				patch_id = EXCLUDED.patch_id,
 				dirty_files = COALESCE(EXCLUDED.dirty_files, review_jobs.dirty_files),
-				token_usage = COALESCE(EXCLUDED.token_usage, review_jobs.token_usage),
+				token_usage = CASE WHEN EXCLUDED.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased') THEN EXCLUDED.token_usage ELSE COALESCE(EXCLUDED.token_usage, review_jobs.token_usage) END,
+				agent_invoked = CASE WHEN EXCLUDED.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased') THEN EXCLUDED.agent_invoked ELSE (review_jobs.agent_invoked OR EXCLUDED.agent_invoked) END,
 				worktree_path = COALESCE(EXCLUDED.worktree_path, review_jobs.worktree_path),
 				source = COALESCE(EXCLUDED.source, review_jobs.source),
 				min_severity = EXCLUDED.min_severity,
@@ -1186,7 +1198,7 @@ func (p *PgPool) BatchUpsertJobs(ctx context.Context, jobs []JobWithPgIDs) ([]bo
 			defaultStr(j.JobType, "review"), j.ReviewType, nullString(j.PatchID), j.Status, j.Agentic, j.EnqueuedAt, j.StartedAt, j.FinishedAt,
 			nullString(j.Prompt), j.DiffContent, nullString(dirtyFilesJSON), nullString(j.Error), nullString(j.TokenUsage), nullString(j.WorktreePath), nullString(j.Source), normalizeMinSeverityForWrite(j.MinSeverity),
 			nullString(j.PanelRunUUID), nullString(j.PanelRole), nullString(j.PanelName), nullString(j.PanelMemberName), j.PanelMemberIndex, nullString(j.PanelMemberConfigJSON),
-			j.SourceMachineID, j.BackupAgent, j.BackupModel)
+			j.SourceMachineID, j.BackupAgent, j.BackupModel, j.AgentInvoked)
 	}
 
 	br := p.pool.SendBatch(ctx, batch)

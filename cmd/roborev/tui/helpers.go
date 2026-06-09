@@ -72,19 +72,6 @@ func (m *model) setWarningFlash(msg string, d time.Duration, v viewKind) {
 	m.flashWarning = true
 }
 
-func (m model) renderDaemonStatus() string {
-	daemonVersion := m.daemonVersion
-	if daemonVersion == "" {
-		daemonVersion = "?"
-	}
-
-	line := statusStyle.Render("Daemon: " + daemonVersion)
-	if m.versionMismatch {
-		line += " " + errorStyle.Render("[MISMATCH]")
-	}
-	return line
-}
-
 func (m model) renderFlash(view viewKind) string {
 	if m.flashMessage == "" || !time.Now().Before(m.flashExpiresAt) || m.flashView != view {
 		return ""
