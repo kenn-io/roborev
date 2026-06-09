@@ -5,7 +5,7 @@ import (
 	"path/filepath"
 	"strings"
 
-	"github.com/charmbracelet/lipgloss"
+	"charm.land/lipgloss/v2"
 	xansi "github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-runewidth"
 
@@ -243,7 +243,7 @@ func (m model) renderReviewView() string {
 			content := fmt.Sprintf(" > %s_", inputDisplay)
 			boxStyle := lipgloss.NewStyle().
 				Border(lipgloss.NormalBorder()).
-				BorderForeground(lipgloss.AdaptiveColor{Light: "125", Dark: "205"}). // magenta/pink (active)
+				BorderForeground(adaptiveColor("125", "205")). // magenta/pink (active)
 				Width(innerWidth)
 			for line := range strings.SplitSeq(strings.TrimRight(boxStyle.Render(content), "\n"), "\n") {
 				b.WriteString(line)
@@ -266,8 +266,8 @@ func (m model) renderReviewView() string {
 			content := " " + inputDisplay
 			boxStyle := lipgloss.NewStyle().
 				Border(lipgloss.NormalBorder()).
-				BorderForeground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"}). // gray (inactive)
-				Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"}).
+				BorderForeground(adaptiveColor("242", "246")). // gray (inactive)
+				Foreground(adaptiveColor("242", "246")).
 				Width(innerWidth)
 			for line := range strings.SplitSeq(strings.TrimRight(boxStyle.Render(content), "\n"), "\n") {
 				b.WriteString(statusStyle.Render(line))

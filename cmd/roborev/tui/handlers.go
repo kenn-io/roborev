@@ -4,7 +4,7 @@ import (
 	"io"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/streamfmt"
@@ -40,46 +40,52 @@ func (m model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
-	if msg.Action != tea.MouseActionPress {
-		return m, nil
-	}
-	switch msg.Button {
-	case tea.MouseButtonWheelUp:
-		if m.currentView == viewColumnOptions {
-			if m.colOptionsIdx > 0 {
-				m.colOptionsIdx--
+	mouse := msg.Mouse()
+	switch msg.(type) {
+	case tea.MouseWheelMsg:
+		switch mouse.Button {
+		case tea.MouseWheelUp:
+			if m.currentView == viewColumnOptions {
+				if m.colOptionsIdx > 0 {
+					m.colOptionsIdx--
+				}
+				return m, nil
 			}
+			if m.currentView == viewTasks {
+				if m.fixSelectedIdx > 0 {
+					m.fixSelectedIdx--
+				}
+				return m, nil
+			}
+			return m.handleUpKey()
+		case tea.MouseWheelDown:
+			if m.currentView == viewColumnOptions {
+				if m.colOptionsIdx < len(m.colOptionsList)-1 {
+					m.colOptionsIdx++
+				}
+				return m, nil
+			}
+			if m.currentView == viewTasks {
+				if m.fixSelectedIdx < len(m.fixJobs)-1 {
+					m.fixSelectedIdx++
+				}
+				return m, nil
+			}
+			return m.handleDownKey()
+		default:
 			return m, nil
 		}
-		if m.currentView == viewTasks {
-			if m.fixSelectedIdx > 0 {
-				m.fixSelectedIdx--
-			}
+	case tea.MouseClickMsg:
+		if mouse.Button != tea.MouseLeft {
 			return m, nil
 		}
-		return m.handleUpKey()
-	case tea.MouseButtonWheelDown:
-		if m.currentView == viewColumnOptions {
-			if m.colOptionsIdx < len(m.colOptionsList)-1 {
-				m.colOptionsIdx++
-			}
-			return m, nil
-		}
-		if m.currentView == viewTasks {
-			if m.fixSelectedIdx < len(m.fixJobs)-1 {
-				m.fixSelectedIdx++
-			}
-			return m, nil
-		}
-		return m.handleDownKey()
-	case tea.MouseButtonLeft:
 		switch m.currentView {
 		case viewQueue:
-			m.handleQueueMouseClick(msg.X, msg.Y)
+			m.handleQueueMouseClick(mouse.X, mouse.Y)
 		case viewTasks:
-			m.handleTasksMouseClick(msg.Y)
+			m.handleTasksMouseClick(mouse.Y)
 		case viewColumnOptions:
-			return m.handleColumnOptionsMouseClick(msg.Y)
+			return m.handleColumnOptionsMouseClick(mouse.Y)
 		}
 		return m, nil
 	default:
@@ -118,7 +124,7 @@ func (m model) handleGlobalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handlePageUpKey()
 	case "pgdown":
 		return m.handlePageDownKey()
-	case " ":
+	case "space":
 		return m.handleToggleExpand()
 	case "p":
 		return m.handlePromptKey()

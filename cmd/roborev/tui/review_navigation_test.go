@@ -4,7 +4,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 
 	"go.kenn.io/roborev/internal/storage"
@@ -17,7 +17,7 @@ func TestTUIReviewNavigation(t *testing.T) {
 		initialIdx           int
 		initialID            int64
 		initialScroll        int
-		key                  any // rune or tea.KeyType
+		key                  any
 		wantIdx              int
 		wantJobID            int64
 		wantScroll           int
@@ -147,12 +147,9 @@ func TestTUIReviewNavigation(t *testing.T) {
 			var m2 model
 			var cmd tea.Cmd
 
-			switch k := tt.key.(type) {
-			case rune:
-				m2, cmd = pressKey(m, k)
-			case tea.KeyType:
-				m2, cmd = pressSpecial(m, k)
-			}
+			k, ok := tt.key.(rune)
+			assert.True(t, ok)
+			m2, cmd = pressSpecial(m, k)
 
 			assertSelection(t, m2, tt.wantIdx, tt.wantJobID)
 

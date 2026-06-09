@@ -10,7 +10,7 @@ import (
 	"testing"
 	"time"
 
-	googlegithub "github.com/google/go-github/v84/github"
+	googlegithub "github.com/google/go-github/v88/github"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -27,16 +27,19 @@ type repoAPIServer struct {
 func (s *repoAPIServer) handler(w http.ResponseWriter, r *http.Request) {
 	s.t.Helper()
 	w.Header().Set("Content-Type", "application/json")
+	path := strings.TrimPrefix(r.URL.Path, "/api/v3")
 
 	switch {
-	case r.Method == http.MethodGet && r.URL.Path == "/orgs/acme/repos":
+	case r.Method == http.MethodGet && path == "/orgs/acme/repos":
 		assert.NoError(s.t, json.NewEncoder(w).Encode(s.orgRepos))
-	case r.Method == http.MethodGet && r.URL.Path == "/orgs/jane/repos":
+	case r.Method == http.MethodGet && path == "/orgs/jane/repos":
 		w.WriteHeader(http.StatusNotFound)
 		assert.NoError(s.t, json.NewEncoder(w).Encode(map[string]any{"message": "not found"}))
-	case r.Method == http.MethodGet && r.URL.Path == "/users/jane/repos":
+	case r.Method == http.MethodGet && path == "/users/acme/repos":
+		assert.NoError(s.t, json.NewEncoder(w).Encode(s.orgRepos))
+	case r.Method == http.MethodGet && path == "/users/jane/repos":
 		assert.NoError(s.t, json.NewEncoder(w).Encode(s.userRepos))
-	case r.Method == http.MethodGet && r.URL.Path == "/user/repos":
+	case r.Method == http.MethodGet && path == "/user/repos":
 		if s.authStatus != 0 {
 			w.WriteHeader(s.authStatus)
 			assert.NoError(s.t, json.NewEncoder(w).Encode(map[string]any{"message": "auth failed"}))

@@ -4,10 +4,11 @@ import (
 	"regexp"
 	"strings"
 	"time"
+	"unicode"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/glamour"
-	gansi "github.com/charmbracelet/glamour/ansi"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/glamour/v2"
+	gansi "charm.land/glamour/v2/ansi"
 	xansi "github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-runewidth"
 	"github.com/muesli/termenv"
@@ -28,14 +29,32 @@ const branchNone = "(none)"
 // Some embedded terminals forward Enter as LF (ctrl+j) instead of CR.
 // Only use this in non-text-entry flows where ctrl+j is not meaningful input.
 func isSubmitKey(msg tea.KeyMsg) bool {
-	switch msg.Type {
-	case tea.KeyEnter, tea.KeyCtrlJ:
+	key := msg.Key()
+	switch key.Code {
+	case tea.KeyEnter:
 		return true
 	}
-	if len(msg.Runes) == 1 {
-		return msg.Runes[0] == '\r' || msg.Runes[0] == '\n'
+	if key.Mod.Contains(tea.ModCtrl) && key.Code == 'j' {
+		return true
 	}
-	return false
+	return key.Text == "\r" || key.Text == "\n"
+}
+
+func keyRunes(msg tea.KeyMsg) []rune {
+	key := msg.Key()
+	if key.Text != "" {
+		return []rune(key.Text)
+	}
+	if key.Code == tea.KeySpace {
+		return []rune{' '}
+	}
+	if key.Mod != 0 {
+		return nil
+	}
+	if key.Code >= 0 && key.Code <= unicode.MaxRune && unicode.IsPrint(key.Code) {
+		return []rune{key.Code}
+	}
+	return nil
 }
 
 // setFlash sets a flash message with the given duration and view.
@@ -525,7 +544,7 @@ func stripTrailingPadding(line string, noColor bool) string {
 // renderMarkdownLines renders markdown text using glamour and splits into lines.
 // wrapWidth controls glamour's word-wrap column (capped for readability).
 // maxWidth controls line truncation (actual terminal width).
-// colorProfile controls glamour's color output (use termenv.Ascii to suppress colors).
+// colorProfile controls post-render color stripping.
 // Falls back to wrapText if glamour rendering fails.
 func renderMarkdownLines(text string, wrapWidth, maxWidth int, glamourStyle gansi.StyleConfig, tabWidth int, colorProfile termenv.Profile) []string {
 	// Truncate long lines before glamour so they don't get word-wrapped.
@@ -535,7 +554,6 @@ func renderMarkdownLines(text string, wrapWidth, maxWidth int, glamourStyle gans
 		glamour.WithStyles(glamourStyle),
 		glamour.WithWordWrap(wrapWidth),
 		glamour.WithPreservedNewLines(),
-		glamour.WithColorProfile(colorProfile),
 	)
 	if err != nil {
 		return sanitizeLines(wrapText(text, wrapWidth))

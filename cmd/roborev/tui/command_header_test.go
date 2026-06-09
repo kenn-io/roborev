@@ -144,10 +144,10 @@ func TestLogViewRendersFullCommandWhenExpanded(t *testing.T) {
 	m.jobs = []storage.ReviewJob{makeJob(1, withAgent("test"))}
 	m.logLines = []logLine{{text: "out"}}
 
-	collapsed := cmdHeaderLine(m.View())
+	collapsed := cmdHeaderLine(m.View().Content)
 	assert.Contains(t, collapsed, "…", "collapsed command header should be truncated")
 
 	m.cmdExpanded = true
-	expanded := cmdHeaderLine(m.View())
+	expanded := cmdHeaderLine(m.View().Content)
 	assert.NotContains(t, expanded, "…", "expanded command header line should not be truncated")
 }

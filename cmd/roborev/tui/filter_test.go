@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 
 	"go.kenn.io/roborev/internal/storage"
@@ -260,7 +260,7 @@ func TestTUIFilterLoadingRendersPaddedHeight(t *testing.T) {
 	m.width = 100
 	m.height = 20
 
-	output := m.View()
+	output := m.View().Content
 
 	lines := strings.Split(output, "\n")
 

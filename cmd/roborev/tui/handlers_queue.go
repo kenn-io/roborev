@@ -4,7 +4,7 @@ import (
 	"fmt"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -307,7 +307,7 @@ func (m model) handleColumnOptionsInput(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			m.taskColGen++
 		}
 		return m, nil
-	case " ", "enter":
+	case "space", "enter":
 		return m.toggleColumnOption(m.colOptionsIdx)
 	}
 	return m, nil
@@ -329,7 +329,7 @@ func (m model) toggleColumnOption(idx int) (tea.Model, tea.Cmd) {
 		opt.enabled = !opt.enabled
 		m.mouseEnabled = opt.enabled
 		m.colOptionsDirty = true
-		return m, mouseCaptureCmd(m.currentView, m.mouseEnabled)
+		return m, nil
 	} else if opt.id == colOptionTasksWorkflow {
 		opt.enabled = !opt.enabled
 		m.tasksEnabled = opt.enabled

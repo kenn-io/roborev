@@ -2,19 +2,22 @@ package tui
 
 import (
 	"fmt"
+	"image/color"
 	"maps"
+	"os"
 	"slices"
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/lipgloss/table"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
+	"charm.land/lipgloss/v2/table"
 	"github.com/muesli/termenv"
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/streamfmt"
 	"go.kenn.io/roborev/internal/tokens"
 	"go.kenn.io/roborev/internal/version"
 )
@@ -53,11 +56,17 @@ func anyPanelRow(rows []queueRow) bool {
 }
 
 // queueColorEnabled reports whether the queue should render the unicode tree
-// glyphs (vs the ASCII fallbacks). It keys on the same global lipgloss color
-// profile that drives every AdaptiveColor style on the queue, so glyph color
-// and cell color stay consistent (NO_COLOR / ROBOREV_COLOR_MODE=none → false).
+// glyphs (vs the ASCII fallbacks). It uses the same color-mode resolver as
+// markdown rendering (NO_COLOR / ROBOREV_COLOR_MODE=none -> false).
 func queueColorEnabled() bool {
-	return lipgloss.ColorProfile() != termenv.Ascii
+	mode := strings.ToLower(os.Getenv("ROBOREV_COLOR_MODE"))
+	if mode == "none" || termenv.EnvNoColor() {
+		return false
+	}
+	if mode == "dark" || mode == "light" {
+		return true
+	}
+	return streamfmt.ResolveColorProfile() != termenv.Ascii
 }
 
 // queueTreeSlot returns the leading tree marker for a row, with a trailing
@@ -416,7 +425,7 @@ func (m model) renderQueueView() string {
 		// Compute column widths: fixed columns get their natural size,
 		// flexible columns (Ref, Branch, Repo) absorb excess space.
 		bordersOn := m.colBordersOn
-		borderColor := lipgloss.AdaptiveColor{Light: "248", Dark: "242"}
+		borderColor := adaptiveColor("248", "242")
 
 		// Spacing per column: non-first, non-sel columns get 1 char of spacing
 		// (either PaddingRight or border ▕ + PaddingLeft = 2 chars)
@@ -622,12 +631,12 @@ func (m model) renderQueueView() string {
 
 				// Header row styling
 				if row == table.HeaderRow {
-					return s.Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"})
+					return s.Foreground(adaptiveColor("242", "246"))
 				}
 
 				// Selection highlighting — uniform background, no per-cell coloring
 				if row == selectedWindowIdx {
-					bg := lipgloss.AdaptiveColor{Light: "153", Dark: "24"}
+					bg := adaptiveColor("153", "24")
 					s = s.Background(bg)
 					if bordersOn {
 						s = s.BorderBackground(bg)
@@ -639,7 +648,7 @@ func (m model) renderQueueView() string {
 				// gets a subtle background so a parent and its members read as
 				// one block. Foreground per-cell coloring is applied on top.
 				if absIdx := start + row; bands != nil && absIdx < len(bands) && bands[absIdx] {
-					bg := lipgloss.AdaptiveColor{Light: "254", Dark: "236"} // subtle zebra band
+					bg := adaptiveColor("254", "236") // subtle zebra band
 					s = s.Background(bg)
 					if bordersOn {
 						s = s.BorderBackground(bg)
@@ -903,7 +912,7 @@ func truncateReason(reason string, maxLen int) string {
 // statusColor returns the foreground color for the Status column.
 func statusColor(
 	status storage.JobStatus,
-) lipgloss.TerminalColor {
+) color.Color {
 	switch status {
 	case storage.JobStatusQueued:
 		return queuedStyle.GetForeground()
@@ -927,7 +936,7 @@ func statusColor(
 // Returns nil when no color should be applied (nil verdict).
 func verdictColor(
 	verdict *string,
-) lipgloss.TerminalColor {
+) color.Color {
 	if verdict == nil {
 		return nil
 	}

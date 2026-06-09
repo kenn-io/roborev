@@ -7,8 +7,8 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/glamour/styles"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/glamour/v2/styles"
 	"github.com/mattn/go-runewidth"
 	"github.com/muesli/termenv"
 	"github.com/stretchr/testify/assert"

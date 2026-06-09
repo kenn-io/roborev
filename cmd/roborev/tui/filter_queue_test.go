@@ -6,7 +6,7 @@ import (
 	"strconv"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -16,7 +16,7 @@ import (
 func TestTUIFilterNavigation(t *testing.T) {
 	cases := []struct {
 		startIdx    int
-		key         tea.KeyType
+		key         rune
 		expectedIdx int
 		description string
 	}{
@@ -47,7 +47,7 @@ func TestTUIFilterNavigationSequential(t *testing.T) {
 		makeNode("repo-c", 1),
 	})
 
-	keys := []tea.KeyType{tea.KeyDown, tea.KeyDown, tea.KeyDown, tea.KeyUp}
+	keys := []rune{tea.KeyDown, tea.KeyDown, tea.KeyDown, tea.KeyUp}
 
 	m2 := m
 	for _, k := range keys {

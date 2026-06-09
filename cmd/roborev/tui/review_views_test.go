@@ -3,7 +3,7 @@ package tui
 import (
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -146,7 +146,7 @@ func TestTUICommitMsgViewNavigationWithQ(t *testing.T) {
 func TestTUICtrlDQuitsFromQueueView(t *testing.T) {
 	m := initTestModel(withCurrentView(viewQueue))
 
-	_, cmd := pressSpecial(m, tea.KeyCtrlD)
+	_, cmd := pressCtrl(m, 'd')
 
 	if cmd == nil {
 		require.Condition(t, func() bool {
@@ -164,7 +164,7 @@ func TestTUICtrlDNavigatesBackFromReviewView(t *testing.T) {
 		withReviewFromView(viewQueue),
 	)
 
-	got, _ := pressSpecial(m, tea.KeyCtrlD)
+	got, _ := pressCtrl(m, 'd')
 
 	assertView(t, got, viewQueue)
 }
@@ -175,7 +175,7 @@ func TestTUICtrlDNoOpInCommentModal(t *testing.T) {
 	m.commentText = "draft comment"
 	m.commentJobID = 42
 
-	got, cmd := pressSpecial(m, tea.KeyCtrlD)
+	got, cmd := pressCtrl(m, 'd')
 
 	assertView(t, got, viewKindComment)
 	if got.commentText != "draft comment" {

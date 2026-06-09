@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	googlegithub "github.com/google/go-github/v84/github"
+	googlegithub "github.com/google/go-github/v88/github"
 )
 
 type ClientOption func(*clientOptions) error
@@ -141,12 +141,21 @@ func NewClient(token string, opts ...ClientOption) (*Client, error) {
 	if httpClient == nil {
 		httpClient = &http.Client{Timeout: defaultHTTPTimeout}
 	}
-	api := googlegithub.NewClient(httpClient)
+
+	apiOpts := []googlegithub.ClientOptionsFunc{
+		googlegithub.WithHTTPClient(httpClient),
+	}
 	if cfg.baseURL != nil {
-		api.BaseURL = cfg.baseURL
+		base := cfg.baseURL.String()
+		apiOpts = append(apiOpts, googlegithub.WithEnterpriseURLs(base, base))
 	}
 	if strings.TrimSpace(token) != "" {
-		api = api.WithAuthToken(strings.TrimSpace(token))
+		apiOpts = append(apiOpts, googlegithub.WithAuthToken(strings.TrimSpace(token)))
+	}
+
+	api, err := googlegithub.NewClient(apiOpts...)
+	if err != nil {
+		return nil, err
 	}
 	return &Client{api: api}, nil
 }

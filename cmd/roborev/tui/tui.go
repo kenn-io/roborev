@@ -14,12 +14,11 @@ import (
 	"time"
 	"unicode"
 
-	tea "github.com/charmbracelet/bubbletea"
-	gansi "github.com/charmbracelet/glamour/ansi"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/charmbracelet/lipgloss/table"
+	tea "charm.land/bubbletea/v2"
+	gansi "charm.land/glamour/v2/ansi"
+	"charm.land/lipgloss/v2"
+	"charm.land/lipgloss/v2/table"
 	"github.com/mattn/go-runewidth"
-	"github.com/muesli/termenv"
 	gitrepo "go.kenn.io/kit/git/repo"
 
 	"go.kenn.io/roborev/internal/config"
@@ -41,43 +40,43 @@ const (
 var (
 	titleStyle = lipgloss.NewStyle().
 			Bold(true).
-			Foreground(lipgloss.AdaptiveColor{Light: "125", Dark: "205"}) // Magenta/Pink
+			Foreground(adaptiveColor("125", "205")) // Magenta/Pink
 
 	statusStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"}) // Gray
+			Foreground(adaptiveColor("242", "246")) // Gray
 
 	selectedStyle = lipgloss.NewStyle().
-			Background(lipgloss.AdaptiveColor{Light: "153", Dark: "24"}) // Light blue background
+			Background(adaptiveColor("153", "24")) // Light blue background
 
-	queuedStyle   = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "136", Dark: "226"}) // Yellow/Gold
-	runningStyle  = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "25", Dark: "33"})   // Blue
-	doneStyle     = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "27", Dark: "39"})   // Blue (completed)
-	failedStyle   = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "166", Dark: "208"}) // Orange (job error)
-	canceledStyle = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "243", Dark: "245"}) // Gray
+	queuedStyle   = lipgloss.NewStyle().Foreground(adaptiveColor("136", "226")) // Yellow/Gold
+	runningStyle  = lipgloss.NewStyle().Foreground(adaptiveColor("25", "33"))   // Blue
+	doneStyle     = lipgloss.NewStyle().Foreground(adaptiveColor("27", "39"))   // Blue (completed)
+	failedStyle   = lipgloss.NewStyle().Foreground(adaptiveColor("166", "208")) // Orange (job error)
+	canceledStyle = lipgloss.NewStyle().Foreground(adaptiveColor("243", "245")) // Gray
 
-	passStyle   = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "28", Dark: "46"})   // Green
-	failStyle   = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "124", Dark: "196"}) // Red (review found issues)
-	closedStyle = lipgloss.NewStyle().Foreground(lipgloss.AdaptiveColor{Light: "30", Dark: "51"})   // Cyan
+	passStyle   = lipgloss.NewStyle().Foreground(adaptiveColor("28", "46"))   // Green
+	failStyle   = lipgloss.NewStyle().Foreground(adaptiveColor("124", "196")) // Red (review found issues)
+	closedStyle = lipgloss.NewStyle().Foreground(adaptiveColor("30", "51"))   // Cyan
 
 	helpStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"}) // Gray
+			Foreground(adaptiveColor("242", "246")) // Gray
 
 	helpKeyStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.AdaptiveColor{Light: "242", Dark: "246"}) // Gray (matches status/scroll text)
+			Foreground(adaptiveColor("242", "246")) // Gray (matches status/scroll text)
 	helpDescStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.AdaptiveColor{Light: "248", Dark: "240"}) // Dimmer gray for descriptions
+			Foreground(adaptiveColor("248", "240")) // Dimmer gray for descriptions
 
 	errorStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.AdaptiveColor{Light: "124", Dark: "196"}).Bold(true) // Red
+			Foreground(adaptiveColor("124", "196")).Bold(true) // Red
 
 	flashStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.AdaptiveColor{Light: "28", Dark: "46"}) // Green
+			Foreground(adaptiveColor("28", "46")) // Green
 
 	warningFlashStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.AdaptiveColor{Light: "136", Dark: "226"}).Bold(true) // Yellow/Gold
+				Foreground(adaptiveColor("136", "226")).Bold(true) // Yellow/Gold
 
 	updateStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.AdaptiveColor{Light: "136", Dark: "226"}).Bold(true) // Yellow/Gold
+			Foreground(adaptiveColor("136", "226")).Bold(true) // Yellow/Gold
 )
 
 // reflowHelpRows redistributes items across rows so that when rendered
@@ -163,7 +162,7 @@ func renderHelpTable(rows [][]helpItem, width int) string {
 		return ""
 	}
 
-	borderColor := lipgloss.AdaptiveColor{Light: "248", Dark: "242"}
+	borderColor := adaptiveColor("248", "242")
 	cellStyle := lipgloss.NewStyle()
 	// PaddingLeft gaps the ▕ from cell text.
 	cellWithBorder := lipgloss.NewStyle().
@@ -595,23 +594,6 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 		filterStack = append(filterStack, filterTypeBranch)
 	}
 
-	// Apply ROBOREV_COLOR_MODE to the lipgloss default renderer so that
-	// AdaptiveColor styles on the queue screen respect the env var.
-	// NO_COLOR takes precedence per the convention.
-	// The glamour/markdown layer is handled separately via streamfmt.
-	if termenv.EnvNoColor() {
-		lipgloss.SetColorProfile(termenv.Ascii)
-	} else {
-		switch strings.ToLower(os.Getenv("ROBOREV_COLOR_MODE")) {
-		case "dark":
-			lipgloss.SetHasDarkBackground(true)
-		case "light":
-			lipgloss.SetHasDarkBackground(false)
-		case "none":
-			lipgloss.SetColorProfile(termenv.Ascii)
-		}
-	}
-
 	httpClient := ep.HTTPClient(10 * time.Second)
 	m := model{
 		endpoint:            ep,
@@ -665,7 +647,7 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 
 func (m model) Init() tea.Cmd {
 	cmds := []tea.Cmd{
-		tea.WindowSize(),
+		tea.RequestWindowSize,
 		m.displayTick(),
 		m.tick(),
 		m.fetchJobs(),
@@ -833,13 +815,6 @@ func mouseCaptureEnabled(v viewKind, mouseEnabled bool) bool {
 	return mouseEnabled && !mouseDisabledView(v)
 }
 
-func mouseCaptureCmd(v viewKind, mouseEnabled bool) tea.Cmd {
-	if mouseCaptureEnabled(v, mouseEnabled) {
-		return tea.EnableMouseCellMotion
-	}
-	return tea.DisableMouse
-}
-
 func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 	// Signal that the event loop is running (once). The control
 	// listener waits on this before accepting connections.
@@ -850,8 +825,6 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 			close(m.ready)
 		}
 	}
-
-	prevView := m.currentView
 
 	var result tea.Model
 	var cmd tea.Cmd
@@ -951,26 +924,10 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 
-	// Track view transitions to toggle mouse capture. Content views
-	// (review, log, patch, etc.) release mouse so the terminal allows
-	// native text selection; interactive views re-enable it for
-	// click and wheel support.
-	updated, ok := result.(model)
-	if !ok {
-		log.Printf("tui: Update returned unexpected type %T; skipping mouse toggle", result)
-		return result, cmd
-	}
-	newView := updated.currentView
-	prevCapture := mouseCaptureEnabled(prevView, m.mouseEnabled)
-	newCapture := mouseCaptureEnabled(newView, updated.mouseEnabled)
-	if prevCapture != newCapture {
-		cmd = tea.Batch(cmd, mouseCaptureCmd(newView, updated.mouseEnabled))
-	}
-
 	return result, cmd
 }
 
-func (m model) View() string {
+func (m model) viewContent() string {
 	if m.currentView == viewKindComment {
 		return m.renderRespondView()
 	}
@@ -1007,6 +964,15 @@ func (m model) View() string {
 	return m.renderQueueView()
 }
 
+func (m model) View() tea.View {
+	v := tea.NewView(m.viewContent())
+	v.AltScreen = true
+	if mouseCaptureEnabled(m.currentView, m.mouseEnabled) {
+		v.MouseMode = tea.MouseModeCellMotion
+	}
+	return v
+}
+
 // helpLines builds the help content lines from shortcut definitions.
 
 // helpMaxScroll returns the maximum scroll offset for the help view.
@@ -1022,13 +988,7 @@ type Config struct {
 }
 
 func programOptionsForModel(m model) []tea.ProgramOption {
-	programOpts := []tea.ProgramOption{
-		tea.WithAltScreen(),
-	}
-	if m.mouseEnabled {
-		programOpts = append(programOpts, tea.WithMouseCellMotion())
-	}
-	return programOpts
+	return nil
 }
 
 // Run starts the interactive TUI.

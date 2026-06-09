@@ -4,8 +4,8 @@ import (
 	"regexp"
 	"strings"
 
-	"github.com/charmbracelet/glamour"
-	gansi "github.com/charmbracelet/glamour/ansi"
+	"charm.land/glamour/v2"
+	gansi "charm.land/glamour/v2/ansi"
 	xansi "github.com/charmbracelet/x/ansi"
 	"github.com/mattn/go-runewidth"
 	"github.com/muesli/termenv"
@@ -244,7 +244,7 @@ func ParseFence(line string) (byte, int, bool) {
 // RenderMarkdownLines renders markdown text using glamour and splits
 // into lines. wrapWidth controls glamour's word-wrap column.
 // maxWidth controls line truncation (actual terminal width).
-// colorProfile controls glamour's color output (use termenv.Ascii to suppress colors).
+// colorProfile controls post-render color stripping.
 // Falls back to WrapText if glamour rendering fails.
 func RenderMarkdownLines(
 	text string, wrapWidth, maxWidth int,
@@ -256,7 +256,6 @@ func RenderMarkdownLines(
 		glamour.WithStyles(glamourStyle),
 		glamour.WithWordWrap(wrapWidth),
 		glamour.WithPreservedNewLines(),
-		glamour.WithColorProfile(colorProfile),
 	)
 	if err != nil {
 		return SanitizeLines(WrapText(text, wrapWidth))

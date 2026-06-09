@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 
 	"go.kenn.io/roborev/internal/storage"
@@ -169,7 +169,7 @@ func TestTUIRenderQueueViewBranchFilterOnlyNoPanic(t *testing.T) {
 	}
 
 	// This should not panic
-	output := m.View()
+	output := m.View().Content
 
 	// Should show branch filter indicator
 	assert.Contains(t, output, "[b: feature]")

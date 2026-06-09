@@ -230,7 +230,7 @@ func TestTUIRenderViews(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			m := setupRenderModel(tt.view, tt.review, withBranchName(tt.branch))
-			output := m.View()
+			output := m.View().Content
 
 			for _, want := range tt.wantContains {
 				assertOutputContains(t, output, want)
@@ -368,7 +368,7 @@ func TestTUIVisibleLinesCalculationTable(t *testing.T) {
 			m.width = tt.width
 			m.height = tt.height
 
-			output := m.View()
+			output := m.View().Content
 
 			expectedIndicator := fmt.Sprintf("[1-%d of %d lines]", tt.wantVisibleLines, 21)
 			assert.Contains(t, output, expectedIndicator)

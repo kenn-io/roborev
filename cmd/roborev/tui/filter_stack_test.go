@@ -4,7 +4,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 
 	"go.kenn.io/roborev/internal/storage"
@@ -231,7 +231,7 @@ func TestTUIFilterStackTitleBarOrder(t *testing.T) {
 	m.activeRepoFilter = []string{"/path/to/myrepo"}
 	m.filterStack = append(m.filterStack, "repo")
 
-	output := m.View()
+	output := m.View().Content
 
 	assert.Contains(t, output, "[b: feature]")
 	assert.Contains(t, output, "[f: myrepo]")
@@ -250,7 +250,7 @@ func TestTUIFilterStackTitleUsesRepoDisplayName(t *testing.T) {
 		"new-service": {"/workspace/old-service"},
 	}
 
-	output := m.View()
+	output := m.View().Content
 
 	assert.Contains(t, output, "[f: new-service]")
 	assert.NotContains(t, output, "[f: old-service]")
@@ -269,7 +269,7 @@ func TestTUIFilterStackReverseOrder(t *testing.T) {
 	m.activeBranchFilter = "develop"
 	m.filterStack = append(m.filterStack, "branch")
 
-	output := m.View()
+	output := m.View().Content
 
 	fIdx := strings.Index(output, "[f: myrepo]")
 	bIdx := strings.Index(output, "[b: develop]")

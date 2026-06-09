@@ -15,7 +15,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -89,20 +89,51 @@ func mockServerModel(t *testing.T, handler http.HandlerFunc) (*httptest.Server, 
 
 // pressKey simulates pressing a rune key and returns the updated model.
 func pressKey(m model, r rune) (model, tea.Cmd) {
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{r}})
+	updated, cmd := m.Update(keyPressMsg(r))
 	return updated.(model), cmd
 }
 
 // pressKeys simulates pressing multiple rune keys.
 func pressKeys(m model, runes []rune) (model, tea.Cmd) {
-	updated, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: runes})
+	updated, cmd := m.Update(keyPressTextMsg(string(runes)))
 	return updated.(model), cmd
 }
 
 // pressSpecial simulates pressing a special key (Enter, Escape, etc.).
-func pressSpecial(m model, key tea.KeyType) (model, tea.Cmd) {
-	updated, cmd := m.Update(tea.KeyMsg{Type: key})
+func pressSpecial(m model, key rune) (model, tea.Cmd) {
+	updated, cmd := m.Update(keySpecialMsg(key))
 	return updated.(model), cmd
+}
+
+func pressCtrl(m model, key rune) (model, tea.Cmd) {
+	updated, cmd := m.Update(ctrlKeyMsg(key))
+	return updated.(model), cmd
+}
+
+func keyPressMsg(r rune) tea.KeyPressMsg {
+	return keyPressTextMsg(string(r))
+}
+
+func keyPressTextMsg(text string) tea.KeyPressMsg {
+	key := tea.Key{Text: text}
+	runes := []rune(text)
+	if len(runes) == 1 {
+		key.Code = runes[0]
+		if key.Code == ' ' {
+			key.Code = tea.KeySpace
+		}
+	} else {
+		key.Code = tea.KeyExtended
+	}
+	return tea.KeyPressMsg(key)
+}
+
+func keySpecialMsg(key rune) tea.KeyPressMsg {
+	return tea.KeyPressMsg(tea.Key{Code: key})
+}
+
+func ctrlKeyMsg(key rune) tea.KeyPressMsg {
+	return tea.KeyPressMsg(tea.Key{Code: key, Mod: tea.ModCtrl})
 }
 
 // updateModel sends a message to the model and returns the updated model.
@@ -840,7 +871,7 @@ func TestTUIVersionMismatchDetection(t *testing.T) {
 		m.versionMismatch = true
 		m.daemonVersion = "old-version"
 
-		output := m.View()
+		output := m.View().Content
 
 		if !strings.Contains(output, "Daemon: old-version") {
 			assert.Condition(t, func() bool {
@@ -877,7 +908,7 @@ func TestTUIVersionMismatchDetection(t *testing.T) {
 			},
 		}
 
-		output := m.View()
+		output := m.View().Content
 
 		if strings.Contains(output, "Daemon: old-version") {
 			assert.Condition(t, func() bool {
@@ -910,7 +941,7 @@ func TestTUIVersionMismatchDetection(t *testing.T) {
 		}
 		m.setFlash("Saved", time.Minute, viewReview)
 
-		output := m.View()
+		output := m.View().Content
 
 		if !strings.Contains(output, "Saved") {
 			assert.Condition(t, func() bool {
@@ -1212,7 +1243,7 @@ func TestTUIStatusDisplaysCorrectly(t *testing.T) {
 	}
 	m.selectedIdx = 0
 
-	output := m.View()
+	output := m.View().Content
 	if len(output) == 0 {
 		assert.Condition(t, func() bool {
 			return false
@@ -1242,7 +1273,7 @@ func TestHandleFixKeyRejectsFixJob(t *testing.T) {
 	}
 	m.selectedIdx, m.selectedJobID = 0, 10
 
-	result, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'F'}})
+	result, cmd := m.Update(keyPressMsg('F'))
 	updated := result.(model)
 
 	if cmd != nil {
@@ -1353,7 +1384,7 @@ func TestTUIColumnOptionsCanEnableTasksWorkflow(t *testing.T) {
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 
-	result, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	result, _ := m.Update(keyPressMsg('o'))
 	updated := result.(model)
 	if updated.currentView != viewColumnOptions {
 		require.Condition(t, func() bool {
@@ -1375,7 +1406,7 @@ func TestTUIColumnOptionsCanEnableTasksWorkflow(t *testing.T) {
 	}
 	updated.colOptionsIdx = idx
 
-	result, _ = updated.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	result, _ = updated.Update(keySpecialMsg(tea.KeyEnter))
 	toggled := result.(model)
 	if !toggled.tasksEnabled {
 		require.Condition(t, func() bool {
@@ -1383,7 +1414,7 @@ func TestTUIColumnOptionsCanEnableTasksWorkflow(t *testing.T) {
 		}, "expected tasks workflow to be enabled after toggle")
 	}
 
-	result, cmd := toggled.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	result, cmd := toggled.Update(keySpecialMsg(tea.KeyEsc))
 	closed := result.(model)
 	if closed.currentView != viewQueue {
 		require.Condition(t, func() bool {
@@ -1422,7 +1453,7 @@ func TestTUIColumnOptionsCanDisableMouse(t *testing.T) {
 	m := newModel(testEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
 
-	result, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	result, _ := m.Update(keyPressMsg('o'))
 	updated := result.(model)
 	if updated.currentView != viewColumnOptions {
 		require.Condition(t, func() bool {
@@ -1444,26 +1475,25 @@ func TestTUIColumnOptionsCanDisableMouse(t *testing.T) {
 	}
 	updated.colOptionsIdx = idx
 
-	result, cmd := updated.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	result, cmd := updated.Update(keySpecialMsg(tea.KeyEnter))
 	toggled := result.(model)
 	if toggled.mouseEnabled {
 		require.Condition(t, func() bool {
 			return false
 		}, "expected mouse to be disabled after toggle")
 	}
-	if cmd == nil {
+	if cmd != nil {
 		require.Condition(t, func() bool {
 			return false
-		}, "expected mouse toggle command after disabling mouse")
+		}, "expected no mouse toggle command after disabling mouse")
 	}
-	msgs := collectMsgs(cmd)
-	if !hasMsgType(msgs, "tea.disableMouseMsg") {
+	if toggled.View().MouseMode != tea.MouseModeNone {
 		require.Condition(t, func() bool {
 			return false
-		}, "expected disableMouseMsg after disabling mouse, got %v", msgs)
+		}, "expected mouse mode none after disabling mouse")
 	}
 
-	result, cmd = toggled.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	result, cmd = toggled.Update(keySpecialMsg(tea.KeyEsc))
 	closed := result.(model)
 	if closed.currentView != viewQueue {
 		require.Condition(t, func() bool {
@@ -1475,7 +1505,7 @@ func TestTUIColumnOptionsCanDisableMouse(t *testing.T) {
 			return false
 		}, "expected save command after closing column options")
 	}
-	msgs = collectMsgs(cmd)
+	msgs := collectMsgs(cmd)
 	if len(msgs) > 0 {
 		if last := msgs[len(msgs)-1]; last != nil {
 			if errMsg, ok := last.(configSaveErrMsg); ok {
@@ -1514,7 +1544,7 @@ func TestTUIColumnOptionsCanReEnableMouse(t *testing.T) {
 	m.selectedIdx = 0
 	m.selectedJobID = 1
 
-	result, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	result, _ := m.Update(keyPressMsg('o'))
 	updated := result.(model)
 
 	idx := -1
@@ -1531,7 +1561,7 @@ func TestTUIColumnOptionsCanReEnableMouse(t *testing.T) {
 	}
 	updated.colOptionsIdx = idx
 
-	result, _ = updated.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	result, _ = updated.Update(keySpecialMsg(tea.KeyEnter))
 	disabled := result.(model)
 	if disabled.mouseEnabled {
 		require.Condition(t, func() bool {
@@ -1539,26 +1569,25 @@ func TestTUIColumnOptionsCanReEnableMouse(t *testing.T) {
 		}, "expected mouse to be disabled after first toggle")
 	}
 
-	result, cmd := disabled.Update(tea.KeyMsg{Type: tea.KeyEnter})
+	result, cmd := disabled.Update(keySpecialMsg(tea.KeyEnter))
 	reenabled := result.(model)
 	if !reenabled.mouseEnabled {
 		require.Condition(t, func() bool {
 			return false
 		}, "expected mouse to be enabled after second toggle")
 	}
-	if cmd == nil {
+	if cmd != nil {
 		require.Condition(t, func() bool {
 			return false
-		}, "expected mouse toggle command after enabling mouse")
+		}, "expected no mouse toggle command after enabling mouse")
 	}
-	msgs := collectMsgs(cmd)
-	if !hasMsgType(msgs, "tea.enableMouseCellMotionMsg") {
+	if reenabled.View().MouseMode != tea.MouseModeCellMotion {
 		require.Condition(t, func() bool {
 			return false
-		}, "expected enableMouseCellMotionMsg after enabling mouse, got %v", msgs)
+		}, "expected cell-motion mouse mode after enabling mouse")
 	}
 
-	result, _ = reenabled.Update(tea.KeyMsg{Type: tea.KeyEsc})
+	result, _ = reenabled.Update(keySpecialMsg(tea.KeyEsc))
 	closed := result.(model)
 	if closed.currentView != viewQueue {
 		require.Condition(t, func() bool {
@@ -1590,10 +1619,10 @@ func TestNewModelLoadsMouseDisabledFromConfig(t *testing.T) {
 			return false
 		}, "expected newModel to load mouse_enabled = false from config")
 	}
-	if len(programOptionsForModel(m)) != 1 {
+	if m.View().MouseMode != tea.MouseModeNone {
 		require.Condition(t, func() bool {
 			return false
-		}, "expected startup options without mouse capture when disabled, got %d options", len(programOptionsForModel(m)))
+		}, "expected rendered view without mouse capture when disabled")
 	}
 }
 

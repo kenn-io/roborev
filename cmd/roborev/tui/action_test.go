@@ -9,7 +9,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/google/go-cmp/cmp"
 	"github.com/mattn/go-runewidth"
 	"github.com/stretchr/testify/assert"
@@ -122,7 +122,7 @@ func TestTUICloseFromReviewView_Navigation(t *testing.T) {
 			initialJobID: 2,
 			actions: func(m model) model {
 				m2, _ := pressKey(m, 'a')
-				m3, _ := pressSpecial(m2, tea.KeyCtrlC)
+				m3, _ := pressCtrl(m2, 'c')
 				return m3
 			},
 			expectedIdx:  2,

@@ -8,7 +8,7 @@ import (
 	"time"
 	"unicode"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -40,8 +40,8 @@ func (m model) handleCommentKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	default:
 		if msg.String() == "shift+enter" || msg.String() == "ctrl+j" {
 			m.commentText += "\n"
-		} else if len(msg.Runes) > 0 {
-			for _, r := range msg.Runes {
+		} else if len(keyRunes(msg)) > 0 {
+			for _, r := range keyRunes(msg) {
 				if unicode.IsPrint(r) || r == '\n' || r == '\t' {
 					m.commentText += string(r)
 				}
@@ -184,8 +184,8 @@ func (m model) handleFilterKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, m.fetchUnloadedBranches()
 	default:
-		if len(msg.Runes) > 0 {
-			for _, r := range msg.Runes {
+		if len(keyRunes(msg)) > 0 {
+			for _, r := range keyRunes(msg) {
 				if unicode.IsPrint(r) && !unicode.IsControl(r) {
 					m.filterSearch += string(r)
 					m.filterSelectedIdx = 0
@@ -508,7 +508,7 @@ func (m model) handlePatchKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			}
 			return m, nil
 		default:
-			for _, r := range msg.Runes {
+			for _, r := range keyRunes(msg) {
 				if unicode.IsPrint(r) {
 					m.savePatchInput += string(r)
 				}

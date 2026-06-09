@@ -10,9 +10,10 @@ import (
 	"strings"
 	"unicode"
 
-	gansi "github.com/charmbracelet/glamour/ansi"
-	"github.com/charmbracelet/glamour/styles"
-	"github.com/charmbracelet/lipgloss"
+	gansi "charm.land/glamour/v2/ansi"
+	"charm.land/glamour/v2/styles"
+	"charm.land/lipgloss/v2"
+	"charm.land/lipgloss/v2/compat"
 	"github.com/muesli/termenv"
 	"golang.org/x/term"
 )
@@ -20,22 +21,21 @@ import (
 // Styles for TTY-mode stream output.
 var (
 	sfToolStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.AdaptiveColor{
-			Light: "30", Dark: "51",
-		}) // Cyan — matches tuiClosedStyle
+			Foreground(adaptiveColor("30", "51")) // Cyan — matches tuiClosedStyle
 	sfArgStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.AdaptiveColor{
-			Light: "242", Dark: "246",
-		}) // Gray — de-emphasize detail
+			Foreground(adaptiveColor("242", "246")) // Gray — de-emphasize detail
 	sfGutterStyle = lipgloss.NewStyle().
-			Foreground(lipgloss.AdaptiveColor{
-			Light: "242", Dark: "240",
-		}) // Dim — subtle visual grouping
+			Foreground(adaptiveColor("242", "240")) // Dim — subtle visual grouping
 	sfReasoningStyle = lipgloss.NewStyle().
-				Foreground(lipgloss.AdaptiveColor{
-			Light: "242", Dark: "243",
-		}).Italic(true) // Dim italic — thinking indicator
+				Foreground(adaptiveColor("242", "243")).Italic(true) // Dim italic — thinking indicator
 )
+
+func adaptiveColor(light, dark string) compat.AdaptiveColor {
+	return compat.AdaptiveColor{
+		Light: lipgloss.Color(light),
+		Dark:  lipgloss.Color(dark),
+	}
+}
 
 // Formatter wraps an io.Writer to transform raw NDJSON stream output
 // from Claude into compact, human-readable progress lines.

@@ -12,7 +12,7 @@ import (
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -858,7 +858,7 @@ func TestNoQuit_QKeyInQueueView(t *testing.T) {
 	m := newModel(testEndpoint, withExternalIODisabled(), withNoQuit())
 	m.currentView = viewQueue
 
-	result, cmd := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	result, cmd := m.Update(keyPressMsg('q'))
 	updated := result.(model)
 	assert.Equal(t, viewQueue, updated.currentView,
 		"q should be suppressed in queue view with noQuit")
@@ -869,7 +869,7 @@ func TestNoQuit_CtrlCStillQuits(t *testing.T) {
 	m := newModel(testEndpoint, withExternalIODisabled(), withNoQuit())
 	m.currentView = viewQueue
 
-	_, cmd := m.Update(tea.KeyMsg{Type: tea.KeyCtrlC})
+	_, cmd := m.Update(ctrlKeyMsg('c'))
 	assert.NotNil(t, cmd,
 		"ctrl+c should still produce tea.Quit with noQuit")
 }
@@ -879,7 +879,7 @@ func TestNoQuit_QStillClosesModal(t *testing.T) {
 	m.currentView = viewReview
 	m.currentReview = &storage.Review{Agent: "test", Output: "test"}
 
-	result, _ := m.Update(tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'q'}})
+	result, _ := m.Update(keyPressMsg('q'))
 	updated := result.(model)
 	assert.Equal(t, viewQueue, updated.currentView,
 		"q in review view should close modal even with noQuit")

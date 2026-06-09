@@ -10,7 +10,7 @@ import (
 	"time"
 	"unicode/utf8"
 
-	googlegithub "github.com/google/go-github/v84/github"
+	googlegithub "github.com/google/go-github/v88/github"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -51,21 +51,22 @@ func (s *commentAPIServer) handler(w http.ResponseWriter, r *http.Request) {
 		assert.Equal(s.t, s.wantAuth, r.Header.Get("Authorization"))
 	}
 	w.Header().Set("Content-Type", "application/json")
+	path := strings.TrimPrefix(r.URL.Path, "/api/v3")
 
 	switch {
-	case r.Method == http.MethodGet && r.URL.Path == "/repos/owner/repo/issues/1/comments":
+	case r.Method == http.MethodGet && path == "/repos/owner/repo/issues/1/comments":
 		s.writeIssueComments(w, 1)
-	case r.Method == http.MethodGet && r.URL.Path == "/repos/owner/repo/issues/17/comments":
+	case r.Method == http.MethodGet && path == "/repos/owner/repo/issues/17/comments":
 		s.writeIssueComments(w, 17)
-	case r.Method == http.MethodPost && r.URL.Path == "/repos/owner/repo/issues/1/comments":
+	case r.Method == http.MethodPost && path == "/repos/owner/repo/issues/1/comments":
 		s.captureCreate(w, r)
-	case r.Method == http.MethodPatch && strings.HasPrefix(r.URL.Path, "/repos/owner/repo/issues/comments/"):
+	case r.Method == http.MethodPatch && strings.HasPrefix(path, "/repos/owner/repo/issues/comments/"):
 		s.capturePatch(w, r)
-	case r.Method == http.MethodGet && r.URL.Path == "/repos/owner/repo/pulls/17/reviews":
+	case r.Method == http.MethodGet && path == "/repos/owner/repo/pulls/17/reviews":
 		assert.NoError(s.t, json.NewEncoder(w).Encode(s.reviewsByPR[17]))
-	case r.Method == http.MethodGet && r.URL.Path == "/repos/owner/repo/pulls/17/comments":
+	case r.Method == http.MethodGet && path == "/repos/owner/repo/pulls/17/comments":
 		assert.NoError(s.t, json.NewEncoder(w).Encode(s.inlineCommentsByPR[17]))
-	case r.Method == http.MethodGet && r.URL.Path == "/repos/owner/repo/collaborators":
+	case r.Method == http.MethodGet && path == "/repos/owner/repo/collaborators":
 		assert.NoError(s.t, json.NewEncoder(w).Encode(s.collaborators))
 	default:
 		http.NotFound(w, r)

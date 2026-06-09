@@ -5,7 +5,7 @@ import (
 	"time"
 	"unicode"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	gitrepo "go.kenn.io/kit/git/repo"
 
 	"go.kenn.io/roborev/internal/storage"
@@ -355,8 +355,8 @@ func (m model) handleReviewFixPanelKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, nil
 	default:
-		if len(msg.Runes) > 0 {
-			for _, r := range msg.Runes {
+		if len(keyRunes(msg)) > 0 {
+			for _, r := range keyRunes(msg) {
 				if unicode.IsPrint(r) {
 					m.fixPromptText += string(r)
 				}

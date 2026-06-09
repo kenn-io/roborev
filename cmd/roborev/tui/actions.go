@@ -10,7 +10,7 @@ import (
 	"strings"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	godiff "github.com/sourcegraph/go-diff/diff"
 	gitrepo "go.kenn.io/kit/git/repo"
 	gitworktree "go.kenn.io/kit/git/worktree"

@@ -3,17 +3,16 @@ package tui
 import (
 	"encoding/json"
 	"fmt"
+	"image/color"
 	"maps"
 	"net/http"
-	"os"
 	"slices"
 	"strings"
 	"testing"
 	"time"
 
-	tea "github.com/charmbracelet/bubbletea"
-	"github.com/charmbracelet/lipgloss"
-	"github.com/muesli/termenv"
+	tea "charm.land/bubbletea/v2"
+	"charm.land/lipgloss/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -22,26 +21,19 @@ import (
 )
 
 func mouseLeftClick(x, y int) tea.MouseMsg {
-	return tea.MouseMsg{
+	return tea.MouseClickMsg(tea.Mouse{
 		X:      x,
 		Y:      y,
-		Action: tea.MouseActionPress,
-		Button: tea.MouseButtonLeft,
-	}
+		Button: tea.MouseLeft,
+	})
 }
 
 func mouseWheelDown() tea.MouseMsg {
-	return tea.MouseMsg{
-		Action: tea.MouseActionPress,
-		Button: tea.MouseButtonWheelDown,
-	}
+	return tea.MouseWheelMsg(tea.Mouse{Button: tea.MouseWheelDown})
 }
 
 func mouseWheelUp() tea.MouseMsg {
-	return tea.MouseMsg{
-		Action: tea.MouseActionPress,
-		Button: tea.MouseButtonWheelUp,
-	}
+	return tea.MouseWheelMsg(tea.Mouse{Button: tea.MouseWheelUp})
 }
 
 func newTuiModel(serverAddr string) model {
@@ -156,13 +148,9 @@ func TestTUIQueueNavigation(t *testing.T) {
 				m.activeRepoFilter = tt.activeFilter
 			}
 
-			var m2 model
-			switch k := tt.key.(type) {
-			case rune:
-				m2, _ = pressKey(m, k)
-			case tea.KeyType:
-				m2, _ = pressSpecial(m, k)
-			}
+			k, ok := tt.key.(rune)
+			require.True(t, ok)
+			m2, _ := pressSpecial(m, k)
 
 			assert.Equal(t, tt.wantIdx, m2.selectedIdx)
 			assert.Equal(t, tt.wantJobID, m2.selectedJobID)
@@ -235,7 +223,7 @@ func TestTUIQueueCtrlJFetchesReview(t *testing.T) {
 	m.selectedIdx = 0
 	m.selectedJobID = 1
 
-	m2, cmd := pressSpecial(m, tea.KeyCtrlJ)
+	m2, cmd := pressCtrl(m, 'j')
 
 	assert.Equal(t, tuiViewQueue, m2.reviewFromView)
 	assert.NotNil(t, cmd, "expected fetchReview command for ctrl+j activation")
@@ -307,7 +295,7 @@ func TestTUIQueueCompactMode(t *testing.T) {
 	m.selectedIdx = 0
 	m.selectedJobID = 1
 
-	output := m.View()
+	output := m.View().Content
 
 	assert.Contains(t, output, "roborev queue")
 
@@ -335,20 +323,20 @@ func TestTUIQueueDistractionFreeToggle(t *testing.T) {
 	m.selectedIdx = 0
 	m.selectedJobID = 1
 
-	output := m.View()
+	output := m.View().Content
 	assert.Contains(t, output, "JobID")
 	assert.Contains(t, output, "nav")
 
-	m2, _ := updateModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+	m2, _ := updateModel(t, m, keyPressMsg('D'))
 	assert.True(t, m2.distractionFree, "D should toggle distraction-free on")
-	output = m2.View()
+	output = m2.View().Content
 	assert.NotContains(t, output, "JobID")
 	assert.NotContains(t, output, "nav")
 	assert.NotContains(t, output, "Daemon:")
 
-	m3, _ := updateModel(t, m2, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
+	m3, _ := updateModel(t, m2, keyPressMsg('D'))
 	assert.False(t, m3.distractionFree, "D should toggle distraction-free off")
-	output = m3.View()
+	output = m3.View().Content
 	assert.Contains(t, output, "JobID")
 }
 
@@ -373,11 +361,11 @@ func TestTUIQueueDistractionFreePreservesLastJob(t *testing.T) {
 				m.selectedIdx = n - 2
 				m.selectedJobID = int64(9300 + n - 2)
 
-				normalOutput := m.View()
+				normalOutput := m.View().Content
 				normalHasLast := strings.Contains(normalOutput, lastJobID)
 
-				m2, _ := updateModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'D'}})
-				compactOutput := m2.View()
+				m2, _ := updateModel(t, m, keyPressMsg('D'))
+				compactOutput := m2.View().Content
 				compactHasLast := strings.Contains(compactOutput, lastJobID)
 
 				if normalHasLast {
@@ -462,7 +450,7 @@ func TestTUITasksCtrlJFetchesReview(t *testing.T) {
 	}
 	m.fixSelectedIdx = 0
 
-	m2, cmd := pressSpecial(m, tea.KeyCtrlJ)
+	m2, cmd := pressCtrl(m, 'j')
 
 	assert.EqualValues(t, 101, m2.selectedJobID)
 	assert.Equal(t, tuiViewTasks, m2.reviewFromView)
@@ -1244,7 +1232,7 @@ func TestTUIEmptyQueueRendersPaddedHeight(t *testing.T) {
 	m.jobs = []storage.ReviewJob{}
 	m.loadingJobs = false
 
-	output := m.View()
+	output := m.View().Content
 
 	lines := strings.Split(output, "\n")
 
@@ -1261,7 +1249,7 @@ func TestTUIEmptyQueueWithFilterRendersPaddedHeight(t *testing.T) {
 	m.activeRepoFilter = []string{"/some/repo"}
 	m.loadingJobs = false
 
-	output := m.View()
+	output := m.View().Content
 
 	lines := strings.Split(output, "\n")
 	assert.GreaterOrEqual(t, len(lines), m.height-3)
@@ -1276,7 +1264,7 @@ func TestTUILoadingJobsShowsLoadingMessage(t *testing.T) {
 	m.jobs = []storage.ReviewJob{}
 	m.loadingJobs = true
 
-	output := m.View()
+	output := m.View().Content
 
 	assert.Contains(t, output, "Loading...")
 	assert.NotContains(t, output, "No jobs in queue")
@@ -1291,7 +1279,7 @@ func TestTUILoadingShowsForLoadingMore(t *testing.T) {
 	m.loadingJobs = false
 	m.loadingMore = true
 
-	output := m.View()
+	output := m.View().Content
 
 	assert.Contains(t, output, "Loading...", "Expected 'Loading...' message when loadingMore is true")
 }
@@ -1306,7 +1294,7 @@ func TestTUIQueueNoScrollIndicatorPads(t *testing.T) {
 		makeJob(2, withRef("def456"), withAgent("test")),
 	}
 
-	output := m.View()
+	output := m.View().Content
 
 	lines := strings.Split(output, "\n")
 
@@ -1902,7 +1890,7 @@ func TestColumnOptionsModalOpenClose(t *testing.T) {
 	m.currentView = viewQueue
 	m.hiddenColumns = map[int]bool{}
 
-	m2, _ := updateModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m2, _ := updateModel(t, m, keyPressMsg('o'))
 	assert.Equal(t, viewColumnOptions, m2.currentView)
 	assert.NotEmpty(t, m2.colOptionsList, "expected non-empty colOptionsList")
 
@@ -1914,7 +1902,7 @@ func TestColumnOptionsModalOpenClose(t *testing.T) {
 	tasks := m2.colOptionsList[len(m2.colOptionsList)-1]
 	assert.False(t, tasks.id != colOptionTasksWorkflow || tasks.name != "Tasks workflow")
 
-	m3, _ := updateModel(t, m2, tea.KeyMsg{Type: tea.KeyEscape})
+	m3, _ := updateModel(t, m2, keySpecialMsg(tea.KeyEscape))
 	assert.Equal(t, viewQueue, m3.currentView)
 }
 
@@ -1924,16 +1912,16 @@ func TestColumnOptionsToggle(t *testing.T) {
 	m.currentView = viewQueue
 	m.hiddenColumns = map[int]bool{}
 
-	m, _ = updateModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m, _ = updateModel(t, m, keyPressMsg('o'))
 
 	assert.Equal(t, colRef, m.colOptionsList[0].id)
 	assert.True(t, m.colOptionsList[0].enabled, "expected Ref to be enabled initially")
 
-	m, _ = updateModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	m, _ = updateModel(t, m, keyPressMsg(' '))
 	assert.False(t, m.colOptionsList[0].enabled, "expected Ref to be disabled after toggle")
 	assert.True(t, m.hiddenColumns[colRef], "expected colRef in hiddenColumns")
 
-	m, _ = updateModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{' '}})
+	m, _ = updateModel(t, m, keyPressMsg(' '))
 	assert.True(t, m.colOptionsList[0].enabled, "expected Ref to be enabled after second toggle")
 	assert.False(t, m.hiddenColumns[colRef], "expected colRef removed from hiddenColumns")
 }
@@ -1946,7 +1934,7 @@ func TestColumnOptionsMouseClick(t *testing.T) {
 	m.mouseEnabled = true
 
 	// Open column options modal.
-	m, _ = updateModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m, _ = updateModel(t, m, keyPressMsg('o'))
 	require.Equal(t, viewColumnOptions, m.currentView)
 
 	// First option is at row 2 (title=0, blank=1, first option=2).
@@ -1974,7 +1962,7 @@ func TestColumnOptionsMouseClickSentinel(t *testing.T) {
 	m.hiddenColumns = map[int]bool{}
 	m.mouseEnabled = true
 
-	m, _ = updateModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m, _ = updateModel(t, m, keyPressMsg('o'))
 	require.Equal(t, viewColumnOptions, m.currentView)
 
 	// Find the borders option (first sentinel, has a separator line before it).
@@ -2013,7 +2001,7 @@ func TestColumnOptionsMouseWheel(t *testing.T) {
 	m.hiddenColumns = map[int]bool{}
 	m.mouseEnabled = true
 
-	m, _ = updateModel(t, m, tea.KeyMsg{Type: tea.KeyRunes, Runes: []rune{'o'}})
+	m, _ = updateModel(t, m, keyPressMsg('o'))
 	require.Equal(t, viewColumnOptions, m.currentView)
 	assert.Equal(t, 0, m.colOptionsIdx)
 
@@ -2242,7 +2230,7 @@ func TestStatusColor(t *testing.T) {
 	tests := []struct {
 		name   string
 		status storage.JobStatus
-		want   lipgloss.TerminalColor
+		want   color.Color
 	}{
 		{"queued", storage.JobStatusQueued, queuedStyle.GetForeground()},
 		{"running", storage.JobStatusRunning, runningStyle.GetForeground()},
@@ -2270,7 +2258,7 @@ func TestVerdictColor(t *testing.T) {
 	tests := []struct {
 		name    string
 		verdict *string
-		want    lipgloss.TerminalColor
+		want    color.Color
 	}{
 		{"pass", strPtr("P"), passStyle.GetForeground()},
 		{"fail", strPtr("F"), failStyle.GetForeground()},
@@ -3016,24 +3004,13 @@ func TestFetchPanelMembersEmptyRun(t *testing.T) {
 	assert.Empty(t, msg.members)
 }
 
-// withTestColor forces the global lipgloss color profile on for the duration of
-// a test (restored afterwards), so the unicode disclosure/connector glyphs are
-// emitted by the queue render path. The TUI color predicate keys on the global
-// lipgloss profile, which defaults to Ascii under `go test` (non-TTY stdout).
+// withTestColor forces the queue color predicate on for the duration of a test,
+// so the unicode disclosure/connector glyphs are emitted by the render path.
 func withTestColor(t *testing.T) {
 	t.Helper()
-	prev := lipgloss.ColorProfile()
-	prevNoColor, hadNoColor := os.LookupEnv("NO_COLOR")
-	require.NoError(t, os.Unsetenv("NO_COLOR"))
-	lipgloss.SetColorProfile(termenv.ANSI256)
-	t.Cleanup(func() {
-		if hadNoColor {
-			_ = os.Setenv("NO_COLOR", prevNoColor)
-		} else {
-			_ = os.Unsetenv("NO_COLOR")
-		}
-		lipgloss.SetColorProfile(prev)
-	})
+	t.Setenv("NO_COLOR", "")
+	t.Setenv("CLICOLOR", "")
+	t.Setenv("ROBOREV_COLOR_MODE", "dark")
 }
 
 func TestRenderShowsDisclosureAndConnectorsWhenExpanded(t *testing.T) {

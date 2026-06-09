@@ -5,7 +5,7 @@ import (
 	"strings"
 	"testing"
 
-	tea "github.com/charmbracelet/bubbletea"
+	tea "charm.land/bubbletea/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -173,7 +173,7 @@ func TestTUILogViewLookupFixJob(t *testing.T) {
 	}
 	m.logLines = []logLine{{text: "output"}}
 
-	view := m.View()
+	view := m.View().Content
 	assert.Contains(t, view, "#42")
 	assert.Contains(t, view, "codex")
 }
@@ -219,7 +219,7 @@ func TestTUILogVisibleLinesFixJob(t *testing.T) {
 
 	m.logLines = []logLine{{text: "output"}}
 	m.width = 80
-	view := m.View()
+	view := m.View().Content
 	hasCmd := strings.Contains(view, "Command:")
 
 	if !hasCmd {
@@ -585,14 +585,8 @@ func TestMouseDisabledInContentViews(t *testing.T) {
 					require.Equal(t, viewQueue, updated.currentView, "view did not change from queue (setup may be incomplete)")
 				}
 
-				msgs := collectMsgs(cmd)
-				if !hasMsgType(msgs, "tea.disableMouseMsg") {
-					types := make([]string, len(msgs))
-					for i, msg := range msgs {
-						types[i] = fmt.Sprintf("%T", msg)
-					}
-					assert.Contains(t, types, "tea.disableMouseMsg", "expected disableMouseMsg in cmd, got types: %v", types)
-				}
+				assert.NotNil(t, cmd)
+				assert.Equal(t, tea.MouseModeNone, updated.View().MouseMode)
 			})
 		}
 
@@ -627,14 +621,8 @@ func TestMouseDisabledInContentViews(t *testing.T) {
 			}
 			assert.Equal(t, expectedView, updated.currentView)
 
-			msgs := collectMsgs(cmd)
-			if !hasMsgType(msgs, "tea.enableMouseCellMotionMsg") {
-				types := make([]string, len(msgs))
-				for i, msg := range msgs {
-					types[i] = fmt.Sprintf("%T", msg)
-				}
-				assert.NotEmpty(t, types, "expected enableMouseCellMotionMsg in cmd, got types: %v", types)
-			}
+			_ = cmd
+			assert.Equal(t, tea.MouseModeCellMotion, updated.View().MouseMode)
 		})
 	}
 }
