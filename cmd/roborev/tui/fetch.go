@@ -931,7 +931,9 @@ func (m model) fetchCommitMsg(job *storage.ReviewJob) tea.Cmd {
 					// Indent body
 					bodyLines := strings.SplitSeq(info.Body, "\n")
 					for line := range bodyLines {
-						content.WriteString("   " + line + "\n")
+						content.WriteString("   ")
+						content.WriteString(line)
+						content.WriteByte('\n')
 					}
 				}
 				content.WriteString("\n")
@@ -950,9 +952,12 @@ func (m model) fetchCommitMsg(job *storage.ReviewJob) tea.Cmd {
 		fmt.Fprintf(&content, "Commit: %s\n", info.SHA)
 		fmt.Fprintf(&content, "Author: %s\n", info.Author)
 		fmt.Fprintf(&content, "Date:   %s\n\n", info.Timestamp.Format("2006-01-02 15:04:05 -0700"))
-		content.WriteString(info.Subject + "\n")
+		content.WriteString(info.Subject)
+		content.WriteByte('\n')
 		if info.Body != "" {
-			content.WriteString("\n" + info.Body + "\n")
+			content.WriteByte('\n')
+			content.WriteString(info.Body)
+			content.WriteByte('\n')
 		}
 
 		return commitMsgMsg{jobID: jobID, content: sanitizeForDisplay(content.String())}

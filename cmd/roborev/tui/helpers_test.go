@@ -310,7 +310,8 @@ func TestRenderMarkdownLinesPreservesLongProse(t *testing.T) {
 
 	var combined strings.Builder
 	for _, line := range lines {
-		combined.WriteString(stripTestANSI(line) + " ")
+		combined.WriteString(stripTestANSI(line))
+		combined.WriteByte(' ')
 	}
 	for _, word := range []string{"important", "word-wrapped", "truncated", "information", "rendered"} {
 		assert.Contains(t, combined.String(), word)

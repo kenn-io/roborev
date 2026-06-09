@@ -391,7 +391,9 @@ func (m model) renderRespondView() string {
 	// Simple text box with border
 	boxWidth := max(m.width-4, 20)
 
-	b.WriteString("┌─" + strings.Repeat("─", boxWidth-2) + "─┐\n")
+	b.WriteString("┌─")
+	b.WriteString(strings.Repeat("─", boxWidth-2))
+	b.WriteString("─┐\n")
 
 	// Wrap text display to box width
 	textLinesWritten := 0
@@ -403,7 +405,9 @@ func (m model) renderRespondView() string {
 		// Show placeholder (styled, but we pad manually to avoid ANSI issues)
 		placeholder := "Type your comment..."
 		padded := placeholder + strings.Repeat(" ", boxWidth-2-len(placeholder))
-		b.WriteString("│ " + statusStyle.Render(padded) + " │\x1b[K\n")
+		b.WriteString("│ ")
+		b.WriteString(statusStyle.Render(padded))
+		b.WriteString(" │\x1b[K\n")
 		textLinesWritten++
 	} else {
 		lines := strings.SplitSeq(m.commentText, "\n")
@@ -432,7 +436,9 @@ func (m model) renderRespondView() string {
 		textLinesWritten++
 	}
 
-	b.WriteString("└─" + strings.Repeat("─", boxWidth-2) + "─┘\x1b[K\n")
+	b.WriteString("└─")
+	b.WriteString(strings.Repeat("─", boxWidth-2))
+	b.WriteString("─┘\x1b[K\n")
 
 	// Pad remaining space
 	linesWritten := 6 + textLinesWritten // title, blank, help, blank, top border, bottom border

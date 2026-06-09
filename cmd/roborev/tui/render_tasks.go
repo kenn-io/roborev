@@ -487,7 +487,8 @@ func (m model) renderPatchView() string {
 				strings.HasPrefix(line, "---") || strings.HasPrefix(line, "+++"):
 				display = metaStyle.Render(line)
 			}
-			b.WriteString("  " + display)
+			b.WriteString("  ")
+			b.WriteString(display)
 			b.WriteString("\x1b[K\n")
 		}
 
@@ -514,7 +515,9 @@ func (m model) renderPatchView() string {
 			display = string(rs)
 		}
 		display = display + strings.Repeat(" ", max(inputWidth-runewidth.StringWidth(display), 0))
-		b.WriteString(helpStyle.Render(label) + display + "\x1b[K\n")
+		b.WriteString(helpStyle.Render(label))
+		b.WriteString(display)
+		b.WriteString("\x1b[K\n")
 		b.WriteString(renderHelpTable([][]helpItem{
 			{{"enter", "save"}, {"esc", "cancel"}},
 		}, m.width))
