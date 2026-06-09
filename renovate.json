@@ -17,15 +17,7 @@
       "matchManagers": ["gomod"],
       "groupName": "Go dependencies",
       "groupSlug": "go-dependencies",
-      "postUpdateOptions": ["gomodTidy"],
-      "postUpgradeTasks": {
-        "commands": ["bash scripts/update-nix-vendor-hash.sh"],
-        "fileFilters": ["go.mod", "go.sum", "flake.nix"],
-        "executionMode": "branch",
-        "installTools": {
-          "nix": {}
-        }
-      }
+      "postUpdateOptions": ["gomodTidy"]
     }
   ]
 }
