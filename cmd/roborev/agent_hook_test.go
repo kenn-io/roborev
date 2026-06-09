@@ -49,7 +49,6 @@ func TestAgentHookInstallSupportsBinaryOverride(t *testing.T) {
 	path := filepath.Join(dir, "hooks.json")
 	binPath := filepath.Join(dir, "roborev")
 	require.NoError(t, os.WriteFile(binPath, []byte("#!/bin/sh\nexit 0\n"), 0o755))
-	command := binPath + " agent-hook run"
 
 	cmd := agentHookCmd()
 	cmd.SetOut(io.Discard)
@@ -66,9 +65,9 @@ func TestAgentHookInstallSupportsBinaryOverride(t *testing.T) {
 	body, err := os.ReadFile(path)
 	require.NoError(t, err)
 	require.NoError(t, json.Unmarshal(body, &root))
-	assertAgentHookCommandCount(t, root, "PreToolUse", command, 1)
-	assertAgentHookCommandCount(t, root, "PostToolUse", command, 1)
-	assertAgentHookCommandCount(t, root, "Stop", command, 1)
+	assertAgentHookCommandContains(t, root, "PreToolUse", binPath, 1)
+	assertAgentHookCommandContains(t, root, "PostToolUse", binPath, 1)
+	assertAgentHookCommandContains(t, root, "Stop", binPath, 1)
 }
 
 func TestAgentHookDaemonHasLifecycleSubcommands(t *testing.T) {
@@ -116,6 +115,26 @@ func assertAgentHookCommandCount(t *testing.T, root map[string]any, event, comma
 			hookObj, ok := raw.(map[string]any)
 			require.True(t, ok)
 			if hookObj["type"] == "command" && hookObj["command"] == command {
+				count++
+			}
+		}
+	}
+	assert.Equal(t, want, count)
+}
+
+func assertAgentHookCommandContains(t *testing.T, root map[string]any, event, binaryPath string, want int) {
+	t.Helper()
+	count := 0
+	for _, hook := range agentHookEventEntriesForTest(t, root, event) {
+		entry, ok := hook.(map[string]any)
+		require.True(t, ok)
+		for _, raw := range entry["hooks"].([]any) {
+			hookObj, ok := raw.(map[string]any)
+			require.True(t, ok)
+			command, _ := hookObj["command"].(string)
+			if hookObj["type"] == "command" &&
+				strings.Contains(command, binaryPath) &&
+				strings.HasSuffix(command, " agent-hook run") {
 				count++
 			}
 		}
