@@ -17,7 +17,7 @@
       "matchManagers": ["gomod"],
       "groupName": "Go dependencies",
       "groupSlug": "go-dependencies",
-      "postUpdateOptions": ["gomodTidy"]
+      "postUpdateOptions": ["gomodUpdateImportPaths", "gomodTidy"]
     }
   ]
 }
