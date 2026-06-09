@@ -5,6 +5,8 @@ import (
 	"context"
 	"encoding/json"
 	"errors"
+	"io"
+	"os"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -40,6 +42,33 @@ func TestAgentHookDumpCodexCreatesHookConfig(t *testing.T) {
 	assert.Equal("^Bash$", firstAgentHookMatcher(t, root, "PreToolUse"))
 	assert.Equal("^Bash$", firstAgentHookMatcher(t, root, "PostToolUse"))
 	assert.InDelta(10, firstAgentHookCommandTimeout(t, root, "Stop", command), 0)
+}
+
+func TestAgentHookInstallSupportsBinaryOverride(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hooks.json")
+	binPath := filepath.Join(dir, "roborev")
+	require.NoError(t, os.WriteFile(binPath, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	command := binPath + " agent-hook run"
+
+	cmd := agentHookCmd()
+	cmd.SetOut(io.Discard)
+	cmd.SetArgs([]string{
+		"install",
+		"--agent", "codex",
+		"--binary", binPath,
+		"--codex-config", path,
+	})
+
+	require.NoError(t, cmd.Execute())
+
+	var root map[string]any
+	body, err := os.ReadFile(path)
+	require.NoError(t, err)
+	require.NoError(t, json.Unmarshal(body, &root))
+	assertAgentHookCommandCount(t, root, "PreToolUse", command, 1)
+	assertAgentHookCommandCount(t, root, "PostToolUse", command, 1)
+	assertAgentHookCommandCount(t, root, "Stop", command, 1)
 }
 
 func TestAgentHookDaemonHasLifecycleSubcommands(t *testing.T) {

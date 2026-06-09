@@ -122,13 +122,13 @@ func TestUpsertCommandHookCollapsesDuplicatesAndKeepsOthers(t *testing.T) {
 	assert.Equal([]string{spec.Command, "/usr/bin/other-tool run"}, commands)
 }
 
-func TestAgentHookNoticeTranslatesBinaryFlag(t *testing.T) {
+func TestAgentHookNoticeTranslatesBinaryFlagForCommandOnlyFlows(t *testing.T) {
 	assert := assert.New(t)
 	notice := "Warning: roborev appears to be running from a versioned mise install (/x); " +
 		"use --binary to install hooks with a stable shim if available"
 
 	got := agentHookNotice(notice)
-	assert.NotContains(got, "--binary", "agent-hook commands have no --binary flag")
+	assert.NotContains(got, "--binary", "command-only flows do not expose --binary")
 	assert.Contains(got, "--command", "the override flag is translated to --command")
 	assert.Empty(agentHookNotice(""), "an empty notice stays empty")
 }
@@ -140,6 +140,23 @@ func TestResolveHookCommandOverrideIsVerbatim(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal("/custom/roborev agent-hook run", command, "an override is used verbatim")
 	assert.Empty(notice, "an override yields no advisory notice")
+}
+
+func TestResolveHookCommandWithBinaryUsesBinaryOverride(t *testing.T) {
+	assert := assert.New(t)
+	binPath := filepath.Join(t.TempDir(), "roborev")
+	require.NoError(t, os.WriteFile(binPath, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+
+	command, notice, err := ResolveHookCommandWithBinary("", binPath)
+	require.NoError(t, err)
+	assert.Equal(shellQuote(binPath)+" agent-hook run", command)
+	assert.Empty(notice)
+}
+
+func TestResolveHookCommandWithBinaryRejectsCommandAndBinary(t *testing.T) {
+	_, _, err := ResolveHookCommandWithBinary("/custom/roborev agent-hook run", "/other/roborev")
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "--command and --binary cannot be used together")
 }
 
 func TestResolveHookCommandBlankOverrideResolvesBinary(t *testing.T) {

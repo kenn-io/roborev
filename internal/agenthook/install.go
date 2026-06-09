@@ -453,17 +453,40 @@ func ResolveHookCommand(override string) (command, notice string, err error) {
 	if override = strings.TrimSpace(override); override != "" {
 		return override, "", nil
 	}
-	res, err := githook.ResolveRoborevPath("")
+	command, notice, err = resolveHookCommandFromBinary("")
+	if err != nil {
+		return "", "", err
+	}
+	return command, agentHookNotice(notice), nil
+}
+
+// ResolveHookCommandWithBinary returns the command to install for agent hooks.
+// commandOverride is used verbatim when set. binaryOverride is resolved and
+// quoted before appending the agent-hook runner subcommand.
+func ResolveHookCommandWithBinary(commandOverride, binaryOverride string) (command, notice string, err error) {
+	commandOverride = strings.TrimSpace(commandOverride)
+	binaryOverride = strings.TrimSpace(binaryOverride)
+	if commandOverride != "" && binaryOverride != "" {
+		return "", "", fmt.Errorf("--command and --binary cannot be used together")
+	}
+	if commandOverride != "" {
+		return commandOverride, "", nil
+	}
+	return resolveHookCommandFromBinary(binaryOverride)
+}
+
+func resolveHookCommandFromBinary(binaryOverride string) (command, notice string, err error) {
+	res, err := githook.ResolveRoborevPath(binaryOverride)
 	if err != nil {
 		return "", "", fmt.Errorf("resolve roborev binary: %w", err)
 	}
-	return shellQuote(res.Path) + " agent-hook run", agentHookNotice(res.Notice), nil
+	return shellQuote(res.Path) + " agent-hook run", res.Notice, nil
 }
 
-// agentHookNotice adapts a binary-resolution notice for agent-hook commands. The
-// shared resolver phrases its stable-binary guidance for the git hooks' --binary
-// flag; agent-hook install and dump expose --command instead, so the flag name is
-// translated to avoid pointing users at a flag these commands do not have.
+// agentHookNotice adapts a binary-resolution notice for command-only agent-hook
+// commands. The shared resolver phrases its stable-binary guidance for --binary;
+// dump exposes --command instead, so the flag name is translated to avoid
+// pointing users at a flag that command does not have.
 func agentHookNotice(notice string) string {
 	return strings.ReplaceAll(notice, "--binary", "--command")
 }

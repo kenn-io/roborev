@@ -14,6 +14,15 @@ By default this installs hook entries for both Codex and Claude Code. Use
 `--agent codex` or `--agent claude` to update only one harness. Existing hook
 entries are preserved, and repeated installs are idempotent.
 
+When roborev is installed through a version manager such as mise,
+`agent-hook install` resolves the same stable `roborev` shim used by
+`roborev init`. Use `--binary` to pin the binary baked into the agent hook
+command:
+
+```bash
+roborev agent-hook install --binary ~/.local/share/mise/shims/roborev
+```
+
 For declarative setups, print the JSON to manage yourself:
 
 ```bash

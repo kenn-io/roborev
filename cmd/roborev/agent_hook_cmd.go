@@ -112,6 +112,7 @@ func agentHookDaemonRunCmd() *cobra.Command {
 }
 
 func agentHookInstallCmd() *cobra.Command {
+	hookBinary := ""
 	opts := agenthook.InstallOptions{
 		Agent:            "all",
 		CodexConfigPath:  agenthook.DefaultCodexHooksPath(),
@@ -124,7 +125,7 @@ func agentHookInstallCmd() *cobra.Command {
 		Args:                  cobra.NoArgs,
 		DisableFlagsInUseLine: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			command, notice, err := agenthook.ResolveHookCommand(opts.Command)
+			command, notice, err := agenthook.ResolveHookCommandWithBinary(opts.Command, hookBinary)
 			if err != nil {
 				return err
 			}
@@ -137,6 +138,7 @@ func agentHookInstallCmd() *cobra.Command {
 	}
 	cmd.Flags().StringVar(&opts.Agent, "agent", opts.Agent, "agent config to update: codex, claude, or all")
 	cmd.Flags().StringVar(&opts.Command, "command", opts.Command, "hook command to install; defaults to this binary plus 'agent-hook run'")
+	cmd.Flags().StringVar(&hookBinary, "binary", "", "roborev binary path to bake into agent hooks (for version-manager shims)")
 	cmd.Flags().StringVar(&opts.CodexConfigPath, "codex-config", opts.CodexConfigPath, "Codex hooks.json path")
 	cmd.Flags().StringVar(&opts.ClaudeConfigPath, "claude-config", opts.ClaudeConfigPath, "Claude settings.json path")
 	cmd.Flags().Var(&agentHookSecondsOrDuration{d: &opts.Timeout}, "timeout", "Codex hook timeout (e.g. 10s, 1m, or bare integer seconds)")
