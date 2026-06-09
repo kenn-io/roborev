@@ -133,6 +133,11 @@ func (m model) queueHelpRows() [][]helpItem {
 		row2 = append(row2, helpItem{"s", "show classify"})
 	}
 	row2 = append(row2, helpItem{"D", "focus"})
+	pauseLabel := "pause"
+	if m.status.QueuePaused {
+		pauseLabel = "resume"
+	}
+	row2 = append(row2, helpItem{"P", pauseLabel})
 	if m.tasksWorkflowEnabled() {
 		row2 = append(row2, helpItem{"T", "tasks"})
 	}
@@ -398,7 +403,8 @@ func fitTitleLeft(app, filters, hideClosed string, width int) string {
 // is tight (then the hiding-closed flag, then filter text truncates). On a
 // daemon/client version mismatch the daemon version is shown in red inside the
 // parentheses ("roborev (<client>, Daemon: <daemon>)") in place of the
-// right-aligned version, so the warning is prominent and self-explanatory.
+// right-aligned version, so the warning is prominent and self-explanatory. A
+// paused queue adds a yellow [PAUSED] marker to the app name.
 func (m model) renderQueueTitle() string {
 	width := m.width
 	if width <= 0 {
@@ -416,6 +422,12 @@ func (m model) renderQueueTitle() string {
 			titleStyle.Render(")")
 	} else {
 		app = titleStyle.Render("roborev")
+	}
+	// A paused queue is a global daemon state the operator just chose. Mark it
+	// in the title's leftmost, never-dropped span so it stays visible under
+	// filters and in compact mode, where the status line is hidden.
+	if m.status.QueuePaused {
+		app += " " + warningFlashStyle.Render("[PAUSED]")
 	}
 
 	filters := m.titleFilters()

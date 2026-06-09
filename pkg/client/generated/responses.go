@@ -167,6 +167,14 @@ type PingResponse = PingInfo
 
 type PingErrorResponse = ErrorModel
 
+type PauseQueueResponse = QueuePauseOutputBody
+
+type PauseQueueErrorResponse = ErrorModel
+
+type UnpauseQueueResponse = QueuePauseOutputBody
+
+type UnpauseQueueErrorResponse = ErrorModel
+
 type RemapJobsResponse = RemapResult
 
 type RemapJobsErrorResponse = ErrorModel
@@ -350,6 +358,20 @@ type PingResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *PingResponse
+}
+
+type PauseQueueResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *PauseQueueResponse
+}
+
+type UnpauseQueueResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *UnpauseQueueResponse
 }
 
 type RemapJobsResp struct {

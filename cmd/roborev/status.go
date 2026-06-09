@@ -111,7 +111,11 @@ func statusCmd() *cobra.Command {
 				daemonLine += fmt.Sprintf(" [%s]", status.Version)
 			}
 			fmt.Println(daemonLine)
-			fmt.Printf("Workers: %d/%d active\n", status.ActiveWorkers, status.MaxWorkers)
+			workersLine := fmt.Sprintf("Workers: %d/%d active", status.ActiveWorkers, status.MaxWorkers)
+			if status.QueuePaused {
+				workersLine += " (paused)"
+			}
+			fmt.Println(workersLine)
 			fmt.Printf("Jobs:    %d queued, %d running, %d completed, %d failed, %d skipped\n",
 				status.QueuedJobs, status.RunningJobs, status.CompletedJobs, status.FailedJobs, status.SkippedJobs)
 			fmt.Println()

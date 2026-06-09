@@ -168,10 +168,30 @@ func (m model) handleGlobalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleColumnOptionsKey()
 	case "D":
 		return m.handleDistractionFreeKey()
+	case "P":
+		return m.handleTogglePauseKey()
 	case "tab":
 		return m.handleTabKey()
 	}
 	return m, nil
+}
+
+// handleTogglePauseKey pauses or resumes daemon queue processing. Pause is a
+// global daemon state, so this toggle and the [PAUSED] badge work from any
+// view sharing the global keymap. The badge flips optimistically and is
+// reconciled (or rolled back) once the daemon responds.
+func (m model) handleTogglePauseKey() (tea.Model, tea.Cmd) {
+	paused := !m.status.QueuePaused
+	m.status.QueuePaused = paused
+	if paused {
+		m.setWarningFlash(
+			"Queue paused - running jobs finish, no new jobs start",
+			3*time.Second, m.currentView,
+		)
+	} else {
+		m.setFlash("Queue resumed", 3*time.Second, m.currentView)
+	}
+	return m, m.togglePauseCmd(paused)
 }
 
 func (m model) handleQuitKey() (tea.Model, tea.Cmd) {

@@ -1340,6 +1340,13 @@ func (s *Server) humaGetStatus(
 	}
 	configReloadCounter := s.configWatcher.ReloadCounter()
 
+	queuePaused, err := s.db.IsQueuePaused()
+	if err != nil {
+		return nil, huma.Error500InternalServerError(
+			fmt.Sprintf("get queue paused state: %v", err),
+		)
+	}
+
 	s.endpointMu.Lock()
 	ep := s.endpoint
 	s.endpointMu.Unlock()
@@ -1358,6 +1365,7 @@ func (s *Server) humaGetStatus(
 		AutoDesign:          s.autoDesignStatusForResponse(),
 		ActiveWorkers:       s.workerPool.ActiveWorkers(),
 		MaxWorkers:          s.workerPool.MaxWorkers(),
+		QueuePaused:         queuePaused,
 		Network:             ep.Network,
 		Address:             ep.Address,
 		Port:                ep.Port(),
@@ -1365,6 +1373,32 @@ func (s *Server) humaGetStatus(
 		ConfigReloadedAt:    configReloadedAt,
 		ConfigReloadCounter: configReloadCounter,
 	}
+	return resp, nil
+}
+
+func (s *Server) humaPauseQueue(
+	ctx context.Context, input *QueuePauseInput,
+) (*QueuePauseOutput, error) {
+	if err := s.db.SetQueuePaused(true); err != nil {
+		return nil, huma.Error500InternalServerError(
+			fmt.Sprintf("pause queue: %v", err),
+		)
+	}
+	resp := &QueuePauseOutput{}
+	resp.Body.QueuePaused = true
+	return resp, nil
+}
+
+func (s *Server) humaUnpauseQueue(
+	ctx context.Context, input *QueuePauseInput,
+) (*QueuePauseOutput, error) {
+	if err := s.db.SetQueuePaused(false); err != nil {
+		return nil, huma.Error500InternalServerError(
+			fmt.Sprintf("unpause queue: %v", err),
+		)
+	}
+	resp := &QueuePauseOutput{}
+	resp.Body.QueuePaused = false
 	return resp, nil
 }
 

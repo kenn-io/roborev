@@ -348,7 +348,11 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 			ORDER BY enqueued_at, id
 			LIMIT 1
 		)
-	`, workerID, nowStr, nowStr, nowNano)
+		AND NOT EXISTS (
+			SELECT 1 FROM daemon_state
+			WHERE key = ? AND value IN ('true', '1')
+		)
+	`, workerID, nowStr, nowStr, nowNano, queuePausedStateKey)
 	if err != nil {
 		return nil, err
 	}

@@ -82,6 +82,20 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 			o.Tags = []string{"daemon"}
 		})
 
+	huma.Post(api, "/api/queue/pause", s.humaPauseQueue,
+		func(o *huma.Operation) {
+			o.OperationID = "pause-queue"
+			o.Summary = "Pause queue processing"
+			o.Tags = []string{"daemon"}
+		})
+
+	huma.Post(api, "/api/queue/unpause", s.humaUnpauseQueue,
+		func(o *huma.Operation) {
+			o.OperationID = "unpause-queue"
+			o.Summary = "Resume queue processing"
+			o.Tags = []string{"daemon"}
+		})
+
 	huma.Get(api, "/api/summary", s.humaGetSummary,
 		func(o *huma.Operation) {
 			o.OperationID = "get-summary"

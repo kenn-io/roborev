@@ -181,6 +181,29 @@ func (m model) cancelJob(
 	}
 }
 
+// togglePauseCmd pauses or resumes daemon queue processing, reporting the
+// outcome so the optimistic badge update can be reconciled or rolled back.
+func (m model) togglePauseCmd(paused bool) tea.Cmd {
+	return func() tea.Msg {
+		return pauseResultMsg{paused: paused, err: m.callPauseAPI(paused)}
+	}
+}
+
+func (m model) callPauseAPI(paused bool) error {
+	if paused {
+		resp, err := m.api.PauseQueueWithResponse(m.apiContext())
+		if resp != nil && resp.StatusCode != http.StatusOK {
+			err = apiStatusError(resp.StatusCode, apiStatus(resp.StatusCode), resp.Body)
+		}
+		return err
+	}
+	resp, err := m.api.UnpauseQueueWithResponse(m.apiContext())
+	if resp != nil && resp.StatusCode != http.StatusOK {
+		err = apiStatusError(resp.StatusCode, apiStatus(resp.StatusCode), resp.Body)
+	}
+	return err
+}
+
 // rerunJob sends a rerun request to the server for failed/canceled jobs.
 func (m model) rerunJob(snap rerunSnapshot) tea.Cmd {
 	return func() tea.Msg {

@@ -173,6 +173,10 @@ type cancelResultMsg struct {
 	restoreSelection bool
 	err              error
 }
+type pauseResultMsg struct {
+	paused bool
+	err    error
+}
 type rerunResultMsg struct {
 	jobID         int64
 	oldState      storage.JobStatus

@@ -107,6 +107,14 @@ type ClientInterface interface {
 	Ping(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*PingResponse, error)
 	PingWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*PingResp, error)
 
+	// PauseQueue Pause queue processing
+	PauseQueue(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*PauseQueueResponse, error)
+	PauseQueueWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*PauseQueueResp, error)
+
+	// UnpauseQueue Resume queue processing
+	UnpauseQueue(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*UnpauseQueueResponse, error)
+	UnpauseQueueWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*UnpauseQueueResp, error)
+
 	// RemapJobs Remap jobs after git history rewrite
 	RemapJobs(ctx context.Context, options *RemapJobsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RemapJobsResponse, error)
 	RemapJobsWithResponse(ctx context.Context, options *RemapJobsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RemapJobsResp, error)
@@ -1408,6 +1416,130 @@ func (c *Client) Ping(ctx context.Context, reqEditors ...runtime.RequestEditorFn
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/ping")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// PauseQueue Pause queue processing
+func (c *Client) PauseQueue(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*PauseQueueResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/queue/pause",
+		Method:     "POST",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*PauseQueueResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(PauseQueueErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "PauseQueueErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(PauseQueueResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "PauseQueueResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/queue/pause")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// UnpauseQueue Resume queue processing
+func (c *Client) UnpauseQueue(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*UnpauseQueueResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/queue/unpause",
+		Method:     "POST",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*UnpauseQueueResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(UnpauseQueueErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "UnpauseQueueErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(UnpauseQueueResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "UnpauseQueueResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/queue/unpause")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

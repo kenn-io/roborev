@@ -869,6 +869,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		result, cmd = m.handleCancelResultMsg(msg)
 	case rerunResultMsg:
 		result, cmd = m.handleRerunResultMsg(msg)
+	case pauseResultMsg:
+		result, cmd = m.handlePauseResultMsg(msg)
 	case repoNamesMsg:
 		result, cmd = m.handleRepoNamesMsg(msg)
 	case reposMsg:

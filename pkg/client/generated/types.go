@@ -200,6 +200,7 @@ type DaemonStatus struct {
 	MaxWorkers          int64             `json:"max_workers"`
 	Network             *string           `json:"network,omitempty"`
 	Port                *int64            `json:"port,omitempty"`
+	QueuePaused         bool              `json:"queue_paused"`
 	QueuedJobs          int64             `json:"queued_jobs"`
 	RebasedJobs         int64             `json:"rebased_jobs"`
 	RunningJobs         int64             `json:"running_jobs"`
@@ -601,6 +602,12 @@ type PingInfo struct {
 
 func (p PingInfo) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type QueuePauseOutputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema      *string `json:"$schema,omitempty"`
+	QueuePaused bool    `json:"queue_paused"`
 }
 
 type RegisterRepoRequest struct {

@@ -243,6 +243,15 @@ func startDaemon() error {
 		fmt.Println("Starting daemon...")
 	}
 
+	// Persist any pending queue-pause state before the daemon's workers start.
+	// startDaemon runs only after any previous daemon has been stopped (restart)
+	// or when none was running (cold start), so this never migrates a live DB.
+	if pendingStartPause != nil {
+		if err := writeLocalQueuePaused(*pendingStartPause); err != nil {
+			return fmt.Errorf("persist initial queue pause state: %w", err)
+		}
+	}
+
 	manager := kitdaemon.Manager{
 		Store:    daemon.RuntimeStore(),
 		Discover: daemon.DiscoverOptions(1 * time.Second),

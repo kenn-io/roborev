@@ -144,6 +144,12 @@ CREATE TABLE IF NOT EXISTS ci_pr_review_attempts (
   UNIQUE(github_repo, pr_number, head_sha)
 );
 
+CREATE TABLE IF NOT EXISTS daemon_state (
+  key TEXT PRIMARY KEY,
+  value TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_review_jobs_status ON review_jobs(status);
 CREATE INDEX IF NOT EXISTS idx_review_jobs_repo ON review_jobs(repo_id);
 CREATE INDEX IF NOT EXISTS idx_review_jobs_git_ref ON review_jobs(git_ref);
@@ -1448,6 +1454,18 @@ func (db *DB) migrateSyncColumns() error {
 	`)
 	if err != nil {
 		return fmt.Errorf("create sync_state table: %w", err)
+	}
+
+	// Migration: Create daemon_state table for durable local daemon controls.
+	_, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS daemon_state (
+			key TEXT PRIMARY KEY,
+			value TEXT NOT NULL,
+			updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+		)
+	`)
+	if err != nil {
+		return fmt.Errorf("create daemon_state table: %w", err)
 	}
 
 	// Migration: Align commits uniqueness to UNIQUE(repo_id, sha) instead of just UNIQUE(sha)

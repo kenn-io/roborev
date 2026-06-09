@@ -318,6 +318,7 @@ type DaemonStatus struct {
 	SkippedJobs         int    `json:"skipped_jobs"`
 	ActiveWorkers       int    `json:"active_workers"`
 	MaxWorkers          int    `json:"max_workers"`
+	QueuePaused         bool   `json:"queue_paused"`
 	Network             string `json:"network,omitempty"`
 	Address             string `json:"address,omitempty"`
 	Port                int    `json:"port,omitempty"`

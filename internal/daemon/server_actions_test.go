@@ -45,7 +45,7 @@ func (a *commandTestAgent) CommandLine() string { return a.command }
 func (a *commandTestAgent) CommandName() string { return a.command }
 
 func TestHandleStatus(t *testing.T) {
-	server, _, _ := newTestServer(t)
+	server, db, _ := newTestServer(t)
 
 	t.Run("returns status with version", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
@@ -101,6 +101,19 @@ func TestHandleStatus(t *testing.T) {
 		}
 	})
 
+	t.Run("includes queue paused state", func(t *testing.T) {
+		require.NoError(t, db.SetQueuePaused(true))
+		req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
+		w := httptest.NewRecorder()
+
+		server.httpServer.Handler.ServeHTTP(w, req)
+
+		var status storage.DaemonStatus
+		testutil.DecodeJSON(t, w, &status)
+		assert.True(t, status.QueuePaused)
+		require.NoError(t, db.SetQueuePaused(false))
+	})
+
 	t.Run("config_reloaded_at empty initially", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/status", nil)
 		w := httptest.NewRecorder()
@@ -117,6 +130,28 @@ func TestHandleStatus(t *testing.T) {
 			}, "Expected ConfigReloadedAt to be empty initially, got %q", status.ConfigReloadedAt)
 		}
 	})
+}
+
+func TestHandleQueuePause(t *testing.T) {
+	server, db, _ := newTestServer(t)
+
+	req := httptest.NewRequest(http.MethodPost, "/api/queue/pause", nil)
+	w := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	paused, err := db.IsQueuePaused()
+	require.NoError(t, err)
+	assert.True(t, paused)
+
+	req = httptest.NewRequest(http.MethodPost, "/api/queue/unpause", nil)
+	w = httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(w, req)
+	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+	paused, err = db.IsQueuePaused()
+	require.NoError(t, err)
+	assert.False(t, paused)
 }
 
 func TestHandlePing(t *testing.T) {

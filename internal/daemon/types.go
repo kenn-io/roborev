@@ -283,6 +283,16 @@ type GetStatusOutput struct {
 	Body storage.DaemonStatus
 }
 
+// QueuePauseInput is an empty input for queue pause/unpause endpoints.
+type QueuePauseInput struct{}
+
+// QueuePauseOutput is the response for queue pause/unpause endpoints.
+type QueuePauseOutput struct {
+	Body struct {
+		QueuePaused bool `json:"queue_paused"`
+	}
+}
+
 // -- GET /api/summary --
 
 // GetSummaryInput holds query parameters for the summary endpoint.

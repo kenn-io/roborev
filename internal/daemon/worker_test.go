@@ -2582,6 +2582,22 @@ func TestWorker_ClassifyJob_Yes_PromotesToDesignReview(t *testing.T) {
 	assert.Equal(1, n, "exactly one auto_design row must exist (no second INSERT)")
 }
 
+func TestWorkerPoolDoesNotClaimNewJobsWhenQueuePaused(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	require.NoError(t, tc.DB.SetQueuePaused(true))
+	job := tc.createJob(t, "pausedsha")
+
+	tc.Pool.Start()
+	t.Cleanup(tc.Pool.Stop)
+	time.Sleep(150 * time.Millisecond)
+
+	after, err := tc.DB.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, storage.JobStatusQueued, after.Status)
+	assert.Empty(t, after.WorkerID)
+	assert.Equal(t, 0, tc.Pool.ActiveWorkers())
+}
+
 func TestWorker_ClassifyJob_No_MarksSkipped(t *testing.T) {
 	tc := newWorkerTestContext(t, 0)
 

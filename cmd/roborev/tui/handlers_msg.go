@@ -773,6 +773,25 @@ func (m model) handleCancelResultMsg(
 	return m, nil
 }
 
+// handlePauseResultMsg reconciles the queue-pause badge with the daemon. On
+// success it refetches status so worker counts settle; on failure it rolls
+// back the optimistic toggle and surfaces the error.
+func (m model) handlePauseResultMsg(msg pauseResultMsg) (tea.Model, tea.Cmd) {
+	if msg.err != nil {
+		m.status.QueuePaused = !msg.paused
+		verb := "pause"
+		if !msg.paused {
+			verb = "resume"
+		}
+		m.setWarningFlash(
+			fmt.Sprintf("Failed to %s queue: %v", verb, msg.err),
+			4*time.Second, m.currentView,
+		)
+		return m, nil
+	}
+	return m, m.fetchStatus()
+}
+
 // handleRerunResultMsg processes job re-run results.
 func (m model) handleRerunResultMsg(
 	msg rerunResultMsg,

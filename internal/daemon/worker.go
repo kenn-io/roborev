@@ -429,6 +429,30 @@ func (wp *WorkerPool) worker(id int) {
 		default:
 		}
 
+		paused, err := wp.db.IsQueuePaused()
+		if err != nil {
+			log.Printf("[%s] Error checking queue pause state: %v", workerID, err)
+			if wp.errorLog != nil {
+				wp.errorLog.LogError("worker", fmt.Sprintf("check queue pause state: %v", err), 0)
+			}
+			select {
+			case <-wp.stopCh:
+				log.Printf("[%s] Shutting down", workerID)
+				return
+			case <-time.After(5 * time.Second):
+			}
+			continue
+		}
+		if paused {
+			select {
+			case <-wp.stopCh:
+				log.Printf("[%s] Shutting down", workerID)
+				return
+			case <-time.After(2 * time.Second):
+			}
+			continue
+		}
+
 		// Try to claim a job
 		job, err := wp.db.ClaimJob(workerID)
 		if err != nil {
