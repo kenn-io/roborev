@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -194,8 +195,9 @@ func TestDaemonShutdownBySignal(t *testing.T) {
 	// Important: Set ROBOREV_DATA_DIR so it writes runtime files under our tmpDir
 	cmd.Env = append(os.Environ(), "ROBOREV_DATA_DIR="+tmpDir)
 
-	// Capture output for debugging
-	outputBuffer := new(bytes.Buffer)
+	// Capture output for debugging. Use syncBuffer: assertion message
+	// arguments call String() while the exec copy goroutine still writes.
+	outputBuffer := new(syncBuffer)
 	cmd.Stdout = outputBuffer
 	cmd.Stderr = outputBuffer
 
@@ -338,6 +340,26 @@ func TestDaemonSignalCleanup(t *testing.T) {
 	}
 }
 
+// syncBuffer is a goroutine-safe bytes.Buffer for capturing subprocess
+// output: the exec stdout-copy goroutine writes while assertion message
+// arguments read, and those arguments are evaluated even on success.
+type syncBuffer struct {
+	mu  sync.Mutex
+	buf bytes.Buffer
+}
+
+func (b *syncBuffer) Write(p []byte) (int, error) {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.Write(p)
+}
+
+func (b *syncBuffer) String() string {
+	b.mu.Lock()
+	defer b.mu.Unlock()
+	return b.buf.String()
+}
+
 // TestDaemonLifecycleEndToEnd exercises the real daemon binary on every OS,
 // including Windows: spawn, runtime publication, liveness probe, a
 // DB-backed API endpoint, and HTTP shutdown (the production stop path).
@@ -364,7 +386,7 @@ func TestDaemonLifecycleEndToEnd(t *testing.T) {
 		"--addr", "127.0.0.1:0",
 	)
 	cmd.Env = append(os.Environ(), "ROBOREV_DATA_DIR="+tmpDir)
-	outputBuffer := new(bytes.Buffer)
+	outputBuffer := new(syncBuffer)
 	cmd.Stdout = outputBuffer
 	cmd.Stderr = outputBuffer
 	require.NoError(t, cmd.Start(), "failed to start daemon")
