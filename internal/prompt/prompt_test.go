@@ -1,6 +1,7 @@
 package prompt
 
 import (
+	"context"
 	"fmt"
 	"os"
 	"os/exec"
@@ -2061,4 +2062,21 @@ func TestRenderShellCommandStripsInlineCodeBreakers(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestBuildCanceledContextFails(t *testing.T) {
+	repo := testutil.NewTestRepoWithCommit(t)
+	firstSHA := testutil.GetHeadSHA(t, repo.Path())
+	sha := repo.CommitFile("f.txt", "x\n", "Second commit")
+	db, _ := setupDBWithCommits(t, repo.Path(), []string{firstSHA, sha})
+
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	b := NewBuilder(db).WithContext(ctx).ForRepo(repo.Path(), 0)
+
+	_, err := b.Build(sha, 1, "test", "", "")
+	require.Error(t, err, "single prompt build must abort on canceled context even with review context enabled")
+
+	_, err = b.Build(firstSHA+".."+sha, 1, "test", "", "")
+	require.Error(t, err, "range prompt build must abort on canceled context even with review context enabled")
 }

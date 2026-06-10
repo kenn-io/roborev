@@ -494,7 +494,12 @@ func IsUnbornHead(repoPath string) bool {
 
 // ResolveSHA resolves a ref (like HEAD) to a full SHA
 func ResolveSHA(repoPath, ref string) (string, error) {
-	cmd := exec.Command("git", "rev-parse", ref)
+	return ResolveSHACtx(context.Background(), repoPath, ref)
+}
+
+// ResolveSHACtx is ResolveSHA with a cancellable context.
+func ResolveSHACtx(ctx context.Context, repoPath, ref string) (string, error) {
+	cmd := exec.CommandContext(ctx, "git", "rev-parse", ref)
 	cmd.Dir = repoPath
 
 	out, err := cmd.Output()
@@ -679,8 +684,13 @@ func ReadFile(repoPath, sha, filePath string) ([]byte, error) {
 // GetParentCommits returns the N commits before the given commit (not including it)
 // Returns commits in reverse chronological order (most recent parent first)
 func GetParentCommits(repoPath, sha string, count int) ([]string, error) {
+	return GetParentCommitsCtx(context.Background(), repoPath, sha, count)
+}
+
+// GetParentCommitsCtx is GetParentCommits with a cancellable context.
+func GetParentCommitsCtx(ctx context.Context, repoPath, sha string, count int) ([]string, error) {
 	// Use git log to get parent commits, skipping the commit itself
-	cmd := exec.Command("git", "log", "--format=%H", "-n", fmt.Sprintf("%d", count), "--skip=1", sha)
+	cmd := exec.CommandContext(ctx, "git", "log", "--format=%H", "-n", fmt.Sprintf("%d", count), "--skip=1", sha)
 	cmd.Dir = repoPath
 
 	out, err := cmd.Output()
@@ -1211,13 +1221,18 @@ func GetRangeFilesChangedCtx(
 
 // GetRangeStart returns the start commit (first parent before range) for context lookup
 func GetRangeStart(repoPath, rangeRef string) (string, error) {
+	return GetRangeStartCtx(context.Background(), repoPath, rangeRef)
+}
+
+// GetRangeStartCtx is GetRangeStart with a cancellable context.
+func GetRangeStartCtx(ctx context.Context, repoPath, rangeRef string) (string, error) {
 	start, _, ok := ParseRange(rangeRef)
 	if !ok {
 		return "", fmt.Errorf("invalid range: %s", rangeRef)
 	}
 
 	// Resolve the start ref
-	return ResolveSHA(repoPath, start)
+	return ResolveSHACtx(ctx, repoPath, start)
 }
 
 // IsRebaseInProgress returns true if a rebase operation is in progress

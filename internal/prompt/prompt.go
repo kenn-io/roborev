@@ -1212,7 +1212,7 @@ func (b *Builder) buildRangePrompt(rangeRef string, contextCount int, agentName,
 
 	// Get previous reviews from before the range start
 	if contextCount > 0 && b.db != nil {
-		startSHA, err := git.GetRangeStart(b.repoPath, rangeRef)
+		startSHA, err := git.GetRangeStartCtx(b.context(), b.repoPath, rangeRef)
 		if err == nil {
 			contexts, err := b.getPreviousReviewContexts(startSHA, contextCount)
 			if err == nil && len(contexts) > 0 {
@@ -1479,7 +1479,7 @@ func (b *Builder) previousAttemptContexts(gitRef string) []reviewAttemptContext 
 // getPreviousReviewContexts gets the N commits before the target and looks up their reviews and responses
 func (b *Builder) getPreviousReviewContexts(sha string, count int) ([]HistoricalReviewContext, error) {
 	// Get parent commits from git
-	parentSHAs, err := git.GetParentCommits(b.repoPath, sha, count)
+	parentSHAs, err := git.GetParentCommitsCtx(b.context(), b.repoPath, sha, count)
 	if err != nil {
 		return nil, fmt.Errorf("get parent commits: %w", err)
 	}
