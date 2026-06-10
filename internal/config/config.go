@@ -1060,15 +1060,28 @@ type KataContextConfig struct {
 
 // ResolveKataContext returns the effective kata context settings for a repo,
 // with per-repo values overriding the global config. Unknown modes resolve to
-// "off"; a non-positive max_chars resolves to the default.
+// "off"; a non-positive max_chars resolves to the default. The repo config is
+// read from the working tree; callers that already hold a trusted repo config
+// (e.g. CI, which loads it off the PR's default branch) should use
+// ResolveKataContextFrom instead.
 func ResolveKataContext(repoPath string, globalCfg *Config) KataContextConfig {
+	repoCfg, err := LoadRepoConfig(repoPath)
+	if err != nil {
+		repoCfg = nil
+	}
+	return ResolveKataContextFrom(repoCfg, globalCfg)
+}
+
+// ResolveKataContextFrom is ResolveKataContext for an already-loaded repo
+// config (nil means no repo-level overrides).
+func ResolveKataContextFrom(repoCfg *RepoConfig, globalCfg *Config) KataContextConfig {
 	mode := ""
 	maxChars := 0
 	if globalCfg != nil {
 		mode = globalCfg.KataContext.Mode
 		maxChars = globalCfg.KataContext.MaxChars
 	}
-	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil {
+	if repoCfg != nil {
 		if repoCfg.KataContext.Mode != "" {
 			mode = repoCfg.KataContext.Mode
 		}

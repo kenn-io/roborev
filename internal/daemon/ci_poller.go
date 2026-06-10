@@ -91,7 +91,7 @@ type CIPoller struct {
 	gitCloneFn          func(ctx context.Context, ghRepo, targetPath string, env []string) error
 	mergeBaseFn         func(string, string, string) (string, error)
 	loadRepoConfigFn    func(string) (*config.RepoConfig, error)
-	buildReviewPromptFn func(context.Context, string, string, int64, int, string, string, string, string, kata.Client, *config.Config) (string, error)
+	buildReviewPromptFn func(context.Context, string, string, int64, int, string, string, string, string, kata.Client, *config.RepoConfig, *config.Config) (string, error)
 	postPRCommentFn     func(string, int, string) error
 	setCommitStatusFn   func(ghRepo, sha, state, description string) error
 	agentResolverFn     func(name string) (string, error)      // returns resolved agent name
@@ -126,8 +126,8 @@ func NewCIPoller(db *storage.DB, cfgGetter ConfigGetter, broadcaster Broadcaster
 	p.gitFetchPRHeadFn = gitFetchPRHead
 	p.mergeBaseFn = gitpkg.GetMergeBase
 	p.loadRepoConfigFn = loadCIRepoConfig
-	p.buildReviewPromptFn = func(ctx context.Context, repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, minSeverity, additionalContext string, kataClient kata.Client, cfg *config.Config) (string, error) {
-		builder := prompt.NewBuilderWithConfig(p.db, cfg).WithContext(ctx).ForRepo(repoPath, repoID).WithKataClient(kataClient)
+	p.buildReviewPromptFn = func(ctx context.Context, repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, minSeverity, additionalContext string, kataClient kata.Client, repoCfg *config.RepoConfig, cfg *config.Config) (string, error) {
+		builder := prompt.NewBuilderWithConfig(p.db, cfg).WithContext(ctx).ForRepo(repoPath, repoID).WithKataClient(kataClient).WithRepoConfig(repoCfg)
 		return builder.BuildWithAdditionalContextAndDiffFile(
 			gitRef,
 			contextCount,
@@ -961,7 +961,7 @@ func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) (
 	for i, m := range in.members {
 		storedPrompt, err := p.callBuildReviewPrompt(
 			ctx, in.repo.RootPath, in.gitRef, in.repo.ID, in.cfg.ReviewContextCount,
-			m.Agent, m.ReviewType, reviewMinSeverity, in.prDiscussionContext, in.kataClient, in.cfg,
+			m.Agent, m.ReviewType, reviewMinSeverity, in.prDiscussionContext, in.kataClient, in.repoCfg, in.cfg,
 		)
 		if err != nil {
 			// A canceled poller (Stop or shutdown) must abort the whole run
@@ -2724,11 +2724,11 @@ func (p *CIPoller) callMergeBase(repoPath, baseRef, headRef string) (string, err
 	return gitpkg.GetMergeBase(repoPath, baseRef, headRef)
 }
 
-func (p *CIPoller) callBuildReviewPrompt(ctx context.Context, repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, minSeverity, additionalContext string, kataClient kata.Client, cfg *config.Config) (string, error) {
+func (p *CIPoller) callBuildReviewPrompt(ctx context.Context, repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, minSeverity, additionalContext string, kataClient kata.Client, repoCfg *config.RepoConfig, cfg *config.Config) (string, error) {
 	if p.buildReviewPromptFn != nil {
-		return p.buildReviewPromptFn(ctx, repoPath, gitRef, repoID, contextCount, agentName, reviewType, minSeverity, additionalContext, kataClient, cfg)
+		return p.buildReviewPromptFn(ctx, repoPath, gitRef, repoID, contextCount, agentName, reviewType, minSeverity, additionalContext, kataClient, repoCfg, cfg)
 	}
-	builder := prompt.NewBuilderWithConfig(p.db, cfg).WithContext(ctx).ForRepo(repoPath, repoID).WithKataClient(kataClient)
+	builder := prompt.NewBuilderWithConfig(p.db, cfg).WithContext(ctx).ForRepo(repoPath, repoID).WithKataClient(kataClient).WithRepoConfig(repoCfg)
 	return builder.BuildWithAdditionalContextAndDiffFile(
 		gitRef,
 		contextCount,

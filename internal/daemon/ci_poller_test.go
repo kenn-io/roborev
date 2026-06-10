@@ -980,7 +980,7 @@ func TestCIPollerProcessPR_FallsBackWhenPromptPrebuildFails(t *testing.T) {
 			CreatedAt: time.Date(2026, time.March, 27, 12, 0, 0, 0, time.UTC),
 		}}, nil
 	}
-	h.Poller.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, kata.Client, *config.Config) (string, error) {
+	h.Poller.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, kata.Client, *config.RepoConfig, *config.Config) (string, error) {
 		return "", errors.New("prompt prebuild exploded")
 	}
 
@@ -3882,7 +3882,7 @@ func TestReconcileStuckAttempt(t *testing.T) {
 
 func TestBuildPanelOpts_RecordsPRBranchOnJobs(t *testing.T) {
 	p := &CIPoller{}
-	p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, kata.Client, *config.Config) (string, error) {
+	p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, kata.Client, *config.RepoConfig, *config.Config) (string, error) {
 		return "prebuilt prompt", nil
 	}
 
@@ -3937,7 +3937,7 @@ func TestCIPromptPrebuildIncludesKataContext(t *testing.T) {
 	}}
 	type ctxKey struct{}
 	ctx := context.WithValue(context.Background(), ctxKey{}, "poller")
-	out, err := p.callBuildReviewPrompt(ctx, repo.Path(), sha, 0, 0, "test", "", "", "", fake, cfg)
+	out, err := p.callBuildReviewPrompt(ctx, repo.Path(), sha, 0, 0, "test", "", "", "", fake, nil, cfg)
 	require.NoError(t, err)
 	assert.Contains(t, out, "Task Context (kata)")
 	assert.Contains(t, out, "Build widget")
@@ -3990,7 +3990,7 @@ func TestBuildPanelOptsAbortsOnCanceledPrebuild(t *testing.T) {
 
 	t.Run("cancellation aborts the run", func(t *testing.T) {
 		p := &CIPoller{}
-		p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, kata.Client, *config.Config) (string, error) {
+		p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, kata.Client, *config.RepoConfig, *config.Config) (string, error) {
 			return "", fmt.Errorf("building prompt: %w", context.Canceled)
 		}
 		_, _, err := p.buildPanelOpts(context.Background(), in)
@@ -3999,7 +3999,7 @@ func TestBuildPanelOptsAbortsOnCanceledPrebuild(t *testing.T) {
 
 	t.Run("other prebuild errors still enqueue without stored prompt", func(t *testing.T) {
 		p := &CIPoller{}
-		p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, kata.Client, *config.Config) (string, error) {
+		p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, kata.Client, *config.RepoConfig, *config.Config) (string, error) {
 			return "", errors.New("prompt prebuild exploded")
 		}
 		memberOpts, _, err := p.buildPanelOpts(context.Background(), in)
@@ -4021,4 +4021,38 @@ func TestRetryAttemptPRCarriesAuthor(t *testing.T) {
 	require.True(t, ok)
 	assert.Equal(t, "alice", pr.Author.Login,
 		"direct lookup must preserve the PR author so kata trust gating does not fail closed for trusted authors")
+}
+
+func TestCIPromptPrebuildUsesPassedRepoConfigForKata(t *testing.T) {
+	repo := testutil.NewTestRepoWithCommit(t)
+	sha := repo.CommitFile("feature.txt", "new feature\n", "Implement feature")
+	// A divergent working-tree config tries to enable kata context; CI must
+	// ignore it in favor of the repo config loaded off the default branch.
+	require.NoError(t, os.WriteFile(filepath.Join(repo.Path(), ".roborev.toml"),
+		[]byte("[kata_context]\nmode = \"open\"\n"), 0o644))
+
+	fake := &katatest.FakeClient{
+		BindingResult: kata.Binding{Project: "roborev"},
+		ListResult:    []kata.Issue{{ShortID: "abc4", Title: "Build widget", Body: "Spec.", Status: "open"}},
+	}
+	cfg := config.DefaultConfig() // global kata mode: off
+	p := NewCIPoller(nil, NewStaticConfig(cfg), nil)
+
+	t.Run("default-branch config without kata overrides working tree", func(t *testing.T) {
+		out, err := p.callBuildReviewPrompt(context.Background(), repo.Path(), sha, 0, 0,
+			"test", "", "", "", fake, &config.RepoConfig{}, cfg)
+		require.NoError(t, err)
+		assert.NotContains(t, out, "Task Context (kata)",
+			"working-tree .roborev.toml must not enable kata context for CI prebuilds")
+	})
+
+	t.Run("default-branch config enabling kata applies", func(t *testing.T) {
+		repoCfg := &config.RepoConfig{}
+		repoCfg.KataContext.Mode = config.KataModeOpen
+		out, err := p.callBuildReviewPrompt(context.Background(), repo.Path(), sha, 0, 0,
+			"test", "", "", "", fake, repoCfg, cfg)
+		require.NoError(t, err)
+		assert.Contains(t, out, "Task Context (kata)")
+		assert.Contains(t, out, "Build widget")
+	})
 }
