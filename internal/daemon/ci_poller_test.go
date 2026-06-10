@@ -4046,6 +4046,14 @@ func TestCIPromptPrebuildUsesPassedRepoConfigForKata(t *testing.T) {
 			"working-tree .roborev.toml must not enable kata context for CI prebuilds")
 	})
 
+	t.Run("nil repo config (parse-error fallback) still ignores working tree", func(t *testing.T) {
+		out, err := p.callBuildReviewPrompt(context.Background(), repo.Path(), sha, 0, 0,
+			"test", "", "", "", fake, nil, cfg)
+		require.NoError(t, err)
+		assert.NotContains(t, out, "Task Context (kata)",
+			"CI must not fall back to the working tree when the default-branch config failed to load")
+	})
+
 	t.Run("default-branch config enabling kata applies", func(t *testing.T) {
 		repoCfg := &config.RepoConfig{}
 		repoCfg.KataContext.Mode = config.KataModeOpen
