@@ -1,6 +1,7 @@
 package git
 
 import (
+	"context"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -2364,4 +2365,29 @@ func TestGetBranchBase(t *testing.T) {
 
 		assert.Equal(t, "upstream/main", GetBranchBase(repo.Dir, "HEAD"))
 	})
+}
+
+func TestCtxVariantsHonorCancellation(t *testing.T) {
+	repo := NewTestRepoWithCommit(t)
+	sha := strings.TrimSpace(repo.Run("rev-parse", "HEAD"))
+	rangeRef := sha + ".." + sha
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	tests := []struct {
+		name string
+		call func() error
+	}{
+		{"GetCommitInfoCtx", func() error { _, err := GetCommitInfoCtx(ctx, repo.Dir, sha); return err }},
+		{"GetFilesChangedCtx", func() error { _, err := GetFilesChangedCtx(ctx, repo.Dir, sha); return err }},
+		{"GetDiffLimitedCtx", func() error { _, _, err := GetDiffLimitedCtx(ctx, repo.Dir, sha, 1024); return err }},
+		{"GetRangeCommitsCtx", func() error { _, err := GetRangeCommitsCtx(ctx, repo.Dir, rangeRef); return err }},
+		{"GetRangeFilesChangedCtx", func() error { _, err := GetRangeFilesChangedCtx(ctx, repo.Dir, rangeRef); return err }},
+		{"GetRangeDiffLimitedCtx", func() error { _, _, err := GetRangeDiffLimitedCtx(ctx, repo.Dir, rangeRef, 1024); return err }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Error(t, tt.call(), "canceled context must abort the git call")
+		})
+	}
 }

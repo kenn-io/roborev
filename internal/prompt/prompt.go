@@ -1100,7 +1100,7 @@ func (b *Builder) buildSinglePrompt(sha string, contextCount int, agentName, rev
 
 	// Include previous review attempts for this same commit (for re-reviews)
 	ctx.optional.PreviousAttempts = previousAttemptViewsFromContexts(b.previousAttemptContexts(sha))
-	if files, err := git.GetFilesChanged(b.repoPath, sha); err == nil {
+	if files, err := git.GetFilesChangedCtx(b.context(), b.repoPath, sha); err == nil {
 		ctx.optional.DependencyMetadata = buildDependencyMetadataSection(files)
 	}
 
@@ -1108,7 +1108,7 @@ func (b *Builder) buildSinglePrompt(sha string, contextCount int, agentName, rev
 	shortSHA := gitrepo.ShortSHA(sha)
 
 	// Get commit info
-	info, err := git.GetCommitInfo(b.repoPath, sha)
+	info, err := git.GetCommitInfoCtx(b.context(), b.repoPath, sha)
 	if err != nil {
 		return "", fmt.Errorf("get commit info: %w", err)
 	}
@@ -1141,7 +1141,7 @@ func (b *Builder) buildSinglePrompt(sha string, contextCount int, agentName, rev
 	excludes := b.resolveExcludes(reviewType)
 	bodyLimit := max(0, ctx.promptCap-len(ctx.requiredPrefix))
 	diffLimit := max(0, bodyLimit-len(currentRequired)-len(currentOverflow)-len(emptyDiffBlock))
-	diff, truncated, err := git.GetDiffLimited(b.repoPath, sha, diffLimit, excludes...)
+	diff, truncated, err := git.GetDiffLimitedCtx(b.context(), b.repoPath, sha, diffLimit, excludes...)
 	if err != nil {
 		return "", fmt.Errorf("get diff: %w", err)
 	}
@@ -1225,11 +1225,11 @@ func (b *Builder) buildRangePrompt(rangeRef string, contextCount int, agentName,
 	ctx.optional.PreviousAttempts = previousAttemptViewsFromContexts(b.previousAttemptContexts(rangeRef))
 
 	// Get commits in range
-	commits, err := git.GetRangeCommits(b.repoPath, rangeRef)
+	commits, err := git.GetRangeCommitsCtx(b.context(), b.repoPath, rangeRef)
 	if err != nil {
 		return "", fmt.Errorf("get range commits: %w", err)
 	}
-	if files, err := git.GetRangeFilesChanged(b.repoPath, rangeRef); err == nil {
+	if files, err := git.GetRangeFilesChangedCtx(b.context(), b.repoPath, rangeRef); err == nil {
 		ctx.optional.DependencyMetadata = buildDependencyMetadataSection(files)
 	}
 
@@ -1241,7 +1241,7 @@ func (b *Builder) buildRangePrompt(rangeRef string, contextCount int, agentName,
 	var kataMessages []string
 	for _, commitSHA := range commits {
 		short := gitrepo.ShortSHA(commitSHA)
-		info, err := git.GetCommitInfo(b.repoPath, commitSHA)
+		info, err := git.GetCommitInfoCtx(b.context(), b.repoPath, commitSHA)
 		if err == nil {
 			entries = append(entries, commitRangeEntryView{Commit: short, Subject: escapeXML(info.Subject)})
 			kataMessages = append(kataMessages, info.Subject+"\n\n"+info.Body)
@@ -1271,7 +1271,7 @@ func (b *Builder) buildRangePrompt(rangeRef string, contextCount int, agentName,
 	excludes := b.resolveExcludes(reviewType)
 	bodyLimit := max(0, ctx.promptCap-len(ctx.requiredPrefix))
 	diffLimit := max(0, bodyLimit-len(currentRequiredText)-len(currentOverflowText)-len(emptyDiffBlock))
-	diff, truncated, err := git.GetRangeDiffLimited(b.repoPath, rangeRef, diffLimit, excludes...)
+	diff, truncated, err := git.GetRangeDiffLimitedCtx(b.context(), b.repoPath, rangeRef, diffLimit, excludes...)
 	if err != nil {
 		return "", fmt.Errorf("get range diff: %w", err)
 	}
