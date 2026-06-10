@@ -7,6 +7,7 @@ import (
 	"os"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -116,6 +117,8 @@ func TestEnsureDaemonRestartsWhenLiveProbeFailsDespiteRuntimeVersion(t *testing.
 
 	origGetAnyRunningDaemon := getAnyRunningDaemon
 	origRestartDaemon := restartDaemonForEnsure
+	origRetryDelay := ensureProbeRetryDelay
+	ensureProbeRetryDelay = time.Millisecond
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
 		return &daemon.RuntimeInfo{
 			PID:     1234,
@@ -131,6 +134,7 @@ func TestEnsureDaemonRestartsWhenLiveProbeFailsDespiteRuntimeVersion(t *testing.
 	t.Cleanup(func() {
 		getAnyRunningDaemon = origGetAnyRunningDaemon
 		restartDaemonForEnsure = origRestartDaemon
+		ensureProbeRetryDelay = origRetryDelay
 	})
 
 	if err := ensureDaemon(); err != nil {

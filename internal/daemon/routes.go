@@ -124,6 +124,13 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 			o.Tags = []string{"daemon"}
 		})
 
+	huma.Post(api, "/api/shutdown", s.humaShutdown,
+		func(o *huma.Operation) {
+			o.OperationID = "shutdown"
+			o.Summary = "Gracefully shut down the daemon"
+			o.Tags = []string{"daemon"}
+		})
+
 	huma.Get(api, "/api/sync/status", s.humaSyncStatus,
 		func(o *huma.Operation) {
 			o.OperationID = "get-sync-status"

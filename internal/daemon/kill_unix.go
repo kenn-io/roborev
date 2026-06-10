@@ -130,6 +130,14 @@ func isProcessAlive(pid int) bool {
 	return err == nil || errors.Is(err, syscall.EPERM)
 }
 
+// ProcessExists reports whether pid appears to name a live process.
+func ProcessExists(pid int) bool {
+	if pid <= 0 {
+		return false
+	}
+	return isProcessAlive(pid)
+}
+
 // killProcess kills a process by PID on Unix systems.
 // Returns true only if the process is confirmed dead.
 // Verifies the process is a roborev daemon before killing to prevent

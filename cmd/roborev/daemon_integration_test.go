@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"fmt"
+	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -335,4 +336,85 @@ func TestDaemonSignalCleanup(t *testing.T) {
 			return false
 		}, "daemon did not exit within timeout")
 	}
+}
+
+// TestDaemonLifecycleEndToEnd exercises the real daemon binary on every OS,
+// including Windows: spawn, runtime publication, liveness probe, a
+// DB-backed API endpoint, and HTTP shutdown (the production stop path).
+// The DB-backed /api/status check is deliberate: a daemon can answer
+// /api/ping from memory while every database-backed endpoint hangs, which is
+// exactly the "zombie daemon" failure mode from issue #834.
+func TestDaemonLifecycleEndToEnd(t *testing.T) {
+	dbPath, configPath := setupTestDaemon(t)
+	tmpDir := filepath.Dir(dbPath)
+
+	binPath := filepath.Join(tmpDir, "roborev-test")
+	if runtime.GOOS == "windows" {
+		binPath += ".exe"
+	}
+	// The built daemon runs in a subprocess, so compile kit's test telemetry
+	// disable tag into that binary.
+	buildCmd := exec.Command("go", "build", "-tags", "kit_posthog_disabled", "-o", binPath, ".")
+	out, err := buildCmd.CombinedOutput()
+	require.NoError(t, err, "failed to build test binary: %s", out)
+
+	cmd := exec.Command(binPath, "daemon", "run",
+		"--db", dbPath,
+		"--config", configPath,
+		"--addr", "127.0.0.1:0",
+	)
+	cmd.Env = append(os.Environ(), "ROBOREV_DATA_DIR="+tmpDir)
+	outputBuffer := new(bytes.Buffer)
+	cmd.Stdout = outputBuffer
+	cmd.Stderr = outputBuffer
+	require.NoError(t, cmd.Start(), "failed to start daemon")
+
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	t.Cleanup(func() {
+		if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
+			_ = cmd.Process.Kill()
+			select {
+			case <-done:
+			case <-time.After(2 * time.Second):
+			}
+		}
+	})
+
+	// Wait for the daemon to publish its runtime record and answer pings.
+	pid := cmd.Process.Pid
+	var info *daemon.RuntimeInfo
+	require.True(t, waitFor(t, 30*time.Second, func() bool {
+		read, err := daemon.ReadRuntimeForPID(pid)
+		if err != nil {
+			return false
+		}
+		info = read
+		return true
+	}), "daemon never published a runtime record. Output:\n%s", outputBuffer.String())
+
+	ep := info.Endpoint()
+	probe, err := daemon.ProbeDaemon(ep, 5*time.Second)
+	require.NoError(t, err, "daemon must answer /api/ping. Output:\n%s", outputBuffer.String())
+	assert.Equal(t, pid, probe.PID)
+
+	// A live daemon must serve database-backed endpoints, not just ping.
+	client := ep.HTTPClient(10 * time.Second)
+	resp, err := client.Get(ep.BaseURL() + "/api/status")
+	require.NoError(t, err, "daemon must serve /api/status. Output:\n%s", outputBuffer.String())
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	resp.Body.Close()
+
+	// Stop via HTTP shutdown, the path the CLI uses on every platform.
+	resp, err = client.Post(ep.BaseURL()+"/api/shutdown", "application/json", nil)
+	require.NoError(t, err, "shutdown request failed")
+	resp.Body.Close()
+
+	select {
+	case <-done:
+		// Daemon exited.
+	case <-time.After(15 * time.Second):
+		require.Fail(t, "daemon did not exit after /api/shutdown", "Output:\n%s", outputBuffer.String())
+	}
+	assert.False(t, daemon.ProcessExists(pid), "daemon process must be gone after shutdown")
 }

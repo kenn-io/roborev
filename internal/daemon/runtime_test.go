@@ -530,3 +530,110 @@ func TestListAllRuntimesWithGlobMetacharacters(t *testing.T) {
 		}, "Expected PID %d, got %d", math.MaxInt32, runtimes[0].PID)
 	}
 }
+
+// writeLegacyRuntimeFile writes a pre-v0.57 runtime file (addr/port layout,
+// data dir root) and returns its path.
+func writeLegacyRuntimeFile(t *testing.T, dataDir, name string, pid int, addr string) string {
+	t.Helper()
+	body, err := json.Marshal(map[string]any{
+		"pid":     pid,
+		"addr":    addr,
+		"port":    defaultTestPort,
+		"network": "tcp",
+		"version": "0.56.0",
+	})
+	require.NoError(t, err)
+	path := filepath.Join(dataDir, name)
+	require.NoError(t, os.WriteFile(path, body, 0o644))
+	return path
+}
+
+func TestListAllRuntimesIncludesLegacyRecords(t *testing.T) {
+	assert := assert.New(t)
+	dataDir := testenv.SetDataDir(t)
+
+	// New-style record in runtime/ plus legacy daemon.<pid>.json and
+	// daemon.json in the data dir root.
+	runtimeDir := runtimeStore().Dir
+	require.NoError(t, os.MkdirAll(runtimeDir, 0o700))
+	createRuntimeFile(t, runtimeDir, math.MaxInt32, nil)
+	legacyPath := writeLegacyRuntimeFile(t, dataDir,
+		fmt.Sprintf("daemon.%d.json", math.MaxInt32-1), math.MaxInt32-1, "127.0.0.1:7374")
+	writeLegacyRuntimeFile(t, dataDir, "daemon.json", math.MaxInt32-2, "127.0.0.1:7375")
+
+	runtimes, err := ListAllRuntimes()
+	require.NoError(t, err)
+	require.Len(t, runtimes, 3)
+
+	byPID := make(map[int]*RuntimeInfo, len(runtimes))
+	for _, info := range runtimes {
+		byPID[info.PID] = info
+	}
+	require.Contains(t, byPID, math.MaxInt32-1)
+	legacy := byPID[math.MaxInt32-1]
+	assert.Equal("127.0.0.1:7374", legacy.Address)
+	assert.Equal("tcp", legacy.Network)
+	assert.Equal("0.56.0", legacy.Version)
+	assert.Equal(legacyPath, legacy.SourcePath)
+	assert.Equal("127.0.0.1:7374", legacy.Endpoint().Address)
+	require.Contains(t, byPID, math.MaxInt32-2)
+	assert.Equal("127.0.0.1:7375", byPID[math.MaxInt32-2].Address)
+}
+
+func TestListAllRuntimesDeduplicatesLegacyByPID(t *testing.T) {
+	dataDir := testenv.SetDataDir(t)
+
+	runtimeDir := runtimeStore().Dir
+	require.NoError(t, os.MkdirAll(runtimeDir, 0o700))
+	createRuntimeFile(t, runtimeDir, math.MaxInt32, nil)
+	// Legacy record for the same PID must not produce a duplicate entry.
+	writeLegacyRuntimeFile(t, dataDir,
+		fmt.Sprintf("daemon.%d.json", math.MaxInt32), math.MaxInt32, "127.0.0.1:7374")
+
+	runtimes, err := ListAllRuntimes()
+	require.NoError(t, err)
+	require.Len(t, runtimes, 1)
+	// The new-style record wins.
+	assert.Equal(t, defaultTestAddr, runtimes[0].Address)
+}
+
+func TestListLegacyRuntimesSkipsMalformedFiles(t *testing.T) {
+	assert := assert.New(t)
+	dataDir := testenv.SetDataDir(t)
+
+	require.NoError(t, os.WriteFile(filepath.Join(dataDir, "daemon.json"), []byte("not json"), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dataDir, "daemon.0.json"), []byte(`{"pid":0,"addr":"x"}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dataDir, "daemon.5.json"), []byte(`{"pid":5}`), 0o644))
+	require.NoError(t, os.WriteFile(filepath.Join(dataDir, "config.toml"), []byte(""), 0o644))
+
+	assert.Empty(listLegacyRuntimes())
+
+	runtimes, err := ListAllRuntimes()
+	require.NoError(t, err)
+	assert.Empty(runtimes)
+}
+
+func TestKillDaemonStopsLegacyDaemonGracefully(t *testing.T) {
+	assert := assert.New(t)
+	dataDir := testenv.SetDataDir(t)
+
+	// A legacy (pre-v0.57) daemon answers /api/shutdown but has no /api/ping.
+	addr, mux := startMockDaemon(t)
+	shutdownCalled := false
+	mux.HandleFunc("/api/shutdown", func(w http.ResponseWriter, r *http.Request) {
+		shutdownCalled = true
+		w.WriteHeader(http.StatusOK)
+	})
+
+	// Use a PID that is certainly dead so the post-shutdown liveness check
+	// confirms process exit.
+	legacyPath := writeLegacyRuntimeFile(t, dataDir,
+		fmt.Sprintf("daemon.%d.json", math.MaxInt32), math.MaxInt32, addr)
+	runtimes, err := ListAllRuntimes()
+	require.NoError(t, err)
+	require.Len(t, runtimes, 1)
+
+	assert.True(KillDaemon(runtimes[0]))
+	assert.True(shutdownCalled, "graceful shutdown endpoint must be tried first")
+	assert.NoFileExists(legacyPath, "legacy runtime file must be cleaned up")
+}

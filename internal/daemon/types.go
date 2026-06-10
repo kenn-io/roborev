@@ -448,6 +448,13 @@ type PingOutput struct {
 	Body PingInfo
 }
 
+// ShutdownOutput is the response for POST /api/shutdown.
+type ShutdownOutput struct {
+	Body struct {
+		Status string `json:"status"`
+	}
+}
+
 // SyncStatusOutput is the response for GET /api/sync/status.
 type SyncStatusOutput struct {
 	Body struct {

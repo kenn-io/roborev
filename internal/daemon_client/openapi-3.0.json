@@ -164,6 +164,32 @@
         ],
         "type": "object"
       },
+      "BackfillTokensRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "example": "https://example.com/BackfillTokensRequest.json",
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "dry_run": {
+            "type": "boolean"
+          },
+          "sessions": {
+            "items": {
+              "$ref": "#/components/schemas/SessionUsagePayload"
+            },
+            "nullable": true,
+            "type": "array"
+          }
+        },
+        "required": [
+          "sessions"
+        ],
+        "type": "object"
+      },
       "BatchJobsOutputBody": {
         "additionalProperties": false,
         "properties": {
@@ -420,6 +446,9 @@
             "format": "int64",
             "type": "integer"
           },
+          "queue_paused": {
+            "type": "boolean"
+          },
           "queued_jobs": {
             "format": "int64",
             "type": "integer"
@@ -451,7 +480,8 @@
           "rebased_jobs",
           "skipped_jobs",
           "active_workers",
-          "max_workers"
+          "max_workers",
+          "queue_paused"
         ],
         "type": "object"
       },
@@ -1149,6 +1179,25 @@
         ],
         "type": "object"
       },
+      "QueuePauseOutputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "example": "https://example.com/QueuePauseOutputBody.json",
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "queue_paused": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "queue_paused"
+        ],
+        "type": "object"
+      },
       "RegisterRepoRequest": {
         "additionalProperties": false,
         "properties": {
@@ -1752,6 +1801,65 @@
         ],
         "type": "object"
       },
+      "SessionUsagePayload": {
+        "additionalProperties": false,
+        "properties": {
+          "agent": {
+            "type": "string"
+          },
+          "cost_usd": {
+            "format": "double",
+            "type": "number"
+          },
+          "has_cost": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "has_token_data": {
+            "nullable": true,
+            "type": "boolean"
+          },
+          "peak_context_tokens": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "project": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "total_output_tokens": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "session_id",
+          "has_token_data",
+          "has_cost"
+        ],
+        "type": "object"
+      },
+      "ShutdownOutputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "example": "https://example.com/ShutdownOutputBody.json",
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "status"
+        ],
+        "type": "object"
+      },
       "Summary": {
         "additionalProperties": false,
         "properties": {
@@ -1845,6 +1953,78 @@
           "enabled",
           "connected",
           "message"
+        ],
+        "type": "object"
+      },
+      "TokenResult": {
+        "additionalProperties": false,
+        "properties": {
+          "agent": {
+            "type": "string"
+          },
+          "job_id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "reason": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "summary": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "session_id",
+          "status"
+        ],
+        "type": "object"
+      },
+      "TokenSummary": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "example": "https://example.com/TokenSummary.json",
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "failed": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "results": {
+            "items": {
+              "$ref": "#/components/schemas/TokenResult"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "skipped": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "total": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "updated": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
+        "required": [
+          "total",
+          "updated",
+          "skipped",
+          "failed",
+          "results"
         ],
         "type": "object"
       },
@@ -3023,6 +3203,68 @@
         ]
       }
     },
+    "/api/queue/pause": {
+      "post": {
+        "operationId": "pause-queue",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueuePauseOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Pause queue processing",
+        "tags": [
+          "daemon"
+        ]
+      }
+    },
+    "/api/queue/unpause": {
+      "post": {
+        "operationId": "unpause-queue",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/QueuePauseOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Resume queue processing",
+        "tags": [
+          "daemon"
+        ]
+      }
+    },
     "/api/remap": {
       "post": {
         "operationId": "remap-jobs",
@@ -3297,6 +3539,37 @@
         ]
       }
     },
+    "/api/shutdown": {
+      "post": {
+        "operationId": "shutdown",
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ShutdownOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Gracefully shut down the daemon",
+        "tags": [
+          "daemon"
+        ]
+      }
+    },
     "/api/status": {
       "get": {
         "operationId": "get-status",
@@ -3505,6 +3778,55 @@
         "summary": "Get sync worker status",
         "tags": [
           "sync"
+        ]
+      }
+    },
+    "/api/tokens/backfill": {
+      "post": {
+        "operationId": "backfill-tokens",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/BackfillTokensRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/TokenSummary"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "400": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          },
+          "500": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorResponse"
+                }
+              }
+            }
+          }
+        },
+        "summary": "Backfill token usage from AgentsView payloads",
+        "tags": [
+          "jobs"
         ]
       }
     }

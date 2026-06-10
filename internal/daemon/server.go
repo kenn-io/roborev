@@ -57,6 +57,8 @@ type Server struct {
 	stopErr         error
 	sweepMu         sync.Mutex         // protects sweepCancel (written by Start, read by Stop)
 	sweepCancel     context.CancelFunc // cancels the panel sweep goroutine on Stop
+	shutdownCh      chan struct{}      // closed when /api/shutdown is requested
+	shutdownOnce    sync.Once
 
 	// Cached machine ID to avoid INSERT on every status request
 	machineIDMu sync.Mutex
@@ -101,6 +103,7 @@ func NewServer(db *storage.DB, cfg *config.Config, configPath string) *Server {
 		activityLog:   activityLog,
 		telemetryStop: make(chan struct{}),
 		startTime:     time.Now(),
+		shutdownCh:    make(chan struct{}),
 	}
 
 	mux := http.NewServeMux()
@@ -2597,6 +2600,31 @@ func (s *Server) humaPing(
 		Version: version.Version,
 		PID:     os.Getpid(),
 	}}, nil
+}
+
+// humaShutdown requests a graceful daemon shutdown. This is the only
+// graceful stop path on Windows, where the daemon cannot receive SIGTERM;
+// without it every stop is a hard TerminateProcess that can interrupt
+// SQLite WAL writes. The response is written before the server begins
+// draining connections, so the client always sees it.
+func (s *Server) humaShutdown(
+	ctx context.Context, input *struct{},
+) (*ShutdownOutput, error) {
+	s.RequestShutdown()
+	resp := &ShutdownOutput{}
+	resp.Body.Status = "shutting down"
+	return resp, nil
+}
+
+// RequestShutdown signals that the daemon should shut down gracefully.
+func (s *Server) RequestShutdown() {
+	s.shutdownOnce.Do(func() { close(s.shutdownCh) })
+}
+
+// ShutdownRequested returns a channel that is closed when a graceful
+// shutdown has been requested via /api/shutdown.
+func (s *Server) ShutdownRequested() <-chan struct{} {
+	return s.shutdownCh
 }
 
 func (s *Server) humaSyncStatus(

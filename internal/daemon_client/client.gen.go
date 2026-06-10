@@ -163,6 +163,14 @@ type AutoDesignStatus struct {
 	TriggeredHeuristic  int64 `json:"triggered_heuristic"`
 }
 
+// BackfillTokensRequest defines model for BackfillTokensRequest.
+type BackfillTokensRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema   *string                `json:"$schema,omitempty"`
+	DryRun   *bool                  `json:"dry_run,omitempty"`
+	Sessions *[]SessionUsagePayload `json:"sessions"`
+}
+
 // BatchJobsOutputBody defines model for BatchJobsOutputBody.
 type BatchJobsOutputBody struct {
 	// Schema A URL to the JSON Schema for this object.
@@ -246,6 +254,7 @@ type DaemonStatus struct {
 	MaxWorkers          int64             `json:"max_workers"`
 	Network             *string           `json:"network,omitempty"`
 	Port                *int64            `json:"port,omitempty"`
+	QueuePaused         bool              `json:"queue_paused"`
 	QueuedJobs          int64             `json:"queued_jobs"`
 	RebasedJobs         int64             `json:"rebased_jobs"`
 	RunningJobs         int64             `json:"running_jobs"`
@@ -478,6 +487,13 @@ type PingInfo struct {
 	Version string  `json:"version"`
 }
 
+// QueuePauseOutputBody defines model for QueuePauseOutputBody.
+type QueuePauseOutputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema      *string `json:"$schema,omitempty"`
+	QueuePaused bool    `json:"queue_paused"`
+}
+
 // RegisterRepoRequest defines model for RegisterRepoRequest.
 type RegisterRepoRequest struct {
 	// Schema A URL to the JSON Schema for this object.
@@ -664,6 +680,25 @@ type ReviewJob struct {
 	WorktreePath          *string       `json:"worktree_path,omitempty"`
 }
 
+// SessionUsagePayload defines model for SessionUsagePayload.
+type SessionUsagePayload struct {
+	Agent             *string  `json:"agent,omitempty"`
+	CostUsd           *float64 `json:"cost_usd,omitempty"`
+	HasCost           *bool    `json:"has_cost"`
+	HasTokenData      *bool    `json:"has_token_data"`
+	PeakContextTokens *int64   `json:"peak_context_tokens,omitempty"`
+	Project           *string  `json:"project,omitempty"`
+	SessionId         string   `json:"session_id"`
+	TotalOutputTokens *int64   `json:"total_output_tokens,omitempty"`
+}
+
+// ShutdownOutputBody defines model for ShutdownOutputBody.
+type ShutdownOutputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+	Status string  `json:"status"`
+}
+
 // Summary defines model for Summary.
 type Summary struct {
 	// Schema A URL to the JSON Schema for this object.
@@ -688,6 +723,27 @@ type SyncStatusOutputBody struct {
 	Connected bool    `json:"connected"`
 	Enabled   bool    `json:"enabled"`
 	Message   string  `json:"message"`
+}
+
+// TokenResult defines model for TokenResult.
+type TokenResult struct {
+	Agent     *string `json:"agent,omitempty"`
+	JobId     *int64  `json:"job_id,omitempty"`
+	Reason    *string `json:"reason,omitempty"`
+	SessionId string  `json:"session_id"`
+	Status    string  `json:"status"`
+	Summary   *string `json:"summary,omitempty"`
+}
+
+// TokenSummary defines model for TokenSummary.
+type TokenSummary struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema  *string        `json:"$schema,omitempty"`
+	Failed  int64          `json:"failed"`
+	Results *[]TokenResult `json:"results"`
+	Skipped int64          `json:"skipped"`
+	Total   int64          `json:"total"`
+	Updated int64          `json:"updated"`
 }
 
 // UpdateJobBranchOutputBody defines model for UpdateJobBranchOutputBody.
@@ -929,6 +985,9 @@ type RegisterRepoJSONRequestBody = RegisterRepoRequest
 // CloseReviewJSONRequestBody defines body for CloseReview for application/json ContentType.
 type CloseReviewJSONRequestBody = CloseReviewRequest
 
+// BackfillTokensJSONRequestBody defines body for BackfillTokens for application/json ContentType.
+type BackfillTokensJSONRequestBody = BackfillTokensRequest
+
 // RequestEditorFn  is the function signature for the RequestEditor callback function
 type RequestEditorFn func(ctx context.Context, req *http.Request) error
 
@@ -1077,6 +1136,12 @@ type ClientInterface interface {
 	// Ping request
 	Ping(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// PauseQueue request
+	PauseQueue(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// UnpauseQueue request
+	UnpauseQueue(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// RemapJobsWithBody request with any body
 	RemapJobsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -1101,6 +1166,9 @@ type ClientInterface interface {
 
 	CloseReview(ctx context.Context, body CloseReviewJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// Shutdown request
+	Shutdown(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// GetStatus request
 	GetStatus(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -1115,6 +1183,11 @@ type ClientInterface interface {
 
 	// GetSyncStatus request
 	GetSyncStatus(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// BackfillTokensWithBody request with any body
+	BackfillTokensWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	BackfillTokens(ctx context.Context, body BackfillTokensJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 func (c *Client) ListActivity(ctx context.Context, params *ListActivityParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -1453,6 +1526,30 @@ func (c *Client) Ping(ctx context.Context, reqEditors ...RequestEditorFn) (*http
 	return c.Client.Do(req)
 }
 
+func (c *Client) PauseQueue(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPauseQueueRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) UnpauseQueue(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewUnpauseQueueRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) RemapJobsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewRemapJobsRequestWithBody(c.Server, contentType, body)
 	if err != nil {
@@ -1561,6 +1658,18 @@ func (c *Client) CloseReview(ctx context.Context, body CloseReviewJSONRequestBod
 	return c.Client.Do(req)
 }
 
+func (c *Client) Shutdown(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewShutdownRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 func (c *Client) GetStatus(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetStatusRequest(c.Server)
 	if err != nil {
@@ -1611,6 +1720,30 @@ func (c *Client) SyncNow(ctx context.Context, params *SyncNowParams, reqEditors 
 
 func (c *Client) GetSyncStatus(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewGetSyncStatusRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) BackfillTokensWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBackfillTokensRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) BackfillTokens(ctx context.Context, body BackfillTokensJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBackfillTokensRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -2763,6 +2896,60 @@ func NewPingRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewPauseQueueRequest generates requests for PauseQueue
+func NewPauseQueueRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/queue/pause")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewUnpauseQueueRequest generates requests for UnpauseQueue
+func NewUnpauseQueueRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/queue/unpause")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewRemapJobsRequest calls the generic RemapJobs builder with application/json body
 func NewRemapJobsRequest(server string, body RemapJobsJSONRequestBody) (*http.Request, error) {
 	var bodyReader io.Reader
@@ -3062,6 +3249,33 @@ func NewCloseReviewRequestWithBody(server string, contentType string, body io.Re
 	return req, nil
 }
 
+// NewShutdownRequest generates requests for Shutdown
+func NewShutdownRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/shutdown")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
 // NewGetStatusRequest generates requests for GetStatus
 func NewGetStatusRequest(server string) (*http.Request, error) {
 	var err error
@@ -3311,6 +3525,46 @@ func NewGetSyncStatusRequest(server string) (*http.Request, error) {
 	return req, nil
 }
 
+// NewBackfillTokensRequest calls the generic BackfillTokens builder with application/json body
+func NewBackfillTokensRequest(server string, body BackfillTokensJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewBackfillTokensRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewBackfillTokensRequestWithBody generates requests for BackfillTokens with any type of body
+func NewBackfillTokensRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/tokens/backfill")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 func (c *Client) applyEditors(ctx context.Context, req *http.Request, additionalEditors []RequestEditorFn) error {
 	for _, r := range c.RequestEditors {
 		if err := r(ctx, req); err != nil {
@@ -3429,6 +3683,12 @@ type ClientWithResponsesInterface interface {
 	// PingWithResponse request
 	PingWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*PingResponse, error)
 
+	// PauseQueueWithResponse request
+	PauseQueueWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*PauseQueueResponse, error)
+
+	// UnpauseQueueWithResponse request
+	UnpauseQueueWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*UnpauseQueueResponse, error)
+
 	// RemapJobsWithBodyWithResponse request with any body
 	RemapJobsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RemapJobsResponse, error)
 
@@ -3453,6 +3713,9 @@ type ClientWithResponsesInterface interface {
 
 	CloseReviewWithResponse(ctx context.Context, body CloseReviewJSONRequestBody, reqEditors ...RequestEditorFn) (*CloseReviewResponse, error)
 
+	// ShutdownWithResponse request
+	ShutdownWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ShutdownResponse, error)
+
 	// GetStatusWithResponse request
 	GetStatusWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetStatusResponse, error)
 
@@ -3467,6 +3730,11 @@ type ClientWithResponsesInterface interface {
 
 	// GetSyncStatusWithResponse request
 	GetSyncStatusWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetSyncStatusResponse, error)
+
+	// BackfillTokensWithBodyWithResponse request with any body
+	BackfillTokensWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BackfillTokensResponse, error)
+
+	BackfillTokensWithResponse(ctx context.Context, body BackfillTokensJSONRequestBody, reqEditors ...RequestEditorFn) (*BackfillTokensResponse, error)
 }
 
 type ListActivityResponse struct {
@@ -3914,6 +4182,52 @@ func (r PingResponse) StatusCode() int {
 	return 0
 }
 
+type PauseQueueResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *QueuePauseOutputBody
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r PauseQueueResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PauseQueueResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type UnpauseQueueResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *QueuePauseOutputBody
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r UnpauseQueueResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r UnpauseQueueResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type RemapJobsResponse struct {
 	Body                          []byte
 	HTTPResponse                  *http.Response
@@ -4052,6 +4366,29 @@ func (r CloseReviewResponse) StatusCode() int {
 	return 0
 }
 
+type ShutdownResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *ShutdownOutputBody
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r ShutdownResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ShutdownResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 type GetStatusResponse struct {
 	Body                          []byte
 	HTTPResponse                  *http.Response
@@ -4159,6 +4496,30 @@ func (r GetSyncStatusResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r GetSyncStatusResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type BackfillTokensResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *TokenSummary
+	JSON400      *ErrorResponse
+	JSON500      *ErrorResponse
+}
+
+// Status returns HTTPResponse.Status
+func (r BackfillTokensResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r BackfillTokensResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -4408,6 +4769,24 @@ func (c *ClientWithResponses) PingWithResponse(ctx context.Context, reqEditors .
 	return ParsePingResponse(rsp)
 }
 
+// PauseQueueWithResponse request returning *PauseQueueResponse
+func (c *ClientWithResponses) PauseQueueWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*PauseQueueResponse, error) {
+	rsp, err := c.PauseQueue(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePauseQueueResponse(rsp)
+}
+
+// UnpauseQueueWithResponse request returning *UnpauseQueueResponse
+func (c *ClientWithResponses) UnpauseQueueWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*UnpauseQueueResponse, error) {
+	rsp, err := c.UnpauseQueue(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseUnpauseQueueResponse(rsp)
+}
+
 // RemapJobsWithBodyWithResponse request with arbitrary body returning *RemapJobsResponse
 func (c *ClientWithResponses) RemapJobsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RemapJobsResponse, error) {
 	rsp, err := c.RemapJobsWithBody(ctx, contentType, body, reqEditors...)
@@ -4486,6 +4865,15 @@ func (c *ClientWithResponses) CloseReviewWithResponse(ctx context.Context, body 
 	return ParseCloseReviewResponse(rsp)
 }
 
+// ShutdownWithResponse request returning *ShutdownResponse
+func (c *ClientWithResponses) ShutdownWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ShutdownResponse, error) {
+	rsp, err := c.Shutdown(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseShutdownResponse(rsp)
+}
+
 // GetStatusWithResponse request returning *GetStatusResponse
 func (c *ClientWithResponses) GetStatusWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetStatusResponse, error) {
 	rsp, err := c.GetStatus(ctx, reqEditors...)
@@ -4529,6 +4917,23 @@ func (c *ClientWithResponses) GetSyncStatusWithResponse(ctx context.Context, req
 		return nil, err
 	}
 	return ParseGetSyncStatusResponse(rsp)
+}
+
+// BackfillTokensWithBodyWithResponse request with arbitrary body returning *BackfillTokensResponse
+func (c *ClientWithResponses) BackfillTokensWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BackfillTokensResponse, error) {
+	rsp, err := c.BackfillTokensWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseBackfillTokensResponse(rsp)
+}
+
+func (c *ClientWithResponses) BackfillTokensWithResponse(ctx context.Context, body BackfillTokensJSONRequestBody, reqEditors ...RequestEditorFn) (*BackfillTokensResponse, error) {
+	rsp, err := c.BackfillTokens(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseBackfillTokensResponse(rsp)
 }
 
 // ParseListActivityResponse parses an HTTP response from a ListActivityWithResponse call
@@ -5190,6 +5595,72 @@ func ParsePingResponse(rsp *http.Response) (*PingResponse, error) {
 	return response, nil
 }
 
+// ParsePauseQueueResponse parses an HTTP response from a PauseQueueWithResponse call
+func ParsePauseQueueResponse(rsp *http.Response) (*PauseQueueResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PauseQueueResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest QueuePauseOutputBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseUnpauseQueueResponse parses an HTTP response from a UnpauseQueueWithResponse call
+func ParseUnpauseQueueResponse(rsp *http.Response) (*UnpauseQueueResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &UnpauseQueueResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest QueuePauseOutputBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseRemapJobsResponse parses an HTTP response from a RemapJobsWithResponse call
 func ParseRemapJobsResponse(rsp *http.Response) (*RemapJobsResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -5388,6 +5859,39 @@ func ParseCloseReviewResponse(rsp *http.Response) (*CloseReviewResponse, error) 
 	return response, nil
 }
 
+// ParseShutdownResponse parses an HTTP response from a ShutdownWithResponse call
+func ParseShutdownResponse(rsp *http.Response) (*ShutdownResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ShutdownResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ShutdownOutputBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
 // ParseGetStatusResponse parses an HTTP response from a GetStatusWithResponse call
 func ParseGetStatusResponse(rsp *http.Response) (*GetStatusResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -5533,6 +6037,46 @@ func ParseGetSyncStatusResponse(rsp *http.Response) (*GetSyncStatusResponse, err
 			return nil, err
 		}
 		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseBackfillTokensResponse parses an HTTP response from a BackfillTokensWithResponse call
+func ParseBackfillTokensResponse(rsp *http.Response) (*BackfillTokensResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &BackfillTokensResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest TokenSummary
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 500:
+		var dest ErrorResponse
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON500 = &dest
 
 	}
 

@@ -36,7 +36,7 @@ CLI (roborev) → HTTP API → Daemon (roborev daemon run) → Worker Pool → A
 - **Config**: Global at `~/.roborev/config.toml`, per-repo at `.roborev.toml`
 - **Data dir**: Set `ROBOREV_DATA_DIR` env var to override `~/.roborev`
 - **Color mode**: `ROBOREV_COLOR_MODE=auto|dark|light|none` controls TUI color theme; `NO_COLOR=1` strips all colors
-- **Runtime info**: Daemon writes PID/addr/port to `~/.roborev/daemon.json`
+- **Runtime info**: Daemon writes PID/addr/version to `~/.roborev/runtime/daemon.<pid>.json` (kit runtime store); pre-v0.57 daemons wrote `~/.roborev/daemon.json`, still read for upgrade-time stop/cleanup
 
 ## Package Map
 
@@ -256,6 +256,8 @@ All endpoints prefixed with `/api/`:
 | `/sync/status` | GET | Sync status |
 | `/activity` | GET | Activity log |
 | `/remap` | POST | Remap job UUIDs after recovery |
+| `/ping` | GET | Liveness identity (ok, service, version, pid) |
+| `/shutdown` | POST | Graceful daemon shutdown (only graceful stop path on Windows) |
 
 ## CI Poller (`internal/daemon/ci_poller.go`)
 

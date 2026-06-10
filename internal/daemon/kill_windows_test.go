@@ -3,9 +3,11 @@
 package daemon
 
 import (
+	"os"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 const testRoborevExe = `C:\Program Files\roborev\roborev.exe`
@@ -242,4 +244,27 @@ func TestNormalizeCommandLine(t *testing.T) {
 				"normalizeCommandLine(%q) = %q, want %q", tt.input, got, tt.want)
 		})
 	}
+}
+
+func TestProcessExistsUsesWin32APIWithoutSpawning(t *testing.T) {
+	assert := assert.New(t)
+
+	// The current process certainly exists.
+	assert.True(processExists(os.Getpid()))
+	assert.True(ProcessExists(os.Getpid()))
+
+	// Invalid PIDs are never alive.
+	assert.False(processExists(0))
+	assert.False(processExists(-1))
+	assert.False(ProcessExists(0))
+}
+
+func TestProcessExistsDetectsExitedProcess(t *testing.T) {
+	// Spawn a short-lived hidden process and wait for it to exit.
+	cmd := HiddenCommand("cmd.exe", "/c", "exit 0")
+	require.NoError(t, cmd.Start())
+	pid := cmd.Process.Pid
+	require.NoError(t, cmd.Wait())
+
+	assert.False(t, processExists(pid), "exited process must not be reported alive")
 }

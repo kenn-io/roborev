@@ -3,10 +3,10 @@
 package daemon
 
 import (
-	"bytes"
-	"os/exec"
+	"errors"
 	"strconv"
 	"strings"
+	"syscall"
 	"time"
 )
 
@@ -44,7 +44,7 @@ func identifyProcessImpl(pid int) processIdentity {
 // getCommandLineWmic tries to get process command line via wmic.
 // Returns empty string on failure or if no command line data.
 func getCommandLineWmic(pidStr string) string {
-	cmd := exec.Command("wmic", "process", "where", "ProcessId="+pidStr, "get", "commandline")
+	cmd := HiddenCommand("wmic", "process", "where", "ProcessId="+pidStr, "get", "commandline")
 	output, err := cmd.Output()
 	if err != nil {
 		return ""
@@ -60,7 +60,7 @@ func getCommandLinePowerShell(pidStr string) string {
 	// Force UTF-8 output to avoid UTF-16LE encoding issues when capturing stdout
 	script := `[Console]::OutputEncoding=[Text.Encoding]::UTF8;` +
 		`(Get-CimInstance Win32_Process -Filter "ProcessId=` + pidStr + `").CommandLine`
-	cmd := exec.Command("powershell", "-NoProfile", "-Command", script)
+	cmd := HiddenCommand("powershell", "-NoProfile", "-Command", script)
 	output, err := cmd.Output()
 	if err != nil {
 		return ""
@@ -199,11 +199,11 @@ func killProcess(pid int) bool {
 	}
 
 	// Use taskkill to terminate the process
-	cmd := exec.Command("taskkill", "/PID", strconv.Itoa(pid), "/F")
+	cmd := HiddenCommand("taskkill", "/PID", strconv.Itoa(pid), "/F")
 	_ = cmd.Run() // Ignore error - we'll verify with processExists
 
 	// Wait for process to fully terminate
-	for i := 0; i < 10; i++ {
+	for range 10 {
 		time.Sleep(100 * time.Millisecond)
 		if !processExists(pid) {
 			return true // Process is gone
@@ -213,24 +213,30 @@ func killProcess(pid int) bool {
 	return false // Still running after repeated attempts
 }
 
-// processExists checks if a process with the given PID exists.
-// Uses tasklist with CSV output which is locale-independent.
+// processExists checks if a process with the given PID exists using the
+// Win32 API directly. Spawning tasklist here would flash a console window on
+// every liveness poll when the caller has no console of its own.
 func processExists(pid int) bool {
-	// tasklist /FI "PID eq N" /FO CSV /NH
-	// - Returns exit code 0 whether or not process is found
-	// - If found: outputs CSV line with process info including PID
-	// - If not found: outputs empty or info message (no CSV data)
-	// We check if output contains the PID as a CSV field
-	pidStr := strconv.Itoa(pid)
-	cmd := exec.Command("tasklist", "/FI", "PID eq "+pidStr, "/FO", "CSV", "/NH")
-	output, err := cmd.Output()
+	if pid <= 0 {
+		return false
+	}
+	const processQueryLimitedInformation = 0x1000
+	const stillActive = 259 // STILL_ACTIVE
+	handle, err := syscall.OpenProcess(processQueryLimitedInformation, false, uint32(pid))
 	if err != nil {
-		// tasklist failed - assume process might exist to be safe
+		// Access denied means the process exists but belongs to another user.
+		return errors.Is(err, syscall.ERROR_ACCESS_DENIED)
+	}
+	defer func() { _ = syscall.CloseHandle(handle) }()
+	var code uint32
+	if err := syscall.GetExitCodeProcess(handle, &code); err != nil {
+		// Cannot tell - assume the process might exist to be safe.
 		return true
 	}
+	return code == stillActive
+}
 
-	// In CSV output, the PID appears as a quoted field: "1234"
-	// Check if the output contains the quoted PID
-	quotedPID := []byte("\"" + pidStr + "\"")
-	return len(output) > 0 && bytes.Contains(output, quotedPID)
+// ProcessExists reports whether pid appears to name a live process.
+func ProcessExists(pid int) bool {
+	return processExists(pid)
 }

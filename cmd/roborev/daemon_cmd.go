@@ -224,6 +224,8 @@ func daemonRunCmd() *cobra.Command {
 				select {
 				case sig := <-sigCh:
 					log.Printf("Received signal %v, shutting down...", sig)
+				case <-server.ShutdownRequested():
+					log.Printf("Shutdown requested via API, shutting down...")
 				case <-cmd.Context().Done():
 					log.Printf("Context cancelled, shutting down...")
 				}

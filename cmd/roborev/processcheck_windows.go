@@ -3,26 +3,22 @@
 package main
 
 import (
-	"bytes"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"strconv"
+
+	"go.kenn.io/roborev/internal/daemon"
 )
 
 // isPIDAliveForUpdateDefault returns true when pid exists.
-// Uses tasklist CSV output which is locale-independent.
+// Uses the Win32 API for the existence check; spawning tasklist here would
+// flash a console window on every update wait-loop poll.
 func isPIDAliveForUpdateDefault(pid int) bool {
 	if pid <= 0 {
 		return false
 	}
 
-	exists, err := processExistsForUpdate(pid)
-	if err != nil {
-		// Be conservative when existence cannot be determined.
-		return true
-	}
-	if !exists {
+	if !daemon.ProcessExists(pid) {
 		return false
 	}
 
@@ -37,19 +33,6 @@ func isPIDAliveForUpdateDefault(pid int) bool {
 		// Unknown identity -> conservative (assume still alive).
 		return true
 	}
-}
-
-func processExistsForUpdate(pid int) (bool, error) {
-	pidStr := strconv.Itoa(pid)
-	// Use an absolute path to avoid PATH/CWD binary hijacking.
-	cmd := exec.Command(tasklistPath(), "/FI", "PID eq "+pidStr, "/FO", "CSV", "/NH")
-	out, err := cmd.Output()
-	if err != nil {
-		return false, err
-	}
-
-	quotedPID := []byte("\"" + pidStr + "\"")
-	return len(out) > 0 && bytes.Contains(out, quotedPID), nil
 }
 
 func identifyPIDForUpdate(pid int) updatePIDIdentity {
@@ -68,7 +51,8 @@ func identifyPIDForUpdate(pid int) updatePIDIdentity {
 }
 
 func getCommandLineWmicForUpdate(pidStr string) string {
-	cmd := exec.Command(
+	// Use an absolute path to avoid PATH/CWD binary hijacking.
+	cmd := daemon.HiddenCommand(
 		wmicPath(), "process", "where", "ProcessId="+pidStr, "get", "commandline",
 	)
 	output, err := cmd.Output()
@@ -82,7 +66,7 @@ func getCommandLinePowerShellForUpdate(pidStr string) string {
 	// Force UTF-8 output to avoid UTF-16LE capture issues.
 	script := `[Console]::OutputEncoding=[Text.Encoding]::UTF8;` +
 		`(Get-CimInstance Win32_Process -Filter "ProcessId=` + pidStr + `").CommandLine`
-	cmd := exec.Command(
+	cmd := daemon.HiddenCommand(
 		powershellPath(), "-NoProfile", "-NonInteractive", "-Command", script,
 	)
 	output, err := cmd.Output()
@@ -112,10 +96,6 @@ func systemRootForUpdate() string {
 		systemRoot = `C:\Windows`
 	}
 	return systemRoot
-}
-
-func tasklistPath() string {
-	return filepath.Join(systemRootForUpdate(), "System32", "tasklist.exe")
 }
 
 func wmicPath() string {

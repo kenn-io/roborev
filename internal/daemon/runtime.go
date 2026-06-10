@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net"
 	"os"
@@ -149,10 +150,72 @@ func ListAllRuntimes() ([]*RuntimeInfo, error) {
 	}
 
 	runtimes := make([]*RuntimeInfo, 0, len(records))
+	seen := make(map[int]struct{}, len(records))
 	for _, rec := range records {
 		runtimes = append(runtimes, runtimeInfoFromRecord(rec))
+		seen[rec.PID] = struct{}{}
+	}
+	for _, info := range listLegacyRuntimes() {
+		if _, ok := seen[info.PID]; ok {
+			continue
+		}
+		seen[info.PID] = struct{}{}
+		runtimes = append(runtimes, info)
 	}
 	return runtimes, nil
+}
+
+// legacyRuntimeInfo is the on-disk shape written by roborev v0.56 and earlier,
+// which stored daemon.<pid>.json and daemon.json in the data dir root.
+type legacyRuntimeInfo struct {
+	PID     int    `json:"pid"`
+	Addr    string `json:"addr"`
+	Network string `json:"network"`
+	Version string `json:"version"`
+}
+
+// listLegacyRuntimes returns runtime records written by roborev v0.56 and
+// earlier. Those daemons predate /api/ping, so kit discovery can never see
+// them; they are surfaced here so stop, update, and zombie cleanup can
+// terminate them by PID after an upgrade. Malformed files are skipped.
+func listLegacyRuntimes() []*RuntimeInfo {
+	dir := config.DataDir()
+	entries, err := os.ReadDir(dir)
+	if err != nil {
+		return nil
+	}
+	var runtimes []*RuntimeInfo
+	for _, entry := range entries {
+		if entry.IsDir() {
+			continue
+		}
+		name := entry.Name()
+		if name != "daemon.json" &&
+			(!strings.HasPrefix(name, "daemon.") || !strings.HasSuffix(name, ".json")) {
+			continue
+		}
+		path := filepath.Join(dir, name)
+		body, err := os.ReadFile(path)
+		if err != nil {
+			continue
+		}
+		var legacy legacyRuntimeInfo
+		if err := json.Unmarshal(body, &legacy); err != nil || legacy.PID <= 0 || legacy.Addr == "" {
+			continue
+		}
+		network := legacy.Network
+		if network == "" {
+			network = "tcp"
+		}
+		runtimes = append(runtimes, &RuntimeInfo{
+			PID:        legacy.PID,
+			Network:    network,
+			Address:    legacy.Addr,
+			Version:    legacy.Version,
+			SourcePath: path,
+		})
+	}
+	return runtimes
 }
 
 // GetAnyRunningDaemon returns info about a responsive daemon.
@@ -284,6 +347,16 @@ func KillDaemon(info *RuntimeInfo) bool {
 		}
 	}
 
+	// Confirmed dead means no ping response AND, when a PID is known, the
+	// process is gone. Legacy (pre-v0.57) daemons never answer /api/ping, so
+	// the HTTP check alone would declare them dead while they still run.
+	confirmedDead := func() bool {
+		if info.PID > 0 && isProcessAlive(info.PID) {
+			return false
+		}
+		return !IsDaemonAlive(ep)
+	}
+
 	// First try graceful HTTP shutdown
 	if ep.Address != "" {
 		client := ep.HTTPClient(2 * time.Second)
@@ -293,7 +366,7 @@ func KillDaemon(info *RuntimeInfo) bool {
 			// Wait for graceful shutdown
 			for range 10 {
 				time.Sleep(200 * time.Millisecond)
-				if !IsDaemonAlive(ep) {
+				if confirmedDead() {
 					removeRuntimeFile()
 					return true
 				}
