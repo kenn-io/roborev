@@ -1964,3 +1964,14 @@ func TestUpsertPulledJobRoundTripsBackupColumns(t *testing.T) {
 	assert.Equal("copilot", ba)
 	assert.Equal("gpt-5", bm)
 }
+
+func TestClaimJobHydratesUUID(t *testing.T) {
+	db := openTestDB(t)
+	_, _, enqueued := createJobChain(t, db, "/repo/uuid-hydration", "abc123")
+	require.NotEmpty(t, enqueued.UUID, "enqueue must assign a job UUID")
+
+	claimed := claimJob(t, db, "worker-1")
+	assert.Equal(t, enqueued.ID, claimed.ID)
+	assert.Equal(t, enqueued.UUID, claimed.UUID,
+		"claimed job must carry the stored UUID so completion events keep UUID-based hook idempotency")
+}

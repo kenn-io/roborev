@@ -598,7 +598,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			ctx, checkout.promptRepoPath, cfg, job.ReviewType,
 		)
 		reviewPrompt, cleanup, err = preparePrebuiltPrompt(
-			checkout.promptRepoPath, checkout.snapshotTarget, job, reviewPrompt, excludes,
+			ctx, checkout.promptRepoPath, checkout.snapshotTarget, job, reviewPrompt, excludes,
 		)
 		if cleanup != nil {
 			defer cleanup()
@@ -1441,13 +1441,13 @@ func (wp *WorkerPool) failoverOrFail(
 }
 
 func preparePrebuiltPrompt(
-	repoPath string, snapshotTarget prompt.SnapshotTarget,
+	ctx context.Context, repoPath string, snapshotTarget prompt.SnapshotTarget,
 	job *storage.ReviewJob, reviewPrompt string, excludes []string,
 ) (string, func(), error) {
 	if !strings.Contains(reviewPrompt, prompt.DiffFilePathPlaceholder) {
 		return reviewPrompt, nil, nil
 	}
-	builder := prompt.NewBuilder(nil).ForRepo(repoPath, job.RepoID)
+	builder := prompt.NewBuilder(nil).WithContext(ctx).ForRepo(repoPath, job.RepoID)
 	diffFile, cleanup, err := builder.WriteDiffSnapshotTarget(job.GitRef, excludes, snapshotTarget)
 	if err != nil {
 		return "", nil, fmt.Errorf("prepare diff snapshot for prebuilt prompt: %w", err)

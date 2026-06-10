@@ -28,12 +28,24 @@ func TestTrimNextDropsGuidelinesBeforeKata(t *testing.T) {
 func TestBuildKataContextSectionView(t *testing.T) {
 	v := buildKataContextSectionView(
 		[]kata.Issue{{QualifiedID: "p#abc4", Title: "Add widget", Body: "Build the widget.", Status: "open"}},
-		[]string{"Referenced p#def5 could not be loaded."}, 50000)
+		[]string{"Referenced p#def5 could not be loaded."}, 50000, config.KataModeCurrent)
 	require.NotNil(t, v)
 	assert.Contains(t, v.Body, "p#abc4")
 	assert.Contains(t, v.Body, "Add widget")
 	assert.Contains(t, v.Body, "Build the widget.")
 	assert.Contains(t, v.Body, "could not be loaded")
+	assert.Contains(t, v.Body, "authoritative task description",
+		"current-mode issues are explicitly referenced and must be framed as intent")
+}
+
+func TestBuildKataContextSectionViewOpenModeIntro(t *testing.T) {
+	v := buildKataContextSectionView(
+		[]kata.Issue{{QualifiedID: "p#abc4", Title: "Add widget", Body: "Build the widget.", Status: "open"}},
+		nil, 50000, config.KataModeOpen)
+	require.NotNil(t, v)
+	assert.Contains(t, v.Body, "background context",
+		"open-mode issues are the whole backlog and must not be framed as authoritative")
+	assert.NotContains(t, v.Body, "authoritative task description")
 }
 
 func TestBuildKataContextSectionViewTruncates(t *testing.T) {
@@ -41,14 +53,15 @@ func TestBuildKataContextSectionViewTruncates(t *testing.T) {
 	for i := range big {
 		big[i] = 'x'
 	}
-	v := buildKataContextSectionView([]kata.Issue{{ShortID: "a", Title: "T", Body: string(big)}}, nil, 80)
+	v := buildKataContextSectionView([]kata.Issue{{ShortID: "a", Title: "T", Body: string(big)}}, nil, 80, config.KataModeCurrent)
 	require.NotNil(t, v)
-	assert.LessOrEqual(t, len(v.Body), 80+len("\n\n_[kata context truncated]_"))
+	maxLen := len(kataIntroCurrent) + len("\n\n") + 80 + len("\n\n_[kata context truncated]_")
+	assert.LessOrEqual(t, len(v.Body), maxLen, "truncation budget applies to the issue body, not the fixed intro")
 	assert.Contains(t, v.Body, "_[kata context truncated]_")
 }
 
 func TestBuildKataContextSectionViewEmpty(t *testing.T) {
-	assert.Nil(t, buildKataContextSectionView(nil, nil, 50000))
+	assert.Nil(t, buildKataContextSectionView(nil, nil, 50000, config.KataModeCurrent))
 }
 
 func TestBuilderInjectsKataContext(t *testing.T) {
@@ -91,6 +104,7 @@ func TestBuildDirtyInjectsOpenKataContext(t *testing.T) {
 	assert.Contains(t, out, "Task Context (kata)")
 	assert.Contains(t, out, "Build widget")
 	assert.Contains(t, out, "Widget spec here.")
+	assert.Contains(t, out, "background context")
 	require.Len(t, fake.ListOpts, 1)
 	assert.Equal(t, "open", fake.ListOpts[0].Status)
 }

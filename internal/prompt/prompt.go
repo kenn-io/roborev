@@ -269,9 +269,9 @@ func (b *Builder) WriteDiffSnapshotTarget(gitRef string, excludes []string, targ
 		err      error
 	)
 	if git.IsRange(gitRef) {
-		fullDiff, err = git.GetRangeDiff(b.repoPath, gitRef, excludes...)
+		fullDiff, err = git.GetRangeDiffCtx(b.context(), b.repoPath, gitRef, excludes...)
 	} else {
-		fullDiff, err = git.GetDiff(b.repoPath, gitRef, excludes...)
+		fullDiff, err = git.GetDiffCtx(b.context(), b.repoPath, gitRef, excludes...)
 	}
 	if err != nil {
 		return "", nil, fmt.Errorf("capture diff: %w", err)
@@ -1349,7 +1349,16 @@ func buildProjectGuidelinesSectionView(guidelines string) *markdownSectionView {
 	}
 }
 
-func buildKataContextSectionView(issues []kata.Issue, notes []string, maxChars int) *markdownSectionView {
+// Kata section intros by resolution mode. Current-mode issues were
+// explicitly referenced by commit messages, so they are authoritative
+// intent; open-mode issues are the whole open backlog and may be
+// unrelated to the change under review.
+const (
+	kataIntroCurrent = "The kata issue(s) below are referenced by this change and are the authoritative task description. Treat them as the source of truth for intent. Raise as high-priority findings: (a) code that diverges from or omits what a kata specifies, and (b) contradictions between the change and a kata, or across multiple katas."
+	kataIntroOpen    = "The kata issue(s) below are the open tasks in this project's tracker, included as background context. They may be unrelated to this change. Use them to understand intent where relevant; do not raise findings merely because this change does not address an open kata."
+)
+
+func buildKataContextSectionView(issues []kata.Issue, notes []string, maxChars int, mode string) *markdownSectionView {
 	if len(issues) == 0 && len(notes) == 0 {
 		return nil
 	}
@@ -1387,7 +1396,11 @@ func buildKataContextSectionView(issues []kata.Issue, notes []string, maxChars i
 	if maxChars > 0 && len(body) > maxChars {
 		body = strings.TrimSpace(truncateUTF8(body, maxChars)) + "\n\n_[kata context truncated]_"
 	}
-	return &markdownSectionView{Heading: "## Task Context (kata)", Body: body}
+	intro := kataIntroCurrent
+	if mode == config.KataModeOpen {
+		intro = kataIntroOpen
+	}
+	return &markdownSectionView{Heading: "## Task Context (kata)", Body: intro + "\n\n" + body}
 }
 
 // resolveKataContext populates the optional KataContext section when configured.
@@ -1403,7 +1416,7 @@ func (b *Builder) resolveKataContext(messages []string) *markdownSectionView {
 	for _, err := range res.Errs {
 		log.Printf("kata context (repo %s, mode %s): %v", b.repoPath, kc.Mode, err)
 	}
-	return buildKataContextSectionView(res.Issues, res.Notes, kc.MaxChars)
+	return buildKataContextSectionView(res.Issues, res.Notes, kc.MaxChars, kc.Mode)
 }
 
 func buildAdditionalContextSection(additionalContext string) string {

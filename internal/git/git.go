@@ -394,10 +394,17 @@ func listRemotes(repoPath string) ([]string, error) {
 func GetDiff(
 	repoPath, sha string, extraExcludes ...string,
 ) (string, error) {
+	return GetDiffCtx(context.Background(), repoPath, sha, extraExcludes...)
+}
+
+// GetDiffCtx is GetDiff with a cancellable context.
+func GetDiffCtx(
+	ctx context.Context, repoPath, sha string, extraExcludes ...string,
+) (string, error) {
 	args := []string{"show", sha, "--format=", "--"}
 	args = append(args, ReviewPathspecArgs(extraExcludes...)...)
 
-	cmd := exec.Command("git", args...)
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = repoPath
 
 	out, err := cmd.Output()
@@ -768,10 +775,17 @@ func GetRangeCommitsCtx(ctx context.Context, repoPath, rangeRef string) ([]strin
 func GetRangeDiff(
 	repoPath, rangeRef string, extraExcludes ...string,
 ) (string, error) {
+	return GetRangeDiffCtx(context.Background(), repoPath, rangeRef, extraExcludes...)
+}
+
+// GetRangeDiffCtx is GetRangeDiff with a cancellable context.
+func GetRangeDiffCtx(
+	ctx context.Context, repoPath, rangeRef string, extraExcludes ...string,
+) (string, error) {
 	args := []string{"diff", rangeRef, "--"}
 	args = append(args, ReviewPathspecArgs(extraExcludes...)...)
 
-	cmd := exec.Command("git", args...)
+	cmd := exec.CommandContext(ctx, "git", args...)
 	cmd.Dir = repoPath
 
 	out, err := cmd.Output()

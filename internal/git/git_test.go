@@ -2387,6 +2387,8 @@ func TestCtxVariantsHonorCancellation(t *testing.T) {
 		{"GetParentCommitsCtx", func() error { _, err := GetParentCommitsCtx(ctx, repo.Dir, sha, 1); return err }},
 		{"ResolveSHACtx", func() error { _, err := ResolveSHACtx(ctx, repo.Dir, sha); return err }},
 		{"GetRangeStartCtx", func() error { _, err := GetRangeStartCtx(ctx, repo.Dir, rangeRef); return err }},
+		{"GetDiffCtx", func() error { _, err := GetDiffCtx(ctx, repo.Dir, sha); return err }},
+		{"GetRangeDiffCtx", func() error { _, err := GetRangeDiffCtx(ctx, repo.Dir, rangeRef); return err }},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {

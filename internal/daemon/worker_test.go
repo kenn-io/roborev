@@ -1327,7 +1327,7 @@ func TestPreparePrebuiltPrompt_ReplacesDiffFilePlaceholder(t *testing.T) {
 	job := &storage.ReviewJob{ID: 73, Agent: "codex", GitRef: sha}
 
 	reviewPrompt, cleanup, err := preparePrebuiltPrompt(
-		tc.TmpDir,
+		context.Background(), tc.TmpDir,
 		prompt.SnapshotTarget{},
 		job,
 		"## Pull Request Discussion\n\n### Diff\n\nRead the diff from: `"+prompt.DiffFilePathPlaceholder+"`\n",
@@ -1352,7 +1352,7 @@ func TestPreparePrebuiltPrompt_RequotesDiffPathWithSingleQuote(t *testing.T) {
 	job := &storage.ReviewJob{ID: 74, Agent: "codex", GitRef: sha}
 
 	reviewPrompt, cleanup, err := preparePrebuiltPrompt(
-		repoPath,
+		context.Background(), repoPath,
 		prompt.SnapshotTarget{},
 		job,
 		"### Diff\n\nRead the diff from: `"+prompt.DiffFilePathPlaceholder+"`\n",
@@ -1378,7 +1378,7 @@ func TestPreparePrebuiltPrompt_AllowsUnsafeModeByStillWritingDiffFile(t *testing
 	job := &storage.ReviewJob{ID: 75, Agent: "codex", GitRef: sha}
 
 	reviewPrompt, cleanup, err := preparePrebuiltPrompt(
-		tc.TmpDir,
+		context.Background(), tc.TmpDir,
 		prompt.SnapshotTarget{},
 		job,
 		"### Diff\n\nRead the diff from: `"+prompt.DiffFilePathPlaceholder+"`\n",
