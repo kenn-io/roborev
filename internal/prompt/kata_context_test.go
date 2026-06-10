@@ -73,6 +73,41 @@ func TestBuilderInjectsKataContext(t *testing.T) {
 	assert.Equal(t, []string{"abc4"}, fake.ShowRefs)
 }
 
+func TestBuildDirtyInjectsOpenKataContext(t *testing.T) {
+	repo := testutil.NewTestRepoWithCommit(t)
+
+	fake := &katatest.FakeClient{
+		BindingResult: kata.Binding{Project: "roborev"},
+		ListResult: []kata.Issue{
+			{ShortID: "abc4", QualifiedID: "roborev#abc4", Title: "Build widget", Body: "Widget spec here.", Status: "open"},
+		},
+	}
+	g := &config.Config{}
+	g.KataContext.Mode = config.KataModeOpen
+
+	b := NewBuilderWithConfig(nil, g).ForRepo(repo.Path(), 0).WithKataClient(fake)
+	out, err := b.BuildDirty("diff --git a/f.txt b/f.txt\n+dirty\n", 0, "test", "", "")
+	require.NoError(t, err)
+	assert.Contains(t, out, "Task Context (kata)")
+	assert.Contains(t, out, "Build widget")
+	assert.Contains(t, out, "Widget spec here.")
+	require.Len(t, fake.ListOpts, 1)
+	assert.Equal(t, "open", fake.ListOpts[0].Status)
+}
+
+func TestBuildDirtyNoKataContextInCurrentMode(t *testing.T) {
+	repo := testutil.NewTestRepoWithCommit(t)
+	fake := &katatest.FakeClient{BindingResult: kata.Binding{Project: "roborev"}}
+	g := &config.Config{}
+	g.KataContext.Mode = config.KataModeCurrent
+
+	b := NewBuilderWithConfig(nil, g).ForRepo(repo.Path(), 0).WithKataClient(fake)
+	out, err := b.BuildDirty("diff --git a/f.txt b/f.txt\n+dirty\n", 0, "test", "", "")
+	require.NoError(t, err)
+	assert.NotContains(t, out, "Task Context (kata)")
+	assert.Empty(t, fake.ShowRefs, "no commit messages means no refs to resolve")
+}
+
 func TestBuilderNoKataContextWhenModeOff(t *testing.T) {
 	repo := testutil.NewTestRepoWithCommit(t)
 	sha := repo.CommitFile("f.txt", "x\n", "Implement\n\nCloses: kata#abc4")

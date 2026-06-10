@@ -549,6 +549,10 @@ func (b *Builder) BuildDirtyWithFiles(diff string, changedFiles []string, contex
 		ctx.optional.ProjectGuidelines = buildProjectGuidelinesSectionView(repoCfg.ReviewGuidelines)
 	}
 
+	// Uncommitted changes have no commit messages, so "current" mode has no
+	// refs to resolve; "open" mode still lists open katas.
+	ctx.optional.KataContext = b.resolveKataContext(nil)
+
 	// Get previous reviews for context (use HEAD as reference point)
 	if contextCount > 0 && b.db != nil {
 		headSHA, err := gitrepo.Resolve(b.context(), b.repoPath, "HEAD")
