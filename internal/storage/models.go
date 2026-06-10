@@ -150,10 +150,12 @@ func (j ReviewJob) HookBranch() string {
 	return j.CIBaseBranch
 }
 
-// IsCIReview returns true if this job was enqueued by the CI poller
-// (only CI jobs record the PR base branch).
+// IsCIReview returns true if this job was enqueued by the CI poller:
+// CI jobs are tagged Source=ci by CreateCIPanelRun and record the PR base
+// branch. Either marker counts so older rows without ci_base_branch are
+// still recognized as CI.
 func (j ReviewJob) IsCIReview() bool {
-	return j.CIBaseBranch != ""
+	return j.Source == JobSourceCI || j.CIBaseBranch != ""
 }
 
 // IsDirtyJob returns true if this is a dirty review (uncommitted changes).

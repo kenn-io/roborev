@@ -4009,3 +4009,16 @@ func TestBuildPanelOptsAbortsOnCanceledPrebuild(t *testing.T) {
 		assert.False(t, memberOpts[0].PromptPrebuilt)
 	})
 }
+
+func TestRetryAttemptPRCarriesAuthor(t *testing.T) {
+	p := &CIPoller{}
+	p.prPostTargetFn = func(_ context.Context, _ string, _ int) (panelPostTarget, error) {
+		return panelPostTarget{Open: true, HeadSHA: "head000", BaseRefName: "main", AuthorLogin: "alice"}, nil
+	}
+
+	pr, ok := p.retryAttemptPR(context.Background(), "acme/api",
+		&storage.ReviewAttempt{PRNumber: 7, HeadSHA: "head000"}, nil)
+	require.True(t, ok)
+	assert.Equal(t, "alice", pr.Author.Login,
+		"direct lookup must preserve the PR author so kata trust gating does not fail closed for trusted authors")
+}

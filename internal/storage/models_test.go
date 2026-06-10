@@ -280,3 +280,21 @@ func TestLegacyCommentLookupTarget(t *testing.T) {
 		})
 	}
 }
+
+func TestIsCIReview(t *testing.T) {
+	tests := []struct {
+		name string
+		job  storage.ReviewJob
+		want bool
+	}{
+		{"source ci with base branch", storage.ReviewJob{Source: storage.JobSourceCI, CIBaseBranch: "main"}, true},
+		{"source ci without base branch", storage.ReviewJob{Source: storage.JobSourceCI}, true},
+		{"base branch without source", storage.ReviewJob{CIBaseBranch: "main"}, true},
+		{"local job", storage.ReviewJob{Branch: "feature"}, false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, tt.job.IsCIReview())
+		})
+	}
+}

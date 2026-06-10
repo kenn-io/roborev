@@ -62,6 +62,7 @@ type panelPostTarget struct {
 	Open        bool
 	HeadSHA     string
 	BaseRefName string
+	AuthorLogin string
 }
 
 const (
@@ -2381,6 +2382,9 @@ func (p *CIPoller) retryAttemptPR(
 		Number:      attempt.PRNumber,
 		HeadRefOid:  headSHA,
 		BaseRefName: baseRefName,
+		// Preserve the author so kata trust gating in enqueuePanelRun does
+		// not fail closed for trusted authors on the retry path.
+		Author: ghPRAuthor{Login: target.AuthorLogin},
 	}, true
 }
 
@@ -2856,6 +2860,7 @@ func (p *CIPoller) panelPostTarget(
 		Open:        strings.EqualFold(pr.State, "open"),
 		HeadSHA:     pr.HeadRefOID,
 		BaseRefName: pr.BaseRefName,
+		AuthorLogin: pr.AuthorLogin,
 	}, nil
 }
 
