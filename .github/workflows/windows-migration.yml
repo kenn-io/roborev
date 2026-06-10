@@ -12,8 +12,11 @@ on:
 permissions:
   contents: read
 
+# ref_name (not ref) so workflow_dispatch, push, and pull_request runs on the
+# same branch share one group: a dispatched run must be cancelled when a push
+# supersedes it, and vice versa.
 concurrency:
-  group: ${{ github.workflow }}-${{ github.head_ref || github.ref }}
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
   cancel-in-progress: true
 
 jobs:
