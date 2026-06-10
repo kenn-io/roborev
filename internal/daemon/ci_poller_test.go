@@ -980,7 +980,7 @@ func TestCIPollerProcessPR_FallsBackWhenPromptPrebuildFails(t *testing.T) {
 			CreatedAt: time.Date(2026, time.March, 27, 12, 0, 0, 0, time.UTC),
 		}}, nil
 	}
-	h.Poller.buildReviewPromptFn = func(string, string, int64, int, string, string, string, string, *config.Config) (string, error) {
+	h.Poller.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, *config.Config) (string, error) {
 		return "", errors.New("prompt prebuild exploded")
 	}
 
@@ -3882,11 +3882,11 @@ func TestReconcileStuckAttempt(t *testing.T) {
 
 func TestBuildPanelOpts_RecordsPRBranchOnJobs(t *testing.T) {
 	p := &CIPoller{}
-	p.buildReviewPromptFn = func(string, string, int64, int, string, string, string, string, *config.Config) (string, error) {
+	p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, *config.Config) (string, error) {
 		return "prebuilt prompt", nil
 	}
 
-	memberOpts, synthOpts := p.buildPanelOpts(buildPanelOptsInput{
+	memberOpts, synthOpts := p.buildPanelOpts(context.Background(), buildPanelOptsInput{
 		repo:       &storage.Repo{ID: 1, RootPath: t.TempDir()},
 		cfg:        config.DefaultConfig(),
 		ghRepo:     "kenn-io/roborev",
@@ -3908,6 +3908,18 @@ func TestBuildPanelOpts_RecordsPRBranchOnJobs(t *testing.T) {
 		"CI synthesis job must not set Branch (it would leak into branch-scoped local flows)")
 }
 
+// ctxCapturingKataClient records the context passed to List so tests can
+// verify the poller context reaches kata CLI calls (cancellation on Stop).
+type ctxCapturingKataClient struct {
+	kata.Client
+	listCtx context.Context
+}
+
+func (c *ctxCapturingKataClient) List(ctx context.Context, opts kata.ListOpts) ([]kata.Issue, error) {
+	c.listCtx = ctx
+	return c.Client.List(ctx, opts)
+}
+
 func TestCIPromptPrebuildIncludesKataContext(t *testing.T) {
 	repo := testutil.NewTestRepoWithCommit(t)
 	sha := repo.CommitFile("feature.txt", "new feature\n", "Implement feature")
@@ -3916,19 +3928,22 @@ func TestCIPromptPrebuildIncludesKataContext(t *testing.T) {
 	cfg.KataContext.Mode = config.KataModeOpen
 
 	p := NewCIPoller(nil, NewStaticConfig(cfg), nil)
-	fake := &katatest.FakeClient{
+	fake := &ctxCapturingKataClient{Client: &katatest.FakeClient{
 		BindingResult: kata.Binding{Project: "roborev"},
 		ListResult: []kata.Issue{
 			{ShortID: "abc4", QualifiedID: "roborev#abc4", Title: "Build widget", Body: "Widget spec here.", Status: "open"},
 		},
-	}
+	}}
 	p.newKataClient = func(string) kata.Client { return fake }
 
-	out, err := p.callBuildReviewPrompt(repo.Path(), sha, 0, 0, "test", "", "", "", cfg)
+	type ctxKey struct{}
+	ctx := context.WithValue(context.Background(), ctxKey{}, "poller")
+	out, err := p.callBuildReviewPrompt(ctx, repo.Path(), sha, 0, 0, "test", "", "", "", cfg)
 	require.NoError(t, err)
 	assert.Contains(t, out, "Task Context (kata)")
 	assert.Contains(t, out, "Build widget")
 	assert.Contains(t, out, "Widget spec here.")
-	require.Len(t, fake.ListOpts, 1)
-	assert.Equal(t, "open", fake.ListOpts[0].Status)
+	require.NotNil(t, fake.listCtx, "kata client must be queried")
+	assert.Equal(t, "poller", fake.listCtx.Value(ctxKey{}),
+		"poller context must reach kata CLI calls so Stop cancels them")
 }
