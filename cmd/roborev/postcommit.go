@@ -52,7 +52,13 @@ func postCommitCmd() *cobra.Command {
 
 			root, err := gitrepo.Root(ctx, repoPath)
 			if err != nil {
-				hookLog(repoPath, "skip", "not a git repo")
+				// Include the underlying error: failures here are
+				// not always "no repo" (e.g. git exits 128 on
+				// dubious-ownership refusals) and the hook log is
+				// the only place they surface.
+				hookLog(repoPath, "skip", fmt.Sprintf(
+					"not a git repo: %v", err,
+				))
 				return nil
 			}
 
