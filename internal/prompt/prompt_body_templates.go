@@ -130,6 +130,7 @@ func reviewAttemptsFromView(views []reviewAttemptView) []ReviewAttemptTemplateCo
 func reviewOptionalContextFromView(view optionalSectionsView) ReviewOptionalContext {
 	return ReviewOptionalContext{
 		ProjectGuidelines:  markdownSectionFromView(view.ProjectGuidelines),
+		KataContext:        markdownSectionFromView(view.KataContext),
 		AdditionalContext:  view.AdditionalContext,
 		DependencyMetadata: view.DependencyMetadata,
 		PreviousReviews:    previousReviewsFromView(view.PreviousReviews),

@@ -59,6 +59,7 @@ const (
 
 type ReviewOptionalContext struct {
 	ProjectGuidelines  *MarkdownSection
+	KataContext        *MarkdownSection
 	AdditionalContext  string
 	DependencyMetadata string
 	PreviousReviews    []PreviousReviewTemplateContext
@@ -71,6 +72,10 @@ func (o ReviewOptionalContext) Clone() ReviewOptionalContext {
 	if o.ProjectGuidelines != nil {
 		section := *o.ProjectGuidelines
 		cloned.ProjectGuidelines = &section
+	}
+	if o.KataContext != nil {
+		section := *o.KataContext
+		cloned.KataContext = &section
 	}
 	cloned.PreviousReviews = slices.Clone(o.PreviousReviews)
 	for i := range cloned.PreviousReviews {
@@ -89,6 +94,7 @@ func (o ReviewOptionalContext) Clone() ReviewOptionalContext {
 
 func (o ReviewOptionalContext) IsEmpty() bool {
 	return o.ProjectGuidelines == nil &&
+		o.KataContext == nil &&
 		o.AdditionalContext == "" &&
 		o.DependencyMetadata == "" &&
 		len(o.PreviousReviews) == 0 &&
@@ -120,6 +126,8 @@ func (o *ReviewOptionalContext) TrimNext() bool {
 		o.AdditionalContext = ""
 	case o.ProjectGuidelines != nil:
 		o.ProjectGuidelines = nil
+	case o.KataContext != nil:
+		o.KataContext = nil
 	default:
 		return false
 	}

@@ -1622,6 +1622,7 @@ func (s *Server) humaCloseReview(
 		evt.Repo = job.RepoPath
 		evt.RepoName = job.RepoName
 		evt.SHA = job.GitRef
+		evt.Branch = job.HookBranch()
 		evt.Agent = job.Agent
 	}
 	s.broadcaster.Broadcast(evt)
@@ -2210,6 +2211,8 @@ func (s *Server) humaRemap(
 	}
 
 	if remapped > 0 {
+		// Repo-level batch event: it spans many jobs, so it carries no single
+		// Branch. A branch-filtered hook therefore never fires for it.
 		s.broadcaster.Broadcast(Event{
 			Type: "review.remapped",
 			TS:   time.Now(),

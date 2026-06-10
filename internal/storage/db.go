@@ -40,6 +40,7 @@ CREATE TABLE IF NOT EXISTS review_jobs (
   commit_id INTEGER REFERENCES commits(id),
   git_ref TEXT NOT NULL,
   branch TEXT,
+  ci_base_branch TEXT,
   session_id TEXT,
   agent TEXT NOT NULL DEFAULT 'codex',
   model TEXT,
@@ -952,6 +953,23 @@ func (db *DB) migrate() error {
 			if err != nil {
 				return fmt.Errorf("add %s column: %w", col.name, err)
 			}
+		}
+	}
+
+	// Migration: add ci_base_branch column to review_jobs if missing.
+	// CI reviews record the PR base (target) branch here for event/hook
+	// branch matching only. It is deliberately separate from branch, which
+	// stays empty for CI jobs so branch-scoped local flows (fix/refine
+	// discovery, fix-ref selection, session reuse) never treat a CI review
+	// as local work on the base branch.
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'ci_base_branch'`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check ci_base_branch column: %w", err)
+	}
+	if count == 0 {
+		_, err = db.Exec(`ALTER TABLE review_jobs ADD COLUMN ci_base_branch TEXT`)
+		if err != nil {
+			return fmt.Errorf("add ci_base_branch column: %w", err)
 		}
 	}
 

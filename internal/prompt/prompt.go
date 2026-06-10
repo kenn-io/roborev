@@ -19,6 +19,7 @@ import (
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/git"
+	"go.kenn.io/roborev/internal/kata"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -81,11 +82,12 @@ type HistoricalReviewContext struct {
 
 // Builder constructs review prompts
 type Builder struct {
-	db        *storage.DB
-	globalCfg *config.Config // optional global config for exclude patterns
-	ctx       context.Context
-	repoPath  string
-	repoID    int64
+	db         *storage.DB
+	globalCfg  *config.Config // optional global config for exclude patterns
+	ctx        context.Context
+	repoPath   string
+	repoID     int64
+	kataClient kata.Client
 }
 
 // DiffFilePathPlaceholder is a sentinel path embedded in prebuilt
@@ -132,6 +134,14 @@ func (b *Builder) ForRepo(repoPath string, repoID int64) *Builder {
 	next := *b
 	next.repoPath = repoPath
 	next.repoID = repoID
+	return &next
+}
+
+// WithKataClient returns a builder that resolves kata task context via client.
+// A nil client disables kata context.
+func (b *Builder) WithKataClient(client kata.Client) *Builder {
+	next := *b
+	next.kataClient = client
 	return &next
 }
 
@@ -1009,6 +1019,9 @@ func measureOptionalSectionsLoss(original, trimmed ReviewOptionalContext) int {
 	if original.ProjectGuidelines != nil && trimmed.ProjectGuidelines == nil {
 		loss++
 	}
+	if original.KataContext != nil && trimmed.KataContext == nil {
+		loss++
+	}
 	return loss
 }
 
@@ -1095,6 +1108,8 @@ func (b *Builder) buildSinglePrompt(sha string, contextCount int, agentName, rev
 	if err != nil {
 		return "", fmt.Errorf("get commit info: %w", err)
 	}
+
+	ctx.optional.KataContext = b.resolveKataContext([]string{info.Subject + "\n\n" + info.Body})
 
 	currentView := currentCommitSectionView{
 		Commit:  shortSHA,
@@ -1219,15 +1234,18 @@ func (b *Builder) buildRangePrompt(rangeRef string, contextCount int, agentName,
 	ctx.optional.InRangeReviews = inRangeReviewViews(b.lookupReviewContexts(commits, true))
 
 	entries := make([]commitRangeEntryView, 0, len(commits))
+	var kataMessages []string
 	for _, commitSHA := range commits {
 		short := gitrepo.ShortSHA(commitSHA)
 		info, err := git.GetCommitInfo(b.repoPath, commitSHA)
 		if err == nil {
 			entries = append(entries, commitRangeEntryView{Commit: short, Subject: escapeXML(info.Subject)})
+			kataMessages = append(kataMessages, info.Subject+"\n\n"+info.Body)
 			continue
 		}
 		entries = append(entries, commitRangeEntryView{Commit: short})
 	}
+	ctx.optional.KataContext = b.resolveKataContext(kataMessages)
 	currentView := commitRangeSectionView{Count: len(commits), Entries: entries}
 	currentRequiredText, err := renderCommitRangeRequired(currentView)
 	if err != nil {
@@ -1325,6 +1343,63 @@ func buildProjectGuidelinesSectionView(guidelines string) *markdownSectionView {
 		Heading: "## Project Guidelines",
 		Body:    trimmed,
 	}
+}
+
+func buildKataContextSectionView(issues []kata.Issue, notes []string, maxChars int) *markdownSectionView {
+	if len(issues) == 0 && len(notes) == 0 {
+		return nil
+	}
+	var b strings.Builder
+	for _, n := range notes {
+		b.WriteString("> ")
+		b.WriteString(n)
+		b.WriteString("\n")
+	}
+	if len(notes) > 0 && len(issues) > 0 {
+		b.WriteString("\n")
+	}
+	for i, issue := range issues {
+		if i > 0 {
+			b.WriteString("\n")
+		}
+		ref := issue.QualifiedID
+		if ref == "" {
+			ref = issue.ShortID
+		}
+		fmt.Fprintf(&b, "### %s — %s", ref, issue.Title)
+		if issue.Status != "" {
+			fmt.Fprintf(&b, " (%s)", issue.Status)
+		}
+		b.WriteString("\n\n")
+		if body := strings.TrimSpace(issue.Body); body != "" {
+			b.WriteString(body)
+			b.WriteString("\n")
+		}
+	}
+	body := strings.TrimSpace(b.String())
+	if body == "" {
+		return nil
+	}
+	if maxChars > 0 && len(body) > maxChars {
+		body = strings.TrimSpace(truncateUTF8(body, maxChars)) + "\n\n_[kata context truncated]_"
+	}
+	return &markdownSectionView{Heading: "## Task Context (kata)", Body: body}
+}
+
+// resolveKataContext populates the optional KataContext section when configured.
+func (b *Builder) resolveKataContext(messages []string) *markdownSectionView {
+	if b.kataClient == nil {
+		return nil
+	}
+	kc := config.ResolveKataContext(b.repoPath, b.globalCfg)
+	if kc.Mode == config.KataModeOff {
+		return nil
+	}
+	res := kata.ResolveContext(b.context(), b.kataClient, kc.Mode, messages)
+	for _, err := range res.Errs {
+		log.Printf("kata context (repo %s, mode %s): %v", b.repoPath, kc.Mode, err)
+	}
+	return buildKataContextSectionView(res.Issues, res.Notes, kc.MaxChars)
 }
 
 func buildAdditionalContextSection(additionalContext string) string {

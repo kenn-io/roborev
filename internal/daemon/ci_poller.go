@@ -53,7 +53,6 @@ type ghPR struct {
 	Number      int        `json:"number"`
 	HeadRefOid  string     `json:"headRefOid"`
 	BaseRefName string     `json:"baseRefName"`
-	HeadRefName string     `json:"headRefName"`
 	Title       string     `json:"title"`
 	Author      ghPRAuthor `json:"author"`
 }
@@ -426,7 +425,10 @@ func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, 
 	memberOpts, synthOpts := p.buildPanelOpts(
 		buildPanelOptsInput{
 			repo: repo, repoCfg: repoCfg, cfg: cfg, ghRepo: ghRepo, gitRef: gitRef,
-			prNumber: pr.Number, panelName: ciPanelName(repoCfg, cfg),
+			// Gate hooks on the PR base (target) branch: it is maintainer-
+			// controlled, unlike the fork-author-controlled head ref.
+			baseBranch: pr.BaseRefName,
+			prNumber:   pr.Number, panelName: ciPanelName(repoCfg, cfg),
 			prDiscussionContext: prDiscussionContext,
 			members:             members, synth: synth,
 		})
@@ -928,6 +930,7 @@ type buildPanelOptsInput struct {
 	cfg                 *config.Config
 	ghRepo              string
 	gitRef              string
+	baseBranch          string // PR base (target) branch, recorded for hook branch matching only (never Branch)
 	prNumber            int
 	panelName           string // config panel name ("" for the implicit matrix)
 	prDiscussionContext string
@@ -960,6 +963,7 @@ func (p *CIPoller) buildPanelOpts(in buildPanelOptsInput) ([]storage.EnqueueOpts
 		memberOpts = append(memberOpts, storage.EnqueueOpts{
 			RepoID:                in.repo.ID,
 			GitRef:                in.gitRef,
+			CIBaseBranch:          in.baseBranch,
 			Agent:                 m.Agent,
 			Model:                 m.Model,
 			Provider:              m.Provider,
@@ -980,6 +984,7 @@ func (p *CIPoller) buildPanelOpts(in buildPanelOptsInput) ([]storage.EnqueueOpts
 	synthOpts := storage.EnqueueOpts{
 		RepoID:       in.repo.ID,
 		GitRef:       in.gitRef,
+		CIBaseBranch: in.baseBranch,
 		Agent:        in.synth.Agent,
 		Model:        in.synth.Model,
 		Reasoning:    in.synth.Reasoning,
@@ -1526,7 +1531,6 @@ func (p *CIPoller) listOpenPRs(ctx context.Context, ghRepo string) ([]ghPR, erro
 			Number:      pr.Number,
 			HeadRefOid:  pr.HeadRefOID,
 			BaseRefName: pr.BaseRefName,
-			HeadRefName: pr.HeadRefName,
 			Title:       pr.Title,
 			Author:      ghPRAuthor{Login: pr.AuthorLogin},
 		})

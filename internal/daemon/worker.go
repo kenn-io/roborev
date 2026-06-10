@@ -19,6 +19,7 @@ import (
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	gitpkg "go.kenn.io/roborev/internal/git"
+	"go.kenn.io/roborev/internal/kata"
 	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
@@ -579,7 +580,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// Build the prompt (or use pre-stored prompt for task/compact jobs).
 	// Create a per-job builder with the snapshotted config so exclude
 	// patterns are resolved consistently.
-	pb := prompt.NewBuilderWithConfig(wp.db, cfg).WithContext(ctx).ForRepo(checkout.promptRepoPath, job.RepoID)
+	pb := prompt.NewBuilderWithConfig(wp.db, cfg).WithContext(ctx).ForRepo(checkout.promptRepoPath, job.RepoID).WithKataClient(kata.NewCLIClient(checkout.promptRepoPath))
 	if err := pb.CleanupStaleSnapshots(prompt.DefaultStaleSnapshotAge); err != nil {
 		log.Printf("[%s] Warning: cleanup stale snapshots for job %d: %v", workerID, job.ID, err)
 	}
@@ -755,6 +756,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		Repo:         job.RepoPath,
 		RepoName:     job.RepoName,
 		SHA:          job.GitRef,
+		Branch:       job.HookBranch(),
 		Agent:        agentName,
 		WorktreePath: eventWorktreePath,
 	})
@@ -840,6 +842,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 				Repo:         job.RepoPath,
 				RepoName:     job.RepoName,
 				SHA:          job.GitRef,
+				Branch:       job.HookBranch(),
 				Agent:        agentName,
 				WorktreePath: eventWorktreePath,
 			})
@@ -955,9 +958,11 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		Type:         "review.completed",
 		TS:           time.Now(),
 		JobID:        job.ID,
+		JobUUID:      job.UUID,
 		Repo:         job.RepoPath,
 		RepoName:     job.RepoName,
 		SHA:          job.GitRef,
+		Branch:       job.HookBranch(),
 		Agent:        agentName,
 		Verdict:      verdict,
 		Findings:     output,
@@ -1247,9 +1252,11 @@ func (wp *WorkerPool) broadcastFailed(job *storage.ReviewJob, agentName, errorMs
 		Type:         "review.failed",
 		TS:           time.Now(),
 		JobID:        job.ID,
+		JobUUID:      job.UUID,
 		Repo:         job.RepoPath,
 		RepoName:     job.RepoName,
 		SHA:          job.GitRef,
+		Branch:       job.HookBranch(),
 		Agent:        agentName,
 		Error:        errorMsg,
 		WorktreePath: wtPath,

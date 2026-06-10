@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -10,25 +11,29 @@ import (
 	"net/http"
 	neturl "net/url"
 	"os/exec"
+	"path"
 	"path/filepath"
 	"runtime"
 	"strings"
 	"sync"
 	"time"
+	"unicode/utf8"
 
 	"go.kenn.io/roborev/internal/config"
 	gitpkg "go.kenn.io/roborev/internal/git"
+	"go.kenn.io/roborev/internal/kata"
 )
 
 // HookRunner listens for broadcaster events and runs configured hooks.
 type HookRunner struct {
-	cfgGetter   ConfigGetter
-	broadcaster Broadcaster
-	logger      *log.Logger
-	subID       int
-	stopCh      chan struct{}
-	idleCh      chan chan struct{}
-	wg          sync.WaitGroup
+	cfgGetter     ConfigGetter
+	broadcaster   Broadcaster
+	logger        *log.Logger
+	subID         int
+	stopCh        chan struct{}
+	idleCh        chan chan struct{}
+	wg            sync.WaitGroup
+	newKataClient func(workdir string) kata.Client
 }
 
 // NewHookRunner creates a new HookRunner that subscribes to events from the broadcaster.
@@ -39,12 +44,13 @@ func NewHookRunner(cfgGetter ConfigGetter, broadcaster Broadcaster, logger *log.
 	subID, eventCh := broadcaster.Subscribe("")
 
 	hr := &HookRunner{
-		cfgGetter:   cfgGetter,
-		broadcaster: broadcaster,
-		logger:      logger,
-		subID:       subID,
-		stopCh:      make(chan struct{}),
-		idleCh:      make(chan chan struct{}),
+		cfgGetter:     cfgGetter,
+		broadcaster:   broadcaster,
+		logger:        logger,
+		subID:         subID,
+		stopCh:        make(chan struct{}),
+		idleCh:        make(chan chan struct{}),
+		newKataClient: func(workdir string) kata.Client { return kata.NewCLIClient(workdir) },
 	}
 
 	go hr.listen(eventCh)
@@ -164,6 +170,10 @@ func (hr *HookRunner) handleEvent(event Event) {
 			continue
 		}
 
+		if !matchBranch(hook.Branches, event.Branch) {
+			continue
+		}
+
 		if hook.Type == "webhook" {
 			if hook.URL == "" {
 				continue
@@ -172,6 +182,13 @@ func (hr *HookRunner) handleEvent(event Event) {
 			fired++
 			hr.wg.Add(1)
 			go hr.postWebhook(hook.URL, event)
+			continue
+		}
+
+		if hook.Type == "kata" {
+			fired++
+			hr.wg.Add(1)
+			go hr.runKataHook(hook, event, effectiveRepo)
 			continue
 		}
 
@@ -201,6 +218,31 @@ func matchEvent(pattern, eventType string) bool {
 	if before, ok := strings.CutSuffix(pattern, ".*"); ok {
 		prefix := before
 		return strings.HasPrefix(eventType, prefix+".")
+	}
+	return false
+}
+
+// matchBranch reports whether an event's branch satisfies a hook's branches
+// allowlist. An empty allowlist matches every branch (the default). When an
+// allowlist is set, an empty or unknown branch never matches (fail closed: an
+// unknown branch is not the branch you asked for). Patterns are path.Match
+// globs, so "main" matches exactly and "release/*" matches "release/1.2".
+//
+// Every review event tied to a job carries that job's branch, so lifecycle
+// hooks (started/canceled/completed/failed/closed/reopened) filter correctly.
+// The few repo-level events without a single job (e.g. review.remapped) carry
+// no branch and so never match a non-empty allowlist.
+func matchBranch(patterns []string, branch string) bool {
+	if len(patterns) == 0 {
+		return true
+	}
+	if branch == "" {
+		return false
+	}
+	for _, p := range patterns {
+		if ok, err := path.Match(p, branch); err == nil && ok {
+			return true
+		}
 	}
 	return false
 }
@@ -364,4 +406,140 @@ func redactURLError(err error) error {
 		return ue.Err
 	}
 	return err
+}
+
+const kataHookMaxBodyBytes = 16384
+
+// kataCreateRequest builds the kata issue for an event, or ok=false when no
+// issue should be filed (e.g. a passing review).
+func kataCreateRequest(hook config.HookConfig, event Event) (kata.CreateReq, bool) {
+	repoName := event.RepoName
+	if repoName == "" {
+		repoName = filepath.Base(event.Repo)
+	}
+	shortSHA := gitpkg.ShortSHA(event.SHA)
+
+	var title, marker string
+	defaultPriority := 0
+	switch event.Type {
+	case "review.failed":
+		title = fmt.Sprintf("Review failed for %s (%s): roborev show %d", repoName, shortSHA, event.JobID)
+		marker, defaultPriority = "review-failed", 1
+	case "review.completed":
+		if event.Verdict != "F" {
+			return kata.CreateReq{}, false
+		}
+		title = fmt.Sprintf("Review findings for %s (%s): roborev show %d", repoName, shortSHA, event.JobID)
+		marker, defaultPriority = "review-finding", 2
+	default:
+		return kata.CreateReq{}, false
+	}
+
+	priority := defaultPriority
+	if hook.Priority != nil {
+		priority = *hook.Priority
+	}
+
+	idempotencyKey := fmt.Sprintf("roborev:%d:%s:%s", event.JobID, event.Type, event.SHA)
+	if event.JobUUID != "" {
+		idempotencyKey = fmt.Sprintf("roborev:job:%s:%s", event.JobUUID, event.Type)
+	}
+
+	return kata.CreateReq{
+		Title:          title,
+		Body:           buildKataHookBody(event),
+		Project:        hook.Project,
+		Labels:         dedupeStrings(append([]string{kata.RoborevLabel, marker}, hook.Labels...)),
+		Priority:       &priority,
+		IdempotencyKey: idempotencyKey,
+	}, true
+}
+
+func buildKataHookBody(event Event) string {
+	var b strings.Builder
+	fmt.Fprintf(&b, "- repo: %s\n", event.RepoName)
+	fmt.Fprintf(&b, "- commit: %s\n", event.SHA)
+	if event.Agent != "" {
+		fmt.Fprintf(&b, "- agent: %s\n", event.Agent)
+	}
+	if event.Verdict != "" {
+		fmt.Fprintf(&b, "- verdict: %s\n", event.Verdict)
+	}
+	fmt.Fprintf(&b, "- event: %s\n", event.Type)
+	if !event.TS.IsZero() {
+		fmt.Fprintf(&b, "- time: %s\n", event.TS.Format(time.RFC3339))
+	}
+	fmt.Fprintf(&b, "\nInspect: `roborev show %d`\n", event.JobID)
+	if event.Type == "review.completed" && event.Verdict == "F" {
+		fmt.Fprintf(&b, "\nFix: `roborev fix %d`\n", event.JobID)
+	}
+	if event.Error != "" {
+		fmt.Fprintf(&b, "\n## Error\n\n%s\n", event.Error)
+	}
+	if event.Findings != "" {
+		fmt.Fprintf(&b, "\n## Findings\n\n%s\n", event.Findings)
+	}
+	return capBody(b.String(), event.JobID)
+}
+
+func capBody(body string, jobID int64) string {
+	if len(body) <= kataHookMaxBodyBytes {
+		return body
+	}
+	marker := fmt.Sprintf("\n\n_[truncated; see roborev show %d]_", jobID)
+	keep := max(kataHookMaxBodyBytes-len(marker), 0)
+	for keep > 0 && !utf8.RuneStart(body[keep]) {
+		keep--
+	}
+	return body[:keep] + marker
+}
+
+func dedupeStrings(in []string) []string {
+	seen := make(map[string]bool, len(in))
+	out := make([]string, 0, len(in))
+	for _, s := range in {
+		if s != "" && !seen[s] {
+			seen[s] = true
+			out = append(out, s)
+		}
+	}
+	return out
+}
+
+// runKataHook files a kata issue for the event. Every failure is logged
+// visibly because the hook is explicitly configured.
+func (hr *HookRunner) runKataHook(hook config.HookConfig, event Event, workdir string) {
+	defer hr.wg.Done()
+
+	req, ok := kataCreateRequest(hook, event)
+	if !ok {
+		return
+	}
+
+	factory := hr.newKataClient
+	if factory == nil {
+		factory = func(wd string) kata.Client { return kata.NewCLIClient(wd) }
+	}
+	client := factory(workdir)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+
+	if req.Project == "" {
+		if _, err := client.Binding(ctx); err != nil {
+			hr.logger.Printf("kata hook (job %d): %v", event.JobID, err)
+			return
+		}
+	}
+
+	res, err := client.Create(ctx, req)
+	if err != nil {
+		hr.logger.Printf("kata hook error (job %d): %v", event.JobID, err)
+		return
+	}
+	if res.Reused {
+		hr.logger.Printf("kata hook: reused issue %s (job %d)", res.ShortID, event.JobID)
+		return
+	}
+	hr.logger.Printf("kata hook: created issue %s (job %d)", res.ShortID, event.JobID)
 }

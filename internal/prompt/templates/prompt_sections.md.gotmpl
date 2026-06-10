@@ -5,6 +5,13 @@ These guidelines supplement the default review criteria and may add repo-specifi
 {{.Body}}
 
 {{end}}{{end}}
+{{define "kata_context"}}{{with .KataContext}}{{.Heading}}
+
+The kata issue(s) below are the authoritative task description for this change. Treat them as the source of truth for intent. Raise as high-priority findings: (a) code that diverges from or omits what a kata specifies, and (b) contradictions between the change and a kata, or across multiple katas.
+
+{{.Body}}
+
+{{end}}{{end}}
 {{define "additional_context"}}{{- .AdditionalContext -}}{{end}}
 {{define "dependency_metadata"}}{{- .DependencyMetadata -}}{{end}}
 {{define "review_comments"}}{{if .}}Comments on this review:
@@ -51,7 +58,7 @@ responses from developers. Use this context to:
 
 {{template "review_comments" .Comments}}
 {{- end}}{{end}}{{end}}
-{{define "optional_sections"}}{{template "project_guidelines" .}}{{template "additional_context" .}}{{template "dependency_metadata" .}}{{template "previous_reviews" .}}{{template "in_range_reviews" .}}{{template "previous_review_attempts" .}}{{end}}
+{{define "optional_sections"}}{{template "kata_context" .}}{{template "project_guidelines" .}}{{template "additional_context" .}}{{template "dependency_metadata" .}}{{template "previous_reviews" .}}{{template "in_range_reviews" .}}{{template "previous_review_attempts" .}}{{end}}
 {{define "current_commit_required"}}## Current Commit
 
 **Commit:** {{.Commit}}

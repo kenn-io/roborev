@@ -11,9 +11,11 @@ type Event struct {
 	Type         string    `json:"type"`
 	TS           time.Time `json:"ts"`
 	JobID        int64     `json:"job_id"`
+	JobUUID      string    `json:"job_uuid,omitempty"`
 	Repo         string    `json:"repo"`
 	RepoName     string    `json:"repo_name"`
 	SHA          string    `json:"sha"`
+	Branch       string    `json:"branch,omitempty"`
 	Agent        string    `json:"agent,omitempty"`
 	Verdict      string    `json:"verdict,omitempty"`
 	Findings     string    `json:"findings,omitempty"`
@@ -116,9 +118,11 @@ func (e Event) MarshalJSON() ([]byte, error) {
 		Type         string `json:"type"`
 		TS           string `json:"ts"`
 		JobID        int64  `json:"job_id"`
+		JobUUID      string `json:"job_uuid,omitempty"`
 		Repo         string `json:"repo"`
 		RepoName     string `json:"repo_name"`
 		SHA          string `json:"sha"`
+		Branch       string `json:"branch,omitempty"`
 		Agent        string `json:"agent,omitempty"`
 		Verdict      string `json:"verdict,omitempty"`
 		Findings     string `json:"findings,omitempty"`
@@ -128,9 +132,11 @@ func (e Event) MarshalJSON() ([]byte, error) {
 		Type:         e.Type,
 		TS:           e.TS.UTC().Format(time.RFC3339),
 		JobID:        e.JobID,
+		JobUUID:      e.JobUUID,
 		Repo:         e.Repo,
 		RepoName:     e.RepoName,
 		SHA:          e.SHA,
+		Branch:       e.Branch,
 		Agent:        e.Agent,
 		Verdict:      e.Verdict,
 		Findings:     e.Findings,

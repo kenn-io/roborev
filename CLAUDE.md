@@ -55,6 +55,7 @@ CLI (roborev) → HTTP API → Daemon (roborev daemon run) → Worker Pool → A
 | `internal/github/` | GitHub REST API wrappers |
 | `internal/githook/` | Git hook installation/management |
 | `internal/ghaction/` | GitHub Actions integration |
+| `internal/kata/` | Kata task-ledger client (CLI shell-out), ref parsing, context resolution |
 | `internal/skills/` | Agent skill discovery and management |
 | `internal/streamfmt/` | Streaming output formatting |
 | `internal/testutil/` | Test helpers (TestRepo, HTTP fixtures) |
@@ -80,6 +81,8 @@ CLI (roborev) → HTTP API → Daemon (roborev daemon run) → Worker Pool → A
 | `internal/prompt/prompt.go` | Prompt builder (single, range, dirty) |
 | `internal/worktree/worktree.go` | Worktree create/patch-capture/apply |
 | `internal/review/synthesis.go` | Multi-agent review synthesis for CI |
+| `internal/kata/client.go` | Kata CLI client (Binding, List, Show, Create) |
+| `internal/kata/context.go` | Resolve kata context for prompts (off/current/open) |
 
 ## Agent System
 
@@ -175,6 +178,7 @@ Empty/`"review"` (standard), `"security"`, `"design"` — changes the system pro
 | `ResolveJobTimeout()` | Per-repo or global (default 30 min) |
 | `ResolveMaxPromptSize()` | Prompt truncation threshold |
 | `ResolveReviewReasoning()` / `RefineReasoning()` / `FixReasoning()` | Default reasoning level per workflow |
+| `ResolveKataContext(repoPath, globalCfg)` | Kata prompt-context mode/max_chars; repo overrides global field-by-field (repo `max_chars = 0` inherits global; final `<= 0` → 50000 default) |
 
 ### Workflow-specific config pattern
 
@@ -189,7 +193,9 @@ The internal `lookupFieldByTag()` helper resolves these via reflection on the st
 
 ### RepoConfig notable fields
 
-`agent`, `model`, `backup_agent`, `backup_model`, `review_context_count`, `review_guidelines`, `job_timeout_minutes`, `max_prompt_size`, `allow_unsafe_agents`, per-workflow agent/model/backup overrides, hooks config
+`agent`, `model`, `backup_agent`, `backup_model`, `review_context_count`, `review_guidelines`, `job_timeout_minutes`, `max_prompt_size`, `allow_unsafe_agents`, per-workflow agent/model/backup overrides, hooks config, `kata_context` (mode/max_chars)
+
+The built-in `[[hooks]] type = "kata"` files review findings as kata issues (hook fields: `project`, `labels`, `priority`); idempotency keys prefer the job UUID. All hooks also accept an optional `branches` glob allowlist (`path.Match`; empty = all branches), gated centrally in `matchBranch`. The matched `Event.Branch` is the commit's branch for local reviews and the PR base (target) branch for CI reviews — never the fork-controlled head ref. CI jobs store the base branch in the dedicated `ci_base_branch` column and leave `branch` empty so branch-scoped local flows (fix/refine discovery, fix-ref selection, session reuse) never treat a CI review as local work on the base branch; event construction merges the two via `ReviewJob.HookBranch()`. See `internal/daemon/hooks.go`.
 
 ## Worker Pool (`internal/daemon/worker.go`)
 

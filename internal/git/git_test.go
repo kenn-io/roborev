@@ -1121,6 +1121,8 @@ func setupDiffExcludesGeneratedFilesTest(t *testing.T) (*TestRepo, string) {
 	repo.WriteFile(".beads/notes.md", "beads\n")
 	repo.WriteFile(".gocache/object", "cache\n")
 	repo.WriteFile(".cache/object", "cache\n")
+	repo.WriteFile(".kata.local.toml", "[server]\nurl = \"http://x\"\n")
+	repo.WriteFile(".kata.toml", "[project]\nname = \"demo\"\n")
 	repo.WriteFile("keep.txt", "keep\n")
 
 	repo.CommitAll("add files")
@@ -1133,9 +1135,11 @@ func TestGetDiffExcludesGeneratedFiles(t *testing.T) {
 	assertExcluded := func(t *testing.T, diff string) {
 		t.Helper()
 		require.Contains(t, diff, "keep.txt", "expected generated files filter to retain keep.txt")
+		require.Contains(t, diff, ".kata.toml", "expected committed kata binding to remain reviewable")
 		require.NotContains(t, diff, ".beads/", "expected generated files filter to exclude .beads files")
 		require.NotContains(t, diff, ".gocache/", "expected generated files filter to exclude .gocache files")
 		require.NotContains(t, diff, ".cache/", "expected generated files filter to exclude .cache files")
+		require.NotContains(t, diff, ".kata.local.toml", "expected .kata.local.toml to be excluded")
 	}
 
 	t.Run("GetDiff", func(t *testing.T) {

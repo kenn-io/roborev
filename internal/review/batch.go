@@ -8,6 +8,7 @@ import (
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/kata"
 	"go.kenn.io/roborev/internal/prompt"
 )
 
@@ -157,7 +158,7 @@ func runSingle(
 	result.Agent = resolvedAgent.Name()
 
 	// Build prompt (nil DB = no previous review context)
-	builder := prompt.NewBuilderWithConfig(nil, cfg.GlobalConfig).WithContext(ctx).ForRepo(cfg.RepoPath, 0)
+	builder := prompt.NewBuilderWithConfig(nil, cfg.GlobalConfig).WithContext(ctx).ForRepo(cfg.RepoPath, 0).WithKataClient(kata.NewCLIClient(cfg.RepoPath))
 
 	// Normalize review type for prompt building
 	promptReviewType := reviewType

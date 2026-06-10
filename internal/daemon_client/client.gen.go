@@ -312,7 +312,7 @@ type ErrorDetail struct {
 	Message *string `json:"message,omitempty"`
 
 	// Value The value at the given location
-	Value interface{} `json:"value,omitempty"`
+	Value any `json:"value,omitempty"`
 }
 
 // ErrorEntry defines model for ErrorEntry.
@@ -1777,7 +1777,6 @@ func NewListActivityRequest(server string, params *ListActivityParams) (*http.Re
 		queryValues := queryURL.Query()
 
 		if params.Limit != nil {
-
 			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
@@ -1789,7 +1788,6 @@ func NewListActivityRequest(server string, params *ListActivityParams) (*http.Re
 					}
 				}
 			}
-
 		}
 
 		queryURL.RawQuery = queryValues.Encode()
@@ -1826,7 +1824,6 @@ func NewListBranchesRequest(server string, params *ListBranchesParams) (*http.Re
 		queryValues := queryURL.Query()
 
 		if params.Repo != nil {
-
 			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "repo", *params.Repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
@@ -1838,7 +1835,6 @@ func NewListBranchesRequest(server string, params *ListBranchesParams) (*http.Re
 					}
 				}
 			}
-
 		}
 
 		queryURL.RawQuery = queryValues.Encode()
@@ -1915,7 +1911,6 @@ func NewListCommentsRequest(server string, params *ListCommentsParams) (*http.Re
 		queryValues := queryURL.Query()
 
 		if params.JobId != nil {
-
 			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "job_id", *params.JobId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
@@ -1927,11 +1922,9 @@ func NewListCommentsRequest(server string, params *ListCommentsParams) (*http.Re
 					}
 				}
 			}
-
 		}
 
 		if params.CommitId != nil {
-
 			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "commit_id", *params.CommitId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
@@ -1943,11 +1936,9 @@ func NewListCommentsRequest(server string, params *ListCommentsParams) (*http.Re
 					}
 				}
 			}
-
 		}
 
 		if params.Sha != nil {
-
 			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "sha", *params.Sha, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
@@ -1959,7 +1950,6 @@ func NewListCommentsRequest(server string, params *ListCommentsParams) (*http.Re
 					}
 				}
 			}
-
 		}
 
 		queryURL.RawQuery = queryValues.Encode()
@@ -2280,7 +2270,6 @@ func NewGetJobLogRequest(server string, params *GetJobLogParams) (*http.Request,
 		queryValues := queryURL.Query()
 
 		if params.JobId != nil {
-
 			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "job_id", *params.JobId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
@@ -2292,11 +2281,9 @@ func NewGetJobLogRequest(server string, params *GetJobLogParams) (*http.Request,
 					}
 				}
 			}
-
 		}
 
 		if params.Offset != nil {
-
 			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "offset", *params.Offset, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
@@ -2308,7 +2295,6 @@ func NewGetJobLogRequest(server string, params *GetJobLogParams) (*http.Request,
 					}
 				}
 			}
-
 		}
 
 		queryURL.RawQuery = queryValues.Encode()
@@ -2345,7 +2331,6 @@ func NewGetJobOutputRequest(server string, params *GetJobOutputParams) (*http.Re
 		queryValues := queryURL.Query()
 
 		if params.JobId != nil {
-
 			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "job_id", *params.JobId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
@@ -2357,11 +2342,9 @@ func NewGetJobOutputRequest(server string, params *GetJobOutputParams) (*http.Re
 					}
 				}
 			}
-
 		}
 
 		if params.Stream != nil {
-
 			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "stream", *params.Stream, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
@@ -2373,7 +2356,6 @@ func NewGetJobOutputRequest(server string, params *GetJobOutputParams) (*http.Re
 					}
 				}
 			}
-
 		}
 
 		queryURL.RawQuery = queryValues.Encode()
@@ -2410,7 +2392,6 @@ func NewGetJobPatchRequest(server string, params *GetJobPatchParams) (*http.Requ
 		queryValues := queryURL.Query()
 
 		if params.JobId != nil {
-
 			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "job_id", *params.JobId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
@@ -2422,7 +2403,6 @@ func NewGetJobPatchRequest(server string, params *GetJobPatchParams) (*http.Requ
 					}
 				}
 			}
-
 		}
 
 		queryURL.RawQuery = queryValues.Encode()
@@ -2579,7 +2559,6 @@ func NewListJobsRequest(server string, params *ListJobsParams) (*http.Request, e
 		queryValues := queryURL.Query()
 
 		if params.Id != nil {
-
 			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "id", *params.Id, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
@@ -2591,11 +2570,9 @@ func NewListJobsRequest(server string, params *ListJobsParams) (*http.Request, e
 					}
 				}
 			}
-
 		}
 
 		if params.Status != nil {
-
 			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "status", *params.Status, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
@@ -2607,11 +2584,9 @@ func NewListJobsRequest(server string, params *ListJobsParams) (*http.Request, e
 					}
 				}
 			}
-
 		}
 
 		if params.Repo != nil {
-
 			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "repo", *params.Repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
@@ -2623,11 +2598,9 @@ func NewListJobsRequest(server string, params *ListJobsParams) (*http.Request, e
 					}
 				}
 			}
-
 		}
 
 		if params.GitRef != nil {
-
 			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "git_ref", *params.GitRef, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
@@ -2639,11 +2612,9 @@ func NewListJobsRequest(server string, params *ListJobsParams) (*http.Request, e
 					}
 				}
 			}
-
 		}
 
 		if params.Branch != nil {
-
 			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "branch", *params.Branch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
@@ -2655,11 +2626,9 @@ func NewListJobsRequest(server string, params *ListJobsParams) (*http.Request, e
 					}
 				}
 			}
-
 		}
 
 		if params.BranchIncludeEmpty != nil {
-
 			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "branch_include_empty", *params.BranchIncludeEmpty, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
@@ -2671,11 +2640,9 @@ func NewListJobsRequest(server string, params *ListJobsParams) (*http.Request, e
 					}
 				}
 			}
-
 		}
 
 		if params.Closed != nil {
-
 			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "closed", *params.Closed, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
@@ -2687,11 +2654,9 @@ func NewListJobsRequest(server string, params *ListJobsParams) (*http.Request, e
 					}
 				}
 			}
-
 		}
 
 		if params.JobType != nil {
-
 			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "job_type", *params.JobType, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
@@ -2703,11 +2668,9 @@ func NewListJobsRequest(server string, params *ListJobsParams) (*http.Request, e
 					}
 				}
 			}
-
 		}
 
 		if params.ExcludeJobType != nil {
-
 			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "exclude_job_type", *params.ExcludeJobType, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
@@ -2719,11 +2682,9 @@ func NewListJobsRequest(server string, params *ListJobsParams) (*http.Request, e
 					}
 				}
 			}
-
 		}
 
 		if params.HideClassifyJobs != nil {
-
 			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "hide_classify_jobs", *params.HideClassifyJobs, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
@@ -2735,7 +2696,6 @@ func NewListJobsRequest(server string, params *ListJobsParams) (*http.Request, e
 					}
 				}
 			}
-
 		}
 
 		if params.PanelRun != nil {
@@ -2755,7 +2715,6 @@ func NewListJobsRequest(server string, params *ListJobsParams) (*http.Request, e
 		}
 
 		if params.RepoPrefix != nil {
-
 			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "repo_prefix", *params.RepoPrefix, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
@@ -2767,11 +2726,9 @@ func NewListJobsRequest(server string, params *ListJobsParams) (*http.Request, e
 					}
 				}
 			}
-
 		}
 
 		if params.Limit != nil {
-
 			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
@@ -2783,11 +2740,9 @@ func NewListJobsRequest(server string, params *ListJobsParams) (*http.Request, e
 					}
 				}
 			}
-
 		}
 
 		if params.Offset != nil {
-
 			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "offset", *params.Offset, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
@@ -2799,11 +2754,9 @@ func NewListJobsRequest(server string, params *ListJobsParams) (*http.Request, e
 					}
 				}
 			}
-
 		}
 
 		if params.Before != nil {
-
 			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "before", *params.Before, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
@@ -2815,7 +2768,6 @@ func NewListJobsRequest(server string, params *ListJobsParams) (*http.Request, e
 					}
 				}
 			}
-
 		}
 
 		queryURL.RawQuery = queryValues.Encode()
@@ -3013,7 +2965,6 @@ func NewListReposRequest(server string, params *ListReposParams) (*http.Request,
 		queryValues := queryURL.Query()
 
 		if params.Branch != nil {
-
 			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "branch", *params.Branch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
@@ -3025,11 +2976,9 @@ func NewListReposRequest(server string, params *ListReposParams) (*http.Request,
 					}
 				}
 			}
-
 		}
 
 		if params.Prefix != nil {
-
 			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "prefix", *params.Prefix, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
@@ -3041,7 +2990,6 @@ func NewListReposRequest(server string, params *ListReposParams) (*http.Request,
 					}
 				}
 			}
-
 		}
 
 		queryURL.RawQuery = queryValues.Encode()
@@ -3167,7 +3115,6 @@ func NewGetReviewRequest(server string, params *GetReviewParams) (*http.Request,
 		queryValues := queryURL.Query()
 
 		if params.JobId != nil {
-
 			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "job_id", *params.JobId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
@@ -3179,11 +3126,9 @@ func NewGetReviewRequest(server string, params *GetReviewParams) (*http.Request,
 					}
 				}
 			}
-
 		}
 
 		if params.Sha != nil {
-
 			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "sha", *params.Sha, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
@@ -3195,7 +3140,6 @@ func NewGetReviewRequest(server string, params *GetReviewParams) (*http.Request,
 					}
 				}
 			}
-
 		}
 
 		queryURL.RawQuery = queryValues.Encode()
@@ -3326,7 +3270,6 @@ func NewStreamEventsRequest(server string, params *StreamEventsParams) (*http.Re
 		queryValues := queryURL.Query()
 
 		if params.Repo != nil {
-
 			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "repo", *params.Repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
@@ -3338,7 +3281,6 @@ func NewStreamEventsRequest(server string, params *StreamEventsParams) (*http.Re
 					}
 				}
 			}
-
 		}
 
 		queryURL.RawQuery = queryValues.Encode()
@@ -3375,7 +3317,6 @@ func NewGetSummaryRequest(server string, params *GetSummaryParams) (*http.Reques
 		queryValues := queryURL.Query()
 
 		if params.Since != nil {
-
 			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "since", *params.Since, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
@@ -3387,11 +3328,9 @@ func NewGetSummaryRequest(server string, params *GetSummaryParams) (*http.Reques
 					}
 				}
 			}
-
 		}
 
 		if params.Repo != nil {
-
 			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "repo", *params.Repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
@@ -3403,11 +3342,9 @@ func NewGetSummaryRequest(server string, params *GetSummaryParams) (*http.Reques
 					}
 				}
 			}
-
 		}
 
 		if params.Branch != nil {
-
 			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "branch", *params.Branch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
@@ -3419,11 +3356,9 @@ func NewGetSummaryRequest(server string, params *GetSummaryParams) (*http.Reques
 					}
 				}
 			}
-
 		}
 
 		if params.All != nil {
-
 			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "all", *params.All, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
@@ -3435,7 +3370,6 @@ func NewGetSummaryRequest(server string, params *GetSummaryParams) (*http.Reques
 					}
 				}
 			}
-
 		}
 
 		queryURL.RawQuery = queryValues.Encode()
@@ -3472,7 +3406,6 @@ func NewSyncNowRequest(server string, params *SyncNowParams) (*http.Request, err
 		queryValues := queryURL.Query()
 
 		if params.Stream != nil {
-
 			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "stream", *params.Stream, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
@@ -3484,7 +3417,6 @@ func NewSyncNowRequest(server string, params *SyncNowParams) (*http.Request, err
 					}
 				}
 			}
-
 		}
 
 		queryURL.RawQuery = queryValues.Encode()
@@ -5339,7 +5271,6 @@ func ParseGetJobLogResponse(rsp *http.Response) (*GetJobLogResponse, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSONDefault = &dest
-
 	}
 
 	return response, nil
@@ -5365,7 +5296,6 @@ func ParseGetJobOutputResponse(rsp *http.Response) (*GetJobOutputResponse, error
 			return nil, err
 		}
 		response.ApplicationproblemJSONDefault = &dest
-
 	}
 
 	return response, nil
@@ -5391,7 +5321,6 @@ func ParseGetJobPatchResponse(rsp *http.Response) (*GetJobPatchResponse, error) 
 			return nil, err
 		}
 		response.ApplicationproblemJSONDefault = &dest
-
 	}
 
 	return response, nil
@@ -5945,7 +5874,6 @@ func ParseStreamEventsResponse(rsp *http.Response) (*StreamEventsResponse, error
 			return nil, err
 		}
 		response.ApplicationproblemJSONDefault = &dest
-
 	}
 
 	return response, nil
@@ -6004,7 +5932,6 @@ func ParseSyncNowResponse(rsp *http.Response) (*SyncNowResponse, error) {
 			return nil, err
 		}
 		response.ApplicationproblemJSONDefault = &dest
-
 	}
 
 	return response, nil

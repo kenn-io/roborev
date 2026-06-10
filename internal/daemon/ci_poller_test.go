@@ -3771,6 +3771,7 @@ func TestRetryDueReviewAttemptFetchesPRMissingFromOpenPage(t *testing.T) {
 	h.CaptureCommitStatuses()
 
 	const headSHA = "offpage00000001"
+	const baseBranch = "release/3.1"
 	const prNum = 132
 	now := time.Now()
 	created, err := h.DB.ReserveReviewAttempt("acme/api", prNum, headSHA, now.Add(-time.Hour))
@@ -3783,7 +3784,7 @@ func TestRetryDueReviewAttemptFetchesPRMissingFromOpenPage(t *testing.T) {
 	h.Poller.prPostTargetFn = func(_ context.Context, ghRepo string, prNumber int) (panelPostTarget, error) {
 		assert.Equal("acme/api", ghRepo)
 		lookedUp = append(lookedUp, prNumber)
-		return panelPostTarget{Open: true, HeadSHA: headSHA, BaseRefName: "main"}, nil
+		return panelPostTarget{Open: true, HeadSHA: headSHA, BaseRefName: baseBranch}, nil
 	}
 
 	h.Poller.retryDueReviewAttempts(context.Background(), "acme/api",
@@ -3799,7 +3800,21 @@ func TestRetryDueReviewAttemptFetchesPRMissingFromOpenPage(t *testing.T) {
 	panel, err := h.DB.GetActiveCIPanelByPRSHA("acme/api", prNum, headSHA)
 	require.NoError(t, err)
 	assert.Equal(headSHA, panel.HeadSHA)
-	assert.Equal("base-"+headSHA+".."+headSHA, h.panelMembers(t, "acme/api", prNum, headSHA)[0].GitRef)
+	members := h.panelMembers(t, "acme/api", prNum, headSHA)
+	assert.Equal("base-"+headSHA+".."+headSHA, members[0].GitRef)
+	for _, m := range members {
+		assert.Equal(baseBranch, m.CIBaseBranch,
+			"retry direct-lookup path must persist the PR base branch on member jobs for branch-filtered hooks")
+		assert.Empty(m.Branch,
+			"CI member jobs must not record a local branch (it would leak into fix/refine discovery)")
+	}
+	require.NotNil(t, panel.SynthesisJobID)
+	synth, err := h.DB.GetJobByID(*panel.SynthesisJobID)
+	require.NoError(t, err)
+	assert.Equal(baseBranch, synth.CIBaseBranch,
+		"retry direct-lookup path must persist the PR base branch on the synthesis job")
+	assert.Empty(synth.Branch,
+		"CI synthesis job must not record a local branch (it would leak into fix/refine discovery)")
 }
 
 // TestReconcileStuckAttempt covers the crash/stuck reconcile: a pending attempt
@@ -3861,4 +3876,32 @@ func TestReconcileStuckAttempt(t *testing.T) {
 	require.NotNil(t, live)
 	assert.Equal("pending", live.State, "live in-flight attempt is left untouched")
 	assert.Nil(live.NextAttemptAt, "live attempt keeps its NULL next_attempt_at")
+}
+
+func TestBuildPanelOpts_RecordsPRBranchOnJobs(t *testing.T) {
+	p := &CIPoller{}
+	p.buildReviewPromptFn = func(string, string, int64, int, string, string, string, string, *config.Config) (string, error) {
+		return "prebuilt prompt", nil
+	}
+
+	memberOpts, synthOpts := p.buildPanelOpts(buildPanelOptsInput{
+		repo:       &storage.Repo{ID: 1, RootPath: t.TempDir()},
+		cfg:        config.DefaultConfig(),
+		ghRepo:     "kenn-io/roborev",
+		gitRef:     "base..head",
+		baseBranch: "release/2.0",
+		prNumber:   42,
+		members:    []config.ResolvedMember{{Name: "m1", Agent: "codex"}},
+		synth:      config.SynthesisSpec{Agent: "codex"},
+	})
+
+	require.Len(t, memberOpts, 1)
+	assert.Equal(t, "release/2.0", memberOpts[0].CIBaseBranch,
+		"CI member jobs must record the PR base (target) branch so branch-filtered hooks fire")
+	assert.Empty(t, memberOpts[0].Branch,
+		"CI member jobs must not set Branch (it would leak into branch-scoped local flows)")
+	assert.Equal(t, "release/2.0", synthOpts.CIBaseBranch,
+		"CI synthesis job must record the PR base (target) branch so branch-filtered hooks fire")
+	assert.Empty(t, synthOpts.Branch,
+		"CI synthesis job must not set Branch (it would leak into branch-scoped local flows)")
 }

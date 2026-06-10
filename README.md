@@ -60,8 +60,8 @@ You can also choose the exact binary path with
   current code, filters false positives, and consolidates related issues
   into a single review.
 - **Extensible Hooks** - Run shell commands on review events. Built-in
-  [beads](https://github.com/steveyegge/beads) integration creates trackable issues from
-  review failures automatically.
+  [beads](https://github.com/steveyegge/beads) and [kata](https://github.com/kenn-io/kata)
+  integrations create trackable issues from review failures automatically.
 
 ## The Agentic Fix Loop
 
@@ -187,6 +187,44 @@ Project-specific review instructions here.
 `snapshot_dir` must be repo-relative. `roborev init` ensures it is ignored in `.gitignore`; snapshot creation also adds a local `.git/info/exclude` fallback for existing checkouts whose ignore setup is stale.
 
 See [configuration guide](https://roborev.io/configuration/) for all options.
+
+### Kata task context
+
+If your repo is bound to a [kata](https://github.com/kenn-io/kata) project (a
+committed `.kata.toml`), roborev can pull the kata issue(s) referenced in the
+reviewed commit messages into the review prompt, and file review findings back
+as kata issues.
+
+```toml
+# .roborev.toml
+[kata_context]
+mode = "current"   # off (default) | current | open
+max_chars = 50000  # cap on kata context bytes in the prompt
+
+# File a kata issue when a review fails or returns findings:
+[[hooks]]
+event = "review.*"
+type = "kata"
+# branches = ["main"]        # only file katas for reviews on these branches; default all
+# project  = "myproj"        # defaults to the .kata.toml binding
+# labels   = ["from-review"]
+# priority = 2
+```
+
+`mode = "current"` includes only the katas referenced anywhere in the reviewed
+commit messages (e.g. `Closes: kata#abc4`); `open` includes every open kata in
+the bound project, except issues the kata hook itself filed (labelled
+`roborev`), so review findings are not fed back into later reviews as task
+intent. A hook's optional `branches` list (glob patterns such as `release/*`)
+limits it to reviews on matching branches; unset fires on all branches. The
+matched branch is the commit's branch for local reviews and the PR base
+(target) branch for CI pull-request reviews — so `branches = ["main"]` means
+commits on `main` locally but PRs *targeting* `main` in CI, and a fork's head
+branch name cannot satisfy a protected-branch filter. The `kata` CLI must be
+on `PATH`; when it is absent or the repo is unbound, prompt context is
+silently skipped. Any other failure — a broken `.kata.toml`, a failing `kata`
+invocation — is logged by both the prompt builder and the configured `kata`
+hook, so a configured integration never goes dark unnoticed.
 
 ### Environment Variables
 

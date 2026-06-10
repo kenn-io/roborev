@@ -45,10 +45,14 @@ func IsConfigParseError(err error) bool {
 
 // HookConfig defines a hook that runs on review events
 type HookConfig struct {
-	Event   string `toml:"event"`                // "review.failed", "review.completed", "review.*"
-	Command string `toml:"command"`              // shell command with {var} templates
-	Type    string `toml:"type"`                 // "beads" or "webhook"; empty or "command" runs Command
-	URL     string `toml:"url" sensitive:"true"` // webhook destination URL when Type is "webhook"
+	Event    string   `toml:"event"`                // "review.failed", "review.completed", "review.*"
+	Branches []string `toml:"branches"`             // optional branch globs (path.Match); empty = all branches
+	Command  string   `toml:"command"`              // shell command with {var} templates
+	Type     string   `toml:"type"`                 // "beads", "kata", or "webhook"; empty or "command" runs Command
+	URL      string   `toml:"url" sensitive:"true"` // webhook destination URL when Type is "webhook"
+	Project  string   `toml:"project"`              // kata: project name (defaults to .kata.toml binding)
+	Labels   []string `toml:"labels"`               // kata: extra labels (roborev is always added)
+	Priority *int     `toml:"priority"`             // kata: issue priority (0..4); nil = kata default
 }
 
 type AdvancedConfig struct {
@@ -235,6 +239,9 @@ type Config struct {
 	// Optional agent harness hook integration
 	AgentHook AgentHookConfig `toml:"agent_hook"`
 
+	// Kata task-context integration for review prompts
+	KataContext KataContextConfig `toml:"kata_context"`
+
 	// Diff exclusion patterns (filenames or glob patterns to exclude from review diffs)
 	ExcludePatterns []string `toml:"exclude_patterns" comment:"Filenames or glob patterns to exclude from review diffs globally."`
 
@@ -403,6 +410,9 @@ type RepoConfig struct {
 	// Hooks configuration (per-repo)
 	Hooks []HookConfig `toml:"hooks"`
 
+	// Kata task-context integration for review prompts (per-repo)
+	KataContext KataContextConfig `toml:"kata_context"`
+
 	// Analysis settings
 	MaxPromptSize int `toml:"max_prompt_size" comment:"Maximum prompt size for this repo before falling back to file paths."` // Max prompt size in bytes before falling back to paths (overrides global default)
 
@@ -437,6 +447,7 @@ func DefaultConfig() *Config {
 			FailedReviewThreshold: 4,
 			Instruction:           "Invoke the $roborev-fix skill now.",
 		},
+		KataContext: KataContextConfig{Mode: KataModeOff, MaxChars: defaultKataMaxChars},
 		Agent: AgentConfig{
 			Codex: CodexConfig{
 				DisableReviewSkills:    true,
@@ -1031,6 +1042,59 @@ func ResolveMaxPromptSize(repoPath string, globalCfg *Config) int {
 		globalVal = clampPositive(globalCfg.DefaultMaxPromptSize)
 	}
 	return resolve(DefaultMaxPromptSize, repoVal, globalVal)
+}
+
+// Kata context modes and the default cap on combined kata context bytes.
+const (
+	KataModeOff         = "off"
+	KataModeCurrent     = "current"
+	KataModeOpen        = "open"
+	defaultKataMaxChars = 50000
+)
+
+// KataContextConfig controls pulling kata task context into review prompts.
+type KataContextConfig struct {
+	Mode     string `toml:"mode" comment:"Kata task context in review prompts: off | current | open (default off)."`
+	MaxChars int    `toml:"max_chars" comment:"Max bytes of kata context to include (default 50000)."`
+}
+
+// ResolveKataContext returns the effective kata context settings for a repo,
+// with per-repo values overriding the global config. Unknown modes resolve to
+// "off"; a non-positive max_chars resolves to the default.
+func ResolveKataContext(repoPath string, globalCfg *Config) KataContextConfig {
+	mode := ""
+	maxChars := 0
+	if globalCfg != nil {
+		mode = globalCfg.KataContext.Mode
+		maxChars = globalCfg.KataContext.MaxChars
+	}
+	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil {
+		if repoCfg.KataContext.Mode != "" {
+			mode = repoCfg.KataContext.Mode
+		}
+		if repoCfg.KataContext.MaxChars != 0 {
+			maxChars = repoCfg.KataContext.MaxChars
+		}
+	}
+	return KataContextConfig{Mode: normalizeKataMode(mode), MaxChars: clampKataMaxChars(maxChars)}
+}
+
+func normalizeKataMode(mode string) string {
+	switch strings.ToLower(strings.TrimSpace(mode)) {
+	case KataModeCurrent:
+		return KataModeCurrent
+	case KataModeOpen:
+		return KataModeOpen
+	default:
+		return KataModeOff
+	}
+}
+
+func clampKataMaxChars(n int) int {
+	if n <= 0 {
+		return defaultKataMaxChars
+	}
+	return n
 }
 
 // ResolveSnapshotDir returns the absolute repo-local directory used for

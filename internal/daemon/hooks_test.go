@@ -135,6 +135,32 @@ func TestMatchEvent(t *testing.T) {
 	}
 }
 
+func TestMatchBranch(t *testing.T) {
+	tests := []struct {
+		name     string
+		patterns []string
+		branch   string
+		want     bool
+	}{
+		{"empty allowlist matches any", nil, "main", true},
+		{"empty allowlist matches empty branch", nil, "", true},
+		{"exact match", []string{"main"}, "main", true},
+		{"exact mismatch", []string{"main"}, "develop", false},
+		{"prefix is not a substring match", []string{"main"}, "main2", false},
+		{"filter set, empty branch fails closed", []string{"main"}, "", false},
+		{"glob matches", []string{"release/*"}, "release/1.2", true},
+		{"glob does not cross slash", []string{"release/*"}, "release/1/2", false},
+		{"any pattern in the list matches", []string{"main", "release/*"}, "release/9", true},
+		{"malformed pattern never matches", []string{"["}, "main", false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, matchBranch(tt.patterns, tt.branch))
+		})
+	}
+}
+
 func TestInterpolate(t *testing.T) {
 	event := Event{
 		JobID:    42,
@@ -570,6 +596,52 @@ func TestHookRunnerNoMatchDoesNotFire(t *testing.T) {
 			return false
 		}, "hook should not have fired for non-matching event")
 	}
+}
+
+func TestHookRunnerBranchFilter(t *testing.T) {
+	tmpDir := t.TempDir()
+	markerFile := filepath.Join(tmpDir, "branch-hook-fired")
+
+	cfg := &config.Config{
+		Hooks: []config.HookConfig{
+			{
+				Event:    "review.completed",
+				Branches: []string{"main"},
+				Command:  touchCmd(markerFile),
+			},
+		},
+	}
+
+	hr, broadcaster := setupRunner(t, cfg)
+
+	// A review on a branch outside the allowlist must not fire the hook.
+	broadcaster.Broadcast(Event{
+		Type:     "review.completed",
+		TS:       time.Now(),
+		JobID:    1,
+		Repo:     tmpDir,
+		RepoName: "test",
+		SHA:      "abc",
+		Branch:   "feature/x",
+		Agent:    "test",
+		Verdict:  "F",
+	})
+	hr.WaitUntilIdle()
+	assert.NoFileExists(t, markerFile, "hook should not fire for a branch outside the allowlist")
+
+	// The same hook fires once the review runs on an allowed branch.
+	broadcaster.Broadcast(Event{
+		Type:     "review.completed",
+		TS:       time.Now(),
+		JobID:    2,
+		Repo:     tmpDir,
+		RepoName: "test",
+		SHA:      "def",
+		Branch:   "main",
+		Agent:    "test",
+		Verdict:  "F",
+	})
+	waitForFile(t, markerFile, 5*time.Second)
 }
 
 func TestHookRunnerWebhookPostsEventJSON(t *testing.T) {

@@ -300,9 +300,11 @@ func (wp *WorkerPool) broadcastClassifyFailed(job *storage.ReviewJob, errMsg str
 		Type:     "review.failed",
 		TS:       time.Now(),
 		JobID:    job.ID,
+		JobUUID:  job.UUID,
 		Repo:     job.RepoPath,
 		RepoName: job.RepoName,
 		SHA:      job.GitRef,
+		Branch:   job.HookBranch(),
 		Agent:    job.Agent,
 		Error:    errMsg,
 	})
@@ -323,9 +325,11 @@ func (wp *WorkerPool) broadcastClassifyTerminal(job *storage.ReviewJob) {
 		Type:     "review.completed",
 		TS:       time.Now(),
 		JobID:    job.ID,
+		JobUUID:  job.UUID,
 		Repo:     job.RepoPath,
 		RepoName: job.RepoName,
 		SHA:      job.GitRef,
+		Branch:   job.HookBranch(),
 		Agent:    job.Agent,
 	})
 }

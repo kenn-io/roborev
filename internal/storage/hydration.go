@@ -20,6 +20,7 @@ type reviewJobScanFields struct {
 	RequestedModel    sql.NullString
 	RequestedProvider sql.NullString
 	Branch            sql.NullString
+	CIBaseBranch      sql.NullString
 	SessionID         sql.NullString
 	CommitID          sql.NullInt64
 	CommitSubject     sql.NullString
@@ -60,6 +61,9 @@ func applyReviewJobScan(job *ReviewJob, fields reviewJobScanFields) {
 	}
 	if fields.Branch.Valid {
 		job.Branch = fields.Branch.String
+	}
+	if fields.CIBaseBranch.Valid {
+		job.CIBaseBranch = fields.CIBaseBranch.String
 	}
 	if fields.SessionID.Valid {
 		job.SessionID = fields.SessionID.String

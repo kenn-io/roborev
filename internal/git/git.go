@@ -983,6 +983,8 @@ var excludedPathPatterns = []string{
 	// Nix
 	":(exclude,glob)**/flake.lock",
 	":(exclude,glob)**/.beads/**",
+	// kata local (uncommitted) overrides; the committed .kata.toml binding stays reviewable
+	":(exclude,glob)**/.kata.local.toml",
 	":(exclude,glob)**/.gocache/**",
 	":(exclude,glob)**/.cache/**",
 }

@@ -10,6 +10,7 @@ import (
 	"testing"
 	"time"
 
+	"github.com/BurntSushi/toml"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -4041,4 +4042,59 @@ func TestClassifyWorkflowConfig_FoundByReflectionTag(t *testing.T) {
 	assert.Equal(t, "haiku", lookupFieldByTag(reflect.ValueOf(*cfg), "classify_model"))
 	assert.Equal(t, "codex", lookupFieldByTag(reflect.ValueOf(*cfg), "classify_backup_agent"))
 	assert.Equal(t, "o-mini", lookupFieldByTag(reflect.ValueOf(*cfg), "classify_backup_model"))
+}
+
+func TestResolveKataContextDefaults(t *testing.T) {
+	kc := ResolveKataContext(t.TempDir(), &Config{})
+	assert.Equal(t, KataModeOff, kc.Mode)
+	assert.Equal(t, 50000, kc.MaxChars)
+}
+
+func TestResolveKataContextGlobal(t *testing.T) {
+	g := &Config{}
+	g.KataContext.Mode = "current"
+	g.KataContext.MaxChars = 1234
+	kc := ResolveKataContext(t.TempDir(), g)
+	assert.Equal(t, KataModeCurrent, kc.Mode)
+	assert.Equal(t, 1234, kc.MaxChars)
+}
+
+func TestResolveKataContextRepoOverridesGlobal(t *testing.T) {
+	dir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dir, ".roborev.toml"),
+		[]byte("[kata_context]\nmode = \"open\"\n"), 0o644))
+	g := &Config{}
+	g.KataContext.Mode = "current"
+	g.KataContext.MaxChars = 999
+	kc := ResolveKataContext(dir, g)
+	assert.Equal(t, KataModeOpen, kc.Mode) // repo wins
+	assert.Equal(t, 999, kc.MaxChars)      // repo unset -> global kept
+}
+
+func TestResolveKataContextNormalizesUnknown(t *testing.T) {
+	g := &Config{}
+	g.KataContext.Mode = "bogus"
+	g.KataContext.MaxChars = -5
+	kc := ResolveKataContext(t.TempDir(), g)
+	assert.Equal(t, KataModeOff, kc.Mode)
+	assert.Equal(t, 50000, kc.MaxChars) // <=0 clamps to default
+}
+
+func TestHookConfigKataFields(t *testing.T) {
+	var cfg RepoConfig
+	_, err := toml.Decode(`
+[[hooks]]
+event = "review.*"
+type = "kata"
+project = "myproj"
+labels = ["from-review"]
+priority = 3
+`, &cfg)
+	require.NoError(t, err)
+	require.Len(t, cfg.Hooks, 1)
+	assert.Equal(t, "kata", cfg.Hooks[0].Type)
+	assert.Equal(t, "myproj", cfg.Hooks[0].Project)
+	assert.Equal(t, []string{"from-review"}, cfg.Hooks[0].Labels)
+	require.NotNil(t, cfg.Hooks[0].Priority)
+	assert.Equal(t, 3, *cfg.Hooks[0].Priority)
 }

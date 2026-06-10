@@ -175,9 +175,11 @@ func (wp *WorkerPool) completeSynthesis(
 		Type:     "review.completed",
 		TS:       time.Now(),
 		JobID:    job.ID,
+		JobUUID:  job.UUID,
 		Repo:     job.RepoPath,
 		RepoName: job.RepoName,
 		SHA:      job.GitRef,
+		Branch:   job.HookBranch(),
 		Agent:    agentName,
 		Verdict:  storage.ParseVerdict(output),
 		Findings: output,
@@ -210,6 +212,7 @@ func (wp *WorkerPool) runSynthesisAgent(
 		Repo:     job.RepoPath,
 		RepoName: job.RepoName,
 		SHA:      job.GitRef,
+		Branch:   job.HookBranch(),
 		Agent:    agentName,
 	})
 

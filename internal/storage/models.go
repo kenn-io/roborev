@@ -70,6 +70,7 @@ type ReviewJob struct {
 	CommitID          *int64     `json:"commit_id,omitempty"`  // nil for ranges
 	GitRef            string     `json:"git_ref"`              // SHA or "start..end" for ranges
 	Branch            string     `json:"branch,omitempty"`     // Branch name at time of job creation
+	CIBaseBranch      string     `json:"-"`                    // PR base branch for CI jobs; daemon-internal, used only for event/hook branch matching
 	SessionID         string     `json:"session_id,omitempty"` // Reused prior session or captured current session ID
 	Agent             string     `json:"agent"`
 	Model             string     `json:"model,omitempty"`              // Effective model for this run (for opencode: provider/model format)
@@ -135,6 +136,18 @@ type ReviewJob struct {
 	// session-reuse candidate validation. Dirty jobs keep GitRef="dirty" and
 	// carry their base HEAD through this field.
 	ReusableSessionTarget string `json:"-"`
+}
+
+// HookBranch returns the branch used for event/hook branch matching: the
+// local branch the job was enqueued from, or the PR base (target) branch for
+// CI jobs. CI jobs deliberately leave Branch empty so branch-scoped local
+// flows (fix/refine discovery, fix-ref selection, session reuse) never treat
+// a CI review as local work on the base branch.
+func (j ReviewJob) HookBranch() string {
+	if j.Branch != "" {
+		return j.Branch
+	}
+	return j.CIBaseBranch
 }
 
 // IsDirtyJob returns true if this is a dirty review (uncommitted changes).
