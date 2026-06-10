@@ -1967,6 +1967,7 @@ func TestUpsertPulledJobRoundTripsBackupColumns(t *testing.T) {
 
 func TestClaimJobHydratesUUID(t *testing.T) {
 	db := openTestDB(t)
+	defer db.Close()
 	_, _, enqueued := createJobChain(t, db, "/repo/uuid-hydration", "abc123")
 	require.NotEmpty(t, enqueued.UUID, "enqueue must assign a job UUID")
 
