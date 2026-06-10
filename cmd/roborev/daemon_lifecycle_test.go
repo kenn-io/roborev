@@ -142,3 +142,41 @@ func TestEnsureDaemonRestartsWhenLiveProbeFailsDespiteRuntimeVersion(t *testing.
 	}
 	assert.Equal(t, 1, restartCalls)
 }
+
+func TestEnsureDaemonCleansZombiesBeforeColdStart(t *testing.T) {
+	t.Setenv("ROBOREV_SKIP_VERSION_CHECK", "")
+
+	origServerAddr := serverAddr
+	origParsed := parsedServerEndpoint
+	origGetAnyRunningDaemon := getAnyRunningDaemon
+	origCleanupZombieDaemons := cleanupZombieDaemons
+	origStartDaemon := startDaemonForEnsure
+	origRetryDelay := ensureProbeRetryDelay
+	serverAddr = ""
+	parsedServerEndpoint = nil
+	ensureProbeRetryDelay = time.Millisecond
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+		return nil, os.ErrNotExist
+	}
+
+	var calls []string
+	cleanupZombieDaemons = func(target daemon.DaemonEndpoint) int {
+		calls = append(calls, "cleanup:"+target.Address)
+		return 1
+	}
+	startDaemonForEnsure = func() error {
+		calls = append(calls, "start")
+		return nil
+	}
+	t.Cleanup(func() {
+		serverAddr = origServerAddr
+		parsedServerEndpoint = origParsed
+		getAnyRunningDaemon = origGetAnyRunningDaemon
+		cleanupZombieDaemons = origCleanupZombieDaemons
+		startDaemonForEnsure = origStartDaemon
+		ensureProbeRetryDelay = origRetryDelay
+	})
+
+	require.NoError(t, ensureDaemon())
+	assert.Equal(t, []string{"cleanup:127.0.0.1:1", "start"}, calls)
+}
