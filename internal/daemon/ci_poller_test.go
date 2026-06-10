@@ -25,6 +25,8 @@ import (
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	ghpkg "go.kenn.io/roborev/internal/github"
+	"go.kenn.io/roborev/internal/kata"
+	"go.kenn.io/roborev/internal/kata/katatest"
 	"go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
@@ -3904,4 +3906,29 @@ func TestBuildPanelOpts_RecordsPRBranchOnJobs(t *testing.T) {
 		"CI synthesis job must record the PR base (target) branch so branch-filtered hooks fire")
 	assert.Empty(t, synthOpts.Branch,
 		"CI synthesis job must not set Branch (it would leak into branch-scoped local flows)")
+}
+
+func TestCIPromptPrebuildIncludesKataContext(t *testing.T) {
+	repo := testutil.NewTestRepoWithCommit(t)
+	sha := repo.CommitFile("feature.txt", "new feature\n", "Implement feature")
+
+	cfg := config.DefaultConfig()
+	cfg.KataContext.Mode = config.KataModeOpen
+
+	p := NewCIPoller(nil, NewStaticConfig(cfg), nil)
+	fake := &katatest.FakeClient{
+		BindingResult: kata.Binding{Project: "roborev"},
+		ListResult: []kata.Issue{
+			{ShortID: "abc4", QualifiedID: "roborev#abc4", Title: "Build widget", Body: "Widget spec here.", Status: "open"},
+		},
+	}
+	p.newKataClient = func(string) kata.Client { return fake }
+
+	out, err := p.callBuildReviewPrompt(repo.Path(), sha, 0, 0, "test", "", "", "", cfg)
+	require.NoError(t, err)
+	assert.Contains(t, out, "Task Context (kata)")
+	assert.Contains(t, out, "Build widget")
+	assert.Contains(t, out, "Widget spec here.")
+	require.Len(t, fake.ListOpts, 1)
+	assert.Equal(t, "open", fake.ListOpts[0].Status)
 }

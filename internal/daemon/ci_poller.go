@@ -26,6 +26,7 @@ import (
 	"go.kenn.io/roborev/internal/config"
 	gitpkg "go.kenn.io/roborev/internal/git"
 	ghpkg "go.kenn.io/roborev/internal/github"
+	"go.kenn.io/roborev/internal/kata"
 	"go.kenn.io/roborev/internal/prompt"
 	reviewpkg "go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/review/autotype"
@@ -96,6 +97,7 @@ type CIPoller struct {
 	jobCancelFn         func(jobID int64)                      // kills running worker process (optional)
 	isPROpenFn          func(ghRepo string, prNumber int) bool // checks if a PR is still open
 	prPostTargetFn      func(context.Context, string, int) (panelPostTarget, error)
+	newKataClient       func(workdir string) kata.Client
 
 	repoResolver *RepoResolver
 
@@ -124,7 +126,7 @@ func NewCIPoller(db *storage.DB, cfgGetter ConfigGetter, broadcaster Broadcaster
 	p.mergeBaseFn = gitpkg.GetMergeBase
 	p.loadRepoConfigFn = loadCIRepoConfig
 	p.buildReviewPromptFn = func(repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, minSeverity, additionalContext string, cfg *config.Config) (string, error) {
-		builder := prompt.NewBuilderWithConfig(p.db, cfg).ForRepo(repoPath, repoID)
+		builder := prompt.NewBuilderWithConfig(p.db, cfg).ForRepo(repoPath, repoID).WithKataClient(p.kataClientFor(repoPath))
 		return builder.BuildWithAdditionalContextAndDiffFile(
 			gitRef,
 			contextCount,
@@ -2711,7 +2713,7 @@ func (p *CIPoller) callBuildReviewPrompt(repoPath, gitRef string, repoID int64, 
 	if p.buildReviewPromptFn != nil {
 		return p.buildReviewPromptFn(repoPath, gitRef, repoID, contextCount, agentName, reviewType, minSeverity, additionalContext, cfg)
 	}
-	builder := prompt.NewBuilderWithConfig(p.db, cfg).ForRepo(repoPath, repoID)
+	builder := prompt.NewBuilderWithConfig(p.db, cfg).ForRepo(repoPath, repoID).WithKataClient(p.kataClientFor(repoPath))
 	return builder.BuildWithAdditionalContextAndDiffFile(
 		gitRef,
 		contextCount,
@@ -2721,6 +2723,15 @@ func (p *CIPoller) callBuildReviewPrompt(repoPath, gitRef string, repoID int64, 
 		additionalContext,
 		prompt.DiffFilePathPlaceholder,
 	)
+}
+
+// kataClientFor returns the kata client for prompt building, honoring the
+// newKataClient test seam.
+func (p *CIPoller) kataClientFor(repoPath string) kata.Client {
+	if p.newKataClient != nil {
+		return p.newKataClient(repoPath)
+	}
+	return kata.NewCLIClient(repoPath)
 }
 
 func (p *CIPoller) callPostPRComment(ghRepo string, prNumber int, body string) error {
