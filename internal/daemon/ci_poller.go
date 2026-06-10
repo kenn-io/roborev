@@ -90,7 +90,7 @@ type CIPoller struct {
 	gitCloneFn          func(ctx context.Context, ghRepo, targetPath string, env []string) error
 	mergeBaseFn         func(string, string, string) (string, error)
 	loadRepoConfigFn    func(string) (*config.RepoConfig, error)
-	buildReviewPromptFn func(context.Context, string, string, int64, int, string, string, string, string, *config.Config) (string, error)
+	buildReviewPromptFn func(context.Context, string, string, int64, int, string, string, string, string, kata.Client, *config.Config) (string, error)
 	postPRCommentFn     func(string, int, string) error
 	setCommitStatusFn   func(ghRepo, sha, state, description string) error
 	agentResolverFn     func(name string) (string, error)      // returns resolved agent name
@@ -125,8 +125,8 @@ func NewCIPoller(db *storage.DB, cfgGetter ConfigGetter, broadcaster Broadcaster
 	p.gitFetchPRHeadFn = gitFetchPRHead
 	p.mergeBaseFn = gitpkg.GetMergeBase
 	p.loadRepoConfigFn = loadCIRepoConfig
-	p.buildReviewPromptFn = func(ctx context.Context, repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, minSeverity, additionalContext string, cfg *config.Config) (string, error) {
-		builder := prompt.NewBuilderWithConfig(p.db, cfg).WithContext(ctx).ForRepo(repoPath, repoID).WithKataClient(p.kataClientFor(repoPath))
+	p.buildReviewPromptFn = func(ctx context.Context, repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, minSeverity, additionalContext string, kataClient kata.Client, cfg *config.Config) (string, error) {
+		builder := prompt.NewBuilderWithConfig(p.db, cfg).WithContext(ctx).ForRepo(repoPath, repoID).WithKataClient(kataClient)
 		return builder.BuildWithAdditionalContextAndDiffFile(
 			gitRef,
 			contextCount,
@@ -424,7 +424,7 @@ func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, 
 	// no member already covers the design review type (F8, F12).
 	members = p.maybeAppendDesignMember(ctx, members, repo, repoCfg, cfg, mergeBase, pr.HeadRefOid)
 
-	memberOpts, synthOpts := p.buildPanelOpts(
+	memberOpts, synthOpts, err := p.buildPanelOpts(
 		ctx,
 		buildPanelOptsInput{
 			repo: repo, repoCfg: repoCfg, cfg: cfg, ghRepo: ghRepo, gitRef: gitRef,
@@ -434,7 +434,11 @@ func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, 
 			prNumber:   pr.Number, panelName: ciPanelName(repoCfg, cfg),
 			prDiscussionContext: prDiscussionContext,
 			members:             members, synth: synth,
+			kataClient: p.kataClientForPR(ctx, ghRepo, repo.RootPath, pr.Author.Login),
 		})
+	if err != nil {
+		return err
+	}
 
 	created, _, _, err := p.db.CreateCIPanelRun(ghRepo, pr.Number, pr.HeadRefOid, memberOpts, synthOpts)
 	if err != nil {
@@ -939,6 +943,7 @@ type buildPanelOptsInput struct {
 	prDiscussionContext string
 	members             []config.ResolvedMember
 	synth               config.SynthesisSpec
+	kataClient          kata.Client // nil when the PR author is not trusted to steer kata context
 }
 
 // buildPanelOpts builds the member and synthesis EnqueueOpts for a CI panel run.
@@ -948,16 +953,21 @@ type buildPanelOptsInput struct {
 // blocked JobTypeSynthesis carrying the panel name and any synthesis backup.
 // CreateCIPanelRun stamps the shared panel_run_uuid and enforces the roles, so
 // PanelRunUUID is left empty here.
-func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) ([]storage.EnqueueOpts, storage.EnqueueOpts) {
+func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) ([]storage.EnqueueOpts, storage.EnqueueOpts, error) {
 	synthesisMinSeverity := resolveMinSeverity(in.cfg.CI.MinSeverity, in.repo.RootPath, in.ghRepo)
 	reviewMinSeverity := resolveCIReviewMinSeverity(in.repoCfg, in.cfg, in.ghRepo)
 	memberOpts := make([]storage.EnqueueOpts, 0, len(in.members))
 	for i, m := range in.members {
 		storedPrompt, err := p.callBuildReviewPrompt(
 			ctx, in.repo.RootPath, in.gitRef, in.repo.ID, in.cfg.ReviewContextCount,
-			m.Agent, m.ReviewType, reviewMinSeverity, in.prDiscussionContext, in.cfg,
+			m.Agent, m.ReviewType, reviewMinSeverity, in.prDiscussionContext, in.kataClient, in.cfg,
 		)
 		if err != nil {
+			// A canceled poller (Stop or shutdown) must abort the whole run
+			// rather than degrade it into jobs without stored prompts.
+			if ctx.Err() != nil || errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded) {
+				return nil, storage.EnqueueOpts{}, fmt.Errorf("prebuild prompt for %s#%d canceled: %w", in.ghRepo, in.prNumber, err)
+			}
 			log.Printf("CI poller: failed to prebuild prompt for %s#%d (member=%s, agent=%s): %v; enqueuing without stored prompt",
 				in.ghRepo, in.prNumber, m.Name, m.Agent, err)
 			storedPrompt = ""
@@ -999,7 +1009,7 @@ func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) (
 		PanelName:    in.panelName,
 		ClaimBlocked: true,
 	}
-	return memberOpts, synthOpts
+	return memberOpts, synthOpts, nil
 }
 
 func listCommitsInRange(repoPath, base, head string) ([]string, error) {
@@ -2710,11 +2720,11 @@ func (p *CIPoller) callMergeBase(repoPath, baseRef, headRef string) (string, err
 	return gitpkg.GetMergeBase(repoPath, baseRef, headRef)
 }
 
-func (p *CIPoller) callBuildReviewPrompt(ctx context.Context, repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, minSeverity, additionalContext string, cfg *config.Config) (string, error) {
+func (p *CIPoller) callBuildReviewPrompt(ctx context.Context, repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, minSeverity, additionalContext string, kataClient kata.Client, cfg *config.Config) (string, error) {
 	if p.buildReviewPromptFn != nil {
-		return p.buildReviewPromptFn(ctx, repoPath, gitRef, repoID, contextCount, agentName, reviewType, minSeverity, additionalContext, cfg)
+		return p.buildReviewPromptFn(ctx, repoPath, gitRef, repoID, contextCount, agentName, reviewType, minSeverity, additionalContext, kataClient, cfg)
 	}
-	builder := prompt.NewBuilderWithConfig(p.db, cfg).WithContext(ctx).ForRepo(repoPath, repoID).WithKataClient(p.kataClientFor(repoPath))
+	builder := prompt.NewBuilderWithConfig(p.db, cfg).WithContext(ctx).ForRepo(repoPath, repoID).WithKataClient(kataClient)
 	return builder.BuildWithAdditionalContextAndDiffFile(
 		gitRef,
 		contextCount,
@@ -2733,6 +2743,29 @@ func (p *CIPoller) kataClientFor(repoPath string) kata.Client {
 		return p.newKataClient(repoPath)
 	}
 	return kata.NewCLIClient(repoPath)
+}
+
+// kataClientForPR returns a kata client for CI prompt prebuilds only when the
+// PR author is a trusted collaborator (maintain/admin). Commit messages select
+// which kata issues current mode loads, and member output can surface issue
+// content in publicly posted PR comments, so fork authors must not steer kata
+// resolution. Fails closed: lookup errors or an unknown author skip kata
+// context for this run.
+func (p *CIPoller) kataClientForPR(ctx context.Context, ghRepo, repoPath, authorLogin string) kata.Client {
+	login := strings.ToLower(strings.TrimSpace(authorLogin))
+	if login == "" {
+		return nil
+	}
+	trusted, err := p.callListTrustedActors(ctx, ghRepo)
+	if err != nil {
+		log.Printf("CI poller: skipping kata context for %s (author %s): trusted actor lookup failed: %v",
+			ghRepo, authorLogin, err)
+		return nil
+	}
+	if _, ok := trusted[login]; !ok {
+		return nil
+	}
+	return p.kataClientFor(repoPath)
 }
 
 func (p *CIPoller) callPostPRComment(ghRepo string, prNumber int, body string) error {

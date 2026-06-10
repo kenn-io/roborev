@@ -980,7 +980,7 @@ func TestCIPollerProcessPR_FallsBackWhenPromptPrebuildFails(t *testing.T) {
 			CreatedAt: time.Date(2026, time.March, 27, 12, 0, 0, 0, time.UTC),
 		}}, nil
 	}
-	h.Poller.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, *config.Config) (string, error) {
+	h.Poller.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, kata.Client, *config.Config) (string, error) {
 		return "", errors.New("prompt prebuild exploded")
 	}
 
@@ -3882,11 +3882,11 @@ func TestReconcileStuckAttempt(t *testing.T) {
 
 func TestBuildPanelOpts_RecordsPRBranchOnJobs(t *testing.T) {
 	p := &CIPoller{}
-	p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, *config.Config) (string, error) {
+	p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, kata.Client, *config.Config) (string, error) {
 		return "prebuilt prompt", nil
 	}
 
-	memberOpts, synthOpts := p.buildPanelOpts(context.Background(), buildPanelOptsInput{
+	memberOpts, synthOpts, panelErr := p.buildPanelOpts(context.Background(), buildPanelOptsInput{
 		repo:       &storage.Repo{ID: 1, RootPath: t.TempDir()},
 		cfg:        config.DefaultConfig(),
 		ghRepo:     "kenn-io/roborev",
@@ -3896,6 +3896,7 @@ func TestBuildPanelOpts_RecordsPRBranchOnJobs(t *testing.T) {
 		members:    []config.ResolvedMember{{Name: "m1", Agent: "codex"}},
 		synth:      config.SynthesisSpec{Agent: "codex"},
 	})
+	require.NoError(t, panelErr)
 
 	require.Len(t, memberOpts, 1)
 	assert.Equal(t, "release/2.0", memberOpts[0].CIBaseBranch,
@@ -3934,11 +3935,9 @@ func TestCIPromptPrebuildIncludesKataContext(t *testing.T) {
 			{ShortID: "abc4", QualifiedID: "roborev#abc4", Title: "Build widget", Body: "Widget spec here.", Status: "open"},
 		},
 	}}
-	p.newKataClient = func(string) kata.Client { return fake }
-
 	type ctxKey struct{}
 	ctx := context.WithValue(context.Background(), ctxKey{}, "poller")
-	out, err := p.callBuildReviewPrompt(ctx, repo.Path(), sha, 0, 0, "test", "", "", "", cfg)
+	out, err := p.callBuildReviewPrompt(ctx, repo.Path(), sha, 0, 0, "test", "", "", "", fake, cfg)
 	require.NoError(t, err)
 	assert.Contains(t, out, "Task Context (kata)")
 	assert.Contains(t, out, "Build widget")
@@ -3946,4 +3945,67 @@ func TestCIPromptPrebuildIncludesKataContext(t *testing.T) {
 	require.NotNil(t, fake.listCtx, "kata client must be queried")
 	assert.Equal(t, "poller", fake.listCtx.Value(ctxKey{}),
 		"poller context must reach kata CLI calls so Stop cancels them")
+}
+
+func TestKataClientForPR(t *testing.T) {
+	fake := &katatest.FakeClient{}
+	tests := []struct {
+		name       string
+		author     string
+		actors     map[string]struct{}
+		actorsErr  error
+		wantClient bool
+	}{
+		{"trusted author", "Alice", map[string]struct{}{"alice": {}}, nil, true},
+		{"untrusted fork author", "mallory", map[string]struct{}{"alice": {}}, nil, false},
+		{"empty author", "", map[string]struct{}{"alice": {}}, nil, false},
+		{"lookup failure fails closed", "alice", nil, errors.New("api down"), false},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &CIPoller{}
+			p.newKataClient = func(string) kata.Client { return fake }
+			p.listTrustedActorsFn = func(context.Context, string) (map[string]struct{}, error) {
+				return tt.actors, tt.actorsErr
+			}
+			client := p.kataClientForPR(context.Background(), "kenn-io/roborev", t.TempDir(), tt.author)
+			if tt.wantClient {
+				assert.NotNil(t, client)
+			} else {
+				assert.Nil(t, client)
+			}
+		})
+	}
+}
+
+func TestBuildPanelOptsAbortsOnCanceledPrebuild(t *testing.T) {
+	in := buildPanelOptsInput{
+		repo:    &storage.Repo{ID: 1, RootPath: "/tmp/repo"},
+		cfg:     config.DefaultConfig(),
+		ghRepo:  "kenn-io/roborev",
+		gitRef:  "base..head",
+		members: []config.ResolvedMember{{Name: "m1", Agent: "codex"}},
+		synth:   config.SynthesisSpec{Agent: "codex"},
+	}
+
+	t.Run("cancellation aborts the run", func(t *testing.T) {
+		p := &CIPoller{}
+		p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, kata.Client, *config.Config) (string, error) {
+			return "", fmt.Errorf("building prompt: %w", context.Canceled)
+		}
+		_, _, err := p.buildPanelOpts(context.Background(), in)
+		require.ErrorIs(t, err, context.Canceled, "canceled prebuild must abort instead of enqueuing promptless jobs")
+	})
+
+	t.Run("other prebuild errors still enqueue without stored prompt", func(t *testing.T) {
+		p := &CIPoller{}
+		p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, kata.Client, *config.Config) (string, error) {
+			return "", errors.New("prompt prebuild exploded")
+		}
+		memberOpts, _, err := p.buildPanelOpts(context.Background(), in)
+		require.NoError(t, err)
+		require.Len(t, memberOpts, 1)
+		assert.Empty(t, memberOpts[0].Prompt)
+		assert.False(t, memberOpts[0].PromptPrebuilt)
+	})
 }

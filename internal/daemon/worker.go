@@ -580,7 +580,14 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// Build the prompt (or use pre-stored prompt for task/compact jobs).
 	// Create a per-job builder with the snapshotted config so exclude
 	// patterns are resolved consistently.
-	pb := prompt.NewBuilderWithConfig(wp.db, cfg).WithContext(ctx).ForRepo(checkout.promptRepoPath, job.RepoID).WithKataClient(kata.NewCLIClient(checkout.promptRepoPath))
+	pb := prompt.NewBuilderWithConfig(wp.db, cfg).WithContext(ctx).ForRepo(checkout.promptRepoPath, job.RepoID)
+	// CI jobs normally carry a prebuilt prompt whose kata context was gated
+	// on PR author trust by the poller. This rebuild fallback has no author
+	// information, so it must not resolve kata refs from fork-controlled
+	// commit messages (or leak backlog content) — skip kata context entirely.
+	if !job.IsCIReview() {
+		pb = pb.WithKataClient(kata.NewCLIClient(checkout.promptRepoPath))
+	}
 	if err := pb.CleanupStaleSnapshots(prompt.DefaultStaleSnapshotAge); err != nil {
 		log.Printf("[%s] Warning: cleanup stale snapshots for job %d: %v", workerID, job.ID, err)
 	}

@@ -150,6 +150,12 @@ func (j ReviewJob) HookBranch() string {
 	return j.CIBaseBranch
 }
 
+// IsCIReview returns true if this job was enqueued by the CI poller
+// (only CI jobs record the PR base branch).
+func (j ReviewJob) IsCIReview() bool {
+	return j.CIBaseBranch != ""
+}
+
 // IsDirtyJob returns true if this is a dirty review (uncommitted changes).
 func (j ReviewJob) IsDirtyJob() bool {
 	if j.JobType != "" {
