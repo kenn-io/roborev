@@ -468,3 +468,42 @@ func TestRunBatchIgnoresMalformedRepoConfig(t *testing.T) {
 	require.Equal(t, ResultDone, results[0].Status, "status=%q err=%q", results[0].Status, results[0].Error)
 	assert.Equal(t, "batch-agent", results[0].Agent)
 }
+
+func TestRunBatch_NoKataContextFromUntrustedCheckout(t *testing.T) {
+	require := require.New(t)
+
+	t.Parallel()
+	repo := testutil.NewTestRepoWithCommit(t)
+
+	// An untrusted PR head controls the checkout: it can both enable
+	// kata_context in .roborev.toml and reference kata issues in commit
+	// messages. Daemon-free CI must never resolve kata context.
+	require.NoError(os.WriteFile(
+		filepath.Join(repo.Root, ".roborev.toml"),
+		[]byte("[kata_context]\nmode = \"open\"\n"), 0o644))
+	require.NoError(os.WriteFile(
+		filepath.Join(repo.Root, ".kata.toml"),
+		[]byte("[project]\nname = \"victim\"\n"), 0o644))
+	repo.RunGit("add", "-A")
+	repo.RunGit("commit", "-m", "Sneaky change\n\nCloses: kata#abc4")
+	sha := repo.RevParse("HEAD")
+
+	captureAgent := &promptCapture{name: "capture"}
+	cfg := BatchConfig{
+		RepoPath:     repo.Root,
+		GitRef:       sha,
+		Agents:       []string{"capture"},
+		ReviewTypes:  []string{"review"},
+		GlobalConfig: &config.Config{},
+		AgentRegistry: map[string]agent.Agent{
+			"capture": captureAgent,
+		},
+	}
+
+	results := RunBatch(context.Background(), cfg)
+	require.Len(results, 1)
+	require.Equal(ResultDone, results[0].Status,
+		"status=%q err=%q", results[0].Status, results[0].Error)
+	assert.NotContains(t, captureAgent.lastPrompt, "Task Context (kata)",
+		"daemon-free CI must not include kata context from an untrusted checkout")
+}
