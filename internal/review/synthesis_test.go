@@ -1,6 +1,7 @@
 package review
 
 import (
+	"fmt"
 	"os"
 	"strings"
 	"testing"
@@ -13,6 +14,13 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	// Re-invoked as a fake `kata` binary by tests that put a copy of the
+	// test executable named kata on PATH (see
+	// TestRunBatch_NoKataContextFromUntrustedCheckout).
+	if os.Getenv("ROBOREV_TEST_FAKE_KATA") == "1" {
+		fmt.Println(`{"issues":[{"short_id":"abc4","title":"Leaked task","body":"Secret kata body."}]}`)
+		os.Exit(0)
+	}
 	os.Exit(testenv.RunIsolatedMain(m))
 }
 

@@ -469,10 +469,31 @@ func TestRunBatchIgnoresMalformedRepoConfig(t *testing.T) {
 	assert.Equal(t, "batch-agent", results[0].Agent)
 }
 
+// installFakeKata copies the test binary to dir as `kata` and points PATH and
+// ROBOREV_TEST_FAKE_KATA at it, so any kata CLI invocation deterministically
+// returns an open issue (see TestMain) instead of depending on whether the
+// developer machine has kata installed.
+func installFakeKata(t *testing.T) {
+	t.Helper()
+	self, err := os.Executable()
+	require.NoError(t, err)
+	data, err := os.ReadFile(self)
+	require.NoError(t, err)
+	dir := t.TempDir()
+	name := "kata"
+	if runtime.GOOS == "windows" {
+		name = "kata.exe"
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(dir, name), data, 0o755))
+	t.Setenv("ROBOREV_TEST_FAKE_KATA", "1")
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
 func TestRunBatch_NoKataContextFromUntrustedCheckout(t *testing.T) {
 	require := require.New(t)
 
-	t.Parallel()
+	// No t.Parallel: installFakeKata uses t.Setenv.
+	installFakeKata(t)
 	repo := testutil.NewTestRepoWithCommit(t)
 
 	// An untrusted PR head controls the checkout: it can both enable
@@ -506,4 +527,6 @@ func TestRunBatch_NoKataContextFromUntrustedCheckout(t *testing.T) {
 		"status=%q err=%q", results[0].Status, results[0].Error)
 	assert.NotContains(t, captureAgent.lastPrompt, "Task Context (kata)",
 		"daemon-free CI must not include kata context from an untrusted checkout")
+	assert.NotContains(t, captureAgent.lastPrompt, "Secret kata body.",
+		"fake kata output must never reach the prompt")
 }
