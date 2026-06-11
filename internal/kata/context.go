@@ -22,37 +22,54 @@ type ContextResult struct {
 }
 
 // ResolveContext loads kata issues for a review according to mode. It never
-// fails the review: a missing binary or binding yields an empty result, and
-// other failures are reported in Errs so a configured-but-broken setup is
-// visible in logs instead of silently degrading.
-func ResolveContext(ctx context.Context, client Client, mode string, commitMessages []string) ContextResult {
+// fails the review for kata-specific problems: a missing binary or binding
+// yields an empty result, and other failures are reported in Errs so a
+// configured-but-broken setup is visible in logs instead of silently
+// degrading. The single exception is context cancellation, which is returned
+// as an error so a canceled review aborts instead of proceeding without
+// context.
+func ResolveContext(ctx context.Context, client Client, mode string, commitMessages []string) (ContextResult, error) {
 	if client == nil {
-		return ContextResult{}
+		return ContextResult{}, nil
+	}
+	if err := ctx.Err(); err != nil {
+		return ContextResult{}, err
 	}
 	binding, err := client.Binding(ctx)
 	if err != nil {
+		if canceled(err) {
+			return ContextResult{}, err
+		}
 		if errors.Is(err, ErrNoBinding) || errors.Is(err, ErrUnavailable) {
-			return ContextResult{} // not a kata workspace -> inert
+			return ContextResult{}, nil // not a kata workspace -> inert
 		}
 		// A present-but-broken .kata.toml: surface it rather than silently
 		// dropping the configured context.
-		return ContextResult{Errs: []error{fmt.Errorf("resolve binding: %w", err)}}
+		return ContextResult{Errs: []error{fmt.Errorf("resolve binding: %w", err)}}, nil
 	}
 	switch mode {
 	case ModeOpen:
 		issues, err := client.List(ctx, ListOpts{Status: "open"})
 		if err != nil {
-			if errors.Is(err, ErrUnavailable) {
-				return ContextResult{}
+			if canceled(err) {
+				return ContextResult{}, err
 			}
-			return ContextResult{Errs: []error{fmt.Errorf("list open katas: %w", err)}}
+			if errors.Is(err, ErrUnavailable) {
+				return ContextResult{}, nil
+			}
+			return ContextResult{Errs: []error{fmt.Errorf("list open katas: %w", err)}}, nil
 		}
-		return ContextResult{Issues: excludeRoborevFiled(issues)}
+		return ContextResult{Issues: excludeRoborevFiled(issues)}, nil
 	case ModeCurrent:
 		return resolveCurrent(ctx, client, binding.Project, commitMessages)
 	default:
-		return ContextResult{}
+		return ContextResult{}, nil
 	}
+}
+
+// canceled reports whether err stems from context cancellation or timeout.
+func canceled(err error) bool {
+	return errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded)
 }
 
 // excludeRoborevFiled drops issues filed by roborev itself (the review
@@ -69,7 +86,7 @@ func excludeRoborevFiled(issues []Issue) []Issue {
 	return kept
 }
 
-func resolveCurrent(ctx context.Context, client Client, project string, messages []string) ContextResult {
+func resolveCurrent(ctx context.Context, client Client, project string, messages []string) (ContextResult, error) {
 	var res ContextResult
 	seen := make(map[string]bool)
 	for _, msg := range messages {
@@ -80,8 +97,11 @@ func resolveCurrent(ctx context.Context, client Client, project string, messages
 			seen[ref] = true
 			issue, err := client.Show(ctx, ref)
 			if err != nil {
+				if canceled(err) {
+					return ContextResult{}, err
+				}
 				if errors.Is(err, ErrUnavailable) {
-					return ContextResult{} // kata absent -> inert, no notes
+					return ContextResult{}, nil // kata absent -> inert, no notes
 				}
 				res.Notes = append(res.Notes, fmt.Sprintf("Referenced %s#%s could not be loaded.", project, ref))
 				res.Errs = append(res.Errs, fmt.Errorf("show %s: %w", ref, err))
@@ -90,5 +110,5 @@ func resolveCurrent(ctx context.Context, client Client, project string, messages
 			res.Issues = append(res.Issues, issue)
 		}
 	}
-	return res
+	return res, nil
 }

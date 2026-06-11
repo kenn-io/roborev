@@ -1,6 +1,8 @@
 package prompt
 
 import (
+	"context"
+	"fmt"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -132,4 +134,19 @@ func TestBuilderNoKataContextWhenModeOff(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, out, "Task Context (kata)")
 	assert.Empty(t, fake.ShowRefs, "off mode must not query kata")
+}
+
+func TestBuildDirtyAbortsWhenKataResolutionCanceled(t *testing.T) {
+	repo := testutil.NewTestRepoWithCommit(t)
+	fake := &katatest.FakeClient{
+		BindingResult: kata.Binding{Project: "roborev"},
+		ListErr:       fmt.Errorf("kata list: %w", context.Canceled),
+	}
+	g := &config.Config{}
+	g.KataContext.Mode = config.KataModeOpen
+
+	b := NewBuilderWithConfig(nil, g).ForRepo(repo.Path(), 0).WithKataClient(fake)
+	_, err := b.BuildDirty("diff --git a/f.txt b/f.txt\n+dirty\n", 0, "test", "", "")
+	require.ErrorIs(t, err, context.Canceled,
+		"a canceled kata resolution must abort the dirty prompt build, not degrade to a kata-less prompt")
 }

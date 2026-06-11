@@ -551,7 +551,11 @@ func (b *Builder) BuildDirtyWithFiles(diff string, changedFiles []string, contex
 
 	// Uncommitted changes have no commit messages, so "current" mode has no
 	// refs to resolve; "open" mode still lists open katas.
-	ctx.optional.KataContext = b.resolveKataContext(nil)
+	kataView, err := b.resolveKataContext(nil)
+	if err != nil {
+		return "", err
+	}
+	ctx.optional.KataContext = kataView
 
 	// Get previous reviews for context (use HEAD as reference point)
 	if contextCount > 0 && b.db != nil {
@@ -1113,7 +1117,11 @@ func (b *Builder) buildSinglePrompt(sha string, contextCount int, agentName, rev
 		return "", fmt.Errorf("get commit info: %w", err)
 	}
 
-	ctx.optional.KataContext = b.resolveKataContext([]string{info.Subject + "\n\n" + info.Body})
+	kataView, err := b.resolveKataContext([]string{info.Subject + "\n\n" + info.Body})
+	if err != nil {
+		return "", err
+	}
+	ctx.optional.KataContext = kataView
 
 	currentView := currentCommitSectionView{
 		Commit:  shortSHA,
@@ -1249,7 +1257,11 @@ func (b *Builder) buildRangePrompt(rangeRef string, contextCount int, agentName,
 		}
 		entries = append(entries, commitRangeEntryView{Commit: short})
 	}
-	ctx.optional.KataContext = b.resolveKataContext(kataMessages)
+	kataView, err := b.resolveKataContext(kataMessages)
+	if err != nil {
+		return "", err
+	}
+	ctx.optional.KataContext = kataView
 	currentView := commitRangeSectionView{Count: len(commits), Entries: entries}
 	currentRequiredText, err := renderCommitRangeRequired(currentView)
 	if err != nil {
@@ -1403,20 +1415,25 @@ func buildKataContextSectionView(issues []kata.Issue, notes []string, maxChars i
 	return &markdownSectionView{Heading: "## Task Context (kata)", Body: intro + "\n\n" + body}
 }
 
-// resolveKataContext populates the optional KataContext section when configured.
-func (b *Builder) resolveKataContext(messages []string) *markdownSectionView {
+// resolveKataContext populates the optional KataContext section when
+// configured. It returns an error only for context cancellation, so a
+// canceled review aborts prompt construction instead of proceeding.
+func (b *Builder) resolveKataContext(messages []string) (*markdownSectionView, error) {
 	if b.kataClient == nil {
-		return nil
+		return nil, nil
 	}
 	kc := config.ResolveKataContext(b.repoPath, b.globalCfg)
 	if kc.Mode == config.KataModeOff {
-		return nil
+		return nil, nil
 	}
-	res := kata.ResolveContext(b.context(), b.kataClient, kc.Mode, messages)
+	res, err := kata.ResolveContext(b.context(), b.kataClient, kc.Mode, messages)
+	if err != nil {
+		return nil, fmt.Errorf("resolve kata context: %w", err)
+	}
 	for _, err := range res.Errs {
 		log.Printf("kata context (repo %s, mode %s): %v", b.repoPath, kc.Mode, err)
 	}
-	return buildKataContextSectionView(res.Issues, res.Notes, kc.MaxChars, kc.Mode)
+	return buildKataContextSectionView(res.Issues, res.Notes, kc.MaxChars, kc.Mode), nil
 }
 
 func buildAdditionalContextSection(additionalContext string) string {
