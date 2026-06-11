@@ -88,8 +88,6 @@ type Builder struct {
 	repoPath   string
 	repoID     int64
 	kataClient kata.Client
-	repoCfg    *config.RepoConfig // trusted pre-loaded repo config for kata context (CI); only meaningful when repoCfgSet
-	repoCfgSet bool               // WithRepoConfig was called: never read kata settings from the working tree, even if repoCfg is nil
 }
 
 // DiffFilePathPlaceholder is a sentinel path embedded in prebuilt
@@ -144,19 +142,6 @@ func (b *Builder) ForRepo(repoPath string, repoID int64) *Builder {
 func (b *Builder) WithKataClient(client kata.Client) *Builder {
 	next := *b
 	next.kataClient = client
-	return &next
-}
-
-// WithRepoConfig returns a builder that resolves kata context settings from an
-// already-loaded repo config instead of reading .roborev.toml from the repo
-// working tree. CI passes the config loaded off the PR's default branch so a
-// stale or divergent local checkout cannot change kata_context for CI reviews.
-// A nil repoCfg still suppresses the working-tree read (it means "no repo
-// overrides", e.g. CI fell back after a config parse error).
-func (b *Builder) WithRepoConfig(repoCfg *config.RepoConfig) *Builder {
-	next := *b
-	next.repoCfg = repoCfg
-	next.repoCfgSet = true
 	return &next
 }
 
@@ -1423,12 +1408,7 @@ func (b *Builder) resolveKataContext(messages []string) *markdownSectionView {
 	if b.kataClient == nil {
 		return nil
 	}
-	var kc config.KataContextConfig
-	if b.repoCfgSet {
-		kc = config.ResolveKataContextFrom(b.repoCfg, b.globalCfg)
-	} else {
-		kc = config.ResolveKataContext(b.repoPath, b.globalCfg)
-	}
+	kc := config.ResolveKataContext(b.repoPath, b.globalCfg)
 	if kc.Mode == config.KataModeOff {
 		return nil
 	}

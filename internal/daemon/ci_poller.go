@@ -26,7 +26,6 @@ import (
 	"go.kenn.io/roborev/internal/config"
 	gitpkg "go.kenn.io/roborev/internal/git"
 	ghpkg "go.kenn.io/roborev/internal/github"
-	"go.kenn.io/roborev/internal/kata"
 	"go.kenn.io/roborev/internal/prompt"
 	reviewpkg "go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/review/autotype"
@@ -91,14 +90,13 @@ type CIPoller struct {
 	gitCloneFn          func(ctx context.Context, ghRepo, targetPath string, env []string) error
 	mergeBaseFn         func(string, string, string) (string, error)
 	loadRepoConfigFn    func(string) (*config.RepoConfig, error)
-	buildReviewPromptFn func(context.Context, string, string, int64, int, string, string, string, string, kata.Client, *config.RepoConfig, *config.Config) (string, error)
+	buildReviewPromptFn func(context.Context, string, string, int64, int, string, string, string, string, *config.Config) (string, error)
 	postPRCommentFn     func(string, int, string) error
 	setCommitStatusFn   func(ghRepo, sha, state, description string) error
 	agentResolverFn     func(name string) (string, error)      // returns resolved agent name
 	jobCancelFn         func(jobID int64)                      // kills running worker process (optional)
 	isPROpenFn          func(ghRepo string, prNumber int) bool // checks if a PR is still open
 	prPostTargetFn      func(context.Context, string, int) (panelPostTarget, error)
-	newKataClient       func(workdir string) kata.Client
 
 	repoResolver *RepoResolver
 
@@ -126,8 +124,15 @@ func NewCIPoller(db *storage.DB, cfgGetter ConfigGetter, broadcaster Broadcaster
 	p.gitFetchPRHeadFn = gitFetchPRHead
 	p.mergeBaseFn = gitpkg.GetMergeBase
 	p.loadRepoConfigFn = loadCIRepoConfig
-	p.buildReviewPromptFn = func(ctx context.Context, repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, minSeverity, additionalContext string, kataClient kata.Client, repoCfg *config.RepoConfig, cfg *config.Config) (string, error) {
-		builder := prompt.NewBuilderWithConfig(p.db, cfg).WithContext(ctx).ForRepo(repoPath, repoID).WithKataClient(kataClient).WithRepoConfig(repoCfg)
+	// CI prompts deliberately carry no kata context. PR-creator trust does
+	// not extend to whoever controls the reviewed head SHA (any write
+	// collaborator can push to a same-repo PR branch), and GitHub's polling
+	// APIs expose no non-spoofable head-pusher signal to gate on, so kata
+	// task-ledger content stays out of CI prompts entirely (it could
+	// otherwise surface in publicly posted PR comments). Kata context is a
+	// local-review feature; the worker also skips it for CI jobs.
+	p.buildReviewPromptFn = func(ctx context.Context, repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, minSeverity, additionalContext string, cfg *config.Config) (string, error) {
+		builder := prompt.NewBuilderWithConfig(p.db, cfg).WithContext(ctx).ForRepo(repoPath, repoID)
 		return builder.BuildWithAdditionalContextAndDiffFile(
 			gitRef,
 			contextCount,
@@ -435,7 +440,6 @@ func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, 
 			prNumber:   pr.Number, panelName: ciPanelName(repoCfg, cfg),
 			prDiscussionContext: prDiscussionContext,
 			members:             members, synth: synth,
-			kataClient: p.kataClientForPR(ctx, ghRepo, repo.RootPath, pr.Author.Login),
 		})
 	if err != nil {
 		return err
@@ -944,7 +948,6 @@ type buildPanelOptsInput struct {
 	prDiscussionContext string
 	members             []config.ResolvedMember
 	synth               config.SynthesisSpec
-	kataClient          kata.Client // nil when the PR author is not trusted to steer kata context
 }
 
 // buildPanelOpts builds the member and synthesis EnqueueOpts for a CI panel run.
@@ -961,7 +964,7 @@ func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) (
 	for i, m := range in.members {
 		storedPrompt, err := p.callBuildReviewPrompt(
 			ctx, in.repo.RootPath, in.gitRef, in.repo.ID, in.cfg.ReviewContextCount,
-			m.Agent, m.ReviewType, reviewMinSeverity, in.prDiscussionContext, in.kataClient, in.repoCfg, in.cfg,
+			m.Agent, m.ReviewType, reviewMinSeverity, in.prDiscussionContext, in.cfg,
 		)
 		if err != nil {
 			// A canceled poller (Stop or shutdown) must abort the whole run
@@ -2724,11 +2727,11 @@ func (p *CIPoller) callMergeBase(repoPath, baseRef, headRef string) (string, err
 	return gitpkg.GetMergeBase(repoPath, baseRef, headRef)
 }
 
-func (p *CIPoller) callBuildReviewPrompt(ctx context.Context, repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, minSeverity, additionalContext string, kataClient kata.Client, repoCfg *config.RepoConfig, cfg *config.Config) (string, error) {
+func (p *CIPoller) callBuildReviewPrompt(ctx context.Context, repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, minSeverity, additionalContext string, cfg *config.Config) (string, error) {
 	if p.buildReviewPromptFn != nil {
-		return p.buildReviewPromptFn(ctx, repoPath, gitRef, repoID, contextCount, agentName, reviewType, minSeverity, additionalContext, kataClient, repoCfg, cfg)
+		return p.buildReviewPromptFn(ctx, repoPath, gitRef, repoID, contextCount, agentName, reviewType, minSeverity, additionalContext, cfg)
 	}
-	builder := prompt.NewBuilderWithConfig(p.db, cfg).WithContext(ctx).ForRepo(repoPath, repoID).WithKataClient(kataClient).WithRepoConfig(repoCfg)
+	builder := prompt.NewBuilderWithConfig(p.db, cfg).WithContext(ctx).ForRepo(repoPath, repoID)
 	return builder.BuildWithAdditionalContextAndDiffFile(
 		gitRef,
 		contextCount,
@@ -2738,38 +2741,6 @@ func (p *CIPoller) callBuildReviewPrompt(ctx context.Context, repoPath, gitRef s
 		additionalContext,
 		prompt.DiffFilePathPlaceholder,
 	)
-}
-
-// kataClientFor returns the kata client for prompt building, honoring the
-// newKataClient test seam.
-func (p *CIPoller) kataClientFor(repoPath string) kata.Client {
-	if p.newKataClient != nil {
-		return p.newKataClient(repoPath)
-	}
-	return kata.NewCLIClient(repoPath)
-}
-
-// kataClientForPR returns a kata client for CI prompt prebuilds only when the
-// PR author is a trusted collaborator (maintain/admin). Commit messages select
-// which kata issues current mode loads, and member output can surface issue
-// content in publicly posted PR comments, so fork authors must not steer kata
-// resolution. Fails closed: lookup errors or an unknown author skip kata
-// context for this run.
-func (p *CIPoller) kataClientForPR(ctx context.Context, ghRepo, repoPath, authorLogin string) kata.Client {
-	login := strings.ToLower(strings.TrimSpace(authorLogin))
-	if login == "" {
-		return nil
-	}
-	trusted, err := p.callListTrustedActors(ctx, ghRepo)
-	if err != nil {
-		log.Printf("CI poller: skipping kata context for %s (author %s): trusted actor lookup failed: %v",
-			ghRepo, authorLogin, err)
-		return nil
-	}
-	if _, ok := trusted[login]; !ok {
-		return nil
-	}
-	return p.kataClientFor(repoPath)
 }
 
 func (p *CIPoller) callPostPRComment(ghRepo string, prNumber int, body string) error {
