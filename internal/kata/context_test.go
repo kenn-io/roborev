@@ -130,25 +130,26 @@ func TestResolveNilClient(t *testing.T) {
 
 func TestResolveContextPropagatesCancellation(t *testing.T) {
 	tests := []struct {
-		name string
-		fake *katatest.FakeClient
-		mode string
+		name    string
+		fake    *katatest.FakeClient
+		mode    string
+		wantErr error
 	}{
-		{"binding canceled", &katatest.FakeClient{BindingErr: fmt.Errorf("kata: %w", context.Canceled)}, "open"},
+		{"binding canceled", &katatest.FakeClient{BindingErr: fmt.Errorf("kata: %w", context.Canceled)}, "open", context.Canceled},
 		{"list canceled", &katatest.FakeClient{
 			BindingResult: kata.Binding{Project: "p"},
 			ListErr:       fmt.Errorf("kata list: %w", context.Canceled),
-		}, "open"},
+		}, "open", context.Canceled},
 		{"show deadline exceeded", &katatest.FakeClient{
 			BindingResult: kata.Binding{Project: "p"},
 			ShowErr:       map[string]error{"abc4": fmt.Errorf("kata show: %w", context.DeadlineExceeded)},
-		}, "current"},
+		}, "current", context.DeadlineExceeded},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			_, err := kata.ResolveContext(context.Background(), tt.fake, tt.mode, []string{"kata#abc4"})
-			require.Error(t, err, "cancellation must propagate, not degrade to an empty result")
-			assert.True(t, errors.Is(err, context.Canceled) || errors.Is(err, context.DeadlineExceeded))
+			require.ErrorIs(t, err, tt.wantErr,
+				"cancellation must propagate with its original kind, not degrade to an empty result")
 		})
 	}
 }
