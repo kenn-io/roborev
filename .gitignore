@@ -33,6 +33,7 @@ __pycache__/
 .roborev.toml
 
 .gocache
+.golangci-lint-cache/
 .cache
 .gomodcache/
 .gopath/

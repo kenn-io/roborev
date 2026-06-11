@@ -15,6 +15,15 @@ ACP_TEST_MODEL ?=
 # A mismatched version can silently apply different formatting/fixes.
 GOLANGCI_LINT_VERSION := 2.12.2
 
+# Keep the golangci-lint cache per-checkout. The default user-global cache
+# stores raw linter findings keyed by package content with absolute file
+# paths from whichever checkout computed them. Post-processors (nolint,
+# generated-file exclusion) re-read files at those paths on every run; if
+# another worktree with identical content populated the cache and was later
+# deleted, those reads fail and suppressed findings leak through as errors
+# (golangci-lint #3502). A per-checkout cache dies with its checkout.
+export GOLANGCI_LINT_CACHE := $(CURDIR)/.golangci-lint-cache
+
 .PHONY: build install clean test test-git-isolation test-integration test-acp-integration test-acp-integration-codex test-acp-integration-claude test-acp-integration-gemini test-postgres test-all postgres-up postgres-down test-postgres-ci api-generate lint lint-ci check-golangci-lint print-golangci-lint-version check-renovate-config install-hooks
 
 build:
