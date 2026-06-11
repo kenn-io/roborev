@@ -937,6 +937,11 @@ func GetDirtyDiff(
 	lsArgs := []string{"ls-files", "--others", "--exclude-standard", "--"}
 	lsArgs = append(lsArgs, ".")
 	lsArgs = append(lsArgs, excludedPathPatterns...)
+	// Suppress a developer's UNTRACKED local kata override from dirty
+	// reviews. A tracked .kata.local.toml is deliberately not excluded
+	// anywhere (it steers kata binding resolution, so committing or
+	// modifying it must stay visible to review).
+	lsArgs = append(lsArgs, ":(exclude,glob)**/.kata.local.toml")
 	lsArgs = append(lsArgs, extra...)
 	cmd = exec.Command("git", lsArgs...)
 	cmd.Dir = repoPath
@@ -1038,8 +1043,6 @@ var excludedPathPatterns = []string{
 	// Nix
 	":(exclude,glob)**/flake.lock",
 	":(exclude,glob)**/.beads/**",
-	// kata local (uncommitted) overrides; the committed .kata.toml binding stays reviewable
-	":(exclude,glob)**/.kata.local.toml",
 	":(exclude,glob)**/.gocache/**",
 	":(exclude,glob)**/.cache/**",
 }

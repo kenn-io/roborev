@@ -1137,10 +1137,11 @@ func TestGetDiffExcludesGeneratedFiles(t *testing.T) {
 		t.Helper()
 		require.Contains(t, diff, "keep.txt", "expected generated files filter to retain keep.txt")
 		require.Contains(t, diff, ".kata.toml", "expected committed kata binding to remain reviewable")
+		require.Contains(t, diff, ".kata.local.toml",
+			"a committed .kata.local.toml steers kata binding resolution and must stay reviewable")
 		require.NotContains(t, diff, ".beads/", "expected generated files filter to exclude .beads files")
 		require.NotContains(t, diff, ".gocache/", "expected generated files filter to exclude .gocache files")
 		require.NotContains(t, diff, ".cache/", "expected generated files filter to exclude .cache files")
-		require.NotContains(t, diff, ".kata.local.toml", "expected .kata.local.toml to be excluded")
 	}
 
 	t.Run("GetDiff", func(t *testing.T) {
@@ -2395,4 +2396,31 @@ func TestCtxVariantsHonorCancellation(t *testing.T) {
 			assert.Error(t, tt.call(), "canceled context must abort the git call")
 		})
 	}
+}
+
+func TestGetDirtyDiffKataLocalToml(t *testing.T) {
+	t.Run("untracked local override is suppressed", func(t *testing.T) {
+		repo := NewTestRepoWithCommit(t)
+		repo.WriteFile(".kata.local.toml", "[project]\nname = \"local\"\n")
+		repo.WriteFile("dirty.txt", "dirty\n")
+
+		diff, err := GetDirtyDiff(repo.Dir)
+		require.NoError(t, err)
+		assert.Contains(t, diff, "dirty.txt")
+		assert.NotContains(t, diff, ".kata.local.toml",
+			"an untracked local kata override must not leak into dirty review prompts")
+	})
+
+	t.Run("tracked local override modifications stay visible", func(t *testing.T) {
+		repo := NewTestRepoWithCommit(t)
+		repo.WriteFile(".kata.local.toml", "[project]\nname = \"committed\"\n")
+		repo.CommitAll("track kata local override")
+		repo.WriteFile(".kata.local.toml", "[project]\nname = \"steered\"\n")
+
+		diff, err := GetDirtyDiff(repo.Dir)
+		require.NoError(t, err)
+		assert.Contains(t, diff, ".kata.local.toml",
+			"modifying a tracked .kata.local.toml must stay visible to dirty reviews")
+		assert.Contains(t, diff, "steered")
+	})
 }
