@@ -3907,7 +3907,30 @@ func TestBuildPanelOpts_RecordsPRBranchOnJobs(t *testing.T) {
 		"CI synthesis job must not set Branch (it would leak into branch-scoped local flows)")
 }
 
+// installFakeKata copies the test binary to a temp dir as `kata` and points
+// PATH and ROBOREV_TEST_FAKE_KATA at it, so any kata CLI invocation
+// deterministically returns an open issue (see TestMain) instead of depending
+// on whether the machine has kata installed.
+func installFakeKata(t *testing.T) {
+	t.Helper()
+	self, err := os.Executable()
+	require.NoError(t, err)
+	data, err := os.ReadFile(self)
+	require.NoError(t, err)
+	dir := t.TempDir()
+	name := "kata"
+	if runtime.GOOS == "windows" {
+		name = "kata.exe"
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(dir, name), data, 0o755))
+	t.Setenv("ROBOREV_TEST_FAKE_KATA", "1")
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
 func TestCIPromptPrebuildNeverIncludesKataContext(t *testing.T) {
+	// A fake kata on PATH would serve an open issue, so this test fails if
+	// CI prompt building ever reattaches a real kata client.
+	installFakeKata(t)
 	repo := testutil.NewTestRepoWithCommit(t)
 	// Even a checkout and global config that both enable kata context must
 	// not surface it: CI prompts carry no kata client because whoever
@@ -3927,6 +3950,8 @@ func TestCIPromptPrebuildNeverIncludesKataContext(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotContains(t, out, "Task Context (kata)",
 		"CI prompt prebuilds must never include kata task-ledger content")
+	assert.NotContains(t, out, "Secret kata body.",
+		"fake kata output must never reach the prompt")
 }
 
 func TestBuildPanelOptsAbortsOnCanceledPrebuild(t *testing.T) {
