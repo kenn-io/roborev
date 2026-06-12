@@ -139,6 +139,191 @@ func TestUpdaterCheckForUpdateUsesKitGitHubAPIReleaseDiscovery(t *testing.T) {
 	assert.False(t, info.IsDevBuild)
 }
 
+func TestUpdaterCheckForUpdateFallsBackToReleasePageOnAPIError(t *testing.T) {
+	const checksum = "abc123def456789012345678901234567890123456789012345678901234abcd"
+	const assetName = "roborev_1.3.0_darwin_arm64.tar.gz"
+
+	apiBaseURL := "https://api.example.test"
+	ghBaseURL := "https://github.example.test"
+	releaseAPIURL := apiBaseURL + "/repos/roborev-dev/roborev/releases/latest"
+	latestPageURL := ghBaseURL + "/roborev-dev/roborev/releases/latest"
+	renamedPageURL := ghBaseURL + "/kenn-io/roborev/releases/latest"
+	tagPageURL := ghBaseURL + "/kenn-io/roborev/releases/tag/v1.3.0"
+	downloadBase := ghBaseURL + "/roborev-dev/roborev/releases/download/v1.3.0"
+	seen := []string{}
+
+	t.Setenv("GH_TOKEN", "")
+	t.Setenv("GITHUB_TOKEN", "")
+	updater := NewUpdater(Deps{
+		Client: &http.Client{
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				seen = append(seen, req.Method+" "+req.URL.String())
+				switch req.Method + " " + req.URL.String() {
+				case "GET " + releaseAPIURL:
+					return newHTTPResponse(http.StatusForbidden, `{"message":"API rate limit exceeded"}`), nil
+				case "GET " + latestPageURL:
+					return newRedirectResponse(http.StatusMovedPermanently, renamedPageURL), nil
+				case "GET " + renamedPageURL:
+					return newRedirectResponse(http.StatusFound, tagPageURL), nil
+				case "GET " + tagPageURL:
+					return newHTTPResponse(http.StatusOK, "release page"), nil
+				case "GET " + downloadBase + "/SHA256SUMS":
+					return newHTTPResponse(http.StatusOK, fmt.Sprintf("%s  %s\n", checksum, assetName)), nil
+				case "HEAD " + downloadBase + "/" + assetName:
+					resp := newHTTPResponse(http.StatusOK, "")
+					resp.ContentLength = 42
+					return resp, nil
+				default:
+					return nil, fmt.Errorf("unexpected request to %s", req.URL.String())
+				}
+			}),
+		},
+		Now:              func() time.Time { return time.Unix(0, 0) },
+		Version:          "v1.2.0",
+		GOOS:             "darwin",
+		GOARCH:           "arm64",
+		CacheDir:         t.TempDir,
+		GitHubAPIBaseURL: apiBaseURL,
+		GitHubBaseURL:    ghBaseURL,
+	})
+
+	info, err := updater.CheckForUpdate(true)
+	require.NoError(t, err)
+	require.NotNil(t, info)
+	assert.Equal(t, "v1.3.0", info.LatestVersion)
+	assert.Equal(t, "v1.2.0", info.CurrentVersion)
+	assert.Equal(t, assetName, info.AssetName)
+	assert.Equal(t, downloadBase+"/"+assetName, info.DownloadURL)
+	assert.Equal(t, checksum, info.Checksum)
+	assert.Equal(t, int64(42), info.Size)
+	assert.Equal(t, "roborev-dev", info.Owner)
+	assert.Equal(t, "roborev", info.Repo)
+	assert.False(t, info.IsDevBuild)
+	assert.Contains(t, seen, "GET "+releaseAPIURL)
+}
+
+func TestUpdaterCheckForUpdateFallbackReturnsNilWhenUpToDate(t *testing.T) {
+	apiBaseURL := "https://api.example.test"
+	ghBaseURL := "https://github.example.test"
+	tagPageURL := ghBaseURL + "/roborev-dev/roborev/releases/tag/v1.2.0"
+
+	t.Setenv("GH_TOKEN", "")
+	t.Setenv("GITHUB_TOKEN", "")
+	updater := NewUpdater(Deps{
+		Client: &http.Client{
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				switch req.URL.String() {
+				case apiBaseURL + "/repos/roborev-dev/roborev/releases/latest":
+					return newHTTPResponse(http.StatusForbidden, "rate limited"), nil
+				case ghBaseURL + "/roborev-dev/roborev/releases/latest":
+					return newRedirectResponse(http.StatusFound, tagPageURL), nil
+				case tagPageURL:
+					return newHTTPResponse(http.StatusOK, "release page"), nil
+				default:
+					return nil, fmt.Errorf("unexpected request to %s", req.URL.String())
+				}
+			}),
+		},
+		Now:              func() time.Time { return time.Unix(0, 0) },
+		Version:          "v1.2.0",
+		GOOS:             "darwin",
+		GOARCH:           "arm64",
+		CacheDir:         t.TempDir,
+		GitHubAPIBaseURL: apiBaseURL,
+		GitHubBaseURL:    ghBaseURL,
+	})
+
+	info, err := updater.CheckForUpdate(true)
+	require.NoError(t, err)
+	assert.Nil(t, info)
+}
+
+func TestUpdaterCheckForUpdateReturnsBothErrorsWhenFallbackFails(t *testing.T) {
+	apiBaseURL := "https://api.example.test"
+	ghBaseURL := "https://github.example.test"
+
+	t.Setenv("GH_TOKEN", "")
+	t.Setenv("GITHUB_TOKEN", "")
+	updater := NewUpdater(Deps{
+		Client: &http.Client{
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				switch req.URL.String() {
+				case apiBaseURL + "/repos/roborev-dev/roborev/releases/latest":
+					return newHTTPResponse(http.StatusForbidden, "rate limited"), nil
+				case ghBaseURL + "/roborev-dev/roborev/releases/latest":
+					return newHTTPResponse(http.StatusNotFound, "not found"), nil
+				default:
+					return nil, fmt.Errorf("unexpected request to %s", req.URL.String())
+				}
+			}),
+		},
+		Now:              func() time.Time { return time.Unix(0, 0) },
+		Version:          "v1.2.0",
+		GOOS:             "darwin",
+		GOARCH:           "arm64",
+		CacheDir:         t.TempDir,
+		GitHubAPIBaseURL: apiBaseURL,
+		GitHubBaseURL:    ghBaseURL,
+	})
+
+	info, err := updater.CheckForUpdate(true)
+	require.Error(t, err)
+	assert.Nil(t, info)
+	assert.Contains(t, err.Error(), "403")
+	assert.Contains(t, err.Error(), "github.com fallback also failed")
+	assert.Contains(t, err.Error(), "404")
+}
+
+func TestUpdaterCheckForUpdateSendsTokenToAPIHostOnly(t *testing.T) {
+	const releaseTag = "v1.3.0"
+	const assetName = "roborev_1.3.0_darwin_arm64.tar.gz"
+	const checksum = "abc123def456789012345678901234567890123456789012345678901234abcd"
+
+	apiBaseURL := "https://api.example.test"
+	releaseURL := apiBaseURL + "/repos/roborev-dev/roborev/releases/latest"
+	checksumsURL := "https://downloads.example.test/SHA256SUMS"
+	downloadURL := "https://downloads.example.test/" + assetName
+
+	t.Setenv("GITHUB_TOKEN", "fallback-token")
+	t.Setenv("GH_TOKEN", "primary-token")
+	updater := NewUpdater(Deps{
+		Client: &http.Client{
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				switch req.URL.String() {
+				case releaseURL:
+					assert.Equal(t, "Bearer primary-token", req.Header.Get("Authorization"))
+					body := fmt.Sprintf(`{
+						"tag_name": %q,
+						"body": "",
+						"assets": [
+							{"name": %q, "size": 42, "browser_download_url": %q},
+							{"name": "SHA256SUMS", "size": 128, "browser_download_url": %q}
+						]
+					}`, releaseTag, assetName, downloadURL, checksumsURL)
+					return newHTTPResponse(http.StatusOK, body), nil
+				case checksumsURL:
+					assert.Empty(t, req.Header.Get("Authorization"))
+					return newHTTPResponse(http.StatusOK, fmt.Sprintf("%s  %s\n", checksum, assetName)), nil
+				default:
+					return nil, fmt.Errorf("unexpected request to %s", req.URL.String())
+				}
+			}),
+		},
+		Now:              func() time.Time { return time.Unix(0, 0) },
+		Version:          "v1.2.0",
+		GOOS:             "darwin",
+		GOARCH:           "arm64",
+		CacheDir:         t.TempDir,
+		GitHubAPIBaseURL: apiBaseURL,
+	})
+
+	info, err := updater.CheckForUpdate(true)
+	require.NoError(t, err)
+	require.NotNil(t, info)
+	assert.Equal(t, releaseTag, info.LatestVersion)
+	assert.Equal(t, checksum, info.Checksum)
+}
+
 func TestUpdaterPerformUpdateInstallsBinary(t *testing.T) {
 	binaryName := "roborev"
 	if runtime.GOOS == "windows" {
@@ -320,6 +505,12 @@ func newHTTPResponse(statusCode int, body string) *http.Response {
 		Body:       io.NopCloser(strings.NewReader(body)),
 		Header:     make(http.Header),
 	}
+}
+
+func newRedirectResponse(statusCode int, location string) *http.Response {
+	resp := newHTTPResponse(statusCode, "")
+	resp.Header.Set("Location", location)
+	return resp
 }
 
 func newBinaryResponse(statusCode int, body []byte) *http.Response {

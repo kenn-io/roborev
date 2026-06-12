@@ -365,9 +365,10 @@ launchd or systemd).`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			fmt.Println("Checking for updates...")
 
+			// kit already wraps check errors with "check for updates:".
 			info, err := update.CheckForUpdate(true) // Force check, ignore cache
 			if err != nil {
-				return fmt.Errorf("check for updates: %w", err)
+				return err
 			}
 
 			if info == nil {
