@@ -26,3 +26,11 @@ language = "system"
 entry = "make check-renovate-config"
 files = "^renovate\\.json$"
 pass_filenames = false
+
+[[repos.hooks]]
+id = "actionlint"
+name = "actionlint"
+language = "system"
+entry = "make check-actions"
+files = "^\\.github/workflows/.*\\.ya?ml$"
+pass_filenames = false

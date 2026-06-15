@@ -29,19 +29,35 @@ jobs:
 
       - name: Test with race detection (Linux/macOS)
         if: matrix.os != 'windows-latest'
-        run: go test -race -shuffle=on -tags integration ./...
+        run: |
+          set -o pipefail
+          mkdir -p test-results
+          go test -json -race -shuffle=on -tags integration ./... 2>&1 |
+            tee "test-results/${{ matrix.os }}-test.jsonl"
 
       - name: Test (Windows)
         if: matrix.os == 'windows-latest'
         shell: pwsh
         run: |
+          New-Item -ItemType Directory -Force -Path test-results | Out-Null
           # go test on Windows can exit 1 due to temp .exe cleanup
           # ("go: remove ...\.exe: Access is denied") even when all
           # tests pass. Only suppress that specific pattern.
-          go test -timeout 30m -shuffle=on -tags integration ./... 2>&1 | Tee-Object -Variable testOut
+          go test -json -timeout 30m -shuffle=on -tags integration ./... 2>&1 |
+            Tee-Object -FilePath "test-results/${{ matrix.os }}-test.jsonl" |
+            ForEach-Object {
+              $line = $_
+              $event = $line | ConvertFrom-Json -ErrorAction SilentlyContinue
+              if ($event -and $event.Output) {
+                Write-Host -NoNewline $event.Output
+              } else {
+                Write-Host $line
+              }
+              $line
+            } | Tee-Object -Variable testOut | Out-Null
           $exitCode = $LASTEXITCODE
           if ($exitCode -ne 0) {
-            $failed = $testOut | Select-String "^FAIL\s"
+            $failed = $testOut | Select-String '"Action":"fail"'
             if ($failed) {
               Write-Host "Tests failed:"
               Write-Host ($failed -join "`n")
@@ -55,6 +71,14 @@ jobs:
             Write-Host "All tests passed (ignoring temp .exe cleanup error)"
             exit 0
           }
+
+      - name: Upload test JSON
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: ${{ matrix.os }}-test-json
+          path: test-results/${{ matrix.os }}-test.jsonl
+          if-no-files-found: ignore
 
       - name: Build with CGO disabled
         run: go build ./...

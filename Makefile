@@ -24,7 +24,7 @@ GOLANGCI_LINT_VERSION := 2.12.2
 # (golangci-lint #3502). A per-checkout cache dies with its checkout.
 export GOLANGCI_LINT_CACHE := $(CURDIR)/.golangci-lint-cache
 
-.PHONY: build install clean test test-git-isolation test-integration test-acp-integration test-acp-integration-codex test-acp-integration-claude test-acp-integration-gemini test-postgres test-all postgres-up postgres-down test-postgres-ci api-generate lint lint-ci check-golangci-lint print-golangci-lint-version check-renovate-config install-hooks
+.PHONY: build install clean test test-git-isolation test-integration test-acp-integration test-acp-integration-codex test-acp-integration-claude test-acp-integration-gemini test-postgres test-all postgres-up postgres-down test-postgres-ci api-generate lint lint-ci check-golangci-lint print-golangci-lint-version check-actions check-renovate-config install-hooks
 
 build:
 	@mkdir -p bin
@@ -181,6 +181,14 @@ check-renovate-config:
 		exit 1; \
 	fi
 	renovate-config-validator renovate.json
+
+# Validate GitHub Actions workflows.
+check-actions:
+	@if ! command -v actionlint >/dev/null 2>&1; then \
+		echo "actionlint not found. Install with: go install github.com/rhysd/actionlint/cmd/actionlint@latest" >&2; \
+		exit 1; \
+	fi
+	actionlint
 
 # Install pre-commit hooks via prek.
 install-hooks:
