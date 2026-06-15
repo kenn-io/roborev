@@ -45,16 +45,7 @@ jobs:
           # tests pass. Only suppress that specific pattern.
           go test -json -timeout 30m -shuffle=on -tags integration ./... 2>&1 |
             Tee-Object -FilePath "test-results/${{ matrix.os }}-test.jsonl" |
-            ForEach-Object {
-              $line = $_
-              $event = $line | ConvertFrom-Json -ErrorAction SilentlyContinue
-              if ($event -and $event.Output) {
-                Write-Host -NoNewline $event.Output
-              } else {
-                Write-Host $line
-              }
-              $line
-            } | Tee-Object -Variable testOut | Out-Null
+            Tee-Object -Variable testOut
           $exitCode = $LASTEXITCODE
           if ($exitCode -ne 0) {
             $failed = $testOut | Select-String '"Action":"fail"'
