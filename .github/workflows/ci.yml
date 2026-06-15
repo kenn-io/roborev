@@ -43,18 +43,20 @@ jobs:
           # go test on Windows can exit 1 due to temp .exe cleanup
           # ("go: remove ...\.exe: Access is denied") even when all
           # tests pass. Only suppress that specific pattern.
-          go test -json -timeout 30m -shuffle=on -tags integration ./... 2>&1 |
-            Tee-Object -FilePath "test-results/${{ matrix.os }}-test.jsonl" |
-            Tee-Object -Variable testOut
+          $testResultPath = "test-results/${{ matrix.os }}-test.jsonl"
+          go test -json -timeout 30m -shuffle=on -tags integration ./... > $testResultPath 2>&1
           $exitCode = $LASTEXITCODE
           if ($exitCode -ne 0) {
-            $failed = $testOut | Select-String '"Action":"fail"'
+            Write-Host "go test failed; recent output:"
+            Get-Content -Path $testResultPath -Tail 200
+
+            $failed = Select-String -Path $testResultPath -Pattern '"Action":"fail"'
             if ($failed) {
               Write-Host "Tests failed:"
-              Write-Host ($failed -join "`n")
+              $failed | Select-Object -First 50 | ForEach-Object { Write-Host $_.Line }
               exit 1
             }
-            $cleanup = $testOut | Select-String "go: remove .+\.exe: Access is denied"
+            $cleanup = Select-String -Path $testResultPath -Pattern "go: remove .+\.exe: Access is denied"
             if (-not $cleanup) {
               Write-Host "go test failed with unknown error"
               exit $exitCode
