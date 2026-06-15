@@ -1016,15 +1016,16 @@ func TestControlSocketRoundtrip(t *testing.T) {
 	runDone := make(chan struct{})
 	go func() { _, _ = p.Run(); close(runDone) }()
 	t.Cleanup(func() {
-		// Close the write end first so bubbletea's readLoop
-		// sees EOF and exits before Kill's shutdown closes the
-		// cancel reader, avoiding a data race on the fd.
+		// Close the write end first so bubbletea's readLoop sees EOF,
+		// then Kill and wait for Run to return.
 		w.Close()
 		p.Kill()
 		<-runDone
-		// Bubbletea does not close custom readers passed via
-		// WithInput, so close the read end after Run exits.
-		r.Close()
+		// Deliberately do not close the read end. Bubbletea's input
+		// read goroutine (via cancelreader) may still call os.File.Fd()
+		// on r after Run returns, and on macOS the kqueue cancelreader
+		// races with os.File.Close(). The OS reclaims the fd at process
+		// exit; leaking it for this short-lived test is harmless.
 	})
 
 	// Give the program time to complete Init() and reach its
