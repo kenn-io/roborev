@@ -127,7 +127,7 @@ func daemonRunCmd() *cobra.Command {
 			// the message-pattern regexes would otherwise surface only
 			// at dispatch time as a "heuristic error" skipped row,
 			// silently suppressing every automatic design review.
-			if cfg.AutoDesignReview.Enabled {
+			if cfg.AutoDesignReview.Enabled || cfg.AutoDesignReview.HookEnabled {
 				globalHeuristics := config.ResolveGlobalAutoDesignHeuristics(cfg)
 				if err := globalHeuristics.Validate(); err != nil {
 					return fmt.Errorf("invalid [auto_design_review] config in %s: %w", configPath, err)
