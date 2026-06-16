@@ -57,6 +57,33 @@ func TestAutoDesignEnabledFromConfigTriState(t *testing.T) {
 	assert.False(config.AutoDesignEnabledFromConfig(nil, nil))
 }
 
+func TestAutoDesignHookEnabledFromConfigTriState(t *testing.T) {
+	assert := assert.New(t)
+	on, off := true, false
+
+	assert.True(config.AutoDesignHookEnabledFromConfig(
+		&config.RepoConfig{AutoDesignReview: config.AutoDesignReviewRepoConfig{HookEnabled: &on}},
+		&config.Config{}))
+	assert.False(config.AutoDesignHookEnabledFromConfig(
+		&config.RepoConfig{AutoDesignReview: config.AutoDesignReviewRepoConfig{HookEnabled: &off}},
+		&config.Config{AutoDesignReview: config.AutoDesignReviewConfig{HookEnabled: true}}))
+	assert.True(config.AutoDesignHookEnabledFromConfig(
+		&config.RepoConfig{},
+		&config.Config{AutoDesignReview: config.AutoDesignReviewConfig{HookEnabled: true}}))
+	assert.False(config.AutoDesignHookEnabledFromConfig(&config.RepoConfig{}, &config.Config{}))
+	assert.True(config.AutoDesignHookEnabledFromConfig(
+		nil, &config.Config{AutoDesignReview: config.AutoDesignReviewConfig{HookEnabled: true}}))
+	assert.False(config.AutoDesignHookEnabledFromConfig(nil, nil))
+}
+
+func TestResolveAutoDesignHookEnabledDelegates(t *testing.T) {
+	assert := assert.New(t)
+	repoDir := t.TempDir()
+	assert.True(config.ResolveAutoDesignHookEnabled(repoDir,
+		&config.Config{AutoDesignReview: config.AutoDesignReviewConfig{HookEnabled: true}}))
+	assert.False(config.ResolveAutoDesignHookEnabled(repoDir, &config.Config{}))
+}
+
 func TestAutoDesignHeuristicsFromConfigUsesProvidedConfig(t *testing.T) {
 	assert := assert.New(t)
 	// Repo overrides one scalar, global overrides another; defaults fill the rest.

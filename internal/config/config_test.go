@@ -3746,6 +3746,7 @@ func TestAutoDesignReviewConfig_Load(t *testing.T) {
 	err := os.WriteFile(cfgFile, []byte(`
 [auto_design_review]
 enabled = true
+hook_enabled = true
 min_diff_lines = 20
 large_diff_lines = 400
 large_file_count = 8
@@ -3762,6 +3763,7 @@ classifier_max_prompt_size = 32768
 	require.NoError(t, err)
 	assert := assert.New(t)
 	assert.True(cfg.AutoDesignReview.Enabled)
+	assert.True(cfg.AutoDesignReview.HookEnabled)
 	assert.Equal(20, cfg.AutoDesignReview.MinDiffLines)
 	assert.Equal(400, cfg.AutoDesignReview.LargeDiffLines)
 	assert.Equal(8, cfg.AutoDesignReview.LargeFileCount)

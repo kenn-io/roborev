@@ -12,7 +12,8 @@ import (
 // decision. Opt-in; when Enabled is false (default), the decision is never
 // consulted and behavior matches pre-auto-design-review.
 type AutoDesignReviewConfig struct {
-	Enabled bool `toml:"enabled" comment:"Enable the automatic design review decider. Off by default."`
+	Enabled     bool `toml:"enabled" comment:"Enable the automatic design review decider. Off by default."`
+	HookEnabled bool `toml:"hook_enabled" comment:"Enable the automatic design review decider only for post-commit hook reviews. Off by default."`
 
 	MinDiffLines   int `toml:"min_diff_lines" comment:"Diffs below this line count skip design review automatically."`
 	LargeDiffLines int `toml:"large_diff_lines" comment:"Diffs at or above this line count trigger a design review automatically."`
@@ -32,7 +33,8 @@ type AutoDesignReviewConfig struct {
 // global struct except Enabled is *bool, distinguishing "not set" from
 // "explicitly false" so a repo can disable a globally-enabled default.
 type AutoDesignReviewRepoConfig struct {
-	Enabled *bool `toml:"enabled" comment:"Override the global auto design review setting for this repo. Omit to inherit."`
+	Enabled     *bool `toml:"enabled" comment:"Override the global auto design review setting for this repo. Omit to inherit."`
+	HookEnabled *bool `toml:"hook_enabled" comment:"Override post-commit-hook-only automatic design review for this repo. Omit to inherit."`
 
 	MinDiffLines   int `toml:"min_diff_lines"`
 	LargeDiffLines int `toml:"large_diff_lines"`
@@ -117,6 +119,28 @@ func AutoDesignEnabledFromConfig(repoCfg *RepoConfig, globalCfg *Config) bool {
 		return *repoCfg.AutoDesignReview.Enabled
 	}
 	if globalCfg != nil && globalCfg.AutoDesignReview.Enabled {
+		return true
+	}
+	return false
+}
+
+// ResolveAutoDesignHookEnabled returns true if hook-only auto design review is
+// enabled for the given repo path. Tri-state behavior matches
+// ResolveAutoDesignEnabled, but this setting is consulted only for post-commit
+// hook reviews.
+func ResolveAutoDesignHookEnabled(repoPath string, globalCfg *Config) bool {
+	repoCfg, _ := LoadRepoConfig(repoPath)
+	return AutoDesignHookEnabledFromConfig(repoCfg, globalCfg)
+}
+
+// AutoDesignHookEnabledFromConfig resolves hook-only auto-design routing from
+// the passed configs without reading the working tree. A per-repo explicit
+// value overrides global, and unset falls through to the global value.
+func AutoDesignHookEnabledFromConfig(repoCfg *RepoConfig, globalCfg *Config) bool {
+	if repoCfg != nil && repoCfg.AutoDesignReview.HookEnabled != nil {
+		return *repoCfg.AutoDesignReview.HookEnabled
+	}
+	if globalCfg != nil && globalCfg.AutoDesignReview.HookEnabled {
 		return true
 	}
 	return false

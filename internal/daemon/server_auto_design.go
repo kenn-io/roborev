@@ -28,6 +28,8 @@ type AutoDesignMetrics struct {
 // autoDesignMetrics is the process-global instance.
 var autoDesignMetrics = &AutoDesignMetrics{}
 
+const autoDesignHookSource = "post_commit"
+
 // RecordHeuristic bumps either TriggeredHeuristic or SkippedHeuristic.
 func (m *AutoDesignMetrics) RecordHeuristic(run bool) {
 	if run {
@@ -71,13 +73,14 @@ func AutoDesignMetricsSnapshot() storage.AutoDesignStatus {
 // registered repo). Returns nil otherwise so the JSON omits the field.
 func (s *Server) autoDesignStatusForResponse() *storage.AutoDesignStatus {
 	cfg, _ := config.LoadGlobal()
-	enabled := cfg != nil && cfg.AutoDesignReview.Enabled
+	enabled := cfg != nil && (cfg.AutoDesignReview.Enabled || cfg.AutoDesignReview.HookEnabled)
 
 	if !enabled {
 		repos, err := s.db.ListRepos()
 		if err == nil {
 			for _, r := range repos {
-				if config.ResolveAutoDesignEnabled(r.RootPath, cfg) {
+				if config.ResolveAutoDesignEnabled(r.RootPath, cfg) ||
+					config.ResolveAutoDesignHookEnabled(r.RootPath, cfg) {
 					enabled = true
 					break
 				}
@@ -108,7 +111,7 @@ func ResetAutoDesignMetricsForTest() {
 // response.
 func (s *Server) maybeDispatchAutoDesign(ctx context.Context, parent *storage.ReviewJob) error {
 	cfg, _ := config.LoadGlobal()
-	if !config.ResolveAutoDesignEnabled(parent.RepoPath, cfg) {
+	if !autoDesignEnabledForSource(parent.RepoPath, parent.Source, cfg) {
 		return nil
 	}
 
@@ -194,6 +197,13 @@ func (s *Server) maybeDispatchAutoDesign(ctx context.Context, parent *storage.Re
 		log.Printf("auto-design: Classify error, skipping: %v", err)
 		return s.insertSkippedDesign(parent, "auto-design: heuristic error")
 	}
+}
+
+func autoDesignEnabledForSource(repoPath, source string, cfg *config.Config) bool {
+	if config.ResolveAutoDesignEnabled(repoPath, cfg) {
+		return true
+	}
+	return source == autoDesignHookSource && config.ResolveAutoDesignHookEnabled(repoPath, cfg)
 }
 
 func (s *Server) enqueueClassifyJob(parent *storage.ReviewJob) error {
