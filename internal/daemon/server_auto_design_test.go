@@ -193,6 +193,44 @@ func TestMaybeDispatchAutoDesign_HookEnabledRunsForPostCommitSource(t *testing.T
 	assert.Equal(t, storage.JobTypeReview, found.JobType)
 }
 
+func TestPostCommitHookAutoDesignUsesActiveConfig(t *testing.T) {
+	assert := assert.New(t)
+	ResetAutoDesignMetricsForTest()
+	t.Cleanup(ResetAutoDesignMetricsForTest)
+
+	db, tmpDir := testutil.OpenTestDBWithDir(t)
+	configPath := filepath.Join(tmpDir, "custom-config.toml")
+	require.NoError(t, os.WriteFile(configPath, []byte(`
+[auto_design_review]
+hook_enabled = true
+trigger_paths = ["migrations/**"]
+`), 0o644))
+	cfg, err := config.LoadGlobalFrom(configPath)
+	require.NoError(t, err)
+	require.True(t, cfg.AutoDesignReview.HookEnabled)
+
+	srv := NewServer(db, cfg, configPath)
+	t.Cleanup(func() { _ = srv.Close() })
+
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("base.txt", "base", "base")
+	sha := repo.CommitFile("migrations/001.sql", "create table t(id integer);\n", "feat: add migration")
+
+	job := enqueueViaHTTP(t, srv, EnqueueRequest{
+		RepoPath: repo.Path(),
+		GitRef:   sha,
+		Agent:    "test",
+		Source:   "post_commit",
+	})
+	assert.Equal("post_commit", job.Source)
+
+	storedRepo, err := db.GetOrCreateRepo(repo.Path())
+	require.NoError(t, err)
+	assert.Equal(1, autoDesignRowsForSHA(t, db, storedRepo.ID, sha),
+		"hook-only auto-design should use the daemon's active config, not the default global path")
+	assert.EqualValues(1, AutoDesignMetricsSnapshot().TriggeredHeuristic)
+}
+
 func TestAutoDesignMetrics_RecordHeuristic(t *testing.T) {
 	ResetAutoDesignMetricsForTest()
 	t.Cleanup(ResetAutoDesignMetricsForTest)

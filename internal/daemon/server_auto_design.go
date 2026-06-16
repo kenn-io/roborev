@@ -30,6 +30,16 @@ var autoDesignMetrics = &AutoDesignMetrics{}
 
 const autoDesignHookSource = "post_commit"
 
+func (s *Server) autoDesignConfig() *config.Config {
+	if s != nil && s.configWatcher != nil {
+		if cfg := s.configWatcher.Config(); cfg != nil {
+			return cfg
+		}
+	}
+	cfg, _ := config.LoadGlobal()
+	return cfg
+}
+
 // RecordHeuristic bumps either TriggeredHeuristic or SkippedHeuristic.
 func (m *AutoDesignMetrics) RecordHeuristic(run bool) {
 	if run {
@@ -72,7 +82,7 @@ func AutoDesignMetricsSnapshot() storage.AutoDesignStatus {
 // auto-design is effectively enabled (globally, or by at least one
 // registered repo). Returns nil otherwise so the JSON omits the field.
 func (s *Server) autoDesignStatusForResponse() *storage.AutoDesignStatus {
-	cfg, _ := config.LoadGlobal()
+	cfg := s.autoDesignConfig()
 	enabled := cfg != nil && (cfg.AutoDesignReview.Enabled || cfg.AutoDesignReview.HookEnabled)
 
 	if !enabled {
@@ -110,7 +120,7 @@ func ResetAutoDesignMetricsForTest() {
 // Opportunistic: errors are logged but never bubble up to the caller's HTTP
 // response.
 func (s *Server) maybeDispatchAutoDesign(ctx context.Context, parent *storage.ReviewJob) error {
-	cfg, _ := config.LoadGlobal()
+	cfg := s.autoDesignConfig()
 	if !autoDesignEnabledForSource(parent.RepoPath, parent.Source, cfg) {
 		return nil
 	}
@@ -219,7 +229,7 @@ func (s *Server) enqueueClassifyJob(parent *storage.ReviewJob) error {
 }
 
 func (s *Server) enqueueDesignFollowUp(parent *storage.ReviewJob) error {
-	cfg, _ := config.LoadGlobal()
+	cfg := s.autoDesignConfig()
 	designAgent, designModel := resolveDesignAgent(parent.RepoPath, cfg)
 	_, err := s.db.EnqueueAutoDesignJob(storage.EnqueueOpts{
 		RepoID:     parent.RepoID,
