@@ -712,6 +712,41 @@ func TestPostCommitBodyCarriesSource(t *testing.T) {
 	assert.Contains(t, string(body), `"source":"post_commit"`)
 }
 
+func TestPostCommitHookAutoDesignUsesHTTPSource(t *testing.T) {
+	assert := assert.New(t)
+	ResetAutoDesignMetricsForTest()
+	t.Cleanup(ResetAutoDesignMetricsForTest)
+	server, db, _ := newTestServer(t)
+
+	const hookOnlyAutoDesign = `
+[auto_design_review]
+hook_enabled = true
+trigger_paths = ["migrations/**"]
+`
+	repo := testutil.NewGitRepo(t)
+	repo.WriteFile(".roborev.toml", hookOnlyAutoDesign)
+	repo.CommitFile("base.txt", "base", "base")
+	sha := repo.CommitFile("migrations/001.sql", "create table t(id integer);\n", "feat: add migration")
+
+	job := enqueueViaHTTP(t, server, EnqueueRequest{
+		RepoPath: repo.Path(),
+		GitRef:   sha,
+		Agent:    "test",
+		Source:   "post_commit",
+	})
+	assert.Equal("post_commit", job.Source)
+
+	stored, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal("post_commit", stored.Source)
+
+	storedRepo, err := db.GetOrCreateRepo(repo.Path())
+	require.NoError(t, err)
+	assert.Equal(1, autoDesignRowsForSHA(t, db, storedRepo.ID, sha),
+		"hook-only auto-design should see the post_commit source from HTTP enqueue")
+	assert.EqualValues(1, AutoDesignMetricsSnapshot().TriggeredHeuristic)
+}
+
 // TestEnqueueStoredPromptSkipsPanel verifies a stored-prompt job (run/analyze/
 // compact) is never fanned into a review panel, even with default_panel set:
 // the panel synthesis worker assumes member code reviews, not prompt output.

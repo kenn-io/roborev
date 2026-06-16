@@ -37,6 +37,7 @@ type targetDescriptor struct {
 	minSeverity       string
 	worktreePath      string
 	jobType           string // req.JobType for prompt; "" lets EnqueueJob infer dirty/range/review
+	source            string
 	prompt            string
 	promptPrebuilt    bool
 	outputPrefix      string
@@ -55,7 +56,7 @@ func (d targetDescriptor) baseOpts() storage.EnqueueOpts {
 		RepoID: d.repoID, CommitID: d.commitID, GitRef: d.gitRef, Branch: d.branch,
 		PatchID: d.patchID, DiffContent: d.diffContent, DirtyFiles: d.dirtyFiles, MinSeverity: d.minSeverity,
 		WorktreePath: d.worktreePath, JobType: d.jobType, Prompt: d.prompt,
-		PromptPrebuilt: d.promptPrebuilt, OutputPrefix: d.outputPrefix, Label: d.label,
+		Source: d.source, PromptPrebuilt: d.promptPrebuilt, OutputPrefix: d.outputPrefix, Label: d.label,
 		Agentic: d.agentic, RequestedModel: d.requestedModel, RequestedProvider: d.requestedProvider,
 	}
 }
@@ -119,16 +120,22 @@ func (s *Server) buildTargetDescriptor(
 		in.req.CustomPrompt = insightsPrompt
 	}
 
+	var desc targetDescriptor
 	switch classifyTarget(in.req.CustomPrompt, in.gitRef) {
 	case kindPrompt:
-		return s.descriptorForPrompt(in), nil
+		desc = s.descriptorForPrompt(in)
 	case kindDirty:
-		return s.descriptorForDirty(ctx, in)
+		desc, early = s.descriptorForDirty(ctx, in)
 	case kindRange:
-		return s.descriptorForRange(ctx, in)
+		desc, early = s.descriptorForRange(ctx, in)
 	default:
-		return s.descriptorForSingleCommit(ctx, in)
+		desc, early = s.descriptorForSingleCommit(ctx, in)
 	}
+	if early != nil {
+		return targetDescriptor{}, early
+	}
+	desc.source = in.req.Source
+	return desc, nil
 }
 
 // resolveInsightsPrompt builds the insights prompt for insights jobs and returns
