@@ -131,6 +131,14 @@ func cleanupStaleCIWorktrees(ctx context.Context) error {
 // (<parent>/<repo>/roborev-ci-*) and the legacy flat layout
 // (<parent>/roborev-ci-*) that older daemons produced, so a transition
 // across the layout change still cleans up pre-existing worktrees.
+//
+// A top-level roborev-ci-* entry is only treated as a legacy flat worktree
+// when it is an actual linked worktree. A repository whose own basename
+// starts with the worktree prefix produces a repo-named parent that also
+// matches the prefix; classifying that parent as a flat worktree would
+// delete it (and the worktrees nested inside it) wholesale without first
+// closing or pruning them. Such a parent is recursed into like any other
+// repo directory instead.
 func staleCIWorktreeDirs(parentDir string) ([]string, error) {
 	entries, err := os.ReadDir(parentDir)
 	if err != nil {
@@ -141,22 +149,49 @@ func staleCIWorktreeDirs(parentDir string) ([]string, error) {
 		if !entry.IsDir() {
 			continue
 		}
-		if strings.HasPrefix(entry.Name(), ciWorktreePrefix) {
-			dirs = append(dirs, filepath.Join(parentDir, entry.Name()))
+		dirPath := filepath.Join(parentDir, entry.Name())
+		hasPrefix := strings.HasPrefix(entry.Name(), ciWorktreePrefix)
+		// Legacy flat worktree: a real linked worktree directly under parent.
+		if hasPrefix && isLinkedWorktree(dirPath) {
+			dirs = append(dirs, dirPath)
 			continue
 		}
-		repoDir := filepath.Join(parentDir, entry.Name())
-		nested, err := os.ReadDir(repoDir)
-		if err != nil {
+		// Repo-named parent (current layout): collect nested worktrees so each
+		// is closed and pruned individually rather than removed wholesale.
+		if nested := nestedCIWorktreeDirs(dirPath); len(nested) > 0 {
+			dirs = append(dirs, nested...)
 			continue
 		}
-		for _, sub := range nested {
-			if sub.IsDir() && strings.HasPrefix(sub.Name(), ciWorktreePrefix) {
-				dirs = append(dirs, filepath.Join(repoDir, sub.Name()))
-			}
+		// Orphaned flat dir left by an older daemon: remove directly.
+		if hasPrefix {
+			dirs = append(dirs, dirPath)
 		}
 	}
 	return dirs, nil
+}
+
+// nestedCIWorktreeDirs returns the roborev-ci-* worktree directories nested
+// directly beneath repoDir, or nil if repoDir cannot be read or holds none.
+func nestedCIWorktreeDirs(repoDir string) []string {
+	entries, err := os.ReadDir(repoDir)
+	if err != nil {
+		return nil
+	}
+	var dirs []string
+	for _, entry := range entries {
+		if entry.IsDir() && strings.HasPrefix(entry.Name(), ciWorktreePrefix) {
+			dirs = append(dirs, filepath.Join(repoDir, entry.Name()))
+		}
+	}
+	return dirs
+}
+
+// isLinkedWorktree reports whether dir is a git linked worktree, i.e. it
+// contains a .git file pointing at a gitdir rather than being a plain
+// directory such as a repo-named worktree parent.
+func isLinkedWorktree(dir string) bool {
+	_, err := linkedWorktreeGitDir(dir)
+	return err == nil
 }
 
 func removeStaleCIWorktree(ctx context.Context, worktreeDir string) error {
