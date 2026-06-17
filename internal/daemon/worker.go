@@ -381,7 +381,7 @@ func (wp *WorkerPool) createCIExactCheckout(
 	if headRef == "" {
 		return "", nil, fmt.Errorf("CI job %d has empty checkout ref", job.ID)
 	}
-	parentDir := ciWorktreeParentDir()
+	parentDir := ciWorktreeRepoDir(job.RepoPath)
 	if err := os.MkdirAll(parentDir, 0o755); err != nil {
 		return "", nil, fmt.Errorf("create CI worktree parent: %w", err)
 	}

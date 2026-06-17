@@ -25,6 +25,21 @@ func ciWorktreeParentDir() string {
 	return filepath.Join(config.DataDir(), ciWorktreeDirName)
 }
 
+// ciWorktreeRepoDir returns the parent directory for a CI worktree, grouped
+// by the owning repository (<dataDir>/ci-worktrees/<repo>). Nesting the
+// generated worktree under a repo-named component lets downstream tooling
+// attribute the review session to the repository instead of the worktree's
+// generated leaf name. Falls back to the flat parent when repoPath has no
+// usable basename.
+func ciWorktreeRepoDir(repoPath string) string {
+	parent := ciWorktreeParentDir()
+	slug := filepath.Base(strings.TrimSpace(repoPath))
+	if slug == "" || slug == "." || slug == string(filepath.Separator) {
+		return parent
+	}
+	return filepath.Join(parent, slug)
+}
+
 func writeCIWorktreeMarker(worktreeDir, repoPath string) error {
 	repoPath = strings.TrimSpace(repoPath)
 	if repoPath == "" {
@@ -94,8 +109,7 @@ func repoPathFromLinkedWorktree(worktreeDir string) (string, error) {
 }
 
 func cleanupStaleCIWorktrees(ctx context.Context) error {
-	parentDir := ciWorktreeParentDir()
-	entries, err := os.ReadDir(parentDir)
+	dirs, err := staleCIWorktreeDirs(ciWorktreeParentDir())
 	if err != nil {
 		if errors.Is(err, os.ErrNotExist) {
 			return nil
@@ -104,16 +118,45 @@ func cleanupStaleCIWorktrees(ctx context.Context) error {
 	}
 
 	var errs []error
-	for _, entry := range entries {
-		if !entry.IsDir() || !strings.HasPrefix(entry.Name(), ciWorktreePrefix) {
-			continue
-		}
-		dir := filepath.Join(parentDir, entry.Name())
+	for _, dir := range dirs {
 		if err := removeStaleCIWorktree(ctx, dir); err != nil {
 			errs = append(errs, err)
 		}
 	}
 	return errors.Join(errs...)
+}
+
+// staleCIWorktreeDirs returns candidate CI worktree directories under
+// parentDir. It handles the current repo-nested layout
+// (<parent>/<repo>/roborev-ci-*) and the legacy flat layout
+// (<parent>/roborev-ci-*) that older daemons produced, so a transition
+// across the layout change still cleans up pre-existing worktrees.
+func staleCIWorktreeDirs(parentDir string) ([]string, error) {
+	entries, err := os.ReadDir(parentDir)
+	if err != nil {
+		return nil, err
+	}
+	var dirs []string
+	for _, entry := range entries {
+		if !entry.IsDir() {
+			continue
+		}
+		if strings.HasPrefix(entry.Name(), ciWorktreePrefix) {
+			dirs = append(dirs, filepath.Join(parentDir, entry.Name()))
+			continue
+		}
+		repoDir := filepath.Join(parentDir, entry.Name())
+		nested, err := os.ReadDir(repoDir)
+		if err != nil {
+			continue
+		}
+		for _, sub := range nested {
+			if sub.IsDir() && strings.HasPrefix(sub.Name(), ciWorktreePrefix) {
+				dirs = append(dirs, filepath.Join(repoDir, sub.Name()))
+			}
+		}
+	}
+	return dirs, nil
 }
 
 func removeStaleCIWorktree(ctx context.Context, worktreeDir string) error {
