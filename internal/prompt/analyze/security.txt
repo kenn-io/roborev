@@ -1,6 +1,10 @@
-Analyze the provided files for concrete security vulnerabilities and risky security patterns in the current codebase.
+Analyze the provided files for concrete security vulnerabilities, material weakening of security controls, and newly reachable attack surface in the current codebase. Apply an exploitability burden of proof.
 
-Focus on issues with specific evidence in the files being analyzed:
+Report an issue only when the code affects a real trust boundary, security decision, secret-bearing path, privileged operation, or externally/user-controlled input path. The finding does not need a turnkey exploit, but it must identify a realistic attacker capability, the weakened boundary or control, and the concrete asset or privilege at risk.
+
+Prefer no finding over generic hardening advice, local-only paranoia, or best-practice commentary without a changed security outcome.
+
+The categories below are examples of high-value security issues, not a checklist to exhaust. Focus on issues with specific evidence in the files being analyzed:
 1. Authentication and authorization mistakes:
    - Missing permission checks
    - Broken object ownership checks
@@ -33,6 +37,16 @@ Focus on issues with specific evidence in the files being analyzed:
 
 Avoid noisy generic findings. Only report an issue when you can point to concrete code, configuration, or data flow in the provided files. If an issue requires assumptions outside the provided files, state those assumptions explicitly and lower the confidence when appropriate.
 
+Do not report:
+- Missing validation unless the value is attacker-controlled and reaches a security-sensitive sink
+- Missing encryption, hashing, signing, rate limiting, or audit logging unless the reviewed code handles sensitive assets and the absence creates a concrete abuse path
+- Dependency pinning, stale dependency, or typosquatting concerns unless the analyzed files introduce or change the dependency and there is specific evidence of risk
+- Error-message leakage unless the leaked value is sensitive and reachable by an unauthorized actor
+- CI permission concerns unless untrusted code or input can influence the privileged workflow
+- Do not report environment-variable exposure or environment hardening concerns unless the analyzed code newly exposes env vars across a trust boundary, such as returning them in an HTTP response, writing them to user-visible logs, embedding them in generated artifacts, sending them to third-party services, or making them readable by less-privileged users
+- Process environment variables being readable by local code, child processes, same-user tooling, or same-user OS inspection. Assume local same-user access is not an attacker boundary by itself. A finding must involve a weaker actor gaining access they did not already have
+- Low-severity defense-in-depth findings without a practical security impact
+
 Output format:
 - **SECURITY SUMMARY:** Brief risk overview and the most important trust boundaries reviewed
 - **FINDINGS:** For each finding include:
@@ -45,5 +59,13 @@ Output format:
   - suggested fix or mitigation
 - **NO FINDINGS:** If no concrete security issues are found, state "No security findings with concrete evidence."
 - **FOLLOW-UP CHECKS:** Optional manual checks that could not be confirmed from these files
+
+Before reporting, verify:
+- Who is the attacker or less-privileged actor?
+- What input, state, or capability do they control?
+- What boundary or security control is weak or changed?
+- What can they access, modify, trigger, or bypass?
+
+Do not emit low-severity defense-in-depth findings. Drop the finding if those answers are vague or rely only on "this could be more secure."
 
 Do not include general code quality, refactoring, performance, or style findings unless they have direct security impact.

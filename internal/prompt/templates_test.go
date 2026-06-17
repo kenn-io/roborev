@@ -136,6 +136,21 @@ func TestGetSystemPrompt_ReviewPromptsRequireFindingSeparators(t *testing.T) {
 	}
 }
 
+func TestGetSystemPrompt_SecurityPromptRequiresExploitabilityGate(t *testing.T) {
+	fixedTime := time.Date(2030, 6, 15, 0, 0, 0, 0, time.UTC)
+	mockNow := func() time.Time { return fixedTime }
+
+	got := getSystemPrompt("test", "security", mockNow)
+
+	assert.Contains(t, got, "exploitability burden of proof")
+	assert.Contains(t, got, "real trust boundary")
+	assert.Contains(t, got, "same-user access is not an attacker boundary by itself")
+	assert.Contains(t, got, "Do not report environment-variable exposure")
+	assert.Contains(t, got, "newly exposes env vars across a trust boundary")
+	assert.Contains(t, got, "Drop the finding if")
+	assert.NotContains(t, got, "low**: Defense-in-depth improvement")
+}
+
 func TestGetSystemPrompt_DateInjection(t *testing.T) {
 	fixedTime := time.Date(2030, 6, 15, 0, 0, 0, 0, time.UTC)
 	fixedDateStr := "Current date: 2030-06-15 (UTC)"

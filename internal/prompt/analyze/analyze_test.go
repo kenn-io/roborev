@@ -67,6 +67,18 @@ func TestSecurityPromptRequiresActionableFindings(t *testing.T) {
 	assert.Contains(t, prompt, "concrete", "prompt should discourage generic findings")
 }
 
+func TestSecurityPromptDiscouragesSecurityTheater(t *testing.T) {
+	prompt, err := Security.GetPrompt()
+	require.NoError(t, err, "GetPrompt()")
+
+	assert.Contains(t, prompt, "exploitability burden of proof")
+	assert.Contains(t, prompt, "same-user access is not an attacker boundary by itself")
+	assert.Contains(t, prompt, "Do not report environment-variable exposure")
+	assert.Contains(t, prompt, "newly exposes env vars across a trust boundary")
+	assert.Contains(t, prompt, "Do not emit low-severity defense-in-depth findings")
+	assert.Contains(t, prompt, "Drop the finding if")
+}
+
 func TestBuildPrompt(t *testing.T) {
 	files := map[string]string{
 		"b.go": "package b\n",
