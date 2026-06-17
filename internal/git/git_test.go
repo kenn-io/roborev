@@ -8,6 +8,7 @@ import (
 	"runtime"
 	"strings"
 	"testing"
+	"time"
 	"unicode/utf8"
 
 	"github.com/stretchr/testify/assert"
@@ -60,6 +61,35 @@ func (r *TestRepo) Run(args ...string) string {
 	return runGit(r.T, r.Dir, args...)
 }
 
+func TestIsTransientGitError(t *testing.T) {
+	assert := assert.New(t)
+	// The exact MSYS sh.exe fork failure observed on Windows CI.
+	winFork := "0 [main] sh (4236) C:\\Program Files\\Git\\usr\\bin\\sh.exe: " +
+		"*** fatal error - add_item (\"\\??\\C:\\Program Files\\Git\", \"/\", ...) " +
+		"failed, errno 1\nfatal: Could not read from remote repository."
+	transient := []string{
+		winFork,
+		"git: fork: retry: Resource temporarily unavailable",
+		"error: cannot fork() for fetch-pack",
+		"DLL initialization failed",
+	}
+	for _, out := range transient {
+		assert.True(isTransientGitError([]byte(out)), "should retry: %q", out)
+	}
+	durable := []string{
+		"",
+		"CONFLICT (content): Merge conflict in file.txt",
+		"nothing to commit, working tree clean",
+		"fatal: not a git repository",
+		// A generic remote-read failure without the MSYS fork signature must
+		// not be retried -- it is a real, durable error.
+		"fatal: Could not read from remote repository.",
+	}
+	for _, out := range durable {
+		assert.False(isTransientGitError([]byte(out)), "should not retry: %q", out)
+	}
+}
+
 func (r *TestRepo) CommitFile(filename, content, msg string) {
 	r.T.Helper()
 	r.WriteFile(filename, content)
@@ -109,13 +139,49 @@ func (r *TestRepo) InstallHook(name, script string) {
 	require.NoError(r.T, err)
 }
 
+const (
+	gitTransientRetries   = 4
+	gitTransientRetryWait = 250 * time.Millisecond
+)
+
 func runGit(t *testing.T, dir string, args ...string) string {
 	t.Helper()
-	cmd := exec.Command("git", args...)
-	cmd.Dir = dir
-	out, err := cmd.CombinedOutput()
+	var out []byte
+	var err error
+	for attempt := 0; ; attempt++ {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = dir
+		out, err = cmd.CombinedOutput()
+		if err == nil || attempt >= gitTransientRetries || !isTransientGitError(out) {
+			break
+		}
+		time.Sleep(gitTransientRetryWait)
+	}
 	require.NoError(t, err, "git %v failed: %v\n%s", args, err, out)
 	return strings.TrimSpace(string(out))
+}
+
+// isTransientGitError reports whether git output matches the intermittent
+// MSYS2/Cygwin process-spawn failures seen on Windows CI runners. git's
+// local transport (clone/fetch/push to a filesystem path) forks sh.exe, and
+// that fork sporadically aborts before doing any work -- e.g. "fatal error -
+// add_item ... failed" or "Resource temporarily unavailable". The command
+// performed no partial work, so retrying it is safe.
+func isTransientGitError(out []byte) bool {
+	s := string(out)
+	for _, sig := range []string{
+		"fatal error - add_item",
+		"Resource temporarily unavailable",
+		"fork: retry",
+		"cannot fork",
+		"unable to fork",
+		"DLL initialization failed",
+	} {
+		if strings.Contains(s, sig) {
+			return true
+		}
+	}
+	return false
 }
 
 func TestIsUnbornHead(t *testing.T) {
