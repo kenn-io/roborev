@@ -145,23 +145,25 @@ func TestCountOpenFailedReviewsExcludesNonReviewJobTypes(t *testing.T) {
 	head := repo.CommitFile("base.txt", "base\n", "base")
 
 	closed := false
-	verdict := "F"
+	failVerdict := "F"
+	passVerdict := "P"
 	// All jobs are on the queried branch, so the reachability gate passes for
-	// each; only the job-type filter decides what counts.
-	job := func(jobType string) storage.ReviewJob {
+	// each; only the job-type and verdict filters decide what counts.
+	job := func(jobType, verdict string) storage.ReviewJob {
 		return storage.ReviewJob{
 			Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main", JobType: jobType,
 		}
 	}
-	// Every job is done, open and carries an F verdict; only the review-like job
-	// types should count. A completed fix job stores a parsed verdict, so without
-	// the filter it would keep the hook prompting $roborev-fix for itself.
+	// Every job is done and open; only review-like jobs with an F verdict should
+	// count. A completed fix job stores a parsed verdict, so without the filter
+	// it would keep the hook prompting $roborev-fix for itself.
 	jobs := []storage.ReviewJob{
-		job(storage.JobTypeReview),
-		job(storage.JobTypeFix),
-		job(storage.JobTypeTask),
-		job(storage.JobTypeInsights),
-		job(storage.JobTypeClassify),
+		job(storage.JobTypeReview, failVerdict),
+		job(storage.JobTypeReview, passVerdict),
+		job(storage.JobTypeFix, failVerdict),
+		job(storage.JobTypeTask, failVerdict),
+		job(storage.JobTypeInsights, failVerdict),
+		job(storage.JobTypeClassify, failVerdict),
 	}
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{Jobs: jobs}))
@@ -171,7 +173,7 @@ func TestCountOpenFailedReviewsExcludesNonReviewJobTypes(t *testing.T) {
 	count, ok := countOpenFailedReviews(context.Background(), repo.Path(), "main", head, server.URL)
 
 	assert.True(ok)
-	assert.Equal(1, count, "only the review job counts; fix/task/insights/classify verdicts are not reviews")
+	assert.Equal(1, count, "only failed review jobs count; passed reviews and non-review job types are not actionable")
 }
 
 func TestBuildHookReasonsAreCompactOneLine(t *testing.T) {

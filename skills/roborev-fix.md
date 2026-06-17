@@ -1,6 +1,6 @@
 # /roborev-fix
 
-Fix all open review findings in one pass.
+Fix all open failing review findings in one pass.
 
 ## Usage
 
@@ -10,7 +10,7 @@ Fix all open review findings in one pass.
 
 ## Description
 
-Discovers open code reviews and fixes all their findings in a single pass. This skill batches all outstanding findings together, groups them by file, and fixes them by severity priority. It also handles single reviews when given a specific job ID.
+Discovers open failing code reviews and fixes all their findings in a single pass. This skill batches all actionable outstanding findings together, groups them by file, and fixes them by severity priority. It also handles single reviews when given a specific job ID.
 
 If job IDs are provided, only those reviews are fixed. Otherwise, the skill checks recent commits (HEAD, HEAD~1) for failed reviews that have not been closed.
 
@@ -20,7 +20,7 @@ When the user invokes `/roborev-fix [job_id...]`:
 
 1. **Discover reviews** to address:
    - If job IDs given, use those
-   - Otherwise, run `roborev show HEAD` and `roborev show HEAD~1` to find failed, open reviews
+   - Otherwise, run `roborev show HEAD` and `roborev show HEAD~1` to find open failing reviews
    - If no failed reviews found, inform the user
 
 2. **Fetch all reviews** using `roborev show --job <id>` for each job.

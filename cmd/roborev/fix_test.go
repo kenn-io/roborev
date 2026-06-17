@@ -878,6 +878,12 @@ func TestRunFixOpen(t *testing.T) {
 	t.Run("finds and processes open jobs", func(t *testing.T) {
 		var reviewCalls, closeCalls atomic.Int32
 		var openQueryCalls atomic.Int32
+		passVerdict := "P"
+		jobsByID := map[int64]storage.ReviewJob{
+			10: {ID: 10, Status: storage.JobStatusDone, Agent: "test", Branch: repoBranch},
+			20: {ID: 20, Status: storage.JobStatusDone, Agent: "test", Branch: repoBranch},
+			30: {ID: 30, Status: storage.JobStatusDone, Agent: "test", Branch: repoBranch, Verdict: &passVerdict},
+		}
 
 		_ = newMockDaemonBuilder(t).
 			WithHandler("/api/jobs", func(w http.ResponseWriter, r *http.Request) {
@@ -886,8 +892,9 @@ func TestRunFixOpen(t *testing.T) {
 					if openQueryCalls.Add(1) == 1 {
 						writeJSON(w, map[string]any{
 							"jobs": []storage.ReviewJob{
-								{ID: 10, Status: storage.JobStatusDone, Agent: "test", Branch: repoBranch},
-								{ID: 20, Status: storage.JobStatusDone, Agent: "test", Branch: repoBranch},
+								jobsByID[10],
+								jobsByID[20],
+								jobsByID[30],
 							},
 							"has_more": false,
 						})
@@ -898,9 +905,12 @@ func TestRunFixOpen(t *testing.T) {
 						})
 					}
 				} else {
+					var id int64
+					_, _ = fmt.Sscanf(q.Get("id"), "%d", &id)
+					assert.NotEqual(t, int64(30), id, "passed review should not be fetched for fixing")
 					writeJSON(w, map[string]any{
 						"jobs": []storage.ReviewJob{
-							{ID: 10, Status: storage.JobStatusDone, Agent: "test"},
+							jobsByID[id],
 						},
 						"has_more": false,
 					})

@@ -1,11 +1,11 @@
 ---
 name: roborev-fix
-description: Use when the user asks to fix open reviews, invokes /roborev-fix, or provides job IDs; do not use when the user only pastes review findings with no request to discover or close reviews
+description: Use when the user asks to fix open failing reviews, invokes /roborev-fix, or provides job IDs; do not use when the user only pastes review findings with no request to discover or close reviews
 ---
 
 # roborev-fix
 
-Fix all open review findings in one pass.
+Fix all open failing review findings in one pass.
 
 ## Usage
 
@@ -24,7 +24,7 @@ file paths, suggested fixes, or copied review summaries is not by itself a
 request to run `/roborev-fix`.
 
 Use this skill when the user explicitly invokes `/roborev-fix`, asks to fix
-open/unaddressed reviews (in any phrasing), provides job IDs that need
+open failing/unaddressed reviews (in any phrasing), provides job IDs that need
 fetching, or gives a mix of job IDs and pasted findings.
 
 ## IMPORTANT
@@ -56,19 +56,19 @@ roborev show --job <job_id> --json
 ```
 
 If no job IDs are provided and no findings are in the conversation, discover
-open reviews:
+open failing reviews:
 
 ```bash
 roborev fix --list
 ```
 
-This lists each open job with its ID, commit SHA/ref, agent, and summary (a panel review shows as its synthesis parent).
+This lists each actionable open failing job with its ID, commit SHA/ref, agent, and summary (a panel review shows as its synthesis parent).
 Collect the job IDs from the output.
 
 If the command fails, report the error to the user. Common causes: the daemon
 is not running, or the repo is not initialized (suggest `roborev init`).
 
-If no open reviews are found, inform the user there is nothing to fix.
+If no open failing reviews are found, inform the user there is nothing to fix.
 
 ### 2. Fetch reviews (if needed)
 
@@ -93,7 +93,7 @@ The JSON output has this structure:
   - Comments from `roborev-fix` or `roborev-refine` are automated tool records
   - All other comments are from the developer (user feedback)
 
-A discovered open job may be a **synthesis (panel) parent**. Its `output` and
+A discovered actionable open failing job may be a **synthesis (panel) parent**. Its `output` and
 `job.verdict` are the synthesized result across the panel's reviewers, so fix
 from the parent exactly as you would a single review. When the job is a panel,
 `show --json` also includes an additive top-level `panel` block:
@@ -110,7 +110,7 @@ Skip any reviews where `job.verdict` is `"P"` (passing reviews have no findings 
 Skip any reviews where `job.verdict` is empty or missing (the review may have errored and is not actionable).
 Skip any reviews where `closed` is `true`, unless the user explicitly provided that job ID (in which case, warn them and ask to confirm).
 
-If all reviews are skipped, inform the user there is nothing to fix.
+If all discovered reviews are passed, closed, or otherwise skipped, inform the user there is nothing to fix.
 
 If the review has `comments`, respect any developer feedback (false positives, preferred approaches).
 
@@ -196,7 +196,7 @@ Agent:
 User: `/roborev-fix`
 
 Agent:
-1. Runs `roborev fix --list` and finds 2 open reviews: job 1019 and job 1021
+1. Runs `roborev fix --list` and finds 2 open failing reviews: job 1019 and job 1021
 2. Fetches both reviews with `roborev show --job 1019 --json` and `roborev show --job 1021 --json`
 3. Runs `git show <git_ref>` for one review where the finding lacked enough context
 4. Fixes all 3 findings across both reviews, sorted by severity, grouped by file

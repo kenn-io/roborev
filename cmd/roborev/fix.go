@@ -770,12 +770,23 @@ func queryOpenJobs(
 			return nil, fmt.Errorf("decode response: %w", err)
 		}
 
-		return jobsResp.Jobs, nil
+		return filterFixCandidateJobs(jobsResp.Jobs), nil
 	})
 	if err != nil {
 		return nil, fmt.Errorf("query jobs: %w", err)
 	}
 	return jobs, nil
+}
+
+func filterFixCandidateJobs(jobs []storage.ReviewJob) []storage.ReviewJob {
+	filtered := make([]storage.ReviewJob, 0, len(jobs))
+	for _, job := range jobs {
+		if job.Verdict != nil && strings.EqualFold(strings.TrimSpace(*job.Verdict), "P") {
+			continue
+		}
+		filtered = append(filtered, job)
+	}
+	return filtered
 }
 
 func queryOpenJobIDs(
