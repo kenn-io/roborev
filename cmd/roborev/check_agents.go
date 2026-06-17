@@ -61,7 +61,20 @@ Examples:
 					continue
 				}
 
-				a, _ := agent.Get(name)
+				if !agent.IsAvailable(name) {
+					a, _ := agent.Get(name)
+					cmdName := ""
+					if a != nil {
+						if ca, ok := a.(agent.CommandAgent); ok {
+							cmdName = ca.CommandName()
+						}
+					}
+					fmt.Printf("  - %-14s %s (not found in PATH)\n", name, cmdName)
+					skipped++
+					continue
+				}
+
+				a, _ := agent.GetAvailable(name)
 				if a == nil {
 					continue
 				}
@@ -69,12 +82,6 @@ Examples:
 				cmdName := ""
 				if ca, ok := a.(agent.CommandAgent); ok {
 					cmdName = ca.CommandName()
-				}
-
-				if !agent.IsAvailable(name) {
-					fmt.Printf("  - %-14s %s (not found in PATH)\n", name, cmdName)
-					skipped++
-					continue
 				}
 
 				path, _ := exec.LookPath(cmdName)
