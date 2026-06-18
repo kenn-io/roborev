@@ -781,12 +781,21 @@ func queryOpenJobs(
 func filterFixCandidateJobs(jobs []storage.ReviewJob) []storage.ReviewJob {
 	filtered := make([]storage.ReviewJob, 0, len(jobs))
 	for _, job := range jobs {
-		if job.Verdict != nil && strings.EqualFold(strings.TrimSpace(*job.Verdict), "P") {
+		if !isFixCandidateJob(job) {
 			continue
 		}
 		filtered = append(filtered, job)
 	}
 	return filtered
+}
+
+func isFixCandidateJob(job storage.ReviewJob) bool {
+	if job.Verdict == nil || !strings.EqualFold(strings.TrimSpace(*job.Verdict), "F") {
+		return false
+	}
+	return job.IsReviewJob() ||
+		job.JobType == storage.JobTypeCompact ||
+		job.IsSynthesisJob()
 }
 
 func queryOpenJobIDs(
