@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -196,7 +197,17 @@ func TestCountOpenFailedReviewsCachesBranchlessLineageContext(t *testing.T) {
 	countPath := filepath.Join(t.TempDir(), "git-count")
 	wrapperDir := t.TempDir()
 	wrapperPath := filepath.Join(wrapperDir, "git")
-	wrapper := "#!/bin/sh\nprintf x >> " + countPath + "\nexec " + gitPath + " \"$@\"\n"
+	shellQuote := func(path string) string {
+		return "'" + strings.ReplaceAll(path, "'", "'\\''") + "'"
+	}
+	cmdQuote := func(path string) string {
+		return `"` + strings.ReplaceAll(path, `"`, `""`) + `"`
+	}
+	wrapper := fmt.Sprintf("#!/bin/sh\nprintf x >> %s\nexec %s \"$@\"\n", shellQuote(countPath), shellQuote(gitPath))
+	if runtime.GOOS == "windows" {
+		wrapperPath += ".cmd"
+		wrapper = fmt.Sprintf("@echo off\r\n<nul set /p dummy=x>>%s\r\n%s %%*\r\nexit /b %%ERRORLEVEL%%\r\n", cmdQuote(countPath), cmdQuote(gitPath))
+	}
 	require.NoError(os.WriteFile(wrapperPath, []byte(wrapper), 0o755))
 	t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
@@ -206,7 +217,7 @@ func TestCountOpenFailedReviewsCachesBranchlessLineageContext(t *testing.T) {
 	assert.Equal(len(jobs), count)
 	gitCalls, err := os.ReadFile(countPath)
 	require.NoError(err)
-	assert.LessOrEqual(len(gitCalls), 5, "lineage context should be built once instead of spawning git per branchless job")
+	assert.LessOrEqual(strings.Count(string(gitCalls), "x"), 5, "lineage context should be built once instead of spawning git per branchless job")
 }
 
 func TestCountOpenFailedReviewsExcludesNonReviewJobTypes(t *testing.T) {
