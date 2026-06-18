@@ -1150,7 +1150,7 @@ func failedReviewCountsForHead(repoRoot, branch, head string, job storage.Review
 	if ref == "" || ref == "dirty" || head == "" {
 		return true
 	}
-	return detachedReviewMatches(repoRoot, head, job)
+	return roborevgit.RefMatchesBranchLineage(repoRoot, branch, head, ref)
 }
 
 func detachedReviewMatches(repoRoot, head string, job storage.ReviewJob) bool {

@@ -139,6 +139,32 @@ func TestCountOpenFailedReviewsExcludesUnreachableBranchlessReviews(t *testing.T
 	assert.Equal(4, count, "only the unreachable branchless review must be excluded on a branch query")
 }
 
+func TestCountOpenFailedReviewsExcludesBaseBranchBranchlessReviews(t *testing.T) {
+	assert := assert.New(t)
+	repo := testutil.NewGitRepo(t)
+	base := repo.CommitFile("base.txt", "base\n", "base")
+	mainOnly := repo.CommitFile("main.txt", "main\n", "main only")
+	repo.RunGit("checkout", "-b", "feature/lineage")
+	featureHead := repo.CommitFile("feature.txt", "feature\n", "feature")
+
+	closed := false
+	verdict := "F"
+	jobs := []storage.ReviewJob{
+		{Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: base},
+		{Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: mainOnly},
+		{Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: featureHead},
+	}
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{Jobs: jobs}))
+	}))
+	t.Cleanup(server.Close)
+
+	count, ok := countOpenFailedReviews(context.Background(), repo.Path(), "feature/lineage", featureHead, server.URL)
+
+	assert.True(ok)
+	assert.Equal(1, count, "only the branchless review outside trunk history should count")
+}
+
 func TestCountOpenFailedReviewsExcludesNonReviewJobTypes(t *testing.T) {
 	assert := assert.New(t)
 	repo := testutil.NewGitRepo(t)

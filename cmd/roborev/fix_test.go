@@ -3147,6 +3147,13 @@ func TestFilterReachableJobs(t *testing.T) {
 			wantIDs: []int64{2},
 		},
 		{
+			name: "reachable SHA no branch included",
+			jobs: []storage.ReviewJob{
+				{ID: 14, GitRef: mainSHA},
+			},
+			wantIDs: []int64{14},
+		},
+		{
 			name: "unreachable SHA no branch excluded",
 			jobs: []storage.ReviewJob{
 				{ID: 2, GitRef: otherSHA},
@@ -3176,11 +3183,11 @@ func TestFilterReachableJobs(t *testing.T) {
 			wantIDs: nil,
 		},
 		{
-			name: "empty GitRef no branch excluded",
+			name: "empty GitRef no branch included",
 			jobs: []storage.ReviewJob{
 				{ID: 3, GitRef: ""},
 			},
-			wantIDs: nil,
+			wantIDs: []int64{3},
 		},
 		{
 			name: "dirty ref matching branch included",
@@ -3197,11 +3204,11 @@ func TestFilterReachableJobs(t *testing.T) {
 			wantIDs: nil,
 		},
 		{
-			name: "dirty ref no branch excluded",
+			name: "dirty ref no branch included",
 			jobs: []storage.ReviewJob{
 				{ID: 4, GitRef: "dirty"},
 			},
-			wantIDs: nil,
+			wantIDs: []int64{4},
 		},
 		{
 			name: "range ref matching branch included",
@@ -3237,7 +3244,14 @@ func TestFilterReachableJobs(t *testing.T) {
 			wantIDs: []int64{5},
 		},
 		{
-			name: "range ref no branch excluded",
+			name: "range ref reachable end no branch included",
+			jobs: []storage.ReviewJob{
+				{ID: 15, GitRef: otherSHA + ".." + mainSHA},
+			},
+			wantIDs: []int64{15},
+		},
+		{
+			name: "range ref unreachable end no branch excluded",
 			jobs: []storage.ReviewJob{
 				{ID: 5, GitRef: "abc123..def456"},
 			},
@@ -3312,6 +3326,14 @@ func TestFilterReachableJobs(t *testing.T) {
 			branchOverride: "other-branch",
 			jobs: []storage.ReviewJob{
 				{ID: 13, GitRef: mainSHA, Branch: defaultBranch},
+			},
+			wantIDs: nil,
+		},
+		{
+			name:           "branch override excludes branchless current lineage ref",
+			branchOverride: "other-branch",
+			jobs: []storage.ReviewJob{
+				{ID: 16, GitRef: mainSHA},
 			},
 			wantIDs: nil,
 		},
@@ -3688,6 +3710,13 @@ func TestFilterReachableJobsFeatureBranch(t *testing.T) {
 				{ID: 3, GitRef: baseSHA},
 			},
 			wantIDs: nil,
+		},
+		{
+			name: "feature branch commit with no branch included",
+			jobs: []storage.ReviewJob{
+				{ID: 5, GitRef: featureSHA},
+			},
+			wantIDs: []int64{5},
 		},
 		{
 			name: "base branch commit matching branch included",

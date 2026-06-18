@@ -649,13 +649,15 @@ func runFixOpen(cmd *cobra.Command, branch string, allBranches, explicitBranch, 
 	}
 }
 
-// filterReachableJobs returns only those jobs relevant to the
-// current worktree by matching the job's stored Branch field
-// against the current (or overridden) branch. branchOverride is
-// the explicit --branch value for non-mutating flows (e.g. --list).
-// Mutating flows (fix, --batch) pass "" so that the current branch
-// is auto-detected. Callers that want all branches (--all-branches)
-// skip this function entirely.
+// filterReachableJobs returns only those jobs relevant to the current worktree
+// by matching the job's stored Branch field against the current (or overridden)
+// branch. In the default current-branch path, branchless jobs are also included
+// when they are repo-scoped/dirty or their reviewed ref belongs to the current
+// branch lineage, matching the agent hook's actionable-review check.
+// branchOverride is the explicit --branch value for non-mutating flows (e.g.
+// --list). Mutating flows (fix, --batch) pass "" so that the current branch is
+// auto-detected. Callers that want all branches (--all-branches) skip this
+// function entirely.
 func filterReachableJobs(
 	ctx context.Context,
 	worktreeRoot, branchOverride string,
@@ -665,6 +667,7 @@ func filterReachableJobs(
 	if matchBranch == "" {
 		matchBranch = gitrepo.CurrentBranch(ctx, worktreeRoot)
 	}
+	allowBranchlessLineage := branchOverride == "" && matchBranch != ""
 	var detachedRefs map[string]struct{}
 	if matchBranch == "" {
 		detachedRefs = detachedHeadReviewRefs(ctx, worktreeRoot)
@@ -672,6 +675,10 @@ func filterReachableJobs(
 	var filtered []storage.ReviewJob
 	for _, j := range jobs {
 		if branchMatch(matchBranch, j.Branch) {
+			filtered = append(filtered, j)
+			continue
+		}
+		if allowBranchlessLineage && branchlessJobMatchesCurrentLineage(worktreeRoot, matchBranch, j) {
 			filtered = append(filtered, j)
 			continue
 		}
@@ -683,13 +690,30 @@ func filterReachableJobs(
 }
 
 // branchMatch returns true when a job's branch matches the target.
-// Both must be known and equal. Jobs with no branch are excluded
-// (use --all-branches to include them).
+// Both must be known and equal. Branchless lineage matching is handled
+// separately for the default current-branch path.
 func branchMatch(matchBranch, jobBranch string) bool {
 	if matchBranch == "" || jobBranch == "" {
 		return false
 	}
 	return jobBranch == matchBranch
+}
+
+func branchlessJobMatchesCurrentLineage(worktreeRoot, currentBranch string, job storage.ReviewJob) bool {
+	if strings.TrimSpace(job.Branch) != "" {
+		return false
+	}
+	ref := strings.TrimSpace(job.GitRef)
+	if ref == "" || ref == "dirty" {
+		return true
+	}
+	if _, end, ok := git.ParseRange(ref); ok {
+		ref = strings.TrimSpace(end)
+	}
+	if ref == "" {
+		return false
+	}
+	return git.RefMatchesBranchLineage(worktreeRoot, currentBranch, "HEAD", ref)
 }
 
 func detachedHeadReviewRefs(ctx context.Context, worktreeRoot string) map[string]struct{} {

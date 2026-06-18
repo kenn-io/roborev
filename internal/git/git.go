@@ -554,6 +554,30 @@ func IsAncestor(repoPath, ancestor, descendant string) (bool, error) {
 	return false, fmt.Errorf("git merge-base --is-ancestor: %w", err)
 }
 
+// RefMatchesBranchLineage reports whether ref belongs to currentBranch's
+// current lineage. The ref must be reachable from head. For non-default
+// branches, refs already reachable from the default branch are excluded so
+// branchless reviews from trunk history do not follow every feature branch.
+func RefMatchesBranchLineage(repoPath, currentBranch, head, ref string) bool {
+	ref = strings.TrimSpace(ref)
+	if _, end, ok := ParseRange(ref); ok {
+		ref = strings.TrimSpace(end)
+	}
+	if ref == "" || currentBranch == "" || head == "" {
+		return false
+	}
+	onCurrent, err := IsAncestor(repoPath, ref, head)
+	if err != nil || !onCurrent {
+		return false
+	}
+	defaultBranch, err := GetDefaultBranch(repoPath)
+	if err != nil || IsOnBaseBranch(repoPath, currentBranch, defaultBranch) {
+		return true
+	}
+	onDefault, err := IsAncestor(repoPath, ref, defaultBranch)
+	return err != nil || !onDefault
+}
+
 // GetRepoRoot returns the root directory of the git repository
 func GetRepoRoot(path string) (string, error) {
 	cmd := newGitCmd("rev-parse", "--show-toplevel")
