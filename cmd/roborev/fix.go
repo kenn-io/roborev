@@ -668,6 +668,15 @@ func filterReachableJobs(
 		matchBranch = gitrepo.CurrentBranch(ctx, worktreeRoot)
 	}
 	allowBranchlessLineage := branchOverride == "" && matchBranch != ""
+	var lineageMatcher *git.BranchLineageMatcher
+	lineageMatcherLoaded := false
+	lineageMatches := func(ref string) bool {
+		if !lineageMatcherLoaded {
+			lineageMatcherLoaded = true
+			lineageMatcher, _ = git.NewBranchLineageMatcherCtx(ctx, worktreeRoot, matchBranch, "HEAD")
+		}
+		return lineageMatcher != nil && lineageMatcher.Matches(ref)
+	}
 	var detachedRefs map[string]struct{}
 	if matchBranch == "" {
 		detachedRefs = detachedHeadReviewRefs(ctx, worktreeRoot)
@@ -678,7 +687,7 @@ func filterReachableJobs(
 			filtered = append(filtered, j)
 			continue
 		}
-		if allowBranchlessLineage && branchlessJobMatchesCurrentLineage(worktreeRoot, matchBranch, j) {
+		if allowBranchlessLineage && branchlessJobMatchesCurrentLineage(j, lineageMatches) {
 			filtered = append(filtered, j)
 			continue
 		}
@@ -699,7 +708,7 @@ func branchMatch(matchBranch, jobBranch string) bool {
 	return jobBranch == matchBranch
 }
 
-func branchlessJobMatchesCurrentLineage(worktreeRoot, currentBranch string, job storage.ReviewJob) bool {
+func branchlessJobMatchesCurrentLineage(job storage.ReviewJob, lineageMatches func(string) bool) bool {
 	if strings.TrimSpace(job.Branch) != "" {
 		return false
 	}
@@ -713,7 +722,7 @@ func branchlessJobMatchesCurrentLineage(worktreeRoot, currentBranch string, job 
 	if ref == "" {
 		return false
 	}
-	return git.RefMatchesBranchLineage(worktreeRoot, currentBranch, "HEAD", ref)
+	return lineageMatches != nil && lineageMatches(ref)
 }
 
 func detachedHeadReviewRefs(ctx context.Context, worktreeRoot string) map[string]struct{} {

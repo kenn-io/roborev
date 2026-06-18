@@ -3,9 +3,11 @@ package agenthook
 import (
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"strings"
 	"sync/atomic"
@@ -163,6 +165,48 @@ func TestCountOpenFailedReviewsExcludesBaseBranchBranchlessReviews(t *testing.T)
 
 	assert.True(ok)
 	assert.Equal(1, count, "only the branchless review outside trunk history should count")
+}
+
+func TestCountOpenFailedReviewsCachesBranchlessLineageContext(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("base.txt", "base\n", "base")
+	repo.RunGit("checkout", "-b", "feature/lineage")
+
+	closed := false
+	verdict := "F"
+	jobs := make([]storage.ReviewJob, 0, 25)
+	for i := range 25 {
+		ref := repo.CommitFile(
+			filepath.Join("feature", fmt.Sprintf("file-%02d.txt", i)),
+			"feature\n",
+			"feature commit",
+		)
+		jobs = append(jobs, storage.ReviewJob{Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: ref})
+	}
+	featureHead := repo.HeadSHA()
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{Jobs: jobs}))
+	}))
+	t.Cleanup(server.Close)
+
+	gitPath, err := exec.LookPath("git")
+	require.NoError(err)
+	countPath := filepath.Join(t.TempDir(), "git-count")
+	wrapperDir := t.TempDir()
+	wrapperPath := filepath.Join(wrapperDir, "git")
+	wrapper := "#!/bin/sh\nprintf x >> " + countPath + "\nexec " + gitPath + " \"$@\"\n"
+	require.NoError(os.WriteFile(wrapperPath, []byte(wrapper), 0o755))
+	t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	count, ok := countOpenFailedReviews(context.Background(), repo.Path(), "feature/lineage", featureHead, server.URL)
+
+	assert.True(ok)
+	assert.Equal(len(jobs), count)
+	gitCalls, err := os.ReadFile(countPath)
+	require.NoError(err)
+	assert.LessOrEqual(len(gitCalls), 5, "lineage context should be built once instead of spawning git per branchless job")
 }
 
 func TestCountOpenFailedReviewsExcludesNonReviewJobTypes(t *testing.T) {

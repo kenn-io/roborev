@@ -1105,6 +1105,15 @@ func countOpenFailedReviews(ctx context.Context, repoRoot, branch, head, configu
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return 0, false
 	}
+	var lineageMatcher *roborevgit.BranchLineageMatcher
+	lineageMatcherLoaded := false
+	lineageMatches := func(ref string) bool {
+		if !lineageMatcherLoaded {
+			lineageMatcherLoaded = true
+			lineageMatcher, _ = roborevgit.NewBranchLineageMatcherCtx(ctx, repoRoot, branch, head)
+		}
+		return lineageMatcher != nil && lineageMatcher.Matches(ref)
+	}
 	count := 0
 	for _, job := range out.Jobs {
 		if job.Status != "" && job.Status != storage.JobStatusDone {
@@ -1116,7 +1125,7 @@ func countOpenFailedReviews(ctx context.Context, repoRoot, branch, head, configu
 		if !countsAsFailedReview(job) {
 			continue
 		}
-		if !failedReviewCountsForHead(repoRoot, branch, head, job) {
+		if !failedReviewCountsForHead(repoRoot, branch, head, job, lineageMatches) {
 			continue
 		}
 		if job.Verdict != nil && strings.EqualFold(*job.Verdict, "F") {
@@ -1139,7 +1148,7 @@ func countOpenFailedReviews(ctx context.Context, repoRoot, branch, head, configu
 //   - On a branch, branchless repo-level or dirty reviews still count, matching
 //     the long-standing reminder behavior. Branchless concrete refs count only
 //     when they belong to the current branch lineage and are not trunk history.
-func failedReviewCountsForHead(repoRoot, branch, head string, job storage.ReviewJob) bool {
+func failedReviewCountsForHead(repoRoot, branch, head string, job storage.ReviewJob, lineageMatches func(string) bool) bool {
 	if branch == "" {
 		return head != "" && detachedReviewMatches(repoRoot, head, job)
 	}
@@ -1150,7 +1159,7 @@ func failedReviewCountsForHead(repoRoot, branch, head string, job storage.Review
 	if ref == "" || ref == "dirty" || head == "" {
 		return true
 	}
-	return roborevgit.RefMatchesBranchLineage(repoRoot, branch, head, ref)
+	return lineageMatches != nil && lineageMatches(ref)
 }
 
 func detachedReviewMatches(repoRoot, head string, job storage.ReviewJob) bool {

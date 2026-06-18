@@ -561,26 +561,70 @@ func IsAncestor(repoPath, ancestor, descendant string) (bool, error) {
 // If the default branch cannot be identified, concrete branchless refs fail
 // closed because there is no trunk boundary to compare against.
 func RefMatchesBranchLineage(repoPath, currentBranch, head, ref string) bool {
+	matcher, err := NewBranchLineageMatcher(repoPath, currentBranch, head)
+	return err == nil && matcher.Matches(ref)
+}
+
+// BranchLineageMatcher caches the current branch lineage as a commit set so a
+// batch of branchless concrete review refs can be checked without repeatedly
+// spawning git processes. For non-default branches, the set contains commits
+// reachable from head and not reachable from the repository default branch. For
+// the default branch itself, the set contains commits reachable from head.
+type BranchLineageMatcher struct {
+	commits map[string]struct{}
+}
+
+// NewBranchLineageMatcher builds a reusable matcher for currentBranch's current
+// lineage. Callers that need to test more than one ref should create one matcher
+// and reuse Matches instead of calling RefMatchesBranchLineage repeatedly.
+func NewBranchLineageMatcher(repoPath, currentBranch, head string) (*BranchLineageMatcher, error) {
+	return NewBranchLineageMatcherCtx(context.Background(), repoPath, currentBranch, head)
+}
+
+// NewBranchLineageMatcherCtx is NewBranchLineageMatcher with a cancellable
+// context.
+func NewBranchLineageMatcherCtx(ctx context.Context, repoPath, currentBranch, head string) (*BranchLineageMatcher, error) {
+	currentBranch = strings.TrimSpace(currentBranch)
+	head = strings.TrimSpace(head)
+	if repoPath == "" || currentBranch == "" || head == "" {
+		return nil, fmt.Errorf("repo path, current branch, and head are required")
+	}
+	defaultBranch, err := GetDefaultBranch(repoPath)
+	if err != nil {
+		return nil, err
+	}
+	args := []string{"rev-list", head}
+	if !IsOnBaseBranch(repoPath, currentBranch, defaultBranch) {
+		args = append(args, "--not", defaultBranch)
+	}
+	cmd := newGitCmdContext(ctx, args...)
+	cmd.Dir = repoPath
+	out, err := cmd.Output()
+	if err != nil {
+		return nil, fmt.Errorf("git rev-list branch lineage: %w", err)
+	}
+	commits := make(map[string]struct{})
+	for commit := range strings.FieldsSeq(string(out)) {
+		commits[commit] = struct{}{}
+	}
+	return &BranchLineageMatcher{commits: commits}, nil
+}
+
+// Matches reports whether ref belongs to the cached branch lineage. Range refs
+// are matched by their end ref, preserving RefMatchesBranchLineage behavior.
+func (m *BranchLineageMatcher) Matches(ref string) bool {
+	if m == nil {
+		return false
+	}
 	ref = strings.TrimSpace(ref)
 	if _, end, ok := ParseRange(ref); ok {
 		ref = strings.TrimSpace(end)
 	}
-	if ref == "" || currentBranch == "" || head == "" {
+	if ref == "" {
 		return false
 	}
-	onCurrent, err := IsAncestor(repoPath, ref, head)
-	if err != nil || !onCurrent {
-		return false
-	}
-	defaultBranch, err := GetDefaultBranch(repoPath)
-	if err != nil {
-		return false
-	}
-	if IsOnBaseBranch(repoPath, currentBranch, defaultBranch) {
-		return true
-	}
-	onDefault, err := IsAncestor(repoPath, ref, defaultBranch)
-	return err == nil && !onDefault
+	_, ok := m.commits[ref]
+	return ok
 }
 
 // GetRepoRoot returns the root directory of the git repository
