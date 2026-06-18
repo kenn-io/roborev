@@ -571,7 +571,9 @@ func RefMatchesBranchLineage(repoPath, currentBranch, head, ref string) bool {
 // reachable from head and not reachable from the repository default branch. For
 // the default branch itself, the set contains commits reachable from head.
 type BranchLineageMatcher struct {
-	commits map[string]struct{}
+	repoPath       string
+	commits        map[string]struct{}
+	resolvedCommit map[string]string
 }
 
 // NewBranchLineageMatcher builds a reusable matcher for currentBranch's current
@@ -607,7 +609,11 @@ func NewBranchLineageMatcherCtx(ctx context.Context, repoPath, currentBranch, he
 	for commit := range strings.FieldsSeq(string(out)) {
 		commits[commit] = struct{}{}
 	}
-	return &BranchLineageMatcher{commits: commits}, nil
+	return &BranchLineageMatcher{
+		repoPath:       repoPath,
+		commits:        commits,
+		resolvedCommit: make(map[string]string),
+	}, nil
 }
 
 // Matches reports whether ref belongs to the cached branch lineage. Range refs
@@ -623,8 +629,40 @@ func (m *BranchLineageMatcher) Matches(ref string) bool {
 	if ref == "" {
 		return false
 	}
-	_, ok := m.commits[ref]
+	if _, ok := m.commits[ref]; ok {
+		return true
+	}
+	if isFullObjectID(ref) {
+		return false
+	}
+	commit, ok := m.resolvedCommit[ref]
+	if !ok {
+		var err error
+		commit, err = ResolveSHA(m.repoPath, ref)
+		if err != nil {
+			m.resolvedCommit[ref] = ""
+			return false
+		}
+		m.resolvedCommit[ref] = commit
+	}
+	if commit == "" {
+		return false
+	}
+	_, ok = m.commits[commit]
 	return ok
+}
+
+func isFullObjectID(ref string) bool {
+	if len(ref) != 40 && len(ref) != 64 {
+		return false
+	}
+	for _, r := range ref {
+		if (r >= '0' && r <= '9') || (r >= 'a' && r <= 'f') || (r >= 'A' && r <= 'F') {
+			continue
+		}
+		return false
+	}
+	return true
 }
 
 // GetRepoRoot returns the root directory of the git repository

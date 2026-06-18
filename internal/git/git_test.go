@@ -1981,6 +1981,25 @@ func TestRefMatchesBranchLineage(t *testing.T) {
 		assert.True(t, RefMatchesBranchLineage(repo.Dir, "main", "main", trunkSHA))
 	})
 
+	t.Run("resolves symbolic and abbreviated refs before cached lookup", func(t *testing.T) {
+		repo := NewTestRepo(t)
+		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.CommitFile("trunk.txt", "trunk", "trunk commit")
+		repo.Run("checkout", "-b", "feature/lineage")
+		repo.CommitFile("feature-1.txt", "feature", "feature commit 1")
+		previousFeatureSHA := repo.HeadSHA()
+		repo.CommitFile("feature-2.txt", "feature", "feature commit 2")
+		featureSHA := repo.HeadSHA()
+
+		matcher, err := NewBranchLineageMatcher(repo.Dir, "feature/lineage", "HEAD")
+		require.NoError(t, err)
+		assert.True(t, matcher.Matches("HEAD"))
+		assert.True(t, matcher.Matches("HEAD~1"))
+		assert.True(t, matcher.Matches("feature/lineage"))
+		assert.True(t, matcher.Matches(featureSHA[:12]))
+		assert.True(t, matcher.Matches(previousFeatureSHA[:12]+"..HEAD"))
+	})
+
 	t.Run("missing default branch fails closed", func(t *testing.T) {
 		repo := NewTestRepo(t)
 		repo.Run("symbolic-ref", "HEAD", "refs/heads/trunk")
