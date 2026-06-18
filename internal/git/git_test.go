@@ -1966,6 +1966,33 @@ func TestIsAncestor(t *testing.T) {
 	})
 }
 
+func TestRefMatchesBranchLineage(t *testing.T) {
+	t.Run("feature branch excludes trunk refs and includes feature refs", func(t *testing.T) {
+		repo := NewTestRepo(t)
+		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.CommitFile("trunk.txt", "trunk", "trunk commit")
+		trunkSHA := repo.HeadSHA()
+		repo.Run("checkout", "-b", "feature/lineage")
+		repo.CommitFile("feature.txt", "feature", "feature commit")
+		featureSHA := repo.HeadSHA()
+
+		assert.False(t, RefMatchesBranchLineage(repo.Dir, "feature/lineage", "HEAD", trunkSHA))
+		assert.True(t, RefMatchesBranchLineage(repo.Dir, "feature/lineage", "HEAD", featureSHA))
+		assert.True(t, RefMatchesBranchLineage(repo.Dir, "main", "main", trunkSHA))
+	})
+
+	t.Run("missing default branch fails closed", func(t *testing.T) {
+		repo := NewTestRepo(t)
+		repo.Run("symbolic-ref", "HEAD", "refs/heads/trunk")
+		repo.CommitFile("trunk.txt", "trunk", "trunk commit")
+		repo.Run("checkout", "-b", "feature/no-default")
+		repo.CommitFile("feature.txt", "feature", "feature commit")
+		featureSHA := repo.HeadSHA()
+
+		assert.False(t, RefMatchesBranchLineage(repo.Dir, "feature/no-default", "HEAD", featureSHA))
+	})
+}
+
 func TestGetPatchID(t *testing.T) {
 	t.Run("stable across rebase", func(t *testing.T) {
 		repo := NewTestRepo(t)

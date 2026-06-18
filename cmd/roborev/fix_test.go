@@ -3664,7 +3664,8 @@ func TestRunFixOpenExcludesMergedBranchJobs(t *testing.T) {
 
 // TestFilterReachableJobsFeatureBranch verifies that on a feature
 // branch, jobs from other branches are excluded even though their
-// SHAs are reachable from HEAD. Jobs with no branch fail open.
+// SHAs are reachable from HEAD. Branchless concrete refs are included only
+// when they are outside trunk history.
 func TestFilterReachableJobsFeatureBranch(t *testing.T) {
 	repo := newTestGitRepo(t)
 	baseSHA := repo.CommitFile("base.txt", "base", "base commit")

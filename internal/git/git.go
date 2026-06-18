@@ -558,6 +558,8 @@ func IsAncestor(repoPath, ancestor, descendant string) (bool, error) {
 // current lineage. The ref must be reachable from head. For non-default
 // branches, refs already reachable from the default branch are excluded so
 // branchless reviews from trunk history do not follow every feature branch.
+// If the default branch cannot be identified, concrete branchless refs fail
+// closed because there is no trunk boundary to compare against.
 func RefMatchesBranchLineage(repoPath, currentBranch, head, ref string) bool {
 	ref = strings.TrimSpace(ref)
 	if _, end, ok := ParseRange(ref); ok {
@@ -571,11 +573,14 @@ func RefMatchesBranchLineage(repoPath, currentBranch, head, ref string) bool {
 		return false
 	}
 	defaultBranch, err := GetDefaultBranch(repoPath)
-	if err != nil || IsOnBaseBranch(repoPath, currentBranch, defaultBranch) {
+	if err != nil {
+		return false
+	}
+	if IsOnBaseBranch(repoPath, currentBranch, defaultBranch) {
 		return true
 	}
 	onDefault, err := IsAncestor(repoPath, ref, defaultBranch)
-	return err != nil || !onDefault
+	return err == nil && !onDefault
 }
 
 // GetRepoRoot returns the root directory of the git repository
