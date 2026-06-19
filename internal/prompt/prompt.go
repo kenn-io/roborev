@@ -544,10 +544,9 @@ func (b *Builder) BuildDirtyWithFiles(diff string, changedFiles []string, contex
 	ctx := b.newPromptBuildContext(agentName, reviewType, minSeverity, "dirty", optionalSectionsView{})
 	ctx.optional.DependencyMetadata = buildDependencyMetadataSection(changedFiles)
 
-	// Add project-specific guidelines if configured
-	if repoCfg, err := config.LoadRepoConfig(b.repoPath); err == nil && repoCfg != nil {
-		ctx.optional.ProjectGuidelines = buildProjectGuidelinesSectionView(repoCfg.ReviewGuidelines)
-	}
+	ctx.optional.ProjectGuidelines = buildProjectGuidelinesSectionView(
+		LoadGuidelinesLocal(b.repoPath, b.globalCfg),
+	)
 
 	// Uncommitted changes have no commit messages, so "current" mode has no
 	// refs to resolve; "open" mode still lists open katas.
@@ -781,9 +780,9 @@ func (b *Builder) newPromptBuildContext(agentName, reviewType, minSeverity, defa
 	}
 }
 
-func defaultOptionalSections(ctx context.Context, repoPath, additionalContext string) optionalSectionsView {
+func defaultOptionalSections(ctx context.Context, repoPath string, globalCfg *config.Config, additionalContext string) optionalSectionsView {
 	return optionalSectionsView{
-		ProjectGuidelines: buildProjectGuidelinesSectionView(LoadGuidelines(ctx, repoPath)),
+		ProjectGuidelines: buildProjectGuidelinesSectionView(LoadGuidelinesWithConfig(ctx, repoPath, globalCfg)),
 		AdditionalContext: buildAdditionalContextSection(additionalContext),
 	}
 }
@@ -1092,7 +1091,7 @@ func selectRichestRangePromptView(limit int, view TemplateContext, variants []di
 
 // buildSinglePrompt constructs a prompt for a single commit
 func (b *Builder) buildSinglePrompt(sha string, contextCount int, agentName, reviewType string, opts buildOpts) (string, error) {
-	ctx := b.newPromptBuildContext(agentName, reviewType, opts.minSeverity, "review", defaultOptionalSections(b.context(), b.repoPath, opts.additionalContext))
+	ctx := b.newPromptBuildContext(agentName, reviewType, opts.minSeverity, "review", defaultOptionalSections(b.context(), b.repoPath, b.globalCfg, opts.additionalContext))
 
 	// Get previous reviews if requested
 	if contextCount > 0 && b.db != nil {
@@ -1216,7 +1215,7 @@ func (b *Builder) buildSinglePrompt(sha string, contextCount int, agentName, rev
 
 // buildRangePrompt constructs a prompt for a commit range
 func (b *Builder) buildRangePrompt(rangeRef string, contextCount int, agentName, reviewType string, opts buildOpts) (string, error) {
-	ctx := b.newPromptBuildContext(agentName, reviewType, opts.minSeverity, "range", defaultOptionalSections(b.context(), b.repoPath, opts.additionalContext))
+	ctx := b.newPromptBuildContext(agentName, reviewType, opts.minSeverity, "range", defaultOptionalSections(b.context(), b.repoPath, b.globalCfg, opts.additionalContext))
 
 	// Get previous reviews from before the range start
 	if contextCount > 0 && b.db != nil {
@@ -1452,10 +1451,65 @@ func orderedPreviousReviewViews(contexts []HistoricalReviewContext) []previousRe
 	return previousReviewViews(ordered)
 }
 
-// LoadGuidelines loads review guidelines from the repo's default
+type loadedGuidelines struct {
+	text            string
+	supersedeGlobal bool
+}
+
+// LoadGuidelines loads repo review guidelines from the repo's default
 // branch, falling back to filesystem config when the default branch
 // has no .roborev.toml.
 func LoadGuidelines(ctx context.Context, repoPath string) string {
+	return loadRepoGuidelines(ctx, repoPath).text
+}
+
+// LoadGuidelinesWithConfig merges global review guidelines with repo
+// guidelines. Repo guidelines append to global guidelines by default;
+// review_guidelines_supersede_global in repo config disables the global
+// guidelines for that repo.
+func LoadGuidelinesWithConfig(ctx context.Context, repoPath string, globalCfg *config.Config) string {
+	repo := loadRepoGuidelines(ctx, repoPath)
+	return mergeGuidelines(globalGuidelines(globalCfg), repo.text, repo.supersedeGlobal)
+}
+
+// LoadGuidelinesLocal is like LoadGuidelinesWithConfig, but reads repo
+// guidelines from the working tree. Use it for dirty/local agent prompts
+// where the user's current local config is expected to apply.
+func LoadGuidelinesLocal(repoPath string, globalCfg *config.Config) string {
+	var repo loadedGuidelines
+	if fsCfg, err := config.LoadRepoConfig(repoPath); err == nil && fsCfg != nil {
+		repo = loadedGuidelines{
+			text:            fsCfg.ReviewGuidelines,
+			supersedeGlobal: fsCfg.ReviewGuidelinesSupersedeGlobal,
+		}
+	}
+	return mergeGuidelines(globalGuidelines(globalCfg), repo.text, repo.supersedeGlobal)
+}
+
+func globalGuidelines(globalCfg *config.Config) string {
+	if globalCfg == nil {
+		return ""
+	}
+	return globalCfg.ReviewGuidelines
+}
+
+func mergeGuidelines(global, repo string, repoSupersedesGlobal bool) string {
+	global = strings.TrimSpace(global)
+	repo = strings.TrimSpace(repo)
+	if repoSupersedesGlobal {
+		return repo
+	}
+	switch {
+	case global == "":
+		return repo
+	case repo == "":
+		return global
+	default:
+		return global + "\n\n" + repo
+	}
+}
+
+func loadRepoGuidelines(ctx context.Context, repoPath string) loadedGuidelines {
 	// Load review guidelines from the default branch (origin/main,
 	// origin/master, etc.). Branch-specific guidelines are intentionally
 	// ignored to prevent prompt injection from untrusted PR authors.
@@ -1465,21 +1519,27 @@ func LoadGuidelines(ctx context.Context, repoPath string) string {
 			if config.IsConfigParseError(err) {
 				log.Printf("prompt: invalid .roborev.toml on %s: %v",
 					defaultBranch, err)
-				return ""
+				return loadedGuidelines{}
 			}
 			log.Printf("prompt: failed to read .roborev.toml from %s: %v"+
 				" (will try filesystem)", defaultBranch, err)
 		} else if cfg != nil {
-			return cfg.ReviewGuidelines
+			return loadedGuidelines{
+				text:            cfg.ReviewGuidelines,
+				supersedeGlobal: cfg.ReviewGuidelinesSupersedeGlobal,
+			}
 		}
 	}
 
 	// Fall back to filesystem config when default branch has no config
 	// (e.g., no remote, or .roborev.toml not yet committed).
 	if fsCfg, err := config.LoadRepoConfig(repoPath); err == nil && fsCfg != nil {
-		return fsCfg.ReviewGuidelines
+		return loadedGuidelines{
+			text:            fsCfg.ReviewGuidelines,
+			supersedeGlobal: fsCfg.ReviewGuidelinesSupersedeGlobal,
+		}
 	}
-	return ""
+	return loadedGuidelines{}
 }
 
 func (b *Builder) previousAttemptContexts(gitRef string) []reviewAttemptContext {
@@ -1619,9 +1679,9 @@ func (b *Builder) BuildAddressPrompt(review *storage.Review, previousAttempts []
 		JobID:          review.JobID,
 	}
 
-	if repoCfg, err := config.LoadRepoConfig(b.repoPath); err == nil && repoCfg != nil {
-		view.ProjectGuidelines = buildProjectGuidelinesSectionView(repoCfg.ReviewGuidelines)
-	}
+	view.ProjectGuidelines = buildProjectGuidelinesSectionView(
+		LoadGuidelinesLocal(b.repoPath, b.globalCfg),
+	)
 
 	if len(previousAttempts) > 0 {
 		toolAttempts, userComments := SplitResponses(previousAttempts)

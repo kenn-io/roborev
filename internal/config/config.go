@@ -104,6 +104,7 @@ type Config struct {
 	MaxWorkers                 int    `toml:"max_workers"`
 	ReviewContextCount         int    `toml:"review_context_count"`
 	ReuseReviewSessionLookback int    `toml:"reuse_review_session_lookback"` // 0 means no candidate cap
+	ReviewGuidelines           string `toml:"review_guidelines" comment:"Extra review instructions added to prompts globally."`
 	DefaultAgent               string `toml:"default_agent" comment:"Default agent when no workflow-specific agent is set."`
 	DefaultModel               string `toml:"default_model"` // Default model for agents (format varies by agent)
 	DefaultBackupAgent         string `toml:"default_backup_agent"`
@@ -289,27 +290,28 @@ type ACPAgentConfig struct {
 
 // RepoConfig holds per-repo overrides
 type RepoConfig struct {
-	Agent                      string   `toml:"agent" comment:"Default agent for this repo when no workflow-specific agent is set."`
-	Model                      string   `toml:"model" comment:"Default model for this repo when no workflow-specific model is set."` // Model for agents (format varies by agent)
-	BackupAgent                string   `toml:"backup_agent" comment:"Backup agent for this repo if the primary agent fails."`
-	BackupModel                string   `toml:"backup_model" comment:"Backup model for this repo if the primary model fails."`
-	ReviewContextCount         int      `toml:"review_context_count" comment:"Number of related reviews to include as context for this repo."`
-	ReviewGuidelines           string   `toml:"review_guidelines" comment:"Extra review instructions added to prompts for this repo."`
-	JobTimeoutMinutes          int      `toml:"job_timeout_minutes" comment:"Override the review job timeout in minutes for this repo."`
-	ExcludedBranches           []string `toml:"excluded_branches" comment:"Branches that should be skipped for automatic review in this repo."`
-	ExcludedCommitPatterns     []string `toml:"excluded_commit_patterns" comment:"Commit message substrings that should skip review for this repo."`
-	DisplayName                string   `toml:"display_name" comment:"Display name shown for this repo in the TUI and output."`
-	ReviewReasoning            string   `toml:"review_reasoning" comment:"Reasoning level for reviews in this repo: fast, standard, medium, thorough, or maximum."`
-	RefineReasoning            string   `toml:"refine_reasoning" comment:"Reasoning level for refine in this repo: fast, standard, medium, thorough, or maximum."`
-	FixReasoning               string   `toml:"fix_reasoning" comment:"Reasoning level for fix in this repo: fast, standard, medium, thorough, or maximum."`
-	FixMinSeverity             string   `toml:"fix_min_severity" comment:"Minimum severity for fix in this repo: critical, high, medium, or low."`     // Minimum severity for fix: critical, high, medium, low
-	RefineMinSeverity          string   `toml:"refine_min_severity" comment:"Minimum severity for refine in this repo: critical, high, medium, low."`  // Minimum severity for refine: critical, high, medium, low
-	ReviewMinSeverity          string   `toml:"review_min_severity" comment:"Minimum severity for reviews in this repo: critical, high, medium, low."` // Minimum severity for review: critical, high, medium, low
-	ExcludePatterns            []string `toml:"exclude_patterns" comment:"Filenames or glob patterns to exclude from review diffs for this repo."`
-	SnapshotDir                string   `toml:"snapshot_dir" comment:"Repo-local directory for temporary oversized diff snapshots."`
-	PostCommitReview           string   `toml:"post_commit_review" comment:"Automatic post-commit review mode for this repo: commit or branch."` // "commit" (default) or "branch"
-	ReuseReviewSession         *bool    `toml:"reuse_review_session"`
-	ReuseReviewSessionLookback int      `toml:"reuse_review_session_lookback"` // 0 means no candidate cap
+	Agent                           string   `toml:"agent" comment:"Default agent for this repo when no workflow-specific agent is set."`
+	Model                           string   `toml:"model" comment:"Default model for this repo when no workflow-specific model is set."` // Model for agents (format varies by agent)
+	BackupAgent                     string   `toml:"backup_agent" comment:"Backup agent for this repo if the primary agent fails."`
+	BackupModel                     string   `toml:"backup_model" comment:"Backup model for this repo if the primary model fails."`
+	ReviewContextCount              int      `toml:"review_context_count" comment:"Number of related reviews to include as context for this repo."`
+	ReviewGuidelines                string   `toml:"review_guidelines" comment:"Extra review instructions added to prompts for this repo."`
+	ReviewGuidelinesSupersedeGlobal bool     `toml:"review_guidelines_supersede_global" comment:"Use repo review_guidelines instead of appending global review_guidelines."`
+	JobTimeoutMinutes               int      `toml:"job_timeout_minutes" comment:"Override the review job timeout in minutes for this repo."`
+	ExcludedBranches                []string `toml:"excluded_branches" comment:"Branches that should be skipped for automatic review in this repo."`
+	ExcludedCommitPatterns          []string `toml:"excluded_commit_patterns" comment:"Commit message substrings that should skip review for this repo."`
+	DisplayName                     string   `toml:"display_name" comment:"Display name shown for this repo in the TUI and output."`
+	ReviewReasoning                 string   `toml:"review_reasoning" comment:"Reasoning level for reviews in this repo: fast, standard, medium, thorough, or maximum."`
+	RefineReasoning                 string   `toml:"refine_reasoning" comment:"Reasoning level for refine in this repo: fast, standard, medium, thorough, or maximum."`
+	FixReasoning                    string   `toml:"fix_reasoning" comment:"Reasoning level for fix in this repo: fast, standard, medium, thorough, or maximum."`
+	FixMinSeverity                  string   `toml:"fix_min_severity" comment:"Minimum severity for fix in this repo: critical, high, medium, or low."`     // Minimum severity for fix: critical, high, medium, low
+	RefineMinSeverity               string   `toml:"refine_min_severity" comment:"Minimum severity for refine in this repo: critical, high, medium, low."`  // Minimum severity for refine: critical, high, medium, low
+	ReviewMinSeverity               string   `toml:"review_min_severity" comment:"Minimum severity for reviews in this repo: critical, high, medium, low."` // Minimum severity for review: critical, high, medium, low
+	ExcludePatterns                 []string `toml:"exclude_patterns" comment:"Filenames or glob patterns to exclude from review diffs for this repo."`
+	SnapshotDir                     string   `toml:"snapshot_dir" comment:"Repo-local directory for temporary oversized diff snapshots."`
+	PostCommitReview                string   `toml:"post_commit_review" comment:"Automatic post-commit review mode for this repo: commit or branch."` // "commit" (default) or "branch"
+	ReuseReviewSession              *bool    `toml:"reuse_review_session"`
+	ReuseReviewSessionLookback      int      `toml:"reuse_review_session_lookback"` // 0 means no candidate cap
 
 	// CI-specific overrides (used by CI poller for this repo)
 	CI RepoCIConfig `toml:"ci"`

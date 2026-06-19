@@ -236,7 +236,7 @@ func enqueueConsolidation(ctx context.Context, cmd *cobra.Command, repoRoot stri
 	)
 	// Build verification prompt after agent resolution so compact can reuse
 	// the selected agent's regular review output contract.
-	compactPrompt := buildCompactPrompt(jobReviews, branchFilter, repoRoot, agentName)
+	compactPrompt := buildCompactPrompt(ctx, jobReviews, branchFilter, repoRoot, agentName)
 	// Resolve model locally for display; the daemon re-resolves with
 	// its own canonical-agent comparison to skip generic default_model
 	// when the agent was overridden on CLI.
@@ -462,7 +462,7 @@ func runCompact(cmd *cobra.Command, opts compactOptions) error {
 	return nil
 }
 
-func buildCompactPrompt(jobReviews []jobReview, branch, repoRoot, agentName string) string {
+func buildCompactPrompt(ctx context.Context, jobReviews []jobReview, branch, repoRoot, agentName string) string {
 	var sb strings.Builder
 
 	if reviewPrompt := strings.TrimSpace(prompt.GetSystemPrompt(agentName, "review")); reviewPrompt != "" {
@@ -475,9 +475,11 @@ func buildCompactPrompt(jobReviews []jobReview, branch, repoRoot, agentName stri
 
 	// Include project review guidelines so the compact agent
 	// respects the same rules as regular reviews.
-	if repoCfg, err := config.LoadRepoConfig(repoRoot); err == nil && repoCfg != nil && repoCfg.ReviewGuidelines != "" {
+	globalCfg, _ := config.LoadGlobal()
+	guidelines := prompt.LoadGuidelinesWithConfig(ctx, repoRoot, globalCfg)
+	if guidelines != "" {
 		sb.WriteString("## Project Guidelines\n\n")
-		sb.WriteString(strings.TrimSpace(repoCfg.ReviewGuidelines))
+		sb.WriteString(strings.TrimSpace(guidelines))
 		sb.WriteString("\n\n")
 	}
 

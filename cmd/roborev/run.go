@@ -18,6 +18,7 @@ import (
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
+	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -306,12 +307,13 @@ func buildPromptWithContext(repoPath, userPrompt string) string {
 	sb.WriteString("## Context\n\n")
 	fmt.Fprintf(&sb, "You are working in the repository \"%s\" at %s.\n", repoName, repoPath)
 
-	// Load project guidelines if available
-	repoCfg, err := config.LoadRepoConfig(repoPath)
-	if err == nil && repoCfg != nil && repoCfg.ReviewGuidelines != "" {
+	// Load project guidelines if available.
+	globalCfg, _ := config.LoadGlobal()
+	guidelines := prompt.LoadGuidelinesLocal(repoPath, globalCfg)
+	if guidelines != "" {
 		sb.WriteString("\n## Project Guidelines\n\n")
 		sb.WriteString("The following are project-specific guidelines for this repository:\n\n")
-		sb.WriteString(strings.TrimSpace(repoCfg.ReviewGuidelines))
+		sb.WriteString(strings.TrimSpace(guidelines))
 		sb.WriteString("\n")
 	}
 

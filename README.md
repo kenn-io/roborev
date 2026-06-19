@@ -182,7 +182,13 @@ snapshot_dir = ".roborev"
 review_guidelines = """
 Project-specific review instructions here.
 """
+# Optional: use repo guidelines instead of appending global review_guidelines.
+review_guidelines_supersede_global = false
 ```
+
+You can also set `review_guidelines` in `~/.roborev/config.toml`. Global
+guidelines apply to every repo and are appended before repo guidelines by
+default.
 
 `snapshot_dir` must be repo-relative. `roborev init` ensures it is ignored in `.gitignore`; snapshot creation also adds a local `.git/info/exclude` fallback for existing checkouts whose ignore setup is stale.
 

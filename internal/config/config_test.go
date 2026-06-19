@@ -269,6 +269,17 @@ func TestLoadGlobalMouseEnabledFromTOML(t *testing.T) {
 	}, "MouseEnabled should be false when loaded from TOML")
 }
 
+func TestLoadGlobalConfigWithReviewGuidelines(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	err := os.WriteFile(path, []byte(`review_guidelines = "Prefer small, focused changes."`+"\n"), 0o644)
+	require.NoError(t, err)
+
+	cfg, err := LoadGlobalFrom(path)
+	require.NoError(t, err)
+	assert.Equal(t, "Prefer small, focused changes.", cfg.ReviewGuidelines)
+}
+
 func TestLoadRepoConfigWithGuidelines(t *testing.T) {
 	tmpDir := newTempRepo(t, `
 agent = "claude-code"
@@ -295,6 +306,19 @@ All public APIs must have documentation comments.
 	assert.Condition(t, func() bool {
 		return strings.Contains(cfg.ReviewGuidelines, "composition over inheritance")
 	}, "Expected guidelines to contain 'composition over inheritance'")
+}
+
+func TestLoadRepoConfigWithGuidelinesSupersedeGlobal(t *testing.T) {
+	tmpDir := newTempRepo(t, `
+review_guidelines = "Repo-only rule."
+review_guidelines_supersede_global = true
+`)
+
+	cfg, err := LoadRepoConfig(tmpDir)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.Equal(t, "Repo-only rule.", cfg.ReviewGuidelines)
+	assert.Equal(t, true, cfg.ReviewGuidelinesSupersedeGlobal)
 }
 
 func TestLoadRepoConfigNoGuidelines(t *testing.T) {

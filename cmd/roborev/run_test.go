@@ -125,6 +125,21 @@ func TestBuildPromptWithContext(t *testing.T) {
 		assert.Contains(t, result, "Always use tabs for indentation")
 	})
 
+	t.Run("appends global and project guidelines", func(t *testing.T) {
+		dataDir := t.TempDir()
+		t.Setenv("ROBOREV_DATA_DIR", dataDir)
+		require.NoError(t, os.MkdirAll(dataDir, 0o755))
+		require.NoError(t, os.WriteFile(filepath.Join(dataDir, "config.toml"),
+			[]byte(`review_guidelines = "Global rule"`+"\n"), 0o644))
+		repoPath := createRepoWithConfig(t, `review_guidelines = "Project rule"`)
+
+		result := buildPromptWithContext(repoPath, "test prompt")
+
+		assert.Contains(t, result, "Global rule")
+		assert.Contains(t, result, "Project rule")
+		assert.Less(t, strings.Index(result, "Global rule"), strings.Index(result, "Project rule"))
+	})
+
 	t.Run("omits guidelines section when not configured", func(t *testing.T) {
 		repoPath := createRepoWithConfig(t, "")
 

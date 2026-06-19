@@ -1810,6 +1810,54 @@ func TestBuildRangePrompt_WithGuidelines(t *testing.T) {
 	assertNotContains(t, section, "Branch-only rule.", "branch guidelines should not appear in guidelines section")
 }
 
+func TestBuildSinglePrompt_WithGlobalGuidelines(t *testing.T) {
+	ctx := setupGuidelinesRepo(t, "main", "", "", nil)
+	cfg := &config.Config{ReviewGuidelines: "Global rule."}
+
+	b := NewBuilderWithConfig(nil, cfg)
+	prompt, err := b.ForRepo(ctx.Dir, 0).Build(ctx.BaseSHA, 0, "test", "review", "")
+	require.NoError(t, err, "Build: %v", err)
+
+	section := extractGuidelinesSection(prompt)
+	assertContains(t, section, "Global rule.", "expected global guidelines in prompt")
+}
+
+func TestBuildSinglePrompt_AppendsGlobalAndRepoGuidelines(t *testing.T) {
+	ctx := setupGuidelinesRepo(t, "main", "Repo rule.", "", nil)
+	cfg := &config.Config{ReviewGuidelines: "Global rule."}
+
+	b := NewBuilderWithConfig(nil, cfg)
+	prompt, err := b.ForRepo(ctx.Dir, 0).Build(ctx.BaseSHA, 0, "test", "review", "")
+	require.NoError(t, err, "Build: %v", err)
+
+	section := extractGuidelinesSection(prompt)
+	assertContains(t, section, "Global rule.", "expected global guidelines in prompt")
+	assertContains(t, section, "Repo rule.", "expected repo guidelines in prompt")
+	assert.Less(t, strings.Index(section, "Global rule."), strings.Index(section, "Repo rule."))
+}
+
+func TestBuildSinglePrompt_RepoGuidelinesSupersedeGlobalWhenConfigured(t *testing.T) {
+	ctx := setupGuidelinesRepo(t, "main", "", "", func(t *testing.T, r *testRepo) {
+		t.Helper()
+		require.NoError(t, os.WriteFile(filepath.Join(r.dir, ".roborev.toml"),
+			[]byte("review_guidelines = \"Repo rule.\"\nreview_guidelines_supersede_global = true\n"), 0o644))
+		r.git("add", "-A")
+		r.git("commit", "-m", "add guidelines")
+		r.git("remote", "add", "origin", r.dir)
+		r.git("fetch", "origin")
+		r.git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+	})
+	cfg := &config.Config{ReviewGuidelines: "Global rule."}
+
+	b := NewBuilderWithConfig(nil, cfg)
+	prompt, err := b.ForRepo(ctx.Dir, 0).Build(ctx.BaseSHA, 0, "test", "review", "")
+	require.NoError(t, err, "Build: %v", err)
+
+	section := extractGuidelinesSection(prompt)
+	assertContains(t, section, "Repo rule.", "expected repo guidelines in prompt")
+	assertNotContains(t, section, "Global rule.", "global guidelines should be superseded")
+}
+
 // setupExcludePatternRepo creates a repo with a "custom.dat" file
 // (to be excluded) and a "keep.go" file (to be retained). Returns
 // the repo directory and the commit SHA containing both files.

@@ -595,7 +595,7 @@ func TestIsGlobalKey(t *testing.T) {
 		{"hooks", true},
 		{"agent", false},
 		{"sync", false},
-		{"review_guidelines", false},
+		{"review_guidelines", true},
 		{"nonexistent", false},
 	}
 
@@ -606,6 +606,13 @@ func TestIsGlobalKey(t *testing.T) {
 			assert.Equal(tt.want, got)
 		})
 	}
+}
+
+func TestReviewGuidelinesValidInGlobalAndRepoConfig(t *testing.T) {
+	assert := assert.New(t)
+	assert.NoError(SetConfigValue(&Config{}, "review_guidelines", "Global rule"))
+	assert.NoError(SetConfigValue(&RepoConfig{}, "review_guidelines", "Repo rule"))
+	assert.NoError(SetConfigValue(&RepoConfig{}, "review_guidelines_supersede_global", "true"))
 }
 
 func TestListExplicitKeys(t *testing.T) {
