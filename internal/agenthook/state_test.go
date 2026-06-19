@@ -260,7 +260,7 @@ func TestCountOpenFailedReviewsExcludesNonReviewJobTypes(t *testing.T) {
 func TestBuildHookReasonsAreCompactOneLine(t *testing.T) {
 	assert := assert.New(t)
 	req := Request{
-		Instruction: "Invoke the $roborev-fix skill now.",
+		Instruction: DefaultInstruction,
 		Event: Input{
 			SessionID: "019e94d7-4320-73a3-8833-e697eb1ea5cb",
 			CWD:       "/Users/wesm/.superset/worktrees/roborev/agent-hook-integration",
@@ -280,12 +280,14 @@ func TestBuildHookReasonsAreCompactOneLine(t *testing.T) {
 	assert.NotContains(failed, "\n")
 	assert.NotContains(failed, req.Event.SessionID)
 	assert.NotContains(failed, "/Users/wesm")
+	assert.NotContains(failed, "continue the task")
 
 	stop := buildStopReason(req, st)
 	assert.Equal("Invoke the $roborev-fix skill now. 4 Stop hooks reached.", stop)
 	assert.NotContains(stop, "\n")
 	assert.NotContains(stop, req.Event.SessionID)
 	assert.NotContains(stop, "/Users/wesm")
+	assert.NotContains(stop, "continue the task")
 
 	commit := buildCommitReason(req, st.CommitCount, st.LastCommitRepo)
 	assert.Equal(`Invoke the $roborev-fix skill now. 2 commits reached in "agent-hook-integration".`, commit)

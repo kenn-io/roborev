@@ -88,6 +88,11 @@ it. Commit baselines are tracked by branch and by worktree, so detached
 worktrees keep their own commit sequence and attaching a branch later does not
 drop the detached history.
 
+When a `PostToolUse` prompt fires, roborev appends context telling the agent to
+fix any Roborev issues it finds and then continue the task that the hook
+interrupted. `Stop` prompts do not include that continuation framing because
+they fire when the agent has already reached the end of its turn.
+
 Command flags override environment variables, which override TOML config:
 
 ```text

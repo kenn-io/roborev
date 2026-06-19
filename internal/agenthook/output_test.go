@@ -15,6 +15,7 @@ func TestBuildOutputForStopBlocks(t *testing.T) {
 
 	assert.Equal(t, "block", output["decision"])
 	assert.Equal(t, "Invoke $roborev-fix.", output["reason"])
+	assert.NotContains(t, output["reason"], "continue the task")
 }
 
 func TestBuildOutputForPostToolUseAddsContext(t *testing.T) {
@@ -27,7 +28,12 @@ func TestBuildOutputForPostToolUseAddsContext(t *testing.T) {
 	specific, ok := output["hookSpecificOutput"].(map[string]any)
 	require.True(t, ok)
 	assert.Equal(t, "PostToolUse", specific["hookEventName"])
-	assert.Equal(t, "Invoke $roborev-fix.", specific["additionalContext"])
+	assert.Equal(
+		t,
+		"Invoke $roborev-fix. If Roborev issues are found, fix them, "+
+			"then continue the task you were doing before this hook interrupted you.",
+		specific["additionalContext"],
+	)
 }
 
 func TestBuildOutputWhenNotTriggeredIsEmpty(t *testing.T) {
