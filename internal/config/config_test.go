@@ -318,7 +318,7 @@ review_guidelines_supersede_global = true
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 	assert.Equal(t, "Repo-only rule.", cfg.ReviewGuidelines)
-	assert.Equal(t, true, cfg.ReviewGuidelinesSupersedeGlobal)
+	assert.True(t, cfg.ReviewGuidelinesSupersedeGlobal)
 }
 
 func TestLoadRepoConfigNoGuidelines(t *testing.T) {

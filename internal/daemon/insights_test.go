@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -71,6 +72,50 @@ func TestHandleEnqueueInsightsBuildsPromptServerSide(t *testing.T) {
 	assert.NotContains(t, stored.Prompt, "Compact finding")
 	assert.NotContains(t, stored.Prompt, "Feature finding")
 	assert.NotContains(t, stored.Prompt, "Old finding")
+}
+
+func TestHandleEnqueueInsightsIncludesGlobalAndRepoGuidelines(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	server.configWatcher.Config().ReviewGuidelines = "Global rule."
+
+	repo := testutil.InitTestRepo(t)
+	repoDir := repo.Path()
+	repo.CommitFile(".roborev.toml", "review_guidelines = \"Repo rule.\"\n", "add repo guidelines")
+
+	mainRoot, err := gitpkg.GetMainRepoRoot(repoDir)
+	require.NoError(t, err)
+
+	storedRepo, err := db.GetOrCreateRepo(mainRoot)
+	require.NoError(t, err)
+
+	enqueueCompletedInsightsReviewJob(
+		t, db, storedRepo.ID, "aaa111", "main",
+		storage.JobTypeReview, failingInsightsOutput("Included finding"),
+	)
+
+	since := time.Now().Add(-24 * time.Hour)
+	req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", EnqueueRequest{
+		RepoPath: repoDir,
+		GitRef:   "insights",
+		Agent:    "test",
+		JobType:  storage.JobTypeInsights,
+		Since:    since.Format(time.RFC3339),
+	})
+	w := httptest.NewRecorder()
+
+	server.httpServer.Handler.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+
+	var job storage.ReviewJob
+	testutil.DecodeJSON(t, w, &job)
+
+	stored, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+
+	require.Contains(t, stored.Prompt, "Global rule.")
+	require.Contains(t, stored.Prompt, "Repo rule.")
+	assert.Less(t, strings.Index(stored.Prompt, "Global rule."), strings.Index(stored.Prompt, "Repo rule."))
 }
 
 func TestHandleEnqueueInsightsSkipsWhenNoFailingReviewsMatch(t *testing.T) {
