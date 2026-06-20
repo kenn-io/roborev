@@ -17,9 +17,9 @@ func TestClassifyPanelOutcome(t *testing.T) {
 
 	assert.Equal(OutcomePost, classifyPanelOutcome([]reviewpkg.ReviewResult{ok, transient}, nil, 0).Kind)
 	assert.Equal(OutcomeDeferTransient, classifyPanelOutcome([]reviewpkg.ReviewResult{transient}, nil, 0).Kind)
+	assert.Equal(OutcomeDeferTransient, classifyPanelOutcome([]reviewpkg.ReviewResult{quota}, nil, 0).Kind)
 	assert.Equal(OutcomeDeferGenuine, classifyPanelOutcome([]reviewpkg.ReviewResult{genuine}, nil, 1).Kind)
 	assert.Equal(OutcomeGenuineGiveUp, classifyPanelOutcome([]reviewpkg.ReviewResult{genuine}, nil, 3).Kind)
-	assert.Equal(OutcomeAllSkip, classifyPanelOutcome([]reviewpkg.ReviewResult{quota}, nil, 0).Kind)
 }
 
 // TestClassifyPanelOutcomeSynthesisFailure verifies the synthesis-failure

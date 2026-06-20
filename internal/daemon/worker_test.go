@@ -1818,6 +1818,50 @@ func TestProcessJob_CooldownResolvesAlias(t *testing.T) {
 	tc.assertJobStatus(t, job.ID, storage.JobStatusFailed)
 }
 
+func TestProcessJob_CIReviewCooldownDoesNotFailOverToBackup(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+
+	cfg := config.DefaultConfig()
+	cfg.DefaultBackupAgent = "test"
+	tc.reconfigurePool(cfg)
+
+	claimed := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
+	claimed.Source = storage.JobSourceCI
+	claimed.CIBaseBranch = "main"
+	tc.Pool.cooldownAgent("codex", time.Now().Add(time.Hour))
+
+	tc.Pool.processJob(testWorkerID, claimed)
+
+	updated := tc.assertJobStatus(t, claimed.ID, storage.JobStatusFailed)
+	assert := assert.New(t)
+	assert.Equal("codex", updated.Agent, "CI cooldown must not fail over to backup")
+	assert.True(strings.HasPrefix(updated.Error, review.QuotaErrorPrefix),
+		"cooldown failure should be a retryable quota skip, got %q", updated.Error)
+}
+
+func TestFailOrRetryInner_CIQuotaDoesNotFailOverToBackup(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+
+	cfg := config.DefaultConfig()
+	cfg.DefaultBackupAgent = "test"
+	tc.reconfigurePool(cfg)
+
+	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
+	job.Source = storage.JobSourceCI
+	job.CIBaseBranch = "main"
+
+	tc.Pool.failOrRetryAgent(testWorkerID, job, "codex", "resource exhausted: reset after 1h")
+
+	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusFailed)
+	assert := assert.New(t)
+	assert.Equal("codex", updated.Agent, "CI quota must not fail over to backup")
+	assert.True(strings.HasPrefix(updated.Error, review.QuotaErrorPrefix),
+		"quota failure should be a retryable quota skip, got %q", updated.Error)
+	assert.True(tc.Pool.isAgentCoolingDown("codex"), "quota should cool down the configured agent")
+}
+
 func TestResolveBackupAgent_AliasMatchesPrimary(t *testing.T) {
 	// "claude" is an alias for "claude-code". If job.Agent is "claude"
 	// and backup resolves to "claude-code", they are the same agent.
@@ -2068,6 +2112,23 @@ func TestFailOrRetryInner_SessionLimitCoolsDownAndSkipsRetries(t *testing.T) {
 	got, err := tc.DB.GetJobRetryCount(job.ID)
 	require.NoError(t, err)
 	assert.Equal(0, got, "session-limit error must not consume a retry slot")
+}
+
+func TestFailOrRetryInner_SessionLimitFinalFailureIsRetryableOutage(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	job := tc.createAndClaimJobWithAgent(t, "session-limit-outage-test", testWorkerID, "claude-code")
+	job = tc.exhaustRetries(t, job, testWorkerID, "claude-code")
+
+	errText := "agent: claude-code failed\nstream: stream errors: You've hit your session limit · resets 5:50am (UTC): exit status 1"
+	tc.Pool.failOrRetryAgent(testWorkerID, job, "claude-code", errText)
+
+	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusFailed)
+	assert := assert.New(t)
+	assert.True(tc.Pool.isAgentCoolingDown("claude-code"), "agent should be in cooldown")
+	assert.True(strings.HasPrefix(updated.Error, review.OutageErrorPrefix),
+		"session-limit failure should be retryable outage, got %q", updated.Error)
+	assert.False(strings.HasPrefix(updated.Error, review.QuotaErrorPrefix),
+		"session-limit failure should not be stored as quota skip")
 }
 
 func TestFailOrRetryInner_UnmatchedAgentErrorLogsWarn(t *testing.T) {

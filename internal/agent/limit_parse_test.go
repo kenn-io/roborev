@@ -52,6 +52,11 @@ func TestParseResetTime(t *testing.T) {
 			want: time.Date(2026, 5, 5, 17, 42, 0, 0, loc),
 		},
 		{
+			name: "resets without at and utc suffix",
+			msg:  "You've hit your session limit · resets 5:50am (UTC)",
+			want: time.Date(2026, 5, 6, 5, 50, 0, 0, loc),
+		},
+		{
 			name: "resets at earlier today rolls to next day",
 			msg:  "limit resets at 9:00 AM",
 			want: time.Date(2026, 5, 6, 9, 0, 0, 0, loc),

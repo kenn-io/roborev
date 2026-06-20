@@ -47,7 +47,7 @@ func ParseResetDuration(errMsg string) time.Duration {
 }
 
 // ParseResetTime extracts an absolute reset time from messages like
-// "resets at 5:42 PM" or "try again at 17:42". Interprets the parsed
+// "resets at 5:42 PM", "resets 5:42pm", or "try again at 17:42". Interprets the parsed
 // clock time in the local timezone. Returns the zero time.Time if no
 // recognized phrase is present or the time is unparseable.
 //
@@ -68,6 +68,8 @@ func parseResetTimeAt(errMsg string, now time.Time) time.Time {
 	switch {
 	case strings.Contains(lower, "resets at "):
 		idx = strings.Index(lower, "resets at ") + len("resets at ")
+	case strings.Contains(lower, "resets "):
+		idx = strings.Index(lower, "resets ") + len("resets ")
 	case strings.Contains(lower, "try again at "):
 		idx = strings.Index(lower, "try again at ") + len("try again at ")
 	default:
@@ -80,7 +82,7 @@ func parseResetTimeAt(errMsg string, now time.Time) time.Time {
 	end := len(rest)
 	for i, r := range rest {
 		// Stop at sentence-ending punctuation or newline.
-		if r == '.' || r == ',' || r == ';' || r == '\n' || r == ')' {
+		if r == '.' || r == ',' || r == ';' || r == '\n' || r == '(' || r == ')' {
 			end = i
 			break
 		}

@@ -13,12 +13,6 @@ const (
 	LimitKindTransient                  // 429-style; retry locally, no cooldown
 	LimitKindQuota                      // hard quota exhaustion (Gemini/Codex today)
 	// LimitKindSession is a session-level cap (e.g. Claude 5-hour).
-	// Plumbing is in place — daemon cooldown/abort and CLI strict abort
-	// both handle it — but defaultLimitRules does not yet produce it for
-	// any real agent. ClassifyLimit can return LimitKindSession only via
-	// an injected classifier (tests). Production support is pending a
-	// captured Claude session-cap message; see the TODO at
-	// defaultLimitRules.
 	LimitKindSession
 )
 
@@ -55,16 +49,6 @@ type limitRule struct {
 // config-validation errors. A transient classification only triggers a
 // local retry with backoff (no cooldown), so the bar is deliberately
 // kept high to avoid retrying deterministic failures forever.
-//
-// TODO: add a LimitKindSession rule for Claude's 5-hour cap once the
-// exact error wording is captured from a real session-cap failure.
-// Speculative substrings ("usage limit", "limit reached", etc.) are
-// not added on purpose — they would also match policy errors,
-// transient 429s, and config-validation messages, and a false positive
-// would abort roborev fix and cool down the agent when retrying might
-// have worked. Until that pattern lands, ClassifyLimit returns
-// LimitKindSession only when an injected classifier produces it
-// (i.e., in tests).
 var defaultLimitRules = []limitRule{
 	{Agents: []string{"*"}, Substring: "resource exhausted", Kind: LimitKindQuota},
 	{Agents: []string{"*"}, Substring: "quota exceeded", Kind: LimitKindQuota},
@@ -79,6 +63,8 @@ var defaultLimitRules = []limitRule{
 	// specific intent wins under first-match-wins (classifyLimitWithRules).
 	// Codex ChatGPT-account usage cap — a quota skip, not a hard failure.
 	{Agents: []string{"codex"}, Substring: "you've hit your usage limit", Kind: LimitKindQuota},
+	// Claude Code five-hour session cap, captured from real daemon logs.
+	{Agents: []string{"claude-code"}, Substring: "you've hit your session limit", Kind: LimitKindSession},
 	// Transient/outage — observed provider wording only (no speculative
 	// substrings; see the no-speculative note above). Retried with backoff.
 	{Agents: []string{"*"}, Substring: "too many requests", Kind: LimitKindTransient},

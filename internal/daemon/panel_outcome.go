@@ -17,8 +17,9 @@ const (
 	// member produced real review output.
 	OutcomePost OutcomeKind = iota
 	// OutcomeDeferTransient defers the run for a later retry: no member
-	// succeeded and at least one failed on a transient provider outage. The
-	// finalize path posts nothing unless the transient retry wall is exhausted.
+	// succeeded and at least one failed on a provider outage or agent
+	// availability limit. The finalize path posts nothing unless the transient
+	// retry wall is exhausted.
 	OutcomeDeferTransient
 	// OutcomeDeferGenuine defers the run for a later retry: no member succeeded,
 	// none failed transiently, and at least one failed genuinely, but the
@@ -27,8 +28,8 @@ const (
 	// OutcomeGenuineGiveUp posts a genuine-failure soft note with a blocking
 	// commit status: a genuine failure recurred up to the give-up cap.
 	OutcomeGenuineGiveUp
-	// OutcomeAllSkip posts the all-skipped summary: every member was a
-	// quota/timeout skip (or the member set was empty), with no real result.
+	// OutcomeAllSkip posts the all-skipped summary: every member was a timeout
+	// skip (or the member set was empty), with no real result.
 	OutcomeAllSkip
 )
 
@@ -59,11 +60,12 @@ type PanelOutcome struct {
 //     help).
 //  1. any done member with non-empty output -> OutcomePost (a partial review is
 //     better than nothing once any reviewer landed real output).
-//  2. else any transient-outage failure -> OutcomeDeferTransient (wait for the
-//     real review rather than post a failed/partial result).
+//  2. else any transient-outage or quota/session failure ->
+//     OutcomeDeferTransient (wait for the real review rather than post a
+//     failed/partial result).
 //  3. else any genuine failure -> OutcomeGenuineGiveUp when this attempt would
 //     hit the give-up cap (consecutiveGenuine+1), otherwise OutcomeDeferGenuine.
-//  4. else (all quota/timeout skips, or empty) -> OutcomeAllSkip.
+//  4. else (all timeout skips, or empty) -> OutcomeAllSkip.
 func classifyPanelOutcome(
 	results []reviewpkg.ReviewResult, synthesis *reviewpkg.ReviewResult, consecutiveGenuine int,
 ) PanelOutcome {
@@ -75,6 +77,9 @@ func classifyPanelOutcome(
 		return PanelOutcome{Kind: OutcomePost}
 	}
 	if r := firstMatch(results, reviewpkg.IsTransientFailure); r != nil {
+		return PanelOutcome{Kind: OutcomeDeferTransient, LastErrorExcerpt: r.Error}
+	}
+	if r := firstMatch(results, reviewpkg.IsQuotaFailure); r != nil {
 		return PanelOutcome{Kind: OutcomeDeferTransient, LastErrorExcerpt: r.Error}
 	}
 	if r := firstMatch(results, reviewpkg.IsGenuineFailure); r != nil {

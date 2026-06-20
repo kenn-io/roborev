@@ -99,6 +99,12 @@ func TestClassifyLimitTransientAndUsage(t *testing.T) {
 			LimitKindQuota,
 		},
 		{
+			"claude session limit -> session", "claude-code",
+			`agent: claude-code failed
+stream: stream errors: You've hit your session limit · resets 5:50am (UTC): exit status 1`,
+			LimitKindSession,
+		},
+		{
 			// Usage-cap text wrapped in a 429/Too Many Requests envelope must
 			// still classify as quota: the codex usage-limit rule precedes the
 			// generic transient rules, so first-match-wins keeps it quota. This

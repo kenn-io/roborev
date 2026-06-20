@@ -551,7 +551,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	if wp.isAgentCoolingDown(canonicalAgent) {
 		log.Printf("[%s] Agent %s in cooldown, skipping job %d",
 			workerID, canonicalAgent, job.ID)
-		wp.failoverOrFail(workerID, job, canonicalAgent,
+		wp.failCooldownOrFailover(workerID, job, canonicalAgent,
 			fmt.Sprintf("agent %s quota cooldown active", canonicalAgent))
 		return
 	}
@@ -1026,18 +1026,19 @@ func (wp *WorkerPool) failOrRetryAgent(workerID string, job *storage.ReviewJob, 
 }
 
 // finalErrorMsg tags the stored error with review.OutageErrorPrefix when an
-// agent failure classifies as a transient provider outage (429 /
-// stream-disconnect / 5xx) so the CI batch layer can treat it as retryable
-// rather than a genuine failure. Non-agent and non-transient errors are
-// returned unchanged.
+// agent failure classifies as a transient provider outage or session cap so the
+// CI batch layer can treat it as retryable rather than a genuine failure.
+// Non-agent and non-transient errors are returned unchanged.
 func (wp *WorkerPool) finalErrorMsg(agentName, errorMsg string, agentError bool) string {
 	if !agentError {
 		return errorMsg
 	}
-	if wp.classify(agent.CanonicalName(agentName), errorMsg).Kind == agent.LimitKindTransient {
+	switch wp.classify(agent.CanonicalName(agentName), errorMsg).Kind {
+	case agent.LimitKindTransient, agent.LimitKindSession:
 		return review.OutageError(errorMsg)
+	default:
+		return errorMsg
 	}
-	return errorMsg
 }
 
 func (wp *WorkerPool) failOrRetryInner(workerID string, job *storage.ReviewJob, agentName string, errorMsg string, agentError bool) {
@@ -1059,9 +1060,15 @@ func (wp *WorkerPool) failOrRetryInner(workerID string, job *storage.ReviewJob, 
 				}
 			}
 			wp.cooldownAgent(agentName, time.Now().Add(dur))
-			log.Printf("[%s] Agent %s quota exhausted, cooldown %v",
+			log.Printf("[%s] Agent %s limit exhausted, cooldown %v",
 				workerID, agentName, dur)
-			wp.failoverOrFail(workerID, job, agentName, errorMsg)
+			prefix := review.QuotaErrorPrefix
+			label := "quota"
+			if cls.Kind == agent.LimitKindSession {
+				prefix = review.OutageErrorPrefix
+				label = "session limit"
+			}
+			wp.failoverOrFailWithPrefix(workerID, job, agentName, errorMsg, prefix, label)
 			return
 		case agent.LimitKindNone:
 			if errorMsg != "" {
@@ -1407,13 +1414,31 @@ func (wp *WorkerPool) isAgentCoolingDown(name string) bool {
 	return true
 }
 
-// failoverOrFail attempts failover to a backup agent for the job.
-// If no backup is available, fails the job with a quota-prefixed error.
+func (wp *WorkerPool) failCooldownOrFailover(
+	workerID string, job *storage.ReviewJob,
+	agentName, errorMsg string,
+) {
+	wp.failoverOrFailWithPrefix(workerID, job, agentName, errorMsg, review.QuotaErrorPrefix, "quota")
+}
+
+// failoverOrFail attempts failover to a backup agent for non-CI jobs. CI
+// reviews must preserve their configured panel member and let the CI retry
+// schedule handle quota/session availability failures.
 func (wp *WorkerPool) failoverOrFail(
 	workerID string, job *storage.ReviewJob,
 	agentName, errorMsg string,
 ) {
-	backupAgent := wp.resolveBackupAgent(job)
+	wp.failoverOrFailWithPrefix(workerID, job, agentName, errorMsg, review.QuotaErrorPrefix, "quota")
+}
+
+func (wp *WorkerPool) failoverOrFailWithPrefix(
+	workerID string, job *storage.ReviewJob,
+	agentName, errorMsg, prefix, label string,
+) {
+	backupAgent := ""
+	if !job.IsCIReview() {
+		backupAgent = wp.resolveBackupAgent(job)
+	}
 	if backupAgent != "" && !wp.isAgentCoolingDown(backupAgent) {
 		backupModel := wp.resolveBackupModel(job)
 		failedOver, err := wp.db.FailoverJob(
@@ -1424,27 +1449,43 @@ func (wp *WorkerPool) failoverOrFail(
 				workerID, job.ID, err)
 		}
 		if failedOver {
-			log.Printf("[%s] Job %d failing over from %s to %s (quota): %s",
-				workerID, job.ID, agentName, backupAgent, errorMsg)
+			log.Printf("[%s] Job %d failing over from %s to %s (%s): %s",
+				workerID, job.ID, agentName, backupAgent, label, errorMsg)
 			return
 		}
 	}
 
-	// No backup or failover failed — fail with quota prefix
-	quotaMsg := review.QuotaErrorPrefix + errorMsg
-	if updated, err := wp.db.FailJob(job.ID, workerID, quotaMsg); err != nil {
+	wp.failJobWithPrefix(workerID, job, agentName, errorMsg, prefix, label)
+}
+
+func (wp *WorkerPool) failJobWithPrefix(
+	workerID string, job *storage.ReviewJob,
+	agentName, errorMsg, prefix, label string,
+) {
+	storedMsg := prefixedFailure(prefix, errorMsg)
+	if updated, err := wp.db.FailJob(job.ID, workerID, storedMsg); err != nil {
 		log.Printf("[%s] Error failing job %d: %v", workerID, job.ID, err)
 	} else if updated {
-		log.Printf("[%s] Job %d skipped (agent %s quota exhausted)",
-			workerID, job.ID, agentName)
-		wp.broadcastFailed(job, agentName, quotaMsg)
+		log.Printf("[%s] Job %d skipped (agent %s %s)",
+			workerID, job.ID, agentName, label)
+		wp.broadcastFailed(job, agentName, storedMsg)
 		if wp.errorLog != nil {
 			wp.errorLog.LogError("worker",
-				fmt.Sprintf("job %d skipped (quota): %s", job.ID, errorMsg),
+				fmt.Sprintf("job %d skipped (%s): %s", job.ID, label, errorMsg),
 				job.ID)
 		}
-		wp.logJobFailed(job.ID, workerID, agentName, quotaMsg)
+		wp.logJobFailed(job.ID, workerID, agentName, storedMsg)
 	}
+}
+
+func prefixedFailure(prefix, msg string) string {
+	if prefix == "" || strings.HasPrefix(msg, prefix) {
+		return msg
+	}
+	if prefix == review.OutageErrorPrefix {
+		return review.OutageError(msg)
+	}
+	return prefix + msg
 }
 
 func preparePrebuiltPrompt(

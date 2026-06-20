@@ -756,6 +756,43 @@ func TestPostPanelRunDefersTransient(t *testing.T) {
 	assert.NotNil(attempt.NextAttemptAt, "transient defer schedules a next attempt")
 }
 
+// TestPostPanelRunDefersQuotaOnly covers the agent-unavailable policy: when
+// every member is skipped because the configured agent is quota/session limited,
+// the panel is deferred for the retry sweep instead of posting an all-skipped
+// result and marking the HEAD terminal.
+func TestPostPanelRunDefersQuotaOnly(t *testing.T) {
+	assert := assert.New(t)
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	comments := h.CaptureComments()
+	statuses := h.CaptureCommitStatuses()
+
+	const headSHA = "quotaonly123456"
+	created, err := h.DB.ReserveReviewAttempt("acme/api", 86, headSHA, time.Now())
+	require.NoError(t, err)
+	require.True(t, created, "attempt row reserved")
+
+	quota := reviewpkg.QuotaErrorPrefix + "agent codex quota cooldown active"
+	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 86, headSHA, "base.."+headSHA,
+		[]jobSpec{{Agent: "codex", ReviewType: "review", Status: "failed", Error: quota}})
+	h.markJobFailed(t, synth.ID, "synthesis released after all members failed")
+
+	h.Poller.handleReviewFailed(ciEvent(synth.ID, "review.failed"))
+
+	assert.Empty(*comments, "quota-only defer must not post a comment")
+	require.Len(t, *statuses, 1, "quota-only defer sets exactly one status")
+	assert.Equal("pending", (*statuses)[0].State, "quota-only defer status is pending")
+	assert.False(h.panelPostedAt(t, panel.ID), "deferred panel is not marked posted")
+	assert.True(h.panelRetiredAt(t, panel.ID), "deferred panel is retired for retry")
+
+	attempt, err := h.DB.GetReviewAttempt("acme/api", 86, headSHA)
+	require.NoError(t, err)
+	require.NotNil(t, attempt)
+	assert.Equal("deferred", attempt.State)
+	assert.Equal("transient", attempt.LastErrorClass)
+	assert.Equal(0, attempt.ConsecutiveGenuineAttempts)
+	assert.NotNil(attempt.NextAttemptAt, "quota-only defer schedules a next attempt")
+}
+
 // TestPostPanelRunDefersGenuine covers the genuine-failure defer: a genuine
 // failure below the give-up cap posts nothing, sets pending, bumps the
 // consecutive-genuine streak, and retires the run.

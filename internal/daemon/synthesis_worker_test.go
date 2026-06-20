@@ -8,6 +8,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -16,6 +17,7 @@ import (
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
+	reviewpkg "go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/internal/tokens"
@@ -859,6 +861,43 @@ func TestSynthesisMultiSuccessRespectsCooldown(t *testing.T) {
 	require.NoError(t, err)
 	assert.NotEqual(t, storage.JobStatusDone, got.Status,
 		"cooldown must divert before completing the synthesis")
+}
+
+func TestSynthesisCIReviewCooldownDoesNotFailOverToBackup(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+
+	const memberAgent = "panel-ci-cd-member"
+	registerPassingAgent(t, memberAgent)
+
+	var called bool
+	const synthAgent = "synth-ci-cd"
+	registerNeverCalledAgent(t, synthAgent, &called)
+
+	tc.Pool.cooldownAgent(synthAgent, time.Now().Add(time.Hour))
+
+	runUUID, members, _ := enqueuePanelRun(t, tc, "ci-cd-panel", []memberSpec{
+		{name: "m0", agent: memberAgent},
+		{name: "m1", agent: memberAgent},
+	})
+	setSynthesisAgent(t, tc, runUUID, synthAgent)
+	_, err := tc.DB.Exec(
+		`UPDATE review_jobs
+		 SET source = ?, ci_base_branch = ?, backup_agent = ?
+		 WHERE panel_run_uuid = ? AND panel_role = 'synthesis'`,
+		storage.JobSourceCI, "main", "test", runUUID,
+	)
+	require.NoError(t, err)
+	completeMember(t, tc, members[0].ID, memberAgent, "Finding A")
+	completeMember(t, tc, members[1].ID, memberAgent, "Finding B")
+
+	synth := releaseAndClaimSynthesis(t, tc, runUUID)
+	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+
+	assert.False(t, called, "CI synthesis must not invoke an agent in cooldown")
+	got := tc.assertJobStatus(t, synth.ID, storage.JobStatusFailed)
+	assert.Equal(t, synthAgent, got.Agent, "CI synthesis cooldown must not fail over to backup")
+	assert.True(t, strings.HasPrefix(got.Error, reviewpkg.QuotaErrorPrefix),
+		"cooldown failure should be a retryable quota skip, got %q", got.Error)
 }
 
 // TestSynthesisRunsAgainstWorktree verifies the synthesis agent runs against the

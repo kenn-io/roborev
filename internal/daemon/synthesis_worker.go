@@ -91,7 +91,7 @@ func (wp *WorkerPool) synthesizeSucceededResults(
 	// branches skip this check because they never invoke an agent.
 	canonicalAgent := agent.CanonicalName(job.Agent)
 	if wp.isAgentCoolingDown(canonicalAgent) {
-		wp.failoverOrFail(workerID, job, canonicalAgent,
+		wp.failCooldownOrFailover(workerID, job, canonicalAgent,
 			fmt.Sprintf("agent %s quota cooldown active", canonicalAgent))
 		return
 	}
