@@ -82,6 +82,9 @@ bash docs/screenshots/update-generated-assets-branch.sh --push
 The script writes screenshots to ignored `docs/assets/generated/`, validates the
 expected SVGs, creates a temporary git repository with a single commit, then
 fetches that commit into `docs-generated-assets`. It does not switch branches.
+Screenshot data is generated from a deterministic synthetic fixture database in
+`$TMPDIR/roborev-demo-data`; it does not read the maintainer's live roborev
+database.
 
 For the initial import or a manual refresh from an existing directory:
 
@@ -132,6 +135,12 @@ assets, builds, checks, and then runs:
 
 ```bash
 make docs-deploy
+```
+
+Create a Vercel preview/staging deployment before production with:
+
+```bash
+make docs-deploy-staging
 ```
 
 Use `make docs-deploy` directly only when the asset branches and local build
