@@ -5,6 +5,7 @@ missing=0
 
 required_files=(
   "docs/index.md"
+  "docs/README.md"
   "docs/quickstart.md"
   "docs/installation.md"
   "docs/commands.md"

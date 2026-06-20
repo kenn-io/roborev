@@ -68,6 +68,7 @@ tmp_config_base=""
     --exclude './overrides' \
     --exclude './scripts' \
     --exclude './screenshots' \
+    --exclude './README.md' \
     --exclude './pyproject.toml' \
     --exclude './uv.lock' \
     --exclude './vercel.json' \
