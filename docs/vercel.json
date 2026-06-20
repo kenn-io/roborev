@@ -1,0 +1,65 @@
+{
+  "$schema": "https://openapi.vercel.sh/vercel.json",
+  "framework": null,
+  "installCommand": "uv sync --frozen --no-dev",
+  "buildCommand": "uv run --frozen bash ./vercel-build.sh",
+  "outputDirectory": "site",
+  "trailingSlash": true,
+  "redirects": [
+    {
+      "source": "/install.sh",
+      "destination": "https://raw.githubusercontent.com/kenn-io/roborev/main/scripts/install.sh",
+      "permanent": false
+    },
+    {
+      "source": "/install.ps1",
+      "destination": "https://raw.githubusercontent.com/kenn-io/roborev/main/scripts/install.ps1",
+      "permanent": false
+    },
+    {
+      "source": "/integrations/postgres-sync/",
+      "destination": "/advanced/postgres-sync/",
+      "permanent": true
+    },
+    {
+      "source": "/agents/modes/",
+      "destination": "/advanced/custom-tasks/",
+      "permanent": true
+    },
+    {
+      "source": "/guides/reviewing-branches/",
+      "destination": "/guides/reviewing-code/",
+      "permanent": true
+    },
+    {
+      "source": "/guides/reviewing-dirty/",
+      "destination": "/guides/reviewing-code/",
+      "permanent": true
+    },
+    {
+      "source": "/guides/custom-tasks/",
+      "destination": "/advanced/custom-tasks/",
+      "permanent": true
+    },
+    {
+      "source": "/guides/acp/",
+      "destination": "/advanced/acp/",
+      "permanent": true
+    },
+    {
+      "source": "/guides/postgres-sync/",
+      "destination": "/advanced/postgres-sync/",
+      "permanent": true
+    },
+    {
+      "source": "/integrations/streaming/",
+      "destination": "/advanced/streaming/",
+      "permanent": true
+    },
+    {
+      "source": "/integrations/git-worktrees/",
+      "destination": "/guides/repository-management/",
+      "permanent": true
+    }
+  ]
+}

@@ -1,6 +1,6 @@
 <picture>
-  <source media="(prefers-color-scheme: dark)" srcset="https://raw.githubusercontent.com/roborev-dev/roborev-docs/main/public/logo-with-text-dark-bg.svg">
-  <img alt="roborev" src="https://raw.githubusercontent.com/roborev-dev/roborev-docs/main/public/logo-with-text-light.svg">
+  <source media="(prefers-color-scheme: dark)" srcset="https://roborev.io/assets/static/logo-with-text-dark-bg.svg">
+  <img alt="roborev" src="https://roborev.io/assets/static/logo-with-text-light.svg">
 </picture>
 
 [![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go&logoColor=white)](https://go.dev/)
@@ -14,7 +14,7 @@ background, reviews every commit as agents write code, and surfaces
 issues in seconds -- before they compound. Pull code reviews into
 your agentic loop while context is fresh.
 
-![roborev TUI](https://raw.githubusercontent.com/roborev-dev/roborev-docs/main/public/tui-hero.svg)
+![roborev TUI](https://roborev.io/assets/generated/tui-hero.svg)
 
 ## How It Works
 
@@ -37,7 +37,7 @@ You can also choose the exact binary path with
 `roborev init --binary ~/.local/share/mise/shims/roborev` or
 `roborev agent-hook install --binary ~/.local/share/mise/shims/roborev`.
 
-![roborev review](https://raw.githubusercontent.com/roborev-dev/roborev-docs/main/public/tui-review.svg)
+![roborev review](https://roborev.io/assets/generated/tui-review.svg)
 
 ## Features
 
