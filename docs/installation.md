@@ -37,13 +37,13 @@ The install script downloads the latest release binary for your platform:
 Install via Homebrew:
 
 ```bash
-brew install kenn-io/tap/roborev
+brew install roborev-dev/tap/roborev
 ```
 
 Or tap first, then install:
 
 ```bash
-brew tap kenn-io/tap
+brew tap roborev-dev/tap
 brew install roborev
 ```
 

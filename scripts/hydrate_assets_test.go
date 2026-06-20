@@ -64,14 +64,30 @@ func TestHydrateAssetsForceFetchesRemoteAssetBranches(t *testing.T) {
 func writeStaticAssets(t *testing.T, dir, content string) {
 	t.Helper()
 	files := []string{
-		"logo.svg",
-		"favicon.svg",
-		"og-image.png",
-		"architecture.svg",
-		"federation.svg",
 		"agent-hook-feedback-loop.png",
-		"claudechic-review-sidebar.png",
+		"agents/claude-code.svg",
 		"agents/codex.svg",
+		"agents/copilot.svg",
+		"agents/cursor.svg",
+		"agents/gemini.svg",
+		"agents/opencode.svg",
+		"agents/pi.svg",
+		"architecture.svg",
+		"claudechic-review-sidebar.png",
+		"favicon-32.png",
+		"favicon-64.png",
+		"favicon.svg",
+		"federation.svg",
+		"logo-with-text-dark-bg.png",
+		"logo-with-text-dark-bg.svg",
+		"logo-with-text-light.png",
+		"logo-with-text-light.svg",
+		"logo-with-text.png",
+		"logo-with-text.svg",
+		"logo.png",
+		"logo.svg",
+		"og-image.png",
+		"og-image.svg",
 	}
 	writeAssetFiles(t, dir, files, content)
 }

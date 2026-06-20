@@ -36,7 +36,7 @@ import sys
 
 allowed_repos = ("roborev", "kata", "msgvault", "agentsview")
 canonical_repos = {name: f"github.com/kenn-io/{name}" for name in allowed_repos}
-terminal_statuses = ("done", "failed", "canceled", "applied", "rebased", "skipped")
+review_statuses = ("done",)
 limit = int(os.environ.get("ROBOREV_DOCS_REVIEW_LIMIT", "1000"))
 source_db = os.environ["SOURCE_DB"]
 dest_db = os.environ["DEST_DB"]
@@ -238,17 +238,39 @@ def row_value(row, key, default=""):
     return value
 
 
+def demo_repo_name(row):
+    repo = repo_by_id.get(row["repo_id"])
+    if repo is None:
+        return "public-repo"
+    return repo["name"]
+
+
+def demo_job_number(row):
+    return job_id_map[row["id"]]
+
+
+def demo_git_ref(row):
+    return f"docs-review-{demo_job_number(row):04d}"
+
+
+def demo_branch(row):
+    return f"docs/{demo_repo_name(row)}"
+
+
+def demo_commit_subject(row):
+    return f"Docs fixture review {demo_job_number(row):04d} for {demo_repo_name(row)}"
+
+
 def demo_prompt(row):
-    git_ref = row_value(row, "git_ref", "selected-ref")
     review_type = row_value(row, "review_type", "default")
     return (
         "Docs screenshot fixture prompt for a committed public "
-        f"{review_type or 'default'} review of {git_ref}."
+        f"{review_type or 'default'} review of {demo_git_ref(row)}."
     )
 
 
 def demo_review_output(row):
-    subject = row_value(row, "commit_subject", "selected public commit")
+    subject = demo_commit_subject(row)
     if review_is_failing(row):
         severity = row_value(row, "min_severity")
         if not severity:
@@ -281,10 +303,10 @@ def review_is_failing(row):
         return True
     if re.search(r"^\s*(?:[-*]\s*)?(?:Critical|High|Medium|Low)\s*[:\-\u2013\u2014]", output, re.IGNORECASE | re.MULTILINE):
         return True
-    return row["status"] == "failed"
+    return False
 
 
-status_clause = qmarks(len(terminal_statuses))
+status_clause = qmarks(len(review_statuses))
 candidate_rows = src.execute(
     f"""
     SELECT
@@ -294,18 +316,19 @@ candidate_rows = src.execute(
       rv.verdict_bool AS review_verdict_bool
     FROM review_jobs j
     JOIN commits c ON c.id = j.commit_id
-    LEFT JOIN reviews rv ON rv.job_id = j.id
+    JOIN reviews rv ON rv.job_id = j.id
     WHERE j.repo_id IN ({qmarks(len(repo_ids))})
       AND j.status IN ({status_clause})
       AND j.commit_id IS NOT NULL
+      AND COALESCE(rv.output, '') <> ''
       AND COALESCE(NULLIF(j.job_type, ''), 'review') = 'review'
       AND COALESCE(j.dirty_files, '') IN ('', '[]', 'null')
     ORDER BY datetime(COALESCE(j.finished_at, j.started_at, j.enqueued_at)) DESC, j.id DESC
     """,
-    repo_ids + terminal_statuses,
+    repo_ids + review_statuses,
 ).fetchall()
 if not candidate_rows:
-    raise SystemExit("no terminal review jobs found for public docs repos")
+    raise SystemExit("no completed reviewed jobs found for public docs repos")
 
 failing = [row for row in candidate_rows if review_is_failing(row)]
 passing = [row for row in candidate_rows if not review_is_failing(row)]
@@ -328,6 +351,10 @@ selected_job_ids = tuple(job_id_map)
 commit_ids = tuple(
     sorted({row["commit_id"] for row in selected_jobs if row["commit_id"] is not None})
 )
+commit_job_number = {}
+for row in selected_jobs:
+    if row["commit_id"] is not None and row["commit_id"] not in commit_job_number:
+        commit_job_number[row["commit_id"]] = demo_job_number(row)
 
 dst.execute("PRAGMA foreign_keys = OFF")
 dst.execute("BEGIN")
@@ -346,19 +373,33 @@ if commit_ids:
     for row in src.execute(
         f"SELECT * FROM commits WHERE id IN ({qmarks(len(commit_ids))})", commit_ids
     ):
-        insert_row("commits", row)
+        number = commit_job_number.get(row["id"], 0)
+        insert_row(
+            "commits",
+            row,
+            {
+                "sha": f"{number:040x}",
+                "author": "Docs Fixture",
+                "subject": f"Docs fixture public review {number:04d}",
+                "timestamp": "2026-06-20 12:00:00",
+            },
+        )
 
 for row in selected_jobs:
+    git_ref = demo_git_ref(row)
     insert_row(
         "review_jobs",
         row,
         {
             "id": job_id_map[row["id"]],
+            "git_ref": git_ref,
+            "branch": demo_branch(row),
+            "ci_base_branch": "",
             "prompt": demo_prompt(row),
             "diff_content": None,
             "dirty_files": "[]",
             "error": None,
-            "command_line": f"roborev review {row_value(row, 'git_ref', '')}".strip(),
+            "command_line": f"roborev review {git_ref}",
             "source_machine_id": None,
             "synced_at": None,
             "worker_id": "docs-demo",
@@ -366,6 +407,7 @@ for row in selected_jobs:
             "output_prefix": "",
             "patch": None,
             "worktree_path": "",
+            "uuid": f"00000000-0000-4000-8000-{job_id_map[row['id']]:012d}",
         },
     )
 
