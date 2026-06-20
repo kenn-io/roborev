@@ -229,6 +229,49 @@ def insert_row(table, row, overrides=None):
     )
 
 
+def row_value(row, key, default=""):
+    if key not in row.keys():
+        return default
+    value = row[key]
+    if value is None or value == "":
+        return default
+    return value
+
+
+def demo_prompt(row):
+    git_ref = row_value(row, "git_ref", "selected-ref")
+    review_type = row_value(row, "review_type", "default")
+    return (
+        "Docs screenshot fixture prompt for a committed public "
+        f"{review_type or 'default'} review of {git_ref}."
+    )
+
+
+def demo_review_output(row):
+    subject = row_value(row, "commit_subject", "selected public commit")
+    if review_is_failing(row):
+        severity = row_value(row, "min_severity")
+        if not severity:
+            severity = ("High", "Medium", "Low")[int(row["id"]) % 3]
+        severity_label = str(severity).strip().title()
+        return f"""P/F: F
+
+Summary: Docs screenshot fixture review for "{subject}" found a representative {severity_label.lower()} issue.
+
+Findings:
+- {severity_label}: Public fixture finding used for documentation screenshots.
+
+This deterministic fixture text does not include source review content."""
+
+    return f"""P/F: P
+
+Summary: Docs screenshot fixture review for "{subject}" found no blocking issues.
+
+Findings: none.
+
+This deterministic fixture text does not include source review content."""
+
+
 def review_is_failing(row):
     verdict = row["review_verdict_bool"]
     if verdict is not None:
@@ -246,12 +289,17 @@ candidate_rows = src.execute(
     f"""
     SELECT
       j.*,
+      c.subject AS commit_subject,
       rv.output AS review_output,
       rv.verdict_bool AS review_verdict_bool
     FROM review_jobs j
+    JOIN commits c ON c.id = j.commit_id
     LEFT JOIN reviews rv ON rv.job_id = j.id
     WHERE j.repo_id IN ({qmarks(len(repo_ids))})
       AND j.status IN ({status_clause})
+      AND j.commit_id IS NOT NULL
+      AND COALESCE(NULLIF(j.job_type, ''), 'review') = 'review'
+      AND COALESCE(j.dirty_files, '') IN ('', '[]', 'null')
     ORDER BY datetime(COALESCE(j.finished_at, j.started_at, j.enqueued_at)) DESC, j.id DESC
     """,
     repo_ids + terminal_statuses,
@@ -275,6 +323,7 @@ if len(selected_ids) < min(limit, len(candidate_rows)):
 
 selected_jobs = [row for row in candidate_rows if row["id"] in selected_ids]
 job_id_map = {row["id"]: len(selected_jobs) - idx for idx, row in enumerate(selected_jobs)}
+selected_jobs_by_id = {row["id"]: row for row in selected_jobs}
 selected_job_ids = tuple(job_id_map)
 commit_ids = tuple(
     sorted({row["commit_id"] for row in selected_jobs if row["commit_id"] is not None})
@@ -305,9 +354,17 @@ for row in selected_jobs:
         row,
         {
             "id": job_id_map[row["id"]],
+            "prompt": demo_prompt(row),
+            "diff_content": None,
+            "dirty_files": "[]",
+            "error": None,
+            "command_line": f"roborev review {row_value(row, 'git_ref', '')}".strip(),
             "source_machine_id": None,
             "synced_at": None,
-            "worker_id": sanitize_text(row["worker_id"]),
+            "worker_id": "docs-demo",
+            "session_id": "",
+            "output_prefix": "",
+            "patch": None,
             "worktree_path": "",
         },
     )
@@ -316,34 +373,18 @@ for row in src.execute(
     f"SELECT * FROM reviews WHERE job_id IN ({qmarks(len(selected_job_ids))})",
     selected_job_ids,
 ):
+    source_job = selected_jobs_by_id[row["job_id"]]
     insert_row(
         "reviews",
         row,
         {
             "job_id": job_id_map[row["job_id"]],
+            "prompt": demo_prompt(source_job),
+            "output": demo_review_output(source_job),
             "updated_by_machine_id": None,
             "synced_at": None,
         },
     )
-
-if has_table(src, "responses"):
-    response_cols = table_columns(src, "responses")
-    predicates = []
-    params = []
-    if commit_ids and "commit_id" in response_cols:
-        predicates.append(f"commit_id IN ({qmarks(len(commit_ids))})")
-        params.extend(commit_ids)
-    if selected_job_ids and "job_id" in response_cols:
-        predicates.append(f"job_id IN ({qmarks(len(selected_job_ids))})")
-        params.extend(selected_job_ids)
-    if predicates:
-        for row in src.execute(
-            "SELECT * FROM responses WHERE " + " OR ".join(predicates), params
-        ):
-            overrides = {"source_machine_id": None, "synced_at": None}
-            if "job_id" in response_cols and row["job_id"] in job_id_map:
-                overrides["job_id"] = job_id_map[row["job_id"]]
-            insert_row("responses", row, overrides)
 
 dst.execute("COMMIT")
 dst.execute("PRAGMA foreign_keys = ON")

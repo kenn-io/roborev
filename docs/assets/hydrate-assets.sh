@@ -7,6 +7,7 @@ docs_root="$(cd "$script_dir/.." && pwd)"
 repo_root="$(cd "$docs_root/.." && pwd)"
 static_branch="${ROBOREV_DOCS_ASSETS_BRANCH:-docs-assets}"
 generated_branch="${ROBOREV_DOCS_GENERATED_ASSETS_BRANCH:-docs-generated-assets}"
+use_local_branches="${ROBOREV_DOCS_USE_LOCAL_ASSET_BRANCHES:-false}"
 
 static_target="$docs_root/assets/static"
 generated_target="$docs_root/assets/generated"
@@ -48,16 +49,27 @@ has_expected_assets() {
 resolve_asset_ref() {
   local branch="$1"
 
-  if git -C "$repo_root" rev-parse --verify --quiet "$branch" >/dev/null; then
-    printf '%s\n' "$branch"
-    return 0
+  if [[ "$use_local_branches" == "1" || "$use_local_branches" == "true" ]]; then
+    if git -C "$repo_root" rev-parse --verify --quiet "$branch" >/dev/null; then
+      printf '%s\n' "$branch"
+      return 0
+    fi
   fi
 
-  git -C "$repo_root" fetch --depth=1 origin \
-    "$branch:refs/remotes/origin/$branch" >/dev/null 2>&1 || true
+  if ! git -C "$repo_root" fetch --force --depth=1 origin \
+    "+refs/heads/$branch:refs/remotes/origin/$branch" >/dev/null; then
+    printf 'docs assets not hydrated: failed to fetch origin/%s\n' "$branch" >&2
+    return 1
+  fi
 
   if git -C "$repo_root" rev-parse --verify --quiet "origin/$branch" >/dev/null; then
     printf 'origin/%s\n' "$branch"
+    return 0
+  fi
+
+  if [[ "$use_local_branches" == "1" || "$use_local_branches" == "true" ]] &&
+    git -C "$repo_root" rev-parse --verify --quiet "$branch" >/dev/null; then
+    printf '%s\n' "$branch"
     return 0
   fi
 

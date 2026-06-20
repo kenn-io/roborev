@@ -1,0 +1,120 @@
+package scripts
+
+import (
+	"os"
+	"os/exec"
+	"path/filepath"
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
+)
+
+func TestHydrateAssetsForceFetchesRemoteAssetBranches(t *testing.T) {
+	tempDir := t.TempDir()
+	remoteRepo := filepath.Join(tempDir, "remote")
+	localRepo := filepath.Join(tempDir, "local")
+	require.NoError(t, os.MkdirAll(remoteRepo, 0o755))
+	require.NoError(t, os.MkdirAll(localRepo, 0o755))
+
+	git(t, remoteRepo, "init")
+	git(t, remoteRepo, "config", "user.name", "Test User")
+	git(t, remoteRepo, "config", "user.email", "test@example.invalid")
+	writeStaticAssets(t, remoteRepo, "old static")
+	git(t, remoteRepo, "add", ".")
+	git(t, remoteRepo, "commit", "-m", "old static assets")
+	git(t, remoteRepo, "branch", "docs-assets")
+
+	git(t, localRepo, "init")
+	git(t, localRepo, "remote", "add", "origin", remoteRepo)
+	git(t, localRepo, "fetch", "origin", "docs-assets:refs/remotes/origin/docs-assets")
+
+	git(t, remoteRepo, "rm", "-r", ".")
+	writeStaticAssets(t, remoteRepo, "new static")
+	git(t, remoteRepo, "add", ".")
+	git(t, remoteRepo, "commit", "-m", "new static assets")
+	newStaticCommit := gitOutput(t, remoteRepo, "rev-parse", "HEAD")
+	git(t, remoteRepo, "update-ref", "refs/heads/docs-assets", newStaticCommit)
+
+	git(t, remoteRepo, "rm", "-r", ".")
+	writeGeneratedAssets(t, remoteRepo, "generated")
+	git(t, remoteRepo, "add", ".")
+	git(t, remoteRepo, "commit", "-m", "generated assets")
+	git(t, remoteRepo, "branch", "docs-generated-assets")
+
+	git(t, localRepo, "fetch", "origin", "docs-generated-assets:refs/remotes/origin/docs-generated-assets")
+
+	docsAssetsDir := filepath.Join(localRepo, "docs", "assets")
+	require.NoError(t, os.MkdirAll(docsAssetsDir, 0o755))
+	script, err := os.ReadFile(filepath.Join("..", "docs", "assets", "hydrate-assets.sh"))
+	require.NoError(t, err)
+	scriptPath := filepath.Join(docsAssetsDir, "hydrate-assets.sh")
+	require.NoError(t, os.WriteFile(scriptPath, script, 0o755))
+
+	cmd := exec.Command("bash", scriptPath)
+	cmd.Dir = localRepo
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(output))
+
+	logo, err := os.ReadFile(filepath.Join(localRepo, "docs", "assets", "static", "logo.svg"))
+	require.NoError(t, err)
+	assert.Equal(t, "new static\n", string(logo))
+}
+
+func writeStaticAssets(t *testing.T, dir, content string) {
+	t.Helper()
+	files := []string{
+		"logo.svg",
+		"favicon.svg",
+		"og-image.png",
+		"architecture.svg",
+		"federation.svg",
+		"agent-hook-feedback-loop.png",
+		"claudechic-review-sidebar.png",
+		"agents/codex.svg",
+	}
+	writeAssetFiles(t, dir, files, content)
+}
+
+func writeGeneratedAssets(t *testing.T, dir, content string) {
+	t.Helper()
+	files := []string{
+		"tui-hero.svg",
+		"tui-queue.svg",
+		"tui-review.svg",
+		"tui-copy.svg",
+		"tui-respond.svg",
+		"tui-help.svg",
+		"tui-address.svg",
+		"cli-help.svg",
+		"cli-repo-list.svg",
+		"cli-status.svg",
+	}
+	writeAssetFiles(t, dir, files, content)
+}
+
+func writeAssetFiles(t *testing.T, dir string, files []string, content string) {
+	t.Helper()
+	for _, file := range files {
+		path := filepath.Join(dir, file)
+		require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+		require.NoError(t, os.WriteFile(path, []byte(content+"\n"), 0o644))
+	}
+}
+
+func git(t *testing.T, dir string, args ...string) {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(output))
+}
+
+func gitOutput(t *testing.T, dir string, args ...string) string {
+	t.Helper()
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(output))
+	return string(output[:len(output)-1])
+}

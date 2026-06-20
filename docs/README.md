@@ -64,6 +64,12 @@ make docs-check
 `make docs-check` hydrates assets, runs a strict Zensical build, checks generated
 links/assets/metadata, and validates `vercel.json` redirects.
 
+Asset hydration force-fetches `origin/docs-assets` and
+`origin/docs-generated-assets` by default so force-pushed orphan branches do not
+silently leave stale local media in place. Set
+`ROBOREV_DOCS_USE_LOCAL_ASSET_BRANCHES=1` only when you intentionally want to
+hydrate from local asset branch refs instead of origin.
+
 ## Updating Generated Screenshots
 
 Regenerate generated CLI/TUI screenshots and update the local
@@ -82,11 +88,14 @@ bash docs/screenshots/update-generated-assets-branch.sh --push
 The script writes screenshots to ignored `docs/assets/generated/`, validates the
 expected SVGs, creates a temporary git repository with a single commit, then
 fetches that commit into `docs-generated-assets`. It does not switch branches.
-Screenshot data is copied from the maintainer's local roborev database, selected
-only from repos whose identity or `origin` remote matches the canonical public
-`kenn-io/roborev`, `kenn-io/kata`, `kenn-io/msgvault`, and
-`kenn-io/agentsview` repositories, then sanitized before Docker renders
-screenshots. The generated demo database is written to
+Screenshot data is derived from the maintainer's local roborev database, selected
+only from committed review jobs for repos whose identity or `origin` remote
+matches the canonical public `kenn-io/roborev`, `kenn-io/kata`,
+`kenn-io/msgvault`, and `kenn-io/agentsview` repositories. The demo DB keeps
+public repo/job metadata such as repo names, refs, statuses, timings, verdict
+mix, and token usage, but it does not copy source prompts, diffs, responses, or
+review output. Review text is replaced with deterministic fixture content before
+Docker renders screenshots. The generated demo database is written to
 `$TMPDIR/roborev-demo-data`.
 
 For the initial import or a manual refresh from an existing directory:

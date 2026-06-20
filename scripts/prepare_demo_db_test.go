@@ -63,6 +63,56 @@ func TestPrepareDemoDBRedactsWindowsUserPaths(t *testing.T) {
 	assert.Contains(t, text, "/home/maintainer")
 }
 
+func TestPrepareDemoDBCuratesReviewContent(t *testing.T) {
+	tempDir := t.TempDir()
+	sourceDB := filepath.Join(tempDir, "source.db")
+	db := createScreenshotSourceDB(t, sourceDB)
+	defer db.Close()
+
+	for i, name := range docsScreenshotRepos {
+		repoID := int64(i + 1)
+		insertScreenshotRepo(t, db, repoID, "/public/"+name, name, "git@github.com:kenn-io/"+name+".git")
+		insertScreenshotReview(t, db, repoID, repoID, "PUBLIC "+name, 1)
+	}
+
+	insertScreenshotReview(t, db, 1, 300, "committed review", 0)
+	_, err := db.Exec(
+		`UPDATE review_jobs
+		 SET prompt = 'RAW_LOCAL_SECRET prompt',
+		     diff_content = 'RAW_LOCAL_SECRET diff'
+		 WHERE id = 300`,
+	)
+	require.NoError(t, err)
+	_, err = db.Exec(
+		`UPDATE reviews
+		 SET prompt = 'RAW_LOCAL_SECRET review prompt',
+		     output = 'RAW_LOCAL_SECRET review output'
+		 WHERE job_id = 300`,
+	)
+	require.NoError(t, err)
+	_, err = db.Exec(
+		`INSERT INTO responses (commit_id, job_id, responder, response)
+		 VALUES (300, 300, 'maintainer', 'RAW_LOCAL_SECRET response')`,
+	)
+	require.NoError(t, err)
+
+	insertScreenshotReview(t, db, 1, 301, "TASK_LOCAL_SECRET", 0)
+	_, err = db.Exec(`UPDATE review_jobs SET job_type = 'task', commit_id = NULL WHERE id = 301`)
+	require.NoError(t, err)
+
+	insertScreenshotReview(t, db, 1, 302, "DIRTY_LOCAL_SECRET", 0)
+	_, err = db.Exec(`UPDATE review_jobs SET dirty_files = '["private.txt"]' WHERE id = 302`)
+	require.NoError(t, err)
+
+	demoDB := runPrepareDemoDB(t, tempDir, sourceDB)
+	text := readScreenshotDemoText(t, demoDB)
+
+	assert.NotContains(t, text, "RAW_LOCAL_SECRET")
+	assert.NotContains(t, text, "TASK_LOCAL_SECRET")
+	assert.NotContains(t, text, "DIRTY_LOCAL_SECRET")
+	assert.Contains(t, text, "Docs screenshot fixture")
+}
+
 func createScreenshotSourceDB(t *testing.T, path string) *sql.DB {
 	t.Helper()
 
@@ -106,6 +156,8 @@ CREATE TABLE review_jobs (
   retry_count INTEGER NOT NULL DEFAULT 0,
   diff_content TEXT,
   dirty_files TEXT,
+  job_type TEXT NOT NULL DEFAULT 'review',
+  review_type TEXT NOT NULL DEFAULT '',
   worktree_path TEXT DEFAULT '',
   uuid TEXT,
   source_machine_id TEXT,
@@ -226,6 +278,7 @@ SELECT root_path || ' ' || name || ' ' || COALESCE(identity, '') FROM repos
 UNION ALL SELECT subject || ' ' || author FROM commits
 UNION ALL SELECT COALESCE(prompt, '') || ' ' || COALESCE(diff_content, '') FROM review_jobs
 UNION ALL SELECT prompt || ' ' || output FROM reviews
+UNION ALL SELECT responder || ' ' || response FROM responses
 `)
 	require.NoError(t, err)
 	defer rows.Close()
