@@ -61,7 +61,7 @@ REQUIRED_SITEMAP_URLS = [
 ]
 
 COMPACT_SVG_MAX_HEIGHTS = {
-    "cli-repo-list.svg": 220.0,
+    "assets/generated/cli-repo-list.svg": 220.0,
 }
 
 FORBIDDEN_PATTERNS = [

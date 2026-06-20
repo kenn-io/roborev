@@ -65,6 +65,16 @@ tmp_config_base=""
     --exclude './.ruff_cache' \
     --exclude './.mypy_cache' \
     --exclude './superpowers' \
+    --exclude './overrides' \
+    --exclude './scripts' \
+    --exclude './screenshots' \
+    --exclude './pyproject.toml' \
+    --exclude './uv.lock' \
+    --exclude './vercel.json' \
+    --exclude './vercel-build.sh' \
+    --exclude './zensical-docs.sh' \
+    --exclude './zensical.toml' \
+    --exclude './assets/*.sh' \
     -cf - .
 ) | (cd "$tmp_docs" && tar -xf -)
 

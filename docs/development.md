@@ -92,6 +92,62 @@ go build ./...             # Build all
 make install               # Install with version info
 ```
 
+## Documentation
+
+The public docs site lives in `docs/` and is built with Zensical. The docs
+source is tracked in this repository; image media is hydrated from two orphan
+branches before builds:
+
+- `docs-assets` contains curated static media such as logos, favicons, diagrams,
+  Open Graph images, and integration screenshots.
+- `docs-generated-assets` contains generated CLI and TUI screenshots.
+
+Install the docs toolchain and build the site:
+
+```bash
+make docs-install
+make docs-build
+```
+
+Preview locally:
+
+```bash
+make docs-serve
+```
+
+Run the docs validation checks:
+
+```bash
+make docs-check
+```
+
+The Vercel project should be linked from the repository root with `docs/` as
+its root directory. Use these project settings:
+
+| Setting | Value |
+| --- | --- |
+| Framework preset | `Other` |
+| Root directory | `docs` |
+| Install command | `uv sync --frozen --no-dev` |
+| Build command | `uv run --frozen bash ./vercel-build.sh` |
+| Output directory | `site` |
+
+Deploy committed docs changes with:
+
+```bash
+scripts/update-docs.sh
+```
+
+The helper updates and pushes `docs-generated-assets`, hydrates both asset
+branches, builds the docs, runs `make docs-check`, and deploys through Vercel.
+For the direct Vercel deploy step only, use:
+
+```bash
+make docs-deploy
+```
+
+`make docs-deploy` runs `vercel deploy --prod` from the repository root.
+
 ## License
 
 MIT
