@@ -31,9 +31,11 @@ import os
 import pathlib
 import re
 import sqlite3
+import subprocess
 import sys
 
 allowed_repos = ("roborev", "kata", "msgvault", "agentsview")
+canonical_repos = {name: f"github.com/kenn-io/{name}" for name in allowed_repos}
 terminal_statuses = ("done", "failed", "canceled", "applied", "rebased", "skipped")
 limit = int(os.environ.get("ROBOREV_DOCS_REVIEW_LIMIT", "1000"))
 source_db = os.environ["SOURCE_DB"]
@@ -41,6 +43,9 @@ dest_db = os.environ["DEST_DB"]
 home = str(pathlib.Path.home())
 home_name = pathlib.Path.home().name
 
+windows_user_path_re = re.compile(
+    r"(?i)\b[A-Z]:[\\/]+Users(?:[\\/]+[A-Za-z0-9._-]+(?:[\\/][^\s\"'`)>\]]*)?)?"
+)
 secret_patterns = [
     re.compile(r"sk-[A-Za-z0-9_-]{12,}"),
     re.compile(r"gh[pousr]_[A-Za-z0-9_]{12,}"),
@@ -104,34 +109,66 @@ def ident(name):
 exec_schema()
 
 
-all_repo_rows = src.execute(
-    f"SELECT * FROM repos WHERE name IN ({qmarks(len(allowed_repos))})",
-    allowed_repos,
-).fetchall()
-if not all_repo_rows:
-    raise SystemExit(
-        "no public docs repos found in source database: " + ", ".join(allowed_repos)
+def normalize_github_repo(value):
+    if not value:
+        return ""
+    text = str(value).strip()
+    patterns = (
+        r"^git@github\.com:([^/\s]+)/([^/\s]+?)(?:\.git)?/?$",
+        r"^ssh://git@github\.com/([^/\s]+)/([^/\s]+?)(?:\.git)?/?$",
+        r"^https?://github\.com/([^/\s]+)/([^/\s]+?)(?:\.git)?/?$",
+        r"^github\.com[:/]([^/\s]+)/([^/\s]+?)(?:\.git)?/?$",
     )
+    for pattern in patterns:
+        match = re.match(pattern, text, re.IGNORECASE)
+        if match:
+            owner, repo = match.groups()
+            return f"github.com/{owner.lower()}/{repo.lower()}"
+    return ""
 
-repo_job_counts = {
-    row["repo_id"]: row["count"]
-    for row in src.execute(
-        f"""
-        SELECT repo_id, COUNT(*) AS count
-        FROM review_jobs
-        WHERE status IN ({qmarks(len(terminal_statuses))})
-        GROUP BY repo_id
-        """,
-        terminal_statuses,
-    )
-}
+
+def origin_remote_urls(root_path):
+    if not root_path:
+        return []
+    path = pathlib.Path(root_path)
+    if not path.exists():
+        return []
+    try:
+        result = subprocess.run(
+            ["git", "-C", str(path), "remote", "get-url", "--all", "origin"],
+            check=False,
+            capture_output=True,
+            text=True,
+            timeout=5,
+        )
+    except (OSError, subprocess.TimeoutExpired):
+        return []
+    if result.returncode != 0:
+        return []
+    return [line.strip() for line in result.stdout.splitlines() if line.strip()]
+
+
+def repo_matches_canonical(row, expected):
+    candidates = [row["identity"], row["root_path"]]
+    candidates.extend(origin_remote_urls(row["root_path"]))
+    return any(normalize_github_repo(candidate) == expected for candidate in candidates)
+
+
+all_repo_rows = src.execute("SELECT * FROM repos").fetchall()
+if not all_repo_rows:
+    raise SystemExit("source database has no repos")
 repo_rows = []
 for name in allowed_repos:
-    matches = [row for row in all_repo_rows if row["name"] == name]
-    if matches:
-        repo_rows.append(
-            max(matches, key=lambda row: (repo_job_counts.get(row["id"], 0), row["id"]))
-        )
+    expected = canonical_repos[name]
+    matches = [
+        row
+        for row in all_repo_rows
+        if row["name"] == name and repo_matches_canonical(row, expected)
+    ]
+    if len(matches) != 1:
+        detail = "missing" if len(matches) == 0 else f"ambiguous ({len(matches)} matches)"
+        raise SystemExit(f"public docs repo {name!r} is {detail}; expected canonical {expected}")
+    repo_rows.append(matches[0])
 
 repo_by_id = {row["id"]: row for row in repo_rows}
 repo_ids = tuple(repo_by_id)
@@ -150,8 +187,8 @@ def sanitize_text(value):
         sanitized = sanitized.replace(home, "/home/maintainer")
     if home_name:
         sanitized = re.sub(r"\b" + re.escape(home_name) + r"\b", "maintainer", sanitized)
+    sanitized = windows_user_path_re.sub("/home/maintainer", sanitized)
     sanitized = sanitized.replace("/Users/", "/home/maintainer/")
-    sanitized = sanitized.replace(r"C:\Users\\", r"C:\Users\maintainer\\")
 
     sanitized = re.sub(
         r"/Users/[A-Za-z0-9._-]+(?:/[^\s\"'`)>\]]*)?",
@@ -316,6 +353,7 @@ def validate_sanitized():
     failures = []
     private_patterns = [
         re.compile(r"/Users/"),
+        windows_user_path_re,
         re.compile(re.escape(home)) if home else None,
         re.compile(r"\b" + re.escape(home_name) + r"\b") if home_name else None,
         re.compile(r"sk-[A-Za-z0-9_-]{12,}"),

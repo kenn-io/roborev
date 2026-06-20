@@ -185,7 +185,7 @@ wheels = [
 ]
 
 [[package]]
-name = "roborev-docs"
+name = "roborev-documentation"
 version = "0.0.0"
 source = { virtual = "." }
 dependencies = [

@@ -1131,7 +1131,7 @@ All notable changes to roborev, grouped by minor release.
 
 **Improvements**
 
-- Simplified `install.sh` and moved docs screenshots to roborev-docs repo.
+- Simplified `install.sh` and moved docs screenshots to the documentation site.
 - Instruct reviewers to skip commit message review.
 
 **Bug fixes**

@@ -82,10 +82,12 @@ bash docs/screenshots/update-generated-assets-branch.sh --push
 The script writes screenshots to ignored `docs/assets/generated/`, validates the
 expected SVGs, creates a temporary git repository with a single commit, then
 fetches that commit into `docs-generated-assets`. It does not switch branches.
-Screenshot data is copied from the maintainer's local roborev database, filtered
-to public project reviews for `roborev`, `kata`, `msgvault`, and `agentsview`,
-then sanitized before Docker renders screenshots. The generated demo database is
-written to `$TMPDIR/roborev-demo-data`.
+Screenshot data is copied from the maintainer's local roborev database, selected
+only from repos whose identity or `origin` remote matches the canonical public
+`kenn-io/roborev`, `kenn-io/kata`, `kenn-io/msgvault`, and
+`kenn-io/agentsview` repositories, then sanitized before Docker renders
+screenshots. The generated demo database is written to
+`$TMPDIR/roborev-demo-data`.
 
 For the initial import or a manual refresh from an existing directory:
 
