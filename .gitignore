@@ -29,6 +29,15 @@ Thumbs.db
 # Python
 __pycache__/
 
+# Docs build and hydrated assets
+docs/.venv/
+docs/.vercel/
+docs/.zensical-build.*
+docs/zensical-public-docs.*
+docs/site/
+docs/assets/static/
+docs/assets/generated/
+
 # Local config (users create their own)
 .roborev.toml
 

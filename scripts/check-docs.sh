@@ -43,6 +43,11 @@ required_files=(
   "docs/scripts/check_vercel_redirects.py"
   "docs/assets/hydrate-assets.sh"
   "docs/assets/update-static-assets-branch.sh"
+  "docs/screenshots/Dockerfile"
+  "docs/screenshots/freeze.json"
+  "docs/screenshots/generate-screenshots.sh"
+  "docs/screenshots/prepare-demo-db.sh"
+  "docs/screenshots/screenshot-all.sh"
   "docs/screenshots/update-generated-assets-branch.sh"
   "scripts/update-docs.sh"
 )
@@ -140,7 +145,10 @@ require_line scripts/update-docs.sh 'docs-generated-assets'
 reject_line README.md 'roborev-docs'
 
 root_media_refs="$(
-  rg -n '(<img[^>]+src="/|!\[[^]]*\]\(/)[^)" >]+\.(png|svg|jpg|jpeg|webp|gif)' docs README.md || true
+  (rg -n '(<img[^>]+src="/|!\[[^]]*\]\(/)[^)" >]+\.(png|svg|jpg|jpeg|webp|gif)' docs README.md || true) \
+    | grep -v '/assets/static/' \
+    | grep -v '/assets/generated/' \
+    || true
 )"
 if [[ -n "$root_media_refs" ]]; then
   printf 'docs media references must use /assets/static or /assets/generated:\n%s\n' "$root_media_refs" >&2
