@@ -102,6 +102,16 @@ require_line() {
   fi
 }
 
+require_exact_line() {
+  local file="$1"
+  local expected="$2"
+
+  if ! grep -Fx -- "$expected" "$file" >/dev/null; then
+    printf 'missing required docs content in %s: %s\n' "$file" "$expected" >&2
+    exit 1
+  fi
+}
+
 reject_line() {
   local file="$1"
   local unexpected="$2"
@@ -121,6 +131,8 @@ require_line Makefile 'docs-generated-assets-branch:'
 require_line Makefile 'docs-deploy-staging:'
 require_line Makefile 'docs-deploy:'
 require_line Makefile 'vercel deploy --prod'
+require_exact_line .gitignore '.vercel'
+require_line docs/README.md 'vercel link'
 require_line docs/README.md 'make docs-deploy-staging'
 
 require_line docs/vercel.json '"framework": null'

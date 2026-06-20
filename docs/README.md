@@ -123,6 +123,15 @@ Vercel root directory:
 | Build command | `uv run --frozen bash ./vercel-build.sh` |
 | Output directory | `site` |
 
+Link the checkout once from the repository root:
+
+```bash
+vercel link
+```
+
+When prompted, choose the roborev docs Vercel project. The generated `.vercel/`
+directory is local-only and ignored.
+
 Deploy committed docs changes with:
 
 ```bash

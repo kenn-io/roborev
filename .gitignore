@@ -31,7 +31,6 @@ __pycache__/
 
 # Docs build and hydrated assets
 docs/.venv/
-docs/.vercel/
 docs/.zensical-build.*
 docs/zensical-public-docs.*
 docs/site/
@@ -63,5 +62,10 @@ REPORT.md
 *.db
 .codex
 .antigravitycli/
+
+# docs Vercel artifacts
+.vercel
+.env*.local
+
 # roborev snapshots
 /.roborev/
