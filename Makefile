@@ -62,10 +62,10 @@ docs-generated-assets-branch:
 	bash docs/screenshots/update-generated-assets-branch.sh
 
 docs-deploy-staging:
-	vercel deploy
+	vercel deploy docs
 
 docs-deploy:
-	vercel deploy --prod
+	vercel deploy docs --prod
 
 # Regenerate the checked-in OpenAPI document and public Go client.
 api-generate:
