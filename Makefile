@@ -24,7 +24,7 @@ GOLANGCI_LINT_VERSION := 2.12.2
 # (golangci-lint #3502). A per-checkout cache dies with its checkout.
 export GOLANGCI_LINT_CACHE := $(CURDIR)/.golangci-lint-cache
 
-.PHONY: build install clean test test-git-isolation test-integration test-acp-integration test-acp-integration-codex test-acp-integration-claude test-acp-integration-gemini test-postgres test-all postgres-up postgres-down test-postgres-ci api-generate lint lint-ci check-golangci-lint print-golangci-lint-version check-actions check-renovate-config install-hooks
+.PHONY: build install clean test test-git-isolation test-integration test-acp-integration test-acp-integration-codex test-acp-integration-claude test-acp-integration-gemini test-postgres test-all postgres-up postgres-down test-postgres-ci api-generate lint lint-ci check-golangci-lint print-golangci-lint-version check-actions check-renovate-config install-hooks docs-install docs-build docs-serve docs-check docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy
 
 build:
 	@mkdir -p bin
@@ -39,6 +39,30 @@ install:
 
 clean:
 	rm -rf bin/
+
+docs-install:
+	cd docs && uv sync --frozen --no-dev
+
+docs-build:
+	cd docs && uv run --frozen bash ./vercel-build.sh
+
+docs-serve:
+	cd docs && bash assets/hydrate-assets.sh && uv run bash ./zensical-docs.sh serve
+
+docs-check:
+	bash scripts/check-docs.sh
+
+docs-screenshots:
+	bash docs/screenshots/screenshot-all.sh
+
+docs-assets-branch:
+	bash docs/assets/update-static-assets-branch.sh
+
+docs-generated-assets-branch:
+	bash docs/screenshots/update-generated-assets-branch.sh
+
+docs-deploy:
+	vercel deploy --prod
 
 # Regenerate the checked-in OpenAPI document and public Go client.
 api-generate:
