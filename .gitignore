@@ -66,6 +66,9 @@ REPORT.md
 # docs Vercel artifacts
 .vercel
 .env*.local
+docs/.gitignore
+docs/.vercel/
+docs/.env*.local
 
 # roborev snapshots
 /.roborev/
