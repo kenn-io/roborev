@@ -1,10 +1,10 @@
 #!/bin/bash
 # roborev installer
-# Usage: curl -fsSL https://raw.githubusercontent.com/roborev-dev/roborev/main/scripts/install.sh | bash
+# Usage: curl -fsSL https://roborev.io/install.sh | bash
 
 set -euo pipefail
 
-REPO="roborev-dev/roborev"
+REPO="kenn-io/roborev"
 BINARY_NAME="roborev"
 ROBOREV_INSTALL_TMPDIR=""
 

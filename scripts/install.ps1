@@ -3,7 +3,7 @@
 
 $ErrorActionPreference = 'Stop'
 
-$repo = 'roborev-dev/roborev'
+$repo = 'kenn-io/roborev'
 $binaryName = 'roborev.exe'
 
 function Write-Info($msg) { Write-Host $msg -ForegroundColor Green }

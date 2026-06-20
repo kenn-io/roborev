@@ -24,6 +24,21 @@ func TestWindowsInstallersUseZipReleaseAssets(t *testing.T) {
 	assert.Contains(t, powerShell, `Expand-Archive -LiteralPath $archivePath -DestinationPath $tmpDir -Force`)
 }
 
+func TestInstallersUseCanonicalReleaseRepository(t *testing.T) {
+	shellInstaller, err := os.ReadFile("install.sh")
+	require.NoError(t, err)
+	powerShellInstaller, err := os.ReadFile("install.ps1")
+	require.NoError(t, err)
+
+	shell := string(shellInstaller)
+	powerShell := string(powerShellInstaller)
+
+	assert.Contains(t, shell, `REPO="kenn-io/roborev"`)
+	assert.NotContains(t, shell, "roborev-dev/roborev")
+	assert.Contains(t, powerShell, `$repo = 'kenn-io/roborev'`)
+	assert.NotContains(t, powerShell, "roborev-dev/roborev")
+}
+
 func TestShellInstallerFailsReleasePathOnExtractionOrMissingBinary(t *testing.T) {
 	shellInstaller, err := os.ReadFile("install.sh")
 	require.NoError(t, err)
