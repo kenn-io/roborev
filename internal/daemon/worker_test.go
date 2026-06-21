@@ -2030,35 +2030,55 @@ func TestFailOrRetryInner_QuotaSkipsRetries(t *testing.T) {
 }
 
 func TestFailOrRetryInner_QuotaResetAtDoesNotExceedConfiguredCooldown(t *testing.T) {
-	tc := newWorkerTestContext(t, 1)
-	cfg := config.DefaultConfig()
-	cfg.AgentQuotaCooldown = "5m"
-	tc.reconfigurePool(cfg)
-
-	sha := testutil.GetHeadSHA(t, tc.TmpDir)
-	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
-	start := time.Now()
-	tc.Pool.classify = func(agentName, msg string) agent.LimitClassification {
-		return agent.LimitClassification{
-			Kind:    agent.LimitKindQuota,
-			Agent:   agentName,
-			ResetAt: start.Add(time.Hour),
-			Message: msg,
-		}
+	tests := []struct {
+		name      string
+		resetFrom time.Duration
+		want      time.Duration
+	}{
+		{
+			name:      "later provider reset is capped by config",
+			resetFrom: time.Hour,
+			want:      5 * time.Minute,
+		},
+		{
+			name:      "earlier provider reset is honored",
+			resetFrom: 2 * time.Minute,
+			want:      2 * time.Minute,
+		},
 	}
 
-	tc.Pool.failOrRetryInner(
-		testWorkerID, job, "codex",
-		"codex stream reported failure: You've hit your usage limit.",
-		true,
-	)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tc := newWorkerTestContext(t, 1)
+			cfg := config.DefaultConfig()
+			cfg.AgentQuotaCooldown = "5m"
+			tc.reconfigurePool(cfg)
 
-	tc.Pool.agentCooldownsMu.RLock()
-	expiry, ok := tc.Pool.agentCooldowns["codex"]
-	tc.Pool.agentCooldownsMu.RUnlock()
-	require.True(t, ok, "expected codex cooldown entry")
-	assert.WithinDuration(t, start.Add(5*time.Minute), expiry, time.Minute,
-		"cooldown should use configured duration, not provider reset time")
+			sha := testutil.GetHeadSHA(t, tc.TmpDir)
+			job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
+			start := time.Now()
+			tc.Pool.classify = func(agentName, msg string) agent.LimitClassification {
+				return agent.LimitClassification{
+					Kind:    agent.LimitKindQuota,
+					Agent:   agentName,
+					ResetAt: start.Add(tt.resetFrom),
+					Message: msg,
+				}
+			}
+
+			tc.Pool.failOrRetryInner(
+				testWorkerID, job, "codex",
+				"codex stream reported failure: You've hit your usage limit.",
+				true,
+			)
+
+			tc.Pool.agentCooldownsMu.RLock()
+			expiry, ok := tc.Pool.agentCooldowns["codex"]
+			tc.Pool.agentCooldownsMu.RUnlock()
+			require.True(t, ok, "expected codex cooldown entry")
+			assert.WithinDuration(t, start.Add(tt.want), expiry, time.Minute)
+		})
+	}
 }
 
 func TestFailOrRetryInner_QuotaCooldownForHonorsConfiguredCap(t *testing.T) {
