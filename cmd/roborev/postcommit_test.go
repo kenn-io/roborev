@@ -243,18 +243,24 @@ func TestPostCommitLogsCreatesParentDir(t *testing.T) {
 // that accepts connections but never responds, without needing
 // a real httptest server or a long sleep.
 type stallingRoundTripper struct {
-	hit chan struct{}
+	hit       chan struct{}
+	cancelled chan time.Duration
 }
 
 func (s *stallingRoundTripper) RoundTrip(
 	req *http.Request,
 ) (*http.Response, error) {
+	start := time.Now()
 	select {
 	case s.hit <- struct{}{}:
 	default:
 	}
 	select {
 	case <-req.Context().Done():
+		select {
+		case s.cancelled <- time.Since(start):
+		default:
+		}
 	case <-time.After(5 * time.Second):
 		return nil, fmt.Errorf("stallingRoundTripper: context was never cancelled")
 	}
@@ -274,7 +280,10 @@ func TestPostCommitTimesOutOnSlowDaemon(t *testing.T) {
 
 	repo.CommitFile("file.txt", "content", "initial")
 
-	rt := &stallingRoundTripper{hit: make(chan struct{}, 1)}
+	rt := &stallingRoundTripper{
+		hit:       make(chan struct{}, 1),
+		cancelled: make(chan time.Duration, 1),
+	}
 	orig := hookHTTPClient
 	hookHTTPClient = func() *http.Client {
 		return &http.Client{
@@ -284,9 +293,7 @@ func TestPostCommitTimesOutOnSlowDaemon(t *testing.T) {
 	}
 	t.Cleanup(func() { hookHTTPClient = orig })
 
-	start := time.Now()
 	_, _, err := executePostCommitCmd("--repo", repo.Dir)
-	elapsed := time.Since(start)
 
 	require.NoError(t, err)
 
@@ -297,10 +304,15 @@ func TestPostCommitTimesOutOnSlowDaemon(t *testing.T) {
 		require.NoError(t, err, "RoundTrip was never called; timeout not exercised")
 	}
 	assert.False(t, realHandlerCalled, "real handler should not be reached")
-	assert.LessOrEqual(t, elapsed, time.Second,
 
-		"command took %v; should return promptly via timeout",
-		elapsed)
+	select {
+	case elapsed := <-rt.cancelled:
+		assert.LessOrEqual(t, elapsed, time.Second,
+			"request took %v; should return promptly via timeout",
+			elapsed)
+	default:
+		require.FailNow(t, "request context was not cancelled by timeout")
+	}
 }
 
 func TestEnqueueAliasIsHidden(t *testing.T) {
