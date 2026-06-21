@@ -49,9 +49,11 @@ windows_user_path_re = re.compile(
 secret_patterns = [
     re.compile(r"sk-[A-Za-z0-9_-]{12,}"),
     re.compile(r"gh[pousr]_[A-Za-z0-9_]{12,}"),
+    re.compile(r"github_pat_[A-Za-z0-9_]{12,}"),
+    re.compile(r"glpat-[A-Za-z0-9_-]{12,}"),
     re.compile(r"AKIA[0-9A-Z]{16}"),
     re.compile(
-        r"(?i)\b(api[_-]?key|secret|password)\b([\"']?\s*[:=]\s*[\"']?)[^\s,\"')]+"
+        r"(?i)\b(api[_-]?key|secret|password|token)\b([\"']?\s*[:=]\s*[\"']?)[^\s,\"')]+"
     ),
 ]
 

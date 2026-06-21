@@ -74,11 +74,37 @@ source_dir="$(cd "$source_dir" 2>/dev/null && pwd)" || {
 }
 
 for asset in "${expected_assets[@]}"; do
+  if [[ -L "$source_dir/$asset" ]]; then
+    printf 'static docs asset source must not be a symlink: %s\n' "$asset" >&2
+    exit 1
+  fi
   if [[ ! -f "$source_dir/$asset" ]]; then
     printf 'static docs asset source is missing expected asset: %s\n' "$asset" >&2
     exit 1
   fi
 done
+
+is_expected_asset() {
+  local path="$1"
+  local asset
+  for asset in "${expected_assets[@]}"; do
+    [[ "$asset" == "$path" ]] && return 0
+  done
+  return 1
+}
+
+while IFS= read -r -d '' path; do
+  rel="${path#"$source_dir"/}"
+  case "$rel" in
+    .DS_Store|*/.DS_Store)
+      continue
+      ;;
+  esac
+  if ! is_expected_asset "$rel"; then
+    printf 'static docs asset source has unexpected file: %s\n' "$rel" >&2
+    exit 1
+  fi
+done < <(find "$source_dir" -mindepth 1 \( -type f -o -type l \) -print0)
 
 tmp_root="$(mktemp -d)"
 asset_repo="$tmp_root/assets-repo"
@@ -89,8 +115,10 @@ cleanup() {
 trap cleanup EXIT
 
 mkdir -p "$asset_repo"
-cp -R "$source_dir"/. "$asset_repo"/
-find "$asset_repo" -name .DS_Store -delete
+for asset in "${expected_assets[@]}"; do
+  mkdir -p "$asset_repo/$(dirname "$asset")"
+  cp "$source_dir/$asset" "$asset_repo/$asset"
+done
 
 git -C "$asset_repo" init --quiet
 git -C "$asset_repo" add .

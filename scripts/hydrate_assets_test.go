@@ -68,6 +68,56 @@ func TestHydrateAssetsForceFetchesRemoteAssetBranches(t *testing.T) {
 	assert.Equal(t, "generated\n", string(screenshot))
 }
 
+func TestAssetPublishersRejectUnexpectedFiles(t *testing.T) {
+	cases := []struct {
+		name      string
+		scriptRel string
+		write     func(*testing.T, string, string)
+	}{
+		{
+			name:      "static",
+			scriptRel: filepath.Join("docs", "assets", "update-static-assets-branch.sh"),
+			write:     writeStaticAssets,
+		},
+		{
+			name:      "generated",
+			scriptRel: filepath.Join("docs", "screenshots", "update-generated-assets-branch.sh"),
+			write:     writeGeneratedAssets,
+		},
+	}
+
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			tempDir := t.TempDir()
+			repo := filepath.Join(tempDir, "repo")
+			sourceDir := filepath.Join(tempDir, "source")
+			require.NoError(t, os.MkdirAll(repo, 0o755))
+			git(t, repo, "init")
+			tc.write(t, sourceDir, "asset")
+			require.NoError(t, os.WriteFile(filepath.Join(sourceDir, ".env.local"), []byte("TOKEN=secret\n"), 0o600))
+
+			scriptPath := installAssetScript(t, repo, tc.scriptRel)
+			cmd := exec.Command("bash", scriptPath, "--source", sourceDir)
+			cmd.Dir = repo
+			output, err := cmd.CombinedOutput()
+
+			require.Error(t, err, string(output))
+			assert.Contains(t, string(output), "unexpected")
+			assert.Contains(t, string(output), ".env.local")
+		})
+	}
+}
+
+func installAssetScript(t *testing.T, repo, scriptRel string) string {
+	t.Helper()
+	script, err := os.ReadFile(filepath.Join("..", scriptRel))
+	require.NoError(t, err)
+	scriptPath := filepath.Join(repo, scriptRel)
+	require.NoError(t, os.MkdirAll(filepath.Dir(scriptPath), 0o755))
+	require.NoError(t, os.WriteFile(scriptPath, script, 0o755))
+	return scriptPath
+}
+
 func writeStaticAssets(t *testing.T, dir, content string) {
 	t.Helper()
 	files := []string{

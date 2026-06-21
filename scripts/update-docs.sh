@@ -73,6 +73,7 @@ if [[ "$dry_run" == false ]]; then
 fi
 
 run make docs-install
+run rm -rf docs/assets/generated
 run bash docs/screenshots/update-generated-assets-branch.sh --push
 run rm -rf docs/assets/static docs/assets/generated
 run bash docs/assets/hydrate-assets.sh

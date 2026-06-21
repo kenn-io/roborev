@@ -98,6 +98,12 @@ High: REAL_PUBLIC_REVIEW_FINDING from /Users/Alice/roborev with api_key=abc123'
 		 WHERE job_id = 300`,
 	)
 	require.NoError(t, err)
+	_, err = db.Exec(
+		`UPDATE reviews
+		 SET output = output || ' and github_pat_1234567890ABCDEFGHIJKLMNOP'
+		 WHERE job_id = 300`,
+	)
+	require.NoError(t, err)
 	_, err = db.Exec(`UPDATE commits SET subject = 'REAL_PUBLIC_COMMIT_SUBJECT' WHERE id = 300`)
 	require.NoError(t, err)
 	_, err = db.Exec(
@@ -128,6 +134,7 @@ High: REAL_PUBLIC_REVIEW_FINDING from /Users/Alice/roborev with api_key=abc123'
 	assert.NotContains(t, text, "/home/maintainer/Alice")
 	assert.NotContains(t, text, "api_key=abc123")
 	assert.Contains(t, text, "api_key=[REDACTED]")
+	assert.NotContains(t, text, "github_pat_1234567890ABCDEFGHIJKLMNOP")
 	assert.Contains(t, text, "REAL_PUBLIC_DIFF")
 	assert.NotContains(t, text, "REAL_PUBLIC_RESPONSE")
 	assert.NotContains(t, text, "TASK_LOCAL_SECRET")
