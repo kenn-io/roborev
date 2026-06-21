@@ -37,7 +37,8 @@ func (sc *StaticConfig) Config() *config.Config {
 // ConfigWatcher watches config.toml for changes and reloads configuration.
 //
 // Hot-reloadable settings take effect immediately: default_agent, job_timeout,
-// allow_unsafe_agents, anthropic_api_key, review_context_count.
+// agent_quota_cooldown, allow_unsafe_agents, anthropic_api_key,
+// review_context_count.
 //
 // Settings requiring restart: server_addr, max_workers, [sync] section.
 // These are read at startup and the running values are preserved even if the
@@ -243,6 +244,9 @@ func logConfigChanges(old, new *config.Config) {
 	}
 	if old.JobTimeoutMinutes != new.JobTimeoutMinutes {
 		log.Printf("Config change: job_timeout_minutes %d -> %d", old.JobTimeoutMinutes, new.JobTimeoutMinutes)
+	}
+	if old.AgentQuotaCooldown != new.AgentQuotaCooldown {
+		log.Printf("Config change: agent_quota_cooldown %q -> %q", old.AgentQuotaCooldown, new.AgentQuotaCooldown)
 	}
 	oldUnsafe := old.AllowUnsafeAgents != nil && *old.AllowUnsafeAgents
 	newUnsafe := new.AllowUnsafeAgents != nil && *new.AllowUnsafeAgents

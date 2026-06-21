@@ -1982,8 +1982,9 @@ func (p *CIPoller) recordDeferral(
 	if err := p.db.MarkPanelRetired(row.ID); err != nil {
 		log.Printf("CI poller: error retiring deferred panel %d: %v", row.ID, err)
 	}
-	log.Printf("CI poller: deferred %s panel run for %s#%d (panel %d, retrying)",
-		errClass, row.GithubRepo, row.PRNumber, row.ID)
+	log.Printf("CI poller: deferred %s panel run for %s#%d@%s (panel %d, run %s, attempt %d, next_attempt_at %s, last_error=%q)",
+		errClass, row.GithubRepo, row.PRNumber, gitpkg.ShortSHA(row.HeadSHA), row.ID, row.PanelRunUUID,
+		attempt.Attempt, nextAt.Format(time.RFC3339), logExcerpt(excerpt))
 }
 
 // markAttemptDone marks the HEAD's attempt terminal. finalizePanelRun guarantees
@@ -2344,7 +2345,7 @@ func (p *CIPoller) retryDueReviewAttempt(
 		}
 		return false // PR advanced; the new HEAD already has its own attempt
 	}
-	claimed, _, _, err := p.db.ClaimDueReviewAttempt(ghRepo, attempt.PRNumber, attempt.HeadSHA, now)
+	claimed, attemptNumber, firstAttemptAt, err := p.db.ClaimDueReviewAttempt(ghRepo, attempt.PRNumber, attempt.HeadSHA, now)
 	if err != nil {
 		log.Printf("CI poller: error claiming due review attempt for %s#%d@%s: %v",
 			ghRepo, attempt.PRNumber, gitpkg.ShortSHA(attempt.HeadSHA), err)
@@ -2362,7 +2363,21 @@ func (p *CIPoller) retryDueReviewAttempt(
 			ghRepo, attempt.PRNumber, gitpkg.ShortSHA(attempt.HeadSHA), err)
 		return false
 	}
+	nextAttemptAt := "<nil>"
+	if attempt.NextAttemptAt != nil {
+		nextAttemptAt = attempt.NextAttemptAt.Format(time.RFC3339)
+	}
+	log.Printf("CI poller: re-enqueued deferred review attempt for %s#%d@%s (attempt %d, first_attempt_at %s, previous_next_attempt_at %s, last_error_class %q, last_error=%q)",
+		ghRepo, attempt.PRNumber, gitpkg.ShortSHA(attempt.HeadSHA), attemptNumber,
+		firstAttemptAt.Format(time.RFC3339), nextAttemptAt, attempt.LastErrorClass,
+		logExcerpt(attempt.LastErrorExcerpt))
 	return true
+}
+
+func logExcerpt(excerpt string) string {
+	preview := strings.ReplaceAll(excerpt, "\n", " ")
+	preview = strings.ReplaceAll(preview, "\r", "")
+	return truncateRunes(preview, 200)
 }
 
 func (p *CIPoller) retryAttemptPR(

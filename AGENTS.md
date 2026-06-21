@@ -187,6 +187,14 @@ Test conventions:
 - Keep changes simple; avoid over-engineering.
 - Prefer Go stdlib over new dependencies.
 - No emojis in code or output (commit messages are fine).
+- Do not include private review data or infrastructure details in tests,
+  fixtures, commit messages, PR descriptions, PR comments, issue comments, or
+  public docs unless the user explicitly asks for that disclosure. This includes
+  real hostnames, usernames, local paths, daemon/service names, job IDs, review
+  IDs, PR numbers from private queues, database rows, log excerpts, timestamps
+  tied to incidents, config contents, auth state, and machine-specific behavior.
+  Use synthetic identifiers, generic provider messages, and behavior-focused
+  descriptions instead.
 - Never amend commits; fixes should be new commits.
 - Never push/pull unless explicitly asked.
 - NEVER merge pull requests.

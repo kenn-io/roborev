@@ -41,6 +41,8 @@ func TestDefaultConfig(t *testing.T) {
 	assert.Empty(t, cfg.Cost.Endpoint)
 	assert.Equal(t, "10s", cfg.Cost.Timeout)
 	assert.Equal(t, 10*time.Second, cfg.Cost.ResolvedTimeout())
+	assert.Equal(t, "30m0s", cfg.AgentQuotaCooldown)
+	assert.Equal(t, 30*time.Minute, ResolveAgentQuotaCooldown(cfg))
 }
 
 func TestDataDir(t *testing.T) {
@@ -546,6 +548,46 @@ func TestResolveJobTimeout(t *testing.T) {
 					return false
 				}, "ResolveJobTimeout() = %v, want %v", got, tt.want)
 			}
+		})
+	}
+}
+
+func TestResolveAgentQuotaCooldown(t *testing.T) {
+	tests := []struct {
+		name         string
+		globalConfig *Config
+		want         time.Duration
+	}{
+		{
+			name: "default when no config",
+			want: 30 * time.Minute,
+		},
+		{
+			name:         "default when global config has empty value",
+			globalConfig: &Config{AgentQuotaCooldown: ""},
+			want:         30 * time.Minute,
+		},
+		{
+			name:         "default when global config is invalid",
+			globalConfig: &Config{AgentQuotaCooldown: "soon"},
+			want:         30 * time.Minute,
+		},
+		{
+			name:         "default when global config is non-positive",
+			globalConfig: &Config{AgentQuotaCooldown: "-1m"},
+			want:         30 * time.Minute,
+		},
+		{
+			name:         "global config takes precedence over default",
+			globalConfig: &Config{AgentQuotaCooldown: "5m"},
+			want:         5 * time.Minute,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := ResolveAgentQuotaCooldown(tt.globalConfig)
+			assert.Equal(t, tt.want, got)
 		})
 	}
 }

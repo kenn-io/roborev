@@ -110,6 +110,7 @@ type Config struct {
 	DefaultBackupAgent         string `toml:"default_backup_agent"`
 	DefaultBackupModel         string `toml:"default_backup_model"`
 	JobTimeoutMinutes          int    `toml:"job_timeout_minutes"`
+	AgentQuotaCooldown         string `toml:"agent_quota_cooldown" comment:"Maximum daemon-wide cooldown after an agent quota error, as a Go duration such as 30m."`
 	ReviewReasoning            string `toml:"review_reasoning" comment:"Default reasoning level for reviews: fast, standard, medium, thorough, or maximum."`
 	RefineReasoning            string `toml:"refine_reasoning" comment:"Default reasoning level for refine: fast, standard, medium, thorough, or maximum."`
 	FixReasoning               string `toml:"fix_reasoning" comment:"Default reasoning level for fix: fast, standard, medium, thorough, or maximum."`
@@ -424,6 +425,7 @@ type RepoConfig struct {
 
 const (
 	DefaultPiJSONSchemaExtension = "npm:@nqbao/pi-json-schema@0.1.1"
+	DefaultAgentQuotaCooldown    = 30 * time.Minute
 )
 
 // DefaultConfig returns the default configuration
@@ -434,6 +436,7 @@ func DefaultConfig() *Config {
 		ReviewContextCount: 3,
 		DefaultAgent:       "codex",
 		JobTimeoutMinutes:  30,
+		AgentQuotaCooldown: DefaultAgentQuotaCooldown.String(),
 		CodexCmd:           "codex",
 		ClaudeCodeCmd:      "claude",
 		CursorCmd:          "agent",
@@ -829,6 +832,20 @@ func ResolveJobTimeout(repoPath string, globalCfg *Config) int {
 		globalVal = clampPositive(globalCfg.JobTimeoutMinutes)
 	}
 	return resolve(30, repoVal, globalVal)
+}
+
+// ResolveAgentQuotaCooldown returns the maximum daemon-wide agent cooldown
+// after a quota/session-limit error. Provider reset hints may shorten this
+// value, but daemon scheduling must not lengthen beyond operator config.
+func ResolveAgentQuotaCooldown(globalCfg *Config) time.Duration {
+	if globalCfg == nil || strings.TrimSpace(globalCfg.AgentQuotaCooldown) == "" {
+		return DefaultAgentQuotaCooldown
+	}
+	d, err := time.ParseDuration(globalCfg.AgentQuotaCooldown)
+	if err != nil || d <= 0 {
+		return DefaultAgentQuotaCooldown
+	}
+	return d
 }
 
 // ResolveAutoClosePassingReviews returns whether passing reviews should

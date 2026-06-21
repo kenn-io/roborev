@@ -1050,12 +1050,12 @@ func (wp *WorkerPool) failOrRetryInner(workerID string, job *storage.ReviewJob, 
 		cls := wp.classify(agent.CanonicalName(agentName), errorMsg)
 		switch cls.Kind {
 		case agent.LimitKindQuota, agent.LimitKindSession:
-			dur := defaultCooldown
-			if cls.CooldownFor > 0 {
+			dur := wp.agentQuotaCooldown()
+			if cls.CooldownFor > 0 && cls.CooldownFor < dur {
 				dur = cls.CooldownFor
 			}
 			if !cls.ResetAt.IsZero() {
-				if until := time.Until(cls.ResetAt); until > 0 {
+				if until := time.Until(cls.ResetAt); until > 0 && until < dur {
 					dur = until
 				}
 			}
@@ -1072,10 +1072,8 @@ func (wp *WorkerPool) failOrRetryInner(workerID string, job *storage.ReviewJob, 
 			return
 		case agent.LimitKindNone:
 			if errorMsg != "" {
-				preview := strings.ReplaceAll(errorMsg, "\n", " ")
-				preview = strings.ReplaceAll(preview, "\r", "")
 				log.Printf("[%s] unclassified agent error from %s: %s",
-					workerID, agentName, truncateRunes(preview, 200))
+					workerID, agentName, logExcerpt(errorMsg))
 			}
 			// fall through to context-window / retry handling
 		case agent.LimitKindTransient:
@@ -1349,9 +1347,12 @@ func (wp *WorkerPool) captureTokenUsageForSession(
 	}
 }
 
-// defaultCooldown is the fallback duration when the error message doesn't
-// contain a parseable "reset after" token.
-const defaultCooldown = 30 * time.Minute
+func (wp *WorkerPool) agentQuotaCooldown() time.Duration {
+	if wp == nil || wp.cfgGetter == nil {
+		return config.DefaultAgentQuotaCooldown
+	}
+	return config.ResolveAgentQuotaCooldown(wp.cfgGetter.Config())
+}
 
 func isContextWindowError(errMsg string) bool {
 	lower := strings.ToLower(errMsg)
