@@ -62,6 +62,10 @@ has_expected_assets() {
   done
 }
 
+in_git_worktree() {
+  git -C "$repo_root" rev-parse --is-inside-work-tree >/dev/null 2>&1
+}
+
 resolve_asset_ref() {
   local branch="$1"
 
@@ -97,11 +101,11 @@ hydrate_branch() {
   local target="$2"
   shift 2
 
-  if has_expected_assets "$target" "$@"; then
-    return 0
-  fi
+  if ! in_git_worktree; then
+    if has_expected_assets "$target" "$@"; then
+      return 0
+    fi
 
-  if ! git -C "$repo_root" rev-parse --is-inside-work-tree >/dev/null 2>&1; then
     printf 'docs assets not hydrated: no git worktree found and expected assets are missing\n' >&2
     return 1
   fi

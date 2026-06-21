@@ -43,6 +43,19 @@ security findings:
 - Symlink-following in hook read/write under .git/hooks/ (controlled by the
   local user; a compromised local filesystem is out of scope)
 
+## Docs publication assets
+
+Docs media is published from maintainer-controlled orphan branches
+(`docs-assets` and `docs-generated-assets`). Treat these refs as trusted
+publication artifacts, not untrusted PR input: an actor who can force-push them
+already has repo publication authority. Do not report speculative build-host file
+exposure from malicious assets in those branches as a security vulnerability
+unless the code path accepts asset content from untrusted PR input.
+
+It is still valid to flag docs correctness and reproducibility issues, such as
+silently using stale ignored assets, hydrating from the wrong ref, missing
+expected files, or accidentally publishing unintended local files.
+
 ## Agent tool permissions
 
 Review agents run with shell access to inspect diffs and source files. Codex

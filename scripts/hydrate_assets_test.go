@@ -46,6 +46,9 @@ func TestHydrateAssetsForceFetchesRemoteAssetBranches(t *testing.T) {
 
 	docsAssetsDir := filepath.Join(localRepo, "docs", "assets")
 	require.NoError(t, os.MkdirAll(docsAssetsDir, 0o755))
+	writeStaticAssets(t, filepath.Join(docsAssetsDir, "static"), "stale local static")
+	writeGeneratedAssets(t, filepath.Join(docsAssetsDir, "generated"), "stale local generated")
+
 	script, err := os.ReadFile(filepath.Join("..", "docs", "assets", "hydrate-assets.sh"))
 	require.NoError(t, err)
 	scriptPath := filepath.Join(docsAssetsDir, "hydrate-assets.sh")
@@ -59,6 +62,10 @@ func TestHydrateAssetsForceFetchesRemoteAssetBranches(t *testing.T) {
 	logo, err := os.ReadFile(filepath.Join(localRepo, "docs", "assets", "static", "logo.svg"))
 	require.NoError(t, err)
 	assert.Equal(t, "new static\n", string(logo))
+
+	screenshot, err := os.ReadFile(filepath.Join(localRepo, "docs", "assets", "generated", "tui-hero.svg"))
+	require.NoError(t, err)
+	assert.Equal(t, "generated\n", string(screenshot))
 }
 
 func writeStaticAssets(t *testing.T, dir, content string) {
