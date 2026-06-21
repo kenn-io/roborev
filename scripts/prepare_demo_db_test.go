@@ -36,7 +36,7 @@ func TestPrepareDemoDBUsesCanonicalRepoIdentity(t *testing.T) {
 	text := readScreenshotDemoText(t, demoDB)
 
 	assert.Contains(t, text, "github.com/kenn-io/roborev")
-	assert.Contains(t, text, "docs/roborev")
+	assert.Contains(t, text, "PUBLIC roborev")
 	assert.NotContains(t, text, "PRIVATE roborev")
 	assert.NotContains(t, text, "/private/roborev")
 }
@@ -66,7 +66,7 @@ func TestPrepareDemoDBRedactsWindowsUserPaths(t *testing.T) {
 	assert.Contains(t, text, "/home/maintainer")
 }
 
-func TestPrepareDemoDBCuratesReviewContent(t *testing.T) {
+func TestPrepareDemoDBPreservesSanitizedRealReviewContent(t *testing.T) {
 	tempDir := t.TempDir()
 	sourceDB := filepath.Join(tempDir, "source.db")
 	db := createScreenshotSourceDB(t, sourceDB)
@@ -81,21 +81,28 @@ func TestPrepareDemoDBCuratesReviewContent(t *testing.T) {
 	insertScreenshotReview(t, db, 1, 300, "committed review", 0)
 	_, err := db.Exec(
 		`UPDATE review_jobs
-		 SET prompt = 'RAW_LOCAL_SECRET prompt',
-		     diff_content = 'RAW_LOCAL_SECRET diff'
+		 SET prompt = 'REAL_PUBLIC_PROMPT from C:\Users\Alice\roborev',
+		     diff_content = 'REAL_PUBLIC_DIFF',
+		     git_ref = 'feature/public-review',
+		     branch = 'feature/public-review',
+		     command_line = 'roborev review feature/public-review'
 		 WHERE id = 300`,
 	)
 	require.NoError(t, err)
 	_, err = db.Exec(
 		`UPDATE reviews
-		 SET prompt = 'RAW_LOCAL_SECRET review prompt',
-		     output = 'RAW_LOCAL_SECRET review output'
+		 SET prompt = 'REAL_PUBLIC_REVIEW_PROMPT from /Users/Alice/roborev',
+		     output = 'P/F: F
+
+High: REAL_PUBLIC_REVIEW_FINDING from /Users/Alice/roborev with api_key=abc123'
 		 WHERE job_id = 300`,
 	)
 	require.NoError(t, err)
+	_, err = db.Exec(`UPDATE commits SET subject = 'REAL_PUBLIC_COMMIT_SUBJECT' WHERE id = 300`)
+	require.NoError(t, err)
 	_, err = db.Exec(
 		`INSERT INTO responses (commit_id, job_id, responder, response)
-		 VALUES (300, 300, 'maintainer', 'RAW_LOCAL_SECRET response')`,
+		 VALUES (300, 300, 'maintainer', 'REAL_PUBLIC_RESPONSE')`,
 	)
 	require.NoError(t, err)
 
@@ -110,10 +117,20 @@ func TestPrepareDemoDBCuratesReviewContent(t *testing.T) {
 	demoDB := runPrepareDemoDB(t, tempDir, sourceDB)
 	text := readScreenshotDemoText(t, demoDB)
 
-	assert.NotContains(t, text, "RAW_LOCAL_SECRET")
+	assert.Contains(t, text, "REAL_PUBLIC_PROMPT")
+	assert.Contains(t, text, "REAL_PUBLIC_REVIEW_PROMPT")
+	assert.Contains(t, text, "REAL_PUBLIC_REVIEW_FINDING")
+	assert.Contains(t, text, "REAL_PUBLIC_COMMIT_SUBJECT")
+	assert.Contains(t, text, "feature/public-review")
+	assert.Contains(t, text, "/home/maintainer")
+	assert.NotContains(t, text, `C:\Users\Alice`)
+	assert.NotContains(t, text, "/Users/Alice")
+	assert.NotContains(t, text, "api_key=abc123")
+	assert.Contains(t, text, "api_key=[REDACTED]")
+	assert.Contains(t, text, "REAL_PUBLIC_DIFF")
+	assert.NotContains(t, text, "REAL_PUBLIC_RESPONSE")
 	assert.NotContains(t, text, "TASK_LOCAL_SECRET")
 	assert.NotContains(t, text, "DIRTY_LOCAL_SECRET")
-	assert.Contains(t, text, "Docs screenshot fixture")
 }
 
 func TestPrepareDemoDBSelectsOnlyCompletedJobsWithReviewVerdicts(t *testing.T) {
@@ -139,10 +156,10 @@ func TestPrepareDemoDBSelectsOnlyCompletedJobsWithReviewVerdicts(t *testing.T) {
 	assert.NotContains(t, text, "FAILED_NO_REVIEW_SECRET")
 	assert.NotContains(t, text, "CANCELED_WITH_REVIEW_SECRET")
 	assert.NotContains(t, text, "SKIPPED_WITH_REVIEW_SECRET")
-	assert.Contains(t, text, "representative")
+	assert.Contains(t, text, "DONE_FAILING_VERDICT")
 }
 
-func TestPrepareDemoDBReplacesSourceCommitAndRefMetadata(t *testing.T) {
+func TestPrepareDemoDBPreservesRealCommitAndRefMetadata(t *testing.T) {
 	tempDir := t.TempDir()
 	sourceDB := filepath.Join(tempDir, "source.db")
 	db := createScreenshotSourceDB(t, sourceDB)
@@ -154,20 +171,20 @@ func TestPrepareDemoDBReplacesSourceCommitAndRefMetadata(t *testing.T) {
 		insertScreenshotReview(t, db, repoID, repoID, "PUBLIC "+name, 1)
 	}
 
-	insertScreenshotReview(t, db, 1, 500, "PRIVATE_METADATA_SECRET", 0)
+	insertScreenshotReview(t, db, 1, 500, "REAL_PUBLIC_METADATA", 0)
 	_, err := db.Exec(
 		`UPDATE commits
-		 SET sha = 'PRIVATE_METADATA_SECRET_SHA',
-		     author = 'PRIVATE_METADATA_SECRET_AUTHOR',
-		     subject = 'PRIVATE_METADATA_SECRET_SUBJECT'
+		 SET sha = 'abc1234',
+		     author = 'REAL_PUBLIC_METADATA_AUTHOR',
+		     subject = 'REAL_PUBLIC_METADATA_SUBJECT'
 		 WHERE id = 500`,
 	)
 	require.NoError(t, err)
 	_, err = db.Exec(
 		`UPDATE review_jobs
-		 SET git_ref = 'PRIVATE_METADATA_SECRET_REF',
-		     branch = 'PRIVATE_METADATA_SECRET_BRANCH',
-		     command_line = 'roborev review PRIVATE_METADATA_SECRET_COMMAND'
+		 SET git_ref = 'abc1234',
+		     branch = 'feature/real-public-branch',
+		     command_line = 'roborev review abc1234'
 		 WHERE id = 500`,
 	)
 	require.NoError(t, err)
@@ -175,9 +192,10 @@ func TestPrepareDemoDBReplacesSourceCommitAndRefMetadata(t *testing.T) {
 	demoDB := runPrepareDemoDB(t, tempDir, sourceDB)
 	text := readScreenshotDemoText(t, demoDB)
 
-	assert.NotContains(t, text, "PRIVATE_METADATA_SECRET")
-	assert.Contains(t, text, "docs-review-")
-	assert.Contains(t, text, "Docs Fixture")
+	assert.Contains(t, text, "abc1234")
+	assert.Contains(t, text, "REAL_PUBLIC_METADATA_AUTHOR")
+	assert.Contains(t, text, "REAL_PUBLIC_METADATA_SUBJECT")
+	assert.Contains(t, text, "feature/real-public-branch")
 }
 
 func createScreenshotSourceDB(t *testing.T, path string) *sql.DB {

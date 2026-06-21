@@ -238,62 +238,6 @@ def row_value(row, key, default=""):
     return value
 
 
-def demo_repo_name(row):
-    repo = repo_by_id.get(row["repo_id"])
-    if repo is None:
-        return "public-repo"
-    return repo["name"]
-
-
-def demo_job_number(row):
-    return job_id_map[row["id"]]
-
-
-def demo_git_ref(row):
-    return f"docs-review-{demo_job_number(row):04d}"
-
-
-def demo_branch(row):
-    return f"docs/{demo_repo_name(row)}"
-
-
-def demo_commit_subject(row):
-    return f"Docs fixture review {demo_job_number(row):04d} for {demo_repo_name(row)}"
-
-
-def demo_prompt(row):
-    review_type = row_value(row, "review_type", "default")
-    return (
-        "Docs screenshot fixture prompt for a committed public "
-        f"{review_type or 'default'} review of {demo_git_ref(row)}."
-    )
-
-
-def demo_review_output(row):
-    subject = demo_commit_subject(row)
-    if review_is_failing(row):
-        severity = row_value(row, "min_severity")
-        if not severity:
-            severity = ("High", "Medium", "Low")[int(row["id"]) % 3]
-        severity_label = str(severity).strip().title()
-        return f"""P/F: F
-
-Summary: Docs screenshot fixture review for "{subject}" found a representative {severity_label.lower()} issue.
-
-Findings:
-- {severity_label}: Public fixture finding used for documentation screenshots.
-
-This deterministic fixture text does not include source review content."""
-
-    return f"""P/F: P
-
-Summary: Docs screenshot fixture review for "{subject}" found no blocking issues.
-
-Findings: none.
-
-This deterministic fixture text does not include source review content."""
-
-
 def review_is_failing(row):
     verdict = row["review_verdict_bool"]
     if verdict is not None:
@@ -351,10 +295,6 @@ selected_job_ids = tuple(job_id_map)
 commit_ids = tuple(
     sorted({row["commit_id"] for row in selected_jobs if row["commit_id"] is not None})
 )
-commit_job_number = {}
-for row in selected_jobs:
-    if row["commit_id"] is not None and row["commit_id"] not in commit_job_number:
-        commit_job_number[row["commit_id"]] = demo_job_number(row)
 
 dst.execute("PRAGMA foreign_keys = OFF")
 dst.execute("BEGIN")
@@ -373,41 +313,21 @@ if commit_ids:
     for row in src.execute(
         f"SELECT * FROM commits WHERE id IN ({qmarks(len(commit_ids))})", commit_ids
     ):
-        number = commit_job_number.get(row["id"], 0)
-        insert_row(
-            "commits",
-            row,
-            {
-                "sha": f"{number:040x}",
-                "author": "Docs Fixture",
-                "subject": f"Docs fixture public review {number:04d}",
-                "timestamp": "2026-06-20 12:00:00",
-            },
-        )
+        insert_row("commits", row)
 
 for row in selected_jobs:
-    git_ref = demo_git_ref(row)
     insert_row(
         "review_jobs",
         row,
         {
             "id": job_id_map[row["id"]],
-            "git_ref": git_ref,
-            "branch": demo_branch(row),
-            "ci_base_branch": "",
-            "prompt": demo_prompt(row),
-            "diff_content": None,
             "dirty_files": "[]",
             "error": None,
-            "command_line": f"roborev review {git_ref}",
             "source_machine_id": None,
             "synced_at": None,
             "worker_id": "docs-demo",
-            "session_id": "",
             "output_prefix": "",
             "patch": None,
-            "worktree_path": "",
-            "uuid": f"00000000-0000-4000-8000-{job_id_map[row['id']]:012d}",
         },
     )
 
@@ -415,14 +335,11 @@ for row in src.execute(
     f"SELECT * FROM reviews WHERE job_id IN ({qmarks(len(selected_job_ids))})",
     selected_job_ids,
 ):
-    source_job = selected_jobs_by_id[row["job_id"]]
     insert_row(
         "reviews",
         row,
         {
             "job_id": job_id_map[row["job_id"]],
-            "prompt": demo_prompt(source_job),
-            "output": demo_review_output(source_job),
             "updated_by_machine_id": None,
             "synced_at": None,
         },
