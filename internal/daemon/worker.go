@@ -1372,15 +1372,14 @@ func isContextWindowError(errMsg string) bool {
 	return false
 }
 
-// cooldownAgent sets or extends the cooldown expiry for an agent.
-// Only extends — never shortens an existing cooldown.
+// cooldownAgent records the cooldown expiry for an agent, bounded by the
+// current configured maximum. Later provider hints may shorten an existing
+// cooldown; a subsequent quota error can extend it again, but never past config.
 func (wp *WorkerPool) cooldownAgent(name string, until time.Time) {
 	name = agent.CanonicalName(name)
+	until = wp.clampAgentCooldownExpiry(until, time.Now())
 	wp.agentCooldownsMu.Lock()
 	defer wp.agentCooldownsMu.Unlock()
-	if existing, ok := wp.agentCooldowns[name]; ok && existing.After(until) {
-		return
-	}
 	wp.agentCooldowns[name] = until
 }
 
@@ -1388,31 +1387,60 @@ func (wp *WorkerPool) cooldownAgent(name string, until time.Time) {
 // quota cooldown period. Expired entries are cleaned up eagerly.
 func (wp *WorkerPool) isAgentCoolingDown(name string) bool {
 	name = agent.CanonicalName(name)
+	now := time.Now()
 	wp.agentCooldownsMu.RLock()
 	expiry, ok := wp.agentCooldowns[name]
 	if !ok {
 		wp.agentCooldownsMu.RUnlock()
 		return false
 	}
-	if time.Now().After(expiry) {
+	if now.After(expiry) {
 		wp.agentCooldownsMu.RUnlock()
 		if wp.testHookCooldownLockUpgrade != nil {
 			wp.testHookCooldownLockUpgrade()
 		}
-		// Upgrade to write lock and delete expired entry
 		wp.agentCooldownsMu.Lock()
-		// Re-check under write lock (may have been refreshed)
-		exp, stillExists := wp.agentCooldowns[name]
-		if stillExists && time.Now().After(exp) {
-			delete(wp.agentCooldowns, name)
-			wp.agentCooldownsMu.Unlock()
-			return false
-		}
+		cooling := wp.clampActiveCooldownLocked(name)
 		wp.agentCooldownsMu.Unlock()
-		return stillExists
+		return cooling
+	}
+	clampedExpiry := wp.clampAgentCooldownExpiry(expiry, now)
+	if clampedExpiry.Before(expiry) {
+		wp.agentCooldownsMu.RUnlock()
+		wp.agentCooldownsMu.Lock()
+		cooling := wp.clampActiveCooldownLocked(name)
+		wp.agentCooldownsMu.Unlock()
+		return cooling
 	}
 	wp.agentCooldownsMu.RUnlock()
 	return true
+}
+
+// clampActiveCooldownLocked rechecks and clamps a cooldown under the write lock.
+// The caller must hold agentCooldownsMu for writing.
+func (wp *WorkerPool) clampActiveCooldownLocked(name string) bool {
+	expiry, ok := wp.agentCooldowns[name]
+	if !ok {
+		return false
+	}
+	now := time.Now()
+	if now.After(expiry) {
+		delete(wp.agentCooldowns, name)
+		return false
+	}
+	clampedExpiry := wp.clampAgentCooldownExpiry(expiry, now)
+	if clampedExpiry.Before(expiry) {
+		wp.agentCooldowns[name] = clampedExpiry
+	}
+	return true
+}
+
+func (wp *WorkerPool) clampAgentCooldownExpiry(expiry, now time.Time) time.Time {
+	maxExpiry := now.Add(wp.agentQuotaCooldown())
+	if expiry.After(maxExpiry) {
+		return maxExpiry
+	}
+	return expiry
 }
 
 func (wp *WorkerPool) failCooldownOrFailover(

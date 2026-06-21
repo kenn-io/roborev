@@ -1737,13 +1737,48 @@ func TestAgentCooldown(t *testing.T) {
 		}, "expected expired cooldown to return false")
 	}
 
-	// cooldownAgent never shortens
+	// A later shorter cooldown still leaves the agent cooling down.
+	// Duration-specific shortening behavior is covered below.
 	pool.cooldownAgent("gemini", time.Now().Add(1*time.Minute))
 	if !pool.isAgentCoolingDown("gemini") {
 		assert.Condition(t, func() bool {
 			return false
-		}, "cooldown should not have been shortened")
+		}, "expected gemini to remain in cooldown")
 	}
+}
+
+func TestAgentCooldown_ShorterCooldownReplacesExisting(t *testing.T) {
+	cfg := config.DefaultConfig()
+	pool := NewWorkerPool(nil, NewStaticConfig(cfg), 1, NewBroadcaster(), nil, nil)
+
+	start := time.Now()
+	pool.cooldownAgent("codex", start.Add(30*time.Minute))
+	pool.cooldownAgent("codex", start.Add(2*time.Minute))
+
+	pool.agentCooldownsMu.RLock()
+	expiry, ok := pool.agentCooldowns["codex"]
+	pool.agentCooldownsMu.RUnlock()
+	require.True(t, ok, "expected codex cooldown entry")
+	assert.WithinDuration(t, start.Add(2*time.Minute), expiry, time.Minute)
+}
+
+func TestAgentCooldown_CheckClampsExistingCooldownToConfiguredCap(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.AgentQuotaCooldown = "5m"
+	pool := NewWorkerPool(nil, NewStaticConfig(cfg), 1, NewBroadcaster(), nil, nil)
+
+	start := time.Now()
+	pool.agentCooldownsMu.Lock()
+	pool.agentCooldowns["codex"] = start.Add(time.Hour)
+	pool.agentCooldownsMu.Unlock()
+
+	require.True(t, pool.isAgentCoolingDown("codex"))
+
+	pool.agentCooldownsMu.RLock()
+	expiry, ok := pool.agentCooldowns["codex"]
+	pool.agentCooldownsMu.RUnlock()
+	require.True(t, ok, "expected codex cooldown entry")
+	assert.WithinDuration(t, start.Add(5*time.Minute), expiry, time.Minute)
 }
 
 func TestAgentCooldown_ExpiredEntryDeleted(t *testing.T) {
