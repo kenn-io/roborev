@@ -188,15 +188,20 @@ def sanitize_text(value):
     if home_name:
         sanitized = re.sub(r"\b" + re.escape(home_name) + r"\b", "maintainer", sanitized)
     sanitized = windows_user_path_re.sub("/home/maintainer", sanitized)
-    sanitized = sanitized.replace("/Users/", "/home/maintainer/")
 
     sanitized = re.sub(
         r"/Users/[A-Za-z0-9._-]+(?:/[^\s\"'`)>\]]*)?",
         "/home/maintainer",
         sanitized,
     )
+    sanitized = sanitized.replace("/Users/", "/home/maintainer/")
     sanitized = re.sub(
         r"/home/(?!maintainer\b)[A-Za-z0-9._-]+(?:/[^\s\"'`)>\]]*)?",
+        "/home/maintainer",
+        sanitized,
+    )
+    sanitized = re.sub(
+        r"/home/maintainer/[A-Za-z0-9._-]+(?:/[^\s\"'`)>\]]*)?",
         "/home/maintainer",
         sanitized,
     )
@@ -356,6 +361,7 @@ def validate_sanitized():
         windows_user_path_re,
         re.compile(re.escape(home)) if home else None,
         re.compile(r"\b" + re.escape(home_name) + r"\b") if home_name else None,
+        re.compile(r"/home/maintainer/[A-Za-z0-9._-]+"),
         re.compile(r"sk-[A-Za-z0-9_-]{12,}"),
         re.compile(r"gh[pousr]_[A-Za-z0-9_]{12,}"),
         re.compile(r"AKIA[0-9A-Z]{16}"),

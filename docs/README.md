@@ -92,11 +92,12 @@ Screenshot data is derived from the maintainer's local roborev database, selecte
 only from committed review jobs for repos whose identity or `origin` remote
 matches the canonical public `kenn-io/roborev`, `kenn-io/kata`,
 `kenn-io/msgvault`, and `kenn-io/agentsview` repositories. The demo DB keeps
-public repo/job metadata such as repo names, refs, statuses, timings, verdict
-mix, and token usage, but it does not copy source prompts, diffs, responses, or
-review output. Review text is replaced with deterministic fixture content before
-Docker renders screenshots. The generated demo database is written to
-`$TMPDIR/roborev-demo-data`.
+public repo/job metadata such as repo names, refs, branches, statuses, timings,
+verdict mix, token usage, prompts, diffs, and review output so screenshots stay
+representative of real open-source review data. The copy omits responses and
+sanitizes local paths, local usernames, email addresses, and credential-shaped
+tokens before Docker renders screenshots. The generated demo database is written
+to `$TMPDIR/roborev-demo-data`.
 
 For the initial import or a manual refresh from an existing directory:
 

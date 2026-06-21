@@ -125,6 +125,7 @@ High: REAL_PUBLIC_REVIEW_FINDING from /Users/Alice/roborev with api_key=abc123'
 	assert.Contains(t, text, "/home/maintainer")
 	assert.NotContains(t, text, `C:\Users\Alice`)
 	assert.NotContains(t, text, "/Users/Alice")
+	assert.NotContains(t, text, "/home/maintainer/Alice")
 	assert.NotContains(t, text, "api_key=abc123")
 	assert.Contains(t, text, "api_key=[REDACTED]")
 	assert.Contains(t, text, "REAL_PUBLIC_DIFF")
