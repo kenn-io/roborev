@@ -8,6 +8,7 @@ import (
 	"maps"
 	"slices"
 	"strings"
+	"time"
 )
 
 // SubagentSpec is a named reviewer spec referenced by panels. Empty scalar
@@ -21,6 +22,7 @@ type SubagentSpec struct {
 	ReviewType   string `toml:"review_type"`
 	Instructions string `toml:"instructions"`
 	AllowFailure bool   `toml:"allow_failure"`
+	Timeout      string `toml:"timeout"`
 }
 
 // PanelSpec is a named set of subagent members plus an optional synthesis
@@ -161,6 +163,7 @@ type ResolvedMember struct {
 	ReviewType   string `json:"review_type"`
 	Instructions string `json:"instructions"`
 	AllowFailure bool   `json:"allow_failure,omitempty"`
+	Timeout      string `json:"timeout,omitempty"`
 }
 
 // SynthesisSpec is the resolved agent/model/reasoning for a panel's synthesis
@@ -311,6 +314,9 @@ func resolveMemberFromConfig(
 	if err != nil {
 		return ResolvedMember{}, fmt.Errorf("subagent %q: %w", name, err)
 	}
+	if err := validateSubagentTimeout(spec.Timeout); err != nil {
+		return ResolvedMember{}, fmt.Errorf("subagent %q: %w", name, err)
+	}
 	workflow := workflowForReviewType(reviewType)
 	agent := spec.Agent
 	if agent == "" {
@@ -337,7 +343,19 @@ func resolveMemberFromConfig(
 		ReviewType:   reviewType,
 		Instructions: spec.Instructions,
 		AllowFailure: spec.AllowFailure,
+		Timeout:      spec.Timeout,
 	}, nil
+}
+
+func validateSubagentTimeout(timeout string) error {
+	if timeout == "" {
+		return nil
+	}
+	d, err := time.ParseDuration(timeout)
+	if err != nil || d <= 0 {
+		return fmt.Errorf("invalid timeout %q", timeout)
+	}
+	return nil
 }
 
 // resolveSynthesis resolves the synthesis agent/model/reasoning: the panel's

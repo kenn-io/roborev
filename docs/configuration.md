@@ -255,6 +255,8 @@ instructions = "Focus on correctness, regressions, and missing tests."
 [review.subagents.security]
 agent = "claude-code"
 review_type = "security"
+allow_failure = true
+timeout = "3m"
 
 [review.panels.branch_final]
 members = ["bug", "security"]

@@ -528,9 +528,11 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// This prevents mixed settings if config reloads mid-job.
 	cfg := wp.cfgGetter.Config()
 
-	// Get timeout from config (per-repo or global, default 30 minutes)
+	// Get timeout from config (per-repo or global, default 30 minutes), then
+	// overlay any frozen panel-member timeout captured at enqueue time.
 	timeoutMinutes := config.ResolveJobTimeout(job.RepoPath, cfg)
-	ctx, cancel := context.WithTimeout(context.Background(), time.Duration(timeoutMinutes)*time.Minute)
+	timeoutDuration := resolveJobTimeoutDuration(job, timeoutMinutes)
+	ctx, cancel := context.WithTimeout(context.Background(), timeoutDuration)
 	defer cancel()
 
 	// Register for cancellation tracking
@@ -861,7 +863,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		if errors.Is(err, context.DeadlineExceeded) || ctx.Err() == context.DeadlineExceeded {
 			timeoutErr := fmt.Sprintf(
 				"agent timeout after %s",
-				(time.Duration(timeoutMinutes) * time.Minute).Round(time.Second),
+				timeoutDuration.Round(time.Second),
 			)
 			log.Printf("[%s] Job %d timed out: %v", workerID, job.ID, err)
 			wp.failOrRetryAgent(workerID, job, agentName, timeoutErr)
@@ -1295,6 +1297,22 @@ func memberInstructionSuffix(job *storage.ReviewJob) string {
 		"\n\n## Additional reviewer instructions (panel: %s / member: %s)\n%s\n",
 		job.PanelName, job.PanelMemberName, m.Instructions,
 	)
+}
+
+func resolveJobTimeoutDuration(job *storage.ReviewJob, defaultMinutes int) time.Duration {
+	defaultDuration := time.Duration(defaultMinutes) * time.Minute
+	if job.PanelRole != storage.PanelRoleMember || job.PanelMemberConfigJSON == "" {
+		return defaultDuration
+	}
+	var m config.ResolvedMember
+	if json.Unmarshal([]byte(job.PanelMemberConfigJSON), &m) != nil || m.Timeout == "" {
+		return defaultDuration
+	}
+	d, err := time.ParseDuration(m.Timeout)
+	if err != nil || d <= 0 {
+		return defaultDuration
+	}
+	return d
 }
 
 // releaseIfPanelMember releases a panel run's blocked synthesis job when this

@@ -23,6 +23,7 @@ type memberSpec struct {
 	name         string
 	agent        string
 	instructions string
+	timeout      string
 }
 
 // enqueuePanelRun builds and enqueues a panel run (members + gated synthesis)
@@ -44,6 +45,7 @@ func enqueuePanelRun(
 			Index:        i,
 			Agent:        m.agent,
 			Instructions: m.instructions,
+			Timeout:      m.timeout,
 		})
 		require.NoError(t, err)
 		opts = append(opts, storage.EnqueueOpts{
@@ -130,6 +132,24 @@ func TestMemberInstructionsAppended(t *testing.T) {
 	assert.Contains(captured, "Focus on auth boundaries.")
 	assert.Contains(captured, "auth-reviewer")
 	assert.Contains(captured, "Additional reviewer instructions")
+}
+
+func TestPanelMemberTimeoutOverridesDefaultJobTimeout(t *testing.T) {
+	job := &storage.ReviewJob{
+		PanelRole:             storage.PanelRoleMember,
+		PanelMemberConfigJSON: `{"timeout":"90s"}`,
+	}
+
+	assert.Equal(t, 90*time.Second, resolveJobTimeoutDuration(job, 30))
+}
+
+func TestPanelMemberInvalidTimeoutFallsBackToDefaultJobTimeout(t *testing.T) {
+	job := &storage.ReviewJob{
+		PanelRole:             storage.PanelRoleMember,
+		PanelMemberConfigJSON: `{"timeout":"later"}`,
+	}
+
+	assert.Equal(t, 30*time.Minute, resolveJobTimeoutDuration(job, 30))
 }
 
 func TestMemberInstructionsNotAppendedForNonPanelJob(t *testing.T) {

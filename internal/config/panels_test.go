@@ -37,6 +37,7 @@ review_type = "security"
 reasoning = "thorough"
 instructions = "Focus on authz."
 allow_failure = true
+timeout = "3m"
 
 [review.panels.quick]
 members = ["default"]
@@ -59,6 +60,7 @@ synthesis_model = "gpt-5.5"
 	assert.Equal("thorough", cfg.Review.Subagents["security"].Reasoning)
 	assert.Equal("Focus on authz.", cfg.Review.Subagents["security"].Instructions)
 	assert.True(cfg.Review.Subagents["security"].AllowFailure)
+	assert.Equal("3m", cfg.Review.Subagents["security"].Timeout)
 	assert.Equal([]string{"default", "security"}, cfg.Review.Panels["branch_final"].Members)
 	assert.Equal("codex", cfg.Review.Panels["branch_final"].SynthesisAgent)
 	assert.Equal("gpt-5.5", cfg.Review.Panels["branch_final"].SynthesisModel)
@@ -199,6 +201,7 @@ func TestResolvePanel(t *testing.T) {
 					Reasoning:    "thorough",
 					Instructions: "Focus on authz.",
 					AllowFailure: true,
+					Timeout:      "3m",
 				},
 			},
 			Panels: map[string]PanelSpec{
@@ -236,6 +239,7 @@ func TestResolvePanel(t *testing.T) {
 	assert.Equal("thorough", members[1].Reasoning)
 	assert.Equal("Focus on authz.", members[1].Instructions)
 	assert.True(members[1].AllowFailure)
+	assert.Equal("3m", members[1].Timeout)
 
 	// Synthesis from the panel's explicit fields; reasoning is the fix default.
 	assert.Equal("codex", synth.Agent)
@@ -258,6 +262,18 @@ func TestResolvePanel(t *testing.T) {
 	require.ErrorContains(t, err, `panel "empty" has no members`)
 	_, _, err = ResolvePanel("typo", "", global)
 	require.ErrorContains(t, err, `references undefined subagent "missing"`)
+}
+
+func TestResolvePanelRejectsInvalidSubagentTimeout(t *testing.T) {
+	global := &Config{Review: ReviewConfig{
+		Subagents: map[string]SubagentSpec{
+			"bad": {Agent: "codex", Timeout: "0"},
+		},
+		Panels: map[string]PanelSpec{"p": {Members: []string{"bad"}}},
+	}}
+
+	_, _, err := ResolvePanel("p", "", global)
+	require.ErrorContains(t, err, `subagent "bad": invalid timeout`)
 }
 
 // TestResolvePanelExplicitAgentSkipsGenericModel verifies A3: a member that

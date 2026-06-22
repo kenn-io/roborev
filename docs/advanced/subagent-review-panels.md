@@ -25,11 +25,14 @@ instructions = "Focus on correctness, regressions, edge cases, and missing tests
 agent = "claude-code"
 review_type = "security"
 reasoning = "thorough"
+timeout = "10m"
 instructions = "Focus on authn/authz, secret handling, injection, and unsafe file access."
 
 [review.subagents.design]
 agent = "codex"
 review_type = "design"
+allow_failure = true
+timeout = "3m"
 
 [review.panels.quick]
 members = ["bug"]
@@ -107,6 +110,8 @@ provider = "anthropic"
 reasoning = "thorough"
 review_type = "security"
 instructions = "Focus on authentication and authorization."
+allow_failure = true
+timeout = "3m"
 ```
 
 | Key | Type | Description |
@@ -117,8 +122,12 @@ instructions = "Focus on authentication and authorization."
 | `reasoning` | string | Reasoning level for this member. Empty means use review reasoning. |
 | `review_type` | string | `default`, `security`, or `design`. `review` and `general` are accepted as aliases for `default`. |
 | `instructions` | string | Additional instructions appended only to this member prompt. |
+| `allow_failure` | bool | When true, a failed or canceled member does not make an otherwise successful panel fail. |
+| `timeout` | duration string | Per-member job timeout such as `90s`, `3m`, or `1h`. Empty uses repo/global `job_timeout_minutes`. |
 
 The member workflow is chosen from `review_type`: `default` uses review workflow config, `security` uses security workflow config, and `design` uses design workflow config. If a member sets `agent` but omits `model`, roborev inherits only a workflow specific model. It does not pair that explicit agent with an unrelated generic `default_model`.
+
+`allow_failure` and `timeout` are independent. Use both for a reviewer that is useful when available but should not block the panel, such as a reviewer running on flaky external infrastructure. If every required reviewer also fails and no member produces review output, the panel still records a failed/unavailable review instead of passing.
 
 ### Panels
 
