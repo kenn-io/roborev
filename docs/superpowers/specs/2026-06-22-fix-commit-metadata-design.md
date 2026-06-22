@@ -38,11 +38,15 @@ The `fix_` prefix keeps the setting scoped to fix-like workflows and avoids impl
 
 Validation should reject malformed identity strings. A valid value must be parseable as a display name plus email in the conventional `Name <email>` format.
 
-Config precedence should follow the existing pattern:
+Use `net/mail.ParseAddress` from the standard library for validation, and require both a non-empty display name and non-empty email address in name-address form. The angle-bracket form is required because `git commit --author "Just A Name"` is interpreted by Git as a commit search pattern and fails with a confusing "no such user" style error. Validation should accept valid addresses with `+` tags, such as `Name <name+git@example.com>`.
+
+Config precedence should follow the existing pattern, resolved independently per field:
 
 1. Repo config
 2. Global config
 3. Empty/default
+
+For string fields, an unset repo value inherits the global value; an explicitly set empty string clears the global value for that repo. For list fields, an unset repo value inherits the global value; an explicitly set empty list (`fix_commit_co_authored_by = []`) clears the global value for that repo. Use raw TOML key presence, not only Go zero values, so unset and explicit empty remain distinguishable.
 
 No CLI flag is needed in the first pass.
 
@@ -62,6 +66,8 @@ For these paths, use native Git commit support:
 
 Using `--trailer` lets Git place trailers correctly and cooperate with existing trailer handling. If the installed Git version does not support `--trailer`, return a clear error that names the unsupported setting and explains that Git 2.32 or newer is required.
 
+Only co-author trailers need the Git 2.32 gate. `--author` predates this feature and should not be blocked by the trailer support check. Detect unsupported `--trailer` reactively from the failed `git commit` invocation when co-authors are configured; Git rejects an unknown option before creating a commit, so no partial commit lands. Keep the detection logic small and test it with a unit test over representative Git stderr rather than requiring an old Git binary in integration tests.
+
 Agent-owned commits must receive prompt instructions only:
 
 - Foreground `roborev fix`
@@ -69,6 +75,8 @@ Agent-owned commits must receive prompt instructions only:
 - `roborev analyze --fix`
 
 The prompt should tell the agent to use the configured author and co-author trailers when creating the commit. Documentation must describe this as best-effort because the external agent owns the actual `git commit` invocation.
+
+Roborev cannot remove trailers that an agent adds from its own configuration in these foreground paths. If Codex, Claude Code, or another agent adds its own `Co-authored-by` trailer, the resulting commit may contain both the agent's trailer and the trailer requested by roborev. Users who need deterministic trailers should use roborev-owned commit flows such as `roborev refine` or applying a background fix patch in the TUI.
 
 ## Code Shape
 
@@ -98,6 +106,7 @@ Add a shared prompt helper that renders the configured metadata instructions for
 
 - Malformed identity values should fail before invoking an agent or applying a patch.
 - Unsupported `git commit --trailer` should fail only when co-author trailers are configured and roborev owns the commit.
+- Unsupported `git commit --trailer` detection should happen after Git rejects the commit command, before any retry prompt is sent to an agent for hook repair.
 - Existing hook retry behavior in refine should keep working. Commit options must be preserved across every retry.
 - TUI apply should still report the current "patch applied but commit failed" error shape if metadata causes commit failure.
 
@@ -106,14 +115,20 @@ Add a shared prompt helper that renders the configured metadata instructions for
 Add config tests for:
 
 - Global and repo config parsing.
+- Author and co-author precedence resolving independently.
 - Repo config overriding global config.
+- Explicit repo empty string clearing a global author.
+- Explicit repo empty list clearing global co-authors.
 - Malformed author and co-author values.
+- Bare-name identity rejection.
+- Plus-address identity acceptance.
 - Empty config resolving to empty metadata.
 
 Add git tests for:
 
 - `CreateCommit` with author override.
 - `CreateCommit` with one and multiple co-author trailers.
+- Unsupported-trailer error classification with representative Git stderr.
 - Existing hook-failure classification still working with commit options.
 
 Add command/TUI tests for:
@@ -129,5 +144,8 @@ Update command/config documentation to say:
 
 - `fix_commit_author` changes the author for roborev-owned fix commits and asks foreground agents to use the same author.
 - `fix_commit_co_authored_by` adds co-author trailers to roborev-owned fix commits and asks foreground agents to include them.
+- The deterministic roborev-owned commit surfaces are `roborev refine` and TUI application of daemon-created background fix patches.
+- Foreground `roborev fix`, batch fix, and `roborev analyze --fix` are prompt-only because the external agent creates the commit.
 - The committer remains the current Git committer.
 - Agent-authored foreground commits are best-effort because roborev does not amend commits after agents create them.
+- Agent-authored foreground commits may still include extra trailers inserted by the agent's own configuration.
