@@ -149,7 +149,7 @@ func TestUpdaterCheckForUpdateUsesKitConventionalReleaseDiscovery(t *testing.T) 
 	assert.False(t, info.IsDevBuild)
 }
 
-func TestUpdaterCheckForUpdateFallsBackToReleasePageOnAPIError(t *testing.T) {
+func TestUpdaterCheckForUpdateUsesReleasePageBeforeAPI(t *testing.T) {
 	const checksum = "abc123def456789012345678901234567890123456789012345678901234abcd"
 	const assetName = "roborev_1.3.0_darwin_arm64.tar.gz"
 
@@ -176,13 +176,18 @@ func TestUpdaterCheckForUpdateFallsBackToReleasePageOnAPIError(t *testing.T) {
 				case "GET " + renamedPageURL:
 					return newRedirectResponse(http.StatusFound, tagPageURL), nil
 				case "GET " + tagPageURL:
-					return newHTTPResponse(http.StatusOK, "release page"), nil
+					resp := newHTTPResponse(http.StatusOK, "release page")
+					resp.Request = req
+					return resp, nil
 				case "GET " + downloadBase + "/SHA256SUMS":
 					return newHTTPResponse(http.StatusOK, fmt.Sprintf("%s  %s\n", checksum, assetName)), nil
 				case "HEAD " + downloadBase + "/" + assetName:
 					resp := newHTTPResponse(http.StatusOK, "")
 					resp.ContentLength = 42
 					return resp, nil
+				case "HEAD " + downloadBase + "/" + assetName + ".sha256.sig",
+					"HEAD " + downloadBase + "/" + assetName + ".sig":
+					return newHTTPResponse(http.StatusNotFound, ""), nil
 				default:
 					return nil, fmt.Errorf("unexpected request to %s", req.URL.String())
 				}
@@ -209,7 +214,16 @@ func TestUpdaterCheckForUpdateFallsBackToReleasePageOnAPIError(t *testing.T) {
 	assert.Equal(t, "roborev-dev", info.Owner)
 	assert.Equal(t, "roborev", info.Repo)
 	assert.False(t, info.IsDevBuild)
-	assert.Contains(t, seen, "GET "+releaseAPIURL)
+	assert.Equal(t, []string{
+		"GET " + latestPageURL,
+		"GET " + renamedPageURL,
+		"GET " + tagPageURL,
+		"HEAD " + downloadBase + "/" + assetName,
+		"HEAD " + downloadBase + "/" + assetName + ".sha256.sig",
+		"HEAD " + downloadBase + "/" + assetName + ".sig",
+		"GET " + downloadBase + "/SHA256SUMS",
+	}, seen)
+	assert.NotContains(t, seen, "GET "+releaseAPIURL)
 }
 
 func TestUpdaterCheckForUpdateFallbackReturnsNilWhenUpToDate(t *testing.T) {
