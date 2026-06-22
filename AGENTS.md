@@ -217,10 +217,11 @@ Test conventions:
 - When committing, stage ALL modified files related to the work (including formatting-only and ancillary updates).
 - Before committing, run `git diff` and `git status` to verify nothing is unintentionally left unstaged.
 - When creating PRs, write a clean GitHub-facing summary with relevant context and links.
-- PR descriptions should not include standalone "Verification" or
-  "Test Plan" sections unless the user explicitly asks for them. Keep PR
-  bodies focused on summary, context, and behavior changes; rely on CI/status
-  checks for routine validation evidence.
+- Do not add navel-gazing PR sections for validation, testing, checks run, or
+  lists of changes made. Keep PR bodies focused on reviewer-facing context,
+  rationale, behavior changes, risk, and useful links; rely on the diff and
+  CI/status checks for routine mechanics and validation evidence unless the
+  user explicitly asks for those details.
 
 ## Review / Refine Guidance
 
