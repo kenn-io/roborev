@@ -60,6 +60,8 @@ flowchart TD
 
 If the agent makes no changes for a review, that review is skipped and refine moves on to the next failed review.
 
+Refine creates its own commits after applying agent changes. If `fix_commit_author` or `fix_commit_co_authored_by` is configured, refine applies those values directly with Git's `--author` and `--trailer` options. See [Fix Commit Metadata](/configuration/#fix-commit-metadata).
+
 ## Refine vs Fix
 
 | | `roborev fix` | `roborev refine` |

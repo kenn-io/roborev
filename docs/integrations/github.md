@@ -27,7 +27,7 @@ Before enabling the CI poller, understand the following:
 - **All open PRs are reviewed.** There is no filtering by draft status, labels, or author. Draft PRs, bot PRs, and stale PRs all get reviewed.
 - **CI settings are global by default, with per-repo overrides.** The `panel`, `agents`, `review_types`, and `model` in the global `[ci]` section apply to every repo unless overridden. Individual repos can override panels, agents, review types, and reasoning level via the `[ci]` section in their `.roborev.toml` (see [Per-Repo Overrides](#per-repo-overrides)).
 - **Reviews run with `max_workers` concurrency** (default: 4). Jobs are enqueued immediately but executed up to 4 at a time. A panel consumes normal worker capacity as its members run. A 2 type x 2 agent matrix creates 4 members plus 1 synthesis parent.
-- **PR comments include panel metadata.** Comments include a footer with the panel name, synthesis job, member reviewers, statuses, runtimes, and optional costs.
+- **PR comments include panel metadata.** Comments include a footer with the panel name, synthesis job, member reviewers, statuses, runtimes, and optional costs. When only some panel jobs have reported cost, the footer marks the total as partial.
 - **The daemon does not survive reboots.** Use `roborev daemon start` to run in the background, but you'll need a launchd agent (macOS) or systemd service (Linux) if you want it to start on boot.
 
 !!! warning "First-run with many open PRs"
@@ -352,6 +352,7 @@ instructions = "Focus on authn/authz, injection, secrets, and unsafe file access
 [review.subagents.design]
 agent = "codex"
 review_type = "design"
+allow_failure = true
 
 [review.panels.ci]
 members = ["bug", "security", "design"]
@@ -359,6 +360,8 @@ synthesis_agent = "codex"
 ```
 
 When `panel` is set, the CI poller ignores `agents`, `review_types`, and `[ci.reviews]` for that repo. The named panel is resolved from global config plus the repo's `.roborev.toml` as loaded from the repo's default branch. Repo definitions override global definitions by name.
+
+Use `allow_failure = true` on a subagent when that reviewer is best-effort or depends on flaky infrastructure. Its successful output is still included, but a failure or cancellation will not block an otherwise usable CI panel comment.
 
 See [Subagent Review Panels](/advanced/subagent-review-panels/) for the full panel configuration reference.
 

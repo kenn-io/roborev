@@ -5,6 +5,22 @@ description: Release history for roborev
 
 All notable changes to roborev, grouped by minor release.
 
+## 0.59.1
+<small>2026-06-22</small>
+
+**New features**
+
+- Configurable fix commit metadata. Set `fix_commit_author` and `fix_commit_co_authored_by` globally or per repo to control author metadata for `roborev refine` commits, background fix commits applied from the TUI, and prompt instructions for foreground `roborev fix` and `roborev analyze --fix` commits. See [Fix Commit Metadata](/configuration/#fix-commit-metadata).
+- Tolerated panel member failures. Mark a panel subagent with `allow_failure = true` when that reviewer is useful but flaky, so a transient failure or cancellation does not fail an otherwise usable panel result. See [Subagents](/advanced/subagent-review-panels/#subagents).
+
+**Improvements**
+
+- Pi job logs now render trace-style message and tool output instead of exposing raw event JSON, making Pi review sessions easier to inspect in CLI and TUI logs.
+- Panel parent rows and CI comment footers now surface known member costs even when some panel work is still pending or unpriced, with partial coverage clearly marked where comments include costs.
+- Expanded documentation for configuration, GitHub integration, review workflows, auto-fix/refine workflows, and subagent review panels.
+
+---
+
 ## 0.59.0
 <small>2026-06-22</small>
 

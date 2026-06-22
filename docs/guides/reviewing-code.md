@@ -63,6 +63,8 @@ roborev review --branch --panel none
 
 See [Subagent Review Panels](/advanced/subagent-review-panels/) for panel configuration.
 
+Panel subagents can be marked `allow_failure = true` when a reviewer is useful but flaky. Those members still contribute findings when they succeed, but a transient failure or cancellation does not fail the synthesized parent if required reviewers produced usable output.
+
 ### CI Integration
 
 ```bash

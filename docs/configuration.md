@@ -310,7 +310,7 @@ members = ["bug", "security"]
 synthesis_agent = "codex"
 ```
 
-`default_panel` applies to manual daemon reviews when `--panel` is not set. `hook_review_panel` applies to automatic post-commit reviews. CI reviews can select a named panel with `[ci] panel = "branch_final"`.
+`default_panel` applies to manual daemon reviews when `--panel` is not set. `hook_review_panel` applies to automatic post-commit reviews. CI reviews can select a named panel with `[ci] panel = "branch_final"`. Use `allow_failure = true` for flaky or best-effort subagents whose failure should not fail an otherwise successful panel.
 
 Global and repo panel maps are merged by name, with repo entries overriding global entries. See [Subagent Review Panels](/advanced/subagent-review-panels/) for the full reference.
 

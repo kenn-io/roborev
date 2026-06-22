@@ -138,9 +138,9 @@ The queue displays two separate status columns:
 - **Status**: The job's lifecycle state: Queued (yellow), Running (blue), Done (default), Error (orange), Canceled (gray).
 - **P/F**: The review verdict, shown once the review completes: Pass (green) or Fail (red). This reflects whether the code review found issues, not whether the job itself errored. A job can finish successfully (Status = Done) with a Fail verdict if the reviewer flagged problems.
 
-The default-visible "Cost" column shows the model-pricing estimate from [agentsview](/commands/#token-usage) for completed jobs. The cell stays blank for unpriced models, for jobs whose usage has not been fetched yet, and on agentsview versions older than 0.30.0.
+The default-visible "Cost" column shows the model-pricing estimate from [agentsview](/commands/#token-usage) for jobs that have reported usage. The cell stays blank for unpriced models, for jobs whose usage has not been fetched yet, and on agentsview versions older than 0.30.0.
 
-For panel parent rows, the cost column sums member costs plus synthesis cost after the panel run is complete.
+For panel parent rows, the cost column shows known member costs as soon as they are available, including while other members are still running or unpriced. After synthesis reports usage, synthesis cost is added to the parent value. Until every member reports cost, the value is a lower-bound estimate.
 
 The queue status line also shows approximate aggregate cost for the active filter scope when the scope contains jobs where an agent ran. This is the same lower-bound coverage model as `roborev cost`: if only some eligible jobs reported cost, the status line includes the priced-job coverage.
 

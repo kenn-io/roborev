@@ -33,6 +33,7 @@ agent = "codex"
 review_type = "design"
 allow_failure = true
 timeout = "3m"
+instructions = "Helpful when available, but do not block the panel if this reviewer flakes."
 
 [review.panels.quick]
 members = ["bug"]
@@ -127,7 +128,7 @@ timeout = "3m"
 
 The member workflow is chosen from `review_type`: `default` uses review workflow config, `security` uses security workflow config, and `design` uses design workflow config. If a member sets `agent` but omits `model`, roborev inherits only a workflow specific model. It does not pair that explicit agent with an unrelated generic `default_model`.
 
-`allow_failure` and `timeout` are independent. Use both for a reviewer that is useful when available but should not block the panel, such as a reviewer running on flaky external infrastructure. If every required reviewer also fails and no member produces review output, the panel still records a failed/unavailable review instead of passing.
+`allow_failure` is how you mark a flaky or best-effort reviewer. The member still runs and its findings are included when it succeeds, but a failed or canceled run is tolerated when at least one required member produced usable output. `allow_failure` and `timeout` are independent; use both for a reviewer that is useful when available but should not block the panel, such as a reviewer running on flaky external infrastructure. If every required reviewer also fails and no member produces review output, the panel still records a failed/unavailable review instead of passing.
 
 ### Panels
 
@@ -217,7 +218,7 @@ The TUI shows a panel run as one synthesis parent row. Press `Space` or `Right` 
 }
 ```
 
-When token usage is available, panel parent cost in the TUI includes member costs plus synthesis cost after the run is complete.
+When token usage is available, panel parent cost in the TUI includes known member costs even while the panel is still running or while some members are unpriced. Once synthesis reports usage, the parent total also includes synthesis cost. Treat the displayed value as a lower bound whenever not every member has reported cost.
 
 ## Operational Notes
 
