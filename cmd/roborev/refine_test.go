@@ -780,13 +780,43 @@ exit 0
 	}
 
 	testAgent := agent.NewTestAgent()
-	sha, err := commitWithHookRetry(t.Context(), repo.Root, "test commit", testAgent, true)
+	sha, err := commitWithHookRetry(t.Context(), repo.Root, "test commit", testAgent, true, git.CommitOptions{})
 	require.NoError(t, err, "commitWithHookRetry should succeed: %v")
 
 	require.NotEmpty(t, sha, "expected non-empty SHA")
 
 	commitSHA := repo.RevParse("HEAD")
 	assert.Equal(t, commitSHA, sha)
+}
+
+func TestCommitWithHookRetryUsesCommitOptions(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	repo := testutil.InitTestRepo(t)
+
+	if err := os.WriteFile(filepath.Join(repo.Root, "new.txt"), []byte("hello"), 0o644); err != nil {
+		require.NoError(t, err)
+	}
+
+	testAgent := agent.NewTestAgent()
+	_, err := commitWithHookRetry(
+		t.Context(),
+		repo.Root,
+		"test commit",
+		testAgent,
+		true,
+		git.CommitOptions{
+			Author:    "Fix Author <fix@example.com>",
+			CoAuthors: []string{"Pair Reviewer <pair@example.com>"},
+		},
+	)
+	require.NoError(t, err)
+
+	show := repo.Run("show", "-s", "--format=%an <%ae>%n%B", "HEAD")
+	assert.Contains(t, show, "Fix Author <fix@example.com>")
+	assert.Contains(t, show, "Co-authored-by: Pair Reviewer <pair@example.com>")
 }
 
 func TestCommitWithHookRetryExhausted(t *testing.T) {
@@ -804,7 +834,7 @@ func TestCommitWithHookRetryExhausted(t *testing.T) {
 	}
 
 	testAgent := agent.NewTestAgent()
-	_, err := commitWithHookRetry(t.Context(), repo.Root, "test commit", testAgent, true)
+	_, err := commitWithHookRetry(t.Context(), repo.Root, "test commit", testAgent, true, git.CommitOptions{})
 	require.Error(t, err, "expected error after exhausting retries")
 	assert.Contains(t, err.Error(), "after 3 attempts")
 }
@@ -817,7 +847,7 @@ func TestCommitWithHookRetrySkipsNonHookError(t *testing.T) {
 	repo := testutil.InitTestRepo(t)
 
 	testAgent := agent.NewTestAgent()
-	_, err := commitWithHookRetry(t.Context(), repo.Root, "empty commit", testAgent, true)
+	_, err := commitWithHookRetry(t.Context(), repo.Root, "empty commit", testAgent, true, git.CommitOptions{})
 	require.Error(t, err, "expected error for empty commit without hook")
 
 	assert.NotContains(t, err.Error(), "pre-commit hook failed")
@@ -844,7 +874,7 @@ func TestCommitWithHookRetrySkipsAddPhaseError(t *testing.T) {
 	defer os.Remove(lockFile)
 
 	testAgent := agent.NewTestAgent()
-	_, err := commitWithHookRetry(t.Context(), repo.Root, "test commit", testAgent, true)
+	_, err := commitWithHookRetry(t.Context(), repo.Root, "test commit", testAgent, true, git.CommitOptions{})
 	require.Error(t, err, "expected error with index.lock present")
 
 	assert.NotContains(t, err.Error(), "pre-commit hook failed")
@@ -861,7 +891,7 @@ func TestCommitWithHookRetrySkipsCommitPhaseNonHookError(t *testing.T) {
 	repo.WriteNamedHook("pre-commit", "#!/bin/sh\nexit 0\n")
 
 	testAgent := agent.NewTestAgent()
-	_, err := commitWithHookRetry(t.Context(), repo.Root, "empty commit", testAgent, true)
+	_, err := commitWithHookRetry(t.Context(), repo.Root, "empty commit", testAgent, true, git.CommitOptions{})
 	require.Error(t, err, "expected error for empty commit")
 
 	assert.NotContains(t, err.Error(), "pre-commit hook failed")

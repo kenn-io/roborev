@@ -314,6 +314,7 @@ type fixJobParams struct {
 	RepoRoot string
 	Agent    agent.Agent
 	Output   io.Writer // agent streaming output (nil = discard)
+	Metadata config.FixCommitMetadata
 	// Classify is the rate-limit classifier used for the commit-retry
 	// path. nil defaults to agent.ClassifyLimit. Tests inject a stub.
 	Classify agent.LimitClassifier
@@ -401,7 +402,7 @@ func fixJobDirect(ctx context.Context, params fixJobParams, prompt string) (*fix
 			}
 		}
 	}
-	if _, retryErr := retryAgent.Review(ctx, params.RepoRoot, "HEAD", buildGenericCommitPrompt(), out); retryErr != nil {
+	if _, retryErr := retryAgent.Review(ctx, params.RepoRoot, "HEAD", buildGenericCommitPromptWithMetadata(params.Metadata), out); retryErr != nil {
 		// Classify the retry error so quota/session limits abort
 		// instead of being demoted to a warning — otherwise the fix
 		// loop keeps invoking the exhausted agent on every following
@@ -1050,8 +1051,8 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 	// Resolve minimum severity filter (only for review-type jobs;
 	// task/analyze jobs have free-form output without severity labels)
 	var minSev string
+	fixCfg, _ := config.LoadGlobal()
 	if !job.IsTaskJob() {
-		fixCfg, _ := config.LoadGlobal()
 		minSev, err = config.ResolveFixMinSeverity(
 			opts.minSeverity, repoRoot, fixCfg,
 		)
@@ -1069,6 +1070,10 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 	comments, commentsErr := fetchComments(ctx, addr, jobID, commitID, gitRef)
 	if commentsErr != nil && !opts.quiet {
 		cmd.Printf("Warning: could not fetch comments for job %d: %v\n", jobID, commentsErr)
+	}
+	metadata, err := config.ResolveFixCommitMetadata(repoRoot, fixCfg)
+	if err != nil {
+		return fmt.Errorf("resolve fix commit metadata: %w", err)
 	}
 
 	// Resolve the agent only after every check above that can return
@@ -1100,8 +1105,9 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		RepoRoot: repoRoot,
 		Agent:    currentAgent,
 		Output:   capture,
+		Metadata: metadata,
 		Classify: opts.classify,
-	}, buildGenericFixPrompt(review.Output, minSev, comments))
+	}, buildGenericFixPromptWithMetadata(review.Output, minSev, comments, metadata))
 	// Flush capture FIRST so session extraction completes before reading SessionID.
 	capture.Flush()
 	if fmtr != nil {
@@ -1337,6 +1343,10 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 	}
 
 	cfg, _ := config.LoadGlobal()
+	metadata, err := config.ResolveFixCommitMetadata(roots.worktreeRoot, cfg)
+	if err != nil {
+		return fmt.Errorf("resolve fix commit metadata: %w", err)
+	}
 
 	// Resolve minimum severity filter. Suppress if any entry is a
 	// task job — task/analyze output has no severity labels, so the
@@ -1363,6 +1373,7 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 		MaxSize:     maxSize,
 		MaxCount:    batchSize,
 		MinSeverity: minSev,
+		Metadata:    metadata,
 	})
 
 	if err := ensureBaseAgent(roots.worktreeRoot, opts, tracker); err != nil {
@@ -1393,7 +1404,7 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 			cmd.Printf("Running fix agent (%s) to apply changes...\n\n", currentAgent.Name())
 		}
 
-		prompt := buildBatchFixPrompt(batch, minSev)
+		prompt := buildBatchFixPromptWithMetadata(batch, minSev, metadata)
 
 		underlying := io.Discard
 		var fmtr *streamfmt.Formatter
@@ -1407,6 +1418,7 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 			RepoRoot: roots.worktreeRoot,
 			Agent:    currentAgent,
 			Output:   capture,
+			Metadata: metadata,
 			Classify: opts.classify,
 		}, prompt)
 		// Flush capture FIRST so session extraction completes before reading SessionID.
@@ -1487,13 +1499,18 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 	return nil
 }
 
-// batchPromptOverhead is the fixed size of the batch prompt header + footer.
-var batchPromptOverhead = len(batchPromptHeader + batchPromptFooter)
-
 const (
 	batchPromptHeader = "# Batch Fix Request\n\nThe following reviews found issues that need to be fixed.\nAddress all findings across all reviews in a single pass.\n\n"
 	batchPromptFooter = "## Instructions\n\nPlease apply fixes for all the findings above.\nFocus on the highest priority items first.\nAfter making changes, verify the code compiles/passes linting,\nrun relevant tests, and create a git commit summarizing all changes.\n"
 )
+
+func batchPromptOverhead(metadata config.FixCommitMetadata) int {
+	return len(batchPromptHeader) + len(buildBatchPromptFooter(metadata))
+}
+
+func buildBatchPromptFooter(metadata config.FixCommitMetadata) string {
+	return batchPromptFooter + formatFixCommitMetadataInstructions(metadata)
+}
 
 // batchEntrySize returns the size of a single entry in the batch prompt.
 // The index parameter is the 1-based position in the batch.
@@ -1511,6 +1528,7 @@ type batchSplitOptions struct {
 	MaxSize     int    // total prompt bytes per batch, including overhead
 	MaxCount    int    // entries per batch (0 = unbounded)
 	MinSeverity string // forwarded to overhead calculation
+	Metadata    config.FixCommitMetadata
 }
 
 // splitIntoBatches groups entries into batches respecting opts.
@@ -1520,7 +1538,7 @@ type batchSplitOptions struct {
 func splitIntoBatches(
 	entries []batchEntry, opts batchSplitOptions,
 ) [][]batchEntry {
-	overhead := batchPromptOverhead +
+	overhead := batchPromptOverhead(opts.Metadata) +
 		len(config.SeverityInstruction(opts.MinSeverity))
 	var batches [][]batchEntry
 	var current []batchEntry
@@ -1554,6 +1572,14 @@ func splitIntoBatches(
 // When minSeverity is non-empty, a severity filtering instruction is injected.
 // User comments attached to each entry are included inline.
 func buildBatchFixPrompt(entries []batchEntry, minSeverity string) string {
+	return buildBatchFixPromptWithMetadata(entries, minSeverity, config.FixCommitMetadata{})
+}
+
+func buildBatchFixPromptWithMetadata(
+	entries []batchEntry,
+	minSeverity string,
+	metadata config.FixCommitMetadata,
+) string {
 	var sb strings.Builder
 	sb.WriteString(batchPromptHeader)
 	if inst := config.SeverityInstruction(minSeverity); inst != "" {
@@ -1570,7 +1596,7 @@ func buildBatchFixPrompt(entries []batchEntry, minSeverity string) string {
 		sb.WriteString(prompt.FormatUserComments(userComments))
 	}
 
-	sb.WriteString(batchPromptFooter)
+	sb.WriteString(buildBatchPromptFooter(metadata))
 	return sb.String()
 }
 
@@ -1729,6 +1755,14 @@ func legacyCommentLookupTarget(commitID int64, gitRef string) (int64, string) {
 // Responses are split into tool attempts and user comments so each type
 // receives appropriate framing in the prompt.
 func buildGenericFixPrompt(analysisOutput, minSeverity string, responses []storage.Response) string {
+	return buildGenericFixPromptWithMetadata(analysisOutput, minSeverity, responses, config.FixCommitMetadata{})
+}
+
+func buildGenericFixPromptWithMetadata(
+	analysisOutput, minSeverity string,
+	responses []storage.Response,
+	metadata config.FixCommitMetadata,
+) string {
 	toolAttempts, userComments := prompt.SplitResponses(responses)
 	var sb strings.Builder
 	sb.WriteString("# Fix Request\n\n")
@@ -1750,11 +1784,16 @@ func buildGenericFixPrompt(analysisOutput, minSeverity string, responses []stora
 	sb.WriteString("1. Verify the code still compiles/passes linting\n")
 	sb.WriteString("2. Run any relevant tests to ensure nothing is broken\n")
 	sb.WriteString("3. Create a git commit with a descriptive message summarizing the changes\n")
+	sb.WriteString(formatFixCommitMetadataInstructions(metadata))
 	return sb.String()
 }
 
 // buildGenericCommitPrompt creates a prompt to commit uncommitted changes
 func buildGenericCommitPrompt() string {
+	return buildGenericCommitPromptWithMetadata(config.FixCommitMetadata{})
+}
+
+func buildGenericCommitPromptWithMetadata(metadata config.FixCommitMetadata) string {
 	var sb strings.Builder
 	sb.WriteString("# Commit Request\n\n")
 	sb.WriteString("There are uncommitted changes from a previous fix operation.\n\n")
@@ -1765,6 +1804,7 @@ func buildGenericCommitPrompt() string {
 	sb.WriteString("The commit message should:\n")
 	sb.WriteString("- Summarize what was changed and why\n")
 	sb.WriteString("- Be concise but informative\n")
+	sb.WriteString(formatFixCommitMetadataInstructions(metadata))
 	return sb.String()
 }
 

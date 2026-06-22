@@ -379,6 +379,14 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 	if err := config.ValidateRepoConfig(repoPath); err != nil {
 		return fmt.Errorf("resolve workflow config: %w", err)
 	}
+	metadata, err := config.ResolveFixCommitMetadata(repoPath, cfg)
+	if err != nil {
+		return fmt.Errorf("resolve fix commit metadata: %w", err)
+	}
+	commitOpts := git.CommitOptions{
+		Author:    metadata.Author,
+		CoAuthors: metadata.CoAuthors,
+	}
 	resolution, err := agent.ResolveWorkflowConfig(
 		opts.agentName, repoPath, cfg, "refine", resolvedReasoning,
 	)
@@ -703,7 +711,7 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 		_ = wt.Close(ctx)
 
 		commitMsg := fmt.Sprintf("Address review findings (job %d)\n\n%s", currentFailedReview.JobID, summarizeAgentOutput(output))
-		newCommit, err := commitWithHookRetry(ctx, repoPath, commitMsg, addressAgent, opts.quiet)
+		newCommit, err := commitWithHookRetry(ctx, repoPath, commitMsg, addressAgent, opts.quiet, commitOpts)
 		if err != nil {
 			return fmt.Errorf("failed to commit changes: %w", err)
 		}
@@ -1142,6 +1150,7 @@ func commitWithHookRetry(
 	repoPath, commitMsg string,
 	fixAgent agent.Agent,
 	quiet bool,
+	commitOpts git.CommitOptions,
 ) (string, error) {
 	const maxAttempts = 3
 
@@ -1152,7 +1161,7 @@ func commitWithHookRetry(
 	expectedBranch := gitrepo.CurrentBranch(ctx, repoPath)
 
 	for attempt := 1; attempt <= maxAttempts; attempt++ {
-		sha, err := git.CreateCommit(repoPath, commitMsg)
+		sha, err := git.CreateCommitWithOptions(repoPath, commitMsg, commitOpts)
 		if err == nil {
 			return sha, nil
 		}

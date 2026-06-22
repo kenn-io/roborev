@@ -215,6 +215,34 @@ func TestBuildFixPrompt(t *testing.T) {
 	assertContains(t, prompt, "tests", "prompt should mention verification steps")
 }
 
+func TestBuildFixPromptWithCommitMetadata(t *testing.T) {
+	analysisType := &analyze.AnalysisType{
+		Name:        "refactor",
+		Description: "Suggest refactoring opportunities",
+	}
+	metadata := config.FixCommitMetadata{
+		Author:    "Fix Author <fix-author@example.com>",
+		CoAuthors: []string{"Reviewer One <one@example.com>"},
+	}
+
+	prompt := buildFixPromptWithMetadata(analysisType, "Found bug", metadata)
+
+	assertContains(t, prompt, "## Commit Metadata", "prompt should include commit metadata section")
+	assertContains(t, prompt, "Use this commit author: `Fix Author <fix-author@example.com>`", "prompt should include author instruction")
+	assertContains(t, prompt, "Co-authored-by: Reviewer One <one@example.com>", "prompt should include co-author trailer")
+}
+
+func TestBuildFixPromptOmitsEmptyCommitMetadata(t *testing.T) {
+	analysisType := &analyze.AnalysisType{
+		Name:        "refactor",
+		Description: "Suggest refactoring opportunities",
+	}
+
+	prompt := buildFixPromptWithMetadata(analysisType, "Found bug", config.FixCommitMetadata{})
+
+	assert.NotContains(t, prompt, "## Commit Metadata")
+}
+
 func TestAnalyzeOptionsDefaults(t *testing.T) {
 	opts := analyzeOptions{
 		agentName: "gemini",
@@ -331,6 +359,23 @@ func TestBuildCommitPrompt(t *testing.T) {
 
 	// Should ask for a descriptive message
 	assert.Contains(t, prompt, "descriptive", "prompt should request a descriptive message")
+}
+
+func TestBuildCommitPromptWithCommitMetadata(t *testing.T) {
+	analysisType := &analyze.AnalysisType{
+		Name:        "duplication",
+		Description: "Find code duplication",
+	}
+	metadata := config.FixCommitMetadata{
+		Author:    "Fix Author <fix-author@example.com>",
+		CoAuthors: []string{"Reviewer One <one@example.com>"},
+	}
+
+	prompt := buildCommitPromptWithMetadata(analysisType, metadata)
+
+	assert.Contains(t, prompt, "## Commit Metadata")
+	assert.Contains(t, prompt, "Use this commit author: `Fix Author <fix-author@example.com>`")
+	assert.Contains(t, prompt, "Co-authored-by: Reviewer One <one@example.com>")
 }
 
 func TestListAnalysisTypes(t *testing.T) {

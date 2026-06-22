@@ -197,6 +197,8 @@ roborev refine --min-severity high  # Only fix high and critical findings
 | `--allow-unsafe-agents` | Allow agents without sandboxing |
 | `--min-severity <level>` | Only fix findings at or above this severity (`low`/`medium`/`high`/`critical`) |
 
+`refine` creates its own fix commits, so `fix_commit_author` and `fix_commit_co_authored_by` are applied directly with Git's `--author` and `--trailer` options. See [Fix Commit Metadata](/configuration/#fix-commit-metadata).
+
 See: [Auto-Fix Agentic Loop with Refine](/guides/auto-fixing/)
 
 ## Fixing Reviews
@@ -229,6 +231,8 @@ roborev fix --min-severity medium  # Skip low-severity findings
 | `--list` | List open reviews with details (job ID, ref, branch, agent, verdict) without running any fixes |
 | `--newest-first` | Process jobs newest first instead of oldest first |
 | `--min-severity <level>` | Only fix findings at or above this severity (`low`/`medium`/`high`/`critical`) |
+
+For foreground `fix` and `analyze --fix` flows, the selected agent owns the commit. `fix_commit_author` and `fix_commit_co_authored_by` are included as prompt instructions only, so agent-level Git config can still add its own trailers. See [Fix Commit Metadata](/configuration/#fix-commit-metadata).
 
 See: [Assisted Refactoring](/guides/assisted-refactoring/)
 

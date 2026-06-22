@@ -3669,6 +3669,193 @@ func TestResolveMinSeverity(t *testing.T) {
 		func(v string) *Config { return &Config{ReviewMinSeverity: v} })
 }
 
+func TestResolveFixCommitMetadataFrom(t *testing.T) {
+	tests := []struct {
+		name      string
+		repo      *RepoConfig
+		global    *Config
+		rawRepo   map[string]any
+		rawGlobal map[string]any
+		want      FixCommitMetadata
+		wantErr   string
+	}{
+		{
+			name: "empty config",
+			want: FixCommitMetadata{},
+		},
+		{
+			name: "global values",
+			global: &Config{
+				FixCommitAuthor:       "Global User <global+git@example.com>",
+				FixCommitCoAuthoredBy: []string{"Global Bot <bot@example.com>"},
+			},
+			rawGlobal: map[string]any{
+				"fix_commit_author":         "Global User <global+git@example.com>",
+				"fix_commit_co_authored_by": []any{"Global Bot <bot@example.com>"},
+			},
+			want: FixCommitMetadata{
+				Author:    "Global User <global+git@example.com>",
+				CoAuthors: []string{"Global Bot <bot@example.com>"},
+			},
+		},
+		{
+			name: "repo author overrides global while coauthors inherit",
+			repo: &RepoConfig{
+				FixCommitAuthor: "Repo User <repo@example.com>",
+			},
+			global: &Config{
+				FixCommitAuthor:       "Global User <global@example.com>",
+				FixCommitCoAuthoredBy: []string{"Global Bot <bot@example.com>"},
+			},
+			rawRepo: map[string]any{
+				"fix_commit_author": "Repo User <repo@example.com>",
+			},
+			rawGlobal: map[string]any{
+				"fix_commit_author":         "Global User <global@example.com>",
+				"fix_commit_co_authored_by": []any{"Global Bot <bot@example.com>"},
+			},
+			want: FixCommitMetadata{
+				Author:    "Repo User <repo@example.com>",
+				CoAuthors: []string{"Global Bot <bot@example.com>"},
+			},
+		},
+		{
+			name: "repo coauthors override global while author inherits",
+			repo: &RepoConfig{
+				FixCommitCoAuthoredBy: []string{"Repo Bot <repo-bot@example.com>"},
+			},
+			global: &Config{
+				FixCommitAuthor:       "Global User <global@example.com>",
+				FixCommitCoAuthoredBy: []string{"Global Bot <bot@example.com>"},
+			},
+			rawRepo: map[string]any{
+				"fix_commit_co_authored_by": []any{"Repo Bot <repo-bot@example.com>"},
+			},
+			rawGlobal: map[string]any{
+				"fix_commit_author":         "Global User <global@example.com>",
+				"fix_commit_co_authored_by": []any{"Global Bot <bot@example.com>"},
+			},
+			want: FixCommitMetadata{
+				Author:    "Global User <global@example.com>",
+				CoAuthors: []string{"Repo Bot <repo-bot@example.com>"},
+			},
+		},
+		{
+			name: "repo explicit empty author clears global",
+			repo: &RepoConfig{
+				FixCommitAuthor: "",
+			},
+			global: &Config{
+				FixCommitAuthor: "Global User <global@example.com>",
+			},
+			rawRepo: map[string]any{
+				"fix_commit_author": "",
+			},
+			rawGlobal: map[string]any{
+				"fix_commit_author": "Global User <global@example.com>",
+			},
+			want: FixCommitMetadata{},
+		},
+		{
+			name: "repo explicit empty coauthors clears global",
+			repo: &RepoConfig{
+				FixCommitCoAuthoredBy: []string{},
+			},
+			global: &Config{
+				FixCommitCoAuthoredBy: []string{"Global Bot <bot@example.com>"},
+			},
+			rawRepo: map[string]any{
+				"fix_commit_co_authored_by": []any{},
+			},
+			rawGlobal: map[string]any{
+				"fix_commit_co_authored_by": []any{"Global Bot <bot@example.com>"},
+			},
+			want: FixCommitMetadata{},
+		},
+		{
+			name: "malformed author",
+			global: &Config{
+				FixCommitAuthor: "not an address",
+			},
+			rawGlobal: map[string]any{
+				"fix_commit_author": "not an address",
+			},
+			wantErr: "fix_commit_author",
+		},
+		{
+			name: "malformed coauthor",
+			global: &Config{
+				FixCommitCoAuthoredBy: []string{"not an address"},
+			},
+			rawGlobal: map[string]any{
+				"fix_commit_co_authored_by": []any{"not an address"},
+			},
+			wantErr: "fix_commit_co_authored_by",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ResolveFixCommitMetadataFrom(tt.repo, tt.global, tt.rawRepo, tt.rawGlobal)
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestValidateFixCommitIdentity(t *testing.T) {
+	tests := []struct {
+		name    string
+		value   string
+		want    string
+		wantErr string
+	}{
+		{
+			name:  "valid",
+			value: "Example User <user@example.com>",
+			want:  "Example User <user@example.com>",
+		},
+		{
+			name:  "plus address",
+			value: "Example User <user+git@example.com>",
+			want:  "Example User <user+git@example.com>",
+		},
+		{
+			name:    "bare name rejected",
+			value:   "Example User",
+			wantErr: "Name <email>",
+		},
+		{
+			name:    "bare email rejected",
+			value:   "user@example.com",
+			wantErr: "Name <email>",
+		},
+		{
+			name:    "empty rejected",
+			value:   " ",
+			wantErr: "empty",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := ValidateFixCommitIdentity(tt.value)
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
 func TestSeverityInstruction(t *testing.T) {
 	tests := []struct {
 		name        string

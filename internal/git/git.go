@@ -2193,13 +2193,20 @@ func GetCommitsSince(repoPath, mergeBase string) ([]string, error) {
 // succeed — true means a hook (pre-commit, commit-msg, etc.)
 // caused the failure.
 type CommitError struct {
-	Phase      string // "add" or "commit"
-	HookFailed bool   // true when a hook caused the failure
-	Stderr     string
-	Err        error
+	Phase              string // "add" or "commit"
+	HookFailed         bool   // true when a hook caused the failure
+	UnsupportedTrailer bool   // true when git commit does not support --trailer
+	Stderr             string
+	Err                error
 }
 
 func (e *CommitError) Error() string {
+	if e.UnsupportedTrailer {
+		return fmt.Sprintf(
+			"git %s: fix_commit_co_authored_by requires git commit --trailer support (Git 2.32 or newer): %v: %s",
+			e.Phase, e.Err, e.Stderr,
+		)
+	}
 	return fmt.Sprintf("git %s: %v: %s", e.Phase, e.Err, e.Stderr)
 }
 
@@ -2207,9 +2214,21 @@ func (e *CommitError) Unwrap() error {
 	return e.Err
 }
 
+// CommitOptions configures optional metadata for commits created by roborev.
+type CommitOptions struct {
+	Author    string
+	CoAuthors []string
+}
+
 // CreateCommit stages all changes and creates a commit with the given message
 // Returns the SHA of the new commit
 func CreateCommit(repoPath, message string) (string, error) {
+	return CreateCommitWithOptions(repoPath, message, CommitOptions{})
+}
+
+// CreateCommitWithOptions stages all changes and creates a commit with the
+// given message and optional commit metadata. Returns the SHA of the new commit.
+func CreateCommitWithOptions(repoPath, message string, opts CommitOptions) (string, error) {
 	// Stage all changes (respects .gitignore)
 	cmd := newGitCommitCmd(repoPath, "add", "-A")
 	var stderr bytes.Buffer
@@ -2220,16 +2239,28 @@ func CreateCommit(repoPath, message string) (string, error) {
 		}
 	}
 
-	// Create commit
-	cmd = newGitCommitCmd(repoPath, "commit", "-m", message)
+	args := []string{"commit"}
+	if opts.Author != "" {
+		args = append(args, "--author", opts.Author)
+	}
+	for _, coAuthor := range opts.CoAuthors {
+		args = append(args, "--trailer", "Co-authored-by: "+coAuthor)
+	}
+	args = append(args, "-m", message)
+	// Create commit.
+	cmd = newGitCommitCmd(repoPath, args...)
 	stderr.Reset()
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
+		stderrText := stderr.String()
+		unsupportedTrailer := len(opts.CoAuthors) > 0 &&
+			IsUnsupportedCommitTrailerError(stderrText)
 		return "", &CommitError{
-			Phase:      "commit",
-			HookFailed: isHookCausingFailure(repoPath),
-			Stderr:     stderr.String(),
-			Err:        err,
+			Phase:              "commit",
+			HookFailed:         !unsupportedTrailer && isHookCausingFailure(repoPath),
+			UnsupportedTrailer: unsupportedTrailer,
+			Stderr:             stderrText,
+			Err:                err,
 		}
 	}
 
@@ -2240,6 +2271,14 @@ func CreateCommit(repoPath, message string) (string, error) {
 	}
 
 	return sha, nil
+}
+
+// IsUnsupportedCommitTrailerError reports whether git rejected the commit
+// because the --trailer option is unavailable.
+func IsUnsupportedCommitTrailerError(stderr string) bool {
+	lower := strings.ToLower(stderr)
+	return strings.Contains(lower, "unknown option") &&
+		strings.Contains(lower, "trailer")
 }
 
 // IsWorkingTreeClean returns true if the working tree has no uncommitted or untracked changes

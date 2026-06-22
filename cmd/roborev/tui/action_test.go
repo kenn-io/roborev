@@ -4,6 +4,9 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/http"
+	"os"
+	"os/exec"
+	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -15,7 +18,9 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	robogit "go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 func TestTUICloseReviewSuccess(t *testing.T) {
@@ -27,6 +32,29 @@ func TestTUICloseReviewSuccess(t *testing.T) {
 	require.NoError(t, result.err, "Expected no error, got %v", result.err)
 	require.True(t, result.reviewView, "Expected reviewView to be true")
 	require.EqualValues(t, 100, result.jobID, "Expected jobID=100, got %d", result.jobID)
+}
+
+func TestCommitPatchWithMetadata(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	repo := testutil.InitTestRepo(t)
+	path := filepath.Join(repo.Root, "base.txt")
+	require.NoError(t, os.WriteFile(path, []byte("changed\n"), 0o644))
+
+	patch := repo.Run("diff", "--", "base.txt")
+	require.NotEmpty(t, patch)
+
+	err := commitPatch(repo.Root, patch, "apply patch", robogit.CommitOptions{
+		Author:    "Fix Author <fix@example.com>",
+		CoAuthors: []string{"Pair Reviewer <pair@example.com>"},
+	})
+	require.NoError(t, err)
+
+	show := repo.Run("show", "-s", "--format=%an <%ae>%n%B", "HEAD")
+	assert.Contains(t, show, "Fix Author <fix@example.com>")
+	assert.Contains(t, show, "Co-authored-by: Pair Reviewer <pair@example.com>")
 }
 
 func TestTUICloseReviewNotFound(t *testing.T) {

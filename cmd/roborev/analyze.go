@@ -583,8 +583,14 @@ func runAnalyzeAndFix(cmd *cobra.Command, ep daemon.DaemonEndpoint, repoRoot str
 		cmd.Println()
 	}
 
+	cfg, _ := config.LoadGlobal()
+	metadata, err := config.ResolveFixCommitMetadata(repoRoot, cfg)
+	if err != nil {
+		return fmt.Errorf("resolve fix commit metadata: %w", err)
+	}
+
 	// Build the fix prompt
-	fixPrompt := buildFixPrompt(analysisType, review.Output)
+	fixPrompt := buildFixPromptWithMetadata(analysisType, review.Output, metadata)
 
 	// Resolve fix agent (defaults to analysis agent)
 	fixAgentName := opts.fixAgent
@@ -626,7 +632,7 @@ func runAnalyzeAndFix(cmd *cobra.Command, ep daemon.DaemonEndpoint, repoRoot str
 					cmd.Println()
 				}
 
-				commitPrompt := buildCommitPrompt(analysisType)
+				commitPrompt := buildCommitPromptWithMetadata(analysisType, metadata)
 				if err := runFixAgent(cmd, repoRoot, fixAgentName, fixModel, opts.reasoning, commitPrompt, opts.quiet); err != nil {
 					if !opts.quiet {
 						cmd.Printf("\nWarning: commit agent failed: %v\n", err)
@@ -721,6 +727,14 @@ func waitForAnalysisJob(ctx context.Context, ep daemon.DaemonEndpoint, jobID int
 
 // buildFixPrompt constructs a prompt for the fixer agent
 func buildFixPrompt(analysisType *analyze.AnalysisType, analysisOutput string) string {
+	return buildFixPromptWithMetadata(analysisType, analysisOutput, config.FixCommitMetadata{})
+}
+
+func buildFixPromptWithMetadata(
+	analysisType *analyze.AnalysisType,
+	analysisOutput string,
+	metadata config.FixCommitMetadata,
+) string {
 	var sb strings.Builder
 	sb.WriteString("# Fix Request\n\n")
 	fmt.Fprintf(&sb, "An analysis of type **%s** was performed and produced the following findings:\n\n", analysisType.Name)
@@ -734,11 +748,19 @@ func buildFixPrompt(analysisType *analyze.AnalysisType, analysisOutput string) s
 	sb.WriteString("1. Verify the code still compiles/passes linting\n")
 	sb.WriteString("2. Run any relevant tests to ensure nothing is broken\n")
 	sb.WriteString("3. Create a git commit with a descriptive message summarizing the changes\n")
+	sb.WriteString(formatFixCommitMetadataInstructions(metadata))
 	return sb.String()
 }
 
 // buildCommitPrompt constructs a prompt to commit uncommitted changes
 func buildCommitPrompt(analysisType *analyze.AnalysisType) string {
+	return buildCommitPromptWithMetadata(analysisType, config.FixCommitMetadata{})
+}
+
+func buildCommitPromptWithMetadata(
+	analysisType *analyze.AnalysisType,
+	metadata config.FixCommitMetadata,
+) string {
 	var sb strings.Builder
 	sb.WriteString("# Commit Request\n\n")
 	sb.WriteString("There are uncommitted changes from a previous fix operation.\n\n")
@@ -750,6 +772,7 @@ func buildCommitPrompt(analysisType *analyze.AnalysisType) string {
 	fmt.Fprintf(&sb, "- Reference the '%s' analysis that prompted the changes\n", analysisType.Name)
 	sb.WriteString("- Summarize what was changed and why\n")
 	sb.WriteString("- Be concise but informative\n")
+	sb.WriteString(formatFixCommitMetadataInstructions(metadata))
 	return sb.String()
 }
 

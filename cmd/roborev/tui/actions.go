@@ -15,6 +15,8 @@ import (
 	gitrepo "go.kenn.io/kit/git/repo"
 	gitworktree "go.kenn.io/kit/git/worktree"
 
+	"go.kenn.io/roborev/internal/config"
+	robogit "go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/storage"
 	daemonclient "go.kenn.io/roborev/pkg/client/generated"
 )
@@ -420,6 +422,19 @@ func (m model) checkApplyCommitPatch(ctx context.Context, jobID int64, jobDetail
 		return applyPatchResultMsg{jobID: jobID, err: err}
 	}
 
+	cfg, err := config.LoadGlobal()
+	if err != nil {
+		return applyPatchResultMsg{jobID: jobID, err: fmt.Errorf("load config: %w", err)}
+	}
+	metadata, err := config.ResolveFixCommitMetadata(targetDir, cfg)
+	if err != nil {
+		return applyPatchResultMsg{jobID: jobID, err: fmt.Errorf("resolve fix commit metadata: %w", err)}
+	}
+	commitOpts := robogit.CommitOptions{
+		Author:    metadata.Author,
+		CoAuthors: metadata.CoAuthors,
+	}
+
 	// Apply the patch
 	if err := gitworktree.ApplyPatch(ctx, targetDir, patch); err != nil {
 		return applyPatchResultMsg{jobID: jobID, err: err}
@@ -436,7 +451,7 @@ func (m model) checkApplyCommitPatch(ctx context.Context, jobID int64, jobDetail
 		ref := gitrepo.ShortSHA(jobDetail.GitRef)
 		commitMsg = fmt.Sprintf("fix: apply roborev fix for %s (job #%d)", ref, jobID)
 	}
-	if err := commitPatch(targetDir, patch, commitMsg); err != nil {
+	if err := commitPatch(targetDir, patch, commitMsg, commitOpts); err != nil {
 		return applyPatchResultMsg{
 			jobID: jobID, parentJobID: parentJobID, success: true,
 			commitFailed: true, err: fmt.Errorf("patch applied but commit failed: %w", err),
@@ -464,7 +479,7 @@ func (m model) checkApplyCommitPatch(ctx context.Context, jobID int64, jobDetail
 }
 
 // commitPatch stages only the files touched by patch and commits them.
-func commitPatch(repoPath, patch, message string) error {
+func commitPatch(repoPath, patch, message string, opts robogit.CommitOptions) error {
 	files, err := patchFiles(patch)
 	if err != nil {
 		return err
@@ -478,13 +493,24 @@ func commitPatch(repoPath, patch, message string) error {
 	if out, err := addCmd.CombinedOutput(); err != nil {
 		return fmt.Errorf("git add: %w: %s", err, out)
 	}
-	commitArgs := append(
-		[]string{"-C", repoPath, "commit", "--only", "-m", message, "--"},
-		files...,
-	)
+	commitArgs := []string{"-C", repoPath, "commit"}
+	if opts.Author != "" {
+		commitArgs = append(commitArgs, "--author", opts.Author)
+	}
+	for _, coAuthor := range opts.CoAuthors {
+		commitArgs = append(commitArgs, "--trailer", "Co-authored-by: "+coAuthor)
+	}
+	commitArgs = append(commitArgs, "--only", "-m", message, "--")
+	commitArgs = append(commitArgs, files...)
 	commitCmd := exec.Command("git", commitArgs...)
 	commitCmd.Env = append(os.Environ(), "GIT_LITERAL_PATHSPECS=1")
 	if out, err := commitCmd.CombinedOutput(); err != nil {
+		if len(opts.CoAuthors) > 0 && robogit.IsUnsupportedCommitTrailerError(string(out)) {
+			return fmt.Errorf(
+				"git commit: fix_commit_co_authored_by requires git commit --trailer support (Git 2.32 or newer): %w: %s",
+				err, out,
+			)
+		}
 		return fmt.Errorf("git commit: %w: %s", err, out)
 	}
 	return nil

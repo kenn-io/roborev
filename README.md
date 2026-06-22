@@ -184,6 +184,10 @@ Project-specific review instructions here.
 """
 # Optional: use repo guidelines instead of appending global review_guidelines.
 review_guidelines_supersede_global = false
+
+# Optional: metadata for roborev-owned fix commits and prompt hints for agent-owned fix commits.
+fix_commit_author = "Your Name <you@example.com>"
+fix_commit_co_authored_by = ["Pair Reviewer <pair@example.com>"]
 ```
 
 You can also set `review_guidelines` in `~/.roborev/config.toml`. Global

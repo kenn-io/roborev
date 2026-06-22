@@ -136,6 +136,8 @@ max_chars = 50000
 | `fix_agent_<level>` | string | Agent to use for fix at specific reasoning level |
 | `fix_model` | string | Model to use for fix / analyze --fix |
 | `fix_model_<level>` | string | Model to use for fix at specific reasoning level |
+| `fix_commit_author` | string | Author for fix-like commits, formatted as `Name <email>`. Applied directly to roborev-owned commits; prompt-only for foreground agent commits |
+| `fix_commit_co_authored_by` | array | `Co-authored-by` trailers for fix-like commits, each formatted as `Name <email>`. Applied directly to roborev-owned commits; prompt-only for foreground agent commits |
 | `security_agent` | string | Agent to use for `--type security` reviews |
 | `security_agent_<level>` | string | Agent for security reviews at specific reasoning level |
 | `security_model` | string | Model for security reviews |
@@ -155,6 +157,33 @@ max_chars = 50000
 | `kata_context.max_chars` | int | Maximum bytes of Kata issue context to include (default: `50000`) |
 | `max_prompt_size` | int | Maximum prompt size in bytes for this repo (default: 200000) |
 | `snapshot_dir` | string | Repo-relative directory for oversized diff snapshots (default: `.roborev`). See [Prompt Size Budget](#prompt-size-budget) |
+
+### Fix Commit Metadata
+
+Use `fix_commit_author` and `fix_commit_co_authored_by` to set author metadata on commits produced by fix-like workflows:
+
+```toml
+# .roborev.toml or ~/.roborev/config.toml
+fix_commit_author = "Your Name <you@example.com>"
+fix_commit_co_authored_by = [
+  "Pair Reviewer <pair@example.com>",
+]
+```
+
+Both keys are accepted in global and per-repo config. Repo config overrides global config independently per field, so a repo can override only the author and still inherit global co-authors. Set `fix_commit_author = ""` or `fix_commit_co_authored_by = []` in `.roborev.toml` to suppress a global value for that repo.
+
+The identity format must be `Name <email>`. roborev validates this before invoking Git so bare names fail with a config error instead of Git interpreting them as commit search patterns.
+
+roborev applies these values directly when it owns the commit:
+
+- `roborev refine` commits
+- background fix patches applied from the TUI
+
+For foreground `roborev fix`, `roborev analyze --fix`, and batch fix flows, the agent creates the commit. roborev adds the configured author and trailer request to the agent prompt, but this is best-effort. It cannot remove trailers that the agent adds from its own Git configuration, so duplicate or unexpected `Co-authored-by` lines can still appear in agent-authored commits. Use `refine` or TUI-applied background fixes when deterministic trailers matter.
+
+Only the commit author is overridden. The committer remains the user and environment running `roborev`.
+
+`fix_commit_co_authored_by` uses `git commit --trailer`, which requires Git 2.32 or newer. `fix_commit_author` uses Git's long-standing `--author` option and is not gated on trailer support.
 
 ### Review Guidelines
 

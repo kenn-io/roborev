@@ -203,6 +203,10 @@ type Config struct {
 	RefineMinSeverity string `toml:"refine_min_severity" comment:"Minimum severity for refine: critical, high, medium, or low. Empty disables filtering."`
 	FixMinSeverity    string `toml:"fix_min_severity" comment:"Minimum severity for fix: critical, high, medium, or low. Empty disables filtering."`
 
+	// Fix commit metadata
+	FixCommitAuthor       string   `toml:"fix_commit_author" comment:"Author for roborev-owned fix commits, formatted as Name <email>."`
+	FixCommitCoAuthoredBy []string `toml:"fix_commit_co_authored_by" comment:"Co-authored-by trailers for roborev-owned fix commits, each formatted as Name <email>."`
+
 	AllowUnsafeAgents   *bool `toml:"allow_unsafe_agents"`   // nil = not set, allows commands to choose their own default
 	DisableCodexSandbox bool  `toml:"disable_codex_sandbox"` // use --full-auto instead of --sandbox read-only (for systems where bwrap is broken)
 	ReuseReviewSession  *bool `toml:"reuse_review_session"`  // nil = not set; when true, reuse prior branch review sessions when possible
@@ -308,6 +312,8 @@ type RepoConfig struct {
 	FixMinSeverity                  string   `toml:"fix_min_severity" comment:"Minimum severity for fix in this repo: critical, high, medium, or low."`     // Minimum severity for fix: critical, high, medium, low
 	RefineMinSeverity               string   `toml:"refine_min_severity" comment:"Minimum severity for refine in this repo: critical, high, medium, low."`  // Minimum severity for refine: critical, high, medium, low
 	ReviewMinSeverity               string   `toml:"review_min_severity" comment:"Minimum severity for reviews in this repo: critical, high, medium, low."` // Minimum severity for review: critical, high, medium, low
+	FixCommitAuthor                 string   `toml:"fix_commit_author" comment:"Author for roborev-owned fix commits in this repo, formatted as Name <email>."`
+	FixCommitCoAuthoredBy           []string `toml:"fix_commit_co_authored_by" comment:"Co-authored-by trailers for roborev-owned fix commits in this repo, each formatted as Name <email>."`
 	ExcludePatterns                 []string `toml:"exclude_patterns" comment:"Filenames or glob patterns to exclude from review diffs for this repo."`
 	SnapshotDir                     string   `toml:"snapshot_dir" comment:"Repo-local directory for temporary oversized diff snapshots."`
 	PostCommitReview                string   `toml:"post_commit_review" comment:"Automatic post-commit review mode for this repo: commit or branch."` // "commit" (default) or "branch"

@@ -1966,6 +1966,62 @@ exec "$REAL_GIT" "$@"
 	require.NoError(t, err)
 }
 
+func TestCreateCommitWithOptionsAuthor(t *testing.T) {
+	repo := NewTestRepoWithCommit(t)
+	repo.WriteFile("new.txt", "content")
+
+	sha, err := CreateCommitWithOptions(repo.Dir, "commit with author", CommitOptions{
+		Author: "Fix Author <fix-author@example.com>",
+	})
+	require.NoError(t, err)
+	assert.NotEmpty(t, sha)
+
+	got := repo.Run("show", "-s", "--format=%an <%ae>", "HEAD")
+	assert.Equal(t, "Fix Author <fix-author@example.com>", got)
+}
+
+func TestCreateCommitWithOptionsCoAuthors(t *testing.T) {
+	repo := NewTestRepoWithCommit(t)
+	repo.WriteFile("new.txt", "content")
+
+	_, err := CreateCommitWithOptions(repo.Dir, "commit with trailers", CommitOptions{
+		CoAuthors: []string{
+			"Reviewer One <one@example.com>",
+			"Reviewer Two <two@example.com>",
+		},
+	})
+	require.NoError(t, err)
+
+	body := repo.Run("show", "-s", "--format=%B", "HEAD")
+	assert.Contains(t, body, "Co-authored-by: Reviewer One <one@example.com>")
+	assert.Contains(t, body, "Co-authored-by: Reviewer Two <two@example.com>")
+}
+
+func TestCreateCommitWithOptionsUnsupportedTrailerError(t *testing.T) {
+	stderr := "error: unknown option `trailer'\nusage: git commit [<options>] [--] <pathspec>..."
+
+	assert.True(t, IsUnsupportedCommitTrailerError(stderr))
+	assert.False(t, IsUnsupportedCommitTrailerError("error: bad revision 'trailer'"))
+}
+
+func TestCreateCommitWithOptionsHookFailure(t *testing.T) {
+	repo := NewTestRepoWithCommit(t)
+
+	repo.InstallHook("pre-commit",
+		"#!/bin/sh\necho 'hook failed with options' >&2\nexit 1\n")
+
+	repo.WriteFile("new.txt", "content")
+
+	_, err := CreateCommitWithOptions(repo.Dir, "should fail", CommitOptions{
+		Author: "Fix Author <fix-author@example.com>",
+	})
+	require.Error(t, err, "expected CreateCommitWithOptions to fail with pre-commit hook")
+
+	var commitErr *CommitError
+	require.ErrorAs(t, err, &commitErr, "expected CommitError type")
+	assert.True(t, commitErr.HookFailed, "expected HookFailed=true for pre-commit hook rejection")
+}
+
 func TestCommitErrorHookFailedFalseWhenNothingToCommit(t *testing.T) {
 	repo := NewTestRepoWithCommit(t)
 

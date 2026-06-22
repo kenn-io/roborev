@@ -153,6 +153,49 @@ func TestBuildBatchFixPromptSplitsMixedResponses(t *testing.T) {
 	assert.Contains(t, p, "Found HIGH bug in foo.go")
 }
 
+func TestBuildGenericFixPromptWithCommitMetadata(t *testing.T) {
+	metadata := config.FixCommitMetadata{
+		Author: "Fix Author <fix-author@example.com>",
+		CoAuthors: []string{
+			"Reviewer One <one@example.com>",
+			"Reviewer Two <two@example.com>",
+		},
+	}
+
+	p := buildGenericFixPromptWithMetadata("Found bug in foo.go", "", nil, metadata)
+
+	assert.Contains(t, p, "## Commit Metadata")
+	assert.Contains(t, p, "Use this commit author: `Fix Author <fix-author@example.com>`")
+	assert.Contains(t, p, "Co-authored-by: Reviewer One <one@example.com>")
+	assert.Contains(t, p, "Co-authored-by: Reviewer Two <two@example.com>")
+}
+
+func TestBuildGenericFixPromptOmitsEmptyCommitMetadata(t *testing.T) {
+	p := buildGenericFixPromptWithMetadata("Found bug in foo.go", "", nil, config.FixCommitMetadata{})
+
+	assert.NotContains(t, p, "## Commit Metadata")
+}
+
+func TestBuildBatchFixPromptWithCommitMetadata(t *testing.T) {
+	entries := []batchEntry{{
+		jobID: 1,
+		job:   &storage.ReviewJob{GitRef: "abc123"},
+		review: &storage.Review{
+			Output: "Found bug in foo.go",
+		},
+	}}
+	metadata := config.FixCommitMetadata{
+		Author:    "Fix Author <fix-author@example.com>",
+		CoAuthors: []string{"Reviewer One <one@example.com>"},
+	}
+
+	p := buildBatchFixPromptWithMetadata(entries, "", metadata)
+
+	assert.Contains(t, p, "## Commit Metadata")
+	assert.Contains(t, p, "Use this commit author: `Fix Author <fix-author@example.com>`")
+	assert.Contains(t, p, "Co-authored-by: Reviewer One <one@example.com>")
+}
+
 func TestFetchCommentsSkipsLegacyLookupForDirtyJob(t *testing.T) {
 	assert := assert.New(t)
 	var sawLegacy bool
@@ -191,6 +234,19 @@ func TestBuildGenericCommitPrompt(t *testing.T) {
 	// Should have commit instructions
 	assert.Contains(t, prompt, "git commit")
 	assert.Contains(t, prompt, "descriptive")
+}
+
+func TestBuildGenericCommitPromptWithCommitMetadata(t *testing.T) {
+	metadata := config.FixCommitMetadata{
+		Author:    "Fix Author <fix-author@example.com>",
+		CoAuthors: []string{"Reviewer One <one@example.com>"},
+	}
+
+	prompt := buildGenericCommitPromptWithMetadata(metadata)
+
+	assert.Contains(t, prompt, "## Commit Metadata")
+	assert.Contains(t, prompt, "Use this commit author: `Fix Author <fix-author@example.com>`")
+	assert.Contains(t, prompt, "Co-authored-by: Reviewer One <one@example.com>")
 }
 
 func TestFetchJob(t *testing.T) {
