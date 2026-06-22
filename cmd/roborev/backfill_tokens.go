@@ -10,6 +10,7 @@ import (
 
 	"go.kenn.io/roborev/internal/backfill"
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/tokens"
 )
@@ -19,9 +20,11 @@ func backfillTokensCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "backfill-tokens",
-		Short: "Backfill token usage for completed jobs via agentsview",
-		Long: `Scan completed jobs that have a session ID but missing token cost data,
-and attempt to fetch token consumption from agentsview.
+		Short: "Backfill token usage for completed jobs",
+		Long: `Scan completed jobs missing token usage or cost data.
+
+Codex job logs are checked first for turn.completed usage events. When
+available, agentsview is also queried to recover cost estimates.
 
 This is best-effort: jobs whose session files have been deleted
 will be skipped.`,
@@ -51,10 +54,19 @@ will be skipped.`,
 			for _, job := range candidates {
 				total++
 
+				logUsage, logErr := tokens.ParseCodexUsageFile(
+					daemon.JobLogPath(job.ID),
+				)
+				if logErr != nil {
+					log.Printf(
+						"job %d: parse job log: %v", job.ID, logErr,
+					)
+				}
+
 				ctx, cancel := context.WithTimeout(
 					context.Background(), 15*time.Second,
 				)
-				usage, fetchErr := tokens.FetchForSessionWithConfig(
+				fetchedUsage, fetchErr := tokens.FetchForSessionWithConfig(
 					ctx, job.SessionID, fetchConfig,
 				)
 				cancel()
@@ -63,9 +75,14 @@ will be skipped.`,
 					log.Printf(
 						"job %d: fetch error: %v", job.ID, fetchErr,
 					)
-					failed++
-					continue
+					if logUsage == nil {
+						failed++
+						continue
+					}
 				}
+				usage := backfill.MergeTokenUsage(
+					tokens.ToJSON(logUsage), fetchedUsage,
+				)
 				if usage == nil {
 					skipped++
 					continue
@@ -82,7 +99,7 @@ will be skipped.`,
 				}
 
 				j := tokens.ToJSON(mergedUsage)
-				if err := db.SaveJobTokenUsage(job.ID, job.SessionID, j); err != nil {
+				if err := db.BackfillJobTokenUsage(job.ID, job.SessionID, j); err != nil {
 					log.Printf(
 						"job %d: save error: %v", job.ID, err,
 					)

@@ -683,9 +683,11 @@ type ReviewJob struct {
 // SessionUsagePayload defines model for SessionUsagePayload.
 type SessionUsagePayload struct {
 	Agent             *string  `json:"agent,omitempty"`
+	CachedInputTokens *int64   `json:"cached_input_tokens,omitempty"`
 	CostUsd           *float64 `json:"cost_usd,omitempty"`
 	HasCost           *bool    `json:"has_cost"`
 	HasTokenData      *bool    `json:"has_token_data"`
+	InputTokens       *int64   `json:"input_tokens,omitempty"`
 	PeakContextTokens *int64   `json:"peak_context_tokens,omitempty"`
 	Project           *string  `json:"project,omitempty"`
 	SessionId         string   `json:"session_id"`

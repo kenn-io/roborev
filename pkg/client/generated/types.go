@@ -902,9 +902,11 @@ func (r ReviewJob) Validate() error {
 
 type SessionUsagePayload struct {
 	Agent             *string  `json:"agent,omitempty"`
+	CachedInputTokens *int64   `json:"cached_input_tokens,omitempty"`
 	CostUsd           *float64 `json:"cost_usd,omitempty"`
 	HasCost           *bool    `json:"has_cost,omitempty"`
 	HasTokenData      *bool    `json:"has_token_data,omitempty"`
+	InputTokens       *int64   `json:"input_tokens,omitempty"`
 	PeakContextTokens *int64   `json:"peak_context_tokens,omitempty"`
 	Project           *string  `json:"project,omitempty"`
 	SessionID         string   `json:"session_id" validate:"required"`

@@ -79,6 +79,21 @@ func MergeTokenUsage(existingJSON string, fetched *tokens.Usage) *tokens.Usage {
 		merged.OutputTokens = existing.OutputTokens
 		merged.PeakContextTokens = existing.PeakContextTokens
 	}
+	if merged.InputTokens == 0 {
+		merged.InputTokens = existing.InputTokens
+	}
+	if merged.CachedInputTokens == 0 {
+		merged.CachedInputTokens = existing.CachedInputTokens
+	}
+	if merged.UsageSource == "" {
+		merged.UsageSource = existing.UsageSource
+	}
+	if merged.ThreadID == "" {
+		merged.ThreadID = existing.ThreadID
+	}
+	if merged.EventOffset == 0 {
+		merged.EventOffset = existing.EventOffset
+	}
 	if !merged.HasCost && existing.HasCost {
 		merged.CostUSD = existing.CostUSD
 		merged.HasCost = true

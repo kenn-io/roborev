@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strings"
 	"testing"
 	"time"
 
@@ -55,6 +56,14 @@ func TestFormatSummary(t *testing.T) {
 			"tokens unpriced",
 			Usage{PeakContextTokens: 1000, OutputTokens: 200},
 			"1.0k ctx · 200 out",
+		},
+		{
+			"codex input counts",
+			Usage{
+				InputTokens: 79150, CachedInputTokens: 2560,
+				OutputTokens: 3389,
+			},
+			"79.2k in (2.6k cached) · 3.4k out",
 		},
 		{
 			"cost only",
@@ -113,6 +122,17 @@ func TestParseJSON(t *testing.T) {
 		assert.InDelta(t, 0.05, u.CostUSD, 1e-9)
 	})
 
+	t.Run("codex input buckets", func(t *testing.T) {
+		u := ParseJSON(
+			`{"input_tokens":79150,"cached_input_tokens":2560,` +
+				`"total_output_tokens":3389}`,
+		)
+		require.NotNil(t, u)
+		assert.Equal(t, int64(79150), u.InputTokens)
+		assert.Equal(t, int64(2560), u.CachedInputTokens)
+		assert.Equal(t, int64(3389), u.OutputTokens)
+	})
+
 	t.Run("all zeros", func(t *testing.T) {
 		assert.Nil(t, ParseJSON(
 			`{"peak_context_tokens":0,"total_output_tokens":0}`,
@@ -122,6 +142,35 @@ func TestParseJSON(t *testing.T) {
 	t.Run("invalid json", func(t *testing.T) {
 		assert.Nil(t, ParseJSON(`{invalid`))
 	})
+}
+
+func TestParseCodexUsageJSONL(t *testing.T) {
+	log := strings.Join([]string{
+		`{"type":"thread.started","thread_id":"thread-123"}`,
+		`{"type":"turn.started"}`,
+		`{"type":"item.completed","item":{"type":"agent_message","text":"ok"}}`,
+		`{"type":"turn.completed","usage":{"input_tokens":79150,"cached_input_tokens":2560,"output_tokens":3389}}`,
+	}, "\n") + "\n"
+
+	usage, err := ParseCodexUsageJSONL(strings.NewReader(log))
+	require.NoError(t, err)
+	require.NotNil(t, usage)
+	assert.Equal(t, int64(79150), usage.InputTokens)
+	assert.Equal(t, int64(2560), usage.CachedInputTokens)
+	assert.Equal(t, int64(3389), usage.OutputTokens)
+	assert.Equal(t, "job_log_turn_completed", usage.UsageSource)
+	assert.Equal(t, "thread-123", usage.ThreadID)
+	assert.Positive(t, usage.EventOffset)
+}
+
+func TestParseCodexUsageJSONLIgnoresMissingUsage(t *testing.T) {
+	usage, err := ParseCodexUsageJSONL(strings.NewReader(
+		"plain text\n" +
+			`{"type":"turn.completed","usage":{}}` + "\n",
+	))
+
+	require.NoError(t, err)
+	assert.Nil(t, usage)
 }
 
 // installFakeAgentsview writes an executable "agentsview" shell script

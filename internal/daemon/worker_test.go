@@ -881,6 +881,42 @@ func TestProcessJob_UsageEndpointFailureKeepsCompletedJob(t *testing.T) {
 	assert.Empty(t, updated.TokenUsage)
 }
 
+func TestCaptureTokenUsageForSessionUsesCodexJobLog(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	tc := newWorkerTestContext(t, 1)
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
+	require.NoError(t, tc.DB.CompleteJob(job.ID, "codex", "prompt", "No issues found."))
+
+	logPath := JobLogPath(job.ID)
+	require.NoError(t, os.MkdirAll(filepath.Dir(logPath), 0o700))
+	require.NoError(t, os.WriteFile(logPath, []byte(
+		`{"type":"thread.started","thread_id":"thread-123"}`+"\n"+
+			`{"type":"turn.completed","usage":{"input_tokens":79150,`+
+			`"cached_input_tokens":2560,"output_tokens":3389}}`+"\n",
+	), 0o600))
+
+	tc.Pool.tokenUsageFetcher = func(context.Context, string) (*tokens.Usage, error) {
+		return &tokens.Usage{CostUSD: 0.42, HasCost: true}, nil
+	}
+
+	tc.Pool.captureTokenUsageForSession(
+		context.Background(), testWorkerID, job, "thread-123",
+	)
+
+	updated, err := tc.DB.GetJobByID(job.ID)
+	require.NoError(t, err)
+	usage := tokens.ParseJSON(updated.TokenUsage)
+	require.NotNil(t, usage)
+	assert.Equal(t, int64(79150), usage.InputTokens)
+	assert.Equal(t, int64(2560), usage.CachedInputTokens)
+	assert.Equal(t, int64(3389), usage.OutputTokens)
+	assert.True(t, usage.HasCost)
+	assert.InDelta(t, 0.42, usage.CostUSD, 1e-9)
+	assert.Equal(t, "job_log_turn_completed", usage.UsageSource)
+	assert.Equal(t, "thread-123", usage.ThreadID)
+}
+
 func TestProcessJob_UsesStoredReviewPromptOverride(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)

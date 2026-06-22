@@ -1,13 +1,17 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/backfill"
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/tokens"
 )
@@ -208,4 +212,72 @@ func TestMergeBackfillTokenUsagePreservesExistingCountsForCostOnlyFetch(t *testi
 	assert.Equal(t, int64(118000), got.PeakContextTokens)
 	assert.True(t, got.HasCost)
 	assert.InDelta(t, 0.42, got.CostUSD, 1e-9)
+}
+
+func TestMergeBackfillTokenUsagePreservesCodexInputBucketsForCostOnlyFetch(t *testing.T) {
+	existing := `{"input_tokens":79150,"cached_input_tokens":2560,` +
+		`"total_output_tokens":3389,"usage_source":"job_log_turn_completed",` +
+		`"thread_id":"thread-123","event_offset":91}`
+	fetched := &tokens.Usage{CostUSD: 0.42, HasCost: true}
+
+	got := backfill.MergeTokenUsage(existing, fetched)
+
+	assert.Equal(t, int64(79150), got.InputTokens)
+	assert.Equal(t, int64(2560), got.CachedInputTokens)
+	assert.Equal(t, int64(3389), got.OutputTokens)
+	assert.Equal(t, "job_log_turn_completed", got.UsageSource)
+	assert.Equal(t, "thread-123", got.ThreadID)
+	assert.Equal(t, int64(91), got.EventOffset)
+	assert.True(t, got.HasCost)
+	assert.InDelta(t, 0.42, got.CostUSD, 1e-9)
+}
+
+func TestBackfillTokensUsesCodexJobLogWhenAgentsviewMissing(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", dataDir)
+	t.Setenv("PATH", t.TempDir())
+
+	db, err := storage.Open(storage.DefaultDBPath())
+	require.NoError(t, err)
+	defer db.Close()
+
+	repo, err := db.GetOrCreateRepo(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	commit, err := db.GetOrCreateCommit(repo.ID, "abc123", "Author", "Subject", time.Now())
+	require.NoError(t, err)
+	job, err := db.EnqueueJob(storage.EnqueueOpts{
+		RepoID:    repo.ID,
+		CommitID:  commit.ID,
+		GitRef:    "abc123",
+		Agent:     "codex",
+		SessionID: "thread-123",
+	})
+	require.NoError(t, err)
+	claimed, err := db.ClaimJob("worker-1")
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	require.Equal(t, job.ID, claimed.ID)
+	require.NoError(t, db.CompleteJob(job.ID, "codex", "prompt", "No issues found."))
+
+	logPath := daemon.JobLogPath(job.ID)
+	require.NoError(t, os.MkdirAll(filepath.Dir(logPath), 0o700))
+	require.NoError(t, os.WriteFile(logPath, []byte(
+		`{"type":"thread.started","thread_id":"thread-123"}`+"\n"+
+			`{"type":"turn.completed","usage":{"input_tokens":79150,`+
+			`"cached_input_tokens":2560,"output_tokens":3389}}`+"\n",
+	), 0o600))
+
+	cmd := backfillTokensCmd()
+	cmd.SetArgs(nil)
+	require.NoError(t, cmd.Execute())
+
+	updated, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	usage := tokens.ParseJSON(updated.TokenUsage)
+	require.NotNil(t, usage)
+	assert.Equal(t, int64(79150), usage.InputTokens)
+	assert.Equal(t, int64(2560), usage.CachedInputTokens)
+	assert.Equal(t, int64(3389), usage.OutputTokens)
+	assert.Equal(t, "job_log_turn_completed", usage.UsageSource)
+	assert.Equal(t, "thread-123", usage.ThreadID)
 }

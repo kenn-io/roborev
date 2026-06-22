@@ -116,6 +116,10 @@ type SummaryOptions struct {
 // GetSummary computes aggregate review statistics.
 // All sub-queries run inside a single read transaction for snapshot consistency.
 func (db *DB) GetSummary(opts SummaryOptions) (*Summary, error) {
+	if opts.RepoPath != "" {
+		opts.RepoPath = normalizeRepoPathBestEffort(opts.RepoPath)
+	}
+
 	tx, err := db.Begin()
 	if err != nil {
 		return nil, err

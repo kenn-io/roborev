@@ -476,6 +476,32 @@ func (db *DB) SaveJobTokenUsage(jobID int64, sessionID, tokenUsageJSON string) e
 	return err
 }
 
+// BackfillJobTokenUsage stores recovered token usage for a terminal job.
+// Unlike SaveJobTokenUsage, this path runs after the producing worker is gone,
+// so it scopes the update to a terminal row and preserves any different
+// existing session_id to avoid stamping usage onto an unrelated attempt.
+func (db *DB) BackfillJobTokenUsage(jobID int64, sessionID, tokenUsageJSON string) error {
+	if tokenUsageJSON == "" {
+		return nil
+	}
+	now := time.Now().Format(time.RFC3339)
+	_, err := db.Exec(
+		`UPDATE review_jobs
+		 SET token_usage = ?,
+		     session_id = CASE
+		       WHEN ? != '' AND (session_id IS NULL OR session_id = '') THEN ?
+		       ELSE session_id
+		     END,
+		     updated_at = ?,
+		     synced_at = NULL
+		 WHERE id = ?
+		   AND status IN ('done', 'applied', 'rebased', 'failed', 'canceled', 'skipped')
+		   AND (session_id IS NULL OR session_id = '' OR session_id = ?)`,
+		tokenUsageJSON, sessionID, sessionID, now, jobID, sessionID,
+	)
+	return err
+}
+
 // CompleteFixJob atomically marks a fix job as done, stores the review,
 // and persists the patch in a single transaction. This prevents invalid
 // states where a patch is written but the job isn't done, or vice versa.

@@ -17,6 +17,7 @@ import (
 	gitworktree "go.kenn.io/kit/git/worktree"
 
 	"go.kenn.io/roborev/internal/agent"
+	"go.kenn.io/roborev/internal/backfill"
 	"go.kenn.io/roborev/internal/config"
 	gitpkg "go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/kata"
@@ -1311,37 +1312,64 @@ func (wp *WorkerPool) releaseIfPanelMember(job *storage.ReviewJob) {
 func (wp *WorkerPool) captureTokenUsageForSession(
 	ctx context.Context, workerID string, job *storage.ReviewJob, capturedSession string,
 ) {
-	// Fetch token usage from agentsview (best-effort).
-	// Only collect for fresh sessions (where we captured a new session ID).
-	// Resumed sessions report cumulative totals across all turns, which
-	// would overcount if assigned to a single job.
+	// Only fetch agentsview usage for fresh sessions (where we captured a new
+	// session ID). Resumed-session agentsview totals are cumulative across
+	// turns, but Codex job-log turn.completed usage belongs to this job's
+	// stream and is safe to parse below.
 	wasResumed := job.SessionID != "" && capturedSession == job.SessionID
-	if capturedSession == "" || wasResumed {
-		return
+
+	var usage *tokens.Usage
+	logUsage, logErr := tokens.ParseCodexUsageFile(JobLogPath(job.ID))
+	if logErr != nil {
+		log.Printf("[%s] Warning: parse token usage from job log for job %d: %v",
+			workerID, job.ID, logErr)
+	} else if logUsage != nil {
+		usage = logUsage
 	}
-	fetcher := wp.tokenUsageFetcher
-	if fetcher == nil {
-		cfg := wp.cfgGetter.Config()
-		fetcher = func(ctx context.Context, sessionID string) (*tokens.Usage, error) {
-			return tokens.FetchForSessionWithConfig(
-				ctx, sessionID,
-				tokens.FetchConfig{
-					Endpoint: cfg.Cost.Endpoint,
-					Timeout:  cfg.Cost.ResolvedTimeout(),
-				},
-			)
+
+	if capturedSession != "" && !wasResumed {
+		fetcher := wp.tokenUsageFetcher
+		if fetcher == nil {
+			cfg := wp.cfgGetter.Config()
+			fetcher = func(ctx context.Context, sessionID string) (*tokens.Usage, error) {
+				return tokens.FetchForSessionWithConfig(
+					ctx, sessionID,
+					tokens.FetchConfig{
+						Endpoint: cfg.Cost.Endpoint,
+						Timeout:  cfg.Cost.ResolvedTimeout(),
+					},
+				)
+			}
+		}
+		fetched, tokenErr := fetcher(ctx, capturedSession)
+		if tokenErr != nil {
+			log.Printf("[%s] Warning: fetch token usage for job %d: %v",
+				workerID, job.ID, tokenErr)
+		} else {
+			usage = backfill.MergeTokenUsage(tokens.ToJSON(usage), fetched)
 		}
 	}
-	usage, tokenErr := fetcher(ctx, capturedSession)
-	if tokenErr != nil {
-		log.Printf("[%s] Warning: fetch token usage for job %d: %v",
-			workerID, job.ID, tokenErr)
-		return
-	}
+
 	if usage == nil {
 		return
 	}
-	if err := wp.db.SaveJobTokenUsage(job.ID, capturedSession, tokens.ToJSON(usage)); err != nil {
+	sessionID := capturedSession
+	if sessionID == "" {
+		sessionID = usage.ThreadID
+	}
+	if sessionID == "" {
+		return
+	}
+	var err error
+	if capturedSession != "" {
+		err = wp.db.SaveJobTokenUsage(job.ID, sessionID, tokens.ToJSON(usage))
+		if err == nil {
+			err = wp.db.BackfillJobTokenUsage(job.ID, sessionID, tokens.ToJSON(usage))
+		}
+	} else {
+		err = wp.db.BackfillJobTokenUsage(job.ID, sessionID, tokens.ToJSON(usage))
+	}
+	if err != nil {
 		log.Printf("[%s] Warning: save token usage for job %d: %v",
 			workerID, job.ID, err)
 	}

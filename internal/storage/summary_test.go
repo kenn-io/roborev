@@ -222,6 +222,23 @@ func TestGetSummary_RepoFilter(t *testing.T) {
 	assert.Equal(t, 2, s.Overview.Total)
 }
 
+func TestGetSummary_RepoFilterNormalizesWindowsSeparators(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, `C:\Users\dev\Projects\repo`)
+	commit := createCommit(t, db, repo.ID, "aaa111")
+	enqueueJob(t, db, repo.ID, commit.ID, "aaa111")
+
+	s, err := db.GetSummary(SummaryOptions{
+		RepoPath: `C:\Users\dev\Projects\repo`,
+		Since:    time.Now().Add(-1 * time.Hour),
+	})
+	require.NoError(t, err)
+	assert.Equal(t, "C:/Users/dev/Projects/repo", s.RepoPath)
+	assert.Equal(t, 1, s.Overview.Total)
+}
+
 func TestGetSummary_BranchFilter(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()

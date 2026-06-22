@@ -1,6 +1,8 @@
 package tokens
 
 import (
+	"bufio"
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,6 +10,7 @@ import (
 	"io"
 	"net/http"
 	"net/url"
+	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -19,10 +22,15 @@ import (
 // Stored as JSON in the review_jobs.token_usage column.
 // Fields align with agentsview's session-usage output.
 type Usage struct {
+	InputTokens       int64   `json:"input_tokens,omitempty"`
+	CachedInputTokens int64   `json:"cached_input_tokens,omitempty"`
 	OutputTokens      int64   `json:"total_output_tokens,omitempty"`
 	PeakContextTokens int64   `json:"peak_context_tokens,omitempty"`
 	CostUSD           float64 `json:"cost_usd,omitempty"`
 	HasCost           bool    `json:"has_cost,omitempty"`
+	UsageSource       string  `json:"usage_source,omitempty"`
+	ThreadID          string  `json:"thread_id,omitempty"`
+	EventOffset       int64   `json:"event_offset,omitempty"`
 }
 
 // FetchConfig configures session usage lookup. When Endpoint is set,
@@ -57,6 +65,8 @@ type SessionUsagePayload struct {
 	SessionID         string   `json:"session_id"`
 	Agent             string   `json:"agent,omitempty"`
 	Project           string   `json:"project,omitempty"`
+	InputTokens       *int64   `json:"input_tokens,omitempty"`
+	CachedInputTokens *int64   `json:"cached_input_tokens,omitempty"`
 	OutputTokens      *int64   `json:"total_output_tokens,omitempty"`
 	PeakContextTokens *int64   `json:"peak_context_tokens,omitempty"`
 	HasTokenData      *bool    `json:"has_token_data"`
@@ -69,16 +79,33 @@ type SessionUsagePayload struct {
 // when a cost estimate is available. Returns empty string when there
 // is neither token nor cost data.
 func (u Usage) FormatSummary() string {
-	hasTokens := u.PeakContextTokens != 0 || u.OutputTokens != 0
+	inputTokens := u.PeakContextTokens
+	inputLabel := "ctx"
+	if inputTokens == 0 && u.InputTokens != 0 {
+		inputTokens = u.InputTokens
+		inputLabel = "in"
+	}
+	hasTokens := inputTokens != 0 || u.OutputTokens != 0 ||
+		u.CachedInputTokens != 0
 	if !hasTokens {
 		// No token counts: show the cost alone when present.
 		return u.FormatCost()
 	}
 	s := fmt.Sprintf(
-		"%s ctx · %s out",
-		formatCount(u.PeakContextTokens),
+		"%s %s · %s out",
+		formatCount(inputTokens),
+		inputLabel,
 		formatCount(u.OutputTokens),
 	)
+	if u.CachedInputTokens != 0 {
+		s = fmt.Sprintf(
+			"%s %s (%s cached) · %s out",
+			formatCount(inputTokens),
+			inputLabel,
+			formatCount(u.CachedInputTokens),
+			formatCount(u.OutputTokens),
+		)
+	}
 	if cost := u.FormatCost(); cost != "" {
 		s += " · " + cost
 	}
@@ -325,11 +352,22 @@ func UsageFromSessionPayload(resp SessionUsagePayload) (*Usage, error) {
 
 	usage := &Usage{}
 	if *resp.HasTokenData {
-		if resp.OutputTokens == nil || resp.PeakContextTokens == nil {
+		if resp.OutputTokens == nil {
 			return nil, fmt.Errorf("usage endpoint schema: missing token counts")
 		}
 		usage.OutputTokens = *resp.OutputTokens
-		usage.PeakContextTokens = *resp.PeakContextTokens
+		if resp.PeakContextTokens != nil {
+			usage.PeakContextTokens = *resp.PeakContextTokens
+		}
+		if resp.InputTokens != nil {
+			usage.InputTokens = *resp.InputTokens
+		}
+		if resp.CachedInputTokens != nil {
+			usage.CachedInputTokens = *resp.CachedInputTokens
+		}
+		if usage.PeakContextTokens == 0 && usage.InputTokens == 0 {
+			return nil, fmt.Errorf("usage endpoint schema: missing token counts")
+		}
 	}
 	if *resp.HasCost {
 		if resp.CostUSD == nil {
@@ -338,7 +376,7 @@ func UsageFromSessionPayload(resp SessionUsagePayload) (*Usage, error) {
 		usage.CostUSD = *resp.CostUSD
 		usage.HasCost = true
 	}
-	if usage.OutputTokens == 0 && usage.PeakContextTokens == 0 && !usage.HasCost {
+	if !usage.HasUsageData() {
 		return nil, nil
 	}
 	return usage, nil
@@ -354,10 +392,90 @@ func ParseJSON(data string) *Usage {
 	if err := json.Unmarshal([]byte(data), &u); err != nil {
 		return nil
 	}
-	if u.OutputTokens == 0 && u.PeakContextTokens == 0 && !u.HasCost {
+	if !u.HasUsageData() {
 		return nil
 	}
 	return &u
+}
+
+// HasUsageData reports whether the usage value carries counts or cost data.
+func (u Usage) HasUsageData() bool {
+	return u.InputTokens != 0 ||
+		u.CachedInputTokens != 0 ||
+		u.OutputTokens != 0 ||
+		u.PeakContextTokens != 0 ||
+		u.HasCost
+}
+
+// ParseCodexUsageFile extracts the final Codex turn.completed usage event
+// from a raw JSONL job log.
+func ParseCodexUsageFile(path string) (*Usage, error) {
+	f, err := os.Open(path)
+	if err != nil {
+		if errors.Is(err, os.ErrNotExist) {
+			return nil, nil
+		}
+		return nil, err
+	}
+	defer f.Close()
+	return ParseCodexUsageJSONL(f)
+}
+
+// ParseCodexUsageJSONL extracts the final Codex turn.completed usage event
+// from an event stream. Non-JSON lines and unrelated JSON events are ignored.
+func ParseCodexUsageJSONL(r io.Reader) (*Usage, error) {
+	type codexUsageEvent struct {
+		Type     string `json:"type"`
+		ThreadID string `json:"thread_id,omitempty"`
+		Usage    struct {
+			InputTokens       int64 `json:"input_tokens"`
+			CachedInputTokens int64 `json:"cached_input_tokens"`
+			OutputTokens      int64 `json:"output_tokens"`
+		} `json:"usage,omitempty"`
+	}
+
+	reader := bufio.NewReader(r)
+	var offset int64
+	var threadID string
+	var usage *Usage
+	for {
+		line, err := reader.ReadBytes('\n')
+		if len(line) > 0 {
+			trimmed := bytes.TrimSpace(line)
+			if len(trimmed) > 0 {
+				var ev codexUsageEvent
+				if json.Unmarshal(trimmed, &ev) == nil {
+					if ev.ThreadID != "" {
+						threadID = ev.ThreadID
+					}
+					if ev.Type == "turn.completed" {
+						u := Usage{
+							InputTokens:       ev.Usage.InputTokens,
+							CachedInputTokens: ev.Usage.CachedInputTokens,
+							OutputTokens:      ev.Usage.OutputTokens,
+							UsageSource:       "job_log_turn_completed",
+							ThreadID:          threadID,
+							EventOffset:       offset,
+						}
+						if ev.ThreadID != "" {
+							u.ThreadID = ev.ThreadID
+						}
+						if u.HasUsageData() {
+							usage = &u
+						}
+					}
+				}
+			}
+			offset += int64(len(line))
+		}
+		if err == nil {
+			continue
+		}
+		if errors.Is(err, io.EOF) {
+			return usage, nil
+		}
+		return nil, err
+	}
 }
 
 // ToJSON serializes token usage to JSON for database storage.
