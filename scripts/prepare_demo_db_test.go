@@ -386,11 +386,20 @@ func insertScreenshotJobWithoutReview(t *testing.T, db *sql.DB, repoID, jobID in
 func runPrepareDemoDB(t *testing.T, tempDir, sourceDB string) string {
 	t.Helper()
 
-	cmd := exec.Command("bash", "../docs/screenshots/prepare-demo-db.sh")
-	cmd.Env = append(os.Environ(),
-		"TMPDIR="+tempDir,
-		"ROBOREV_DOCS_SOURCE_DB="+sourceDB,
-		"HOME="+filepath.Join(tempDir, "maintainer-home"),
+	script := readShellScript(t, filepath.Join("..", "docs", "screenshots", "prepare-demo-db.sh"))
+	scriptPath := filepath.Join(tempDir, "prepare-demo-db.sh")
+	require.NoError(t, os.WriteFile(scriptPath, script, 0o755))
+
+	homeDir := filepath.Join(tempDir, "maintainer-home")
+	require.NoError(t, os.MkdirAll(homeDir, 0o755))
+
+	cmd := exec.Command(
+		"bash",
+		"-lc",
+		"export TMPDIR="+shellQuote(bashPath(t, tempDir))+
+			" ROBOREV_DOCS_SOURCE_DB="+shellQuote(bashPath(t, sourceDB))+
+			" HOME="+shellQuote(bashPath(t, homeDir))+
+			"; exec "+shellQuote(bashPath(t, scriptPath)),
 	)
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(output))

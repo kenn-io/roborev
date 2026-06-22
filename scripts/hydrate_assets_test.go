@@ -49,12 +49,13 @@ func TestHydrateAssetsForceFetchesRemoteAssetBranches(t *testing.T) {
 	writeStaticAssets(t, filepath.Join(docsAssetsDir, "static"), "stale local static")
 	writeGeneratedAssets(t, filepath.Join(docsAssetsDir, "generated"), "stale local generated")
 
-	script, err := os.ReadFile(filepath.Join("..", "docs", "assets", "hydrate-assets.sh"))
-	require.NoError(t, err)
+	git(t, localRepo, "remote", "set-url", "origin", bashPath(t, remoteRepo))
+
+	script := readShellScript(t, filepath.Join("..", "docs", "assets", "hydrate-assets.sh"))
 	scriptPath := filepath.Join(docsAssetsDir, "hydrate-assets.sh")
 	require.NoError(t, os.WriteFile(scriptPath, script, 0o755))
 
-	cmd := exec.Command("bash", scriptPath)
+	cmd := exec.Command("bash", bashPath(t, scriptPath))
 	cmd.Dir = localRepo
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(output))
@@ -97,7 +98,7 @@ func TestAssetPublishersRejectUnexpectedFiles(t *testing.T) {
 			require.NoError(t, os.WriteFile(filepath.Join(sourceDir, ".env.local"), []byte("TOKEN=secret\n"), 0o600))
 
 			scriptPath := installAssetScript(t, repo, tc.scriptRel)
-			cmd := exec.Command("bash", scriptPath, "--source", sourceDir)
+			cmd := exec.Command("bash", bashPath(t, scriptPath), "--source", bashPath(t, sourceDir))
 			cmd.Dir = repo
 			output, err := cmd.CombinedOutput()
 
@@ -110,8 +111,7 @@ func TestAssetPublishersRejectUnexpectedFiles(t *testing.T) {
 
 func installAssetScript(t *testing.T, repo, scriptRel string) string {
 	t.Helper()
-	script, err := os.ReadFile(filepath.Join("..", scriptRel))
-	require.NoError(t, err)
+	script := readShellScript(t, filepath.Join("..", scriptRel))
 	scriptPath := filepath.Join(repo, scriptRel)
 	require.NoError(t, os.MkdirAll(filepath.Dir(scriptPath), 0o755))
 	require.NoError(t, os.WriteFile(scriptPath, script, 0o755))
