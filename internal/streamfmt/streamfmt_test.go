@@ -151,7 +151,8 @@ type anthropicContentBlock struct {
 }
 
 type anthropicMessage struct {
-	Content any `json:"content"`
+	Role    string `json:"role,omitempty"`
+	Content any    `json:"content"`
 }
 
 type anthropicToolUseResult struct {
@@ -349,6 +350,7 @@ type piTestAssistantMessageEvent struct {
 type piEvent struct {
 	Type                  string                       `json:"type"`
 	AssistantMessageEvent *piTestAssistantMessageEvent `json:"assistantMessageEvent,omitempty"`
+	Message               *anthropicMessage            `json:"message,omitempty"`
 	ToolCallID            string                       `json:"toolCallId,omitempty"`
 	ToolName              string                       `json:"toolName,omitempty"`
 	Args                  any                          `json:"args,omitempty"`
@@ -364,6 +366,16 @@ func eventPiMessageUpdate(eventType, content, delta string) string {
 			Type:    eventType,
 			Content: content,
 			Delta:   delta,
+		},
+	})
+}
+
+func eventPiMessageEnd(role string, content any) string {
+	return toJSON(piEvent{
+		Type: "message_end",
+		Message: &anthropicMessage{
+			Role:    role,
+			Content: content,
 		},
 	})
 }
@@ -1053,6 +1065,25 @@ func TestFormatter_PiRendering(t *testing.T) {
 				`{"type":"agent_end"}`,
 			},
 			empty: true,
+		},
+		{
+			name: "AssistantMessageEndText",
+			events: []string{
+				eventPiMessageEnd("user", []anthropicContentBlock{{
+					Type: "text",
+					Text: "prompt echo",
+				}}),
+				eventPiMessageEnd("assistant", []anthropicContentBlock{{
+					Type: "text",
+					Text: "Final review from message_end.",
+				}}),
+			},
+			contains: []string{
+				"Final review from message_end.",
+			},
+			notContains: []string{
+				"prompt echo",
+			},
 		},
 	}
 

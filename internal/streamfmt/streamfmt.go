@@ -203,6 +203,7 @@ type streamEvent struct {
 	Type string `json:"type"`
 	// Claude: nested message with content blocks
 	Message *struct {
+		Role    string          `json:"role,omitempty"`
 		Content json.RawMessage `json:"content,omitempty"`
 	} `json:"message,omitempty"`
 	// Gemini: top-level fields
@@ -343,6 +344,12 @@ func (f *Formatter) processLine(line string) {
 	case "message_update":
 		// Pi format: render only completed assistant text.
 		f.processPiMessageUpdate(ev.AssistantMessageEvent)
+	case "message_end":
+		// Pi format: some streams only include the completed
+		// assistant content on message_end.
+		if ev.Message != nil {
+			f.processPiMessageEnd(ev.Message.Role, ev.Message.Content)
+		}
 	case "tool_execution_start":
 		// Pi format: render each tool call once, at start, so
 		// running logs show progress without replaying result text.
@@ -364,7 +371,7 @@ func (f *Formatter) processLine(line string) {
 	case "result", "tool_result", "init",
 		"thread.started", "turn.started", "turn.completed",
 		"session", "agent_start", "turn_start", "turn_end",
-		"agent_end", "message_start", "message_end",
+		"agent_end", "message_start",
 		"tool_execution_update", "tool_execution_end":
 		// Suppress lifecycle events
 	default:
@@ -462,6 +469,33 @@ func (f *Formatter) processPiMessageUpdate(
 		return
 	}
 	f.writeText(SanitizeControlKeepNewlines(ev.Content))
+}
+
+func (f *Formatter) processPiMessageEnd(
+	role string, raw json.RawMessage,
+) {
+	if role != "assistant" || raw == nil {
+		return
+	}
+
+	var blocks []contentBlock
+	if err := json.Unmarshal(raw, &blocks); err == nil {
+		var parts []string
+		for _, block := range blocks {
+			if block.Type == "text" && block.Text != "" {
+				parts = append(parts, block.Text)
+			}
+		}
+		if len(parts) > 0 {
+			f.writeText(strings.Join(parts, "\n"))
+		}
+		return
+	}
+
+	var text string
+	if err := json.Unmarshal(raw, &text); err == nil {
+		f.writeText(text)
+	}
 }
 
 func (f *Formatter) processPiToolExecution(
