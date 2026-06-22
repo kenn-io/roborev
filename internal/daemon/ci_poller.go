@@ -2223,12 +2223,13 @@ func (p *CIPoller) expireTimedOutPanels(ghRepo string, cfg *config.Config) {
 
 // panelMemberTimeoutState reports the two predicates that gate timeout expiry:
 // hasMeaningful is true when at least one member carries a REAL postable result -
-// a done member, or a failed/canceled member that is NOT a quota skip and NOT a
-// prior timeout cancellation (those are counted as skips downstream and must not
-// pass the guard). hasExpiredRunning is true when at least one running member has
-// consumed runtime beyond the timeout. Queued time never counts toward this
-// timeout. Classification reuses the review-package skip classifiers via
-// toReviewResult so it agrees with how panelCommitStatus accounts for skips.
+// a done member, or a failed/canceled member that is NOT allowed to fail, NOT a
+// quota skip, and NOT a prior timeout cancellation (those are counted as skips
+// downstream and must not pass the guard). hasExpiredRunning is true when at
+// least one running member has consumed runtime beyond the timeout. Queued time
+// never counts toward this timeout. Classification reuses the review-package
+// skip classifiers via toReviewResult so it agrees with how panelCommitStatus
+// accounts for skips.
 func panelMemberTimeoutState(members []storage.BatchReviewResult, timeout time.Duration, now time.Time) (hasMeaningful, hasExpiredRunning bool) {
 	for i := range members {
 		switch storage.JobStatus(members[i].Status) {
@@ -2236,7 +2237,7 @@ func panelMemberTimeoutState(members []storage.BatchReviewResult, timeout time.D
 			hasMeaningful = true
 		case storage.JobStatusFailed, storage.JobStatusCanceled:
 			r := toReviewResult(members[i])
-			if !reviewpkg.IsQuotaFailure(r) && !reviewpkg.IsTimeoutCancellation(r) {
+			if !r.AllowFailure && !reviewpkg.IsQuotaFailure(r) && !reviewpkg.IsTimeoutCancellation(r) {
 				hasMeaningful = true
 			}
 		case storage.JobStatusRunning:

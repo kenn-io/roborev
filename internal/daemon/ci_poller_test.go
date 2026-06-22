@@ -196,11 +196,12 @@ func (h *ciPollerHarness) CaptureCommitStatuses() *[]capturedStatus {
 }
 
 type jobSpec struct {
-	Agent      string
-	ReviewType string
-	Status     string // "done", "failed", "canceled", "running", "queued"
-	Output     string
-	Error      string
+	Agent                 string
+	ReviewType            string
+	Status                string // "done", "failed", "canceled", "running", "queued"
+	Output                string
+	Error                 string
+	PanelMemberConfigJSON string
 }
 
 // markJobDoneWithReview sets a job to "done" and inserts a review row.

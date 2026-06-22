@@ -27,7 +27,7 @@ func (h *ciPollerHarness) seedBlockedPanelRun(
 		members = append(members, storage.EnqueueOpts{
 			RepoID: h.Repo.ID, GitRef: gitRef, Agent: s.Agent, ReviewType: s.ReviewType,
 			JobType: storage.JobTypeRange, PanelName: "ci", PanelMemberName: s.Agent,
-			PanelMemberIndex: i,
+			PanelMemberIndex: i, PanelMemberConfigJSON: s.PanelMemberConfigJSON,
 		})
 	}
 	synthesis := storage.EnqueueOpts{
@@ -339,6 +339,39 @@ func TestExpireTimedOutPanelsQuotaFailureNotMeaningful(t *testing.T) {
 	assert.Empty(canceled, "no worker killed when only skips are terminal")
 
 	// Synthesis stays gated so no fake success can be posted.
+	assert.True(h.synthBlocked(t, synth.PanelRunUUID), "synthesis stays blocked (no fake success)")
+	assert.NotEqual(storage.JobStatusCanceled, h.jobStatus(t, synth.ID), "synthesis not canceled")
+}
+
+func TestExpireTimedOutPanelsAllowedFailureNotMeaningful(t *testing.T) {
+	assert := assert.New(t)
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	h.Cfg.CI.BatchTimeout = "1ms"
+
+	var canceled []int64
+	h.Poller.jobCancelFn = func(jobID int64) { canceled = append(canceled, jobID) }
+
+	panel, synth, members := h.seedBlockedPanelRun(t, "acme/api", 25, "headsha", "base..headsha",
+		[]jobSpec{
+			{
+				Agent:                 "pi",
+				ReviewType:            "review",
+				Status:                "failed",
+				Error:                 "pi host disappeared",
+				PanelMemberConfigJSON: `{"allow_failure":true}`,
+			},
+			{Agent: "codex", ReviewType: "review", Status: "running"},
+		})
+	require.Len(t, members, 2)
+	h.backdatePanelCreatedAt(t, panel.ID)
+	h.backdateJobStartedAt(t, members[1].ID)
+	require.True(t, h.synthBlocked(t, synth.PanelRunUUID), "synthesis blocked before sweep")
+
+	h.Poller.expireTimedOutPanels("acme/api", h.Cfg)
+
+	assert.Equal(storage.JobStatusFailed, h.jobStatus(t, members[0].ID), "allowed-failed member untouched")
+	assert.Equal(storage.JobStatusRunning, h.jobStatus(t, members[1].ID), "required running member left running")
+	assert.Empty(canceled, "no worker killed when only optional failures are terminal")
 	assert.True(h.synthBlocked(t, synth.PanelRunUUID), "synthesis stays blocked (no fake success)")
 	assert.NotEqual(storage.JobStatusCanceled, h.jobStatus(t, synth.ID), "synthesis not canceled")
 }
