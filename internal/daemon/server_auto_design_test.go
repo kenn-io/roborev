@@ -4,6 +4,7 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -260,6 +261,30 @@ func TestAutoDesignStatusForResponse_DisabledOmitted(t *testing.T) {
 	// No repo enables auto_design_review.
 	got := srv.autoDesignStatusForResponse()
 	assert.Nil(t, got)
+}
+
+func TestAutoDesignStatusForResponse_DisabledRegularRepoDoesNotSpawnGit(t *testing.T) {
+	ResetAutoDesignMetricsForTest()
+	db := testutil.OpenTestDB(t)
+	repo := testutil.NewGitRepo(t)
+	_, err := db.GetOrCreateRepo(repo.Path())
+	require.NoError(t, err)
+
+	srv := NewServer(db, config.DefaultConfig(), "")
+	marker := filepath.Join(t.TempDir(), "git-invoked")
+	t.Setenv("ROBOREV_GIT_MARKER", marker)
+
+	fakeGit := "#!/bin/sh\n: > \"$ROBOREV_GIT_MARKER\"\nexit 1\n"
+	if runtime.GOOS == "windows" {
+		fakeGit = "@echo git > \"%ROBOREV_GIT_MARKER%\"\r\n@exit /b 1\r\n"
+	}
+	restore := testutil.MockBinaryInPath(t, "git", fakeGit)
+	defer restore()
+
+	got := srv.autoDesignStatusForResponse()
+	assert.Nil(t, got)
+	_, err = os.Stat(marker)
+	assert.True(t, os.IsNotExist(err), "disabled status path must not shell out to git for regular repos without config")
 }
 
 func TestAutoDesignStatusForResponse_EnabledRepoSurfaces(t *testing.T) {

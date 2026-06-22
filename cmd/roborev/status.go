@@ -20,6 +20,7 @@ type statusJSONResult struct {
 	Daemon  *storage.DaemonStatus `json:"daemon,omitempty"`
 	Health  *storage.HealthStatus `json:"health,omitempty"`
 	Jobs    []storage.ReviewJob   `json:"jobs,omitempty"`
+	Error   string                `json:"error,omitempty"`
 }
 
 func statusCmd() *cobra.Command {
@@ -33,6 +34,17 @@ func statusCmd() *cobra.Command {
 				enc := json.NewEncoder(os.Stdout)
 				enc.SetIndent("", "  ")
 				return enc.Encode(result)
+			}
+			writeStatusUnavailable := func(err error) error {
+				if jsonOutput {
+					return writeJSONResult(statusJSONResult{
+						Running: true,
+						Error:   err.Error(),
+					})
+				}
+				fmt.Println("Daemon: running")
+				fmt.Printf("Status: unavailable: %v\n", err)
+				return nil
 			}
 
 			// Ensure daemon is running (and restart if version mismatch)
@@ -51,13 +63,7 @@ func statusCmd() *cobra.Command {
 			client := ep.HTTPClient(2 * time.Second)
 			resp, err := client.Get(addr + "/api/status")
 			if err != nil {
-				if jsonOutput {
-					return writeJSONResult(statusJSONResult{Running: false})
-				}
-				fmt.Println("Daemon: not running")
-				fmt.Println()
-				fmt.Println("Start with: roborev daemon start")
-				return nil
+				return writeStatusUnavailable(err)
 			}
 			defer resp.Body.Close()
 

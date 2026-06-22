@@ -575,6 +575,9 @@ func RepoConfigPath(repoPath string) string {
 	if _, err := os.Stat(local); err == nil {
 		return local
 	}
+	if info, err := os.Stat(filepath.Join(repoPath, ".git")); err == nil && info.IsDir() {
+		return local
+	}
 
 	// Not present (or unreadable) at repoPath. If repoPath is a worktree, the
 	// config may live only in the main checkout. Any resolution failure (not a

@@ -4,6 +4,7 @@ import (
 	"encoding/json"
 	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -16,6 +17,26 @@ type statusJSONOutput struct {
 	Running bool                 `json:"running"`
 	Daemon  storage.DaemonStatus `json:"daemon"`
 	Jobs    []storage.ReviewJob  `json:"jobs,omitempty"`
+}
+
+func TestStatusCmdDoesNotReportNotRunningWhenStatusRequestTimesOut(t *testing.T) {
+	md := NewMockDaemon(t, MockRefineHooks{
+		OnStatus: func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
+			time.Sleep(3 * time.Second)
+			return true
+		},
+	})
+	defer md.Close()
+
+	output := captureStdout(t, func() {
+		cmd := statusCmd()
+		err := cmd.Execute()
+		require.NoError(t, err)
+	})
+
+	assert.Contains(t, output, "Daemon: running")
+	assert.Contains(t, output, "Status: unavailable")
+	assert.NotContains(t, output, "Daemon: not running")
 }
 
 func TestStatusCmdJSONIncludesDaemonEndpoint(t *testing.T) {

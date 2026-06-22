@@ -89,8 +89,9 @@ func (s *Server) autoDesignStatusForResponse() *storage.AutoDesignStatus {
 		repos, err := s.db.ListRepos()
 		if err == nil {
 			for _, r := range repos {
-				if config.ResolveAutoDesignEnabled(r.RootPath, cfg) ||
-					config.ResolveAutoDesignHookEnabled(r.RootPath, cfg) {
+				repoCfg, _ := config.LoadRepoConfig(r.RootPath)
+				if config.AutoDesignEnabledFromConfig(repoCfg, cfg) ||
+					config.AutoDesignHookEnabledFromConfig(repoCfg, cfg) {
 					enabled = true
 					break
 				}
