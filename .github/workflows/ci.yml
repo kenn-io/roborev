@@ -27,12 +27,22 @@ jobs:
       - name: Build
         run: go build ./...
 
-      - name: Test with race detection (Linux/macOS)
-        if: matrix.os != 'windows-latest'
+      - name: Test with race detection (Linux)
+        if: matrix.os == 'ubuntu-latest'
         run: |
           set -o pipefail
           mkdir -p test-results
-          go test -json -race -shuffle=on -tags integration ./... 2>&1 |
+          go test -json -timeout 30m -race -shuffle=on -tags integration ./... 2>&1 |
+            tee "test-results/${{ matrix.os }}-test.jsonl"
+
+      - name: Test (macOS)
+        if: matrix.os == 'macos-latest'
+        run: |
+          set -o pipefail
+          mkdir -p test-results
+          # Go's race detector can intermittently hang/crash while spawning child
+          # processes on darwin/arm64; Linux keeps the race coverage for CI.
+          go test -json -timeout 30m -shuffle=on -tags integration ./... 2>&1 |
             tee "test-results/${{ matrix.os }}-test.jsonl"
 
       - name: Test (Windows)

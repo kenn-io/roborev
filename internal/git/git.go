@@ -12,26 +12,269 @@ import (
 	"runtime"
 	"slices"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode/utf8"
 
+	gitcmd "go.kenn.io/kit/git/cmd"
+
 	"go.kenn.io/roborev/internal/procutil"
 )
+
+// gitRunner builds git commands through kit, which sets CREATE_NO_WINDOW on
+// Windows so a detached daemon's git children never flash a console.
+//
+// StripEnv removes inherited GIT_* variables (GIT_DIR, GIT_WORK_TREE,
+// GIT_INDEX_FILE, GIT_AUTHOR_*, GIT_CONFIG_*, ...). roborev runs from git hooks
+// whose environment binds git to the triggering repository and index, so a
+// child git invocation with cmd.Dir set elsewhere could otherwise operate on
+// the wrong repository. CreateCommit intentionally uses newGitCommitCmd instead
+// because it must preserve commit identity environment.
+//
+// We deliberately do NOT enable kit's NullGlobalConfig/NoSystemConfig (the
+// gitcmd.New() defaults): the user's ~/.gitconfig and /etc/gitconfig must stay
+// readable so CreateCommit picks up user.name/user.email and
+// GetHooksPath/EnsureAbsoluteHooksPath still see a globally configured
+// core.hooksPath. Stripping the env is enough to prevent inherited-repository
+// pollution without hiding the persistent config. With the global config
+// readable, safe.directory entries are read natively, so forwarding them as
+// command-scope config would only add a redundant subprocess.
+var gitRunner = gitcmd.Runner{StripEnv: true, DisableSafeDirectoryForward: true}
 
 // newGitCmd builds a "git" command that does not open a console window on
 // Windows. All git invocations in this package must go through newGitCmd or
 // newGitCmdContext so a detached daemon's git children never flash a console.
+//
+// The empty dir is intentional: callers set cmd.Dir (or pass "-C") themselves,
+// and because safe.directory forwarding is disabled the runner never uses dir
+// to compute the environment, so threading it here would be dead weight.
 func newGitCmd(args ...string) *exec.Cmd {
-	cmd := exec.Command("git", args...)
-	procutil.HideConsole(cmd)
-	return cmd
+	return gitRunner.Command(context.Background(), "", args...)
 }
 
 func newGitCmdContext(ctx context.Context, args ...string) *exec.Cmd {
-	cmd := exec.CommandContext(ctx, "git", args...)
+	return gitRunner.Command(ctx, "", args...)
+}
+
+// gitLocalEnvKeys matches the local repository environment reported by
+// `git rev-parse --local-env-vars` for current Git releases, plus
+// GIT_INTERNAL_SUPER_PREFIX which Git uses internally for submodule context.
+// These variables can make a git command ignore cmd.Dir or read repository
+// state from the caller's checkout.
+var gitLocalEnvKeys = map[string]struct{}{
+	"GIT_DIR":                          {},
+	"GIT_WORK_TREE":                    {},
+	"GIT_INDEX_FILE":                   {},
+	"GIT_OBJECT_DIRECTORY":             {},
+	"GIT_ALTERNATE_OBJECT_DIRECTORIES": {},
+	"GIT_COMMON_DIR":                   {},
+	"GIT_CONFIG":                       {},
+	"GIT_CONFIG_COUNT":                 {},
+	"GIT_CONFIG_PARAMETERS":            {},
+	"GIT_GRAFT_FILE":                   {},
+	"GIT_IMPLICIT_WORK_TREE":           {},
+	"GIT_INTERNAL_SUPER_PREFIX":        {},
+	"GIT_NAMESPACE":                    {},
+	"GIT_NO_REPLACE_OBJECTS":           {},
+	"GIT_PREFIX":                       {},
+	"GIT_REPLACE_REF_BASE":             {},
+	"GIT_QUARANTINE_PATH":              {},
+	"GIT_SHALLOW_FILE":                 {},
+}
+
+var gitCommandConfigEnvPrefixes = []string{
+	"GIT_CONFIG_KEY_",
+	"GIT_CONFIG_VALUE_",
+	"GIT_CONFIG_SCOPE_",
+}
+
+var gitCommitIdentityConfigKeys = map[string]struct{}{
+	"author.email":    {},
+	"author.name":     {},
+	"committer.email": {},
+	"committer.name":  {},
+	"user.email":      {},
+	"user.name":       {},
+}
+
+type gitConfigEntry struct {
+	key   string
+	value string
+}
+
+func newGitCommitCmd(repoPath string, args ...string) *exec.Cmd {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = repoPath
 	procutil.HideConsole(cmd)
+	cmd.Env = append(filterGitCommitEnv(cmd.Environ()), "GIT_TERMINAL_PROMPT=0")
 	return cmd
+}
+
+func filterGitCommitEnv(env []string) []string {
+	result := make([]string, 0, len(env))
+	for _, entry := range env {
+		key, _, _ := strings.Cut(entry, "=")
+		upper := strings.ToUpper(key)
+		if isGitLocalEnvKey(upper) || isGitCommandConfigEnvKey(upper) {
+			continue
+		}
+		result = append(result, entry)
+	}
+	return appendGitCommitIdentityConfig(result, env)
+}
+
+func isGitLocalEnvKey(upper string) bool {
+	_, ok := gitLocalEnvKeys[upper]
+	return ok
+}
+
+func isGitCommandConfigEnvKey(upper string) bool {
+	for _, prefix := range gitCommandConfigEnvPrefixes {
+		if strings.HasPrefix(upper, prefix) {
+			return true
+		}
+	}
+	return false
+}
+
+func appendGitCommitIdentityConfig(result, env []string) []string {
+	config := gitCommitIdentityConfig(env)
+	for i, entry := range config {
+		result = append(result,
+			fmt.Sprintf("GIT_CONFIG_KEY_%d=%s", i, entry.key),
+			fmt.Sprintf("GIT_CONFIG_VALUE_%d=%s", i, entry.value),
+		)
+	}
+	if len(config) > 0 {
+		result = append(result, fmt.Sprintf("GIT_CONFIG_COUNT=%d", len(config)))
+	}
+	return result
+}
+
+func gitCommitIdentityConfig(env []string) []gitConfigEntry {
+	config := gitCommitIdentityConfigFromCount(env)
+	config = append(config, gitCommitIdentityConfigFromParameters(env)...)
+	return config
+}
+
+func gitCommitIdentityConfigFromCount(env []string) []gitConfigEntry {
+	countValue, ok := envLastValue(env, "GIT_CONFIG_COUNT")
+	if !ok {
+		return nil
+	}
+	count, err := strconv.Atoi(countValue)
+	if err != nil || count <= 0 {
+		return nil
+	}
+
+	var config []gitConfigEntry
+	for i := range count {
+		key, keyOK := envLastValue(env, fmt.Sprintf("GIT_CONFIG_KEY_%d", i))
+		value, valueOK := envLastValue(env, fmt.Sprintf("GIT_CONFIG_VALUE_%d", i))
+		if !keyOK || !valueOK {
+			continue
+		}
+		if _, ok := gitCommitIdentityConfigKeys[strings.ToLower(key)]; !ok {
+			continue
+		}
+		config = append(config, gitConfigEntry{key: key, value: value})
+	}
+	return config
+}
+
+func gitCommitIdentityConfigFromParameters(env []string) []gitConfigEntry {
+	parameters, ok := envLastValue(env, "GIT_CONFIG_PARAMETERS")
+	if !ok {
+		return nil
+	}
+	entries, ok := parseGitConfigParameters(parameters)
+	if !ok {
+		return nil
+	}
+	config := make([]gitConfigEntry, 0, len(entries))
+	for _, entry := range entries {
+		if _, ok := gitCommitIdentityConfigKeys[strings.ToLower(entry.key)]; ok {
+			config = append(config, entry)
+		}
+	}
+	return config
+}
+
+func parseGitConfigParameters(parameters string) ([]gitConfigEntry, bool) {
+	var entries []gitConfigEntry
+	for i := 0; ; {
+		i = skipASCIISpaces(parameters, i)
+		if i == len(parameters) {
+			return entries, true
+		}
+		key, next, ok := parseGitSQToken(parameters, i)
+		if !ok {
+			return nil, false
+		}
+		i = next
+		if i < len(parameters) && parameters[i] == '=' {
+			if i+1 == len(parameters) || isASCIISpace(parameters[i+1]) {
+				entries = append(entries, gitConfigEntry{key: key})
+				i++
+				continue
+			}
+			value, next, ok := parseGitSQToken(parameters, i+1)
+			if !ok {
+				return nil, false
+			}
+			entries = append(entries, gitConfigEntry{key: key, value: value})
+			i = next
+			continue
+		}
+		if cutKey, value, ok := strings.Cut(key, "="); ok {
+			entries = append(entries, gitConfigEntry{key: cutKey, value: value})
+			continue
+		}
+		entries = append(entries, gitConfigEntry{key: key})
+	}
+}
+
+func parseGitSQToken(s string, start int) (string, int, bool) {
+	if start >= len(s) || s[start] != '\'' {
+		return "", start, false
+	}
+	var b strings.Builder
+	for i := start + 1; i < len(s); {
+		if s[i] != '\'' {
+			b.WriteByte(s[i])
+			i++
+			continue
+		}
+		if i+3 < len(s) && s[i+1] == '\\' && s[i+2] == '\'' && s[i+3] == '\'' {
+			b.WriteByte('\'')
+			i += 4
+			continue
+		}
+		return b.String(), i + 1, true
+	}
+	return "", start, false
+}
+
+func skipASCIISpaces(s string, i int) int {
+	for i < len(s) && isASCIISpace(s[i]) {
+		i++
+	}
+	return i
+}
+
+func isASCIISpace(c byte) bool {
+	return c == ' ' || c == '\t' || c == '\n' || c == '\r'
+}
+
+func envLastValue(env []string, key string) (string, bool) {
+	for _, v := range slices.Backward(env) {
+		k, v, ok := strings.Cut(v, "=")
+		if ok && strings.EqualFold(k, key) {
+			return v, true
+		}
+	}
+	return "", false
 }
 
 // normalizeMSYSPath converts MSYS-style paths (e.g., /c/Users/...) to Windows paths (C:\Users\...).
@@ -1643,10 +1886,7 @@ func isHookCausingFailure(repoPath string) bool {
 	if !hasCommitHooks(repoPath) {
 		return false
 	}
-	cmd := newGitCmd(
-		"-C", repoPath, "commit",
-		"--dry-run", "--no-verify", "-m", "probe",
-	)
+	cmd := newGitCommitCmd(repoPath, "commit", "--dry-run", "--no-verify", "-m", "probe")
 	return cmd.Run() == nil
 }
 
@@ -1971,8 +2211,7 @@ func (e *CommitError) Unwrap() error {
 // Returns the SHA of the new commit
 func CreateCommit(repoPath, message string) (string, error) {
 	// Stage all changes (respects .gitignore)
-	cmd := newGitCmd("add", "-A")
-	cmd.Dir = repoPath
+	cmd := newGitCommitCmd(repoPath, "add", "-A")
 	var stderr bytes.Buffer
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {
@@ -1982,8 +2221,7 @@ func CreateCommit(repoPath, message string) (string, error) {
 	}
 
 	// Create commit
-	cmd = newGitCmd("commit", "-m", message)
-	cmd.Dir = repoPath
+	cmd = newGitCommitCmd(repoPath, "commit", "-m", message)
 	stderr.Reset()
 	cmd.Stderr = &stderr
 	if err := cmd.Run(); err != nil {

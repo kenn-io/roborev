@@ -18,7 +18,33 @@ import (
 )
 
 func TestMain(m *testing.M) {
+	if os.Getenv("ROBOREV_GIT_HOOK_PWD_HELPER") == "1" {
+		os.Exit(runGitHookPWDHelper())
+	}
 	os.Exit(testenv.RunIsolatedMain(m))
+}
+
+func runGitHookPWDHelper() int {
+	cwd, err := os.Getwd()
+	if err != nil {
+		_, _ = os.Stderr.WriteString("get cwd: " + err.Error() + "\n")
+		return 1
+	}
+	pwd := os.Getenv("PWD")
+	pwd = cleanHookPWDPath(pwd)
+	cwd = cleanHookPWDPath(cwd)
+	if pwd != cwd {
+		_, _ = os.Stderr.WriteString("PWD mismatch: " + pwd + " != " + cwd + "\n")
+		return 1
+	}
+	return 0
+}
+
+func cleanHookPWDPath(path string) string {
+	if resolved, err := filepath.EvalSymlinks(path); err == nil {
+		path = resolved
+	}
+	return filepath.Clean(path)
 }
 
 type TestRepo struct {
@@ -1827,6 +1853,119 @@ func TestCreateCommitPreCommitHookOutput(t *testing.T) {
 	assert.True(t, commitErr.HookFailed, "expected HookFailed=true for pre-commit hook rejection")
 }
 
+func TestCreateCommitExecutableHookReceivesRepoPWD(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("direct binary hooks without .exe are not portable on Windows")
+	}
+
+	repo := NewTestRepoWithCommit(t)
+	t.Setenv("PWD", t.TempDir())
+	t.Setenv("ROBOREV_GIT_HOOK_PWD_HELPER", "1")
+	installSelfAsHook(t, repo.Dir, "pre-commit")
+
+	repo.WriteFile("pwd.txt", "content")
+
+	sha, err := CreateCommit(repo.Dir, "commit with pwd hook")
+	require.NoError(t, err)
+	assert.Equal(t, sha, repo.HeadSHA())
+}
+
+func installSelfAsHook(t *testing.T, repoDir, name string) {
+	t.Helper()
+	exe, err := os.Executable()
+	require.NoError(t, err)
+	data, err := os.ReadFile(exe)
+	require.NoError(t, err)
+
+	hooksDir := filepath.Join(repoDir, ".git", "hooks")
+	err = os.MkdirAll(hooksDir, 0o755)
+	require.NoError(t, err)
+	err = os.WriteFile(filepath.Join(hooksDir, name), data, 0o755)
+	require.NoError(t, err)
+}
+
+func TestCreateCommitHookFailedProbePreservesEnvOnlyIdentity(t *testing.T) {
+	repo := NewTestRepoWithCommit(t)
+	repo.Run("config", "--unset", "user.name")
+	repo.Run("config", "--unset", "user.email")
+
+	realGit, err := exec.LookPath("git")
+	require.NoError(t, err, "locate real git")
+
+	wrapperDir := t.TempDir()
+	writeGitDryRunIdentityProbeWrapper(t, wrapperDir)
+	t.Setenv("REAL_GIT", realGit)
+	t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+	t.Setenv("HOME", t.TempDir())
+	t.Setenv("USERPROFILE", t.TempDir())
+	t.Setenv("XDG_CONFIG_HOME", t.TempDir())
+	t.Setenv("GIT_AUTHOR_NAME", "Env Author")
+	t.Setenv("GIT_AUTHOR_EMAIL", "env-author@example.com")
+	t.Setenv("GIT_COMMITTER_NAME", "Env Committer")
+	t.Setenv("GIT_COMMITTER_EMAIL", "env-committer@example.com")
+
+	repo.InstallHook("pre-commit",
+		"#!/bin/sh\necho 'blocked by env-only identity hook' >&2\nexit 1\n")
+
+	repo.WriteFile("new.txt", "content")
+
+	_, err = CreateCommit(repo.Dir, "should fail")
+	require.Error(t, err, "expected CreateCommit to fail with pre-commit hook")
+
+	var commitErr *CommitError
+	require.ErrorAs(t, err, &commitErr, "expected CommitError type")
+	assert.True(t, commitErr.HookFailed, "expected HookFailed=true with env-only identity")
+}
+
+func writeGitDryRunIdentityProbeWrapper(t *testing.T, dir string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		path := filepath.Join(dir, "git.bat")
+		script := `@echo off
+setlocal EnableExtensions
+set is_commit=0
+set is_dry_run=0
+for %%A in (%*) do (
+  if "%%~A"=="commit" set is_commit=1
+  if "%%~A"=="--dry-run" set is_dry_run=1
+)
+if "%is_commit%%is_dry_run%"=="11" (
+  if not "%GIT_AUTHOR_NAME%"=="" exit /b 0
+  echo missing env identity in dry-run 1>&2
+  exit /b 1
+)
+"%REAL_GIT%" %*
+`
+		err := os.WriteFile(path, []byte(script), 0o755)
+		require.NoError(t, err)
+		return
+	}
+
+	path := filepath.Join(dir, "git")
+	script := `#!/bin/sh
+is_commit=0
+is_dry_run=0
+for arg do
+	if [ "$arg" = "commit" ]; then
+		is_commit=1
+	fi
+	if [ "$arg" = "--dry-run" ]; then
+		is_dry_run=1
+	fi
+done
+if [ "$is_commit$is_dry_run" = "11" ]; then
+	if [ -n "$GIT_AUTHOR_NAME" ]; then
+		exit 0
+	fi
+	echo "missing env identity in dry-run" >&2
+	exit 1
+fi
+exec "$REAL_GIT" "$@"
+`
+	err := os.WriteFile(path, []byte(script), 0o755)
+	require.NoError(t, err)
+}
+
 func TestCommitErrorHookFailedFalseWhenNothingToCommit(t *testing.T) {
 	repo := NewTestRepoWithCommit(t)
 
@@ -1884,6 +2023,166 @@ func TestCommitErrorHookFailedFalseForGPGSigningFailure(t *testing.T) {
 	var commitErr *CommitError
 	require.ErrorAs(t, err, &commitErr, "expected CommitError type, got: %T", err)
 	assert.False(t, commitErr.HookFailed, "HookFailed should be false for GPG signing failure (no hooks installed)")
+}
+
+func TestCreateCommitPreservesGitIdentityEnvWhileIgnoringRepoEnv(t *testing.T) {
+	target := NewTestRepoWithCommit(t)
+	leaked := NewTestRepoWithCommit(t)
+	leakedHead := leaked.HeadSHA()
+
+	t.Setenv("GIT_DIR", filepath.Join(leaked.Dir, ".git"))
+	t.Setenv("GIT_WORK_TREE", leaked.Dir)
+	t.Setenv("GIT_INDEX_FILE", filepath.Join(leaked.Dir, ".git", "index"))
+	t.Setenv("GIT_IMPLICIT_WORK_TREE", "0")
+	t.Setenv("GIT_AUTHOR_NAME", "Env Author")
+	t.Setenv("GIT_AUTHOR_EMAIL", "env-author@example.com")
+	t.Setenv("GIT_COMMITTER_NAME", "Env Committer")
+	t.Setenv("GIT_COMMITTER_EMAIL", "env-committer@example.com")
+
+	target.WriteFile("created.txt", "content")
+	sha, err := CreateCommit(target.Dir, "commit with env identity")
+	require.NoError(t, err)
+
+	os.Unsetenv("GIT_DIR")
+	os.Unsetenv("GIT_WORK_TREE")
+	os.Unsetenv("GIT_INDEX_FILE")
+	os.Unsetenv("GIT_IMPLICIT_WORK_TREE")
+
+	assert.Equal(t, sha, target.HeadSHA())
+	assert.Equal(t, leakedHead, leaked.HeadSHA(), "leaked repo env must not redirect the commit")
+	assert.Equal(t, "Env Author <env-author@example.com>", target.Run("show", "-s", "--format=%an <%ae>", sha))
+	assert.Equal(t, "Env Committer <env-committer@example.com>", target.Run("show", "-s", "--format=%cn <%ce>", sha))
+}
+
+func TestCreateCommitPreservesGitConfigEnvWhileIgnoringRepoEnv(t *testing.T) {
+	target := NewTestRepoWithCommit(t)
+	leaked := NewTestRepoWithCommit(t)
+	leakedHead := leaked.HeadSHA()
+
+	t.Setenv("GIT_DIR", filepath.Join(leaked.Dir, ".git"))
+	t.Setenv("GIT_WORK_TREE", leaked.Dir)
+	t.Setenv("GIT_INDEX_FILE", filepath.Join(leaked.Dir, ".git", "index"))
+	t.Setenv("GIT_IMPLICIT_WORK_TREE", "0")
+	t.Setenv("GIT_CONFIG_COUNT", "3")
+	t.Setenv("GIT_CONFIG_KEY_0", "core.worktree")
+	t.Setenv("GIT_CONFIG_VALUE_0", leaked.Dir)
+	t.Setenv("GIT_CONFIG_KEY_1", "user.name")
+	t.Setenv("GIT_CONFIG_VALUE_1", "Config Author")
+	t.Setenv("GIT_CONFIG_KEY_2", "user.email")
+	t.Setenv("GIT_CONFIG_VALUE_2", "config-author@example.com")
+
+	target.WriteFile("created.txt", "content")
+	sha, err := CreateCommit(target.Dir, "commit with env config")
+	require.NoError(t, err)
+
+	os.Unsetenv("GIT_DIR")
+	os.Unsetenv("GIT_WORK_TREE")
+	os.Unsetenv("GIT_INDEX_FILE")
+	os.Unsetenv("GIT_IMPLICIT_WORK_TREE")
+
+	assert.Equal(t, sha, target.HeadSHA())
+	assert.Equal(t, leakedHead, leaked.HeadSHA(), "leaked repo env must not redirect the commit")
+	assert.Equal(t, "Config Author <config-author@example.com>", target.Run("show", "-s", "--format=%an <%ae>", sha))
+}
+
+func TestCreateCommitPreservesGitConfigParametersIdentity(t *testing.T) {
+	target := NewTestRepoWithCommit(t)
+	leaked := NewTestRepoWithCommit(t)
+	leakedHead := leaked.HeadSHA()
+
+	t.Setenv("GIT_DIR", filepath.Join(leaked.Dir, ".git"))
+	t.Setenv("GIT_WORK_TREE", leaked.Dir)
+	t.Setenv("GIT_IMPLICIT_WORK_TREE", "0")
+	t.Setenv("GIT_CONFIG_PARAMETERS",
+		"'core.worktree'='"+leaked.Dir+"' 'core.fileMode'= 'color.ui' 'user.name'='Param O'\\''Connor' 'user.email'='param@example.com'")
+
+	target.WriteFile("created.txt", "content")
+	sha, err := CreateCommit(target.Dir, "commit with parameters identity")
+	require.NoError(t, err)
+
+	os.Unsetenv("GIT_DIR")
+	os.Unsetenv("GIT_WORK_TREE")
+	os.Unsetenv("GIT_IMPLICIT_WORK_TREE")
+
+	assert.Equal(t, sha, target.HeadSHA())
+	assert.Equal(t, leakedHead, leaked.HeadSHA(), "leaked repo env and config parameters must not redirect the commit")
+	assert.Equal(t, "Param O'Connor <param@example.com>", target.Run("show", "-s", "--format=%an <%ae>", sha))
+}
+
+func TestCreateCommitPreservesGlobalConfigEnv(t *testing.T) {
+	repo := NewTestRepoWithCommit(t)
+	repo.Run("config", "--unset", "user.name")
+	repo.Run("config", "--unset", "user.email")
+
+	globalCfg := filepath.Join(t.TempDir(), "global.gitconfig")
+	err := os.WriteFile(globalCfg, []byte("[user]\n\tname = Global Author\n\temail = global@example.com\n"), 0o644)
+	require.NoError(t, err)
+	t.Setenv("GIT_CONFIG_GLOBAL", globalCfg)
+	t.Setenv("GIT_CONFIG_NOSYSTEM", "1")
+
+	repo.WriteFile("created.txt", "content")
+	sha, err := CreateCommit(repo.Dir, "commit with global identity")
+	require.NoError(t, err)
+
+	assert.Equal(t, "Global Author <global@example.com>", repo.Run("show", "-s", "--format=%an <%ae>", sha))
+}
+
+func TestFilterGitCommitEnvStripsLocalEnvAndPreservesCommitIdentity(t *testing.T) {
+	assert := assert.New(t)
+	got := filterGitCommitEnv([]string{
+		"PATH=/usr/bin",
+		"GIT_DIR=/leaked/.git",
+		"GIT_WORK_TREE=/leaked",
+		"GIT_INDEX_FILE=/leaked/.git/index",
+		"GIT_IMPLICIT_WORK_TREE=0",
+		"GIT_GRAFT_FILE=/leaked/info/grafts",
+		"GIT_REPLACE_REF_BASE=refs/replace/leaked",
+		"GIT_INTERNAL_SUPER_PREFIX=leaked/",
+		"GIT_SHALLOW_FILE=/leaked/shallow",
+		"GIT_CONFIG_PARAMETERS='core.worktree'='/leaked' 'core.fileMode'= 'color.ui' 'committer.name'='Param Committer' 'committer.email'='param-committer@example.com'",
+		"GIT_CONFIG_COUNT=3",
+		"GIT_CONFIG_KEY_0=core.worktree",
+		"GIT_CONFIG_VALUE_0=/leaked",
+		"GIT_CONFIG_KEY_1=user.name",
+		"GIT_CONFIG_VALUE_1=Config Author",
+		"GIT_CONFIG_KEY_2=user.email",
+		"GIT_CONFIG_VALUE_2=config-author@example.com",
+		"GIT_CONFIG_GLOBAL=/tmp/global.gitconfig",
+		"GIT_CONFIG_NOSYSTEM=1",
+		"GIT_SSH_COMMAND=ssh -i /tmp/key",
+		"GIT_AUTHOR_NAME=Env Author",
+		"GIT_AUTHOR_EMAIL=env-author@example.com",
+		"GIT_COMMITTER_NAME=Env Committer",
+		"GIT_COMMITTER_EMAIL=env-committer@example.com",
+	})
+	joined := strings.Join(got, "\n")
+
+	assert.NotContains(joined, "GIT_DIR=")
+	assert.NotContains(joined, "GIT_WORK_TREE=")
+	assert.NotContains(joined, "GIT_INDEX_FILE=")
+	assert.NotContains(joined, "GIT_IMPLICIT_WORK_TREE=")
+	assert.NotContains(joined, "GIT_GRAFT_FILE=")
+	assert.NotContains(joined, "GIT_REPLACE_REF_BASE=")
+	assert.NotContains(joined, "GIT_INTERNAL_SUPER_PREFIX=")
+	assert.NotContains(joined, "GIT_SHALLOW_FILE=")
+	assert.NotContains(joined, "GIT_CONFIG_PARAMETERS=")
+	assert.NotContains(joined, "core.worktree")
+	assert.Contains(joined, "GIT_AUTHOR_NAME=Env Author")
+	assert.Contains(joined, "GIT_AUTHOR_EMAIL=env-author@example.com")
+	assert.Contains(joined, "GIT_COMMITTER_NAME=Env Committer")
+	assert.Contains(joined, "GIT_COMMITTER_EMAIL=env-committer@example.com")
+	assert.Contains(joined, "GIT_CONFIG_KEY_0=user.name")
+	assert.Contains(joined, "GIT_CONFIG_VALUE_0=Config Author")
+	assert.Contains(joined, "GIT_CONFIG_KEY_1=user.email")
+	assert.Contains(joined, "GIT_CONFIG_VALUE_1=config-author@example.com")
+	assert.Contains(joined, "GIT_CONFIG_KEY_2=committer.name")
+	assert.Contains(joined, "GIT_CONFIG_VALUE_2=Param Committer")
+	assert.Contains(joined, "GIT_CONFIG_KEY_3=committer.email")
+	assert.Contains(joined, "GIT_CONFIG_VALUE_3=param-committer@example.com")
+	assert.Contains(joined, "GIT_CONFIG_COUNT=4")
+	assert.Contains(joined, "GIT_CONFIG_GLOBAL=/tmp/global.gitconfig")
+	assert.Contains(joined, "GIT_CONFIG_NOSYSTEM=1")
+	assert.Contains(joined, "GIT_SSH_COMMAND=ssh -i /tmp/key")
 }
 
 func TestHasCommitHooksDetectsInstalledHooks(t *testing.T) {
