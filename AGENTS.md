@@ -171,6 +171,12 @@ Test conventions:
   - replace `if err != nil { require.NoError(t, err, ...) }` and `if err == nil { ... } else { ... }` with direct `require.Error`/`require.NoError`/`require.NotNil` statements.
   - avoid manual `if` prechecks such as `if got != want` or `if cfg != nil`; convert to direct `assert.Equal`/`assert.NotNil` assertions.
   - remove `assert`/`require` fail helpers and `t.Fatal`/`t.Fatalf`/`t.Error` usage when a direct assertion provides the same check.
+- Shell script tests must exercise observable behavior by running the script
+  against controlled inputs and asserting outputs, side effects, or exit
+  codes. Do not add bash tests that grep shell scripts, workflows, config
+  files, or docs for expected implementation text; those checks are usually
+  tautological and should be replaced with real execution, parser/tool-native
+  validation, or a documented manual release check.
 
 ## Search Shortcuts
 
