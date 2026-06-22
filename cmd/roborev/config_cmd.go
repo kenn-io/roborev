@@ -461,7 +461,7 @@ func setConfigKey(path, key, value string, isGlobal bool) error {
 	if err := config.SetConfigValue(repoCfg, key, value); err != nil {
 		return err
 	}
-	return config.SaveRepoConfigTo(path, repoCfg)
+	return config.SaveRepoConfigToWithExplicitKeys(path, repoCfg, key)
 }
 
 // validateKeyForScope validates a key against the appropriate config scope.

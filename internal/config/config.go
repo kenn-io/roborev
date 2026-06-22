@@ -1240,14 +1240,25 @@ func SaveGlobalTo(path string, cfg *Config) error {
 
 // SaveRepoConfigTo saves a per-repo configuration to a specific path.
 func SaveRepoConfigTo(path string, cfg *RepoConfig) error {
+	return SaveRepoConfigToWithExplicitKeys(path, cfg)
+}
+
+// SaveRepoConfigToWithExplicitKeys saves a per-repo configuration while
+// preserving explicit zero-valued keys named in explicitKeys.
+func SaveRepoConfigToWithExplicitKeys(path string, cfg *RepoConfig, explicitKeys ...string) error {
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
 
+	raw, err := LoadRawTOML(path)
+	if err != nil {
+		return err
+	}
 	data, err := tomlv2.Marshal(cfg)
 	if err != nil {
 		return err
 	}
+	data = filterUnintendedZeroFixCommitMetadata(data, cfg, raw, explicitKeys)
 
 	mode := os.FileMode(0o644)
 	if info, err := os.Stat(path); err == nil {
@@ -1272,6 +1283,41 @@ func SaveRepoConfigTo(path string, cfg *RepoConfig) error {
 		return err
 	}
 	return os.Rename(tmpPath, path)
+}
+
+func filterUnintendedZeroFixCommitMetadata(
+	data []byte,
+	cfg *RepoConfig,
+	raw map[string]any,
+	explicitKeys []string,
+) []byte {
+	explicit := make(map[string]bool, len(explicitKeys))
+	for _, key := range explicitKeys {
+		explicit[key] = true
+	}
+	if cfg.FixCommitAuthor == "" &&
+		!rawKeyPresent(raw, fixCommitAuthorKey) &&
+		!explicit[fixCommitAuthorKey] {
+		data = removeTopLevelTOMLAssignment(data, fixCommitAuthorKey)
+	}
+	if len(cfg.FixCommitCoAuthoredBy) == 0 &&
+		!rawKeyPresent(raw, fixCommitCoAuthorsKey) &&
+		!explicit[fixCommitCoAuthorsKey] {
+		data = removeTopLevelTOMLAssignment(data, fixCommitCoAuthorsKey)
+	}
+	return data
+}
+
+func removeTopLevelTOMLAssignment(data []byte, key string) []byte {
+	lines := strings.SplitAfter(string(data), "\n")
+	var kept strings.Builder
+	for _, line := range lines {
+		if strings.HasPrefix(strings.TrimSpace(line), key+" =") {
+			continue
+		}
+		kept.WriteString(line)
+	}
+	return []byte(kept.String())
 }
 
 // roborevIDPattern validates .roborev-id content.

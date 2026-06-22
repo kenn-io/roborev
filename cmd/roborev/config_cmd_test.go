@@ -11,6 +11,8 @@ import (
 	"github.com/BurntSushi/toml"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/config"
 )
 
 func setupConfigFile(t *testing.T) string {
@@ -408,6 +410,22 @@ func TestSetConfigKeyRepoConfig(t *testing.T) {
 
 	require.NoError(t, setConfigKey(path, "agent", "claude-code", false), "setConfigKey repo failed")
 	assertConfigValue(t, path, "agent", "claude-code")
+}
+
+func TestSetConfigKeyRepoConfigPreservesExplicitEmptyFixCommitMetadata(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, ".roborev.toml")
+
+	require.NoError(t, setConfigKey(path, "fix_commit_author", "", false))
+	require.NoError(t, setConfigKey(path, "fix_commit_co_authored_by", "", false))
+
+	raw := readTOML(t, path)
+	assert.True(t, config.IsKeyInTOMLFile(raw, "fix_commit_author"))
+	assert.True(t, config.IsKeyInTOMLFile(raw, "fix_commit_co_authored_by"))
+	assert.Empty(t, getNestedValue(t, raw, "fix_commit_author"))
+	coAuthors, ok := getNestedValue(t, raw, "fix_commit_co_authored_by").([]any)
+	require.True(t, ok)
+	assert.Empty(t, coAuthors)
 }
 
 func TestSetConfigKeyRepoConfigWritesComments(t *testing.T) {

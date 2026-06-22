@@ -3808,6 +3808,33 @@ func TestResolveFixCommitMetadataFrom(t *testing.T) {
 	}
 }
 
+func TestResolveFixCommitMetadataInheritsGlobalAfterUnrelatedRepoSave(t *testing.T) {
+	testenv.SetDataDir(t)
+
+	repoPath := t.TempDir()
+	globalCfg := DefaultConfig()
+	globalCfg.FixCommitAuthor = "Global User <global@example.com>"
+	globalCfg.FixCommitCoAuthoredBy = []string{"Global Bot <bot@example.com>"}
+	err := SaveGlobal(globalCfg)
+	require.NoError(t, err)
+
+	err = SaveRepoConfigTo(filepath.Join(repoPath, ".roborev.toml"), &RepoConfig{
+		DisplayName: "backend",
+	})
+	require.NoError(t, err)
+	rawRepo, err := LoadRawRepo(repoPath)
+	require.NoError(t, err)
+	assert.False(t, IsKeyInTOMLFile(rawRepo, "fix_commit_author"))
+	assert.False(t, IsKeyInTOMLFile(rawRepo, "fix_commit_co_authored_by"))
+
+	got, err := ResolveFixCommitMetadata(repoPath, globalCfg)
+	require.NoError(t, err)
+	assert.Equal(t, FixCommitMetadata{
+		Author:    "Global User <global@example.com>",
+		CoAuthors: []string{"Global Bot <bot@example.com>"},
+	}, got)
+}
+
 func TestValidateFixCommitIdentity(t *testing.T) {
 	tests := []struct {
 		name    string
