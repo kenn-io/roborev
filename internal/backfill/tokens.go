@@ -65,6 +65,23 @@ func TokenCandidates(jobs []storage.ReviewJob) []storage.ReviewJob {
 	return out
 }
 
+// LogTokenCandidates filters jobs whose per-job logs may contain recoverable
+// token usage. Unlike TokenCandidates, this does not require a session ID or a
+// unique session because the usage event came from the individual job log.
+func LogTokenCandidates(jobs []storage.ReviewJob) []storage.ReviewJob {
+	var out []storage.ReviewJob
+	for _, job := range jobs {
+		if !job.HasViewableOutput() {
+			continue
+		}
+		if !NeedsTokenUsageBackfill(job.TokenUsage) {
+			continue
+		}
+		out = append(out, job)
+	}
+	return out
+}
+
 func MergeTokenUsage(existingJSON string, fetched *tokens.Usage) *tokens.Usage {
 	if fetched == nil {
 		return tokens.ParseJSON(existingJSON)
@@ -104,6 +121,18 @@ func MergeTokenUsage(existingJSON string, fetched *tokens.Usage) *tokens.Usage {
 func NeedsTokenCostBackfill(tokenUsage string) bool {
 	usage := tokens.ParseJSON(tokenUsage)
 	return usage == nil || !usage.HasCost
+}
+
+func NeedsTokenUsageBackfill(tokenUsage string) bool {
+	usage := tokens.ParseJSON(tokenUsage)
+	if usage == nil {
+		return true
+	}
+	hasTokenCounts := usage.InputTokens != 0 ||
+		usage.CachedInputTokens != 0 ||
+		usage.OutputTokens != 0 ||
+		usage.PeakContextTokens != 0
+	return !hasTokenCounts || !usage.HasCost
 }
 
 func ApplyTokenUsage(

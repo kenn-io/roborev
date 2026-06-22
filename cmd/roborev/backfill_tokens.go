@@ -48,7 +48,11 @@ will be skipped.`,
 				return fmt.Errorf("list jobs: %w", err)
 			}
 
-			candidates := backfill.TokenCandidates(jobs)
+			agentsviewCandidates := make(map[int64]bool)
+			for _, job := range backfill.TokenCandidates(jobs) {
+				agentsviewCandidates[job.ID] = true
+			}
+			candidates := backfill.LogTokenCandidates(jobs)
 
 			var total, updated, skipped, failed int
 			for _, job := range candidates {
@@ -63,13 +67,17 @@ will be skipped.`,
 					)
 				}
 
-				ctx, cancel := context.WithTimeout(
-					context.Background(), 15*time.Second,
-				)
-				fetchedUsage, fetchErr := tokens.FetchForSessionWithConfig(
-					ctx, job.SessionID, fetchConfig,
-				)
-				cancel()
+				var fetchedUsage *tokens.Usage
+				var fetchErr error
+				if agentsviewCandidates[job.ID] {
+					ctx, cancel := context.WithTimeout(
+						context.Background(), 15*time.Second,
+					)
+					fetchedUsage, fetchErr = tokens.FetchForSessionWithConfig(
+						ctx, job.SessionID, fetchConfig,
+					)
+					cancel()
+				}
 
 				if fetchErr != nil {
 					log.Printf(
@@ -99,7 +107,11 @@ will be skipped.`,
 				}
 
 				j := tokens.ToJSON(mergedUsage)
-				if err := db.BackfillJobTokenUsage(job.ID, job.SessionID, j); err != nil {
+				sessionID := job.SessionID
+				if sessionID == "" {
+					sessionID = mergedUsage.ThreadID
+				}
+				if err := db.BackfillJobTokenUsage(job.ID, sessionID, j); err != nil {
 					log.Printf(
 						"job %d: save error: %v", job.ID, err,
 					)

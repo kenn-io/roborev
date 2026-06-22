@@ -1,6 +1,7 @@
 package main
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"testing"
@@ -280,4 +281,85 @@ func TestBackfillTokensUsesCodexJobLogWhenAgentsviewMissing(t *testing.T) {
 	assert.Equal(t, int64(3389), usage.OutputTokens)
 	assert.Equal(t, "job_log_turn_completed", usage.UsageSource)
 	assert.Equal(t, "thread-123", usage.ThreadID)
+}
+
+func TestBackfillTokensUsesCodexJobLogsWithoutAgentsviewEligibleSession(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", dataDir)
+	t.Setenv("PATH", t.TempDir())
+
+	db, err := storage.Open(storage.DefaultDBPath())
+	require.NoError(t, err)
+	defer db.Close()
+
+	repo, err := db.GetOrCreateRepo(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	commit, err := db.GetOrCreateCommit(repo.ID, "abc123", "Author", "Subject", time.Now())
+	require.NoError(t, err)
+
+	missingSession := enqueueCompleteJob(t, db, repo.ID, commit.ID, "")
+	sharedSessionA := enqueueCompleteJob(t, db, repo.ID, commit.ID, "shared-session")
+	sharedSessionB := enqueueCompleteJob(t, db, repo.ID, commit.ID, "shared-session")
+
+	writeCodexUsageLog(t, missingSession.ID, "missing-session-thread", 1000, 100, 200)
+	writeCodexUsageLog(t, sharedSessionA.ID, "shared-session", 2000, 200, 300)
+	writeCodexUsageLog(t, sharedSessionB.ID, "shared-session", 3000, 300, 400)
+
+	cmd := backfillTokensCmd()
+	cmd.SetArgs(nil)
+	require.NoError(t, cmd.Execute())
+
+	assertJobUsage := func(jobID int64, threadID string, input, cached, output int64) {
+		updated, err := db.GetJobByID(jobID)
+		require.NoError(t, err)
+		usage := tokens.ParseJSON(updated.TokenUsage)
+		require.NotNil(t, usage)
+		assert.Equal(t, input, usage.InputTokens)
+		assert.Equal(t, cached, usage.CachedInputTokens)
+		assert.Equal(t, output, usage.OutputTokens)
+		assert.Equal(t, threadID, usage.ThreadID)
+		assert.Equal(t, "job_log_turn_completed", usage.UsageSource)
+	}
+	assertJobUsage(missingSession.ID, "missing-session-thread", 1000, 100, 200)
+	assertJobUsage(sharedSessionA.ID, "shared-session", 2000, 200, 300)
+	assertJobUsage(sharedSessionB.ID, "shared-session", 3000, 300, 400)
+
+	updatedMissingSession, err := db.GetJobByID(missingSession.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "missing-session-thread", updatedMissingSession.SessionID)
+}
+
+func enqueueCompleteJob(
+	t *testing.T, db *storage.DB, repoID, commitID int64, sessionID string,
+) *storage.ReviewJob {
+	t.Helper()
+	job, err := db.EnqueueJob(storage.EnqueueOpts{
+		RepoID:    repoID,
+		CommitID:  commitID,
+		GitRef:    "abc123",
+		Agent:     "codex",
+		SessionID: sessionID,
+	})
+	require.NoError(t, err)
+	claimed, err := db.ClaimJob("worker-1")
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	require.Equal(t, job.ID, claimed.ID)
+	require.NoError(t, db.CompleteJob(job.ID, "codex", "prompt", "No issues found."))
+	return job
+}
+
+func writeCodexUsageLog(
+	t *testing.T, jobID int64, threadID string, input, cached, output int64,
+) {
+	t.Helper()
+	logPath := daemon.JobLogPath(jobID)
+	require.NoError(t, os.MkdirAll(filepath.Dir(logPath), 0o700))
+	require.NoError(t, os.WriteFile(logPath, []byte(
+		`{"type":"thread.started","thread_id":"`+threadID+`"}`+"\n"+
+			`{"type":"turn.completed","usage":{"input_tokens":`+
+			fmt.Sprintf("%d", input)+`,"cached_input_tokens":`+
+			fmt.Sprintf("%d", cached)+`,"output_tokens":`+
+			fmt.Sprintf("%d", output)+`}}`+"\n",
+	), 0o600))
 }
