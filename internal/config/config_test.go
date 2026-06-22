@@ -481,6 +481,41 @@ func TestLoadRawRepoWorktreeFallback(t *testing.T) {
 		"explicit key should be detected via the main-checkout fallback")
 }
 
+func TestSaveRepoConfigWorktreePreservesInheritedExplicitFixCommitClears(t *testing.T) {
+	main := t.TempDir()
+	execGit(t, main, "init")
+	execGit(t, main, "config", "user.email", "t@example.com")
+	execGit(t, main, "config", "user.name", "t")
+	writeTestFile(t, main, "base.txt", "base\n")
+	execGit(t, main, "add", ".")
+	execGit(t, main, "commit", "-m", "init")
+
+	writeTestFile(t, main, ".gitignore", ".roborev.toml\n")
+	writeRepoConfigStr(t, main, "fix_commit_author = \"\"\nfix_commit_co_authored_by = []\n")
+
+	wt := filepath.Join(t.TempDir(), "wt")
+	execGit(t, main, "worktree", "add", wt, "HEAD")
+
+	repoCfg, err := LoadRepoConfig(wt)
+	require.NoError(t, err)
+	require.NotNil(t, repoCfg)
+	repoCfg.DisplayName = "worktree"
+	err = SaveRepoConfigToWithExplicitKeys(filepath.Join(wt, ".roborev.toml"), repoCfg, "display_name")
+	require.NoError(t, err)
+
+	rawLocal, err := LoadRawTOML(filepath.Join(wt, ".roborev.toml"))
+	require.NoError(t, err)
+	assert.True(t, IsKeyInTOMLFile(rawLocal, "fix_commit_author"))
+	assert.True(t, IsKeyInTOMLFile(rawLocal, "fix_commit_co_authored_by"))
+
+	got, err := ResolveFixCommitMetadata(wt, &Config{
+		FixCommitAuthor:       "Global User <global@example.com>",
+		FixCommitCoAuthoredBy: []string{"Global Bot <bot@example.com>"},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, FixCommitMetadata{}, got)
+}
+
 func TestResolveJobTimeout(t *testing.T) {
 	tests := []struct {
 		name         string
@@ -3469,6 +3504,21 @@ func TestResolveReuseReviewSessionLookback(t *testing.T) {
 	}
 }
 
+func TestResolveReuseReviewSessionLookbackInheritsGlobalAfterUnrelatedRepoSave(t *testing.T) {
+	dir := t.TempDir()
+	err := SaveRepoConfigTo(filepath.Join(dir, ".roborev.toml"), &RepoConfig{
+		DisplayName: "backend",
+	})
+	require.NoError(t, err)
+
+	rawRepo, err := LoadRawRepo(dir)
+	require.NoError(t, err)
+	assert.False(t, IsKeyInTOMLFile(rawRepo, "reuse_review_session_lookback"))
+
+	got := ResolveReuseReviewSessionLookback(dir, &Config{ReuseReviewSessionLookback: 25})
+	assert.Equal(t, 25, got)
+}
+
 func TestResolvedThrottleInterval(t *testing.T) {
 	tests := []struct {
 		name  string
@@ -3826,6 +3876,12 @@ func TestResolveFixCommitMetadataInheritsGlobalAfterUnrelatedRepoSave(t *testing
 	require.NoError(t, err)
 	assert.False(t, IsKeyInTOMLFile(rawRepo, "fix_commit_author"))
 	assert.False(t, IsKeyInTOMLFile(rawRepo, "fix_commit_co_authored_by"))
+	saved, err := os.ReadFile(filepath.Join(repoPath, ".roborev.toml"))
+	require.NoError(t, err)
+	assert.NotContains(t, string(saved), "fix_commit_author")
+	assert.NotContains(t, string(saved), "fix_commit_co_authored_by")
+	assert.NotContains(t, string(saved), "Author for roborev-owned fix commits")
+	assert.NotContains(t, string(saved), "Co-authored-by trailers")
 
 	got, err := ResolveFixCommitMetadata(repoPath, globalCfg)
 	require.NoError(t, err)

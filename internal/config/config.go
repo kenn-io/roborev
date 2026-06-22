@@ -1250,7 +1250,8 @@ func SaveRepoConfigToWithExplicitKeys(path string, cfg *RepoConfig, explicitKeys
 		return err
 	}
 
-	raw, err := LoadRawTOML(path)
+	repoPath := filepath.Dir(path)
+	raw, err := LoadRawRepo(repoPath)
 	if err != nil {
 		return err
 	}
@@ -1258,7 +1259,7 @@ func SaveRepoConfigToWithExplicitKeys(path string, cfg *RepoConfig, explicitKeys
 	if err != nil {
 		return err
 	}
-	data = filterUnintendedZeroFixCommitMetadata(data, cfg, raw, explicitKeys)
+	data = filterUnintendedZeroRepoConfigKeys(data, cfg, raw, explicitKeys)
 
 	mode := os.FileMode(0o644)
 	if info, err := os.Stat(path); err == nil {
@@ -1285,7 +1286,7 @@ func SaveRepoConfigToWithExplicitKeys(path string, cfg *RepoConfig, explicitKeys
 	return os.Rename(tmpPath, path)
 }
 
-func filterUnintendedZeroFixCommitMetadata(
+func filterUnintendedZeroRepoConfigKeys(
 	data []byte,
 	cfg *RepoConfig,
 	raw map[string]any,
@@ -1305,19 +1306,31 @@ func filterUnintendedZeroFixCommitMetadata(
 		!explicit[fixCommitCoAuthorsKey] {
 		data = removeTopLevelTOMLAssignment(data, fixCommitCoAuthorsKey)
 	}
+	if cfg.ReuseReviewSessionLookback == 0 &&
+		!rawKeyPresent(raw, "reuse_review_session_lookback") &&
+		!explicit["reuse_review_session_lookback"] {
+		data = removeTopLevelTOMLAssignment(data, "reuse_review_session_lookback")
+	}
 	return data
 }
 
 func removeTopLevelTOMLAssignment(data []byte, key string) []byte {
 	lines := strings.SplitAfter(string(data), "\n")
-	var kept strings.Builder
+	kept := make([]string, 0, len(lines))
 	for _, line := range lines {
 		if strings.HasPrefix(strings.TrimSpace(line), key+" =") {
+			for len(kept) > 0 && strings.HasPrefix(strings.TrimSpace(kept[len(kept)-1]), "#") {
+				kept = kept[:len(kept)-1]
+			}
 			continue
 		}
-		kept.WriteString(line)
+		kept = append(kept, line)
 	}
-	return []byte(kept.String())
+	var sb strings.Builder
+	for _, line := range kept {
+		sb.WriteString(line)
+	}
+	return []byte(sb.String())
 }
 
 // roborevIDPattern validates .roborev-id content.
