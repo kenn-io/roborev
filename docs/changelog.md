@@ -5,6 +5,44 @@ description: Release history for roborev
 
 All notable changes to roborev, grouped by minor release.
 
+## 0.59.0
+<small>2026-06-22</small>
+
+**New features**
+
+- Repository-hosted documentation. The roborev.io docs now live in this repository, with guides, command reference, integration docs, troubleshooting, and a local Zensical build/check workflow. See [Docs Maintainer Guide](/development/#documentation).
+- Global review guidelines. Set `review_guidelines` in `~/.roborev/config.toml` to apply shared reviewer instructions across repositories. Repo-level `review_guidelines` are appended after the global text by default; set `review_guidelines_supersede_global = true` in `.roborev.toml` when a repo should replace the global guidance. See [Review Guidelines](/configuration/#review-guidelines).
+- Hook-only auto-design routing. `[auto_design_review] hook_enabled = true` runs the design-review router for post-commit hook reviews without also enabling it for manual reviews or CI. See [Auto Design Review](/configuration/#auto-design-review).
+
+**Improvements**
+
+- `roborev status` is more responsive because it no longer performs slow repository config probes while rendering status.
+- CLI startup is faster because terminal capability probing is no longer imported during startup.
+- CI review retries keep using the agents configured for the PR instead of being derailed by daemon quota cooldowns.
+- Agent quota cooldowns can now be capped with `agent_quota_cooldown`, a global Go-duration config value that defaults to `30m`.
+- CI review worktrees are grouped under repo-named parent directories, making daemon clone/worktree storage easier to inspect.
+- Security review prompts are stricter about reporting only concrete, exploitable issues and avoiding generic low-signal findings.
+- Agent-hook continuation prompts now tell the agent to fix roborev issues and then continue the interrupted task, reducing session derailment.
+- Self-update and install release discovery are more resilient when GitHub API rate limits are hit.
+
+**Bug fixes**
+
+- Hidden Windows console windows for daemon, git, and agent child processes.
+- Fixed Windows summary filtering behavior.
+- Fixed Codex token usage backfill and reporting.
+- Fixed `check-agents` availability checks so configured command overrides such as `codex_cmd` and `claude_code_cmd` are honored.
+- Improved `roborev fix` discovery so it targets failing reviews and follows hook lineage correctly, including branchless and detached-head flows.
+
+**Acknowledgements**
+
+- Thanks to [Wes McKinney](https://github.com/wesm) for repository-hosted docs, faster `status`, lighter CLI startup, capped quota cooldowns, CI retry/worktree improvements, self-update resilience, Windows summary and Codex token fixes, and release/doc maintenance.
+- Thanks to [Marius van Niekerk](https://github.com/mariusvniekerk) for global review guidelines, clearer agent-hook continuation prompts, tighter security review prompts, `roborev fix` discovery improvements, and Windows child-process hardening in git and agent paths.
+- Thanks to [Phillip Cloud](https://github.com/cpcloud) for hook-only auto-design routing.
+- Thanks to [Ewan Dawson](https://github.com/EwanDawson) for fixing `check-agents` availability checks with resolved agent commands.
+- Thanks to [Christophe Dervieux](https://github.com/cderv) for suppressing extra daemon child-process console windows on Windows.
+
+---
+
 ## 0.58
 <small>2026-06-11</small>
 

@@ -341,7 +341,7 @@ roborev insights --json                  # Output as JSON
 | `--wait` | Wait for completion and display result (default: true) |
 | `--json` | Output job info as JSON |
 
-Analyzes failing code reviews to identify recurring patterns and suggest improvements to review guidelines. The command queries completed reviews (focusing on failures) within the time window, includes the current `review_guidelines` from `.roborev.toml` as context, and sends the batch to an agent for structured analysis.
+Analyzes failing code reviews to identify recurring patterns and suggest improvements to review guidelines. The command queries completed reviews (focusing on failures) within the time window, includes the currently resolved `review_guidelines` from global and repo config as context, and sends the batch to an agent for structured analysis.
 
 The agent produces:
 
@@ -349,7 +349,7 @@ The agent produces:
 - Hotspot areas (files/packages with concentrated failures)
 - Noise candidates (findings consistently dismissed without code changes)
 - Guideline gaps (patterns flagged by reviews but not covered by guidelines)
-- Suggested guideline additions (concrete text for `.roborev.toml`)
+- Suggested guideline additions (concrete text for `.roborev.toml` or `~/.roborev/config.toml`)
 
 If no failing reviews match the time window and branch filter, the command exits with a message instead of queuing a job.
 

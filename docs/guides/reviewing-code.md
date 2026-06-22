@@ -168,6 +168,28 @@ review_min_severity = "medium"
 
 The cascade order is: CLI flag > per-repo config > global config. The CLI flag overrides the config value. See [Configuration](/configuration/#per-repository-options).
 
+## Review Guidelines
+
+Use `review_guidelines` to give reviewers durable context about your project or your whole machine:
+
+```toml
+# ~/.roborev/config.toml
+review_guidelines = """
+Prefer concrete, actionable findings.
+Do not flag localhost-only data paths as remote trust boundaries.
+"""
+
+# .roborev.toml
+review_guidelines = """
+This repo has no production database yet.
+Public APIs must keep backward-compatible JSON fields.
+"""
+```
+
+Global guidelines apply to every repo. Repo guidelines are appended after global guidelines by default, so a repo can add local rules without losing shared preferences. Set `review_guidelines_supersede_global = true` in `.roborev.toml` when a repo should replace the global text entirely.
+
+See [Review Guidelines](/configuration/#review-guidelines) for common patterns and precedence details.
+
 ## Specific Commit Ranges
 
 Use `--since` to review commits since a specific point:

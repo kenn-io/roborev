@@ -151,6 +151,7 @@ max_chars = 50000
 | `security_backup_agent` | string | Fallback agent for security reviews |
 | `design_backup_agent` | string | Fallback agent for design reviews |
 | `review_guidelines` | string | Project-specific guidelines for the reviewer |
+| `review_guidelines_supersede_global` | bool | Use repo guidelines instead of appending global `review_guidelines` |
 | `kata_context.mode` | string | Kata task context in review prompts: `off`, `current`, or `open`. See [Kata Integration](#kata-integration) |
 | `kata_context.max_chars` | int | Maximum bytes of Kata issue context to include (default: `50000`) |
 | `max_prompt_size` | int | Maximum prompt size in bytes for this repo (default: 200000) |
@@ -158,12 +159,21 @@ max_chars = 50000
 
 ### Review Guidelines
 
-Use `review_guidelines` to give the AI reviewer project-specific
-context: suppress irrelevant warnings, enforce conventions, or
-describe trust boundaries and architecture so the reviewer doesn't
-flag non-issues:
+Use `review_guidelines` to give the AI reviewer persistent context:
+suppress irrelevant warnings, enforce conventions, or describe trust
+boundaries and architecture so the reviewer doesn't flag non-issues.
+Guidelines can be global, per-repo, or both:
 
 ```toml
+# ~/.roborev/config.toml
+review_guidelines = """
+These rules apply to every repository on this machine.
+Prefer clear error messages and avoid speculative findings.
+"""
+```
+
+```toml
+# .roborev.toml
 review_guidelines = """
 This is a local CLI tool. The daemon runs on localhost and all
 displayed data originates from the user's own filesystem and git
@@ -173,10 +183,18 @@ crosses a trust boundary.
 Performance is critical - flag any O(n^2) or worse algorithms.
 All error messages must be user-friendly.
 """
+
+# Optional: replace global review_guidelines for this repo instead of appending.
+review_guidelines_supersede_global = false
 ```
 
-Guidelines are included in the review prompt, so they shape what the
-reviewer flags and what it ignores. Common uses:
+When both scopes are configured, global guidelines are rendered first and
+repo guidelines are appended after them. Set
+`review_guidelines_supersede_global = true` in `.roborev.toml` when a repo
+needs to replace the global rules entirely.
+
+Guidelines are included in the review prompt for local and daemon review jobs,
+so they shape what the reviewer flags and what it ignores. Common uses:
 
 - **Trust boundaries**: Describe where untrusted data enters the
   system so the reviewer doesn't flag sanitization for trusted paths.
@@ -429,7 +447,9 @@ default_model = "gpt-5.5"  # Default LLM
 default_backup_model = "claude-sonnet-4-20250514"  # Fallback model for backup agent
 server_addr = "127.0.0.1:7373"
 max_workers = 4
-job_timeout = "10m"  # Per-job timeout (default: 10m)
+job_timeout_minutes = 30          # Per-job timeout in minutes
+agent_quota_cooldown = "30m"      # Maximum quota cooldown after agent limits
+review_guidelines = "Global review instructions for every repo."
 hide_closed_by_default = true     # Start TUI with closed/failed/canceled hidden
 auto_filter_repo = true           # Auto-filter TUI to current repo on startup
 auto_filter_branch = true         # Auto-filter TUI to current branch/worktree on startup
@@ -448,10 +468,12 @@ column_borders = true             # Show separators between TUI columns
 | `default_model` | string | agent default | Model to use (format varies by agent) | Yes |
 | `server_addr` | string | 127.0.0.1:7373 | Daemon listen address. Use `unix://` for Unix domain socket (see [Unix Domain Socket](#unix-domain-socket)) | No |
 | `max_workers` | int | 4 | Number of parallel review workers | No |
-| `job_timeout` | duration | 10m | Per-job timeout | Yes |
+| `job_timeout_minutes` | int | 30 | Per-job timeout in minutes | Yes |
+| `agent_quota_cooldown` | string | `30m0s` | Maximum daemon-wide cooldown after an agent quota or session-limit error, as a Go duration such as `10m`, `30m`, or `1h` | Yes |
 | `allow_unsafe_agents` | bool | false | Enable agentic mode globally | Yes |
 | `anthropic_api_key` | string | - | Anthropic API key for Claude Code | Yes |
 | `review_context_count` | int | 3 | Recent reviews to include as context | Yes |
+| `review_guidelines` | string | - | Global reviewer instructions included in review prompts for every repo | Yes |
 | `reuse_review_session` | bool | false | (Experimental) Resume prior agent sessions on the same branch. See [Session Reuse](/guides/reviewing-code/#session-reuse) | Yes |
 | `reuse_review_session_lookback` | int | 0 | Max recent session candidates to consider (0 = unlimited) | Yes |
 | `auto_close_passing_reviews` | bool | false | Automatically close reviews that pass with no findings | Yes |
@@ -806,7 +828,7 @@ Template variables: `{job_id}`, `{repo}`, `{repo_name}`, `{sha}`, `{agent}`, `{v
 
 ## Auto Design Review
 
-Off by default. When enabled, roborev decides per commit whether to dispatch a `--type design` review on top of the normal code review. The router uses cheap heuristics first (path globs, diff size, file count, commit-subject regexes) and falls back to a JSON-schema-constrained classifier for ambiguous cases. The post-commit, `roborev review`, range, and dirty paths all consult the router, as does the CI poller when `design` is not already in the configured panel or review matrix. When the router decides not to run, a skipped row is recorded with a short reason and rendered dimmed in the TUI; PR synthesis includes a one-line `Auto-design-review skipped: <reason>` section.
+Off by default. When enabled, roborev decides per commit whether to dispatch a `--type design` review on top of the normal code review. The router uses cheap heuristics first (path globs, diff size, file count, commit-subject regexes) and falls back to a JSON-schema-constrained classifier for ambiguous cases. With `enabled = true`, the post-commit, `roborev review`, range, and dirty paths all consult the router, as does the CI poller when `design` is not already in the configured panel or review matrix. When the router decides not to run, a skipped row is recorded with a short reason and rendered dimmed in the TUI; PR synthesis includes a one-line `Auto-design-review skipped: <reason>` section.
 
 By default, the TUI queue hides the auto-design-router's classifier jobs (`job_type = classify`) and skipped design rows (`status = skipped`, scoped to `source = auto_design`) so per-commit routing decisions do not crowd out review rows. Decisions are still recorded and counted on the daemon status endpoint. Press `s` in the TUI to toggle visibility for the current session, or set `show_classify_jobs = true` in `~/.roborev/config.toml` to make them visible globally; per-repo `.roborev.toml` can override with a nullable `show_classify_jobs` field (omit to inherit). When viewing a hidden classifier or skipped row, press `l` to see the classifier verdict and `skip_reason` rendered above the (typically empty) log.
 
@@ -819,12 +841,22 @@ Turn it on globally in `~/.roborev/config.toml`:
 enabled = true
 ```
 
-A per-repo `[auto_design_review]` block in `.roborev.toml` overrides the global value. The per-repo `enabled` field is tri-state: omitting it inherits the global setting, `enabled = false` explicitly opts a repo out of a globally-enabled default, and `enabled = true` opts a repo in when the global default is off.
+To run the router only for automatic post-commit hook reviews, use `hook_enabled` instead:
+
+```toml
+[auto_design_review]
+hook_enabled = true
+```
+
+`hook_enabled = true` does not affect manual `roborev review`, dirty/range reviews, or CI. Use `enabled = true` when those entry points should consult the router too.
+
+A per-repo `[auto_design_review]` block in `.roborev.toml` overrides the global values. The per-repo `enabled` and `hook_enabled` fields are tri-state: omitting a field inherits the global setting, `false` explicitly opts a repo out of a globally-enabled default, and `true` opts a repo in when the global default is off.
 
 ```toml
 # .roborev.toml
 [auto_design_review]
 enabled = false   # opt this repo out of a globally-enabled router
+hook_enabled = true  # still allow post-commit hook routing for this repo
 ```
 
 ### Heuristics
@@ -833,6 +865,8 @@ The router checks rules in fixed order: trigger paths, large diff, large file co
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
+| `enabled` | bool | false | Enable auto-design routing for post-commit hooks, manual reviews, dirty/range reviews, and CI |
+| `hook_enabled` | bool | false | Enable auto-design routing only for post-commit hook reviews |
 | `min_diff_lines` | int | 10 | Diffs below this changed-line count are skipped automatically |
 | `large_diff_lines` | int | 500 | Diffs at or above this line count trigger a design review automatically |
 | `large_file_count` | int | 10 | Commits touching at least this many files trigger automatically |

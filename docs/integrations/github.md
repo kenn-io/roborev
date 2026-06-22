@@ -473,7 +473,7 @@ The CI poller tracks retry state per repo, PR number, and HEAD SHA. If any panel
 
 If panel members produced review output but the synthesis agent hits quota or a transient provider failure, roborev now retries the panel instead of posting the degraded raw-member fallback. Genuine synthesis failures still fall back to the available member output because retrying the same broken synthesis setup is unlikely to help.
 
-Deferred retries are rechecked before they run. roborev retries only if the PR is still open and still points at the same HEAD SHA. Closed PRs, stale heads, and repo identity mismatches are retired without posting comments. If a new push arrives while an older panel is active, the older active panel is canceled and superseded by the new HEAD.
+Deferred retries are rechecked before they run. roborev retries only if the PR is still open and still points at the same HEAD SHA. Closed PRs, stale heads, and repo identity mismatches are retired without posting comments. If a new push arrives while an older panel is active, the older active panel is canceled and superseded by the new HEAD. Retry runs preserve the PR's configured agents and review panel; daemon cooldown state can skip an agent during execution, but it does not rewrite the retry's configured review plan.
 
 ## Per-Repo Overrides
 
@@ -755,18 +755,18 @@ model = "claude-opus-4-8"
 
 When an agent hits a hard rate or quota limit, roborev puts that agent into a timed cooldown instead of failing the review immediately.
 
-| Setting | Default | Range |
-|---------|---------|-------|
-| Cooldown duration | 30 minutes | 1 minute to 24 hours |
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `agent_quota_cooldown` | `30m0s` | Maximum daemon-wide cooldown after an agent quota or session-limit error, as a Go duration such as `10m`, `30m`, or `1h` |
 
 During cooldown:
 
 - The agent is skipped for new jobs. CI comments show "skipped (quota)" for that agent instead of "failed".
 - If a backup agent is configured (see [Backup Agents](/configuration/#backup-agents)) and is not also in cooldown, the job is retried with the backup agent automatically.
 - Commit status is set to `success` when all panel members were skipped due to quota. This prevents quota exhaustion from blocking PRs.
-- The cooldown timer resets each time the agent hits a quota error, so persistent overuse keeps the agent paused.
+- The cooldown timer resets each time the agent hits a quota error, but it is capped by `agent_quota_cooldown`. Provider reset hints can shorten the cooldown, not lengthen it beyond your configured cap.
 
-No configuration is needed. Quota detection and cooldown are automatic. The daemon logs cooldown start and end events so you can monitor agent availability.
+No configuration is needed unless you want a different cap. Quota detection and cooldown are automatic. The daemon logs cooldown start and end events so you can monitor agent availability.
 
 ## CI Review (GitHub Actions)
 

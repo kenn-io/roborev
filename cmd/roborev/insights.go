@@ -39,7 +39,7 @@ improvements to review guidelines.
 
 This is an LLM-powered command that:
 1. Queries completed reviews (focusing on failures) from the database
-2. Includes the current review_guidelines from .roborev.toml as context
+2. Includes the currently resolved review_guidelines from global and repo config
 3. Sends the batch to an agent with a structured analysis prompt
 4. Returns actionable recommendations for guideline changes
 
@@ -48,7 +48,7 @@ The agent produces:
 - Hotspot areas (files/packages that concentrate failures)
 - Noise candidates (findings consistently dismissed without code changes)
 - Guideline gaps (patterns flagged by reviews but not in guidelines)
-- Suggested guideline additions (concrete text for .roborev.toml)
+- Suggested guideline additions (concrete text for .roborev.toml or config.toml)
 
 Examples:
   roborev insights                          # Analyze last 30 days of reviews
