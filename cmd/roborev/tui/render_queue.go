@@ -969,8 +969,8 @@ func (m model) jobCells(job storage.ReviewJob) []string {
 }
 
 // jobCostCell renders the stored priced estimate for a row. For a panel parent,
-// it adds cached member costs only when every cached member has a priced cost,
-// avoiding a misleading partial panel total.
+// it adds known member costs as a lower-bound aggregate; unpriced members do not
+// suppress costs from members that did report pricing.
 func (m model) jobCostCell(job storage.ReviewJob) string {
 	total := 0.0
 	hasCost := false
@@ -988,7 +988,8 @@ func (m model) jobCostCell(job storage.ReviewJob) string {
 
 	members := m.panelMembers[job.PanelRunUUID]
 	if len(members) == 0 {
-		if job.PanelSummary != nil && job.PanelSummary.MembersCostComplete {
+		if job.PanelSummary != nil &&
+			(job.PanelSummary.MembersCostComplete || job.PanelSummary.MembersWithCost > 0) {
 			return tokens.Usage{CostUSD: total + job.PanelSummary.MembersCostUSD, HasCost: true}.FormatCost()
 		}
 		if !hasCost {
@@ -1004,14 +1005,15 @@ func (m model) jobCostCell(job storage.ReviewJob) string {
 			if job.PanelSummary != nil && job.PanelSummary.MembersCostComplete {
 				return tokens.Usage{CostUSD: total + job.PanelSummary.MembersCostUSD, HasCost: true}.FormatCost()
 			}
-			if !hasCost {
-				return ""
-			}
-			return tokens.Usage{CostUSD: total, HasCost: true}.FormatCost()
+			continue
 		}
 		memberTotal += tu.CostUSD
+		hasCost = true
 	}
 
+	if !hasCost {
+		return ""
+	}
 	return tokens.Usage{CostUSD: total + memberTotal, HasCost: true}.FormatCost()
 }
 

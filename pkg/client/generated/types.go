@@ -584,6 +584,7 @@ type PanelSummary struct {
 	MembersSucceeded    int64    `json:"members_succeeded"`
 	MembersTerminal     int64    `json:"members_terminal"`
 	MembersTotal        int64    `json:"members_total"`
+	MembersWithCost     *int64   `json:"members_with_cost,omitempty"`
 	PanelRunUUID        string   `json:"panel_run_uuid" validate:"required"`
 }
 

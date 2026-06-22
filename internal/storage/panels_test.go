@@ -460,6 +460,7 @@ func TestGetPanelSummaries(t *testing.T) {
 	assert.Equal(1, sumA.MembersFailed)
 	assert.Equal(0, sumA.MembersCanceled)
 	assert.Equal(1, sumA.MembersSkipped)
+	assert.Equal(3, sumA.MembersWithCost)
 	assert.True(sumA.MembersCostComplete)
 	assert.InDelta(0.40, sumA.MembersCostUSD, 0.000001)
 
@@ -470,6 +471,7 @@ func TestGetPanelSummaries(t *testing.T) {
 	assert.Equal(1, sumB.MembersCanceled)
 	assert.Equal(0, sumB.MembersFailed)
 	assert.Equal(0, sumB.MembersSkipped)
+	assert.Equal(1, sumB.MembersWithCost)
 	assert.False(sumB.MembersCostComplete, "partial member cost is not complete")
 	assert.InDelta(0.20, sumB.MembersCostUSD, 0.000001)
 
@@ -480,6 +482,7 @@ func TestGetPanelSummaries(t *testing.T) {
 	assert.Equal(0, sumC.MembersFailed)
 	assert.Equal(0, sumC.MembersCanceled)
 	assert.Equal(0, sumC.MembersSkipped)
+	assert.Equal(0, sumC.MembersWithCost)
 	assert.False(sumC.MembersCostComplete)
 
 	// A run with no member rows is absent from the map (not a zero-value entry).

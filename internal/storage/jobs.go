@@ -1872,6 +1872,7 @@ type PanelSummary struct {
 	MembersFailed       int     `json:"members_failed"`
 	MembersCanceled     int     `json:"members_canceled"`
 	MembersSkipped      int     `json:"members_skipped"`
+	MembersWithCost     int     `json:"members_with_cost,omitempty"`
 	MembersCostUSD      float64 `json:"members_cost_usd,omitempty"`
 	MembersCostComplete bool    `json:"members_cost_complete,omitempty"`
 }
@@ -1919,6 +1920,7 @@ func (db *DB) GetPanelSummaries(runUUIDs []string) (map[string]PanelSummary, err
 			&membersWithCost, &s.MembersCostUSD); err != nil {
 			return nil, fmt.Errorf("scan panel summary: %w", err)
 		}
+		s.MembersWithCost = membersWithCost
 		s.MembersCostComplete = s.MembersTotal > 0 && membersWithCost == s.MembersTotal
 		out[s.PanelRunUUID] = s
 	}

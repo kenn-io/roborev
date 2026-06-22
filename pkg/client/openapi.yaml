@@ -877,6 +877,9 @@ components:
         members_total:
           format: int64
           type: integer
+        members_with_cost:
+          format: int64
+          type: integer
         panel_run_uuid:
           type: string
       required:

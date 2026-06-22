@@ -811,6 +811,30 @@ func TestTUIQueueCollapsedPanelShowsSummaryCostBeforeExpansion(t *testing.T) {
 	assert.Contains(t, out, "~$0.40", "collapsed parent row uses panel_summary cost before member fetch")
 }
 
+func TestTUIQueueCollapsedPanelShowsPartialSummaryCostBeforeExpansion(t *testing.T) {
+	parent := makeJob(10, withRef("syn"), withStatus(storage.JobStatusDone),
+		withSynthesis("R", storage.PanelSummary{
+			MembersTotal:        2,
+			MembersTerminal:     2,
+			MembersSucceeded:    2,
+			MembersWithCost:     1,
+			MembersCostUSD:      0.35,
+			MembersCostComplete: false,
+		}))
+
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	m.width = 200
+	m.height = 30
+	m.jobs = []storage.ReviewJob{parent}
+	m.panelMembers = map[string][]storage.ReviewJob{}
+	m.selectedIdx = 0
+	m.selectedJobID = parent.ID
+
+	out := stripTestANSI(m.renderQueueView())
+	assert.False(t, m.expandedPanels["R"], "panel remains collapsed")
+	assert.Contains(t, out, "~$0.35", "collapsed parent row shows known member costs even when partial")
+}
+
 func TestTUIQueueCollapsedPanelUsesSummaryCostWhenMemberCacheStale(t *testing.T) {
 	parent := makeJob(10, withRef("syn"), withStatus(storage.JobStatusDone),
 		withSynthesis("R", storage.PanelSummary{
@@ -835,6 +859,27 @@ func TestTUIQueueCollapsedPanelUsesSummaryCostWhenMemberCacheStale(t *testing.T)
 	out := stripTestANSI(m.renderQueueView())
 	assert.False(t, m.expandedPanels["R"], "panel remains collapsed")
 	assert.Contains(t, out, "~$0.40", "complete panel_summary cost wins over stale cached members")
+}
+
+func TestTUIQueueCollapsedPanelShowsPartialCachedMemberCost(t *testing.T) {
+	parent := makeJob(10, withRef("syn"), withStatus(storage.JobStatusDone),
+		withSynthesis("R", storage.PanelSummary{MembersTotal: 2, MembersTerminal: 2, MembersSucceeded: 2}))
+	memberA := makeJob(11, withPanelMember("R", "default", 0), withStatus(storage.JobStatusDone))
+	memberA.TokenUsage = `{"cost_usd":0.10,"has_cost":true}`
+	memberB := makeJob(12, withPanelMember("R", "security", 1), withStatus(storage.JobStatusDone))
+	memberB.TokenUsage = `{"has_cost":false}`
+
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	m.width = 200
+	m.height = 30
+	m.jobs = []storage.ReviewJob{parent}
+	m.panelMembers = map[string][]storage.ReviewJob{"R": {memberA, memberB}}
+	m.selectedIdx = 0
+	m.selectedJobID = parent.ID
+
+	out := stripTestANSI(m.renderQueueView())
+	assert.False(t, m.expandedPanels["R"], "panel remains collapsed")
+	assert.Contains(t, out, "~$0.10", "collapsed parent row shows known cached member costs even when partial")
 }
 
 func TestTUIQueueTableRendersWithinWidth(t *testing.T) {
