@@ -75,36 +75,41 @@ func TestUpdaterCheckForUpdateSkipsNetworkWithFreshCache(t *testing.T) {
 	assert.Equal(t, 0, requests)
 }
 
-func TestUpdaterCheckForUpdateUsesKitGitHubAPIReleaseDiscovery(t *testing.T) {
+func TestUpdaterCheckForUpdateUsesKitConventionalReleaseDiscovery(t *testing.T) {
 	const releaseTag = "v1.3.0"
 	const assetName = "roborev_1.3.0_windows_amd64.zip"
 	const checksum = "abc123def456789012345678901234567890123456789012345678901234abcd"
 
 	apiBaseURL := "https://api.example.test"
-	releaseURL := apiBaseURL + "/repos/roborev-dev/roborev/releases/latest"
-	downloadURL := "https://downloads.example.test/" + assetName
-	checksumsURL := "https://downloads.example.test/SHA256SUMS"
+	ghBaseURL := "https://github.example.test"
+	latestPageURL := ghBaseURL + "/roborev-dev/roborev/releases/latest"
+	tagPageURL := ghBaseURL + "/roborev-dev/roborev/releases/tag/" + releaseTag
+	downloadBase := ghBaseURL + "/roborev-dev/roborev/releases/download/" + releaseTag
+	downloadURL := downloadBase + "/" + assetName
+	checksumsURL := downloadBase + "/SHA256SUMS"
 	seen := []string{}
 
 	updater := NewUpdater(Deps{
 		Client: &http.Client{
 			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 				seen = append(seen, req.Method+" "+req.URL.String())
-				switch req.URL.String() {
-				case releaseURL:
+				switch req.Method + " " + req.URL.String() {
+				case "GET " + latestPageURL:
 					require.Equal(t, http.MethodGet, req.Method)
-					assert.Equal(t, "application/vnd.github.v3+json", req.Header.Get("Accept"))
-					body := fmt.Sprintf(`{
-						"tag_name": %q,
-						"body": "",
-						"assets": [
-							{"name": %q, "size": 42, "browser_download_url": %q},
-							{"name": "SHA256SUMS", "size": 128, "browser_download_url": %q}
-						]
-					}`, releaseTag, assetName, downloadURL, checksumsURL)
-					return newHTTPResponse(http.StatusOK, body), nil
-				case checksumsURL:
+					return newRedirectResponse(http.StatusFound, tagPageURL), nil
+				case "GET " + tagPageURL:
 					require.Equal(t, http.MethodGet, req.Method)
+					resp := newHTTPResponse(http.StatusOK, "release page")
+					resp.Request = req
+					return resp, nil
+				case "HEAD " + downloadURL:
+					resp := newHTTPResponse(http.StatusOK, "")
+					resp.ContentLength = 42
+					return resp, nil
+				case "HEAD " + downloadURL + ".sha256.sig",
+					"HEAD " + downloadURL + ".sig":
+					return newHTTPResponse(http.StatusNotFound, ""), nil
+				case "GET " + checksumsURL:
 					return newHTTPResponse(http.StatusOK, fmt.Sprintf("%s  %s\n", checksum, assetName)), nil
 				default:
 					return nil, fmt.Errorf("unexpected request to %s", req.URL.String())
@@ -117,13 +122,18 @@ func TestUpdaterCheckForUpdateUsesKitGitHubAPIReleaseDiscovery(t *testing.T) {
 		GOARCH:           "amd64",
 		CacheDir:         t.TempDir,
 		GitHubAPIBaseURL: apiBaseURL,
+		GitHubBaseURL:    ghBaseURL,
 	})
 
 	info, err := updater.CheckForUpdate(true)
 	require.NoError(t, err)
 	require.NotNil(t, info)
 	assert.Equal(t, []string{
-		http.MethodGet + " " + releaseURL,
+		http.MethodGet + " " + latestPageURL,
+		http.MethodGet + " " + tagPageURL,
+		http.MethodHead + " " + downloadURL,
+		http.MethodHead + " " + downloadURL + ".sha256.sig",
+		http.MethodHead + " " + downloadURL + ".sig",
 		http.MethodGet + " " + checksumsURL,
 	}, seen)
 	assert.Equal(t, "roborev-dev", info.Owner)
@@ -280,6 +290,8 @@ func TestUpdaterCheckForUpdateSendsTokenToAPIHostOnly(t *testing.T) {
 	const checksum = "abc123def456789012345678901234567890123456789012345678901234abcd"
 
 	apiBaseURL := "https://api.example.test"
+	ghBaseURL := "https://github.example.test"
+	latestPageURL := ghBaseURL + "/roborev-dev/roborev/releases/latest"
 	releaseURL := apiBaseURL + "/repos/roborev-dev/roborev/releases/latest"
 	checksumsURL := "https://downloads.example.test/SHA256SUMS"
 	downloadURL := "https://downloads.example.test/" + assetName
@@ -290,6 +302,9 @@ func TestUpdaterCheckForUpdateSendsTokenToAPIHostOnly(t *testing.T) {
 		Client: &http.Client{
 			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
 				switch req.URL.String() {
+				case latestPageURL:
+					assert.Empty(t, req.Header.Get("Authorization"))
+					return newHTTPResponse(http.StatusNotFound, "not found"), nil
 				case releaseURL:
 					assert.Equal(t, "Bearer primary-token", req.Header.Get("Authorization"))
 					body := fmt.Sprintf(`{
@@ -315,6 +330,7 @@ func TestUpdaterCheckForUpdateSendsTokenToAPIHostOnly(t *testing.T) {
 		GOARCH:           "arm64",
 		CacheDir:         t.TempDir,
 		GitHubAPIBaseURL: apiBaseURL,
+		GitHubBaseURL:    ghBaseURL,
 	})
 
 	info, err := updater.CheckForUpdate(true)

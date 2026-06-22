@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"io"
 	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -26,7 +25,6 @@ const (
 	cacheDuration        = time.Hour
 	checksumsAssetName   = "SHA256SUMS"
 	defaultGitHubBaseURL = "https://github.com"
-	defaultGitHubAPIHost = "api.github.com"
 	maxChecksumsBytes    = 1 << 20
 )
 
@@ -104,60 +102,7 @@ func NewUpdater(deps Deps) *Updater {
 	if deps.GitHubBaseURL == "" {
 		deps.GitHubBaseURL = defaultGitHubBaseURL
 	}
-	if token := githubToken(); token != "" {
-		deps.Client = clientWithAPIAuth(deps.Client, token, apiHost(deps.GitHubAPIBaseURL))
-	}
 	return &Updater{deps: deps}
-}
-
-// githubToken returns an optional GitHub API token from the environment,
-// using the same precedence as the gh CLI.
-func githubToken() string {
-	for _, key := range []string{"GH_TOKEN", "GITHUB_TOKEN"} {
-		if token := os.Getenv(key); token != "" {
-			return token
-		}
-	}
-	return ""
-}
-
-func apiHost(apiBaseURL string) string {
-	if apiBaseURL == "" {
-		return defaultGitHubAPIHost
-	}
-	u, err := url.Parse(apiBaseURL)
-	if err != nil || u.Host == "" {
-		return defaultGitHubAPIHost
-	}
-	return u.Host
-}
-
-// clientWithAPIAuth returns a copy of base whose transport attaches the
-// token to requests for the GitHub API host. Release asset downloads go to
-// other hosts and must stay unauthenticated: GitHub redirects them to
-// pre-signed storage URLs that reject Authorization headers.
-func clientWithAPIAuth(base *http.Client, token, host string) *http.Client {
-	client := *base
-	transport := client.Transport
-	if transport == nil {
-		transport = http.DefaultTransport
-	}
-	client.Transport = &apiAuthTransport{base: transport, token: token, host: host}
-	return &client
-}
-
-type apiAuthTransport struct {
-	base  http.RoundTripper
-	token string
-	host  string
-}
-
-func (t *apiAuthTransport) RoundTrip(req *http.Request) (*http.Response, error) {
-	if strings.EqualFold(req.URL.Host, t.host) && req.Header.Get("Authorization") == "" {
-		req = req.Clone(req.Context())
-		req.Header.Set("Authorization", "Bearer "+t.token)
-	}
-	return t.base.RoundTrip(req)
 }
 
 func defaultUpdater() *Updater {
@@ -388,6 +333,8 @@ func (u *Updater) client() selfupdate.Client {
 		HTTPClient:             u.deps.Client,
 		Clock:                  u.deps.Now,
 		GitHubAPIBaseURL:       u.deps.GitHubAPIBaseURL,
+		GitHubWebBaseURL:       u.deps.GitHubBaseURL,
+		GitHubToken:            selfupdate.EnvironmentGitHubToken(),
 		UserAgent:              "roborev/" + u.deps.Version,
 		CacheFileName:          cacheFileName,
 		CacheDuration:          cacheDuration,
