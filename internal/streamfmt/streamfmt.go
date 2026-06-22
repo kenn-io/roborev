@@ -62,6 +62,7 @@ type Formatter struct {
 	// Tracks opencode tool call IDs that have already been rendered.
 	opencodeRenderedToolIDs map[string]struct{}
 	piRenderedToolIDs       map[string]struct{}
+	piLastAssistantText     string
 	codexCommands           codexCommandTracker
 }
 
@@ -468,7 +469,7 @@ func (f *Formatter) processPiMessageUpdate(
 	if ev == nil || ev.Type != "text_end" {
 		return
 	}
-	f.writeText(SanitizeControlKeepNewlines(ev.Content))
+	f.writePiAssistantText(ev.Content)
 }
 
 func (f *Formatter) processPiMessageEnd(
@@ -487,15 +488,24 @@ func (f *Formatter) processPiMessageEnd(
 			}
 		}
 		if len(parts) > 0 {
-			f.writeText(strings.Join(parts, "\n"))
+			f.writePiAssistantText(strings.Join(parts, "\n"))
 		}
 		return
 	}
 
 	var text string
 	if err := json.Unmarshal(raw, &text); err == nil {
-		f.writeText(text)
+		f.writePiAssistantText(text)
 	}
+}
+
+func (f *Formatter) writePiAssistantText(text string) {
+	text = strings.TrimSpace(SanitizeControlKeepNewlines(text))
+	if text == "" || text == f.piLastAssistantText {
+		return
+	}
+	f.piLastAssistantText = text
+	f.writeText(text)
 }
 
 func (f *Formatter) processPiToolExecution(

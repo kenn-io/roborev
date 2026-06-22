@@ -1035,6 +1035,10 @@ func TestFormatter_PiRendering(t *testing.T) {
 				),
 				eventPiMessageUpdate("text_delta", "", "draft"),
 				eventPiMessageUpdate("text_end", "Final review.\n\nNo issues found.", ""),
+				eventPiMessageEnd("assistant", []anthropicContentBlock{{
+					Type: "text",
+					Text: "Final review.\n\nNo issues found.",
+				}}),
 				`{"type":"turn_end"}`,
 				`{"type":"agent_end"}`,
 			},
@@ -1046,6 +1050,8 @@ func TestFormatter_PiRendering(t *testing.T) {
 			},
 			counts: map[string]int{
 				"Bash   go test ./...": 1,
+				"Final review.":        1,
+				"No issues found.":     1,
 			},
 			notContains: []string{
 				"checking repo",
