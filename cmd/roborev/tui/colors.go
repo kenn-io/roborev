@@ -1,13 +1,11 @@
 package tui
 
 import (
-	"charm.land/lipgloss/v2"
-	"charm.land/lipgloss/v2/compat"
+	"image/color"
+
+	"go.kenn.io/roborev/internal/termstyle"
 )
 
-func adaptiveColor(light, dark string) compat.AdaptiveColor {
-	return compat.AdaptiveColor{
-		Light: lipgloss.Color(light),
-		Dark:  lipgloss.Color(dark),
-	}
+func adaptiveColor(light, dark string) color.Color {
+	return termstyle.AdaptiveColor(light, dark)
 }

@@ -5,6 +5,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"image/color"
 	"io"
 	"os"
 	"strings"
@@ -13,9 +14,10 @@ import (
 	gansi "charm.land/glamour/v2/ansi"
 	"charm.land/glamour/v2/styles"
 	"charm.land/lipgloss/v2"
-	"charm.land/lipgloss/v2/compat"
 	"github.com/muesli/termenv"
 	"golang.org/x/term"
+
+	"go.kenn.io/roborev/internal/termstyle"
 )
 
 // Styles for TTY-mode stream output.
@@ -30,11 +32,8 @@ var (
 				Foreground(adaptiveColor("242", "243")).Italic(true) // Dim italic — thinking indicator
 )
 
-func adaptiveColor(light, dark string) compat.AdaptiveColor {
-	return compat.AdaptiveColor{
-		Light: lipgloss.Color(light),
-		Dark:  lipgloss.Color(dark),
-	}
+func adaptiveColor(light, dark string) color.Color {
+	return termstyle.AdaptiveColor(light, dark)
 }
 
 // Formatter wraps an io.Writer to transform raw NDJSON stream output
@@ -107,6 +106,7 @@ func TerminalWidth(w io.Writer) int {
 func GlamourStyle() gansi.StyleConfig {
 	mode := strings.ToLower(os.Getenv("ROBOREV_COLOR_MODE"))
 	var style gansi.StyleConfig
+	isDark := true
 	switch {
 	case mode == "none" || termenv.EnvNoColor():
 		// Use dark style as base; colors will be stripped by Ascii profile.
@@ -115,12 +115,15 @@ func GlamourStyle() gansi.StyleConfig {
 		style = styles.DarkStyleConfig
 	case mode == "light":
 		style = styles.LightStyleConfig
+		isDark = false
 	default: // "auto" or ""
 		style = styles.LightStyleConfig
-		if termenv.HasDarkBackground() {
+		isDark = termenv.HasDarkBackground()
+		if isDark {
 			style = styles.DarkStyleConfig
 		}
 	}
+	termstyle.SetDarkBackground(isDark)
 	zeroMargin := uint(0)
 	style.Document.Margin = &zeroMargin
 	style.CodeBlock.Margin = &zeroMargin
