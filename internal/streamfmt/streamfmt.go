@@ -61,6 +61,7 @@ type Formatter struct {
 
 	// Tracks opencode tool call IDs that have already been rendered.
 	opencodeRenderedToolIDs map[string]struct{}
+	piRenderedToolIDs       map[string]struct{}
 	codexCommands           codexCommandTracker
 }
 
@@ -213,6 +214,11 @@ type streamEvent struct {
 	Item *codexItem `json:"item,omitempty"`
 	// OpenCode: nested part payload
 	Part json.RawMessage `json:"part,omitempty"`
+	// Pi: message/tool execution events
+	AssistantMessageEvent *piAssistantMessageEvent `json:"assistantMessageEvent,omitempty"`
+	ToolCallID            string                   `json:"toolCallId,omitempty"`
+	PiToolName            string                   `json:"toolName,omitempty"`
+	Args                  json.RawMessage          `json:"args,omitempty"`
 }
 
 // codexItem represents the item field in codex JSONL events.
@@ -232,6 +238,11 @@ type opencodeToolPart struct {
 		Status string                     `json:"status,omitempty"`
 		Input  map[string]json.RawMessage `json:"input,omitempty"`
 	} `json:"state"`
+}
+
+type piAssistantMessageEvent struct {
+	Type    string `json:"type"`
+	Content string `json:"content,omitempty"`
 }
 
 type contentBlock struct {
@@ -329,6 +340,13 @@ func (f *Formatter) processLine(line string) {
 	case "item.started", "item.completed", "item.updated":
 		// Codex format: item events
 		f.processCodexItem(ev.Type, ev.Item)
+	case "message_update":
+		// Pi format: render only completed assistant text.
+		f.processPiMessageUpdate(ev.AssistantMessageEvent)
+	case "tool_execution_start":
+		// Pi format: render each tool call once, at start, so
+		// running logs show progress without replaying result text.
+		f.processPiToolExecution(ev.ToolCallID, ev.PiToolName, ev.Args)
 	case "text", "reasoning", "tool", "tool_use":
 		// Both Gemini and opencode use "tool_use", and opencode
 		// 1.4+ emits "tool_use" where earlier versions used
@@ -344,7 +362,10 @@ func (f *Formatter) processLine(line string) {
 	case "step_start", "step_finish":
 		// OpenCode lifecycle events — suppress
 	case "result", "tool_result", "init",
-		"thread.started", "turn.started", "turn.completed":
+		"thread.started", "turn.started", "turn.completed",
+		"session", "agent_start", "turn_start", "turn_end",
+		"agent_end", "message_start", "message_end",
+		"tool_execution_update", "tool_execution_end":
 		// Suppress lifecycle events
 	default:
 		// Suppress system, user, and other events
@@ -434,6 +455,30 @@ func (f *Formatter) processOpenCodePart(
 	}
 }
 
+func (f *Formatter) processPiMessageUpdate(
+	ev *piAssistantMessageEvent,
+) {
+	if ev == nil || ev.Type != "text_end" {
+		return
+	}
+	f.writeText(SanitizeControlKeepNewlines(ev.Content))
+}
+
+func (f *Formatter) processPiToolExecution(
+	callID, toolName string, args json.RawMessage,
+) {
+	if callID != "" {
+		if f.piRenderedToolIDs == nil {
+			f.piRenderedToolIDs = make(map[string]struct{})
+		}
+		if _, seen := f.piRenderedToolIDs[callID]; seen {
+			return
+		}
+		f.piRenderedToolIDs[callID] = struct{}{}
+	}
+	f.formatToolUse(toolName, args)
+}
+
 // opencodeToolInput returns the raw JSON input map from an opencode
 // tool part, suitable for passing to formatToolUse.
 func (f *Formatter) opencodeToolInput(
@@ -491,7 +536,11 @@ func (f *Formatter) formatToolUse(name string, input json.RawMessage) {
 
 	switch display {
 	case "Read", "Edit", "Write":
-		f.writeTool(display, jsonString(fields["filepath"]))
+		path := jsonString(fields["filepath"])
+		if path == "" {
+			path = jsonString(fields["path"])
+		}
+		f.writeTool(display, path)
 	case "Bash":
 		cmd := jsonString(fields["command"])
 		if len(cmd) > 80 {
