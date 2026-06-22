@@ -20,6 +20,7 @@ type SubagentSpec struct {
 	Reasoning    string `toml:"reasoning"`
 	ReviewType   string `toml:"review_type"`
 	Instructions string `toml:"instructions"`
+	AllowFailure bool   `toml:"allow_failure"`
 }
 
 // PanelSpec is a named set of subagent members plus an optional synthesis
@@ -159,6 +160,7 @@ type ResolvedMember struct {
 	Reasoning    string `json:"reasoning"`
 	ReviewType   string `json:"review_type"`
 	Instructions string `json:"instructions"`
+	AllowFailure bool   `json:"allow_failure,omitempty"`
 }
 
 // SynthesisSpec is the resolved agent/model/reasoning for a panel's synthesis
@@ -334,6 +336,7 @@ func resolveMemberFromConfig(
 		Reasoning:    reasoning,
 		ReviewType:   reviewType,
 		Instructions: spec.Instructions,
+		AllowFailure: spec.AllowFailure,
 	}, nil
 }
 

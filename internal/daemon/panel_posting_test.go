@@ -157,6 +157,21 @@ func TestPanelCommitStatus(t *testing.T) {
 			wantDesc:  "Review complete (1/3 jobs failed)",
 		},
 		{
+			name: "allowed failure with successful sibling is success",
+			members: []storage.BatchReviewResult{
+				member("codex", "review", "done", ""),
+				{
+					Agent:                 "pi",
+					ReviewType:            "security",
+					Status:                "failed",
+					Error:                 "pi host disappeared",
+					PanelMemberConfigJSON: `{"allow_failure":true}`,
+				},
+			},
+			wantState: "success",
+			wantDesc:  "Review complete",
+		},
+		{
 			name: "done plus skip is success with note",
 			members: []storage.BatchReviewResult{
 				member("codex", "review", "done", ""),

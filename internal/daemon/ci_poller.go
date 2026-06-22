@@ -2077,17 +2077,28 @@ func panelCommitStatus(members []storage.BatchReviewResult) (state, desc string)
 	results := toReviewResults(members)
 	completed := 0
 	failedMembers := 0
-	for _, m := range members {
+	quotaSkips := 0
+	timeoutSkips := 0
+	transientSkips := 0
+	for i, m := range members {
+		r := results[i]
 		switch storage.JobStatus(m.Status) {
 		case storage.JobStatusDone:
 			completed++
 		case storage.JobStatusFailed, storage.JobStatusCanceled:
+			if r.AllowFailure {
+				continue
+			}
 			failedMembers++
+			if reviewpkg.IsQuotaFailure(r) {
+				quotaSkips++
+			} else if reviewpkg.IsTimeoutCancellation(r) {
+				timeoutSkips++
+			} else if reviewpkg.IsTransientFailure(r) {
+				transientSkips++
+			}
 		}
 	}
-	quotaSkips := reviewpkg.CountQuotaFailures(results)
-	timeoutSkips := reviewpkg.CountTimeoutCancellations(results)
-	transientSkips := reviewpkg.CountTransientFailures(results)
 	skippedTotal := quotaSkips + timeoutSkips + transientSkips
 	realFailures := max(failedMembers-quotaSkips-timeoutSkips-transientSkips, 0)
 
@@ -3054,14 +3065,21 @@ func toReviewResults(
 func toReviewResult(
 	br storage.BatchReviewResult,
 ) reviewpkg.ReviewResult {
+	var member struct {
+		AllowFailure bool `json:"allow_failure"`
+	}
+	if br.PanelMemberConfigJSON != "" {
+		_ = json.Unmarshal([]byte(br.PanelMemberConfigJSON), &member)
+	}
 	return reviewpkg.ReviewResult{
-		Agent:      br.Agent,
-		ReviewType: br.ReviewType,
-		Output:     br.Output,
-		Status:     br.Status,
-		Error:      br.Error,
-		Skipped:    br.Status == string(storage.JobStatusSkipped),
-		SkipReason: br.SkipReason,
+		Agent:        br.Agent,
+		ReviewType:   br.ReviewType,
+		Output:       br.Output,
+		Status:       br.Status,
+		Error:        br.Error,
+		Skipped:      br.Status == string(storage.JobStatusSkipped),
+		SkipReason:   br.SkipReason,
+		AllowFailure: member.AllowFailure,
 	}
 }
 

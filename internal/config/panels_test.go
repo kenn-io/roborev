@@ -36,6 +36,7 @@ agent = "codex"
 review_type = "security"
 reasoning = "thorough"
 instructions = "Focus on authz."
+allow_failure = true
 
 [review.panels.quick]
 members = ["default"]
@@ -57,6 +58,7 @@ synthesis_model = "gpt-5.5"
 	assert.Equal("security", cfg.Review.Subagents["security"].ReviewType)
 	assert.Equal("thorough", cfg.Review.Subagents["security"].Reasoning)
 	assert.Equal("Focus on authz.", cfg.Review.Subagents["security"].Instructions)
+	assert.True(cfg.Review.Subagents["security"].AllowFailure)
 	assert.Equal([]string{"default", "security"}, cfg.Review.Panels["branch_final"].Members)
 	assert.Equal("codex", cfg.Review.Panels["branch_final"].SynthesisAgent)
 	assert.Equal("gpt-5.5", cfg.Review.Panels["branch_final"].SynthesisModel)
@@ -196,6 +198,7 @@ func TestResolvePanel(t *testing.T) {
 					ReviewType:   "security",
 					Reasoning:    "thorough",
 					Instructions: "Focus on authz.",
+					AllowFailure: true,
 				},
 			},
 			Panels: map[string]PanelSpec{
@@ -232,6 +235,7 @@ func TestResolvePanel(t *testing.T) {
 	assert.Equal("security", members[1].ReviewType)
 	assert.Equal("thorough", members[1].Reasoning)
 	assert.Equal("Focus on authz.", members[1].Instructions)
+	assert.True(members[1].AllowFailure)
 
 	// Synthesis from the panel's explicit fields; reasoning is the fix default.
 	assert.Equal("codex", synth.Agent)

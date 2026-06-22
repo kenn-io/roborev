@@ -21,6 +21,11 @@ type ReviewResult struct {
 	// crashing on missing Output.
 	Skipped    bool
 	SkipReason string
+
+	// AllowFailure means this panel member is allowed to fail without making an
+	// otherwise successful panel fail. It is set from the resolved member config
+	// stored with the job, not from live config.
+	AllowFailure bool
 }
 
 // Result status values for ReviewResult.Status.

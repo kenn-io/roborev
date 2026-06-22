@@ -133,7 +133,7 @@ func allMembersPassed(
 	results []reviewpkg.ReviewResult,
 	succeeded []reviewpkg.ReviewResult,
 ) bool {
-	if len(results) == 0 || len(results) != len(succeeded) {
+	if len(results) == 0 {
 		return false
 	}
 	for _, r := range succeeded {
@@ -141,7 +141,13 @@ func allMembersPassed(
 			return false
 		}
 	}
-	return true
+	ignored := 0
+	for _, r := range results {
+		if r.AllowFailure && (r.Status == reviewpkg.ResultFailed || r.Status == "canceled") {
+			ignored++
+		}
+	}
+	return len(results)-ignored == len(succeeded)
 }
 
 // completeSynthesis stores the synthesis review, guards against the cancel race,

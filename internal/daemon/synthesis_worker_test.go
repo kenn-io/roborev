@@ -91,6 +91,16 @@ func registerNeverCalledAgent(t *testing.T, name string, called *bool) {
 	t.Cleanup(func() { agent.Unregister(name) })
 }
 
+func TestAllMembersPassedIgnoresAllowedFailure(t *testing.T) {
+	results := []reviewpkg.ReviewResult{
+		{Status: reviewpkg.ResultDone, Output: "No issues found."},
+		{Status: reviewpkg.ResultFailed, Error: "pi host disappeared", AllowFailure: true},
+	}
+	succeeded := filterSucceeded(results)
+
+	assert.True(t, allMembersPassed(results, succeeded))
+}
+
 // jobAgentInvoked reads the raw agent_invoked cost-eligibility marker for a job.
 func jobAgentInvoked(t *testing.T, tc *workerTestContext, jobID int64) bool {
 	t.Helper()
