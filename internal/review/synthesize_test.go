@@ -326,6 +326,37 @@ func TestSynthesize_UsesSynthesisEntrypoint(t *testing.T) {
 	assert.NotContains(t, synth.synthPrompt, "Review the code changes in commit")
 }
 
+func TestSynthesize_EmptyAgentAutoSelectsAvailableAgent(t *testing.T) {
+	t.Setenv("PATH", "")
+
+	synth := newSynthesisEntrypointAgent()
+	agent.Register(synth)
+	t.Cleanup(func() { agent.Unregister("synthesis-entrypoint") })
+
+	results := []ReviewResult{
+		{
+			Agent:      "codex",
+			ReviewType: "default",
+			Status:     "done",
+			Output:     "Found issue A",
+		},
+		{
+			Agent:      "codex",
+			ReviewType: "security",
+			Status:     "done",
+			Output:     "Found issue B",
+		},
+	}
+
+	comment, err := Synthesize(context.Background(), results, SynthesizeOpts{
+		GitRef:  "aaa111..bbb222",
+		HeadSHA: "bbb222",
+	})
+	require.NoError(t, err)
+	assertContains(t, comment, "synthesized output")
+	assert.False(t, synth.reviewCalled, "standalone synthesis must not use code-review entrypoint")
+}
+
 func TestSynthesize_PassesGlobalConfigToResolver(t *testing.T) {
 	originalResolver := getAvailableWithConfig
 	t.Cleanup(func() { getAvailableWithConfig = originalResolver })
