@@ -2854,6 +2854,24 @@ func TestResolveCIMatrixMembersUsesPassedRepoConfigForAgentModel(t *testing.T) {
 	assert.Equal(t, "default-branch-model", members[0].Model)
 }
 
+func TestResolveMatrixMemberAgentBlankAgentAutoDetectsAvailableAgent(t *testing.T) {
+	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+	t.Setenv("PATH", "")
+	agent.Register(&agent.FakeAgent{NameStr: "ci-auto-daemon"})
+	t.Cleanup(func() { agent.Unregister("ci-auto-daemon") })
+
+	resolvedAgent, resolvedModel, err := h.Poller.resolveMatrixMemberAgent(
+		h.Repo,
+		nil,
+		h.Cfg,
+		config.AgentReviewType{Agent: "", ReviewType: "default"},
+		"thorough",
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "ci-auto-daemon", resolvedAgent)
+	assert.Empty(t, resolvedModel)
+}
+
 func TestResolveMatrixMemberAgentUsesPassedRepoConfigForACPAvailability(t *testing.T) {
 	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
 	binDir := t.TempDir()

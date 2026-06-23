@@ -237,6 +237,29 @@ func TestRunBatch_WorkflowAwareResolution(t *testing.T) {
 	assert.Equal("security-agent", secResult.Agent, "security type resolved to %q, want %q", secResult.Agent, "security-agent")
 }
 
+func TestRunBatch_BlankCIAgentAutoDetectsAvailableAgent(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+
+	t.Setenv("PATH", "")
+	agent.Register(&agent.FakeAgent{NameStr: "ci-auto-batch"})
+	t.Cleanup(func() { agent.Unregister("ci-auto-batch") })
+
+	cfg := BatchConfig{
+		RepoPath:     t.TempDir(),
+		GitRef:       "abc..def",
+		Agents:       []string{""},
+		ReviewTypes:  []string{"default"},
+		GlobalConfig: config.DefaultConfig(),
+	}
+
+	results := RunBatch(context.Background(), cfg)
+	require.Len(results, 1)
+	assert.Equal("ci-auto-batch", results[0].Agent)
+	assert.Equal(ResultFailed, results[0].Status)
+	assert.Contains(results[0].Error, "build prompt")
+}
+
 func TestRunBatch_WorkflowModelResolution(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

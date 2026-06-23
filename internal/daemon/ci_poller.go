@@ -690,12 +690,19 @@ func (p *CIPoller) resolveMatrixMemberAgent(
 		return "", "", fmt.Errorf("resolve workflow config: %w", err)
 	}
 	resolvedAgent := resolution.PreferredAgent
+	autoDetectAgent := strings.TrimSpace(entry.Agent) == "" && p.agentResolverFn == nil
 	if p.agentResolverFn != nil {
 		name, err := p.agentResolverFn(resolvedAgent)
 		if err != nil {
 			return "", "", fmt.Errorf("%w for type=%s: %w", errNoCIAgent, entry.ReviewType, err)
 		}
 		resolvedAgent = name
+	} else if autoDetectAgent {
+		resolved, err := agent.GetAvailableWithConfigFromConfig(repoCfg, "", cfg)
+		if err != nil {
+			return "", "", fmt.Errorf("%w for type=%s: %w", errNoCIAgent, entry.ReviewType, err)
+		}
+		resolvedAgent = resolved.Name()
 	} else if resolved, err := agent.GetPreferredOrBackupWithConfigFromConfig(
 		repoCfg, resolvedAgent, cfg, resolution.BackupAgent,
 	); err != nil {
