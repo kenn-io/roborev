@@ -44,8 +44,13 @@ func completeMember(t *testing.T, tc *workerTestContext, jobID int64, ag, output
 // failMember drives a specific member to terminal failure.
 func failMember(t *testing.T, tc *workerTestContext, jobID int64) {
 	t.Helper()
+	failMemberWithError(t, tc, jobID, "boom")
+}
+
+func failMemberWithError(t *testing.T, tc *workerTestContext, jobID int64, errMsg string) {
+	t.Helper()
 	markMemberRunning(t, tc, jobID)
-	ok, err := tc.DB.FailJob(jobID, testWorkerID, "boom")
+	ok, err := tc.DB.FailJob(jobID, testWorkerID, errMsg)
 	require.NoError(t, err)
 	require.True(t, ok, "FailJob should mark the running member failed")
 }
@@ -431,6 +436,36 @@ func TestSynthesisAllFailed(t *testing.T) {
 	assert.Contains(review.Output, "Review Failed")
 	assert.Contains(review.Output, "All review jobs in this batch failed")
 	assert.False(synthCalled, "no agent should run when every member failed")
+}
+
+func TestSynthesisAllQuotaSkippedDoesNotStoreFailReview(t *testing.T) {
+	assert := assert.New(t)
+	tc := newWorkerTestContext(t, 1)
+
+	const memberAgent = "panel-all-quota-member"
+	registerPassingAgent(t, memberAgent)
+
+	var synthCalled bool
+	const synthAgent = "synth-all-quota"
+	registerNeverCalledAgent(t, synthAgent, &synthCalled)
+
+	runUUID, members, _ := enqueuePanelRun(t, tc, "all-quota-panel", []memberSpec{
+		{name: "m0", agent: memberAgent},
+		{name: "m1", agent: memberAgent},
+	})
+	setSynthesisAgent(t, tc, runUUID, synthAgent)
+	for _, m := range members {
+		failMemberWithError(t, tc, m.ID, reviewpkg.QuotaErrorPrefix+"agent quota exhausted")
+	}
+
+	synth := releaseAndClaimSynthesis(t, tc, runUUID)
+	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+
+	got := tc.assertJobStatus(t, synth.ID, storage.JobStatusFailed)
+	assert.Contains(got.Error, reviewpkg.QuotaErrorPrefix)
+	_, err := tc.DB.GetReviewByJobID(synth.ID)
+	require.Error(t, err, "all-quota synthesis must not store a verdict-bearing review")
+	assert.False(synthCalled, "no agent should run when every member was skipped")
 }
 
 func TestSynthesisSingleSuccessPassthrough(t *testing.T) {

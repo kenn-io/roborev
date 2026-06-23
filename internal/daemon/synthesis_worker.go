@@ -41,6 +41,10 @@ func (wp *WorkerPool) processSynthesisJob(
 
 	switch len(succeeded) {
 	case 0:
+		if errMsg, ok := allAvailabilitySkippedFailure(results); ok {
+			wp.failSynthesisWithoutReview(workerID, job, errMsg)
+			return
+		}
 		// Every member failed — emit a durable fail review with no agent call.
 		// The comment renders the head SHA (FormatAllFailedComment short-SHAs its
 		// arg), so pass the head side of the frozen mergeBase..headSHA range.
@@ -69,6 +73,26 @@ func (wp *WorkerPool) processSynthesisJob(
 		// Two or more succeeded — combine and deduplicate via one agent call.
 		wp.synthesizeSucceededResults(ctx, workerID, job, succeeded)
 	}
+}
+
+func allAvailabilitySkippedFailure(results []reviewpkg.ReviewResult) (string, bool) {
+	if len(results) == 0 {
+		return "", false
+	}
+	first := ""
+	for _, r := range results {
+		if reviewpkg.IsQuotaFailure(r) || reviewpkg.IsTransientFailure(r) {
+			if first == "" {
+				first = r.Error
+			}
+			continue
+		}
+		return "", false
+	}
+	if first == "" {
+		first = reviewpkg.OutageError("all review agents unavailable")
+	}
+	return first, true
 }
 
 func singleSuccessCanPassthrough(minSeverity string) bool {
@@ -148,6 +172,22 @@ func allMembersPassed(
 		}
 	}
 	return len(results)-ignored == len(succeeded)
+}
+
+func (wp *WorkerPool) failSynthesisWithoutReview(workerID string, job *storage.ReviewJob, errorMsg string) {
+	if updated, err := wp.db.FailJob(job.ID, workerID, errorMsg); err != nil {
+		log.Printf("[%s] Error failing skipped synthesis job %d: %v", workerID, job.ID, err)
+	} else if updated {
+		log.Printf("[%s] Synthesis job %d skipped because all panel members were unavailable",
+			workerID, job.ID)
+		wp.broadcastFailed(job, job.Agent, errorMsg)
+		if wp.errorLog != nil {
+			wp.errorLog.LogError("worker",
+				fmt.Sprintf("synthesis job %d skipped: %s", job.ID, errorMsg),
+				job.ID)
+		}
+		wp.logJobFailed(job.ID, workerID, job.Agent, errorMsg)
+	}
 }
 
 // completeSynthesis stores the synthesis review, guards against the cancel race,
