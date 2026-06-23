@@ -716,7 +716,7 @@ func resolveRerunModelProvider(job *storage.ReviewJob, cfg *config.Config) (stri
 }
 
 func validateRerunAgent(repoPath string, agentName string, cfg *config.Config) error {
-	_, err := agent.GetAvailableWithConfig(repoPath, agentName, cfg)
+	_, err := agent.GetPreferredOrBackupWithConfig(repoPath, agentName, cfg)
 	if err != nil {
 		var unknownErr *agent.UnknownAgentError
 		if errors.As(err, &unknownErr) {
@@ -1941,7 +1941,7 @@ func (s *Server) resolveSingleAgent(
 		return "", "", out
 	}
 	agentName := resolution.PreferredAgent
-	resolved, err := agent.GetAvailableWithConfig(
+	resolved, err := agent.GetPreferredOrBackupWithConfig(
 		in.resolutionPath, agentName, in.cfg, resolution.BackupAgent,
 	)
 	if err != nil {
@@ -2383,7 +2383,7 @@ func (s *Server) humaFixJob(
 		)
 	}
 	agentName := resolution.PreferredAgent
-	if resolved, err := agent.GetAvailableWithConfig(
+	if resolved, err := agent.GetPreferredOrBackupWithConfig(
 		resolutionPath, agentName, cfg, resolution.BackupAgent,
 	); err != nil {
 		var unknownErr *agent.UnknownAgentError

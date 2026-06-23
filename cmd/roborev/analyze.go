@@ -802,7 +802,7 @@ func runFixAgent(cmd *cobra.Command, repoPath, agentName, model, reasoning, prom
 	}
 	agentName = resolution.PreferredAgent
 
-	a, err := agent.GetAvailableWithConfig(
+	a, err := agent.GetPreferredOrBackupWithConfig(
 		repoPath, agentName, cfg, resolution.BackupAgent,
 	)
 	if err != nil {

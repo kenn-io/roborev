@@ -1262,7 +1262,7 @@ func verifyRepoState(
 }
 
 func selectRefineAgent(repoPath string, cfg *config.Config, resolvedAgent string, reasoningLevel agent.ReasoningLevel, backups ...string) (agent.Agent, error) {
-	baseAgent, err := agent.GetAvailableWithConfig(repoPath, resolvedAgent, cfg, backups...)
+	baseAgent, err := agent.GetPreferredOrBackupWithConfig(repoPath, resolvedAgent, cfg, backups...)
 	if err != nil {
 		return nil, err
 	}

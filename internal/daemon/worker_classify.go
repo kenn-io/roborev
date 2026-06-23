@@ -232,8 +232,8 @@ func (wp *WorkerPool) applyClassifyVerdict(workerID string, job *storage.ReviewJ
 
 // resolveDesignFollowUp returns the (agent, model) pair to persist on a
 // promoted design review. Resolves to an *installed* agent via
-// agent.GetAvailableWithConfig so the worker that claims the promoted
-// row next can actually run it.
+// preferred-or-backup resolution so the worker that claims the promoted row
+// next can actually run it without using unrelated fallback agents.
 func (wp *WorkerPool) resolveDesignFollowUp(repoPath string) (string, string) {
 	cfg := wp.cfgGetter.Config()
 	resolution, err := agent.ResolveWorkflowConfig(
@@ -242,7 +242,7 @@ func (wp *WorkerPool) resolveDesignFollowUp(repoPath string) (string, string) {
 		return config.ResolveAgent("", repoPath, cfg), ""
 	}
 	primary := resolution.PreferredAgent
-	chosen, err := agent.GetAvailableWithConfig(repoPath, primary, cfg, resolution.BackupAgent)
+	chosen, err := agent.GetPreferredOrBackupWithConfig(repoPath, primary, cfg, resolution.BackupAgent)
 	if err != nil {
 		return primary, resolution.ModelForSelectedAgent(primary, "")
 	}

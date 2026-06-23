@@ -1,7 +1,9 @@
 package agent
 
 import (
+	"fmt"
 	"os/exec"
+	"sort"
 	"strings"
 
 	"go.kenn.io/roborev/internal/config"
@@ -133,6 +135,94 @@ func isAvailableWithConfig(name string, cfg *config.Config) bool {
 	}
 	// Fall back to the default (hardcoded) command.
 	return firstAvailableCommand(ca) != ""
+}
+
+// GetPreferredOrBackupWithConfig resolves an available workflow agent while
+// honoring runtime ACP config and command overrides. Unlike GetAvailable, it is
+// strict: it only considers the preferred agent and explicitly configured
+// backups, never the package-wide hardcoded fallback chain.
+func GetPreferredOrBackupWithConfig(
+	repoPath string,
+	preferred string,
+	cfg *config.Config,
+	backups ...string,
+) (Agent, error) {
+	var repoCfg *config.RepoConfig
+	if strings.TrimSpace(repoPath) != "" {
+		repoCfg, _ = config.LoadRepoConfig(repoPath)
+	}
+	return GetPreferredOrBackupWithConfigFromConfig(
+		repoCfg, preferred, cfg, backups...,
+	)
+}
+
+// GetPreferredOrBackupWithConfigFromConfig is the config-taking core of
+// GetPreferredOrBackupWithConfig; it never reads repo config from disk.
+func GetPreferredOrBackupWithConfigFromConfig(
+	repoCfg *config.RepoConfig,
+	preferred string,
+	cfg *config.Config,
+	backups ...string,
+) (Agent, error) {
+	rawPreferred := strings.TrimSpace(preferred)
+	preferred = resolveAlias(rawPreferred)
+
+	if isConfiguredACPAgentNameFromConfig(rawPreferred, cfg, repoCfg) {
+		acpAgent := configuredACPAgentFromConfig(repoCfg, cfg)
+		if _, err := exec.LookPath(acpAgent.CommandName()); err == nil {
+			return acpAgent, nil
+		}
+		if canonicalACP, err := Get(defaultACPName); err == nil {
+			if commandAgent, ok := canonicalACP.(CommandAgent); !ok {
+				return canonicalACP, nil
+			} else if _, err := exec.LookPath(commandAgent.CommandName()); err == nil {
+				return canonicalACP, nil
+			}
+		}
+		if backup, ok := resolveAvailableBackupWithConfig("", backups, repoCfg, cfg); ok {
+			return backup, nil
+		}
+		return nil, unavailablePreferredBackupError(preferred, backups)
+	}
+
+	if preferred != "" {
+		registryMu.RLock()
+		_, knownAgent := registry[preferred]
+		registryMu.RUnlock()
+		if !knownAgent {
+			known := Available()
+			sort.Strings(known)
+			return nil, &UnknownAgentError{Name: preferred, Known: known}
+		}
+		if isAvailableWithConfig(preferred, cfg) {
+			a, _ := Get(preferred)
+			return applyAvailableCommand(a, cfg), nil
+		}
+	}
+
+	if backup, ok := resolveAvailableBackupWithConfig(preferred, backups, repoCfg, cfg); ok {
+		return backup, nil
+	}
+
+	return nil, unavailablePreferredBackupError(preferred, backups)
+}
+
+func unavailablePreferredBackupError(preferred string, backups []string) error {
+	return fmt.Errorf(
+		"no configured agent available (preferred: %q, backups: %s)\nYou may need to run 'roborev daemon restart' from a shell that has access to your agents",
+		preferred,
+		strings.Join(nonEmptyResolvedAgentNames(backups), ", "),
+	)
+}
+
+func nonEmptyResolvedAgentNames(names []string) []string {
+	out := make([]string, 0, len(names))
+	for _, name := range names {
+		if s := strings.TrimSpace(name); s != "" {
+			out = append(out, resolveAlias(s))
+		}
+	}
+	return out
 }
 
 // GetAvailableWithConfig resolves an available agent while honoring runtime ACP config.

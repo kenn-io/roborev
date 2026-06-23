@@ -658,7 +658,7 @@ func (p *CIPoller) resolveCIPanelMemberExecution(
 			return "", "", fmt.Errorf("%w for type=%s: %w", errNoCIAgent, member.ReviewType, err)
 		}
 		resolvedAgent = name
-	} else if resolved, err := agent.GetAvailableWithConfigFromConfig(
+	} else if resolved, err := agent.GetPreferredOrBackupWithConfigFromConfig(
 		repoCfg, resolvedAgent, cfg, resolution.BackupAgent,
 	); err != nil {
 		return "", "", fmt.Errorf("%w for type=%s: %w", errNoCIAgent, member.ReviewType, err)
@@ -696,7 +696,7 @@ func (p *CIPoller) resolveMatrixMemberAgent(
 			return "", "", fmt.Errorf("%w for type=%s: %w", errNoCIAgent, entry.ReviewType, err)
 		}
 		resolvedAgent = name
-	} else if resolved, err := agent.GetAvailableWithConfigFromConfig(
+	} else if resolved, err := agent.GetPreferredOrBackupWithConfigFromConfig(
 		repoCfg, resolvedAgent, cfg, resolution.BackupAgent,
 	); err != nil {
 		return "", "", fmt.Errorf("%w for type=%s: %w", errNoCIAgent, entry.ReviewType, err)
@@ -823,7 +823,7 @@ func resolveCIAutoDesignAgent(repoCfg *config.RepoConfig, cfg *config.Config) (s
 		}
 		return designAgent, designModel
 	}
-	chosen, err := agent.GetAvailableWithConfigFromConfig(
+	chosen, err := agent.GetPreferredOrBackupWithConfigFromConfig(
 		repoCfg, resolution.PreferredAgent, cfg, resolution.BackupAgent,
 	)
 	if err != nil {

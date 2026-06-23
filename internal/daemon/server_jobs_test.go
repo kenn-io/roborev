@@ -1965,6 +1965,7 @@ func TestHandleEnqueueAgentAvailability(t *testing.T) {
 		name          string
 		requestAgent  string
 		defaultAgent  string
+		backupAgent   string
 		mockBinaries  []string // binary names to place in PATH
 		expectedAgent string   // expected agent stored in job
 		expectedCode  int      // expected HTTP status code
@@ -1977,17 +1978,23 @@ func TestHandleEnqueueAgentAvailability(t *testing.T) {
 			expectedCode:  http.StatusCreated,
 		},
 		{
-			name:          "unavailable codex falls back to claude-code",
-			requestAgent:  "codex",
-			mockBinaries:  []string{"claude"},
-			expectedAgent: "claude-code",
-			expectedCode:  http.StatusCreated,
+			name:         "unavailable explicit codex without backup returns 503",
+			requestAgent: "codex",
+			mockBinaries: []string{"claude"},
+			expectedCode: http.StatusServiceUnavailable,
 		},
 		{
-			name:          "default agent falls back when codex not installed",
+			name:         "default agent without backup returns 503 when unavailable",
+			requestAgent: "",
+			mockBinaries: []string{"claude"},
+			expectedCode: http.StatusServiceUnavailable,
+		},
+		{
+			name:          "configured backup used when default agent unavailable",
 			requestAgent:  "",
-			mockBinaries:  []string{"claude"},
-			expectedAgent: "claude-code",
+			backupAgent:   "gemini",
+			mockBinaries:  []string{"gemini"},
+			expectedAgent: "gemini",
 			expectedCode:  http.StatusCreated,
 		},
 		{
@@ -2013,11 +2020,10 @@ func TestHandleEnqueueAgentAvailability(t *testing.T) {
 			expectedCode:  http.StatusCreated,
 		},
 		{
-			name:          "default falls back to kilo when only kilo available",
-			requestAgent:  "",
-			mockBinaries:  []string{"kilo"},
-			expectedAgent: "kilo",
-			expectedCode:  http.StatusCreated,
+			name:         "default does not use hardcoded fallback when only kilo available",
+			requestAgent: "",
+			mockBinaries: []string{"kilo"},
+			expectedCode: http.StatusServiceUnavailable,
 		},
 		{
 			name:         "no agents available returns 503",
@@ -2039,6 +2045,9 @@ func TestHandleEnqueueAgentAvailability(t *testing.T) {
 			server, _, _ := newTestServer(t)
 			if tt.defaultAgent != "" {
 				server.configWatcher.Config().DefaultAgent = tt.defaultAgent
+			}
+			if tt.backupAgent != "" {
+				server.configWatcher.Config().DefaultBackupAgent = tt.backupAgent
 			}
 
 			// Isolate PATH: only mock binaries + git (no real agent CLIs)
@@ -2696,7 +2705,7 @@ func TestHandleEnqueueAgentOverrideModel(t *testing.T) {
 	}
 }
 
-func TestHandleEnqueueFallbackAgentUsesDefaultModelForActualAgent(t *testing.T) {
+func TestHandleEnqueueBackupAgentUsesBackupModel(t *testing.T) {
 	gitPath, err := exec.LookPath("git")
 	if err != nil {
 		t.Skip("git not installed")
@@ -2737,6 +2746,8 @@ func TestHandleEnqueueFallbackAgentUsesDefaultModelForActualAgent(t *testing.T) 
 	cfg.DefaultAgent = "claude-code"
 	cfg.DefaultModel = "gpt-5.4"
 	cfg.ReviewAgent = "codex"
+	cfg.ReviewBackupAgent = "claude-code"
+	cfg.ReviewBackupModel = "backup-sonnet"
 	server := NewServer(db, cfg, "")
 
 	reqData := EnqueueRequest{
@@ -2763,10 +2774,10 @@ func TestHandleEnqueueFallbackAgentUsesDefaultModelForActualAgent(t *testing.T) 
 			return false
 		}, "agent = %q, want %q", job.Agent, "claude-code")
 	}
-	if job.Model != "gpt-5.4" {
+	if job.Model != "backup-sonnet" {
 		require.Condition(t, func() bool {
 			return false
-		}, "model = %q, want %q", job.Model, "gpt-5.4")
+		}, "model = %q, want %q", job.Model, "backup-sonnet")
 	}
 }
 

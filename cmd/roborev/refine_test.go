@@ -150,12 +150,12 @@ func (m *mockDaemonClient) WithJob(id int64, gitRef string, status storage.JobSt
 
 var _ daemon.Client = (*mockDaemonClient)(nil)
 
-func TestSelectRefineAgentCodexFallback(t *testing.T) {
+func TestSelectRefineAgentUnavailableWithoutBackupFails(t *testing.T) {
 	t.Setenv("PATH", "")
 
 	_, err := selectRefineAgent("", nil, "codex", agent.ReasoningFast, "")
 	require.Error(t, err, "expected error when no agents are available")
-	if !strings.Contains(err.Error(), "no agents available") {
+	if !strings.Contains(err.Error(), "no configured agent available") {
 		require.NoError(t, err)
 	}
 }
@@ -260,10 +260,10 @@ func TestSelectRefineAgentCodexACPConfigAliasUsesACPResolution(t *testing.T) {
 	assert.Equal(t, "acp-agent", acpAgent.CommandName())
 }
 
-func TestSelectRefineAgentCodexFallbackUsesRequestedReasoning(t *testing.T) {
+func TestSelectRefineAgentBackupUsesRequestedReasoning(t *testing.T) {
 	t.Cleanup(testutil.MockExecutableIsolated(t, "codex", 0))
 
-	selected, err := selectRefineAgent("", nil, "gemini", agent.ReasoningThorough, "")
+	selected, err := selectRefineAgent("", nil, "gemini", agent.ReasoningThorough, "codex")
 	require.NoError(t, err, "selectRefineAgent failed: %v")
 
 	codexAgent, ok := selected.(*agent.CodexAgent)

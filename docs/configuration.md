@@ -146,7 +146,7 @@ max_chars = 50000
 | `design_agent_<level>` | string | Agent for design reviews at specific reasoning level |
 | `design_model` | string | Model for design reviews |
 | `design_model_<level>` | string | Model for design reviews at specific reasoning level |
-| `backup_agent` | string | Fallback agent if primary fails |
+| `backup_agent` | string | Fallback agent if primary is unavailable or fails |
 | `review_backup_agent` | string | Fallback agent for reviews |
 | `refine_backup_agent` | string | Fallback agent for refine |
 | `fix_backup_agent` | string | Fallback agent for fix |
@@ -316,7 +316,7 @@ Global and repo panel maps are merged by name, with repo entries overriding glob
 
 ### Backup Agents
 
-If the primary agent fails (rate limits, network errors, crashes), roborev can automatically retry the job with a backup agent. This is useful when your primary agent has usage caps. For example, Codex plans often hit rate limits during heavy review sessions, so falling back to Claude Code keeps reviews flowing.
+If the primary agent is unavailable (for example, its command is not visible to the daemon) or fails during execution (rate limits, network errors, crashes), roborev can use a configured backup agent. This is useful when your primary agent has usage caps. For example, Codex plans often hit rate limits during heavy review sessions, so falling back to Claude Code keeps reviews flowing.
 
 ```toml
 # ~/.roborev/config.toml
@@ -344,14 +344,14 @@ backup_agent = "claude-code"          # Repo-level fallback
 review_backup_agent = "gemini"        # Workflow-specific override
 ```
 
-When a job fails with an agent error (not a review finding), roborev resolves the backup agent in this order:
+When a workflow needs a backup agent, roborev resolves it in this order:
 
 1. Repo-level workflow-specific backup (e.g. `review_backup_agent` in `.roborev.toml`)
 2. Repo-level generic `backup_agent`
 3. Global workflow-specific backup (e.g. `review_backup_agent` in `config.toml`)
 4. Global `default_backup_agent`
 
-If a backup agent is found and installed, the job is retried with that agent. The failover is logged in the daemon output. If no backup is configured or the backup agent isn't installed, the job fails normally.
+If a backup agent is found and installed, roborev uses that agent instead. If no backup is configured or the backup agent isn't installed, the job fails normally. roborev does not choose unrelated installed agents from the built-in agent list for workflow-configured reviews or fixes.
 
 ### Agent Command Overrides
 
@@ -494,7 +494,7 @@ column_borders = true             # Show separators between TUI columns
 | Option | Type | Default | Description | Hot-Reload |
 |--------|------|---------|-------------|------------|
 | `default_agent` | string | auto-detect | Default AI agent to use | Yes |
-| `default_backup_agent` | string | - | Fallback agent when the primary fails | Yes |
+| `default_backup_agent` | string | - | Fallback agent when the primary is unavailable or fails | Yes |
 | `default_backup_model` | string | - | Fallback model used when a backup agent runs | Yes |
 | `default_model` | string | agent default | Model to use (format varies by agent) | Yes |
 | `server_addr` | string | 127.0.0.1:7373 | Daemon listen address. Use `unix://` for Unix domain socket (see [Unix Domain Socket](#unix-domain-socket)) | No |

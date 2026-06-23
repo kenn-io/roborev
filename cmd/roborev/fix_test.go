@@ -2953,7 +2953,7 @@ fix_agent = "claude"
 	assert.Empty(t, modelStr)
 }
 
-func TestResolveFixAgentFallbackUsesDefaultModelForActualAgent(t *testing.T) {
+func TestResolveFixAgentBackupUsesBackupModel(t *testing.T) {
 	t.Cleanup(testutil.MockExecutableIsolated(t, "codex", 0))
 
 	tmpDir := t.TempDir()
@@ -2964,6 +2964,8 @@ func TestResolveFixAgentFallbackUsesDefaultModelForActualAgent(t *testing.T) {
 default_agent = "codex"
 default_model = "gpt-5.4"
 fix_agent = "claude"
+fix_backup_agent = "codex"
+fix_backup_model = "backup-gpt"
 `), 0o644); err != nil {
 		require.NoError(t, err)
 	}
@@ -2973,7 +2975,7 @@ fix_agent = "claude"
 
 	codexAgent, ok := selected.(*agent.CodexAgent)
 	assert.True(t, ok)
-	assert.Equal(t, "gpt-5.4", codexAgent.Model)
+	assert.Equal(t, "backup-gpt", codexAgent.Model)
 }
 
 func TestResolveFixAgentUsesRepoWorkflowModel(t *testing.T) {

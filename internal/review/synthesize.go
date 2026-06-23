@@ -20,9 +20,10 @@ var ErrAllFailed = errors.New(
 	"all review jobs failed")
 
 // getAvailableWithConfig is a variable for dependency injection in tests.
-// It wraps agent.GetAvailableWithConfig with repoPath as the first parameter.
+// It wraps strict preferred-or-backup resolution with repoPath as the first
+// parameter.
 var getAvailableWithConfig = func(repoPath string, preferred string, cfg *config.Config, backups ...string) (agent.Agent, error) {
-	return agent.GetAvailableWithConfig(repoPath, preferred, cfg, backups...)
+	return agent.GetPreferredOrBackupWithConfig(repoPath, preferred, cfg, backups...)
 }
 
 // SynthesizeOpts controls synthesis behavior.

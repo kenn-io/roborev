@@ -116,7 +116,7 @@ func runSingle(
 			err = fmt.Errorf("no agents available (mock registry)")
 		}
 	} else {
-		resolvedAgent, err = agent.GetAvailableWithConfig(
+		resolvedAgent, err = agent.GetPreferredOrBackupWithConfig(
 			cfg.RepoPath, resolvedName, cfg.GlobalConfig, backupAgent)
 	}
 

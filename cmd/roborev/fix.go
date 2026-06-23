@@ -481,7 +481,7 @@ func resolveFixAgent(repoPath string, opts fixOptions) (agent.Agent, error) {
 		return nil, fmt.Errorf("resolve workflow config: %w", err)
 	}
 
-	a, err := agent.GetAvailableWithConfig(
+	a, err := agent.GetPreferredOrBackupWithConfig(
 		repoPath, resolution.PreferredAgent, cfg, resolution.BackupAgent,
 	)
 	if err != nil {

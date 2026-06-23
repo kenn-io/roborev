@@ -247,7 +247,7 @@ func (s *Server) enqueueDesignFollowUp(parent *storage.ReviewJob) error {
 
 // resolveDesignAgent returns the (agent, model) pair the auto-design
 // follow-up should persist for execution. It resolves to an *installed*
-// agent via agent.GetAvailableWithConfig — otherwise the row would
+// preferred or configured backup agent; otherwise the row would
 // carry an unavailable primary name and the worker would fail when it
 // claims the job, even though an explicit backup agent is installed
 // and configured.
@@ -258,7 +258,7 @@ func resolveDesignAgent(repoPath string, cfg *config.Config) (string, string) {
 		return config.ResolveAgent("", repoPath, cfg), ""
 	}
 	primary := resolution.PreferredAgent
-	chosen, err := agent.GetAvailableWithConfig(repoPath, primary, cfg, resolution.BackupAgent)
+	chosen, err := agent.GetPreferredOrBackupWithConfig(repoPath, primary, cfg, resolution.BackupAgent)
 	if err != nil {
 		// Nothing installed — fall back to the primary name anyway so
 		// the row has a readable agent value, even if the worker will

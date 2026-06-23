@@ -146,7 +146,7 @@ synthesis_backup_model = "claude-opus-4-8"
 | `members` | array | Ordered list of subagent names. Required and must not be empty. |
 | `synthesis_agent` | string | Agent for synthesis. Empty means use fix workflow agent resolution. |
 | `synthesis_model` | string | Model for synthesis. Empty means use fix workflow model resolution. |
-| `synthesis_backup_agent` | string | Explicit backup agent for synthesis if the primary fails. |
+| `synthesis_backup_agent` | string | Explicit backup agent for synthesis if the primary is unavailable or fails. |
 | `synthesis_backup_model` | string | Explicit backup model for synthesis backup. |
 
 Panel validation fails if `default_panel` or `hook_review_panel` names an undefined panel, a panel has no members, or a panel references an undefined subagent.

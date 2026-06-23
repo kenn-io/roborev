@@ -508,7 +508,7 @@ func resolvePanelMemberExecution(
 	if err != nil {
 		return agentName, model
 	}
-	selected, err := agent.GetAvailableWithConfig(
+	selected, err := agent.GetPreferredOrBackupWithConfig(
 		repoPath, resolution.PreferredAgent, cfg, resolution.BackupAgent,
 	)
 	if err != nil {

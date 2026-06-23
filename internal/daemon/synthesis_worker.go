@@ -333,7 +333,7 @@ func (wp *WorkerPool) configureSynthesisAgent(
 	workerID string, job *storage.ReviewJob,
 ) (agent.Agent, string, error) {
 	cfg := wp.cfgGetter.Config()
-	baseAgent, err := agent.GetAvailableWithConfig(job.RepoPath, job.Agent, cfg, job.BackupAgent)
+	baseAgent, err := agent.GetPreferredOrBackupWithConfig(job.RepoPath, job.Agent, cfg, job.BackupAgent)
 	if err != nil {
 		wp.failOrRetryAgent(workerID, job, job.Agent, fmt.Sprintf("get agent: %v", err))
 		return nil, "", err
