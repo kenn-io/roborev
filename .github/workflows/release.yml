@@ -129,7 +129,7 @@ jobs:
       - name: Checkout tap repository
         uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         with:
-          repository: roborev-dev/homebrew-tap
+          repository: kenn-io/homebrew-tap
           token: ${{ secrets.HOMEBREW_TAP_TOKEN }}
           path: homebrew-tap
 
@@ -245,7 +245,9 @@ jobs:
           fi
           echo "All checksums verified"
 
-      - name: Commit and push
+      - name: Commit, push, and open PR
+        env:
+          GH_TOKEN: ${{ secrets.HOMEBREW_TAP_TOKEN }}
         run: |
           cd homebrew-tap
           git config user.name "github-actions[bot]"
@@ -257,6 +259,19 @@ jobs:
             exit 0
           fi
 
+          branch="roborev-v${VERSION}"
+          git checkout -B "$branch"
           git add Formula/roborev.rb
           git commit -m "Update roborev to v${VERSION}"
-          git push
+          git push -u origin "$branch" --force-with-lease
+
+          if gh pr list --repo kenn-io/homebrew-tap --state open --head "$branch" --json number --jq '.[0].number' | grep -q .; then
+            echo "Open Homebrew tap PR for $branch already exists"
+          else
+            gh pr create \
+              --repo kenn-io/homebrew-tap \
+              --base main \
+              --head "$branch" \
+              --title "Update roborev to v${VERSION}" \
+              --body "Updates the Homebrew formula to roborev v${VERSION} using the release tarball checksums from the release workflow."
+          fi
