@@ -260,6 +260,35 @@ func TestRunBatch_BlankCIAgentAutoDetectsAvailableAgent(t *testing.T) {
 	assert.Contains(results[0].Error, "build prompt")
 }
 
+func TestRunBatch_BlankCIAgentHonorsConfiguredCommandOverride(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fake command uses POSIX permissions")
+	}
+	assert := assert.New(t)
+	require := require.New(t)
+
+	binDir := t.TempDir()
+	cmdPath := filepath.Join(binDir, "ci-codex")
+	require.NoError(os.WriteFile(cmdPath, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	t.Setenv("PATH", binDir)
+
+	globalCfg := config.DefaultConfig()
+	globalCfg.CodexCmd = "ci-codex"
+	cfg := BatchConfig{
+		RepoPath:     t.TempDir(),
+		GitRef:       "abc..def",
+		Agents:       []string{""},
+		ReviewTypes:  []string{"default"},
+		GlobalConfig: globalCfg,
+	}
+
+	results := RunBatch(context.Background(), cfg)
+	require.Len(results, 1)
+	assert.Equal("codex", results[0].Agent)
+	assert.Equal(ResultFailed, results[0].Status)
+	assert.Contains(results[0].Error, "build prompt")
+}
+
 func TestRunBatch_WorkflowModelResolution(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

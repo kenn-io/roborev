@@ -2872,6 +2872,29 @@ func TestResolveMatrixMemberAgentBlankAgentAutoDetectsAvailableAgent(t *testing.
 	assert.Empty(t, resolvedModel)
 }
 
+func TestResolveMatrixMemberAgentBlankAgentHonorsConfiguredCommandOverride(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fake command uses POSIX permissions")
+	}
+	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+	binDir := t.TempDir()
+	cmdPath := filepath.Join(binDir, "ci-codex")
+	require.NoError(t, os.WriteFile(cmdPath, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	t.Setenv("PATH", binDir)
+	h.Cfg.CodexCmd = "ci-codex"
+
+	resolvedAgent, resolvedModel, err := h.Poller.resolveMatrixMemberAgent(
+		h.Repo,
+		nil,
+		h.Cfg,
+		config.AgentReviewType{Agent: "", ReviewType: "default"},
+		"thorough",
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "codex", resolvedAgent)
+	assert.Empty(t, resolvedModel)
+}
+
 func TestResolveMatrixMemberAgentUsesPassedRepoConfigForACPAvailability(t *testing.T) {
 	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
 	binDir := t.TempDir()
@@ -3295,6 +3318,36 @@ func TestProcessPRAutoDesignUsesCIModelOverride(t *testing.T) {
 	require.NotNil(t, design, "design member appended")
 	assert.Equal("test", design.Agent)
 	assert.Equal("ci-model-override", design.Model)
+}
+
+func TestResolveCIAutoDesignAgentBlankAgentAutoDetectsAvailableAgent(t *testing.T) {
+	t.Setenv("PATH", "")
+	agent.Register(&agent.FakeAgent{NameStr: "ci-auto-design"})
+	t.Cleanup(func() { agent.Unregister("ci-auto-design") })
+
+	designAgent, designModel := resolveCIAutoDesignAgent(nil, config.DefaultConfig())
+
+	assert.Equal(t, "ci-auto-design", designAgent)
+	assert.Empty(t, designModel)
+}
+
+func TestResolveCIAutoDesignAgentExplicitDesignAgentStaysStrict(t *testing.T) {
+	t.Setenv("PATH", "")
+	const primaryAgent = "ci-explicit-design-primary"
+	agent.Register(&unavailableSynthesisCommandAgent{
+		name:    primaryAgent,
+		command: "roborev-missing-explicit-design-primary",
+	})
+	t.Cleanup(func() { agent.Unregister(primaryAgent) })
+	agent.Register(&agent.FakeAgent{NameStr: "ci-auto-design-available"})
+	t.Cleanup(func() { agent.Unregister("ci-auto-design-available") })
+
+	cfg := config.DefaultConfig()
+	cfg.DesignAgent = primaryAgent
+	designAgent, designModel := resolveCIAutoDesignAgent(nil, cfg)
+
+	assert.Equal(t, primaryAgent, designAgent)
+	assert.Empty(t, designModel)
 }
 
 // TestProcessPRSynthesisAndMembersUseSeparateMinSeverity verifies the CI

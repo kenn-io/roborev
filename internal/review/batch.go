@@ -119,7 +119,7 @@ func runSingle(
 		}
 	} else if autoDetectAgent {
 		resolvedAgent, err = agent.GetAvailableWithConfig(
-			cfg.RepoPath, "", cfg.GlobalConfig)
+			cfg.RepoPath, resolvedName, cfg.GlobalConfig, backupAgent)
 	} else {
 		resolvedAgent, err = agent.GetPreferredOrBackupWithConfig(
 			cfg.RepoPath, resolvedName, cfg.GlobalConfig, backupAgent)

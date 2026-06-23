@@ -698,7 +698,9 @@ func (p *CIPoller) resolveMatrixMemberAgent(
 		}
 		resolvedAgent = name
 	} else if autoDetectAgent {
-		resolved, err := agent.GetAvailableWithConfigFromConfig(repoCfg, "", cfg)
+		resolved, err := agent.GetAvailableWithConfigFromConfig(
+			repoCfg, resolvedAgent, cfg, resolution.BackupAgent,
+		)
 		if err != nil {
 			return "", "", fmt.Errorf("%w for type=%s: %w", errNoCIAgent, entry.ReviewType, err)
 		}
@@ -830,13 +832,75 @@ func resolveCIAutoDesignAgent(repoCfg *config.RepoConfig, cfg *config.Config) (s
 		}
 		return designAgent, designModel
 	}
-	chosen, err := agent.GetPreferredOrBackupWithConfigFromConfig(
-		repoCfg, resolution.PreferredAgent, cfg, resolution.BackupAgent,
-	)
+	strictDesignAgent := explicitDesignAgentConfigured(repoCfg, cfg, reasoning) ||
+		strings.TrimSpace(resolution.BackupAgent) != ""
+	var chosen agent.Agent
+	if strictDesignAgent {
+		chosen, err = agent.GetPreferredOrBackupWithConfigFromConfig(
+			repoCfg, resolution.PreferredAgent, cfg, resolution.BackupAgent,
+		)
+	} else {
+		chosen, err = agent.GetAvailableWithConfigFromConfig(
+			repoCfg, resolution.PreferredAgent, cfg,
+		)
+	}
 	if err != nil {
 		return resolution.PreferredAgent, resolution.ModelForSelectedAgent(resolution.PreferredAgent, ciModel)
 	}
 	return chosen.Name(), resolution.ModelForSelectedAgent(chosen.Name(), ciModel)
+}
+
+func explicitDesignAgentConfigured(repoCfg *config.RepoConfig, cfg *config.Config, reasoning string) bool {
+	if repoCfg != nil {
+		if strings.TrimSpace(repoCfg.Agent) != "" ||
+			strings.TrimSpace(repoCfg.DesignAgent) != "" ||
+			strings.TrimSpace(repoDesignAgentForReasoning(repoCfg, reasoning)) != "" {
+			return true
+		}
+	}
+	if cfg != nil {
+		if strings.TrimSpace(cfg.DesignAgent) != "" ||
+			strings.TrimSpace(globalDesignAgentForReasoning(cfg, reasoning)) != "" {
+			return true
+		}
+		defaultAgent := strings.TrimSpace(cfg.DefaultAgent)
+		return defaultAgent != "" && defaultAgent != config.DefaultConfig().DefaultAgent
+	}
+	return false
+}
+
+func repoDesignAgentForReasoning(repoCfg *config.RepoConfig, reasoning string) string {
+	switch reasoning {
+	case string(agent.ReasoningFast):
+		return repoCfg.DesignAgentFast
+	case string(agent.ReasoningStandard):
+		return repoCfg.DesignAgentStandard
+	case string(agent.ReasoningMedium):
+		return repoCfg.DesignAgentMedium
+	case string(agent.ReasoningThorough):
+		return repoCfg.DesignAgentThorough
+	case string(agent.ReasoningMaximum):
+		return repoCfg.DesignAgentMaximum
+	default:
+		return ""
+	}
+}
+
+func globalDesignAgentForReasoning(cfg *config.Config, reasoning string) string {
+	switch reasoning {
+	case string(agent.ReasoningFast):
+		return cfg.DesignAgentFast
+	case string(agent.ReasoningStandard):
+		return cfg.DesignAgentStandard
+	case string(agent.ReasoningMedium):
+		return cfg.DesignAgentMedium
+	case string(agent.ReasoningThorough):
+		return cfg.DesignAgentThorough
+	case string(agent.ReasoningMaximum):
+		return cfg.DesignAgentMaximum
+	default:
+		return ""
+	}
 }
 
 // maybeAppendDesignMember appends exactly one whole-range design member to the
