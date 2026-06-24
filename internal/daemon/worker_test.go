@@ -1212,45 +1212,52 @@ func TestShouldAppendReviewJobLogOnlyForFirstAutoDesignAttempt(t *testing.T) {
 	assert.False(t, shouldAppendReviewJobLog(job))
 }
 
-func TestApplyCodexReviewSettingsOnlyForReviewJobs(t *testing.T) {
+func TestApplyCodexReviewSettings(t *testing.T) {
 	cfg := config.DefaultConfig()
 	cfg.Agent.Codex.DisableReviewSkills = true
 	cfg.Agent.Codex.IgnoreReviewUserConfig = true
 
 	tests := []struct {
-		name string
-		job  storage.ReviewJob
-		want bool
+		name       string
+		job        storage.ReviewJob
+		wantSkills bool
+		wantIgnore bool
 	}{
 		{
-			name: "single commit review",
-			job:  storage.ReviewJob{JobType: storage.JobTypeReview},
-			want: true,
+			name:       "single commit review",
+			job:        storage.ReviewJob{JobType: storage.JobTypeReview},
+			wantSkills: true,
+			wantIgnore: true,
 		},
 		{
-			name: "range review",
-			job:  storage.ReviewJob{JobType: storage.JobTypeRange},
-			want: true,
+			name:       "range review",
+			job:        storage.ReviewJob{JobType: storage.JobTypeRange},
+			wantSkills: true,
+			wantIgnore: true,
 		},
 		{
-			name: "dirty review",
-			job:  storage.ReviewJob{JobType: storage.JobTypeDirty},
-			want: true,
+			name:       "dirty review",
+			job:        storage.ReviewJob{JobType: storage.JobTypeDirty},
+			wantSkills: true,
+			wantIgnore: true,
 		},
 		{
-			name: "task job",
-			job:  storage.ReviewJob{JobType: storage.JobTypeTask},
-			want: false,
+			name:       "task job",
+			job:        storage.ReviewJob{JobType: storage.JobTypeTask},
+			wantSkills: true,
+			wantIgnore: false,
 		},
 		{
-			name: "classify job",
-			job:  storage.ReviewJob{JobType: storage.JobTypeClassify},
-			want: false,
+			name:       "classify job",
+			job:        storage.ReviewJob{JobType: storage.JobTypeClassify},
+			wantSkills: false,
+			wantIgnore: false,
 		},
 		{
-			name: "fix job",
-			job:  storage.ReviewJob{JobType: storage.JobTypeFix},
-			want: false,
+			name:       "fix job",
+			job:        storage.ReviewJob{JobType: storage.JobTypeFix},
+			wantSkills: true,
+			wantIgnore: false,
 		},
 	}
 
@@ -1259,8 +1266,8 @@ func TestApplyCodexReviewSettingsOnlyForReviewJobs(t *testing.T) {
 			got := applyCodexReviewSettings(agent.NewCodexAgent("codex"), &tt.job, cfg)
 			codexAgent, ok := got.(*agent.CodexAgent)
 			require.True(t, ok)
-			assert.Equal(t, tt.want, codexAgent.SuppressSkillInstructions)
-			assert.Equal(t, tt.want, codexAgent.IgnoreUserConfig)
+			assert.Equal(t, tt.wantSkills, codexAgent.SuppressSkillInstructions)
+			assert.Equal(t, tt.wantIgnore, codexAgent.IgnoreUserConfig)
 		})
 	}
 }
@@ -2060,6 +2067,64 @@ func TestResolveBackupAgentUsesConfiguredCommandOverride(t *testing.T) {
 	}
 
 	assert.Equal(t, "claude-code", pool.resolveBackupAgent(job))
+}
+
+func TestResolveBackupAgentUsesConfigCommandOverride(t *testing.T) {
+	fakeBin := t.TempDir()
+	wrapper := "gemini-wrapper"
+	if runtime.GOOS == "windows" {
+		wrapper += ".exe"
+	}
+	wrapperPath := filepath.Join(fakeBin, wrapper)
+	require.NoError(t, os.WriteFile(wrapperPath, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	t.Setenv("PATH", fakeBin)
+
+	cfg := config.DefaultConfig()
+	cfg.ReviewBackupAgent = "gemini"
+	cfg.GeminiCmd = wrapperPath
+	pool := NewWorkerPool(nil, NewStaticConfig(cfg), 1, NewBroadcaster(), nil, nil)
+	job := &storage.ReviewJob{Agent: "codex", RepoPath: t.TempDir()}
+
+	assert.Equal(t, "gemini", pool.resolveBackupAgent(job))
+}
+
+func TestResolveBackupAgentConfiguredCommandMissingDoesNotUseDefaultCandidate(t *testing.T) {
+	fakeBin := t.TempDir()
+	agy := "agy"
+	if runtime.GOOS == "windows" {
+		agy += ".exe"
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(fakeBin, agy), []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	t.Setenv("PATH", fakeBin)
+
+	cfg := config.DefaultConfig()
+	cfg.ReviewBackupAgent = "gemini"
+	cfg.GeminiCmd = "gemini"
+	pool := NewWorkerPool(nil, NewStaticConfig(cfg), 1, NewBroadcaster(), nil, nil)
+	job := &storage.ReviewJob{Agent: "codex", RepoPath: t.TempDir()}
+
+	assert.Empty(t, pool.resolveBackupAgent(job))
+}
+
+func TestResolveBackupAgentUsesConfiguredACPName(t *testing.T) {
+	fakeBin := t.TempDir()
+	acp := "custom-acp"
+	script := "#!/bin/sh\nexit 0\n"
+	if runtime.GOOS == "windows" {
+		acp += ".cmd"
+		script = "@echo off\r\nexit /b 0\r\n"
+	}
+	acpPath := filepath.Join(fakeBin, acp)
+	require.NoError(t, os.WriteFile(acpPath, []byte(script), 0o755))
+	t.Setenv("PATH", fakeBin)
+
+	cfg := config.DefaultConfig()
+	cfg.ReviewBackupAgent = "my-acp"
+	cfg.ACP = &config.ACPAgentConfig{Name: "my-acp", Command: acpPath}
+	pool := NewWorkerPool(nil, NewStaticConfig(cfg), 1, NewBroadcaster(), nil, nil)
+	job := &storage.ReviewJob{Agent: "codex", RepoPath: t.TempDir()}
+
+	assert.Equal(t, "acp", pool.resolveBackupAgent(job))
 }
 
 func TestFailOrRetryInner_QuotaSkipsRetries(t *testing.T) {

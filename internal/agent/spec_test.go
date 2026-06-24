@@ -51,6 +51,7 @@ func TestAgentSpecsCommandOverrides(t *testing.T) {
 	cfg := &config.Config{
 		CodexCmd:      "custom-codex",
 		ClaudeCodeCmd: "custom-claude",
+		GeminiCmd:     "custom-gemini",
 		CursorCmd:     "custom-cursor",
 		PiCmd:         "custom-pi",
 		OpenCodeCmd:   "custom-opencode",

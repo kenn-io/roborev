@@ -14,8 +14,6 @@ import (
 	"slices"
 	"strings"
 	"sync"
-
-	"go.kenn.io/roborev/internal/procutil"
 )
 
 // ClaudeAgent runs code reviews using Claude Code CLI
@@ -248,7 +246,7 @@ func claudeSupportsDangerousFlag(ctx context.Context, command string) (bool, err
 		return cached.(bool), nil
 	}
 	cmd := exec.CommandContext(ctx, command, "--help")
-	procutil.HideConsole(cmd)
+	configureCapabilityProbe(cmd)
 	output, err := cmd.CombinedOutput()
 	supported := strings.Contains(string(output), claudeDangerousFlag)
 	if err != nil && !supported {
@@ -263,7 +261,7 @@ func claudeSupportsEffortFlag(ctx context.Context, command string) bool {
 		return cached.(bool)
 	}
 	cmd := exec.CommandContext(ctx, command, "--help")
-	procutil.HideConsole(cmd)
+	configureCapabilityProbe(cmd)
 	output, _ := cmd.CombinedOutput()
 	supported := strings.Contains(string(output), claudeEffortFlag)
 	claudeEffortSupport.Store(command, supported)
@@ -281,7 +279,7 @@ func claudeSupportsToolsFlag(ctx context.Context, command string) bool {
 		return cached.(bool)
 	}
 	cmd := exec.CommandContext(ctx, command, "--help")
-	procutil.HideConsole(cmd)
+	configureCapabilityProbe(cmd)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		// Don't cache transient failures.
@@ -690,7 +688,7 @@ func (a *ClaudeAgent) ClassifyWithSchema(
 	}
 	args := a.classifyArgs(schema)
 	cmd := exec.CommandContext(ctx, a.Command, args...)
-	procutil.HideConsole(cmd)
+	configureSubprocess(cmd)
 	cmd.Dir = repoPath
 	env, err := buildClaudeEnv(cmd.Environ(), model, baseURL)
 	if err != nil {

@@ -1002,13 +1002,16 @@ func (wp *WorkerPool) autoClosePassingReview(workerID string, job *storage.Revie
 }
 
 func applyCodexReviewSettings(a agent.Agent, job *storage.ReviewJob, cfg *config.Config) agent.Agent {
-	if !job.IsReviewJob() {
+	if !job.IsReviewJob() && !job.UsesStoredPrompt() {
 		return a
 	}
 	a = agent.WithCodexSkillsDisabled(
 		a,
 		config.ResolveDisableCodexReviewSkills(job.RepoPath, cfg),
 	)
+	if !job.IsReviewJob() {
+		return a
+	}
 	a = agent.WithCodexUserConfigIgnored(
 		a,
 		config.ResolveIgnoreCodexReviewUserConfig(job.RepoPath, cfg),
@@ -1222,9 +1225,10 @@ func (wp *WorkerPool) resolveBackupAgent(job *storage.ReviewJob) string {
 	if backup == "" {
 		return ""
 	}
-	// Canonicalize and verify availability using the config-aware path so
-	// command overrides and configured ACP aliases participate in failover.
-	resolved, err := agent.GetPreferredOrBackupWithConfig(job.RepoPath, backup, cfg)
+	// Resolve exactly the configured backup using the config-aware path so
+	// command overrides and configured ACP aliases participate in failover
+	// without falling through to unrelated agents.
+	resolved, err := agent.GetAvailableExactWithConfig(job.RepoPath, backup, cfg)
 	if err != nil {
 		return ""
 	}

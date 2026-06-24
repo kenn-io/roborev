@@ -580,7 +580,7 @@ func TestGetAvailablePrefersAntigravityForGemini(t *testing.T) {
 	assert.True(t, gemini.CommandAuto)
 }
 
-func TestGeminiWithModelUsesLegacyCommandWhenAutoSelectedAntigravity(t *testing.T) {
+func TestGeminiWithModelKeepsAutoSelectedAntigravity(t *testing.T) {
 	fakeBin := t.TempDir()
 	for _, bin := range []string{"agy", "gemini"} {
 		name := bin
@@ -604,9 +604,58 @@ func TestGeminiWithModelUsesLegacyCommandWhenAutoSelectedAntigravity(t *testing.
 	withModel := resolved.WithModel("gemini-1.5-pro")
 	require.IsType(t, &GeminiAgent{}, withModel)
 	gemini := withModel.(*GeminiAgent)
-	assert.Equal(t, "gemini", gemini.CommandName())
+	assert.Equal(t, "agy", gemini.CommandName())
 	assert.True(t, gemini.ModelExplicit)
+	assert.True(t, gemini.CommandAuto)
+	assert.NotContains(t, gemini.CommandLine(), "-m")
+}
+
+func TestGetAvailableWithConfigGeminiCmdPinsLegacyCommand(t *testing.T) {
+	fakeBin := t.TempDir()
+	for _, bin := range []string{"agy", "gemini"} {
+		name := bin
+		if runtime.GOOS == "windows" {
+			name += ".exe"
+		}
+		p := filepath.Join(fakeBin, name)
+		require.NoError(t, os.WriteFile(p, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	}
+	t.Setenv("PATH", fakeBin)
+
+	originalRegistry := registry
+	registry = map[string]Agent{
+		"gemini": NewGeminiAgent(""),
+	}
+	t.Cleanup(func() { registry = originalRegistry })
+
+	resolved, err := GetAvailableWithConfig("", "gemini", &config.Config{GeminiCmd: "gemini"})
+	require.NoError(t, err)
+	require.IsType(t, &GeminiAgent{}, resolved)
+	gemini := resolved.(*GeminiAgent)
+	assert.Equal(t, "gemini", gemini.CommandName())
 	assert.False(t, gemini.CommandAuto)
+}
+
+func TestGetAvailableWithConfigGeminiCmdUnavailableDoesNotFallBackToAntigravity(t *testing.T) {
+	fakeBin := t.TempDir()
+	name := "agy"
+	if runtime.GOOS == "windows" {
+		name += ".exe"
+	}
+	p := filepath.Join(fakeBin, name)
+	require.NoError(t, os.WriteFile(p, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	t.Setenv("PATH", fakeBin)
+
+	originalRegistry := registry
+	registry = map[string]Agent{
+		"gemini": NewGeminiAgent(""),
+	}
+	t.Cleanup(func() { registry = originalRegistry })
+
+	_, err := GetAvailableWithConfig("", "gemini", &config.Config{GeminiCmd: "gemini"})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "no agents available")
 }
 
 func TestGetAvailableFallsBackToGeminiWhenAntigravityMissing(t *testing.T) {

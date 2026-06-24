@@ -129,9 +129,8 @@ func isAvailableWithConfig(name string, cfg *config.Config) bool {
 	}
 	// Check the configured command first — it takes priority.
 	if override := commandOverrideForAgent(name, cfg); override != "" {
-		if _, err := exec.LookPath(override); err == nil {
-			return true
-		}
+		_, err := exec.LookPath(override)
+		return err == nil
 	}
 	// Fall back to the default (hardcoded) command.
 	return firstAvailableCommand(ca) != ""
@@ -243,6 +242,56 @@ func GetAvailableWithConfig(repoPath string, preferred string, cfg *config.Confi
 	return GetAvailableWithConfigFromConfig(repoCfg, preferred, cfg, backups...)
 }
 
+// GetAvailableExactWithConfig resolves exactly the requested agent while
+// honoring command overrides and configured ACP names. Unlike
+// GetAvailableWithConfig, it never falls through to backup agents or the global
+// fallback chain.
+func GetAvailableExactWithConfig(repoPath string, name string, cfg *config.Config) (Agent, error) {
+	var repoCfg *config.RepoConfig
+	if strings.TrimSpace(repoPath) != "" {
+		repoCfg, _ = config.LoadRepoConfig(repoPath)
+	}
+	return GetAvailableExactWithConfigFromConfig(repoCfg, name, cfg)
+}
+
+// GetAvailableExactWithConfigFromConfig is like GetAvailableExactWithConfig,
+// but uses an already-loaded repo config.
+func GetAvailableExactWithConfigFromConfig(repoCfg *config.RepoConfig, name string, cfg *config.Config) (Agent, error) {
+	rawName := strings.TrimSpace(name)
+	if rawName == "" {
+		return nil, fmt.Errorf("empty agent name")
+	}
+
+	if isConfiguredACPAgentNameFromConfig(rawName, cfg, repoCfg) {
+		configured := configuredACPAgentFromConfig(repoCfg, cfg)
+		if _, err := exec.LookPath(configured.CommandName()); err != nil {
+			return nil, fmt.Errorf("agent %q command %q unavailable: %w", rawName, configured.CommandName(), err)
+		}
+		return configured, nil
+	}
+
+	canonical := resolveAlias(rawName)
+	a, err := Get(canonical)
+	if err != nil {
+		return nil, err
+	}
+
+	if ca, ok := a.(CommandAgent); ok {
+		if override := commandOverrideForAgent(canonical, cfg); override != "" {
+			if _, err := exec.LookPath(override); err != nil {
+				return nil, fmt.Errorf("agent %q command %q unavailable: %w", canonical, override, err)
+			}
+			return applyAgentConfigOverrides(applyCommandOverrides(a, cfg), cfg), nil
+		}
+		if firstAvailableCommand(ca) == "" {
+			return nil, fmt.Errorf("agent %q unavailable", canonical)
+		}
+		return applyAgentConfigOverrides(applyResolvedCommand(a), cfg), nil
+	}
+
+	return applyAgentConfigOverrides(a, cfg), nil
+}
+
 // GetAvailableWithConfigFromConfig resolves an available agent using already
 // loaded repo config, never reading repo config from the working tree.
 func GetAvailableWithConfigFromConfig(repoCfg *config.RepoConfig, preferred string, cfg *config.Config, backups ...string) (Agent, error) {
@@ -269,8 +318,8 @@ func GetAvailableWithConfigFromConfig(repoCfg *config.RepoConfig, preferred stri
 			return backup, nil
 		}
 
-		// Finally fall back to normal auto-selection.
-		return GetAvailable("", backups...)
+		// Finally fall back to config-aware auto-selection.
+		return getAvailableFallbackWithConfig("", repoCfg, cfg)
 	}
 
 	// Check the preferred agent using config command overrides before
@@ -300,6 +349,10 @@ func GetAvailableWithConfigFromConfig(repoCfg *config.RepoConfig, preferred stri
 		return backup, nil
 	}
 
+	if cfg != nil {
+		return getAvailableFallbackWithConfig(preferred, repoCfg, cfg)
+	}
+
 	resolved, err := GetAvailable(preferred, backups...)
 	if err != nil {
 		return nil, err
@@ -313,6 +366,58 @@ func GetAvailableWithConfigFromConfig(repoCfg *config.RepoConfig, preferred stri
 	}
 
 	return applyAgentConfigOverrides(applyCommandOverrides(resolved, cfg), cfg), nil
+}
+
+func getAvailableFallbackWithConfig(preferred string, repoCfg *config.RepoConfig, cfg *config.Config) (Agent, error) {
+	for _, name := range fallbackAgentOrder {
+		if name == preferred {
+			continue
+		}
+		if !isAvailableWithConfig(name, cfg) {
+			continue
+		}
+		a, _ := Get(name)
+		resolved := applyAvailableCommand(a, cfg)
+		return applyConfiguredACPIfAvailable(resolved, repoCfg, cfg), nil
+	}
+
+	var available []string
+	registryMu.RLock()
+	for name := range registry {
+		if name != "test" && isAvailableWithConfigFromConfig(name, repoCfg, cfg) {
+			available = append(available, name)
+		}
+	}
+	registryMu.RUnlock()
+
+	if len(available) == 0 {
+		return nil, fmt.Errorf("no agents available (install one of: %s)\nYou may need to run 'roborev daemon restart' from a shell that has access to your agents", strings.Join(installHintAgentNames(), ", "))
+	}
+
+	a, _ := Get(available[0])
+	return applyConfiguredACPIfAvailable(applyAvailableCommand(a, cfg), repoCfg, cfg), nil
+}
+
+func isAvailableWithConfigFromConfig(name string, repoCfg *config.RepoConfig, cfg *config.Config) bool {
+	name = resolveAlias(name)
+	if name == defaultACPName {
+		configured := configuredACPAgentFromConfig(repoCfg, cfg)
+		if _, err := exec.LookPath(configured.CommandName()); err == nil {
+			return true
+		}
+	}
+	return isAvailableWithConfig(name, cfg)
+}
+
+func applyConfiguredACPIfAvailable(a Agent, repoCfg *config.RepoConfig, cfg *config.Config) Agent {
+	if a == nil || a.Name() != defaultACPName {
+		return a
+	}
+	configured := configuredACPAgentFromConfig(repoCfg, cfg)
+	if _, err := exec.LookPath(configured.CommandName()); err == nil {
+		return configured
+	}
+	return a
 }
 
 func applyAvailableCommand(a Agent, cfg *config.Config) Agent {

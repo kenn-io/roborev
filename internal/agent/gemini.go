@@ -7,7 +7,6 @@ import (
 	"fmt"
 	"io"
 	"log"
-	"os/exec"
 	"path"
 	"strings"
 )
@@ -85,12 +84,6 @@ func (a *GeminiAgent) WithModel(model string) Agent {
 	}
 	clone := a.clone(withClonedModel(model))
 	clone.ModelExplicit = true
-	if clone.usesAntigravity() && clone.CommandAuto {
-		if _, err := exec.LookPath("gemini"); err == nil {
-			clone.Command = "gemini"
-			clone.CommandAuto = false
-		}
-	}
 	return clone
 }
 

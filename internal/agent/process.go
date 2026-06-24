@@ -5,7 +5,9 @@ import (
 	"errors"
 	"io"
 	"io/fs"
+	"os"
 	"os/exec"
+	"path/filepath"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -54,6 +56,18 @@ func configureSubprocess(cmd *exec.Cmd) *subprocessTracker {
 		return err
 	}
 	return tracker
+}
+
+func configureCapabilityProbe(cmd *exec.Cmd) {
+	procutil.HideConsole(cmd)
+	if cmd.Path != "" &&
+		!filepath.IsAbs(cmd.Path) &&
+		strings.ContainsAny(cmd.Path, `/\`) {
+		if absPath, err := filepath.Abs(cmd.Path); err == nil {
+			cmd.Path = absPath
+		}
+	}
+	cmd.Dir = os.TempDir()
 }
 
 func closeOnContextDone(ctx context.Context, c io.Closer) func() {

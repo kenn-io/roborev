@@ -982,18 +982,19 @@ func TestACPNameDoesNotMatchCanonicalRequest(t *testing.T) {
 
 func TestGetAvailableWithConfigAppliesClaudeCodeCmd(t *testing.T) {
 	fakeBin := t.TempDir()
-	binName := "claude"
+	binName := "claude-wrapper"
 	if runtime.GOOS == "windows" {
 		binName += ".exe"
 	}
+	wrapperPath := filepath.Join(fakeBin, binName)
 	err := os.WriteFile(
-		filepath.Join(fakeBin, binName),
+		wrapperPath,
 		[]byte("#!/bin/sh\nexit 0\n"), 0o755,
 	)
 	require.NoError(t, err)
 	t.Setenv("PATH", fakeBin)
 
-	cfg := &config.Config{ClaudeCodeCmd: "/custom/claude-wrapper"}
+	cfg := &config.Config{ClaudeCodeCmd: wrapperPath}
 
 	resolved, err := GetAvailableWithConfig("", "claude-code", cfg)
 	require.NoError(t, err)
@@ -1001,7 +1002,7 @@ func TestGetAvailableWithConfigAppliesClaudeCodeCmd(t *testing.T) {
 	ca, ok := resolved.(CommandAgent)
 	require.True(t, ok, "resolved agent should implement CommandAgent")
 	assert.Equal(t, "claude-code", resolved.Name())
-	assert.Equal(t, "/custom/claude-wrapper", ca.CommandName(),
+	assert.Equal(t, wrapperPath, ca.CommandName(),
 		"configured claude_code_cmd should override the default command")
 }
 

@@ -43,6 +43,7 @@ func TestDefaultConfig(t *testing.T) {
 	assert.Equal(t, 10*time.Second, cfg.Cost.ResolvedTimeout())
 	assert.Equal(t, "30m0s", cfg.AgentQuotaCooldown)
 	assert.Equal(t, 30*time.Minute, ResolveAgentQuotaCooldown(cfg))
+	assert.Empty(t, cfg.GeminiCmd)
 }
 
 func TestDataDir(t *testing.T) {

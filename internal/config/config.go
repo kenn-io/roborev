@@ -214,6 +214,7 @@ type Config struct {
 	// Agent commands
 	CodexCmd      string `toml:"codex_cmd"`
 	ClaudeCodeCmd string `toml:"claude_code_cmd"`
+	GeminiCmd     string `toml:"gemini_cmd"`
 	CursorCmd     string `toml:"cursor_cmd"`
 	PiCmd         string `toml:"pi_cmd"`
 	OpenCodeCmd   string `toml:"opencode_cmd"`

@@ -10,8 +10,6 @@ import (
 	"os/exec"
 	"strings"
 	"sync"
-
-	"go.kenn.io/roborev/internal/procutil"
 )
 
 // CodexAgent runs code reviews using the Codex CLI
@@ -226,7 +224,7 @@ func codexSupportsDangerousFlag(ctx context.Context, command string, ignoreUserC
 		return cached.(bool), nil
 	}
 	cmd := exec.CommandContext(ctx, command, codexExecHelpArgs(ignoreUserConfig)...)
-	procutil.HideConsole(cmd)
+	configureCapabilityProbe(cmd)
 	output, err := cmd.CombinedOutput()
 	supported := strings.Contains(string(output), codexDangerousFlag)
 	if err != nil && !supported {
@@ -247,7 +245,7 @@ func codexSupportsNonInteractive(ctx context.Context, command string, ignoreUser
 		return cached.(bool), nil
 	}
 	cmd := exec.CommandContext(ctx, command, codexExecHelpArgs(ignoreUserConfig)...)
-	procutil.HideConsole(cmd)
+	configureCapabilityProbe(cmd)
 	output, err := cmd.CombinedOutput()
 	supported := strings.Contains(string(output), "--sandbox")
 	if err != nil && !supported {
@@ -287,7 +285,7 @@ func codexSupportsIgnoreUserConfig(ctx context.Context, command string) (bool, e
 	}
 
 	cmd := exec.CommandContext(ctx, command, "exec", codexIgnoreUserConfigFlag, "--help")
-	procutil.HideConsole(cmd)
+	configureCapabilityProbe(cmd)
 	output, err := cmd.CombinedOutput()
 	if err != nil {
 		if ctxErr := ctx.Err(); ctxErr != nil {

@@ -336,6 +336,26 @@ func TestGeminiAntigravityExplicitModelFailsClearly(t *testing.T) {
 	assert.Contains(t, err.Error(), "does not support explicit Gemini model selection")
 }
 
+func TestGeminiAutoSelectedAntigravityExplicitModelFailsClearly(t *testing.T) {
+	skipIfWindows(t)
+
+	scriptPath := writeTempCommand(t, `#!/bin/sh
+case "$1" in *etxtbsy*) exit 0;; esac
+echo "unexpected antigravity invocation"
+`)
+	agyPath := filepath.Join(filepath.Dir(scriptPath), "agy")
+	require.NoError(t, os.Rename(scriptPath, agyPath))
+
+	a := NewGeminiAgent(agyPath)
+	a.CommandAuto = true
+	a = a.WithModel("gemini-1.5-pro").(*GeminiAgent)
+
+	_, err := a.Review(context.Background(), t.TempDir(), "sha", "prompt", nil)
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "does not support explicit Gemini model selection")
+}
+
 func TestGemini_Review_Integration(t *testing.T) {
 	skipIfWindows(t)
 

@@ -361,6 +361,7 @@ If an agent binary is installed under a non-standard name or path, use a `*_cmd`
 # ~/.roborev/config.toml
 claude_code_cmd = "/opt/bin/claude"
 codex_cmd = "codex-nightly"
+gemini_cmd = "gemini"                 # Pin legacy Gemini CLI instead of auto-preferring agy
 cursor_cmd = "/usr/local/bin/agent"
 opencode_cmd = "/usr/local/bin/opencode-wrapper"
 pi_cmd = "~/bin/pi"
@@ -370,11 +371,12 @@ pi_cmd = "~/bin/pi"
 |--------|----------------|
 | `claude_code_cmd` | `claude` |
 | `codex_cmd` | `codex` |
+| `gemini_cmd` | auto (`agy`, then `gemini`) |
 | `cursor_cmd` | `agent` |
 | `opencode_cmd` | `opencode` |
 | `pi_cmd` | `pi` |
 
-These overrides affect both agent execution and availability detection. Without them, roborev only checks for the default command name when deciding whether an agent is installed.
+These overrides affect both agent execution and availability detection. Without them, roborev only checks for the default command name when deciding whether an agent is installed. Gemini is the exception: when `gemini_cmd` is unset, roborev auto-prefers `agy` before the legacy `gemini` command; set `gemini_cmd = "gemini"` to pin the legacy CLI, for example when using explicit Gemini model overrides.
 
 ### Agent Name Validation
 
@@ -524,6 +526,7 @@ column_borders = true             # Show separators between TUI columns
 | `task_column_order` | array | | Custom task column display order | N/A |
 | `claude_code_cmd` | string | `claude` | Custom path or name for the Claude Code binary | Yes |
 | `codex_cmd` | string | `codex` | Custom path or name for the Codex binary | Yes |
+| `gemini_cmd` | string | unset | Custom path or name for the Gemini-compatible binary; unset auto-prefers `agy` then `gemini` | Yes |
 | `cursor_cmd` | string | `agent` | Custom path or name for the Cursor binary | Yes |
 | `opencode_cmd` | string | `opencode` | Custom path or name for the OpenCode binary | Yes |
 | `pi_cmd` | string | `pi` | Custom path or name for the Pi binary | Yes |

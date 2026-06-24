@@ -6,6 +6,7 @@ import (
 	"io/fs"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -167,6 +168,25 @@ func TestConfigureSubprocessPreservesPWD(t *testing.T) {
 	require.NoError(t, err)
 	require.Equal(t, dir+"\n", string(out),
 		"configureSubprocess should preserve PWD matching cmd.Dir")
+}
+
+func TestConfigureCapabilityProbePreservesRelativeCommandPath(t *testing.T) {
+	skipIfWindows(t)
+
+	repoDir := t.TempDir()
+	binDir := filepath.Join(repoDir, "bin")
+	require.NoError(t, os.Mkdir(binDir, 0o755))
+	commandPath := filepath.Join(binDir, "codex")
+	require.NoError(t, os.WriteFile(commandPath, []byte("#!/bin/sh\necho probe-ok\n"), 0o755))
+	t.Chdir(repoDir)
+
+	cmd := exec.CommandContext(context.Background(), "./bin/codex", "--help")
+	configureCapabilityProbe(cmd)
+
+	out, err := cmd.Output()
+	require.NoError(t, err)
+	require.Equal(t, "probe-ok\n", string(out))
+	require.Equal(t, os.TempDir(), cmd.Dir)
 }
 
 func TestConfigureSubprocessDoesNotMarkCanceledWhenProcessAlreadyExited(t *testing.T) {

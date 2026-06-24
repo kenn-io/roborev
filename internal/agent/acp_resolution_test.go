@@ -183,3 +183,35 @@ func TestGetAvailableWithConfigACPAsBackup(t *testing.T) {
 		assert.Equal(t, defaultACPName, got.Name())
 	})
 }
+
+func TestGetAvailableWithConfigFinalFallbackAppliesACPConfig(t *testing.T) {
+	fakeBin := t.TempDir()
+	customBin := "custom-acp"
+	script := "#!/bin/sh\nexit 0\n"
+	if runtime.GOOS == "windows" {
+		customBin += ".cmd"
+		script = "@echo off\r\nexit /b 0\r\n"
+	}
+	customPath := filepath.Join(fakeBin, customBin)
+	require.NoError(t, os.WriteFile(customPath, []byte(script), 0o755))
+	t.Setenv("PATH", fakeBin)
+
+	originalRegistry := registry
+	registry = map[string]Agent{
+		defaultACPName: NewACPAgent(""),
+	}
+	t.Cleanup(func() { registry = originalRegistry })
+
+	cfg := &config.Config{ACP: &config.ACPAgentConfig{
+		Command: customPath,
+		Model:   "configured-model",
+	}}
+
+	got, err := GetAvailableWithConfig("", "", cfg)
+
+	require.NoError(t, err)
+	acp, ok := got.(*ACPAgent)
+	require.True(t, ok)
+	assert.Equal(t, customPath, acp.Command)
+	assert.Equal(t, "configured-model", acp.Model)
+}

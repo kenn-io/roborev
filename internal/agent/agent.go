@@ -329,7 +329,13 @@ func applyResolvedCommand(a Agent) Agent {
 	if !ok || spec.CloneWithCommand == nil {
 		return a
 	}
-	return spec.CloneWithCommand(a, command)
+	resolved := spec.CloneWithCommand(a, command)
+	if gemini, ok := resolved.(*GeminiAgent); ok {
+		clone := *gemini
+		clone.CommandAuto = true
+		return &clone
+	}
+	return resolved
 }
 
 // syncWriter wraps an io.Writer with mutex protection for concurrent writes.

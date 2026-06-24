@@ -57,6 +57,9 @@ var allAgentSpecs = []agentSpec{
 		Name:           "gemini",
 		DefaultCommand: "gemini",
 		FallbackRank:   3,
+		CommandOverride: func(cfg *config.Config) string {
+			return cfg.GeminiCmd
+		},
 		CloneWithCommand: func(a Agent, command string) Agent {
 			agent, ok := a.(*GeminiAgent)
 			if !ok {
@@ -64,7 +67,7 @@ var allAgentSpecs = []agentSpec{
 			}
 			clone := *agent
 			clone.Command = command
-			clone.CommandAuto = true
+			clone.CommandAuto = false
 			return &clone
 		},
 	},

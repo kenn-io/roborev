@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"io"
+	"os"
 	"slices"
 	"strings"
 	"testing"
@@ -41,6 +42,38 @@ func assertTools(t *testing.T, args []string, want []string, dontWant []string) 
 	for _, d := range dontWant {
 		assert.NotContains(gotTools, d, "forbidden tool %q", d)
 	}
+}
+
+func TestClaudeHelpProbeUsesExistingWorkingDirectory(t *testing.T) {
+	skipIfWindows(t)
+
+	cmdPath := writeTempCommand(t, `#!/bin/sh
+case "$1" in *etxtbsy*) exit 0;; esac
+if ! pwd >/dev/null 2>&1; then
+  echo "getcwd: cannot access parent directories" >&2
+  exit 1
+fi
+if [ "$1" = "--help" ]; then
+  echo "--dangerously-skip-permissions"
+  exit 0
+fi
+exit 1
+`)
+
+	originalWD, err := os.Getwd()
+	require.NoError(t, err)
+	t.Cleanup(func() {
+		require.NoError(t, os.Chdir(originalWD))
+	})
+
+	deletedWD := t.TempDir()
+	require.NoError(t, os.Chdir(deletedWD))
+	require.NoError(t, os.RemoveAll(deletedWD))
+
+	supported, err := claudeSupportsDangerousFlag(context.Background(), cmdPath)
+
+	require.NoError(t, err)
+	assert.True(t, supported)
 }
 
 func TestClaudeBuildArgs(t *testing.T) {
