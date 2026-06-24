@@ -652,12 +652,25 @@ func (p *CIPoller) resolveCIPanelMemberExecution(
 		return "", "", fmt.Errorf("resolve workflow config: %w", err)
 	}
 	resolvedAgent := resolution.PreferredAgent
+	strictWorkflowAgent := member.AgentExplicit ||
+		config.HasWorkflowAgentOverrideFromConfig(
+			repoCfg, cfg, workflow, member.Reasoning,
+		) ||
+		strings.TrimSpace(resolution.BackupAgent) != ""
 	if p.agentResolverFn != nil {
 		name, err := p.agentResolverFn(resolvedAgent)
 		if err != nil {
 			return "", "", fmt.Errorf("%w for type=%s: %w", errNoCIAgent, member.ReviewType, err)
 		}
 		resolvedAgent = name
+	} else if !strictWorkflowAgent {
+		resolved, err := agent.GetAvailableWithConfigFromConfig(
+			repoCfg, resolvedAgent, cfg, resolution.BackupAgent,
+		)
+		if err != nil {
+			return "", "", fmt.Errorf("%w for type=%s: %w", errNoCIAgent, member.ReviewType, err)
+		}
+		resolvedAgent = resolved.Name()
 	} else if resolved, err := agent.GetPreferredOrBackupWithConfigFromConfig(
 		repoCfg, resolvedAgent, cfg, resolution.BackupAgent,
 	); err != nil {

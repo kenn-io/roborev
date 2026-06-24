@@ -154,16 +154,17 @@ func SelectPanelName(requested, source string, merged ReviewConfig) string {
 // ResolvedMember is a fully-resolved panel member. It is the value serialized
 // into the review_jobs.panel_member_config_json column for reproducibility.
 type ResolvedMember struct {
-	Name         string `json:"name"`
-	Index        int    `json:"index"`
-	Agent        string `json:"agent"`
-	Model        string `json:"model"`
-	Provider     string `json:"provider"`
-	Reasoning    string `json:"reasoning"`
-	ReviewType   string `json:"review_type"`
-	Instructions string `json:"instructions"`
-	AllowFailure bool   `json:"allow_failure,omitempty"`
-	Timeout      string `json:"timeout,omitempty"`
+	Name          string `json:"name"`
+	Index         int    `json:"index"`
+	Agent         string `json:"agent"`
+	AgentExplicit bool   `json:"agent_explicit,omitempty"`
+	Model         string `json:"model"`
+	Provider      string `json:"provider"`
+	Reasoning     string `json:"reasoning"`
+	ReviewType    string `json:"review_type"`
+	Instructions  string `json:"instructions"`
+	AllowFailure  bool   `json:"allow_failure,omitempty"`
+	Timeout       string `json:"timeout,omitempty"`
 }
 
 // SynthesisSpec is the resolved agent/model/reasoning for a panel's synthesis
@@ -334,16 +335,17 @@ func resolveMemberFromConfig(
 		}
 	}
 	return ResolvedMember{
-		Name:         name,
-		Index:        index,
-		Agent:        agent,
-		Model:        model,
-		Provider:     spec.Provider,
-		Reasoning:    reasoning,
-		ReviewType:   reviewType,
-		Instructions: spec.Instructions,
-		AllowFailure: spec.AllowFailure,
-		Timeout:      spec.Timeout,
+		Name:          name,
+		Index:         index,
+		Agent:         agent,
+		AgentExplicit: strings.TrimSpace(spec.Agent) != "",
+		Model:         model,
+		Provider:      spec.Provider,
+		Reasoning:     reasoning,
+		ReviewType:    reviewType,
+		Instructions:  spec.Instructions,
+		AllowFailure:  spec.AllowFailure,
+		Timeout:       spec.Timeout,
 	}, nil
 }
 

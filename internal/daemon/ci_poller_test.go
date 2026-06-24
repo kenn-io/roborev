@@ -3565,6 +3565,50 @@ func TestProcessPRNamedPanelMemberUsesBackupModelWhenPreferredUnavailable(t *tes
 	assert.Equal("named-panel-backup-model", members[0].Model)
 }
 
+func TestProcessPRNamedPanelOmittedAgentAutoDetectsAvailableAgent(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("minimal PATH setup uses POSIX symlink")
+	}
+	assert := assert.New(t)
+	p, db, _, repo, cfg := newCIPanelGitHarness(t)
+	p.agentResolverFn = nil
+	gitPath, gitErr := exec.LookPath("git")
+	require.NoError(t, gitErr)
+	binDir := t.TempDir()
+	require.NoError(t, os.Symlink(gitPath, filepath.Join(binDir, "git")))
+	t.Setenv("PATH", binDir)
+	agent.Register(&agent.FakeAgent{NameStr: "ci-named-panel-auto"})
+	t.Cleanup(func() { agent.Unregister("ci-named-panel-auto") })
+
+	cfg.CI.Panel = "ci"
+	cfg.Review = config.ReviewConfig{
+		Subagents: map[string]config.SubagentSpec{
+			"rev": {ReviewType: "review"},
+		},
+		Panels: map[string]config.PanelSpec{
+			"ci": {Members: []string{"rev"}, SynthesisAgent: "test"},
+		},
+	}
+	p.loadRepoConfigFn = func(string) (*config.RepoConfig, error) { return &config.RepoConfig{}, nil }
+
+	base := repo.HeadSHA()
+	head := repo.CommitFile("app.go", "package app\n", "feat: app")
+	p.mergeBaseFn = func(_, _, _ string) (string, error) { return base, nil }
+
+	err := p.processPR(context.Background(), "acme/api", ghPR{
+		Number: 16, HeadRefOid: head, BaseRefName: "main",
+	}, cfg)
+	require.NoError(t, err, "processPR")
+
+	panel, err := db.GetCIPanelByPRSHA("acme/api", 16, head)
+	require.NoError(t, err)
+	require.NotNil(t, panel)
+	members, err := db.GetPanelMembers(panel.PanelRunUUID)
+	require.NoError(t, err)
+	require.Len(t, members, 1)
+	assert.Equal("ci-named-panel-auto", members[0].Agent)
+}
+
 // TestProcessPRAutoDesignAppendsNoneWhenNotWarranted verifies that an enabled
 // auto-design router appends no design member when no commit in the range
 // warrants one (a trivial doc/test change that the heuristics skip).

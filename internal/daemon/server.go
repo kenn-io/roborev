@@ -703,7 +703,11 @@ func resolveRerunModelProvider(job *storage.ReviewJob, cfg *config.Config) (stri
 		return "", "", fmt.Errorf("resolve workflow config: %w", err)
 	}
 
-	if err := validateRerunAgent(resolutionPath, job.Agent, resolution.BackupAgent, cfg); err != nil {
+	backupAgent := resolution.BackupAgent
+	if strings.TrimSpace(job.BackupAgent) != "" {
+		backupAgent = job.BackupAgent
+	}
+	if err := validateRerunAgent(resolutionPath, job.Agent, backupAgent, cfg); err != nil {
 		return "", "", err
 	}
 

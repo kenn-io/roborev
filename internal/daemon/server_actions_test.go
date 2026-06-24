@@ -742,6 +742,26 @@ func TestResolveRerunModelProviderAllowsUnavailablePrimaryWithBackup(t *testing.
 	assert.Empty(t, provider)
 }
 
+func TestResolveRerunModelProviderAllowsUnavailablePrimaryWithStoredBackup(t *testing.T) {
+	t.Setenv("PATH", "")
+	mainRepo := t.TempDir()
+
+	job := &storage.ReviewJob{
+		Agent:       "claude-code",
+		BackupAgent: "test",
+		JobType:     storage.JobTypeReview,
+		ReviewType:  config.ReviewTypeDefault,
+		Reasoning:   "thorough",
+		RepoPath:    mainRepo,
+	}
+
+	model, provider, err := resolveRerunModelProvider(job, config.DefaultConfig())
+
+	require.NoError(t, err)
+	assert.Empty(t, model)
+	assert.Empty(t, provider)
+}
+
 // TestHandleAddCommentToJobStates tests that comments can be added to jobs
 // in any state: queued, running, done, failed, and canceled.
 func TestHandleAddCommentToJobStates(t *testing.T) {
