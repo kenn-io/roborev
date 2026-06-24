@@ -5,6 +5,26 @@ description: Release history for roborev
 
 All notable changes to roborev, grouped by minor release.
 
+## 0.59.2
+<small>2026-06-24</small>
+
+**New features**
+
+- Copilot review output now prefers structured JSON when the installed CLI supports it, so roborev can store complete assistant findings instead of truncated process output.
+- `roborev fix` now includes completed `analyze` jobs when discovering open findings, so queued analysis results can be fixed without passing each job ID explicitly. See [Applying Fixes from Analysis](/guides/assisted-refactoring/#applying-fixes-from-analysis).
+
+**Improvements**
+
+- Homebrew tap updates now open pull requests against `kenn-io/homebrew-tap` instead of pushing directly to the protected tap branch.
+- Workflow-configured reviews, fixes, panels, CI members, and synthesis now use only the preferred agent or an explicitly configured backup. See [Backup Agents](/configuration/#backup-agents).
+- `roborev analyze` agent invocation is more stable across local setups, including Gemini/Antigravity selection, capability probes from deleted worktrees, and Codex stored-prompt jobs.
+
+**Bug fixes**
+
+- Quota-only or provider-unavailable panel runs no longer store misleading failed synthesis reviews when every member was skipped for availability reasons.
+
+---
+
 ## 0.59.1
 <small>2026-06-22</small>
 

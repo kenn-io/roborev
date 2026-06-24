@@ -104,8 +104,9 @@ roborev analyze security ./...              # Find security risks in existing co
 Available types: `test-fixtures`, `duplication`, `refactor`, `complexity`,
 `api-design`, `dead-code`, `architecture`, `security`.
 
-Analysis jobs appear in the review queue. Use `roborev fix <id>` to
-apply findings later, or pass `--fix` to apply immediately.
+Analysis jobs appear in the review queue. Use `roborev fix` to apply
+open findings later, target a specific job with `roborev fix <id>`, or
+pass `--fix` to apply immediately.
 
 ## Installation
 

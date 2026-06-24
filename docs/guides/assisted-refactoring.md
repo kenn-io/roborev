@@ -46,7 +46,7 @@ roborev analyze api-design 'pkg/api/*.go'
 roborev analyze architecture internal/storage/
 ```
 
-Results appear in the TUI as jobs labeled with their analysis type (e.g. `test-fixtures`, `duplication`). Use `roborev show <job_id>` or the TUI to read findings. You can then use the job IDs to address findings at your discretion with `roborev fix <job_id>`.
+Results appear in the TUI as jobs labeled with their analysis type (e.g. `test-fixtures`, `duplication`). Use `roborev show <job_id>` or the TUI to read findings. You can then run `roborev fix` to address open findings, or pass specific job IDs with `roborev fix <job_id>`.
 
 ## Branch Mode
 
@@ -91,7 +91,7 @@ Per-file mode is useful when:
 `roborev fix` works with any review, not just analysis results. Use it to address commit reviews too:
 
 ```bash
-roborev fix                        # Fix all open reviews on this branch
+roborev fix                        # Fix all open reviews and analysis findings on this branch
 roborev fix 123                    # Fix a specific review by job ID
 roborev fix 42 43 44               # Fix multiple reviews sequentially
 roborev fix --batch                # Batch all open into one agent prompt
