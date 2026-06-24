@@ -3,6 +3,8 @@ package agent
 import (
 	"bytes"
 	"context"
+	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -12,9 +14,13 @@ import (
 )
 
 var (
-	copilotAllowAllToolsSupport sync.Map
-	copilotStreamOffSupport     sync.Map
+	copilotAllowAllToolsSupport      sync.Map
+	copilotStreamOffSupport          sync.Map
+	copilotJSONOutputSupport         sync.Map
+	copilotDisableBuiltInMCPsSupport sync.Map
 )
+
+var errNoCopilotJSON = errors.New("no valid copilot JSON events parsed from output")
 
 // copilotSupportsAllowAllTools checks whether the copilot binary supports
 // the --allow-all-tools flag needed for non-interactive tool approval.
@@ -52,6 +58,36 @@ func copilotSupportsStreamOff(ctx context.Context, command string) (bool, error)
 	return supported, nil
 }
 
+func copilotSupportsJSONOutput(ctx context.Context, command string) (bool, error) {
+	if cached, ok := copilotJSONOutputSupport.Load(command); ok {
+		return cached.(bool), nil
+	}
+	cmd := exec.CommandContext(ctx, command, "--help")
+	configureCapabilityProbe(cmd)
+	output, err := cmd.CombinedOutput()
+	supported := strings.Contains(string(output), "--output-format")
+	if err != nil && !supported {
+		return false, fmt.Errorf("check %s --help: %w: %s", command, err, output)
+	}
+	copilotJSONOutputSupport.Store(command, supported)
+	return supported, nil
+}
+
+func copilotSupportsDisableBuiltInMCPs(ctx context.Context, command string) (bool, error) {
+	if cached, ok := copilotDisableBuiltInMCPsSupport.Load(command); ok {
+		return cached.(bool), nil
+	}
+	cmd := exec.CommandContext(ctx, command, "--help")
+	configureCapabilityProbe(cmd)
+	output, err := cmd.CombinedOutput()
+	supported := strings.Contains(string(output), "--disable-builtin-mcps")
+	if err != nil && !supported {
+		return false, fmt.Errorf("check %s --help: %w: %s", command, err, output)
+	}
+	copilotDisableBuiltInMCPsSupport.Store(command, supported)
+	return supported, nil
+}
+
 // copilotReviewDenyTools lists tools denied in review mode to enforce read-only
 // behavior. Deny rules take precedence over --allow-all-tools in copilot's
 // permission system.
@@ -72,7 +108,7 @@ var copilotReviewDenyTools = []string{
 // In review mode, destructive tools are denied. In agentic mode, all tools
 // are allowed without restriction.
 func (a *CopilotAgent) buildArgs(agenticMode bool) []string {
-	return a.commandArgs(agenticMode, true, true)
+	return a.commandArgs(agenticMode, true, true, true, true)
 }
 
 // CopilotAgent runs code reviews using the GitHub Copilot CLI
@@ -138,7 +174,7 @@ func (a *CopilotAgent) CommandName() string {
 
 func (a *CopilotAgent) CommandLine() string {
 	agenticMode := a.Agentic || AllowUnsafeAgents()
-	args := a.commandArgs(agenticMode, false, false)
+	args := a.commandArgs(agenticMode, false, false, false, false)
 	return a.Command + " " + strings.Join(args, " ")
 }
 
@@ -155,7 +191,23 @@ func (a *CopilotAgent) Review(ctx context.Context, repoPath, commitSHA, prompt s
 		log.Printf("copilot: cannot detect --stream support: %v", err)
 	}
 
-	args := a.commandArgs(agenticMode, supportsAllowAllTools, supportsStreamOff)
+	supportsJSONOutput, err := copilotSupportsJSONOutput(ctx, a.Command)
+	if err != nil {
+		log.Printf("copilot: cannot detect --output-format support: %v", err)
+	}
+
+	supportsDisableBuiltInMCPs, err := copilotSupportsDisableBuiltInMCPs(ctx, a.Command)
+	if err != nil {
+		log.Printf("copilot: cannot detect --disable-builtin-mcps support: %v", err)
+	}
+
+	args := a.commandArgs(
+		agenticMode,
+		supportsAllowAllTools,
+		supportsStreamOff,
+		supportsJSONOutput,
+		supportsDisableBuiltInMCPs,
+	)
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Stdin = strings.NewReader(prompt)
@@ -179,6 +231,15 @@ func (a *CopilotAgent) Review(ctx context.Context, repoPath, commitSHA, prompt s
 	}
 
 	result := stdout.String()
+	if supportsJSONOutput {
+		parsed, parseErr := parseCopilotJSON(strings.NewReader(result))
+		if parseErr != nil && !errors.Is(parseErr, errNoCopilotJSON) {
+			return "", parseErr
+		}
+		if parsed != "" {
+			return parsed, nil
+		}
+	}
 	if len(result) == 0 {
 		return "No review output generated", nil
 	}
@@ -186,13 +247,21 @@ func (a *CopilotAgent) Review(ctx context.Context, repoPath, commitSHA, prompt s
 	return result, nil
 }
 
-func (a *CopilotAgent) commandArgs(agenticMode, includePermissions, includeStreamOff bool) []string {
+func (a *CopilotAgent) commandArgs(
+	agenticMode, includePermissions, includeStreamOff, includeJSONOutput, includeDisableBuiltInMCPs bool,
+) []string {
 	args := []string{}
 	if includePermissions {
 		args = append(args, "-s", "--allow-all-tools")
 	}
 	if includeStreamOff {
 		args = append(args, "--stream", "off")
+	}
+	if includeJSONOutput {
+		args = append(args, "--output-format", "json")
+	}
+	if includeDisableBuiltInMCPs && !agenticMode {
+		args = append(args, "--disable-builtin-mcps")
 	}
 	if a.Model != "" {
 		args = append(args, "--model", a.Model)
@@ -203,6 +272,56 @@ func (a *CopilotAgent) commandArgs(agenticMode, includePermissions, includeStrea
 		}
 	}
 	return args
+}
+
+type copilotEvent struct {
+	Type string `json:"type"`
+	Data struct {
+		MessageID    string            `json:"messageId,omitempty"`
+		Content      string            `json:"content,omitempty"`
+		ToolCalls    []json.RawMessage `json:"toolCalls,omitempty"`
+		ToolRequests []json.RawMessage `json:"toolRequests,omitempty"`
+	} `json:"data,omitempty"`
+}
+
+func parseCopilotJSON(r io.Reader) (string, error) {
+	var validEventsParsed bool
+	assistantMessages := newTrailingReviewText()
+
+	err := scanStreamJSONLines(r, nil, func(line string) error {
+		var ev copilotEvent
+		if jsonErr := json.Unmarshal([]byte(line), &ev); jsonErr != nil {
+			return nil
+		}
+		if ev.Type == "" {
+			return nil
+		}
+		validEventsParsed = true
+
+		if ev.Type == "assistant.tool_call" ||
+			ev.Type == "assistant.tool_result" ||
+			strings.HasPrefix(ev.Type, "tool.") {
+			assistantMessages.ResetAfterTool()
+		}
+
+		if ev.Type == "assistant.message" {
+			if len(ev.Data.ToolCalls) > 0 || len(ev.Data.ToolRequests) > 0 {
+				assistantMessages.ResetAfterTool()
+				return nil
+			}
+			if ev.Data.Content != "" {
+				assistantMessages.AddWithID(ev.Data.MessageID, ev.Data.Content)
+			}
+		}
+		return nil
+	})
+	if err != nil {
+		return "", err
+	}
+	if !validEventsParsed {
+		return "", errNoCopilotJSON
+	}
+	return assistantMessages.Join("\n"), nil
 }
 
 func init() {
