@@ -3350,6 +3350,19 @@ func TestResolveCIAutoDesignAgentExplicitDesignAgentStaysStrict(t *testing.T) {
 	assert.Empty(t, designModel)
 }
 
+func TestResolveCIAutoDesignAgentGenericDefaultAgentCanAutoDetect(t *testing.T) {
+	t.Setenv("PATH", "")
+	agent.Register(&agent.FakeAgent{NameStr: "ci-auto-design-generic"})
+	t.Cleanup(func() { agent.Unregister("ci-auto-design-generic") })
+
+	cfg := config.DefaultConfig()
+	cfg.DefaultAgent = "claude-code"
+	designAgent, designModel := resolveCIAutoDesignAgent(nil, cfg)
+
+	assert.Equal(t, "ci-auto-design-generic", designAgent)
+	assert.Empty(t, designModel)
+}
+
 // TestProcessPRSynthesisAndMembersUseSeparateMinSeverity verifies the CI
 // min_severity threshold reaches only the synthesis job, while member reviews
 // use the review_min_severity setting from normal review config.

@@ -852,8 +852,7 @@ func resolveCIAutoDesignAgent(repoCfg *config.RepoConfig, cfg *config.Config) (s
 
 func explicitDesignAgentConfigured(repoCfg *config.RepoConfig, cfg *config.Config, reasoning string) bool {
 	if repoCfg != nil {
-		if strings.TrimSpace(repoCfg.Agent) != "" ||
-			strings.TrimSpace(repoCfg.DesignAgent) != "" ||
+		if strings.TrimSpace(repoCfg.DesignAgent) != "" ||
 			strings.TrimSpace(repoDesignAgentForReasoning(repoCfg, reasoning)) != "" {
 			return true
 		}
@@ -863,8 +862,6 @@ func explicitDesignAgentConfigured(repoCfg *config.RepoConfig, cfg *config.Confi
 			strings.TrimSpace(globalDesignAgentForReasoning(cfg, reasoning)) != "" {
 			return true
 		}
-		defaultAgent := strings.TrimSpace(cfg.DefaultAgent)
-		return defaultAgent != "" && defaultAgent != config.DefaultConfig().DefaultAgent
 	}
 	return false
 }

@@ -2041,6 +2041,27 @@ func TestResolveBackupPrefersStoredJobBackup(t *testing.T) {
 	assert.Equal("opus", pool.resolveBackupModel(synthesisStored))
 }
 
+func TestResolveBackupAgentUsesConfiguredCommandOverride(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell fake command uses POSIX permissions")
+	}
+	binDir := t.TempDir()
+	cmdPath := filepath.Join(binDir, "backup-claude")
+	require.NoError(t, os.WriteFile(cmdPath, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	t.Setenv("PATH", binDir)
+
+	cfg := config.DefaultConfig()
+	cfg.ReviewBackupAgent = "claude-code"
+	cfg.ClaudeCodeCmd = "backup-claude"
+	pool := NewWorkerPool(nil, NewStaticConfig(cfg), 1, NewBroadcaster(), nil, nil)
+	job := &storage.ReviewJob{
+		Agent:    "codex",
+		RepoPath: t.TempDir(),
+	}
+
+	assert.Equal(t, "claude-code", pool.resolveBackupAgent(job))
+}
+
 func TestFailOrRetryInner_QuotaSkipsRetries(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)

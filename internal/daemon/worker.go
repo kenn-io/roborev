@@ -1222,9 +1222,10 @@ func (wp *WorkerPool) resolveBackupAgent(job *storage.ReviewJob) string {
 	if backup == "" {
 		return ""
 	}
-	// Canonicalize: resolve alias, verify installed, skip if same as primary
-	resolved, err := agent.Get(backup)
-	if err != nil || !agent.IsAvailable(resolved.Name()) {
+	// Canonicalize and verify availability using the config-aware path so
+	// command overrides and configured ACP aliases participate in failover.
+	resolved, err := agent.GetPreferredOrBackupWithConfig(job.RepoPath, backup, cfg)
+	if err != nil {
 		return ""
 	}
 	if resolution.AgentMatches(resolved.Name(), job.Agent) {
