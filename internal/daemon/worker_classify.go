@@ -238,7 +238,7 @@ func (wp *WorkerPool) resolveDesignFollowUp(repoPath string) (string, string) {
 	cfg := wp.cfgGetter.Config()
 	repoCfg, _ := config.LoadRepoConfig(repoPath)
 	return resolveDesignFollowUpAgentFromConfig(
-		repoCfg, cfg, "" /* default reasoning */, "",
+		repoCfg, cfg, localAutoDesignReviewReasoning, "",
 	)
 }
 

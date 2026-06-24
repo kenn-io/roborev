@@ -100,6 +100,65 @@ func TestMaybeDispatchAutoDesign_HeuristicTrigger(t *testing.T) {
 	assert.Equal(t, "review", found.JobType, "direct heuristic trigger enqueues a design review, not a classify")
 }
 
+func TestMaybeDispatchAutoDesign_HeuristicUsesThoroughDesignAgentConfig(t *testing.T) {
+	srv, repo := newAutoDesignTestServer(t)
+
+	const primaryAgent = "local-design-thorough-primary"
+	agent.Register(&unavailableSynthesisCommandAgent{
+		name:    primaryAgent,
+		command: "roborev-missing-local-design-thorough-primary",
+	})
+	t.Cleanup(func() { agent.Unregister(primaryAgent) })
+	agent.Register(&agent.FakeAgent{NameStr: "local-design-auto-detect"})
+	t.Cleanup(func() { agent.Unregister("local-design-auto-detect") })
+	t.Setenv("PATH", "")
+
+	require.NoError(t, os.WriteFile(filepath.Join(repo.RootPath, ".roborev.toml"), []byte(`
+design_agent_thorough = "local-design-thorough-primary"
+design_model_thorough = "local-thorough-model"
+
+[auto_design_review]
+enabled = true
+`), 0o644))
+
+	commit, err := srv.db.GetOrCreateCommit(repo.ID, "decafbad", "Author", "refactor: rework api", time.Now())
+	require.NoError(t, err)
+	diff := "+x\n+y\n+a\n+b\n+c\n+d\n+e\n+f\n+g\n+h\n+i\n+j\n+k\n+l\n"
+	parent := &storage.ReviewJob{
+		ID:            1000,
+		RepoID:        repo.ID,
+		CommitID:      &commit.ID,
+		GitRef:        "decafbad",
+		Agent:         "test",
+		JobType:       storage.JobTypeReview,
+		Status:        storage.JobStatusQueued,
+		EnqueuedAt:    time.Now(),
+		RepoPath:      repo.RootPath,
+		CommitSubject: "refactor: rework api",
+		DiffContent:   &diff,
+	}
+
+	require.NoError(t, srv.maybeDispatchAutoDesign(context.Background(), parent))
+
+	queued, err := srv.db.ListJobsByStatus(repo.ID, storage.JobStatusQueued)
+	require.NoError(t, err)
+	var found *storage.ReviewJob
+	for i := range queued {
+		j := queued[i]
+		if j.GitRef == "decafbad" && j.ReviewType == "design" && j.Source == "auto_design" {
+			found = &j
+			break
+		}
+	}
+	require.NotNil(t, found, "expected an auto_design design row")
+	full, err := srv.db.GetJobByID(found.ID)
+	require.NoError(t, err)
+	assert := assert.New(t)
+	assert.Equal(primaryAgent, full.Agent)
+	assert.Equal("local-thorough-model", full.Model)
+	assert.Equal("thorough", full.Reasoning)
+}
+
 func TestMaybeDispatchAutoDesign_HeuristicSkip_TrivialDiff(t *testing.T) {
 	srv, repo := newAutoDesignTestServer(t)
 	enableAutoDesignReviewForRepo(t, repo.RootPath)

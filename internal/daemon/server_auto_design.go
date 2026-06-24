@@ -29,7 +29,10 @@ type AutoDesignMetrics struct {
 // autoDesignMetrics is the process-global instance.
 var autoDesignMetrics = &AutoDesignMetrics{}
 
-const autoDesignHookSource = "post_commit"
+const (
+	autoDesignHookSource           = "post_commit"
+	localAutoDesignReviewReasoning = "thorough"
+)
 
 func (s *Server) autoDesignConfig() *config.Config {
 	if s != nil && s.configWatcher != nil {
@@ -252,7 +255,9 @@ func (s *Server) enqueueDesignFollowUp(parent *storage.ReviewJob) error {
 // the normal blank-agent path.
 func resolveDesignAgent(repoPath string, cfg *config.Config) (string, string) {
 	repoCfg, _ := config.LoadRepoConfig(repoPath)
-	return resolveDesignFollowUpAgentFromConfig(repoCfg, cfg, "" /* default reasoning */, "")
+	return resolveDesignFollowUpAgentFromConfig(
+		repoCfg, cfg, localAutoDesignReviewReasoning, "",
+	)
 }
 
 func resolveDesignFollowUpAgentFromConfig(

@@ -62,6 +62,41 @@ func TestWorkerPoolResolveDesignFollowUpGenericDefaultAgentCanAutoDetect(t *test
 	assert.Empty(t, designModel)
 }
 
+func TestProcessClassifyJob_DesignPromotionUsesThoroughDesignAgentConfig(t *testing.T) {
+	tc := newWorkerTestContext(t, 0)
+
+	const primaryAgent = "classify-design-thorough-primary"
+	agent.Register(&unavailableSynthesisCommandAgent{
+		name:    primaryAgent,
+		command: "roborev-missing-classify-design-thorough-primary",
+	})
+	t.Cleanup(func() { agent.Unregister(primaryAgent) })
+	agent.Register(&agent.FakeAgent{NameStr: "classify-design-auto-detect"})
+	t.Cleanup(func() { agent.Unregister("classify-design-auto-detect") })
+	t.Setenv("PATH", "")
+
+	require.NoError(t, os.WriteFile(filepath.Join(tc.Repo.RootPath, ".roborev.toml"), []byte(`
+design_agent_thorough = "classify-design-thorough-primary"
+design_model_thorough = "classify-thorough-model"
+`), 0o644))
+
+	job := tc.createAndClaimClassifyJob(t, "f00dbabe", "feat: new package", "+lots of new code\n")
+	SetTestClassifierVerdict(true, "new package detected")
+	t.Cleanup(func() { SetTestClassifierVerdict(false, "") })
+
+	tc.Pool.processJob(testWorkerID, job)
+
+	after, err := tc.DB.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert := assert.New(t)
+	assert.Equal(storage.JobTypeReview, after.JobType)
+	assert.Equal(storage.JobStatusQueued, after.Status)
+	assert.Equal("design", after.ReviewType)
+	assert.Equal(primaryAgent, after.Agent)
+	assert.Equal("classify-thorough-model", after.Model)
+	assert.Equal("thorough", after.Reasoning)
+}
+
 type wrappedErr struct{ inner error }
 
 func (w *wrappedErr) Error() string { return "outer: " + w.inner.Error() }
