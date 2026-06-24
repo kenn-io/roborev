@@ -844,7 +844,12 @@ func isAnalyzeTaskJob(job storage.ReviewJob) bool {
 	if job.JobType != storage.JobTypeTask {
 		return false
 	}
-	return analyze.GetType(strings.TrimSpace(job.GitRef)) != nil
+	analysisType := analyze.GetType(strings.TrimSpace(job.GitRef))
+	if analysisType == nil {
+		return false
+	}
+	prefix := strings.TrimSpace(job.OutputPrefix)
+	return strings.HasPrefix(prefix, fmt.Sprintf("## %s Analysis\n\n**Files:**\n", analysisType.Name))
 }
 
 func queryOpenJobIDs(
