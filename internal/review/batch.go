@@ -108,7 +108,10 @@ func runSingle(
 		resolvedName = resolution.PreferredAgent
 		backupAgent = resolution.BackupAgent
 	}
-	autoDetectAgent := strings.TrimSpace(agentName) == "" && cfg.AgentRegistry == nil
+	strictWorkflowAgent := cfg.GlobalConfig != nil && (config.HasWorkflowAgentOverrideFromConfig(
+		resolution.RepoConfig, cfg.GlobalConfig, workflow, cfg.Reasoning,
+	) || strings.TrimSpace(backupAgent) != "")
+	autoDetectAgent := strings.TrimSpace(agentName) == "" && cfg.AgentRegistry == nil && !strictWorkflowAgent
 
 	var resolvedAgent agent.Agent
 	if cfg.AgentRegistry != nil {

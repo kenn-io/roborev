@@ -441,6 +441,30 @@ func ResolveAgentForWorkflowFromConfig(
 	return "codex"
 }
 
+// HasWorkflowAgentOverrideFromConfig reports whether repo/global config has a
+// workflow-specific primary agent override for the given workflow and reasoning
+// level. It intentionally excludes generic repo agent and global default_agent
+// values because those are preferences, not workflow pins.
+func HasWorkflowAgentOverrideFromConfig(
+	repoCfg *RepoConfig,
+	globalCfg *Config,
+	workflow, level string,
+) bool {
+	if repoCfg != nil {
+		if repoWorkflowField(repoCfg, workflow, level, true) != "" ||
+			repoWorkflowField(repoCfg, workflow, "", true) != "" {
+			return true
+		}
+	}
+	if globalCfg != nil {
+		if globalWorkflowField(globalCfg, workflow, level, true) != "" ||
+			globalWorkflowField(globalCfg, workflow, "", true) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // ResolveModelForWorkflow determines which model to use based on workflow and level.
 // Same priority as ResolveAgentForWorkflow, but returns empty string as default.
 func ResolveModelForWorkflow(cli, repoPath string, globalCfg *Config, workflow, level string) string {

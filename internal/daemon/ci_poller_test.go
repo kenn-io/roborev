@@ -2895,6 +2895,46 @@ func TestResolveMatrixMemberAgentBlankAgentHonorsConfiguredCommandOverride(t *te
 	assert.Empty(t, resolvedModel)
 }
 
+func TestResolveMatrixMemberAgentBlankAgentWithExplicitBackupStaysStrict(t *testing.T) {
+	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+	t.Setenv("PATH", "")
+	h.Cfg.ReviewBackupAgent = "claude-code"
+	agent.Register(&agent.FakeAgent{NameStr: "ci-unrelated-daemon"})
+	t.Cleanup(func() { agent.Unregister("ci-unrelated-daemon") })
+
+	resolvedAgent, resolvedModel, err := h.Poller.resolveMatrixMemberAgent(
+		h.Repo,
+		nil,
+		h.Cfg,
+		config.AgentReviewType{Agent: "", ReviewType: "default"},
+		"thorough",
+	)
+	require.Error(t, err)
+	assert.Empty(t, resolvedAgent)
+	assert.Empty(t, resolvedModel)
+	assert.Contains(t, err.Error(), "no configured agent available")
+}
+
+func TestResolveMatrixMemberAgentBlankAgentWithExplicitPrimaryStaysStrict(t *testing.T) {
+	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+	t.Setenv("PATH", "")
+	h.Cfg.ReviewAgent = "claude-code"
+	agent.Register(&agent.FakeAgent{NameStr: "ci-unrelated-primary"})
+	t.Cleanup(func() { agent.Unregister("ci-unrelated-primary") })
+
+	resolvedAgent, resolvedModel, err := h.Poller.resolveMatrixMemberAgent(
+		h.Repo,
+		nil,
+		h.Cfg,
+		config.AgentReviewType{Agent: "", ReviewType: "default"},
+		"thorough",
+	)
+	require.Error(t, err)
+	assert.Empty(t, resolvedAgent)
+	assert.Empty(t, resolvedModel)
+	assert.Contains(t, err.Error(), "no configured agent available")
+}
+
 func TestResolveMatrixMemberAgentUsesPassedRepoConfigForACPAvailability(t *testing.T) {
 	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
 	binDir := t.TempDir()
