@@ -508,9 +508,21 @@ func resolvePanelMemberExecution(
 	if err != nil {
 		return agentName, model
 	}
-	selected, err := agent.GetPreferredOrBackupWithConfig(
-		repoPath, resolution.PreferredAgent, cfg, resolution.BackupAgent,
-	)
+	strictWorkflowAgent := m.AgentExplicit ||
+		config.HasWorkflowAgentOverrideFromConfig(
+			resolution.RepoConfig, cfg, resolution.Workflow, resolution.Reasoning,
+		) ||
+		strings.TrimSpace(resolution.BackupAgent) != ""
+	var selected agent.Agent
+	if strictWorkflowAgent {
+		selected, err = agent.GetPreferredOrBackupWithConfig(
+			repoPath, resolution.PreferredAgent, cfg, resolution.BackupAgent,
+		)
+	} else {
+		selected, err = agent.GetAvailableWithConfig(
+			repoPath, resolution.PreferredAgent, cfg, resolution.BackupAgent,
+		)
+	}
 	if err != nil {
 		return agentName, model
 	}
