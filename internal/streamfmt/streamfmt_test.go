@@ -112,6 +112,16 @@ func runStreamTestCase(t *testing.T, tc streamTestCase) {
 	})
 }
 
+func TestFormatterTTYRendersPlainText(t *testing.T) {
+	fix := newFixture(true)
+
+	fix.writeLine("No issues found.")
+	fix.writeLine("Summary: Updates docs.")
+
+	fix.assertContains(t, "No issues found.")
+	fix.assertContains(t, "Summary: Updates docs.")
+}
+
 type toolInput struct {
 	FilePath  string `json:"file_path,omitempty"`
 	OldString string `json:"old_string,omitempty"`

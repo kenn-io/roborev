@@ -322,6 +322,7 @@ func (f *Formatter) processLine(line string) {
 
 	var ev streamEvent
 	if err := json.Unmarshal([]byte(line), &ev); err != nil {
+		f.writeText(SanitizeControlKeepNewlines(line))
 		return
 	}
 

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"bytes"
 	"context"
 	"os"
 	"strings"
@@ -69,10 +70,13 @@ func TestCopilotReviewParsesJSONOutput(t *testing.T) {
 	})
 	a := NewCopilotAgent(mock.CmdPath)
 
-	res, err := a.Review(context.Background(), t.TempDir(), "HEAD", "prompt", nil)
+	var output bytes.Buffer
+	res, err := a.Review(context.Background(), t.TempDir(), "HEAD", "prompt", &output)
 
 	require.NoError(t, err)
 	assert.Equal(t, "Full review output", res)
+	assert.Contains(t, output.String(), "Full review output")
+	assert.NotContains(t, output.String(), "assistant.message")
 	assertFileContent(t, mock.StdinFile, "prompt")
 
 	args := readFileContent(t, mock.ArgsFile)

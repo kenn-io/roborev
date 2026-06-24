@@ -216,7 +216,11 @@ func (a *CopilotAgent) Review(ctx context.Context, repoPath, commitSHA, prompt s
 
 	var stdout, stderr bytes.Buffer
 	if sw := newSyncWriter(output); sw != nil {
-		cmd.Stdout = io.MultiWriter(&stdout, sw)
+		if supportsJSONOutput {
+			cmd.Stdout = &stdout
+		} else {
+			cmd.Stdout = io.MultiWriter(&stdout, sw)
+		}
 		cmd.Stderr = io.MultiWriter(&stderr, sw)
 	} else {
 		cmd.Stdout = &stdout
@@ -232,12 +236,19 @@ func (a *CopilotAgent) Review(ctx context.Context, repoPath, commitSHA, prompt s
 
 	result := stdout.String()
 	if supportsJSONOutput {
+		if sessionCapture, ok := output.(*SessionCaptureWriter); ok {
+			sessionCapture.capture([]byte(result))
+		}
 		parsed, parseErr := parseCopilotJSON(strings.NewReader(result))
 		if parseErr != nil && !errors.Is(parseErr, errNoCopilotJSON) {
 			return "", parseErr
 		}
 		if parsed != "" {
+			writeCopilotReviewOutput(output, parsed)
 			return parsed, nil
+		}
+		if errors.Is(parseErr, errNoCopilotJSON) {
+			writeCopilotReviewOutput(output, result)
 		}
 	}
 	if len(result) == 0 {
@@ -245,6 +256,20 @@ func (a *CopilotAgent) Review(ctx context.Context, repoPath, commitSHA, prompt s
 	}
 
 	return result, nil
+}
+
+func writeCopilotReviewOutput(output io.Writer, text string) {
+	if text == "" {
+		return
+	}
+	sw := newSyncWriter(output)
+	if sw == nil {
+		return
+	}
+	if !strings.HasSuffix(text, "\n") {
+		text += "\n"
+	}
+	_, _ = sw.Write([]byte(text))
 }
 
 func (a *CopilotAgent) commandArgs(
