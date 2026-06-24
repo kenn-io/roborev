@@ -237,7 +237,7 @@ func (a *CopilotAgent) Review(ctx context.Context, repoPath, commitSHA, prompt s
 	result := stdout.String()
 	if supportsJSONOutput {
 		if sessionCapture, ok := output.(*SessionCaptureWriter); ok {
-			sessionCapture.capture([]byte(result))
+			sessionCapture.capture([]byte(lineTerminated(result)))
 		}
 		parsed, parseErr := parseCopilotJSON(strings.NewReader(result))
 		if parseErr != nil && !errors.Is(parseErr, errNoCopilotJSON) {
@@ -258,6 +258,13 @@ func (a *CopilotAgent) Review(ctx context.Context, repoPath, commitSHA, prompt s
 	return result, nil
 }
 
+func lineTerminated(text string) string {
+	if text == "" || strings.HasSuffix(text, "\n") {
+		return text
+	}
+	return text + "\n"
+}
+
 func writeCopilotReviewOutput(output io.Writer, text string) {
 	if text == "" {
 		return
@@ -266,10 +273,7 @@ func writeCopilotReviewOutput(output io.Writer, text string) {
 	if sw == nil {
 		return
 	}
-	if !strings.HasSuffix(text, "\n") {
-		text += "\n"
-	}
-	_, _ = sw.Write([]byte(text))
+	_, _ = sw.Write([]byte(lineTerminated(text)))
 }
 
 func (a *CopilotAgent) commandArgs(

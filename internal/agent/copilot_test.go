@@ -84,6 +84,29 @@ func TestCopilotReviewParsesJSONOutput(t *testing.T) {
 	assert.Contains(t, args, "--disable-builtin-mcps")
 }
 
+func TestCopilotReviewJSONOutputCapturesSessionIDWithoutTrailingNewline(t *testing.T) {
+	skipIfWindows(t)
+
+	cmdPath := writeTempCommand(t, `#!/bin/sh
+case "$*" in *--help*) echo "--allow-all-tools --stream --output-format"; exit 0;; esac
+printf '%s\n%s' \
+'{"type":"assistant.message","data":{"messageId":"msg-1","content":"No issues found.","toolRequests":[]}}' \
+'{"type":"result","exitCode":0,"sessionId":"session-no-newline"}'
+`)
+	a := NewCopilotAgent(cmdPath)
+
+	var output bytes.Buffer
+	sessionWriter := NewSessionCaptureWriter(&output, nil)
+	res, err := a.Review(context.Background(), t.TempDir(), "HEAD", "prompt", sessionWriter)
+	sessionWriter.Flush()
+
+	require.NoError(t, err)
+	assert.Equal(t, "No issues found.", res)
+	assert.Equal(t, "session-no-newline", sessionWriter.SessionID())
+	assert.Contains(t, output.String(), "No issues found.")
+	assert.NotContains(t, output.String(), "assistant.message")
+}
+
 func TestCopilotReviewJSONOutputUsesLatestMessageContentByID(t *testing.T) {
 	skipIfWindows(t)
 
