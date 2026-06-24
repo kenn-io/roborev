@@ -303,6 +303,27 @@ func TestListJobsWithRepoFilter(t *testing.T) {
 	}
 }
 
+func TestListJobsHydratesOutputPrefix(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, "/tmp/output-prefix-list")
+	const outputPrefix = "## refactor Analysis\n\n**Files:**\n- main.go\n\n---\n\n"
+	_, err := db.EnqueueJob(EnqueueOpts{
+		RepoID:       repo.ID,
+		GitRef:       "refactor",
+		Agent:        "test",
+		Prompt:       "analyze main.go",
+		OutputPrefix: outputPrefix,
+	})
+	require.NoError(t, err, "EnqueueJob failed")
+
+	jobs, err := db.ListJobs("", repo.RootPath, 0, 0)
+	require.NoError(t, err, "ListJobs failed")
+	require.Len(t, jobs, 1)
+	assert.Equal(t, outputPrefix, jobs[0].OutputPrefix)
+}
+
 func TestListJobsWithRepoPaths(t *testing.T) {
 	assert := assert.New(t)
 	db := openTestDB(t)
