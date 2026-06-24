@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"strings"
 	"sync/atomic"
 
 	"go.kenn.io/roborev/internal/agent"
@@ -245,27 +246,50 @@ func (s *Server) enqueueDesignFollowUp(parent *storage.ReviewJob) error {
 	return err
 }
 
-// resolveDesignAgent returns the (agent, model) pair the auto-design
-// follow-up should persist for execution. It resolves to an *installed*
-// preferred or configured backup agent; otherwise the row would
-// carry an unavailable primary name and the worker would fail when it
-// claims the job, even though an explicit backup agent is installed
-// and configured.
+// resolveDesignAgent returns the (agent, model) pair the auto-design follow-up
+// should persist for execution. Workflow-specific design agents and backups
+// stay strict, while generic defaults can auto-detect an installed agent like
+// the normal blank-agent path.
 func resolveDesignAgent(repoPath string, cfg *config.Config) (string, string) {
-	resolution, err := agent.ResolveWorkflowConfig(
-		"", repoPath, cfg, "design", "")
+	repoCfg, _ := config.LoadRepoConfig(repoPath)
+	return resolveDesignFollowUpAgentFromConfig(repoCfg, cfg, "" /* default reasoning */, "")
+}
+
+func resolveDesignFollowUpAgentFromConfig(
+	repoCfg *config.RepoConfig,
+	cfg *config.Config,
+	reasoning string,
+	modelOverride string,
+) (string, string) {
+	resolution, err := agent.ResolveWorkflowConfigFromConfig(
+		"", repoCfg, cfg, "design", reasoning)
 	if err != nil || resolution.PreferredAgent == "" {
-		return config.ResolveAgent("", repoPath, cfg), ""
+		designAgent, designModel := config.DesignAgentFromConfig(repoCfg, cfg)
+		if modelOverride != "" {
+			designModel = modelOverride
+		}
+		return designAgent, designModel
 	}
 	primary := resolution.PreferredAgent
-	chosen, err := agent.GetPreferredOrBackupWithConfig(repoPath, primary, cfg, resolution.BackupAgent)
+	strictDesignAgent := config.HasWorkflowAgentOverrideFromConfig(
+		repoCfg, cfg, "design", reasoning,
+	) ||
+		strings.TrimSpace(resolution.BackupAgent) != ""
+	var chosen agent.Agent
+	if strictDesignAgent {
+		chosen, err = agent.GetPreferredOrBackupWithConfigFromConfig(
+			repoCfg, primary, cfg, resolution.BackupAgent,
+		)
+	} else {
+		chosen, err = agent.GetAvailableWithConfigFromConfig(repoCfg, primary, cfg)
+	}
 	if err != nil {
 		// Nothing installed — fall back to the primary name anyway so
 		// the row has a readable agent value, even if the worker will
 		// error. Better than persisting the sentinel.
-		return primary, resolution.ModelForSelectedAgent(primary, "")
+		return primary, resolution.ModelForSelectedAgent(primary, modelOverride)
 	}
-	return chosen.Name(), resolution.ModelForSelectedAgent(chosen.Name(), "")
+	return chosen.Name(), resolution.ModelForSelectedAgent(chosen.Name(), modelOverride)
 }
 
 func (s *Server) insertSkippedDesign(parent *storage.ReviewJob, reason string) error {

@@ -231,22 +231,15 @@ func (wp *WorkerPool) applyClassifyVerdict(workerID string, job *storage.ReviewJ
 }
 
 // resolveDesignFollowUp returns the (agent, model) pair to persist on a
-// promoted design review. Resolves to an *installed* agent via
-// preferred-or-backup resolution so the worker that claims the promoted row
-// next can actually run it without using unrelated fallback agents.
+// promoted design review. It shares heuristic auto-design resolution so generic
+// defaults can auto-detect, while workflow-specific pins and backups stay
+// strict.
 func (wp *WorkerPool) resolveDesignFollowUp(repoPath string) (string, string) {
 	cfg := wp.cfgGetter.Config()
-	resolution, err := agent.ResolveWorkflowConfig(
-		"" /* no CLI override */, repoPath, cfg, "design", "" /* default reasoning */)
-	if err != nil || resolution.PreferredAgent == "" {
-		return config.ResolveAgent("", repoPath, cfg), ""
-	}
-	primary := resolution.PreferredAgent
-	chosen, err := agent.GetPreferredOrBackupWithConfig(repoPath, primary, cfg, resolution.BackupAgent)
-	if err != nil {
-		return primary, resolution.ModelForSelectedAgent(primary, "")
-	}
-	return chosen.Name(), resolution.ModelForSelectedAgent(chosen.Name(), "")
+	repoCfg, _ := config.LoadRepoConfig(repoPath)
+	return resolveDesignFollowUpAgentFromConfig(
+		repoCfg, cfg, "" /* default reasoning */, "",
+	)
 }
 
 // completeClassifyAsSkip is the failure path: the classifier couldn't

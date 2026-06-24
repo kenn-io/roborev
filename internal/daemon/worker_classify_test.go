@@ -47,6 +47,21 @@ func TestPublicClassifierSkipReason_WrappedDeadlineExceeded(t *testing.T) {
 	assert.Equal(t, "classifier timed out", publicClassifierSkipReason(wrapped))
 }
 
+func TestWorkerPoolResolveDesignFollowUpGenericDefaultAgentCanAutoDetect(t *testing.T) {
+	t.Setenv("PATH", "")
+	agent.Register(&agent.FakeAgent{NameStr: "classify-auto-design"})
+	t.Cleanup(func() { agent.Unregister("classify-auto-design") })
+
+	cfg := config.DefaultConfig()
+	cfg.DefaultAgent = "claude-code"
+	wp := &WorkerPool{cfgGetter: NewStaticConfig(cfg)}
+
+	designAgent, designModel := wp.resolveDesignFollowUp(t.TempDir())
+
+	assert.Equal(t, "classify-auto-design", designAgent)
+	assert.Empty(t, designModel)
+}
+
 type wrappedErr struct{ inner error }
 
 func (w *wrappedErr) Error() string { return "outer: " + w.inner.Error() }

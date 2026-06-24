@@ -833,39 +833,11 @@ func ciReasoning(repoCfg *config.RepoConfig) string {
 }
 
 func resolveCIAutoDesignAgent(repoCfg *config.RepoConfig, cfg *config.Config) (string, string) {
-	reasoning := ciReasoning(repoCfg)
 	ciModel := ""
 	if cfg != nil {
 		ciModel = cfg.CI.Model
 	}
-	resolution, err := agent.ResolveWorkflowConfigFromConfig(
-		"", repoCfg, cfg, "design", reasoning,
-	)
-	if err != nil || resolution.PreferredAgent == "" {
-		designAgent, designModel := config.DesignAgentFromConfig(repoCfg, cfg)
-		if strings.TrimSpace(ciModel) != "" {
-			designModel = ciModel
-		}
-		return designAgent, designModel
-	}
-	strictDesignAgent := config.HasWorkflowAgentOverrideFromConfig(
-		repoCfg, cfg, "design", reasoning,
-	) ||
-		strings.TrimSpace(resolution.BackupAgent) != ""
-	var chosen agent.Agent
-	if strictDesignAgent {
-		chosen, err = agent.GetPreferredOrBackupWithConfigFromConfig(
-			repoCfg, resolution.PreferredAgent, cfg, resolution.BackupAgent,
-		)
-	} else {
-		chosen, err = agent.GetAvailableWithConfigFromConfig(
-			repoCfg, resolution.PreferredAgent, cfg,
-		)
-	}
-	if err != nil {
-		return resolution.PreferredAgent, resolution.ModelForSelectedAgent(resolution.PreferredAgent, ciModel)
-	}
-	return chosen.Name(), resolution.ModelForSelectedAgent(chosen.Name(), ciModel)
+	return resolveDesignFollowUpAgentFromConfig(repoCfg, cfg, ciReasoning(repoCfg), ciModel)
 }
 
 // maybeAppendDesignMember appends exactly one whole-range design member to the

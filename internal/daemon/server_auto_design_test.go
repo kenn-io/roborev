@@ -11,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
@@ -43,6 +44,19 @@ func enableHookAutoDesignReviewForRepo(t *testing.T, repoPath string) {
 		[]byte(`[auto_design_review]
 hook_enabled = true
 `), 0o644))
+}
+
+func TestResolveDesignAgentGenericDefaultAgentCanAutoDetect(t *testing.T) {
+	t.Setenv("PATH", "")
+	agent.Register(&agent.FakeAgent{NameStr: "local-auto-design"})
+	t.Cleanup(func() { agent.Unregister("local-auto-design") })
+
+	cfg := config.DefaultConfig()
+	cfg.DefaultAgent = "claude-code"
+	designAgent, designModel := resolveDesignAgent(t.TempDir(), cfg)
+
+	assert.Equal(t, "local-auto-design", designAgent)
+	assert.Empty(t, designModel)
 }
 
 func TestMaybeDispatchAutoDesign_HeuristicTrigger(t *testing.T) {
