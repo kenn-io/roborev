@@ -721,6 +721,27 @@ func TestResolveRerunModelProviderRejectsInvalidAgentWithRequestedOverrides(t *t
 	assert.Empty(t, provider)
 }
 
+func TestResolveRerunModelProviderAllowsUnavailablePrimaryWithBackup(t *testing.T) {
+	t.Setenv("PATH", "")
+	mainRepo := t.TempDir()
+
+	job := &storage.ReviewJob{
+		Agent:      "claude-code",
+		JobType:    storage.JobTypeReview,
+		ReviewType: config.ReviewTypeDefault,
+		Reasoning:  "thorough",
+		RepoPath:   mainRepo,
+	}
+	cfg := config.DefaultConfig()
+	cfg.ReviewBackupAgent = "test"
+
+	model, provider, err := resolveRerunModelProvider(job, cfg)
+
+	require.NoError(t, err)
+	assert.Empty(t, model)
+	assert.Empty(t, provider)
+}
+
 // TestHandleAddCommentToJobStates tests that comments can be added to jobs
 // in any state: queued, running, done, failed, and canceled.
 func TestHandleAddCommentToJobStates(t *testing.T) {

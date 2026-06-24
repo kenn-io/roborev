@@ -455,6 +455,9 @@ func HasWorkflowAgentOverrideFromConfig(
 			repoWorkflowField(repoCfg, workflow, "", true) != "" {
 			return true
 		}
+		if strings.TrimSpace(repoCfg.Agent) != "" {
+			return false
+		}
 	}
 	if globalCfg != nil {
 		if globalWorkflowField(globalCfg, workflow, level, true) != "" ||

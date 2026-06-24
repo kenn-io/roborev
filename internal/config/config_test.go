@@ -1930,6 +1930,84 @@ func TestResolveAgentForWorkflow(t *testing.T) {
 	}
 }
 
+func TestHasWorkflowAgentOverrideFromConfig(t *testing.T) {
+	tests := []struct {
+		name     string
+		repo     *RepoConfig
+		global   *Config
+		workflow string
+		level    string
+		want     bool
+	}{
+		{
+			name:     "repo generic is not workflow specific",
+			repo:     &RepoConfig{Agent: "claude-code"},
+			workflow: "review",
+			level:    "thorough",
+			want:     false,
+		},
+		{
+			name:     "repo generic shadows global workflow",
+			repo:     &RepoConfig{Agent: "claude-code"},
+			global:   &Config{ReviewAgent: "gemini"},
+			workflow: "review",
+			level:    "thorough",
+			want:     false,
+		},
+		{
+			name:     "repo workflow specific",
+			repo:     &RepoConfig{ReviewAgent: "claude-code"},
+			workflow: "review",
+			level:    "thorough",
+			want:     true,
+		},
+		{
+			name:     "repo level specific",
+			repo:     &RepoConfig{ReviewAgentThorough: "claude-code"},
+			workflow: "review",
+			level:    "thorough",
+			want:     true,
+		},
+		{
+			name:     "global workflow specific",
+			global:   &Config{ReviewAgent: "gemini"},
+			workflow: "review",
+			level:    "thorough",
+			want:     true,
+		},
+		{
+			name:     "global level specific",
+			global:   &Config{ReviewAgentThorough: "gemini"},
+			workflow: "review",
+			level:    "thorough",
+			want:     true,
+		},
+		{
+			name:     "global default is not workflow specific",
+			global:   &Config{DefaultAgent: "gemini"},
+			workflow: "review",
+			level:    "thorough",
+			want:     false,
+		},
+		{
+			name:     "repo generic shadows global design",
+			repo:     &RepoConfig{Agent: "claude-code"},
+			global:   &Config{DesignAgent: "gemini"},
+			workflow: "design",
+			level:    "thorough",
+			want:     false,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got := HasWorkflowAgentOverrideFromConfig(
+				tt.repo, tt.global, tt.workflow, tt.level,
+			)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
 func TestResolveModelForWorkflow(t *testing.T) {
 	tests := []struct {
 		name     string

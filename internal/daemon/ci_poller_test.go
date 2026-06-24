@@ -3403,6 +3403,20 @@ func TestResolveCIAutoDesignAgentGenericDefaultAgentCanAutoDetect(t *testing.T) 
 	assert.Empty(t, designModel)
 }
 
+func TestResolveCIAutoDesignAgentRepoGenericShadowsGlobalDesignAgent(t *testing.T) {
+	t.Setenv("PATH", "")
+	agent.Register(&agent.FakeAgent{NameStr: "ci-auto-design-shadowed"})
+	t.Cleanup(func() { agent.Unregister("ci-auto-design-shadowed") })
+
+	repoCfg := &config.RepoConfig{Agent: "claude-code"}
+	cfg := config.DefaultConfig()
+	cfg.DesignAgent = "gemini"
+	designAgent, designModel := resolveCIAutoDesignAgent(repoCfg, cfg)
+
+	assert.Equal(t, "ci-auto-design-shadowed", designAgent)
+	assert.Empty(t, designModel)
+}
+
 // TestProcessPRSynthesisAndMembersUseSeparateMinSeverity verifies the CI
 // min_severity threshold reaches only the synthesis job, while member reviews
 // use the review_min_severity setting from normal review config.
