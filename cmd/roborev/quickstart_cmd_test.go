@@ -34,9 +34,44 @@ func TestCheckConfiguredAgentRequiresNonEmptyGlobalDefault(t *testing.T) {
 	assert.Equal(statusOK, checkConfiguredAgent(repo, true, "codex").Status)
 }
 
+func TestDetectStateUsesGlobalWorkflowReviewAgent(t *testing.T) {
+	assert := assert.New(t)
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	repo := newTempGitRepo(t)
+
+	require.NoError(t, os.WriteFile(
+		config.GlobalConfigPath(),
+		[]byte("review_agent = \"claude-code\"\n"),
+		0o600,
+	))
+
+	state := detectState(context.Background(), repo, true)
+	configured := quickstartCheckByID(t, state, "configured_agent")
+	repoConfig := quickstartCheckByID(t, state, "repo_config")
+
+	assert.Equal(statusOK, configured.Status)
+	assert.Contains(configured.Details, "claude-code")
+	assert.Equal("roborev init --agent claude-code", repoConfig.FixCommand)
+}
+
+func TestCheckConfiguredAgentAcceptsRepoLevelReviewAgent(t *testing.T) {
+	repo := newTempGitRepo(t)
+	require.NoError(t, os.WriteFile(
+		filepath.Join(repo, ".roborev.toml"),
+		[]byte("review_agent_thorough = \"claude-code\"\n"),
+		0o644,
+	))
+
+	check := checkConfiguredAgent(repo, true, "claude-code")
+
+	assert.Equal(t, statusOK, check.Status)
+	assert.Contains(t, check.Details, "claude-code")
+}
+
 func TestCheckRepoConfigUsesResolvedRepoConfigPath(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	mainRepo := newTempGitRepo(t)
+	configureTempGitIdentity(t, mainRepo)
 	require.NoError(t, os.WriteFile(filepath.Join(mainRepo, "README.md"), []byte("test\n"), 0o644))
 	cmd := exec.Command("git", "add", "README.md")
 	cmd.Dir = mainRepo
@@ -120,6 +155,32 @@ func writeQuickstartSkill(t *testing.T, home, configDir, name string) {
 	path := filepath.Join(home, configDir, "skills", name, "SKILL.md")
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
 	require.NoError(t, os.WriteFile(path, []byte("---\nname: "+name+"\n---\n"), 0o644))
+}
+
+func quickstartCheckByID(t *testing.T, state quickstartState, id string) quickstartCheck {
+	t.Helper()
+	var found *quickstartCheck
+	for i := range state.Checks {
+		if state.Checks[i].ID == id {
+			found = &state.Checks[i]
+			break
+		}
+	}
+	require.NotNil(t, found, "missing quickstart check %q", id)
+	return *found
+}
+
+func configureTempGitIdentity(t *testing.T, repo string) {
+	t.Helper()
+	for _, args := range [][]string{
+		{"config", "user.name", "Test User"},
+		{"config", "user.email", "test@example.invalid"},
+	} {
+		cmd := exec.Command("git", args...)
+		cmd.Dir = repo
+		output, err := cmd.CombinedOutput()
+		require.NoError(t, err, string(output))
+	}
 }
 
 func newTempGitRepo(t *testing.T) string {

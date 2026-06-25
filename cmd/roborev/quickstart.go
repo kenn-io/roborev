@@ -50,7 +50,7 @@ var quickstartCheckIDs = []string{
 func detectState(ctx context.Context, repoRoot string, inGitRepo bool) quickstartState {
 	daemonUp := daemonReachable()
 	global, _ := config.LoadGlobal()
-	agent := config.ResolveAgent("", repoRoot, global)
+	agent := resolveQuickstartReviewAgent(repoRoot, global)
 
 	checks := []quickstartCheck{
 		checkDaemon(daemonUp),
@@ -66,6 +66,14 @@ func detectState(ctx context.Context, repoRoot string, inGitRepo bool) quickstar
 	}
 
 	return quickstartState{InGitRepo: inGitRepo, DaemonRunning: daemonUp, Checks: checks}
+}
+
+func resolveQuickstartReviewAgent(repoRoot string, global *config.Config) string {
+	reasoning, err := config.ResolveReviewReasoning("", repoRoot, global)
+	if err != nil {
+		reasoning = ""
+	}
+	return config.ResolveAgentForWorkflow("", repoRoot, global, "review", reasoning)
 }
 
 func daemonReachable() bool {
@@ -176,11 +184,21 @@ func checkConfiguredAgent(repoRoot string, inGitRepo bool, agent string) quickst
 		return c
 	}
 	explicit := false
-	if repoCfg, err := config.LoadRepoConfig(repoRoot); err == nil && repoCfg != nil && repoCfg.Agent != "" {
-		explicit = true
+	global, _ := config.LoadGlobal()
+	if repoCfg, err := config.LoadRepoConfig(repoRoot); err == nil {
+		reasoning := ""
+		if resolved, resolveErr := config.ResolveReviewReasoningFromConfig("", repoCfg, global); resolveErr == nil {
+			reasoning = resolved
+		}
+		if repoCfg != nil && strings.TrimSpace(repoCfg.Agent) != "" {
+			explicit = true
+		}
+		if config.HasWorkflowAgentOverrideFromConfig(repoCfg, global, "review", reasoning) {
+			explicit = true
+		}
 	}
 	if raw, err := config.LoadRawGlobal(); err == nil {
-		if v, ok := raw["default_agent"].(string); ok && v != "" {
+		if v, ok := raw["default_agent"].(string); ok && strings.TrimSpace(v) != "" {
 			explicit = true
 		}
 	}
