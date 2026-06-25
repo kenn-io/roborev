@@ -1018,12 +1018,13 @@ func TestCommitWithHookRetryRestoresNewSubmoduleFromFailedHook(t *testing.T) {
 
 	parent := NewGitTestRepo(t)
 	parent.CommitFile("parent.txt", "base\n", "parent base")
+	submoduleSourcePath := filepath.ToSlash(submoduleSource.Dir)
 	hookScript := fmt.Sprintf(`#!/bin/sh
 set -e
 git -c protocol.file.allow=always submodule add %s vendor/new
 echo "hook failure" >&2
 exit 1
-`, submoduleSource.Dir)
+`, submoduleSourcePath)
 	require.NoError(t, os.WriteFile(filepath.Join(parent.Dir, ".git", "hooks", "pre-commit"), []byte(hookScript), 0o755))
 
 	require.NoError(t, os.WriteFile(filepath.Join(parent.Dir, "new.txt"), []byte("hello\n"), 0o644))
@@ -1095,12 +1096,13 @@ func TestCommitWithHookRetryPreservesGitmodulesWithoutPriorGitlinks(t *testing.T
 	parent := NewGitTestRepo(t)
 	originalGitmodules := "[submodule \"historical\"]\n\tpath = historical\n\turl = https://example.invalid/historical.git\n"
 	parent.CommitFile(".gitmodules", originalGitmodules, "historical gitmodules")
+	submoduleSourcePath := filepath.ToSlash(submoduleSource.Dir)
 	hookScript := fmt.Sprintf(`#!/bin/sh
 set -e
 git -c protocol.file.allow=always submodule add %s vendor/new
 echo "hook failure" >&2
 exit 1
-`, submoduleSource.Dir)
+`, submoduleSourcePath)
 	require.NoError(t, os.WriteFile(filepath.Join(parent.Dir, ".git", "hooks", "pre-commit"), []byte(hookScript), 0o755))
 
 	require.NoError(t, os.WriteFile(filepath.Join(parent.Dir, "new.txt"), []byte("hello\n"), 0o644))
