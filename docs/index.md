@@ -21,6 +21,7 @@ coding agent so the write -> review -> fix loop runs hands-off.
 
 - **Post-commit reviews** - every commit is reviewed automatically, with any agent.
 - **Agent hook** - nudges your CLI agent to fix findings mid-session.
+- **Refine before you ship** - `/roborev-refine` re-reviews and fixes your whole branch until every review passes, catching bugs before the PR.
 
 [Set up automation ->](automation/post-commit-reviews.md)
 

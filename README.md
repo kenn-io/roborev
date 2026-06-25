@@ -35,6 +35,9 @@ roborev skills install
 roborev agent-hook install    # layer 2: mid-session fix loop
 ```
 
+Before you ship, run the `/roborev-refine` skill: it re-reviews and fixes your
+whole branch until every review passes, catching bugs before the PR.
+
 New here? Run `roborev quickstart` and point your agent at it.
 
 ## Quick Start
