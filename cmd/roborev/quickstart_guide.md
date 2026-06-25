@@ -9,14 +9,47 @@ A git post-commit hook enqueues a background review of every commit. This works
 with any editor or agent. Findings land in `roborev tui`, `roborev show HEAD`,
 and the daemon API.
 
-**Layer 2 - Agent hook (CLI harnesses).**
+**Layer 2 - Agent hook (CLI harnesses, optional).**
 The agent hook watches your coding-agent session (turns, commits, failed
 reviews). When review work piles up, it returns one instruction telling the
-agent to run the roborev-fix skill before the session goes cold - closing the
-write -> review -> fix loop without you asking. (Claude Code invokes it as
-`/roborev-fix`; Codex as `$roborev-fix`.) This requires a CLI harness
-(Claude Code CLI or Codex) that exposes PreToolUse / PostToolUse / Stop hooks.
-Claude Desktop does not expose these, so only Layer 1 runs there.
+agent to run the roborev-fix skill before the session goes cold - so the
+write -> review -> fix loop closes without you asking. It is automation layered
+on top of the skills below: it just invokes `roborev-fix` for you. This requires
+a CLI harness (Claude Code CLI or Codex) that exposes PreToolUse / PostToolUse /
+Stop hooks. Claude Desktop does not expose these, so only Layer 1 runs there.
+
+## Skills: drive roborev from your coding agent
+
+Skills are the main way you and your agent use roborev from inside a session,
+with or without the agent hook. `roborev skills install` adds them to Claude
+Code and Codex as commands (Claude Code invokes them with `/`, Codex with `$`):
+
+- `/roborev-review` - review the current commit; `/roborev-review-branch` reviews every commit on the branch
+- `/roborev-refine` - review the branch, fix findings, and re-review until it passes
+- `/roborev-fix` - fix all open failing reviews in one pass
+- `/roborev-respond` - comment on a review and close it
+- `/roborev-design-review` - run a design-focused review (`/roborev-design-review-branch` for the branch)
+
+Invoke these directly whenever you want a review or a fix - they do not require
+the agent hook. The hook (Layer 2) simply calls `/roborev-fix` automatically
+once findings pile up.
+
+### Finalize a branch with the refine loop
+
+Before opening a PR, get the whole branch review-clean with the refine loop:
+review every commit on the branch, fix the findings, and re-review - repeating
+until every review passes.
+
+```
+/roborev-refine
+```
+
+This is the recommended day-to-day workflow; the skill drives the
+review -> fix -> re-review loop for you (up to `--max-iterations`, default 10).
+A non-interactive `roborev refine` CLI command also exists for CI and scripting,
+and can gate on a severity floor (`--min-severity medium` to ignore low
+findings), but that is advanced - for interactive work the skill is the better
+fit.
 
 ## Configuration playbook
 
