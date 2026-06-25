@@ -22,6 +22,19 @@ your agentic loop while context is fresh.
 2. Every commit triggers a background review -- agents write, roborev reads
 3. View findings in the TUI, feed them to your agent, or let `roborev fix` handle it
 
+### Automation, two layers
+
+- **Post-commit reviews** - a git hook reviews every commit in the background (any agent).
+- **Agent hook** - watches your Claude Code / Codex session and tells the agent to run `/roborev-fix` when findings pile up.
+
+```bash
+roborev init                  # layer 1: per-commit reviews
+roborev skills install
+roborev agent-hook install    # layer 2: mid-session fix loop
+```
+
+New here? Run `roborev quickstart` and point your agent at it.
+
 ## Quick Start
 
 ```bash

@@ -99,6 +99,14 @@ roborev init --force
 
 This is the "nuke it from orbit" option: it re-registers the repo with the daemon, reinstalls the hook, and restarts the daemon. Use this when you're not sure what's wrong and want a clean slate.
 
+## Automation works in Claude Code CLI but not Claude Desktop
+
+The agent hook (mid-session fix nudges) relies on harness hooks
+(`PreToolUse` / `PostToolUse` / `Stop`) that the Claude Code CLI and Codex
+expose. Claude Desktop does not expose these hooks, so the agent-hook layer does
+not run there. Post-commit reviews still work in any environment - check
+`roborev status` and `roborev show HEAD` to confirm reviews are running.
+
 ## See Also
 
 - [Quick Start](/quickstart/): Initial setup and first review

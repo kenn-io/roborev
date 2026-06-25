@@ -16,6 +16,16 @@ Continuous code review for coding agents. Review commits immediately, catch issu
   <img src="/assets/generated/tui-hero.svg" alt="roborev TUI queue view" loading="eager">
 </figure>
 
+## How roborev works
+
+roborev reviews every commit in the background and feeds findings back to your
+coding agent so the write -> review -> fix loop runs hands-off.
+
+- **Post-commit reviews** - every commit is reviewed automatically, with any agent.
+- **Agent hook** - nudges your CLI agent to fix findings mid-session.
+
+[Set up automation ->](automation/post-commit-reviews.md)
+
 <div class="agent-matrix">
   <a href="/agents/"><img src="/assets/static/agents/codex.svg" alt="Codex" data-agent="codex" width="1604" height="719" /></a>
   <a href="/agents/"><img src="/assets/static/agents/claude-code.svg" alt="Claude Code" data-agent="claude-code" width="696" height="95" /></a>

@@ -233,6 +233,28 @@ so they shape what the reviewer flags and what it ignores. Common uses:
   overflow, localhost rate-limiting, or other non-issues for your
   project.
 
+### Make roborev always flag something
+
+Use `review_guidelines` in `.roborev.toml` to inject standing instructions into
+every review for the repo:
+
+```toml
+review_guidelines = """
+Every change to UI components must include or update a Playwright e2e test.
+Flag any PR that changes UI without a corresponding e2e test.
+"""
+```
+
+Because empty hooks are omitted from the generated config, you can add a
+`[[hooks]]` block directly without removing anything:
+
+```toml
+[[hooks]]
+event = "review.*"
+type = "kata"
+project = "myproj"
+```
+
 ### Kata Integration
 
 If your repo is bound to a [Kata](https://github.com/kenn-io/kata) project with a committed `.kata.toml`, roborev can include Kata task context in review prompts. For an overview of both directions of the integration, see [Kata](/integrations/kata/).
