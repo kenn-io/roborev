@@ -36,6 +36,7 @@ type InstallOptions struct {
 type binaryResolverDeps struct {
 	executable  func() (string, error)
 	lookPath    func(string) (string, error)
+	lookPathAll func(string) []string
 	userHomeDir func() (string, error)
 }
 
@@ -43,6 +44,7 @@ func defaultBinaryResolverDeps() binaryResolverDeps {
 	return binaryResolverDeps{
 		executable:  os.Executable,
 		lookPath:    exec.LookPath,
+		lookPathAll: lookPathAll,
 		userHomeDir: os.UserHomeDir,
 	}
 }
@@ -190,14 +192,18 @@ func resolveRoborevPathWithDeps(override string, deps binaryResolverDeps) (Binar
 			}, nil
 		}
 	}
-	if shim, ok := miseShimForInstall(current); ok {
-		return BinaryResolution{
-			Path: shim,
-			Notice: fmt.Sprintf(
-				"Detected roborev managed by mise; installing hooks with %s instead of versioned binary %s",
-				shim, current,
-			),
-		}, nil
+	if versionedManagerInstall(current) != "" && deps.lookPathAll != nil {
+		for _, path := range deps.lookPathAll("roborev") {
+			if manager, ok := managedBinaryShim(current, path); ok {
+				return BinaryResolution{
+					Path: path,
+					Notice: fmt.Sprintf(
+						"Detected roborev managed by %s; installing hooks with %s instead of versioned binary %s",
+						manager, path, current,
+					),
+				}, nil
+			}
+		}
 	}
 
 	if manager := versionedManagerInstall(current); manager != "" {
@@ -211,6 +217,51 @@ func resolveRoborevPathWithDeps(override string, deps binaryResolverDeps) (Binar
 	}
 
 	return BinaryResolution{Path: current}, nil
+}
+
+func lookPathAll(file string) []string {
+	var matches []string
+	seen := make(map[string]bool)
+	add := func(path string) {
+		if seen[path] || !isExecutableFile(path) {
+			return
+		}
+		seen[path] = true
+		matches = append(matches, path)
+	}
+
+	if hasPathSeparator(file) {
+		add(file)
+		return matches
+	}
+
+	for _, dir := range filepath.SplitList(os.Getenv("PATH")) {
+		if dir == "" {
+			dir = "."
+		}
+		base := filepath.Join(dir, file)
+		add(base)
+		if runtime.GOOS == "windows" && filepath.Ext(file) == "" {
+			for _, ext := range windowsPathExts() {
+				add(base + ext)
+			}
+		}
+	}
+	return matches
+}
+
+func windowsPathExts() []string {
+	pathext := os.Getenv("PATHEXT")
+	if pathext == "" {
+		pathext = ".COM;.EXE;.BAT;.CMD"
+	}
+	exts := filepath.SplitList(pathext)
+	for i, ext := range exts {
+		if ext != "" && !strings.HasPrefix(ext, ".") {
+			exts[i] = "." + ext
+		}
+	}
+	return exts
 }
 
 // resolveRoborevPath returns the path to use in generated hooks. It is kept
@@ -303,23 +354,6 @@ func versionedManagerInstall(current string) string {
 func isMiseManagedRoborev(path string) bool {
 	return strings.Contains(path, "/mise/installs/") &&
 		strings.HasSuffix(path, "/roborev")
-}
-
-func miseShimForInstall(current string) (string, bool) {
-	current = filepath.ToSlash(current)
-	if !isMiseManagedRoborev(current) {
-		return "", false
-	}
-	marker := "/mise/installs/"
-	before, _, ok := strings.Cut(current, marker)
-	if !ok {
-		return "", false
-	}
-	shim := filepath.FromSlash(before + "/mise/shims/roborev")
-	if !isExecutableFile(shim) {
-		return "", false
-	}
-	return shim, true
 }
 
 func isExecutableFile(path string) bool {

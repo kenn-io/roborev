@@ -151,12 +151,9 @@ func TestResolveRoborevPathPrefersVersionManagerShim(t *testing.T) {
 	}
 }
 
-func TestResolveRoborevPathDerivesMiseShimFromInstallPath(t *testing.T) {
-	home := t.TempDir()
-	current := filepath.Join(home, ".local", "share", "mise", "installs", "roborev", "1.2.3", "bin", "roborev")
-	shim := filepath.Join(home, ".local", "share", "mise", "shims", "roborev")
-	require.NoError(t, os.MkdirAll(filepath.Dir(shim), 0o755))
-	require.NoError(t, os.WriteFile(shim, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+func TestResolveRoborevPathPrefersMiseShimLaterOnPath(t *testing.T) {
+	current := "/Users/alice/.local/share/mise/installs/roborev/1.2.3/bin/roborev"
+	shim := "/Users/alice/.local/share/mise/shims/roborev"
 	deps := binaryResolverDeps{
 		executable: func() (string, error) {
 			return current, nil
@@ -165,8 +162,16 @@ func TestResolveRoborevPathDerivesMiseShimFromInstallPath(t *testing.T) {
 			require.Equal(t, "roborev", file)
 			return current, nil
 		},
+		lookPathAll: func(file string) []string {
+			require.Equal(t, "roborev", file)
+			return []string{
+				current,
+				"/usr/local/bin/roborev",
+				shim,
+			}
+		},
 		userHomeDir: func() (string, error) {
-			return home, nil
+			return "/Users/alice", nil
 		},
 	}
 
@@ -176,6 +181,20 @@ func TestResolveRoborevPathDerivesMiseShimFromInstallPath(t *testing.T) {
 	assert.Equal(t, shim, resolution.Path)
 	assert.Contains(t, resolution.Notice, "mise")
 	assert.Contains(t, resolution.Notice, "versioned binary")
+}
+
+func TestLookPathAllFindsExecutableMatchesOnPath(t *testing.T) {
+	dir1 := t.TempDir()
+	dir2 := t.TempDir()
+	bin1 := filepath.Join(dir1, "roborev")
+	bin2 := filepath.Join(dir2, "roborev")
+	require.NoError(t, os.WriteFile(bin1, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	require.NoError(t, os.WriteFile(bin2, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	t.Setenv("PATH", filepath.Join(t.TempDir(), "missing")+string(os.PathListSeparator)+dir1+string(os.PathListSeparator)+dir2)
+
+	matches := lookPathAll("roborev")
+
+	assert.Equal(t, []string{bin1, bin2}, matches)
 }
 
 func TestResolveRoborevPathWarnsForVersionedInstallWithoutShim(t *testing.T) {
