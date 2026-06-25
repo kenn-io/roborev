@@ -48,7 +48,7 @@ func initCmd() *cobra.Command {
 				if agent != "" {
 					cfg.DefaultAgent = agent
 				}
-				if err := config.SaveGlobal(cfg); err != nil {
+				if err := config.WriteDefaultGlobalConfigTo(configPath, cfg); err != nil {
 					return fmt.Errorf("save config: %w", err)
 				}
 				fmt.Printf("  Created config at %s\n", configPath)
