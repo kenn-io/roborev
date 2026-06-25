@@ -14,12 +14,30 @@ any editor or agent.
 roborev init      # installs the hook, starts the daemon, registers the repo
 ```
 
-Verify it is live:
+Now every commit you make is reviewed automatically. Each review gets a verdict
+(pass or fail) and, when it fails, a list of findings with severities and
+file locations. Check that it is running:
 
 ```bash
 roborev status        # daemon + queue
-roborev show HEAD     # the latest commit's review
+roborev show HEAD     # print the latest commit's review in the terminal
 ```
+
+Then act on the reviews in whichever way fits how you work:
+
+- **Copy-paste from the TUI.** `roborev tui` shows the review queue; open a
+  review to read its findings and copy the full text straight into your coding
+  agent (or fix by hand). This works with any agent or editor.
+- **Fix failing reviews with the `roborev-fix` skill.** From inside Claude Code
+  or Codex, `/roborev-fix` (Codex: `$roborev-fix`) pulls every open failing
+  review for your current branch or git worktree, applies the fixes, and closes
+  the reviews in one pass.
+- **Clean the whole branch before a PR with the refine loop.**
+  `/roborev-refine` reviews the branch, fixes findings, and re-reviews until
+  every review passes.
+
+The `roborev-fix` and `roborev-refine` skills come from `roborev skills install`
+(see [Agent Skills](../guides/agent-skills.md)).
 
 ## Layer 2 - Agent hook
 
@@ -52,7 +70,8 @@ roborev quickstart            # human-readable
 roborev quickstart --json     # machine-readable state for agents
 ```
 
-## Acting on results
+## React to review events
 
-To notify or file issues when reviews complete, add [Review Event
-Hooks](../guides/hooks.md).
+To notify a channel or file issues automatically when reviews complete, add
+[Review Event Hooks](../guides/hooks.md) (desktop notifications, Slack, Kata,
+webhooks, or any shell command).
