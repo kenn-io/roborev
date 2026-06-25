@@ -165,7 +165,7 @@ instructions. The eight checks, with stable IDs:
 |------------|-----------|----------------------------|
 | `daemon_running` | `probeDaemonWithRetry` ping | `roborev daemon start` |
 | `post_commit_hook` | `gitrepo.HooksPath` → read `post-commit` marker | `roborev install-hook` |
-| `repo_registered` | daemon `/repos` (read-only GET) | `roborev init` |
+| `repo_registered` | `GET /api/repos/resolve?path=<repoRoot>` (read-only) | `roborev init` |
 | `repo_config` | stat `.roborev.toml` at repo root | `roborev init --agent <agent>` |
 | `configured_agent` | parse `.roborev.toml` / global | `roborev config set --local agent <agent>` |
 | `agent_hook_claude` | read `~/.claude/settings.json` | `roborev agent-hook install --agent claude` |
@@ -175,6 +175,12 @@ instructions. The eight checks, with stable IDs:
 The repo-dependent checks (`post_commit_hook`, `repo_registered`,
 `repo_config`, `configured_agent`) report `status: "unknown"` when not inside a
 git repo.
+
+`fix_command` is always emitted fully substituted — never with a literal
+`<agent>` placeholder (the JSON contract promises a runnable command). The
+`<agent>` shown in the table above is resolved at render time to a concrete
+agent value from repo/global config (`ResolveAgent`), falling back to `codex`
+(the `DefaultConfig` default) when nothing is configured.
 
 **Part 2 — How roborev works + configuration playbook** (static embedded
 markdown the agent reads to assist the user). Covers the four selected topics:
