@@ -151,6 +151,33 @@ func TestResolveRoborevPathPrefersVersionManagerShim(t *testing.T) {
 	}
 }
 
+func TestResolveRoborevPathDerivesMiseShimFromInstallPath(t *testing.T) {
+	home := t.TempDir()
+	current := filepath.Join(home, ".local", "share", "mise", "installs", "roborev", "1.2.3", "bin", "roborev")
+	shim := filepath.Join(home, ".local", "share", "mise", "shims", "roborev")
+	require.NoError(t, os.MkdirAll(filepath.Dir(shim), 0o755))
+	require.NoError(t, os.WriteFile(shim, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	deps := binaryResolverDeps{
+		executable: func() (string, error) {
+			return current, nil
+		},
+		lookPath: func(file string) (string, error) {
+			require.Equal(t, "roborev", file)
+			return current, nil
+		},
+		userHomeDir: func() (string, error) {
+			return home, nil
+		},
+	}
+
+	resolution, err := resolveRoborevPathWithDeps("", deps)
+
+	require.NoError(t, err)
+	assert.Equal(t, shim, resolution.Path)
+	assert.Contains(t, resolution.Notice, "mise")
+	assert.Contains(t, resolution.Notice, "versioned binary")
+}
+
 func TestResolveRoborevPathWarnsForVersionedInstallWithoutShim(t *testing.T) {
 	current := "/Users/alice/.local/share/mise/installs/go-go-kenn-io-roborev-cmd-roborev/1.2.3/bin/roborev"
 	deps := stubRoborevPathDeps(t, current, "")

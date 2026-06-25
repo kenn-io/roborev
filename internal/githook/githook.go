@@ -190,6 +190,15 @@ func resolveRoborevPathWithDeps(override string, deps binaryResolverDeps) (Binar
 			}, nil
 		}
 	}
+	if shim, ok := miseShimForInstall(current); ok {
+		return BinaryResolution{
+			Path: shim,
+			Notice: fmt.Sprintf(
+				"Detected roborev managed by mise; installing hooks with %s instead of versioned binary %s",
+				shim, current,
+			),
+		}, nil
+	}
 
 	if manager := versionedManagerInstall(current); manager != "" {
 		return BinaryResolution{
@@ -294,6 +303,31 @@ func versionedManagerInstall(current string) string {
 func isMiseManagedRoborev(path string) bool {
 	return strings.Contains(path, "/mise/installs/") &&
 		strings.HasSuffix(path, "/roborev")
+}
+
+func miseShimForInstall(current string) (string, bool) {
+	current = filepath.ToSlash(current)
+	if !isMiseManagedRoborev(current) {
+		return "", false
+	}
+	marker := "/mise/installs/"
+	before, _, ok := strings.Cut(current, marker)
+	if !ok {
+		return "", false
+	}
+	shim := filepath.FromSlash(before + "/mise/shims/roborev")
+	if !isExecutableFile(shim) {
+		return "", false
+	}
+	return shim, true
+}
+
+func isExecutableFile(path string) bool {
+	info, err := os.Stat(path)
+	if err != nil || info.IsDir() {
+		return false
+	}
+	return runtime.GOOS == "windows" || info.Mode()&0o111 != 0
 }
 
 func isHomebrewBin(path string) bool {
