@@ -36,6 +36,7 @@ func main() {
 	rootCmd.PersistentFlags().BoolVarP(&verbose, "verbose", "v", false, "verbose output")
 
 	rootCmd.AddCommand(initCmd())
+	rootCmd.AddCommand(quickstartCmd())
 	rootCmd.AddCommand(reviewCmd())
 	rootCmd.AddCommand(postCommitCmd())
 	rootCmd.AddCommand(enqueueCmd()) // hidden alias for backward compatibility

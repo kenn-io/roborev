@@ -1,6 +1,7 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"os"
@@ -90,4 +91,34 @@ func TestStateJSONMarshalsStableFields(t *testing.T) {
 	assert.Contains(t, back, "in_git_repo")
 	assert.Contains(t, back, "daemon_running")
 	assert.Contains(t, back, "checks")
+}
+
+func TestRenderHumanIncludesGuideAndState(t *testing.T) {
+	var buf bytes.Buffer
+	renderHuman(&buf, quickstartState{
+		InGitRepo: true,
+		Checks:    []quickstartCheck{{ID: "daemon_running", Status: statusOK, Details: "daemon is running"}},
+	})
+	out := buf.String()
+	assert.Contains(t, out, "How roborev works") // embedded guide
+	assert.Contains(t, out, "daemon_running")    // detected state
+}
+
+func TestQuickstartJSONOmitsGuide(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	repo := newTempGitRepo(t)
+
+	cmd := quickstartCmd()
+	cmd.SetArgs([]string{"--json"})
+	var buf bytes.Buffer
+	cmd.SetOut(&buf)
+	// Run from the repo dir.
+	t.Chdir(repo)
+	require.NoError(t, cmd.Execute())
+
+	out := buf.String()
+	assert.NotContains(t, out, "How roborev works")
+	var state quickstartState
+	require.NoError(t, json.Unmarshal([]byte(out), &state))
+	assert.Len(t, state.Checks, len(quickstartCheckIDs))
 }
