@@ -1244,25 +1244,25 @@ func commitWithHookRetry(
 		if !errors.As(err, &commitErr) || !commitErr.HookFailed {
 			return "", err
 		}
-		if len(submodulesBeforeRetry) > 0 {
-			changedSubmodules, checkErr := changedRefineSubmodules(
-				ctx, repoPath, submodulesBeforeRetry,
+		changedSubmodules, checkErr := changedRefineSubmodules(
+			ctx, repoPath, submodulesBeforeRetry,
+		)
+		if checkErr != nil {
+			return "", fmt.Errorf(
+				"cannot automatically retry hooks in repositories with git submodules; check submodule changes: %w",
+				checkErr,
 			)
-			if checkErr != nil {
-				return "", fmt.Errorf(
-					"cannot automatically retry hooks in repositories with git submodules; check submodule changes: %w",
-					checkErr,
-				)
+		}
+		if len(changedSubmodules) > 0 {
+			err := refineSubmoduleChangesError(changedSubmodules)
+			if restoreErr := restoreRefineParentSubmoduleState(
+				ctx, repoPath, submodulesBeforeRetry, changedSubmodules,
+			); restoreErr != nil {
+				return "", fmt.Errorf("%w; failed to restore parent submodule state: %w", err, restoreErr)
 			}
-			if len(changedSubmodules) > 0 {
-				err := refineSubmoduleChangesError(changedSubmodules)
-				if restoreErr := restoreRefineParentSubmoduleState(
-					ctx, repoPath, submodulesBeforeRetry, changedSubmodules,
-				); restoreErr != nil {
-					return "", fmt.Errorf("%w; failed to restore parent submodule state: %w", err, restoreErr)
-				}
-				return "", err
-			}
+			return "", err
+		}
+		if len(submodulesBeforeRetry) > 0 {
 			return "", fmt.Errorf(
 				"cannot automatically retry hooks in repositories with git submodules: %w",
 				err,
@@ -1595,6 +1595,11 @@ func restoreRefineParentSubmoduleState(
 					path, err, strings.TrimSpace(string(out)),
 				))
 			}
+			if beforeState.initialized {
+				if err := restoreRefineSubmoduleWorktree(ctx, repoPath, path, beforeState); err != nil {
+					restoreErrs = append(restoreErrs, err.Error())
+				}
+			}
 			continue
 		}
 		cmd := refineGitCmd(ctx, "-C", repoPath, "update-index", "--force-remove", "--", path)
@@ -1615,11 +1620,44 @@ func restoreRefineParentSubmoduleState(
 	return nil
 }
 
+func restoreRefineSubmoduleWorktree(
+	ctx context.Context,
+	repoPath, path string,
+	state refineSubmoduleState,
+) error {
+	submodulePath := filepath.Join(repoPath, filepath.FromSlash(path))
+	reset := refineGitCmd(ctx, "-C", submodulePath, "reset", "--hard", state.head)
+	out, err := reset.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf(
+			"reset submodule %s to %s: %w: %s",
+			path,
+			gitrepo.ShortSHA(state.head),
+			err,
+			strings.TrimSpace(string(out)),
+		)
+	}
+	clean := refineGitCmd(ctx, "-C", submodulePath, "clean", "-fd")
+	out, err = clean.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf(
+			"clean submodule %s: %w: %s",
+			path,
+			err,
+			strings.TrimSpace(string(out)),
+		)
+	}
+	return nil
+}
+
 func restoreRefineGitmodules(
 	ctx context.Context,
 	repoPath string,
 	before refineSubmoduleSnapshot,
 ) error {
+	if len(before) == 0 {
+		return removeRefineGitmodules(ctx, repoPath)
+	}
 	for _, state := range before {
 		gitmodulesPath := filepath.Join(repoPath, ".gitmodules")
 		if state.gitmodulesExists {
@@ -1633,16 +1671,21 @@ func restoreRefineGitmodules(
 			}
 			return nil
 		}
-		if err := os.Remove(gitmodulesPath); err != nil && !errors.Is(err, os.ErrNotExist) {
-			return fmt.Errorf("remove restored .gitmodules: %w", err)
-		}
-		cmd := refineGitCmd(ctx, "-C", repoPath,
-			"rm", "--cached", "--ignore-unmatch", "--", ".gitmodules")
-		out, err := cmd.CombinedOutput()
-		if err != nil {
-			return fmt.Errorf("unstage .gitmodules: %w: %s", err, strings.TrimSpace(string(out)))
-		}
-		return nil
+		return removeRefineGitmodules(ctx, repoPath)
+	}
+	return nil
+}
+
+func removeRefineGitmodules(ctx context.Context, repoPath string) error {
+	gitmodulesPath := filepath.Join(repoPath, ".gitmodules")
+	if err := os.Remove(gitmodulesPath); err != nil && !errors.Is(err, os.ErrNotExist) {
+		return fmt.Errorf("remove restored .gitmodules: %w", err)
+	}
+	cmd := refineGitCmd(ctx, "-C", repoPath,
+		"rm", "--cached", "--ignore-unmatch", "--", ".gitmodules")
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return fmt.Errorf("unstage .gitmodules: %w: %s", err, strings.TrimSpace(string(out)))
 	}
 	return nil
 }
