@@ -14,6 +14,11 @@ use_directory_urls = true
 nav = [
   {"Quick Start" = "quickstart.md"},
   {"Installation" = "installation.md"},
+  {"Automation" = [
+    {"Post-Commit Reviews" = "automation/post-commit-reviews.md"},
+    {"Agent Hook"          = "agent-hook.md"},
+    {"Review Event Hooks"  = "guides/hooks.md"},
+  ]},
   {"CLI Commands" = "commands.md"},
   {"Terminal UI" = "integrations/tui.md"},
   {"Configuration" = "configuration.md"},
@@ -39,8 +44,6 @@ nav = [
     {"Kata" = "integrations/kata.md"},
     {"Claude Chic" = "integrations/claudechic.md"},
   ]},
-  {"Review Hooks" = "guides/hooks.md"},
-  {"Agent Hook" = "agent-hook.md"},
   {"Troubleshooting" = "guides/troubleshooting.md"},
   {"Development" = "development.md"},
   {"Changelog" = "changelog.md"},
