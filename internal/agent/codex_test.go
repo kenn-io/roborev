@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"os"
+	"slices"
 	"strings"
 	"testing"
 	"time"
@@ -130,6 +131,33 @@ func TestCodexBuildArgsLoadsUserConfigByDefault(t *testing.T) {
 	args := a.buildArgs("/repo", false, true, false)
 
 	assert.NotContains(t, args, codexIgnoreUserConfigFlag)
+}
+
+func TestCodexBuildArgsIncludesConfigOverrides(t *testing.T) {
+	a := NewCodexAgent("codex")
+	a.ConfigOverrides = []string{
+		`model_provider="my-custom"`,
+		`model_providers.my-custom.base_url="https://api.example.com/v1"`,
+	}
+
+	args := a.buildArgs("/repo", false, true, false)
+
+	for _, override := range a.ConfigOverrides {
+		assertContainsArg(t, args, override)
+	}
+}
+
+func TestCodexBuildArgsConfigOverridesPrecedeSafetyFlags(t *testing.T) {
+	a := WithCodexSkillsDisabled(NewCodexAgent("codex"), true).(*CodexAgent)
+	a.ConfigOverrides = []string{`skills.include_instructions=true`}
+
+	args := a.buildArgs("/repo", false, true, false)
+
+	userIdx := slices.Index(args, `skills.include_instructions=true`)
+	safetyIdx := slices.Index(args, codexDisableSkillsConfig)
+	require.GreaterOrEqual(t, userIdx, 0)
+	require.GreaterOrEqual(t, safetyIdx, 0)
+	assert.Less(t, userIdx, safetyIdx, "roborev safety -c flag must follow user override so roborev wins on conflict")
 }
 
 func TestCodexBuildArgsRejectsInvalidSessionResume(t *testing.T) {

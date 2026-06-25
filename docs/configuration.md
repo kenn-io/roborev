@@ -808,6 +808,41 @@ ignore_review_user_config = true   # Pass --ignore-user-config to Codex review j
 
 Set either to `false` to restore the prior behavior if you rely on Codex skill instructions or user-level Codex config during reviews.
 
+#### Custom Codex Config (Model Providers)
+
+`ignore_review_user_config` stops Codex review jobs from loading your
+`~/.codex/config.toml`, which also means a custom `model_provider` and its
+`[model_providers.*]` block defined there are not applied. To inject specific
+Codex options without loading your full user config, define an
+`[agent.codex.config]` table. Every key under it is passed to Codex as a
+`-c key=value` override on **every** Codex job (review, fix, refine, analyze),
+and these overrides apply even when `--ignore-user-config` is in effect.
+
+The table mirrors Codex's own `config.toml`, so you can declare a custom
+provider and select it:
+
+```toml
+# ~/.roborev/config.toml
+[agent.codex]
+ignore_review_user_config = true   # safe to leave enabled
+
+[agent.codex.config]
+model_provider = "my-custom"
+
+[agent.codex.config.model_providers.my-custom]
+name = "My Provider"
+base_url = "https://api.example.com/v1"
+env_key = "MY_API_KEY"
+wire_api = "responses"
+```
+
+roborev flattens that into `-c model_provider="my-custom"`,
+`-c model_providers.my-custom.base_url="https://api.example.com/v1"`, and so on,
+one override per leaf key. Values keep their TOML type: strings stay quoted,
+numbers and booleans stay bare, and arrays stay arrays. roborev's own review
+controls (skill suppression, sandbox mode, reasoning effort) are applied after
+your overrides, so they take precedence if a key collides.
+
 ### Pi Classifier Options
 
 Pi can be used as the auto design-review classifier because roborev runs Pi with a JSON schema output extension. The default extension source is `npm:@nqbao/pi-json-schema@0.1.1`.

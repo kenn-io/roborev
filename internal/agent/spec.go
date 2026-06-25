@@ -239,13 +239,22 @@ func applyAgentConfigOverrides(a Agent, cfg *config.Config) Agent {
 	if cfg == nil || a == nil {
 		return a
 	}
-	if pi, ok := a.(*PiAgent); ok {
+	switch agent := a.(type) {
+	case *PiAgent:
 		ext := strings.TrimSpace(cfg.Agent.Pi.JSONSchemaExtension)
-		if ext == "" || ext == pi.JSONSchemaExtension {
+		if ext == "" || ext == agent.JSONSchemaExtension {
 			return a
 		}
-		clone := *pi
+		clone := *agent
 		clone.JSONSchemaExtension = ext
+		return &clone
+	case *CodexAgent:
+		overrides := cfg.Agent.Codex.ConfigOverrideArgs()
+		if len(overrides) == 0 {
+			return a
+		}
+		clone := *agent
+		clone.ConfigOverrides = overrides
 		return &clone
 	}
 	return a

@@ -69,6 +69,9 @@ type AgentHookConfig struct {
 type CodexConfig struct {
 	DisableReviewSkills    bool `toml:"disable_review_skills" comment:"Disable Codex skill instructions for review jobs."`
 	IgnoreReviewUserConfig bool `toml:"ignore_review_user_config" comment:"Pass --ignore-user-config to Codex for review jobs."`
+	// Config holds passthrough Codex options that ConfigOverrideArgs flattens
+	// into `-c key=value` overrides on every Codex job (see ConfigOverrideArgs).
+	Config map[string]any `toml:"config" comment:"Codex config injected as -c overrides on every Codex job (e.g. model_provider and [agent.codex.config.model_providers.*]). Survives --ignore-user-config."`
 }
 
 type PiConfig struct {

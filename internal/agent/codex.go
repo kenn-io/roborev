@@ -21,6 +21,7 @@ type CodexAgent struct {
 	SessionID                 string         // Existing session/thread ID to resume
 	SuppressSkillInstructions bool           // Whether to suppress Codex skill instructions
 	IgnoreUserConfig          bool           // Whether to pass --ignore-user-config
+	ConfigOverrides           []string       // Extra `-c key=value` overrides injected from roborev config
 }
 
 const (
@@ -68,6 +69,7 @@ func (a *CodexAgent) clone(opts ...agentCloneOption) *CodexAgent {
 		SessionID:                 cfg.SessionID,
 		SuppressSkillInstructions: a.SuppressSkillInstructions,
 		IgnoreUserConfig:          a.IgnoreUserConfig,
+		ConfigOverrides:           a.ConfigOverrides,
 	}
 }
 
@@ -180,6 +182,11 @@ func (a *CodexAgent) commandArgs(opts codexArgOptions) []string {
 	args = append(args, "--json")
 	if a.IgnoreUserConfig {
 		args = append(args, codexIgnoreUserConfigFlag)
+	}
+	// User-provided overrides go before roborev's own -c flags so roborev's
+	// safety settings (skills, sandbox, reasoning) win on any key conflict.
+	for _, override := range a.ConfigOverrides {
+		args = append(args, "-c", override)
 	}
 	if opts.agenticMode {
 		args = append(args, codexDangerousFlag)

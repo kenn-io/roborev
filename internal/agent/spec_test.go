@@ -96,3 +96,32 @@ func TestApplyAgentConfigOverridesPiJSONSchemaExtension(t *testing.T) {
 	assert.Equal(t, "/opt/roborev/pi-json-schema/index.ts", pi.JSONSchemaExtension)
 	assert.Equal(t, config.DefaultPiJSONSchemaExtension, agent.JSONSchemaExtension)
 }
+
+func TestApplyAgentConfigOverridesCodexConfig(t *testing.T) {
+	t.Parallel()
+
+	base := NewCodexAgent("codex")
+	overridden := applyAgentConfigOverrides(base, &config.Config{
+		Agent: config.AgentConfig{
+			Codex: config.CodexConfig{
+				Config: map[string]any{"model_provider": "my-custom"},
+			},
+		},
+	})
+
+	codex, ok := overridden.(*CodexAgent)
+	require.True(t, ok)
+	assert.Equal(t, []string{`model_provider="my-custom"`}, codex.ConfigOverrides)
+	assert.Empty(t, base.ConfigOverrides, "original agent must not be mutated")
+}
+
+func TestApplyAgentConfigOverridesCodexNoConfigLeavesAgentUnchanged(t *testing.T) {
+	t.Parallel()
+
+	base := NewCodexAgent("codex")
+	overridden := applyAgentConfigOverrides(base, &config.Config{})
+
+	codex, ok := overridden.(*CodexAgent)
+	require.True(t, ok)
+	assert.Empty(t, codex.ConfigOverrides)
+}
