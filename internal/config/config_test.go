@@ -4549,3 +4549,35 @@ func TestUserAddedHooksBlockParses(t *testing.T) {
 	require.NoError(t, tomlv2.Unmarshal([]byte(combined), &got))
 	require.Len(t, got.Hooks, 1)
 }
+
+func TestWriteDefaultGlobalConfigTo(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+
+	require.NoError(t, WriteDefaultGlobalConfigTo(path, DefaultConfig()))
+
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	content := string(raw)
+
+	// Commented example present, but does not break parsing.
+	assert.Contains(t, content, "# [[hooks]]")
+	assert.NotContains(t, content, "\nhooks = []")
+	var parsed Config
+	require.NoError(t, tomlv2.Unmarshal(raw, &parsed))
+
+	// 0600 permissions.
+	info, err := os.Stat(path)
+	require.NoError(t, err)
+	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+}
+
+func TestSaveGlobalToHasNoCommentedExample(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "config.toml")
+	require.NoError(t, SaveGlobalTo(path, DefaultConfig()))
+	raw, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.NotContains(t, string(raw), "# [[hooks]]",
+		"normal rewrites must not reintroduce the commented example")
+}
