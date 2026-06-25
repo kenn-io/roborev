@@ -1349,6 +1349,7 @@ type refineSubmoduleSnapshot struct {
 	submodules        map[string]refineSubmoduleState
 	gitmodulesExists  bool
 	gitmodulesContent string
+	gitmodulesIndex   string
 }
 
 func snapshotRefineSubmodules(ctx context.Context, repoPath string) (refineSubmoduleSnapshot, error) {
@@ -1360,11 +1361,16 @@ func snapshotRefineSubmodules(ctx context.Context, repoPath string) (refineSubmo
 	if err != nil {
 		return refineSubmoduleSnapshot{}, err
 	}
+	gitmodulesIndex, err := readRefineGitmodulesIndex(ctx, repoPath)
+	if err != nil {
+		return refineSubmoduleSnapshot{}, err
+	}
 
 	snapshot := refineSubmoduleSnapshot{
 		submodules:        make(map[string]refineSubmoduleState, len(gitlinks)),
 		gitmodulesExists:  gitmodulesExists,
 		gitmodulesContent: gitmodulesContent,
+		gitmodulesIndex:   gitmodulesIndex,
 	}
 	for path, gitlink := range gitlinks {
 		state := refineSubmoduleState{
@@ -1431,7 +1437,8 @@ func changedRefineSubmodules(
 		}
 	}
 	if current.gitmodulesExists != before.gitmodulesExists ||
-		current.gitmodulesContent != before.gitmodulesContent {
+		current.gitmodulesContent != before.gitmodulesContent ||
+		current.gitmodulesIndex != before.gitmodulesIndex {
 		changedBeforeGitmodules := len(changed)
 		for path := range current.submodules {
 			addChanged(path)
@@ -1564,6 +1571,31 @@ func readRefineGitmodules(repoPath string) (bool, string, error) {
 		return false, "", nil
 	}
 	return false, "", fmt.Errorf("read .gitmodules: %w", err)
+}
+
+func readRefineGitmodulesIndex(ctx context.Context, repoPath string) (string, error) {
+	cmd := refineGitCmd(ctx, "-C", repoPath, "ls-files", "--stage", "-z", "--", refineGitmodulesPath)
+	out, err := cmd.CombinedOutput()
+	if err != nil {
+		return "", fmt.Errorf(
+			"git ls-files for .gitmodules: %w: %s",
+			err,
+			strings.TrimSpace(string(out)),
+		)
+	}
+	record := strings.TrimRight(string(out), "\x00")
+	if record == "" {
+		return "", nil
+	}
+	metadata, _, ok := strings.Cut(record, "\t")
+	if !ok {
+		return "", fmt.Errorf("git ls-files returned malformed .gitmodules output: %s", record)
+	}
+	fields := strings.Fields(metadata)
+	if len(fields) < 2 {
+		return "", fmt.Errorf("git ls-files returned malformed .gitmodules metadata: %s", metadata)
+	}
+	return fields[1], nil
 }
 
 func sameRefinePath(a, b string) bool {

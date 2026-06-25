@@ -1155,6 +1155,32 @@ exit 1
 	assert.False(t, agentCalled)
 }
 
+func TestCommitWithHookRetryRollsBackIndexedGitmodulesFromSuccessfulHook(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	parent := NewGitTestRepo(t)
+	parent.CommitFile("parent.txt", "base\n", "parent base")
+	headBefore := parent.Run("rev-parse", "HEAD")
+	require.NoError(t, os.WriteFile(filepath.Join(parent.Dir, ".git", "hooks", "pre-commit"), []byte(`#!/bin/sh
+blob=$(printf '[submodule "indexed"]\n\tpath = indexed\n\turl = https://example.invalid/indexed.git\n' | git hash-object -w --stdin)
+git update-index --add --cacheinfo 100644 "$blob" .gitmodules
+exit 0
+`), 0o755))
+
+	require.NoError(t, os.WriteFile(filepath.Join(parent.Dir, "new.txt"), []byte("hello\n"), 0o644))
+
+	_, err := commitWithHookRetry(t.Context(), parent.Dir, "test commit", agent.NewTestAgent(), true, git.CommitOptions{})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "roborev refine cannot modify git submodules")
+	assert.Contains(t, err.Error(), ".gitmodules")
+	assert.Equal(t, headBefore, parent.Run("rev-parse", "HEAD"))
+	assert.Empty(t, parent.Run("ls-files", "--stage", "--", ".gitmodules"))
+	assert.NoFileExists(t, filepath.Join(parent.Dir, ".gitmodules"))
+}
+
 func TestCommitWithHookRetryRollsBackSubmoduleGitlinkFromSuccessfulHook(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")
