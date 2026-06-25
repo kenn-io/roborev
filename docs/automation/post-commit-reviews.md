@@ -33,8 +33,8 @@ Then act on the reviews in whichever way fits how you work:
   review for your current branch or git worktree, applies the fixes, and closes
   the reviews in one pass.
 - **Clean the whole branch before a PR with the refine loop.**
-  `/roborev-refine` reviews the branch, fixes findings, and re-reviews until
-  every review passes.
+  `/roborev-refine` (Codex: `$roborev-refine`) reviews the branch, fixes
+  findings, and re-reviews until every review passes.
 
 The `roborev-fix` and `roborev-refine` skills come from `roborev skills install`
 (see [Agent Skills](../guides/agent-skills.md)).
