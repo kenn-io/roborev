@@ -240,7 +240,7 @@ func TestResolveRoborevPathDoesNotGuessUnsupportedManagers(t *testing.T) {
 }
 
 func TestVersionedManagerInstallRecognizesWindowsMiseExecutable(t *testing.T) {
-	path := `C:\Users\alice\.local\share\mise\installs\roborev\1.2.3\bin\roborev.exe`
+	path := filepath.FromSlash("C:/Users/alice/.local/share/mise/installs/roborev/1.2.3/bin/roborev.exe")
 
 	manager := versionedManagerInstall(path)
 
