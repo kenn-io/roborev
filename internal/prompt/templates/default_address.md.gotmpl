@@ -17,6 +17,8 @@ For Go projects, use: GOCACHE=/tmp/go-build go build ./... and GOCACHE=/tmp/go-b
 
 IMPORTANT: Do NOT commit changes yourself. Just modify the files. The caller will handle committing.
 
+IMPORTANT: Do not modify files inside git submodules. You may read initialized submodules for context, but submodule contents must be changed by running roborev from inside that submodule repository or by fixing them manually.
+
 When finished, provide a brief summary in this format (this will be used in the commit message):
 
 Changes:

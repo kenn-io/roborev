@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"fmt"
+	"io"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -817,6 +818,185 @@ func TestCommitWithHookRetryUsesCommitOptions(t *testing.T) {
 	show := repo.Run("show", "-s", "--format=%an <%ae>%n%B", "HEAD")
 	assert.Contains(t, show, "Fix Author <fix@example.com>")
 	assert.Contains(t, show, "Co-authored-by: Pair Reviewer <pair@example.com>")
+}
+
+func TestChangedRefineSubmodulesDetectsDirtySubmoduleIgnoredByParentStatus(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	submoduleSource := NewGitTestRepo(t)
+	submoduleSource.CommitFile("sub.txt", "base\n", "submodule base")
+
+	parent := NewGitTestRepo(t)
+	parent.CommitFile("parent.txt", "base\n", "parent base")
+	parent.Run("-c", "protocol.file.allow=always", "submodule", "add", submoduleSource.Dir, "vendor/sub")
+	parent.Run("commit", "-m", "add submodule")
+
+	before, err := snapshotRefineSubmodules(t.Context(), parent.Dir)
+	require.NoError(t, err)
+
+	parent.Run("config", "submodule.vendor/sub.ignore", "dirty")
+	require.NoError(t, os.WriteFile(
+		filepath.Join(parent.Dir, "vendor", "sub", "sub.txt"),
+		[]byte("dirty\n"),
+		0o644,
+	))
+	require.True(t, git.IsWorkingTreeClean(parent.Dir))
+
+	changed, err := changedRefineSubmodules(t.Context(), parent.Dir, before)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"vendor/sub"}, changed)
+}
+
+func TestChangedRefineSubmodulesDetectsGitlinkOnlyChange(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	submoduleSource := NewGitTestRepo(t)
+	submoduleSource.CommitFile("sub.txt", "base\n", "submodule base")
+
+	parent := NewGitTestRepo(t)
+	parent.CommitFile("parent.txt", "base\n", "parent base")
+	parent.Run("-c", "protocol.file.allow=always", "submodule", "add", submoduleSource.Dir, "vendor/sub")
+	parent.Run("commit", "-m", "add submodule")
+
+	before, err := snapshotRefineSubmodules(t.Context(), parent.Dir)
+	require.NoError(t, err)
+
+	nextSHA := submoduleSource.CommitFile("sub.txt", "next\n", "submodule next")
+	parent.Run("update-index", "--cacheinfo", "160000", nextSHA, "vendor/sub")
+
+	changed, err := changedRefineSubmodules(t.Context(), parent.Dir, before)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"vendor/sub"}, changed)
+}
+
+func TestChangedRefineSubmodulesDetectsGitmodulesOnlyChange(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	submoduleSource := NewGitTestRepo(t)
+	submoduleSource.CommitFile("sub.txt", "base\n", "submodule base")
+
+	parent := NewGitTestRepo(t)
+	parent.CommitFile("parent.txt", "base\n", "parent base")
+	parent.Run("-c", "protocol.file.allow=always", "submodule", "add", submoduleSource.Dir, "vendor/sub")
+	parent.Run("commit", "-m", "add submodule")
+
+	before, err := snapshotRefineSubmodules(t.Context(), parent.Dir)
+	require.NoError(t, err)
+
+	parent.Run("config", "-f", ".gitmodules", "submodule.vendor/sub.branch", "main")
+
+	changed, err := changedRefineSubmodules(t.Context(), parent.Dir, before)
+
+	require.NoError(t, err)
+	assert.Equal(t, []string{"vendor/sub"}, changed)
+}
+
+func TestCommitWithHookRetryDoesNotRunHookFixAgentWithSubmodules(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	submoduleSource := NewGitTestRepo(t)
+	submoduleSource.CommitFile("sub.txt", "base\n", "submodule base")
+
+	parent := NewGitTestRepo(t)
+	parent.CommitFile("parent.txt", "base\n", "parent base")
+	parent.Run("-c", "protocol.file.allow=always", "submodule", "add", submoduleSource.Dir, "vendor/sub")
+	parent.Run("commit", "-m", "add submodule")
+	require.NoError(t, os.WriteFile(filepath.Join(parent.Dir, ".git", "hooks", "pre-commit"), []byte(`#!/bin/sh
+echo "hook failure" >&2
+exit 1
+`), 0o755))
+
+	require.NoError(t, os.WriteFile(filepath.Join(parent.Dir, "new.txt"), []byte("hello\n"), 0o644))
+	agentCalled := false
+	testAgent := &functionalMockAgent{nameVal: "test", reviewFunc: func(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
+		agentCalled = true
+		return "Changes:\n- no-op", nil
+	}}
+
+	_, err := commitWithHookRetry(t.Context(), parent.Dir, "test commit", testAgent, true, git.CommitOptions{})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "cannot automatically retry hooks in repositories with git submodules")
+	assert.False(t, agentCalled)
+}
+
+func TestCommitWithHookRetryRestoresSubmoduleGitlinkFromFailedHook(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	submoduleSource := NewGitTestRepo(t)
+	submoduleSource.CommitFile("sub.txt", "base\n", "submodule base")
+
+	parent := NewGitTestRepo(t)
+	parent.CommitFile("parent.txt", "base\n", "parent base")
+	parent.Run("-c", "protocol.file.allow=always", "submodule", "add", submoduleSource.Dir, "vendor/sub")
+	parent.Run("commit", "-m", "add submodule")
+	gitlinkBefore := parent.Run("ls-files", "--stage", "--", "vendor/sub")
+	nextSHA := submoduleSource.CommitFile("sub.txt", "next\n", "submodule next")
+	hookScript := fmt.Sprintf(`#!/bin/sh
+set -e
+git update-index --cacheinfo 160000 %s vendor/sub
+echo "hook failure" >&2
+exit 1
+`, nextSHA)
+	require.NoError(t, os.WriteFile(filepath.Join(parent.Dir, ".git", "hooks", "pre-commit"), []byte(hookScript), 0o755))
+
+	require.NoError(t, os.WriteFile(filepath.Join(parent.Dir, "new.txt"), []byte("hello\n"), 0o644))
+	agentCalled := false
+	testAgent := &functionalMockAgent{nameVal: "test", reviewFunc: func(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
+		agentCalled = true
+		return "Changes:\n- no-op", nil
+	}}
+
+	_, err := commitWithHookRetry(t.Context(), parent.Dir, "test commit", testAgent, true, git.CommitOptions{})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "roborev refine cannot modify git submodules")
+	assert.Contains(t, err.Error(), "vendor/sub")
+	assert.Equal(t, gitlinkBefore, parent.Run("ls-files", "--stage", "--", "vendor/sub"))
+	assert.False(t, agentCalled)
+}
+
+func TestCommitWithHookRetryRollsBackSubmoduleGitlinkFromSuccessfulHook(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	submoduleSource := NewGitTestRepo(t)
+	submoduleSource.CommitFile("sub.txt", "base\n", "submodule base")
+
+	parent := NewGitTestRepo(t)
+	parent.CommitFile("parent.txt", "base\n", "parent base")
+	parent.Run("-c", "protocol.file.allow=always", "submodule", "add", submoduleSource.Dir, "vendor/sub")
+	parent.Run("commit", "-m", "add submodule")
+	headBefore := parent.Run("rev-parse", "HEAD")
+	nextSHA := submoduleSource.CommitFile("sub.txt", "next\n", "submodule next")
+	hookScript := fmt.Sprintf(`#!/bin/sh
+set -e
+git update-index --cacheinfo 160000 %s vendor/sub
+exit 0
+`, nextSHA)
+	require.NoError(t, os.WriteFile(filepath.Join(parent.Dir, ".git", "hooks", "pre-commit"), []byte(hookScript), 0o755))
+
+	require.NoError(t, os.WriteFile(filepath.Join(parent.Dir, "new.txt"), []byte("hello\n"), 0o644))
+
+	_, err := commitWithHookRetry(t.Context(), parent.Dir, "test commit", agent.NewTestAgent(), true, git.CommitOptions{})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "roborev refine cannot modify git submodules")
+	assert.Contains(t, err.Error(), "vendor/sub")
+	assert.Equal(t, headBefore, parent.Run("rev-parse", "HEAD"))
 }
 
 func TestCommitWithHookRetryExhausted(t *testing.T) {
