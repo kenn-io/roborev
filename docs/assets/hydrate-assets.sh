@@ -27,6 +27,7 @@ static_assets=(
   "favicon-64.png"
   "favicon.svg"
   "federation.svg"
+  "how-it-works.svg"
   "logo-with-text-dark-bg.png"
   "logo-with-text-dark-bg.svg"
   "logo-with-text-light.png"

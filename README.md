@@ -24,6 +24,8 @@ your agentic loop while context is fresh.
 
 ### Automation, two layers
 
+![How roborev works](https://roborev.io/assets/static/how-it-works.svg)
+
 - **Post-commit reviews** - a git hook reviews every commit in the background (any agent).
 - **Agent hook** - watches your Claude Code / Codex session and tells the agent to run `/roborev-fix` when findings pile up.
 

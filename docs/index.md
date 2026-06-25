@@ -18,6 +18,8 @@ Continuous code review for coding agents. Review commits immediately, catch issu
 
 ## How roborev works
 
+![How roborev works](/assets/static/how-it-works.svg){ loading=eager }
+
 roborev reviews every commit in the background and feeds findings back to your
 coding agent so the write -> review -> fix loop runs hands-off.
 
