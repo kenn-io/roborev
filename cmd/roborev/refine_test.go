@@ -1044,6 +1044,46 @@ exit 1
 	assert.False(t, agentCalled)
 }
 
+func TestCommitWithHookRetryPreservesExistingPathFromFailedHook(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	submoduleSource := NewGitTestRepo(t)
+	newSubmoduleSHA := submoduleSource.CommitFile("sub.txt", "base\n", "submodule base")
+
+	parent := NewGitTestRepo(t)
+	parent.CommitFile(".gitignore", "/vendor/existing/\n", "ignore existing vendor path")
+	existingFile := filepath.Join(parent.Dir, "vendor", "existing", "keep.txt")
+	require.NoError(t, os.MkdirAll(filepath.Dir(existingFile), 0o755))
+	require.NoError(t, os.WriteFile(existingFile, []byte("keep\n"), 0o644))
+	hookScript := fmt.Sprintf(`#!/bin/sh
+set -e
+git update-index --add --cacheinfo 160000 %s vendor/existing
+echo "hook failure" >&2
+exit 1
+`, newSubmoduleSHA)
+	require.NoError(t, os.WriteFile(filepath.Join(parent.Dir, ".git", "hooks", "pre-commit"), []byte(hookScript), 0o755))
+
+	require.NoError(t, os.WriteFile(filepath.Join(parent.Dir, "new.txt"), []byte("hello\n"), 0o644))
+	agentCalled := false
+	testAgent := &functionalMockAgent{nameVal: "test", reviewFunc: func(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
+		agentCalled = true
+		return "Changes:\n- no-op", nil
+	}}
+
+	_, err := commitWithHookRetry(t.Context(), parent.Dir, "test commit", testAgent, true, git.CommitOptions{})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "roborev refine cannot modify git submodules")
+	assert.Contains(t, err.Error(), "vendor/existing")
+	assert.Empty(t, parent.Run("ls-files", "--stage", "--", "vendor/existing"))
+	content, readErr := os.ReadFile(existingFile)
+	require.NoError(t, readErr)
+	assert.Equal(t, "keep\n", string(content))
+	assert.False(t, agentCalled)
+}
+
 func TestCommitWithHookRetryRollsBackSubmoduleGitlinkFromSuccessfulHook(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")

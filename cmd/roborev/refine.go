@@ -1670,10 +1670,36 @@ func removeRefineNewSubmoduleWorktree(repoPath, path string) error {
 		strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
 		return fmt.Errorf("refuse to remove submodule path outside repo: %s", path)
 	}
+	isSubmoduleCheckout, err := isRefineSubmoduleCheckout(submodulePath)
+	if err != nil {
+		return fmt.Errorf("check new submodule worktree %s: %w", path, err)
+	}
+	if !isSubmoduleCheckout {
+		return nil
+	}
 	if err := os.RemoveAll(submodulePath); err != nil {
 		return fmt.Errorf("remove new submodule worktree %s: %w", path, err)
 	}
 	return nil
+}
+
+func isRefineSubmoduleCheckout(path string) (bool, error) {
+	gitMarker := filepath.Join(path, ".git")
+	info, err := os.Lstat(gitMarker)
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	if err != nil {
+		return false, err
+	}
+	if !info.Mode().IsRegular() {
+		return false, nil
+	}
+	content, err := os.ReadFile(gitMarker)
+	if err != nil {
+		return false, err
+	}
+	return strings.HasPrefix(strings.TrimSpace(string(content)), "gitdir:"), nil
 }
 
 func restoreRefineGitmodules(
