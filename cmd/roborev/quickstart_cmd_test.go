@@ -37,6 +37,16 @@ func TestCheckConfiguredAgentRequiresNonEmptyGlobalDefault(t *testing.T) {
 func TestCheckRepoConfigUsesResolvedRepoConfigPath(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	mainRepo := newTempGitRepo(t)
+	require.NoError(t, os.WriteFile(filepath.Join(mainRepo, "README.md"), []byte("test\n"), 0o644))
+	cmd := exec.Command("git", "add", "README.md")
+	cmd.Dir = mainRepo
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(output))
+	cmd = exec.Command("git", "commit", "-m", "initial")
+	cmd.Dir = mainRepo
+	output, err = cmd.CombinedOutput()
+	require.NoError(t, err, string(output))
+
 	require.NoError(t, os.WriteFile(
 		filepath.Join(mainRepo, ".roborev.toml"),
 		[]byte("agent = \"codex\"\n"),
@@ -44,9 +54,9 @@ func TestCheckRepoConfigUsesResolvedRepoConfigPath(t *testing.T) {
 	))
 
 	worktree := filepath.Join(t.TempDir(), "linked")
-	cmd := exec.Command("git", "worktree", "add", worktree)
+	cmd = exec.Command("git", "worktree", "add", worktree)
 	cmd.Dir = mainRepo
-	output, err := cmd.CombinedOutput()
+	output, err = cmd.CombinedOutput()
 	require.NoError(t, err, string(output))
 
 	check := checkRepoConfig(worktree, true, "codex")
@@ -73,6 +83,7 @@ func TestCheckRepoConfigReportsInvalidConfigAsUnknown(t *testing.T) {
 func TestCheckSkillsRequiresFixAndRefineSkillNamesForOneAgent(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("HOMEDRIVE", "")
 	t.Setenv("HOMEPATH", "")
 
@@ -91,6 +102,7 @@ func TestCheckSkillsRequiresFixAndRefineSkillNamesForOneAgent(t *testing.T) {
 func TestCheckSkillsAcceptsCodexFixAndRefine(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
 	t.Setenv("HOMEDRIVE", "")
 	t.Setenv("HOMEPATH", "")
 
