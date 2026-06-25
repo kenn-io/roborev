@@ -1122,6 +1122,39 @@ exit 1
 	assert.False(t, agentCalled)
 }
 
+func TestCommitWithHookRetryRestoresGitmodulesOnlyFailedHook(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	parent := NewGitTestRepo(t)
+	parent.CommitFile("parent.txt", "base\n", "parent base")
+	require.NoError(t, os.WriteFile(filepath.Join(parent.Dir, ".git", "hooks", "pre-commit"), []byte(`#!/bin/sh
+cat > .gitmodules <<'EOF'
+[submodule "metadata-only"]
+	path = metadata-only
+	url = https://example.invalid/metadata-only.git
+EOF
+echo "hook failure" >&2
+exit 1
+`), 0o755))
+
+	require.NoError(t, os.WriteFile(filepath.Join(parent.Dir, "new.txt"), []byte("hello\n"), 0o644))
+	agentCalled := false
+	testAgent := &functionalMockAgent{nameVal: "test", reviewFunc: func(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
+		agentCalled = true
+		return "Changes:\n- no-op", nil
+	}}
+
+	_, err := commitWithHookRetry(t.Context(), parent.Dir, "test commit", testAgent, true, git.CommitOptions{})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "roborev refine cannot modify git submodules")
+	assert.Contains(t, err.Error(), ".gitmodules")
+	assert.NoFileExists(t, filepath.Join(parent.Dir, ".gitmodules"))
+	assert.False(t, agentCalled)
+}
+
 func TestCommitWithHookRetryRollsBackSubmoduleGitlinkFromSuccessfulHook(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not available")

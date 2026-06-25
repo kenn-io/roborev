@@ -1343,6 +1343,8 @@ type refineSubmoduleState struct {
 	artifacts   bool
 }
 
+const refineGitmodulesPath = ".gitmodules"
+
 type refineSubmoduleSnapshot struct {
 	submodules        map[string]refineSubmoduleState
 	gitmodulesExists  bool
@@ -1430,11 +1432,15 @@ func changedRefineSubmodules(
 	}
 	if current.gitmodulesExists != before.gitmodulesExists ||
 		current.gitmodulesContent != before.gitmodulesContent {
+		changedBeforeGitmodules := len(changed)
 		for path := range current.submodules {
 			addChanged(path)
 		}
 		for path := range before.submodules {
 			addChanged(path)
+		}
+		if len(changed) == changedBeforeGitmodules {
+			addChanged(refineGitmodulesPath)
 		}
 	}
 
@@ -1604,6 +1610,9 @@ func restoreRefineParentSubmoduleState(
 ) error {
 	var restoreErrs []string
 	for _, path := range paths {
+		if path == refineGitmodulesPath {
+			continue
+		}
 		beforeState, ok := before.submodules[path]
 		if ok && beforeState.gitlink != "" {
 			cmd := refineGitCmd(ctx, "-C", repoPath,
