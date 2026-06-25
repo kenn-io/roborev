@@ -122,3 +122,30 @@ func TestQuickstartJSONOmitsGuide(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(out), &state))
 	assert.Len(t, state.Checks, len(quickstartCheckIDs))
 }
+
+func TestQuickstartOutsideGitRepo(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	t.Chdir(t.TempDir())
+
+	t.Run("json exits 0 with in_git_repo false", func(t *testing.T) {
+		cmd := quickstartCmd()
+		cmd.SetArgs([]string{"--json"})
+		var outBuf, errBuf bytes.Buffer
+		cmd.SetOut(&outBuf)
+		cmd.SetErr(&errBuf)
+		require.NoError(t, cmd.Execute())
+
+		var state quickstartState
+		require.NoError(t, json.Unmarshal(outBuf.Bytes(), &state))
+		assert.False(t, state.InGitRepo)
+	})
+
+	t.Run("human returns silentExit error", func(t *testing.T) {
+		cmd := quickstartCmd()
+		cmd.SetArgs(nil)
+		var outBuf, errBuf bytes.Buffer
+		cmd.SetOut(&outBuf)
+		cmd.SetErr(&errBuf)
+		require.Error(t, cmd.Execute())
+	})
+}

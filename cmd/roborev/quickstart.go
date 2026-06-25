@@ -57,8 +57,8 @@ func detectState(ctx context.Context, repoRoot string, inGitRepo bool) quickstar
 		checkDaemon(daemonUp),
 		checkPostCommitHook(ctx, repoRoot, inGitRepo),
 		checkRepoRegistered(repoRoot, inGitRepo, daemonUp),
-		checkRepoConfig(repoRoot, inGitRepo),
-		checkConfiguredAgent(repoRoot, inGitRepo, global, agent),
+		checkRepoConfig(repoRoot, inGitRepo, agent),
+		checkConfiguredAgent(repoRoot, inGitRepo, agent),
 		checkAgentHook("agent_hook_claude", agenthook.DefaultClaudeSettingsPath(),
 			"roborev agent-hook install --agent claude"),
 		checkAgentHook("agent_hook_codex", agenthook.DefaultCodexHooksPath(),
@@ -146,7 +146,7 @@ func repoTracked(repoRoot string) (bool, error) {
 	return body.Tracked, nil
 }
 
-func checkRepoConfig(repoRoot string, inGitRepo bool) quickstartCheck {
+func checkRepoConfig(repoRoot string, inGitRepo bool, agent string) quickstartCheck {
 	c := quickstartCheck{ID: "repo_config"}
 	if !inGitRepo {
 		c.Status = statusUnknown
@@ -159,11 +159,11 @@ func checkRepoConfig(repoRoot string, inGitRepo bool) quickstartCheck {
 	}
 	c.Status = statusMissing
 	c.Details = "no per-repo .roborev.toml (using global defaults)"
-	c.FixCommand = "roborev init --agent codex"
+	c.FixCommand = fmt.Sprintf("roborev init --agent %s", agent)
 	return c
 }
 
-func checkConfiguredAgent(repoRoot string, inGitRepo bool, global *config.Config, agent string) quickstartCheck {
+func checkConfiguredAgent(repoRoot string, inGitRepo bool, agent string) quickstartCheck {
 	c := quickstartCheck{ID: "configured_agent"}
 	if !inGitRepo {
 		c.Status = statusUnknown
@@ -173,7 +173,7 @@ func checkConfiguredAgent(repoRoot string, inGitRepo bool, global *config.Config
 	if repoCfg, err := config.LoadRepoConfig(repoRoot); err == nil && repoCfg != nil && repoCfg.Agent != "" {
 		explicit = true
 	}
-	if global != nil && global.DefaultAgent != "" {
+	if _, err := os.Stat(config.GlobalConfigPath()); err == nil {
 		explicit = true
 	}
 	if explicit {

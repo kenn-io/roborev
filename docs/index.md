@@ -12,10 +12,6 @@ Continuous code review for coding agents. Review commits immediately, catch issu
   <a class="md-button" href="https://github.com/kenn-io/roborev">View on GitHub</a>
 </p>
 
-<figure class="hero-shot" data-lightbox>
-  <img src="/assets/generated/tui-hero.svg" alt="roborev TUI queue view" loading="eager">
-</figure>
-
 ## How roborev works
 
 ![How roborev works](/assets/static/how-it-works.svg){ loading=eager }
@@ -27,6 +23,10 @@ coding agent so the write -> review -> fix loop runs hands-off.
 - **Agent hook** - nudges your CLI agent to fix findings mid-session.
 
 [Set up automation ->](automation/post-commit-reviews.md)
+
+<figure class="hero-shot" data-lightbox>
+  <img src="/assets/generated/tui-hero.svg" alt="roborev TUI queue view" loading="eager">
+</figure>
 
 <div class="agent-matrix">
   <a href="/agents/"><img src="/assets/static/agents/codex.svg" alt="Codex" data-agent="codex" width="1604" height="719" /></a>
