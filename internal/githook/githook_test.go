@@ -239,6 +239,14 @@ func TestResolveRoborevPathDoesNotGuessUnsupportedManagers(t *testing.T) {
 	}
 }
 
+func TestVersionedManagerInstallRecognizesWindowsMiseExecutable(t *testing.T) {
+	path := `C:\Users\alice\.local\share\mise\installs\roborev\1.2.3\bin\roborev.exe`
+
+	manager := versionedManagerInstall(path)
+
+	assert.Equal(t, "mise", manager)
+}
+
 func TestResolveRoborevPathUsesExplicitBinary(t *testing.T) {
 	binPath := filepath.Join(t.TempDir(), "roborev")
 	require.NoError(t, os.WriteFile(binPath, []byte("#!/bin/sh\nexit 0\n"), 0o755))

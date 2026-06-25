@@ -325,8 +325,8 @@ func hasPathSeparator(path string) bool {
 }
 
 func managedBinaryShim(current, pathRoborev string) (string, bool) {
-	current = filepath.ToSlash(current)
-	pathRoborev = filepath.ToSlash(pathRoborev)
+	current = slashPath(current)
+	pathRoborev = slashPath(pathRoborev)
 	switch {
 	case isMiseManagedRoborev(current) &&
 		strings.Contains(pathRoborev, "/mise/shims/roborev"):
@@ -340,7 +340,7 @@ func managedBinaryShim(current, pathRoborev string) (string, bool) {
 }
 
 func versionedManagerInstall(current string) string {
-	current = filepath.ToSlash(current)
+	current = slashPath(current)
 	switch {
 	case isMiseManagedRoborev(current):
 		return "mise"
@@ -351,9 +351,14 @@ func versionedManagerInstall(current string) string {
 	}
 }
 
+func slashPath(path string) string {
+	return strings.ReplaceAll(filepath.ToSlash(path), "\\", "/")
+}
+
 func isMiseManagedRoborev(path string) bool {
 	return strings.Contains(path, "/mise/installs/") &&
-		strings.HasSuffix(path, "/roborev")
+		(strings.HasSuffix(path, "/roborev") ||
+			strings.HasSuffix(strings.ToLower(path), "/roborev.exe"))
 }
 
 func isExecutableFile(path string) bool {
