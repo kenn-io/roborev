@@ -62,6 +62,19 @@ func TestCommitFileCreatesParentDirectories(t *testing.T) {
 	require.Equal(t, "hello", string(content))
 }
 
+func TestGitRepoHelpersDisableAutoMaintenance(t *testing.T) {
+	repo := InitTestRepo(t)
+
+	require.Equal(t, "0", repo.Run("config", "--get", "gc.auto"))
+	require.Equal(t, "false", repo.Run("config", "--get", "maintenance.auto"))
+
+	dir := filepath.Join(t.TempDir(), "repo")
+	InitTestGitRepo(t, dir)
+
+	require.Equal(t, "0", runGit(t, dir, nil, "config", "--get", "gc.auto"))
+	require.Equal(t, "false", runGit(t, dir, nil, "config", "--get", "maintenance.auto"))
+}
+
 func TestNewGitRepoReturnsResolvedPath(t *testing.T) {
 	repo := NewGitRepo(t)
 

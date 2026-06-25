@@ -83,6 +83,8 @@ func mustWrite(dir, name, content string) {
 func configureTemplateUser(dir string) {
 	mustGit(dir, "config", "user.email", GitUserEmail)
 	mustGit(dir, "config", "user.name", GitUserName)
+	mustGit(dir, "config", "gc.auto", "0")
+	mustGit(dir, "config", "maintenance.auto", "false")
 }
 
 // copyTree recursively copies the contents of src into dst. Files are written
