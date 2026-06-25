@@ -83,15 +83,23 @@ then hits a TOML parse error: `hooks` is already a value array.
    a user deleted. Instead, append a commented `[[hooks]]` example block ONLY
    when creating the global config for the first time.
 
-   Implementation: a dedicated default-config writer used by the first-time
-   creation path. `roborev init` creates `~/.roborev/config.toml` when absent
-   (`init_cmd.go` step 3); route that creation through the new writer:
+   Implementation: a dedicated first-creation writer that accepts the prepared
+   config (so `roborev init --agent ...` keeps working — today init builds
+   `DefaultConfig()`, sets `cfg.DefaultAgent = agent`, then saves):
 
    ```
-   func WriteDefaultGlobalConfig(path string) error
+   func WriteDefaultGlobalConfigTo(path string, cfg *Config) error
    ```
 
-   It marshals `DefaultConfig()` (now without `hooks = []`) and appends a
+   It must preserve `SaveGlobalTo`'s durability guarantees: atomic write
+   (temp file + rename) and `0600` file permissions, since the global config can
+   later hold sensitive values (e.g. webhook URLs). It is used ONLY on
+   first-time creation. `roborev init` creates `~/.roborev/config.toml` when
+   absent (`init_cmd.go` step 3); route that creation through this writer,
+   passing the already-prepared config (with `DefaultAgent` applied when
+   `--agent` is given). Normal rewrites continue through `SaveGlobalTo`.
+
+   The writer marshals the config (now without `hooks = []`) and appends a
    trailing commented block:
 
    ```toml
@@ -115,8 +123,10 @@ then hits a TOML parse error: `hooks` is already a value array.
 - A config with a non-empty `[[hooks]]` round-trips (marshal → parse → equal).
 - A config file containing both a hand-added `[[hooks]]` block and no leftover
   `hooks = []` parses cleanly (regression for the reported error).
-- `WriteDefaultGlobalConfig` output parses cleanly and contains the commented
+- `WriteDefaultGlobalConfigTo` output parses cleanly and contains the commented
   example; `SaveGlobalTo` output does NOT contain the commented example.
+- `WriteDefaultGlobalConfigTo` writes with `0600` permissions and replaces any
+  existing file atomically.
 
 ---
 
@@ -132,9 +142,12 @@ New file `cmd/roborev/quickstart_cmd.go`, registered in `main.go`.
     returning `*daemon.PingInfo`. Do NOT call `ensureDaemon()`
     (`daemon_lifecycle.go:225`, used by `status.go:31`), which can start/restart
     the daemon.
-  - Read git hook files directly (`<repo>/.git/hooks/post-commit`, check for the
-    roborev marker). Do NOT call setup helpers like `EnsureAbsoluteHooksPath`
-    (referenced near `init_cmd.go:77`).
+  - Resolve the hooks directory with the read-only `gitrepo.HooksPath` resolver
+    (wrapped in `cmd/roborev/helpers.go`), which honors linked worktrees and
+    `core.hooksPath`; then read `<hooksDir>/post-commit` and check for the
+    roborev marker. Do NOT read `<repo>/.git/hooks/post-commit` directly (misses
+    worktrees / `core.hooksPath`), and do NOT call the mutating
+    `EnsureAbsoluteHooksPath` (referenced near `init_cmd.go:77`).
   - Read agent-hook installation from `~/.claude/settings.json` and
     `~/.codex/hooks.json` without installing.
   - Load config via the existing read-only `config.Load` path.
@@ -142,19 +155,26 @@ New file `cmd/roborev/quickstart_cmd.go`, registered in `main.go`.
 
 ### Output: two parts
 
-**Part 1 — Detected state** (repo-aware checklist). Each item is one of three
-states with an exact remediation command:
+**Part 1 — Detected state** (repo-aware checklist). Whether the command is
+inside a git repo is reported as the top-level `in_git_repo` field, not as a
+check row (so it never appears as a `missing` check needing a command). Every
+check row carries a runnable `fix_command` when `missing` — no bare
+instructions. The eight checks, with stable IDs:
 
-| Check | Detection | Fix command when missing |
-|-------|-----------|--------------------------|
-| In a git repo | git rev-parse | (n/a — error out early) |
-| Daemon running | `probeDaemonWithRetry` ping | `roborev daemon start` |
-| Post-commit hook installed | read `.git/hooks/post-commit` marker | `roborev install-hook` |
-| Repo registered | daemon `/repos` (read-only GET) | `roborev init` |
-| `.roborev.toml` present | stat repo root | `roborev init --agent <agent>` |
-| Configured agent | parse `.roborev.toml` / global | set `agent = "..."` |
-| Agent hook installed (claude/codex) | read settings files | `roborev agent-hook install` |
-| Skills installed | existing skills discovery (read-only) | `roborev skills install` |
+| Check `id` | Detection | `fix_command` when missing |
+|------------|-----------|----------------------------|
+| `daemon_running` | `probeDaemonWithRetry` ping | `roborev daemon start` |
+| `post_commit_hook` | `gitrepo.HooksPath` → read `post-commit` marker | `roborev install-hook` |
+| `repo_registered` | daemon `/repos` (read-only GET) | `roborev init` |
+| `repo_config` | stat `.roborev.toml` at repo root | `roborev init --agent <agent>` |
+| `configured_agent` | parse `.roborev.toml` / global | `roborev config set --local agent <agent>` |
+| `agent_hook_claude` | read `~/.claude/settings.json` | `roborev agent-hook install --agent claude` |
+| `agent_hook_codex` | read `~/.codex/hooks.json` | `roborev agent-hook install --agent codex` |
+| `skills_installed` | skills discovery (read-only) | `roborev skills install` |
+
+The repo-dependent checks (`post_commit_hook`, `repo_registered`,
+`repo_config`, `configured_agent`) report `status: "unknown"` when not inside a
+git repo.
 
 **Part 2 — How roborev works + configuration playbook** (static embedded
 markdown the agent reads to assist the user). Covers the four selected topics:
@@ -189,35 +209,57 @@ shared source — different audiences and cadences.
 ### `--json` flag
 
 First-class, stable schema for the detected-state portion only (omit the static
-explainer). Each check serializes as:
+explainer). Top-level: `in_git_repo` (bool), `daemon_running` (bool, mirrors the
+`daemon_running` check for convenience), and `checks` (array). Each check:
 
 ```json
 {
+  "in_git_repo": true,
+  "daemon_running": true,
   "checks": [
     {
       "id": "post_commit_hook",
-      "status": "ok | missing | unknown",
+      "status": "ok",
       "details": "human-readable detail string",
       "fix_command": "roborev install-hook"
     }
-  ],
-  "in_git_repo": true,
-  "daemon_running": true
+  ]
 }
 ```
 
-Field names (`id`, `status`, `details`, `fix_command`) are the stable contract;
-agents branch on `status` and run `fix_command`. `status` is a closed enum.
+Stable contract:
+- `id` is one of exactly eight values: `daemon_running`, `post_commit_hook`,
+  `repo_registered`, `repo_config`, `configured_agent`, `agent_hook_claude`,
+  `agent_hook_codex`, `skills_installed`. The set and ordering are stable.
+- `status` is a closed enum: `"ok" | "missing" | "unknown"`.
+- `details` is a human-readable string (may be empty).
+- `fix_command` is a runnable command string, present and non-empty whenever
+  `status` is `"missing"`; it may be omitted/empty for `"ok"` or `"unknown"`.
+
+Agents branch on `status` and run `fix_command`.
+
+### Outside a git repo
+
+Behavior is explicit and differs by output mode:
+- **Human output:** exit non-zero with a short "run this inside a git repo /
+  `roborev init`" setup message.
+- **`--json`:** exit `0` with `in_git_repo: false`; repo-dependent checks
+  (`post_commit_hook`, `repo_registered`, `repo_config`, `configured_agent`)
+  report `status: "unknown"`; global checks (`daemon_running`,
+  `agent_hook_*`, `skills_installed`) report their real state.
 
 ### Tests (`cmd/roborev/quickstart_cmd_test.go`)
 
 - Detection is read-only: running `quickstart` against a repo with no daemon does
   NOT start one (assert no daemon process / no runtime record created), and does
   NOT modify `.git/hooks/post-commit` or any config file.
-- `--json` emits the documented schema; `status` only ever takes allowed enum
-  values; every `missing` check has a non-empty `fix_command`.
+- `--json` emits the documented schema; `id` only ever takes the eight allowed
+  values; `status` only ever takes allowed enum values; every `missing` check
+  has a non-empty runnable `fix_command`.
 - Static explainer is present in human output and absent from `--json`.
-- Graceful behavior outside a git repo and with no global config.
+- Outside a git repo: human output exits non-zero with a setup message; `--json`
+  exits `0` with `in_git_repo: false` and repo-dependent checks `unknown` while
+  global checks report real state. Also covers the no-global-config case.
 
 ---
 
@@ -302,6 +344,11 @@ Content: the loop —
 
 - The SVG lives with the other static assets (`/assets/static/...`, served from
   the `docs-assets` orphan branch per `docs/README.md`).
+- Add `how-it-works.svg` to BOTH asset manifests, or
+  hydration/update validation will fail even with the SVG on the orphan branch:
+  - `docs/assets/update-static-assets-branch.sh` `expected_assets` array
+    (`:12`) — note this script errors on any file not in the list (`:104`).
+  - `docs/assets/hydrate-assets.sh` `static_assets` array (`:15`).
 - Docs reference it relatively: `/assets/static/how-it-works.svg`.
 - README references it with an absolute URL so GitHub renders it:
   `https://roborev.io/assets/static/how-it-works.svg` (existing README images
