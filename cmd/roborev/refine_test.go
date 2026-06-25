@@ -1018,16 +1018,12 @@ func TestCommitWithHookRetryRestoresNewSubmoduleFromFailedHook(t *testing.T) {
 
 	parent := NewGitTestRepo(t)
 	parent.CommitFile("parent.txt", "base\n", "parent base")
-	newSubmoduleSHA := submoduleSource.Run("rev-parse", "HEAD")
 	hookScript := fmt.Sprintf(`#!/bin/sh
 set -e
-git config -f .gitmodules submodule.vendor/new.path vendor/new
-git config -f .gitmodules submodule.vendor/new.url %s
-git add .gitmodules
-git update-index --add --cacheinfo 160000 %s vendor/new
+git -c protocol.file.allow=always submodule add %s vendor/new
 echo "hook failure" >&2
 exit 1
-`, submoduleSource.Dir, newSubmoduleSHA)
+`, submoduleSource.Dir)
 	require.NoError(t, os.WriteFile(filepath.Join(parent.Dir, ".git", "hooks", "pre-commit"), []byte(hookScript), 0o755))
 
 	require.NoError(t, os.WriteFile(filepath.Join(parent.Dir, "new.txt"), []byte("hello\n"), 0o644))
@@ -1044,6 +1040,7 @@ exit 1
 	assert.Contains(t, err.Error(), "vendor/new")
 	assert.Empty(t, parent.Run("ls-files", "--stage", "--", "vendor/new"))
 	assert.NoFileExists(t, filepath.Join(parent.Dir, ".gitmodules"))
+	assert.NoDirExists(t, filepath.Join(parent.Dir, "vendor", "new"))
 	assert.False(t, agentCalled)
 }
 

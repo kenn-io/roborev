@@ -1610,6 +1610,9 @@ func restoreRefineParentSubmoduleState(
 				path, err, strings.TrimSpace(string(out)),
 			))
 		}
+		if err := removeRefineNewSubmoduleWorktree(repoPath, path); err != nil {
+			restoreErrs = append(restoreErrs, err.Error())
+		}
 	}
 	if err := restoreRefineGitmodules(ctx, repoPath, before); err != nil {
 		restoreErrs = append(restoreErrs, err.Error())
@@ -1646,6 +1649,29 @@ func restoreRefineSubmoduleWorktree(
 			err,
 			strings.TrimSpace(string(out)),
 		)
+	}
+	return nil
+}
+
+func removeRefineNewSubmoduleWorktree(repoPath, path string) error {
+	absRepo, err := filepath.Abs(repoPath)
+	if err != nil {
+		return fmt.Errorf("resolve repo path: %w", err)
+	}
+	submodulePath, err := filepath.Abs(filepath.Join(absRepo, filepath.FromSlash(path)))
+	if err != nil {
+		return fmt.Errorf("resolve new submodule path %s: %w", path, err)
+	}
+	rel, err := filepath.Rel(absRepo, submodulePath)
+	if err != nil {
+		return fmt.Errorf("check new submodule path %s: %w", path, err)
+	}
+	if rel == "." || rel == ".." || filepath.IsAbs(rel) ||
+		strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
+		return fmt.Errorf("refuse to remove submodule path outside repo: %s", path)
+	}
+	if err := os.RemoveAll(submodulePath); err != nil {
+		return fmt.Errorf("remove new submodule worktree %s: %w", path, err)
 	}
 	return nil
 }
