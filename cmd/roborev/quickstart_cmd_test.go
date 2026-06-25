@@ -34,6 +34,82 @@ func TestCheckConfiguredAgentRequiresNonEmptyGlobalDefault(t *testing.T) {
 	assert.Equal(statusOK, checkConfiguredAgent(repo, true, "codex").Status)
 }
 
+func TestCheckRepoConfigUsesResolvedRepoConfigPath(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	mainRepo := newTempGitRepo(t)
+	require.NoError(t, os.WriteFile(
+		filepath.Join(mainRepo, ".roborev.toml"),
+		[]byte("agent = \"codex\"\n"),
+		0o644,
+	))
+
+	worktree := filepath.Join(t.TempDir(), "linked")
+	cmd := exec.Command("git", "worktree", "add", worktree)
+	cmd.Dir = mainRepo
+	output, err := cmd.CombinedOutput()
+	require.NoError(t, err, string(output))
+
+	check := checkRepoConfig(worktree, true, "codex")
+
+	assert.Equal(t, statusOK, check.Status)
+	assert.Contains(t, check.Details, ".roborev.toml present")
+}
+
+func TestCheckRepoConfigReportsInvalidConfigAsUnknown(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	repo := newTempGitRepo(t)
+	require.NoError(t, os.WriteFile(
+		filepath.Join(repo, ".roborev.toml"),
+		[]byte("agent = \n"),
+		0o644,
+	))
+
+	check := checkRepoConfig(repo, true, "codex")
+
+	assert.Equal(t, statusUnknown, check.Status)
+	assert.Contains(t, check.Details, "could not read .roborev.toml")
+}
+
+func TestCheckSkillsRequiresFixAndRefineSkillNamesForOneAgent(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("HOMEDRIVE", "")
+	t.Setenv("HOMEPATH", "")
+
+	writeQuickstartSkill(t, home, ".claude", "roborev-address")
+	assert.Equal(t, statusMissing, checkSkills().Status)
+
+	writeQuickstartSkill(t, home, ".claude", "roborev-fix")
+	assert.Equal(t, statusMissing, checkSkills().Status)
+
+	writeQuickstartSkill(t, home, ".claude", "roborev-refine")
+	check := checkSkills()
+	assert.Equal(t, statusOK, check.Status)
+	assert.Contains(t, check.Details, "Claude Code")
+}
+
+func TestCheckSkillsAcceptsCodexFixAndRefine(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("HOMEDRIVE", "")
+	t.Setenv("HOMEPATH", "")
+
+	writeQuickstartSkill(t, home, ".codex", "roborev-fix")
+	writeQuickstartSkill(t, home, ".codex", "roborev-refine")
+
+	check := checkSkills()
+
+	assert.Equal(t, statusOK, check.Status)
+	assert.Contains(t, check.Details, "Codex")
+}
+
+func writeQuickstartSkill(t *testing.T, home, configDir, name string) {
+	t.Helper()
+	path := filepath.Join(home, configDir, "skills", name, "SKILL.md")
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, []byte("---\nname: "+name+"\n---\n"), 0o644))
+}
+
 func newTempGitRepo(t *testing.T) string {
 	t.Helper()
 	dir := t.TempDir()

@@ -5,8 +5,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"net/url"
-	"os"
-	"path/filepath"
+	"strings"
 	"time"
 
 	"go.kenn.io/roborev/internal/agenthook"
@@ -155,7 +154,11 @@ func checkRepoConfig(repoRoot string, inGitRepo bool, agent string) quickstartCh
 		c.Status = statusUnknown
 		return c
 	}
-	if _, err := os.Stat(filepath.Join(repoRoot, ".roborev.toml")); err == nil {
+	if repoCfg, err := config.LoadRepoConfig(repoRoot); err != nil {
+		c.Status = statusUnknown
+		c.Details = fmt.Sprintf("could not read .roborev.toml: %v", err)
+		return c
+	} else if repoCfg != nil {
 		c.Status = statusOK
 		c.Details = ".roborev.toml present"
 		return c
@@ -213,13 +216,39 @@ func checkAgentHook(id, path, fix string) quickstartCheck {
 
 func checkSkills() quickstartCheck {
 	c := quickstartCheck{ID: "skills_installed"}
-	if skills.IsInstalled(skills.AgentClaude) || skills.IsInstalled(skills.AgentCodex) {
+	installedFor := agentsWithRequiredQuickstartSkills(skills.Status())
+	if len(installedFor) > 0 {
 		c.Status = statusOK
-		c.Details = "roborev skills installed"
+		c.Details = "roborev fix/refine skills installed for " + strings.Join(installedFor, " and ")
 		return c
 	}
 	c.Status = statusMissing
-	c.Details = "roborev skills not installed"
+	c.Details = "roborev fix/refine skills not installed"
 	c.FixCommand = "roborev skills install"
 	return c
+}
+
+func agentsWithRequiredQuickstartSkills(statuses []skills.AgentStatus) []string {
+	required := []string{"roborev-fix", "roborev-refine"}
+	labels := map[skills.Agent]string{
+		skills.AgentClaude: "Claude Code",
+		skills.AgentCodex:  "Codex",
+	}
+	var installedFor []string
+	for _, status := range statuses {
+		if !status.Available {
+			continue
+		}
+		complete := true
+		for _, name := range required {
+			if status.Skills[name] == skills.SkillMissing {
+				complete = false
+				break
+			}
+		}
+		if complete {
+			installedFor = append(installedFor, labels[status.Agent])
+		}
+	}
+	return installedFor
 }

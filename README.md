@@ -60,7 +60,7 @@ You can also choose the exact binary path with
 ## Features
 
 - **Background Reviews** - Every commit is reviewed automatically via
-  git hooks. No workflow changes required.
+  git hooks. No remote review workflow required.
 - **Auto-Fix** - `roborev fix` feeds review findings to an agent that
   applies fixes and commits. `roborev refine` iterates until reviews pass.
 - **Agent Hook** - Optional Codex and Claude Code harness hooks can prompt
@@ -84,9 +84,9 @@ You can also choose the exact binary path with
 ## The Agentic Fix Loop
 
 When reviews find issues, copy-and-paste the reviews into your
-interactive agent sessions, or invoke the `roborev:fix` skills. You
-can also address open reviews on the command line non-interactively
-with `roborev fix`.
+interactive agent sessions, or invoke `/roborev-fix` in Claude Code
+or `$roborev-fix` in Codex. You can also address open reviews on the
+command line non-interactively with `roborev fix`.
 
 `roborev fix` shows the review findings to an agent, which applies
 changes and commits. The new commit gets reviewed automatically,
