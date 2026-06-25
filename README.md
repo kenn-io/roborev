@@ -27,7 +27,7 @@ your agentic loop while context is fresh.
 ![How roborev works](https://roborev.io/assets/static/how-it-works.svg)
 
 - **Post-commit reviews** - a git hook reviews every commit in the background (any agent).
-- **Agent hook** - watches your Claude Code / Codex session and tells the agent to run `/roborev-fix` when findings pile up.
+- **Agent hook** - watches your Claude Code / Codex session and tells the agent to run the roborev-fix skill when findings pile up.
 
 ```bash
 roborev init                  # layer 1: per-commit reviews

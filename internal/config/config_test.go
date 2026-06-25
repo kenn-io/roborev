@@ -5,6 +5,7 @@ import (
 	"os"
 	"path/filepath"
 	"reflect"
+	"runtime"
 	"sort"
 	"strings"
 	"testing"
@@ -4566,10 +4567,12 @@ func TestWriteDefaultGlobalConfigTo(t *testing.T) {
 	var parsed Config
 	require.NoError(t, tomlv2.Unmarshal(raw, &parsed))
 
-	// 0600 permissions.
+	// 0600 permissions (Unix mode bits are not preserved on Windows).
 	info, err := os.Stat(path)
 	require.NoError(t, err)
-	assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	if runtime.GOOS != "windows" {
+		assert.Equal(t, os.FileMode(0o600), info.Mode().Perm())
+	}
 }
 
 func TestSaveGlobalToHasNoCommentedExample(t *testing.T) {

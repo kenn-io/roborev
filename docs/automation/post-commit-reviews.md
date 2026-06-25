@@ -24,11 +24,12 @@ roborev show HEAD     # the latest commit's review
 ## Layer 2 - Agent hook
 
 The agent hook watches your coding-agent session and, once review work piles up,
-tells the agent to run the `/roborev-fix` skill before the session ends - closing
-the write -> review -> fix loop automatically.
+tells the agent to run the roborev-fix skill before the session ends - closing
+the write -> review -> fix loop automatically. (Claude Code invokes it as
+`/roborev-fix`, Codex as `$roborev-fix`.)
 
 ```bash
-roborev skills install        # install the /roborev-fix skill
+roborev skills install        # install the roborev-fix skill
 roborev agent-hook install    # wire the hook into Claude Code / Codex
 ```
 

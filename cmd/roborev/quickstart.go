@@ -137,6 +137,9 @@ func repoTracked(repoRoot string) (bool, error) {
 		return false, err
 	}
 	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return false, fmt.Errorf("resolve repo: daemon returned %s", resp.Status)
+	}
 	var body struct {
 		Tracked bool `json:"tracked"`
 	}
@@ -173,7 +176,7 @@ func checkConfiguredAgent(repoRoot string, inGitRepo bool, agent string) quickst
 	if repoCfg, err := config.LoadRepoConfig(repoRoot); err == nil && repoCfg != nil && repoCfg.Agent != "" {
 		explicit = true
 	}
-	if _, err := os.Stat(config.GlobalConfigPath()); err == nil {
+	if raw, err := config.LoadRawGlobal(); err == nil && config.IsKeyInTOMLFile(raw, "default_agent") {
 		explicit = true
 	}
 	if explicit {

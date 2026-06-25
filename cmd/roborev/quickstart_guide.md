@@ -12,8 +12,9 @@ and the daemon API.
 **Layer 2 - Agent hook (CLI harnesses).**
 The agent hook watches your coding-agent session (turns, commits, failed
 reviews). When review work piles up, it returns one instruction telling the
-agent to run the `/roborev-fix` skill before the session goes cold - closing the
-write -> review -> fix loop without you asking. This requires a CLI harness
+agent to run the roborev-fix skill before the session goes cold - closing the
+write -> review -> fix loop without you asking. (Claude Code invokes it as
+`/roborev-fix`; Codex as `$roborev-fix`.) This requires a CLI harness
 (Claude Code CLI or Codex) that exposes PreToolUse / PostToolUse / Stop hooks.
 Claude Desktop does not expose these, so only Layer 1 runs there.
 
@@ -61,12 +62,19 @@ get faster, more focused automated review.
 
 ### Choose the review agent and model
 
-Set the review agent and model per repo (`.roborev.toml`) or globally
-(`~/.roborev/config.toml`):
+Set the review agent and model per repo in `.roborev.toml`:
 
 ```toml
 agent = "codex"          # codex, claude-code, gemini, copilot, ...
 model = "gpt-5-codex"    # optional, agent-specific
+```
+
+Or set the defaults globally in `~/.roborev/config.toml`. Note the keys differ
+(a top-level `agent` there collides with the global `[agent]` table):
+
+```toml
+default_agent = "codex"
+default_model = "gpt-5-codex"
 ```
 
 For per-workflow routing and reasoning levels (fast / standard / thorough), see
