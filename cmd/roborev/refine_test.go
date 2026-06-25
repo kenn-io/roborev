@@ -1040,7 +1040,7 @@ exit 1
 	assert.Contains(t, err.Error(), "vendor/new")
 	assert.Empty(t, parent.Run("ls-files", "--stage", "--", "vendor/new"))
 	assert.NoFileExists(t, filepath.Join(parent.Dir, ".gitmodules"))
-	assert.NoDirExists(t, filepath.Join(parent.Dir, "vendor", "new"))
+	assert.DirExists(t, filepath.Join(parent.Dir, "vendor", "new"))
 	assert.False(t, agentCalled)
 }
 
@@ -1081,6 +1081,44 @@ exit 1
 	content, readErr := os.ReadFile(existingFile)
 	require.NoError(t, readErr)
 	assert.Equal(t, "keep\n", string(content))
+	assert.False(t, agentCalled)
+}
+
+func TestCommitWithHookRetryPreservesGitmodulesWithoutPriorGitlinks(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not available")
+	}
+
+	submoduleSource := NewGitTestRepo(t)
+	submoduleSource.CommitFile("sub.txt", "base\n", "submodule base")
+
+	parent := NewGitTestRepo(t)
+	originalGitmodules := "[submodule \"historical\"]\n\tpath = historical\n\turl = https://example.invalid/historical.git\n"
+	parent.CommitFile(".gitmodules", originalGitmodules, "historical gitmodules")
+	hookScript := fmt.Sprintf(`#!/bin/sh
+set -e
+git -c protocol.file.allow=always submodule add %s vendor/new
+echo "hook failure" >&2
+exit 1
+`, submoduleSource.Dir)
+	require.NoError(t, os.WriteFile(filepath.Join(parent.Dir, ".git", "hooks", "pre-commit"), []byte(hookScript), 0o755))
+
+	require.NoError(t, os.WriteFile(filepath.Join(parent.Dir, "new.txt"), []byte("hello\n"), 0o644))
+	agentCalled := false
+	testAgent := &functionalMockAgent{nameVal: "test", reviewFunc: func(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
+		agentCalled = true
+		return "Changes:\n- no-op", nil
+	}}
+
+	_, err := commitWithHookRetry(t.Context(), parent.Dir, "test commit", testAgent, true, git.CommitOptions{})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "roborev refine cannot modify git submodules")
+	assert.Contains(t, err.Error(), "vendor/new")
+	content, readErr := os.ReadFile(filepath.Join(parent.Dir, ".gitmodules"))
+	require.NoError(t, readErr)
+	assert.Equal(t, originalGitmodules, string(content))
+	assert.Empty(t, parent.Run("status", "--porcelain", "--", ".gitmodules"))
 	assert.False(t, agentCalled)
 }
 

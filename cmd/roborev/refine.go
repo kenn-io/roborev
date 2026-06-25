@@ -1262,7 +1262,7 @@ func commitWithHookRetry(
 			}
 			return "", err
 		}
-		if len(submodulesBeforeRetry) > 0 {
+		if len(submodulesBeforeRetry.submodules) > 0 {
 			return "", fmt.Errorf(
 				"cannot automatically retry hooks in repositories with git submodules: %w",
 				err,
@@ -1336,58 +1336,62 @@ func commitWithHookRetry(
 }
 
 type refineSubmoduleState struct {
-	gitlink           string
-	initialized       bool
-	head              string
-	status            string
-	gitmodulesExists  bool
-	gitmodulesContent string
-	artifacts         bool
+	gitlink     string
+	initialized bool
+	head        string
+	status      string
+	artifacts   bool
 }
 
-type refineSubmoduleSnapshot map[string]refineSubmoduleState
+type refineSubmoduleSnapshot struct {
+	submodules        map[string]refineSubmoduleState
+	gitmodulesExists  bool
+	gitmodulesContent string
+}
 
 func snapshotRefineSubmodules(ctx context.Context, repoPath string) (refineSubmoduleSnapshot, error) {
 	gitlinks, err := refineSubmoduleGitlinks(ctx, repoPath)
 	if err != nil {
-		return nil, err
+		return refineSubmoduleSnapshot{}, err
 	}
 	gitmodulesExists, gitmodulesContent, err := readRefineGitmodules(repoPath)
 	if err != nil {
-		return nil, err
+		return refineSubmoduleSnapshot{}, err
 	}
 
-	snapshot := make(refineSubmoduleSnapshot, len(gitlinks))
+	snapshot := refineSubmoduleSnapshot{
+		submodules:        make(map[string]refineSubmoduleState, len(gitlinks)),
+		gitmodulesExists:  gitmodulesExists,
+		gitmodulesContent: gitmodulesContent,
+	}
 	for path, gitlink := range gitlinks {
 		state := refineSubmoduleState{
-			gitlink:           gitlink,
-			gitmodulesExists:  gitmodulesExists,
-			gitmodulesContent: gitmodulesContent,
+			gitlink: gitlink,
 		}
 		initialized, err := isInitializedRefineSubmodule(ctx, repoPath, path)
 		if err != nil {
-			return nil, err
+			return refineSubmoduleSnapshot{}, err
 		}
 		state.initialized = initialized
 		if initialized {
 			head, err := refineSubmoduleHead(ctx, repoPath, path)
 			if err != nil {
-				return nil, err
+				return refineSubmoduleSnapshot{}, err
 			}
 			status, err := refineSubmoduleStatus(ctx, repoPath, path)
 			if err != nil {
-				return nil, err
+				return refineSubmoduleSnapshot{}, err
 			}
 			state.head = head
 			state.status = status
 		} else {
 			artifacts, err := hasRefineSubmoduleArtifacts(repoPath, path)
 			if err != nil {
-				return nil, err
+				return refineSubmoduleSnapshot{}, err
 			}
 			state.artifacts = artifacts
 		}
-		snapshot[path] = state
+		snapshot.submodules[path] = state
 	}
 	return snapshot, nil
 }
@@ -1402,18 +1406,35 @@ func changedRefineSubmodules(
 		return nil, err
 	}
 
-	seen := make(map[string]struct{}, len(current))
+	seen := make(map[string]struct{}, len(current.submodules))
 	var changed []string
-	for path, currentState := range current {
+	changedSet := make(map[string]struct{})
+	addChanged := func(path string) {
+		if _, ok := changedSet[path]; ok {
+			return
+		}
+		changedSet[path] = struct{}{}
+		changed = append(changed, path)
+	}
+	for path, currentState := range current.submodules {
 		seen[path] = struct{}{}
-		beforeState, ok := before[path]
+		beforeState, ok := before.submodules[path]
 		if !ok || currentState != beforeState {
-			changed = append(changed, path)
+			addChanged(path)
 		}
 	}
-	for path := range before {
+	for path := range before.submodules {
 		if _, ok := seen[path]; !ok {
-			changed = append(changed, path)
+			addChanged(path)
+		}
+	}
+	if current.gitmodulesExists != before.gitmodulesExists ||
+		current.gitmodulesContent != before.gitmodulesContent {
+		for path := range current.submodules {
+			addChanged(path)
+		}
+		for path := range before.submodules {
+			addChanged(path)
 		}
 	}
 
@@ -1423,7 +1444,7 @@ func changedRefineSubmodules(
 
 func dirtyRefineSubmodules(snapshot refineSubmoduleSnapshot) []string {
 	var paths []string
-	for path, state := range snapshot {
+	for path, state := range snapshot.submodules {
 		if state.initialized {
 			if state.status != "" || (state.head != "" && state.gitlink != "" && state.head != state.gitlink) {
 				paths = append(paths, path)
@@ -1583,7 +1604,7 @@ func restoreRefineParentSubmoduleState(
 ) error {
 	var restoreErrs []string
 	for _, path := range paths {
-		beforeState, ok := before[path]
+		beforeState, ok := before.submodules[path]
 		if ok && beforeState.gitlink != "" {
 			cmd := refineGitCmd(ctx, "-C", repoPath,
 				"update-index", "--add", "--cacheinfo", "160000",
@@ -1609,9 +1630,6 @@ func restoreRefineParentSubmoduleState(
 				"remove gitlink for submodule %s: %v: %s",
 				path, err, strings.TrimSpace(string(out)),
 			))
-		}
-		if err := removeRefineNewSubmoduleWorktree(repoPath, path); err != nil {
-			restoreErrs = append(restoreErrs, err.Error())
 		}
 	}
 	if err := restoreRefineGitmodules(ctx, repoPath, before); err != nil {
@@ -1653,79 +1671,24 @@ func restoreRefineSubmoduleWorktree(
 	return nil
 }
 
-func removeRefineNewSubmoduleWorktree(repoPath, path string) error {
-	absRepo, err := filepath.Abs(repoPath)
-	if err != nil {
-		return fmt.Errorf("resolve repo path: %w", err)
-	}
-	submodulePath, err := filepath.Abs(filepath.Join(absRepo, filepath.FromSlash(path)))
-	if err != nil {
-		return fmt.Errorf("resolve new submodule path %s: %w", path, err)
-	}
-	rel, err := filepath.Rel(absRepo, submodulePath)
-	if err != nil {
-		return fmt.Errorf("check new submodule path %s: %w", path, err)
-	}
-	if rel == "." || rel == ".." || filepath.IsAbs(rel) ||
-		strings.HasPrefix(rel, ".."+string(os.PathSeparator)) {
-		return fmt.Errorf("refuse to remove submodule path outside repo: %s", path)
-	}
-	isSubmoduleCheckout, err := isRefineSubmoduleCheckout(submodulePath)
-	if err != nil {
-		return fmt.Errorf("check new submodule worktree %s: %w", path, err)
-	}
-	if !isSubmoduleCheckout {
-		return nil
-	}
-	if err := os.RemoveAll(submodulePath); err != nil {
-		return fmt.Errorf("remove new submodule worktree %s: %w", path, err)
-	}
-	return nil
-}
-
-func isRefineSubmoduleCheckout(path string) (bool, error) {
-	gitMarker := filepath.Join(path, ".git")
-	info, err := os.Lstat(gitMarker)
-	if errors.Is(err, os.ErrNotExist) {
-		return false, nil
-	}
-	if err != nil {
-		return false, err
-	}
-	if !info.Mode().IsRegular() {
-		return false, nil
-	}
-	content, err := os.ReadFile(gitMarker)
-	if err != nil {
-		return false, err
-	}
-	return strings.HasPrefix(strings.TrimSpace(string(content)), "gitdir:"), nil
-}
-
 func restoreRefineGitmodules(
 	ctx context.Context,
 	repoPath string,
 	before refineSubmoduleSnapshot,
 ) error {
-	if len(before) == 0 {
-		return removeRefineGitmodules(ctx, repoPath)
-	}
-	for _, state := range before {
+	if before.gitmodulesExists {
 		gitmodulesPath := filepath.Join(repoPath, ".gitmodules")
-		if state.gitmodulesExists {
-			if err := os.WriteFile(gitmodulesPath, []byte(state.gitmodulesContent), 0o644); err != nil {
-				return fmt.Errorf("restore .gitmodules: %w", err)
-			}
-			cmd := refineGitCmd(ctx, "-C", repoPath, "add", "--", ".gitmodules")
-			out, err := cmd.CombinedOutput()
-			if err != nil {
-				return fmt.Errorf("stage restored .gitmodules: %w: %s", err, strings.TrimSpace(string(out)))
-			}
-			return nil
+		if err := os.WriteFile(gitmodulesPath, []byte(before.gitmodulesContent), 0o644); err != nil {
+			return fmt.Errorf("restore .gitmodules: %w", err)
 		}
-		return removeRefineGitmodules(ctx, repoPath)
+		cmd := refineGitCmd(ctx, "-C", repoPath, "add", "--", ".gitmodules")
+		out, err := cmd.CombinedOutput()
+		if err != nil {
+			return fmt.Errorf("stage restored .gitmodules: %w: %s", err, strings.TrimSpace(string(out)))
+		}
+		return nil
 	}
-	return nil
+	return removeRefineGitmodules(ctx, repoPath)
 }
 
 func removeRefineGitmodules(ctx context.Context, repoPath string) error {
