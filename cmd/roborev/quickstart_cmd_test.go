@@ -11,7 +11,28 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/config"
 )
+
+func TestCheckConfiguredAgentRequiresNonEmptyGlobalDefault(t *testing.T) {
+	assert := assert.New(t)
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	repo := newTempGitRepo(t)
+
+	// No global config and no repo agent: not configured.
+	assert.Equal(statusMissing, checkConfiguredAgent(repo, true, "codex").Status)
+
+	// Global config present but default_agent empty: still not configured
+	// (must match the repo check, which requires a non-empty agent).
+	cfgPath := config.GlobalConfigPath()
+	require.NoError(t, os.WriteFile(cfgPath, []byte("default_agent = \"\"\n"), 0o600))
+	assert.Equal(statusMissing, checkConfiguredAgent(repo, true, "codex").Status)
+
+	// Global config with a non-empty default_agent: configured.
+	require.NoError(t, os.WriteFile(cfgPath, []byte("default_agent = \"codex\"\n"), 0o600))
+	assert.Equal(statusOK, checkConfiguredAgent(repo, true, "codex").Status)
+}
 
 func newTempGitRepo(t *testing.T) string {
 	t.Helper()

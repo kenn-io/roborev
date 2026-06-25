@@ -176,8 +176,10 @@ func checkConfiguredAgent(repoRoot string, inGitRepo bool, agent string) quickst
 	if repoCfg, err := config.LoadRepoConfig(repoRoot); err == nil && repoCfg != nil && repoCfg.Agent != "" {
 		explicit = true
 	}
-	if raw, err := config.LoadRawGlobal(); err == nil && config.IsKeyInTOMLFile(raw, "default_agent") {
-		explicit = true
+	if raw, err := config.LoadRawGlobal(); err == nil {
+		if v, ok := raw["default_agent"].(string); ok && v != "" {
+			explicit = true
+		}
 	}
 	if explicit {
 		c.Status = statusOK
