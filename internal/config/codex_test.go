@@ -59,6 +59,20 @@ func TestCodexConfigOverrideArgsEmpty(t *testing.T) {
 	assert.Nil(CodexConfig{Config: map[string]any{}}.ConfigOverrideArgs())
 }
 
+func TestCodexConfigOverrideArgsQuotesNonBareKeys(t *testing.T) {
+	cfg := CodexConfig{Config: map[string]any{
+		"model_providers": map[string]any{
+			"foo.bar":   map[string]any{"base_url": "https://x"},
+			"has space": map[string]any{"k": "v"},
+		},
+	}}
+
+	assert.Equal(t, []string{
+		`model_providers."foo.bar".base_url="https://x"`,
+		`model_providers."has space".k="v"`,
+	}, cfg.ConfigOverrideArgs())
+}
+
 func TestCodexConfigSurvivesSaveLoadRoundTrip(t *testing.T) {
 	original := DefaultConfig()
 	original.Agent.Codex.Config = map[string]any{

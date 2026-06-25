@@ -30,9 +30,9 @@ func (c CodexConfig) ConfigOverrideArgs() []string {
 
 func flattenCodexConfigOverrides(prefix string, table map[string]any, out *[]string) {
 	for key, val := range table {
-		fullKey := key
+		fullKey := tomlOverrideKeySegment(key)
 		if prefix != "" {
-			fullKey = prefix + "." + key
+			fullKey = prefix + "." + fullKey
 		}
 		if sub, ok := val.(map[string]any); ok {
 			flattenCodexConfigOverrides(fullKey, sub, out)
@@ -42,6 +42,35 @@ func flattenCodexConfigOverrides(prefix string, table map[string]any, out *[]str
 			*out = append(*out, fullKey+"="+encoded)
 		}
 	}
+}
+
+// tomlOverrideKeySegment returns key unchanged when it is a valid TOML bare key,
+// otherwise as a TOML-quoted key segment. Without this, a provider name with
+// dots or other non-bare characters (e.g. model_providers."foo.bar") would be
+// joined raw and parsed by Codex as extra nested path segments, targeting the
+// wrong key or producing an invalid override.
+func tomlOverrideKeySegment(key string) string {
+	if isBareTOMLKey(key) {
+		return key
+	}
+	if quoted, ok := encodeTOMLOverrideValue(key); ok {
+		return quoted
+	}
+	return key
+}
+
+func isBareTOMLKey(key string) bool {
+	if key == "" {
+		return false
+	}
+	for _, r := range key {
+		switch {
+		case r >= 'a' && r <= 'z', r >= 'A' && r <= 'Z', r >= '0' && r <= '9', r == '_', r == '-':
+		default:
+			return false
+		}
+	}
+	return true
 }
 
 // encodeTOMLOverrideValue renders a single leaf value as the TOML literal Codex
