@@ -223,7 +223,7 @@ type Config struct {
 	AnthropicAPIKey string `toml:"anthropic_api_key" sensitive:"true"`
 
 	// Hooks configuration
-	Hooks []HookConfig `toml:"hooks"`
+	Hooks []HookConfig `toml:"hooks,omitempty"`
 
 	// Sync configuration for PostgreSQL
 	Sync SyncConfig `toml:"sync"`
@@ -418,7 +418,7 @@ type RepoConfig struct {
 	ShowClassifyJobs        *bool `toml:"show_classify_jobs" comment:"Override whether the TUI queue shows auto-design-review classifier rows for this repo. Omit to inherit."`
 
 	// Hooks configuration (per-repo)
-	Hooks []HookConfig `toml:"hooks"`
+	Hooks []HookConfig `toml:"hooks,omitempty"`
 
 	// Kata task-context integration for review prompts (per-repo)
 	KataContext KataContextConfig `toml:"kata_context"`

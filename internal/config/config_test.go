@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/BurntSushi/toml"
+	tomlv2 "github.com/pelletier/go-toml/v2"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -4514,4 +4515,37 @@ priority = 3
 	assert.Equal(t, []string{"from-review"}, cfg.Hooks[0].Labels)
 	require.NotNil(t, cfg.Hooks[0].Priority)
 	assert.Equal(t, 3, *cfg.Hooks[0].Priority)
+}
+
+func TestEmptyHooksOmittedFromMarshal(t *testing.T) {
+	data, err := tomlv2.Marshal(DefaultConfig())
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "hooks = []",
+		"empty hooks must not marshal to a value array that collides with [[hooks]]")
+}
+
+func TestNonEmptyHooksRoundTrip(t *testing.T) {
+	cfg := DefaultConfig()
+	cfg.Hooks = []HookConfig{{Event: "review.*", Type: "kata", Project: "myproj"}}
+
+	data, err := tomlv2.Marshal(cfg)
+	require.NoError(t, err)
+
+	var got Config
+	require.NoError(t, tomlv2.Unmarshal(data, &got))
+	require.Len(t, got.Hooks, 1)
+	assert.Equal(t, "review.*", got.Hooks[0].Event)
+	assert.Equal(t, "kata", got.Hooks[0].Type)
+	assert.Equal(t, "myproj", got.Hooks[0].Project)
+}
+
+func TestUserAddedHooksBlockParses(t *testing.T) {
+	// Regression: default config + hand-added [[hooks]] must not collide.
+	data, err := tomlv2.Marshal(DefaultConfig())
+	require.NoError(t, err)
+	combined := string(data) + "\n[[hooks]]\nevent = \"review.*\"\ntype = \"kata\"\n"
+
+	var got Config
+	require.NoError(t, tomlv2.Unmarshal([]byte(combined), &got))
+	require.Len(t, got.Hooks, 1)
 }
