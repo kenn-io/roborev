@@ -511,14 +511,27 @@ func enqueueAnalysisJob(ctx context.Context, ep daemon.DaemonEndpoint, repoRoot,
 		branch = opts.branch
 	}
 
+	reviewType := analysisReviewType(label)
+	cfg, err := config.LoadGlobal()
+	if err != nil {
+		return nil, fmt.Errorf("load config: %w", err)
+	}
+	resolved, err := config.ResolveAnalyzeConfig(
+		opts.agentName, opts.model, opts.reasoning, repoRoot, cfg,
+		label, analysisWorkflow(label), "",
+	)
+	if err != nil {
+		return nil, fmt.Errorf("resolve analyze config: %w", err)
+	}
+
 	reqBody, _ := json.Marshal(daemon.EnqueueRequest{
 		RepoPath:     repoRoot,
 		GitRef:       label, // Use analysis type name as the TUI label
 		Branch:       branch,
-		Agent:        opts.agentName,
-		Model:        opts.model,
-		Reasoning:    opts.reasoning,
-		ReviewType:   analysisReviewType(label),
+		Agent:        resolved.Agent,
+		Model:        resolved.Model,
+		Reasoning:    resolved.Reasoning,
+		ReviewType:   reviewType,
 		CustomPrompt: prompt,
 		OutputPrefix: outputPrefix,
 		Agentic:      true, // Agentic mode needed for reading files when prompt exceeds size limit
@@ -552,6 +565,13 @@ func analysisReviewType(label string) string {
 		return config.ReviewTypeSecurity
 	}
 	return ""
+}
+
+func analysisWorkflow(label string) string {
+	if label == config.ReviewTypeSecurity {
+		return config.ReviewTypeSecurity
+	}
+	return "review"
 }
 
 // runAnalyzeAndFix waits for analysis to complete, runs a fixer agent, then marks closed

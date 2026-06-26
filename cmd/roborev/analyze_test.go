@@ -519,6 +519,42 @@ func TestEnqueueSecurityAnalysisJobUsesSecurityReviewType(t *testing.T) {
 	assert.Equal(t, "security", gotReviewType, "security analysis should resolve security workflow config")
 }
 
+func TestEnqueueAnalysisJobAppliesAnalyzeConfig(t *testing.T) {
+	repo := newTestGitRepo(t)
+	repo.CommitFile("main.go", "package main", "initial")
+	require.NoError(t, os.WriteFile(filepath.Join(repo.Dir, ".roborev.toml"), []byte(`
+[analyze.refactor]
+agent = "configured-agent"
+model = "configured-model"
+reasoning = "fast"
+`), 0o644))
+
+	var got daemon.EnqueueRequest
+	ts, _ := newMockServer(t, MockServerOpts{
+		OnEnqueue: func(w http.ResponseWriter, r *http.Request) {
+			if !assert.NoError(t, json.NewDecoder(r.Body).Decode(&got)) {
+				w.WriteHeader(http.StatusBadRequest)
+				return
+			}
+
+			w.WriteHeader(http.StatusCreated)
+			_ = json.NewEncoder(w).Encode(storage.ReviewJob{
+				ID:     42,
+				Agent:  "configured-agent",
+				Status: storage.JobStatusQueued,
+			})
+		},
+	})
+
+	_, err := enqueueAnalysisJob(t.Context(), mustParseEndpoint(t, ts.URL), repo.Dir, "test prompt", "", "refactor", analyzeOptions{})
+	require.NoError(t, err, "enqueueAnalysisJob")
+
+	assert.Equal(t, "configured-agent", got.Agent)
+	assert.Equal(t, "configured-model", got.Model)
+	assert.Equal(t, "fast", got.Reasoning)
+	assert.Empty(t, got.ReviewType)
+}
+
 func TestEnqueueAnalysisJobBranchName(t *testing.T) {
 	// Create a real git repo so GetCurrentBranch returns a known value
 	repo := newTestGitRepo(t)

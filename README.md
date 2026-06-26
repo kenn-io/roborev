@@ -126,6 +126,15 @@ Analysis jobs appear in the review queue. Use `roborev fix` to apply
 open findings later, target a specific job with `roborev fix <id>`, or
 pass `--fix` to apply immediately.
 
+Analysis types can pin their own agent settings in config:
+
+```toml
+[analyze.refactor]
+agent = "claude-code"
+model = "sonnet"
+reasoning = "fast"
+```
+
 ## Installation
 
 **Shell Script (macOS / Linux):**

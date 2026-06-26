@@ -118,6 +118,9 @@ type Config struct {
 	RefineReasoning            string `toml:"refine_reasoning" comment:"Default reasoning level for refine: fast, standard, medium, thorough, or maximum."`
 	FixReasoning               string `toml:"fix_reasoning" comment:"Default reasoning level for fix: fast, standard, medium, thorough, or maximum."`
 
+	// Analysis-type-specific agent/model configuration
+	Analyze map[string]AnalyzeConfig `toml:"analyze"`
+
 	// Workflow-specific agent/model configuration
 	ReviewAgent           string `toml:"review_agent"`
 	ReviewAgentFast       string `toml:"review_agent_fast"`
@@ -332,6 +335,9 @@ type RepoConfig struct {
 
 	// Subagent review panel overrides for this repo (opt-in)
 	Review ReviewConfig `toml:"review"`
+
+	// Analysis-type-specific agent/model configuration
+	Analyze map[string]AnalyzeConfig `toml:"analyze"`
 
 	// Workflow-specific agent/model configuration
 	ReviewAgent           string `toml:"review_agent" comment:"Agent override for standard review in this repo."`

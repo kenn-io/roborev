@@ -2011,6 +2011,70 @@ func TestHasWorkflowAgentOverrideFromConfig(t *testing.T) {
 	}
 }
 
+func TestResolveAnalyzeConfig(t *testing.T) {
+	tests := []struct {
+		name      string
+		cliAgent  string
+		cliModel  string
+		repo      string
+		global    *Config
+		analysis  string
+		fallback  string
+		reasoning string
+		wantAgent string
+		wantModel string
+	}{
+		{
+			name:     "repo analysis table overrides workflow fallback",
+			repo:     "[analyze.refactor]\nagent = \"repo-agent\"\nmodel = \"repo-model\"\n",
+			global:   &Config{ReviewAgent: "global-review", ReviewModel: "global-review-model"},
+			analysis: "refactor", fallback: "review", reasoning: "standard",
+			wantAgent: "repo-agent", wantModel: "repo-model",
+		},
+		{
+			name:     "global analysis table used when repo lacks entry",
+			repo:     "review_agent = \"repo-review\"\n",
+			global:   &Config{Analyze: map[string]AnalyzeConfig{"refactor": {Agent: "global-agent", Model: "global-model"}}},
+			analysis: "refactor", fallback: "review", reasoning: "standard",
+			wantAgent: "repo-review", wantModel: "global-model",
+		},
+		{
+			name:     "cli agent and model override analysis table",
+			cliAgent: "cli-agent", cliModel: "cli-model",
+			repo:     "[analyze.refactor]\nagent = \"repo-agent\"\nmodel = \"repo-model\"\n",
+			analysis: "refactor", fallback: "review", reasoning: "standard",
+			wantAgent: "cli-agent", wantModel: "cli-model",
+		},
+		{
+			name:     "missing analysis table falls back to workflow",
+			repo:     "review_agent = \"repo-review\"\nreview_model = \"repo-review-model\"\n",
+			analysis: "duplication", fallback: "review", reasoning: "standard",
+			wantAgent: "repo-review", wantModel: "repo-review-model",
+		},
+		{
+			name:     "security analysis falls back to security workflow",
+			repo:     "review_agent = \"repo-review\"\nsecurity_agent = \"repo-security\"\n",
+			analysis: "security", fallback: "security", reasoning: "standard",
+			wantAgent: "repo-security",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repoPath := newTempRepo(t, tt.repo)
+
+			got, err := ResolveAnalyzeConfig(
+				tt.cliAgent, tt.cliModel, "", repoPath, tt.global,
+				tt.analysis, tt.fallback, tt.reasoning,
+			)
+			require.NoError(t, err)
+
+			assert.Equal(t, tt.wantAgent, got.Agent)
+			assert.Equal(t, tt.wantModel, got.Model)
+		})
+	}
+}
+
 func TestResolveModelForWorkflow(t *testing.T) {
 	tests := []struct {
 		name     string
