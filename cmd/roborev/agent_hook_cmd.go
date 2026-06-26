@@ -206,12 +206,20 @@ func agentHookResetCmd() *cobra.Command {
 }
 
 func runAgentHook(opts agenthook.Options, stdin io.Reader, stdout, stderr io.Writer) error {
+	return runHook(opts, "agent-hook", stdin, stdout, stderr)
+}
+
+// runHook is the shared core behind the agent-hook and droid-hook run commands.
+// It reads an agent harness hook payload from stdin, records it with the shared
+// agenthook daemon, and emits the harness-compatible JSON output. label is used
+// in diagnostics so the invoking agent knows which integration produced them.
+func runHook(opts agenthook.Options, label string, stdin io.Reader, stdout, stderr io.Writer) error {
 	var input agenthook.Input
 	if err := json.NewDecoder(stdin).Decode(&input); err != nil {
-		return fmt.Errorf("decode agent hook input: %w", err)
+		return fmt.Errorf("decode %s input: %w", label, err)
 	}
 	if input.SessionID == "" {
-		return fmt.Errorf("agent hook input missing session_id")
+		return fmt.Errorf("%s input missing session_id", label)
 	}
 
 	resp, err := postAgentHook(context.Background(), agenthook.Request{
@@ -223,7 +231,7 @@ func runAgentHook(opts agenthook.Options, stdin io.Reader, stdout, stderr io.Wri
 		RoborevServerAddr:     opts.RoborevServerAddr,
 	})
 	if err != nil {
-		fmt.Fprintf(stderr, "roborev agent-hook: %v\n", err)
+		fmt.Fprintf(stderr, "roborev %s: %v\n", label, err)
 		return json.NewEncoder(stdout).Encode(map[string]any{})
 	}
 

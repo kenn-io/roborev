@@ -66,6 +66,12 @@ type AgentHookConfig struct {
 	Instruction           string `toml:"instruction" comment:"Instruction emitted when the agent hook decides a review/fix pass is needed."`
 }
 
+type DroidHookConfig struct {
+	TurnThreshold         int    `toml:"turn_threshold" comment:"Stop hook threshold; 0 disables Stop-based prompting."`
+	CommitThreshold       int    `toml:"commit_threshold" comment:"PostToolUse commit threshold; 0 disables commit-based prompting."`
+	FailedReviewThreshold int    `toml:"failed_review_threshold" comment:"Open failed roborev review threshold; 0 disables review-based prompting."`
+	Instruction           string `toml:"instruction" comment:"Instruction emitted when the Droid hook decides a review/fix pass is needed."`
+}
 type CodexConfig struct {
 	DisableReviewSkills    bool `toml:"disable_review_skills" comment:"Disable Codex skill instructions for review jobs."`
 	IgnoreReviewUserConfig bool `toml:"ignore_review_user_config" comment:"Pass --ignore-user-config to Codex for review jobs."`
@@ -251,6 +257,8 @@ type Config struct {
 
 	// Optional agent harness hook integration
 	AgentHook AgentHookConfig `toml:"agent_hook"`
+	// Optional Factory Droid harness hook integration
+	DroidHook DroidHookConfig `toml:"droid_hook"`
 
 	// Kata task-context integration for review prompts
 	KataContext KataContextConfig `toml:"kata_context"`
@@ -467,6 +475,12 @@ func DefaultConfig() *Config {
 			CommitThreshold:       0,
 			FailedReviewThreshold: 4,
 			Instruction:           "Invoke the $roborev-fix skill now.",
+		},
+		DroidHook: DroidHookConfig{
+			TurnThreshold:         5,
+			CommitThreshold:       0,
+			FailedReviewThreshold: 4,
+			Instruction:           "Run the roborev-fix skill to address the unresolved roborev findings, then continue.",
 		},
 		KataContext: KataContextConfig{Mode: KataModeOff, MaxChars: defaultKataMaxChars},
 		Agent: AgentConfig{
