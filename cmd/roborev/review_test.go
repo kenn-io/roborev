@@ -358,6 +358,11 @@ func TestReviewFlagValidation(t *testing.T) {
 			[]string{"cannot specify commits with --since"},
 		},
 		{
+			"invalid review type",
+			[]string{"--type", "bogus"},
+			[]string{`invalid --type "bogus"`, "security, design, lookahead"},
+		},
+		{
 			"branch and dirty exclusive",
 			[]string{"--branch", "--dirty"},
 			[]string{"cannot use --branch with --dirty"},

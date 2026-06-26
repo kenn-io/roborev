@@ -16,6 +16,6 @@ func TestReviewTypeFlagCompletion(t *testing.T) {
 
 	got, directive := completion(cmd, nil, "")
 
-	assert.ElementsMatch(t, []cobra.Completion{"security", "design"}, got)
+	assert.ElementsMatch(t, []cobra.Completion{"security", "design", "lookahead"}, got)
 	assert.Equal(t, cobra.ShellCompDirectiveNoFileComp, directive)
 }

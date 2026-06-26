@@ -10,9 +10,10 @@ import (
 
 // Canonical review type names.
 const (
-	ReviewTypeDefault  = "default"
-	ReviewTypeSecurity = "security"
-	ReviewTypeDesign   = "design"
+	ReviewTypeDefault   = "default"
+	ReviewTypeSecurity  = "security"
+	ReviewTypeDesign    = "design"
+	ReviewTypeLookahead = "lookahead"
 )
 
 // IsDefaultReviewType returns true if the review type represents the standard
@@ -29,8 +30,9 @@ func IsDefaultReviewType(rt string) bool {
 // empty or unrecognized.
 func ValidateReviewTypes(types []string) ([]string, error) {
 	validSpecial := map[string]bool{
-		ReviewTypeSecurity: true,
-		ReviewTypeDesign:   true,
+		ReviewTypeSecurity:  true,
+		ReviewTypeDesign:    true,
+		ReviewTypeLookahead: true,
 	}
 	seen := make(map[string]bool, len(types))
 	canonical := make([]string, 0, len(types))
@@ -38,14 +40,14 @@ func ValidateReviewTypes(types []string) ([]string, error) {
 		if rt == "" {
 			return nil, fmt.Errorf(
 				"invalid review_type %q "+
-					"(valid: default, security, design)", rt)
+					"(valid: default, security, design, lookahead)", rt)
 		}
 		if IsDefaultReviewType(rt) {
 			rt = ReviewTypeDefault
 		} else if !validSpecial[rt] {
 			return nil, fmt.Errorf(
 				"invalid review_type %q "+
-					"(valid: default, security, design)", rt)
+					"(valid: default, security, design, lookahead)", rt)
 		}
 		if !seen[rt] {
 			seen[rt] = true

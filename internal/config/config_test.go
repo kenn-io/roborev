@@ -2249,6 +2249,8 @@ func TestResolveBackupAgentForWorkflow(t *testing.T) {
 		{"global backup for fix", nil, &Config{FixBackupAgent: "codex"}, "fix", "codex"},
 		{"global backup for security", nil, &Config{SecurityBackupAgent: "gemini"}, "security", "gemini"},
 		{"global backup for design", nil, &Config{DesignBackupAgent: "droid"}, "design", "droid"},
+		{"global backup for lookahead", nil, &Config{LookaheadBackupAgent: "codex"}, "lookahead", "codex"},
+		{"repo backup for lookahead", M{"lookahead_backup_agent": "claude"}, nil, "lookahead", "claude"},
 
 		// Repo backup agent overrides global
 		{"repo overrides global", M{"review_backup_agent": "repo-test"}, &Config{ReviewBackupAgent: "global-test"}, "review", "repo-test"},
@@ -2319,6 +2321,7 @@ func TestResolveBackupModelForWorkflow(t *testing.T) {
 		{"global backup model for fix", nil, &Config{FixBackupModel: "o3-mini"}, "fix", "o3-mini"},
 		{"global backup model for security", nil, &Config{SecurityBackupModel: "gpt-4"}, "security", "gpt-4"},
 		{"global backup model for design", nil, &Config{DesignBackupModel: "claude-3"}, "design", "claude-3"},
+		{"global backup model for lookahead", nil, &Config{LookaheadBackupModel: "o3"}, "lookahead", "o3"},
 
 		// Repo backup model overrides global
 		{"repo overrides global", M{"review_backup_model": "repo-model"}, &Config{ReviewBackupModel: "global-model"}, "review", "repo-model"},
@@ -3227,8 +3230,8 @@ func TestValidateReviewTypes(t *testing.T) {
 	}{
 		{
 			name:  "valid types pass through",
-			input: []string{"default", "security", "design"},
-			want:  []string{"default", "security", "design"},
+			input: []string{"default", "security", "design", "lookahead"},
+			want:  []string{"default", "security", "design", "lookahead"},
 		},
 		{
 			name:  "alias review canonicalizes",

@@ -548,6 +548,7 @@ func TestWorkflowForReviewType(t *testing.T) {
 	assert.Equal("review", workflowForReviewType(""))
 	assert.Equal("security", workflowForReviewType("security"))
 	assert.Equal("design", workflowForReviewType("design"))
+	assert.Equal("lookahead", workflowForReviewType("lookahead"))
 }
 
 func TestResolvePanelRejectsInvalidReviewType(t *testing.T) {

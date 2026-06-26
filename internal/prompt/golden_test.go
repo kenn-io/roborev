@@ -184,6 +184,17 @@ func TestGoldenPrompt_DesignReview(t *testing.T) {
 	assertGolden(t, scrubDynamic(prompt), "design_review.golden")
 }
 
+func TestGoldenPrompt_LookaheadReview(t *testing.T) {
+	r := newGoldenTestRepo(t)
+	sha := r.commitFile("hello.txt", "hello world\n", "add greeting")
+
+	b := NewBuilder(nil)
+	prompt, err := b.ForRepo(r.dir, 0).Build(sha, 0, "test", "lookahead", "")
+	require.NoError(t, err)
+
+	assertGolden(t, scrubDynamic(prompt), "lookahead_review.golden")
+}
+
 func TestGoldenPrompt_SingleReviewClaudeCode(t *testing.T) {
 	r := newGoldenTestRepo(t)
 	sha := r.commitFile("hello.txt", "hello world\n", "add greeting")

@@ -414,6 +414,8 @@ func workflowForReviewType(reviewType string) string {
 		return "security"
 	case ReviewTypeDesign:
 		return "design"
+	case ReviewTypeLookahead:
+		return "lookahead"
 	default:
 		return "review"
 	}

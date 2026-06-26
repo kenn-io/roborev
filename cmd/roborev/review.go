@@ -87,6 +87,7 @@ Examples:
   roborev review --since abc123  # Review commits since abc123 (exclusive)
   roborev review --type security   # Security-focused review of HEAD
   roborev review --branch --type security  # Security review of branch
+  roborev review --type lookahead  # Time-series look-ahead bias review of HEAD
 `,
 		RunE: func(cmd *cobra.Command, args []string) (err error) {
 			ctx := cmd.Context()
@@ -150,8 +151,8 @@ Examples:
 			}
 
 			// Validate --type flag
-			if reviewType != "" && reviewType != "security" && reviewType != "design" {
-				return usageErr(cmd, fmt.Errorf("invalid --type %q (valid: security, design)", reviewType))
+			if reviewType != "" && reviewType != "security" && reviewType != "design" && reviewType != "lookahead" {
+				return usageErr(cmd, fmt.Errorf("invalid --type %q (valid: security, design, lookahead)", reviewType))
 			}
 
 			// Auto-install/upgrade hooks when running from CLI
@@ -420,7 +421,7 @@ Examples:
 	cmd.Flags().StringVar(&baseBranch, "base", "", "base branch for --branch comparison (default: auto-detect)")
 	cmd.Flags().StringVar(&since, "since", "", "review commits since this commit (exclusive, like git's .. range)")
 	cmd.Flags().BoolVar(&local, "local", false, "run review locally without daemon (streams output to console)")
-	cmd.Flags().StringVar(&reviewType, "type", "", "review type (security, design) — changes system prompt")
+	cmd.Flags().StringVar(&reviewType, "type", "", "review type (security, design, lookahead) — changes system prompt")
 	cmd.Flags().StringVar(&provider, "provider", "", "provider for pi agent (e.g. anthropic, openai)")
 	cmd.Flags().StringVar(&minSeverity, "min-severity", "", "minimum severity threshold: critical, high, medium, low")
 	cmd.Flags().StringVar(&panel, "panel", "", "review panel to fan out to (config panel name; 'none' forces single-agent)")

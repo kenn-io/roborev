@@ -194,6 +194,10 @@ func TestLocalReviewValidation(t *testing.T) {
 			opts: runOpts{Agent: "test", Reasoning: "fast", ReviewType: "design"},
 		},
 		{
+			name: "Valid Lookahead Type",
+			opts: runOpts{Agent: "test", Reasoning: "fast", ReviewType: "lookahead"},
+		},
+		{
 			name: "Empty Type Accepted",
 			opts: runOpts{Agent: "test", Reasoning: "fast", ReviewType: ""},
 		},
