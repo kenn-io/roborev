@@ -5,6 +5,31 @@ description: Release history for roborev
 
 All notable changes to roborev, grouped by minor release.
 
+## 0.60.0
+<small>2026-06-25</small>
+
+**New features**
+
+- `roborev quickstart` now provides guided setup and automation onboarding for repository setup, review tuning, and post-commit review workflows.
+- Codex jobs now support explicit `-c` config passthrough overrides through `[agent.codex.config]`, so teams can opt into custom Codex providers without loading the full user config. See [Custom Codex Config](/configuration/#custom-codex-config-model-providers).
+
+**Improvements**
+
+- Onboarding docs now center automation-first workflows, including post-commit reviews, agent hooks, review tuning, and agent-oriented setup guidance.
+- Git hook and agent hook installers now prefer managed `roborev` shims when available, keeping generated hook commands stable across version-manager upgrades.
+
+**Bug fixes**
+
+- `roborev refine` now rejects dirty or changed submodule state before applying agent output, avoiding accidental overwrite of local submodule edits.
+
+**Acknowledgements**
+
+- Thanks to [Wes McKinney](https://github.com/wesm) for `roborev quickstart`, the automation-first docs revamp, and safer submodule handling in `roborev refine`.
+- Thanks to [Matt Topol](https://github.com/zeroshade) for Codex config passthrough overrides.
+- Thanks to [Marius van Niekerk](https://github.com/mariusvniekerk) for managed shim preference in hook installation.
+
+---
+
 ## 0.59.2
 <small>2026-06-24</small>
 
