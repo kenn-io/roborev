@@ -99,7 +99,7 @@ func TestRunInstallMigratesStaleRoborevHookCommand(t *testing.T) {
 
 func TestUpsertCommandHookCollapsesDuplicatesAndKeepsOthers(t *testing.T) {
 	assert := assert.New(t)
-	spec := installSpec{
+	spec := InstallSpec{
 		Event: "PostToolUse", Matcher: "^Bash$",
 		Command: "/new/roborev agent-hook run", Timeout: 10, IncludeTimeout: true,
 	}
@@ -110,7 +110,7 @@ func TestUpsertCommandHookCollapsesDuplicatesAndKeepsOthers(t *testing.T) {
 		commandHookJSON("/old/b/roborev agent-hook run", 10),
 	}
 
-	updated, changed := upsertCommandHook(list, commandHook, spec)
+	updated, changed := upsertCommandHook(list, commandHook, spec, agentHookRunner)
 
 	assert.True(changed)
 	// Both stale roborev hooks collapse into one new command at the first one's
@@ -127,10 +127,10 @@ func TestAgentHookNoticeTranslatesBinaryFlagForCommandOnlyFlows(t *testing.T) {
 	notice := "Warning: roborev appears to be running from a versioned mise install (/x); " +
 		"use --binary to install hooks with a stable shim if available"
 
-	got := agentHookNotice(notice)
+	got := TranslateBinaryNotice(notice)
 	assert.NotContains(got, "--binary", "command-only flows do not expose --binary")
 	assert.Contains(got, "--command", "the override flag is translated to --command")
-	assert.Empty(agentHookNotice(""), "an empty notice stays empty")
+	assert.Empty(TranslateBinaryNotice(""), "an empty notice stays empty")
 }
 
 func TestResolveHookCommandOverrideIsVerbatim(t *testing.T) {

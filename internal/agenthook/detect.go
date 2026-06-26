@@ -30,7 +30,7 @@ func Installed(path string) (bool, error) {
 func jsonContainsRoborevHook(v any) bool {
 	switch t := v.(type) {
 	case string:
-		return isRoborevAgentHookCommand(t)
+		return isRoborevHookCommand(t, agentHookRunner)
 	case []any:
 		if slices.ContainsFunc(t, jsonContainsRoborevHook) {
 			return true

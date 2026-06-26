@@ -13,6 +13,14 @@ import (
 	"go.kenn.io/roborev/internal/githook"
 )
 
+// agentHookRunner is the roborev subcommand suffix baked into Codex/Claude hook
+// commands. It also serves as the stale-command sentinel: an install replaces
+// any prior command hook that invokes this runner, regardless of the roborev
+// binary path baked in by an earlier install. It is disjoint from the Factory
+// Droid runner ("droid-hook run") so the two integrations never clobber each
+// other's hook entries.
+const agentHookRunner = "agent-hook run"
+
 type InstallOptions struct {
 	Agent            string
 	Command          string
@@ -29,7 +37,11 @@ type DumpOptions struct {
 	Timeout    time.Duration
 }
 
-type installSpec struct {
+// InstallSpec describes a single hook entry to install: the harness event, an
+// optional tool-name matcher, the command to run, and an optional timeout. It is
+// shared by every integration that reuses this package's JSON hook format
+// (Codex, Claude, and Factory Droid all use the same shape).
+type InstallSpec struct {
 	Event          string
 	Matcher        string
 	Command        string
@@ -54,14 +66,14 @@ func RunInstall(opts InstallOptions, stdout io.Writer) error {
 	}
 
 	if agent == "all" || agent == "codex" {
-		changed, err := installSpecs(opts.CodexConfigPath, codexSpecs(command, opts.Timeout), opts.DryRun)
+		changed, err := InstallSpecs(opts.CodexConfigPath, codexSpecs(command, opts.Timeout), agentHookRunner, opts.DryRun)
 		if err != nil {
 			return err
 		}
 		printInstallResult(stdout, "Codex", opts.CodexConfigPath, changed, opts.DryRun)
 	}
 	if agent == "all" || agent == "claude" {
-		changed, err := installSpecs(opts.ClaudeConfigPath, claudeSpecs(command), opts.DryRun)
+		changed, err := InstallSpecs(opts.ClaudeConfigPath, claudeSpecs(command), agentHookRunner, opts.DryRun)
 		if err != nil {
 			return err
 		}
@@ -81,7 +93,7 @@ func RunDump(opts DumpOptions, stdout io.Writer) error {
 	}
 
 	path := opts.ConfigPath
-	var specs []installSpec
+	var specs []InstallSpec
 	switch agent {
 	case "codex":
 		if path == "" {
@@ -97,11 +109,11 @@ func RunDump(opts DumpOptions, stdout io.Writer) error {
 		return fmt.Errorf("agent must be codex or claude")
 	}
 
-	root, _, _, err := planSpecs(path, specs)
+	root, _, _, err := PlanSpecs(path, specs, agentHookRunner)
 	if err != nil {
 		return err
 	}
-	body, err := marshalJSONConfig(root)
+	body, err := MarshalJSONConfig(root)
 	if err != nil {
 		return fmt.Errorf("encode %s: %w", path, err)
 	}
@@ -130,9 +142,9 @@ func printInstallResult(stdout io.Writer, name, path string, changed, dryRun boo
 	}
 }
 
-func codexSpecs(command string, timeout time.Duration) []installSpec {
+func codexSpecs(command string, timeout time.Duration) []InstallSpec {
 	secs := int(timeout.Seconds())
-	return []installSpec{
+	return []InstallSpec{
 		{
 			Event:          "PreToolUse",
 			Matcher:        "^Bash$",
@@ -156,8 +168,8 @@ func codexSpecs(command string, timeout time.Duration) []installSpec {
 	}
 }
 
-func claudeSpecs(command string) []installSpec {
-	return []installSpec{
+func claudeSpecs(command string) []InstallSpec {
+	return []InstallSpec{
 		{
 			Event:   "PreToolUse",
 			Matcher: "Bash",
@@ -175,8 +187,13 @@ func claudeSpecs(command string) []installSpec {
 	}
 }
 
-func installSpecs(path string, specs []installSpec, dryRun bool) (bool, error) {
-	root, mode, changed, err := planSpecs(path, specs)
+// InstallSpecs writes specs into the hook config at path, collapsing any prior
+// roborev command hooks for runner into a single up-to-date entry. runner is the
+// subcommand suffix (e.g. "agent-hook run" or "droid-hook run") used to identify
+// stale roborev commands from earlier installs. It reports whether the config
+// changed. When dryRun is set, it computes the change without writing.
+func InstallSpecs(path string, specs []InstallSpec, runner string, dryRun bool) (bool, error) {
+	root, mode, changed, err := PlanSpecs(path, specs, runner)
 	if err != nil {
 		return false, err
 	}
@@ -189,7 +206,11 @@ func installSpecs(path string, specs []installSpec, dryRun bool) (bool, error) {
 	return true, nil
 }
 
-func planSpecs(path string, specs []installSpec) (map[string]any, os.FileMode, bool, error) {
+// PlanSpecs reads the hook config at path and computes the merged config that
+// would result from installing specs (identified by runner for stale-command
+// detection) without writing. It returns the root object, its file mode, and
+// whether the config would change.
+func PlanSpecs(path string, specs []InstallSpec, runner string) (map[string]any, os.FileMode, bool, error) {
 	if path == "" {
 		return nil, 0, false, fmt.Errorf("config path is required")
 	}
@@ -204,7 +225,7 @@ func planSpecs(path string, specs []installSpec) (map[string]any, os.FileMode, b
 
 	changed := false
 	for _, spec := range specs {
-		specChanged, err := ensureSpec(hooks, spec)
+		specChanged, err := ensureSpec(hooks, spec, runner)
 		if err != nil {
 			return nil, 0, false, fmt.Errorf("%s hook: %w", spec.Event, err)
 		}
@@ -238,7 +259,9 @@ func readJSONConfig(path string) (map[string]any, os.FileMode, error) {
 	return root, mode, nil
 }
 
-func marshalJSONConfig(root map[string]any) ([]byte, error) {
+// MarshalJSONConfig encodes a hook config root as indented JSON with a trailing
+// newline, suitable for writing to a hooks.json or settings.json file.
+func MarshalJSONConfig(root map[string]any) ([]byte, error) {
 	body, err := json.MarshalIndent(root, "", "  ")
 	if err != nil {
 		return nil, err
@@ -247,7 +270,7 @@ func marshalJSONConfig(root map[string]any) ([]byte, error) {
 }
 
 func writeJSONConfig(path string, root map[string]any, mode os.FileMode) error {
-	body, err := marshalJSONConfig(root)
+	body, err := MarshalJSONConfig(root)
 	if err != nil {
 		return fmt.Errorf("encode %s: %w", path, err)
 	}
@@ -295,7 +318,7 @@ func configObject(root map[string]any) (map[string]any, error) {
 	return hooks, nil
 }
 
-func ensureSpec(hooks map[string]any, spec installSpec) (bool, error) {
+func ensureSpec(hooks map[string]any, spec InstallSpec, runner string) (bool, error) {
 	entries, err := eventEntries(hooks, spec.Event)
 	if err != nil {
 		return false, err
@@ -329,7 +352,7 @@ func ensureSpec(hooks map[string]any, spec installSpec) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	updated, changed := upsertCommandHook(entryHookList, commandHook, spec)
+	updated, changed := upsertCommandHook(entryHookList, commandHook, spec, runner)
 	entry["hooks"] = updated
 	hooks[spec.Event] = entries
 	return changed, nil
@@ -350,17 +373,17 @@ func eventEntries(hooks map[string]any, event string) ([]any, error) {
 }
 
 // upsertCommandHook installs commandHook into list, collapsing any prior roborev
-// agent-hook command hooks - including ones carrying a stale binary path from an
+// command hooks for runner - including ones carrying a stale binary path from an
 // earlier install - into this single hook rather than appending a duplicate
 // beside them. Non-roborev hooks are left untouched. It reports whether the list
 // changed.
-func upsertCommandHook(list []any, commandHook map[string]any, spec installSpec) ([]any, bool) {
+func upsertCommandHook(list []any, commandHook map[string]any, spec InstallSpec, runner string) ([]any, bool) {
 	updated := make([]any, 0, len(list)+1)
 	placed := false
 	changed := false
 	for _, raw := range list {
 		hook, ok := raw.(map[string]any)
-		if !ok || !replaceableCommandHook(hook, spec) {
+		if !ok || !replaceableCommandHook(hook, spec, runner) {
 			updated = append(updated, raw)
 			continue
 		}
@@ -385,19 +408,19 @@ func upsertCommandHook(list []any, commandHook map[string]any, spec installSpec)
 
 // replaceableCommandHook reports whether an existing command hook should be
 // replaced by the spec's command: either it already uses the exact command (an
-// idempotent re-install) or it is a roborev agent-hook command that may carry a
+// idempotent re-install) or it is a roborev command for runner that may carry a
 // stale binary path from a prior install.
-func replaceableCommandHook(hook map[string]any, spec installSpec) bool {
+func replaceableCommandHook(hook map[string]any, spec InstallSpec, runner string) bool {
 	if hook["type"] != "command" {
 		return false
 	}
 	cmd, _ := hook["command"].(string)
-	return cmd == spec.Command || isRoborevAgentHookCommand(cmd)
+	return cmd == spec.Command || isRoborevHookCommand(cmd, runner)
 }
 
 // commandHookCurrent reports whether hook already matches spec exactly, so it
 // needs no rewrite.
-func commandHookCurrent(hook map[string]any, spec installSpec) bool {
+func commandHookCurrent(hook map[string]any, spec InstallSpec) bool {
 	if cmd, _ := hook["command"].(string); cmd != spec.Command {
 		return false
 	}
@@ -408,11 +431,12 @@ func commandHookCurrent(hook map[string]any, spec installSpec) bool {
 	return ok && int(curr) == spec.Timeout
 }
 
-// isRoborevAgentHookCommand reports whether a hook command invokes roborev's
-// agent-hook runner, regardless of binary path or quoting, so an install can
-// replace command hooks that carry a stale or versioned roborev path.
-func isRoborevAgentHookCommand(command string) bool {
-	return strings.Contains(command, "agent-hook run") && strings.Contains(command, "roborev")
+// isRoborevHookCommand reports whether a hook command invokes the roborev
+// runner (e.g. "agent-hook run" or "droid-hook run"), regardless of binary path
+// or quoting, so an install can replace command hooks that carry a stale or
+// versioned roborev path. runner is the subcommand suffix to match.
+func isRoborevHookCommand(command, runner string) bool {
+	return strings.Contains(command, runner) && strings.Contains(command, "roborev")
 }
 
 func findEntry(entries []any, matcher string) (int, error) {
@@ -449,21 +473,32 @@ func entryHooks(entry map[string]any) ([]any, error) {
 // a stable shim over a versioned or temporary install path - and returns any
 // advisory notice from that resolution so callers can surface it. A non-empty
 // override is used verbatim with no notice, letting callers pin an exact command.
+// The notice is translated for command-only flows (dump), which expose
+// --command rather than --binary.
 func ResolveHookCommand(override string) (command, notice string, err error) {
-	if override = strings.TrimSpace(override); override != "" {
-		return override, "", nil
-	}
-	command, notice, err = resolveHookCommandFromBinary("")
+	command, notice, err = ResolveHookCommandWithRunner(override, "", agentHookRunner)
 	if err != nil {
 		return "", "", err
 	}
-	return command, agentHookNotice(notice), nil
+	return command, TranslateBinaryNotice(notice), nil
 }
 
 // ResolveHookCommandWithBinary returns the command to install for agent hooks.
 // commandOverride is used verbatim when set. binaryOverride is resolved and
-// quoted before appending the agent-hook runner subcommand.
+// quoted before appending the agent-hook runner subcommand. The returned notice
+// is raw (mentions --binary), since the install flow exposes --binary.
 func ResolveHookCommandWithBinary(commandOverride, binaryOverride string) (command, notice string, err error) {
+	return ResolveHookCommandWithRunner(commandOverride, binaryOverride, agentHookRunner)
+}
+
+// ResolveHookCommandWithRunner returns the command to install for a roborev hook
+// integration identified by runner (e.g. "agent-hook run" or "droid-hook run").
+// commandOverride is used verbatim when set; otherwise binaryOverride (or an
+// auto-resolved roborev binary) is quoted and suffixed with runner. The returned
+// notice is raw (mentions --binary); callers that expose --command instead
+// should pass it through TranslateBinaryNotice. commandOverride and
+// binaryOverride are mutually exclusive.
+func ResolveHookCommandWithRunner(commandOverride, binaryOverride, runner string) (command, notice string, err error) {
 	commandOverride = strings.TrimSpace(commandOverride)
 	binaryOverride = strings.TrimSpace(binaryOverride)
 	if commandOverride != "" && binaryOverride != "" {
@@ -472,22 +507,22 @@ func ResolveHookCommandWithBinary(commandOverride, binaryOverride string) (comma
 	if commandOverride != "" {
 		return commandOverride, "", nil
 	}
-	return resolveHookCommandFromBinary(binaryOverride)
+	return resolveHookCommandFromBinary(binaryOverride, runner)
 }
 
-func resolveHookCommandFromBinary(binaryOverride string) (command, notice string, err error) {
+func resolveHookCommandFromBinary(binaryOverride, runner string) (command, notice string, err error) {
 	res, err := githook.ResolveRoborevPath(binaryOverride)
 	if err != nil {
 		return "", "", fmt.Errorf("resolve roborev binary: %w", err)
 	}
-	return shellQuote(res.Path) + " agent-hook run", res.Notice, nil
+	return shellQuote(res.Path) + " " + runner, res.Notice, nil
 }
 
-// agentHookNotice adapts a binary-resolution notice for command-only agent-hook
-// commands. The shared resolver phrases its stable-binary guidance for --binary;
+// TranslateBinaryNotice adapts a binary-resolution notice for command-only hook
+// flows. The shared resolver phrases its stable-binary guidance for --binary;
 // dump exposes --command instead, so the flag name is translated to avoid
 // pointing users at a flag that command does not have.
-func agentHookNotice(notice string) string {
+func TranslateBinaryNotice(notice string) string {
 	return strings.ReplaceAll(notice, "--binary", "--command")
 }
 

@@ -4,6 +4,8 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"os"
+	"path/filepath"
 	"strings"
 	"testing"
 
@@ -96,4 +98,50 @@ func TestRunDroidHookEmitsEmptyWhenNotTriggered(t *testing.T) {
 	)
 	require.NoError(t, err)
 	assert.JSONEq(t, `{}`, stdout.String())
+}
+
+func TestDroidHookCmdHasInstallAndDumpSubcommands(t *testing.T) {
+	for _, name := range []string{"install", "dump"} {
+		sub, _, err := droidHookCmd().Find([]string{name})
+		require.NoError(t, err)
+		assert.Equal(t, name, sub.Name())
+	}
+}
+
+func TestDroidHookInstallCmdFlags(t *testing.T) {
+	cmd := droidHookInstallCmd()
+	for _, flag := range []string{"command", "binary", "config", "scope", "timeout", "dry-run"} {
+		require.NotNil(t, cmd.Flags().Lookup(flag), "missing flag %s", flag)
+	}
+}
+
+func TestDroidHookDumpCmdFlags(t *testing.T) {
+	cmd := droidHookDumpCmd()
+	for _, flag := range []string{"command", "config", "scope", "timeout"} {
+		require.NotNil(t, cmd.Flags().Lookup(flag), "missing flag %s", flag)
+	}
+	assert.Nil(t, cmd.Flags().Lookup("binary"))
+	assert.Nil(t, cmd.Flags().Lookup("dry-run"))
+}
+
+func TestDroidHookInstallCmdWritesHooks(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hooks.json")
+	cmd := droidHookInstallCmd()
+	cmd.SetArgs([]string{
+		"--command", "/tmp/roborev droid-hook run",
+		"--config", path,
+		"--scope", "user",
+	})
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+
+	require.NoError(t, cmd.Execute())
+	assert.Contains(t, out.String(), "installed Factory Droid hooks")
+
+	body, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Contains(t, string(body), "droid-hook run")
+	assert.Contains(t, string(body), `"Execute"`)
+	assert.Contains(t, string(body), `"Stop"`)
 }
