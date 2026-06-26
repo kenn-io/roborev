@@ -484,32 +484,25 @@ synthesis_agent = "test"
 	assert.Equal("backup-model", members[0].Model)
 }
 
-// TestEnqueuePanelLookaheadMemberUsesLookaheadBackup verifies that a lookahead
-// panel member resolves its backup agent/model from the lookahead workflow keys
-// (lookahead_backup_agent / lookahead_backup_model) rather than falling back to
-// the generic review workflow. Only the lookahead_backup_* keys are configured
-// here, so the test fails if the member's review type maps to the "review"
-// workflow during agent/model failover resolution.
-func TestEnqueuePanelLookaheadMemberUsesLookaheadBackup(t *testing.T) {
+// TestEnqueuePanelLookaheadMemberUsesAnalyzeConfig verifies that a lookahead
+// panel member with no explicit agent resolves its agent/model from the generic
+// per-type [analyze.lookahead] config. The lookahead review type carries no
+// bespoke workflow fields, so this exercises the generic override path: if the
+// member's review type did not key into [analyze.lookahead], the agent/model
+// would fall back to the generic defaults instead.
+func TestEnqueuePanelLookaheadMemberUsesAnalyzeConfig(t *testing.T) {
 	assert := assert.New(t)
 	server, db, _ := newTestServer(t)
 
-	const primaryAgent = "panel-lookahead-primary"
-	agent.Register(&unavailableSynthesisCommandAgent{
-		name:    primaryAgent,
-		command: "roborev-missing-panel-lookahead-primary",
-	})
-	t.Cleanup(func() { agent.Unregister(primaryAgent) })
-
-	const panelWithLookaheadBackup = `
-lookahead_backup_agent = "test"
-lookahead_backup_model = "lookahead-backup-model"
+	const panelWithAnalyzeLookahead = `
+[analyze.lookahead]
+agent = "test"
+model = "lookahead-model"
 
 [review]
 default_panel = "solo"
 
 [review.subagents.only]
-agent = "panel-lookahead-primary"
 review_type = "lookahead"
 
 [review.panels.solo]
@@ -517,7 +510,7 @@ members = ["only"]
 synthesis_agent = "test"
 `
 	repo := testutil.NewGitRepo(t)
-	repo.WriteFile(".roborev.toml", panelWithLookaheadBackup)
+	repo.WriteFile(".roborev.toml", panelWithAnalyzeLookahead)
 	repo.CommitFile("a.txt", "a", "add a")
 
 	resp := enqueuePanelViaHTTP(t, server, EnqueueRequest{
@@ -530,9 +523,9 @@ synthesis_agent = "test"
 	require.NoError(t, err)
 	require.Len(t, members, 1)
 	assert.Equal("test", members[0].Agent,
-		"lookahead member should fail over to lookahead_backup_agent")
-	assert.Equal("lookahead-backup-model", members[0].Model,
-		"lookahead member should use lookahead_backup_model, not the review workflow")
+		"lookahead member should resolve its agent from [analyze.lookahead]")
+	assert.Equal("lookahead-model", members[0].Model,
+		"lookahead member should resolve its model from [analyze.lookahead]")
 }
 
 func TestEnqueuePanelOmittedMemberAgentAutoDetectsAvailableAgent(t *testing.T) {

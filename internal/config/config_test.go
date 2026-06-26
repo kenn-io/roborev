@@ -1933,6 +1933,46 @@ func TestResolveAgentForWorkflow(t *testing.T) {
 	}
 }
 
+// TestResolveWorkflowAnalyzeOverride covers the generic per-type
+// [analyze.<workflow>] override. Review types such as "lookahead" carry no
+// bespoke {workflow}_agent/{workflow}_model fields, so they are configured
+// entirely through this map.
+func TestResolveWorkflowAnalyzeOverride(t *testing.T) {
+	assert := assert.New(t)
+
+	lookahead := map[string]AnalyzeConfig{
+		"lookahead": {Agent: "claude-code", Model: "sonnet"},
+	}
+
+	// Repo [analyze.lookahead] drives the lookahead workflow agent/model.
+	repoCfg := &RepoConfig{Analyze: lookahead}
+	assert.Equal("claude-code",
+		ResolveAgentForWorkflowFromConfig("", repoCfg, nil, "lookahead", "thorough"))
+	assert.Equal("sonnet",
+		ResolveModelForWorkflowFromConfig("", repoCfg, nil, "lookahead", "thorough"))
+
+	// Global [analyze.lookahead] applies when the repo does not override it.
+	globalCfg := &Config{Analyze: lookahead}
+	assert.Equal("claude-code",
+		ResolveAgentForWorkflowFromConfig("", nil, globalCfg, "lookahead", "thorough"))
+	assert.Equal("sonnet",
+		ResolveModelForWorkflowFromConfig("", nil, globalCfg, "lookahead", "thorough"))
+
+	// The override is keyed by type and does not leak into other workflows.
+	assert.Equal("codex",
+		ResolveAgentForWorkflowFromConfig("", repoCfg, nil, "review", "thorough"))
+	assert.Empty(
+		ResolveModelForWorkflowFromConfig("", repoCfg, nil, "review", "thorough"))
+
+	// CLI still wins over the analyze override.
+	assert.Equal("gemini",
+		ResolveAgentForWorkflowFromConfig("gemini", repoCfg, nil, "lookahead", "thorough"))
+
+	// A per-type agent pin counts as a strict workflow override.
+	assert.True(HasWorkflowAgentOverrideFromConfig(repoCfg, nil, "lookahead", "thorough"))
+	assert.False(HasWorkflowAgentOverrideFromConfig(&RepoConfig{}, nil, "lookahead", "thorough"))
+}
+
 func TestHasWorkflowAgentOverrideFromConfig(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -2249,8 +2289,6 @@ func TestResolveBackupAgentForWorkflow(t *testing.T) {
 		{"global backup for fix", nil, &Config{FixBackupAgent: "codex"}, "fix", "codex"},
 		{"global backup for security", nil, &Config{SecurityBackupAgent: "gemini"}, "security", "gemini"},
 		{"global backup for design", nil, &Config{DesignBackupAgent: "droid"}, "design", "droid"},
-		{"global backup for lookahead", nil, &Config{LookaheadBackupAgent: "codex"}, "lookahead", "codex"},
-		{"repo backup for lookahead", M{"lookahead_backup_agent": "claude"}, nil, "lookahead", "claude"},
 
 		// Repo backup agent overrides global
 		{"repo overrides global", M{"review_backup_agent": "repo-test"}, &Config{ReviewBackupAgent: "global-test"}, "review", "repo-test"},
@@ -2321,7 +2359,6 @@ func TestResolveBackupModelForWorkflow(t *testing.T) {
 		{"global backup model for fix", nil, &Config{FixBackupModel: "o3-mini"}, "fix", "o3-mini"},
 		{"global backup model for security", nil, &Config{SecurityBackupModel: "gpt-4"}, "security", "gpt-4"},
 		{"global backup model for design", nil, &Config{DesignBackupModel: "claude-3"}, "design", "claude-3"},
-		{"global backup model for lookahead", nil, &Config{LookaheadBackupModel: "o3"}, "lookahead", "o3"},
 
 		// Repo backup model overrides global
 		{"repo overrides global", M{"review_backup_model": "repo-model"}, &Config{ReviewBackupModel: "global-model"}, "review", "repo-model"},

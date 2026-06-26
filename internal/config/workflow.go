@@ -453,7 +453,8 @@ func HasWorkflowAgentOverrideFromConfig(
 	workflow, level string,
 ) bool {
 	if repoCfg != nil {
-		if repoWorkflowField(repoCfg, workflow, level, true) != "" ||
+		if analyzeField(repoCfg.Analyze, workflow, true) != "" ||
+			repoWorkflowField(repoCfg, workflow, level, true) != "" ||
 			repoWorkflowField(repoCfg, workflow, "", true) != "" {
 			return true
 		}
@@ -462,7 +463,8 @@ func HasWorkflowAgentOverrideFromConfig(
 		}
 	}
 	if globalCfg != nil {
-		if globalWorkflowField(globalCfg, workflow, level, true) != "" ||
+		if analyzeField(globalCfg.Analyze, workflow, true) != "" ||
+			globalWorkflowField(globalCfg, workflow, level, true) != "" ||
 			globalWorkflowField(globalCfg, workflow, "", true) != "" {
 			return true
 		}
@@ -510,6 +512,9 @@ func ResolveWorkflowModelFromConfig(
 	workflow, level string,
 ) string {
 	if repoCfg != nil {
+		if s := analyzeField(repoCfg.Analyze, workflow, false); s != "" {
+			return s
+		}
 		if s := repoWorkflowField(repoCfg, workflow, level, false); s != "" {
 			return s
 		}
@@ -518,6 +523,9 @@ func ResolveWorkflowModelFromConfig(
 		}
 	}
 	if globalCfg != nil {
+		if s := analyzeField(globalCfg.Analyze, workflow, false); s != "" {
+			return s
+		}
 		if s := globalWorkflowField(globalCfg, workflow, level, false); s != "" {
 			return s
 		}
@@ -624,9 +632,15 @@ func lookupFieldByTag(v reflect.Value, key string) string {
 }
 
 // getWorkflowValue looks up agent or model config following Option A priority.
+// The per-type [analyze.<workflow>] override sits at the top of each config
+// layer, so review types such as "lookahead" are configured generically
+// without bespoke {workflow}_agent/{workflow}_model fields.
 func getWorkflowValue(repo *RepoConfig, global *Config, workflow, level string, isAgent bool) string {
-	// Repo layer: level-specific > workflow-specific > generic
+	// Repo layer: analyze override > level-specific > workflow-specific > generic
 	if repo != nil {
+		if s := analyzeField(repo.Analyze, workflow, isAgent); s != "" {
+			return s
+		}
 		if s := repoWorkflowField(repo, workflow, level, isAgent); s != "" {
 			return s
 		}
@@ -640,8 +654,11 @@ func getWorkflowValue(repo *RepoConfig, global *Config, workflow, level string, 
 			return strings.TrimSpace(repo.Model)
 		}
 	}
-	// Global layer: level-specific > workflow-specific > generic
+	// Global layer: analyze override > level-specific > workflow-specific > generic
 	if global != nil {
+		if s := analyzeField(global.Analyze, workflow, isAgent); s != "" {
+			return s
+		}
 		if s := globalWorkflowField(global, workflow, level, isAgent); s != "" {
 			return s
 		}
