@@ -1,13 +1,14 @@
 ---
 name: roborev-lookahead-review
-description: Request a time-series look-ahead (future-data leakage) review for a commit and present the results
+description: Request a time-series look-ahead (a.k.a. peekahead / future-data leakage) review for a commit and present the results
 ---
 
 # roborev-lookahead-review
 
 Request a time-series look-ahead review for a commit and present the results. A
 look-ahead review checks whether the change uses information that would not yet
-be available at the point in time it represents (future-data leakage).
+be available at the point in time it represents — also called peekahead, future
+leakage, or temporal leakage.
 
 ## Usage
 
