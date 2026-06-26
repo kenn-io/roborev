@@ -484,6 +484,57 @@ synthesis_agent = "test"
 	assert.Equal("backup-model", members[0].Model)
 }
 
+// TestEnqueuePanelLookaheadMemberUsesLookaheadBackup verifies that a lookahead
+// panel member resolves its backup agent/model from the lookahead workflow keys
+// (lookahead_backup_agent / lookahead_backup_model) rather than falling back to
+// the generic review workflow. Only the lookahead_backup_* keys are configured
+// here, so the test fails if the member's review type maps to the "review"
+// workflow during agent/model failover resolution.
+func TestEnqueuePanelLookaheadMemberUsesLookaheadBackup(t *testing.T) {
+	assert := assert.New(t)
+	server, db, _ := newTestServer(t)
+
+	const primaryAgent = "panel-lookahead-primary"
+	agent.Register(&unavailableSynthesisCommandAgent{
+		name:    primaryAgent,
+		command: "roborev-missing-panel-lookahead-primary",
+	})
+	t.Cleanup(func() { agent.Unregister(primaryAgent) })
+
+	const panelWithLookaheadBackup = `
+lookahead_backup_agent = "test"
+lookahead_backup_model = "lookahead-backup-model"
+
+[review]
+default_panel = "solo"
+
+[review.subagents.only]
+agent = "panel-lookahead-primary"
+review_type = "lookahead"
+
+[review.panels.solo]
+members = ["only"]
+synthesis_agent = "test"
+`
+	repo := testutil.NewGitRepo(t)
+	repo.WriteFile(".roborev.toml", panelWithLookaheadBackup)
+	repo.CommitFile("a.txt", "a", "add a")
+
+	resp := enqueuePanelViaHTTP(t, server, EnqueueRequest{
+		RepoPath: repo.Path(),
+		GitRef:   "HEAD",
+		Agent:    "test",
+	})
+
+	members, err := db.GetPanelMembers(resp.PanelRunUUID)
+	require.NoError(t, err)
+	require.Len(t, members, 1)
+	assert.Equal("test", members[0].Agent,
+		"lookahead member should fail over to lookahead_backup_agent")
+	assert.Equal("lookahead-backup-model", members[0].Model,
+		"lookahead member should use lookahead_backup_model, not the review workflow")
+}
+
 func TestEnqueuePanelOmittedMemberAgentAutoDetectsAvailableAgent(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("minimal PATH setup uses POSIX symlink")

@@ -534,14 +534,7 @@ func resolvePanelMemberExecution(
 }
 
 func workflowForPanelReviewType(reviewType string) string {
-	switch reviewType {
-	case config.ReviewTypeSecurity:
-		return "security"
-	case config.ReviewTypeDesign:
-		return "design"
-	default:
-		return "review"
-	}
+	return config.WorkflowForReviewType(reviewType)
 }
 
 // panelSynthesisOpts overlays the synthesis spec and panel fields onto the

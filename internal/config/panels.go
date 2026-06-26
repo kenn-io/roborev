@@ -318,7 +318,7 @@ func resolveMemberFromConfig(
 	if err := validateSubagentTimeout(spec.Timeout); err != nil {
 		return ResolvedMember{}, fmt.Errorf("subagent %q: %w", name, err)
 	}
-	workflow := workflowForReviewType(reviewType)
+	workflow := WorkflowForReviewType(reviewType)
 	agent := spec.Agent
 	if agent == "" {
 		agent = ResolveAgentForWorkflowFromConfig("", repoCfg, globalCfg, workflow, reasoning)
@@ -406,9 +406,9 @@ func resolveSynthesisFromConfig(
 	}, nil
 }
 
-// workflowForReviewType maps a canonical review type to the workflow name used
+// WorkflowForReviewType maps a canonical review type to the workflow name used
 // for agent/model fallback resolution.
-func workflowForReviewType(reviewType string) string {
+func WorkflowForReviewType(reviewType string) string {
 	switch reviewType {
 	case ReviewTypeSecurity:
 		return "security"

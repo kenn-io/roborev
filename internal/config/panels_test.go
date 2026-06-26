@@ -544,11 +544,11 @@ func TestResolveCISynthesis(t *testing.T) {
 
 func TestWorkflowForReviewType(t *testing.T) {
 	assert := assert.New(t)
-	assert.Equal("review", workflowForReviewType("default"))
-	assert.Equal("review", workflowForReviewType(""))
-	assert.Equal("security", workflowForReviewType("security"))
-	assert.Equal("design", workflowForReviewType("design"))
-	assert.Equal("lookahead", workflowForReviewType("lookahead"))
+	assert.Equal("review", WorkflowForReviewType("default"))
+	assert.Equal("review", WorkflowForReviewType(""))
+	assert.Equal("security", WorkflowForReviewType("security"))
+	assert.Equal("design", WorkflowForReviewType("design"))
+	assert.Equal("lookahead", WorkflowForReviewType("lookahead"))
 }
 
 func TestResolvePanelRejectsInvalidReviewType(t *testing.T) {
