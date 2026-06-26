@@ -453,9 +453,9 @@ func HasWorkflowAgentOverrideFromConfig(
 	workflow, level string,
 ) bool {
 	if repoCfg != nil {
-		if analyzeField(repoCfg.Analyze, workflow, true) != "" ||
-			repoWorkflowField(repoCfg, workflow, level, true) != "" ||
-			repoWorkflowField(repoCfg, workflow, "", true) != "" {
+		if repoWorkflowField(repoCfg, workflow, level, true) != "" ||
+			repoWorkflowField(repoCfg, workflow, "", true) != "" ||
+			analyzeField(repoCfg.Analyze, workflow, true) != "" {
 			return true
 		}
 		if strings.TrimSpace(repoCfg.Agent) != "" {
@@ -463,9 +463,9 @@ func HasWorkflowAgentOverrideFromConfig(
 		}
 	}
 	if globalCfg != nil {
-		if analyzeField(globalCfg.Analyze, workflow, true) != "" ||
-			globalWorkflowField(globalCfg, workflow, level, true) != "" ||
-			globalWorkflowField(globalCfg, workflow, "", true) != "" {
+		if globalWorkflowField(globalCfg, workflow, level, true) != "" ||
+			globalWorkflowField(globalCfg, workflow, "", true) != "" ||
+			analyzeField(globalCfg.Analyze, workflow, true) != "" {
 			return true
 		}
 	}
@@ -512,24 +512,24 @@ func ResolveWorkflowModelFromConfig(
 	workflow, level string,
 ) string {
 	if repoCfg != nil {
-		if s := analyzeField(repoCfg.Analyze, workflow, false); s != "" {
-			return s
-		}
 		if s := repoWorkflowField(repoCfg, workflow, level, false); s != "" {
 			return s
 		}
 		if s := repoWorkflowField(repoCfg, workflow, "", false); s != "" {
 			return s
 		}
-	}
-	if globalCfg != nil {
-		if s := analyzeField(globalCfg.Analyze, workflow, false); s != "" {
+		if s := analyzeField(repoCfg.Analyze, workflow, false); s != "" {
 			return s
 		}
+	}
+	if globalCfg != nil {
 		if s := globalWorkflowField(globalCfg, workflow, level, false); s != "" {
 			return s
 		}
 		if s := globalWorkflowField(globalCfg, workflow, "", false); s != "" {
+			return s
+		}
+		if s := analyzeField(globalCfg.Analyze, workflow, false); s != "" {
 			return s
 		}
 	}
@@ -632,19 +632,20 @@ func lookupFieldByTag(v reflect.Value, key string) string {
 }
 
 // getWorkflowValue looks up agent or model config following Option A priority.
-// The per-type [analyze.<workflow>] override sits at the top of each config
-// layer, so review types such as "lookahead" are configured generically
-// without bespoke {workflow}_agent/{workflow}_model fields.
+// Dedicated {workflow}_agent/{workflow}_model fields win first; the per-type
+// [analyze.<workflow>] map is consulted only as a fallback below them, so a
+// legacy security_agent still governs `review --type security` while review
+// types without dedicated fields (e.g. "lookahead") resolve through the map.
 func getWorkflowValue(repo *RepoConfig, global *Config, workflow, level string, isAgent bool) string {
-	// Repo layer: analyze override > level-specific > workflow-specific > generic
+	// Repo layer: level-specific > workflow-specific > analyze override > generic
 	if repo != nil {
-		if s := analyzeField(repo.Analyze, workflow, isAgent); s != "" {
-			return s
-		}
 		if s := repoWorkflowField(repo, workflow, level, isAgent); s != "" {
 			return s
 		}
 		if s := repoWorkflowField(repo, workflow, "", isAgent); s != "" {
+			return s
+		}
+		if s := analyzeField(repo.Analyze, workflow, isAgent); s != "" {
 			return s
 		}
 		if isAgent && strings.TrimSpace(repo.Agent) != "" {
@@ -654,15 +655,15 @@ func getWorkflowValue(repo *RepoConfig, global *Config, workflow, level string, 
 			return strings.TrimSpace(repo.Model)
 		}
 	}
-	// Global layer: analyze override > level-specific > workflow-specific > generic
+	// Global layer: level-specific > workflow-specific > analyze override > generic
 	if global != nil {
-		if s := analyzeField(global.Analyze, workflow, isAgent); s != "" {
-			return s
-		}
 		if s := globalWorkflowField(global, workflow, level, isAgent); s != "" {
 			return s
 		}
 		if s := globalWorkflowField(global, workflow, "", isAgent); s != "" {
+			return s
+		}
+		if s := analyzeField(global.Analyze, workflow, isAgent); s != "" {
 			return s
 		}
 		if isAgent && strings.TrimSpace(global.DefaultAgent) != "" {

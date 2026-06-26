@@ -1971,6 +1971,26 @@ func TestResolveWorkflowAnalyzeOverride(t *testing.T) {
 	// A per-type agent pin counts as a strict workflow override.
 	assert.True(HasWorkflowAgentOverrideFromConfig(repoCfg, nil, "lookahead", "thorough"))
 	assert.False(HasWorkflowAgentOverrideFromConfig(&RepoConfig{}, nil, "lookahead", "thorough"))
+
+	// Dedicated {type}_agent/{type}_model fields win over the analyze map, so a
+	// legacy [analyze.security] (intended for `roborev analyze security`) never
+	// hijacks a security review configured the legacy way.
+	secAnalyze := map[string]AnalyzeConfig{
+		"security": {Agent: "claude-code", Model: "sonnet"},
+	}
+	legacySecurity := &RepoConfig{
+		SecurityAgent: "codex",
+		SecurityModel: "o3",
+		Analyze:       secAnalyze,
+	}
+	assert.Equal("codex",
+		ResolveAgentForWorkflowFromConfig("", legacySecurity, nil, "security", "thorough"))
+	assert.Equal("o3",
+		ResolveModelForWorkflowFromConfig("", legacySecurity, nil, "security", "thorough"))
+
+	// The analyze map only fills in when the dedicated field is unset.
+	assert.Equal("claude-code",
+		ResolveAgentForWorkflowFromConfig("", &RepoConfig{Analyze: secAnalyze}, nil, "security", "thorough"))
 }
 
 func TestHasWorkflowAgentOverrideFromConfig(t *testing.T) {
