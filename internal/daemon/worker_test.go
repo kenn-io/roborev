@@ -1272,6 +1272,52 @@ func TestApplyCodexReviewSettings(t *testing.T) {
 	}
 }
 
+func TestAnalyzeTaskCodexCommandLinePreservesAgentConfig(t *testing.T) {
+	fakeBin := t.TempDir()
+	codex := "codex"
+	script := "#!/bin/sh\nexit 0\n"
+	if runtime.GOOS == "windows" {
+		codex += ".cmd"
+		script = "@echo off\r\nexit /b 0\r\n"
+	}
+	codexPath := filepath.Join(fakeBin, codex)
+	require.NoError(t, os.WriteFile(codexPath, []byte(script), 0o755))
+	t.Setenv("PATH", fakeBin)
+
+	cfg := config.DefaultConfig()
+	cfg.CodexCmd = codexPath
+	cfg.Agent.Codex.DisableReviewSkills = true
+	cfg.Agent.Codex.IgnoreReviewUserConfig = true
+	cfg.Agent.Codex.Config = map[string]any{
+		"model_provider": "my-custom",
+	}
+
+	base, err := agent.GetPreferredOrBackupWithConfig("", "codex", cfg)
+	require.NoError(t, err)
+
+	job := storage.ReviewJob{
+		JobType:   storage.JobTypeTask,
+		GitRef:    "refactor",
+		Agent:     "codex",
+		Model:     "o4-mini",
+		Reasoning: "fast",
+		Agentic:   true,
+	}
+	configured := applyCodexReviewSettings(
+		base.WithReasoning(agent.ParseReasoningLevel(job.Reasoning)).
+			WithAgentic(job.Agentic).
+			WithModel(job.Model),
+		&job,
+		cfg,
+	)
+
+	commandLine := configured.CommandLine()
+	assert.Contains(t, commandLine, `-c model_provider="my-custom"`)
+	assert.Contains(t, commandLine, "-m o4-mini")
+	assert.Contains(t, commandLine, "-c skills.include_instructions=false")
+	assert.NotContains(t, commandLine, "--ignore-user-config")
+}
+
 func TestProcessJob_RebuildsAndPersistsFreshPromptForReviewRetry(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
