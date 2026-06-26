@@ -1988,9 +1988,41 @@ func TestResolveWorkflowAnalyzeOverride(t *testing.T) {
 	assert.Equal("o3",
 		ResolveModelForWorkflowFromConfig("", legacySecurity, nil, "security", "thorough"))
 
-	// The analyze map only fills in when the dedicated field is unset.
-	assert.Equal("claude-code",
-		ResolveAgentForWorkflowFromConfig("", &RepoConfig{Analyze: secAnalyze}, nil, "security", "thorough"))
+	// Native review workflows do not fall back to [analyze.<workflow>] when the
+	// dedicated fields are unset; those tables belong to `roborev analyze`.
+	for _, workflow := range []string{"security", "design"} {
+		repoOnlyAnalyze := &RepoConfig{
+			Agent: "repo-default",
+			Model: "repo-default-model",
+			Analyze: map[string]AnalyzeConfig{
+				workflow: {Agent: "analyze-agent", Model: "analyze-model"},
+			},
+		}
+		assert.Equal("repo-default",
+			ResolveAgentForWorkflowFromConfig("", repoOnlyAnalyze, nil, workflow, "thorough"))
+		assert.Equal("repo-default-model",
+			ResolveModelForWorkflowFromConfig("", repoOnlyAnalyze, nil, workflow, "thorough"))
+		assert.Empty(
+			ResolveWorkflowModelFromConfig(repoOnlyAnalyze, nil, workflow, "thorough"))
+		assert.False(
+			HasWorkflowAgentOverrideFromConfig(repoOnlyAnalyze, nil, workflow, "thorough"))
+
+		globalOnlyAnalyze := &Config{
+			DefaultAgent: "global-default",
+			DefaultModel: "global-default-model",
+			Analyze: map[string]AnalyzeConfig{
+				workflow: {Agent: "analyze-agent", Model: "analyze-model"},
+			},
+		}
+		assert.Equal("global-default",
+			ResolveAgentForWorkflowFromConfig("", nil, globalOnlyAnalyze, workflow, "thorough"))
+		assert.Equal("global-default-model",
+			ResolveModelForWorkflowFromConfig("", nil, globalOnlyAnalyze, workflow, "thorough"))
+		assert.Empty(
+			ResolveWorkflowModelFromConfig(nil, globalOnlyAnalyze, workflow, "thorough"))
+		assert.False(
+			HasWorkflowAgentOverrideFromConfig(nil, globalOnlyAnalyze, workflow, "thorough"))
+	}
 }
 
 func TestHasWorkflowAgentOverrideFromConfig(t *testing.T) {
