@@ -25,6 +25,8 @@ failed-review detection are identical to Codex/Claude behavior.`,
 	cmd.AddCommand(droidHookRunCmd())
 	cmd.AddCommand(droidHookInstallCmd())
 	cmd.AddCommand(droidHookDumpCmd())
+	cmd.AddCommand(droidHookStatusCmd())
+	cmd.AddCommand(droidHookResetCmd())
 	return cmd
 }
 
@@ -133,5 +135,40 @@ func droidHookDumpCmd() *cobra.Command {
 	cmd.Flags().StringVar(&opts.ConfigPath, "config", opts.ConfigPath, "Factory Droid hooks.json path to read and merge into; defaults to the resolved scope's standard path")
 	cmd.Flags().StringVar(&opts.Scope, "scope", opts.Scope, "config scope to dump: user or project")
 	cmd.Flags().Var(&agentHookSecondsOrDuration{d: &opts.Timeout}, "timeout", "Droid hook timeout (e.g. 10s, 1m, or bare integer seconds)")
+	return cmd
+}
+
+// droidHookStatusCmd and droidHookResetCmd delegate to the shared agenthook
+// daemon that droid-hook run feeds. The session state is integration-agnostic
+// (keyed by session_id), so Droid sessions are inspected and reset through the
+// same surface as Codex/Claude sessions.
+func droidHookStatusCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:                   "status",
+		Short:                 "Print tracked Factory Droid hook session counts as JSON",
+		Args:                  cobra.NoArgs,
+		DisableFlagsInUseLine: true,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			return agenthook.RunStatus(cmd.OutOrStdout())
+		},
+	}
+}
+
+func droidHookResetCmd() *cobra.Command {
+	opts := agenthook.ResetOptions{}
+	cmd := &cobra.Command{
+		Use:                   "reset [session-id]",
+		Short:                 "Reset one Factory Droid hook session count, or all counts with --all",
+		Args:                  cobra.MaximumNArgs(1),
+		DisableFlagsInUseLine: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			sessionID := ""
+			if len(args) > 0 {
+				sessionID = args[0]
+			}
+			return agenthook.RunReset(opts, sessionID, cmd.OutOrStdout())
+		},
+	}
+	cmd.Flags().BoolVar(&opts.All, "all", false, "reset all sessions")
 	return cmd
 }

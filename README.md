@@ -32,7 +32,8 @@ your agentic loop while context is fresh.
 ```bash
 roborev init                  # layer 1: per-commit reviews
 roborev skills install
-roborev agent-hook install    # layer 2: mid-session fix loop
+roborev agent-hook install    # layer 2: mid-session fix loop (Codex/Claude)
+roborev droid-hook install     # layer 2: mid-session fix loop (Factory Droid)
 ```
 
 Before you ship, run the `/roborev-refine` skill: it re-reviews and fixes your
@@ -52,8 +53,9 @@ roborev tui           # View reviews in interactive UI
 If roborev is managed by a version manager, `roborev init` and
 `roborev agent-hook install` try to install hooks with the stable shim/symlink.
 You can also choose the exact binary path with
-`roborev init --binary ~/.local/share/mise/shims/roborev` or
-`roborev agent-hook install --binary ~/.local/share/mise/shims/roborev`.
+`roborev init --binary ~/.local/share/mise/shims/roborev`,
+`roborev agent-hook install --binary ~/.local/share/mise/shims/roborev`, or
+`roborev droid-hook install --binary ~/.local/share/mise/shims/roborev`.
 
 ![roborev review](https://roborev.io/assets/generated/tui-review.svg)
 
@@ -92,11 +94,12 @@ command line non-interactively with `roborev fix`.
 changes and commits. The new commit gets reviewed automatically,
 closing the loop.
 
-For Codex and Claude Code sessions, `roborev agent-hook install` can add an
-optional harness hook that prompts the active session to invoke `$roborev-fix`
-after configured turn, commit, or failed-review thresholds are met. The hook
-uses a separate local `roborev-agent-hook` daemon for session counters; it does
-not run inside the main roborev daemon.
+For Codex, Claude Code, and Factory Droid sessions, `roborev agent-hook install`
+(or `roborev droid-hook install` for Factory Droid) can add an optional harness
+hook that prompts the active session to invoke `$roborev-fix` (or `/roborev-fix`
+for Droid) after configured turn, commit, or failed-review thresholds are met.
+The hook uses a separate local `roborev-agent-hook` daemon for session counters;
+it does not run inside the main roborev daemon.
 
 For fully automated iteration (advanced feature), use `refine`:
 
@@ -192,6 +195,7 @@ If the hook rewrites files, re-stage them and re-run `git commit`. Use
 | `roborev refine` | Auto-fix loop: fix, re-review, repeat |
 | `roborev analyze <type>` | Run code analysis with optional auto-fix |
 | `roborev agent-hook install` | Install optional Codex/Claude agent harness hooks |
+| `roborev droid-hook install` | Install optional Factory Droid harness hooks |
 | `roborev compact` | Verify and consolidate open review findings |
 | `roborev show [sha]` | Display review for commit |
 | `roborev run "<task>"` | Execute a task with an AI agent |
@@ -274,6 +278,9 @@ hook, so a configured integration never goes dark unnoticed.
 | `ROBOREV_AGENT_HOOK_TURN_THRESHOLD` | Override agent-hook Stop threshold |
 | `ROBOREV_AGENT_HOOK_COMMIT_THRESHOLD` | Override agent-hook commit threshold |
 | `ROBOREV_AGENT_HOOK_FAILED_REVIEW_THRESHOLD` | Override agent-hook failed-review threshold |
+| `ROBOREV_DROID_HOOK_TURN_THRESHOLD` | Override droid-hook Stop threshold |
+| `ROBOREV_DROID_HOOK_COMMIT_THRESHOLD` | Override droid-hook commit threshold |
+| `ROBOREV_DROID_HOOK_FAILED_REVIEW_THRESHOLD` | Override droid-hook failed-review threshold |
 | `NO_COLOR` | Set to any value to disable all color output ([no-color.org](https://no-color.org)) |
 
 ## Supported Agents
@@ -384,6 +391,7 @@ Full documentation available at **[roborev.io](https://roborev.io)**:
 - [Code Analysis and Assisted Refactoring](https://roborev.io/guides/assisted-refactoring/)
 - [Hooks](https://roborev.io/guides/hooks/)
 - [Agent Hook](docs/agent-hook.md)
+- [Droid Hook](docs/droid-hook.md)
 - [Agent Skills](https://roborev.io/guides/agent-skills/)
 - [PostgreSQL Sync](https://roborev.io/guides/postgres-sync/)
 

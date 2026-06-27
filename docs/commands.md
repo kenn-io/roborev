@@ -602,6 +602,22 @@ roborev agent-hook daemon start         # start | status | stop | restart
 
 `roborev agent-hook` is an opt-in Codex and Claude Code integration that prompts the agent to run `$roborev-fix` when review work piles up. See [Agent Hook](/agent-hook/).
 
+```bash
+roborev droid-hook install             # Install Factory Droid hook entries (user scope)
+roborev droid-hook install --scope project --dry-run  # Preview project-scope hooks
+roborev droid-hook install --binary ~/.local/bin/roborev
+roborev droid-hook dump --scope user   # Print hook config JSON (declarative setups)
+roborev droid-hook run                 # Read a hook payload from stdin (Droid calls this)
+roborev droid-hook status              # Tracked session counters as JSON (shared daemon)
+roborev droid-hook reset <session-id>  # Reset one session (or --all)
+```
+
+`roborev droid-hook` is the Factory Droid counterpart to `agent-hook`: it prompts
+Droid to run `/roborev-fix` when review work piles up, sharing the same local
+state daemon. Use `--scope user` (default, `~/.factory/hooks.json`) or
+`--scope project` (`.factory/hooks.json`, commit to share). See
+[Droid Hook](/droid-hook/).
+
 ## Checking Agents
 
 ```bash

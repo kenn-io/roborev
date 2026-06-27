@@ -108,6 +108,14 @@ func TestDroidHookCmdHasInstallAndDumpSubcommands(t *testing.T) {
 	}
 }
 
+func TestDroidHookCmdHasStatusAndResetSubcommands(t *testing.T) {
+	for _, name := range []string{"status", "reset"} {
+		sub, _, err := droidHookCmd().Find([]string{name})
+		require.NoError(t, err)
+		assert.Equal(t, name, sub.Name())
+	}
+}
+
 func TestDroidHookInstallCmdFlags(t *testing.T) {
 	cmd := droidHookInstallCmd()
 	for _, flag := range []string{"command", "binary", "config", "scope", "timeout", "dry-run"} {
