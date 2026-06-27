@@ -251,6 +251,7 @@ func agentsWithRequiredQuickstartSkills(statuses []skills.AgentStatus) []string 
 	labels := map[skills.Agent]string{
 		skills.AgentClaude: "Claude Code",
 		skills.AgentCodex:  "Codex",
+		skills.AgentDroid:  "Factory Droid",
 	}
 	var installedFor []string
 	for _, status := range statuses {

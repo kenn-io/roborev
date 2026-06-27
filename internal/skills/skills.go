@@ -1,5 +1,5 @@
-// Package skills provides embedded skill files for AI agents (Claude Code, Codex)
-// and installation utilities.
+// Package skills provides embedded skill files for AI agents (Claude Code, Codex,
+// Factory Droid) and installation utilities.
 package skills
 
 import (
@@ -21,12 +21,16 @@ var claudeSkills embed.FS
 //go:embed codex/*/SKILL.md
 var codexSkills embed.FS
 
+//go:embed droid/*/SKILL.md
+var droidSkills embed.FS
+
 // Agent represents a supported AI agent
 type Agent string
 
 const (
 	AgentClaude Agent = "claude"
 	AgentCodex  Agent = "codex"
+	AgentDroid  Agent = "droid"
 )
 
 type agentSpec struct {
@@ -46,6 +50,7 @@ type embeddedSkill struct {
 var supportedAgents = []agentSpec{
 	{agent: AgentClaude, configDirName: ".claude", embedFS: claudeSkills, embedDir: "claude"},
 	{agent: AgentCodex, configDirName: ".codex", embedFS: codexSkills, embedDir: "codex"},
+	{agent: AgentDroid, configDirName: ".factory", embedFS: droidSkills, embedDir: "droid"},
 }
 
 // InstallResult contains the result of a skill installation
