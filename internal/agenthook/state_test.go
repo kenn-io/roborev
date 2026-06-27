@@ -386,6 +386,63 @@ func TestRecordPostToolUseFailedReviewPromptUsesNewBranchLineageKey(t *testing.T
 	assert.Equal("failed_reviews", featureResp.TriggeredBy)
 }
 
+func TestRecordToolUseAcceptsDroidExecuteForCommitTracking(t *testing.T) {
+	assert := assert.New(t)
+	repo := testutil.NewGitRepo(t)
+	initial := repo.CommitFile("main.go", "package main\n", "initial")
+	store := &StateStore{path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+
+	record := func(eventName, command string) Response {
+		resp, err := store.Record(Request{
+			Event: Input{
+				SessionID:     "session-1",
+				CWD:           repo.Path(),
+				HookEventName: eventName,
+				ToolName:      "Execute",
+				ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"` + command + `"`)},
+			},
+			CommitThreshold: 1,
+		})
+		require.NoError(t, err)
+		return resp
+	}
+
+	preResp := record("PreToolUse", "git commit -m second")
+	branchKey := repoHeadKey(repo.Path(), "main")
+	assert.False(preResp.Skipped)
+	assert.Equal(initial, store.sessions["session-1"].RepoHeads[branchKey])
+
+	next := repo.CommitFile("second.go", "package main\n", "second")
+	postResp := record("PostToolUse", "git commit -m second")
+	assert.False(postResp.Skipped)
+	assert.Equal(1, postResp.CommitCount)
+	assert.Equal(next, store.sessions["session-1"].RepoHeads[branchKey])
+	assert.Equal([]string{next}, store.sessions["session-1"].CommitSHAsSincePrompt[branchKey])
+}
+
+func TestRecordToolUseSkipsNonShellToolNames(t *testing.T) {
+	assert := assert.New(t)
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("main.go", "package main\n", "initial")
+	store := &StateStore{path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+
+	for _, eventName := range []string{"PreToolUse", "PostToolUse"} {
+		resp, err := store.Record(Request{
+			Event: Input{
+				SessionID:     "session-1",
+				CWD:           repo.Path(),
+				HookEventName: eventName,
+				ToolName:      "Read",
+				ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"git commit -m ignored"`)},
+			},
+			CommitThreshold: 1,
+		})
+		require.NoError(t, err)
+		assert.True(resp.Skipped)
+	}
+	assert.Empty(store.sessions)
+}
+
 func TestRecordStopFailedReviewPromptUsesNewDetachedLineageKey(t *testing.T) {
 	assert := assert.New(t)
 	repo := testutil.NewGitRepo(t)

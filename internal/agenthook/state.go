@@ -207,7 +207,7 @@ func (s *StateStore) recordStop(req Request) (Response, error) {
 }
 
 func (s *StateStore) recordPreToolUse(req Request) (Response, error) {
-	if req.Event.ToolName != "" && req.Event.ToolName != "Bash" {
+	if !isShellToolName(req.Event.ToolName) {
 		return Response{
 			SessionID:             req.Event.SessionID,
 			CommitThreshold:       req.CommitThreshold,
@@ -258,7 +258,7 @@ func (s *StateStore) recordPreToolUse(req Request) (Response, error) {
 }
 
 func (s *StateStore) recordPostToolUse(req Request) (Response, error) {
-	if req.Event.ToolName != "" && req.Event.ToolName != "Bash" {
+	if !isShellToolName(req.Event.ToolName) {
 		return Response{
 			SessionID:             req.Event.SessionID,
 			CommitThreshold:       req.CommitThreshold,
@@ -420,6 +420,10 @@ func (s *StateStore) recordPostToolUse(req Request) (Response, error) {
 		resp.Reason = buildCommitReason(req, triggeringCommitCount, scope.WorktreeRoot)
 	}
 	return resp, nil
+}
+
+func isShellToolName(name string) bool {
+	return name == "" || name == "Bash" || name == "Execute"
 }
 
 func hasActionableFailedReviews(count int, ok bool) bool {
