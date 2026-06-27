@@ -307,6 +307,21 @@ Base keys use the pattern `{workflow}_agent` and `{workflow}_model` (e.g. `revie
 The fallback hierarchy for each workflow is:
 - **CLI flag** > **repo `{workflow}_agent_{level}`** > **repo `{workflow}_agent`** > **repo `agent`** > **global `{workflow}_agent_{level}`** > **global `{workflow}_agent`** > **global `default_agent`** > `codex`
 
+#### Per-type `[analyze.<type>]` override
+
+Some review types have no dedicated `{type}_agent` / `{type}_model` keys. Those are pinned through a generic per-type block keyed by the type name, which sets `agent` and `model`. Today this applies to the `lookahead` review type:
+
+```toml
+[analyze.lookahead]
+agent = "claude-code"
+model = "sonnet"
+```
+
+For such a type the fallback hierarchy is:
+- **CLI flag** > **repo `[analyze.<type>]`** > **repo `agent`** > **global `[analyze.<type>]`** > **global `default_agent`** > `codex` (model follows the same chain, ending at the agent's own default)
+
+This block is consulted **only** for review types that lack dedicated fields. Types that have them — `review`, `refine`, `fix`, `security`, `design` — ignore `[analyze.<type>]` when running reviews and use their `{type}_agent` / `{type}_model` keys instead. So an `[analyze.security]` table written for `roborev analyze security` never changes `roborev review --type security`. Reasoning is unaffected by this block for reviews; it follows `review_reasoning` (the block's `reasoning` field applies only to `roborev analyze <type>` runs).
+
 ### Review Panels
 
 Use `[review]` to configure subagent review panels. A panel fans one daemon review target out to named reviewers and stores one synthesis parent review:
