@@ -75,6 +75,13 @@ func TestUpdaterCheckForUpdateSkipsNetworkWithFreshCache(t *testing.T) {
 	assert.Equal(t, 0, requests)
 }
 
+func TestNewUpdaterDefaultClientDoesNotSetWholeRequestTimeout(t *testing.T) {
+	updater := NewUpdater(Deps{})
+
+	require.NotNil(t, updater.deps.Client)
+	assert.Zero(t, updater.deps.Client.Timeout)
+}
+
 func TestUpdaterCheckForUpdateUsesKitConventionalReleaseDiscovery(t *testing.T) {
 	const releaseTag = "v1.3.0"
 	const assetName = "roborev_1.3.0_windows_amd64.zip"
