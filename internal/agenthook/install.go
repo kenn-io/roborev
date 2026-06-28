@@ -696,15 +696,21 @@ func DefaultClaudeSettingsPath() string {
 }
 
 // DefaultDroidHooksPath returns the user-scoped Factory Droid hooks.json path.
-// Unsupported scopes return an empty path.
+// Unsupported scopes return an empty path. HOME is checked first so tests and
+// POSIX-style environments work on Windows, where os.UserHomeDir returns
+// USERPROFILE instead.
 func DefaultDroidHooksPath(scope string) string {
 	scope = strings.ToLower(strings.TrimSpace(scope))
 	if scope != "" && scope != "user" {
 		return ""
 	}
-	home, err := os.UserHomeDir()
-	if err != nil || home == "" {
-		return ""
+	home := os.Getenv("HOME")
+	if home == "" {
+		var err error
+		home, err = os.UserHomeDir()
+		if err != nil || home == "" {
+			return ""
+		}
 	}
 	return filepath.Join(home, ".factory", "hooks.json")
 }
