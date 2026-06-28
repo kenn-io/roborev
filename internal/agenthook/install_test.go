@@ -352,6 +352,41 @@ func TestRunDumpDroidRejectsProjectConfigPath(t *testing.T) {
 	assert.ErrorContains(t, err, "project-scoped Factory Droid hook config is not supported")
 }
 
+func TestRunInstallDroidAllowsUserScopeWhenHomeIsCWD(t *testing.T) {
+	wd, err := os.Getwd()
+	require.NoError(t, err)
+	t.Setenv("HOME", wd)
+
+	var out bytes.Buffer
+	err = RunInstall(InstallOptions{
+		Agent:      "droid",
+		Command:    "/tmp/roborev agent-hook run --agent droid",
+		ConfigPath: filepath.Join(wd, ".factory", "hooks.json"),
+		Scope:      "user",
+		Timeout:    10 * time.Second,
+		DryRun:     true,
+	}, &out)
+	require.NoError(t, err)
+	assert.Contains(t, out.String(), "would update Factory Droid agent hooks")
+}
+
+func TestRunDumpDroidAllowsUserScopeWhenHomeIsCWD(t *testing.T) {
+	wd, err := os.Getwd()
+	require.NoError(t, err)
+	t.Setenv("HOME", wd)
+
+	var out bytes.Buffer
+	err = RunDump(DumpOptions{
+		Agent:      "droid",
+		Command:    "/tmp/roborev agent-hook run --agent droid",
+		ConfigPath: filepath.Join(wd, ".factory", "hooks.json"),
+		Scope:      "user",
+		Timeout:    10 * time.Second,
+	}, &out)
+	require.NoError(t, err)
+	assert.Contains(t, out.String(), "agent-hook run --agent droid")
+}
+
 func TestDefaultDroidHooksPath(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)

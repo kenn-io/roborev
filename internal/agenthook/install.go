@@ -709,10 +709,17 @@ func DefaultDroidHooksPath(scope string) string {
 }
 
 func validateDroidHooksPath(path string) error {
+	if isUserDroidHooksPath(path) {
+		return nil
+	}
 	if isProjectDroidHooksPath(path) {
 		return fmt.Errorf("project-scoped Factory Droid hook config is not supported; use the user-scoped Factory hooks path instead")
 	}
 	return nil
+}
+
+func isUserDroidHooksPath(path string) bool {
+	return sameCleanAbsPath(path, DefaultDroidHooksPath("user"))
 }
 
 func isProjectDroidHooksPath(path string) bool {
@@ -736,7 +743,21 @@ func isProjectDroidHooksPath(path string) bool {
 	if err != nil {
 		return false
 	}
-	return filepath.Clean(clean) == filepath.Clean(projectAbs)
+	return sameCleanAbsPath(clean, projectAbs)
+}
+
+func sameCleanAbsPath(a, b string) bool {
+	a = strings.TrimSpace(a)
+	b = strings.TrimSpace(b)
+	if a == "" || b == "" {
+		return false
+	}
+	aAbs, errA := filepath.Abs(filepath.Clean(a))
+	bAbs, errB := filepath.Abs(filepath.Clean(b))
+	if errA == nil && errB == nil {
+		return filepath.Clean(aAbs) == filepath.Clean(bAbs)
+	}
+	return filepath.Clean(a) == filepath.Clean(b)
 }
 
 func normalizeDroidScope(scope string) (string, error) {
