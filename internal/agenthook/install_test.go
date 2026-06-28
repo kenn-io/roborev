@@ -326,6 +326,32 @@ func TestRunDumpDroidRejectsProjectScope(t *testing.T) {
 	assert.ErrorContains(t, err, "project scope is not supported for Factory Droid agent hooks")
 }
 
+func TestRunInstallDroidRejectsProjectConfigPath(t *testing.T) {
+	var out bytes.Buffer
+	err := RunInstall(InstallOptions{
+		Agent:      "droid",
+		Command:    "/tmp/roborev agent-hook run --agent droid",
+		ConfigPath: filepath.Join(".factory", "hooks.json"),
+		Scope:      "user",
+		Timeout:    10 * time.Second,
+	}, &out)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "project-scoped Factory Droid hook config is not supported")
+}
+
+func TestRunDumpDroidRejectsProjectConfigPath(t *testing.T) {
+	var out bytes.Buffer
+	err := RunDump(DumpOptions{
+		Agent:      "droid",
+		Command:    "/tmp/roborev agent-hook run --agent droid",
+		ConfigPath: filepath.Join(".factory", "hooks.json"),
+		Scope:      "user",
+		Timeout:    10 * time.Second,
+	}, &out)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "project-scoped Factory Droid hook config is not supported")
+}
+
 func TestDefaultDroidHooksPath(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)

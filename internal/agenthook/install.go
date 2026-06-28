@@ -113,6 +113,9 @@ func RunInstall(opts InstallOptions, stdout io.Writer) error {
 		if path == "" {
 			return fmt.Errorf("could not resolve Factory Droid hooks path for scope %q", scope)
 		}
+		if err := validateDroidHooksPath(path); err != nil {
+			return err
+		}
 		changed, err := InstallSpecs(path, droidSpecs(command, opts.Timeout), droidAgentHookRunner, opts.DryRun)
 		if err != nil {
 			return err
@@ -156,6 +159,9 @@ func RunDump(opts DumpOptions, stdout io.Writer) error {
 		}
 		if path == "" {
 			return fmt.Errorf("could not resolve Factory Droid hooks path for scope %q", scope)
+		}
+		if err := validateDroidHooksPath(path); err != nil {
+			return err
 		}
 		specs = droidSpecs(command, opts.Timeout)
 		runner = droidAgentHookRunner
@@ -700,6 +706,37 @@ func DefaultDroidHooksPath(scope string) string {
 		return ""
 	}
 	return filepath.Join(home, ".factory", "hooks.json")
+}
+
+func validateDroidHooksPath(path string) error {
+	if isProjectDroidHooksPath(path) {
+		return fmt.Errorf("project-scoped Factory Droid hook config is not supported; use the user-scoped Factory hooks path instead")
+	}
+	return nil
+}
+
+func isProjectDroidHooksPath(path string) bool {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return false
+	}
+	clean := filepath.Clean(path)
+	projectRel := filepath.Join(".factory", "hooks.json")
+	if clean == projectRel {
+		return true
+	}
+	if !filepath.IsAbs(clean) {
+		return false
+	}
+	wd, err := os.Getwd()
+	if err != nil || wd == "" {
+		return false
+	}
+	projectAbs, err := filepath.Abs(filepath.Join(wd, projectRel))
+	if err != nil {
+		return false
+	}
+	return filepath.Clean(clean) == filepath.Clean(projectAbs)
 }
 
 func normalizeDroidScope(scope string) (string, error) {
