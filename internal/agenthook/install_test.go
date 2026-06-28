@@ -241,33 +241,53 @@ func TestRunInstallCodexMigratesStaleHookCommandWithRunFlags(t *testing.T) {
 }
 
 func TestRunInstallDroidMigratesStaleHookCommandWithRunFlags(t *testing.T) {
-	assert := assert.New(t)
-	path := filepath.Join(t.TempDir(), "hooks.json")
-	oldCommand := "/old/versioned/1.2.3/bin/roborev agent-hook run --agent droid --config /tmp/roborev.toml"
-	newCommand := "/stable/bin/roborev agent-hook run --agent droid"
-
-	writeJSONFile(t, path, map[string]any{
-		"hooks": map[string]any{
-			"Stop": []any{map[string]any{
-				"hooks": []any{commandHookJSON(oldCommand, 10)},
-			}},
+	cases := []struct {
+		name       string
+		oldCommand string
+	}{
+		{
+			name:       "agent flag before config",
+			oldCommand: "/old/versioned/1.2.3/bin/roborev agent-hook run --agent droid --config /tmp/roborev.toml",
 		},
-	})
+		{
+			name:       "agent flag after config",
+			oldCommand: "/old/versioned/1.2.3/bin/roborev agent-hook run --config /tmp/roborev.toml --agent droid",
+		},
+		{
+			name:       "agent equals form",
+			oldCommand: "/old/versioned/1.2.3/bin/roborev agent-hook run --agent=droid",
+		},
+	}
+	for _, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			path := filepath.Join(t.TempDir(), "hooks.json")
+			newCommand := "/stable/bin/roborev agent-hook run --agent droid"
 
-	var out bytes.Buffer
-	err := RunInstall(InstallOptions{
-		Agent:      "droid",
-		Command:    newCommand,
-		ConfigPath: path,
-		Scope:      "user",
-		Timeout:    10 * time.Second,
-	}, &out)
-	require.NoError(t, err)
+			writeJSONFile(t, path, map[string]any{
+				"hooks": map[string]any{
+					"Stop": []any{map[string]any{
+						"hooks": []any{commandHookJSON(tc.oldCommand, 10)},
+					}},
+				},
+			})
 
-	root := readJSONFile(t, path)
-	assertCommandCount(t, root, "Stop", newCommand, 1)
-	assertCommandCount(t, root, "Stop", oldCommand, 0)
-	assert.Contains(out.String(), "installed Factory Droid agent hooks")
+			var out bytes.Buffer
+			err := RunInstall(InstallOptions{
+				Agent:      "droid",
+				Command:    newCommand,
+				ConfigPath: path,
+				Scope:      "user",
+				Timeout:    10 * time.Second,
+			}, &out)
+			require.NoError(t, err)
+
+			root := readJSONFile(t, path)
+			assertCommandCount(t, root, "Stop", newCommand, 1)
+			assertCommandCount(t, root, "Stop", tc.oldCommand, 0)
+			assert.Contains(out.String(), "installed Factory Droid agent hooks")
+		})
+	}
 }
 
 func TestRunInstallDroidRejectsUnknownScope(t *testing.T) {

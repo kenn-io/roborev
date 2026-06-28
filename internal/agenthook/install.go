@@ -520,23 +520,47 @@ func commandHookCurrent(hook map[string]any, spec InstallSpec) bool {
 // install can replace command hooks that carry a stale or versioned roborev
 // path. runner is the subcommand suffix to match.
 func isRoborevHookCommand(command, runner string) bool {
-	idx := strings.Index(command, runner)
-	if idx == -1 || !strings.Contains(command, "roborev") {
+	if !strings.Contains(command, "roborev") {
 		return false
+	}
+
+	baseRunner := runner
+	if runner == droidAgentHookRunner {
+		baseRunner = agentHookRunner
+	}
+
+	suffix, ok := hookCommandRunnerSuffix(command, baseRunner)
+	if !ok {
+		return false
+	}
+
+	switch runner {
+	case agentHookRunner:
+		return !selectsDroidAgent(suffix)
+	case droidAgentHookRunner:
+		return selectsDroidAgent(suffix)
+	default:
+		return true
+	}
+}
+
+func hookCommandRunnerSuffix(command, runner string) (string, bool) {
+	idx := strings.Index(command, runner)
+	if idx == -1 {
+		return "", false
 	}
 	after := idx + len(runner)
 	if after == len(command) {
-		return true
+		return "", true
 	}
 	next := command[after : after+1]
 	if strings.ContainsAny(next, "\"'") {
-		return true
+		return "", true
 	}
 	if !strings.ContainsAny(next, " \t\r\n") {
-		return false
+		return "", false
 	}
-	suffix := strings.TrimSpace(command[after:])
-	return runner != agentHookRunner || !selectsDroidAgent(suffix)
+	return strings.TrimSpace(command[after:]), true
 }
 
 func selectsDroidAgent(suffix string) bool {
