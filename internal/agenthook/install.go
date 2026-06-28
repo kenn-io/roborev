@@ -24,6 +24,12 @@ const agentHookRunner = "agent-hook run"
 // Droid install never clobbers plain Codex/Claude hook entries and vice versa.
 const droidAgentHookRunner = "agent-hook run --agent droid"
 
+// legacyDroidHookRunner is the unmerged Factory Droid runner used before Droid
+// was folded into the shared agent-hook command surface. Keep it replaceable so
+// reinstalling from this branch removes stale hook entries that would call a
+// deleted command.
+const legacyDroidHookRunner = "droid-hook run"
+
 // ExecuteMatcher is the Factory Droid tool name for shell commands. PreToolUse
 // and PostToolUse hooks match it to track turns and commits, mirroring the
 // Codex/Claude Bash matcher.
@@ -499,7 +505,15 @@ func replaceableCommandHook(hook map[string]any, spec InstallSpec, runner string
 		return false
 	}
 	cmd, _ := hook["command"].(string)
-	return cmd == spec.Command || isRoborevHookCommand(cmd, runner)
+	if cmd == spec.Command {
+		return true
+	}
+	for _, candidate := range replaceableRunners(runner) {
+		if isRoborevHookCommand(cmd, candidate) {
+			return true
+		}
+	}
+	return false
 }
 
 // commandHookCurrent reports whether hook already matches spec exactly, so it
@@ -520,7 +534,19 @@ func commandHookCurrent(hook map[string]any, spec InstallSpec) bool {
 // install can replace command hooks that carry a stale or versioned roborev
 // path. runner is the subcommand suffix to match.
 func isRoborevHookCommand(command, runner string) bool {
-	return strings.Contains(command, runner) && strings.Contains(command, "roborev")
+	idx := strings.Index(command, runner)
+	if idx == -1 || !strings.Contains(command, "roborev") {
+		return false
+	}
+	after := idx + len(runner)
+	return after == len(command) || strings.ContainsAny(command[after:after+1], "\"'")
+}
+
+func replaceableRunners(runner string) []string {
+	if runner == droidAgentHookRunner {
+		return []string{droidAgentHookRunner, legacyDroidHookRunner}
+	}
+	return []string{runner}
 }
 
 func findEntry(entries []any, matcher string) (int, error) {

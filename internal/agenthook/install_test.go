@@ -182,6 +182,77 @@ func TestRunInstallDroidLeavesPlainAgentHookEntriesUntouched(t *testing.T) {
 	assert.Contains(out.String(), "installed Factory Droid agent hooks")
 }
 
+func TestRunInstallCodexLeavesDroidAgentHookEntriesUntouched(t *testing.T) {
+	assert := assert.New(t)
+	path := filepath.Join(t.TempDir(), "hooks.json")
+	droidCommand := "/stable/bin/roborev agent-hook run --agent droid"
+	codexCommand := "/stable/bin/roborev agent-hook run"
+
+	writeJSONFile(t, path, map[string]any{
+		"hooks": map[string]any{
+			"Stop": []any{map[string]any{
+				"hooks": []any{commandHookJSON(droidCommand, 10)},
+			}},
+		},
+	})
+
+	var out bytes.Buffer
+	err := RunInstall(InstallOptions{
+		Agent:           "codex",
+		Command:         codexCommand,
+		CodexConfigPath: path,
+		Timeout:         10 * time.Second,
+	}, &out)
+	require.NoError(t, err)
+
+	root := readJSONFile(t, path)
+	assertCommandCount(t, root, "Stop", droidCommand, 1)
+	assertCommandCount(t, root, "Stop", codexCommand, 1)
+	assert.Contains(out.String(), "installed Codex agent hooks")
+}
+
+func TestRunInstallDroidMigratesLegacyDroidHookCommand(t *testing.T) {
+	assert := assert.New(t)
+	path := filepath.Join(t.TempDir(), "hooks.json")
+	oldCommand := "/old/versioned/1.2.3/bin/roborev droid-hook run"
+	newCommand := "/stable/bin/roborev agent-hook run --agent droid"
+
+	writeJSONFile(t, path, map[string]any{
+		"hooks": map[string]any{
+			"PreToolUse": []any{map[string]any{
+				"matcher": ExecuteMatcher,
+				"hooks":   []any{commandHookJSON(oldCommand, 10)},
+			}},
+			"PostToolUse": []any{map[string]any{
+				"matcher": ExecuteMatcher,
+				"hooks":   []any{commandHookJSON(oldCommand, 10)},
+			}},
+			"Stop": []any{map[string]any{
+				"hooks": []any{commandHookJSON(oldCommand, 10)},
+			}},
+		},
+	})
+
+	var out bytes.Buffer
+	err := RunInstall(InstallOptions{
+		Agent:      "droid",
+		Command:    newCommand,
+		ConfigPath: path,
+		Scope:      "user",
+		Timeout:    10 * time.Second,
+	}, &out)
+	require.NoError(t, err)
+
+	root := readJSONFile(t, path)
+	assertCommandCount(t, root, "PreToolUse", newCommand, 1)
+	assertCommandCount(t, root, "PreToolUse", oldCommand, 0)
+	assertCommandCount(t, root, "PostToolUse", newCommand, 1)
+	assertCommandCount(t, root, "PostToolUse", oldCommand, 0)
+	assertCommandCount(t, root, "Stop", newCommand, 1)
+	assertCommandCount(t, root, "Stop", oldCommand, 0)
+	assert.Contains(out.String(), "installed Factory Droid agent hooks")
+}
+
 func TestRunInstallDroidRejectsUnknownScope(t *testing.T) {
 	var out bytes.Buffer
 	err := RunInstall(InstallOptions{
