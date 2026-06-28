@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"unicode/utf8"
 
 	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
@@ -960,6 +961,101 @@ func TestIntegration_BatchUpsertJobs(t *testing.T) {
 		assert.Equal(t, "openai", found.Provider)
 		assert.Equal(t, "requested-model", found.RequestedModel)
 		assert.Equal(t, "requested-provider", found.RequestedProvider)
+	})
+
+	t.Run("invalid utf8 text fields are sanitized", func(t *testing.T) {
+		jobUUID := uuid.NewString()
+		machineID := uuid.NewString()
+		commitSHA := "batch-invalid-utf8-sha-" + jobUUID
+		commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{
+			RepoID: repoID, SHA: commitSHA,
+		})
+		invalidText := "ReportLab PDF marker: " + string([]byte{0x93}) + " after header"
+		require.False(t, utf8.ValidString(invalidText))
+		diffContent := "diff --git a/demo.pdf b/demo.pdf\n" + invalidText
+		jobs := []JobWithPgIDs{{
+			Job: SyncableJob{
+				UUID:            jobUUID,
+				RepoIdentity:    "https://github.com/test/batch-jobs-test.git",
+				CommitSHA:       commitSHA,
+				GitRef:          commitSHA,
+				Agent:           "test",
+				Status:          "failed",
+				Prompt:          invalidText,
+				DiffContent:     &diffContent,
+				Error:           invalidText,
+				SourceMachineID: machineID,
+				EnqueuedAt:      time.Now(),
+			},
+			PgRepoID:   repoID,
+			PgCommitID: &commitID,
+		}}
+
+		success, err := pool.BatchUpsertJobs(ctx, jobs)
+		require.NoError(t, err)
+		assert.Equal(t, 1, countSuccesses(success))
+
+		var storedPrompt, storedDiff, storedError string
+		err = pool.pool.QueryRow(ctx,
+			`SELECT prompt, diff_content, error FROM review_jobs WHERE uuid = $1`, jobUUID,
+		).Scan(&storedPrompt, &storedDiff, &storedError)
+		require.NoError(t, err)
+		assert.True(t, utf8.ValidString(storedPrompt))
+		assert.True(t, utf8.ValidString(storedDiff))
+		assert.True(t, utf8.ValidString(storedError))
+		assert.Contains(t, storedPrompt, "\uFFFD")
+		assert.Contains(t, storedDiff, "\uFFFD")
+		assert.Contains(t, storedError, "\uFFFD")
+	})
+
+	t.Run("valid sibling persists when one job row fails", func(t *testing.T) {
+		validJobUUID := uuid.NewString()
+		invalidJobUUID := uuid.NewString()
+		machineID := uuid.NewString()
+		commitSHA := "batch-partial-job-sha-" + validJobUUID
+		commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{
+			RepoID: repoID, SHA: commitSHA,
+		})
+		jobs := []JobWithPgIDs{
+			{
+				Job: SyncableJob{
+					UUID:            validJobUUID,
+					RepoIdentity:    "https://github.com/test/batch-jobs-test.git",
+					CommitSHA:       commitSHA,
+					GitRef:          commitSHA,
+					Agent:           "test",
+					Status:          "done",
+					SourceMachineID: machineID,
+					EnqueuedAt:      time.Now(),
+				},
+				PgRepoID:   repoID,
+				PgCommitID: &commitID,
+			},
+			{
+				Job: SyncableJob{
+					UUID:            invalidJobUUID,
+					RepoIdentity:    "https://github.com/test/batch-jobs-test.git",
+					GitRef:          "invalid-repo",
+					Agent:           "test",
+					Status:          "done",
+					SourceMachineID: machineID,
+					EnqueuedAt:      time.Now(),
+				},
+				PgRepoID: -1,
+			},
+		}
+
+		success, err := pool.BatchUpsertJobs(ctx, jobs)
+
+		require.Error(t, err)
+		assert.Len(t, success, 2)
+		assert.True(t, success[0])
+		assert.False(t, success[1])
+
+		var count int
+		err = pool.pool.QueryRow(ctx, `SELECT COUNT(*) FROM review_jobs WHERE uuid = $1`, validJobUUID).Scan(&count)
+		require.NoError(t, err)
+		assert.Equal(t, 1, count)
 	})
 }
 

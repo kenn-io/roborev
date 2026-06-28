@@ -1051,6 +1051,18 @@ func nullString(s string) any {
 	return s
 }
 
+func sanitizePostgresText(s string) string {
+	return strings.ToValidUTF8(s, "\uFFFD")
+}
+
+func sanitizePostgresTextPointer(s *string) *string {
+	if s == nil {
+		return nil
+	}
+	sanitized := sanitizePostgresText(*s)
+	return &sanitized
+}
+
 // defaultStr returns s if non-empty, otherwise returns the default.
 // Used for NOT NULL columns that should never be nil.
 func defaultStr(s, def string) string {
@@ -1152,14 +1164,80 @@ func (p *PgPool) BatchUpsertJobs(ctx context.Context, jobs []JobWithPgIDs) ([]bo
 		return nil, nil
 	}
 
+	success, err := p.batchUpsertJobs(ctx, jobs)
+	if err == nil || len(jobs) == 1 {
+		return success, err
+	}
+	return p.upsertJobsIndividually(ctx, jobs)
+}
+
+func (p *PgPool) batchUpsertJobs(ctx context.Context, jobs []JobWithPgIDs) ([]bool, error) {
 	batch := &pgx.Batch{}
 	for _, jw := range jobs {
-		j := jw.Job
-		dirtyFilesJSON, err := encodeDirtyFiles(j.DirtyFiles)
-		if err != nil {
+		if err := queueJobUpsert(batch, jw); err != nil {
 			return nil, err
 		}
-		batch.Queue(`
+	}
+
+	br := p.pool.SendBatch(ctx, batch)
+
+	success := make([]bool, len(jobs))
+	var firstErr error
+	for i := range jobs {
+		_, err := br.Exec()
+		if err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		success[i] = true
+	}
+	if err := br.Close(); err != nil && firstErr == nil {
+		firstErr = err
+	}
+
+	return success, firstErr
+}
+
+func (p *PgPool) upsertJobsIndividually(ctx context.Context, jobs []JobWithPgIDs) ([]bool, error) {
+	success := make([]bool, len(jobs))
+	var firstErr error
+	for i, jw := range jobs {
+		batch := &pgx.Batch{}
+		if err := queueJobUpsert(batch, jw); err != nil {
+			if firstErr == nil {
+				firstErr = err
+			}
+			continue
+		}
+		br := p.pool.SendBatch(ctx, batch)
+		_, execErr := br.Exec()
+		closeErr := br.Close()
+		if execErr != nil {
+			if firstErr == nil {
+				firstErr = execErr
+			}
+			continue
+		}
+		if closeErr != nil {
+			if firstErr == nil {
+				firstErr = closeErr
+			}
+			continue
+		}
+		success[i] = true
+	}
+	return success, firstErr
+}
+
+func queueJobUpsert(batch *pgx.Batch, jw JobWithPgIDs) error {
+	j := jw.Job
+	dirtyFilesJSON, err := encodeDirtyFiles(j.DirtyFiles)
+	if err != nil {
+		return err
+	}
+	batch.Queue(`
 			INSERT INTO review_jobs (
 				uuid, repo_id, commit_id, git_ref, session_id, agent, model, provider, requested_model, requested_provider, reasoning, job_type, review_type, patch_id, status, agentic,
 				enqueued_at, started_at, finished_at, prompt, diff_content, dirty_files, error, token_usage,
@@ -1195,27 +1273,9 @@ func (p *PgPool) BatchUpsertJobs(ctx context.Context, jobs []JobWithPgIDs) ([]bo
 				panel_member_config_json = EXCLUDED.panel_member_config_json,
 				updated_at = clock_timestamp()
 		`, j.UUID, jw.PgRepoID, jw.PgCommitID, j.GitRef, nullString(j.SessionID), j.Agent, nullString(j.Model), nullString(j.Provider), nullString(j.RequestedModel), nullString(j.RequestedProvider), nullString(j.Reasoning),
-			defaultStr(j.JobType, "review"), j.ReviewType, nullString(j.PatchID), j.Status, j.Agentic, j.EnqueuedAt, j.StartedAt, j.FinishedAt,
-			nullString(j.Prompt), j.DiffContent, nullString(dirtyFilesJSON), nullString(j.Error), nullString(j.TokenUsage), nullString(j.WorktreePath), nullString(j.Source), normalizeMinSeverityForWrite(j.MinSeverity),
-			nullString(j.PanelRunUUID), nullString(j.PanelRole), nullString(j.PanelName), nullString(j.PanelMemberName), j.PanelMemberIndex, nullString(j.PanelMemberConfigJSON),
-			j.SourceMachineID, j.BackupAgent, j.BackupModel, j.AgentInvoked)
-	}
-
-	br := p.pool.SendBatch(ctx, batch)
-	defer br.Close()
-
-	success := make([]bool, len(jobs))
-	var firstErr error
-	for i := range jobs {
-		_, err := br.Exec()
-		if err != nil {
-			if firstErr == nil {
-				firstErr = err
-			}
-			continue
-		}
-		success[i] = true
-	}
-
-	return success, firstErr
+		defaultStr(j.JobType, "review"), j.ReviewType, nullString(j.PatchID), j.Status, j.Agentic, j.EnqueuedAt, j.StartedAt, j.FinishedAt,
+		nullString(sanitizePostgresText(j.Prompt)), sanitizePostgresTextPointer(j.DiffContent), nullString(dirtyFilesJSON), nullString(sanitizePostgresText(j.Error)), nullString(j.TokenUsage), nullString(j.WorktreePath), nullString(j.Source), normalizeMinSeverityForWrite(j.MinSeverity),
+		nullString(j.PanelRunUUID), nullString(j.PanelRole), nullString(j.PanelName), nullString(j.PanelMemberName), j.PanelMemberIndex, nullString(j.PanelMemberConfigJSON),
+		j.SourceMachineID, j.BackupAgent, j.BackupModel, j.AgentInvoked)
+	return nil
 }
