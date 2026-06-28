@@ -150,7 +150,7 @@ func agentHookInstallCmd() *cobra.Command {
 	cmd.Flags().StringVar(&opts.ConfigPath, "config", opts.ConfigPath, "hook config path for a single selected agent")
 	cmd.Flags().StringVar(&opts.CodexConfigPath, "codex-config", opts.CodexConfigPath, "Codex hooks.json path")
 	cmd.Flags().StringVar(&opts.ClaudeConfigPath, "claude-config", opts.ClaudeConfigPath, "Claude settings.json path")
-	cmd.Flags().StringVar(&opts.Scope, "scope", opts.Scope, "Factory Droid config scope to update: user or project")
+	cmd.Flags().StringVar(&opts.Scope, "scope", opts.Scope, "Factory Droid config scope to update: user")
 	cmd.Flags().Var(&agentHookSecondsOrDuration{d: &opts.Timeout}, "timeout", "Codex hook timeout (e.g. 10s, 1m, or bare integer seconds)")
 	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", opts.DryRun, "print what would change without writing files")
 	return cmd
@@ -184,7 +184,7 @@ func agentHookDumpCmd() *cobra.Command {
 	cmd.Flags().StringVar(&opts.Agent, "agent", opts.Agent, "agent config to dump: codex, claude, or droid")
 	cmd.Flags().StringVar(&opts.Command, "command", opts.Command, "hook command to install; defaults to this binary plus 'agent-hook run'")
 	cmd.Flags().StringVar(&opts.ConfigPath, "config", opts.ConfigPath, "config path to read and merge into; defaults to the agent's standard path")
-	cmd.Flags().StringVar(&opts.Scope, "scope", opts.Scope, "Factory Droid config scope to dump: user or project")
+	cmd.Flags().StringVar(&opts.Scope, "scope", opts.Scope, "Factory Droid config scope to dump: user")
 	cmd.Flags().Var(&agentHookSecondsOrDuration{d: &opts.Timeout}, "timeout", "Codex hook timeout (e.g. 10s, 1m, or bare integer seconds)")
 	return cmd
 }

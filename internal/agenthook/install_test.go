@@ -299,7 +299,31 @@ func TestRunInstallDroidRejectsUnknownScope(t *testing.T) {
 		Timeout: 10 * time.Second,
 	}, &out)
 	require.Error(t, err)
-	assert.Contains(t, err.Error(), "scope must be user or project")
+	assert.Contains(t, err.Error(), "scope must be user")
+}
+
+func TestRunInstallDroidRejectsProjectScope(t *testing.T) {
+	var out bytes.Buffer
+	err := RunInstall(InstallOptions{
+		Agent:   "droid",
+		Command: "/tmp/roborev agent-hook run --agent droid",
+		Scope:   "project",
+		Timeout: 10 * time.Second,
+	}, &out)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "project scope is not supported for Factory Droid agent hooks")
+}
+
+func TestRunDumpDroidRejectsProjectScope(t *testing.T) {
+	var out bytes.Buffer
+	err := RunDump(DumpOptions{
+		Agent:   "droid",
+		Command: "/tmp/roborev agent-hook run --agent droid",
+		Scope:   "project",
+		Timeout: 10 * time.Second,
+	}, &out)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "project scope is not supported for Factory Droid agent hooks")
 }
 
 func TestDefaultDroidHooksPath(t *testing.T) {
@@ -308,7 +332,7 @@ func TestDefaultDroidHooksPath(t *testing.T) {
 
 	assert.Equal(t, filepath.Join(dir, ".factory", "hooks.json"), DefaultDroidHooksPath("user"))
 	assert.Equal(t, filepath.Join(dir, ".factory", "hooks.json"), DefaultDroidHooksPath(""))
-	assert.Equal(t, ".factory/hooks.json", DefaultDroidHooksPath("project"))
+	assert.Empty(t, DefaultDroidHooksPath("project"))
 }
 
 func TestUpsertCommandHookCollapsesDuplicatesAndKeepsOthers(t *testing.T) {

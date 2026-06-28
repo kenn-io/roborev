@@ -688,12 +688,12 @@ func DefaultClaudeSettingsPath() string {
 	return filepath.Join(home, ".claude", "settings.json")
 }
 
-// DefaultDroidHooksPath returns the Factory Droid hooks.json path for a scope:
-// "~/.factory/hooks.json" for user scope, ".factory/hooks.json"
-// (project-relative) for project scope.
+// DefaultDroidHooksPath returns the user-scoped Factory Droid hooks.json path.
+// Unsupported scopes return an empty path.
 func DefaultDroidHooksPath(scope string) string {
-	if strings.ToLower(scope) == "project" {
-		return ".factory/hooks.json"
+	scope = strings.ToLower(strings.TrimSpace(scope))
+	if scope != "" && scope != "user" {
+		return ""
 	}
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
@@ -707,10 +707,13 @@ func normalizeDroidScope(scope string) (string, error) {
 	if scope == "" {
 		return "user", nil
 	}
-	if scope == "user" || scope == "project" {
+	if scope == "user" {
 		return scope, nil
 	}
-	return "", fmt.Errorf("scope must be user or project")
+	if scope == "project" {
+		return "", fmt.Errorf("project scope is not supported for Factory Droid agent hooks; use user scope because project hooks are executable repo-local configuration")
+	}
+	return "", fmt.Errorf("scope must be user")
 }
 
 func shellQuote(s string) string {

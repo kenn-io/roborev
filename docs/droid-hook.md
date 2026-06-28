@@ -81,9 +81,12 @@ roborev agent-hook install --agent droid
 By default this updates `~/.factory/hooks.json` (the user scope, applied to every
 project), registering `PreToolUse`, `PostToolUse` (both matching the `Execute`
 tool), and `Stop` hooks. Existing hooks are preserved, and repeated installs are
-idempotent. Use `--scope project` to write `.factory/hooks.json` in the current
-project (commit to share with teammates), and `--dry-run` to report what would
-change without writing.
+idempotent. Use `--dry-run` to report what would change without writing.
+
+Project-scoped Factory hooks are intentionally not supported by roborev because
+`.factory/hooks.json` is executable repo-local configuration. Do not commit
+Factory hook commands to a repository; install the Droid hook in your user scope
+instead.
 
 When roborev is installed through a version manager such as mise,
 `agent-hook install --agent droid` resolves the same stable roborev shim used
@@ -102,7 +105,6 @@ place is the wrong shape, print the JSON for your config system to consume:
 
 ```bash
 roborev agent-hook dump --agent droid --scope user
-roborev agent-hook dump --agent droid --scope project
 ```
 
 ## Runtime Model
