@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 
+	gitpkg "go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/githook"
 )
 
@@ -730,6 +731,10 @@ func isProjectDroidHooksPath(path string) bool {
 	clean := filepath.Clean(path)
 	projectRel := filepath.Join(".factory", "hooks.json")
 	if clean == projectRel {
+		return true
+	}
+	if repoRoot, err := gitpkg.GetRepoRoot("."); err == nil && repoRoot != "" &&
+		sameCleanAbsPath(clean, filepath.Join(repoRoot, projectRel)) {
 		return true
 	}
 	if !filepath.IsAbs(clean) {

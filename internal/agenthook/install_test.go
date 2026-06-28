@@ -11,6 +11,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 func TestRunDumpCodexCreatesHookConfig(t *testing.T) {
@@ -387,6 +389,57 @@ func TestRunDumpDroidAllowsUserScopeWhenHomeIsCWD(t *testing.T) {
 	assert.Contains(t, out.String(), "agent-hook run --agent droid")
 }
 
+func TestRunInstallDroidRejectsRepoRootProjectConfigFromSubdir(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	subdir := filepath.Join(repo.Path(), "subdir")
+	require.NoError(t, os.MkdirAll(subdir, 0o755))
+	chdirForTest(t, subdir)
+
+	for _, configPath := range []string{
+		filepath.Join("..", ".factory", "hooks.json"),
+		filepath.Join(repo.Path(), ".factory", "hooks.json"),
+	} {
+		t.Run(configPath, func(t *testing.T) {
+			var out bytes.Buffer
+			err := RunInstall(InstallOptions{
+				Agent:      "droid",
+				Command:    "/tmp/roborev agent-hook run --agent droid",
+				ConfigPath: configPath,
+				Scope:      "user",
+				Timeout:    10 * time.Second,
+				DryRun:     true,
+			}, &out)
+			require.Error(t, err)
+			assert.ErrorContains(t, err, "project-scoped Factory Droid hook config is not supported")
+		})
+	}
+}
+
+func TestRunDumpDroidRejectsRepoRootProjectConfigFromSubdir(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	subdir := filepath.Join(repo.Path(), "subdir")
+	require.NoError(t, os.MkdirAll(subdir, 0o755))
+	chdirForTest(t, subdir)
+
+	for _, configPath := range []string{
+		filepath.Join("..", ".factory", "hooks.json"),
+		filepath.Join(repo.Path(), ".factory", "hooks.json"),
+	} {
+		t.Run(configPath, func(t *testing.T) {
+			var out bytes.Buffer
+			err := RunDump(DumpOptions{
+				Agent:      "droid",
+				Command:    "/tmp/roborev agent-hook run --agent droid",
+				ConfigPath: configPath,
+				Scope:      "user",
+				Timeout:    10 * time.Second,
+			}, &out)
+			require.Error(t, err)
+			assert.ErrorContains(t, err, "project-scoped Factory Droid hook config is not supported")
+		})
+	}
+}
+
 func TestDefaultDroidHooksPath(t *testing.T) {
 	dir := t.TempDir()
 	t.Setenv("HOME", dir)
@@ -522,6 +575,16 @@ func eventEntriesForTest(t *testing.T, root map[string]any, event string) []any 
 	entries, ok := hooks[event].([]any)
 	require.True(t, ok)
 	return entries
+}
+
+func chdirForTest(t *testing.T, dir string) {
+	t.Helper()
+	oldWD, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(dir))
+	t.Cleanup(func() {
+		require.NoError(t, os.Chdir(oldWD))
+	})
 }
 
 func commandHookJSON(command string, timeout int) map[string]any {
