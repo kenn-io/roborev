@@ -44,26 +44,59 @@ discord_webhook_url = "https://discord.com/api/webhooks/..."
 The field is global-only because the CI poller is a global daemon component and
 the request is for a simple notification target. Empty means disabled. The field
 is tagged `sensitive:"true"` so `roborev config list` and related output mask it.
+This uses the existing `MaskValue` behavior for sensitive keys, which reveals
+only the last four characters.
 
-The existing CI section already requires a daemon restart to apply changes, so
-this setting follows that same restart behavior.
+The setting is hot-reloaded with the rest of the CI poller config. The CI
+poller's event handler must read `cfgGetter.Config().CI.DiscordWebhookURL` for
+each failed event instead of capturing the URL at startup.
 
 ## Runtime Architecture
 
-The CI poller starts one Discord notifier when `ci.discord_webhook_url` is set.
-The notifier subscribes to daemon events and listens for `review.failed`.
+The CI poller already subscribes to daemon review lifecycle events for PR
+posting. Extend the existing `handleReviewFailed` path to also attempt Discord
+notification. Do not start a separate notifier goroutine or subscribe a second
+event listener; the existing event loop is the right ownership boundary for
+CI-only behavior and avoids a start/stop lifecycle tied to config reloads.
 
 For each failed event:
 
-1. Load the job with `db.GetJobByID(event.JobID)`.
-2. Ignore missing jobs and non-CI jobs.
-3. Build a concise Discord payload from the event and job metadata.
-4. POST to the configured webhook URL with a short HTTP timeout.
-5. Log delivery failures with the webhook URL redacted.
+1. Read the current webhook URL from `cfgGetter.Config()`. If it is empty, do
+   nothing and do not load the job.
+2. Load the job with `db.GetJobByID(event.JobID)`.
+3. Ignore missing jobs and jobs where `ReviewJob.IsCIReview()` is false.
+4. Apply quota/cooldown dedupe before posting.
+5. Build a concise Discord payload from the event and job metadata.
+6. POST to the configured webhook URL with a short HTTP timeout.
+7. Log delivery failures with the webhook URL redacted.
+
+`db.GetJobByID` is required even though the event has some metadata. The event
+does not carry job source, review type, retry count, or panel fields. Loading
+the job is therefore necessary both to apply `ReviewJob.IsCIReview()` and to
+populate the CI-specific context in the Discord message. This is race-free
+because `FailJob` commits the terminal row before `broadcastFailed` emits the
+event.
 
 This keeps worker failure handling unchanged. The worker remains responsible for
 classifying failures, storing the final error, broadcasting `review.failed`, and
 releasing CI panel synthesis when needed.
+
+## Quota/Cooldown Fan-Out Control
+
+Quota cooldown is the highest-noise failure mode. After an agent enters
+cooldown, every CI job routed to that agent can fail immediately with
+`quota: agent <name> quota cooldown active` until the cooldown expires, unless a
+healthy backup agent handles the job. Without suppression, one underlying quota
+event can produce one Discord message per PR, review type, and panel member.
+
+For `quota/cooldown` failures, the CI poller keeps an in-memory dedupe map keyed
+by canonical agent name. The first quota/cooldown failure for an agent sends a
+Discord message. Further quota/cooldown failures for that same agent are
+suppressed until the dedupe expiry. Use
+`config.ResolveAgentQuotaCooldown(cfg)` as the dedupe duration because it is the
+same daemon-wide cap that bounds the worker's agent cooldown; provider reset
+hints may shorten the worker's actual cooldown, but that exact expiry is not
+available on the failure event. Non-quota failures are not deduped.
 
 ## Message Content
 
@@ -84,12 +117,21 @@ Fields:
 
 Failure classes:
 
-- `quota/cooldown` for errors prefixed with `quota:`, including
+- `quota/cooldown` for errors matching `review.QuotaErrorPrefix`, including
   `agent <name> quota cooldown active`.
-- `provider/session outage` for errors prefixed with the existing outage
-  prefix.
-- `timeout/canceled` for timeout cancellation errors.
+- `provider/session outage` for errors matching `review.OutageErrorPrefix`.
+- `timeout` for prefixless agent timeout errors containing
+  `agent timeout after`.
 - `error` for everything else.
+
+Use the existing `review` package constants and helpers where they apply:
+`review.QuotaErrorPrefix`, `review.OutageErrorPrefix`,
+`review.TimeoutErrorPrefix`, `review.IsQuotaFailure`,
+`review.IsTransientFailure`, `review.IsTimeoutCancellation`, and
+`review.IsGenuineFailure`. The `agent timeout after` check is CI-specific
+because worker member timeouts are stored without `review.TimeoutErrorPrefix`.
+Canceled jobs broadcast `review.canceled`, not `review.failed`, and are not in
+scope for this notification path.
 
 The message should not include `job.RepoPath`, `WorktreePath`, prompt text,
 agent output, command lines, tokens, or full local file paths.
@@ -98,13 +140,17 @@ agent output, command lines, tokens, or full local file paths.
 
 Notification is best-effort:
 
-- Empty webhook URL disables the notifier.
+- Empty webhook URL skips the notification path.
 - Invalid webhook URLs are logged and skipped.
 - HTTP 2xx is success.
 - HTTP non-2xx logs status and a limited response body.
 - Request failures log a redacted URL and sanitized error.
-- A failed notification does not retry inside the notifier; CI poller retries
-  remain governed by the existing CI retry state.
+- A failed notification does not retry inside the notification path. CI poller
+  retries remain governed by the existing CI retry state.
+
+Mirror the existing generic webhook delivery pattern: a five-second HTTP client
+timeout, `redactWebhookURL`, and `redactURLError`. Those helpers already avoid
+logging secret webhook path segments, credentials, query strings, and fragments.
 
 ## Testing
 
@@ -112,12 +158,18 @@ Add focused unit tests:
 
 - Config loads `ci.discord_webhook_url` and treats `ci.discord_webhook_url` as
   sensitive.
+- The webhook URL is read fresh at event time: setting or clearing it through a
+  mutable `ConfigGetter` affects the next `review.failed` handling without
+  restarting the poller.
 - Discord payload builder includes CI failure context and classifies
   quota/cooldown errors.
-- Discord notifier ignores non-CI failed jobs.
-- Discord notifier posts to a test HTTP server for CI failed jobs.
-- Discord notifier redacts webhook URL credentials/query details in logs on
-  HTTP failure.
+- Discord payload builder classifies `agent timeout after ...` as `timeout`.
+- Discord notification path ignores non-CI failed jobs.
+- Discord notification path posts to a test HTTP server for CI failed jobs.
+- Discord notification path dedupes quota/cooldown notifications per canonical
+  agent during the configured agent quota cooldown window.
+- Discord notification path redacts webhook URL credentials/query details in
+  logs on HTTP failure.
 
 Existing worker and CI poller tests should not need behavior changes because the
 worker event flow remains unchanged.
@@ -131,5 +183,5 @@ Update CI poller documentation to show:
 discord_webhook_url = "https://discord.com/api/webhooks/..."
 ```
 
-Document that notifications are daemon-local, best-effort, global-only, and
-sent for CI job failures.
+Document that notifications are daemon-local, hot-reloaded, best-effort,
+global-only, deduped for quota/cooldown bursts, and sent for CI job failures.
