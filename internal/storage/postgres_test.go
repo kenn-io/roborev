@@ -1008,6 +1008,51 @@ func TestIntegration_BatchUpsertJobs(t *testing.T) {
 		assert.Contains(t, storedError, "\uFFFD")
 	})
 
+	t.Run("nul text fields are sanitized", func(t *testing.T) {
+		jobUUID := uuid.NewString()
+		machineID := uuid.NewString()
+		commitSHA := "batch-nul-text-sha-" + jobUUID
+		commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{
+			RepoID: repoID, SHA: commitSHA,
+		})
+		nulText := "binary marker: \x00 after header"
+		require.True(t, utf8.ValidString(nulText))
+		diffContent := "diff --git a/demo.bin b/demo.bin\n" + nulText
+		jobs := []JobWithPgIDs{{
+			Job: SyncableJob{
+				UUID:            jobUUID,
+				RepoIdentity:    "https://github.com/test/batch-jobs-test.git",
+				CommitSHA:       commitSHA,
+				GitRef:          commitSHA,
+				Agent:           "test",
+				Status:          "failed",
+				Prompt:          nulText,
+				DiffContent:     &diffContent,
+				Error:           nulText,
+				SourceMachineID: machineID,
+				EnqueuedAt:      time.Now(),
+			},
+			PgRepoID:   repoID,
+			PgCommitID: &commitID,
+		}}
+
+		success, err := pool.BatchUpsertJobs(ctx, jobs)
+		require.NoError(t, err)
+		assert.Equal(t, 1, countSuccesses(success))
+
+		var storedPrompt, storedDiff, storedError string
+		err = pool.pool.QueryRow(ctx,
+			`SELECT prompt, diff_content, error FROM review_jobs WHERE uuid = $1`, jobUUID,
+		).Scan(&storedPrompt, &storedDiff, &storedError)
+		require.NoError(t, err)
+		assert.NotContains(t, storedPrompt, "\x00")
+		assert.NotContains(t, storedDiff, "\x00")
+		assert.NotContains(t, storedError, "\x00")
+		assert.Contains(t, storedPrompt, "\uFFFD")
+		assert.Contains(t, storedDiff, "\uFFFD")
+		assert.Contains(t, storedError, "\uFFFD")
+	})
+
 	t.Run("valid sibling persists when one job row fails", func(t *testing.T) {
 		validJobUUID := uuid.NewString()
 		invalidJobUUID := uuid.NewString()

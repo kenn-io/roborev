@@ -1052,7 +1052,7 @@ func nullString(s string) any {
 }
 
 func sanitizePostgresText(s string) string {
-	return strings.ToValidUTF8(s, "\uFFFD")
+	return strings.ReplaceAll(strings.ToValidUTF8(s, "\uFFFD"), "\x00", "\uFFFD")
 }
 
 func sanitizePostgresTextPointer(s *string) *string {
