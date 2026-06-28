@@ -520,7 +520,12 @@ func commandHookCurrent(hook map[string]any, spec InstallSpec) bool {
 // install can replace command hooks that carry a stale or versioned roborev
 // path. runner is the subcommand suffix to match.
 func isRoborevHookCommand(command, runner string) bool {
-	return strings.Contains(command, runner) && strings.Contains(command, "roborev")
+	idx := strings.Index(command, runner)
+	if idx == -1 || !strings.Contains(command, "roborev") {
+		return false
+	}
+	after := idx + len(runner)
+	return after == len(command) || strings.ContainsAny(command[after:after+1], "\"'")
 }
 
 func findEntry(entries []any, matcher string) (int, error) {
