@@ -151,8 +151,10 @@ Examples:
 			}
 
 			// Validate --type flag
-			if reviewType != "" && reviewType != "security" && reviewType != "design" && reviewType != "lookahead" {
-				return usageErr(cmd, fmt.Errorf("invalid --type %q (valid: security, design, lookahead)", reviewType))
+			switch reviewType {
+			case "", config.ReviewTypeSecurity, config.ReviewTypeDesign, config.ReviewTypeLookahead:
+			default:
+				return usageErr(cmd, fmt.Errorf("invalid --type %q (valid: %s)", reviewType, config.ExplicitReviewTypesHelp()))
 			}
 
 			// Auto-install/upgrade hooks when running from CLI
@@ -455,10 +457,7 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent string, di
 	}
 
 	// Map review_type to config workflow (matches daemon behavior)
-	workflow := "review"
-	if !config.IsDefaultReviewType(reviewType) {
-		workflow = reviewType
-	}
+	workflow := config.WorkflowForReviewType(reviewType)
 	if err := config.ValidateRepoConfig(repoPath); err != nil {
 		return fmt.Errorf("resolve workflow config: %w", err)
 	}

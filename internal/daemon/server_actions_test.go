@@ -564,6 +564,7 @@ func TestWorkflowForJobFixType(t *testing.T) {
 	assert.Equal("fix", workflowForJob(storage.JobTypeCompact, config.ReviewTypeDefault))
 	assert.Equal("review", workflowForJob(storage.JobTypeReview, config.ReviewTypeDefault))
 	assert.Equal("security", workflowForJob(storage.JobTypeReview, "security"))
+	assert.Equal("review", workflowForJob(storage.JobTypeReview, "lookahead"))
 }
 
 func TestResolveRerunModelProviderUsesWorktreeConfig(t *testing.T) {

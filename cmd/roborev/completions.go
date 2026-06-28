@@ -33,7 +33,12 @@ func registerReasoningCompletion(cmd *cobra.Command) {
 // Panics if the flag doesn't exist on the command (programming error).
 func registerReviewTypeCompletion(cmd *cobra.Command) {
 	if err := cmd.RegisterFlagCompletionFunc("type", func(_ *cobra.Command, _ []string, _ string) ([]cobra.Completion, cobra.ShellCompDirective) {
-		return []cobra.Completion{config.ReviewTypeSecurity, config.ReviewTypeDesign, config.ReviewTypeLookahead}, cobra.ShellCompDirectiveNoFileComp
+		types := config.ExplicitReviewTypes()
+		completions := make([]cobra.Completion, len(types))
+		for i, t := range types {
+			completions[i] = cobra.Completion(t)
+		}
+		return completions, cobra.ShellCompDirectiveNoFileComp
 	}); err != nil {
 		panic(fmt.Sprintf("registering review type completion for %s: %v", cmd.Name(), err))
 	}

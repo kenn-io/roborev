@@ -1180,16 +1180,13 @@ func (wp *WorkerPool) failoverOrFailNonRetryableAgent(
 }
 
 // failoverWorkflow returns the config workflow key for backup
-// agent/model resolution. Fix jobs map to "fix"; security/design
-// jobs use their ReviewType; everything else maps to "review".
+// agent/model resolution. Fix jobs map to "fix"; specialized review
+// jobs use their review-type workflow mapping.
 func failoverWorkflow(job *storage.ReviewJob) string {
 	if job.IsFixJob() {
 		return "fix"
 	}
-	if !config.IsDefaultReviewType(job.ReviewType) {
-		return job.ReviewType
-	}
-	return "review"
+	return config.WorkflowForReviewType(job.ReviewType)
 }
 
 // resolveBackupAgent determines the backup agent for a job. An explicit

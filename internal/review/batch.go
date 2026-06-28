@@ -84,10 +84,7 @@ func runSingle(
 
 	// Map review type to workflow name for config
 	// resolution (same mapping as CI poller).
-	workflow := "review"
-	if !config.IsDefaultReviewType(reviewType) {
-		workflow = reviewType
-	}
+	workflow := config.WorkflowForReviewType(reviewType)
 
 	// Workflow-aware agent/model resolution when config
 	// is available; otherwise use the agent name as-is.

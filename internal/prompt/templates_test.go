@@ -151,6 +151,18 @@ func TestGetSystemPrompt_SecurityPromptRequiresExploitabilityGate(t *testing.T) 
 	assert.NotContains(t, got, "low**: Defense-in-depth improvement")
 }
 
+func TestGetSystemPrompt_LookaheadPromptFocusesOnTemporalLeakage(t *testing.T) {
+	fixedTime := time.Date(2030, 6, 15, 0, 0, 0, 0, time.UTC)
+	mockNow := func() time.Time { return fixedTime }
+
+	got := getSystemPrompt("test", "lookahead", mockNow)
+
+	assert.Contains(t, got, "look-ahead")
+	assert.Contains(t, got, "future-data leakage")
+	assert.Contains(t, got, "information not yet available at the point in time it claims to represent")
+	assert.Contains(t, got, "Separate multiple findings with `---` on its own line.")
+}
+
 func TestGetSystemPrompt_DateInjection(t *testing.T) {
 	fixedTime := time.Date(2030, 6, 15, 0, 0, 0, 0, time.UTC)
 	fixedDateStr := "Current date: 2030-06-15 (UTC)"

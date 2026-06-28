@@ -30,6 +30,7 @@ func TestHandleEnqueueReviewTypeNormalization(t *testing.T) {
 		{name: "default stored as-is", reviewType: "default", wantCode: http.StatusCreated, wantStored: "default"},
 		{name: "security stored as-is", reviewType: "security", wantCode: http.StatusCreated, wantStored: "security"},
 		{name: "design stored as-is", reviewType: "design", wantCode: http.StatusCreated, wantStored: "design"},
+		{name: "lookahead stored as-is", reviewType: "lookahead", wantCode: http.StatusCreated, wantStored: "lookahead"},
 		{name: "invalid type rejected", reviewType: "bogus", wantCode: http.StatusBadRequest, wantErrorMsg: "invalid review_type"},
 	}
 

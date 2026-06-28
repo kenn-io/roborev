@@ -694,10 +694,7 @@ func (p *CIPoller) resolveMatrixMemberAgent(
 	entry config.AgentReviewType,
 	reasoning string,
 ) (string, string, error) {
-	workflow := "review"
-	if !config.IsDefaultReviewType(entry.ReviewType) {
-		workflow = entry.ReviewType
-	}
+	workflow := config.WorkflowForReviewType(entry.ReviewType)
 	resolution, err := agent.ResolveWorkflowConfigFromConfig(entry.Agent, repoCfg, cfg, workflow, reasoning)
 	if err != nil {
 		return "", "", fmt.Errorf("resolve workflow config: %w", err)

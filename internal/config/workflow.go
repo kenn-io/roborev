@@ -57,6 +57,25 @@ func ValidateReviewTypes(types []string) ([]string, error) {
 	return canonical, nil
 }
 
+func ExplicitReviewTypes() []string {
+	return []string{ReviewTypeSecurity, ReviewTypeDesign, ReviewTypeLookahead}
+}
+
+func ExplicitReviewTypesHelp() string {
+	return strings.Join(ExplicitReviewTypes(), ", ")
+}
+
+func ValidReviewTypesHelp() string {
+	return "default, " + ExplicitReviewTypesHelp()
+}
+
+func WorkflowForReviewType(reviewType string) string {
+	if IsDefaultReviewType(reviewType) {
+		return "review"
+	}
+	return reviewType
+}
+
 // NormalizeReasoning validates and normalizes a reasoning level string.
 // Returns the canonical form (maximum, thorough, medium, standard, fast) or an error if invalid.
 // Returns empty string (no error) for empty input.

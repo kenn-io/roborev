@@ -309,9 +309,10 @@ func installAgent(spec agentSpec) (InstallResult, error) {
 
 // SkillInfo describes an available skill.
 type SkillInfo struct {
-	DirName     string // e.g. "roborev-fix"
-	Name        string // e.g. "roborev-fix"
-	Description string
+	DirName         string // e.g. "roborev-fix"
+	Name            string // e.g. "roborev-fix"
+	Description     string
+	SupportedAgents []Agent
 }
 
 // SkillState describes whether a skill is installed and up to date for an agent.
@@ -334,7 +335,7 @@ type AgentStatus struct {
 // directory name. When the same skill exists across multiple agents, the
 // first agent's metadata is used.
 func ListSkills() ([]SkillInfo, error) {
-	seen := make(map[string]bool)
+	seen := make(map[string]int)
 	var out []SkillInfo
 	for _, spec := range supportedAgents {
 		skills, err := embeddedSkillsForAgent(spec)
@@ -342,14 +343,18 @@ func ListSkills() ([]SkillInfo, error) {
 			return nil, err
 		}
 		for _, skill := range skills {
-			if seen[skill.DirName] {
+			if idx, ok := seen[skill.DirName]; ok {
+				if !slices.Contains(out[idx].SupportedAgents, spec.agent) {
+					out[idx].SupportedAgents = append(out[idx].SupportedAgents, spec.agent)
+				}
 				continue
 			}
-			seen[skill.DirName] = true
+			seen[skill.DirName] = len(out)
 			out = append(out, SkillInfo{
-				DirName:     skill.DirName,
-				Name:        skill.Name,
-				Description: skill.Description,
+				DirName:         skill.DirName,
+				Name:            skill.Name,
+				Description:     skill.Description,
+				SupportedAgents: []Agent{spec.agent},
 			})
 		}
 	}

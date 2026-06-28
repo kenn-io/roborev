@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"slices"
 	"strings"
 
 	"github.com/spf13/cobra"
@@ -46,6 +47,10 @@ func skillsCmd() *cobra.Command {
 				}
 
 				for _, a := range agents {
+					if !slices.Contains(s.SupportedAgents, a.agent) {
+						continue
+					}
+
 					var as *skills.AgentStatus
 					for i := range statuses {
 						if statuses[i].Agent == a.agent {
@@ -165,7 +170,7 @@ This command is idempotent - running it multiple times is safe.`,
 					case skills.AgentCodex:
 						fmt.Println("  Codex: $roborev-review, $roborev-review-branch, $roborev-design-review, $roborev-design-review-branch, $roborev-fix, $roborev-respond")
 					case skills.AgentDroid:
-						fmt.Println("  Factory Droid: /roborev-review, /roborev-review-branch, /roborev-design-review, /roborev-design-review-branch, /roborev-fix, /roborev-respond")
+						fmt.Println("  Factory Droid: /roborev-review, /roborev-review-branch, /roborev-design-review, /roborev-design-review-branch, /roborev-lookahead-review, /roborev-lookahead-review-branch, /roborev-fix, /roborev-respond")
 					}
 				}
 			}

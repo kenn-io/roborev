@@ -3339,8 +3339,8 @@ func TestValidateReviewTypes(t *testing.T) {
 		},
 		{
 			name:  "mixed valid with dedup",
-			input: []string{"security", "review", "security"},
-			want:  []string{"security", "default"},
+			input: []string{"security", "review", "lookahead", "security"},
+			want:  []string{"security", "default", "lookahead"},
 		},
 		{
 			name:    "invalid type returns error",
