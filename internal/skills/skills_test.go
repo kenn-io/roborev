@@ -438,10 +438,10 @@ func TestListSkillsReportsSupportedAgents(t *testing.T) {
 		[]Agent{AgentClaude, AgentCodex, AgentDroid},
 		skillsByDir["roborev-review"].SupportedAgents)
 	assert.ElementsMatch(t,
-		[]Agent{AgentDroid},
+		[]Agent{AgentClaude, AgentCodex, AgentDroid},
 		skillsByDir["roborev-lookahead-review"].SupportedAgents)
 	assert.ElementsMatch(t,
-		[]Agent{AgentDroid},
+		[]Agent{AgentClaude, AgentCodex, AgentDroid},
 		skillsByDir["roborev-lookahead-review-branch"].SupportedAgents)
 }
 

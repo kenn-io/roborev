@@ -406,12 +406,6 @@ func resolveSynthesisFromConfig(
 	}, nil
 }
 
-// workflowForReviewType maps a canonical review type to the workflow name used
-// for agent/model fallback resolution.
-func workflowForReviewType(reviewType string) string {
-	return WorkflowForReviewType(reviewType)
-}
-
 // canonicalMemberReviewType canonicalizes a subagent's review_type, treating
 // empty as "default".
 func canonicalMemberReviewType(reviewType string) (string, error) {

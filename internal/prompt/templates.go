@@ -63,8 +63,6 @@ func getSystemPrompt(agentName string, promptType string, now func() time.Time) 
 		fallbackName = "default_lookahead.md.gotmpl"
 	case "design-review":
 		fallbackName = "default_design_review.md.gotmpl"
-	case "lookahead":
-		fallbackName = "default_lookahead.md.gotmpl"
 	case "run":
 		// No default run preamble - return empty so raw prompts are used
 		return ""
