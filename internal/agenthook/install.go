@@ -525,7 +525,32 @@ func isRoborevHookCommand(command, runner string) bool {
 		return false
 	}
 	after := idx + len(runner)
-	return after == len(command) || strings.ContainsAny(command[after:after+1], "\"'")
+	if after == len(command) {
+		return true
+	}
+	next := command[after : after+1]
+	if strings.ContainsAny(next, "\"'") {
+		return true
+	}
+	if !strings.ContainsAny(next, " \t\r\n") {
+		return false
+	}
+	suffix := strings.TrimSpace(command[after:])
+	return runner != agentHookRunner || !selectsDroidAgent(suffix)
+}
+
+func selectsDroidAgent(suffix string) bool {
+	fields := shellFields(suffix)
+	for i, field := range fields {
+		field = cleanShellToken(field)
+		if field == "--agent=droid" {
+			return true
+		}
+		if field == "--agent" && i+1 < len(fields) && cleanShellToken(fields[i+1]) == "droid" {
+			return true
+		}
+	}
+	return false
 }
 
 func findEntry(entries []any, matcher string) (int, error) {

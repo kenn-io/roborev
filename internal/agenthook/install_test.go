@@ -211,6 +211,65 @@ func TestRunInstallCodexLeavesDroidAgentHookEntriesUntouched(t *testing.T) {
 	assert.Contains(out.String(), "installed Codex agent hooks")
 }
 
+func TestRunInstallCodexMigratesStaleHookCommandWithRunFlags(t *testing.T) {
+	assert := assert.New(t)
+	path := filepath.Join(t.TempDir(), "hooks.json")
+	oldCommand := "/old/versioned/1.2.3/bin/roborev agent-hook run --turn-threshold 3"
+	newCommand := "/stable/bin/roborev agent-hook run"
+
+	writeJSONFile(t, path, map[string]any{
+		"hooks": map[string]any{
+			"Stop": []any{map[string]any{
+				"hooks": []any{commandHookJSON(oldCommand, 10)},
+			}},
+		},
+	})
+
+	var out bytes.Buffer
+	err := RunInstall(InstallOptions{
+		Agent:           "codex",
+		Command:         newCommand,
+		CodexConfigPath: path,
+		Timeout:         10 * time.Second,
+	}, &out)
+	require.NoError(t, err)
+
+	root := readJSONFile(t, path)
+	assertCommandCount(t, root, "Stop", newCommand, 1)
+	assertCommandCount(t, root, "Stop", oldCommand, 0)
+	assert.Contains(out.String(), "installed Codex agent hooks")
+}
+
+func TestRunInstallDroidMigratesStaleHookCommandWithRunFlags(t *testing.T) {
+	assert := assert.New(t)
+	path := filepath.Join(t.TempDir(), "hooks.json")
+	oldCommand := "/old/versioned/1.2.3/bin/roborev agent-hook run --agent droid --config /tmp/roborev.toml"
+	newCommand := "/stable/bin/roborev agent-hook run --agent droid"
+
+	writeJSONFile(t, path, map[string]any{
+		"hooks": map[string]any{
+			"Stop": []any{map[string]any{
+				"hooks": []any{commandHookJSON(oldCommand, 10)},
+			}},
+		},
+	})
+
+	var out bytes.Buffer
+	err := RunInstall(InstallOptions{
+		Agent:      "droid",
+		Command:    newCommand,
+		ConfigPath: path,
+		Scope:      "user",
+		Timeout:    10 * time.Second,
+	}, &out)
+	require.NoError(t, err)
+
+	root := readJSONFile(t, path)
+	assertCommandCount(t, root, "Stop", newCommand, 1)
+	assertCommandCount(t, root, "Stop", oldCommand, 0)
+	assert.Contains(out.String(), "installed Factory Droid agent hooks")
+}
+
 func TestRunInstallDroidRejectsUnknownScope(t *testing.T) {
 	var out bytes.Buffer
 	err := RunInstall(InstallOptions{
