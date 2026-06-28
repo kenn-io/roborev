@@ -733,6 +733,9 @@ func isProjectDroidHooksPath(path string) bool {
 	if clean == projectRel {
 		return true
 	}
+	if isTargetRepoDroidHooksPath(clean) {
+		return true
+	}
 	if repoRoot, err := gitpkg.GetRepoRoot("."); err == nil && repoRoot != "" &&
 		sameCleanAbsPath(clean, filepath.Join(repoRoot, projectRel)) {
 		return true
@@ -751,18 +754,47 @@ func isProjectDroidHooksPath(path string) bool {
 	return sameCleanAbsPath(clean, projectAbs)
 }
 
+func isTargetRepoDroidHooksPath(path string) bool {
+	abs, ok := cleanAbsPath(path)
+	if !ok || filepath.Base(abs) != "hooks.json" {
+		return false
+	}
+	factoryDir := filepath.Dir(abs)
+	if filepath.Base(factoryDir) != ".factory" {
+		return false
+	}
+	candidateRoot := filepath.Dir(factoryDir)
+	repoRoot, err := gitpkg.GetRepoRoot(candidateRoot)
+	if err != nil || repoRoot == "" {
+		return false
+	}
+	return sameCleanAbsPath(candidateRoot, repoRoot)
+}
+
 func sameCleanAbsPath(a, b string) bool {
 	a = strings.TrimSpace(a)
 	b = strings.TrimSpace(b)
 	if a == "" || b == "" {
 		return false
 	}
-	aAbs, errA := filepath.Abs(filepath.Clean(a))
-	bAbs, errB := filepath.Abs(filepath.Clean(b))
-	if errA == nil && errB == nil {
+	aAbs, okA := cleanAbsPath(a)
+	bAbs, okB := cleanAbsPath(b)
+	if okA && okB {
 		return filepath.Clean(aAbs) == filepath.Clean(bAbs)
 	}
 	return filepath.Clean(a) == filepath.Clean(b)
+}
+
+func cleanAbsPath(path string) (string, bool) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", false
+	}
+	abs, err := filepath.Abs(filepath.Clean(path))
+	if err != nil {
+		return "", false
+	}
+	return filepath.Clean(abs), true
 }
 
 func normalizeDroidScope(scope string) (string, error) {
