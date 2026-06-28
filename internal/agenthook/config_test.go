@@ -39,6 +39,54 @@ instruction = "Run roborev fix."
 	assert.Equal(t, "Run roborev fix.", opts.Instruction)
 }
 
+func TestResolveOptionsForAgentDroidUsesDroidHookConfig(t *testing.T) {
+	clearAgentHookEnv(t)
+	path := writeAgentHookConfig(t, `
+[agent_hook]
+turn_threshold = 99
+instruction = "agent instruction"
+
+[droid_hook]
+turn_threshold = 6
+commit_threshold = 2
+failed_review_threshold = 3
+instruction = "droid instruction"
+`)
+
+	opts, err := ResolveOptionsForAgent("droid", Options{ConfigPath: path}, map[string]bool{"config": true})
+
+	require.NoError(t, err)
+	assert.Equal(t, 6, opts.TurnThreshold)
+	assert.Equal(t, 2, opts.CommitThreshold)
+	assert.Equal(t, 3, opts.FailedReviewThreshold)
+	assert.Equal(t, "droid instruction", opts.Instruction)
+}
+
+func TestResolveOptionsForAgentDroidEnvOverridesConfig(t *testing.T) {
+	clearAgentHookEnv(t)
+	path := writeAgentHookConfig(t, `
+[droid_hook]
+turn_threshold = 6
+commit_threshold = 2
+failed_review_threshold = 3
+instruction = "config instruction"
+`)
+	t.Setenv(DroidTurnThresholdEnv, "7")
+	t.Setenv(DroidCommitThresholdEnv, "4")
+	t.Setenv(DroidFailedReviewThresholdEnv, "5")
+	t.Setenv(DroidInstructionEnv, "env instruction")
+	t.Setenv(DroidRoborevServerEnv, "127.0.0.1:9999")
+
+	opts, err := ResolveOptionsForAgent("droid", Options{ConfigPath: path}, map[string]bool{"config": true})
+
+	require.NoError(t, err)
+	assert.Equal(t, 7, opts.TurnThreshold)
+	assert.Equal(t, 4, opts.CommitThreshold)
+	assert.Equal(t, 5, opts.FailedReviewThreshold)
+	assert.Equal(t, "env instruction", opts.Instruction)
+	assert.Equal(t, "127.0.0.1:9999", opts.RoborevServerAddr)
+}
+
 func TestResolveOptionsAllowsZeroTurnThresholdFromConfig(t *testing.T) {
 	clearAgentHookEnv(t)
 	path := writeAgentHookConfig(t, `
@@ -162,6 +210,11 @@ func clearAgentHookEnv(t *testing.T) {
 		InstructionEnv,
 		RoborevServerEnv,
 		DaemonAddrEnv,
+		DroidTurnThresholdEnv,
+		DroidCommitThresholdEnv,
+		DroidFailedReviewThresholdEnv,
+		DroidInstructionEnv,
+		DroidRoborevServerEnv,
 	} {
 		t.Setenv(name, "")
 	}

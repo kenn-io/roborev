@@ -34,6 +34,31 @@ func TestRunDumpCodexCreatesHookConfig(t *testing.T) {
 	assert.InDelta(t, 10, firstCommandTimeout(t, root, "Stop", command), 0)
 }
 
+func TestRunDumpDroidCreatesHookConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hooks.json")
+	command := "/tmp/roborev agent-hook run --agent droid"
+
+	var stdout bytes.Buffer
+	err := RunDump(DumpOptions{
+		Agent:      "droid",
+		Command:    command,
+		ConfigPath: path,
+		Scope:      "user",
+		Timeout:    10 * time.Second,
+	}, &stdout)
+
+	require.NoError(t, err)
+	var root map[string]any
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &root))
+	assertCommandCount(t, root, "PreToolUse", command, 1)
+	assertCommandCount(t, root, "PostToolUse", command, 1)
+	assertCommandCount(t, root, "Stop", command, 1)
+	assert.Equal(t, ExecuteMatcher, firstMatcher(t, root, "PreToolUse"))
+	assert.Equal(t, ExecuteMatcher, firstMatcher(t, root, "PostToolUse"))
+	assert.Empty(t, firstMatcher(t, root, "Stop"))
+	assert.InDelta(t, 10, firstCommandTimeout(t, root, "Stop", command), 0)
+}
+
 func TestRunInstallCodexIsIdempotent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "hooks.json")
 	command := "/tmp/roborev agent-hook run"
@@ -57,6 +82,36 @@ func TestRunInstallCodexIsIdempotent(t *testing.T) {
 	}, &second)
 	require.NoError(t, err)
 	assert.Contains(t, second.String(), "Codex agent hooks already installed")
+}
+
+func TestRunInstallDroidIsIdempotent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hooks.json")
+	command := "/tmp/roborev agent-hook run --agent droid"
+
+	var first bytes.Buffer
+	err := RunInstall(InstallOptions{
+		Agent:      "droid",
+		Command:    command,
+		ConfigPath: path,
+		Scope:      "user",
+		Timeout:    10 * time.Second,
+	}, &first)
+	require.NoError(t, err)
+	assert.Contains(t, first.String(), "installed Factory Droid agent hooks")
+
+	var second bytes.Buffer
+	err = RunInstall(InstallOptions{
+		Agent:      "droid",
+		Command:    command,
+		ConfigPath: path,
+		Scope:      "user",
+		Timeout:    10 * time.Second,
+	}, &second)
+	require.NoError(t, err)
+	assert.Contains(t, second.String(), "Factory Droid agent hooks already installed")
+
+	root := readJSONFile(t, path)
+	assertCommandCount(t, root, "Stop", command, 1)
 }
 
 func TestRunInstallMigratesStaleRoborevHookCommand(t *testing.T) {
@@ -95,6 +150,57 @@ func TestRunInstallMigratesStaleRoborevHookCommand(t *testing.T) {
 	assertCommandCount(t, root, "Stop", newCommand, 1)
 	assertCommandCount(t, root, "Stop", oldCommand, 0)
 	assert.Contains(out.String(), "installed Codex agent hooks", "migrating a stale command counts as a change")
+}
+
+func TestRunInstallDroidLeavesPlainAgentHookEntriesUntouched(t *testing.T) {
+	assert := assert.New(t)
+	path := filepath.Join(t.TempDir(), "hooks.json")
+	agentCommand := "/stable/bin/roborev agent-hook run"
+	droidCommand := "/stable/bin/roborev agent-hook run --agent droid"
+
+	writeJSONFile(t, path, map[string]any{
+		"hooks": map[string]any{
+			"Stop": []any{map[string]any{
+				"hooks": []any{commandHookJSON(agentCommand, 10)},
+			}},
+		},
+	})
+
+	var out bytes.Buffer
+	err := RunInstall(InstallOptions{
+		Agent:      "droid",
+		Command:    droidCommand,
+		ConfigPath: path,
+		Scope:      "user",
+		Timeout:    10 * time.Second,
+	}, &out)
+	require.NoError(t, err)
+
+	root := readJSONFile(t, path)
+	assertCommandCount(t, root, "Stop", agentCommand, 1)
+	assertCommandCount(t, root, "Stop", droidCommand, 1)
+	assert.Contains(out.String(), "installed Factory Droid agent hooks")
+}
+
+func TestRunInstallDroidRejectsUnknownScope(t *testing.T) {
+	var out bytes.Buffer
+	err := RunInstall(InstallOptions{
+		Agent:   "droid",
+		Command: "/tmp/roborev agent-hook run --agent droid",
+		Scope:   "team",
+		Timeout: 10 * time.Second,
+	}, &out)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "scope must be user or project")
+}
+
+func TestDefaultDroidHooksPath(t *testing.T) {
+	dir := t.TempDir()
+	t.Setenv("HOME", dir)
+
+	assert.Equal(t, filepath.Join(dir, ".factory", "hooks.json"), DefaultDroidHooksPath("user"))
+	assert.Equal(t, filepath.Join(dir, ".factory", "hooks.json"), DefaultDroidHooksPath(""))
+	assert.Equal(t, ".factory/hooks.json", DefaultDroidHooksPath("project"))
 }
 
 func TestUpsertCommandHookCollapsesDuplicatesAndKeepsOthers(t *testing.T) {

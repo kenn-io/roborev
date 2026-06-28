@@ -997,6 +997,64 @@ func TestRecordPreToolUseBaselinesUntrackedRepoForLaterPostCommitRegistration(t 
 	assert.Equal("commit", post.TriggeredBy)
 }
 
+func TestRecordPreAndPostToolUseTrackDroidExecuteCommits(t *testing.T) {
+	assert := assert.New(t)
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("main.go", "package main\n", "initial")
+
+	closed := false
+	verdict := "F"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/repos/resolve" {
+			assert.NoError(json.NewEncoder(w).Encode(map[string]any{
+				"tracked": true,
+				"repo": map[string]string{
+					"root_path": repo.Path(),
+					"name":      filepath.Base(repo.Path()),
+				},
+			}))
+			return
+		}
+		assert.Equal("/api/jobs", r.URL.Path)
+		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{
+			Jobs: []storage.ReviewJob{
+				{Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main"},
+			},
+		}))
+	}))
+	t.Cleanup(server.Close)
+
+	store := &StateStore{
+		path:     filepath.Join(t.TempDir(), "state.json"),
+		sessions: map[string]SessionState{},
+	}
+	req := Request{
+		Event: Input{
+			SessionID:     "session-1",
+			CWD:           repo.Path(),
+			HookEventName: "PreToolUse",
+			ToolName:      "Execute",
+			ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"git commit -m feature"`)},
+		},
+		CommitThreshold:   1,
+		Instruction:       "Run roborev fix.",
+		RoborevServerAddr: server.URL,
+	}
+
+	pre, err := store.Record(req)
+	require.NoError(t, err)
+	assert.False(pre.Skipped, "Droid Execute must seed the commit baseline")
+
+	repo.CommitFile("feature.go", "package main\n", "feature")
+	postReq := req
+	postReq.Event.HookEventName = "PostToolUse"
+	post, err := store.Record(postReq)
+	require.NoError(t, err)
+
+	assert.True(post.Triggered, "Droid Execute must count the commit after the baseline")
+	assert.Equal("commit", post.TriggeredBy)
+}
+
 func TestRecordStopTriggersFailedReviewOnDetachedHead(t *testing.T) {
 	assert := assert.New(t)
 	repo := testutil.NewGitRepo(t)

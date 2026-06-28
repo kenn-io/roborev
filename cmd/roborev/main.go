@@ -66,7 +66,6 @@ func main() {
 	rootCmd.AddCommand(syncCmd())
 	rootCmd.AddCommand(remapCmd())
 	rootCmd.AddCommand(agentHookCmd())
-	rootCmd.AddCommand(droidHookCmd())
 	rootCmd.AddCommand(checkAgentsCmd())
 	rootCmd.AddCommand(ciCmd())
 	rootCmd.AddCommand(logCmd())

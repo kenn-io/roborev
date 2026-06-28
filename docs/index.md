@@ -64,7 +64,7 @@ AI coding agents write code fast, but they make mistakes. Most review feedback c
 
 1. **Ask your agents to commit often**, ideally every turn of work
 2. **roborev reviews** each commit in the background
-3. **Bring review work back into the agent session** with [`agent-hook`](/agent-hook/) ([`droid-hook`](/droid-hook/) for Factory Droid) or check the TUI (`roborev tui`) as findings arrive
+3. **Bring review work back into the agent session** with [`agent-hook`](/agent-hook/) (`--agent droid` for Factory Droid) or check the TUI (`roborev tui`) as findings arrive
 4. **Address findings** by letting the hook prompt the fix skill, copying reviews into your agent, using [`/roborev-fix`](/guides/agent-skills/), or running `roborev fix`
 
 Every commit gets reviewed. Issues surface in seconds, not hours. Open reviews stay in the TUI queue until explicitly addressed and closed, so nothing falls through the cracks.
@@ -77,7 +77,7 @@ Every commit gets reviewed. Issues surface in seconds, not hours. Open reviews s
 
 -   **Agent-Ready Feedback**
 
-    Use `agent-hook` (or `droid-hook` for Factory Droid) to prompt Codex, Claude Code, or Droid to run the fix skill when review work piles up. You can also copy findings into your agent session, use `/roborev-fix`, or run `roborev fix` to apply fixes automatically.
+    Use `agent-hook` to prompt Codex, Claude Code, or Droid (`--agent droid`) to run the fix skill when review work piles up. You can also copy findings into your agent session, use `/roborev-fix`, or run `roborev fix` to apply fixes automatically.
 
 -   **Code Analysis**
 

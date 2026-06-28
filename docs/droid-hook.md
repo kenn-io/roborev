@@ -1,19 +1,20 @@
 ---
-title: Droid Hook
+title: Factory Droid Agent Hook
 description: Let Factory Droid sessions run roborev-fix mid-session by watching the agent boundary
 ---
 
-`roborev droid-hook` is an opt-in integration with the Factory Droid harness hook
-system. roborev reviews your commits in the background; `droid-hook` watches the
-agent boundary and, once review work has piled up, returns one instruction
-telling Droid to run the `roborev-fix` skill before the session goes cold. It is
-the Factory Droid counterpart to [`agent-hook`](/agent-hook/), and shares the
-same local state daemon, loop prevention, and failed-review detection.
+The `--agent droid` profile for `roborev agent-hook` is an opt-in integration
+with the Factory Droid harness hook system. roborev reviews your commits in the
+background; the Droid profile watches the agent boundary and, once review work
+has piled up, returns one instruction telling Droid to run the `roborev-fix`
+skill before the session goes cold. It shares the same local state daemon, loop
+prevention, and failed-review detection as the Codex and Claude Code agent
+hooks.
 
 !!! note
     This is different from [Review Hooks](/guides/hooks/), which run your own
-    shell commands when a review completes. Droid Hook plugs into Factory Droid's
-    own hook system to steer the agent itself.
+    shell commands when a review completes. The Droid agent-hook profile plugs
+    into Factory Droid's own hook system to steer the agent itself.
 
 ## The Loop
 
@@ -21,9 +22,9 @@ Agents are good at making progress. They are worse at remembering to come back
 after a background reviewer finishes, especially when reviews happen out of band
 like they do with roborev.
 
-`droid-hook` closes that gap. It sits behind Factory Droid hooks, counts what
-happened in the current session, checks roborev for failed reviews, and returns
-one direct instruction when there is review work to fix:
+The Droid agent-hook profile closes that gap. It sits behind Factory Droid
+hooks, counts what happened in the current session, checks roborev for failed
+reviews, and returns one direct instruction when there is review work to fix:
 
 ```text
 Run the roborev-fix skill to address the unresolved roborev findings, then continue.
@@ -40,7 +41,7 @@ reviewed, fix the review, continue.
 
 ## What It Watches
 
-`droid-hook` tracks three signals per session:
+The Droid profile tracks three signals per session:
 
 - **Turns.** `Stop` hooks, so long-running sessions get periodic review repair.
 - **Commits.** `PostToolUse` hooks on the `Execute` tool (Droid's shell tool)
@@ -48,7 +49,7 @@ reviewed, fix the review, continue.
   baseline so the count stays accurate.
 - **Failed reviews.** Open, non-closed roborev reviews with a failed verdict.
 
-`droid-hook` resolves the repository from the agent's working directory, so
+It resolves the repository from the agent's working directory, so
 outside a git repository it returns `{}` and stays out of the way. Reminders
 also depend on the roborev daemon reporting an open failed review, so a
 repository roborev does not track never produces a reminder.
@@ -74,7 +75,7 @@ roborev skills install
 Then install the hook entries:
 
 ```bash
-roborev droid-hook install
+roborev agent-hook install --agent droid
 ```
 
 By default this updates `~/.factory/hooks.json` (the user scope, applied to every
@@ -85,12 +86,12 @@ project (commit to share with teammates), and `--dry-run` to report what would
 change without writing.
 
 When roborev is installed through a version manager such as mise,
-`droid-hook install` resolves the same stable roborev shim used by
-`roborev init`. To pin the exact binary path baked into the hook command, use
-`--binary`:
+`agent-hook install --agent droid` resolves the same stable roborev shim used
+by `roborev init`. To pin the exact binary path baked into the hook command,
+use `--binary`:
 
 ```bash
-roborev droid-hook install --binary ~/.local/share/mise/shims/roborev
+roborev agent-hook install --agent droid --binary ~/.local/share/mise/shims/roborev
 ```
 
 Use `--command` only when you want to provide the full hook command yourself.
@@ -100,8 +101,8 @@ For declarative setups (Nix home-manager, dotfiles) where editing those files in
 place is the wrong shape, print the JSON for your config system to consume:
 
 ```bash
-roborev droid-hook dump --scope user
-roborev droid-hook dump --scope project
+roborev agent-hook dump --agent droid --scope user
+roborev agent-hook dump --agent droid --scope project
 ```
 
 ## Runtime Model
@@ -109,13 +110,13 @@ roborev droid-hook dump --scope project
 Factory Droid invokes:
 
 ```bash
-roborev droid-hook run
+roborev agent-hook run --agent droid
 ```
 
 `run` reads a hook payload on stdin, talks to a small local `roborev-agent-hook`
 daemon, and emits the hook response JSON Droid expects. This daemon is shared
-with `agent-hook` (it serves Codex, Claude Code, and Droid from one process) and
-stores only local session counters under:
+with the other agent-hook profiles (it serves Codex, Claude Code, and Droid from
+one process) and stores only local session counters under:
 
 ```text
 ${ROBOREV_DATA_DIR:-~/.roborev}/agent-hook/
@@ -162,7 +163,7 @@ run flags > environment variables > [droid_hook] config > defaults
 `ROBOREV_DROID_HOOK_ROBOREV_ADDR` and `ROBOREV_AGENT_HOOK_DAEMON_ADDR` are
 operational overrides only and are not persisted in TOML.
 `ROBOREV_AGENT_HOOK_DAEMON_ADDR` points `run` at a specific local hook daemon
-address (shared with `agent-hook`).
+address shared by every agent-hook profile.
 
 ## Inspecting Sessions
 
@@ -171,12 +172,12 @@ Inspect tracked session counters, including `remind_count` (the number of
 shows sessions from every integration (Droid, Codex, Claude Code):
 
 ```bash
-roborev droid-hook status
+roborev agent-hook status
 ```
 
 Reset counters when you want a session to start fresh:
 
 ```bash
-roborev droid-hook reset <session-id>   # reset one session
-roborev droid-hook reset --all          # reset every session
+roborev agent-hook reset <session-id>   # reset one session
+roborev agent-hook reset --all          # reset every session
 ```

@@ -44,6 +44,35 @@ func TestAgentHookDumpCodexCreatesHookConfig(t *testing.T) {
 	assert.InDelta(10, firstAgentHookCommandTimeout(t, root, "Stop", command), 0)
 }
 
+func TestAgentHookDumpDroidCreatesHookConfig(t *testing.T) {
+	assert := assert.New(t)
+	path := filepath.Join(t.TempDir(), "hooks.json")
+	command := "/tmp/roborev agent-hook run --agent droid"
+
+	cmd := agentHookCmd()
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
+	cmd.SetArgs([]string{
+		"dump",
+		"--agent", "droid",
+		"--command", command,
+		"--config", path,
+		"--scope", "user",
+	})
+
+	require.NoError(t, cmd.Execute())
+
+	var root map[string]any
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &root))
+	assertAgentHookCommandCount(t, root, "PreToolUse", command, 1)
+	assertAgentHookCommandCount(t, root, "PostToolUse", command, 1)
+	assertAgentHookCommandCount(t, root, "Stop", command, 1)
+	assert.Equal("Execute", firstAgentHookMatcher(t, root, "PreToolUse"))
+	assert.Equal("Execute", firstAgentHookMatcher(t, root, "PostToolUse"))
+	assert.Empty(firstAgentHookMatcher(t, root, "Stop"))
+	assert.InDelta(10, firstAgentHookCommandTimeout(t, root, "Stop", command), 0)
+}
+
 func TestAgentHookInstallSupportsBinaryOverride(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "hooks.json")
@@ -68,6 +97,31 @@ func TestAgentHookInstallSupportsBinaryOverride(t *testing.T) {
 	assertAgentHookCommandContains(t, root, "PreToolUse", binPath, 1)
 	assertAgentHookCommandContains(t, root, "PostToolUse", binPath, 1)
 	assertAgentHookCommandContains(t, root, "Stop", binPath, 1)
+}
+
+func TestAgentHookInstallDroidWritesFactoryHooks(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hooks.json")
+
+	cmd := agentHookCmd()
+	var out bytes.Buffer
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{
+		"install",
+		"--agent", "droid",
+		"--command", "/tmp/roborev agent-hook run --agent droid",
+		"--config", path,
+		"--scope", "user",
+	})
+
+	require.NoError(t, cmd.Execute())
+	assert.Contains(t, out.String(), "installed Factory Droid agent hooks")
+
+	body, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Contains(t, string(body), "agent-hook run --agent droid")
+	assert.Contains(t, string(body), `"Execute"`)
+	assert.Contains(t, string(body), `"Stop"`)
 }
 
 func TestAgentHookDaemonHasLifecycleSubcommands(t *testing.T) {

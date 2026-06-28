@@ -16,16 +16,26 @@ import (
 // agentHookRunner is the roborev subcommand suffix baked into Codex/Claude hook
 // commands. It also serves as the stale-command sentinel: an install replaces
 // any prior command hook that invokes this runner, regardless of the roborev
-// binary path baked in by an earlier install. It is disjoint from the Factory
-// Droid runner ("droid-hook run") so the two integrations never clobber each
-// other's hook entries.
+// binary path baked in by an earlier install.
 const agentHookRunner = "agent-hook run"
+
+// droidAgentHookRunner selects the Factory Droid profile through the shared
+// agent-hook runtime. It is deliberately more specific than agentHookRunner so a
+// Droid install never clobbers plain Codex/Claude hook entries and vice versa.
+const droidAgentHookRunner = "agent-hook run --agent droid"
+
+// ExecuteMatcher is the Factory Droid tool name for shell commands. PreToolUse
+// and PostToolUse hooks match it to track turns and commits, mirroring the
+// Codex/Claude Bash matcher.
+const ExecuteMatcher = "Execute"
 
 type InstallOptions struct {
 	Agent            string
 	Command          string
+	ConfigPath       string
 	CodexConfigPath  string
 	ClaudeConfigPath string
+	Scope            string
 	Timeout          time.Duration
 	DryRun           bool
 }
@@ -34,6 +44,7 @@ type DumpOptions struct {
 	Agent      string
 	Command    string
 	ConfigPath string
+	Scope      string
 	Timeout    time.Duration
 }
 
@@ -54,30 +65,59 @@ func RunInstall(opts InstallOptions, stdout io.Writer) error {
 	if agent == "" {
 		agent = "all"
 	}
-	if agent != "all" && agent != "codex" && agent != "claude" {
-		return fmt.Errorf("agent must be codex, claude, or all")
+	if agent != "all" && agent != "codex" && agent != "claude" && agent != "droid" {
+		return fmt.Errorf("agent must be codex, claude, droid, or all")
 	}
 	if opts.Timeout < 0 {
 		return fmt.Errorf("timeout must be >= 0")
 	}
-	command, err := resolveInstallCommand(opts.Command)
+	command, err := resolveInstallCommand(agent, opts.Command)
 	if err != nil {
 		return err
 	}
+	if agent == "all" && opts.ConfigPath != "" {
+		return fmt.Errorf("--config is only supported when installing a single agent")
+	}
 
 	if agent == "all" || agent == "codex" {
-		changed, err := InstallSpecs(opts.CodexConfigPath, codexSpecs(command, opts.Timeout), agentHookRunner, opts.DryRun)
+		path := opts.CodexConfigPath
+		if agent == "codex" && opts.ConfigPath != "" {
+			path = opts.ConfigPath
+		}
+		changed, err := InstallSpecs(path, codexSpecs(command, opts.Timeout), agentHookRunner, opts.DryRun)
 		if err != nil {
 			return err
 		}
-		printInstallResult(stdout, "Codex", opts.CodexConfigPath, changed, opts.DryRun)
+		printInstallResult(stdout, "Codex", path, changed, opts.DryRun)
 	}
 	if agent == "all" || agent == "claude" {
-		changed, err := InstallSpecs(opts.ClaudeConfigPath, claudeSpecs(command), agentHookRunner, opts.DryRun)
+		path := opts.ClaudeConfigPath
+		if agent == "claude" && opts.ConfigPath != "" {
+			path = opts.ConfigPath
+		}
+		changed, err := InstallSpecs(path, claudeSpecs(command), agentHookRunner, opts.DryRun)
 		if err != nil {
 			return err
 		}
-		printInstallResult(stdout, "Claude", opts.ClaudeConfigPath, changed, opts.DryRun)
+		printInstallResult(stdout, "Claude", path, changed, opts.DryRun)
+	}
+	if agent == "droid" {
+		scope, err := normalizeDroidScope(opts.Scope)
+		if err != nil {
+			return err
+		}
+		path := opts.ConfigPath
+		if path == "" {
+			path = DefaultDroidHooksPath(scope)
+		}
+		if path == "" {
+			return fmt.Errorf("could not resolve Factory Droid hooks path for scope %q", scope)
+		}
+		changed, err := InstallSpecs(path, droidSpecs(command, opts.Timeout), droidAgentHookRunner, opts.DryRun)
+		if err != nil {
+			return err
+		}
+		printInstallResult(stdout, "Factory Droid", path, changed, opts.DryRun)
 	}
 	return nil
 }
@@ -87,13 +127,14 @@ func RunDump(opts DumpOptions, stdout io.Writer) error {
 	if opts.Timeout < 0 {
 		return fmt.Errorf("timeout must be >= 0")
 	}
-	command, err := resolveInstallCommand(opts.Command)
+	command, err := resolveInstallCommand(agent, opts.Command)
 	if err != nil {
 		return err
 	}
 
 	path := opts.ConfigPath
 	var specs []InstallSpec
+	runner := agentHookRunner
 	switch agent {
 	case "codex":
 		if path == "" {
@@ -105,11 +146,24 @@ func RunDump(opts DumpOptions, stdout io.Writer) error {
 			path = DefaultClaudeSettingsPath()
 		}
 		specs = claudeSpecs(command)
+	case "droid":
+		scope, err := normalizeDroidScope(opts.Scope)
+		if err != nil {
+			return err
+		}
+		if path == "" {
+			path = DefaultDroidHooksPath(scope)
+		}
+		if path == "" {
+			return fmt.Errorf("could not resolve Factory Droid hooks path for scope %q", scope)
+		}
+		specs = droidSpecs(command, opts.Timeout)
+		runner = droidAgentHookRunner
 	default:
-		return fmt.Errorf("agent must be codex or claude")
+		return fmt.Errorf("agent must be codex, claude, or droid")
 	}
 
-	root, _, _, err := PlanSpecs(path, specs, agentHookRunner)
+	root, _, _, err := PlanSpecs(path, specs, runner)
 	if err != nil {
 		return err
 	}
@@ -121,9 +175,13 @@ func RunDump(opts DumpOptions, stdout io.Writer) error {
 	return err
 }
 
-func resolveInstallCommand(command string) (string, error) {
+func resolveInstallCommand(agent, command string) (string, error) {
 	command = strings.TrimSpace(command)
 	if command == "" {
+		if agent == "droid" {
+			command, _, err := ResolveHookCommandWithRunner("", "", droidAgentHookRunner)
+			return command, err
+		}
 		return defaultInstallCommand()
 	}
 	return command, nil
@@ -187,10 +245,36 @@ func claudeSpecs(command string) []InstallSpec {
 	}
 }
 
+func droidSpecs(command string, timeout time.Duration) []InstallSpec {
+	secs := int(timeout.Seconds())
+	return []InstallSpec{
+		{
+			Event:          "PreToolUse",
+			Matcher:        ExecuteMatcher,
+			Command:        command,
+			Timeout:        secs,
+			IncludeTimeout: true,
+		},
+		{
+			Event:          "PostToolUse",
+			Matcher:        ExecuteMatcher,
+			Command:        command,
+			Timeout:        secs,
+			IncludeTimeout: true,
+		},
+		{
+			Event:          "Stop",
+			Command:        command,
+			Timeout:        secs,
+			IncludeTimeout: true,
+		},
+	}
+}
+
 // InstallSpecs writes specs into the hook config at path, collapsing any prior
 // roborev command hooks for runner into a single up-to-date entry. runner is the
-// subcommand suffix (e.g. "agent-hook run" or "droid-hook run") used to identify
-// stale roborev commands from earlier installs. It reports whether the config
+// subcommand suffix (e.g. "agent-hook run") used to identify stale roborev
+// commands from earlier installs. It reports whether the config
 // changed. When dryRun is set, it computes the change without writing.
 func InstallSpecs(path string, specs []InstallSpec, runner string, dryRun bool) (bool, error) {
 	root, mode, changed, err := PlanSpecs(path, specs, runner)
@@ -432,9 +516,9 @@ func commandHookCurrent(hook map[string]any, spec InstallSpec) bool {
 }
 
 // isRoborevHookCommand reports whether a hook command invokes the roborev
-// runner (e.g. "agent-hook run" or "droid-hook run"), regardless of binary path
-// or quoting, so an install can replace command hooks that carry a stale or
-// versioned roborev path. runner is the subcommand suffix to match.
+// runner (e.g. "agent-hook run"), regardless of binary path or quoting, so an
+// install can replace command hooks that carry a stale or versioned roborev
+// path. runner is the subcommand suffix to match.
 func isRoborevHookCommand(command, runner string) bool {
 	return strings.Contains(command, runner) && strings.Contains(command, "roborev")
 }
@@ -492,7 +576,7 @@ func ResolveHookCommandWithBinary(commandOverride, binaryOverride string) (comma
 }
 
 // ResolveHookCommandWithRunner returns the command to install for a roborev hook
-// integration identified by runner (e.g. "agent-hook run" or "droid-hook run").
+// integration identified by runner (e.g. "agent-hook run").
 // commandOverride is used verbatim when set; otherwise binaryOverride (or an
 // auto-resolved roborev binary) is quoted and suffixed with runner. The returned
 // notice is raw (mentions --binary); callers that expose --command instead
@@ -548,6 +632,31 @@ func DefaultClaudeSettingsPath() string {
 		return ""
 	}
 	return filepath.Join(home, ".claude", "settings.json")
+}
+
+// DefaultDroidHooksPath returns the Factory Droid hooks.json path for a scope:
+// "~/.factory/hooks.json" for user scope, ".factory/hooks.json"
+// (project-relative) for project scope.
+func DefaultDroidHooksPath(scope string) string {
+	if strings.ToLower(scope) == "project" {
+		return ".factory/hooks.json"
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ""
+	}
+	return filepath.Join(home, ".factory", "hooks.json")
+}
+
+func normalizeDroidScope(scope string) (string, error) {
+	scope = strings.ToLower(strings.TrimSpace(scope))
+	if scope == "" {
+		return "user", nil
+	}
+	if scope == "user" || scope == "project" {
+		return scope, nil
+	}
+	return "", fmt.Errorf("scope must be user or project")
 }
 
 func shellQuote(s string) string {
