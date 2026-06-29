@@ -6,11 +6,14 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"log"
 	"net/http"
 	"strconv"
 	"strings"
 	"time"
 
+	"go.kenn.io/roborev/internal/agent"
+	"go.kenn.io/roborev/internal/config"
 	gitpkg "go.kenn.io/roborev/internal/git"
 	reviewpkg "go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
@@ -42,6 +45,61 @@ type discordEmbedField struct {
 }
 
 type discordLogf func(format string, args ...any)
+
+func (p *CIPoller) notifyDiscordCIJobFailed(event Event) {
+	if p == nil || p.db == nil || p.cfgGetter == nil {
+		return
+	}
+	cfg := p.cfgGetter.Config()
+	if cfg == nil {
+		return
+	}
+	webhookURL := strings.TrimSpace(cfg.CI.DiscordWebhookURL)
+	if webhookURL == "" {
+		return
+	}
+
+	job, err := p.db.GetJobByID(event.JobID)
+	if err != nil {
+		log.Printf("CI Discord webhook: lookup job %d: %v", event.JobID, err)
+		return
+	}
+	if job == nil || !job.IsCIReview() {
+		return
+	}
+
+	failureClass := discordFailureClass(*job, event.Error)
+	if failureClass == discordFailureQuotaCooldown &&
+		p.suppressDiscordQuotaCooldownNotification(canonicalDiscordAgent(*job, event), cfg) {
+		return
+	}
+
+	payload := buildDiscordCIJobFailedPayload(event, *job)
+	postDiscordWebhook(context.Background(), webhookURL, payload, log.Printf)
+}
+
+func (p *CIPoller) suppressDiscordQuotaCooldownNotification(agentName string, cfg *config.Config) bool {
+	if agentName == "" {
+		agentName = "unknown"
+	}
+	if p.discordQuotaDedupe == nil {
+		p.discordQuotaDedupe = make(map[string]time.Time)
+	}
+	nowFn := p.discordNowFn
+	if nowFn == nil {
+		nowFn = time.Now
+	}
+	now := nowFn()
+	if until, ok := p.discordQuotaDedupe[agentName]; ok && now.Before(until) {
+		return true
+	}
+	p.discordQuotaDedupe[agentName] = now.Add(config.ResolveAgentQuotaCooldown(cfg))
+	return false
+}
+
+func canonicalDiscordAgent(job storage.ReviewJob, event Event) string {
+	return agent.CanonicalName(firstNonEmpty(event.Agent, job.Agent))
+}
 
 func postDiscordWebhook(ctx context.Context, webhookURL string, payload discordWebhookPayload, logf discordLogf) bool {
 	safeURL := redactWebhookURL(webhookURL)

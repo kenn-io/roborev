@@ -101,6 +101,11 @@ type CIPoller struct {
 
 	repoResolver *RepoResolver
 
+	// Discord quota dedupe is owned by the single CI event listener goroutine.
+	// Add locking before calling it from concurrent goroutines.
+	discordQuotaDedupe map[string]time.Time
+	discordNowFn       func() time.Time
+
 	subID      int // broadcaster subscription ID for event listening
 	stopCh     chan struct{}
 	doneCh     chan struct{}
@@ -114,9 +119,11 @@ type CIPoller struct {
 // authenticate as the app bot instead of the user's personal account.
 func NewCIPoller(db *storage.DB, cfgGetter ConfigGetter, broadcaster Broadcaster) *CIPoller {
 	p := &CIPoller{
-		db:          db,
-		cfgGetter:   cfgGetter,
-		broadcaster: broadcaster,
+		db:                 db,
+		cfgGetter:          cfgGetter,
+		broadcaster:        broadcaster,
+		discordQuotaDedupe: make(map[string]time.Time),
+		discordNowFn:       time.Now,
 	}
 	p.listOpenPRsFn = p.listOpenPRs
 	p.listTrustedActorsFn = p.listTrustedActors
@@ -1644,6 +1651,7 @@ func (p *CIPoller) handleReviewFailed(event Event) {
 		return
 	}
 	p.routePanelEvent(event.JobID)
+	p.notifyDiscordCIJobFailed(event)
 }
 
 // handleReviewCanceled retires an active CI panel mapping for a canceled

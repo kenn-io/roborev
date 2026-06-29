@@ -38,6 +38,14 @@ type ciPollerHarness struct {
 	Poller   *CIPoller
 }
 
+type mutableConfigGetter struct {
+	cfg *config.Config
+}
+
+func (g *mutableConfigGetter) Config() *config.Config {
+	return g.cfg
+}
+
 func installFakeGHAuthToken(t *testing.T, token string) {
 	t.Helper()
 	if runtime.GOOS == "windows" {
@@ -193,6 +201,105 @@ func (h *ciPollerHarness) CaptureCommitStatuses() *[]capturedStatus {
 		return nil
 	}
 	return &captured
+}
+
+func TestCIPollerDiscordWebhookReadsURLAtEventTime(t *testing.T) {
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	getter := &mutableConfigGetter{cfg: h.Cfg}
+	h.Poller.cfgGetter = getter
+
+	reqCh := make(chan discordWebhookPayload, 2)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		var payload discordWebhookPayload
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+		reqCh <- payload
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	_, _, members := h.seedCIPanelRun(t, "acme/api", 1, "headsha111", "base..headsha111",
+		[]jobSpec{{Agent: "codex", ReviewType: "security", Status: "failed", Error: "agent: failed"}})
+
+	h.Poller.handleReviewFailed(ciEvent(members[0].ID, "review.failed"))
+	assert.Empty(t, reqCh, "empty URL skips notification")
+
+	h.Cfg.CI.DiscordWebhookURL = server.URL
+	h.Poller.handleReviewFailed(ciEvent(members[0].ID, "review.failed"))
+
+	var payload discordWebhookPayload
+	require.Eventually(t, func() bool {
+		select {
+		case payload = <-reqCh:
+			return true
+		default:
+			return false
+		}
+	}, 2*time.Second, 10*time.Millisecond)
+	require.Len(t, payload.Embeds, 1)
+	assert.Equal(t, "roborev CI job failed", payload.Embeds[0].Title)
+
+	h.Cfg.CI.DiscordWebhookURL = ""
+	h.Poller.handleReviewFailed(ciEvent(members[0].ID, "review.failed"))
+	assert.Empty(t, reqCh, "cleared URL skips future notifications")
+}
+
+func TestCIPollerDiscordWebhookIgnoresNonCIJobs(t *testing.T) {
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	reqCh := make(chan discordWebhookPayload, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		var payload discordWebhookPayload
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+		reqCh <- payload
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	h.Cfg.CI.DiscordWebhookURL = server.URL
+
+	job, err := h.DB.EnqueueJob(storage.EnqueueOpts{
+		RepoID: h.Repo.ID,
+		GitRef: "abc123",
+		Agent:  "codex",
+	})
+	require.NoError(t, err)
+	h.markJobFailed(t, job.ID, "agent: failed")
+
+	h.Poller.handleReviewFailed(ciEvent(job.ID, "review.failed"))
+
+	assert.Empty(t, reqCh)
+}
+
+func TestCIPollerDiscordWebhookDedupesQuotaCooldownPerAgent(t *testing.T) {
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	h.Cfg.AgentQuotaCooldown = "5m"
+	reqCh := make(chan discordWebhookPayload, 3)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		var payload discordWebhookPayload
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+		reqCh <- payload
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+	h.Cfg.CI.DiscordWebhookURL = server.URL
+
+	now := time.Date(2026, 6, 28, 12, 0, 0, 0, time.UTC)
+	h.Poller.discordNowFn = func() time.Time { return now }
+	quotaErr := review.QuotaErrorPrefix + "agent codex quota cooldown active"
+	_, _, firstMembers := h.seedCIPanelRun(t, "acme/api", 2, "headsha222", "base..headsha222",
+		[]jobSpec{{Agent: "codex", ReviewType: "security", Status: "failed", Error: quotaErr}})
+	_, _, secondMembers := h.seedCIPanelRun(t, "acme/api", 3, "headsha333", "base..headsha333",
+		[]jobSpec{{Agent: "codex", ReviewType: "review", Status: "failed", Error: quotaErr}})
+
+	h.Poller.handleReviewFailed(ciEvent(firstMembers[0].ID, "review.failed"))
+	h.Poller.handleReviewFailed(ciEvent(secondMembers[0].ID, "review.failed"))
+
+	assert.Len(t, reqCh, 1, "same-agent quota cooldown is deduped globally")
+
+	now = now.Add(5*time.Minute + time.Second)
+	h.Poller.handleReviewFailed(ciEvent(secondMembers[0].ID, "review.failed"))
+	assert.Len(t, reqCh, 2, "dedupe expires after configured quota cooldown")
 }
 
 type jobSpec struct {
