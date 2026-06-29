@@ -418,6 +418,25 @@ func TestRunInstallDroidRejectsMixedCaseExistingProjectConfigOnCaseInsensitiveFS
 	assert.ErrorContains(t, err, "project-scoped Factory Droid hook config is not supported")
 }
 
+func TestRunInstallDroidRejectsMixedCaseNewProjectConfigOnCaseInsensitiveFS(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	chdirForTest(t, repo.Path())
+	requireFilesystemCaseInsensitive(t, repo.Path())
+	stubDroidPathCaseInsensitive(t, false)
+
+	var out bytes.Buffer
+	err := RunInstall(InstallOptions{
+		Agent:      "droid",
+		Command:    "/tmp/roborev agent-hook run --agent droid",
+		ConfigPath: filepath.Join(".Factory", "hooks.JSON"),
+		Scope:      "user",
+		Timeout:    10 * time.Second,
+		DryRun:     true,
+	}, &out)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "project-scoped Factory Droid hook config is not supported")
+}
+
 func TestRunInstallDroidRejectsSymlinkToProjectConfigPath(t *testing.T) {
 	repo := testutil.NewGitRepo(t)
 	targetDir := filepath.Join(repo.Path(), ".factory")

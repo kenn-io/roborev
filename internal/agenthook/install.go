@@ -874,10 +874,7 @@ func sameDroidPath(a, b string) bool {
 }
 
 func sameDroidPathName(a, b string) bool {
-	if droidPathCaseInsensitive {
-		return strings.EqualFold(a, b)
-	}
-	return a == b
+	return strings.EqualFold(a, b)
 }
 
 // evalExistingParentPath resolves the longest existing ancestor of path and
