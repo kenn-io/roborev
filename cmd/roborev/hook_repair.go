@@ -16,37 +16,34 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 )
 
-type reconcileHookOptions struct {
+type repairHookOptions struct {
 	current    bool
 	registered bool
 	binary     string
 	out        io.Writer
 }
 
-func reconcileHooksCmd() *cobra.Command {
-	opts := reconcileHookOptions{out: os.Stdout}
+func installHookRepairCmd() *cobra.Command {
+	opts := repairHookOptions{out: os.Stdout}
 
 	cmd := &cobra.Command{
-		Use:    "reconcile-hooks",
-		Short:  "Repair roborev-managed git hooks",
-		Hidden: true,
+		Use:   "repair",
+		Short: "Repair existing roborev-managed git hooks",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if !opts.current && !opts.registered {
+			if !opts.registered {
 				opts.current = true
-				opts.registered = true
 			}
-			return reconcileHooks(cmd.Context(), opts)
+			return repairHooks(cmd.Context(), opts)
 		},
 	}
 
-	cmd.Flags().BoolVar(&opts.current, "current", false, "reconcile hooks in the current repository")
-	cmd.Flags().BoolVar(&opts.registered, "registered", false, "reconcile hooks in registered repositories")
+	cmd.Flags().BoolVar(&opts.registered, "registered", false, "repair hooks in all registered repositories")
 	cmd.Flags().StringVar(&opts.binary, "binary", "", "roborev binary path to bake into git hooks")
 
 	return cmd
 }
 
-func reconcileHooks(ctx context.Context, opts reconcileHookOptions) error {
+func repairHooks(ctx context.Context, opts repairHookOptions) error {
 	out := opts.out
 	if out == nil {
 		out = io.Discard
@@ -60,19 +57,19 @@ func reconcileHooks(ctx context.Context, opts reconcileHookOptions) error {
 		fmt.Fprintln(out, resolution.Notice)
 	}
 
-	roots, err := hookReconcileRoots(ctx, opts)
+	roots, err := hookRepairRoots(ctx, opts)
 	if err != nil {
 		return err
 	}
 	if len(roots) == 0 {
-		fmt.Fprintln(out, "No repositories to reconcile")
+		fmt.Fprintln(out, "No repositories to repair")
 		return nil
 	}
 
 	var reconciled int
 	var warnings []error
 	for _, root := range roots {
-		found, err := reconcileManagedRepoHooks(ctx, root, resolution.Path)
+		found, err := repairManagedRepoHooks(ctx, root, resolution.Path)
 		if err != nil {
 			warnings = append(warnings, fmt.Errorf("%s: %w", root, err))
 			continue
@@ -83,7 +80,7 @@ func reconcileHooks(ctx context.Context, opts reconcileHookOptions) error {
 	}
 
 	for _, warning := range warnings {
-		fmt.Fprintf(out, "Warning: failed to reconcile hooks for %v\n", warning)
+		fmt.Fprintf(out, "Warning: failed to repair hooks for %v\n", warning)
 	}
 	if len(warnings) > 0 {
 		return errors.Join(warnings...)
@@ -92,11 +89,11 @@ func reconcileHooks(ctx context.Context, opts reconcileHookOptions) error {
 		fmt.Fprintln(out, "No managed hooks found")
 		return nil
 	}
-	fmt.Fprintf(out, "Reconciled hooks in %d repo(s)\n", reconciled)
+	fmt.Fprintf(out, "Repaired hooks in %d repo(s)\n", reconciled)
 	return nil
 }
 
-func hookReconcileRoots(ctx context.Context, opts reconcileHookOptions) ([]string, error) {
+func hookRepairRoots(ctx context.Context, opts repairHookOptions) ([]string, error) {
 	seen := map[string]struct{}{}
 	var roots []string
 	add := func(root string) {
@@ -157,7 +154,7 @@ func registeredHookRepos() ([]string, error) {
 	return roots, nil
 }
 
-func reconcileManagedRepoHooks(ctx context.Context, repoPath, binaryPath string) (bool, error) {
+func repairManagedRepoHooks(ctx context.Context, repoPath, binaryPath string) (bool, error) {
 	root, err := gitrepo.Root(ctx, repoPath)
 	if err != nil {
 		return false, nil

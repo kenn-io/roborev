@@ -788,23 +788,20 @@ func TestUpdateCmdHasNoRestartFlag(t *testing.T) {
 	assert.Contains(t, flag.Usage, "skip daemon restart")
 }
 
-func TestReconcileHooksAfterUpdateUsesNewBinary(t *testing.T) {
-	var gotName string
-	var gotArgs []string
-	run := func(name string, args ...string) ([]byte, error) {
-		gotName = name
-		gotArgs = append([]string(nil), args...)
-		return []byte("updated hooks\n"), nil
-	}
-
-	reconcileHooksAfterUpdate("/tmp/bin", run)
+func TestRepairHooksAfterUpdateUsesRegisteredRepos(t *testing.T) {
+	var gotOpts repairHookOptions
+	repairHooksAfterUpdate("/tmp/bin", func(opts repairHookOptions) error {
+		gotOpts = opts
+		return nil
+	})
 
 	wantBinary := filepath.Join("/tmp/bin", "roborev")
 	if runtime.GOOS == "windows" {
 		wantBinary += ".exe"
 	}
-	assert.Equal(t, wantBinary, gotName)
-	assert.Equal(t, []string{"reconcile-hooks", "--current", "--registered"}, gotArgs)
+	assert.False(t, gotOpts.current)
+	assert.True(t, gotOpts.registered)
+	assert.Equal(t, wantBinary, gotOpts.binary)
 }
 
 // stubRestartVars saves and restores all package-level vars used by

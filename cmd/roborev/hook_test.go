@@ -190,7 +190,7 @@ func TestInstallHookCmdCreatesPostRewriteHook(t *testing.T) {
 	assert.Contains(t, string(content), githook.PostRewriteVersionMarker)
 }
 
-func TestReconcileHooksCmdRewritesManagedHooksOnly(t *testing.T) {
+func TestInstallHookRepairCmdRewritesCurrentManagedHooksOnly(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("test checks Unix exec bits, skipping on Windows")
 	}
@@ -208,8 +208,8 @@ func TestReconcileHooksCmdRewritesManagedHooksOnly(t *testing.T) {
 	customPostRewrite := "#!/bin/sh\necho custom\n"
 	require.NoError(t, os.WriteFile(filepath.Join(repo.HooksDir, "post-rewrite"), []byte(customPostRewrite), 0o755))
 
-	cmd := reconcileHooksCmd()
-	cmd.SetArgs([]string{"--current", "--binary", newBinary})
+	cmd := installHookCmd()
+	cmd.SetArgs([]string{"repair", "--binary", newBinary})
 	err := cmd.Execute()
 	require.NoError(t, err)
 
@@ -223,7 +223,7 @@ func TestReconcileHooksCmdRewritesManagedHooksOnly(t *testing.T) {
 	assert.Equal(t, customPostRewrite, string(postRewrite))
 }
 
-func TestReconcileHooksCmdSkipsCurrentRepoWithoutManagedHook(t *testing.T) {
+func TestInstallHookRepairCmdSkipsCurrentRepoWithoutManagedHook(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("test checks Unix exec bits, skipping on Windows")
 	}
@@ -238,8 +238,8 @@ func TestReconcileHooksCmdSkipsCurrentRepoWithoutManagedHook(t *testing.T) {
 	customPostCommit := "#!/bin/sh\necho custom\n"
 	require.NoError(t, os.WriteFile(repo.HookPath, []byte(customPostCommit), 0o755))
 
-	cmd := reconcileHooksCmd()
-	cmd.SetArgs([]string{"--current", "--binary", newBinary})
+	cmd := installHookCmd()
+	cmd.SetArgs([]string{"repair", "--binary", newBinary})
 	err := cmd.Execute()
 	require.NoError(t, err)
 
@@ -251,7 +251,7 @@ func TestReconcileHooksCmdSkipsCurrentRepoWithoutManagedHook(t *testing.T) {
 	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
-func TestReconcileHooksCmdDoesNotTreatRoborevMentionAsManagedHook(t *testing.T) {
+func TestInstallHookRepairCmdDoesNotTreatRoborevMentionAsManagedHook(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("test checks Unix exec bits, skipping on Windows")
 	}
@@ -266,8 +266,8 @@ func TestReconcileHooksCmdDoesNotTreatRoborevMentionAsManagedHook(t *testing.T) 
 	customPostCommit := "#!/bin/sh\n# roborev is handled elsewhere\necho custom\n"
 	require.NoError(t, os.WriteFile(repo.HookPath, []byte(customPostCommit), 0o755))
 
-	cmd := reconcileHooksCmd()
-	cmd.SetArgs([]string{"--current", "--binary", newBinary})
+	cmd := installHookCmd()
+	cmd.SetArgs([]string{"repair", "--binary", newBinary})
 	err := cmd.Execute()
 	require.NoError(t, err)
 
@@ -276,7 +276,7 @@ func TestReconcileHooksCmdDoesNotTreatRoborevMentionAsManagedHook(t *testing.T) 
 	assert.Equal(t, customPostCommit, string(postCommit))
 }
 
-func TestReconcileHooksCmdDoesNotNormalizeUnmanagedHooksPath(t *testing.T) {
+func TestInstallHookRepairCmdDoesNotNormalizeUnmanagedHooksPath(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("test checks Unix exec bits, skipping on Windows")
 	}
@@ -294,8 +294,8 @@ func TestReconcileHooksCmdDoesNotNormalizeUnmanagedHooksPath(t *testing.T) {
 	customPostCommit := "#!/bin/sh\necho custom\n"
 	require.NoError(t, os.WriteFile(filepath.Join(hooksDir, "post-commit"), []byte(customPostCommit), 0o755))
 
-	cmd := reconcileHooksCmd()
-	cmd.SetArgs([]string{"--current", "--binary", newBinary})
+	cmd := installHookCmd()
+	cmd.SetArgs([]string{"repair", "--binary", newBinary})
 	err := cmd.Execute()
 	require.NoError(t, err)
 
@@ -307,7 +307,7 @@ func TestReconcileHooksCmdDoesNotNormalizeUnmanagedHooksPath(t *testing.T) {
 	assert.Equal(t, customPostCommit, string(postCommit))
 }
 
-func TestReconcileHooksCmdRepairsRegisteredRepo(t *testing.T) {
+func TestInstallHookRepairCmdWithRegisteredRepairsRegisteredRepos(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("test checks Unix exec bits, skipping on Windows")
 	}
@@ -329,8 +329,49 @@ func TestReconcileHooksCmdRepairsRegisteredRepo(t *testing.T) {
 	require.NoError(t, os.MkdirAll(repo.HooksDir, 0o755))
 	require.NoError(t, os.WriteFile(repo.HookPath, []byte(githook.GeneratePostCommitWithBinary(oldBinary)), 0o755))
 
-	cmd := reconcileHooksCmd()
-	cmd.SetArgs([]string{"--registered", "--binary", newBinary})
+	cmd := installHookCmd()
+	cmd.SetArgs([]string{"repair", "--registered", "--binary", newBinary})
+	err = cmd.Execute()
+	require.NoError(t, err)
+
+	postCommit, err := os.ReadFile(repo.HookPath)
+	require.NoError(t, err)
+	assert.Contains(t, string(postCommit), fmt.Sprintf("ROBOREV=%q", newBinary))
+	assert.NotContains(t, string(postCommit), oldBinary)
+}
+
+func TestInstallHookRepairCmdWithRegisteredWorksOutsideGitRepo(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test checks Unix exec bits, skipping on Windows")
+	}
+
+	dataDir := testenv.SetDataDir(t)
+	db, err := storage.Open(filepath.Join(dataDir, "reviews.db"))
+	require.NoError(t, err)
+	defer db.Close()
+
+	oldBinary := filepath.Join(t.TempDir(), "roborev-old")
+	newBinary := filepath.Join(t.TempDir(), "roborev-new")
+	require.NoError(t, os.WriteFile(oldBinary, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	require.NoError(t, os.WriteFile(newBinary, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+
+	repo := testutil.NewTestRepo(t)
+	_, err = db.GetOrCreateRepo(repo.Root)
+	require.NoError(t, err)
+
+	require.NoError(t, os.MkdirAll(repo.HooksDir, 0o755))
+	require.NoError(t, os.WriteFile(repo.HookPath, []byte(githook.GeneratePostCommitWithBinary(oldBinary)), 0o755))
+
+	outsideRepo := t.TempDir()
+	previousDir, err := os.Getwd()
+	require.NoError(t, err)
+	require.NoError(t, os.Chdir(outsideRepo))
+	t.Cleanup(func() {
+		require.NoError(t, os.Chdir(previousDir))
+	})
+
+	cmd := installHookCmd()
+	cmd.SetArgs([]string{"repair", "--registered", "--binary", newBinary})
 	err = cmd.Execute()
 	require.NoError(t, err)
 

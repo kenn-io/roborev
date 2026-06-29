@@ -53,6 +53,7 @@ func installHookCmd() *cobra.Command {
 
 	cmd.Flags().BoolVar(&force, "force", false, "overwrite existing hook")
 	cmd.Flags().StringVar(&hookBinary, "binary", "", "roborev binary path to bake into git hooks (for version-manager shims)")
+	cmd.AddCommand(installHookRepairCmd())
 
 	return cmd
 }

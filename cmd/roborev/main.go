@@ -51,7 +51,6 @@ func main() {
 	rootCmd.AddCommand(closeCmd())
 	rootCmd.AddCommand(installHookCmd())
 	rootCmd.AddCommand(uninstallHookCmd())
-	rootCmd.AddCommand(reconcileHooksCmd())
 	rootCmd.AddCommand(daemonCmd())
 	rootCmd.AddCommand(streamCmd())
 	rootCmd.AddCommand(tuiCmd())

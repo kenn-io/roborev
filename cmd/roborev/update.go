@@ -1,6 +1,7 @@
 package main
 
 import (
+	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -343,12 +344,6 @@ func restartDaemonAfterUpdate(binDir string, noRestart bool) {
 	)
 }
 
-type updatedBinaryRunner func(name string, args ...string) ([]byte, error)
-
-func runUpdatedBinary(name string, args ...string) ([]byte, error) {
-	return exec.Command(name, args...).CombinedOutput()
-}
-
 func updatedRoborevBinary(binDir string) string {
 	newBinary := filepath.Join(binDir, "roborev")
 	if runtime.GOOS == "windows" {
@@ -357,18 +352,18 @@ func updatedRoborevBinary(binDir string) string {
 	return newBinary
 }
 
-func reconcileHooksAfterUpdate(binDir string, run updatedBinaryRunner) {
+type repairHookRunner func(opts repairHookOptions) error
+
+func repairHooksAfterUpdate(binDir string, run repairHookRunner) {
 	if run == nil {
-		run = runUpdatedBinary
+		run = func(opts repairHookOptions) error {
+			return repairHooks(context.Background(), opts)
+		}
 	}
 
 	fmt.Print("Updating git hooks... ")
-	output, err := run(updatedRoborevBinary(binDir), "reconcile-hooks", "--current", "--registered")
-	if err != nil {
+	if err := run(repairHookOptions{registered: true, binary: updatedRoborevBinary(binDir)}); err != nil {
 		fmt.Printf("warning: %v\n", err)
-		if trimmed := strings.TrimSpace(string(output)); trimmed != "" {
-			fmt.Println(trimmed)
-		}
 		return
 	}
 	fmt.Println("OK")
@@ -493,7 +488,7 @@ launchd or systemd).`,
 			}
 
 			restartDaemonAfterUpdate(binDir, noRestart)
-			reconcileHooksAfterUpdate(binDir, runUpdatedBinary)
+			repairHooksAfterUpdate(binDir, nil)
 
 			// Update skills using the NEW binary (current process has old embedded skills)
 			// Use "skills update" to only update agents that already have skills installed
