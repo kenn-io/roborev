@@ -24,16 +24,16 @@ The export is intended for downstream collection and analysis of completed revie
 
 Flags:
 
-- `--format json`: output format. JSON is the only supported format and the default.
+- `--format json`: output format. JSON is the only supported format and the default. The flag is intentionally present as a forward-compatible affordance even though it has one valid value in this version.
 - `--profile content|metadata`: defaults to `content`.
 - `--since T`: optional lower bound for completed review time.
 - `--until T`: optional upper bound for completed review time.
 - `--closed-only`: only include top-level reviews marked closed.
-- `--repo R`: exact repo identity or repo root path filter.
+- `--repo R`: exact repo identity or repo root path filter. Repo root paths may be used for filtering but are not emitted in the export document.
 - `--project P`: exact project display-name filter.
 - `--limit N`: maximum number of top-level reviews emitted by the CLI.
 
-Time flags accept RFC3339 timestamps or `YYYY-MM-DD` dates. Date-only values are interpreted as UTC day boundaries: `--since 2026-06-01` means `2026-06-01T00:00:00Z`; `--until 2026-06-01` means `2026-06-02T00:00:00Z` as an exclusive upper bound.
+Time flags accept RFC3339 timestamps or `YYYY-MM-DD` dates. `--since` is inclusive and `--until` is exclusive for both timestamp and date-only inputs. Date-only values are interpreted as UTC day boundaries: `--since 2026-06-01` means `2026-06-01T00:00:00Z`; `--until 2026-06-01` means `2026-06-02T00:00:00Z`.
 
 When `--limit` is omitted, the CLI uses bounded daemon pages and follows the cursor until all matching rows have been emitted into the single JSON document. When `--limit` is present, the CLI stops after emitting at most that many top-level reviews.
 
@@ -147,7 +147,11 @@ Panel and CI review behavior:
 
 - A panel run exports as one top-level synthesis review.
 - Member reviews never appear as top-level rows.
-- Member reviews are included under `subagents` for their synthesis review, ordered by `(panel_member_index ASC, job_id ASC)`.
+- Member reviews are included under `subagents` for their synthesis review only when the member row has `review_jobs.status = 'done'`, a joined `reviews` row, and non-null `reviews.verdict_bool`. Failed, skipped, queued, running, or empty-output members are omitted from `subagents` in this version.
+- Subagents are ordered by `(panel_member_index ASC, job_id ASC)`.
+- Subagent `name` comes from `review_jobs.panel_member_name`; if it is empty, use `review_jobs.agent`.
+- Subagent `completed_at` comes from normalized member `reviews.created_at`, matching top-level review semantics.
+- Subagent `duration_ms` is execution time for the member job: member `review_jobs.finished_at - review_jobs.started_at`.
 - `--limit` counts only top-level rows; nested subagents do not count against it.
 - Historical PR exports can contain multiple rows with the same `pr_number` when a PR was reviewed at multiple head SHAs. `commit_sha` distinguishes those events.
 
@@ -179,7 +183,7 @@ Extract this into a shared helper so export, sync, and future SQL paths use one 
 
 Output timestamps are always RFC3339 UTC.
 
-`duration_ms` is execution time: `review_jobs.finished_at - review_jobs.started_at`, parsed with the existing timestamp parser. If either side is missing or unparsable, emit `null`.
+`completed_at` and `duration_ms` intentionally use different sources. `completed_at` is the stable export event time from the review row. `duration_ms` is execution time from the job row: `review_jobs.finished_at - review_jobs.started_at`, parsed with the existing timestamp parser. If either side is missing or unparsable, emit `null`.
 
 ## Cursor And Ordering
 
@@ -205,33 +209,43 @@ OR (
 
 `project` is `repos.name`.
 
-`repo` is `repos.identity` when present, otherwise `repos.root_path`.
+`repo` is `repos.identity` when present, otherwise `repos.name`. Do not emit `repos.root_path` as a fallback because it can reveal local usernames and filesystem layout. The `project` field also uses `repos.name`, so local-only repos without an identity may have matching `repo` and `project` values.
 
-`--repo` matches either `repos.identity` or `repos.root_path` exactly. `--project` matches `repos.name` exactly.
+`--repo` matches either `repos.identity` or `repos.root_path` exactly. This keeps local path filtering available to the CLI without exposing the path in the output document. `--project` matches `repos.name` exactly.
 
 `commit_sha` comes from `commits.sha` for single-commit reviews. For range, dirty, and synthesis rows, use the best stable reviewed ref available:
 
 - commit review: joined `commits.sha`.
-- range review: the end ref when `git_ref` is a two-dot or three-dot range and the end ref is SHA-like; otherwise `null`.
+- range and synthesis reviews: the end ref when `git_ref` is a two-dot or three-dot range and the end ref is SHA-like; otherwise `null`.
 - dirty review: `null`.
-- synthesis review: the synthesis job `git_ref`, which is the reviewed head SHA for CI panels.
 
 For CI panel synthesis rows, join `ci_pr_panels` on `review_jobs.panel_run_uuid = ci_pr_panels.panel_run_uuid`:
 
 - `pr_number` is `ci_pr_panels.pr_number`.
 - `pr_url` is `https://github.com/{github_repo}/pull/{pr_number}`.
+- `head_sha` from `ci_pr_panels` can be used as an authoritative cross-check for the synthesis range end. If both are present and disagree, prefer `ci_pr_panels.head_sha` and surface the mismatch through logging or telemetry rather than exporting the range text as `commit_sha`.
 
 For local panels and non-panel reviews, PR fields are `null`.
 
+## Cost Fields
+
+Cost fields are extracted from `review_jobs.token_usage` JSON. The export must not emit the raw token usage blob.
+
+- `cost.tokens_in`: `$.input_tokens` when present and non-zero; otherwise `null`. Many existing rows do not carry input-token data, so this field may commonly be `null`.
+- `cost.tokens_out`: `$.total_output_tokens` when present and non-zero; otherwise `null`.
+- `cost.usd`: `$.cost_usd` only when `$.has_cost` is true; otherwise `null`.
+
+The extraction should use structured JSON access (`json_valid`, `json_extract`, or Go JSON decoding), not string parsing.
+
 ## Verdict Backfill
 
-Add an automatic idempotent DB-open migration that populates `reviews.verdict_bool` for legacy rows:
+Add an automatic idempotent migration in the existing DB-open migration chain that populates `reviews.verdict_bool` for legacy rows:
 
 ```text
 WHERE verdict_bool IS NULL AND output != ''
 ```
 
-The migration uses the existing deterministic verdict parser and stores the result. This permanently bakes the parser's current interpretation into legacy rows. That tradeoff is intentional: metadata export can then avoid loading raw review output while still including legacy reviews.
+The migration is a Go-side row scan because `ParseVerdict` is Go code, not SQL. It should batch updates in a transaction. It uses the existing deterministic verdict parser and stores the result. This permanently bakes the parser's current interpretation into legacy rows. That tradeoff is intentional: metadata export can then avoid loading raw review output while still including legacy reviews. The migration is idempotent and should do no work after all legacy rows have been populated.
 
 The existing hidden backfill command can remain, but export should not require users to run a manual command first.
 
@@ -262,6 +276,8 @@ The export path enforces privacy by column projection. It must not select or loa
 
 In the `content` profile, the export does select `reviews.output`. This is raw review content as stored. It may contain sensitive repository details and should be handled carefully by downstream systems. It is not sanitized.
 
+Repo identity fallback is also privacy-sensitive. The export must not emit absolute `repos.root_path` values when `repos.identity` is absent; use the repo display name instead.
+
 Tests should assert forbidden columns and sentinel values are absent from both profiles, while allowing intentionally exported review output in the content profile.
 
 ## Tests
@@ -274,10 +290,15 @@ Storage tests:
 - Empty-output rows with null `verdict_bool` are excluded.
 - Job type filtering excludes task, insights, fix, classify, and compact rows even when they have review rows and verdicts.
 - Top-level panel export includes synthesis only and nests member reviews under `subagents`.
+- Subagent export includes only completed member reviews with verdicts and omits failed, skipped, queued, running, and empty-output members.
 - CI synthesis export includes `pr_number` and `pr_url`; local panel rows emit `null` PR fields.
+- Synthesis `commit_sha` uses the range end or CI panel head SHA, never the raw synthesis range.
 - `--since` and `--until` filter on normalized `reviews.created_at`.
+- RFC3339 and date-only windows use inclusive `since` and exclusive `until` semantics.
 - Cursor pagination is deterministic for rows sharing the same completed timestamp.
 - `--closed-only` filters on the canonical top-level review.
+- Cost fields are extracted as scalars from `review_jobs.token_usage` and the raw token usage JSON is not emitted.
+- Local repos without identity do not emit absolute root paths in `repo`.
 - Content caps preserve valid UTF-8 and append the truncation marker.
 - Forbidden private columns and sentinel values are absent from metadata and content profiles.
 
