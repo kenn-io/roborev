@@ -33,14 +33,7 @@ When the user invokes `$roborev-design-review-branch [--base <branch>] [--panel 
 
 ### 1. Validate inputs
 
-If a base branch is provided, verify it resolves to a valid ref:
-
-```bash
-read -r branch <<'ROBOREV_REF'
-<branch>
-ROBOREV_REF
-git rev-parse --verify -- "$branch"
-```
+If a base branch is provided, use the base-branch command snippet below; it stores and validates the ref before invoking `roborev review`.
 
 If validation fails, inform the user the ref is invalid. Do not proceed.
 
@@ -48,7 +41,19 @@ If validation fails, inform the user the ref is invalid. Do not proceed.
 
 Construct and execute the review command:
 
+If no base branch is specified, run:
+
 ```bash
+roborev review --branch --wait --type design [--panel <name>|none]
+```
+
+If a base branch is specified, run:
+
+```bash
+read -r branch <<'ROBOREV_REF'
+<branch>
+ROBOREV_REF
+git rev-parse --verify -- "$branch" || exit 1
 roborev review --branch --wait --type design --base "$branch" [--panel <name>|none]
 ```
 
@@ -105,8 +110,8 @@ Agent:
 User: `$roborev-design-review-branch --base develop`
 
 Agent:
-1. Validates: `git rev-parse --verify -- "$branch"`
-2. Executes `roborev review --branch --wait --type design --base "$branch"`
+1. Validates: `git rev-parse --verify -- "develop"`
+2. Executes `roborev review --branch --wait --type design --base develop`
 3. Presents the verdict and findings
 4. If findings exist: "Would you like me to address these findings? Run `$roborev-fix 1043`"
 

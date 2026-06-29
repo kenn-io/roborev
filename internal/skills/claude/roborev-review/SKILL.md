@@ -33,14 +33,7 @@ When the user invokes `/roborev-review [commit] [--type security|design] [--pane
 
 ### 1. Validate inputs
 
-If a commit ref is provided, verify it resolves to a valid commit:
-
-```bash
-read -r commit <<'ROBOREV_REF'
-<commit>
-ROBOREV_REF
-git rev-parse --verify -- "$commit^{commit}"
-```
+If a commit ref is provided, use the commit-provided command snippet below; it stores and validates the ref before invoking `roborev review`.
 
 If validation fails, inform the user the ref is invalid. Do not proceed.
 
@@ -57,6 +50,10 @@ roborev review --wait [--type <type>] [--panel <name>|none]
 If a commit is specified:
 
 ```
+read -r commit <<'ROBOREV_REF'
+<commit>
+ROBOREV_REF
+git rev-parse --verify -- "$commit^{commit}" || exit 1
 roborev review "$commit" --wait [--type <type>] [--panel <name>|none]
 ```
 
@@ -78,6 +75,10 @@ roborev review --wait [--type <type>] [--panel <name>|none]
 If a commit is specified:
 
 ```
+read -r commit <<'ROBOREV_REF'
+<commit>
+ROBOREV_REF
+git rev-parse --verify -- "$commit^{commit}" || exit 1
 roborev review "$commit" --wait [--type <type>] [--panel <name>|none]
 ```
 
@@ -135,7 +136,7 @@ User: `/roborev-review abc123 --type security`
 
 Agent:
 1. Validates `abc123` resolves to a valid commit
-2. Launches background task: `roborev review "$commit" --wait --type security`
+2. Launches background task: `roborev review abc123 --wait --type security`
 3. Tells user: "Security review submitted for abc123. I'll present the results when it completes."
 4. When complete, presents the verdict and findings
 5. If findings exist: "Would you like me to fix these findings? Run `/roborev-fix 1043`"

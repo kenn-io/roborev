@@ -36,14 +36,7 @@ When the user invokes `/roborev-lookahead-review [commit] [--panel <name>|none]`
 
 ### 1. Validate inputs
 
-If a commit ref is provided, verify it resolves to a valid commit:
-
-```bash
-read -r commit <<'ROBOREV_REF'
-<commit>
-ROBOREV_REF
-git rev-parse --verify -- "$commit^{commit}"
-```
+If a commit ref is provided, use the commit-provided command snippet below; it stores and validates the ref before invoking `roborev review`.
 
 If validation fails, inform the user the ref is invalid. Do not proceed.
 
@@ -60,6 +53,10 @@ roborev review --wait --type lookahead [--panel <name>|none]
 If a commit is specified:
 
 ```
+read -r commit <<'ROBOREV_REF'
+<commit>
+ROBOREV_REF
+git rev-parse --verify -- "$commit^{commit}" || exit 1
 roborev review "$commit" --wait --type lookahead [--panel <name>|none]
 ```
 
@@ -80,6 +77,10 @@ roborev review --wait --type lookahead [--panel <name>|none]
 If a commit is specified:
 
 ```
+read -r commit <<'ROBOREV_REF'
+<commit>
+ROBOREV_REF
+git rev-parse --verify -- "$commit^{commit}" || exit 1
 roborev review "$commit" --wait --type lookahead [--panel <name>|none]
 ```
 
@@ -137,7 +138,7 @@ User: `/roborev-lookahead-review abc123`
 
 Agent:
 1. Validates `abc123` resolves to a valid commit
-2. Launches background task: `roborev review "$commit" --wait --type lookahead`
+2. Launches background task: `roborev review abc123 --wait --type lookahead`
 3. Tells user: "Look-ahead review submitted for abc123. I'll present the results when it completes."
 4. When complete, presents the verdict and findings
 5. If findings exist: "Would you like me to address these findings? Run `/roborev-fix 1043`"
