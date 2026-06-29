@@ -757,18 +757,22 @@ model = "claude-opus-4-8"
 
 ## Discord Failure Notifications
 
-Set `discord_webhook_url` in the global `[ci]` config to send Discord messages when CI poller jobs fail:
+Set `discord_webhook_url` in the global `[ci]` config when you want an out-of-band alert for CI poller jobs that fail before roborev can post useful PR feedback:
 
 ```toml
 [ci]
 discord_webhook_url = "https://discord.com/api/webhooks/..."
 ```
 
-The setting is hot-reloaded. Empty disables notifications.
+The setting is hot-reloaded. Set it to an empty value or remove the key to disable notifications without restarting the daemon.
 
-Notifications are best-effort and never affect job state, CI retry state, or PR comment posting. Messages include the repository, CI base branch, job ID, panel/member context when available, agent, review type, ref, retry count, failure class, and trimmed error text. Raw error text is length-bounded but not path-sanitized, so avoid routing these notifications to public channels.
+Notifications are sent for terminal CI review job failures only. They are best-effort: a slow, unavailable, or rate-limited Discord webhook does not change job state, CI retry state, GitHub status updates, or PR comment posting.
 
-Quota/cooldown failures are deduped globally per canonical agent for the configured `agent_quota_cooldown` window. This means one `codex` quota failure can suppress additional `codex` quota messages from other repos until the cooldown window expires; the first message is the representative failure for that daemon-wide agent cooldown.
+Each message includes the repository, CI base branch, job ID, panel/member context when available, agent, review type, ref, retry count, failure class, and trimmed error text. Raw error text is length-bounded but not path-sanitized, so send these notifications only to trusted private channels.
+
+Quota/cooldown failures are deduped globally per canonical agent for the configured `agent_quota_cooldown` window. This keeps one agent quota incident from flooding Discord when many PRs or panel members route to the same unavailable agent. For example, one `codex` quota failure can suppress additional `codex` quota messages from other repos until the cooldown window expires; the first message is the representative failure for that daemon-wide agent cooldown.
+
+The webhook URL is a secret-bearing credential. roborev masks it in config output, but anyone with the raw URL can post to the Discord channel. Rotate the webhook in Discord if the URL is accidentally shared.
 
 ## Quota Handling
 
