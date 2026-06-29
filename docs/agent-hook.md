@@ -1,10 +1,10 @@
 ---
 title: Agent Hook
-description: Let Codex and Claude Code sessions run roborev-fix mid-session by watching the agent boundary
+description: Let Codex, Claude Code, and Factory Droid sessions run roborev-fix mid-session by watching the agent boundary
 ---
 
 
-`roborev agent-hook` is an opt-in integration with the Codex and Claude Code harness hook systems. roborev reviews your commits in the background; `agent-hook` watches the agent boundary and, once review work has piled up, returns one instruction telling the agent to run the `$roborev-fix` skill before the session goes cold. It is the in-tree replacement for the standalone `roborev-hook` tool.
+`roborev agent-hook` is an opt-in integration with the Codex, Claude Code, and Factory Droid harness hook systems. roborev reviews your commits in the background; `agent-hook` watches the agent boundary and, once review work has piled up, returns one instruction telling the agent to run the fix skill before the session goes cold. It is the in-tree replacement for the standalone `roborev-hook` tool.
 
 !!! note
     This is different from [Review Hooks](/guides/hooks/), which run your own shell commands when a review completes. Agent Hook plugs into the coding agent's own hook system to steer the agent itself.
@@ -17,7 +17,7 @@ description: Let Codex and Claude Code sessions run roborev-fix mid-session by w
 
 Agents are good at making progress. They are worse at remembering to come back after a background reviewer finishes, especially when reviews happen out of band like they do with roborev.
 
-`agent-hook` closes that gap. It sits behind Codex or Claude Code hooks, counts what happened in the current session, checks roborev for failed reviews, and returns one direct instruction when there is review work to fix:
+`agent-hook` closes that gap. It sits behind Codex, Claude Code, or Factory Droid hooks, counts what happened in the current session, checks roborev for failed reviews, and returns one direct instruction when there is review work to fix:
 
 ```text
 Invoke the $roborev-fix skill now.
@@ -26,21 +26,21 @@ Invoke the $roborev-fix skill now.
 That turns review into part of the agent's normal rhythm: write code, get reviewed, fix the review, continue.
 
 !!! note
-    The default instruction uses Codex's `$roborev-fix` skill syntax. Claude Code refers to the same skill as `/roborev-fix` (see [Agent-Specific Syntax](/guides/agent-skills/#agent-specific-syntax)). A single instruction string is sent to both harnesses; override `instruction` (see [Configuration](#configuration)) if you prefer different wording.
+    The default Codex/Claude instruction uses Codex's `$roborev-fix` skill syntax. Claude Code refers to the same skill as `/roborev-fix` (see [Agent-Specific Syntax](/guides/agent-skills/#agent-specific-syntax)). Factory Droid uses a separate default instruction that names `roborev-fix` generically. Override `instruction` (see [Configuration](#configuration)) if you prefer different wording.
 
 ## What It Watches
 
 `agent-hook` tracks three signals per session:
 
 - **Turns.** `Stop` hooks, so long-running sessions get periodic review repair.
-- **Commits.** `PostToolUse` Bash hooks that produce commits. A `PreToolUse` Bash hook seeds the per-commit baseline so the count stays accurate.
+- **Commits.** `PostToolUse` shell hooks that produce commits. Codex and Claude Code use Bash hooks; Factory Droid uses the `Execute` tool. A matching `PreToolUse` hook seeds the per-commit baseline so the count stays accurate.
 - **Failed reviews.** Open, non-closed roborev reviews with a failed verdict.
 
 `agent-hook` resolves the repository from the agent's working directory, so outside a git repository it returns `{}` and stays out of the way. Reminders also depend on the roborev daemon reporting an open failed review, so a repository roborev does not track never produces a reminder.
 
 If the main roborev daemon is unavailable, the failed-review check is skipped. Turn and commit counts still work through the local hook daemon, but they only prompt the agent once roborev reports at least one open failed review.
 
-Commit-producing Bash calls are counted by default, but commit-based prompts stay off unless `commit_threshold` is set above `0`. Failed-review counts are scoped to the current git branch. Older jobs without a stored branch are included, matching `roborev fix` discovery.
+Commit-producing shell calls are counted by default, but commit-based prompts stay off unless `commit_threshold` is set above `0`. Failed-review counts are scoped to the current git branch. Older jobs without a stored branch are included, matching `roborev fix` discovery.
 
 ## Quick Start
 
@@ -58,10 +58,19 @@ roborev agent-hook install
 
 By default this updates both `~/.codex/hooks.json` and `~/.claude/settings.json`, registering `PreToolUse`, `PostToolUse`, and `Stop` hooks. Existing hooks are preserved, and repeated installs are idempotent. Use `--agent codex` or `--agent claude` to update only one harness, and `--dry-run` to report what would change without writing.
 
+For Factory Droid, install the Droid profile explicitly:
+
+```bash
+roborev agent-hook install --agent droid
+```
+
+This updates the user-scoped `~/.factory/hooks.json`, registering `PreToolUse`, `PostToolUse` (both matching Droid's `Execute` tool), and `Stop` hooks. Project-scoped Factory hooks are intentionally not supported by roborev because `.factory/hooks.json` is executable repo-local configuration. Do not commit Factory hook commands to a repository; install the Droid hook in your user scope instead.
+
 When roborev is installed through a version manager such as mise, `agent-hook install` resolves the same stable roborev shim used by `roborev init`. To pin the exact binary path baked into the agent hook command, use `--binary`:
 
 ```bash
 roborev agent-hook install --binary ~/.local/share/mise/shims/roborev
+roborev agent-hook install --agent droid --binary ~/.local/share/mise/shims/roborev
 ```
 
 Use `--command` only when you want to provide the full hook command yourself. `--binary` and `--command` are mutually exclusive.
@@ -71,6 +80,7 @@ For declarative setups (Nix home-manager, dotfiles) where editing those files in
 ```bash
 roborev agent-hook dump --agent codex
 roborev agent-hook dump --agent claude
+roborev agent-hook dump --agent droid --scope user
 ```
 
 ## Runtime Model
@@ -81,7 +91,13 @@ Agent harnesses invoke:
 roborev agent-hook run
 ```
 
-`run` reads a hook payload on stdin, talks to a small local `roborev-agent-hook` daemon, and emits the hook response JSON the harness expects. This daemon is separate from the main roborev daemon and stores only local session counters under:
+Factory Droid invokes the same runtime with its profile selected:
+
+```bash
+roborev agent-hook run --agent droid
+```
+
+`run` reads a hook payload on stdin, talks to a small local `roborev-agent-hook` daemon, and emits the hook response JSON the harness expects. This daemon is shared by Codex, Claude Code, and Factory Droid profiles. It is separate from the main roborev daemon and stores only local session counters under:
 
 ```text
 ${ROBOREV_DATA_DIR:-~/.roborev}/agent-hook/
@@ -126,9 +142,35 @@ run flags > environment variables > [agent_hook] config > defaults
 
 `ROBOREV_AGENT_HOOK_ROBOREV_ADDR` and `ROBOREV_AGENT_HOOK_DAEMON_ADDR` are operational overrides only and are not persisted in TOML. `ROBOREV_AGENT_HOOK_DAEMON_ADDR` points `run` at a specific local hook daemon address.
 
+Factory Droid uses its own `[droid_hook]` section and environment variables:
+
+```toml
+[droid_hook]
+turn_threshold = 5
+commit_threshold = 0
+failed_review_threshold = 4
+instruction = "Run the roborev-fix skill to address the unresolved roborev findings, then continue."
+```
+
+| Trigger | Default | TOML key | `run` flag | Environment variable |
+|---------|---------|----------|------------|----------------------|
+| Stop hooks (turns) | `5` | `turn_threshold` | `--turn-threshold` | `ROBOREV_DROID_HOOK_TURN_THRESHOLD` |
+| Commit-producing `Execute` calls | `0` | `commit_threshold` | `--commit-threshold` | `ROBOREV_DROID_HOOK_COMMIT_THRESHOLD` |
+| Open failed reviews | `4` | `failed_review_threshold` | `--failed-review-threshold` | `ROBOREV_DROID_HOOK_FAILED_REVIEW_THRESHOLD` |
+| Continuation instruction | `Run the roborev-fix skill...` | `instruction` | `--instruction` | `ROBOREV_DROID_HOOK_INSTRUCTION` |
+| roborev daemon address | runtime discovery | | `--roborev-server` | `ROBOREV_DROID_HOOK_ROBOREV_ADDR` |
+
+Droid values resolve in this order:
+
+```text
+run flags > environment variables > [droid_hook] config > defaults
+```
+
+`ROBOREV_DROID_HOOK_ROBOREV_ADDR` is an operational override only and is not persisted in TOML. `ROBOREV_AGENT_HOOK_DAEMON_ADDR` still points `run` at a specific local hook daemon address shared by every agent-hook profile.
+
 ## Inspecting Sessions
 
-Inspect tracked session counters, including `remind_count` (the number of `$roborev-fix` reminders emitted), as JSON:
+Inspect tracked session counters, including `remind_count` (the number of fix-skill reminders emitted), as JSON. Because the daemon is shared, this shows sessions from every integration:
 
 ```bash
 roborev agent-hook status

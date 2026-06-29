@@ -617,7 +617,7 @@ run `/roborev-fix` when review work piles up, sharing the same local state
 daemon. The Droid profile installs to user scope by default
 (`~/.factory/hooks.json`); roborev does not install project-scoped Factory hooks
 because `.factory/hooks.json` is executable repo-local configuration. See
-[Factory Droid Agent Hook](/droid-hook/).
+[Agent Hook](/agent-hook/).
 
 ## Checking Agents
 

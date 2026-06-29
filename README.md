@@ -392,7 +392,6 @@ Full documentation available at **[roborev.io](https://roborev.io)**:
 - [Code Analysis and Assisted Refactoring](https://roborev.io/guides/assisted-refactoring/)
 - [Hooks](https://roborev.io/guides/hooks/)
 - [Agent Hook](docs/agent-hook.md)
-- [Factory Droid Agent Hook](docs/droid-hook.md)
 - [Agent Skills](https://roborev.io/guides/agent-skills/)
 - [PostgreSQL Sync](https://roborev.io/guides/postgres-sync/)
 
