@@ -2574,6 +2574,7 @@ func TestCIConfigDiscordWebhookURL(t *testing.T) {
 
 	tomlContent := `
 [ci]
+enabled = true
 discord_webhook_url = "https://discord.com/api/webhooks/123/token"
 `
 

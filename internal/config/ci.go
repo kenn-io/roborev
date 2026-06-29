@@ -163,6 +163,7 @@ type CIConfig struct {
 	Panel string `toml:"panel"`
 
 	// DiscordWebhookURL posts CI poller job failures to a Discord webhook.
+	// Empty disables Discord notifications.
 	DiscordWebhookURL string `toml:"discord_webhook_url" sensitive:"true"`
 
 	// UpsertComments enables updating existing PR comments instead of
