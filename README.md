@@ -194,11 +194,28 @@ If the hook rewrites files, re-stage them and re-run `git commit`. Use
 | `roborev agent-hook install` | Install optional Codex/Claude agent harness hooks |
 | `roborev compact` | Verify and consolidate open review findings |
 | `roborev show [sha]` | Display review for commit |
+| `roborev export reviews` | Export completed reviews as JSON |
 | `roborev run "<task>"` | Execute a task with an AI agent |
 | `roborev close <id>` | Close a review |
 | `roborev skills install` | Install agent skills for Claude/Codex |
 
 See [full command reference](https://roborev.io/commands/) for all options.
+
+### Exporting review history
+
+Use `roborev export reviews` to emit completed reviews as one JSON document for
+local reporting or archival workflows:
+
+```bash
+roborev export reviews
+roborev export reviews --profile metadata --since 2026-06-01 --until 2026-07-01
+roborev export reviews --closed-only --repo github.com/org/repo --limit 1000
+```
+
+The default `content` profile includes raw review output as stored. That output
+may contain sensitive repository details, so handle exported files carefully.
+Use `--profile metadata` when you only need identifiers, timestamps, verdicts,
+cost metadata, and related review metadata.
 
 ## Configuration
 

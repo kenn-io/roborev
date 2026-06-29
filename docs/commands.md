@@ -128,6 +128,50 @@ See: [Terminal UI](/integrations/tui/)
 !!! tip
     Press `l` in the TUI to open the log viewer for any job (running or completed).
 
+## Exporting Reviews
+
+```bash
+roborev export reviews
+roborev export reviews --profile metadata
+roborev export reviews --since 2026-06-01 --until 2026-07-01
+roborev export reviews --closed-only --repo github.com/org/repo
+roborev export reviews --project my-workspace --limit 1000
+```
+
+| Flag | Description |
+|------|-------------|
+| `--format json` | Output format. JSON is the only supported format and the default |
+| `--profile content\|metadata` | Export profile. `content` is the default |
+| `--since <time>` | Inclusive `completed_at` lower bound. Accepts RFC3339 or `YYYY-MM-DD` |
+| `--until <time>` | Exclusive `completed_at` upper bound. Accepts RFC3339 or `YYYY-MM-DD` |
+| `--closed-only` | Include only reviews you have marked resolved |
+| `--repo <id>` | Exact exported repo identifier, usually `github.com/org/repo` |
+| `--project <name>` | Exact local project/workspace label |
+| `--limit <n>` | Maximum top-level reviews to emit |
+
+`roborev export reviews` emits one JSON document containing completed reviews.
+The default `content` profile includes the raw review output text exactly as
+stored, subject to a large size cap. The `metadata` profile keeps the same
+review metadata but sets `content` fields to `null`.
+
+Only finished review jobs with a verdict are exported. Task, fix, insights,
+compact, queued, running, failed, and canceled jobs are excluded. Panel reviews
+export as one top-level synthesis review with completed member reviews nested
+under `subagents`; member reviews do not appear as separate top-level rows.
+
+The export window filters on `completed_at`. Date-only bounds are interpreted
+as UTC days, so `--since 2026-06-01 --until 2026-06-30` includes reviews from
+the start of June 1 through the end of June 30 UTC. When `--limit` is omitted,
+the CLI follows daemon cursors until all matching rows are included in the one
+JSON document. With `--limit`, the CLI still pages through bounded daemon
+responses until the requested top-level count is reached or no more rows match.
+
+!!! warning "Review content may be sensitive"
+    The `content` profile exports raw review output as stored. Review text can
+    include repository-specific details or other sensitive context. Use
+    `--profile metadata` when you do not need review prose, and handle content
+    exports with the same care as local review data.
+
 ## Job Logs
 
 ```bash
