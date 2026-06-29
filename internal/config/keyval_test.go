@@ -576,6 +576,7 @@ func TestIsValidKey(t *testing.T) {
 
 func TestIsSensitiveKey(t *testing.T) {
 	assert := assert.New(t)
+	assert.True(IsSensitiveKey("ci.discord_webhook_url"))
 	assert.True(IsSensitiveKey("ci.github_app_private_key"))
 	assert.False(IsSensitiveKey("ci.github_app_id"))
 	assert.True(IsSensitiveKey("hooks.url"))

@@ -2569,6 +2569,23 @@ max_repos = 50
 	})
 }
 
+func TestCIConfigDiscordWebhookURL(t *testing.T) {
+	t.Parallel()
+
+	tomlContent := `
+[ci]
+discord_webhook_url = "https://discord.com/api/webhooks/123/token"
+`
+
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(configPath, []byte(tomlContent), 0o644))
+
+	cfg, err := LoadGlobalFrom(configPath)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.Equal(t, "https://discord.com/api/webhooks/123/token", cfg.CI.DiscordWebhookURL)
+}
+
 func TestNormalizeMinSeverity(t *testing.T) {
 	tests := []struct {
 		input   string
