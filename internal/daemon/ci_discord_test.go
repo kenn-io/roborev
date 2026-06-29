@@ -1,9 +1,18 @@
 package daemon
 
 import (
+	"context"
+	"encoding/json"
+	"fmt"
+	"net/http"
+	"net/http/httptest"
+	neturl "net/url"
+	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
@@ -89,4 +98,69 @@ func discordEmbedFieldsByName(fields []discordEmbedField) map[string]string {
 		out[f.Name] = f.Value
 	}
 	return out
+}
+
+func TestPostDiscordWebhookPostsJSON(t *testing.T) {
+	type request struct {
+		contentType string
+		payload     discordWebhookPayload
+	}
+	reqCh := make(chan request, 1)
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		var payload discordWebhookPayload
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+		reqCh <- request{contentType: r.Header.Get("Content-Type"), payload: payload}
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	defer server.Close()
+
+	payload := discordWebhookPayload{Embeds: []discordEmbed{{Title: "roborev CI job failed"}}}
+
+	var logs []string
+	ok := postDiscordWebhook(context.Background(), server.URL, payload, func(format string, args ...any) {
+		logs = append(logs, fmt.Sprintf(format, args...))
+	})
+
+	assert.True(t, ok)
+	assert.Empty(t, logs)
+	select {
+	case got := <-reqCh:
+		assert.Equal(t, "application/json", got.contentType)
+		require.Len(t, got.payload.Embeds, 1)
+		assert.Equal(t, "roborev CI job failed", got.payload.Embeds[0].Title)
+	case <-time.After(2 * time.Second):
+		require.Fail(t, "timed out waiting for Discord webhook request")
+	}
+}
+
+func TestPostDiscordWebhookRedactsURLInLogs(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		http.Error(w, "boom", http.StatusBadGateway)
+	}))
+	defer server.Close()
+
+	webhookURL, err := neturl.Parse(server.URL)
+	require.NoError(t, err)
+	webhookURL.User = neturl.UserPassword("token", "secret")
+	webhookURL.Path = "/api/webhooks/123456/sensitive-token"
+	webhookURL.RawQuery = "api_key=12345"
+	webhookURL.Fragment = "frag"
+
+	var logs []string
+	ok := postDiscordWebhook(context.Background(), webhookURL.String(), discordWebhookPayload{}, func(format string, args ...any) {
+		logs = append(logs, fmt.Sprintf(format, args...))
+	})
+
+	assert.False(t, ok)
+	require.NotEmpty(t, logs)
+	logOutput := strings.Join(logs, "\n")
+	assert.Contains(t, logOutput, "502 Bad Gateway")
+	assert.Contains(t, logOutput, "/...")
+	assert.NotContains(t, logOutput, "token")
+	assert.NotContains(t, logOutput, "secret")
+	assert.NotContains(t, logOutput, "api_key")
+	assert.NotContains(t, logOutput, "12345")
+	assert.NotContains(t, logOutput, "frag")
+	assert.NotContains(t, logOutput, "sensitive-token")
 }

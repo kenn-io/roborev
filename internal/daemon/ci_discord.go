@@ -1,9 +1,15 @@
 package daemon
 
 import (
+	"bytes"
+	"context"
+	"encoding/json"
 	"fmt"
+	"io"
+	"net/http"
 	"strconv"
 	"strings"
+	"time"
 
 	gitpkg "go.kenn.io/roborev/internal/git"
 	reviewpkg "go.kenn.io/roborev/internal/review"
@@ -33,6 +39,45 @@ type discordEmbedField struct {
 	Name   string `json:"name"`
 	Value  string `json:"value"`
 	Inline bool   `json:"inline,omitempty"`
+}
+
+type discordLogf func(format string, args ...any)
+
+func postDiscordWebhook(ctx context.Context, webhookURL string, payload discordWebhookPayload, logf discordLogf) bool {
+	safeURL := redactWebhookURL(webhookURL)
+
+	body, err := json.Marshal(payload)
+	if err != nil {
+		logf("Discord webhook error (url=%q): marshal payload: %v", safeURL, err)
+		return false
+	}
+
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, webhookURL, bytes.NewReader(body))
+	if err != nil {
+		logf("Discord webhook error (url=%q): build request: %v", safeURL, redactURLError(err))
+		return false
+	}
+	req.Header.Set("Content-Type", "application/json")
+
+	client := &http.Client{Timeout: 5 * time.Second}
+	resp, err := client.Do(req)
+	if err != nil {
+		logf("Discord webhook error (url=%q): %v", safeURL, redactURLError(err))
+		return false
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode >= http.StatusOK && resp.StatusCode < http.StatusMultipleChoices {
+		return true
+	}
+
+	respBody, _ := io.ReadAll(io.LimitReader(resp.Body, 1024))
+	if len(respBody) > 0 {
+		logf("Discord webhook error (url=%q): status %s: %s", safeURL, resp.Status, strings.TrimSpace(string(respBody)))
+		return false
+	}
+	logf("Discord webhook error (url=%q): status %s", safeURL, resp.Status)
+	return false
 }
 
 func buildDiscordCIJobFailedPayload(event Event, job storage.ReviewJob) discordWebhookPayload {
