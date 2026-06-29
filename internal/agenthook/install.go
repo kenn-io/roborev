@@ -717,7 +717,7 @@ func DefaultDroidHooksPath(scope string) string {
 
 func validateDroidHooksPath(path string) error {
 	if isUserDroidHooksPath(path) {
-		if resolved, ok := evalExistingPath(path); ok && !isUserDroidHooksPath(resolved) && isProjectDroidHooksPath(resolved) {
+		if resolved, ok := evalExistingParentPath(path); ok && !isUserDroidHooksPath(resolved) && isProjectDroidHooksPath(resolved) {
 			return fmt.Errorf("project-scoped Factory Droid hook config is not supported; use the user-scoped Factory hooks path instead")
 		}
 		return nil
@@ -725,7 +725,7 @@ func validateDroidHooksPath(path string) error {
 	if isProjectDroidHooksPath(path) {
 		return fmt.Errorf("project-scoped Factory Droid hook config is not supported; use the user-scoped Factory hooks path instead")
 	}
-	if resolved, ok := evalExistingPath(path); ok && isProjectDroidHooksPath(resolved) {
+	if resolved, ok := evalExistingParentPath(path); ok && isProjectDroidHooksPath(resolved) {
 		return fmt.Errorf("project-scoped Factory Droid hook config is not supported; use the user-scoped Factory hooks path instead")
 	}
 	return nil
@@ -809,16 +809,33 @@ func cleanAbsPath(path string) (string, bool) {
 	return filepath.Clean(abs), true
 }
 
-func evalExistingPath(path string) (string, bool) {
+// evalExistingParentPath resolves the longest existing ancestor of path and
+// returns the full path with symlinks evaluated on the existing portion. This
+// catches symlinked parent directories even when the final path components do
+// not exist yet (e.g., hooks.json has not been created).
+func evalExistingParentPath(path string) (string, bool) {
 	path = strings.TrimSpace(path)
 	if path == "" {
 		return "", false
 	}
-	resolved, err := filepath.EvalSymlinks(path)
-	if err != nil {
-		return "", false
+	clean := filepath.Clean(path)
+	existing := clean
+	remaining := ""
+	for existing != "." && existing != string(filepath.Separator) {
+		if _, err := os.Lstat(existing); err == nil {
+			break
+		}
+		remaining = filepath.Join(filepath.Base(existing), remaining)
+		existing = filepath.Dir(existing)
 	}
-	return cleanAbsPath(resolved)
+	if existing == "." || existing == string(filepath.Separator) {
+		return cleanAbsPath(clean)
+	}
+	resolved, err := filepath.EvalSymlinks(existing)
+	if err != nil {
+		return cleanAbsPath(clean)
+	}
+	return cleanAbsPath(filepath.Join(resolved, remaining))
 }
 
 func normalizeDroidScope(scope string) (string, error) {

@@ -414,6 +414,45 @@ func TestRunDumpDroidAllowsUserScopeWhenHomeIsCWD(t *testing.T) {
 	assert.Contains(t, out.String(), "agent-hook run --agent droid")
 }
 
+func TestRunInstallDroidRejectsSymlinkedParentToRepoFactory(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	require.NoError(t, os.MkdirAll(filepath.Join(repo.Path(), ".factory"), 0o755))
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	require.NoError(t, os.Symlink(filepath.Join(repo.Path(), ".factory"), filepath.Join(home, ".factory")))
+
+	var out bytes.Buffer
+	err := RunInstall(InstallOptions{
+		Agent:   "droid",
+		Command: "/tmp/roborev agent-hook run --agent droid",
+		Scope:   "user",
+		Timeout: 10 * time.Second,
+		DryRun:  true,
+	}, &out)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "project-scoped Factory Droid hook config is not supported")
+}
+
+func TestRunDumpDroidRejectsSymlinkedParentToRepoFactory(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	require.NoError(t, os.MkdirAll(filepath.Join(repo.Path(), ".factory"), 0o755))
+
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	require.NoError(t, os.Symlink(filepath.Join(repo.Path(), ".factory"), filepath.Join(home, ".factory")))
+
+	var out bytes.Buffer
+	err := RunDump(DumpOptions{
+		Agent:   "droid",
+		Command: "/tmp/roborev agent-hook run --agent droid",
+		Scope:   "user",
+		Timeout: 10 * time.Second,
+	}, &out)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "project-scoped Factory Droid hook config is not supported")
+}
+
 func TestRunInstallDroidRejectsRepoRootProjectConfigFromSubdir(t *testing.T) {
 	repo := testutil.NewGitRepo(t)
 	subdir := filepath.Join(repo.Path(), "subdir")
