@@ -51,11 +51,18 @@ If validation fails, inform the user the ref is invalid. Do not proceed.
 
 Construct and execute the review command:
 
+If no commit is specified, run:
+
+```bash
+roborev review --wait --type lookahead [--panel <name>|none]
+```
+
+If a commit is specified, run:
+
 ```bash
 roborev review "$commit" --wait --type lookahead [--panel <name>|none]
 ```
 
-- If no commit is specified, omit it (defaults to HEAD)
 - If `--panel <name>` is specified, include it (fans out to the named config panel); `--panel none` forces a single-agent review
 
 The `--wait` flag blocks until the review completes.

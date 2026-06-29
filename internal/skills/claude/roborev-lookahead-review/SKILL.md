@@ -51,11 +51,18 @@ If validation fails, inform the user the ref is invalid. Do not proceed.
 
 Construct the review command:
 
+If no commit is specified:
+
+```
+roborev review --wait --type lookahead [--panel <name>|none]
+```
+
+If a commit is specified:
+
 ```
 roborev review "$commit" --wait --type lookahead [--panel <name>|none]
 ```
 
-- If no commit is specified, omit it (defaults to HEAD)
 - If `--panel <name>` is specified, include it (fans out to the named config panel); `--panel none` forces a single-agent review
 
 ### 3. Run the review in the background
@@ -63,6 +70,14 @@ roborev review "$commit" --wait --type lookahead [--panel <name>|none]
 Launch a background task that runs the command. This lets the user continue working while the review runs.
 
 Use the `Task` tool with `run_in_background: true` and `subagent_type: "Bash"`:
+
+If no commit is specified:
+
+```
+roborev review --wait --type lookahead [--panel <name>|none]
+```
+
+If a commit is specified:
 
 ```
 roborev review "$commit" --wait --type lookahead [--panel <name>|none]
