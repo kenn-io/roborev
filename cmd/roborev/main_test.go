@@ -790,7 +790,7 @@ func TestUpdateCmdHasNoRestartFlag(t *testing.T) {
 
 func TestRepairHooksAfterUpdateUsesRegisteredRepos(t *testing.T) {
 	var gotOpts repairHookOptions
-	repairHooksAfterUpdate("/tmp/bin", func(opts repairHookOptions) error {
+	repairHooksAfterUpdate("/tmp/bin", false, func(opts repairHookOptions) error {
 		gotOpts = opts
 		return nil
 	})
@@ -802,6 +802,19 @@ func TestRepairHooksAfterUpdateUsesRegisteredRepos(t *testing.T) {
 	assert.False(t, gotOpts.current)
 	assert.True(t, gotOpts.registered)
 	assert.Equal(t, wantBinary, gotOpts.binary)
+}
+
+func TestRepairHooksAfterUpdateSkipsWhenNoRestart(t *testing.T) {
+	called := false
+	output := captureStdout(t, func() {
+		repairHooksAfterUpdate("/tmp/bin", true, func(opts repairHookOptions) error {
+			called = true
+			return nil
+		})
+	})
+
+	assert.False(t, called)
+	assert.Contains(t, output, "Skipping git hook update (--no-restart)")
 }
 
 func TestRepairHooksAfterUpdateUsesNewBinary(t *testing.T) {
@@ -839,7 +852,7 @@ func main() {
 	require.NoError(t, err, "build fake roborev: %s", out)
 	t.Setenv("ROBOREV_FAKE_ARGS", argsPath)
 
-	repairHooksAfterUpdate(binDir, nil)
+	repairHooksAfterUpdate(binDir, false, nil)
 
 	gotBytes, err := os.ReadFile(argsPath)
 	require.NoError(t, err)

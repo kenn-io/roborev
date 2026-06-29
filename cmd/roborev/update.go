@@ -353,7 +353,12 @@ func updatedRoborevBinary(binDir string) string {
 
 type repairHookRunner func(opts repairHookOptions) error
 
-func repairHooksAfterUpdate(binDir string, run repairHookRunner) {
+func repairHooksAfterUpdate(binDir string, noRestart bool, run repairHookRunner) {
+	if noRestart {
+		fmt.Println("Skipping git hook update (--no-restart)")
+		return
+	}
+
 	newBinary := updatedRoborevBinary(binDir)
 	if run == nil {
 		run = func(opts repairHookOptions) error {
@@ -501,7 +506,7 @@ launchd or systemd).`,
 			}
 
 			restartDaemonAfterUpdate(binDir, noRestart)
-			repairHooksAfterUpdate(binDir, nil)
+			repairHooksAfterUpdate(binDir, noRestart, nil)
 
 			// Update skills using the NEW binary (current process has old embedded skills)
 			// Use "skills update" to only update agents that already have skills installed
