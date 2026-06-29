@@ -159,6 +159,8 @@ Compact jobs are excluded from this version. They produce review-like verificati
 
 ## Time Semantics
 
+`created_at` is based on `review_jobs.enqueued_at`: the time the job entered the queue. It is normalized and emitted as RFC3339 UTC.
+
 `completed_at` is based on `reviews.created_at`, not `review_jobs.finished_at`.
 
 Reasons:
@@ -167,7 +169,7 @@ Reasons:
 - `review_jobs.finished_at` has mixed local-offset formatting and is not a safe cursor key.
 - Synced `reviews.created_at` values may still be RFC3339 while local values may be SQLite `datetime('now')` text, so all comparisons must normalize timestamp text before filtering or ordering.
 
-Use a shared timestamp normalization expression for SQL comparisons:
+Use a shared timestamp normalization expression for SQL comparisons and output conversion for stored timestamp text, including `review_jobs.enqueued_at` and `reviews.created_at`:
 
 ```sql
 datetime(
@@ -183,7 +185,7 @@ Extract this into a shared helper so export, sync, and future SQL paths use one 
 
 Output timestamps are always RFC3339 UTC.
 
-`completed_at` and `duration_ms` intentionally use different sources. `completed_at` is the stable export event time from the review row. `duration_ms` is execution time from the job row: `review_jobs.finished_at - review_jobs.started_at`, parsed with the existing timestamp parser. If either side is missing or unparsable, emit `null`.
+`created_at`, `completed_at`, and `duration_ms` intentionally use different sources. `created_at` is enqueue time from the job row. `completed_at` is the stable export event time from the review row. `duration_ms` is execution time from the job row: `review_jobs.finished_at - review_jobs.started_at`, parsed with the existing timestamp parser. If either side is missing or unparsable, emit `null`.
 
 ## Cursor And Ordering
 
@@ -206,6 +208,13 @@ OR (
 `truncated` is true when a page or explicit CLI `--limit` stops before all matching rows are emitted. `next_cursor` is set when additional rows are available.
 
 ## Repo, Project, And PR Fields
+
+Review field sources:
+
+- `status`: `review_jobs.status`, filtered to `done`.
+- `agent`: `review_jobs.agent`.
+- `model`: `review_jobs.model`, with empty string emitted as `null`.
+- `branch`: `review_jobs.branch` when non-empty, otherwise `review_jobs.ci_base_branch` when non-empty, otherwise `null`. This matches the existing `ReviewJob.HookBranch()` semantics so CI synthesis rows report the PR base branch.
 
 `project` is `repos.name`.
 
@@ -293,6 +302,9 @@ Storage tests:
 - Subagent export includes only completed member reviews with verdicts and omits failed, skipped, queued, running, and empty-output members.
 - CI synthesis export includes `pr_number` and `pr_url`; local panel rows emit `null` PR fields.
 - Synthesis `commit_sha` uses the range end or CI panel head SHA, never the raw synthesis range.
+- `created_at` is sourced from normalized `review_jobs.enqueued_at`.
+- CI synthesis `branch` falls back to `review_jobs.ci_base_branch`.
+- Field-source mapping covers `status`, `agent`, `model`, and `branch`.
 - `--since` and `--until` filter on normalized `reviews.created_at`.
 - RFC3339 and date-only windows use inclusive `since` and exclusive `until` semantics.
 - Cursor pagination is deterministic for rows sharing the same completed timestamp.
