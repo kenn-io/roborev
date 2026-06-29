@@ -227,21 +227,57 @@ func TestCIPollerDiscordWebhookReadsURLAtEventTime(t *testing.T) {
 	h.Cfg.CI.DiscordWebhookURL = server.URL
 	h.Poller.handleReviewFailed(ciEvent(members[0].ID, "review.failed"))
 
-	var payload discordWebhookPayload
-	require.Eventually(t, func() bool {
-		select {
-		case payload = <-reqCh:
-			return true
-		default:
-			return false
-		}
-	}, 2*time.Second, 10*time.Millisecond)
+	payload := receiveDiscordPayload(t, reqCh)
 	require.Len(t, payload.Embeds, 1)
 	assert.Equal(t, "roborev CI job failed", payload.Embeds[0].Title)
 
 	h.Cfg.CI.DiscordWebhookURL = ""
 	h.Poller.handleReviewFailed(ciEvent(members[0].ID, "review.failed"))
 	assert.Empty(t, reqCh, "cleared URL skips future notifications")
+}
+
+func TestCIPollerDiscordWebhookPostDoesNotBlockFailedEvent(t *testing.T) {
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+
+	requestStarted := make(chan struct{}, 1)
+	releaseResponse := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		defer r.Body.Close()
+		requestStarted <- struct{}{}
+		<-releaseResponse
+		w.WriteHeader(http.StatusNoContent)
+	}))
+	t.Cleanup(server.Close)
+	t.Cleanup(func() {
+		close(releaseResponse)
+	})
+	h.Cfg.CI.DiscordWebhookURL = server.URL
+
+	_, _, members := h.seedCIPanelRun(t, "acme/api", 4, "headsha444", "base..headsha444",
+		[]jobSpec{{Agent: "codex", ReviewType: "security", Status: "failed", Error: "agent: failed"}})
+
+	done := make(chan struct{})
+	go func() {
+		h.Poller.handleReviewFailed(ciEvent(members[0].ID, "review.failed"))
+		close(done)
+	}()
+
+	require.Eventually(t, func() bool {
+		select {
+		case <-done:
+			return true
+		default:
+			return false
+		}
+	}, 200*time.Millisecond, 10*time.Millisecond)
+	require.Eventually(t, func() bool {
+		select {
+		case <-requestStarted:
+			return true
+		default:
+			return false
+		}
+	}, 2*time.Second, 10*time.Millisecond)
 }
 
 func TestCIPollerDiscordWebhookIgnoresNonCIJobs(t *testing.T) {
@@ -295,11 +331,27 @@ func TestCIPollerDiscordWebhookDedupesQuotaCooldownPerAgent(t *testing.T) {
 	h.Poller.handleReviewFailed(ciEvent(firstMembers[0].ID, "review.failed"))
 	h.Poller.handleReviewFailed(ciEvent(secondMembers[0].ID, "review.failed"))
 
-	assert.Len(t, reqCh, 1, "same-agent quota cooldown is deduped globally")
+	receiveDiscordPayload(t, reqCh)
+	assert.Empty(t, reqCh, "same-agent quota cooldown is deduped globally")
 
 	now = now.Add(5*time.Minute + time.Second)
 	h.Poller.handleReviewFailed(ciEvent(secondMembers[0].ID, "review.failed"))
-	assert.Len(t, reqCh, 2, "dedupe expires after configured quota cooldown")
+	receiveDiscordPayload(t, reqCh)
+	assert.Empty(t, reqCh, "dedupe expires after configured quota cooldown")
+}
+
+func receiveDiscordPayload(t *testing.T, ch <-chan discordWebhookPayload) discordWebhookPayload {
+	t.Helper()
+	var payload discordWebhookPayload
+	require.Eventually(t, func() bool {
+		select {
+		case payload = <-ch:
+			return true
+		default:
+			return false
+		}
+	}, 2*time.Second, 10*time.Millisecond)
+	return payload
 }
 
 type jobSpec struct {

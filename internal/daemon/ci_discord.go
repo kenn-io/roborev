@@ -75,7 +75,7 @@ func (p *CIPoller) notifyDiscordCIJobFailed(event Event) {
 	}
 
 	payload := buildDiscordCIJobFailedPayload(event, *job)
-	postDiscordWebhook(context.Background(), webhookURL, payload, log.Printf)
+	go postDiscordWebhook(context.Background(), webhookURL, payload, log.Printf)
 }
 
 func (p *CIPoller) suppressDiscordQuotaCooldownNotification(agentName string, cfg *config.Config) bool {
@@ -98,7 +98,19 @@ func (p *CIPoller) suppressDiscordQuotaCooldownNotification(agentName string, cf
 }
 
 func canonicalDiscordAgent(job storage.ReviewJob, event Event) string {
+	if agentName := quotaCooldownAgentName(firstNonEmpty(job.Error, event.Error)); agentName != "" {
+		return agent.CanonicalName(agentName)
+	}
 	return agent.CanonicalName(firstNonEmpty(event.Agent, job.Agent))
+}
+
+func quotaCooldownAgentName(errorText string) string {
+	errorText = strings.TrimPrefix(strings.TrimSpace(errorText), reviewpkg.QuotaErrorPrefix)
+	parts := strings.Fields(errorText)
+	if len(parts) < 5 || parts[0] != "agent" || parts[2] != "quota" || parts[3] != "cooldown" || parts[4] != "active" {
+		return ""
+	}
+	return parts[1]
 }
 
 func postDiscordWebhook(ctx context.Context, webhookURL string, payload discordWebhookPayload, logf discordLogf) bool {

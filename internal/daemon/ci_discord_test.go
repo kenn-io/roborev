@@ -57,6 +57,16 @@ func TestDiscordFailureClass(t *testing.T) {
 	}
 }
 
+func TestCanonicalDiscordAgentUsesQuotaCooldownAgent(t *testing.T) {
+	job := storage.ReviewJob{
+		Agent: "synthesis",
+		Error: review.QuotaErrorPrefix + "agent codex quota cooldown active",
+	}
+	event := Event{Agent: "synthesis"}
+
+	assert.Equal(t, "codex", canonicalDiscordAgent(job, event))
+}
+
 func TestBuildDiscordCIJobFailedPayloadIncludesContext(t *testing.T) {
 	job := storage.ReviewJob{
 		ID:              42,
