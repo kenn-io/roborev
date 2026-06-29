@@ -53,8 +53,16 @@ When the user invokes `$roborev-refine [--since <commit>] [--branch <name>] [--m
 If `--branch` is provided, verify the current branch matches before doing any
 work. If it does not, stop and tell the user.
 
-If `--since` is provided, verify it resolves to a valid commit and is an
-ancestor of `HEAD`.
+If `--since` is provided, store the raw value safely, then verify it resolves to a valid commit
+and is an ancestor of `HEAD`:
+
+```bash
+read -r since <<'ROBOREV_REF'
+<commit>
+ROBOREV_REF
+resolved_since=$(git rev-parse --verify -- "$since^{commit}") || exit 1
+git merge-base --is-ancestor "$resolved_since" HEAD
+```
 
 If `--since` is not provided, ensure you are not refining the default branch.
 This matches `roborev refine`, which refuses to run on the default branch
@@ -68,7 +76,7 @@ of fix-review cycles, not the total number of reviews.
 Choose the review command that matches the requested scope:
 
 ```bash
-roborev review --since <commit> --wait
+roborev review --since "$since" --wait
 ```
 
 or, if `--since` was not provided:
@@ -179,7 +187,7 @@ below.
 Now run the explicit full-scope review. If refining with `--since`:
 
 ```bash
-roborev review --since <commit> --wait
+roborev review --since "$since" --wait
 ```
 
 If refining without `--since`:
@@ -236,10 +244,10 @@ User: `$roborev-refine --since abc123 --max-iterations 3`
 
 Agent:
 1. Validates `abc123` resolves and is an ancestor of `HEAD`
-2. Runs `roborev review --since abc123 --wait`
+2. Runs `roborev review --since "$since" --wait`
 3. Review returns verdict Fail
 4. Fixes findings, tests, commits, comments, closes
-5. Checks for hook review via `roborev wait` — if a commit-scoped hook review is found, remembers it to close after the next explicit `roborev review --since abc123 --wait`
+5. Checks for hook review via `roborev wait` — if a commit-scoped hook review is found, remembers it to close after the next explicit `roborev review --since "$since" --wait`
 6. Continues until the full requested range passes or 3 iterations are exhausted
 
 ## See also

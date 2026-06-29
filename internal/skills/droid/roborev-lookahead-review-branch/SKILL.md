@@ -39,7 +39,10 @@ When the user invokes `/roborev-lookahead-review-branch [--base <branch>] [--pan
 If a base branch is provided, verify it resolves to a valid ref:
 
 ```bash
-git rev-parse --verify -- <branch>
+read -r branch <<'ROBOREV_REF'
+<branch>
+ROBOREV_REF
+git rev-parse --verify -- "$branch"
 ```
 
 If validation fails, inform the user the ref is invalid. Do not proceed.
@@ -49,7 +52,7 @@ If validation fails, inform the user the ref is invalid. Do not proceed.
 Construct and execute the review command:
 
 ```bash
-roborev review --branch --wait --type lookahead [--base <branch>] [--panel <name>|none]
+roborev review --branch --wait --type lookahead --base "$branch" [--panel <name>|none]
 ```
 
 - If `--base` is specified, include it (otherwise auto-detects the base branch)
@@ -106,7 +109,7 @@ User: `/roborev-lookahead-review-branch --base develop`
 
 Agent:
 1. Validates `develop` resolves to a valid ref
-2. Executes `roborev review --branch --wait --type lookahead --base develop`
+2. Executes `roborev review --branch --wait --type lookahead --base "$branch"`
 3. Presents the verdict and findings
 4. If findings exist: "Would you like me to address these findings? Run `/roborev-fix 1043`"
 

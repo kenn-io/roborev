@@ -39,7 +39,10 @@ When the user invokes `/roborev-lookahead-review [commit] [--panel <name>|none]`
 If a commit ref is provided, verify it resolves to a valid commit:
 
 ```bash
-git rev-parse --verify -- <commit>^{commit}
+read -r commit <<'ROBOREV_REF'
+<commit>
+ROBOREV_REF
+git rev-parse --verify -- "$commit^{commit}"
 ```
 
 If validation fails, inform the user the ref is invalid. Do not proceed.
@@ -49,7 +52,7 @@ If validation fails, inform the user the ref is invalid. Do not proceed.
 Construct the review command:
 
 ```
-roborev review [commit] --wait --type lookahead [--panel <name>|none]
+roborev review "$commit" --wait --type lookahead [--panel <name>|none]
 ```
 
 - If no commit is specified, omit it (defaults to HEAD)
@@ -62,7 +65,7 @@ Launch a background task that runs the command. This lets the user continue work
 Use the `Task` tool with `run_in_background: true` and `subagent_type: "Bash"`:
 
 ```
-roborev review [commit] --wait --type lookahead [--panel <name>|none]
+roborev review "$commit" --wait --type lookahead [--panel <name>|none]
 ```
 
 Tell the user that the look-ahead review has been submitted and they can continue working. You will present the results when the review completes.
@@ -119,7 +122,7 @@ User: `/roborev-lookahead-review abc123`
 
 Agent:
 1. Validates `abc123` resolves to a valid commit
-2. Launches background task: `roborev review abc123 --wait --type lookahead`
+2. Launches background task: `roborev review "$commit" --wait --type lookahead`
 3. Tells user: "Look-ahead review submitted for abc123. I'll present the results when it completes."
 4. When complete, presents the verdict and findings
 5. If findings exist: "Would you like me to address these findings? Run `/roborev-fix 1043`"

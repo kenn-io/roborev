@@ -809,7 +809,61 @@ func cleanAbsPath(path string) (string, bool) {
 	if err != nil {
 		return "", false
 	}
-	return filepath.Clean(abs), true
+	return canonicalExistingPath(filepath.Clean(abs)), true
+}
+
+func canonicalExistingPath(path string) string {
+	path = filepath.Clean(path)
+	volume := filepath.VolumeName(path)
+	rest := strings.TrimPrefix(path, volume)
+	rooted := strings.HasPrefix(rest, string(filepath.Separator))
+	rest = strings.TrimPrefix(rest, string(filepath.Separator))
+	parts := strings.Split(rest, string(filepath.Separator))
+
+	current := volume
+	if rooted {
+		current += string(filepath.Separator)
+	}
+	for i, part := range parts {
+		if part == "" {
+			continue
+		}
+		next := filepath.Join(current, part)
+		if _, err := os.Lstat(next); err != nil {
+			for _, remaining := range parts[i:] {
+				if remaining != "" {
+					current = filepath.Join(current, remaining)
+				}
+			}
+			return filepath.Clean(current)
+		}
+		if actual := actualDirEntryName(current, part); actual != "" {
+			part = actual
+		}
+		current = filepath.Join(current, part)
+	}
+	return filepath.Clean(current)
+}
+
+func actualDirEntryName(parent, name string) string {
+	if parent == "" {
+		parent = "."
+	}
+	entries, err := os.ReadDir(parent)
+	if err != nil {
+		return ""
+	}
+	for _, entry := range entries {
+		if entry.Name() == name {
+			return name
+		}
+	}
+	for _, entry := range entries {
+		if strings.EqualFold(entry.Name(), name) {
+			return entry.Name()
+		}
+	}
+	return ""
 }
 
 func sameDroidPath(a, b string) bool {

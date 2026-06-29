@@ -36,7 +36,10 @@ When the user invokes `/roborev-design-review [commit] [--panel <name>|none]`:
 If a commit ref is provided, verify it resolves to a valid commit:
 
 ```bash
-git rev-parse --verify -- <commit>^{commit}
+read -r commit <<'ROBOREV_REF'
+<commit>
+ROBOREV_REF
+git rev-parse --verify -- "$commit^{commit}"
 ```
 
 If validation fails, inform the user the ref is invalid. Do not proceed.
@@ -46,7 +49,7 @@ If validation fails, inform the user the ref is invalid. Do not proceed.
 Construct and execute the review command:
 
 ```bash
-roborev review [commit] --wait --type design [--panel <name>|none]
+roborev review "$commit" --wait --type design [--panel <name>|none]
 ```
 
 - If no commit is specified, omit it (defaults to HEAD)
@@ -102,8 +105,8 @@ Agent:
 User: `/roborev-design-review abc123`
 
 Agent:
-1. Validates: `git rev-parse --verify -- abc123^{commit}`
-2. Executes `roborev review abc123 --wait --type design`
+1. Validates: `git rev-parse --verify -- "$commit^{commit}"`
+2. Executes `roborev review "$commit" --wait --type design`
 3. Presents the verdict and findings
 4. If findings exist: "Would you like me to address these findings? Run `/roborev-fix 1043`"
 

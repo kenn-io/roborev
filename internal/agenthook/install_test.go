@@ -396,6 +396,28 @@ func TestRunDumpDroidRejectsMixedCaseProjectConfigPathWhenCaseInsensitive(t *tes
 	assert.ErrorContains(t, err, "project-scoped Factory Droid hook config is not supported")
 }
 
+func TestRunInstallDroidRejectsMixedCaseExistingProjectConfigOnCaseInsensitiveFS(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	chdirForTest(t, repo.Path())
+	requireFilesystemCaseInsensitive(t, repo.Path())
+	stubDroidPathCaseInsensitive(t, false)
+
+	require.NoError(t, os.MkdirAll(filepath.Join(repo.Path(), ".factory"), 0o755))
+	writeJSONFile(t, filepath.Join(repo.Path(), ".factory", "hooks.json"), map[string]any{})
+
+	var out bytes.Buffer
+	err := RunInstall(InstallOptions{
+		Agent:      "droid",
+		Command:    "/tmp/roborev agent-hook run --agent droid",
+		ConfigPath: filepath.Join(repo.Path(), ".Factory", "hooks.JSON"),
+		Scope:      "user",
+		Timeout:    10 * time.Second,
+		DryRun:     true,
+	}, &out)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "project-scoped Factory Droid hook config is not supported")
+}
+
 func TestRunInstallDroidRejectsSymlinkToProjectConfigPath(t *testing.T) {
 	repo := testutil.NewGitRepo(t)
 	targetDir := filepath.Join(repo.Path(), ".factory")
@@ -755,6 +777,18 @@ func stubDroidPathCaseInsensitive(t *testing.T, enabled bool) {
 	t.Cleanup(func() {
 		droidPathCaseInsensitive = old
 	})
+}
+
+func requireFilesystemCaseInsensitive(t *testing.T, dir string) {
+	t.Helper()
+	probe := filepath.Join(dir, "case-probe")
+	require.NoError(t, os.WriteFile(probe, []byte("probe"), 0o600))
+	t.Cleanup(func() {
+		require.NoError(t, os.Remove(probe))
+	})
+	if _, err := os.Stat(filepath.Join(dir, "CASE-PROBE")); err != nil {
+		t.Skip("filesystem is case-sensitive")
+	}
 }
 
 func commandHookJSON(command string, timeout int) map[string]any {

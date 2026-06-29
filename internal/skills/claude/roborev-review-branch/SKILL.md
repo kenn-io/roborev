@@ -36,7 +36,10 @@ When the user invokes `/roborev-review-branch [--base <branch>] [--type security
 If a base branch is provided, verify it resolves to a valid ref:
 
 ```bash
-git rev-parse --verify -- <branch>
+read -r branch <<'ROBOREV_REF'
+<branch>
+ROBOREV_REF
+git rev-parse --verify -- "$branch"
 ```
 
 If validation fails, inform the user the ref is invalid. Do not proceed.
@@ -46,7 +49,7 @@ If validation fails, inform the user the ref is invalid. Do not proceed.
 Construct the review command:
 
 ```
-roborev review --branch --wait [--base <branch>] [--type <type>] [--panel <name>|none]
+roborev review --branch --wait --base "$branch" [--type <type>] [--panel <name>|none]
 ```
 
 - If `--base` is specified, include it (otherwise auto-detects the base branch)
@@ -60,7 +63,7 @@ Launch a background task that runs the command. This lets the user continue work
 Use the `Task` tool with `run_in_background: true` and `subagent_type: "Bash"`:
 
 ```
-roborev review --branch --wait [--base <branch>] [--type <type>] [--panel <name>|none]
+roborev review --branch --wait --base "$branch" [--type <type>] [--panel <name>|none]
 ```
 
 Tell the user that the branch review has been submitted and they can continue working. You will present the results when the review completes.
@@ -117,7 +120,7 @@ User: `/roborev-review-branch --base develop --type security`
 
 Agent:
 1. Validates `develop` resolves to a valid ref
-2. Launches background task: `roborev review --branch --wait --base develop --type security`
+2. Launches background task: `roborev review --branch --wait --base "$branch" --type security`
 3. Tells user: "Security review submitted for branch (against develop). I'll present the results when it completes."
 4. When complete, presents the verdict and findings
 5. If findings exist: "Would you like me to address these findings? Run `/roborev-fix 1043`"
