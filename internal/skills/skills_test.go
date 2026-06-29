@@ -514,7 +514,7 @@ func TestFixSkillsUseHeredocForCommentText(t *testing.T) {
 			var content string
 			for _, skill := range skills {
 				if skill.DirName == "roborev-fix" {
-					content = string(skill.Content)
+					content = strings.ReplaceAll(string(skill.Content), "\r\n", "\n")
 				}
 			}
 			require.NotEmpty(t, content, "missing roborev-fix skill for %s", agent)
