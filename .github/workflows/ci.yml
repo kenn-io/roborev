@@ -11,7 +11,44 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  go-changes:
+    runs-on: ubuntu-latest
+    outputs:
+      changed: ${{ steps.filter.outputs.changed }}
+    steps:
+      - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
+        with:
+          fetch-depth: 0
+
+      - name: Detect Go changes
+        id: filter
+        shell: bash
+        env:
+          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$BASE_SHA" ] || [[ "$BASE_SHA" =~ ^0+$ ]]; then
+            echo "changed=true" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+
+          changed=false
+          while IFS= read -r path; do
+            case "$path" in
+              *.go|go.mod|go.sum|go.work|go.work.sum)
+                changed=true
+                break
+                ;;
+            esac
+          done < <(git diff --name-only --no-renames "$BASE_SHA" "$HEAD_SHA")
+
+          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+
   test:
+    needs: go-changes
+    if: needs.go-changes.outputs.changed == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -89,6 +126,8 @@ jobs:
           CGO_ENABLED: 0
 
   coverage:
+    needs: go-changes
+    if: needs.go-changes.outputs.changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
@@ -109,6 +148,8 @@ jobs:
         continue-on-error: true
 
   integration:
+    needs: go-changes
+    if: needs.go-changes.outputs.changed == 'true'
     runs-on: ubuntu-latest
     services:
       postgres:
@@ -137,6 +178,8 @@ jobs:
           TEST_POSTGRES_URL: postgres://roborev_test:roborev_test_password@localhost:5433/roborev_test
 
   lint:
+    needs: go-changes
+    if: needs.go-changes.outputs.changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
@@ -155,6 +198,8 @@ jobs:
           version: ${{ steps.golangci.outputs.version }}
 
   nix:
+    needs: go-changes
+    if: needs.go-changes.outputs.changed == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
