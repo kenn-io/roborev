@@ -532,6 +532,7 @@ Per-repo overrides take priority over the global `[ci]` config. Any field not se
 | `synthesis_model` | string | | Model override for implicit matrix synthesis |
 | `upsert_comments` | bool | `false` | Update existing PR comments instead of creating new ones |
 | `include_costs` | bool | `false` | Include token cost estimates in PR comment footers |
+| `discord_webhook_url` | string | | Discord webhook URL for best-effort CI job failure notifications |
 | `batch_timeout` | string | `"15m"` | Maximum time to wait for panel members before posting available results. Set `"0"` to disable. |
 
 When `agents` is empty, the poller auto-detects the first available agent from: codex, claude-code, gemini, copilot, opencode, cursor, kiro, kilo, droid, pi.
@@ -567,7 +568,7 @@ The GitHub App authentication failed. Check that your PEM file path is correct, 
 The poller found no installation ID for this repo's owner. If you're using `[ci.github_app_installations]`, add an entry for the owner. If you're using the singular `github_app_installation_id`, make sure it's set. Owner names are matched case-insensitively, so `wesm` and `Wesm` are equivalent.
 
 **No log output at all for CI**
-Check that `[ci] enabled = true` is in `~/.roborev/config.toml` and that the daemon was restarted after adding it. The `[ci]` section requires a daemon restart to take effect.
+Check that `[ci] enabled = true` is in `~/.roborev/config.toml`. CI config is hot-reloaded; starting or stopping the poller may still require normal daemon lifecycle if CI was never running.
 
 **Reviews enqueue but never complete**
 Check `roborev status` to see if jobs are queued/running. The agent may be failing -- check the daemon logs for error messages from the agent.
@@ -753,6 +754,21 @@ review_types = ["security"]
 agents = ["claude-code"]
 model = "claude-opus-4-8"
 ```
+
+## Discord Failure Notifications
+
+Set `discord_webhook_url` in the global `[ci]` config to send Discord messages when CI poller jobs fail:
+
+```toml
+[ci]
+discord_webhook_url = "https://discord.com/api/webhooks/..."
+```
+
+The setting is hot-reloaded. Empty disables notifications.
+
+Notifications are best-effort and never affect job state, CI retry state, or PR comment posting. Messages include the repository, CI base branch, job ID, panel/member context when available, agent, review type, ref, retry count, failure class, and trimmed error text. Raw error text is length-bounded but not path-sanitized, so avoid routing these notifications to public channels.
+
+Quota/cooldown failures are deduped globally per canonical agent for the configured `agent_quota_cooldown` window. This means one `codex` quota failure can suppress additional `codex` quota messages from other repos until the cooldown window expires; the first message is the representative failure for that daemon-wide agent cooldown.
 
 ## Quota Handling
 

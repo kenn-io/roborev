@@ -579,7 +579,7 @@ The daemon automatically watches `~/.roborev/config.toml` for
 changes. Most settings take effect immediately without restarting the
 daemon.
 
-**Settings that require daemon restart:** `server_addr`, `max_workers`, the `[ci]` section, and the `[sync]` section.
+**Settings that require daemon restart:** `server_addr`, `max_workers`, and the `[sync]` section.
 
 ### Data Directory
 
