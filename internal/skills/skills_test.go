@@ -3,6 +3,7 @@ package skills
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"testing/fstest"
 
@@ -499,6 +500,31 @@ func TestDroidSkillsUseDroidAdaptations(t *testing.T) {
 		assert.NotContains(t, content, "CLAUDE.md", "droid skill %s must reference AGENTS.md, not CLAUDE.md", s.DirName)
 		assert.Contains(t, content, "AGENTS.md", "droid skill %s should reference AGENTS.md", s.DirName)
 		assert.Contains(t, content, "/roborev-", "droid skill %s should use /roborev- slash invocation", s.DirName)
+	}
+}
+
+func TestFixSkillsUseHeredocForCommentText(t *testing.T) {
+	for _, agent := range []Agent{AgentClaude, AgentCodex, AgentDroid} {
+		t.Run(string(agent), func(t *testing.T) {
+			spec, ok := lookupAgent(agent)
+			require.True(t, ok)
+			skills, err := embeddedSkillsForAgent(spec)
+			require.NoError(t, err)
+
+			var content string
+			for _, skill := range skills {
+				if skill.DirName == "roborev-fix" {
+					content = string(skill.Content)
+				}
+			}
+			require.NotEmpty(t, content, "missing roborev-fix skill for %s", agent)
+			assert.Contains(t, content, "cat <<'ROBOREV_COMMENT'")
+			assert.Contains(t, content, "never\nby interpolating dynamic text directly into a shell string")
+			assert.NotContains(t, content, `"<summary of changes>"`)
+			assert.NotContains(t, content, "Escape quotes and special characters in the bash command")
+			assert.Equal(t, 0, strings.Count(content, `roborev comment --commenter roborev-fix --job 1019 "`))
+			assert.Equal(t, 0, strings.Count(content, `roborev comment --commenter roborev-fix --job 1021 "`))
+		})
 	}
 }
 

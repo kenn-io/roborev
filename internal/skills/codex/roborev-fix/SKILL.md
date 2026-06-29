@@ -156,12 +156,19 @@ it. Run these as **separate commands**, but only run `roborev close` after
 confirming the comment succeeded:
 
 ```bash
-roborev comment --commenter roborev-fix --job <job_id> "<summary of changes>"
+roborev comment --commenter roborev-fix --job <job_id> -m "$(cat <<'ROBOREV_COMMENT'
+<summary of changes>
+ROBOREV_COMMENT
+)"
 # Only if the comment above succeeded:
 roborev close <job_id>
 ```
 
-The comment should reference each finding by severity and file, state what was fixed, and note any findings intentionally skipped. Keep it concise (1-3 sentences). Escape quotes and special characters in the bash command.
+**Important:** Always pass the comment text via a heredoc as shown above, never
+by interpolating dynamic text directly into a shell string. Review-derived
+content, file paths, and summaries may contain shell metacharacters.
+
+The comment should reference each finding by severity and file, state what was fixed, and note any findings intentionally skipped. Keep it concise (1-3 sentences).
 
 ### 6. Commit
 
@@ -202,9 +209,9 @@ Agent:
 4. Fixes all 3 findings across both reviews, sorted by severity, grouped by file
 5. Runs `go test ./...` to verify
 6. Records comments and closes reviews:
-   - `roborev comment --commenter roborev-fix --job 1019 "Fixed null check and added error handling"`
+   - Records a heredoc comment for job 1019 summarizing the fixed null check and added error handling
    - `roborev close 1019`
-   - `roborev comment --commenter roborev-fix --job 1021 "Fixed missing validation"`
+   - Records a heredoc comment for job 1021 summarizing the fixed missing validation
    - `roborev close 1021`
 7. Commits the changes per project conventions, or commits before step 6 if repository policy requires a SHA in close comments
 8. Audits jobs 1019 and 1021 with `roborev show --job <job_id> --json` and verifies `closed=true`
@@ -219,7 +226,7 @@ Agent:
 3. Fixes the 2 findings from job 1019
 4. Runs `go test ./...` to verify
 5. Records comment and closes review:
-   - `roborev comment --commenter roborev-fix --job 1019 "Fixed null check in foo.go and error handling in bar.go"`
+   - Records a heredoc comment for job 1019 summarizing the fixed null check in `foo.go` and error handling in `bar.go`
    - `roborev close 1019`
 6. Commits the changes per project conventions, or commits before step 5 if repository policy requires a SHA in close comments
 7. Audits job 1019 with `roborev show --job 1019 --json` and verifies `closed=true`
