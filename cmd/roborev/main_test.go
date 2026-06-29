@@ -847,8 +847,6 @@ func main() {
 		"install-hook",
 		"repair",
 		"--registered",
-		"--binary",
-		newBinary,
 	}, "\n"), string(gotBytes))
 }
 

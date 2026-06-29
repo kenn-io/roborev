@@ -362,8 +362,6 @@ func repairHooksAfterUpdate(binDir string, run repairHookRunner) {
 				"install-hook",
 				"repair",
 				"--registered",
-				"--binary",
-				opts.binary,
 			)
 			output, err := cmd.CombinedOutput()
 			if err != nil {
