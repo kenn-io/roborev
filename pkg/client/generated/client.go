@@ -55,6 +55,10 @@ type ClientInterface interface {
 	EnqueueJob(ctx context.Context, options *EnqueueJobRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EnqueueJobResponseJSON, error)
 	EnqueueJobWithResponse(ctx context.Context, options *EnqueueJobRequestOptions, reqEditors ...runtime.RequestEditorFn) (*EnqueueJobResp, error)
 
+	// ExportReviews Export completed reviews
+	ExportReviews(ctx context.Context, options *ExportReviewsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ExportReviewsResponse, error)
+	ExportReviewsWithResponse(ctx context.Context, options *ExportReviewsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ExportReviewsResp, error)
+
 	// GetHealth Get daemon health
 	GetHealth(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetHealthResponse, error)
 	GetHealthWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetHealthResp, error)
@@ -138,6 +142,10 @@ type ClientInterface interface {
 	// CloseReview Close or reopen a review
 	CloseReview(ctx context.Context, options *CloseReviewRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CloseReviewResponse, error)
 	CloseReviewWithResponse(ctx context.Context, options *CloseReviewRequestOptions, reqEditors ...runtime.RequestEditorFn) (*CloseReviewResp, error)
+
+	// Shutdown Gracefully shut down the daemon
+	Shutdown(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ShutdownResponse, error)
+	ShutdownWithResponse(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ShutdownResp, error)
 
 	// GetStatus Get daemon status
 	GetStatus(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*GetStatusResponse, error)
@@ -557,6 +565,82 @@ func (c *Client) EnqueueJob(ctx context.Context, options *EnqueueJobRequestOptio
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/enqueue")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ExportReviews Export completed reviews
+func (c *Client) ExportReviews(ctx context.Context, options *ExportReviewsRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ExportReviewsResponse, error) {
+	var err error
+
+	queryEncoding := map[string]runtime.QueryEncoding{
+		"closed_only": {Style: "form", Explode: &[]bool{false}[0]},
+		"cursor":      {Style: "form", Explode: &[]bool{false}[0]},
+		"format":      {Style: "form", Explode: &[]bool{false}[0]},
+		"limit":       {Style: "form", Explode: &[]bool{false}[0]},
+		"profile":     {Style: "form", Explode: &[]bool{false}[0]},
+		"project":     {Style: "form", Explode: &[]bool{false}[0]},
+		"repo":        {Style: "form", Explode: &[]bool{false}[0]},
+		"since":       {Style: "form", Explode: &[]bool{false}[0]},
+		"until":       {Style: "form", Explode: &[]bool{false}[0]},
+	}
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:    c.apiClient.GetBaseURL() + "/api/export/reviews",
+		Method:        "GET",
+		Options:       options,
+		QueryEncoding: queryEncoding,
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ExportReviewsResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ExportReviewsErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ExportReviewsErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ExportReviewsResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ExportReviewsResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/export/reviews")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -1938,6 +2022,68 @@ func (c *Client) CloseReview(ctx context.Context, options *CloseReviewRequestOpt
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/review/close")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// Shutdown Gracefully shut down the daemon
+func (c *Client) Shutdown(ctx context.Context, reqEditors ...runtime.RequestEditorFn) (*ShutdownResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL: c.apiClient.GetBaseURL() + "/api/shutdown",
+		Method:     "POST",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ShutdownResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ShutdownErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ShutdownErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ShutdownResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ShutdownResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/shutdown")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

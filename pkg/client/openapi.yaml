@@ -564,6 +564,213 @@ components:
       required:
         - error
       type: object
+    ExportReview:
+      additionalProperties: false
+      properties:
+        agent:
+          type: string
+        branch:
+          type:
+            - string
+            - "null"
+        commit_sha:
+          type:
+            - string
+            - "null"
+        completed_at:
+          type: string
+        content:
+          type:
+            - string
+            - "null"
+        cost:
+          $ref: "#/components/schemas/ExportReviewCost"
+        created_at:
+          type: string
+        duration_ms:
+          format: int64
+          type:
+            - integer
+            - "null"
+        model:
+          type:
+            - string
+            - "null"
+        pr_number:
+          format: int64
+          type:
+            - integer
+            - "null"
+        pr_url:
+          type:
+            - string
+            - "null"
+        project:
+          type: string
+        repo:
+          type: string
+        review_id:
+          type: string
+        status:
+          type: string
+        subagents:
+          items:
+            $ref: "#/components/schemas/ExportSubagent"
+          type:
+            - array
+            - "null"
+        verdict:
+          type: string
+      required:
+        - review_id
+        - status
+        - verdict
+        - created_at
+        - completed_at
+        - duration_ms
+        - project
+        - repo
+        - branch
+        - commit_sha
+        - pr_number
+        - pr_url
+        - agent
+        - model
+        - cost
+        - content
+        - subagents
+      type: object
+    ExportReviewCost:
+      additionalProperties: false
+      properties:
+        tokens_in:
+          format: int64
+          type:
+            - integer
+            - "null"
+        tokens_out:
+          format: int64
+          type:
+            - integer
+            - "null"
+        usd:
+          format: double
+          type:
+            - number
+            - "null"
+      required:
+        - tokens_in
+        - tokens_out
+        - usd
+      type: object
+    ExportReviewsDocument:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/ExportReviewsDocument.json
+          format: uri
+          readOnly: true
+          type: string
+        generated_at:
+          type: string
+        next_cursor:
+          type:
+            - string
+            - "null"
+        profile:
+          type: string
+        reviews:
+          items:
+            $ref: "#/components/schemas/ExportReview"
+          type:
+            - array
+            - "null"
+        schema_version:
+          format: int64
+          type: integer
+        tool:
+          type: string
+        tool_version:
+          type: string
+        truncated:
+          type: boolean
+        window:
+          $ref: "#/components/schemas/ExportReviewsWindow"
+      required:
+        - schema_version
+        - tool
+        - tool_version
+        - generated_at
+        - profile
+        - window
+        - truncated
+        - next_cursor
+        - reviews
+      type: object
+    ExportReviewsWindow:
+      additionalProperties: false
+      properties:
+        field:
+          type: string
+        since:
+          type:
+            - string
+            - "null"
+        until:
+          type:
+            - string
+            - "null"
+      required:
+        - field
+        - since
+        - until
+      type: object
+    ExportSubagent:
+      additionalProperties: false
+      properties:
+        agent:
+          type: string
+        completed_at:
+          type: string
+        content:
+          type:
+            - string
+            - "null"
+        cost:
+          $ref: "#/components/schemas/ExportReviewCost"
+        duration_ms:
+          format: int64
+          type:
+            - integer
+            - "null"
+        model:
+          type:
+            - string
+            - "null"
+        name:
+          type: string
+        review_id:
+          type: string
+        review_type:
+          type:
+            - string
+            - "null"
+        verdict:
+          type: string
+      required:
+        - review_id
+        - name
+        - agent
+        - model
+        - review_type
+        - verdict
+        - completed_at
+        - duration_ms
+        - cost
+        - content
+      type: object
     FailureStats:
       additionalProperties: false
       properties:
@@ -1418,6 +1625,21 @@ components:
         - has_token_data
         - has_cost
       type: object
+    ShutdownOutputBody:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/ShutdownOutputBody.json
+          format: uri
+          readOnly: true
+          type: string
+        status:
+          type: string
+      required:
+        - status
+      type: object
     Summary:
       additionalProperties: false
       properties:
@@ -1851,6 +2073,93 @@ paths:
       summary: Enqueue a daemon job
       tags:
         - jobs
+  /api/export/reviews:
+    get:
+      operationId: export-reviews
+      parameters:
+        - description: Output format; only json is supported
+          explode: false
+          in: query
+          name: format
+          schema:
+            default: json
+            description: Output format; only json is supported
+            type: string
+        - description: "Export profile: content or metadata"
+          explode: false
+          in: query
+          name: profile
+          schema:
+            default: content
+            description: "Export profile: content or metadata"
+            type: string
+        - description: Inclusive completed_at lower bound (RFC3339 or YYYY-MM-DD)
+          explode: false
+          in: query
+          name: since
+          schema:
+            description: Inclusive completed_at lower bound (RFC3339 or YYYY-MM-DD)
+            type: string
+        - description: Exclusive completed_at upper bound (RFC3339 or YYYY-MM-DD; date-only means through that UTC day)
+          explode: false
+          in: query
+          name: until
+          schema:
+            description: Exclusive completed_at upper bound (RFC3339 or YYYY-MM-DD; date-only means through that UTC day)
+            type: string
+        - description: Only include reviews marked closed
+          explode: false
+          in: query
+          name: closed_only
+          schema:
+            description: Only include reviews marked closed
+            type: boolean
+        - description: Exact exported repo identifier filter
+          explode: false
+          in: query
+          name: repo
+          schema:
+            description: Exact exported repo identifier filter
+            type: string
+        - description: Exact project display-name filter
+          explode: false
+          in: query
+          name: project
+          schema:
+            description: Exact project display-name filter
+            type: string
+        - description: Maximum top-level reviews in this page
+          explode: false
+          in: query
+          name: limit
+          schema:
+            default: 500
+            description: Maximum top-level reviews in this page
+            format: int64
+            type: integer
+        - description: Opaque cursor from a previous page
+          explode: false
+          in: query
+          name: cursor
+          schema:
+            description: Opaque cursor from a previous page
+            type: string
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExportReviewsDocument"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Export completed reviews
+      tags:
+        - reviews
   /api/health:
     get:
       operationId: get-health
@@ -2520,6 +2829,25 @@ paths:
       summary: Close or reopen a review
       tags:
         - reviews
+  /api/shutdown:
+    post:
+      operationId: shutdown
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShutdownOutputBody"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Gracefully shut down the daemon
+      tags:
+        - daemon
   /api/status:
     get:
       operationId: get-status

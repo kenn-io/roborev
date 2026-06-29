@@ -115,6 +115,10 @@ type EnqueueJobErrorResponseJSON500 = ErrorResponse
 
 type EnqueueJobErrorResponseJSON503 = ErrorResponse
 
+type ExportReviewsResponse = ExportReviewsDocument
+
+type ExportReviewsErrorResponse = ErrorModel
+
 type GetHealthResponse = HealthStatus
 
 type GetHealthErrorResponse = ErrorModel
@@ -199,6 +203,10 @@ type CloseReviewResponse = CloseReviewOutputBody
 
 type CloseReviewErrorResponse = ErrorModel
 
+type ShutdownResponse = ShutdownOutputBody
+
+type ShutdownErrorResponse = ErrorModel
+
 type GetStatusResponse = DaemonStatus
 
 type GetStatusErrorResponse = ErrorModel
@@ -266,6 +274,13 @@ type EnqueueJobResp struct {
 	JSON413      *EnqueueJobErrorResponseJSON
 	JSON500      *EnqueueJobErrorResponseJSON500
 	JSON503      *EnqueueJobErrorResponseJSON503
+}
+
+type ExportReviewsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ExportReviewsResponse
 }
 
 type GetHealthResp struct {
@@ -414,6 +429,13 @@ type CloseReviewResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *CloseReviewResponse
+}
+
+type ShutdownResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ShutdownResponse
 }
 
 type GetStatusResp struct {

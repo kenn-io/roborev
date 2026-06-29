@@ -56,6 +56,35 @@ func (g GetCostQuery) Validate() error {
 	return errors
 }
 
+type ExportReviewsQuery struct {
+	// Format Output format; only json is supported
+	Format *string `json:"format,omitempty"`
+
+	// Profile Export profile: content or metadata
+	Profile *string `json:"profile,omitempty"`
+
+	// Since Inclusive completed_at lower bound (RFC3339 or YYYY-MM-DD)
+	Since *string `json:"since,omitempty"`
+
+	// Until Exclusive completed_at upper bound (RFC3339 or YYYY-MM-DD; date-only means through that UTC day)
+	Until *string `json:"until,omitempty"`
+
+	// ClosedOnly Only include reviews marked closed
+	ClosedOnly *bool `json:"closed_only,omitempty"`
+
+	// Repo Exact exported repo identifier filter
+	Repo *string `json:"repo,omitempty"`
+
+	// Project Exact project display-name filter
+	Project *string `json:"project,omitempty"`
+
+	// Limit Maximum top-level reviews in this page
+	Limit *int64 `json:"limit,omitempty"`
+
+	// Cursor Opaque cursor from a previous page
+	Cursor *string `json:"cursor,omitempty"`
+}
+
 type GetJobLogQuery struct {
 	// JobID Job ID
 	JobID *string `json:"job_id,omitempty"`

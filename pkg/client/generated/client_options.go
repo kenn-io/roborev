@@ -270,6 +270,50 @@ func (o *EnqueueJobRequestOptions) GetHeader() (map[string]string, error) {
 	return nil, nil
 }
 
+// ExportReviewsRequestOptions is the options needed to make a request to ExportReviews.
+type ExportReviewsRequestOptions struct {
+	Query *ExportReviewsQuery
+}
+
+// Validate validates all the fields in the options.
+// Use it if fields validation was not run.
+func (o *ExportReviewsRequestOptions) Validate() error {
+	var errors runtime.ValidationErrors
+
+	if o.Query != nil {
+		if v, ok := any(o.Query).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Query", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+
+	return errors
+}
+
+// GetPathParams returns the path params as a map.
+func (o *ExportReviewsRequestOptions) GetPathParams() (map[string]any, error) {
+	return nil, nil
+}
+
+// GetQuery returns the query params as a map.
+func (o *ExportReviewsRequestOptions) GetQuery() (map[string]any, error) {
+	return runtime.AsMap[any](o.Query)
+}
+
+// GetBody returns the payload in any type that can be marshalled to JSON by the client.
+func (o *ExportReviewsRequestOptions) GetBody() any {
+	return nil
+}
+
+// GetHeader returns the headers as a map.
+func (o *ExportReviewsRequestOptions) GetHeader() (map[string]string, error) {
+	return nil, nil
+}
+
 // MarkJobAppliedRequestOptions is the options needed to make a request to MarkJobApplied.
 type MarkJobAppliedRequestOptions struct {
 	Body *MarkJobAppliedBody

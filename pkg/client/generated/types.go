@@ -356,6 +356,218 @@ func (s ErrorResponse) Error() string {
 	return "unmapped client error"
 }
 
+type ExportReview struct {
+	Agent       string           `json:"agent" validate:"required"`
+	Branch      *string          `json:"branch,omitempty" validate:"required"`
+	CommitSha   *string          `json:"commit_sha,omitempty" validate:"required"`
+	CompletedAt string           `json:"completed_at" validate:"required"`
+	Content     *string          `json:"content,omitempty" validate:"required"`
+	Cost        ExportReviewCost `json:"cost"`
+	CreatedAt   string           `json:"created_at" validate:"required"`
+	DurationMs  *int64           `json:"duration_ms,omitempty"`
+	Model       *string          `json:"model,omitempty" validate:"required"`
+	PrNumber    *int64           `json:"pr_number,omitempty"`
+	PrURL       *string          `json:"pr_url,omitempty" validate:"required"`
+	Project     string           `json:"project" validate:"required"`
+	Repo        string           `json:"repo" validate:"required"`
+	ReviewID    string           `json:"review_id" validate:"required"`
+	Status      string           `json:"status" validate:"required"`
+	Subagents   []ExportSubagent `json:"subagents,omitempty" validate:"required"`
+	Verdict     string           `json:"verdict" validate:"required"`
+}
+
+func (e ExportReview) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(e.Agent, "required"); err != nil {
+		errors = errors.Append("Agent", err)
+	}
+	if e.Branch != nil {
+		if err := typesValidator.Var(e.Branch, "required"); err != nil {
+			errors = errors.Append("Branch", err)
+		}
+	}
+	if e.CommitSha != nil {
+		if err := typesValidator.Var(e.CommitSha, "required"); err != nil {
+			errors = errors.Append("CommitSha", err)
+		}
+	}
+	if err := typesValidator.Var(e.CompletedAt, "required"); err != nil {
+		errors = errors.Append("CompletedAt", err)
+	}
+	if e.Content != nil {
+		if err := typesValidator.Var(e.Content, "required"); err != nil {
+			errors = errors.Append("Content", err)
+		}
+	}
+	if v, ok := any(e.Cost).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Cost", err)
+		}
+	}
+	if err := typesValidator.Var(e.CreatedAt, "required"); err != nil {
+		errors = errors.Append("CreatedAt", err)
+	}
+	if e.Model != nil {
+		if err := typesValidator.Var(e.Model, "required"); err != nil {
+			errors = errors.Append("Model", err)
+		}
+	}
+	if e.PrURL != nil {
+		if err := typesValidator.Var(e.PrURL, "required"); err != nil {
+			errors = errors.Append("PrURL", err)
+		}
+	}
+	if err := typesValidator.Var(e.Project, "required"); err != nil {
+		errors = errors.Append("Project", err)
+	}
+	if err := typesValidator.Var(e.Repo, "required"); err != nil {
+		errors = errors.Append("Repo", err)
+	}
+	if err := typesValidator.Var(e.ReviewID, "required"); err != nil {
+		errors = errors.Append("ReviewID", err)
+	}
+	if err := typesValidator.Var(e.Status, "required"); err != nil {
+		errors = errors.Append("Status", err)
+	}
+	for i, item := range e.Subagents {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Subagents[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(e.Verdict, "required"); err != nil {
+		errors = errors.Append("Verdict", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type ExportReviewCost struct {
+	TokensIn  *int64   `json:"tokens_in,omitempty"`
+	TokensOut *int64   `json:"tokens_out,omitempty"`
+	Usd       *float64 `json:"usd,omitempty"`
+}
+
+type ExportReviewsDocument struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema        *string             `json:"$schema,omitempty"`
+	GeneratedAt   string              `json:"generated_at" validate:"required"`
+	NextCursor    *string             `json:"next_cursor,omitempty" validate:"required"`
+	Profile       string              `json:"profile" validate:"required"`
+	Reviews       []ExportReview      `json:"reviews,omitempty" validate:"required"`
+	SchemaVersion int64               `json:"schema_version"`
+	Tool          string              `json:"tool" validate:"required"`
+	ToolVersion   string              `json:"tool_version" validate:"required"`
+	Truncated     bool                `json:"truncated"`
+	Window        ExportReviewsWindow `json:"window"`
+}
+
+func (e ExportReviewsDocument) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(e.GeneratedAt, "required"); err != nil {
+		errors = errors.Append("GeneratedAt", err)
+	}
+	if e.NextCursor != nil {
+		if err := typesValidator.Var(e.NextCursor, "required"); err != nil {
+			errors = errors.Append("NextCursor", err)
+		}
+	}
+	if err := typesValidator.Var(e.Profile, "required"); err != nil {
+		errors = errors.Append("Profile", err)
+	}
+	for i, item := range e.Reviews {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Reviews[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(e.Tool, "required"); err != nil {
+		errors = errors.Append("Tool", err)
+	}
+	if err := typesValidator.Var(e.ToolVersion, "required"); err != nil {
+		errors = errors.Append("ToolVersion", err)
+	}
+	if v, ok := any(e.Window).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Window", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type ExportReviewsWindow struct {
+	Field string  `json:"field" validate:"required"`
+	Since *string `json:"since,omitempty" validate:"required"`
+	Until *string `json:"until,omitempty" validate:"required"`
+}
+
+func (e ExportReviewsWindow) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(e))
+}
+
+type ExportSubagent struct {
+	Agent       string           `json:"agent" validate:"required"`
+	CompletedAt string           `json:"completed_at" validate:"required"`
+	Content     *string          `json:"content,omitempty" validate:"required"`
+	Cost        ExportReviewCost `json:"cost"`
+	DurationMs  *int64           `json:"duration_ms,omitempty"`
+	Model       *string          `json:"model,omitempty" validate:"required"`
+	Name        string           `json:"name" validate:"required"`
+	ReviewID    string           `json:"review_id" validate:"required"`
+	ReviewType  *string          `json:"review_type,omitempty" validate:"required"`
+	Verdict     string           `json:"verdict" validate:"required"`
+}
+
+func (e ExportSubagent) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(e.Agent, "required"); err != nil {
+		errors = errors.Append("Agent", err)
+	}
+	if err := typesValidator.Var(e.CompletedAt, "required"); err != nil {
+		errors = errors.Append("CompletedAt", err)
+	}
+	if e.Content != nil {
+		if err := typesValidator.Var(e.Content, "required"); err != nil {
+			errors = errors.Append("Content", err)
+		}
+	}
+	if v, ok := any(e.Cost).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Cost", err)
+		}
+	}
+	if e.Model != nil {
+		if err := typesValidator.Var(e.Model, "required"); err != nil {
+			errors = errors.Append("Model", err)
+		}
+	}
+	if err := typesValidator.Var(e.Name, "required"); err != nil {
+		errors = errors.Append("Name", err)
+	}
+	if err := typesValidator.Var(e.ReviewID, "required"); err != nil {
+		errors = errors.Append("ReviewID", err)
+	}
+	if e.ReviewType != nil {
+		if err := typesValidator.Var(e.ReviewType, "required"); err != nil {
+			errors = errors.Append("ReviewType", err)
+		}
+	}
+	if err := typesValidator.Var(e.Verdict, "required"); err != nil {
+		errors = errors.Append("Verdict", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type FailureStats struct {
 	Errors  map[string]int64 `json:"errors"`
 	Retries int64            `json:"retries"`
@@ -915,6 +1127,16 @@ type SessionUsagePayload struct {
 }
 
 func (s SessionUsagePayload) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+}
+
+type ShutdownOutputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+	Status string  `json:"status" validate:"required"`
+}
+
+func (s ShutdownOutputBody) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(s))
 }
 
