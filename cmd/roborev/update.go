@@ -343,6 +343,37 @@ func restartDaemonAfterUpdate(binDir string, noRestart bool) {
 	)
 }
 
+type updatedBinaryRunner func(name string, args ...string) ([]byte, error)
+
+func runUpdatedBinary(name string, args ...string) ([]byte, error) {
+	return exec.Command(name, args...).CombinedOutput()
+}
+
+func updatedRoborevBinary(binDir string) string {
+	newBinary := filepath.Join(binDir, "roborev")
+	if runtime.GOOS == "windows" {
+		newBinary += ".exe"
+	}
+	return newBinary
+}
+
+func reconcileHooksAfterUpdate(binDir string, run updatedBinaryRunner) {
+	if run == nil {
+		run = runUpdatedBinary
+	}
+
+	fmt.Print("Updating git hooks... ")
+	output, err := run(updatedRoborevBinary(binDir), "reconcile-hooks", "--current", "--registered")
+	if err != nil {
+		fmt.Printf("warning: %v\n", err)
+		if trimmed := strings.TrimSpace(string(output)); trimmed != "" {
+			fmt.Println(trimmed)
+		}
+		return
+	}
+	fmt.Println("OK")
+}
+
 func updateCmd() *cobra.Command {
 	var checkOnly bool
 	var yes bool
@@ -462,15 +493,13 @@ launchd or systemd).`,
 			}
 
 			restartDaemonAfterUpdate(binDir, noRestart)
+			reconcileHooksAfterUpdate(binDir, runUpdatedBinary)
 
 			// Update skills using the NEW binary (current process has old embedded skills)
 			// Use "skills update" to only update agents that already have skills installed
 			if skills.IsInstalled(skills.AgentClaude) || skills.IsInstalled(skills.AgentCodex) {
 				fmt.Print("Updating skills... ")
-				newBinary := filepath.Join(binDir, "roborev")
-				if runtime.GOOS == "windows" {
-					newBinary += ".exe"
-				}
+				newBinary := updatedRoborevBinary(binDir)
 				skillsCmd := exec.Command(newBinary, "skills", "update")
 				if output, err := skillsCmd.CombinedOutput(); err != nil {
 					fmt.Printf("warning: %v\n", err)

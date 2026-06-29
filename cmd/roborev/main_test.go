@@ -15,6 +15,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync/atomic"
 	"testing"
@@ -785,6 +786,25 @@ func TestUpdateCmdHasNoRestartFlag(t *testing.T) {
 	require.NotNil(t, flag, "expected --no-restart flag to be defined")
 	assert.Equal(t, "false", flag.DefValue)
 	assert.Contains(t, flag.Usage, "skip daemon restart")
+}
+
+func TestReconcileHooksAfterUpdateUsesNewBinary(t *testing.T) {
+	var gotName string
+	var gotArgs []string
+	run := func(name string, args ...string) ([]byte, error) {
+		gotName = name
+		gotArgs = append([]string(nil), args...)
+		return []byte("updated hooks\n"), nil
+	}
+
+	reconcileHooksAfterUpdate("/tmp/bin", run)
+
+	wantBinary := filepath.Join("/tmp/bin", "roborev")
+	if runtime.GOOS == "windows" {
+		wantBinary += ".exe"
+	}
+	assert.Equal(t, wantBinary, gotName)
+	assert.Equal(t, []string{"reconcile-hooks", "--current", "--registered"}, gotArgs)
 }
 
 // stubRestartVars saves and restores all package-level vars used by
