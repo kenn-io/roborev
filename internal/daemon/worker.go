@@ -27,6 +27,8 @@ import (
 	"go.kenn.io/roborev/internal/tokens"
 )
 
+const agentTimeoutErrorPrefix = "agent timeout after"
+
 // WorkerPool manages a pool of review workers
 type WorkerPool struct {
 	db          *storage.DB
@@ -863,7 +865,8 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		}
 		if errors.Is(err, context.DeadlineExceeded) || ctx.Err() == context.DeadlineExceeded {
 			timeoutErr := fmt.Sprintf(
-				"agent timeout after %s",
+				"%s %s",
+				agentTimeoutErrorPrefix,
 				timeoutDuration.Round(time.Second),
 			)
 			log.Printf("[%s] Job %d timed out: %v", workerID, job.ID, err)
