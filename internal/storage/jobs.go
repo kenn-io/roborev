@@ -1208,7 +1208,7 @@ func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
 	var fields reviewJobScanFields
 	err := db.QueryRow(`
 		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.ci_base_branch, j.session_id, j.agent, j.reasoning, j.status, j.enqueued_at,
-		       j.started_at, j.finished_at, j.worker_id, j.error, j.prompt, COALESCE(j.agentic, 0),
+		       j.started_at, j.finished_at, j.worker_id, j.error, j.prompt, j.retry_count, COALESCE(j.agentic, 0),
 		       r.root_path, r.name, c.subject, j.model, j.provider, j.requested_model, j.requested_provider, j.job_type, j.review_type, j.patch_id, COALESCE(j.output_prefix, ''),
 		       j.parent_job_id, j.patch, j.token_usage, j.dirty_files, COALESCE(j.worktree_path, ''), j.command_line, COALESCE(j.min_severity, ''), COALESCE(j.backup_agent, ''), COALESCE(j.backup_model, ''),
 		       COALESCE(j.skip_reason, ''), COALESCE(j.source, ''),
@@ -1218,7 +1218,7 @@ func (db *DB) GetJobByID(id int64) (*ReviewJob, error) {
 		LEFT JOIN commits c ON c.id = j.commit_id
 		WHERE j.id = ?
 	`, id).Scan(&j.ID, &j.RepoID, &fields.CommitID, &j.GitRef, &fields.Branch, &fields.CIBaseBranch, &fields.SessionID, &j.Agent, &j.Reasoning, &j.Status, &fields.EnqueuedAt,
-		&fields.StartedAt, &fields.FinishedAt, &fields.WorkerID, &fields.Error, &fields.Prompt, &fields.Agentic,
+		&fields.StartedAt, &fields.FinishedAt, &fields.WorkerID, &fields.Error, &fields.Prompt, &j.RetryCount, &fields.Agentic,
 		&j.RepoPath, &j.RepoName, &fields.CommitSubject, &fields.Model, &fields.Provider, &fields.RequestedModel, &fields.RequestedProvider, &fields.JobType, &fields.ReviewType, &fields.PatchID, &fields.OutputPrefix,
 		&fields.ParentJobID, &fields.Patch, &fields.TokenUsage, &fields.DirtyFiles, &fields.WorktreePath, &fields.CommandLine, &fields.MinSeverity, &fields.BackupAgent, &fields.BackupModel,
 		&fields.SkipReason, &fields.Source,

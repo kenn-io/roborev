@@ -220,6 +220,8 @@ func TestCIPollerDiscordWebhookReadsURLAtEventTime(t *testing.T) {
 
 	_, _, members := h.seedCIPanelRun(t, "acme/api", 1, "headsha111", "base..headsha111",
 		[]jobSpec{{Agent: "codex", ReviewType: "security", Status: "failed", Error: "agent: failed"}})
+	_, err := h.DB.Exec(`UPDATE review_jobs SET retry_count = 2 WHERE id = ?`, members[0].ID)
+	require.NoError(t, err)
 
 	h.Poller.handleReviewFailed(ciEvent(members[0].ID, "review.failed"))
 	assert.Empty(t, reqCh, "empty URL skips notification")
@@ -230,6 +232,8 @@ func TestCIPollerDiscordWebhookReadsURLAtEventTime(t *testing.T) {
 	payload := receiveDiscordPayload(t, reqCh)
 	require.Len(t, payload.Embeds, 1)
 	assert.Equal(t, "roborev CI job failed", payload.Embeds[0].Title)
+	fields := discordEmbedFieldsByName(payload.Embeds[0].Fields)
+	assert.Equal(t, "2", fields["Retry count"])
 
 	h.Cfg.CI.DiscordWebhookURL = ""
 	h.Poller.handleReviewFailed(ciEvent(members[0].ID, "review.failed"))
