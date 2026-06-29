@@ -16,7 +16,8 @@ event JSON, so it is not suitable for direct Discord notifications.
 
 - Add a simple global CI poller Discord webhook setting:
   `ci.discord_webhook_url`.
-- Notify Discord for every terminal CI job failure.
+- Notify Discord for every terminal CI job failure, with quota/cooldown bursts
+  deduped per agent.
 - Include context that explains why the job failed when available.
 - Keep notification delivery best-effort so webhook failures never affect job
   state, retries, synthesis, or PR posting.
@@ -127,11 +128,11 @@ Failure classes:
 Use the existing `review` package constants and helpers where they apply:
 `review.QuotaErrorPrefix`, `review.OutageErrorPrefix`,
 `review.TimeoutErrorPrefix`, `review.IsQuotaFailure`,
-`review.IsTransientFailure`, `review.IsTimeoutCancellation`, and
-`review.IsGenuineFailure`. The `agent timeout after` check is CI-specific
-because worker member timeouts are stored without `review.TimeoutErrorPrefix`.
-Canceled jobs broadcast `review.canceled`, not `review.failed`, and are not in
-scope for this notification path.
+`review.IsTransientFailure`, and `review.IsGenuineFailure`. The
+`agent timeout after` check is CI-specific because worker member timeouts are
+stored without `review.TimeoutErrorPrefix`. Canceled jobs broadcast
+`review.canceled`, not `review.failed`, and are not in scope for this
+notification path.
 
 The message should not include `job.RepoPath`, `WorktreePath`, prompt text,
 agent output, command lines, tokens, or full local file paths.
