@@ -162,7 +162,7 @@ type CIConfig struct {
 	// matrix. Empty means use the matrix.
 	Panel string `toml:"panel"`
 
-	// DiscordWebhookURL posts CI poller job failures to a Discord webhook.
+	// DiscordWebhookURL posts best-effort Discord notifications for CI job failures.
 	// Empty disables Discord notifications.
 	DiscordWebhookURL string `toml:"discord_webhook_url" sensitive:"true"`
 
