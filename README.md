@@ -208,7 +208,7 @@ local reporting or archival workflows:
 
 ```bash
 roborev export reviews
-roborev export reviews --profile metadata --since 2026-06-01 --until 2026-07-01
+roborev export reviews --profile metadata --since 2026-06-01 --until 2026-06-30
 roborev export reviews --closed-only --repo github.com/org/repo --limit 1000
 ```
 

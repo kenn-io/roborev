@@ -133,7 +133,7 @@ See: [Terminal UI](/integrations/tui/)
 ```bash
 roborev export reviews
 roborev export reviews --profile metadata
-roborev export reviews --since 2026-06-01 --until 2026-07-01
+roborev export reviews --since 2026-06-01 --until 2026-06-30
 roborev export reviews --closed-only --repo github.com/org/repo
 roborev export reviews --project my-workspace --limit 1000
 ```
