@@ -421,13 +421,7 @@ func (db *DB) GetJobsToSync(machineID string, limit int) ([]SyncableJob, error) 
 		WHERE j.status IN ('done', 'failed', 'canceled', 'skipped')
 		AND j.source_machine_id = ?
 		AND j.uuid IS NOT NULL
-		AND (j.synced_at IS NULL OR datetime(
-			CASE WHEN j.updated_at GLOB '*[+-][0-9][0-9]:[0-9][0-9]' OR j.updated_at LIKE '%Z'
-				THEN j.updated_at ELSE j.updated_at || 'Z' END
-		) > datetime(
-			CASE WHEN j.synced_at GLOB '*[+-][0-9][0-9]:[0-9][0-9]' OR j.synced_at LIKE '%Z'
-				THEN j.synced_at ELSE j.synced_at || 'Z' END
-		))
+		AND (j.synced_at IS NULL OR `+sqliteNormalizedTimestampExpr("j.updated_at")+` > `+sqliteNormalizedTimestampExpr("j.synced_at")+`)
 		ORDER BY j.id
 		LIMIT ?
 	`, machineID, limit)
@@ -632,13 +626,7 @@ func (db *DB) GetReviewsToSync(machineID string, limit int) ([]SyncableReview, e
 		AND r.uuid IS NOT NULL
 		AND j.uuid IS NOT NULL
 		AND j.synced_at IS NOT NULL
-		AND (r.synced_at IS NULL OR datetime(
-			CASE WHEN r.updated_at GLOB '*[+-][0-9][0-9]:[0-9][0-9]' OR r.updated_at LIKE '%Z'
-				THEN r.updated_at ELSE r.updated_at || 'Z' END
-		) > datetime(
-			CASE WHEN r.synced_at GLOB '*[+-][0-9][0-9]:[0-9][0-9]' OR r.synced_at LIKE '%Z'
-				THEN r.synced_at ELSE r.synced_at || 'Z' END
-		))
+		AND (r.synced_at IS NULL OR `+sqliteNormalizedTimestampExpr("r.updated_at")+` > `+sqliteNormalizedTimestampExpr("r.synced_at")+`)
 		ORDER BY r.id
 		LIMIT ?
 	`, machineID, limit)
@@ -822,13 +810,7 @@ func (db *DB) UpsertPulledJob(j PulledJob, repoID int64, commitID *int64) error 
 			updated_at = excluded.updated_at,
 			synced_at = ?
 			WHERE review_jobs.status NOT IN ('applied', 'rebased')
-			OR datetime(
-				CASE WHEN review_jobs.updated_at GLOB '*[+-][0-9][0-9]:[0-9][0-9]' OR review_jobs.updated_at LIKE '%Z'
-					THEN review_jobs.updated_at ELSE review_jobs.updated_at || 'Z' END
-			) < datetime(
-				CASE WHEN excluded.updated_at GLOB '*[+-][0-9][0-9]:[0-9][0-9]' OR excluded.updated_at LIKE '%Z'
-					THEN excluded.updated_at ELSE excluded.updated_at || 'Z' END
-			)
+			OR `+sqliteNormalizedTimestampExpr("review_jobs.updated_at")+` < `+sqliteNormalizedTimestampExpr("excluded.updated_at")+`
 	`, j.UUID, repoID, commitID, j.GitRef, nullStr(j.SessionID), j.Agent, nullStr(j.Model), nullStr(j.Provider), nullStr(j.RequestedModel), nullStr(j.RequestedProvider), j.Reasoning, j.JobType,
 		j.ReviewType, nullStr(j.PatchID), j.Status, j.Agentic, j.AgentInvoked, j.EnqueuedAt.Format(time.RFC3339),
 		nullTimeStr(j.StartedAt), nullTimeStr(j.FinishedAt),
@@ -853,24 +835,24 @@ func (db *DB) UpsertPulledReview(r PulledReview) error {
 	}
 
 	now := time.Now().UTC().Format(time.RFC3339)
+	var verdictBool any
+	if r.Output != "" {
+		verdictBool = verdictToBool(ParseVerdict(r.Output))
+	}
 	_, err = db.Exec(`
 		INSERT INTO reviews (
 			uuid, job_id, agent, prompt, output, closed,
-			updated_by_machine_id, created_at, updated_at, synced_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			verdict_bool, updated_by_machine_id, created_at, updated_at, synced_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(uuid) DO UPDATE SET
 			closed = excluded.closed,
+			verdict_bool = COALESCE(reviews.verdict_bool, excluded.verdict_bool),
 			updated_by_machine_id = excluded.updated_by_machine_id,
 			updated_at = excluded.updated_at,
 			synced_at = ?
-			WHERE datetime(
-				CASE WHEN reviews.updated_at GLOB '*[+-][0-9][0-9]:[0-9][0-9]' OR reviews.updated_at LIKE '%Z'
-					THEN reviews.updated_at ELSE reviews.updated_at || 'Z' END
-			) < datetime(
-				CASE WHEN excluded.updated_at GLOB '*[+-][0-9][0-9]:[0-9][0-9]' OR excluded.updated_at LIKE '%Z'
-					THEN excluded.updated_at ELSE excluded.updated_at || 'Z' END
-			)
+			WHERE `+sqliteNormalizedTimestampExpr("reviews.updated_at")+` < `+sqliteNormalizedTimestampExpr("excluded.updated_at")+`
 	`, r.UUID, jobID, r.Agent, r.Prompt, r.Output, r.Closed,
+		verdictBool,
 		r.UpdatedByMachineID, r.CreatedAt.Format(time.RFC3339), r.UpdatedAt.Format(time.RFC3339), now, now)
 	return err
 }

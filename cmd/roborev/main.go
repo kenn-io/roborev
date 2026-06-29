@@ -61,6 +61,7 @@ func main() {
 	rootCmd.AddCommand(fixCmd())
 	rootCmd.AddCommand(compactCmd())
 	rootCmd.AddCommand(promptCmd()) // hidden alias for backward compatibility
+	rootCmd.AddCommand(exportCmd())
 	rootCmd.AddCommand(repoCmd())
 	rootCmd.AddCommand(skillsCmd())
 	rootCmd.AddCommand(syncCmd())

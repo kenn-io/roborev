@@ -29,13 +29,13 @@ Flags:
 - `--since T`: optional lower bound for completed review time.
 - `--until T`: optional upper bound for completed review time.
 - `--closed-only`: only include top-level reviews marked closed.
-- `--repo R`: exact repo identity or repo root path filter. Repo root paths may be used for filtering but are not emitted in the export document.
+- `--repo R`: exact exported repo identifier filter. This is `repos.identity` when present, otherwise `repos.name`; local root paths are not accepted by this export filter.
 - `--project P`: exact project display-name filter.
 - `--limit N`: maximum number of top-level reviews emitted by the CLI.
 
 Time flags accept RFC3339 timestamps or `YYYY-MM-DD` dates. `--since` is inclusive and `--until` is exclusive for both timestamp and date-only inputs. Date-only values are interpreted as UTC day boundaries: `--since 2026-06-01` means `2026-06-01T00:00:00Z`; `--until 2026-06-01` means `2026-06-02T00:00:00Z`.
 
-When `--limit` is omitted, the CLI uses bounded daemon pages and follows the cursor until all matching rows have been emitted into the single JSON document. When `--limit` is present, the CLI stops after emitting at most that many top-level reviews.
+When `--limit` is omitted, the CLI uses bounded daemon pages and follows the cursor until all matching rows have been emitted into the single JSON document. When `--limit` is present, the CLI follows bounded daemon pages until either the requested number of top-level reviews has been emitted or no cursor remains. The CLI passes a per-page limit of `min(remaining, daemon_max_page_size)`.
 
 ## API Surface
 
@@ -123,6 +123,11 @@ Subagent object:
   "verdict": "fail",
   "completed_at": "2026-06-29T00:00:05Z",
   "duration_ms": 5000,
+  "cost": {
+    "tokens_in": null,
+    "tokens_out": null,
+    "usd": null
+  },
   "content": "raw member review output"
 }
 ```
@@ -220,7 +225,7 @@ Review field sources:
 
 `repo` is `repos.identity` when present, otherwise `repos.name`. Do not emit `repos.root_path` as a fallback because it can reveal local usernames and filesystem layout. The `project` field also uses `repos.name`, so local-only repos without an identity may have matching `repo` and `project` values.
 
-`--repo` matches either `repos.identity` or `repos.root_path` exactly. This keeps local path filtering available to the CLI without exposing the path in the output document. `--project` matches `repos.name` exactly.
+`--repo` matches the exported repo identifier exactly: `repos.identity` when present, otherwise `repos.name`. `--project` matches `repos.name` exactly.
 
 `commit_sha` comes from `commits.sha` for single-commit reviews. For range, dirty, and synthesis rows, use the best stable reviewed ref available:
 
@@ -238,7 +243,7 @@ For local panels and non-panel reviews, PR fields are `null`.
 
 ## Cost Fields
 
-Cost fields are extracted from `review_jobs.token_usage` JSON. The export must not emit the raw token usage blob.
+Cost fields are extracted from `review_jobs.token_usage` JSON for both top-level reviews and nested subagents. The export must not emit the raw token usage blob.
 
 - `cost.tokens_in`: `$.input_tokens` when present and non-zero; otherwise `null`. Many existing rows do not carry input-token data, so this field may commonly be `null`.
 - `cost.tokens_out`: `$.total_output_tokens` when present and non-zero; otherwise `null`.
@@ -325,5 +330,5 @@ CLI tests:
 - `roborev export reviews` defaults to JSON content profile.
 - `--profile metadata` emits the same row metadata with `content: null`.
 - CLI follows daemon cursors when `--limit` is omitted and returns a single JSON document.
-- Explicit `--limit` stops after the requested number of top-level reviews.
+- Explicit `--limit` follows daemon cursors until the requested number of top-level reviews is reached.
 - Runtime failures and usage errors follow existing CLI conventions.

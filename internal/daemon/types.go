@@ -115,6 +115,44 @@ type GetReviewOutput struct {
 	Body *storage.Review
 }
 
+// -- GET /api/export/reviews --
+
+// ExportReviewsInput holds query parameters for exporting completed reviews.
+type ExportReviewsInput struct {
+	Format     string `query:"format" default:"json" doc:"Output format; only json is supported"`
+	Profile    string `query:"profile" default:"content" doc:"Export profile: content or metadata"`
+	Since      string `query:"since" doc:"Inclusive completed_at lower bound (RFC3339 or YYYY-MM-DD)"`
+	Until      string `query:"until" doc:"Exclusive completed_at upper bound (RFC3339 or YYYY-MM-DD; date-only means through that UTC day)"`
+	ClosedOnly bool   `query:"closed_only" doc:"Only include reviews marked closed"`
+	Repo       string `query:"repo" doc:"Exact exported repo identifier filter"`
+	Project    string `query:"project" doc:"Exact project display-name filter"`
+	Limit      int    `query:"limit" default:"500" doc:"Maximum top-level reviews in this page"`
+	Cursor     string `query:"cursor" doc:"Opaque cursor from a previous page"`
+}
+
+type ExportReviewsWindow struct {
+	Field string  `json:"field"`
+	Since *string `json:"since"`
+	Until *string `json:"until"`
+}
+
+type ExportReviewsDocument struct {
+	SchemaVersion int                    `json:"schema_version"`
+	Tool          string                 `json:"tool"`
+	ToolVersion   string                 `json:"tool_version"`
+	GeneratedAt   string                 `json:"generated_at"`
+	Profile       string                 `json:"profile"`
+	Window        ExportReviewsWindow    `json:"window"`
+	Truncated     bool                   `json:"truncated"`
+	NextCursor    *string                `json:"next_cursor"`
+	Reviews       []storage.ExportReview `json:"reviews"`
+}
+
+// ExportReviewsOutput is the response for GET /api/export/reviews.
+type ExportReviewsOutput struct {
+	Body ExportReviewsDocument
+}
+
 // -- Shared request/response types (used by Huma handlers) --
 
 // CancelJobRequest is the JSON body for POST /api/job/cancel.

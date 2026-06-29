@@ -1199,6 +1199,106 @@ func (s *Server) humaGetReview(
 	return &GetReviewOutput{Body: review}, nil
 }
 
+const (
+	exportReviewsDefaultLimit = 500
+	exportReviewsMaxLimit     = 5000
+)
+
+func (s *Server) humaExportReviews(
+	ctx context.Context, input *ExportReviewsInput,
+) (*ExportReviewsOutput, error) {
+	format := input.Format
+	if format == "" {
+		format = "json"
+	}
+	if format != "json" {
+		return nil, huma.Error400BadRequest("unsupported export format")
+	}
+
+	profile := input.Profile
+	if profile == "" {
+		profile = string(storage.ExportProfileContent)
+	}
+	if profile != string(storage.ExportProfileContent) &&
+		profile != string(storage.ExportProfileMetadata) {
+		return nil, huma.Error400BadRequest("unsupported export profile")
+	}
+
+	since, sinceOut, err := parseExportTimeBound(input.Since, false)
+	if err != nil {
+		return nil, huma.Error400BadRequest("invalid since")
+	}
+	until, untilOut, err := parseExportTimeBound(input.Until, true)
+	if err != nil {
+		return nil, huma.Error400BadRequest("invalid until")
+	}
+
+	limit := input.Limit
+	if limit <= 0 {
+		limit = exportReviewsDefaultLimit
+	}
+	if limit > exportReviewsMaxLimit {
+		limit = exportReviewsMaxLimit
+	}
+
+	page, err := s.db.ExportReviews(storage.ExportReviewsOptions{
+		Profile:    storage.ExportProfile(profile),
+		Since:      since,
+		Until:      until,
+		Cursor:     input.Cursor,
+		ClosedOnly: input.ClosedOnly,
+		Repo:       input.Repo,
+		Project:    input.Project,
+		Limit:      limit,
+	})
+	if err != nil {
+		return nil, huma.Error400BadRequest(err.Error())
+	}
+
+	var nextCursor *string
+	if page.NextCursor != nil {
+		nextCursor = page.NextCursor
+	}
+	resp := &ExportReviewsOutput{}
+	resp.Body = ExportReviewsDocument{
+		SchemaVersion: 1,
+		Tool:          "roborev",
+		ToolVersion:   version.Version,
+		GeneratedAt:   time.Now().UTC().Format(time.RFC3339),
+		Profile:       profile,
+		Window: ExportReviewsWindow{
+			Field: "completed_at",
+			Since: sinceOut,
+			Until: untilOut,
+		},
+		Truncated:  page.Truncated,
+		NextCursor: nextCursor,
+		Reviews:    page.Reviews,
+	}
+	return resp, nil
+}
+
+func parseExportTimeBound(raw string, upper bool) (time.Time, *string, error) {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return time.Time{}, nil, nil
+	}
+	if t, err := time.Parse("2006-01-02", raw); err == nil {
+		if upper {
+			t = t.Add(24 * time.Hour)
+		}
+		out := t.UTC().Format(time.RFC3339)
+		return t, &out, nil
+	}
+	t, err := time.Parse(time.RFC3339Nano, raw)
+	if err != nil {
+		return time.Time{}, nil, err
+	}
+	t = t.UTC()
+	out := t.Format(time.RFC3339)
+	return t, &out, nil
+}
+
 func (s *Server) humaListComments(
 	ctx context.Context, input *ListCommentsInput,
 ) (*ListCommentsOutput, error) {

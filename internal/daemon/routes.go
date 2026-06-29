@@ -43,6 +43,13 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 			o.Tags = []string{"reviews"}
 		})
 
+	huma.Get(api, "/api/export/reviews", s.humaExportReviews,
+		func(o *huma.Operation) {
+			o.OperationID = "export-reviews"
+			o.Summary = "Export completed reviews"
+			o.Tags = []string{"reviews"}
+		})
+
 	// /api/job/output is registered as a plain HandleFunc
 	// (not Huma) because its stream=1 mode uses NDJSON
 	// streaming which doesn't fit Huma's typed response model.

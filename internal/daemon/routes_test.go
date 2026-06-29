@@ -37,6 +37,43 @@ func serveHuma(
 	return rr
 }
 
+func seedHumaExportReviews(t *testing.T, db *storage.DB, repoID int64, count int) {
+	t.Helper()
+	tx, err := db.Begin()
+	require.NoError(t, err)
+	defer tx.Rollback()
+
+	for i := range count {
+		sha := fmt.Sprintf("%040x", i+1)
+		createdAt := time.Date(2026, 6, 29, 0, 0, i, 0, time.UTC).Format(time.RFC3339)
+		res, err := tx.Exec(
+			`INSERT INTO commits (repo_id, sha, author, subject, timestamp)
+			 VALUES (?, ?, 'Test User', 'test commit', ?)`,
+			repoID, sha, createdAt,
+		)
+		require.NoError(t, err)
+		commitID, err := res.LastInsertId()
+		require.NoError(t, err)
+		res, err = tx.Exec(
+			`INSERT INTO review_jobs
+			 (repo_id, commit_id, uuid, git_ref, agent, status, enqueued_at, started_at, finished_at, job_type)
+			 VALUES (?, ?, ?, ?, 'test-agent', 'done', ?, ?, ?, 'review')`,
+			repoID, commitID, "job-"+sha, sha, createdAt, createdAt, createdAt,
+		)
+		require.NoError(t, err)
+		jobID, err := res.LastInsertId()
+		require.NoError(t, err)
+		_, err = tx.Exec(
+			`INSERT INTO reviews
+			 (job_id, uuid, agent, prompt, output, created_at, updated_at, verdict_bool)
+			 VALUES (?, ?, 'test-agent', 'prompt', 'No issues found.', ?, ?, 1)`,
+			jobID, "review-"+sha, createdAt, createdAt,
+		)
+		require.NoError(t, err)
+	}
+	require.NoError(t, tx.Commit())
+}
+
 func TestHumaListJobs(t *testing.T) {
 	srv, db, _ := newTestServer(t)
 	repo := testutil.CreateTestRepo(t, db)
@@ -167,6 +204,125 @@ func TestHumaGetReview_Found(t *testing.T) {
 	var review storage.Review
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &review))
 	assert.Equal(t, job.ID, review.JobID)
+}
+
+func TestHumaExportReviews(t *testing.T) {
+	srv, db, _ := newTestServer(t)
+	repo := testutil.CreateTestRepo(t, db)
+	require.NoError(t, db.SetRepoIdentity(repo.ID, "github.com/acme/widgets"))
+	first := testutil.CreateCompletedReview(
+		t, db, repo.ID, "export-a", "test-agent", "No issues found.",
+	)
+	second := testutil.CreateCompletedReview(
+		t, db, repo.ID, "export-b", "test-agent", "- Medium — issue",
+	)
+	_, err := db.Exec(`UPDATE reviews SET created_at = '2026-06-29 00:00:00' WHERE job_id = ?`, first.ID)
+	require.NoError(t, err)
+	_, err = db.Exec(`UPDATE reviews SET created_at = '2026-06-29 00:00:01' WHERE job_id = ?`, second.ID)
+	require.NoError(t, err)
+
+	rr := serveHuma(t, srv, http.MethodGet,
+		"/api/export/reviews?profile=metadata&since=2026-06-29&until=2026-06-29&limit=1", nil)
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+
+	var body struct {
+		SchemaVersion int                    `json:"schema_version"`
+		Tool          string                 `json:"tool"`
+		ToolVersion   string                 `json:"tool_version"`
+		GeneratedAt   string                 `json:"generated_at"`
+		Profile       string                 `json:"profile"`
+		Window        map[string]*string     `json:"window"`
+		Truncated     bool                   `json:"truncated"`
+		NextCursor    *string                `json:"next_cursor"`
+		Reviews       []storage.ExportReview `json:"reviews"`
+	}
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &body))
+	assert.Equal(t, 1, body.SchemaVersion)
+	assert.Equal(t, "roborev", body.Tool)
+	assert.NotEmpty(t, body.ToolVersion)
+	assert.NotEmpty(t, body.GeneratedAt)
+	assert.Equal(t, "metadata", body.Profile)
+	require.NotNil(t, body.Window["field"])
+	assert.Equal(t, "completed_at", *body.Window["field"])
+	require.NotNil(t, body.Window["since"])
+	assert.Equal(t, "2026-06-29T00:00:00Z", *body.Window["since"])
+	require.NotNil(t, body.Window["until"])
+	assert.Equal(t, "2026-06-30T00:00:00Z", *body.Window["until"])
+	assert.True(t, body.Truncated)
+	require.NotNil(t, body.NextCursor)
+	require.Len(t, body.Reviews, 1)
+	assert.Equal(t, "export-a", *body.Reviews[0].CommitSHA)
+	assert.Nil(t, body.Reviews[0].Content)
+	assert.Equal(t, "github.com/acme/widgets", body.Reviews[0].Repo)
+
+	rr2 := serveHuma(t, srv, http.MethodGet,
+		"/api/export/reviews?profile=content&cursor="+*body.NextCursor+"&limit=10", nil)
+	require.Equal(t, http.StatusOK, rr2.Code, rr2.Body.String())
+	var page2 struct {
+		Truncated  bool                   `json:"truncated"`
+		NextCursor *string                `json:"next_cursor"`
+		Reviews    []storage.ExportReview `json:"reviews"`
+	}
+	require.NoError(t, json.Unmarshal(rr2.Body.Bytes(), &page2))
+	assert.False(t, page2.Truncated)
+	assert.Nil(t, page2.NextCursor)
+	require.Len(t, page2.Reviews, 1)
+	assert.Equal(t, "fail", page2.Reviews[0].Verdict)
+	assert.Equal(t, "- Medium — issue", *page2.Reviews[0].Content)
+}
+
+func TestHumaExportReviewsValidation(t *testing.T) {
+	srv, _, _ := newTestServer(t)
+
+	tests := []string{
+		"/api/export/reviews?format=yaml",
+		"/api/export/reviews?profile=full",
+		"/api/export/reviews?since=not-a-time",
+	}
+	for _, path := range tests {
+		t.Run(path, func(t *testing.T) {
+			rr := serveHuma(t, srv, http.MethodGet, path, nil)
+			assert.Equal(t, http.StatusBadRequest, rr.Code, rr.Body.String())
+		})
+	}
+}
+
+func TestHumaExportReviewsDefaultLimitIsBounded(t *testing.T) {
+	srv, db, _ := newTestServer(t)
+	repo := testutil.CreateTestRepo(t, db)
+	seedHumaExportReviews(t, db, repo.ID, 501)
+
+	rr := serveHuma(t, srv, http.MethodGet, "/api/export/reviews", nil)
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+
+	var body struct {
+		Truncated  bool                   `json:"truncated"`
+		NextCursor *string                `json:"next_cursor"`
+		Reviews    []storage.ExportReview `json:"reviews"`
+	}
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &body))
+	assert.Len(t, body.Reviews, 500)
+	assert.True(t, body.Truncated)
+	assert.NotNil(t, body.NextCursor)
+}
+
+func TestHumaExportReviewsMaxLimitIsClamped(t *testing.T) {
+	srv, db, _ := newTestServer(t)
+	repo := testutil.CreateTestRepo(t, db)
+	seedHumaExportReviews(t, db, repo.ID, 5001)
+
+	rr := serveHuma(t, srv, http.MethodGet, "/api/export/reviews?limit=999999", nil)
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+
+	var body struct {
+		Truncated  bool                   `json:"truncated"`
+		NextCursor *string                `json:"next_cursor"`
+		Reviews    []storage.ExportReview `json:"reviews"`
+	}
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &body))
+	assert.Len(t, body.Reviews, 5000)
+	assert.True(t, body.Truncated)
+	assert.NotNil(t, body.NextCursor)
 }
 
 func TestHumaCancelJob(t *testing.T) {
@@ -416,6 +572,7 @@ func TestHumaOpenAPISpec(t *testing.T) {
 	wantPaths := map[string]string{
 		"/api/jobs":              "get",
 		"/api/review":            "get",
+		"/api/export/reviews":    "get",
 		"/api/comments":          "get",
 		"/api/repos":             "get",
 		"/api/repos/resolve":     "get",

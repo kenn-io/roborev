@@ -198,6 +198,10 @@ func Open(dbPath string) (*DB, error) {
 		db.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
+	if _, err := wrapped.BackfillVerdictBool(); err != nil {
+		db.Close()
+		return nil, fmt.Errorf("backfill verdicts: %w", err)
+	}
 
 	return wrapped, nil
 }
