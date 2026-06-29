@@ -420,10 +420,13 @@ func TestRunInstallDroidRejectsSymlinkedParentToRepoFactory(t *testing.T) {
 
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	require.NoError(t, os.Symlink(filepath.Join(repo.Path(), ".factory"), filepath.Join(home, ".factory")))
+	err := os.Symlink(filepath.Join(repo.Path(), ".factory"), filepath.Join(home, ".factory"))
+	if err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
 
 	var out bytes.Buffer
-	err := RunInstall(InstallOptions{
+	err = RunInstall(InstallOptions{
 		Agent:   "droid",
 		Command: "/tmp/roborev agent-hook run --agent droid",
 		Scope:   "user",
@@ -440,10 +443,13 @@ func TestRunDumpDroidRejectsSymlinkedParentToRepoFactory(t *testing.T) {
 
 	home := t.TempDir()
 	t.Setenv("HOME", home)
-	require.NoError(t, os.Symlink(filepath.Join(repo.Path(), ".factory"), filepath.Join(home, ".factory")))
+	err := os.Symlink(filepath.Join(repo.Path(), ".factory"), filepath.Join(home, ".factory"))
+	if err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
 
 	var out bytes.Buffer
-	err := RunDump(DumpOptions{
+	err = RunDump(DumpOptions{
 		Agent:   "droid",
 		Command: "/tmp/roborev agent-hook run --agent droid",
 		Scope:   "user",
