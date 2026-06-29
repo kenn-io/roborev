@@ -22,8 +22,11 @@ concurrency:
 jobs:
   go-changes:
     runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
     outputs:
-      changed: ${{ steps.filter.outputs.changed }}
+      changed: ${{ steps.filter.outputs.go }}
     steps:
       - uses: actions/checkout@df4cb1c069e1874edd31b4311f1884172cec0e10  # v6.0.3
         with:
@@ -31,29 +34,17 @@ jobs:
 
       - name: Detect Go changes
         id: filter
-        shell: bash
-        env:
-          BASE_SHA: ${{ github.event.pull_request.base.sha || github.event.before }}
-          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
-        run: |
-          set -euo pipefail
-
-          if [ -z "$BASE_SHA" ] || [[ "$BASE_SHA" =~ ^0+$ ]]; then
-            echo "changed=true" >> "$GITHUB_OUTPUT"
-            exit 0
-          fi
-
-          changed=false
-          while IFS= read -r path; do
-            case "$path" in
-              *.go|go.mod|go.sum|go.work|go.work.sum)
-                changed=true
-                break
-                ;;
-            esac
-          done < <(git diff --name-only --no-renames "$BASE_SHA" "$HEAD_SHA")
-
-          echo "changed=$changed" >> "$GITHUB_OUTPUT"
+        uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d  # v4.0.1
+        with:
+          base: ${{ github.ref }}
+          filters: |
+            go:
+              - '*.go'
+              - '**/*.go'
+              - 'go.mod'
+              - 'go.sum'
+              - 'go.work'
+              - 'go.work.sum'
 
   v056-daemon-upgrade:
     needs: go-changes
