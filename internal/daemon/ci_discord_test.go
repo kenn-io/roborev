@@ -124,14 +124,18 @@ func TestPostDiscordWebhookPostsJSON(t *testing.T) {
 
 	assert.True(t, ok)
 	assert.Empty(t, logs)
-	select {
-	case got := <-reqCh:
-		assert.Equal(t, "application/json", got.contentType)
-		require.Len(t, got.payload.Embeds, 1)
-		assert.Equal(t, "roborev CI job failed", got.payload.Embeds[0].Title)
-	case <-time.After(2 * time.Second):
-		require.Fail(t, "timed out waiting for Discord webhook request")
-	}
+	var got request
+	require.Eventually(t, func() bool {
+		select {
+		case got = <-reqCh:
+			return true
+		default:
+			return false
+		}
+	}, 2*time.Second, 10*time.Millisecond)
+	assert.Equal(t, "application/json", got.contentType)
+	require.Len(t, got.payload.Embeds, 1)
+	assert.Equal(t, "roborev CI job failed", got.payload.Embeds[0].Title)
 }
 
 func TestPostDiscordWebhookRedactsURLInLogs(t *testing.T) {
