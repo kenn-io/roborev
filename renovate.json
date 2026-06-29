@@ -23,6 +23,11 @@
       "matchManagers": ["pep621"],
       "groupName": "Docs dependencies",
       "groupSlug": "docs-dependencies"
+    },
+    {
+      "matchManagers": ["github-actions"],
+      "groupName": "GitHub Actions dependencies",
+      "groupSlug": "github-actions-dependencies"
     }
   ]
 }
