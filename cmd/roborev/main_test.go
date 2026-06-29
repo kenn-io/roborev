@@ -804,6 +804,54 @@ func TestRepairHooksAfterUpdateUsesRegisteredRepos(t *testing.T) {
 	assert.Equal(t, wantBinary, gotOpts.binary)
 }
 
+func TestRepairHooksAfterUpdateUsesNewBinary(t *testing.T) {
+	_ = setupIsolatedDataDir(t)
+	tmpDir := t.TempDir()
+	binDir := filepath.Join(tmpDir, "bin")
+	require.NoError(t, os.MkdirAll(binDir, 0o755))
+
+	fakeSource := filepath.Join(tmpDir, "fake_roborev.go")
+	argsPath := filepath.Join(tmpDir, "args.txt")
+	require.NoError(t, os.WriteFile(fakeSource, []byte(`package main
+
+import (
+	"fmt"
+	"os"
+	"strings"
+)
+
+func main() {
+	argsPath := os.Getenv("ROBOREV_FAKE_ARGS")
+	if argsPath == "" {
+		os.Exit(2)
+	}
+	if err := os.WriteFile(argsPath, []byte(strings.Join(os.Args[1:], "\n")), 0o644); err != nil {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(1)
+	}
+}
+`), 0o644))
+
+	newBinary := updatedRoborevBinary(binDir)
+	build := exec.Command("go", "build", "-o", newBinary, fakeSource)
+	build.Env = os.Environ()
+	out, err := build.CombinedOutput()
+	require.NoError(t, err, "build fake roborev: %s", out)
+	t.Setenv("ROBOREV_FAKE_ARGS", argsPath)
+
+	repairHooksAfterUpdate(binDir, nil)
+
+	gotBytes, err := os.ReadFile(argsPath)
+	require.NoError(t, err)
+	assert.Equal(t, strings.Join([]string{
+		"install-hook",
+		"repair",
+		"--registered",
+		"--binary",
+		newBinary,
+	}, "\n"), string(gotBytes))
+}
+
 // stubRestartVars saves and restores all package-level vars used by
 // restartDaemonAfterUpdate. Returns a struct with call counters.
 type restartStubs struct {

@@ -1,7 +1,6 @@
 package main
 
 import (
-	"context"
 	"errors"
 	"fmt"
 	"os"
@@ -355,14 +354,30 @@ func updatedRoborevBinary(binDir string) string {
 type repairHookRunner func(opts repairHookOptions) error
 
 func repairHooksAfterUpdate(binDir string, run repairHookRunner) {
+	newBinary := updatedRoborevBinary(binDir)
 	if run == nil {
 		run = func(opts repairHookOptions) error {
-			return repairHooks(context.Background(), opts)
+			cmd := exec.Command(
+				newBinary,
+				"install-hook",
+				"repair",
+				"--registered",
+				"--binary",
+				opts.binary,
+			)
+			output, err := cmd.CombinedOutput()
+			if err != nil {
+				if trimmed := strings.TrimSpace(string(output)); trimmed != "" {
+					return fmt.Errorf("%w: %s", err, trimmed)
+				}
+				return err
+			}
+			return nil
 		}
 	}
 
 	fmt.Print("Updating git hooks... ")
-	if err := run(repairHookOptions{registered: true, binary: updatedRoborevBinary(binDir)}); err != nil {
+	if err := run(repairHookOptions{registered: true, binary: newBinary}); err != nil {
 		fmt.Printf("warning: %v\n", err)
 		return
 	}
