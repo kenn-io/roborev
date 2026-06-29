@@ -354,6 +354,31 @@ func TestRunDumpDroidRejectsProjectConfigPath(t *testing.T) {
 	assert.ErrorContains(t, err, "project-scoped Factory Droid hook config is not supported")
 }
 
+func TestRunInstallDroidRejectsSymlinkToProjectConfigPath(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	targetDir := filepath.Join(repo.Path(), ".factory")
+	require.NoError(t, os.MkdirAll(targetDir, 0o755))
+	targetPath := filepath.Join(targetDir, "hooks.json")
+	writeJSONFile(t, targetPath, map[string]any{})
+
+	linkPath := filepath.Join(t.TempDir(), "hooks.json")
+	err := os.Symlink(targetPath, linkPath)
+	if err != nil {
+		t.Skipf("symlinks unavailable: %v", err)
+	}
+
+	var out bytes.Buffer
+	err = RunInstall(InstallOptions{
+		Agent:      "droid",
+		Command:    "/tmp/roborev agent-hook run --agent droid",
+		ConfigPath: linkPath,
+		Scope:      "user",
+		Timeout:    10 * time.Second,
+	}, &out)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "project-scoped Factory Droid hook config is not supported")
+}
+
 func TestRunInstallDroidAllowsUserScopeWhenHomeIsCWD(t *testing.T) {
 	wd, err := os.Getwd()
 	require.NoError(t, err)

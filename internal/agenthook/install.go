@@ -717,9 +717,15 @@ func DefaultDroidHooksPath(scope string) string {
 
 func validateDroidHooksPath(path string) error {
 	if isUserDroidHooksPath(path) {
+		if resolved, ok := evalExistingPath(path); ok && !isUserDroidHooksPath(resolved) && isProjectDroidHooksPath(resolved) {
+			return fmt.Errorf("project-scoped Factory Droid hook config is not supported; use the user-scoped Factory hooks path instead")
+		}
 		return nil
 	}
 	if isProjectDroidHooksPath(path) {
+		return fmt.Errorf("project-scoped Factory Droid hook config is not supported; use the user-scoped Factory hooks path instead")
+	}
+	if resolved, ok := evalExistingPath(path); ok && isProjectDroidHooksPath(resolved) {
 		return fmt.Errorf("project-scoped Factory Droid hook config is not supported; use the user-scoped Factory hooks path instead")
 	}
 	return nil
@@ -801,6 +807,18 @@ func cleanAbsPath(path string) (string, bool) {
 		return "", false
 	}
 	return filepath.Clean(abs), true
+}
+
+func evalExistingPath(path string) (string, bool) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return "", false
+	}
+	resolved, err := filepath.EvalSymlinks(path)
+	if err != nil {
+		return "", false
+	}
+	return cleanAbsPath(resolved)
 }
 
 func normalizeDroidScope(scope string) (string, error) {

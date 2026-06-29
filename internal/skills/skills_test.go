@@ -530,3 +530,52 @@ func TestDroidSkillsInstallToFactoryDir(t *testing.T) {
 		assert.True(t, res.Skipped, "Droid should be skipped when ~/.factory does not exist")
 	})
 }
+
+func TestDroidSkillOperationsUseHomeEnvWhenUserHomeDirDiffers(t *testing.T) {
+	envHome := t.TempDir()
+	userHome := t.TempDir()
+	t.Setenv("HOME", envHome)
+	stubUserHomeDir(t, userHome)
+	require.NoError(t, os.MkdirAll(filepath.Join(envHome, ".factory"), 0o755))
+
+	results, err := Install()
+	require.NoError(t, err)
+	droidInstall := findResultByAgent(t, results, AgentDroid)
+	require.False(t, droidInstall.Skipped, "Droid should use HOME for Factory config discovery")
+	assertSkillsInstalled(t, envHome, agentCase{
+		agent:       AgentDroid,
+		configDir:   ".factory",
+		displayName: string(AgentDroid),
+	})
+	_, err = os.Stat(filepath.Join(userHome, ".factory"))
+	require.ErrorIs(t, err, os.ErrNotExist)
+
+	assert.True(t, IsInstalled(AgentDroid), "Droid installed detection should use HOME")
+
+	updates, err := Update()
+	require.NoError(t, err)
+	droidUpdate := findResultByAgent(t, updates, AgentDroid)
+	assert.NotEmpty(t, droidUpdate.Updated, "Droid update should use HOME")
+
+	var droidStatus AgentStatus
+	for _, status := range Status() {
+		if status.Agent == AgentDroid {
+			droidStatus = status
+		}
+	}
+	assert.True(t, droidStatus.Available, "Droid status should use HOME")
+	for _, name := range expectedSkillDirNamesForAgent(t, AgentDroid) {
+		assert.Equal(t, SkillCurrent, droidStatus.Skills[name])
+	}
+}
+
+func stubUserHomeDir(t *testing.T, home string) {
+	t.Helper()
+	old := userHomeDir
+	userHomeDir = func() (string, error) {
+		return home, nil
+	}
+	t.Cleanup(func() {
+		userHomeDir = old
+	})
+}
