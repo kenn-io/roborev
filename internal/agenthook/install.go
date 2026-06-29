@@ -7,6 +7,7 @@ import (
 	"io"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
@@ -29,6 +30,8 @@ const droidAgentHookRunner = "agent-hook run --agent droid"
 // and PostToolUse hooks match it to track turns and commits, mirroring the
 // Codex/Claude Bash matcher.
 const ExecuteMatcher = "Execute"
+
+var droidPathCaseInsensitive = runtime.GOOS == "windows"
 
 type InstallOptions struct {
 	Agent            string
@@ -742,7 +745,7 @@ func isProjectDroidHooksPath(path string) bool {
 	}
 	clean := filepath.Clean(path)
 	projectRel := filepath.Join(".factory", "hooks.json")
-	if clean == projectRel {
+	if sameDroidPath(clean, projectRel) {
 		return true
 	}
 	if isTargetRepoDroidHooksPath(clean) {
@@ -768,11 +771,11 @@ func isProjectDroidHooksPath(path string) bool {
 
 func isTargetRepoDroidHooksPath(path string) bool {
 	abs, ok := cleanAbsPath(path)
-	if !ok || filepath.Base(abs) != "hooks.json" {
+	if !ok || !sameDroidPathName(filepath.Base(abs), "hooks.json") {
 		return false
 	}
 	factoryDir := filepath.Dir(abs)
-	if filepath.Base(factoryDir) != ".factory" {
+	if !sameDroidPathName(filepath.Base(factoryDir), ".factory") {
 		return false
 	}
 	candidateRoot := filepath.Dir(factoryDir)
@@ -792,9 +795,9 @@ func sameCleanAbsPath(a, b string) bool {
 	aAbs, okA := cleanAbsPath(a)
 	bAbs, okB := cleanAbsPath(b)
 	if okA && okB {
-		return filepath.Clean(aAbs) == filepath.Clean(bAbs)
+		return sameDroidPath(filepath.Clean(aAbs), filepath.Clean(bAbs))
 	}
-	return filepath.Clean(a) == filepath.Clean(b)
+	return sameDroidPath(filepath.Clean(a), filepath.Clean(b))
 }
 
 func cleanAbsPath(path string) (string, bool) {
@@ -807,6 +810,20 @@ func cleanAbsPath(path string) (string, bool) {
 		return "", false
 	}
 	return filepath.Clean(abs), true
+}
+
+func sameDroidPath(a, b string) bool {
+	if droidPathCaseInsensitive {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
+}
+
+func sameDroidPathName(a, b string) bool {
+	if droidPathCaseInsensitive {
+		return strings.EqualFold(a, b)
+	}
+	return a == b
 }
 
 // evalExistingParentPath resolves the longest existing ancestor of path and

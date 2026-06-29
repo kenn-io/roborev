@@ -354,6 +354,48 @@ func TestRunDumpDroidRejectsProjectConfigPath(t *testing.T) {
 	assert.ErrorContains(t, err, "project-scoped Factory Droid hook config is not supported")
 }
 
+func TestRunInstallDroidRejectsMixedCaseProjectConfigPathsWhenCaseInsensitive(t *testing.T) {
+	stubDroidPathCaseInsensitive(t, true)
+	repo := testutil.NewGitRepo(t)
+	chdirForTest(t, repo.Path())
+
+	for _, configPath := range []string{
+		filepath.Join(".Factory", "hooks.JSON"),
+		filepath.Join(repo.Path(), ".Factory", "hooks.JSON"),
+	} {
+		t.Run(configPath, func(t *testing.T) {
+			var out bytes.Buffer
+			err := RunInstall(InstallOptions{
+				Agent:      "droid",
+				Command:    "/tmp/roborev agent-hook run --agent droid",
+				ConfigPath: configPath,
+				Scope:      "user",
+				Timeout:    10 * time.Second,
+				DryRun:     true,
+			}, &out)
+			require.Error(t, err)
+			assert.ErrorContains(t, err, "project-scoped Factory Droid hook config is not supported")
+		})
+	}
+}
+
+func TestRunDumpDroidRejectsMixedCaseProjectConfigPathWhenCaseInsensitive(t *testing.T) {
+	stubDroidPathCaseInsensitive(t, true)
+	repo := testutil.NewGitRepo(t)
+	chdirForTest(t, repo.Path())
+
+	var out bytes.Buffer
+	err := RunDump(DumpOptions{
+		Agent:      "droid",
+		Command:    "/tmp/roborev agent-hook run --agent droid",
+		ConfigPath: filepath.Join(".Factory", "hooks.JSON"),
+		Scope:      "user",
+		Timeout:    10 * time.Second,
+	}, &out)
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "project-scoped Factory Droid hook config is not supported")
+}
+
 func TestRunInstallDroidRejectsSymlinkToProjectConfigPath(t *testing.T) {
 	repo := testutil.NewGitRepo(t)
 	targetDir := filepath.Join(repo.Path(), ".factory")
@@ -703,6 +745,15 @@ func chdirForTest(t *testing.T, dir string) {
 	require.NoError(t, os.Chdir(dir))
 	t.Cleanup(func() {
 		require.NoError(t, os.Chdir(oldWD))
+	})
+}
+
+func stubDroidPathCaseInsensitive(t *testing.T, enabled bool) {
+	t.Helper()
+	old := droidPathCaseInsensitive
+	droidPathCaseInsensitive = enabled
+	t.Cleanup(func() {
+		droidPathCaseInsensitive = old
 	})
 }
 
