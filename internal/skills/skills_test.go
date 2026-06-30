@@ -503,6 +503,18 @@ func TestDroidSkillsUseDroidAdaptations(t *testing.T) {
 	}
 }
 
+func TestDerivedSkillFilesAreCurrent(t *testing.T) {
+	derived, err := renderDerivedSkills(os.DirFS("."))
+	require.NoError(t, err)
+	require.Len(t, derived, 12)
+
+	for relPath, want := range derived {
+		got, err := os.ReadFile(filepath.FromSlash(relPath))
+		require.NoError(t, err, "read checked-in derived skill %s", relPath)
+		assert.Equal(t, string(want), string(got), "derived skill %s is stale; run `go generate ./internal/skills`", relPath)
+	}
+}
+
 func TestFixSkillsUseHeredocForCommentText(t *testing.T) {
 	for _, agent := range []Agent{AgentClaude, AgentCodex, AgentDroid} {
 		t.Run(string(agent), func(t *testing.T) {

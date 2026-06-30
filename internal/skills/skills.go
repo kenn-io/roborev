@@ -15,6 +15,8 @@ import (
 	"strings"
 )
 
+//go:generate go run ./generate
+
 //go:embed claude/*/SKILL.md
 var claudeSkills embed.FS
 
