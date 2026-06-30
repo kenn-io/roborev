@@ -428,7 +428,6 @@ func TestReviewBranchFlag(t *testing.T) {
 	t.Run("branch on default branch fails", func(t *testing.T) {
 		repo, _ := setupTestEnvironment(t)
 
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
 		repo.CommitFile("file.txt", "content", "initial")
 
 		_, _, err := executeReviewCmd("--repo", repo.Dir, "--branch")
@@ -438,9 +437,8 @@ func TestReviewBranchFlag(t *testing.T) {
 	t.Run("branch with no commits fails", func(t *testing.T) {
 		repo, _ := setupTestEnvironment(t)
 
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
 		repo.CommitFile("file.txt", "content", "initial")
-		repo.Run("checkout", "-b", "feature")
+		repo.CheckoutNewBranch("feature")
 
 		_, _, err := executeReviewCmd("--repo", repo.Dir, "--branch")
 		assertErrorContains(t, err, "no commits on branch")
@@ -450,10 +448,8 @@ func TestReviewBranchFlag(t *testing.T) {
 		repo, mux := setupTestEnvironment(t)
 		reqCh := mockEnqueue(t, mux)
 
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
-		repo.CommitFile("file.txt", "content", "initial")
-		mainSHA := repo.Run("rev-parse", "HEAD")
-		repo.Run("checkout", "-b", "feature")
+		mainSHA := repo.CommitFile("file.txt", "content", "initial")
+		repo.CheckoutNewBranch("feature")
 		repo.CommitFile("feature.txt", "feature", "feature commit")
 
 		_, _, err := executeReviewCmd("--repo", repo.Dir, "--branch")
@@ -468,13 +464,11 @@ func TestReviewBranchFlag(t *testing.T) {
 		repo, mux := setupTestEnvironment(t)
 		reqCh := mockEnqueue(t, mux)
 
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
-		repo.CommitFile("file.txt", "content", "initial")
-		mainSHA := repo.Run("rev-parse", "HEAD")
-		repo.Run("checkout", "-b", "feature")
-		repo.Run("config", "branch.feature.remote", "https://example.com/fork.git")
-		repo.Run("config", "branch.feature.merge", "refs/heads/feature")
-		repo.Run("config", "branch.feature.base", "main")
+		mainSHA := repo.CommitFile("file.txt", "content", "initial")
+		repo.CheckoutNewBranch("feature")
+		repo.SetBranchConfig("feature", "remote", "https://example.com/fork.git")
+		repo.SetBranchConfig("feature", "merge", "refs/heads/feature")
+		repo.SetBranchConfig("feature", "base", "main")
 		repo.CommitFile("feature.txt", "feature", "feature commit")
 
 		_, _, err := executeReviewCmd("--repo", repo.Dir, "--branch")
@@ -492,21 +486,18 @@ func TestReviewBranchFlag(t *testing.T) {
 		repo, mux := setupTestEnvironment(t)
 		reqCh := mockEnqueue(t, mux)
 
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
-		repo.CommitFile("base.txt", "base", "initial")
-		staleMainSHA := repo.Run("rev-parse", "HEAD")
+		staleMainSHA := repo.CommitFile("base.txt", "base", "initial")
 		// Two commits land on the trunk after local main was last updated.
 		repo.CommitFile("trunk1.txt", "t1", "trunk advance 1")
-		repo.CommitFile("trunk2.txt", "t2", "trunk advance 2")
-		freshOriginSHA := repo.Run("rev-parse", "HEAD")
+		freshOriginSHA := repo.CommitFile("trunk2.txt", "t2", "trunk advance 2")
 		// Rewind local main to simulate a stale checkout.
-		repo.Run("update-ref", "refs/heads/main", staleMainSHA)
-		repo.Run("remote", "add", "origin", "/dev/null")
-		repo.Run("update-ref", "refs/remotes/origin/main", freshOriginSHA)
+		repo.SetRef("refs/heads/main", staleMainSHA)
+		repo.AddRemote("origin", "/dev/null")
+		repo.SetRef("refs/remotes/origin/main", freshOriginSHA)
 		// Feature branch was rebased onto origin/main.
-		repo.Run("checkout", "-b", "feature", freshOriginSHA)
+		repo.CheckoutNewBranch("feature", freshOriginSHA)
 		repo.CommitFile("feature.txt", "f", "feature commit")
-		repo.Run("config", "branch.feature.base", "main")
+		repo.SetBranchConfig("feature", "base", "main")
 
 		_, _, err := executeReviewCmd("--repo", repo.Dir, "--branch")
 		require.NoError(t, err)
@@ -579,9 +570,8 @@ func writeRoborevConfig(t *testing.T, repo *TestGitRepo, content string) {
 func TestTryBranchReview(t *testing.T) {
 	t.Run("returns false when no config", func(t *testing.T) {
 		repo := newTestGitRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
 		repo.CommitFile("file.txt", "content", "initial")
-		repo.Run("checkout", "-b", "feature")
+		repo.CheckoutNewBranch("feature")
 		repo.CommitFile("feature.txt", "feature", "feature commit")
 
 		_, ok := tryBranchReview(t.Context(), repo.Dir, "")
@@ -590,9 +580,8 @@ func TestTryBranchReview(t *testing.T) {
 
 	t.Run("returns false when config is commit", func(t *testing.T) {
 		repo := newTestGitRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
 		repo.CommitFile("file.txt", "content", "initial")
-		repo.Run("checkout", "-b", "feature")
+		repo.CheckoutNewBranch("feature")
 		repo.CommitFile("feature.txt", "feature", "feature commit")
 		writeRoborevConfig(t, repo, `post_commit_review = "commit"`)
 
@@ -602,10 +591,8 @@ func TestTryBranchReview(t *testing.T) {
 
 	t.Run("returns merge-base range when config is branch", func(t *testing.T) {
 		repo := newTestGitRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
-		repo.CommitFile("file.txt", "content", "initial")
-		mainSHA := repo.Run("rev-parse", "HEAD")
-		repo.Run("checkout", "-b", "feature")
+		mainSHA := repo.CommitFile("file.txt", "content", "initial")
+		repo.CheckoutNewBranch("feature")
 		repo.CommitFile("feature.txt", "feature", "feature commit")
 		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
 
@@ -618,10 +605,8 @@ func TestTryBranchReview(t *testing.T) {
 
 	t.Run("covers multiple commits on feature branch", func(t *testing.T) {
 		repo := newTestGitRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
-		repo.CommitFile("file.txt", "content", "initial")
-		mainSHA := repo.Run("rev-parse", "HEAD")
-		repo.Run("checkout", "-b", "feature")
+		mainSHA := repo.CommitFile("file.txt", "content", "initial")
+		repo.CheckoutNewBranch("feature")
 		repo.CommitFile("a.txt", "a", "first feature commit")
 		repo.CommitFile("b.txt", "b", "second feature commit")
 		repo.CommitFile("c.txt", "c", "third feature commit")
@@ -636,7 +621,6 @@ func TestTryBranchReview(t *testing.T) {
 
 	t.Run("returns false on base branch", func(t *testing.T) {
 		repo := newTestGitRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
 		repo.CommitFile("file.txt", "content", "initial")
 		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
 
@@ -646,10 +630,9 @@ func TestTryBranchReview(t *testing.T) {
 
 	t.Run("uses baseBranch override", func(t *testing.T) {
 		repo := newTestGitRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/develop")
-		repo.CommitFile("file.txt", "content", "initial")
-		developSHA := repo.Run("rev-parse", "HEAD")
-		repo.Run("checkout", "-b", "feature")
+		repo.SetHeadBranch("develop")
+		developSHA := repo.CommitFile("file.txt", "content", "initial")
+		repo.CheckoutNewBranch("feature")
 		repo.CommitFile("feature.txt", "feature", "feature commit")
 		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
 
@@ -662,13 +645,11 @@ func TestTryBranchReview(t *testing.T) {
 
 	t.Run("uses branch base before url upstream", func(t *testing.T) {
 		repo := newTestGitRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
-		repo.CommitFile("file.txt", "content", "initial")
-		mainSHA := repo.Run("rev-parse", "HEAD")
-		repo.Run("checkout", "-b", "feature")
-		repo.Run("config", "branch.feature.remote", "https://example.com/fork.git")
-		repo.Run("config", "branch.feature.merge", "refs/heads/feature")
-		repo.Run("config", "branch.feature.base", "main")
+		mainSHA := repo.CommitFile("file.txt", "content", "initial")
+		repo.CheckoutNewBranch("feature")
+		repo.SetBranchConfig("feature", "remote", "https://example.com/fork.git")
+		repo.SetBranchConfig("feature", "merge", "refs/heads/feature")
+		repo.SetBranchConfig("feature", "base", "main")
 		repo.CommitFile("feature.txt", "feature", "feature commit")
 		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
 
@@ -679,10 +660,8 @@ func TestTryBranchReview(t *testing.T) {
 
 	t.Run("returns false on detached HEAD", func(t *testing.T) {
 		repo := newTestGitRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
-		repo.CommitFile("file.txt", "content", "initial")
-		sha := repo.Run("rev-parse", "HEAD")
-		repo.Run("checkout", sha)
+		sha := repo.CommitFile("file.txt", "content", "initial")
+		repo.DetachHead(sha)
 		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
 
 		_, ok := tryBranchReview(t.Context(), repo.Dir, "")
@@ -696,17 +675,16 @@ func TestTryBranchReview(t *testing.T) {
 		// UpstreamIsTrunk gating, origin/feature (not trunk-named) is
 		// rejected and the review falls back to the repository's default
 		// branch for the merge base.
-		remote := newBareTestGitRepo(t)
 		repo := newTestGitRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
-		repo.CommitFile("file.txt", "content", "initial")
-		repo.Run("remote", "add", "origin", remote.Dir)
-		repo.Run("push", "-u", "origin", "main")
-		repo.Run("remote", "set-head", "origin", "main")
-		mainSHA := repo.Run("rev-parse", "origin/main")
-		repo.Run("checkout", "-b", "feature")
-		repo.CommitFile("first.txt", "first", "first feature commit")
-		repo.Run("push", "-u", "origin", "feature")
+		mainSHA := repo.CommitFile("file.txt", "content", "initial")
+		repo.AddRemote("origin", "/dev/null")
+		repo.SetRef("refs/remotes/origin/main", mainSHA)
+		repo.SetRemoteHead("origin", "main")
+		repo.CheckoutNewBranch("feature")
+		firstFeatureSHA := repo.CommitFile("first.txt", "first", "first feature commit")
+		repo.SetRef("refs/remotes/origin/feature", firstFeatureSHA)
+		repo.SetBranchConfig("feature", "remote", "origin")
+		repo.SetBranchConfig("feature", "merge", "refs/heads/feature")
 		repo.CommitFile("second.txt", "second", "unpushed commit")
 		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
 
@@ -726,13 +704,12 @@ func TestTryBranchReview(t *testing.T) {
 		// would enqueue a review against the wrong commit range in fork
 		// workflows.
 		repo := newTestGitRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
 		repo.CommitFile("file.txt", "content", "initial")
-		repo.Run("checkout", "-b", "feature")
+		repo.CheckoutNewBranch("feature")
 		repo.CommitFile("feature.txt", "feature", "feature commit")
 		// Configure tracking against an upstream that never resolves locally.
-		repo.Run("config", "branch.feature.remote", "upstream")
-		repo.Run("config", "branch.feature.merge", "refs/heads/main")
+		repo.SetBranchConfig("feature", "remote", "upstream")
+		repo.SetBranchConfig("feature", "merge", "refs/heads/main")
 		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
 
 		ref, ok := tryBranchReview(t.Context(), repo.Dir, "")
@@ -744,12 +721,12 @@ func TestTryBranchReview(t *testing.T) {
 		// Regression: LocalBranchName only stripped "origin/", so
 		// current="main" vs base="upstream/main" missed the guardrail
 		// and produced a branch review on the base branch itself.
-		remote := newBareTestGitRepo(t)
 		repo := newTestGitRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
-		repo.CommitFile("file.txt", "content", "initial")
-		repo.Run("remote", "add", "upstream", remote.Dir)
-		repo.Run("push", "-u", "upstream", "main")
+		mainSHA := repo.CommitFile("file.txt", "content", "initial")
+		repo.AddRemote("upstream", "/dev/null")
+		repo.SetRef("refs/remotes/upstream/main", mainSHA)
+		repo.SetBranchConfig("main", "remote", "upstream")
+		repo.SetBranchConfig("main", "merge", "refs/heads/main")
 		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
 
 		_, ok := tryBranchReview(t.Context(), repo.Dir, "")
@@ -762,17 +739,14 @@ func TestTryBranchReview(t *testing.T) {
 		// stale local main must resolve to origin/main, not the rewound
 		// pointer, so the hook enqueues only the real branch commits.
 		repo := newTestGitRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
-		repo.CommitFile("base.txt", "base", "initial")
-		staleMainSHA := repo.Run("rev-parse", "HEAD")
-		repo.CommitFile("trunk.txt", "t", "trunk advance")
-		freshOriginSHA := repo.Run("rev-parse", "HEAD")
-		repo.Run("update-ref", "refs/heads/main", staleMainSHA)
-		repo.Run("remote", "add", "origin", "/dev/null")
-		repo.Run("update-ref", "refs/remotes/origin/main", freshOriginSHA)
-		repo.Run("checkout", "-b", "feature", freshOriginSHA)
+		staleMainSHA := repo.CommitFile("base.txt", "base", "initial")
+		freshOriginSHA := repo.CommitFile("trunk.txt", "t", "trunk advance")
+		repo.SetRef("refs/heads/main", staleMainSHA)
+		repo.AddRemote("origin", "/dev/null")
+		repo.SetRef("refs/remotes/origin/main", freshOriginSHA)
+		repo.CheckoutNewBranch("feature", freshOriginSHA)
 		repo.CommitFile("feature.txt", "f", "feature commit")
-		repo.Run("config", "branch.feature.base", "main")
+		repo.SetBranchConfig("feature", "base", "main")
 		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
 
 		ref, ok := tryBranchReview(t.Context(), repo.Dir, "")
@@ -787,30 +761,27 @@ func TestTryBranchReview(t *testing.T) {
 		// diverged from (e.g., upstream/main), the review must use the
 		// upstream tracking ref, not the default branch, so already-merged
 		// commits are not re-reviewed.
-		remote := newBareTestGitRepo(t)
 		repo := newTestGitRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
-		repo.CommitFile("file.txt", "u1", "upstream c1")
+		staleOriginSHA := repo.CommitFile("file.txt", "u1", "upstream c1")
 		repo.CommitFile("file.txt", "u1\nu2", "upstream c2")
-		repo.CommitFile("file.txt", "u1\nu2\nu3", "upstream c3")
-		repo.Run("remote", "add", "upstream", remote.Dir)
-		repo.Run("push", "-u", "upstream", "main")
+		upstreamSHA := repo.CommitFile("file.txt", "u1\nu2\nu3", "upstream c3")
+		repo.AddRemote("upstream", "/dev/null")
+		repo.SetRef("refs/remotes/upstream/main", upstreamSHA)
 
 		// Simulate origin lagging behind upstream by 2 commits.
-		staleOrigin := newBareTestGitRepo(t)
-		repo.Run("remote", "add", "origin", staleOrigin.Dir)
-		repo.Run("push", "origin", "HEAD~2:refs/heads/main")
-		repo.Run("fetch", "origin")
-		repo.Run("remote", "set-head", "origin", "main")
+		repo.AddRemote("origin", "/dev/null")
+		repo.SetRef("refs/remotes/origin/main", staleOriginSHA)
+		repo.SetRemoteHead("origin", "main")
 
-		repo.Run("checkout", "-b", "feature", "--track", "upstream/main")
+		repo.CheckoutNewBranch("feature", upstreamSHA)
+		repo.SetBranchConfig("feature", "remote", "upstream")
+		repo.SetBranchConfig("feature", "merge", "refs/heads/main")
 		repo.CommitFile("feature.txt", "only-new-commit", "feature commit")
 		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
 
 		ref, ok := tryBranchReview(t.Context(), repo.Dir, "")
 		require.True(t, ok, "expected branch review to run")
 
-		upstreamSHA := repo.Run("rev-parse", "upstream/main")
 		want := upstreamSHA + "..HEAD"
 		assert.Equal(t, want, ref,
 			"review must compare against upstream/main, not origin/main")
@@ -821,9 +792,8 @@ func TestReviewIgnoresBranchConfig(t *testing.T) {
 	repo, mux := setupTestEnvironment(t)
 	reqCh := mockEnqueue(t, mux)
 
-	repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
 	repo.CommitFile("file.txt", "content", "initial")
-	repo.Run("checkout", "-b", "feature")
+	repo.CheckoutNewBranch("feature")
 	repo.CommitFile("feature.txt", "feature", "feature commit")
 	writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
 
@@ -838,9 +808,8 @@ func TestReviewQuietIgnoresBranchConfig(t *testing.T) {
 	repo, mux := setupTestEnvironment(t)
 	reqCh := mockEnqueue(t, mux)
 
-	repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
 	repo.CommitFile("file.txt", "content", "initial")
-	repo.Run("checkout", "-b", "feature")
+	repo.CheckoutNewBranch("feature")
 	repo.CommitFile("feature.txt", "feature", "feature commit")
 	writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
 

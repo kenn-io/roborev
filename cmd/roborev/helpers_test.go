@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -118,6 +119,95 @@ func (r *TestGitRepo) CommitFiles(files map[string]string, msg string) string {
 	}
 	sort.Strings(paths)
 	return commitPaths(r.t, r.Dir, msg, paths...)
+}
+
+func (r *TestGitRepo) HeadSHA() string {
+	r.t.Helper()
+	repo, err := gogit.PlainOpen(r.Dir)
+	require.NoError(r.t, err, "open repo %q", r.Dir)
+	head, err := repo.Head()
+	require.NoError(r.t, err, "read HEAD")
+	return head.Hash().String()
+}
+
+func (r *TestGitRepo) SetHeadBranch(branch string) {
+	r.t.Helper()
+	writeGitFile(r.t, r.Dir, "HEAD", "ref: refs/heads/"+branch+"\n")
+}
+
+func (r *TestGitRepo) DetachHead(sha string) {
+	r.t.Helper()
+	writeGitFile(r.t, r.Dir, "HEAD", sha+"\n")
+}
+
+func (r *TestGitRepo) CheckoutNewBranch(branch string, start ...string) {
+	r.t.Helper()
+	require.LessOrEqual(r.t, len(start), 1, "CheckoutNewBranch accepts at most one start ref")
+	sha := ""
+	if len(start) == 0 {
+		sha = r.HeadSHA()
+	} else {
+		sha = start[0]
+	}
+	r.SetRef("refs/heads/"+branch, sha)
+	r.SetHeadBranch(branch)
+}
+
+func (r *TestGitRepo) SetRef(ref, sha string) {
+	r.t.Helper()
+	writeGitFile(r.t, r.Dir, ref, sha+"\n")
+}
+
+func (r *TestGitRepo) AddRemote(name, url string) {
+	r.t.Helper()
+	appendGitConfig(r.t, r.Dir, "remote", name, map[string]string{
+		"url":   url,
+		"fetch": "+refs/heads/*:refs/remotes/" + name + "/*",
+	})
+}
+
+func (r *TestGitRepo) SetRemoteHead(remote, branch string) {
+	r.t.Helper()
+	writeGitFile(r.t, r.Dir, "refs/remotes/"+remote+"/HEAD",
+		"ref: refs/remotes/"+remote+"/"+branch+"\n")
+}
+
+func (r *TestGitRepo) SetBranchConfig(branch, key, value string) {
+	r.t.Helper()
+	appendGitConfig(r.t, r.Dir, "branch", branch, map[string]string{key: value})
+}
+
+func writeGitFile(t *testing.T, repoDir, relPath, content string) {
+	t.Helper()
+	path := filepath.Join(repoDir, ".git", filepath.FromSlash(relPath))
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+}
+
+func appendGitConfig(t *testing.T, repoDir, section, subsection string, values map[string]string) {
+	t.Helper()
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	var b strings.Builder
+	b.WriteByte('\n')
+	if subsection == "" {
+		fmt.Fprintf(&b, "[%s]\n", section)
+	} else {
+		fmt.Fprintf(&b, "[%s %q]\n", section, subsection)
+	}
+	for _, key := range keys {
+		fmt.Fprintf(&b, "\t%s = %s\n", key, values[key])
+	}
+
+	f, err := os.OpenFile(filepath.Join(repoDir, ".git", "config"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	require.NoError(t, err)
+	defer f.Close()
+	_, err = f.WriteString(b.String())
+	require.NoError(t, err)
 }
 
 func commitPaths(t *testing.T, dir, msg string, paths ...string) string {
