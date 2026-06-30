@@ -10,7 +10,6 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
-
 	gitcmd "go.kenn.io/kit/git/cmd"
 
 	"go.kenn.io/roborev/internal/testutil"
