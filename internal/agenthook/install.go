@@ -889,15 +889,16 @@ func evalExistingParentPath(path string) (string, bool) {
 	clean := filepath.Clean(path)
 	existing := clean
 	remaining := ""
-	for existing != "." && existing != string(filepath.Separator) {
+	for {
 		if _, err := os.Lstat(existing); err == nil {
 			break
 		}
+		parent := filepath.Dir(existing)
+		if parent == existing {
+			return cleanAbsPath(clean)
+		}
 		remaining = filepath.Join(filepath.Base(existing), remaining)
-		existing = filepath.Dir(existing)
-	}
-	if existing == "." || existing == string(filepath.Separator) {
-		return cleanAbsPath(clean)
+		existing = parent
 	}
 	resolved, err := filepath.EvalSymlinks(existing)
 	if err != nil {
