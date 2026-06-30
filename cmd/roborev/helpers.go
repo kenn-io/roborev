@@ -136,8 +136,8 @@ func autoInstallHooks(ctx context.Context, repoPath string) {
 	}
 	for _, name := range []string{"post-commit", "post-rewrite"} {
 		marker := githook.VersionMarker(name)
-		if githook.NeedsUpgrade(ctx, repoPath, name, marker) ||
-			githook.Missing(ctx, repoPath, name) {
+		if githook.NeedsUpgradeInDir(hooksDir, name, marker) ||
+			githook.MissingInDir(hooksDir, name) {
 			if err := githook.Install(hooksDir, name, false); err != nil {
 				// Non-shell hooks are a persistent condition;
 				// don't warn on every invocation.

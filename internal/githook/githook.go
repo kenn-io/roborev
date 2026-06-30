@@ -101,6 +101,13 @@ func NeedsUpgrade(ctx context.Context, repoPath, hookName, versionMarker string)
 	if err != nil {
 		return false
 	}
+	return NeedsUpgradeInDir(hooksDir, hookName, versionMarker)
+}
+
+// NeedsUpgradeInDir checks whether a hook in hooksDir contains roborev but is
+// outdated. Callers that already resolved the hooks directory can use this to
+// avoid repeated git config lookups.
+func NeedsUpgradeInDir(hooksDir, hookName, versionMarker string) bool {
 	content, err := os.ReadFile(filepath.Join(hooksDir, hookName))
 	if err != nil {
 		return false
@@ -135,6 +142,12 @@ func Missing(ctx context.Context, repoPath, hookName string) bool {
 	if err != nil {
 		return false
 	}
+	return MissingInDir(hooksDir, hookName)
+}
+
+// MissingInDir checks whether hooksDir has roborev installed in post-commit
+// but is missing the named hook.
+func MissingInDir(hooksDir, hookName string) bool {
 	pcContent, err := os.ReadFile(
 		filepath.Join(hooksDir, "post-commit"),
 	)

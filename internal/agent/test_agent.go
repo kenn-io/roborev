@@ -24,7 +24,7 @@ type TestAgentCall struct {
 // new ID like "test-session-1". Resumed calls (SessionID != "") echo
 // the incoming ID. Counters are per-instance.
 type TestAgent struct {
-	Delay     time.Duration  // Simulated processing delay
+	Delay     time.Duration  // Optional simulated processing delay
 	Output    string         // Fixed output to return
 	Fail      bool           // If true, returns an error
 	Reasoning ReasoningLevel // Reasoning level (for testing)
@@ -44,7 +44,6 @@ type testAgentState struct {
 // NewTestAgent creates a new test agent with its own per-instance counter.
 func NewTestAgent() *TestAgent {
 	return &TestAgent{
-		Delay:     100 * time.Millisecond,
 		Output:    "Test review output: This commit looks good. No issues found.",
 		Reasoning: ReasoningStandard,
 		state:     &testAgentState{},
@@ -106,11 +105,19 @@ func (a *TestAgent) Calls() []TestAgentCall {
 }
 
 func (a *TestAgent) Review(ctx context.Context, repoPath, commitSHA, prompt string, output io.Writer) (string, error) {
-	// Respect context cancellation
 	select {
 	case <-ctx.Done():
 		return "", ctx.Err()
-	case <-time.After(a.Delay):
+	default:
+	}
+	if a.Delay > 0 {
+		timer := time.NewTimer(a.Delay)
+		defer timer.Stop()
+		select {
+		case <-ctx.Done():
+			return "", ctx.Err()
+		case <-timer.C:
+		}
 	}
 
 	// Determine the session ID to advertise: echo incoming, or mint fresh.

@@ -107,7 +107,6 @@ func TestEnqueueIfNeeded(t *testing.T) {
 func withFreshTestAgent(t *testing.T) *agent.TestAgent {
 	t.Helper()
 	a := agent.NewTestAgent()
-	a.Delay = 0 // tests don't want the 100ms baked-in delay
 	agent.Register(a)
 	t.Cleanup(func() {
 		agent.Unregister("test")
