@@ -208,15 +208,10 @@ func TestHandleEnqueueExcludedBranch(t *testing.T) {
 	server, db, tmpDir := newTestServer(t)
 
 	repoDir := filepath.Join(tmpDir, "testrepo")
-	testutil.InitTestGitRepo(t, repoDir)
+	repo := testutil.InitTestGitRepo(t, repoDir)
 
 	// Switch to excluded branch
-	checkoutCmd := exec.Command("git", "-C", repoDir, "checkout", "-b", "wip-feature")
-	if out, err := checkoutCmd.CombinedOutput(); err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "git checkout failed: %v\n%s", err, out)
-	}
+	repo.CheckoutNewBranch("wip-feature")
 
 	// Create .roborev.toml with excluded_branches
 	repoConfig := filepath.Join(repoDir, ".roborev.toml")
@@ -268,13 +263,7 @@ func TestHandleEnqueueExcludedBranch(t *testing.T) {
 
 	t.Run("enqueue on non-excluded branch succeeds", func(t *testing.T) {
 		// Switch to a non-excluded branch
-		checkoutCmd := exec.Command("git", "checkout", "-b", "feature-ok")
-		checkoutCmd.Dir = repoDir
-		if out, err := checkoutCmd.CombinedOutput(); err != nil {
-			require.Condition(t, func() bool {
-				return false
-			}, "git checkout failed: %v\n%s", err, out)
-		}
+		repo.CheckoutNewBranch("feature-ok")
 
 		reqData := EnqueueRequest{RepoPath: repoDir, GitRef: "HEAD", Agent: "test"}
 		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
@@ -303,7 +292,7 @@ func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
 	server, db, tmpDir := newTestServer(t)
 
 	repoDir := filepath.Join(tmpDir, "testrepo")
-	testutil.InitTestGitRepo(t, repoDir)
+	repo := testutil.InitTestGitRepo(t, repoDir)
 
 	// Write repo config with excluded_commit_patterns
 	repoConfig := filepath.Join(repoDir, ".roborev.toml")
@@ -315,13 +304,7 @@ func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
 	}
 
 	// Create a commit whose message matches an exclusion pattern
-	addExcluded := exec.Command("git", "-C", repoDir,
-		"commit", "--allow-empty", "-m", "wip: checkpoint [skip review]")
-	if out, err := addExcluded.CombinedOutput(); err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "git commit failed: %v\n%s", err, out)
-	}
+	repo.CommitEmpty("wip: checkpoint [skip review]")
 
 	t.Run("matching commit returns skipped", func(t *testing.T) {
 		reqData := EnqueueRequest{
@@ -368,13 +351,7 @@ func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
 	})
 
 	// Create a commit that does NOT match any exclusion pattern
-	addNormal := exec.Command("git", "-C", repoDir,
-		"commit", "--allow-empty", "-m", "feat: add endpoint")
-	if out, err := addNormal.CombinedOutput(); err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "git commit failed: %v\n%s", err, out)
-	}
+	repo.CommitEmpty("feat: add endpoint")
 
 	t.Run("non-matching commit enqueues normally", func(t *testing.T) {
 		reqData := EnqueueRequest{
@@ -404,24 +381,11 @@ func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
 	t.Run("range where all commits excluded returns skipped",
 		func(t *testing.T) {
 			// Create a branch with only excluded commits
-			branchCmd := exec.Command("git", "-C", repoDir,
-				"checkout", "-b", "all-excluded")
-			if out, err := branchCmd.CombinedOutput(); err != nil {
-				require.Condition(t, func() bool {
-					return false
-				}, "checkout failed: %v\n%s", err, out)
-			}
-			base := testutil.GetHeadSHA(t, repoDir)
+			repo.CheckoutNewBranch("all-excluded")
+			base := repo.HeadSHA()
 
 			for i := range 2 {
-				cmd := exec.Command("git", "-C", repoDir,
-					"commit", "--allow-empty",
-					"-m", fmt.Sprintf("[wip] checkpoint %d", i))
-				if out, err := cmd.CombinedOutput(); err != nil {
-					require.Condition(t, func() bool {
-						return false
-					}, "commit failed: %v\n%s", err, out)
-				}
+				repo.CommitEmpty(fmt.Sprintf("[wip] checkpoint %d", i))
 			}
 
 			ref := base + "..HEAD"
@@ -455,28 +419,11 @@ func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
 
 	t.Run("range with mixed commits enqueues normally",
 		func(t *testing.T) {
-			branchCmd := exec.Command("git", "-C", repoDir,
-				"checkout", "-b", "mixed-range")
-			if out, err := branchCmd.CombinedOutput(); err != nil {
-				require.Condition(t, func() bool {
-					return false
-				}, "checkout failed: %v\n%s", err, out)
-			}
-			base := testutil.GetHeadSHA(t, repoDir)
+			repo.CheckoutNewBranch("mixed-range")
+			base := repo.HeadSHA()
 
-			cmds := [][]string{
-				{"commit", "--allow-empty", "-m", "[wip] temp"},
-				{"commit", "--allow-empty", "-m", "feat: real work"},
-			}
-			for _, args := range cmds {
-				cmd := exec.Command("git", append(
-					[]string{"-C", repoDir}, args...)...)
-				if out, err := cmd.CombinedOutput(); err != nil {
-					require.Condition(t, func() bool {
-						return false
-					}, "commit failed: %v\n%s", err, out)
-				}
-			}
+			repo.CommitEmpty("[wip] temp")
+			repo.CommitEmpty("feat: real work")
 
 			ref := base + "..HEAD"
 			reqData := EnqueueRequest{
@@ -510,14 +457,8 @@ func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
 			// I/O failures where GetRangeCommits succeeds but
 			// individual GetCommitInfo calls fail — git object
 			// corruption can't isolate those two calls.)
-			branchCmd := exec.Command("git", "-C", repoDir,
-				"checkout", "-b", "corrupt-range")
-			if out, err := branchCmd.CombinedOutput(); err != nil {
-				require.Condition(t, func() bool {
-					return false
-				}, "checkout failed: %v\n%s", err, out)
-			}
-			base := testutil.GetHeadSHA(t, repoDir)
+			repo.CheckoutNewBranch("corrupt-range")
+			base := repo.HeadSHA()
 
 			treeOut, err := exec.Command("git", "-C", repoDir,
 				"rev-parse", "HEAD^{tree}").Output()
@@ -538,11 +479,7 @@ func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
 			require.NoError(t, err, "hash-object")
 			tip := strings.TrimSpace(string(hashOut))
 
-			if out, err := exec.Command("git", "-C", repoDir,
-				"update-ref", "refs/heads/corrupt-range", tip).
-				CombinedOutput(); err != nil {
-				require.NoError(t, err, "update-ref: %s", out)
-			}
+			repo.SetRef("refs/heads/corrupt-range", tip)
 
 			// ResolveSHA succeeds for both endpoints (base and the
 			// synthetic tip both exist as objects), but
@@ -572,14 +509,9 @@ func TestHandleEnqueueReusesPreviousBranchSessionWhenEnabled(t *testing.T) {
 	server, db, tmpDir := newTestServer(t)
 
 	repoDir := filepath.Join(tmpDir, "testrepo")
-	testutil.InitTestGitRepo(t, repoDir)
+	testRepo := testutil.InitTestGitRepo(t, repoDir)
 
-	checkoutCmd := exec.Command("git", "-C", repoDir, "checkout", "-b", "feature/session")
-	if out, err := checkoutCmd.CombinedOutput(); err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "git checkout failed: %v\n%s", err, out)
-	}
+	testRepo.CheckoutNewBranch("feature/session")
 	if branch := gitpkg.GetCurrentBranch(repoDir); branch != "feature/session" {
 		require.Condition(t, func() bool {
 			return false
@@ -755,14 +687,9 @@ func TestFindReusableSessionIDRejectsReusedBranchNameFromUnrelatedHistory(t *tes
 	server, db, tmpDir := newTestServer(t)
 
 	repoDir := filepath.Join(tmpDir, "testrepo")
-	testutil.InitTestGitRepo(t, repoDir)
+	testRepo := testutil.InitTestGitRepo(t, repoDir)
 
-	checkoutCmd := exec.Command("git", "-C", repoDir, "checkout", "-b", "feature/session")
-	if out, err := checkoutCmd.CombinedOutput(); err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "git checkout failed: %v\n%s", err, out)
-	}
+	testRepo.CheckoutNewBranch("feature/session")
 
 	reuseSessions := true
 	server.configWatcher.Config().ReuseReviewSession = &reuseSessions
@@ -780,33 +707,7 @@ func TestFindReusableSessionIDRejectsReusedBranchNameFromUnrelatedHistory(t *tes
 		}, "GetOrCreateRepo failed: %v", err)
 	}
 
-	if out, err := exec.Command("git", "-C", repoDir, "checkout", "--orphan", "branch-reused").CombinedOutput(); err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "git checkout --orphan failed: %v\n%s", err, out)
-	}
-	if out, err := exec.Command("git", "-C", repoDir, "rm", "-rf", ".").CombinedOutput(); err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "git rm failed: %v\n%s", err, out)
-	}
-	unrelatedFile := filepath.Join(repoDir, "unrelated.txt")
-	if err := os.WriteFile(unrelatedFile, []byte("unrelated\n"), 0o644); err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "WriteFile failed: %v", err)
-	}
-	if out, err := exec.Command("git", "-C", repoDir, "add", "unrelated.txt").CombinedOutput(); err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "git add failed: %v\n%s", err, out)
-	}
-	if out, err := exec.Command("git", "-C", repoDir, "commit", "-m", "unrelated history").CombinedOutput(); err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "git commit failed: %v\n%s", err, out)
-	}
-	unrelatedSHA := testutil.GetHeadSHA(t, repoDir)
+	unrelatedSHA := testRepo.UnrelatedCommit("unrelated history")
 
 	prevCommit, err := db.GetOrCreateCommit(repo.ID, unrelatedSHA, "Author", "Subject", time.Now())
 	if err != nil {
@@ -843,12 +744,7 @@ func TestFindReusableSessionIDRejectsReusedBranchNameFromUnrelatedHistory(t *tes
 		}, "failed to seed session_id: %v", err)
 	}
 
-	if out, err := exec.Command("git", "-C", repoDir, "checkout", "feature/session").CombinedOutput(); err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "git checkout feature/session failed: %v\n%s", err, out)
-	}
-	targetSHA := testutil.GetHeadSHA(t, repoDir)
+	targetSHA := testRepo.HeadSHA()
 
 	if got := server.findReusableSessionID(t.Context(), repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, "", targetSHA); got != "" {
 		require.Condition(t, func() bool {
@@ -862,14 +758,9 @@ func TestFindReusableSessionIDRejectsCandidateThatIsTooOldOnBranch(t *testing.T)
 	server, db, tmpDir := newTestServer(t)
 
 	repoDir := filepath.Join(tmpDir, "testrepo")
-	testutil.InitTestGitRepo(t, repoDir)
+	testRepo := testutil.InitTestGitRepo(t, repoDir)
 
-	checkoutCmd := exec.Command("git", "-C", repoDir, "checkout", "-b", "feature/session")
-	if out, err := checkoutCmd.CombinedOutput(); err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "git checkout failed: %v\n%s", err, out)
-	}
+	testRepo.CheckoutNewBranch("feature/session")
 
 	reuseSessions := true
 	server.configWatcher.Config().ReuseReviewSession = &reuseSessions
@@ -887,7 +778,7 @@ func TestFindReusableSessionIDRejectsCandidateThatIsTooOldOnBranch(t *testing.T)
 		}, "GetOrCreateRepo failed: %v", err)
 	}
 
-	candidateSHA := testutil.GetHeadSHA(t, repoDir)
+	candidateSHA := testRepo.HeadSHA()
 	candidateCommit, err := db.GetOrCreateCommit(repo.ID, candidateSHA, "Author", "Subject", time.Now())
 	if err != nil {
 		require.Condition(t, func() bool {
@@ -924,24 +815,13 @@ func TestFindReusableSessionIDRejectsCandidateThatIsTooOldOnBranch(t *testing.T)
 	}
 
 	for i := range 51 {
-		nextFile := filepath.Join(repoDir, fmt.Sprintf("commit-%02d.txt", i))
-		if err := os.WriteFile(nextFile, fmt.Appendf(nil, "%d\n", i), 0o644); err != nil {
-			require.Condition(t, func() bool {
-				return false
-			}, "WriteFile failed: %v", err)
-		}
-		if out, err := exec.Command("git", "-C", repoDir, "add", filepath.Base(nextFile)).CombinedOutput(); err != nil {
-			require.Condition(t, func() bool {
-				return false
-			}, "git add failed: %v\n%s", err, out)
-		}
-		if out, err := exec.Command("git", "-C", repoDir, "commit", "-m", fmt.Sprintf("commit %02d", i)).CombinedOutput(); err != nil {
-			require.Condition(t, func() bool {
-				return false
-			}, "git commit failed: %v\n%s", err, out)
-		}
+		testRepo.CommitFile(
+			fmt.Sprintf("commit-%02d.txt", i),
+			fmt.Sprintf("%d\n", i),
+			fmt.Sprintf("commit %02d", i),
+		)
 	}
-	targetSHA := testutil.GetHeadSHA(t, repoDir)
+	targetSHA := testRepo.HeadSHA()
 
 	if got := server.findReusableSessionID(t.Context(), repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, "", targetSHA); got != "" {
 		require.Condition(t, func() bool {
@@ -954,13 +834,9 @@ func TestFindReusableSessionIDFallsBackToOlderValidCandidate(t *testing.T) {
 	server, db, tmpDir := newTestServer(t)
 
 	repoDir := filepath.Join(tmpDir, "testrepo")
-	testutil.InitTestGitRepo(t, repoDir)
+	testRepo := testutil.InitTestGitRepo(t, repoDir)
 
-	if out, err := exec.Command("git", "-C", repoDir, "checkout", "-b", "feature/session").CombinedOutput(); err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "git checkout failed: %v\n%s", err, out)
-	}
+	testRepo.CheckoutNewBranch("feature/session")
 
 	reuseSessions := true
 	server.configWatcher.Config().ReuseReviewSession = &reuseSessions
@@ -978,7 +854,7 @@ func TestFindReusableSessionIDFallsBackToOlderValidCandidate(t *testing.T) {
 		}, "GetOrCreateRepo failed: %v", err)
 	}
 
-	validSHA := testutil.GetHeadSHA(t, repoDir)
+	validSHA := testRepo.HeadSHA()
 	validCommit, err := db.GetOrCreateCommit(repo.ID, validSHA, "Author", "Subject", time.Now())
 	if err != nil {
 		require.Condition(t, func() bool {
@@ -1014,33 +890,7 @@ func TestFindReusableSessionIDFallsBackToOlderValidCandidate(t *testing.T) {
 		}, "failed to seed valid session_id: %v", err)
 	}
 
-	if out, err := exec.Command("git", "-C", repoDir, "checkout", "--orphan", "branch-reused").CombinedOutput(); err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "git checkout --orphan failed: %v\n%s", err, out)
-	}
-	if out, err := exec.Command("git", "-C", repoDir, "rm", "-rf", ".").CombinedOutput(); err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "git rm failed: %v\n%s", err, out)
-	}
-	unrelatedFile := filepath.Join(repoDir, "unrelated-newer.txt")
-	if err := os.WriteFile(unrelatedFile, []byte("unrelated newer\n"), 0o644); err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "WriteFile failed: %v", err)
-	}
-	if out, err := exec.Command("git", "-C", repoDir, "add", filepath.Base(unrelatedFile)).CombinedOutput(); err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "git add failed: %v\n%s", err, out)
-	}
-	if out, err := exec.Command("git", "-C", repoDir, "commit", "-m", "new unrelated history").CombinedOutput(); err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "git commit failed: %v\n%s", err, out)
-	}
-	invalidSHA := testutil.GetHeadSHA(t, repoDir)
+	invalidSHA := testRepo.UnrelatedCommit("new unrelated history")
 	invalidCommit, err := db.GetOrCreateCommit(repo.ID, invalidSHA, "Author", "Subject", time.Now())
 	if err != nil {
 		require.Condition(t, func() bool {
@@ -1076,12 +926,7 @@ func TestFindReusableSessionIDFallsBackToOlderValidCandidate(t *testing.T) {
 		}, "failed to seed invalid session_id: %v", err)
 	}
 
-	if out, err := exec.Command("git", "-C", repoDir, "checkout", "feature/session").CombinedOutput(); err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "git checkout feature/session failed: %v\n%s", err, out)
-	}
-	targetSHA := testutil.GetHeadSHA(t, repoDir)
+	targetSHA := testRepo.HeadSHA()
 
 	if got := server.findReusableSessionID(t.Context(), repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, "", targetSHA); got != "session-valid" {
 		require.Condition(t, func() bool {
@@ -1095,13 +940,9 @@ func TestFindReusableSessionIDUsesConfigurableLookback(t *testing.T) {
 	server, db, tmpDir := newTestServer(t)
 
 	repoDir := filepath.Join(tmpDir, "testrepo")
-	testutil.InitTestGitRepo(t, repoDir)
+	testRepo := testutil.InitTestGitRepo(t, repoDir)
 
-	if out, err := exec.Command("git", "-C", repoDir, "checkout", "-b", "feature/session").CombinedOutput(); err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "git checkout failed: %v\n%s", err, out)
-	}
+	testRepo.CheckoutNewBranch("feature/session")
 
 	reuseSessions := true
 	server.configWatcher.Config().ReuseReviewSession = &reuseSessions
@@ -1120,7 +961,7 @@ func TestFindReusableSessionIDUsesConfigurableLookback(t *testing.T) {
 		}, "GetOrCreateRepo failed: %v", err)
 	}
 
-	validSHA := testutil.GetHeadSHA(t, repoDir)
+	validSHA := testRepo.HeadSHA()
 	validCommit, err := db.GetOrCreateCommit(repo.ID, validSHA, "Author", "Subject", time.Now())
 	if err != nil {
 		require.Condition(t, func() bool {
@@ -1157,36 +998,7 @@ func TestFindReusableSessionIDUsesConfigurableLookback(t *testing.T) {
 	}
 
 	for i := range 11 {
-		branchName := fmt.Sprintf("branch-reused-%02d", i)
-		if out, err := exec.Command("git", "-C", repoDir, "checkout", "--orphan", branchName).CombinedOutput(); err != nil {
-			require.Condition(t, func() bool {
-				return false
-			}, "git checkout --orphan failed: %v\n%s", err, out)
-		}
-		if out, err := exec.Command("git", "-C", repoDir, "rm", "-rf", ".").CombinedOutput(); err != nil {
-			require.Condition(t, func() bool {
-				return false
-			}, "git rm failed: %v\n%s", err, out)
-		}
-
-		unrelatedFile := filepath.Join(repoDir, fmt.Sprintf("unrelated-%02d.txt", i))
-		if err := os.WriteFile(unrelatedFile, fmt.Appendf(nil, "unrelated %02d\n", i), 0o644); err != nil {
-			require.Condition(t, func() bool {
-				return false
-			}, "WriteFile failed: %v", err)
-		}
-		if out, err := exec.Command("git", "-C", repoDir, "add", filepath.Base(unrelatedFile)).CombinedOutput(); err != nil {
-			require.Condition(t, func() bool {
-				return false
-			}, "git add failed: %v\n%s", err, out)
-		}
-		if out, err := exec.Command("git", "-C", repoDir, "commit", "-m", fmt.Sprintf("unrelated %02d", i)).CombinedOutput(); err != nil {
-			require.Condition(t, func() bool {
-				return false
-			}, "git commit failed: %v\n%s", err, out)
-		}
-
-		invalidSHA := testutil.GetHeadSHA(t, repoDir)
+		invalidSHA := testRepo.UnrelatedCommit(fmt.Sprintf("unrelated %02d", i))
 		invalidCommit, err := db.GetOrCreateCommit(repo.ID, invalidSHA, "Author", "Subject", time.Now())
 		if err != nil {
 			require.Condition(t, func() bool {
@@ -1224,12 +1036,7 @@ func TestFindReusableSessionIDUsesConfigurableLookback(t *testing.T) {
 		}
 	}
 
-	if out, err := exec.Command("git", "-C", repoDir, "checkout", "feature/session").CombinedOutput(); err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "git checkout feature/session failed: %v\n%s", err, out)
-	}
-	targetSHA := testutil.GetHeadSHA(t, repoDir)
+	targetSHA := testRepo.HeadSHA()
 
 	if got := server.findReusableSessionID(t.Context(), repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, "", targetSHA); got != "session-valid" {
 		require.Condition(t, func() bool {
@@ -1256,13 +1063,9 @@ func TestFindReusableSessionIDLookbackIgnoresUnusableRefs(t *testing.T) {
 	server, db, tmpDir := newTestServer(t)
 
 	repoDir := filepath.Join(tmpDir, "testrepo")
-	testutil.InitTestGitRepo(t, repoDir)
+	testRepo := testutil.InitTestGitRepo(t, repoDir)
 
-	if out, err := exec.Command("git", "-C", repoDir, "checkout", "-b", "feature/session").CombinedOutput(); err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "git checkout failed: %v\n%s", err, out)
-	}
+	testRepo.CheckoutNewBranch("feature/session")
 
 	reuseSessions := true
 	server.configWatcher.Config().ReuseReviewSession = &reuseSessions
@@ -1281,7 +1084,7 @@ func TestFindReusableSessionIDLookbackIgnoresUnusableRefs(t *testing.T) {
 		}, "GetOrCreateRepo failed: %v", err)
 	}
 
-	targetSHA := testutil.GetHeadSHA(t, repoDir)
+	targetSHA := testRepo.HeadSHA()
 	validCommit, err := db.GetOrCreateCommit(repo.ID, targetSHA, "Author", "Subject", time.Now())
 	if err != nil {
 		require.Condition(t, func() bool {
@@ -1385,13 +1188,9 @@ func TestFindReusableSessionIDSkipsInvalidStoredSessionID(t *testing.T) {
 	server, db, tmpDir := newTestServer(t)
 
 	repoDir := filepath.Join(tmpDir, "testrepo")
-	testutil.InitTestGitRepo(t, repoDir)
+	testRepo := testutil.InitTestGitRepo(t, repoDir)
 
-	if out, err := exec.Command("git", "-C", repoDir, "checkout", "-b", "feature/session").CombinedOutput(); err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "git checkout failed: %v\n%s", err, out)
-	}
+	testRepo.CheckoutNewBranch("feature/session")
 
 	reuseSessions := true
 	server.configWatcher.Config().ReuseReviewSession = &reuseSessions
@@ -1410,7 +1209,7 @@ func TestFindReusableSessionIDSkipsInvalidStoredSessionID(t *testing.T) {
 		}, "GetOrCreateRepo failed: %v", err)
 	}
 
-	targetSHA := testutil.GetHeadSHA(t, repoDir)
+	targetSHA := testRepo.HeadSHA()
 	commit, err := db.GetOrCreateCommit(repo.ID, targetSHA, "Author", "Subject", time.Now())
 	if err != nil {
 		require.Condition(t, func() bool {

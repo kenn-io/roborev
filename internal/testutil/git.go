@@ -13,6 +13,7 @@ import (
 	"time"
 
 	gogit "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 )
 
@@ -216,6 +217,9 @@ func (r *TestRepo) Path() string {
 
 func (r *TestRepo) HeadSHA() string {
 	r.t.Helper()
+	if sha, err := headSHA(r.Root); err == nil {
+		return sha
+	}
 	return r.RevParse("HEAD")
 }
 
@@ -268,6 +272,64 @@ func (r *TestRepo) CommitFiles(files map[string]string, msg string) string {
 	return r.commitPaths(msg, paths...)
 }
 
+// CommitEmpty creates an empty commit with the given message and returns HEAD.
+func (r *TestRepo) CommitEmpty(msg string) string {
+	r.t.Helper()
+
+	repo, err := gogit.PlainOpen(r.Root)
+	if err != nil {
+		r.t.Fatalf("open repo %q: %v", r.Root, err)
+	}
+	wt, err := repo.Worktree()
+	if err != nil {
+		r.t.Fatalf("worktree: %v", err)
+	}
+	hash, err := wt.Commit(msg, &gogit.CommitOptions{
+		AllowEmptyCommits: true,
+		Author:            testSignature(),
+	})
+	if err != nil {
+		r.t.Fatalf("empty commit: %v", err)
+	}
+	return hash.String()
+}
+
+// UnrelatedCommit writes an unreferenced root commit object using the current
+// HEAD tree. It is useful for ancestry tests that need real but unreachable
+// commits without paying for orphan-branch checkout/reset subprocesses.
+func (r *TestRepo) UnrelatedCommit(msg string) string {
+	r.t.Helper()
+
+	repo, err := gogit.PlainOpen(r.Root)
+	if err != nil {
+		r.t.Fatalf("open repo %q: %v", r.Root, err)
+	}
+	head, err := repo.Head()
+	if err != nil {
+		r.t.Fatalf("read HEAD: %v", err)
+	}
+	headCommit, err := repo.CommitObject(head.Hash())
+	if err != nil {
+		r.t.Fatalf("read HEAD commit: %v", err)
+	}
+	sig := testSignature()
+	commit := &object.Commit{
+		Author:    *sig,
+		Committer: *sig,
+		Message:   msg,
+		TreeHash:  headCommit.TreeHash,
+	}
+	obj := repo.Storer.NewEncodedObject()
+	if err := commit.Encode(obj); err != nil {
+		r.t.Fatalf("encode unrelated commit: %v", err)
+	}
+	hash, err := repo.Storer.SetEncodedObject(obj)
+	if err != nil {
+		r.t.Fatalf("store unrelated commit: %v", err)
+	}
+	return hash.String()
+}
+
 func (r *TestRepo) commitPaths(msg string, paths ...string) string {
 	r.t.Helper()
 
@@ -285,12 +347,86 @@ func (r *TestRepo) commitPaths(msg string, paths ...string) string {
 		}
 	}
 	hash, err := wt.Commit(msg, &gogit.CommitOptions{
-		Author: &object.Signature{Name: GitUserName, Email: GitUserEmail, When: time.Now()},
+		Author: testSignature(),
 	})
 	if err != nil {
 		r.t.Fatalf("commit: %v", err)
 	}
 	return hash.String()
+}
+
+func testSignature() *object.Signature {
+	return &object.Signature{Name: GitUserName, Email: GitUserEmail, When: time.Now()}
+}
+
+func headSHA(dir string) (string, error) {
+	info, err := os.Stat(filepath.Join(dir, ".git"))
+	if err != nil {
+		return "", err
+	}
+	if !info.IsDir() {
+		return "", fmt.Errorf("%s is not a plain .git directory", filepath.Join(dir, ".git"))
+	}
+	repo, err := gogit.PlainOpen(dir)
+	if err != nil {
+		return "", err
+	}
+	head, err := repo.Head()
+	if err != nil {
+		return "", err
+	}
+	return head.Hash().String(), nil
+}
+
+// CheckoutNewBranch creates and checks out branch at the current HEAD or the
+// optional starting SHA, without spawning a git process.
+func (r *TestRepo) CheckoutNewBranch(branch string, start ...string) {
+	r.t.Helper()
+	if len(start) > 1 {
+		r.t.Fatalf("CheckoutNewBranch accepts at most one start ref")
+	}
+	repo, err := gogit.PlainOpen(r.Root)
+	if err != nil {
+		r.t.Fatalf("open repo %q: %v", r.Root, err)
+	}
+	hash := plumbing.ZeroHash
+	if len(start) == 1 {
+		hash = plumbing.NewHash(start[0])
+	} else {
+		head, err := repo.Head()
+		if err != nil {
+			r.t.Fatalf("read HEAD: %v", err)
+		}
+		hash = head.Hash()
+	}
+	wt, err := repo.Worktree()
+	if err != nil {
+		r.t.Fatalf("worktree: %v", err)
+	}
+	err = wt.Checkout(&gogit.CheckoutOptions{
+		Branch: plumbing.NewBranchReferenceName(branch),
+		Create: true,
+		Hash:   hash,
+	})
+	if err != nil {
+		r.t.Fatalf("checkout new branch %q: %v", branch, err)
+	}
+}
+
+// SetRef writes a hash ref directly.
+func (r *TestRepo) SetRef(ref, sha string) {
+	r.t.Helper()
+	repo, err := gogit.PlainOpen(r.Root)
+	if err != nil {
+		r.t.Fatalf("open repo %q: %v", r.Root, err)
+	}
+	err = repo.Storer.SetReference(plumbing.NewHashReference(
+		plumbing.ReferenceName(ref),
+		plumbing.NewHash(sha),
+	))
+	if err != nil {
+		r.t.Fatalf("set ref %q: %v", ref, err)
+	}
 }
 
 // Config sets a git config value.
@@ -370,5 +506,8 @@ func InitTestGitRepo(t *testing.T, dir string) *TestRepo {
 // GetHeadSHA returns the HEAD commit SHA for the git repo at dir.
 func GetHeadSHA(t *testing.T, dir string) string {
 	t.Helper()
+	if sha, err := headSHA(dir); err == nil {
+		return sha
+	}
 	return runGit(t, dir, nil, "rev-parse", "HEAD")
 }
