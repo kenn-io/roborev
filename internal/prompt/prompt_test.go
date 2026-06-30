@@ -722,6 +722,11 @@ func deterministicGuidelineLen(t *testing.T, prefixLenAtOne, targetPrefixLen int
 // Tests that use NewBuilder(nil) resolve to this value.
 var defaultPromptCap = config.DefaultMaxPromptSize
 
+const (
+	oversizedRangeMetadataCommitCount = 16
+	oversizedRangeMetadataSubjectLen  = 16 * 1024
+)
+
 func singleCommitNearCapRepo(t *testing.T, remainingBudget int) (string, string) {
 	t.Helper()
 	repoPath, sha := setupLargeDiffRepoWithGuidelines(t, 1)
@@ -879,7 +884,11 @@ func TestBuildRangePromptCodexOversizedDiffKeepsCurrentRangeMetadataWhenTrimming
 }
 
 func TestBuildRangePromptCodexOversizedDiffWithLargeRangeMetadataStaysWithinMaxPromptSize(t *testing.T) {
-	repoPath, rangeRef := setupLargeRangeMetadataRepo(t, 80, 4096)
+	repoPath, rangeRef := setupLargeRangeMetadataRepo(
+		t,
+		oversizedRangeMetadataCommitCount,
+		oversizedRangeMetadataSubjectLen,
+	)
 
 	b := NewBuilder(nil)
 	prompt, err := b.ForRepo(repoPath, 0).Build(rangeRef, 0, "codex", "", "")
@@ -888,7 +897,7 @@ func TestBuildRangePromptCodexOversizedDiffWithLargeRangeMetadataStaysWithinMaxP
 	assert.LessOrEqual(t, len(prompt), defaultPromptCap, "expected large range metadata to still stay within the prompt cap")
 	assertContains(t, prompt, "git diff", "expected Codex range fallback guidance to remain present when range metadata is oversized")
 	assertContains(t, prompt, "## Commit Range", "expected the commit range section header to remain intact")
-	assertContains(t, prompt, "Reviewing 80 commits:", "expected the range summary to remain intact")
+	assertContains(t, prompt, "Reviewing 16 commits:", "expected the range summary to remain intact")
 }
 
 func TestSelectRichestRangePromptViewPrefersRicherVariantOnEqualMetadataLoss(t *testing.T) {
@@ -1575,7 +1584,11 @@ func TestBuildPromptCodexTinyCapStillStaysWithinCap(t *testing.T) {
 }
 
 func TestBuildRangePromptCodexTinyCapStillStaysWithinCap(t *testing.T) {
-	repoPath, rangeRef := setupLargeRangeMetadataRepo(t, 80, 4096)
+	repoPath, rangeRef := setupLargeRangeMetadataRepo(
+		t,
+		oversizedRangeMetadataCommitCount,
+		oversizedRangeMetadataSubjectLen,
+	)
 	cap := 256
 	cfg := &config.Config{DefaultMaxPromptSize: cap}
 	b := NewBuilderWithConfig(nil, cfg)
