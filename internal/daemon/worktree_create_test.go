@@ -4,11 +4,14 @@ import (
 	"context"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	gitcmd "go.kenn.io/kit/git/cmd"
 
 	"go.kenn.io/roborev/internal/testutil"
 )
@@ -17,6 +20,27 @@ func TestAttributeContentUsesGitLFS(t *testing.T) {
 	assert.False(t, attributeContentUsesGitLFS("# *.bin filter=lfs\n*.txt text\n"))
 	assert.True(t, attributeContentUsesGitLFS("*.bin filter=lfs diff=lfs merge=lfs -text\n"))
 	assert.True(t, attributeContentUsesGitLFS("[attr]lfs filter=lfs diff=lfs merge=lfs -text\n"))
+}
+
+func TestPullGitLFSPropagatesPullFailure(t *testing.T) {
+	script := `#!/bin/sh
+if [ "$1" = "lfs" ] && [ "$2" = "env" ]; then exit 0; fi
+if [ "$1" = "lfs" ] && [ "$2" = "pull" ]; then exit 9; fi
+exit 1
+`
+	if runtime.GOOS == "windows" {
+		script = "@echo off\r\n" +
+			"if \"%1\"==\"lfs\" if \"%2\"==\"env\" exit /b 0\r\n" +
+			"if \"%1\"==\"lfs\" if \"%2\"==\"pull\" exit /b 9\r\n" +
+			"exit /b 1\r\n"
+	}
+	cleanup := testutil.MockBinaryInPath(t, "git", script)
+	t.Cleanup(cleanup)
+
+	err := pullGitLFS(context.Background(), gitcmd.New(), t.TempDir())
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "git lfs pull")
 }
 
 func TestCheckoutUsesGitLFS(t *testing.T) {
@@ -43,6 +67,25 @@ func TestCheckoutUsesGitLFS(t *testing.T) {
 			"assets/.gitattributes": "*.bin filter=lfs diff=lfs merge=lfs -text\n",
 			"assets/file.bin":       "placeholder\n",
 		}, "nested lfs attrs")
+
+		assert.True(t, checkoutUsesGitLFS(context.Background(), repo.Path()))
+	})
+
+	t.Run("tracked symlink attributes fail open", func(t *testing.T) {
+		repo := testutil.NewGitRepo(t)
+		repo.CommitFile("README.md", "base\n", "base")
+		repo.WriteFile("link-target.txt", "*.bin text\n")
+		blob := strings.TrimSpace(repo.Run("hash-object", "-w", "link-target.txt"))
+		repo.RunGit("update-index", "--add", "--cacheinfo", "120000,"+blob+",.gitattributes")
+		repo.RunGit("commit", "-m", "symlink attrs")
+		repo.WriteFile(".gitattributes", "*.bin text\n")
+
+		assert.True(t, checkoutUsesGitLFS(context.Background(), repo.Path()))
+	})
+
+	t.Run("oversized tracked attributes fail open", func(t *testing.T) {
+		repo := testutil.NewGitRepo(t)
+		repo.CommitFile(".gitattributes", strings.Repeat("x", maxGitAttributeFileBytes+1), "large attrs")
 
 		assert.True(t, checkoutUsesGitLFS(context.Background(), repo.Path()))
 	})

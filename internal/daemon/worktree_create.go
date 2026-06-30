@@ -4,10 +4,12 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"slices"
+	"strconv"
 	"strings"
 
 	gitcmd "go.kenn.io/kit/git/cmd"
@@ -21,6 +23,10 @@ func createWorkerWorktree(
 ) (*gitworktree.Worktree, error) {
 	initSubmodules := opts.InitSubmodules
 	pullLFS := opts.PullLFS
+	runner := opts.Runner
+	if runner.Env == nil {
+		runner = gitcmd.New()
+	}
 	opts.InitSubmodules = false
 	opts.PullLFS = false
 
@@ -41,7 +47,9 @@ func createWorkerWorktree(
 		}
 	}
 	if pullLFS && checkoutUsesGitLFS(ctx, wt.Dir) {
-		wt.PullLFS(ctx)
+		if err := pullGitLFS(ctx, runner, wt.Dir); err != nil {
+			return nil, err
+		}
 	}
 
 	complete = true
@@ -59,7 +67,7 @@ func checkoutUsesGitLFS(ctx context.Context, repoPath string) bool {
 		return true
 	}
 	for _, attr := range attrs {
-		uses, err := attributeFileUsesGitLFS(filepath.Join(repoPath, filepath.FromSlash(attr)))
+		uses, err := gitAttributeFileUsesGitLFS(ctx, repoPath, attr)
 		if err != nil {
 			return true
 		}
@@ -79,20 +87,72 @@ func checkoutUsesGitLFS(ctx context.Context, repoPath string) bool {
 	return false
 }
 
-func gitAttributeFiles(ctx context.Context, repoPath string) ([]string, error) {
-	out, err := gitOutput(ctx, repoPath, "ls-files", "-z", "--", ".gitattributes", "**/.gitattributes")
+const maxGitAttributeFileBytes = 1 << 20
+
+type gitAttributeFile struct {
+	Mode     string
+	ObjectID string
+	Path     string
+}
+
+func pullGitLFS(ctx context.Context, runner gitcmd.Runner, repoPath string) error {
+	if _, _, err := runner.Run(ctx, repoPath, nil, "lfs", "env"); err != nil {
+		return fmt.Errorf("git lfs unavailable: %w", err)
+	}
+	if _, _, err := runner.Run(ctx, repoPath, nil, "lfs", "pull"); err != nil {
+		return fmt.Errorf("git lfs pull: %w", err)
+	}
+	return nil
+}
+
+func gitAttributeFiles(ctx context.Context, repoPath string) ([]gitAttributeFile, error) {
+	out, err := gitOutput(ctx, repoPath, "ls-files", "-s", "-z", "--", ".gitattributes", "**/.gitattributes")
 	if err != nil {
 		return nil, err
 	}
 	parts := bytes.Split(out, []byte{0})
-	files := make([]string, 0, len(parts))
+	files := make([]gitAttributeFile, 0, len(parts))
 	for _, part := range parts {
 		if len(part) == 0 {
 			continue
 		}
-		files = append(files, string(part))
+		meta, path, ok := strings.Cut(string(part), "\t")
+		fields := strings.Fields(meta)
+		if !ok || len(fields) < 2 {
+			return nil, fmt.Errorf("parse tracked attributes entry %q", part)
+		}
+		files = append(files, gitAttributeFile{
+			Mode:     fields[0],
+			ObjectID: fields[1],
+			Path:     path,
+		})
 	}
 	return files, nil
+}
+
+func gitAttributeFileUsesGitLFS(ctx context.Context, repoPath string, attr gitAttributeFile) (bool, error) {
+	if attr.Mode != "100644" && attr.Mode != "100755" {
+		return false, fmt.Errorf("unsafe tracked attributes mode %s for %s", attr.Mode, attr.Path)
+	}
+	out, err := gitOutput(ctx, repoPath, "cat-file", "-s", attr.ObjectID)
+	if err != nil {
+		return false, err
+	}
+	size, err := strconv.ParseInt(strings.TrimSpace(string(out)), 10, 64)
+	if err != nil {
+		return false, err
+	}
+	if size > maxGitAttributeFileBytes {
+		return false, fmt.Errorf("tracked attributes file %s is too large: %d bytes", attr.Path, size)
+	}
+	out, err = gitOutput(ctx, repoPath, "cat-file", "blob", attr.ObjectID)
+	if err != nil {
+		return false, err
+	}
+	if len(out) > maxGitAttributeFileBytes {
+		return false, fmt.Errorf("tracked attributes file %s exceeded size cap", attr.Path)
+	}
+	return attributeContentUsesGitLFS(string(out)), nil
 }
 
 func gitPathAttributeFileUsesGitLFS(ctx context.Context, repoPath, path string) (bool, bool) {
@@ -153,9 +213,22 @@ func attributePathUsesGitLFS(repoPath, attrPath string) (bool, bool) {
 }
 
 func attributeFileUsesGitLFS(path string) (bool, error) {
+	info, err := os.Lstat(path)
+	if err != nil {
+		return false, err
+	}
+	if !info.Mode().IsRegular() {
+		return false, fmt.Errorf("attributes file %s is not regular", path)
+	}
+	if info.Size() > maxGitAttributeFileBytes {
+		return false, fmt.Errorf("attributes file %s is too large: %d bytes", path, info.Size())
+	}
 	data, err := os.ReadFile(path)
 	if err != nil {
 		return false, err
+	}
+	if len(data) > maxGitAttributeFileBytes {
+		return false, fmt.Errorf("attributes file %s exceeded size cap", path)
 	}
 	return attributeContentUsesGitLFS(string(data)), nil
 }
