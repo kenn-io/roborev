@@ -2,6 +2,7 @@ package git
 
 import (
 	"context"
+	"os"
 	"path/filepath"
 	"strings"
 	"sync"
@@ -35,11 +36,32 @@ var openGoGitRepository = func(path string) (*gogit.Repository, error) {
 // read yet, such as reftable, SHA-256, or partial clones with missing objects.
 func OpenEnqueueMetadataReader(ctx context.Context, repoPath string) EnqueueMetadataReader {
 	fallback := subprocessEnqueueMetadataReader{ctx: ctx, repoPath: repoPath}
+	if hasDotGitFileAncestor(repoPath) {
+		return fallback
+	}
 	repo, err := openGoGitRepository(repoPath)
 	if err != nil {
 		return fallback
 	}
 	return &goGitEnqueueMetadataReader{repo: repo, fallback: fallback}
+}
+
+func hasDotGitFileAncestor(path string) bool {
+	abs, err := filepath.Abs(path)
+	if err != nil {
+		abs = path
+	}
+	for {
+		info, err := os.Stat(filepath.Join(abs, ".git"))
+		if err == nil {
+			return !info.IsDir()
+		}
+		parent := filepath.Dir(abs)
+		if parent == abs {
+			return false
+		}
+		abs = parent
+	}
 }
 
 type subprocessEnqueueMetadataReader struct {
