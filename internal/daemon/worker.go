@@ -389,7 +389,7 @@ func (wp *WorkerPool) createCIExactCheckout(
 		return "", nil, fmt.Errorf("create CI worktree parent: %w", err)
 	}
 	unlock := lockGitMetadata(job.RepoPath)
-	wt, createErr := gitworktree.Create(ctx, job.RepoPath, headRef, gitworktree.Options{
+	wt, createErr := createWorkerWorktree(ctx, job.RepoPath, headRef, gitworktree.Options{
 		ParentDir:      parentDir,
 		Prefix:         fmt.Sprintf("%s%d-", ciWorktreePrefix, job.ID),
 		InitSubmodules: true,
@@ -809,7 +809,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	reviewRepoPath := checkout.agentRepoPath
 	var fixWorktree *gitworktree.Worktree
 	if job.IsFixJob() {
-		wt, wtErr := gitworktree.Create(ctx, job.RepoPath, job.GitRef, gitworktree.Options{
+		wt, wtErr := createWorkerWorktree(ctx, job.RepoPath, job.GitRef, gitworktree.Options{
 			Prefix:         "roborev-worktree-",
 			InitSubmodules: true,
 			PullLFS:        true,
