@@ -15,6 +15,7 @@ import (
 	"unicode/utf8"
 
 	gogit "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -147,6 +148,116 @@ func NewBareTestRepo(t *testing.T) *TestRepo {
 func (r *TestRepo) Run(args ...string) string {
 	r.T.Helper()
 	return runGit(r.T, r.Dir, args...)
+}
+
+func (r *TestRepo) SetHeadBranch(branch string) {
+	r.T.Helper()
+	repo, err := gogit.PlainOpen(r.Dir)
+	require.NoError(r.T, err, "open repo")
+	ref := plumbing.NewBranchReferenceName(branch)
+	err = repo.Storer.SetReference(plumbing.NewSymbolicReference(plumbing.HEAD, ref))
+	require.NoError(r.T, err, "set HEAD branch %q", branch)
+}
+
+func (r *TestRepo) SetRef(ref, sha string) {
+	r.T.Helper()
+	repo, err := gogit.PlainOpen(r.Dir)
+	require.NoError(r.T, err, "open repo")
+	err = repo.Storer.SetReference(plumbing.NewHashReference(
+		plumbing.ReferenceName(ref),
+		plumbing.NewHash(sha),
+	))
+	require.NoError(r.T, err, "set ref %q", ref)
+}
+
+func (r *TestRepo) SetSymbolicRef(ref, target string) {
+	r.T.Helper()
+	repo, err := gogit.PlainOpen(r.Dir)
+	require.NoError(r.T, err, "open repo")
+	err = repo.Storer.SetReference(plumbing.NewSymbolicReference(
+		plumbing.ReferenceName(ref),
+		plumbing.ReferenceName(target),
+	))
+	require.NoError(r.T, err, "set symbolic ref %q", ref)
+}
+
+func (r *TestRepo) CheckoutNewBranch(branch string, start ...string) {
+	r.T.Helper()
+	require.LessOrEqual(r.T, len(start), 1, "CheckoutNewBranch accepts at most one start ref")
+	repo, err := gogit.PlainOpen(r.Dir)
+	require.NoError(r.T, err, "open repo")
+	var hash plumbing.Hash
+	if len(start) == 1 {
+		resolved, err := repo.ResolveRevision(plumbing.Revision(start[0]))
+		require.NoError(r.T, err, "resolve start ref %q", start[0])
+		hash = *resolved
+	} else {
+		head, err := repo.Head()
+		require.NoError(r.T, err, "read HEAD")
+		hash = head.Hash()
+	}
+	wt, err := repo.Worktree()
+	require.NoError(r.T, err, "open worktree")
+	err = wt.Checkout(&gogit.CheckoutOptions{
+		Branch: plumbing.NewBranchReferenceName(branch),
+		Create: true,
+		Hash:   hash,
+	})
+	require.NoError(r.T, err, "checkout new branch %q", branch)
+}
+
+func (r *TestRepo) CheckoutBranch(branch string) {
+	r.T.Helper()
+	repo, err := gogit.PlainOpen(r.Dir)
+	require.NoError(r.T, err, "open repo")
+	wt, err := repo.Worktree()
+	require.NoError(r.T, err, "open worktree")
+	err = wt.Checkout(&gogit.CheckoutOptions{
+		Branch: plumbing.NewBranchReferenceName(branch),
+		Force:  true,
+	})
+	require.NoError(r.T, err, "checkout branch %q", branch)
+}
+
+func (r *TestRepo) AddRemote(name, url string) {
+	r.T.Helper()
+	r.appendConfig("remote", name,
+		"url", url,
+		"fetch", "+refs/heads/*:refs/remotes/"+name+"/*",
+	)
+}
+
+func (r *TestRepo) SetBranchUpstream(branch, remote, mergeBranch string) {
+	r.T.Helper()
+	r.appendConfig("branch", branch,
+		"remote", remote,
+		"merge", "refs/heads/"+mergeBranch,
+	)
+}
+
+func (r *TestRepo) SetBranchBase(branch, base string) {
+	r.T.Helper()
+	r.appendConfig("branch", branch, "base", base)
+}
+
+func (r *TestRepo) appendConfig(section, subsection string, keyValues ...string) {
+	r.T.Helper()
+	require.Zero(r.T, len(keyValues)%2, "config key/value arguments must be paired")
+	configPath := filepath.Join(r.Dir, ".git", "config")
+	f, err := os.OpenFile(configPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	require.NoError(r.T, err, "open git config")
+	defer f.Close()
+	_, err = fmt.Fprintf(f, "\n[%s %s]\n", section, quoteGitConfigSubsection(subsection))
+	require.NoError(r.T, err, "write config section")
+	for i := 0; i < len(keyValues); i += 2 {
+		_, err = fmt.Fprintf(f, "\t%s = %s\n", keyValues[i], keyValues[i+1])
+		require.NoError(r.T, err, "write config value")
+	}
+}
+
+func quoteGitConfigSubsection(subsection string) string {
+	escaped := strings.NewReplacer(`\`, `\\`, `"`, `\"`).Replace(subsection)
+	return `"` + escaped + `"`
 }
 
 func (r *TestRepo) writeConfig(author string) {
@@ -908,15 +1019,16 @@ func TestGetUpstream(t *testing.T) {
 	})
 
 	t.Run("returns upstream tracking branch", func(t *testing.T) {
-		remote := NewBareTestRepo(t)
 		repo := NewTestRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.SetHeadBranch("main")
 		repo.CommitFile("file.txt", "content", "initial")
+		head := repo.HeadSHA()
 
 		// Name the remote "upstream" to match the user's fork-style setup.
-		repo.Run("remote", "add", "upstream", remote.Dir)
-		repo.Run("push", "-u", "upstream", "main")
-		repo.Run("checkout", "-b", "feature", "--track", "upstream/main")
+		repo.AddRemote("upstream", "/dev/null")
+		repo.SetRef("refs/remotes/upstream/main", head)
+		repo.CheckoutNewBranch("feature", head)
+		repo.SetBranchUpstream("feature", "upstream", "main")
 
 		upstream, err := GetUpstream(repo.Dir, "HEAD")
 		require.NoError(t, err)
@@ -924,14 +1036,15 @@ func TestGetUpstream(t *testing.T) {
 	})
 
 	t.Run("returns upstream for named ref", func(t *testing.T) {
-		remote := NewBareTestRepo(t)
 		repo := NewTestRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.SetHeadBranch("main")
 		repo.CommitFile("file.txt", "content", "initial")
+		head := repo.HeadSHA()
 
-		repo.Run("remote", "add", "origin", remote.Dir)
-		repo.Run("push", "-u", "origin", "main")
-		repo.Run("checkout", "-b", "feature")
+		repo.AddRemote("origin", "/dev/null")
+		repo.SetRef("refs/remotes/origin/main", head)
+		repo.SetBranchUpstream("main", "origin", "main")
+		repo.CheckoutNewBranch("feature")
 
 		// feature has no upstream, but main does.
 		upstream, err := GetUpstream(repo.Dir, "main")
@@ -944,13 +1057,14 @@ func TestGetUpstream(t *testing.T) {
 	})
 
 	t.Run("empty ref defaults to HEAD", func(t *testing.T) {
-		remote := NewBareTestRepo(t)
 		repo := NewTestRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.SetHeadBranch("main")
 		repo.CommitFile("file.txt", "content", "initial")
+		head := repo.HeadSHA()
 
-		repo.Run("remote", "add", "origin", remote.Dir)
-		repo.Run("push", "-u", "origin", "main")
+		repo.AddRemote("origin", "/dev/null")
+		repo.SetRef("refs/remotes/origin/main", head)
+		repo.SetBranchUpstream("main", "origin", "main")
 
 		upstream, err := GetUpstream(repo.Dir, "")
 		require.NoError(t, err)
@@ -963,10 +1077,10 @@ func TestGetUpstream(t *testing.T) {
 		// reject this as "missing" just because refs/remotes/<upstream>
 		// doesn't exist.
 		repo := NewTestRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.SetHeadBranch("main")
 		repo.CommitFile("file.txt", "content", "initial")
-		repo.Run("checkout", "-b", "dev")
-		repo.Run("branch", "-u", "main", "dev")
+		repo.CheckoutNewBranch("dev")
+		repo.SetBranchUpstream("dev", ".", "main")
 
 		upstream, err := GetUpstream(repo.Dir, "HEAD")
 		require.NoError(t, err)
@@ -980,14 +1094,11 @@ func TestGetUpstream(t *testing.T) {
 		// able to distinguish this from "no upstream configured" so the
 		// user isn't silently switched to a different base branch that
 		// could yield the wrong commit range.
-		remote := NewBareTestRepo(t)
 		repo := NewTestRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.SetHeadBranch("main")
 		repo.CommitFile("file.txt", "content", "initial")
-		repo.Run("remote", "add", "upstream", remote.Dir)
-		repo.Run("push", "-u", "upstream", "main")
-		// Tracking config now points at refs/remotes/upstream/main. Remove it.
-		repo.Run("update-ref", "-d", "refs/remotes/upstream/main")
+		repo.AddRemote("upstream", "/dev/null")
+		repo.SetBranchUpstream("main", "upstream", "main")
 
 		upstream, err := GetUpstream(repo.Dir, "HEAD")
 		assert.Empty(t, upstream)
@@ -1002,10 +1113,9 @@ func TestGetUpstream(t *testing.T) {
 		// but branch.<name>.remote/merge are set, so callers must still
 		// see UpstreamMissingError, not ("", nil).
 		repo := NewTestRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.SetHeadBranch("main")
 		repo.CommitFile("file.txt", "content", "initial")
-		repo.Run("config", "branch.main.remote", "upstream")
-		repo.Run("config", "branch.main.merge", "refs/heads/main")
+		repo.SetBranchUpstream("main", "upstream", "main")
 
 		upstream, err := GetUpstream(repo.Dir, "HEAD")
 		assert.Empty(t, upstream)
@@ -1016,10 +1126,9 @@ func TestGetUpstream(t *testing.T) {
 
 	t.Run("errors for missing slash-named remote tracking config", func(t *testing.T) {
 		repo := NewTestRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.SetHeadBranch("main")
 		repo.CommitFile("file.txt", "content", "initial")
-		repo.Run("config", "branch.main.remote", "company/fork")
-		repo.Run("config", "branch.main.merge", "refs/heads/main")
+		repo.SetBranchUpstream("main", "company/fork", "main")
 
 		upstream, err := GetUpstream(repo.Dir, "HEAD")
 		assert.Empty(t, upstream)
@@ -1030,11 +1139,10 @@ func TestGetUpstream(t *testing.T) {
 
 	t.Run("ignores url remote tracking config", func(t *testing.T) {
 		repo := NewTestRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.SetHeadBranch("main")
 		repo.CommitFile("file.txt", "content", "initial")
-		repo.Run("checkout", "-b", "feature")
-		repo.Run("config", "branch.feature.remote", "https://example.com/fork.git")
-		repo.Run("config", "branch.feature.merge", "refs/heads/feature")
+		repo.CheckoutNewBranch("feature")
+		repo.SetBranchUpstream("feature", "https://example.com/fork.git", "feature")
 
 		upstream, err := GetUpstream(repo.Dir, "HEAD")
 		require.NoError(t, err)
@@ -1047,14 +1155,12 @@ func TestGetUpstream(t *testing.T) {
 		// extracts subsection "release/1.2.3" and key "remote". Confirm
 		// GetUpstream returns UpstreamMissingError for a dotted branch name
 		// whose tracking ref has been removed.
-		remote := NewBareTestRepo(t)
 		repo := NewTestRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.SetHeadBranch("main")
 		repo.CommitFile("file.txt", "content", "initial")
-		repo.Run("remote", "add", "upstream", remote.Dir)
-		repo.Run("push", "-u", "upstream", "main")
-		repo.Run("checkout", "-b", "release/1.2.3", "--track", "upstream/main")
-		repo.Run("update-ref", "-d", "refs/remotes/upstream/main")
+		repo.AddRemote("upstream", "/dev/null")
+		repo.CheckoutNewBranch("release/1.2.3")
+		repo.SetBranchUpstream("release/1.2.3", "upstream", "main")
 
 		upstream, err := GetUpstream(repo.Dir, "HEAD")
 		assert.Empty(t, upstream)
@@ -1070,18 +1176,15 @@ func TestGetUpstream(t *testing.T) {
 		// a missing refs/remotes/<upstream>/... and causing downstream
 		// merge-base to use the wrong ref. Verify the tracking config's
 		// qualified ref explicitly.
-		remote := NewBareTestRepo(t)
 		repo := NewTestRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.SetHeadBranch("main")
 		repo.CommitFile("file.txt", "content", "initial")
-		repo.Run("remote", "add", "upstream", remote.Dir)
-		repo.Run("push", "-u", "upstream", "main")
-		// Remove the remote-tracking ref that @{upstream} points to…
-		repo.Run("update-ref", "-d", "refs/remotes/upstream/main")
-		// …and create a local ref with the identical short name so an
+		repo.AddRemote("upstream", "/dev/null")
+		repo.SetBranchUpstream("main", "upstream", "main")
+		// Create a local ref with the identical short name so an
 		// unqualified rev-parse would succeed.
 		head := repo.HeadSHA()
-		repo.Run("update-ref", "refs/heads/upstream/main", head)
+		repo.SetRef("refs/heads/upstream/main", head)
 
 		upstream, err := GetUpstream(repo.Dir, "HEAD")
 		assert.Empty(t, upstream)
@@ -1631,27 +1734,30 @@ func TestResetWorkingTree(t *testing.T) {
 
 func TestUpstreamIsTrunk(t *testing.T) {
 	t.Run("trunk-named upstream matches", func(t *testing.T) {
-		remote := NewBareTestRepo(t)
 		repo := NewTestRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.SetHeadBranch("main")
 		repo.CommitFile("file.txt", "content", "initial")
-		repo.Run("remote", "add", "origin", remote.Dir)
-		repo.Run("push", "-u", "origin", "main")
-		repo.Run("remote", "set-head", "origin", "main")
+		head := repo.HeadSHA()
+		repo.AddRemote("origin", "/dev/null")
+		repo.SetRef("refs/remotes/origin/main", head)
+		repo.SetSymbolicRef("refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+		repo.SetBranchUpstream("main", "origin", "main")
 
 		assert.True(t, UpstreamIsTrunk(repo.Dir, "HEAD"))
 	})
 
 	t.Run("self-counterpart upstream does not match", func(t *testing.T) {
-		remote := NewBareTestRepo(t)
 		repo := NewTestRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.SetHeadBranch("main")
 		repo.CommitFile("file.txt", "content", "initial")
-		repo.Run("remote", "add", "origin", remote.Dir)
-		repo.Run("push", "-u", "origin", "main")
-		repo.Run("remote", "set-head", "origin", "main")
-		repo.Run("checkout", "-b", "feature")
-		repo.Run("push", "-u", "origin", "feature")
+		mainHead := repo.HeadSHA()
+		repo.AddRemote("origin", "/dev/null")
+		repo.SetRef("refs/remotes/origin/main", mainHead)
+		repo.SetSymbolicRef("refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+		repo.CheckoutNewBranch("feature")
+		featureHead := repo.HeadSHA()
+		repo.SetRef("refs/remotes/origin/feature", featureHead)
+		repo.SetBranchUpstream("feature", "origin", "feature")
 
 		// feature tracks origin/feature (its own remote counterpart) — not trunk.
 		assert.False(t, UpstreamIsTrunk(repo.Dir, "HEAD"))
@@ -1660,17 +1766,16 @@ func TestUpstreamIsTrunk(t *testing.T) {
 	t.Run("multi-remote trunk matches", func(t *testing.T) {
 		// Fork workflow: local main tracks upstream/main while the default
 		// branch is origin/main. Both refs strip to "main" → trunk.
-		remote := NewBareTestRepo(t)
 		repo := NewTestRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.SetHeadBranch("main")
 		repo.CommitFile("file.txt", "content", "initial")
-		repo.Run("remote", "add", "origin", remote.Dir)
-		repo.Run("push", "-u", "origin", "main")
-		repo.Run("remote", "set-head", "origin", "main")
-		upRemote := NewBareTestRepo(t)
-		repo.Run("remote", "add", "upstream", upRemote.Dir)
-		repo.Run("push", "upstream", "main")
-		repo.Run("branch", "-u", "upstream/main", "main")
+		head := repo.HeadSHA()
+		repo.AddRemote("origin", "/dev/null")
+		repo.SetRef("refs/remotes/origin/main", head)
+		repo.SetSymbolicRef("refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+		repo.AddRemote("upstream", "/dev/null")
+		repo.SetRef("refs/remotes/upstream/main", head)
+		repo.SetBranchUpstream("main", "upstream", "main")
 
 		assert.True(t, UpstreamIsTrunk(repo.Dir, "HEAD"))
 	})
@@ -1683,12 +1788,13 @@ func TestUpstreamIsTrunk(t *testing.T) {
 	t.Run("returns false when default branch cannot be detected", func(t *testing.T) {
 		// Branch tracks some upstream, but origin/HEAD and main/master are
 		// all missing so GetDefaultBranch fails.
-		remote := NewBareTestRepo(t)
 		repo := NewTestRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/trunk")
+		repo.SetHeadBranch("trunk")
 		repo.CommitFile("file.txt", "content", "initial")
-		repo.Run("remote", "add", "origin", remote.Dir)
-		repo.Run("push", "-u", "origin", "trunk")
+		head := repo.HeadSHA()
+		repo.AddRemote("origin", "/dev/null")
+		repo.SetRef("refs/remotes/origin/trunk", head)
+		repo.SetBranchUpstream("trunk", "origin", "trunk")
 
 		assert.False(t, UpstreamIsTrunk(repo.Dir, "HEAD"))
 	})
@@ -1698,20 +1804,18 @@ func TestUpstreamIsTrunk(t *testing.T) {
 		// last path segment "main" and would wrongly match the default
 		// leaf. UpstreamIsTrunk must compare the full branch name after
 		// stripping the configured remote prefix, not just the leaf.
-		remote := NewBareTestRepo(t)
 		repo := NewTestRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.SetHeadBranch("main")
 		repo.CommitFile("file.txt", "content", "initial")
-		repo.Run("remote", "add", "origin", remote.Dir)
-		repo.Run("push", "-u", "origin", "main")
-		repo.Run("remote", "set-head", "origin", "main")
+		head := repo.HeadSHA()
+		repo.AddRemote("origin", "/dev/null")
+		repo.SetRef("refs/remotes/origin/main", head)
+		repo.SetSymbolicRef("refs/remotes/origin/HEAD", "refs/remotes/origin/main")
 		// Simulate a feature branch whose remote-tracking ref ends in "main"
 		// but isn't trunk.
-		head := repo.HeadSHA()
-		repo.Run("update-ref", "refs/remotes/origin/team/main", head)
-		repo.Run("checkout", "-b", "team/main")
-		repo.Run("config", "branch.team/main.remote", "origin")
-		repo.Run("config", "branch.team/main.merge", "refs/heads/team/main")
+		repo.SetRef("refs/remotes/origin/team/main", head)
+		repo.CheckoutNewBranch("team/main")
+		repo.SetBranchUpstream("team/main", "origin", "team/main")
 
 		assert.False(t, UpstreamIsTrunk(repo.Dir, "HEAD"),
 			"branch tracking origin/team/main is not trunk — its branch part is team/main, not main")
@@ -1721,13 +1825,14 @@ func TestUpstreamIsTrunk(t *testing.T) {
 		// Regression: callers that pass a fully-qualified ref (e.g.,
 		// "refs/heads/feature" or output of ResolveSHA) must still hit
 		// the branch.<name>.* config keys after the prefix is stripped.
-		remote := NewBareTestRepo(t)
 		repo := NewTestRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.SetHeadBranch("main")
 		repo.CommitFile("file.txt", "content", "initial")
-		repo.Run("remote", "add", "origin", remote.Dir)
-		repo.Run("push", "-u", "origin", "main")
-		repo.Run("remote", "set-head", "origin", "main")
+		head := repo.HeadSHA()
+		repo.AddRemote("origin", "/dev/null")
+		repo.SetRef("refs/remotes/origin/main", head)
+		repo.SetSymbolicRef("refs/remotes/origin/HEAD", "refs/remotes/origin/main")
+		repo.SetBranchUpstream("main", "origin", "main")
 
 		assert.True(t, UpstreamIsTrunk(repo.Dir, "refs/heads/main"),
 			"refs/heads/-qualified ref should resolve to the same branch config as 'HEAD'")
@@ -1741,20 +1846,18 @@ func TestUpstreamIsTrunk(t *testing.T) {
 		// and misclassify the local upstream as trunk. The namespace
 		// check (refs/heads/... vs refs/remotes/...) must reject the
 		// local-branch upstream.
-		remote := NewBareTestRepo(t)
 		repo := NewTestRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.SetHeadBranch("main")
 		repo.CommitFile("file.txt", "content", "initial")
-		repo.Run("remote", "add", "origin", remote.Dir)
-		repo.Run("push", "-u", "origin", "main")
-		repo.Run("remote", "set-head", "origin", "main")
 		head := repo.HeadSHA()
+		repo.AddRemote("origin", "/dev/null")
+		repo.SetRef("refs/remotes/origin/main", head)
+		repo.SetSymbolicRef("refs/remotes/origin/HEAD", "refs/remotes/origin/main")
 		// Local branch literally named "origin/main".
-		repo.Run("update-ref", "refs/heads/origin/main", head)
+		repo.SetRef("refs/heads/origin/main", head)
 		// New branch whose upstream is the LOCAL "origin/main", via remote=".".
-		repo.Run("checkout", "-b", "pinned", head)
-		repo.Run("config", "branch.pinned.remote", ".")
-		repo.Run("config", "branch.pinned.merge", "refs/heads/origin/main")
+		repo.CheckoutNewBranch("pinned", head)
+		repo.SetBranchUpstream("pinned", ".", "origin/main")
 
 		assert.False(t, UpstreamIsTrunk(repo.Dir, "HEAD"),
 			"local-branch upstream named origin/main must not be classified as trunk")
@@ -1769,24 +1872,24 @@ func TestIsOnBaseBranch(t *testing.T) {
 	})
 
 	t.Run("matches origin-prefixed ref", func(t *testing.T) {
-		remote := NewBareTestRepo(t)
 		repo := NewTestRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.SetHeadBranch("main")
 		repo.CommitFile("file.txt", "content", "initial")
-		repo.Run("remote", "add", "origin", remote.Dir)
-		repo.Run("push", "-u", "origin", "main")
+		head := repo.HeadSHA()
+		repo.AddRemote("origin", "/dev/null")
+		repo.SetRef("refs/remotes/origin/main", head)
 
 		assert.True(t, IsOnBaseBranch(repo.Dir, "main", "origin/main"))
 		assert.False(t, IsOnBaseBranch(repo.Dir, "feature", "origin/main"))
 	})
 
 	t.Run("matches non-origin remote prefix", func(t *testing.T) {
-		remote := NewBareTestRepo(t)
 		repo := NewTestRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.SetHeadBranch("main")
 		repo.CommitFile("file.txt", "content", "initial")
-		repo.Run("remote", "add", "upstream", remote.Dir)
-		repo.Run("push", "-u", "upstream", "main")
+		head := repo.HeadSHA()
+		repo.AddRemote("upstream", "/dev/null")
+		repo.SetRef("refs/remotes/upstream/main", head)
 
 		assert.True(t, IsOnBaseBranch(repo.Dir, "main", "upstream/main"))
 		assert.False(t, IsOnBaseBranch(repo.Dir, "feature", "upstream/main"))
@@ -1797,14 +1900,13 @@ func TestIsOnBaseBranch(t *testing.T) {
 		// remote named "feature" is configured, we must not treat base
 		// "feature/foo" as if it were a remote-tracking ref and strip the
 		// prefix — that would falsely match a local branch named "foo".
-		remote := NewBareTestRepo(t)
 		repo := NewTestRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.SetHeadBranch("main")
 		repo.CommitFile("file.txt", "content", "initial")
-		repo.Run("remote", "add", "feature", remote.Dir)
-		repo.Run("checkout", "-b", "feature/foo")
+		repo.AddRemote("feature", "/dev/null")
+		repo.CheckoutNewBranch("feature/foo")
 		repo.CommitFile("b.txt", "b", "work")
-		repo.Run("checkout", "-b", "foo", "main")
+		repo.CheckoutNewBranch("foo", "main")
 
 		// Current branch "foo" vs base "feature/foo" — refs/remotes/feature/foo
 		// does not exist, so the prefix must not be stripped.
@@ -1824,12 +1926,12 @@ func TestIsOnBaseBranch(t *testing.T) {
 		// slash ("company/") would leave "fork/main" and wrongly match
 		// a local branch of that name. The full remote prefix
 		// "company/fork/" must be stripped to yield "main".
-		remote := NewBareTestRepo(t)
 		repo := NewTestRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.SetHeadBranch("main")
 		repo.CommitFile("file.txt", "content", "initial")
-		repo.Run("remote", "add", "company/fork", remote.Dir)
-		repo.Run("push", "-u", "company/fork", "main")
+		head := repo.HeadSHA()
+		repo.AddRemote("company/fork", "/dev/null")
+		repo.SetRef("refs/remotes/company/fork/main", head)
 
 		assert.True(t, IsOnBaseBranch(repo.Dir, "main", "company/fork/main"),
 			"current=main on base=company/fork/main must strip full remote prefix")
@@ -1843,16 +1945,15 @@ func TestIsOnBaseBranch(t *testing.T) {
 		// remote-tracking ref of the same short name. The two are distinct
 		// refs in different namespaces; when both exist, the guardrail
 		// must refuse to match rather than assume they're the same.
-		remote := NewBareTestRepo(t)
 		repo := NewTestRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.SetHeadBranch("main")
 		repo.CommitFile("file.txt", "content", "initial")
-		repo.Run("remote", "add", "origin", remote.Dir)
-		repo.Run("push", "-u", "origin", "main")
 		head := repo.HeadSHA()
+		repo.AddRemote("origin", "/dev/null")
+		repo.SetRef("refs/remotes/origin/main", head)
 		// Create a local branch literally named "origin/main" so both
 		// refs/heads/origin/main AND refs/remotes/origin/main resolve.
-		repo.Run("update-ref", "refs/heads/origin/main", head)
+		repo.SetRef("refs/heads/origin/main", head)
 
 		assert.False(t, IsOnBaseBranch(repo.Dir, "origin/main", "origin/main"),
 			"ambiguous name in both refs/heads and refs/remotes must not match")
@@ -1865,10 +1966,10 @@ func TestIsOnBaseBranch(t *testing.T) {
 		// "already on base origin/foo". That would wrongly block
 		// review --branch / refine on a perfectly valid feature branch.
 		repo := NewTestRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.SetHeadBranch("main")
 		repo.CommitFile("file.txt", "content", "initial")
 		// Create a local branch literally named "origin/foo" — no remote involved.
-		repo.Run("branch", "origin/foo")
+		repo.SetRef("refs/heads/origin/foo", repo.HeadSHA())
 
 		assert.False(t, IsOnBaseBranch(repo.Dir, "foo", "origin/foo"),
 			"local branch origin/foo without a remote-tracking ref must not match 'foo'")
@@ -1882,14 +1983,13 @@ func TestIsOnBaseBranch(t *testing.T) {
 		// (local branch or remote-tracking?), so the safe response is to
 		// refuse to match either way. The downstream merge-base / range
 		// check will surface any real "nothing to review" condition.
-		remote := NewBareTestRepo(t)
 		repo := NewTestRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.SetHeadBranch("main")
 		repo.CommitFile("file.txt", "content", "initial")
-		repo.Run("remote", "add", "feature", remote.Dir)
-		repo.Run("branch", "feature/foo")
 		head := repo.HeadSHA()
-		repo.Run("update-ref", "refs/remotes/feature/foo", head)
+		repo.AddRemote("feature", "/dev/null")
+		repo.SetRef("refs/heads/feature/foo", head)
+		repo.SetRef("refs/remotes/feature/foo", head)
 
 		assert.False(t, IsOnBaseBranch(repo.Dir, "foo", "feature/foo"),
 			"ambiguous ref must not be stripped")
@@ -2749,19 +2849,19 @@ func TestLooksLikeSHA(t *testing.T) {
 func TestGetBranchBase(t *testing.T) {
 	t.Run("returns empty when not configured", func(t *testing.T) {
 		repo := NewTestRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.SetHeadBranch("main")
 		repo.CommitFile("base.txt", "base", "initial")
-		repo.Run("checkout", "-b", "feature")
+		repo.CheckoutNewBranch("feature")
 
 		assert.Empty(t, GetBranchBase(repo.Dir, "HEAD"))
 	})
 
 	t.Run("returns local bare name when no remote-tracking exists", func(t *testing.T) {
 		repo := NewTestRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.SetHeadBranch("main")
 		repo.CommitFile("base.txt", "base", "initial")
-		repo.Run("checkout", "-b", "feature")
-		repo.Run("config", "branch.feature.base", "main")
+		repo.CheckoutNewBranch("feature")
+		repo.SetBranchBase("feature", "main")
 
 		assert.Equal(t, "main", GetBranchBase(repo.Dir, "HEAD"))
 	})
@@ -2772,18 +2872,18 @@ func TestGetBranchBase(t *testing.T) {
 		// base..HEAD range. The fix translates the bare name to origin/main
 		// when local main is just an ancestor of origin/main.
 		repo := NewTestRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.SetHeadBranch("main")
 		repo.CommitFile("base.txt", "base", "initial")
 		staleMainSHA := repo.HeadSHA()
 		repo.CommitFile("trunk.txt", "trunk", "trunk advance")
 		freshOriginSHA := repo.HeadSHA()
 		// Rewind local main so it lags one commit behind origin/main.
-		repo.Run("update-ref", "refs/heads/main", staleMainSHA)
-		repo.Run("remote", "add", "origin", "/dev/null")
-		repo.Run("update-ref", "refs/remotes/origin/main", freshOriginSHA)
-		repo.Run("checkout", "-b", "feature", freshOriginSHA)
+		repo.SetRef("refs/heads/main", staleMainSHA)
+		repo.AddRemote("origin", "/dev/null")
+		repo.SetRef("refs/remotes/origin/main", freshOriginSHA)
+		repo.CheckoutNewBranch("feature", freshOriginSHA)
 		repo.CommitFile("feature.txt", "f", "feature commit")
-		repo.Run("config", "branch.feature.base", "main")
+		repo.SetBranchBase("feature", "main")
 
 		assert.Equal(t, "origin/main", GetBranchBase(repo.Dir, "HEAD"))
 	})
@@ -2793,44 +2893,44 @@ func TestGetBranchBase(t *testing.T) {
 		// user's local branch is not just stale — respect their config
 		// rather than silently picking a different base.
 		repo := NewTestRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.SetHeadBranch("main")
 		repo.CommitFile("base.txt", "base", "initial")
 		baseSHA := repo.HeadSHA()
 		repo.CommitFile("origin.txt", "origin", "origin-only commit")
 		originMainSHA := repo.HeadSHA()
 		// Local main diverges with its own commit not present on origin/main.
-		repo.Run("update-ref", "refs/heads/main", baseSHA)
-		repo.Run("checkout", "main")
+		repo.SetRef("refs/heads/main", baseSHA)
+		repo.CheckoutBranch("main")
 		repo.CommitFile("local.txt", "local", "local-only commit")
-		repo.Run("remote", "add", "origin", "/dev/null")
-		repo.Run("update-ref", "refs/remotes/origin/main", originMainSHA)
-		repo.Run("checkout", "-b", "feature")
-		repo.Run("config", "branch.feature.base", "main")
+		repo.AddRemote("origin", "/dev/null")
+		repo.SetRef("refs/remotes/origin/main", originMainSHA)
+		repo.CheckoutNewBranch("feature")
+		repo.SetBranchBase("feature", "main")
 
 		assert.Equal(t, "main", GetBranchBase(repo.Dir, "HEAD"))
 	})
 
 	t.Run("returns origin counterpart when local branch is missing", func(t *testing.T) {
 		repo := NewTestRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/scratch")
+		repo.SetHeadBranch("scratch")
 		repo.CommitFile("base.txt", "base", "initial")
 		originSHA := repo.HeadSHA()
-		repo.Run("remote", "add", "origin", "/dev/null")
-		repo.Run("update-ref", "refs/remotes/origin/main", originSHA)
+		repo.AddRemote("origin", "/dev/null")
+		repo.SetRef("refs/remotes/origin/main", originSHA)
 		// Note: no refs/heads/main. Branch from origin/main directly.
-		repo.Run("checkout", "-b", "feature", originSHA)
+		repo.CheckoutNewBranch("feature", originSHA)
 		repo.CommitFile("feature.txt", "f", "feature commit")
-		repo.Run("config", "branch.feature.base", "main")
+		repo.SetBranchBase("feature", "main")
 
 		assert.Equal(t, "origin/main", GetBranchBase(repo.Dir, "HEAD"))
 	})
 
 	t.Run("returns qualified ref unchanged", func(t *testing.T) {
 		repo := NewTestRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.SetHeadBranch("main")
 		repo.CommitFile("base.txt", "base", "initial")
-		repo.Run("checkout", "-b", "feature")
-		repo.Run("config", "branch.feature.base", "upstream/main")
+		repo.CheckoutNewBranch("feature")
+		repo.SetBranchBase("feature", "upstream/main")
 
 		assert.Equal(t, "upstream/main", GetBranchBase(repo.Dir, "HEAD"))
 	})
@@ -2840,17 +2940,17 @@ func TestGetBranchBase(t *testing.T) {
 		// names must still get stale-ancestor translation — treating any
 		// '/' as a remote prefix would skip the fix for these cases.
 		repo := NewTestRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/release/1.2")
+		repo.SetHeadBranch("release/1.2")
 		repo.CommitFile("base.txt", "base", "initial")
 		staleSHA := repo.HeadSHA()
 		repo.CommitFile("trunk.txt", "t", "trunk advance")
 		freshSHA := repo.HeadSHA()
-		repo.Run("update-ref", "refs/heads/release/1.2", staleSHA)
-		repo.Run("remote", "add", "origin", "/dev/null")
-		repo.Run("update-ref", "refs/remotes/origin/release/1.2", freshSHA)
-		repo.Run("checkout", "-b", "feature", freshSHA)
+		repo.SetRef("refs/heads/release/1.2", staleSHA)
+		repo.AddRemote("origin", "/dev/null")
+		repo.SetRef("refs/remotes/origin/release/1.2", freshSHA)
+		repo.CheckoutNewBranch("feature", freshSHA)
 		repo.CommitFile("feature.txt", "f", "feature commit")
-		repo.Run("config", "branch.feature.base", "release/1.2")
+		repo.SetBranchBase("feature", "release/1.2")
 
 		assert.Equal(t, "origin/release/1.2", GetBranchBase(repo.Dir, "HEAD"))
 	})
@@ -2859,13 +2959,13 @@ func TestGetBranchBase(t *testing.T) {
 		// An unambiguous remote-tracking ref (refs/remotes/<value> exists,
 		// no shadowing local branch) is not subject to translation.
 		repo := NewTestRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.SetHeadBranch("main")
 		repo.CommitFile("base.txt", "base", "initial")
 		mainSHA := repo.HeadSHA()
-		repo.Run("remote", "add", "upstream", "/dev/null")
-		repo.Run("update-ref", "refs/remotes/upstream/main", mainSHA)
-		repo.Run("checkout", "-b", "feature")
-		repo.Run("config", "branch.feature.base", "upstream/main")
+		repo.AddRemote("upstream", "/dev/null")
+		repo.SetRef("refs/remotes/upstream/main", mainSHA)
+		repo.CheckoutNewBranch("feature")
+		repo.SetBranchBase("feature", "upstream/main")
 
 		assert.Equal(t, "upstream/main", GetBranchBase(repo.Dir, "HEAD"))
 	})
@@ -2876,17 +2976,16 @@ func TestGetBranchBase(t *testing.T) {
 		// fork) must NOT be silently substituted — that would compute the
 		// merge-base against a different remote than the user intended.
 		repo := NewTestRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.SetHeadBranch("main")
 		repo.CommitFile("base.txt", "base", "initial")
 		mainSHA := repo.HeadSHA()
-		repo.Run("remote", "add", "origin", "/dev/null")
-		repo.Run("update-ref", "refs/remotes/origin/main", mainSHA)
+		repo.AddRemote("origin", "/dev/null")
+		repo.SetRef("refs/remotes/origin/main", mainSHA)
 		// Configure local main to track upstream/main, but never set up
 		// the corresponding remote-tracking ref.
-		repo.Run("config", "branch.main.remote", "upstream")
-		repo.Run("config", "branch.main.merge", "refs/heads/main")
-		repo.Run("checkout", "-b", "feature")
-		repo.Run("config", "branch.feature.base", "main")
+		repo.SetBranchUpstream("main", "upstream", "main")
+		repo.CheckoutNewBranch("feature")
+		repo.SetBranchBase("feature", "main")
 
 		assert.Equal(t, "main", GetBranchBase(repo.Dir, "HEAD"),
 			"missing upstream must not be substituted with origin counterpart")
@@ -2899,16 +2998,16 @@ func TestGetBranchBase(t *testing.T) {
 		// upstream/main happens to exist. The user explicitly remote-
 		// qualified the value; either it resolves or git surfaces an error.
 		repo := NewTestRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.SetHeadBranch("main")
 		repo.CommitFile("base.txt", "base", "initial")
 		mainSHA := repo.HeadSHA()
-		repo.Run("remote", "add", "origin", "/dev/null")
+		repo.AddRemote("origin", "/dev/null")
 		// origin holds a stray ref shaped like a remote-qualified path —
 		// e.g., a past push of a local branch literally named
 		// "upstream/main". refs/remotes/upstream/main remains absent.
-		repo.Run("update-ref", "refs/remotes/origin/upstream/main", mainSHA)
-		repo.Run("checkout", "-b", "feature")
-		repo.Run("config", "branch.feature.base", "upstream/main")
+		repo.SetRef("refs/remotes/origin/upstream/main", mainSHA)
+		repo.CheckoutNewBranch("feature")
+		repo.SetBranchBase("feature", "upstream/main")
 
 		assert.Equal(t, "upstream/main", GetBranchBase(repo.Dir, "HEAD"),
 			"explicit remote-qualified value must not collapse to origin/<value>")
@@ -2919,16 +3018,15 @@ func TestGetBranchBase(t *testing.T) {
 		// targets another local branch. origin/<name> is unrelated and
 		// must not be silently substituted.
 		repo := NewTestRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/develop")
+		repo.SetHeadBranch("develop")
 		repo.CommitFile("base.txt", "base", "initial")
 		developSHA := repo.HeadSHA()
-		repo.Run("checkout", "-b", "main")
-		repo.Run("config", "branch.main.remote", ".")
-		repo.Run("config", "branch.main.merge", "refs/heads/develop")
-		repo.Run("remote", "add", "origin", "/dev/null")
-		repo.Run("update-ref", "refs/remotes/origin/main", developSHA)
-		repo.Run("checkout", "-b", "feature")
-		repo.Run("config", "branch.feature.base", "main")
+		repo.CheckoutNewBranch("main")
+		repo.SetBranchUpstream("main", ".", "develop")
+		repo.AddRemote("origin", "/dev/null")
+		repo.SetRef("refs/remotes/origin/main", developSHA)
+		repo.CheckoutNewBranch("feature")
+		repo.SetBranchBase("feature", "main")
 
 		assert.Equal(t, "main", GetBranchBase(repo.Dir, "HEAD"),
 			"local-branch tracking must not be substituted with origin counterpart")
@@ -2939,21 +3037,20 @@ func TestGetBranchBase(t *testing.T) {
 		// also exists (e.g., points at the user's fork). The base should
 		// resolve to upstream/main because that's what local main tracks.
 		repo := NewTestRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
+		repo.SetHeadBranch("main")
 		repo.CommitFile("base.txt", "base", "initial")
 		mainSHA := repo.HeadSHA()
 		repo.CommitFile("trunk.txt", "trunk", "upstream advance")
 		upstreamSHA := repo.HeadSHA()
-		repo.Run("update-ref", "refs/heads/main", mainSHA)
-		repo.Run("remote", "add", "origin", "/dev/null")
-		repo.Run("remote", "add", "upstream", "/dev/null")
-		repo.Run("update-ref", "refs/remotes/origin/main", mainSHA)
-		repo.Run("update-ref", "refs/remotes/upstream/main", upstreamSHA)
-		repo.Run("config", "branch.main.remote", "upstream")
-		repo.Run("config", "branch.main.merge", "refs/heads/main")
-		repo.Run("checkout", "-b", "feature", upstreamSHA)
+		repo.SetRef("refs/heads/main", mainSHA)
+		repo.AddRemote("origin", "/dev/null")
+		repo.AddRemote("upstream", "/dev/null")
+		repo.SetRef("refs/remotes/origin/main", mainSHA)
+		repo.SetRef("refs/remotes/upstream/main", upstreamSHA)
+		repo.SetBranchUpstream("main", "upstream", "main")
+		repo.CheckoutNewBranch("feature", upstreamSHA)
 		repo.CommitFile("feature.txt", "f", "feature commit")
-		repo.Run("config", "branch.feature.base", "main")
+		repo.SetBranchBase("feature", "main")
 
 		assert.Equal(t, "upstream/main", GetBranchBase(repo.Dir, "HEAD"))
 	})
