@@ -54,6 +54,7 @@ if command -v uv >/dev/null 2>&1; then
     cd docs
     uv run --frozen bash ./zensical-docs.sh build
     uv run --frozen python scripts/check_built_site.py
+    uv run --frozen python scripts/check_public_markdown_sources.py
     uv run --frozen python scripts/check_vercel_redirects.py
   )
 else

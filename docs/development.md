@@ -132,6 +132,11 @@ its root directory. Use these project settings:
 | Build command | `uv run --frozen bash ./vercel-build.sh` |
 | Output directory | `site` |
 
+The build wrapper also copies `index.md` and every nav-listed Markdown document
+into `site/`. That keeps source-form docs available from the same deployment as
+the rendered page: for example, `/changelog.md` serves the Markdown source that
+generated `/changelog/`.
+
 Deploy committed docs changes with:
 
 ```bash

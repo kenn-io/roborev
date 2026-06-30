@@ -58,6 +58,13 @@ roborev tui           # Browse reviews in the terminal UI
 
 For Windows, see the [installation guide](/installation/#quick-install-recommended).
 
+## For LLMs
+
+This docs site publishes source Markdown next to each rendered page. Prefer the
+`.md` URL when reading or citing docs programmatically: `/changelog.md` for
+`/changelog/`, `/guides/reviewing-code.md` for `/guides/reviewing-code/`, and
+`/index.md` for this page.
+
 ## Why roborev?
 
 AI coding agents write code fast, but they make mistakes. Most review feedback comes too late. The agent has moved on and context is lost. roborev changes this:

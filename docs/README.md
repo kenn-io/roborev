@@ -16,8 +16,8 @@ clones do not pull large screenshots and PNGs into the main history.
 - `assets/update-static-assets-branch.sh`: updates curated static assets.
 - `screenshots/`: Docker/tmux/freeze screenshot generator and generated asset
   branch updater.
-- `scripts/check_built_site.py` and `scripts/check_vercel_redirects.py`:
-  post-build validation.
+- `scripts/check_built_site.py`, `scripts/check_public_markdown_sources.py`,
+  and `scripts/check_vercel_redirects.py`: post-build validation.
 
 `docs/assets/static/`, `docs/assets/generated/`, `docs/site/`, and `docs/.venv/`
 are ignored local outputs.
@@ -62,7 +62,8 @@ make docs-check
 ```
 
 `make docs-check` hydrates assets, runs a strict Zensical build, checks generated
-links/assets/metadata, and validates `vercel.json` redirects.
+links/assets/metadata, verifies public Markdown source files, and validates
+`vercel.json` redirects.
 
 Asset hydration force-fetches `origin/docs-assets` and
 `origin/docs-generated-assets` by default so force-pushed orphan branches do not
@@ -135,6 +136,11 @@ Vercel root directory:
 | Install command | `uv sync --frozen --no-dev` |
 | Build command | `uv run --frozen bash ./vercel-build.sh` |
 | Output directory | `site` |
+
+The build wrapper also copies `index.md` and every nav-listed Markdown document
+into `site/`. That keeps source-form docs available from the same deployment as
+the rendered page: for example, `/changelog.md` serves the Markdown source that
+generated `/changelog/`.
 
 Link the checkout once from the repository root:
 

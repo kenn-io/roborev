@@ -94,6 +94,13 @@ awk -v docs_dir="$tmp_docs_name" -v site_dir="$site_dir" '
 case "$command_name" in
   build)
     (cd "$docs_root" && "$zensical_bin" build --strict --config-file "$tmp_config_name" "$@")
+    (
+      cd "$docs_root"
+      python3 scripts/copy_public_markdown_sources.py \
+        --docs-dir "$tmp_docs_name" \
+        --site-dir "$site_dir" \
+        --config "$tmp_config_name"
+    )
     ;;
   serve)
     (cd "$docs_root" && "$zensical_bin" serve --config-file "$tmp_config_name" "$@")

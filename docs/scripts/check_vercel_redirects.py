@@ -282,6 +282,13 @@ def main() -> None:
         fail("vercel.json must set trailingSlash true")
 
     redirects = collect_redirects(data)
+    for source in redirects:
+        if source.endswith(".md"):
+            fail(
+                "Markdown source URL must be served as a static file, "
+                f"not redirected: {source}"
+            )
+
     for source, destination in PERMANENT.items():
         item = redirects.get(source)
         if not item:
