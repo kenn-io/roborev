@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"regexp"
+	"runtime"
 	"slices"
 	"strings"
 	"time"
@@ -113,6 +114,7 @@ type Config struct {
 	DefaultBackupAgent         string `toml:"default_backup_agent"`
 	DefaultBackupModel         string `toml:"default_backup_model"`
 	JobTimeoutMinutes          int    `toml:"job_timeout_minutes"`
+	HookTimeout                string `toml:"hook_timeout" comment:"Post-commit hook request timeout as a Go duration such as 30s. Empty uses the platform default (3s, 30s on Windows where git subprocess spawns are slow)."`
 	AgentQuotaCooldown         string `toml:"agent_quota_cooldown" comment:"Maximum daemon-wide cooldown after an agent quota error, as a Go duration such as 30m."`
 	ReviewReasoning            string `toml:"review_reasoning" comment:"Default reasoning level for reviews: fast, standard, medium, thorough, or maximum."`
 	RefineReasoning            string `toml:"refine_reasoning" comment:"Default reasoning level for refine: fast, standard, medium, thorough, or maximum."`
@@ -310,6 +312,7 @@ type RepoConfig struct {
 	ReviewGuidelines                string   `toml:"review_guidelines" comment:"Extra review instructions added to prompts for this repo."`
 	ReviewGuidelinesSupersedeGlobal bool     `toml:"review_guidelines_supersede_global" comment:"Use repo review_guidelines instead of appending global review_guidelines."`
 	JobTimeoutMinutes               int      `toml:"job_timeout_minutes" comment:"Override the review job timeout in minutes for this repo."`
+	HookTimeout                     string   `toml:"hook_timeout" comment:"Override the post-commit hook request timeout for this repo, as a Go duration such as 1m. Useful for large repos where the enqueue handler's git calls are slow."`
 	ExcludedBranches                []string `toml:"excluded_branches" comment:"Branches that should be skipped for automatic review in this repo."`
 	ExcludedCommitPatterns          []string `toml:"excluded_commit_patterns" comment:"Commit message substrings that should skip review for this repo."`
 	DisplayName                     string   `toml:"display_name" comment:"Display name shown for this repo in the TUI and output."`
@@ -442,6 +445,16 @@ type RepoConfig struct {
 const (
 	DefaultPiJSONSchemaExtension = "npm:@nqbao/pi-json-schema@0.1.1"
 	DefaultAgentQuotaCooldown    = 30 * time.Minute
+
+	// DefaultHookTimeout bounds how long the post-commit hook waits for the
+	// daemon's enqueue handler before giving up so a stalled daemon never
+	// blocks a commit.
+	DefaultHookTimeout = 3 * time.Second
+	// DefaultHookTimeoutWindows is the Windows default. Each git subprocess
+	// spawn costs ~250-750ms on Windows, so on a large repo the enqueue
+	// handler's sequential git calls can exceed the non-Windows budget before
+	// it can reply. The default is raised 10x to absorb that overhead. See #916.
+	DefaultHookTimeoutWindows = 30 * time.Second
 )
 
 // DefaultConfig returns the default configuration
@@ -851,6 +864,49 @@ func ResolveJobTimeout(repoPath string, globalCfg *Config) int {
 		globalVal = clampPositive(globalCfg.JobTimeoutMinutes)
 	}
 	return resolve(30, repoVal, globalVal)
+}
+
+// DefaultHookTimeoutForOS returns the platform default post-commit hook
+// timeout. Windows uses a longer default because each git subprocess spawn is
+// costly there (see DefaultHookTimeoutWindows).
+func DefaultHookTimeoutForOS() time.Duration {
+	if runtime.GOOS == "windows" {
+		return DefaultHookTimeoutWindows
+	}
+	return DefaultHookTimeout
+}
+
+// ResolveHookTimeout returns the post-commit hook request timeout.
+// Priority: per-repo hook_timeout > global hook_timeout > platform default.
+// Values are Go duration strings (e.g. "30s", "1m"); unparseable or
+// non-positive values are ignored in favor of the next source.
+func ResolveHookTimeout(repoPath string, globalCfg *Config) time.Duration {
+	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil {
+		if d, ok := parsePositiveDuration(repoCfg.HookTimeout); ok {
+			return d
+		}
+	}
+	if globalCfg != nil {
+		if d, ok := parsePositiveDuration(globalCfg.HookTimeout); ok {
+			return d
+		}
+	}
+	return DefaultHookTimeoutForOS()
+}
+
+// parsePositiveDuration parses a Go duration string, returning (d, true) only
+// when it is valid and strictly positive. Empty, malformed, zero, and negative
+// values return (0, false) so callers fall back to a default.
+func parsePositiveDuration(s string) (time.Duration, bool) {
+	s = strings.TrimSpace(s)
+	if s == "" {
+		return 0, false
+	}
+	d, err := time.ParseDuration(s)
+	if err != nil || d <= 0 {
+		return 0, false
+	}
+	return d, true
 }
 
 // ResolveAgentQuotaCooldown returns the maximum daemon-wide agent cooldown

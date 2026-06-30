@@ -18,11 +18,13 @@ import (
 	"go.kenn.io/roborev/internal/git"
 )
 
-// hookHTTPClient returns an HTTP client for hook requests. Short timeout
-// ensures hooks never block commits if the daemon stalls.
-// Tests can override this variable to inject custom transports.
-var hookHTTPClient = func() *http.Client {
-	return getDaemonHTTPClient(3 * time.Second)
+// hookHTTPClient returns an HTTP client for hook requests with the given
+// timeout, which bounds how long the hook waits for the daemon so a stalled
+// daemon never blocks a commit. The timeout is resolved from config (see
+// config.ResolveHookTimeout). Tests override this variable to inject custom
+// transports.
+var hookHTTPClient = func(timeout time.Duration) *http.Client {
+	return getDaemonHTTPClient(timeout)
 }
 
 // hookLogPath can be overridden in tests.
@@ -94,8 +96,15 @@ func postCommitCmd() *cobra.Command {
 				Source:   "post_commit",
 			})
 
+			// Resolve the hook timeout from config (per-repo > global >
+			// platform default). Config reads are filesystem-only, so this
+			// adds no git-subprocess overhead to the hook path. A failed
+			// global load falls back to the platform default inside Resolve.
+			globalCfg, _ := config.LoadGlobal()
+			timeout := config.ResolveHookTimeout(root, globalCfg)
+
 			ep := getDaemonEndpoint()
-			resp, err := hookHTTPClient().Post(
+			resp, err := hookHTTPClient(timeout).Post(
 				ep.BaseURL()+"/api/enqueue",
 				"application/json",
 				bytes.NewReader(reqBody),
