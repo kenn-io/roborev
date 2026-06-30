@@ -34,36 +34,36 @@ func TestResolveHookTimeoutDefault(t *testing.T) {
 
 func TestResolveHookTimeoutGlobal(t *testing.T) {
 	dir := t.TempDir()
-	cfg := &Config{HookTimeout: "45s"}
+	cfg := &Config{HookTimeoutSeconds: 45}
 	assert.Equal(t, 45*time.Second, ResolveHookTimeout(dir, cfg))
 }
 
 func TestResolveHookTimeoutRepoOverridesGlobal(t *testing.T) {
-	dir := newTempRepo(t, `hook_timeout = "90s"`)
-	cfg := &Config{HookTimeout: "45s"}
+	dir := newTempRepo(t, `hook_timeout_seconds = 90`)
+	cfg := &Config{HookTimeoutSeconds: 45}
 	assert.Equal(t, 90*time.Second, ResolveHookTimeout(dir, cfg))
 }
 
-func TestResolveHookTimeoutInvalidFallsBack(t *testing.T) {
+func TestResolveHookTimeoutNonPositiveFallsBack(t *testing.T) {
 	assert := assert.New(t)
 
-	// Invalid global with no repo config falls back to platform default.
+	// Zero/negative global with no repo config falls back to platform default.
 	dir := t.TempDir()
-	for _, bad := range []string{"", "0", "-5s", "soon", "12"} {
+	for _, bad := range []int{0, -5} {
 		assert.Equal(platformHookDefault(),
-			ResolveHookTimeout(dir, &Config{HookTimeout: bad}),
-			"global %q should fall back to platform default", bad)
+			ResolveHookTimeout(dir, &Config{HookTimeoutSeconds: bad}),
+			"global %d should fall back to platform default", bad)
 	}
 
-	// Invalid repo value falls back to a valid global value.
-	repoDir := newTempRepo(t, `hook_timeout = "nope"`)
+	// Non-positive repo value falls back to a valid global value.
+	repoDir := newTempRepo(t, `hook_timeout_seconds = -1`)
 	assert.Equal(30*time.Second,
-		ResolveHookTimeout(repoDir, &Config{HookTimeout: "30s"}))
+		ResolveHookTimeout(repoDir, &Config{HookTimeoutSeconds: 30}))
 }
 
 // TestResolveHookTimeoutWorktreeStaysFilesystemOnly verifies the hook path
 // never spawns git: a linked worktree without its own .roborev.toml must NOT
-// inherit the main checkout's hook_timeout via LoadRepoConfig's git-backed
+// inherit the main checkout's hook_timeout_seconds via LoadRepoConfig's git-backed
 // worktree fallback. It falls back to the global value instead.
 func TestResolveHookTimeoutWorktreeStaysFilesystemOnly(t *testing.T) {
 	main := t.TempDir()
@@ -74,10 +74,10 @@ func TestResolveHookTimeoutWorktreeStaysFilesystemOnly(t *testing.T) {
 	execGit(t, main, "add", ".")
 	execGit(t, main, "commit", "-m", "init")
 
-	// Main checkout carries a per-repo hook_timeout, gitignored so the git
-	// fallback in LoadRepoConfig would otherwise inherit it into a worktree.
+	// Main checkout carries a per-repo hook_timeout_seconds, gitignored so the
+	// git fallback in LoadRepoConfig would otherwise inherit it into a worktree.
 	writeTestFile(t, main, ".gitignore", ".roborev.toml\n")
-	writeRepoConfigStr(t, main, `hook_timeout = "90s"`)
+	writeRepoConfigStr(t, main, `hook_timeout_seconds = 90`)
 
 	wt := filepath.Join(t.TempDir(), "wt")
 	execGit(t, main, "worktree", "add", wt, "HEAD")
@@ -87,10 +87,10 @@ func TestResolveHookTimeoutWorktreeStaysFilesystemOnly(t *testing.T) {
 	inherited, err := LoadRepoConfig(wt)
 	require.NoError(t, err)
 	require.NotNil(t, inherited)
-	require.Equal(t, "90s", inherited.HookTimeout)
+	require.Equal(t, 90, inherited.HookTimeoutSeconds)
 
 	// ResolveHookTimeout stays filesystem-only, so it ignores the main config
 	// and uses the global value.
 	assert.Equal(t, 12*time.Second,
-		ResolveHookTimeout(wt, &Config{HookTimeout: "12s"}))
+		ResolveHookTimeout(wt, &Config{HookTimeoutSeconds: 12}))
 }
