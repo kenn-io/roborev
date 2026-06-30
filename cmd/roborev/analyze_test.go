@@ -603,10 +603,10 @@ func TestEnqueueAnalysisJobBranchName(t *testing.T) {
 
 func setupBranchTestRepo(t *testing.T) *TestGitRepo {
 	repo := newTestGitRepo(t)
-	repo.Run("checkout", "-b", "main")
+	repo.SetHeadBranch("main")
 	repo.CommitFile("base.go", "package main", "base")
 
-	repo.Run("checkout", "-b", "feature")
+	repo.CheckoutNewBranch("feature")
 	repo.CommitFile("new.go", "package main\nfunc New() {}", "add go file")
 	repo.CommitFile("docs.md", "# Docs", "add docs")
 	repo.CommitFile("config.yml", "key: val", "add config")
@@ -645,7 +645,7 @@ func TestGetBranchFiles(t *testing.T) {
 	t.Run("named branch reads from that branch", func(t *testing.T) {
 		repo := setupBranchTestRepo(t)
 		// Switch back to main, analyze feature branch by name
-		repo.Run("checkout", "main")
+		repo.SetHeadBranch("main")
 
 		files, err := getBranchFiles(t.Context(), cmd, repo.Dir, analyzeOptions{
 			branch:     "feature",
@@ -670,7 +670,7 @@ func TestGetBranchFiles(t *testing.T) {
 
 	t.Run("on base branch returns error", func(t *testing.T) {
 		repo := setupBranchTestRepo(t)
-		repo.Run("checkout", "main")
+		repo.SetHeadBranch("main")
 
 		_, err := getBranchFiles(t.Context(), cmd, repo.Dir, analyzeOptions{
 			branch:     "HEAD",

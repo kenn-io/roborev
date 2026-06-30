@@ -186,20 +186,24 @@ func TestLocalReviewValidation(t *testing.T) {
 			wantErr: "invalid --type",
 		},
 		{
-			name: "Valid Security Type",
-			opts: runOpts{Agent: "test", Reasoning: "fast", ReviewType: "security"},
+			name:    "Valid Security Type",
+			opts:    runOpts{Agent: "test", Reasoning: "fast", ReviewType: "security", Dirty: true, Quiet: true},
+			wantErr: "no uncommitted changes",
 		},
 		{
-			name: "Valid Design Type",
-			opts: runOpts{Agent: "test", Reasoning: "fast", ReviewType: "design"},
+			name:    "Valid Design Type",
+			opts:    runOpts{Agent: "test", Reasoning: "fast", ReviewType: "design", Dirty: true, Quiet: true},
+			wantErr: "no uncommitted changes",
 		},
 		{
-			name: "Valid Lookahead Type",
-			opts: runOpts{Agent: "test", Reasoning: "fast", ReviewType: "lookahead"},
+			name:    "Valid Lookahead Type",
+			opts:    runOpts{Agent: "test", Reasoning: "fast", ReviewType: "lookahead", Dirty: true, Quiet: true},
+			wantErr: "no uncommitted changes",
 		},
 		{
-			name: "Empty Type Accepted",
-			opts: runOpts{Agent: "test", Reasoning: "fast", ReviewType: ""},
+			name:    "Empty Type Accepted",
+			opts:    runOpts{Agent: "test", Reasoning: "fast", ReviewType: "", Dirty: true, Quiet: true},
+			wantErr: "no uncommitted changes",
 		},
 	}
 

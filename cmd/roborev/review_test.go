@@ -154,7 +154,7 @@ func TestEnqueueCmdPositionalArg(t *testing.T) {
 		)
 
 		shortFirstSHA := shas[0][:7]
-		_, _, err := executeReviewCmd("--repo", repo.Dir, shortFirstSHA)
+		_, _, err := executeReviewCmd("--repo", repo.Dir, shortFirstSHA, "--quiet")
 		require.NoError(t, err, "enqueue failed: %v")
 
 		req := <-reqCh
@@ -172,7 +172,7 @@ func TestEnqueueCmdPositionalArg(t *testing.T) {
 		)
 
 		shortFirstSHA := shas[0][:7]
-		_, _, err := executeReviewCmd("--repo", repo.Dir, "--sha", shortFirstSHA)
+		_, _, err := executeReviewCmd("--repo", repo.Dir, "--sha", shortFirstSHA, "--quiet")
 		require.NoError(t, err, "enqueue failed: %v")
 
 		req := <-reqCh
@@ -187,7 +187,7 @@ func TestEnqueueCmdPositionalArg(t *testing.T) {
 			repoCommitSpec{"file1.txt", "first", "first commit"},
 		)
 
-		_, _, err := executeReviewCmd("--repo", repo.Dir)
+		_, _, err := executeReviewCmd("--repo", repo.Dir, "--quiet")
 		require.NoError(t, err, "enqueue failed: %v")
 
 		req := <-reqCh
@@ -399,7 +399,7 @@ func TestReviewSinceFlag(t *testing.T) {
 			repoCommitSpec{"file2.txt", "second", "second commit"},
 		)
 
-		_, _, err := executeReviewCmd("--repo", repo.Dir, "--since", shas[0][:7])
+		_, _, err := executeReviewCmd("--repo", repo.Dir, "--since", shas[0][:7], "--quiet")
 		require.NoError(t, err)
 
 		req := <-reqCh
@@ -411,7 +411,7 @@ func TestReviewSinceFlag(t *testing.T) {
 		repo, _ := setupTestEnvironment(t)
 		repo.CommitFile("file.txt", "content", "initial")
 
-		_, _, err := executeReviewCmd("--repo", repo.Dir, "--since", "nonexistent123")
+		_, _, err := executeReviewCmd("--repo", repo.Dir, "--since", "nonexistent123", "--quiet")
 		assertErrorContains(t, err, "invalid --since commit")
 	})
 
@@ -419,7 +419,7 @@ func TestReviewSinceFlag(t *testing.T) {
 		repo, _ := setupTestEnvironment(t)
 		repo.CommitFile("file.txt", "content", "initial")
 
-		_, _, err := executeReviewCmd("--repo", repo.Dir, "--since", "HEAD")
+		_, _, err := executeReviewCmd("--repo", repo.Dir, "--since", "HEAD", "--quiet")
 		assertErrorContains(t, err, "no commits since")
 	})
 }
@@ -430,7 +430,7 @@ func TestReviewBranchFlag(t *testing.T) {
 
 		repo.CommitFile("file.txt", "content", "initial")
 
-		_, _, err := executeReviewCmd("--repo", repo.Dir, "--branch")
+		_, _, err := executeReviewCmd("--repo", repo.Dir, "--branch", "--quiet")
 		assertErrorContains(t, err, "already on main")
 	})
 
@@ -440,7 +440,7 @@ func TestReviewBranchFlag(t *testing.T) {
 		repo.CommitFile("file.txt", "content", "initial")
 		repo.CheckoutNewBranch("feature")
 
-		_, _, err := executeReviewCmd("--repo", repo.Dir, "--branch")
+		_, _, err := executeReviewCmd("--repo", repo.Dir, "--branch", "--quiet")
 		assertErrorContains(t, err, "no commits on branch")
 	})
 
@@ -452,7 +452,7 @@ func TestReviewBranchFlag(t *testing.T) {
 		repo.CheckoutNewBranch("feature")
 		repo.CommitFile("feature.txt", "feature", "feature commit")
 
-		_, _, err := executeReviewCmd("--repo", repo.Dir, "--branch")
+		_, _, err := executeReviewCmd("--repo", repo.Dir, "--branch", "--quiet")
 		require.NoError(t, err)
 
 		req := <-reqCh
@@ -471,7 +471,7 @@ func TestReviewBranchFlag(t *testing.T) {
 		repo.SetBranchConfig("feature", "base", "main")
 		repo.CommitFile("feature.txt", "feature", "feature commit")
 
-		_, _, err := executeReviewCmd("--repo", repo.Dir, "--branch")
+		_, _, err := executeReviewCmd("--repo", repo.Dir, "--branch", "--quiet")
 		require.NoError(t, err)
 
 		req := <-reqCh
@@ -499,7 +499,7 @@ func TestReviewBranchFlag(t *testing.T) {
 		repo.CommitFile("feature.txt", "f", "feature commit")
 		repo.SetBranchConfig("feature", "base", "main")
 
-		_, _, err := executeReviewCmd("--repo", repo.Dir, "--branch")
+		_, _, err := executeReviewCmd("--repo", repo.Dir, "--branch", "--quiet")
 		require.NoError(t, err)
 
 		req := <-reqCh
@@ -515,7 +515,7 @@ func TestReviewFastFlag(t *testing.T) {
 
 		repo.CommitFile("file.txt", "content", "initial")
 
-		_, _, err := executeReviewCmd("--repo", repo.Dir, "--fast")
+		_, _, err := executeReviewCmd("--repo", repo.Dir, "--fast", "--quiet")
 		require.NoError(t, err)
 
 		req := <-reqCh
@@ -528,7 +528,7 @@ func TestReviewFastFlag(t *testing.T) {
 
 		repo.CommitFile("file.txt", "content", "initial")
 
-		_, _, err := executeReviewCmd("--repo", repo.Dir, "--fast", "--reasoning", "thorough")
+		_, _, err := executeReviewCmd("--repo", repo.Dir, "--fast", "--reasoning", "thorough", "--quiet")
 		require.NoError(t, err)
 
 		req := <-reqCh
@@ -570,9 +570,6 @@ func writeRoborevConfig(t *testing.T, repo *TestGitRepo, content string) {
 func TestTryBranchReview(t *testing.T) {
 	t.Run("returns false when no config", func(t *testing.T) {
 		repo := newTestGitRepo(t)
-		repo.CommitFile("file.txt", "content", "initial")
-		repo.CheckoutNewBranch("feature")
-		repo.CommitFile("feature.txt", "feature", "feature commit")
 
 		_, ok := tryBranchReview(t.Context(), repo.Dir, "")
 		assert.False(t, ok)
@@ -580,9 +577,6 @@ func TestTryBranchReview(t *testing.T) {
 
 	t.Run("returns false when config is commit", func(t *testing.T) {
 		repo := newTestGitRepo(t)
-		repo.CommitFile("file.txt", "content", "initial")
-		repo.CheckoutNewBranch("feature")
-		repo.CommitFile("feature.txt", "feature", "feature commit")
 		writeRoborevConfig(t, repo, `post_commit_review = "commit"`)
 
 		_, ok := tryBranchReview(t.Context(), repo.Dir, "")
