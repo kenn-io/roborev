@@ -3,12 +3,15 @@
 package daemon
 
 import (
+	"context"
+	"io"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 )
@@ -75,6 +78,17 @@ func TestWorkerPoolE2E(t *testing.T) {
 }
 
 func TestWorkerPoolCancelRunningJob(t *testing.T) {
+	originalTestAgent, err := agent.Get("test")
+	require.NoError(t, err)
+	agent.Register(&agent.FakeAgent{
+		NameStr: "test",
+		ReviewFn: func(ctx context.Context, _, _, _ string, _ io.Writer) (string, error) {
+			<-ctx.Done()
+			return "", ctx.Err()
+		},
+	})
+	t.Cleanup(func() { agent.Register(originalTestAgent) })
+
 	tc := newWorkerTestContext(t, 1)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 	job := tc.createJob(t, sha)
@@ -101,7 +115,7 @@ func TestWorkerPoolCancelRunningJob(t *testing.T) {
 		}, "Expected status 'canceled', got '%s'", finalJob.Status)
 	}
 
-	_, err := tc.DB.GetReviewByJobID(job.ID)
+	_, err = tc.DB.GetReviewByJobID(job.ID)
 	if err == nil {
 		assert.Condition(t, func() bool {
 			return false

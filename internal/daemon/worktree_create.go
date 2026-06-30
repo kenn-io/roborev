@@ -118,14 +118,30 @@ func configuredAttributeFileUsesGitLFS(ctx context.Context, repoPath string) (bo
 	out, err := gitOutput(ctx, repoPath, "config", "--path", "--get", "core.attributesFile")
 	if err != nil {
 		if isGitExitCode(err, 1) {
-			return false, true
+			return defaultAttributeFileUsesGitLFS(ctx, repoPath)
 		}
+		return false, false
+	}
+	attrPath := strings.TrimSpace(string(out))
+	if attrPath == "" {
+		return defaultAttributeFileUsesGitLFS(ctx, repoPath)
+	}
+	return attributePathUsesGitLFS(repoPath, attrPath)
+}
+
+func defaultAttributeFileUsesGitLFS(ctx context.Context, repoPath string) (bool, bool) {
+	out, err := gitOutput(ctx, repoPath, "var", "GIT_ATTR_GLOBAL")
+	if err != nil {
 		return false, false
 	}
 	attrPath := strings.TrimSpace(string(out))
 	if attrPath == "" {
 		return false, true
 	}
+	return attributePathUsesGitLFS(repoPath, attrPath)
+}
+
+func attributePathUsesGitLFS(repoPath, attrPath string) (bool, bool) {
 	if !filepath.IsAbs(attrPath) {
 		attrPath = filepath.Join(repoPath, attrPath)
 	}

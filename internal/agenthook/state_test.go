@@ -87,6 +87,33 @@ func TestRepoHeadKey(t *testing.T) {
 	assert.NotEqual(repoHeadKey("/repo", "main"), repoHeadKey("/repo", "feature"))
 }
 
+func TestCurrentGitScopeReportsBranchFromRevParse(t *testing.T) {
+	t.Run("attached branch", func(t *testing.T) {
+		repo := testutil.NewGitRepo(t)
+		repo.CommitFile("base.txt", "base\n", "base")
+		repo.CheckoutNewBranch("feature/scope")
+
+		scope, ok := currentGitScope(repo.Path())
+
+		require.True(t, ok)
+		assert.Equal(t, "feature/scope", scope.Branch)
+		assert.Equal(t, repo.HeadSHA(), scope.Head)
+	})
+
+	t.Run("detached head", func(t *testing.T) {
+		repo := testutil.NewGitRepo(t)
+		repo.CommitFile("base.txt", "base\n", "base")
+		head := repo.HeadSHA()
+		repo.Checkout(head)
+
+		scope, ok := currentGitScope(repo.Path())
+
+		require.True(t, ok)
+		assert.Empty(t, scope.Branch)
+		assert.Equal(t, head, scope.Head)
+	})
+}
+
 func TestCommitsSincePromptAddsLegacyCountToSHASequence(t *testing.T) {
 	st := SessionState{
 		CommitCountsSincePrompt: map[string]int{"seq": 2},

@@ -710,18 +710,22 @@ func currentGitScope(cwd string) (gitScope, bool) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
 	defer cancel()
 	out, err := agentHookGit.Output(ctx, cwd,
-		"rev-parse", "--show-toplevel", "--git-dir", "--git-common-dir", "HEAD")
+		"rev-parse", "--show-toplevel", "--git-dir", "--git-common-dir", "HEAD", "--abbrev-ref", "HEAD")
 	if err != nil {
 		return gitScope{}, false
 	}
 	lines := strings.Split(strings.ReplaceAll(string(out), "\r\n", "\n"), "\n")
-	if len(lines) < 4 {
+	if len(lines) < 5 {
 		return gitScope{}, false
 	}
 	root := cleanGitPath(lines[0])
 	gitDir := absGitPath(cwd, cleanGitPath(lines[1]))
 	commonDir := absGitPath(cwd, cleanGitPath(lines[2]))
 	head := strings.TrimSpace(lines[3])
+	branch := strings.TrimSpace(lines[4])
+	if branch == "HEAD" {
+		branch = ""
+	}
 	if root == "" || gitDir == "" || commonDir == "" || head == "" {
 		return gitScope{}, false
 	}
@@ -730,7 +734,7 @@ func currentGitScope(cwd string) (gitScope, bool) {
 		GitDir:       gitDir,
 		CommonDir:    commonDir,
 		Head:         head,
-		Branch:       branchFromGitHead(gitDir),
+		Branch:       branch,
 	}, true
 }
 
@@ -750,18 +754,6 @@ func absGitPath(base, path string) string {
 		path = filepath.Join(base, path)
 	}
 	return filepath.Clean(path)
-}
-
-func branchFromGitHead(gitDir string) string {
-	data, err := os.ReadFile(filepath.Join(gitDir, "HEAD"))
-	if err != nil {
-		return ""
-	}
-	ref, ok := strings.CutPrefix(strings.TrimSpace(string(data)), "ref:")
-	if !ok {
-		return ""
-	}
-	return strings.TrimPrefix(strings.TrimSpace(ref), "refs/heads/")
 }
 
 func resolveHookScope(ctx context.Context, cwd, configuredAddr string) (hookScope, bool) {

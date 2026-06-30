@@ -70,4 +70,17 @@ func TestCheckoutUsesGitLFS(t *testing.T) {
 
 		assert.True(t, checkoutUsesGitLFS(context.Background(), repo.Path()))
 	})
+
+	t.Run("default global attributes file", func(t *testing.T) {
+		xdgConfigHome := filepath.Join(t.TempDir(), "xdg-config")
+		t.Setenv("XDG_CONFIG_HOME", xdgConfigHome)
+
+		repo := testutil.NewGitRepo(t)
+		repo.CommitFile("file.bin", "placeholder\n", "base")
+		attrPath := filepath.Join(xdgConfigHome, "git", "attributes")
+		require.NoError(t, os.MkdirAll(filepath.Dir(attrPath), 0o755))
+		require.NoError(t, os.WriteFile(attrPath, []byte("*.bin filter=lfs diff=lfs merge=lfs -text\n"), 0o644))
+
+		assert.True(t, checkoutUsesGitLFS(context.Background(), repo.Path()))
+	})
 }
