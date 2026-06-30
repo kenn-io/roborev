@@ -449,8 +449,10 @@ func TestPanelPermanentPreflightErrorAbandons(t *testing.T) {
 // `## roborev:` header is wrapped exactly once; a raw/all-failed body that
 // already starts with the header is not double-wrapped.
 func TestPanelWrapperNoDoubleHeader(t *testing.T) {
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+
 	t.Run("plain output gets one header", func(t *testing.T) {
-		h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+		h.Cfg.CI.IncludeCosts = false
 		comments := h.CaptureComments()
 		_, synth, _ := h.seedCIPanelRun(t, "acme/api", 9, "headsha555", "base..headsha555",
 			[]jobSpec{{Agent: "test", ReviewType: "review", Status: "done", Output: "x"}})
@@ -464,7 +466,7 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 	})
 
 	t.Run("plain output is not collapsed", func(t *testing.T) {
-		h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+		h.Cfg.CI.IncludeCosts = false
 		comments := h.CaptureComments()
 		_, synth, _ := h.seedCIPanelRun(t, "acme/api", 13, "headsha888", "base..headsha888",
 			[]jobSpec{{Agent: "test", ReviewType: "review", Status: "done", Output: "x"}})
@@ -481,7 +483,7 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 	})
 
 	t.Run("plain output footer includes panel members", func(t *testing.T) {
-		h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+		h.Cfg.CI.IncludeCosts = false
 		comments := h.CaptureComments()
 		const headSHA = "9999999cccccc"
 		_, synth, _ := h.seedCIPanelRun(t, "acme/api", 14, headSHA, "base.."+headSHA,
@@ -507,7 +509,7 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 	})
 
 	t.Run("clean synthesis body gets one panel footer", func(t *testing.T) {
-		h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+		h.Cfg.CI.IncludeCosts = false
 		comments := h.CaptureComments()
 		const headSHA = "b00cdbf1234567"
 		_, synth, _ := h.seedCIPanelRun(t, "acme/api", 22, headSHA, "base.."+headSHA,
@@ -530,7 +532,7 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 	})
 
 	t.Run("footer uses synthesis review agent", func(t *testing.T) {
-		h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+		h.Cfg.CI.IncludeCosts = false
 		comments := h.CaptureComments()
 		const headSHA = "facefeed1234567"
 		_, synth, _ := h.seedCIPanelRun(t, "acme/api", 20, headSHA, "base.."+headSHA,
@@ -548,7 +550,7 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 	})
 
 	t.Run("headed pass output keeps result text", func(t *testing.T) {
-		h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+		h.Cfg.CI.IncludeCosts = false
 		comments := h.CaptureComments()
 		const headSHA = "1234567feedface"
 		_, synth, _ := h.seedCIPanelRun(t, "acme/api", 19, headSHA, "base.."+headSHA,
@@ -565,7 +567,7 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 	})
 
 	t.Run("plain output footer hides cost by default", func(t *testing.T) {
-		h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+		h.Cfg.CI.IncludeCosts = false
 		comments := h.CaptureComments()
 		_, synth, members := h.seedCIPanelRun(t, "acme/api", 18, "headsha3333", "base..headsha3333",
 			[]jobSpec{
@@ -593,7 +595,6 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 	})
 
 	t.Run("plain output footer includes runtime and cost when enabled", func(t *testing.T) {
-		h := newCIPollerHarness(t, "https://github.com/acme/api.git")
 		h.Cfg.CI.IncludeCosts = true
 		comments := h.CaptureComments()
 		_, synth, members := h.seedCIPanelRun(t, "acme/api", 16, "headsha1111", "base..headsha1111",
@@ -620,7 +621,6 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 	})
 
 	t.Run("plain output footer shows partial cost when enabled", func(t *testing.T) {
-		h := newCIPollerHarness(t, "https://github.com/acme/api.git")
 		h.Cfg.CI.IncludeCosts = true
 		comments := h.CaptureComments()
 		_, synth, members := h.seedCIPanelRun(t, "acme/api", 17, "headsha2222", "base..headsha2222",
@@ -643,7 +643,7 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 	})
 
 	t.Run("plain output footer includes failed and canceled members", func(t *testing.T) {
-		h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+		h.Cfg.CI.IncludeCosts = false
 		comments := h.CaptureComments()
 		_, synth, _ := h.seedCIPanelRun(t, "acme/api", 15, "headsha000", "base..headsha000",
 			[]jobSpec{
@@ -663,7 +663,7 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 	})
 
 	t.Run("prefixed output is not re-wrapped", func(t *testing.T) {
-		h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+		h.Cfg.CI.IncludeCosts = false
 		comments := h.CaptureComments()
 		const headSHA = "abc1234feedface"
 		_, synth, _ := h.seedCIPanelRun(t, "acme/api", 10, headSHA, "base.."+headSHA,
@@ -683,7 +683,7 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 	})
 
 	t.Run("prefixed output is bounded with footer", func(t *testing.T) {
-		h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+		h.Cfg.CI.IncludeCosts = false
 		comments := h.CaptureComments()
 		const headSHA = "7654321feedface"
 		_, synth, _ := h.seedCIPanelRun(t, "acme/api", 21, headSHA, "base.."+headSHA,

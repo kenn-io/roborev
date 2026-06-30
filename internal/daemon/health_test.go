@@ -22,7 +22,7 @@ func setupTestServer(t *testing.T) *Server {
 	t.Cleanup(func() { db.Close() })
 
 	cfg := config.DefaultConfig()
-	server := NewServer(db, cfg, "")
+	server := newServerWithLogs(db, cfg, "", newTestErrorLog(), newTestActivityLog())
 	t.Cleanup(func() { server.Close() })
 	return server
 }

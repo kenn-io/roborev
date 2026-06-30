@@ -120,17 +120,17 @@ func (wp *WorkerPool) Start() {
 // multiple times; only the first call performs shutdown.
 func (wp *WorkerPool) Stop() {
 	wp.stopOnce.Do(func() {
-		log.Println("Stopping worker pool...")
 		close(wp.stopCh)
 		// Wait for Start to finish wg.Add before calling Wait.
 		// If Start was never called, readyCh stays open but
 		// stopCh is closed, so any late workers exit immediately.
 		select {
 		case <-wp.readyCh:
+			log.Println("Stopping worker pool...")
 			wp.wg.Wait()
+			log.Println("Worker pool stopped")
 		default:
 		}
-		log.Println("Worker pool stopped")
 	})
 }
 

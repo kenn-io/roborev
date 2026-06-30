@@ -56,13 +56,22 @@ enabled = true
 	require.NoError(t, err)
 
 	cfg := config.DefaultConfig()
+	cfg.MaxWorkers = 1
 	srv := NewServer(db, cfg, "")
 
-	// Worker pool drives classify jobs end-to-end.
-	srv.workerPool.Start()
-	t.Cleanup(func() { srv.workerPool.Stop() })
-
 	return &autoDesignE2E{t: t, repo: repo, db: db, srv: srv, row: row}
+}
+
+func (e *autoDesignE2E) startWorkers() {
+	e.t.Helper()
+	e.srv.workerPool.Start()
+	e.t.Cleanup(func() { e.srv.workerPool.Stop() })
+}
+
+func (e *autoDesignE2E) completeParentReview(job *storage.ReviewJob) {
+	e.t.Helper()
+	_, err := e.db.Exec(`UPDATE review_jobs SET status = ? WHERE id = ?`, storage.JobStatusDone, job.ID)
+	require.NoError(e.t, err)
 }
 
 // enqueueReviewFor creates a primary review job the way the HTTP
@@ -260,7 +269,9 @@ func TestE2EAutoDesign_ClassifierPath_PromotesToDesignReview(t *testing.T) {
 	SetTestClassifierVerdict(true, "new package detected")
 	t.Cleanup(func() { SetTestClassifierVerdict(false, "") })
 
-	e.enqueueReviewFor(sha, "feat: small helper")
+	parent := e.enqueueReviewFor(sha, "feat: small helper")
+	e.completeParentReview(parent)
+	e.startWorkers()
 
 	// Wait for the worker to promote the classify row in place to a
 	// real review row. The initial row appears immediately with
@@ -308,7 +319,9 @@ func TestE2EAutoDesign_ClassifierPath_SkipsAmbiguous(t *testing.T) {
 	SetTestClassifierVerdict(false, "local rename only")
 	t.Cleanup(func() { SetTestClassifierVerdict(false, "") })
 
-	e.enqueueReviewFor(sha, "feat: rename var")
+	parent := e.enqueueReviewFor(sha, "feat: rename var")
+	e.completeParentReview(parent)
+	e.startWorkers()
 
 	// Wait for the worker to transition the classify row to skipped.
 	got := e.eventuallyAutoDesignMatches(sha, "status=skipped",
@@ -436,7 +449,9 @@ classifier_timeout_seconds = 1
 
 	// Don't set test verdict — let the real path fire, which will hit
 	// config.ResolveClassifyAgent's validator and fail.
-	e.enqueueReviewFor(sha, "feat: tweak")
+	parent := e.enqueueReviewFor(sha, "feat: tweak")
+	e.completeParentReview(parent)
+	e.startWorkers()
 
 	got := e.eventuallyAutoDesignMatches(sha, "status=skipped (classifier failed)",
 		func(j *storage.ReviewJob) bool { return j.Status == storage.JobStatusSkipped })
