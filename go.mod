@@ -14,7 +14,7 @@ require (
 	github.com/coder/acp-go-sdk v0.13.5
 	github.com/coreos/go-systemd/v22 v22.7.0
 	github.com/danielgtaylor/huma/v2 v2.38.0
-	github.com/doordash-oss/oapi-codegen-dd/v3 v3.75.5
+	github.com/doordash-oss/oapi-codegen-dd/v3 v3.75.7
 	github.com/fsnotify/fsnotify v1.10.1
 	github.com/go-git/go-git/v5 v5.19.1
 	github.com/go-playground/validator/v10 v10.30.3
@@ -26,15 +26,15 @@ require (
 	github.com/mattn/go-runewidth v0.0.24
 	github.com/muesli/ansi v0.0.0-20230316100256-276c6243b2f6
 	github.com/muesli/termenv v0.16.0
-	github.com/oapi-codegen/runtime v1.4.1
-	github.com/pelletier/go-toml/v2 v2.3.1
+	github.com/oapi-codegen/runtime v1.4.2
+	github.com/pelletier/go-toml/v2 v2.4.1
 	github.com/sourcegraph/go-diff v0.8.0
 	github.com/spf13/cobra v1.10.2
 	github.com/stretchr/testify v1.11.1
-	go.kenn.io/kit v0.1.7
+	go.kenn.io/kit v0.1.8
 	golang.org/x/term v0.44.0
 	gopkg.in/yaml.v3 v3.0.1
-	modernc.org/sqlite v1.52.0
+	modernc.org/sqlite v1.53.0
 )
 
 require (
@@ -104,7 +104,7 @@ require (
 	golang.org/x/sys v0.46.0 // indirect
 	golang.org/x/text v0.37.0 // indirect
 	gopkg.in/warnings.v0 v0.1.2 // indirect
-	modernc.org/libc v1.72.3 // indirect
+	modernc.org/libc v1.73.4 // indirect
 	modernc.org/mathutil v1.7.1 // indirect
 	modernc.org/memory v1.11.0 // indirect
 )
