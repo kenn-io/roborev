@@ -224,6 +224,13 @@ func (r *TestRepo) HeadSHA() string {
 	return r.RevParse("HEAD")
 }
 
+func (r *TestRepo) resolveRevision(repo *gogit.Repository, rev string) plumbing.Hash {
+	r.t.Helper()
+	resolved, err := repo.ResolveRevision(plumbing.Revision(rev))
+	require.NoError(r.t, err, "resolve ref %q", rev)
+	return *resolved
+}
+
 // RunGit runs a git command in the repo directory.
 func (r *TestRepo) RunGit(args ...string) {
 	r.t.Helper()
@@ -380,7 +387,7 @@ func headSHA(dir string) (string, error) {
 }
 
 // CheckoutNewBranch creates and checks out branch at the current HEAD or the
-// optional starting SHA, without spawning a git process.
+// optional starting ref, without spawning a git process.
 func (r *TestRepo) CheckoutNewBranch(branch string, start ...string) {
 	r.t.Helper()
 	if len(start) > 1 {
@@ -392,7 +399,7 @@ func (r *TestRepo) CheckoutNewBranch(branch string, start ...string) {
 	}
 	var hash plumbing.Hash
 	if len(start) == 1 {
-		hash = plumbing.NewHash(start[0])
+		hash = r.resolveRevision(repo, start[0])
 	} else {
 		head, err := repo.Head()
 		if err != nil {
@@ -436,7 +443,7 @@ func (r *TestRepo) CheckoutBranchForce(branch string, start ...string) {
 	require.NoError(r.t, err, "open repo %q", r.Root)
 	var hash plumbing.Hash
 	if len(start) == 1 {
-		hash = plumbing.NewHash(start[0])
+		hash = r.resolveRevision(repo, start[0])
 	} else {
 		head, err := repo.Head()
 		require.NoError(r.t, err, "read HEAD")
@@ -459,7 +466,7 @@ func (r *TestRepo) CheckoutDetached(start ...string) {
 	require.NoError(r.t, err, "open repo %q", r.Root)
 	var hash plumbing.Hash
 	if len(start) == 1 {
-		hash = plumbing.NewHash(start[0])
+		hash = r.resolveRevision(repo, start[0])
 	} else {
 		head, err := repo.Head()
 		require.NoError(r.t, err, "read HEAD")
@@ -504,6 +511,57 @@ func (r *TestRepo) SetRef(ref, sha string) {
 	if err != nil {
 		r.t.Fatalf("set ref %q: %v", ref, err)
 	}
+}
+
+func (r *TestRepo) AddRemote(name, url string) {
+	r.t.Helper()
+	r.appendConfig("remote", name, map[string]string{
+		"url":   url,
+		"fetch": "+refs/heads/*:refs/remotes/" + name + "/*",
+	})
+}
+
+func (r *TestRepo) SetRemoteHead(remote, branch string) {
+	r.t.Helper()
+	r.writeGitFile("refs/remotes/"+remote+"/HEAD", "ref: refs/remotes/"+remote+"/"+branch+"\n")
+}
+
+func (r *TestRepo) SetBranchConfig(branch, key, value string) {
+	r.t.Helper()
+	r.appendConfig("branch", branch, map[string]string{key: value})
+}
+
+func (r *TestRepo) writeGitFile(relPath, content string) {
+	r.t.Helper()
+	path := filepath.Join(r.GitDir, filepath.FromSlash(relPath))
+	require.NoError(r.t, os.MkdirAll(filepath.Dir(path), 0o755), "create git dir for %s", relPath)
+	require.NoError(r.t, os.WriteFile(path, []byte(content), 0o644), "write git file %s", relPath)
+}
+
+func (r *TestRepo) appendConfig(section, subsection string, values map[string]string) {
+	r.t.Helper()
+	keys := make([]string, 0, len(values))
+	for key := range values {
+		keys = append(keys, key)
+	}
+	sort.Strings(keys)
+
+	var b strings.Builder
+	b.WriteByte('\n')
+	if subsection == "" {
+		fmt.Fprintf(&b, "[%s]\n", section)
+	} else {
+		fmt.Fprintf(&b, "[%s %q]\n", section, subsection)
+	}
+	for _, key := range keys {
+		fmt.Fprintf(&b, "\t%s = %s\n", key, values[key])
+	}
+
+	f, err := os.OpenFile(filepath.Join(r.GitDir, "config"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	require.NoError(r.t, err, "open git config")
+	defer f.Close()
+	_, err = f.WriteString(b.String())
+	require.NoError(r.t, err, "write git config")
 }
 
 // Config sets a git config value.

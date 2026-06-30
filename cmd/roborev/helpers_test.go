@@ -17,6 +17,7 @@ import (
 	"time"
 
 	gogit "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/spf13/cobra"
 	"github.com/stretchr/testify/require"
@@ -39,16 +40,6 @@ func newTestGitRepo(t *testing.T) *TestGitRepo {
 		t.Skip("git not available")
 	}
 	repo := testutil.NewGitRepo(t)
-	return &TestGitRepo{Dir: repo.Path(), t: t}
-}
-
-// newBareTestGitRepo creates a bare git repository for use as a remote.
-func newBareTestGitRepo(t *testing.T) *TestGitRepo {
-	t.Helper()
-	if _, err := exec.LookPath("git"); err != nil {
-		t.Skip("git not available")
-	}
-	repo := testutil.NewBareTestRepo(t)
 	return &TestGitRepo{Dir: repo.Path(), t: t}
 }
 
@@ -143,14 +134,26 @@ func (r *TestGitRepo) DetachHead(sha string) {
 func (r *TestGitRepo) CheckoutNewBranch(branch string, start ...string) {
 	r.t.Helper()
 	require.LessOrEqual(r.t, len(start), 1, "CheckoutNewBranch accepts at most one start ref")
-	sha := ""
-	if len(start) == 0 {
-		sha = r.HeadSHA()
+	repo, err := gogit.PlainOpen(r.Dir)
+	require.NoError(r.t, err, "open repo %q", r.Dir)
+	var hash plumbing.Hash
+	if len(start) == 1 {
+		resolved, err := repo.ResolveRevision(plumbing.Revision(start[0]))
+		require.NoError(r.t, err, "resolve ref %q", start[0])
+		hash = *resolved
 	} else {
-		sha = start[0]
+		head, err := repo.Head()
+		require.NoError(r.t, err, "read HEAD")
+		hash = head.Hash()
 	}
-	r.SetRef("refs/heads/"+branch, sha)
-	r.SetHeadBranch(branch)
+	wt, err := repo.Worktree()
+	require.NoError(r.t, err, "open worktree")
+	err = wt.Checkout(&gogit.CheckoutOptions{
+		Branch: plumbing.NewBranchReferenceName(branch),
+		Create: true,
+		Hash:   hash,
+	})
+	require.NoError(r.t, err, "checkout new branch %q", branch)
 }
 
 func (r *TestGitRepo) SetRef(ref, sha string) {

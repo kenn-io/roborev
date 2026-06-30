@@ -577,8 +577,8 @@ func TestValidateRefineContext_SinceIgnoresUpstreamMissing(t *testing.T) {
 	repo.CommitFile("second.txt", "second", "second commit")
 
 	// Configure tracking against an upstream that never resolves locally.
-	repo.Run("config", "branch.main.remote", "upstream")
-	repo.Run("config", "branch.main.merge", "refs/heads/main")
+	repo.SetBranchConfig("main", "remote", "upstream")
+	repo.SetBranchConfig("main", "merge", "refs/heads/main")
 
 	chdirForTest(t, repo.Root)
 
@@ -599,10 +599,10 @@ func TestValidateRefineContext_UpstreamMissingErrorsWithoutSince(t *testing.T) {
 	// as UpstreamMissingError rather than silently falling back to the
 	// repository default branch (which could yield the wrong range).
 	repo := testutil.InitTestRepo(t)
-	repo.RunGit("checkout", "-b", "feature")
+	repo.CheckoutNewBranch("feature")
 	repo.CommitFile("feature.txt", "feature", "feature commit")
-	repo.Run("config", "branch.feature.remote", "upstream")
-	repo.Run("config", "branch.feature.merge", "refs/heads/main")
+	repo.SetBranchConfig("feature", "remote", "upstream")
+	repo.SetBranchConfig("feature", "merge", "refs/heads/main")
 
 	chdirForTest(t, repo.Root)
 
@@ -621,7 +621,7 @@ func TestValidateRefineContext_SinceWorksOnFeatureBranch(t *testing.T) {
 	repo := testutil.InitTestRepo(t)
 	baseSHA := repo.RevParse("HEAD")
 
-	repo.RunGit("checkout", "-b", "feature")
+	repo.CheckoutNewBranch("feature")
 	repo.CommitFile("feature.txt", "feature", "feature commit")
 
 	chdirForTest(t, repo.Root)
@@ -655,11 +655,11 @@ func TestValidateRefineContext_SinceNotAncestorOfHEAD(t *testing.T) {
 
 	repo := testutil.InitTestRepo(t)
 
-	repo.RunGit("checkout", "-b", "other-branch")
+	repo.CheckoutNewBranch("other-branch")
 	repo.CommitFile("other.txt", "other", "commit on other branch")
 	otherBranchSHA := repo.RevParse("HEAD")
 
-	repo.RunGit("checkout", "main")
+	repo.CheckoutBranch("main")
 	repo.CommitFile("main2.txt", "main2", "second commit on main")
 
 	chdirForTest(t, repo.Root)
@@ -679,22 +679,21 @@ func TestValidateRefineContext_PrefersNonOriginUpstream(t *testing.T) {
 	// pick upstream/main as the base so commits already merged upstream
 	// are not refined.
 	repo := testutil.InitTestRepo(t)
-	repo.CommitFile("upstream_c2.go", "package main", "upstream c2")
-	upstreamSHA := repo.RevParse("HEAD")
+	staleOriginSHA := repo.RevParse("HEAD")
+	upstreamSHA := repo.CommitFile("upstream_c2.go", "package main", "upstream c2")
 
-	bareRemote := t.TempDir()
-	bareStale := t.TempDir()
-	repo.Run("init", "--bare", bareRemote)
-	repo.Run("init", "--bare", bareStale)
-	repo.Run("remote", "add", "upstream", bareRemote)
-	repo.Run("push", "-u", "upstream", "main")
+	repo.AddRemote("upstream", "/dev/null")
+	repo.SetRef("refs/remotes/upstream/main", upstreamSHA)
+	repo.SetBranchConfig("main", "remote", "upstream")
+	repo.SetBranchConfig("main", "merge", "refs/heads/main")
 
-	repo.Run("remote", "add", "origin", bareStale)
-	repo.Run("push", "origin", "HEAD~1:refs/heads/main")
-	repo.Run("fetch", "origin")
-	repo.Run("remote", "set-head", "origin", "main")
+	repo.AddRemote("origin", "/dev/null")
+	repo.SetRef("refs/remotes/origin/main", staleOriginSHA)
+	repo.SetRemoteHead("origin", "main")
 
-	repo.RunGit("checkout", "-b", "feature", "--track", "upstream/main")
+	repo.CheckoutNewBranch("feature", upstreamSHA)
+	repo.SetBranchConfig("feature", "remote", "upstream")
+	repo.SetBranchConfig("feature", "merge", "refs/heads/main")
 	repo.CommitFile("feature.go", "package main", "feature commit")
 
 	chdirForTest(t, repo.Root)
@@ -720,10 +719,11 @@ func TestValidateRefineContext_RefusesLocalMainTrackingNonOriginUpstream(t *test
 	// (not "origin/main"). Regression for IsOnBaseBranch's non-origin
 	// remote handling.
 	repo := testutil.InitTestRepo(t)
-	bareRemote := t.TempDir()
-	repo.Run("init", "--bare", bareRemote)
-	repo.Run("remote", "add", "upstream", bareRemote)
-	repo.Run("push", "-u", "upstream", "main")
+	mainSHA := repo.HeadSHA()
+	repo.AddRemote("upstream", "/dev/null")
+	repo.SetRef("refs/remotes/upstream/main", mainSHA)
+	repo.SetBranchConfig("main", "remote", "upstream")
+	repo.SetBranchConfig("main", "merge", "refs/heads/main")
 
 	chdirForTest(t, repo.Root)
 
@@ -740,7 +740,7 @@ func TestValidateRefineContext_FeatureBranchWithoutSinceStillWorks(t *testing.T)
 	repo := testutil.InitTestRepo(t)
 	baseSHA := repo.RevParse("HEAD")
 
-	repo.RunGit("checkout", "-b", "feature")
+	repo.CheckoutNewBranch("feature")
 	repo.CommitFile("feature.txt", "feature", "feature commit")
 
 	chdirForTest(t, repo.Root)

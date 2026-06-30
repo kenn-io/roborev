@@ -558,7 +558,7 @@ reasoning = "fast"
 func TestEnqueueAnalysisJobBranchName(t *testing.T) {
 	// Create a real git repo so GetCurrentBranch returns a known value
 	repo := newTestGitRepo(t)
-	repo.Run("checkout", "-b", "test-current")
+	repo.SetHeadBranch("test-current")
 	repo.CommitFile("init.go", "package main", "initial")
 
 	captureBranch := func(t *testing.T) (mock *httptest.Server, gotBranch *string) {
@@ -657,7 +657,7 @@ func TestGetBranchFiles(t *testing.T) {
 
 	t.Run("no code files returns error", func(t *testing.T) {
 		repo := setupBranchTestRepo(t)
-		repo.Run("checkout", "-b", "docs-only", "main")
+		repo.CheckoutNewBranch("docs-only", "main")
 		repo.CommitFile("readme.md", "# Hello", "add readme")
 
 		_, err := getBranchFiles(t.Context(), cmd, repo.Dir, analyzeOptions{
@@ -685,22 +685,23 @@ func TestGetBranchFiles(t *testing.T) {
 		// Feature branch tracks upstream/main; merge-base must be taken
 		// against upstream/main, not origin/main, so commits already
 		// merged upstream aren't re-analyzed.
-		remote := newBareTestGitRepo(t)
-		stale := newBareTestGitRepo(t)
 		repo := newTestGitRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
-		repo.CommitFile("a.go", "package main", "u1")
-		repo.CommitFile("b.go", "package main", "u2")
-		repo.Run("remote", "add", "upstream", remote.Dir)
-		repo.Run("push", "-u", "upstream", "main")
+		repo.SetHeadBranch("main")
+		staleOriginSHA := repo.CommitFile("a.go", "package main", "u1")
+		upstreamSHA := repo.CommitFile("b.go", "package main", "u2")
+		repo.AddRemote("upstream", "/dev/null")
+		repo.SetRef("refs/remotes/upstream/main", upstreamSHA)
+		repo.SetBranchConfig("main", "remote", "upstream")
+		repo.SetBranchConfig("main", "merge", "refs/heads/main")
 
 		// origin lags upstream by 1 commit.
-		repo.Run("remote", "add", "origin", stale.Dir)
-		repo.Run("push", "origin", "HEAD~1:refs/heads/main")
-		repo.Run("fetch", "origin")
-		repo.Run("remote", "set-head", "origin", "main")
+		repo.AddRemote("origin", "/dev/null")
+		repo.SetRef("refs/remotes/origin/main", staleOriginSHA)
+		repo.SetRemoteHead("origin", "main")
 
-		repo.Run("checkout", "-b", "feature", "--track", "upstream/main")
+		repo.CheckoutNewBranch("feature", upstreamSHA)
+		repo.SetBranchConfig("feature", "remote", "upstream")
+		repo.SetBranchConfig("feature", "merge", "refs/heads/main")
 		repo.CommitFile("only-new.go", "package main\nfunc New() {}", "feature work")
 
 		files, err := getBranchFiles(t.Context(), cmd, repo.Dir, analyzeOptions{branch: "HEAD"})
@@ -713,12 +714,13 @@ func TestGetBranchFiles(t *testing.T) {
 	})
 
 	t.Run("blocks local main tracking non-origin upstream", func(t *testing.T) {
-		remote := newBareTestGitRepo(t)
 		repo := newTestGitRepo(t)
-		repo.Run("symbolic-ref", "HEAD", "refs/heads/main")
-		repo.CommitFile("a.go", "package main", "initial")
-		repo.Run("remote", "add", "upstream", remote.Dir)
-		repo.Run("push", "-u", "upstream", "main")
+		repo.SetHeadBranch("main")
+		mainSHA := repo.CommitFile("a.go", "package main", "initial")
+		repo.AddRemote("upstream", "/dev/null")
+		repo.SetRef("refs/remotes/upstream/main", mainSHA)
+		repo.SetBranchConfig("main", "remote", "upstream")
+		repo.SetBranchConfig("main", "merge", "refs/heads/main")
 
 		_, err := getBranchFiles(t.Context(), cmd, repo.Dir, analyzeOptions{branch: "HEAD"})
 		require.Error(t, err, "expected error when on base branch")
