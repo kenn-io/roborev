@@ -1040,17 +1040,9 @@ func TestCIPollerProcessPR_IncludesHumanPRDiscussion(t *testing.T) {
 	h.Poller = NewCIPoller(h.DB, NewStaticConfig(h.Cfg), nil)
 	h.stubProcessPRGit()
 
-	testutil.InitTestGitRepo(t, h.RepoPath)
-	require.NoError(t, os.WriteFile(filepath.Join(h.RepoPath, "followup.txt"), []byte("followup"), 0o644))
-	cmd := exec.Command("git", "-C", h.RepoPath, "add", "followup.txt")
-	require.NoError(t, cmd.Run())
-	cmd = exec.Command("git", "-C", h.RepoPath, "commit", "-m", "followup commit")
-	require.NoError(t, cmd.Run())
-
-	headSHA := testutil.GetHeadSHA(t, h.RepoPath)
-	baseSHABytes, err := exec.Command("git", "-C", h.RepoPath, "rev-parse", "HEAD^").Output()
-	require.NoError(t, err)
-	baseSHA := strings.TrimSpace(string(baseSHABytes))
+	repo := testutil.InitTestGitRepo(t, h.RepoPath)
+	baseSHA := repo.HeadSHA()
+	headSHA := repo.CommitFile("followup.txt", "followup", "followup commit")
 
 	h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) { return baseSHA, nil }
 	h.Poller.listTrustedActorsFn = func(context.Context, string) (map[string]struct{}, error) {
@@ -1084,7 +1076,7 @@ func TestCIPollerProcessPR_IncludesHumanPRDiscussion(t *testing.T) {
 		}, nil
 	}
 
-	err = h.Poller.processPR(context.Background(), "acme/api", ghPR{
+	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
 		Number: 77, HeadRefOid: headSHA, BaseRefName: "main",
 	}, h.Cfg)
 	require.NoError(t, err)
@@ -1118,17 +1110,9 @@ func TestCIPollerProcessPR_FallsBackWhenPromptPrebuildFails(t *testing.T) {
 	h.Poller = NewCIPoller(h.DB, NewStaticConfig(h.Cfg), nil)
 	h.stubProcessPRGit()
 
-	testutil.InitTestGitRepo(t, h.RepoPath)
-	require.NoError(t, os.WriteFile(filepath.Join(h.RepoPath, "followup.txt"), []byte("followup"), 0o644))
-	cmd := exec.Command("git", "-C", h.RepoPath, "add", "followup.txt")
-	require.NoError(t, cmd.Run())
-	cmd = exec.Command("git", "-C", h.RepoPath, "commit", "-m", "followup commit")
-	require.NoError(t, cmd.Run())
-
-	headSHA := testutil.GetHeadSHA(t, h.RepoPath)
-	baseSHABytes, err := exec.Command("git", "-C", h.RepoPath, "rev-parse", "HEAD^").Output()
-	require.NoError(t, err)
-	baseSHA := strings.TrimSpace(string(baseSHABytes))
+	repo := testutil.InitTestGitRepo(t, h.RepoPath)
+	baseSHA := repo.HeadSHA()
+	headSHA := repo.CommitFile("followup.txt", "followup", "followup commit")
 
 	h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) { return baseSHA, nil }
 	h.Poller.listTrustedActorsFn = func(context.Context, string) (map[string]struct{}, error) {
@@ -1146,7 +1130,7 @@ func TestCIPollerProcessPR_FallsBackWhenPromptPrebuildFails(t *testing.T) {
 		return "", errors.New("prompt prebuild exploded")
 	}
 
-	err = h.Poller.processPR(context.Background(), "acme/api", ghPR{
+	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
 		Number: 78, HeadRefOid: headSHA, BaseRefName: "main",
 	}, h.Cfg)
 	require.NoError(t, err)
@@ -1163,7 +1147,8 @@ func TestCIPollerProcessPR_PrebuildsLargeCodexPromptWithDiffFileInstructions(t *
 	h.Poller = NewCIPoller(h.DB, NewStaticConfig(h.Cfg), nil)
 	h.stubProcessPRGit()
 
-	testutil.InitTestGitRepo(t, h.RepoPath)
+	repo := testutil.InitTestGitRepo(t, h.RepoPath)
+	baseSHA := repo.HeadSHA()
 
 	var content strings.Builder
 	for range 20000 {
@@ -1173,18 +1158,7 @@ func TestCIPollerProcessPR_PrebuildsLargeCodexPromptWithDiffFileInstructions(t *
 		content.WriteString(strings.Repeat("y", 20))
 		content.WriteString("\n")
 	}
-	require.NoError(t, os.WriteFile(filepath.Join(h.RepoPath, "large.txt"), []byte(content.String()), 0o644))
-	cmd := exec.Command("git", "-C", h.RepoPath, "add", "large.txt")
-	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, "git add failed: %s", out)
-	cmd = exec.Command("git", "-C", h.RepoPath, "commit", "-m", "large followup")
-	out, err = cmd.CombinedOutput()
-	require.NoError(t, err, "git commit failed: %s", out)
-
-	headSHA := testutil.GetHeadSHA(t, h.RepoPath)
-	baseSHABytes, err := exec.Command("git", "-C", h.RepoPath, "rev-parse", "HEAD^").Output()
-	require.NoError(t, err)
-	baseSHA := strings.TrimSpace(string(baseSHABytes))
+	headSHA := repo.CommitFile("large.txt", content.String(), "large followup")
 
 	h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) { return baseSHA, nil }
 	h.Poller.listTrustedActorsFn = func(context.Context, string) (map[string]struct{}, error) {
@@ -1199,7 +1173,7 @@ func TestCIPollerProcessPR_PrebuildsLargeCodexPromptWithDiffFileInstructions(t *
 		}}, nil
 	}
 
-	err = h.Poller.processPR(context.Background(), "acme/api", ghPR{
+	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
 		Number: 79, HeadRefOid: headSHA, BaseRefName: "main",
 	}, h.Cfg)
 	require.NoError(t, err)
@@ -3914,10 +3888,7 @@ func TestProcessPRIgnoresWorkingTreeAutoDesignConfig(t *testing.T) {
 	p, db, _, repo, cfg := newCIPanelGitHarness(t)
 	// Default-branch config: auto-design omitted (disabled). Commit it to main
 	// so loadCIRepoConfig reads it from the default branch.
-	require.NoError(t, os.WriteFile(filepath.Join(repo.Path(), ".roborev.toml"),
-		[]byte("agent = \"test\"\n"), 0o644))
-	repo.RunGit("add", ".roborev.toml")
-	repo.RunGit("commit", "-m", "chore: base config without auto-design")
+	repo.CommitFile(".roborev.toml", "agent = \"test\"\n", "chore: base config without auto-design")
 
 	base := repo.HeadSHA()
 	// A migration commit that WOULD warrant design if auto-design were enabled.

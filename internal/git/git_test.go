@@ -2,15 +2,20 @@ package git
 
 import (
 	"context"
+	"fmt"
+	"io/fs"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync"
 	"testing"
 	"time"
 	"unicode/utf8"
 
+	gogit "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -48,8 +53,63 @@ func cleanHookPWDPath(path string) string {
 }
 
 type TestRepo struct {
-	T   *testing.T
-	Dir string
+	T      *testing.T
+	Dir    string
+	Author string
+}
+
+var (
+	testRepoTemplateMu   sync.Mutex
+	testRepoTemplateDirs = map[string]string{}
+)
+
+func instantiateTestRepoTemplate(t *testing.T, key string, build func(string), dst string) {
+	t.Helper()
+	src := testRepoTemplate(t, key, build)
+	require.NoError(t, copyTestRepoTree(dst, src), "copy git template %s", key)
+}
+
+func testRepoTemplate(t *testing.T, key string, build func(string)) string {
+	t.Helper()
+	testRepoTemplateMu.Lock()
+	defer testRepoTemplateMu.Unlock()
+	if dir, ok := testRepoTemplateDirs[key]; ok {
+		return dir
+	}
+	dir, err := os.MkdirTemp("", "roborev-git-test-"+key+"-*")
+	require.NoError(t, err, "create git template")
+	build(dir)
+	testRepoTemplateDirs[key] = dir
+	return dir
+}
+
+func copyTestRepoTree(dst, src string) error {
+	return filepath.WalkDir(src, func(path string, d fs.DirEntry, err error) error {
+		if err != nil {
+			return err
+		}
+		rel, err := filepath.Rel(src, path)
+		if err != nil {
+			return err
+		}
+		target := filepath.Join(dst, rel)
+		if d.IsDir() {
+			return os.MkdirAll(target, 0o755)
+		}
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return err
+		}
+		return os.WriteFile(target, data, 0o644)
+	})
+}
+
+func mustTemplateGit(dir string, args ...string) {
+	cmd := exec.Command("git", args...)
+	cmd.Dir = dir
+	if out, err := cmd.CombinedOutput(); err != nil {
+		panic(fmt.Sprintf("git template %v failed: %v\n%s", args, err, out))
+	}
 }
 
 func NewTestRepo(t *testing.T) *TestRepo {
@@ -60,10 +120,11 @@ func NewTestRepo(t *testing.T) *TestRepo {
 func NewTestRepoWithAuthor(t *testing.T, author string) *TestRepo {
 	t.Helper()
 	dir := t.TempDir()
-	r := &TestRepo{T: t, Dir: dir}
-	r.Run("init")
-	r.Run("config", "user.email", "test@test.com")
-	r.Run("config", "user.name", author)
+	instantiateTestRepoTemplate(t, "init", func(d string) {
+		mustTemplateGit(d, "init")
+	}, dir)
+	r := &TestRepo{T: t, Dir: dir, Author: author}
+	r.writeConfig(author)
 	return r
 }
 
@@ -77,14 +138,25 @@ func NewTestRepoWithCommit(t *testing.T) *TestRepo {
 func NewBareTestRepo(t *testing.T) *TestRepo {
 	t.Helper()
 	dir := t.TempDir()
-	r := &TestRepo{T: t, Dir: dir}
-	r.Run("init", "--bare")
-	return r
+	instantiateTestRepoTemplate(t, "bare", func(d string) {
+		mustTemplateGit(d, "init", "--bare")
+	}, dir)
+	return &TestRepo{T: t, Dir: dir, Author: "Test"}
 }
 
 func (r *TestRepo) Run(args ...string) string {
 	r.T.Helper()
 	return runGit(r.T, r.Dir, args...)
+}
+
+func (r *TestRepo) writeConfig(author string) {
+	r.T.Helper()
+	configPath := filepath.Join(r.Dir, ".git", "config")
+	f, err := os.OpenFile(configPath, os.O_CREATE|os.O_APPEND|os.O_WRONLY, 0o644)
+	require.NoError(r.T, err, "open git config")
+	defer f.Close()
+	_, err = f.WriteString("\n[user]\n\temail = test@test.com\n\tname = " + author + "\n")
+	require.NoError(r.T, err, "write git config")
 }
 
 func TestIsTransientGitError(t *testing.T) {
@@ -119,14 +191,66 @@ func TestIsTransientGitError(t *testing.T) {
 func (r *TestRepo) CommitFile(filename, content, msg string) {
 	r.T.Helper()
 	r.WriteFile(filename, content)
-	r.Run("add", filename)
-	r.Run("commit", "-m", msg)
+	if !r.canCommitInProcess() {
+		r.Run("add", filename)
+		r.Run("commit", "-m", msg)
+		return
+	}
+	r.commitPaths(msg, filename)
 }
 
 func (r *TestRepo) CommitAll(msg string) {
 	r.T.Helper()
-	r.Run("add", ".")
-	r.Run("commit", "-m", msg)
+	if !r.canCommitInProcess() {
+		r.Run("add", ".")
+		r.Run("commit", "-m", msg)
+		return
+	}
+	repo, err := gogit.PlainOpen(r.Dir)
+	require.NoError(r.T, err, "open repo")
+	wt, err := repo.Worktree()
+	require.NoError(r.T, err, "open worktree")
+	require.NoError(r.T, wt.AddGlob("."), "git add .")
+	r.commitWorktree(wt, msg)
+}
+
+func (r *TestRepo) canCommitInProcess() bool {
+	info, err := os.Stat(filepath.Join(r.Dir, ".git"))
+	if err != nil || !info.IsDir() {
+		return false
+	}
+	entries, err := os.ReadDir(filepath.Join(r.Dir, ".git", "hooks"))
+	if err != nil {
+		return true
+	}
+	for _, entry := range entries {
+		if entry.IsDir() || strings.HasSuffix(entry.Name(), ".sample") {
+			continue
+		}
+		return false
+	}
+	return true
+}
+
+func (r *TestRepo) commitPaths(msg string, paths ...string) {
+	r.T.Helper()
+	repo, err := gogit.PlainOpen(r.Dir)
+	require.NoError(r.T, err, "open repo")
+	wt, err := repo.Worktree()
+	require.NoError(r.T, err, "open worktree")
+	for _, path := range paths {
+		_, err = wt.Add(filepath.ToSlash(path))
+		require.NoError(r.T, err, "git add %s", path)
+	}
+	r.commitWorktree(wt, msg)
+}
+
+func (r *TestRepo) commitWorktree(wt *gogit.Worktree, msg string) {
+	r.T.Helper()
+	_, err := wt.Commit(msg, &gogit.CommitOptions{
+		Author: &object.Signature{Name: r.Author, Email: "test@test.com", When: time.Now()},
+	})
+	require.NoError(r.T, err, "commit")
 }
 
 func (r *TestRepo) WriteFile(filename, content string) {
@@ -152,7 +276,7 @@ func (r *TestRepo) AddWorktree(branchName string) *TestRepo {
 		cmd.Dir = r.Dir
 		_ = cmd.Run()
 	})
-	return &TestRepo{T: r.T, Dir: wtDir}
+	return &TestRepo{T: r.T, Dir: wtDir, Author: r.Author}
 }
 
 func (r *TestRepo) InstallHook(name, script string) {

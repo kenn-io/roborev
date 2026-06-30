@@ -6,6 +6,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -252,6 +253,23 @@ func (r *TestRepo) CommitFile(filename, content, msg string) string {
 	r.t.Helper()
 
 	r.WriteFile(filename, content)
+	return r.commitPaths(msg, filename)
+}
+
+// CommitFiles writes files, stages them, commits, and returns the new HEAD SHA.
+func (r *TestRepo) CommitFiles(files map[string]string, msg string) string {
+	r.t.Helper()
+	paths := make([]string, 0, len(files))
+	for name, content := range files {
+		r.WriteFile(name, content)
+		paths = append(paths, name)
+	}
+	sort.Strings(paths)
+	return r.commitPaths(msg, paths...)
+}
+
+func (r *TestRepo) commitPaths(msg string, paths ...string) string {
+	r.t.Helper()
 
 	repo, err := gogit.PlainOpen(r.Root)
 	if err != nil {
@@ -261,8 +279,10 @@ func (r *TestRepo) CommitFile(filename, content, msg string) string {
 	if err != nil {
 		r.t.Fatalf("worktree: %v", err)
 	}
-	if _, err := wt.Add(filepath.ToSlash(filename)); err != nil {
-		r.t.Fatalf("git add %s: %v", filename, err)
+	for _, path := range paths {
+		if _, err := wt.Add(filepath.ToSlash(path)); err != nil {
+			r.t.Fatalf("git add %s: %v", path, err)
+		}
 	}
 	hash, err := wt.Commit(msg, &gogit.CommitOptions{
 		Author: &object.Signature{Name: GitUserName, Email: GitUserEmail, When: time.Now()},
@@ -300,10 +320,33 @@ func NewGitRepo(t *testing.T) *TestRepo {
 	})
 }
 
+// NewBareTestRepo creates a bare temporary repository suitable for use as a
+// test remote. The bare repository shape is copied from a cached template to
+// avoid paying for `git init --bare` in every test case.
+func NewBareTestRepo(t *testing.T) *TestRepo {
+	t.Helper()
+	dir := t.TempDir()
+	instantiateInto(t, dir, "bare", func(d string) {
+		mustGit(d, "init", "--bare")
+	})
+	resolved, err := filepath.EvalSymlinks(dir)
+	if err != nil {
+		resolved = dir
+	}
+	return &TestRepo{
+		Root:         dir,
+		GitDir:       dir,
+		HooksDir:     filepath.Join(dir, "hooks"),
+		HookPath:     filepath.Join(dir, "hooks", "post-commit"),
+		resolvedPath: resolved,
+		t:            t,
+	}
+}
+
 // InitTestGitRepo initializes a git repository with a commit in the given directory.
 // Creates the directory if it doesn't exist, runs git init, configures user, creates
 // a test file, and makes an initial commit.
-func InitTestGitRepo(t *testing.T, dir string) {
+func InitTestGitRepo(t *testing.T, dir string) *TestRepo {
 	t.Helper()
 	if err := os.MkdirAll(dir, 0o755); err != nil {
 		t.Fatalf("create repo dir %q: %v", dir, err)
@@ -315,6 +358,13 @@ func InitTestGitRepo(t *testing.T, dir string) {
 		mustGit(d, "add", "test.txt")
 		mustGit(d, "commit", "-m", "initial commit")
 	})
+	return &TestRepo{
+		Root:     dir,
+		GitDir:   filepath.Join(dir, ".git"),
+		HooksDir: filepath.Join(dir, ".git", "hooks"),
+		HookPath: filepath.Join(dir, ".git", "hooks", "post-commit"),
+		t:        t,
+	}
 }
 
 // GetHeadSHA returns the HEAD commit SHA for the git repo at dir.

@@ -39,6 +39,7 @@ const testWorkerID = "test-worker"
 type workerTestContext struct {
 	DB          *storage.DB
 	TmpDir      string
+	GitRepo     *testutil.TestRepo
 	Repo        *storage.Repo
 	Pool        *WorkerPool
 	Broadcaster Broadcaster
@@ -49,7 +50,7 @@ type workerTestContext struct {
 func newWorkerTestContext(t *testing.T, workers int) *workerTestContext {
 	t.Helper()
 	db, tmpDir := testutil.OpenTestDBWithDir(t)
-	testutil.InitTestGitRepo(t, tmpDir)
+	gitRepo := testutil.InitTestGitRepo(t, tmpDir)
 
 	cfg := config.DefaultConfig()
 	if workers > 0 {
@@ -70,6 +71,7 @@ func newWorkerTestContext(t *testing.T, workers int) *workerTestContext {
 	return &workerTestContext{
 		DB:          db,
 		TmpDir:      tmpDir,
+		GitRepo:     gitRepo,
 		Repo:        repo,
 		Pool:        pool,
 		Broadcaster: b,
@@ -455,17 +457,16 @@ func TestWorkerCIPanelPromptSnapshotUsesTrustedConfigAndAgentCheckout(t *testing
 	repo := testutil.NewGitRepo(t)
 	baseSHA := repo.CommitFile("README.md", "base\n", "base")
 	repo.Checkout("-b", "pr-head")
-	repo.WriteFile(".roborev.toml", "exclude_patterns = [\"secret.txt\"]\nsnapshot_dir = \"pr-controlled-snapshots\"\n")
-	repo.WriteFile("secret.txt", "SECRET_SENTINEL_FROM_PR\n")
 	var big strings.Builder
 	for range 400 {
 		big.WriteString(strings.Repeat("large diff content ", 8))
 		big.WriteString("\n")
 	}
-	repo.WriteFile("big.txt", big.String())
-	repo.RunGit("add", ".roborev.toml", "secret.txt", "big.txt")
-	repo.RunGit("commit", "-m", "pr adds untrusted config and files")
-	headSHA := repo.HeadSHA()
+	headSHA := repo.CommitFiles(map[string]string{
+		".roborev.toml": "exclude_patterns = [\"secret.txt\"]\nsnapshot_dir = \"pr-controlled-snapshots\"\n",
+		"secret.txt":    "SECRET_SENTINEL_FROM_PR\n",
+		"big.txt":       big.String(),
+	}, "pr adds untrusted config and files")
 	repo.Checkout("main")
 
 	storedRepo, err := db.GetOrCreateRepo(repo.Path(), "https://github.com/acme/api.git")
@@ -1558,18 +1559,7 @@ func TestProcessJob_LargeDiffUsesExternalSnapshotWhenGitDirReadOnly(t *testing.T
 		content.WriteString(strings.Repeat("y", 20))
 		content.WriteString("\n")
 	}
-	require.NoError(t, os.WriteFile(
-		filepath.Join(tc.TmpDir, "large.txt"),
-		[]byte(content.String()), 0o644,
-	))
-	cmd := exec.Command("git", "-C", tc.TmpDir, "add", "large.txt")
-	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, "git add failed: %s", out)
-	cmd = exec.Command("git", "-C", tc.TmpDir, "commit", "-m", "large diff")
-	out, err = cmd.CombinedOutput()
-	require.NoError(t, err, "git commit failed: %s", out)
-
-	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+	sha := tc.GitRepo.CommitFile("large.txt", content.String(), "large diff")
 	commit, err := tc.DB.GetOrCreateCommit(tc.Repo.ID, sha, "Author", "large", time.Now())
 	require.NoError(t, err)
 	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
@@ -1639,18 +1629,7 @@ func TestProcessJob_LargeDiffUsesExternalSnapshotWithoutOversizedPrompt(t *testi
 		content.WriteString(strings.Repeat("large diff content ", 8))
 		content.WriteString("\n")
 	}
-	require.NoError(t, os.WriteFile(
-		filepath.Join(tc.TmpDir, "large-agent.txt"),
-		[]byte(content.String()), 0o644,
-	))
-	cmd := exec.Command("git", "-C", tc.TmpDir, "add", "large-agent.txt")
-	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, "git add failed: %s", out)
-	cmd = exec.Command("git", "-C", tc.TmpDir, "commit", "-m", "large agent diff")
-	out, err = cmd.CombinedOutput()
-	require.NoError(t, err, "git commit failed: %s", out)
-
-	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+	sha := tc.GitRepo.CommitFile("large-agent.txt", content.String(), "large agent diff")
 	commit, err := tc.DB.GetOrCreateCommit(tc.Repo.ID, sha, "Author", "large", time.Now())
 	require.NoError(t, err)
 	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{

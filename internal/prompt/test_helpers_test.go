@@ -4,10 +4,13 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"sort"
 	"strings"
 	"testing"
 	"time"
 
+	gogit "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -16,8 +19,9 @@ import (
 )
 
 type testRepo struct {
-	t   *testing.T
-	dir string
+	t    *testing.T
+	dir  string
+	repo *testutil.TestRepo
 }
 
 const (
@@ -37,18 +41,26 @@ func newTestRepoWithBranch(t *testing.T, branch string) *testRepo {
 
 func initTestRepo(t *testing.T, initArgs ...string) *testRepo {
 	t.Helper()
-	r := &testRepo{t: t, dir: t.TempDir()}
-	r.git(append([]string{"init"}, initArgs...)...)
+	repo := testutil.NewGitRepo(t)
+	r := &testRepo{t: t, dir: repo.Path(), repo: repo}
+	if len(initArgs) == 2 && initArgs[0] == "-b" && initArgs[1] != "main" {
+		require.NoError(t,
+			os.WriteFile(filepath.Join(r.dir, ".git", "HEAD"), []byte("ref: refs/heads/"+initArgs[1]+"\n"), 0o644),
+			"set initial branch")
+	}
 	r.configure()
 	return r
 }
 
 func (r *testRepo) configure() {
 	r.t.Helper()
-	r.git("config", "user.email", testGitEmail)
-	r.git("config", "user.name", testGitUser)
-	r.git("config", "gc.auto", "0")
-	r.git("config", "maintenance.auto", "false")
+	configPath := filepath.Join(r.dir, ".git", "config")
+	data, err := os.ReadFile(configPath)
+	require.NoError(r.t, err, "read git config")
+	text := string(data)
+	text = strings.Replace(text, "email = "+testutil.GitUserEmail, "email = "+testGitEmail, 1)
+	text = strings.Replace(text, "name = "+testutil.GitUserName, "name = "+testGitUser, 1)
+	require.NoError(r.t, os.WriteFile(configPath, []byte(text), 0o644), "write git config")
 }
 
 func TestNewTestRepoDisablesGitAutoMaintenance(t *testing.T) {
@@ -73,6 +85,46 @@ func (r *testRepo) git(args ...string) string {
 	return strings.TrimSpace(string(out))
 }
 
+func (r *testRepo) fastCommitFile(name, content, message string) string {
+	r.t.Helper()
+	r.writeFile(name, content)
+	return r.fastCommitPaths(message, name)
+}
+
+func (r *testRepo) fastCommitFiles(files map[string]string, message string) string {
+	r.t.Helper()
+	paths := make([]string, 0, len(files))
+	for name, content := range files {
+		r.writeFile(name, content)
+		paths = append(paths, name)
+	}
+	sort.Strings(paths)
+	return r.fastCommitPaths(message, paths...)
+}
+
+func (r *testRepo) fastCommitPaths(message string, paths ...string) string {
+	r.t.Helper()
+	repo, err := gogit.PlainOpen(r.dir)
+	require.NoError(r.t, err, "open repo")
+	wt, err := repo.Worktree()
+	require.NoError(r.t, err, "open worktree")
+	for _, path := range paths {
+		_, err = wt.Add(filepath.ToSlash(path))
+		require.NoError(r.t, err, "git add %s", path)
+	}
+	when := time.Now()
+	if raw := os.Getenv("GIT_AUTHOR_DATE"); raw != "" {
+		if parsed, err := time.Parse(time.RFC3339, raw); err == nil {
+			when = parsed
+		}
+	}
+	hash, err := wt.Commit(message, &gogit.CommitOptions{
+		Author: &object.Signature{Name: testGitUser, Email: testGitEmail, When: when},
+	})
+	require.NoError(r.t, err, "commit")
+	return hash.String()
+}
+
 func assertContains(t *testing.T, doc, substring, msg string) {
 	t.Helper()
 	assert.Contains(t, doc, substring, msg)
@@ -94,13 +146,8 @@ func setupTestRepo(t *testing.T) (string, []string) {
 
 	// Create 6 commits so we can test with 5 previous commits
 	for i := 1; i <= 6; i++ {
-		filename := filepath.Join(r.dir, "file.txt")
 		content := strings.Repeat("x", i) // Different content each time
-		require.NoError(t, os.WriteFile(filename, []byte(content), 0o644))
-		r.git("add", "file.txt")
-		r.git("commit", "-m", "commit "+string(rune('0'+i)))
-
-		sha := r.git("rev-parse", "HEAD")
+		sha := r.fastCommitFile("file.txt", content, "commit "+string(rune('0'+i)))
 		commits = append(commits, sha)
 	}
 
@@ -111,12 +158,7 @@ func setupLargeDiffRepo(t *testing.T) (string, string) {
 	t.Helper()
 	r := newTestRepo(t)
 
-	require.NoError(t, os.WriteFile(
-		filepath.Join(r.dir, "base.txt"),
-		[]byte("base\n"), 0o644,
-	))
-	r.git("add", "base.txt")
-	r.git("commit", "-m", "initial")
+	r.fastCommitFile("base.txt", "base\n", "initial")
 
 	var content strings.Builder
 	for range 20000 {
@@ -127,26 +169,14 @@ func setupLargeDiffRepo(t *testing.T) (string, string) {
 		content.WriteString("\n")
 	}
 
-	require.NoError(t, os.WriteFile(
-		filepath.Join(r.dir, "large.txt"),
-		[]byte(content.String()), 0o644,
-	))
-	r.git("add", "large.txt")
-	r.git("commit", "-m", "large change")
-
-	return r.dir, r.git("rev-parse", "HEAD")
+	return r.dir, r.fastCommitFile("large.txt", content.String(), "large change")
 }
 
 func setupLargeExcludePatternRepo(t *testing.T) (string, string) {
 	t.Helper()
 	r := newTestRepo(t)
 
-	require.NoError(t, os.WriteFile(
-		filepath.Join(r.dir, "base.txt"),
-		[]byte("base\n"), 0o644,
-	))
-	r.git("add", "base.txt")
-	r.git("commit", "-m", "initial")
+	r.fastCommitFile("base.txt", "base\n", "initial")
 
 	var content strings.Builder
 	for range 20000 {
@@ -157,18 +187,10 @@ func setupLargeExcludePatternRepo(t *testing.T) (string, string) {
 		content.WriteString("\n")
 	}
 
-	require.NoError(t, os.WriteFile(
-		filepath.Join(r.dir, "large.txt"),
-		[]byte(content.String()), 0o644,
-	))
-	require.NoError(t, os.WriteFile(
-		filepath.Join(r.dir, "custom.dat"),
-		[]byte(content.String()), 0o644,
-	))
-	r.git("add", "large.txt", "custom.dat")
-	r.git("commit", "-m", "large change")
-
-	return r.dir, r.git("rev-parse", "HEAD")
+	return r.dir, r.fastCommitFiles(map[string]string{
+		"large.txt":  content.String(),
+		"custom.dat": content.String(),
+	}, "large change")
 }
 
 func setupLargeDiffRepoWithGuidelines(t *testing.T, guidelineLen int) (string, string) {
@@ -177,16 +199,10 @@ func setupLargeDiffRepoWithGuidelines(t *testing.T, guidelineLen int) (string, s
 
 	guidelines := strings.Repeat("g", guidelineLen)
 	toml := `review_guidelines = """` + "\n" + guidelines + "\n" + `"""` + "\n"
-	require.NoError(t, os.WriteFile(
-		filepath.Join(r.dir, ".roborev.toml"),
-		[]byte(toml), 0o644,
-	))
-	require.NoError(t, os.WriteFile(
-		filepath.Join(r.dir, "base.txt"),
-		[]byte("base\n"), 0o644,
-	))
-	r.git("add", ".roborev.toml", "base.txt")
-	r.git("commit", "-m", "initial")
+	r.fastCommitFiles(map[string]string{
+		".roborev.toml": toml,
+		"base.txt":      "base\n",
+	}, "initial")
 
 	r.git("remote", "add", "origin", r.dir)
 	r.git("fetch", "origin")
@@ -201,26 +217,14 @@ func setupLargeDiffRepoWithGuidelines(t *testing.T, guidelineLen int) (string, s
 		content.WriteString("\n")
 	}
 
-	require.NoError(t, os.WriteFile(
-		filepath.Join(r.dir, "large.txt"),
-		[]byte(content.String()), 0o644,
-	))
-	r.git("add", "large.txt")
-	r.git("commit", "-m", "large change")
-
-	return r.dir, r.git("rev-parse", "HEAD")
+	return r.dir, r.fastCommitFile("large.txt", content.String(), "large change")
 }
 
 func setupLargeCommitBodyRepo(t *testing.T, bodyLen int) (string, string) {
 	t.Helper()
 	r := newTestRepo(t)
 
-	require.NoError(t, os.WriteFile(
-		filepath.Join(r.dir, "base.txt"),
-		[]byte("base\n"), 0o644,
-	))
-	r.git("add", "base.txt")
-	r.git("commit", "-m", "initial")
+	r.fastCommitFile("base.txt", "base\n", "initial")
 
 	require.NoError(t, os.WriteFile(
 		filepath.Join(r.dir, "base.txt"),
@@ -268,12 +272,7 @@ func setupLargeCommitSubjectRepo(t *testing.T, subjectLen int) (string, string) 
 	t.Helper()
 	r := newTestRepo(t)
 
-	require.NoError(t, os.WriteFile(
-		filepath.Join(r.dir, "base.txt"),
-		[]byte("base\n"), 0o644,
-	))
-	r.git("add", "base.txt")
-	r.git("commit", "-m", "initial")
+	r.fastCommitFile("base.txt", "base\n", "initial")
 
 	require.NoError(t, os.WriteFile(
 		filepath.Join(r.dir, "base.txt"),
@@ -293,12 +292,7 @@ func setupLargeCommitAuthorRepo(t *testing.T, authorLen int) (string, string) {
 	t.Helper()
 	r := newTestRepo(t)
 
-	require.NoError(t, os.WriteFile(
-		filepath.Join(r.dir, "base.txt"),
-		[]byte("base\n"), 0o644,
-	))
-	r.git("add", "base.txt")
-	r.git("commit", "-m", "initial")
+	r.fastCommitFile("base.txt", "base\n", "initial")
 
 	require.NoError(t, os.WriteFile(
 		filepath.Join(r.dir, "base.txt"),
@@ -326,22 +320,10 @@ func setupLargeRangeMetadataRepo(t *testing.T, commitCount, subjectLen int) (str
 	t.Helper()
 	r := newTestRepo(t)
 
-	require.NoError(t, os.WriteFile(
-		filepath.Join(r.dir, "base.txt"),
-		[]byte("base\n"), 0o644,
-	))
-	r.git("add", "base.txt")
-	r.git("commit", "-m", "initial")
-
-	startSHA := r.git("rev-parse", "HEAD")
+	startSHA := r.fastCommitFile("base.txt", "base\n", "initial")
 	subject := strings.Repeat("s", subjectLen)
 	for i := range commitCount {
-		require.NoError(t, os.WriteFile(
-			filepath.Join(r.dir, "base.txt"),
-			[]byte(strings.Repeat("x\n", i+2)), 0o644,
-		))
-		r.git("add", "base.txt")
-		r.commitWithMessage(subject + "\n")
+		r.fastCommitFile("base.txt", strings.Repeat("x\n", i+2), subject+"\n")
 	}
 
 	endSHA := r.git("rev-parse", "HEAD")
@@ -386,15 +368,14 @@ func setupGuidelinesRepo(t *testing.T, defaultBranch, baseGuidelines, branchGuid
 	}
 
 	// Initial commit with base guidelines
+	files := map[string]string{}
 	if baseGuidelines != "" {
 		toml := `review_guidelines = """` + "\n" + baseGuidelines + "\n" + `"""` + "\n"
-		require.NoError(t, os.WriteFile(filepath.Join(r.dir, ".roborev.toml"), []byte(toml), 0o644), "write .roborev.toml")
+		files[".roborev.toml"] = toml
 	} else {
-		require.NoError(t, os.WriteFile(filepath.Join(r.dir, "README.md"), []byte("init"), 0o644), "write README.md")
+		files["README.md"] = "init"
 	}
-	r.git("add", "-A")
-	r.git("commit", "-m", "initial")
-	baseSHA := r.git("rev-parse", "HEAD")
+	baseSHA := r.fastCommitFiles(files, "initial")
 
 	// Set up origin pointing to itself so origin/<branch> exists
 	r.git("remote", "add", "origin", r.dir)
@@ -407,10 +388,7 @@ func setupGuidelinesRepo(t *testing.T, defaultBranch, baseGuidelines, branchGuid
 	if branchGuidelines != "" {
 		r.git("checkout", "-b", "feature-branch")
 		toml := `review_guidelines = """` + "\n" + branchGuidelines + "\n" + `"""` + "\n"
-		require.NoError(t, os.WriteFile(filepath.Join(r.dir, ".roborev.toml"), []byte(toml), 0o644), "write .roborev.toml")
-		r.git("add", ".roborev.toml")
-		r.git("commit", "-m", "update guidelines on branch")
-		featureSHA = r.git("rev-parse", "HEAD")
+		featureSHA = r.fastCommitFile(".roborev.toml", toml, "update guidelines on branch")
 		r.git("checkout", defaultBranch)
 	}
 

@@ -103,22 +103,21 @@ func TestBuildPromptWithAdditionalContextAndPreviousAttemptsPreservesSectionOrde
 func TestBuildRangePromptSummarizesExcludedDependencyMetadata(t *testing.T) {
 	repo := newTestRepo(t)
 	require.NoError(t, os.MkdirAll(filepath.Join(repo.dir, "frontend"), 0o755))
-	repo.writeFile("frontend/package.json", `{"dependencies":{"react":"18.2.0"}}`+"\n")
-	repo.writeFile("frontend/package-lock.json", `{"packages":{"":{"dependencies":{"react":"18.2.0"}}}}`+"\n")
-	repo.writeFile("go.mod", "module example.com/app\n\nrequire github.com/jackc/pgx/v5 v5.9.0\n")
-	repo.writeFile("go.sum", "github.com/jackc/pgx/v5 v5.9.0 h1:old\n")
-	repo.git("add", "-A")
-	repo.git("commit", "-m", "add dependency metadata")
-	baseSHA := repo.git("rev-parse", "HEAD")
+	baseSHA := repo.fastCommitFiles(map[string]string{
+		"frontend/package.json":      `{"dependencies":{"react":"18.2.0"}}` + "\n",
+		"frontend/package-lock.json": `{"packages":{"":{"dependencies":{"react":"18.2.0"}}}}` + "\n",
+		"go.mod":                     "module example.com/app\n\nrequire github.com/jackc/pgx/v5 v5.9.0\n",
+		"go.sum":                     "github.com/jackc/pgx/v5 v5.9.0 h1:old\n",
+	}, "add dependency metadata")
 
-	repo.writeFile("frontend/package.json", `{"dependencies":{"react":"18.3.1"}}`+"\n")
-	repo.writeFile("frontend/package-lock.json", `{"packages":{"":{"dependencies":{"react":"18.3.1"}}}}`+"\n")
-	repo.writeFile("go.mod", "module example.com/app\n\nrequire github.com/jackc/pgx/v5 v5.10.0\n")
-	repo.writeFile("go.sum", "github.com/jackc/pgx/v5 v5.10.0 h1:new\n")
-	repo.git("add", "-A")
-	repo.git("commit", "-m", "bump dependency metadata")
+	headSHA := repo.fastCommitFiles(map[string]string{
+		"frontend/package.json":      `{"dependencies":{"react":"18.3.1"}}` + "\n",
+		"frontend/package-lock.json": `{"packages":{"":{"dependencies":{"react":"18.3.1"}}}}` + "\n",
+		"go.mod":                     "module example.com/app\n\nrequire github.com/jackc/pgx/v5 v5.10.0\n",
+		"go.sum":                     "github.com/jackc/pgx/v5 v5.10.0 h1:new\n",
+	}, "bump dependency metadata")
 
-	rangeRef := baseSHA + ".." + repo.git("rev-parse", "HEAD")
+	rangeRef := baseSHA + ".." + headSHA
 	prompt, err := NewBuilder(nil).ForRepo(repo.dir, 0).Build(rangeRef, 0, "test", "", "")
 	require.NoError(t, err)
 

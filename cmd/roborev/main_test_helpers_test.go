@@ -21,6 +21,7 @@ import (
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/internal/version"
 )
 
@@ -33,13 +34,8 @@ type GitTestRepo struct {
 // NewGitTestRepo creates a new temporary git repository.
 func NewGitTestRepo(t *testing.T) *GitTestRepo {
 	t.Helper()
-	dir := t.TempDir()
-	r := &GitTestRepo{Dir: dir, t: t}
-	r.Run("init")
-	r.Run("symbolic-ref", "HEAD", "refs/heads/main")
-	r.Run("config", "user.email", "test@test.com")
-	r.Run("config", "user.name", "Test")
-	return r
+	repo := testutil.NewGitRepo(t)
+	return &GitTestRepo{Dir: repo.Path(), t: t}
 }
 
 // Run executes a git command in the repository.
@@ -58,9 +54,7 @@ func (r *GitTestRepo) CommitFile(name, content, msg string) string {
 	path := filepath.Join(r.Dir, name)
 	require.NoError(r.t, os.MkdirAll(filepath.Dir(path), 0o755))
 	require.NoError(r.t, os.WriteFile(path, []byte(content), 0o644))
-	r.Run("add", name)
-	r.Run("commit", "-m", msg)
-	return r.Run("rev-parse", "HEAD")
+	return commitPaths(r.t, r.Dir, msg, name)
 }
 
 // MockDaemon encapsulates a mock daemon server and its state.

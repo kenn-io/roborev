@@ -6,8 +6,6 @@ import (
 	"context"
 	"io"
 	"os"
-	"os/exec"
-	"path/filepath"
 	"strings"
 	"testing"
 	"time"
@@ -26,7 +24,7 @@ import (
 // and cleans up afterward. They use FakeAgent to capture exactly what
 // the agent sees without making real AI calls.
 
-func commitLargeChange(t *testing.T, dir string) string {
+func commitLargeChange(t *testing.T, repo *testutil.TestRepo) string {
 	t.Helper()
 	var content strings.Builder
 	for range 20000 {
@@ -36,17 +34,7 @@ func commitLargeChange(t *testing.T, dir string) string {
 		content.WriteString(strings.Repeat("y", 20))
 		content.WriteString("\n")
 	}
-	require.NoError(t, os.WriteFile(
-		filepath.Join(dir, "large.txt"),
-		[]byte(content.String()), 0o644,
-	))
-	cmd := exec.Command("git", "-C", dir, "add", "large.txt")
-	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, "git add: %s", out)
-	cmd = exec.Command("git", "-C", dir, "commit", "-m", "large change")
-	out, err = cmd.CombinedOutput()
-	require.NoError(t, err, "git commit: %s", out)
-	return testutil.GetHeadSHA(t, dir)
+	return repo.CommitFile("large.txt", content.String(), "large change")
 }
 
 func registerFakeAgent(t *testing.T, name string, fn func(ctx context.Context, repoPath, sha, prompt string, w io.Writer) (string, error)) {
@@ -84,7 +72,7 @@ func TestSnapshotFlow_SmallDiffInlinesWithoutFile(t *testing.T) {
 
 func TestSnapshotFlow_LargeDiffWritesFileAndReferencesInPrompt(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
-	sha := commitLargeChange(t, tc.TmpDir)
+	sha := commitLargeChange(t, tc.GitRepo)
 
 	var receivedPrompt string
 	registerFakeAgent(t, "test", func(_ context.Context, _, _, p string, _ io.Writer) (string, error) {
@@ -120,7 +108,7 @@ func TestSnapshotFlow_LargeDiffWritesFileAndReferencesInPrompt(t *testing.T) {
 
 func TestSnapshotFlow_SnapshotFileContentMatchesDiff(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
-	sha := commitLargeChange(t, tc.TmpDir)
+	sha := commitLargeChange(t, tc.GitRepo)
 
 	var snapshotPath string
 	registerFakeAgent(t, "test", func(_ context.Context, _, _, p string, _ io.Writer) (string, error) {
@@ -173,7 +161,7 @@ func TestSnapshotFlow_SnapshotFileContentMatchesDiff(t *testing.T) {
 
 func TestSnapshotFlow_SnapshotFileReadableDuringReview(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
-	sha := commitLargeChange(t, tc.TmpDir)
+	sha := commitLargeChange(t, tc.GitRepo)
 
 	var fileContent string
 	var fileReadErr error
@@ -224,24 +212,10 @@ func TestSnapshotFlow_SnapshotFileReadableDuringReview(t *testing.T) {
 func TestSnapshotFlow_ExcludePatternsAppliedToSnapshot(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 
-	// Create a commit with both a normal file and an excluded file
-	require.NoError(t, os.WriteFile(
-		filepath.Join(tc.TmpDir, "code.go"),
-		[]byte(strings.Repeat("package main\n", 15000)),
-		0o644,
-	))
-	require.NoError(t, os.WriteFile(
-		filepath.Join(tc.TmpDir, "generated.dat"),
-		[]byte(strings.Repeat("gen\n", 5000)),
-		0o644,
-	))
-	cmd := exec.Command("git", "-C", tc.TmpDir, "add", "code.go", "generated.dat")
-	out, err := cmd.CombinedOutput()
-	require.NoError(t, err, "git add: %s", out)
-	cmd = exec.Command("git", "-C", tc.TmpDir, "commit", "-m", "mixed change")
-	out, err = cmd.CombinedOutput()
-	require.NoError(t, err, "git commit: %s", out)
-	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+	sha := tc.GitRepo.CommitFiles(map[string]string{
+		"code.go":       strings.Repeat("package main\n", 15000),
+		"generated.dat": strings.Repeat("gen\n", 5000),
+	}, "mixed change")
 
 	// Configure exclude patterns via global config
 	cfg := tc.Pool.cfgGetter.Config()
