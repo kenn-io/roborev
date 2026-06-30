@@ -604,20 +604,14 @@ roborev agent-hook daemon start         # start | status | stop | restart
 `roborev agent-hook` is an opt-in Codex, Claude Code, and Factory Droid integration that prompts the agent to run the fix skill when review work piles up. See [Agent Hook](/agent-hook/).
 
 ```bash
-roborev agent-hook install --agent droid             # Install Factory Droid hook entries (user scope)
-roborev agent-hook install --agent droid --binary ~/.local/bin/roborev
-roborev agent-hook dump --agent droid --scope user   # Print hook config JSON (declarative setups)
-roborev agent-hook run --agent droid                 # Read a hook payload from stdin (Droid calls this)
-roborev agent-hook status                            # Tracked session counters as JSON (shared daemon)
-roborev agent-hook reset <session-id>                # Reset one session (or --all)
+roborev agent-hook install             # Install Codex/Claude hook entries
+roborev agent-hook install --agent droid  # Install Factory Droid hook entries (user scope)
+roborev agent-hook dump --agent droid   # Print hook config JSON (declarative setups)
+roborev agent-hook status               # Tracked session counters as JSON (shared daemon)
+roborev agent-hook reset <session-id>    # Reset one session (or --all)
 ```
 
-Use `--agent droid` to install Factory Droid hook entries that prompt Droid to
-run `/roborev-fix` when review work piles up, sharing the same local state
-daemon. The Droid profile installs to user scope by default
-(`~/.factory/hooks.json`); roborev does not install project-scoped Factory hooks
-because `.factory/hooks.json` is executable repo-local configuration. See
-[Agent Hook](/agent-hook/).
+Factory Droid hooks install to user scope (`~/.factory/hooks.json`); project-scoped Factory hooks are not supported. See [Droid Hook](/droid-hook/).
 
 ## Checking Agents
 

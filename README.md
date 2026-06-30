@@ -32,8 +32,7 @@ your agentic loop while context is fresh.
 ```bash
 roborev init                  # layer 1: per-commit reviews
 roborev skills install
-roborev agent-hook install    # layer 2: mid-session fix loop (Codex/Claude)
-roborev agent-hook install --agent droid  # layer 2: mid-session fix loop (Factory Droid)
+roborev agent-hook install    # layer 2: mid-session fix loop (add --agent droid for Factory Droid)
 ```
 
 Before you ship, run the `/roborev-refine` skill: it re-reviews and fixes your
@@ -53,9 +52,8 @@ roborev tui           # View reviews in interactive UI
 If roborev is managed by a version manager, `roborev init` and
 `roborev agent-hook install` try to install hooks with the stable shim/symlink.
 You can also choose the exact binary path with
-`roborev init --binary ~/.local/share/mise/shims/roborev`,
-`roborev agent-hook install --binary ~/.local/share/mise/shims/roborev`, or
-`roborev agent-hook install --agent droid --binary ~/.local/share/mise/shims/roborev`.
+`roborev init --binary ~/.local/share/mise/shims/roborev` or
+`roborev agent-hook install --binary ~/.local/share/mise/shims/roborev`.
 
 ![roborev review](https://roborev.io/assets/generated/tui-review.svg)
 
@@ -195,8 +193,7 @@ If the hook rewrites files, re-stage them and re-run `git commit`. Use
 | `roborev fix` | Fix open reviews (or specify job IDs) |
 | `roborev refine` | Auto-fix loop: fix, re-review, repeat |
 | `roborev analyze <type>` | Run code analysis with optional auto-fix |
-| `roborev agent-hook install` | Install optional Codex/Claude agent harness hooks |
-| `roborev agent-hook install --agent droid` | Install optional Factory Droid harness hooks |
+| `roborev agent-hook install` | Install optional agent harness hooks (Codex, Claude Code, or `--agent droid` for Factory Droid) |
 | `roborev compact` | Verify and consolidate open review findings |
 | `roborev show [sha]` | Display review for commit |
 | `roborev run "<task>"` | Execute a task with an AI agent |
