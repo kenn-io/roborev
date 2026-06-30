@@ -31,7 +31,6 @@ package git
 
 import (
 	"os"
-	"os/exec"
 	"strings"
 	"testing"
 
@@ -63,9 +62,13 @@ func openGoGit(path string) (*gogit.Repository, error) {
 	})
 }
 
+// execGitOut runs git via newGitCmd -- the same production helper the daemon
+// uses -- so the measured spawn cost includes its GIT_* env stripping and
+// Windows console-hiding, and an inherited GIT_DIR/GIT_WORK_TREE can't redirect
+// the benchmark at the wrong repository.
 func execGitOut(b *testing.B, dir string, args ...string) string {
 	b.Helper()
-	cmd := exec.Command("git", args...)
+	cmd := newGitCmd(args...)
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {
@@ -193,7 +196,7 @@ func BenchmarkSpawnIsAncestor(b *testing.B) {
 
 	b.Run("exec", func(b *testing.B) {
 		for b.Loop() {
-			cmd := exec.Command("git", "merge-base", "--is-ancestor", "HEAD~1", "HEAD")
+			cmd := newGitCmd("merge-base", "--is-ancestor", "HEAD~1", "HEAD")
 			cmd.Dir = path
 			if err := cmd.Run(); err != nil {
 				b.Fatal(err)
@@ -261,7 +264,7 @@ func BenchmarkEnqueueSequence(b *testing.B) {
 				"--format=%H"+rs+"%an"+rs+"%s"+rs+"%aI"+rs+"%b", "HEAD")
 			_ = GetPatchID(path, sha)
 			if ancestor {
-				cmd := exec.Command("git", "merge-base", "--is-ancestor", "HEAD~1", "HEAD")
+				cmd := newGitCmd("merge-base", "--is-ancestor", "HEAD~1", "HEAD")
 				cmd.Dir = path
 				_ = cmd.Run()
 			}

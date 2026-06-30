@@ -120,7 +120,7 @@ max_chars = 50000
 | `excluded_commit_patterns` | array | Commit message substrings to skip reviews on (case-insensitive) |
 | `exclude_patterns` | array | Filenames or glob patterns to exclude from review diffs for this repo |
 | `post_commit_review` | string | Post-commit hook behavior: `"commit"` (default) or `"branch"` |
-| `hook_timeout` | string | Override the post-commit hook request timeout for this repo, as a Go duration such as `1m`. Useful for large repos where the daemon's enqueue git calls are slow. Empty inherits global / platform default |
+| `hook_timeout` | string | Override the post-commit hook request timeout for this repo, as a Go duration such as `1m`. Useful for large repos where the daemon's enqueue git calls are slow. Read filesystem-only from this checkout's `.roborev.toml` (a linked worktree without its own file does not inherit the main checkout's value). Empty, malformed, or non-positive values inherit the global / platform default |
 | `auto_close_passing_reviews` | bool | Automatically close reviews that pass with no findings |
 | `review_reasoning` | string | Reasoning level for reviews: thorough, standard, fast |
 | `refine_reasoning` | string | Reasoning level for refine: thorough, standard, fast |
@@ -541,7 +541,7 @@ column_borders = true             # Show separators between TUI columns
 | `server_addr` | string | 127.0.0.1:7373 | Daemon listen address. Use `unix://` for Unix domain socket (see [Unix Domain Socket](#unix-domain-socket)) | No |
 | `max_workers` | int | 4 | Number of parallel review workers | No |
 | `job_timeout_minutes` | int | 30 | Per-job timeout in minutes | Yes |
-| `hook_timeout` | string | `3s` (`30s` on Windows) | Post-commit hook request timeout, as a Go duration such as `30s` or `1m`. Raise it on Windows or large repos where the daemon's enqueue git calls are slow. Empty uses the platform default | Yes |
+| `hook_timeout` | string | `3s` (`30s` on Windows) | Post-commit hook request timeout, as a Go duration such as `30s` or `1m`. Raise it on Windows or large repos where the daemon's enqueue git calls are slow. Empty, malformed (e.g. a bare `30` with no unit), zero, or negative values are ignored and fall back to the platform default | Yes |
 | `agent_quota_cooldown` | string | `30m0s` | Maximum daemon-wide cooldown after an agent quota or session-limit error, as a Go duration such as `10m`, `30m`, or `1h` | Yes |
 | `allow_unsafe_agents` | bool | false | Enable agentic mode globally | Yes |
 | `anthropic_api_key` | string | - | Anthropic API key for Claude Code | Yes |

@@ -1,11 +1,13 @@
 package config
 
 import (
+	"path/filepath"
 	"runtime"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 )
 
 func platformHookDefault() time.Duration {
@@ -57,4 +59,38 @@ func TestResolveHookTimeoutInvalidFallsBack(t *testing.T) {
 	repoDir := newTempRepo(t, `hook_timeout = "nope"`)
 	assert.Equal(30*time.Second,
 		ResolveHookTimeout(repoDir, &Config{HookTimeout: "30s"}))
+}
+
+// TestResolveHookTimeoutWorktreeStaysFilesystemOnly verifies the hook path
+// never spawns git: a linked worktree without its own .roborev.toml must NOT
+// inherit the main checkout's hook_timeout via LoadRepoConfig's git-backed
+// worktree fallback. It falls back to the global value instead.
+func TestResolveHookTimeoutWorktreeStaysFilesystemOnly(t *testing.T) {
+	main := t.TempDir()
+	execGit(t, main, "init")
+	execGit(t, main, "config", "user.email", "t@example.com")
+	execGit(t, main, "config", "user.name", "t")
+	writeTestFile(t, main, "base.txt", "base\n")
+	execGit(t, main, "add", ".")
+	execGit(t, main, "commit", "-m", "init")
+
+	// Main checkout carries a per-repo hook_timeout, gitignored so the git
+	// fallback in LoadRepoConfig would otherwise inherit it into a worktree.
+	writeTestFile(t, main, ".gitignore", ".roborev.toml\n")
+	writeRepoConfigStr(t, main, `hook_timeout = "90s"`)
+
+	wt := filepath.Join(t.TempDir(), "wt")
+	execGit(t, main, "worktree", "add", wt, "HEAD")
+
+	// Sanity: the git-backed loader DOES inherit the main value -- proving the
+	// fallback path exists and that ResolveHookTimeout must avoid it.
+	inherited, err := LoadRepoConfig(wt)
+	require.NoError(t, err)
+	require.NotNil(t, inherited)
+	require.Equal(t, "90s", inherited.HookTimeout)
+
+	// ResolveHookTimeout stays filesystem-only, so it ignores the main config
+	// and uses the global value.
+	assert.Equal(t, 12*time.Second,
+		ResolveHookTimeout(wt, &Config{HookTimeout: "12s"}))
 }

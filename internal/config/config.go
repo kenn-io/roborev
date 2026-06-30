@@ -880,8 +880,18 @@ func DefaultHookTimeoutForOS() time.Duration {
 // Priority: per-repo hook_timeout > global hook_timeout > platform default.
 // Values are Go duration strings (e.g. "30s", "1m"); unparseable or
 // non-positive values are ignored in favor of the next source.
+//
+// This runs inside the latency-sensitive post-commit hook, so it stays
+// strictly filesystem-only: the per-repo lookup reads repoPath/.roborev.toml
+// directly and deliberately skips LoadRepoConfig's linked-worktree fallback
+// (RepoConfigPath), which would spawn git -- the exact Windows git-spawn cost
+// this timeout exists to bound. A linked worktree without its own .roborev.toml
+// therefore inherits the global / platform default rather than the main
+// checkout's value.
 func ResolveHookTimeout(repoPath string, globalCfg *Config) time.Duration {
-	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil {
+	if repoCfg, err := loadRepoConfigFile(
+		filepath.Join(repoPath, ".roborev.toml"),
+	); err == nil && repoCfg != nil {
 		if d, ok := parsePositiveDuration(repoCfg.HookTimeout); ok {
 			return d
 		}
@@ -892,6 +902,20 @@ func ResolveHookTimeout(repoPath string, globalCfg *Config) time.Duration {
 		}
 	}
 	return DefaultHookTimeoutForOS()
+}
+
+// loadRepoConfigFile decodes .roborev.toml from an explicit file path,
+// returning (nil, nil) when the file is absent. Unlike LoadRepoConfig it does
+// no linked-worktree fallback (RepoConfigPath), so it never spawns git.
+func loadRepoConfigFile(path string) (*RepoConfig, error) {
+	if _, err := os.Stat(path); os.IsNotExist(err) {
+		return nil, nil
+	}
+	var cfg RepoConfig
+	if _, err := toml.DecodeFile(path, &cfg); err != nil {
+		return nil, err
+	}
+	return &cfg, nil
 }
 
 // parsePositiveDuration parses a Go duration string, returning (d, true) only

@@ -97,9 +97,10 @@ func postCommitCmd() *cobra.Command {
 			})
 
 			// Resolve the hook timeout from config (per-repo > global >
-			// platform default). Config reads are filesystem-only, so this
-			// adds no git-subprocess overhead to the hook path. A failed
-			// global load falls back to the platform default inside Resolve.
+			// platform default). ResolveHookTimeout is strictly filesystem-only
+			// (it reads .roborev.toml directly and never spawns git), so it adds
+			// no git-subprocess latency to the hook. A failed global load falls
+			// back to the platform default inside Resolve.
 			globalCfg, _ := config.LoadGlobal()
 			timeout := config.ResolveHookTimeout(root, globalCfg)
 
