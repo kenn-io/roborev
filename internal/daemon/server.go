@@ -1863,7 +1863,8 @@ func (s *Server) humaEnqueue(
 	}
 	req.ReviewType = canonical[0]
 
-	checkoutRoot, err := gitrepo.Root(ctx, req.RepoPath)
+	metadata := git.OpenEnqueueMetadataReader(ctx, req.RepoPath)
+	checkoutRoot, err := metadata.Root()
 	if err != nil {
 		return rawJSONOutput(
 			http.StatusBadRequest,
@@ -1884,7 +1885,7 @@ func (s *Server) humaEnqueue(
 		worktreePath = filepath.Clean(checkoutRoot)
 	}
 
-	currentBranch := gitrepo.CurrentBranch(ctx, checkoutRoot)
+	currentBranch := metadata.CurrentBranch()
 	branchToCheck := currentBranch
 	if req.JobType == storage.JobTypeInsights {
 		if req.Branch != "" {
@@ -1977,6 +1978,7 @@ func (s *Server) humaEnqueue(
 		gitRef:            gitRef,
 		checkoutRoot:      checkoutRoot,
 		repoRoot:          repoRoot,
+		metadata:          metadata,
 		worktreePath:      worktreePath,
 		normalizedMinSev:  normalizedMinSev,
 		requestedModel:    requestedModel,

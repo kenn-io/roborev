@@ -11,7 +11,6 @@ import (
 	"time"
 
 	"github.com/google/uuid"
-	gitrepo "go.kenn.io/kit/git/repo"
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
@@ -71,6 +70,7 @@ type freezeInputs struct {
 	gitRef            string
 	checkoutRoot      string
 	repoRoot          string
+	metadata          git.EnqueueMetadataReader
 	worktreePath      string
 	normalizedMinSev  string
 	requestedModel    string
@@ -112,6 +112,9 @@ func classifyTarget(customPrompt, gitRef string) targetKind {
 func (s *Server) buildTargetDescriptor(
 	ctx context.Context, in freezeInputs,
 ) (targetDescriptor, *RawJSONOutput) {
+	if in.metadata == nil {
+		in.metadata = git.OpenEnqueueMetadataReader(ctx, in.checkoutRoot)
+	}
 	insightsPrompt, early := s.resolveInsightsPrompt(ctx, in)
 	if early != nil {
 		return targetDescriptor{}, early
@@ -223,10 +226,10 @@ func (s *Server) descriptorForDirty(
 		return targetDescriptor{}, out
 	}
 
-	targetSHA, _ := gitrepo.Resolve(ctx, in.checkoutRoot, "HEAD")
+	targetSHA, _ := in.metadata.Resolve("HEAD")
 	var commitID int64
 	if targetSHA != "" {
-		if info, err := git.GetCommitInfo(in.repoRoot, targetSHA); err == nil {
+		if info, err := in.metadata.CommitInfo(targetSHA); err == nil {
 			if commit, err := s.db.GetOrCreateCommit(
 				in.repo.ID, targetSHA, info.Author, info.Subject, info.Timestamp,
 			); err == nil {
@@ -257,12 +260,10 @@ func (s *Server) descriptorForRange(
 	ctx context.Context, in freezeInputs,
 ) (targetDescriptor, *RawJSONOutput) {
 	parts := strings.SplitN(in.gitRef, "..", 2)
-	startSHA, err := gitrepo.Resolve(ctx, in.checkoutRoot, parts[0])
+	startSHA, err := in.metadata.Resolve(parts[0])
 	if err != nil {
 		if before, ok := strings.CutSuffix(parts[0], "^"); ok {
-			if _, resolveErr := gitrepo.Resolve(
-				ctx, in.checkoutRoot, before+"^{commit}",
-			); resolveErr == nil {
+			if _, resolveErr := in.metadata.Resolve(before + "^{commit}"); resolveErr == nil {
 				startSHA = git.EmptyTreeSHA
 				err = nil
 			}
@@ -273,7 +274,7 @@ func (s *Server) descriptorForRange(
 			return targetDescriptor{}, out
 		}
 	}
-	endSHA, err := gitrepo.Resolve(ctx, in.checkoutRoot, parts[1])
+	endSHA, err := in.metadata.Resolve(parts[1])
 	if err != nil {
 		out, _ := rawJSONOutput(http.StatusBadRequest,
 			ErrorResponse{Error: fmt.Sprintf("invalid end commit: %v", err)})
@@ -281,7 +282,7 @@ func (s *Server) descriptorForRange(
 	}
 
 	fullRef := startSHA + ".." + endSHA
-	if skip := s.rangeExclusionSkip(in.repoRoot, in.checkoutRoot, fullRef); skip != nil {
+	if skip := s.rangeExclusionSkip(in.repoRoot, in.metadata, fullRef); skip != nil {
 		return targetDescriptor{}, skip
 	}
 
@@ -300,14 +301,16 @@ func (s *Server) descriptorForRange(
 // rangeExclusionSkip returns a skip 200 when every commit in the range matches an
 // excluded message pattern, mirroring the single-commit exclusion. It returns nil
 // when the range cannot be fully read or no commits match, so the review proceeds.
-func (s *Server) rangeExclusionSkip(repoRoot, checkoutRoot, fullRef string) *RawJSONOutput {
-	rangeCommits, rcErr := git.GetRangeCommits(checkoutRoot, fullRef)
+func (s *Server) rangeExclusionSkip(
+	repoRoot string, metadata git.EnqueueMetadataReader, fullRef string,
+) *RawJSONOutput {
+	rangeCommits, rcErr := metadata.RangeCommits(fullRef)
 	if rcErr != nil || len(rangeCommits) == 0 {
 		return nil
 	}
 	messages := make([]string, 0, len(rangeCommits))
 	for _, rc := range rangeCommits {
-		ci, ciErr := git.GetCommitInfo(repoRoot, rc)
+		ci, ciErr := metadata.CommitInfo(rc)
 		if ciErr != nil {
 			return nil
 		}
@@ -329,14 +332,14 @@ func (s *Server) rangeExclusionSkip(repoRoot, checkoutRoot, fullRef string) *Raw
 func (s *Server) descriptorForSingleCommit(
 	ctx context.Context, in freezeInputs,
 ) (targetDescriptor, *RawJSONOutput) {
-	sha, err := gitrepo.Resolve(ctx, in.checkoutRoot, in.gitRef)
+	sha, err := in.metadata.Resolve(in.gitRef)
 	if err != nil {
 		out, _ := rawJSONOutput(http.StatusBadRequest,
 			ErrorResponse{Error: fmt.Sprintf("invalid commit: %v", err)})
 		return targetDescriptor{}, out
 	}
 
-	info, err := git.GetCommitInfo(in.repoRoot, sha)
+	info, err := in.metadata.CommitInfo(sha)
 	if err != nil {
 		out, _ := rawJSONOutput(http.StatusBadRequest,
 			ErrorResponse{Error: fmt.Sprintf("get commit info: %v", err)})

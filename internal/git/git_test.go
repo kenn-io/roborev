@@ -2,6 +2,7 @@ package git
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -860,6 +861,123 @@ func TestGetCommitInfo(t *testing.T) {
 		assert.Contains(t, info.Subject, "|", "expected subject to contain pipe, got '%s'", info.Subject)
 		assert.Contains(t, info.Body, "foo | bar", "expected body to contain 'foo | bar', got '%s'", info.Body)
 	})
+}
+
+func TestOpenEnqueueMetadataReaderGoGitMatchesGit(t *testing.T) {
+	assert := assert.New(t)
+	repo := NewTestRepo(t)
+	repo.CommitFile("base.txt", "base", "base")
+	repo.Run("checkout", "-b", "feature/enqueue")
+	repo.WriteFile("feature.txt", "feature")
+	repo.Run("add", ".")
+	repo.Run("commit", "-m", "Feature subject", "-m", "Feature body line 1\n\nFeature body line 2")
+
+	reader := OpenEnqueueMetadataReader(t.Context(), repo.Dir)
+
+	root, err := reader.Root()
+	require.NoError(t, err)
+	wantRoot, err := GetRepoRoot(repo.Dir)
+	require.NoError(t, err)
+	assert.Equal(wantRoot, root)
+
+	assert.Equal(GetCurrentBranch(repo.Dir), reader.CurrentBranch())
+
+	head, err := reader.Resolve("HEAD")
+	require.NoError(t, err)
+	wantHead, err := ResolveSHA(repo.Dir, "HEAD")
+	require.NoError(t, err)
+	assert.Equal(wantHead, head)
+
+	headParent, err := reader.Resolve("HEAD~1")
+	require.NoError(t, err)
+	wantParent, err := ResolveSHA(repo.Dir, "HEAD~1")
+	require.NoError(t, err)
+	assert.Equal(wantParent, headParent)
+
+	branchHead, err := reader.Resolve("feature/enqueue")
+	require.NoError(t, err)
+	assert.Equal(wantHead, branchHead)
+
+	commitSyntax, err := reader.Resolve("HEAD^{commit}")
+	require.NoError(t, err)
+	assert.Equal(wantHead, commitSyntax)
+
+	abbrev, err := reader.Resolve(wantHead[:12])
+	require.NoError(t, err)
+	assert.Equal(wantHead, abbrev)
+
+	gotInfo, err := reader.CommitInfo("HEAD")
+	require.NoError(t, err)
+	wantInfo, err := GetCommitInfo(repo.Dir, "HEAD")
+	require.NoError(t, err)
+	assert.Equal(wantInfo.SHA, gotInfo.SHA)
+	assert.Equal(wantInfo.Author, gotInfo.Author)
+	assert.Equal(wantInfo.Subject, gotInfo.Subject)
+	assert.Equal(wantInfo.Body, gotInfo.Body)
+	assert.True(wantInfo.Timestamp.Equal(gotInfo.Timestamp),
+		"timestamp mismatch: want %s got %s", wantInfo.Timestamp, gotInfo.Timestamp)
+
+	gotRange, err := reader.RangeCommits("HEAD~1..HEAD")
+	require.NoError(t, err)
+	wantRange, err := GetRangeCommits(repo.Dir, "HEAD~1..HEAD")
+	require.NoError(t, err)
+	assert.Equal(wantRange, gotRange)
+}
+
+func TestOpenEnqueueMetadataReaderRangeCommitsUsesCancellableGitLog(t *testing.T) {
+	repo := NewTestRepo(t)
+	repo.CommitFile("base.txt", "base", "base")
+	repo.CommitFile("feature.txt", "feature", "feature")
+
+	ctx, cancel := context.WithCancel(t.Context())
+	reader := OpenEnqueueMetadataReader(ctx, repo.Dir)
+	cancel()
+
+	_, err := reader.RangeCommits("HEAD~1..HEAD")
+	require.Error(t, err)
+}
+
+func TestOpenEnqueueMetadataReaderGoGitUsesWorktreeRootAndBranch(t *testing.T) {
+	assert := assert.New(t)
+	repo := NewTestRepo(t)
+	repo.CommitFile("base.txt", "base", "base")
+	wt := repo.AddWorktree("feature/worktree")
+
+	reader := OpenEnqueueMetadataReader(t.Context(), wt.Dir)
+
+	root, err := reader.Root()
+	require.NoError(t, err)
+	assert.Equal(cleanEvalPath(wt.Dir), cleanEvalPath(root))
+	assert.Equal("feature/worktree", reader.CurrentBranch())
+
+	head, err := reader.Resolve("HEAD")
+	require.NoError(t, err)
+	assert.Equal(strings.TrimSpace(wt.Run("rev-parse", "HEAD")), head)
+}
+
+func TestOpenEnqueueMetadataReaderFallsBackWhenGoGitOpenFails(t *testing.T) {
+	repo := NewTestRepo(t)
+	repo.CommitFile("base.txt", "base", "base")
+
+	oldOpen := openGoGitRepository
+	openGoGitRepository = func(string) (*gogit.Repository, error) {
+		return nil, errors.New("forced go-git open failure")
+	}
+	t.Cleanup(func() { openGoGitRepository = oldOpen })
+
+	reader := OpenEnqueueMetadataReader(t.Context(), repo.Dir)
+
+	root, err := reader.Root()
+	require.NoError(t, err)
+	assert.Equal(t, cleanEvalPath(repo.Dir), cleanEvalPath(root))
+
+	sha, err := reader.Resolve("HEAD")
+	require.NoError(t, err)
+	assert.Equal(t, strings.TrimSpace(repo.Run("rev-parse", "HEAD")), sha)
+
+	info, err := reader.CommitInfo("HEAD")
+	require.NoError(t, err)
+	assert.Equal(t, "base", info.Subject)
 }
 
 func TestGetCommitParents(t *testing.T) {
