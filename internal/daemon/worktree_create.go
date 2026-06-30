@@ -213,7 +213,7 @@ func attributePathUsesGitLFS(repoPath, attrPath string) (bool, bool) {
 }
 
 func attributeFileUsesGitLFS(path string) (bool, error) {
-	info, err := os.Lstat(path)
+	info, err := os.Stat(path)
 	if err != nil {
 		return false, err
 	}

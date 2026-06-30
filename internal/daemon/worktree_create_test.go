@@ -113,6 +113,20 @@ func TestCheckoutUsesGitLFS(t *testing.T) {
 		assert.True(t, checkoutUsesGitLFS(context.Background(), repo.Path()))
 	})
 
+	t.Run("configured symlink attributes file without lfs", func(t *testing.T) {
+		repo := testutil.NewGitRepo(t)
+		repo.CommitFile("file.bin", "placeholder\n", "base")
+		targetPath := filepath.Join(repo.Path(), "custom.attributes.target")
+		attrPath := filepath.Join(repo.Path(), "custom.attributes")
+		require.NoError(t, os.WriteFile(targetPath, []byte("*.bin text\n"), 0o644))
+		if err := os.Symlink(targetPath, attrPath); err != nil {
+			t.Skipf("symlink attributes file: %v", err)
+		}
+		repo.Config("core.attributesFile", attrPath)
+
+		assert.False(t, checkoutUsesGitLFS(context.Background(), repo.Path()))
+	})
+
 	t.Run("default global attributes file", func(t *testing.T) {
 		xdgConfigHome := filepath.Join(t.TempDir(), "xdg-config")
 		t.Setenv("XDG_CONFIG_HOME", xdgConfigHome)
@@ -124,5 +138,22 @@ func TestCheckoutUsesGitLFS(t *testing.T) {
 		require.NoError(t, os.WriteFile(attrPath, []byte("*.bin filter=lfs diff=lfs merge=lfs -text\n"), 0o644))
 
 		assert.True(t, checkoutUsesGitLFS(context.Background(), repo.Path()))
+	})
+
+	t.Run("default global symlink attributes file without lfs", func(t *testing.T) {
+		xdgConfigHome := filepath.Join(t.TempDir(), "xdg-config")
+		t.Setenv("XDG_CONFIG_HOME", xdgConfigHome)
+
+		repo := testutil.NewGitRepo(t)
+		repo.CommitFile("file.bin", "placeholder\n", "base")
+		targetPath := filepath.Join(xdgConfigHome, "git", "attributes.target")
+		attrPath := filepath.Join(xdgConfigHome, "git", "attributes")
+		require.NoError(t, os.MkdirAll(filepath.Dir(attrPath), 0o755))
+		require.NoError(t, os.WriteFile(targetPath, []byte("*.bin text\n"), 0o644))
+		if err := os.Symlink(targetPath, attrPath); err != nil {
+			t.Skipf("symlink attributes file: %v", err)
+		}
+
+		assert.False(t, checkoutUsesGitLFS(context.Background(), repo.Path()))
 	})
 }
