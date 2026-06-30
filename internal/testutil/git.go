@@ -15,6 +15,7 @@ import (
 	gogit "github.com/go-git/go-git/v5"
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
+	"github.com/stretchr/testify/require"
 )
 
 // TestRepo encapsulates a temporary git repository for tests.
@@ -389,7 +390,7 @@ func (r *TestRepo) CheckoutNewBranch(branch string, start ...string) {
 	if err != nil {
 		r.t.Fatalf("open repo %q: %v", r.Root, err)
 	}
-	hash := plumbing.ZeroHash
+	var hash plumbing.Hash
 	if len(start) == 1 {
 		hash = plumbing.NewHash(start[0])
 	} else {
@@ -411,6 +412,82 @@ func (r *TestRepo) CheckoutNewBranch(branch string, start ...string) {
 	if err != nil {
 		r.t.Fatalf("checkout new branch %q: %v", branch, err)
 	}
+}
+
+// CheckoutBranch checks out an existing branch without spawning a git process.
+func (r *TestRepo) CheckoutBranch(branch string) {
+	r.t.Helper()
+	repo, err := gogit.PlainOpen(r.Root)
+	require.NoError(r.t, err, "open repo %q", r.Root)
+	wt, err := repo.Worktree()
+	require.NoError(r.t, err, "worktree")
+	err = wt.Checkout(&gogit.CheckoutOptions{
+		Branch: plumbing.NewBranchReferenceName(branch),
+		Force:  true,
+	})
+	require.NoError(r.t, err, "checkout branch %q", branch)
+}
+
+// CheckoutBranchForce creates or resets branch to start, then checks it out.
+func (r *TestRepo) CheckoutBranchForce(branch string, start ...string) {
+	r.t.Helper()
+	require.LessOrEqual(r.t, len(start), 1, "CheckoutBranchForce accepts at most one start ref")
+	repo, err := gogit.PlainOpen(r.Root)
+	require.NoError(r.t, err, "open repo %q", r.Root)
+	var hash plumbing.Hash
+	if len(start) == 1 {
+		hash = plumbing.NewHash(start[0])
+	} else {
+		head, err := repo.Head()
+		require.NoError(r.t, err, "read HEAD")
+		hash = head.Hash()
+	}
+	ref := plumbing.NewBranchReferenceName(branch)
+	err = repo.Storer.SetReference(plumbing.NewHashReference(ref, hash))
+	require.NoError(r.t, err, "set branch %q", branch)
+	wt, err := repo.Worktree()
+	require.NoError(r.t, err, "worktree")
+	err = wt.Checkout(&gogit.CheckoutOptions{Branch: ref, Force: true})
+	require.NoError(r.t, err, "checkout branch %q", branch)
+}
+
+// CheckoutDetached detaches HEAD at start, or at the current HEAD when omitted.
+func (r *TestRepo) CheckoutDetached(start ...string) {
+	r.t.Helper()
+	require.LessOrEqual(r.t, len(start), 1, "CheckoutDetached accepts at most one start ref")
+	repo, err := gogit.PlainOpen(r.Root)
+	require.NoError(r.t, err, "open repo %q", r.Root)
+	var hash plumbing.Hash
+	if len(start) == 1 {
+		hash = plumbing.NewHash(start[0])
+	} else {
+		head, err := repo.Head()
+		require.NoError(r.t, err, "read HEAD")
+		hash = head.Hash()
+	}
+	wt, err := repo.Worktree()
+	require.NoError(r.t, err, "worktree")
+	err = wt.Checkout(&gogit.CheckoutOptions{Hash: hash, Force: true})
+	require.NoError(r.t, err, "checkout detached %q", hash.String())
+}
+
+// AmendCommit stages paths, amends HEAD, and returns the new HEAD SHA.
+func (r *TestRepo) AmendCommit(msg string, paths ...string) string {
+	r.t.Helper()
+	repo, err := gogit.PlainOpen(r.Root)
+	require.NoError(r.t, err, "open repo %q", r.Root)
+	wt, err := repo.Worktree()
+	require.NoError(r.t, err, "worktree")
+	for _, path := range paths {
+		_, err := wt.Add(filepath.ToSlash(path))
+		require.NoError(r.t, err, "git add %s", path)
+	}
+	hash, err := wt.Commit(msg, &gogit.CommitOptions{
+		Amend:  true,
+		Author: testSignature(),
+	})
+	require.NoError(r.t, err, "amend commit")
+	return hash.String()
 }
 
 // SetRef writes a hash ref directly.

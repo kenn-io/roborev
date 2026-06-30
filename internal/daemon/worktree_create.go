@@ -7,6 +7,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	gitcmd "go.kenn.io/kit/git/cmd"
@@ -149,10 +150,8 @@ func attributeContentUsesGitLFS(content string) bool {
 		if line == "" || strings.HasPrefix(line, "#") {
 			continue
 		}
-		for _, field := range strings.Fields(line) {
-			if field == "filter=lfs" {
-				return true
-			}
+		if slices.Contains(strings.Fields(line), "filter=lfs") {
+			return true
 		}
 	}
 	return false

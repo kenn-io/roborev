@@ -147,7 +147,7 @@ func TestCountOpenFailedReviewsExcludesBaseBranchBranchlessReviews(t *testing.T)
 	repo := testutil.NewGitRepo(t)
 	base := repo.CommitFile("base.txt", "base\n", "base")
 	mainOnly := repo.CommitFile("main.txt", "main\n", "main only")
-	repo.RunGit("checkout", "-b", "feature/lineage")
+	repo.CheckoutNewBranch("feature/lineage")
 	featureHead := repo.CommitFile("feature.txt", "feature\n", "feature")
 
 	closed := false
@@ -173,7 +173,7 @@ func TestCountOpenFailedReviewsCachesBranchlessLineageContext(t *testing.T) {
 	require := require.New(t)
 	repo := testutil.NewGitRepo(t)
 	repo.CommitFile("base.txt", "base\n", "base")
-	repo.RunGit("checkout", "-b", "feature/lineage")
+	repo.CheckoutNewBranch("feature/lineage")
 
 	closed := false
 	verdict := "F"
@@ -379,7 +379,7 @@ func TestRecordPostToolUseFailedReviewPromptUsesNewBranchLineageKey(t *testing.T
 	assert.True(mainResp.Triggered)
 	assert.Equal("failed_reviews", mainResp.TriggeredBy)
 
-	repo.RunGit("checkout", "-b", "feature/lineage")
+	repo.CheckoutNewBranch("feature/lineage")
 	repo.CommitFile("feature.go", "package main\n", "feature")
 	featureResp := post()
 	assert.True(featureResp.Triggered, "a descendant branch must not reuse main's failed-review dedupe key")
@@ -422,7 +422,7 @@ func TestRecordStopFailedReviewPromptUsesNewDetachedLineageKey(t *testing.T) {
 	assert.True(mainResp.Triggered)
 	assert.Equal("failed_reviews", mainResp.TriggeredBy)
 
-	repo.RunGit("checkout", "--detach")
+	repo.CheckoutDetached()
 	detachedResp := stop()
 	assert.True(detachedResp.Triggered, "detached HEAD must not reuse a prior branch failed-review dedupe key")
 	assert.Equal("failed_reviews", detachedResp.TriggeredBy)
@@ -433,7 +433,7 @@ func TestRecordStopFailedReviewPromptDoesNotReuseStaleDetachedLineage(t *testing
 	repo := testutil.NewGitRepo(t)
 	base := repo.CommitFile("base.go", "package main\n", "base")
 	firstHead := repo.CommitFile("first.go", "package main\n", "first")
-	repo.RunGit("checkout", "--detach", firstHead)
+	repo.CheckoutDetached(firstHead)
 
 	reviewRef := firstHead
 	closed := false
@@ -469,9 +469,9 @@ func TestRecordStopFailedReviewPromptDoesNotReuseStaleDetachedLineage(t *testing
 	assert.Equal(firstHead, store.sessions["session-1"].RepoHeads[worktreeKey])
 	delete(store.sessions["session-1"].RepoHeads, worktreeKey)
 
-	repo.RunGit("checkout", "-B", "unrelated", base)
+	repo.CheckoutBranchForce("unrelated", base)
 	secondHead := repo.CommitFile("second.go", "package main\n", "second")
-	repo.RunGit("checkout", "--detach", secondHead)
+	repo.CheckoutDetached(secondHead)
 	reviewRef = secondHead
 	secondResp := stop()
 	assert.True(secondResp.Triggered, "unrelated detached checkout must not inherit stale detached failed-review dedupe")
@@ -580,10 +580,10 @@ func TestRecordPostToolUseCommitReminderDoesNotFollowUnrelatedBranchInSameWorktr
 	assert.False(post("git commit -m main-pending").Triggered, "main commit waits for its review")
 
 	failed = true
-	repo.RunGit("checkout", "-b", "feature/unrelated")
+	repo.CheckoutNewBranch("feature/unrelated")
 	assert.False(post("go test ./...").Triggered, "feature must not inherit main's pending commit reminder")
 
-	repo.RunGit("checkout", "main")
+	repo.CheckoutBranch("main")
 	mainResp := post("go test ./...")
 	assert.True(mainResp.Triggered, "main's own pending commit reminder still fires")
 	assert.Equal("commit", mainResp.TriggeredBy)
@@ -944,7 +944,7 @@ func TestRecordStopTriggersFailedReviewOnDetachedHead(t *testing.T) {
 	assert := assert.New(t)
 	repo := testutil.NewGitRepo(t)
 	head := repo.CommitFile("main.go", "package main\n", "initial")
-	repo.RunGit("checkout", "--detach")
+	repo.CheckoutDetached()
 
 	closed := false
 	verdict := "F"
@@ -1005,7 +1005,7 @@ func TestRecordStopTriggersFailedRangeReviewOnDetachedHead(t *testing.T) {
 	repo := testutil.NewGitRepo(t)
 	base := repo.CommitFile("main.go", "package main\n", "initial")
 	head := repo.CommitFile("feature.go", "package main\n", "feature")
-	repo.RunGit("checkout", "--detach")
+	repo.CheckoutDetached()
 
 	closed := false
 	verdict := "F"
@@ -1061,7 +1061,7 @@ func TestRecordStopDetachedHeadCountsReachableBranchfulReview(t *testing.T) {
 	repo := testutil.NewGitRepo(t)
 	base := repo.CommitFile("main.go", "package main\n", "initial")
 	head := repo.CommitFile("feature.go", "package main\n", "feature")
-	repo.RunGit("checkout", "--detach")
+	repo.CheckoutDetached()
 
 	closed := false
 	verdict := "F"
@@ -1120,7 +1120,7 @@ func TestRecordStopDetachedHeadDoesNotTriggerForUnrelatedFailedReviews(t *testin
 	assert := assert.New(t)
 	repo := testutil.NewGitRepo(t)
 	head := repo.CommitFile("main.go", "package main\n", "initial")
-	repo.RunGit("checkout", "--detach")
+	repo.CheckoutDetached()
 
 	closed := false
 	verdict := "F"
@@ -1302,7 +1302,7 @@ func TestRecordPostToolUseCommitSliceSurvivesBranchAttachment(t *testing.T) {
 	assert := assert.New(t)
 	repo := testutil.NewGitRepo(t)
 	repo.CommitFile("main.go", "package main\n", "initial")
-	repo.RunGit("checkout", "--detach")
+	repo.CheckoutDetached()
 
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/repos/resolve" {
@@ -1344,7 +1344,7 @@ func TestRecordPostToolUseCommitSliceSurvivesBranchAttachment(t *testing.T) {
 	_, err = store.Record(commitReq)
 	require.NoError(t, err)
 
-	repo.RunGit("checkout", "-B", "feature/attached")
+	repo.CheckoutBranchForce("feature/attached")
 	checkoutReq := baseReq
 	checkoutReq.Event.ToolInput = map[string]json.RawMessage{"command": json.RawMessage(`"git checkout -B feature/attached"`)}
 	_, err = store.Record(checkoutReq)
@@ -1367,7 +1367,7 @@ func TestRecordPostToolUseAmendAfterBranchAttachmentKeepsDetachedCommitThreshold
 	assert := assert.New(t)
 	repo := testutil.NewGitRepo(t)
 	repo.CommitFile("main.go", "package main\n", "initial")
-	repo.RunGit("checkout", "--detach")
+	repo.CheckoutDetached()
 
 	failed := false
 	closed := false
@@ -1422,7 +1422,7 @@ func TestRecordPostToolUseAmendAfterBranchAttachmentKeepsDetachedCommitThreshold
 	require.NoError(t, err)
 	assert.False(resp.Triggered)
 
-	repo.RunGit("checkout", "-B", "feature/attached")
+	repo.CheckoutBranchForce("feature/attached")
 	checkoutReq := baseReq
 	checkoutReq.Event.ToolInput = map[string]json.RawMessage{"command": json.RawMessage(`"git checkout -B feature/attached"`)}
 	_, err = store.Record(checkoutReq)
@@ -1435,8 +1435,7 @@ func TestRecordPostToolUseAmendAfterBranchAttachmentKeepsDetachedCommitThreshold
 	assert.False(resp.Triggered)
 
 	repo.WriteFile("feature-b.go", "package main\nconst amended = true\n")
-	repo.RunGit("add", "feature-b.go")
-	repo.RunGit("commit", "--amend", "-m", "attached amended")
+	repo.AmendCommit("attached amended", "feature-b.go")
 	failed = true
 	commitReq.Event.ToolInput = map[string]json.RawMessage{"command": json.RawMessage(`"git commit --amend -m attached amended"`)}
 	resp, err = store.Record(commitReq)
@@ -1501,7 +1500,7 @@ func TestRecordPostToolUseDetachedFailedReviewDedupeScopesByDetachedHead(t *test
 	assert := assert.New(t)
 	repo := testutil.NewGitRepo(t)
 	base := repo.CommitFile("main.go", "package main\n", "initial")
-	repo.RunGit("checkout", "--detach", base)
+	repo.CheckoutDetached(base)
 	firstHead := repo.CommitFile("first.go", "package main\n", "first detached")
 
 	reviewRef := firstHead
@@ -1538,7 +1537,7 @@ func TestRecordPostToolUseDetachedFailedReviewDedupeScopesByDetachedHead(t *test
 	assert.True(first.Triggered)
 	assert.Equal("failed_reviews", first.TriggeredBy)
 
-	repo.RunGit("checkout", "--detach", base)
+	repo.CheckoutDetached(base)
 	secondHead := repo.CommitFile("second.go", "package main\n", "second detached")
 	reviewRef = secondHead
 	second := post()
@@ -1765,9 +1764,7 @@ func TestRecordPostToolUseAmendPreservesDeferredCommitReminder(t *testing.T) {
 	assert.False(atCommit.Triggered, "no prompt while the commit's review is still pending")
 
 	repo.WriteFile("feature.go", "package main\nconst feature = true\n")
-	repo.RunGit("add", "feature.go")
-	repo.RunGit("commit", "--amend", "-m", "second amended")
-	amended := repo.HeadSHA()
+	amended := repo.AmendCommit("second amended", "feature.go")
 	amend := base
 	amend.Event.ToolInput = map[string]json.RawMessage{"command": json.RawMessage(`"git commit --amend -m second amended"`)}
 	atAmend, err := store.Record(amend)
@@ -1833,9 +1830,7 @@ func TestRecordPostToolUseAmendPreservesEarlierPendingCommits(t *testing.T) {
 	require.NoError(t, err)
 
 	repo.WriteFile("second.go", "package main\nconst second = true\n")
-	repo.RunGit("add", "second.go")
-	repo.RunGit("commit", "--amend", "-m", "second amended")
-	amended := repo.HeadSHA()
+	amended := repo.AmendCommit("second amended", "second.go")
 	amend := base
 	amend.Event.ToolInput = map[string]json.RawMessage{"command": json.RawMessage(`"git commit --amend -m second amended"`)}
 	atAmend, err := store.Record(amend)
