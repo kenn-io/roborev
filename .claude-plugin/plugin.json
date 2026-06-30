@@ -2,7 +2,7 @@
   "name": "roborev",
   "displayName": "roborev",
   "description": "Agent skills for roborev code review, fix, refine, and response workflows.",
-  "version": "0.59.0",
+  "version": "0.61.0",
   "author": {
     "name": "roborev",
     "url": "https://github.com/roborev-dev"

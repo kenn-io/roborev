@@ -1,6 +1,6 @@
 {
   "name": "roborev",
-  "version": "0.59.0",
+  "version": "0.61.0",
   "description": "Agent skills for roborev code review, fix, refine, and response workflows.",
   "author": {
     "name": "roborev",
