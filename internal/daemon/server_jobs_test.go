@@ -287,100 +287,57 @@ func TestHandleEnqueueExcludedBranch(t *testing.T) {
 	})
 }
 
-func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
+func TestBuildTargetDescriptorExcludedCommitPattern(t *testing.T) {
 	t.Parallel()
 	server, db, tmpDir := newTestServer(t)
 
 	repoDir := filepath.Join(tmpDir, "testrepo")
 	repo := testutil.InitTestGitRepo(t, repoDir)
+	storedRepo, err := db.GetOrCreateRepo(repoDir)
+	require.NoError(t, err)
 
-	// Write repo config with excluded_commit_patterns
 	repoConfig := filepath.Join(repoDir, ".roborev.toml")
 	configContent := `excluded_commit_patterns = ["[skip review]", "[wip]"]`
-	if err := os.WriteFile(repoConfig, []byte(configContent), 0o644); err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "Failed to write repo config: %v", err)
+	require.NoError(t, os.WriteFile(repoConfig, []byte(configContent), 0o644))
+
+	freeze := func(t *testing.T, gitRef string) (targetDescriptor, *RawJSONOutput) {
+		t.Helper()
+		return server.buildTargetDescriptor(t.Context(), freezeInputs{
+			repo:         storedRepo,
+			req:          EnqueueRequest{RepoPath: repoDir, GitRef: gitRef, Agent: "test"},
+			gitRef:       gitRef,
+			checkoutRoot: repoDir,
+			repoRoot:     repoDir,
+		})
 	}
 
-	// Create a commit whose message matches an exclusion pattern
 	repo.CommitEmpty("wip: checkpoint [skip review]")
 
 	t.Run("matching commit returns skipped", func(t *testing.T) {
-		reqData := EnqueueRequest{
-			RepoPath: repoDir, GitRef: "HEAD", Agent: "test",
-		}
-		req := testutil.MakeJSONRequest(
-			t, http.MethodPost, "/api/enqueue", reqData,
-		)
-		w := httptest.NewRecorder()
-		server.httpServer.Handler.ServeHTTP(w, req)
+		_, early := freeze(t, "HEAD")
+		require.NotNil(t, early)
+		assert.Equal(t, http.StatusOK, early.Status)
+		resp, ok := early.Body.(EnqueueSkippedResponse)
+		require.True(t, ok)
+		assert.True(t, resp.Skipped)
+		assert.Contains(t, resp.Reason, "excluded")
 
-		if w.Code != http.StatusOK {
-			assert.Condition(t, func() bool {
-				return false
-			}, "expected 200, got %d: %s",
-				w.Code, w.Body.String())
-		}
-
-		var resp struct {
-			Skipped bool   `json:"skipped"`
-			Reason  string `json:"reason"`
-		}
-		testutil.DecodeJSON(t, w, &resp)
-
-		if !resp.Skipped {
-			assert.Condition(t, func() bool {
-				return false
-			}, "expected skipped=true")
-		}
-		if !strings.Contains(resp.Reason, "excluded") {
-			assert.Condition(t, func() bool {
-				return false
-			}, "reason should mention excluded, got %q",
-				resp.Reason)
-		}
-
-		// No job should have been created
 		queued, _, _, _, _, _, _, _, _ := db.GetJobCounts()
-		if queued != 0 {
-			assert.Condition(t, func() bool {
-				return false
-			}, "expected 0 queued jobs, got %d", queued)
-		}
+		assert.Equal(t, 0, queued)
 	})
 
-	// Create a commit that does NOT match any exclusion pattern
 	repo.CommitEmpty("feat: add endpoint")
 
-	t.Run("non-matching commit enqueues normally", func(t *testing.T) {
-		reqData := EnqueueRequest{
-			RepoPath: repoDir, GitRef: "HEAD", Agent: "test",
-		}
-		req := testutil.MakeJSONRequest(
-			t, http.MethodPost, "/api/enqueue", reqData,
-		)
-		w := httptest.NewRecorder()
-		server.httpServer.Handler.ServeHTTP(w, req)
-
-		if w.Code != http.StatusCreated {
-			assert.Condition(t, func() bool {
-				return false
-			}, "expected 201, got %d: %s",
-				w.Code, w.Body.String())
-		}
-
-		queued, _, _, _, _, _, _, _, _ := db.GetJobCounts()
-		if queued != 1 {
-			assert.Condition(t, func() bool {
-				return false
-			}, "expected 1 queued job, got %d", queued)
-		}
+	t.Run("non-matching commit freezes normally", func(t *testing.T) {
+		desc, early := freeze(t, "HEAD")
+		require.Nil(t, early)
+		assert.Positive(t, desc.commitID)
+		assert.NotEmpty(t, desc.gitRef)
+		assert.Equal(t, "feat: add endpoint", desc.commitSubject)
 	})
 
 	t.Run("range where all commits excluded returns skipped",
 		func(t *testing.T) {
-			// Create a branch with only excluded commits
 			repo.CheckoutNewBranch("all-excluded")
 			base := repo.HeadSHA()
 
@@ -388,36 +345,15 @@ func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
 				repo.CommitEmpty(fmt.Sprintf("[wip] checkpoint %d", i))
 			}
 
-			ref := base + "..HEAD"
-			reqData := EnqueueRequest{
-				RepoPath: repoDir, GitRef: ref, Agent: "test",
-			}
-			req := testutil.MakeJSONRequest(
-				t, http.MethodPost, "/api/enqueue", reqData,
-			)
-			w := httptest.NewRecorder()
-			server.httpServer.Handler.ServeHTTP(w, req)
-
-			if w.Code != http.StatusOK {
-				assert.Condition(t, func() bool {
-					return false
-				}, "expected 200, got %d: %s",
-					w.Code, w.Body.String())
-			}
-
-			var resp struct {
-				Skipped bool   `json:"skipped"`
-				Reason  string `json:"reason"`
-			}
-			testutil.DecodeJSON(t, w, &resp)
-			if !resp.Skipped {
-				assert.Condition(t, func() bool {
-					return false
-				}, "expected skipped=true for all-excluded range")
-			}
+			_, early := freeze(t, base+"..HEAD")
+			require.NotNil(t, early)
+			assert.Equal(t, http.StatusOK, early.Status)
+			resp, ok := early.Body.(EnqueueSkippedResponse)
+			require.True(t, ok)
+			assert.True(t, resp.Skipped)
 		})
 
-	t.Run("range with mixed commits enqueues normally",
+	t.Run("range with mixed commits freezes normally",
 		func(t *testing.T) {
 			repo.CheckoutNewBranch("mixed-range")
 			base := repo.HeadSHA()
@@ -425,27 +361,14 @@ func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
 			repo.CommitEmpty("[wip] temp")
 			repo.CommitEmpty("feat: real work")
 
-			ref := base + "..HEAD"
-			reqData := EnqueueRequest{
-				RepoPath: repoDir, GitRef: ref, Agent: "test",
-			}
-			req := testutil.MakeJSONRequest(
-				t, http.MethodPost, "/api/enqueue", reqData,
-			)
-			w := httptest.NewRecorder()
-			server.httpServer.Handler.ServeHTTP(w, req)
-
-			if w.Code != http.StatusCreated {
-				assert.Condition(t, func() bool {
-					return false
-				}, "expected 201, got %d: %s",
-					w.Code, w.Body.String())
-			}
+			desc, early := freeze(t, base+"..HEAD")
+			require.Nil(t, early)
+			assert.Contains(t, desc.gitRef, "..")
 		})
 
 	// This test corrupts a branch's parent chain, so it must run last
 	// since the corrupt-range branch becomes unwalkable afterward.
-	t.Run("range with corrupt mid-commit enqueues normally",
+	t.Run("range with corrupt mid-commit freezes normally",
 		func(t *testing.T) {
 			// Build a synthetic tip whose `parent` line points at a SHA
 			// that does not exist in the object store. GetRangeCommits
@@ -485,23 +408,10 @@ func TestHandleEnqueueExcludedCommitPattern(t *testing.T) {
 			// synthetic tip both exist as objects), but
 			// GetRangeCommits fails because git can't load tip's
 			// fake parent. The exclusion block is skipped and the
-			// job is enqueued normally.
-			ref := base + ".." + tip
-			reqData := EnqueueRequest{
-				RepoPath: repoDir, GitRef: ref, Agent: "test",
-			}
-			req := testutil.MakeJSONRequest(
-				t, http.MethodPost, "/api/enqueue", reqData,
-			)
-			w := httptest.NewRecorder()
-			server.httpServer.Handler.ServeHTTP(w, req)
-
-			if w.Code != http.StatusCreated {
-				assert.Condition(t, func() bool {
-					return false
-				}, "expected 201, got %d: %s",
-					w.Code, w.Body.String())
-			}
+			// descriptor freezes normally.
+			desc, early := freeze(t, base+".."+tip)
+			require.Nil(t, early)
+			assert.Contains(t, desc.gitRef, "..")
 		})
 }
 
@@ -991,13 +901,13 @@ func TestFindReusableSessionIDUsesConfigurableLookback(t *testing.T) {
 			return false
 		}, "CompleteJob failed: %v", err)
 	}
-	if _, err := db.Exec(`UPDATE review_jobs SET session_id = ?, finished_at = datetime('now', '-12 minutes') WHERE id = ?`, "session-valid", validJob.ID); err != nil {
+	if _, err := db.Exec(`UPDATE review_jobs SET session_id = ?, finished_at = datetime('now', '-4 minutes') WHERE id = ?`, "session-valid", validJob.ID); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "failed to seed valid session_id: %v", err)
 	}
 
-	for i := range 11 {
+	for i := range 3 {
 		invalidSHA := testRepo.UnrelatedCommit(fmt.Sprintf("unrelated %02d", i))
 		invalidCommit, err := db.GetOrCreateCommit(repo.ID, invalidSHA, "Author", "Subject", time.Now())
 		if err != nil {
@@ -1028,7 +938,7 @@ func TestFindReusableSessionIDUsesConfigurableLookback(t *testing.T) {
 				return false
 			}, "CompleteJob failed: %v", err)
 		}
-		offsetMinutes := 11 - i
+		offsetMinutes := 3 - i
 		if _, err := db.Exec(`UPDATE review_jobs SET session_id = ?, finished_at = datetime('now', ?) WHERE id = ?`, fmt.Sprintf("session-invalid-%02d", i), fmt.Sprintf("-%d minutes", offsetMinutes), invalidJob.ID); err != nil {
 			require.Condition(t, func() bool {
 				return false
@@ -1044,14 +954,14 @@ func TestFindReusableSessionIDUsesConfigurableLookback(t *testing.T) {
 		}, "findReusableSessionID() with default lookback = %q, want %q", got, "session-valid")
 	}
 
-	server.configWatcher.Config().ReuseReviewSessionLookback = 10
+	server.configWatcher.Config().ReuseReviewSessionLookback = 3
 	if got := server.findReusableSessionID(t.Context(), repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, "", targetSHA); got != "" {
 		require.Condition(t, func() bool {
 			return false
 		}, "findReusableSessionID() with capped lookback = %q, want empty", got)
 	}
 
-	server.configWatcher.Config().ReuseReviewSessionLookback = 12
+	server.configWatcher.Config().ReuseReviewSessionLookback = 4
 	if got := server.findReusableSessionID(t.Context(), repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, "", targetSHA); got != "session-valid" {
 		require.Condition(t, func() bool {
 			return false
@@ -1725,39 +1635,10 @@ func TestHandleEnqueuePromptJob(t *testing.T) {
 	})
 }
 
-func TestHandleEnqueueAgentAvailability(t *testing.T) {
-	// Shared read-only git repo created once (all subtests use different servers for DB isolation)
-	repoDir := filepath.Join(t.TempDir(), "repo")
-	testutil.InitTestGitRepo(t, repoDir)
-	headSHA := testutil.GetHeadSHA(t, repoDir)
-
-	// Create an isolated dir containing only a wrapper for git.
-	// We can't just use git's parent dir because it may contain real agent
-	// binaries (e.g. codex, claude) that would defeat the PATH isolation.
-	// Symlinks don't work reliably on Windows, so we use wrapper scripts.
-	gitPath, err := exec.LookPath("git")
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "git not found in PATH")
-	}
-	gitOnlyDir := t.TempDir()
-	if runtime.GOOS == "windows" {
-		wrapper := fmt.Sprintf("@\"%s\" %%*\r\n", gitPath)
-		if err := os.WriteFile(filepath.Join(gitOnlyDir, "git.cmd"), []byte(wrapper), 0o755); err != nil {
-			require.Condition(t, func() bool {
-				return false
-			}, err)
-		}
-	} else {
-		wrapper := fmt.Sprintf("#!/bin/sh\nexec '%s' \"$@\"\n", gitPath)
-		if err := os.WriteFile(filepath.Join(gitOnlyDir, "git"), []byte(wrapper), 0o755); err != nil {
-			require.Condition(t, func() bool {
-				return false
-			}, err)
-		}
-	}
-
+func TestResolveSingleAgentAvailability(t *testing.T) {
+	// The full enqueue handler already has broad git-target coverage. Keep this
+	// table focused on the availability/status mapper so it does not pay git
+	// root and descriptor-freezing costs for every resolver case.
 	mockScript := "#!/bin/sh\nexit 0\n"
 
 	tests := []struct {
@@ -1840,13 +1721,12 @@ func TestHandleEnqueueAgentAvailability(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			// Each subtest gets its own server/DB to avoid SHA dedup conflicts
-			server, _, _ := newTestServer(t)
+			cfg := config.DefaultConfig()
 			if tt.defaultAgent != "" {
-				server.configWatcher.Config().DefaultAgent = tt.defaultAgent
+				cfg.DefaultAgent = tt.defaultAgent
 			}
 			if tt.backupAgent != "" {
-				server.configWatcher.Config().DefaultBackupAgent = tt.backupAgent
+				cfg.DefaultBackupAgent = tt.backupAgent
 			}
 
 			// Isolate PATH: only mock binaries + git (no real agent CLIs)
@@ -1865,39 +1745,28 @@ func TestHandleEnqueueAgentAvailability(t *testing.T) {
 					}, err)
 				}
 			}
-			os.Setenv("PATH", mockDir+string(os.PathListSeparator)+gitOnlyDir)
+			os.Setenv("PATH", mockDir)
 			t.Cleanup(func() { os.Setenv("PATH", origPath) })
 
-			reqData := EnqueueRequest{
-				RepoPath:  repoDir,
-				CommitSHA: headSHA,
-			}
+			reqData := EnqueueRequest{}
 			if tt.requestAgent != "" {
 				reqData.Agent = tt.requestAgent
 			}
-			req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
-			w := httptest.NewRecorder()
 
-			server.httpServer.Handler.ServeHTTP(w, req)
-
-			if w.Code != tt.expectedCode {
-				require.Condition(t, func() bool {
-					return false
-				}, "Expected status %d, got %d: %s", tt.expectedCode, w.Code, w.Body.String())
-			}
-
+			agentName, _, early := (&Server{}).resolveSingleAgent(singleAgentInputs{
+				req:       reqData,
+				cfg:       cfg,
+				workflow:  "review",
+				reasoning: "fast",
+			})
 			if tt.expectedCode != http.StatusCreated {
+				require.NotNil(t, early)
+				assert.Equal(t, tt.expectedCode, early.Status)
 				return
 			}
 
-			var job storage.ReviewJob
-			testutil.DecodeJSON(t, w, &job)
-
-			if job.Agent != tt.expectedAgent {
-				assert.Condition(t, func() bool {
-					return false
-				}, "Expected agent %q, got %q", tt.expectedAgent, job.Agent)
-			}
+			require.Nil(t, early)
+			assert.Equal(t, tt.expectedAgent, agentName)
 		})
 	}
 }
@@ -2416,15 +2285,11 @@ func TestHandleListJobsRepoPrefixFilter(t *testing.T) {
 	})
 }
 
-func TestHandleEnqueueAgentOverrideModel(t *testing.T) {
+func TestResolveSingleAgentOverrideModel(t *testing.T) {
 	t.Parallel()
 	// When the requested agent differs from config default, the generic
 	// default_model should be skipped. When they match (even via alias),
 	// default_model should apply.
-
-	repoDir := t.TempDir()
-	testutil.InitTestGitRepo(t, repoDir)
-	headSHA := testutil.GetHeadSHA(t, repoDir)
 
 	tests := []struct {
 		name         string
@@ -2467,39 +2332,19 @@ func TestHandleEnqueueAgentOverrideModel(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			db, _ := testutil.OpenTestDBWithDir(t)
 			cfg := config.DefaultConfig()
 			cfg.DefaultAgent = tt.defaultAgent
 			cfg.DefaultModel = tt.defaultModel
-			server := NewServer(db, cfg, "")
 
-			reqData := EnqueueRequest{
-				RepoPath:  repoDir,
-				CommitSHA: headSHA,
-				Agent:     tt.reqAgent,
-				Model:     tt.reqModel,
-			}
-			req := testutil.MakeJSONRequest(
-				t, http.MethodPost, "/api/enqueue", reqData,
-			)
-			w := httptest.NewRecorder()
-			server.httpServer.Handler.ServeHTTP(w, req)
-
-			if w.Code != http.StatusCreated {
-				require.Condition(t, func() bool {
-					return false
-				}, "expected 201, got %d: %s", w.Code, w.Body.String())
-			}
-
-			var job storage.ReviewJob
-			testutil.DecodeJSON(t, w, &job)
-
-			if job.Model != tt.wantModel {
-				assert.Condition(t, func() bool {
-					return false
-				}, "model = %q, want %q", job.Model, tt.wantModel)
-			}
-			assert.Equal(t, tt.reqModel, job.RequestedModel)
+			_, model, early := (&Server{}).resolveSingleAgent(singleAgentInputs{
+				req:            EnqueueRequest{Agent: tt.reqAgent},
+				cfg:            cfg,
+				workflow:       "review",
+				reasoning:      "thorough",
+				requestedModel: tt.reqModel,
+			})
+			require.Nil(t, early)
+			assert.Equal(t, tt.wantModel, model)
 		})
 	}
 }

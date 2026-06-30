@@ -2035,8 +2035,9 @@ type singleAgentInputs struct {
 func (s *Server) resolveSingleAgent(
 	in singleAgentInputs,
 ) (string, string, *RawJSONOutput) {
-	resolution, err := agent.ResolveWorkflowConfig(
-		in.req.Agent, in.resolutionPath, in.cfg, in.workflow, in.reasoning,
+	repoCfg, _ := config.LoadRepoConfig(in.resolutionPath)
+	resolution, err := agent.ResolveWorkflowConfigFromConfig(
+		in.req.Agent, repoCfg, in.cfg, in.workflow, in.reasoning,
 	)
 	if err != nil {
 		out, _ := rawJSONOutput(
@@ -2046,8 +2047,8 @@ func (s *Server) resolveSingleAgent(
 		return "", "", out
 	}
 	agentName := resolution.PreferredAgent
-	resolved, err := agent.GetPreferredOrBackupWithConfig(
-		in.resolutionPath, agentName, in.cfg, resolution.BackupAgent,
+	resolved, err := agent.GetPreferredOrBackupWithConfigFromConfig(
+		repoCfg, agentName, in.cfg, resolution.BackupAgent,
 	)
 	if err != nil {
 		var unknownErr *agent.UnknownAgentError
