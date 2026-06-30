@@ -137,7 +137,7 @@ roborev review --branch --type security  # Security review of branch
 
 Review types work with all review modes (`--branch`, `--dirty`, `--since`, single commits, ranges).
 
-The `security` and `design` types can have their own agent and model configuration via `{type}_agent` and `{type}_model` in `.roborev.toml` or global config. See [Workflow-Specific Agent and Model](/configuration/#workflow-specific-agent-and-model). `lookahead` is configured through the generic per-type block instead:
+The `security` and `design` types can have their own agent and model configuration via `{type}_agent` and `{type}_model` in `.roborev.toml` or global config. See [Workflow-Specific Agent and Model](/configuration/#workflow-specific-agent-and-model). `lookahead` has no dedicated fields, so pin it through the generic per-type block:
 
 ```toml
 [analyze.lookahead]
@@ -145,7 +145,7 @@ agent = "claude-code"
 model = "sonnet"
 ```
 
-Like the other types, it falls back to your default agent and model when unset.
+When unset, it falls back to your repo or global default agent and model.
 
 ## Task Context from Kata
 

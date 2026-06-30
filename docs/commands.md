@@ -51,6 +51,7 @@ roborev review --dirty           # Review working tree
 # Review types
 roborev review --type security   # Security-focused review
 roborev review --type design     # Design-focused review
+roborev review --type lookahead  # Time-series look-ahead bias review
 
 # Review panels
 roborev review --branch --panel branch_final  # Run a named review panel
@@ -65,7 +66,7 @@ roborev review --branch --panel none          # Force single-agent review
 | `--base <branch>` | Base branch for `--branch` comparison (default: auto-detect) |
 | `--agent <name>` | Use a specific agent for review: a built-in (`codex`, `claude-code`, `gemini`, `copilot`, `opencode`, `cursor`, `kiro`, `kilo`, `droid`, `pi`) or a configured ACP agent |
 | `-m, --model <model>` | Model to use (format varies by agent) |
-| `--type <type>` | Review type (`security`, `design`); changes system prompt |
+| `--type <type>` | Review type (`security`, `design`, `lookahead`); changes system prompt |
 | `--reasoning <level>` | Set reasoning depth (`maximum`/`thorough`/`standard`/`fast`) |
 | `--fast` | Shorthand for `--reasoning fast` |
 | `--min-severity <level>` | Only report findings at or above this severity (`low`/`medium`/`high`/`critical`) |
@@ -439,7 +440,7 @@ roborev ci review --comment                  # Post results as PR comment
 | `--gh-repo <owner/repo>` | GitHub repo (default: `GITHUB_REPOSITORY` env var) |
 | `--pr <number>` | PR number (default: extracted from `GITHUB_EVENT_PATH`) |
 | `--agent <names>` | Agents to use (repeatable, default: auto-detect) |
-| `--review-types <types>` | Review types to run (comma-separated: `security`, `design`, `default`) |
+| `--review-types <types>` | Review types to run (comma-separated: `security`, `design`, `lookahead`, `default`) |
 | `--reasoning <level>` | Reasoning depth (`thorough`/`standard`/`fast`) |
 | `--min-severity <level>` | Minimum severity to report (`low`/`medium`/`high`/`critical`) |
 | `--synthesis-agent <name>` | Agent for combining multi-job results |

@@ -5,6 +5,35 @@ description: Release history for roborev
 
 All notable changes to roborev, grouped by minor release.
 
+## 0.61.0
+<small>2026-06-30</small>
+
+**New features**
+
+- Completed review export. `roborev export reviews` emits completed review history as JSON, with `content` and `metadata` profiles plus date, repo, project, closed-only, and limit filters. Panel synthesis reviews export as top-level rows with completed member reviews nested under `subagents`. See [Exporting Reviews](/commands/#exporting-reviews).
+- Lookahead reviews. `roborev review --type lookahead` adds a time-series correctness reviewer focused on look-ahead bias, future-data leakage, point-in-time joins, temporal split mistakes, and related peekahead defects. See [Review Types](/guides/reviewing-code/#review-types).
+- Factory Droid support for the agent-hook and skill workflows. `roborev agent-hook install --agent droid` installs user-scoped Factory Droid hooks, and roborev now ships Droid-compatible review, fix, refine, respond, design-review, and lookahead skill files. See [Agent Hook](/agent-hook/).
+- Per-analysis agent configuration. Analysis types can now pin their own agent, model, and reasoning with `[analyze.<type>]`, so `roborev analyze refactor` and similar workflows can use analysis-specific defaults. See [Workflow-Specific Agent and Model](/configuration/#workflow-specific-agent-and-model).
+- CI Discord failure notifications. `[ci] discord_webhook_url` enables best-effort Discord webhook alerts for CI review job failures, with sensitive URL masking in config output. See [CI Options Reference](/integrations/github/#ci-options-reference).
+
+**Improvements**
+
+- Post-commit hook request timeouts are now configurable with `hook_timeout_seconds`, with Windows defaulting to 30 seconds and other platforms defaulting to 3 seconds. The hook resolves repo config without spawning git, so large repos and Windows checkouts can raise the bound without adding more hook latency.
+- `roborev update` now allows slower release downloads and repairs registered roborev-managed git hooks after an update so managed installs keep pointing hooks at the new binary.
+- Documentation now covers `[analyze.<type>]` configuration for fieldless review types such as `lookahead`.
+
+**Bug fixes**
+
+- PostgreSQL sync now sanitizes invalid UTF-8 and NUL bytes in job text fields such as prompts, diffs, and errors before writing to Postgres, preventing binary review data from breaking sync.
+
+**Acknowledgements**
+
+- Thanks to [Wes McKinney](https://github.com/wesm) for completed review export, lookahead reviews, Factory Droid support, CI Discord notifications, update download resilience, PostgreSQL text hardening, and release/doc maintenance.
+- Thanks to [Marius van Niekerk](https://github.com/mariusvniekerk) for per-analysis agent configuration, configurable post-commit hook timeouts, `[analyze.<type>]` documentation, and release maintenance improvements.
+- Thanks to [Phillip Cloud](https://github.com/cpcloud) for managed hook repair after roborev updates.
+
+---
+
 ## 0.60.0
 <small>2026-06-25</small>
 
