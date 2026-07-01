@@ -10,6 +10,9 @@ For a one-shot fix without re-review, see [`roborev fix`](/guides/assisted-refac
 !!! tip "Run from an agent session"
     The `/roborev-refine` skill runs the same iterative loop from within a Claude Code or Codex session. See [Agent Skills](/guides/agent-skills/#refine-a-branch).
 
+!!! tip "Automation inside your coding agent"
+    If you want review fixes to happen automatically during your Codex or Claude Code sessions — without invoking a command yourself — see [Agent Hook](/agent-hook/), which watches the agent boundary and steers the agent to fix failed reviews as they appear.
+
 ```bash
 roborev refine                       # Fix failed reviews using default agent
 roborev refine --agent claude-code   # Use specific agent
