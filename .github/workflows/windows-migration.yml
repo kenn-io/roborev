@@ -1,0 +1,78 @@
+name: Windows Migration
+
+# Temporary: keep this isolated while validating the v0.56 -> current Windows
+# daemon migration path. Remove after the migration window closes, target 2026-08.
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+# ref_name (not ref) so workflow_dispatch, push, and pull_request runs on the
+# same branch share one group: a dispatched run must be cancelled when a push
+# supersedes it, and vice versa.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.head_ref || github.ref_name }}
+  cancel-in-progress: true
+
+jobs:
+  go-changes:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+      pull-requests: read
+    outputs:
+      changed: ${{ steps.filter.outputs.go }}
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+        with:
+          fetch-depth: 0
+
+      - name: Detect Go changes
+        id: filter
+        uses: dorny/paths-filter@fbd0ab8f3e69293af611ebaee6363fc25e6d187d  # v4.0.1
+        with:
+          base: ${{ github.ref }}
+          filters: |
+            go:
+              - '*.go'
+              - '**/*.go'
+              - 'go.mod'
+              - 'go.sum'
+              - 'go.work'
+              - 'go.work.sum'
+
+  windows-migration-202608:
+    needs: go-changes
+    if: needs.go-changes.outputs.changed == 'true'
+    runs-on: windows-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6.5.0
+        with:
+          go-version: '1.26.4'
+
+      - name: Download v0.56 Windows release binary
+        id: old
+        shell: pwsh
+        run: |
+          $archive = Join-Path $env:RUNNER_TEMP "roborev_0.56.0_windows_amd64.tar.gz"
+          $extractDir = Join-Path $env:RUNNER_TEMP "roborev-v0.56.0"
+          New-Item -ItemType Directory -Path $extractDir -Force | Out-Null
+          Invoke-WebRequest `
+            -Uri "https://github.com/kenn-io/roborev/releases/download/v0.56.0/roborev_0.56.0_windows_amd64.tar.gz" `
+            -OutFile $archive
+          tar -xzf $archive -C $extractDir
+          "old_binary=$extractDir\roborev.exe" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
+
+      - name: Run v0.56 daemon migration repro
+        shell: pwsh
+        env:
+          ROBOREV_MIGRATION_OLD_BINARY: ${{ steps.old.outputs.old_binary }}
+        run: go test -timeout 10m -tags "integration migration" ./cmd/roborev -run TestWindowsV056DaemonMigrationStart -count=1 -v
