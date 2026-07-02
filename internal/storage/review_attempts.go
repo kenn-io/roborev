@@ -164,6 +164,31 @@ func (db *DB) DeferReviewAttempt(repo string, pr int, sha, errClass, excerpt, la
 	return nil
 }
 
+// MakeTransientReviewAttemptsDue clears startup-visible transient backoff by
+// moving future deferred transient attempts to now. Quota/cooldown failures are
+// recorded as transient at the CI-attempt layer, so a daemon restart after the
+// provider recovers should let the retry sweep run immediately. Genuine
+// deterministic failures keep their scheduled backoff.
+func (db *DB) MakeTransientReviewAttemptsDue(now time.Time) (int64, error) {
+	nowTS := now.Format(time.RFC3339)
+	res, err := db.Exec(`
+		UPDATE ci_pr_review_attempts
+		SET next_attempt_at = ?, updated_at = ?
+		WHERE state = 'deferred'
+		  AND last_error_class = 'transient'
+		  AND next_attempt_at IS NOT NULL
+		  AND datetime(next_attempt_at) > datetime(?)`,
+		nowTS, nowTS, nowTS)
+	if err != nil {
+		return 0, fmt.Errorf("make transient review attempts due: %w", err)
+	}
+	n, err := res.RowsAffected()
+	if err != nil {
+		return 0, fmt.Errorf("make transient review attempts due rows: %w", err)
+	}
+	return n, nil
+}
+
 // RearmStuckReviewAttempt re-defers a 'pending' attempt that the crash/stuck
 // reconcile found stranded — claimed by the retry sweep (state flipped to
 // 'pending', attempt bumped) but then CreateCIPanelRun failed or the daemon

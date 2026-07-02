@@ -208,6 +208,12 @@ func (p *CIPoller) Start() error {
 	stopCh := p.stopCh
 	doneCh := p.doneCh
 
+	if woke, err := p.db.MakeTransientReviewAttemptsDue(time.Now()); err != nil {
+		log.Printf("CI poller: error making transient review attempts due on startup: %v", err)
+	} else if woke > 0 {
+		log.Printf("CI poller: made %d transient review attempt(s) due on startup", woke)
+	}
+
 	// Subscribe to events before starting poll to avoid missing early completions
 	if p.broadcaster != nil {
 		subID, eventCh := p.broadcaster.Subscribe("")

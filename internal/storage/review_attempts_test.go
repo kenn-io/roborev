@@ -17,6 +17,14 @@ func openReviewAttemptsTestDB(t *testing.T) *DB {
 	return db
 }
 
+func attemptHeads(attempts []ReviewAttempt) []string {
+	heads := make([]string, 0, len(attempts))
+	for _, attempt := range attempts {
+		heads = append(heads, attempt.HeadSHA)
+	}
+	return heads
+}
+
 func TestReviewAttemptsTableExists(t *testing.T) {
 	db := openReviewAttemptsTestDB(t)
 	insert := `INSERT INTO ci_pr_review_attempts
@@ -121,6 +129,44 @@ func TestGetDueReviewAttempts(t *testing.T) {
 	assert.Len(due, 1)
 	assert.Equal("a", due[0].HeadSHA)
 	assert.Equal("deferred", due[0].State)
+}
+
+func TestMakeTransientReviewAttemptsDue(t *testing.T) {
+	assert := assert.New(t)
+	db := openReviewAttemptsTestDB(t)
+	now := time.Now()
+
+	created, err := db.ReserveReviewAttempt("o/r", 1, "transient-future", now)
+	require.NoError(t, err)
+	require.True(t, created)
+	require.NoError(t, db.DeferReviewAttempt("o/r", 1, "transient-future", "transient", "quota", "u",
+		now.Add(time.Hour), false))
+
+	created, err = db.ReserveReviewAttempt("o/r", 2, "genuine-future", now)
+	require.NoError(t, err)
+	require.True(t, created)
+	require.NoError(t, db.DeferReviewAttempt("o/r", 2, "genuine-future", "genuine", "bad config", "u",
+		now.Add(time.Hour), true))
+
+	created, err = db.ReserveReviewAttempt("o/r", 3, "transient-past", now)
+	require.NoError(t, err)
+	require.True(t, created)
+	require.NoError(t, db.DeferReviewAttempt("o/r", 3, "transient-past", "transient", "outage", "u",
+		now.Add(-time.Minute), false))
+
+	updated, err := db.MakeTransientReviewAttemptsDue(now)
+	require.NoError(t, err)
+	assert.Equal(int64(1), updated)
+
+	due, err := db.GetDueReviewAttempts("o/r", now)
+	require.NoError(t, err)
+	assert.ElementsMatch([]string{"transient-future", "transient-past"}, attemptHeads(due))
+
+	genuine, err := db.GetReviewAttempt("o/r", 2, "genuine-future")
+	require.NoError(t, err)
+	require.NotNil(t, genuine)
+	require.NotNil(t, genuine.NextAttemptAt)
+	assert.True(genuine.NextAttemptAt.After(now), "genuine retry backoff should remain scheduled")
 }
 
 func TestGetNonTerminalAttemptPRs(t *testing.T) {

@@ -911,6 +911,30 @@ func TestCIPollerStartStopHealth(t *testing.T) {
 	}
 }
 
+func TestCIPollerStartMakesTransientAttemptsDue(t *testing.T) {
+	db := testutil.OpenTestDB(t)
+	now := time.Now()
+
+	created, err := db.ReserveReviewAttempt("acme/api", 42, "head-startup", now)
+	require.NoError(t, err)
+	require.True(t, created)
+	require.NoError(t, db.DeferReviewAttempt("acme/api", 42, "head-startup", "transient", "quota", "run",
+		now.Add(time.Hour), false))
+
+	cfg := config.DefaultConfig()
+	cfg.CI.Enabled = true
+	cfg.CI.PollInterval = "5m"
+	p := NewCIPoller(db, NewStaticConfig(cfg), nil)
+
+	require.NoError(t, p.Start())
+	p.Stop()
+
+	due, err := db.GetDueReviewAttempts("acme/api", time.Now())
+	require.NoError(t, err)
+	require.Len(t, due, 1)
+	assert.Equal(t, "head-startup", due[0].HeadSHA)
+}
+
 func TestCIPollerFindLocalRepo_PartialIdentityFallback(t *testing.T) {
 	h := newCIPollerHarness(t, "ssh://git@github.com/acme/api.git")
 
