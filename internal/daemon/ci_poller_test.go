@@ -2611,8 +2611,11 @@ func TestFormatRawBatchComment_QuotaSkippedNote(t *testing.T) {
 
 	assertContainsAll(t, comment, "comment",
 		"skipped (quota)",
-		"gemini review skipped",
+		"1 review skipped",
+		"quota exhausted",
 	)
+	assert.NotContains(t, comment, "gemini")
+	assert.NotContains(t, comment, "agent quota")
 }
 
 func TestBuildSynthesisPrompt_QuotaSkippedLabel(t *testing.T) {

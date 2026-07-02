@@ -3214,11 +3214,7 @@ func formatPanelReviewerSummary(members []storage.BatchReviewResult) string {
 	}
 	counts := make(map[string]int)
 	for _, m := range members {
-		status := strings.TrimSpace(m.Status)
-		if status == "" {
-			status = "unknown"
-		}
-		counts[status]++
+		counts[formatPanelReviewerStatus(m)]++
 	}
 	statuses := []string{"done", "failed", "canceled", "skipped", "running", "queued", "unknown"}
 	seen := make(map[string]struct{}, len(statuses))
@@ -3243,6 +3239,25 @@ func formatPanelReviewerSummary(members []storage.BatchReviewResult) string {
 		return parts[0]
 	}
 	return fmt.Sprintf("%d total (%s)", len(members), strings.Join(parts, ", "))
+}
+
+func formatPanelReviewerStatus(member storage.BatchReviewResult) string {
+	result := toReviewResult(member)
+	switch {
+	case result.Skipped || result.Status == reviewpkg.ResultSkipped:
+		return "skipped"
+	case reviewpkg.IsQuotaFailure(result):
+		return "skipped"
+	case reviewpkg.IsTimeoutCancellation(result):
+		return "skipped"
+	case reviewpkg.IsTransientFailure(result):
+		return "skipped"
+	}
+	status := strings.TrimSpace(member.Status)
+	if status == "" {
+		return "unknown"
+	}
+	return status
 }
 
 func formatPanelTotal(synth *storage.ReviewJob, members []storage.BatchReviewResult, includeCosts bool) string {

@@ -2,7 +2,6 @@ package review
 
 import (
 	"fmt"
-	"sort"
 	"strings"
 
 	gitrepo "go.kenn.io/kit/git/repo"
@@ -89,10 +88,10 @@ func BuildSynthesisPrompt(
 			if reason == "" {
 				reason = "no reason recorded"
 			}
-			b.WriteString("Auto-design-review skipped: " + reason)
+			b.WriteString("Review skipped: " + reason)
 		} else if IsQuotaFailure(r) {
 			b.WriteString(
-				"(review skipped — agent quota exhausted)")
+				"(review skipped — quota exhausted)")
 		} else if IsTransientFailure(r) {
 			b.WriteString(
 				"(review skipped — provider unavailable)")
@@ -160,7 +159,7 @@ func FormatRawBatchComment(
 		} else if IsTransientFailure(r) {
 			status = "skipped (provider unavailable)"
 		} else if r.Skipped || r.Status == ResultSkipped {
-			status = "skipped (auto-design)"
+			status = "skipped"
 		}
 		fmt.Fprintf(&b, "### Review %d (%s)\n\n",
 			i+1, status)
@@ -170,10 +169,10 @@ func FormatRawBatchComment(
 			if reason == "" {
 				reason = "no reason recorded"
 			}
-			b.WriteString("Auto-design-review skipped: " + reason + "\n\n")
+			b.WriteString("Review skipped: " + reason + "\n\n")
 		} else if IsQuotaFailure(r) {
 			b.WriteString(
-				"Review skipped — agent quota exhausted.\n\n")
+				"Review skipped: quota exhausted.\n\n")
 		} else if IsTransientFailure(r) {
 			b.WriteString(
 				"Review skipped — provider temporarily unavailable.\n\n")
@@ -340,36 +339,25 @@ func CountTimeoutCancellations(reviews []ReviewResult) int {
 	return n
 }
 
-// SkippedAgentNote returns a markdown note listing agents that
-// were skipped due to quota exhaustion. Returns "" if none.
+// SkippedAgentNote returns a neutral markdown note counting reviews skipped due
+// to quota exhaustion. Returns "" if none.
 func SkippedAgentNote(reviews []ReviewResult) string {
-	agents := make(map[string]struct{})
+	skips := 0
 	for _, r := range reviews {
 		if IsQuotaFailure(r) {
-			agents[r.Agent] = struct{}{}
+			skips++
 		}
 	}
-	if len(agents) == 0 {
+	if skips == 0 {
 		return ""
 	}
-	names := sortedKeys(agents)
-	if len(names) == 1 {
+	if skips == 1 {
 		return fmt.Sprintf(
-			"\n*Note: %s review skipped "+
-				"(agent quota exhausted)*\n",
-			names[0])
+			"\n*Note: 1 review skipped " +
+				"(quota exhausted)*\n")
 	}
 	return fmt.Sprintf(
-		"\n*Note: %s reviews skipped "+
-			"(agent quota exhausted)*\n",
-		strings.Join(names, ", "))
-}
-
-func sortedKeys(m map[string]struct{}) []string {
-	keys := make([]string, 0, len(m))
-	for k := range m {
-		keys = append(keys, k)
-	}
-	sort.Strings(keys)
-	return keys
+		"\n*Note: %d reviews skipped "+
+			"(quota exhausted)*\n",
+		skips)
 }

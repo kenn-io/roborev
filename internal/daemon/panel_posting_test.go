@@ -698,6 +698,28 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 		assert.NotContains(t, body, "gemini/design")
 	})
 
+	t.Run("plain output footer counts quota timeout and outage members as skipped", func(t *testing.T) {
+		h.Cfg.CI.IncludeCosts = false
+		comments := h.CaptureComments()
+		_, synth, _ := h.seedCIPanelRun(t, "acme/api", 24, "headsha4444", "base..headsha4444",
+			[]jobSpec{
+				{Agent: "codex", ReviewType: "default", Status: "done", Output: "x"},
+				{Agent: "gemini", ReviewType: "security", Status: "failed", Error: reviewpkg.QuotaErrorPrefix + "quota exhausted"},
+				{Agent: "claude", ReviewType: "default", Status: "canceled", Error: reviewpkg.TimeoutErrorPrefix + "batch expired"},
+				{Agent: "droid", ReviewType: "default", Status: "failed", Error: reviewpkg.OutageErrorPrefix + "503"},
+			})
+		h.completeSynthesisWithReview(t, synth.ID, "Medium issue found.")
+
+		h.Poller.handleReviewCompleted(ciEvent(synth.ID, "review.completed"))
+
+		require.Len(t, *comments, 1)
+		body := (*comments)[0].Body
+		assert.Contains(t, body, "Reviewers: 4 total (1 done, 3 skipped)")
+		assert.NotContains(t, body, "1 failed")
+		assert.NotContains(t, body, "1 canceled")
+		assert.NotContains(t, body, "gemini/security")
+	})
+
 	t.Run("prefixed output is not re-wrapped", func(t *testing.T) {
 		h.Cfg.CI.IncludeCosts = false
 		comments := h.CaptureComments()

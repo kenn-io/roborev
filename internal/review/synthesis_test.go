@@ -246,8 +246,9 @@ func TestBuildSynthesisPrompt_QuotaAndFailed(t *testing.T) {
 	assertContainsAll(t, prompt, []string{
 		"[SKIPPED]",
 		"[FAILED]",
-		"agent quota exhausted",
+		"quota exhausted",
 	})
+	assert.NotContains(t, prompt, "agent quota")
 }
 
 func TestBuildSynthesisPrompt_Truncation(t *testing.T) {
@@ -479,7 +480,9 @@ func TestSkippedAgentNote(t *testing.T) {
 			},
 		}
 		note := SkippedAgentNote(reviews)
-		assertContainsAll(t, note, []string{"gemini", "review skipped"})
+		assertContainsAll(t, note, []string{"1 review skipped", "quota exhausted"})
+		assert.NotContains(t, note, "gemini")
+		assert.NotContains(t, note, "agent quota")
 	})
 
 	t.Run("multiple skips", func(t *testing.T) {
@@ -496,7 +499,9 @@ func TestSkippedAgentNote(t *testing.T) {
 			},
 		}
 		note := SkippedAgentNote(reviews)
-		assertContainsAll(t, note, []string{"reviews skipped"})
+		assertContainsAll(t, note, []string{"2 reviews skipped", "quota exhausted"})
+		assert.NotContains(t, note, "codex")
+		assert.NotContains(t, note, "gemini")
 	})
 }
 
@@ -553,10 +558,12 @@ func TestBuildSynthesisPrompt_IncludesSkipped(t *testing.T) {
 	prompt := BuildSynthesisPrompt(reviews, "")
 	assertContainsAll(t, prompt, []string{
 		"Add type for foo",
-		"Auto-design-review skipped",
+		"Review skipped: trivial diff",
 		"trivial diff",
 		"[SKIPPED]",
 	})
+	assert.NotContains(t, prompt, "Auto-design-review")
+	assert.NotContains(t, prompt, "design")
 }
 
 func TestBuildSynthesisPrompt_TransientSkipped(t *testing.T) {
