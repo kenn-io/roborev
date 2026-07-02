@@ -252,6 +252,30 @@ func TestExportReviewsCmdPropagatesCursorErrors(t *testing.T) {
 	assert.Contains(t, err.Error(), "invalid export cursor")
 }
 
+func TestExportReviewsCmdUsesDistinctExitCodeForCursorDatabaseReset(t *testing.T) {
+	NewMockDaemon(t, MockRefineHooks{
+		OnUnhandled: func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool {
+			if r.URL.Path != "/api/export/reviews" {
+				return false
+			}
+			assert.Equal(t, "old-cursor", r.URL.Query().Get("cursor"))
+			http.Error(w, "export cursor database reset", http.StatusConflict)
+			return true
+		},
+	})
+
+	cmd := exportCmd()
+	cmd.SetArgs([]string{"reviews", "--cursor", "old-cursor"})
+	err := cmd.Execute()
+
+	require.Error(t, err)
+	var exitErr *exitError
+	require.ErrorAs(t, err, &exitErr)
+	assert.Equal(t, exportReviewsCursorResetExitCode, exitErr.code)
+	assert.Contains(t, err.Error(), "daemon returned 409 Conflict")
+	assert.Contains(t, err.Error(), "database reset")
+}
+
 func runExportCmd(t *testing.T, args ...string) string {
 	t.Helper()
 	var out bytes.Buffer

@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -16,7 +17,12 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 )
 
-const exportReviewsMaxPageSize = 5000
+const (
+	exportReviewsMaxPageSize         = 5000
+	exportReviewsCursorResetExitCode = 3
+)
+
+var errExportCursorDatabaseReset = errors.New("export cursor database reset")
 
 type exportReviewsOpts struct {
 	format     string
@@ -56,9 +62,11 @@ matching rows are available immediately.
 
 Cursor tokens are opaque and versioned for stability across invocations and
 roborev upgrades. Export documents include database_id; a cursor from a
-different database is rejected so callers can discard it and backfill. Reviews
-that complete late with completed_at before an already consumed cursor position
-are not returned by cursor resume; consumers that need convergence should use an
+different database is rejected with exit code 3 so callers can discard it and
+backfill. Other cursor rejections exit non-zero and should also be handled by
+discarding the cursor and retrying with a window backfill. Reviews that complete
+late with completed_at before an already consumed cursor position are not
+returned by cursor resume; consumers that need convergence should use an
 overlapping window separately.`),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			limitSet := cmd.Flags().Changed("limit")
@@ -71,6 +79,9 @@ overlapping window separately.`),
 
 			doc, err := fetchAllExportReviews(getDaemonEndpoint(), opts, limitSet)
 			if err != nil {
+				if errors.Is(err, errExportCursorDatabaseReset) {
+					return &exitError{code: exportReviewsCursorResetExitCode, cause: err}
+				}
 				return err
 			}
 			enc := json.NewEncoder(cmd.OutOrStdout())
@@ -189,6 +200,10 @@ func fetchExportReviewsPage(ep daemon.DaemonEndpoint, opts exportReviewsOpts, cu
 	defer resp.Body.Close()
 	if resp.StatusCode != http.StatusOK {
 		body, _ := io.ReadAll(resp.Body)
+		if resp.StatusCode == http.StatusConflict {
+			return daemon.ExportReviewsDocument{}, fmt.Errorf("%w: daemon returned %s: %s",
+				errExportCursorDatabaseReset, resp.Status, strings.TrimSpace(string(body)))
+		}
 		return daemon.ExportReviewsDocument{}, fmt.Errorf("daemon returned %s: %s", resp.Status, strings.TrimSpace(string(body)))
 	}
 	var doc daemon.ExportReviewsDocument

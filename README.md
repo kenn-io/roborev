@@ -226,7 +226,10 @@ cost metadata, and related review metadata.
 Exports include a stable `database_id` for the local review database and, when
 at least one review is emitted, an opaque `next_cursor`. Pass
 `--cursor <next_cursor>` to resume after the previous page; `--cursor` cannot
-be combined with `--since`.
+be combined with `--since`. If a cursor belongs to a previous database
+generation, `roborev export reviews` exits with code `3`; discard the cursor
+and retry with a window backfill. Other cursor rejections also require
+discarding the cursor before backfilling.
 
 ## Configuration
 

@@ -184,9 +184,11 @@ matching rows are available immediately. `--cursor <opaque>` resumes strictly
 after the cursor position, cannot be combined with `--since`, and still honors
 `--until`, `--limit`, `--profile`, `--closed-only`, `--repo`, and `--project`.
 A malformed, corrupt, stale, or no-longer-resolvable cursor fails instead of
-silently producing a full or empty export. A cursor from a different
-`database_id` is rejected distinctly as a database reset so callers can discard
-the cursor and backfill.
+silently producing a full or empty export. Consumers should treat any cursor
+rejection as a signal to discard the cursor and retry with a completed-at window
+backfill. A cursor from a different `database_id` is rejected distinctly as a
+database reset, and the CLI exits with code `3` for that case so shell callers
+can branch without parsing stderr.
 
 Cursor resume is not an overlap scan. A review that completes later with
 `completed_at` earlier than an already consumed cursor position will not be

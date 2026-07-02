@@ -7,12 +7,16 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
+	"os"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 	"go.kenn.io/roborev/internal/tokens"
@@ -296,6 +300,66 @@ func TestHumaExportReviewsRejectsDifferentDatabaseCursorWithConflict(t *testing.
 	assert.Contains(t, rr.Body.String(), "database reset")
 }
 
+func TestHumaExportReviewsRejectsCursorAfterDatabaseRecreation(t *testing.T) {
+	tmpDir := t.TempDir()
+	dbPath := filepath.Join(tmpDir, "reviews.db")
+
+	firstDB, err := storage.Open(dbPath)
+	require.NoError(t, err)
+	firstServer := newServerWithLogs(firstDB, config.DefaultConfig(), "", newTestErrorLog(), newTestActivityLog())
+	firstRepo := testutil.CreateTestRepo(t, firstDB)
+	firstJob := testutil.CreateCompletedReview(
+		t, firstDB, firstRepo.ID, "export-before-reset", "test-agent", "No issues found.",
+	)
+	_, err = firstDB.Exec(`UPDATE reviews SET created_at = '2026-06-29 00:00:00' WHERE job_id = ?`, firstJob.ID)
+	require.NoError(t, err)
+
+	firstRR := serveHuma(t, firstServer, http.MethodGet, "/api/export/reviews?limit=10", nil)
+	require.Equal(t, http.StatusOK, firstRR.Code, firstRR.Body.String())
+	var firstExport struct {
+		DatabaseID string  `json:"database_id"`
+		NextCursor *string `json:"next_cursor"`
+	}
+	require.NoError(t, json.Unmarshal(firstRR.Body.Bytes(), &firstExport))
+	require.NotEmpty(t, firstExport.DatabaseID)
+	require.NotNil(t, firstExport.NextCursor)
+	require.NoError(t, firstServer.Close())
+	require.NoError(t, firstDB.Close())
+
+	removeSQLiteFiles(t, dbPath)
+
+	secondDB, err := storage.Open(dbPath)
+	require.NoError(t, err)
+	defer secondDB.Close()
+	secondServer := newServerWithLogs(secondDB, config.DefaultConfig(), "", newTestErrorLog(), newTestActivityLog())
+	defer secondServer.Close()
+	secondRepo := testutil.CreateTestRepo(t, secondDB)
+	secondJob := testutil.CreateCompletedReview(
+		t, secondDB, secondRepo.ID, "export-after-reset", "test-agent", "No issues found.",
+	)
+	_, err = secondDB.Exec(`UPDATE reviews SET created_at = '2026-06-29 00:00:00' WHERE job_id = ?`, secondJob.ID)
+	require.NoError(t, err)
+
+	resetRR := serveHuma(t, secondServer, http.MethodGet,
+		"/api/export/reviews?cursor="+url.QueryEscape(*firstExport.NextCursor), nil)
+	assert.Equal(t, http.StatusConflict, resetRR.Code, resetRR.Body.String())
+	assert.Contains(t, resetRR.Body.String(), "database reset")
+
+	backfillRR := serveHuma(t, secondServer, http.MethodGet, "/api/export/reviews?limit=10", nil)
+	require.Equal(t, http.StatusOK, backfillRR.Code, backfillRR.Body.String())
+	var backfill struct {
+		DatabaseID string                 `json:"database_id"`
+		NextCursor *string                `json:"next_cursor"`
+		Reviews    []storage.ExportReview `json:"reviews"`
+	}
+	require.NoError(t, json.Unmarshal(backfillRR.Body.Bytes(), &backfill))
+	assert.NotEmpty(t, backfill.DatabaseID)
+	assert.NotEqual(t, firstExport.DatabaseID, backfill.DatabaseID)
+	require.NotNil(t, backfill.NextCursor)
+	require.Len(t, backfill.Reviews, 1)
+	assert.Equal(t, "export-after-reset", *backfill.Reviews[0].CommitSHA)
+}
+
 func TestHumaExportReviewsRejectsCursorWithSince(t *testing.T) {
 	srv, _, _ := newTestServer(t)
 
@@ -371,6 +435,16 @@ func encodeExportCursorForRouteTest(t *testing.T, databaseID, completedAt, revie
 	})
 	require.NoError(t, err)
 	return base64.RawURLEncoding.EncodeToString(data)
+}
+
+func removeSQLiteFiles(t *testing.T, dbPath string) {
+	t.Helper()
+	for _, path := range []string{dbPath, dbPath + "-wal", dbPath + "-shm"} {
+		err := os.Remove(path)
+		if err != nil && !os.IsNotExist(err) {
+			require.NoError(t, err)
+		}
+	}
 }
 
 func TestHumaCancelJob(t *testing.T) {
