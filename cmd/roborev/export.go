@@ -171,7 +171,7 @@ func fetchExportReviewsPage(ep daemon.DaemonEndpoint, opts exportReviewsOpts, cu
 	params := url.Values{}
 	params.Set("format", opts.format)
 	params.Set("profile", opts.profile)
-	if opts.since != "" {
+	if opts.since != "" && cursor == "" {
 		params.Set("since", opts.since)
 	}
 	if opts.until != "" {

@@ -24,18 +24,19 @@ func TestExportReviewsCmdFollowsCursors(t *testing.T) {
 			assert.Equal(http.MethodGet, r.Method)
 			assert.Equal("json", r.URL.Query().Get("format"))
 			assert.Equal("metadata", r.URL.Query().Get("profile"))
-			assert.Equal("2026-06-29", r.URL.Query().Get("since"))
 			assert.Equal("2026-06-30", r.URL.Query().Get("until"))
 			assert.Equal("true", r.URL.Query().Get("closed_only"))
 			assert.Equal("github.com/acme/widgets", r.URL.Query().Get("repo"))
 			assert.Equal("widgets", r.URL.Query().Get("project"))
 			switch len(calls) {
 			case 1:
+				assert.Equal("2026-06-29", r.URL.Query().Get("since"))
 				assert.Empty(r.URL.Query().Get("cursor"))
 				writeExportTestPage(t, w, r.URL.Query().Get("profile"), true, new("cursor-1"), []map[string]any{
 					{"review_id": "r1", "content": nil},
 				})
 			case 2:
+				assert.Empty(r.URL.Query().Get("since"))
 				assert.Equal("cursor-1", r.URL.Query().Get("cursor"))
 				writeExportTestPage(t, w, r.URL.Query().Get("profile"), false, new("cursor-2"), []map[string]any{
 					{"review_id": "r2", "content": nil},
