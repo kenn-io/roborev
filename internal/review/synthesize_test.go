@@ -132,7 +132,6 @@ func TestSynthesize_Formatting(t *testing.T) {
 			expectedTexts: []string{
 				"Review Passed",
 				"No issues found.",
-				"Agent: codex",
 			},
 		},
 		{
@@ -196,6 +195,8 @@ func TestSynthesize_Formatting(t *testing.T) {
 			for _, text := range tt.expectedTexts {
 				assertContains(t, comment, text)
 			}
+			assert.NotContains(t, comment, "Agent:")
+			assert.NotContains(t, comment, "Type:")
 		})
 	}
 }
@@ -234,6 +235,9 @@ func TestSynthesize_MultipleResults_FallsBackToRaw(t *testing.T) {
 	assertContains(t, comment, "Synthesis unavailable")
 	assertContains(t, comment, "Found issue A")
 	assertContains(t, comment, "Design looks good")
+	assert.NotContains(t, comment, "codex —")
+	assert.NotContains(t, comment, "security")
+	assert.NotContains(t, comment, "design")
 }
 
 func TestSynthesize_MixedSuccessAndFailure(t *testing.T) {

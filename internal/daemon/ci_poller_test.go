@@ -431,13 +431,15 @@ func TestBuildSynthesisPrompt(t *testing.T) {
 	assertContainsAll(t, prompt, "prompt",
 		"Deduplicate findings",
 		"Organize by severity",
-		"### Review 1: Agent=codex, Type=security",
-		"### Review 2: Agent=gemini, Type=review",
+		"### Review 1",
+		"### Review 2",
 		"[FAILED]",
 		"No issues found.",
 		"foo.go:42",
 		"(no output",
 	)
+	assert.NotContains(t, prompt, "Agent=")
+	assert.NotContains(t, prompt, "Type=")
 }
 
 func TestFormatRawBatchComment(t *testing.T) {
@@ -451,12 +453,15 @@ func TestFormatRawBatchComment(t *testing.T) {
 	assertContainsAll(t, comment, "comment",
 		"## roborev: Combined Review (`abc123d`)",
 		"Synthesis unavailable",
-		"### codex — security (done)",
+		"### Review 1 (done)",
 		"Finding A",
-		"### gemini — review (failed)",
+		"### Review 2 (failed)",
 		"**Error:** Review failed. Check CI logs for details.",
 		"---",
 	)
+	assert.NotContains(t, comment, "codex")
+	assert.NotContains(t, comment, "gemini")
+	assert.NotContains(t, comment, "security")
 
 	if strings.Contains(comment, "<details>") {
 		assert.Condition(t, func() bool {
@@ -478,11 +483,10 @@ func TestFormatSynthesizedComment(t *testing.T) {
 		"## roborev: Combined Review (`abc123d`)",
 		"All clean. No critical findings.",
 		"Synthesized from 2 reviews",
-		"codex",
-		"gemini",
-		"security",
-		"review",
 	)
+	assert.NotContains(t, comment, "agents:")
+	assert.NotContains(t, comment, "types:")
+	assert.NotContains(t, comment, "security")
 }
 
 func TestFormatAllFailedComment(t *testing.T) {
@@ -496,10 +500,13 @@ func TestFormatAllFailedComment(t *testing.T) {
 	assertContainsAll(t, comment, "comment",
 		"## roborev: Review Failed (`abc123d`)",
 		"All review jobs in this batch failed",
-		"**codex** (security): failed",
-		"**gemini** (review): failed",
+		"Review 1: failed",
+		"Review 2: failed",
 		"Check CI logs for error details.",
 	)
+	assert.NotContains(t, comment, "codex")
+	assert.NotContains(t, comment, "gemini")
+	assert.NotContains(t, comment, "security")
 }
 
 func TestGitHubTokenForRepo_PrefersAppTokenOverEnvironment(t *testing.T) {
@@ -697,7 +704,9 @@ func TestAppendPanelPRFooterBoundsOversizedFooter(t *testing.T) {
 
 	assert.LessOrEqual(t, len(comment), review.MaxCommentLen)
 	assert.True(t, utf8.ValidString(comment), "bounded comment must be valid UTF-8")
-	assert.Contains(t, comment, "Panel: ci")
+	assert.Contains(t, comment, "Reviewers: 250 done")
+	assert.NotContains(t, comment, "Panel:")
+	assert.NotContains(t, comment, "Members:")
 	assert.NotContains(t, comment, "Job:", "synthesis footer must not leak a job ID that confuses local fixing agents")
 }
 

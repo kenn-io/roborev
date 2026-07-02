@@ -122,9 +122,7 @@ func formatSingleResult(
 		output = TrimPartialRune(output[:maxLen]) + truncSuffix
 	}
 
-	return header + output + fmt.Sprintf(
-		"\n\n---\n*Agent: %s | Type: %s*\n",
-		r.Agent, r.ReviewType)
+	return header + output
 }
 
 func runSynthesis(

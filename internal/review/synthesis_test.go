@@ -148,13 +148,43 @@ func TestBuildSynthesisPrompt_Basic(t *testing.T) {
 		"combining multiple code review outputs",
 		"Do not call tools or run commands",
 		"Only combine the input review results according to these rules",
-		"Agent=codex",
-		"Agent=gemini",
+		"### Review 1",
+		"### Review 2",
 		"Found XSS vulnerability",
 		"No issues found.",
 	})
+	assert.NotContains(t, prompt, "Agent=")
+	assert.NotContains(t, prompt, "Type=")
 	assert.NotContains(t, prompt, "Verify each finding")
 	assert.NotContains(t, prompt, "current codebase")
+}
+
+func TestBuildSynthesisPrompt_UsesNeutralReviewerLabels(t *testing.T) {
+	reviews := []ReviewResult{
+		{
+			Agent:      "codex",
+			ReviewType: "security",
+			Status:     "done",
+			Output:     "Finding A",
+		},
+		{
+			Agent:      "gemini",
+			ReviewType: "design",
+			Status:     "done",
+			Output:     "Finding B",
+		},
+	}
+
+	prompt := BuildSynthesisPrompt(reviews, "")
+
+	assert.Contains(t, prompt, "### Review 1")
+	assert.Contains(t, prompt, "### Review 2")
+	assert.NotContains(t, prompt, "Agent=codex")
+	assert.NotContains(t, prompt, "Agent=gemini")
+	assert.NotContains(t, prompt, "Type=security")
+	assert.NotContains(t, prompt, "Type=design")
+	assert.NotContains(t, prompt, "security")
+	assert.NotContains(t, prompt, "design")
 }
 
 func TestBuildSynthesisPrompt_Severity(t *testing.T) {
@@ -284,11 +314,11 @@ func TestFormatSynthesizedComment(t *testing.T) {
 		"## roborev: Combined Review (`abc1234`)",
 		"Combined findings here",
 		"Synthesized from 2 reviews",
-		"codex",
-		"gemini",
-		"security",
-		"design",
 	})
+	assert.NotContains(t, comment, "agents:")
+	assert.NotContains(t, comment, "types:")
+	assert.NotContains(t, comment, "security")
+	assert.NotContains(t, comment, "design")
 }
 
 func TestFormatRawBatchComment(t *testing.T) {
@@ -312,12 +342,15 @@ func TestFormatRawBatchComment(t *testing.T) {
 	assertContainsAll(t, comment, []string{
 		"## roborev: Combined Review (`def4567`)",
 		"Synthesis unavailable",
-		"### codex — security (done)",
+		"### Review 1 (done)",
 		"Found issue X",
-		"### gemini — security (failed)",
+		"### Review 2 (failed)",
 		"Review failed",
 		"---",
 	})
+	assert.NotContains(t, comment, "codex")
+	assert.NotContains(t, comment, "gemini")
+	assert.NotContains(t, comment, "security")
 
 	assert.NotContains(t, comment, "<details>", "raw batch comment should not use <details> blocks")
 }
@@ -423,7 +456,8 @@ func TestFormatAllFailedComment(t *testing.T) {
 		assert.Contains(comment, "Check CI logs")
 		// The transient member is still labelled as a skip, the genuine one as failed.
 		assert.Contains(comment, "skipped (provider unavailable)")
-		assert.Contains(comment, "**gemini** (default): failed")
+		assert.Contains(comment, "Review 2: failed")
+		assert.NotContains(comment, "**gemini** (default): failed")
 	})
 }
 

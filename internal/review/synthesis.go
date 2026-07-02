@@ -52,10 +52,10 @@ func BuildSynthesisPrompt(
 			"into a single GitHub PR comment.\nRules:\n" +
 			"- Do not call tools or run commands\n" +
 			"- Only combine the input review results according to these rules\n" +
-			"- Deduplicate findings reported by multiple agents\n" +
+			"- Deduplicate findings reported by multiple reviewers\n" +
 			"- Organize by severity (Critical > High > Medium > Low)\n" +
 			"- Preserve file/line references\n" +
-			"- If all agents agree code is clean, say so concisely\n" +
+			"- If all reviewers agree code is clean, say so concisely\n" +
 			"- Start with a one-line summary verdict\n" +
 			"- Use markdown formatting\n" +
 			"- No preamble about yourself\n")
@@ -73,9 +73,7 @@ func BuildSynthesisPrompt(
 	const maxPerReview = 15000
 
 	for i, r := range reviews {
-		fmt.Fprintf(&b,
-			"---\n### Review %d: Agent=%s, Type=%s",
-			i+1, r.Agent, r.ReviewType)
+		fmt.Fprintf(&b, "---\n### Review %d", i+1)
 		if r.Skipped || r.Status == ResultSkipped {
 			b.WriteString(" [SKIPPED]")
 		} else if IsQuotaFailure(r) {
@@ -127,25 +125,9 @@ func FormatSynthesizedComment(
 		gitrepo.ShortSHA(headSHA))
 	b.WriteString(output)
 
-	agentSet := make(map[string]struct{})
-	typeSet := make(map[string]struct{})
-	for _, r := range reviews {
-		if r.Agent != "" {
-			agentSet[r.Agent] = struct{}{}
-		}
-		if r.ReviewType != "" {
-			typeSet[r.ReviewType] = struct{}{}
-		}
-	}
-	agents := sortedKeys(agentSet)
-	types := sortedKeys(typeSet)
-
 	fmt.Fprintf(&b,
-		"\n\n---\n*Synthesized from %d reviews "+
-			"(agents: %s | types: %s)*\n",
-		len(reviews),
-		strings.Join(agents, ", "),
-		strings.Join(types, ", "))
+		"\n\n---\n*Synthesized from %d reviews*\n",
+		len(reviews))
 
 	if note := SkippedAgentNote(reviews); note != "" {
 		b.WriteString(note)
@@ -180,8 +162,8 @@ func FormatRawBatchComment(
 		} else if r.Skipped || r.Status == ResultSkipped {
 			status = "skipped (auto-design)"
 		}
-		fmt.Fprintf(&b, "### %s — %s (%s)\n\n",
-			r.Agent, r.ReviewType, status)
+		fmt.Fprintf(&b, "### Review %d (%s)\n\n",
+			i+1, status)
 
 		if r.Skipped || r.Status == ResultSkipped {
 			reason := r.SkipReason
@@ -249,23 +231,23 @@ func FormatAllFailedComment(
 			"All review jobs in this batch failed.\n\n")
 	}
 
-	for _, r := range reviews {
+	for i, r := range reviews {
 		if IsQuotaFailure(r) {
 			fmt.Fprintf(&b,
-				"- **%s** (%s): skipped (quota)\n",
-				r.Agent, r.ReviewType)
+				"- Review %d: skipped (quota)\n",
+				i+1)
 		} else if IsTimeoutCancellation(r) {
 			fmt.Fprintf(&b,
-				"- **%s** (%s): skipped (timeout)\n",
-				r.Agent, r.ReviewType)
+				"- Review %d: skipped (timeout)\n",
+				i+1)
 		} else if IsTransientFailure(r) {
 			fmt.Fprintf(&b,
-				"- **%s** (%s): skipped (provider unavailable)\n",
-				r.Agent, r.ReviewType)
+				"- Review %d: skipped (provider unavailable)\n",
+				i+1)
 		} else {
 			fmt.Fprintf(&b,
-				"- **%s** (%s): failed\n",
-				r.Agent, r.ReviewType)
+				"- Review %d: failed\n",
+				i+1)
 		}
 	}
 
