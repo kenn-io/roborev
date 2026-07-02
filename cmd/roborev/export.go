@@ -23,6 +23,7 @@ type exportReviewsOpts struct {
 	profile    string
 	since      string
 	until      string
+	cursor     string
 	closedOnly bool
 	repo       string
 	project    string
@@ -44,6 +45,21 @@ func exportReviewsCmd() *cobra.Command {
 		Use:   "reviews",
 		Args:  cobra.NoArgs,
 		Short: "Export completed reviews as JSON",
+		Long: strings.TrimSpace(`
+Export completed reviews as a JSON document.
+
+Rows are ordered by completed_at, review_id ascending. Use --cursor with the
+next_cursor value from a previous export to resume strictly after that position.
+--cursor cannot be used with --since; --until, --limit, --profile, and filters
+still apply. Every non-empty export includes next_cursor; truncated means more
+matching rows are available immediately.
+
+Cursor tokens are opaque and versioned for stability across invocations and
+roborev upgrades. Export documents include database_id; a cursor from a
+different database is rejected so callers can discard it and backfill. Reviews
+that complete late with completed_at before an already consumed cursor position
+are not returned by cursor resume; consumers that need convergence should use an
+overlapping window separately.`),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			limitSet := cmd.Flags().Changed("limit")
 			if err := validateExportReviewsOpts(opts, limitSet); err != nil {
@@ -66,6 +82,7 @@ func exportReviewsCmd() *cobra.Command {
 	cmd.Flags().StringVar(&opts.profile, "profile", string(storage.ExportProfileContent), "export profile (content or metadata)")
 	cmd.Flags().StringVar(&opts.since, "since", "", "inclusive completed_at lower bound (RFC3339 or YYYY-MM-DD)")
 	cmd.Flags().StringVar(&opts.until, "until", "", "exclusive completed_at upper bound (RFC3339 or YYYY-MM-DD)")
+	cmd.Flags().StringVar(&opts.cursor, "cursor", "", "opaque next_cursor from a previous export; resumes after that cursor and cannot be used with --since")
 	cmd.Flags().BoolVar(&opts.closedOnly, "closed-only", false, "only include reviews marked closed")
 	cmd.Flags().StringVar(&opts.repo, "repo", "", "exact exported repo identifier filter")
 	cmd.Flags().StringVar(&opts.project, "project", "", "exact project display-name filter")
@@ -84,12 +101,15 @@ func validateExportReviewsOpts(opts exportReviewsOpts, limitSet bool) error {
 	if limitSet && opts.limit <= 0 {
 		return fmt.Errorf("--limit must be greater than 0")
 	}
+	if opts.cursor != "" && opts.since != "" {
+		return fmt.Errorf("--cursor cannot be used with --since; cursor already defines the resume position")
+	}
 	return nil
 }
 
 func fetchAllExportReviews(ep daemon.DaemonEndpoint, opts exportReviewsOpts, limitSet bool) (*daemon.ExportReviewsDocument, error) {
 	var out *daemon.ExportReviewsDocument
-	var cursor string
+	cursor := opts.cursor
 	remaining := opts.limit
 	for {
 		pageLimit := 0
@@ -116,8 +136,11 @@ func fetchAllExportReviews(ep daemon.DaemonEndpoint, opts exportReviewsOpts, lim
 				break
 			}
 		}
-		if page.NextCursor == nil || *page.NextCursor == "" {
+		if !page.Truncated {
 			break
+		}
+		if page.NextCursor == nil || *page.NextCursor == "" {
+			return nil, fmt.Errorf("daemon returned truncated export page without next cursor")
 		}
 		if len(page.Reviews) == 0 {
 			return nil, fmt.Errorf("daemon returned empty export page with next cursor")
@@ -129,7 +152,6 @@ func fetchAllExportReviews(ep daemon.DaemonEndpoint, opts exportReviewsOpts, lim
 	}
 	if !limitSet {
 		out.Truncated = false
-		out.NextCursor = nil
 	}
 	return out, nil
 }

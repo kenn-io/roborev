@@ -37,7 +37,7 @@ func TestExportReviewsCmdFollowsCursors(t *testing.T) {
 				})
 			case 2:
 				assert.Equal("cursor-1", r.URL.Query().Get("cursor"))
-				writeExportTestPage(t, w, r.URL.Query().Get("profile"), false, nil, []map[string]any{
+				writeExportTestPage(t, w, r.URL.Query().Get("profile"), false, new("cursor-2"), []map[string]any{
 					{"review_id": "r2", "content": nil},
 				})
 			default:
@@ -67,7 +67,8 @@ func TestExportReviewsCmdFollowsCursors(t *testing.T) {
 	require.NoError(t, json.Unmarshal([]byte(output), &got))
 	assert.Equal("metadata", got.Profile)
 	assert.False(got.Truncated)
-	assert.Nil(got.NextCursor)
+	require.NotNil(t, got.NextCursor)
+	assert.Equal("cursor-2", *got.NextCursor)
 	require.Len(t, got.Reviews, 2)
 	assert.Equal("r1", got.Reviews[0]["review_id"])
 	assert.Equal("r2", got.Reviews[1]["review_id"])
@@ -106,6 +107,47 @@ func TestExportReviewsCmdLimitStopsAtCursor(t *testing.T) {
 	assert.Equal("next-page", *got.NextCursor)
 	require.Len(t, got.Reviews, 1)
 	assert.Equal("raw", got.Reviews[0]["content"])
+}
+
+func TestExportReviewsCmdStartsFromCursor(t *testing.T) {
+	assert := assert.New(t)
+	var calls []string
+	NewMockDaemon(t, MockRefineHooks{
+		OnUnhandled: func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool {
+			if r.URL.Path != "/api/export/reviews" {
+				return false
+			}
+			calls = append(calls, r.URL.RawQuery)
+			assert.Equal("opaque-cursor", r.URL.Query().Get("cursor"))
+			assert.Empty(r.URL.Query().Get("since"))
+			assert.Equal("2026-06-30", r.URL.Query().Get("until"))
+			assert.Equal("metadata", r.URL.Query().Get("profile"))
+			writeExportTestPage(t, w, r.URL.Query().Get("profile"), false, new("resume-r2"), []map[string]any{
+				{"review_id": "r2", "content": nil},
+			})
+			return true
+		},
+	})
+
+	output := runExportCmd(t,
+		"reviews",
+		"--profile", "metadata",
+		"--cursor", "opaque-cursor",
+		"--until", "2026-06-30",
+	)
+
+	require.Len(t, calls, 1)
+	var got struct {
+		DatabaseID string           `json:"database_id"`
+		NextCursor *string          `json:"next_cursor"`
+		Reviews    []map[string]any `json:"reviews"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(output), &got))
+	assert.Equal("test-database", got.DatabaseID)
+	require.NotNil(t, got.NextCursor)
+	assert.Equal("resume-r2", *got.NextCursor)
+	require.Len(t, got.Reviews, 1)
+	assert.Equal("r2", got.Reviews[0]["review_id"])
 }
 
 func TestExportReviewsCmdExplicitLargeLimitFollowsUntilLimit(t *testing.T) {
@@ -158,6 +200,7 @@ func TestExportReviewsCmdRejectsInvalidFlags(t *testing.T) {
 		{name: "format", args: []string{"reviews", "--format", "yaml"}},
 		{name: "profile", args: []string{"reviews", "--profile", "full"}},
 		{name: "limit", args: []string{"reviews", "--limit", "0"}},
+		{name: "cursor-since", args: []string{"reviews", "--cursor", "opaque", "--since", "2026-06-29"}},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
@@ -188,6 +231,27 @@ func TestRootExportReviewsCmdRejectsInvalidFlagsAsUsageError(t *testing.T) {
 	assert.False(t, executed.SilenceUsage)
 }
 
+func TestExportReviewsCmdPropagatesCursorErrors(t *testing.T) {
+	NewMockDaemon(t, MockRefineHooks{
+		OnUnhandled: func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool {
+			if r.URL.Path != "/api/export/reviews" {
+				return false
+			}
+			assert.Equal(t, "corrupt", r.URL.Query().Get("cursor"))
+			http.Error(w, "invalid export cursor: illegal base64 data", http.StatusBadRequest)
+			return true
+		},
+	})
+
+	cmd := exportCmd()
+	cmd.SetArgs([]string{"reviews", "--cursor", "corrupt"})
+	err := cmd.Execute()
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "daemon returned 400 Bad Request")
+	assert.Contains(t, err.Error(), "invalid export cursor")
+}
+
 func runExportCmd(t *testing.T, args ...string) string {
 	t.Helper()
 	var out bytes.Buffer
@@ -209,6 +273,7 @@ func writeExportTestPage(t *testing.T, w http.ResponseWriter, profile string, tr
 		"tool":           "roborev",
 		"tool_version":   "dev",
 		"generated_at":   "2026-06-29T00:00:00Z",
+		"database_id":    "test-database",
 		"profile":        profile,
 		"window": map[string]any{
 			"field": "completed_at",

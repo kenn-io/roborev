@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"os"
 	"path/filepath"
 	"regexp"
 	"testing"
@@ -103,6 +104,36 @@ func TestGetMachineID_EmptyValueRegeneration(t *testing.T) {
 	err = db.QueryRow(`SELECT value FROM sync_state WHERE key = ?`, SyncStateMachineID).Scan(&stored)
 	r.NoError(err, "Failed to query stored ID: %v", err)
 	a.Equal(id, stored, "Stored ID %q doesn't match returned ID %q", stored, id)
+}
+
+func TestGetDatabaseIDStableAcrossRestartAndChangesAfterRecreation(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "reviews.db")
+
+	db, err := Open(dbPath)
+	require.NoError(t, err)
+	first, err := db.GetDatabaseID()
+	require.NoError(t, err)
+	require.NotEmpty(t, first)
+	require.NoError(t, db.Close())
+
+	reopened, err := Open(dbPath)
+	require.NoError(t, err)
+	second, err := reopened.GetDatabaseID()
+	require.NoError(t, err)
+	assert.Equal(t, first, second)
+	require.NoError(t, reopened.Close())
+
+	require.NoError(t, os.Remove(dbPath))
+	_ = os.Remove(dbPath + "-wal")
+	_ = os.Remove(dbPath + "-shm")
+
+	recreated, err := Open(dbPath)
+	require.NoError(t, err)
+	third, err := recreated.GetDatabaseID()
+	require.NoError(t, err)
+	assert.NotEmpty(t, third)
+	assert.NotEqual(t, first, third)
+	require.NoError(t, recreated.Close())
 }
 
 func TestGetOrCreateSyncStateValue(t *testing.T) {

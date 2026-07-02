@@ -18,6 +18,7 @@ const (
 	ExportProfileContent  ExportProfile = "content"
 	ExportProfileMetadata ExportProfile = "metadata"
 
+	exportCursorVersion     = 1
 	exportContentMaxBytes   = 1 << 20
 	exportDefaultPageLimit  = 500
 	exportMaxPageLimit      = 5000
@@ -26,6 +27,11 @@ const (
 	exportReviewStatusDone  = "done"
 	exportReviewVerdictPass = "pass"
 	exportReviewVerdictFail = "fail"
+)
+
+var (
+	ErrExportCursorDatabaseMismatch = errors.New("export cursor database reset")
+	ErrExportCursorNotFound         = errors.New("export cursor no longer resolvable")
 )
 
 type ExportReviewsOptions struct {
@@ -85,6 +91,8 @@ type ExportReviewCost struct {
 }
 
 type exportCursor struct {
+	Version     int    `json:"version"`
+	DatabaseID  string `json:"database_id"`
 	CompletedAt string `json:"completed_at"`
 	ReviewID    string `json:"review_id"`
 }
@@ -130,7 +138,7 @@ func (db *DB) ExportReviews(opts ExportReviewsOptions) (ExportReviewsPage, error
 		opts.Limit = exportMaxPageLimit
 	}
 
-	cursor, err := decodeExportCursor(opts.Cursor)
+	cursor, err := db.resolveExportCursor(opts.Cursor)
 	if err != nil {
 		return ExportReviewsPage{}, err
 	}
@@ -164,9 +172,13 @@ func (db *DB) ExportReviews(opts ExportReviewsOptions) (ExportReviewsPage, error
 	if err := rows.Err(); err != nil {
 		return ExportReviewsPage{}, err
 	}
-	if page.Truncated && len(page.Reviews) > 0 {
+	if len(page.Reviews) > 0 {
 		last := page.Reviews[len(page.Reviews)-1]
-		nextCursor := encodeExportCursor(last.CompletedAt, last.ReviewID)
+		databaseID, err := db.GetDatabaseID()
+		if err != nil {
+			return ExportReviewsPage{}, err
+		}
+		nextCursor := encodeExportCursor(databaseID, last.CompletedAt, last.ReviewID)
 		if nextCursor != "" {
 			page.NextCursor = &nextCursor
 		}
@@ -548,16 +560,49 @@ func isSHALike(s string) bool {
 	return true
 }
 
-func encodeExportCursor(completedAt, reviewID string) string {
-	if completedAt == "" || reviewID == "" {
+func encodeExportCursor(databaseID, completedAt, reviewID string) string {
+	if databaseID == "" || completedAt == "" || reviewID == "" {
 		return ""
 	}
-	data, err := json.Marshal(exportCursor{CompletedAt: completedAt, ReviewID: reviewID})
+	data, err := json.Marshal(exportCursor{
+		Version:     exportCursorVersion,
+		DatabaseID:  databaseID,
+		CompletedAt: completedAt,
+		ReviewID:    reviewID,
+	})
 	if err != nil {
 		log.Printf("storage: warning: encode export cursor: %v", err)
 		return ""
 	}
 	return base64.RawURLEncoding.EncodeToString(data)
+}
+
+func (db *DB) resolveExportCursor(cursor string) (*exportCursor, error) {
+	decoded, err := decodeExportCursor(cursor)
+	if err != nil || decoded == nil {
+		return decoded, err
+	}
+	databaseID, err := db.GetDatabaseID()
+	if err != nil {
+		return nil, err
+	}
+	if decoded.DatabaseID != databaseID {
+		return nil, fmt.Errorf(
+			"%w: cursor database_id %q does not match current database_id %q",
+			ErrExportCursorDatabaseMismatch, decoded.DatabaseID, databaseID,
+		)
+	}
+	found, err := db.exportCursorReviewExists(decoded)
+	if err != nil {
+		return nil, err
+	}
+	if !found {
+		return nil, fmt.Errorf(
+			"%w: completed_at %q review_id %q",
+			ErrExportCursorNotFound, decoded.CompletedAt, decoded.ReviewID,
+		)
+	}
+	return decoded, nil
 }
 
 func decodeExportCursor(cursor string) (*exportCursor, error) {
@@ -572,7 +617,10 @@ func decodeExportCursor(cursor string) (*exportCursor, error) {
 	if err := json.Unmarshal(data, &decoded); err != nil {
 		return nil, fmt.Errorf("invalid export cursor: %w", err)
 	}
-	if decoded.CompletedAt == "" || decoded.ReviewID == "" {
+	if decoded.Version != exportCursorVersion {
+		return nil, fmt.Errorf("invalid export cursor: unsupported version %d", decoded.Version)
+	}
+	if decoded.DatabaseID == "" || decoded.CompletedAt == "" || decoded.ReviewID == "" {
 		return nil, errors.New("invalid export cursor: missing fields")
 	}
 	t, err := time.Parse(time.RFC3339Nano, decoded.CompletedAt)
@@ -581,4 +629,24 @@ func decodeExportCursor(cursor string) (*exportCursor, error) {
 	}
 	decoded.CompletedAt = t.UTC().Format(time.RFC3339)
 	return &decoded, nil
+}
+
+func (db *DB) exportCursorReviewExists(cursor *exportCursor) (bool, error) {
+	completedExpr := sqliteNormalizedTimestampExpr("rv.created_at")
+	var count int
+	err := db.QueryRow(`
+		SELECT COUNT(1)
+		FROM reviews rv
+		JOIN review_jobs j ON j.id = rv.job_id
+		WHERE rv.uuid = ?
+		  AND `+completedExpr+` = datetime(?)
+		  AND j.status = 'done'
+		  AND COALESCE(j.job_type, 'review') IN ('review','range','dirty','synthesis')
+		  AND COALESCE(j.panel_role, '') != 'member'
+		  AND rv.verdict_bool IS NOT NULL
+	`, cursor.ReviewID, cursor.CompletedAt).Scan(&count)
+	if err != nil {
+		return false, fmt.Errorf("validate export cursor: %w", err)
+	}
+	return count > 0, nil
 }

@@ -673,9 +673,13 @@ components:
           format: uri
           readOnly: true
           type: string
+        database_id:
+          description: Stable identity for the local review database; changes when the database is recreated.
+          type: string
         generated_at:
           type: string
         next_cursor:
+          description: Opaque resume cursor emitted when reviews is non-empty; pass as cursor to resume after the last returned review.
           type:
             - string
             - "null"
@@ -695,6 +699,7 @@ components:
         tool_version:
           type: string
         truncated:
+          description: True when more matching rows are available immediately.
           type: boolean
         window:
           $ref: "#/components/schemas/ExportReviewsWindow"
@@ -703,6 +708,7 @@ components:
         - tool
         - tool_version
         - generated_at
+        - database_id
         - profile
         - window
         - truncated
@@ -2137,12 +2143,12 @@ paths:
             description: Maximum top-level reviews in this page
             format: int64
             type: integer
-        - description: Opaque cursor from a previous page
+        - description: Opaque next_cursor from a previous page. Resumes strictly after its (completed_at, review_id) position; mutually exclusive with since.
           explode: false
           in: query
           name: cursor
           schema:
-            description: Opaque cursor from a previous page
+            description: Opaque next_cursor from a previous page. Resumes strictly after its (completed_at, review_id) position; mutually exclusive with since.
             type: string
       responses:
         "200":
@@ -2151,6 +2157,12 @@ paths:
               schema:
                 $ref: "#/components/schemas/ExportReviewsDocument"
           description: OK
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Cursor database_id does not match this local database
         default:
           content:
             application/problem+json:

@@ -1228,6 +1228,9 @@ func (s *Server) humaExportReviews(
 		profile != string(storage.ExportProfileMetadata) {
 		return nil, huma.Error400BadRequest("unsupported export profile")
 	}
+	if input.Cursor != "" && input.Since != "" {
+		return nil, huma.Error400BadRequest("cursor cannot be used with since")
+	}
 
 	since, sinceOut, err := parseExportTimeBound(input.Since, false)
 	if err != nil {
@@ -1257,7 +1260,14 @@ func (s *Server) humaExportReviews(
 		Limit:      limit,
 	})
 	if err != nil {
+		if errors.Is(err, storage.ErrExportCursorDatabaseMismatch) {
+			return nil, huma.Error409Conflict(err.Error())
+		}
 		return nil, huma.Error400BadRequest(err.Error())
+	}
+	databaseID, err := s.db.GetDatabaseID()
+	if err != nil {
+		return nil, fmt.Errorf("get database ID: %w", err)
 	}
 
 	var nextCursor *string
@@ -1270,6 +1280,7 @@ func (s *Server) humaExportReviews(
 		Tool:          "roborev",
 		ToolVersion:   version.Version,
 		GeneratedAt:   time.Now().UTC().Format(time.RFC3339),
+		DatabaseID:    databaseID,
 		Profile:       profile,
 		Window: ExportReviewsWindow{
 			Field: "completed_at",

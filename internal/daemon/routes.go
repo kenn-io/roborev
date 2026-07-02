@@ -48,6 +48,21 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 			o.OperationID = "export-reviews"
 			o.Summary = "Export completed reviews"
 			o.Tags = []string{"reviews"}
+			if o.Responses == nil {
+				o.Responses = map[string]*huma.Response{}
+			}
+			o.Responses["409"] = &huma.Response{
+				Description: "Cursor database_id does not match this local database",
+				Content: map[string]*huma.MediaType{
+					"application/problem+json": {Schema: jsonSchema(api, huma.ErrorModel{})},
+				},
+			}
+			o.Responses["default"] = &huma.Response{
+				Description: "Error",
+				Content: map[string]*huma.MediaType{
+					"application/problem+json": {Schema: jsonSchema(api, huma.ErrorModel{})},
+				},
+			}
 		})
 
 	// /api/job/output is registered as a plain HandleFunc

@@ -190,8 +190,56 @@ func TestExportReviewsPagination(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, page2.Reviews, 1)
 	assert.False(page2.Truncated)
-	assert.Nil(page2.NextCursor)
+	require.NotNil(t, page2.NextCursor)
 	assert.Equal(third.UUID, page2.Reviews[0].ReviewID)
+
+	page3, err := db.ExportReviews(ExportReviewsOptions{Profile: ExportProfileContent, Cursor: *page2.NextCursor, Limit: 2})
+	require.NoError(t, err)
+	assert.Empty(page3.Reviews)
+	assert.False(page3.Truncated)
+	assert.Nil(page3.NextCursor)
+}
+
+func TestExportReviewsCursorRoundTripAcrossPagesMatchesUnpaginated(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
+	for i := range 5 {
+		seedCompletedExportReview(
+			t, db, repo.ID, fmt.Sprintf("%040x", i+1),
+			fmt.Sprintf("2026-06-29 00:00:%02d", i), false,
+		)
+	}
+
+	full, err := db.ExportReviews(ExportReviewsOptions{Profile: ExportProfileMetadata, Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, full.Reviews, 5)
+
+	var cursor string
+	var pagedIDs []string
+	for {
+		page, err := db.ExportReviews(ExportReviewsOptions{
+			Profile: ExportProfileMetadata,
+			Cursor:  cursor,
+			Limit:   2,
+		})
+		require.NoError(t, err)
+		for _, review := range page.Reviews {
+			pagedIDs = append(pagedIDs, review.ReviewID)
+		}
+		if page.NextCursor == nil || len(page.Reviews) == 0 {
+			break
+		}
+		cursor = *page.NextCursor
+	}
+
+	fullIDs := make([]string, 0, len(full.Reviews))
+	for _, review := range full.Reviews {
+		fullIDs = append(fullIDs, review.ReviewID)
+	}
+	assert.Equal(t, fullIDs, pagedIDs)
+	assert.Len(t, uniqueStrings(pagedIDs), len(pagedIDs), "paged export must not duplicate reviews")
 }
 
 func TestExportReviewsCursorPaginatesSameCompletedTimestamp(t *testing.T) {
@@ -212,6 +260,43 @@ func TestExportReviewsCursorPaginatesSameCompletedTimestamp(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, page2.Reviews, 1)
 	assert.Equal(t, second.UUID, page2.Reviews[0].ReviewID)
+	assert.NotNil(t, page2.NextCursor)
+}
+
+func TestExportReviewsCursorPaginatesSameCompletedTimestampPileup(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
+	wantIDs := make([]string, 0, 5)
+	for i := range 5 {
+		review := seedCompletedExportReview(
+			t, db, repo.ID, fmt.Sprintf("%040x", i+1),
+			"2026-06-29 00:00:00", false,
+		)
+		wantIDs = append(wantIDs, review.UUID)
+	}
+
+	var cursor string
+	var gotIDs []string
+	for {
+		page, err := db.ExportReviews(ExportReviewsOptions{
+			Profile: ExportProfileContent,
+			Cursor:  cursor,
+			Limit:   2,
+		})
+		require.NoError(t, err)
+		for _, review := range page.Reviews {
+			gotIDs = append(gotIDs, review.ReviewID)
+		}
+		if page.NextCursor == nil || len(page.Reviews) == 0 {
+			break
+		}
+		cursor = *page.NextCursor
+	}
+
+	assert.Equal(t, wantIDs, gotIDs)
+	assert.Len(t, uniqueStrings(gotIDs), len(gotIDs), "same-timestamp pagination must not duplicate reviews")
 }
 
 func TestExportReviewsDefaultLimitIsBounded(t *testing.T) {
@@ -244,14 +329,83 @@ func TestExportReviewsEmptyPageUsesEmptyReviewsArray(t *testing.T) {
 	assert.NotContains(t, string(encoded), `"reviews":null`)
 }
 
-func TestExportReviewsRejectsInvalidCursorTimestamp(t *testing.T) {
-	cursor := base64.RawURLEncoding.EncodeToString([]byte(`{"completed_at":"not-a-time","review_id":"r1"}`))
+func TestExportReviewsNonTruncatedPageIncludesResumeCursor(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	_, err := db.ExportReviews(ExportReviewsOptions{Profile: ExportProfileContent, Cursor: cursor, Limit: 10})
+	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
+	first := seedCompletedExportReview(t, db, repo.ID, "1111111111111111111111111111111111111111", "2026-06-29 00:00:00", false)
+
+	page, err := db.ExportReviews(ExportReviewsOptions{Profile: ExportProfileMetadata, Limit: 10})
+	require.NoError(t, err)
+	require.Len(t, page.Reviews, 1)
+	assert.False(t, page.Truncated)
+	require.NotNil(t, page.NextCursor)
+	assert.Equal(t, first.UUID, page.Reviews[0].ReviewID)
+
+	resumed, err := db.ExportReviews(ExportReviewsOptions{
+		Profile: ExportProfileMetadata,
+		Cursor:  *page.NextCursor,
+		Limit:   10,
+	})
+	require.NoError(t, err)
+	assert.Empty(t, resumed.Reviews)
+	assert.False(t, resumed.Truncated)
+	assert.Nil(t, resumed.NextCursor)
+}
+
+func TestExportReviewsRejectsInvalidCursorTimestamp(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	databaseID, err := db.GetDatabaseID()
+	require.NoError(t, err)
+	cursor := encodeExportCursorForTest(t, databaseID, "not-a-time", "r1")
+
+	_, err = db.ExportReviews(ExportReviewsOptions{Profile: ExportProfileContent, Cursor: cursor, Limit: 10})
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "invalid export cursor timestamp")
+}
+
+func TestExportReviewsRejectsCorruptCursor(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	_, err := db.ExportReviews(ExportReviewsOptions{
+		Profile: ExportProfileContent,
+		Cursor:  "not base64",
+		Limit:   10,
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "invalid export cursor")
+}
+
+func TestExportReviewsRejectsCursorFromDifferentDatabaseID(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
+	first := seedCompletedExportReview(t, db, repo.ID, "1111111111111111111111111111111111111111", "2026-06-29 00:00:00", false)
+	cursor := encodeExportCursorForTest(t, "00000000-0000-4000-8000-000000000000", formatExportTime(first.CreatedAt), first.UUID)
+
+	_, err := db.ExportReviews(ExportReviewsOptions{Profile: ExportProfileMetadata, Cursor: cursor, Limit: 10})
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrExportCursorDatabaseMismatch)
+	assert.Contains(t, err.Error(), "database reset")
+}
+
+func TestExportReviewsRejectsNoLongerResolvableCursor(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	databaseID, err := db.GetDatabaseID()
+	require.NoError(t, err)
+	cursor := encodeExportCursorForTest(t, databaseID, "2026-06-29T00:00:00Z", "missing-review")
+
+	_, err = db.ExportReviews(ExportReviewsOptions{Profile: ExportProfileMetadata, Cursor: cursor, Limit: 10})
+	require.Error(t, err)
+	require.ErrorIs(t, err, ErrExportCursorNotFound)
+	assert.Contains(t, err.Error(), "no longer resolvable")
 }
 
 func TestExportReviewsPanelSubagents(t *testing.T) {
@@ -535,4 +689,24 @@ func derefFloat64(v *float64) float64 {
 		return 0
 	}
 	return *v
+}
+
+func encodeExportCursorForTest(t *testing.T, databaseID, completedAt, reviewID string) string {
+	t.Helper()
+	data, err := json.Marshal(map[string]any{
+		"version":      1,
+		"database_id":  databaseID,
+		"completed_at": completedAt,
+		"review_id":    reviewID,
+	})
+	require.NoError(t, err)
+	return base64.RawURLEncoding.EncodeToString(data)
+}
+
+func uniqueStrings(values []string) map[string]struct{} {
+	out := make(map[string]struct{}, len(values))
+	for _, value := range values {
+		out[value] = struct{}{}
+	}
+	return out
 }

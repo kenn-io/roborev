@@ -81,7 +81,7 @@ type ExportReviewsQuery struct {
 	// Limit Maximum top-level reviews in this page
 	Limit *int64 `json:"limit,omitempty"`
 
-	// Cursor Opaque cursor from a previous page
+	// Cursor Opaque next_cursor from a previous page. Resumes strictly after its (completed_at, review_id) position; mutually exclusive with since.
 	Cursor *string `json:"cursor,omitempty"`
 }
 

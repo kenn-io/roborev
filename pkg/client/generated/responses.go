@@ -277,10 +277,11 @@ type EnqueueJobResp struct {
 }
 
 type ExportReviewsResp struct {
-	HTTPResponse *http.Response
-	Body         []byte
-	StatusCode   int
-	JSON200      *ExportReviewsResponse
+	HTTPResponse                  *http.Response
+	Body                          []byte
+	StatusCode                    int
+	JSON200                       *ExportReviewsResponse
+	ApplicationProblemPlusJSON409 *ExportReviewsErrorResponse
 }
 
 type GetHealthResp struct {

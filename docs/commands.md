@@ -137,6 +137,7 @@ roborev export reviews --profile metadata
 roborev export reviews --since 2026-06-01 --until 2026-06-30
 roborev export reviews --closed-only --repo github.com/org/repo
 roborev export reviews --project my-workspace --limit 1000
+roborev export reviews --cursor "$NEXT_CURSOR" --until 2026-07-01
 ```
 
 | Flag | Description |
@@ -145,6 +146,7 @@ roborev export reviews --project my-workspace --limit 1000
 | `--profile content\|metadata` | Export profile. `content` is the default |
 | `--since <time>` | Inclusive `completed_at` lower bound. Accepts RFC3339 or `YYYY-MM-DD` |
 | `--until <time>` | Exclusive `completed_at` upper bound. Accepts RFC3339 or `YYYY-MM-DD` |
+| `--cursor <opaque>` | Resume strictly after a previous `next_cursor`. Mutually exclusive with `--since` |
 | `--closed-only` | Include only reviews you have marked resolved |
 | `--repo <id>` | Exact exported repo identifier, usually `github.com/org/repo` |
 | `--project <name>` | Exact local project/workspace label |
@@ -166,6 +168,30 @@ the start of June 1 through the end of June 30 UTC. When `--limit` is omitted,
 the CLI follows daemon cursors until all matching rows are included in the one
 JSON document. With `--limit`, the CLI still pages through bounded daemon
 responses until the requested top-level count is reached or no more rows match.
+
+Export documents use `schema_version: 1` and include a stable `database_id`
+for the local review database. Adding `database_id` does not bump
+`schema_version` because it is an additive header field and existing consumers
+must continue to ignore unknown header keys.
+
+Rows are ordered by `(completed_at, review_id)` ascending. `next_cursor` is an
+opaque, internally versioned token containing that compound position and the
+`database_id`; version 1 cursors are stable across invocations and roborev
+upgrades, and future cursor encoding changes must keep old cursor versions
+resolvable or reject them clearly. Every non-empty export includes a
+`next_cursor`, even when `truncated` is `false`; `truncated` only means more
+matching rows are available immediately. `--cursor <opaque>` resumes strictly
+after the cursor position, cannot be combined with `--since`, and still honors
+`--until`, `--limit`, `--profile`, `--closed-only`, `--repo`, and `--project`.
+A malformed, corrupt, stale, or no-longer-resolvable cursor fails instead of
+silently producing a full or empty export. A cursor from a different
+`database_id` is rejected distinctly as a database reset so callers can discard
+the cursor and backfill.
+
+Cursor resume is not an overlap scan. A review that completes later with
+`completed_at` earlier than an already consumed cursor position will not be
+returned by cursor resume. Consumers that need convergence for late-completing
+reviews should run their own overlapping completed-at window separately.
 
 !!! warning "Review content may be sensitive"
     The `content` profile exports raw review output as stored. Review text can

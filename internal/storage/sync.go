@@ -17,6 +17,7 @@ const (
 	SyncStateLastReviewCursor = "last_review_cursor" // Composite cursor for reviews (updated_at,id)
 	SyncStateLastResponseID   = "last_response_id"   // inserted_at/id cursor of last synced response
 	SyncStateSyncTargetID     = "sync_target_id"     // Database ID of last synced Postgres
+	SyncStateDatabaseID       = "database_id"        // Stable identity of this local SQLite database
 )
 
 // GetSyncState retrieves a value from the sync_state table.
@@ -124,6 +125,18 @@ func (db *DB) GetMachineID() (string, error) {
 			return "", fmt.Errorf("update empty machine ID: %w", err)
 		}
 		return newID, nil
+	}
+	return id, nil
+}
+
+// GetDatabaseID returns this local database's unique identifier, creating one
+// if it doesn't exist. It changes only when the SQLite database is recreated.
+func (db *DB) GetDatabaseID() (string, error) {
+	id, err := db.GetOrCreateSyncStateValue(SyncStateDatabaseID, func() (string, error) {
+		return GenerateUUID(), nil
+	})
+	if err != nil {
+		return "", fmt.Errorf("get database ID: %w", err)
 	}
 	return id, nil
 }

@@ -453,20 +453,30 @@ type ExportReviewCost struct {
 
 type ExportReviewsDocument struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema        *string             `json:"$schema,omitempty"`
-	GeneratedAt   string              `json:"generated_at" validate:"required"`
-	NextCursor    *string             `json:"next_cursor,omitempty" validate:"required"`
-	Profile       string              `json:"profile" validate:"required"`
-	Reviews       []ExportReview      `json:"reviews,omitempty" validate:"required"`
-	SchemaVersion int64               `json:"schema_version"`
-	Tool          string              `json:"tool" validate:"required"`
-	ToolVersion   string              `json:"tool_version" validate:"required"`
-	Truncated     bool                `json:"truncated"`
-	Window        ExportReviewsWindow `json:"window"`
+	Schema *string `json:"$schema,omitempty"`
+
+	// DatabaseID Stable identity for the local review database; changes when the database is recreated.
+	DatabaseID  string `json:"database_id" validate:"required"`
+	GeneratedAt string `json:"generated_at" validate:"required"`
+
+	// NextCursor Opaque resume cursor emitted when reviews is non-empty; pass as cursor to resume after the last returned review.
+	NextCursor    *string        `json:"next_cursor,omitempty" validate:"required"`
+	Profile       string         `json:"profile" validate:"required"`
+	Reviews       []ExportReview `json:"reviews,omitempty" validate:"required"`
+	SchemaVersion int64          `json:"schema_version"`
+	Tool          string         `json:"tool" validate:"required"`
+	ToolVersion   string         `json:"tool_version" validate:"required"`
+
+	// Truncated True when more matching rows are available immediately.
+	Truncated bool                `json:"truncated"`
+	Window    ExportReviewsWindow `json:"window"`
 }
 
 func (e ExportReviewsDocument) Validate() error {
 	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(e.DatabaseID, "required"); err != nil {
+		errors = errors.Append("DatabaseID", err)
+	}
 	if err := typesValidator.Var(e.GeneratedAt, "required"); err != nil {
 		errors = errors.Append("GeneratedAt", err)
 	}

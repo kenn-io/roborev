@@ -127,7 +127,7 @@ type ExportReviewsInput struct {
 	Repo       string `query:"repo" doc:"Exact exported repo identifier filter"`
 	Project    string `query:"project" doc:"Exact project display-name filter"`
 	Limit      int    `query:"limit" default:"500" doc:"Maximum top-level reviews in this page"`
-	Cursor     string `query:"cursor" doc:"Opaque cursor from a previous page"`
+	Cursor     string `query:"cursor" doc:"Opaque next_cursor from a previous page. Resumes strictly after its (completed_at, review_id) position; mutually exclusive with since."`
 }
 
 type ExportReviewsWindow struct {
@@ -141,10 +141,11 @@ type ExportReviewsDocument struct {
 	Tool          string                 `json:"tool"`
 	ToolVersion   string                 `json:"tool_version"`
 	GeneratedAt   string                 `json:"generated_at"`
+	DatabaseID    string                 `json:"database_id" doc:"Stable identity for the local review database; changes when the database is recreated."`
 	Profile       string                 `json:"profile"`
 	Window        ExportReviewsWindow    `json:"window"`
-	Truncated     bool                   `json:"truncated"`
-	NextCursor    *string                `json:"next_cursor"`
+	Truncated     bool                   `json:"truncated" doc:"True when more matching rows are available immediately."`
+	NextCursor    *string                `json:"next_cursor" doc:"Opaque resume cursor emitted when reviews is non-empty; pass as cursor to resume after the last returned review."`
 	Reviews       []storage.ExportReview `json:"reviews"`
 }
 
