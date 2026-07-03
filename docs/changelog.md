@@ -5,6 +5,31 @@ description: Release history for roborev
 
 All notable changes to roborev, grouped by minor release.
 
+## 0.61.1
+<small>2026-07-02</small>
+
+**New features**
+
+- Incremental review export cursors. `roborev export reviews` now emits a stable `database_id` and opaque `next_cursor` values, and `--cursor` resumes strictly after a previous export position for consumers that sync only new completed review data. See [Exporting Reviews](/commands/#exporting-reviews).
+
+**Improvements**
+
+- Documentation deployments now publish source Markdown files next to rendered pages, so `/changelog.md`, `/index.md`, and nav-listed page sources can be read directly by agents and other programmatic consumers.
+- CI review comments now use numbered reviewer labels and aggregate reviewer-status footers instead of exposing internal panel member/type identifiers, making PR comments cleaner for downstream review and fix workflows.
+- Refine documentation now points users to Agent Hook when they want Codex or Claude Code sessions to pick up review fixes automatically. See [Auto-Fix with Refine](/guides/auto-fixing/).
+
+**Bug fixes**
+
+- Deferred transient CI review attempts are made due when the daemon starts, so provider outages or quota cooldowns that outlive a daemon restart can be retried immediately instead of waiting on stale in-memory backoff state.
+- Review enqueue metadata collection now uses a single go-git reader for safe metadata reads with subprocess fallback for unsupported repository formats, improving reliability and latency for hook-triggered reviews, especially on Windows.
+
+**Acknowledgements**
+
+- Thanks to [Wes McKinney](https://github.com/wesm) for incremental review export cursors, public Markdown source publishing, CI review comment metadata improvements, and CI startup retry recovery.
+- Thanks to [Marius van Niekerk](https://github.com/mariusvniekerk) for the refine documentation update and more reliable review enqueue metadata collection.
+
+---
+
 ## 0.61.0
 <small>2026-06-30</small>
 
