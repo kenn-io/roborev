@@ -1067,6 +1067,9 @@ components:
     PanelSummary:
       additionalProperties: false
       properties:
+        first_started_at:
+          format: date-time
+          type: string
         members_canceled:
           format: int64
           type: integer

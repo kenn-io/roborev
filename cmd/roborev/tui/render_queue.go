@@ -930,14 +930,7 @@ func (m model) jobCells(job storage.ReviewJob) []string {
 
 	enqueued := job.EnqueuedAt.Local().Format("Jan 02 15:04")
 
-	elapsed := ""
-	if job.StartedAt != nil {
-		if job.FinishedAt != nil {
-			elapsed = job.FinishedAt.Sub(*job.StartedAt).Round(time.Second).String()
-		} else {
-			elapsed = time.Since(*job.StartedAt).Round(time.Second).String()
-		}
-	}
+	elapsed := m.jobElapsedCell(job)
 
 	status := statusLabel(job)
 
@@ -966,6 +959,45 @@ func (m model) jobCells(job storage.ReviewJob) []string {
 	cost := m.jobCostCell(job)
 
 	return []string{ref, branch, repo, agentName, enqueued, elapsed, status, verdict, handled, sessionID, requestedModel, requestedProvider, cost}
+}
+
+func (m model) jobElapsedCell(job storage.ReviewJob) string {
+	startedAt, ok := m.jobElapsedStart(job)
+	if !ok {
+		return ""
+	}
+	if job.FinishedAt != nil {
+		return job.FinishedAt.Sub(startedAt).Round(time.Second).String()
+	}
+	return time.Since(startedAt).Round(time.Second).String()
+}
+
+func (m model) jobElapsedStart(job storage.ReviewJob) (time.Time, bool) {
+	startedAt := time.Time{}
+	hasStartedAt := false
+	if job.StartedAt != nil {
+		startedAt = *job.StartedAt
+		hasStartedAt = true
+	}
+
+	if !job.IsSynthesisJob() || job.PanelRunUUID == "" {
+		return startedAt, hasStartedAt
+	}
+
+	if job.PanelSummary != nil && job.PanelSummary.FirstStartedAt != nil {
+		startedAt = *job.PanelSummary.FirstStartedAt
+		hasStartedAt = true
+	}
+	for _, member := range m.panelMembers[job.PanelRunUUID] {
+		if member.StartedAt == nil {
+			continue
+		}
+		if !hasStartedAt || member.StartedAt.Before(startedAt) {
+			startedAt = *member.StartedAt
+			hasStartedAt = true
+		}
+	}
+	return startedAt, hasStartedAt
 }
 
 // jobCostCell renders the stored priced estimate for a row. For a panel parent,

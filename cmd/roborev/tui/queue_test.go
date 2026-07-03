@@ -599,6 +599,52 @@ func TestTUIJobCellsContent(t *testing.T) {
 		cells := m.jobCells(member)
 		assert.Empty(t, cells[8])
 	})
+
+	t.Run("panel parent elapsed uses panel wall clock when members are cached", func(t *testing.T) {
+		elapsedIdx := colElapsed - colRef
+		firstMemberStarted := time.Date(2026, time.March, 1, 12, 0, 0, 0, time.UTC)
+		synthesisStarted := firstMemberStarted.Add(9 * time.Minute)
+		synthesisFinished := firstMemberStarted.Add(11 * time.Minute)
+		parent := makeJob(10,
+			withSynthesis("R", storage.PanelSummary{MembersTotal: 2, MembersTerminal: 2}),
+			withStartedAt(synthesisStarted),
+			withFinishedAt(&synthesisFinished),
+		)
+		memberA := makeJob(11,
+			withPanelMember("R", "default", 0),
+			withStartedAt(firstMemberStarted),
+		)
+		memberB := makeJob(12,
+			withPanelMember("R", "security", 1),
+			withStartedAt(firstMemberStarted.Add(2*time.Minute)),
+		)
+		m.panelMembers = map[string][]storage.ReviewJob{"R": {memberA, memberB}}
+
+		cells := m.jobCells(parent)
+
+		assert.Equal(t, "11m0s", cells[elapsedIdx])
+	})
+
+	t.Run("panel parent elapsed uses panel summary before members are cached", func(t *testing.T) {
+		elapsedIdx := colElapsed - colRef
+		firstMemberStarted := time.Date(2026, time.March, 1, 12, 0, 0, 0, time.UTC)
+		synthesisStarted := firstMemberStarted.Add(9 * time.Minute)
+		synthesisFinished := firstMemberStarted.Add(11 * time.Minute)
+		parent := makeJob(10,
+			withSynthesis("R", storage.PanelSummary{
+				MembersTotal:    2,
+				MembersTerminal: 2,
+				FirstStartedAt:  &firstMemberStarted,
+			}),
+			withStartedAt(synthesisStarted),
+			withFinishedAt(&synthesisFinished),
+		)
+		m.panelMembers = nil
+
+		cells := m.jobCells(parent)
+
+		assert.Equal(t, "11m0s", cells[elapsedIdx])
+	})
 }
 
 func TestTUIJobCellsReviewTypeTag(t *testing.T) {
@@ -687,6 +733,35 @@ func TestTUIQueueShowsCostColumnByDefault(t *testing.T) {
 		"Cost header should be visible by default")
 	assert.Contains(t, out, "~$0.42",
 		"cost value should render in the row")
+}
+
+func TestTUIQueuePanelParentRendersPanelElapsedTime(t *testing.T) {
+	firstMemberStarted := time.Date(2026, time.March, 1, 12, 0, 0, 0, time.UTC)
+	synthesisStarted := firstMemberStarted.Add(9 * time.Minute)
+	synthesisFinished := firstMemberStarted.Add(11 * time.Minute)
+	parent := makeJob(10,
+		withRef("syn1234"),
+		withRepoName("repo"),
+		withAgent("test"),
+		withSynthesis("R", storage.PanelSummary{
+			MembersTotal:    2,
+			MembersTerminal: 2,
+			FirstStartedAt:  &firstMemberStarted,
+		}),
+		withStartedAt(synthesisStarted),
+		withFinishedAt(&synthesisFinished),
+	)
+
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	m.width = 200
+	m.height = 30
+	m.jobs = []storage.ReviewJob{parent}
+	m.selectedIdx = 0
+	m.selectedJobID = parent.ID
+
+	out := stripTestANSI(m.renderQueueView())
+	assert.Contains(t, out, "11m0s")
+	assert.NotContains(t, out, "2m0s")
 }
 
 func TestTUIQueueHeaderShowsPausedQueueState(t *testing.T) {

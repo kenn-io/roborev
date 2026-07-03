@@ -1866,16 +1866,17 @@ func (db *DB) GetPanelMemberReviews(panelRunUUID string) ([]BatchReviewResult, e
 // ambiguous — an all-failed panel is finished but has zero done members — so
 // the terminal set is broken out explicitly.
 type PanelSummary struct {
-	PanelRunUUID        string  `json:"panel_run_uuid"`
-	MembersTotal        int     `json:"members_total"`
-	MembersTerminal     int     `json:"members_terminal"`
-	MembersSucceeded    int     `json:"members_succeeded"`
-	MembersFailed       int     `json:"members_failed"`
-	MembersCanceled     int     `json:"members_canceled"`
-	MembersSkipped      int     `json:"members_skipped"`
-	MembersWithCost     int     `json:"members_with_cost,omitempty"`
-	MembersCostUSD      float64 `json:"members_cost_usd,omitempty"`
-	MembersCostComplete bool    `json:"members_cost_complete,omitempty"`
+	PanelRunUUID        string     `json:"panel_run_uuid"`
+	MembersTotal        int        `json:"members_total"`
+	MembersTerminal     int        `json:"members_terminal"`
+	MembersSucceeded    int        `json:"members_succeeded"`
+	MembersFailed       int        `json:"members_failed"`
+	MembersCanceled     int        `json:"members_canceled"`
+	MembersSkipped      int        `json:"members_skipped"`
+	MembersWithCost     int        `json:"members_with_cost,omitempty"`
+	MembersCostUSD      float64    `json:"members_cost_usd,omitempty"`
+	MembersCostComplete bool       `json:"members_cost_complete,omitempty"`
+	FirstStartedAt      *time.Time `json:"first_started_at,omitempty"`
 }
 
 // GetPanelSummaries computes the member breakdown for each given panel run in
@@ -1900,7 +1901,8 @@ func (db *DB) GetPanelSummaries(runUUIDs []string) (map[string]PanelSummary, err
 		       COALESCE(SUM(CASE WHEN status = 'canceled' THEN 1 ELSE 0 END), 0),
 		       COALESCE(SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END), 0),
 		       COALESCE(SUM(CASE WHEN json_valid(token_usage) AND json_extract(token_usage, '$.has_cost') THEN 1 ELSE 0 END), 0),
-		       COALESCE(SUM(CASE WHEN json_valid(token_usage) AND json_extract(token_usage, '$.has_cost') THEN json_extract(token_usage, '$.cost_usd') ELSE 0 END), 0)
+		       COALESCE(SUM(CASE WHEN json_valid(token_usage) AND json_extract(token_usage, '$.has_cost') THEN json_extract(token_usage, '$.cost_usd') ELSE 0 END), 0),
+		       MIN(started_at)
 		FROM review_jobs
 		WHERE panel_role = 'member' AND panel_run_uuid IN (%s)
 		GROUP BY panel_run_uuid
@@ -1916,13 +1918,18 @@ func (db *DB) GetPanelSummaries(runUUIDs []string) (map[string]PanelSummary, err
 	for rows.Next() {
 		var s PanelSummary
 		var membersWithCost int
+		var firstStartedAt sql.NullString
 		if err := rows.Scan(&s.PanelRunUUID, &s.MembersTotal, &s.MembersTerminal,
 			&s.MembersSucceeded, &s.MembersFailed, &s.MembersCanceled, &s.MembersSkipped,
-			&membersWithCost, &s.MembersCostUSD); err != nil {
+			&membersWithCost, &s.MembersCostUSD, &firstStartedAt); err != nil {
 			return nil, fmt.Errorf("scan panel summary: %w", err)
 		}
 		s.MembersWithCost = membersWithCost
 		s.MembersCostComplete = s.MembersTotal > 0 && membersWithCost == s.MembersTotal
+		if firstStartedAt.Valid {
+			t := parseSQLiteTime(firstStartedAt.String)
+			s.FirstStartedAt = &t
+		}
 		out[s.PanelRunUUID] = s
 	}
 	return out, rows.Err()

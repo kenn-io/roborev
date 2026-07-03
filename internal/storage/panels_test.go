@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"testing"
 	"time"
@@ -192,6 +193,14 @@ func enqueuePanelRun(t *testing.T, db *DB, repoID int64, runUUID string, n int) 
 func setStatus(t *testing.T, db *DB, jobID int64, status JobStatus) {
 	t.Helper()
 	_, err := db.Exec(`UPDATE review_jobs SET status = ? WHERE id = ?`, string(status), jobID)
+	require.NoError(t, err)
+}
+
+func setStartedAt(t *testing.T, db *DB, jobID int64, startedAt time.Time) {
+	t.Helper()
+	_, err := db.Exec(
+		`UPDATE review_jobs SET started_at = ? WHERE id = ?`,
+		startedAt.UTC().Format(time.RFC3339), jobID)
 	require.NoError(t, err)
 }
 
@@ -431,6 +440,10 @@ func TestGetPanelSummaries(t *testing.T) {
 
 	// Run A: 3 members — done, failed, skipped (all terminal; 1 succeeded).
 	_, a := enqueuePanelRun(t, db, repo.ID, "run-A", 3)
+	firstAStarted := time.Date(2026, time.March, 1, 12, 0, 0, 0, time.UTC)
+	setStartedAt(t, db, a[0].ID, firstAStarted.Add(2*time.Minute))
+	setStartedAt(t, db, a[1].ID, firstAStarted)
+	setStartedAt(t, db, a[2].ID, firstAStarted.Add(time.Minute))
 	setStatus(t, db, a[0].ID, JobStatusDone)
 	setStatus(t, db, a[1].ID, JobStatusFailed)
 	setStatus(t, db, a[2].ID, JobStatusSkipped)
@@ -463,6 +476,11 @@ func TestGetPanelSummaries(t *testing.T) {
 	assert.Equal(3, sumA.MembersWithCost)
 	assert.True(sumA.MembersCostComplete)
 	assert.InDelta(0.40, sumA.MembersCostUSD, 0.000001)
+	sumAJSON, err := json.Marshal(sumA)
+	require.NoError(t, err)
+	var sumAMap map[string]any
+	require.NoError(t, json.Unmarshal(sumAJSON, &sumAMap))
+	assert.Equal(firstAStarted.Format(time.RFC3339), sumAMap["first_started_at"])
 
 	sumB := got["run-B"]
 	assert.Equal(2, sumB.MembersTotal)

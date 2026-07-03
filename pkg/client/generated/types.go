@@ -798,16 +798,17 @@ type OverviewStats struct {
 }
 
 type PanelSummary struct {
-	MembersCanceled     int64    `json:"members_canceled"`
-	MembersCostComplete *bool    `json:"members_cost_complete,omitempty"`
-	MembersCostUsd      *float64 `json:"members_cost_usd,omitempty"`
-	MembersFailed       int64    `json:"members_failed"`
-	MembersSkipped      int64    `json:"members_skipped"`
-	MembersSucceeded    int64    `json:"members_succeeded"`
-	MembersTerminal     int64    `json:"members_terminal"`
-	MembersTotal        int64    `json:"members_total"`
-	MembersWithCost     *int64   `json:"members_with_cost,omitempty"`
-	PanelRunUUID        string   `json:"panel_run_uuid" validate:"required"`
+	FirstStartedAt      *time.Time `json:"first_started_at,omitempty"`
+	MembersCanceled     int64      `json:"members_canceled"`
+	MembersCostComplete *bool      `json:"members_cost_complete,omitempty"`
+	MembersCostUsd      *float64   `json:"members_cost_usd,omitempty"`
+	MembersFailed       int64      `json:"members_failed"`
+	MembersSkipped      int64      `json:"members_skipped"`
+	MembersSucceeded    int64      `json:"members_succeeded"`
+	MembersTerminal     int64      `json:"members_terminal"`
+	MembersTotal        int64      `json:"members_total"`
+	MembersWithCost     *int64     `json:"members_with_cost,omitempty"`
+	PanelRunUUID        string     `json:"panel_run_uuid" validate:"required"`
 }
 
 func (p PanelSummary) Validate() error {
