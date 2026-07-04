@@ -1205,6 +1205,7 @@ func TestListJobsWithBeforeCursor(t *testing.T) {
 func TestListJobsWithoutPrompt(t *testing.T) {
 	assert := assert.New(t)
 	db := openTestDB(t)
+	defer db.Close()
 	repo, err := db.GetOrCreateRepo("/tmp/without-prompt-repo")
 	require.NoError(t, err)
 	_, err = db.EnqueueJob(EnqueueOpts{
