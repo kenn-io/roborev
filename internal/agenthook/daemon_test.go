@@ -38,3 +38,21 @@ func channelSignaled(ch <-chan struct{}) bool {
 		return false
 	}
 }
+
+func TestDaemonServesPprof(t *testing.T) {
+	assert := assert.New(t)
+	state := &StateStore{
+		path:     filepath.Join(t.TempDir(), "state.json"),
+		sessions: map[string]SessionState{},
+	}
+	mux := http.NewServeMux()
+	registerRoutes(mux, state, make(chan struct{}, 1))
+
+	index := httptest.NewRecorder()
+	mux.ServeHTTP(index, httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil))
+	assert.Equal(http.StatusOK, index.Code)
+
+	heap := httptest.NewRecorder()
+	mux.ServeHTTP(heap, httptest.NewRequest(http.MethodGet, "/debug/pprof/heap", nil))
+	assert.Equal(http.StatusOK, heap.Code)
+}

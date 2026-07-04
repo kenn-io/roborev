@@ -140,6 +140,9 @@ type ListJobsQuery struct {
 	// PanelRun Return all jobs (members + synthesis) of one panel run
 	PanelRun *string `json:"panel_run,omitempty"`
 
+	// OmitPrompt Omit prompt and diff content from returned jobs (metadata-only listing)
+	OmitPrompt *ListJobsQueryOmitPrompt `json:"omit_prompt,omitempty"`
+
 	// RepoPrefix Filter repos by path prefix
 	RepoPrefix *string `json:"repo_prefix,omitempty"`
 
@@ -173,6 +176,13 @@ func (l ListJobsQuery) Validate() error {
 		if v, ok := any(l.HideClassifyJobs).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append("HideClassifyJobs", err)
+			}
+		}
+	}
+	if l.OmitPrompt != nil {
+		if v, ok := any(l.OmitPrompt).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("OmitPrompt", err)
 			}
 		}
 	}

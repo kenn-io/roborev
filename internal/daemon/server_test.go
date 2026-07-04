@@ -697,3 +697,16 @@ func TestCostOptionsFromInput(t *testing.T) {
 	_, err = costOptionsFromInput(&GetCostInput{Since: "bogus"})
 	assert.Error(err)
 }
+
+func TestServerServesPprof(t *testing.T) {
+	assert := assert.New(t)
+	server, _, _ := newTestServer(t)
+
+	index := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(index, httptest.NewRequest(http.MethodGet, "/debug/pprof/", nil))
+	assert.Equal(http.StatusOK, index.Code)
+
+	heap := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(heap, httptest.NewRequest(http.MethodGet, "/debug/pprof/heap", nil))
+	assert.Equal(http.StatusOK, heap.Code)
+}

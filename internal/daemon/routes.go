@@ -3,6 +3,7 @@ package daemon
 import (
 	"encoding/json"
 	"net/http"
+	"net/http/pprof"
 	"reflect"
 
 	"github.com/danielgtaylor/huma/v2"
@@ -17,6 +18,14 @@ import (
 // all typed endpoints. The returned huma.API can be used to serve
 // the generated OpenAPI spec.
 func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
+	// pprof profiling endpoints; the daemon listens only on loopback (or a
+	// systemd-provided local socket), so the profiles stay local to the machine.
+	mux.HandleFunc("/debug/pprof/", pprof.Index)
+	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
+
 	cfg := huma.DefaultConfig("roborev", version.Version)
 	cfg.DocsPath = ""
 	cfg.SchemasPath = ""

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"net/http/pprof"
 	"os"
 	"os/signal"
 	"path/filepath"
@@ -105,6 +106,7 @@ func parseDaemonEndpoint(raw string) (kitdaemon.Endpoint, error) {
 }
 
 func registerRoutes(mux *http.ServeMux, state *StateStore, shutdown chan<- struct{}) {
+	registerPprof(mux)
 	mux.Handle(kitdaemon.DefaultPingPath, kitdaemon.NewPingHandler(kitdaemon.PingHandlerOptions{
 		Service: ServiceName,
 		Version: version.Version,
@@ -192,6 +194,17 @@ func registerRoutes(mux *http.ServeMux, state *StateStore, shutdown chan<- struc
 		}
 		writeJSON(w, map[string]bool{"ok": true})
 	})
+}
+
+// registerPprof exposes the standard pprof profiling endpoints. The daemon
+// listens only on a unix socket or loopback TCP, so the profiles stay local
+// to the machine's user.
+func registerPprof(mux *http.ServeMux) {
+	mux.HandleFunc("/debug/pprof/", pprof.Index)
+	mux.HandleFunc("/debug/pprof/cmdline", pprof.Cmdline)
+	mux.HandleFunc("/debug/pprof/profile", pprof.Profile)
+	mux.HandleFunc("/debug/pprof/symbol", pprof.Symbol)
+	mux.HandleFunc("/debug/pprof/trace", pprof.Trace)
 }
 
 func writeJSON(w http.ResponseWriter, v any) {

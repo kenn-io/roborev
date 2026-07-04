@@ -83,6 +83,25 @@ func (l ListJobsQueryHideClassifyJobs) Validate() error {
 	}
 }
 
+// ListJobsQueryOmitPrompt Omit prompt and diff content from returned jobs (metadata-only listing)
+type ListJobsQueryOmitPrompt string
+
+const (
+	ListJobsQueryOmitPromptEmpty ListJobsQueryOmitPrompt = ""
+	ListJobsQueryOmitPromptFalse ListJobsQueryOmitPrompt = "false"
+	ListJobsQueryOmitPromptTrue  ListJobsQueryOmitPrompt = "true"
+)
+
+// Validate checks if the ListJobsQueryOmitPrompt value is valid
+func (l ListJobsQueryOmitPrompt) Validate() error {
+	switch l {
+	case ListJobsQueryOmitPromptEmpty, ListJobsQueryOmitPromptFalse, ListJobsQueryOmitPromptTrue:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ListJobsQueryOmitPrompt value, got: %v", l))
+	}
+}
+
 // GetSummaryQueryAll Include per-repo breakdown
 type GetSummaryQueryAll string
 

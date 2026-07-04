@@ -2679,3 +2679,42 @@ func TestHandleEnqueueMinSeverity(t *testing.T) {
 		assert.Contains(t, w.Body.String(), "invalid min_severity")
 	})
 }
+
+func TestListJobsOmitPrompt(t *testing.T) {
+	assert := assert.New(t)
+	server, db, _ := newTestServer(t)
+
+	repo, err := db.GetOrCreateRepo("/test/omit-prompt-repo")
+	require.NoError(t, err)
+	diff := "diff --git a/f b/f"
+	_, err = db.EnqueueJob(storage.EnqueueOpts{
+		RepoID:      repo.ID,
+		GitRef:      "dirty",
+		Agent:       "test",
+		Prompt:      "a very large stored prompt",
+		DiffContent: diff,
+	})
+	require.NoError(t, err)
+
+	t.Run("default includes prompt", func(t *testing.T) {
+		resp := fetchJobs(t, server, "repo="+url.QueryEscape(repo.RootPath))
+		require.Len(t, resp.Jobs, 1)
+		assert.Equal("a very large stored prompt", resp.Jobs[0].Prompt)
+	})
+
+	t.Run("omit_prompt=true strips prompt and diff content", func(t *testing.T) {
+		resp := fetchJobs(t, server, "repo="+url.QueryEscape(repo.RootPath)+"&omit_prompt=true")
+		require.Len(t, resp.Jobs, 1)
+		assert.Empty(resp.Jobs[0].Prompt)
+		assert.Nil(resp.Jobs[0].DiffContent)
+	})
+
+	t.Run("omit_prompt=true strips prompt on single-job lookup", func(t *testing.T) {
+		all := fetchJobs(t, server, "repo="+url.QueryEscape(repo.RootPath))
+		require.Len(t, all.Jobs, 1)
+		resp := fetchJobs(t, server, fmt.Sprintf("id=%d&omit_prompt=true", all.Jobs[0].ID))
+		require.Len(t, resp.Jobs, 1)
+		assert.Empty(resp.Jobs[0].Prompt)
+		assert.Nil(resp.Jobs[0].DiffContent)
+	})
+}

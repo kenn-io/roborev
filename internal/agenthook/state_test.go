@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -1990,4 +1991,25 @@ func TestRecordPostToolUseAmendPreservesEarlierPendingCommits(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(atLater.Triggered, "both pending commits count once reviews appear")
 	assert.Equal("commit", atLater.TriggeredBy)
+}
+
+func TestCountOpenFailedReviewsRequestsOmittedPrompts(t *testing.T) {
+	assert := assert.New(t)
+	repo := testutil.NewGitRepo(t)
+	head := repo.CommitFile("base.txt", "base\n", "base")
+
+	var gotQuery atomic.Value
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotQuery.Store(r.URL.Query())
+		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{}))
+	}))
+	t.Cleanup(server.Close)
+
+	_, ok := countOpenFailedReviews(context.Background(), repo.Path(), "main", head, server.URL)
+
+	require.True(t, ok)
+	query, _ := gotQuery.Load().(url.Values)
+	require.NotNil(t, query)
+	assert.Equal("true", query.Get("omit_prompt"),
+		"hook count queries must not pull full prompts over the wire")
 }

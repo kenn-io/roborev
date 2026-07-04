@@ -2540,6 +2540,17 @@ paths:
           schema:
             description: Return all jobs (members + synthesis) of one panel run
             type: string
+        - description: Omit prompt and diff content from returned jobs (metadata-only listing)
+          explode: false
+          in: query
+          name: omit_prompt
+          schema:
+            description: Omit prompt and diff content from returned jobs (metadata-only listing)
+            enum:
+              - "true"
+              - "false"
+              - ""
+            type: string
         - description: Filter repos by path prefix
           explode: false
           in: query

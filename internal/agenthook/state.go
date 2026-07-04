@@ -1161,6 +1161,9 @@ func countOpenFailedReviews(ctx context.Context, repoRoot, branch, head, configu
 	values.Set("status", "done")
 	values.Set("closed", "false")
 	values.Set("limit", "10000")
+	// Only job metadata is needed to count verdicts; full prompts would add
+	// tens of megabytes of JSON per hook event on busy repos.
+	values.Set("omit_prompt", "true")
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ep.BaseURL()+"/api/jobs?"+values.Encode(), nil)
 	if err != nil {
 		return 0, false

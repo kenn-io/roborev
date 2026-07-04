@@ -87,6 +87,7 @@ type ListJobsInput struct {
 	ExcludeJobType     string   `query:"exclude_job_type" doc:"Exclude jobs of this type"`
 	HideClassifyJobs   string   `query:"hide_classify_jobs" doc:"Hide auto-design-router rows (job_type=classify and status=skipped)" enum:"true,false,"`
 	PanelRun           string   `query:"panel_run" doc:"Return all jobs (members + synthesis) of one panel run"`
+	OmitPrompt         string   `query:"omit_prompt" doc:"Omit prompt and diff content from returned jobs (metadata-only listing)" enum:"true,false,"`
 	RepoPrefix         string   `query:"repo_prefix" doc:"Filter repos by path prefix"`
 	Limit              int      `query:"limit" default:"-999999" doc:"Max results (default 50, 0=unlimited, max 10000)"`
 	Offset             int      `query:"offset" default:"-1" doc:"Skip N results (requires limit>0)"`

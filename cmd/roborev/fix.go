@@ -776,8 +776,10 @@ func queryOpenJobs(
 	repoRoot, branch string,
 ) ([]storage.ReviewJob, error) {
 	jobs, err := withFixDaemonRetryContext(ctx, getDaemonEndpoint().BaseURL(), func(addr string) ([]storage.ReviewJob, error) {
+		// omit_prompt: discovery only needs job metadata; prompts would add
+		// megabytes of JSON on repos with a long review history.
 		queryURL := fmt.Sprintf(
-			"%s/api/jobs?status=done&repo=%s&closed=false&limit=0",
+			"%s/api/jobs?status=done&repo=%s&closed=false&limit=0&omit_prompt=true",
 			addr, url.QueryEscape(repoRoot),
 		)
 		if branch != "" {

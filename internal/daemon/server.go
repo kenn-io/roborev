@@ -960,6 +960,17 @@ func formatDuration(d time.Duration) string {
 
 const limitNotProvided = -999999
 
+// stripJobPrompts clears the large prompt and diff payloads from listed jobs
+// for omit_prompt=true callers. Metadata-only consumers such as the agent hook
+// daemon poll job lists on every hook event; shipping full prompts to them
+// costs tens of megabytes of encode/decode per request.
+func stripJobPrompts(jobs []storage.ReviewJob) {
+	for i := range jobs {
+		jobs[i].Prompt = ""
+		jobs[i].DiffContent = nil
+	}
+}
+
 func (s *Server) humaListJobs(
 	ctx context.Context, input *ListJobsInput,
 ) (*ListJobsOutput, error) {
@@ -980,6 +991,9 @@ func (s *Server) humaListJobs(
 		job.Patch = nil
 		resp := &ListJobsOutput{}
 		resp.Body.Jobs = []storage.ReviewJob{*job}
+		if input.OmitPrompt == "true" {
+			stripJobPrompts(resp.Body.Jobs)
+		}
 		return resp, nil
 	}
 
@@ -1118,6 +1132,10 @@ func (s *Server) humaListJobs(
 	if limit > 0 && len(jobs) > limit {
 		hasMore = true
 		jobs = jobs[:limit]
+	}
+
+	if input.OmitPrompt == "true" {
+		stripJobPrompts(jobs)
 	}
 
 	attachPanelSummaries(s.db, jobs)
