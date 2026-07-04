@@ -731,6 +731,260 @@
         ],
         "type": "object"
       },
+      "ExportReview": {
+        "additionalProperties": false,
+        "properties": {
+          "agent": {
+            "type": "string"
+          },
+          "branch": {
+            "nullable": true,
+            "type": "string"
+          },
+          "commit_sha": {
+            "nullable": true,
+            "type": "string"
+          },
+          "completed_at": {
+            "type": "string"
+          },
+          "content": {
+            "nullable": true,
+            "type": "string"
+          },
+          "cost": {
+            "$ref": "#/components/schemas/ExportReviewCost"
+          },
+          "created_at": {
+            "type": "string"
+          },
+          "duration_ms": {
+            "format": "int64",
+            "nullable": true,
+            "type": "integer"
+          },
+          "model": {
+            "nullable": true,
+            "type": "string"
+          },
+          "pr_number": {
+            "format": "int64",
+            "nullable": true,
+            "type": "integer"
+          },
+          "pr_url": {
+            "nullable": true,
+            "type": "string"
+          },
+          "project": {
+            "type": "string"
+          },
+          "repo": {
+            "type": "string"
+          },
+          "review_id": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "subagents": {
+            "items": {
+              "$ref": "#/components/schemas/ExportSubagent"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "verdict": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "review_id",
+          "status",
+          "verdict",
+          "created_at",
+          "completed_at",
+          "duration_ms",
+          "project",
+          "repo",
+          "branch",
+          "commit_sha",
+          "pr_number",
+          "pr_url",
+          "agent",
+          "model",
+          "cost",
+          "content",
+          "subagents"
+        ],
+        "type": "object"
+      },
+      "ExportReviewCost": {
+        "additionalProperties": false,
+        "properties": {
+          "tokens_in": {
+            "format": "int64",
+            "nullable": true,
+            "type": "integer"
+          },
+          "tokens_out": {
+            "format": "int64",
+            "nullable": true,
+            "type": "integer"
+          },
+          "usd": {
+            "format": "double",
+            "nullable": true,
+            "type": "number"
+          }
+        },
+        "required": [
+          "tokens_in",
+          "tokens_out",
+          "usd"
+        ],
+        "type": "object"
+      },
+      "ExportReviewsDocument": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "example": "https://example.com/ExportReviewsDocument.json",
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "database_id": {
+            "description": "Stable identity for the local review database; changes when the database is recreated.",
+            "type": "string"
+          },
+          "generated_at": {
+            "type": "string"
+          },
+          "next_cursor": {
+            "description": "Opaque resume cursor emitted when reviews is non-empty; pass as cursor to resume after the last returned review.",
+            "nullable": true,
+            "type": "string"
+          },
+          "profile": {
+            "type": "string"
+          },
+          "reviews": {
+            "items": {
+              "$ref": "#/components/schemas/ExportReview"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "schema_version": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "tool": {
+            "type": "string"
+          },
+          "tool_version": {
+            "type": "string"
+          },
+          "truncated": {
+            "description": "True when more matching rows are available immediately.",
+            "type": "boolean"
+          },
+          "window": {
+            "$ref": "#/components/schemas/ExportReviewsWindow"
+          }
+        },
+        "required": [
+          "schema_version",
+          "tool",
+          "tool_version",
+          "generated_at",
+          "database_id",
+          "profile",
+          "window",
+          "truncated",
+          "next_cursor",
+          "reviews"
+        ],
+        "type": "object"
+      },
+      "ExportReviewsWindow": {
+        "additionalProperties": false,
+        "properties": {
+          "field": {
+            "type": "string"
+          },
+          "since": {
+            "nullable": true,
+            "type": "string"
+          },
+          "until": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "field",
+          "since",
+          "until"
+        ],
+        "type": "object"
+      },
+      "ExportSubagent": {
+        "additionalProperties": false,
+        "properties": {
+          "agent": {
+            "type": "string"
+          },
+          "completed_at": {
+            "type": "string"
+          },
+          "content": {
+            "nullable": true,
+            "type": "string"
+          },
+          "cost": {
+            "$ref": "#/components/schemas/ExportReviewCost"
+          },
+          "duration_ms": {
+            "format": "int64",
+            "nullable": true,
+            "type": "integer"
+          },
+          "model": {
+            "nullable": true,
+            "type": "string"
+          },
+          "name": {
+            "type": "string"
+          },
+          "review_id": {
+            "type": "string"
+          },
+          "review_type": {
+            "nullable": true,
+            "type": "string"
+          },
+          "verdict": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "review_id",
+          "name",
+          "agent",
+          "model",
+          "review_type",
+          "verdict",
+          "completed_at",
+          "duration_ms",
+          "cost",
+          "content"
+        ],
+        "type": "object"
+      },
       "FailureStats": {
         "additionalProperties": false,
         "properties": {
@@ -1102,6 +1356,10 @@
       "PanelSummary": {
         "additionalProperties": false,
         "properties": {
+          "first_started_at": {
+            "format": "date-time",
+            "type": "string"
+          },
           "members_canceled": {
             "format": "int64",
             "type": "integer"
@@ -2499,6 +2757,143 @@
         "summary": "Enqueue a daemon job",
         "tags": [
           "jobs"
+        ]
+      }
+    },
+    "/api/export/reviews": {
+      "get": {
+        "operationId": "export-reviews",
+        "parameters": [
+          {
+            "description": "Output format; only json is supported",
+            "explode": false,
+            "in": "query",
+            "name": "format",
+            "schema": {
+              "default": "json",
+              "description": "Output format; only json is supported",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Export profile: content or metadata",
+            "explode": false,
+            "in": "query",
+            "name": "profile",
+            "schema": {
+              "default": "content",
+              "description": "Export profile: content or metadata",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Inclusive completed_at lower bound (RFC3339 or YYYY-MM-DD)",
+            "explode": false,
+            "in": "query",
+            "name": "since",
+            "schema": {
+              "description": "Inclusive completed_at lower bound (RFC3339 or YYYY-MM-DD)",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exclusive completed_at upper bound (RFC3339 or YYYY-MM-DD; date-only means through that UTC day)",
+            "explode": false,
+            "in": "query",
+            "name": "until",
+            "schema": {
+              "description": "Exclusive completed_at upper bound (RFC3339 or YYYY-MM-DD; date-only means through that UTC day)",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Only include reviews marked closed",
+            "explode": false,
+            "in": "query",
+            "name": "closed_only",
+            "schema": {
+              "description": "Only include reviews marked closed",
+              "type": "boolean"
+            }
+          },
+          {
+            "description": "Exact exported repo identifier filter",
+            "explode": false,
+            "in": "query",
+            "name": "repo",
+            "schema": {
+              "description": "Exact exported repo identifier filter",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exact project display-name filter",
+            "explode": false,
+            "in": "query",
+            "name": "project",
+            "schema": {
+              "description": "Exact project display-name filter",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Maximum top-level reviews in this page",
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 500,
+              "description": "Maximum top-level reviews in this page",
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Opaque next_cursor from a previous page. Resumes strictly after its (completed_at, review_id) position; mutually exclusive with since.",
+            "explode": false,
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "description": "Opaque next_cursor from a previous page. Resumes strictly after its (completed_at, review_id) position; mutually exclusive with since.",
+              "type": "string"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExportReviewsDocument"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Cursor database_id does not match this local database"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Export completed reviews",
+        "tags": [
+          "reviews"
         ]
       }
     },
