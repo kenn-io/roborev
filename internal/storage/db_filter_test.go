@@ -1201,3 +1201,29 @@ func TestListJobsWithBeforeCursor(t *testing.T) {
 		assert.Len(t, result, 3)
 	})
 }
+
+func TestListJobsWithoutPrompt(t *testing.T) {
+	assert := assert.New(t)
+	db := openTestDB(t)
+	repo, err := db.GetOrCreateRepo("/tmp/without-prompt-repo")
+	require.NoError(t, err)
+	_, err = db.EnqueueJob(EnqueueOpts{
+		RepoID: repo.ID,
+		GitRef: "dirty",
+		Agent:  "test",
+		Prompt: "a large stored prompt",
+	})
+	require.NoError(t, err)
+
+	withPrompt, err := db.ListJobs("", repo.RootPath, 0, 0)
+	require.NoError(t, err)
+	require.Len(t, withPrompt, 1)
+	assert.Equal("a large stored prompt", withPrompt[0].Prompt, "default listing keeps the prompt")
+
+	withoutPrompt, err := db.ListJobs("", repo.RootPath, 0, 0, WithoutPrompt())
+	require.NoError(t, err)
+	require.Len(t, withoutPrompt, 1)
+	assert.Empty(withoutPrompt[0].Prompt, "WithoutPrompt must not hydrate the prompt column")
+	assert.Equal(withPrompt[0].ID, withoutPrompt[0].ID, "same job either way")
+	assert.Equal(withPrompt[0].GitRef, withoutPrompt[0].GitRef, "other fields still hydrated")
+}

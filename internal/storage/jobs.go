@@ -923,6 +923,7 @@ type listJobsOptions struct {
 	beforeCursor       *int64
 	panelRun           string
 	excludePanelRole   string
+	omitPrompt         bool
 }
 
 // WithGitRef filters jobs by git ref.
@@ -947,6 +948,14 @@ func WithBranchOrEmpty(branch string) ListJobsOption {
 // WithClosed filters jobs by closed state (true/false).
 func WithClosed(closed bool) ListJobsOption {
 	return func(o *listJobsOptions) { o.closed = &closed }
+}
+
+// WithoutPrompt selects an empty string in place of the prompt column so
+// metadata-only listings never read the stored prompts. Prompts embed full
+// diffs, so on repos with a long review history hydrating them costs tens of
+// megabytes of SQLite reads and string allocations per listing.
+func WithoutPrompt() ListJobsOption {
+	return func(o *listJobsOptions) { o.omitPrompt = true }
 }
 
 // WithJobType filters jobs by job_type (e.g. "fix", "review").
@@ -1111,9 +1120,17 @@ func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions) (s
 
 // ListJobs returns jobs with optional status, repo, branch, and closed filters.
 func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int, opts ...ListJobsOption) ([]ReviewJob, error) {
+	options := collectListJobsOptions(opts...)
+	// Metadata-only listings select a constant instead of the prompt column;
+	// the scan still binds the same positional field, it just never touches
+	// the large TEXT payload.
+	promptExpr := "j.prompt"
+	if options.omitPrompt {
+		promptExpr = "''"
+	}
 	query := `
 		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.ci_base_branch, j.session_id, j.agent, j.reasoning, j.status, j.enqueued_at,
-		       j.started_at, j.finished_at, j.worker_id, j.error, j.prompt, j.retry_count,
+		       j.started_at, j.finished_at, j.worker_id, j.error, ` + promptExpr + `, j.retry_count,
 		       COALESCE(j.agentic, 0), COALESCE(j.prompt_prebuilt, 0), r.root_path, r.name, c.subject, rv.closed, rv.output,
 		       rv.verdict_bool, j.source_machine_id, j.uuid, j.model, j.job_type, j.review_type, j.patch_id, COALESCE(j.output_prefix, ''),
 		       j.parent_job_id, j.provider, j.requested_model, j.requested_provider, j.token_usage, COALESCE(j.worktree_path, ''),
@@ -1125,7 +1142,7 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		LEFT JOIN commits c ON c.id = j.commit_id
 		LEFT JOIN reviews rv ON rv.job_id = j.id
 	`
-	queryFilters, args := buildJobFilterClause(statusFilter, repoFilter, collectListJobsOptions(opts...))
+	queryFilters, args := buildJobFilterClause(statusFilter, repoFilter, options)
 	query += queryFilters
 
 	query += " ORDER BY j.id DESC"

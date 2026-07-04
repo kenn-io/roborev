@@ -1054,6 +1054,9 @@ func (s *Server) humaListJobs(
 	}
 
 	var listOpts []storage.ListJobsOption
+	if input.OmitPrompt == "true" {
+		listOpts = append(listOpts, storage.WithoutPrompt())
+	}
 	if input.GitRef != "" {
 		listOpts = append(
 			listOpts, storage.WithGitRef(input.GitRef),
