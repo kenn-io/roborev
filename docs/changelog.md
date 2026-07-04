@@ -5,6 +5,24 @@ description: Release history for roborev
 
 All notable changes to roborev, grouped by minor release.
 
+## 0.61.2
+<small>2026-07-04</small>
+
+**New features**
+
+- TUI queue panel rows now show wall-clock elapsed time from the first reviewer start through synthesis completion, so collapsed panels reflect the end-to-end wait instead of only synthesis runtime.
+
+**Improvements**
+
+- Metadata-only job listings can omit prompt and diff payloads, reducing daemon and agent-hook response sizes while avoiding unnecessary prompt exposure in callers that only need job state.
+
+**Acknowledgements**
+
+- Thanks to [Wes McKinney](https://github.com/wesm) for TUI panel wall-clock elapsed time.
+- Thanks to [Marius van Niekerk](https://github.com/mariusvniekerk) for slimmer metadata-only job listings that omit prompt payloads.
+
+---
+
 ## 0.61.1
 <small>2026-07-02</small>
 
