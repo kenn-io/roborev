@@ -49,6 +49,27 @@ func RepairRepoHooks(ctx context.Context, repoPath, binaryPath string) (bool, er
 	return found, errors.Join(errs...)
 }
 
+// HookBinaryStale reports whether the repo's named hook is roborev-managed
+// but bakes a binary path other than binaryPath. Read-only: callers that
+// cannot rewrite the hook (e.g. the daemon when hooks live inside the
+// working tree) use this to detect and warn about stale hooks that
+// NeedsUpgrade misses because the version marker is current.
+func HookBinaryStale(ctx context.Context, repoPath, hookName, binaryPath string) bool {
+	hooksDir, err := gitrepo.HooksPath(ctx, repoPath)
+	if err != nil {
+		return false
+	}
+	content, err := os.ReadFile(filepath.Join(hooksDir, hookName))
+	if err != nil {
+		return false
+	}
+	s := string(content)
+	if !strings.Contains(strings.ToLower(s), "# roborev "+hookName+" hook") {
+		return false
+	}
+	return !hookUsesBinary(s, binaryPath)
+}
+
 // HooksDirInsideWorktree reports whether the repo's effective hooks
 // directory resolves inside the working tree but outside the git dir
 // (e.g. core.hooksPath = .githooks). Such directories may hold tracked

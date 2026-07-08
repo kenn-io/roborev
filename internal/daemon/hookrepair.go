@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"fmt"
 	"log"
 	"os"
 
@@ -41,12 +42,8 @@ func repairRepoHooksAtStartup(ctx context.Context, root, binaryPath string) {
 	if inside {
 		// core.hooksPath points into the working tree, which may hold
 		// tracked files the daemon must not modify. Warn instead.
-		if githook.NeedsUpgrade(ctx, root, "post-commit", githook.PostCommitVersionMarker) {
-			log.Printf("Warning: outdated post-commit hook in %s -- run 'roborev init' to upgrade", root)
-		}
-		if githook.NeedsUpgrade(ctx, root, "post-rewrite", githook.PostRewriteVersionMarker) ||
-			githook.Missing(ctx, root, "post-rewrite") {
-			log.Printf("Warning: missing or outdated post-rewrite hook in %s -- run 'roborev init' to install", root)
+		for _, warning := range worktreeHookWarnings(ctx, root, binaryPath) {
+			log.Print(warning)
 		}
 		return
 	}
@@ -56,4 +53,27 @@ func repairRepoHooksAtStartup(ctx context.Context, root, binaryPath string) {
 	if githook.Missing(ctx, root, "post-rewrite") {
 		log.Printf("Warning: missing post-rewrite hook in %s -- run 'roborev init' to install", root)
 	}
+}
+
+// worktreeHookWarnings collects read-only diagnostics for repos whose hooks
+// directory the daemon must not write: outdated version markers, hooks baked
+// with a binary other than binaryPath, and a missing post-rewrite hook.
+func worktreeHookWarnings(ctx context.Context, root, binaryPath string) []string {
+	var warnings []string
+	if githook.NeedsUpgrade(ctx, root, "post-commit", githook.PostCommitVersionMarker) {
+		warnings = append(warnings,
+			fmt.Sprintf("Warning: outdated post-commit hook in %s -- run 'roborev init' to upgrade", root))
+	} else if githook.HookBinaryStale(ctx, root, "post-commit", binaryPath) {
+		warnings = append(warnings,
+			fmt.Sprintf("Warning: post-commit hook in %s points at a stale roborev binary -- run 'roborev init' to update it", root))
+	}
+	if githook.NeedsUpgrade(ctx, root, "post-rewrite", githook.PostRewriteVersionMarker) ||
+		githook.Missing(ctx, root, "post-rewrite") {
+		warnings = append(warnings,
+			fmt.Sprintf("Warning: missing or outdated post-rewrite hook in %s -- run 'roborev init' to install", root))
+	} else if githook.HookBinaryStale(ctx, root, "post-rewrite", binaryPath) {
+		warnings = append(warnings,
+			fmt.Sprintf("Warning: post-rewrite hook in %s points at a stale roborev binary -- run 'roborev init' to update it", root))
+	}
+	return warnings
 }

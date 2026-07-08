@@ -95,6 +95,40 @@ func TestRepairRepoHooks(t *testing.T) {
 	})
 }
 
+func TestHookBinaryStale(t *testing.T) {
+	t.Parallel()
+
+	t.Run("managed hook with different binary is stale", func(t *testing.T) {
+		t.Parallel()
+		repo := testutil.NewTestRepo(t)
+		oldBinary := writeExecutableFile(t, filepath.Join(t.TempDir(), "roborev"))
+		repo.WriteHook(GeneratePostCommitWithBinary(oldBinary))
+		newBinary := filepath.Join(t.TempDir(), "roborev")
+		assert.True(t, HookBinaryStale(t.Context(), repo.Root, hookPostCommit, newBinary))
+	})
+
+	t.Run("managed hook with matching binary is current", func(t *testing.T) {
+		t.Parallel()
+		repo := testutil.NewTestRepo(t)
+		binary := writeExecutableFile(t, filepath.Join(t.TempDir(), "roborev"))
+		repo.WriteHook(GeneratePostCommitWithBinary(binary))
+		assert.False(t, HookBinaryStale(t.Context(), repo.Root, hookPostCommit, binary))
+	})
+
+	t.Run("unmanaged hook is not stale", func(t *testing.T) {
+		t.Parallel()
+		repo := testutil.NewTestRepo(t)
+		repo.WriteHook("#!/bin/sh\necho custom\n")
+		assert.False(t, HookBinaryStale(t.Context(), repo.Root, hookPostCommit, "/new/roborev"))
+	})
+
+	t.Run("missing hook is not stale", func(t *testing.T) {
+		t.Parallel()
+		repo := testutil.NewTestRepo(t)
+		assert.False(t, HookBinaryStale(t.Context(), repo.Root, hookPostCommit, "/new/roborev"))
+	})
+}
+
 func TestHooksDirInsideWorktree(t *testing.T) {
 	t.Parallel()
 

@@ -3,6 +3,7 @@ package daemon
 import (
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -72,5 +73,82 @@ func TestRepairRepoHooksAtStartup(t *testing.T) {
 		t.Parallel()
 		gone := filepath.Join(t.TempDir(), "gone")
 		repairRepoHooksAtStartup(t.Context(), gone, writeFakeBinary(t, "roborev"))
+	})
+}
+
+func TestWorktreeHookWarnings(t *testing.T) {
+	t.Parallel()
+
+	setupWorktreeHooks := func(t *testing.T) (*testutil.TestRepo, string) {
+		t.Helper()
+		repo := testutil.NewTestRepo(t)
+		hooksDir := filepath.Join(repo.Root, ".githooks")
+		require.NoError(t, os.MkdirAll(hooksDir, 0o755))
+		repo.Run("config", "core.hooksPath", ".githooks")
+		return repo, hooksDir
+	}
+
+	t.Run("stale baked binary with current marker warns", func(t *testing.T) {
+		t.Parallel()
+		repo, hooksDir := setupWorktreeHooks(t)
+		oldBinary := writeFakeBinary(t, "roborev")
+		for _, name := range []string{"post-commit", "post-rewrite"} {
+			content := githook.GeneratePostCommitWithBinary(oldBinary)
+			if name == "post-rewrite" {
+				content = githook.GeneratePostRewriteWithBinary(oldBinary)
+			}
+			require.NoError(t, os.WriteFile(filepath.Join(hooksDir, name), []byte(content), 0o755))
+		}
+
+		warnings := worktreeHookWarnings(t.Context(), repo.Root, writeFakeBinary(t, "roborev"))
+		require.Len(t, warnings, 2)
+		assert.Contains(t, warnings[0], "post-commit")
+		assert.Contains(t, warnings[0], "stale")
+		assert.Contains(t, warnings[1], "post-rewrite")
+		assert.Contains(t, warnings[1], "stale")
+	})
+
+	t.Run("current hooks produce no warnings", func(t *testing.T) {
+		t.Parallel()
+		repo, hooksDir := setupWorktreeHooks(t)
+		binary := writeFakeBinary(t, "roborev")
+		require.NoError(t, os.WriteFile(
+			filepath.Join(hooksDir, "post-commit"),
+			[]byte(githook.GeneratePostCommitWithBinary(binary)), 0o755))
+		require.NoError(t, os.WriteFile(
+			filepath.Join(hooksDir, "post-rewrite"),
+			[]byte(githook.GeneratePostRewriteWithBinary(binary)), 0o755))
+
+		assert.Empty(t, worktreeHookWarnings(t.Context(), repo.Root, binary))
+	})
+
+	t.Run("outdated marker warns without duplicate stale warning", func(t *testing.T) {
+		t.Parallel()
+		repo, hooksDir := setupWorktreeHooks(t)
+		legacy := "#!/bin/sh\n# roborev post-commit hook v1\nroborev enqueue\n"
+		require.NoError(t, os.WriteFile(filepath.Join(hooksDir, "post-commit"), []byte(legacy), 0o755))
+
+		warnings := worktreeHookWarnings(t.Context(), repo.Root, writeFakeBinary(t, "roborev"))
+		var postCommitWarnings []string
+		for _, w := range warnings {
+			if strings.Contains(w, "post-commit") {
+				postCommitWarnings = append(postCommitWarnings, w)
+			}
+		}
+		require.Len(t, postCommitWarnings, 1)
+		assert.Contains(t, postCommitWarnings[0], "outdated")
+	})
+
+	t.Run("missing post-rewrite warns", func(t *testing.T) {
+		t.Parallel()
+		repo, hooksDir := setupWorktreeHooks(t)
+		binary := writeFakeBinary(t, "roborev")
+		require.NoError(t, os.WriteFile(
+			filepath.Join(hooksDir, "post-commit"),
+			[]byte(githook.GeneratePostCommitWithBinary(binary)), 0o755))
+
+		warnings := worktreeHookWarnings(t.Context(), repo.Root, binary)
+		require.Len(t, warnings, 1)
+		assert.Contains(t, warnings[0], "post-rewrite")
 	})
 }
