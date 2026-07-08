@@ -8,8 +8,13 @@ import (
 	"path/filepath"
 	"strings"
 
+	gitcmd "go.kenn.io/kit/git/cmd"
 	gitrepo "go.kenn.io/kit/git/repo"
 )
+
+// runner shells out through kit's defensive git runner so inherited git
+// environment variables do not affect repository discovery.
+var runner = gitcmd.New()
 
 // RepairRepoHooks rewrites roborev-managed hooks in repoPath so they invoke
 // binaryPath. Only hook files containing roborev marker comments are
@@ -70,27 +75,66 @@ func HookBinaryStale(ctx context.Context, repoPath, hookName, binaryPath string)
 	return !hookUsesBinary(s, binaryPath)
 }
 
-// HooksDirInsideWorktree reports whether the repo's effective hooks
-// directory resolves inside the working tree but outside the git dir
-// (e.g. core.hooksPath = .githooks). Such directories may hold tracked
-// files, so background processes must not write to them.
-func HooksDirInsideWorktree(ctx context.Context, repoPath string) (bool, error) {
-	root, err := gitrepo.Root(ctx, repoPath)
-	if err != nil {
-		return false, fmt.Errorf("resolve repo root: %w", err)
-	}
-	hooksDir, err := gitrepo.HooksPath(ctx, root)
+// HooksDirInsideGitDir reports whether the repo's effective hooks directory
+// lies inside the repository's git directory or common git directory — the
+// layout roborev's own hook installs use, including linked worktrees. Any
+// other location (core.hooksPath into a working tree, an external shared
+// hooks directory) may hold tracked or user-managed files, so background
+// processes must only write hooks when this reports true.
+func HooksDirInsideGitDir(ctx context.Context, repoPath string) (bool, error) {
+	hooksDir, err := gitrepo.HooksPath(ctx, repoPath)
 	if err != nil {
 		return false, fmt.Errorf("get hooks path: %w", err)
 	}
-	gitDir, err := gitrepo.GitDir(ctx, root)
+	gitDir, err := gitrepo.GitDir(ctx, repoPath)
 	if err != nil {
 		return false, fmt.Errorf("get git dir: %w", err)
 	}
-	if isPathWithin(hooksDir, gitDir) {
-		return false, nil
+	// Git reports some paths physically (--git-path resolves symlinks) and
+	// others logically, so canonicalize before comparing.
+	hooksDir = canonicalizePath(hooksDir)
+	if isPathWithin(hooksDir, canonicalizePath(gitDir)) {
+		return true, nil
 	}
-	return isPathWithin(hooksDir, root), nil
+	commonDir, err := gitCommonDir(ctx, repoPath)
+	if err != nil {
+		return false, fmt.Errorf("get git common dir: %w", err)
+	}
+	return isPathWithin(hooksDir, canonicalizePath(commonDir)), nil
+}
+
+// canonicalizePath resolves symlinks in the longest existing prefix of path
+// and rejoins the remainder, so paths that do not fully exist yet (for
+// example a hooks dir that was never created) still canonicalize.
+func canonicalizePath(path string) string {
+	remainder := ""
+	for current := path; ; {
+		resolved, err := filepath.EvalSymlinks(current)
+		if err == nil {
+			return filepath.Join(resolved, remainder)
+		}
+		parent := filepath.Dir(current)
+		if parent == current {
+			return path
+		}
+		remainder = filepath.Join(filepath.Base(current), remainder)
+		current = parent
+	}
+}
+
+// gitCommonDir returns the absolute path of the repository's common git
+// directory, resolving relative rev-parse output the same way kit's
+// gitrepo.GitDir does.
+func gitCommonDir(ctx context.Context, repoPath string) (string, error) {
+	out, err := runner.Output(ctx, repoPath, "rev-parse", "--git-common-dir")
+	if err != nil {
+		return "", fmt.Errorf("git rev-parse --git-common-dir: %w", err)
+	}
+	dir := gitrepo.NormalizePath(string(out))
+	if !filepath.IsAbs(dir) {
+		dir = filepath.Join(repoPath, dir)
+	}
+	return filepath.Clean(dir), nil
 }
 
 // isPathWithin reports whether path is dir or inside dir. Both paths must

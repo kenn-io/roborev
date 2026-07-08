@@ -34,15 +34,16 @@ func repairRegisteredHooks(ctx context.Context, repos []storage.Repo) {
 }
 
 func repairRepoHooksAtStartup(ctx context.Context, root, binaryPath string) {
-	inside, err := githook.HooksDirInsideWorktree(ctx, root)
+	insideGitDir, err := githook.HooksDirInsideGitDir(ctx, root)
 	if err != nil {
 		// Registered repo may have been deleted; nothing to repair.
 		return
 	}
-	if inside {
-		// core.hooksPath points into the working tree, which may hold
-		// tracked files the daemon must not modify. Warn instead.
-		for _, warning := range worktreeHookWarnings(ctx, root, binaryPath) {
+	if !insideGitDir {
+		// The hooks directory resolves outside the git dir (for example
+		// core.hooksPath into a working tree), where it may hold tracked
+		// or user-managed files the daemon must not modify. Warn instead.
+		for _, warning := range readOnlyHookWarnings(ctx, root, binaryPath) {
 			log.Print(warning)
 		}
 		return
@@ -55,10 +56,10 @@ func repairRepoHooksAtStartup(ctx context.Context, root, binaryPath string) {
 	}
 }
 
-// worktreeHookWarnings collects read-only diagnostics for repos whose hooks
-// directory the daemon must not write: outdated version markers, hooks baked
-// with a binary other than binaryPath, and a missing post-rewrite hook.
-func worktreeHookWarnings(ctx context.Context, root, binaryPath string) []string {
+// readOnlyHookWarnings collects diagnostics for repos whose hooks directory
+// the daemon must not write: outdated version markers, hooks baked with a
+// binary other than binaryPath, and a missing post-rewrite hook.
+func readOnlyHookWarnings(ctx context.Context, root, binaryPath string) []string {
 	var warnings []string
 	if githook.NeedsUpgrade(ctx, root, "post-commit", githook.PostCommitVersionMarker) {
 		warnings = append(warnings,

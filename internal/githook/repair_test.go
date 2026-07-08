@@ -3,6 +3,7 @@ package githook
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -129,40 +130,83 @@ func TestHookBinaryStale(t *testing.T) {
 	})
 }
 
-func TestHooksDirInsideWorktree(t *testing.T) {
+func TestHooksDirInsideGitDir(t *testing.T) {
 	t.Parallel()
 
-	t.Run("default hooks dir is not inside worktree", func(t *testing.T) {
+	t.Run("default hooks dir is inside git dir", func(t *testing.T) {
 		t.Parallel()
 		repo := testutil.NewTestRepo(t)
-		inside, err := HooksDirInsideWorktree(t.Context(), repo.Root)
-		require.NoError(t, err)
-		assert.False(t, inside)
-	})
-
-	t.Run("relative hooksPath inside worktree", func(t *testing.T) {
-		t.Parallel()
-		repo := testutil.NewTestRepo(t)
-		require.NoError(t, os.MkdirAll(filepath.Join(repo.Root, ".githooks"), 0o755))
-		repo.Run("config", "core.hooksPath", ".githooks")
-		inside, err := HooksDirInsideWorktree(t.Context(), repo.Root)
+		inside, err := HooksDirInsideGitDir(t.Context(), repo.Root)
 		require.NoError(t, err)
 		assert.True(t, inside)
 	})
 
-	t.Run("absolute hooksPath outside worktree", func(t *testing.T) {
+	t.Run("relative hooksPath in worktree is outside", func(t *testing.T) {
 		t.Parallel()
 		repo := testutil.NewTestRepo(t)
-		external := t.TempDir()
-		repo.Run("config", "core.hooksPath", external)
-		inside, err := HooksDirInsideWorktree(t.Context(), repo.Root)
+		require.NoError(t, os.MkdirAll(filepath.Join(repo.Root, ".githooks"), 0o755))
+		repo.Run("config", "core.hooksPath", ".githooks")
+		inside, err := HooksDirInsideGitDir(t.Context(), repo.Root)
 		require.NoError(t, err)
 		assert.False(t, inside)
 	})
 
+	t.Run("absolute external hooksPath is outside", func(t *testing.T) {
+		t.Parallel()
+		repo := testutil.NewTestRepo(t)
+		external := t.TempDir()
+		repo.Run("config", "core.hooksPath", external)
+		inside, err := HooksDirInsideGitDir(t.Context(), repo.Root)
+		require.NoError(t, err)
+		assert.False(t, inside)
+	})
+
+	t.Run("linked worktree default hooks dir is inside common dir", func(t *testing.T) {
+		t.Parallel()
+		repo := testutil.NewTestRepoWithCommit(t)
+		repo.Run("branch", "hooks-wt")
+		wtDir := filepath.Join(t.TempDir(), "wt")
+		repo.Run("worktree", "add", wtDir, "hooks-wt")
+
+		inside, err := HooksDirInsideGitDir(t.Context(), wtDir)
+		require.NoError(t, err)
+		assert.True(t, inside)
+	})
+
+	t.Run("linked worktree hooksPath in main worktree is outside", func(t *testing.T) {
+		t.Parallel()
+		repo := testutil.NewTestRepoWithCommit(t)
+		require.NoError(t, os.MkdirAll(filepath.Join(repo.Root, ".githooks"), 0o755))
+		repo.Run("config", "core.hooksPath", ".githooks")
+		repo.Run("branch", "hooks-wt")
+		wtDir := filepath.Join(t.TempDir(), "wt")
+		repo.Run("worktree", "add", wtDir, "hooks-wt")
+
+		inside, err := HooksDirInsideGitDir(t.Context(), wtDir)
+		require.NoError(t, err)
+		assert.False(t, inside, "hooks dir resolves into the main worktree and must not be daemon-writable")
+	})
+
+	t.Run("hooks dir symlinked into worktree is outside", func(t *testing.T) {
+		t.Parallel()
+		if runtime.GOOS == "windows" {
+			t.Skip("symlink creation requires elevated privileges on Windows")
+		}
+		repo := testutil.NewTestRepo(t)
+		target := filepath.Join(repo.Root, ".githooks")
+		require.NoError(t, os.MkdirAll(target, 0o755))
+		hooksDir := filepath.Join(repo.Root, ".git", "hooks")
+		require.NoError(t, os.RemoveAll(hooksDir))
+		require.NoError(t, os.Symlink(target, hooksDir))
+
+		inside, err := HooksDirInsideGitDir(t.Context(), repo.Root)
+		require.NoError(t, err)
+		assert.False(t, inside, "symlinked hooks dir escapes the git dir into the worktree")
+	})
+
 	t.Run("not a git repo returns error", func(t *testing.T) {
 		t.Parallel()
-		_, err := HooksDirInsideWorktree(t.Context(), t.TempDir())
+		_, err := HooksDirInsideGitDir(t.Context(), t.TempDir())
 		assert.Error(t, err)
 	})
 }

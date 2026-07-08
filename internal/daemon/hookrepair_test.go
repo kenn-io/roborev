@@ -69,6 +69,46 @@ func TestRepairRepoHooksAtStartup(t *testing.T) {
 		assert.Equal(t, custom, string(content))
 	})
 
+	t.Run("never writes main-worktree hooks dir via linked worktree", func(t *testing.T) {
+		t.Parallel()
+		repo := testutil.NewTestRepoWithCommit(t)
+		oldBinary := writeFakeBinary(t, "roborev")
+		hooksDir := filepath.Join(repo.Root, ".githooks")
+		require.NoError(t, os.MkdirAll(hooksDir, 0o755))
+		repo.Run("config", "core.hooksPath", ".githooks")
+		stale := githook.GeneratePostCommitWithBinary(oldBinary)
+		hookPath := filepath.Join(hooksDir, "post-commit")
+		require.NoError(t, os.WriteFile(hookPath, []byte(stale), 0o755))
+		repo.Run("branch", "hooks-wt")
+		wtDir := filepath.Join(t.TempDir(), "wt")
+		repo.Run("worktree", "add", wtDir, "hooks-wt")
+
+		repairRepoHooksAtStartup(t.Context(), wtDir, writeFakeBinary(t, "roborev"))
+
+		content, err := os.ReadFile(hookPath)
+		require.NoError(t, err)
+		assert.Equal(t, stale, string(content),
+			"daemon must not modify hooks that resolve into the main worktree")
+	})
+
+	t.Run("repairs common-dir hooks via linked worktree", func(t *testing.T) {
+		t.Parallel()
+		repo := testutil.NewTestRepoWithCommit(t)
+		oldBinary := writeFakeBinary(t, "roborev")
+		newBinary := writeFakeBinary(t, "roborev")
+		repo.WriteHook(githook.GeneratePostCommitWithBinary(oldBinary))
+		repo.Run("branch", "hooks-wt")
+		wtDir := filepath.Join(t.TempDir(), "wt")
+		repo.Run("worktree", "add", wtDir, "hooks-wt")
+
+		repairRepoHooksAtStartup(t.Context(), wtDir, newBinary)
+
+		content, err := os.ReadFile(repo.GetHookPath("post-commit"))
+		require.NoError(t, err)
+		assert.Contains(t, string(content), newBinary)
+		assert.NotContains(t, string(content), oldBinary)
+	})
+
 	t.Run("deleted repo is a no-op", func(t *testing.T) {
 		t.Parallel()
 		gone := filepath.Join(t.TempDir(), "gone")
@@ -76,7 +116,7 @@ func TestRepairRepoHooksAtStartup(t *testing.T) {
 	})
 }
 
-func TestWorktreeHookWarnings(t *testing.T) {
+func TestReadOnlyHookWarnings(t *testing.T) {
 	t.Parallel()
 
 	setupWorktreeHooks := func(t *testing.T) (*testutil.TestRepo, string) {
@@ -100,7 +140,7 @@ func TestWorktreeHookWarnings(t *testing.T) {
 			require.NoError(t, os.WriteFile(filepath.Join(hooksDir, name), []byte(content), 0o755))
 		}
 
-		warnings := worktreeHookWarnings(t.Context(), repo.Root, writeFakeBinary(t, "roborev"))
+		warnings := readOnlyHookWarnings(t.Context(), repo.Root, writeFakeBinary(t, "roborev"))
 		require.Len(t, warnings, 2)
 		assert.Contains(t, warnings[0], "post-commit")
 		assert.Contains(t, warnings[0], "stale")
@@ -119,7 +159,7 @@ func TestWorktreeHookWarnings(t *testing.T) {
 			filepath.Join(hooksDir, "post-rewrite"),
 			[]byte(githook.GeneratePostRewriteWithBinary(binary)), 0o755))
 
-		assert.Empty(t, worktreeHookWarnings(t.Context(), repo.Root, binary))
+		assert.Empty(t, readOnlyHookWarnings(t.Context(), repo.Root, binary))
 	})
 
 	t.Run("outdated marker warns without duplicate stale warning", func(t *testing.T) {
@@ -128,7 +168,7 @@ func TestWorktreeHookWarnings(t *testing.T) {
 		legacy := "#!/bin/sh\n# roborev post-commit hook v1\nroborev enqueue\n"
 		require.NoError(t, os.WriteFile(filepath.Join(hooksDir, "post-commit"), []byte(legacy), 0o755))
 
-		warnings := worktreeHookWarnings(t.Context(), repo.Root, writeFakeBinary(t, "roborev"))
+		warnings := readOnlyHookWarnings(t.Context(), repo.Root, writeFakeBinary(t, "roborev"))
 		var postCommitWarnings []string
 		for _, w := range warnings {
 			if strings.Contains(w, "post-commit") {
@@ -147,7 +187,7 @@ func TestWorktreeHookWarnings(t *testing.T) {
 			filepath.Join(hooksDir, "post-commit"),
 			[]byte(githook.GeneratePostCommitWithBinary(binary)), 0o755))
 
-		warnings := worktreeHookWarnings(t.Context(), repo.Root, binary)
+		warnings := readOnlyHookWarnings(t.Context(), repo.Root, binary)
 		require.Len(t, warnings, 1)
 		assert.Contains(t, warnings[0], "post-rewrite")
 	})
