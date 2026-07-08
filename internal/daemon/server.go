@@ -26,7 +26,6 @@ import (
 	"go.kenn.io/roborev/internal/backfill"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/git"
-	"go.kenn.io/roborev/internal/githook"
 	"go.kenn.io/roborev/internal/prompt"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/telemetry"
@@ -312,11 +311,11 @@ func (s *Server) Start(ctx context.Context) error {
 		)
 	}
 
-	// Check for outdated hooks in registered repos (skip in CI mode
-	// where repos are fetch-only and don't need local hooks).
+	// Repair stale roborev-managed hooks in registered repos (skip in CI
+	// mode where repos are fetch-only and don't need local hooks).
 	if s.ciPoller == nil {
 		if repos, err := s.db.ListRepos(); err == nil {
-			go logHookWarnings(ctx, repos)
+			go repairRegisteredHooks(ctx, repos)
 		}
 	}
 
@@ -410,18 +409,6 @@ func awaitServeExitOnUnreadyStartup(serveExited bool, serveErrCh <-chan error) e
 		return err
 	}
 	return nil
-}
-
-func logHookWarnings(ctx context.Context, repos []storage.Repo) {
-	for _, repo := range repos {
-		if githook.NeedsUpgrade(ctx, repo.RootPath, "post-commit", githook.PostCommitVersionMarker) {
-			log.Printf("Warning: outdated post-commit hook in %s -- run 'roborev init' to upgrade", repo.RootPath)
-		}
-		if githook.NeedsUpgrade(ctx, repo.RootPath, "post-rewrite", githook.PostRewriteVersionMarker) ||
-			githook.Missing(ctx, repo.RootPath, "post-rewrite") {
-			log.Printf("Warning: missing or outdated post-rewrite hook in %s -- run 'roborev init' to install", repo.RootPath)
-		}
-	}
 }
 
 // getSystemdListener returns the listener and endpoint passed by systemd during
