@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"strings"
@@ -34,8 +35,10 @@ func TestRepairRepoHooksAtStartup(t *testing.T) {
 
 		content, err := os.ReadFile(repo.GetHookPath("post-commit"))
 		require.NoError(t, err)
-		assert.Contains(t, string(content), newBinary)
-		assert.NotContains(t, string(content), oldBinary)
+		// The hook bakes the path via %q, so compare the quoted form
+		// (on Windows the raw path differs by backslash escaping).
+		assert.Contains(t, string(content), fmt.Sprintf("ROBOREV=%q", newBinary))
+		assert.NotContains(t, string(content), fmt.Sprintf("ROBOREV=%q", oldBinary))
 	})
 
 	t.Run("never writes hooks dir inside worktree", func(t *testing.T) {
@@ -105,8 +108,8 @@ func TestRepairRepoHooksAtStartup(t *testing.T) {
 
 		content, err := os.ReadFile(repo.GetHookPath("post-commit"))
 		require.NoError(t, err)
-		assert.Contains(t, string(content), newBinary)
-		assert.NotContains(t, string(content), oldBinary)
+		assert.Contains(t, string(content), fmt.Sprintf("ROBOREV=%q", newBinary))
+		assert.NotContains(t, string(content), fmt.Sprintf("ROBOREV=%q", oldBinary))
 	})
 
 	t.Run("deleted repo is a no-op", func(t *testing.T) {

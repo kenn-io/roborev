@@ -1,6 +1,7 @@
 package githook
 
 import (
+	"fmt"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -36,8 +37,10 @@ func TestRepairRepoHooks(t *testing.T) {
 		for _, name := range []string{hookPostCommit, hookPostRewrite} {
 			content, err := os.ReadFile(repo.GetHookPath(name))
 			require.NoError(t, err)
-			assert.Contains(t, string(content), newBinary, "%s should point at new binary", name)
-			assert.NotContains(t, string(content), oldBinary, "%s should not point at old binary", name)
+			// The hook bakes the path via %q, so compare the quoted form
+			// (on Windows the raw path differs by backslash escaping).
+			assert.Contains(t, string(content), fmt.Sprintf("ROBOREV=%q", newBinary), "%s should point at new binary", name)
+			assert.NotContains(t, string(content), fmt.Sprintf("ROBOREV=%q", oldBinary), "%s should not point at old binary", name)
 		}
 	})
 
@@ -88,7 +91,7 @@ func TestRepairRepoHooks(t *testing.T) {
 
 		postCommit, err := os.ReadFile(repo.GetHookPath(hookPostCommit))
 		require.NoError(t, err)
-		assert.Contains(t, string(postCommit), newBinary)
+		assert.Contains(t, string(postCommit), fmt.Sprintf("ROBOREV=%q", newBinary))
 
 		postRewrite, err := os.ReadFile(repo.GetHookPath(hookPostRewrite))
 		require.NoError(t, err)
