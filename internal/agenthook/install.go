@@ -691,6 +691,9 @@ func DefaultCodexHooksPath() string {
 }
 
 func DefaultClaudeSettingsPath() string {
+	if dir := os.Getenv("CLAUDE_CONFIG_DIR"); dir != "" {
+		return filepath.Join(dir, "settings.json")
+	}
 	home, err := os.UserHomeDir()
 	if err != nil || home == "" {
 		return ""

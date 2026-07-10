@@ -112,8 +112,8 @@ func skillsCmd() *cobra.Command {
 		Long: `Install roborev skills to your AI agent configuration directories.
 
 Skills are installed for agents whose config directories exist:
-  - Claude Code: ~/.claude/skills/
-  - Codex: ~/.codex/skills/
+  - Claude Code: ~/.claude/skills/ (or $CLAUDE_CONFIG_DIR/skills/ if set)
+  - Codex: ~/.codex/skills/ (or $CODEX_HOME/skills/ if set)
   - Factory Droid: ~/.factory/skills/
 
 This command is idempotent - running it multiple times is safe.`,
@@ -141,7 +141,7 @@ This command is idempotent - running it multiple times is safe.`,
 			var installedAgents []skills.Agent
 			for _, result := range results {
 				if result.Skipped {
-					fmt.Printf("%s: skipped (no ~/.%s directory)\n", result.Agent, result.Agent)
+					fmt.Printf("%s: skipped (no %s directory)\n", result.Agent, result.ConfigDir)
 					continue
 				}
 

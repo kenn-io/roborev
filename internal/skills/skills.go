@@ -38,6 +38,7 @@ const (
 type agentSpec struct {
 	agent         Agent
 	configDirName string
+	configDirEnv  string
 	embedFS       fs.FS
 	embedDir      string
 }
@@ -50,8 +51,8 @@ type embeddedSkill struct {
 }
 
 var supportedAgents = []agentSpec{
-	{agent: AgentClaude, configDirName: ".claude", embedFS: claudeSkills, embedDir: "claude"},
-	{agent: AgentCodex, configDirName: ".codex", embedFS: codexSkills, embedDir: "codex"},
+	{agent: AgentClaude, configDirName: ".claude", configDirEnv: "CLAUDE_CONFIG_DIR", embedFS: claudeSkills, embedDir: "claude"},
+	{agent: AgentCodex, configDirName: ".codex", configDirEnv: "CODEX_HOME", embedFS: codexSkills, embedDir: "codex"},
 	{agent: AgentDroid, configDirName: ".factory", embedFS: droidSkills, embedDir: "droid"},
 }
 
@@ -60,6 +61,7 @@ var userHomeDir = os.UserHomeDir
 // InstallResult contains the result of a skill installation
 type InstallResult struct {
 	Agent     Agent
+	ConfigDir string // Resolved agent config directory
 	Installed []string
 	Updated   []string
 	Skipped   bool // True if agent config dir doesn't exist
@@ -121,6 +123,11 @@ func lookupAgent(agent Agent) (agentSpec, bool) {
 }
 
 func agentConfigDir(home string, spec agentSpec) string {
+	if spec.configDirEnv != "" {
+		if dir := os.Getenv(spec.configDirEnv); dir != "" {
+			return dir
+		}
+	}
 	return filepath.Join(home, spec.configDirName)
 }
 
@@ -276,6 +283,7 @@ func installAgent(spec agentSpec) (InstallResult, error) {
 	}
 
 	configDir := agentConfigDir(home, spec)
+	result.ConfigDir = configDir
 	if _, err := os.Stat(configDir); os.IsNotExist(err) {
 		result.Skipped = true
 		return result, nil

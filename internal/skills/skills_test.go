@@ -33,6 +33,10 @@ func setupTestEnv(t *testing.T) string {
 	t.Setenv("HOMEDRIVE", "")
 	t.Setenv("HOMEPATH", "")
 
+	// Clear config-dir overrides so tests never touch a real agent config.
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	t.Setenv("CODEX_HOME", "")
+
 	return tmpHome
 }
 
@@ -119,6 +123,75 @@ func TestInstallWhenDirExists(t *testing.T) {
 			assertSkillsInstalled(t, tmpHome, tc)
 		})
 	}
+}
+
+func TestInstallHonorsConfigDirEnvOverride(t *testing.T) {
+	tests := []struct {
+		agent  Agent
+		envVar string
+	}{
+		{agent: AgentClaude, envVar: "CLAUDE_CONFIG_DIR"},
+		{agent: AgentCodex, envVar: "CODEX_HOME"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.envVar, func(t *testing.T) {
+			expectedSkills := expectedSkillDirNamesForAgent(t, tt.agent)
+			tmpHome := setupTestEnv(t)
+			configDir := t.TempDir()
+			t.Setenv(tt.envVar, configDir)
+
+			results, err := Install()
+			require.NoError(t, err, "Install failed")
+
+			res := findResultByAgent(t, results, tt.agent)
+			assert.False(t, res.Skipped, "expected not to be skipped")
+			assert.Equal(t, configDir, res.ConfigDir)
+			assert.Len(t, res.Installed, len(expectedSkills))
+
+			for _, skill := range expectedSkills {
+				path := filepath.Join(configDir, "skills", skill, "SKILL.md")
+				_, err := os.Stat(path)
+				require.NoError(t, err, "expected %s to exist", path)
+			}
+
+			spec, ok := lookupAgent(tt.agent)
+			require.True(t, ok)
+			_, err = os.Stat(filepath.Join(tmpHome, spec.configDirName))
+			assert.True(t, os.IsNotExist(err), "expected nothing under the home config dir")
+
+			assert.True(t, IsInstalled(tt.agent), "expected IsInstalled to honor the override")
+
+			for _, status := range Status() {
+				if status.Agent != tt.agent {
+					continue
+				}
+				assert.True(t, status.Available, "expected Status to honor the override")
+				for _, skill := range expectedSkills {
+					assert.Equal(t, SkillCurrent, status.Skills[skill])
+				}
+			}
+		})
+	}
+}
+
+func TestInstallSkipsWhenConfigDirEnvOverrideMissing(t *testing.T) {
+	tmpHome := setupTestEnv(t)
+
+	// The home config dir exists, but the override takes precedence.
+	require.NoError(t, os.MkdirAll(filepath.Join(tmpHome, ".claude"), 0o755))
+	missing := filepath.Join(t.TempDir(), "missing")
+	t.Setenv("CLAUDE_CONFIG_DIR", missing)
+
+	results, err := Install()
+	require.NoError(t, err, "Install failed")
+
+	claudeResult := findResultByAgent(t, results, AgentClaude)
+	assert.True(t, claudeResult.Skipped, "expected Claude to be skipped when the override dir doesn't exist")
+	assert.Equal(t, missing, claudeResult.ConfigDir)
+
+	_, err = os.Stat(filepath.Join(tmpHome, ".claude", "skills"))
+	assert.True(t, os.IsNotExist(err), "expected no skills under the home config dir")
 }
 
 func TestInstallIdempotent(t *testing.T) {

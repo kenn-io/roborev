@@ -651,6 +651,24 @@ func TestDefaultDroidHooksPath(t *testing.T) {
 	assert.Empty(t, DefaultDroidHooksPath("project"))
 }
 
+func TestDefaultClaudeSettingsPathHonorsClaudeConfigDir(t *testing.T) {
+	configDir := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", configDir)
+
+	assert.Equal(t, filepath.Join(configDir, "settings.json"), DefaultClaudeSettingsPath())
+}
+
+func TestDefaultClaudeSettingsPathDefaultsToHome(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("CLAUDE_CONFIG_DIR", "")
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("HOMEDRIVE", "")
+	t.Setenv("HOMEPATH", "")
+
+	assert.Equal(t, filepath.Join(home, ".claude", "settings.json"), DefaultClaudeSettingsPath())
+}
+
 func TestUpsertCommandHookCollapsesDuplicatesAndKeepsOthers(t *testing.T) {
 	assert := assert.New(t)
 	spec := InstallSpec{

@@ -34,6 +34,9 @@ func RunIsolatedMain(m *testing.M) int {
 	restoreDataDir := setDataDirEnv(tmpDir)
 	defer restoreDataDir()
 
+	restoreAgentConfigEnv := unsetAgentConfigDirEnv()
+	defer restoreAgentConfigEnv()
+
 	code := m.Run()
 
 	// Hard barrier: fail if tests polluted production logs.
@@ -83,6 +86,29 @@ func setDataDirEnv(dir string) func() {
 			return
 		}
 		_ = os.Unsetenv("ROBOREV_DATA_DIR")
+	}
+}
+
+// unsetAgentConfigDirEnv clears agent config-dir overrides (e.g.
+// CLAUDE_CONFIG_DIR replacing ~/.claude) so tests that redirect HOME never
+// resolve paths into a developer's real agent configuration.
+func unsetAgentConfigDirEnv() func() {
+	keys := []string{"CLAUDE_CONFIG_DIR", "CODEX_HOME"}
+	restores := make([]func(), 0, len(keys))
+	for _, key := range keys {
+		orig, has := os.LookupEnv(key)
+		if !has {
+			continue
+		}
+		_ = os.Unsetenv(key)
+		restores = append(restores, func() {
+			_ = os.Setenv(key, orig)
+		})
+	}
+	return func() {
+		for _, restore := range restores {
+			restore()
+		}
 	}
 }
 
