@@ -101,6 +101,9 @@ func containsRoborevWorkflowInvocation(commands []string) (bool, error) {
 }
 
 func commandContainsRoborevInvocation(command string) (bool, error) {
+	if riskyRoborevShellSyntax(command) {
+		return false, errors.New("classify command: unsupported executable-affecting shell syntax")
+	}
 	tokens, err := shellWords(command)
 	if err != nil {
 		return false, fmt.Errorf("classify command: %w", err)
@@ -125,6 +128,9 @@ func commandContainsRoborevInvocation(command string) (bool, error) {
 }
 
 func commandContainsRoborevBranchReview(command string) (bool, error) {
+	if riskyRoborevShellSyntax(command) {
+		return false, errors.New("classify command: unsupported executable-affecting shell syntax")
+	}
 	tokens, err := shellWords(command)
 	if err != nil {
 		return false, fmt.Errorf("classify command: %w", err)
@@ -281,6 +287,118 @@ func isShellSeparator(token string) bool {
 	return token == "&&" || token == "||" || token == ";" || token == "|" || token == "&"
 }
 
+func riskyRoborevShellSyntax(command string) bool {
+	expansionActive := shellTextOutsideSingleQuotes(command)
+	unquoted := shellTextOutsideQuotes(command)
+	if containsRoborevCommandSubstitution(expansionActive) {
+		return true
+	}
+	if containsShellWord(unquoted, "roborev") && strings.ContainsAny(unquoted, "(){}") {
+		return true
+	}
+	return containsRoborevAliasExpansion(expansionActive)
+}
+
+func shellTextOutsideSingleQuotes(command string) string {
+	return maskQuotedShellText(command, false)
+}
+
+func shellTextOutsideQuotes(command string) string {
+	return maskQuotedShellText(command, true)
+}
+
+func maskQuotedShellText(command string, maskDouble bool) string {
+	var masked strings.Builder
+	quote := rune(0)
+	escaped := false
+	for _, r := range command {
+		if escaped {
+			masked.WriteRune(' ')
+			escaped = false
+			continue
+		}
+		if r == '\\' && quote != '\'' {
+			masked.WriteRune(' ')
+			escaped = true
+			continue
+		}
+		if quote != 0 {
+			if r == quote {
+				quote = 0
+				masked.WriteRune(' ')
+			} else if quote == '\'' || maskDouble {
+				masked.WriteRune(' ')
+			} else {
+				masked.WriteRune(r)
+			}
+			continue
+		}
+		if r == '\'' || r == '"' {
+			quote = r
+			masked.WriteRune(' ')
+			continue
+		}
+		masked.WriteRune(r)
+	}
+	return masked.String()
+}
+
+func containsRoborevCommandSubstitution(command string) bool {
+	for start := 0; start < len(command); start++ {
+		if start+1 < len(command) && command[start] == '$' && command[start+1] == '(' {
+			if end := strings.IndexByte(command[start+2:], ')'); end >= 0 && containsShellWord(command[start+2:start+2+end], "roborev") {
+				return true
+			}
+		}
+		if command[start] == '`' {
+			if end := strings.IndexByte(command[start+1:], '`'); end >= 0 && containsShellWord(command[start+1:start+1+end], "roborev") {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+func containsRoborevAliasExpansion(command string) bool {
+	aliases := make(map[string]bool)
+	fields := strings.FieldsFunc(command, func(r rune) bool {
+		return r == ' ' || r == '\t' || r == '\n' || r == ';' || r == '&' || r == '|' || r == '(' || r == ')' || r == '{' || r == '}'
+	})
+	for _, field := range fields {
+		name, value, ok := strings.Cut(field, "=")
+		if ok && isShellAssignment(name+"=") && filepath.Base(value) == "roborev" {
+			aliases[name] = true
+		}
+	}
+	for name := range aliases {
+		if strings.Contains(command, "${"+name+"}") || containsShellWord(command, "$"+name) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsShellWord(text, word string) bool {
+	for offset := 0; ; {
+		index := strings.Index(text[offset:], word)
+		if index < 0 {
+			return false
+		}
+		index += offset
+		beforeOK := index == 0 || !isShellWordRune(rune(text[index-1]))
+		after := index + len(word)
+		afterOK := after == len(text) || !isShellWordRune(rune(text[after]))
+		if beforeOK && afterOK {
+			return true
+		}
+		offset = index + len(word)
+	}
+}
+
+func isShellWordRune(r rune) bool {
+	return r == '_' || r == '-' || r >= '0' && r <= '9' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z'
+}
+
 func shellWords(command string) ([]string, error) {
 	var words []string
 	var word strings.Builder
@@ -294,7 +412,7 @@ func shellWords(command string) ([]string, error) {
 			wordStarted = false
 		}
 	}
-	for i, r := range command {
+	for _, r := range command {
 		if escaped {
 			word.WriteRune(r)
 			wordStarted = true
@@ -309,8 +427,6 @@ func shellWords(command string) ([]string, error) {
 		if quote != 0 {
 			if r == quote {
 				quote = 0
-			} else if quote != '\'' && unsupportedShellExpansion(command, i, r) {
-				return nil, errors.New("unsupported shell expansion")
 			} else {
 				word.WriteRune(r)
 			}
@@ -320,9 +436,6 @@ func shellWords(command string) ([]string, error) {
 			quote = r
 			wordStarted = true
 			continue
-		}
-		if unsupportedShellExpansion(command, i, r) {
-			return nil, errors.New("unsupported shell expansion")
 		}
 		if r == ' ' || r == '\t' {
 			flush()
@@ -349,10 +462,6 @@ func shellWords(command string) ([]string, error) {
 	}
 	flush()
 	return words, nil
-}
-
-func unsupportedShellExpansion(command string, index int, r rune) bool {
-	return r == '`' || r == '$' && index+1 < len(command) && (command[index+1] == '(' || command[index+1] == '{')
 }
 
 func TestParseCodexCommands(t *testing.T) {
@@ -520,6 +629,9 @@ func TestContainsRoborevWorkflowInvocation(t *testing.T) {
 		{name: "ripgrep mention", commands: []string{`rg 'roborev fix' README.md`}},
 		{name: "printf mention", commands: []string{`printf '%s\n' 'roborev status'`}},
 		{name: "single quoted expansion mention", commands: []string{`printf '%s\n' '$(roborev status)'`}},
+		{name: "double quoted mention", commands: []string{`printf '%s\n' "roborev status"`}},
+		{name: "unrelated command substitution", commands: []string{`printf '%s\n' "$(git status)"`}},
+		{name: "unrelated grouping", commands: []string{`(git status)`}},
 		{name: "prose mention", commands: []string{"The command is roborev fix 42"}},
 		{name: "unrelated command", commands: []string{"git status"}},
 	}
@@ -541,6 +653,11 @@ func TestRoborevClassifiersFailClosed(t *testing.T) {
 		{name: "unmatched quote", command: `printf 'roborev status`},
 		{name: "trailing escape", command: `printf roborev\`},
 		{name: "unsupported substitution", command: `printf "$(roborev status)"`},
+		{name: "alias expansion", command: `RR=roborev; $RR status`},
+		{name: "braced alias expansion", command: `RR=roborev; ${RR} status`},
+		{name: "subshell grouping", command: `(roborev status)`},
+		{name: "brace grouping", command: `{ roborev status; }`},
+		{name: "nested grouping", command: `if true; then (roborev status); fi`},
 	}
 
 	for _, tt := range tests {
@@ -591,7 +708,46 @@ func TestCodexSkillShellResolutionPreflight(t *testing.T) {
 	require.NoError(t, prerequisiteError(err, "cannot construct isolated executable path"))
 	require.NoError(t, prerequisiteError(writeShellProfiles(home, stubDir), "cannot create isolated shell profiles"))
 	childEnv := evalChildEnvironment(os.Environ(), home, filepath.Join(home, ".codex"), safePath)
-	preflightShellResolution(t, childEnv, stubPath)
+	require.NoError(t, prerequisiteError(preflightShellResolution(childEnv, stubPath), "shell resolution safety preflight failed"))
+}
+
+func TestVerifyShellResolution(t *testing.T) {
+	tests := []struct {
+		name    string
+		shells  []string
+		resolve func(string) (string, bool, error)
+		wantErr string
+	}{
+		{
+			name:   "zero available",
+			shells: []string{"shell-a", "shell-b"},
+			resolve: func(string) (string, bool, error) {
+				return "", false, nil
+			},
+			wantErr: "no supported login shell available",
+		},
+		{
+			name:   "one exact success",
+			shells: []string{"missing-shell", "available-shell"},
+			resolve: func(shell string) (string, bool, error) {
+				if shell == "available-shell" {
+					return "stub-command", true, nil
+				}
+				return "", false, nil
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := verifyShellResolution(tt.shells, "stub-command", tt.resolve)
+			if tt.wantErr != "" {
+				require.ErrorContains(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
 }
 
 func intPointer(value int) *int {
@@ -627,7 +783,7 @@ func TestCodexSkillExplicitInvocation(t *testing.T) {
 	require.NoError(t, prerequisiteError(err, "cannot construct isolated executable path"), "live Codex skill eval safety prerequisite")
 	require.NoError(t, prerequisiteError(writeShellProfiles(isolatedHome, stubDir), "cannot create isolated shell profiles"), "live Codex skill eval safety prerequisite")
 	childEnv := evalChildEnvironment(os.Environ(), isolatedHome, isolatedCodexHome, safePath)
-	preflightShellResolution(t, childEnv, stubPath)
+	require.NoError(t, prerequisiteError(preflightShellResolution(childEnv, stubPath), "shell resolution safety preflight failed"), "live Codex skill eval safety prerequisite")
 	t.Log("shell resolution safety preflight passed")
 
 	repoDir := createCodexEvalRepo(t, childEnv)
@@ -846,15 +1002,16 @@ func evalChildEnvironment(base []string, home, codexHome, path string) []string 
 	return env
 }
 
-func preflightShellResolution(t *testing.T, childEnv []string, stubPath string) {
-	t.Helper()
-	for _, shell := range []string{"/bin/zsh", "/bin/bash", "/bin/sh"} {
+func preflightShellResolution(childEnv []string, stubPath string) error {
+	shells := []string{"/bin/zsh", "/bin/bash", "/bin/sh"}
+	return verifyShellResolution(shells, stubPath, func(shell string) (string, bool, error) {
 		if _, err := os.Stat(shell); errors.Is(err, os.ErrNotExist) {
-			continue
-		} else {
-			require.NoError(t, prerequisiteError(err, "shell resolution preflight unavailable"), "live Codex skill eval safety prerequisite")
+			return "", false, nil
+		} else if err != nil {
+			return "", false, err
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+		defer cancel()
 		cmd := exec.CommandContext(ctx, shell, "-lc", "command -v roborev")
 		prepareEvalCommand(cmd)
 		cmd.Env = childEnv
@@ -862,9 +1019,33 @@ func preflightShellResolution(t *testing.T, childEnv []string, stubPath string) 
 		cmd.Stdout = &stdout
 		cmd.Stderr = &stderr
 		err := cmd.Run()
-		cancel()
-		require.False(t, errors.Is(ctx.Err(), context.DeadlineExceeded), "shell resolution safety preflight timed out for %s", filepath.Base(shell))
-		require.NoError(t, prerequisiteError(err, "shell resolution safety preflight command failed"), "live Codex skill eval safety prerequisite for %s", filepath.Base(shell))
-		require.True(t, strings.TrimSpace(stdout.String()) == stubPath, "shell resolution safety preflight did not resolve the isolated stub for %s", filepath.Base(shell))
+		if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+			return "", true, errors.New("shell resolution safety preflight timed out")
+		}
+		if err != nil {
+			return "", true, errors.New("shell resolution safety preflight command failed")
+		}
+		return strings.TrimSpace(stdout.String()), true, nil
+	})
+}
+
+func verifyShellResolution(shells []string, stubPath string, resolve func(string) (string, bool, error)) error {
+	verified := 0
+	for _, shell := range shells {
+		resolved, available, err := resolve(shell)
+		if err != nil {
+			return err
+		}
+		if !available {
+			continue
+		}
+		if resolved != stubPath {
+			return errors.New("shell resolution safety preflight did not resolve isolated stub")
+		}
+		verified++
 	}
+	if verified == 0 {
+		return errors.New("no supported login shell available for safety preflight")
+	}
+	return nil
 }
