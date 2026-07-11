@@ -9,6 +9,7 @@ import (
 	"log"
 	"os/exec"
 	"path"
+	"runtime"
 	"strconv"
 	"strings"
 	"time"
@@ -248,10 +249,10 @@ func (a *GeminiAgent) runAntigravity(ctx context.Context, repoPath, prompt strin
 	if antigravityPromptViaFlag(ctx, a.Command) {
 		// This contract carries the prompt in argv (agy has no stdin/file
 		// prompt input here), so bound its length to fail with a clear error
-		// rather than an opaque exec failure (E2BIG, or Windows' ~32KB
-		// CreateProcess limit). Mirrors kiro's maxPromptArgLen guard.
-		if len(trimmedPrompt) > maxPromptArgLen {
-			return "", "", fmt.Errorf("prompt too large for antigravity argv (%d bytes, max %d)", len(trimmedPrompt), maxPromptArgLen)
+		// rather than an opaque exec failure. The ceiling is platform-specific
+		// (see antigravityMaxPromptArgLen).
+		if limit := antigravityMaxPromptArgLen(); len(trimmedPrompt) > limit {
+			return "", "", fmt.Errorf("prompt too large for antigravity argv (%d bytes, max %d on %s)", len(trimmedPrompt), limit, runtime.GOOS)
 		}
 		finalArgs = append(append([]string(nil), args...), "--prompt", trimmedPrompt)
 	} else {
@@ -302,12 +303,35 @@ func antigravityPromptViaFlag(ctx context.Context, command string) bool {
 	// consume the whole review timeout.
 	vctx, cancel := context.WithTimeout(ctx, antigravityVersionProbeTimeout)
 	defer cancel()
-	out, err := exec.CommandContext(vctx, command, "--version").Output()
+	cmd := exec.CommandContext(vctx, command, "--version")
+	// Run the probe from a stable cwd and without a console window, and avoid
+	// inheriting a deleted daemon working directory (a bad cwd otherwise makes
+	// the probe fail and mis-default a legacy agy to the --prompt contract).
+	configureCapabilityProbe(cmd)
+	out, err := cmd.Output()
 	if err != nil {
 		log.Printf("antigravity: could not read agy version (%v); assuming the --prompt flag contract", err)
 		return true
 	}
 	return antigravityVersionUsesPromptFlag(string(out))
+}
+
+// antigravityMaxPromptArgLen bounds the prompt when it is passed in argv, the
+// only channel agy print mode offers. The ceiling is platform-specific because
+// the OS limits differ sharply: Windows caps the whole command line near 32K
+// UTF-16 units, Linux caps a single argument at MAX_ARG_STRLEN (128 KiB), and
+// macOS only bounds total argv+env (~1 MiB). The default prompt cap (200 KiB)
+// exceeds the Linux and Windows limits, so a large diff would otherwise fail
+// with an opaque exec error instead of a clear one.
+func antigravityMaxPromptArgLen() int {
+	switch runtime.GOOS {
+	case "windows":
+		return 30 * 1000 // headroom under the ~32K UTF-16 command-line cap
+	case "linux":
+		return 120 * 1024 // under MAX_ARG_STRLEN (128 KiB) per argument
+	default:
+		return maxPromptArgLen // macOS/other: bounded by total ARG_MAX
+	}
 }
 
 // antigravityVersionUsesPromptFlag reports whether agy's `--version` output

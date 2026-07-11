@@ -380,6 +380,25 @@ echo "No issues found."
 	assert.NotContains(t, argsOut, "--prompt\n")
 }
 
+func TestGeminiAntigravityPromptTooLargeForArgv(t *testing.T) {
+	skipIfWindows(t)
+
+	// New-contract (flag) path bounds the argv-passed prompt with a clear error.
+	scriptPath := writeTempCommand(t, `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "1.1.1"; exit 0; fi
+echo "should not run the review"
+`)
+	a := NewGeminiAgent(scriptPath)
+	a.Command = filepath.Join(filepath.Dir(scriptPath), "agy")
+	require.NoError(t, os.Rename(scriptPath, a.Command))
+
+	big := strings.Repeat("x", antigravityMaxPromptArgLen()+1)
+	_, err := a.Review(context.Background(), t.TempDir(), "sha", big, &bytes.Buffer{})
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "too large for antigravity argv")
+}
+
 func TestGeminiAntigravityVersionProbeFailureDefaultsToPromptFlag(t *testing.T) {
 	skipIfWindows(t)
 
