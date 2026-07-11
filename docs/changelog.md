@@ -5,6 +5,34 @@ description: Release history for roborev
 
 All notable changes to roborev, grouped by minor release.
 
+## 0.62.0
+<small>2026-07-11</small>
+
+**New features**
+
+- `roborev cancel <job_id>` cancels one queued or running job from the command line. Terminal jobs cannot be canceled. See [Canceling a Job](/commands/#canceling-a-job).
+
+**Improvements**
+
+- Bundled Codex and Claude Code roborev skills now require explicit user invocation. Personal, plugin-namespaced, and structured Codex selection remain available, as do Claude Code slash commands and menu selection; ordinary review or fix requests stay in the agent's native workflow. See [Agent Skills](/guides/agent-skills/#usage).
+- `roborev skills install`, skill status checks, updates, and agent-hook installation now honor `CLAUDE_CONFIG_DIR` and `CODEX_HOME`, falling back to `~/.claude` and `~/.codex` when the variables are unset. See [Agent Skills](/guides/agent-skills/#how-it-works).
+- ACP documentation now includes model-selectable Gemini setup through an Antigravity SDK bridge, thinking-level model suffixes, daemon environment injection, and troubleshooting for agent and model selection. See [Model-Selectable Gemini via a Bridge](/advanced/acp/#example-model-selectable-gemini-via-a-bridge).
+
+**Bug fixes**
+
+- Workflow-specific models no longer leak into a selected ACP agent when the model is paired with a different workflow agent. The selected ACP agent instead keeps its `[acp].model`; explicit `--model` values and models paired with that ACP agent still take precedence.
+- The Antigravity adapter now selects the prompt transport supported by the installed `agy` version: stdin-based `--print` through 1.1.0 and `--prompt` starting with 1.1.1.
+- Pre-commit lint checks now use the non-mutating `make lint-ci` target, preventing commits from unexpectedly rewriting files. `make lint` remains the explicit auto-fix command.
+
+**Acknowledgements**
+
+- Thanks to [Matthew Jacobs](https://github.com/mjacobs) for `roborev cancel`, the model-selectable Gemini ACP documentation, and ACP model-pairing fixes.
+- Thanks to [Yo Iida](https://github.com/y011d4) for honoring custom Claude Code and Codex configuration directories during skill installation.
+- Thanks to [Graham Taylor](https://github.com/gwtaylor) for Antigravity version compatibility.
+- Thanks to [Wes McKinney](https://github.com/wesm) for explicit-only Codex and Claude Code skills and non-mutating pre-commit lint checks.
+
+---
+
 ## 0.61.2
 <small>2026-07-04</small>
 
@@ -15,11 +43,6 @@ All notable changes to roborev, grouped by minor release.
 **Improvements**
 
 - Metadata-only job listings can omit prompt and diff payloads, reducing daemon and agent-hook response sizes while avoiding unnecessary prompt exposure in callers that only need job state.
-
-**Bug fixes**
-
-- Bundled Codex roborev skills now require explicit personal, plugin-namespaced, or structured selection. Machine-readable activation policy and invocation-only descriptions keep ordinary review and fix requests in Codex's native workflow. See [Agent Skills](/guides/agent-skills/#agent-specific-syntax).
-- Bundled Claude Code roborev skills are now explicit-only as well. Skills set `disable-model-invocation: true` and state only their invocation contract in the description, so Claude Code never auto-selects a roborev skill for an ordinary review or fix request; invoke skills with their slash commands. `roborev-fix` stays model-invocable so the agent-hook instruction keeps working. See [Agent Skills](/guides/agent-skills/#agent-specific-syntax).
 
 **Acknowledgements**
 

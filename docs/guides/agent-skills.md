@@ -239,8 +239,16 @@ roborev update
 
 Skills are installed as agent-specific configuration:
 
-- **Claude Code**: Custom slash commands in `~/.claude/`
-- **Codex**: Custom agent skills directory
+- **Claude Code**: Custom slash commands under
+  `$CLAUDE_CONFIG_DIR/skills/` when `CLAUDE_CONFIG_DIR` is set, otherwise
+  `~/.claude/skills/`
+- **Codex**: Custom agent skills under `$CODEX_HOME/skills/` when `CODEX_HOME`
+  is set, otherwise `~/.codex/skills/`
+- **Factory Droid**: Custom skills under `~/.factory/skills/`
+
+The same resolved directories are used when installing, updating, and checking
+skill status. Claude Code agent-hook installation also honors
+`CLAUDE_CONFIG_DIR`; Codex agent-hook installation honors `CODEX_HOME`.
 
 The review skills use `--wait` internally so the agent can present results inline. The fix skills call `roborev show --job <id> --json` to fetch review data, then parse and present findings to the agent in a structured format. All reviews (whether requested via skills or the post-commit hook) appear in the TUI queue.
 

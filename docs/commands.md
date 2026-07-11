@@ -17,6 +17,7 @@ roborev fix                      # Fix open reviews
 roborev status                   # Check daemon and queue
 roborev pause                    # Pause queue processing
 roborev unpause                  # Resume queue processing
+roborev cancel <job_id>          # Cancel one queued or running job
 roborev summary                  # Aggregate review statistics
 roborev cost                     # Approximate aggregate review cost
 roborev insights                 # Analyze review patterns
@@ -128,6 +129,17 @@ See: [Terminal UI](/integrations/tui/)
 
 !!! tip
     Press `l` in the TUI to open the log viewer for any job (running or completed).
+
+## Canceling a Job
+
+```bash
+roborev cancel 42                # Cancel job 42 if it is queued or running
+```
+
+`roborev cancel` accepts one positive numeric job ID. It asks the daemon to
+cancel that job and prints `Job 42 canceled` when successful. Jobs that have
+already reached a terminal state, including done, failed, or canceled jobs,
+cannot be canceled and return an error.
 
 ## Exporting Reviews
 
@@ -605,6 +617,7 @@ roborev daemon restart           # Restart daemon
 roborev daemon run               # Run in foreground
 roborev pause                    # Pause queue processing
 roborev unpause                  # Resume queue processing
+roborev cancel <job_id>          # Cancel one queued or running job
 
 roborev status                   # Show daemon and queue status
 roborev status --json            # Structured status for scripting
@@ -620,7 +633,7 @@ roborev uninstall-hook           # Remove hook
 | `--json` | Emit daemon and queue status as JSON. Includes the active daemon endpoint as `network`, `address`, and `port` fields alongside queue counters and version fields |
 | `--force` | Overwrite an existing post-commit hook with a fresh one |
 
-`pause` and `unpause` are daemon-wide queue controls. Pausing prevents workers from starting new queued jobs, but running jobs continue to completion. A paused queue survives daemon restarts and is shown in `roborev status` and the TUI.
+`pause` and `unpause` are daemon-wide queue controls. Pausing prevents workers from starting new queued jobs, but running jobs continue to completion. A paused queue survives daemon restarts and is shown in `roborev status` and the TUI. Use `cancel` when you need to stop one queued or running job instead of pausing the whole queue.
 
 !!! tip "Broken post-commit hook?"
     If your post-commit hook was corrupted during a previous upgrade (e.g. a stray `fi` or missing lines), run:

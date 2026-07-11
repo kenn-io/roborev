@@ -172,17 +172,19 @@ The agent doesn't support the requested session mode. Check which modes the agen
 
 The agent doesn't support the requested model. Remove the `model` field from your `[acp]` config, or check the agent's documentation for supported model names.
 
-### Reviews run with a different model (or agent) than configured
+### Which model wins for an ACP agent?
 
-Workflow model settings (`review_model`, `fix_model`, and their leveled
-variants) take precedence over the `[acp]` `model` field. If a global workflow
-model names a model your ACP agent does not advertise (say `review_model =
-"gpt-5.4"` with a Gemini-only agent), the model check fails, the job retries,
-and after retries it silently fails over to the backup agent — the review
-completes, but a different agent served it. Pass `--model` explicitly, or
-align the workflow model with the ACP agent. To see which agent actually
-served a job: `roborev show --job <id> --json` and check `job.agent` /
-`job.model`.
+Workflow models follow their paired workflow agent. If `review_agent =
+"codex"` and `review_model = "gpt-5.4"`, selecting a Gemini ACP agent with
+`--agent agy-sdk` does not pass `gpt-5.4` to that agent; the ACP agent keeps its
+`[acp].model` instead. This also applies when the workflow agent is inherited
+from the default agent.
+
+A workflow model does apply when its workflow agent resolves to the selected
+ACP agent. An explicit `--model` always wins, and a generic `model` or
+`default_model` still applies when the selected ACP agent is also the matching
+default agent. To confirm which agent and model served a job, run `roborev show
+--job <id> --json` and inspect `job.agent` and `job.model`.
 
 ### `--agent` is ignored and a panel runs instead
 
