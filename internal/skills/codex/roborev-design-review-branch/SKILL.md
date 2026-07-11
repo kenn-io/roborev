@@ -1,6 +1,6 @@
 ---
 name: roborev-design-review-branch
-description: Request a design review for all commits on the current branch and present the results
+description: Use only when the user explicitly invokes $roborev-design-review-branch; request a design review for all commits on the current branch and present the results
 ---
 
 # roborev-design-review-branch
@@ -12,6 +12,13 @@ Request a design review for all commits on the current branch and present the re
 ```
 $roborev-design-review-branch [--base <branch>] [--panel <name>|none]
 ```
+
+## Explicit invocation only
+
+Use this skill only when the user literally invokes personal skill
+`$roborev-design-review-branch`. Requests such as “review this branch's design”
+or “check the architecture” without that trigger must use native behavior and
+must not run roborev.
 
 ## When NOT to invoke this skill
 

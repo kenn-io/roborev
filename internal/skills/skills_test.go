@@ -1,7 +1,10 @@
 package skills
 
 import (
+	"encoding/json"
+	"io/fs"
 	"os"
+	"path"
 	"path/filepath"
 	"strings"
 	"testing"
@@ -59,6 +62,58 @@ func expectedSkillDirNamesForAgent(t *testing.T, agent Agent) []string {
 	return names
 }
 
+func TestCodexSkillsEmbedExplicitInvocationPolicy(t *testing.T) {
+	wantSkills := []string{
+		"roborev-design-review",
+		"roborev-design-review-branch",
+		"roborev-fix",
+		"roborev-lookahead-review",
+		"roborev-lookahead-review-branch",
+		"roborev-refine",
+		"roborev-respond",
+		"roborev-review",
+		"roborev-review-branch",
+	}
+	assert.ElementsMatch(t, wantSkills, expectedSkillDirNamesForAgent(t, AgentCodex))
+
+	const wantPolicy = "policy:\n  allow_implicit_invocation: false\n"
+	for _, skill := range wantSkills {
+		content, err := fs.ReadFile(codexSkills, path.Join("codex", skill, "agents", "openai.yaml"))
+		require.NoError(t, err, "read policy for %s", skill)
+		assert.Equal(t, wantPolicy, string(content), "policy for %s", skill)
+	}
+}
+
+func TestCodexSkillDescriptionsRequireExplicitInvocation(t *testing.T) {
+	spec, ok := lookupAgent(AgentCodex)
+	require.True(t, ok)
+	skills, err := embeddedSkillsForAgent(spec)
+	require.NoError(t, err)
+	require.Len(t, skills, 9)
+
+	for _, skill := range skills {
+		wantPrefix := "Use only when the user explicitly invokes $" + skill.DirName
+		assert.True(t, strings.HasPrefix(skill.Description, wantPrefix),
+			"%s description must begin %q; got %q", skill.DirName, wantPrefix, skill.Description)
+	}
+}
+
+func TestPluginDefaultPromptsExplicitlyInvokeNamespacedSkills(t *testing.T) {
+	data, err := os.ReadFile(filepath.Join("..", "..", ".codex-plugin", "plugin.json"))
+	require.NoError(t, err)
+	var manifest struct {
+		Interface struct {
+			DefaultPrompt []string `json:"defaultPrompt"`
+		} `json:"interface"`
+	}
+	require.NoError(t, json.Unmarshal(data, &manifest))
+	assert.Equal(t, []string{
+		"Review the current branch with $roborev:roborev-review-branch.",
+		"Fix open roborev findings with $roborev:roborev-fix.",
+		"Respond to a roborev review with $roborev:roborev-respond.",
+	}, manifest.Interface.DefaultPrompt)
+}
+
 func findResultByAgent(t *testing.T, results []InstallResult, agent Agent) *InstallResult {
 	t.Helper()
 	for i := range results {
@@ -68,6 +123,17 @@ func findResultByAgent(t *testing.T, results []InstallResult, agent Agent) *Inst
 	}
 	require.Condition(t, func() bool { return false }, "missing install result: no result found for agent %s", agent)
 	return nil
+}
+
+func findStatusByAgent(t *testing.T, statuses []AgentStatus, agent Agent) AgentStatus {
+	t.Helper()
+	for _, status := range statuses {
+		if status.Agent == agent {
+			return status
+		}
+	}
+	require.Condition(t, func() bool { return false }, "missing status for agent %s", agent)
+	return AgentStatus{}
 }
 
 func requireResultCount(t *testing.T, results []InstallResult, want int) {
@@ -123,6 +189,65 @@ func TestInstallWhenDirExists(t *testing.T) {
 			assertSkillsInstalled(t, tmpHome, tc)
 		})
 	}
+}
+
+func TestInstallWritesCodexPolicyOnly(t *testing.T) {
+	tmpHome := setupTestEnv(t)
+	for _, tc := range agentCases {
+		require.NoError(t, os.MkdirAll(filepath.Join(tmpHome, tc.configDir), 0o755))
+	}
+
+	_, err := Install()
+	require.NoError(t, err)
+
+	const wantPolicy = "policy:\n  allow_implicit_invocation: false\n"
+	for _, skill := range expectedSkillDirNamesForAgent(t, AgentCodex) {
+		policyPath := filepath.Join(tmpHome, ".codex", "skills", skill, "agents", "openai.yaml")
+		content, err := os.ReadFile(policyPath)
+		require.NoError(t, err, "read installed policy for %s", skill)
+		assert.Equal(t, wantPolicy, string(content), "installed policy for %s", skill)
+	}
+	for _, tc := range []agentCase{agentCases[0], agentCases[2]} {
+		for _, skill := range expectedSkillDirNamesForAgent(t, tc.agent) {
+			policyPath := filepath.Join(tmpHome, tc.configDir, "skills", skill, "agents", "openai.yaml")
+			_, err := os.Stat(policyPath)
+			assert.ErrorIs(t, err, os.ErrNotExist, "%s should not install Codex policy", tc.agent)
+		}
+	}
+}
+
+func TestCodexStatusRequiresCurrentPolicy(t *testing.T) {
+	tmpHome := setupTestEnv(t)
+	require.NoError(t, os.MkdirAll(filepath.Join(tmpHome, ".codex"), 0o755))
+	_, err := Install()
+	require.NoError(t, err)
+
+	skill := expectedSkillDirNamesForAgent(t, AgentCodex)[0]
+	policyPath := filepath.Join(tmpHome, ".codex", "skills", skill, "agents", "openai.yaml")
+	require.NoError(t, os.Remove(policyPath))
+	status := findStatusByAgent(t, Status(), AgentCodex)
+	assert.Equal(t, SkillOutdated, status.Skills[skill], "missing policy should be outdated when SKILL.md is present")
+	assert.True(t, IsInstalled(AgentCodex), "SKILL.md should remain the installed-presence signal")
+
+	require.NoError(t, os.MkdirAll(filepath.Dir(policyPath), 0o755))
+	require.NoError(t, os.WriteFile(policyPath, []byte("policy:\n  allow_implicit_invocation: true\n"), 0o644))
+	status = findStatusByAgent(t, Status(), AgentCodex)
+	assert.Equal(t, SkillOutdated, status.Skills[skill], "changed policy should be outdated")
+}
+
+func TestUpdateAddsCodexPolicyToSkillOnlyInstall(t *testing.T) {
+	tmpHome := setupTestEnv(t)
+	skill := expectedSkillDirNamesForAgent(t, AgentCodex)[0]
+	createMockSkill(t, tmpHome, AgentCodex, skill)
+
+	results, err := Update()
+	require.NoError(t, err)
+	findResultByAgent(t, results, AgentCodex)
+
+	policyPath := filepath.Join(tmpHome, ".codex", "skills", skill, "agents", "openai.yaml")
+	content, err := os.ReadFile(policyPath)
+	require.NoError(t, err)
+	assert.Equal(t, "policy:\n  allow_implicit_invocation: false\n", string(content))
 }
 
 func TestInstallHonorsConfigDirEnvOverride(t *testing.T) {

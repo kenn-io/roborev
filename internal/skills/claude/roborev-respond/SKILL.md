@@ -1,6 +1,6 @@
 ---
 name: roborev-respond
-description: Add a comment to a roborev code review and close it
+description: Use only when the user explicitly invokes /roborev-respond; add a comment to a roborev code review and close it
 ---
 
 # roborev-respond
@@ -12,6 +12,13 @@ Record a comment on a roborev code review and close it.
 ```
 /roborev-respond <job_id> [message]
 ```
+
+## Explicit invocation only
+
+Use this skill only when the user literally invokes personal skill
+`/roborev-respond`. Requests such as “respond to this review” or “close this
+review with a comment” without that trigger must use native behavior and must
+not run roborev.
 
 ## IMPORTANT
 

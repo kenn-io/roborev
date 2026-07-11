@@ -1,6 +1,6 @@
 ---
 name: roborev-review-branch
-description: Request a code review for all commits on the current branch and present the results
+description: Use only when the user explicitly invokes $roborev-review-branch; request a code review for all commits on the current branch and present the results
 ---
 
 # roborev-review-branch
@@ -12,6 +12,13 @@ Request a code review for all commits on the current branch and present the resu
 ```
 $roborev-review-branch [--base <branch>] [--type security|design] [--panel <name>|none]
 ```
+
+## Explicit invocation only
+
+Use this skill only when the user literally invokes personal skill
+`$roborev-review-branch`. Requests such as “review this branch” or “check all
+branch commits” without that trigger must use native behavior and must not run
+roborev.
 
 ## When NOT to invoke this skill
 

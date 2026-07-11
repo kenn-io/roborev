@@ -30,9 +30,9 @@
       "Write"
     ],
     "defaultPrompt": [
-      "Review the current branch with roborev.",
-      "Fix open roborev findings.",
-      "Respond to a roborev review."
+      "Review the current branch with $roborev:roborev-review-branch.",
+      "Fix open roborev findings with $roborev:roborev-fix.",
+      "Respond to a roborev review with $roborev:roborev-respond."
     ],
     "websiteURL": "https://roborev.io",
     "privacyPolicyURL": "https://roborev.io/privacy",

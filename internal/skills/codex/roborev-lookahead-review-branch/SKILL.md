@@ -1,6 +1,6 @@
 ---
 name: roborev-lookahead-review-branch
-description: Request a time-series look-ahead (a.k.a. peekahead / future-data leakage) review for all commits on the current branch and present the results
+description: Use only when the user explicitly invokes $roborev-lookahead-review-branch; request a time-series look-ahead review for all commits on the current branch and present the results
 ---
 
 # roborev-lookahead-review-branch
@@ -15,6 +15,13 @@ also called peekahead, future leakage, or temporal leakage.
 ```
 $roborev-lookahead-review-branch [--base <branch>] [--panel <name>|none]
 ```
+
+## Explicit invocation only
+
+Use this skill only when the user literally invokes personal skill
+`$roborev-lookahead-review-branch`. Requests such as “check this branch for
+future leakage” or “review temporal correctness” without that trigger must use
+native behavior and must not run roborev.
 
 ## When NOT to invoke this skill
 

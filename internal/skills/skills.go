@@ -6,6 +6,7 @@ import (
 	"bufio"
 	"bytes"
 	"embed"
+	"errors"
 	"fmt"
 	"io/fs"
 	"os"
@@ -20,7 +21,7 @@ import (
 //go:embed claude/*/SKILL.md
 var claudeSkills embed.FS
 
-//go:embed codex/*/SKILL.md
+//go:embed codex/*/SKILL.md codex/*/agents/openai.yaml
 var codexSkills embed.FS
 
 //go:embed droid/*/SKILL.md
@@ -48,6 +49,7 @@ type embeddedSkill struct {
 	Name        string
 	Description string
 	Content     []byte
+	OpenAIYAML  []byte
 }
 
 var supportedAgents = []agentSpec{
@@ -170,11 +172,16 @@ func embeddedSkillsForAgent(spec agentSpec) ([]embeddedSkill, error) {
 		if name == "" {
 			name = dirName
 		}
+		openAIYAML, err := fs.ReadFile(spec.embedFS, path.Join(spec.embedDir, dirName, "agents", "openai.yaml"))
+		if err != nil && !errors.Is(err, fs.ErrNotExist) {
+			return nil, fmt.Errorf("read %s/agents/openai.yaml: %w", dirName, err)
+		}
 		skills = append(skills, embeddedSkill{
 			DirName:     dirName,
 			Name:        name,
 			Description: desc,
 			Content:     content,
+			OpenAIYAML:  openAIYAML,
 		})
 	}
 	return skills, nil
@@ -313,6 +320,15 @@ func installAgent(spec agentSpec) (InstallResult, error) {
 		if err := os.WriteFile(destPath, skill.Content, 0o644); err != nil {
 			return result, fmt.Errorf("write %s/SKILL.md: %w", skillName, err)
 		}
+		if skill.OpenAIYAML != nil {
+			agentsDir := filepath.Join(skillDir, "agents")
+			if err := os.MkdirAll(agentsDir, 0o755); err != nil {
+				return result, fmt.Errorf("create %s/agents dir: %w", skillName, err)
+			}
+			if err := os.WriteFile(filepath.Join(agentsDir, "openai.yaml"), skill.OpenAIYAML, 0o644); err != nil {
+				return result, fmt.Errorf("write %s/agents/openai.yaml: %w", skillName, err)
+			}
+		}
 
 		if existed {
 			result.Updated = append(result.Updated, skillName)
@@ -417,11 +433,19 @@ func Status() []AgentStatus {
 				continue
 			}
 
-			if bytes.Equal(installedContent, skill.Content) {
-				status.Skills[skill.DirName] = SkillCurrent
-			} else {
+			if !bytes.Equal(installedContent, skill.Content) {
 				status.Skills[skill.DirName] = SkillOutdated
+				continue
 			}
+
+			if skill.OpenAIYAML != nil {
+				installedPolicy, err := os.ReadFile(filepath.Join(skillsDir, skill.DirName, "agents", "openai.yaml"))
+				if err != nil || !bytes.Equal(installedPolicy, skill.OpenAIYAML) {
+					status.Skills[skill.DirName] = SkillOutdated
+					continue
+				}
+			}
+			status.Skills[skill.DirName] = SkillCurrent
 		}
 
 		out = append(out, status)

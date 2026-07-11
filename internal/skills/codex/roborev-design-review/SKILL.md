@@ -1,6 +1,6 @@
 ---
 name: roborev-design-review
-description: Request a design review for a commit and present the results
+description: Use only when the user explicitly invokes $roborev-design-review; request a design review for a commit and present the results
 ---
 
 # roborev-design-review
@@ -12,6 +12,13 @@ Request a design review for a commit and present the results.
 ```
 $roborev-design-review [commit] [--panel <name>|none]
 ```
+
+## Explicit invocation only
+
+Use this skill only when the user literally invokes personal skill
+`$roborev-design-review`. Requests such as “review this commit's design” or
+“check this architecture change” without that trigger must use native behavior
+and must not run roborev.
 
 ## When NOT to invoke this skill
 

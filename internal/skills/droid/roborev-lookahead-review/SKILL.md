@@ -1,6 +1,6 @@
 ---
 name: roborev-lookahead-review
-description: Request a time-series look-ahead (a.k.a. peekahead / future-data leakage) review for a commit and present the results
+description: Use only when the user explicitly invokes /roborev-lookahead-review; request a time-series look-ahead review for a commit and present the results
 ---
 
 # roborev-lookahead-review
@@ -15,6 +15,13 @@ leakage, or temporal leakage.
 ```
 /roborev-lookahead-review [commit] [--panel <name>|none]
 ```
+
+## Explicit invocation only
+
+Use this skill only when the user literally invokes personal skill
+`/roborev-lookahead-review`. Requests such as “check this commit for peekahead”
+or “review future-data leakage” without that trigger must use native behavior
+and must not run roborev.
 
 ## When NOT to invoke this skill
 

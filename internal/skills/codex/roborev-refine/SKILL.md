@@ -1,6 +1,6 @@
 ---
 name: roborev-refine
-description: Iterative review-fix loop for the current branch — reviews via daemon, fixes inline, re-reviews until passing or max iterations reached
+description: Use only when the user explicitly invokes $roborev-refine; iteratively review, fix, and re-review the current branch until passing or the iteration limit is reached
 ---
 
 # roborev-refine
@@ -20,6 +20,13 @@ CLI. Do not simply shell out to `roborev refine`.
 ```
 $roborev-refine [--since <commit>] [--branch <name>] [--max-iterations <n>]
 ```
+
+## Explicit invocation only
+
+Use this skill only when the user literally invokes personal skill
+`$roborev-refine`. Requests such as “refine this change” or “iterate until the
+review passes” without that trigger must use native behavior and must not run
+roborev.
 
 - `--since <commit>`: refine commits after this commit (exclusive); required on the default branch
 - `--branch <name>`: validate that the current branch matches before refining

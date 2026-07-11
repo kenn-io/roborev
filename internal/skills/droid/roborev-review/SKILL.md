@@ -1,6 +1,6 @@
 ---
 name: roborev-review
-description: Request a code review for a commit and present the results
+description: Use only when the user explicitly invokes /roborev-review; request a code review for a commit and present the results
 ---
 
 # roborev-review
@@ -12,6 +12,12 @@ Request a code review for a commit and present the results.
 ```
 /roborev-review [commit] [--type security|design] [--panel <name>|none]
 ```
+
+## Explicit invocation only
+
+Use this skill only when the user literally invokes personal skill
+`/roborev-review`. Requests such as “review this commit” or “check this change”
+without that trigger must use native behavior and must not run roborev.
 
 ## When NOT to invoke this skill
 
