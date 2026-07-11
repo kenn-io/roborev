@@ -210,7 +210,9 @@ Gate it behind build tag `codexeval` and
    must be able to mutate only the disposable copy. Authentication errors must
    identify the missing prerequisite without printing either path.
 3. Create a disposable git repository with a reviewable change.
-4. Put a harmless `roborev` stub first on `PATH`.
+4. Put a harmless `roborev` stub first on `PATH`. Give each live run a unique,
+   unpredictable output marker that exists only inside the stub and is not
+   included in the prompt or repository fixture.
 5. Run `codex exec --json --ephemeral --ignore-user-config --ignore-rules`
    with read-only sandbox and approval disabled.
 6. Parse top-level completed-item JSONL events (`type == "item.completed"`),
@@ -229,13 +231,13 @@ For each model in `ROBOREV_CODEX_SKILL_EVAL_MODELS`:
 {prompt: "$roborev-review-branch", wantCommand: "roborev review --branch --wait"}
 ```
 
-Define a roborev workflow invocation as an executed shell payload whose command
-sequence starts the stubbed `roborev` binary followed by the expected roborev
-subcommand. Normalize the `/bin/zsh -lc ...` wrapper and quoting before matching.
-Do not count diagnostics such as `command -v roborev`, `rg roborev`, or prose
-that merely mentions the name. The positive case must match the ordered tokens
-`roborev review --branch --wait`; negative failures report sanitized attempted
-workflow commands without auth or private paths.
+Use the unique per-run stub marker as the negative execution oracle: any
+completed command event whose aggregated output contains the exact marker means
+the implicit prompt executed roborev, regardless of shell aliases, grouping,
+wrappers, command text, status, or exit code. Diagnostics and prose do not print
+the marker and therefore remain harmless. The positive case must both match the
+ordered tokens `roborev review --branch --wait` and contain that same event's
+marker with completed status and exit code zero.
 
 - [ ] **Step 5: Add the Make target**
 

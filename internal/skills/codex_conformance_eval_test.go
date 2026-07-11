@@ -5,6 +5,8 @@ package skills
 import (
 	"bytes"
 	"context"
+	"crypto/rand"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,8 +21,6 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
-
-const roborevStubMarker = "ROBOREV_STUB_EXECUTED"
 
 type codexCommandEvent struct {
 	Command          string
@@ -60,18 +60,36 @@ func parseCodexCommandEvents(r io.Reader) ([]codexCommandEvent, error) {
 	return commands, nil
 }
 
-func containsSuccessfulRoborevBranchReview(events []codexCommandEvent) (bool, error) {
+func containsSuccessfulRoborevBranchReview(events []codexCommandEvent, marker string) (bool, error) {
 	for _, event := range events {
 		workflow, err := commandContainsRoborevBranchReview(event.Command)
 		if err != nil {
 			return false, err
 		}
 		if workflow && event.ExitCode != nil && *event.ExitCode == 0 &&
-			event.Status == "completed" && strings.Contains(event.AggregatedOutput, roborevStubMarker) {
+			event.Status == "completed" && containsExactOutputLine(event.AggregatedOutput, marker) {
 			return true, nil
 		}
 	}
 	return false, nil
+}
+
+func containsStubExecution(events []codexCommandEvent, marker string) bool {
+	for _, event := range events {
+		if containsExactOutputLine(event.AggregatedOutput, marker) {
+			return true
+		}
+	}
+	return false
+}
+
+func containsExactOutputLine(output, marker string) bool {
+	for _, line := range strings.Split(output, "\n") {
+		if strings.TrimSuffix(line, "\r") == marker {
+			return true
+		}
+	}
+	return false
 }
 
 func containsRoborevBranchReviewWorkflow(commands []string) (bool, error) {
@@ -101,9 +119,6 @@ func containsRoborevWorkflowInvocation(commands []string) (bool, error) {
 }
 
 func commandContainsRoborevInvocation(command string) (bool, error) {
-	if riskyRoborevShellSyntax(command) {
-		return false, errors.New("classify command: unsupported executable-affecting shell syntax")
-	}
 	tokens, err := shellWords(command)
 	if err != nil {
 		return false, fmt.Errorf("classify command: %w", err)
@@ -128,9 +143,6 @@ func commandContainsRoborevInvocation(command string) (bool, error) {
 }
 
 func commandContainsRoborevBranchReview(command string) (bool, error) {
-	if riskyRoborevShellSyntax(command) {
-		return false, errors.New("classify command: unsupported executable-affecting shell syntax")
-	}
 	tokens, err := shellWords(command)
 	if err != nil {
 		return false, fmt.Errorf("classify command: %w", err)
@@ -287,118 +299,6 @@ func isShellSeparator(token string) bool {
 	return token == "&&" || token == "||" || token == ";" || token == "|" || token == "&"
 }
 
-func riskyRoborevShellSyntax(command string) bool {
-	expansionActive := shellTextOutsideSingleQuotes(command)
-	unquoted := shellTextOutsideQuotes(command)
-	if containsRoborevCommandSubstitution(expansionActive) {
-		return true
-	}
-	if containsShellWord(unquoted, "roborev") && strings.ContainsAny(unquoted, "(){}") {
-		return true
-	}
-	return containsRoborevAliasExpansion(expansionActive)
-}
-
-func shellTextOutsideSingleQuotes(command string) string {
-	return maskQuotedShellText(command, false)
-}
-
-func shellTextOutsideQuotes(command string) string {
-	return maskQuotedShellText(command, true)
-}
-
-func maskQuotedShellText(command string, maskDouble bool) string {
-	var masked strings.Builder
-	quote := rune(0)
-	escaped := false
-	for _, r := range command {
-		if escaped {
-			masked.WriteRune(' ')
-			escaped = false
-			continue
-		}
-		if r == '\\' && quote != '\'' {
-			masked.WriteRune(' ')
-			escaped = true
-			continue
-		}
-		if quote != 0 {
-			if r == quote {
-				quote = 0
-				masked.WriteRune(' ')
-			} else if quote == '\'' || maskDouble {
-				masked.WriteRune(' ')
-			} else {
-				masked.WriteRune(r)
-			}
-			continue
-		}
-		if r == '\'' || r == '"' {
-			quote = r
-			masked.WriteRune(' ')
-			continue
-		}
-		masked.WriteRune(r)
-	}
-	return masked.String()
-}
-
-func containsRoborevCommandSubstitution(command string) bool {
-	for start := 0; start < len(command); start++ {
-		if start+1 < len(command) && command[start] == '$' && command[start+1] == '(' {
-			if end := strings.IndexByte(command[start+2:], ')'); end >= 0 && containsShellWord(command[start+2:start+2+end], "roborev") {
-				return true
-			}
-		}
-		if command[start] == '`' {
-			if end := strings.IndexByte(command[start+1:], '`'); end >= 0 && containsShellWord(command[start+1:start+1+end], "roborev") {
-				return true
-			}
-		}
-	}
-	return false
-}
-
-func containsRoborevAliasExpansion(command string) bool {
-	aliases := make(map[string]bool)
-	fields := strings.FieldsFunc(command, func(r rune) bool {
-		return r == ' ' || r == '\t' || r == '\n' || r == ';' || r == '&' || r == '|' || r == '(' || r == ')' || r == '{' || r == '}'
-	})
-	for _, field := range fields {
-		name, value, ok := strings.Cut(field, "=")
-		if ok && isShellAssignment(name+"=") && filepath.Base(value) == "roborev" {
-			aliases[name] = true
-		}
-	}
-	for name := range aliases {
-		if strings.Contains(command, "${"+name+"}") || containsShellWord(command, "$"+name) {
-			return true
-		}
-	}
-	return false
-}
-
-func containsShellWord(text, word string) bool {
-	for offset := 0; ; {
-		index := strings.Index(text[offset:], word)
-		if index < 0 {
-			return false
-		}
-		index += offset
-		beforeOK := index == 0 || !isShellWordRune(rune(text[index-1]))
-		after := index + len(word)
-		afterOK := after == len(text) || !isShellWordRune(rune(text[after]))
-		if beforeOK && afterOK {
-			return true
-		}
-		offset = index + len(word)
-	}
-}
-
-func isShellWordRune(r rune) bool {
-	return r == '_' || r == '-' || r >= '0' && r <= '9' || r >= 'a' && r <= 'z' || r >= 'A' && r <= 'Z'
-}
-
 func shellWords(command string) ([]string, error) {
 	var words []string
 	var word strings.Builder
@@ -526,6 +426,7 @@ func TestParseCodexCommandsAcceptsOversizedEvent(t *testing.T) {
 }
 
 func TestSuccessfulRoborevBranchReviewEvent(t *testing.T) {
+	const marker = "test-run-stub-marker"
 	tests := []struct {
 		name   string
 		events []codexCommandEvent
@@ -535,7 +436,7 @@ func TestSuccessfulRoborevBranchReviewEvent(t *testing.T) {
 			name: "successful stub execution",
 			events: []codexCommandEvent{{
 				Command:          "roborev review --branch --wait",
-				AggregatedOutput: "ROBOREV_STUB_EXECUTED\n",
+				AggregatedOutput: marker + "\n",
 				ExitCode:         intPointer(0),
 				Status:           "completed",
 			}},
@@ -545,14 +446,14 @@ func TestSuccessfulRoborevBranchReviewEvent(t *testing.T) {
 			name: "marker in separate event",
 			events: []codexCommandEvent{
 				{Command: "roborev review --branch --wait", ExitCode: intPointer(0), Status: "completed"},
-				{Command: "printf ROBOREV_STUB_EXECUTED", AggregatedOutput: "ROBOREV_STUB_EXECUTED", ExitCode: intPointer(0), Status: "completed"},
+				{Command: "printf marker", AggregatedOutput: marker, ExitCode: intPointer(0), Status: "completed"},
 			},
 		},
 		{
 			name: "failed command",
 			events: []codexCommandEvent{{
 				Command:          "roborev review --branch --wait",
-				AggregatedOutput: "ROBOREV_STUB_EXECUTED",
+				AggregatedOutput: marker,
 				ExitCode:         intPointer(1),
 				Status:           "failed",
 			}},
@@ -561,7 +462,7 @@ func TestSuccessfulRoborevBranchReviewEvent(t *testing.T) {
 			name: "missing exit code",
 			events: []codexCommandEvent{{
 				Command:          "roborev review --branch --wait",
-				AggregatedOutput: "ROBOREV_STUB_EXECUTED",
+				AggregatedOutput: marker,
 				Status:           "completed",
 			}},
 		},
@@ -569,11 +470,74 @@ func TestSuccessfulRoborevBranchReviewEvent(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got, err := containsSuccessfulRoborevBranchReview(tt.events)
+			got, err := containsSuccessfulRoborevBranchReview(tt.events, marker)
 			require.NoError(t, err)
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+func TestContainsStubExecution(t *testing.T) {
+	const marker = "test-run-stub-marker"
+	tests := []struct {
+		name   string
+		events []codexCommandEvent
+		want   bool
+	}{
+		{
+			name: "indirect execution",
+			events: []codexCommandEvent{{
+				Command:          `RR='roborev'; $RR status`,
+				AggregatedOutput: marker + "\n",
+				ExitCode:         intPointer(0),
+				Status:           "completed",
+			}},
+			want: true,
+		},
+		{
+			name: "safe expansion mention",
+			events: []codexCommandEvent{{
+				Command:          `RR=roborev; printf '%s\n' "$RR status"`,
+				AggregatedOutput: "$RR status\n",
+				ExitCode:         intPointer(0),
+				Status:           "completed",
+			}},
+		},
+		{
+			name: "marker only as substring",
+			events: []codexCommandEvent{{
+				AggregatedOutput: "prefix-" + marker + "-suffix\n",
+			}},
+		},
+		{
+			name: "failed event still proves execution",
+			events: []codexCommandEvent{{
+				Command:          "unsupported shell syntax",
+				AggregatedOutput: marker + "\n",
+				ExitCode:         intPointer(1),
+				Status:           "failed",
+			}},
+			want: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, containsStubExecution(tt.events, marker))
+		})
+	}
+}
+
+func TestCreateRoborevStubUsesUniqueMarker(t *testing.T) {
+	first := createUniqueRoborevStub(t)
+	second := createUniqueRoborevStub(t)
+
+	assert.NotEmpty(t, first.Marker)
+	assert.NotEqual(t, first.Marker, second.Marker)
+	assert.NotEqual(t, first.Path, second.Path)
+	contents, err := os.ReadFile(first.Path)
+	require.NoError(t, err)
+	assert.Contains(t, string(contents), first.Marker)
 }
 
 func TestContainsRoborevBranchReviewWorkflow(t *testing.T) {
@@ -645,29 +609,6 @@ func TestContainsRoborevWorkflowInvocation(t *testing.T) {
 	}
 }
 
-func TestRoborevClassifiersFailClosed(t *testing.T) {
-	tests := []struct {
-		name    string
-		command string
-	}{
-		{name: "unmatched quote", command: `printf 'roborev status`},
-		{name: "trailing escape", command: `printf roborev\`},
-		{name: "unsupported substitution", command: `printf "$(roborev status)"`},
-		{name: "alias expansion", command: `RR=roborev; $RR status`},
-		{name: "braced alias expansion", command: `RR=roborev; ${RR} status`},
-		{name: "subshell grouping", command: `(roborev status)`},
-		{name: "brace grouping", command: `{ roborev status; }`},
-		{name: "nested grouping", command: `if true; then (roborev status); fi`},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			_, err := containsRoborevWorkflowInvocation([]string{tt.command})
-			require.ErrorContains(t, err, "classify command")
-		})
-	}
-}
-
 func TestBuildSafeChildPathExcludesRoborevDirectories(t *testing.T) {
 	stubDir := t.TempDir()
 	dangerousDir := t.TempDir()
@@ -702,13 +643,12 @@ func TestPrepareEvalCommandSetsWaitDelay(t *testing.T) {
 
 func TestCodexSkillShellResolutionPreflight(t *testing.T) {
 	home := t.TempDir()
-	stubDir := createRoborevStub(t)
-	stubPath := filepath.Join(stubDir, "roborev")
-	safePath, err := buildSafeChildPath(stubDir, os.Getenv("PATH"))
+	stub := createUniqueRoborevStub(t)
+	safePath, err := buildSafeChildPath(stub.Dir, os.Getenv("PATH"))
 	require.NoError(t, prerequisiteError(err, "cannot construct isolated executable path"))
-	require.NoError(t, prerequisiteError(writeShellProfiles(home, stubDir), "cannot create isolated shell profiles"))
+	require.NoError(t, prerequisiteError(writeShellProfiles(home, stub.Dir), "cannot create isolated shell profiles"))
 	childEnv := evalChildEnvironment(os.Environ(), home, filepath.Join(home, ".codex"), safePath)
-	require.NoError(t, prerequisiteError(preflightShellResolution(childEnv, stubPath), "shell resolution safety preflight failed"))
+	require.NoError(t, prerequisiteError(preflightShellResolution(childEnv, stub.Path), "shell resolution safety preflight failed"))
 }
 
 func TestVerifyShellResolution(t *testing.T) {
@@ -777,13 +717,12 @@ func TestCodexSkillExplicitInvocation(t *testing.T) {
 	require.NoError(t, prerequisiteError(err, "cannot install isolated Codex skills"), "live Codex skill eval prerequisite")
 	require.False(t, result.Skipped)
 
-	stubDir := createRoborevStub(t)
-	stubPath := filepath.Join(stubDir, "roborev")
-	safePath, err := buildSafeChildPath(stubDir, os.Getenv("PATH"))
+	stub := createUniqueRoborevStub(t)
+	safePath, err := buildSafeChildPath(stub.Dir, os.Getenv("PATH"))
 	require.NoError(t, prerequisiteError(err, "cannot construct isolated executable path"), "live Codex skill eval safety prerequisite")
-	require.NoError(t, prerequisiteError(writeShellProfiles(isolatedHome, stubDir), "cannot create isolated shell profiles"), "live Codex skill eval safety prerequisite")
+	require.NoError(t, prerequisiteError(writeShellProfiles(isolatedHome, stub.Dir), "cannot create isolated shell profiles"), "live Codex skill eval safety prerequisite")
 	childEnv := evalChildEnvironment(os.Environ(), isolatedHome, isolatedCodexHome, safePath)
-	require.NoError(t, prerequisiteError(preflightShellResolution(childEnv, stubPath), "shell resolution safety preflight failed"), "live Codex skill eval safety prerequisite")
+	require.NoError(t, prerequisiteError(preflightShellResolution(childEnv, stub.Path), "shell resolution safety preflight failed"), "live Codex skill eval safety prerequisite")
 	t.Log("shell resolution safety preflight passed")
 
 	repoDir := createCodexEvalRepo(t, childEnv)
@@ -804,15 +743,14 @@ func TestCodexSkillExplicitInvocation(t *testing.T) {
 			t.Run(model+"/"+tc.name, func(t *testing.T) {
 				events := runCodexSkillEval(t, codexPath, model, repoDir, tc.prompt, childEnv)
 				if tc.wantInvocation {
-					gotWorkflow, err := containsSuccessfulRoborevBranchReview(events)
+					gotWorkflow, err := containsSuccessfulRoborevBranchReview(events, stub.Marker)
 					require.NoError(t, err, "explicit skill command classification was uncertain")
 					require.True(t, gotWorkflow, "explicit skill did not complete the stubbed ordered review workflow for model=%s case=%s", model, tc.name)
 					t.Logf("model=%s case=%s ordered_workflow=%t", model, tc.name, gotWorkflow)
 				} else {
-					gotInvocation, err := containsRoborevWorkflowInvocation(eventCommands(events))
-					require.NoError(t, err, "implicit command classification was uncertain for model=%s case=%s", model, tc.name)
-					assert.False(t, gotInvocation, "implicit prompt executed a roborev command for model=%s case=%s", model, tc.name)
-					t.Logf("model=%s case=%s roborev_invocation=%t", model, tc.name, gotInvocation)
+					gotExecution := containsStubExecution(events, stub.Marker)
+					assert.False(t, gotExecution, "implicit prompt executed the roborev stub for model=%s case=%s", model, tc.name)
+					t.Logf("model=%s case=%s stub_execution=%t", model, tc.name, gotExecution)
 				}
 			})
 		}
@@ -888,13 +826,23 @@ func runFixtureCommand(t *testing.T, childEnv []string, dir, name string, args .
 	require.NoError(t, prerequisiteError(err, "isolated git evaluation fixture command failed"))
 }
 
-func createRoborevStub(t *testing.T) string {
+type roborevStub struct {
+	Dir    string
+	Path   string
+	Marker string
+}
+
+func createUniqueRoborevStub(t *testing.T) roborevStub {
 	t.Helper()
 	dir := t.TempDir()
 	stub := filepath.Join(dir, "roborev")
-	contents := "#!/bin/sh\nprintf '%s\\n' " + roborevStubMarker + "\n"
+	random := make([]byte, 16)
+	_, err := rand.Read(random)
+	require.NoError(t, err)
+	marker := "ROBOREV_STUB_EXECUTED_" + hex.EncodeToString(random)
+	contents := "#!/bin/sh\nprintf '%s\\n' " + marker + "\n"
 	require.NoError(t, os.WriteFile(stub, []byte(contents), 0o700))
-	return dir
+	return roborevStub{Dir: dir, Path: stub, Marker: marker}
 }
 
 func runCodexSkillEval(t *testing.T, codexPath, model, repoDir, prompt string, childEnv []string) []codexCommandEvent {
@@ -916,14 +864,6 @@ func runCodexSkillEval(t *testing.T, codexPath, model, repoDir, prompt string, c
 	require.NoError(t, err, "Codex skill eval process failed for model %s (stderr withheld)", model)
 	commands, err := parseCodexCommandEvents(&stdout)
 	require.NoError(t, err, "parse Codex skill eval output for model %s", model)
-	return commands
-}
-
-func eventCommands(events []codexCommandEvent) []string {
-	commands := make([]string, len(events))
-	for i, event := range events {
-		commands[i] = event.Command
-	}
 	return commands
 }
 
