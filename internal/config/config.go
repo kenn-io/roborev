@@ -1124,8 +1124,19 @@ func GetDisplayName(repoPath string) string {
 // 3. Global config (default_model in config.toml)
 // 4. Default (empty string, agent uses its default)
 func ResolveModel(explicit string, repoPath string, globalCfg *Config) string {
+	repoCfg, err := LoadRepoConfig(repoPath)
+	if err != nil {
+		repoCfg = nil
+	}
+	return ResolveModelFromConfig(explicit, repoCfg, globalCfg)
+}
+
+// ResolveModelFromConfig is the config-taking core of ResolveModel: it
+// resolves entirely from the passed repoCfg and globalCfg, never reading the
+// working tree.
+func ResolveModelFromConfig(explicit string, repoCfg *RepoConfig, globalCfg *Config) string {
 	var repoVal string
-	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil {
+	if repoCfg != nil {
 		repoVal = strings.TrimSpace(repoCfg.Model)
 	}
 	var globalVal string

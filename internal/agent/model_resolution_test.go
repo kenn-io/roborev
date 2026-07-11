@@ -114,6 +114,55 @@ func TestModelForSelectedAgentACPWorkflowModelPrecedence(t *testing.T) {
 			want:          acpModel,
 		},
 		{
+			// Default agent IS the ACP agent, but the workflow agent is a
+			// different agent: the workflow model pairs with that workflow
+			// agent and must not leak to the selected ACP agent. With no
+			// generic model, the ACP fallback supplies [acp].model.
+			name: "acp is default, workflow agent differs -> acp model",
+			cfg: &config.Config{
+				DefaultAgent: acpName,
+				ReviewAgent:  "codex",
+				ReviewModel:  "gpt-5.4",
+				ACP:          &config.ACPAgentConfig{Name: acpName, Model: acpModel},
+			},
+			workflow:      "review",
+			level:         "standard",
+			selectedAgent: acpName,
+			want:          acpModel,
+		},
+		{
+			// Same, but a generic model is configured: the generic model
+			// pairs with the default agent, which IS the selected ACP agent,
+			// so it applies (and beats the [acp].model fallback).
+			name: "acp is default, workflow agent differs, generic model -> generic model",
+			cfg: &config.Config{
+				DefaultAgent: acpName,
+				DefaultModel: "gemini-custom",
+				ReviewAgent:  "codex",
+				ReviewModel:  "gpt-5.4",
+				ACP:          &config.ACPAgentConfig{Name: acpName, Model: acpModel},
+			},
+			workflow:      "review",
+			level:         "standard",
+			selectedAgent: acpName,
+			want:          "gemini-custom",
+		},
+		{
+			// No workflow agent configured: the workflow model pairs with
+			// the default agent, which IS the selected ACP agent, so the
+			// workflow model still applies.
+			name: "acp is default, no workflow agent, workflow model -> workflow model",
+			cfg: &config.Config{
+				DefaultAgent: acpName,
+				ReviewModel:  "gemini-paired",
+				ACP:          &config.ACPAgentConfig{Name: acpName, Model: acpModel},
+			},
+			workflow:      "review",
+			level:         "standard",
+			selectedAgent: acpName,
+			want:          "gemini-paired",
+		},
+		{
 			// Leveled variant with leveled workflow agent -> leveled model.
 			name: "acp selected, thorough agent is acp -> thorough model",
 			cfg: &config.Config{
