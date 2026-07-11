@@ -14,6 +14,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 	"time"
@@ -81,6 +82,17 @@ func containsStubExecution(events []codexCommandEvent, marker string) bool {
 		}
 	}
 	return false
+}
+
+func containsForbiddenRoborevExecution(events []codexCommandEvent, marker string) (bool, error) {
+	if containsStubExecution(events, marker) {
+		return true, nil
+	}
+	commands := make([]string, len(events))
+	for i, event := range events {
+		commands[i] = event.Command
+	}
+	return containsRoborevWorkflowInvocation(commands)
 }
 
 func containsExactOutputLine(output, marker string) bool {
@@ -244,19 +256,8 @@ func tokenListMatches(tokens []string, matcher func([]string) bool) (bool, error
 }
 
 func roborevBranchReviewTokens(tokens []string) bool {
-	if len(tokens) < 4 || filepath.Base(tokens[0]) != "roborev" || tokens[1] != "review" {
-		return false
-	}
-	branch := -1
-	for i := 2; i < len(tokens); i++ {
-		if tokens[i] == "--branch" {
-			branch = i
-		}
-		if tokens[i] == "--wait" && branch >= 0 && branch < i {
-			return true
-		}
-	}
-	return false
+	return len(tokens) == 4 && tokens[0] == "roborev" &&
+		tokens[1] == "review" && tokens[2] == "--branch" && tokens[3] == "--wait"
 }
 
 func shellCommandString(tokens []string) (string, bool, error) {
@@ -466,6 +467,15 @@ func TestSuccessfulRoborevBranchReviewEvent(t *testing.T) {
 				Status:           "completed",
 			}},
 		},
+		{
+			name: "non-exact workflow",
+			events: []codexCommandEvent{{
+				Command:          "roborev review --branch garbage --wait",
+				AggregatedOutput: marker + "\n",
+				ExitCode:         intPointer(0),
+				Status:           "completed",
+			}},
+		},
 	}
 
 	for _, tt := range tests {
@@ -540,6 +550,65 @@ func TestCreateRoborevStubUsesUniqueMarker(t *testing.T) {
 	assert.Contains(t, string(contents), first.Marker)
 }
 
+func TestContainsForbiddenRoborevExecution(t *testing.T) {
+	const marker = "test-run-stub-marker"
+	tests := []struct {
+		name    string
+		events  []codexCommandEvent
+		want    bool
+		wantErr bool
+	}{
+		{name: "absolute real path", events: []codexCommandEvent{{Command: "/known/path/roborev status"}}, want: true},
+		{name: "diagnostic", events: []codexCommandEvent{{Command: "command -v roborev"}}},
+		{
+			name: "safe alias mention",
+			events: []codexCommandEvent{{
+				Command:          `RR=roborev; printf '%s\n' "$RR status"`,
+				AggregatedOutput: "$RR status\n",
+			}},
+		},
+		{
+			name: "dynamic alias marker",
+			events: []codexCommandEvent{{
+				Command:          `RR='roborev'; $RR status`,
+				AggregatedOutput: marker + "\n",
+			}},
+			want: true,
+		},
+		{name: "classification uncertainty", events: []codexCommandEvent{{Command: `printf 'unterminated`}}, wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := containsForbiddenRoborevExecution(tt.events, marker)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestRewriteRoborevStubRotatesMarker(t *testing.T) {
+	stub := createUniqueRoborevStub(t)
+	first := rewriteRoborevStub(t, stub.Path)
+	second := rewriteRoborevStub(t, stub.Path)
+
+	assert.NotEqual(t, stub.Marker, first)
+	assert.NotEqual(t, first, second)
+	contents, err := os.ReadFile(stub.Path)
+	require.NoError(t, err)
+	assert.Contains(t, string(contents), second)
+	assert.NotContains(t, string(contents), first)
+}
+
+func TestCodexLiveEvalPlatformSupport(t *testing.T) {
+	assert.Contains(t, codexLiveEvalSkipReason("windows"), "POSIX login shells")
+	assert.Empty(t, codexLiveEvalSkipReason("darwin"))
+}
+
 func TestContainsRoborevBranchReviewWorkflow(t *testing.T) {
 	tests := []struct {
 		name     string
@@ -547,7 +616,9 @@ func TestContainsRoborevBranchReviewWorkflow(t *testing.T) {
 		want     bool
 	}{
 		{name: "direct", commands: []string{"roborev review --branch --wait"}, want: true},
-		{name: "direct with later options", commands: []string{"roborev review --branch --wait --type security"}, want: true},
+		{name: "trailing option", commands: []string{"roborev review --branch --wait --type security"}},
+		{name: "interleaved argument", commands: []string{"roborev review --branch garbage --wait"}},
+		{name: "absolute executable", commands: []string{"/known/path/roborev review --branch --wait"}},
 		{name: "zsh login command", commands: []string{`/bin/zsh -lc 'roborev review --branch --wait'`}, want: true},
 		{name: "zsh wrapper", commands: []string{`/bin/zsh -lc 'cd /tmp/repo && roborev review --branch --wait'`}, want: true},
 		{name: "split across events", commands: []string{"roborev review --branch", "roborev review --wait"}},
@@ -698,6 +769,9 @@ func TestCodexSkillExplicitInvocation(t *testing.T) {
 	if os.Getenv("ROBOREV_RUN_CODEX_SKILL_EVAL") != "1" {
 		t.Skip("set ROBOREV_RUN_CODEX_SKILL_EVAL=1 to run the live Codex skill evaluation")
 	}
+	if reason := codexLiveEvalSkipReason(runtime.GOOS); reason != "" {
+		t.Skip(reason)
+	}
 
 	codexPath, err := exec.LookPath("codex")
 	require.NoError(t, prerequisiteError(err, "Codex executable unavailable"), "live Codex skill eval prerequisite")
@@ -741,16 +815,18 @@ func TestCodexSkillExplicitInvocation(t *testing.T) {
 	for _, model := range models {
 		for _, tc := range cases {
 			t.Run(model+"/"+tc.name, func(t *testing.T) {
+				marker := rewriteRoborevStub(t, stub.Path)
 				events := runCodexSkillEval(t, codexPath, model, repoDir, tc.prompt, childEnv)
 				if tc.wantInvocation {
-					gotWorkflow, err := containsSuccessfulRoborevBranchReview(events, stub.Marker)
+					gotWorkflow, err := containsSuccessfulRoborevBranchReview(events, marker)
 					require.NoError(t, err, "explicit skill command classification was uncertain")
 					require.True(t, gotWorkflow, "explicit skill did not complete the stubbed ordered review workflow for model=%s case=%s", model, tc.name)
 					t.Logf("model=%s case=%s ordered_workflow=%t", model, tc.name, gotWorkflow)
 				} else {
-					gotExecution := containsStubExecution(events, stub.Marker)
-					assert.False(t, gotExecution, "implicit prompt executed the roborev stub for model=%s case=%s", model, tc.name)
-					t.Logf("model=%s case=%s stub_execution=%t", model, tc.name, gotExecution)
+					gotExecution, err := containsForbiddenRoborevExecution(events, marker)
+					require.NoError(t, err, "implicit command classification was uncertain for model=%s case=%s", model, tc.name)
+					assert.False(t, gotExecution, "implicit prompt executed roborev for model=%s case=%s", model, tc.name)
+					t.Logf("model=%s case=%s forbidden_execution=%t", model, tc.name, gotExecution)
 				}
 			})
 		}
@@ -836,13 +912,26 @@ func createUniqueRoborevStub(t *testing.T) roborevStub {
 	t.Helper()
 	dir := t.TempDir()
 	stub := filepath.Join(dir, "roborev")
+	marker := rewriteRoborevStub(t, stub)
+	return roborevStub{Dir: dir, Path: stub, Marker: marker}
+}
+
+func rewriteRoborevStub(t *testing.T, path string) string {
+	t.Helper()
 	random := make([]byte, 16)
 	_, err := rand.Read(random)
 	require.NoError(t, err)
 	marker := "ROBOREV_STUB_EXECUTED_" + hex.EncodeToString(random)
 	contents := "#!/bin/sh\nprintf '%s\\n' " + marker + "\n"
-	require.NoError(t, os.WriteFile(stub, []byte(contents), 0o700))
-	return roborevStub{Dir: dir, Path: stub, Marker: marker}
+	require.NoError(t, os.WriteFile(path, []byte(contents), 0o700))
+	return marker
+}
+
+func codexLiveEvalSkipReason(goos string) string {
+	if goos == "windows" {
+		return "live Codex skill eval requires POSIX login shells and is not supported on native Windows"
+	}
+	return ""
 }
 
 func runCodexSkillEval(t *testing.T, codexPath, model, repoDir, prompt string, childEnv []string) []codexCommandEvent {

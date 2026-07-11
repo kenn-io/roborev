@@ -210,14 +210,17 @@ Gate it behind build tag `codexeval` and
    must be able to mutate only the disposable copy. Authentication errors must
    identify the missing prerequisite without printing either path.
 3. Create a disposable git repository with a reviewable change.
-4. Put a harmless `roborev` stub first on `PATH`. Give each live run a unique,
-   unpredictable output marker that exists only inside the stub and is not
-   included in the prompt or repository fixture.
+4. Put a harmless `roborev` stub first on `PATH`. Immediately before each
+   model/case subprocess, rewrite it with a fresh, unpredictable output marker
+   that is not included in the prompt or repository fixture.
 5. Run `codex exec --json --ephemeral --ignore-user-config --ignore-rules`
    with read-only sandbox and approval disabled.
 6. Parse top-level completed-item JSONL events (`type == "item.completed"`),
    then select nested items where `item.type == "command_execution"` and read
    `item.command`.
+7. Skip the live test on native Windows before model execution because its
+   isolation contract depends on POSIX login-shell behavior. Tagged offline
+   tests must still cross-compile for Windows.
 
 Add `TestMain` using `testenv.RunIsolatedMain` because the eval runs git.
 
@@ -235,9 +238,12 @@ Use the unique per-run stub marker as the negative execution oracle: any
 completed command event whose aggregated output contains the exact marker means
 the implicit prompt executed roborev, regardless of shell aliases, grouping,
 wrappers, command text, status, or exit code. Diagnostics and prose do not print
-the marker and therefore remain harmless. The positive case must both match the
-ordered tokens `roborev review --branch --wait` and contain that same event's
-marker with completed status and exit code zero.
+the marker and therefore remain harmless. Also reject any command event that
+the focused classifier confidently identifies as a direct roborev execution,
+including an absolute executable path; classification uncertainty fails the
+eval. The positive case must match exactly the four ordered tokens `roborev
+review --branch --wait` and contain that same event's marker with completed
+status and exit code zero.
 
 - [ ] **Step 5: Add the Make target**
 
