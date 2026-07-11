@@ -17,5 +17,12 @@ func TestMain(m *testing.M) {
 			authenticatedCodexHome = filepath.Join(home, ".codex")
 		}
 	}
+	if authenticatedCodexHome != "" {
+		if absolute, err := filepath.Abs(authenticatedCodexHome); err == nil {
+			authenticatedCodexHome = absolute
+		} else {
+			authenticatedCodexHome = ""
+		}
+	}
 	os.Exit(testenv.RunIsolatedMain(m))
 }
