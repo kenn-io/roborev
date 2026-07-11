@@ -55,6 +55,47 @@ func containsRoborevBranchReviewWorkflow(commands []string) bool {
 	return false
 }
 
+func containsRoborevWorkflowInvocation(commands []string) bool {
+	for _, command := range commands {
+		if commandContainsRoborevInvocation(command) {
+			return true
+		}
+	}
+	return false
+}
+
+func commandContainsRoborevInvocation(command string) bool {
+	tokens, ok := shellWords(command)
+	if !ok {
+		return false
+	}
+	for start := 0; start < len(tokens); {
+		end := start
+		for end < len(tokens) && !isShellSeparator(tokens[end]) {
+			end++
+		}
+		if simpleCommandContainsRoborevInvocation(tokens[start:end]) {
+			return true
+		}
+		start = end + 1
+	}
+	return false
+}
+
+func simpleCommandContainsRoborevInvocation(tokens []string) bool {
+	for len(tokens) > 0 && strings.Contains(tokens[0], "=") && !strings.HasPrefix(tokens[0], "=") {
+		tokens = tokens[1:]
+	}
+	if len(tokens) == 0 {
+		return false
+	}
+	executable := filepath.Base(tokens[0])
+	if (executable == "zsh" || executable == "sh" || executable == "bash") && len(tokens) >= 3 && strings.Contains(tokens[1], "c") {
+		return commandContainsRoborevInvocation(tokens[2])
+	}
+	return executable == "roborev" && len(tokens) >= 2
+}
+
 func commandContainsRoborevBranchReview(command string) bool {
 	tokens, ok := shellWords(command)
 	if !ok {
@@ -221,6 +262,35 @@ func TestContainsRoborevBranchReviewWorkflow(t *testing.T) {
 	}
 }
 
+func TestContainsRoborevWorkflowInvocation(t *testing.T) {
+	tests := []struct {
+		name     string
+		commands []string
+		want     bool
+	}{
+		{name: "direct review", commands: []string{"roborev review --branch --wait"}, want: true},
+		{name: "fix", commands: []string{"roborev fix 42"}, want: true},
+		{name: "status", commands: []string{"roborev status"}, want: true},
+		{name: "incomplete review", commands: []string{"roborev review --branch"}, want: true},
+		{name: "reordered review", commands: []string{"roborev review --wait --branch"}, want: true},
+		{name: "zsh login command", commands: []string{`/bin/zsh -lc 'roborev fix 42'`}, want: true},
+		{name: "bash compound", commands: []string{`bash -lc 'cd /tmp/repo && roborev status'`}, want: true},
+		{name: "sh compound", commands: []string{`sh -c 'git status; roborev review --branch'`}, want: true},
+		{name: "command lookup", commands: []string{"command -v roborev"}},
+		{name: "ripgrep mention", commands: []string{`rg 'roborev fix' README.md`}},
+		{name: "printf mention", commands: []string{`printf '%s\n' 'roborev status'`}},
+		{name: "prose mention", commands: []string{"The command is roborev fix 42"}},
+		{name: "bare executable", commands: []string{"roborev"}},
+		{name: "unrelated command", commands: []string{"git status"}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, containsRoborevWorkflowInvocation(tt.commands))
+		})
+	}
+}
+
 func TestCodexSkillExplicitInvocation(t *testing.T) {
 	if os.Getenv("ROBOREV_RUN_CODEX_SKILL_EVAL") != "1" {
 		t.Skip("set ROBOREV_RUN_CODEX_SKILL_EVAL=1 to run the live Codex skill evaluation")
@@ -262,14 +332,16 @@ func TestCodexSkillExplicitInvocation(t *testing.T) {
 		for _, tc := range cases {
 			t.Run(model+"/"+tc.name, func(t *testing.T) {
 				commands := runCodexSkillEval(t, codexPath, model, repoDir, tc.prompt)
-				gotInvocation := containsRoborevBranchReviewWorkflow(commands)
 				safeCommands := sanitizeEvalCommands(commands, isolatedHome, repoDir, stubDir, authenticatedCodexHome)
 				if tc.wantInvocation {
-					require.True(t, gotInvocation, "explicit skill did not execute ordered roborev review --branch --wait workflow; commands=%q", safeCommands)
+					gotWorkflow := containsRoborevBranchReviewWorkflow(commands)
+					require.True(t, gotWorkflow, "explicit skill did not execute ordered roborev review --branch --wait workflow; commands=%q", safeCommands)
+					t.Logf("model=%s case=%s ordered_workflow=%t", model, tc.name, gotWorkflow)
 				} else {
-					assert.False(t, gotInvocation, "implicit prompt executed roborev workflow; commands=%q", safeCommands)
+					gotInvocation := containsRoborevWorkflowInvocation(commands)
+					assert.False(t, gotInvocation, "implicit prompt executed a roborev command; commands=%q", safeCommands)
+					t.Logf("model=%s case=%s roborev_invocation=%t", model, tc.name, gotInvocation)
 				}
-				t.Logf("model=%s case=%s invocation=%t", model, tc.name, gotInvocation)
 			})
 		}
 	}
