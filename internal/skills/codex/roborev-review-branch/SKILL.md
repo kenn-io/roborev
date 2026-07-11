@@ -15,7 +15,8 @@ $roborev-review-branch [--base <branch>] [--type security|design] [--panel <name
 
 ## Explicit invocation only
 
-Invocation must be explicit: literal personal `$roborev-review-branch`, plugin `$roborev:roborev-review-branch`, or structured Codex skill selection.
+Invocation must be explicit: literal personal `$roborev-review-branch`, plugin
+`$roborev:roborev-review-branch`, or structured Codex skill selection.
 Requests such as “review this branch” without one of these explicit mechanisms must use
 native behavior and must not run roborev.
 

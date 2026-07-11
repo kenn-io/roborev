@@ -47,8 +47,8 @@ func skillDerivations() []skillDerivation {
 			SkillName:   skillName,
 			Replacements: []stringReplacement{
 				{
-					Old: ", plugin `$roborev:" + skillName + "`, or structured Codex skill selection",
-					New: "or structured Factory skill selection",
+					Old: ", plugin\n`$roborev:" + skillName + "`, or structured Codex skill selection",
+					New: ", or structured\nFactory skill selection",
 				},
 				{Old: "$roborev", New: "/roborev"},
 				{Old: "CLAUDE.md", New: "AGENTS.md"},
@@ -61,8 +61,8 @@ func skillDerivations() []skillDerivation {
 			SkillName:   skillName,
 			Replacements: []stringReplacement{
 				{
-					Old: ", plugin `$roborev:" + skillName + "`, or structured Codex skill selection",
-					New: "or structured Claude Code skill selection",
+					Old: ", plugin\n`$roborev:" + skillName + "`, or structured Codex skill selection",
+					New: ", or structured\nClaude Code skill selection",
 				},
 				{Old: "$roborev", New: "/roborev"},
 			},

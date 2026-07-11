@@ -15,7 +15,8 @@ $roborev-design-review [commit] [--panel <name>|none]
 
 ## Explicit invocation only
 
-Invocation must be explicit: literal personal `$roborev-design-review`, plugin `$roborev:roborev-design-review`, or structured Codex skill selection.
+Invocation must be explicit: literal personal `$roborev-design-review`, plugin
+`$roborev:roborev-design-review`, or structured Codex skill selection.
 Requests such as “review this commit's design” without one of these explicit mechanisms
 must use native behavior and must not run roborev.
 

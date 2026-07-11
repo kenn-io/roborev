@@ -18,7 +18,8 @@ leakage, or temporal leakage.
 
 ## Explicit invocation only
 
-Invocation must be explicit: literal personal `/roborev-lookahead-review`or structured Factory skill selection.
+Invocation must be explicit: literal personal `/roborev-lookahead-review`, or structured
+Factory skill selection.
 Requests such as “check this commit for peekahead” without one of these explicit
 mechanisms must use native behavior and must not run roborev.
 

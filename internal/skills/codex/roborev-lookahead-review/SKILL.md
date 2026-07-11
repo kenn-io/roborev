@@ -18,7 +18,8 @@ $roborev-lookahead-review [commit] [--panel <name>|none]
 
 ## Explicit invocation only
 
-Invocation must be explicit: literal personal `$roborev-lookahead-review`, plugin `$roborev:roborev-lookahead-review`, or structured Codex skill selection.
+Invocation must be explicit: literal personal `$roborev-lookahead-review`, plugin
+`$roborev:roborev-lookahead-review`, or structured Codex skill selection.
 Requests such as “check this commit for peekahead” without one of these explicit
 mechanisms must use native behavior and must not run roborev.
 

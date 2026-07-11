@@ -15,7 +15,8 @@ Fix all open failing review findings in one pass.
 
 ## Explicit invocation only
 
-Invocation must be explicit: literal personal `/roborev-fix`or structured Claude Code skill selection.
+Invocation must be explicit: literal personal `/roborev-fix`, or structured
+Claude Code skill selection.
 Requests such as “fix the open findings” without one of these explicit mechanisms must use native
 behavior and must not run roborev.
 

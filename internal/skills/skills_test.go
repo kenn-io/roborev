@@ -745,13 +745,14 @@ func TestDerivedExplicitInvocationWordingUsesTargetAgent(t *testing.T) {
 	require.NoError(t, err)
 
 	for relPath, content := range derived {
-		text := string(content)
+		text := strings.Join(strings.Fields(string(content)), " ")
+		skillName := path.Base(path.Dir(relPath))
 		assert.NotContains(t, text, "structured Codex skill selection", "%s retains Codex-specific wording", relPath)
 		assert.NotContains(t, text, "roborev:", "%s retains Codex plugin namespace", relPath)
 		if strings.HasPrefix(relPath, "droid/") {
-			assert.Contains(t, text, "structured Factory skill selection", relPath)
+			assert.Contains(t, text, "`/"+skillName+"`, or structured Factory skill selection", relPath)
 		} else {
-			assert.Contains(t, text, "structured Claude Code skill selection", relPath)
+			assert.Contains(t, text, "`/"+skillName+"`, or structured Claude Code skill selection", relPath)
 		}
 	}
 }

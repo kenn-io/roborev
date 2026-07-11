@@ -15,7 +15,8 @@ Request a code review for all commits on the current branch and present the resu
 
 ## Explicit invocation only
 
-Invocation must be explicit: literal personal `/roborev-review-branch`or structured Factory skill selection.
+Invocation must be explicit: literal personal `/roborev-review-branch`, or structured
+Factory skill selection.
 Requests such as “review this branch” without one of these explicit mechanisms must use
 native behavior and must not run roborev.
 

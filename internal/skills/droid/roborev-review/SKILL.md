@@ -15,7 +15,8 @@ Request a code review for a commit and present the results.
 
 ## Explicit invocation only
 
-Invocation must be explicit: literal personal `/roborev-review`or structured Factory skill selection.
+Invocation must be explicit: literal personal `/roborev-review`, or structured
+Factory skill selection.
 Requests such as “review this commit” without one of these explicit mechanisms must use native
 behavior and must not run roborev.
 

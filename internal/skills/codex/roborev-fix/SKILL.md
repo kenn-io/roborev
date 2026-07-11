@@ -15,7 +15,8 @@ $roborev-fix [job_id...]
 
 ## Explicit invocation only
 
-Invocation must be explicit: literal personal `$roborev-fix`, plugin `$roborev:roborev-fix`, or structured Codex skill selection.
+Invocation must be explicit: literal personal `$roborev-fix`, plugin
+`$roborev:roborev-fix`, or structured Codex skill selection.
 Requests such as “fix the open findings” without one of these explicit mechanisms must use native
 behavior and must not run roborev.
 
