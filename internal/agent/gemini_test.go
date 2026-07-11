@@ -105,6 +105,9 @@ func TestGeminiAntigravityBuildArgs(t *testing.T) {
 				"--approval-mode",
 				"-m",
 				"--dangerously-skip-permissions",
+				// A bare --print would swallow --print-timeout as the
+				// prompt; the prompt is passed via --prompt at run time.
+				"--print",
 			},
 		},
 		{
@@ -116,6 +119,7 @@ func TestGeminiAntigravityBuildArgs(t *testing.T) {
 				"--approval-mode",
 				"-m",
 				"--sandbox",
+				"--print",
 			},
 		},
 	}
@@ -125,7 +129,6 @@ func TestGeminiAntigravityBuildArgs(t *testing.T) {
 			a := NewGeminiAgent("agy").WithModel("gemini-1.5-pro").(*GeminiAgent)
 			args := a.buildArgs(tc.agentic)
 
-			assert.Contains(t, args, "--print")
 			assertFlagValue(t, args, "--print-timeout", "30m")
 			assert.Contains(t, args, tc.wantFlag)
 			for _, unwanted := range tc.unwantedArgs {
@@ -305,13 +308,17 @@ func TestGeminiAntigravityReviewPlainText(t *testing.T) {
 	skipIfWindows(t)
 
 	scriptPath := writeTempCommand(t, `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "1.1.1"; exit 0; fi
 cat > "$STDIN_FILE"
+printf '%s\n' "$@" > "$ARGS_FILE"
 echo "Plain text review output"
 echo "No issues found."
 `)
 
 	stdinFile := filepath.Join(t.TempDir(), "stdin")
+	argsFile := filepath.Join(t.TempDir(), "args")
 	t.Setenv("STDIN_FILE", stdinFile)
+	t.Setenv("ARGS_FILE", argsFile)
 	a := NewGeminiAgent(scriptPath)
 	a.Command = filepath.Join(filepath.Dir(scriptPath), "agy")
 	require.NoError(t, os.Rename(scriptPath, a.Command))
@@ -322,9 +329,113 @@ echo "No issues found."
 	require.NoError(t, err)
 	assert.Equal(t, "Plain text review output\nNo issues found.", res)
 	assert.Contains(t, output.String(), "Plain text review output")
+
+	// agy >= 1.1.1 takes the prompt as the value of --prompt, not from stdin.
+	stdinBytes, readErr := os.ReadFile(stdinFile)
+	require.NoError(t, readErr)
+	assert.Empty(t, string(stdinBytes))
+
+	argsBytes, readErr := os.ReadFile(argsFile)
+	require.NoError(t, readErr)
+	argsOut := string(argsBytes)
+	assert.Contains(t, argsOut, "--prompt\nprompt\n")
+	assert.NotContains(t, argsOut, "--print\n")
+}
+
+func TestGeminiAntigravityLegacyStdinContract(t *testing.T) {
+	skipIfWindows(t)
+
+	// Old agy (<= 1.1.0) read the prompt from stdin with a bare --print.
+	scriptPath := writeTempCommand(t, `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "1.1.0"; exit 0; fi
+cat > "$STDIN_FILE"
+printf '%s\n' "$@" > "$ARGS_FILE"
+echo "Legacy review output"
+echo "No issues found."
+`)
+
+	stdinFile := filepath.Join(t.TempDir(), "stdin")
+	argsFile := filepath.Join(t.TempDir(), "args")
+	t.Setenv("STDIN_FILE", stdinFile)
+	t.Setenv("ARGS_FILE", argsFile)
+	a := NewGeminiAgent(scriptPath)
+	a.Command = filepath.Join(filepath.Dir(scriptPath), "agy")
+	require.NoError(t, os.Rename(scriptPath, a.Command))
+
+	var output bytes.Buffer
+	res, err := a.Review(context.Background(), t.TempDir(), "sha", "prompt", &output)
+
+	require.NoError(t, err)
+	assert.Equal(t, "Legacy review output\nNo issues found.", res)
+
+	// Prompt arrives on stdin; args carry a bare --print and no --prompt.
 	stdinBytes, readErr := os.ReadFile(stdinFile)
 	require.NoError(t, readErr)
 	assert.Equal(t, "prompt\n", string(stdinBytes))
+
+	argsBytes, readErr := os.ReadFile(argsFile)
+	require.NoError(t, readErr)
+	argsOut := string(argsBytes)
+	assert.Contains(t, argsOut, "--print\n")
+	assert.NotContains(t, argsOut, "--prompt\n")
+}
+
+func TestGeminiAntigravityVersionProbeFailureDefaultsToPromptFlag(t *testing.T) {
+	skipIfWindows(t)
+
+	// If `agy --version` fails, detection defaults to the current (flag) contract.
+	scriptPath := writeTempCommand(t, `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "boom" >&2; exit 1; fi
+cat > "$STDIN_FILE"
+printf '%s\n' "$@" > "$ARGS_FILE"
+echo "Review output"
+echo "No issues found."
+`)
+
+	stdinFile := filepath.Join(t.TempDir(), "stdin")
+	argsFile := filepath.Join(t.TempDir(), "args")
+	t.Setenv("STDIN_FILE", stdinFile)
+	t.Setenv("ARGS_FILE", argsFile)
+	a := NewGeminiAgent(scriptPath)
+	a.Command = filepath.Join(filepath.Dir(scriptPath), "agy")
+	require.NoError(t, os.Rename(scriptPath, a.Command))
+
+	res, err := a.Review(context.Background(), t.TempDir(), "sha", "prompt", &bytes.Buffer{})
+
+	require.NoError(t, err)
+	assert.Equal(t, "Review output\nNo issues found.", res)
+
+	// Defaulted to the flag contract: prompt via --prompt, stdin empty.
+	stdinBytes, readErr := os.ReadFile(stdinFile)
+	require.NoError(t, readErr)
+	assert.Empty(t, string(stdinBytes))
+
+	argsBytes, readErr := os.ReadFile(argsFile)
+	require.NoError(t, readErr)
+	assert.Contains(t, string(argsBytes), "--prompt\nprompt\n")
+}
+
+func TestAntigravityVersionUsesPromptFlag(t *testing.T) {
+	assert := assert.New(t)
+	// New contract (>= 1.1.1).
+	assert.True(antigravityVersionUsesPromptFlag("1.1.1"))
+	assert.True(antigravityVersionUsesPromptFlag("1.1.2"))
+	assert.True(antigravityVersionUsesPromptFlag("1.2.0"))
+	assert.True(antigravityVersionUsesPromptFlag("2.0.0"))
+	assert.True(antigravityVersionUsesPromptFlag("v1.1.1"))
+	assert.True(antigravityVersionUsesPromptFlag("1.1.1-beta"))
+	// Old stdin contract (<= 1.1.0).
+	assert.False(antigravityVersionUsesPromptFlag("1.1.0"))
+	assert.False(antigravityVersionUsesPromptFlag("1.0.16"))
+	assert.False(antigravityVersionUsesPromptFlag("1.1")) // 1.1.0
+	// Decorated / multi-token output resolves the first dotted version token.
+	assert.True(antigravityVersionUsesPromptFlag("1.1.1 (abc123)"))
+	assert.True(antigravityVersionUsesPromptFlag("agy 2.0.0\n"))
+	assert.False(antigravityVersionUsesPromptFlag("agy version 1.1.0"))
+	// Unparseable, empty, or dot-less output defaults to the current (flag) contract.
+	assert.True(antigravityVersionUsesPromptFlag(""))
+	assert.True(antigravityVersionUsesPromptFlag("unknown"))
+	assert.True(antigravityVersionUsesPromptFlag("12345"))
 }
 
 func TestGeminiAntigravityExplicitModelFailsClearly(t *testing.T) {

@@ -7,8 +7,11 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"os/exec"
 	"path"
+	"strconv"
 	"strings"
+	"time"
 )
 
 // errNoStreamJSON indicates no valid stream-json events were parsed.
@@ -166,7 +169,11 @@ func commandBaseName(command string) string {
 }
 
 func (a *GeminiAgent) buildAntigravityArgs(agenticMode bool) []string {
-	args := []string{"--print", "--print-timeout", "30m"}
+	// These are the flags common to both print-mode contracts. runAntigravity
+	// adds the prompt-carrying flag (a bare --print for old agy that reads
+	// stdin, or --prompt <text> for agy >= 1.1.1) after detecting the version,
+	// so no --print is emitted here where it would swallow --print-timeout.
+	args := []string{"--print-timeout", "30m"}
 
 	if agenticMode {
 		args = append(args, "--dangerously-skip-permissions")
@@ -219,13 +226,45 @@ func (a *GeminiAgent) runGemini(ctx context.Context, repoPath, prompt string, ar
 	return "No review output generated", runResult.Stderr, nil
 }
 
+// antigravityPromptFlagVersion is the agy release where print mode began taking
+// the prompt as the value of --prompt (an alias of --print/-p) and stopped
+// reading it from stdin. Older agy builds read the prompt from stdin with a
+// bare --print. agy is an unstable CLI target, so the invocation is gated on
+// the reported version rather than assuming one contract.
+const (
+	antigravityPromptFlagVersion   = "1.1.1"
+	antigravityVersionProbeTimeout = 10 * time.Second
+)
+
 func (a *GeminiAgent) runAntigravity(ctx context.Context, repoPath, prompt string, args []string, output io.Writer) (string, string, error) {
+	// Choose the prompt-carrying flag by agy version: >= 1.1.1 takes the prompt
+	// as the value of --prompt (stdin is ignored); older agy reads it from
+	// stdin with a bare --print. A bare --print on new agy would swallow the
+	// following --print-timeout token as the prompt, so the two forms must not
+	// be mixed.
+	trimmedPrompt := strings.TrimRight(prompt, "\n")
+	var finalArgs []string
+	var stdin io.Reader
+	if antigravityPromptViaFlag(ctx, a.Command) {
+		// This contract carries the prompt in argv (agy has no stdin/file
+		// prompt input here), so bound its length to fail with a clear error
+		// rather than an opaque exec failure (E2BIG, or Windows' ~32KB
+		// CreateProcess limit). Mirrors kiro's maxPromptArgLen guard.
+		if len(trimmedPrompt) > maxPromptArgLen {
+			return "", "", fmt.Errorf("prompt too large for antigravity argv (%d bytes, max %d)", len(trimmedPrompt), maxPromptArgLen)
+		}
+		finalArgs = append(append([]string(nil), args...), "--prompt", trimmedPrompt)
+	} else {
+		finalArgs = append([]string{"--print"}, args...)
+		stdin = strings.NewReader(trimmedPrompt + "\n")
+	}
+
 	runResult, runErr := runStreamingCLI(ctx, streamingCLISpec{
 		Name:         "antigravity",
 		Command:      a.Command,
-		Args:         args,
+		Args:         finalArgs,
 		Dir:          repoPath,
-		Stdin:        strings.NewReader(strings.TrimRight(prompt, "\n") + "\n"),
+		Stdin:        stdin,
 		Output:       output,
 		StreamStderr: true,
 		Parse: func(r io.Reader, sw *syncWriter) (string, error) {
@@ -249,6 +288,88 @@ func (a *GeminiAgent) runAntigravity(ctx context.Context, repoPath, prompt strin
 	}
 
 	return "No review output generated", runResult.Stderr, nil
+}
+
+// antigravityPromptViaFlag reports whether the installed agy expects the prompt
+// as a --prompt flag value (agy >= 1.1.1) rather than on stdin (agy <= 1.1.0).
+// It shells out to `agy --version`; the `agy version` subcommand needs a TTY
+// and fails in pipes/subprocesses. Any detection failure (missing binary,
+// timeout, unparseable output) defaults to the current flag contract, since the
+// stdin form only exists in old agy builds.
+func antigravityPromptViaFlag(ctx context.Context, command string) bool {
+	// Cap the probe: `agy --version` returns instantly, but agy's sibling
+	// `agy version` subcommand hangs without a TTY, so don't let a wedged probe
+	// consume the whole review timeout.
+	vctx, cancel := context.WithTimeout(ctx, antigravityVersionProbeTimeout)
+	defer cancel()
+	out, err := exec.CommandContext(vctx, command, "--version").Output()
+	if err != nil {
+		log.Printf("antigravity: could not read agy version (%v); assuming the --prompt flag contract", err)
+		return true
+	}
+	return antigravityVersionUsesPromptFlag(string(out))
+}
+
+// antigravityVersionUsesPromptFlag reports whether agy's `--version` output
+// indicates the --prompt flag contract (>= 1.1.1). It scans for the first
+// dotted version token, so decorated output ("agy version 1.1.0", a trailing
+// build hash) still resolves. Output with no parseable version defaults to
+// true, the current contract.
+func antigravityVersionUsesPromptFlag(versionOutput string) bool {
+	for _, tok := range strings.Fields(versionOutput) {
+		if !strings.Contains(tok, ".") {
+			continue
+		}
+		if cmp, ok := compareDotVersion(tok, antigravityPromptFlagVersion); ok {
+			return cmp >= 0
+		}
+	}
+	return true
+}
+
+// compareDotVersion compares two dotted numeric versions (major.minor.patch,
+// with an optional leading 'v' and any -prerelease/+build suffix ignored). It
+// returns -1, 0, or 1, and ok=false if either side has no parseable version.
+func compareDotVersion(a, b string) (int, bool) {
+	av, aok := parseDotVersion(a)
+	bv, bok := parseDotVersion(b)
+	if !aok || !bok {
+		return 0, false
+	}
+	for i := range av {
+		switch {
+		case av[i] < bv[i]:
+			return -1, true
+		case av[i] > bv[i]:
+			return 1, true
+		}
+	}
+	return 0, true
+}
+
+// parseDotVersion parses a single major[.minor[.patch]] numeric version token,
+// tolerating a 'v' prefix and dropping any -prerelease/+build metadata.
+func parseDotVersion(v string) ([3]int, bool) {
+	var out [3]int
+	v = strings.TrimPrefix(strings.TrimSpace(v), "v")
+	if i := strings.IndexAny(v, "-+"); i >= 0 {
+		v = v[:i]
+	}
+	if v == "" {
+		return out, false
+	}
+	parts := strings.Split(v, ".")
+	if len(parts) > 3 {
+		return out, false
+	}
+	for i, p := range parts {
+		n, err := strconv.Atoi(p)
+		if err != nil || n < 0 {
+			return out, false
+		}
+		out[i] = n
+	}
+	return out, true
 }
 
 func parseAntigravityOutput(r io.Reader, sw *syncWriter) (string, error) {
