@@ -367,7 +367,7 @@ func antigravityMaxPromptArgLen() int {
 // build hash) still resolves. Output with no parseable version defaults to
 // true, the current contract.
 func antigravityVersionUsesPromptFlag(versionOutput string) bool {
-	for _, tok := range strings.Fields(versionOutput) {
+	for tok := range strings.FieldsSeq(versionOutput) {
 		if !strings.Contains(tok, ".") {
 			continue
 		}
