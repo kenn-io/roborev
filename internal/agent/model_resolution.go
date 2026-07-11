@@ -102,6 +102,19 @@ func (w WorkflowConfig) ModelForSelectedAgent(
 ) string {
 	if w.UsesBackupAgent(selectedAgent) &&
 		strings.TrimSpace(cliModel) == "" {
+		// Backup path is intentionally NOT wrapped in the ACP pairing guard
+		// applied to workflow models below. BackupModel() resolves only
+		// backup_model-family fields (workflow/repo/global backup_model), never
+		// generic default_model or a workflow review_model, so a generic or
+		// workflow model can never leak onto an ACP backup agent here. When
+		// BackupModel() is empty the ACP backup agent keeps its own [acp].model
+		// (callers apply the resolved model as `if model != "" { WithModel }`,
+		// and the configured ACP agent is constructed with [acp].model baked
+		// in), so the empty case is already correct. A non-empty backup_model is
+		// an explicit backup-config pair with backup_agent; if a user pairs an
+		// ACP backup agent with a foreign backup_model (e.g. a cross-layer
+		// default_backup_model), ACP session-time validation is the backstop.
+		// See model_resolution_test.go (backup-pairing cases) for the pins.
 		return w.BackupModel()
 	}
 	var model string

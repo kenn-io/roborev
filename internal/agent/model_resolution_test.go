@@ -494,6 +494,93 @@ func TestResolveWorkflowConfigModelForSelectedAgent_BackupWithoutModelKeepsDefau
 	require.Empty(t, resolution.ModelForSelectedAgent("claude-code", ""))
 }
 
+// TestModelForSelectedAgentACPBackupPairing pins the backup-path semantics for
+// a configured ACP backup agent. The backup path deliberately bypasses the
+// workflow-model ACP pairing guard because BackupModel() only ever resolves
+// backup_model-family fields (never a generic default_model or workflow
+// review_model), so no generic/workflow model can leak onto an ACP backup
+// agent. These cases pin the resulting behavior across the layers that matter.
+func TestModelForSelectedAgentACPBackupPairing(t *testing.T) {
+	t.Parallel()
+
+	const acpName = "agy-acp"
+	const acpModel = "gemini-3.5-flash"
+
+	tests := []struct {
+		name          string
+		cfg           *config.Config
+		workflow      string
+		selectedAgent string
+		want          string
+		note          string
+	}{
+		{
+			// Explicit workflow-specific backup_model paired with the ACP
+			// backup agent: it is used verbatim (thinking suffixes included).
+			name: "acp backup, workflow-specific backup_model -> that model",
+			cfg: &config.Config{
+				DefaultAgent:      "codex",
+				ReviewAgent:       "gemini",
+				ReviewBackupAgent: acpName,
+				ReviewBackupModel: "gemini-3.5-flash:high",
+				ACP:               &config.ACPAgentConfig{Name: acpName, Model: acpModel},
+			},
+			workflow:      "review",
+			selectedAgent: acpName,
+			want:          "gemini-3.5-flash:high",
+			note:          "explicit paired backup_model wins",
+		},
+		{
+			// No backup_model anywhere: returns "" so the ACP backup agent
+			// keeps its own baked-in [acp].model (callers only override when
+			// the resolved model is non-empty). This is the safe empty case.
+			name: "acp backup, no backup_model -> empty (keeps [acp].model)",
+			cfg: &config.Config{
+				DefaultAgent:      "codex",
+				ReviewAgent:       "gemini",
+				ReviewBackupAgent: acpName,
+				ACP:               &config.ACPAgentConfig{Name: acpName, Model: acpModel},
+			},
+			workflow:      "review",
+			selectedAgent: acpName,
+			want:          "",
+			note:          "empty backup_model leaves [acp].model intact",
+		},
+		{
+			// Cross-layer: only a global default_backup_model is set while the
+			// ACP backup agent is workflow-specific. BackupModel() honors the
+			// explicit backup config (it is still a backup_model, not a generic
+			// or workflow model), and ACP session validation is the backstop if
+			// the value is foreign. Pinned to document the deliberate scope.
+			name: "acp backup, only global default_backup_model -> honored",
+			cfg: &config.Config{
+				DefaultAgent:       "codex",
+				ReviewAgent:        "gemini",
+				ReviewBackupAgent:  acpName,
+				DefaultBackupModel: "gemini-3.0-pro",
+				ACP:                &config.ACPAgentConfig{Name: acpName, Model: acpModel},
+			},
+			workflow:      "review",
+			selectedAgent: acpName,
+			want:          "gemini-3.0-pro",
+			note:          "explicit backup_model honored across layers",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			resolution, err := ResolveWorkflowConfig(
+				"", t.TempDir(), tt.cfg, tt.workflow, "standard",
+			)
+			require.NoError(t, err)
+			require.True(t, resolution.UsesBackupAgent(tt.selectedAgent),
+				"expected %q to be resolved via the backup path", tt.selectedAgent)
+			got := resolution.ModelForSelectedAgent(tt.selectedAgent, "")
+			require.Equal(t, tt.want, got, tt.note)
+		})
+	}
+}
+
 func TestResolveWorkflowConfigIgnoresMalformedRepoConfig(t *testing.T) {
 	t.Parallel()
 
