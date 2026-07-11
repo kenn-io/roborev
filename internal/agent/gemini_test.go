@@ -380,6 +380,15 @@ echo "No issues found."
 	assert.NotContains(t, argsOut, "--prompt\n")
 }
 
+func TestUTF16CodeUnits(t *testing.T) {
+	assert := assert.New(t)
+	assert.Equal(0, utf16CodeUnits(""))
+	assert.Equal(3, utf16CodeUnits("abc"))
+	assert.Equal(1, utf16CodeUnits("é"))          // é, BMP, 2 UTF-8 bytes but 1 UTF-16 unit
+	assert.Equal(2, utf16CodeUnits("\U0001D11E")) // musical symbol, surrogate pair
+	assert.Equal(4, utf16CodeUnits("a\U0001D11Eb"))
+}
+
 func TestGeminiAntigravityPromptTooLargeForArgv(t *testing.T) {
 	skipIfWindows(t)
 

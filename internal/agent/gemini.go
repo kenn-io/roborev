@@ -251,8 +251,8 @@ func (a *GeminiAgent) runAntigravity(ctx context.Context, repoPath, prompt strin
 		// prompt input here), so bound its length to fail with a clear error
 		// rather than an opaque exec failure. The ceiling is platform-specific
 		// (see antigravityMaxPromptArgLen).
-		if limit := antigravityMaxPromptArgLen(); len(trimmedPrompt) > limit {
-			return "", "", fmt.Errorf("prompt too large for antigravity argv (%d bytes, max %d on %s)", len(trimmedPrompt), limit, runtime.GOOS)
+		if size, limit := antigravityPromptArgSize(trimmedPrompt), antigravityMaxPromptArgLen(); size > limit {
+			return "", "", fmt.Errorf("prompt too large for antigravity argv (size %d, max %d on %s)", size, limit, runtime.GOOS)
 		}
 		finalArgs = append(append([]string(nil), args...), "--prompt", trimmedPrompt)
 	} else {
@@ -316,17 +316,44 @@ func antigravityPromptViaFlag(ctx context.Context, command string) bool {
 	return antigravityVersionUsesPromptFlag(string(out))
 }
 
-// antigravityMaxPromptArgLen bounds the prompt when it is passed in argv, the
-// only channel agy print mode offers. The ceiling is platform-specific because
-// the OS limits differ sharply: Windows caps the whole command line near 32K
+// antigravityPromptArgSize measures the prompt against the platform's
+// command-line limit: UTF-16 code units on Windows (what CreateProcess counts,
+// counting supplementary-plane runes as a surrogate pair), bytes elsewhere.
+func antigravityPromptArgSize(prompt string) int {
+	if runtime.GOOS != "windows" {
+		return len(prompt)
+	}
+	return utf16CodeUnits(prompt)
+}
+
+// utf16CodeUnits counts the UTF-16 code units in s, counting supplementary-plane
+// runes (> U+FFFF) as a surrogate pair.
+func utf16CodeUnits(s string) int {
+	units := 0
+	for _, r := range s {
+		if r > 0xFFFF {
+			units += 2
+		} else {
+			units++
+		}
+	}
+	return units
+}
+
+// antigravityMaxPromptArgLen is the ceiling for antigravityPromptArgSize when
+// the prompt is passed in argv, the only channel agy print mode offers. The
+// limits differ sharply by OS: Windows caps the whole command line at 32767
 // UTF-16 units, Linux caps a single argument at MAX_ARG_STRLEN (128 KiB), and
 // macOS only bounds total argv+env (~1 MiB). The default prompt cap (200 KiB)
-// exceeds the Linux and Windows limits, so a large diff would otherwise fail
-// with an opaque exec error instead of a clear one.
+// exceeds the Linux and Windows ceilings, so a large diff fails with a clear
+// error instead of an opaque one.
 func antigravityMaxPromptArgLen() int {
 	switch runtime.GOOS {
 	case "windows":
-		return 30 * 1000 // headroom under the ~32K UTF-16 command-line cap
+		// Half of the 32767-unit command-line cap, which survives worst-case
+		// quote/backslash escaping (it can nearly double a quoted argument) and
+		// reserves room for the executable path and the other flags.
+		return 15000
 	case "linux":
 		return 120 * 1024 // under MAX_ARG_STRLEN (128 KiB) per argument
 	default:
