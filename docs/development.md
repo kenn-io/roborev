@@ -92,8 +92,8 @@ Codex, contact a model, or run the live skill conformance evaluation.
 
 The opt-in live evaluation checks that ordinary natural-language review and fix
 requests do not invoke roborev, while an explicit `$roborev-review-branch`
-invocation does. It requires an authenticated `codex` CLI plus network and
-model access, and it incurs model usage:
+invocation does. It requires `codex-cli` 0.144.1 or newer, authenticated plus
+network and model access, and it incurs model usage:
 
 ```bash
 make test-codex-skill-eval

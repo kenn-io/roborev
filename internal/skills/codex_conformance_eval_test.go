@@ -15,6 +15,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -89,11 +90,22 @@ func commandUsesNonLoginShell(command string) (bool, error) {
 		if executable != "zsh" && executable != "bash" && executable != "sh" {
 			continue
 		}
-		for _, option := range tokens[i+1:] {
+		options := tokens[i+1:]
+		for j, option := range options {
 			if option == "--login" || option == "-l" || shortShellOptionHasFlag(option, 'l') {
 				return false, nil
 			}
-			if option == "-c" || shortShellOptionHasCommandFlag(option) || !strings.HasPrefix(option, "-") {
+			if option == "-c" || shortShellOptionHasCommandFlag(option) {
+				if j+1 >= len(options) {
+					return false, errors.New("shell command flag has no command string")
+				}
+				nestedNonLogin, err := commandUsesNonLoginShell(options[j+1])
+				if err != nil || !nestedNonLogin {
+					return nestedNonLogin, err
+				}
+				break
+			}
+			if !strings.HasPrefix(option, "-") {
 				break
 			}
 		}
@@ -510,6 +522,34 @@ func TestSuccessfulRoborevBranchReviewEvent(t *testing.T) {
 			}},
 		},
 		{
+			name: "nested login wrapper rejected",
+			events: []codexCommandEvent{{
+				Command:          `/bin/sh -c 'zsh -lc "roborev review --branch --wait"'`,
+				AggregatedOutput: marker + "\n",
+				ExitCode:         intPointer(0),
+				Status:           "completed",
+			}},
+		},
+		{
+			name: "multi-level login wrapper rejected",
+			events: []codexCommandEvent{{
+				Command:          `command /bin/bash -c 'exec sh -lc "roborev review --branch --wait"'`,
+				AggregatedOutput: marker + "\n",
+				ExitCode:         intPointer(0),
+				Status:           "completed",
+			}},
+		},
+		{
+			name: "nested non-login wrappers",
+			events: []codexCommandEvent{{
+				Command:          `/bin/sh -c 'env zsh -c "roborev review --branch --wait"'`,
+				AggregatedOutput: marker + "\n",
+				ExitCode:         intPointer(0),
+				Status:           "completed",
+			}},
+			want: true,
+		},
+		{
 			name: "marker in separate event",
 			events: []codexCommandEvent{
 				{Command: "roborev review --branch --wait", ExitCode: intPointer(0), Status: "completed"},
@@ -807,6 +847,32 @@ func TestCodexSkillEvalArgsDisableLoginShell(t *testing.T) {
 	}, args)
 }
 
+func TestCodexVersionSupportsNonLoginShell(t *testing.T) {
+	tests := []struct {
+		name    string
+		output  string
+		wantErr bool
+	}{
+		{name: "older", output: "codex-cli 0.143.9\n", wantErr: true},
+		{name: "minimum", output: "codex-cli 0.144.1\n"},
+		{name: "newer minor", output: "codex-cli 0.145.0\n"},
+		{name: "newer major", output: "codex-cli 1.0.0\n"},
+		{name: "malformed", output: "codex-cli latest\n", wantErr: true},
+		{name: "trailing text", output: "codex-cli 0.144.1 extra\n", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			err := codexVersionSupportsNonLoginShell(tt.output)
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+		})
+	}
+}
+
 func environmentValue(env []string, key string) string {
 	for _, entry := range env {
 		if name, value, ok := strings.Cut(entry, "="); ok && strings.EqualFold(name, key) {
@@ -916,7 +982,7 @@ func TestCodexSkillExplicitInvocation(t *testing.T) {
 	startup, err := writeNonLoginShellStartup(isolatedHome, stub.Dir)
 	require.NoError(t, prerequisiteError(err, "cannot create isolated non-login shell startup"), "live Codex skill eval safety prerequisite")
 	childEnv := evalNonLoginChildEnvironment(os.Environ(), isolatedHome, isolatedCodexHome, safePath, startup)
-	require.NoError(t, prerequisiteError(preflightCodexNonLoginConfig(codexPath, childEnv), "Codex rejected non-login shell configuration"), "live Codex skill eval safety prerequisite")
+	require.NoError(t, prerequisiteError(preflightCodexVersion(codexPath, childEnv), "Codex version does not support non-login shell configuration"), "live Codex skill eval safety prerequisite")
 	require.NoError(t, prerequisiteError(preflightShellResolution(childEnv, stub.Path), "shell resolution safety preflight failed"), "live Codex skill eval safety prerequisite")
 	t.Log("shell resolution safety preflight passed")
 
@@ -1173,10 +1239,10 @@ func codexSkillEvalArgs(model, repoDir, prompt string) []string {
 	}
 }
 
-func preflightCodexNonLoginConfig(codexPath string, childEnv []string) error {
+func preflightCodexVersion(codexPath string, childEnv []string) error {
 	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, codexPath, "-c", "allow_login_shell=false", "features", "list")
+	cmd := exec.CommandContext(ctx, codexPath, "--version")
 	prepareEvalCommand(cmd)
 	cmd.Env = childEnv
 	var stdout, stderr bytes.Buffer
@@ -1184,10 +1250,53 @@ func preflightCodexNonLoginConfig(codexPath string, childEnv []string) error {
 	cmd.Stderr = &stderr
 	err := cmd.Run()
 	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
-		return errors.New("Codex non-login configuration preflight timed out")
+		return errors.New("Codex version preflight timed out")
 	}
 	if err != nil {
-		return errors.New("Codex non-login configuration preflight failed")
+		return errors.New("Codex version preflight failed")
+	}
+	return codexVersionSupportsNonLoginShell(stdout.String())
+}
+
+func codexVersionSupportsNonLoginShell(output string) error {
+	const prefix = "codex-cli "
+	line := strings.TrimSuffix(output, "\n")
+	line = strings.TrimSuffix(line, "\r")
+	if !strings.HasPrefix(line, prefix) {
+		return errors.New("unrecognized Codex version output")
+	}
+	version := strings.TrimPrefix(line, prefix)
+	if strings.ContainsAny(version, " \t\r\n") {
+		return errors.New("unrecognized Codex version output")
+	}
+	parts := strings.Split(version, ".")
+	if len(parts) != 3 {
+		return errors.New("unrecognized Codex version output")
+	}
+	numbers := make([]int, 3)
+	for i, part := range parts {
+		if part == "" {
+			return errors.New("unrecognized Codex version output")
+		}
+		for _, r := range part {
+			if r < '0' || r > '9' {
+				return errors.New("unrecognized Codex version output")
+			}
+		}
+		number, err := strconv.Atoi(part)
+		if err != nil {
+			return errors.New("unrecognized Codex version output")
+		}
+		numbers[i] = number
+	}
+	minimum := [3]int{0, 144, 1}
+	for i, number := range numbers {
+		if number > minimum[i] {
+			return nil
+		}
+		if number < minimum[i] {
+			return errors.New("Codex version does not support non-login shells")
+		}
 	}
 	return nil
 }

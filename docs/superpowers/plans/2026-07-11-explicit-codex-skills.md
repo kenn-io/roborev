@@ -222,7 +222,10 @@ Gate it behind build tag `codexeval` and
    non-login startup through `.zshenv`, `BASH_ENV`, and `ENV`, and preflight
    supported shells with `-c` under the exact child environment. Global login
    profiles must never participate in the safety proof.
-8. Skip the live test on native Windows before model execution because its
+8. Before model execution, require `codex-cli` version 0.144.1 or newer, the
+   first known version with the non-login configuration contract. Reject older
+   or unparseable version output.
+9. Skip the live test on native Windows before model execution because its
    isolation contract depends on POSIX shell startup behavior. Tagged offline
    tests must still cross-compile for Windows.
 
