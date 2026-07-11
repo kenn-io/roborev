@@ -22,6 +22,8 @@ roborev skills install
 | `/roborev-review-branch [--base ...] [--type ...]` | Review all commits on the current branch |
 | `/roborev-design-review [commit]` | Request a design review for a commit |
 | `/roborev-design-review-branch [--base ...]` | Design review all commits on the current branch |
+| `/roborev-lookahead-review [commit] [--panel <name>\|none]` | Check a commit for time-series look-ahead bias |
+| `/roborev-lookahead-review-branch [--base <branch>] [--panel <name>\|none]` | Check all branch commits for time-series look-ahead bias |
 | `/roborev-fix [job_id...]` | Discover and fix all open review findings in one pass |
 | `/roborev-refine [--since ...] [--branch ...] [--max-iterations ...]` | Iterative review-fix-review loop until all reviews pass |
 | `/roborev-respond <job_id> [message]` | Add a response to document changes |
@@ -91,6 +93,33 @@ Review all commits on the current branch with a design-focused lens:
 
 This is the branch equivalent of `/roborev-design-review`.
 
+### Look-ahead review a commit
+
+Request a time-series review that checks whether a change uses information that
+would not have been available at the point being predicted:
+
+```
+/roborev-lookahead-review
+/roborev-lookahead-review abc123
+/roborev-lookahead-review --panel forecasting
+```
+
+With no commit argument, the skill reviews `HEAD`. Use `--panel none` to disable
+an otherwise configured review panel.
+
+### Look-ahead review a branch
+
+Run the same future-data leakage check across all commits on the current branch:
+
+```
+/roborev-lookahead-review-branch
+/roborev-lookahead-review-branch --base develop
+/roborev-lookahead-review-branch --panel forecasting
+```
+
+The skill compares the branch with its merge base by default, or with the branch
+specified by `--base`, and waits to present the result inline.
+
 ### Fix all open reviews at once
 
 The most powerful skill is `/roborev-fix`. With no arguments it discovers all open failed reviews on recent commits and fixes them in a single pass:
@@ -152,10 +181,10 @@ Unlike `roborev refine` on the CLI, the skill performs the full workflow inside 
 
 | Agent | Syntax |
 |-------|--------|
-| Claude Code | `/roborev-review`, `/roborev-review-branch`, `/roborev-design-review`, `/roborev-design-review-branch`, `/roborev-fix`, `/roborev-refine`, `/roborev-respond` |
-| Factory Droid | `/roborev-review`, `/roborev-review-branch`, `/roborev-design-review`, `/roborev-design-review-branch`, `/roborev-fix`, `/roborev-refine`, `/roborev-respond` |
-| Codex, personal install | `$roborev-review`, `$roborev-review-branch`, `$roborev-design-review`, `$roborev-design-review-branch`, `$roborev-fix`, `$roborev-refine`, `$roborev-respond` |
-| Codex, plugin install | `$roborev:roborev-review`, `$roborev:roborev-review-branch`, `$roborev:roborev-design-review`, `$roborev:roborev-design-review-branch`, `$roborev:roborev-fix`, `$roborev:roborev-refine`, `$roborev:roborev-respond` |
+| Claude Code | `/roborev-review`, `/roborev-review-branch`, `/roborev-design-review`, `/roborev-design-review-branch`, `/roborev-lookahead-review`, `/roborev-lookahead-review-branch`, `/roborev-fix`, `/roborev-refine`, `/roborev-respond` |
+| Factory Droid | `/roborev-review`, `/roborev-review-branch`, `/roborev-design-review`, `/roborev-design-review-branch`, `/roborev-lookahead-review`, `/roborev-lookahead-review-branch`, `/roborev-fix`, `/roborev-refine`, `/roborev-respond` |
+| Codex, personal install | `$roborev-review`, `$roborev-review-branch`, `$roborev-design-review`, `$roborev-design-review-branch`, `$roborev-lookahead-review`, `$roborev-lookahead-review-branch`, `$roborev-fix`, `$roborev-refine`, `$roborev-respond` |
+| Codex, plugin install | `$roborev:roborev-review`, `$roborev:roborev-review-branch`, `$roborev:roborev-design-review`, `$roborev:roborev-design-review-branch`, `$roborev:roborev-lookahead-review`, `$roborev:roborev-lookahead-review-branch`, `$roborev:roborev-fix`, `$roborev:roborev-refine`, `$roborev:roborev-respond` |
 
 Codex can also invoke either installation by selecting the skill in its
 structured skill picker. Descriptions shown in that picker help identify the

@@ -106,12 +106,20 @@ make test-codex-skill-eval CODEX_SKILL_EVAL_MODELS='gpt-5.5,gpt-5.6-sol'
 ```
 
 The live target currently requires POSIX login-shell behavior. Native Windows
-skips the live evaluation before any model call; the tagged offline helper tests
-remain portable. To exercise those parser, command-classification, and safety
-helpers without opting into model calls, run:
+skips the live evaluation before any model call. The tagged helper suite runs
+without model usage; on native Windows, only its POSIX shell-resolution
+preflight test skips, while the parser, execution-oracle, and process helpers
+still run. Exercise the tagged offline helpers with:
 
 ```bash
 go test -tags=codexeval ./internal/skills
+```
+
+To verify that the complete tagged package remains Windows-cross-compilable:
+
+```bash
+GOOS=windows GOARCH=amd64 go test -c -tags=codexeval \
+  -o /tmp/roborev-skills-windows.test.exe ./internal/skills
 ```
 
 The harness creates an isolated `HOME` and `CODEX_HOME`, copies the existing

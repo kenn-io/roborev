@@ -713,6 +713,10 @@ func TestPrepareEvalCommandSetsWaitDelay(t *testing.T) {
 }
 
 func TestCodexSkillShellResolutionPreflight(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("shell resolution preflight requires POSIX login shells on native Windows")
+	}
+
 	home := t.TempDir()
 	stub := createUniqueRoborevStub(t)
 	safePath, err := buildSafeChildPath(stub.Dir, os.Getenv("PATH"))
