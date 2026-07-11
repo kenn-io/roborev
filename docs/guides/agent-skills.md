@@ -29,7 +29,21 @@ roborev skills install
 ## Usage
 
 !!! note "Codex users"
-    Replace the leading `/` with `$` in all examples below. For example, use `$roborev-review` instead of `/roborev-review`. See the [syntax table](#agent-specific-syntax) for details.
+    All bundled Codex roborev skills are **explicit-only**. An ordinary request
+    such as "Review the changes in this branch" uses Codex's native behavior; it
+    must not activate a roborev skill or run roborev.
+
+    Explicit invocation has three supported forms:
+
+    - For skills installed by `roborev skills install`, replace the leading `/`
+      in the examples below with `$`: `$roborev-review-branch`.
+    - For plugin-managed skills, qualify the same skill with the plugin namespace:
+      `$roborev:roborev-review-branch`.
+    - Select the roborev skill directly in Codex's structured skill picker.
+
+    The namespace distinguishes plugin-contributed skills from personal skills
+    that may have the same name. See the [syntax table](#agent-specific-syntax)
+    for more examples.
 
 ### Review a commit
 
@@ -139,7 +153,13 @@ Unlike `roborev refine` on the CLI, the skill performs the full workflow inside 
 | Agent | Syntax |
 |-------|--------|
 | Claude Code | `/roborev-review`, `/roborev-review-branch`, `/roborev-design-review`, `/roborev-design-review-branch`, `/roborev-fix`, `/roborev-refine`, `/roborev-respond` |
-| Codex | `$roborev-review`, `$roborev-review-branch`, `$roborev-design-review`, `$roborev-design-review-branch`, `$roborev-fix`, `$roborev-refine`, `$roborev-respond` |
+| Factory Droid | `/roborev-review`, `/roborev-review-branch`, `/roborev-design-review`, `/roborev-design-review-branch`, `/roborev-fix`, `/roborev-refine`, `/roborev-respond` |
+| Codex, personal install | `$roborev-review`, `$roborev-review-branch`, `$roborev-design-review`, `$roborev-design-review-branch`, `$roborev-fix`, `$roborev-refine`, `$roborev-respond` |
+| Codex, plugin install | `$roborev:roborev-review`, `$roborev:roborev-review-branch`, `$roborev:roborev-design-review`, `$roborev:roborev-design-review-branch`, `$roborev:roborev-fix`, `$roborev:roborev-refine`, `$roborev:roborev-respond` |
+
+Codex can also invoke either installation by selecting the skill in its
+structured skill picker. Descriptions shown in that picker help identify the
+workflow; they do not make ordinary prose an invocation.
 
 ## Checking Skill Status
 
@@ -188,6 +208,13 @@ Starting in 0.56, the roborev repository also ships agent plugin manifests that 
 - `.codex-plugin/plugin.json` for the Codex plugin system.
 
 These let you install roborev skills through each agent's native plugin channel as an alternative to `roborev skills install`. The skill content is identical; the difference is who manages updates: `roborev skills install` is updated when you run `roborev update`, while plugin-managed installs follow each agent's plugin lifecycle.
+
+Codex namespaces skills supplied by plugins to avoid collisions with personal
+skills. Invoke a plugin-managed skill as `$roborev:roborev-<workflow>` (for
+example, `$roborev:roborev-fix`); invoke a personal skill installed by roborev
+as `$roborev-<workflow>` (for example, `$roborev-fix`). Both forms are explicit
+invocations. General requests such as "fix the issues in this branch" remain
+native Codex tasks and do not select roborev.
 
 ## Waiting for Hook-Triggered Reviews
 

@@ -85,6 +85,44 @@ go test ./...              # Run all tests
 go test ./internal/agent/  # Test specific package
 ```
 
+Ordinary unit tests are deterministic and offline. They do not authenticate to
+Codex, contact a model, or run the live skill conformance evaluation.
+
+### Codex skill conformance evaluation
+
+The opt-in live evaluation checks that ordinary natural-language review and fix
+requests do not invoke roborev, while an explicit `$roborev-review-branch`
+invocation does. It requires an authenticated `codex` CLI plus network and
+model access, and it incurs model usage:
+
+```bash
+make test-codex-skill-eval
+```
+
+Override the default model with a comma-separated comparison set:
+
+```bash
+make test-codex-skill-eval CODEX_SKILL_EVAL_MODELS='gpt-5.5,gpt-5.6-sol'
+```
+
+The live target currently requires POSIX login-shell behavior. Native Windows
+skips the live evaluation before any model call; the tagged offline helper tests
+remain portable. To exercise those parser, command-classification, and safety
+helpers without opting into model calls, run:
+
+```bash
+go test -tags=codexeval ./internal/skills
+```
+
+The harness creates an isolated `HOME` and `CODEX_HOME`, copies the existing
+Codex authentication file into that disposable home, installs the in-tree
+skills there, and runs each case in a temporary git repository. A safe `PATH`
+and login-shell preflight ensure every available supported shell resolves a
+harmless roborev stub before Codex starts. The stub gets a fresh marker for each
+model and case so the test can detect any execution without contacting the
+roborev daemon. The evaluation never reads or writes the normal daemon database
+or review state.
+
 ## Building
 
 ```bash
