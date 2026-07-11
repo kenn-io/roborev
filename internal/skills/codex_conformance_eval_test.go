@@ -67,12 +67,50 @@ func containsSuccessfulRoborevBranchReview(events []codexCommandEvent, marker st
 		if err != nil {
 			return false, err
 		}
-		if workflow && event.ExitCode != nil && *event.ExitCode == 0 &&
+		nonLogin, err := commandUsesNonLoginShell(event.Command)
+		if err != nil {
+			return false, err
+		}
+		if workflow && nonLogin && event.ExitCode != nil && *event.ExitCode == 0 &&
 			event.Status == "completed" && containsExactOutputLine(event.AggregatedOutput, marker) {
 			return true, nil
 		}
 	}
 	return false, nil
+}
+
+func commandUsesNonLoginShell(command string) (bool, error) {
+	tokens, err := shellWords(command)
+	if err != nil {
+		return false, err
+	}
+	for i, token := range tokens {
+		executable := filepath.Base(token)
+		if executable != "zsh" && executable != "bash" && executable != "sh" {
+			continue
+		}
+		for _, option := range tokens[i+1:] {
+			if option == "--login" || option == "-l" || shortShellOptionHasFlag(option, 'l') {
+				return false, nil
+			}
+			if option == "-c" || shortShellOptionHasCommandFlag(option) || !strings.HasPrefix(option, "-") {
+				break
+			}
+		}
+	}
+	return true, nil
+}
+
+func shortShellOptionHasFlag(token string, want rune) bool {
+	if len(token) < 3 || token[0] != '-' || token[1] == '-' {
+		return false
+	}
+	for _, flag := range token[1:] {
+		if flag == want {
+			return true
+		}
+	}
+	return false
 }
 
 func containsStubExecution(events []codexCommandEvent, marker string) bool {
@@ -444,6 +482,34 @@ func TestSuccessfulRoborevBranchReviewEvent(t *testing.T) {
 			want: true,
 		},
 		{
+			name: "non-login wrapper",
+			events: []codexCommandEvent{{
+				Command:          `/bin/zsh -c 'roborev review --branch --wait'`,
+				AggregatedOutput: marker + "\n",
+				ExitCode:         intPointer(0),
+				Status:           "completed",
+			}},
+			want: true,
+		},
+		{
+			name: "login wrapper rejected",
+			events: []codexCommandEvent{{
+				Command:          `/bin/zsh -lc 'roborev review --branch --wait'`,
+				AggregatedOutput: marker + "\n",
+				ExitCode:         intPointer(0),
+				Status:           "completed",
+			}},
+		},
+		{
+			name: "prefixed login wrapper rejected",
+			events: []codexCommandEvent{{
+				Command:          `env /bin/zsh -lc 'roborev review --branch --wait'`,
+				AggregatedOutput: marker + "\n",
+				ExitCode:         intPointer(0),
+				Status:           "completed",
+			}},
+		},
+		{
 			name: "marker in separate event",
 			events: []codexCommandEvent{
 				{Command: "roborev review --branch --wait", ExitCode: intPointer(0), Status: "completed"},
@@ -605,7 +671,7 @@ func TestRewriteRoborevStubRotatesMarker(t *testing.T) {
 }
 
 func TestCodexLiveEvalPlatformSupport(t *testing.T) {
-	assert.Contains(t, codexLiveEvalSkipReason("windows"), "POSIX login shells")
+	assert.Contains(t, codexLiveEvalSkipReason("windows"), "POSIX shell startup")
 	assert.Empty(t, codexLiveEvalSkipReason("darwin"))
 }
 
@@ -692,18 +758,62 @@ func TestBuildSafeChildPathExcludesRoborevDirectories(t *testing.T) {
 	assert.Equal(t, []string{stubDir, safeDir}, filepath.SplitList(got))
 }
 
-func TestWriteShellProfilesQuotesStubPath(t *testing.T) {
+func TestWriteNonLoginShellStartup(t *testing.T) {
 	home := t.TempDir()
 	stubDir := filepath.Join(t.TempDir(), "stub's bin")
 	require.NoError(t, os.MkdirAll(stubDir, 0o700))
-	require.NoError(t, writeShellProfiles(home, stubDir))
+	startup, err := writeNonLoginShellStartup(home, stubDir)
+	require.NoError(t, err)
 
 	want := "export PATH=" + shellSingleQuote(stubDir) + ":\"$PATH\"\n"
-	for _, name := range []string{".zprofile", ".bash_profile", ".profile"} {
+	for _, name := range []string{".zshenv", ".bash_env", ".sh_env"} {
 		contents, err := os.ReadFile(filepath.Join(home, name))
 		require.NoError(t, err)
 		assert.Equal(t, want, string(contents))
 	}
+	assert.Equal(t, filepath.Join(home, ".bash_env"), startup.BashEnv)
+	assert.Equal(t, filepath.Join(home, ".sh_env"), startup.ShEnv)
+	_, err = os.Stat(filepath.Join(home, ".zprofile"))
+	assert.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestNonLoginChildEnvironment(t *testing.T) {
+	startup := nonLoginShellStartup{BashEnv: "/isolated/bash-env", ShEnv: "/isolated/sh-env"}
+	base := []string{
+		"PATH=/system/bin",
+		"SHELL=/bin/fish",
+		"BASH_ENV=/real/bash-env",
+		"ENV=/real/sh-env",
+		"KEEP=value",
+	}
+	env := evalNonLoginChildEnvironment(base, "/isolated/home", "/isolated/codex", "/safe/bin", startup)
+
+	assert.Equal(t, "/isolated/bash-env", environmentValue(env, "BASH_ENV"))
+	assert.Equal(t, "/isolated/sh-env", environmentValue(env, "ENV"))
+	assert.Empty(t, environmentValue(env, "SHELL"))
+	assert.Equal(t, "value", environmentValue(env, "KEEP"))
+}
+
+func TestNonLoginShellCommandArgs(t *testing.T) {
+	assert.Equal(t, []string{"-c", "command -v roborev"}, nonLoginShellCommandArgs())
+}
+
+func TestCodexSkillEvalArgsDisableLoginShell(t *testing.T) {
+	args := codexSkillEvalArgs("model-a", "/repo", "prompt")
+	assert.Equal(t, []string{
+		"-a", "never", "-c", "allow_login_shell=false",
+		"exec", "--json", "--ephemeral", "--ignore-user-config", "--ignore-rules",
+		"-s", "read-only", "-m", "model-a", "-C", "/repo", "prompt",
+	}, args)
+}
+
+func environmentValue(env []string, key string) string {
+	for _, entry := range env {
+		if name, value, ok := strings.Cut(entry, "="); ok && strings.EqualFold(name, key) {
+			return value
+		}
+	}
+	return ""
 }
 
 func TestPrepareEvalCommandSetsWaitDelay(t *testing.T) {
@@ -714,15 +824,20 @@ func TestPrepareEvalCommandSetsWaitDelay(t *testing.T) {
 
 func TestCodexSkillShellResolutionPreflight(t *testing.T) {
 	if runtime.GOOS == "windows" {
-		t.Skip("shell resolution preflight requires POSIX login shells on native Windows")
+		t.Skip("shell resolution preflight requires POSIX non-login shell startup on native Windows")
 	}
 
 	home := t.TempDir()
 	stub := createUniqueRoborevStub(t)
+	dangerousDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(dangerousDir, "roborev"), []byte("#!/bin/sh\nexit 1\n"), 0o700))
 	safePath, err := buildSafeChildPath(stub.Dir, os.Getenv("PATH"))
 	require.NoError(t, prerequisiteError(err, "cannot construct isolated executable path"))
-	require.NoError(t, prerequisiteError(writeShellProfiles(home, stub.Dir), "cannot create isolated shell profiles"))
-	childEnv := evalChildEnvironment(os.Environ(), home, filepath.Join(home, ".codex"), safePath)
+	startup, err := writeNonLoginShellStartup(home, stub.Dir)
+	require.NoError(t, prerequisiteError(err, "cannot create isolated shell startup"))
+	loginReset := []byte("export PATH=" + shellSingleQuote(dangerousDir) + ":\"$PATH\"\n")
+	require.NoError(t, os.WriteFile(filepath.Join(home, ".zprofile"), loginReset, 0o600))
+	childEnv := evalNonLoginChildEnvironment(os.Environ(), home, filepath.Join(home, ".codex"), safePath, startup)
 	require.NoError(t, prerequisiteError(preflightShellResolution(childEnv, stub.Path), "shell resolution safety preflight failed"))
 }
 
@@ -739,7 +854,7 @@ func TestVerifyShellResolution(t *testing.T) {
 			resolve: func(string) (string, bool, error) {
 				return "", false, nil
 			},
-			wantErr: "no supported login shell available",
+			wantErr: "no supported non-login shell available",
 		},
 		{
 			name:   "one exact success",
@@ -798,8 +913,10 @@ func TestCodexSkillExplicitInvocation(t *testing.T) {
 	stub := createUniqueRoborevStub(t)
 	safePath, err := buildSafeChildPath(stub.Dir, os.Getenv("PATH"))
 	require.NoError(t, prerequisiteError(err, "cannot construct isolated executable path"), "live Codex skill eval safety prerequisite")
-	require.NoError(t, prerequisiteError(writeShellProfiles(isolatedHome, stub.Dir), "cannot create isolated shell profiles"), "live Codex skill eval safety prerequisite")
-	childEnv := evalChildEnvironment(os.Environ(), isolatedHome, isolatedCodexHome, safePath)
+	startup, err := writeNonLoginShellStartup(isolatedHome, stub.Dir)
+	require.NoError(t, prerequisiteError(err, "cannot create isolated non-login shell startup"), "live Codex skill eval safety prerequisite")
+	childEnv := evalNonLoginChildEnvironment(os.Environ(), isolatedHome, isolatedCodexHome, safePath, startup)
+	require.NoError(t, prerequisiteError(preflightCodexNonLoginConfig(codexPath, childEnv), "Codex rejected non-login shell configuration"), "live Codex skill eval safety prerequisite")
 	require.NoError(t, prerequisiteError(preflightShellResolution(childEnv, stub.Path), "shell resolution safety preflight failed"), "live Codex skill eval safety prerequisite")
 	t.Log("shell resolution safety preflight passed")
 
@@ -825,7 +942,7 @@ func TestCodexSkillExplicitInvocation(t *testing.T) {
 					gotWorkflow, err := containsSuccessfulRoborevBranchReview(events, marker)
 					require.NoError(t, err, "explicit skill command classification was uncertain")
 					require.True(t, gotWorkflow, "explicit skill did not complete the stubbed ordered review workflow for model=%s case=%s", model, tc.name)
-					t.Logf("model=%s case=%s ordered_workflow=%t", model, tc.name, gotWorkflow)
+					t.Logf("model=%s case=%s ordered_non_login_workflow=%t", model, tc.name, gotWorkflow)
 				} else {
 					gotExecution, err := containsForbiddenRoborevExecution(events, marker)
 					require.NoError(t, err, "implicit command classification was uncertain for model=%s case=%s", model, tc.name)
@@ -933,7 +1050,7 @@ func rewriteRoborevStub(t *testing.T, path string) string {
 
 func codexLiveEvalSkipReason(goos string) string {
 	if goos == "windows" {
-		return "live Codex skill eval requires POSIX login shells and is not supported on native Windows"
+		return "live Codex skill eval requires POSIX shell startup isolation and is not supported on native Windows"
 	}
 	return ""
 }
@@ -942,11 +1059,7 @@ func runCodexSkillEval(t *testing.T, codexPath, model, repoDir, prompt string, c
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, codexPath,
-		"-a", "never",
-		"exec", "--json", "--ephemeral", "--ignore-user-config", "--ignore-rules",
-		"-s", "read-only", "-m", model, "-C", repoDir, prompt,
-	)
+	cmd := exec.CommandContext(ctx, codexPath, codexSkillEvalArgs(model, repoDir, prompt)...)
 	prepareEvalCommand(cmd)
 	cmd.Env = childEnv
 	var stdout, stderr bytes.Buffer
@@ -991,48 +1104,92 @@ func directoryContainsExecutableRoborev(directory string) (bool, error) {
 	return info.Mode().IsRegular() && info.Mode().Perm()&0o111 != 0, nil
 }
 
-func writeShellProfiles(home, stubDir string) error {
+func writeNonLoginShellStartup(home, stubDir string) (nonLoginShellStartup, error) {
 	contents := []byte("export PATH=" + shellSingleQuote(stubDir) + ":\"$PATH\"\n")
-	for _, name := range []string{".zprofile", ".bash_profile", ".profile"} {
+	for _, name := range []string{".zshenv", ".bash_env", ".sh_env"} {
 		if err := os.WriteFile(filepath.Join(home, name), contents, 0o600); err != nil {
-			return err
+			return nonLoginShellStartup{}, err
 		}
 	}
-	return nil
+	return nonLoginShellStartup{
+		BashEnv: filepath.Join(home, ".bash_env"),
+		ShEnv:   filepath.Join(home, ".sh_env"),
+	}, nil
 }
 
 func shellSingleQuote(value string) string {
 	return "'" + strings.ReplaceAll(value, "'", "'\"'\"'") + "'"
 }
 
-func evalChildEnvironment(base []string, home, codexHome, path string) []string {
+type nonLoginShellStartup struct {
+	BashEnv string
+	ShEnv   string
+}
+
+func evalNonLoginChildEnvironment(base []string, home, codexHome, path string, startup nonLoginShellStartup) []string {
 	overrides := map[string]string{
 		"HOME":        home,
 		"USERPROFILE": home,
 		"ZDOTDIR":     home,
 		"CODEX_HOME":  codexHome,
 		"PATH":        path,
+		"BASH_ENV":    startup.BashEnv,
+		"ENV":         startup.ShEnv,
 	}
+	excluded := map[string]bool{"SHELL": true}
 	env := make([]string, 0, len(base)+len(overrides))
 	for _, entry := range base {
 		key, _, ok := strings.Cut(entry, "=")
-		if ok {
-			for override := range overrides {
-				if strings.EqualFold(key, override) {
-					key = ""
-					break
-				}
-			}
-			if key == "" {
-				continue
+		if !ok {
+			env = append(env, entry)
+			continue
+		}
+		replaced := excluded[strings.ToUpper(key)]
+		for override := range overrides {
+			if strings.EqualFold(key, override) {
+				replaced = true
+				break
 			}
 		}
-		env = append(env, entry)
+		if !replaced {
+			env = append(env, entry)
+		}
 	}
-	for _, key := range []string{"HOME", "USERPROFILE", "ZDOTDIR", "CODEX_HOME", "PATH"} {
+	for _, key := range []string{"HOME", "USERPROFILE", "ZDOTDIR", "CODEX_HOME", "PATH", "BASH_ENV", "ENV"} {
 		env = append(env, key+"="+overrides[key])
 	}
 	return env
+}
+
+func nonLoginShellCommandArgs() []string {
+	return []string{"-c", "command -v roborev"}
+}
+
+func codexSkillEvalArgs(model, repoDir, prompt string) []string {
+	return []string{
+		"-a", "never", "-c", "allow_login_shell=false",
+		"exec", "--json", "--ephemeral", "--ignore-user-config", "--ignore-rules",
+		"-s", "read-only", "-m", model, "-C", repoDir, prompt,
+	}
+}
+
+func preflightCodexNonLoginConfig(codexPath string, childEnv []string) error {
+	ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
+	defer cancel()
+	cmd := exec.CommandContext(ctx, codexPath, "-c", "allow_login_shell=false", "features", "list")
+	prepareEvalCommand(cmd)
+	cmd.Env = childEnv
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	err := cmd.Run()
+	if errors.Is(ctx.Err(), context.DeadlineExceeded) {
+		return errors.New("Codex non-login configuration preflight timed out")
+	}
+	if err != nil {
+		return errors.New("Codex non-login configuration preflight failed")
+	}
+	return nil
 }
 
 func preflightShellResolution(childEnv []string, stubPath string) error {
@@ -1045,7 +1202,7 @@ func preflightShellResolution(childEnv []string, stubPath string) error {
 		}
 		ctx, cancel := context.WithTimeout(context.Background(), 15*time.Second)
 		defer cancel()
-		cmd := exec.CommandContext(ctx, shell, "-lc", "command -v roborev")
+		cmd := exec.CommandContext(ctx, shell, nonLoginShellCommandArgs()...)
 		prepareEvalCommand(cmd)
 		cmd.Env = childEnv
 		var stdout, stderr bytes.Buffer
@@ -1078,7 +1235,7 @@ func verifyShellResolution(shells []string, stubPath string, resolve func(string
 		verified++
 	}
 	if verified == 0 {
-		return errors.New("no supported login shell available for safety preflight")
+		return errors.New("no supported non-login shell available for safety preflight")
 	}
 	return nil
 }

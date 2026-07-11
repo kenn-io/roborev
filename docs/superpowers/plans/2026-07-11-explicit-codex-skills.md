@@ -218,8 +218,12 @@ Gate it behind build tag `codexeval` and
 6. Parse top-level completed-item JSONL events (`type == "item.completed"`),
    then select nested items where `item.type == "command_execution"` and read
    `item.command`.
-7. Skip the live test on native Windows before model execution because its
-   isolation contract depends on POSIX login-shell behavior. Tagged offline
+7. Force `allow_login_shell=false` for every Codex subprocess. Isolate
+   non-login startup through `.zshenv`, `BASH_ENV`, and `ENV`, and preflight
+   supported shells with `-c` under the exact child environment. Global login
+   profiles must never participate in the safety proof.
+8. Skip the live test on native Windows before model execution because its
+   isolation contract depends on POSIX shell startup behavior. Tagged offline
    tests must still cross-compile for Windows.
 
 Add `TestMain` using `testenv.RunIsolatedMain` because the eval runs git.

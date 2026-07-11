@@ -105,7 +105,7 @@ Override the default model with a comma-separated comparison set:
 make test-codex-skill-eval CODEX_SKILL_EVAL_MODELS='gpt-5.5,gpt-5.6-sol'
 ```
 
-The live target currently requires POSIX login-shell behavior. Native Windows
+The live target currently requires POSIX shell startup behavior. Native Windows
 skips the live evaluation before any model call. The tagged helper suite runs
 without model usage; on native Windows, only its POSIX shell-resolution
 preflight test skips, while the parser, execution-oracle, and process helpers
@@ -124,12 +124,14 @@ GOOS=windows GOARCH=amd64 go test -c -tags=codexeval \
 
 The harness creates an isolated `HOME` and `CODEX_HOME`, copies the existing
 Codex authentication file into that disposable home, installs the in-tree
-skills there, and runs each case in a temporary git repository. A safe `PATH`
-and login-shell preflight ensure every available supported shell resolves a
-harmless roborev stub before Codex starts. The stub gets a fresh marker for each
-model and case so the test can detect any execution without contacting the
-roborev daemon. The evaluation never reads or writes the normal daemon database
-or review state.
+skills there, and runs each case in a temporary git repository. Every Codex
+subprocess sets `allow_login_shell=false`; isolated `.zshenv`, `BASH_ENV`, and
+`ENV` startup files plus a safe `PATH` ensure global login profiles cannot
+reorder command resolution. A non-login `-c` preflight proves each available
+supported shell resolves the harmless roborev stub before Codex starts. The
+stub gets a fresh marker for each model and case so the test can detect any
+execution without contacting the roborev daemon. The evaluation never reads or
+writes the normal daemon database or review state.
 
 ## Building
 
