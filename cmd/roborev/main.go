@@ -49,6 +49,7 @@ func main() {
 	rootCmd.AddCommand(commentCmd())
 	rootCmd.AddCommand(respondCmd()) // hidden alias for backward compatibility
 	rootCmd.AddCommand(closeCmd())
+	rootCmd.AddCommand(cancelCmd())
 	rootCmd.AddCommand(installHookCmd())
 	rootCmd.AddCommand(uninstallHookCmd())
 	rootCmd.AddCommand(daemonCmd())
