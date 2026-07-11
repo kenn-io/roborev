@@ -128,9 +128,12 @@ skills there, and runs each case in a temporary git repository. Every Codex
 subprocess sets `allow_login_shell=false`; isolated `.zshenv`, `BASH_ENV`, and
 `ENV` startup files plus a safe `PATH` ensure global login profiles cannot
 reorder command resolution. A non-login `-c` preflight proves each available
-supported shell resolves the harmless roborev stub before Codex starts. The
-stub gets a fresh marker for each model and case so the test can detect any
-execution without contacting the roborev daemon. The evaluation never reads or
+supported shell resolves the harmless roborev stub before Codex starts. Codex
+runs with `workspace-write` against the disposable repository plus a separate
+disposable evidence directory; the user checkout and normal agent state remain
+outside those configured writable roots. The stub writes a fresh per-case
+sentinel before printing its marker, so redirected or indirect execution remains
+detectable without contacting the roborev daemon. The evaluation never reads or
 writes the normal daemon database or review state.
 
 ## Building

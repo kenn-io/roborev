@@ -839,11 +839,11 @@ func TestNonLoginShellCommandArgs(t *testing.T) {
 }
 
 func TestCodexSkillEvalArgsDisableLoginShell(t *testing.T) {
-	args := codexSkillEvalArgs("model-a", "/repo", "prompt")
+	args := codexSkillEvalArgs("model-a", "/repo", "/evidence", "prompt")
 	assert.Equal(t, []string{
 		"-a", "never", "-c", "allow_login_shell=false",
 		"exec", "--json", "--ephemeral", "--ignore-user-config", "--ignore-rules",
-		"-s", "read-only", "-m", "model-a", "-C", "/repo", "prompt",
+		"-s", "workspace-write", "-m", "model-a", "-C", "/repo", "--add-dir", "/evidence", "prompt",
 	}, args)
 }
 
@@ -977,6 +977,7 @@ func TestCodexSkillExplicitInvocation(t *testing.T) {
 	require.False(t, result.Skipped)
 
 	stub := createUniqueRoborevStub(t)
+	evidenceDir := t.TempDir()
 	safePath, err := buildSafeChildPath(stub.Dir, os.Getenv("PATH"))
 	require.NoError(t, prerequisiteError(err, "cannot construct isolated executable path"), "live Codex skill eval safety prerequisite")
 	startup, err := writeNonLoginShellStartup(isolatedHome, stub.Dir)
@@ -1002,16 +1003,22 @@ func TestCodexSkillExplicitInvocation(t *testing.T) {
 	for _, model := range models {
 		for _, tc := range cases {
 			t.Run(model+"/"+tc.name, func(t *testing.T) {
-				marker := rewriteRoborevStub(t, stub.Path)
-				events := runCodexSkillEval(t, codexPath, model, repoDir, tc.prompt, childEnv)
+				marker := rewriteRoborevStubWithEvidenceDir(t, stub.Path, evidenceDir)
+				events := runCodexSkillEval(t, codexPath, model, repoDir, evidenceDir, tc.prompt, childEnv)
+				stubExecuted, err := roborevStubExecuted(evidenceDir, marker)
+				require.NoError(t, err, "inspect per-case roborev execution sentinel")
 				if tc.wantInvocation {
+					require.True(t, stubExecuted, "explicit skill did not execute the stub for model=%s case=%s", model, tc.name)
 					gotWorkflow, err := containsSuccessfulRoborevBranchReview(events, marker)
 					require.NoError(t, err, "explicit skill command classification was uncertain")
 					require.True(t, gotWorkflow, "explicit skill did not complete the stubbed ordered review workflow for model=%s case=%s", model, tc.name)
 					t.Logf("model=%s case=%s ordered_non_login_workflow=%t", model, tc.name, gotWorkflow)
 				} else {
-					gotExecution, err := containsForbiddenRoborevExecution(events, marker)
-					require.NoError(t, err, "implicit command classification was uncertain for model=%s case=%s", model, tc.name)
+					gotExecution := stubExecuted
+					if !gotExecution {
+						gotExecution, err = containsForbiddenRoborevExecution(events, marker)
+						require.NoError(t, err, "implicit command classification was uncertain for model=%s case=%s", model, tc.name)
+					}
 					assert.False(t, gotExecution, "implicit prompt executed roborev for model=%s case=%s", model, tc.name)
 					t.Logf("model=%s case=%s forbidden_execution=%t", model, tc.name, gotExecution)
 				}
@@ -1104,14 +1111,34 @@ func createUniqueRoborevStub(t *testing.T) roborevStub {
 }
 
 func rewriteRoborevStub(t *testing.T, path string) string {
+	return rewriteRoborevStubWithEvidenceDir(t, path, filepath.Dir(path))
+}
+
+func rewriteRoborevStubWithEvidenceDir(t *testing.T, path, evidenceDir string) string {
 	t.Helper()
 	random := make([]byte, 16)
 	_, err := rand.Read(random)
 	require.NoError(t, err)
 	marker := "ROBOREV_STUB_EXECUTED_" + hex.EncodeToString(random)
-	contents := "#!/bin/sh\nprintf '%s\\n' " + marker + "\n"
+	sentinelPath := roborevExecutionSentinelPath(evidenceDir, marker)
+	contents := "#!/bin/sh\n: > " + shellSingleQuote(sentinelPath) + " || exit 97\nprintf '%s\\n' " + marker + "\n"
 	require.NoError(t, os.WriteFile(path, []byte(contents), 0o700))
 	return marker
+}
+
+func roborevExecutionSentinelPath(evidenceDir, marker string) string {
+	return filepath.Join(evidenceDir, marker+".executed")
+}
+
+func roborevStubExecuted(evidenceDir, marker string) (bool, error) {
+	_, err := os.Stat(roborevExecutionSentinelPath(evidenceDir, marker))
+	if err == nil {
+		return true, nil
+	}
+	if errors.Is(err, os.ErrNotExist) {
+		return false, nil
+	}
+	return false, errors.New("inspect roborev execution sentinel")
 }
 
 func codexLiveEvalSkipReason(goos string) string {
@@ -1121,11 +1148,11 @@ func codexLiveEvalSkipReason(goos string) string {
 	return ""
 }
 
-func runCodexSkillEval(t *testing.T, codexPath, model, repoDir, prompt string, childEnv []string) []codexCommandEvent {
+func runCodexSkillEval(t *testing.T, codexPath, model, repoDir, evidenceDir, prompt string, childEnv []string) []codexCommandEvent {
 	t.Helper()
 	ctx, cancel := context.WithTimeout(context.Background(), 4*time.Minute)
 	defer cancel()
-	cmd := exec.CommandContext(ctx, codexPath, codexSkillEvalArgs(model, repoDir, prompt)...)
+	cmd := exec.CommandContext(ctx, codexPath, codexSkillEvalArgs(model, repoDir, evidenceDir, prompt)...)
 	prepareEvalCommand(cmd)
 	cmd.Env = childEnv
 	var stdout, stderr bytes.Buffer
@@ -1231,11 +1258,11 @@ func nonLoginShellCommandArgs() []string {
 	return []string{"-c", "command -v roborev"}
 }
 
-func codexSkillEvalArgs(model, repoDir, prompt string) []string {
+func codexSkillEvalArgs(model, repoDir, evidenceDir, prompt string) []string {
 	return []string{
 		"-a", "never", "-c", "allow_login_shell=false",
 		"exec", "--json", "--ephemeral", "--ignore-user-config", "--ignore-rules",
-		"-s", "read-only", "-m", model, "-C", repoDir, prompt,
+		"-s", "workspace-write", "-m", model, "-C", repoDir, "--add-dir", evidenceDir, prompt,
 	}
 }
 

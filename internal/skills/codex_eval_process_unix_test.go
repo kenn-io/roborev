@@ -6,6 +6,7 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"io"
 	"os"
 	"os/exec"
 	"syscall"
@@ -43,4 +44,20 @@ func TestEvalCommandTerminatesProcessGroup(t *testing.T) {
 	require.Error(t, err)
 	assert.ErrorIs(t, ctx.Err(), context.DeadlineExceeded)
 	assert.Less(t, time.Since(started), 3*time.Second)
+}
+
+func TestRoborevStubWritesPerCaseSentinelWhenOutputRedirected(t *testing.T) {
+	stub := createUniqueRoborevStub(t)
+	sentinelPath := roborevExecutionSentinelPath(stub.Dir, stub.Marker)
+	cmd := exec.Command(stub.Path, "status")
+	cmd.Stdout = io.Discard
+	require.NoError(t, cmd.Run())
+	_, err := os.Stat(sentinelPath)
+	require.NoError(t, err, "stub execution must remain observable when stdout is redirected")
+
+	nextMarker := rewriteRoborevStub(t, stub.Path)
+	nextSentinelPath := roborevExecutionSentinelPath(stub.Dir, nextMarker)
+	assert.NotEqual(t, sentinelPath, nextSentinelPath)
+	_, err = os.Stat(nextSentinelPath)
+	assert.ErrorIs(t, err, os.ErrNotExist, "each rewritten case must start without prior execution evidence")
 }
