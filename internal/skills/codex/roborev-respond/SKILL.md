@@ -1,6 +1,6 @@
 ---
 name: roborev-respond
-description: Use only when the user explicitly invokes $roborev-respond; add a comment to a roborev code review and close it
+description: Use only when the user explicitly invokes $roborev-respond
 ---
 
 # roborev-respond

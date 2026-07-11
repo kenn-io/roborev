@@ -1,6 +1,6 @@
 ---
 name: roborev-review-branch
-description: Use only when the user explicitly invokes $roborev-review-branch; request a code review for all commits on the current branch and present the results
+description: Use only when the user explicitly invokes $roborev-review-branch
 ---
 
 # roborev-review-branch

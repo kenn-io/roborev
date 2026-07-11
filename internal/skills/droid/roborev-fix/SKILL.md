@@ -1,6 +1,6 @@
 ---
 name: roborev-fix
-description: Use only when the user explicitly invokes /roborev-fix; fix open failing roborev reviews or the specified job IDs
+description: Use only when the user explicitly invokes /roborev-fix
 ---
 
 # roborev-fix

@@ -1,6 +1,6 @@
 ---
 name: roborev-design-review
-description: Use only when the user explicitly invokes /roborev-design-review; request a design review for a commit and present the results
+description: Use only when the user explicitly invokes /roborev-design-review
 ---
 
 # roborev-design-review

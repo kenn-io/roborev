@@ -1,6 +1,6 @@
 ---
 name: roborev-lookahead-review
-description: Use only when the user explicitly invokes $roborev-lookahead-review; request a time-series look-ahead review for a commit and present the results
+description: Use only when the user explicitly invokes $roborev-lookahead-review
 ---
 
 # roborev-lookahead-review

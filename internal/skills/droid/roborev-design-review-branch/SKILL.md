@@ -1,6 +1,6 @@
 ---
 name: roborev-design-review-branch
-description: Use only when the user explicitly invokes /roborev-design-review-branch; request a design review for all commits on the current branch and present the results
+description: Use only when the user explicitly invokes /roborev-design-review-branch
 ---
 
 # roborev-design-review-branch

@@ -1,6 +1,6 @@
 ---
 name: roborev-refine
-description: Use only when the user explicitly invokes /roborev-refine; iteratively review, fix, and re-review the current branch until passing or the iteration limit is reached
+description: Use only when the user explicitly invokes /roborev-refine
 ---
 
 # roborev-refine

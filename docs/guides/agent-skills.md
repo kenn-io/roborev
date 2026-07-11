@@ -187,8 +187,9 @@ Unlike `roborev refine` on the CLI, the skill performs the full workflow inside 
 | Codex, plugin install | `$roborev:roborev-review`, `$roborev:roborev-review-branch`, `$roborev:roborev-design-review`, `$roborev:roborev-design-review-branch`, `$roborev:roborev-lookahead-review`, `$roborev:roborev-lookahead-review-branch`, `$roborev:roborev-fix`, `$roborev:roborev-refine`, `$roborev:roborev-respond` |
 
 Codex can also invoke either installation by selecting the skill in its
-structured skill picker. Descriptions shown in that picker help identify the
-workflow; they do not make ordinary prose an invocation.
+structured skill picker. Skill descriptions intentionally state only the
+explicit invocation requirement; workflow details live in the skill body so
+ordinary prose cannot semantically match a capability summary.
 
 ## Checking Skill Status
 

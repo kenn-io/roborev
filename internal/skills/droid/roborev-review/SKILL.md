@@ -1,6 +1,6 @@
 ---
 name: roborev-review
-description: Use only when the user explicitly invokes /roborev-review; request a code review for a commit and present the results
+description: Use only when the user explicitly invokes /roborev-review
 ---
 
 # roborev-review

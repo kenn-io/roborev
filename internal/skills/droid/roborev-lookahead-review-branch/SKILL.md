@@ -1,6 +1,6 @@
 ---
 name: roborev-lookahead-review-branch
-description: Use only when the user explicitly invokes /roborev-lookahead-review-branch; request a time-series look-ahead review for all commits on the current branch and present the results
+description: Use only when the user explicitly invokes /roborev-lookahead-review-branch
 ---
 
 # roborev-lookahead-review-branch

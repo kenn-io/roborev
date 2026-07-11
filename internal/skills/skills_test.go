@@ -92,9 +92,9 @@ func TestCodexSkillDescriptionsRequireExplicitInvocation(t *testing.T) {
 	require.Len(t, skills, 9)
 
 	for _, skill := range skills {
-		wantPrefix := "Use only when the user explicitly invokes $" + skill.DirName
-		assert.True(t, strings.HasPrefix(skill.Description, wantPrefix),
-			"%s description must begin %q; got %q", skill.DirName, wantPrefix, skill.Description)
+		wantDescription := "Use only when the user explicitly invokes $" + skill.DirName
+		assert.Equal(t, wantDescription, skill.Description,
+			"%s description must contain only the explicit invocation contract", skill.DirName)
 	}
 }
 
