@@ -8,6 +8,7 @@ ACP_TEST_ARGS ?=
 ACP_TEST_DISABLE_MODE ?=
 ACP_TEST_MODE ?=
 ACP_TEST_MODEL ?=
+CODEX_SKILL_EVAL_MODELS ?= gpt-5.6-sol
 
 # Pinned golangci-lint version. Single source of truth: CI reads it via
 # `make print-golangci-lint-version` (see .github/workflows/ci.yml), and
@@ -24,7 +25,7 @@ GOLANGCI_LINT_VERSION := 2.12.2
 # (golangci-lint #3502). A per-checkout cache dies with its checkout.
 export GOLANGCI_LINT_CACHE := $(CURDIR)/.golangci-lint-cache
 
-.PHONY: build install clean test test-git-isolation test-integration test-acp-integration test-acp-integration-codex test-acp-integration-claude test-acp-integration-gemini test-postgres test-all postgres-up postgres-down test-postgres-ci api-generate lint lint-ci check-golangci-lint print-golangci-lint-version check-actions check-renovate-config install-hooks docs-install docs-build docs-serve docs-check docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy
+.PHONY: build install clean test test-git-isolation test-codex-skill-eval test-integration test-acp-integration test-acp-integration-codex test-acp-integration-claude test-acp-integration-gemini test-postgres test-all postgres-up postgres-down test-postgres-ci api-generate lint lint-ci check-golangci-lint print-golangci-lint-version check-actions check-renovate-config install-hooks docs-install docs-build docs-serve docs-check docs-screenshots docs-assets-branch docs-generated-assets-branch docs-deploy-staging docs-deploy
 
 build:
 	@mkdir -p bin
@@ -77,6 +78,9 @@ test:
 
 test-git-isolation:
 	go test -run '^TestGitUsingTestPackagesUseIsolatedTestMain$$' .
+
+test-codex-skill-eval:
+	ROBOREV_RUN_CODEX_SKILL_EVAL=1 ROBOREV_CODEX_SKILL_EVAL_MODELS="$(CODEX_SKILL_EVAL_MODELS)" go test -tags=codexeval ./internal/skills -run TestCodexSkillExplicitInvocation -count=1 -v
 
 # Unit + slow integration tests (no postgres required)
 test-integration:
