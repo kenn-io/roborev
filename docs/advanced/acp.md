@@ -67,6 +67,41 @@ args = ["--verbose"]
 
 Once configured, the agent can be selected with `--agent my-agent`.
 
+### Example: Model-Selectable Gemini via a Bridge
+
+The `agy` (Antigravity) CLI does not support explicit Gemini model selection,
+so the built-in `gemini` agent runs default-model-only when it resolves to
+`agy`. An ACP bridge that wraps the Google Antigravity SDK restores model
+selection (including thinking-level control) through the generic ACP agent —
+no roborev changes required. One such bridge is
+[agy-acp](https://github.com/mjacobs/agy-acp) (`uv tool install agy-acp`):
+
+```toml
+# ~/.roborev/config.toml or .roborev.toml
+[acp]
+name = "agy-sdk"
+command = "agy-acp"
+model = "gemini-3.5-flash"
+```
+
+Then select it anywhere agents are routable: `--agent agy-sdk`, per-workflow
+agents, backup agents, or panel members. Bridge model IDs accept an optional
+thinking suffix (`gemini-3.5-flash:high`), which is how a reasoning level
+reaches the model — roborev's ACP client transmits only mode and model, not
+reasoning.
+
+If the agent process needs environment variables (API keys, cloud project
+settings), remember it is spawned by the **daemon**, which does not inherit
+your shell environment. Inject them with an `env` wrapper:
+
+```toml
+[acp]
+name = "agy-sdk"
+command = "env"
+args = ["AGY_ACP_VERTEX=1", "AGY_ACP_PROJECT=my-gcp-project", "agy-acp"]
+model = "gemini-3.5-flash"
+```
+
 ## Configuration Reference
 
 Configure ACP in the `[acp]` section of `~/.roborev/config.toml`:
@@ -136,6 +171,23 @@ The agent doesn't support the requested session mode. Check which modes the agen
 ### "model X is not available"
 
 The agent doesn't support the requested model. Remove the `model` field from your `[acp]` config, or check the agent's documentation for supported model names.
+
+### Reviews run with a different model (or agent) than configured
+
+Workflow model settings (`review_model`, `fix_model`, and their leveled
+variants) take precedence over the `[acp]` `model` field. If a global workflow
+model names a model your ACP agent does not advertise (say `review_model =
+"gpt-5.4"` with a Gemini-only agent), the model check fails, the job retries,
+and after retries it silently fails over to the backup agent — the review
+completes, but a different agent served it. Pass `--model` explicitly, or
+align the workflow model with the ACP agent. To see which agent actually
+served a job: `roborev show --job <id> --json` and check `job.agent` /
+`job.model`.
+
+### `--agent` is ignored and a panel runs instead
+
+When `default_panel` is configured, `roborev review` fans out to the panel.
+Add `--panel none` to force a single-agent review with your ACP agent.
 
 ### "write operation not permitted in read-only mode"
 
