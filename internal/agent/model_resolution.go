@@ -167,6 +167,24 @@ func ResolveWorkflowModelForAgentFromConfig(
 	defaultAgent := config.ResolveAgentFromConfig("", repoCfg, globalCfg)
 	if workflowModelComparableAgentNameFromConfig(selectedAgent, repoCfg, globalCfg) !=
 		workflowModelComparableAgentNameFromConfig(defaultAgent, repoCfg, globalCfg) {
+		// Workflow models follow their paired workflow agent. When the
+		// selected agent is the configured ACP agent but the workflow's
+		// configured agent for this workflow+level is NOT that ACP agent, the
+		// workflow model (e.g. a global review_model meant for the default
+		// reviewer) is paired with a different agent. Returning "" lets the
+		// ACP-config-model fallback in ModelForSelectedAgent supply
+		// [acp].model rather than handing a foreign model to the ACP agent,
+		// which its model validation would reject. Scope guard: this only
+		// affects ACP-selected agents; non-ACP agents keep legacy behavior.
+		if isConfiguredACPAgentNameFromConfig(selectedAgent, globalCfg, repoCfg) {
+			workflowAgent := config.ResolveAgentForWorkflowFromConfig(
+				"", repoCfg, globalCfg, workflow, level,
+			)
+			if workflowModelComparableAgentNameFromConfig(workflowAgent, repoCfg, globalCfg) !=
+				workflowModelComparableAgentNameFromConfig(selectedAgent, repoCfg, globalCfg) {
+				return ""
+			}
+		}
 		return config.ResolveWorkflowModelFromConfig(
 			repoCfg, globalCfg, workflow, level,
 		)

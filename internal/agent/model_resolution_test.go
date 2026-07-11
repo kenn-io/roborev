@@ -5,10 +5,144 @@ import (
 	"path/filepath"
 	"testing"
 
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/config"
 )
+
+// TestModelForSelectedAgentACPWorkflowModelPrecedence pins the semantic that
+// workflow models (review_model, leveled variants) follow their paired
+// workflow agent. A workflow model configured for the default reviewer must
+// NOT be handed to a CLI-selected configured ACP agent; the [acp].model must
+// win in that case. When the workflow agent IS the ACP agent, the paired
+// workflow model applies as before.
+func TestModelForSelectedAgentACPWorkflowModelPrecedence(t *testing.T) {
+	t.Parallel()
+
+	const acpName = "agy-sdk"
+	const acpModel = "gemini-3.5-flash"
+
+	tests := []struct {
+		name          string
+		cfg           *config.Config
+		workflow      string
+		level         string
+		selectedAgent string
+		cliModel      string
+		want          string
+	}{
+		{
+			// THE BUG: global review_model paired with the default reviewer
+			// must not leak to the CLI-selected ACP agent.
+			name: "acp selected, workflow model but no workflow agent -> acp model",
+			cfg: &config.Config{
+				DefaultAgent: "codex",
+				ReviewModel:  "gpt-5.4",
+				ACP:          &config.ACPAgentConfig{Name: acpName, Model: acpModel},
+			},
+			workflow:      "review",
+			level:         "standard",
+			selectedAgent: acpName,
+			want:          acpModel,
+		},
+		{
+			// Workflow agent IS the ACP agent: paired workflow model applies.
+			name: "acp selected and review_agent is acp -> workflow model",
+			cfg: &config.Config{
+				DefaultAgent: "codex",
+				ReviewAgent:  acpName,
+				ReviewModel:  "gpt-5.4",
+				ACP:          &config.ACPAgentConfig{Name: acpName, Model: acpModel},
+			},
+			workflow:      "review",
+			level:         "standard",
+			selectedAgent: acpName,
+			want:          "gpt-5.4",
+		},
+		{
+			// Explicit CLI --model always wins.
+			name: "acp selected with explicit cli model -> cli model",
+			cfg: &config.Config{
+				DefaultAgent: "codex",
+				ReviewModel:  "gpt-5.4",
+				ACP:          &config.ACPAgentConfig{Name: acpName, Model: acpModel},
+			},
+			workflow:      "review",
+			level:         "standard",
+			selectedAgent: acpName,
+			cliModel:      "gpt-5.4-custom",
+			want:          "gpt-5.4-custom",
+		},
+		{
+			// Scope guard: non-ACP selected agent keeps legacy behavior
+			// (workflow model still applies).
+			name: "non-acp selected differing from default -> workflow model",
+			cfg: &config.Config{
+				DefaultAgent: "codex",
+				ReviewModel:  "gpt-5.4",
+				ACP:          &config.ACPAgentConfig{Name: acpName, Model: acpModel},
+			},
+			workflow:      "review",
+			level:         "standard",
+			selectedAgent: "gemini",
+			want:          "gpt-5.4",
+		},
+		{
+			// Existing fallback: no workflow model anywhere -> acp model.
+			name: "acp selected, no workflow model -> acp model",
+			cfg: &config.Config{
+				DefaultAgent: "codex",
+				ACP:          &config.ACPAgentConfig{Name: acpName, Model: acpModel},
+			},
+			workflow:      "review",
+			level:         "standard",
+			selectedAgent: acpName,
+			want:          acpModel,
+		},
+		{
+			// Leveled variant, no leveled workflow agent -> acp model.
+			name: "acp selected, thorough model but no thorough agent -> acp model",
+			cfg: &config.Config{
+				DefaultAgent:        "codex",
+				ReviewModelThorough: "gpt-5.4-thorough",
+				ACP:                 &config.ACPAgentConfig{Name: acpName, Model: acpModel},
+			},
+			workflow:      "review",
+			level:         "thorough",
+			selectedAgent: acpName,
+			want:          acpModel,
+		},
+		{
+			// Leveled variant with leveled workflow agent -> leveled model.
+			name: "acp selected, thorough agent is acp -> thorough model",
+			cfg: &config.Config{
+				DefaultAgent:        "codex",
+				ReviewAgentThorough: acpName,
+				ReviewModelThorough: "gpt-5.4-thorough",
+				ACP:                 &config.ACPAgentConfig{Name: acpName, Model: acpModel},
+			},
+			workflow:      "review",
+			level:         "thorough",
+			selectedAgent: acpName,
+			want:          "gpt-5.4-thorough",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			resolution, err := ResolveWorkflowConfigFromConfig(
+				tt.selectedAgent, nil, tt.cfg, tt.workflow, tt.level,
+			)
+			require.NoError(t, err)
+			got := resolution.ModelForSelectedAgent(tt.selectedAgent, tt.cliModel)
+			assert.Equal(tt.want, got,
+				"ModelForSelectedAgent(%q, %q) = %q, want %q",
+				tt.selectedAgent, tt.cliModel, got, tt.want)
+		})
+	}
+}
 
 func TestResolveWorkflowModelForAgentSkipsGenericDefaultModel(t *testing.T) {
 	t.Parallel()
