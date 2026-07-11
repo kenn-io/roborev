@@ -15,10 +15,9 @@ Request a code review for all commits on the current branch and present the resu
 
 ## Explicit invocation only
 
-Use this skill only when the user literally invokes personal skill
-`/roborev-review-branch`. Requests such as “review this branch” or “check all
-branch commits” without that trigger must use native behavior and must not run
-roborev.
+Invocation must be explicit: literal personal `/roborev-review-branch`or structured Factory skill selection.
+Requests such as “review this branch” without one of these explicit mechanisms must use
+native behavior and must not run roborev.
 
 ## When NOT to invoke this skill
 

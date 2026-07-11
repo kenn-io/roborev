@@ -18,10 +18,9 @@ leakage, or temporal leakage.
 
 ## Explicit invocation only
 
-Use this skill only when the user literally invokes personal skill
-`/roborev-lookahead-review`. Requests such as “check this commit for peekahead”
-or “review future-data leakage” without that trigger must use native behavior
-and must not run roborev.
+Invocation must be explicit: literal personal `/roborev-lookahead-review`or structured Factory skill selection.
+Requests such as “check this commit for peekahead” without one of these explicit
+mechanisms must use native behavior and must not run roborev.
 
 ## When NOT to invoke this skill
 

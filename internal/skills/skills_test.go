@@ -98,6 +98,33 @@ func TestCodexSkillDescriptionsRequireExplicitInvocation(t *testing.T) {
 	}
 }
 
+func TestCodexSkillBodiesAcceptEveryExplicitInvocationPath(t *testing.T) {
+	spec, ok := lookupAgent(AgentCodex)
+	require.True(t, ok)
+	skills, err := embeddedSkillsForAgent(spec)
+	require.NoError(t, err)
+	require.Len(t, skills, 9)
+
+	for _, skill := range skills {
+		content := string(skill.Content)
+		sectionStart := strings.Index(content, "## Explicit invocation only\n")
+		require.NotEqual(t, -1, sectionStart, "%s missing explicit-invocation section", skill.DirName)
+		section := content[sectionStart:]
+		if sectionEnd := strings.Index(section[len("## Explicit invocation only\n"):], "\n## "); sectionEnd >= 0 {
+			section = section[:len("## Explicit invocation only\n")+sectionEnd]
+		}
+		section = strings.Join(strings.Fields(section), " ")
+
+		assert.Contains(t, section, "`$"+skill.DirName+"`", "%s missing personal invocation", skill.DirName)
+		assert.Contains(t, section, "`$roborev:"+skill.DirName+"`", "%s missing plugin invocation", skill.DirName)
+		assert.Contains(t, section, "structured Codex skill selection", "%s missing structured selection", skill.DirName)
+		assert.Contains(t, section, "Requests such as", "%s missing ordinary prose example", skill.DirName)
+		assert.Contains(t, section, "without one of these explicit mechanisms", "%s must distinguish ordinary prose", skill.DirName)
+		assert.Contains(t, section, "must use native behavior", "%s missing native fallback", skill.DirName)
+		assert.Contains(t, section, "must not run roborev", "%s missing no-roborev instruction", skill.DirName)
+	}
+}
+
 func TestPluginDefaultPromptsExplicitlyInvokeNamespacedSkills(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", ".codex-plugin", "plugin.json"))
 	require.NoError(t, err)
@@ -710,6 +737,22 @@ func TestDerivedSkillFilesAreCurrent(t *testing.T) {
 		got, err := os.ReadFile(filepath.FromSlash(relPath))
 		require.NoError(t, err, "read checked-in derived skill %s", relPath)
 		assert.Equal(t, string(want), string(got), "derived skill %s is stale; run `go generate ./internal/skills`", relPath)
+	}
+}
+
+func TestDerivedExplicitInvocationWordingUsesTargetAgent(t *testing.T) {
+	derived, err := renderDerivedSkills(os.DirFS("."))
+	require.NoError(t, err)
+
+	for relPath, content := range derived {
+		text := string(content)
+		assert.NotContains(t, text, "structured Codex skill selection", "%s retains Codex-specific wording", relPath)
+		assert.NotContains(t, text, "roborev:", "%s retains Codex plugin namespace", relPath)
+		if strings.HasPrefix(relPath, "droid/") {
+			assert.Contains(t, text, "structured Factory skill selection", relPath)
+		} else {
+			assert.Contains(t, text, "structured Claude Code skill selection", relPath)
+		}
 	}
 }
 

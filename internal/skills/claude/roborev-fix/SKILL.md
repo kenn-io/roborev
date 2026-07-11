@@ -15,10 +15,9 @@ Fix all open failing review findings in one pass.
 
 ## Explicit invocation only
 
-Use this skill only when the user literally invokes personal skill
-`/roborev-fix`. Requests such as “fix the open findings” or “address these
-review comments” without that trigger must use native behavior and must not run
-roborev.
+Invocation must be explicit: literal personal `/roborev-fix`or structured Claude Code skill selection.
+Requests such as “fix the open findings” without one of these explicit mechanisms must use native
+behavior and must not run roborev.
 
 ## When NOT to invoke this skill
 

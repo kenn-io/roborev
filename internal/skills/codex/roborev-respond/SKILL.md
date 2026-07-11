@@ -15,10 +15,9 @@ $roborev-respond <job_id> [message]
 
 ## Explicit invocation only
 
-Use this skill only when the user literally invokes personal skill
-`$roborev-respond`. Requests such as “respond to this review” or “close this
-review with a comment” without that trigger must use native behavior and must
-not run roborev.
+Invocation must be explicit: literal personal `$roborev-respond`, plugin `$roborev:roborev-respond`, or structured Codex skill selection.
+Requests such as “respond to this review” without one of these explicit mechanisms must use
+native behavior and must not run roborev.
 
 ## IMPORTANT
 

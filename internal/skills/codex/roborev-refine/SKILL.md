@@ -23,10 +23,9 @@ $roborev-refine [--since <commit>] [--branch <name>] [--max-iterations <n>]
 
 ## Explicit invocation only
 
-Use this skill only when the user literally invokes personal skill
-`$roborev-refine`. Requests such as “refine this change” or “iterate until the
-review passes” without that trigger must use native behavior and must not run
-roborev.
+Invocation must be explicit: literal personal `$roborev-refine`, plugin `$roborev:roborev-refine`, or structured Codex skill selection.
+Requests such as “refine this change” without one of these explicit mechanisms must use native
+behavior and must not run roborev.
 
 - `--since <commit>`: refine commits after this commit (exclusive); required on the default branch
 - `--branch <name>`: validate that the current branch matches before refining
