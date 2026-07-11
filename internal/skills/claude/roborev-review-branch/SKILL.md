@@ -1,6 +1,7 @@
 ---
 name: roborev-review-branch
-description: Request a code review for all commits on the current branch and present the results
+description: Use only when the user explicitly invokes /roborev-review-branch
+disable-model-invocation: true
 ---
 
 # roborev-review-branch
@@ -12,6 +13,13 @@ Request a code review for all commits on the current branch and present the resu
 ```
 /roborev-review-branch [--base <branch>] [--type security|design] [--panel <name>|none]
 ```
+
+## Explicit invocation only
+
+Invocation must be explicit: literal personal `/roborev-review-branch`, or structured
+Claude Code skill selection.
+Requests such as “review this branch” without one of these explicit mechanisms must use
+native behavior and must not run roborev.
 
 ## When NOT to invoke this skill
 

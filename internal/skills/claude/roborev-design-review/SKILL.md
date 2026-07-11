@@ -1,6 +1,7 @@
 ---
 name: roborev-design-review
-description: Request a design review for a commit and present the results
+description: Use only when the user explicitly invokes /roborev-design-review
+disable-model-invocation: true
 ---
 
 # roborev-design-review
@@ -12,6 +13,13 @@ Request a design review for a commit and present the results.
 ```
 /roborev-design-review [commit] [--panel <name>|none]
 ```
+
+## Explicit invocation only
+
+Invocation must be explicit: literal personal `/roborev-design-review`, or structured
+Claude Code skill selection.
+Requests such as “review this commit's design” without one of these explicit mechanisms
+must use native behavior and must not run roborev.
 
 ## When NOT to invoke this skill
 

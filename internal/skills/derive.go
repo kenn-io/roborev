@@ -56,16 +56,28 @@ func skillDerivations() []skillDerivation {
 		})
 	}
 	for _, skillName := range derivedClaudeSkills {
-		derivations = append(derivations, skillDerivation{
-			TargetAgent: AgentClaude,
-			SkillName:   skillName,
-			Replacements: []stringReplacement{
-				{
-					Old: ", plugin\n`$roborev:" + skillName + "`, or structured Codex skill selection",
-					New: ", or structured\nClaude Code skill selection",
-				},
-				{Old: "$roborev", New: "/roborev"},
+		replacements := []stringReplacement{
+			{
+				Old: ", plugin\n`$roborev:" + skillName + "`, or structured Codex skill selection",
+				New: ", or structured\nClaude Code skill selection",
 			},
+			{Old: "$roborev", New: "/roborev"},
+		}
+		// roborev-fix must stay model-invocable: the agent-hook Stop hook
+		// instructs the Claude Code model to invoke it, and
+		// disable-model-invocation would block that path. Its explicit-only
+		// description and body section remain the guard against implicit
+		// selection.
+		if skillName != "roborev-fix" {
+			replacements = append([]stringReplacement{{
+				Old: "invokes $" + skillName + "\n---",
+				New: "invokes /" + skillName + "\ndisable-model-invocation: true\n---",
+			}}, replacements...)
+		}
+		derivations = append(derivations, skillDerivation{
+			TargetAgent:  AgentClaude,
+			SkillName:    skillName,
+			Replacements: replacements,
 		})
 	}
 	return derivations

@@ -19,6 +19,7 @@ All notable changes to roborev, grouped by minor release.
 **Bug fixes**
 
 - Bundled Codex roborev skills now require explicit personal, plugin-namespaced, or structured selection. Machine-readable activation policy and invocation-only descriptions keep ordinary review and fix requests in Codex's native workflow. See [Agent Skills](/guides/agent-skills/#agent-specific-syntax).
+- Bundled Claude Code roborev skills are now explicit-only as well. Skills set `disable-model-invocation: true` and state only their invocation contract in the description, so Claude Code never auto-selects a roborev skill for an ordinary review or fix request; invoke skills with their slash commands. `roborev-fix` stays model-invocable so the agent-hook instruction keeps working. See [Agent Skills](/guides/agent-skills/#agent-specific-syntax).
 
 **Acknowledgements**
 

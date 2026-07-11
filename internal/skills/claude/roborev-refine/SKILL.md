@@ -1,6 +1,7 @@
 ---
 name: roborev-refine
 description: Use only when the user explicitly invokes /roborev-refine
+disable-model-invocation: true
 ---
 
 # roborev-refine

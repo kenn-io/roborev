@@ -125,6 +125,75 @@ func TestCodexSkillBodiesAcceptEveryExplicitInvocationPath(t *testing.T) {
 	}
 }
 
+func TestClaudeSkillDescriptionsRequireExplicitInvocation(t *testing.T) {
+	spec, ok := lookupAgent(AgentClaude)
+	require.True(t, ok)
+	skills, err := embeddedSkillsForAgent(spec)
+	require.NoError(t, err)
+	require.Len(t, skills, 9)
+
+	for _, skill := range skills {
+		wantDescription := "Use only when the user explicitly invokes /" + skill.DirName
+		assert.Equal(t, wantDescription, skill.Description,
+			"%s description must contain only the explicit invocation contract", skill.DirName)
+	}
+}
+
+func TestClaudeSkillsEmbedExplicitInvocationPolicy(t *testing.T) {
+	// disable-model-invocation is Claude Code's machine-readable equivalent of
+	// the Codex agents/openai.yaml policy: the model can never auto-select the
+	// skill; the user invokes it with /<name> or structured skill selection.
+	// roborev-fix is the one exception: the agent-hook Stop hook instructs the
+	// model to invoke it, so it must remain model-invocable and relies on its
+	// explicit-only description and body section instead.
+	spec, ok := lookupAgent(AgentClaude)
+	require.True(t, ok)
+	skills, err := embeddedSkillsForAgent(spec)
+	require.NoError(t, err)
+	require.Len(t, skills, 9)
+
+	for _, skill := range skills {
+		content := strings.ReplaceAll(string(skill.Content), "\r\n", "\n")
+		require.True(t, strings.HasPrefix(content, "---\n"), "%s missing frontmatter", skill.DirName)
+		frontmatterEnd := strings.Index(content[len("---\n"):], "\n---\n")
+		require.NotEqual(t, -1, frontmatterEnd, "%s missing frontmatter close", skill.DirName)
+		frontmatterLines := strings.Split(content[len("---\n"):len("---\n")+frontmatterEnd], "\n")
+		if skill.DirName == "roborev-fix" {
+			assert.NotContains(t, frontmatterLines, "disable-model-invocation: true",
+				"roborev-fix must stay model-invocable for the agent-hook instruction")
+		} else {
+			assert.Contains(t, frontmatterLines, "disable-model-invocation: true",
+				"%s frontmatter must disable implicit model invocation", skill.DirName)
+		}
+	}
+}
+
+func TestClaudeSkillBodiesAcceptEveryExplicitInvocationPath(t *testing.T) {
+	spec, ok := lookupAgent(AgentClaude)
+	require.True(t, ok)
+	skills, err := embeddedSkillsForAgent(spec)
+	require.NoError(t, err)
+	require.Len(t, skills, 9)
+
+	for _, skill := range skills {
+		content := string(skill.Content)
+		sectionStart := strings.Index(content, "## Explicit invocation only\n")
+		require.NotEqual(t, -1, sectionStart, "%s missing explicit-invocation section", skill.DirName)
+		section := content[sectionStart:]
+		if sectionEnd := strings.Index(section[len("## Explicit invocation only\n"):], "\n## "); sectionEnd >= 0 {
+			section = section[:len("## Explicit invocation only\n")+sectionEnd]
+		}
+		section = strings.Join(strings.Fields(section), " ")
+
+		assert.Contains(t, section, "`/"+skill.DirName+"`", "%s missing personal invocation", skill.DirName)
+		assert.Contains(t, section, "structured Claude Code skill selection", "%s missing structured selection", skill.DirName)
+		assert.Contains(t, section, "Requests such as", "%s missing ordinary prose example", skill.DirName)
+		assert.Contains(t, section, "without one of these explicit mechanisms", "%s must distinguish ordinary prose", skill.DirName)
+		assert.Contains(t, section, "must use native behavior", "%s missing native fallback", skill.DirName)
+		assert.Contains(t, section, "must not run roborev", "%s missing no-roborev instruction", skill.DirName)
+	}
+}
+
 func TestPluginDefaultPromptsExplicitlyInvokeNamespacedSkills(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", ".codex-plugin", "plugin.json"))
 	require.NoError(t, err)
@@ -751,8 +820,15 @@ func TestDerivedExplicitInvocationWordingUsesTargetAgent(t *testing.T) {
 		assert.NotContains(t, text, "roborev:", "%s retains Codex plugin namespace", relPath)
 		if strings.HasPrefix(relPath, "droid/") {
 			assert.Contains(t, text, "`/"+skillName+"`, or structured Factory skill selection", relPath)
+			assert.NotContains(t, text, "disable-model-invocation", "%s must not carry the Claude-only frontmatter policy", relPath)
 		} else {
 			assert.Contains(t, text, "`/"+skillName+"`, or structured Claude Code skill selection", relPath)
+			if skillName == "roborev-fix" {
+				assert.NotContains(t, text, "disable-model-invocation",
+					"roborev-fix must stay model-invocable for the agent-hook instruction")
+			} else {
+				assert.Contains(t, text, "disable-model-invocation: true", "%s missing Claude frontmatter policy", relPath)
+			}
 		}
 	}
 }

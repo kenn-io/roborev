@@ -1,6 +1,7 @@
 ---
 name: roborev-respond
 description: Use only when the user explicitly invokes /roborev-respond
+disable-model-invocation: true
 ---
 
 # roborev-respond
