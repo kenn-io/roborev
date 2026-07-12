@@ -198,16 +198,18 @@ func TestExportCIMetricsRejectsCursorFromDifferentDatabase(t *testing.T) {
 	require.ErrorIs(t, err, ErrExportCursorDatabaseMismatch)
 }
 
-// seedLegacyCIJob inserts one completed pre-panel CI review job:
-// source='ci', no panel run, explicit enqueue/finish timestamps. The
-// pre-panel era wrote no PR linkage rows that survive, so the legacy export
-// groups these jobs by (repo, git_ref) into pseudopanel units.
+// seedLegacyCIJob inserts one completed pre-panel CI review job with no
+// panel run and explicit enqueue/finish timestamps, CI-tagged only through
+// ci_base_branch: rows from that era predate source='ci' tagging, and the
+// legacy export must honor both markers (ReviewJob.IsCI). The pre-panel era
+// wrote no PR linkage rows that survive, so the legacy export groups these
+// jobs by (repo, git_ref) into pseudopanel units.
 func seedLegacyCIJob(t *testing.T, db *DB, repoID int64, gitRef, agent string, enqueued, finished string) *ReviewJob {
 	t.Helper()
 	job, err := db.EnqueueJob(EnqueueOpts{
 		RepoID: repoID, GitRef: gitRef,
 		Agent: agent, Model: "legacy-model", Provider: "legacy-provider",
-		Source: JobSourceCI,
+		CIBaseBranch: "main",
 	})
 	require.NoError(t, err)
 	_, err = db.Exec(`UPDATE review_jobs

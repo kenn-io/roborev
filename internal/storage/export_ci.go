@@ -24,8 +24,10 @@ type ExportCIMetricsOptions struct {
 	Cursor string
 	Limit  int
 	// Legacy switches the export to the pre-panel CI era (~2026-02 to
-	// ~2026-06): completed source='ci' review_jobs rows with no panel run,
-	// grouped per (repo, git_ref) into one wall-clock unit ("pseudopanel").
+	// ~2026-06): completed CI review_jobs rows with no panel run — tagged
+	// source='ci' or, for rows predating that tag, a non-empty
+	// ci_base_branch (the same markers ReviewJob.IsCI checks) — grouped
+	// per (repo, git_ref) into one wall-clock unit ("pseudopanel").
 	// Legacy turnaround (first_attempt_at -> posted_at) measures earliest
 	// job enqueue -> latest job finish and excludes comment-posting
 	// latency, so it slightly undercounts the panel-era PR-perceived
@@ -273,7 +275,8 @@ func (db *DB) exportCIMetricsLegacy(opts ExportCIMetricsOptions, cursor *ciMetri
 		       ` + postedExpr + `
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
-		WHERE j.source = ? AND (j.panel_run_uuid IS NULL OR j.panel_run_uuid = '')
+		WHERE (j.source = ? OR COALESCE(j.ci_base_branch, '') != '')
+		  AND (j.panel_run_uuid IS NULL OR j.panel_run_uuid = '')
 		  AND j.status = ? AND j.finished_at IS NOT NULL
 		GROUP BY j.repo_id, j.git_ref
 		` + havingClause + `
@@ -354,7 +357,8 @@ func (db *DB) legacyUnitJobs(repoID int64, gitRef string) ([]ExportCIPanelJob, e
 		       `+legacyUnitTimeExpr("j.finished_at")+`
 		FROM review_jobs j
 		WHERE j.repo_id = ? AND j.git_ref = ?
-		  AND j.source = ? AND (j.panel_run_uuid IS NULL OR j.panel_run_uuid = '')
+		  AND (j.source = ? OR COALESCE(j.ci_base_branch, '') != '')
+		  AND (j.panel_run_uuid IS NULL OR j.panel_run_uuid = '')
 		  AND j.status = ? AND j.finished_at IS NOT NULL
 		ORDER BY j.id ASC`,
 		repoID, gitRef, JobSourceCI, string(JobStatusDone))
@@ -556,13 +560,14 @@ func (db *DB) resolveCIMetricsCursor(cursor string, legacy bool) (*ciMetricsCurs
 		// check both still hold.
 		existsQuery = `
 			SELECT COUNT(1) FROM review_jobs a
-			WHERE a.id = ? AND a.source = '` + JobSourceCI + `'
+			WHERE a.id = ?
+			  AND (a.source = '` + JobSourceCI + `' OR COALESCE(a.ci_base_branch, '') != '')
 			  AND (a.panel_run_uuid IS NULL OR a.panel_run_uuid = '')
 			  AND a.status = 'done' AND a.finished_at IS NOT NULL
 			  AND (SELECT MAX(` + legacyUnitTimeExpr("j.finished_at") + `)
 			       FROM review_jobs j
 			       WHERE j.repo_id = a.repo_id AND j.git_ref = a.git_ref
-			         AND j.source = '` + JobSourceCI + `'
+			         AND (j.source = '` + JobSourceCI + `' OR COALESCE(j.ci_base_branch, '') != '')
 			         AND (j.panel_run_uuid IS NULL OR j.panel_run_uuid = '')
 			         AND j.status = 'done' AND j.finished_at IS NOT NULL) = ?`
 	}
