@@ -17,6 +17,12 @@ const (
 	PanelOutcomeGiveupPosted   = "giveup_posted"
 	PanelOutcomeAbandoned      = "abandoned"
 	PanelOutcomeUnknown        = "unknown"
+
+	// PanelOutcomeLegacyReview marks rows exported from the frozen pre-panel
+	// ci_pr_reviews table (ExportCIMetricsOptions.Legacy). It is never
+	// persisted to ci_pr_panels; ExportCIMetrics stamps it onto legacy rows
+	// at export time.
+	PanelOutcomeLegacyReview = "legacy_review"
 )
 
 // CIPanel maps a PR HEAD (github_repo, pr_number, head_sha) to the subagent

@@ -23,6 +23,7 @@ type exportCIMetricsOpts struct {
 	until  string
 	cursor string
 	limit  int
+	legacy bool
 }
 
 func exportCIMetricsCmd() *cobra.Command {
@@ -45,7 +46,14 @@ Cursor tokens are opaque and versioned. Export documents include
 database_id; a cursor from a different database is rejected with exit code
 3 so callers can discard it and backfill. Panels finalized before outcome
 persistence existed export with outcome "unknown" and null
-first_attempt_at.`),
+first_attempt_at.
+
+Use --legacy to export the frozen pre-panel CI era instead: rows from the
+retired ci_pr_reviews table (roughly 2026-02 through 2026-06), one per
+reviewed PR head, with outcome "legacy_review". This is a one-time backfill
+source, not an ongoing feed — legacy first_attempt_at is job enqueue time,
+not comparable to panel-era first_attempt_at. Legacy cursors cannot be
+resumed against a non-legacy export, or vice versa.`),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			limitSet := cmd.Flags().Changed("limit")
 			if err := validateExportCIMetricsOpts(opts, limitSet); err != nil {
@@ -72,6 +80,8 @@ first_attempt_at.`),
 	cmd.Flags().StringVar(&opts.until, "until", "", "exclusive posted_at upper bound (RFC3339 or YYYY-MM-DD)")
 	cmd.Flags().StringVar(&opts.cursor, "cursor", "", "opaque next_cursor from a previous export; cannot be used with --since")
 	cmd.Flags().IntVar(&opts.limit, "limit", 0, "maximum number of panels to emit")
+	cmd.Flags().BoolVar(&opts.legacy, "legacy", false,
+		"export the frozen pre-panel CI era (ci_pr_reviews) instead of panel runs; for one-time backfill")
 	return cmd
 }
 
@@ -151,6 +161,9 @@ func fetchExportCIMetricsPage(ep daemon.DaemonEndpoint, opts exportCIMetricsOpts
 	}
 	if cursor != "" {
 		params.Set("cursor", cursor)
+	}
+	if opts.legacy {
+		params.Set("legacy", "true")
 	}
 
 	resp, err := ep.HTTPClient(30 * time.Second).Get(ep.BaseURL() + "/api/export/ci-metrics?" + params.Encode())

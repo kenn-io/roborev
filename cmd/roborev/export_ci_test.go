@@ -65,3 +65,48 @@ func TestExportCIMetricsCmdFollowsCursors(t *testing.T) {
 	assert.Len(panels, 2)
 	assert.Equal(false, doc["truncated"])
 }
+
+func TestExportCIMetricsCmdLegacyFlagSetsQueryParam(t *testing.T) {
+	assert := assert.New(t)
+	var sawLegacy string
+	NewMockDaemon(t, MockRefineHooks{
+		OnUnhandled: func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool {
+			if r.URL.Path != "/api/export/ci-metrics" {
+				return false
+			}
+			sawLegacy = r.URL.Query().Get("legacy")
+			writeCIMetricsTestPage(t, w, false, nil, []map[string]any{
+				{"github_repo": "o/r", "pr_number": 1, "head_sha": "a", "outcome": "legacy_review", "jobs": []any{}},
+			})
+			return true
+		},
+	})
+
+	runExportCmd(t, "ci-metrics", "--legacy")
+
+	assert.Equal("true", sawLegacy)
+}
+
+func TestExportCIMetricsCmdWithoutLegacyFlagOmitsQueryParam(t *testing.T) {
+	assert := assert.New(t)
+	var sawLegacy string
+	sawParam := false
+	NewMockDaemon(t, MockRefineHooks{
+		OnUnhandled: func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool {
+			if r.URL.Path != "/api/export/ci-metrics" {
+				return false
+			}
+			sawParam = r.URL.Query().Has("legacy")
+			sawLegacy = r.URL.Query().Get("legacy")
+			writeCIMetricsTestPage(t, w, false, nil, []map[string]any{
+				{"github_repo": "o/r", "pr_number": 1, "head_sha": "a", "outcome": "review_posted", "jobs": []any{}},
+			})
+			return true
+		},
+	})
+
+	runExportCmd(t, "ci-metrics")
+
+	assert.False(sawParam, "legacy query param must be omitted when --legacy is not set")
+	assert.Empty(sawLegacy)
+}

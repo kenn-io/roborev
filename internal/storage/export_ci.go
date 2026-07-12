@@ -23,6 +23,15 @@ type ExportCIMetricsOptions struct {
 	Until  time.Time
 	Cursor string
 	Limit  int
+	// Legacy switches the export to the frozen pre-panel ci_pr_reviews era
+	// (~2026-02 to ~2026-06), one row per reviewed PR head, before panels
+	// existed. Legacy turnaround (first_attempt_at -> posted_at) measures
+	// job enqueue time -> ci_pr_reviews record time; it is NOT comparable
+	// to panel-era turnaround (first poller attempt -> panel posted), so
+	// callers must not mix the two eras in one turnaround-time analysis.
+	// Legacy cursors are namespaced and are rejected if replayed with
+	// Legacy unset, and vice versa.
+	Legacy bool
 }
 
 // ExportCIMetricsPage is one bounded page of finalized CI panel records.
@@ -72,10 +81,20 @@ type ciMetricsCursor struct {
 	DatabaseID string `json:"database_id"`
 	PostedAt   string `json:"posted_at"`
 	PanelID    int64  `json:"panel_id"`
+	// Legacy namespaces the cursor to ExportCIMetricsOptions.Legacy so a
+	// panel-era cursor can never be replayed against the legacy export (or
+	// vice versa): the two eras page over different tables and ids, and
+	// silently mixing them would skip or repeat rows.
+	Legacy bool `json:"legacy,omitempty"`
 }
 
-// ExportCIMetrics returns one bounded page of finalized CI panel records
-// ordered by (posted_at, id) ascending, with the same opaque-cursor and
+// ErrExportCIMetricsCursorModeMismatch is returned when a cursor minted for
+// one ExportCIMetrics mode (legacy vs. panel) is replayed against the other.
+var ErrExportCIMetricsCursorModeMismatch = errors.New("ci metrics cursor mode mismatch")
+
+// ExportCIMetrics returns one bounded page of finalized CI panel records (or,
+// with Legacy set, frozen pre-panel ci_pr_reviews records) ordered by
+// (posted_at, id) ascending, with the same opaque-cursor and
 // database_id-reset contract as ExportReviews.
 func (db *DB) ExportCIMetrics(opts ExportCIMetricsOptions) (ExportCIMetricsPage, error) {
 	switch {
@@ -85,11 +104,19 @@ func (db *DB) ExportCIMetrics(opts ExportCIMetricsOptions) (ExportCIMetricsPage,
 		opts.Limit = ciMetricsMaxPageLimit
 	}
 
-	cursor, err := db.resolveCIMetricsCursor(opts.Cursor)
+	cursor, err := db.resolveCIMetricsCursor(opts.Cursor, opts.Legacy)
 	if err != nil {
 		return ExportCIMetricsPage{}, err
 	}
+	if opts.Legacy {
+		return db.exportCIMetricsLegacy(opts, cursor)
+	}
+	return db.exportCIMetricsPanels(opts, cursor)
+}
 
+// exportCIMetricsPanels is the ci_pr_panels-backed page builder used by
+// ExportCIMetrics when Legacy is unset.
+func (db *DB) exportCIMetricsPanels(opts ExportCIMetricsOptions, cursor *ciMetricsCursor) (ExportCIMetricsPage, error) {
 	postedExpr := sqliteNormalizedTimestampExpr("cp.posted_at")
 	conditions := []string{"cp.posted_at IS NOT NULL"}
 	args := make([]any, 0)
@@ -165,12 +192,143 @@ func (db *DB) ExportCIMetrics(opts ExportCIMetricsOptions) (ExportCIMetricsPage,
 		if err != nil {
 			return ExportCIMetricsPage{}, err
 		}
-		next := encodeCIMetricsCursor(databaseID, lastPosted, lastID)
+		next := encodeCIMetricsCursor(databaseID, lastPosted, lastID, false)
 		if next != "" {
 			page.NextCursor = &next
 		}
 	}
 	return page, nil
+}
+
+// exportCIMetricsLegacy is the ci_pr_reviews-backed page builder used by
+// ExportCIMetrics when Legacy is set. Each row joins its linked review_jobs
+// row (job_id) and is shaped into the same ExportCIPanel struct: outcome is
+// always PanelOutcomeLegacyReview, attempt_count is always nil (legacy rows
+// predate retry-attempt tracking), and posted_at/first_attempt_at/
+// panel_created_at are derived from cr.created_at and j.enqueued_at rather
+// than from a real panel lifecycle. Jobs always contains exactly the one
+// linked job, tagged role "review".
+func (db *DB) exportCIMetricsLegacy(opts ExportCIMetricsOptions, cursor *ciMetricsCursor) (ExportCIMetricsPage, error) {
+	createdExpr := sqliteNormalizedTimestampExpr("cr.created_at")
+	conditions := []string{"cr.created_at IS NOT NULL"}
+	args := make([]any, 0)
+	if !opts.Since.IsZero() {
+		conditions = append(conditions, createdExpr+" >= datetime(?)")
+		args = append(args, opts.Since.UTC().Format(time.RFC3339))
+	}
+	if !opts.Until.IsZero() {
+		conditions = append(conditions, createdExpr+" < datetime(?)")
+		args = append(args, opts.Until.UTC().Format(time.RFC3339))
+	}
+	if cursor != nil {
+		conditions = append(conditions,
+			"("+createdExpr+" > datetime(?) OR ("+createdExpr+" = datetime(?) AND cr.id > ?))")
+		args = append(args, cursor.PostedAt, cursor.PostedAt, cursor.PanelID)
+	}
+	args = append(args, opts.Limit+1)
+
+	query := `
+		SELECT cr.id, cr.github_repo, cr.pr_number, cr.head_sha, cr.created_at,
+		       j.uuid, j.enqueued_at, j.agent, j.model, j.provider, j.status,
+		       j.started_at, j.finished_at
+		FROM ci_pr_reviews cr
+		JOIN review_jobs j ON j.id = cr.job_id
+		WHERE ` + strings.Join(conditions, " AND ") + `
+		ORDER BY ` + createdExpr + ` ASC, cr.id ASC
+		LIMIT ?`
+	rows, err := db.Query(query, args...)
+	if err != nil {
+		return ExportCIMetricsPage{}, fmt.Errorf("query legacy ci metrics export: %w", err)
+	}
+	defer rows.Close()
+
+	page := ExportCIMetricsPage{Panels: []ExportCIPanel{}}
+	var lastID int64
+	var lastPosted string
+	for rows.Next() {
+		id, panel, err := scanLegacyCIMetricsRow(rows)
+		if err != nil {
+			return ExportCIMetricsPage{}, err
+		}
+		if len(page.Panels) == opts.Limit {
+			page.Truncated = true
+			break
+		}
+		page.Panels = append(page.Panels, panel)
+		lastID = id
+		lastPosted = panel.PostedAt
+	}
+	if err := rows.Err(); err != nil {
+		return ExportCIMetricsPage{}, err
+	}
+
+	if len(page.Panels) > 0 {
+		databaseID, err := db.GetDatabaseID()
+		if err != nil {
+			return ExportCIMetricsPage{}, err
+		}
+		next := encodeCIMetricsCursor(databaseID, lastPosted, lastID, true)
+		if next != "" {
+			page.NextCursor = &next
+		}
+	}
+	return page, nil
+}
+
+// scanLegacyCIMetricsRow scans one ci_pr_reviews-joined-review_jobs export
+// row into an ExportCIPanel, mirroring scanCIMetricsRow's null-handling for
+// the panel-era query.
+func scanLegacyCIMetricsRow(rows *sql.Rows) (int64, ExportCIPanel, error) {
+	var (
+		id         int64
+		panel      ExportCIPanel
+		createdAt  sql.NullString
+		jobUUID    string
+		enqueuedAt sql.NullString
+		agent      string
+		model      sql.NullString
+		provider   sql.NullString
+		status     string
+		startedAt  sql.NullString
+		finishedAt sql.NullString
+	)
+	if err := rows.Scan(&id, &panel.GithubRepo, &panel.PRNumber, &panel.HeadSHA, &createdAt,
+		&jobUUID, &enqueuedAt, &agent, &model, &provider, &status, &startedAt, &finishedAt); err != nil {
+		return 0, ExportCIPanel{}, fmt.Errorf("scan legacy ci metrics row: %w", err)
+	}
+	panel.Outcome = PanelOutcomeLegacyReview
+	if createdAt.Valid {
+		panel.PostedAt = formatExportTime(parseSQLiteTime(createdAt.String))
+	}
+	if enqueuedAt.Valid {
+		v := formatExportTime(parseSQLiteTime(enqueuedAt.String))
+		panel.FirstAttemptAt = &v
+		panel.PanelCreatedAt = v
+	}
+	if agent != "" {
+		panel.SynthesisAgent = &agent
+	}
+	if model.Valid && model.String != "" {
+		panel.SynthesisModel = &model.String
+	}
+
+	job := ExportCIPanelJob{JobUUID: jobUUID, Role: "review", Agent: agent, Status: status}
+	if model.Valid && model.String != "" {
+		job.Model = &model.String
+	}
+	if provider.Valid && provider.String != "" {
+		job.Provider = &provider.String
+	}
+	if startedAt.Valid {
+		v := formatExportTime(parseSQLiteTime(startedAt.String))
+		job.StartedAt = &v
+	}
+	if finishedAt.Valid {
+		v := formatExportTime(parseSQLiteTime(finishedAt.String))
+		job.FinishedAt = &v
+	}
+	panel.Jobs = []ExportCIPanelJob{job}
+	return id, panel, nil
 }
 
 // scanCIMetricsRow scans one ci_pr_panels export row and maps its nullable
@@ -261,7 +419,7 @@ func (db *DB) exportCIPanelJobs(panelRunUUID string) ([]ExportCIPanelJob, error)
 	return jobs, rows.Err()
 }
 
-func encodeCIMetricsCursor(databaseID, postedAt string, panelID int64) string {
+func encodeCIMetricsCursor(databaseID, postedAt string, panelID int64, legacy bool) string {
 	if databaseID == "" || postedAt == "" || panelID <= 0 {
 		return ""
 	}
@@ -270,6 +428,7 @@ func encodeCIMetricsCursor(databaseID, postedAt string, panelID int64) string {
 		DatabaseID: databaseID,
 		PostedAt:   postedAt,
 		PanelID:    panelID,
+		Legacy:     legacy,
 	})
 	if err != nil {
 		log.Printf("storage: warning: encode ci metrics cursor: %v", err)
@@ -278,7 +437,12 @@ func encodeCIMetricsCursor(databaseID, postedAt string, panelID int64) string {
 	return base64.RawURLEncoding.EncodeToString(data)
 }
 
-func (db *DB) resolveCIMetricsCursor(cursor string) (*ciMetricsCursor, error) {
+// resolveCIMetricsCursor decodes and validates an opaque cursor for the
+// requested export mode. legacy must match the mode the cursor was minted
+// for (ciMetricsCursor.Legacy); a mismatch is rejected with
+// ErrExportCIMetricsCursorModeMismatch since the two modes page over
+// different tables and ids.
+func (db *DB) resolveCIMetricsCursor(cursor string, legacy bool) (*ciMetricsCursor, error) {
 	if cursor == "" {
 		return nil, nil
 	}
@@ -296,6 +460,10 @@ func (db *DB) resolveCIMetricsCursor(cursor string) (*ciMetricsCursor, error) {
 	if decoded.DatabaseID == "" || decoded.PostedAt == "" || decoded.PanelID <= 0 {
 		return nil, errors.New("invalid ci metrics cursor: missing fields")
 	}
+	if decoded.Legacy != legacy {
+		return nil, fmt.Errorf("%w: cursor legacy=%v does not match requested legacy=%v",
+			ErrExportCIMetricsCursorModeMismatch, decoded.Legacy, legacy)
+	}
 	t, err := time.Parse(time.RFC3339Nano, decoded.PostedAt)
 	if err != nil {
 		return nil, fmt.Errorf("invalid ci metrics cursor timestamp: %w", err)
@@ -312,13 +480,18 @@ func (db *DB) resolveCIMetricsCursor(cursor string) (*ciMetricsCursor, error) {
 			ErrExportCursorDatabaseMismatch, decoded.DatabaseID, databaseID,
 		)
 	}
-	var count int
-	err = db.QueryRow(`
+	existsQuery := `
 		SELECT COUNT(1) FROM ci_pr_panels cp
 		WHERE cp.id = ? AND cp.posted_at IS NOT NULL
-		  AND `+sqliteNormalizedTimestampExpr("cp.posted_at")+` = datetime(?)`,
-		decoded.PanelID, decoded.PostedAt).Scan(&count)
-	if err != nil {
+		  AND ` + sqliteNormalizedTimestampExpr("cp.posted_at") + ` = datetime(?)`
+	if legacy {
+		existsQuery = `
+			SELECT COUNT(1) FROM ci_pr_reviews cr
+			WHERE cr.id = ? AND cr.created_at IS NOT NULL
+			  AND ` + sqliteNormalizedTimestampExpr("cr.created_at") + ` = datetime(?)`
+	}
+	var count int
+	if err := db.QueryRow(existsQuery, decoded.PanelID, decoded.PostedAt).Scan(&count); err != nil {
 		return nil, fmt.Errorf("validate ci metrics cursor: %w", err)
 	}
 	if count == 0 {

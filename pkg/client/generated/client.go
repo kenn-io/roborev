@@ -582,6 +582,7 @@ func (c *Client) ExportCiMetrics(ctx context.Context, options *ExportCiMetricsRe
 	queryEncoding := map[string]runtime.QueryEncoding{
 		"cursor": {Style: "form", Explode: &[]bool{false}[0]},
 		"format": {Style: "form", Explode: &[]bool{false}[0]},
+		"legacy": {Style: "form", Explode: &[]bool{false}[0]},
 		"limit":  {Style: "form", Explode: &[]bool{false}[0]},
 		"since":  {Style: "form", Explode: &[]bool{false}[0]},
 		"until":  {Style: "form", Explode: &[]bool{false}[0]},

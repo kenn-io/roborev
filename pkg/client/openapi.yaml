@@ -2262,6 +2262,13 @@ paths:
           schema:
             description: Opaque next_cursor from a previous page. Resumes strictly after its (posted_at, panel_id) position; mutually exclusive with since.
             type: string
+        - description: Export the frozen pre-panel ci_pr_reviews era instead of panel runs. Cursors are namespaced to this mode and cannot be reused across modes.
+          explode: false
+          in: query
+          name: legacy
+          schema:
+            description: Export the frozen pre-panel ci_pr_reviews era instead of panel runs. Cursors are namespaced to this mode and cannot be reused across modes.
+            type: boolean
       responses:
         "200":
           content:

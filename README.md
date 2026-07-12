@@ -240,6 +240,11 @@ the same cursor contract as `roborev export reviews`, ordered by
 `posted_at`, and exits with code `3` when a cursor's `database_id` no
 longer matches so callers can discard the cursor and backfill.
 
+Pass `--legacy` to export the frozen pre-panel CI era instead (rows with
+outcome `legacy_review`, one per reviewed PR head, from before panel runs
+existed) as a one-time backfill; legacy and panel cursors are namespaced
+and cannot be resumed against each other's export.
+
 ## Configuration
 
 Create `.roborev.toml` in your repo:

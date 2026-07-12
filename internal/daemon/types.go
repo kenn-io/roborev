@@ -165,6 +165,7 @@ type ExportCIMetricsInput struct {
 	Until  string `query:"until" doc:"Exclusive posted_at upper bound (RFC3339 or YYYY-MM-DD; date-only means through that UTC day)"`
 	Limit  int    `query:"limit" default:"500" doc:"Maximum panels in this page"`
 	Cursor string `query:"cursor" doc:"Opaque next_cursor from a previous page. Resumes strictly after its (posted_at, panel_id) position; mutually exclusive with since."`
+	Legacy bool   `query:"legacy" doc:"Export the frozen pre-panel ci_pr_reviews era instead of panel runs. Cursors are namespaced to this mode and cannot be reused across modes."`
 }
 
 // ExportCIMetricsDocument is the response body for GET /api/export/ci-metrics.

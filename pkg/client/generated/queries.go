@@ -71,6 +71,9 @@ type ExportCiMetricsQuery struct {
 
 	// Cursor Opaque next_cursor from a previous page. Resumes strictly after its (posted_at, panel_id) position; mutually exclusive with since.
 	Cursor *string `json:"cursor,omitempty"`
+
+	// Legacy Export the frozen pre-panel ci_pr_reviews era instead of panel runs. Cursors are namespaced to this mode and cannot be reused across modes.
+	Legacy *bool `json:"legacy,omitempty"`
 }
 
 type ExportReviewsQuery struct {

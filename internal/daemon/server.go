@@ -1325,6 +1325,7 @@ func (s *Server) humaExportCIMetrics(
 		Until:  until,
 		Cursor: input.Cursor,
 		Limit:  input.Limit,
+		Legacy: input.Legacy,
 	})
 	if err != nil {
 		if errors.Is(err, storage.ErrExportCursorDatabaseMismatch) {
