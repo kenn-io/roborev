@@ -502,7 +502,7 @@ func TestResolveWorkflowConfigModelForSelectedAgent_BackupWithoutModelKeepsDefau
 // path — while a model inherited from the trailing global
 // default_backup_model fallback pairs with default_backup_agent only. An
 // inherited model whose paired agent is not the selected ACP backup agent is
-// skipped (""), leaving the agent's own [acp].model in effect, because ACP
+// skipped in favor of the agent's own [acp].model, because ACP
 // exact-membership validation would otherwise reject the foreign value and
 // break the backup handoff. Non-ACP backup agents keep legacy behavior.
 func TestModelForSelectedAgentACPBackupPairing(t *testing.T) {
@@ -557,9 +557,10 @@ func TestModelForSelectedAgentACPBackupPairing(t *testing.T) {
 			// model is the inherited global default_backup_model, which pairs
 			// with default_backup_agent (unset here). Handing the inherited
 			// model to the ACP agent would fail its exact-membership
-			// validation and break the backup handoff, so it is skipped and
-			// the agent keeps its own [acp].model.
-			name: "acp backup, inherited default_backup_model, no default_backup_agent -> skipped",
+			// validation and break the backup handoff, so the agent's own
+			// [acp].model is surfaced instead (keeping persisted job metadata
+			// accurate).
+			name: "acp backup, inherited default_backup_model, no default_backup_agent -> acp model",
 			cfg: &config.Config{
 				DefaultAgent:       "codex",
 				ReviewAgent:        "gemini",
@@ -569,14 +570,14 @@ func TestModelForSelectedAgentACPBackupPairing(t *testing.T) {
 			},
 			workflow:      "review",
 			selectedAgent: acpName,
-			want:          "",
-			note:          "inherited default_backup_model is unpaired -> keeps [acp].model",
+			want:          acpModel,
+			note:          "inherited default_backup_model is unpaired -> [acp].model",
 		},
 		{
 			// Same mispair with default_backup_agent set to a DIFFERENT
 			// agent: default_backup_model pairs with that agent, not the
 			// workflow-selected ACP backup agent.
-			name: "acp backup, default_backup_model paired with other default_backup_agent -> skipped",
+			name: "acp backup, default_backup_model paired with other default_backup_agent -> acp model",
 			cfg: &config.Config{
 				DefaultAgent:       "codex",
 				ReviewAgent:        "gemini",
@@ -587,8 +588,25 @@ func TestModelForSelectedAgentACPBackupPairing(t *testing.T) {
 			},
 			workflow:      "review",
 			selectedAgent: acpName,
-			want:          "",
+			want:          acpModel,
 			note:          "default_backup_model belongs to claude, not the ACP agent",
+		},
+		{
+			// Mispair with no [acp].model configured either: nothing safe to
+			// hand the agent, so resolve to "" (the agent runs its own
+			// default).
+			name: "acp backup, mispaired inherited model, no [acp].model -> empty",
+			cfg: &config.Config{
+				DefaultAgent:       "codex",
+				ReviewAgent:        "gemini",
+				ReviewBackupAgent:  acpName,
+				DefaultBackupModel: "gpt-5.4-mini",
+				ACP:                &config.ACPAgentConfig{Name: acpName},
+			},
+			workflow:      "review",
+			selectedAgent: acpName,
+			want:          "",
+			note:          "mispaired inherited model with no [acp].model resolves empty",
 		},
 		{
 			// Legit same-layer global pair: default_backup_agent IS the ACP

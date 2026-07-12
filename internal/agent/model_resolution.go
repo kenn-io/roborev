@@ -146,13 +146,16 @@ func (w WorkflowConfig) ModelForSelectedAgent(
 		// when the selected ACP backup agent was configured at a more specific
 		// layer (e.g. review_backup_agent), handing it the inherited model
 		// would fail ACP exact-membership validation and break the backup
-		// handoff — the last line of defense. Return "" instead so the agent
-		// keeps its own [acp].model (callers apply the resolved model as
-		// `if model != "" { WithModel }`, and the configured ACP agent is
-		// constructed with [acp].model baked in). Non-ACP backup agents keep
-		// legacy behavior: native CLIs tolerate a foreign model value.
+		// handoff — the last line of defense. Skip the foreign model and
+		// surface the agent's own [acp].model instead (when set) so persisted
+		// job metadata matches the model the ACP agent actually runs. Non-ACP
+		// backup agents keep legacy behavior: native CLIs tolerate a foreign
+		// model value.
 		model := w.BackupModel()
 		if model != "" && w.acpBackupModelMispaired(selectedAgent) {
+			if acpCfg := w.resolveACPAgentConfig(); acpCfg != nil && acpCfg.Model != "" {
+				return acpCfg.Model
+			}
 			return ""
 		}
 		return model

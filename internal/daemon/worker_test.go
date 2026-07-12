@@ -2073,6 +2073,44 @@ func TestResolveBackupPrefersStoredJobBackup(t *testing.T) {
 	assert.Equal("opus", pool.resolveBackupModel(synthesisStored))
 }
 
+// TestResolveBackupModelSkipsMispairedACPInheritedDefault verifies the
+// failover path applies the ACP backup pairing guard: a global
+// default_backup_model inherited by a workflow-selected ACP backup agent
+// pairs with default_backup_agent (unset here), so persisting it would hand
+// the ACP agent a model it never advertised and the failover attempt would
+// fail again. The guard surfaces [acp].model instead. Non-ACP backups keep
+// legacy inheritance.
+func TestResolveBackupModelSkipsMispairedACPInheritedDefault(t *testing.T) {
+	assert := assert.New(t)
+	repoPath := t.TempDir()
+	job := &storage.ReviewJob{Agent: "codex", RepoPath: repoPath}
+
+	// Mispaired: ACP backup agent from review_backup_agent, model inherited
+	// from default_backup_model -> [acp].model wins.
+	cfg := config.DefaultConfig()
+	cfg.ACP = &config.ACPAgentConfig{Name: "agy-acp", Model: "gemini-3.5-flash"}
+	cfg.ReviewBackupAgent = "agy-acp"
+	cfg.DefaultBackupModel = "gpt-5.4-mini"
+	pool := NewWorkerPool(nil, NewStaticConfig(cfg), 1, NewBroadcaster(), nil, nil)
+	assert.Equal("gemini-3.5-flash", pool.resolveBackupModel(job))
+
+	// Same-layer pair: default_backup_agent IS the ACP agent, so the
+	// default_backup_model configured alongside it is honored.
+	cfgPaired := config.DefaultConfig()
+	cfgPaired.ACP = &config.ACPAgentConfig{Name: "agy-acp", Model: "gemini-3.5-flash"}
+	cfgPaired.DefaultBackupAgent = "agy-acp"
+	cfgPaired.DefaultBackupModel = "gemini-3.0-pro"
+	poolPaired := NewWorkerPool(nil, NewStaticConfig(cfgPaired), 1, NewBroadcaster(), nil, nil)
+	assert.Equal("gemini-3.0-pro", poolPaired.resolveBackupModel(job))
+
+	// Non-ACP backup: inherited default_backup_model keeps legacy behavior.
+	cfgLegacy := config.DefaultConfig()
+	cfgLegacy.ReviewBackupAgent = "claude"
+	cfgLegacy.DefaultBackupModel = "claude-sonnet"
+	poolLegacy := NewWorkerPool(nil, NewStaticConfig(cfgLegacy), 1, NewBroadcaster(), nil, nil)
+	assert.Equal("claude-sonnet", poolLegacy.resolveBackupModel(job))
+}
+
 func TestResolveBackupAgentUsesConfiguredCommandOverride(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("shell fake command uses POSIX permissions")

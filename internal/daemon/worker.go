@@ -1258,7 +1258,16 @@ func (wp *WorkerPool) resolveBackupModel(job *storage.ReviewJob) string {
 	if err != nil {
 		return ""
 	}
-	return resolution.BackupModel()
+	backup := strings.TrimSpace(resolution.BackupAgent)
+	if backup == "" {
+		return ""
+	}
+	// Resolve the model for the concrete backup agent through the same
+	// chokepoint the enqueue paths use so the ACP backup pairing guard
+	// applies: an inherited global default_backup_model must not be
+	// persisted for a mispaired ACP backup agent, or the failover attempt
+	// would hand ACP a model it never advertised and fail again.
+	return resolution.ModelForSelectedAgent(backup, "")
 }
 
 // broadcastFailed sends a review.failed event for a job
