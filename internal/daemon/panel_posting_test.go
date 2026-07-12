@@ -1019,6 +1019,37 @@ func TestPostPanelRunTransientGiveUp(t *testing.T) {
 	assert.Equal(storage.PanelOutcomeGiveupPosted, *got.Outcome)
 }
 
+// TestPostPanelRunAllSkipPersistsNoReviewOutcome covers the all-skip finalize
+// arm: every member is a timeout skip (classifyPanelOutcome falls through to
+// OutcomeAllSkip), so finalizePanelRun still posts the all-skipped summary but
+// must persist storage.PanelOutcomeNoReviewPosted, not the OutcomePost arm's
+// PanelOutcomeReviewPosted — the two arms only differ in which outcome they
+// pass to postPanelComment, so a regression re-merging them would pass every
+// other test in this file.
+func TestPostPanelRunAllSkipPersistsNoReviewOutcome(t *testing.T) {
+	assert := assert.New(t)
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	comments := h.CaptureComments()
+	statuses := h.CaptureCommitStatuses()
+
+	timeoutErr := reviewpkg.TimeoutErrorPrefix + "posted early"
+	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 87, "allskip1234567", "base..allskip1234567",
+		[]jobSpec{{Agent: "test", ReviewType: "review", Status: "canceled", Error: timeoutErr}})
+	h.markJobFailed(t, synth.ID, "synthesis released after all members skipped")
+
+	h.Poller.handleReviewFailed(ciEvent(synth.ID, "review.failed"))
+
+	require.Len(t, *comments, 1, "all-skip still posts the all-skipped summary")
+	assert.Contains((*comments)[0].Body, "## roborev: Combined Review", "all-skipped summary header")
+	assert.NotEmpty(*statuses, "commit status set on all-skip")
+	assert.True(h.panelPostedAt(t, panel.ID), "all-skip finalizes the panel (posted_at set)")
+
+	got, err := h.DB.GetCIPanelByPRSHA("acme/api", 87, "allskip1234567")
+	require.NoError(t, err)
+	require.NotNil(t, got.Outcome)
+	assert.Equal(storage.PanelOutcomeNoReviewPosted, *got.Outcome, "all-skip persists the no-review outcome")
+}
+
 // TestFinalizePanelRunBackfillsMissingAttemptRow covers upgrade-boundary panel
 // rows that predate reserve-on-enqueue. A terminal panel with no attempt row
 // must self-heal and still post instead of remaining active/unposted forever.
