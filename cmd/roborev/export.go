@@ -42,6 +42,7 @@ func exportCmd() *cobra.Command {
 		Short: "Export roborev data",
 	}
 	cmd.AddCommand(exportReviewsCmd())
+	cmd.AddCommand(exportCIMetricsCmd())
 	return cmd
 }
 

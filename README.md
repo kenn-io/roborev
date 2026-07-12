@@ -199,6 +199,7 @@ Use `make lint` when you explicitly want golangci-lint to apply fixes. Use
 | `roborev compact` | Verify and consolidate open review findings |
 | `roborev show [sha]` | Display review for commit |
 | `roborev export reviews` | Export completed reviews as JSON |
+| `roborev export ci-metrics` | Export finalized CI panel metrics as JSON |
 | `roborev run "<task>"` | Execute a task with an AI agent |
 | `roborev close <id>` | Close a review |
 | `roborev skills install` | Install agent skills for Claude/Codex |
@@ -229,6 +230,15 @@ be combined with `--since`. If a cursor belongs to a previous database
 generation, `roborev export reviews` exits with code `3`; discard the cursor
 and retry with a window backfill. Other cursor rejections also require
 discarding the cursor before backfilling.
+
+Use `roborev export ci-metrics` to emit finalized CI panel runs — terminal
+outcome (`review_posted`, `no_review_posted`, `giveup_posted`, `abandoned`,
+or `unknown` for panels finalized before outcomes were recorded),
+first-attempt and posting timestamps, attempt count, and each panel's
+member/synthesis jobs — for external review turnaround tracking. It follows
+the same cursor contract as `roborev export reviews`, ordered by
+`posted_at`, and exits with code `3` when a cursor's `database_id` no
+longer matches so callers can discard the cursor and backfill.
 
 ## Configuration
 
