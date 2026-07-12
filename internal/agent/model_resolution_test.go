@@ -646,8 +646,10 @@ func TestModelForSelectedAgentACPBackupPairing(t *testing.T) {
 		{
 			// Scope guard: a non-ACP backup agent keeps legacy behavior — the
 			// inherited default_backup_model still applies even though no
-			// default_backup_agent pairs with it (native CLIs tolerate a
-			// foreign model value).
+			// default_backup_agent pairs with it. Any incompatibility
+			// surfaces at the agent layer as a visible error (e.g. gemini
+			// via agy rejects explicit models loudly), never as ACP's
+			// silent failover break.
 			name: "non-acp backup, inherited default_backup_model -> honored (legacy)",
 			cfg: &config.Config{
 				DefaultAgent:       "codex",

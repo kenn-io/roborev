@@ -149,8 +149,11 @@ func (w WorkflowConfig) ModelForSelectedAgent(
 		// handoff — the last line of defense. Skip the foreign model and
 		// surface the agent's own [acp].model instead (when set) so persisted
 		// job metadata matches the model the ACP agent actually runs. Non-ACP
-		// backup agents keep legacy behavior: native CLIs tolerate a foreign
-		// model value.
+		// backup agents keep legacy behavior: a foreign model on a native CLI
+		// surfaces as a visible agent-layer error or is ignored, never a
+		// silent failover break. (Gemini resolved to the agy CLI rejects any
+		// explicit model with a loud, actionable error — pre-existing
+		// behavior enforced at the agent layer, see gemini.go.)
 		model := w.BackupModel()
 		if model != "" && w.acpBackupModelMispaired(selectedAgent) {
 			if acpCfg := w.resolveACPAgentConfig(); acpCfg != nil && acpCfg.Model != "" {
