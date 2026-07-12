@@ -27,7 +27,26 @@ roborev tui                      # Interactive terminal UI
                                  # --no-quit: suppress keyboard quit
                                  # --control-socket: custom socket path
 roborev version                  # Show version
+roborev version --json           # Show stable machine-readable version data
 ```
+
+### Version JSON contract
+
+`roborev version --json` prints one JSON object and exits successfully without
+requiring a repository or a running daemon:
+
+```json
+{"name":"roborev","version":"v0.62.0"}
+```
+
+The stable fields are:
+
+| Field | Type | Description |
+|-------|------|-------------|
+| `name` | string | Canonical tool name; always `roborev` |
+| `version` | string | Build version, using the release semantic version for release builds |
+
+Consumers should ignore additional fields so the contract can grow compatibly.
 
 ## Reviewing Code
 
