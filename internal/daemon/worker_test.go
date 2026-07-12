@@ -2109,6 +2109,24 @@ func TestResolveBackupModelSkipsMispairedACPInheritedDefault(t *testing.T) {
 	cfgLegacy.DefaultBackupModel = "claude-sonnet"
 	poolLegacy := NewWorkerPool(nil, NewStaticConfig(cfgLegacy), 1, NewBroadcaster(), nil, nil)
 	assert.Equal("claude-sonnet", poolLegacy.resolveBackupModel(job))
+
+	// Cross-file mispair: a repo-layer review_backup_agent selects the ACP
+	// agent while the only backup model is a global review_backup_model
+	// written against the global backup agent resolution (empty here). The
+	// repo agent override must not capture the global model on failover
+	// either.
+	repoOverridePath := t.TempDir()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(repoOverridePath, ".roborev.toml"),
+		[]byte("review_backup_agent = \"agy-acp\"\n"),
+		0o644,
+	))
+	cfgCross := config.DefaultConfig()
+	cfgCross.ACP = &config.ACPAgentConfig{Name: "agy-acp", Model: "gemini-3.5-flash"}
+	cfgCross.ReviewBackupModel = "gpt-5.4"
+	poolCross := NewWorkerPool(nil, NewStaticConfig(cfgCross), 1, NewBroadcaster(), nil, nil)
+	crossJob := &storage.ReviewJob{Agent: "codex", RepoPath: repoOverridePath}
+	assert.Equal("gemini-3.5-flash", poolCross.resolveBackupModel(crossJob))
 }
 
 func TestResolveBackupAgentUsesConfiguredCommandOverride(t *testing.T) {

@@ -93,16 +93,28 @@ func (w WorkflowConfig) BackupModel() string {
 	)
 }
 
-// acpBackupModelMispaired reports whether the backup model resolved for this
-// workflow was inherited from the global default_backup_model while the
-// selected ACP backup agent is not paired with it at that layer.
-// default_backup_model pairs with default_backup_agent; when the ACP backup
-// agent came from a more specific layer (or no default_backup_agent is set),
-// the inherited model belongs to a different agent and must not be handed to
-// the ACP agent, whose exact-membership model validation would reject it and
-// break the backup handoff. Workflow-scoped backup models pair with the
-// workflow's resolved backup agent — the selected agent on this path — and
-// are never mispaired here.
+// acpBackupModelMispaired reports whether the resolved backup model is
+// paired with a different agent than the selected ACP backup agent. Backup
+// agent and model precedence resolve independently, so a model must be
+// applied only when the backup agent resolvable AT THE MODEL'S OWN LAYER is
+// the selected ACP agent:
+//
+//   - Repo-layer models (repo {workflow}_backup_model, repo backup_model)
+//     pair with the normally-resolved backup agent: the repo author wrote
+//     the model against whatever full resolution yields (an inherited global
+//     agent included), which is the selected agent on this path. Never
+//     mispaired.
+//   - A global {workflow}_backup_model pairs with the backup agent
+//     resolvable from global-layer fields only (global
+//     {workflow}_backup_agent, else default_backup_agent). A more specific
+//     repo-layer agent override must not capture the global model.
+//   - A global default_backup_model pairs with default_backup_agent only. A
+//     more specific workflow- or repo-layer agent must not capture the
+//     generic model.
+//
+// A mispaired model would fail the ACP agent's exact-membership model
+// validation and break the backup handoff, which is why this is guarded for
+// ACP-selected backup agents only.
 func (w WorkflowConfig) acpBackupModelMispaired(selectedAgent string) bool {
 	if !w.isConfiguredACPAgentName(selectedAgent) {
 		return false
@@ -111,19 +123,31 @@ func (w WorkflowConfig) acpBackupModelMispaired(selectedAgent string) bool {
 	if repoCfg == nil {
 		repoCfg, _ = config.LoadRepoConfig(w.RepoPath)
 	}
+	// Repo-layer model: pairs with the fully-resolved backup agent (the
+	// selected agent). Passing a nil global config scopes resolution to the
+	// repo-layer fields.
 	if config.ResolveWorkflowScopedBackupModelFromConfig(
-		repoCfg, w.GlobalConfig, w.Workflow,
+		repoCfg, nil, w.Workflow,
 	) != "" {
-		// The resolved backup model is workflow-scoped: paired with the
-		// selected backup agent by construction.
 		return false
 	}
-	// The model was inherited from global default_backup_model, which pairs
-	// with default_backup_agent only.
 	if w.GlobalConfig == nil {
 		return false
 	}
-	pairedAgent := strings.TrimSpace(w.GlobalConfig.DefaultBackupAgent)
+	var pairedAgent string
+	if config.ResolveWorkflowScopedBackupModelFromConfig(
+		nil, w.GlobalConfig, w.Workflow,
+	) != "" {
+		// Global {workflow}_backup_model: pairs with the global-layer
+		// workflow backup agent resolution (global {workflow}_backup_agent,
+		// else default_backup_agent).
+		pairedAgent = config.ResolveBackupAgentForWorkflowFromConfig(
+			nil, w.GlobalConfig, w.Workflow,
+		)
+	} else {
+		// Global default_backup_model: pairs with default_backup_agent only.
+		pairedAgent = strings.TrimSpace(w.GlobalConfig.DefaultBackupAgent)
+	}
 	return pairedAgent == "" || !w.AgentMatches(selectedAgent, pairedAgent)
 }
 
