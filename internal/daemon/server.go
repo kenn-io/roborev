@@ -1302,6 +1302,60 @@ func (s *Server) humaExportReviews(
 	return resp, nil
 }
 
+func (s *Server) humaExportCIMetrics(
+	ctx context.Context, input *ExportCIMetricsInput,
+) (*ExportCIMetricsOutput, error) {
+	if input.Format != "" && input.Format != "json" {
+		return nil, huma.Error400BadRequest("unsupported export format")
+	}
+	if input.Cursor != "" && input.Since != "" {
+		return nil, huma.Error400BadRequest("cursor cannot be used with since")
+	}
+	since, sinceOut, err := parseExportTimeBound(input.Since, false)
+	if err != nil {
+		return nil, huma.Error400BadRequest("invalid since")
+	}
+	until, untilOut, err := parseExportTimeBound(input.Until, true)
+	if err != nil {
+		return nil, huma.Error400BadRequest("invalid until")
+	}
+
+	page, err := s.db.ExportCIMetrics(storage.ExportCIMetricsOptions{
+		Since:  since,
+		Until:  until,
+		Cursor: input.Cursor,
+		Limit:  input.Limit,
+	})
+	if err != nil {
+		if errors.Is(err, storage.ErrExportCursorDatabaseMismatch) {
+			return nil, huma.Error409Conflict(err.Error())
+		}
+		return nil, huma.Error400BadRequest(err.Error())
+	}
+	databaseID, err := s.db.GetDatabaseID()
+	if err != nil {
+		return nil, fmt.Errorf("get database ID: %w", err)
+	}
+
+	resp := &ExportCIMetricsOutput{}
+	resp.Body = ExportCIMetricsDocument{
+		SchemaVersion: 1,
+		Tool:          "roborev",
+		ToolVersion:   version.Version,
+		GeneratedAt:   time.Now().UTC().Format(time.RFC3339),
+		DatabaseID:    databaseID,
+		Window: ExportReviewsWindow{
+			Field: "posted_at",
+			Since: sinceOut,
+			Until: untilOut,
+		},
+		Truncated:  page.Truncated,
+		NextCursor: page.NextCursor,
+		Panels:     page.Panels,
+	}
+	return resp, nil
+}
+
 func parseExportTimeBound(raw string, upper bool) (time.Time, *string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {

@@ -155,6 +155,36 @@ type ExportReviewsOutput struct {
 	Body ExportReviewsDocument
 }
 
+// -- GET /api/export/ci-metrics --
+
+// ExportCIMetricsInput holds query parameters for exporting finalized CI
+// panel metrics.
+type ExportCIMetricsInput struct {
+	Format string `query:"format" default:"json" doc:"Output format; only json is supported"`
+	Since  string `query:"since" doc:"Inclusive posted_at lower bound (RFC3339 or YYYY-MM-DD)"`
+	Until  string `query:"until" doc:"Exclusive posted_at upper bound (RFC3339 or YYYY-MM-DD; date-only means through that UTC day)"`
+	Limit  int    `query:"limit" default:"500" doc:"Maximum panels in this page"`
+	Cursor string `query:"cursor" doc:"Opaque next_cursor from a previous page. Resumes strictly after its (posted_at, panel_id) position; mutually exclusive with since."`
+}
+
+// ExportCIMetricsDocument is the response body for GET /api/export/ci-metrics.
+type ExportCIMetricsDocument struct {
+	SchemaVersion int                     `json:"schema_version"`
+	Tool          string                  `json:"tool"`
+	ToolVersion   string                  `json:"tool_version"`
+	GeneratedAt   string                  `json:"generated_at"`
+	DatabaseID    string                  `json:"database_id" doc:"Stable identity for the local review database; changes when the database is recreated."`
+	Window        ExportReviewsWindow     `json:"window"`
+	Truncated     bool                    `json:"truncated" doc:"True when more matching rows are available immediately."`
+	NextCursor    *string                 `json:"next_cursor" doc:"Opaque resume cursor emitted when panels is non-empty."`
+	Panels        []storage.ExportCIPanel `json:"panels"`
+}
+
+// ExportCIMetricsOutput is the response for GET /api/export/ci-metrics.
+type ExportCIMetricsOutput struct {
+	Body ExportCIMetricsDocument
+}
+
 // -- Shared request/response types (used by Huma handlers) --
 
 // CancelJobRequest is the JSON body for POST /api/job/cancel.

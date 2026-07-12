@@ -425,6 +425,49 @@ func TestHumaExportReviewsMaxLimitIsClamped(t *testing.T) {
 	assert.NotNil(t, body.NextCursor)
 }
 
+func TestHumaExportCIMetrics(t *testing.T) {
+	srv, db, _ := newTestServer(t)
+	repo := testutil.CreateTestRepo(t, db)
+
+	// Seed one finalized panel exactly as the storage tests do.
+	created, err := db.ReserveReviewAttempt("o/r", 5, "headsha5",
+		time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC))
+	require.NoError(t, err)
+	require.True(t, created)
+	members := []storage.EnqueueOpts{
+		{RepoID: repo.ID, GitRef: "b..headsha5", Agent: "test", PanelMemberIndex: 0},
+	}
+	synthesis := storage.EnqueueOpts{RepoID: repo.ID, GitRef: "b..headsha5", Agent: "test"}
+	ok, _, _, err := db.CreateCIPanelRun("o/r", 5, "headsha5", members, synthesis)
+	require.NoError(t, err)
+	require.True(t, ok)
+	panel, err := db.GetCIPanelByPRSHA("o/r", 5, "headsha5")
+	require.NoError(t, err)
+	require.NoError(t, db.MarkPanelPosted(panel.ID, storage.PanelOutcomeReviewPosted))
+
+	rr := serveHuma(t, srv, http.MethodGet, "/api/export/ci-metrics", nil)
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+	var doc ExportCIMetricsDocument
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &doc))
+	assert.Equal(t, 1, doc.SchemaVersion)
+	assert.Equal(t, "roborev", doc.Tool)
+	assert.NotEmpty(t, doc.DatabaseID)
+	assert.Equal(t, "posted_at", doc.Window.Field)
+	require.Len(t, doc.Panels, 1)
+	assert.Equal(t, storage.PanelOutcomeReviewPosted, doc.Panels[0].Outcome)
+
+	// Cursor from a different database → 409.
+	foreign, err := json.Marshal(map[string]any{
+		"version": 1, "database_id": "other",
+		"posted_at": "2026-07-01T00:00:00Z", "panel_id": 1,
+	})
+	require.NoError(t, err)
+	cursor := base64.RawURLEncoding.EncodeToString(foreign)
+	rr = serveHuma(t, srv, http.MethodGet,
+		"/api/export/ci-metrics?cursor="+url.QueryEscape(cursor), nil)
+	assert.Equal(t, http.StatusConflict, rr.Code, rr.Body.String())
+}
+
 func encodeExportCursorForRouteTest(t *testing.T, databaseID, completedAt, reviewID string) string {
 	t.Helper()
 	data, err := json.Marshal(map[string]any{
@@ -695,6 +738,7 @@ func TestHumaOpenAPISpec(t *testing.T) {
 		"/api/jobs":              "get",
 		"/api/review":            "get",
 		"/api/export/reviews":    "get",
+		"/api/export/ci-metrics": "get",
 		"/api/comments":          "get",
 		"/api/repos":             "get",
 		"/api/repos/resolve":     "get",
