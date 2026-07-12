@@ -364,7 +364,7 @@ const legacyUnitJobConditions = `(j.panel_run_uuid IS NULL OR j.panel_run_uuid =
 // wall clock (observed in production: one ref re-reviewed 12 days later
 // inflated its turnaround to 290 hours). Pseudopanel members enqueue within
 // seconds of each other, so the hour window is generous for real units.
-const legacyUnitWindowCTE = `unit_windows AS (
+const legacyUnitWindowCTE = `unit_windows AS MATERIALIZED (
 			SELECT j.repo_id, j.git_ref,
 			       strftime('%Y-%m-%dT%H:%M:%SZ',
 			                datetime(MIN(` + legacyUnitTimeExprConst + `), '+1 hour')) AS window_end
