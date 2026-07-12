@@ -748,3 +748,80 @@ func TestMarkPanelPostedWithoutAttemptRow(t *testing.T) {
 	assert.Nil(t, p.FirstAttemptAt)
 	assert.Nil(t, p.AttemptCount)
 }
+
+// TestMarkPanelPostedTwiceErrorsAndPreservesFirstResult covers a stale
+// posting lease (or any other double call) racing a prior successful
+// MarkPanelPosted: the guarded panel UPDATE must not match a second time, so
+// the second call errors instead of overwriting the already-stamped outcome/
+// first_attempt_at/attempt_count/posted_at, and the attempt row set 'done' by
+// the first call must stay 'done' rather than being touched again.
+func TestMarkPanelPostedTwiceErrorsAndPreservesFirstResult(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	created, err := db.ReserveReviewAttempt("o/r", 9, "headsha9", now)
+	require.NoError(t, err)
+	require.True(t, created)
+
+	id := seedPanelRow(t, db, "o/r", 9, "headsha9")
+	require.NoError(t, db.MarkPanelPosted(id, PanelOutcomeReviewPosted))
+
+	first, err := db.GetCIPanelByPRSHA("o/r", 9, "headsha9")
+	require.NoError(t, err)
+
+	err = db.MarkPanelPosted(id, PanelOutcomeAbandoned)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "not finalizable")
+
+	second, err := db.GetCIPanelByPRSHA("o/r", 9, "headsha9")
+	require.NoError(t, err)
+	require.NotNil(t, second.Outcome)
+	assert.Equal(t, PanelOutcomeReviewPosted, *second.Outcome, "outcome from first call survives")
+	require.NotNil(t, second.FirstAttemptAt)
+	require.NotNil(t, first.FirstAttemptAt)
+	assert.True(t, second.FirstAttemptAt.Equal(*first.FirstAttemptAt))
+	require.NotNil(t, second.AttemptCount)
+	require.NotNil(t, first.AttemptCount)
+	assert.Equal(t, *first.AttemptCount, *second.AttemptCount)
+	require.NotNil(t, second.PostedAt)
+	require.NotNil(t, first.PostedAt)
+	assert.True(t, second.PostedAt.Equal(*first.PostedAt), "posted_at must not be overwritten")
+
+	attempt, err := db.GetReviewAttempt("o/r", 9, "headsha9")
+	require.NoError(t, err)
+	require.NotNil(t, attempt)
+	assert.Equal(t, "done", attempt.State, "attempt row stays done from the first call")
+}
+
+// TestMarkPanelPostedRetiredPanelErrors covers a concurrently retired panel: a
+// posting lease that finishes after MarkPanelRetired must not finalize the
+// row (it has no outcome to protect its own metrics from a stale caller) and
+// must not mark the attempt row done, since the panel run was abandoned by
+// the retire, not completed.
+func TestMarkPanelPostedRetiredPanelErrors(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	created, err := db.ReserveReviewAttempt("o/r", 10, "headsha10", now)
+	require.NoError(t, err)
+	require.True(t, created)
+
+	id := seedPanelRow(t, db, "o/r", 10, "headsha10")
+	require.NoError(t, db.MarkPanelRetired(id))
+
+	err = db.MarkPanelPosted(id, PanelOutcomeReviewPosted)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "not finalizable")
+
+	panel, err := db.GetCIPanelByPRSHA("o/r", 10, "headsha10")
+	require.NoError(t, err)
+	assert.Nil(t, panel.Outcome, "retired panel must not be finalized")
+	assert.NotNil(t, panel.RetiredAt)
+
+	attempt, err := db.GetReviewAttempt("o/r", 10, "headsha10")
+	require.NoError(t, err)
+	require.NotNil(t, attempt)
+	assert.NotEqual(t, "done", attempt.State, "attempt must not be marked done for a retired panel")
+}
