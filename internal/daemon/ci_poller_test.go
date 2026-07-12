@@ -2834,7 +2834,7 @@ func TestCIPollerProcessPR_PostedSameHeadIsAlreadyReviewed(t *testing.T) {
 	require.NoError(t, err, "first processPR")
 	panel, err := h.DB.GetCIPanelByPRSHA("acme/api", 72, "same-sha")
 	require.NoError(t, err)
-	require.NoError(t, h.DB.MarkPanelPosted(panel.ID))
+	require.NoError(t, h.DB.MarkPanelPosted(panel.ID, storage.PanelOutcomeReviewPosted))
 
 	captured := h.CaptureCommitStatuses()
 	err = h.Poller.processPR(

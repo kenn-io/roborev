@@ -6,6 +6,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/storage"
 )
 
 // backdatePanelPostClaim forces a panel row's posting_claimed_at older than the
@@ -100,7 +102,7 @@ func TestReconcilePanelPostingNoop(t *testing.T) {
 	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 22, "headrec333", "base..headrec333",
 		[]jobSpec{{Agent: "test", ReviewType: "review", Status: "done", Output: "Finding T"}})
 	h.completeSynthesisWithReview(t, synth.ID, "## Combined\nVerified finding T.")
-	require.NoError(t, h.DB.MarkPanelPosted(panel.ID))
+	require.NoError(t, h.DB.MarkPanelPosted(panel.ID, storage.PanelOutcomeReviewPosted))
 
 	h.Poller.reconcilePanelPosting(context.Background(), "acme/api")
 

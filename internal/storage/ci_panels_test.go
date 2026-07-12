@@ -88,7 +88,7 @@ func TestClaimPanelForPosting(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, got3, "re-claimable after release")
 
-	require.NoError(t, db.MarkPanelPosted(id))
+	require.NoError(t, db.MarkPanelPosted(id, PanelOutcomeReviewPosted))
 	got4, err := db.ClaimPanelForPosting(id, staleWindow)
 	require.NoError(t, err)
 	assert.False(t, got4, "posted row never claims again")
@@ -163,7 +163,7 @@ func TestGetPendingPanelPRsAndDelete(t *testing.T) {
 	// PR 1 posted (excluded), PR 2 + PR 3 pending (included). A row under a
 	// different repo proves the github_repo filter excludes it.
 	postedID := seedPanelRow(t, db, "o/r", 1, "sha1")
-	require.NoError(t, db.MarkPanelPosted(postedID))
+	require.NoError(t, db.MarkPanelPosted(postedID, PanelOutcomeReviewPosted))
 	pendingID2 := seedPanelRow(t, db, "o/r", 2, "sha2")
 	seedPanelRow(t, db, "o/r", 3, "sha3")
 	seedPanelRow(t, db, "x/y", 9, "sha9")
@@ -202,7 +202,7 @@ func TestGetActivePanelsForPR(t *testing.T) {
 	// Two rows for PR 7: one posted (excluded), one pending (included). Rows for
 	// a different PR and a different repo prove the filters.
 	postedID := seedPanelRow(t, db, "o/r", 7, "posted")
-	require.NoError(t, db.MarkPanelPosted(postedID))
+	require.NoError(t, db.MarkPanelPosted(postedID, PanelOutcomeReviewPosted))
 	seedPanelRow(t, db, "o/r", 7, "pending")
 	seedPanelRow(t, db, "o/r", 8, "other-pr")
 	seedPanelRow(t, db, "x/y", 7, "other-repo")
@@ -250,7 +250,7 @@ func TestGetTimedOutPanels(t *testing.T) {
 	queuedOld, queuedMember := seedRun(4, "queued-old", time.Now().Add(-1*time.Hour).Format(time.RFC3339))
 	_, err := db.Exec(`UPDATE review_jobs SET status = 'queued', started_at = NULL WHERE id = ?`, queuedMember.ID)
 	require.NoError(t, err)
-	require.NoError(t, db.MarkPanelPosted(oldPosted.ID))
+	require.NoError(t, db.MarkPanelPosted(oldPosted.ID, PanelOutcomeReviewPosted))
 	_ = recentUnposted
 	_ = queuedOld
 
@@ -469,7 +469,7 @@ func TestGetUnpostedTerminalPanels(t *testing.T) {
 	// (c) synthesis failed, posted_at SET -> EXCLUDED (already posted).
 	cPanel, cSynth := seedPanelRunForRepo(t, db, repo.ID, "o/r", 3, "failed-posted")
 	setStatus(t, db, cSynth.ID, JobStatusFailed)
-	require.NoError(t, db.MarkPanelPosted(cPanel.ID))
+	require.NoError(t, db.MarkPanelPosted(cPanel.ID, PanelOutcomeReviewPosted))
 	// (d) synthesis failed, posted_at NULL -> INCLUDED (raw-fallback must post).
 	dPanel, dSynth := seedPanelRunForRepo(t, db, repo.ID, "o/r", 4, "failed-unposted")
 	setStatus(t, db, dSynth.ID, JobStatusFailed)
@@ -561,7 +561,7 @@ func TestMarkPanelRetiredDoesNotRetirePostedPanel(t *testing.T) {
 	t.Cleanup(func() { db.Close() })
 
 	id := seedPanelRow(t, db, "o/r", 6, "posted-head")
-	require.NoError(t, db.MarkPanelPosted(id))
+	require.NoError(t, db.MarkPanelPosted(id, PanelOutcomeReviewPosted))
 	require.NoError(t, db.MarkPanelRetired(id))
 
 	panel, err := db.GetActiveCIPanelByPRSHA("o/r", 6, "posted-head")
@@ -698,4 +698,46 @@ func TestCreateCIPanelRunAtomicity(t *testing.T) {
 	attempt, err := db.GetReviewAttempt("o/r", 11, "atomicsha")
 	require.NoError(t, err)
 	assert.Nil(attempt, "reserved attempt row rolls back with the failed run")
+}
+
+func TestMarkPanelPostedSnapshotsAttemptMetrics(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	now := time.Date(2026, 7, 1, 12, 0, 0, 0, time.UTC)
+	created, err := db.ReserveReviewAttempt("o/r", 7, "headsha7", now)
+	require.NoError(t, err)
+	require.True(t, created)
+
+	id := seedPanelRow(t, db, "o/r", 7, "headsha7")
+	require.NoError(t, db.MarkPanelPosted(id, PanelOutcomeReviewPosted))
+
+	// Closed-PR cleanup deletes attempt rows; the snapshot must survive it.
+	_, err = db.DeleteReviewAttemptsForPR("o/r", 7)
+	require.NoError(t, err)
+
+	p, err := db.GetCIPanelByPRSHA("o/r", 7, "headsha7")
+	require.NoError(t, err)
+	require.NotNil(t, p.PostedAt)
+	require.NotNil(t, p.Outcome)
+	assert.Equal(t, PanelOutcomeReviewPosted, *p.Outcome)
+	require.NotNil(t, p.FirstAttemptAt)
+	assert.True(t, p.FirstAttemptAt.Equal(now), "got %v want %v", p.FirstAttemptAt, now)
+	require.NotNil(t, p.AttemptCount)
+	assert.Equal(t, int64(1), *p.AttemptCount)
+}
+
+func TestMarkPanelPostedWithoutAttemptRow(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	id := seedPanelRow(t, db, "o/r", 8, "headsha8")
+	require.NoError(t, db.MarkPanelPosted(id, PanelOutcomeAbandoned))
+
+	p, err := db.GetCIPanelByPRSHA("o/r", 8, "headsha8")
+	require.NoError(t, err)
+	require.NotNil(t, p.Outcome)
+	assert.Equal(t, PanelOutcomeAbandoned, *p.Outcome)
+	assert.Nil(t, p.FirstAttemptAt)
+	assert.Nil(t, p.AttemptCount)
 }

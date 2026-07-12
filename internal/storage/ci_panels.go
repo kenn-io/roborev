@@ -269,10 +269,27 @@ func (db *DB) ReleasePanelPostClaim(id int64) error {
 	return err
 }
 
-// MarkPanelPosted records that the PR comment for this run has been posted,
-// permanently barring further posting claims for the row.
-func (db *DB) MarkPanelPosted(id int64) error {
-	_, err := db.Exec(`UPDATE ci_pr_panels SET posted_at = datetime('now') WHERE id = ? AND retired_at IS NULL`, id)
+// MarkPanelPosted finalizes the run: it permanently bars further posting
+// claims and atomically stamps the terminal outcome plus a snapshot of
+// first_attempt_at/attempt from the operational attempt row. The snapshot
+// matters because closed-PR cleanup later deletes attempt rows; the panel
+// row is the durable record of terminal metrics.
+func (db *DB) MarkPanelPosted(id int64, outcome string) error {
+	_, err := db.Exec(`
+		UPDATE ci_pr_panels
+		SET posted_at = datetime('now'),
+		    outcome = ?,
+		    first_attempt_at = (
+		        SELECT a.first_attempt_at FROM ci_pr_review_attempts a
+		        WHERE a.github_repo = ci_pr_panels.github_repo
+		          AND a.pr_number = ci_pr_panels.pr_number
+		          AND a.head_sha = ci_pr_panels.head_sha),
+		    attempt_count = (
+		        SELECT a.attempt FROM ci_pr_review_attempts a
+		        WHERE a.github_repo = ci_pr_panels.github_repo
+		          AND a.pr_number = ci_pr_panels.pr_number
+		          AND a.head_sha = ci_pr_panels.head_sha)
+		WHERE id = ? AND retired_at IS NULL`, outcome, id)
 	return err
 }
 
