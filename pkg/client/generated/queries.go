@@ -56,6 +56,23 @@ func (g GetCostQuery) Validate() error {
 	return errors
 }
 
+type ExportCiMetricsQuery struct {
+	// Format Output format; only json is supported
+	Format *string `json:"format,omitempty"`
+
+	// Since Inclusive posted_at lower bound (RFC3339 or YYYY-MM-DD)
+	Since *string `json:"since,omitempty"`
+
+	// Until Exclusive posted_at upper bound (RFC3339 or YYYY-MM-DD; date-only means through that UTC day)
+	Until *string `json:"until,omitempty"`
+
+	// Limit Maximum panels in this page
+	Limit *int64 `json:"limit,omitempty"`
+
+	// Cursor Opaque next_cursor from a previous page. Resumes strictly after its (posted_at, panel_id) position; mutually exclusive with since.
+	Cursor *string `json:"cursor,omitempty"`
+}
+
 type ExportReviewsQuery struct {
 	// Format Output format; only json is supported
 	Format *string `json:"format,omitempty"`

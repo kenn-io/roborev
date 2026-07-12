@@ -356,6 +356,137 @@ func (s ErrorResponse) Error() string {
 	return "unmapped client error"
 }
 
+type ExportCIMetricsDocument struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+
+	// DatabaseID Stable identity for the local review database; changes when the database is recreated.
+	DatabaseID  string `json:"database_id" validate:"required"`
+	GeneratedAt string `json:"generated_at" validate:"required"`
+
+	// NextCursor Opaque resume cursor emitted when panels is non-empty.
+	NextCursor    *string         `json:"next_cursor,omitempty" validate:"required"`
+	Panels        []ExportCIPanel `json:"panels,omitempty" validate:"required"`
+	SchemaVersion int64           `json:"schema_version"`
+	Tool          string          `json:"tool" validate:"required"`
+	ToolVersion   string          `json:"tool_version" validate:"required"`
+
+	// Truncated True when more matching rows are available immediately.
+	Truncated bool                `json:"truncated"`
+	Window    ExportReviewsWindow `json:"window"`
+}
+
+func (e ExportCIMetricsDocument) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(e.DatabaseID, "required"); err != nil {
+		errors = errors.Append("DatabaseID", err)
+	}
+	if err := typesValidator.Var(e.GeneratedAt, "required"); err != nil {
+		errors = errors.Append("GeneratedAt", err)
+	}
+	if e.NextCursor != nil {
+		if err := typesValidator.Var(e.NextCursor, "required"); err != nil {
+			errors = errors.Append("NextCursor", err)
+		}
+	}
+	for i, item := range e.Panels {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Panels[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(e.Tool, "required"); err != nil {
+		errors = errors.Append("Tool", err)
+	}
+	if err := typesValidator.Var(e.ToolVersion, "required"); err != nil {
+		errors = errors.Append("ToolVersion", err)
+	}
+	if v, ok := any(e.Window).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Window", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type ExportCIPanel struct {
+	AttemptCount   *int64             `json:"attempt_count,omitempty"`
+	FirstAttemptAt *string            `json:"first_attempt_at,omitempty" validate:"required"`
+	GithubRepo     string             `json:"github_repo" validate:"required"`
+	HeadSha        string             `json:"head_sha" validate:"required"`
+	Jobs           []ExportCIPanelJob `json:"jobs,omitempty" validate:"required"`
+	Outcome        string             `json:"outcome" validate:"required"`
+	PanelCreatedAt string             `json:"panel_created_at" validate:"required"`
+	PostedAt       string             `json:"posted_at" validate:"required"`
+	PrNumber       int64              `json:"pr_number"`
+	SynthesisAgent *string            `json:"synthesis_agent,omitempty" validate:"required"`
+	SynthesisModel *string            `json:"synthesis_model,omitempty" validate:"required"`
+}
+
+func (e ExportCIPanel) Validate() error {
+	var errors runtime.ValidationErrors
+	if e.FirstAttemptAt != nil {
+		if err := typesValidator.Var(e.FirstAttemptAt, "required"); err != nil {
+			errors = errors.Append("FirstAttemptAt", err)
+		}
+	}
+	if err := typesValidator.Var(e.GithubRepo, "required"); err != nil {
+		errors = errors.Append("GithubRepo", err)
+	}
+	if err := typesValidator.Var(e.HeadSha, "required"); err != nil {
+		errors = errors.Append("HeadSha", err)
+	}
+	for i, item := range e.Jobs {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Jobs[%d]", i), err)
+			}
+		}
+	}
+	if err := typesValidator.Var(e.Outcome, "required"); err != nil {
+		errors = errors.Append("Outcome", err)
+	}
+	if err := typesValidator.Var(e.PanelCreatedAt, "required"); err != nil {
+		errors = errors.Append("PanelCreatedAt", err)
+	}
+	if err := typesValidator.Var(e.PostedAt, "required"); err != nil {
+		errors = errors.Append("PostedAt", err)
+	}
+	if e.SynthesisAgent != nil {
+		if err := typesValidator.Var(e.SynthesisAgent, "required"); err != nil {
+			errors = errors.Append("SynthesisAgent", err)
+		}
+	}
+	if e.SynthesisModel != nil {
+		if err := typesValidator.Var(e.SynthesisModel, "required"); err != nil {
+			errors = errors.Append("SynthesisModel", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type ExportCIPanelJob struct {
+	Agent      string  `json:"agent" validate:"required"`
+	FinishedAt *string `json:"finished_at,omitempty" validate:"required"`
+	JobUUID    string  `json:"job_uuid" validate:"required"`
+	Model      *string `json:"model,omitempty" validate:"required"`
+	Provider   *string `json:"provider,omitempty" validate:"required"`
+	Role       string  `json:"role" validate:"required"`
+	StartedAt  *string `json:"started_at,omitempty" validate:"required"`
+	Status     string  `json:"status" validate:"required"`
+}
+
+func (e ExportCIPanelJob) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(e))
+}
+
 type ExportReview struct {
 	Agent       string           `json:"agent" validate:"required"`
 	Branch      *string          `json:"branch,omitempty" validate:"required"`

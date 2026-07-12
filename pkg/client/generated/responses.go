@@ -115,6 +115,10 @@ type EnqueueJobErrorResponseJSON500 = ErrorResponse
 
 type EnqueueJobErrorResponseJSON503 = ErrorResponse
 
+type ExportCiMetricsResponse = ExportCIMetricsDocument
+
+type ExportCiMetricsErrorResponse = ErrorModel
+
 type ExportReviewsResponse = ExportReviewsDocument
 
 type ExportReviewsErrorResponse = ErrorModel
@@ -274,6 +278,14 @@ type EnqueueJobResp struct {
 	JSON413      *EnqueueJobErrorResponseJSON
 	JSON500      *EnqueueJobErrorResponseJSON500
 	JSON503      *EnqueueJobErrorResponseJSON503
+}
+
+type ExportCiMetricsResp struct {
+	HTTPResponse                  *http.Response
+	Body                          []byte
+	StatusCode                    int
+	JSON200                       *ExportCiMetricsResponse
+	ApplicationProblemPlusJSON409 *ExportCiMetricsErrorResponse
 }
 
 type ExportReviewsResp struct {
