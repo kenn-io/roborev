@@ -712,6 +712,13 @@ func TestMarkPanelPostedSnapshotsAttemptMetrics(t *testing.T) {
 	id := seedPanelRow(t, db, "o/r", 7, "headsha7")
 	require.NoError(t, db.MarkPanelPosted(id, PanelOutcomeReviewPosted))
 
+	// MarkPanelPosted finalizes the attempt row and the panel row in the same
+	// transaction; the attempt must be terminal before it is ever deleted.
+	attempt, err := db.GetReviewAttempt("o/r", 7, "headsha7")
+	require.NoError(t, err)
+	require.NotNil(t, attempt)
+	assert.Equal(t, "done", attempt.State)
+
 	// Closed-PR cleanup deletes attempt rows; the snapshot must survive it.
 	_, err = db.DeleteReviewAttemptsForPR("o/r", 7)
 	require.NoError(t, err)

@@ -269,13 +269,35 @@ func (db *DB) ReleasePanelPostClaim(id int64) error {
 	return err
 }
 
-// MarkPanelPosted finalizes the run: it permanently bars further posting
-// claims and atomically stamps the terminal outcome plus a snapshot of
-// first_attempt_at/attempt from the operational attempt row. The snapshot
-// matters because closed-PR cleanup later deletes attempt rows; the panel
-// row is the durable record of terminal metrics.
+// MarkPanelPosted finalizes the run: in one atomic transaction it marks the
+// HEAD's review attempt terminal (state='done', mirroring
+// MarkReviewAttemptDone) and finalizes the panel row — permanently barring
+// further posting claims and stamping the terminal outcome plus a snapshot of
+// first_attempt_at/attempt from the operational attempt row. Doing both in one
+// transaction prevents a split where the panel is terminal but the attempt
+// stays pending: the stuck-attempt reconcile would otherwise rearm it and
+// enqueue a duplicate review. The snapshot matters because closed-PR cleanup
+// later deletes attempt rows; the panel row is the durable record of terminal
+// metrics. The attempt row may already be gone (deleted by closed-PR
+// cleanup); zero rows affected there is not an error.
 func (db *DB) MarkPanelPosted(id int64, outcome string) error {
-	_, err := db.Exec(`
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("mark panel posted: begin: %w", err)
+	}
+	defer func() { _ = tx.Rollback() }()
+
+	now := time.Now().Format(time.RFC3339)
+	if _, err := tx.Exec(`
+		UPDATE ci_pr_review_attempts
+		SET state = 'done', next_attempt_at = NULL, updated_at = ?
+		WHERE (github_repo, pr_number, head_sha) = (
+		    SELECT github_repo, pr_number, head_sha FROM ci_pr_panels WHERE id = ?)`,
+		now, id); err != nil {
+		return fmt.Errorf("mark panel posted: mark attempt done: %w", err)
+	}
+
+	if _, err := tx.Exec(`
 		UPDATE ci_pr_panels
 		SET posted_at = datetime('now'),
 		    outcome = ?,
@@ -289,8 +311,14 @@ func (db *DB) MarkPanelPosted(id int64, outcome string) error {
 		        WHERE a.github_repo = ci_pr_panels.github_repo
 		          AND a.pr_number = ci_pr_panels.pr_number
 		          AND a.head_sha = ci_pr_panels.head_sha)
-		WHERE id = ? AND retired_at IS NULL`, outcome, id)
-	return err
+		WHERE id = ? AND retired_at IS NULL`, outcome, id); err != nil {
+		return fmt.Errorf("mark panel posted: finalize panel: %w", err)
+	}
+
+	if err := tx.Commit(); err != nil {
+		return fmt.Errorf("mark panel posted: commit: %w", err)
+	}
+	return nil
 }
 
 // MarkPanelRetired makes an abandoned panel row non-postable while retaining its
