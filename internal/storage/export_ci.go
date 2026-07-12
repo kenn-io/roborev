@@ -377,22 +377,34 @@ const legacyUnitWindowCTE = `unit_windows AS MATERIALIZED (
 // use inside const SQL fragments.
 const legacyUnitTimeExprConst = `strftime('%Y-%m-%dT%H:%M:%SZ', j.enqueued_at)`
 
+// legacyUnitWindowEndSubquery computes one (repo, git_ref) unit's adjacency
+// window end (first enqueue + 1 hour) as a scalar subquery over two bound
+// parameters. Per-unit callers use this instead of legacyUnitWindowCTE: the
+// CTE aggregates every unit in the table, which is fine once per page but
+// pathological when repeated for each of the page's units.
+const legacyUnitWindowEndSubquery = `(
+		SELECT strftime('%Y-%m-%dT%H:%M:%SZ',
+		                datetime(MIN(strftime('%Y-%m-%dT%H:%M:%SZ', jj.enqueued_at)), '+1 hour'))
+		FROM review_jobs jj
+		WHERE jj.repo_id = ? AND jj.git_ref = ?
+		  AND (jj.panel_run_uuid IS NULL OR jj.panel_run_uuid = '')
+		  AND jj.job_type IN ('review', 'range')
+		  AND jj.status = 'done' AND jj.finished_at IS NOT NULL)`
+
 // legacyUnitJobs returns the completed jobs of one legacy (repo, git_ref)
 // unit in id order — bounded to the adjacency window like the unit query —
 // shaped as ExportCIPanelJob rows tagged role "review".
 func (db *DB) legacyUnitJobs(repoID int64, gitRef string) ([]ExportCIPanelJob, error) {
 	rows, err := db.Query(`
-		WITH `+legacyUnitWindowCTE+`
 		SELECT j.uuid, j.agent, j.model, j.provider, j.status,
 		       `+legacyUnitTimeExpr("j.started_at")+`,
 		       `+legacyUnitTimeExpr("j.finished_at")+`
 		FROM review_jobs j
-		JOIN unit_windows w ON w.repo_id = j.repo_id AND w.git_ref = j.git_ref
 		WHERE j.repo_id = ? AND j.git_ref = ?
 		  AND `+legacyUnitJobConditions+`
-		  AND `+legacyUnitTimeExpr("j.enqueued_at")+` <= w.window_end
+		  AND `+legacyUnitTimeExpr("j.enqueued_at")+` <= `+legacyUnitWindowEndSubquery+`
 		ORDER BY j.id ASC`,
-		repoID, gitRef)
+		repoID, gitRef, repoID, gitRef)
 	if err != nil {
 		return nil, fmt.Errorf("query legacy ci unit jobs: %w", err)
 	}
@@ -590,7 +602,6 @@ func (db *DB) resolveCIMetricsCursor(cursor string, legacy bool) (*ciMetricsCurs
 		// job and the unit's latest finish; re-derive that unit's group and
 		// check both still hold.
 		existsQuery = `
-			WITH ` + legacyUnitWindowCTE + `
 			SELECT COUNT(1) FROM review_jobs a
 			WHERE a.id = ?
 			  AND (a.panel_run_uuid IS NULL OR a.panel_run_uuid = '')
@@ -598,10 +609,16 @@ func (db *DB) resolveCIMetricsCursor(cursor string, legacy bool) (*ciMetricsCurs
 			  AND a.status = 'done' AND a.finished_at IS NOT NULL
 			  AND (SELECT MAX(` + legacyUnitTimeExpr("j.finished_at") + `)
 			       FROM review_jobs j
-			       JOIN unit_windows w ON w.repo_id = j.repo_id AND w.git_ref = j.git_ref
 			       WHERE j.repo_id = a.repo_id AND j.git_ref = a.git_ref
 			         AND ` + legacyUnitJobConditions + `
-			         AND ` + legacyUnitTimeExpr("j.enqueued_at") + ` <= w.window_end) = ?`
+			         AND ` + legacyUnitTimeExpr("j.enqueued_at") + ` <= (
+			           SELECT strftime('%Y-%m-%dT%H:%M:%SZ',
+			                    datetime(MIN(strftime('%Y-%m-%dT%H:%M:%SZ', jj.enqueued_at)), '+1 hour'))
+			           FROM review_jobs jj
+			           WHERE jj.repo_id = a.repo_id AND jj.git_ref = a.git_ref
+			             AND (jj.panel_run_uuid IS NULL OR jj.panel_run_uuid = '')
+			             AND jj.job_type IN ('review', 'range')
+			             AND jj.status = 'done' AND jj.finished_at IS NOT NULL)) = ?`
 	}
 	var count int
 	if err := db.QueryRow(existsQuery, decoded.PanelID, decoded.PostedAt).Scan(&count); err != nil {
