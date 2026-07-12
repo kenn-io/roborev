@@ -199,17 +199,15 @@ func TestExportCIMetricsRejectsCursorFromDifferentDatabase(t *testing.T) {
 }
 
 // seedLegacyCIJob inserts one completed pre-panel CI review job with no
-// panel run and explicit enqueue/finish timestamps, CI-tagged only through
-// ci_base_branch: rows from that era predate source='ci' tagging, and the
-// legacy export must honor both markers (ReviewJob.IsCI). The pre-panel era
-// wrote no PR linkage rows that survive, so the legacy export groups these
-// jobs by (repo, git_ref) into pseudopanel units.
+// panel run and explicit enqueue/finish timestamps. Rows from that era
+// predate all CI tagging (source and ci_base_branch stay empty), so the
+// legacy export identifies pseudopanels structurally: two or more completed
+// jobs sharing (repo, git_ref).
 func seedLegacyCIJob(t *testing.T, db *DB, repoID int64, gitRef, agent string, enqueued, finished string) *ReviewJob {
 	t.Helper()
 	job, err := db.EnqueueJob(EnqueueOpts{
 		RepoID: repoID, GitRef: gitRef,
 		Agent: agent, Model: "legacy-model", Provider: "legacy-provider",
-		CIBaseBranch: "main",
 	})
 	require.NoError(t, err)
 	_, err = db.Exec(`UPDATE review_jobs
@@ -233,10 +231,14 @@ func TestExportCIMetricsLegacyCombinesPseudopanel(t *testing.T) {
 		"2026-03-01 10:00:00", "2026-03-01 10:30:00")
 	_, err := db.Exec(`UPDATE review_jobs SET status = 'failed' WHERE id = ?`, failed.ID)
 	require.NoError(t, err)
+	// A singleton review of another ref is a manual one-off, not a
+	// pseudopanel, and must not export.
+	seedLegacyCIJob(t, db, repo.ID, "base..head-singleton", "codex",
+		"2026-03-02 10:00:00", "2026-03-02 10:05:00")
 
 	page, err := db.ExportCIMetrics(ExportCIMetricsOptions{Legacy: true})
 	require.NoError(t, err)
-	require.Len(t, page.Panels, 1, "one pseudopanel unit per (repo, git_ref)")
+	require.Len(t, page.Panels, 1, "one pseudopanel unit per (repo, git_ref); singletons excluded")
 	p := page.Panels[0]
 
 	assert.Equal(t, repo.Name, p.GithubRepo)
@@ -274,8 +276,12 @@ func TestExportCIMetricsLegacyPagination(t *testing.T) {
 	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
 	seedLegacyCIJob(t, db, repo.ID, "sha-legacy-a", "codex",
 		"2026-03-01 10:00:00", "2026-03-01 10:05:00")
+	seedLegacyCIJob(t, db, repo.ID, "sha-legacy-a", "gemini",
+		"2026-03-01 10:00:00", "2026-03-01 10:06:00")
 	seedLegacyCIJob(t, db, repo.ID, "sha-legacy-b", "codex",
 		"2026-03-02 10:00:00", "2026-03-02 10:05:00")
+	seedLegacyCIJob(t, db, repo.ID, "sha-legacy-b", "gemini",
+		"2026-03-02 10:00:00", "2026-03-02 10:06:00")
 
 	first, err := db.ExportCIMetrics(ExportCIMetricsOptions{Legacy: true, Limit: 1})
 	require.NoError(t, err)
@@ -299,6 +305,8 @@ func TestExportCIMetricsRejectsCursorModeMismatch(t *testing.T) {
 	seedPostedPanel(t, db, 40, "sha-panel", PanelOutcomeReviewPosted)
 	seedLegacyCIJob(t, db, repo.ID, "sha-legacy", "codex",
 		"2026-03-01 10:00:00", "2026-03-01 10:05:00")
+	seedLegacyCIJob(t, db, repo.ID, "sha-legacy", "gemini",
+		"2026-03-01 10:00:00", "2026-03-01 10:06:00")
 
 	panelPage, err := db.ExportCIMetrics(ExportCIMetricsOptions{})
 	require.NoError(t, err)
@@ -325,6 +333,8 @@ func TestExportCIMetricsLegacyAndPanelModesAreDisjoint(t *testing.T) {
 	seedPostedPanel(t, db, 50, "sha-panel-only", PanelOutcomeReviewPosted)
 	seedLegacyCIJob(t, db, repo.ID, "sha-legacy-only", "codex",
 		"2026-03-01 10:00:00", "2026-03-01 10:05:00")
+	seedLegacyCIJob(t, db, repo.ID, "sha-legacy-only", "gemini",
+		"2026-03-01 10:00:00", "2026-03-01 10:06:00")
 
 	panelPage, err := db.ExportCIMetrics(ExportCIMetricsOptions{})
 	require.NoError(t, err)
