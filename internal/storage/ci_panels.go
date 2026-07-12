@@ -39,13 +39,15 @@ type CIPanel struct {
 	Outcome          *string    `json:"outcome,omitempty"`
 	FirstAttemptAt   *time.Time `json:"first_attempt_at,omitempty"`
 	AttemptCount     *int64     `json:"attempt_count,omitempty"`
+	SynthesisAgent   *string    `json:"synthesis_agent,omitempty"`
+	SynthesisModel   *string    `json:"synthesis_model,omitempty"`
 }
 
 // ciPanelColumns is the canonical SELECT column list for scanCIPanel. Kept in
 // one place so every Get* query and the scanner stay in lockstep.
 const ciPanelColumns = `id, github_repo, pr_number, head_sha, panel_run_uuid,
 	synthesis_job_id, created_at, posting_claimed_at, posted_at, retired_at,
-	outcome, first_attempt_at, attempt_count`
+	outcome, first_attempt_at, attempt_count, synthesis_agent, synthesis_model`
 
 // scanCIPanel hydrates a CIPanel from a row selecting ciPanelColumns. Nullable
 // columns are scanned through sql.Null* and the timestamps parsed with
@@ -61,10 +63,12 @@ func scanCIPanel(row sqlScanner) (*CIPanel, error) {
 	var outcome sql.NullString
 	var firstAttemptAt sql.NullString
 	var attemptCount sql.NullInt64
+	var synthesisAgent sql.NullString
+	var synthesisModel sql.NullString
 	if err := row.Scan(
 		&p.ID, &p.GithubRepo, &p.PRNumber, &p.HeadSHA, &p.PanelRunUUID,
 		&synthesisJobID, &createdAt, &postingClaimedAt, &postedAt, &retiredAt,
-		&outcome, &firstAttemptAt, &attemptCount,
+		&outcome, &firstAttemptAt, &attemptCount, &synthesisAgent, &synthesisModel,
 	); err != nil {
 		return nil, err
 	}
@@ -95,6 +99,12 @@ func scanCIPanel(row sqlScanner) (*CIPanel, error) {
 	}
 	if attemptCount.Valid {
 		p.AttemptCount = &attemptCount.Int64
+	}
+	if synthesisAgent.Valid {
+		p.SynthesisAgent = &synthesisAgent.String
+	}
+	if synthesisModel.Valid {
+		p.SynthesisModel = &synthesisModel.String
 	}
 	return &p, nil
 }
@@ -271,18 +281,19 @@ func (db *DB) ReleasePanelPostClaim(id int64) error {
 
 // MarkPanelPosted finalizes the run: in one atomic transaction it finalizes
 // the panel row — permanently barring further posting claims and stamping the
-// terminal outcome plus a snapshot of first_attempt_at/attempt from the
-// operational attempt row — then marks the HEAD's review attempt terminal
-// (state='done', mirroring MarkReviewAttemptDone). The panel UPDATE is
-// guarded with posted_at IS NULL AND retired_at IS NULL and its RowsAffected
-// is checked: a stale posting lease that races a previous MarkPanelPosted
-// call (or a concurrent retire) must not double-finalize the row or overwrite
-// an already-stamped outcome, so the whole transaction is rolled back and an
-// error returned instead of also marking the attempt done. The snapshot
-// matters because closed-PR cleanup later deletes attempt rows; the panel row
-// is the durable record of terminal metrics. The attempt row may already be
-// gone (deleted by closed-PR cleanup); zero rows affected there is not an
-// error.
+// terminal outcome, a snapshot of first_attempt_at/attempt from the
+// operational attempt row, and a snapshot of the synthesis job's agent/model —
+// then marks the HEAD's review attempt terminal (state='done', mirroring
+// MarkReviewAttemptDone). The panel UPDATE is guarded with
+// posted_at IS NULL AND retired_at IS NULL and its RowsAffected is checked: a
+// stale posting lease that races a previous MarkPanelPosted call (or a
+// concurrent retire) must not double-finalize the row or overwrite an
+// already-stamped outcome, so the whole transaction is rolled back and an
+// error returned instead of also marking the attempt done. Both snapshots
+// matter because closed-PR cleanup later deletes attempt rows and cascade
+// repo deletion deletes review_jobs rows; the panel row is the durable record
+// of terminal metrics. The attempt row may already be gone (deleted by
+// closed-PR cleanup); zero rows affected there is not an error.
 func (db *DB) MarkPanelPosted(id int64, outcome string) error {
 	tx, err := db.Begin()
 	if err != nil {
@@ -303,7 +314,11 @@ func (db *DB) MarkPanelPosted(id int64, outcome string) error {
 		        SELECT a.attempt FROM ci_pr_review_attempts a
 		        WHERE a.github_repo = ci_pr_panels.github_repo
 		          AND a.pr_number = ci_pr_panels.pr_number
-		          AND a.head_sha = ci_pr_panels.head_sha)
+		          AND a.head_sha = ci_pr_panels.head_sha),
+		    synthesis_agent = (
+		        SELECT j.agent FROM review_jobs j WHERE j.id = ci_pr_panels.synthesis_job_id),
+		    synthesis_model = (
+		        SELECT j.model FROM review_jobs j WHERE j.id = ci_pr_panels.synthesis_job_id)
 		WHERE id = ? AND posted_at IS NULL AND retired_at IS NULL`, outcome, id)
 	if err != nil {
 		return fmt.Errorf("mark panel posted: finalize panel: %w", err)

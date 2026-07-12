@@ -77,6 +77,47 @@ func TestExportCIMetricsLegacyRowsAreUnknown(t *testing.T) {
 	assert.Nil(t, page.Panels[0].AttemptCount)
 }
 
+// TestExportCIMetricsSurvivesCascadeRepoDeletion covers the snapshot fix: a
+// panel's synthesis_agent/synthesis_model are stamped onto ci_pr_panels at
+// MarkPanelPosted time, so ExportCIMetrics still reports them (via the
+// COALESCE(NULLIF(...)) fallback preferring the snapshot) after the repo and
+// its review_jobs rows are cascade-deleted. Jobs, which is sourced live from
+// review_jobs by panel_run_uuid, is expected to come back empty in that case.
+func TestExportCIMetricsSurvivesCascadeRepoDeletion(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
+	now := time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC)
+	created, err := db.ReserveReviewAttempt("o/r", 42, "sha-cascade", now)
+	require.NoError(t, err)
+	require.True(t, created)
+
+	members := []EnqueueOpts{{
+		RepoID: repo.ID, GitRef: "b..h", Agent: "test-member", PanelMemberIndex: 0,
+	}}
+	synthesis := EnqueueOpts{RepoID: repo.ID, GitRef: "b..h", Agent: "test-synth", Model: "test-model"}
+	runCreated, _, _, err := db.CreateCIPanelRun("o/r", 42, "sha-cascade", members, synthesis)
+	require.NoError(t, err)
+	require.True(t, runCreated)
+
+	panel, err := db.GetCIPanelByPRSHA("o/r", 42, "sha-cascade")
+	require.NoError(t, err)
+	require.NoError(t, db.MarkPanelPosted(panel.ID, PanelOutcomeReviewPosted))
+
+	require.NoError(t, db.DeleteRepo(repo.ID, true))
+
+	page, err := db.ExportCIMetrics(ExportCIMetricsOptions{})
+	require.NoError(t, err)
+	require.Len(t, page.Panels, 1)
+	p := page.Panels[0]
+	require.NotNil(t, p.SynthesisAgent, "synthesis_agent survives from the panel-row snapshot")
+	assert.Equal(t, "test-synth", *p.SynthesisAgent)
+	require.NotNil(t, p.SynthesisModel, "synthesis_model survives from the panel-row snapshot")
+	assert.Equal(t, "test-model", *p.SynthesisModel)
+	assert.Empty(t, p.Jobs, "jobs reflect only currently retained review_jobs rows")
+}
+
 func TestExportCIMetricsCursorPagination(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()

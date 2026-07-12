@@ -36,7 +36,11 @@ type ExportCIMetricsPage struct {
 // rows finalized before outcome persistence existed export as "unknown",
 // and FirstAttemptAt/AttemptCount stay null for them (there is
 // deliberately no fallback to panel_created_at, which undercounts
-// deferred retries).
+// deferred retries). SynthesisAgent/SynthesisModel are self-contained
+// snapshots taken at finalization (MarkPanelPosted), so they survive
+// deletion of the underlying review_jobs rows (e.g. cascade repo delete).
+// Jobs, by contrast, reflects the currently retained review_jobs rows for
+// the panel run and may be empty for panels whose repo was cascade-deleted.
 type ExportCIPanel struct {
 	GithubRepo     string             `json:"github_repo"`
 	PRNumber       int64              `json:"pr_number"`
@@ -108,7 +112,9 @@ func (db *DB) ExportCIMetrics(opts ExportCIMetricsOptions) (ExportCIMetricsPage,
 		SELECT cp.id, cp.github_repo, cp.pr_number, cp.head_sha,
 		       cp.created_at, cp.posted_at, cp.first_attempt_at,
 		       cp.attempt_count, COALESCE(cp.outcome, '` + PanelOutcomeUnknown + `'),
-		       cp.panel_run_uuid, sj.agent, sj.model
+		       cp.panel_run_uuid,
+		       COALESCE(NULLIF(cp.synthesis_agent, ''), sj.agent),
+		       COALESCE(NULLIF(cp.synthesis_model, ''), sj.model)
 		FROM ci_pr_panels cp
 		LEFT JOIN review_jobs sj ON sj.id = cp.synthesis_job_id
 		WHERE ` + strings.Join(conditions, " AND ") + `

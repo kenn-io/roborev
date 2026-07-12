@@ -117,6 +117,8 @@ CREATE TABLE IF NOT EXISTS ci_pr_panels (
   outcome TEXT,
   first_attempt_at TEXT,
   attempt_count INTEGER,
+  synthesis_agent TEXT,
+  synthesis_model TEXT,
   UNIQUE(github_repo, pr_number, head_sha)
 );
 
@@ -1006,12 +1008,15 @@ func (db *DB) migrate() error {
 	}
 
 	// Migration: add terminal-metrics columns to ci_pr_panels if missing.
-	// Written once at finalization so the terminal outcome and retry timing
-	// survive later attempt-row cleanup.
+	// Written once at finalization so the terminal outcome, retry timing, and
+	// synthesis agent/model survive later attempt-row cleanup and cascade repo
+	// deletion (review_jobs rows for the panel's synthesis job may be gone).
 	for _, col := range []struct{ name, ddl string }{
 		{"outcome", `ALTER TABLE ci_pr_panels ADD COLUMN outcome TEXT`},
 		{"first_attempt_at", `ALTER TABLE ci_pr_panels ADD COLUMN first_attempt_at TEXT`},
 		{"attempt_count", `ALTER TABLE ci_pr_panels ADD COLUMN attempt_count INTEGER`},
+		{"synthesis_agent", `ALTER TABLE ci_pr_panels ADD COLUMN synthesis_agent TEXT`},
+		{"synthesis_model", `ALTER TABLE ci_pr_panels ADD COLUMN synthesis_model TEXT`},
 	} {
 		err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('ci_pr_panels') WHERE name = ?`, col.name).Scan(&count)
 		if err != nil {
