@@ -88,11 +88,19 @@ Then select it anywhere agents are routable: `--agent agy-sdk`, per-workflow
 agents, backup agents, or panel members. Bridge model IDs accept an optional
 thinking suffix (`gemini-3.5-flash:high`), which is how a reasoning level
 reaches the model — roborev's ACP client transmits only mode and model, not
-reasoning.
+reasoning. The suffixed IDs work only because the bridge advertises the
+suffixed strings verbatim in its model list: roborev validates the configured
+model against exact membership of what the agent advertises (for agy-acp, the
+set in `AGY_ACP_MODELS`), so a suffix the bridge does not advertise is
+rejected just like any unknown model.
 
 If the agent process needs environment variables (API keys, cloud project
-settings), remember it is spawned by the **daemon**, which does not inherit
-your shell environment. Inject them with an `env` wrapper:
+settings), remember that daemon-run reviews spawn it from the **daemon**,
+which carries the environment the daemon was started with — not your current
+shell. Exports added to your shell after the daemon started are invisible to
+it until a daemon restart (foreground flows like `roborev review --local` do
+use your shell environment). To make the values explicit regardless of how
+the agent is launched, inject them with an `env` wrapper:
 
 ```toml
 [acp]
@@ -101,6 +109,48 @@ command = "env"
 args = ["AGY_ACP_VERTEX=1", "AGY_ACP_PROJECT=my-gcp-project", "agy-acp"]
 model = "gemini-3.5-flash"
 ```
+
+The `env` args pattern is for **non-secret** values only. Everything in `args`
+is committed to your TOML config and is visible in the process table
+(`/proc/<pid>/cmdline`) while the agent runs, so never put API keys or tokens
+there. For credentials, point `command` at a protected wrapper script (e.g.
+`chmod 700`, stored outside any repo) that exports the secrets before
+`exec`-ing the bridge:
+
+```toml
+[acp]
+name = "agy-sdk"
+command = "/home/you/.config/roborev/agy-acp-wrapper.sh"
+model = "gemini-3.5-flash"
+```
+
+```bash
+#!/usr/bin/env bash
+# ~/.config/roborev/agy-acp-wrapper.sh  (chmod 700, outside any repo)
+export GEMINI_API_KEY="$(cat "$HOME/.secrets/gemini_api_key")"
+exec agy-acp "$@"
+```
+
+### Which Gemini path should I use?
+
+Pick by how you authenticate to Gemini:
+
+- **Consumer Antigravity / Gemini subscription (OAuth login):** use the
+  built-in `gemini` agent via the `agy` CLI. No model selection is possible
+  on this path: an explicit model errors whenever the agent resolves to
+  `agy` — even with the legacy `gemini` CLI also installed — unless you pin
+  `gemini_cmd = "gemini"` (see [Supported Agents](/agents/)). The underlying
+  SDK has no OAuth path, so an ACP bridge cannot restore model selection
+  either.
+- **`GEMINI_API_KEY` (AI Studio key):** use the agy-acp bridge above. Full
+  model and thinking-suffix selection.
+- **GCP Vertex (application-default credentials):** use the agy-acp bridge
+  with `AGY_ACP_VERTEX=1` and `AGY_ACP_PROJECT=<project>` (location `global`),
+  or the legacy `gemini` CLI `-m` flag if you are an enterprise user who still
+  has it.
+- **Avoid** routing Gemini through an Anthropic-compat proxy (LiteLLM + the
+  `claude-code` agent) for reviews: reasoning arrives as ordinary text and
+  contaminates the review output.
 
 ## Configuration Reference
 
@@ -181,10 +231,12 @@ Workflow models follow their paired workflow agent. If `review_agent =
 from the default agent.
 
 A workflow model does apply when its workflow agent resolves to the selected
-ACP agent. An explicit `--model` always wins, and a generic `model` or
-`default_model` still applies when the selected ACP agent is also the matching
-default agent. To confirm which agent and model served a job, run `roborev show
---job <id> --json` and inspect `job.agent` and `job.model`.
+ACP agent. An explicit `--model` wins on the single-agent path (if
+`default_panel` is configured, panel member jobs choose their own models —
+add `--panel none`; see below), and a generic `model` or `default_model`
+still applies when the selected ACP agent is also the matching default agent.
+To confirm which agent and model served a job, run `roborev show --job <id>
+--json` and inspect `job.agent` and `job.model`.
 
 ### `--agent` is ignored and a panel runs instead
 

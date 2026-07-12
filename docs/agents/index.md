@@ -148,14 +148,11 @@ curl -fsSL https://antigravity.google/cli/install.sh | bash
 npm install -g @google/gemini-cli
 ```
 
-Antigravity runs in `--print` mode with the prompt piped over stdin. Review jobs get `--sandbox`; agentic jobs get `--dangerously-skip-permissions`.
+Antigravity runs in print mode — the prompt is passed via `--prompt` on `agy` >= 1.1.1 and piped over stdin with a bare `--print` on older versions (roborev probes `agy --version` to pick the contract). Review jobs get `--sandbox`; agentic jobs get `--dangerously-skip-permissions`.
 
-Antigravity does not currently accept a `--model` flag, so:
+Antigravity does not currently accept a `--model` flag, so an explicit `--model` returns an error whenever the Gemini agent resolves to `agy` — even when the legacy `gemini` CLI is also installed — rather than silently ignoring the override.
 
-- If both `agy` and `gemini` are installed, any `--model` override automatically reroutes to `gemini`.
-- If only `agy` is installed, an explicit `--model` returns an error so the override is not silently ignored.
-
-If you rely on model selection and want to keep using `gemini` exclusively, install only the legacy CLI or shadow `agy` on your `PATH` with a wrapper that exec's `gemini`.
+If you rely on model selection, pin the legacy CLI with `gemini_cmd = "gemini"` in your config, install only the legacy CLI, or shadow `agy` on your `PATH` with a wrapper that exec's `gemini`.
 
 ## Pi Structured Output
 
