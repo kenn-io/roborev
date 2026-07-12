@@ -272,12 +272,15 @@ func (db *DB) exportCIMetricsLegacy(opts ExportCIMetricsOptions, cursor *ciMetri
 	args = append(args, opts.Limit+1)
 
 	query := `
+		WITH ` + legacyUnitWindowCTE + `
 		SELECT MIN(j.id), j.repo_id, r.name, j.git_ref,
 		       MIN(` + legacyUnitTimeExpr("j.enqueued_at") + `),
 		       ` + postedExpr + `
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
+		JOIN unit_windows w ON w.repo_id = j.repo_id AND w.git_ref = j.git_ref
 		WHERE ` + legacyUnitJobConditions + `
+		  AND ` + legacyUnitTimeExpr("j.enqueued_at") + ` <= w.window_end
 		GROUP BY j.repo_id, j.git_ref
 		HAVING ` + strings.Join(having, " AND ") + `
 		ORDER BY 6 ASC, 1 ASC
@@ -355,16 +358,39 @@ const legacyUnitJobConditions = `(j.panel_run_uuid IS NULL OR j.panel_run_uuid =
 		  AND j.job_type IN ('review', 'range')
 		  AND j.status = 'done' AND j.finished_at IS NOT NULL`
 
+// legacyUnitWindowCTE bounds a unit to ADJACENT jobs: only jobs enqueued
+// within an hour of the ref's first enqueue belong to the pseudopanel, so a
+// manual re-review of the same ref days later cannot stretch the unit's
+// wall clock (observed in production: one ref re-reviewed 12 days later
+// inflated its turnaround to 290 hours). Pseudopanel members enqueue within
+// seconds of each other, so the hour window is generous for real units.
+const legacyUnitWindowCTE = `unit_windows AS (
+			SELECT j.repo_id, j.git_ref,
+			       strftime('%Y-%m-%dT%H:%M:%SZ',
+			                datetime(MIN(` + legacyUnitTimeExprConst + `), '+1 hour')) AS window_end
+			FROM review_jobs j
+			WHERE ` + legacyUnitJobConditions + `
+			GROUP BY j.repo_id, j.git_ref
+		)`
+
+// legacyUnitTimeExprConst mirrors legacyUnitTimeExpr("j.enqueued_at") for
+// use inside const SQL fragments.
+const legacyUnitTimeExprConst = `strftime('%Y-%m-%dT%H:%M:%SZ', j.enqueued_at)`
+
 // legacyUnitJobs returns the completed jobs of one legacy (repo, git_ref)
-// unit in id order, shaped as ExportCIPanelJob rows tagged role "review".
+// unit in id order — bounded to the adjacency window like the unit query —
+// shaped as ExportCIPanelJob rows tagged role "review".
 func (db *DB) legacyUnitJobs(repoID int64, gitRef string) ([]ExportCIPanelJob, error) {
 	rows, err := db.Query(`
+		WITH `+legacyUnitWindowCTE+`
 		SELECT j.uuid, j.agent, j.model, j.provider, j.status,
 		       `+legacyUnitTimeExpr("j.started_at")+`,
 		       `+legacyUnitTimeExpr("j.finished_at")+`
 		FROM review_jobs j
+		JOIN unit_windows w ON w.repo_id = j.repo_id AND w.git_ref = j.git_ref
 		WHERE j.repo_id = ? AND j.git_ref = ?
 		  AND `+legacyUnitJobConditions+`
+		  AND `+legacyUnitTimeExpr("j.enqueued_at")+` <= w.window_end
 		ORDER BY j.id ASC`,
 		repoID, gitRef)
 	if err != nil {
@@ -564,6 +590,7 @@ func (db *DB) resolveCIMetricsCursor(cursor string, legacy bool) (*ciMetricsCurs
 		// job and the unit's latest finish; re-derive that unit's group and
 		// check both still hold.
 		existsQuery = `
+			WITH ` + legacyUnitWindowCTE + `
 			SELECT COUNT(1) FROM review_jobs a
 			WHERE a.id = ?
 			  AND (a.panel_run_uuid IS NULL OR a.panel_run_uuid = '')
@@ -571,8 +598,10 @@ func (db *DB) resolveCIMetricsCursor(cursor string, legacy bool) (*ciMetricsCurs
 			  AND a.status = 'done' AND a.finished_at IS NOT NULL
 			  AND (SELECT MAX(` + legacyUnitTimeExpr("j.finished_at") + `)
 			       FROM review_jobs j
+			       JOIN unit_windows w ON w.repo_id = j.repo_id AND w.git_ref = j.git_ref
 			       WHERE j.repo_id = a.repo_id AND j.git_ref = a.git_ref
-			         AND ` + legacyUnitJobConditions + `) = ?`
+			         AND ` + legacyUnitJobConditions + `
+			         AND ` + legacyUnitTimeExpr("j.enqueued_at") + ` <= w.window_end) = ?`
 	}
 	var count int
 	if err := db.QueryRow(existsQuery, decoded.PanelID, decoded.PostedAt).Scan(&count); err != nil {

@@ -269,6 +269,32 @@ func TestExportCIMetricsLegacyCombinesPseudopanel(t *testing.T) {
 	assert.NotNil(t, page.NextCursor)
 }
 
+// TestExportCIMetricsLegacyExcludesNonAdjacentReReview covers the adjacency
+// window: a manual re-review of the same ref days after the pseudopanel ran
+// must not stretch the unit's wall clock (a production ref re-reviewed 12
+// days later inflated its turnaround to 290 hours before this bound).
+func TestExportCIMetricsLegacyExcludesNonAdjacentReReview(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
+	seedLegacyCIJob(t, db, repo.ID, "base..head-rerun", "codex",
+		"2026-03-01 10:00:00", "2026-03-01 10:05:00")
+	seedLegacyCIJob(t, db, repo.ID, "base..head-rerun", "gemini",
+		"2026-03-01 10:00:10", "2026-03-01 10:07:00")
+	// Re-reviewed 12 days later: outside the adjacency window.
+	seedLegacyCIJob(t, db, repo.ID, "base..head-rerun", "codex",
+		"2026-03-13 09:00:00", "2026-03-13 09:06:00")
+
+	page, err := db.ExportCIMetrics(ExportCIMetricsOptions{Legacy: true})
+	require.NoError(t, err)
+	require.Len(t, page.Panels, 1)
+	p := page.Panels[0]
+	assert.Equal(t, "2026-03-01T10:07:00Z", p.PostedAt,
+		"wall clock ends at the adjacent group's last finish, not the re-review's")
+	require.Len(t, p.Jobs, 2, "the non-adjacent re-review job is not part of the unit")
+}
+
 func TestExportCIMetricsLegacyPagination(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
