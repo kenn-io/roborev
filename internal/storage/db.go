@@ -114,6 +114,9 @@ CREATE TABLE IF NOT EXISTS ci_pr_panels (
   posting_claimed_at TIMESTAMP,
   posted_at TIMESTAMP,
   retired_at TIMESTAMP,
+  outcome TEXT,
+  first_attempt_at TEXT,
+  attempt_count INTEGER,
   UNIQUE(github_repo, pr_number, head_sha)
 );
 
@@ -999,6 +1002,25 @@ func (db *DB) migrate() error {
 		_, err = db.Exec(`ALTER TABLE ci_pr_panels ADD COLUMN retired_at TIMESTAMP`)
 		if err != nil {
 			return fmt.Errorf("add retired_at column: %w", err)
+		}
+	}
+
+	// Migration: add terminal-metrics columns to ci_pr_panels if missing.
+	// Written once at finalization so the terminal outcome and retry timing
+	// survive later attempt-row cleanup.
+	for _, col := range []struct{ name, ddl string }{
+		{"outcome", `ALTER TABLE ci_pr_panels ADD COLUMN outcome TEXT`},
+		{"first_attempt_at", `ALTER TABLE ci_pr_panels ADD COLUMN first_attempt_at TEXT`},
+		{"attempt_count", `ALTER TABLE ci_pr_panels ADD COLUMN attempt_count INTEGER`},
+	} {
+		err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('ci_pr_panels') WHERE name = ?`, col.name).Scan(&count)
+		if err != nil {
+			return fmt.Errorf("check %s column: %w", col.name, err)
+		}
+		if count == 0 {
+			if _, err = db.Exec(col.ddl); err != nil {
+				return fmt.Errorf("add %s column: %w", col.name, err)
+			}
 		}
 	}
 

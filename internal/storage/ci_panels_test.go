@@ -614,6 +614,38 @@ func TestCreateCIPanelRunRace(t *testing.T) {
 	assert.Equal(1, countCIPanels(t, db, "o/r", 9), "single mapping row")
 }
 
+func TestCIPanelTerminalMetricsRoundTrip(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	id := seedPanelRow(t, db, "o/r", 42, "headsha42")
+	_, err := db.Exec(`UPDATE ci_pr_panels
+		SET outcome = ?, first_attempt_at = '2026-07-01T00:00:00Z', attempt_count = 3
+		WHERE id = ?`, PanelOutcomeReviewPosted, id)
+	require.NoError(t, err)
+
+	p, err := db.GetCIPanelByPRSHA("o/r", 42, "headsha42")
+	require.NoError(t, err)
+	require.NotNil(t, p.Outcome)
+	assert.Equal(t, PanelOutcomeReviewPosted, *p.Outcome)
+	require.NotNil(t, p.FirstAttemptAt)
+	assert.True(t, p.FirstAttemptAt.Equal(time.Date(2026, 7, 1, 0, 0, 0, 0, time.UTC)))
+	require.NotNil(t, p.AttemptCount)
+	assert.Equal(t, int64(3), *p.AttemptCount)
+}
+
+func TestCIPanelTerminalMetricsNullForLegacyRows(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	seedPanelRow(t, db, "o/r", 43, "headsha43")
+	p, err := db.GetCIPanelByPRSHA("o/r", 43, "headsha43")
+	require.NoError(t, err)
+	assert.Nil(t, p.Outcome)
+	assert.Nil(t, p.FirstAttemptAt)
+	assert.Nil(t, p.AttemptCount)
+}
+
 // TestCreateCIPanelRunAtomicity covers F2: a failure inside createCIPanelRunTx
 // (after the mapping INSERT) rolls back fully — no orphan mapping, no orphan
 // jobs. The failure is injected with failingExecer rather than a foreign-key

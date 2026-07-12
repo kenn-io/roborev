@@ -8,6 +8,17 @@ import (
 	"time"
 )
 
+// Panel terminal outcomes, persisted once at finalization. A NULL outcome
+// means the row was finalized before outcome persistence existed; exports
+// surface it as PanelOutcomeUnknown.
+const (
+	PanelOutcomeReviewPosted   = "review_posted"
+	PanelOutcomeNoReviewPosted = "no_review_posted"
+	PanelOutcomeGiveupPosted   = "giveup_posted"
+	PanelOutcomeAbandoned      = "abandoned"
+	PanelOutcomeUnknown        = "unknown"
+)
+
 // CIPanel maps a PR HEAD (github_repo, pr_number, head_sha) to the subagent
 // panel run that reviews it and to that run's synthesis job. It is the
 // panel-based successor to CIPRBatch: instead of tracking a matrix of jobs
@@ -25,12 +36,16 @@ type CIPanel struct {
 	PostingClaimedAt *time.Time `json:"posting_claimed_at,omitempty"`
 	PostedAt         *time.Time `json:"posted_at,omitempty"`
 	RetiredAt        *time.Time `json:"retired_at,omitempty"`
+	Outcome          *string    `json:"outcome,omitempty"`
+	FirstAttemptAt   *time.Time `json:"first_attempt_at,omitempty"`
+	AttemptCount     *int64     `json:"attempt_count,omitempty"`
 }
 
 // ciPanelColumns is the canonical SELECT column list for scanCIPanel. Kept in
 // one place so every Get* query and the scanner stay in lockstep.
 const ciPanelColumns = `id, github_repo, pr_number, head_sha, panel_run_uuid,
-	synthesis_job_id, created_at, posting_claimed_at, posted_at, retired_at`
+	synthesis_job_id, created_at, posting_claimed_at, posted_at, retired_at,
+	outcome, first_attempt_at, attempt_count`
 
 // scanCIPanel hydrates a CIPanel from a row selecting ciPanelColumns. Nullable
 // columns are scanned through sql.Null* and the timestamps parsed with
@@ -43,9 +58,13 @@ func scanCIPanel(row sqlScanner) (*CIPanel, error) {
 	var postingClaimedAt sql.NullString
 	var postedAt sql.NullString
 	var retiredAt sql.NullString
+	var outcome sql.NullString
+	var firstAttemptAt sql.NullString
+	var attemptCount sql.NullInt64
 	if err := row.Scan(
 		&p.ID, &p.GithubRepo, &p.PRNumber, &p.HeadSHA, &p.PanelRunUUID,
 		&synthesisJobID, &createdAt, &postingClaimedAt, &postedAt, &retiredAt,
+		&outcome, &firstAttemptAt, &attemptCount,
 	); err != nil {
 		return nil, err
 	}
@@ -66,6 +85,16 @@ func scanCIPanel(row sqlScanner) (*CIPanel, error) {
 	if retiredAt.Valid {
 		t := parseSQLiteTime(retiredAt.String)
 		p.RetiredAt = &t
+	}
+	if outcome.Valid {
+		p.Outcome = &outcome.String
+	}
+	if firstAttemptAt.Valid {
+		t := parseSQLiteTime(firstAttemptAt.String)
+		p.FirstAttemptAt = &t
+	}
+	if attemptCount.Valid {
+		p.AttemptCount = &attemptCount.Int64
 	}
 	return &p, nil
 }
