@@ -1034,6 +1034,46 @@ func (db *DB) migrate() error {
 		return err
 	}
 
+	// Backfill terminal metrics for panels finalized before the terminal-
+	// metrics columns existed, from their still-retained review_jobs rows.
+	// Runs after migrateSyncColumns because it reads
+	// review_jobs.panel_run_uuid, which that migration adds. The poster
+	// only set posted_at after posting a comment, and the synthesis job's
+	// terminal status pins down which comment that was: done posted the
+	// synthesized review, skipped posted the all-skip notice, and
+	// failed/canceled posted the give-up comment. first_attempt_at is
+	// approximated by the panel run's earliest job enqueue: the attempt
+	// rows are gone, so deferred attempts before the executed one are
+	// unrecoverable and this floor slightly undercounts turnaround for
+	// throttled PRs; attempt_count stays NULL for the same reason. Rows
+	// whose jobs were cascade-deleted keep NULLs and export as "unknown".
+	// Both statements only touch rows the finalizer never wrote, so re-runs
+	// are no-ops.
+	if _, err = db.Exec(`UPDATE ci_pr_panels SET outcome = (
+			SELECT CASE j.status
+				WHEN 'done' THEN 'review_posted'
+				WHEN 'skipped' THEN 'no_review_posted'
+				ELSE 'giveup_posted'
+			END FROM review_jobs j WHERE j.id = ci_pr_panels.synthesis_job_id
+		)
+		WHERE posted_at IS NOT NULL AND outcome IS NULL
+		  AND synthesis_job_id IS NOT NULL
+		  AND (SELECT j.status FROM review_jobs j WHERE j.id = ci_pr_panels.synthesis_job_id)
+		      IN ('done', 'skipped', 'failed', 'canceled')`); err != nil {
+		return fmt.Errorf("backfill ci_pr_panels outcome: %w", err)
+	}
+	if _, err = db.Exec(`UPDATE ci_pr_panels SET first_attempt_at = (
+			SELECT MIN(strftime('%Y-%m-%dT%H:%M:%SZ', j.enqueued_at))
+			FROM review_jobs j WHERE j.panel_run_uuid = ci_pr_panels.panel_run_uuid
+		)
+		WHERE posted_at IS NOT NULL AND first_attempt_at IS NULL
+		  AND panel_run_uuid != ''
+		  AND EXISTS (SELECT 1 FROM review_jobs j
+		              WHERE j.panel_run_uuid = ci_pr_panels.panel_run_uuid
+		                AND j.enqueued_at IS NOT NULL)`); err != nil {
+		return fmt.Errorf("backfill ci_pr_panels first_attempt_at: %w", err)
+	}
+
 	// Auto design review support: extends status CHECK constraint,
 	// adds skip_reason column. (job_type has no CHECK constraint;
 	// 'classify' is accepted as-is.)

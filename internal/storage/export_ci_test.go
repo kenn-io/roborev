@@ -3,6 +3,7 @@ package storage
 import (
 	"encoding/base64"
 	"encoding/json"
+	"os"
 	"path/filepath"
 	"testing"
 	"time"
@@ -10,6 +11,47 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+// TestMigrationBackfillsPanelTerminalMetrics covers the startup backfill for
+// panels finalized before outcome persistence existed: reopening the
+// database reconstructs outcome from the retained synthesis job's terminal
+// status and first_attempt_at from the panel run's earliest job enqueue, so
+// pre-existing posted panels export with real terminal metrics instead of
+// "unknown"/NULL.
+func TestMigrationBackfillsPanelTerminalMetrics(t *testing.T) {
+	tmpl, err := getTemplatePath()
+	require.NoError(t, err)
+	data, err := os.ReadFile(tmpl)
+	require.NoError(t, err)
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	require.NoError(t, os.WriteFile(dbPath, data, 0o644))
+	db, err := Open(dbPath)
+	require.NoError(t, err)
+
+	panel := seedPostedPanel(t, db, 60, "sha-backfill", PanelOutcomeReviewPosted)
+	require.NotNil(t, panel.SynthesisJobID)
+	setStatus(t, db, *panel.SynthesisJobID, JobStatusDone)
+	// Simulate a row finalized before the terminal-metrics columns existed.
+	_, err = db.Exec(`UPDATE ci_pr_panels
+		SET outcome = NULL, first_attempt_at = NULL, attempt_count = NULL
+		WHERE id = ?`, panel.ID)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	reopened, err := Open(dbPath)
+	require.NoError(t, err)
+	defer reopened.Close()
+
+	page, err := reopened.ExportCIMetrics(ExportCIMetricsOptions{})
+	require.NoError(t, err)
+	require.Len(t, page.Panels, 1)
+	p := page.Panels[0]
+	assert.Equal(t, PanelOutcomeReviewPosted, p.Outcome,
+		"outcome reconstructed from the synthesis job's terminal status")
+	require.NotNil(t, p.FirstAttemptAt,
+		"first_attempt_at reconstructed from the run's earliest job enqueue")
+	assert.Nil(t, p.AttemptCount, "attempt counts are unrecoverable")
+}
 
 func seedPostedPanel(t *testing.T, db *DB, pr int, sha, outcome string) *CIPanel {
 	t.Helper()
@@ -156,65 +198,70 @@ func TestExportCIMetricsRejectsCursorFromDifferentDatabase(t *testing.T) {
 	require.ErrorIs(t, err, ErrExportCursorDatabaseMismatch)
 }
 
-// seedLegacyCIReview inserts a review_jobs row plus its ci_pr_reviews link,
-// mirroring the frozen pre-panel schema (ci_pr_reviews.job_id -> review_jobs,
-// created_at in SQLite's CURRENT_TIMESTAMP space format). No production
-// writer remains for ci_pr_reviews, so tests populate it directly.
-func seedLegacyCIReview(t *testing.T, db *DB, repoID int64, githubRepo string, pr int, headSHA, createdAt string) *ReviewJob {
+// seedLegacyCIJob inserts one completed pre-panel CI review job:
+// source='ci', no panel run, explicit enqueue/finish timestamps. The
+// pre-panel era wrote no PR linkage rows that survive, so the legacy export
+// groups these jobs by (repo, git_ref) into pseudopanel units.
+func seedLegacyCIJob(t *testing.T, db *DB, repoID int64, gitRef, agent string, enqueued, finished string) *ReviewJob {
 	t.Helper()
 	job, err := db.EnqueueJob(EnqueueOpts{
-		RepoID: repoID, GitRef: headSHA,
-		Agent: "legacy-agent", Model: "legacy-model", Provider: "legacy-provider",
+		RepoID: repoID, GitRef: gitRef,
+		Agent: agent, Model: "legacy-model", Provider: "legacy-provider",
+		Source: JobSourceCI,
 	})
 	require.NoError(t, err)
-	_, err = db.Exec(`INSERT INTO ci_pr_reviews (github_repo, pr_number, head_sha, job_id, created_at)
-		VALUES (?, ?, ?, ?, ?)`, githubRepo, pr, headSHA, job.ID, createdAt)
+	_, err = db.Exec(`UPDATE review_jobs
+		SET status = 'done', enqueued_at = ?, started_at = ?, finished_at = ?
+		WHERE id = ?`, enqueued, enqueued, finished, job.ID)
 	require.NoError(t, err)
 	return job
 }
 
-func TestExportCIMetricsLegacyRowShape(t *testing.T) {
+func TestExportCIMetricsLegacyCombinesPseudopanel(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
 	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
-	job := seedLegacyCIReview(t, db, repo.ID, "o/r", 7, "sha-legacy", "2026-03-01 10:00:00")
-	setStatus(t, db, job.ID, JobStatusDone)
-	setStartedAt(t, db, job.ID, time.Date(2026, 3, 1, 9, 55, 0, 0, time.UTC))
-	_, err := db.Exec(`UPDATE review_jobs SET finished_at = ? WHERE id = ?`, "2026-03-01T10:05:00Z", job.ID)
+	jobA := seedLegacyCIJob(t, db, repo.ID, "base..head-legacy", "codex",
+		"2026-03-01 10:00:00", "2026-03-01 10:05:00")
+	jobB := seedLegacyCIJob(t, db, repo.ID, "base..head-legacy", "gemini",
+		"2026-03-01 10:00:00", "2026-03-01 10:08:00")
+	// A failed sibling contributes neither to the wall clock nor to Jobs.
+	failed := seedLegacyCIJob(t, db, repo.ID, "base..head-legacy", "codex",
+		"2026-03-01 10:00:00", "2026-03-01 10:30:00")
+	_, err := db.Exec(`UPDATE review_jobs SET status = 'failed' WHERE id = ?`, failed.ID)
 	require.NoError(t, err)
 
 	page, err := db.ExportCIMetrics(ExportCIMetricsOptions{Legacy: true})
 	require.NoError(t, err)
-	require.Len(t, page.Panels, 1)
+	require.Len(t, page.Panels, 1, "one pseudopanel unit per (repo, git_ref)")
 	p := page.Panels[0]
 
-	assert.Equal(t, "o/r", p.GithubRepo)
-	assert.Equal(t, int64(7), p.PRNumber)
-	assert.Equal(t, "sha-legacy", p.HeadSHA)
+	assert.Equal(t, repo.Name, p.GithubRepo)
+	assert.Equal(t, int64(0), p.PRNumber, "the PR linkage is unrecoverable for legacy units")
+	assert.Equal(t, "head-legacy", p.HeadSHA)
 	assert.Equal(t, PanelOutcomeLegacyReview, p.Outcome)
-	assert.NotEmpty(t, p.PostedAt)
+	assert.Equal(t, "2026-03-01T10:08:00Z", p.PostedAt, "latest finish of the unit's done jobs")
 	require.NotNil(t, p.FirstAttemptAt)
-	assert.Equal(t, p.PanelCreatedAt, *p.FirstAttemptAt,
-		"legacy panel_created_at and first_attempt_at both snapshot job.enqueued_at")
+	assert.Equal(t, "2026-03-01T10:00:00Z", *p.FirstAttemptAt, "earliest enqueue of the unit")
+	assert.Equal(t, p.PanelCreatedAt, *p.FirstAttemptAt)
 	assert.Nil(t, p.AttemptCount, "legacy rows predate retry-attempt tracking")
-	require.NotNil(t, p.SynthesisAgent)
-	assert.Equal(t, "legacy-agent", *p.SynthesisAgent)
-	require.NotNil(t, p.SynthesisModel)
-	assert.Equal(t, "legacy-model", *p.SynthesisModel)
+	assert.Nil(t, p.SynthesisAgent, "pseudopanels had no synthesis")
+	assert.Nil(t, p.SynthesisModel, "pseudopanels had no synthesis")
 
-	require.Len(t, p.Jobs, 1)
-	j := p.Jobs[0]
-	assert.Equal(t, job.UUID, j.JobUUID)
-	assert.Equal(t, "review", j.Role)
-	assert.Equal(t, "legacy-agent", j.Agent)
-	require.NotNil(t, j.Model)
-	assert.Equal(t, "legacy-model", *j.Model)
-	require.NotNil(t, j.Provider)
-	assert.Equal(t, "legacy-provider", *j.Provider)
-	assert.Equal(t, string(JobStatusDone), j.Status)
-	assert.NotNil(t, j.StartedAt)
-	assert.NotNil(t, j.FinishedAt)
+	require.Len(t, p.Jobs, 2)
+	assert.Equal(t, jobA.UUID, p.Jobs[0].JobUUID)
+	assert.Equal(t, jobB.UUID, p.Jobs[1].JobUUID)
+	for _, j := range p.Jobs {
+		assert.Equal(t, "review", j.Role)
+		assert.Equal(t, string(JobStatusDone), j.Status)
+		require.NotNil(t, j.Model)
+		assert.Equal(t, "legacy-model", *j.Model)
+		require.NotNil(t, j.Provider)
+		assert.Equal(t, "legacy-provider", *j.Provider)
+		assert.NotNil(t, j.StartedAt)
+		assert.NotNil(t, j.FinishedAt)
+	}
 	assert.NotNil(t, page.NextCursor)
 }
 
@@ -223,8 +270,10 @@ func TestExportCIMetricsLegacyPagination(t *testing.T) {
 	defer db.Close()
 
 	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
-	seedLegacyCIReview(t, db, repo.ID, "o/r", 30, "sha-legacy-a", "2026-03-01 10:00:00")
-	seedLegacyCIReview(t, db, repo.ID, "o/r", 31, "sha-legacy-b", "2026-03-02 10:00:00")
+	seedLegacyCIJob(t, db, repo.ID, "sha-legacy-a", "codex",
+		"2026-03-01 10:00:00", "2026-03-01 10:05:00")
+	seedLegacyCIJob(t, db, repo.ID, "sha-legacy-b", "codex",
+		"2026-03-02 10:00:00", "2026-03-02 10:05:00")
 
 	first, err := db.ExportCIMetrics(ExportCIMetricsOptions{Legacy: true, Limit: 1})
 	require.NoError(t, err)
@@ -246,7 +295,8 @@ func TestExportCIMetricsRejectsCursorModeMismatch(t *testing.T) {
 
 	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
 	seedPostedPanel(t, db, 40, "sha-panel", PanelOutcomeReviewPosted)
-	seedLegacyCIReview(t, db, repo.ID, "o/r", 41, "sha-legacy", "2026-03-01 10:00:00")
+	seedLegacyCIJob(t, db, repo.ID, "sha-legacy", "codex",
+		"2026-03-01 10:00:00", "2026-03-01 10:05:00")
 
 	panelPage, err := db.ExportCIMetrics(ExportCIMetricsOptions{})
 	require.NoError(t, err)
@@ -271,7 +321,8 @@ func TestExportCIMetricsLegacyAndPanelModesAreDisjoint(t *testing.T) {
 
 	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
 	seedPostedPanel(t, db, 50, "sha-panel-only", PanelOutcomeReviewPosted)
-	seedLegacyCIReview(t, db, repo.ID, "o/r", 51, "sha-legacy-only", "2026-03-01 10:00:00")
+	seedLegacyCIJob(t, db, repo.ID, "sha-legacy-only", "codex",
+		"2026-03-01 10:00:00", "2026-03-01 10:05:00")
 
 	panelPage, err := db.ExportCIMetrics(ExportCIMetricsOptions{})
 	require.NoError(t, err)

@@ -23,14 +23,15 @@ type ExportCIMetricsOptions struct {
 	Until  time.Time
 	Cursor string
 	Limit  int
-	// Legacy switches the export to the frozen pre-panel ci_pr_reviews era
-	// (~2026-02 to ~2026-06), one row per reviewed PR head, before panels
-	// existed. Legacy turnaround (first_attempt_at -> posted_at) measures
-	// job enqueue time -> ci_pr_reviews record time; it is NOT comparable
-	// to panel-era turnaround (first poller attempt -> panel posted), so
-	// callers must not mix the two eras in one turnaround-time analysis.
-	// Legacy cursors are namespaced and are rejected if replayed with
-	// Legacy unset, and vice versa.
+	// Legacy switches the export to the pre-panel CI era (~2026-02 to
+	// ~2026-06): completed source='ci' review_jobs rows with no panel run,
+	// grouped per (repo, git_ref) into one wall-clock unit ("pseudopanel").
+	// Legacy turnaround (first_attempt_at -> posted_at) measures earliest
+	// job enqueue -> latest job finish and excludes comment-posting
+	// latency, so it slightly undercounts the panel-era PR-perceived
+	// turnaround (first poller attempt -> panel posted). Legacy cursors
+	// are namespaced and are rejected if replayed with Legacy unset, and
+	// vice versa.
 	Legacy bool
 }
 
@@ -200,74 +201,142 @@ func (db *DB) exportCIMetricsPanels(opts ExportCIMetricsOptions, cursor *ciMetri
 	return page, nil
 }
 
-// exportCIMetricsLegacy is the ci_pr_reviews-backed page builder used by
-// ExportCIMetrics when Legacy is set. Each row joins its linked review_jobs
-// row (job_id) and is shaped into the same ExportCIPanel struct: outcome is
-// always PanelOutcomeLegacyReview, attempt_count is always nil (legacy rows
-// predate retry-attempt tracking), and posted_at/first_attempt_at/
-// panel_created_at are derived from cr.created_at and j.enqueued_at rather
-// than from a real panel lifecycle. Jobs always contains exactly the one
-// linked job, tagged role "review".
+// legacyUnitTimeExpr normalizes a review_jobs timestamp column (SQLite
+// CURRENT_TIMESTAMP space format or RFC 3339) to sortable RFC 3339 UTC so
+// MIN/MAX aggregate correctly across mixed formats.
+func legacyUnitTimeExpr(col string) string {
+	return "strftime('%Y-%m-%dT%H:%M:%SZ', " + col + ")"
+}
+
+// legacyGithubRepo maps a repos.name value (CI clones store the remote URL)
+// to the owner/repo form used by panel-era github_repo, passing through
+// values that are not GitHub remotes.
+func legacyGithubRepo(name string) string {
+	for _, prefix := range []string{
+		"https://github.com/", "http://github.com/",
+		"git@github.com:", "ssh://git@github.com/",
+	} {
+		if rest, ok := strings.CutPrefix(name, prefix); ok {
+			return strings.TrimSuffix(rest, ".git")
+		}
+	}
+	return name
+}
+
+// legacyHeadSHA extracts the head of a git_ref: the part after ".." (or
+// "...") for range refs, the ref itself otherwise.
+func legacyHeadSHA(gitRef string) string {
+	if i := strings.LastIndex(gitRef, ".."); i >= 0 {
+		return strings.TrimPrefix(gitRef[i+2:], ".")
+	}
+	return gitRef
+}
+
+// exportCIMetricsLegacy is the review_jobs-backed page builder used by
+// ExportCIMetrics when Legacy is set. The pre-panel CI era enqueued
+// independent reviews of the same range — typically two agents x two review
+// types per PR head ("pseudopanels") — and the tables that linked them to
+// PRs (ci_pr_batches, then ci_pr_reviews) have no surviving production
+// rows. Each export row is therefore one (repo, git_ref) group of completed
+// source='ci' non-panel jobs collapsed into a single wall-clock unit:
+// panel_created_at/first_attempt_at is the group's earliest enqueue,
+// posted_at its latest finish, outcome is always PanelOutcomeLegacyReview,
+// pr_number is 0 (the PR linkage is unrecoverable), and head_sha is the
+// range head. Jobs lists the group's completed jobs tagged role "review";
+// synthesis_agent/synthesis_model stay nil (pseudopanels had no synthesis).
 func (db *DB) exportCIMetricsLegacy(opts ExportCIMetricsOptions, cursor *ciMetricsCursor) (ExportCIMetricsPage, error) {
-	createdExpr := sqliteNormalizedTimestampExpr("cr.created_at")
-	conditions := []string{"cr.created_at IS NOT NULL"}
+	postedExpr := "MAX(" + legacyUnitTimeExpr("j.finished_at") + ")"
+	having := []string{}
 	args := make([]any, 0)
 	if !opts.Since.IsZero() {
-		conditions = append(conditions, createdExpr+" >= datetime(?)")
+		having = append(having, postedExpr+" >= ?")
 		args = append(args, opts.Since.UTC().Format(time.RFC3339))
 	}
 	if !opts.Until.IsZero() {
-		conditions = append(conditions, createdExpr+" < datetime(?)")
+		having = append(having, postedExpr+" < ?")
 		args = append(args, opts.Until.UTC().Format(time.RFC3339))
 	}
 	if cursor != nil {
-		conditions = append(conditions,
-			"("+createdExpr+" > datetime(?) OR ("+createdExpr+" = datetime(?) AND cr.id > ?))")
+		having = append(having,
+			"("+postedExpr+" > ? OR ("+postedExpr+" = ? AND MIN(j.id) > ?))")
 		args = append(args, cursor.PostedAt, cursor.PostedAt, cursor.PanelID)
+	}
+	havingClause := ""
+	if len(having) > 0 {
+		havingClause = "HAVING " + strings.Join(having, " AND ")
 	}
 	args = append(args, opts.Limit+1)
 
 	query := `
-		SELECT cr.id, cr.github_repo, cr.pr_number, cr.head_sha, cr.created_at,
-		       j.uuid, j.enqueued_at, j.agent, j.model, j.provider, j.status,
-		       j.started_at, j.finished_at
-		FROM ci_pr_reviews cr
-		JOIN review_jobs j ON j.id = cr.job_id
-		WHERE ` + strings.Join(conditions, " AND ") + `
-		ORDER BY ` + createdExpr + ` ASC, cr.id ASC
+		SELECT MIN(j.id), j.repo_id, r.name, j.git_ref,
+		       MIN(` + legacyUnitTimeExpr("j.enqueued_at") + `),
+		       ` + postedExpr + `
+		FROM review_jobs j
+		JOIN repos r ON r.id = j.repo_id
+		WHERE j.source = ? AND (j.panel_run_uuid IS NULL OR j.panel_run_uuid = '')
+		  AND j.status = ? AND j.finished_at IS NOT NULL
+		GROUP BY j.repo_id, j.git_ref
+		` + havingClause + `
+		ORDER BY 6 ASC, 1 ASC
 		LIMIT ?`
-	rows, err := db.Query(query, args...)
+	rows, err := db.Query(query, append([]any{JobSourceCI, string(JobStatusDone)}, args...)...)
 	if err != nil {
 		return ExportCIMetricsPage{}, fmt.Errorf("query legacy ci metrics export: %w", err)
 	}
 	defer rows.Close()
 
-	page := ExportCIMetricsPage{Panels: []ExportCIPanel{}}
-	var lastID int64
-	var lastPosted string
+	type legacyUnit struct {
+		unitID int64
+		repoID int64
+		panel  ExportCIPanel
+	}
+	units := []legacyUnit{}
+	truncated := false
 	for rows.Next() {
-		id, panel, err := scanLegacyCIMetricsRow(rows)
+		var (
+			u        legacyUnit
+			repoName string
+			gitRef   string
+			first    sql.NullString
+			posted   sql.NullString
+		)
+		if err := rows.Scan(&u.unitID, &u.repoID, &repoName, &gitRef, &first, &posted); err != nil {
+			return ExportCIMetricsPage{}, fmt.Errorf("scan legacy ci metrics unit: %w", err)
+		}
+		if len(units) == opts.Limit {
+			truncated = true
+			break
+		}
+		u.panel.GithubRepo = legacyGithubRepo(repoName)
+		u.panel.HeadSHA = legacyHeadSHA(gitRef)
+		u.panel.Outcome = PanelOutcomeLegacyReview
+		u.panel.PostedAt = posted.String
+		if first.Valid {
+			v := first.String
+			u.panel.FirstAttemptAt = &v
+			u.panel.PanelCreatedAt = v
+		}
+		u.panel.Jobs, err = db.legacyUnitJobs(u.repoID, gitRef)
 		if err != nil {
 			return ExportCIMetricsPage{}, err
 		}
-		if len(page.Panels) == opts.Limit {
-			page.Truncated = true
-			break
-		}
-		page.Panels = append(page.Panels, panel)
-		lastID = id
-		lastPosted = panel.PostedAt
+		units = append(units, u)
 	}
 	if err := rows.Err(); err != nil {
 		return ExportCIMetricsPage{}, err
 	}
 
-	if len(page.Panels) > 0 {
+	page := ExportCIMetricsPage{Panels: make([]ExportCIPanel, 0, len(units)), Truncated: truncated}
+	for _, u := range units {
+		page.Panels = append(page.Panels, u.panel)
+	}
+	if len(units) > 0 {
 		databaseID, err := db.GetDatabaseID()
 		if err != nil {
 			return ExportCIMetricsPage{}, err
 		}
-		next := encodeCIMetricsCursor(databaseID, lastPosted, lastID, true)
+		last := units[len(units)-1]
+		next := encodeCIMetricsCursor(databaseID, last.panel.PostedAt, last.unitID, true)
 		if next != "" {
 			page.NextCursor = &next
 		}
@@ -275,60 +344,57 @@ func (db *DB) exportCIMetricsLegacy(opts ExportCIMetricsOptions, cursor *ciMetri
 	return page, nil
 }
 
-// scanLegacyCIMetricsRow scans one ci_pr_reviews-joined-review_jobs export
-// row into an ExportCIPanel, mirroring scanCIMetricsRow's null-handling for
-// the panel-era query.
-func scanLegacyCIMetricsRow(rows *sql.Rows) (int64, ExportCIPanel, error) {
-	var (
-		id         int64
-		panel      ExportCIPanel
-		createdAt  sql.NullString
-		jobUUID    string
-		enqueuedAt sql.NullString
-		agent      string
-		model      sql.NullString
-		provider   sql.NullString
-		status     string
-		startedAt  sql.NullString
-		finishedAt sql.NullString
-	)
-	if err := rows.Scan(&id, &panel.GithubRepo, &panel.PRNumber, &panel.HeadSHA, &createdAt,
-		&jobUUID, &enqueuedAt, &agent, &model, &provider, &status, &startedAt, &finishedAt); err != nil {
-		return 0, ExportCIPanel{}, fmt.Errorf("scan legacy ci metrics row: %w", err)
+// legacyUnitJobs returns the completed source='ci' non-panel jobs of one
+// legacy (repo, git_ref) unit in id order, shaped as ExportCIPanelJob rows
+// tagged role "review".
+func (db *DB) legacyUnitJobs(repoID int64, gitRef string) ([]ExportCIPanelJob, error) {
+	rows, err := db.Query(`
+		SELECT j.uuid, j.agent, j.model, j.provider, j.status,
+		       `+legacyUnitTimeExpr("j.started_at")+`,
+		       `+legacyUnitTimeExpr("j.finished_at")+`
+		FROM review_jobs j
+		WHERE j.repo_id = ? AND j.git_ref = ?
+		  AND j.source = ? AND (j.panel_run_uuid IS NULL OR j.panel_run_uuid = '')
+		  AND j.status = ? AND j.finished_at IS NOT NULL
+		ORDER BY j.id ASC`,
+		repoID, gitRef, JobSourceCI, string(JobStatusDone))
+	if err != nil {
+		return nil, fmt.Errorf("query legacy ci unit jobs: %w", err)
 	}
-	panel.Outcome = PanelOutcomeLegacyReview
-	if createdAt.Valid {
-		panel.PostedAt = formatExportTime(parseSQLiteTime(createdAt.String))
-	}
-	if enqueuedAt.Valid {
-		v := formatExportTime(parseSQLiteTime(enqueuedAt.String))
-		panel.FirstAttemptAt = &v
-		panel.PanelCreatedAt = v
-	}
-	if agent != "" {
-		panel.SynthesisAgent = &agent
-	}
-	if model.Valid && model.String != "" {
-		panel.SynthesisModel = &model.String
-	}
+	defer rows.Close()
 
-	job := ExportCIPanelJob{JobUUID: jobUUID, Role: "review", Agent: agent, Status: status}
-	if model.Valid && model.String != "" {
-		job.Model = &model.String
+	jobs := []ExportCIPanelJob{}
+	for rows.Next() {
+		var (
+			job        ExportCIPanelJob
+			model      sql.NullString
+			provider   sql.NullString
+			startedAt  sql.NullString
+			finishedAt sql.NullString
+		)
+		if err := rows.Scan(&job.JobUUID, &job.Agent, &model, &provider, &job.Status,
+			&startedAt, &finishedAt); err != nil {
+			return nil, fmt.Errorf("scan legacy ci unit job: %w", err)
+		}
+		job.Role = "review"
+		if model.Valid && model.String != "" {
+			job.Model = &model.String
+		}
+		if provider.Valid && provider.String != "" {
+			job.Provider = &provider.String
+		}
+		if startedAt.Valid {
+			job.StartedAt = &startedAt.String
+		}
+		if finishedAt.Valid {
+			job.FinishedAt = &finishedAt.String
+		}
+		jobs = append(jobs, job)
 	}
-	if provider.Valid && provider.String != "" {
-		job.Provider = &provider.String
+	if err := rows.Err(); err != nil {
+		return nil, err
 	}
-	if startedAt.Valid {
-		v := formatExportTime(parseSQLiteTime(startedAt.String))
-		job.StartedAt = &v
-	}
-	if finishedAt.Valid {
-		v := formatExportTime(parseSQLiteTime(finishedAt.String))
-		job.FinishedAt = &v
-	}
-	panel.Jobs = []ExportCIPanelJob{job}
-	return id, panel, nil
+	return jobs, nil
 }
 
 // scanCIMetricsRow scans one ci_pr_panels export row and maps its nullable
@@ -485,10 +551,20 @@ func (db *DB) resolveCIMetricsCursor(cursor string, legacy bool) (*ciMetricsCurs
 		WHERE cp.id = ? AND cp.posted_at IS NOT NULL
 		  AND ` + sqliteNormalizedTimestampExpr("cp.posted_at") + ` = datetime(?)`
 	if legacy {
+		// A legacy cursor names a pseudopanel unit by its MIN(j.id) anchor
+		// job and the unit's latest finish; re-derive that unit's group and
+		// check both still hold.
 		existsQuery = `
-			SELECT COUNT(1) FROM ci_pr_reviews cr
-			WHERE cr.id = ? AND cr.created_at IS NOT NULL
-			  AND ` + sqliteNormalizedTimestampExpr("cr.created_at") + ` = datetime(?)`
+			SELECT COUNT(1) FROM review_jobs a
+			WHERE a.id = ? AND a.source = '` + JobSourceCI + `'
+			  AND (a.panel_run_uuid IS NULL OR a.panel_run_uuid = '')
+			  AND a.status = 'done' AND a.finished_at IS NOT NULL
+			  AND (SELECT MAX(` + legacyUnitTimeExpr("j.finished_at") + `)
+			       FROM review_jobs j
+			       WHERE j.repo_id = a.repo_id AND j.git_ref = a.git_ref
+			         AND j.source = '` + JobSourceCI + `'
+			         AND (j.panel_run_uuid IS NULL OR j.panel_run_uuid = '')
+			         AND j.status = 'done' AND j.finished_at IS NOT NULL) = ?`
 	}
 	var count int
 	if err := db.QueryRow(existsQuery, decoded.PanelID, decoded.PostedAt).Scan(&count); err != nil {

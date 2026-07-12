@@ -472,14 +472,18 @@ func TestHumaExportCIMetricsLegacy(t *testing.T) {
 	srv, db, _ := newTestServer(t)
 	repo := testutil.CreateTestRepo(t, db)
 
-	// Seed a frozen pre-panel ci_pr_reviews row directly: no production
-	// writer remains for this table, panels replaced it.
+	// Seed one completed pre-panel CI review job: source='ci', no panel
+	// run. The legacy export groups such jobs per (repo, git_ref) into
+	// pseudopanel units.
 	job, err := db.EnqueueJob(storage.EnqueueOpts{
 		RepoID: repo.ID, GitRef: "legacy-sha", Agent: "legacy-agent", Model: "legacy-model",
+		Source: storage.JobSourceCI,
 	})
 	require.NoError(t, err)
-	_, err = db.Exec(`INSERT INTO ci_pr_reviews (github_repo, pr_number, head_sha, job_id, created_at)
-		VALUES (?, ?, ?, ?, ?)`, "o/r", 9, "legacy-sha", job.ID, "2026-03-01 10:00:00")
+	_, err = db.Exec(`UPDATE review_jobs
+		SET status = 'done', enqueued_at = ?, started_at = ?, finished_at = ?
+		WHERE id = ?`,
+		"2026-03-01 10:00:00", "2026-03-01 10:00:00", "2026-03-01 10:05:00", job.ID)
 	require.NoError(t, err)
 
 	rr := serveHuma(t, srv, http.MethodGet, "/api/export/ci-metrics?legacy=true", nil)
@@ -488,7 +492,7 @@ func TestHumaExportCIMetricsLegacy(t *testing.T) {
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &doc))
 	require.Len(t, doc.Panels, 1)
 	assert.Equal(t, storage.PanelOutcomeLegacyReview, doc.Panels[0].Outcome)
-	assert.Equal(t, "o/r", doc.Panels[0].GithubRepo)
+	assert.Equal(t, repo.Name, doc.Panels[0].GithubRepo)
 	assert.Equal(t, "legacy-sha", doc.Panels[0].HeadSHA)
 	require.Len(t, doc.Panels[0].Jobs, 1)
 	assert.Equal(t, "review", doc.Panels[0].Jobs[0].Role)
