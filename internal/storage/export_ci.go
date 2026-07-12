@@ -129,44 +129,13 @@ func (db *DB) ExportCIMetrics(opts ExportCIMetricsOptions) (ExportCIMetricsPage,
 	}
 	var pending []pendingPanel
 	for rows.Next() {
-		var (
-			id             int64
-			panel          ExportCIPanel
-			createdAt      sql.NullString
-			postedAt       sql.NullString
-			firstAttemptAt sql.NullString
-			attemptCount   sql.NullInt64
-			runUUID        string
-			synthAgent     sql.NullString
-			synthModel     sql.NullString
-		)
-		if err := rows.Scan(&id, &panel.GithubRepo, &panel.PRNumber, &panel.HeadSHA,
-			&createdAt, &postedAt, &firstAttemptAt, &attemptCount, &panel.Outcome,
-			&runUUID, &synthAgent, &synthModel); err != nil {
-			return ExportCIMetricsPage{}, fmt.Errorf("scan ci metrics row: %w", err)
+		id, panel, runUUID, err := scanCIMetricsRow(rows)
+		if err != nil {
+			return ExportCIMetricsPage{}, err
 		}
 		if len(pending) == opts.Limit {
 			page.Truncated = true
 			break
-		}
-		if createdAt.Valid {
-			panel.PanelCreatedAt = formatExportTime(parseSQLiteTime(createdAt.String))
-		}
-		if postedAt.Valid {
-			panel.PostedAt = formatExportTime(parseSQLiteTime(postedAt.String))
-		}
-		if firstAttemptAt.Valid {
-			v := formatExportTime(parseSQLiteTime(firstAttemptAt.String))
-			panel.FirstAttemptAt = &v
-		}
-		if attemptCount.Valid {
-			panel.AttemptCount = &attemptCount.Int64
-		}
-		if synthAgent.Valid && synthAgent.String != "" {
-			panel.SynthesisAgent = &synthAgent.String
-		}
-		if synthModel.Valid && synthModel.String != "" {
-			panel.SynthesisModel = &synthModel.String
 		}
 		pending = append(pending, pendingPanel{panel: panel, runUUID: runUUID})
 		lastID = id
@@ -196,6 +165,49 @@ func (db *DB) ExportCIMetrics(opts ExportCIMetricsOptions) (ExportCIMetricsPage,
 		}
 	}
 	return page, nil
+}
+
+// scanCIMetricsRow scans one ci_pr_panels export row and maps its nullable
+// SQL columns onto an ExportCIPanel. It returns the panel's database id and
+// panel_run_uuid alongside the populated panel so the caller can page and
+// join review_jobs without re-touching sql.Null* locals.
+func scanCIMetricsRow(rows *sql.Rows) (int64, ExportCIPanel, string, error) {
+	var (
+		id             int64
+		panel          ExportCIPanel
+		createdAt      sql.NullString
+		postedAt       sql.NullString
+		firstAttemptAt sql.NullString
+		attemptCount   sql.NullInt64
+		runUUID        string
+		synthAgent     sql.NullString
+		synthModel     sql.NullString
+	)
+	if err := rows.Scan(&id, &panel.GithubRepo, &panel.PRNumber, &panel.HeadSHA,
+		&createdAt, &postedAt, &firstAttemptAt, &attemptCount, &panel.Outcome,
+		&runUUID, &synthAgent, &synthModel); err != nil {
+		return 0, ExportCIPanel{}, "", fmt.Errorf("scan ci metrics row: %w", err)
+	}
+	if createdAt.Valid {
+		panel.PanelCreatedAt = formatExportTime(parseSQLiteTime(createdAt.String))
+	}
+	if postedAt.Valid {
+		panel.PostedAt = formatExportTime(parseSQLiteTime(postedAt.String))
+	}
+	if firstAttemptAt.Valid {
+		v := formatExportTime(parseSQLiteTime(firstAttemptAt.String))
+		panel.FirstAttemptAt = &v
+	}
+	if attemptCount.Valid {
+		panel.AttemptCount = &attemptCount.Int64
+	}
+	if synthAgent.Valid && synthAgent.String != "" {
+		panel.SynthesisAgent = &synthAgent.String
+	}
+	if synthModel.Valid && synthModel.String != "" {
+		panel.SynthesisModel = &synthModel.String
+	}
+	return id, panel, runUUID, nil
 }
 
 func (db *DB) exportCIPanelJobs(panelRunUUID string) ([]ExportCIPanelJob, error) {
