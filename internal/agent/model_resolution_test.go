@@ -494,12 +494,17 @@ func TestResolveWorkflowConfigModelForSelectedAgent_BackupWithoutModelKeepsDefau
 	require.Empty(t, resolution.ModelForSelectedAgent("claude-code", ""))
 }
 
-// TestModelForSelectedAgentACPBackupPairing pins the backup-path semantics for
-// a configured ACP backup agent. The backup path deliberately bypasses the
-// workflow-model ACP pairing guard because BackupModel() only ever resolves
-// backup_model-family fields (never a generic default_model or workflow
-// review_model), so no generic/workflow model can leak onto an ACP backup
-// agent. These cases pin the resulting behavior across the layers that matter.
+// TestModelForSelectedAgentACPBackupPairing pins the backup-path pairing
+// semantics for a configured ACP backup agent. Backup models pair with backup
+// agents layer by layer: workflow-scoped backup models (repo
+// {workflow}_backup_model, repo backup_model, global {workflow}_backup_model)
+// pair with the workflow's resolved backup agent — the selected agent on this
+// path — while a model inherited from the trailing global
+// default_backup_model fallback pairs with default_backup_agent only. An
+// inherited model whose paired agent is not the selected ACP backup agent is
+// skipped (""), leaving the agent's own [acp].model in effect, because ACP
+// exact-membership validation would otherwise reject the foreign value and
+// break the backup handoff. Non-ACP backup agents keep legacy behavior.
 func TestModelForSelectedAgentACPBackupPairing(t *testing.T) {
 	t.Parallel()
 
@@ -547,23 +552,96 @@ func TestModelForSelectedAgentACPBackupPairing(t *testing.T) {
 			note:          "empty backup_model leaves [acp].model intact",
 		},
 		{
-			// Cross-layer: only a global default_backup_model is set while the
-			// ACP backup agent is workflow-specific. BackupModel() honors the
-			// explicit backup config (it is still a backup_model, not a generic
-			// or workflow model), and ACP session validation is the backstop if
-			// the value is foreign. Pinned to document the deliberate scope.
-			name: "acp backup, only global default_backup_model -> honored",
+			// THE LEAK (cross-layer mispair): the ACP backup agent is
+			// workflow-specific (review_backup_agent), but the only backup
+			// model is the inherited global default_backup_model, which pairs
+			// with default_backup_agent (unset here). Handing the inherited
+			// model to the ACP agent would fail its exact-membership
+			// validation and break the backup handoff, so it is skipped and
+			// the agent keeps its own [acp].model.
+			name: "acp backup, inherited default_backup_model, no default_backup_agent -> skipped",
 			cfg: &config.Config{
 				DefaultAgent:       "codex",
 				ReviewAgent:        "gemini",
 				ReviewBackupAgent:  acpName,
+				DefaultBackupModel: "gpt-5.4-mini",
+				ACP:                &config.ACPAgentConfig{Name: acpName, Model: acpModel},
+			},
+			workflow:      "review",
+			selectedAgent: acpName,
+			want:          "",
+			note:          "inherited default_backup_model is unpaired -> keeps [acp].model",
+		},
+		{
+			// Same mispair with default_backup_agent set to a DIFFERENT
+			// agent: default_backup_model pairs with that agent, not the
+			// workflow-selected ACP backup agent.
+			name: "acp backup, default_backup_model paired with other default_backup_agent -> skipped",
+			cfg: &config.Config{
+				DefaultAgent:       "codex",
+				ReviewAgent:        "gemini",
+				ReviewBackupAgent:  acpName,
+				DefaultBackupAgent: "claude",
+				DefaultBackupModel: "claude-sonnet",
+				ACP:                &config.ACPAgentConfig{Name: acpName, Model: acpModel},
+			},
+			workflow:      "review",
+			selectedAgent: acpName,
+			want:          "",
+			note:          "default_backup_model belongs to claude, not the ACP agent",
+		},
+		{
+			// Legit same-layer global pair: default_backup_agent IS the ACP
+			// agent and default_backup_model was configured alongside it.
+			name: "acp backup via default_backup_agent, default_backup_model -> that model",
+			cfg: &config.Config{
+				DefaultAgent:       "codex",
+				ReviewAgent:        "gemini",
+				DefaultBackupAgent: acpName,
 				DefaultBackupModel: "gemini-3.0-pro",
 				ACP:                &config.ACPAgentConfig{Name: acpName, Model: acpModel},
 			},
 			workflow:      "review",
 			selectedAgent: acpName,
 			want:          "gemini-3.0-pro",
-			note:          "explicit backup_model honored across layers",
+			note:          "same-layer default_backup_agent+default_backup_model pair holds",
+		},
+		{
+			// Legit inheritance: the backup agent inherits from
+			// default_backup_agent=ACP while the model is workflow-scoped
+			// (global review_backup_model). Workflow-scoped models pair with
+			// the resolved backup agent, so the pair holds — thinking
+			// suffixes included.
+			name: "acp backup inherited from default_backup_agent, workflow backup_model -> that model",
+			cfg: &config.Config{
+				DefaultAgent:       "codex",
+				ReviewAgent:        "gemini",
+				DefaultBackupAgent: acpName,
+				ReviewBackupModel:  "gemini-3.5-flash:high",
+				ACP:                &config.ACPAgentConfig{Name: acpName, Model: acpModel},
+			},
+			workflow:      "review",
+			selectedAgent: acpName,
+			want:          "gemini-3.5-flash:high",
+			note:          "workflow-scoped backup_model pairs with the resolved backup agent",
+		},
+		{
+			// Scope guard: a non-ACP backup agent keeps legacy behavior — the
+			// inherited default_backup_model still applies even though no
+			// default_backup_agent pairs with it (native CLIs tolerate a
+			// foreign model value).
+			name: "non-acp backup, inherited default_backup_model -> honored (legacy)",
+			cfg: &config.Config{
+				DefaultAgent:       "codex",
+				ReviewAgent:        "gemini",
+				ReviewBackupAgent:  "claude",
+				DefaultBackupModel: "claude-sonnet",
+				ACP:                &config.ACPAgentConfig{Name: acpName, Model: acpModel},
+			},
+			workflow:      "review",
+			selectedAgent: "claude-code",
+			want:          "claude-sonnet",
+			note:          "non-ACP backup agents are unaffected by the guard",
 		},
 	}
 

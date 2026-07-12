@@ -93,6 +93,40 @@ func (w WorkflowConfig) BackupModel() string {
 	)
 }
 
+// acpBackupModelMispaired reports whether the backup model resolved for this
+// workflow was inherited from the global default_backup_model while the
+// selected ACP backup agent is not paired with it at that layer.
+// default_backup_model pairs with default_backup_agent; when the ACP backup
+// agent came from a more specific layer (or no default_backup_agent is set),
+// the inherited model belongs to a different agent and must not be handed to
+// the ACP agent, whose exact-membership model validation would reject it and
+// break the backup handoff. Workflow-scoped backup models pair with the
+// workflow's resolved backup agent — the selected agent on this path — and
+// are never mispaired here.
+func (w WorkflowConfig) acpBackupModelMispaired(selectedAgent string) bool {
+	if !w.isConfiguredACPAgentName(selectedAgent) {
+		return false
+	}
+	repoCfg := w.RepoConfig
+	if repoCfg == nil {
+		repoCfg, _ = config.LoadRepoConfig(w.RepoPath)
+	}
+	if config.ResolveWorkflowScopedBackupModelFromConfig(
+		repoCfg, w.GlobalConfig, w.Workflow,
+	) != "" {
+		// The resolved backup model is workflow-scoped: paired with the
+		// selected backup agent by construction.
+		return false
+	}
+	// The model was inherited from global default_backup_model, which pairs
+	// with default_backup_agent only.
+	if w.GlobalConfig == nil {
+		return false
+	}
+	pairedAgent := strings.TrimSpace(w.GlobalConfig.DefaultBackupAgent)
+	return pairedAgent == "" || !w.AgentMatches(selectedAgent, pairedAgent)
+}
+
 // ModelForSelectedAgent resolves the model for the actual selected
 // agent. Backup agents use the workflow backup model when no explicit
 // CLI model was provided; otherwise the workflow/default precedence used
@@ -102,20 +136,26 @@ func (w WorkflowConfig) ModelForSelectedAgent(
 ) string {
 	if w.UsesBackupAgent(selectedAgent) &&
 		strings.TrimSpace(cliModel) == "" {
-		// Backup path is intentionally NOT wrapped in the ACP pairing guard
-		// applied to workflow models below. BackupModel() resolves only
-		// backup_model-family fields (workflow/repo/global backup_model), never
-		// generic default_model or a workflow review_model, so a generic or
-		// workflow model can never leak onto an ACP backup agent here. When
-		// BackupModel() is empty the ACP backup agent keeps its own [acp].model
-		// (callers apply the resolved model as `if model != "" { WithModel }`,
-		// and the configured ACP agent is constructed with [acp].model baked
-		// in), so the empty case is already correct. A non-empty backup_model is
-		// an explicit backup-config pair with backup_agent; if a user pairs an
-		// ACP backup agent with a foreign backup_model (e.g. a cross-layer
-		// default_backup_model), ACP session-time validation is the backstop.
-		// See model_resolution_test.go (backup-pairing cases) for the pins.
-		return w.BackupModel()
+		// Backup models pair with backup agents layer by layer, mirroring the
+		// workflow-model pairing guard below. Workflow-scoped backup models
+		// (repo {workflow}_backup_model, repo backup_model, global
+		// {workflow}_backup_model) pair with the workflow's resolved backup
+		// agent — which is the selected agent on this path — so they always
+		// apply. A model inherited from the trailing global
+		// default_backup_model fallback pairs with default_backup_agent only:
+		// when the selected ACP backup agent was configured at a more specific
+		// layer (e.g. review_backup_agent), handing it the inherited model
+		// would fail ACP exact-membership validation and break the backup
+		// handoff — the last line of defense. Return "" instead so the agent
+		// keeps its own [acp].model (callers apply the resolved model as
+		// `if model != "" { WithModel }`, and the configured ACP agent is
+		// constructed with [acp].model baked in). Non-ACP backup agents keep
+		// legacy behavior: native CLIs tolerate a foreign model value.
+		model := w.BackupModel()
+		if model != "" && w.acpBackupModelMispaired(selectedAgent) {
+			return ""
+		}
+		return model
 	}
 	var model string
 	if w.RepoConfig != nil {

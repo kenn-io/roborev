@@ -622,6 +622,29 @@ func ResolveBackupModelForWorkflow(repoPath string, globalCfg *Config, workflow 
 // ResolveBackupModelForWorkflow: it resolves entirely from the passed repoCfg
 // and globalCfg, never reading the working tree.
 func ResolveBackupModelForWorkflowFromConfig(repoCfg *RepoConfig, globalCfg *Config, workflow string) string {
+	if s := ResolveWorkflowScopedBackupModelFromConfig(repoCfg, globalCfg, workflow); s != "" {
+		return s
+	}
+
+	// Global default layer.
+	if globalCfg != nil {
+		if s := strings.TrimSpace(globalCfg.DefaultBackupModel); s != "" {
+			return s
+		}
+	}
+
+	return ""
+}
+
+// ResolveWorkflowScopedBackupModelFromConfig resolves only the
+// workflow-scoped backup model fields — repo {workflow}_backup_model, repo
+// backup_model, global {workflow}_backup_model — excluding the trailing
+// global default_backup_model fallback of
+// ResolveBackupModelForWorkflowFromConfig. Workflow-scoped fields pair with
+// the workflow's resolved backup agent, whereas default_backup_model pairs
+// with default_backup_agent; the ACP backup pairing guard relies on this
+// distinction.
+func ResolveWorkflowScopedBackupModelFromConfig(repoCfg *RepoConfig, globalCfg *Config, workflow string) string {
 	// Repo layer: workflow-specific > generic
 	if repoCfg != nil {
 		if s := lookupFieldByTag(reflect.ValueOf(*repoCfg), workflow+"_backup_model"); s != "" {
@@ -632,12 +655,9 @@ func ResolveBackupModelForWorkflowFromConfig(repoCfg *RepoConfig, globalCfg *Con
 		}
 	}
 
-	// Global layer: workflow-specific > default
+	// Global layer: workflow-specific only
 	if globalCfg != nil {
 		if s := lookupFieldByTag(reflect.ValueOf(*globalCfg), workflow+"_backup_model"); s != "" {
-			return s
-		}
-		if s := strings.TrimSpace(globalCfg.DefaultBackupModel); s != "" {
 			return s
 		}
 	}
