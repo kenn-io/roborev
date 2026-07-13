@@ -17,6 +17,8 @@ by default, especially on narrow terminals.
 - The Log view retains its current collapsed default and `i` toggle.
 - Prompt and Log expansion choices are independent; visiting or toggling one
   view must not change the other view's presentation.
+- Prompt help describes `i` as a command-display toggle rather than an expand
+  action because the initial Prompt state is already expanded.
 - Wrapped header height remains included in visible-content calculations so
   content, status, and help rows stay within the terminal height.
 
@@ -53,6 +55,7 @@ Update the command-header tests test-first to prove:
 - Pressing `i` collapses Prompt and pressing it again restores wrapping.
 - A newly constructed Log model remains collapsed.
 - Toggling Prompt does not alter Log state, and vice versa.
+- Prompt's compact help label accurately describes the bidirectional toggle.
 - Existing header-height and command-content assertions continue to pass.
 
 Run the focused TUI tests, then the repository-wide Go test suite and lint
