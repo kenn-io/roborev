@@ -1039,17 +1039,37 @@ func (db *DB) migrate() error {
 	// reads review_jobs.panel_run_uuid/panel_role, which that migration
 	// adds.
 	//
-	// Outcome is reconstructed from the retained MEMBER results, mirroring
-	// the posting decision (classifyPanelOutcome), NOT from the synthesis
-	// job's status: a genuinely failed synthesis still posted successful
-	// member output via the raw fallback. A member with retained non-empty
-	// review output means the review was posted; otherwise a failed member
-	// means the give-up note was; otherwise the all-skip notice was. Runs
-	// abandoned on a permanent posting failure are indistinguishable
+	// Outcome is reconstructed from the retained jobs, mirroring the live
+	// posting decision (classifyPanelOutcome) in precedence order:
+	//
+	//  1. A synthesis job that FAILED transiently (a provider outage or a
+	//     quota/session exhaustion) took precedence over member output in
+	//     the live path: the run deferred rather than post the degraded raw
+	//     fallback, and a posted row in that state is the terminal give-up
+	//     after the transient retry wall exhausted -> 'giveup_posted'. The
+	//     transient/quota distinction is an error-prefix match, matching
+	//     review.IsTransientFailure / IsQuotaFailure (OutageErrorPrefix
+	//     "outage: ", QuotaErrorPrefix "quota: "); storage cannot import
+	//     review (review imports storage), so the prefixes are inlined and
+	//     must track those constants. A GENUINE (deterministic) synthesis
+	//     failure is deliberately NOT caught here: it still posted the raw
+	//     member fallback, so it falls through to rule 2.
+	//  2. A member with retained non-empty review output means the review
+	//     (or the raw fallback) was posted -> 'review_posted'.
+	//  3. Otherwise a failed member means the give-up note was posted ->
+	//     'giveup_posted'.
+	//  4. Otherwise the all-skip notice was posted -> 'no_review_posted'.
+	//
+	// Runs abandoned on a permanent posting failure are indistinguishable
 	// (posting state was not persisted then) and stay approximate. Rows
 	// with no surviving member rows keep NULL and export as "unknown".
 	if _, err = db.Exec(`UPDATE ci_pr_panels SET outcome =
 		CASE
+			WHEN EXISTS (SELECT 1 FROM review_jobs sj
+			             WHERE sj.id = ci_pr_panels.synthesis_job_id
+			               AND sj.status = 'failed'
+			               AND (sj.error LIKE 'outage: %' OR sj.error LIKE 'quota: %'))
+			     THEN 'giveup_posted'
 			WHEN EXISTS (SELECT 1 FROM review_jobs j
 			             JOIN reviews rv ON rv.job_id = j.id
 			             WHERE j.panel_run_uuid = ci_pr_panels.panel_run_uuid

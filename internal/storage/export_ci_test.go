@@ -57,6 +57,21 @@ func TestMigrationBackfillsPanelTerminalMetrics(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, db.DeleteReviewAttempt("o/r", 64, "sha-no-jobs"))
 
+	// (f) Synthesis failed on a transient outage AND a member produced
+	// output: the live path deferred rather than post the degraded raw
+	// fallback, so a posted row here is the exhausted transient give-up, not
+	// a review — the synthesis-failure classification outranks member output.
+	transientGiveup := seedPostedPanel(t, db, 65, "sha-transient-giveup", PanelOutcomeReviewPosted)
+	require.NotNil(t, transientGiveup.SynthesisJobID)
+	completeMemberWithOutput(t, db, transientGiveup.PanelRunUUID, "Partial output.")
+	failSynthesisWithError(t, db, *transientGiveup.SynthesisJobID, "outage: provider unavailable")
+
+	// (g) Same for a quota/session synthesis failure.
+	quotaGiveup := seedPostedPanel(t, db, 66, "sha-quota-giveup", PanelOutcomeReviewPosted)
+	require.NotNil(t, quotaGiveup.SynthesisJobID)
+	completeMemberWithOutput(t, db, quotaGiveup.PanelRunUUID, "Partial output.")
+	failSynthesisWithError(t, db, *quotaGiveup.SynthesisJobID, "quota: session limit reached")
+
 	// Simulate rows finalized before the terminal-metrics columns existed.
 	_, err = db.Exec(`UPDATE ci_pr_panels
 		SET outcome = NULL, first_attempt_at = NULL, attempt_count = NULL`)
@@ -69,7 +84,7 @@ func TestMigrationBackfillsPanelTerminalMetrics(t *testing.T) {
 
 	page, err := reopened.ExportCIMetrics(ExportCIMetricsOptions{})
 	require.NoError(t, err)
-	require.Len(t, page.Panels, 5)
+	require.Len(t, page.Panels, 7)
 	bySHA := map[string]ExportCIPanel{}
 	for _, p := range page.Panels {
 		bySHA[p.HeadSHA] = p
@@ -97,6 +112,22 @@ func TestMigrationBackfillsPanelTerminalMetrics(t *testing.T) {
 	assert.Equal(t, PanelOutcomeUnknown, p.Outcome,
 		"no surviving member rows leaves the outcome unknown")
 	assert.Nil(t, p.FirstAttemptAt)
+
+	assert.Equal(t, PanelOutcomeGiveupPosted, bySHA["sha-transient-giveup"].Outcome,
+		"a transient-failed synthesis is a give-up even with member output")
+	assert.Equal(t, PanelOutcomeGiveupPosted, bySHA["sha-quota-giveup"].Outcome,
+		"a quota-failed synthesis is a give-up even with member output")
+}
+
+// failSynthesisWithError marks a synthesis job failed with a classified
+// error string (e.g. "outage: ..." or "quota: ..."), the signal the outcome
+// backfill uses to tell a transient synthesis give-up from a genuine
+// synthesis failure that still posted the raw member fallback.
+func failSynthesisWithError(t *testing.T, db *DB, jobID int64, errText string) {
+	t.Helper()
+	_, err := db.Exec(`UPDATE review_jobs SET status = 'failed', error = ? WHERE id = ?`,
+		errText, jobID)
+	require.NoError(t, err)
 }
 
 // TestMigrationBackfillsSynthesisSnapshotSurvivesCascade covers the synthesis
