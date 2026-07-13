@@ -361,11 +361,11 @@ func (db *DB) exportCIMetricsLegacy(opts ExportCIMetricsOptions, cursor *ciMetri
 
 // legacyPanelEraEnd returns the timestamp of the database's first panel
 // activity (earliest panel-tagged job enqueue or ci_pr_panels row) in
-// normalized RFC 3339 UTC, or "" when there is none. It is the immutable
-// upper bound of the pre-panel era: only jobs enqueued strictly before it
-// can belong to a legacy pseudopanel, so post-panel reviews can never form
-// new legacy units or destabilize legacy cursors. Computed once per export
-// call and passed as a bound parameter.
+// normalized RFC 3339 UTC, or "" when there is none. It is the upper bound
+// of the pre-panel era: only jobs enqueued strictly before it can belong to
+// a legacy pseudopanel, so post-panel reviews do not form new legacy units.
+// Recomputed per export call; the --legacy export is a one-time backfill, so
+// this runs against complete data and is never a live, drifting feed.
 func (db *DB) legacyPanelEraEnd() (string, error) {
 	var end sql.NullString
 	err := db.QueryRow(`
