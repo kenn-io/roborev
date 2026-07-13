@@ -49,14 +49,12 @@ persistence existed are backfilled at startup from their retained jobs;
 rows whose jobs were deleted export with outcome "unknown" and null
 first_attempt_at.
 
-Use --legacy to export the frozen pre-panel CI era instead (roughly
-2026-02 through 2026-06): completed CI review jobs grouped per
-(repo, git_ref) into one wall-clock "pseudopanel" unit — first_attempt_at
-is the group's earliest enqueue, posted_at its latest finish, outcome
-"legacy_review", pr_number 0 (the PR linkage did not survive). This is a
-one-time backfill source, not an ongoing feed; legacy turnaround excludes
-comment-posting latency, unlike panel-era turnaround. Legacy cursors
-cannot be resumed against a non-legacy export, or vice versa.`),
+Use --legacy to export the frozen pre-panel CI era instead: review jobs
+from before the database's first panel activity, grouped per
+(repo, git_ref) into one wall-clock "pseudopanel" unit with outcome
+"legacy_review" and pr_number 0. This is a one-time backfill source, not
+an ongoing feed. Legacy cursors cannot be resumed against a non-legacy
+export, or vice versa.`),
 		RunE: func(cmd *cobra.Command, args []string) error {
 			limitSet := cmd.Flags().Changed("limit")
 			if err := validateExportCIMetricsOpts(opts, limitSet); err != nil {

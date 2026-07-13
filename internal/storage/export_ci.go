@@ -23,18 +23,17 @@ type ExportCIMetricsOptions struct {
 	Until  time.Time
 	Cursor string
 	Limit  int
-	// Legacy switches the export to the pre-panel CI era (~2026-02 to
-	// ~2026-06): completed review/range jobs with no panel run, grouped
-	// per (repo, git_ref) into one wall-clock unit ("pseudopanel") when
-	// two or more reviews share the ref. Rows from that era predate all
-	// CI tagging, so membership is structural, and singleton reviews are
-	// excluded as manual one-offs.
-	// Legacy turnaround (first_attempt_at -> posted_at) measures earliest
-	// job enqueue -> latest job finish and excludes comment-posting
-	// latency, so it slightly undercounts the panel-era PR-perceived
-	// turnaround (first poller attempt -> panel posted). Legacy cursors
-	// are namespaced and are rejected if replayed with Legacy unset, and
-	// vice versa.
+	// Legacy switches the export to the frozen pre-panel CI era: terminal
+	// (done or failed) review/range jobs with no panel run, enqueued
+	// before the database's first panel activity, grouped per
+	// (repo, git_ref) into one wall-clock unit ("pseudopanel") when two or
+	// more terminal jobs share the ref and at least one succeeded (the
+	// batch flow posted whatever output was available). Singleton reviews
+	// are excluded as manual one-offs; a database with no panel activity
+	// exports no legacy rows. Legacy turnaround (earliest enqueue ->
+	// latest finish) excludes comment-posting latency, unlike panel-era
+	// turnaround. Legacy cursors are namespaced and rejected if replayed
+	// with Legacy unset, and vice versa.
 	Legacy bool
 }
 
@@ -211,19 +210,20 @@ func legacyUnitTimeExpr(col string) string {
 	return "strftime('%Y-%m-%dT%H:%M:%SZ', " + col + ")"
 }
 
-// legacyGithubRepo maps a repos.name value (CI clones store the remote URL)
-// to the owner/repo form used by panel-era github_repo, passing through
-// values that are not GitHub remotes.
-func legacyGithubRepo(name string) string {
+// legacyGithubRepo maps a repo's remote identity (repos.identity, a GitHub
+// remote URL for CI clones; the export falls back to repos.name only when
+// identity is unset) to the owner/repo form used by panel-era github_repo,
+// passing through values that are not GitHub remotes.
+func legacyGithubRepo(identity string) string {
 	for _, prefix := range []string{
 		"https://github.com/", "http://github.com/",
 		"git@github.com:", "ssh://git@github.com/",
 	} {
-		if rest, ok := strings.CutPrefix(name, prefix); ok {
+		if rest, ok := strings.CutPrefix(identity, prefix); ok {
 			return strings.TrimSuffix(rest, ".git")
 		}
 	}
-	return name
+	return identity
 }
 
 // legacyHeadSHA extracts the head of a git_ref: the part after ".." (or
@@ -237,24 +237,30 @@ func legacyHeadSHA(gitRef string) string {
 
 // exportCIMetricsLegacy is the review_jobs-backed page builder used by
 // ExportCIMetrics when Legacy is set. The pre-panel CI era enqueued
-// independent reviews of the same range — typically two agents x two review
-// types per PR head ("pseudopanels") — before any CI tagging existed
-// (source='ci' and ci_base_branch both postdate those rows), and the tables
-// that linked them to PRs (ci_pr_batches, then ci_pr_reviews) have no
-// surviving production rows. A pseudopanel is therefore identified
-// structurally: two or more completed review/range jobs sharing
-// (repo, git_ref) with no panel run. Each such group collapses into one
-// wall-clock unit: panel_created_at/first_attempt_at is the group's
-// earliest enqueue, posted_at its latest finish, outcome is always
-// PanelOutcomeLegacyReview, pr_number is 0 (the PR linkage is
-// unrecoverable), and head_sha is the range head. Jobs lists the group's
-// completed jobs tagged role "review"; synthesis_agent/synthesis_model stay
-// nil (pseudopanels had no synthesis). Singleton reviews are excluded: a
-// lone job on a ref is a manual one-off, not a pseudopanel.
+// independent reviews of the same range before any CI tagging existed, and
+// the tables that linked them to PRs have no surviving production rows, so
+// a pseudopanel is identified structurally per the Legacy option doc. Each
+// group collapses into one wall-clock unit: panel_created_at/
+// first_attempt_at is the group's earliest enqueue, posted_at its latest
+// finish (the batch posted only after every member was terminal, so a
+// failed sibling's finish counts), outcome is PanelOutcomeLegacyReview,
+// pr_number is 0 (the PR linkage is unrecoverable), and head_sha is the
+// range head. Jobs lists the group's terminal jobs tagged role "review";
+// synthesis fields stay nil.
 func (db *DB) exportCIMetricsLegacy(opts ExportCIMetricsOptions, cursor *ciMetricsCursor) (ExportCIMetricsPage, error) {
+	eraEnd, err := db.legacyPanelEraEnd()
+	if err != nil {
+		return ExportCIMetricsPage{}, err
+	}
+	if eraEnd == "" {
+		// No panel activity ever: there is no bounded pre-panel era to
+		// export from.
+		return ExportCIMetricsPage{Panels: []ExportCIPanel{}}, nil
+	}
+
 	postedExpr := "MAX(" + legacyUnitTimeExpr("j.finished_at") + ")"
 	having := []string{}
-	args := make([]any, 0)
+	args := []any{eraEnd, eraEnd}
 	if !opts.Since.IsZero() {
 		having = append(having, postedExpr+" >= ?")
 		args = append(args, opts.Since.UTC().Format(time.RFC3339))
@@ -268,12 +274,14 @@ func (db *DB) exportCIMetricsLegacy(opts ExportCIMetricsOptions, cursor *ciMetri
 			"("+postedExpr+" > ? OR ("+postedExpr+" = ? AND MIN(j.id) > ?))")
 		args = append(args, cursor.PostedAt, cursor.PostedAt, cursor.PanelID)
 	}
-	having = append(having, "COUNT(*) >= 2")
+	having = append(having, "COUNT(*) >= 2",
+		"SUM(CASE WHEN j.status = 'done' THEN 1 ELSE 0 END) >= 1")
 	args = append(args, opts.Limit+1)
 
 	query := `
 		WITH ` + legacyUnitWindowCTE + `
-		SELECT MIN(j.id), j.repo_id, r.name, j.git_ref,
+		SELECT MIN(j.id), j.repo_id,
+		       COALESCE(NULLIF(TRIM(r.identity), ''), r.name), j.git_ref,
 		       MIN(` + legacyUnitTimeExpr("j.enqueued_at") + `),
 		       ` + postedExpr + `
 		FROM review_jobs j
@@ -300,20 +308,20 @@ func (db *DB) exportCIMetricsLegacy(opts ExportCIMetricsOptions, cursor *ciMetri
 	truncated := false
 	for rows.Next() {
 		var (
-			u        legacyUnit
-			repoName string
-			gitRef   string
-			first    sql.NullString
-			posted   sql.NullString
+			u            legacyUnit
+			repoIdentity string
+			gitRef       string
+			first        sql.NullString
+			posted       sql.NullString
 		)
-		if err := rows.Scan(&u.unitID, &u.repoID, &repoName, &gitRef, &first, &posted); err != nil {
+		if err := rows.Scan(&u.unitID, &u.repoID, &repoIdentity, &gitRef, &first, &posted); err != nil {
 			return ExportCIMetricsPage{}, fmt.Errorf("scan legacy ci metrics unit: %w", err)
 		}
 		if len(units) == opts.Limit {
 			truncated = true
 			break
 		}
-		u.panel.GithubRepo = legacyGithubRepo(repoName)
+		u.panel.GithubRepo = legacyGithubRepo(repoIdentity)
 		u.panel.HeadSHA = legacyHeadSHA(gitRef)
 		u.panel.Outcome = PanelOutcomeLegacyReview
 		u.panel.PostedAt = posted.String
@@ -322,7 +330,7 @@ func (db *DB) exportCIMetricsLegacy(opts ExportCIMetricsOptions, cursor *ciMetri
 			u.panel.FirstAttemptAt = &v
 			u.panel.PanelCreatedAt = v
 		}
-		u.panel.Jobs, err = db.legacyUnitJobs(u.repoID, gitRef)
+		u.panel.Jobs, err = db.legacyUnitJobs(u.repoID, gitRef, eraEnd)
 		if err != nil {
 			return ExportCIMetricsPage{}, err
 		}
@@ -350,13 +358,49 @@ func (db *DB) exportCIMetricsLegacy(opts ExportCIMetricsOptions, cursor *ciMetri
 	return page, nil
 }
 
-// legacyUnitJobConditions is the shared WHERE fragment selecting jobs that
-// can belong to a legacy pseudopanel unit: completed review/range jobs with
-// no panel run. Pre-panel rows carry no CI tagging, so membership is
-// structural (the unit query additionally requires groups of two or more).
-const legacyUnitJobConditions = `(j.panel_run_uuid IS NULL OR j.panel_run_uuid = '')
-		  AND j.job_type IN ('review', 'range')
-		  AND j.status = 'done' AND j.finished_at IS NOT NULL`
+// legacyPanelEraEnd returns the timestamp of the database's first panel
+// activity (earliest panel-tagged job enqueue or ci_pr_panels row) in
+// normalized RFC 3339 UTC, or "" when there is none. It is the immutable
+// upper bound of the pre-panel era: only jobs enqueued strictly before it
+// can belong to a legacy pseudopanel, so post-panel reviews can never form
+// new legacy units or destabilize legacy cursors. Computed once per export
+// call and passed as a bound parameter.
+func (db *DB) legacyPanelEraEnd() (string, error) {
+	var end sql.NullString
+	err := db.QueryRow(`
+		SELECT MIN(t) FROM (
+			SELECT MIN(strftime('%Y-%m-%dT%H:%M:%SZ', j.enqueued_at)) AS t
+			FROM review_jobs j
+			WHERE j.panel_run_uuid IS NOT NULL AND j.panel_run_uuid != ''
+			UNION ALL
+			SELECT MIN(strftime('%Y-%m-%dT%H:%M:%SZ', cp.created_at))
+			FROM ci_pr_panels cp
+		) WHERE t IS NOT NULL`).Scan(&end)
+	if err != nil {
+		return "", fmt.Errorf("query legacy panel era end: %w", err)
+	}
+	return end.String, nil
+}
+
+// legacyUnitJobConditionsFor builds the shared WHERE fragment selecting jobs
+// that can belong to a legacy pseudopanel unit under the given table alias:
+// terminal (done or failed) review/range jobs with no panel run, enqueued
+// before the pre-panel era end (one bound parameter, see
+// legacyPanelEraEnd). Failed jobs count as members because the batch flow
+// posted whatever output was available; the unit query separately requires
+// at least one done job per group. Pre-panel rows carry no CI tagging, so
+// membership is structural (the unit query additionally requires groups of
+// two or more).
+func legacyUnitJobConditionsFor(alias string) string {
+	return `(` + alias + `.panel_run_uuid IS NULL OR ` + alias + `.panel_run_uuid = '')
+		  AND ` + alias + `.job_type IN ('review', 'range')
+		  AND ` + alias + `.status IN ('done', 'failed') AND ` + alias + `.finished_at IS NOT NULL
+		  AND ` + legacyUnitTimeExpr(alias+".enqueued_at") + ` < ?`
+}
+
+// legacyUnitJobConditions is legacyUnitJobConditionsFor for the default
+// alias "j". Binds one parameter: the pre-panel era end.
+var legacyUnitJobConditions = legacyUnitJobConditionsFor("j")
 
 // legacyUnitWindowCTE bounds a unit to ADJACENT jobs: only jobs enqueued
 // within an hour of the ref's first enqueue belong to the pseudopanel, so a
@@ -364,7 +408,8 @@ const legacyUnitJobConditions = `(j.panel_run_uuid IS NULL OR j.panel_run_uuid =
 // wall clock (observed in production: one ref re-reviewed 12 days later
 // inflated its turnaround to 290 hours). Pseudopanel members enqueue within
 // seconds of each other, so the hour window is generous for real units.
-const legacyUnitWindowCTE = `unit_windows AS MATERIALIZED (
+// Binds one parameter: the pre-panel era end.
+var legacyUnitWindowCTE = `unit_windows AS MATERIALIZED (
 			SELECT j.repo_id, j.git_ref,
 			       strftime('%Y-%m-%dT%H:%M:%SZ',
 			                datetime(MIN(` + legacyUnitTimeExprConst + `), '+1 hour')) AS window_end
@@ -378,23 +423,22 @@ const legacyUnitWindowCTE = `unit_windows AS MATERIALIZED (
 const legacyUnitTimeExprConst = `strftime('%Y-%m-%dT%H:%M:%SZ', j.enqueued_at)`
 
 // legacyUnitWindowEndSubquery computes one (repo, git_ref) unit's adjacency
-// window end (first enqueue + 1 hour) as a scalar subquery over two bound
-// parameters. Per-unit callers use this instead of legacyUnitWindowCTE: the
-// CTE aggregates every unit in the table, which is fine once per page but
-// pathological when repeated for each of the page's units.
-const legacyUnitWindowEndSubquery = `(
+// window end (first enqueue + 1 hour) as a scalar subquery over three bound
+// parameters (repo_id, git_ref, era end). Per-unit callers use this instead
+// of legacyUnitWindowCTE: the CTE aggregates every unit in the table, which
+// is fine once per page but pathological when repeated for each of the
+// page's units.
+var legacyUnitWindowEndSubquery = `(
 		SELECT strftime('%Y-%m-%dT%H:%M:%SZ',
 		                datetime(MIN(strftime('%Y-%m-%dT%H:%M:%SZ', jj.enqueued_at)), '+1 hour'))
 		FROM review_jobs jj
 		WHERE jj.repo_id = ? AND jj.git_ref = ?
-		  AND (jj.panel_run_uuid IS NULL OR jj.panel_run_uuid = '')
-		  AND jj.job_type IN ('review', 'range')
-		  AND jj.status = 'done' AND jj.finished_at IS NOT NULL)`
+		  AND ` + legacyUnitJobConditionsFor("jj") + `)`
 
-// legacyUnitJobs returns the completed jobs of one legacy (repo, git_ref)
-// unit in id order — bounded to the adjacency window like the unit query —
-// shaped as ExportCIPanelJob rows tagged role "review".
-func (db *DB) legacyUnitJobs(repoID int64, gitRef string) ([]ExportCIPanelJob, error) {
+// legacyUnitJobs returns the terminal jobs of one legacy (repo, git_ref)
+// unit in id order — bounded to the adjacency window and pre-panel era like
+// the unit query — shaped as ExportCIPanelJob rows tagged role "review".
+func (db *DB) legacyUnitJobs(repoID int64, gitRef, eraEnd string) ([]ExportCIPanelJob, error) {
 	rows, err := db.Query(`
 		SELECT j.uuid, j.agent, j.model, j.provider, j.status,
 		       `+legacyUnitTimeExpr("j.started_at")+`,
@@ -404,7 +448,7 @@ func (db *DB) legacyUnitJobs(repoID int64, gitRef string) ([]ExportCIPanelJob, e
 		  AND `+legacyUnitJobConditions+`
 		  AND `+legacyUnitTimeExpr("j.enqueued_at")+` <= `+legacyUnitWindowEndSubquery+`
 		ORDER BY j.id ASC`,
-		repoID, gitRef, repoID, gitRef)
+		repoID, gitRef, eraEnd, repoID, gitRef, eraEnd)
 	if err != nil {
 		return nil, fmt.Errorf("query legacy ci unit jobs: %w", err)
 	}
@@ -597,16 +641,21 @@ func (db *DB) resolveCIMetricsCursor(cursor string, legacy bool) (*ciMetricsCurs
 		SELECT COUNT(1) FROM ci_pr_panels cp
 		WHERE cp.id = ? AND cp.posted_at IS NOT NULL
 		  AND ` + sqliteNormalizedTimestampExpr("cp.posted_at") + ` = datetime(?)`
+	existsArgs := []any{decoded.PanelID, decoded.PostedAt}
 	if legacy {
 		// A legacy cursor names a pseudopanel unit by its MIN(j.id) anchor
 		// job and the unit's latest finish; re-derive that unit's group and
-		// check both still hold.
+		// check both still hold. The era end bounds all three membership
+		// fragments; when the database has no panel activity ("" era end),
+		// nothing matches and the cursor is rejected as not found.
+		eraEnd, err := db.legacyPanelEraEnd()
+		if err != nil {
+			return nil, err
+		}
 		existsQuery = `
 			SELECT COUNT(1) FROM review_jobs a
 			WHERE a.id = ?
-			  AND (a.panel_run_uuid IS NULL OR a.panel_run_uuid = '')
-			  AND a.job_type IN ('review', 'range')
-			  AND a.status = 'done' AND a.finished_at IS NOT NULL
+			  AND ` + legacyUnitJobConditionsFor("a") + `
 			  AND (SELECT MAX(` + legacyUnitTimeExpr("j.finished_at") + `)
 			       FROM review_jobs j
 			       WHERE j.repo_id = a.repo_id AND j.git_ref = a.git_ref
@@ -616,12 +665,11 @@ func (db *DB) resolveCIMetricsCursor(cursor string, legacy bool) (*ciMetricsCurs
 			                    datetime(MIN(strftime('%Y-%m-%dT%H:%M:%SZ', jj.enqueued_at)), '+1 hour'))
 			           FROM review_jobs jj
 			           WHERE jj.repo_id = a.repo_id AND jj.git_ref = a.git_ref
-			             AND (jj.panel_run_uuid IS NULL OR jj.panel_run_uuid = '')
-			             AND jj.job_type IN ('review', 'range')
-			             AND jj.status = 'done' AND jj.finished_at IS NOT NULL)) = ?`
+			             AND ` + legacyUnitJobConditionsFor("jj") + `)) = ?`
+		existsArgs = []any{decoded.PanelID, eraEnd, eraEnd, eraEnd, decoded.PostedAt}
 	}
 	var count int
-	if err := db.QueryRow(existsQuery, decoded.PanelID, decoded.PostedAt).Scan(&count); err != nil {
+	if err := db.QueryRow(existsQuery, existsArgs...).Scan(&count); err != nil {
 		return nil, fmt.Errorf("validate ci metrics cursor: %w", err)
 	}
 	if count == 0 {

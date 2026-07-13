@@ -14,10 +14,12 @@ import (
 
 // TestMigrationBackfillsPanelTerminalMetrics covers the startup backfill for
 // panels finalized before outcome persistence existed: reopening the
-// database reconstructs outcome from the retained synthesis job's terminal
-// status and first_attempt_at from the panel run's earliest job enqueue, so
-// pre-existing posted panels export with real terminal metrics instead of
-// "unknown"/NULL.
+// database reconstructs outcome from the retained MEMBER results, mirroring
+// the posting decision (a failed synthesis whose member produced output
+// still posted the raw fallback), and first_attempt_at/attempt_count from
+// the surviving ci_pr_review_attempts row — the same source the finalizer
+// snapshots — falling back to the run's earliest job enqueue when the
+// attempt row was cleaned up.
 func TestMigrationBackfillsPanelTerminalMetrics(t *testing.T) {
 	tmpl, err := getTemplatePath()
 	require.NoError(t, err)
@@ -28,13 +30,36 @@ func TestMigrationBackfillsPanelTerminalMetrics(t *testing.T) {
 	db, err := Open(dbPath)
 	require.NoError(t, err)
 
-	panel := seedPostedPanel(t, db, 60, "sha-backfill", PanelOutcomeReviewPosted)
-	require.NotNil(t, panel.SynthesisJobID)
-	setStatus(t, db, *panel.SynthesisJobID, JobStatusDone)
-	// Simulate a row finalized before the terminal-metrics columns existed.
+	// (a) Synthesis FAILED but a member produced real output: the raw
+	// fallback was posted, so the outcome is review_posted, not a give-up.
+	rawFallback := seedPostedPanel(t, db, 60, "sha-raw-fallback", PanelOutcomeReviewPosted)
+	require.NotNil(t, rawFallback.SynthesisJobID)
+	completeMemberWithOutput(t, db, rawFallback.PanelRunUUID, "Found a bug.")
+	setStatus(t, db, *rawFallback.SynthesisJobID, JobStatusFailed)
+
+	// (b) All members failed: the give-up note was posted.
+	giveup := seedPostedPanel(t, db, 61, "sha-giveup", PanelOutcomeReviewPosted)
+	setStatus(t, db, panelMemberID(t, db, giveup.PanelRunUUID), JobStatusFailed)
+
+	// (c) All members skipped: the all-skip notice was posted.
+	allSkip := seedPostedPanel(t, db, 62, "sha-all-skip", PanelOutcomeReviewPosted)
+	setStatus(t, db, panelMemberID(t, db, allSkip.PanelRunUUID), JobStatusSkipped)
+
+	// (d) Attempt row already cleaned up: first_attempt_at falls back to
+	// the run's earliest job enqueue; attempt_count is unrecoverable.
+	noAttempt := seedPostedPanel(t, db, 63, "sha-no-attempt", PanelOutcomeReviewPosted)
+	completeMemberWithOutput(t, db, noAttempt.PanelRunUUID, "Looks good.")
+	require.NoError(t, db.DeleteReviewAttempt("o/r", 63, "sha-no-attempt"))
+
+	// (e) Member rows gone entirely: the outcome is unrecoverable.
+	noJobs := seedPostedPanel(t, db, 64, "sha-no-jobs", PanelOutcomeReviewPosted)
+	_, err = db.Exec(`DELETE FROM review_jobs WHERE panel_run_uuid = ?`, noJobs.PanelRunUUID)
+	require.NoError(t, err)
+	require.NoError(t, db.DeleteReviewAttempt("o/r", 64, "sha-no-jobs"))
+
+	// Simulate rows finalized before the terminal-metrics columns existed.
 	_, err = db.Exec(`UPDATE ci_pr_panels
-		SET outcome = NULL, first_attempt_at = NULL, attempt_count = NULL
-		WHERE id = ?`, panel.ID)
+		SET outcome = NULL, first_attempt_at = NULL, attempt_count = NULL`)
 	require.NoError(t, err)
 	require.NoError(t, db.Close())
 
@@ -44,13 +69,55 @@ func TestMigrationBackfillsPanelTerminalMetrics(t *testing.T) {
 
 	page, err := reopened.ExportCIMetrics(ExportCIMetricsOptions{})
 	require.NoError(t, err)
-	require.Len(t, page.Panels, 1)
-	p := page.Panels[0]
+	require.Len(t, page.Panels, 5)
+	bySHA := map[string]ExportCIPanel{}
+	for _, p := range page.Panels {
+		bySHA[p.HeadSHA] = p
+	}
+
+	p := bySHA["sha-raw-fallback"]
 	assert.Equal(t, PanelOutcomeReviewPosted, p.Outcome,
-		"outcome reconstructed from the synthesis job's terminal status")
+		"a member with output posted the raw fallback despite the failed synthesis")
+	require.NotNil(t, p.FirstAttemptAt)
+	assert.Equal(t, "2026-07-01T10:00:00Z", *p.FirstAttemptAt,
+		"first_attempt_at snapshots the surviving attempt row")
+	require.NotNil(t, p.AttemptCount, "attempt_count snapshots the surviving attempt row")
+	assert.Equal(t, int64(1), *p.AttemptCount)
+
+	assert.Equal(t, PanelOutcomeGiveupPosted, bySHA["sha-giveup"].Outcome)
+	assert.Equal(t, PanelOutcomeNoReviewPosted, bySHA["sha-all-skip"].Outcome)
+
+	p = bySHA["sha-no-attempt"]
+	assert.Equal(t, PanelOutcomeReviewPosted, p.Outcome)
 	require.NotNil(t, p.FirstAttemptAt,
-		"first_attempt_at reconstructed from the run's earliest job enqueue")
-	assert.Nil(t, p.AttemptCount, "attempt counts are unrecoverable")
+		"first_attempt_at falls back to the run's earliest job enqueue")
+	assert.Nil(t, p.AttemptCount, "attempt counts are unrecoverable without the attempt row")
+
+	p = bySHA["sha-no-jobs"]
+	assert.Equal(t, PanelOutcomeUnknown, p.Outcome,
+		"no surviving member rows leaves the outcome unknown")
+	assert.Nil(t, p.FirstAttemptAt)
+}
+
+// panelMemberID returns the id of a panel run's single seeded member job.
+func panelMemberID(t *testing.T, db *DB, runUUID string) int64 {
+	t.Helper()
+	var id int64
+	require.NoError(t, db.QueryRow(`SELECT id FROM review_jobs
+		WHERE panel_run_uuid = ? AND panel_role = 'member'`, runUUID).Scan(&id))
+	return id
+}
+
+// completeMemberWithOutput marks a panel run's member job done and stores a
+// review row with the given output — the evidence the outcome backfill keys
+// on.
+func completeMemberWithOutput(t *testing.T, db *DB, runUUID, output string) {
+	t.Helper()
+	id := panelMemberID(t, db, runUUID)
+	setStatus(t, db, id, JobStatusDone)
+	_, err := db.Exec(`INSERT INTO reviews (job_id, agent, prompt, output)
+		VALUES (?, 'test', 'p', ?)`, id, output)
+	require.NoError(t, err)
 }
 
 func seedPostedPanel(t *testing.T, db *DB, pr int, sha, outcome string) *CIPanel {
@@ -201,8 +268,8 @@ func TestExportCIMetricsRejectsCursorFromDifferentDatabase(t *testing.T) {
 // seedLegacyCIJob inserts one completed pre-panel CI review job with no
 // panel run and explicit enqueue/finish timestamps. Rows from that era
 // predate all CI tagging (source and ci_base_branch stay empty), so the
-// legacy export identifies pseudopanels structurally: two or more completed
-// jobs sharing (repo, git_ref).
+// legacy export identifies pseudopanels structurally: two or more terminal
+// jobs sharing (repo, git_ref), at least one done.
 func seedLegacyCIJob(t *testing.T, db *DB, repoID int64, gitRef, agent string, enqueued, finished string) *ReviewJob {
 	t.Helper()
 	job, err := db.EnqueueJob(EnqueueOpts{
@@ -217,16 +284,30 @@ func seedLegacyCIJob(t *testing.T, db *DB, repoID int64, gitRef, agent string, e
 	return job
 }
 
+// seedPanelEraMarker inserts a minimal ci_pr_panels row so the database has
+// panel activity starting at createdAt: the pre-panel era ends there, and
+// only legacy jobs enqueued earlier remain exportable.
+func seedPanelEraMarker(t *testing.T, db *DB, createdAt string) {
+	t.Helper()
+	_, err := db.Exec(`INSERT INTO ci_pr_panels
+		(github_repo, pr_number, head_sha, panel_run_uuid, created_at)
+		VALUES ('era/marker', 999999, ?, ?, ?)`,
+		"sha-era-"+createdAt, "era-"+createdAt, createdAt)
+	require.NoError(t, err)
+}
+
 func TestExportCIMetricsLegacyCombinesPseudopanel(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
 	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
+	seedPanelEraMarker(t, db, "2026-06-01 00:00:00")
 	jobA := seedLegacyCIJob(t, db, repo.ID, "base..head-legacy", "codex",
 		"2026-03-01 10:00:00", "2026-03-01 10:05:00")
 	jobB := seedLegacyCIJob(t, db, repo.ID, "base..head-legacy", "gemini",
 		"2026-03-01 10:00:00", "2026-03-01 10:08:00")
-	// A failed sibling contributes neither to the wall clock nor to Jobs.
+	// A failed sibling is part of the unit: the batch posted only after
+	// every member was terminal, so its finish extends the wall clock.
 	failed := seedLegacyCIJob(t, db, repo.ID, "base..head-legacy", "codex",
 		"2026-03-01 10:00:00", "2026-03-01 10:30:00")
 	_, err := db.Exec(`UPDATE review_jobs SET status = 'failed' WHERE id = ?`, failed.ID)
@@ -241,11 +322,13 @@ func TestExportCIMetricsLegacyCombinesPseudopanel(t *testing.T) {
 	require.Len(t, page.Panels, 1, "one pseudopanel unit per (repo, git_ref); singletons excluded")
 	p := page.Panels[0]
 
-	assert.Equal(t, repo.Name, p.GithubRepo)
+	assert.Equal(t, repo.Name, p.GithubRepo,
+		"falls back to repos.name when no identity is recorded")
 	assert.Equal(t, int64(0), p.PRNumber, "the PR linkage is unrecoverable for legacy units")
 	assert.Equal(t, "head-legacy", p.HeadSHA)
 	assert.Equal(t, PanelOutcomeLegacyReview, p.Outcome)
-	assert.Equal(t, "2026-03-01T10:08:00Z", p.PostedAt, "latest finish of the unit's done jobs")
+	assert.Equal(t, "2026-03-01T10:30:00Z", p.PostedAt,
+		"latest finish of the unit's terminal jobs, including the failed sibling")
 	require.NotNil(t, p.FirstAttemptAt)
 	assert.Equal(t, "2026-03-01T10:00:00Z", *p.FirstAttemptAt, "earliest enqueue of the unit")
 	assert.Equal(t, p.PanelCreatedAt, *p.FirstAttemptAt)
@@ -253,12 +336,15 @@ func TestExportCIMetricsLegacyCombinesPseudopanel(t *testing.T) {
 	assert.Nil(t, p.SynthesisAgent, "pseudopanels had no synthesis")
 	assert.Nil(t, p.SynthesisModel, "pseudopanels had no synthesis")
 
-	require.Len(t, p.Jobs, 2)
+	require.Len(t, p.Jobs, 3)
 	assert.Equal(t, jobA.UUID, p.Jobs[0].JobUUID)
 	assert.Equal(t, jobB.UUID, p.Jobs[1].JobUUID)
+	assert.Equal(t, failed.UUID, p.Jobs[2].JobUUID)
+	assert.Equal(t, string(JobStatusDone), p.Jobs[0].Status)
+	assert.Equal(t, string(JobStatusDone), p.Jobs[1].Status)
+	assert.Equal(t, string(JobStatusFailed), p.Jobs[2].Status)
 	for _, j := range p.Jobs {
 		assert.Equal(t, "review", j.Role)
-		assert.Equal(t, string(JobStatusDone), j.Status)
 		require.NotNil(t, j.Model)
 		assert.Equal(t, "legacy-model", *j.Model)
 		require.NotNil(t, j.Provider)
@@ -267,6 +353,98 @@ func TestExportCIMetricsLegacyCombinesPseudopanel(t *testing.T) {
 		assert.NotNil(t, j.FinishedAt)
 	}
 	assert.NotNil(t, page.NextCursor)
+}
+
+// TestExportCIMetricsLegacyPartialSuccessUnit covers the batch flow's
+// partial-success posting: one done + one failed job is a posted review and
+// must export as a unit, while an all-failed pair posted nothing reviewable
+// and is excluded.
+func TestExportCIMetricsLegacyPartialSuccessUnit(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
+	seedPanelEraMarker(t, db, "2026-06-01 00:00:00")
+	seedLegacyCIJob(t, db, repo.ID, "base..head-partial", "codex",
+		"2026-03-01 10:00:00", "2026-03-01 10:05:00")
+	partialFailed := seedLegacyCIJob(t, db, repo.ID, "base..head-partial", "gemini",
+		"2026-03-01 10:00:00", "2026-03-01 10:07:00")
+	allFailedA := seedLegacyCIJob(t, db, repo.ID, "base..head-all-failed", "codex",
+		"2026-03-02 10:00:00", "2026-03-02 10:05:00")
+	allFailedB := seedLegacyCIJob(t, db, repo.ID, "base..head-all-failed", "gemini",
+		"2026-03-02 10:00:00", "2026-03-02 10:06:00")
+	for _, id := range []int64{partialFailed.ID, allFailedA.ID, allFailedB.ID} {
+		_, err := db.Exec(`UPDATE review_jobs SET status = 'failed' WHERE id = ?`, id)
+		require.NoError(t, err)
+	}
+
+	page, err := db.ExportCIMetrics(ExportCIMetricsOptions{Legacy: true})
+	require.NoError(t, err)
+	require.Len(t, page.Panels, 1,
+		"partial-success units export; all-failed groups posted no review")
+	p := page.Panels[0]
+	assert.Equal(t, "head-partial", p.HeadSHA)
+	assert.Equal(t, "2026-03-01T10:07:00Z", p.PostedAt,
+		"wall clock ends at the failed sibling's finish")
+	require.Len(t, p.Jobs, 2)
+}
+
+// TestExportCIMetricsLegacyUsesRepoIdentity covers github_repo naming: the
+// export must use the repo's remote identity (mapped to owner/repo), not the
+// checkout basename, so same-named clones of different repositories are not
+// conflated.
+func TestExportCIMetricsLegacyUsesRepoIdentity(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo, err := db.GetOrCreateRepo(filepath.Join(t.TempDir(), "repo"),
+		"git@github.com:owner/project.git")
+	require.NoError(t, err)
+	seedPanelEraMarker(t, db, "2026-06-01 00:00:00")
+	seedLegacyCIJob(t, db, repo.ID, "base..head-ident", "codex",
+		"2026-03-01 10:00:00", "2026-03-01 10:05:00")
+	seedLegacyCIJob(t, db, repo.ID, "base..head-ident", "gemini",
+		"2026-03-01 10:00:00", "2026-03-01 10:06:00")
+
+	page, err := db.ExportCIMetrics(ExportCIMetricsOptions{Legacy: true})
+	require.NoError(t, err)
+	require.Len(t, page.Panels, 1)
+	assert.Equal(t, "owner/project", page.Panels[0].GithubRepo)
+}
+
+// TestExportCIMetricsLegacyBoundedToPrePanelEra covers the era bound: only
+// jobs enqueued before the database's first panel activity can form legacy
+// units, so post-panel manual reviews of the same ref never appear as new
+// pseudopanels, and a database with no panel activity exports nothing.
+func TestExportCIMetricsLegacyBoundedToPrePanelEra(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
+	seedLegacyCIJob(t, db, repo.ID, "base..head-pre", "codex",
+		"2026-03-01 10:00:00", "2026-03-01 10:05:00")
+	seedLegacyCIJob(t, db, repo.ID, "base..head-pre", "gemini",
+		"2026-03-01 10:00:00", "2026-03-01 10:06:00")
+
+	page, err := db.ExportCIMetrics(ExportCIMetricsOptions{Legacy: true})
+	require.NoError(t, err)
+	assert.Empty(t, page.Panels,
+		"a database with no panel activity has no pre-panel era")
+	assert.Nil(t, page.NextCursor)
+
+	// Panel era starts 2026-06-01: the March unit exports, but two manual
+	// reviews of one ref after that date must not form a pseudopanel.
+	seedPanelEraMarker(t, db, "2026-06-01 00:00:00")
+	seedLegacyCIJob(t, db, repo.ID, "base..head-post", "codex",
+		"2026-07-01 10:00:00", "2026-07-01 10:05:00")
+	seedLegacyCIJob(t, db, repo.ID, "base..head-post", "gemini",
+		"2026-07-01 10:00:00", "2026-07-01 10:06:00")
+
+	page, err = db.ExportCIMetrics(ExportCIMetricsOptions{Legacy: true})
+	require.NoError(t, err)
+	require.Len(t, page.Panels, 1)
+	assert.Equal(t, "head-pre", page.Panels[0].HeadSHA,
+		"post-panel-era jobs are excluded from legacy units")
 }
 
 // TestExportCIMetricsLegacyExcludesNonAdjacentReReview covers the adjacency
@@ -278,6 +456,7 @@ func TestExportCIMetricsLegacyExcludesNonAdjacentReReview(t *testing.T) {
 	defer db.Close()
 
 	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
+	seedPanelEraMarker(t, db, "2026-06-01 00:00:00")
 	seedLegacyCIJob(t, db, repo.ID, "base..head-rerun", "codex",
 		"2026-03-01 10:00:00", "2026-03-01 10:05:00")
 	seedLegacyCIJob(t, db, repo.ID, "base..head-rerun", "gemini",
@@ -300,6 +479,7 @@ func TestExportCIMetricsLegacyPagination(t *testing.T) {
 	defer db.Close()
 
 	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
+	seedPanelEraMarker(t, db, "2026-06-01 00:00:00")
 	seedLegacyCIJob(t, db, repo.ID, "sha-legacy-a", "codex",
 		"2026-03-01 10:00:00", "2026-03-01 10:05:00")
 	seedLegacyCIJob(t, db, repo.ID, "sha-legacy-a", "gemini",

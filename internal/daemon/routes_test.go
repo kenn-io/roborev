@@ -472,6 +472,13 @@ func TestHumaExportCIMetricsLegacy(t *testing.T) {
 	srv, db, _ := newTestServer(t)
 	repo := testutil.CreateTestRepo(t, db)
 
+	// Panel activity starting 2026-06-01 bounds the pre-panel era; the
+	// seeded jobs below predate it.
+	_, err := db.Exec(`INSERT INTO ci_pr_panels
+		(github_repo, pr_number, head_sha, panel_run_uuid, created_at)
+		VALUES ('era/marker', 999999, 'sha-era', 'era-uuid', '2026-06-01 00:00:00')`)
+	require.NoError(t, err)
+
 	// Seed one pre-panel pseudopanel: two completed review jobs sharing a
 	// (repo, git_ref), no panel run, no CI tagging (rows from that era
 	// predate it). The legacy export groups them into one unit.

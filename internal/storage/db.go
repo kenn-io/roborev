@@ -1035,42 +1035,69 @@ func (db *DB) migrate() error {
 	}
 
 	// Backfill terminal metrics for panels finalized before the terminal-
-	// metrics columns existed, from their still-retained review_jobs rows.
-	// Runs after migrateSyncColumns because it reads
-	// review_jobs.panel_run_uuid, which that migration adds. The poster
-	// only set posted_at after posting a comment, and the synthesis job's
-	// terminal status pins down which comment that was: done posted the
-	// synthesized review, skipped posted the all-skip notice, and
-	// failed/canceled posted the give-up comment. first_attempt_at is
-	// approximated by the panel run's earliest job enqueue: the attempt
-	// rows are gone, so deferred attempts before the executed one are
-	// unrecoverable and this floor slightly undercounts turnaround for
-	// throttled PRs; attempt_count stays NULL for the same reason. Rows
-	// whose jobs were cascade-deleted keep NULLs and export as "unknown".
-	// Both statements only touch rows the finalizer never wrote, so re-runs
-	// are no-ops.
-	if _, err = db.Exec(`UPDATE ci_pr_panels SET outcome = (
-			SELECT CASE j.status
-				WHEN 'done' THEN 'review_posted'
-				WHEN 'skipped' THEN 'no_review_posted'
-				ELSE 'giveup_posted'
-			END FROM review_jobs j WHERE j.id = ci_pr_panels.synthesis_job_id
-		)
+	// metrics columns existed. Runs after migrateSyncColumns because it
+	// reads review_jobs.panel_run_uuid/panel_role, which that migration
+	// adds.
+	//
+	// Outcome is reconstructed from the retained MEMBER results, mirroring
+	// the posting decision (classifyPanelOutcome), NOT from the synthesis
+	// job's status: a genuinely failed synthesis still posted successful
+	// member output via the raw fallback. A member with retained non-empty
+	// review output means the review was posted; otherwise a failed member
+	// means the give-up note was; otherwise the all-skip notice was. Runs
+	// abandoned on a permanent posting failure are indistinguishable
+	// (posting state was not persisted then) and stay approximate. Rows
+	// with no surviving member rows keep NULL and export as "unknown".
+	if _, err = db.Exec(`UPDATE ci_pr_panels SET outcome =
+		CASE
+			WHEN EXISTS (SELECT 1 FROM review_jobs j
+			             JOIN reviews rv ON rv.job_id = j.id
+			             WHERE j.panel_run_uuid = ci_pr_panels.panel_run_uuid
+			               AND j.panel_role = 'member' AND j.status = 'done'
+			               AND TRIM(rv.output) != '') THEN 'review_posted'
+			WHEN EXISTS (SELECT 1 FROM review_jobs j
+			             WHERE j.panel_run_uuid = ci_pr_panels.panel_run_uuid
+			               AND j.panel_role = 'member'
+			               AND j.status = 'failed') THEN 'giveup_posted'
+			ELSE 'no_review_posted'
+		END
 		WHERE posted_at IS NOT NULL AND outcome IS NULL
-		  AND synthesis_job_id IS NOT NULL
-		  AND (SELECT j.status FROM review_jobs j WHERE j.id = ci_pr_panels.synthesis_job_id)
-		      IN ('done', 'skipped', 'failed', 'canceled')`); err != nil {
-		return fmt.Errorf("backfill ci_pr_panels outcome: %w", err)
-	}
-	if _, err = db.Exec(`UPDATE ci_pr_panels SET first_attempt_at = (
-			SELECT MIN(strftime('%Y-%m-%dT%H:%M:%SZ', j.enqueued_at))
-			FROM review_jobs j WHERE j.panel_run_uuid = ci_pr_panels.panel_run_uuid
-		)
-		WHERE posted_at IS NOT NULL AND first_attempt_at IS NULL
 		  AND panel_run_uuid != ''
 		  AND EXISTS (SELECT 1 FROM review_jobs j
 		              WHERE j.panel_run_uuid = ci_pr_panels.panel_run_uuid
-		                AND j.enqueued_at IS NOT NULL)`); err != nil {
+		                AND j.panel_role = 'member')`); err != nil {
+		return fmt.Errorf("backfill ci_pr_panels outcome: %w", err)
+	}
+	// first_attempt_at/attempt_count prefer the surviving
+	// ci_pr_review_attempts row — the exact source MarkPanelPosted
+	// snapshots at finalization — so deferred retries before the executed
+	// run are counted. Only when closed-PR cleanup already deleted the
+	// attempt row does first_attempt_at fall back to the final run's
+	// earliest job enqueue (a floor that undercounts throttled PRs), with
+	// attempt_count left NULL as unrecoverable. Both statements only touch
+	// rows the finalizer never wrote, so re-runs are no-ops.
+	if _, err = db.Exec(`UPDATE ci_pr_panels SET
+		first_attempt_at = COALESCE(
+			(SELECT a.first_attempt_at FROM ci_pr_review_attempts a
+			 WHERE a.github_repo = ci_pr_panels.github_repo
+			   AND a.pr_number = ci_pr_panels.pr_number
+			   AND a.head_sha = ci_pr_panels.head_sha),
+			(SELECT MIN(strftime('%Y-%m-%dT%H:%M:%SZ', j.enqueued_at))
+			 FROM review_jobs j WHERE j.panel_run_uuid = ci_pr_panels.panel_run_uuid)),
+		attempt_count =
+			(SELECT a.attempt FROM ci_pr_review_attempts a
+			 WHERE a.github_repo = ci_pr_panels.github_repo
+			   AND a.pr_number = ci_pr_panels.pr_number
+			   AND a.head_sha = ci_pr_panels.head_sha)
+		WHERE posted_at IS NOT NULL AND first_attempt_at IS NULL
+		  AND (EXISTS (SELECT 1 FROM ci_pr_review_attempts a
+		               WHERE a.github_repo = ci_pr_panels.github_repo
+		                 AND a.pr_number = ci_pr_panels.pr_number
+		                 AND a.head_sha = ci_pr_panels.head_sha)
+		       OR (panel_run_uuid != ''
+		           AND EXISTS (SELECT 1 FROM review_jobs j
+		                       WHERE j.panel_run_uuid = ci_pr_panels.panel_run_uuid
+		                         AND j.enqueued_at IS NOT NULL)))`); err != nil {
 		return fmt.Errorf("backfill ci_pr_panels first_attempt_at: %w", err)
 	}
 
