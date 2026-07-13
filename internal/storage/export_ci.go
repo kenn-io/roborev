@@ -24,16 +24,17 @@ type ExportCIMetricsOptions struct {
 	Cursor string
 	Limit  int
 	// Legacy switches the export to the frozen pre-panel CI era: terminal
-	// (done or failed) review/range jobs with no panel run, enqueued
-	// before the database's first panel activity, grouped per
+	// (done, failed, or canceled) review/range jobs with no panel run,
+	// enqueued before the database's first panel activity, grouped per
 	// (repo, git_ref) into one wall-clock unit ("pseudopanel") when two or
 	// more terminal jobs share the ref and at least one succeeded (the
-	// batch flow posted whatever output was available). Singleton reviews
-	// are excluded as manual one-offs; a database with no panel activity
-	// exports no legacy rows. Legacy turnaround (earliest enqueue ->
-	// latest finish) excludes comment-posting latency, unlike panel-era
-	// turnaround. Legacy cursors are namespaced and rejected if replayed
-	// with Legacy unset, and vice versa.
+	// batch flow posted whatever output was available once every member
+	// reached a terminal state). Singleton reviews are excluded as manual
+	// one-offs; a database with no panel activity exports no legacy rows.
+	// Legacy turnaround (earliest enqueue -> latest finish) excludes
+	// comment-posting latency, unlike panel-era turnaround. Legacy cursors
+	// are namespaced and rejected if replayed with Legacy unset, and vice
+	// versa.
 	Legacy bool
 }
 
@@ -243,7 +244,7 @@ func legacyHeadSHA(gitRef string) string {
 // group collapses into one wall-clock unit: panel_created_at/
 // first_attempt_at is the group's earliest enqueue, posted_at its latest
 // finish (the batch posted only after every member was terminal, so a
-// failed sibling's finish counts), outcome is PanelOutcomeLegacyReview,
+// failed or canceled sibling's finish counts), outcome is PanelOutcomeLegacyReview,
 // pr_number is 0 (the PR linkage is unrecoverable), and head_sha is the
 // range head. Jobs lists the group's terminal jobs tagged role "review";
 // synthesis fields stay nil.
@@ -384,17 +385,21 @@ func (db *DB) legacyPanelEraEnd() (string, error) {
 
 // legacyUnitJobConditionsFor builds the shared WHERE fragment selecting jobs
 // that can belong to a legacy pseudopanel unit under the given table alias:
-// terminal (done or failed) review/range jobs with no panel run, enqueued
-// before the pre-panel era end (one bound parameter, see
-// legacyPanelEraEnd). Failed jobs count as members because the batch flow
-// posted whatever output was available; the unit query separately requires
-// at least one done job per group. Pre-panel rows carry no CI tagging, so
-// membership is structural (the unit query additionally requires groups of
-// two or more).
+// terminal (done, failed, or canceled) review/range jobs with no panel run,
+// enqueued before the pre-panel era end (one bound parameter, see
+// legacyPanelEraEnd). Failed and canceled jobs count as members because the
+// batch flow treated both as terminal and then posted whatever output was
+// available; the unit query separately requires at least one done job per
+// group. The finished_at guard is what keeps the panel migration's own
+// cleanup out: it canceled leftover in-flight batch jobs without stamping
+// finished_at, and those batches never posted. Pre-panel rows carry no CI
+// tagging, so membership is structural (the unit query additionally requires
+// groups of two or more).
 func legacyUnitJobConditionsFor(alias string) string {
 	return `(` + alias + `.panel_run_uuid IS NULL OR ` + alias + `.panel_run_uuid = '')
 		  AND ` + alias + `.job_type IN ('review', 'range')
-		  AND ` + alias + `.status IN ('done', 'failed') AND ` + alias + `.finished_at IS NOT NULL
+		  AND ` + alias + `.status IN ('done', 'failed', 'canceled')
+		  AND ` + alias + `.finished_at IS NOT NULL
 		  AND ` + legacyUnitTimeExpr(alias+".enqueued_at") + ` < ?`
 }
 

@@ -356,9 +356,10 @@ func TestExportCIMetricsLegacyCombinesPseudopanel(t *testing.T) {
 }
 
 // TestExportCIMetricsLegacyPartialSuccessUnit covers the batch flow's
-// partial-success posting: one done + one failed job is a posted review and
-// must export as a unit, while an all-failed pair posted nothing reviewable
-// and is excluded.
+// partial-success posting: one done job plus a failed or canceled sibling is
+// a posted review and must export as a unit (the batch treated both failure
+// modes as terminal and posted the available output), while a group with no
+// successful job posted nothing reviewable and is excluded.
 func TestExportCIMetricsLegacyPartialSuccessUnit(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
@@ -369,24 +370,72 @@ func TestExportCIMetricsLegacyPartialSuccessUnit(t *testing.T) {
 		"2026-03-01 10:00:00", "2026-03-01 10:05:00")
 	partialFailed := seedLegacyCIJob(t, db, repo.ID, "base..head-partial", "gemini",
 		"2026-03-01 10:00:00", "2026-03-01 10:07:00")
+	// A timed-out member was canceled, not failed: it is still a terminal
+	// member of the batch, so it counts toward the unit and its finish
+	// extends the wall clock.
+	seedLegacyCIJob(t, db, repo.ID, "base..head-canceled", "codex",
+		"2026-03-03 10:00:00", "2026-03-03 10:05:00")
+	canceledSibling := seedLegacyCIJob(t, db, repo.ID, "base..head-canceled", "gemini",
+		"2026-03-03 10:00:00", "2026-03-03 10:09:00")
 	allFailedA := seedLegacyCIJob(t, db, repo.ID, "base..head-all-failed", "codex",
 		"2026-03-02 10:00:00", "2026-03-02 10:05:00")
 	allFailedB := seedLegacyCIJob(t, db, repo.ID, "base..head-all-failed", "gemini",
 		"2026-03-02 10:00:00", "2026-03-02 10:06:00")
-	for _, id := range []int64{partialFailed.ID, allFailedA.ID, allFailedB.ID} {
+	for _, id := range []int64{partialFailed.ID, allFailedA.ID} {
 		_, err := db.Exec(`UPDATE review_jobs SET status = 'failed' WHERE id = ?`, id)
+		require.NoError(t, err)
+	}
+	for _, id := range []int64{canceledSibling.ID, allFailedB.ID} {
+		_, err := db.Exec(`UPDATE review_jobs SET status = 'canceled' WHERE id = ?`, id)
 		require.NoError(t, err)
 	}
 
 	page, err := db.ExportCIMetrics(ExportCIMetricsOptions{Legacy: true})
 	require.NoError(t, err)
-	require.Len(t, page.Panels, 1,
-		"partial-success units export; all-failed groups posted no review")
-	p := page.Panels[0]
-	assert.Equal(t, "head-partial", p.HeadSHA)
-	assert.Equal(t, "2026-03-01T10:07:00Z", p.PostedAt,
+	require.Len(t, page.Panels, 2,
+		"partial-success units export; a group with no successful job posted no review")
+	bySHA := map[string]ExportCIPanel{}
+	for _, p := range page.Panels {
+		bySHA[p.HeadSHA] = p
+	}
+
+	partial := bySHA["head-partial"]
+	assert.Equal(t, "2026-03-01T10:07:00Z", partial.PostedAt,
 		"wall clock ends at the failed sibling's finish")
-	require.Len(t, p.Jobs, 2)
+	require.Len(t, partial.Jobs, 2)
+
+	canceled := bySHA["head-canceled"]
+	assert.Equal(t, "2026-03-03T10:09:00Z", canceled.PostedAt,
+		"wall clock ends at the canceled sibling's finish")
+	require.Len(t, canceled.Jobs, 2, "the canceled member belongs to the unit")
+	assert.Equal(t, string(JobStatusCanceled), canceled.Jobs[1].Status)
+}
+
+// TestExportCIMetricsLegacyExcludesUnfinishedMigrationCancels covers the
+// panel migration's own cleanup: it canceled leftover in-flight batch jobs
+// without stamping finished_at, and those batches never posted a review. An
+// unfinished canceled sibling must not join a unit (which would stretch its
+// wall clock to the migration's timestamp), leaving its lone done job a
+// singleton.
+func TestExportCIMetricsLegacyExcludesUnfinishedMigrationCancels(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
+	seedPanelEraMarker(t, db, "2026-06-01 00:00:00")
+	seedLegacyCIJob(t, db, repo.ID, "base..head-inflight", "codex",
+		"2026-03-01 10:00:00", "2026-03-01 10:05:00")
+	superseded := seedLegacyCIJob(t, db, repo.ID, "base..head-inflight", "gemini",
+		"2026-03-01 10:00:00", "2026-03-01 10:06:00")
+	_, err := db.Exec(`UPDATE review_jobs
+		SET status = 'canceled', error = 'superseded by panel migration', finished_at = NULL
+		WHERE id = ?`, superseded.ID)
+	require.NoError(t, err)
+
+	page, err := db.ExportCIMetrics(ExportCIMetricsOptions{Legacy: true})
+	require.NoError(t, err)
+	assert.Empty(t, page.Panels,
+		"a never-finished cancel leaves the surviving job a singleton, not a unit")
 }
 
 // TestExportCIMetricsLegacyUsesRepoIdentity covers github_repo naming: the
