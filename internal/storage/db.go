@@ -1100,6 +1100,26 @@ func (db *DB) migrate() error {
 		                         AND j.enqueued_at IS NOT NULL)))`); err != nil {
 		return fmt.Errorf("backfill ci_pr_panels first_attempt_at: %w", err)
 	}
+	// Snapshot synthesis_agent/synthesis_model from the synthesis job for
+	// panels finalized before these columns existed, exactly as
+	// MarkPanelPosted now does at finalization. Without this the export
+	// falls back to the live review_jobs join, so a later cascade repo
+	// deletion (which deletes the synthesis job) permanently loses the
+	// model attribution for these historical rows. Only rows whose
+	// synthesis job still exists can be recovered; the pair is written
+	// together and guarded on synthesis_agent IS NULL, so re-runs and rows
+	// already snapshotted by the finalizer are untouched.
+	if _, err = db.Exec(`UPDATE ci_pr_panels SET
+		synthesis_agent = (SELECT j.agent FROM review_jobs j
+		                   WHERE j.id = ci_pr_panels.synthesis_job_id),
+		synthesis_model = (SELECT j.model FROM review_jobs j
+		                   WHERE j.id = ci_pr_panels.synthesis_job_id)
+		WHERE posted_at IS NOT NULL AND synthesis_agent IS NULL
+		  AND synthesis_job_id IS NOT NULL
+		  AND EXISTS (SELECT 1 FROM review_jobs j
+		              WHERE j.id = ci_pr_panels.synthesis_job_id)`); err != nil {
+		return fmt.Errorf("backfill ci_pr_panels synthesis snapshot: %w", err)
+	}
 
 	// Auto design review support: extends status CHECK constraint,
 	// adds skip_reason column. (job_type has no CHECK constraint;

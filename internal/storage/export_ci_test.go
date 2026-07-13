@@ -99,6 +99,59 @@ func TestMigrationBackfillsPanelTerminalMetrics(t *testing.T) {
 	assert.Nil(t, p.FirstAttemptAt)
 }
 
+// TestMigrationBackfillsSynthesisSnapshotSurvivesCascade covers the synthesis
+// agent/model backfill: a panel finalized before those snapshot columns
+// existed relied on the live review_jobs join, so a later cascade repo
+// deletion would erase its model attribution. The startup backfill snapshots
+// the pair from the synthesis job, so the export still reports the model
+// after the repo (and its review_jobs rows) are deleted.
+func TestMigrationBackfillsSynthesisSnapshotSurvivesCascade(t *testing.T) {
+	tmpl, err := getTemplatePath()
+	require.NoError(t, err)
+	data, err := os.ReadFile(tmpl)
+	require.NoError(t, err)
+	dbPath := filepath.Join(t.TempDir(), "test.db")
+	require.NoError(t, os.WriteFile(dbPath, data, 0o644))
+	db, err := Open(dbPath)
+	require.NoError(t, err)
+
+	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
+	now := time.Date(2026, 7, 1, 10, 0, 0, 0, time.UTC)
+	created, err := db.ReserveReviewAttempt("o/r", 70, "sha-cascade-pre", now)
+	require.NoError(t, err)
+	require.True(t, created)
+	members := []EnqueueOpts{{RepoID: repo.ID, GitRef: "b..h", Agent: "m", PanelMemberIndex: 0}}
+	synthesis := EnqueueOpts{RepoID: repo.ID, GitRef: "b..h", Agent: "test-synth", Model: "test-model"}
+	runCreated, _, _, err := db.CreateCIPanelRun("o/r", 70, "sha-cascade-pre", members, synthesis)
+	require.NoError(t, err)
+	require.True(t, runCreated)
+	panel, err := db.GetCIPanelByPRSHA("o/r", 70, "sha-cascade-pre")
+	require.NoError(t, err)
+	require.NoError(t, db.MarkPanelPosted(panel.ID, PanelOutcomeReviewPosted))
+	// Simulate a row finalized before the snapshot columns existed: clear
+	// the snapshot so only the live synthesis job carries the model.
+	_, err = db.Exec(`UPDATE ci_pr_panels
+		SET synthesis_agent = NULL, synthesis_model = NULL WHERE id = ?`, panel.ID)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	// Reopen to run the backfill, THEN cascade-delete the repo.
+	reopened, err := Open(dbPath)
+	require.NoError(t, err)
+	defer reopened.Close()
+	require.NoError(t, reopened.DeleteRepo(repo.ID, true))
+
+	page, err := reopened.ExportCIMetrics(ExportCIMetricsOptions{})
+	require.NoError(t, err)
+	require.Len(t, page.Panels, 1)
+	p := page.Panels[0]
+	require.NotNil(t, p.SynthesisAgent, "synthesis_agent survives cascade via the backfilled snapshot")
+	assert.Equal(t, "test-synth", *p.SynthesisAgent)
+	require.NotNil(t, p.SynthesisModel, "synthesis_model survives cascade via the backfilled snapshot")
+	assert.Equal(t, "test-model", *p.SynthesisModel)
+	assert.Empty(t, p.Jobs, "the underlying review_jobs rows are gone")
+}
+
 // panelMemberID returns the id of a panel run's single seeded member job.
 func panelMemberID(t *testing.T, db *DB, runUUID string) int64 {
 	t.Helper()
