@@ -22,6 +22,7 @@ func TestTzdataEmbedded(t *testing.T) {
 	entries, err := os.ReadDir(".")
 	require.NoError(t, err)
 
+	found := false
 	for _, entry := range entries {
 		if entry.IsDir() || !strings.HasSuffix(entry.Name(), ".go") {
 			continue
@@ -30,9 +31,14 @@ func TestTzdataEmbedded(t *testing.T) {
 		require.NoError(t, err)
 		for _, imp := range file.Imports {
 			if imp.Path.Value == `"time/tzdata"` {
-				return
+				found = true
+				break
 			}
 		}
+		if found {
+			break
+		}
 	}
-	t.Fatal("package main must blank-import time/tzdata so named timezones work in release binaries without a system zoneinfo database")
+	require.True(t, found,
+		"package main must blank-import time/tzdata so named timezones work in release binaries without a system zoneinfo database")
 }
