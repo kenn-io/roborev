@@ -3,6 +3,11 @@ package main
 import (
 	"errors"
 	"os"
+	// Embed the IANA timezone database as a last-resort fallback for
+	// time.LoadLocation: releases are static CGO_ENABLED=0 binaries, and
+	// Windows and minimal container images have no system zoneinfo, which
+	// would make named timezones (e.g. [ci.quiet_hours] timezone) fail.
+	_ "time/tzdata"
 
 	"github.com/spf13/cobra"
 )
