@@ -31,9 +31,11 @@ roborev skills install
 ## Usage
 
 !!! note "Explicit invocation"
-    All bundled roborev skills are **explicit-only**. An ordinary request such
-    as "Review the changes in this branch" uses your agent's native behavior;
-    it must not activate a roborev skill or run roborev.
+    All bundled roborev skills require explicit roborev workflow intent. An
+    ordinary request such as "Review the changes in this branch" uses your
+    agent's native behavior; it must not activate a roborev skill or run
+    roborev. Skill metadata prevents model invocation except for
+    `roborev-fix`, which Agent Hook explicitly instructs the model to invoke.
 
     **Claude Code** enforces this in skill metadata: the bundled skills set
     `disable-model-invocation: true`, so the model never selects a roborev
@@ -53,8 +55,11 @@ roborev skills install
     - Select the roborev skill directly in Codex's structured skill picker.
 
     The namespace distinguishes plugin-contributed skills from personal skills
-    that may have the same name. See the [syntax table](#agent-specific-syntax)
-    for more examples.
+    that may have the same name. `roborev-fix` is the one model-invocable Codex
+    exception so [`roborev agent-hook`](../agent-hook.md) can start the fix
+    workflow it names; every other bundled Codex skill is implicit-disabled.
+    The fix skill's description still requires explicit roborev invocation.
+    See the [syntax table](#agent-specific-syntax) for more examples.
 
 ### Review a commit
 
@@ -266,7 +271,9 @@ skills. Invoke a plugin-managed skill as `$roborev:roborev-<workflow>` (for
 example, `$roborev:roborev-fix`); invoke a personal skill installed by roborev
 as `$roborev-<workflow>` (for example, `$roborev-fix`). Both forms are explicit
 invocations. General requests such as "fix the issues in this branch" remain
-native Codex tasks and do not select roborev.
+native Codex tasks and do not select roborev. `roborev-fix` alone is
+model-invocable so the [agent-hook](../agent-hook.md) instruction can invoke
+it; every other Codex skill sets `allow_implicit_invocation: false`.
 
 Claude Code likewise namespaces plugin-managed skills: invoke them as
 `/roborev:roborev-<workflow>` (for example, `/roborev:roborev-fix`). Personal

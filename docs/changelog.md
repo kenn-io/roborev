@@ -5,6 +5,33 @@ description: Release history for roborev
 
 All notable changes to roborev, grouped by minor release.
 
+## 0.62.1
+<small>2026-07-13</small>
+
+**New features**
+
+- Completed CI panel metrics are now persisted at finalization, including terminal outcome, retry timing, and synthesis agent/model snapshots. `roborev export ci-metrics` exports those records with member and synthesis job timing, opaque resumable cursors, database-reset detection, and an optional `--legacy` backfill for pre-panel CI history. See [Exporting CI Metrics](/commands/#exporting-ci-metrics).
+- `roborev version --json` provides a stable machine-readable contract with the canonical tool name and build version. See [Version JSON Contract](/commands/#version-json-contract).
+
+**Improvements**
+
+- The TUI Prompt view now wraps the full agent command by default, while the Log view keeps its compact single-line default. Press `i` to toggle each view independently. See [Prompt View](/integrations/tui/#prompt-view).
+- The Codex `roborev-fix` skill remains model-invocable so Agent Hook can start the requested fix loop; every other bundled Codex skill remains explicit-only. See [Agent Skills](/guides/agent-skills/#usage).
+- The Nix flake no longer depends on `flake-utils`, reducing transitive flake inputs while preserving the supported system outputs.
+
+**Bug fixes**
+
+- ACP backup agents no longer inherit a backup model paired with a different agent. A mismatched inherited model is skipped so the selected ACP agent keeps its own `[acp].model` instead of failing model validation. See [Backup Agents](/configuration/#backup-agents).
+
+**Acknowledgements**
+
+- Thanks to [Wes McKinney](https://github.com/wesm) for persistent CI panel metrics and export, wrapped TUI prompt commands, and Codex Agent Hook skill invocation.
+- Thanks to [Marius van Niekerk](https://github.com/mariusvniekerk) for the stable JSON version contract.
+- Thanks to [Matthew Jacobs](https://github.com/mjacobs) for ACP backup-model pairing safeguards and expanded Gemini ACP documentation.
+- Thanks to [Luis Quiñones](https://github.com/luisnquin) for simplifying the Nix flake dependencies.
+
+---
+
 ## 0.62.0
 <small>2026-07-11</small>
 

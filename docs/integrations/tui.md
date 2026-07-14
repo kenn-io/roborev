@@ -198,7 +198,7 @@ Press `p` from the queue view or review view to see the prompt that was sent to 
 | `?` | Show all commands |
 | `Esc`, `q` | Back to queue |
 
-The prompt header shows the job ID, git ref, and agent. Below the header, the command line used to run the agent is displayed. It is truncated to terminal width by default; press `i` to wrap and inspect the full command line. The log view uses the same toggle.
+The prompt header shows the job ID, git ref, and agent. Below the header, the full command line used to run the agent is wrapped by default; press `i` to collapse it to one truncated line or expand it again. The Log view starts collapsed, and its `i` toggle is independent from the Prompt view.
 
 ## Copying Reviews
 

@@ -36,7 +36,7 @@ roborev version --json           # Show stable machine-readable version data
 requiring a repository or a running daemon:
 
 ```json
-{"name":"roborev","version":"v0.62.0"}
+{"name":"roborev","version":"v0.62.1"}
 ```
 
 The stable fields are:
@@ -231,6 +231,50 @@ reviews should run their own overlapping completed-at window separately.
     include repository-specific details or other sensitive context. Use
     `--profile metadata` when you do not need review prose, and handle content
     exports with the same care as local review data.
+
+## Exporting CI Metrics
+
+```bash
+roborev export ci-metrics
+roborev export ci-metrics --since 2026-07-01 --until 2026-07-31
+roborev export ci-metrics --limit 1000
+roborev export ci-metrics --cursor "$NEXT_CURSOR" --until 2026-08-01
+roborev export ci-metrics --legacy
+```
+
+| Flag | Description |
+|------|-------------|
+| `--format json` | Output format. JSON is the only supported format and the default |
+| `--since <time>` | Inclusive `posted_at` lower bound. Accepts RFC3339 or `YYYY-MM-DD` |
+| `--until <time>` | Exclusive `posted_at` upper bound. Accepts RFC3339 or `YYYY-MM-DD` |
+| `--cursor <opaque>` | Resume strictly after a previous `next_cursor`. Mutually exclusive with `--since` |
+| `--limit <n>` | Maximum panels to emit |
+| `--legacy` | Export the frozen pre-panel CI era as a one-time backfill instead of panel runs |
+
+`roborev export ci-metrics` emits one JSON document containing finalized CI
+panel runs for external turnaround-time analysis. Each panel records its GitHub
+repository, pull request, head SHA, creation and posting times, first-attempt
+time, attempt count, terminal outcome, synthesis agent/model snapshot, and the
+retained member and synthesis jobs with their timing and model metadata.
+
+Terminal outcomes distinguish `review_posted`, `no_review_posted`,
+`giveup_posted`, and `abandoned`. roborev backfills metrics for older finalized
+panels from retained jobs and attempts when the daemon starts. If the source
+rows have already been deleted, the panel remains exportable with outcome
+`unknown` and unavailable fields set to `null`.
+
+Export documents use `schema_version: 1` and the same stable `database_id`
+contract as review exports. Rows are ordered by `(posted_at, panel_id)`
+ascending. Every non-empty export includes an opaque `next_cursor`; pass it to
+`--cursor` to resume strictly after the last panel. A cursor from a recreated
+database is rejected with exit code `3`, so callers can discard it and backfill
+from a time window. Other cursor rejections also require discarding the cursor.
+Date-only `--until` bounds include the full named UTC day.
+
+`--legacy` exports the frozen pre-panel CI era as `legacy_review` pseudopanels,
+grouped from related completed review jobs before the database's first panel
+activity. It is intended for a one-time historical backfill. Legacy and
+panel-era cursors are namespaced and cannot be resumed against each other.
 
 ## Job Logs
 

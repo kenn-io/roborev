@@ -238,6 +238,12 @@ still applies when the selected ACP agent is also the matching default agent.
 To confirm which agent and model served a job, run `roborev show --job <id>
 --json` and inspect `job.agent` and `job.model`.
 
+Backup models follow the same pairing rule. A global `default_backup_model`
+belongs to `default_backup_agent`; it is not passed to a different ACP agent
+selected by a more-specific workflow or repo backup setting. On a mismatch,
+the selected ACP agent keeps its `[acp].model`. See [Backup
+Agents](/configuration/#backup-agents) for the full resolution order.
+
 ### `--agent` is ignored and a panel runs instead
 
 When `default_panel` is configured, `roborev review` fans out to the panel.

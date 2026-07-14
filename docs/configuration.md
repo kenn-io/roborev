@@ -360,10 +360,13 @@ If the primary agent is unavailable (for example, its command is not visible to 
 # ~/.roborev/config.toml
 default_agent = "codex"
 default_backup_agent = "claude-code"  # Fallback for any workflow
-default_backup_model = "claude-sonnet-4-20250514"  # Model for the backup agent
+default_backup_model = "claude-sonnet-4-20250514"  # Model paired with default_backup_agent
 ```
 
-When a backup agent takes over, it uses the model specified by `default_backup_model`. Without this setting, the backup agent uses whatever model is configured for it normally. This is useful when your backup agent needs a different model than the one configured as `default_model` (which is typically chosen for the primary agent).
+When `default_backup_agent` takes over, it uses the model paired with it in
+`default_backup_model`. Without this setting, the backup agent uses its normal
+configured model. This is useful when your backup agent needs a different model
+than `default_model`, which is typically chosen for the primary agent.
 
 You can also set backup agents per workflow:
 
@@ -390,6 +393,19 @@ When a workflow needs a backup agent, roborev resolves it in this order:
 4. Global `default_backup_agent`
 
 If a backup agent is found and installed, roborev uses that agent instead. If no backup is configured or the backup agent isn't installed, the job fails normally. roborev does not choose unrelated installed agents from the built-in agent list for workflow-configured reviews or fixes.
+
+Backup models follow the agent selected at the corresponding configuration
+layer. Repo-level workflow-specific and generic backup models pair with the
+fully resolved repo backup agent. A global workflow-specific backup model pairs
+with the workflow backup agent resolved from global configuration, and
+`default_backup_model` pairs only with `default_backup_agent`.
+
+This pairing is enforced for ACP backups because ACP agents validate model
+names against their advertised model list. If a more-specific backup setting
+selects an ACP agent but the inherited model belongs to a different backup
+agent, roborev skips the mismatched model and keeps the selected agent's
+`[acp].model`. Explicitly paired backup models and non-ACP backup behavior are
+unchanged.
 
 ### Agent Command Overrides
 
@@ -515,7 +531,7 @@ Create `~/.roborev/config.toml` to set system-wide defaults.
 ```toml
 default_agent = "codex"
 default_model = "gpt-5.5"  # Default LLM
-default_backup_model = "claude-sonnet-4-20250514"  # Fallback model for backup agent
+default_backup_model = "claude-sonnet-4-20250514"  # Model paired with default_backup_agent
 server_addr = "127.0.0.1:7373"
 max_workers = 4
 job_timeout_minutes = 30          # Per-job timeout in minutes
@@ -536,7 +552,7 @@ column_borders = true             # Show separators between TUI columns
 |--------|------|---------|-------------|------------|
 | `default_agent` | string | auto-detect | Default AI agent to use | Yes |
 | `default_backup_agent` | string | - | Fallback agent when the primary is unavailable or fails | Yes |
-| `default_backup_model` | string | - | Fallback model used when a backup agent runs | Yes |
+| `default_backup_model` | string | - | Model paired with `default_backup_agent` | Yes |
 | `default_model` | string | agent default | Model to use (format varies by agent) | Yes |
 | `server_addr` | string | 127.0.0.1:7373 | Daemon listen address. Use `unix://` for Unix domain socket (see [Unix Domain Socket](#unix-domain-socket)) | No |
 | `max_workers` | int | 4 | Number of parallel review workers | No |
