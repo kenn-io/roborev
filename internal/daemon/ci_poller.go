@@ -106,6 +106,13 @@ type CIPoller struct {
 	discordQuotaDedupe map[string]time.Time
 	discordNowFn       func() time.Time
 
+	// nowFn is the clock for throttle decisions (test seam).
+	nowFn func() time.Time
+
+	// quietHours is the window resolved once per poll cycle by poll(),
+	// owned by the single poll goroutine.
+	quietHours *config.QuietHoursWindow
+
 	subID      int // broadcaster subscription ID for event listening
 	stopCh     chan struct{}
 	doneCh     chan struct{}
@@ -124,6 +131,7 @@ func NewCIPoller(db *storage.DB, cfgGetter ConfigGetter, broadcaster Broadcaster
 		broadcaster:        broadcaster,
 		discordQuotaDedupe: make(map[string]time.Time),
 		discordNowFn:       time.Now,
+		nowFn:              time.Now,
 	}
 	p.listOpenPRsFn = p.listOpenPRs
 	p.listTrustedActorsFn = p.listTrustedActors
@@ -281,6 +289,10 @@ func (p *CIPoller) run(ctx context.Context, stopCh, doneCh chan struct{}, interv
 
 func (p *CIPoller) poll(ctx context.Context) {
 	cfg := p.cfgGetter.Config()
+
+	// Resolve quiet hours once per cycle so an invalid config logs one
+	// warning per poll, not one per PR.
+	p.quietHours = resolveQuietHours(&cfg.CI)
 
 	repos, err := p.repoResolver.Resolve(ctx, &cfg.CI, func(owner string) string {
 		return p.githubTokenForRepo(owner + "/_") // githubTokenForRepo only uses the owner part
@@ -535,22 +547,45 @@ func (p *CIPoller) alreadyReviewedPR(ghRepo string, pr ghPR) (bool, error) {
 	return false, nil
 }
 
+// resolveQuietHours parses the [ci.quiet_hours] config, logging a warning
+// and disabling the feature when it is invalid (a typo must not throttle
+// harder than configured).
+func resolveQuietHours(ci *config.CIConfig) *config.QuietHoursWindow {
+	w, err := ci.QuietHours.Resolve()
+	if err != nil {
+		log.Printf("CI poller: invalid [ci.quiet_hours] config, quiet hours disabled: %v", err)
+		return nil
+	}
+	return w
+}
+
 // throttlePR reports whether the PR was reviewed recently enough to defer this
-// push. Bypass users are never throttled. When throttled it sets a "pending"
-// deferred commit status and returns true. The throttle is purely time-based on
-// the most recent panel run for the PR (any HEAD SHA).
+// push. Bypass users skip the base throttle interval, but the quiet-hours
+// interval applies to everyone while the window is active. When throttled it
+// sets a "pending" deferred commit status and returns true. The throttle is
+// purely time-based on the most recent panel run for the PR (any HEAD SHA).
 func (p *CIPoller) throttlePR(ghRepo string, pr ghPR, cfg *config.Config) (bool, error) {
 	throttle := cfg.CI.ResolvedThrottleInterval()
-	if throttle <= 0 || cfg.CI.IsThrottleBypassed(pr.Author.Login) {
+	if cfg.CI.IsThrottleBypassed(pr.Author.Login) {
+		throttle = 0
+	}
+	if q := p.quietHours; q != nil && q.Active(p.nowFn()) && q.Interval > throttle {
+		throttle = q.Interval
+	}
+	if throttle <= 0 {
 		return false, nil
 	}
 	lastReview, err := p.db.LatestPanelTimeForPR(ghRepo, pr.Number)
 	if err != nil {
 		return false, fmt.Errorf("check PR throttle: %w", err)
 	}
-	if lastReview.IsZero() || time.Since(lastReview) >= throttle {
+	if lastReview.IsZero() || p.nowFn().Sub(lastReview) >= throttle {
 		return false, nil
 	}
+	// With the quiet-hours interval this can overstate the wait for bypass
+	// users, who become eligible at the first poll after the window ends.
+	// The status is advisory; capping at the window end isn't worth the
+	// wrap-around complexity.
 	nextReview := lastReview.Add(throttle)
 	desc := fmt.Sprintf("Review deferred — next eligible at %s", nextReview.UTC().Format("15:04 UTC"))
 	if err := p.callSetCommitStatus(ghRepo, pr.HeadRefOid, "pending", desc); err != nil {

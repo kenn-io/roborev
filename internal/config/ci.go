@@ -137,6 +137,12 @@ type CIConfig struct {
 	// bypass the throttle interval and are always reviewed immediately.
 	ThrottleBypassUsers []string `toml:"throttle_bypass_users"`
 
+	// QuietHours configures a recurring daily window during which a
+	// stronger per-PR throttle applies to all users, including
+	// ThrottleBypassUsers. In-flight reviews still complete and post;
+	// only new review enqueues are throttled.
+	QuietHours QuietHoursConfig `toml:"quiet_hours"`
+
 	// Model overrides the model for CI reviews (empty = use workflow resolution)
 	Model string `toml:"model"`
 
@@ -299,6 +305,109 @@ func (c *CIConfig) ResolvedBatchTimeout() time.Duration {
 		return defaultTimeout
 	}
 	return d
+}
+
+// QuietHoursConfig configures the [ci.quiet_hours] window. The feature is
+// enabled only when both Start and End are set.
+type QuietHoursConfig struct {
+	// Start is the window start as "HH:MM" (24-hour clock).
+	Start string `toml:"start"`
+
+	// End is the window end as "HH:MM". When Start > End the window
+	// wraps past midnight (e.g. 23:00-05:00).
+	End string `toml:"end"`
+
+	// Timezone is an IANA location name (e.g. "US/Central") in which
+	// the window is evaluated. Empty means machine local time.
+	Timezone string `toml:"timezone"`
+
+	// ThrottleInterval is the per-PR minimum time between reviews while
+	// the window is active. Default: "1h". "0" makes quiet hours a
+	// no-op (a zero interval never exceeds the base throttle).
+	ThrottleInterval string `toml:"throttle_interval"`
+}
+
+// QuietHoursWindow is a parsed, validated quiet-hours window.
+type QuietHoursWindow struct {
+	start int // minutes since midnight
+	end   int
+	loc   *time.Location
+
+	// Interval is the per-PR minimum time between reviews while the
+	// window is active.
+	Interval time.Duration
+}
+
+// Resolve parses and validates the quiet-hours config. It returns
+// (nil, nil) when the feature is disabled: Start and End both unset, or
+// Start == End (a zero-length window, not 24h). Invalid values return an
+// error; callers should treat an error as disabled so a typo never
+// throttles harder than configured.
+func (q *QuietHoursConfig) Resolve() (*QuietHoursWindow, error) {
+	if q.Start == "" && q.End == "" {
+		return nil, nil
+	}
+	if q.Start == "" || q.End == "" {
+		return nil, fmt.Errorf(
+			"start and end must both be set (start=%q end=%q)",
+			q.Start, q.End)
+	}
+	start, err := parseClockMinutes(q.Start)
+	if err != nil {
+		return nil, fmt.Errorf("start: %w", err)
+	}
+	end, err := parseClockMinutes(q.End)
+	if err != nil {
+		return nil, fmt.Errorf("end: %w", err)
+	}
+	if start == end {
+		return nil, nil
+	}
+	// time.LoadLocation("") returns UTC, so empty must be special-cased
+	// to machine local time.
+	loc := time.Local
+	if q.Timezone != "" {
+		loc, err = time.LoadLocation(q.Timezone)
+		if err != nil {
+			return nil, fmt.Errorf("timezone: %w", err)
+		}
+	}
+	interval := time.Hour
+	if q.ThrottleInterval != "" {
+		interval, err = time.ParseDuration(q.ThrottleInterval)
+		if err != nil {
+			return nil, fmt.Errorf("throttle_interval: %w", err)
+		}
+		if interval < 0 {
+			return nil, fmt.Errorf(
+				"throttle_interval: negative duration %q",
+				q.ThrottleInterval)
+		}
+	}
+	return &QuietHoursWindow{
+		start: start, end: end, loc: loc, Interval: interval,
+	}, nil
+}
+
+// Active reports whether t falls inside the window: start inclusive, end
+// exclusive, evaluated on the wall clock in the window's timezone.
+func (w *QuietHoursWindow) Active(t time.Time) bool {
+	lt := t.In(w.loc)
+	m := lt.Hour()*60 + lt.Minute()
+	if w.start < w.end {
+		return m >= w.start && m < w.end
+	}
+	return m >= w.start || m < w.end
+}
+
+// parseClockMinutes parses a "HH:MM" 24-hour clock time into minutes
+// since midnight.
+func parseClockMinutes(s string) (int, error) {
+	t, err := time.Parse("15:04", s)
+	if err != nil {
+		return 0, fmt.Errorf("invalid clock time %q (want HH:MM)", s)
+	}
+	return t.Hour()*60 + t.Minute(), nil
 }
 
 // IsThrottleBypassed reports whether the given GitHub login is in

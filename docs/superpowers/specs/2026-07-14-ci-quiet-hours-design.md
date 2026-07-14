@@ -35,24 +35,33 @@ throttle_interval = "1h"   # per-PR minimum interval during the window; default 
 
 - Feature is enabled only when both `start` and `end` are set.
 - `start == end` is treated as disabled (a zero-length window, not 24h).
+- Empty `timezone` means machine local time (`time.Local`). Implementation
+  note: this must be special-cased — `time.LoadLocation("")` returns UTC,
+  not local time.
+- `throttle_interval = "0"` is valid and makes the feature a no-op (a zero
+  quiet interval never exceeds the base throttle under max semantics),
+  mirroring how `throttle_interval = "0"` disables the base throttle.
 - Invalid `start`/`end`/`timezone`/`throttle_interval` values: log a warning
-  and treat the feature as disabled for that poll, matching the lenient style
-  of `ResolvedThrottleInterval`. A typo must not throttle harder than
+  and treat the feature as disabled, matching the lenient style of
+  `ResolvedThrottleInterval`. A typo must not throttle harder than
   configured.
 
 Struct: `QuietHoursConfig` in `internal/config/ci.go`, embedded in `CIConfig`
-as `QuietHours QuietHoursConfig \`toml:"quiet_hours"\``. A resolution helper
-parses and validates:
+as `QuietHours QuietHoursConfig \`toml:"quiet_hours"\``. Parsing and checking
+are split so validation runs once per poll cycle, not per PR:
 
 ```go
-// Active reports whether t falls inside the quiet-hours window.
-// Returns the effective throttle interval when active.
-func (q *QuietHoursConfig) Active(t time.Time) (bool, time.Duration, error)
+// Resolve parses and validates the config. Returns (nil, nil) when the
+// feature is disabled (start/end unset or start == end), and an error on
+// invalid values.
+func (q *QuietHoursConfig) Resolve() (*QuietHoursWindow, error)
+
+// Active reports whether t falls inside the window.
+func (w *QuietHoursWindow) Active(t time.Time) bool
 ```
 
-(Exact signature may be split into parse + check during implementation; the
-contract is: given a wall-clock instant, is the window active and what
-interval applies.)
+`QuietHoursWindow` carries the parsed start/end clock times, the
+`*time.Location`, and the resolved `Interval time.Duration` (default 1h).
 
 ### Window semantics
 
@@ -64,15 +73,21 @@ interval applies.)
 
 ### Poller integration (`internal/daemon/ci_poller.go`)
 
-Fold into `throttlePR` as an effective-interval override:
+The window is resolved **once per poll cycle** in `poll()` and the resolved
+`*QuietHoursWindow` is passed down to `throttlePR`. An invalid config logs
+one warning per poll cycle (not per PR) and disables the feature for that
+cycle; valid config is parsed once instead of re-parsing HH:MM strings per
+PR.
+
+`throttlePR` applies it as an effective-interval override:
 
 ```go
 throttle := cfg.CI.ResolvedThrottleInterval()
 if cfg.CI.IsThrottleBypassed(pr.Author.Login) {
     throttle = 0
 }
-if active, quiet := quietHoursActive(cfg, p.now()); active && quiet > throttle {
-    throttle = quiet
+if quiet != nil && quiet.Active(p.now()) && quiet.Interval > throttle {
+    throttle = quiet.Interval
 }
 if throttle <= 0 {
     return false, nil
@@ -85,9 +100,18 @@ if throttle <= 0 {
 - A PR with no prior panel run (`lastReview.IsZero()`) is still reviewed
   immediately, even inside the window — first reviews are never blocked.
 - The existing "Review deferred — next eligible at HH:MM UTC" pending commit
-  status is reused unchanged.
-- Add a `now func() time.Time` field on `CIPoller` (defaulting to `time.Now`)
-  as a test hook if one does not already exist.
+  status is reused unchanged. Known cosmetic inaccuracy, accepted: with the
+  quiet interval, `lastReview.Add(throttle)` may land after the window ends,
+  overstating the wait for bypass users who become eligible at the first
+  poll after the window (e.g. last review 04:50, window ends 05:00, status
+  says 05:50). The status is advisory; capping it at the window end would
+  add wrap-around complexity for a cosmetic string.
+- **Clock source**: add a `now func() time.Time` field on `CIPoller`
+  (defaulting to `time.Now`). `throttlePR` uses it for both the window check
+  and the interval comparison (`p.now().Sub(lastReview)` replaces
+  `time.Since(lastReview)`), so tests control one clock for both. Precedent
+  for injected clocks exists per-feature (`discordNowFn` in
+  `ci_discord.go`); a poller-wide field is new.
 
 ### Explicitly out of scope
 
