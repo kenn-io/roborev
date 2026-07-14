@@ -38,6 +38,7 @@ type mockServerConfig struct {
 	review      *storage.Review
 	status      int // Default 200
 	receivedRef *string
+	enqueueJob  *storage.ReviewJob
 }
 
 // newRunTestServer creates a unified test server for run command tests.
@@ -76,12 +77,18 @@ func newRunTestServer(t *testing.T, cfg mockServerConfig) *httptest.Server {
 				if cfg.receivedRef != nil {
 					*cfg.receivedRef = req.GitRef
 				}
-				w.WriteHeader(http.StatusCreated)
-				writeJSON(w, storage.ReviewJob{
+				job := storage.ReviewJob{
 					ID:     1,
+					UUID:   "00000000-0000-4000-8000-000000000001",
 					Agent:  "test",
 					GitRef: req.GitRef,
-				})
+					Status: storage.JobStatusQueued,
+				}
+				if cfg.enqueueJob != nil {
+					job = *cfg.enqueueJob
+				}
+				w.WriteHeader(http.StatusCreated)
+				writeJSON(w, job)
 			}
 		default:
 			w.WriteHeader(http.StatusNotFound)
@@ -89,6 +96,157 @@ func newRunTestServer(t *testing.T, cfg mockServerConfig) *httptest.Server {
 	}))
 	t.Cleanup(s.Close)
 	return s
+}
+
+func TestRunLaunchReceiptOutput(t *testing.T) {
+	t.Run("human output is unchanged", func(t *testing.T) {
+		server := newRunTestServer(t, mockServerConfig{})
+		patchServerAddr(t, server.URL)
+
+		cmd := runCmd()
+		var out strings.Builder
+		cmd.SetOut(&out)
+		cmd.SetErr(io.Discard)
+		cmd.SetArgs([]string{"test prompt"})
+
+		require.NoError(t, cmd.Execute())
+		assert.Equal(t, "Enqueued task 1 (agent: test)\n", out.String())
+	})
+
+	t.Run("json emits one document with the full launch identity", func(t *testing.T) {
+		server := newRunTestServer(t, mockServerConfig{})
+		patchServerAddr(t, server.URL)
+
+		cmd := runCmd()
+		var out strings.Builder
+		cmd.SetOut(&out)
+		cmd.SetErr(io.Discard)
+		fullRef := "refs/heads/feature/keep-this-full-ref"
+		cmd.SetArgs([]string{"test prompt", "--label", fullRef, "--json"})
+
+		require.NoError(t, cmd.Execute())
+		var receipt struct {
+			JobID   int64             `json:"job_id"`
+			JobUUID string            `json:"job_uuid"`
+			GitRef  string            `json:"git_ref"`
+			Status  storage.JobStatus `json:"status"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(out.String()), &receipt), out.String())
+		assert.Equal(t, int64(1), receipt.JobID)
+		assert.Equal(t, "00000000-0000-4000-8000-000000000001", receipt.JobUUID)
+		assert.Equal(t, fullRef, receipt.GitRef)
+		assert.Equal(t, storage.JobStatusQueued, receipt.Status)
+		assert.Equal(t, 1, strings.Count(strings.TrimSpace(out.String()), "{"),
+			"machine stdout must contain one JSON document and no human prelude")
+		assert.NotContains(t, out.String(), "Enqueued task")
+	})
+
+	t.Run("json rejects an enqueue response without uuid before writing stdout", func(t *testing.T) {
+		job := storage.ReviewJob{
+			ID: 1, Agent: "test", GitRef: "run", Status: storage.JobStatusQueued,
+		}
+		server := newRunTestServer(t, mockServerConfig{enqueueJob: &job})
+		patchServerAddr(t, server.URL)
+
+		cmd := runCmd()
+		var out strings.Builder
+		cmd.SetOut(&out)
+		cmd.SetErr(io.Discard)
+		cmd.SetArgs([]string{"test prompt", "--json"})
+
+		err := cmd.Execute()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "uuid")
+		assert.Empty(t, out.String())
+	})
+
+	for _, conflict := range []string{"--quiet", "--wait"} {
+		t.Run("json rejects conflicting mode "+conflict, func(t *testing.T) {
+			cmd := runCmd()
+			var out strings.Builder
+			cmd.SetOut(&out)
+			cmd.SetErr(io.Discard)
+			cmd.SetArgs([]string{"test prompt", "--json", conflict})
+
+			err := cmd.Execute()
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "--json")
+			assert.Contains(t, err.Error(), conflict)
+			assert.Empty(t, out.String())
+		})
+	}
+
+	t.Run("json rejects global verbose mode", func(t *testing.T) {
+		oldVerbose := verbose
+		verbose = true
+		t.Cleanup(func() { verbose = oldVerbose })
+
+		cmd := runCmd()
+		var out strings.Builder
+		cmd.SetOut(&out)
+		cmd.SetErr(io.Discard)
+		cmd.SetArgs([]string{"test prompt", "--json"})
+
+		err := cmd.Execute()
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "--json")
+		assert.Contains(t, err.Error(), "--verbose")
+		assert.Empty(t, out.String())
+	})
+
+	t.Run("returned job id re-queries the same launch", func(t *testing.T) {
+		var persisted *storage.ReviewJob
+		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+			switch r.URL.Path {
+			case "/api/ping":
+				writeJSON(w, daemon.PingInfo{OK: true, Service: "roborev", Version: version.Version})
+			case "/api/status":
+				writeJSON(w, map[string]string{"version": version.Version})
+			case "/api/enqueue":
+				var req daemon.EnqueueRequest
+				require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+				persisted = &storage.ReviewJob{
+					ID:     42,
+					UUID:   "00000000-0000-4000-8000-000000000042",
+					Agent:  "test",
+					GitRef: req.GitRef,
+					Status: storage.JobStatusQueued,
+				}
+				w.WriteHeader(http.StatusCreated)
+				writeJSON(w, persisted)
+			case "/api/jobs":
+				if persisted != nil && r.URL.Query().Get("id") == "42" {
+					writeJSON(w, map[string][]storage.ReviewJob{"jobs": {*persisted}})
+					return
+				}
+				writeJSON(w, map[string][]storage.ReviewJob{"jobs": {}})
+			default:
+				w.WriteHeader(http.StatusNotFound)
+			}
+		}))
+		t.Cleanup(server.Close)
+		patchServerAddr(t, server.URL)
+
+		cmd := runCmd()
+		var out strings.Builder
+		cmd.SetOut(&out)
+		cmd.SetErr(io.Discard)
+		fullRef := "refs/heads/feature/requery"
+		cmd.SetArgs([]string{"test prompt", "--json", "--label", fullRef})
+		require.NoError(t, cmd.Execute())
+
+		var receipt struct {
+			JobID   int64  `json:"job_id"`
+			JobUUID string `json:"job_uuid"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(out.String()), &receipt))
+		api := newDaemonReviewAPI(server.URL, server.Client())
+		queried, err := api.getJob(t.Context(), receipt.JobID)
+		require.NoError(t, err)
+		assert.Equal(t, receipt.JobUUID, queried.UUID)
+		assert.Equal(t, fullRef, queried.GitRef)
+		assert.Equal(t, storage.JobStatusQueued, queried.Status)
+	})
 }
 
 // stubReview creates a storage.Review with common defaults.

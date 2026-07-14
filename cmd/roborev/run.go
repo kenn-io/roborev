@@ -24,14 +24,15 @@ import (
 
 func runCmd() *cobra.Command {
 	var (
-		agentName string
-		model     string
-		reasoning string
-		wait      bool
-		quiet     bool
-		noContext bool
-		agentic   bool
-		label     string
+		agentName  string
+		model      string
+		reasoning  string
+		wait       bool
+		quiet      bool
+		noContext  bool
+		agentic    bool
+		label      string
+		jsonOutput bool
 	)
 
 	cmd := &cobra.Command{
@@ -49,6 +50,10 @@ The task can be provided as:
 By default, the job is enqueued and the command returns immediately.
 Use --wait to wait for completion and display the result.
 
+Use --json to emit one machine-readable launch receipt containing job_id,
+job_uuid, git_ref, and status. It cannot be combined with --quiet, --wait,
+or the global --verbose flag.
+
 By default, context about the repository (name, path, and any project
 guidelines from .roborev.toml) is included. Use --no-context to disable.
 
@@ -63,10 +68,11 @@ Examples:
   roborev run --no-context "What is 2+2?"
   roborev run --agentic "Create a new test file for main.go"
   roborev run --label refactor "Refactor the config module"
+  roborev run --json "Explain the architecture of this codebase"
   cat instructions.txt | roborev run --wait
 `,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runPrompt(cmd, args, agentName, model, reasoning, wait, quiet, !noContext, agentic, label)
+			return runPrompt(cmd, args, agentName, model, reasoning, wait, quiet, !noContext, agentic, label, jsonOutput)
 		},
 	}
 
@@ -79,6 +85,7 @@ Examples:
 	cmd.Flags().BoolVar(&agentic, "agentic", false, "enable agentic mode (allow file edits and commands)")
 	cmd.Flags().BoolVar(&agentic, "yolo", false, "alias for --agentic")
 	cmd.Flags().StringVar(&label, "label", "", "custom label to display in TUI (default: run)")
+	cmd.Flags().BoolVar(&jsonOutput, "json", false, "emit a machine-readable launch receipt")
 	registerAgentCompletion(cmd)
 	registerReasoningCompletion(cmd)
 
@@ -93,7 +100,43 @@ func promptCmd() *cobra.Command {
 	return cmd
 }
 
-func runPrompt(cmd *cobra.Command, args []string, agentName, modelStr, reasoningStr string, wait, quiet, includeContext, agentic bool, label string) error {
+type runLaunchReceipt struct {
+	JobID   int64             `json:"job_id"`
+	JobUUID string            `json:"job_uuid"`
+	GitRef  string            `json:"git_ref"`
+	Status  storage.JobStatus `json:"status"`
+}
+
+func newRunLaunchReceipt(job storage.ReviewJob) (runLaunchReceipt, error) {
+	switch {
+	case job.ID <= 0:
+		return runLaunchReceipt{}, fmt.Errorf("enqueue response is missing job id")
+	case strings.TrimSpace(job.UUID) == "":
+		return runLaunchReceipt{}, fmt.Errorf("enqueue response is missing job uuid")
+	case strings.TrimSpace(job.GitRef) == "":
+		return runLaunchReceipt{}, fmt.Errorf("enqueue response is missing git ref")
+	case strings.TrimSpace(string(job.Status)) == "":
+		return runLaunchReceipt{}, fmt.Errorf("enqueue response is missing status")
+	}
+	return runLaunchReceipt{
+		JobID: job.ID, JobUUID: job.UUID, GitRef: job.GitRef, Status: job.Status,
+	}, nil
+}
+
+func runPrompt(cmd *cobra.Command, args []string, agentName, modelStr, reasoningStr string, wait, quiet, includeContext, agentic bool, label string, jsonOutput bool) error {
+	if jsonOutput {
+		cmd.SilenceUsage = true
+	}
+	if jsonOutput && quiet {
+		return fmt.Errorf("--json cannot be combined with --quiet")
+	}
+	if jsonOutput && wait {
+		return fmt.Errorf("--json cannot be combined with --wait")
+	}
+	if jsonOutput && verbose {
+		return fmt.Errorf("--json cannot be combined with --verbose")
+	}
+
 	// Get prompt from args or stdin
 	var promptText string
 	if len(args) > 0 {
@@ -177,6 +220,14 @@ func runPrompt(cmd *cobra.Command, args []string, agentName, modelStr, reasoning
 	var job storage.ReviewJob
 	if err := json.Unmarshal(body, &job); err != nil {
 		return fmt.Errorf("failed to parse response: %w", err)
+	}
+
+	if jsonOutput {
+		receipt, err := newRunLaunchReceipt(job)
+		if err != nil {
+			return err
+		}
+		return json.NewEncoder(cmd.OutOrStdout()).Encode(receipt)
 	}
 
 	if !quiet {

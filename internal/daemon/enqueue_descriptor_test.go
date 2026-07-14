@@ -220,6 +220,7 @@ func TestEnqueueResponseUnchanged(t *testing.T) {
 	var job storage.ReviewJob
 	testutil.DecodeJSON(t, w, &job)
 	assert.Positive(t, job.ID)
+	assert.NotEmpty(t, job.UUID, "created enqueue response must emit its launch UUID")
 	assert.Equal(t, "test", job.Agent)
 	assert.Equal(t, storage.JobStatusQueued, job.Status)
 }

@@ -7,7 +7,7 @@ import (
 )
 
 type EnqueueJob_Response_OneOf struct {
-	runtime.Either[ReviewJob, EnqueueSkippedResponse]
+	runtime.Either[EnqueueCreatedResponse, EnqueueSkippedResponse]
 }
 
 func (e *EnqueueJob_Response_OneOf) Validate() error {
@@ -25,7 +25,7 @@ func (e *EnqueueJob_Response_OneOf) Validate() error {
 }
 
 type EnqueueJob_Response_201_OneOf struct {
-	runtime.Either[ReviewJob, EnqueueSkippedResponse]
+	runtime.Either[EnqueueCreatedResponse, EnqueueSkippedResponse]
 }
 
 func (e *EnqueueJob_Response_201_OneOf) Validate() error {

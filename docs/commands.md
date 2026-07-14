@@ -577,6 +577,7 @@ roborev run "Explain the architecture"
 roborev run --wait "Review src/auth/ for security issues"
 roborev run "Find simplification opportunities in src/utils/"
 roborev run --agentic "Add input validation to all endpoints"
+roborev run --json "Explain the architecture"
 cat review-checklist.txt | roborev run --wait
 ```
 
@@ -589,6 +590,7 @@ cat review-checklist.txt | roborev run --wait
 | `--agentic, --yolo` | Enable agentic mode (can modify files) |
 | `--no-context` | Don't include repository context |
 | `--label <string>` | Custom label displayed in TUI (default: `run`) |
+| `--json` | Emit one launch receipt with `job_id`, `job_uuid`, `git_ref`, and `status`; incompatible with `--quiet`, `--wait`, and global `--verbose` |
 
 See: [Custom Agent Tasks](/advanced/custom-tasks/)
 

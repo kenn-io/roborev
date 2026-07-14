@@ -403,6 +403,147 @@ components:
         - queue_p90_secs
         - queue_p99_secs
       type: object
+    EnqueueCreatedResponse:
+      additionalProperties: false
+      properties:
+        agent:
+          type: string
+        agentic:
+          type: boolean
+        backup_agent:
+          type: string
+        backup_model:
+          type: string
+        branch:
+          type: string
+        claim_blocked:
+          type: boolean
+        closed:
+          type: boolean
+        command_line:
+          type: string
+        commit_id:
+          format: int64
+          type: integer
+        commit_subject:
+          type: string
+        diff_content:
+          type: string
+        dirty_files:
+          items:
+            type: string
+          type:
+            - array
+            - "null"
+        enqueued_at:
+          format: date-time
+          type: string
+        error:
+          type: string
+        finished_at:
+          format: date-time
+          type: string
+        git_ref:
+          type: string
+        id:
+          format: int64
+          type: integer
+        job_type:
+          type: string
+        min_severity:
+          type: string
+        model:
+          type: string
+        output_prefix:
+          type: string
+        panel_member_config_json:
+          type: string
+        panel_member_index:
+          format: int64
+          type: integer
+        panel_member_name:
+          type: string
+        panel_name:
+          type: string
+        panel_role:
+          type: string
+        panel_run_uuid:
+          type: string
+        panel_summary:
+          $ref: "#/components/schemas/PanelSummary"
+        parent_job_id:
+          format: int64
+          type: integer
+        patch:
+          type: string
+        patch_id:
+          type: string
+        prompt:
+          type: string
+        prompt_prebuilt:
+          type: boolean
+        provider:
+          type: string
+        reasoning:
+          type: string
+        repo_id:
+          format: int64
+          type: integer
+        repo_name:
+          type: string
+        repo_path:
+          type: string
+        requested_model:
+          type: string
+        requested_provider:
+          type: string
+        retry_count:
+          format: int64
+          type: integer
+        review_type:
+          type: string
+        session_id:
+          type: string
+        skip_reason:
+          type: string
+        source:
+          type: string
+        source_machine_id:
+          type: string
+        started_at:
+          format: date-time
+          type: string
+        status:
+          type: string
+        synced_at:
+          format: date-time
+          type: string
+        token_usage:
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+        uuid:
+          type: string
+        verdict:
+          type: string
+        worker_id:
+          type: string
+        worktree_path:
+          type: string
+      required:
+        - uuid
+        - id
+        - repo_id
+        - git_ref
+        - agent
+        - job_type
+        - status
+        - enqueued_at
+        - retry_count
+        - agentic
+        - prompt_prebuilt
+      type: object
     EnqueueRequest:
       additionalProperties: false
       properties:
@@ -2187,14 +2328,14 @@ paths:
             application/json:
               schema:
                 oneOf:
-                  - $ref: "#/components/schemas/ReviewJob"
+                  - $ref: "#/components/schemas/EnqueueCreatedResponse"
                   - $ref: "#/components/schemas/EnqueueSkippedResponse"
         "201":
           content:
             application/json:
               schema:
                 oneOf:
-                  - $ref: "#/components/schemas/ReviewJob"
+                  - $ref: "#/components/schemas/EnqueueCreatedResponse"
                   - $ref: "#/components/schemas/EnqueueSkippedResponse"
           description: Created
         "400":
