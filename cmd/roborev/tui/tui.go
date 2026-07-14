@@ -401,10 +401,11 @@ type model struct {
 	logLoading        bool                 // True while a fetch is in-flight
 	logFetchSeq       uint64               // Monotonic seq to drop stale responses
 
-	// cmdExpanded toggles full (wrapped) display of the agent command-line
-	// header shown in the Log and Prompt views. Collapsed (default) shows a
-	// single line truncated to the terminal width.
-	cmdExpanded bool
+	// Command-line header expansion is independent by view. Prompt defaults to
+	// expanded so long invocations remain readable; Log retains its compact
+	// collapsed default.
+	promptCmdExpanded bool
+	logCmdExpanded    bool
 
 	// Glamour markdown render cache (pointer so View's value receiver can update it)
 	mdCache *markdownCache
@@ -640,6 +641,7 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 		taskColCache:        &colWidthCache{gen: -1},
 		expandedPanels:      map[string]bool{},
 		panelMembers:        map[string][]storage.ReviewJob{},
+		promptCmdExpanded:   true,
 	}
 	// Seed the cached classify-visibility decision once so render and
 	// fetch can read m.classifyEffective without hitting disk.

@@ -320,7 +320,7 @@ func (m model) handleLogKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	case "right":
 		return m.handleNextKey()
 	case "i":
-		m.cmdExpanded = !m.cmdExpanded
+		m.logCmdExpanded = !m.logCmdExpanded
 		return m, tea.ClearScreen
 	case "?":
 		m.helpFromView = m.currentView

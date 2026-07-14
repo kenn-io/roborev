@@ -176,7 +176,7 @@ func (m *model) logVisibleLines() int {
 	job := m.logViewLookupJob()
 	// Command header may span multiple lines when expanded; classify rows
 	// add their own reasoning header lines.
-	reserved += len(m.commandHeaderLines(job))
+	reserved += len(m.commandHeaderLines(job, m.logCmdExpanded))
 	reserved += len(classifyReasoningLines(job, m.width))
 	return max(m.height-reserved, 1)
 }

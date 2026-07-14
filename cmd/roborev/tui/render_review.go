@@ -310,9 +310,9 @@ func (m model) renderPromptView() string {
 	b.WriteString("\x1b[K\n") // Clear to end of line
 
 	// Show command line (computed from job params, dimmed, below title).
-	// Collapsed by default; press i to expand the full command via cmdExpanded.
+	// Prompt starts expanded; press i to toggle the wrapped command.
 	headerLines := 1
-	for _, line := range m.commandHeaderLines(review.Job) {
+	for _, line := range m.commandHeaderLines(review.Job, m.promptCmdExpanded) {
 		b.WriteString(line)
 		b.WriteString("\x1b[K\n")
 		headerLines++
@@ -331,7 +331,7 @@ func (m model) renderPromptView() string {
 
 	// Reserve: title + command(N, headerLines) + scroll indicator(1) + help(N) + margin(1)
 	promptHelpRows := [][]helpItem{
-		{{"↑/↓", "scroll"}, {"←/→", "prev/next"}, {"i", "expand cmd"}, {"p", "toggle prompt/review"}, {"?", "commands"}, {"esc", "back"}},
+		{{"↑/↓", "scroll"}, {"←/→", "prev/next"}, {"i", "toggle cmd"}, {"p", "toggle prompt/review"}, {"?", "commands"}, {"esc", "back"}},
 	}
 	promptHelpLines := len(reflowHelpRows(promptHelpRows, m.width))
 	visibleLines := max(m.height-(2+promptHelpLines)-headerLines, 1)

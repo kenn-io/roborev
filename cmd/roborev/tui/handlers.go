@@ -130,7 +130,7 @@ func (m model) handleGlobalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handlePromptKey()
 	case "i":
 		if m.currentView == viewKindPrompt {
-			m.cmdExpanded = !m.cmdExpanded
+			m.promptCmdExpanded = !m.promptCmdExpanded
 			return m, tea.ClearScreen
 		}
 		return m, nil
