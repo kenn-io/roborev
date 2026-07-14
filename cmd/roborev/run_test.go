@@ -39,6 +39,7 @@ type mockServerConfig struct {
 	status      int // Default 200
 	receivedRef *string
 	enqueueJob  *storage.ReviewJob
+	skipReason  string // If set, enqueue returns 200 skipped instead of 201
 }
 
 // newRunTestServer creates a unified test server for run command tests.
@@ -76,6 +77,12 @@ func newRunTestServer(t *testing.T, cfg mockServerConfig) *httptest.Server {
 				}
 				if cfg.receivedRef != nil {
 					*cfg.receivedRef = req.GitRef
+				}
+				if cfg.skipReason != "" {
+					writeJSON(w, daemon.EnqueueSkippedResponse{
+						Skipped: true, Reason: cfg.skipReason,
+					})
+					return
 				}
 				job := storage.ReviewJob{
 					ID:     1,
@@ -149,6 +156,9 @@ func TestRunLaunchReceiptOutput(t *testing.T) {
 		patchServerAddr(t, server.URL)
 
 		cmd := runCmd()
+		// The root command's PersistentPreRunE silences usage for runtime
+		// errors in production; replicate that for this bare subcommand.
+		cmd.SilenceUsage = true
 		var out strings.Builder
 		cmd.SetOut(&out)
 		cmd.SetErr(io.Discard)
@@ -157,9 +167,51 @@ func TestRunLaunchReceiptOutput(t *testing.T) {
 		err := cmd.Execute()
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "uuid")
+		assert.Contains(t, err.Error(), "enqueued",
+			"error must disclose that the job was created so callers do not retry blindly")
 		assert.Empty(t, out.String())
 	})
 
+	t.Run("json emits a skipped document when the daemon skips the enqueue", func(t *testing.T) {
+		server := newRunTestServer(t, mockServerConfig{skipReason: "branch excluded by config"})
+		patchServerAddr(t, server.URL)
+
+		cmd := runCmd()
+		var out strings.Builder
+		cmd.SetOut(&out)
+		cmd.SetErr(io.Discard)
+		cmd.SetArgs([]string{"test prompt", "--json"})
+
+		require.NoError(t, cmd.Execute())
+		var skipped struct {
+			Skipped bool   `json:"skipped"`
+			Reason  string `json:"reason"`
+		}
+		require.NoError(t, json.Unmarshal([]byte(out.String()), &skipped), out.String())
+		assert.True(t, skipped.Skipped)
+		assert.Equal(t, "branch excluded by config", skipped.Reason)
+		assert.Equal(t, 1, strings.Count(strings.TrimSpace(out.String()), "{"),
+			"machine stdout must contain one JSON document")
+	})
+
+	t.Run("human mode prints the skip reason", func(t *testing.T) {
+		server := newRunTestServer(t, mockServerConfig{skipReason: "branch excluded by config"})
+		patchServerAddr(t, server.URL)
+
+		cmd := runCmd()
+		var out strings.Builder
+		cmd.SetOut(&out)
+		cmd.SetErr(io.Discard)
+		cmd.SetArgs([]string{"test prompt"})
+
+		require.NoError(t, cmd.Execute())
+		assert.Equal(t, "branch excluded by config\n", out.String())
+	})
+
+	// Flag conflicts go through usageErr, so cobra prints the usage block.
+	// In production that lands on stderr; these bare subcommands redirect it
+	// into out via SetOut, so assert stdout carries no receipt instead of
+	// asserting emptiness.
 	for _, conflict := range []string{"--quiet", "--wait"} {
 		t.Run("json rejects conflicting mode "+conflict, func(t *testing.T) {
 			cmd := runCmd()
@@ -172,7 +224,8 @@ func TestRunLaunchReceiptOutput(t *testing.T) {
 			require.Error(t, err)
 			assert.Contains(t, err.Error(), "--json")
 			assert.Contains(t, err.Error(), conflict)
-			assert.Empty(t, out.String())
+			assert.NotContains(t, out.String(), "job_id",
+				"conflict errors must not write a receipt to stdout")
 		})
 	}
 
@@ -191,51 +244,29 @@ func TestRunLaunchReceiptOutput(t *testing.T) {
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), "--json")
 		assert.Contains(t, err.Error(), "--verbose")
-		assert.Empty(t, out.String())
+		assert.NotContains(t, out.String(), "job_id",
+			"conflict errors must not write a receipt to stdout")
 	})
 
 	t.Run("returned job id re-queries the same launch", func(t *testing.T) {
-		var persisted *storage.ReviewJob
-		server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			switch r.URL.Path {
-			case "/api/ping":
-				writeJSON(w, daemon.PingInfo{OK: true, Service: "roborev", Version: version.Version})
-			case "/api/status":
-				writeJSON(w, map[string]string{"version": version.Version})
-			case "/api/enqueue":
-				var req daemon.EnqueueRequest
-				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
-					t.Errorf("decode enqueue request: %v", err)
-					http.Error(w, "invalid enqueue request", http.StatusBadRequest)
-					return
-				}
-				persisted = &storage.ReviewJob{
-					ID:     42,
-					UUID:   "00000000-0000-4000-8000-000000000042",
-					Agent:  "test",
-					GitRef: req.GitRef,
-					Status: storage.JobStatusQueued,
-				}
-				w.WriteHeader(http.StatusCreated)
-				writeJSON(w, persisted)
-			case "/api/jobs":
-				if persisted != nil && r.URL.Query().Get("id") == "42" {
-					writeJSON(w, map[string][]storage.ReviewJob{"jobs": {*persisted}})
-					return
-				}
-				writeJSON(w, map[string][]storage.ReviewJob{"jobs": {}})
-			default:
-				w.WriteHeader(http.StatusNotFound)
-			}
-		}))
-		t.Cleanup(server.Close)
+		fullRef := "refs/heads/feature/requery"
+		job := storage.ReviewJob{
+			ID:     42,
+			UUID:   "00000000-0000-4000-8000-000000000042",
+			Agent:  "test",
+			GitRef: fullRef,
+			Status: storage.JobStatusQueued,
+		}
+		server := newRunTestServer(t, mockServerConfig{
+			enqueueJob: &job,
+			jobs:       []storage.ReviewJob{job},
+		})
 		patchServerAddr(t, server.URL)
 
 		cmd := runCmd()
 		var out strings.Builder
 		cmd.SetOut(&out)
 		cmd.SetErr(io.Discard)
-		fullRef := "refs/heads/feature/requery"
 		cmd.SetArgs([]string{"test prompt", "--json", "--label", fullRef})
 		require.NoError(t, cmd.Execute())
 
@@ -244,6 +275,7 @@ func TestRunLaunchReceiptOutput(t *testing.T) {
 			JobUUID string `json:"job_uuid"`
 		}
 		require.NoError(t, json.Unmarshal([]byte(out.String()), &receipt))
+		assert.Equal(t, int64(42), receipt.JobID)
 		api := newDaemonReviewAPI(server.URL, server.Client())
 		queried, err := api.getJob(t.Context(), receipt.JobID)
 		require.NoError(t, err)

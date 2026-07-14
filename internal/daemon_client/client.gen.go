@@ -293,6 +293,65 @@ type DurationStats struct {
 	ReviewP99Secs float64 `json:"review_p99_secs"`
 }
 
+// EnqueueCreatedResponse defines model for EnqueueCreatedResponse.
+type EnqueueCreatedResponse struct {
+	Agent                 string        `json:"agent"`
+	Agentic               bool          `json:"agentic"`
+	BackupAgent           *string       `json:"backup_agent,omitempty"`
+	BackupModel           *string       `json:"backup_model,omitempty"`
+	Branch                *string       `json:"branch,omitempty"`
+	ClaimBlocked          *bool         `json:"claim_blocked,omitempty"`
+	Closed                *bool         `json:"closed,omitempty"`
+	CommandLine           *string       `json:"command_line,omitempty"`
+	CommitId              *int64        `json:"commit_id,omitempty"`
+	CommitSubject         *string       `json:"commit_subject,omitempty"`
+	DiffContent           *string       `json:"diff_content,omitempty"`
+	DirtyFiles            *[]string     `json:"dirty_files,omitempty"`
+	EnqueuedAt            time.Time     `json:"enqueued_at"`
+	Error                 *string       `json:"error,omitempty"`
+	FinishedAt            *time.Time    `json:"finished_at,omitempty"`
+	GitRef                string        `json:"git_ref"`
+	Id                    int64         `json:"id"`
+	JobType               string        `json:"job_type"`
+	MinSeverity           *string       `json:"min_severity,omitempty"`
+	Model                 *string       `json:"model,omitempty"`
+	OutputPrefix          *string       `json:"output_prefix,omitempty"`
+	PanelMemberConfigJson *string       `json:"panel_member_config_json,omitempty"`
+	PanelMemberIndex      *int64        `json:"panel_member_index,omitempty"`
+	PanelMemberName       *string       `json:"panel_member_name,omitempty"`
+	PanelName             *string       `json:"panel_name,omitempty"`
+	PanelRole             *string       `json:"panel_role,omitempty"`
+	PanelRunUuid          *string       `json:"panel_run_uuid,omitempty"`
+	PanelSummary          *PanelSummary `json:"panel_summary,omitempty"`
+	ParentJobId           *int64        `json:"parent_job_id,omitempty"`
+	Patch                 *string       `json:"patch,omitempty"`
+	PatchId               *string       `json:"patch_id,omitempty"`
+	Prompt                *string       `json:"prompt,omitempty"`
+	PromptPrebuilt        bool          `json:"prompt_prebuilt"`
+	Provider              *string       `json:"provider,omitempty"`
+	Reasoning             *string       `json:"reasoning,omitempty"`
+	RepoId                int64         `json:"repo_id"`
+	RepoName              *string       `json:"repo_name,omitempty"`
+	RepoPath              *string       `json:"repo_path,omitempty"`
+	RequestedModel        *string       `json:"requested_model,omitempty"`
+	RequestedProvider     *string       `json:"requested_provider,omitempty"`
+	RetryCount            int64         `json:"retry_count"`
+	ReviewType            *string       `json:"review_type,omitempty"`
+	SessionId             *string       `json:"session_id,omitempty"`
+	SkipReason            *string       `json:"skip_reason,omitempty"`
+	Source                *string       `json:"source,omitempty"`
+	SourceMachineId       *string       `json:"source_machine_id,omitempty"`
+	StartedAt             *time.Time    `json:"started_at,omitempty"`
+	Status                string        `json:"status"`
+	SyncedAt              *time.Time    `json:"synced_at,omitempty"`
+	TokenUsage            *string       `json:"token_usage,omitempty"`
+	UpdatedAt             *time.Time    `json:"updated_at,omitempty"`
+	Uuid                  string        `json:"uuid"`
+	Verdict               *string       `json:"verdict,omitempty"`
+	WorkerId              *string       `json:"worker_id,omitempty"`
+	WorktreePath          *string       `json:"worktree_path,omitempty"`
+}
+
 // EnqueueRequest defines model for EnqueueRequest.
 type EnqueueRequest struct {
 	// Schema A URL to the JSON Schema for this object.
@@ -374,6 +433,54 @@ type ErrorResponse struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema *string `json:"$schema,omitempty"`
 	Error  string  `json:"error"`
+}
+
+// ExportCIMetricsDocument defines model for ExportCIMetricsDocument.
+type ExportCIMetricsDocument struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+
+	// DatabaseId Stable identity for the local review database; changes when the database is recreated.
+	DatabaseId  string `json:"database_id"`
+	GeneratedAt string `json:"generated_at"`
+
+	// NextCursor Opaque resume cursor emitted when panels is non-empty.
+	NextCursor    *string          `json:"next_cursor"`
+	Panels        *[]ExportCIPanel `json:"panels"`
+	SchemaVersion int64            `json:"schema_version"`
+	Tool          string           `json:"tool"`
+	ToolVersion   string           `json:"tool_version"`
+
+	// Truncated True when more matching rows are available immediately.
+	Truncated bool                `json:"truncated"`
+	Window    ExportReviewsWindow `json:"window"`
+}
+
+// ExportCIPanel defines model for ExportCIPanel.
+type ExportCIPanel struct {
+	AttemptCount   *int64              `json:"attempt_count"`
+	FirstAttemptAt *string             `json:"first_attempt_at"`
+	GithubRepo     string              `json:"github_repo"`
+	HeadSha        string              `json:"head_sha"`
+	Jobs           *[]ExportCIPanelJob `json:"jobs"`
+	Outcome        string              `json:"outcome"`
+	PanelCreatedAt string              `json:"panel_created_at"`
+	PostedAt       string              `json:"posted_at"`
+	PrNumber       int64               `json:"pr_number"`
+	SynthesisAgent *string             `json:"synthesis_agent"`
+	SynthesisModel *string             `json:"synthesis_model"`
+}
+
+// ExportCIPanelJob defines model for ExportCIPanelJob.
+type ExportCIPanelJob struct {
+	Agent      string  `json:"agent"`
+	FinishedAt *string `json:"finished_at"`
+	JobUuid    string  `json:"job_uuid"`
+	Model      *string `json:"model"`
+	Provider   *string `json:"provider"`
+	Role       string  `json:"role"`
+	StartedAt  *string `json:"started_at"`
+	Status     string  `json:"status"`
 }
 
 // ExportReview defines model for ExportReview.
@@ -554,6 +661,66 @@ type OverviewStats struct {
 	Rebased  int64 `json:"rebased"`
 	Running  int64 `json:"running"`
 	Total    int64 `json:"total"`
+}
+
+// PanelEnqueueResponse defines model for PanelEnqueueResponse.
+type PanelEnqueueResponse struct {
+	Agent                 string        `json:"agent"`
+	Agentic               bool          `json:"agentic"`
+	BackupAgent           *string       `json:"backup_agent,omitempty"`
+	BackupModel           *string       `json:"backup_model,omitempty"`
+	Branch                *string       `json:"branch,omitempty"`
+	ClaimBlocked          *bool         `json:"claim_blocked,omitempty"`
+	Closed                *bool         `json:"closed,omitempty"`
+	CommandLine           *string       `json:"command_line,omitempty"`
+	CommitId              *int64        `json:"commit_id,omitempty"`
+	CommitSubject         *string       `json:"commit_subject,omitempty"`
+	DiffContent           *string       `json:"diff_content,omitempty"`
+	DirtyFiles            *[]string     `json:"dirty_files,omitempty"`
+	EnqueuedAt            time.Time     `json:"enqueued_at"`
+	Error                 *string       `json:"error,omitempty"`
+	FinishedAt            *time.Time    `json:"finished_at,omitempty"`
+	GitRef                string        `json:"git_ref"`
+	Id                    int64         `json:"id"`
+	JobType               string        `json:"job_type"`
+	MemberJobIds          *[]int64      `json:"member_job_ids"`
+	MinSeverity           *string       `json:"min_severity,omitempty"`
+	Model                 *string       `json:"model,omitempty"`
+	OutputPrefix          *string       `json:"output_prefix,omitempty"`
+	PanelMemberConfigJson *string       `json:"panel_member_config_json,omitempty"`
+	PanelMemberIndex      *int64        `json:"panel_member_index,omitempty"`
+	PanelMemberName       *string       `json:"panel_member_name,omitempty"`
+	PanelName             *string       `json:"panel_name,omitempty"`
+	PanelRole             *string       `json:"panel_role,omitempty"`
+	PanelRunUuid          string        `json:"panel_run_uuid"`
+	PanelSummary          *PanelSummary `json:"panel_summary,omitempty"`
+	ParentJobId           *int64        `json:"parent_job_id,omitempty"`
+	Patch                 *string       `json:"patch,omitempty"`
+	PatchId               *string       `json:"patch_id,omitempty"`
+	Prompt                *string       `json:"prompt,omitempty"`
+	PromptPrebuilt        bool          `json:"prompt_prebuilt"`
+	Provider              *string       `json:"provider,omitempty"`
+	Reasoning             *string       `json:"reasoning,omitempty"`
+	RepoId                int64         `json:"repo_id"`
+	RepoName              *string       `json:"repo_name,omitempty"`
+	RepoPath              *string       `json:"repo_path,omitempty"`
+	RequestedModel        *string       `json:"requested_model,omitempty"`
+	RequestedProvider     *string       `json:"requested_provider,omitempty"`
+	RetryCount            int64         `json:"retry_count"`
+	ReviewType            *string       `json:"review_type,omitempty"`
+	SessionId             *string       `json:"session_id,omitempty"`
+	SkipReason            *string       `json:"skip_reason,omitempty"`
+	Source                *string       `json:"source,omitempty"`
+	SourceMachineId       *string       `json:"source_machine_id,omitempty"`
+	StartedAt             *time.Time    `json:"started_at,omitempty"`
+	Status                string        `json:"status"`
+	SyncedAt              *time.Time    `json:"synced_at,omitempty"`
+	TokenUsage            *string       `json:"token_usage,omitempty"`
+	UpdatedAt             *time.Time    `json:"updated_at,omitempty"`
+	Uuid                  *string       `json:"uuid,omitempty"`
+	Verdict               *string       `json:"verdict,omitempty"`
+	WorkerId              *string       `json:"worker_id,omitempty"`
+	WorktreePath          *string       `json:"worktree_path,omitempty"`
 }
 
 // PanelSummary defines model for PanelSummary.
@@ -910,6 +1077,27 @@ type GetCostParams struct {
 // GetCostParamsBranchEmpty defines parameters for GetCost.
 type GetCostParamsBranchEmpty string
 
+// ExportCiMetricsParams defines parameters for ExportCiMetrics.
+type ExportCiMetricsParams struct {
+	// Format Output format; only json is supported
+	Format *string `form:"format,omitempty" json:"format,omitempty"`
+
+	// Since Inclusive posted_at lower bound (RFC3339 or YYYY-MM-DD)
+	Since *string `form:"since,omitempty" json:"since,omitempty"`
+
+	// Until Exclusive posted_at upper bound (RFC3339 or YYYY-MM-DD; date-only means through that UTC day)
+	Until *string `form:"until,omitempty" json:"until,omitempty"`
+
+	// Limit Maximum panels in this page
+	Limit *int64 `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor Opaque next_cursor from a previous page. Resumes strictly after its (posted_at, panel_id) position; mutually exclusive with since.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+
+	// Legacy Export the frozen pre-panel ci_pr_reviews era instead of panel runs. Cursors are namespaced to this mode and cannot be reused across modes.
+	Legacy *bool `form:"legacy,omitempty" json:"legacy,omitempty"`
+}
+
 // ExportReviewsParams defines parameters for ExportReviews.
 type ExportReviewsParams struct {
 	// Format Output format; only json is supported
@@ -1215,6 +1403,9 @@ type ClientInterface interface {
 
 	EnqueueJob(ctx context.Context, body EnqueueJobJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
+	// ExportCiMetrics request
+	ExportCiMetrics(ctx context.Context, params *ExportCiMetricsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
 	// ExportReviews request
 	ExportReviews(ctx context.Context, params *ExportReviewsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
@@ -1411,6 +1602,18 @@ func (c *Client) EnqueueJobWithBody(ctx context.Context, contentType string, bod
 
 func (c *Client) EnqueueJob(ctx context.Context, body EnqueueJobJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewEnqueueJobRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ExportCiMetrics(ctx context.Context, params *ExportCiMetricsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExportCiMetricsRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -2253,6 +2456,135 @@ func NewEnqueueJobRequestWithBody(server string, contentType string, body io.Rea
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewExportCiMetricsRequest generates requests for ExportCiMetrics
+func NewExportCiMetricsRequest(server string, params *ExportCiMetricsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/export/ci-metrics")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Format != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "format", *params.Format, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Since != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "since", *params.Since, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Until != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "until", *params.Until, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Legacy != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "legacy", *params.Legacy, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -3970,6 +4302,9 @@ type ClientWithResponsesInterface interface {
 
 	EnqueueJobWithResponse(ctx context.Context, body EnqueueJobJSONRequestBody, reqEditors ...RequestEditorFn) (*EnqueueJobResponse, error)
 
+	// ExportCiMetricsWithResponse request
+	ExportCiMetricsWithResponse(ctx context.Context, params *ExportCiMetricsParams, reqEditors ...RequestEditorFn) (*ExportCiMetricsResponse, error)
+
 	// ExportReviewsWithResponse request
 	ExportReviewsWithResponse(ctx context.Context, params *ExportReviewsParams, reqEditors ...RequestEditorFn) (*ExportReviewsResponse, error)
 
@@ -4220,6 +4555,30 @@ func (r EnqueueJobResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r EnqueueJobResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ExportCiMetricsResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *ExportCIMetricsDocument
+	ApplicationproblemJSON409     *ErrorModel
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r ExportCiMetricsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ExportCiMetricsResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -4963,6 +5322,15 @@ func (c *ClientWithResponses) EnqueueJobWithResponse(ctx context.Context, body E
 	return ParseEnqueueJobResponse(rsp)
 }
 
+// ExportCiMetricsWithResponse request returning *ExportCiMetricsResponse
+func (c *ClientWithResponses) ExportCiMetricsWithResponse(ctx context.Context, params *ExportCiMetricsParams, reqEditors ...RequestEditorFn) (*ExportCiMetricsResponse, error) {
+	rsp, err := c.ExportCiMetrics(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExportCiMetricsResponse(rsp)
+}
+
 // ExportReviewsWithResponse request returning *ExportReviewsResponse
 func (c *ClientWithResponses) ExportReviewsWithResponse(ctx context.Context, params *ExportReviewsParams, reqEditors ...RequestEditorFn) (*ExportReviewsResponse, error) {
 	rsp, err := c.ExportReviews(ctx, params, reqEditors...)
@@ -5536,6 +5904,46 @@ func ParseEnqueueJobResponse(rsp *http.Response) (*EnqueueJobResponse, error) {
 			return nil, err
 		}
 		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseExportCiMetricsResponse parses an HTTP response from a ExportCiMetricsWithResponse call
+func ParseExportCiMetricsResponse(rsp *http.Response) (*ExportCiMetricsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ExportCiMetricsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ExportCIMetricsDocument
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 

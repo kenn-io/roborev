@@ -34,6 +34,7 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 	enqueueSuccessSchema := oneOfJSONSchema(
 		api,
 		EnqueueCreatedResponse{},
+		PanelEnqueueResponse{},
 		EnqueueSkippedResponse{},
 	)
 	jobSchema := jsonSchema(api, storage.ReviewJob{})

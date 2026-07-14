@@ -1019,6 +1019,101 @@ type OverviewStats struct {
 	Total    int64 `json:"total"`
 }
 
+type PanelEnqueueResponse struct {
+	Agent                 string        `json:"agent" validate:"required"`
+	Agentic               bool          `json:"agentic"`
+	BackupAgent           *string       `json:"backup_agent,omitempty"`
+	BackupModel           *string       `json:"backup_model,omitempty"`
+	Branch                *string       `json:"branch,omitempty"`
+	ClaimBlocked          *bool         `json:"claim_blocked,omitempty"`
+	Closed                *bool         `json:"closed,omitempty"`
+	CommandLine           *string       `json:"command_line,omitempty"`
+	CommitID              *int64        `json:"commit_id,omitempty"`
+	CommitSubject         *string       `json:"commit_subject,omitempty"`
+	DiffContent           *string       `json:"diff_content,omitempty"`
+	DirtyFiles            []string      `json:"dirty_files,omitempty"`
+	EnqueuedAt            time.Time     `json:"enqueued_at" validate:"required"`
+	ErrorData             *string       `json:"error,omitempty"`
+	FinishedAt            *time.Time    `json:"finished_at,omitempty"`
+	GitRef                string        `json:"git_ref" validate:"required"`
+	ID                    int64         `json:"id"`
+	JobType               string        `json:"job_type" validate:"required"`
+	MemberJobIds          []int64       `json:"member_job_ids,omitempty" validate:"required"`
+	MinSeverity           *string       `json:"min_severity,omitempty"`
+	Model                 *string       `json:"model,omitempty"`
+	OutputPrefix          *string       `json:"output_prefix,omitempty"`
+	PanelMemberConfigJSON *string       `json:"panel_member_config_json,omitempty"`
+	PanelMemberIndex      *int64        `json:"panel_member_index,omitempty"`
+	PanelMemberName       *string       `json:"panel_member_name,omitempty"`
+	PanelName             *string       `json:"panel_name,omitempty"`
+	PanelRole             *string       `json:"panel_role,omitempty"`
+	PanelRunUUID          string        `json:"panel_run_uuid" validate:"required"`
+	PanelSummary          *PanelSummary `json:"panel_summary,omitempty"`
+	ParentJobID           *int64        `json:"parent_job_id,omitempty"`
+	Patch                 *string       `json:"patch,omitempty"`
+	PatchID               *string       `json:"patch_id,omitempty"`
+	Prompt                *string       `json:"prompt,omitempty"`
+	PromptPrebuilt        bool          `json:"prompt_prebuilt"`
+	Provider              *string       `json:"provider,omitempty"`
+	Reasoning             *string       `json:"reasoning,omitempty"`
+	RepoID                int64         `json:"repo_id"`
+	RepoName              *string       `json:"repo_name,omitempty"`
+	RepoPath              *string       `json:"repo_path,omitempty"`
+	RequestedModel        *string       `json:"requested_model,omitempty"`
+	RequestedProvider     *string       `json:"requested_provider,omitempty"`
+	RetryCount            int64         `json:"retry_count"`
+	ReviewType            *string       `json:"review_type,omitempty"`
+	SessionID             *string       `json:"session_id,omitempty"`
+	SkipReason            *string       `json:"skip_reason,omitempty"`
+	Source                *string       `json:"source,omitempty"`
+	SourceMachineID       *string       `json:"source_machine_id,omitempty"`
+	StartedAt             *time.Time    `json:"started_at,omitempty"`
+	Status                string        `json:"status" validate:"required"`
+	SyncedAt              *time.Time    `json:"synced_at,omitempty"`
+	TokenUsage            *string       `json:"token_usage,omitempty"`
+	UpdatedAt             *time.Time    `json:"updated_at,omitempty"`
+	UUID                  *string       `json:"uuid,omitempty"`
+	Verdict               *string       `json:"verdict,omitempty"`
+	WorkerID              *string       `json:"worker_id,omitempty"`
+	WorktreePath          *string       `json:"worktree_path,omitempty"`
+}
+
+func (p PanelEnqueueResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(p.Agent, "required"); err != nil {
+		errors = errors.Append("Agent", err)
+	}
+	if err := typesValidator.Var(p.EnqueuedAt, "required"); err != nil {
+		errors = errors.Append("EnqueuedAt", err)
+	}
+	if err := typesValidator.Var(p.GitRef, "required"); err != nil {
+		errors = errors.Append("GitRef", err)
+	}
+	if err := typesValidator.Var(p.JobType, "required"); err != nil {
+		errors = errors.Append("JobType", err)
+	}
+	if err := typesValidator.Var(p.MemberJobIds, "required"); err != nil {
+		errors = errors.Append("MemberJobIds", err)
+	}
+	if err := typesValidator.Var(p.PanelRunUUID, "required"); err != nil {
+		errors = errors.Append("PanelRunUUID", err)
+	}
+	if p.PanelSummary != nil {
+		if v, ok := any(p.PanelSummary).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("PanelSummary", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(p.Status, "required"); err != nil {
+		errors = errors.Append("Status", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type PanelSummary struct {
 	FirstStartedAt      *time.Time `json:"first_started_at,omitempty"`
 	MembersCanceled     int64      `json:"members_canceled"`

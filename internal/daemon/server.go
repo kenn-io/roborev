@@ -2189,7 +2189,10 @@ func (s *Server) enqueueSingleAgent(
 	job.RepoName = in.repo.Name
 
 	s.finishSingleEnqueue(ctx, job, agentName, in)
-	return rawJSONOutput(http.StatusCreated, job)
+	return rawJSONOutput(http.StatusCreated, EnqueueCreatedResponse{
+		ReviewJob: job,
+		UUID:      job.UUID,
+	})
 }
 
 // finishSingleEnqueue runs the no-panel post-enqueue side effects: auto-design

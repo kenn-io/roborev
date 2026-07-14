@@ -523,6 +523,205 @@
         ],
         "type": "object"
       },
+      "EnqueueCreatedResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "agent": {
+            "type": "string"
+          },
+          "agentic": {
+            "type": "boolean"
+          },
+          "backup_agent": {
+            "type": "string"
+          },
+          "backup_model": {
+            "type": "string"
+          },
+          "branch": {
+            "type": "string"
+          },
+          "claim_blocked": {
+            "type": "boolean"
+          },
+          "closed": {
+            "type": "boolean"
+          },
+          "command_line": {
+            "type": "string"
+          },
+          "commit_id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "commit_subject": {
+            "type": "string"
+          },
+          "diff_content": {
+            "type": "string"
+          },
+          "dirty_files": {
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "enqueued_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          },
+          "finished_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "git_ref": {
+            "type": "string"
+          },
+          "id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "job_type": {
+            "type": "string"
+          },
+          "min_severity": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "output_prefix": {
+            "type": "string"
+          },
+          "panel_member_config_json": {
+            "type": "string"
+          },
+          "panel_member_index": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "panel_member_name": {
+            "type": "string"
+          },
+          "panel_name": {
+            "type": "string"
+          },
+          "panel_role": {
+            "type": "string"
+          },
+          "panel_run_uuid": {
+            "type": "string"
+          },
+          "panel_summary": {
+            "$ref": "#/components/schemas/PanelSummary"
+          },
+          "parent_job_id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "patch": {
+            "type": "string"
+          },
+          "patch_id": {
+            "type": "string"
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "prompt_prebuilt": {
+            "type": "boolean"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "reasoning": {
+            "type": "string"
+          },
+          "repo_id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "repo_name": {
+            "type": "string"
+          },
+          "repo_path": {
+            "type": "string"
+          },
+          "requested_model": {
+            "type": "string"
+          },
+          "requested_provider": {
+            "type": "string"
+          },
+          "retry_count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "review_type": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "skip_reason": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "source_machine_id": {
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "synced_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "token_usage": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "uuid": {
+            "type": "string"
+          },
+          "verdict": {
+            "type": "string"
+          },
+          "worker_id": {
+            "type": "string"
+          },
+          "worktree_path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "uuid",
+          "id",
+          "repo_id",
+          "git_ref",
+          "agent",
+          "job_type",
+          "status",
+          "enqueued_at",
+          "retry_count",
+          "agentic",
+          "prompt_prebuilt"
+        ],
+        "type": "object"
+      },
       "EnqueueRequest": {
         "additionalProperties": false,
         "properties": {
@@ -728,6 +927,172 @@
         },
         "required": [
           "error"
+        ],
+        "type": "object"
+      },
+      "ExportCIMetricsDocument": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "example": "https://example.com/ExportCIMetricsDocument.json",
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "database_id": {
+            "description": "Stable identity for the local review database; changes when the database is recreated.",
+            "type": "string"
+          },
+          "generated_at": {
+            "type": "string"
+          },
+          "next_cursor": {
+            "description": "Opaque resume cursor emitted when panels is non-empty.",
+            "nullable": true,
+            "type": "string"
+          },
+          "panels": {
+            "items": {
+              "$ref": "#/components/schemas/ExportCIPanel"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "schema_version": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "tool": {
+            "type": "string"
+          },
+          "tool_version": {
+            "type": "string"
+          },
+          "truncated": {
+            "description": "True when more matching rows are available immediately.",
+            "type": "boolean"
+          },
+          "window": {
+            "$ref": "#/components/schemas/ExportReviewsWindow"
+          }
+        },
+        "required": [
+          "schema_version",
+          "tool",
+          "tool_version",
+          "generated_at",
+          "database_id",
+          "window",
+          "truncated",
+          "next_cursor",
+          "panels"
+        ],
+        "type": "object"
+      },
+      "ExportCIPanel": {
+        "additionalProperties": false,
+        "properties": {
+          "attempt_count": {
+            "format": "int64",
+            "nullable": true,
+            "type": "integer"
+          },
+          "first_attempt_at": {
+            "nullable": true,
+            "type": "string"
+          },
+          "github_repo": {
+            "type": "string"
+          },
+          "head_sha": {
+            "type": "string"
+          },
+          "jobs": {
+            "items": {
+              "$ref": "#/components/schemas/ExportCIPanelJob"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "outcome": {
+            "type": "string"
+          },
+          "panel_created_at": {
+            "type": "string"
+          },
+          "posted_at": {
+            "type": "string"
+          },
+          "pr_number": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "synthesis_agent": {
+            "nullable": true,
+            "type": "string"
+          },
+          "synthesis_model": {
+            "nullable": true,
+            "type": "string"
+          }
+        },
+        "required": [
+          "github_repo",
+          "pr_number",
+          "head_sha",
+          "panel_created_at",
+          "posted_at",
+          "first_attempt_at",
+          "attempt_count",
+          "outcome",
+          "synthesis_agent",
+          "synthesis_model",
+          "jobs"
+        ],
+        "type": "object"
+      },
+      "ExportCIPanelJob": {
+        "additionalProperties": false,
+        "properties": {
+          "agent": {
+            "type": "string"
+          },
+          "finished_at": {
+            "nullable": true,
+            "type": "string"
+          },
+          "job_uuid": {
+            "type": "string"
+          },
+          "model": {
+            "nullable": true,
+            "type": "string"
+          },
+          "provider": {
+            "nullable": true,
+            "type": "string"
+          },
+          "role": {
+            "type": "string"
+          },
+          "started_at": {
+            "nullable": true,
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "job_uuid",
+          "role",
+          "agent",
+          "model",
+          "provider",
+          "status",
+          "started_at",
+          "finished_at"
         ],
         "type": "object"
       },
@@ -1350,6 +1715,214 @@
           "canceled",
           "applied",
           "rebased"
+        ],
+        "type": "object"
+      },
+      "PanelEnqueueResponse": {
+        "additionalProperties": false,
+        "properties": {
+          "agent": {
+            "type": "string"
+          },
+          "agentic": {
+            "type": "boolean"
+          },
+          "backup_agent": {
+            "type": "string"
+          },
+          "backup_model": {
+            "type": "string"
+          },
+          "branch": {
+            "type": "string"
+          },
+          "claim_blocked": {
+            "type": "boolean"
+          },
+          "closed": {
+            "type": "boolean"
+          },
+          "command_line": {
+            "type": "string"
+          },
+          "commit_id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "commit_subject": {
+            "type": "string"
+          },
+          "diff_content": {
+            "type": "string"
+          },
+          "dirty_files": {
+            "items": {
+              "type": "string"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "enqueued_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "error": {
+            "type": "string"
+          },
+          "finished_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "git_ref": {
+            "type": "string"
+          },
+          "id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "job_type": {
+            "type": "string"
+          },
+          "member_job_ids": {
+            "items": {
+              "format": "int64",
+              "type": "integer"
+            },
+            "nullable": true,
+            "type": "array"
+          },
+          "min_severity": {
+            "type": "string"
+          },
+          "model": {
+            "type": "string"
+          },
+          "output_prefix": {
+            "type": "string"
+          },
+          "panel_member_config_json": {
+            "type": "string"
+          },
+          "panel_member_index": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "panel_member_name": {
+            "type": "string"
+          },
+          "panel_name": {
+            "type": "string"
+          },
+          "panel_role": {
+            "type": "string"
+          },
+          "panel_run_uuid": {
+            "type": "string"
+          },
+          "panel_summary": {
+            "$ref": "#/components/schemas/PanelSummary"
+          },
+          "parent_job_id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "patch": {
+            "type": "string"
+          },
+          "patch_id": {
+            "type": "string"
+          },
+          "prompt": {
+            "type": "string"
+          },
+          "prompt_prebuilt": {
+            "type": "boolean"
+          },
+          "provider": {
+            "type": "string"
+          },
+          "reasoning": {
+            "type": "string"
+          },
+          "repo_id": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "repo_name": {
+            "type": "string"
+          },
+          "repo_path": {
+            "type": "string"
+          },
+          "requested_model": {
+            "type": "string"
+          },
+          "requested_provider": {
+            "type": "string"
+          },
+          "retry_count": {
+            "format": "int64",
+            "type": "integer"
+          },
+          "review_type": {
+            "type": "string"
+          },
+          "session_id": {
+            "type": "string"
+          },
+          "skip_reason": {
+            "type": "string"
+          },
+          "source": {
+            "type": "string"
+          },
+          "source_machine_id": {
+            "type": "string"
+          },
+          "started_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          },
+          "synced_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "token_usage": {
+            "type": "string"
+          },
+          "updated_at": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "uuid": {
+            "type": "string"
+          },
+          "verdict": {
+            "type": "string"
+          },
+          "worker_id": {
+            "type": "string"
+          },
+          "worktree_path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "panel_run_uuid",
+          "member_job_ids",
+          "id",
+          "repo_id",
+          "git_ref",
+          "agent",
+          "job_type",
+          "status",
+          "enqueued_at",
+          "retry_count",
+          "agentic",
+          "prompt_prebuilt"
         ],
         "type": "object"
       },
@@ -2690,7 +3263,10 @@
                 "schema": {
                   "oneOf": [
                     {
-                      "$ref": "#/components/schemas/ReviewJob"
+                      "$ref": "#/components/schemas/EnqueueCreatedResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/PanelEnqueueResponse"
                     },
                     {
                       "$ref": "#/components/schemas/EnqueueSkippedResponse"
@@ -2706,7 +3282,10 @@
                 "schema": {
                   "oneOf": [
                     {
-                      "$ref": "#/components/schemas/ReviewJob"
+                      "$ref": "#/components/schemas/EnqueueCreatedResponse"
+                    },
+                    {
+                      "$ref": "#/components/schemas/PanelEnqueueResponse"
                     },
                     {
                       "$ref": "#/components/schemas/EnqueueSkippedResponse"
@@ -2757,6 +3336,112 @@
         "summary": "Enqueue a daemon job",
         "tags": [
           "jobs"
+        ]
+      }
+    },
+    "/api/export/ci-metrics": {
+      "get": {
+        "operationId": "export-ci-metrics",
+        "parameters": [
+          {
+            "description": "Output format; only json is supported",
+            "explode": false,
+            "in": "query",
+            "name": "format",
+            "schema": {
+              "default": "json",
+              "description": "Output format; only json is supported",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Inclusive posted_at lower bound (RFC3339 or YYYY-MM-DD)",
+            "explode": false,
+            "in": "query",
+            "name": "since",
+            "schema": {
+              "description": "Inclusive posted_at lower bound (RFC3339 or YYYY-MM-DD)",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Exclusive posted_at upper bound (RFC3339 or YYYY-MM-DD; date-only means through that UTC day)",
+            "explode": false,
+            "in": "query",
+            "name": "until",
+            "schema": {
+              "description": "Exclusive posted_at upper bound (RFC3339 or YYYY-MM-DD; date-only means through that UTC day)",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Maximum panels in this page",
+            "explode": false,
+            "in": "query",
+            "name": "limit",
+            "schema": {
+              "default": 500,
+              "description": "Maximum panels in this page",
+              "format": "int64",
+              "type": "integer"
+            }
+          },
+          {
+            "description": "Opaque next_cursor from a previous page. Resumes strictly after its (posted_at, panel_id) position; mutually exclusive with since.",
+            "explode": false,
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "description": "Opaque next_cursor from a previous page. Resumes strictly after its (posted_at, panel_id) position; mutually exclusive with since.",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Export the frozen pre-panel ci_pr_reviews era instead of panel runs. Cursors are namespaced to this mode and cannot be reused across modes.",
+            "explode": false,
+            "in": "query",
+            "name": "legacy",
+            "schema": {
+              "description": "Export the frozen pre-panel ci_pr_reviews era instead of panel runs. Cursors are namespaced to this mode and cannot be reused across modes.",
+              "type": "boolean"
+            }
+          }
+        ],
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ExportCIMetricsDocument"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "409": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Cursor database_id does not match this local database"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Export finalized CI panel metrics",
+        "tags": [
+          "reviews"
         ]
       }
     },

@@ -843,7 +843,7 @@ func TestHumaOpenAPISpec(t *testing.T) {
 	require.True(t, ok, "enqueue 200 response should have a schema")
 	oneOf, ok := schema["oneOf"].([]any)
 	require.True(t, ok, "enqueue 200 response should use oneOf")
-	assert.Len(t, oneOf, 2)
+	assert.Len(t, oneOf, 3)
 
 	components, ok := spec["components"].(map[string]any)
 	require.True(t, ok, "spec must have components")
@@ -875,10 +875,17 @@ func TestHumaOpenAPISpec(t *testing.T) {
 	require.True(t, ok, "enqueue 201 response should have a schema")
 	createdOneOf, ok := createdSchema["oneOf"].([]any)
 	require.True(t, ok, "enqueue 201 response should use oneOf")
-	require.NotEmpty(t, createdOneOf)
-	createdRef, ok := createdOneOf[0].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "#/components/schemas/EnqueueCreatedResponse", createdRef["$ref"])
+	require.Len(t, createdOneOf, 3,
+		"enqueue 201 must document created, panel, and skipped responses")
+	createdRefs := make([]any, 0, len(createdOneOf))
+	for _, member := range createdOneOf {
+		ref, ok := member.(map[string]any)
+		require.True(t, ok)
+		createdRefs = append(createdRefs, ref["$ref"])
+	}
+	assert.Equal(t, "#/components/schemas/EnqueueCreatedResponse", createdRefs[0])
+	assert.Contains(t, createdRefs, "#/components/schemas/PanelEnqueueResponse")
+	assert.Contains(t, createdRefs, "#/components/schemas/EnqueueSkippedResponse")
 }
 
 func TestHumaListRepos(t *testing.T) {

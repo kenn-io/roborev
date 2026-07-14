@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"encoding/json"
 	"net/http"
 	"net/http/httptest"
 	"strings"
@@ -197,8 +198,9 @@ func TestEnqueuePromptJobUnchanged(t *testing.T) {
 	assert.False(claimed.PromptPrebuilt, "humaEnqueue never marks prompts prebuilt")
 }
 
-// TestEnqueueResponseUnchanged pins the HTTP response shape: a bare
-// storage.ReviewJob (status 201), decodable directly into the model.
+// TestEnqueueResponseUnchanged pins the HTTP response shape: a bare JSON
+// object (status 201) wire-compatible with storage.ReviewJob, with the
+// launch UUID always present and no undeclared extra fields.
 func TestEnqueueResponseUnchanged(t *testing.T) {
 	server, _, _ := newTestServer(t)
 
@@ -216,6 +218,12 @@ func TestEnqueueResponseUnchanged(t *testing.T) {
 	require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
 	assert.True(t, strings.HasPrefix(strings.TrimSpace(w.Body.String()), "{"),
 		"response must be a bare JSON object, not a wrapper")
+
+	var raw map[string]any
+	require.NoError(t, json.Unmarshal(w.Body.Bytes(), &raw))
+	assert.NotContains(t, raw, "$schema",
+		"created enqueue response must not carry huma's injected $schema link; "+
+			"the EnqueueCreatedResponse schema declares additionalProperties:false")
 
 	var job storage.ReviewJob
 	testutil.DecodeJSON(t, w, &job)

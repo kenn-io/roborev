@@ -3,41 +3,291 @@
 package generated
 
 import (
+	"encoding/json"
+
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 )
 
 type EnqueueJob_Response_OneOf struct {
-	runtime.Either[EnqueueCreatedResponse, EnqueueSkippedResponse]
+	union json.RawMessage
 }
 
 func (e *EnqueueJob_Response_OneOf) Validate() error {
-	if e.IsA() {
-		if v, ok := any(e.A).(runtime.Validator); ok {
-			return v.Validate()
-		}
+	// NOTE: Validation is not supported for unions with more than 2 elements.
+	// Validating would require unmarshaling against each possible type, which is inefficient.
+	// Use AsValidated<Type>() methods to validate after retrieving the specific type.
+	return nil
+}
+
+// Raw returns the union data inside the EnqueueJob_Response_OneOf as bytes
+func (e *EnqueueJob_Response_OneOf) Raw() json.RawMessage {
+	return e.union
+}
+
+// AsEnqueueCreatedResponse returns the union data inside the EnqueueJob_Response_OneOf as a EnqueueCreatedResponse
+func (e *EnqueueJob_Response_OneOf) AsEnqueueCreatedResponse() (EnqueueCreatedResponse, error) {
+	return runtime.UnmarshalAs[EnqueueCreatedResponse](e.union)
+}
+
+// AsValidatedEnqueueCreatedResponse returns the union data inside the EnqueueJob_Response_OneOf as a validated EnqueueCreatedResponse
+func (e *EnqueueJob_Response_OneOf) AsValidatedEnqueueCreatedResponse() (EnqueueCreatedResponse, error) {
+	val, err := e.AsEnqueueCreatedResponse()
+	if err != nil {
+		var zero EnqueueCreatedResponse
+		return zero, err
 	}
-	if e.IsB() {
-		if v, ok := any(e.B).(runtime.Validator); ok {
-			return v.Validate()
-		}
+	if err := e.validateEnqueueCreatedResponse(val); err != nil {
+		var zero EnqueueCreatedResponse
+		return zero, err
+	}
+	return val, nil
+}
+
+// FromEnqueueCreatedResponse overwrites any union data inside the EnqueueJob_Response_OneOf as the provided EnqueueCreatedResponse
+func (e *EnqueueJob_Response_OneOf) FromEnqueueCreatedResponse(val EnqueueCreatedResponse) error {
+	// Validate before storing
+	if err := e.validateEnqueueCreatedResponse(val); err != nil {
+		return err
+	}
+	bts, err := json.Marshal(val)
+	e.union = bts
+	return err
+}
+
+// AsPanelEnqueueResponse returns the union data inside the EnqueueJob_Response_OneOf as a PanelEnqueueResponse
+func (e *EnqueueJob_Response_OneOf) AsPanelEnqueueResponse() (PanelEnqueueResponse, error) {
+	return runtime.UnmarshalAs[PanelEnqueueResponse](e.union)
+}
+
+// AsValidatedPanelEnqueueResponse returns the union data inside the EnqueueJob_Response_OneOf as a validated PanelEnqueueResponse
+func (e *EnqueueJob_Response_OneOf) AsValidatedPanelEnqueueResponse() (PanelEnqueueResponse, error) {
+	val, err := e.AsPanelEnqueueResponse()
+	if err != nil {
+		var zero PanelEnqueueResponse
+		return zero, err
+	}
+	if err := e.validatePanelEnqueueResponse(val); err != nil {
+		var zero PanelEnqueueResponse
+		return zero, err
+	}
+	return val, nil
+}
+
+// FromPanelEnqueueResponse overwrites any union data inside the EnqueueJob_Response_OneOf as the provided PanelEnqueueResponse
+func (e *EnqueueJob_Response_OneOf) FromPanelEnqueueResponse(val PanelEnqueueResponse) error {
+	// Validate before storing
+	if err := e.validatePanelEnqueueResponse(val); err != nil {
+		return err
+	}
+	bts, err := json.Marshal(val)
+	e.union = bts
+	return err
+}
+
+// AsEnqueueSkippedResponse returns the union data inside the EnqueueJob_Response_OneOf as a EnqueueSkippedResponse
+func (e *EnqueueJob_Response_OneOf) AsEnqueueSkippedResponse() (EnqueueSkippedResponse, error) {
+	return runtime.UnmarshalAs[EnqueueSkippedResponse](e.union)
+}
+
+// AsValidatedEnqueueSkippedResponse returns the union data inside the EnqueueJob_Response_OneOf as a validated EnqueueSkippedResponse
+func (e *EnqueueJob_Response_OneOf) AsValidatedEnqueueSkippedResponse() (EnqueueSkippedResponse, error) {
+	val, err := e.AsEnqueueSkippedResponse()
+	if err != nil {
+		var zero EnqueueSkippedResponse
+		return zero, err
+	}
+	if err := e.validateEnqueueSkippedResponse(val); err != nil {
+		var zero EnqueueSkippedResponse
+		return zero, err
+	}
+	return val, nil
+}
+
+// FromEnqueueSkippedResponse overwrites any union data inside the EnqueueJob_Response_OneOf as the provided EnqueueSkippedResponse
+func (e *EnqueueJob_Response_OneOf) FromEnqueueSkippedResponse(val EnqueueSkippedResponse) error {
+	// Validate before storing
+	if err := e.validateEnqueueSkippedResponse(val); err != nil {
+		return err
+	}
+	bts, err := json.Marshal(val)
+	e.union = bts
+	return err
+}
+
+// validateEnqueueCreatedResponse validates a EnqueueCreatedResponse value
+func (e *EnqueueJob_Response_OneOf) validateEnqueueCreatedResponse(val EnqueueCreatedResponse) error {
+	if v, ok := any(val).(runtime.Validator); ok {
+		return v.Validate()
 	}
 	return nil
+}
+
+// validatePanelEnqueueResponse validates a PanelEnqueueResponse value
+func (e *EnqueueJob_Response_OneOf) validatePanelEnqueueResponse(val PanelEnqueueResponse) error {
+	if v, ok := any(val).(runtime.Validator); ok {
+		return v.Validate()
+	}
+	return nil
+}
+
+// validateEnqueueSkippedResponse validates a EnqueueSkippedResponse value
+func (e *EnqueueJob_Response_OneOf) validateEnqueueSkippedResponse(val EnqueueSkippedResponse) error {
+	if v, ok := any(val).(runtime.Validator); ok {
+		return v.Validate()
+	}
+	return nil
+}
+
+func (e EnqueueJob_Response_OneOf) MarshalJSON() ([]byte, error) {
+	bts, err := e.union.MarshalJSON()
+
+	return bts, err
+}
+
+func (e *EnqueueJob_Response_OneOf) UnmarshalJSON(bts []byte) error {
+	err := e.union.UnmarshalJSON(bts)
+
+	return err
 }
 
 type EnqueueJob_Response_201_OneOf struct {
-	runtime.Either[EnqueueCreatedResponse, EnqueueSkippedResponse]
+	union json.RawMessage
 }
 
 func (e *EnqueueJob_Response_201_OneOf) Validate() error {
-	if e.IsA() {
-		if v, ok := any(e.A).(runtime.Validator); ok {
-			return v.Validate()
-		}
+	// NOTE: Validation is not supported for unions with more than 2 elements.
+	// Validating would require unmarshaling against each possible type, which is inefficient.
+	// Use AsValidated<Type>() methods to validate after retrieving the specific type.
+	return nil
+}
+
+// Raw returns the union data inside the EnqueueJob_Response_201_OneOf as bytes
+func (e *EnqueueJob_Response_201_OneOf) Raw() json.RawMessage {
+	return e.union
+}
+
+// AsEnqueueCreatedResponse returns the union data inside the EnqueueJob_Response_201_OneOf as a EnqueueCreatedResponse
+func (e *EnqueueJob_Response_201_OneOf) AsEnqueueCreatedResponse() (EnqueueCreatedResponse, error) {
+	return runtime.UnmarshalAs[EnqueueCreatedResponse](e.union)
+}
+
+// AsValidatedEnqueueCreatedResponse returns the union data inside the EnqueueJob_Response_201_OneOf as a validated EnqueueCreatedResponse
+func (e *EnqueueJob_Response_201_OneOf) AsValidatedEnqueueCreatedResponse() (EnqueueCreatedResponse, error) {
+	val, err := e.AsEnqueueCreatedResponse()
+	if err != nil {
+		var zero EnqueueCreatedResponse
+		return zero, err
 	}
-	if e.IsB() {
-		if v, ok := any(e.B).(runtime.Validator); ok {
-			return v.Validate()
-		}
+	if err := e.validateEnqueueCreatedResponse(val); err != nil {
+		var zero EnqueueCreatedResponse
+		return zero, err
+	}
+	return val, nil
+}
+
+// FromEnqueueCreatedResponse overwrites any union data inside the EnqueueJob_Response_201_OneOf as the provided EnqueueCreatedResponse
+func (e *EnqueueJob_Response_201_OneOf) FromEnqueueCreatedResponse(val EnqueueCreatedResponse) error {
+	// Validate before storing
+	if err := e.validateEnqueueCreatedResponse(val); err != nil {
+		return err
+	}
+	bts, err := json.Marshal(val)
+	e.union = bts
+	return err
+}
+
+// AsPanelEnqueueResponse returns the union data inside the EnqueueJob_Response_201_OneOf as a PanelEnqueueResponse
+func (e *EnqueueJob_Response_201_OneOf) AsPanelEnqueueResponse() (PanelEnqueueResponse, error) {
+	return runtime.UnmarshalAs[PanelEnqueueResponse](e.union)
+}
+
+// AsValidatedPanelEnqueueResponse returns the union data inside the EnqueueJob_Response_201_OneOf as a validated PanelEnqueueResponse
+func (e *EnqueueJob_Response_201_OneOf) AsValidatedPanelEnqueueResponse() (PanelEnqueueResponse, error) {
+	val, err := e.AsPanelEnqueueResponse()
+	if err != nil {
+		var zero PanelEnqueueResponse
+		return zero, err
+	}
+	if err := e.validatePanelEnqueueResponse(val); err != nil {
+		var zero PanelEnqueueResponse
+		return zero, err
+	}
+	return val, nil
+}
+
+// FromPanelEnqueueResponse overwrites any union data inside the EnqueueJob_Response_201_OneOf as the provided PanelEnqueueResponse
+func (e *EnqueueJob_Response_201_OneOf) FromPanelEnqueueResponse(val PanelEnqueueResponse) error {
+	// Validate before storing
+	if err := e.validatePanelEnqueueResponse(val); err != nil {
+		return err
+	}
+	bts, err := json.Marshal(val)
+	e.union = bts
+	return err
+}
+
+// AsEnqueueSkippedResponse returns the union data inside the EnqueueJob_Response_201_OneOf as a EnqueueSkippedResponse
+func (e *EnqueueJob_Response_201_OneOf) AsEnqueueSkippedResponse() (EnqueueSkippedResponse, error) {
+	return runtime.UnmarshalAs[EnqueueSkippedResponse](e.union)
+}
+
+// AsValidatedEnqueueSkippedResponse returns the union data inside the EnqueueJob_Response_201_OneOf as a validated EnqueueSkippedResponse
+func (e *EnqueueJob_Response_201_OneOf) AsValidatedEnqueueSkippedResponse() (EnqueueSkippedResponse, error) {
+	val, err := e.AsEnqueueSkippedResponse()
+	if err != nil {
+		var zero EnqueueSkippedResponse
+		return zero, err
+	}
+	if err := e.validateEnqueueSkippedResponse(val); err != nil {
+		var zero EnqueueSkippedResponse
+		return zero, err
+	}
+	return val, nil
+}
+
+// FromEnqueueSkippedResponse overwrites any union data inside the EnqueueJob_Response_201_OneOf as the provided EnqueueSkippedResponse
+func (e *EnqueueJob_Response_201_OneOf) FromEnqueueSkippedResponse(val EnqueueSkippedResponse) error {
+	// Validate before storing
+	if err := e.validateEnqueueSkippedResponse(val); err != nil {
+		return err
+	}
+	bts, err := json.Marshal(val)
+	e.union = bts
+	return err
+}
+
+// validateEnqueueCreatedResponse validates a EnqueueCreatedResponse value
+func (e *EnqueueJob_Response_201_OneOf) validateEnqueueCreatedResponse(val EnqueueCreatedResponse) error {
+	if v, ok := any(val).(runtime.Validator); ok {
+		return v.Validate()
 	}
 	return nil
+}
+
+// validatePanelEnqueueResponse validates a PanelEnqueueResponse value
+func (e *EnqueueJob_Response_201_OneOf) validatePanelEnqueueResponse(val PanelEnqueueResponse) error {
+	if v, ok := any(val).(runtime.Validator); ok {
+		return v.Validate()
+	}
+	return nil
+}
+
+// validateEnqueueSkippedResponse validates a EnqueueSkippedResponse value
+func (e *EnqueueJob_Response_201_OneOf) validateEnqueueSkippedResponse(val EnqueueSkippedResponse) error {
+	if v, ok := any(val).(runtime.Validator); ok {
+		return v.Validate()
+	}
+	return nil
+}
+
+func (e EnqueueJob_Response_201_OneOf) MarshalJSON() ([]byte, error) {
+	bts, err := e.union.MarshalJSON()
+
+	return bts, err
+}
+
+func (e *EnqueueJob_Response_201_OneOf) UnmarshalJSON(bts []byte) error {
+	err := e.union.UnmarshalJSON(bts)
+
+	return err
 }

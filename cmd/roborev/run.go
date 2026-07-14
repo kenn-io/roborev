@@ -51,8 +51,10 @@ By default, the job is enqueued and the command returns immediately.
 Use --wait to wait for completion and display the result.
 
 Use --json to emit one machine-readable launch receipt containing job_id,
-job_uuid, git_ref, and status. It cannot be combined with --quiet, --wait,
-or the global --verbose flag.
+job_uuid, git_ref, and status. If the daemon skips the enqueue (for example
+on an excluded branch), the single document is {"skipped":true,"reason":...}
+instead. --json cannot be combined with --quiet, --wait, or the global
+--verbose flag.
 
 By default, context about the repository (name, path, and any project
 guidelines from .roborev.toml) is included. Use --no-context to disable.
@@ -72,7 +74,17 @@ Examples:
   cat instructions.txt | roborev run --wait
 `,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runPrompt(cmd, args, agentName, model, reasoning, wait, quiet, !noContext, agentic, label, jsonOutput)
+			return runPrompt(cmd, args, runOptions{
+				agentName:      agentName,
+				model:          model,
+				reasoning:      reasoning,
+				label:          label,
+				wait:           wait,
+				quiet:          quiet,
+				includeContext: !noContext,
+				agentic:        agentic,
+				jsonOutput:     jsonOutput,
+			})
 		},
 	}
 
@@ -100,6 +112,19 @@ func promptCmd() *cobra.Command {
 	return cmd
 }
 
+// runOptions holds the flag values for a `roborev run` invocation.
+type runOptions struct {
+	agentName      string
+	model          string
+	reasoning      string
+	label          string
+	wait           bool
+	quiet          bool
+	includeContext bool
+	agentic        bool
+	jsonOutput     bool
+}
+
 type runLaunchReceipt struct {
 	JobID   int64             `json:"job_id"`
 	JobUUID string            `json:"job_uuid"`
@@ -107,58 +132,87 @@ type runLaunchReceipt struct {
 	Status  storage.JobStatus `json:"status"`
 }
 
+// newRunLaunchReceipt builds the --json receipt. The daemon assigns the
+// uuid atomically at insert, so a missing uuid means the daemon predates
+// launch receipts (reachable only with ROBOREV_SKIP_VERSION_CHECK=1).
 func newRunLaunchReceipt(job storage.ReviewJob) (runLaunchReceipt, error) {
-	switch {
-	case job.ID <= 0:
-		return runLaunchReceipt{}, fmt.Errorf("enqueue response is missing job id")
-	case strings.TrimSpace(job.UUID) == "":
-		return runLaunchReceipt{}, fmt.Errorf("enqueue response is missing job uuid")
-	case strings.TrimSpace(job.GitRef) == "":
-		return runLaunchReceipt{}, fmt.Errorf("enqueue response is missing git ref")
-	case strings.TrimSpace(string(job.Status)) == "":
-		return runLaunchReceipt{}, fmt.Errorf("enqueue response is missing status")
+	if job.UUID == "" {
+		return runLaunchReceipt{}, fmt.Errorf(
+			"task %d was enqueued, but the daemon response is missing its uuid; "+
+				"the daemon is likely older than this CLI - restart or update it",
+			job.ID)
 	}
 	return runLaunchReceipt{
 		JobID: job.ID, JobUUID: job.UUID, GitRef: job.GitRef, Status: job.Status,
 	}, nil
 }
 
-func runPrompt(cmd *cobra.Command, args []string, agentName, modelStr, reasoningStr string, wait, quiet, includeContext, agentic bool, label string, jsonOutput bool) error {
-	if jsonOutput {
-		cmd.SilenceUsage = true
+// validateRunFlags rejects modes that would corrupt --json's
+// single-document stdout contract.
+func validateRunFlags(opts runOptions) error {
+	if !opts.jsonOutput {
+		return nil
 	}
-	if jsonOutput && quiet {
-		return fmt.Errorf("--json cannot be combined with --quiet")
+	conflicts := []struct {
+		set  bool
+		name string
+	}{
+		{opts.quiet, "--quiet"},
+		{opts.wait, "--wait"},
+		{verbose, "--verbose"},
 	}
-	if jsonOutput && wait {
-		return fmt.Errorf("--json cannot be combined with --wait")
+	for _, conflict := range conflicts {
+		if conflict.set {
+			return fmt.Errorf("--json cannot be combined with %s", conflict.name)
+		}
 	}
-	if jsonOutput && verbose {
-		return fmt.Errorf("--json cannot be combined with --verbose")
-	}
+	return nil
+}
 
-	// Get prompt from args or stdin
-	var promptText string
+// readRunPrompt returns the task text from args or piped stdin.
+func readRunPrompt(args []string) (string, error) {
 	if len(args) > 0 {
-		promptText = strings.Join(args, " ")
-	} else {
-		// Read from stdin
-		stat, err := os.Stdin.Stat()
-		if err != nil {
-			return fmt.Errorf("unable to read stdin: %w", err)
-		}
-		if (stat.Mode() & os.ModeCharDevice) == 0 {
-			// Stdin has data (piped) - use io.ReadAll to handle large prompts
-			data, err := io.ReadAll(os.Stdin)
-			if err != nil {
-				return fmt.Errorf("reading stdin: %w", err)
-			}
-			promptText = string(data)
-		} else {
-			return fmt.Errorf("no prompt provided - pass as argument or pipe via stdin")
-		}
+		return strings.Join(args, " "), nil
+	}
+	stat, err := os.Stdin.Stat()
+	if err != nil {
+		return "", fmt.Errorf("unable to read stdin: %w", err)
+	}
+	if (stat.Mode() & os.ModeCharDevice) != 0 {
+		return "", fmt.Errorf("no prompt provided - pass as argument or pipe via stdin")
+	}
+	// Stdin has data (piped) - use io.ReadAll to handle large prompts
+	data, err := io.ReadAll(os.Stdin)
+	if err != nil {
+		return "", fmt.Errorf("reading stdin: %w", err)
+	}
+	return string(data), nil
+}
+
+// reportRunSkipped emits a skipped-enqueue result: one JSON document in
+// --json mode, the daemon's reason otherwise. The exit code stays zero,
+// mirroring how `roborev insights` reports skipped enqueues.
+func reportRunSkipped(
+	cmd *cobra.Command, opts runOptions, skipped daemon.EnqueueSkippedResponse,
+) error {
+	if opts.jsonOutput {
+		return json.NewEncoder(cmd.OutOrStdout()).Encode(skipped)
+	}
+	if !opts.quiet {
+		cmd.Println(skipped.Reason)
+	}
+	return nil
+}
+
+func runPrompt(cmd *cobra.Command, args []string, opts runOptions) error {
+	if err := validateRunFlags(opts); err != nil {
+		return usageErr(cmd, err)
 	}
 
+	promptText, err := readRunPrompt(args)
+	if err != nil {
+		return err
+	}
 	if strings.TrimSpace(promptText) == "" {
 		return fmt.Errorf("empty prompt")
 	}
@@ -168,8 +222,6 @@ func runPrompt(cmd *cobra.Command, args []string, agentName, modelStr, reasoning
 	if err != nil {
 		return fmt.Errorf("get working directory: %w", err)
 	}
-
-	// Try to use git repo root if available
 	repoRoot := workDir
 	if root, err := gitrepo.Root(cmd.Context(), workDir); err == nil {
 		repoRoot = root
@@ -177,7 +229,7 @@ func runPrompt(cmd *cobra.Command, args []string, agentName, modelStr, reasoning
 
 	// Build the full prompt with context if enabled
 	fullPrompt := promptText
-	if includeContext {
+	if opts.includeContext {
 		fullPrompt = buildPromptWithContext(repoRoot, promptText)
 	}
 
@@ -186,23 +238,23 @@ func runPrompt(cmd *cobra.Command, args []string, agentName, modelStr, reasoning
 		return err
 	}
 
-	// Build the request
 	gitRef := "run"
-	if label != "" {
-		gitRef = label
+	if opts.label != "" {
+		gitRef = opts.label
 	}
 	reqBody, _ := json.Marshal(daemon.EnqueueRequest{
 		RepoPath:     repoRoot,
 		GitRef:       gitRef,
-		Agent:        agentName,
-		Model:        modelStr,
-		Reasoning:    reasoningStr,
+		Agent:        opts.agentName,
+		Model:        opts.model,
+		Reasoning:    opts.reasoning,
 		CustomPrompt: fullPrompt,
-		Agentic:      agentic,
+		Agentic:      opts.agentic,
 	})
 
 	ep := getDaemonEndpoint()
-	resp, err := ep.HTTPClient(10*time.Second).Post(ep.BaseURL()+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
+	resp, err := ep.HTTPClient(10*time.Second).
+		Post(ep.BaseURL()+"/api/enqueue", "application/json", bytes.NewReader(reqBody))
 	if err != nil {
 		return fmt.Errorf("failed to connect to daemon: %w", err)
 	}
@@ -213,6 +265,12 @@ func runPrompt(cmd *cobra.Command, args []string, agentName, modelStr, reasoning
 		return fmt.Errorf("failed to read response: %w", err)
 	}
 
+	if resp.StatusCode == http.StatusOK {
+		var skipped daemon.EnqueueSkippedResponse
+		if err := json.Unmarshal(body, &skipped); err == nil && skipped.Skipped {
+			return reportRunSkipped(cmd, opts, skipped)
+		}
+	}
 	if resp.StatusCode != http.StatusCreated {
 		return fmt.Errorf("enqueue failed: %s", body)
 	}
@@ -222,7 +280,7 @@ func runPrompt(cmd *cobra.Command, args []string, agentName, modelStr, reasoning
 		return fmt.Errorf("failed to parse response: %w", err)
 	}
 
-	if jsonOutput {
+	if opts.jsonOutput {
 		receipt, err := newRunLaunchReceipt(job)
 		if err != nil {
 			return err
@@ -230,13 +288,13 @@ func runPrompt(cmd *cobra.Command, args []string, agentName, modelStr, reasoning
 		return json.NewEncoder(cmd.OutOrStdout()).Encode(receipt)
 	}
 
-	if !quiet {
+	if !opts.quiet {
 		cmd.Printf("Enqueued task %d (agent: %s)\n", job.ID, job.Agent)
 	}
 
 	// If --wait, poll until job completes and show result
-	if wait {
-		return waitForPromptJob(cmd, ep, job.ID, quiet, promptPollInterval)
+	if opts.wait {
+		return waitForPromptJob(cmd, ep, job.ID, opts.quiet, promptPollInterval)
 	}
 
 	return nil

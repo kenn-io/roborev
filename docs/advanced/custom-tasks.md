@@ -23,13 +23,10 @@ to stdout:
 ```
 
 The receipt comes from the atomic enqueue response; it does not parse human
-console output. `--json` cannot be combined with `--quiet`, `--wait`, or the
-global `--verbose` flag.
-
-The daemon documents successful enqueue responses with a dedicated
-`EnqueueCreatedResponse` schema whose `id`, `uuid`, `git_ref`, and `status` are
-required. The general `ReviewJob` schema keeps `uuid` optional for compatibility
-with older stored and synchronized job records.
+console output. If the daemon skips the enqueue (for example on an excluded
+branch), machine mode instead writes a single `{"skipped":true,"reason":"..."}`
+document and exits zero. `--json` cannot be combined with `--quiet`, `--wait`,
+or the global `--verbose` flag.
 
 ## Use Cases
 
