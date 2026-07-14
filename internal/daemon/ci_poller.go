@@ -371,12 +371,20 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 	}
 
 	// Throttle: skip if this PR was reviewed recently (any SHA).
-	throttled, err := p.throttlePR(ghRepo, pr, cfg)
+	throttled, quietOnly, err := p.throttlePR(ghRepo, pr, cfg)
 	if err != nil {
 		return err
 	}
 	if throttled {
-		p.supersedePriorPanels(ghRepo, pr.Number, pr.HeadRefOid)
+		// A quiet-hours-only deferral keeps the in-flight panel running:
+		// quiet hours exists to space reviews out during frequent overnight
+		// pushes, and superseding on every push could cancel each panel
+		// before it completes, producing no reviews at all. The panel posts
+		// a review of its (hour-old) HEAD; the next enqueue supersedes it
+		// if it is somehow still active.
+		if !quietOnly {
+			p.supersedePriorPanels(ghRepo, pr.Number, pr.HeadRefOid)
+		}
 		return nil
 	}
 
@@ -562,26 +570,32 @@ func resolveQuietHours(ci *config.CIConfig) *config.QuietHoursWindow {
 // throttlePR reports whether the PR was reviewed recently enough to defer this
 // push. Bypass users skip the base throttle interval, but the quiet-hours
 // interval applies to everyone while the window is active. When throttled it
-// sets a "pending" deferred commit status and returns true. The throttle is
-// purely time-based on the most recent panel run for the PR (any HEAD SHA).
-func (p *CIPoller) throttlePR(ghRepo string, pr ghPR, cfg *config.Config) (bool, error) {
-	throttle := cfg.CI.ResolvedThrottleInterval()
+// sets a "pending" deferred commit status. quietOnly reports that quiet hours
+// alone drove the deferral (the base rules would have allowed the review);
+// the caller uses it to keep the in-flight panel instead of superseding it.
+// The throttle is purely time-based on the most recent panel run for the PR
+// (any HEAD SHA).
+func (p *CIPoller) throttlePR(ghRepo string, pr ghPR, cfg *config.Config) (throttled, quietOnly bool, err error) {
+	base := cfg.CI.ResolvedThrottleInterval()
 	if cfg.CI.IsThrottleBypassed(pr.Author.Login) {
-		throttle = 0
+		base = 0
 	}
+	throttle := base
 	if q := p.quietHours; q != nil && q.Active(p.nowFn()) && q.Interval > throttle {
 		throttle = q.Interval
 	}
 	if throttle <= 0 {
-		return false, nil
+		return false, false, nil
 	}
 	lastReview, err := p.db.LatestPanelTimeForPR(ghRepo, pr.Number)
 	if err != nil {
-		return false, fmt.Errorf("check PR throttle: %w", err)
+		return false, false, fmt.Errorf("check PR throttle: %w", err)
 	}
-	if lastReview.IsZero() || p.nowFn().Sub(lastReview) >= throttle {
-		return false, nil
+	elapsed := p.nowFn().Sub(lastReview)
+	if lastReview.IsZero() || elapsed >= throttle {
+		return false, false, nil
 	}
+	quietOnly = base <= 0 || elapsed >= base
 	// With the quiet-hours interval this can overstate the wait for bypass
 	// users, who become eligible at the first poll after the window ends.
 	// The status is advisory; capping at the window end isn't worth the
@@ -591,7 +605,7 @@ func (p *CIPoller) throttlePR(ghRepo string, pr ghPR, cfg *config.Config) (bool,
 	if err := p.callSetCommitStatus(ghRepo, pr.HeadRefOid, "pending", desc); err != nil {
 		log.Printf("CI poller: failed to set throttle status: %v", err)
 	}
-	return true, nil
+	return true, quietOnly, nil
 }
 
 // resolveCIMembers resolves the panel members and synthesis spec for a PR. When

@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/storage"
 )
 
 // quietWindow resolves a quiet-hours window that either contains or
@@ -82,6 +83,14 @@ func TestCIPollerProcessPR_QuietHoursThrottlesBypassUser(t *testing.T) {
 	require.NoError(t, err, "first processPR")
 	assert.True(h.hasPanel(t, "acme/api", 90, "first-sha"), "first review is never blocked")
 
+	firstPanel, err := h.DB.GetCIPanelByPRSHA("acme/api", 90, "first-sha")
+	require.NoError(t, err)
+	firstSynth, err := h.DB.GetSynthesisJob(firstPanel.PanelRunUUID)
+	require.NoError(t, err)
+	firstMembers, err := h.DB.GetPanelMembers(firstPanel.PanelRunUUID)
+	require.NoError(t, err)
+	require.Len(t, firstMembers, 1)
+
 	// Second push within the quiet interval — throttled despite bypass.
 	captured := h.CaptureCommitStatuses()
 	err = h.Poller.processPR(context.Background(), "acme/api", pr("second-sha"), h.Cfg)
@@ -91,6 +100,47 @@ func TestCIPollerProcessPR_QuietHoursThrottlesBypassUser(t *testing.T) {
 	require.Len(t, *captured, 1, "expected one deferred status")
 	assert.Equal("pending", (*captured)[0].State)
 	assert.Contains((*captured)[0].Desc, "Review deferred")
+
+	// A quiet-hours-only deferral must not supersede the in-flight panel:
+	// with frequent overnight pushes, canceling on every push could kill
+	// each panel before it completes and produce no reviews at all.
+	active, err := h.DB.GetActivePanelsForPR("acme/api", 90)
+	require.NoError(t, err)
+	assert.Len(active, 1, "in-flight panel must survive a quiet-hours deferral")
+	assert.NotEqual(storage.JobStatusCanceled, h.jobStatus(t, firstSynth.ID),
+		"synthesis must not be canceled")
+	assert.NotEqual(storage.JobStatusCanceled, h.jobStatus(t, firstMembers[0].ID),
+		"member must not be canceled")
+}
+
+func TestCIPollerProcessPR_QuietHoursElapsedBaseKeepsPanel(t *testing.T) {
+	assert := assert.New(t)
+	// A non-bypass contributor whose base throttle (1h) has elapsed but whose
+	// quiet-hours interval (2h) has not: the deferral is quiet-hours-only, so
+	// the in-flight panel must keep running.
+	now := time.Now().Add(75 * time.Minute)
+	h := newQuietHoursHarness(t, "1h", nil, now)
+	h.Poller.quietHours = quietWindow(t, now, "2h", true)
+
+	pr := func(sha string) ghPR {
+		return ghPR{
+			Number: 93, HeadRefOid: sha, BaseRefName: "main",
+			Author: ghPRAuthor{Login: "contributor"},
+		}
+	}
+
+	err := h.Poller.processPR(context.Background(), "acme/api", pr("first-sha"), h.Cfg)
+	require.NoError(t, err, "first processPR")
+	require.True(t, h.hasPanel(t, "acme/api", 93, "first-sha"))
+
+	err = h.Poller.processPR(context.Background(), "acme/api", pr("second-sha"), h.Cfg)
+	require.NoError(t, err, "second processPR")
+	assert.False(h.hasPanel(t, "acme/api", 93, "second-sha"),
+		"quiet-hours interval must still throttle after the base interval elapses")
+
+	active, err := h.DB.GetActivePanelsForPR("acme/api", 93)
+	require.NoError(t, err)
+	assert.Len(active, 1, "in-flight panel must survive a quiet-hours-only deferral")
 }
 
 func TestCIPollerProcessPR_QuietHoursInactiveKeepsBypass(t *testing.T) {
@@ -140,4 +190,10 @@ func TestCIPollerProcessPR_QuietHoursBaseThrottleWins(t *testing.T) {
 	require.NoError(t, err, "second processPR")
 	assert.False(h.hasPanel(t, "acme/api", 92, "second-sha"),
 		"base throttle interval must still apply when longer than the quiet interval")
+
+	// The base throttle drove this deferral, so ordinary supersede semantics
+	// apply: the stale in-flight panel is canceled.
+	active, err := h.DB.GetActivePanelsForPR("acme/api", 92)
+	require.NoError(t, err)
+	assert.Empty(active, "base-throttle deferral must supersede the stale panel")
 }

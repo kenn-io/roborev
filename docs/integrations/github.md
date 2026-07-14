@@ -476,7 +476,9 @@ timezone = "US/Central"    # IANA name; empty means machine local time
 throttle_interval = "1h"   # per-PR minimum between reviews in the window; default 1h
 ```
 
-While the window is active, the effective throttle for every PR is the larger of `throttle_interval` and `quiet_hours.throttle_interval`, and it applies to **all** users — including `throttle_bypass_users`. Everything else is unchanged: a PR's first-ever review is never blocked, in-flight reviews still complete and post their comments, and throttled pushes get the usual pending "review deferred" status. When the window ends, the next poll reviews the latest HEAD once, so overnight pushes collapse into a single fresh review.
+While the window is active, the effective throttle for every PR is the larger of `throttle_interval` and `quiet_hours.throttle_interval`, and it applies to **all** users — including `throttle_bypass_users`. A PR's first-ever review is never blocked, and throttled pushes get the usual pending "review deferred" status. When the window ends, the next poll reviews the latest HEAD once, so overnight pushes collapse into a single fresh review.
+
+A push deferred only by quiet hours (one the base throttle would have allowed) does not cancel an in-flight review — unlike ordinary throttling, where a new push supersedes the stale run. Frequent overnight pushes would otherwise kill every review before it completes; instead, the running review finishes and posts, so a busy PR gets one snapshot review per interval. Pushes deferred by the base throttle keep their existing supersede behavior, inside or outside the window.
 
 The window boundaries are start-inclusive and end-exclusive. Setting `start` equal to `end`, or setting `quiet_hours.throttle_interval = "0"`, makes quiet hours a no-op. Invalid values (bad clock time, unknown timezone, unparseable interval) log a warning and disable quiet hours rather than over-throttling.
 
