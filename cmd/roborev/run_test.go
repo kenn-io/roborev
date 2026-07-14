@@ -204,7 +204,11 @@ func TestRunLaunchReceiptOutput(t *testing.T) {
 				writeJSON(w, map[string]string{"version": version.Version})
 			case "/api/enqueue":
 				var req daemon.EnqueueRequest
-				require.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+				if err := json.NewDecoder(r.Body).Decode(&req); err != nil {
+					t.Errorf("decode enqueue request: %v", err)
+					http.Error(w, "invalid enqueue request", http.StatusBadRequest)
+					return
+				}
 				persisted = &storage.ReviewJob{
 					ID:     42,
 					UUID:   "00000000-0000-4000-8000-000000000042",
