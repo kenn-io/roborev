@@ -1773,6 +1773,18 @@ func (p *CIPoller) postPanelRun(ctx context.Context, row *storage.CIPanel) {
 		return // another path is posting this run
 	}
 
+	// Re-read the row now that the claim is held: the event listener and
+	// poll loop are separate goroutines, so a quiet-hours poll may have set
+	// allow_stale_post after this row was loaded, and the stale-head guard
+	// must decide on the freshest flag.
+	fresh, err := p.db.GetCIPanelByRunUUID(row.PanelRunUUID)
+	if err != nil {
+		log.Printf("CI poller: error reloading panel %d for posting: %v", row.ID, err)
+		p.releasePanelClaim(row.ID)
+		return
+	}
+	row = fresh
+
 	if !p.guardPanelPostTarget(ctx, row) {
 		return
 	}

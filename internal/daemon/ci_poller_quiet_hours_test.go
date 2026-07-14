@@ -241,3 +241,52 @@ func TestCIPollerProcessPR_QuietHoursSnapshotPostsAfterHeadAdvance(t *testing.T)
 	assert.True(h.panelPostedAt(t, panel.ID), "panel is marked posted")
 	assert.False(h.panelRetiredAt(t, panel.ID), "panel is not retired as stale-head")
 }
+
+// TestCIPollerQuietHoursFlagSetAfterRowLoadStillPosts covers the cross-
+// goroutine race: the event listener loads the panel row, then a concurrent
+// quiet-hours poll flags allow_stale_post, then posting proceeds. The
+// posting path must re-read the row under the claim and post the snapshot
+// instead of retiring on the stale in-memory flag.
+func TestCIPollerQuietHoursFlagSetAfterRowLoadStillPosts(t *testing.T) {
+	assert := assert.New(t)
+	now := time.Now()
+	h := newQuietHoursHarness(t, "0", []string{"wesm"}, now)
+	h.Poller.quietHours = quietWindow(t, now, "1h", true)
+	comments := h.CaptureComments()
+
+	err := h.Poller.processPR(context.Background(), "acme/api",
+		ghPR{
+			Number: 95, HeadRefOid: "first-sha", BaseRefName: "main",
+			Author: ghPRAuthor{Login: "wesm"},
+		}, h.Cfg)
+	require.NoError(t, err, "first processPR")
+
+	panel, err := h.DB.GetCIPanelByPRSHA("acme/api", 95, "first-sha")
+	require.NoError(t, err)
+	members, err := h.DB.GetPanelMembers(panel.PanelRunUUID)
+	require.NoError(t, err)
+	require.Len(t, members, 1)
+	h.markJobDoneWithReview(t, members[0].ID, "codex", "Snapshot finding")
+	synth, err := h.DB.GetSynthesisJob(panel.PanelRunUUID)
+	require.NoError(t, err)
+	h.completeSynthesisWithReview(t, synth.ID, "## Combined\nsnapshot findings")
+
+	// Load the row as the event listener would, BEFORE the marking poll.
+	staleRow, err := h.DB.GetCIPanelBySynthesisJobID(synth.ID)
+	require.NoError(t, err)
+	require.False(t, staleRow.AllowStalePost, "row loaded before the flag is set")
+
+	// Concurrent poll marks the panel and the PR advances.
+	marked, err := h.DB.MarkPanelsAllowStalePost("acme/api", 95, "second-sha")
+	require.NoError(t, err)
+	require.Equal(t, int64(1), marked)
+	h.Poller.prPostTargetFn = func(context.Context, string, int) (panelPostTarget, error) {
+		return panelPostTarget{Open: true, HeadSHA: "second-sha"}, nil
+	}
+
+	h.Poller.postPanelRun(context.Background(), staleRow)
+
+	require.Len(t, *comments, 1, "posting must honor the flag set after the row was loaded")
+	assert.True(h.panelPostedAt(t, panel.ID), "panel is marked posted")
+	assert.False(h.panelRetiredAt(t, panel.ID), "panel is not retired on the stale in-memory flag")
+}
