@@ -464,6 +464,22 @@ Throttling is bypassed when a new push supersedes an in-progress review: the old
 
 Users listed in `throttle_bypass_users` get immediate reviews on every push regardless of the interval. Matching is case-insensitive.
 
+### Quiet Hours
+
+Quiet hours apply a stronger per-PR throttle during a recurring daily window — for example overnight, when frequent pushes from long-running agent sessions would burn tokens on reviews that are stale by morning:
+
+```toml
+[ci.quiet_hours]
+start = "23:00"            # HH:MM, 24-hour clock; both start and end are required
+end = "05:00"              # start > end wraps past midnight
+timezone = "US/Central"    # IANA name; empty means machine local time
+throttle_interval = "1h"   # per-PR minimum between reviews in the window; default 1h
+```
+
+While the window is active, the effective throttle for every PR is the larger of `throttle_interval` and `quiet_hours.throttle_interval`, and it applies to **all** users — including `throttle_bypass_users`. Everything else is unchanged: a PR's first-ever review is never blocked, in-flight reviews still complete and post their comments, and throttled pushes get the usual pending "review deferred" status. When the window ends, the next poll reviews the latest HEAD once, so overnight pushes collapse into a single fresh review.
+
+The window boundaries are start-inclusive and end-exclusive. Setting `start` equal to `end`, or setting `quiet_hours.throttle_interval = "0"`, makes quiet hours a no-op. Invalid values (bad clock time, unknown timezone, unparseable interval) log a warning and disable quiet hours rather than over-throttling.
+
 ## Safe CI Retries
 
 The CI poller tracks retry state per repo, PR number, and HEAD SHA. If any panel member produces real review output, roborev posts the available review instead of discarding it. If no member produces output, the poller classifies the outcome:
@@ -536,6 +552,17 @@ Per-repo overrides take priority over the global `[ci]` config. Any field not se
 | `batch_timeout` | string | `"15m"` | Maximum time to wait for panel members before posting available results. Set `"0"` to disable. |
 
 When `agents` is empty, the poller auto-detects the first available agent from: codex, claude-code, gemini, copilot, opencode, cursor, kiro, kilo, droid, pi.
+
+### Quiet Hours Options
+
+Set under `[ci.quiet_hours]` (global config only). See [Quiet Hours](#quiet-hours).
+
+| Option | Type | Default | Description |
+|--------|------|---------|-------------|
+| `start` | string | | Window start as `"HH:MM"` (24-hour clock). Both `start` and `end` must be set to enable quiet hours. |
+| `end` | string | | Window end as `"HH:MM"`. When `start > end` the window wraps past midnight. |
+| `timezone` | string | machine local | IANA timezone name (e.g. `"US/Central"`) in which the window is evaluated |
+| `throttle_interval` | string | `"1h"` | Per-PR minimum time between reviews while the window is active. Applies to all users, including `throttle_bypass_users`. |
 
 ### GitHub App Options
 

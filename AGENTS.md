@@ -226,6 +226,7 @@ Test conventions:
 - When committing, stage ALL modified files related to the work (including formatting-only and ancillary updates).
 - Before committing, run `git diff` and `git status` to verify nothing is unintentionally left unstaged.
 - When creating PRs, write a clean GitHub-facing summary with relevant context and links.
+- Before opening a PR: update the zensical docs under `docs/` for any user-facing behavior or config changes, and remove superpowers working documents (`docs/superpowers/` plans/specs) from the branch — unless the user explicitly asks to retain them.
 - Do not add navel-gazing PR sections for validation, testing, checks run, or
   lists of changes made. Keep PR bodies focused on reviewer-facing context,
   rationale, behavior changes, risk, and useful links; rely on the diff and
