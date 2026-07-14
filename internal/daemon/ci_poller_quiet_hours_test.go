@@ -290,3 +290,53 @@ func TestCIPollerQuietHoursFlagSetAfterRowLoadStillPosts(t *testing.T) {
 	assert.True(h.panelPostedAt(t, panel.ID), "panel is marked posted")
 	assert.False(h.panelRetiredAt(t, panel.ID), "panel is not retired on the stale in-memory flag")
 }
+
+// TestCIPollerQuietHoursFlagSetDuringTargetLookupStillPosts covers the
+// narrowest interleaving: the quiet-hours poll marks allow_stale_post while
+// the posting goroutine is inside the GitHub target lookup, after any row
+// (re)load. Stale-head retirement must be the atomic retire-unless-flagged
+// statement, so the marking winning the race turns the outcome into a
+// posted snapshot instead of a lost review.
+func TestCIPollerQuietHoursFlagSetDuringTargetLookupStillPosts(t *testing.T) {
+	assert := assert.New(t)
+	now := time.Now()
+	h := newQuietHoursHarness(t, "0", []string{"wesm"}, now)
+	h.Poller.quietHours = quietWindow(t, now, "1h", true)
+	comments := h.CaptureComments()
+
+	err := h.Poller.processPR(context.Background(), "acme/api",
+		ghPR{
+			Number: 96, HeadRefOid: "first-sha", BaseRefName: "main",
+			Author: ghPRAuthor{Login: "wesm"},
+		}, h.Cfg)
+	require.NoError(t, err, "first processPR")
+
+	panel, err := h.DB.GetCIPanelByPRSHA("acme/api", 96, "first-sha")
+	require.NoError(t, err)
+	members, err := h.DB.GetPanelMembers(panel.PanelRunUUID)
+	require.NoError(t, err)
+	require.Len(t, members, 1)
+	h.markJobDoneWithReview(t, members[0].ID, "codex", "Snapshot finding")
+	synth, err := h.DB.GetSynthesisJob(panel.PanelRunUUID)
+	require.NoError(t, err)
+	h.completeSynthesisWithReview(t, synth.ID, "## Combined\nsnapshot findings")
+
+	row, err := h.DB.GetCIPanelBySynthesisJobID(synth.ID)
+	require.NoError(t, err)
+	require.False(t, row.AllowStalePost, "flag unset when posting begins")
+
+	// The concurrent poll marks the panel while the posting goroutine is
+	// inside the target lookup — after every load the posting path does.
+	h.Poller.prPostTargetFn = func(context.Context, string, int) (panelPostTarget, error) {
+		marked, err := h.DB.MarkPanelsAllowStalePost("acme/api", 96, "second-sha")
+		require.NoError(t, err)
+		require.Equal(t, int64(1), marked, "poll marks the panel mid-lookup")
+		return panelPostTarget{Open: true, HeadSHA: "second-sha"}, nil
+	}
+
+	h.Poller.postPanelRun(context.Background(), row)
+
+	require.Len(t, *comments, 1, "flag set during target lookup must still post the snapshot")
+	assert.True(h.panelPostedAt(t, panel.ID), "panel is marked posted")
+	assert.False(h.panelRetiredAt(t, panel.ID), "panel is not retired on the stale in-memory flag")
+}

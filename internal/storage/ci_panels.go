@@ -371,6 +371,26 @@ func (db *DB) MarkPanelRetired(id int64) error {
 	return err
 }
 
+// MarkPanelRetiredIfStalePostDisallowed retires the panel only when
+// allow_stale_post is still unset, as one atomic statement. This closes the
+// posting-time race with MarkPanelsAllowStalePost: SQLite serializes the two
+// writes, so either this retirement lands first (the marker's retired_at IS
+// NULL predicate then skips the row) or the marking lands first (the
+// allow_stale_post = 0 predicate here affects zero rows and the caller posts
+// the retained snapshot). Returns whether the row was retired.
+func (db *DB) MarkPanelRetiredIfStalePostDisallowed(id int64) (bool, error) {
+	res, err := db.Exec(`
+		UPDATE ci_pr_panels
+		SET retired_at = datetime('now'), posting_claimed_at = NULL
+		WHERE id = ? AND posted_at IS NULL AND retired_at IS NULL
+		  AND allow_stale_post = 0`, id)
+	if err != nil {
+		return false, fmt.Errorf("retire panel if stale post disallowed: %w", err)
+	}
+	n, err := res.RowsAffected()
+	return n > 0, err
+}
+
 // PanelPRRef identifies a (github_repo, pr_number) pair for panel PR lookups.
 type PanelPRRef struct {
 	GithubRepo string

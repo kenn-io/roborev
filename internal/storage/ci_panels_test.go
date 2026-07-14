@@ -864,3 +864,39 @@ func TestMarkPanelsAllowStalePost(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(row.AllowStalePost, "flag round-trips through the scanner")
 }
+
+// TestMarkPanelRetiredIfStalePostDisallowed covers the atomic
+// retire-unless-flagged CAS used by the stale-head posting guard.
+func TestMarkPanelRetiredIfStalePostDisallowed(t *testing.T) {
+	assert := assert.New(t)
+	db := openTestDB(t)
+	t.Cleanup(func() { db.Close() })
+
+	unflaggedID := seedPanelRow(t, db, "o/r", 7, "unflagged")
+	retired, err := db.MarkPanelRetiredIfStalePostDisallowed(unflaggedID)
+	require.NoError(t, err)
+	assert.True(retired, "unflagged active row is retired")
+	row, err := db.GetCIPanelByPRSHA("o/r", 7, "unflagged")
+	require.NoError(t, err)
+	assert.NotNil(row.RetiredAt, "retired_at is set")
+
+	flaggedID := seedPanelRow(t, db, "o/r", 7, "flagged")
+	_, err = db.MarkPanelsAllowStalePost("o/r", 7, "other-head")
+	require.NoError(t, err)
+	retired, err = db.MarkPanelRetiredIfStalePostDisallowed(flaggedID)
+	require.NoError(t, err)
+	assert.False(retired, "flagged row is not retired")
+	row, err = db.GetCIPanelByPRSHA("o/r", 7, "flagged")
+	require.NoError(t, err)
+	assert.Nil(row.RetiredAt, "flagged row stays active")
+
+	retired, err = db.MarkPanelRetiredIfStalePostDisallowed(unflaggedID)
+	require.NoError(t, err)
+	assert.False(retired, "already-retired row is not retired again")
+
+	postedID := seedPanelRow(t, db, "o/r", 8, "posted")
+	require.NoError(t, db.MarkPanelPosted(postedID, PanelOutcomeReviewPosted))
+	retired, err = db.MarkPanelRetiredIfStalePostDisallowed(postedID)
+	require.NoError(t, err)
+	assert.False(retired, "posted row is not retired")
+}

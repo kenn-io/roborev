@@ -1773,18 +1773,6 @@ func (p *CIPoller) postPanelRun(ctx context.Context, row *storage.CIPanel) {
 		return // another path is posting this run
 	}
 
-	// Re-read the row now that the claim is held: the event listener and
-	// poll loop are separate goroutines, so a quiet-hours poll may have set
-	// allow_stale_post after this row was loaded, and the stale-head guard
-	// must decide on the freshest flag.
-	fresh, err := p.db.GetCIPanelByRunUUID(row.PanelRunUUID)
-	if err != nil {
-		log.Printf("CI poller: error reloading panel %d for posting: %v", row.ID, err)
-		p.releasePanelClaim(row.ID)
-		return
-	}
-	row = fresh
-
 	if !p.guardPanelPostTarget(ctx, row) {
 		return
 	}
@@ -1823,11 +1811,36 @@ func (p *CIPoller) guardPanelPostTarget(ctx context.Context, row *storage.CIPane
 		return false
 	}
 	if target.HeadSHA != "" && !strings.EqualFold(target.HeadSHA, row.HeadSHA) {
-		if !row.AllowStalePost {
+		// Retire-unless-flagged as one atomic statement. An in-memory
+		// row.AllowStalePost check would race with a quiet-hours poll
+		// marking the panel during the target lookup above; the database
+		// serializes this against MarkPanelsAllowStalePost so exactly one
+		// side wins.
+		retired, err := p.db.MarkPanelRetiredIfStalePostDisallowed(row.ID)
+		if err != nil {
+			log.Printf("CI poller: error retiring stale-head panel %d: %v", row.ID, err)
+			p.releasePanelClaim(row.ID)
+			return false
+		}
+		if retired {
 			log.Printf("CI poller: PR %s#%d advanced from reviewed HEAD %s to %s, retiring panel %d without posting",
 				row.GithubRepo, row.PRNumber, gitpkg.ShortSHA(row.HeadSHA), gitpkg.ShortSHA(target.HeadSHA), row.ID)
-			p.retirePanelAndDeleteAttempt(row, "stale-head")
+			if err := p.db.DeleteReviewAttempt(row.GithubRepo, row.PRNumber, row.HeadSHA); err != nil {
+				log.Printf("CI poller: error deleting stale-head review attempt for %s#%d@%s: %v",
+					row.GithubRepo, row.PRNumber, gitpkg.ShortSHA(row.HeadSHA), err)
+			}
 			return false
+		}
+		// Zero rows: either the quiet-hours flag won the race or the row
+		// went terminal through another path. Reload to tell them apart.
+		fresh, err := p.db.GetCIPanelByRunUUID(row.PanelRunUUID)
+		if err != nil {
+			log.Printf("CI poller: error reloading panel %d after stale-head check: %v", row.ID, err)
+			p.releasePanelClaim(row.ID)
+			return false
+		}
+		if !fresh.AllowStalePost || fresh.RetiredAt != nil || fresh.PostedAt != nil {
+			return false // terminal via another path; nothing to post
 		}
 		// Quiet hours retained this panel through the HEAD advance; post its
 		// snapshot review rather than discarding the completed run.
