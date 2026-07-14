@@ -2,6 +2,7 @@ package skills
 
 import (
 	"encoding/json"
+	"fmt"
 	"io/fs"
 	"os"
 	"path"
@@ -62,7 +63,7 @@ func expectedSkillDirNamesForAgent(t *testing.T, agent Agent) []string {
 	return names
 }
 
-func TestCodexSkillsEmbedExplicitInvocationPolicy(t *testing.T) {
+func TestCodexSkillsEmbedInvocationPolicies(t *testing.T) {
 	wantSkills := []string{
 		"roborev-design-review",
 		"roborev-design-review-branch",
@@ -76,8 +77,11 @@ func TestCodexSkillsEmbedExplicitInvocationPolicy(t *testing.T) {
 	}
 	assert.ElementsMatch(t, wantSkills, expectedSkillDirNamesForAgent(t, AgentCodex))
 
-	const wantPolicy = "policy:\n  allow_implicit_invocation: false\n"
 	for _, skill := range wantSkills {
+		// The agent hook tells the model to invoke roborev-fix, so that skill
+		// must remain model-invocable. Every other skill stays explicit-only.
+		wantImplicit := skill == "roborev-fix"
+		wantPolicy := fmt.Sprintf("policy:\n  allow_implicit_invocation: %t\n", wantImplicit)
 		content, err := fs.ReadFile(codexSkills, path.Join("codex", skill, "agents", "openai.yaml"))
 		require.NoError(t, err, "read policy for %s", skill)
 		assert.Equal(t, wantPolicy, string(content), "policy for %s", skill)
@@ -287,7 +291,7 @@ func TestInstallWhenDirExists(t *testing.T) {
 	}
 }
 
-func TestInstallWritesCodexPolicyOnly(t *testing.T) {
+func TestInstallWritesCodexInvocationPolicies(t *testing.T) {
 	tmpHome := setupTestEnv(t)
 	for _, tc := range agentCases {
 		require.NoError(t, os.MkdirAll(filepath.Join(tmpHome, tc.configDir), 0o755))
@@ -296,8 +300,9 @@ func TestInstallWritesCodexPolicyOnly(t *testing.T) {
 	_, err := Install()
 	require.NoError(t, err)
 
-	const wantPolicy = "policy:\n  allow_implicit_invocation: false\n"
 	for _, skill := range expectedSkillDirNamesForAgent(t, AgentCodex) {
+		wantImplicit := skill == "roborev-fix"
+		wantPolicy := fmt.Sprintf("policy:\n  allow_implicit_invocation: %t\n", wantImplicit)
 		policyPath := filepath.Join(tmpHome, ".codex", "skills", skill, "agents", "openai.yaml")
 		content, err := os.ReadFile(policyPath)
 		require.NoError(t, err, "read installed policy for %s", skill)
