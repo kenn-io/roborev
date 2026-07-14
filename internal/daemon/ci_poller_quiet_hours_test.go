@@ -197,3 +197,47 @@ func TestCIPollerProcessPR_QuietHoursBaseThrottleWins(t *testing.T) {
 	require.NoError(t, err)
 	assert.Empty(active, "base-throttle deferral must supersede the stale panel")
 }
+
+func TestCIPollerProcessPR_QuietHoursSnapshotPostsAfterHeadAdvance(t *testing.T) {
+	assert := assert.New(t)
+	now := time.Now()
+	h := newQuietHoursHarness(t, "0", []string{"wesm"}, now)
+	h.Poller.quietHours = quietWindow(t, now, "1h", true)
+	comments := h.CaptureComments()
+
+	pr := func(sha string) ghPR {
+		return ghPR{
+			Number: 94, HeadRefOid: sha, BaseRefName: "main",
+			Author: ghPRAuthor{Login: "wesm"},
+		}
+	}
+
+	// First push starts a panel; the second is deferred by quiet hours only
+	// and must flag the retained panel to post despite the HEAD advance.
+	err := h.Poller.processPR(context.Background(), "acme/api", pr("first-sha"), h.Cfg)
+	require.NoError(t, err, "first processPR")
+	err = h.Poller.processPR(context.Background(), "acme/api", pr("second-sha"), h.Cfg)
+	require.NoError(t, err, "second processPR")
+
+	panel, err := h.DB.GetCIPanelByPRSHA("acme/api", 94, "first-sha")
+	require.NoError(t, err)
+	assert.True(panel.AllowStalePost, "quiet-only deferral flags the retained panel")
+
+	// The PR is at second-sha by the time the retained panel completes.
+	h.Poller.prPostTargetFn = func(context.Context, string, int) (panelPostTarget, error) {
+		return panelPostTarget{Open: true, HeadSHA: "second-sha"}, nil
+	}
+	members, err := h.DB.GetPanelMembers(panel.PanelRunUUID)
+	require.NoError(t, err)
+	require.Len(t, members, 1)
+	h.markJobDoneWithReview(t, members[0].ID, "codex", "Snapshot finding")
+	synth, err := h.DB.GetSynthesisJob(panel.PanelRunUUID)
+	require.NoError(t, err)
+	h.completeSynthesisWithReview(t, synth.ID, "## Combined\nsnapshot findings")
+
+	h.Poller.handleReviewCompleted(ciEvent(synth.ID, "review.completed"))
+
+	require.Len(t, *comments, 1, "retained quiet-hours snapshot must post its review")
+	assert.True(h.panelPostedAt(t, panel.ID), "panel is marked posted")
+	assert.False(h.panelRetiredAt(t, panel.ID), "panel is not retired as stale-head")
+}

@@ -379,10 +379,16 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 		// A quiet-hours-only deferral keeps the in-flight panel running:
 		// quiet hours exists to space reviews out during frequent overnight
 		// pushes, and superseding on every push could cancel each panel
-		// before it completes, producing no reviews at all. The panel posts
-		// a review of its (hour-old) HEAD; the next enqueue supersedes it
-		// if it is somehow still active.
-		if !quietOnly {
+		// before it completes, producing no reviews at all. The retained
+		// panel is flagged so guardPanelPostTarget lets its snapshot review
+		// post even though the PR HEAD has advanced; the next enqueue
+		// supersedes it if it is somehow still active. A push landing after
+		// the panel completes but before this poll can still be retired as
+		// stale-head — an accepted poll-latency race; the next interval's
+		// panel covers it.
+		if quietOnly {
+			p.markPanelsForStalePost(ghRepo, pr)
+		} else {
 			p.supersedePriorPanels(ghRepo, pr.Number, pr.HeadRefOid)
 		}
 		return nil
@@ -553,6 +559,22 @@ func (p *CIPoller) alreadyReviewedPR(ghRepo string, pr ghPR) (bool, error) {
 		return false, fmt.Errorf("check CI panel: %w", err)
 	}
 	return false, nil
+}
+
+// markPanelsForStalePost flags a PR's still-active panel runs to post despite
+// a HEAD advance. Best-effort: on error the panel keeps running and may be
+// retired as stale-head at posting time.
+func (p *CIPoller) markPanelsForStalePost(ghRepo string, pr ghPR) {
+	marked, err := p.db.MarkPanelsAllowStalePost(ghRepo, pr.Number, pr.HeadRefOid)
+	if err != nil {
+		log.Printf("CI poller: error marking panels for stale post for %s#%d: %v",
+			ghRepo, pr.Number, err)
+		return
+	}
+	if marked > 0 {
+		log.Printf("CI poller: quiet hours retained %d in-flight panel run(s) for %s#%d (new HEAD %s)",
+			marked, ghRepo, pr.Number, gitpkg.ShortSHA(pr.HeadRefOid))
+	}
 }
 
 // resolveQuietHours parses the [ci.quiet_hours] config, logging a warning
@@ -1789,10 +1811,16 @@ func (p *CIPoller) guardPanelPostTarget(ctx context.Context, row *storage.CIPane
 		return false
 	}
 	if target.HeadSHA != "" && !strings.EqualFold(target.HeadSHA, row.HeadSHA) {
-		log.Printf("CI poller: PR %s#%d advanced from reviewed HEAD %s to %s, retiring panel %d without posting",
+		if !row.AllowStalePost {
+			log.Printf("CI poller: PR %s#%d advanced from reviewed HEAD %s to %s, retiring panel %d without posting",
+				row.GithubRepo, row.PRNumber, gitpkg.ShortSHA(row.HeadSHA), gitpkg.ShortSHA(target.HeadSHA), row.ID)
+			p.retirePanelAndDeleteAttempt(row, "stale-head")
+			return false
+		}
+		// Quiet hours retained this panel through the HEAD advance; post its
+		// snapshot review rather than discarding the completed run.
+		log.Printf("CI poller: PR %s#%d advanced from reviewed HEAD %s to %s, posting retained quiet-hours snapshot (panel %d)",
 			row.GithubRepo, row.PRNumber, gitpkg.ShortSHA(row.HeadSHA), gitpkg.ShortSHA(target.HeadSHA), row.ID)
-		p.retirePanelAndDeleteAttempt(row, "stale-head")
-		return false
 	}
 	match, err := p.panelRunMatchesTargetRepo(row)
 	if err != nil {

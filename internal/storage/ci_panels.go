@@ -47,13 +47,20 @@ type CIPanel struct {
 	AttemptCount     *int64     `json:"attempt_count,omitempty"`
 	SynthesisAgent   *string    `json:"synthesis_agent,omitempty"`
 	SynthesisModel   *string    `json:"synthesis_model,omitempty"`
+
+	// AllowStalePost permits the panel's review to post even after the PR
+	// HEAD advances past the reviewed HEAD. Set by quiet-hours-only
+	// deferrals, which retain the in-flight panel as an interval snapshot
+	// instead of superseding it.
+	AllowStalePost bool `json:"allow_stale_post,omitempty"`
 }
 
 // ciPanelColumns is the canonical SELECT column list for scanCIPanel. Kept in
 // one place so every Get* query and the scanner stay in lockstep.
 const ciPanelColumns = `id, github_repo, pr_number, head_sha, panel_run_uuid,
 	synthesis_job_id, created_at, posting_claimed_at, posted_at, retired_at,
-	outcome, first_attempt_at, attempt_count, synthesis_agent, synthesis_model`
+	outcome, first_attempt_at, attempt_count, synthesis_agent, synthesis_model,
+	allow_stale_post`
 
 // scanCIPanel hydrates a CIPanel from a row selecting ciPanelColumns. Nullable
 // columns are scanned through sql.Null* and the timestamps parsed with
@@ -75,6 +82,7 @@ func scanCIPanel(row sqlScanner) (*CIPanel, error) {
 		&p.ID, &p.GithubRepo, &p.PRNumber, &p.HeadSHA, &p.PanelRunUUID,
 		&synthesisJobID, &createdAt, &postingClaimedAt, &postedAt, &retiredAt,
 		&outcome, &firstAttemptAt, &attemptCount, &synthesisAgent, &synthesisModel,
+		&p.AllowStalePost,
 	); err != nil {
 		return nil, err
 	}
@@ -367,6 +375,25 @@ func (db *DB) MarkPanelRetired(id int64) error {
 type PanelPRRef struct {
 	GithubRepo string
 	PRNumber   int
+}
+
+// MarkPanelsAllowStalePost flags every still-active panel run for a PR at a
+// HEAD other than newHeadSHA so its review may post even after the PR HEAD
+// advances. Quiet-hours-only deferrals use this to retain the in-flight
+// panel as an interval snapshot instead of superseding it. Returns the
+// number of rows flagged.
+func (db *DB) MarkPanelsAllowStalePost(githubRepo string, prNumber int, newHeadSHA string) (int64, error) {
+	res, err := db.Exec(`
+		UPDATE ci_pr_panels
+		SET allow_stale_post = 1
+		WHERE github_repo = ? AND pr_number = ? AND head_sha != ?
+		  AND posted_at IS NULL AND retired_at IS NULL
+		  AND allow_stale_post = 0`,
+		githubRepo, prNumber, newHeadSHA)
+	if err != nil {
+		return 0, fmt.Errorf("mark panels allow_stale_post: %w", err)
+	}
+	return res.RowsAffected()
 }
 
 // GetActivePanelsForPR returns the un-posted, non-retired panel runs for a

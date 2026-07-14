@@ -825,3 +825,42 @@ func TestMarkPanelPostedRetiredPanelErrors(t *testing.T) {
 	require.NotNil(t, attempt)
 	assert.NotEqual(t, "done", attempt.State, "attempt must not be marked done for a retired panel")
 }
+
+// TestMarkPanelsAllowStalePost covers the quiet-hours retention flag: only
+// still-active runs at other HEADs are flagged; same-HEAD, posted, retired,
+// other-PR, and other-repo rows are untouched.
+func TestMarkPanelsAllowStalePost(t *testing.T) {
+	assert := assert.New(t)
+	db := openTestDB(t)
+	t.Cleanup(func() { db.Close() })
+
+	activeID := seedPanelRow(t, db, "o/r", 7, "old-head")
+	sameHeadID := seedPanelRow(t, db, "o/r", 7, "new-head")
+	postedID := seedPanelRow(t, db, "o/r", 7, "posted-head")
+	require.NoError(t, db.MarkPanelPosted(postedID, PanelOutcomeReviewPosted))
+	retiredID := seedPanelRow(t, db, "o/r", 7, "retired-head")
+	require.NoError(t, db.MarkPanelRetired(retiredID))
+	otherPRID := seedPanelRow(t, db, "o/r", 8, "old-head")
+	otherRepoID := seedPanelRow(t, db, "x/y", 7, "old-head")
+
+	marked, err := db.MarkPanelsAllowStalePost("o/r", 7, "new-head")
+	require.NoError(t, err)
+	assert.Equal(int64(1), marked, "exactly the active other-HEAD row is flagged")
+
+	flagged := func(id int64) bool {
+		var v bool
+		require.NoError(t, db.QueryRow(
+			`SELECT allow_stale_post FROM ci_pr_panels WHERE id = ?`, id).Scan(&v))
+		return v
+	}
+	assert.True(flagged(activeID), "active run at the old HEAD is flagged")
+	assert.False(flagged(sameHeadID), "run at the new HEAD is untouched")
+	assert.False(flagged(postedID), "posted run is untouched")
+	assert.False(flagged(retiredID), "retired run is untouched")
+	assert.False(flagged(otherPRID), "other PR is untouched")
+	assert.False(flagged(otherRepoID), "other repo is untouched")
+
+	row, err := db.GetCIPanelByPRSHA("o/r", 7, "old-head")
+	require.NoError(t, err)
+	assert.True(row.AllowStalePost, "flag round-trips through the scanner")
+}

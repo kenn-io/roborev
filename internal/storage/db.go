@@ -119,6 +119,7 @@ CREATE TABLE IF NOT EXISTS ci_pr_panels (
   attempt_count INTEGER,
   synthesis_agent TEXT,
   synthesis_model TEXT,
+  allow_stale_post INTEGER NOT NULL DEFAULT 0,
   UNIQUE(github_repo, pr_number, head_sha)
 );
 
@@ -1026,6 +1027,20 @@ func (db *DB) migrate() error {
 			if _, err = db.Exec(col.ddl); err != nil {
 				return fmt.Errorf("add %s column: %w", col.name, err)
 			}
+		}
+	}
+
+	// Migration: add allow_stale_post to ci_pr_panels if missing. Set by
+	// quiet-hours-only deferrals so a retained snapshot panel may post its
+	// review even after the PR HEAD advances.
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('ci_pr_panels') WHERE name = 'allow_stale_post'`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check allow_stale_post column: %w", err)
+	}
+	if count == 0 {
+		_, err = db.Exec(`ALTER TABLE ci_pr_panels ADD COLUMN allow_stale_post INTEGER NOT NULL DEFAULT 0`)
+		if err != nil {
+			return fmt.Errorf("add allow_stale_post column: %w", err)
 		}
 	}
 
