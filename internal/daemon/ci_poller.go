@@ -371,26 +371,30 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 	}
 
 	// Throttle: skip if this PR was reviewed recently (any SHA).
-	throttled, quietOnly, err := p.throttlePR(ghRepo, pr, cfg)
+	dec, err := p.throttlePR(ghRepo, pr, cfg)
 	if err != nil {
 		return err
 	}
-	if throttled {
+	if dec.throttled {
 		// A quiet-hours-only deferral keeps the in-flight panel running:
 		// quiet hours exists to space reviews out during frequent overnight
 		// pushes, and superseding on every push could cancel each panel
 		// before it completes, producing no reviews at all. The retained
 		// panel is flagged so guardPanelPostTarget lets its snapshot review
 		// post even though the PR HEAD has advanced; the next enqueue
-		// supersedes it if it is somehow still active. A push landing after
+		// supersedes it if it is somehow still active. Marking happens
+		// BEFORE the deferred-status publication below: that status is a
+		// synchronous GitHub call, and a panel completing during it would
+		// be atomically retired while still unflagged. A push landing after
 		// the panel completes but before this poll can still be retired as
 		// stale-head — an accepted poll-latency race; the next interval's
 		// panel covers it.
-		if quietOnly {
+		if dec.quietOnly {
 			p.markPanelsForStalePost(ghRepo, pr)
 		} else {
 			p.supersedePriorPanels(ghRepo, pr.Number, pr.HeadRefOid)
 		}
+		p.postDeferredStatus(ghRepo, pr, dec.nextEligible)
 		return nil
 	}
 
@@ -589,15 +593,24 @@ func resolveQuietHours(ci *config.CIConfig) *config.QuietHoursWindow {
 	return w
 }
 
+// throttleDecision is throttlePR's verdict on a push. quietOnly reports that
+// quiet hours alone drove the deferral (the base rules would have allowed the
+// review); the caller uses it to keep the in-flight panel instead of
+// superseding it. nextEligible is when the PR can next be reviewed, for the
+// deferred commit status.
+type throttleDecision struct {
+	throttled    bool
+	quietOnly    bool
+	nextEligible time.Time
+}
+
 // throttlePR reports whether the PR was reviewed recently enough to defer this
 // push. Bypass users skip the base throttle interval, but the quiet-hours
-// interval applies to everyone while the window is active. When throttled it
-// sets a "pending" deferred commit status. quietOnly reports that quiet hours
-// alone drove the deferral (the base rules would have allowed the review);
-// the caller uses it to keep the in-flight panel instead of superseding it.
-// The throttle is purely time-based on the most recent panel run for the PR
-// (any HEAD SHA).
-func (p *CIPoller) throttlePR(ghRepo string, pr ghPR, cfg *config.Config) (throttled, quietOnly bool, err error) {
+// interval applies to everyone while the window is active. The throttle is
+// purely time-based on the most recent panel run for the PR (any HEAD SHA).
+// Pure decision, no side effects: the caller publishes the deferred status
+// via postDeferredStatus after its retention/supersede bookkeeping.
+func (p *CIPoller) throttlePR(ghRepo string, pr ghPR, cfg *config.Config) (throttleDecision, error) {
 	base := cfg.CI.ResolvedThrottleInterval()
 	if cfg.CI.IsThrottleBypassed(pr.Author.Login) {
 		base = 0
@@ -607,27 +620,37 @@ func (p *CIPoller) throttlePR(ghRepo string, pr ghPR, cfg *config.Config) (throt
 		throttle = q.Interval
 	}
 	if throttle <= 0 {
-		return false, false, nil
+		return throttleDecision{}, nil
 	}
 	lastReview, err := p.db.LatestPanelTimeForPR(ghRepo, pr.Number)
 	if err != nil {
-		return false, false, fmt.Errorf("check PR throttle: %w", err)
+		return throttleDecision{}, fmt.Errorf("check PR throttle: %w", err)
 	}
 	elapsed := p.nowFn().Sub(lastReview)
 	if lastReview.IsZero() || elapsed >= throttle {
-		return false, false, nil
+		return throttleDecision{}, nil
 	}
-	quietOnly = base <= 0 || elapsed >= base
-	// With the quiet-hours interval this can overstate the wait for bypass
-	// users, who become eligible at the first poll after the window ends.
-	// The status is advisory; capping at the window end isn't worth the
-	// wrap-around complexity.
-	nextReview := lastReview.Add(throttle)
-	desc := fmt.Sprintf("Review deferred — next eligible at %s", nextReview.UTC().Format("15:04 UTC"))
+	return throttleDecision{
+		throttled: true,
+		quietOnly: base <= 0 || elapsed >= base,
+		// With the quiet-hours interval this can overstate the wait for
+		// bypass users, who become eligible at the first poll after the
+		// window ends. The status is advisory; capping at the window end
+		// isn't worth the wrap-around complexity.
+		nextEligible: lastReview.Add(throttle),
+	}, nil
+}
+
+// postDeferredStatus publishes the pending "review deferred" commit status
+// for a throttled push. Callers must finish panel retention or supersede
+// bookkeeping first: this is a synchronous GitHub call, and a retained panel
+// completing during it must already carry its allow_stale_post flag or the
+// posting goroutine's atomic stale-head retirement discards its review.
+func (p *CIPoller) postDeferredStatus(ghRepo string, pr ghPR, nextEligible time.Time) {
+	desc := fmt.Sprintf("Review deferred — next eligible at %s", nextEligible.UTC().Format("15:04 UTC"))
 	if err := p.callSetCommitStatus(ghRepo, pr.HeadRefOid, "pending", desc); err != nil {
 		log.Printf("CI poller: failed to set throttle status: %v", err)
 	}
-	return true, quietOnly, nil
 }
 
 // resolveCIMembers resolves the panel members and synthesis spec for a PR. When

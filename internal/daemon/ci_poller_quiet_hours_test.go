@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"strings"
 	"testing"
 	"time"
 
@@ -339,4 +340,61 @@ func TestCIPollerQuietHoursFlagSetDuringTargetLookupStillPosts(t *testing.T) {
 	require.Len(t, *comments, 1, "flag set during target lookup must still post the snapshot")
 	assert.True(h.panelPostedAt(t, panel.ID), "panel is marked posted")
 	assert.False(h.panelRetiredAt(t, panel.ID), "panel is not retired on the stale in-memory flag")
+}
+
+// TestCIPollerQuietHoursPanelCompletingDuringStatusStillPosts pins the
+// side-effect ordering in processPR: retained panels must be flagged BEFORE
+// the deferred commit status is published. The test simulates a panel whose
+// posting runs while the poller is inside that synchronous GitHub status
+// call; the atomic stale-head retirement must find the flag already set.
+func TestCIPollerQuietHoursPanelCompletingDuringStatusStillPosts(t *testing.T) {
+	assert := assert.New(t)
+	now := time.Now()
+	h := newQuietHoursHarness(t, "0", []string{"wesm"}, now)
+	h.Poller.quietHours = quietWindow(t, now, "1h", true)
+	comments := h.CaptureComments()
+
+	pr := func(sha string) ghPR {
+		return ghPR{
+			Number: 97, HeadRefOid: sha, BaseRefName: "main",
+			Author: ghPRAuthor{Login: "wesm"},
+		}
+	}
+
+	err := h.Poller.processPR(context.Background(), "acme/api", pr("first-sha"), h.Cfg)
+	require.NoError(t, err, "first processPR")
+
+	panel, err := h.DB.GetCIPanelByPRSHA("acme/api", 97, "first-sha")
+	require.NoError(t, err)
+	members, err := h.DB.GetPanelMembers(panel.PanelRunUUID)
+	require.NoError(t, err)
+	require.Len(t, members, 1)
+	h.markJobDoneWithReview(t, members[0].ID, "codex", "Snapshot finding")
+	synth, err := h.DB.GetSynthesisJob(panel.PanelRunUUID)
+	require.NoError(t, err)
+	h.completeSynthesisWithReview(t, synth.ID, "## Combined\nsnapshot findings")
+
+	row, err := h.DB.GetCIPanelBySynthesisJobID(synth.ID)
+	require.NoError(t, err)
+
+	h.Poller.prPostTargetFn = func(context.Context, string, int) (panelPostTarget, error) {
+		return panelPostTarget{Open: true, HeadSHA: "second-sha"}, nil
+	}
+	// The panel's posting fires while the poller publishes the deferred
+	// status for the second push.
+	posted := false
+	h.Poller.setCommitStatusFn = func(_, _, _, desc string) error {
+		if strings.Contains(desc, "Review deferred") && !posted {
+			posted = true
+			h.Poller.postPanelRun(context.Background(), row)
+		}
+		return nil
+	}
+
+	err = h.Poller.processPR(context.Background(), "acme/api", pr("second-sha"), h.Cfg)
+	require.NoError(t, err, "second processPR")
+
+	require.Len(t, *comments, 1, "panel completing during the deferred-status call must post")
+	assert.True(h.panelPostedAt(t, panel.ID), "panel is marked posted")
+	assert.False(h.panelRetiredAt(t, panel.ID), "panel must not be retired while unflagged")
 }
