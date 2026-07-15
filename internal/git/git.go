@@ -424,16 +424,22 @@ func parseMergedBranches(out, sha string) (exact, candidates []string, tips map[
 }
 
 // nearestBranch returns the candidate branch whose tip is the fewest
-// first-parent steps behind sha, or "" when the nearest distance ties or no
-// candidate tip lies on sha's first-parent chain. Tips reachable only
-// through merged-in side histories are skipped rather than ranked: their
-// counts are not path lengths and can spuriously tie the true mainline
-// branch (e.g. a merge whose second parent forked from its first parent).
+// first-parent steps behind sha, or "" when the nearest distance ties, no
+// candidate tip lies on sha's first-parent chain, or any distance lookup
+// fails. Tips reachable only through merged-in side histories are skipped
+// rather than ranked: their counts are not path lengths and can spuriously
+// tie the true mainline branch (e.g. a merge whose second parent forked
+// from its first parent). Git failures abort the whole ranking instead —
+// skipping a failed candidate could crown a farther branch it would have
+// beaten or tied.
 func nearestBranch(ctx context.Context, repoPath, sha string, candidates []string, tips map[string]string) string {
 	best := ""
 	bestDist := -1
 	for _, branch := range candidates {
-		dist, onChain := firstParentDistance(ctx, repoPath, tips[branch], sha)
+		dist, onChain, err := firstParentDistance(ctx, repoPath, tips[branch], sha)
+		if err != nil {
+			return ""
+		}
 		if !onChain {
 			continue
 		}
@@ -448,29 +454,36 @@ func nearestBranch(ctx context.Context, repoPath, sha string, candidates []strin
 }
 
 // firstParentDistance returns the number of first-parent steps from sha back
-// to tip. ok is false when tip does not lie on sha's first-parent chain, or
-// when git fails. rev-list counts sha's first-parent chain above the point
-// where it becomes reachable from tip; tip is on the chain only if that
-// point is tip itself, which sha~n (n first-parent steps) verifies.
-func firstParentDistance(ctx context.Context, repoPath, tip, sha string) (int, bool) {
+// to tip. onChain is false when tip does not lie on sha's first-parent
+// chain; err is non-nil for git or parsing failures, which callers must
+// treat as aborting inference, never as an off-chain candidate. rev-list
+// counts sha's first-parent chain above the point where it becomes
+// reachable from tip; tip is on the chain only if that point is tip itself,
+// which sha~n (n first-parent steps) verifies. sha~n can also fail for an
+// ancestor reachable only through an orphan root; reporting that as an
+// error fails closed, the conservative choice.
+func firstParentDistance(ctx context.Context, repoPath, tip, sha string) (dist int, onChain bool, err error) {
 	cmd := newGitCmdContext(ctx, "rev-list", "--count", "--first-parent", tip+".."+sha)
 	cmd.Dir = repoPath
 	out, err := cmd.Output()
 	if err != nil {
-		return 0, false
+		return 0, false, fmt.Errorf("count first-parent range %s..%s: %w", tip, sha, err)
 	}
 	n, err := strconv.Atoi(strings.TrimSpace(string(out)))
 	if err != nil {
-		return 0, false
+		return 0, false, fmt.Errorf("parse first-parent count: %w", err)
 	}
 
 	cmd = newGitCmdContext(ctx, "rev-parse", "--verify", fmt.Sprintf("%s~%d", sha, n))
 	cmd.Dir = repoPath
 	out, err = cmd.Output()
-	if err != nil || strings.TrimSpace(string(out)) != tip {
-		return 0, false
+	if err != nil {
+		return 0, false, fmt.Errorf("resolve %s~%d: %w", sha, n, err)
 	}
-	return n, true
+	if strings.TrimSpace(string(out)) != tip {
+		return 0, false, nil
+	}
+	return n, true, nil
 }
 
 // LocalBranchName strips the "origin/" prefix from a branch name if present.

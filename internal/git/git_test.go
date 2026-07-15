@@ -1217,6 +1217,25 @@ func TestInferBranchForCommit(t *testing.T) {
 		assert.Equal(t, "mainline", InferBranchForCommit(ctx, repo.Dir, sha))
 	})
 
+	t.Run("candidate-specific git failure aborts inference", func(t *testing.T) {
+		repo := NewTestRepoWithCommit(t)
+		def := GetCurrentBranch(repo.Dir)
+		defTip := strings.TrimSpace(repo.Run("rev-parse", def))
+		repo.Run("checkout", "--detach")
+		repo.CommitFile("f.txt", "content", "detached commit")
+		sha := repo.HeadSHA()
+
+		// A candidate whose distance lookup fails must abort the whole
+		// ranking: skipping it like an off-chain tip could crown a farther
+		// branch that the failed candidate would have beaten or tied.
+		candidates := []string{"broken", def}
+		tips := map[string]string{
+			"broken": "0000000000000000000000000000000000000000",
+			def:      defTip,
+		}
+		assert.Empty(t, nearestBranch(ctx, repo.Dir, sha, candidates, tips))
+	})
+
 	t.Run("two exact tips returns empty", func(t *testing.T) {
 		repo := NewTestRepoWithCommit(t)
 		repo.CheckoutNewBranch("feature")
