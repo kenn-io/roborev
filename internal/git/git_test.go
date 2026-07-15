@@ -1199,6 +1199,24 @@ func TestInferBranchForCommit(t *testing.T) {
 		assert.Equal(t, "mainline", InferBranchForCommit(ctx, repo.Dir, sha))
 	})
 
+	t.Run("off-mainline merge parent does not tie the first-parent branch", func(t *testing.T) {
+		repo := NewTestRepoWithCommit(t)
+		repo.CheckoutNewBranch("mainline")
+		repo.CommitFile("m1.txt", "1", "mainline 1")
+		repo.CheckoutNewBranch("side") // forked at mainline's tip
+		repo.CommitFile("s1.txt", "1", "side 1")
+		repo.CheckoutBranch("mainline")
+		repo.Run("checkout", "--detach")
+		repo.Run("merge", "--no-ff", "side", "-m", "merge side")
+		sha := repo.HeadSHA()
+
+		// side's tip is reachable only through the merge's second parent,
+		// yet its first-parent count matches mainline's (both exclude
+		// everything but the merge commit). Only branches on the target's
+		// first-parent chain may rank, so mainline wins instead of tying.
+		assert.Equal(t, "mainline", InferBranchForCommit(ctx, repo.Dir, sha))
+	})
+
 	t.Run("two exact tips returns empty", func(t *testing.T) {
 		repo := NewTestRepoWithCommit(t)
 		repo.CheckoutNewBranch("feature")

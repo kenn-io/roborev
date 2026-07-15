@@ -424,15 +424,18 @@ func parseMergedBranches(out, sha string) (exact, candidates []string, tips map[
 }
 
 // nearestBranch returns the candidate branch whose tip is the fewest
-// first-parent steps behind sha, or "" when distances tie or any distance
-// lookup fails.
+// first-parent steps behind sha, or "" when the nearest distance ties or no
+// candidate tip lies on sha's first-parent chain. Tips reachable only
+// through merged-in side histories are skipped rather than ranked: their
+// counts are not path lengths and can spuriously tie the true mainline
+// branch (e.g. a merge whose second parent forked from its first parent).
 func nearestBranch(ctx context.Context, repoPath, sha string, candidates []string, tips map[string]string) string {
 	best := ""
 	bestDist := -1
 	for _, branch := range candidates {
-		dist, ok := commitDistance(ctx, repoPath, tips[branch], sha)
-		if !ok {
-			return ""
+		dist, onChain := firstParentDistance(ctx, repoPath, tips[branch], sha)
+		if !onChain {
+			continue
 		}
 		switch {
 		case bestDist == -1 || dist < bestDist:
@@ -444,14 +447,13 @@ func nearestBranch(ctx context.Context, repoPath, sha string, candidates []strin
 	return best
 }
 
-// commitDistance returns the length of to's first-parent chain that is not
-// reachable from from (git rev-list --count --first-parent from..to). When
-// from lies on to's first-parent history this is the mainline path length;
-// counting the full reachable-set difference instead would let a merged-in
-// side history inflate one tip's distance and misattribute equally close
-// merge parents rather than treating them consistently.
-func commitDistance(ctx context.Context, repoPath, from, to string) (int, bool) {
-	cmd := newGitCmdContext(ctx, "rev-list", "--count", "--first-parent", from+".."+to)
+// firstParentDistance returns the number of first-parent steps from sha back
+// to tip. ok is false when tip does not lie on sha's first-parent chain, or
+// when git fails. rev-list counts sha's first-parent chain above the point
+// where it becomes reachable from tip; tip is on the chain only if that
+// point is tip itself, which sha~n (n first-parent steps) verifies.
+func firstParentDistance(ctx context.Context, repoPath, tip, sha string) (int, bool) {
+	cmd := newGitCmdContext(ctx, "rev-list", "--count", "--first-parent", tip+".."+sha)
 	cmd.Dir = repoPath
 	out, err := cmd.Output()
 	if err != nil {
@@ -459,6 +461,13 @@ func commitDistance(ctx context.Context, repoPath, from, to string) (int, bool) 
 	}
 	n, err := strconv.Atoi(strings.TrimSpace(string(out)))
 	if err != nil {
+		return 0, false
+	}
+
+	cmd = newGitCmdContext(ctx, "rev-parse", "--verify", fmt.Sprintf("%s~%d", sha, n))
+	cmd.Dir = repoPath
+	out, err = cmd.Output()
+	if err != nil || strings.TrimSpace(string(out)) != tip {
 		return 0, false
 	}
 	return n, true
