@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"log"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -359,6 +360,91 @@ func GetCurrentBranch(repoPath string) string {
 
 	ref := strings.TrimSpace(string(out))
 	return strings.TrimPrefix(ref, "refs/heads/")
+}
+
+// inferBranchMaxCandidates bounds how many non-exact ancestor branches
+// InferBranchForCommit will rank by distance. Above this it fails closed:
+// committer-date or listing order does not bound distance, so ranking a
+// truncated subset could miss a closer or tied branch.
+const inferBranchMaxCandidates = 20
+
+// InferBranchForCommit returns the local branch a detached-HEAD commit most
+// likely belongs to: the unique branch whose tip equals the commit, or
+// failing that the unique branch whose tip is the nearest ancestor of it.
+// sha must be a full commit SHA. It returns "" when no unambiguous
+// candidate exists (ties, more than inferBranchMaxCandidates ancestor
+// branches, git errors, non-repos), in which case the job keeps an empty
+// branch exactly as before inference existed.
+func InferBranchForCommit(ctx context.Context, repoPath, sha string) string {
+	cmd := newGitCmdContext(ctx, "for-each-ref", "--merged="+sha,
+		"--format=%(objectname) %(refname)", "refs/heads")
+	cmd.Dir = repoPath
+	out, err := cmd.Output()
+	if err != nil {
+		return ""
+	}
+
+	var exact, candidates []string
+	tips := make(map[string]string)
+	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
+		tip, ref, ok := strings.Cut(line, " ")
+		if !ok {
+			continue
+		}
+		branch := strings.TrimPrefix(ref, "refs/heads/")
+		if tip == sha {
+			exact = append(exact, branch)
+			continue
+		}
+		candidates = append(candidates, branch)
+		tips[branch] = tip
+	}
+
+	if len(exact) == 1 {
+		return exact[0]
+	}
+	if len(exact) > 1 || len(candidates) == 0 {
+		return ""
+	}
+	if len(candidates) > inferBranchMaxCandidates {
+		log.Printf(
+			"infer branch: %d ancestor branches of %s exceed cap %d, skipping inference",
+			len(candidates), sha, inferBranchMaxCandidates,
+		)
+		return ""
+	}
+
+	best := ""
+	bestDist := -1
+	for _, branch := range candidates {
+		dist, ok := commitDistance(ctx, repoPath, tips[branch], sha)
+		if !ok {
+			return ""
+		}
+		switch {
+		case bestDist == -1 || dist < bestDist:
+			best, bestDist = branch, dist
+		case dist == bestDist:
+			best = "" // tie: ambiguous unless a closer branch follows
+		}
+	}
+	return best
+}
+
+// commitDistance returns the number of commits reachable from to but not
+// from from (git rev-list --count from..to).
+func commitDistance(ctx context.Context, repoPath, from, to string) (int, bool) {
+	cmd := newGitCmdContext(ctx, "rev-list", "--count", from+".."+to)
+	cmd.Dir = repoPath
+	out, err := cmd.Output()
+	if err != nil {
+		return 0, false
+	}
+	n, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		return 0, false
+	}
+	return n, true
 }
 
 // LocalBranchName strips the "origin/" prefix from a branch name if present.

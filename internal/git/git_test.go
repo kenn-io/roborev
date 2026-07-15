@@ -1127,6 +1127,114 @@ func TestGetCurrentBranch(t *testing.T) {
 	})
 }
 
+func TestInferBranchForCommit(t *testing.T) {
+	ctx := context.Background()
+
+	t.Run("exact tip match", func(t *testing.T) {
+		repo := NewTestRepoWithCommit(t)
+		repo.CheckoutNewBranch("feature")
+		repo.CommitFile("f.txt", "content", "feature commit")
+		sha := repo.HeadSHA()
+		repo.Run("checkout", "--detach")
+
+		assert.Equal(t, "feature", InferBranchForCommit(ctx, repo.Dir, sha))
+	})
+
+	t.Run("one-behind ancestor (detached worktree shape)", func(t *testing.T) {
+		repo := NewTestRepoWithCommit(t)
+		repo.CheckoutNewBranch("feature")
+		repo.CommitFile("f.txt", "content", "feature commit")
+		repo.Run("checkout", "--detach")
+		repo.CommitFile("g.txt", "content", "detached commit")
+		sha := repo.HeadSHA()
+
+		// feature tip is 1 behind sha; the default branch is 2 behind.
+		assert.Equal(t, "feature", InferBranchForCommit(ctx, repo.Dir, sha))
+	})
+
+	t.Run("nearest of several ancestor branches", func(t *testing.T) {
+		repo := NewTestRepoWithCommit(t)
+		repo.CheckoutNewBranch("far")
+		repo.CommitFile("a.txt", "a", "far commit")
+		repo.CheckoutNewBranch("near")
+		repo.CommitFile("b.txt", "b", "near commit")
+		repo.Run("checkout", "--detach")
+		repo.CommitFile("c.txt", "c", "detached commit")
+		sha := repo.HeadSHA()
+
+		assert.Equal(t, "near", InferBranchForCommit(ctx, repo.Dir, sha))
+	})
+
+	t.Run("distance tie returns empty", func(t *testing.T) {
+		repo := NewTestRepoWithCommit(t)
+		repo.CheckoutNewBranch("feature")
+		repo.CommitFile("f.txt", "content", "shared tip")
+		repo.Run("branch", "twin") // second branch at the same tip
+		repo.Run("checkout", "--detach")
+		repo.CommitFile("g.txt", "content", "detached commit")
+		sha := repo.HeadSHA()
+
+		assert.Empty(t, InferBranchForCommit(ctx, repo.Dir, sha))
+	})
+
+	t.Run("two exact tips returns empty", func(t *testing.T) {
+		repo := NewTestRepoWithCommit(t)
+		repo.CheckoutNewBranch("feature")
+		repo.CommitFile("f.txt", "content", "shared tip")
+		repo.Run("branch", "twin")
+		sha := repo.HeadSHA()
+		repo.Run("checkout", "--detach")
+
+		assert.Empty(t, InferBranchForCommit(ctx, repo.Dir, sha))
+	})
+
+	t.Run("no ancestor branch returns empty", func(t *testing.T) {
+		repo := NewTestRepoWithCommit(t)
+		branch := GetCurrentBranch(repo.Dir)
+		repo.Run("checkout", "--detach")
+		repo.CommitFile("f.txt", "content", "detached commit")
+		sha := repo.HeadSHA()
+		repo.Run("branch", "-D", branch)
+
+		assert.Empty(t, InferBranchForCommit(ctx, repo.Dir, sha))
+	})
+
+	t.Run("more than 20 candidates fails closed", func(t *testing.T) {
+		repo := NewTestRepoWithCommit(t)
+		// 21 ancestor branches at increasing depth; nearest would be b21.
+		for i := 1; i <= 21; i++ {
+			repo.CommitFile("f.txt", fmt.Sprintf("v%d", i), fmt.Sprintf("c%d", i))
+			repo.Run("branch", fmt.Sprintf("b%d", i))
+		}
+		repo.Run("checkout", "--detach")
+		repo.CommitFile("g.txt", "content", "detached commit")
+		sha := repo.HeadSHA()
+
+		// b21 is distance 1 and would win, but 21 non-exact candidates
+		// (plus the default branch, 22 total) exceed the cap: fail closed
+		// rather than rank a truncated subset.
+		assert.Empty(t, InferBranchForCommit(ctx, repo.Dir, sha))
+	})
+
+	t.Run("unique exact match wins above the cap", func(t *testing.T) {
+		repo := NewTestRepoWithCommit(t)
+		for i := 1; i <= 21; i++ {
+			repo.CommitFile("f.txt", fmt.Sprintf("v%d", i), fmt.Sprintf("c%d", i))
+			repo.Run("branch", fmt.Sprintf("b%d", i))
+		}
+		repo.Run("checkout", "--detach")
+		repo.CommitFile("g.txt", "content", "detached commit")
+		sha := repo.HeadSHA()
+		repo.Run("branch", "exact-tip")
+
+		assert.Equal(t, "exact-tip", InferBranchForCommit(ctx, repo.Dir, sha))
+	})
+
+	t.Run("non-repo returns empty", func(t *testing.T) {
+		assert.Empty(t, InferBranchForCommit(ctx, t.TempDir(), "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"))
+	})
+}
+
 func TestGetUpstream(t *testing.T) {
 	t.Run("returns empty when no upstream configured", func(t *testing.T) {
 		repo := NewTestRepoWithCommit(t)
