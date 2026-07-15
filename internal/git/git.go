@@ -384,22 +384,7 @@ func InferBranchForCommit(ctx context.Context, repoPath, sha string) string {
 		return ""
 	}
 
-	var exact, candidates []string
-	tips := make(map[string]string)
-	for line := range strings.SplitSeq(strings.TrimSpace(string(out)), "\n") {
-		tip, ref, ok := strings.Cut(line, " ")
-		if !ok {
-			continue
-		}
-		branch := strings.TrimPrefix(ref, "refs/heads/")
-		if tip == sha {
-			exact = append(exact, branch)
-			continue
-		}
-		candidates = append(candidates, branch)
-		tips[branch] = tip
-	}
-
+	exact, candidates, tips := parseMergedBranches(string(out), sha)
 	if len(exact) == 1 {
 		return exact[0]
 	}
@@ -413,7 +398,33 @@ func InferBranchForCommit(ctx context.Context, repoPath, sha string) string {
 		)
 		return ""
 	}
+	return nearestBranch(ctx, repoPath, sha, candidates, tips)
+}
 
+// parseMergedBranches splits "objectname refname" lines from for-each-ref
+// into branches whose tip equals sha (exact) and ancestor branches
+// (candidates), returning each candidate's tip SHA keyed by branch name.
+func parseMergedBranches(out, sha string) (exact, candidates []string, tips map[string]string) {
+	tips = make(map[string]string)
+	for line := range strings.SplitSeq(strings.TrimSpace(out), "\n") {
+		tip, ref, ok := strings.Cut(line, " ")
+		if !ok {
+			continue
+		}
+		branch := strings.TrimPrefix(ref, "refs/heads/")
+		if tip == sha {
+			exact = append(exact, branch)
+			continue
+		}
+		candidates = append(candidates, branch)
+		tips[branch] = tip
+	}
+	return exact, candidates, tips
+}
+
+// nearestBranch returns the candidate branch whose tip is the fewest commits
+// behind sha, or "" when distances tie or any distance lookup fails.
+func nearestBranch(ctx context.Context, repoPath, sha string, candidates []string, tips map[string]string) string {
 	best := ""
 	bestDist := -1
 	for _, branch := range candidates {
