@@ -27,8 +27,11 @@ commit yet), so "which branch tip points at this commit" finds nothing.
 - Heuristic inference is acceptable; empty branch remains the fallback for
   ambiguous cases. (User decision.)
 - Fix future enqueues only; no backfill of existing rows. (User decision.)
-- Daemon-side inference in `humaEnqueue`, not hook-side, so all local enqueue
-  paths and already-deployed hooks are fixed centrally. (User decision.)
+- Daemon-side inference in `humaEnqueue`, not hook-side, so already-deployed
+  hooks are fixed centrally without a per-repo binary upgrade. (User decision.)
+- Covered enqueue shapes: single-commit, range, and dirty targets (everything
+  that freezes a `sessionSHA`). Stored-prompt jobs (task/insights/compact)
+  have no target commit and are not attributed. (Review finding.)
 
 ## Design
 
@@ -46,34 +49,55 @@ fast path, and staying off the interface avoids a second implementation.
 
 Algorithm (any git error → return `""`; never fails the enqueue):
 
-1. `git for-each-ref --merged=<sha> --sort=-committerdate refs/heads`
-   — one command listing local branches whose tips are ancestors of (or equal
-   to) the commit.
-2. If exactly one tip equals the commit, return that branch. Multiple exact
-   tips → ambiguous → `""`.
-3. Otherwise, for the top 20 candidates by recent committer date, compute
-   distance with `git rev-list --count <tip>..<sha>`; the smallest distance
-   wins. A distance tie between two branches → `""`.
-4. No ancestor branches → `""`.
+1. `git for-each-ref --merged=<sha> refs/heads` — one command listing all
+   local branches whose tips are ancestors of (or equal to) the commit.
+   Parse full `%(refname)` values and strip `refs/heads/` manually;
+   `%(refname:short)` has the ambiguity `GetCurrentBranch` deliberately
+   avoids (`internal/git/git.go:346`).
+2. If exactly one tip equals the commit, return that branch (unambiguous
+   regardless of candidate count). Multiple exact tips → `""`.
+3. Otherwise, if more than 20 ancestor candidates exist, fail closed: return
+   `""` and log that inference was skipped. Committer-date order does not
+   bound distance, so evaluating a truncated subset could miss a closer or
+   tied branch; failing closed preserves the unambiguous-candidate contract.
+4. Otherwise, compute distance for every candidate with
+   `git rev-list --count <tip>..<sha>`; the smallest distance wins. A
+   distance tie between two branches → `""`.
+5. No ancestor branches → `""`.
 
-Cost: 1 + (capped ancestor count) subprocesses, only on detached-HEAD
-enqueues.
+All git invocations go through `newGitCmdContext` per the package invariant
+(`internal/git/git.go:45`).
 
-### Call site: `humaEnqueue`
+Cost: at most 1 + 20 subprocesses, only on detached-HEAD enqueues.
 
-After `currentBranch := metadata.CurrentBranch()` returns `""` (and only
-when the client sent no branch, and the job type is not insights):
+### Call site: `humaEnqueue`, after the target freeze
 
-1. Resolve the enqueue target to a commit SHA via `metadata.Resolve`. For
-   range refs (`base..HEAD`), resolve the right-hand side. If resolution
-   fails, skip inference.
-2. `currentBranch = git.InferBranchForCommit(ctx, req.RepoPath, sha)`.
-3. When a branch is inferred, log it (`log.Printf`) so the guess is
-   observable.
+Inference runs after `buildTargetDescriptor` returns, keyed on the
+descriptor's `sessionSHA` — the endpoint SHA the freeze already resolved
+(single commit → the commit, range → the end SHA, dirty → HEAD). Resolving
+the ref independently before the freeze would race ref movement: the freeze
+resolves refs again (`internal/daemon/panel_enqueue.go:229`, `:263`,
+`:335`), and a moved HEAD could attribute the branch of one commit to a job
+storing another. Reusing `sessionSHA` means the target is resolved exactly
+once.
 
-Everything downstream is unchanged: the inferred branch flows into the
-existing `IsBranchExcluded` check (exclusion semantics stay consistent) and
-into the `req.Branch` fallback that stores the job.
+When the client sent no branch, `metadata.CurrentBranch()` was empty
+(detached HEAD), the job type is not insights, and `desc.sessionSHA` is
+non-empty:
+
+1. `inferred := git.InferBranchForCommit(ctx, checkoutRoot, desc.sessionSHA)`.
+2. If `inferred` is empty, proceed unchanged (today's behavior).
+3. If `inferred` matches `IsBranchExcluded`, return the same skip response
+   the pre-freeze check produces, so exclusion semantics stay consistent
+   with symbolic-HEAD enqueues. Because this runs post-freeze, a commit row
+   may already have been created before the skip — an idempotent metadata
+   row, same as any excluded re-enqueue of an existing commit.
+4. Otherwise set the descriptor's branch to `inferred` and log the guess
+   (`log.Printf`) so it is observable.
+
+Stored-prompt jobs (task/insights/compact) have an empty `sessionSHA` and
+skip inference naturally. Dirty jobs are covered: their `sessionSHA` is the
+frozen HEAD of the worktree.
 
 CI jobs are unaffected: the CI poller enqueues directly with `CIBaseBranch`
 and never passes through this endpoint's branch fallback, preserving the
@@ -96,10 +120,15 @@ invariant that CI jobs leave `Branch` empty.
   - distance tie → `""`
   - no ancestor branch → `""`
   - two branches pointing at the same commit → `""`
+  - more than 20 ancestor candidates and no exact match → `""` (fail
+    closed), including a case where the omitted branch would have been
+    closer or tied
+  - more than 20 candidates with a unique exact tip match → that branch
   - non-repo path → `""`
 - Server-level test in the `server_jobs_test.go` style: enqueue from a
   detached-HEAD worktree and assert the stored job's branch is the inferred
-  one; a control case asserts ambiguous setups store `""`.
+  one; a control case asserts ambiguous setups store `""`; a dirty enqueue
+  from a detached worktree attributes via the frozen HEAD.
 
 ## Out of scope
 
