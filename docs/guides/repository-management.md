@@ -127,7 +127,7 @@ When running commands from a worktree:
 
 ### Detached HEAD worktrees
 
-Some tools (agent sandboxes, spec-driven development harnesses) create worktrees with a detached HEAD, where git reports no current branch. When a commit is made on detached HEAD, roborev infers the branch for the review: if exactly one local branch points at the commit it uses that, otherwise it picks the unique nearest branch whose tip is an ancestor of the commit — the usual shape when a tool's worktree runs ahead of the branch it mirrors. If no single best candidate exists (ties, or more than 20 candidate branches), the review is stored without a branch, as before. Inferred branches respect `excluded_branches`.
+Some tools (agent sandboxes, spec-driven development harnesses) create worktrees with a detached HEAD, where git reports no current branch. When a commit is made on detached HEAD, roborev infers the branch for the review: if exactly one local branch points at the commit it uses that; otherwise, if no branch points at it, it picks the unique nearest branch whose tip is an ancestor of the commit — the usual shape when a tool's worktree runs ahead of the branch it mirrors. If no single best candidate exists (ties, or more than 20 candidate branches), the review is stored without a branch, as before. Inferred branches respect `excluded_branches`.
 
 Without this, you'd get duplicate repository entries, scattered reviews, and confusion about which reviews belong to which code. With worktree support, everything is consolidated under the main repository.
 
