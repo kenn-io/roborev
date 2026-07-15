@@ -2740,3 +2740,127 @@ func TestListJobsOmitPrompt(t *testing.T) {
 		assert.Nil(jobs[0].DiffContent)
 	})
 }
+
+func TestHandleEnqueueDetachedHeadInfersBranch(t *testing.T) {
+	enqueue := func(t *testing.T, server *Server, reqData EnqueueRequest) *httptest.ResponseRecorder {
+		t.Helper()
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
+		w := httptest.NewRecorder()
+		server.httpServer.Handler.ServeHTTP(w, req)
+		return w
+	}
+
+	t.Run("single commit attributes to nearest ancestor branch", func(t *testing.T) {
+		server, _, tmpDir := newTestServer(t)
+		repoDir := filepath.Join(tmpDir, "testrepo")
+		repo := testutil.InitTestGitRepo(t, repoDir)
+
+		repo.CheckoutNewBranch("feature-x")
+		repo.CommitFile("f.txt", "content", "feature commit")
+		repo.CheckoutDetached()
+		repo.CommitFile("g.txt", "content", "detached commit")
+
+		w := enqueue(t, server, EnqueueRequest{
+			RepoPath: repoDir, GitRef: "HEAD", Agent: "test",
+		})
+		require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+
+		var job storage.ReviewJob
+		testutil.DecodeJSON(t, w, &job)
+		assert.Equal(t, "feature-x", job.Branch)
+	})
+
+	t.Run("ambiguous tie stores empty branch", func(t *testing.T) {
+		server, _, tmpDir := newTestServer(t)
+		repoDir := filepath.Join(tmpDir, "testrepo")
+		repo := testutil.InitTestGitRepo(t, repoDir)
+
+		repo.CheckoutNewBranch("feature-a")
+		repo.CommitFile("f.txt", "content", "shared tip")
+		repo.RunGit("branch", "feature-b")
+		repo.CheckoutDetached()
+		repo.CommitFile("g.txt", "content", "detached commit")
+
+		w := enqueue(t, server, EnqueueRequest{
+			RepoPath: repoDir, GitRef: "HEAD", Agent: "test",
+		})
+		require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+
+		var job storage.ReviewJob
+		testutil.DecodeJSON(t, w, &job)
+		assert.Empty(t, job.Branch)
+	})
+
+	t.Run("dirty review attributes via frozen HEAD", func(t *testing.T) {
+		server, _, tmpDir := newTestServer(t)
+		repoDir := filepath.Join(tmpDir, "testrepo")
+		repo := testutil.InitTestGitRepo(t, repoDir)
+
+		repo.CheckoutNewBranch("feature-x")
+		repo.CommitFile("f.txt", "content", "feature commit")
+		repo.CheckoutDetached()
+		repo.CommitFile("g.txt", "content", "detached commit")
+
+		w := enqueue(t, server, EnqueueRequest{
+			RepoPath: repoDir, GitRef: "dirty", Agent: "test",
+			DiffContent: "diff --git a/h.txt b/h.txt\n+new line\n",
+		})
+		require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+
+		var job storage.ReviewJob
+		testutil.DecodeJSON(t, w, &job)
+		assert.Equal(t, "feature-x", job.Branch)
+	})
+
+	t.Run("inferred branch is subject to exclusion", func(t *testing.T) {
+		server, db, tmpDir := newTestServer(t)
+		repoDir := filepath.Join(tmpDir, "testrepo")
+		repo := testutil.InitTestGitRepo(t, repoDir)
+
+		repo.CheckoutNewBranch("wip-feature")
+		repo.CommitFile("f.txt", "content", "feature commit")
+		repo.CheckoutDetached()
+		repo.CommitFile("g.txt", "content", "detached commit")
+		require.NoError(t, os.WriteFile(
+			filepath.Join(repoDir, ".roborev.toml"),
+			[]byte(`excluded_branches = ["wip-feature"]`), 0o644,
+		))
+
+		w := enqueue(t, server, EnqueueRequest{
+			RepoPath: repoDir, GitRef: "HEAD", Agent: "test",
+		})
+		require.Equal(t, http.StatusOK, w.Code, w.Body.String())
+
+		var response struct {
+			Skipped bool   `json:"skipped"`
+			Reason  string `json:"reason"`
+		}
+		testutil.DecodeJSON(t, w, &response)
+		assert.True(t, response.Skipped)
+		assert.Contains(t, response.Reason, "wip-feature")
+
+		queued, _, _, _, _, _, _, _, _ := db.GetJobCounts()
+		assert.Zero(t, queued, "no job should be enqueued for excluded inferred branch")
+	})
+
+	t.Run("client-sent branch wins over inference", func(t *testing.T) {
+		server, _, tmpDir := newTestServer(t)
+		repoDir := filepath.Join(tmpDir, "testrepo")
+		repo := testutil.InitTestGitRepo(t, repoDir)
+
+		repo.CheckoutNewBranch("feature-x")
+		repo.CommitFile("f.txt", "content", "feature commit")
+		repo.CheckoutDetached()
+		repo.CommitFile("g.txt", "content", "detached commit")
+
+		w := enqueue(t, server, EnqueueRequest{
+			RepoPath: repoDir, GitRef: "HEAD", Agent: "test",
+			Branch: "explicit-branch",
+		})
+		require.Equal(t, http.StatusCreated, w.Code, w.Body.String())
+
+		var job storage.ReviewJob
+		testutil.DecodeJSON(t, w, &job)
+		assert.Equal(t, "explicit-branch", job.Branch)
+	})
+}

@@ -2062,6 +2062,34 @@ func (s *Server) humaEnqueue(
 		return early, nil
 	}
 
+	// Detached-HEAD attribution: when the client sent no branch and HEAD has
+	// no symbolic ref, infer the branch from the frozen target SHA so the
+	// job lands in branch-scoped views. sessionSHA is the SHA the freeze
+	// already resolved (single commit, range end, or dirty HEAD); reusing it
+	// keeps inference and storage on the same commit. Prompt jobs have no
+	// sessionSHA and are never attributed.
+	if req.Branch == "" && req.JobType != storage.JobTypeInsights &&
+		descriptor.sessionSHA != "" {
+		if inferred := git.InferBranchForCommit(
+			ctx, checkoutRoot, descriptor.sessionSHA,
+		); inferred != "" {
+			if config.IsBranchExcluded(checkoutRoot, inferred) {
+				return rawJSONOutput(http.StatusOK, EnqueueSkippedResponse{
+					Skipped: true,
+					Reason: fmt.Sprintf(
+						"branch %q is excluded from reviews", inferred,
+					),
+				})
+			}
+			log.Printf(
+				"enqueue: inferred branch %q for detached-HEAD target %s",
+				inferred, descriptor.sessionSHA,
+			)
+			descriptor.branch = inferred
+			req.Branch = inferred
+		}
+	}
+
 	merged := config.MergedReviewConfig(resolutionPath, cfg)
 	panelName := selectPanelForTarget(descriptor, req, merged)
 	if panelName != "" {
