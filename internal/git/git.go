@@ -370,7 +370,8 @@ const inferBranchMaxCandidates = 20
 
 // InferBranchForCommit returns the local branch a detached-HEAD commit most
 // likely belongs to: the unique branch whose tip equals the commit, or
-// failing that the unique branch whose tip is the nearest ancestor of it.
+// failing that the unique ancestor branch nearest along the commit's
+// first-parent history (the mainline a detached worktree grew from).
 // sha must be a full commit SHA. It returns "" when no unambiguous
 // candidate exists (ties, more than inferBranchMaxCandidates ancestor
 // branches, git errors, non-repos), in which case the job keeps an empty
@@ -422,8 +423,9 @@ func parseMergedBranches(out, sha string) (exact, candidates []string, tips map[
 	return exact, candidates, tips
 }
 
-// nearestBranch returns the candidate branch whose tip is the fewest commits
-// behind sha, or "" when distances tie or any distance lookup fails.
+// nearestBranch returns the candidate branch whose tip is the fewest
+// first-parent steps behind sha, or "" when distances tie or any distance
+// lookup fails.
 func nearestBranch(ctx context.Context, repoPath, sha string, candidates []string, tips map[string]string) string {
 	best := ""
 	bestDist := -1
@@ -442,10 +444,14 @@ func nearestBranch(ctx context.Context, repoPath, sha string, candidates []strin
 	return best
 }
 
-// commitDistance returns the number of commits reachable from to but not
-// from from (git rev-list --count from..to).
+// commitDistance returns the length of to's first-parent chain that is not
+// reachable from from (git rev-list --count --first-parent from..to). When
+// from lies on to's first-parent history this is the mainline path length;
+// counting the full reachable-set difference instead would let a merged-in
+// side history inflate one tip's distance and misattribute equally close
+// merge parents rather than treating them consistently.
 func commitDistance(ctx context.Context, repoPath, from, to string) (int, bool) {
-	cmd := newGitCmdContext(ctx, "rev-list", "--count", from+".."+to)
+	cmd := newGitCmdContext(ctx, "rev-list", "--count", "--first-parent", from+".."+to)
 	cmd.Dir = repoPath
 	out, err := cmd.Output()
 	if err != nil {

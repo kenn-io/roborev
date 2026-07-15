@@ -1177,6 +1177,28 @@ func TestInferBranchForCommit(t *testing.T) {
 		assert.Empty(t, InferBranchForCommit(ctx, repo.Dir, sha))
 	})
 
+	t.Run("merge ranks by first-parent distance, not history size", func(t *testing.T) {
+		repo := NewTestRepoWithCommit(t)
+		def := GetCurrentBranch(repo.Dir)
+		repo.CheckoutNewBranch("side")
+		repo.CommitFile("s1.txt", "1", "side 1")
+		repo.CommitFile("s2.txt", "2", "side 2")
+		repo.CommitFile("s3.txt", "3", "side 3")
+		repo.CheckoutBranch(def)
+		repo.CheckoutNewBranch("mainline")
+		repo.CommitFile("m1.txt", "1", "mainline 1")
+		repo.Run("checkout", "--detach")
+		repo.Run("merge", "--no-ff", "side", "-m", "merge side")
+		sha := repo.HeadSHA()
+
+		// The merge's first parent is mainline's tip (1 first-parent step
+		// away); side's tip is a merge parent with a 3-commit history. A
+		// reachable-set count would score side closer (2 vs 4) purely
+		// because of history size; first-parent distance attributes the
+		// merge to the mainline it was made on.
+		assert.Equal(t, "mainline", InferBranchForCommit(ctx, repo.Dir, sha))
+	})
+
 	t.Run("two exact tips returns empty", func(t *testing.T) {
 		repo := NewTestRepoWithCommit(t)
 		repo.CheckoutNewBranch("feature")
