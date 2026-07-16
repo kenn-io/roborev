@@ -5,7 +5,8 @@ description: Continuous code review for coding agents
 
 # roborev
 
-Continuous code review for coding agents. Review commits immediately, catch issues early, and fix them while context is fresh.
+Continuous code review for coding agents. Review commits immediately, catch
+issues early, and fix them while context is fresh.
 
 <p class="hero-actions">
   <a class="md-button md-button--primary" href="/quickstart/">Read Docs</a>
@@ -19,9 +20,11 @@ Continuous code review for coding agents. Review commits immediately, catch issu
 roborev reviews every commit in the background and feeds findings back to your
 coding agent so the write -> review -> fix loop runs hands-off.
 
-- **Post-commit reviews** - every commit is reviewed automatically, with any agent.
+- **Post-commit reviews** - every commit is reviewed automatically, with any
+    agent.
 - **Agent hook** - nudges your CLI agent to fix findings mid-session.
-- **Refine before you ship** - `/roborev-refine` re-reviews and fixes your whole branch until every review passes, catching bugs before the PR.
+- **Refine before you ship** - `/roborev-refine` re-reviews and fixes your whole
+    branch until every review passes, catching bugs before the PR.
 
 [Set up automation ->](automation/post-commit-reviews.md)
 
@@ -56,7 +59,8 @@ roborev init          # Install post-commit hook
 roborev tui           # Browse reviews in the terminal UI
 ```
 
-For Windows, see the [installation guide](/installation/#quick-install-recommended).
+For Windows, see the
+[installation guide](/installation/#quick-install-recommended).
 
 ## For LLMs
 
@@ -67,42 +71,59 @@ This docs site publishes source Markdown next to each rendered page. Prefer the
 
 ## Why roborev?
 
-AI coding agents write code fast, but they make mistakes. Most review feedback comes too late. The agent has moved on and context is lost. roborev changes this:
+AI coding agents write code fast, but they make mistakes. Most review feedback
+comes too late. The agent has moved on and context is lost. roborev changes
+this:
 
 1. **Ask your agents to commit often**, ideally every turn of work
-2. **roborev reviews** each commit in the background
-3. **Bring review work back into the agent session** with [`agent-hook`](/agent-hook/) (`--agent droid` for Factory Droid) or check the TUI (`roborev tui`) as findings arrive
-4. **Address findings** by letting the hook prompt the fix skill, copying reviews into your agent, using [`/roborev-fix`](/guides/agent-skills/), or running `roborev fix`
+1. **roborev reviews** each commit in the background
+1. **Bring review work back into the agent session** with
+    [`agent-hook`](/agent-hook/) (`--agent droid` for Factory Droid) or check
+    the TUI (`roborev tui`) as findings arrive
+1. **Address findings** by letting the hook prompt the fix skill, copying
+    reviews into your agent, using [`/roborev-fix`](/guides/agent-skills/), or
+    running `roborev fix`
 
-Every commit gets reviewed. Issues surface in seconds, not hours. Open reviews stay in the TUI queue until explicitly addressed and closed, so nothing falls through the cracks.
+Every commit gets reviewed. Issues surface in seconds, not hours. Open reviews
+stay in the TUI queue until explicitly addressed and closed, so nothing falls
+through the cracks.
 
 <div class="grid cards" markdown>
 
--   **Review Ledger**
+- **Review Ledger**
 
-    Every commit is reviewed automatically via git hooks. Reviews accumulate in a persistent queue that acts as a ledger: nothing is closed until explicitly addressed.
+    Every commit is reviewed automatically via git hooks. Reviews accumulate in a
+    persistent queue that acts as a ledger: nothing is closed until explicitly
+    addressed.
 
--   **Agent-Ready Feedback**
+- **Agent-Ready Feedback**
 
-    Use `agent-hook` to prompt Codex, Claude Code, or Droid (`--agent droid`) to run the fix skill when review work piles up. You can also copy findings into your agent session, use `/roborev-fix`, or run `roborev fix` to apply fixes automatically.
+    Use `agent-hook` to prompt Codex, Claude Code, or Droid (`--agent droid`) to
+    run the fix skill when review work piles up. You can also copy findings into
+    your agent session, use `/roborev-fix`, or run `roborev fix` to apply fixes
+    automatically.
 
--   **Code Analysis**
+- **Code Analysis**
 
-    Built-in analysis types (duplication, complexity, refactoring, test fixtures, dead code) that agents can address directly.
+    Built-in analysis types (duplication, complexity, refactoring, test fixtures,
+    dead code) that agents can address directly.
 
--   **Multi-Agent**
+- **Multi-Agent**
 
-    Works with Codex, Claude Code, Gemini, Copilot, OpenCode, Cursor, Droid, Kilo, Kiro, and Pi. Auto-detects installed agents.
+    Works with Codex, Claude Code, Gemini, Copilot, OpenCode, Cursor, Droid, Kilo,
+    Kiro, and Pi. Auto-detects installed agents.
 
--   **Rich Markdown Display**
+- **Rich Markdown Display**
 
-    Reviews render with full Markdown formatting: syntax-highlighted code blocks, headings, lists, and inline styles, right in your terminal.
+    Reviews render with full Markdown formatting: syntax-highlighted code blocks,
+    headings, lists, and inline styles, right in your terminal.
 
--   **Runs Locally**
+- **Runs Locally**
 
-    No hosted service or additional infrastructure. Reviews are orchestrated on your machine using the coding agents you already have configured.
+    No hosted service or additional infrastructure. Reviews are orchestrated on
+    your machine using the coding agents you already have configured.
 
--   **Multi-Machine Sync**
+- **Multi-Machine Sync**
 
     Bi-directionally sync reviews across machines via PostgreSQL.
 
@@ -121,4 +142,6 @@ Every commit gets reviewed. Issues surface in seconds, not hours. Open reviews s
 
 <img src="/assets/static/federation.svg" alt="roborev federation diagram" class="diagram-center" />
 
-Bi-directionally sync reviews across machines with a shared PostgreSQL database. Each daemon maintains its local SQLite for fast access while syncing changes to the central database.
+Bi-directionally sync reviews across machines with a shared PostgreSQL database.
+Each daemon maintains its local SQLite for fast access while syncing changes to
+the central database.

@@ -150,6 +150,7 @@ Use `testify` (`github.com/stretchr/testify`) for all test assertions. Use `requ
   at least 5 minutes for `go test ./internal/daemon` or `go test ./cmd/roborev`.
 - Pre-commit hooks in this repo are managed with `prek`; run `prek install` after cloning or `make install-hooks` as a wrapper.
 - The local pre-commit hook is a `prek` system hook that runs the non-mutating `make lint-ci` target with `always_run`, so it executes on every commit without rewriting files.
+- Format Zensical Markdown sources with `make markdown`; prose wraps at 80 columns while tables remain unchanged. The non-mutating `make markdown-ci` check runs in `prek` and CI.
 - Use `prek run --all-files` to execute the hooks manually. Run `make lint` only when you explicitly want golangci-lint to apply fixes.
 - Useful build/lint checks: `go build ./...`, `make lint`, `make lint-ci`, `prek run --all-files`
 

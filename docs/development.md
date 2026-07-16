@@ -12,7 +12,8 @@ go test ./...
 make install    # Installs with version info (e.g., v0.7.0-5-gabcdef)
 ```
 
-Or use `go install ./cmd/...` for quick iteration (version shows commit hash only).
+Or use `go install ./cmd/...` for quick iteration (version shows commit hash
+only).
 
 ## Project Structure
 
@@ -54,7 +55,7 @@ CLI (roborev) -> HTTP API -> Daemon (roborev daemon run) -> Worker Pool -> Agent
 ## Adding a New Agent
 
 1. Create `internal/agent/newagent.go`
-2. Implement the `Agent` interface:
+1. Implement the `Agent` interface:
 
 ```go
 type Agent interface {
@@ -63,7 +64,7 @@ type Agent interface {
 }
 ```
 
-3. Call `Register()` in `init()`
+1. Call `Register()` in `init()`
 
 ## Database Schema
 
@@ -74,7 +75,8 @@ Job states: `queued` -> `running` -> `done`/`failed`
 ## Conventions
 
 - **HTTP over gRPC**: Simple HTTP/JSON for the daemon API
-- **No CGO in releases**: Build with `CGO_ENABLED=0` for static binaries (except sqlite which needs CGO locally)
+- **No CGO in releases**: Build with `CGO_ENABLED=0` for static binaries (except
+    sqlite which needs CGO locally)
 - **Test agent**: Use `agent = "test"` for testing without calling real AI
 - **Isolated tests**: All tests use `t.TempDir()` for temp directories
 
@@ -127,16 +129,16 @@ GOOS=windows GOARCH=amd64 go test -c -tags=codexeval \
 ```
 
 The harness creates an isolated `HOME` and `CODEX_HOME`, copies the existing
-Codex authentication file into that disposable home, installs the in-tree
-skills there, and runs each case in a temporary git repository. Every Codex
-subprocess sets `allow_login_shell=false`; isolated `.zshenv`, `BASH_ENV`, and
-`ENV` startup files plus a safe `PATH` ensure global login profiles cannot
-reorder command resolution. A non-login `-c` preflight proves each available
-supported shell resolves the harmless roborev stub before Codex starts. Codex
-runs with `workspace-write` against the disposable repository plus a separate
-disposable evidence directory; the user checkout and normal agent state remain
-outside those configured writable roots. The stub writes a fresh per-case
-sentinel before printing its marker, so redirected or indirect execution remains
+Codex authentication file into that disposable home, installs the in-tree skills
+there, and runs each case in a temporary git repository. Every Codex subprocess
+sets `allow_login_shell=false`; isolated `.zshenv`, `BASH_ENV`, and `ENV`
+startup files plus a safe `PATH` ensure global login profiles cannot reorder
+command resolution. A non-login `-c` preflight proves each available supported
+shell resolves the harmless roborev stub before Codex starts. Codex runs with
+`workspace-write` against the disposable repository plus a separate disposable
+evidence directory; the user checkout and normal agent state remain outside
+those configured writable roots. The stub writes a fresh per-case sentinel
+before printing its marker, so redirected or indirect execution remains
 detectable without contacting the roborev daemon. The evaluation never reads or
 writes the normal daemon database or review state.
 
@@ -154,7 +156,7 @@ source is tracked in this repository; image media is hydrated from two orphan
 branches before builds:
 
 - `docs-assets` contains curated static media such as logos, favicons, diagrams,
-  Open Graph images, and integration screenshots.
+    Open Graph images, and integration screenshots.
 - `docs-generated-assets` contains generated CLI and TUI screenshots.
 
 Install the docs toolchain and build the site:
@@ -176,8 +178,8 @@ Run the docs validation checks:
 make docs-check
 ```
 
-The Vercel project should be linked from the repository root with `docs/` as
-its root directory. Use these project settings:
+The Vercel project should be linked from the repository root with `docs/` as its
+root directory. Use these project settings:
 
 | Setting | Value |
 | --- | --- |

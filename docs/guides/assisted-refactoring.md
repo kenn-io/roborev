@@ -3,7 +3,9 @@ title: Code Analysis and Assisted Refactoring
 description: Run built-in code analysis and automatically apply fixes with roborev analyze and roborev fix
 ---
 
-Use `roborev analyze` to run structured code analysis on your files, and `roborev fix` to automatically apply the suggested changes. Together they provide a repeatable workflow for codebase-wide refactoring driven by AI agents.
+Use `roborev analyze` to run structured code analysis on your files, and
+`roborev fix` to automatically apply the suggested changes. Together they
+provide a repeatable workflow for codebase-wide refactoring driven by AI agents.
 
 ```bash
 roborev analyze refactor 'src/handlers/*.go'                    # Analyze files for refactoring opportunities
@@ -26,11 +28,14 @@ Seven built-in analysis types target common refactoring concerns:
 | `dead-code` | Finds unused exports, unreachable code paths, and stale commented-out code. |
 | `architecture` | Evaluates package organization, dependency flow, separation of concerns, and layering violations. |
 
-List available types with `roborev analyze --list`, or preview a prompt template with `roborev analyze --show-prompt <type>`. If you have shell completions enabled, `roborev analyze <TAB>` will suggest analysis types with descriptions.
+List available types with `roborev analyze --list`, or preview a prompt template
+with `roborev analyze --show-prompt <type>`. If you have shell completions
+enabled, `roborev analyze <TAB>` will suggest analysis types with descriptions.
 
 ## Basic Usage
 
-Point `analyze` at an analysis type and one or more file paths, directories, or glob patterns:
+Point `analyze` at an analysis type and one or more file paths, directories, or
+glob patterns:
 
 ```bash
 # Analyze test files for fixture opportunities
@@ -46,11 +51,15 @@ roborev analyze api-design 'pkg/api/*.go'
 roborev analyze architecture internal/storage/
 ```
 
-Results appear in the TUI as jobs labeled with their analysis type (e.g. `test-fixtures`, `duplication`). Use `roborev show <job_id>` or the TUI to read findings. You can then run `roborev fix` to address open findings, or pass specific job IDs with `roborev fix <job_id>`.
+Results appear in the TUI as jobs labeled with their analysis type (e.g.
+`test-fixtures`, `duplication`). Use `roborev show <job_id>` or the TUI to read
+findings. You can then run `roborev fix` to address open findings, or pass
+specific job IDs with `roborev fix <job_id>`.
 
 ## Branch Mode
 
-Use `--branch` to automatically analyze files changed on the current branch since diverging from the base:
+Use `--branch` to automatically analyze files changed on the current branch
+since diverging from the base:
 
 ```bash
 roborev analyze refactor --branch                  # Analyze current branch
@@ -58,20 +67,26 @@ roborev analyze complexity --branch --per-file     # Per-file analysis of branch
 roborev analyze refactor --branch --base develop   # Compare against develop
 ```
 
-To analyze a different branch without switching to it, specify the branch name with `=`:
+To analyze a different branch without switching to it, specify the branch name
+with `=`:
 
 ```bash
 roborev analyze refactor --branch=feature-xyz
 roborev analyze duplication --branch=feature-xyz --per-file
 ```
 
-Note: use `--branch=name` (with `=`), not `--branch name`. The space-separated form treats `name` as a positional file argument.
+Note: use `--branch=name` (with `=`), not `--branch name`. The space-separated
+form treats `name` as a positional file argument.
 
-Branch mode automatically discovers changed files and filters out non-code files (`.md`, `.yml`, `.yaml`, `.json`, `.toml`, `.html`, `.css`, `.scss`). File contents are read from the git tree, not the working directory, so uncommitted edits are not included.
+Branch mode automatically discovers changed files and filters out non-code files
+(`.md`, `.yml`, `.yaml`, `.json`, `.toml`, `.html`, `.css`, `.scss`). File
+contents are read from the git tree, not the working directory, so uncommitted
+edits are not included.
 
 ## Per-File Mode
 
-By default, all files are bundled into a single analysis job. Use `--per-file` to create a separate job for each file:
+By default, all files are bundled into a single analysis job. Use `--per-file`
+to create a separate job for each file:
 
 ```bash
 roborev analyze complexity --per-file 'internal/storage/*.go'
@@ -86,9 +101,12 @@ Per-file mode is useful when:
 
 ## Using Fix with Reviews
 
-`roborev fix` runs **synchronously in the foreground**: it blocks until the agent finishes, applies changes directly to your working tree, and commits the result. It does not run in the background or queue work for the daemon.
+`roborev fix` runs **synchronously in the foreground**: it blocks until the
+agent finishes, applies changes directly to your working tree, and commits the
+result. It does not run in the background or queue work for the daemon.
 
-`roborev fix` works with any review, not just analysis results. Use it to address commit reviews too:
+`roborev fix` works with any review, not just analysis results. Use it to
+address commit reviews too:
 
 ```bash
 roborev fix                        # Fix all open reviews and analysis findings on this branch
@@ -99,11 +117,22 @@ roborev fix --batch 42 43 44       # Batch specific jobs into one prompt
 roborev fix --min-severity medium  # Skip low-severity findings
 ```
 
-The agent reads the review findings, applies changes, commits, and closes the review. This is a one-shot fix. For an iterative loop with re-review, see [`roborev refine`](/guides/auto-fixing/).
+The agent reads the review findings, applies changes, commits, and closes the
+review. This is a one-shot fix. For an iterative loop with re-review, see
+[`roborev refine`](/guides/auto-fixing/).
 
-Use `--batch` to concatenate multiple reviews into a single prompt so the agent sees all findings at once. This is faster and gives the agent more context to make coordinated fixes across related issues. Reviews are packed into batches respecting the configured max prompt size.
+Use `--batch` to concatenate multiple reviews into a single prompt so the agent
+sees all findings at once. This is faster and gives the agent more context to
+make coordinated fixes across related issues. Reviews are packed into batches
+respecting the configured max prompt size.
 
-For finer control, use `--batch-size N` to pack up to N reviews per agent invocation. roborev will issue multiple invocations when more than N open reviews remain, with each invocation still bounded by `max_prompt_size`. This is useful when `--batch` would exceed the prompt budget but you still want coordinated multi-finding fixes per call. Pair with `--resume` to reuse the agent's session ID across calls within the run, so each invocation builds on prior context instead of starting fresh.
+For finer control, use `--batch-size N` to pack up to N reviews per agent
+invocation. roborev will issue multiple invocations when more than N open
+reviews remain, with each invocation still bounded by `max_prompt_size`. This is
+useful when `--batch` would exceed the prompt budget but you still want
+coordinated multi-finding fixes per call. Pair with `--resume` to reuse the
+agent's session ID across calls within the run, so each invocation builds on
+prior context instead of starting fresh.
 
 ## Applying Fixes from Analysis
 
@@ -111,7 +140,8 @@ There are two ways to apply fixes from analysis results.
 
 ### Inline with `--fix`
 
-Add `--fix` to run analysis and then immediately invoke an agent to apply the suggested changes:
+Add `--fix` to run analysis and then immediately invoke an agent to apply the
+suggested changes:
 
 ```bash
 roborev analyze refactor --fix ./...
@@ -156,7 +186,8 @@ When complete, the agent commits its changes and the jobs are closed.
 
 ### Batch Analyze, Then Fix
 
-Queue multiple analysis jobs at once and let `roborev fix` work through them all:
+Queue multiple analysis jobs at once and let `roborev fix` work through them
+all:
 
 ```bash
 # Queue a batch of analysis jobs
@@ -171,9 +202,15 @@ roborev fix
 roborev fix --batch
 ```
 
-Without `--batch`, `roborev fix` processes open reviews one at a time. As it commits fixes, the daemon automatically reviews the new commits, and if those new reviews fail, `roborev fix` picks them up and fixes them too. This means a single `roborev fix` invocation can work through a chain of analysis findings and their follow-on reviews without manual intervention.
+Without `--batch`, `roborev fix` processes open reviews one at a time. As it
+commits fixes, the daemon automatically reviews the new commits, and if those
+new reviews fail, `roborev fix` picks them up and fixes them too. This means a
+single `roborev fix` invocation can work through a chain of analysis findings
+and their follow-on reviews without manual intervention.
 
-With `--batch`, all open reviews are concatenated into a single prompt (respecting the configured max prompt size), so the agent fixes everything in one pass. This is particularly useful after queuing several analysis jobs.
+With `--batch`, all open reviews are concatenated into a single prompt
+(respecting the configured max prompt size), so the agent fixes everything in
+one pass. This is particularly useful after queuing several analysis jobs.
 
 ## Severity Filtering
 
@@ -185,7 +222,10 @@ roborev fix --min-severity medium        # Skip low-severity findings
 roborev fix --batch --min-severity high  # Severity filter works with batch mode
 ```
 
-The severity filter is injected into the agent prompt as an instruction. Findings below the threshold are ignored. The filter does not apply to task or analysis jobs, which have free-form output without severity labels; if a batch includes any task jobs, the severity filter is suppressed for the entire batch.
+The severity filter is injected into the agent prompt as an instruction.
+Findings below the threshold are ignored. The filter does not apply to task or
+analysis jobs, which have free-form output without severity labels; if a batch
+includes any task jobs, the severity filter is suppressed for the entire batch.
 
 Set a default per repo in `.roborev.toml`:
 
@@ -197,7 +237,8 @@ The CLI flag overrides the config value.
 
 ## Stream Output
 
-When `roborev fix` or `analyze --fix` runs an agent, output is formatted as compact progress lines showing tool calls grouped with a gutter prefix:
+When `roborev fix` or `analyze --fix` runs an agent, output is formatted as
+compact progress lines showing tool calls grouped with a gutter prefix:
 
 ```
 │ Read   internal/gmail/ratelimit_test.go
@@ -207,7 +248,8 @@ When `roborev fix` or `analyze --fix` runs an agent, output is formatted as comp
 │ Grep   TODO  internal/
 ```
 
-Agent text between tool calls is rendered as wrapped Markdown, adapting to your terminal width and light/dark background.
+Agent text between tool calls is rendered as wrapped Markdown, adapting to your
+terminal width and light/dark background.
 
 When piped (non-TTY), raw JSON is passed through for logging or scripting:
 
@@ -248,7 +290,10 @@ In `--per-file` mode, each job includes a `file` field:
 
 ## Large File Handling
 
-When file content exceeds the configured prompt size limit (default 200KB), roborev switches to **agentic mode** automatically. Instead of embedding file contents in the prompt, it passes file paths and lets the agent read them directly.
+When file content exceeds the configured prompt size limit (default 200KB),
+roborev switches to **agentic mode** automatically. Instead of embedding file
+contents in the prompt, it passes file paths and lets the agent read them
+directly.
 
 Configure the limit in `config.toml`:
 
@@ -301,8 +346,11 @@ max_prompt_size = 204800
 
 ## See Also
 
-- [Custom Agent Tasks](/advanced/custom-tasks/): Ad hoc analysis with `roborev run`
-- [Auto-Fix Agentic Loop with Refine](/guides/auto-fixing/): Fix failed reviews automatically
-- [Consolidating Reviews](/commands/#consolidating-reviews): Verify and deduplicate findings before fixing
+- [Custom Agent Tasks](/advanced/custom-tasks/): Ad hoc analysis with
+    `roborev run`
+- [Auto-Fix Agentic Loop with Refine](/guides/auto-fixing/): Fix failed reviews
+    automatically
+- [Consolidating Reviews](/commands/#consolidating-reviews): Verify and
+    deduplicate findings before fixing
 - [Terminal UI](/integrations/tui/): Browse analysis results interactively
 - [Configuration](/configuration/): Prompt size and agent settings

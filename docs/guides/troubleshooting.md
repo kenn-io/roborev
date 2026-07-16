@@ -5,11 +5,13 @@ description: Diagnose and fix common roborev issues
 
 ## Reviews Not Triggering
 
-The most common issue is commits going unreviewed. Walk through these checks in order.
+The most common issue is commits going unreviewed. Walk through these checks in
+order.
 
 ### Check the hook is installed
 
-roborev uses a `post-commit` git hook to enqueue commits for review. Verify it exists:
+roborev uses a `post-commit` git hook to enqueue commits for review. Verify it
+exists:
 
 ```bash
 # Resolves core.hooksPath (relative or absolute) against the main
@@ -36,7 +38,8 @@ If the file is missing, run `roborev install-hook` to create it.
 
 ### Check the daemon is running
 
-The hook enqueues commits, but the daemon must be running to process the queue. Check with:
+The hook enqueues commits, but the daemon must be running to process the queue.
+Check with:
 
 ```bash
 roborev status
@@ -48,7 +51,9 @@ If the daemon is stopped, start it:
 roborev daemon start
 ```
 
-`roborev init` starts the daemon automatically, but it won't survive a reboot unless you've set up a launchd/systemd service. If the daemon was running but reviews still aren't appearing, check the daemon log for errors:
+`roborev init` starts the daemon automatically, but it won't survive a reboot
+unless you've set up a launchd/systemd service. If the daemon was running but
+reviews still aren't appearing, check the daemon log for errors:
 
 ```bash
 roborev daemon run 2>&1 | head -50
@@ -56,7 +61,11 @@ roborev daemon run 2>&1 | head -50
 
 ### Post-commit hook log
 
-roborev logs every post-commit hook invocation to `~/.roborev/post-commit.log` as JSONL. Each entry records a timestamp, the repository path, the outcome (`ok` or `error`), and a reason when the hook skips or fails. This is useful for diagnosing silent hook failures, especially in linked git worktrees where path resolution issues can prevent the hook from firing.
+roborev logs every post-commit hook invocation to `~/.roborev/post-commit.log`
+as JSONL. Each entry records a timestamp, the repository path, the outcome (`ok`
+or `error`), and a reason when the hook skips or fails. This is useful for
+diagnosing silent hook failures, especially in linked git worktrees where path
+resolution issues can prevent the hook from firing.
 
 ```bash
 # View the last few hook invocations
@@ -65,19 +74,24 @@ tail -5 ~/.roborev/post-commit.log | jq .
 
 ### Mangled hook file
 
-Other tools (Husky, lefthook, pre-commit, overcommit) can overwrite or corrupt the post-commit hook. Symptoms include:
+Other tools (Husky, lefthook, pre-commit, overcommit) can overwrite or corrupt
+the post-commit hook. Symptoms include:
 
 - A stray `fi` with no matching `if`
 - Missing `roborev enqueue` line
 - The hook file containing only another tool's boilerplate
 
-To diagnose, inspect the hook file and look for the `roborev enqueue` call. If it's missing or the file looks wrong, reinstall:
+To diagnose, inspect the hook file and look for the `roborev enqueue` call. If
+it's missing or the file looks wrong, reinstall:
 
 ```bash
 roborev install-hook --force
 ```
 
-If your repo uses a hook manager, you may need to add the `roborev enqueue` call to your hook manager's post-commit configuration instead. See [Review Hooks](/guides/hooks/) for details on hook managers and `core.hooksPath`.
+If your repo uses a hook manager, you may need to add the `roborev enqueue` call
+to your hook manager's post-commit configuration instead. See
+[Review Hooks](/guides/hooks/) for details on hook managers and
+`core.hooksPath`.
 
 ### The nuclear option
 
@@ -97,15 +111,17 @@ This overwrites the existing post-commit hook entirely.
 roborev init --force
 ```
 
-This is the "nuke it from orbit" option: it re-registers the repo with the daemon, reinstalls the hook, and restarts the daemon. Use this when you're not sure what's wrong and want a clean slate.
+This is the "nuke it from orbit" option: it re-registers the repo with the
+daemon, reinstalls the hook, and restarts the daemon. Use this when you're not
+sure what's wrong and want a clean slate.
 
 ## Automation works in Claude Code CLI but not Claude Desktop
 
-The agent hook (mid-session fix nudges) relies on harness hooks
-(`PreToolUse` / `PostToolUse` / `Stop`) that the Claude Code CLI and Codex
-expose. Claude Desktop does not expose these hooks, so the agent-hook layer does
-not run there. Post-commit reviews still work in any environment - check
-`roborev status` and `roborev show HEAD` to confirm reviews are running.
+The agent hook (mid-session fix nudges) relies on harness hooks (`PreToolUse` /
+`PostToolUse` / `Stop`) that the Claude Code CLI and Codex expose. Claude
+Desktop does not expose these hooks, so the agent-hook layer does not run there.
+Post-commit reviews still work in any environment - check `roborev status` and
+`roborev show HEAD` to confirm reviews are running.
 
 ## See Also
 

@@ -20,6 +20,14 @@ pass_filenames = false
 always_run = true
 
 [[repos.hooks]]
+id = "markdown-format"
+name = "markdown format"
+language = "system"
+entry = "make markdown-ci"
+pass_filenames = false
+always_run = true
+
+[[repos.hooks]]
 id = "renovate-config-validator"
 name = "renovate config validator"
 language = "system"

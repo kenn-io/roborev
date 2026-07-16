@@ -3,7 +3,6 @@ title: Command Cheat Sheet
 description: Quick reference for all roborev commands and flags
 ---
 
-
 <figure class="screenshot" data-lightbox>
   <img src="/assets/generated/cli-help.svg" alt="roborev help output" loading="lazy">
 </figure>
@@ -114,7 +113,10 @@ roborev wait --quiet             # Suppress output (for hooks/agents)
 | `--job` | Force argument to be treated as job ID |
 | `-q, --quiet` | Suppress output (exit code only) |
 
-Unlike `roborev review --wait`, this does not enqueue a new review. It waits for an already-running job, making it useful when a post-commit hook has already triggered the review. For most interactive workflows, use `roborev tui` to browse completed reviews instead of blocking.
+Unlike `roborev review --wait`, this does not enqueue a new review. It waits for
+an already-running job, making it useful when a post-commit hook has already
+triggered the review. For most interactive workflows, use `roborev tui` to
+browse completed reviews instead of blocking.
 
 See: [Reviewing Code](/guides/reviewing-code/)
 
@@ -140,13 +142,17 @@ roborev log <job_id>             # View job log
 | `--prompt` | Show the prompt sent to the agent instead of the review output |
 | `--json` | Output as JSON for machine-readable workflows |
 
-`roborev show` displays review comments after the review output when comments exist, matching the layout in the TUI review detail view.
+`roborev show` displays review comments after the review output when comments
+exist, matching the layout in the TUI review detail view.
 
-For panel parent reviews, `roborev show` also displays a one-line reviewer summary. `roborev show --json` includes an additive `panel` object with the run UUID, panel name, synthesis job ID, and member reviewer statuses.
+For panel parent reviews, `roborev show` also displays a one-line reviewer
+summary. `roborev show --json` includes an additive `panel` object with the run
+UUID, panel name, synthesis job ID, and member reviewer statuses.
 
 See: [Terminal UI](/integrations/tui/)
 
 !!! tip
+
     Press `l` in the TUI to open the log viewer for any job (running or completed).
 
 ## Canceling a Job
@@ -193,17 +199,17 @@ compact, queued, running, failed, and canceled jobs are excluded. Panel reviews
 export as one top-level synthesis review with completed member reviews nested
 under `subagents`; member reviews do not appear as separate top-level rows.
 
-The export window filters on `completed_at`. Date-only bounds are interpreted
-as UTC days, so `--since 2026-06-01 --until 2026-06-30` includes reviews from
-the start of June 1 through the end of June 30 UTC. When `--limit` is omitted,
-the CLI follows daemon cursors until all matching rows are included in the one
-JSON document. With `--limit`, the CLI still pages through bounded daemon
-responses until the requested top-level count is reached or no more rows match.
+The export window filters on `completed_at`. Date-only bounds are interpreted as
+UTC days, so `--since 2026-06-01 --until 2026-06-30` includes reviews from the
+start of June 1 through the end of June 30 UTC. When `--limit` is omitted, the
+CLI follows daemon cursors until all matching rows are included in the one JSON
+document. With `--limit`, the CLI still pages through bounded daemon responses
+until the requested top-level count is reached or no more rows match.
 
-Export documents use `schema_version: 1` and include a stable `database_id`
-for the local review database. Adding `database_id` does not bump
-`schema_version` because it is an additive header field and existing consumers
-must continue to ignore unknown header keys.
+Export documents use `schema_version: 1` and include a stable `database_id` for
+the local review database. Adding `database_id` does not bump `schema_version`
+because it is an additive header field and existing consumers must continue to
+ignore unknown header keys.
 
 Rows are ordered by `(completed_at, review_id)` ascending. `next_cursor` is an
 opaque, internally versioned token containing that compound position and the
@@ -213,8 +219,8 @@ resolvable or reject them clearly. Every non-empty export includes a
 `next_cursor`, even when `truncated` is `false`; `truncated` only means more
 matching rows are available immediately. `--cursor <opaque>` resumes strictly
 after the cursor position, cannot be combined with `--since`, and still honors
-`--until`, `--limit`, `--profile`, `--closed-only`, `--repo`, and `--project`.
-A malformed, corrupt, stale, or no-longer-resolvable cursor fails instead of
+`--until`, `--limit`, `--profile`, `--closed-only`, `--repo`, and `--project`. A
+malformed, corrupt, stale, or no-longer-resolvable cursor fails instead of
 silently producing a full or empty export. Consumers should treat any cursor
 rejection as a signal to discard the cursor and retry with a completed-at window
 backfill. A cursor from a different `database_id` is rejected distinctly as a
@@ -227,6 +233,7 @@ returned by cursor resume. Consumers that need convergence for late-completing
 reviews should run their own overlapping completed-at window separately.
 
 !!! warning "Review content may be sensitive"
+
     The `content` profile exports raw review output as stored. Review text can
     include repository-specific details or other sensitive context. Use
     `--profile metadata` when you do not need review prose, and handle content
@@ -292,9 +299,13 @@ roborev log clean --days 3       # Remove logs older than 3 days
 | `--raw` | Print raw NDJSON without formatting |
 | `--path` | Print the log file path instead of contents |
 
-Job logs are persisted to `~/.roborev/logs/jobs/` so agent output remains available after daemon restarts. By default, `roborev log` renders NDJSON into compact, human-readable progress lines showing tool calls and agent text. Use `--raw` for the original NDJSON when scripting or debugging.
+Job logs are persisted to `~/.roborev/logs/jobs/` so agent output remains
+available after daemon restarts. By default, `roborev log` renders NDJSON into
+compact, human-readable progress lines showing tool calls and agent text. Use
+`--raw` for the original NDJSON when scripting or debugging.
 
-The `clean` subcommand removes log files older than the specified number of days (default: 7).
+The `clean` subcommand removes log files older than the specified number of days
+(default: 7).
 
 ## Commenting on Reviews
 
@@ -312,6 +323,7 @@ roborev close <job_id> --reopen      # Reopen a closed review
 | `--job` | Force interpretation as job ID |
 
 !!! note
+
     `roborev address` is still accepted as an alias for `roborev close`.
 
 See: [Responding to Reviews](/guides/responding-to-reviews/)
@@ -345,7 +357,10 @@ roborev refine --min-severity high  # Only fix high and critical findings
 | `--allow-unsafe-agents` | Allow agents without sandboxing |
 | `--min-severity <level>` | Only fix findings at or above this severity (`low`/`medium`/`high`/`critical`) |
 
-`refine` creates its own fix commits, so `fix_commit_author` and `fix_commit_co_authored_by` are applied directly with Git's `--author` and `--trailer` options. See [Fix Commit Metadata](/configuration/#fix-commit-metadata).
+`refine` creates its own fix commits, so `fix_commit_author` and
+`fix_commit_co_authored_by` are applied directly with Git's `--author` and
+`--trailer` options. See
+[Fix Commit Metadata](/configuration/#fix-commit-metadata).
 
 See: [Auto-Fix Agentic Loop with Refine](/guides/auto-fixing/)
 
@@ -380,7 +395,10 @@ roborev fix --min-severity medium  # Skip low-severity findings
 | `--newest-first` | Process jobs newest first instead of oldest first |
 | `--min-severity <level>` | Only fix findings at or above this severity (`low`/`medium`/`high`/`critical`) |
 
-For foreground `fix` and `analyze --fix` flows, the selected agent owns the commit. `fix_commit_author` and `fix_commit_co_authored_by` are included as prompt instructions only, so agent-level Git config can still add its own trailers. See [Fix Commit Metadata](/configuration/#fix-commit-metadata).
+For foreground `fix` and `analyze --fix` flows, the selected agent owns the
+commit. `fix_commit_author` and `fix_commit_co_authored_by` are included as
+prompt instructions only, so agent-level Git config can still add its own
+trailers. See [Fix Commit Metadata](/configuration/#fix-commit-metadata).
 
 See: [Assisted Refactoring](/guides/assisted-refactoring/)
 
@@ -410,12 +428,22 @@ roborev compact --reasoning thorough         # Use thorough reasoning level
 | `--timeout <duration>` | Timeout for `--wait` mode (default: 10m) |
 | `--quiet` | Suppress progress output |
 
-Compact discovers open completed reviews, sends them to an agent for verification against the current codebase, and consolidates related findings into a single review job. Original jobs are automatically closed when consolidation finishes. This adds a quality layer between `review` and `fix` to reduce false positives.
+Compact discovers open completed reviews, sends them to an agent for
+verification against the current codebase, and consolidates related findings
+into a single review job. Original jobs are automatically closed when
+consolidation finishes. This adds a quality layer between `review` and `fix` to
+reduce false positives.
 
-If the verification reports that findings remain, `compact` requires each one to be repeated with actionable detail (severity, file/line, description). Outputs that mention remaining findings only as counts or summaries are rejected and the job fails, rather than producing a review that cannot be acted on. A clean verification with no remaining findings is still recorded as a review.
+If the verification reports that findings remain, `compact` requires each one to
+be repeated with actionable detail (severity, file/line, description). Outputs
+that mention remaining findings only as counts or summaries are rejected and the
+job fails, rather than producing a review that cannot be acted on. A clean
+verification with no remaining findings is still recorded as a review.
 
 !!! note
-    Avoid running multiple compact commands concurrently on the same branch. The operation is not atomic and concurrent runs can produce inconsistent state.
+
+    Avoid running multiple compact commands concurrently on the same branch. The
+    operation is not atomic and concurrent runs can produce inconsistent state.
 
 ## Review Statistics
 
@@ -439,13 +467,16 @@ roborev summary --json              # Structured output for scripting
 The summary includes:
 
 - **Overview**: Job counts by status (done, failed, canceled, queued, running)
-- **Verdicts**: Pass/fail counts, pass rate, and resolution rate for addressed failures
-- **Agent breakdown**: Per-agent job counts, pass rate, and median review duration
+- **Verdicts**: Pass/fail counts, pass rate, and resolution rate for addressed
+    failures
+- **Agent breakdown**: Per-agent job counts, pass rate, and median review
+    duration
 - **Duration**: Review and queue time percentiles (p50, p90, p99)
 - **Job types**: Counts by job type (review, fix, task, etc.)
 - **Repos** (with `--all`): Per-repo breakdown with pass/fail/addressed counts
 - **Failures**: Total failures, retries, and error categories
-- **Cost**: Approximate agent spend for eligible jobs in the same time window, with coverage when only some jobs reported cost
+- **Cost**: Approximate agent spend for eligible jobs in the same time window,
+    with coverage when only some jobs reported cost
 
 ## Aggregate Cost
 
@@ -466,9 +497,14 @@ roborev cost --json              # Structured output for scripting
 | `--all` | Aggregate across all repos (mutually exclusive with `--repo`) |
 | `--json` | Structured output for scripting |
 
-Cost is approximate and partial by design. roborev sums stored `cost_usd` values from jobs where an agent actually ran, so the result is a lower bound when some agents or models do not report cost. Human output shows coverage, for example `Approx cost: ~$12.50  (8/10 jobs reported cost)`. JSON output includes `total_usd`, `jobs_with_cost`, `jobs_total`, and `complete`.
+Cost is approximate and partial by design. roborev sums stored `cost_usd` values
+from jobs where an agent actually ran, so the result is a lower bound when some
+agents or models do not report cost. Human output shows coverage, for example
+`Approx cost: ~$12.50  (8/10 jobs reported cost)`. JSON output includes
+`total_usd`, `jobs_with_cost`, `jobs_total`, and `complete`.
 
-See [Token Usage](#token-usage) for how per-job token and cost data is collected.
+See [Token Usage](#token-usage) for how per-job token and cost data is
+collected.
 
 ## Insights
 
@@ -493,7 +529,11 @@ roborev insights --json                  # Output as JSON
 | `--wait` | Wait for completion and display result (default: true) |
 | `--json` | Output job info as JSON |
 
-Analyzes failing code reviews to identify recurring patterns and suggest improvements to review guidelines. The command queries completed reviews (focusing on failures) within the time window, includes the currently resolved `review_guidelines` from global and repo config as context, and sends the batch to an agent for structured analysis.
+Analyzes failing code reviews to identify recurring patterns and suggest
+improvements to review guidelines. The command queries completed reviews
+(focusing on failures) within the time window, includes the currently resolved
+`review_guidelines` from global and repo config as context, and sends the batch
+to an agent for structured analysis.
 
 The agent produces:
 
@@ -501,17 +541,28 @@ The agent produces:
 - Hotspot areas (files/packages with concentrated failures)
 - Noise candidates (findings consistently dismissed without code changes)
 - Guideline gaps (patterns flagged by reviews but not covered by guidelines)
-- Suggested guideline additions (concrete text for `.roborev.toml` or `~/.roborev/config.toml`)
+- Suggested guideline additions (concrete text for `.roborev.toml` or
+    `~/.roborev/config.toml`)
 
-If no failing reviews match the time window and branch filter, the command exits with a message instead of queuing a job.
+If no failing reviews match the time window and branch filter, the command exits
+with a message instead of queuing a job.
 
 ## Token Usage
 
-Token usage is tracked automatically for completed jobs when `agentsview` is installed. Usage appears in the TUI review header and `roborev show` output (e.g. `118.0k ctx · 28.8k out`).
+Token usage is tracked automatically for completed jobs when `agentsview` is
+installed. Usage appears in the TUI review header and `roborev show` output
+(e.g. `118.0k ctx · 28.8k out`).
 
-When agentsview 0.30.0 or newer is installed, the usage summary also includes a model-pricing cost estimate (e.g. `118.0k ctx · 28.8k out · ~$0.42`), and the TUI queue displays a default-visible "Cost" column with the per-job estimate. Older agentsview versions still record token counts; the cost column stays blank for unpriced models and for jobs whose usage has not yet been fetched. The tilde marks the value as a model-pricing estimate rather than a billed amount.
+When agentsview 0.30.0 or newer is installed, the usage summary also includes a
+model-pricing cost estimate (e.g. `118.0k ctx · 28.8k out · ~$0.42`), and the
+TUI queue displays a default-visible "Cost" column with the per-job estimate.
+Older agentsview versions still record token counts; the cost column stays blank
+for unpriced models and for jobs whose usage has not yet been fetched. The tilde
+marks the value as a model-pricing estimate rather than a billed amount.
 
-If you run a central usage service, configure `[cost] endpoint` to fetch usage over HTTP instead of through the local `agentsview` CLI. See [Cost Usage Endpoint](/configuration/#cost-usage-endpoint).
+If you run a central usage service, configure `[cost] endpoint` to fetch usage
+over HTTP instead of through the local `agentsview` CLI. See
+[Cost Usage Endpoint](/configuration/#cost-usage-endpoint).
 
 To backfill token data for older jobs:
 
@@ -524,7 +575,8 @@ roborev backfill-tokens --dry-run   # Preview without writing
 |------|-------------|
 | `--dry-run` | Preview candidates without fetching or storing data |
 
-The backfill scans completed jobs that have a session ID but no stored token usage. Jobs whose session files have been deleted are skipped.
+The backfill scans completed jobs that have a session ID but no stored token
+usage. Jobs whose session files have been deleted are skipped.
 
 ## CI Review
 
@@ -548,11 +600,15 @@ roborev ci review --comment                  # Post results as PR comment
 | `--min-severity <level>` | Minimum severity to report (`low`/`medium`/`high`/`critical`) |
 | `--synthesis-agent <name>` | Agent for combining multi-job results |
 
-Runs a one-shot review without a daemon or database. Designed for CI pipelines where you want review results as part of the build, not as a background service.
+Runs a one-shot review without a daemon or database. Designed for CI pipelines
+where you want review results as part of the build, not as a background service.
 
-In GitHub Actions, `ci review` auto-detects `GITHUB_REPOSITORY`, `GITHUB_REF`, and `GITHUB_EVENT_PATH` so you can run it with no flags. Outside GitHub Actions, pass `--gh-repo` and `--ref` explicitly.
+In GitHub Actions, `ci review` auto-detects `GITHUB_REPOSITORY`, `GITHUB_REF`,
+and `GITHUB_EVENT_PATH` so you can run it with no flags. Outside GitHub Actions,
+pass `--gh-repo` and `--ref` explicitly.
 
-Exit codes: `0` on success or when all agents were skipped due to quota exhaustion, non-zero on real failures.
+Exit codes: `0` on success or when all agents were skipped due to quota
+exhaustion, non-zero on real failures.
 
 See: [GitHub Integration](/integrations/github/)
 
@@ -574,12 +630,15 @@ roborev init gh-action --roborev-version 0.34.0 # Pin version
 | `--roborev-version <ver>` | Pin roborev version in the workflow (default: latest) |
 
 Generates a GitHub Actions workflow that:
-1. Checks out the repository
-2. Downloads and installs roborev with SHA256 verification
-3. Runs `roborev ci review --comment` on each PR
-4. Posts review results as PR comments
 
-Agent API keys are read from repository secrets (e.g. `ANTHROPIC_API_KEY` for Claude Code, `OPENAI_API_KEY` for Codex). Add the required secrets in your repository's Settings > Secrets and variables > Actions.
+1. Checks out the repository
+1. Downloads and installs roborev with SHA256 verification
+1. Runs `roborev ci review --comment` on each PR
+1. Posts review results as PR comments
+
+Agent API keys are read from repository secrets (e.g. `ANTHROPIC_API_KEY` for
+Claude Code, `OPENAI_API_KEY` for Codex). Add the required secrets in your
+repository's Settings > Secrets and variables > Actions.
 
 See: [GitHub Integration](/integrations/github/)
 
@@ -698,18 +757,28 @@ roborev uninstall-hook           # Remove hook
 | `--json` | Emit daemon and queue status as JSON. Includes the active daemon endpoint as `network`, `address`, and `port` fields alongside queue counters and version fields |
 | `--force` | Overwrite an existing post-commit hook with a fresh one |
 
-`pause` and `unpause` are daemon-wide queue controls. Pausing prevents workers from starting new queued jobs, but running jobs continue to completion. A paused queue survives daemon restarts and is shown in `roborev status` and the TUI. Use `cancel` when you need to stop one queued or running job instead of pausing the whole queue.
+`pause` and `unpause` are daemon-wide queue controls. Pausing prevents workers
+from starting new queued jobs, but running jobs continue to completion. A paused
+queue survives daemon restarts and is shown in `roborev status` and the TUI. Use
+`cancel` when you need to stop one queued or running job instead of pausing the
+whole queue.
 
 !!! tip "Broken post-commit hook?"
-    If your post-commit hook was corrupted during a previous upgrade (e.g. a stray `fi` or missing lines), run:
+
+    If your post-commit hook was corrupted during a previous upgrade (e.g. a stray
+    `fi` or missing lines), run:
+
     ```bash
     roborev install-hook --force
     ```
+
     This replaces the hook entirely with a known-good version.
 
 ### Post-Commit Hook Entry Point
 
-`roborev post-commit` is the command the git hook calls after each commit. You do not need to run it manually. It silently exits on any error so hooks never block commits.
+`roborev post-commit` is the command the git hook calls after each commit. You
+do not need to run it manually. It silently exits on any error so hooks never
+block commits.
 
 ```bash
 roborev post-commit              # Called by the git post-commit hook
@@ -720,14 +789,18 @@ roborev post-commit              # Called by the git post-commit hook
 | `--repo <path>` | Path to git repository (default: current directory) |
 | `--base <branch>` | Base branch for branch review comparison |
 
-By default, `post-commit` reviews the single commit at HEAD. To review the entire branch (all commits since diverging from the base branch) instead, set `post_commit_review = "branch"` in `.roborev.toml`:
+By default, `post-commit` reviews the single commit at HEAD. To review the
+entire branch (all commits since diverging from the base branch) instead, set
+`post_commit_review = "branch"` in `.roborev.toml`:
 
 ```toml
 # .roborev.toml
 post_commit_review = "branch"
 ```
 
-When set to `"branch"`, each commit triggers a `merge-base..HEAD` range review. On the base branch itself, detached HEAD, or any error, it falls back to a single-commit review.
+When set to `"branch"`, each commit triggers a `merge-base..HEAD` range review.
+On the base branch itself, detached HEAD, or any error, it falls back to a
+single-commit review.
 
 See: [Configuration](/configuration/#post-commit-review-mode)
 
@@ -752,7 +825,9 @@ roborev agent-hook daemon start         # start | status | stop | restart
 | `--binary <path>` | Resolve and bake this roborev binary path into installed agent hooks. Mutually exclusive with `--command` |
 | `--scope user` | Factory Droid config scope (`--agent droid` only) |
 
-`roborev agent-hook` is an opt-in Codex, Claude Code, and Factory Droid integration that prompts the agent to run the fix skill when review work piles up. See [Agent Hook](/agent-hook/).
+`roborev agent-hook` is an opt-in Codex, Claude Code, and Factory Droid
+integration that prompts the agent to run the fix skill when review work piles
+up. See [Agent Hook](/agent-hook/).
 
 ```bash
 roborev agent-hook install --agent droid             # Install Factory Droid hook entries (user scope)
@@ -802,11 +877,15 @@ roborev stream                   # Stream all events (JSONL)
 roborev stream --repo .          # Filter to current repo
 ```
 
-See: [PostgreSQL Sync](/advanced/postgres-sync/), [Event Streaming](/advanced/streaming/)
+See: [PostgreSQL Sync](/advanced/postgres-sync/),
+[Event Streaming](/advanced/streaming/)
 
 ## Multi-Repo Workspaces
 
-`roborev list` looks in immediate child subfolders for repositories, so you can run it from a parent directory that contains multiple repos. `roborev review` suggests repo-level review commands when run from a workspace root, making it easy to review across projects.
+`roborev list` looks in immediate child subfolders for repositories, so you can
+run it from a parent directory that contains multiple repos. `roborev review`
+suggests repo-level review commands when run from a workspace root, making it
+easy to review across projects.
 
 ## Global Flags
 

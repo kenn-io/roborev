@@ -5,7 +5,11 @@ description: Stream review events and integrate with the daemon REST API
 
 ## Daemon API
 
-The daemon exposes a REST API on the configured `server_addr`. With the default value of `127.0.0.1:7373`, the API is reachable at `http://127.0.0.1:7373`. An OpenAPI 3.1.0 spec is available at `/openapi.json` for client generation and integration tooling. roborev also ships a generated public Go client for integrations that want a stable typed wrapper.
+The daemon exposes a REST API on the configured `server_addr`. With the default
+value of `127.0.0.1:7373`, the API is reachable at `http://127.0.0.1:7373`. An
+OpenAPI 3.1.0 spec is available at `/openapi.json` for client generation and
+integration tooling. roborev also ships a generated public Go client for
+integrations that want a stable typed wrapper.
 
 ```bash
 # Fetch the OpenAPI spec (TCP, default address)
@@ -36,7 +40,12 @@ curl --unix-socket "$XDG_RUNTIME_DIR/roborev/daemon.sock" http://localhost/opena
 | `/api/review/close` | POST | Close or reopen a review |
 | `/api/comment` | POST | Add a comment to a job or commit |
 
-These endpoints have typed request/response schemas in the OpenAPI spec. The daemon also exposes endpoints used by the CLI, TUI, and subsystems for enqueueing jobs, streaming job output, reading logs and patches, sync operations, and token backfill. Most JSON endpoints are represented in the generated client; endpoints that stream or return raw bytes are exposed through raw helper methods.
+These endpoints have typed request/response schemas in the OpenAPI spec. The
+daemon also exposes endpoints used by the CLI, TUI, and subsystems for
+enqueueing jobs, streaming job output, reading logs and patches, sync
+operations, and token backfill. Most JSON endpoints are represented in the
+generated client; endpoints that stream or return raw bytes are exposed through
+raw helper methods.
 
 ## Public Go Client
 
@@ -54,7 +63,8 @@ func main() {
 }
 ```
 
-The client embeds typed methods generated from `pkg/client/openapi.yaml`. For streaming or raw-byte endpoints, use the hand-written helpers:
+The client embeds typed methods generated from `pkg/client/openapi.yaml`. For
+streaming or raw-byte endpoints, use the hand-written helpers:
 
 | Helper | Endpoint |
 |--------|----------|
@@ -64,11 +74,15 @@ The client embeds typed methods generated from `pkg/client/openapi.yaml`. For st
 | `StreamEventsRaw` | `/api/stream/events` |
 | `SyncNowRaw` | `/api/sync/now` |
 
-The generated package is intended for integrations that run against the same installed roborev version as the daemon. The CLI and TUI still evolve in lockstep with the daemon, so pin roborev versions when building long-lived external tools.
+The generated package is intended for integrations that run against the same
+installed roborev version as the daemon. The CLI and TUI still evolve in
+lockstep with the daemon, so pin roborev versions when building long-lived
+external tools.
 
 ## Event Stream
 
-Stream review events in real-time for integrations, notifications, or custom tooling:
+Stream review events in real-time for integrations, notifications, or custom
+tooling:
 
 ```bash
 roborev stream              # Stream all events
@@ -98,6 +112,7 @@ Events are emitted as newline-delimited JSON (JSONL):
 ## Event Fields
 
 Common fields:
+
 - `type`: Event type
 - `ts`: ISO 8601 timestamp
 - `job_id`: Unique job identifier
@@ -105,11 +120,14 @@ Common fields:
 - `repo`: Repository path
 - `repo_name`: Repository display name
 - `sha`: Commit SHA (or `dirty` for uncommitted changes)
-- `branch`: Branch used for event and hook matching, when known. For CI pull-request reviews this is the PR base branch
+- `branch`: Branch used for event and hook matching, when known. For CI
+    pull-request reviews this is the PR base branch
 - `agent`: Agent that processed the review, when available
-- `worktree_path`: Worktree path used by the job, when different from the main repo path
+- `worktree_path`: Worktree path used by the job, when different from the main
+    repo path
 
 Additional fields:
+
 - `verdict`: Pass/Fail verdict (on `review.completed`)
 - `error`: Error message (on `review.failed`)
 

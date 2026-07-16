@@ -8,3 +8,10 @@ dependencies = [
 
 [tool.uv]
 package = false
+
+[dependency-groups]
+dev = [
+    "mdformat==1.0.0",
+    "mdformat-front-matters==2.0.0",
+    "mdformat-mkdocs==5.2.1",
+]

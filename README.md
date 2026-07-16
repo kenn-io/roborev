@@ -164,22 +164,23 @@ go install go.kenn.io/roborev/cmd/roborev@latest
 ## Developer Setup
 
 This repo uses [`prek`](https://prek.j178.dev/) for local pre-commit checks.
-The hooks are local system hooks. They run a fast Git-test isolation guard and
-`make lint-ci`, the non-mutating golangci-lint target, instead of using the
-upstream `golangci-lint` pre-commit repository. The hooks for the Git-test
-isolation guard and `make lint-ci` are configured with
-`always_run = true`, so they run on every commit, not just commits that touch Go
-files. The Renovate config validator runs when `renovate.json` changes.
+The hooks are local system hooks. They run a fast Git-test isolation guard,
+`make lint-ci` for non-mutating Go lint, and `make markdown-ci` for non-mutating
+Zensical Markdown formatting checks. These hooks use `always_run = true`, so
+they run on every commit. The Renovate config validator runs when
+`renovate.json` changes.
 
 ```bash
-brew install prek     # or use your preferred prek install method
+brew install prek uv  # or use your preferred install method
 mise use --global npm:renovate@latest
 prek install          # install the local git hook
 prek run --all-files  # run the configured checks manually
 ```
 
 Use `make lint` when you explicitly want golangci-lint to apply fixes. Use
-`make check-renovate-config` to validate `renovate.json` directly.
+`make markdown` to wrap prose in published Zensical pages at 80 columns while
+leaving Markdown tables unchanged. Use `make check-renovate-config` to validate
+`renovate.json` directly.
 
 ## Commands
 

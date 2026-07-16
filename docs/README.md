@@ -16,8 +16,9 @@ clones do not pull large screenshots and PNGs into the main history.
 - `assets/update-static-assets-branch.sh`: updates curated static assets.
 - `screenshots/`: Docker/tmux/freeze screenshot generator and generated asset
   branch updater.
-- `scripts/check_built_site.py`, `scripts/check_public_markdown_sources.py`,
-  and `scripts/check_vercel_redirects.py`: post-build validation.
+- `scripts/format_markdown.py`: syntax-aware formatting for published pages.
+- `scripts/check_built_site.py`, `scripts/check_public_markdown_sources.py`, and
+  `scripts/check_vercel_redirects.py`: post-build validation.
 
 `docs/assets/static/`, `docs/assets/generated/`, `docs/site/`, and `docs/.venv/`
 are ignored local outputs.
@@ -60,6 +61,15 @@ Run all docs validation:
 ```bash
 make docs-check
 ```
+
+Format all Markdown pages listed by `zensical.toml`:
+
+```bash
+make markdown
+```
+
+The formatter wraps prose at 80 columns and leaves Markdown tables unchanged.
+Use `make markdown-ci` for the non-mutating check run by `prek` and CI.
 
 `make docs-check` hydrates assets, runs a strict Zensical build, checks generated
 links/assets/metadata, verifies public Markdown source files, and validates

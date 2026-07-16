@@ -3,7 +3,6 @@ title: Installation
 description: Install roborev on your system
 ---
 
-
 ## Quick Install (Recommended)
 
 The install script downloads the latest release binary for your platform:
@@ -22,7 +21,8 @@ The install script downloads the latest release binary for your platform:
     powershell -ExecutionPolicy ByPass -c "irm https://roborev.io/install.ps1 | iex"
     ```
 
-    This installs to `%USERPROFILE%\.roborev\bin` and adds it to your PATH. Both x64 and ARM64 are supported.
+    This installs to `%USERPROFILE%\.roborev\bin` and adds it to your PATH. Both x64
+    and ARM64 are supported.
 
     The installer verifies SHA256 checksums by default. To customize installation:
 
@@ -47,11 +47,15 @@ brew tap kenn-io/tap
 brew install roborev
 ```
 
-This also works on Linux with [Linuxbrew](https://docs.brew.sh/Homebrew-on-Linux).
+This also works on Linux with
+[Linuxbrew](https://docs.brew.sh/Homebrew-on-Linux).
 
 ## Linux Packages: DEB and RPM
 
-Starting with 0.57.0, GitHub releases include `.deb` and `.rpm` packages for Linux `amd64` and `arm64`. Download the package for your architecture from the [GitHub Releases](https://github.com/kenn-io/roborev/releases) page, then install it locally:
+Starting with 0.57.0, GitHub releases include `.deb` and `.rpm` packages for
+Linux `amd64` and `arm64`. Download the package for your architecture from the
+[GitHub Releases](https://github.com/kenn-io/roborev/releases) page, then
+install it locally:
 
 ```bash
 # Debian / Ubuntu
@@ -61,7 +65,8 @@ sudo apt install ./roborev_<version>_linux_amd64.deb
 sudo dnf install ./roborev_<version>_linux_amd64.rpm
 ```
 
-The packages install the `roborev` binary to `/usr/bin` and include user-level systemd units for the daemon.
+The packages install the `roborev` binary to `/usr/bin` and include user-level
+systemd units for the daemon.
 
 ## Go Install
 
@@ -85,7 +90,8 @@ cd roborev
 make install
 ```
 
-The `make install` target builds with version information embedded (e.g., `v0.7.0-5-gabcdef`).
+The `make install` target builds with version information embedded (e.g.,
+`v0.7.0-5-gabcdef`).
 
 For quick iteration during development:
 
@@ -111,4 +117,6 @@ This downloads and replaces the current binary with the latest release.
 
 ## Agent Requirements
 
-roborev requires at least one AI agent CLI to be installed. See [Supported Agents](/agents/) for the full list, installation commands, and configuration options.
+roborev requires at least one AI agent CLI to be installed. See
+[Supported Agents](/agents/) for the full list, installation commands, and
+configuration options.
