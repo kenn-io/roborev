@@ -325,6 +325,10 @@ type QuietHoursConfig struct {
 	// the window is active. Default: "1h". "0" makes quiet hours a
 	// no-op (a zero interval never exceeds the base throttle).
 	ThrottleInterval string `toml:"throttle_interval"`
+
+	// BypassUsers lists GitHub usernames that bypass the additional
+	// quiet-hours throttle. Matching is case-insensitive.
+	BypassUsers []string `toml:"bypass_users"`
 }
 
 // QuietHoursWindow is a parsed, validated quiet-hours window.
@@ -410,16 +414,26 @@ func parseClockMinutes(s string) (int, error) {
 	return t.Hour()*60 + t.Minute(), nil
 }
 
-// IsThrottleBypassed reports whether the given GitHub login is in
-// the ThrottleBypassUsers list. Comparison is case-insensitive.
-func (c *CIConfig) IsThrottleBypassed(login string) bool {
+// IsBypassed reports whether the given GitHub login bypasses the additional
+// quiet-hours throttle. Comparison is case-insensitive.
+func (q *QuietHoursConfig) IsBypassed(login string) bool {
+	return containsUsername(q.BypassUsers, login)
+}
+
+func containsUsername(users []string, login string) bool {
 	lower := strings.ToLower(login)
-	for _, u := range c.ThrottleBypassUsers {
-		if strings.ToLower(u) == lower {
+	for _, user := range users {
+		if strings.ToLower(user) == lower {
 			return true
 		}
 	}
 	return false
+}
+
+// IsThrottleBypassed reports whether the given GitHub login is in
+// the ThrottleBypassUsers list. Comparison is case-insensitive.
+func (c *CIConfig) IsThrottleBypassed(login string) bool {
+	return containsUsername(c.ThrottleBypassUsers, login)
 }
 
 // ResolvedMaxRepos returns the maximum number of repos to poll.

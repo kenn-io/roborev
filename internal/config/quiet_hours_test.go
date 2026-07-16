@@ -180,6 +180,13 @@ func TestQuietHoursWindowActive(t *testing.T) {
 	})
 }
 
+func TestQuietHoursBypassUsers(t *testing.T) {
+	q := QuietHoursConfig{BypassUsers: []string{"Trusted-User"}}
+	assert.True(t, q.IsBypassed("trusted-user"))
+	assert.True(t, q.IsBypassed("TRUSTED-USER"))
+	assert.False(t, q.IsBypassed("other-user"))
+}
+
 func TestQuietHoursConfigTOMLParsing(t *testing.T) {
 	configPath := filepath.Join(t.TempDir(), "config.toml")
 	err := os.WriteFile(configPath, []byte(`
@@ -191,6 +198,7 @@ start = "23:00"
 end = "05:00"
 timezone = "US/Central"
 throttle_interval = "90m"
+bypass_users = ["trusted-user"]
 `), 0o644)
 	require.NoError(t, err)
 
@@ -201,4 +209,5 @@ throttle_interval = "90m"
 	assert.Equal(t, "05:00", q.End)
 	assert.Equal(t, "US/Central", q.Timezone)
 	assert.Equal(t, "90m", q.ThrottleInterval)
+	assert.Equal(t, []string{"trusted-user"}, q.BypassUsers)
 }
