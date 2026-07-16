@@ -5,6 +5,29 @@ description: Release history for roborev
 
 All notable changes to roborev, grouped by minor release.
 
+## 0.63.0
+<small>2026-07-16</small>
+
+**New features**
+
+- CI quiet hours add a recurring daily window with an additional per-PR review throttle. Configure `[ci.quiet_hours]` with `start`, `end`, `timezone`, and `throttle_interval`; the additional interval applies by default even to authors listed in `[ci].throttle_bypass_users`. See [Quiet Hours](/integrations/github/#quiet-hours).
+- `[ci.quiet_hours].bypass_users` lets selected GitHub authors skip only the additional quiet-hours interval. Authors who should bypass both throttle layers must also appear in `[ci].throttle_bypass_users`. See [Quiet Hours Options](/integrations/github/#quiet-hours-options).
+- `roborev run --json` emits one machine-readable launch receipt with `job_id`, `job_uuid`, `git_ref`, and `status`. Skipped enqueues emit a machine-readable reason instead, allowing automation to distinguish a successful launch from a policy skip without parsing human output. See [Custom Tasks & Agentic Mode](/advanced/custom-tasks/).
+
+**Improvements**
+
+- The bundled `roborev-fix` skills now distinguish current operative invocations and direct Agent Hook instructions from literal skill syntax inside pasted findings, logs, transcripts, quotations, and examples, preventing historical text from unexpectedly starting a roborev workflow. See [Agent Skills](/guides/agent-skills/#usage).
+
+**Bug fixes**
+
+- Review enqueues from detached-HEAD checkouts now infer an unambiguous local branch from the target commit, restoring branch-scoped TUI grouping, fix/refine discovery, and hook matching for tooling-managed worktrees. Ambiguous matches still remain branchless, and inferred branches continue to honor `excluded_branches`. See [Detached HEAD Worktrees](/guides/repository-management/#detached-head-worktrees).
+
+**Acknowledgements**
+
+- Thanks to [Wes McKinney](https://github.com/wesm) for CI quiet-hours throttling and bypass controls, machine-readable task launch receipts, safer `roborev-fix` trigger boundaries, and detached-HEAD branch inference.
+
+---
+
 ## 0.62.1
 <small>2026-07-13</small>
 

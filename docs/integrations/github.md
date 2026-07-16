@@ -460,7 +460,7 @@ throttle_bypass_users = ["wesm"]      # these users bypass throttling
 
 When a PR is pushed within the throttle window, the poller defers the review and posts a pending GitHub status showing the next eligible review time. Set `throttle_interval = "0"` to disable throttling entirely.
 
-Throttling is bypassed when a new push supersedes an in-progress review: the old review is canceled and the new one starts immediately, so you always get feedback on the latest code.
+When the ordinary throttle defers a new push, roborev cancels any in-progress review for the older HEAD so stale results cannot post. The latest HEAD is reviewed after the interval elapses. Authors listed in `throttle_bypass_users` skip that delay, so their new push cancels the older run and starts its replacement immediately.
 
 Users listed in `throttle_bypass_users` get immediate reviews on every push regardless of the interval. Matching is case-insensitive.
 
@@ -477,7 +477,7 @@ throttle_interval = "1h"   # per-PR minimum between reviews in the window; defau
 bypass_users = ["trusted-contributor"] # skips only the quiet-hours throttle
 ```
 
-While the window is active, the effective throttle for every PR is the larger of `throttle_interval` and `quiet_hours.throttle_interval`. The quiet-hours interval applies to every author except those listed in `quiet_hours.bypass_users`; matching is case-insensitive. The ordinary throttle remains independent, so a quiet-hours bypass user must also appear in `[ci].throttle_bypass_users` to bypass both intervals. A PR's first-ever review is never blocked, and throttled pushes get the usual pending "review deferred" status. When the window ends, the next poll reviews the latest HEAD once, so overnight pushes collapse into a single fresh review.
+While the window is active, the effective throttle for every PR is the larger of `throttle_interval` and `quiet_hours.throttle_interval`. The quiet-hours interval applies to every author except those listed in `quiet_hours.bypass_users`; matching is case-insensitive. The ordinary throttle remains independent, so a quiet-hours bypass user must also appear in `[ci].throttle_bypass_users` to bypass both intervals. A PR's first-ever review is never blocked, and throttled pushes get the usual pending "review deferred" status. When the window ends, the latest HEAD becomes eligible under the ordinary throttle again, so quiet-hours-only deferrals collapse overnight pushes into a single fresh review.
 
 A push deferred only by quiet hours (one the base throttle would have allowed) does not cancel an in-flight review — unlike ordinary throttling, where a new push supersedes the stale run. Frequent overnight pushes would otherwise kill every review before it completes; instead, the running review finishes and posts, so a busy PR gets one snapshot review per interval. Pushes deferred by the base throttle keep their existing supersede behavior, inside or outside the window.
 
