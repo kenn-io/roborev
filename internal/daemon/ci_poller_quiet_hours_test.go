@@ -114,6 +114,56 @@ func TestCIPollerProcessPR_QuietHoursThrottlesBypassUser(t *testing.T) {
 		"member must not be canceled")
 }
 
+func TestCIPollerProcessPR_QuietHoursBypassSkipsQuietThrottle(t *testing.T) {
+	now := time.Now()
+	h := newQuietHoursHarness(t, "1h", []string{"trusted-user"}, now)
+	h.Cfg.CI.QuietHours.BypassUsers = []string{"TRUSTED-USER"}
+	h.Poller.quietHours = quietWindow(t, now, "1h", true)
+
+	pr := func(sha string) ghPR {
+		return ghPR{
+			Number: 98, HeadRefOid: sha, BaseRefName: "main",
+			Author: ghPRAuthor{Login: "trusted-user"},
+		}
+	}
+
+	err := h.Poller.processPR(context.Background(), "acme/api", pr("first-sha"), h.Cfg)
+	require.NoError(t, err, "first processPR")
+	require.True(t, h.hasPanel(t, "acme/api", 98, "first-sha"))
+
+	err = h.Poller.processPR(context.Background(), "acme/api", pr("second-sha"), h.Cfg)
+	require.NoError(t, err, "second processPR")
+	assert.True(t, h.hasPanel(t, "acme/api", 98, "second-sha"),
+		"author bypassing both throttle layers should be reviewed immediately")
+}
+
+func TestCIPollerProcessPR_QuietHoursBypassPreservesBaseThrottle(t *testing.T) {
+	now := time.Now()
+	h := newQuietHoursHarness(t, "1h", nil, now)
+	h.Cfg.CI.QuietHours.BypassUsers = []string{"TRUSTED-USER"}
+	h.Poller.quietHours = quietWindow(t, now, "1h", true)
+
+	pr := func(sha string) ghPR {
+		return ghPR{
+			Number: 99, HeadRefOid: sha, BaseRefName: "main",
+			Author: ghPRAuthor{Login: "trusted-user"},
+		}
+	}
+
+	err := h.Poller.processPR(context.Background(), "acme/api", pr("first-sha"), h.Cfg)
+	require.NoError(t, err, "first processPR")
+	require.True(t, h.hasPanel(t, "acme/api", 99, "first-sha"))
+
+	err = h.Poller.processPR(context.Background(), "acme/api", pr("second-sha"), h.Cfg)
+	require.NoError(t, err, "second processPR")
+	assert.False(t, h.hasPanel(t, "acme/api", 99, "second-sha"),
+		"quiet-hours bypass must not bypass the ordinary throttle")
+
+	active, err := h.DB.GetActivePanelsForPR("acme/api", 99)
+	require.NoError(t, err)
+	assert.Empty(t, active, "ordinary throttle must supersede the stale panel")
+}
+
 func TestCIPollerProcessPR_QuietHoursElapsedBaseKeepsPanel(t *testing.T) {
 	assert := assert.New(t)
 	// A non-bypass contributor whose base throttle (1h) has elapsed but whose

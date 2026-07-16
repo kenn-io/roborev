@@ -605,18 +605,20 @@ type throttleDecision struct {
 }
 
 // throttlePR reports whether the PR was reviewed recently enough to defer this
-// push. Bypass users skip the base throttle interval, but the quiet-hours
-// interval applies to everyone while the window is active. The throttle is
-// purely time-based on the most recent panel run for the PR (any HEAD SHA).
-// Pure decision, no side effects: the caller publishes the deferred status
-// via postDeferredStatus after its retention/supersede bookkeeping.
+// push. Base-throttle bypass users skip the ordinary interval, while
+// quiet-hours bypass users skip only the additional interval active during
+// that window. The throttle is purely time-based on the most recent panel run
+// for the PR (any HEAD SHA). Pure decision, no side effects: the caller
+// publishes the deferred status via postDeferredStatus after its
+// retention/supersede bookkeeping.
 func (p *CIPoller) throttlePR(ghRepo string, pr ghPR, cfg *config.Config) (throttleDecision, error) {
 	base := cfg.CI.ResolvedThrottleInterval()
 	if cfg.CI.IsThrottleBypassed(pr.Author.Login) {
 		base = 0
 	}
 	throttle := base
-	if q := p.quietHours; q != nil && q.Active(p.nowFn()) && q.Interval > throttle {
+	if q := p.quietHours; q != nil && q.Active(p.nowFn()) &&
+		!cfg.CI.QuietHours.IsBypassed(pr.Author.Login) && q.Interval > throttle {
 		throttle = q.Interval
 	}
 	if throttle <= 0 {
@@ -634,7 +636,7 @@ func (p *CIPoller) throttlePR(ghRepo string, pr ghPR, cfg *config.Config) (throt
 		throttled: true,
 		quietOnly: base <= 0 || elapsed >= base,
 		// With the quiet-hours interval this can overstate the wait for
-		// bypass users, who become eligible at the first poll after the
+		// base-throttle bypass users, who become eligible at the first poll after the
 		// window ends. The status is advisory; capping at the window end
 		// isn't worth the wrap-around complexity.
 		nextEligible: lastReview.Add(throttle),

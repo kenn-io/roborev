@@ -474,9 +474,10 @@ start = "23:00"            # HH:MM, 24-hour clock; both start and end are requir
 end = "05:00"              # start > end wraps past midnight
 timezone = "US/Central"    # IANA name; empty means machine local time
 throttle_interval = "1h"   # per-PR minimum between reviews in the window; default 1h
+bypass_users = ["trusted-contributor"] # skips only the quiet-hours throttle
 ```
 
-While the window is active, the effective throttle for every PR is the larger of `throttle_interval` and `quiet_hours.throttle_interval`, and it applies to **all** users — including `throttle_bypass_users`. A PR's first-ever review is never blocked, and throttled pushes get the usual pending "review deferred" status. When the window ends, the next poll reviews the latest HEAD once, so overnight pushes collapse into a single fresh review.
+While the window is active, the effective throttle for every PR is the larger of `throttle_interval` and `quiet_hours.throttle_interval`. The quiet-hours interval applies to every author except those listed in `quiet_hours.bypass_users`; matching is case-insensitive. The ordinary throttle remains independent, so a quiet-hours bypass user must also appear in `[ci].throttle_bypass_users` to bypass both intervals. A PR's first-ever review is never blocked, and throttled pushes get the usual pending "review deferred" status. When the window ends, the next poll reviews the latest HEAD once, so overnight pushes collapse into a single fresh review.
 
 A push deferred only by quiet hours (one the base throttle would have allowed) does not cancel an in-flight review — unlike ordinary throttling, where a new push supersedes the stale run. Frequent overnight pushes would otherwise kill every review before it completes; instead, the running review finishes and posts, so a busy PR gets one snapshot review per interval. Pushes deferred by the base throttle keep their existing supersede behavior, inside or outside the window.
 
@@ -564,7 +565,8 @@ Set under `[ci.quiet_hours]` (global config only). See [Quiet Hours](#quiet-hour
 | `start` | string | | Window start as `"HH:MM"` (24-hour clock). Both `start` and `end` must be set to enable quiet hours. |
 | `end` | string | | Window end as `"HH:MM"`. When `start > end` the window wraps past midnight. |
 | `timezone` | string | machine local | IANA timezone name (e.g. `"US/Central"`) in which the window is evaluated |
-| `throttle_interval` | string | `"1h"` | Per-PR minimum time between reviews while the window is active. Applies to all users, including `throttle_bypass_users`. |
+| `throttle_interval` | string | `"1h"` | Per-PR minimum time between reviews while the window is active. |
+| `bypass_users` | array | `[]` | GitHub usernames that bypass only the additional quiet-hours throttle (case-insensitive) |
 
 ### GitHub App Options
 
