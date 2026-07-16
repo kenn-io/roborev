@@ -28,6 +28,11 @@ All notable changes to roborev, grouped by minor release.
 
 **Improvements**
 
+- `roborev skills install --path <directory>` installs bundled skills directly
+    into a custom final skills directory, defaulting to the Claude-compatible
+    variant and supporting explicit `--agent claude|codex|droid` selection. This
+    supports personal skill directories such as Pi's `~/.pi/agent/skills/`. See
+    [Agent Skills](/guides/agent-skills/).
 - The bundled `roborev-fix` skills now distinguish current operative invocations
     and direct Agent Hook instructions from literal skill syntax inside pasted
     findings, logs, transcripts, quotations, and examples, preventing historical

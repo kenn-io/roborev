@@ -466,6 +466,78 @@ func TestInstallIdempotent(t *testing.T) {
 	require.Len(t, claude2.Updated, len(expectedSkills), "second install: expected %d updated, got %d", len(expectedSkills), len(claude2.Updated))
 }
 
+func TestInstallToPathDefaultsToSelectedAgentDestination(t *testing.T) {
+	for _, agent := range []Agent{AgentClaude, AgentDroid} {
+		t.Run(string(agent), func(t *testing.T) {
+			skillsDir := filepath.Join(t.TempDir(), "custom", "skills")
+			expectedSkills := expectedSkillDirNamesForAgent(t, agent)
+
+			result, err := InstallToPath(agent, skillsDir)
+			require.NoError(t, err)
+			assert.Equal(t, agent, result.Agent)
+			assert.Len(t, result.Installed, len(expectedSkills))
+			assert.Empty(t, result.Updated)
+
+			for _, skill := range expectedSkills {
+				_, err := os.Stat(filepath.Join(skillsDir, skill, "SKILL.md"))
+				require.NoError(t, err, "expected %s skill to be installed", skill)
+			}
+		})
+	}
+}
+
+func TestInstallToPathWritesCodexPolicies(t *testing.T) {
+	skillsDir := filepath.Join(t.TempDir(), "custom", "skills")
+
+	result, err := InstallToPath(AgentCodex, skillsDir)
+	require.NoError(t, err)
+	assert.Equal(t, AgentCodex, result.Agent)
+
+	for _, skill := range expectedSkillDirNamesForAgent(t, AgentCodex) {
+		policyPath := filepath.Join(skillsDir, skill, "agents", "openai.yaml")
+		_, err := os.Stat(policyPath)
+		require.NoError(t, err, "expected Codex policy for %s", skill)
+	}
+}
+
+func TestInstallToPathIsIdempotent(t *testing.T) {
+	skillsDir := filepath.Join(t.TempDir(), "skills")
+	expectedSkills := expectedSkillDirNamesForAgent(t, AgentClaude)
+
+	first, err := InstallToPath(AgentClaude, skillsDir)
+	require.NoError(t, err)
+	assert.Len(t, first.Installed, len(expectedSkills))
+	assert.Empty(t, first.Updated)
+
+	second, err := InstallToPath(AgentClaude, skillsDir)
+	require.NoError(t, err)
+	assert.Empty(t, second.Installed)
+	assert.Len(t, second.Updated, len(expectedSkills))
+}
+
+func TestInstallToPathRemovesLegacySkills(t *testing.T) {
+	skillsDir := filepath.Join(t.TempDir(), "skills")
+	legacyDir := filepath.Join(skillsDir, "roborev-address")
+	require.NoError(t, os.MkdirAll(legacyDir, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(legacyDir, "SKILL.md"), []byte("old"), 0o644))
+
+	_, err := InstallToPath(AgentClaude, skillsDir)
+	require.NoError(t, err)
+
+	_, err = os.Stat(legacyDir)
+	assert.ErrorIs(t, err, os.ErrNotExist)
+}
+
+func TestInstallToPathRejectsUnsupportedAgentWithoutCreatingDestination(t *testing.T) {
+	skillsDir := filepath.Join(t.TempDir(), "skills")
+
+	_, err := InstallToPath(Agent("unknown"), skillsDir)
+	require.EqualError(t, err, `unsupported agent "unknown" (expected claude, codex, or droid)`)
+
+	_, statErr := os.Stat(skillsDir)
+	assert.ErrorIs(t, statErr, os.ErrNotExist)
+}
+
 func TestIsInstalled(t *testing.T) {
 	type testCase struct {
 		name        string

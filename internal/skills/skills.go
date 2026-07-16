@@ -263,15 +263,19 @@ func Update() ([]InstallResult, error) {
 	return results, nil
 }
 
+// InstallToPath installs one agent's skill variant directly into skillsDir.
+// skillsDir is the final directory containing the individual skill directories.
+func InstallToPath(agent Agent, skillsDir string) (InstallResult, error) {
+	spec, ok := lookupAgent(agent)
+	if !ok {
+		return InstallResult{}, fmt.Errorf("unsupported agent %q (expected claude, codex, or droid)", agent)
+	}
+	return installSkills(spec, skillsDir)
+}
+
 // removeLegacySkills deletes skill directories that are no longer
 // embedded in the binary.
-func removeLegacySkills(spec agentSpec) error {
-	home, err := homeDirForAgent(spec)
-	if err != nil {
-		return fmt.Errorf("get home dir: %w", err)
-	}
-
-	skillsDir := agentSkillsDir(home, spec)
+func removeLegacySkills(skillsDir string) error {
 	for _, name := range legacySkills {
 		dir := filepath.Join(skillsDir, name)
 		if err := os.RemoveAll(dir); err != nil {
@@ -296,7 +300,13 @@ func installAgent(spec agentSpec) (InstallResult, error) {
 		return result, nil
 	}
 
-	skillsDir := agentSkillsDir(home, spec)
+	result, err = installSkills(spec, agentSkillsDir(home, spec))
+	result.ConfigDir = configDir
+	return result, err
+}
+
+func installSkills(spec agentSpec, skillsDir string) (InstallResult, error) {
+	result := InstallResult{Agent: spec.agent, ConfigDir: skillsDir}
 	if err := os.MkdirAll(skillsDir, 0o755); err != nil {
 		return result, fmt.Errorf("create skills dir: %w", err)
 	}
@@ -337,7 +347,7 @@ func installAgent(spec agentSpec) (InstallResult, error) {
 		}
 	}
 
-	if err := removeLegacySkills(spec); err != nil {
+	if err := removeLegacySkills(skillsDir); err != nil {
 		return result, err
 	}
 	return result, nil

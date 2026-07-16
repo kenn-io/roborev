@@ -106,6 +106,8 @@ func skillsCmd() *cobra.Command {
 		},
 	}
 
+	var installPath string
+	var installAgent string
 	installCmd := &cobra.Command{
 		Use:   "install",
 		Short: "Install roborev skills for AI agents",
@@ -116,11 +118,33 @@ Skills are installed for agents whose config directories exist:
   - Codex: ~/.codex/skills/ (or $CODEX_HOME/skills/ if set)
   - Factory Droid: ~/.factory/skills/
 
+Use --path to install directly into a custom final skills directory. Custom
+installs use the Claude variant by default; use --agent to select codex or droid.
+
 This command is idempotent - running it multiple times is safe.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			results, err := skills.Install()
-			if err != nil {
-				return err
+			pathChanged := cmd.Flags().Changed("path")
+			agentChanged := cmd.Flags().Changed("agent")
+			if agentChanged && !pathChanged {
+				return fmt.Errorf("--agent requires --path")
+			}
+
+			var results []skills.InstallResult
+			if pathChanged {
+				if strings.TrimSpace(installPath) == "" {
+					return fmt.Errorf("--path cannot be empty")
+				}
+				result, err := skills.InstallToPath(skills.Agent(installAgent), installPath)
+				if err != nil {
+					return err
+				}
+				results = []skills.InstallResult{result}
+			} else {
+				var err error
+				results, err = skills.Install()
+				if err != nil {
+					return err
+				}
 			}
 
 			// formatSkills formats skill names with the correct invocation prefix per agent
@@ -178,6 +202,9 @@ This command is idempotent - running it multiple times is safe.`,
 			return nil
 		},
 	}
+
+	installCmd.Flags().StringVar(&installPath, "path", "", "install directly into this final skills directory")
+	installCmd.Flags().StringVar(&installAgent, "agent", string(skills.AgentClaude), "skill variant for --path (claude, codex, or droid)")
 
 	updateCmd := &cobra.Command{
 		Use:   "update",

@@ -10,6 +10,28 @@ directly:
 roborev skills install
 ```
 
+To install into a custom final skills directory, use `--path`. This is useful
+for agents such as Pi that load skills from a directory roborev does not
+auto-detect:
+
+```bash
+roborev skills install --path ~/.pi/agent/skills/
+```
+
+Custom-path installs use the Claude-compatible skill variant by default. Select
+a different bundled variant with `--agent`:
+
+```bash
+roborev skills install --path /custom/skills --agent codex
+roborev skills install --path /custom/skills --agent droid
+```
+
+The supplied path is the directory that directly contains the individual skill
+directories; it is not an agent configuration root. Your shell expands `~`
+before roborev receives the path. Custom destinations are not tracked by
+`roborev skills` or refreshed by `roborev update`; rerun the same
+`roborev skills install --path ...` command to update them.
+
 !!! tip "Prefer the async workflow for day-to-day reviews"
 
     The recommended roborev workflow is **async reviews + TUI**: reviews run in the
@@ -288,6 +310,9 @@ Skills are installed as agent-specific configuration:
 The same resolved directories are used when installing, updating, and checking
 skill status. Claude Code agent-hook installation also honors
 `CLAUDE_CONFIG_DIR`; Codex agent-hook installation honors `CODEX_HOME`.
+Custom paths supplied with `roborev skills install --path` are direct,
+user-managed destinations and are not included in those status or update
+operations.
 
 The review skills use `--wait` internally so the agent can present results
 inline. The fix skills call `roborev show --job <id> --json` to fetch review
