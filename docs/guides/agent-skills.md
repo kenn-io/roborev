@@ -309,10 +309,9 @@ Skills are installed as agent-specific configuration:
 
 The same resolved directories are used when installing, updating, and checking
 skill status. Claude Code agent-hook installation also honors
-`CLAUDE_CONFIG_DIR`; Codex agent-hook installation honors `CODEX_HOME`.
-Custom paths supplied with `roborev skills install --path` are direct,
-user-managed destinations and are not included in those status or update
-operations.
+`CLAUDE_CONFIG_DIR`; Codex agent-hook installation honors `CODEX_HOME`. Custom
+paths supplied with `roborev skills install --path` are direct, user-managed
+destinations and are not included in those status or update operations.
 
 The review skills use `--wait` internally so the agent can present results
 inline. The fix skills call `roborev show --job <id> --json` to fetch review
