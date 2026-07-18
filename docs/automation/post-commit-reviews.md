@@ -14,6 +14,11 @@ any editor or agent.
 roborev init      # installs the hook, starts the daemon, registers the repo
 ```
 
+The daemon coalesces duplicate hook requests for the same repository, resolved
+Git reference, and review target. Concurrent editor, worktree, or agent hooks
+therefore launch one automatic review. Explicit `roborev review` commands still
+start a fresh review when you deliberately request one.
+
 Now every commit you make is reviewed automatically. Each review gets a verdict
 (pass or fail) and, when it fails, a list of findings with severities and file
 locations. Check that it is running:
