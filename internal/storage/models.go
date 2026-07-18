@@ -62,6 +62,7 @@ const (
 const (
 	JobSourceAutoDesign = "auto_design"
 	JobSourceCI         = "ci"
+	JobSourcePostCommit = "post_commit"
 )
 
 type ReviewJob struct {

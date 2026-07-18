@@ -952,3 +952,52 @@ func TestGetReviewByCommitSHAPendingSynthesisHidesStaleReview(t *testing.T) {
 	require.ErrorIs(t, err, sql.ErrNoRows,
 		"a pending synthesis must hide the stale older standalone review")
 }
+
+func TestEnqueuePostCommitPanelRunDeduplicatesTarget(t *testing.T) {
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	repo := createRepo(t, db, "/tmp/post-commit-panel")
+
+	panelOpts := func(runUUID string) ([]EnqueueOpts, EnqueueOpts) {
+		members := []EnqueueOpts{
+			{
+				RepoID: repo.ID, GitRef: "base..head", Agent: "test",
+				JobType: JobTypeRange, PanelRunUUID: runUUID,
+				PanelMemberName: "default", PanelMemberIndex: 0,
+			},
+			{
+				RepoID: repo.ID, GitRef: "base..head", Agent: "test",
+				JobType: JobTypeRange, PanelRunUUID: runUUID,
+				PanelMemberName: "security", PanelMemberIndex: 1,
+			},
+		}
+		synthesis := EnqueueOpts{
+			RepoID: repo.ID, GitRef: "base..head", Agent: "test",
+			JobType: JobTypeSynthesis, PanelRunUUID: runUUID,
+			PanelName: "branch_final",
+		}
+		return members, synthesis
+	}
+
+	firstMembers, firstSynthesis := panelOpts("run-1")
+	createdMembers, createdSynthesis, duplicate, err := db.EnqueuePostCommitPanelRun(
+		firstMembers, firstSynthesis,
+	)
+	require.NoError(t, err)
+	require.Len(t, createdMembers, 2)
+	require.NotNil(t, createdSynthesis)
+	assert.False(t, duplicate)
+
+	secondMembers, secondSynthesis := panelOpts("run-2")
+	createdMembers, createdSynthesis, duplicate, err = db.EnqueuePostCommitPanelRun(
+		secondMembers, secondSynthesis,
+	)
+	require.NoError(t, err)
+	assert.Nil(t, createdMembers)
+	assert.Nil(t, createdSynthesis)
+	assert.True(t, duplicate)
+
+	var count int
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM review_jobs`).Scan(&count))
+	assert.Equal(t, 3, count)
+}

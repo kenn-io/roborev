@@ -1976,3 +1976,71 @@ func TestClaimJobHydratesUUID(t *testing.T) {
 	assert.Equal(t, enqueued.UUID, claimed.UUID,
 		"claimed job must carry the stored UUID so completion events keep UUID-based hook idempotency")
 }
+
+func TestEnqueuePostCommitJobDeduplicatesNonCanceled(t *testing.T) {
+	statuses := []JobStatus{
+		JobStatusQueued,
+		JobStatusRunning,
+		JobStatusDone,
+		JobStatusFailed,
+		JobStatusApplied,
+		JobStatusRebased,
+		JobStatusSkipped,
+	}
+
+	for _, status := range statuses {
+		t.Run(string(status), func(t *testing.T) {
+			db := openTestDB(t)
+			t.Cleanup(func() { require.NoError(t, db.Close()) })
+			repo := createRepo(t, db, "/tmp/post-commit-"+string(status))
+			commit := createCommit(t, db, repo.ID, "abc123")
+			existing, err := db.EnqueueJob(EnqueueOpts{
+				RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123", Agent: "test",
+			})
+			require.NoError(t, err)
+			setStatus(t, db, existing.ID, status)
+
+			job, duplicate, err := db.EnqueuePostCommitJob(EnqueueOpts{
+				RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123", Agent: "test",
+			})
+			require.NoError(t, err)
+			assert.Nil(t, job)
+			assert.True(t, duplicate)
+
+			var count int
+			err = db.QueryRow(`
+				SELECT COUNT(*) FROM review_jobs
+				WHERE repo_id = ? AND git_ref = ? AND job_type = ?
+			`, repo.ID, "abc123", JobTypeReview).Scan(&count)
+			require.NoError(t, err)
+			assert.Equal(t, 1, count)
+		})
+	}
+}
+
+func TestEnqueuePostCommitJobAllowsCanceledReplacement(t *testing.T) {
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	repo := createRepo(t, db, "/tmp/post-commit-canceled")
+	commit := createCommit(t, db, repo.ID, "abc123")
+	existing, err := db.EnqueueJob(EnqueueOpts{
+		RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123", Agent: "test",
+	})
+	require.NoError(t, err)
+	setStatus(t, db, existing.ID, JobStatusCanceled)
+
+	replacement, duplicate, err := db.EnqueuePostCommitJob(EnqueueOpts{
+		RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123", Agent: "test",
+	})
+	require.NoError(t, err)
+	require.NotNil(t, replacement)
+	assert.False(t, duplicate)
+	assert.Equal(t, JobSourcePostCommit, replacement.Source)
+
+	again, duplicate, err := db.EnqueuePostCommitJob(EnqueueOpts{
+		RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123", Agent: "test",
+	})
+	require.NoError(t, err)
+	assert.Nil(t, again)
+	assert.True(t, duplicate)
+}

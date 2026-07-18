@@ -115,6 +115,88 @@ func (db *DB) EnqueueJob(opts EnqueueOpts) (*ReviewJob, error) {
 	return db.insertJobTx(context.Background(), db, opts, uid, machineID, now)
 }
 
+// EnqueuePostCommitJob atomically inserts a hook-originated job unless a
+// non-canceled job already occupies the same (repo, ref, job type) key.
+func (db *DB) EnqueuePostCommitJob(opts EnqueueOpts) (*ReviewJob, bool, error) {
+	opts.Source = JobSourcePostCommit
+	machineID, _ := db.GetMachineID()
+	now := time.Now()
+
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return nil, false, err
+	}
+	defer conn.Close()
+
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return nil, false, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			if _, err := conn.ExecContext(ctx, "ROLLBACK"); err != nil {
+				log.Printf("jobs EnqueuePostCommitJob: rollback failed: %v", err)
+			}
+		}
+	}()
+
+	duplicate, err := hasNonCanceledJob(ctx, conn, opts)
+	if err != nil {
+		return nil, false, err
+	}
+	if duplicate {
+		if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+			return nil, false, err
+		}
+		committed = true
+		return nil, true, nil
+	}
+
+	job, err := db.insertJobTx(ctx, conn, opts, GenerateUUID(), machineID, now)
+	if err != nil {
+		return nil, false, err
+	}
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return nil, false, err
+	}
+	committed = true
+	return job, false, nil
+}
+
+func hasNonCanceledJob(
+	ctx context.Context, conn *sql.Conn, opts EnqueueOpts,
+) (bool, error) {
+	var exists bool
+	err := conn.QueryRowContext(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM review_jobs
+			WHERE repo_id = ? AND git_ref = ? AND job_type = ? AND status != ?
+		)`,
+		opts.RepoID, opts.GitRef, jobTypeForEnqueue(opts), JobStatusCanceled,
+	).Scan(&exists)
+	if err != nil {
+		return false, fmt.Errorf("query post-commit duplicate: %w", err)
+	}
+	return exists, nil
+}
+
+func jobTypeForEnqueue(opts EnqueueOpts) string {
+	if opts.JobType != "" {
+		return opts.JobType
+	}
+	switch {
+	case opts.Prompt != "":
+		return JobTypeTask
+	case opts.DiffContent != "" || len(opts.DirtyFiles) > 0:
+		return JobTypeDirty
+	case opts.CommitID > 0:
+		return JobTypeReview
+	default:
+		return JobTypeRange
+	}
+}
+
 // insertJobTx inserts one review_jobs row via exec and returns the built
 // ReviewJob. The caller supplies uid/machineID/now so a multi-row panel
 // transaction shares one timestamp/machine id and assigns one uuid per row.
@@ -124,22 +206,7 @@ func (db *DB) insertJobTx(ctx context.Context, exec execer, opts EnqueueOpts, ui
 		reasoning = "thorough"
 	}
 
-	// Determine job type from fields (use explicit type if provided)
-	var jobType string
-	if opts.JobType != "" {
-		jobType = opts.JobType
-	} else {
-		switch {
-		case opts.Prompt != "":
-			jobType = JobTypeTask
-		case opts.DiffContent != "" || len(opts.DirtyFiles) > 0:
-			jobType = JobTypeDirty
-		case opts.CommitID > 0:
-			jobType = JobTypeReview
-		default:
-			jobType = JobTypeRange
-		}
-	}
+	jobType := jobTypeForEnqueue(opts)
 
 	// For task jobs, use Label as git_ref display value
 	gitRef := opts.GitRef
@@ -262,18 +329,41 @@ func (db *DB) insertJobTx(ctx context.Context, exec execer, opts EnqueueOpts, ui
 // before its members run. On any insert error the whole run rolls back and no
 // rows persist.
 func (db *DB) EnqueuePanelRun(members []EnqueueOpts, synthesis EnqueueOpts) ([]*ReviewJob, *ReviewJob, error) {
+	memberJobs, synthJob, _, err := db.enqueuePanelRun(members, synthesis, false)
+	return memberJobs, synthJob, err
+}
+
+// EnqueuePostCommitPanelRun atomically inserts a hook-originated panel unless
+// a non-canceled job already occupies the target member's deduplication key.
+func (db *DB) EnqueuePostCommitPanelRun(
+	members []EnqueueOpts, synthesis EnqueueOpts,
+) ([]*ReviewJob, *ReviewJob, bool, error) {
+	if len(members) == 0 {
+		return nil, nil, false, errors.New("post-commit panel requires at least one member")
+	}
+	members = append([]EnqueueOpts(nil), members...)
+	for i := range members {
+		members[i].Source = JobSourcePostCommit
+	}
+	synthesis.Source = JobSourcePostCommit
+	return db.enqueuePanelRun(members, synthesis, true)
+}
+
+func (db *DB) enqueuePanelRun(
+	members []EnqueueOpts, synthesis EnqueueOpts, deduplicate bool,
+) ([]*ReviewJob, *ReviewJob, bool, error) {
 	machineID, _ := db.GetMachineID()
 	now := time.Now()
 
 	ctx := context.Background()
 	conn, err := db.Conn(ctx)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
 	defer conn.Close()
 
 	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
 	committed := false
 	defer func() {
@@ -283,17 +373,30 @@ func (db *DB) EnqueuePanelRun(members []EnqueueOpts, synthesis EnqueueOpts) ([]*
 			}
 		}
 	}()
+	if deduplicate {
+		duplicate, err := hasNonCanceledJob(ctx, conn, members[0])
+		if err != nil {
+			return nil, nil, false, err
+		}
+		if duplicate {
+			if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+				return nil, nil, false, err
+			}
+			committed = true
+			return nil, nil, true, nil
+		}
+	}
 
 	memberJobs, synthJob, err := db.enqueuePanelRunTx(ctx, conn, members, synthesis, machineID, now)
 	if err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
 
 	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
-		return nil, nil, err
+		return nil, nil, false, err
 	}
 	committed = true
-	return memberJobs, synthJob, nil
+	return memberJobs, synthJob, false, nil
 }
 
 // enqueuePanelRunTx inserts members then synthesis via exec (caller owns the
