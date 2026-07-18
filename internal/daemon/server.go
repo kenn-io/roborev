@@ -2203,12 +2203,22 @@ func (s *Server) enqueueSingleAgent(
 		)
 	}
 
-	job, err := s.db.EnqueueJob(o)
+	var job *storage.ReviewJob
+	var duplicate bool
+	var err error
+	if in.req.Source == storage.JobSourcePostCommit {
+		job, duplicate, err = s.db.EnqueuePostCommitJob(o)
+	} else {
+		job, err = s.db.EnqueueJob(o)
+	}
 	if err != nil {
 		return rawJSONOutput(
 			http.StatusInternalServerError,
 			ErrorResponse{Error: fmt.Sprintf("enqueue job: %v", err)},
 		)
+	}
+	if duplicate {
+		return postCommitDuplicateResponse()
 	}
 	if in.descriptor.commitSubject != "" {
 		job.CommitSubject = in.descriptor.commitSubject
@@ -2220,6 +2230,13 @@ func (s *Server) enqueueSingleAgent(
 	return rawJSONOutput(http.StatusCreated, EnqueueCreatedResponse{
 		ReviewJob: job,
 		UUID:      job.UUID,
+	})
+}
+
+func postCommitDuplicateResponse() (*RawJSONOutput, error) {
+	return rawJSONOutput(http.StatusOK, EnqueueSkippedResponse{
+		Skipped: true,
+		Reason:  "a matching post-commit job already exists",
 	})
 }
 

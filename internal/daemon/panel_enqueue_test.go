@@ -872,3 +872,47 @@ func TestEnqueueStoredPromptSkipsPanel(t *testing.T) {
 	assert.Equal(storage.JobTypeTask, stored.JobType)
 	assert.Empty(stored.PanelRunUUID)
 }
+
+func TestEnqueuePostCommitPanelDuplicateSkips(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	repo := testutil.NewGitRepo(t)
+	repo.WriteFile(".roborev.toml", panelTOML)
+	repo.CommitFile("a.txt", "a", "add a")
+	body := EnqueueRequest{
+		RepoPath: repo.Path(),
+		GitRef:   "HEAD",
+		Agent:    "test",
+		Source:   storage.JobSourcePostCommit,
+	}
+	subID, eventCh := server.broadcaster.Subscribe("")
+	defer server.broadcaster.Unsubscribe(subID)
+
+	first := enqueueRaw(t, server, body)
+	require.Equal(t, http.StatusCreated, first.Code, first.Body.String())
+	require.Len(t, eventCh, 1, "created panel should broadcast job.enqueued")
+	<-eventCh
+	beforeActivity := 0
+	for _, entry := range server.activityLog.Recent() {
+		if entry.Event == "job.enqueued" {
+			beforeActivity++
+		}
+	}
+
+	second := enqueueRaw(t, server, body)
+	require.Equal(t, http.StatusOK, second.Code, second.Body.String())
+	var skipped EnqueueSkippedResponse
+	testutil.DecodeJSON(t, second, &skipped)
+	assert.True(t, skipped.Skipped)
+
+	jobs, err := db.ListJobs("", "", 100, 0)
+	require.NoError(t, err)
+	assert.Len(t, jobs, 4)
+	assert.Empty(t, eventCh, "duplicate panel must not broadcast an event")
+	afterActivity := 0
+	for _, entry := range server.activityLog.Recent() {
+		if entry.Event == "job.enqueued" {
+			afterActivity++
+		}
+	}
+	assert.Equal(t, beforeActivity, afterActivity)
+}

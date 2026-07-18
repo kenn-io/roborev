@@ -425,10 +425,22 @@ func (s *Server) enqueuePanelRun(ctx context.Context, in panelRunInputs) (*RawJS
 	memberOpts := panelMemberOpts(in.descriptor, in.panelName, runUUID, members, in.resolutionPath, in.cfg)
 	synthOpts := panelSynthesisOpts(in.descriptor, in.panelName, runUUID, synth)
 
-	memberJobs, synthJob, err := s.db.EnqueuePanelRun(memberOpts, synthOpts)
+	var memberJobs []*storage.ReviewJob
+	var synthJob *storage.ReviewJob
+	var duplicate bool
+	if in.req.Source == storage.JobSourcePostCommit {
+		memberJobs, synthJob, duplicate, err = s.db.EnqueuePostCommitPanelRun(
+			memberOpts, synthOpts,
+		)
+	} else {
+		memberJobs, synthJob, err = s.db.EnqueuePanelRun(memberOpts, synthOpts)
+	}
 	if err != nil {
 		return rawJSONOutput(http.StatusInternalServerError,
 			ErrorResponse{Error: fmt.Sprintf("enqueue panel run: %v", err)})
+	}
+	if duplicate {
+		return postCommitDuplicateResponse()
 	}
 
 	synthJob.RepoPath = in.repo.RootPath
