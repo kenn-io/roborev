@@ -53,13 +53,23 @@ func TestReviewBranchName(t *testing.T) {
 			want: "main",
 		},
 		{
-			name: "branchNone sentinel treated as empty",
+			name: "backfilled branchNone renders detached placeholder",
+			job:  &storage.ReviewJob{JobType: storage.JobTypeReview, Branch: "(none)", GitRef: "abc123"},
+			want: "(detached @ abc123)",
+		},
+		{
+			name: "branchNone with repo path skips git lookup, placeholder still shown",
+			job:  &storage.ReviewJob{JobType: storage.JobTypeReview, Branch: "(none)", GitRef: "abc123", RepoPath: "/tmp/repo"},
+			want: "(detached @ abc123)",
+		},
+		{
+			name: "legacy branchNone job without job_type stays empty",
 			job:  &storage.ReviewJob{Branch: "(none)", GitRef: "abc123"},
 			want: "",
 		},
 		{
-			name: "branchNone with repo path skips git lookup",
-			job:  &storage.ReviewJob{Branch: "(none)", GitRef: "abc123", RepoPath: "/tmp/repo"},
+			name: "branchNone on task job stays empty",
+			job:  &storage.ReviewJob{JobType: storage.JobTypeTask, Branch: "(none)", GitRef: "abc123"},
 			want: "",
 		},
 		{

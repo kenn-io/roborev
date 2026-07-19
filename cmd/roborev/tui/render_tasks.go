@@ -123,8 +123,10 @@ func (m model) taskCells(job storage.ReviewJob) []string {
 	}
 
 	branch := job.Branch
-	if branch == "" {
-		branch = detachedBranchLabel(job)
+	if branch == "" || branch == branchNone {
+		if label := detachedBranchLabel(job); label != "" {
+			branch = label
+		}
 	}
 
 	defaultRepoName := job.RepoName

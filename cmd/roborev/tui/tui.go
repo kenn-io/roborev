@@ -759,6 +759,15 @@ func uniqueJobRepoPaths(jobs []storage.ReviewJob) []string {
 // if the stored branch is empty and the repo is available locally.
 // Results are cached to avoid repeated git calls on render.
 func (m *model) getBranchForJob(job storage.ReviewJob) string {
+	// A stored branchNone sentinel means backfill already tried a git
+	// lookup and found nothing; show the detached placeholder when
+	// eligible instead of the sentinel (#499).
+	if job.Branch == branchNone {
+		if label := detachedBranchLabel(job); label != "" {
+			return label
+		}
+		return job.Branch
+	}
 	// Use stored branch if available
 	if job.Branch != "" {
 		return job.Branch

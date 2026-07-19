@@ -46,8 +46,12 @@ func formatAgentLabel(agent string, model string) string {
 // have no branch concept; the job is a CI review, which deliberately leaves
 // Branch empty in favor of CIBaseBranch (see storage.ReviewJob.HookBranch);
 // or the ref is a range, "dirty", or "prompt" rather than a single commit.
+//
+// The backfill path persists the branchNone sentinel when a git lookup
+// finds no branch, so a stored "(none)" means "no branch data", not "has a
+// branch" — treat it the same as empty.
 func detachedBranchLabel(job storage.ReviewJob) string {
-	if job.Branch != "" || job.IsTaskJob() || job.IsDirtyJob() || job.IsCIReview() {
+	if (job.Branch != "" && job.Branch != branchNone) || job.IsTaskJob() || job.IsDirtyJob() || job.IsCIReview() {
 		return ""
 	}
 	ref := strings.TrimSpace(job.GitRef)

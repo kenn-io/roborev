@@ -715,7 +715,10 @@ func reviewBranchName(job *storage.ReviewJob) string {
 		return ""
 	}
 	if job.Branch == branchNone {
-		return ""
+		// Backfill already attempted a git lookup and found nothing;
+		// surface the detached placeholder when eligible instead of a
+		// blank field (#499).
+		return detachedBranchLabel(*job)
 	}
 	if job.Branch != "" {
 		return job.Branch
