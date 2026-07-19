@@ -111,6 +111,11 @@ Examples:
 
 			var queryURL string
 			var displayRef string
+			// jobIDForPromptFallback carries the numeric job ID when the
+			// lookup is keyed by job ID, so a 404 from /api/review (no
+			// review row yet) can fall back to the job's stored prompt for
+			// queued/running jobs. -1 means "not applicable" (SHA lookups).
+			jobIDForPromptFallback := int64(-1)
 
 			if len(args) == 0 {
 				if forceJobID {
@@ -152,6 +157,9 @@ Examples:
 				if isJobID {
 					queryURL = addr + "/api/review?job_id=" + arg
 					displayRef = "job " + arg
+					if id, perr := strconv.ParseInt(arg, 10, 64); perr == nil {
+						jobIDForPromptFallback = id
+					}
 				} else {
 					sha := arg
 					if resolvedSHA != "" {
@@ -168,12 +176,18 @@ Examples:
 			}
 			defer resp.Body.Close()
 
-			if resp.StatusCode == http.StatusNotFound {
-				return fmt.Errorf("no review found for %s", displayRef)
-			}
-
 			var review storage.Review
-			if err := json.NewDecoder(resp.Body).Decode(&review); err != nil {
+			if resp.StatusCode == http.StatusNotFound {
+				// Queued/running jobs don't have a review row yet, but the
+				// prompt was already recorded on the job at enqueue time.
+				// Mirror the TUI's fallback (handlers_review.go) so
+				// `show --prompt` works before the job completes.
+				fallback := showPrompt && jobIDForPromptFallback >= 0 &&
+					fetchQueuedJobPromptReview(client, addr, jobIDForPromptFallback, &review)
+				if !fallback {
+					return fmt.Errorf("no review found for %s", displayRef)
+				}
+			} else if err := json.NewDecoder(resp.Body).Decode(&review); err != nil {
 				return fmt.Errorf("failed to parse response: %w", err)
 			}
 
@@ -239,6 +253,50 @@ Examples:
 	cmd.Flags().BoolVar(&showPrompt, "prompt", false, "show the prompt sent to the agent instead of the review output")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output as JSON")
 	return cmd
+}
+
+// fetchQueuedJobPromptReview looks up a job by ID and, if it is queued or
+// running and has a stored prompt, populates out with a minimal review built
+// from the job (Agent, Prompt, Job) and reports true. It reports false if the
+// job can't be found, isn't queued/running, or has no prompt yet — in which
+// case out is left untouched.
+//
+// This mirrors the TUI's queued-job prompt fallback (handlePromptKey in
+// cmd/roborev/tui/handlers_review.go), which reads Prompt straight off the
+// job object because no review row exists until the job completes.
+func fetchQueuedJobPromptReview(client *http.Client, addr string, jobID int64, out *storage.Review) bool {
+	resp, err := client.Get(fmt.Sprintf("%s/api/jobs?id=%d", addr, jobID))
+	if err != nil {
+		return false
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return false
+	}
+
+	var result struct {
+		Jobs []storage.ReviewJob `json:"jobs"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil || len(result.Jobs) == 0 {
+		return false
+	}
+
+	job := result.Jobs[0]
+	if job.Prompt == "" {
+		return false
+	}
+	if job.Status != storage.JobStatusQueued && job.Status != storage.JobStatusRunning {
+		return false
+	}
+
+	jobCopy := job
+	*out = storage.Review{
+		JobID:  job.ID,
+		Agent:  job.Agent,
+		Prompt: job.Prompt,
+		Job:    &jobCopy,
+	}
+	return true
 }
 
 // fetchPanelMembers loads a panel run's member rows (ordered by member index)
