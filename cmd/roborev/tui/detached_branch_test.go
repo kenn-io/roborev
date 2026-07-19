@@ -57,6 +57,11 @@ func TestDetachedBranchLabel(t *testing.T) {
 			want: "",
 		},
 		{
+			name: "fix job from a task parent carries a non-SHA ref, no placeholder",
+			job:  storage.ReviewJob{JobType: storage.JobTypeFix, GitRef: "analyze"},
+			want: "",
+		},
+		{
 			name: "CI review deliberately leaves branch blank",
 			job: storage.ReviewJob{
 				JobType:      storage.JobTypeReview,

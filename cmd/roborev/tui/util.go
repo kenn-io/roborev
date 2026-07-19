@@ -44,16 +44,18 @@ func formatAgentLabel(agent string, model string) string {
 // (see issue #499), so this surfaces the commit instead.
 //
 // Returns "" (leaving the caller's existing blank/fallback behavior intact)
-// when: a branch is already stored; the job is a task or dirty job, which
-// have no branch concept; the job is a CI review, which deliberately leaves
-// Branch empty in favor of CIBaseBranch (see storage.ReviewJob.HookBranch);
-// or the ref is a range, "dirty", or "prompt" rather than a single commit.
+// when: a branch is already stored; the job is not a single-commit review
+// (task, insights, compact, and fix jobs can carry non-SHA refs like
+// "analyze", and dirty jobs have no branch concept); the job is a CI
+// review, which deliberately leaves Branch empty in favor of CIBaseBranch
+// (see storage.ReviewJob.HookBranch); or the ref is a range, "dirty", or
+// "prompt" rather than a single commit.
 //
 // The backfill path persists the branchNone sentinel when a git lookup
 // finds no branch, so a stored "(none)" means "no branch data", not "has a
 // branch" — treat it the same as empty.
 func detachedBranchLabel(job storage.ReviewJob) string {
-	if (job.Branch != "" && job.Branch != branchNone) || job.IsTaskJob() || job.IsDirtyJob() || job.IsCIReview() {
+	if (job.Branch != "" && job.Branch != branchNone) || !job.IsReviewJob() || job.IsDirtyJob() || job.IsCIReview() {
 		return ""
 	}
 	ref := strings.TrimSpace(job.GitRef)
