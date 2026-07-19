@@ -8,7 +8,6 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"go.kenn.io/roborev/internal/storage"
-	"go.kenn.io/roborev/internal/testutil"
 )
 
 func TestTUIReviewMsgSetsBranchName(t *testing.T) {
@@ -54,18 +53,13 @@ func TestReviewBranchName(t *testing.T) {
 			want: "main",
 		},
 		{
-			name: "branchNone without local repo stays blank (unverifiable)",
+			name: "branchNone sentinel treated as empty",
 			job:  &storage.ReviewJob{JobType: storage.JobTypeReview, Branch: "(none)", GitRef: "abc123"},
 			want: "",
 		},
 		{
-			name: "branchNone with unavailable repo stays blank (unverifiable)",
+			name: "branchNone with repo path skips git lookup",
 			job:  &storage.ReviewJob{JobType: storage.JobTypeReview, Branch: "(none)", GitRef: "abc123", RepoPath: "/nonexistent/repo"},
-			want: "",
-		},
-		{
-			name: "legacy branchNone job without job_type stays empty",
-			job:  &storage.ReviewJob{Branch: "(none)", GitRef: "abc123"},
 			want: "",
 		},
 		{
@@ -98,36 +92,10 @@ func TestReviewBranchName(t *testing.T) {
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			got := reviewBranchName(tt.job, "")
+			got := reviewBranchName(tt.job)
 			assert.Equal(t, tt.want, got)
 		})
 	}
-}
-
-// TestReviewBranchNameBranchNoneVerified covers the backfilled branchNone
-// sentinel against a real repo (#499 follow-up): the placeholder is only
-// claimed when a local lookup verifies no branch reaches the commit, and a
-// fresh lookup that now finds a branch wins over the stale sentinel.
-func TestReviewBranchNameBranchNoneVerified(t *testing.T) {
-	repo := testutil.InitTestRepo(t)
-	repo.CommitFile("a.txt", "one", "first")
-	repo.CheckoutDetached()
-	detachedSHA := repo.CommitFile("a.txt", "two", "second, on detached HEAD")
-
-	commitID := int64(1)
-	detachedJob := &storage.ReviewJob{
-		JobType:  storage.JobTypeReview,
-		Branch:   branchNone,
-		GitRef:   detachedSHA,
-		RepoPath: repo.Path(),
-		CommitID: &commitID,
-	}
-	assert.Equal(t, "(detached @ "+detachedSHA[:7]+")", reviewBranchName(detachedJob, ""))
-
-	// A job from another machine is never verified locally, even when a
-	// same-named repo path exists here.
-	detachedJob.SourceMachineID = "machine-b"
-	assert.Empty(t, reviewBranchName(detachedJob, "machine-a"))
 }
 
 func TestTUIReviewMsgEmptyBranchForRange(t *testing.T) {

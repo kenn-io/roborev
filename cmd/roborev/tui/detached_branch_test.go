@@ -37,13 +37,8 @@ func TestDetachedBranchLabel(t *testing.T) {
 			want: "(detached @ abc12)",
 		},
 		{
-			name: "backfilled branchNone sentinel treated as missing",
+			name: "backfilled branchNone sentinel counts as stored, no placeholder",
 			job:  storage.ReviewJob{JobType: storage.JobTypeReview, Branch: branchNone, GitRef: "abc1234567", CommitID: &commitID},
-			want: "(detached @ abc1234)",
-		},
-		{
-			name: "branchNone sentinel on task job still no placeholder",
-			job:  storage.ReviewJob{JobType: storage.JobTypeTask, Branch: branchNone, GitRef: "abc1234567"},
 			want: "",
 		},
 		{

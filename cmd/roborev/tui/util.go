@@ -2,12 +2,10 @@ package tui
 
 import (
 	"fmt"
-	"os"
 	"strings"
 
 	gitrepo "go.kenn.io/kit/git/repo"
 
-	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -44,18 +42,14 @@ func formatAgentLabel(agent string, model string) string {
 // (see issue #499), so this surfaces the commit instead.
 //
 // Returns "" (leaving the caller's existing blank/fallback behavior intact)
-// when: a branch is already stored; the job is not a single-commit review
-// (task, insights, compact, and fix jobs can carry non-SHA refs like
-// "analyze", and dirty jobs have no branch concept); the job is a CI
-// review, which deliberately leaves Branch empty in favor of CIBaseBranch
-// (see storage.ReviewJob.HookBranch); or the ref is a range, "dirty", or
-// "prompt" rather than a single commit.
-//
-// The backfill path persists the branchNone sentinel when a git lookup
-// finds no branch, so a stored "(none)" means "no branch data", not "has a
-// branch" — treat it the same as empty.
+// when: a branch (or the branchNone sentinel) is already stored; the job is
+// not a single-commit review (task, insights, compact, and fix jobs can
+// carry non-SHA refs like "analyze", and dirty jobs have no branch
+// concept); the job is a CI review, which deliberately leaves Branch empty
+// in favor of CIBaseBranch (see storage.ReviewJob.HookBranch); or the ref
+// is a range, "dirty", or "prompt" rather than a single commit.
 func detachedBranchLabel(job storage.ReviewJob) string {
-	if (job.Branch != "" && job.Branch != branchNone) || !job.IsReviewJob() || job.IsDirtyJob() || job.IsCIReview() {
+	if job.Branch != "" || !job.IsReviewJob() || job.IsDirtyJob() || job.IsCIReview() {
 		return ""
 	}
 	ref := strings.TrimSpace(job.GitRef)
@@ -73,32 +67,4 @@ const detachedLabelPrefix = "(detached @ "
 // placeholder rather than a real branch name.
 func isDetachedLabel(branch string) bool {
 	return strings.HasPrefix(branch, detachedLabelPrefix)
-}
-
-// verifiedDetachedLabel resolves the display for a job whose stored branch is
-// the backfilled branchNone sentinel. The backfill stores the sentinel both
-// when a local lookup found no branch and when no lookup was possible (remote
-// job, repo unavailable), so "detached" is only claimed after re-running the
-// lookup locally. Returns the fresh branch when one now reaches the commit,
-// the detached placeholder when the local lookup confirms none does, and ""
-// when no local verification is possible, leaving the caller's existing
-// sentinel behavior intact.
-func verifiedDetachedLabel(job storage.ReviewJob, machineID string) string {
-	if job.Branch != branchNone {
-		return ""
-	}
-	label := detachedBranchLabel(job)
-	if label == "" {
-		return ""
-	}
-	if job.RepoPath == "" || (machineID != "" && job.SourceMachineID != "" && job.SourceMachineID != machineID) {
-		return ""
-	}
-	if _, err := os.Stat(job.RepoPath); err != nil {
-		return ""
-	}
-	if branch := git.GetBranchName(job.RepoPath, strings.TrimSpace(job.GitRef)); branch != "" {
-		return branch
-	}
-	return label
 }
