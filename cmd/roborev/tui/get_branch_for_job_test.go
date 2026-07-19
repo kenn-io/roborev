@@ -112,6 +112,30 @@ func TestBranchMatchesFilterDetachedGroupsUnderNone(t *testing.T) {
 	m2 := newModel(localhostEndpoint, withExternalIODisabled())
 	m2.activeBranchFilter = branchNone
 	assert.True(t, m2.branchMatchesFilter(detached), "backfilled branchNone detached job should match (none)")
+
+	// A stale sentinel on a commit that IS reachable from a branch recovers
+	// the real branch, which then drives filter identity (agreeing with the
+	// displayed value), so the job no longer matches (none).
+	repo.CheckoutNewBranch("feature-x")
+	reachableSHA := repo.CommitFile("b.txt", "three", "third, back on a branch")
+	reachableID := int64(10)
+	reachable := storage.ReviewJob{
+		ID:       10,
+		JobType:  storage.JobTypeReview,
+		Branch:   branchNone,
+		GitRef:   reachableSHA,
+		RepoPath: repo.Path(),
+		CommitID: &reachableID,
+	}
+	m3 := newModel(localhostEndpoint, withExternalIODisabled())
+	realBranch := m3.getBranchForJob(reachable)
+	assert.NotEqual(t, branchNone, realBranch)
+	assert.False(t, isDetachedLabel(realBranch))
+
+	m3.activeBranchFilter = branchNone
+	assert.False(t, m3.branchMatchesFilter(reachable), "recovered real branch should not match (none)")
+	m3.activeBranchFilter = realBranch
+	assert.True(t, m3.branchMatchesFilter(reachable), "recovered real branch should match its own filter")
 }
 
 // TestGetBranchForJobReachableFromBranch ensures the existing git name-rev
