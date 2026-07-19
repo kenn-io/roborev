@@ -57,6 +57,11 @@ func TestDetachedBranchLabel(t *testing.T) {
 			want: "",
 		},
 		{
+			name: "fix job on a detached commit shows placeholder",
+			job:  storage.ReviewJob{JobType: storage.JobTypeFix, GitRef: "abc1234def"},
+			want: "(detached @ abc1234)",
+		},
+		{
 			name: "CI review deliberately leaves branch blank",
 			job: storage.ReviewJob{
 				JobType:      storage.JobTypeReview,

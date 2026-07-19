@@ -35,6 +35,16 @@ func TestTaskCellsBranchColumn(t *testing.T) {
 			wantBranch: "",
 		},
 		{
+			name:       "fix job on a detached commit shows placeholder (Tasks view data path)",
+			job:        storage.ReviewJob{JobType: storage.JobTypeFix, GitRef: "abc1234def"},
+			wantBranch: "(detached @ abc1234)",
+		},
+		{
+			name:       "fix job from a task parent stays blank",
+			job:        storage.ReviewJob{JobType: storage.JobTypeFix, GitRef: "analyze"},
+			wantBranch: "",
+		},
+		{
 			name:       "unverifiable branchNone keeps the sentinel",
 			job:        storage.ReviewJob{JobType: storage.JobTypeReview, Branch: branchNone, GitRef: "abc1234567", CommitID: &commitID},
 			wantBranch: branchNone,
