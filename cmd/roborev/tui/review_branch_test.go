@@ -127,7 +127,7 @@ func TestReviewBranchNameBranchNoneVerified(t *testing.T) {
 	// A job from another machine is never verified locally, even when a
 	// same-named repo path exists here.
 	detachedJob.SourceMachineID = "machine-b"
-	assert.Equal(t, "", reviewBranchName(detachedJob, "machine-a"))
+	assert.Empty(t, reviewBranchName(detachedJob, "machine-a"))
 }
 
 func TestTUIReviewMsgEmptyBranchForRange(t *testing.T) {

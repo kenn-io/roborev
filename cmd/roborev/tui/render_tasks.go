@@ -123,9 +123,10 @@ func (m model) taskCells(job storage.ReviewJob) []string {
 	}
 
 	branch := job.Branch
-	if branch == "" {
+	switch branch {
+	case "":
 		branch = detachedBranchLabel(job)
-	} else if branch == branchNone {
+	case branchNone:
 		if label := verifiedDetachedLabel(job, m.status.MachineID); label != "" {
 			branch = label
 		}
