@@ -797,7 +797,14 @@ func (m *model) getBranchForJob(job storage.ReviewJob) string {
 	}
 
 	branch := git.GetBranchName(job.RepoPath, sha)
-	// Cache result (including empty for detached HEAD / commit not on branch)
+	if branch == "" {
+		// The commit isn't reachable from any local branch - typically a
+		// commit made on top of a detached HEAD (e.g. mid git-bisect).
+		// Surface that instead of leaving the queue cell blank (#499).
+		branch = detachedBranchLabel(job)
+	}
+	// Cache result (including "" when neither lookup nor the detached
+	// placeholder apply, e.g. task/dirty/CI jobs).
 	// We only skip caching above when repo doesn't exist yet
 	if m.branchNames != nil {
 		m.branchNames[job.ID] = branch

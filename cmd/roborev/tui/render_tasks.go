@@ -123,6 +123,9 @@ func (m model) taskCells(job storage.ReviewJob) []string {
 	}
 
 	branch := job.Branch
+	if branch == "" {
+		branch = detachedBranchLabel(job)
+	}
 
 	defaultRepoName := job.RepoName
 	if defaultRepoName == "" && job.RepoPath != "" {

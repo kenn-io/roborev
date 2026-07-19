@@ -34,3 +34,25 @@ func formatAgentLabel(agent string, model string) string {
 	}
 	return agent
 }
+
+// detachedBranchLabel formats a placeholder branch label for a review job
+// whose branch is empty because the commit was made on top of a detached
+// HEAD (for example, mid git-bisect) rather than because the branch concept
+// simply does not apply. A blank branch cell in the queue reads as a bug
+// (see issue #499), so this surfaces the commit instead.
+//
+// Returns "" (leaving the caller's existing blank/fallback behavior intact)
+// when: a branch is already stored; the job is a task or dirty job, which
+// have no branch concept; the job is a CI review, which deliberately leaves
+// Branch empty in favor of CIBaseBranch (see storage.ReviewJob.HookBranch);
+// or the ref is a range, "dirty", or "prompt" rather than a single commit.
+func detachedBranchLabel(job storage.ReviewJob) string {
+	if job.Branch != "" || job.IsTaskJob() || job.IsDirtyJob() || job.IsCIReview() {
+		return ""
+	}
+	ref := strings.TrimSpace(job.GitRef)
+	if ref == "" || ref == "dirty" || ref == "prompt" || strings.Contains(ref, "..") {
+		return ""
+	}
+	return "(detached @ " + gitrepo.ShortSHA(ref) + ")"
+}

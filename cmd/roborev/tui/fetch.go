@@ -706,7 +706,10 @@ func (m model) fetchReview(jobID int64) tea.Cmd {
 // It prefers the stored job.Branch (set at enqueue time) over a dynamic
 // git name-rev lookup, which can be misled by worktree branches
 // reachable from the same SHA. Falls back to git lookup only for
-// single-commit reviews when the stored branch is empty.
+// single-commit reviews when the stored branch is empty, and finally to
+// a "(detached @ <sha>)" placeholder when neither resolves a branch, so a
+// commit made on top of a detached HEAD doesn't render as a blank field
+// (#499).
 func reviewBranchName(job *storage.ReviewJob) string {
 	if job == nil {
 		return ""
@@ -718,9 +721,11 @@ func reviewBranchName(job *storage.ReviewJob) string {
 		return job.Branch
 	}
 	if job.RepoPath != "" && !strings.Contains(job.GitRef, "..") {
-		return git.GetBranchName(job.RepoPath, job.GitRef)
+		if branch := git.GetBranchName(job.RepoPath, job.GitRef); branch != "" {
+			return branch
+		}
 	}
-	return ""
+	return detachedBranchLabel(*job)
 }
 
 func (m model) fetchReviewForPrompt(jobID int64) tea.Cmd {

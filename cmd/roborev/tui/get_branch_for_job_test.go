@@ -1,0 +1,64 @@
+package tui
+
+import (
+	"testing"
+
+	"github.com/stretchr/testify/assert"
+
+	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
+)
+
+// TestGetBranchForJobDetachedHead covers the queue view's branch fallback
+// (#499): a review job with no stored branch, enqueued from a commit made on
+// top of a detached HEAD (e.g. mid git-bisect), has no branch reachable via
+// git name-rev either. Instead of caching and returning "", getBranchForJob
+// should surface a "(detached @ <sha>)" placeholder.
+func TestGetBranchForJobDetachedHead(t *testing.T) {
+	repo := testutil.InitTestRepo(t)
+	repo.CommitFile("a.txt", "one", "first")
+	// Detach HEAD and commit again, mirroring a commit made mid git-bisect:
+	// the resulting SHA is reachable from HEAD but from no local branch.
+	repo.CheckoutDetached()
+	sha := repo.CommitFile("a.txt", "two", "second, on detached HEAD")
+
+	commitID := int64(1)
+	job := storage.ReviewJob{
+		ID:       1,
+		JobType:  storage.JobTypeReview,
+		GitRef:   sha,
+		RepoPath: repo.Path(),
+		CommitID: &commitID,
+	}
+
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	got := m.getBranchForJob(job)
+
+	assert.Equal(t, "(detached @ "+sha[:7]+")", got)
+
+	// Result is cached rather than re-derived on the next call.
+	assert.Equal(t, got, m.branchNames[job.ID])
+}
+
+// TestGetBranchForJobReachableFromBranch ensures the existing git name-rev
+// fallback still wins over the new placeholder when the commit is in fact
+// reachable from a local branch.
+func TestGetBranchForJobReachableFromBranch(t *testing.T) {
+	repo := testutil.InitTestRepo(t)
+	sha := repo.CommitFile("a.txt", "one", "first")
+
+	commitID := int64(2)
+	job := storage.ReviewJob{
+		ID:       2,
+		JobType:  storage.JobTypeReview,
+		GitRef:   sha,
+		RepoPath: repo.Path(),
+		CommitID: &commitID,
+	}
+
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	got := m.getBranchForJob(job)
+
+	assert.NotEmpty(t, got)
+	assert.NotContains(t, got, "detached")
+}

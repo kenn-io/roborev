@@ -72,6 +72,18 @@ func TestReviewBranchName(t *testing.T) {
 			job:  &storage.ReviewJob{GitRef: "abc123"},
 			want: "",
 		},
+		{
+			name: "detached commit review shows placeholder instead of blank",
+			job: &storage.ReviewJob{
+				JobType: storage.JobTypeReview,
+				GitRef:  "abc1234567",
+				CommitID: func() *int64 {
+					id := int64(1)
+					return &id
+				}(),
+			},
+			want: "(detached @ abc1234)",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
