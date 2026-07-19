@@ -696,7 +696,7 @@ func (m model) fetchReview(jobID int64) tea.Cmd {
 
 		responses := m.loadResponses(jobID, review)
 
-		branchName := reviewBranchName(review.Job)
+		branchName := reviewBranchName(review.Job, m.status.MachineID)
 
 		return reviewMsg{review: review, responses: responses, jobID: jobID, branchName: branchName}
 	}
@@ -710,15 +710,14 @@ func (m model) fetchReview(jobID int64) tea.Cmd {
 // a "(detached @ <sha>)" placeholder when neither resolves a branch, so a
 // commit made on top of a detached HEAD doesn't render as a blank field
 // (#499).
-func reviewBranchName(job *storage.ReviewJob) string {
+func reviewBranchName(job *storage.ReviewJob, machineID string) string {
 	if job == nil {
 		return ""
 	}
 	if job.Branch == branchNone {
-		// Backfill already attempted a git lookup and found nothing;
-		// surface the detached placeholder when eligible instead of a
-		// blank field (#499).
-		return detachedBranchLabel(*job)
+		// Backfill found no branch or could not look one up; only claim
+		// detached after a local lookup verifies it (#499).
+		return verifiedDetachedLabel(*job, machineID)
 	}
 	if job.Branch != "" {
 		return job.Branch

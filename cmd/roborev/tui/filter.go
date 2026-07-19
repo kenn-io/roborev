@@ -294,7 +294,9 @@ func (m model) isJobVisible(job storage.ReviewJob) bool {
 // branchMatchesFilter checks if a job's branch matches the active branch filter
 func (m model) branchMatchesFilter(job storage.ReviewJob) bool {
 	branch := m.getBranchForJob(job)
-	if branch == "" {
+	// The detached placeholder is display-only; for filter identity these
+	// jobs group under (none), matching the branch picker's counts (#499).
+	if branch == "" || job.Branch == branchNone || isDetachedLabel(branch) {
 		branch = branchNone
 	}
 	return branch == m.activeBranchFilter

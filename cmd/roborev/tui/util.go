@@ -2,10 +2,12 @@ package tui
 
 import (
 	"fmt"
+	"os"
 	"strings"
 
 	gitrepo "go.kenn.io/kit/git/repo"
 
+	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -58,5 +60,43 @@ func detachedBranchLabel(job storage.ReviewJob) string {
 	if ref == "" || ref == "dirty" || ref == "prompt" || strings.Contains(ref, "..") {
 		return ""
 	}
-	return "(detached @ " + gitrepo.ShortSHA(ref) + ")"
+	return detachedLabelPrefix + gitrepo.ShortSHA(ref) + ")"
+}
+
+// detachedLabelPrefix opens every detachedBranchLabel result; filters use it
+// to keep the display placeholder out of branch identity.
+const detachedLabelPrefix = "(detached @ "
+
+// isDetachedLabel reports whether a branch display value is the detached
+// placeholder rather than a real branch name.
+func isDetachedLabel(branch string) bool {
+	return strings.HasPrefix(branch, detachedLabelPrefix)
+}
+
+// verifiedDetachedLabel resolves the display for a job whose stored branch is
+// the backfilled branchNone sentinel. The backfill stores the sentinel both
+// when a local lookup found no branch and when no lookup was possible (remote
+// job, repo unavailable), so "detached" is only claimed after re-running the
+// lookup locally. Returns the fresh branch when one now reaches the commit,
+// the detached placeholder when the local lookup confirms none does, and ""
+// when no local verification is possible, leaving the caller's existing
+// sentinel behavior intact.
+func verifiedDetachedLabel(job storage.ReviewJob, machineID string) string {
+	if job.Branch != branchNone {
+		return ""
+	}
+	label := detachedBranchLabel(job)
+	if label == "" {
+		return ""
+	}
+	if job.RepoPath == "" || (machineID != "" && job.SourceMachineID != "" && job.SourceMachineID != machineID) {
+		return ""
+	}
+	if _, err := os.Stat(job.RepoPath); err != nil {
+		return ""
+	}
+	if branch := git.GetBranchName(job.RepoPath, strings.TrimSpace(job.GitRef)); branch != "" {
+		return branch
+	}
+	return label
 }

@@ -40,6 +40,80 @@ func TestGetBranchForJobDetachedHead(t *testing.T) {
 	assert.Equal(t, got, m.branchNames[job.ID])
 }
 
+// TestGetBranchForJobBranchNoneSentinel covers backfilled jobs whose stored
+// branch is the branchNone sentinel (#499 follow-up): the detached
+// placeholder is only shown after a local lookup verifies it; remote or
+// repo-less jobs keep the sentinel.
+func TestGetBranchForJobBranchNoneSentinel(t *testing.T) {
+	repo := testutil.InitTestRepo(t)
+	repo.CommitFile("a.txt", "one", "first")
+	repo.CheckoutDetached()
+	sha := repo.CommitFile("a.txt", "two", "second, on detached HEAD")
+
+	commitID := int64(1)
+	base := storage.ReviewJob{
+		ID:       7,
+		JobType:  storage.JobTypeReview,
+		Branch:   branchNone,
+		GitRef:   sha,
+		RepoPath: repo.Path(),
+		CommitID: &commitID,
+	}
+
+	t.Run("verified locally shows placeholder and caches", func(t *testing.T) {
+		m := newModel(localhostEndpoint, withExternalIODisabled())
+		got := m.getBranchForJob(base)
+		assert.Equal(t, "(detached @ "+sha[:7]+")", got)
+		assert.Equal(t, got, m.branchNames[base.ID])
+	})
+
+	t.Run("remote job keeps sentinel, uncached", func(t *testing.T) {
+		m := newModel(localhostEndpoint, withExternalIODisabled())
+		m.status.MachineID = "machine-a"
+		job := base
+		job.SourceMachineID = "machine-b"
+		assert.Equal(t, branchNone, m.getBranchForJob(job))
+		assert.NotContains(t, m.branchNames, job.ID)
+	})
+
+	t.Run("missing repo keeps sentinel, uncached", func(t *testing.T) {
+		m := newModel(localhostEndpoint, withExternalIODisabled())
+		job := base
+		job.RepoPath = "/nonexistent/repo"
+		assert.Equal(t, branchNone, m.getBranchForJob(job))
+		assert.NotContains(t, m.branchNames, job.ID)
+	})
+}
+
+// TestBranchMatchesFilterDetachedGroupsUnderNone pins filter identity: jobs
+// rendered with the detached placeholder still match the (none) branch
+// filter, agreeing with the branch picker's counts (#499 follow-up).
+func TestBranchMatchesFilterDetachedGroupsUnderNone(t *testing.T) {
+	repo := testutil.InitTestRepo(t)
+	repo.CommitFile("a.txt", "one", "first")
+	repo.CheckoutDetached()
+	sha := repo.CommitFile("a.txt", "two", "second, on detached HEAD")
+
+	commitID := int64(9)
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	m.activeBranchFilter = branchNone
+
+	detached := storage.ReviewJob{
+		ID:       9,
+		JobType:  storage.JobTypeReview,
+		GitRef:   sha,
+		RepoPath: repo.Path(),
+		CommitID: &commitID,
+	}
+	assert.True(t, m.branchMatchesFilter(detached), "empty-branch detached job should match (none)")
+
+	detached.Branch = branchNone
+	// Fresh model so the cached display label from the first call is not reused.
+	m2 := newModel(localhostEndpoint, withExternalIODisabled())
+	m2.activeBranchFilter = branchNone
+	assert.True(t, m2.branchMatchesFilter(detached), "backfilled branchNone detached job should match (none)")
+}
+
 // TestGetBranchForJobReachableFromBranch ensures the existing git name-rev
 // fallback still wins over the new placeholder when the commit is in fact
 // reachable from a local branch.

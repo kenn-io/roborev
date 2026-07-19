@@ -35,9 +35,9 @@ func TestTaskCellsBranchColumn(t *testing.T) {
 			wantBranch: "",
 		},
 		{
-			name:       "backfilled branchNone renders detached placeholder",
+			name:       "unverifiable branchNone keeps the sentinel",
 			job:        storage.ReviewJob{JobType: storage.JobTypeReview, Branch: branchNone, GitRef: "abc1234567", CommitID: &commitID},
-			wantBranch: "(detached @ abc1234)",
+			wantBranch: branchNone,
 		},
 		{
 			name:       "branchNone on task job keeps the sentinel",
