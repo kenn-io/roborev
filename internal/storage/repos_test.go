@@ -433,7 +433,7 @@ func TestListRepos(t *testing.T) {
 		repos, err := db.ListRepos()
 		require.NoError(t, err, "ListRepos failed: %v")
 
-		assert.Empty(t, repos)
+		assert.Nil(t, repos)
 	})
 
 	// Create repos

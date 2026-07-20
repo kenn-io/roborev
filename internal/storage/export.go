@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
@@ -187,6 +188,9 @@ func (db *DB) ExportReviews(opts ExportReviewsOptions) (ExportReviewsPage, error
 }
 
 func (db *DB) queryExportReviewRows(opts ExportReviewsOptions, cursor *exportCursor) (*sql.Rows, error) {
+	// Raw SQL allowlist: the export owns a dynamic content projection, optional
+	// joins/filters, and a SQLite-normalized keyset cursor. Keep that statement
+	// intact while executing it through Bun's connection.
 	outputExpr := "NULL"
 	if opts.Profile == ExportProfileContent {
 		outputExpr = "rv.output"
@@ -244,7 +248,7 @@ func (db *DB) queryExportReviewRows(opts ExportReviewsOptions, cursor *exportCur
 		LEFT JOIN ci_pr_panels cp ON cp.panel_run_uuid = j.panel_run_uuid
 		WHERE ` + strings.Join(conditions, " AND ") + `
 		ORDER BY ` + completedExpr + ` ASC, rv.uuid ASC` + limitClause
-	return db.Query(query, args...)
+	return db.bun.QueryContext(context.Background(), query, args...)
 }
 
 func scanExportReviewRow(rows *sql.Rows) (exportReviewRow, error) {
@@ -329,11 +333,13 @@ func (row exportReviewRow) exportCommitSHA() string {
 }
 
 func (db *DB) exportSubagents(panelRunUUID string, profile ExportProfile) ([]ExportSubagent, error) {
+	// Raw SQL allowlist: the content profile changes the selected output column
+	// while the joined, ordered panel-member projection must stay explicit.
 	outputExpr := "NULL"
 	if profile == ExportProfileContent {
 		outputExpr = "rv.output"
 	}
-	rows, err := db.Query(`
+	rows, err := db.bun.QueryContext(context.Background(), `
 		SELECT rv.uuid, rv.verdict_bool, rv.created_at, `+outputExpr+`,
 		       j.agent, j.model, j.review_type, j.panel_member_name, j.started_at, j.finished_at,
 		       j.token_usage
@@ -634,7 +640,9 @@ func decodeExportCursor(cursor string) (*exportCursor, error) {
 func (db *DB) exportCursorReviewExists(cursor *exportCursor) (bool, error) {
 	completedExpr := sqliteNormalizedTimestampExpr("rv.created_at")
 	var count int
-	err := db.QueryRow(`
+	// Raw SQL allowlist: cursor validation must use the same SQLite-normalized
+	// completion expression and eligibility predicates as export pagination.
+	err := db.bun.QueryRowContext(context.Background(), `
 		SELECT COUNT(1)
 		FROM reviews rv
 		JOIN review_jobs j ON j.id = rv.job_id

@@ -22,7 +22,7 @@ roborev/
 ├── cmd/roborev/         # CLI entry point
 ├── internal/
 │   ├── daemon/          # HTTP API server and worker pool
-│   ├── storage/         # SQLite operations
+│   ├── storage/         # Bun-backed SQLite and PostgreSQL persistence
 │   ├── agent/           # Agent interface and implementations
 │   └── config/          # Configuration loading
 ├── scripts/             # Install and utility scripts
@@ -34,12 +34,13 @@ roborev/
 ```
 CLI (roborev) -> HTTP API -> Daemon (roborev daemon run) -> Worker Pool -> Agents
                                 |
-                            SQLite DB
+                            SQLite DB <-> optional PostgreSQL sync
 ```
 
 - **Daemon**: HTTP server on port 7373 (auto-finds available port if busy)
 - **Workers**: Pool of 4 (configurable) parallel review workers
-- **Storage**: SQLite at `~/.roborev/reviews.db` with WAL mode
+- **Storage**: SQLite at `~/.roborev/reviews.db` with WAL mode; optional
+    PostgreSQL synchronization
 
 ## Key Files
 
@@ -48,7 +49,7 @@ CLI (roborev) -> HTTP API -> Daemon (roborev daemon run) -> Worker Pool -> Agent
 | `cmd/roborev/main.go` | CLI entry point, all commands |
 | `internal/daemon/server.go` | HTTP API handlers |
 | `internal/daemon/worker.go` | Worker pool, job processing |
-| `internal/storage/` | SQLite operations |
+| `internal/storage/` | Bun-backed SQLite persistence and PostgreSQL sync |
 | `internal/agent/` | Agent interface + implementations |
 | `internal/config/config.go` | Config loading, agent resolution |
 
@@ -71,6 +72,11 @@ type Agent interface {
 Tables: `repos`, `commits`, `review_jobs`, `reviews`, `responses`
 
 Job states: `queued` -> `running` -> `done`/`failed`
+
+Normal storage reads and writes use Uptrace Bun over modernc SQLite and pgx
+PostgreSQL. SQLite remains the authoritative local database. Schema migrations,
+SQLite pragmas, unique-winner claims, and retained pgx batches use explicit SQL
+where their database-specific semantics are the contract.
 
 ## Conventions
 

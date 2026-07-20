@@ -1,8 +1,10 @@
 package storage
 
 import (
-	"strings"
+	"context"
 	"time"
+
+	"github.com/uptrace/bun"
 )
 
 // CostAggregate is the approximate agent spend for a scope. It is partial by
@@ -57,54 +59,37 @@ const costEligible = "j.started_at IS NOT NULL AND j.finished_at IS NOT NULL " +
 // GetCostAggregate computes approximate agent spend for the given scope on a
 // fresh read.
 func (db *DB) GetCostAggregate(opts CostOptions) (CostAggregate, error) {
-	return costAggregate(db, opts)
+	return costAggregate(db.bun, db, opts)
 }
 
-// costAggregate computes approximate agent spend against any querier, so callers
+// costAggregate computes approximate agent spend against any Bun connection, so callers
 // can share a read snapshot (e.g. GetSummary's transaction). Panel member rows
 // are included — spend is per-row, not row-count.
-func costAggregate(q querier, opts CostOptions) (CostAggregate, error) {
-	var conditions []string
-	var args []any
-
+func costAggregate(db *bun.DB, conn bun.IConn, opts CostOptions) (CostAggregate, error) {
+	query := db.NewSelect().
+		Conn(conn).
+		TableExpr("review_jobs AS j").
+		ColumnExpr("COALESCE(SUM(CASE WHEN " + costEligible + " THEN 1 ELSE 0 END), 0) AS jobs_total").
+		ColumnExpr("COALESCE(SUM(CASE WHEN " + costEligible + " AND " + hasCost + " THEN 1 ELSE 0 END), 0) AS jobs_with_cost").
+		ColumnExpr("CAST(COALESCE(SUM(CASE WHEN " + costEligible + " AND " + hasCost + " THEN json_extract(j.token_usage, '$.cost_usd') ELSE 0 END), 0) AS REAL) AS total_usd").
+		Join("JOIN repos AS r ON r.id = j.repo_id")
 	if len(opts.RepoPaths) > 0 {
-		placeholders := make([]string, len(opts.RepoPaths))
-		for i, p := range opts.RepoPaths {
-			placeholders[i] = "?"
-			args = append(args, p)
-		}
-		conditions = append(conditions, "r.root_path IN ("+strings.Join(placeholders, ",")+")")
+		query = query.Where("r.root_path IN (?)", bun.List(opts.RepoPaths))
 	}
 	if opts.BranchEmpty {
-		conditions = append(conditions, "(j.branch = '' OR j.branch IS NULL)")
+		query = query.Where("j.branch = '' OR j.branch IS NULL")
 	} else if opts.Branch != "" {
-		conditions = append(conditions, "j.branch = ?")
-		args = append(args, opts.Branch)
+		query = query.Where("j.branch = ?", opts.Branch)
 	}
 	if !opts.Since.IsZero() {
-		conditions = append(conditions, "datetime(j.enqueued_at) >= datetime(?)")
-		args = append(args, opts.Since.UTC().Format("2006-01-02 15:04:05"))
+		query = query.Where(
+			"datetime(j.enqueued_at) >= datetime(?)",
+			opts.Since.UTC().Format("2006-01-02 15:04:05"),
+		)
 	}
-
-	where := ""
-	if len(conditions) > 0 {
-		where = "WHERE " + strings.Join(conditions, " AND ")
-	}
-
-	query := `
-		SELECT
-			COALESCE(SUM(CASE WHEN ` + costEligible + ` THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN ` + costEligible + `
-				AND ` + hasCost + ` THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN ` + costEligible + `
-				AND ` + hasCost + `
-				THEN json_extract(j.token_usage, '$.cost_usd') ELSE 0 END), 0)
-		FROM review_jobs j
-		JOIN repos r ON r.id = j.repo_id
-		` + where
 
 	var c CostAggregate
-	if err := q.QueryRow(query, args...).Scan(&c.JobsTotal, &c.JobsWithCost, &c.TotalUSD); err != nil {
+	if err := query.Scan(context.Background(), &c); err != nil {
 		return CostAggregate{}, err
 	}
 	c.Complete = c.JobsTotal > 0 && c.JobsWithCost == c.JobsTotal

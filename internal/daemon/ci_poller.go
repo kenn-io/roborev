@@ -1498,23 +1498,17 @@ func (p *CIPoller) callGitClone(
 // Matching is case-insensitive since GitHub owner/repo names are case-insensitive.
 // Returns an ambiguity error if multiple repos match.
 func (p *CIPoller) findRepoByPartialIdentity(ghRepo string) (*storage.Repo, error) {
-	rows, err := p.db.Query(`SELECT id, root_path, name, created_at, identity FROM repos WHERE identity IS NOT NULL AND identity != ''`)
+	repos, err := p.db.ListReposWithIdentity()
 	if err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
 	// Normalize the search pattern: owner/repo (without .git), lowercased
 	needle := strings.ToLower(strings.TrimSuffix(ghRepo, ".git"))
 
 	var matches []storage.Repo
-	for rows.Next() {
-		var repo storage.Repo
-		var identity string
-		var createdAt string
-		if err := rows.Scan(&repo.ID, &repo.RootPath, &repo.Name, &createdAt, &identity); err != nil {
-			continue
-		}
+	for _, repo := range repos {
+		identity := repo.Identity
 		// Skip sync placeholders (root_path == identity)
 		if repo.RootPath == identity {
 			continue
@@ -1523,12 +1517,6 @@ func (p *CIPoller) findRepoByPartialIdentity(ghRepo string) (*storage.Repo, erro
 		// Strip .git suffix for comparison
 		normalized := strings.ToLower(strings.TrimSuffix(identity, ".git"))
 		if strings.HasSuffix(normalized, "/"+needle) || strings.HasSuffix(normalized, ":"+needle) {
-			repo.Identity = identity
-			if t, err := time.Parse("2006-01-02 15:04:05", createdAt); err == nil {
-				repo.CreatedAt = t
-			} else if t, err := time.Parse(time.RFC3339, createdAt); err == nil {
-				repo.CreatedAt = t
-			}
 			matches = append(matches, repo)
 		}
 	}

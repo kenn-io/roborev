@@ -11,6 +11,8 @@ import (
 	"strings"
 	"time"
 
+	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/dialect/sqlitedialect"
 	_ "modernc.org/sqlite"
 
 	"go.kenn.io/roborev/internal/config"
@@ -168,6 +170,16 @@ CREATE INDEX IF NOT EXISTS idx_commits_sha ON commits(sha);
 
 type DB struct {
 	*sql.DB
+	bun *bun.DB
+}
+
+func newSQLiteBunDB(db *sql.DB) *bun.DB {
+	return bun.NewDB(db, sqlitedialect.New())
+}
+
+// Close closes the Bun wrapper and its underlying SQLite database.
+func (db *DB) Close() error {
+	return db.bun.Close()
 }
 
 // DefaultDBPath returns the default database path
@@ -186,30 +198,33 @@ func Open(dbPath string) (*DB, error) {
 	// Open with WAL mode and busy timeout.
 	// 30s busy_timeout gives enough headroom for concurrent writers
 	// (worker pool + sync worker) to wait for locks rather than failing.
-	db, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(30000)")
+	sqldb, err := sql.Open("sqlite", dbPath+"?_pragma=journal_mode(WAL)&_pragma=busy_timeout(30000)")
 	if err != nil {
 		return nil, fmt.Errorf("open database: %w", err)
 	}
 
-	wrapped := &DB{db}
+	wrapped := &DB{
+		DB:  sqldb,
+		bun: newSQLiteBunDB(sqldb),
+	}
 
 	// Initialize schema (CREATE IF NOT EXISTS is idempotent)
-	if _, err := db.Exec(schema); err != nil {
-		db.Close()
+	if _, err := wrapped.Exec(schema); err != nil {
+		_ = wrapped.Close()
 		return nil, fmt.Errorf("initialize schema: %w", err)
 	}
 
 	// Run migrations for existing databases
 	if err := wrapped.migrate(); err != nil {
-		db.Close()
+		_ = wrapped.Close()
 		return nil, fmt.Errorf("migrate: %w", err)
 	}
 	if _, err := wrapped.GetDatabaseID(); err != nil {
-		db.Close()
+		_ = wrapped.Close()
 		return nil, fmt.Errorf("initialize database ID: %w", err)
 	}
 	if _, err := wrapped.BackfillVerdictBool(); err != nil {
-		db.Close()
+		_ = wrapped.Close()
 		return nil, fmt.Errorf("backfill verdicts: %w", err)
 	}
 

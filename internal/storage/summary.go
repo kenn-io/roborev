@@ -1,17 +1,13 @@
 package storage
 
 import (
-	"database/sql"
+	"context"
 	"sort"
 	"strings"
 	"time"
-)
 
-// querier abstracts *sql.DB and *sql.Tx for summary queries.
-type querier interface {
-	Query(query string, args ...any) (*sql.Rows, error)
-	QueryRow(query string, args ...any) *sql.Row
-}
+	"github.com/uptrace/bun"
+)
 
 // Summary holds aggregate review statistics for a time window.
 type Summary struct {
@@ -120,7 +116,8 @@ func (db *DB) GetSummary(opts SummaryOptions) (*Summary, error) {
 		opts.RepoPath = normalizeRepoPathBestEffort(opts.RepoPath)
 	}
 
-	tx, err := db.Begin()
+	ctx := context.Background()
+	tx, err := db.bun.BeginTx(ctx, nil)
 	if err != nil {
 		return nil, err
 	}
@@ -185,7 +182,7 @@ func (db *DB) GetSummary(opts SummaryOptions) (*Summary, error) {
 	if opts.RepoPath != "" {
 		costRepos = []string{opts.RepoPath}
 	}
-	s.Cost, err = costAggregate(tx, CostOptions{
+	s.Cost, err = costAggregate(db.bun, tx, CostOptions{
 		RepoPaths: costRepos,
 		Branch:    opts.Branch,
 		Since:     opts.Since,
@@ -204,7 +201,10 @@ func (db *DB) GetSummary(opts SummaryOptions) (*Summary, error) {
 	return s, nil
 }
 
-func summaryOverview(q querier, where string, args []any) (OverviewStats, error) {
+func summaryOverview(q bun.IDB, where string, args []any) (OverviewStats, error) {
+	// Raw SQL allowlist: summary helpers share expression-heavy aggregate
+	// projections and dynamically composed filters that Bun does not simplify.
+	// They still execute through the caller's Bun DB or snapshot transaction.
 	query := `
 		SELECT
 			COALESCE(SUM(CASE WHEN j.status = 'queued' THEN 1 ELSE 0 END), 0),
@@ -220,14 +220,14 @@ func summaryOverview(q querier, where string, args []any) (OverviewStats, error)
 		` + where
 
 	var o OverviewStats
-	err := q.QueryRow(query, args...).Scan(
+	err := q.NewRaw(query, args...).Scan(context.Background(),
 		&o.Queued, &o.Running, &o.Done, &o.Failed,
 		&o.Canceled, &o.Applied, &o.Rebased, &o.Total,
 	)
 	return o, err
 }
 
-func summaryVerdicts(q querier, where string, args []any) (VerdictStats, error) {
+func summaryVerdicts(q bun.IDB, where string, args []any) (VerdictStats, error) {
 	query := `
 		SELECT
 			COUNT(*),
@@ -242,7 +242,7 @@ func summaryVerdicts(q querier, where string, args []any) (VerdictStats, error) 
 			AND ` + verdictJobFilter
 
 	var v VerdictStats
-	err := q.QueryRow(query, args...).Scan(&v.Total, &v.Passed, &v.Failed, &v.Addressed)
+	err := q.NewRaw(query, args...).Scan(context.Background(), &v.Total, &v.Passed, &v.Failed, &v.Addressed)
 	if err != nil {
 		return v, err
 	}
@@ -255,16 +255,16 @@ func summaryVerdicts(q querier, where string, args []any) (VerdictStats, error) 
 	return v, nil
 }
 
-func summaryAgents(q querier, where string, args []any) ([]AgentStats, error) {
+func summaryAgents(q bun.IDB, where string, args []any) ([]AgentStats, error) {
 	query := `
 		SELECT
 			j.agent,
 			COUNT(*) as total,
 			COALESCE(SUM(CASE WHEN rv.verdict_bool = 1
-				AND ` + verdictJobFilter + ` THEN 1 ELSE 0 END), 0),
+				AND ` + verdictJobFilter + ` THEN 1 ELSE 0 END), 0) AS passed,
 			COALESCE(SUM(CASE WHEN rv.verdict_bool = 0
-				AND ` + verdictJobFilter + ` THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN j.status = 'failed' THEN 1 ELSE 0 END), 0)
+				AND ` + verdictJobFilter + ` THEN 1 ELSE 0 END), 0) AS failed,
+			COALESCE(SUM(CASE WHEN j.status = 'failed' THEN 1 ELSE 0 END), 0) AS errors
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN reviews rv ON rv.job_id = j.id
@@ -272,26 +272,16 @@ func summaryAgents(q querier, where string, args []any) ([]AgentStats, error) {
 		GROUP BY j.agent
 		ORDER BY total DESC`
 
-	rows, err := q.Query(query, args...)
-	if err != nil {
+	var agents []AgentStats
+	if err := q.NewRaw(query, args...).Scan(context.Background(), &agents); err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	var agents []AgentStats
-	for rows.Next() {
-		var a AgentStats
-		if err := rows.Scan(&a.Agent, &a.Total, &a.Passed, &a.Failed, &a.Errors); err != nil {
-			return nil, err
-		}
+	for i := range agents {
+		a := &agents[i]
 		reviewed := a.Passed + a.Failed
 		if reviewed > 0 {
 			a.PassRate = float64(a.Passed) / float64(reviewed)
 		}
-		agents = append(agents, a)
-	}
-	if err := rows.Err(); err != nil {
-		return nil, err
 	}
 
 	for i := range agents {
@@ -305,7 +295,7 @@ func summaryAgents(q querier, where string, args []any) ([]AgentStats, error) {
 	return agents, nil
 }
 
-func agentMedianDuration(q querier, where string, args []any, agent string) (float64, error) {
+func agentMedianDuration(q bun.IDB, where string, args []any, agent string) (float64, error) {
 	query := `
 		SELECT CAST((julianday(j.finished_at) - julianday(j.started_at)) * 86400 AS REAL)
 		FROM review_jobs j
@@ -314,28 +304,15 @@ func agentMedianDuration(q querier, where string, args []any, agent string) (flo
 		ORDER BY 1`
 
 	allArgs := append(append([]any{}, args...), agent)
-	rows, err := q.Query(query, allArgs...)
-	if err != nil {
-		return 0, err
-	}
-	defer rows.Close()
-
 	var durations []float64
-	for rows.Next() {
-		var d float64
-		if err := rows.Scan(&d); err != nil {
-			return 0, err
-		}
-		durations = append(durations, d)
-	}
-	if err := rows.Err(); err != nil {
+	if err := q.NewRaw(query, allArgs...).Scan(context.Background(), &durations); err != nil {
 		return 0, err
 	}
 
 	return percentile(durations, 0.5), nil
 }
 
-func summaryDurations(q querier, where string, args []any) (DurationStats, error) {
+func summaryDurations(q bun.IDB, where string, args []any) (DurationStats, error) {
 	reviewQuery := `
 		SELECT CAST((julianday(j.finished_at) - julianday(j.started_at)) * 86400 AS REAL)
 		FROM review_jobs j
@@ -370,68 +347,53 @@ func summaryDurations(q querier, where string, args []any) (DurationStats, error
 	}, nil
 }
 
-func collectDurations(q querier, query string, args []any) ([]float64, error) {
-	rows, err := q.Query(query, args...)
-	if err != nil {
+func collectDurations(q bun.IDB, query string, args []any) ([]float64, error) {
+	var scanned []float64
+	if err := q.NewRaw(query, args...).Scan(context.Background(), &scanned); err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
 	var durations []float64
-	for rows.Next() {
-		var d float64
-		if err := rows.Scan(&d); err != nil {
-			return nil, err
-		}
+	for _, d := range scanned {
 		if d >= 0 {
 			durations = append(durations, d)
 		}
 	}
-	return durations, rows.Err()
+	return durations, nil
 }
 
-func summaryJobTypes(q querier, where string, args []any) ([]JobTypeStats, error) {
+func summaryJobTypes(q bun.IDB, where string, args []any) ([]JobTypeStats, error) {
 	query := `
 		SELECT
-			COALESCE(NULLIF(j.job_type, ''), 'review') as jt,
-			COUNT(*),
-			COALESCE(SUM(CASE WHEN j.status = 'applied' THEN 1 ELSE 0 END), 0),
-			COALESCE(SUM(CASE WHEN j.status = 'rebased' THEN 1 ELSE 0 END), 0)
+			COALESCE(NULLIF(j.job_type, ''), 'review') AS type,
+			COUNT(*) AS count,
+			COALESCE(SUM(CASE WHEN j.status = 'applied' THEN 1 ELSE 0 END), 0) AS applied,
+			COALESCE(SUM(CASE WHEN j.status = 'rebased' THEN 1 ELSE 0 END), 0) AS rebased
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		` + where + `
-		GROUP BY jt
+		GROUP BY COALESCE(NULLIF(j.job_type, ''), 'review')
 		ORDER BY COUNT(*) DESC`
 
-	rows, err := q.Query(query, args...)
-	if err != nil {
+	var types []JobTypeStats
+	if err := q.NewRaw(query, args...).Scan(context.Background(), &types); err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	var types []JobTypeStats
-	for rows.Next() {
-		var t JobTypeStats
-		if err := rows.Scan(&t.Type, &t.Count, &t.Applied, &t.Rebased); err != nil {
-			return nil, err
-		}
-		types = append(types, t)
-	}
-	return types, rows.Err()
+	return types, nil
 }
 
-func summaryRepos(q querier, where string, args []any) ([]RepoSummary, error) {
+func summaryRepos(q bun.IDB, where string, args []any) ([]RepoSummary, error) {
 	query := `
 		SELECT
-			r.name,
-			r.root_path,
+			r.name AS name,
+			r.root_path AS path,
 			COUNT(*) as total,
 			COALESCE(SUM(CASE WHEN rv.verdict_bool = 1
-				AND ` + verdictJobFilter + ` THEN 1 ELSE 0 END), 0),
+				AND ` + verdictJobFilter + ` THEN 1 ELSE 0 END), 0) AS passed,
 			COALESCE(SUM(CASE WHEN rv.verdict_bool = 0
-				AND ` + verdictJobFilter + ` THEN 1 ELSE 0 END), 0),
+				AND ` + verdictJobFilter + ` THEN 1 ELSE 0 END), 0) AS failed,
 			COALESCE(SUM(CASE WHEN rv.closed = 1 AND rv.verdict_bool = 0
-				AND ` + verdictJobFilter + ` THEN 1 ELSE 0 END), 0)
+				AND ` + verdictJobFilter + ` THEN 1 ELSE 0 END), 0) AS addressed
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN reviews rv ON rv.job_id = j.id
@@ -439,24 +401,14 @@ func summaryRepos(q querier, where string, args []any) ([]RepoSummary, error) {
 		GROUP BY r.id
 		ORDER BY total DESC`
 
-	rows, err := q.Query(query, args...)
-	if err != nil {
+	var repos []RepoSummary
+	if err := q.NewRaw(query, args...).Scan(context.Background(), &repos); err != nil {
 		return nil, err
 	}
-	defer rows.Close()
-
-	var repos []RepoSummary
-	for rows.Next() {
-		var rs RepoSummary
-		if err := rows.Scan(&rs.Name, &rs.Path, &rs.Total, &rs.Passed, &rs.Failed, &rs.Addressed); err != nil {
-			return nil, err
-		}
-		repos = append(repos, rs)
-	}
-	return repos, rows.Err()
+	return repos, nil
 }
 
-func summaryFailures(q querier, where string, args []any) (FailureStats, error) {
+func summaryFailures(q bun.IDB, where string, args []any) (FailureStats, error) {
 	countQuery := `
 		SELECT
 			COALESCE(SUM(CASE WHEN j.status = 'failed' THEN 1 ELSE 0 END), 0),
@@ -466,7 +418,7 @@ func summaryFailures(q querier, where string, args []any) (FailureStats, error) 
 		` + where
 
 	var f FailureStats
-	if err := q.QueryRow(countQuery, args...).Scan(&f.Total, &f.Retries); err != nil {
+	if err := q.NewRaw(countQuery, args...).Scan(context.Background(), &f.Total, &f.Retries); err != nil {
 		return f, err
 	}
 
@@ -476,75 +428,50 @@ func summaryFailures(q querier, where string, args []any) (FailureStats, error) 
 		JOIN repos r ON r.id = j.repo_id
 		` + where + ` AND j.status = 'failed' AND j.error != ''`
 
-	rows, err := q.Query(errQuery, args...)
-	if err != nil {
+	var messages []string
+	if err := q.NewRaw(errQuery, args...).Scan(context.Background(), &messages); err != nil {
 		return f, err
 	}
-	defer rows.Close()
 
 	f.Errors = make(map[string]int)
-	for rows.Next() {
-		var errMsg string
-		if err := rows.Scan(&errMsg); err != nil {
-			return f, err
-		}
+	for _, errMsg := range messages {
 		category := categorizeError(errMsg)
 		f.Errors[category]++
 	}
-	return f, rows.Err()
+	return f, nil
 }
 
 // BackfillVerdictBool populates verdict_bool for reviews that have output
 // but a NULL verdict_bool. Returns the number of rows updated.
 func (db *DB) BackfillVerdictBool() (int, error) {
-	rows, err := db.Query(`
-		SELECT rv.id, rv.output
-		FROM reviews rv
-		WHERE rv.verdict_bool IS NULL AND rv.output != ''
-	`)
-	if err != nil {
-		return 0, err
-	}
-	defer rows.Close()
-
 	type pending struct {
-		id      int64
-		verdict int
+		ID      int64  `bun:"id"`
+		Output  string `bun:"output"`
+		Verdict int
 	}
 	var updates []pending
-	for rows.Next() {
-		var id int64
-		var output string
-		if err := rows.Scan(&id, &output); err != nil {
-			return 0, err
-		}
-		updates = append(updates, pending{
-			id:      id,
-			verdict: verdictToBool(ParseVerdict(output)),
-		})
-	}
-	if err := rows.Err(); err != nil {
+	if err := db.bun.NewSelect().Model((*reviewRow)(nil)).Column("id", "output").
+		Where("verdict_bool IS NULL").Where("output != ''").Scan(context.Background(), &updates); err != nil {
 		return 0, err
+	}
+	for i := range updates {
+		updates[i].Verdict = verdictToBool(ParseVerdict(updates[i].Output))
 	}
 
 	if len(updates) == 0 {
 		return 0, nil
 	}
 
-	tx, err := db.Begin()
+	tx, err := db.bun.BeginTx(context.Background(), nil)
 	if err != nil {
 		return 0, err
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	stmt, err := tx.Prepare(`UPDATE reviews SET verdict_bool = ? WHERE id = ?`)
-	if err != nil {
-		return 0, err
-	}
-	defer stmt.Close()
-
 	for _, u := range updates {
-		if _, err := stmt.Exec(u.verdict, u.id); err != nil {
+		if _, err := db.bun.NewUpdate().Model((*reviewRow)(nil)).Conn(tx).
+			Set("verdict_bool = ?", u.Verdict).Where("id = ?", u.ID).
+			Exec(context.Background()); err != nil {
 			return 0, err
 		}
 	}

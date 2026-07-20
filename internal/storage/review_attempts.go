@@ -6,6 +6,8 @@ import (
 	"errors"
 	"fmt"
 	"time"
+
+	"github.com/uptrace/bun"
 )
 
 // ReviewAttempt is the local CI-poller retry state for a single reviewed HEAD,
@@ -31,42 +33,16 @@ type ReviewAttempt struct {
 	UpdatedAt                  time.Time  `json:"updated_at"`
 }
 
-// reviewAttemptColumns is the canonical SELECT column list for
-// scanReviewAttempt. Kept in one place so every Get* query and the scanner
-// stay in lockstep.
-const reviewAttemptColumns = `id, github_repo, pr_number, head_sha, attempt,
-	first_attempt_at, next_attempt_at, last_error_class,
-	consecutive_genuine_attempts, last_error_excerpt, last_panel_run_uuid,
-	state, updated_at`
-
-// scanReviewAttempt hydrates a ReviewAttempt from a row selecting
-// reviewAttemptColumns. The nullable next_attempt_at is scanned through
-// sql.NullString and the timestamps parsed with parseSQLiteTime, mirroring
-// scanCIPanel.
-func scanReviewAttempt(row sqlScanner) (*ReviewAttempt, error) {
-	var a ReviewAttempt
-	var firstAttemptAt sql.NullString
-	var nextAttemptAt sql.NullString
-	var updatedAt sql.NullString
-	if err := row.Scan(
-		&a.ID, &a.GithubRepo, &a.PRNumber, &a.HeadSHA, &a.Attempt,
-		&firstAttemptAt, &nextAttemptAt, &a.LastErrorClass,
-		&a.ConsecutiveGenuineAttempts, &a.LastErrorExcerpt, &a.LastPanelRunUUID,
-		&a.State, &updatedAt,
-	); err != nil {
+func scanReviewAttempts(query *bun.SelectQuery) ([]ReviewAttempt, error) {
+	var rows []ciReviewAttemptRow
+	if err := query.Scan(context.Background(), &rows); err != nil {
 		return nil, err
 	}
-	if firstAttemptAt.Valid {
-		a.FirstAttemptAt = parseSQLiteTime(firstAttemptAt.String)
+	var attempts []ReviewAttempt
+	for _, row := range rows {
+		attempts = append(attempts, row.toModel())
 	}
-	if nextAttemptAt.Valid {
-		t := parseSQLiteTime(nextAttemptAt.String)
-		a.NextAttemptAt = &t
-	}
-	if updatedAt.Valid {
-		a.UpdatedAt = parseSQLiteTime(updatedAt.String)
-	}
-	return &a, nil
+	return attempts, nil
 }
 
 // ReserveReviewAttempt idempotently reserves the attempt row for a reviewed
@@ -76,7 +52,7 @@ func scanReviewAttempt(row sqlScanner) (*ReviewAttempt, error) {
 // double-enqueue. The initial row is attempt=1, state='pending',
 // next_attempt_at=NULL, with empty error fields and a zero genuine streak.
 func (db *DB) ReserveReviewAttempt(repo string, pr int, sha string, now time.Time) (bool, error) {
-	res, err := reserveReviewAttemptExec(context.Background(), db, repo, pr, sha, now)
+	res, err := db.reserveReviewAttemptExec(context.Background(), db, repo, pr, sha, now)
 	if err != nil {
 		return false, err
 	}
@@ -95,24 +71,25 @@ func (db *DB) ReserveReviewAttempt(repo string, pr int, sha string, now time.Tim
 // the caller has already established it owns this (repo, pr, sha) via the panel
 // reservation, so whether the row was new or pre-existing does not change the
 // outcome.
-func reserveReviewAttemptTx(ctx context.Context, exec execer, repo string, pr int, sha string, now time.Time) error {
-	_, err := reserveReviewAttemptExec(ctx, exec, repo, pr, sha, now)
+func (db *DB) reserveReviewAttemptTx(ctx context.Context, exec execer, repo string, pr int, sha string, now time.Time) error {
+	_, err := db.reserveReviewAttemptExec(ctx, exec, repo, pr, sha, now)
 	return err
 }
 
 // reserveReviewAttemptExec runs the idempotent attempt-row INSERT against any
 // execer (the pooled *DB or a transaction connection), keeping the SQL in one
 // place for both ReserveReviewAttempt and reserveReviewAttemptTx.
-func reserveReviewAttemptExec(ctx context.Context, exec execer, repo string, pr int, sha string, now time.Time) (sql.Result, error) {
-	ts := now.Format(time.RFC3339)
-	res, err := exec.ExecContext(ctx, `
-		INSERT INTO ci_pr_review_attempts
-			(github_repo, pr_number, head_sha, attempt, first_attempt_at,
-			 next_attempt_at, last_error_class, consecutive_genuine_attempts,
-			 last_error_excerpt, last_panel_run_uuid, state, updated_at)
-		VALUES (?, ?, ?, 1, ?, NULL, '', 0, '', '', 'pending', ?)
-		ON CONFLICT(github_repo, pr_number, head_sha) DO NOTHING`,
-		repo, pr, sha, ts, ts)
+func (db *DB) reserveReviewAttemptExec(ctx context.Context, exec execer, repo string, pr int, sha string, now time.Time) (sql.Result, error) {
+	row := ciReviewAttemptRow{
+		GithubRepo: repo, PRNumber: pr, HeadSHA: sha, Attempt: 1,
+		FirstAttemptAt: dbTimeFromValue(now), State: "pending", UpdatedAt: dbTimeFromValue(now),
+	}
+	insert := db.bun.NewInsert().Model(&row).
+		Column("github_repo", "pr_number", "head_sha", "attempt", "first_attempt_at",
+			"next_attempt_at", "last_error_class", "consecutive_genuine_attempts",
+			"last_error_excerpt", "last_panel_run_uuid", "state", "updated_at").
+		On("CONFLICT (github_repo, pr_number, head_sha) DO NOTHING")
+	res, err := insert.Conn(exec).Exec(ctx)
 	if err != nil {
 		return nil, fmt.Errorf("reserve review attempt: %w", err)
 	}
@@ -122,18 +99,18 @@ func reserveReviewAttemptExec(ctx context.Context, exec execer, repo string, pr 
 // GetReviewAttempt returns the attempt row for a (repo, pr, sha), or nil when
 // no row exists.
 func (db *DB) GetReviewAttempt(repo string, pr int, sha string) (*ReviewAttempt, error) {
-	row := db.QueryRow(`SELECT `+reviewAttemptColumns+`
-		FROM ci_pr_review_attempts
-		WHERE github_repo = ? AND pr_number = ? AND head_sha = ?`,
-		repo, pr, sha)
-	a, err := scanReviewAttempt(row)
+	var row ciReviewAttemptRow
+	err := db.bun.NewSelect().Model(&row).Column(sqliteReviewAttemptColumns...).
+		Where("github_repo = ?", repo).Where("pr_number = ?", pr).Where("head_sha = ?", sha).
+		Scan(context.Background())
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
 	}
 	if err != nil {
 		return nil, fmt.Errorf("get review attempt: %w", err)
 	}
-	return a, nil
+	a := row.toModel()
+	return &a, nil
 }
 
 // DeferReviewAttempt marks a HEAD's attempt deferred until nextAttemptAt,
@@ -144,20 +121,14 @@ func (db *DB) GetReviewAttempt(repo string, pr int, sha string) (*ReviewAttempt,
 func (db *DB) DeferReviewAttempt(repo string, pr int, sha, errClass, excerpt, lastRunUUID string,
 	nextAttemptAt time.Time, bumpGenuine bool,
 ) error {
-	_, err := db.Exec(`
-		UPDATE ci_pr_review_attempts
-		SET state = 'deferred',
-		    next_attempt_at = ?,
-		    last_error_class = ?,
-		    last_error_excerpt = ?,
-		    last_panel_run_uuid = ?,
-		    consecutive_genuine_attempts =
-		        CASE WHEN ? THEN consecutive_genuine_attempts + 1 ELSE 0 END,
-		    updated_at = ?
-		WHERE github_repo = ? AND pr_number = ? AND head_sha = ?`,
-		nextAttemptAt.Format(time.RFC3339), errClass, excerpt, lastRunUUID,
-		bumpGenuine, time.Now().Format(time.RFC3339),
-		repo, pr, sha)
+	_, err := db.bun.NewUpdate().Model((*ciReviewAttemptRow)(nil)).
+		Set("state = 'deferred'").Set("next_attempt_at = ?", dbTimeFromValue(nextAttemptAt)).
+		Set("last_error_class = ?", errClass).Set("last_error_excerpt = ?", excerpt).
+		Set("last_panel_run_uuid = ?", lastRunUUID).
+		Set("consecutive_genuine_attempts = CASE WHEN ? THEN consecutive_genuine_attempts + 1 ELSE 0 END", bumpGenuine).
+		Set("updated_at = ?", dbTimeFromValue(time.Now())).
+		Where("github_repo = ?", repo).Where("pr_number = ?", pr).Where("head_sha = ?", sha).
+		Exec(context.Background())
 	if err != nil {
 		return fmt.Errorf("defer review attempt: %w", err)
 	}
@@ -170,15 +141,12 @@ func (db *DB) DeferReviewAttempt(repo string, pr int, sha, errClass, excerpt, la
 // provider recovers should let the retry sweep run immediately. Genuine
 // deterministic failures keep their scheduled backoff.
 func (db *DB) MakeTransientReviewAttemptsDue(now time.Time) (int64, error) {
-	nowTS := now.Format(time.RFC3339)
-	res, err := db.Exec(`
-		UPDATE ci_pr_review_attempts
-		SET next_attempt_at = ?, updated_at = ?
-		WHERE state = 'deferred'
-		  AND last_error_class = 'transient'
-		  AND next_attempt_at IS NOT NULL
-		  AND datetime(next_attempt_at) > datetime(?)`,
-		nowTS, nowTS, nowTS)
+	nowTS := dbTimeFromValue(now)
+	res, err := db.bun.NewUpdate().Model((*ciReviewAttemptRow)(nil)).
+		Set("next_attempt_at = ?", nowTS).Set("updated_at = ?", nowTS).
+		Where("state = 'deferred'").Where("last_error_class = 'transient'").
+		Where("next_attempt_at IS NOT NULL").Where("datetime(next_attempt_at) > datetime(?)", nowTS).
+		Exec(context.Background())
 	if err != nil {
 		return 0, fmt.Errorf("make transient review attempts due: %w", err)
 	}
@@ -201,13 +169,11 @@ func (db *DB) MakeTransientReviewAttemptsDue(now time.Time) (int64, error) {
 // already moved the row out of 'pending' (e.g. a late finalization), this is a
 // no-op. Returns whether the row was re-armed.
 func (db *DB) RearmStuckReviewAttempt(repo string, pr int, sha string, nextAttemptAt time.Time) (bool, error) {
-	res, err := db.Exec(`
-		UPDATE ci_pr_review_attempts
-		SET state = 'deferred', next_attempt_at = ?, updated_at = ?
-		WHERE github_repo = ? AND pr_number = ? AND head_sha = ?
-		  AND state = 'pending'`,
-		nextAttemptAt.Format(time.RFC3339), time.Now().Format(time.RFC3339),
-		repo, pr, sha)
+	res, err := db.bun.NewUpdate().Model((*ciReviewAttemptRow)(nil)).
+		Set("state = 'deferred'").Set("next_attempt_at = ?", dbTimeFromValue(nextAttemptAt)).
+		Set("updated_at = ?", dbTimeFromValue(time.Now())).
+		Where("github_repo = ?", repo).Where("pr_number = ?", pr).Where("head_sha = ?", sha).
+		Where("state = 'pending'").Exec(context.Background())
 	if err != nil {
 		return false, fmt.Errorf("rearm stuck review attempt: %w", err)
 	}
@@ -227,8 +193,10 @@ func (db *DB) RearmStuckReviewAttempt(repo string, pr int, sha string, nextAttem
 // SQLite datetime() on both sides — like GetTimedOutPanels — so a 'T'-vs-space
 // formatting mismatch can never make a row read as due.
 func (db *DB) ClaimDueReviewAttempt(repo string, pr int, sha string, now time.Time) (bool, int, time.Time, error) {
-	nowTS := now.Format(time.RFC3339)
-	res, err := db.Exec(`
+	nowTS := dbTimeFromValue(now)
+	// Raw SQL allowlist: the due predicate and attempt increment form one
+	// atomic claim whose RowsAffected identifies the unique winner.
+	res, err := db.bun.NewRaw(`
 		UPDATE ci_pr_review_attempts
 		SET state = 'pending', attempt = attempt + 1, next_attempt_at = NULL,
 		    updated_at = ?
@@ -236,7 +204,7 @@ func (db *DB) ClaimDueReviewAttempt(repo string, pr int, sha string, now time.Ti
 		  AND state = 'deferred'
 		  AND next_attempt_at IS NOT NULL
 		  AND datetime(next_attempt_at) <= datetime(?)`,
-		nowTS, repo, pr, sha, nowTS)
+		nowTS, repo, pr, sha, nowTS).Exec(context.Background())
 	if err != nil {
 		return false, 0, time.Time{}, fmt.Errorf("claim due review attempt: %w", err)
 	}
@@ -260,11 +228,11 @@ func (db *DB) ClaimDueReviewAttempt(repo string, pr int, sha string, now time.Ti
 // MarkReviewAttemptDone marks a HEAD's attempt terminal (state='done') so the
 // retry sweep and non-terminal scans skip it.
 func (db *DB) MarkReviewAttemptDone(repo string, pr int, sha string) error {
-	_, err := db.Exec(`
-		UPDATE ci_pr_review_attempts
-		SET state = 'done', next_attempt_at = NULL, updated_at = ?
-		WHERE github_repo = ? AND pr_number = ? AND head_sha = ?`,
-		time.Now().Format(time.RFC3339), repo, pr, sha)
+	_, err := db.bun.NewUpdate().Model((*ciReviewAttemptRow)(nil)).
+		Set("state = 'done'").Set("next_attempt_at = NULL").
+		Set("updated_at = ?", dbTimeFromValue(time.Now())).
+		Where("github_repo = ?", repo).Where("pr_number = ?", pr).Where("head_sha = ?", sha).
+		Exec(context.Background())
 	if err != nil {
 		return fmt.Errorf("mark review attempt done: %w", err)
 	}
@@ -273,8 +241,9 @@ func (db *DB) MarkReviewAttemptDone(repo string, pr int, sha string) error {
 
 // DeleteReviewAttempt removes a single attempt row.
 func (db *DB) DeleteReviewAttempt(repo string, pr int, sha string) error {
-	_, err := db.Exec(`DELETE FROM ci_pr_review_attempts
-		WHERE github_repo = ? AND pr_number = ? AND head_sha = ?`, repo, pr, sha)
+	_, err := db.bun.NewDelete().Model((*ciReviewAttemptRow)(nil)).
+		Where("github_repo = ?", repo).Where("pr_number = ?", pr).Where("head_sha = ?", sha).
+		Exec(context.Background())
 	if err != nil {
 		return fmt.Errorf("delete review attempt: %w", err)
 	}
@@ -284,8 +253,8 @@ func (db *DB) DeleteReviewAttempt(repo string, pr int, sha string) error {
 // DeleteReviewAttemptsForPR removes every attempt row for a PR (across HEAD
 // SHAs) and returns the number deleted. Used by closed-PR cleanup.
 func (db *DB) DeleteReviewAttemptsForPR(repo string, pr int) (int64, error) {
-	res, err := db.Exec(`DELETE FROM ci_pr_review_attempts
-		WHERE github_repo = ? AND pr_number = ?`, repo, pr)
+	res, err := db.bun.NewDelete().Model((*ciReviewAttemptRow)(nil)).
+		Where("github_repo = ?", repo).Where("pr_number = ?", pr).Exec(context.Background())
 	if err != nil {
 		return 0, fmt.Errorf("delete review attempts for PR: %w", err)
 	}
@@ -301,24 +270,13 @@ func (db *DB) DeleteReviewAttemptsForPR(repo string, pr int) (int64, error) {
 // loop can check whether those PRs are still open for closed-PR cleanup.
 // Reuses PanelPRRef, the same repo+pr pair type GetPendingPanelPRs returns.
 func (db *DB) GetNonTerminalAttemptPRs(repo string) ([]PanelPRRef, error) {
-	rows, err := db.Query(`
-		SELECT DISTINCT github_repo, pr_number
-		FROM ci_pr_review_attempts
-		WHERE github_repo = ? AND state IN ('pending', 'deferred')`, repo)
-	if err != nil {
+	var refs []PanelPRRef
+	if err := db.bun.NewSelect().Model((*ciReviewAttemptRow)(nil)).
+		Column("github_repo", "pr_number").Distinct().Where("github_repo = ?", repo).
+		Where("state IN ('pending', 'deferred')").Scan(context.Background(), &refs); err != nil {
 		return nil, fmt.Errorf("get non-terminal attempt PRs: %w", err)
 	}
-	defer rows.Close()
-
-	var refs []PanelPRRef
-	for rows.Next() {
-		var ref PanelPRRef
-		if err := rows.Scan(&ref.GithubRepo, &ref.PRNumber); err != nil {
-			return nil, fmt.Errorf("scan non-terminal attempt PR: %w", err)
-		}
-		refs = append(refs, ref)
-	}
-	return refs, rows.Err()
+	return refs, nil
 }
 
 // GetPendingReviewAttempts returns every attempt for a repo still in the
@@ -328,23 +286,12 @@ func (db *DB) GetNonTerminalAttemptPRs(repo string) ([]PanelPRRef, error) {
 // pending row whose CreateCIPanelRun failed after the claim has nothing to
 // re-arm it). Repo-scoped to match the per-repo poll loop.
 func (db *DB) GetPendingReviewAttempts(repo string) ([]ReviewAttempt, error) {
-	rows, err := db.Query(`SELECT `+reviewAttemptColumns+`
-		FROM ci_pr_review_attempts
-		WHERE github_repo = ? AND state = 'pending'`, repo)
+	attempts, err := scanReviewAttempts(db.bun.NewSelect().Model((*ciReviewAttemptRow)(nil)).
+		Column(sqliteReviewAttemptColumns...).Where("github_repo = ?", repo).Where("state = 'pending'"))
 	if err != nil {
 		return nil, fmt.Errorf("get pending review attempts: %w", err)
 	}
-	defer rows.Close()
-
-	var attempts []ReviewAttempt
-	for rows.Next() {
-		a, err := scanReviewAttempt(rows)
-		if err != nil {
-			return nil, fmt.Errorf("scan pending review attempt: %w", err)
-		}
-		attempts = append(attempts, *a)
-	}
-	return attempts, rows.Err()
+	return attempts, nil
 }
 
 // GetDueReviewAttempts returns the deferred attempts whose next_attempt_at is
@@ -352,24 +299,12 @@ func (db *DB) GetPendingReviewAttempts(repo string) ([]ReviewAttempt, error) {
 // SQLite datetime() arithmetic on both sides, mirroring GetTimedOutPanels, so
 // a 'T'-vs-space formatting mismatch can never make a fresh row read as due.
 func (db *DB) GetDueReviewAttempts(repo string, now time.Time) ([]ReviewAttempt, error) {
-	rows, err := db.Query(`SELECT `+reviewAttemptColumns+`
-		FROM ci_pr_review_attempts
-		WHERE github_repo = ? AND state = 'deferred'
-		  AND next_attempt_at IS NOT NULL
-		  AND datetime(next_attempt_at) <= datetime(?)`,
-		repo, now.Format(time.RFC3339))
+	attempts, err := scanReviewAttempts(db.bun.NewSelect().Model((*ciReviewAttemptRow)(nil)).
+		Column(sqliteReviewAttemptColumns...).Where("github_repo = ?", repo).
+		Where("state = 'deferred'").Where("next_attempt_at IS NOT NULL").
+		Where("datetime(next_attempt_at) <= datetime(?)", dbTimeFromValue(now)))
 	if err != nil {
 		return nil, fmt.Errorf("get due review attempts: %w", err)
 	}
-	defer rows.Close()
-
-	var attempts []ReviewAttempt
-	for rows.Next() {
-		a, err := scanReviewAttempt(rows)
-		if err != nil {
-			return nil, fmt.Errorf("scan due review attempt: %w", err)
-		}
-		attempts = append(attempts, *a)
-	}
-	return attempts, rows.Err()
+	return attempts, nil
 }

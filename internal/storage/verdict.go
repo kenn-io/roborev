@@ -33,13 +33,6 @@ func verdictFromBoolOrParse(vb sql.NullInt64, output string) string {
 	return ParseVerdict(output)
 }
 
-func applyReviewVerdict(review *Review, verdictBool sql.NullInt64) {
-	if verdictBool.Valid {
-		v := int(verdictBool.Int64)
-		review.VerdictBool = &v
-	}
-}
-
 func applyJobVerdict(job *ReviewJob, verdictBool sql.NullInt64, output string) {
 	if output == "" || job.Error != "" || job.IsTaskJob() {
 		return

@@ -59,6 +59,17 @@ roborev sync now       # Trigger immediate sync
 
 Jobs in `queued` or `running` states remain local-only until they complete.
 
+## Storage Implementation
+
+Uptrace Bun is the normal query and model layer for both the local SQLite
+database and the PostgreSQL sync store. PostgreSQL still has one owning
+`pgxpool.Pool`; Bun wraps that same pool through pgx's `database/sql` adapter,
+so Bun queries and retained pgx batch operations share connections and limits.
+
+SQLite remains authoritative. PostgreSQL stores only the replicated subset and
+does not become a selectable daemon backend. Schema migrations and pgx batches
+that report per-item sync results remain explicit database-specific SQL.
+
 ## Environment Variable Expansion
 
 Sensitive values can reference environment variables:

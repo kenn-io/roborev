@@ -114,6 +114,30 @@ func TestPanelColumnsRoundTrip(t *testing.T) {
 	assert.Equal("run-1", jobs[0].PanelRunUUID)
 }
 
+func TestEnqueuePanelMemberZeroPersistsStableIndex(t *testing.T) {
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+
+	repo := createRepo(t, db, "/tmp/panel-zero-index")
+	member, err := db.EnqueueJob(EnqueueOpts{
+		RepoID:           repo.ID,
+		GitRef:           "base..head",
+		Agent:            "test",
+		JobType:          JobTypeRange,
+		PanelRunUUID:     "run-zero-index",
+		PanelRole:        PanelRoleMember,
+		PanelMemberName:  "first",
+		PanelMemberIndex: 0,
+	})
+	require.NoError(t, err)
+
+	var stored sql.NullInt64
+	require.NoError(t, db.QueryRow(
+		`SELECT panel_member_index FROM review_jobs WHERE id = ?`, member.ID,
+	).Scan(&stored))
+	assert.Equal(t, sql.NullInt64{Int64: 0, Valid: true}, stored)
+}
+
 func TestJobTypeHelpersForSynthesis(t *testing.T) {
 	assert := assert.New(t)
 
@@ -806,12 +830,30 @@ type failingExecer struct {
 	failAt int
 }
 
-func (f *failingExecer) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+func (f *failingExecer) failNext() error {
 	f.calls++
 	if f.calls == f.failAt {
-		return nil, errors.New("injected insert failure")
+		return errors.New("injected insert failure")
+	}
+	return nil
+}
+
+func (f *failingExecer) ExecContext(ctx context.Context, query string, args ...any) (sql.Result, error) {
+	if err := f.failNext(); err != nil {
+		return nil, err
 	}
 	return f.inner.ExecContext(ctx, query, args...)
+}
+
+func (f *failingExecer) QueryContext(ctx context.Context, query string, args ...any) (*sql.Rows, error) {
+	if err := f.failNext(); err != nil {
+		return nil, err
+	}
+	return f.inner.QueryContext(ctx, query, args...)
+}
+
+func (f *failingExecer) QueryRowContext(ctx context.Context, query string, args ...any) *sql.Row {
+	return f.inner.QueryRowContext(ctx, query, args...)
 }
 
 func TestEnqueuePanelRunRollback(t *testing.T) {

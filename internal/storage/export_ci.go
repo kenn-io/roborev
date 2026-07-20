@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"encoding/base64"
 	"encoding/json"
@@ -139,6 +140,8 @@ func (db *DB) exportCIMetricsPanels(opts ExportCIMetricsOptions, cursor *ciMetri
 	}
 	args = append(args, opts.Limit+1)
 
+	// Raw SQL allowlist: CI export pagination combines a dynamic predicate set,
+	// SQLite-normalized timestamp cursor, fallback projections, and ordered joins.
 	query := `
 		SELECT cp.id, cp.github_repo, cp.pr_number, cp.head_sha,
 		       cp.created_at, cp.posted_at, cp.first_attempt_at,
@@ -151,7 +154,7 @@ func (db *DB) exportCIMetricsPanels(opts ExportCIMetricsOptions, cursor *ciMetri
 		WHERE ` + strings.Join(conditions, " AND ") + `
 		ORDER BY ` + postedExpr + ` ASC, cp.id ASC
 		LIMIT ?`
-	rows, err := db.Query(query, args...)
+	rows, err := db.bun.QueryContext(context.Background(), query, args...)
 	if err != nil {
 		return ExportCIMetricsPage{}, fmt.Errorf("query ci metrics export: %w", err)
 	}
@@ -279,6 +282,8 @@ func (db *DB) exportCIMetricsLegacy(opts ExportCIMetricsOptions, cursor *ciMetri
 		"SUM(CASE WHEN j.status = 'done' THEN 1 ELSE 0 END) >= 1")
 	args = append(args, opts.Limit+1)
 
+	// Raw SQL allowlist: legacy CI reconstruction uses a shared CTE, grouped
+	// HAVING policy, and database-native time-window expressions as one query.
 	query := `
 		WITH ` + legacyUnitWindowCTE + `
 		SELECT MIN(j.id), j.repo_id,
@@ -294,7 +299,7 @@ func (db *DB) exportCIMetricsLegacy(opts ExportCIMetricsOptions, cursor *ciMetri
 		HAVING ` + strings.Join(having, " AND ") + `
 		ORDER BY 6 ASC, 1 ASC
 		LIMIT ?`
-	rows, err := db.Query(query, args...)
+	rows, err := db.bun.QueryContext(context.Background(), query, args...)
 	if err != nil {
 		return ExportCIMetricsPage{}, fmt.Errorf("query legacy ci metrics export: %w", err)
 	}
@@ -368,7 +373,9 @@ func (db *DB) exportCIMetricsLegacy(opts ExportCIMetricsOptions, cursor *ciMetri
 // this runs against complete data and is never a live, drifting feed.
 func (db *DB) legacyPanelEraEnd() (string, error) {
 	var end sql.NullString
-	err := db.QueryRow(`
+	// Raw SQL allowlist: the legacy boundary is the minimum across two sources
+	// and relies on SQLite strftime normalization inside a UNION aggregate.
+	err := db.bun.QueryRowContext(context.Background(), `
 		SELECT MIN(t) FROM (
 			SELECT MIN(strftime('%Y-%m-%dT%H:%M:%SZ', j.enqueued_at)) AS t
 			FROM review_jobs j
@@ -444,7 +451,9 @@ var legacyUnitWindowEndSubquery = `(
 // unit in id order — bounded to the adjacency window and pre-panel era like
 // the unit query — shaped as ExportCIPanelJob rows tagged role "review".
 func (db *DB) legacyUnitJobs(repoID int64, gitRef, eraEnd string) ([]ExportCIPanelJob, error) {
-	rows, err := db.Query(`
+	// Raw SQL allowlist: legacy membership reuses the database-native adjacency
+	// window expression and explicit ordered projection used by the page query.
+	rows, err := db.bun.QueryContext(context.Background(), `
 		SELECT j.uuid, j.agent, j.model, j.provider, j.status,
 		       `+legacyUnitTimeExpr("j.started_at")+`,
 		       `+legacyUnitTimeExpr("j.finished_at")+`
@@ -537,7 +546,9 @@ func scanCIMetricsRow(rows *sql.Rows) (int64, ExportCIPanel, string, error) {
 }
 
 func (db *DB) exportCIPanelJobs(panelRunUUID string) ([]ExportCIPanelJob, error) {
-	rows, err := db.Query(`
+	// Raw SQL allowlist: this joined export projection preserves role ordering
+	// and nullable timestamp scanning without introducing relation hydration.
+	rows, err := db.bun.QueryContext(context.Background(), `
 		SELECT j.uuid, COALESCE(j.panel_role, ''), j.agent, j.model,
 		       j.provider, j.status, j.started_at, j.finished_at
 		FROM review_jobs j
@@ -642,6 +653,9 @@ func (db *DB) resolveCIMetricsCursor(cursor string, legacy bool) (*ciMetricsCurs
 			ErrExportCursorDatabaseMismatch, decoded.DatabaseID, databaseID,
 		)
 	}
+	// Raw SQL allowlist: cursor validation must re-derive either the persisted
+	// panel timestamp or the legacy grouped unit using the same SQLite time
+	// expressions as pagination.
 	existsQuery := `
 		SELECT COUNT(1) FROM ci_pr_panels cp
 		WHERE cp.id = ? AND cp.posted_at IS NOT NULL
@@ -674,7 +688,7 @@ func (db *DB) resolveCIMetricsCursor(cursor string, legacy bool) (*ciMetricsCurs
 		existsArgs = []any{decoded.PanelID, eraEnd, eraEnd, eraEnd, decoded.PostedAt}
 	}
 	var count int
-	if err := db.QueryRow(existsQuery, existsArgs...).Scan(&count); err != nil {
+	if err := db.bun.QueryRowContext(context.Background(), existsQuery, existsArgs...).Scan(&count); err != nil {
 		return nil, fmt.Errorf("validate ci metrics cursor: %w", err)
 	}
 	if count == 0 {

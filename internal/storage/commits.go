@@ -1,16 +1,27 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"time"
 )
 
+var commitColumns = []string{
+	"id",
+	"repo_id",
+	"sha",
+	"author",
+	"subject",
+	"timestamp",
+	"created_at",
+}
+
 // GetOrCreateCommit finds or creates a commit record.
 // Lookups are by (repo_id, sha) to handle the same SHA in different repos.
 func (db *DB) GetOrCreateCommit(repoID int64, sha, author, subject string, timestamp time.Time) (*Commit, error) {
-	// Try to find existing by (repo_id, sha)
-	commit, err := scanCommit(db.QueryRow(`SELECT id, repo_id, sha, author, subject, timestamp, created_at FROM commits WHERE repo_id = ? AND sha = ?`, repoID, sha))
+	ctx := context.Background()
+	commit, err := db.selectCommit(ctx, "repo_id = ? AND sha = ?", repoID, sha)
 	if err == nil {
 		return commit, nil
 	}
@@ -18,23 +29,22 @@ func (db *DB) GetOrCreateCommit(repoID int64, sha, author, subject string, times
 		return nil, err
 	}
 
-	// Create new
-	result, err := db.Exec(`INSERT INTO commits (repo_id, sha, author, subject, timestamp) VALUES (?, ?, ?, ?, ?)`,
-		repoID, sha, author, subject, timestamp.Format(time.RFC3339))
-	if err != nil {
-		return nil, err
-	}
-
-	id, _ := result.LastInsertId()
-	return &Commit{
-		ID:        id,
+	row := commitRow{
 		RepoID:    repoID,
 		SHA:       sha,
 		Author:    author,
 		Subject:   subject,
-		Timestamp: timestamp,
-		CreatedAt: time.Now(),
-	}, nil
+		Timestamp: dbTimeFromValue(timestamp),
+	}
+	if _, err := db.bun.NewInsert().
+		Model(&row).
+		Column("repo_id", "sha", "author", "subject", "timestamp").
+		On("CONFLICT (repo_id, sha) DO NOTHING").
+		Exec(ctx); err != nil {
+		return nil, err
+	}
+
+	return db.selectCommit(ctx, "repo_id = ? AND sha = ?", repoID, sha)
 }
 
 // ErrAmbiguousCommit is returned when a SHA lookup matches multiple repos
@@ -45,24 +55,41 @@ var ErrAmbiguousCommit = sql.ErrNoRows // Use sql.ErrNoRows for API compatibilit
 // Returns sql.ErrNoRows if no commit found, or if multiple repos have this SHA (ambiguous).
 // Prefer using GetCommitByRepoAndSHA or job-based lookups instead.
 func (db *DB) GetCommitBySHA(sha string) (*Commit, error) {
-	// Check for ambiguity first
+	ctx := context.Background()
 	var count int
-	if err := db.QueryRow(`SELECT COUNT(DISTINCT repo_id) FROM commits WHERE sha = ?`, sha).Scan(&count); err != nil {
+	if err := db.bun.NewSelect().
+		Table("commits").
+		ColumnExpr("COUNT(DISTINCT repo_id)").
+		Where("sha = ?", sha).
+		Scan(ctx, &count); err != nil {
 		return nil, err
 	}
 	if count > 1 {
-		return nil, sql.ErrNoRows // Ambiguous - multiple repos have this SHA
+		return nil, sql.ErrNoRows
 	}
 
-	return scanCommit(db.QueryRow(`SELECT id, repo_id, sha, author, subject, timestamp, created_at FROM commits WHERE sha = ?`, sha))
+	return db.selectCommit(ctx, "sha = ?", sha)
 }
 
 // GetCommitByRepoAndSHA returns a commit by repo ID and SHA
 func (db *DB) GetCommitByRepoAndSHA(repoID int64, sha string) (*Commit, error) {
-	return scanCommit(db.QueryRow(`SELECT id, repo_id, sha, author, subject, timestamp, created_at FROM commits WHERE repo_id = ? AND sha = ?`, repoID, sha))
+	return db.selectCommit(context.Background(), "repo_id = ? AND sha = ?", repoID, sha)
 }
 
 // GetCommitByID returns a commit by its ID
 func (db *DB) GetCommitByID(id int64) (*Commit, error) {
-	return scanCommit(db.QueryRow(`SELECT id, repo_id, sha, author, subject, timestamp, created_at FROM commits WHERE id = ?`, id))
+	return db.selectCommit(context.Background(), "id = ?", id)
+}
+
+func (db *DB) selectCommit(ctx context.Context, where string, args ...any) (*Commit, error) {
+	var row commitRow
+	if err := db.bun.NewSelect().
+		Model(&row).
+		Column(commitColumns...).
+		Where(where, args...).
+		Scan(ctx); err != nil {
+		return nil, err
+	}
+	commit := row.toModel()
+	return &commit, nil
 }

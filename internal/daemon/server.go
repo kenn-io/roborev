@@ -621,8 +621,8 @@ func (s *Server) telemetryProperties(cfg *config.Config) map[string]any {
 	} else {
 		repoCount = len(repos)
 	}
-	reviewCount := 0
-	if err := s.db.QueryRow(`SELECT COUNT(*) FROM reviews`).Scan(&reviewCount); err != nil {
+	reviewCount, err := s.db.CountReviews()
+	if err != nil {
 		log.Printf("Warning: failed to count reviews for telemetry: %v", err)
 	}
 

@@ -8,7 +8,24 @@ import (
 	"log"
 	"path/filepath"
 	"strings"
+
+	"github.com/uptrace/bun"
 )
+
+var repoColumns = []string{"id", "root_path", "name", "identity", "created_at"}
+
+func (db *DB) selectRepo(ctx context.Context, where string, args ...any) (*Repo, error) {
+	var row repoRow
+	if err := db.bun.NewSelect().
+		Model(&row).
+		Column(repoColumns...).
+		Where(where, args...).
+		Scan(ctx); err != nil {
+		return nil, err
+	}
+	repo := row.toModel()
+	return &repo, nil
+}
 
 func normalizeRepoPath(rootPath string) (string, error) {
 	if isWindowsAbsPath(rootPath) {
@@ -71,65 +88,63 @@ func (db *DB) GetOrCreateRepo(rootPath string, identity ...string) (*Repo, error
 		repoIdentity = identity[0]
 	}
 
-	// Try to find existing by path
-	var repo Repo
-	var createdAt string
-	var identityNullable sql.NullString
-	err = db.QueryRow(`SELECT id, root_path, name, identity, created_at FROM repos WHERE root_path = ?`, absPath).
-		Scan(&repo.ID, &repo.RootPath, &repo.Name, &identityNullable, &createdAt)
+	ctx := context.Background()
+	repo, err := db.selectRepo(ctx, "root_path = ?", absPath)
 	if err == nil {
-		repo.Identity = identityNullable.String
-		repo.CreatedAt = parseSQLiteTime(createdAt)
-
 		// Update identity if provided and not already set
 		if repoIdentity != "" && repo.Identity == "" {
-			_, err = db.Exec(`UPDATE repos SET identity = ? WHERE id = ?`, repoIdentity, repo.ID)
+			_, err = db.bun.NewUpdate().
+				Model((*repoRow)(nil)).
+				Set("identity = ?", repoIdentity).
+				Where("id = ?", repo.ID).
+				Exec(ctx)
 			if err != nil {
 				return nil, fmt.Errorf("update identity: %w", err)
 			}
 			repo.Identity = repoIdentity
 		}
-		return &repo, nil
+		return repo, nil
 	}
 	if !errors.Is(err, sql.ErrNoRows) {
 		return nil, err
 	}
 
-	// Create new — use INSERT OR IGNORE to handle concurrent inserts on the
-	// same root_path (UNIQUE constraint). If the row already exists, re-read it.
-	name := filepath.Base(absPath)
-	if repoIdentity != "" {
-		_, err = db.Exec(`INSERT OR IGNORE INTO repos (root_path, name, identity) VALUES (?, ?, ?)`, absPath, name, repoIdentity)
-	} else {
-		_, err = db.Exec(`INSERT OR IGNORE INTO repos (root_path, name) VALUES (?, ?)`, absPath, name)
+	// Create new with an idempotent conflict clause for concurrent inserts on
+	// the same root_path. If the row already exists, re-read it.
+	row := repoRow{
+		RootPath: absPath,
+		Name:     filepath.Base(absPath),
+		Identity: optionalString(repoIdentity),
 	}
-	if err != nil {
+	if _, err = db.bun.NewInsert().
+		Model(&row).
+		Column("root_path", "name", "identity").
+		On("CONFLICT (root_path) DO NOTHING").
+		Exec(ctx); err != nil {
 		return nil, err
 	}
 
 	// Re-read to get the actual row (whether we just created it or it was
 	// concurrently created by another caller).
-	var created Repo
-	var createdAtStr string
-	var idNullable sql.NullString
-	err = db.QueryRow(`SELECT id, root_path, name, identity, created_at FROM repos WHERE root_path = ?`, absPath).
-		Scan(&created.ID, &created.RootPath, &created.Name, &idNullable, &createdAtStr)
+	created, err := db.selectRepo(ctx, "root_path = ?", absPath)
 	if err != nil {
 		return nil, fmt.Errorf("re-read repo after insert: %w", err)
 	}
-	created.Identity = idNullable.String
-	created.CreatedAt = parseSQLiteTime(createdAtStr)
 
 	// Update identity if provided and not already set
 	if repoIdentity != "" && created.Identity == "" {
-		_, err = db.Exec(`UPDATE repos SET identity = ? WHERE id = ?`, repoIdentity, created.ID)
+		_, err = db.bun.NewUpdate().
+			Model((*repoRow)(nil)).
+			Set("identity = ?", repoIdentity).
+			Where("id = ?", created.ID).
+			Exec(ctx)
 		if err != nil {
 			return nil, fmt.Errorf("update identity: %w", err)
 		}
 		created.Identity = repoIdentity
 	}
 
-	return &created, nil
+	return created, nil
 }
 
 // GetRepoByPath returns a repo by its path
@@ -139,17 +154,7 @@ func (db *DB) GetRepoByPath(rootPath string) (*Repo, error) {
 		return nil, err
 	}
 
-	var repo Repo
-	var createdAt string
-	var identityNullable sql.NullString
-	err = db.QueryRow(`SELECT id, root_path, name, identity, created_at FROM repos WHERE root_path = ?`, absPath).
-		Scan(&repo.ID, &repo.RootPath, &repo.Name, &identityNullable, &createdAt)
-	if err != nil {
-		return nil, err
-	}
-	repo.Identity = identityNullable.String
-	repo.CreatedAt = parseSQLiteTime(createdAt)
-	return &repo, nil
+	return db.selectRepo(context.Background(), "root_path = ?", absPath)
 }
 
 // RepoWithCount represents a repo with its total job count
@@ -189,28 +194,20 @@ func (db *DB) ListReposWithReviewCounts(opts ...ListReposOption) ([]RepoWithCoun
 		opt(&o)
 	}
 
-	// Branch filtering requires INNER JOIN + HAVING to exclude repos
-	// with no matching jobs. Without branch filter, LEFT JOIN shows all repos.
-	joinType := "LEFT"
+	query := db.bun.NewSelect().
+		TableExpr("repos AS r").
+		ColumnExpr("r.name").
+		ColumnExpr("r.root_path").
+		ColumnExpr("COALESCE(r.identity, '') AS identity").
+		ColumnExpr("COUNT(rj.id) AS count")
 	if o.branch != "" {
-		joinType = "INNER"
+		query = query.Join("INNER JOIN review_jobs AS rj ON rj.repo_id = r.id")
+	} else {
+		query = query.Join("LEFT JOIN review_jobs AS rj ON rj.repo_id = r.id")
 	}
 
-	query := fmt.Sprintf(`
-		SELECT r.name, r.root_path, COALESCE(r.identity, ''), COUNT(rj.id) as job_count
-		FROM repos r
-		%s JOIN review_jobs rj ON rj.repo_id = r.id
-	`, joinType)
-
-	var args []any
-	var conditions []string
-
 	if o.prefix != "" {
-		conditions = append(
-			conditions,
-			"r.root_path LIKE ? || '/%' ESCAPE '!'",
-		)
-		args = append(args, escapeLike(o.prefix))
+		query = query.Where("r.root_path LIKE ? || '/%' ESCAPE '!'", escapeLike(o.prefix))
 	}
 
 	if o.branch != "" {
@@ -218,41 +215,26 @@ func (db *DB) ListReposWithReviewCounts(opts ...ListReposOption) ([]RepoWithCoun
 		if o.branch == "(none)" {
 			branchFilter = ""
 		}
-		conditions = append(
-			conditions, "COALESCE(rj.branch, '') = ?",
-		)
-		args = append(args, branchFilter)
+		query = query.Where("COALESCE(rj.branch, '') = ?", branchFilter)
 	}
 
-	if len(conditions) > 0 {
-		query += " WHERE " + strings.Join(conditions, " AND ")
-	}
-
-	query += `
-		GROUP BY r.id, r.name, r.root_path
-	`
+	query = query.
+		GroupExpr("r.id, r.name, r.root_path").
+		OrderExpr("r.name")
 	if o.branch != "" {
-		query += " HAVING job_count > 0"
+		query = query.Having("COUNT(rj.id) > 0")
 	}
-	query += " ORDER BY r.name"
-
-	rows, err := db.Query(query, args...)
-	if err != nil {
-		return nil, 0, err
-	}
-	defer rows.Close()
 
 	var repos []RepoWithCount
-	totalCount := 0
-	for rows.Next() {
-		var rc RepoWithCount
-		if err := rows.Scan(&rc.Name, &rc.RootPath, &rc.Identity, &rc.Count); err != nil {
-			return nil, 0, err
-		}
-		repos = append(repos, rc)
-		totalCount += rc.Count
+	if err := query.Scan(context.Background(), &repos); err != nil {
+		return nil, 0, err
 	}
-	return repos, totalCount, rows.Err()
+
+	totalCount := 0
+	for _, repo := range repos {
+		totalCount += repo.Count
+	}
+	return repos, totalCount, nil
 }
 
 // BranchWithCount represents a branch with its total job count
@@ -271,65 +253,40 @@ type BranchListResult struct {
 // ListBranchesWithCounts returns all branches with their job counts
 // If repoPaths is non-empty, filters to jobs in those repos only
 func (db *DB) ListBranchesWithCounts(repoPaths []string) (*BranchListResult, error) {
-	var rows *sql.Rows
-	var err error
-
-	if len(repoPaths) == 0 {
-		// No repo filter - count branches across all repos
-		rows, err = db.Query(`
-			SELECT COALESCE(NULLIF(branch, ''), '(none)') as branch_name, COUNT(*) as job_count
-			FROM review_jobs
-			GROUP BY branch_name
-			ORDER BY job_count DESC, branch_name
-		`)
-	} else if len(repoPaths) == 1 {
-		// Single repo filter
-		rows, err = db.Query(`
-			SELECT COALESCE(NULLIF(rj.branch, ''), '(none)') as branch_name, COUNT(*) as job_count
-			FROM review_jobs rj
-			INNER JOIN repos r ON rj.repo_id = r.id
-			WHERE r.root_path = ?
-			GROUP BY branch_name
-			ORDER BY job_count DESC, branch_name
-		`, repoPaths[0])
-	} else {
-		// Multiple repo paths - build IN clause with placeholders
-		placeholders := make([]string, len(repoPaths))
-		args := make([]any, len(repoPaths))
-		for i, p := range repoPaths {
-			placeholders[i] = "?"
-			args[i] = p
+	var rows []struct {
+		Name  string `bun:"branch_name"`
+		Count int    `bun:"count"`
+	}
+	query := db.bun.NewSelect().
+		TableExpr("review_jobs AS rj").
+		ColumnExpr("COALESCE(NULLIF(rj.branch, ''), '(none)') AS branch_name").
+		ColumnExpr("COUNT(*) AS count").
+		GroupExpr("branch_name").
+		OrderExpr("count DESC, branch_name")
+	if len(repoPaths) > 0 {
+		query = query.Join("INNER JOIN repos AS r ON rj.repo_id = r.id")
+		if len(repoPaths) == 1 {
+			query = query.Where("r.root_path = ?", repoPaths[0])
+		} else {
+			query = query.Where("r.root_path IN (?)", bun.List(repoPaths))
 		}
-		query := fmt.Sprintf(`
-			SELECT COALESCE(NULLIF(rj.branch, ''), '(none)') as branch_name, COUNT(*) as job_count
-			FROM review_jobs rj
-			INNER JOIN repos r ON rj.repo_id = r.id
-			WHERE r.root_path IN (%s)
-			GROUP BY branch_name
-			ORDER BY job_count DESC, branch_name
-		`, strings.Join(placeholders, ","))
-		rows, err = db.Query(query, args...)
 	}
-	if err != nil {
-		return nil, err
-	}
-	defer rows.Close()
 
 	result := &BranchListResult{}
-	for rows.Next() {
-		var bc BranchWithCount
-		if err := rows.Scan(&bc.Name, &bc.Count); err != nil {
-			return nil, err
-		}
-		result.Branches = append(result.Branches, bc)
-		result.TotalCount += bc.Count
-	}
-	if err := rows.Err(); err != nil {
+	if err := query.Scan(context.Background(), &rows); err != nil {
 		return nil, err
+	}
+	for _, row := range rows {
+		result.Branches = append(result.Branches, BranchWithCount{Name: row.Name, Count: row.Count})
+		result.TotalCount += row.Count
 	}
 
 	// Count actual NULL branches (not empty string or "(none)" sentinel)
-	if err := db.QueryRow("SELECT COUNT(*) FROM review_jobs WHERE branch IS NULL").Scan(&result.NullsRemaining); err != nil {
+	if err := db.bun.NewSelect().
+		Table("review_jobs").
+		ColumnExpr("COUNT(*)").
+		Where("branch IS NULL").
+		Scan(context.Background(), &result.NullsRemaining); err != nil {
 		return nil, err
 	}
 
@@ -338,12 +295,17 @@ func (db *DB) ListBranchesWithCounts(repoPaths []string) (*BranchListResult, err
 
 // RenameRepo updates the display name of a repo identified by its path or current name
 func (db *DB) RenameRepo(identifier, newName string) (int64, error) {
+	ctx := context.Background()
 	// Try to match by root_path first (absolute or relative), then by name
 	absPath, pathErr := normalizeRepoPath(identifier)
 
 	// Try path match first
 	if pathErr == nil {
-		result, err := db.Exec(`UPDATE repos SET name = ? WHERE root_path = ?`, newName, absPath)
+		result, err := db.bun.NewUpdate().
+			Model((*repoRow)(nil)).
+			Set("name = ?", newName).
+			Where("root_path = ?", absPath).
+			Exec(ctx)
 		if err != nil {
 			return 0, err
 		}
@@ -354,7 +316,11 @@ func (db *DB) RenameRepo(identifier, newName string) (int64, error) {
 	}
 
 	// Try name match
-	result, err := db.Exec(`UPDATE repos SET name = ? WHERE name = ?`, newName, identifier)
+	result, err := db.bun.NewUpdate().
+		Model((*repoRow)(nil)).
+		Set("name = ?", newName).
+		Where("name = ?", identifier).
+		Exec(ctx)
 	if err != nil {
 		return 0, err
 	}
@@ -378,8 +344,13 @@ func (db *DB) MoveRepo(repoID int64, newPath, newIdentity string) error {
 	}
 
 	// Detect conflict: another repo already at this path
+	ctx := context.Background()
 	var existingID int64
-	err = db.QueryRow(`SELECT id FROM repos WHERE root_path = ?`, absPath).Scan(&existingID)
+	err = db.bun.NewSelect().
+		Table("repos").
+		Column("id").
+		Where("root_path = ?", absPath).
+		Scan(ctx, &existingID)
 	if err == nil && existingID != repoID {
 		return ErrRepoPathConflict
 	}
@@ -387,12 +358,14 @@ func (db *DB) MoveRepo(repoID int64, newPath, newIdentity string) error {
 		return fmt.Errorf("check path conflict: %w", err)
 	}
 
+	query := db.bun.NewUpdate().
+		Model((*repoRow)(nil)).
+		Set("root_path = ?", absPath).
+		Where("id = ?", repoID)
 	if newIdentity != "" {
-		_, err = db.Exec(`UPDATE repos SET root_path = ?, identity = ? WHERE id = ?`, absPath, newIdentity, repoID)
-	} else {
-		_, err = db.Exec(`UPDATE repos SET root_path = ? WHERE id = ?`, absPath, repoID)
+		query = query.Set("identity = ?", newIdentity)
 	}
-	if err != nil {
+	if _, err = query.Exec(ctx); err != nil {
 		return fmt.Errorf("update repo path: %w", err)
 	}
 	return nil
@@ -400,51 +373,47 @@ func (db *DB) MoveRepo(repoID int64, newPath, newIdentity string) error {
 
 // ListRepos returns all repos in the database
 func (db *DB) ListRepos() ([]Repo, error) {
-	rows, err := db.Query(`SELECT id, root_path, name, created_at FROM repos ORDER BY name`)
-	if err != nil {
+	var rows []repoRow
+	if err := db.bun.NewSelect().
+		Model(&rows).
+		Column("id", "root_path", "name", "created_at").
+		OrderExpr("name").
+		Scan(context.Background()); err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
 	var repos []Repo
-	for rows.Next() {
-		var r Repo
-		var createdAt string
-		if err := rows.Scan(&r.ID, &r.RootPath, &r.Name, &createdAt); err != nil {
-			return nil, err
-		}
-		r.CreatedAt = parseSQLiteTime(createdAt)
-		repos = append(repos, r)
+	for _, row := range rows {
+		repos = append(repos, row.toModel())
 	}
-	return repos, rows.Err()
+	return repos, nil
+}
+
+func (db *DB) ListReposWithIdentity() ([]Repo, error) {
+	var rows []repoRow
+	if err := db.bun.NewSelect().
+		Model(&rows).
+		Column("id", "root_path", "name", "created_at", "identity").
+		Where("identity IS NOT NULL").
+		Where("identity != ''").
+		Scan(context.Background()); err != nil {
+		return nil, err
+	}
+	repos := make([]Repo, 0, len(rows))
+	for _, row := range rows {
+		repos = append(repos, row.toModel())
+	}
+	return repos, nil
 }
 
 // GetRepoByID returns a repo by its ID
 func (db *DB) GetRepoByID(id int64) (*Repo, error) {
-	var repo Repo
-	var createdAt string
-	var identity sql.NullString
-	err := db.QueryRow(`SELECT id, root_path, name, created_at, identity FROM repos WHERE id = ?`, id).
-		Scan(&repo.ID, &repo.RootPath, &repo.Name, &createdAt, &identity)
-	if err != nil {
-		return nil, err
-	}
-	repo.Identity = identity.String
-	repo.CreatedAt = parseSQLiteTime(createdAt)
-	return &repo, nil
+	return db.selectRepo(context.Background(), "id = ?", id)
 }
 
 // GetRepoByName returns a repo by its display name
 func (db *DB) GetRepoByName(name string) (*Repo, error) {
-	var repo Repo
-	var createdAt string
-	err := db.QueryRow(`SELECT id, root_path, name, created_at FROM repos WHERE name = ?`, name).
-		Scan(&repo.ID, &repo.RootPath, &repo.Name, &createdAt)
-	if err != nil {
-		return nil, err
-	}
-	repo.CreatedAt = parseSQLiteTime(createdAt)
-	return &repo, nil
+	return db.selectRepo(context.Background(), "name = ?", name)
 }
 
 // FindRepo finds a repo by path or name (tries path first, then name)
@@ -490,65 +459,74 @@ func (db *DB) GetRepoStats(repoID int64) (*RepoStats, error) {
 	stats := &RepoStats{Repo: repo}
 
 	// Get job counts by status
-	rows, err := db.Query(`
-		SELECT status, COUNT(*) FROM review_jobs WHERE repo_id = ? GROUP BY status
-	`, repoID)
-	if err != nil {
+	var statusRows []struct {
+		Status JobStatus `bun:"status"`
+		Count  int       `bun:"count"`
+	}
+	if err := db.bun.NewSelect().
+		Table("review_jobs").
+		Column("status").
+		ColumnExpr("COUNT(*) AS count").
+		Where("repo_id = ?", repoID).
+		GroupExpr("status").
+		Scan(context.Background(), &statusRows); err != nil {
 		return nil, err
 	}
-	defer rows.Close()
 
-	for rows.Next() {
-		var status string
-		var count int
-		if err := rows.Scan(&status, &count); err != nil {
-			return nil, err
-		}
-		stats.TotalJobs += count
-		switch JobStatus(status) {
+	for _, row := range statusRows {
+		stats.TotalJobs += row.Count
+		switch row.Status {
 		case JobStatusQueued:
-			stats.QueuedJobs = count
+			stats.QueuedJobs = row.Count
 		case JobStatusRunning:
-			stats.RunningJobs = count
+			stats.RunningJobs = row.Count
 		case JobStatusDone:
-			stats.CompletedJobs = count
+			stats.CompletedJobs = row.Count
 		case JobStatusFailed:
-			stats.FailedJobs = count
+			stats.FailedJobs = row.Count
 		}
 	}
 
 	// Get review verdict counts (P/F from output)
 	// Closed/open counts preserve the legacy prompt-job exclusion.
-	reviewRows, err := db.Query(`
-		SELECT r.output, r.closed, r.verdict_bool, rj.commit_id, rj.git_ref, rj.job_type
-		FROM reviews r
-		JOIN review_jobs rj ON r.job_id = rj.id
-		WHERE rj.repo_id = ?
-	`, repoID)
-	if err != nil {
+	var reviewRows []struct {
+		Output      string  `bun:"output"`
+		Closed      bool    `bun:"closed"`
+		VerdictBool *int64  `bun:"verdict_bool"`
+		CommitID    *int64  `bun:"commit_id"`
+		GitRef      string  `bun:"git_ref"`
+		JobType     *string `bun:"job_type"`
+	}
+	if err := db.bun.NewSelect().
+		TableExpr("reviews AS r").
+		ColumnExpr("r.output").
+		ColumnExpr("r.closed").
+		ColumnExpr("r.verdict_bool").
+		ColumnExpr("rj.commit_id").
+		ColumnExpr("rj.git_ref").
+		ColumnExpr("rj.job_type").
+		Join("JOIN review_jobs AS rj ON r.job_id = rj.id").
+		Where("rj.repo_id = ?", repoID).
+		Scan(context.Background(), &reviewRows); err != nil {
 		return nil, err
 	}
-	defer reviewRows.Close()
 
-	for reviewRows.Next() {
-		var output string
-		var closed int
-		var gitRef string
-		var verdictBool sql.NullInt64
-		var fields reviewJobScanFields
-
-		if err := reviewRows.Scan(&output, &closed, &verdictBool, &fields.CommitID, &gitRef, &fields.JobType); err != nil {
-			return nil, err
+	for _, row := range reviewRows {
+		job := ReviewJob{
+			CommitID: row.CommitID,
+			GitRef:   row.GitRef,
+			JobType:  stringValue(row.JobType),
 		}
-
-		job := ReviewJob{GitRef: gitRef}
-		applyReviewJobScan(&job, fields)
 
 		if job.CommitID == nil && job.GitRef == "prompt" {
 			continue
 		}
 
-		applyJobVerdict(&job, verdictBool, output)
+		var verdictBool sql.NullInt64
+		if row.VerdictBool != nil {
+			verdictBool = sql.NullInt64{Int64: *row.VerdictBool, Valid: true}
+		}
+		applyJobVerdict(&job, verdictBool, row.Output)
 		if job.Verdict != nil {
 			if *job.Verdict == verdictPass {
 				stats.PassedReviews++
@@ -557,14 +535,11 @@ func (db *DB) GetRepoStats(repoID int64) (*RepoStats, error) {
 			}
 		}
 
-		if closed != 0 {
+		if row.Closed {
 			stats.ClosedReviews++
 		} else {
 			stats.OpenReviews++
 		}
-	}
-	if err := reviewRows.Err(); err != nil {
-		return nil, err
 	}
 
 	return stats, nil
@@ -577,8 +552,9 @@ var ErrRepoHasJobs = errors.New("repository has existing jobs; use cascade to de
 // If cascade is true, also deletes all jobs, reviews, and responses for the repo
 // If cascade is false and jobs exist, returns ErrRepoHasJobs
 func (db *DB) DeleteRepo(repoID int64, cascade bool) error {
-	// Use a dedicated connection with BEGIN IMMEDIATE for proper locking
-	// This ensures no job can be enqueued between the count check and delete
+	// SQLite transaction control remains raw so BEGIN IMMEDIATE acquires the
+	// write lock before the count. All reads and mutations stay on the same
+	// caller-owned connection through Bun.
 	ctx := context.Background()
 	conn, err := db.Conn(ctx)
 	if err != nil {
@@ -587,7 +563,7 @@ func (db *DB) DeleteRepo(repoID int64, cascade bool) error {
 	defer conn.Close()
 
 	// BEGIN IMMEDIATE acquires a write lock immediately, preventing races
-	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+	if _, err := db.bun.NewRaw("BEGIN IMMEDIATE").Conn(conn).Exec(ctx); err != nil {
 		return err
 	}
 
@@ -595,15 +571,14 @@ func (db *DB) DeleteRepo(repoID int64, cascade bool) error {
 	committed := false
 	defer func() {
 		if !committed {
-			if _, err := conn.ExecContext(ctx, "ROLLBACK"); err != nil {
+			if _, err := db.bun.NewRaw("ROLLBACK").Conn(conn).Exec(ctx); err != nil {
 				log.Printf("repos DeleteRepo: rollback failed: %v", err)
 			}
 		}
 	}()
 
 	// Check for existing jobs (within transaction for consistency)
-	var jobCount int
-	err = conn.QueryRowContext(ctx, `SELECT COUNT(*) FROM review_jobs WHERE repo_id = ?`, repoID).Scan(&jobCount)
+	jobCount, err := db.bun.NewSelect().Conn(conn).Table("review_jobs").Where("repo_id = ?", repoID).Count(ctx)
 	if err != nil {
 		return err
 	}
@@ -615,50 +590,41 @@ func (db *DB) DeleteRepo(repoID int64, cascade bool) error {
 	if cascade {
 		// Delete in correct order due to foreign keys
 		// 1a. Delete responses for jobs in this repo (job_id based)
-		_, err := conn.ExecContext(ctx, `
-			DELETE FROM responses WHERE job_id IN (
-				SELECT id FROM review_jobs WHERE repo_id = ?
-			)
-		`, repoID)
+		_, err := db.bun.NewDelete().Conn(conn).Table("responses").
+			Where("job_id IN (SELECT id FROM review_jobs WHERE repo_id = ?)", repoID).Exec(ctx)
 		if err != nil {
 			return err
 		}
 
 		// 1b. Delete responses for commits in this repo (legacy commit_id based)
-		_, err = conn.ExecContext(ctx, `
-			DELETE FROM responses WHERE commit_id IN (
-				SELECT id FROM commits WHERE repo_id = ?
-			)
-		`, repoID)
+		_, err = db.bun.NewDelete().Conn(conn).Table("responses").
+			Where("commit_id IN (SELECT id FROM commits WHERE repo_id = ?)", repoID).Exec(ctx)
 		if err != nil {
 			return err
 		}
 
 		// 2. Delete reviews for jobs in this repo
-		_, err = conn.ExecContext(ctx, `
-			DELETE FROM reviews WHERE job_id IN (
-				SELECT id FROM review_jobs WHERE repo_id = ?
-			)
-		`, repoID)
+		_, err = db.bun.NewDelete().Conn(conn).Table("reviews").
+			Where("job_id IN (SELECT id FROM review_jobs WHERE repo_id = ?)", repoID).Exec(ctx)
 		if err != nil {
 			return err
 		}
 
 		// 3. Delete jobs for this repo
-		_, err = conn.ExecContext(ctx, `DELETE FROM review_jobs WHERE repo_id = ?`, repoID)
+		_, err = db.bun.NewDelete().Conn(conn).Table("review_jobs").Where("repo_id = ?", repoID).Exec(ctx)
 		if err != nil {
 			return err
 		}
 
 		// 4. Delete commits for this repo
-		_, err = conn.ExecContext(ctx, `DELETE FROM commits WHERE repo_id = ?`, repoID)
+		_, err = db.bun.NewDelete().Conn(conn).Table("commits").Where("repo_id = ?", repoID).Exec(ctx)
 		if err != nil {
 			return err
 		}
 	}
 
 	// Delete the repo itself
-	result, err := conn.ExecContext(ctx, `DELETE FROM repos WHERE id = ?`, repoID)
+	result, err := db.bun.NewDelete().Conn(conn).Table("repos").Where("id = ?", repoID).Exec(ctx)
 	if err != nil {
 		return err
 	}
@@ -667,7 +633,7 @@ func (db *DB) DeleteRepo(repoID int64, cascade bool) error {
 		return sql.ErrNoRows
 	}
 
-	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+	if _, err := db.bun.NewRaw("COMMIT").Conn(conn).Exec(ctx); err != nil {
 		return err
 	}
 	committed = true
@@ -680,7 +646,8 @@ func (db *DB) MergeRepos(sourceRepoID, targetRepoID int64) (int64, error) {
 		return 0, nil
 	}
 
-	// Use a dedicated connection with BEGIN IMMEDIATE for proper locking
+	// SQLite transaction control remains raw so BEGIN IMMEDIATE keeps repo,
+	// commit, and job reassignment atomic on one Bun-managed connection.
 	ctx := context.Background()
 	conn, err := db.Conn(ctx)
 	if err != nil {
@@ -688,14 +655,14 @@ func (db *DB) MergeRepos(sourceRepoID, targetRepoID int64) (int64, error) {
 	}
 	defer conn.Close()
 
-	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+	if _, err := db.bun.NewRaw("BEGIN IMMEDIATE").Conn(conn).Exec(ctx); err != nil {
 		return 0, err
 	}
 
 	committed := false
 	defer func() {
 		if !committed {
-			if _, err := conn.ExecContext(ctx, "ROLLBACK"); err != nil {
+			if _, err := db.bun.NewRaw("ROLLBACK").Conn(conn).Exec(ctx); err != nil {
 				log.Printf("repos MergeRepos: rollback failed: %v", err)
 			}
 		}
@@ -705,25 +672,27 @@ func (db *DB) MergeRepos(sourceRepoID, targetRepoID int64) (int64, error) {
 	// Note: commits.sha is UNIQUE, so this will fail if both repos have
 	// commits with the same SHA (which shouldn't happen for the same git repo)
 	// Commit-based responses (legacy) are tied to commit_id which remains valid
-	_, err = conn.ExecContext(ctx, `UPDATE commits SET repo_id = ? WHERE repo_id = ?`, targetRepoID, sourceRepoID)
+	_, err = db.bun.NewUpdate().Conn(conn).Table("commits").Set("repo_id = ?", targetRepoID).
+		Where("repo_id = ?", sourceRepoID).Exec(ctx)
 	if err != nil {
 		return 0, err
 	}
 
 	// Move all jobs from source to target
-	result, err := conn.ExecContext(ctx, `UPDATE review_jobs SET repo_id = ? WHERE repo_id = ?`, targetRepoID, sourceRepoID)
+	result, err := db.bun.NewUpdate().Conn(conn).Table("review_jobs").Set("repo_id = ?", targetRepoID).
+		Where("repo_id = ?", sourceRepoID).Exec(ctx)
 	if err != nil {
 		return 0, err
 	}
 	affected, _ := result.RowsAffected()
 
 	// Delete the source repo (now empty)
-	_, err = conn.ExecContext(ctx, `DELETE FROM repos WHERE id = ?`, sourceRepoID)
+	_, err = db.bun.NewDelete().Conn(conn).Table("repos").Where("id = ?", sourceRepoID).Exec(ctx)
 	if err != nil {
 		return 0, err
 	}
 
-	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+	if _, err := db.bun.NewRaw("COMMIT").Conn(conn).Exec(ctx); err != nil {
 		return 0, err
 	}
 	committed = true

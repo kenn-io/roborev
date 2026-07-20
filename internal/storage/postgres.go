@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"database/sql"
 	_ "embed"
 	"errors"
 	"fmt"
@@ -12,6 +13,10 @@ import (
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/jackc/pgx/v5/stdlib"
+	"github.com/uptrace/bun"
+	"github.com/uptrace/bun/dialect/pgdialect"
+	bunschema "github.com/uptrace/bun/schema"
 )
 
 // PostgreSQL schema version - increment when schema changes
@@ -52,8 +57,13 @@ func pgSchemaStatements() []string {
 // PgPool wraps a pgx connection pool with reconnection logic
 type PgPool struct {
 	pool       *pgxpool.Pool
+	bun        *bun.DB
 	connString string
 	config     PgPoolConfig
+}
+
+func newPostgresBunDB(db *sql.DB) *bun.DB {
+	return bun.NewDB(db, pgdialect.New())
 }
 
 // PgPoolConfig configures the PostgreSQL connection pool
@@ -125,9 +135,11 @@ func NewPgPool(ctx context.Context, connString string, cfg PgPoolConfig) (*PgPoo
 		pool.Close()
 		return nil, fmt.Errorf("ping postgres: %w", err)
 	}
+	sqldb := stdlib.OpenDBFromPool(pool)
 
 	return &PgPool{
 		pool:       pool,
+		bun:        newPostgresBunDB(sqldb),
 		connString: connString,
 		config:     cfg,
 	}, nil
@@ -135,6 +147,11 @@ func NewPgPool(ctx context.Context, connString string, cfg PgPoolConfig) (*PgPoo
 
 // Close closes the connection pool
 func (p *PgPool) Close() {
+	if p.bun != nil {
+		if err := p.bun.Close(); err != nil {
+			log.Printf("close postgres Bun wrapper: %v", err)
+		}
+	}
 	if p.pool != nil {
 		p.pool.Close()
 	}
@@ -463,26 +480,27 @@ func (p *PgPool) EnsureSchema(ctx context.Context) error {
 // a client is syncing to a different database than before.
 func (p *PgPool) GetDatabaseID(ctx context.Context) (string, error) {
 	var id string
-	err := p.pool.QueryRow(ctx, `SELECT value FROM sync_metadata WHERE key = 'database_id'`).Scan(&id)
+	err := p.bun.NewSelect().Model((*pgSyncMetadataRow)(nil)).Column("value").
+		Where("key = ?", "database_id").Scan(ctx, &id)
 	if err == nil {
 		return id, nil
 	}
-	if !errors.Is(err, pgx.ErrNoRows) {
+	if !errors.Is(err, sql.ErrNoRows) {
 		return "", fmt.Errorf("query database_id: %w", err)
 	}
 
 	// Generate new ID - use ON CONFLICT to handle concurrent creation
 	newID := GenerateUUID()
-	_, err = p.pool.Exec(ctx, `
-		INSERT INTO sync_metadata (key, value) VALUES ('database_id', $1)
-		ON CONFLICT (key) DO NOTHING
-	`, newID)
+	row := pgSyncMetadataRow{Key: "database_id", Value: newID}
+	_, err = p.bun.NewInsert().Model(&row).Column("key", "value").
+		On("CONFLICT (key) DO NOTHING").Exec(ctx)
 	if err != nil {
 		return "", fmt.Errorf("insert database_id: %w", err)
 	}
 
 	// Re-read in case another process inserted first
-	err = p.pool.QueryRow(ctx, `SELECT value FROM sync_metadata WHERE key = 'database_id'`).Scan(&id)
+	err = p.bun.NewSelect().Model((*pgSyncMetadataRow)(nil)).Column("value").
+		Where("key = ?", "database_id").Scan(ctx, &id)
 	if err != nil {
 		return "", fmt.Errorf("re-read database_id: %w", err)
 	}
@@ -633,13 +651,12 @@ func (p *PgPool) Ping(ctx context.Context) error {
 
 // RegisterMachine registers or updates this machine in the machines table
 func (p *PgPool) RegisterMachine(ctx context.Context, machineID, name string) error {
-	_, err := p.pool.Exec(ctx, `
-		INSERT INTO machines (machine_id, name, last_seen_at)
-		VALUES ($1, $2, NOW())
-		ON CONFLICT (machine_id) DO UPDATE SET
-			name = COALESCE(EXCLUDED.name, machines.name),
-			last_seen_at = NOW()
-	`, machineID, name)
+	row := pgMachineRow{MachineID: machineID, Name: name}
+	_, err := p.bun.NewInsert().Model(&row).Column("machine_id", "name").
+		Value("last_seen_at", "NOW()").
+		On("CONFLICT (machine_id) DO UPDATE").
+		Set("name = COALESCE(EXCLUDED.name, m.name)").
+		Set("last_seen_at = NOW()").Exec(ctx)
 	if err != nil {
 		return fmt.Errorf("register machine: %w", err)
 	}
@@ -648,32 +665,30 @@ func (p *PgPool) RegisterMachine(ctx context.Context, machineID, name string) er
 
 // GetOrCreateRepo finds or creates a repo by identity, returns the PostgreSQL ID
 func (p *PgPool) GetOrCreateRepo(ctx context.Context, identity string) (int64, error) {
-	var id int64
-	err := p.pool.QueryRow(ctx, `
-		INSERT INTO repos (identity)
-		VALUES ($1)
-		ON CONFLICT (identity) DO UPDATE SET identity = EXCLUDED.identity
-		RETURNING id
-	`, identity).Scan(&id)
+	row := repoRow{Identity: &identity}
+	err := p.bun.NewInsert().Model(&row).Column("identity").
+		On("CONFLICT (identity) DO UPDATE").Set("identity = EXCLUDED.identity").
+		Returning("id").Scan(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("get or create repo: %w", err)
 	}
-	return id, nil
+	return row.ID, nil
 }
 
 // GetOrCreateCommit finds or creates a commit, returns the PostgreSQL ID
 func (p *PgPool) GetOrCreateCommit(ctx context.Context, repoID int64, sha, author, subject string, timestamp time.Time) (int64, error) {
-	var id int64
-	err := p.pool.QueryRow(ctx, `
-		INSERT INTO commits (repo_id, sha, author, subject, timestamp)
-		VALUES ($1, $2, $3, $4, $5)
-		ON CONFLICT (repo_id, sha) DO UPDATE SET sha = EXCLUDED.sha
-		RETURNING id
-	`, repoID, sha, author, subject, timestamp).Scan(&id)
+	row := commitRow{
+		RepoID: repoID, SHA: sha, Author: author, Subject: subject,
+		Timestamp: dbTimeFromValue(timestamp),
+	}
+	err := p.bun.NewInsert().Model(&row).
+		Column("repo_id", "sha", "author", "subject", "timestamp").
+		On("CONFLICT (repo_id, sha) DO UPDATE").Set("sha = EXCLUDED.sha").
+		Returning("id").Scan(ctx)
 	if err != nil {
 		return 0, fmt.Errorf("get or create commit: %w", err)
 	}
-	return id, nil
+	return row.ID, nil
 }
 
 // Tx runs a function within a transaction
@@ -697,78 +712,103 @@ func (p *PgPool) Tx(ctx context.Context, fn func(tx pgx.Tx) error) error {
 
 // UpsertJob inserts or updates a job in PostgreSQL
 func (p *PgPool) UpsertJob(ctx context.Context, j SyncableJob, pgRepoID int64, pgCommitID *int64) error {
-	dirtyFilesJSON, err := encodeDirtyFiles(j.DirtyFiles)
+	query, err := p.newJobUpsert(j, pgRepoID, pgCommitID)
 	if err != nil {
 		return err
 	}
-	_, err = p.pool.Exec(ctx, `
-		INSERT INTO review_jobs (
-			uuid, repo_id, commit_id, git_ref, session_id, agent, model, provider, requested_model, requested_provider, reasoning, job_type, review_type, patch_id, status, agentic,
-			enqueued_at, started_at, finished_at, prompt, diff_content, dirty_files, error, token_usage,
-			worktree_path, source, min_severity,
-			panel_run_uuid, panel_role, panel_name, panel_member_name, panel_member_index, panel_member_config_json,
-			source_machine_id, backup_agent, backup_model, agent_invoked, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, clock_timestamp())
-		ON CONFLICT (uuid) DO UPDATE SET
-			status = EXCLUDED.status,
-			finished_at = EXCLUDED.finished_at,
-			error = EXCLUDED.error,
-			model = EXCLUDED.model,
-			provider = EXCLUDED.provider,
-			requested_model = EXCLUDED.requested_model,
-			requested_provider = EXCLUDED.requested_provider,
-			git_ref = EXCLUDED.git_ref,
-			session_id = CASE WHEN EXCLUDED.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased') THEN EXCLUDED.session_id ELSE COALESCE(EXCLUDED.session_id, review_jobs.session_id) END,
-			commit_id = EXCLUDED.commit_id,
-			patch_id = EXCLUDED.patch_id,
-			dirty_files = COALESCE(EXCLUDED.dirty_files, review_jobs.dirty_files),
-			token_usage = CASE WHEN EXCLUDED.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased') THEN EXCLUDED.token_usage ELSE COALESCE(EXCLUDED.token_usage, review_jobs.token_usage) END,
-			agent_invoked = CASE WHEN EXCLUDED.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased') THEN EXCLUDED.agent_invoked ELSE (review_jobs.agent_invoked OR EXCLUDED.agent_invoked) END,
-			worktree_path = COALESCE(EXCLUDED.worktree_path, review_jobs.worktree_path),
-			source = COALESCE(EXCLUDED.source, review_jobs.source),
-			min_severity = EXCLUDED.min_severity,
-			backup_agent = EXCLUDED.backup_agent,
-			backup_model = EXCLUDED.backup_model,
-			panel_run_uuid = EXCLUDED.panel_run_uuid,
-			panel_role = EXCLUDED.panel_role,
-			panel_name = EXCLUDED.panel_name,
-			panel_member_name = EXCLUDED.panel_member_name,
-			panel_member_index = EXCLUDED.panel_member_index,
-			panel_member_config_json = EXCLUDED.panel_member_config_json,
-			updated_at = clock_timestamp()
-	`, j.UUID, pgRepoID, pgCommitID, j.GitRef, nullString(j.SessionID), j.Agent, nullString(j.Model), nullString(j.Provider), nullString(j.RequestedModel), nullString(j.RequestedProvider), nullString(j.Reasoning),
-		defaultStr(j.JobType, "review"), j.ReviewType, nullString(j.PatchID), j.Status, j.Agentic, j.EnqueuedAt, j.StartedAt, j.FinishedAt,
-		nullString(j.Prompt), j.DiffContent, nullString(dirtyFilesJSON), nullString(j.Error), nullString(j.TokenUsage), nullString(j.WorktreePath), nullString(j.Source), normalizeMinSeverityForWrite(j.MinSeverity),
-		nullString(j.PanelRunUUID), nullString(j.PanelRole), nullString(j.PanelName), nullString(j.PanelMemberName), j.PanelMemberIndex, nullString(j.PanelMemberConfigJSON),
-		j.SourceMachineID, j.BackupAgent, j.BackupModel, j.AgentInvoked)
+	_, err = query.Exec(ctx)
 	return err
+}
+
+func (p *PgPool) newJobUpsert(j SyncableJob, pgRepoID int64, pgCommitID *int64) (*bun.InsertQuery, error) {
+	dirtyFilesJSON, err := encodeDirtyFiles(j.DirtyFiles)
+	if err != nil {
+		return nil, err
+	}
+	panelMemberIndex := j.PanelMemberIndex
+	row := jobRow{
+		UUID: optionalString(j.UUID), RepoID: pgRepoID, CommitID: pgCommitID, GitRef: j.GitRef,
+		SessionID: optionalString(j.SessionID), Agent: j.Agent, Model: optionalString(j.Model),
+		Provider: optionalString(j.Provider), RequestedModel: optionalString(j.RequestedModel),
+		RequestedProvider: optionalString(j.RequestedProvider), Reasoning: optionalString(j.Reasoning),
+		JobType: defaultStr(j.JobType, "review"), ReviewType: j.ReviewType, PatchID: optionalString(j.PatchID),
+		Status: JobStatus(j.Status), Agentic: j.Agentic, AgentInvoked: j.AgentInvoked,
+		EnqueuedAt: dbTimeFromValue(j.EnqueuedAt), StartedAt: dbTimeFromPointer(j.StartedAt),
+		FinishedAt: dbTimeFromPointer(j.FinishedAt), Prompt: optionalString(sanitizePostgresText(j.Prompt)),
+		DiffContent: sanitizePostgresTextPointer(j.DiffContent), DirtyFiles: optionalString(dirtyFilesJSON),
+		Error: optionalString(sanitizePostgresText(j.Error)), TokenUsage: optionalString(j.TokenUsage),
+		WorktreePath: optionalString(j.WorktreePath), Source: optionalString(j.Source),
+		MinSeverity: normalizeMinSeverityForWrite(j.MinSeverity), BackupAgent: j.BackupAgent, BackupModel: j.BackupModel,
+		PanelRunUUID: optionalString(j.PanelRunUUID), PanelRole: optionalString(j.PanelRole),
+		PanelName: optionalString(j.PanelName), PanelMemberName: optionalString(j.PanelMemberName),
+		PanelMemberIndex: &panelMemberIndex, PanelMemberConfigJSON: optionalString(j.PanelMemberConfigJSON),
+		SourceMachineID: optionalString(j.SourceMachineID),
+	}
+	query := p.bun.NewInsert().Model(&row).
+		Column("uuid", "repo_id", "commit_id", "git_ref", "session_id", "agent", "model", "provider",
+			"requested_model", "requested_provider", "reasoning", "job_type", "review_type", "patch_id",
+			"status", "agentic", "enqueued_at", "started_at", "finished_at", "prompt", "diff_content",
+			"dirty_files", "error", "token_usage", "worktree_path", "source", "min_severity", "panel_run_uuid",
+			"panel_role", "panel_name", "panel_member_name", "panel_member_index", "panel_member_config_json",
+			"source_machine_id", "backup_agent", "backup_model", "agent_invoked").
+		Value("updated_at", "clock_timestamp()").
+		On("CONFLICT (uuid) DO UPDATE").
+		Set("status = EXCLUDED.status").Set("finished_at = EXCLUDED.finished_at").
+		Set("error = EXCLUDED.error").Set("model = EXCLUDED.model").Set("provider = EXCLUDED.provider").
+		Set("requested_model = EXCLUDED.requested_model").Set("requested_provider = EXCLUDED.requested_provider").
+		Set("git_ref = EXCLUDED.git_ref").
+		Set("session_id = CASE WHEN EXCLUDED.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased') THEN EXCLUDED.session_id ELSE COALESCE(EXCLUDED.session_id, j.session_id) END").
+		Set("commit_id = EXCLUDED.commit_id").Set("patch_id = EXCLUDED.patch_id").
+		Set("dirty_files = COALESCE(EXCLUDED.dirty_files, j.dirty_files)").
+		Set("token_usage = CASE WHEN EXCLUDED.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased') THEN EXCLUDED.token_usage ELSE COALESCE(EXCLUDED.token_usage, j.token_usage) END").
+		Set("agent_invoked = CASE WHEN EXCLUDED.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased') THEN EXCLUDED.agent_invoked ELSE (j.agent_invoked OR EXCLUDED.agent_invoked) END").
+		Set("worktree_path = COALESCE(EXCLUDED.worktree_path, j.worktree_path)").
+		Set("source = COALESCE(EXCLUDED.source, j.source)").
+		Set("min_severity = EXCLUDED.min_severity").Set("backup_agent = EXCLUDED.backup_agent").
+		Set("backup_model = EXCLUDED.backup_model").Set("panel_run_uuid = EXCLUDED.panel_run_uuid").
+		Set("panel_role = EXCLUDED.panel_role").Set("panel_name = EXCLUDED.panel_name").
+		Set("panel_member_name = EXCLUDED.panel_member_name").
+		Set("panel_member_index = EXCLUDED.panel_member_index").
+		Set("panel_member_config_json = EXCLUDED.panel_member_config_json").
+		Set("updated_at = clock_timestamp()")
+	return query, nil
 }
 
 // UpsertReview inserts or updates a review in PostgreSQL
 func (p *PgPool) UpsertReview(ctx context.Context, r SyncableReview) error {
-	_, err := p.pool.Exec(ctx, `
-		INSERT INTO reviews (
-			uuid, job_uuid, agent, prompt, output, closed,
-			updated_by_machine_id, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, clock_timestamp())
-		ON CONFLICT (uuid) DO UPDATE SET
-			closed = EXCLUDED.closed,
-			updated_by_machine_id = EXCLUDED.updated_by_machine_id,
-			updated_at = clock_timestamp()
-	`, r.UUID, r.JobUUID, r.Agent, r.Prompt, r.Output, r.Closed,
-		r.UpdatedByMachineID, r.CreatedAt)
+	_, err := p.newReviewUpsert(r).Exec(ctx)
 	return err
+}
+
+func (p *PgPool) newReviewUpsert(r SyncableReview) *bun.InsertQuery {
+	row := reviewRow{
+		UUID: &r.UUID, JobUUID: &r.JobUUID, Agent: r.Agent, Prompt: r.Prompt,
+		Output: r.Output, Closed: r.Closed, UpdatedByMachineID: &r.UpdatedByMachineID,
+		CreatedAt: dbTimeFromValue(r.CreatedAt),
+	}
+	return p.bun.NewInsert().Model(&row).
+		Column("uuid", "job_uuid", "agent", "prompt", "output", "closed", "updated_by_machine_id", "created_at").
+		Value("updated_at", "clock_timestamp()").
+		On("CONFLICT (uuid) DO UPDATE").
+		Set("closed = EXCLUDED.closed").
+		Set("updated_by_machine_id = EXCLUDED.updated_by_machine_id").
+		Set("updated_at = clock_timestamp()")
 }
 
 // InsertResponse inserts a response in PostgreSQL (append-only, no updates)
 func (p *PgPool) InsertResponse(ctx context.Context, r SyncableResponse) error {
-	_, err := p.pool.Exec(ctx, `
-		INSERT INTO responses (
-			uuid, job_uuid, responder, response, source_machine_id, created_at
-		) VALUES ($1, $2, $3, $4, $5, $6)
-		ON CONFLICT (uuid) DO NOTHING
-	`, r.UUID, r.JobUUID, r.Responder, r.Response, r.SourceMachineID, r.CreatedAt)
+	_, err := p.newResponseInsert(r).Exec(ctx)
 	return err
+}
+
+func (p *PgPool) newResponseInsert(r SyncableResponse) *bun.InsertQuery {
+	row := responseRow{
+		UUID: &r.UUID, JobUUID: &r.JobUUID, Responder: r.Responder, Response: r.Response,
+		SourceMachineID: &r.SourceMachineID, CreatedAt: dbTimeFromValue(r.CreatedAt),
+	}
+	return p.bun.NewInsert().Model(&row).
+		Column("uuid", "job_uuid", "responder", "response", "source_machine_id", "created_at").
+		On("CONFLICT (uuid) DO NOTHING")
 }
 
 // PulledJob represents a job pulled from PostgreSQL
@@ -816,10 +856,85 @@ type PulledJob struct {
 	UpdatedAt             time.Time
 }
 
+type pulledJobRow struct {
+	UUID                  string  `bun:"uuid"`
+	RepoIdentity          string  `bun:"repo_identity"`
+	CommitSHA             string  `bun:"commit_sha"`
+	CommitAuthor          string  `bun:"commit_author"`
+	CommitSubject         string  `bun:"commit_subject"`
+	CommitTimestamp       dbTime  `bun:"commit_timestamp"`
+	GitRef                string  `bun:"git_ref"`
+	SessionID             string  `bun:"session_id"`
+	Agent                 string  `bun:"agent"`
+	Model                 string  `bun:"model"`
+	Provider              string  `bun:"provider"`
+	RequestedModel        string  `bun:"requested_model"`
+	RequestedProvider     string  `bun:"requested_provider"`
+	Reasoning             string  `bun:"reasoning"`
+	JobType               string  `bun:"job_type"`
+	ReviewType            string  `bun:"review_type"`
+	PatchID               string  `bun:"patch_id"`
+	Status                string  `bun:"status"`
+	Agentic               bool    `bun:"agentic"`
+	AgentInvoked          bool    `bun:"agent_invoked"`
+	EnqueuedAt            dbTime  `bun:"enqueued_at"`
+	StartedAt             dbTime  `bun:"started_at"`
+	FinishedAt            dbTime  `bun:"finished_at"`
+	Prompt                string  `bun:"prompt"`
+	DiffContent           *string `bun:"diff_content"`
+	DirtyFiles            *string `bun:"dirty_files"`
+	Error                 string  `bun:"error"`
+	TokenUsage            string  `bun:"token_usage"`
+	WorktreePath          string  `bun:"worktree_path"`
+	Source                string  `bun:"source"`
+	MinSeverity           string  `bun:"min_severity"`
+	BackupAgent           string  `bun:"backup_agent"`
+	BackupModel           string  `bun:"backup_model"`
+	PanelRunUUID          string  `bun:"panel_run_uuid"`
+	PanelRole             string  `bun:"panel_role"`
+	PanelName             string  `bun:"panel_name"`
+	PanelMemberName       string  `bun:"panel_member_name"`
+	PanelMemberIndex      int     `bun:"panel_member_index"`
+	PanelMemberConfigJSON string  `bun:"panel_member_config_json"`
+	SourceMachineID       string  `bun:"source_machine_id"`
+	UpdatedAt             dbTime  `bun:"updated_at"`
+	CursorID              int64   `bun:"cursor_id"`
+}
+
+func (row pulledJobRow) toModel() PulledJob {
+	job := PulledJob{
+		UUID: row.UUID, RepoIdentity: row.RepoIdentity,
+		CommitSHA: row.CommitSHA, CommitAuthor: row.CommitAuthor,
+		CommitSubject: row.CommitSubject, CommitTimestamp: row.CommitTimestamp.Time,
+		GitRef: row.GitRef, SessionID: row.SessionID, Agent: row.Agent,
+		Model: row.Model, Provider: row.Provider, RequestedModel: row.RequestedModel,
+		RequestedProvider: row.RequestedProvider, Reasoning: row.Reasoning,
+		JobType: row.JobType, ReviewType: row.ReviewType, PatchID: row.PatchID,
+		Status: row.Status, Agentic: row.Agentic, AgentInvoked: row.AgentInvoked,
+		EnqueuedAt: row.EnqueuedAt.Time, Prompt: row.Prompt,
+		DiffContent: cloneStringPointer(row.DiffContent), Error: row.Error,
+		TokenUsage: row.TokenUsage, WorktreePath: row.WorktreePath, Source: row.Source,
+		MinSeverity: row.MinSeverity, BackupAgent: row.BackupAgent, BackupModel: row.BackupModel,
+		PanelRunUUID: row.PanelRunUUID, PanelRole: row.PanelRole, PanelName: row.PanelName,
+		PanelMemberName: row.PanelMemberName, PanelMemberIndex: row.PanelMemberIndex,
+		PanelMemberConfigJSON: row.PanelMemberConfigJSON,
+		SourceMachineID:       row.SourceMachineID, UpdatedAt: row.UpdatedAt.Time,
+	}
+	job.StartedAt = row.StartedAt.pointer()
+	job.FinishedAt = row.FinishedAt.pointer()
+	if row.DirtyFiles != nil {
+		job.DirtyFiles = decodeDirtyFiles(*row.DirtyFiles)
+	}
+	return job
+}
+
 // PullJobs fetches jobs from PostgreSQL updated after the given cursor.
 // Cursor format: "updated_at id" (space-separated) or empty for first pull.
 // Returns jobs not from the given machineID (to avoid echo).
 func (p *PgPool) PullJobs(ctx context.Context, excludeMachineID string, cursor string, limit int) ([]PulledJob, string, error) {
+	if limit <= 0 {
+		return nil, cursor, nil
+	}
 	var cursorTime time.Time
 	var cursorID int64
 
@@ -831,66 +946,59 @@ func (p *PgPool) PullJobs(ctx context.Context, excludeMachineID string, cursor s
 		}
 	}
 
-	rows, err := p.pool.Query(ctx, `
-		SELECT
-			j.uuid, r.identity, COALESCE(c.sha, ''), COALESCE(c.author, ''), COALESCE(c.subject, ''), COALESCE(c.timestamp, '1970-01-01'::timestamptz),
-			j.git_ref, COALESCE(j.session_id, ''), j.agent, COALESCE(j.model, ''), COALESCE(j.provider, ''), COALESCE(j.requested_model, ''), COALESCE(j.requested_provider, ''), COALESCE(j.reasoning, ''), COALESCE(j.job_type, 'review'), COALESCE(j.review_type, ''), COALESCE(j.patch_id, ''), j.status, j.agentic, COALESCE(j.agent_invoked, FALSE),
-			j.enqueued_at, j.started_at, j.finished_at,
-			COALESCE(j.prompt, ''), j.diff_content, j.dirty_files, COALESCE(j.error, ''), COALESCE(j.token_usage, ''),
-			COALESCE(j.worktree_path, ''), COALESCE(j.source, ''), COALESCE(j.min_severity, ''), COALESCE(j.backup_agent, ''), COALESCE(j.backup_model, ''),
-			COALESCE(j.panel_run_uuid, ''), COALESCE(j.panel_role, ''), COALESCE(j.panel_name, ''), COALESCE(j.panel_member_name, ''), COALESCE(j.panel_member_index, 0), COALESCE(j.panel_member_config_json, ''),
-			j.source_machine_id, j.updated_at, j.id
-		FROM review_jobs j
-		JOIN repos r ON j.repo_id = r.id
-		LEFT JOIN commits c ON j.commit_id = c.id
-		WHERE (j.source_machine_id IS NULL OR j.source_machine_id != $1)
-		AND (j.updated_at > $2 OR (j.updated_at = $2 AND j.id > $3))
-		ORDER BY j.updated_at, j.id
-		LIMIT $4
-	`, excludeMachineID, cursorTime, cursorID, limit)
+	var rows []pulledJobRow
+	err := p.bun.NewSelect().TableExpr("review_jobs AS j").
+		ColumnExpr("j.uuid AS uuid").ColumnExpr("r.identity AS repo_identity").
+		ColumnExpr("COALESCE(c.sha, '') AS commit_sha").
+		ColumnExpr("COALESCE(c.author, '') AS commit_author").
+		ColumnExpr("COALESCE(c.subject, '') AS commit_subject").
+		ColumnExpr("COALESCE(c.timestamp, '1970-01-01'::timestamptz) AS commit_timestamp").
+		ColumnExpr("j.git_ref AS git_ref").ColumnExpr("COALESCE(j.session_id, '') AS session_id").
+		ColumnExpr("j.agent AS agent").ColumnExpr("COALESCE(j.model, '') AS model").
+		ColumnExpr("COALESCE(j.provider, '') AS provider").
+		ColumnExpr("COALESCE(j.requested_model, '') AS requested_model").
+		ColumnExpr("COALESCE(j.requested_provider, '') AS requested_provider").
+		ColumnExpr("COALESCE(j.reasoning, '') AS reasoning").
+		ColumnExpr("COALESCE(j.job_type, 'review') AS job_type").
+		ColumnExpr("COALESCE(j.review_type, '') AS review_type").
+		ColumnExpr("COALESCE(j.patch_id, '') AS patch_id").
+		ColumnExpr("j.status AS status").ColumnExpr("j.agentic AS agentic").
+		ColumnExpr("COALESCE(j.agent_invoked, FALSE) AS agent_invoked").
+		ColumnExpr("j.enqueued_at AS enqueued_at").ColumnExpr("j.started_at AS started_at").
+		ColumnExpr("j.finished_at AS finished_at").ColumnExpr("COALESCE(j.prompt, '') AS prompt").
+		ColumnExpr("j.diff_content AS diff_content").ColumnExpr("j.dirty_files AS dirty_files").
+		ColumnExpr("COALESCE(j.error, '') AS error").ColumnExpr("COALESCE(j.token_usage, '') AS token_usage").
+		ColumnExpr("COALESCE(j.worktree_path, '') AS worktree_path").
+		ColumnExpr("COALESCE(j.source, '') AS source").
+		ColumnExpr("COALESCE(j.min_severity, '') AS min_severity").
+		ColumnExpr("COALESCE(j.backup_agent, '') AS backup_agent").
+		ColumnExpr("COALESCE(j.backup_model, '') AS backup_model").
+		ColumnExpr("COALESCE(j.panel_run_uuid, '') AS panel_run_uuid").
+		ColumnExpr("COALESCE(j.panel_role, '') AS panel_role").
+		ColumnExpr("COALESCE(j.panel_name, '') AS panel_name").
+		ColumnExpr("COALESCE(j.panel_member_name, '') AS panel_member_name").
+		ColumnExpr("COALESCE(j.panel_member_index, 0) AS panel_member_index").
+		ColumnExpr("COALESCE(j.panel_member_config_json, '') AS panel_member_config_json").
+		ColumnExpr("j.source_machine_id AS source_machine_id").
+		ColumnExpr("j.updated_at AS updated_at").ColumnExpr("j.id AS cursor_id").
+		Join("JOIN repos AS r ON j.repo_id = r.id").
+		Join("LEFT JOIN commits AS c ON j.commit_id = c.id").
+		Where("j.source_machine_id IS NULL OR j.source_machine_id != ?", excludeMachineID).
+		Where("j.updated_at > ? OR (j.updated_at = ? AND j.id > ?)", cursorTime, cursorTime, cursorID).
+		OrderExpr("j.updated_at, j.id").Limit(limit).Scan(ctx, &rows)
 	if err != nil {
 		return nil, cursor, fmt.Errorf("query jobs: %w", err)
 	}
-	defer rows.Close()
 
 	var jobs []PulledJob
-	var lastUpdatedAt time.Time
-	var lastID int64
-
-	for rows.Next() {
-		var j PulledJob
-		var diffContent *string
-		var dirtyFiles *string
-
-		err := rows.Scan(
-			&j.UUID, &j.RepoIdentity, &j.CommitSHA, &j.CommitAuthor, &j.CommitSubject, &j.CommitTimestamp,
-			&j.GitRef, &j.SessionID, &j.Agent, &j.Model, &j.Provider, &j.RequestedModel, &j.RequestedProvider, &j.Reasoning, &j.JobType, &j.ReviewType, &j.PatchID, &j.Status, &j.Agentic, &j.AgentInvoked,
-			&j.EnqueuedAt, &j.StartedAt, &j.FinishedAt,
-			&j.Prompt, &diffContent, &dirtyFiles, &j.Error, &j.TokenUsage,
-			&j.WorktreePath, &j.Source, &j.MinSeverity, &j.BackupAgent, &j.BackupModel,
-			&j.PanelRunUUID, &j.PanelRole, &j.PanelName, &j.PanelMemberName, &j.PanelMemberIndex, &j.PanelMemberConfigJSON,
-			&j.SourceMachineID, &j.UpdatedAt, &lastID,
-		)
-		if err != nil {
-			return nil, cursor, fmt.Errorf("scan job: %w", err)
-		}
-
-		j.DiffContent = diffContent
-		if dirtyFiles != nil {
-			j.DirtyFiles = decodeDirtyFiles(*dirtyFiles)
-		}
-		lastUpdatedAt = j.UpdatedAt
-		jobs = append(jobs, j)
+	for _, row := range rows {
+		jobs = append(jobs, row.toModel())
 	}
 
-	if err := rows.Err(); err != nil {
-		return nil, cursor, fmt.Errorf("rows error: %w", err)
-	}
-
-	// Update cursor if we got results
 	newCursor := cursor
-	if len(jobs) > 0 {
-		newCursor = fmt.Sprintf("%s %d", lastUpdatedAt.Format(time.RFC3339Nano), lastID)
+	if len(rows) > 0 {
+		last := rows[len(rows)-1]
+		newCursor = fmt.Sprintf("%s %d", last.UpdatedAt.Time.Format(time.RFC3339Nano), last.CursorID)
 	}
 
 	return jobs, newCursor, nil
@@ -909,9 +1017,25 @@ type PulledReview struct {
 	UpdatedAt          time.Time
 }
 
+type pulledReviewRow struct {
+	UUID               string `bun:"uuid"`
+	JobUUID            string `bun:"job_uuid"`
+	Agent              string `bun:"agent"`
+	Prompt             string `bun:"prompt"`
+	Output             string `bun:"output"`
+	Closed             bool   `bun:"closed"`
+	UpdatedByMachineID string `bun:"updated_by_machine_id"`
+	CreatedAt          dbTime `bun:"created_at"`
+	UpdatedAt          dbTime `bun:"updated_at"`
+	CursorID           int64  `bun:"cursor_id"`
+}
+
 // PullReviews fetches reviews from PostgreSQL updated after the given cursor.
 // Only fetches reviews for jobs in knownJobUUIDs to avoid cursor advancement past unknown jobs.
 func (p *PgPool) PullReviews(ctx context.Context, excludeMachineID string, knownJobUUIDs []string, cursor string, limit int) ([]PulledReview, string, error) {
+	if limit <= 0 {
+		return nil, cursor, nil
+	}
 	var cursorTime time.Time
 	var cursorID int64
 
@@ -928,48 +1052,35 @@ func (p *PgPool) PullReviews(ctx context.Context, excludeMachineID string, known
 		return nil, cursor, nil
 	}
 
-	rows, err := p.pool.Query(ctx, `
-		SELECT
-			r.uuid, r.job_uuid, r.agent, r.prompt, r.output, r.closed,
-			r.updated_by_machine_id, r.created_at, r.updated_at, r.id
-		FROM reviews r
-		WHERE (r.updated_by_machine_id IS NULL OR r.updated_by_machine_id != $1)
-		AND r.job_uuid = ANY($2)
-		AND (r.updated_at > $3 OR (r.updated_at = $3 AND r.id > $4))
-		ORDER BY r.updated_at, r.id
-		LIMIT $5
-	`, excludeMachineID, knownJobUUIDs, cursorTime, cursorID, limit)
+	var rows []pulledReviewRow
+	err := p.bun.NewSelect().TableExpr("reviews AS r").
+		ColumnExpr("r.uuid AS uuid").ColumnExpr("r.job_uuid AS job_uuid").
+		ColumnExpr("r.agent AS agent").ColumnExpr("r.prompt AS prompt").
+		ColumnExpr("r.output AS output").ColumnExpr("r.closed AS closed").
+		ColumnExpr("r.updated_by_machine_id AS updated_by_machine_id").
+		ColumnExpr("r.created_at AS created_at").ColumnExpr("r.updated_at AS updated_at").
+		ColumnExpr("r.id AS cursor_id").
+		Where("r.updated_by_machine_id IS NULL OR r.updated_by_machine_id != ?", excludeMachineID).
+		Where("r.job_uuid IN (?)", bun.List(knownJobUUIDs)).
+		Where("r.updated_at > ? OR (r.updated_at = ? AND r.id > ?)", cursorTime, cursorTime, cursorID).
+		OrderExpr("r.updated_at, r.id").Limit(limit).Scan(ctx, &rows)
 	if err != nil {
 		return nil, cursor, fmt.Errorf("query reviews: %w", err)
 	}
-	defer rows.Close()
 
 	var reviews []PulledReview
-	var lastUpdatedAt time.Time
-	var lastID int64
-
-	for rows.Next() {
-		var r PulledReview
-
-		err := rows.Scan(
-			&r.UUID, &r.JobUUID, &r.Agent, &r.Prompt, &r.Output, &r.Closed,
-			&r.UpdatedByMachineID, &r.CreatedAt, &r.UpdatedAt, &lastID,
-		)
-		if err != nil {
-			return nil, cursor, fmt.Errorf("scan review: %w", err)
-		}
-
-		lastUpdatedAt = r.UpdatedAt
-		reviews = append(reviews, r)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, cursor, fmt.Errorf("rows error: %w", err)
+	for _, row := range rows {
+		reviews = append(reviews, PulledReview{
+			UUID: row.UUID, JobUUID: row.JobUUID, Agent: row.Agent, Prompt: row.Prompt,
+			Output: row.Output, Closed: row.Closed, UpdatedByMachineID: row.UpdatedByMachineID,
+			CreatedAt: row.CreatedAt.Time, UpdatedAt: row.UpdatedAt.Time,
+		})
 	}
 
 	newCursor := cursor
-	if len(reviews) > 0 {
-		newCursor = fmt.Sprintf("%s %d", lastUpdatedAt.Format(time.RFC3339Nano), lastID)
+	if len(rows) > 0 {
+		last := rows[len(rows)-1]
+		newCursor = fmt.Sprintf("%s %d", last.UpdatedAt.Time.Format(time.RFC3339Nano), last.CursorID)
 	}
 
 	return reviews, newCursor, nil
@@ -986,9 +1097,23 @@ type PulledResponse struct {
 	InsertedAt      time.Time
 }
 
+type pulledResponseRow struct {
+	UUID            string `bun:"uuid"`
+	JobUUID         string `bun:"job_uuid"`
+	Responder       string `bun:"responder"`
+	Response        string `bun:"response"`
+	SourceMachineID string `bun:"source_machine_id"`
+	CreatedAt       dbTime `bun:"created_at"`
+	InsertedAt      dbTime `bun:"inserted_at"`
+	CursorID        int64  `bun:"cursor_id"`
+}
+
 // PullResponses fetches responses from PostgreSQL inserted after the given cursor.
 // Cursor format: "inserted_at id" (space-separated) or empty for first pull.
 func (p *PgPool) PullResponses(ctx context.Context, excludeMachineID string, cursor string, limit int) ([]PulledResponse, string, error) {
+	if limit <= 0 {
+		return nil, cursor, nil
+	}
 	var cursorTime time.Time
 	var cursorID int64
 	if cursor != "" {
@@ -999,45 +1124,33 @@ func (p *PgPool) PullResponses(ctx context.Context, excludeMachineID string, cur
 		}
 	}
 
-	rows, err := p.pool.Query(ctx, `
-		SELECT
-			r.uuid, r.job_uuid, r.responder, r.response, r.source_machine_id, r.created_at, r.inserted_at, r.id
-		FROM responses r
-		WHERE (r.source_machine_id IS NULL OR r.source_machine_id != $1)
-		AND (r.inserted_at > $2 OR (r.inserted_at = $2 AND r.id > $3))
-		ORDER BY r.inserted_at, r.id
-		LIMIT $4
-	`, excludeMachineID, cursorTime, cursorID, limit)
+	var rows []pulledResponseRow
+	err := p.bun.NewSelect().TableExpr("responses AS r").
+		ColumnExpr("r.uuid AS uuid").ColumnExpr("r.job_uuid AS job_uuid").
+		ColumnExpr("r.responder AS responder").ColumnExpr("r.response AS response").
+		ColumnExpr("r.source_machine_id AS source_machine_id").
+		ColumnExpr("r.created_at AS created_at").ColumnExpr("r.inserted_at AS inserted_at").
+		ColumnExpr("r.id AS cursor_id").
+		Where("r.source_machine_id IS NULL OR r.source_machine_id != ?", excludeMachineID).
+		Where("r.inserted_at > ? OR (r.inserted_at = ? AND r.id > ?)", cursorTime, cursorTime, cursorID).
+		OrderExpr("r.inserted_at, r.id").Limit(limit).Scan(ctx, &rows)
 	if err != nil {
 		return nil, cursor, fmt.Errorf("query responses: %w", err)
 	}
-	defer rows.Close()
 
 	var responses []PulledResponse
-	var lastInsertedAt time.Time
-	var lastID int64
-
-	for rows.Next() {
-		var r PulledResponse
-
-		err := rows.Scan(
-			&r.UUID, &r.JobUUID, &r.Responder, &r.Response, &r.SourceMachineID, &r.CreatedAt, &r.InsertedAt, &lastID,
-		)
-		if err != nil {
-			return nil, cursor, fmt.Errorf("scan response: %w", err)
-		}
-
-		lastInsertedAt = r.InsertedAt
-		responses = append(responses, r)
-	}
-
-	if err := rows.Err(); err != nil {
-		return nil, cursor, fmt.Errorf("rows error: %w", err)
+	for _, row := range rows {
+		responses = append(responses, PulledResponse{
+			UUID: row.UUID, JobUUID: row.JobUUID, Responder: row.Responder,
+			Response: row.Response, SourceMachineID: row.SourceMachineID,
+			CreatedAt: row.CreatedAt.Time, InsertedAt: row.InsertedAt.Time,
+		})
 	}
 
 	newCursor := cursor
-	if len(responses) > 0 {
-		newCursor = formatTimestampIDCursor(lastInsertedAt, lastID)
+	if len(rows) > 0 {
+		last := rows[len(rows)-1]
+		newCursor = formatTimestampIDCursor(last.InsertedAt.Time, last.CursorID)
 	}
 
 	return responses, newCursor, nil
@@ -1072,6 +1185,15 @@ func defaultStr(s, def string) string {
 	return s
 }
 
+func (p *PgPool) queueBunQuery(batch *pgx.Batch, query bunschema.QueryAppender) error {
+	queryBytes, err := query.AppendQuery(bunschema.NewQueryGen(p.bun.Dialect()), nil)
+	if err != nil {
+		return err
+	}
+	batch.Queue(string(queryBytes))
+	return nil
+}
+
 // BatchUpsertReviews inserts or updates multiple reviews in a single batch operation.
 // Returns a boolean slice indicating success/failure for each item at the corresponding index.
 func (p *PgPool) BatchUpsertReviews(ctx context.Context, reviews []SyncableReview) ([]bool, error) {
@@ -1081,17 +1203,9 @@ func (p *PgPool) BatchUpsertReviews(ctx context.Context, reviews []SyncableRevie
 
 	batch := &pgx.Batch{}
 	for _, r := range reviews {
-		batch.Queue(`
-			INSERT INTO reviews (
-				uuid, job_uuid, agent, prompt, output, closed,
-				updated_by_machine_id, created_at, updated_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, clock_timestamp())
-			ON CONFLICT (uuid) DO UPDATE SET
-				closed = EXCLUDED.closed,
-				updated_by_machine_id = EXCLUDED.updated_by_machine_id,
-				updated_at = clock_timestamp()
-		`, r.UUID, r.JobUUID, r.Agent, r.Prompt, r.Output, r.Closed,
-			r.UpdatedByMachineID, r.CreatedAt)
+		if err := p.queueBunQuery(batch, p.newReviewUpsert(r)); err != nil {
+			return nil, fmt.Errorf("build review upsert: %w", err)
+		}
 	}
 
 	br := p.pool.SendBatch(ctx, batch)
@@ -1122,12 +1236,9 @@ func (p *PgPool) BatchInsertResponses(ctx context.Context, responses []SyncableR
 
 	batch := &pgx.Batch{}
 	for _, r := range responses {
-		batch.Queue(`
-			INSERT INTO responses (
-				uuid, job_uuid, responder, response, source_machine_id, created_at
-			) VALUES ($1, $2, $3, $4, $5, $6)
-			ON CONFLICT (uuid) DO NOTHING
-		`, r.UUID, r.JobUUID, r.Responder, r.Response, r.SourceMachineID, r.CreatedAt)
+		if err := p.queueBunQuery(batch, p.newResponseInsert(r)); err != nil {
+			return nil, fmt.Errorf("build response insert: %w", err)
+		}
 	}
 
 	br := p.pool.SendBatch(ctx, batch)
@@ -1174,7 +1285,7 @@ func (p *PgPool) BatchUpsertJobs(ctx context.Context, jobs []JobWithPgIDs) ([]bo
 func (p *PgPool) batchUpsertJobs(ctx context.Context, jobs []JobWithPgIDs) ([]bool, error) {
 	batch := &pgx.Batch{}
 	for _, jw := range jobs {
-		if err := queueJobUpsert(batch, jw); err != nil {
+		if err := p.queueJobUpsert(batch, jw); err != nil {
 			return nil, err
 		}
 	}
@@ -1205,7 +1316,7 @@ func (p *PgPool) upsertJobsIndividually(ctx context.Context, jobs []JobWithPgIDs
 	var firstErr error
 	for i, jw := range jobs {
 		batch := &pgx.Batch{}
-		if err := queueJobUpsert(batch, jw); err != nil {
+		if err := p.queueJobUpsert(batch, jw); err != nil {
 			if firstErr == nil {
 				firstErr = err
 			}
@@ -1231,51 +1342,10 @@ func (p *PgPool) upsertJobsIndividually(ctx context.Context, jobs []JobWithPgIDs
 	return success, firstErr
 }
 
-func queueJobUpsert(batch *pgx.Batch, jw JobWithPgIDs) error {
-	j := jw.Job
-	dirtyFilesJSON, err := encodeDirtyFiles(j.DirtyFiles)
+func (p *PgPool) queueJobUpsert(batch *pgx.Batch, jw JobWithPgIDs) error {
+	query, err := p.newJobUpsert(jw.Job, jw.PgRepoID, jw.PgCommitID)
 	if err != nil {
 		return err
 	}
-	batch.Queue(`
-			INSERT INTO review_jobs (
-				uuid, repo_id, commit_id, git_ref, session_id, agent, model, provider, requested_model, requested_provider, reasoning, job_type, review_type, patch_id, status, agentic,
-				enqueued_at, started_at, finished_at, prompt, diff_content, dirty_files, error, token_usage,
-				worktree_path, source, min_severity,
-				panel_run_uuid, panel_role, panel_name, panel_member_name, panel_member_index, panel_member_config_json,
-				source_machine_id, backup_agent, backup_model, agent_invoked, updated_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, clock_timestamp())
-			ON CONFLICT (uuid) DO UPDATE SET
-				status = EXCLUDED.status,
-				finished_at = EXCLUDED.finished_at,
-				error = EXCLUDED.error,
-				model = EXCLUDED.model,
-				provider = EXCLUDED.provider,
-				requested_model = EXCLUDED.requested_model,
-				requested_provider = EXCLUDED.requested_provider,
-				git_ref = EXCLUDED.git_ref,
-				session_id = CASE WHEN EXCLUDED.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased') THEN EXCLUDED.session_id ELSE COALESCE(EXCLUDED.session_id, review_jobs.session_id) END,
-				commit_id = EXCLUDED.commit_id,
-				patch_id = EXCLUDED.patch_id,
-				dirty_files = COALESCE(EXCLUDED.dirty_files, review_jobs.dirty_files),
-				token_usage = CASE WHEN EXCLUDED.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased') THEN EXCLUDED.token_usage ELSE COALESCE(EXCLUDED.token_usage, review_jobs.token_usage) END,
-				agent_invoked = CASE WHEN EXCLUDED.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased') THEN EXCLUDED.agent_invoked ELSE (review_jobs.agent_invoked OR EXCLUDED.agent_invoked) END,
-				worktree_path = COALESCE(EXCLUDED.worktree_path, review_jobs.worktree_path),
-				source = COALESCE(EXCLUDED.source, review_jobs.source),
-				min_severity = EXCLUDED.min_severity,
-				backup_agent = EXCLUDED.backup_agent,
-				backup_model = EXCLUDED.backup_model,
-				panel_run_uuid = EXCLUDED.panel_run_uuid,
-				panel_role = EXCLUDED.panel_role,
-				panel_name = EXCLUDED.panel_name,
-				panel_member_name = EXCLUDED.panel_member_name,
-				panel_member_index = EXCLUDED.panel_member_index,
-				panel_member_config_json = EXCLUDED.panel_member_config_json,
-				updated_at = clock_timestamp()
-		`, j.UUID, jw.PgRepoID, jw.PgCommitID, j.GitRef, nullString(j.SessionID), j.Agent, nullString(j.Model), nullString(j.Provider), nullString(j.RequestedModel), nullString(j.RequestedProvider), nullString(j.Reasoning),
-		defaultStr(j.JobType, "review"), j.ReviewType, nullString(j.PatchID), j.Status, j.Agentic, j.EnqueuedAt, j.StartedAt, j.FinishedAt,
-		nullString(sanitizePostgresText(j.Prompt)), sanitizePostgresTextPointer(j.DiffContent), nullString(dirtyFilesJSON), nullString(sanitizePostgresText(j.Error)), nullString(j.TokenUsage), nullString(j.WorktreePath), nullString(j.Source), normalizeMinSeverityForWrite(j.MinSeverity),
-		nullString(j.PanelRunUUID), nullString(j.PanelRole), nullString(j.PanelName), nullString(j.PanelMemberName), j.PanelMemberIndex, nullString(j.PanelMemberConfigJSON),
-		j.SourceMachineID, j.BackupAgent, j.BackupModel, j.AgentInvoked)
-	return nil
+	return p.queueBunQuery(batch, query)
 }

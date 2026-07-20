@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"time"
 )
@@ -8,8 +9,13 @@ import (
 // HasCIReview checks if a PR has already been reviewed at the given HEAD SHA.
 func (db *DB) HasCIReview(githubRepo string, prNumber int, headSHA string) (bool, error) {
 	var count int
-	err := db.QueryRow(`SELECT COUNT(*) FROM ci_pr_reviews WHERE github_repo = ? AND pr_number = ? AND head_sha = ?`,
-		githubRepo, prNumber, headSHA).Scan(&count)
+	err := db.bun.NewSelect().
+		Model((*ciPRReviewRow)(nil)).
+		ColumnExpr("COUNT(*)").
+		Where("github_repo = ?", githubRepo).
+		Where("pr_number = ?", prNumber).
+		Where("head_sha = ?", headSHA).
+		Scan(context.Background(), &count)
 	if err != nil {
 		return false, err
 	}
@@ -18,8 +24,16 @@ func (db *DB) HasCIReview(githubRepo string, prNumber int, headSHA string) (bool
 
 // RecordCIReview records that a PR was reviewed at a given HEAD SHA
 func (db *DB) RecordCIReview(githubRepo string, prNumber int, headSHA string, jobID int64) error {
-	_, err := db.Exec(`INSERT INTO ci_pr_reviews (github_repo, pr_number, head_sha, job_id) VALUES (?, ?, ?, ?)`,
-		githubRepo, prNumber, headSHA, jobID)
+	row := ciPRReviewRow{
+		GithubRepo: githubRepo,
+		PRNumber:   prNumber,
+		HeadSHA:    headSHA,
+		JobID:      jobID,
+	}
+	_, err := db.bun.NewInsert().
+		Model(&row).
+		Column("github_repo", "pr_number", "head_sha", "job_id").
+		Exec(context.Background())
 	return err
 }
 
@@ -43,12 +57,16 @@ type BatchReviewResult struct {
 // message explaining why it was canceled. Returns sql.ErrNoRows if the
 // job is already terminal.
 func (db *DB) CancelJobWithError(jobID int64, errMsg string) error {
-	now := time.Now().Format(time.RFC3339)
-	result, err := db.Exec(`
-		UPDATE review_jobs
-		SET status = 'canceled', error = ?, finished_at = ?, updated_at = ?
-		WHERE id = ? AND status IN ('queued', 'running')
-	`, errMsg, now, now, jobID)
+	now := dbTimeFromValue(time.Now())
+	result, err := db.bun.NewUpdate().
+		Model((*jobRow)(nil)).
+		Set("status = ?", JobStatusCanceled).
+		Set("error = ?", errMsg).
+		Set("finished_at = ?", now).
+		Set("updated_at = ?", now).
+		Where("id = ?", jobID).
+		Where("status IN ('queued', 'running')").
+		Exec(context.Background())
 	if err != nil {
 		return err
 	}
