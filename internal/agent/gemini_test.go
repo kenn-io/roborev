@@ -380,6 +380,85 @@ echo "No issues found."
 	assert.NotContains(t, argsOut, "--prompt\n")
 }
 
+func TestGeminiAntigravityEmptyOutput(t *testing.T) {
+	skipIfWindows(t)
+
+	// agy >= 1.1.3 can exit 0 after soft-denying tools in headless print
+	// mode; empty review output must error so the worker retries and fails
+	// over. Agentic runs keep the non-fatal placeholder: fix jobs are
+	// judged by their worktree patch, not text output.
+	silentScript := `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "1.1.3"; exit 0; fi
+exit 0
+`
+	denialScript := `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "1.1.3"; exit 0; fi
+echo 'jetski: no output produced - a tool required the "read_file" permission that headless mode cannot prompt for, so it was auto-denied. Add an allow-rule under permissions.allow in settings.json (e.g. read_file(<target>)).' >&2
+exit 0
+`
+	tests := []struct {
+		name         string
+		script       string
+		agentic      bool
+		unsafeGlobal bool
+		wantResult   string
+		wantInError  []string
+	}{
+		{
+			name:        "SilentExitIsError",
+			script:      silentScript,
+			wantInError: []string{"produced no review output"},
+		},
+		{
+			// allow_unsafe_agents changes tool permissions, not what a
+			// review must produce: empty output stays an error.
+			name:         "ReviewErrorsEvenWithUnsafeAgents",
+			script:       silentScript,
+			unsafeGlobal: true,
+			wantInError:  []string{"produced no review output"},
+		},
+		{
+			name:        "PermissionDenialHint",
+			script:      denialScript,
+			wantInError: []string{"produced no review output", "permissions.allow", "read_file(*)", "auto-denied"},
+		},
+		{
+			name:       "AgenticStaysNonFatal",
+			script:     silentScript,
+			agentic:    true,
+			wantResult: "No review output generated",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			scriptPath := writeTempCommand(t, tt.script)
+			ga := NewGeminiAgent(scriptPath)
+			ga.Command = filepath.Join(filepath.Dir(scriptPath), "agy")
+			require.NoError(t, os.Rename(scriptPath, ga.Command))
+			withUnsafeAgents(t, tt.unsafeGlobal)
+			var a Agent = ga
+			if tt.agentic {
+				a = a.WithAgentic(true)
+			}
+
+			var output bytes.Buffer
+			res, err := a.Review(context.Background(), t.TempDir(), "sha", "prompt", &output)
+
+			if tt.wantInError == nil {
+				require.NoError(t, err)
+				assert.Equal(t, tt.wantResult, res)
+				return
+			}
+			require.Error(t, err)
+			assert.Empty(t, res)
+			for _, want := range tt.wantInError {
+				assert.ErrorContains(t, err, want)
+			}
+		})
+	}
+}
+
 func TestUTF16CodeUnits(t *testing.T) {
 	assert := assert.New(t)
 	assert.Equal(0, utf16CodeUnits(""))

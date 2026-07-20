@@ -288,7 +288,27 @@ func (a *GeminiAgent) runAntigravity(ctx context.Context, repoPath, prompt strin
 		return runResult.Result, runResult.Stderr, nil
 	}
 
-	return "No review output generated", runResult.Stderr, nil
+	// Agentic jobs keep the shared non-fatal placeholder: fix jobs
+	// legitimately emit no text (they are judged by their worktree patch,
+	// and erroring here would discard valid edits before capture). This
+	// gates on workflow intent, not agenticMode: allow_unsafe_agents
+	// changes tool permissions, not what a review must produce.
+	if a.Agentic {
+		return "No review output generated", runResult.Stderr, nil
+	}
+
+	// A clean exit with no output is a failure, not an empty review: agy >=
+	// 1.1.3 soft-denies tools that need a permission confirmation in headless
+	// print mode and exits 0 having produced nothing. Returning an error lets
+	// the worker retry and fail over instead of recording an empty review.
+	msg := "antigravity produced no review output"
+	if strings.Contains(runResult.Stderr, "permissions.allow") {
+		msg += "; add read_file(*) to permissions.allow in agy's settings.json"
+	}
+	if s := truncateStderr(runResult.Stderr); s != "" {
+		msg += "\nstderr: " + s
+	}
+	return "", runResult.Stderr, errors.New(msg)
 }
 
 // antigravityPromptViaFlag reports whether the installed agy expects the prompt
