@@ -2,39 +2,25 @@ package storage
 
 import (
 	"database/sql"
-	"errors"
 	"time"
 )
 
 // GetOrCreateCommit finds or creates a commit record.
 // Lookups are by (repo_id, sha) to handle the same SHA in different repos.
 func (db *DB) GetOrCreateCommit(repoID int64, sha, author, subject string, timestamp time.Time) (*Commit, error) {
-	// Try to find existing by (repo_id, sha)
-	commit, err := scanCommit(db.QueryRow(`SELECT id, repo_id, sha, author, subject, timestamp, created_at FROM commits WHERE repo_id = ? AND sha = ?`, repoID, sha))
-	if err == nil {
-		return commit, nil
-	}
-	if !errors.Is(err, sql.ErrNoRows) {
-		return nil, err
-	}
-
-	// Create new
-	result, err := db.Exec(`INSERT INTO commits (repo_id, sha, author, subject, timestamp) VALUES (?, ?, ?, ?, ?)`,
-		repoID, sha, author, subject, timestamp.Format(time.RFC3339))
+	_, err := db.Exec(`
+		INSERT INTO commits (repo_id, sha, author, subject, timestamp)
+		VALUES (?, ?, ?, ?, ?)
+		ON CONFLICT(repo_id, sha) DO NOTHING
+	`, repoID, sha, author, subject, timestamp.Format(time.RFC3339))
 	if err != nil {
 		return nil, err
 	}
 
-	id, _ := result.LastInsertId()
-	return &Commit{
-		ID:        id,
-		RepoID:    repoID,
-		SHA:       sha,
-		Author:    author,
-		Subject:   subject,
-		Timestamp: timestamp,
-		CreatedAt: time.Now(),
-	}, nil
+	return scanCommit(db.QueryRow(`
+		SELECT id, repo_id, sha, author, subject, timestamp, created_at
+		FROM commits WHERE repo_id = ? AND sha = ?
+	`, repoID, sha))
 }
 
 // ErrAmbiguousCommit is returned when a SHA lookup matches multiple repos

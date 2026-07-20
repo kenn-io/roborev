@@ -46,6 +46,53 @@ func TestCommitOperations(t *testing.T) {
 	assert.Equal(t, found.ID, commit.ID)
 }
 
+func TestGetOrCreateCommitConcurrentInsert(t *testing.T) {
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	repo := createRepo(t, db, "/tmp/concurrent-commit")
+
+	lockConn, err := db.Conn(t.Context())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, lockConn.Close()) })
+	_, err = lockConn.ExecContext(t.Context(), "BEGIN IMMEDIATE")
+	require.NoError(t, err)
+
+	type result struct {
+		commit *Commit
+		err    error
+	}
+	results := make(chan result, 2)
+	for range 2 {
+		go func() {
+			commit, err := db.GetOrCreateCommit(
+				repo.ID, "concurrent-sha", "Author", "Subject", time.Now(),
+			)
+			results <- result{commit: commit, err: err}
+		}()
+	}
+
+	require.Eventually(t, func() bool {
+		return db.Stats().InUse >= 3
+	}, time.Second, time.Millisecond,
+		"both callers should reach the insert while the write lock is held")
+	_, err = lockConn.ExecContext(t.Context(), "COMMIT")
+	require.NoError(t, err)
+
+	first := <-results
+	second := <-results
+	require.NoError(t, first.err)
+	require.NoError(t, second.err)
+	require.NotNil(t, first.commit)
+	require.NotNil(t, second.commit)
+	assert.Equal(t, first.commit.ID, second.commit.ID)
+
+	var count int
+	require.NoError(t, db.QueryRow(`
+		SELECT COUNT(*) FROM commits WHERE repo_id = ? AND sha = ?
+	`, repo.ID, "concurrent-sha").Scan(&count))
+	assert.Equal(t, 1, count)
+}
+
 func TestBranchPersistence(t *testing.T) {
 	t.Run("EnqueueJob stores branch", func(t *testing.T) {
 		db := openTestDB(t)
