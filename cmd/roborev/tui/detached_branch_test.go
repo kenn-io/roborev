@@ -62,6 +62,26 @@ func TestDetachedBranchLabel(t *testing.T) {
 			want: "(detached @ abc1234)",
 		},
 		{
+			name: "panel synthesis row on a detached commit shows placeholder",
+			job:  storage.ReviewJob{JobType: storage.JobTypeSynthesis, GitRef: "abc1234def", CommitID: &commitID},
+			want: "(detached @ abc1234)",
+		},
+		{
+			name: "synthesis of a dirty panel stays blank",
+			job:  storage.ReviewJob{JobType: storage.JobTypeSynthesis, GitRef: "dirty"},
+			want: "",
+		},
+		{
+			name: "synthesis of a range panel stays blank",
+			job:  storage.ReviewJob{JobType: storage.JobTypeSynthesis, GitRef: "abc1234..def5678"},
+			want: "",
+		},
+		{
+			name: "synthesis of a prompt panel carries a non-SHA ref, stays blank",
+			job:  storage.ReviewJob{JobType: storage.JobTypeSynthesis, GitRef: "analyze"},
+			want: "",
+		},
+		{
 			name: "CI review deliberately leaves branch blank",
 			job: storage.ReviewJob{
 				JobType:      storage.JobTypeReview,

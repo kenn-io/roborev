@@ -78,6 +78,18 @@ func TestReviewBranchName(t *testing.T) {
 			want: "",
 		},
 		{
+			name: "detached panel synthesis row shows placeholder instead of blank",
+			job: &storage.ReviewJob{
+				JobType: storage.JobTypeSynthesis,
+				GitRef:  "abc1234567",
+				CommitID: func() *int64 {
+					id := int64(2)
+					return &id
+				}(),
+			},
+			want: "(detached @ abc1234)",
+		},
+		{
 			name: "detached commit review shows placeholder instead of blank",
 			job: &storage.ReviewJob{
 				JobType: storage.JobTypeReview,

@@ -43,25 +43,27 @@ func formatAgentLabel(agent string, model string) string {
 //
 // Returns "" (leaving the caller's existing blank/fallback behavior intact)
 // when: a branch (or the branchNone sentinel) is already stored; the job is
-// neither a single-commit review nor a fix job on a commit (task, insights,
-// and compact jobs carry non-SHA refs like "analyze", and dirty jobs have
-// no branch concept); the job is a CI review, which deliberately leaves
-// Branch empty in favor of CIBaseBranch (see storage.ReviewJob.HookBranch);
-// or the ref is a range, "dirty", or "prompt" rather than a single commit.
-// Fix jobs additionally require a SHA-like ref, since fixes created from
-// task or custom-prompt parents reuse the parent's prompt-word ref.
+// not a single-commit review, a fix job on a commit, or a panel synthesis
+// row for a single-commit review (task, insights, and compact jobs carry
+// non-SHA refs like "analyze", and dirty jobs have no branch concept); the
+// job is a CI review, which deliberately leaves Branch empty in favor of
+// CIBaseBranch (see storage.ReviewJob.HookBranch); or the ref is a range,
+// "dirty", or "prompt" rather than a single commit. Fix and synthesis jobs
+// additionally require a commit ID or SHA-like ref, since fixes created
+// from task or custom-prompt parents (and syntheses of prompt panels)
+// reuse the parent's prompt-word ref.
 func detachedBranchLabel(job storage.ReviewJob) string {
 	if job.Branch != "" || job.IsDirtyJob() || job.IsCIReview() {
 		return ""
 	}
-	if !job.IsReviewJob() && !job.IsFixJob() {
+	if !job.IsReviewJob() && !job.IsFixJob() && !job.IsSynthesisJob() {
 		return ""
 	}
 	ref := strings.TrimSpace(job.GitRef)
 	if ref == "" || ref == "dirty" || ref == "prompt" || strings.Contains(ref, "..") {
 		return ""
 	}
-	if job.IsFixJob() && !isCommitSHA(ref) {
+	if (job.IsFixJob() || job.IsSynthesisJob()) && job.CommitID == nil && !isCommitSHA(ref) {
 		return ""
 	}
 	return detachedLabelPrefix + gitrepo.ShortSHA(ref) + ")"

@@ -38,6 +38,17 @@ func TestGetBranchForJobDetachedHead(t *testing.T) {
 
 	// Result is cached rather than re-derived on the next call.
 	assert.Equal(t, got, m.branchNames[job.ID])
+
+	// The canonical queue row for a detached single-commit panel review is
+	// its synthesis job; it gets the same placeholder.
+	synthesis := storage.ReviewJob{
+		ID:       2,
+		JobType:  storage.JobTypeSynthesis,
+		GitRef:   sha,
+		RepoPath: repo.Path(),
+		CommitID: &commitID,
+	}
+	assert.Equal(t, "(detached @ "+sha[:7]+")", m.getBranchForJob(synthesis))
 }
 
 // TestBackfillBranchValue covers the once-per-session branch backfill
@@ -57,6 +68,12 @@ func TestBackfillBranchValue(t *testing.T) {
 
 	t.Run("detached review left unbackfilled", func(t *testing.T) {
 		job := storage.ReviewJob{JobType: storage.JobTypeReview, GitRef: detachedSHA, RepoPath: repo.Path(), CommitID: &commitID}
+		_, ok := backfillBranchValue(job, "")
+		assert.False(t, ok)
+	})
+
+	t.Run("detached panel synthesis row left unbackfilled", func(t *testing.T) {
+		job := storage.ReviewJob{JobType: storage.JobTypeSynthesis, GitRef: detachedSHA, RepoPath: repo.Path(), CommitID: &commitID}
 		_, ok := backfillBranchValue(job, "")
 		assert.False(t, ok)
 	})
