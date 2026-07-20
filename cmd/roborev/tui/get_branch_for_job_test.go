@@ -75,6 +75,13 @@ func TestBackfillBranchValue(t *testing.T) {
 		assert.Equal(t, branchNone, branch)
 	})
 
+	t.Run("locally missing repo persists sentinel instead of stranding the row", func(t *testing.T) {
+		job := storage.ReviewJob{JobType: storage.JobTypeReview, GitRef: detachedSHA, RepoPath: "/nonexistent/repo", CommitID: &commitID}
+		branch, ok := backfillBranchValue(job, "")
+		assert.True(t, ok)
+		assert.Equal(t, branchNone, branch)
+	})
+
 	t.Run("remote job persists sentinel without lookup", func(t *testing.T) {
 		job := storage.ReviewJob{JobType: storage.JobTypeReview, GitRef: detachedSHA, RepoPath: repo.Path(), CommitID: &commitID, SourceMachineID: "machine-b"}
 		branch, ok := backfillBranchValue(job, "machine-a")

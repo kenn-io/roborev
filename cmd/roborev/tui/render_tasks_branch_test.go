@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 // TestTaskCellsBranchColumn covers the Tasks view "Branch" column (#499):
@@ -13,6 +14,14 @@ import (
 // placeholder instead of a blank cell, while jobs that have (or should
 // have) no branch concept stay blank.
 func TestTaskCellsBranchColumn(t *testing.T) {
+	repo := testutil.InitTestRepo(t)
+	firstSHA := repo.CommitFile("a.txt", "one", "first")
+	repo.CheckoutDetached()
+	detachedSHA := repo.CommitFile("a.txt", "two", "second, on detached HEAD")
+	// Branch from the first commit so detachedSHA stays unreachable.
+	repo.CheckoutNewBranch("feature-x", firstSHA)
+	reachableSHA := repo.CommitFile("b.txt", "three", "third, on a branch")
+
 	commitID := int64(7)
 	tests := []struct {
 		name       string
@@ -21,37 +30,42 @@ func TestTaskCellsBranchColumn(t *testing.T) {
 	}{
 		{
 			name:       "stored branch is used as-is",
-			job:        storage.ReviewJob{JobType: storage.JobTypeReview, Branch: "main", GitRef: "abc1234567", CommitID: &commitID},
+			job:        storage.ReviewJob{ID: 1, JobType: storage.JobTypeReview, Branch: "main", GitRef: detachedSHA, CommitID: &commitID},
 			wantBranch: "main",
 		},
 		{
 			name:       "detached commit review shows placeholder",
-			job:        storage.ReviewJob{JobType: storage.JobTypeReview, GitRef: "abc1234567", CommitID: &commitID},
-			wantBranch: "(detached @ abc1234)",
+			job:        storage.ReviewJob{ID: 2, JobType: storage.JobTypeReview, GitRef: detachedSHA, RepoPath: repo.Path(), CommitID: &commitID},
+			wantBranch: "(detached @ " + detachedSHA[:7] + ")",
 		},
 		{
 			name:       "task job stays blank",
-			job:        storage.ReviewJob{JobType: storage.JobTypeTask, GitRef: "abc1234567"},
+			job:        storage.ReviewJob{ID: 3, JobType: storage.JobTypeTask, GitRef: "analyze"},
 			wantBranch: "",
 		},
 		{
 			name:       "fix job on a detached commit shows placeholder (Tasks view data path)",
-			job:        storage.ReviewJob{JobType: storage.JobTypeFix, GitRef: "abc1234def"},
-			wantBranch: "(detached @ abc1234)",
+			job:        storage.ReviewJob{ID: 4, JobType: storage.JobTypeFix, GitRef: detachedSHA, RepoPath: repo.Path()},
+			wantBranch: "(detached @ " + detachedSHA[:7] + ")",
+		},
+		{
+			name:       "branchless fix job on a reachable commit shows the real branch",
+			job:        storage.ReviewJob{ID: 5, JobType: storage.JobTypeFix, GitRef: reachableSHA, RepoPath: repo.Path()},
+			wantBranch: "feature-x",
 		},
 		{
 			name:       "fix job from a task parent stays blank",
-			job:        storage.ReviewJob{JobType: storage.JobTypeFix, GitRef: "analyze"},
+			job:        storage.ReviewJob{ID: 6, JobType: storage.JobTypeFix, GitRef: "analyze", RepoPath: repo.Path()},
 			wantBranch: "",
 		},
 		{
 			name:       "unverifiable branchNone keeps the sentinel",
-			job:        storage.ReviewJob{JobType: storage.JobTypeReview, Branch: branchNone, GitRef: "abc1234567", CommitID: &commitID},
+			job:        storage.ReviewJob{ID: 7, JobType: storage.JobTypeReview, Branch: branchNone, GitRef: detachedSHA, CommitID: &commitID},
 			wantBranch: branchNone,
 		},
 		{
 			name:       "branchNone on task job keeps the sentinel",
-			job:        storage.ReviewJob{JobType: storage.JobTypeTask, Branch: branchNone, GitRef: "abc1234567"},
+			job:        storage.ReviewJob{ID: 8, JobType: storage.JobTypeTask, Branch: branchNone, GitRef: "analyze"},
 			wantBranch: branchNone,
 		},
 	}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"net/http"
 	neturl "net/url"
+	"os"
 	"sort"
 	"strconv"
 	"strings"
@@ -505,6 +506,13 @@ func backfillBranchValue(job storage.ReviewJob, machineID string) (string, bool)
 	}
 	// Mark remote jobs with no-branch sentinel (can't look up)
 	if job.RepoPath == "" || (machineID != "" && job.SourceMachineID != "" && job.SourceMachineID != machineID) {
+		return branchNone, true
+	}
+
+	// Preserve the old sentinel backfill when the repo cannot be verified
+	// locally: an empty lookup there means "couldn't look", not "detached",
+	// and skipping would strand the row with NullsRemaining nonzero.
+	if _, err := os.Stat(job.RepoPath); err != nil {
 		return branchNone, true
 	}
 

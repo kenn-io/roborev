@@ -122,10 +122,9 @@ func (m model) taskCells(job storage.ReviewJob) []string {
 		}
 	}
 
-	branch := job.Branch
-	if branch == "" {
-		branch = detachedBranchLabel(job)
-	}
+	// Same branch resolution as the queue view: stored branch, then local
+	// git lookup, then the detached placeholder (#499).
+	branch := m.getBranchForJob(job)
 
 	defaultRepoName := job.RepoName
 	if defaultRepoName == "" && job.RepoPath != "" {
