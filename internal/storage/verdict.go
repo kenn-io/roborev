@@ -101,6 +101,7 @@ func normalizeVerdictLine(line string) string {
 
 func hasPassPrefix(line string) bool {
 	passPrefixes := []string{
+		"code review passed:",
 		"no issues",
 		"no findings",
 		"i didn't find any issues",

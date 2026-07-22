@@ -594,6 +594,13 @@ var verdictTests = []verdictTestCase{
 		output: "No issues found. I checked for bugs, security issues, testing gaps, regressions, and code quality concerns.",
 		want:   VerdictPass,
 	},
+	{
+		name: "PassPhraseWins/synthesis pass summary overrides stale fail header",
+		output: "Review #12345 project-a\nVerdict: Fail\n\n" +
+			"2 reviewers: agent-a F, agent-b P\n\n" +
+			"Code review passed: no Medium, High, or Critical findings were identified.",
+		want: VerdictPass,
+	},
 
 	// Failures should come from clear structured findings or from the absence of a
 	// clear pass phrase. We intentionally avoid sentence-level caveat parsing.
