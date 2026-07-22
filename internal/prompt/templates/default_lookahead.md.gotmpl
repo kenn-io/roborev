@@ -34,6 +34,6 @@ For each finding, provide:
 Before finalizing, verify your review: every finding must name the future input and the earlier timestamp it leaks into, reference the narrowest applicable location (line number when possible, file-level when the issue spans a range), and have a severity matching the impact described. Drop any finding where the inputs are in fact available at the time of use, or where the leaking path never reaches a point-in-time output.
 
 If you find no look-ahead issues, state "No issues found." on its own line after the summary.
-Do not report unrelated code quality or style issues unless they cause a temporal-correctness defect.{{.System.NoSkillsInstruction}}{{.System.ToolchainVerificationInstruction}}
+Do not report unrelated code quality or style issues unless they cause a temporal-correctness defect.{{.System.NoSkillsInstruction}}{{.System.AntiTestSlopInstruction}}{{.System.ToolchainVerificationInstruction}}
 
 Current date: {{.System.CurrentDate}} (UTC)

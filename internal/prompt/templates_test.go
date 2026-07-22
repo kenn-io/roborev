@@ -341,6 +341,58 @@ func TestGetSystemPrompt_ToolchainVerificationInstruction(t *testing.T) {
 	}
 }
 
+func TestGetSystemPrompt_AntiTestSlopInstruction(t *testing.T) {
+	fixedTime := time.Date(2030, 6, 15, 0, 0, 0, 0, time.UTC)
+	mockNow := func() time.Time { return fixedTime }
+
+	reviewPrompts := []struct {
+		name    string
+		agent   string
+		command string
+	}{
+		{name: "Codex review", agent: "codex", command: "review"},
+		{name: "Claude review", agent: "claude-code", command: "review"},
+		{name: "Gemini review", agent: "gemini", command: "review"},
+		{name: "Default review", agent: "test", command: "review"},
+		{name: "Range review", agent: "codex", command: "range"},
+		{name: "Dirty review", agent: "claude-code", command: "dirty"},
+		{name: "Security review", agent: "test", command: "security"},
+		{name: "Design review", agent: "test", command: "design-review"},
+		{name: "Lookahead review", agent: "test", command: "lookahead"},
+	}
+
+	for _, tt := range reviewPrompts {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			got := getSystemPrompt(tt.agent, tt.command, mockNow)
+
+			assert.Contains(got, "only proposed test would be tautological")
+			assert.Contains(got, "match source code against a regex")
+			assert.Contains(got, "check that code text is present")
+			assert.Contains(got, "constant's configured or literal value")
+			assert.Contains(got, "observable behavior, meaningful invariants, failure modes, or integration boundaries")
+			assert.Contains(got, "not trivially true by construction")
+		})
+	}
+
+	nonReviewPrompts := []struct {
+		name    string
+		agent   string
+		command string
+	}{
+		{name: "Address", agent: "claude-code", command: "address"},
+		{name: "Run", agent: "gemini", command: "run"},
+	}
+
+	for _, tt := range nonReviewPrompts {
+		t.Run(tt.name, func(t *testing.T) {
+			got := getSystemPrompt(tt.agent, tt.command, mockNow)
+
+			assert.NotContains(t, got, "only proposed test would be tautological")
+		})
+	}
+}
+
 func TestGetSystemPrompt_Exported(t *testing.T) {
 	assert := assert.New(t)
 	before := time.Now().UTC().Truncate(24 * time.Hour)

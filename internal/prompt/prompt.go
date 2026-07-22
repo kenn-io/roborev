@@ -73,6 +73,12 @@ Check the manifests for each changed file's language, including every language a
 - Python: pyproject.toml, requirements.txt, uv/pixi lockfiles.
 - Other languages: the equivalent manifests (Cargo.toml, pom.xml, build.gradle, Gemfile).`
 
+// antiTestSlopInstruction keeps reviewers from recommending tests that cannot
+// detect a behavioral regression because their assertions restate the code.
+const antiTestSlopInstruction = `
+
+IMPORTANT: Do not report a missing test when the only proposed test would be tautological. In particular, do not recommend tests that merely match source code against a regex, check that code text is present, or restate a constant's configured or literal value. Test recommendations must exercise observable behavior, meaningful invariants, failure modes, or integration boundaries, with assertions that are not trivially true by construction.`
+
 // HistoricalReviewContext holds a commit SHA and its associated review (if any) plus responses.
 type HistoricalReviewContext struct {
 	SHA       string

@@ -349,6 +349,7 @@ func (c AddressTemplateContext) Clone() AddressTemplateContext {
 
 type SystemTemplateContext struct {
 	NoSkillsInstruction              string
+	AntiTestSlopInstruction          string
 	ToolchainVerificationInstruction string
 	CurrentDate                      string
 }

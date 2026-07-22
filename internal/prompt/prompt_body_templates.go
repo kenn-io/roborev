@@ -255,7 +255,12 @@ func templateContextFromAddressView(view addressPromptView) TemplateContext {
 }
 
 func templateContextFromSystemView(view systemPromptView) TemplateContext {
-	return TemplateContext{System: &SystemTemplateContext{NoSkillsInstruction: view.NoSkillsInstruction, ToolchainVerificationInstruction: view.ToolchainVerificationInstruction, CurrentDate: view.CurrentDate}}
+	return TemplateContext{System: &SystemTemplateContext{
+		NoSkillsInstruction:              view.NoSkillsInstruction,
+		AntiTestSlopInstruction:          view.AntiTestSlopInstruction,
+		ToolchainVerificationInstruction: view.ToolchainVerificationInstruction,
+		CurrentDate:                      view.CurrentDate,
+	}}
 }
 
 func renderSinglePromptContext(ctx TemplateContext) (string, error) {

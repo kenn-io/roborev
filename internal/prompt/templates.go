@@ -38,6 +38,7 @@ func getSystemPrompt(agentName string, promptType string, now func() time.Time) 
 	if _, err := templateFS.ReadFile("templates/" + tmplName); err == nil {
 		body, err := renderSystemPrompt(tmplName, systemPromptView{
 			NoSkillsInstruction:              noSkillsInstruction,
+			AntiTestSlopInstruction:          antiTestSlopInstruction,
 			ToolchainVerificationInstruction: toolchainVerificationInstruction,
 			CurrentDate:                      now().UTC().Format("2006-01-02"),
 		})
@@ -72,6 +73,7 @@ func getSystemPrompt(agentName string, promptType string, now func() time.Time) 
 
 	body, err := renderSystemPrompt(fallbackName, systemPromptView{
 		NoSkillsInstruction:              noSkillsInstruction,
+		AntiTestSlopInstruction:          antiTestSlopInstruction,
 		ToolchainVerificationInstruction: toolchainVerificationInstruction,
 		CurrentDate:                      now().UTC().Format("2006-01-02"),
 	})
