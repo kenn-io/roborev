@@ -433,10 +433,22 @@ func (w *SyncWorker) connect(timeout time.Duration) (bool, error) {
 		if len(newID) > 8 {
 			newID = newID[:8]
 		}
-		log.Printf("Sync: detected new Postgres database (was %s, now %s), clearing sync state for full re-sync", oldID, newID)
-		if err := w.db.ClearAllSyncedAt(); err != nil {
-			pool.Close()
-			return false, fmt.Errorf("clear synced_at: %w", err)
+		// Adopting a new target either re-pushes everything (the default, so a
+		// replaced database is repopulated) or starts from now. Only the PUSH
+		// direction is affected; pull cursors are reset either way, because
+		// receiving what the new target already holds is the point of joining it.
+		if w.cfg.SkipBackfill {
+			log.Printf("Sync: detected new Postgres database (was %s, now %s), starting from now (skip_backfill); existing local history is not pushed", oldID, newID)
+			if err := w.db.MarkAllSyncedNow(); err != nil {
+				pool.Close()
+				return false, fmt.Errorf("mark synced: %w", err)
+			}
+		} else {
+			log.Printf("Sync: detected new Postgres database (was %s, now %s), clearing sync state for full re-sync", oldID, newID)
+			if err := w.db.ClearAllSyncedAt(); err != nil {
+				pool.Close()
+				return false, fmt.Errorf("clear synced_at: %w", err)
+			}
 		}
 		// Also clear pull cursors so we pull all data from the new database
 		for _, key := range []string{SyncStateLastJobCursor, SyncStateLastReviewCursor, SyncStateLastResponseID} {

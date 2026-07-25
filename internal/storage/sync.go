@@ -189,6 +189,28 @@ func (db *DB) ClearAllSyncedAt() error {
 	return nil
 }
 
+// MarkAllSyncedNow stamps synced_at on every local row that has none, so a
+// newly connected database receives only what changes from here on. It is the
+// inverse of ClearAllSyncedAt and is used when adopting a new sync target
+// without backfilling: pushing an entire local history into a database shared
+// with other people discloses unrelated local work.
+//
+// Rows are stamped rather than deleted or flagged, so the existing push
+// selection (synced_at IS NULL OR updated_at > synced_at) needs no change: a
+// stamped row that is edited later still moves updated_at past synced_at and
+// syncs normally.
+func (db *DB) MarkAllSyncedNow() error {
+	now := time.Now().UTC().Format(time.RFC3339)
+	for _, table := range []string{"review_jobs", "reviews", "responses"} {
+		if _, err := db.Exec(
+			`UPDATE `+table+` SET synced_at = ? WHERE synced_at IS NULL`, now,
+		); err != nil {
+			return fmt.Errorf("mark %s synced: %w", table, err)
+		}
+	}
+	return nil
+}
+
 // BackfillRepoIdentities computes and sets identity for repos that don't have one.
 // Uses config.ResolveRepoIdentity to ensure consistency with new repo creation.
 // Returns the number of repos backfilled.

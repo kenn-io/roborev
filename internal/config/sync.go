@@ -26,6 +26,12 @@ type SyncConfig struct {
 	// ConnectTimeout is the connection timeout (e.g., "5s"). Default: 5s
 	ConnectTimeout string `toml:"connect_timeout"`
 
+	// SkipBackfill adopts a NEW sync target without pushing pre-existing local
+	// rows to it: only work created from that point on is synced. Existing
+	// targets are unaffected. Use when the target database is shared with
+	// others and the local history should not be disclosed to them.
+	SkipBackfill bool `toml:"skip_backfill"`
+
 	// RepoNames provides custom display names for synced repos by identity.
 	// Example: {"git@github.com:org/repo.git": "my-project"}
 	RepoNames map[string]string `toml:"repo_names"`

@@ -715,3 +715,38 @@ func TestSyncOrder_FullWorkflow(t *testing.T) {
 
 	assert.Len(t, responses, 3)
 }
+
+// MarkAllSyncedNow is the inverse of ClearAllSyncedAt: after it, a newly
+// adopted sync target receives only work created from that point on.
+func TestMarkAllSyncedNow(t *testing.T) {
+	h := newSyncTestHelper(t)
+
+	job := h.createCompletedJob("skip-backfill-sha")
+	_, err := h.db.AddCommentToJob(job.ID, "user", "test response")
+	require.NoError(t, err)
+
+	// Pre-existing work is pending: this is what a full backfill would push.
+	jobs, err := h.db.GetJobsToSync(h.machineID, 100)
+	require.NoError(t, err)
+	require.NotEmpty(t, jobs, "the job must be pending before the stamp")
+
+	require.NoError(t, h.db.MarkAllSyncedNow())
+
+	// Nothing pre-existing is offered to the new target.
+	jobs, err = h.db.GetJobsToSync(h.machineID, 100)
+	require.NoError(t, err)
+	assert.Empty(t, jobs, "stamped history must not be pushed to a new target")
+	reviews, err := h.db.GetReviewsToSync(h.machineID, 100)
+	require.NoError(t, err)
+	assert.Empty(t, reviews)
+	comments, err := h.db.GetCommentsToSync(h.machineID, 100)
+	require.NoError(t, err)
+	assert.Empty(t, comments)
+
+	// New work still syncs: the stamp is a floor, not a mute.
+	fresh := h.createCompletedJob("after-the-stamp-sha")
+	jobs, err = h.db.GetJobsToSync(h.machineID, 100)
+	require.NoError(t, err)
+	require.Len(t, jobs, 1, "work created after the stamp must still sync")
+	assert.Equal(t, fresh.ID, jobs[0].ID)
+}
