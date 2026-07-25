@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -17,7 +18,12 @@ const (
 	SyncStateLastReviewCursor = "last_review_cursor" // Composite cursor for reviews (updated_at,id)
 	SyncStateLastResponseID   = "last_response_id"   // inserted_at/id cursor of last synced response
 	SyncStateSyncTargetID     = "sync_target_id"     // Database ID of last synced Postgres
-	SyncStateDatabaseID       = "database_id"        // Stable identity of this local SQLite database
+	// SyncStateAdoptedMaxJobID is the highest review_jobs.id stamped by
+	// MarkAllSyncedNow. Rows at or below it carry a synced_at that means
+	// "predates this target", not "pushed to this target"; monotonic ids avoid
+	// comparing the mixed-format timestamps synced_at can hold.
+	SyncStateAdoptedMaxJobID = "adopted_max_job_id"
+	SyncStateDatabaseID      = "database_id" // Stable identity of this local SQLite database
 )
 
 // GetSyncState retrieves a value from the sync_state table.
@@ -189,26 +195,41 @@ func (db *DB) ClearAllSyncedAt() error {
 	return nil
 }
 
-// MarkAllSyncedNow stamps synced_at on every local row that has none, so a
-// newly connected database receives only what changes from here on. It is the
-// inverse of ClearAllSyncedAt and is used when adopting a new sync target
-// without backfilling: pushing an entire local history into a database shared
-// with other people discloses unrelated local work.
+// MarkAllSyncedNow marks every local row as already synced, so a newly adopted
+// target receives only what changes from here on. It is the inverse of
+// ClearAllSyncedAt and is used when adopting a target without backfilling:
+// pushing an entire local history into a database shared with other people
+// discloses unrelated local work.
 //
-// Rows are stamped rather than deleted or flagged, so the existing push
-// selection (synced_at IS NULL OR updated_at > synced_at) needs no change: a
-// stamped row that is edited later still moves updated_at past synced_at and
-// syncs normally.
+// Rows are stamped from their OWN updated_at rather than wall-clock now, for two
+// reasons. It covers rows that were synced to a previous target and edited since
+// (a stale non-NULL synced_at with a newer updated_at), which a NULL-only stamp
+// would leave pending and push. And it keeps the comparison on one clock: these
+// timestamps have second granularity, so stamping "now" lets an edit made in the
+// same second compare equal to the stamp and never sync at all. Stamping the row
+// with its own updated_at means any later edit moves updated_at strictly past
+// synced_at and syncs normally. Responses carry no updated_at (they are
+// append-only and their eligibility is just a NULL check), so they take
+// created_at.
 func (db *DB) MarkAllSyncedNow() error {
-	now := time.Now().UTC().Format(time.RFC3339)
-	for _, table := range []string{"review_jobs", "reviews", "responses"} {
-		if _, err := db.Exec(
-			`UPDATE `+table+` SET synced_at = ? WHERE synced_at IS NULL`, now,
-		); err != nil {
-			return fmt.Errorf("mark %s synced: %w", table, err)
+	for _, q := range []string{
+		`UPDATE review_jobs SET synced_at = updated_at`,
+		`UPDATE reviews SET synced_at = updated_at`,
+		`UPDATE responses SET synced_at = created_at`,
+	} {
+		if _, err := db.Exec(q); err != nil {
+			return fmt.Errorf("mark rows synced: %w", err)
 		}
 	}
-	return nil
+	// Remember how far the stamp reached, so a child edited later can tell that
+	// its parent only LOOKS synced and carry it up (see GetJobsToSync).
+	var maxJobID sql.NullInt64
+	if err := db.QueryRow(`SELECT MAX(id) FROM review_jobs`).Scan(&maxJobID); err != nil {
+		return fmt.Errorf("read adopted max job id: %w", err)
+	}
+	return db.SetSyncState(
+		SyncStateAdoptedMaxJobID, strconv.FormatInt(maxJobID.Int64, 10),
+	)
 }
 
 // BackfillRepoIdentities computes and sets identity for repos that don't have one.
@@ -456,7 +477,34 @@ func (db *DB) GetJobsToSync(machineID string, limit int) ([]SyncableJob, error) 
 		WHERE j.status IN ('done', 'failed', 'canceled', 'skipped')
 		AND j.source_machine_id = ?
 		AND j.uuid IS NOT NULL
-		AND (j.synced_at IS NULL OR `+sqliteNormalizedTimestampExpr("j.updated_at")+` > `+sqliteNormalizedTimestampExpr("j.synced_at")+`)
+		AND (
+			j.synced_at IS NULL
+			OR `+sqliteNormalizedTimestampExpr("j.updated_at")+` > `+sqliteNormalizedTimestampExpr("j.synced_at")+`
+			-- Children are only eligible once their parent job counts as synced
+			-- (see GetReviewsToSync / GetCommentsToSync). After an adoption
+			-- stamp that is true for parents this target has never seen, so a
+			-- later edit to an old review would push a child whose parent is
+			-- absent and violate the job_uuid foreign key. Carry the parent up
+			-- in the same cycle: jobs are pushed before reviews and comments.
+			-- Scoped to adoption-stamped ids, so a normally-synced parent with a
+			-- pending child (the steady state) is NOT re-pushed.
+			OR (j.id <= COALESCE((
+				SELECT CAST(value AS INTEGER) FROM sync_state
+				WHERE key = 'adopted_max_job_id'
+			), 0) AND (
+			EXISTS (
+				SELECT 1 FROM reviews rv
+				WHERE rv.job_id = j.id AND rv.uuid IS NOT NULL
+				AND rv.updated_by_machine_id = j.source_machine_id
+				AND (rv.synced_at IS NULL OR `+sqliteNormalizedTimestampExpr("rv.updated_at")+` > `+sqliteNormalizedTimestampExpr("rv.synced_at")+`)
+			)
+			OR EXISTS (
+				SELECT 1 FROM responses rs
+				WHERE rs.job_id = j.id AND rs.uuid IS NOT NULL
+				AND rs.source_machine_id = j.source_machine_id
+				AND rs.synced_at IS NULL
+			)))
+		)
 		ORDER BY j.id
 		LIMIT ?
 	`, machineID, limit)

@@ -377,6 +377,38 @@ func (w *SyncWorker) run(stopCh, doneCh chan struct{}, interval, connectTimeout 
 // connect establishes the PostgreSQL connection.
 // Serialized by connectMu to prevent concurrent connection attempts.
 // Returns (true, nil) if a new connection was made, (false, nil) if already connected.
+// adoptionAction is what adopting a sync target means for the PUSH direction.
+type adoptionAction int
+
+const (
+	// adoptionNone: same target as last time, nothing to reconcile.
+	adoptionNone adoptionAction = iota
+	// adoptionStamp: mark local rows as already synced so the target receives
+	// only what changes from here on (skip_backfill).
+	adoptionStamp
+	// adoptionClear: drop the watermarks so a REPLACED database is repopulated.
+	adoptionClear
+)
+
+// adoptionActionFor decides how a target change is reconciled. A first-ever
+// adoption (no recorded target) still stamps under skip_backfill, because that
+// is the common case: a machine that has been reviewing locally for months and
+// is then pointed at a shared database must not upload all of it. It does NOT
+// clear, because there is no previous target whose state needs discarding and
+// clearing would re-push rows a pre-target-tracking version already sent.
+func adoptionActionFor(lastTargetID, dbID string, skipBackfill bool) adoptionAction {
+	if lastTargetID == dbID {
+		return adoptionNone
+	}
+	if skipBackfill {
+		return adoptionStamp
+	}
+	if lastTargetID == "" {
+		return adoptionNone
+	}
+	return adoptionClear
+}
+
 func (w *SyncWorker) connect(timeout time.Duration) (bool, error) {
 	w.connectMu.Lock()
 	defer w.connectMu.Unlock()
@@ -424,26 +456,35 @@ func (w *SyncWorker) connect(timeout time.Duration) (bool, error) {
 		return false, fmt.Errorf("get sync target ID: %w", err)
 	}
 
-	if lastTargetID != "" && lastTargetID != dbID {
-		// Different database - clear all synced_at and pull cursors for full re-sync
+	// Adopting a target covers two cases: switching to a DIFFERENT database, and
+	// enabling sync for the first time (no recorded target). Both matter for
+	// skip_backfill, and the first-time case is the common one: a machine that
+	// has been reviewing locally for months and is then pointed at a shared
+	// database would otherwise upload all of it. Only the PUSH direction is
+	// affected; pull cursors are reset either way, because receiving what the
+	// target already holds is the point of adopting it.
+	if act := adoptionActionFor(lastTargetID, dbID, w.cfg.SkipBackfill); act != adoptionNone {
 		oldID, newID := lastTargetID, dbID
-		if len(oldID) > 8 {
+		if oldID == "" {
+			oldID = "none"
+		} else if len(oldID) > 8 {
 			oldID = oldID[:8]
 		}
 		if len(newID) > 8 {
 			newID = newID[:8]
 		}
-		// Adopting a new target either re-pushes everything (the default, so a
-		// replaced database is repopulated) or starts from now. Only the PUSH
-		// direction is affected; pull cursors are reset either way, because
-		// receiving what the new target already holds is the point of joining it.
-		if w.cfg.SkipBackfill {
-			log.Printf("Sync: detected new Postgres database (was %s, now %s), starting from now (skip_backfill); existing local history is not pushed", oldID, newID)
+		switch act {
+		case adoptionStamp:
+			log.Printf("Sync: adopting Postgres database (was %s, now %s), starting from now (skip_backfill); existing local history is not pushed", oldID, newID)
 			if err := w.db.MarkAllSyncedNow(); err != nil {
 				pool.Close()
 				return false, fmt.Errorf("mark synced: %w", err)
 			}
-		} else {
+		case adoptionClear:
+			// A REPLACED database has to be repopulated, so the default clears
+			// the watermarks. Not done on first adoption: there is no previous
+			// target whose state needs discarding, and clearing would re-push
+			// rows a pre-target-tracking version already sent.
 			log.Printf("Sync: detected new Postgres database (was %s, now %s), clearing sync state for full re-sync", oldID, newID)
 			if err := w.db.ClearAllSyncedAt(); err != nil {
 				pool.Close()

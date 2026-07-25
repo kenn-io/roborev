@@ -725,14 +725,12 @@ func TestMarkAllSyncedNow(t *testing.T) {
 	_, err := h.db.AddCommentToJob(job.ID, "user", "test response")
 	require.NoError(t, err)
 
-	// Pre-existing work is pending: this is what a full backfill would push.
 	jobs, err := h.db.GetJobsToSync(h.machineID, 100)
 	require.NoError(t, err)
 	require.NotEmpty(t, jobs, "the job must be pending before the stamp")
 
 	require.NoError(t, h.db.MarkAllSyncedNow())
 
-	// Nothing pre-existing is offered to the new target.
 	jobs, err = h.db.GetJobsToSync(h.machineID, 100)
 	require.NoError(t, err)
 	assert.Empty(t, jobs, "stamped history must not be pushed to a new target")
@@ -749,4 +747,75 @@ func TestMarkAllSyncedNow(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, jobs, 1, "work created after the stamp must still sync")
 	assert.Equal(t, fresh.ID, jobs[0].ID)
+}
+
+// A row synced to a PREVIOUS target and edited since carries a stale non-NULL
+// synced_at with a newer updated_at. Stamping only NULL rows would leave it
+// pending and push it to the new target, which is the history the adopter asked
+// not to disclose.
+func TestMarkAllSyncedNowCoversStalePendingRows(t *testing.T) {
+	h := newSyncTestHelper(t)
+	job := h.createCompletedJob("stale-pending-sha")
+
+	// Synced to the old target, then edited locally.
+	h.setJobTimestamps(job.ID,
+		sql.NullString{String: "2026-01-01 00:00:00", Valid: true},
+		"2026-06-01 00:00:00")
+	pending, err := h.db.GetJobsToSync(h.machineID, 100)
+	require.NoError(t, err)
+	require.NotEmpty(t, pending, "a locally edited row must be pending before adoption")
+
+	require.NoError(t, h.db.MarkAllSyncedNow())
+
+	pending, err = h.db.GetJobsToSync(h.machineID, 100)
+	require.NoError(t, err)
+	assert.Empty(t, pending, "a stale pending row must not survive adoption")
+}
+
+// Stamping from the row's own updated_at keeps the comparison on one clock.
+// Stamping wall-clock now would let an edit in the same second compare equal to
+// the stamp and never sync, because these timestamps are second-granular.
+func TestMarkAllSyncedNowStampsFromUpdatedAt(t *testing.T) {
+	h := newSyncTestHelper(t)
+	job := h.createCompletedJob("same-second-sha")
+	h.setJobTimestamps(job.ID, sql.NullString{}, "2026-06-01 00:00:00")
+
+	require.NoError(t, h.db.MarkAllSyncedNow())
+
+	var syncedAt sql.NullString
+	require.NoError(t, h.db.QueryRow(
+		`SELECT synced_at FROM review_jobs WHERE id = ?`, job.ID).Scan(&syncedAt))
+	require.True(t, syncedAt.Valid)
+	assert.Equal(t, "2026-06-01 00:00:00", syncedAt.String,
+		"the stamp must be the row's own updated_at, not wall-clock now")
+}
+
+// Children are only eligible once their parent job counts as synced. An
+// adoption stamp makes that true for parents the new target has never seen, so
+// editing an old review must carry its parent up in the same cycle rather than
+// pushing a child whose parent is absent (a job_uuid foreign-key violation).
+func TestAdoptedParentIsPushedWithItsPendingChild(t *testing.T) {
+	h := newSyncTestHelper(t)
+	job := h.createCompletedJob("orphan-child-sha")
+	require.NoError(t, h.db.MarkAllSyncedNow())
+
+	jobs, err := h.db.GetJobsToSync(h.machineID, 100)
+	require.NoError(t, err)
+	require.Empty(t, jobs, "nothing is pending immediately after adoption")
+
+	// Edit a pre-adoption review: it becomes eligible, so its parent must too.
+	review, err := h.db.GetReviewByJobID(job.ID)
+	require.NoError(t, err)
+	h.setReviewTimestamps(review.ID,
+		sql.NullString{String: "2026-01-01 00:00:00", Valid: true},
+		"2026-06-01 00:00:00")
+
+	pendingReviews, err := h.db.GetReviewsToSync(h.machineID, 100)
+	require.NoError(t, err)
+	require.NotEmpty(t, pendingReviews, "the edited review must be pending")
+
+	jobs, err = h.db.GetJobsToSync(h.machineID, 100)
+	require.NoError(t, err)
+	require.Len(t, jobs, 1, "the parent job must be pushed alongside its pending child")
+	assert.Equal(t, job.ID, jobs[0].ID)
 }

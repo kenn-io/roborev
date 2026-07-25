@@ -22,6 +22,7 @@ enabled = true
 postgres_url = "postgres://roborev:${ROBOREV_PG_PASS}@nas.tailnet:5432/roborev"
 interval = "1h"           # Sync interval (default: 1h)
 machine_name = "laptop"   # Friendly name for this machine
+skip_backfill = false     # Adopt a new target without pushing history
 ```
 
 !!! note
@@ -84,6 +85,28 @@ roborev automatically detects this and performs a full resync:
 - If different, all local `synced_at` timestamps and pull cursors are cleared
 - This triggers a complete bidirectional sync: all local data is pushed, and all
     remote data is pulled
+
+### Adopting a Target Without Pushing History
+
+The default repopulates a replaced database, which is usually what you want.
+When the target is a database **shared with other people**, it is usually not:
+pushing your whole local history uploads every review on the machine, including
+work unrelated to that team, to everyone with read access.
+
+Set `skip_backfill = true` to adopt a target and sync only what changes from
+that point on:
+
+```toml
+[sync]
+skip_backfill = true
+```
+
+- Applies when a target is adopted: either a different database, or the first
+    time sync is enabled on a machine that already has local history
+- Affects the **push** direction only. Pull cursors are still reset, because
+    receiving what the target already holds is the point of joining it
+- Existing local rows are marked as already synced rather than deleted, so
+    editing one later still syncs it normally
 
 This means you can safely:
 
