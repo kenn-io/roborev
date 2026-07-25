@@ -12,6 +12,7 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/roborev/internal/agent"
+	"go.kenn.io/roborev/internal/config"
 )
 
 func checkAgentsCmd() *cobra.Command {
@@ -35,6 +36,11 @@ Examples:
   roborev check-agents --timeout 30     # 30 second timeout per agent
   roborev check-agents --large-prompt   # Test with 33KB+ prompt (Windows limit check)`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			cfg, err := config.LoadGlobal()
+			if err != nil {
+				return fmt.Errorf("load global config: %w", err)
+			}
+
 			names := agent.Available()
 			sort.Strings(names)
 
@@ -61,21 +67,10 @@ Examples:
 					continue
 				}
 
-				if !agent.IsAvailable(name) {
-					a, _ := agent.Get(name)
-					cmdName := ""
-					if a != nil {
-						if ca, ok := a.(agent.CommandAgent); ok {
-							cmdName = ca.CommandName()
-						}
-					}
-					fmt.Printf("  - %-14s %s (not found in PATH)\n", name, cmdName)
+				a, err := agent.GetAvailableExactWithConfig(repoPath, name, cfg)
+				if err != nil {
+					fmt.Printf("  - %-14s %s\n", name, err)
 					skipped++
-					continue
-				}
-
-				a, _ := agent.GetAvailable(name)
-				if a == nil {
 					continue
 				}
 
