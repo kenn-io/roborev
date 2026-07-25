@@ -213,7 +213,11 @@ func (db *DB) ClearAllSyncedAt() error {
 // created_at.
 func (db *DB) MarkAllSyncedNow() error {
 	for _, q := range []string{
-		`UPDATE review_jobs SET synced_at = updated_at`,
+		// Only jobs the push query would consider: a non-terminal job left
+		// unstamped keeps synced_at NULL, which already holds its children back,
+		// rather than becoming an unpushable parent that looks synced.
+		`UPDATE review_jobs SET synced_at = updated_at
+		  WHERE status IN ('done', 'failed', 'canceled', 'skipped')`,
 		`UPDATE reviews SET synced_at = updated_at`,
 		`UPDATE responses SET synced_at = created_at`,
 	} {
@@ -230,6 +234,44 @@ func (db *DB) MarkAllSyncedNow() error {
 	return db.SetSyncState(
 		SyncStateAdoptedMaxJobID, strconv.FormatInt(maxJobID.Int64, 10),
 	)
+}
+
+// HasSyncHistory reports whether this database shows evidence of having synced
+// before: a pull cursor, or any locally stamped row. Used to tell a genuine
+// first adoption from an upgrade that predates target-id tracking.
+func (db *DB) HasSyncHistory() (bool, error) {
+	for _, key := range []string{
+		SyncStateLastJobCursor, SyncStateLastReviewCursor, SyncStateLastResponseID,
+	} {
+		v, err := db.GetSyncState(key)
+		if err != nil {
+			return false, err
+		}
+		if v != "" {
+			return true, nil
+		}
+	}
+	var n int
+	if err := db.QueryRow(
+		`SELECT EXISTS (SELECT 1 FROM review_jobs WHERE synced_at IS NOT NULL)`,
+	).Scan(&n); err != nil {
+		return false, fmt.Errorf("check synced rows: %w", err)
+	}
+	return n == 1, nil
+}
+
+// adoptionBoundary reports the highest job id covered by the last adoption
+// stamp. Zero means no adoption has occurred, which disables the guard below.
+func (db *DB) adoptionBoundary() int64 {
+	raw, err := db.GetSyncState(SyncStateAdoptedMaxJobID)
+	if err != nil || raw == "" {
+		return 0
+	}
+	id, err := strconv.ParseInt(raw, 10, 64)
+	if err != nil {
+		return 0
+	}
+	return id
 }
 
 // BackfillRepoIdentities computes and sets identity for repos that don't have one.
@@ -477,34 +519,7 @@ func (db *DB) GetJobsToSync(machineID string, limit int) ([]SyncableJob, error) 
 		WHERE j.status IN ('done', 'failed', 'canceled', 'skipped')
 		AND j.source_machine_id = ?
 		AND j.uuid IS NOT NULL
-		AND (
-			j.synced_at IS NULL
-			OR `+sqliteNormalizedTimestampExpr("j.updated_at")+` > `+sqliteNormalizedTimestampExpr("j.synced_at")+`
-			-- Children are only eligible once their parent job counts as synced
-			-- (see GetReviewsToSync / GetCommentsToSync). After an adoption
-			-- stamp that is true for parents this target has never seen, so a
-			-- later edit to an old review would push a child whose parent is
-			-- absent and violate the job_uuid foreign key. Carry the parent up
-			-- in the same cycle: jobs are pushed before reviews and comments.
-			-- Scoped to adoption-stamped ids, so a normally-synced parent with a
-			-- pending child (the steady state) is NOT re-pushed.
-			OR (j.id <= COALESCE((
-				SELECT CAST(value AS INTEGER) FROM sync_state
-				WHERE key = 'adopted_max_job_id'
-			), 0) AND (
-			EXISTS (
-				SELECT 1 FROM reviews rv
-				WHERE rv.job_id = j.id AND rv.uuid IS NOT NULL
-				AND rv.updated_by_machine_id = j.source_machine_id
-				AND (rv.synced_at IS NULL OR `+sqliteNormalizedTimestampExpr("rv.updated_at")+` > `+sqliteNormalizedTimestampExpr("rv.synced_at")+`)
-			)
-			OR EXISTS (
-				SELECT 1 FROM responses rs
-				WHERE rs.job_id = j.id AND rs.uuid IS NOT NULL
-				AND rs.source_machine_id = j.source_machine_id
-				AND rs.synced_at IS NULL
-			)))
-		)
+		AND (j.synced_at IS NULL OR `+sqliteNormalizedTimestampExpr("j.updated_at")+` > `+sqliteNormalizedTimestampExpr("j.synced_at")+`)
 		ORDER BY j.id
 		LIMIT ?
 	`, machineID, limit)
@@ -698,6 +713,7 @@ type SyncableReview struct {
 // GetReviewsToSync returns reviews modified locally that need to be pushed.
 // Only returns reviews whose parent job has already been synced.
 func (db *DB) GetReviewsToSync(machineID string, limit int) ([]SyncableReview, error) {
+	adoptedMaxJobID := db.adoptionBoundary()
 	rows, err := db.Query(`
 		SELECT
 			r.id, r.uuid, r.job_id, j.uuid,
@@ -709,10 +725,16 @@ func (db *DB) GetReviewsToSync(machineID string, limit int) ([]SyncableReview, e
 		AND r.uuid IS NOT NULL
 		AND j.uuid IS NOT NULL
 		AND j.synced_at IS NOT NULL
+		-- Adoption stamps a parent as synced without ever pushing it, so its
+		-- children must not be pushed either: they would reference a job the
+		-- target has never seen and violate the job_uuid foreign key. Pre-
+		-- adoption children stay local for this target, which is what
+		-- skip_backfill asks for; work created after adoption syncs normally.
+		AND j.id > ?
 		AND (r.synced_at IS NULL OR `+sqliteNormalizedTimestampExpr("r.updated_at")+` > `+sqliteNormalizedTimestampExpr("r.synced_at")+`)
 		ORDER BY r.id
 		LIMIT ?
-	`, machineID, limit)
+	`, machineID, adoptedMaxJobID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("query reviews to sync: %w", err)
 	}
@@ -780,6 +802,7 @@ type SyncableResponse struct {
 // GetCommentsToSync returns comments created locally that need to be pushed.
 // Only returns comments whose parent job has already been synced.
 func (db *DB) GetCommentsToSync(machineID string, limit int) ([]SyncableResponse, error) {
+	adoptedMaxJobID := db.adoptionBoundary()
 	rows, err := db.Query(`
 		SELECT
 			r.id, r.uuid, r.job_id, j.uuid,
@@ -791,9 +814,15 @@ func (db *DB) GetCommentsToSync(machineID string, limit int) ([]SyncableResponse
 		AND j.uuid IS NOT NULL
 		AND r.synced_at IS NULL
 		AND j.synced_at IS NOT NULL
+		-- Adoption stamps a parent as synced without ever pushing it, so its
+		-- children must not be pushed either: they would reference a job the
+		-- target has never seen and violate the job_uuid foreign key. Pre-
+		-- adoption children stay local for this target, which is what
+		-- skip_backfill asks for; work created after adoption syncs normally.
+		AND j.id > ?
 		ORDER BY r.id
 		LIMIT ?
-	`, machineID, limit)
+	`, machineID, adoptedMaxJobID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("query responses to sync: %w", err)
 	}

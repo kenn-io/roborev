@@ -374,9 +374,6 @@ func (w *SyncWorker) run(stopCh, doneCh chan struct{}, interval, connectTimeout 
 	}
 }
 
-// connect establishes the PostgreSQL connection.
-// Serialized by connectMu to prevent concurrent connection attempts.
-// Returns (true, nil) if a new connection was made, (false, nil) if already connected.
 // adoptionAction is what adopting a sync target means for the PUSH direction.
 type adoptionAction int
 
@@ -396,19 +393,35 @@ const (
 // is then pointed at a shared database must not upload all of it. It does NOT
 // clear, because there is no previous target whose state needs discarding and
 // clearing would re-push rows a pre-target-tracking version already sent.
-func adoptionActionFor(lastTargetID, dbID string, skipBackfill bool) adoptionAction {
+func adoptionActionFor(
+	lastTargetID, dbID string, skipBackfill, syncedBefore bool,
+) adoptionAction {
 	if lastTargetID == dbID {
+		return adoptionNone
+	}
+	if lastTargetID == "" {
+		// No recorded target is normally a first adoption, but it is also what
+		// an upgrade from a version that predates target tracking looks like.
+		// Evidence of previous syncing means this is that upgrade, reconnecting
+		// to the SAME database, so stamping would discard genuinely pending
+		// rows and clearing would re-push everything.
+		if syncedBefore {
+			return adoptionNone
+		}
+		if skipBackfill {
+			return adoptionStamp
+		}
 		return adoptionNone
 	}
 	if skipBackfill {
 		return adoptionStamp
 	}
-	if lastTargetID == "" {
-		return adoptionNone
-	}
 	return adoptionClear
 }
 
+// connect establishes the PostgreSQL connection.
+// Serialized by connectMu to prevent concurrent connection attempts.
+// Returns (true, nil) if a new connection was made, (false, nil) if already connected.
 func (w *SyncWorker) connect(timeout time.Duration) (bool, error) {
 	w.connectMu.Lock()
 	defer w.connectMu.Unlock()
@@ -463,7 +476,14 @@ func (w *SyncWorker) connect(timeout time.Duration) (bool, error) {
 	// database would otherwise upload all of it. Only the PUSH direction is
 	// affected; pull cursors are reset either way, because receiving what the
 	// target already holds is the point of adopting it.
-	if act := adoptionActionFor(lastTargetID, dbID, w.cfg.SkipBackfill); act != adoptionNone {
+	syncedBefore, err := w.db.HasSyncHistory()
+	if err != nil {
+		pool.Close()
+		return false, fmt.Errorf("check sync history: %w", err)
+	}
+	if act := adoptionActionFor(
+		lastTargetID, dbID, w.cfg.SkipBackfill, syncedBefore,
+	); act != adoptionNone {
 		oldID, newID := lastTargetID, dbID
 		if oldID == "" {
 			oldID = "none"

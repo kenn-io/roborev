@@ -86,6 +86,16 @@ roborev automatically detects this and performs a full resync:
 - This triggers a complete bidirectional sync: all local data is pushed, and all
     remote data is pulled
 
+This means you can safely:
+
+- Switch between PostgreSQL servers (e.g., dev to prod)
+- Reset/recreate your PostgreSQL database
+- Sync the same local database to multiple PostgreSQL instances over time
+
+The sync will never be left in an inconsistent state where it thinks data was
+synced but the target database doesn't have it. That guarantee describes the
+default; `skip_backfill` below deliberately trades it away.
+
 ### Adopting a Target Without Pushing History
 
 The default repopulates a replaced database, which is usually what you want.
@@ -105,17 +115,10 @@ skip_backfill = true
     time sync is enabled on a machine that already has local history
 - Affects the **push** direction only. Pull cursors are still reset, because
     receiving what the target already holds is the point of joining it
-- Existing local rows are marked as already synced rather than deleted, so
-    editing one later still syncs it normally
-
-This means you can safely:
-
-- Switch between PostgreSQL servers (e.g., dev to prod)
-- Reset/recreate your PostgreSQL database
-- Sync the same local database to multiple PostgreSQL instances over time
-
-The sync will never be left in an inconsistent state where it thinks data was
-synced but the target database doesn't have it.
+- Existing local rows are marked as already synced rather than deleted. Their
+    reviews and comments stay local for this target, because pushing a child
+    whose parent was never uploaded would reference a job the target has never
+    seen. Work created after adoption syncs normally
 
 ## See Also
 

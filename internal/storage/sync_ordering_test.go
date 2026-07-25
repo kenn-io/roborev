@@ -790,32 +790,39 @@ func TestMarkAllSyncedNowStampsFromUpdatedAt(t *testing.T) {
 		"the stamp must be the row's own updated_at, not wall-clock now")
 }
 
-// Children are only eligible once their parent job counts as synced. An
-// adoption stamp makes that true for parents the new target has never seen, so
-// editing an old review must carry its parent up in the same cycle rather than
-// pushing a child whose parent is absent (a job_uuid foreign-key violation).
-func TestAdoptedParentIsPushedWithItsPendingChild(t *testing.T) {
+// Adoption stamps a parent as synced without ever pushing it, so its children
+// must not be pushed either: they would reference a job the target has never
+// seen and violate the job_uuid foreign key. Pre-adoption children stay local
+// for this target; work created after adoption syncs normally.
+func TestAdoptionHoldsPreAdoptionChildren(t *testing.T) {
 	h := newSyncTestHelper(t)
-	job := h.createCompletedJob("orphan-child-sha")
+	old := h.createCompletedJob("pre-adoption-sha")
 	require.NoError(t, h.db.MarkAllSyncedNow())
 
-	jobs, err := h.db.GetJobsToSync(h.machineID, 100)
-	require.NoError(t, err)
-	require.Empty(t, jobs, "nothing is pending immediately after adoption")
-
-	// Edit a pre-adoption review: it becomes eligible, so its parent must too.
-	review, err := h.db.GetReviewByJobID(job.ID)
+	// Edit a pre-adoption review: pending on its own terms, but its parent was
+	// never pushed to this target.
+	review, err := h.db.GetReviewByJobID(old.ID)
 	require.NoError(t, err)
 	h.setReviewTimestamps(review.ID,
 		sql.NullString{String: "2026-01-01 00:00:00", Valid: true},
 		"2026-06-01 00:00:00")
 
-	pendingReviews, err := h.db.GetReviewsToSync(h.machineID, 100)
+	reviews, err := h.db.GetReviewsToSync(h.machineID, 100)
 	require.NoError(t, err)
-	require.NotEmpty(t, pendingReviews, "the edited review must be pending")
+	assert.Empty(t, reviews, "a child whose parent was never pushed must be held")
+	_, err = h.db.AddCommentToJob(old.ID, "user", "post-adoption comment")
+	require.NoError(t, err)
+	comments, err := h.db.GetCommentsToSync(h.machineID, 100)
+	require.NoError(t, err)
+	assert.Empty(t, comments, "comments on a pre-adoption job must be held too")
 
-	jobs, err = h.db.GetJobsToSync(h.machineID, 100)
+	// Work created after adoption is unaffected.
+	fresh := h.createCompletedJob("post-adoption-sha")
+	require.NoError(t, h.db.MarkJobSynced(fresh.ID))
+	freshReview, err := h.db.GetReviewByJobID(fresh.ID)
 	require.NoError(t, err)
-	require.Len(t, jobs, 1, "the parent job must be pushed alongside its pending child")
-	assert.Equal(t, job.ID, jobs[0].ID)
+	reviews, err = h.db.GetReviewsToSync(h.machineID, 100)
+	require.NoError(t, err)
+	require.Len(t, reviews, 1, "post-adoption children must sync normally")
+	assert.Equal(t, freshReview.ID, reviews[0].ID)
 }
