@@ -23,7 +23,12 @@ const (
 	// "predates this target", not "pushed to this target"; monotonic ids avoid
 	// comparing the mixed-format timestamps synced_at can hold.
 	SyncStateAdoptedMaxJobID = "adopted_max_job_id"
-	SyncStateDatabaseID      = "database_id" // Stable identity of this local SQLite database
+	// SyncStateAdoptedAt is when that stamp was applied. A parent below the id
+	// boundary counts as absent from the target only while its synced_at still
+	// predates this: a job that was queued at adoption, or a stamped one that
+	// was later edited, is pushed for real afterwards and releases its children.
+	SyncStateAdoptedAt  = "adopted_at"
+	SyncStateDatabaseID = "database_id" // Stable identity of this local SQLite database
 )
 
 // GetSyncState retrieves a value from the sync_state table.
@@ -180,6 +185,12 @@ func (db *DB) BackfillSourceMachineID() error {
 // This is used when syncing to a new Postgres database to ensure
 // all data gets re-synced.
 func (db *DB) ClearAllSyncedAt() error {
+	// The boundary describes one adoption of one target. Leaving it behind after
+	// a full re-sync would re-push the parent jobs while permanently excluding
+	// their reviews and comments, landing the target with bodyless jobs.
+	if err := db.ClearAdoptionBoundary(); err != nil {
+		return err
+	}
 	// Clear synced_at on review_jobs
 	if _, err := db.Exec(`UPDATE review_jobs SET synced_at = NULL`); err != nil {
 		return fmt.Errorf("clear review_jobs synced_at: %w", err)
@@ -231,8 +242,13 @@ func (db *DB) MarkAllSyncedNow() error {
 	if err := db.QueryRow(`SELECT MAX(id) FROM review_jobs`).Scan(&maxJobID); err != nil {
 		return fmt.Errorf("read adopted max job id: %w", err)
 	}
-	return db.SetSyncState(
+	if err := db.SetSyncState(
 		SyncStateAdoptedMaxJobID, strconv.FormatInt(maxJobID.Int64, 10),
+	); err != nil {
+		return err
+	}
+	return db.SetSyncState(
+		SyncStateAdoptedAt, time.Now().UTC().Format(time.RFC3339),
 	)
 }
 
@@ -260,18 +276,35 @@ func (db *DB) HasSyncHistory() (bool, error) {
 	return n == 1, nil
 }
 
-// adoptionBoundary reports the highest job id covered by the last adoption
-// stamp. Zero means no adoption has occurred, which disables the guard below.
-func (db *DB) adoptionBoundary() int64 {
+// ClearAdoptionBoundary forgets the last adoption stamp, so the child guard
+// stops applying. Called whenever the reconciliation for a target is something
+// other than stamping it.
+func (db *DB) ClearAdoptionBoundary() error {
+	for _, key := range []string{SyncStateAdoptedMaxJobID, SyncStateAdoptedAt} {
+		if err := db.SetSyncState(key, ""); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
+// adoptionBoundary reports the last adoption stamp: the highest job id it
+// covered and when it happened. A zero id means no adoption is in effect, which
+// disables the child guard entirely.
+func (db *DB) adoptionBoundary() (maxJobID int64, adoptedAt string) {
 	raw, err := db.GetSyncState(SyncStateAdoptedMaxJobID)
 	if err != nil || raw == "" {
-		return 0
+		return 0, ""
 	}
 	id, err := strconv.ParseInt(raw, 10, 64)
 	if err != nil {
-		return 0
+		return 0, ""
 	}
-	return id
+	at, err := db.GetSyncState(SyncStateAdoptedAt)
+	if err != nil || at == "" {
+		return 0, ""
+	}
+	return id, at
 }
 
 // BackfillRepoIdentities computes and sets identity for repos that don't have one.
@@ -713,7 +746,7 @@ type SyncableReview struct {
 // GetReviewsToSync returns reviews modified locally that need to be pushed.
 // Only returns reviews whose parent job has already been synced.
 func (db *DB) GetReviewsToSync(machineID string, limit int) ([]SyncableReview, error) {
-	adoptedMaxJobID := db.adoptionBoundary()
+	adoptedMaxJobID, adoptedAt := db.adoptionBoundary()
 	rows, err := db.Query(`
 		SELECT
 			r.id, r.uuid, r.job_id, j.uuid,
@@ -727,14 +760,15 @@ func (db *DB) GetReviewsToSync(machineID string, limit int) ([]SyncableReview, e
 		AND j.synced_at IS NOT NULL
 		-- Adoption stamps a parent as synced without ever pushing it, so its
 		-- children must not be pushed either: they would reference a job the
-		-- target has never seen and violate the job_uuid foreign key. Pre-
-		-- adoption children stay local for this target, which is what
-		-- skip_backfill asks for; work created after adoption syncs normally.
-		AND j.id > ?
+		-- target has never seen and violate the job_uuid foreign key. The guard
+		-- lifts as soon as the parent is pushed for real, which covers a job
+		-- that was still queued at adoption and a stamped one that was later
+		-- edited. Work created after adoption is past the id boundary already.
+		AND NOT (j.id <= ? AND `+sqliteNormalizedTimestampExpr("j.synced_at")+` <= datetime(?))
 		AND (r.synced_at IS NULL OR `+sqliteNormalizedTimestampExpr("r.updated_at")+` > `+sqliteNormalizedTimestampExpr("r.synced_at")+`)
 		ORDER BY r.id
 		LIMIT ?
-	`, machineID, adoptedMaxJobID, limit)
+	`, machineID, adoptedMaxJobID, adoptedAt, limit)
 	if err != nil {
 		return nil, fmt.Errorf("query reviews to sync: %w", err)
 	}
@@ -802,7 +836,7 @@ type SyncableResponse struct {
 // GetCommentsToSync returns comments created locally that need to be pushed.
 // Only returns comments whose parent job has already been synced.
 func (db *DB) GetCommentsToSync(machineID string, limit int) ([]SyncableResponse, error) {
-	adoptedMaxJobID := db.adoptionBoundary()
+	adoptedMaxJobID, adoptedAt := db.adoptionBoundary()
 	rows, err := db.Query(`
 		SELECT
 			r.id, r.uuid, r.job_id, j.uuid,
@@ -816,13 +850,14 @@ func (db *DB) GetCommentsToSync(machineID string, limit int) ([]SyncableResponse
 		AND j.synced_at IS NOT NULL
 		-- Adoption stamps a parent as synced without ever pushing it, so its
 		-- children must not be pushed either: they would reference a job the
-		-- target has never seen and violate the job_uuid foreign key. Pre-
-		-- adoption children stay local for this target, which is what
-		-- skip_backfill asks for; work created after adoption syncs normally.
-		AND j.id > ?
+		-- target has never seen and violate the job_uuid foreign key. The guard
+		-- lifts as soon as the parent is pushed for real, which covers a job
+		-- that was still queued at adoption and a stamped one that was later
+		-- edited. Work created after adoption is past the id boundary already.
+		AND NOT (j.id <= ? AND `+sqliteNormalizedTimestampExpr("j.synced_at")+` <= datetime(?))
 		ORDER BY r.id
 		LIMIT ?
-	`, machineID, adoptedMaxJobID, limit)
+	`, machineID, adoptedMaxJobID, adoptedAt, limit)
 	if err != nil {
 		return nil, fmt.Errorf("query responses to sync: %w", err)
 	}

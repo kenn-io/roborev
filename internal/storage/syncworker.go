@@ -481,9 +481,8 @@ func (w *SyncWorker) connect(timeout time.Duration) (bool, error) {
 		pool.Close()
 		return false, fmt.Errorf("check sync history: %w", err)
 	}
-	if act := adoptionActionFor(
-		lastTargetID, dbID, w.cfg.SkipBackfill, syncedBefore,
-	); act != adoptionNone {
+	act := adoptionActionFor(lastTargetID, dbID, w.cfg.SkipBackfill, syncedBefore)
+	if lastTargetID != dbID {
 		oldID, newID := lastTargetID, dbID
 		if oldID == "" {
 			oldID = "none"
@@ -510,8 +509,19 @@ func (w *SyncWorker) connect(timeout time.Duration) (bool, error) {
 				pool.Close()
 				return false, fmt.Errorf("clear synced_at: %w", err)
 			}
+		default:
+			// Nothing to reconcile on the push side, but any boundary from a
+			// previous adoption describes a target we are no longer talking to
+			// and would otherwise keep excluding children forever.
+			if err := w.db.ClearAdoptionBoundary(); err != nil {
+				pool.Close()
+				return false, fmt.Errorf("clear adoption boundary: %w", err)
+			}
 		}
-		// Also clear pull cursors so we pull all data from the new database
+		// Pull cursors belong to the target that issued them, so they are reset
+		// whenever the target changes, independent of what the push side does.
+		// Keeping them across an upgrade that never recorded a target id would
+		// permanently skip every remote row below the old cursors.
 		for _, key := range []string{SyncStateLastJobCursor, SyncStateLastReviewCursor, SyncStateLastResponseID} {
 			if err := w.db.SetSyncState(key, ""); err != nil {
 				pool.Close()

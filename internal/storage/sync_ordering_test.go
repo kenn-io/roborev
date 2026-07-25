@@ -826,3 +826,89 @@ func TestAdoptionHoldsPreAdoptionChildren(t *testing.T) {
 	require.Len(t, reviews, 1, "post-adoption children must sync normally")
 	assert.Equal(t, freshReview.ID, reviews[0].ID)
 }
+
+// The boundary describes one adoption of one target. A later full re-sync
+// re-pushes the parent jobs, so leaving it in place would permanently exclude
+// their reviews and comments and land the target with bodyless jobs.
+func TestClearAllSyncedAtForgetsTheAdoptionBoundary(t *testing.T) {
+	h := newSyncTestHelper(t)
+	job := h.createCompletedJob("boundary-lifetime-sha")
+	require.NoError(t, h.db.MarkAllSyncedNow())
+
+	review, err := h.db.GetReviewByJobID(job.ID)
+	require.NoError(t, err)
+	h.setReviewTimestamps(review.ID, sql.NullString{}, "2026-06-01 00:00:00")
+	reviews, err := h.db.GetReviewsToSync(h.machineID, 100)
+	require.NoError(t, err)
+	require.Empty(t, reviews, "the guard must apply while the adoption stands")
+
+	// Switching to a replaced target re-pushes everything, so the guard must go.
+	// The child still waits for its parent to actually land, as it always does,
+	// but once the parent is pushed the boundary must no longer exclude it.
+	require.NoError(t, h.db.ClearAllSyncedAt())
+	require.NoError(t, h.db.MarkJobSynced(job.ID))
+	reviews, err = h.db.GetReviewsToSync(h.machineID, 100)
+	require.NoError(t, err)
+	require.Len(t, reviews, 1, "a full re-sync must not leave children excluded")
+}
+
+// A job still queued at adoption is never stamped, so when it completes and is
+// pushed for real its children must follow. The id boundary alone would block
+// them forever, because the job's id predates the adoption.
+func TestQueuedAtAdoptionReleasesItsChildrenOncePushed(t *testing.T) {
+	h := newSyncTestHelper(t)
+	job := h.createCompletedJob("queued-at-adoption-sha")
+	// Look like a job that was not terminal at adoption: no stamp of its own.
+	require.NoError(t, h.db.MarkAllSyncedNow())
+	h.setJobTimestamps(job.ID, sql.NullString{}, "2026-06-01 00:00:00")
+
+	review, err := h.db.GetReviewByJobID(job.ID)
+	require.NoError(t, err)
+	h.setReviewTimestamps(review.ID, sql.NullString{}, "2026-06-01 00:00:00")
+
+	// Pushed for real after adoption: synced_at moves past the adoption time.
+	h.setJobTimestamps(job.ID,
+		sql.NullString{String: "2099-01-01 00:00:00", Valid: true},
+		"2026-06-01 00:00:00")
+
+	reviews, err := h.db.GetReviewsToSync(h.machineID, 100)
+	require.NoError(t, err)
+	require.Len(t, reviews, 1, "a parent pushed after adoption must release its children")
+	assert.Equal(t, review.ID, reviews[0].ID)
+}
+
+// HasSyncHistory decides whether an unrecorded target id is a genuine first
+// adoption or an upgrade from a version that predates target tracking.
+func TestHasSyncHistory(t *testing.T) {
+	t.Run("empty database has no history", func(t *testing.T) {
+		h := newSyncTestHelper(t)
+		got, err := h.db.HasSyncHistory()
+		require.NoError(t, err)
+		assert.False(t, got)
+	})
+
+	t.Run("a pull cursor counts as history", func(t *testing.T) {
+		h := newSyncTestHelper(t)
+		require.NoError(t, h.db.SetSyncState(SyncStateLastJobCursor, "42"))
+		got, err := h.db.HasSyncHistory()
+		require.NoError(t, err)
+		assert.True(t, got)
+	})
+
+	t.Run("a stamped row counts as history", func(t *testing.T) {
+		h := newSyncTestHelper(t)
+		job := h.createCompletedJob("history-sha")
+		require.NoError(t, h.db.MarkJobSynced(job.ID))
+		got, err := h.db.HasSyncHistory()
+		require.NoError(t, err)
+		assert.True(t, got)
+	})
+
+	t.Run("unsynced rows alone are not history", func(t *testing.T) {
+		h := newSyncTestHelper(t)
+		h.createCompletedJob("unsynced-sha")
+		got, err := h.db.HasSyncHistory()
+		require.NoError(t, err)
+		assert.False(t, got)
+	})
+}
