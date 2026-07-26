@@ -67,7 +67,7 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6.5.0
         with:
           go-version: '1.26.4'
-          cache: ${{ !contains(fromJSON('["ubuntu-latest","ubuntu-24.04","ubuntu-22.04"]'), matrix.os) || !(github.repository == 'kenn-io/roborev' && (github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository))) }}
+          cache: ${{ contains(fromJSON('["ubuntu-latest","ubuntu-24.04","ubuntu-22.04"]'), matrix.os) && github.repository == 'kenn-io/roborev' && (github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'false' || 'true' }}
 
       - name: Build
         run: go build ./...
@@ -143,7 +143,7 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6.5.0
         with:
           go-version: '1.26.4'
-          cache: ${{ !(github.repository == 'kenn-io/roborev' && (github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository))) }}
+          cache: ${{ github.repository == 'kenn-io/roborev' && (github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'false' || 'true' }}
 
       - name: Test with coverage
         # -p 1 serializes package execution to avoid ROBOREV_DATA_DIR race conditions
@@ -180,7 +180,7 @@ jobs:
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6.5.0
         with:
           go-version: '1.26.4'
-          cache: ${{ !(github.repository == 'kenn-io/roborev' && (github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository))) }}
+          cache: ${{ github.repository == 'kenn-io/roborev' && (github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'false' || 'true' }}
 
       - name: Run integration tests
         run: go test -shuffle=on -tags=postgres -v ./internal/storage/... -run Integration
@@ -198,7 +198,7 @@ jobs:
         if: needs.go-changes.outputs.changed == 'true'
         with:
           go-version: '1.26.4'
-          cache: ${{ !(github.repository == 'kenn-io/roborev' && (github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository))) }}
+          cache: ${{ github.repository == 'kenn-io/roborev' && (github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'false' || 'true' }}
 
       - name: Resolve pinned golangci-lint version
         if: needs.go-changes.outputs.changed == 'true'
