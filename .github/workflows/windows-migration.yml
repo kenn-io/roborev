@@ -4,12 +4,6 @@ name: Windows Migration
 # daemon migration path. Remove after the migration window closes, target 2026-08.
 on:
   workflow_call:
-    inputs:
-      checkout_ref:
-        description: Git ref to check out
-        required: false
-        type: string
-        default: ""
   push:
     branches: [main]
   workflow_dispatch:
@@ -34,7 +28,6 @@ jobs:
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
-          ref: ${{ inputs.checkout_ref || github.sha }}
           fetch-depth: 0
 
       - name: Detect Go changes
@@ -58,8 +51,6 @@ jobs:
     timeout-minutes: 15
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
-        with:
-          ref: ${{ inputs.checkout_ref || github.sha }}
 
       - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6.5.0
         with:
