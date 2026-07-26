@@ -3,6 +3,7 @@ name: Windows Migration
 # Temporary: keep this isolated while validating the v0.56 -> current Windows
 # daemon migration path. Remove after the migration window closes, target 2026-08.
 on:
+  workflow_call:
   push:
     branches: [main]
   pull_request:
