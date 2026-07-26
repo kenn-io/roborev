@@ -16,7 +16,7 @@ concurrency:
 
 jobs:
   go-changes:
-    runs-on: ${{ (github.event_name == 'pull_request_target' || github.ref == 'refs/heads/main') && 'kenn-linux-x64-public' || 'ubuntu-latest' }}
+    runs-on: ${{ (github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'kenn-linux-x64-public' || 'ubuntu-latest' }}
     permissions:
       contents: read
       pull-requests: read
@@ -67,7 +67,7 @@ jobs:
       fail-fast: false
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
-    runs-on: ${{ contains(fromJSON('["ubuntu-latest","ubuntu-24.04","ubuntu-22.04"]'), matrix.os) && (github.event_name == 'pull_request_target' || github.ref == 'refs/heads/main') && 'kenn-linux-x64-public' || matrix.os }}
+    runs-on: ${{ contains(fromJSON('["ubuntu-latest","ubuntu-24.04","ubuntu-22.04"]'), matrix.os) && (github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'kenn-linux-x64-public' || matrix.os }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
@@ -144,7 +144,7 @@ jobs:
   coverage:
     needs: go-changes
     if: needs.go-changes.outputs.changed == 'true'
-    runs-on: ${{ (github.event_name == 'pull_request_target' || github.ref == 'refs/heads/main') && 'kenn-linux-x64-public' || 'ubuntu-latest' }}
+    runs-on: ${{ (github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'kenn-linux-x64-public' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
@@ -168,7 +168,7 @@ jobs:
   integration:
     needs: go-changes
     if: needs.go-changes.outputs.changed == 'true'
-    runs-on: ${{ (github.event_name == 'pull_request_target' || github.ref == 'refs/heads/main') && 'kenn-linux-x64-public' || 'ubuntu-latest' }}
+    runs-on: ${{ (github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'kenn-linux-x64-public' || 'ubuntu-latest' }}
     services:
       postgres:
         image: postgres:18-alpine
@@ -200,7 +200,7 @@ jobs:
   lint:
     needs: go-changes
     if: needs.go-changes.outputs.lint == 'true'
-    runs-on: ${{ (github.event_name == 'pull_request_target' || github.ref == 'refs/heads/main') && 'kenn-linux-x64-public' || 'ubuntu-latest' }}
+    runs-on: ${{ (github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'kenn-linux-x64-public' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:
@@ -236,7 +236,7 @@ jobs:
   nix:
     needs: go-changes
     if: needs.go-changes.outputs.changed == 'true'
-    runs-on: ${{ (github.event_name == 'pull_request_target' || github.ref == 'refs/heads/main') && 'kenn-linux-x64-public' || 'ubuntu-latest' }}
+    runs-on: ${{ (github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'kenn-linux-x64-public' || 'ubuntu-latest' }}
     steps:
       - uses: actions/checkout@9c091bb21b7c1c1d1991bb908d89e4e9dddfe3e0  # v7.0.0
         with:

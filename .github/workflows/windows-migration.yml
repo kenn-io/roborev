@@ -25,7 +25,7 @@ concurrency:
 
 jobs:
   go-changes:
-    runs-on: ${{ (github.event_name == 'pull_request_target' || github.ref == 'refs/heads/main') && 'kenn-linux-x64-public' || 'ubuntu-latest' }}
+    runs-on: ${{ (github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'kenn-linux-x64-public' || 'ubuntu-latest' }}
     permissions:
       contents: read
       pull-requests: read
