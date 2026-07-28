@@ -40,8 +40,12 @@ func applyReviewVerdict(review *Review, verdictBool sql.NullInt64) {
 	}
 }
 
-func applyJobVerdict(job *ReviewJob, verdictBool sql.NullInt64, output string) {
-	if output == "" || job.Error != "" || job.IsTaskJob() {
+// applyJobVerdict derives the job's verdict from the stored verdict_bool,
+// falling back to parsing the review output. hasReview reports whether a
+// non-empty review output exists; callers that skip hydrating the output for
+// rows with a stored verdict pass the existence flag from SQL instead.
+func applyJobVerdict(job *ReviewJob, verdictBool sql.NullInt64, output string, hasReview bool) {
+	if !hasReview || job.Error != "" || job.IsTaskJob() {
 		return
 	}
 	verdict := verdictFromBoolOrParse(verdictBool, output)

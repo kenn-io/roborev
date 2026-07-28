@@ -167,6 +167,10 @@ func listJobsQuery(values neturl.Values) *daemonclient.ListJobsQuery {
 		typed := daemonclient.ListJobsQueryHideClassifyJobs(value)
 		query.HideClassifyJobs = &typed
 	}
+	if value := values.Get("omit_prompt"); value != "" {
+		typed := daemonclient.ListJobsQueryOmitPrompt(value)
+		query.OmitPrompt = &typed
+	}
 	setStringParam("repo_prefix", &query.RepoPrefix)
 	setIntParam("limit", &query.Limit)
 	setIntParam("offset", &query.Offset)
@@ -216,6 +220,11 @@ func (m model) fetchJobs() tea.Cmd {
 		// Exclude fix jobs — they belong in the Tasks view, not the queue
 		params.Set("exclude_job_type", "fix")
 
+		// Metadata-only rows: completed jobs' prompts are never rendered
+		// from the queue and dominate the payload. Queued/running jobs
+		// keep their prompt server-side for the prompt view.
+		params.Set("omit_prompt", "true")
+
 		// Hide auto-design-router byproducts (classify rows + skipped design
 		// rows) unless the user opted in via show_classify_jobs. Resolved at
 		// fetch time so single-repo filters honor that repo's override.
@@ -260,6 +269,7 @@ func (m model) fetchMoreJobs() tea.Cmd {
 		params := neturl.Values{}
 		params.Set("limit", "50")
 		params.Set("offset", fmt.Sprintf("%d", offset))
+		params.Set("omit_prompt", "true")
 		for _, path := range m.activeRepoFilter {
 			params.Add("repo", path)
 		}
@@ -772,7 +782,7 @@ func (m model) fetchPanelMembers(runUUID string) tea.Cmd {
 	baseURL := m.endpoint.BaseURL()
 	client := m.client
 	return func() tea.Msg {
-		url := fmt.Sprintf("%s/api/jobs?panel_run=%s&limit=0", baseURL, neturl.QueryEscape(runUUID))
+		url := fmt.Sprintf("%s/api/jobs?panel_run=%s&limit=0&omit_prompt=true", baseURL, neturl.QueryEscape(runUUID))
 		resp, err := client.Get(url)
 		if err != nil {
 			return panelMembersMsg{runUUID: runUUID, err: err}
@@ -1047,6 +1057,7 @@ func (m model) fetchFixJobs() tea.Cmd {
 		params := neturl.Values{}
 		params.Set("job_type", "fix")
 		params.Set("limit", "200")
+		params.Set("omit_prompt", "true")
 
 		result, err := m.loadJobsPage(params)
 		if err != nil {

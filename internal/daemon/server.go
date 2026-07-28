@@ -950,10 +950,14 @@ const limitNotProvided = -999999
 // stripJobPrompts clears the large prompt and diff payloads from listed jobs
 // for omit_prompt=true callers. Metadata-only consumers such as the agent hook
 // daemon poll job lists on every hook event; shipping full prompts to them
-// costs tens of megabytes of encode/decode per request.
+// costs tens of megabytes of encode/decode per request. Queued/running jobs
+// keep their prompt — the active set is small and it is the only way to see
+// what a not-yet-reviewed job was asked, matching ListJobs' WithoutPrompt.
 func stripJobPrompts(jobs []storage.ReviewJob) {
 	for i := range jobs {
-		jobs[i].Prompt = ""
+		if jobs[i].Status != storage.JobStatusQueued && jobs[i].Status != storage.JobStatusRunning {
+			jobs[i].Prompt = ""
+		}
 		jobs[i].DiffContent = nil
 	}
 }

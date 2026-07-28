@@ -5,10 +5,13 @@ import (
 	"net/http"
 	"net/http/httptest"
 	neturl "net/url"
+	"sync"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/storage"
 )
 
 func TestListJobsParamsRepeatedRepo(t *testing.T) {
@@ -71,4 +74,55 @@ func TestFetchJobsMultiRepoUsesRepeatedRepoAndPaginates(t *testing.T) {
 	)
 	assert.NotEqual("0", jobsQuery.Get("limit"),
 		"multi-repo paginates instead of loading every job")
+}
+
+// Queue/task/panel listings never render completed jobs' prompts, so every
+// list fetch must request metadata-only rows: full prompts are ~91% of the
+// payload and repeated polls were the daemon's main allocation driver.
+// Detail views (single job, /api/review) still fetch the full record.
+func TestListFetchesRequestMetadataOnlyRows(t *testing.T) {
+	assert := assert.New(t)
+
+	var mu sync.Mutex
+	queries := make(map[string]neturl.Values)
+	ts := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			if r.URL.Path == "/api/jobs" {
+				mu.Lock()
+				key := "list"
+				switch {
+				case r.URL.Query().Get("panel_run") != "":
+					key = "panel"
+				case r.URL.Query().Get("job_type") == "fix":
+					key = "fix"
+				case r.URL.Query().Get("offset") != "":
+					key = "more"
+				}
+				queries[key] = r.URL.Query()
+				mu.Unlock()
+			}
+			w.Header().Set("Content-Type", "application/json")
+			json.NewEncoder(w).Encode(map[string]any{
+				"jobs": []any{}, "has_more": false,
+			})
+		},
+	))
+	defer ts.Close()
+
+	m := newModel(testEndpointFromURL(ts.URL), withExternalIODisabled())
+
+	_, ok := fetchJobsMessage(t, m).(jobsMsg)
+	require.True(t, ok)
+	m.jobs = []storage.ReviewJob{{ID: 1}}
+	m.fetchMoreJobs()()
+	m.fetchFixJobs()()
+	m.fetchPanelMembers("panel-run-uuid")()
+
+	mu.Lock()
+	defer mu.Unlock()
+	for _, key := range []string{"list", "more", "fix", "panel"} {
+		require.Contains(t, queries, key, "%s fetch should have hit /api/jobs", key)
+		assert.Equal("true", queries[key].Get("omit_prompt"),
+			"%s fetch must request metadata-only rows", key)
+	}
 }

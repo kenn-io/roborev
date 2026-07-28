@@ -698,6 +698,24 @@ func TestCostOptionsFromInput(t *testing.T) {
 	assert.Error(err)
 }
 
+func TestStripJobPromptsKeepsActiveJobs(t *testing.T) {
+	assert := assert.New(t)
+	diff := "diff"
+	jobs := []storage.ReviewJob{
+		{Status: storage.JobStatusQueued, Prompt: "queued prompt"},
+		{Status: storage.JobStatusRunning, Prompt: "running prompt"},
+		{Status: storage.JobStatusDone, Prompt: "done prompt", DiffContent: &diff},
+	}
+	stripJobPrompts(jobs)
+
+	assert.Equal("queued prompt", jobs[0].Prompt,
+		"queued jobs keep the prompt: it is the only way to see what was asked")
+	assert.Equal("running prompt", jobs[1].Prompt,
+		"running jobs keep the prompt for the TUI prompt view")
+	assert.Empty(jobs[2].Prompt, "terminal jobs are stripped")
+	assert.Nil(jobs[2].DiffContent, "diff content is always stripped")
+}
+
 func TestServerServesPprof(t *testing.T) {
 	assert := assert.New(t)
 	server, _, _ := newTestServer(t)

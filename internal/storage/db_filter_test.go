@@ -1208,23 +1208,82 @@ func TestListJobsWithoutPrompt(t *testing.T) {
 	defer db.Close()
 	repo, err := db.GetOrCreateRepo("/tmp/without-prompt-repo")
 	require.NoError(t, err)
-	_, err = db.EnqueueJob(EnqueueOpts{
+
+	// Oldest job: claimed and completed → terminal, prompt must be stripped.
+	doneJob, err := db.EnqueueJob(EnqueueOpts{
 		RepoID: repo.ID,
-		GitRef: "dirty",
+		GitRef: "done-ref",
 		Agent:  "test",
-		Prompt: "a large stored prompt",
+		Prompt: "done prompt",
+	})
+	require.NoError(t, err)
+	claimJob(t, db, "worker-1")
+	require.NoError(t, db.CompleteJob(doneJob.ID, "test", "done prompt", "No issues found."))
+
+	// Second job: claimed → running, prompt must survive the metadata listing
+	// (the TUI prompt view reads it straight from the queue rows).
+	runningJob, err := db.EnqueueJob(EnqueueOpts{
+		RepoID: repo.ID,
+		GitRef: "running-ref",
+		Agent:  "test",
+		Prompt: "running prompt",
+	})
+	require.NoError(t, err)
+	claimJob(t, db, "worker-2")
+
+	// Third job: stays queued, prompt must also survive.
+	queuedJob, err := db.EnqueueJob(EnqueueOpts{
+		RepoID: repo.ID,
+		GitRef: "queued-ref",
+		Agent:  "test",
+		Prompt: "queued prompt",
 	})
 	require.NoError(t, err)
 
 	withPrompt, err := db.ListJobs("", repo.RootPath, 0, 0)
 	require.NoError(t, err)
-	require.Len(t, withPrompt, 1)
-	assert.Equal("a large stored prompt", withPrompt[0].Prompt, "default listing keeps the prompt")
+	require.Len(t, withPrompt, 3)
+	for _, j := range withPrompt {
+		assert.NotEmpty(j.Prompt, "default listing keeps every prompt")
+	}
 
 	withoutPrompt, err := db.ListJobs("", repo.RootPath, 0, 0, WithoutPrompt())
 	require.NoError(t, err)
-	require.Len(t, withoutPrompt, 1)
-	assert.Empty(withoutPrompt[0].Prompt, "WithoutPrompt must not hydrate the prompt column")
-	assert.Equal(withPrompt[0].ID, withoutPrompt[0].ID, "same job either way")
-	assert.Equal(withPrompt[0].GitRef, withoutPrompt[0].GitRef, "other fields still hydrated")
+	require.Len(t, withoutPrompt, 3)
+	byID := make(map[int64]ReviewJob, len(withoutPrompt))
+	for _, j := range withoutPrompt {
+		byID[j.ID] = j
+	}
+	assert.Empty(byID[doneJob.ID].Prompt, "terminal jobs must not hydrate the prompt column")
+	assert.Equal("running prompt", byID[runningJob.ID].Prompt, "running jobs keep the prompt")
+	assert.Equal("queued prompt", byID[queuedJob.ID].Prompt, "queued jobs keep the prompt")
+	assert.Equal("done-ref", byID[doneJob.ID].GitRef, "other fields still hydrated")
+}
+
+func TestListJobsParsesVerdictWhenVerdictBoolNull(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, filepath.Join(t.TempDir(), "null-verdict-list-repo"))
+
+	job, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, GitRef: "nullverdict123", Agent: "codex"})
+	require.NoError(t, err, "EnqueueJob failed: %v")
+
+	_, err = db.ClaimJob("worker-0")
+	require.NoError(t, err, "ClaimJob failed: %v")
+
+	err = db.CompleteJob(job.ID, "codex", "review prompt", "- Medium — Bug in line 42\nSummary: found issues.")
+	require.NoError(t, err, "CompleteJob failed: %v")
+
+	// Legacy rows (e.g. synced from an older machine) can lack verdict_bool;
+	// the listing must still fall back to parsing the output text.
+	_, err = db.Exec(`UPDATE reviews SET verdict_bool = NULL WHERE job_id = ?`, job.ID)
+	require.NoError(t, err, "clear verdict_bool failed: %v")
+
+	jobs, err := db.ListJobs("", "", 50, 0)
+	require.NoError(t, err, "ListJobs failed: %v")
+
+	require.Len(t, jobs, 1)
+	require.NotNil(t, jobs[0].Verdict)
+	assert.Equal(t, "F", *jobs[0].Verdict)
 }

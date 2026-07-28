@@ -2689,11 +2689,22 @@ func TestListJobsOmitPrompt(t *testing.T) {
 	repo, err := db.GetOrCreateRepo("/test/omit-prompt-repo")
 	require.NoError(t, err)
 	diff := "diff --git a/f b/f"
-	_, err = db.EnqueueJob(storage.EnqueueOpts{
+	doneJob, err := db.EnqueueJob(storage.EnqueueOpts{
 		RepoID:      repo.ID,
-		GitRef:      "dirty",
+		GitRef:      "done-ref",
 		Agent:       "test",
 		Prompt:      "a very large stored prompt",
+		DiffContent: diff,
+	})
+	require.NoError(t, err)
+	_, err = db.ClaimJob("worker-omit")
+	require.NoError(t, err)
+	require.NoError(t, db.CompleteJob(doneJob.ID, "test", "a very large stored prompt", "No issues found."))
+	queuedJob, err := db.EnqueueJob(storage.EnqueueOpts{
+		RepoID:      repo.ID,
+		GitRef:      "queued-ref",
+		Agent:       "test",
+		Prompt:      "a queued prompt",
 		DiffContent: diff,
 	})
 	require.NoError(t, err)
@@ -2717,27 +2728,48 @@ func TestListJobsOmitPrompt(t *testing.T) {
 		return *resp.JSON200.Jobs
 	}
 
+	jobByID := func(t *testing.T, jobs []daemonclient.ReviewJob, id int64) daemonclient.ReviewJob {
+		t.Helper()
+		for _, j := range jobs {
+			if j.Id == id {
+				return j
+			}
+		}
+		t.Fatalf("job %d not in listing", id)
+		return daemonclient.ReviewJob{}
+	}
+
 	t.Run("default includes prompt", func(t *testing.T) {
 		jobs := listJobs(t, &daemonclient.ListJobsParams{Repo: &repoFilter})
+		require.Len(t, jobs, 2)
+		done := jobByID(t, jobs, doneJob.ID)
+		require.NotNil(t, done.Prompt)
+		assert.Equal("a very large stored prompt", *done.Prompt)
+	})
+
+	t.Run("omit_prompt=true strips terminal jobs, keeps queued", func(t *testing.T) {
+		jobs := listJobs(t, &daemonclient.ListJobsParams{Repo: &repoFilter, OmitPrompt: &omit})
+		require.Len(t, jobs, 2)
+		done := jobByID(t, jobs, doneJob.ID)
+		assert.Nil(done.Prompt)
+		assert.Nil(done.DiffContent)
+		queued := jobByID(t, jobs, queuedJob.ID)
+		require.NotNil(t, queued.Prompt)
+		assert.Equal("a queued prompt", *queued.Prompt)
+	})
+
+	t.Run("omit_prompt=true strips prompt on terminal single-job lookup", func(t *testing.T) {
+		jobs := listJobs(t, &daemonclient.ListJobsParams{Id: &doneJob.ID, OmitPrompt: &omit})
+		require.Len(t, jobs, 1)
+		assert.Nil(jobs[0].Prompt)
+		assert.Nil(jobs[0].DiffContent)
+	})
+
+	t.Run("omit_prompt=true keeps prompt on queued single-job lookup", func(t *testing.T) {
+		jobs := listJobs(t, &daemonclient.ListJobsParams{Id: &queuedJob.ID, OmitPrompt: &omit})
 		require.Len(t, jobs, 1)
 		require.NotNil(t, jobs[0].Prompt)
-		assert.Equal("a very large stored prompt", *jobs[0].Prompt)
-	})
-
-	t.Run("omit_prompt=true strips prompt and diff content", func(t *testing.T) {
-		jobs := listJobs(t, &daemonclient.ListJobsParams{Repo: &repoFilter, OmitPrompt: &omit})
-		require.Len(t, jobs, 1)
-		assert.Nil(jobs[0].Prompt)
-		assert.Nil(jobs[0].DiffContent)
-	})
-
-	t.Run("omit_prompt=true strips prompt on single-job lookup", func(t *testing.T) {
-		all := listJobs(t, &daemonclient.ListJobsParams{Repo: &repoFilter})
-		require.Len(t, all, 1)
-		jobs := listJobs(t, &daemonclient.ListJobsParams{Id: &all[0].Id, OmitPrompt: &omit})
-		require.Len(t, jobs, 1)
-		assert.Nil(jobs[0].Prompt)
-		assert.Nil(jobs[0].DiffContent)
+		assert.Equal("a queued prompt", *jobs[0].Prompt)
 	})
 }
 

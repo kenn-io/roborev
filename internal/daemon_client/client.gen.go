@@ -1187,7 +1187,7 @@ type ListJobsParams struct {
 	// PanelRun Return all jobs (members + synthesis) of one panel run
 	PanelRun *string `form:"panel_run,omitempty" json:"panel_run,omitempty"`
 
-	// OmitPrompt Omit prompt and diff content from returned jobs (metadata-only listing)
+	// OmitPrompt Omit prompt and diff content from returned jobs (metadata-only listing; queued/running jobs keep their prompt)
 	OmitPrompt *ListJobsParamsOmitPrompt `form:"omit_prompt,omitempty" json:"omit_prompt,omitempty"`
 
 	// RepoPrefix Filter repos by path prefix

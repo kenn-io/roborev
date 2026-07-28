@@ -1053,10 +1053,12 @@ func WithClosed(closed bool) ListJobsOption {
 	return func(o *listJobsOptions) { o.closed = &closed }
 }
 
-// WithoutPrompt selects an empty string in place of the prompt column so
-// metadata-only listings never read the stored prompts. Prompts embed full
-// diffs, so on repos with a long review history hydrating them costs tens of
-// megabytes of SQLite reads and string allocations per listing.
+// WithoutPrompt selects an empty string in place of the prompt column for
+// terminal jobs so metadata-only listings never read their stored prompts.
+// Prompts embed full diffs, so on repos with a long review history hydrating
+// them costs tens of megabytes of SQLite reads and string allocations per
+// listing. Queued/running jobs keep their prompt: the active set is small and
+// the TUI prompt view renders it straight from list rows.
 func WithoutPrompt() ListJobsOption {
 	return func(o *listJobsOptions) { o.omitPrompt = true }
 }
@@ -1224,18 +1226,24 @@ func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions) (s
 // ListJobs returns jobs with optional status, repo, branch, and closed filters.
 func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int, opts ...ListJobsOption) ([]ReviewJob, error) {
 	options := collectListJobsOptions(opts...)
-	// Metadata-only listings select a constant instead of the prompt column;
-	// the scan still binds the same positional field, it just never touches
-	// the large TEXT payload.
+	// Metadata-only listings skip the prompt column for terminal jobs; the
+	// scan still binds the same positional field, it just never touches the
+	// large TEXT payload. Queued/running rows keep their prompt: the active
+	// set is small and the TUI prompt view reads it straight from list rows.
 	promptExpr := "j.prompt"
 	if options.omitPrompt {
-		promptExpr = "''"
+		promptExpr = "CASE WHEN j.status IN ('queued', 'running') THEN j.prompt ELSE '' END"
 	}
+	// The review output is only needed to parse a verdict for legacy rows
+	// where verdict_bool is NULL (e.g. synced from older machines); rows with
+	// a stored verdict skip the large TEXT payload and pass the existence
+	// flag instead.
 	query := `
 		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.ci_base_branch, j.session_id, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, ` + promptExpr + `, j.retry_count,
-		       COALESCE(j.agentic, 0), COALESCE(j.prompt_prebuilt, 0), r.root_path, r.name, c.subject, rv.closed, rv.output,
-		       rv.verdict_bool, j.source_machine_id, j.uuid, j.model, j.job_type, j.review_type, j.patch_id, COALESCE(j.output_prefix, ''),
+		       COALESCE(j.agentic, 0), COALESCE(j.prompt_prebuilt, 0), r.root_path, r.name, c.subject, rv.closed,
+		       CASE WHEN rv.verdict_bool IS NULL THEN rv.output ELSE '' END,
+		       rv.verdict_bool, COALESCE(rv.output != '', 0), j.source_machine_id, j.uuid, j.model, j.job_type, j.review_type, j.patch_id, COALESCE(j.output_prefix, ''),
 		       j.parent_job_id, j.provider, j.requested_model, j.requested_provider, j.token_usage, COALESCE(j.worktree_path, ''),
 		       j.command_line, j.dirty_files, COALESCE(j.min_severity, ''), COALESCE(j.backup_agent, ''), COALESCE(j.backup_model, ''),
 		       COALESCE(j.skip_reason, ''), COALESCE(j.source, ''),
@@ -1271,12 +1279,13 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 		var j ReviewJob
 		var output sql.NullString
 		var verdictBool sql.NullInt64
+		var hasOutput bool
 		var fields reviewJobScanFields
 
 		err := rows.Scan(&j.ID, &j.RepoID, &fields.CommitID, &j.GitRef, &fields.Branch, &fields.CIBaseBranch, &fields.SessionID, &j.Agent, &j.Reasoning, &j.Status, &fields.EnqueuedAt,
 			&fields.StartedAt, &fields.FinishedAt, &fields.WorkerID, &fields.Error, &fields.Prompt, &j.RetryCount,
 			&fields.Agentic, &fields.PromptPrebuilt, &j.RepoPath, &j.RepoName, &fields.CommitSubject, &fields.Closed, &output,
-			&verdictBool, &fields.SourceMachineID, &fields.UUID, &fields.Model, &fields.JobType, &fields.ReviewType, &fields.PatchID, &fields.OutputPrefix,
+			&verdictBool, &hasOutput, &fields.SourceMachineID, &fields.UUID, &fields.Model, &fields.JobType, &fields.ReviewType, &fields.PatchID, &fields.OutputPrefix,
 			&fields.ParentJobID, &fields.Provider, &fields.RequestedModel, &fields.RequestedProvider, &fields.TokenUsage, &fields.WorktreePath,
 			&fields.CommandLine, &fields.DirtyFiles, &fields.MinSeverity, &fields.BackupAgent, &fields.BackupModel,
 			&fields.SkipReason, &fields.Source,
@@ -1285,9 +1294,7 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 			return nil, err
 		}
 		applyReviewJobScan(&j, fields)
-		if output.Valid {
-			applyJobVerdict(&j, verdictBool, output.String)
-		}
+		applyJobVerdict(&j, verdictBool, output.String, hasOutput)
 
 		jobs = append(jobs, j)
 	}
@@ -1893,7 +1900,7 @@ func (db *DB) GetPanelMembers(panelRunUUID string) ([]ReviewJob, error) {
 		}
 		applyReviewJobScan(&j, fields)
 		if output.Valid {
-			applyJobVerdict(&j, verdictBool, output.String)
+			applyJobVerdict(&j, verdictBool, output.String, output.String != "")
 		}
 		jobs = append(jobs, j)
 	}
@@ -1943,7 +1950,7 @@ func (db *DB) GetSynthesisJob(panelRunUUID string) (*ReviewJob, error) {
 	}
 	applyReviewJobScan(&j, fields)
 	if output.Valid {
-		applyJobVerdict(&j, verdictBool, output.String)
+		applyJobVerdict(&j, verdictBool, output.String, output.String != "")
 	}
 	return &j, nil
 }

@@ -3041,12 +3041,12 @@ paths:
           schema:
             description: Return all jobs (members + synthesis) of one panel run
             type: string
-        - description: Omit prompt and diff content from returned jobs (metadata-only listing)
+        - description: Omit prompt and diff content from returned jobs (metadata-only listing; queued/running jobs keep their prompt)
           explode: false
           in: query
           name: omit_prompt
           schema:
-            description: Omit prompt and diff content from returned jobs (metadata-only listing)
+            description: Omit prompt and diff content from returned jobs (metadata-only listing; queued/running jobs keep their prompt)
             enum:
               - "true"
               - "false"

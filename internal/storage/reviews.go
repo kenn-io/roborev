@@ -38,7 +38,7 @@ func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 	}
 	applyReviewScan(&r, reviewFields)
 	applyReviewJobScan(&job, jobFields)
-	applyJobVerdict(&job, reviewFields.VerdictBool, r.Output)
+	applyJobVerdict(&job, reviewFields.VerdictBool, r.Output, r.Output != "")
 
 	r.Job = &job
 
@@ -373,7 +373,7 @@ func (db *DB) GetJobsWithReviewsByIDs(jobIDs []int64) (map[int64]JobWithReview, 
 
 		if entry, ok := result[r.JobID]; ok {
 			entry.Review = &r
-			applyJobVerdict(&entry.Job, fields.VerdictBool, r.Output)
+			applyJobVerdict(&entry.Job, fields.VerdictBool, r.Output, r.Output != "")
 			result[r.JobID] = entry
 		}
 	}

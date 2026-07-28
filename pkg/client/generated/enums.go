@@ -83,7 +83,7 @@ func (l ListJobsQueryHideClassifyJobs) Validate() error {
 	}
 }
 
-// ListJobsQueryOmitPrompt Omit prompt and diff content from returned jobs (metadata-only listing)
+// ListJobsQueryOmitPrompt Omit prompt and diff content from returned jobs (metadata-only listing; queued/running jobs keep their prompt)
 type ListJobsQueryOmitPrompt string
 
 const (

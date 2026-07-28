@@ -548,7 +548,7 @@ func (db *DB) GetRepoStats(repoID int64) (*RepoStats, error) {
 			continue
 		}
 
-		applyJobVerdict(&job, verdictBool, output)
+		applyJobVerdict(&job, verdictBool, output, output != "")
 		if job.Verdict != nil {
 			if *job.Verdict == verdictPass {
 				stats.PassedReviews++
