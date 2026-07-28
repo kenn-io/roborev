@@ -23,7 +23,8 @@ ACP v1, Zensical Markdown.
   `name` field.
 - Repository ACP entries replace complete same-name global entries and retain
   unrelated global entries.
-- Do not add a compatibility reader for the old singleton `[acp]` shape.
+- Do not add a compatibility reader for the old singleton `[acp]` shape; reject
+  it with an actionable `[acp.<name>]` migration error.
 - Preserve the bare built-in `acp` adapter as distinct from configured names.
 - Reject configured names that collide with built-in names or aliases.
 - Keep `github.com/coder/acp-go-sdk` v0.13.5 unless the Goose acceptance test
@@ -42,6 +43,9 @@ ACP v1, Zensical Markdown.
 
 - Modify: `internal/config/config.go`
 - Modify: `internal/config/config_test.go`
+- Modify: `internal/config/keyval.go`
+- Modify: `internal/config/keyval_test.go`
+- Modify: `cmd/roborev/config_cmd_test.go`
 
 **Interfaces:**
 
@@ -116,8 +120,11 @@ func ResolveACPAgentConfigFromConfig(
 }
 ```
 
-The all-config resolver copies global entries and overwrites them with repo
-entries so callers cannot mutate source configuration accidentally.
+The all-config resolver deep-copies global entries (including `args`) and
+overwrites them with deep-copied repo entries so callers cannot mutate source
+configuration accidentally. Extend dotted config traversal so
+`config get/set/list acp.goose.command` works and merged listing treats a repo
+agent table as replacing the complete same-name global entry.
 
 - [ ] **Step 4: Run configuration tests**
 
@@ -421,7 +428,7 @@ the browser OAuth flow. If the account-consent step requires user interaction,
 pause with the exact prompt rather than handling credentials. Verify provider
 status using Goose's non-secret info/doctor command.
 
-- [ ] **Step 5: Back up and edit live roborev config**
+- [ ] **Step 5: Back up and edit live roborev config after acceptance succeeds**
 
 Add only:
 
@@ -432,7 +439,9 @@ args = ["acp"]
 ```
 
 Parse the resulting TOML and report only its redacted shape. Do not restart the
-installed daemon because it predates the named-map implementation.
+installed daemon because it predates the named-map implementation. Warn that
+older config-writing commands can remove the new table until the installed
+roborev version includes this change; retain the recovery backup.
 
 - [ ] **Step 6: Build and run branch roborev in isolation**
 

@@ -370,6 +370,17 @@ func TestSetConfigKeyNestedCreation(t *testing.T) {
 	assertConfigValue(t, path, "ci.poll_interval", "10m")
 }
 
+func TestSetConfigKeyNamedACPAgent(t *testing.T) {
+	path := setupConfigFile(t)
+
+	require.NoError(t, setConfigKey(path, "acp.goose.command", "goose", true))
+	require.NoError(t, setConfigKey(path, "acp.goose.args", "acp", true))
+	assertConfigValue(t, path, "acp.goose.command", "goose")
+	args, ok := getNestedValue(t, readTOML(t, path), "acp.goose.args").([]any)
+	require.True(t, ok)
+	assert.Equal(t, []any{"acp"}, args)
+}
+
 func TestSetConfigKeyInvalidKey(t *testing.T) {
 	path := setupConfigFile(t)
 
@@ -563,6 +574,22 @@ func TestListGlobalConfigExplicitKeys(t *testing.T) {
 
 	// Non-explicit default key (default_agent) should NOT be shown
 	require.NotContains(t, output, "default_agent=")
+}
+
+func TestGetAndListNamedACPAgent(t *testing.T) {
+	env := setupConfigEnv(t, strings.Join([]string{
+		`[acp.goose]`,
+		`command = "goose"`,
+		`args = ["acp"]`,
+	}, "\n")+"\n", "")
+
+	got, err := getValueForScope(env.Resolver, "acp.goose.command", scopeGlobal)
+	require.NoError(t, err)
+	assert.Equal(t, "goose", got)
+
+	output := captureOutput(t, listGlobalConfig)
+	assert.Contains(t, output, "acp.goose.command=goose")
+	assert.Contains(t, output, "acp.goose.args=acp")
 }
 
 func TestListLocalConfigExplicitKeys(t *testing.T) {

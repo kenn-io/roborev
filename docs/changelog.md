@@ -13,7 +13,8 @@ All notable changes to roborev, grouped by minor release.
     subtables. Repository entries replace only the matching global agent, and
     commands, models, backups, CI jobs, and synthesis remain isolated by name.
     The ACP guide includes an end-to-end Goose example using ChatGPT Codex
-    subscription authentication. See
+    subscription authentication. This is a breaking configuration change:
+    migrate `[acp]` plus `name = "foo"` to `[acp.foo]`. See
     [Agent Client Protocol (ACP)](/advanced/acp/).
 
 ______________________________________________________________________

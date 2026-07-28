@@ -263,6 +263,22 @@ func TestSetConfigValueInvalidType(t *testing.T) {
 	require.Error(t, SetConfigValue(cfg, "max_workers", "notanumber"), "expected error for invalid integer")
 }
 
+func TestNamedACPConfigKeyTraversal(t *testing.T) {
+	cfg := &Config{}
+
+	require.NoError(t, SetConfigValue(cfg, "acp.goose.command", "goose"))
+	require.NoError(t, SetConfigValue(cfg, "acp.goose.args", "acp,--verbose"))
+
+	goose := cfg.ACP["goose"]
+	assert.Equal(t, "goose", goose.Command)
+	assert.Equal(t, []string{"acp", "--verbose"}, goose.Args)
+	command, err := GetConfigValue(cfg, "acp.goose.command")
+	require.NoError(t, err)
+	assert.Equal(t, "goose", command)
+	assert.True(t, IsValidKey("acp.any-name.command"))
+	assert.True(t, IsGlobalKey("acp.any-name.command"))
+}
+
 func TestListConfigKeys(t *testing.T) {
 	cfg := newComplexTestConfig()
 
@@ -329,6 +345,43 @@ func TestListConfigKeysIncludesComplexNonZeroFields(t *testing.T) {
 	got, ok = found["hooks"]
 	require.True(ok, "missing hooks")
 	assert.Contains(got, "review.failed")
+}
+
+func TestListConfigKeysFlattensNamedACPAgents(t *testing.T) {
+	cfg := &Config{ACP: ACPAgentConfigs{
+		"goose": {Command: "goose", Args: []string{"acp"}},
+		"foo":   {Command: "foo-acp"},
+	}}
+
+	assertConfigValues(t, ListConfigKeys(cfg), map[string]string{
+		"acp.goose.command": "goose",
+		"acp.goose.args":    "acp",
+		"acp.foo.command":   "foo-acp",
+	})
+}
+
+func TestMergedConfigWithOriginReplacesOneACPAgent(t *testing.T) {
+	global := &Config{ACP: ACPAgentConfigs{
+		"goose": {Command: "global-goose", Model: "global-model"},
+		"foo":   {Command: "foo-acp"},
+	}}
+	repo := &RepoConfig{ACP: ACPAgentConfigs{
+		"goose": {Command: "repo-goose"},
+	}}
+	rawGlobal := map[string]any{"acp": map[string]any{
+		"goose": map[string]any{"command": "global-goose", "model": "global-model"},
+		"foo":   map[string]any{"command": "foo-acp"},
+	}}
+	rawRepo := map[string]any{"acp": map[string]any{
+		"goose": map[string]any{"command": "repo-goose"},
+	}}
+
+	got := toOriginMap(MergedConfigWithOrigin(global, repo, rawGlobal, rawRepo))
+	assert.Equal(t, "repo-goose", got["acp.goose.command"].Value)
+	assert.Equal(t, "local", got["acp.goose.command"].Origin)
+	assert.NotContains(t, got, "acp.goose.model")
+	assert.Equal(t, "foo-acp", got["acp.foo.command"].Value)
+	assert.Equal(t, "global", got["acp.foo.command"].Origin)
 }
 
 func TestMergedConfigWithOrigin(t *testing.T) {
@@ -561,6 +614,9 @@ func TestIsValidKey(t *testing.T) {
 		{"ci.github_app_id", true},
 		{"ci.github_app_private_key", true},
 		{"hooks", true},
+		{"acp.goose.command", true},
+		{"acp.goose.args", true},
+		{"acp.goose.unknown", false},
 		{"nonexistent", false},
 		{"fake.key", false},
 	}

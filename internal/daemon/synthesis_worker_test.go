@@ -365,6 +365,44 @@ func TestConfigureSynthesisAgentKeepsPrimaryModelForConfiguredACPAlias(t *testin
 	assert.Equal("primary-model", configuredACP.Model)
 }
 
+func TestConfigureSynthesisAgentUsesBackupModelForNamedACPBackup(t *testing.T) {
+	assert := assert.New(t)
+	tc := newWorkerTestContext(t, 1)
+
+	binDir := t.TempDir()
+	const acpCommand = "backup-acp"
+	acpBinary := acpCommand
+	if runtime.GOOS == "windows" {
+		acpBinary += ".exe"
+	}
+	require.NoError(t, os.WriteFile(filepath.Join(binDir, acpBinary), []byte("#!/bin/sh\nexit 0\n"), 0o755))
+	t.Setenv("PATH", binDir)
+	tc.Pool.cfgGetter.Config().ACP = config.ACPAgentConfigs{
+		"goose": {Command: acpCommand},
+	}
+
+	_, _, synthJob := enqueuePanelRun(t, tc, "named-acp-backup-panel", []memberSpec{
+		{name: "m0", agent: "test"},
+	})
+	_, err := tc.DB.Exec(
+		`UPDATE review_jobs
+		 SET status = 'running', worker_id = ?, agent = ?, model = ?, backup_agent = ?, backup_model = ?
+		 WHERE id = ?`,
+		testWorkerID, "codex", "primary-model", "goose", "backup-model", synthJob.ID,
+	)
+	require.NoError(t, err)
+	job, err := tc.DB.GetJobByID(synthJob.ID)
+	require.NoError(t, err)
+
+	configured, agentName, err := tc.Pool.configureSynthesisAgent(testWorkerID, job)
+	require.NoError(t, err)
+
+	assert.Equal("goose", agentName)
+	configuredACP, ok := configured.(*agent.ACPAgent)
+	require.True(t, ok)
+	assert.Equal("backup-model", configuredACP.Model)
+}
+
 // TestSynthesisAllFailedRendersHeadSHA covers F11: the all-failed review header
 // must render the head SHA, never the merge base. processSynthesisJob frames the
 // synthesis on the frozen mergeBase..headSHA range, and FormatAllFailedComment

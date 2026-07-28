@@ -223,16 +223,7 @@ func SetConfigValue(cfg any, key string, value string) error {
 		return fmt.Errorf("expected pointer to struct, got %s", v.Kind())
 	}
 
-	field, err := FindOrCreateFieldByTOMLKey(v, key)
-	if err != nil {
-		return err
-	}
-
-	if !field.CanSet() {
-		return fmt.Errorf("cannot set field for key %q", key)
-	}
-
-	return setFieldValue(field, value)
+	return setFieldByTOMLKey(v, key, value)
 }
 
 // ListConfigKeys returns all non-zero values from a config struct as key-value pairs.
@@ -333,6 +324,11 @@ func MergedConfigWithOrigin(global *Config, repo *RepoConfig, rawGlobal, rawRepo
 			result = append(result, KeyValueOrigin{Key: kv.Key, Value: repoValMap[kv.Key], Origin: "local"})
 			continue
 		}
+		// A repo ACP table replaces the complete same-name global entry, so
+		// omitted fields must not leak through from the global agent.
+		if acpAgentKey, ok := acpAgentTableKey(kv.Key); ok && IsKeyInTOMLFile(rawRepo, acpAgentKey) {
+			continue
+		}
 
 		if origin, ok := determineOrigin(kv.Key, kv.Value, defaultMap[kv.Key], rawGlobal); ok {
 			result = append(result, KeyValueOrigin{Key: kv.Key, Value: kv.Value, Origin: origin})
@@ -356,6 +352,14 @@ func MergedConfigWithOrigin(global *Config, repo *RepoConfig, rawGlobal, rawRepo
 	}
 
 	return result
+}
+
+func acpAgentTableKey(key string) (string, bool) {
+	parts := strings.Split(key, ".")
+	if len(parts) < 3 || parts[0] != "acp" || parts[1] == "" {
+		return "", false
+	}
+	return strings.Join(parts[:2], "."), true
 }
 
 // FindFieldByTOMLKey locates a struct field by its TOML tag, supporting dot notation.
@@ -440,6 +444,9 @@ func findFieldByTOMLKey(v reflect.Value, key string, initPointers bool) (reflect
 
 		// If there's a remaining dot path, recurse into nested struct
 		if len(parts) == 2 {
+			if fieldVal.Type() == reflect.TypeFor[ACPAgentConfigs]() {
+				return findACPMapFieldByTOMLKey(fieldVal, parts[1], initPointers)
+			}
 			nested, ok := nestedStructValue(fieldVal, initPointers)
 			if ok {
 				return findFieldByTOMLKey(nested, parts[1], initPointers)
@@ -451,6 +458,90 @@ func findFieldByTOMLKey(v reflect.Value, key string, initPointers bool) (reflect
 	}
 
 	return reflect.Value{}, unknownConfigKeyError{key: key}
+}
+
+func findACPMapFieldByTOMLKey(
+	fieldVal reflect.Value,
+	key string,
+	initMap bool,
+) (reflect.Value, error) {
+	parts := strings.SplitN(key, ".", 2)
+	if parts[0] == "" || len(parts) != 2 {
+		return reflect.Value{}, unknownConfigKeyError{key: "acp." + key}
+	}
+	if fieldVal.IsNil() && initMap && fieldVal.CanSet() {
+		fieldVal.Set(reflect.MakeMap(fieldVal.Type()))
+	}
+	entry := fieldVal.MapIndex(reflect.ValueOf(parts[0]))
+	if !entry.IsValid() {
+		entry = reflect.New(fieldVal.Type().Elem()).Elem()
+	}
+	return findFieldByTOMLKey(entry, parts[1], false)
+}
+
+func setFieldByTOMLKey(v reflect.Value, key, value string) error {
+	parts := strings.SplitN(key, ".", 2)
+	tagName := parts[0]
+	t := v.Type()
+	for i := 0; i < t.NumField(); i++ {
+		field := t.Field(i)
+		fieldVal := v.Field(i)
+
+		if isInlineEmbeddedStructField(field) {
+			nested, ok := nestedStructValue(fieldVal, true)
+			if !ok {
+				continue
+			}
+			err := setFieldByTOMLKey(nested, key, value)
+			if err == nil {
+				return nil
+			}
+			if !isUnknownConfigKeyError(err) {
+				return err
+			}
+			continue
+		}
+
+		if getTOMLKey(field) != tagName {
+			continue
+		}
+		if len(parts) == 1 {
+			if !fieldVal.CanSet() {
+				return fmt.Errorf("cannot set field for key %q", key)
+			}
+			return setFieldValue(fieldVal, value)
+		}
+		if fieldVal.Type() == reflect.TypeFor[ACPAgentConfigs]() {
+			return setACPMapFieldByTOMLKey(fieldVal, parts[1], value)
+		}
+		nested, ok := nestedStructValue(fieldVal, true)
+		if !ok {
+			return fmt.Errorf("key %q: %q is not a nested struct", key, tagName)
+		}
+		return setFieldByTOMLKey(nested, parts[1], value)
+	}
+	return unknownConfigKeyError{key: key}
+}
+
+func setACPMapFieldByTOMLKey(fieldVal reflect.Value, key, value string) error {
+	parts := strings.SplitN(key, ".", 2)
+	if parts[0] == "" || len(parts) != 2 {
+		return unknownConfigKeyError{key: "acp." + key}
+	}
+	if fieldVal.IsNil() {
+		fieldVal.Set(reflect.MakeMap(fieldVal.Type()))
+	}
+	mapKey := reflect.ValueOf(parts[0])
+	entry := fieldVal.MapIndex(mapKey)
+	entryCopy := reflect.New(fieldVal.Type().Elem()).Elem()
+	if entry.IsValid() {
+		entryCopy.Set(entry)
+	}
+	if err := setFieldByTOMLKey(entryCopy, parts[1], value); err != nil {
+		return err
+	}
+	fieldVal.SetMapIndex(mapKey, entryCopy)
+	return nil
 }
 
 // formatValue converts a reflect.Value to its string representation
@@ -743,6 +834,16 @@ func flattenStruct(v reflect.Value, prefix string, includeZero bool) []KeyValue 
 		}
 		if fieldVal.Kind() == reflect.Struct {
 			result = append(result, flattenStruct(fieldVal, fullKey, includeZero)...)
+			continue
+		}
+		if fieldVal.Type() == reflect.TypeFor[ACPAgentConfigs]() {
+			keys := fieldVal.MapKeys()
+			sort.Slice(keys, func(i, j int) bool { return keys[i].String() < keys[j].String() })
+			for _, key := range keys {
+				result = append(result, flattenStruct(
+					fieldVal.MapIndex(key), fullKey+"."+key.String(), includeZero,
+				)...)
+			}
 			continue
 		}
 

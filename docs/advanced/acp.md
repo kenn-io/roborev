@@ -54,7 +54,7 @@ end-to-end communication:
 
 ```bash
 which codex-acp          # or your configured command
-roborev review HEAD
+roborev review HEAD --agent codex-acp --panel none
 ```
 
 ## Custom ACP Agents
@@ -252,6 +252,20 @@ The subtable key is the agent name. It must not be empty or collide with a
 built-in agent name or alias. In repository configuration, an `[acp.<name>]`
 entry replaces the complete global entry with the same name; other global ACP
 entries remain available.
+
+The earlier singleton format is no longer accepted. Move the old `name` value
+into the table header:
+
+```toml
+# Before
+[acp]
+name = "my-agent"
+command = "my-acp"
+
+# After
+[acp.my-agent]
+command = "my-acp"
+```
 
 ## Modes
 

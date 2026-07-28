@@ -996,7 +996,7 @@ func TestResolveACPAgentConfigFromConfigMergesByName(t *testing.T) {
 func TestResolveACPAgentConfigsFromConfigReturnsIndependentMerge(t *testing.T) {
 	global := &Config{ACP: ACPAgentConfigs{
 		"goose": {Command: "global-goose"},
-		"foo":   {Command: "foo-acp"},
+		"foo":   {Command: "foo-acp", Args: []string{"serve"}},
 	}}
 	repo := &RepoConfig{ACP: ACPAgentConfigs{
 		"goose": {Command: "repo-goose"},
@@ -1005,11 +1005,28 @@ func TestResolveACPAgentConfigsFromConfigReturnsIndependentMerge(t *testing.T) {
 	merged := ResolveACPAgentConfigsFromConfig(repo, global)
 	assert.Equal(t, ACPAgentConfigs{
 		"goose": {Command: "repo-goose"},
-		"foo":   {Command: "foo-acp"},
+		"foo":   {Command: "foo-acp", Args: []string{"serve"}},
 	}, merged)
 
 	merged["foo"] = ACPAgentConfig{Command: "changed"}
 	assert.Equal(t, "foo-acp", global.ACP["foo"].Command)
+	merged = ResolveACPAgentConfigsFromConfig(repo, global)
+	merged["foo"].Args[0] = "changed"
+	assert.Equal(t, "serve", global.ACP["foo"].Args[0])
+}
+
+func TestLoadConfigRejectsLegacyACPShapeWithMigrationHint(t *testing.T) {
+	legacy := []byte("[acp]\nname = \"goose\"\ncommand = \"goose\"\n")
+
+	globalPath := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(globalPath, legacy, 0o600))
+	_, err := LoadGlobalFrom(globalPath)
+	require.ErrorContains(t, err, "move it to [acp.goose]")
+
+	repo := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repo, ".roborev.toml"), legacy, 0o644))
+	_, err = LoadRepoConfig(repo)
+	require.ErrorContains(t, err, "move it to [acp.goose]")
 }
 
 func TestLoadGlobalNamedACPAgent(t *testing.T) {

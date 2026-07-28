@@ -543,6 +543,9 @@ func LoadGlobalFrom(path string) (*Config, error) {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return cfg, nil
 	}
+	if err := rejectLegacyACPConfig(path); err != nil {
+		return nil, err
+	}
 
 	md, err := toml.DecodeFile(path, cfg)
 	if err != nil {
@@ -653,6 +656,9 @@ func LoadRepoConfig(repoPath string) (*RepoConfig, error) {
 	if _, err := os.Stat(path); os.IsNotExist(err) {
 		return nil, nil // No repo config
 	}
+	if err := rejectLegacyACPConfig(path); err != nil {
+		return nil, err
+	}
 
 	var cfg RepoConfig
 	if _, err := toml.DecodeFile(path, &cfg); err != nil {
@@ -660,6 +666,32 @@ func LoadRepoConfig(repoPath string) (*RepoConfig, error) {
 	}
 
 	return &cfg, nil
+}
+
+func rejectLegacyACPConfig(path string) error {
+	raw := make(map[string]any)
+	if _, err := toml.DecodeFile(path, &raw); err != nil {
+		return err
+	}
+	acp, ok := raw["acp"].(map[string]any)
+	if !ok {
+		return nil
+	}
+	for _, value := range acp {
+		if _, namedTable := value.(map[string]any); namedTable {
+			continue
+		}
+		name, _ := acp["name"].(string)
+		name = strings.TrimSpace(name)
+		if name == "" {
+			name = "<name>"
+		}
+		return fmt.Errorf(
+			"legacy [acp] configuration is no longer supported; move it to [acp.%s] and remove the name field",
+			name,
+		)
+	}
+	return nil
 }
 
 // ValidateRepoConfig returns any repo-config load or parse error for repoPath.
@@ -1287,12 +1319,12 @@ func ResolveACPAgentConfigFromConfig(
 	}
 	if repoCfg != nil {
 		if cfg, ok := repoCfg.ACP[name]; ok {
-			return cfg, true
+			return cloneACPAgentConfig(cfg), true
 		}
 	}
 	if globalCfg != nil {
 		cfg, ok := globalCfg.ACP[name]
-		return cfg, ok
+		return cloneACPAgentConfig(cfg), ok
 	}
 	return ACPAgentConfig{}, false
 }
@@ -1309,14 +1341,25 @@ func ResolveACPAgentConfigsFromConfig(
 	if globalCfg != nil && len(globalCfg.ACP) > 0 {
 		resolved = make(ACPAgentConfigs, len(globalCfg.ACP))
 		maps.Copy(resolved, globalCfg.ACP)
+		for name, cfg := range resolved {
+			resolved[name] = cloneACPAgentConfig(cfg)
+		}
 	}
 	if repoCfg != nil && len(repoCfg.ACP) > 0 {
 		if resolved == nil {
 			resolved = make(ACPAgentConfigs, len(repoCfg.ACP))
 		}
 		maps.Copy(resolved, repoCfg.ACP)
+		for name, cfg := range repoCfg.ACP {
+			resolved[name] = cloneACPAgentConfig(cfg)
+		}
 	}
 	return resolved
+}
+
+func cloneACPAgentConfig(cfg ACPAgentConfig) ACPAgentConfig {
+	cfg.Args = slices.Clone(cfg.Args)
+	return cfg
 }
 
 // SaveGlobal saves the global configuration
