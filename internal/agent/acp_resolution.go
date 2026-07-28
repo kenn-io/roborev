@@ -59,21 +59,14 @@ func configuredACPAgentFromConfig(
 }
 
 func configuredACPAgentWithConfig(name string, acpCfg *config.ACPAgentConfig) (*ACPAgent, error) {
-	name = strings.TrimSpace(name)
-	if name == "" {
-		return nil, fmt.Errorf("empty ACP agent name")
+	candidate := config.ACPAgentConfig{}
+	if acpCfg != nil {
+		candidate = *acpCfg
 	}
-	canonical := resolveAlias(name)
-	registryMu.RLock()
-	_, registered := registry[canonical]
-	registryMu.RUnlock()
-	if canonical != name || registered {
-		return nil, fmt.Errorf("ACP agent name %q conflicts with built-in agent %q", name, canonical)
+	if err := config.ValidateACPAgentConfig(name, candidate); err != nil {
+		return nil, err
 	}
-	if acpCfg == nil || strings.TrimSpace(acpCfg.Command) == "" {
-		return nil, fmt.Errorf("ACP agent %q requires a command", name)
-	}
-	return NewACPAgentFromConfig(name, acpCfg), nil
+	return NewACPAgentFromConfig(name, &candidate), nil
 }
 
 // resolveAvailableBackupWithConfig returns the first backup agent whose

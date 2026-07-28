@@ -18,6 +18,7 @@ import (
 	tomlv2 "github.com/pelletier/go-toml/v2"
 	gitrepo "go.kenn.io/kit/git/repo"
 
+	"go.kenn.io/roborev/internal/agentname"
 	"go.kenn.io/roborev/internal/git"
 )
 
@@ -314,6 +315,35 @@ type ACPAgentConfig struct {
 	Timeout                int    `toml:"timeout"` // Command timeout in seconds (default: 600)
 }
 
+// ValidateACPAgentConfig validates one named ACP entry. Agent construction
+// calls the same function so loading and runtime selection cannot disagree.
+func ValidateACPAgentConfig(name string, cfg ACPAgentConfig) error {
+	rawName := name
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return fmt.Errorf("empty ACP agent name")
+	}
+	if name != rawName {
+		return fmt.Errorf("ACP agent name %q must not contain surrounding whitespace", rawName)
+	}
+	if canonical, builtIn := agentname.BuiltIn(name); builtIn {
+		return fmt.Errorf("ACP agent name %q conflicts with built-in agent %q", name, canonical)
+	}
+	if strings.TrimSpace(cfg.Command) == "" {
+		return fmt.Errorf("ACP agent %q requires a command", name)
+	}
+	return nil
+}
+
+func validateACPAgentConfigs(configs ACPAgentConfigs) error {
+	for _, name := range slices.Sorted(maps.Keys(configs)) {
+		if err := ValidateACPAgentConfig(name, configs[name]); err != nil {
+			return err
+		}
+	}
+	return nil
+}
+
 // RepoConfig holds per-repo overrides
 type RepoConfig struct {
 	Agent                           string   `toml:"agent" comment:"Default agent for this repo when no workflow-specific agent is set."`
@@ -554,6 +584,9 @@ func LoadGlobalFrom(path string) (*Config, error) {
 
 	// Migrate deprecated config keys
 	cfg.migrateDeprecated(md)
+	if err := validateACPAgentConfigs(cfg.ACP); err != nil {
+		return nil, fmt.Errorf("config: %w", err)
+	}
 
 	if err := cfg.CI.NormalizeInstallations(); err != nil {
 		return nil, fmt.Errorf("config: %w", err)
@@ -663,6 +696,9 @@ func LoadRepoConfig(repoPath string) (*RepoConfig, error) {
 	var cfg RepoConfig
 	if _, err := toml.DecodeFile(path, &cfg); err != nil {
 		return nil, err
+	}
+	if err := validateACPAgentConfigs(cfg.ACP); err != nil {
+		return nil, fmt.Errorf("config: %w", err)
 	}
 
 	return &cfg, nil
@@ -786,6 +822,9 @@ func LoadRepoConfigFromRef(repoPath, ref string) (*RepoConfig, error) {
 	var cfg RepoConfig
 	if _, err := toml.Decode(string(data), &cfg); err != nil {
 		return nil, &ConfigParseError{Ref: ref, Err: err}
+	}
+	if err := validateACPAgentConfigs(cfg.ACP); err != nil {
+		return nil, fmt.Errorf("config at %s: %w", ref, err)
 	}
 	return &cfg, nil
 }
@@ -960,6 +999,9 @@ func loadRepoConfigFile(path string) (*RepoConfig, error) {
 	var cfg RepoConfig
 	if _, err := toml.DecodeFile(path, &cfg); err != nil {
 		return nil, err
+	}
+	if err := validateACPAgentConfigs(cfg.ACP); err != nil {
+		return nil, fmt.Errorf("config: %w", err)
 	}
 	return &cfg, nil
 }

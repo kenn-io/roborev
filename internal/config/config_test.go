@@ -1047,6 +1047,40 @@ model = "configured-model"
 	assert.Equal(t, "configured-model", goose.Model)
 }
 
+func TestLoadConfigRejectsInvalidNamedACPAgents(t *testing.T) {
+	tests := []struct {
+		name      string
+		toml      string
+		wantError string
+	}{
+		{name: "empty name", toml: "[acp.\"\"]\ncommand = \"goose\"\n", wantError: "empty ACP agent name"},
+		{name: "missing command", toml: "[acp.goose]\nargs = [\"acp\"]\n", wantError: "requires a command"},
+		{name: "built-in", toml: "[acp.codex]\ncommand = \"goose\"\n", wantError: "conflicts with built-in agent"},
+		{name: "alias", toml: "[acp.claude]\ncommand = \"goose\"\n", wantError: "conflicts with built-in agent"},
+	}
+
+	for _, scope := range []string{"global", "repository"} {
+		for _, tc := range tests {
+			t.Run(scope+"/"+tc.name, func(t *testing.T) {
+				dir := t.TempDir()
+				path := filepath.Join(dir, "config.toml")
+				if scope == "repository" {
+					path = filepath.Join(dir, ".roborev.toml")
+				}
+				require.NoError(t, os.WriteFile(path, []byte(tc.toml), 0o600))
+
+				var err error
+				if scope == "global" {
+					_, err = LoadGlobalFrom(path)
+				} else {
+					_, err = LoadRepoConfig(dir)
+				}
+				require.ErrorContains(t, err, tc.wantError)
+			})
+		}
+	}
+}
+
 func TestIsCommitMessageExcluded(t *testing.T) {
 	tests := []struct {
 		name       string

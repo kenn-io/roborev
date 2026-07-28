@@ -5,6 +5,7 @@ import (
 	"slices"
 	"strings"
 
+	"go.kenn.io/roborev/internal/agentname"
 	"go.kenn.io/roborev/internal/config"
 )
 
@@ -202,11 +203,7 @@ func buildFallbackAgentOrder(specs []agentSpec) []string {
 }
 
 func resolveAlias(name string) string {
-	name = strings.TrimSpace(name)
-	if spec, ok := agentSpecsByName[name]; ok {
-		return spec.Name
-	}
-	return name
+	return agentname.Canonical(name)
 }
 
 func commandOverrideForAgent(name string, cfg *config.Config) string {

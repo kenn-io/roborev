@@ -6,6 +6,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/agentname"
 	"go.kenn.io/roborev/internal/config"
 )
 
@@ -13,6 +14,9 @@ func TestAgentSpecsResolveAliasesAndCanonicalNames(t *testing.T) {
 	t.Parallel()
 
 	for _, spec := range allAgentSpecs {
+		canonical, builtIn := agentname.BuiltIn(spec.Name)
+		assert.True(t, builtIn, "agent spec must be reserved from named ACP configuration: %s", spec.Name)
+		assert.Equal(t, spec.Name, canonical)
 		assert.Equal(t, spec.Name, resolveAlias(spec.Name), "canonical name should resolve to itself: %s", spec.Name)
 		for _, alias := range spec.Aliases {
 			assert.Equal(t, spec.Name, resolveAlias(alias), "alias %s should resolve to %s", alias, spec.Name)
