@@ -606,7 +606,7 @@ synthesis_agent = "test"
 		"lookahead member should resolve its model from [analyze.lookahead]")
 }
 
-func TestEnqueuePanelOmittedMemberAgentAutoDetectsAvailableAgent(t *testing.T) {
+func TestEnqueuePanelOmittedMemberAgentAutoDetectDoesNotInheritRequestedModel(t *testing.T) {
 	if runtime.GOOS == "windows" {
 		t.Skip("minimal PATH setup uses POSIX symlink")
 	}
@@ -648,12 +648,14 @@ synthesis_agent = "test"
 	resp := enqueuePanelViaHTTP(t, server, EnqueueRequest{
 		RepoPath: repo.Path(),
 		GitRef:   "HEAD",
+		Model:    "top-level-model",
 	})
 
 	members, err := db.GetPanelMembers(resp.PanelRunUUID)
 	require.NoError(t, err)
 	require.Len(t, members, 1)
 	assert.Equal("panel-auto-detected", members[0].Agent)
+	assert.Empty(members[0].Model)
 }
 
 // TestEnqueuePanelSynthesisBackupPersisted verifies a panel's
