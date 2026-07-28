@@ -108,3 +108,16 @@ the current repository and record only behavioral success or sanitized errors.
 Update the ACP guide, agent overview, configuration documentation, command
 reference where necessary, and changelog. Examples will use `[acp.<name>]` and
 will explain name-based repository overrides.
+
+The ACP guide will include complete Goose examples for:
+
+- installing the CLI through mise;
+- authenticating the `chatgpt-codex` provider with a ChatGPT subscription;
+- registering `goose acp` as `[acp.goose]`;
+- selecting Goose for one review with `--agent goose`;
+- choosing Goose as a workflow default or backup; and
+- overriding the global Goose entry for one repository without discarding
+  unrelated global ACP agents.
+
+Examples must not include tokens, credential-file contents, machine-specific
+paths, or a hard-coded model that can drift from Goose's configured default.
