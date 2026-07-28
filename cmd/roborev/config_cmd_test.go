@@ -592,6 +592,20 @@ func TestGetAndListNamedACPAgent(t *testing.T) {
 	assert.Contains(t, output, "acp.goose.args=acp")
 }
 
+func TestGetMergedNamedACPAgentDoesNotFallBackWithinReplacedEntry(t *testing.T) {
+	env := setupConfigEnv(t, strings.Join([]string{
+		`[acp.goose]`,
+		`command = "global-goose"`,
+		`model = "global-model"`,
+	}, "\n")+"\n", strings.Join([]string{
+		`[acp.goose]`,
+		`command = "repo-goose"`,
+	}, "\n")+"\n")
+
+	_, err := getValueForScope(env.Resolver, "acp.goose.model", scopeMerged)
+	require.ErrorContains(t, err, `key "acp.goose.model" is not set in local config`)
+}
+
 func TestListLocalConfigExplicitKeys(t *testing.T) {
 	env := setupConfigEnv(t, "", strings.Join([]string{
 		`agent = "claude-code"`,

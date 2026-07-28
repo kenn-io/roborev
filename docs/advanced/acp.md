@@ -99,7 +99,12 @@ Register the stdio ACP server in `~/.roborev/config.toml`:
 [acp.goose]
 command = "goose"
 args = ["acp"]
+disable_mode_negotiation = true
 ```
+
+Goose does not expose ACP session modes, so its entry must disable mode
+negotiation. roborev still enforces read-only file and terminal permissions for
+review flows.
 
 Run one single-agent review with Goose:
 
@@ -117,6 +122,7 @@ review_backup_agent = "codex"
 [acp.goose]
 command = "goose"
 args = ["acp"]
+disable_mode_negotiation = true
 ```
 
 Multiple ACP agents can coexist. Each subtable key is the name passed to
@@ -126,6 +132,7 @@ Multiple ACP agents can coexist. Each subtable key is the name passed to
 [acp.goose]
 command = "goose"
 args = ["acp"]
+disable_mode_negotiation = true
 
 [acp.foo]
 command = "foo-acp"
@@ -138,6 +145,7 @@ A repository can replace one global entry without hiding the others. This
 [acp.goose]
 command = "/opt/project/bin/goose-wrapper"
 args = ["acp"]
+disable_mode_negotiation = true
 ```
 
 ### Example: Model-Selectable Gemini via a Bridge

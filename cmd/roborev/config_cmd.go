@@ -210,16 +210,24 @@ func getValueForScope(resolver RepoResolver, key string, scope configScope) (str
 			if err != nil {
 				return "", fmt.Errorf("load repo config: %w", err)
 			}
-			if raw != nil && config.IsKeyInTOMLFile(raw, key) {
-				repoCfg, err := config.LoadRepoConfig(repoPath)
-				if err != nil {
-					return "", fmt.Errorf("load repo config: %w", err)
+			if raw != nil {
+				if config.IsKeyInTOMLFile(raw, key) {
+					repoCfg, err := config.LoadRepoConfig(repoPath)
+					if err != nil {
+						return "", fmt.Errorf("load repo config: %w", err)
+					}
+					val, err := config.GetConfigValue(repoCfg, key)
+					if err != nil {
+						return "", err
+					}
+					return val, nil
 				}
-				val, err := config.GetConfigValue(repoCfg, key)
-				if err != nil {
-					return "", err
+
+				parts := strings.SplitN(key, ".", 3)
+				if len(parts) == 3 && parts[0] == "acp" &&
+					config.IsKeyInTOMLFile(raw, strings.Join(parts[:2], ".")) {
+					return "", fmt.Errorf("key %q is not set in local config", key)
 				}
-				return val, nil
 			}
 		}
 		// Key not found in local config — check if it's a repo-only key

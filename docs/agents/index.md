@@ -252,6 +252,7 @@ command = "codex-acp"
 [acp.goose]
 command = "goose"
 args = ["acp"]
+disable_mode_negotiation = true
 ```
 
 The subtable key is the agent name, so these entries can be selected with
