@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"database/sql"
 	"testing"
 	"time"
 
@@ -464,6 +465,36 @@ func TestBackfillVerdictBool(t *testing.T) {
 	count, err = db.BackfillVerdictBool()
 	require.NoError(t, err)
 	assert.Equal(t, 0, count)
+}
+
+// Older CompleteFixJob stored verdict_bool even for empty outputs. Listings
+// rely on non-NULL verdict_bool implying a non-empty output, so the startup
+// backfill pass must clear those legacy rows.
+func TestBackfillVerdictBoolClearsEmptyOutputVerdicts(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, "/tmp/backfill-clear-repo")
+	commit := createCommit(t, db, repo.ID, "clear123")
+	job := enqueueJob(t, db, repo.ID, commit.ID, "clear123")
+	claimJob(t, db, "w1")
+	require.NoError(t, db.CompleteJob(job.ID, "codex", "p", "No issues found."))
+
+	// Simulate a legacy empty-output row that still carries a verdict.
+	_, err := db.Exec(`UPDATE reviews SET output = '', verdict_bool = 0 WHERE job_id = ?`, job.ID)
+	require.NoError(t, err)
+
+	count, err := db.BackfillVerdictBool()
+	require.NoError(t, err)
+	assert.Equal(t, 1, count)
+
+	var vb sql.NullInt64
+	require.NoError(t, db.QueryRow(`SELECT verdict_bool FROM reviews WHERE job_id = ?`, job.ID).Scan(&vb))
+	assert.False(t, vb.Valid, "empty-output rows must not keep a verdict")
+
+	count, err = db.BackfillVerdictBool()
+	require.NoError(t, err)
+	assert.Equal(t, 0, count, "normalization is idempotent")
 }
 
 func TestPercentile(t *testing.T) {

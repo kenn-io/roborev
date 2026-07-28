@@ -660,10 +660,16 @@ func (db *DB) CompleteFixJob(jobID int64, agent, prompt, output, patch string) e
 		return nil // Job was canceled
 	}
 
-	verdictBool := verdictToBool(ParseVerdict(finalOutput))
+	// Only store a verdict for non-empty output, matching CompleteJob:
+	// listings treat a non-NULL verdict_bool as proof that a non-empty
+	// review output exists and skip reading the output column.
+	var verdictBoolVal any
+	if finalOutput != "" {
+		verdictBoolVal = verdictToBool(ParseVerdict(finalOutput))
+	}
 	_, err = conn.ExecContext(ctx,
 		`INSERT INTO reviews (job_id, agent, prompt, output, verdict_bool, uuid, updated_by_machine_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
-		jobID, agent, prompt, finalOutput, verdictBool, reviewUUID, machineID, now)
+		jobID, agent, prompt, finalOutput, verdictBoolVal, reviewUUID, machineID, now)
 	if err != nil {
 		return err
 	}
@@ -1237,13 +1243,18 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 	// The review output is only needed to parse a verdict for legacy rows
 	// where verdict_bool is NULL (e.g. synced from older machines); rows with
 	// a stored verdict skip the large TEXT payload and pass the existence
-	// flag instead.
+	// flag instead. Both expressions must stay lazy CASEs: evaluating
+	// rv.output at all (even just != '') materializes the full text, so the
+	// flag returns 1 straight from verdict_bool — writers and the startup
+	// backfill guarantee a non-NULL verdict implies a non-empty output.
 	query := `
 		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.ci_base_branch, j.session_id, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, ` + promptExpr + `, j.retry_count,
 		       COALESCE(j.agentic, 0), COALESCE(j.prompt_prebuilt, 0), r.root_path, r.name, c.subject, rv.closed,
 		       CASE WHEN rv.verdict_bool IS NULL THEN rv.output ELSE '' END,
-		       rv.verdict_bool, COALESCE(rv.output != '', 0), j.source_machine_id, j.uuid, j.model, j.job_type, j.review_type, j.patch_id, COALESCE(j.output_prefix, ''),
+		       rv.verdict_bool,
+		       CASE WHEN rv.verdict_bool IS NOT NULL THEN 1 ELSE COALESCE(rv.output != '', 0) END,
+		       j.source_machine_id, j.uuid, j.model, j.job_type, j.review_type, j.patch_id, COALESCE(j.output_prefix, ''),
 		       j.parent_job_id, j.provider, j.requested_model, j.requested_provider, j.token_usage, COALESCE(j.worktree_path, ''),
 		       j.command_line, j.dirty_files, COALESCE(j.min_severity, ''), COALESCE(j.backup_agent, ''), COALESCE(j.backup_model, ''),
 		       COALESCE(j.skip_reason, ''), COALESCE(j.source, ''),

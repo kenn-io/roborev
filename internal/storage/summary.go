@@ -495,8 +495,20 @@ func summaryFailures(q querier, where string, args []any) (FailureStats, error) 
 }
 
 // BackfillVerdictBool populates verdict_bool for reviews that have output
-// but a NULL verdict_bool. Returns the number of rows updated.
+// but a NULL verdict_bool, and clears verdict_bool on empty-output rows
+// (written by older CompleteFixJob versions). Listings rely on a non-NULL
+// verdict_bool implying a non-empty output so they can skip reading the
+// output column. Returns the number of rows updated.
 func (db *DB) BackfillVerdictBool() (int, error) {
+	cleared, err := db.Exec(`UPDATE reviews SET verdict_bool = NULL WHERE verdict_bool IS NOT NULL AND output = ''`)
+	if err != nil {
+		return 0, err
+	}
+	clearedCount, err := cleared.RowsAffected()
+	if err != nil {
+		return 0, err
+	}
+
 	rows, err := db.Query(`
 		SELECT rv.id, rv.output
 		FROM reviews rv
@@ -528,7 +540,7 @@ func (db *DB) BackfillVerdictBool() (int, error) {
 	}
 
 	if len(updates) == 0 {
-		return 0, nil
+		return int(clearedCount), nil
 	}
 
 	tx, err := db.Begin()
@@ -552,7 +564,7 @@ func (db *DB) BackfillVerdictBool() (int, error) {
 	if err := tx.Commit(); err != nil {
 		return 0, err
 	}
-	return len(updates), nil
+	return len(updates) + int(clearedCount), nil
 }
 
 // categorizeError maps error messages to categories.

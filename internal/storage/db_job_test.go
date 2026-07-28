@@ -2044,3 +2044,22 @@ func TestEnqueuePostCommitJobAllowsCanceledReplacement(t *testing.T) {
 	assert.Nil(t, again)
 	assert.True(t, duplicate)
 }
+
+// Listings treat a non-NULL verdict_bool as proof that a non-empty review
+// output exists (so they can skip reading the output column). An empty-output
+// completion must therefore leave verdict_bool NULL, matching CompleteJob.
+func TestCompleteFixJobEmptyOutputLeavesVerdictNull(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, "/tmp/fix-empty-output-repo")
+	commit := createCommit(t, db, repo.ID, "fix123")
+	job := enqueueJob(t, db, repo.ID, commit.ID, "fix123")
+	claimJob(t, db, "w1")
+
+	require.NoError(t, db.CompleteFixJob(job.ID, "codex", "p", "", "patch content"))
+
+	var vb sql.NullInt64
+	require.NoError(t, db.QueryRow(`SELECT verdict_bool FROM reviews WHERE job_id = ?`, job.ID).Scan(&vb))
+	assert.False(t, vb.Valid, "empty output must not store a verdict")
+}
