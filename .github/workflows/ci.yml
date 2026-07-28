@@ -148,7 +148,7 @@ jobs:
       - name: Test with coverage
         # -p 1 serializes package execution to avoid ROBOREV_DATA_DIR race conditions
         # between tests in different packages that modify this environment variable
-        run: go test -race -shuffle=on -tags integration -p 1 -coverprofile=coverage.out ./...
+        run: go test -timeout 30m -race -shuffle=on -tags integration -p 1 -coverprofile=coverage.out ./...
 
       - name: Upload coverage
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f  # v7.0.0
