@@ -35,8 +35,7 @@ Set `command` to the wrapper binary in your ACP config:
 
 ```toml
 # ~/.roborev/config.toml
-[acp]
-name = "codex-acp"
+[acp.codex-acp]
 command = "codex-acp"
 ```
 
@@ -65,13 +64,81 @@ its path:
 
 ```toml
 # ~/.roborev/config.toml
-[acp]
-name = "my-agent"
+[acp.my-agent]
 command = "/usr/local/bin/my-acp-agent"
 args = ["--verbose"]
 ```
 
 Once configured, the agent can be selected with `--agent my-agent`.
+
+### Example: Goose with a ChatGPT Subscription
+
+[Goose](https://github.com/aaif-goose/goose) includes a native ACP server and
+can authenticate to OpenAI through a ChatGPT Plus or Pro subscription. Install
+the CLI through mise, then inspect its ACP command:
+
+```bash
+mise use --global --pin github:aaif-goose/goose@latest
+goose --version
+goose acp --help
+```
+
+Run the interactive configuration:
+
+```bash
+goose configure
+```
+
+Choose **Configure Providers**, select **ChatGPT Codex**, and complete the
+browser OAuth flow. Keep Goose's configured default model; roborev does not need
+a duplicate model setting.
+
+Register the stdio ACP server in `~/.roborev/config.toml`:
+
+```toml
+[acp.goose]
+command = "goose"
+args = ["acp"]
+```
+
+Run one single-agent review with Goose:
+
+```bash
+roborev review HEAD --agent goose --panel none
+```
+
+To use Goose for reviews by default while retaining the built-in Codex adapter
+as a backup:
+
+```toml
+review_agent = "goose"
+review_backup_agent = "codex"
+
+[acp.goose]
+command = "goose"
+args = ["acp"]
+```
+
+Multiple ACP agents can coexist. Each subtable key is the name passed to
+`--agent`:
+
+```toml
+[acp.goose]
+command = "goose"
+args = ["acp"]
+
+[acp.foo]
+command = "foo-acp"
+```
+
+A repository can replace one global entry without hiding the others. This
+`.roborev.toml` changes only `goose`; the global `foo` entry remains available:
+
+```toml
+[acp.goose]
+command = "/opt/project/bin/goose-wrapper"
+args = ["acp"]
+```
 
 ### Example: Model-Selectable Gemini via a Bridge
 
@@ -84,8 +151,7 @@ changes required. One such bridge is
 
 ```toml
 # ~/.roborev/config.toml or .roborev.toml
-[acp]
-name = "agy-sdk"
+[acp.agy-sdk]
 command = "agy-acp"
 model = "gemini-3.5-flash"
 ```
@@ -109,8 +175,7 @@ environment). To make the values explicit regardless of how the agent is
 launched, inject them with an `env` wrapper:
 
 ```toml
-[acp]
-name = "agy-sdk"
+[acp.agy-sdk]
 command = "env"
 args = ["AGY_ACP_VERTEX=1", "AGY_ACP_PROJECT=my-gcp-project", "agy-acp"]
 model = "gemini-3.5-flash"
@@ -124,8 +189,7 @@ there. For credentials, point `command` at a protected wrapper script (e.g.
 the bridge:
 
 ```toml
-[acp]
-name = "agy-sdk"
+[acp.agy-sdk]
 command = "/home/you/.config/roborev/agy-acp-wrapper.sh"
 model = "gemini-3.5-flash"
 ```
@@ -160,11 +224,10 @@ Pick by how you authenticate to Gemini:
 
 ## Configuration Reference
 
-Configure ACP in the `[acp]` section of `~/.roborev/config.toml`:
+Configure each agent in an `[acp.<name>]` subtable of `~/.roborev/config.toml`:
 
 ```toml
-[acp]
-name = "my-agent"                  # Agent name (required)
+[acp.my-agent]                     # Select with --agent my-agent
 command = "/usr/local/bin/my-acp"  # ACP agent command (required)
 args = ["--verbose"]               # Additional arguments
 model = "my-model"                 # Default model
@@ -176,7 +239,6 @@ disable_mode_negotiation = false   # Skip SetSessionMode RPC
 
 | Option | Type | Default | Description |
 |--------|------|---------|-------------|
-| `name` | string | (required) | Agent name used in `--agent` flag |
 | `command` | string | (required) | Path or command for the ACP agent binary |
 | `args` | array | `[]` | Additional CLI arguments passed to the agent |
 | `model` | string | | Default model to request from the agent |
@@ -185,6 +247,11 @@ disable_mode_negotiation = false   # Skip SetSessionMode RPC
 | `auto_approve_mode` | string | `"auto-approve"` | Mode value sent for agentic flows |
 | `mode` | string | | Default agent mode (overrides `read_only_mode` unless explicitly opting in) |
 | `disable_mode_negotiation` | bool | `false` | Skip ACP `SetSessionMode` RPC while keeping authorization behavior |
+
+The subtable key is the agent name. It must not be empty or collide with a
+built-in agent name or alias. In repository configuration, an `[acp.<name>]`
+entry replaces the complete global entry with the same name; other global ACP
+entries remain available.
 
 ## Modes
 
@@ -236,12 +303,13 @@ npm install -g @zed-industries/codex-acp
 ### "mode X is not available"
 
 The agent doesn't support the requested session mode. Check which modes the
-agent supports, or set `disable_mode_negotiation = true` in your `[acp]` config.
+agent supports, or set `disable_mode_negotiation = true` in its `[acp.<name>]`
+config.
 
 ### "model X is not available"
 
-The agent doesn't support the requested model. Remove the `model` field from
-your `[acp]` config, or check the agent's documentation for supported model
+The agent doesn't support the requested model. Remove the `model` field from its
+`[acp.<name>]` config, or check the agent's documentation for supported model
 names.
 
 ### Which model wins for an ACP agent?
@@ -249,8 +317,8 @@ names.
 Workflow models follow their paired workflow agent. If `review_agent = "codex"`
 and `review_model = "gpt-5.4"`, selecting a Gemini ACP agent with
 `--agent agy-sdk` does not pass `gpt-5.4` to that agent; the ACP agent keeps its
-`[acp].model` instead. This also applies when the workflow agent is inherited
-from the default agent.
+`[acp.agy-sdk].model` instead. This also applies when the workflow agent is
+inherited from the default agent.
 
 A workflow model does apply when its workflow agent resolves to the selected ACP
 agent. An explicit `--model` wins on the single-agent path (if `default_panel`
@@ -263,7 +331,7 @@ and model served a job, run `roborev show --job <id> --json` and inspect
 Backup models follow the same pairing rule. A global `default_backup_model`
 belongs to `default_backup_agent`; it is not passed to a different ACP agent
 selected by a more-specific workflow or repo backup setting. On a mismatch, the
-selected ACP agent keeps its `[acp].model`. See
+selected ACP agent keeps its `[acp.<name>].model`. See
 [Backup Agents](/configuration/#backup-agents) for the full resolution order.
 
 ### `--agent` is ignored and a panel runs instead

@@ -242,16 +242,20 @@ vs agentic modes.
 
 ACP lets you integrate any agent that speaks the
 [Agent Client Protocol](https://zed.dev/blog/acp), even if roborev doesn't have
-a built-in adapter for it. Configure an ACP agent in the `[acp]` section of
+a built-in adapter for it. Configure one or more named ACP agents in
 `~/.roborev/config.toml`:
 
 ```toml
-[acp]
-name = "codex-acp"
+[acp.codex-acp]
 command = "codex-acp"
+
+[acp.goose]
+command = "goose"
+args = ["acp"]
 ```
 
-Once configured, the ACP agent can be selected with `--agent <name>`.
+The subtable key is the agent name, so these entries can be selected with
+`--agent codex-acp` and `--agent goose`.
 
 See the [Agent Client Protocol (ACP) guide](/advanced/acp/) for setup examples,
 the full configuration reference, mode negotiation, and troubleshooting.

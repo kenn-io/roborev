@@ -5,6 +5,19 @@ description: Release history for roborev
 
 All notable changes to roborev, grouped by minor release.
 
+## Unreleased
+
+**New features**
+
+- ACP configuration now supports multiple named agents through `[acp.<name>]`
+    subtables. Repository entries replace only the matching global agent, and
+    commands, models, backups, CI jobs, and synthesis remain isolated by name.
+    The ACP guide includes an end-to-end Goose example using ChatGPT Codex
+    subscription authentication. See
+    [Agent Client Protocol (ACP)](/advanced/acp/).
+
+______________________________________________________________________
+
 ## 0.63.0
 
 <small>2026-07-16</small>

@@ -481,8 +481,9 @@ with the workflow backup agent resolved from global configuration, and
 This pairing is enforced for ACP backups because ACP agents validate model names
 against their advertised model list. If a more-specific backup setting selects
 an ACP agent but the inherited model belongs to a different backup agent,
-roborev skips the mismatched model and keeps the selected agent's `[acp].model`.
-Explicitly paired backup models and non-ACP backup behavior are unchanged.
+roborev skips the mismatched model and keeps the selected agent's
+`[acp.<name>].model`. Explicitly paired backup models and non-ACP backup
+behavior are unchanged.
 
 ### Agent Command Overrides
 
