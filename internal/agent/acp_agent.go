@@ -65,13 +65,13 @@ func NewACPAgent(command string) *ACPAgent {
 	}
 }
 
-func NewACPAgentFromConfig(config *config.ACPAgentConfig) *ACPAgent {
+func NewACPAgentFromConfig(name string, config *config.ACPAgentConfig) *ACPAgent {
 	if config == nil {
 		return NewACPAgent("")
 	}
 
 	agent := NewACPAgent(config.Command)
-	if agentName := strings.TrimSpace(config.Name); agentName != "" {
+	if agentName := strings.TrimSpace(name); agentName != "" {
 		agent.agentName = agentName
 	}
 	if len(config.Args) > 0 {

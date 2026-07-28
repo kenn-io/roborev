@@ -2078,7 +2078,7 @@ func TestResolveBackupPrefersStoredJobBackup(t *testing.T) {
 // default_backup_model inherited by a workflow-selected ACP backup agent
 // pairs with default_backup_agent (unset here), so persisting it would hand
 // the ACP agent a model it never advertised and the failover attempt would
-// fail again. The guard surfaces [acp].model instead. Non-ACP backups keep
+// fail again. The guard surfaces [acp.<name>].model instead. Non-ACP backups keep
 // legacy inheritance.
 func TestResolveBackupModelSkipsMispairedACPInheritedDefault(t *testing.T) {
 	assert := assert.New(t)
@@ -2086,9 +2086,9 @@ func TestResolveBackupModelSkipsMispairedACPInheritedDefault(t *testing.T) {
 	job := &storage.ReviewJob{Agent: "codex", RepoPath: repoPath}
 
 	// Mispaired: ACP backup agent from review_backup_agent, model inherited
-	// from default_backup_model -> [acp].model wins.
+	// from default_backup_model -> [acp.<name>].model wins.
 	cfg := config.DefaultConfig()
-	cfg.ACP = &config.ACPAgentConfig{Name: "agy-acp", Model: "gemini-3.5-flash"}
+	cfg.ACP = config.ACPAgentConfigs{"agy-acp": {Model: "gemini-3.5-flash"}}
 	cfg.ReviewBackupAgent = "agy-acp"
 	cfg.DefaultBackupModel = "gpt-5.4-mini"
 	pool := NewWorkerPool(nil, NewStaticConfig(cfg), 1, NewBroadcaster(), nil, nil)
@@ -2097,7 +2097,7 @@ func TestResolveBackupModelSkipsMispairedACPInheritedDefault(t *testing.T) {
 	// Same-layer pair: default_backup_agent IS the ACP agent, so the
 	// default_backup_model configured alongside it is honored.
 	cfgPaired := config.DefaultConfig()
-	cfgPaired.ACP = &config.ACPAgentConfig{Name: "agy-acp", Model: "gemini-3.5-flash"}
+	cfgPaired.ACP = config.ACPAgentConfigs{"agy-acp": {Model: "gemini-3.5-flash"}}
 	cfgPaired.DefaultBackupAgent = "agy-acp"
 	cfgPaired.DefaultBackupModel = "gemini-3.0-pro"
 	poolPaired := NewWorkerPool(nil, NewStaticConfig(cfgPaired), 1, NewBroadcaster(), nil, nil)
@@ -2122,7 +2122,7 @@ func TestResolveBackupModelSkipsMispairedACPInheritedDefault(t *testing.T) {
 		0o644,
 	))
 	cfgCross := config.DefaultConfig()
-	cfgCross.ACP = &config.ACPAgentConfig{Name: "agy-acp", Model: "gemini-3.5-flash"}
+	cfgCross.ACP = config.ACPAgentConfigs{"agy-acp": {Model: "gemini-3.5-flash"}}
 	cfgCross.ReviewBackupModel = "gpt-5.4"
 	poolCross := NewWorkerPool(nil, NewStaticConfig(cfgCross), 1, NewBroadcaster(), nil, nil)
 	crossJob := &storage.ReviewJob{Agent: "codex", RepoPath: repoOverridePath}
@@ -2201,11 +2201,11 @@ func TestResolveBackupAgentUsesConfiguredACPName(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 	cfg.ReviewBackupAgent = "my-acp"
-	cfg.ACP = &config.ACPAgentConfig{Name: "my-acp", Command: acpPath}
+	cfg.ACP = config.ACPAgentConfigs{"my-acp": {Command: acpPath}}
 	pool := NewWorkerPool(nil, NewStaticConfig(cfg), 1, NewBroadcaster(), nil, nil)
 	job := &storage.ReviewJob{Agent: "codex", RepoPath: t.TempDir()}
 
-	assert.Equal(t, "acp", pool.resolveBackupAgent(job))
+	assert.Equal(t, "my-acp", pool.resolveBackupAgent(job))
 }
 
 func TestFailOrRetryInner_QuotaSkipsRetries(t *testing.T) {

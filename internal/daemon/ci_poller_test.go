@@ -3119,8 +3119,7 @@ func TestResolveMatrixMemberAgentUsesPassedRepoConfigForACPAvailability(t *testi
 	require.NoError(t, os.WriteFile(acpCmd, []byte("#!/bin/sh\nexit 0\n"), 0o755))
 	t.Setenv("PATH", binDir)
 
-	localConfig := "[acp]\n" +
-		"name = \"branch-acp\"\n" +
+	localConfig := "[acp.branch-acp]\n" +
 		"command = \"missing-local-acp\"\n" +
 		"model = \"local-model\"\n"
 	require.NoError(
@@ -3128,13 +3127,12 @@ func TestResolveMatrixMemberAgentUsesPassedRepoConfigForACPAvailability(t *testi
 		os.WriteFile(filepath.Join(h.RepoPath, ".roborev.toml"), []byte(localConfig), 0o644),
 	)
 
-	repoCfg := &config.RepoConfig{
-		ACP: &config.ACPAgentConfig{
-			Name:    "branch-acp",
+	repoCfg := &config.RepoConfig{ACP: config.ACPAgentConfigs{
+		"branch-acp": {
 			Command: "branch-acp",
 			Model:   "branch-model",
 		},
-	}
+	}}
 
 	resolvedAgent, resolvedModel, err := h.Poller.resolveMatrixMemberAgent(
 		h.Repo,
@@ -3144,7 +3142,7 @@ func TestResolveMatrixMemberAgentUsesPassedRepoConfigForACPAvailability(t *testi
 		"standard",
 	)
 	require.NoError(t, err)
-	assert.Equal(t, "acp", resolvedAgent)
+	assert.Equal(t, "branch-acp", resolvedAgent)
 	assert.Equal(t, "branch-model", resolvedModel)
 }
 

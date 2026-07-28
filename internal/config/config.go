@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"maps"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -291,13 +292,16 @@ type Config struct {
 	// Advanced feature flags
 	Advanced AdvancedConfig `toml:"advanced"`
 
-	// ACP (Agent Client Protocol) configuration
-	ACP *ACPAgentConfig `toml:"acp"`
+	// ACP (Agent Client Protocol) configurations keyed by agent name
+	ACP ACPAgentConfigs `toml:"acp,omitempty"`
 }
 
-// ACPAgentConfig holds configuration for a single ACP agent
+// ACPAgentConfigs holds ACP agent configurations keyed by the name used to
+// select the agent.
+type ACPAgentConfigs map[string]ACPAgentConfig
+
+// ACPAgentConfig holds configuration for a single ACP agent.
 type ACPAgentConfig struct {
-	Name            string   `toml:"name"`              // Agent name (required)
 	Command         string   `toml:"command"`           // ACP agent command (required)
 	Args            []string `toml:"args"`              // Additional arguments for the agent
 	ReadOnlyMode    string   `toml:"read_only_mode"`    // Read-only mode. Valid values depend on the underlying agent, e.g. "plan"
@@ -446,8 +450,8 @@ type RepoConfig struct {
 	// Analysis settings
 	MaxPromptSize int `toml:"max_prompt_size" comment:"Maximum prompt size for this repo before falling back to file paths."` // Max prompt size in bytes before falling back to paths (overrides global default)
 
-	// ACP (Agent Client Protocol) configuration for this repo
-	ACP *ACPAgentConfig `toml:"acp"`
+	// ACP (Agent Client Protocol) configurations for this repo
+	ACP ACPAgentConfigs `toml:"acp,omitempty"`
 }
 
 const (
@@ -1257,45 +1261,62 @@ func ResolveSnapshotDir(repoPath string) (string, error) {
 	return filepath.Join(repoPath, clean), nil
 }
 
-// ResolveACPAgentConfig returns the effective ACP agent configuration for a repo.
-// Priority: repo [acp] config > global [acp] config > nil (no ACP config).
-// Repo-level ACP config completely overrides global ACP config (no merging of individual fields).
-func ResolveACPAgentConfig(repoPath string, globalCfg *Config) *ACPAgentConfig {
-	// Only try repo config if repoPath is non-empty
+// ResolveACPAgentConfig returns the named ACP configuration effective for a
+// repository. A repository entry replaces the complete same-name global entry.
+func ResolveACPAgentConfig(name, repoPath string, globalCfg *Config) (ACPAgentConfig, bool) {
+	var repoCfg *RepoConfig
 	if repoPath != "" {
-		repoCfg, err := LoadRepoConfig(repoPath)
-		if err != nil {
-			// Malformed repo config - fall through to global
-			if IsConfigParseError(err) {
-				// Parse error - skip repo config
-			} else {
-				repoCfg = nil
-			}
-		}
-		if repoCfg != nil && repoCfg.ACP != nil {
-			return repoCfg.ACP
+		loaded, err := LoadRepoConfig(repoPath)
+		if err == nil {
+			repoCfg = loaded
 		}
 	}
-
-	// Fall back to global config
-	if globalCfg != nil && globalCfg.ACP != nil {
-		return globalCfg.ACP
-	}
-
-	return nil
+	return ResolveACPAgentConfigFromConfig(name, repoCfg, globalCfg)
 }
 
 // ResolveACPAgentConfigFromConfig is the config-taking core of
-// ResolveACPAgentConfig. Repo-level ACP config completely overrides global ACP
-// config when present.
-func ResolveACPAgentConfigFromConfig(repoCfg *RepoConfig, globalCfg *Config) *ACPAgentConfig {
-	if repoCfg != nil && repoCfg.ACP != nil {
-		return repoCfg.ACP
+// ResolveACPAgentConfig. It never reads repository configuration from disk.
+func ResolveACPAgentConfigFromConfig(
+	name string,
+	repoCfg *RepoConfig,
+	globalCfg *Config,
+) (ACPAgentConfig, bool) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return ACPAgentConfig{}, false
 	}
-	if globalCfg != nil && globalCfg.ACP != nil {
-		return globalCfg.ACP
+	if repoCfg != nil {
+		if cfg, ok := repoCfg.ACP[name]; ok {
+			return cfg, true
+		}
 	}
-	return nil
+	if globalCfg != nil {
+		cfg, ok := globalCfg.ACP[name]
+		return cfg, ok
+	}
+	return ACPAgentConfig{}, false
+}
+
+// ResolveACPAgentConfigsFromConfig returns every effective named ACP
+// configuration. Repository entries replace complete same-name global entries;
+// unrelated global entries remain available. The returned map is independent
+// of both source configurations.
+func ResolveACPAgentConfigsFromConfig(
+	repoCfg *RepoConfig,
+	globalCfg *Config,
+) ACPAgentConfigs {
+	var resolved ACPAgentConfigs
+	if globalCfg != nil && len(globalCfg.ACP) > 0 {
+		resolved = make(ACPAgentConfigs, len(globalCfg.ACP))
+		maps.Copy(resolved, globalCfg.ACP)
+	}
+	if repoCfg != nil && len(repoCfg.ACP) > 0 {
+		if resolved == nil {
+			resolved = make(ACPAgentConfigs, len(repoCfg.ACP))
+		}
+		maps.Copy(resolved, repoCfg.ACP)
+	}
+	return resolved
 }
 
 // SaveGlobal saves the global configuration

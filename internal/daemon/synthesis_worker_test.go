@@ -339,9 +339,8 @@ func TestConfigureSynthesisAgentKeepsPrimaryModelForConfiguredACPAlias(t *testin
 	require.NoError(t, os.WriteFile(filepath.Join(binDir, acpBinary), []byte("#!/bin/sh\nexit 0\n"), 0o755))
 	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	tc.Pool.cfgGetter.Config().ACP = &config.ACPAgentConfig{
-		Name:    "primary-acp",
-		Command: acpCommand,
+	tc.Pool.cfgGetter.Config().ACP = config.ACPAgentConfigs{
+		"primary-acp": {Command: acpCommand},
 	}
 
 	_, _, synthJob := enqueuePanelRun(t, tc, "configured-acp-panel", []memberSpec{
@@ -360,7 +359,7 @@ func TestConfigureSynthesisAgentKeepsPrimaryModelForConfiguredACPAlias(t *testin
 	configured, agentName, err := tc.Pool.configureSynthesisAgent(testWorkerID, job)
 	require.NoError(t, err)
 
-	assert.Equal("acp", agentName)
+	assert.Equal("primary-acp", agentName)
 	configuredACP, ok := configured.(*agent.ACPAgent)
 	require.True(t, ok)
 	assert.Equal("primary-model", configuredACP.Model)

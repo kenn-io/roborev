@@ -11,7 +11,6 @@ import (
 
 func defaultACPAgentConfig() *config.ACPAgentConfig {
 	return &config.ACPAgentConfig{
-		Name:            defaultACPName,
 		Command:         defaultACPCommand,
 		Args:            []string{},
 		ReadOnlyMode:    defaultACPReadOnlyMode,
@@ -23,76 +22,81 @@ func defaultACPAgentConfig() *config.ACPAgentConfig {
 }
 
 func isConfiguredACPAgentName(name string, cfg *config.Config, repoPath string) bool {
-	return isConfiguredACPAgentNameWithConfig(
-		name, config.ResolveACPAgentConfig(repoPath, cfg),
-	)
+	var repoCfg *config.RepoConfig
+	if strings.TrimSpace(repoPath) != "" {
+		repoCfg, _ = config.LoadRepoConfig(repoPath)
+	}
+	return isConfiguredACPAgentNameFromConfig(name, cfg, repoCfg)
 }
 
 func isConfiguredACPAgentNameFromConfig(name string, cfg *config.Config, repoCfg *config.RepoConfig) bool {
-	return isConfiguredACPAgentNameWithConfig(
-		name, config.ResolveACPAgentConfigFromConfig(repoCfg, cfg),
-	)
-}
-
-func isConfiguredACPAgentNameWithConfig(name string, acpCfg *config.ACPAgentConfig) bool {
 	rawName := strings.TrimSpace(name)
-	if rawName == defaultACPName {
-		return true
-	}
-
-	if acpCfg == nil {
+	if rawName == "" {
 		return false
 	}
+	_, ok := config.ResolveACPAgentConfigFromConfig(rawName, repoCfg, cfg)
+	return ok
+}
 
-	configuredName := strings.TrimSpace(acpCfg.Name)
-	if rawName == "" || configuredName == "" {
-		return false
+func configuredACPAgent(name, repoPath string, cfg *config.Config) (*ACPAgent, error) {
+	var repoCfg *config.RepoConfig
+	if strings.TrimSpace(repoPath) != "" {
+		repoCfg, _ = config.LoadRepoConfig(repoPath)
 	}
-
-	// Exact match only — no alias resolution. This prevents collisions
-	// where an alias like "agent" → "cursor" would incorrectly route
-	// cursor requests to ACP. Callers pass rawPreferred (pre-alias) so
-	// `acp.name = "claude"` matches request "claude" but not "claude-code".
-	return rawName == configuredName
+	return configuredACPAgentFromConfig(name, repoCfg, cfg)
 }
 
-func configuredACPAgent(repoPath string, cfg *config.Config) *ACPAgent {
-	acpCfg := config.ResolveACPAgentConfig(repoPath, cfg)
-	return configuredACPAgentWithConfig(acpCfg)
+func configuredACPAgentFromConfig(
+	name string,
+	repoCfg *config.RepoConfig,
+	cfg *config.Config,
+) (*ACPAgent, error) {
+	acpCfg, ok := config.ResolveACPAgentConfigFromConfig(name, repoCfg, cfg)
+	if !ok {
+		return nil, fmt.Errorf("ACP agent %q is not configured", strings.TrimSpace(name))
+	}
+	return configuredACPAgentWithConfig(name, &acpCfg)
 }
 
-func configuredACPAgentFromConfig(repoCfg *config.RepoConfig, cfg *config.Config) *ACPAgent {
-	acpCfg := config.ResolveACPAgentConfigFromConfig(repoCfg, cfg)
-	return configuredACPAgentWithConfig(acpCfg)
-}
-
-func configuredACPAgentWithConfig(acpCfg *config.ACPAgentConfig) *ACPAgent {
-	resolved := NewACPAgentFromConfig(acpCfg)
-	// Keep a stable canonical name in runtime state.
-	resolved.agentName = defaultACPName
-	return resolved
+func configuredACPAgentWithConfig(name string, acpCfg *config.ACPAgentConfig) (*ACPAgent, error) {
+	name = strings.TrimSpace(name)
+	if name == "" {
+		return nil, fmt.Errorf("empty ACP agent name")
+	}
+	canonical := resolveAlias(name)
+	registryMu.RLock()
+	_, registered := registry[canonical]
+	registryMu.RUnlock()
+	if canonical != name || registered {
+		return nil, fmt.Errorf("ACP agent name %q conflicts with built-in agent %q", name, canonical)
+	}
+	if acpCfg == nil || strings.TrimSpace(acpCfg.Command) == "" {
+		return nil, fmt.Errorf("ACP agent %q requires a command", name)
+	}
+	return NewACPAgentFromConfig(name, acpCfg), nil
 }
 
 // resolveAvailableBackupWithConfig returns the first backup agent whose
-// command resolves to an available binary. A configured ACP backup (the
-// literal "acp" or a custom [acp].name) is resolved through the same
-// configured-ACP path as the preferred agent, so [acp].command is honored
-// instead of requiring the hardcoded acp-agent binary on PATH.
+// command resolves to an available binary. Named ACP backups resolve through
+// their own configuration entry.
 func resolveAvailableBackupWithConfig(
 	preferred string,
 	backups []string,
 	repoCfg *config.RepoConfig,
 	cfg *config.Config,
-) (Agent, bool) {
+) (Agent, bool, error) {
 	for _, backup := range backups {
 		raw := strings.TrimSpace(backup)
 		if raw == "" {
 			continue
 		}
 		if isConfiguredACPAgentNameFromConfig(raw, cfg, repoCfg) {
-			acpAgent := configuredACPAgentFromConfig(repoCfg, cfg)
+			acpAgent, err := configuredACPAgentFromConfig(raw, repoCfg, cfg)
+			if err != nil {
+				return nil, false, err
+			}
 			if _, err := exec.LookPath(acpAgent.CommandName()); err == nil {
-				return acpAgent, true
+				return acpAgent, true, nil
 			}
 			continue
 		}
@@ -105,10 +109,10 @@ func resolveAvailableBackupWithConfig(
 		registryMu.RUnlock()
 		if inReg && isAvailableWithConfig(backup, cfg) {
 			agent, _ := Get(backup)
-			return applyAvailableCommand(agent, cfg), true
+			return applyAvailableCommand(agent, cfg), true, nil
 		}
 	}
-	return nil, false
+	return nil, false, nil
 }
 
 // isAvailableWithConfig checks whether the named agent can be resolved
@@ -167,21 +171,21 @@ func GetPreferredOrBackupWithConfigFromConfig(
 	preferred = resolveAlias(rawPreferred)
 
 	if isConfiguredACPAgentNameFromConfig(rawPreferred, cfg, repoCfg) {
-		acpAgent := configuredACPAgentFromConfig(repoCfg, cfg)
+		acpAgent, err := configuredACPAgentFromConfig(rawPreferred, repoCfg, cfg)
+		if err != nil {
+			return nil, err
+		}
 		if _, err := exec.LookPath(acpAgent.CommandName()); err == nil {
 			return acpAgent, nil
 		}
-		if canonicalACP, err := Get(defaultACPName); err == nil {
-			if commandAgent, ok := canonicalACP.(CommandAgent); !ok {
-				return canonicalACP, nil
-			} else if _, err := exec.LookPath(commandAgent.CommandName()); err == nil {
-				return canonicalACP, nil
-			}
+		backup, ok, err := resolveAvailableBackupWithConfig("", backups, repoCfg, cfg)
+		if err != nil {
+			return nil, err
 		}
-		if backup, ok := resolveAvailableBackupWithConfig("", backups, repoCfg, cfg); ok {
+		if ok {
 			return backup, nil
 		}
-		return nil, unavailablePreferredBackupError(preferred, backups)
+		return nil, unavailablePreferredBackupError(rawPreferred, backups)
 	}
 
 	if preferred != "" {
@@ -189,8 +193,7 @@ func GetPreferredOrBackupWithConfigFromConfig(
 		_, knownAgent := registry[preferred]
 		registryMu.RUnlock()
 		if !knownAgent {
-			known := Available()
-			sort.Strings(known)
+			known := availableAgentNamesWithConfig(repoCfg, cfg)
 			return nil, &UnknownAgentError{Name: preferred, Known: known}
 		}
 		if isAvailableWithConfig(preferred, cfg) {
@@ -199,11 +202,24 @@ func GetPreferredOrBackupWithConfigFromConfig(
 		}
 	}
 
-	if backup, ok := resolveAvailableBackupWithConfig(preferred, backups, repoCfg, cfg); ok {
+	backup, ok, err := resolveAvailableBackupWithConfig(preferred, backups, repoCfg, cfg)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
 		return backup, nil
 	}
 
 	return nil, unavailablePreferredBackupError(preferred, backups)
+}
+
+func availableAgentNamesWithConfig(repoCfg *config.RepoConfig, cfg *config.Config) []string {
+	known := Available()
+	for name := range config.ResolveACPAgentConfigsFromConfig(repoCfg, cfg) {
+		known = append(known, name)
+	}
+	sort.Strings(known)
+	return known
 }
 
 func unavailablePreferredBackupError(preferred string, backups []string) error {
@@ -224,9 +240,9 @@ func nonEmptyResolvedAgentNames(names []string) []string {
 	return out
 }
 
-// GetAvailableWithConfig resolves an available agent while honoring runtime ACP config.
-// It treats cfg.ACP.Name as an alias for "acp" and applies cfg.ACP command/mode/model
-// at resolution time instead of package-init time.
+// GetAvailableWithConfig resolves an available agent while honoring named
+// runtime ACP configuration and applying its command, mode, and model at
+// resolution time instead of package-init time.
 // It also applies command overrides for other agents (codex, claude, cursor, pi).
 //
 // The repoPath parameter is used to resolve repo-level ACP configuration,
@@ -263,7 +279,10 @@ func GetAvailableExactWithConfigFromConfig(repoCfg *config.RepoConfig, name stri
 	}
 
 	if isConfiguredACPAgentNameFromConfig(rawName, cfg, repoCfg) {
-		configured := configuredACPAgentFromConfig(repoCfg, cfg)
+		configured, err := configuredACPAgentFromConfig(rawName, repoCfg, cfg)
+		if err != nil {
+			return nil, err
+		}
 		if _, err := exec.LookPath(configured.CommandName()); err != nil {
 			return nil, fmt.Errorf("agent %q command %q unavailable: %w", rawName, configured.CommandName(), err)
 		}
@@ -299,22 +318,19 @@ func GetAvailableWithConfigFromConfig(repoCfg *config.RepoConfig, preferred stri
 	preferred = resolveAlias(rawPreferred)
 
 	if isConfiguredACPAgentNameFromConfig(rawPreferred, cfg, repoCfg) {
-		acpAgent := configuredACPAgentFromConfig(repoCfg, cfg)
+		acpAgent, err := configuredACPAgentFromConfig(rawPreferred, repoCfg, cfg)
+		if err != nil {
+			return nil, err
+		}
 		if _, err := exec.LookPath(acpAgent.CommandName()); err == nil {
 			return acpAgent, nil
 		}
-		// ACP requested with an invalid configured command. Try canonical ACP next.
-		if canonicalACP, err := Get(defaultACPName); err == nil {
-			if commandAgent, ok := canonicalACP.(CommandAgent); !ok {
-				return canonicalACP, nil
-			} else if _, err := exec.LookPath(commandAgent.CommandName()); err == nil {
-				return canonicalACP, nil
-			}
-		}
 
-		// ACP unavailable — try backup agents with config-aware
-		// availability so *_cmd overrides are honored.
-		if backup, ok := resolveAvailableBackupWithConfig("", backups, repoCfg, cfg); ok {
+		backup, ok, err := resolveAvailableBackupWithConfig("", backups, repoCfg, cfg)
+		if err != nil {
+			return nil, err
+		}
+		if ok {
 			return backup, nil
 		}
 
@@ -332,8 +348,10 @@ func GetAvailableWithConfigFromConfig(repoCfg *config.RepoConfig, preferred stri
 		_, knownAgent := registry[preferred]
 		registryMu.RUnlock()
 		if !knownAgent {
-			// Unknown agent — let GetAvailable produce the error.
-			return GetAvailable(preferred, backups...)
+			return nil, &UnknownAgentError{
+				Name:  preferred,
+				Known: availableAgentNamesWithConfig(repoCfg, cfg),
+			}
 		}
 		if isAvailableWithConfig(preferred, cfg) {
 			a, _ := Get(preferred)
@@ -345,7 +363,11 @@ func GetAvailableWithConfigFromConfig(repoCfg *config.RepoConfig, preferred stri
 	// fallback chain. This runs regardless of whether preferred is
 	// set so that backup-only configurations (preferred="" with a
 	// backup_agent) still honor *_cmd overrides.
-	if backup, ok := resolveAvailableBackupWithConfig(preferred, backups, repoCfg, cfg); ok {
+	backup, ok, err := resolveAvailableBackupWithConfig(preferred, backups, repoCfg, cfg)
+	if err != nil {
+		return nil, err
+	}
+	if ok {
 		return backup, nil
 	}
 
@@ -357,14 +379,6 @@ func GetAvailableWithConfigFromConfig(repoCfg *config.RepoConfig, preferred stri
 	if err != nil {
 		return nil, err
 	}
-	if resolved.Name() == defaultACPName {
-		configured := configuredACPAgentFromConfig(repoCfg, cfg)
-		if _, err := exec.LookPath(configured.CommandName()); err == nil {
-			return configured, nil
-		}
-		return resolved, nil
-	}
-
 	return applyAgentConfigOverrides(applyCommandOverrides(resolved, cfg), cfg), nil
 }
 
@@ -378,7 +392,7 @@ func getAvailableFallbackWithConfig(preferred string, repoCfg *config.RepoConfig
 		}
 		a, _ := Get(name)
 		resolved := applyAvailableCommand(a, cfg)
-		return applyConfiguredACPIfAvailable(resolved, repoCfg, cfg), nil
+		return resolved, nil
 	}
 
 	var available []string
@@ -395,29 +409,20 @@ func getAvailableFallbackWithConfig(preferred string, repoCfg *config.RepoConfig
 	}
 
 	a, _ := Get(available[0])
-	return applyConfiguredACPIfAvailable(applyAvailableCommand(a, cfg), repoCfg, cfg), nil
+	return applyAvailableCommand(a, cfg), nil
 }
 
 func isAvailableWithConfigFromConfig(name string, repoCfg *config.RepoConfig, cfg *config.Config) bool {
-	name = resolveAlias(name)
-	if name == defaultACPName {
-		configured := configuredACPAgentFromConfig(repoCfg, cfg)
-		if _, err := exec.LookPath(configured.CommandName()); err == nil {
-			return true
+	rawName := strings.TrimSpace(name)
+	if isConfiguredACPAgentNameFromConfig(rawName, cfg, repoCfg) {
+		configured, err := configuredACPAgentFromConfig(rawName, repoCfg, cfg)
+		if err != nil {
+			return false
 		}
+		_, err = exec.LookPath(configured.CommandName())
+		return err == nil
 	}
-	return isAvailableWithConfig(name, cfg)
-}
-
-func applyConfiguredACPIfAvailable(a Agent, repoCfg *config.RepoConfig, cfg *config.Config) Agent {
-	if a == nil || a.Name() != defaultACPName {
-		return a
-	}
-	configured := configuredACPAgentFromConfig(repoCfg, cfg)
-	if _, err := exec.LookPath(configured.CommandName()); err == nil {
-		return configured
-	}
-	return a
+	return isAvailableWithConfig(resolveAlias(rawName), cfg)
 }
 
 func applyAvailableCommand(a Agent, cfg *config.Config) Agent {
@@ -438,9 +443,6 @@ func applyACPAgentConfigOverride(cfg *config.ACPAgentConfig, override *config.AC
 		return
 	}
 
-	if name := strings.TrimSpace(override.Name); name != "" {
-		cfg.Name = name
-	}
 	if command := strings.TrimSpace(override.Command); command != "" {
 		cfg.Command = command
 	}

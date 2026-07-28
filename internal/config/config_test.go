@@ -971,6 +971,65 @@ func TestResolveExcludePatternsLocal(t *testing.T) {
 	})
 }
 
+func TestResolveACPAgentConfigFromConfigMergesByName(t *testing.T) {
+	global := &Config{ACP: ACPAgentConfigs{
+		"goose": {Command: "global-goose", Model: "global-model"},
+		"foo":   {Command: "foo-acp"},
+	}}
+	repo := &RepoConfig{ACP: ACPAgentConfigs{
+		"goose": {Command: "repo-goose"},
+	}}
+
+	goose, ok := ResolveACPAgentConfigFromConfig("goose", repo, global)
+	require.True(t, ok)
+	assert.Equal(t, "repo-goose", goose.Command)
+	assert.Empty(t, goose.Model)
+
+	foo, ok := ResolveACPAgentConfigFromConfig("foo", repo, global)
+	require.True(t, ok)
+	assert.Equal(t, "foo-acp", foo.Command)
+
+	_, ok = ResolveACPAgentConfigFromConfig("missing", repo, global)
+	assert.False(t, ok)
+}
+
+func TestResolveACPAgentConfigsFromConfigReturnsIndependentMerge(t *testing.T) {
+	global := &Config{ACP: ACPAgentConfigs{
+		"goose": {Command: "global-goose"},
+		"foo":   {Command: "foo-acp"},
+	}}
+	repo := &RepoConfig{ACP: ACPAgentConfigs{
+		"goose": {Command: "repo-goose"},
+	}}
+
+	merged := ResolveACPAgentConfigsFromConfig(repo, global)
+	assert.Equal(t, ACPAgentConfigs{
+		"goose": {Command: "repo-goose"},
+		"foo":   {Command: "foo-acp"},
+	}, merged)
+
+	merged["foo"] = ACPAgentConfig{Command: "changed"}
+	assert.Equal(t, "foo-acp", global.ACP["foo"].Command)
+}
+
+func TestLoadGlobalNamedACPAgent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+[acp.goose]
+command = "goose"
+args = ["acp"]
+model = "configured-model"
+`), 0o600))
+
+	cfg, err := LoadGlobalFrom(path)
+	require.NoError(t, err)
+	goose, ok := ResolveACPAgentConfigFromConfig("goose", nil, cfg)
+	require.True(t, ok)
+	assert.Equal(t, "goose", goose.Command)
+	assert.Equal(t, []string{"acp"}, goose.Args)
+	assert.Equal(t, "configured-model", goose.Model)
+}
+
 func TestIsCommitMessageExcluded(t *testing.T) {
 	tests := []struct {
 		name       string

@@ -242,22 +242,22 @@ func TestSelectRefineAgentCodexUsesRequestedReasoning(t *testing.T) {
 	assert.Equal(t, agent.ReasoningFast, codexAgent.Reasoning)
 }
 
-func TestSelectRefineAgentCodexACPConfigAliasUsesACPResolution(t *testing.T) {
+func TestSelectRefineAgentNamedACPConfigUsesACPResolution(t *testing.T) {
 	t.Cleanup(testutil.MockExecutable(t, "codex", 0))
 	t.Cleanup(testutil.MockExecutable(t, "acp-agent", 0))
 
-	cfg := &config.Config{
-		ACP: &config.ACPAgentConfig{
-			Name:    "codex",
+	cfg := &config.Config{ACP: config.ACPAgentConfigs{
+		"codex-acp": {
 			Command: "acp-agent",
 		},
-	}
+	}}
 
-	selected, err := selectRefineAgent("", cfg, "codex", agent.ReasoningFast, "")
+	selected, err := selectRefineAgent("", cfg, "codex-acp", agent.ReasoningFast, "")
 	require.NoError(t, err, "selectRefineAgent failed: %v")
 
 	acpAgent, ok := selected.(*agent.ACPAgent)
 	assert.True(t, ok)
+	assert.Equal(t, "codex-acp", acpAgent.Name())
 	assert.Equal(t, "acp-agent", acpAgent.CommandName())
 }
 

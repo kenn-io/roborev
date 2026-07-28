@@ -374,12 +374,11 @@ func TestSynthesize_PassesGlobalConfigToResolver(t *testing.T) {
 		return cap, nil
 	}
 
-	cfg := &config.Config{
-		ACP: &config.ACPAgentConfig{
-			Name:    "custom-acp",
+	cfg := &config.Config{ACP: config.ACPAgentConfigs{
+		"custom-acp": {
 			Command: "acp-agent",
 		},
-	}
+	}}
 	results := []ReviewResult{
 		{
 			Agent:      "codex",

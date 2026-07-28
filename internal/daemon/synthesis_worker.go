@@ -346,7 +346,7 @@ func (wp *WorkerPool) configureSynthesisAgent(
 	reasoningLevel := agent.ParseReasoningLevel(reasoning)
 
 	model := job.Model
-	if synthesisSelectedBackupAgent(job, baseAgent.Name(), cfg) {
+	if synthesisSelectedBackupAgent(job, baseAgent.Name()) {
 		model = job.BackupModel
 	}
 
@@ -365,11 +365,11 @@ func (wp *WorkerPool) configureSynthesisAgent(
 	return a, agentName, nil
 }
 
-func synthesisSelectedBackupAgent(job *storage.ReviewJob, selectedAgent string, cfg *config.Config) bool {
-	if !synthesisAgentNameMatchesWithConfig(selectedAgent, job.BackupAgent, job, cfg) {
+func synthesisSelectedBackupAgent(job *storage.ReviewJob, selectedAgent string) bool {
+	if !synthesisAgentNameMatches(selectedAgent, job.BackupAgent) {
 		return false
 	}
-	return !synthesisAgentNameMatchesWithConfig(selectedAgent, job.Agent, job, cfg)
+	return !synthesisAgentNameMatches(selectedAgent, job.Agent)
 }
 
 func synthesisAgentNameMatches(selectedAgent, configuredAgent string) bool {
@@ -386,20 +386,4 @@ func synthesisAgentNameMatches(selectedAgent, configuredAgent string) bool {
 		return false
 	}
 	return agent.CanonicalName(selectedAgent) == agent.CanonicalName(resolvedConfigured.Name())
-}
-
-func synthesisAgentNameMatchesWithConfig(
-	selectedAgent, configuredAgent string, job *storage.ReviewJob, cfg *config.Config,
-) bool {
-	if synthesisAgentNameMatches(selectedAgent, configuredAgent) {
-		return true
-	}
-	if agent.CanonicalName(selectedAgent) != "acp" {
-		return false
-	}
-	acpCfg := config.ResolveACPAgentConfig(job.RepoPath, cfg)
-	if acpCfg == nil {
-		return false
-	}
-	return strings.TrimSpace(configuredAgent) == strings.TrimSpace(acpCfg.Name)
 }

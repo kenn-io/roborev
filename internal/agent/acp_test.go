@@ -41,8 +41,7 @@ func TestACPAgent(t *testing.T) {
 	assert.Equal(t, "plan", defaultAgent.Mode)
 	assert.Equal(t, 10*time.Minute, defaultAgent.Timeout)
 
-	configuredAgent := NewACPAgentFromConfig(&config.ACPAgentConfig{
-		Name:            "custom-acp",
+	configuredAgent := NewACPAgentFromConfig("custom-acp", &config.ACPAgentConfig{
 		Command:         "custom-command",
 		ReadOnlyMode:    "plan",
 		AutoApproveMode: "auto-approve",
@@ -135,7 +134,7 @@ func TestApplyACPAgentConfigOverrideModeResolution(t *testing.T) {
 func TestNewACPAgentFromConfigDisableModeNegotiation(t *testing.T) {
 	t.Parallel()
 
-	agent := NewACPAgentFromConfig(&config.ACPAgentConfig{
+	agent := NewACPAgentFromConfig("custom-acp", &config.ACPAgentConfig{
 		Command:                "go",
 		Mode:                   "plan",
 		ReadOnlyMode:           "plan",
@@ -156,19 +155,18 @@ func TestNewACPAgentFromConfigDisableModeNegotiation(t *testing.T) {
 func TestGetAvailableWithConfigResolvesACPAlias(t *testing.T) {
 	t.Parallel()
 
-	cfg := &config.Config{
-		ACP: &config.ACPAgentConfig{
-			Name:    "custom-acp",
+	cfg := &config.Config{ACP: config.ACPAgentConfigs{
+		"custom-acp": {
 			Command: "go",
 		},
-	}
+	}}
 
 	resolved, err := GetAvailableWithConfig("", "custom-acp", cfg)
 	require.NoError(t, err, "GetAvailableWithConfig failed: %v")
 
 	acpAgent, ok := resolved.(*ACPAgent)
 	require.True(t, ok, "Expected ACP agent, got %T", resolved)
-	require.Equal(t, "acp", acpAgent.Name(), "Expected canonical ACP name 'acp', got %q", acpAgent.Name())
+	require.Equal(t, "custom-acp", acpAgent.Name())
 	require.Equal(t, "go", acpAgent.Command, "Expected ACP command from config, got %q", acpAgent.Command)
 }
 
@@ -176,7 +174,7 @@ func TestGetAvailableWithConfigEmptyRepoPathDoesNotReadCWD(t *testing.T) {
 	cwd := t.TempDir()
 	err := os.WriteFile(
 		filepath.Join(cwd, ".roborev.toml"),
-		[]byte("[acp]\nname = \"cwd-acp\"\ncommand = \"cwd-acp\"\n"),
+		[]byte("[acp.cwd-acp]\ncommand = \"cwd-acp\"\n"),
 		0o644,
 	)
 	require.NoError(t, err)
@@ -191,19 +189,18 @@ func TestGetAvailableWithConfigEmptyRepoPathDoesNotReadCWD(t *testing.T) {
 	require.NoError(t, os.WriteFile(globalACP, []byte("#!/bin/sh\nexit 0\n"), 0o755))
 	t.Setenv("PATH", fakeBin)
 
-	cfg := &config.Config{
-		ACP: &config.ACPAgentConfig{
-			Name:    "global-acp",
+	cfg := &config.Config{ACP: config.ACPAgentConfigs{
+		"global-acp": {
 			Command: "global-acp",
 		},
-	}
+	}}
 
 	resolved, err := GetAvailableWithConfig("", "global-acp", cfg)
 	require.NoError(t, err)
 
 	acpAgent, ok := resolved.(*ACPAgent)
 	require.True(t, ok, "Expected ACP agent, got %T", resolved)
-	require.Equal(t, "acp", acpAgent.Name())
+	require.Equal(t, "global-acp", acpAgent.Name())
 	require.Equal(t, "global-acp", acpAgent.Command)
 }
 
@@ -219,20 +216,14 @@ func TestGetAvailableWithConfigResolvesConfiguredACPNameAlias(t *testing.T) {
 	}
 	t.Setenv("PATH", fakeBin)
 
-	cfg := &config.Config{
-		ACP: &config.ACPAgentConfig{
-			Name:    "claude",
+	cfg := &config.Config{ACP: config.ACPAgentConfigs{
+		"claude": {
 			Command: defaultACPCommand,
 		},
-	}
+	}}
 
-	resolved, err := GetAvailableWithConfig("", "claude", cfg)
-	require.NoError(t, err, "GetAvailableWithConfig failed: %v")
-
-	acpAgent, ok := resolved.(*ACPAgent)
-	require.True(t, ok, "Expected ACP agent, got %T", resolved)
-	require.Equal(t, "acp", acpAgent.Name(), "Expected canonical ACP name 'acp', got %q", acpAgent.Name())
-	require.Equal(t, defaultACPCommand, acpAgent.Command, "Expected ACP command %q, got %q", defaultACPCommand, acpAgent.Command)
+	_, err := GetAvailableWithConfig("", "claude", cfg)
+	require.ErrorContains(t, err, "conflicts with built-in agent")
 }
 
 func TestGetAvailableWithConfigFallsBackToCanonicalACPWhenConfiguredCommandMissing(t *testing.T) {
@@ -247,12 +238,11 @@ func TestGetAvailableWithConfigFallsBackToCanonicalACPWhenConfiguredCommandMissi
 	}
 	t.Setenv("PATH", fakeBin)
 
-	cfg := &config.Config{
-		ACP: &config.ACPAgentConfig{
-			Name:    "custom-acp",
+	cfg := &config.Config{ACP: config.ACPAgentConfigs{
+		"custom-acp": {
 			Command: "missing-acp-command",
 		},
-	}
+	}}
 
 	resolved, err := GetAvailableWithConfig("", "custom-acp", cfg)
 	require.NoError(t, err, "GetAvailableWithConfig failed: %v")
@@ -280,12 +270,11 @@ func TestGetAvailableWithConfigResolvedACPBranchFallsBackWhenConfiguredCommandMi
 	}
 	t.Setenv("PATH", fakeBin)
 
-	cfg := &config.Config{
-		ACP: &config.ACPAgentConfig{
-			Name:    "custom-acp",
+	cfg := &config.Config{ACP: config.ACPAgentConfigs{
+		"custom-acp": {
 			Command: "missing-acp-command",
 		},
-	}
+	}}
 
 	resolved, err := GetAvailableWithConfig("", "custom-acp", cfg)
 	require.NoError(t, err, "GetAvailableWithConfig failed: %v")
@@ -909,12 +898,11 @@ func TestACPAliasCollisionFixed(t *testing.T) {
 	}
 	t.Setenv("PATH", fakeBin)
 
-	cfg := &config.Config{
-		ACP: &config.ACPAgentConfig{
-			Name:    "agent",
+	cfg := &config.Config{ACP: config.ACPAgentConfigs{
+		"agent": {
 			Command: "acp-agent",
 		},
-	}
+	}}
 
 	resolved, err := GetAvailableWithConfig("", "cursor", cfg)
 	require.NoError(t, err, "GetAvailableWithConfig failed: %v")
@@ -966,12 +954,11 @@ func TestACPNameDoesNotMatchCanonicalRequest(t *testing.T) {
 	}
 	t.Setenv("PATH", fakeBin)
 
-	cfg := &config.Config{
-		ACP: &config.ACPAgentConfig{
-			Name:    "claude",
+	cfg := &config.Config{ACP: config.ACPAgentConfigs{
+		"claude": {
 			Command: defaultACPCommand,
 		},
-	}
+	}}
 
 	resolved, err := GetAvailableWithConfig("", "claude-code", cfg)
 	require.NoError(t, err, "GetAvailableWithConfig failed: %v")
@@ -1231,9 +1218,10 @@ func TestGetAvailableWithConfigACPFallbackBackupUsesConfigCmd(t *testing.T) {
 	t.Cleanup(func() { registry = originalRegistry })
 
 	cfg := &config.Config{
-		ACP: &config.ACPAgentConfig{
-			Name:    "my-acp",
-			Command: "nonexistent-acp-binary",
+		ACP: config.ACPAgentConfigs{
+			"my-acp": {
+				Command: "nonexistent-acp-binary",
+			},
 		},
 		ClaudeCodeCmd: filepath.Join(fakeBin, wrapper),
 	}
