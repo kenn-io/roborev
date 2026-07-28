@@ -186,7 +186,7 @@ func GetPreferredOrBackupWithConfigFromConfig(
 		_, knownAgent := registry[preferred]
 		registryMu.RUnlock()
 		if !knownAgent {
-			known := availableAgentNamesWithConfig(repoCfg, cfg)
+			known := AvailableNamesFromConfig(repoCfg, cfg)
 			return nil, &UnknownAgentError{Name: preferred, Known: known}
 		}
 		if isAvailableWithConfig(preferred, cfg) {
@@ -206,7 +206,8 @@ func GetPreferredOrBackupWithConfigFromConfig(
 	return nil, unavailablePreferredBackupError(preferred, backups)
 }
 
-func availableAgentNamesWithConfig(repoCfg *config.RepoConfig, cfg *config.Config) []string {
+// AvailableNamesFromConfig returns built-in and effective named ACP agents.
+func AvailableNamesFromConfig(repoCfg *config.RepoConfig, cfg *config.Config) []string {
 	known := Available()
 	for name := range config.ResolveACPAgentConfigsFromConfig(repoCfg, cfg) {
 		known = append(known, name)
@@ -343,7 +344,7 @@ func GetAvailableWithConfigFromConfig(repoCfg *config.RepoConfig, preferred stri
 		if !knownAgent {
 			return nil, &UnknownAgentError{
 				Name:  preferred,
-				Known: availableAgentNamesWithConfig(repoCfg, cfg),
+				Known: AvailableNamesFromConfig(repoCfg, cfg),
 			}
 		}
 		if isAvailableWithConfig(preferred, cfg) {

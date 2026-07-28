@@ -19,3 +19,14 @@ func TestCheckAgentsHonorsConfiguredCodexCommand(t *testing.T) {
 
 	assert.Regexp(t, `(?m)^  \? codex\s+codex-proxy \(`, output)
 }
+
+func TestCheckAgentsDiscoversConfiguredACPAgent(t *testing.T) {
+	setupConfigEnv(t, "[acp.goose]\ncommand = 'missing-goose-acp'\n", "")
+
+	cmd := checkAgentsCmd()
+	cmd.SetArgs([]string{"--agent", "goose", "--timeout", "1"})
+	output := captureOutput(t, cmd.Execute)
+
+	assert.Regexp(t, `(?m)^  - goose\s+agent "goose" command "missing-goose-acp" unavailable:`, output)
+	assert.Contains(t, output, "1 skipped")
+}

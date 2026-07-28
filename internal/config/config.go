@@ -1411,6 +1411,9 @@ func SaveGlobal(cfg *Config) error {
 
 // SaveGlobalTo saves the global configuration to a specific path.
 func SaveGlobalTo(path string, cfg *Config) error {
+	if err := validateACPAgentConfigs(cfg.ACP); err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
@@ -1461,6 +1464,9 @@ const defaultHooksExample = `
 // appending a commented [[hooks]] example. It writes atomically (temp file +
 // rename) with 0600 permissions. Use SaveGlobalTo for subsequent rewrites.
 func WriteDefaultGlobalConfigTo(path string, cfg *Config) error {
+	if err := validateACPAgentConfigs(cfg.ACP); err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}
@@ -1499,6 +1505,9 @@ func SaveRepoConfigTo(path string, cfg *RepoConfig) error {
 // SaveRepoConfigToWithExplicitKeys saves a per-repo configuration while
 // preserving explicit zero-valued keys named in explicitKeys.
 func SaveRepoConfigToWithExplicitKeys(path string, cfg *RepoConfig, explicitKeys ...string) error {
+	if err := validateACPAgentConfigs(cfg.ACP); err != nil {
+		return fmt.Errorf("config: %w", err)
+	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
 		return err
 	}

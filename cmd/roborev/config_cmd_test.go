@@ -381,6 +381,46 @@ func TestSetConfigKeyNamedACPAgent(t *testing.T) {
 	assert.Equal(t, []any{"acp"}, args)
 }
 
+func TestSetConfigKeyRejectsInvalidNamedACPWithoutChangingFile(t *testing.T) {
+	for _, scope := range []struct {
+		name     string
+		global   bool
+		fileName string
+	}{
+		{name: "global", global: true, fileName: "config.toml"},
+		{name: "repository", global: false, fileName: ".roborev.toml"},
+	} {
+		t.Run(scope.name+"/missing command", func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), scope.fileName)
+			err := setConfigKey(path, "acp.goose.args", "acp", scope.global)
+			require.ErrorContains(t, err, "requires a command")
+			_, statErr := os.Stat(path)
+			require.ErrorIs(t, statErr, os.ErrNotExist)
+		})
+
+		t.Run(scope.name+"/built-in collision", func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), scope.fileName)
+			err := setConfigKey(path, "acp.codex.command", "goose", scope.global)
+			require.ErrorContains(t, err, "conflicts with built-in agent")
+			_, statErr := os.Stat(path)
+			require.ErrorIs(t, statErr, os.ErrNotExist)
+		})
+
+		t.Run(scope.name+"/cleared command", func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), scope.fileName)
+			require.NoError(t, setConfigKey(path, "acp.goose.command", "goose", scope.global))
+			before, err := os.ReadFile(path)
+			require.NoError(t, err)
+
+			err = setConfigKey(path, "acp.goose.command", "", scope.global)
+			require.ErrorContains(t, err, "requires a command")
+			after, err := os.ReadFile(path)
+			require.NoError(t, err)
+			assert.Equal(t, before, after)
+		})
+	}
+}
+
 func TestSetConfigKeyInvalidKey(t *testing.T) {
 	path := setupConfigFile(t)
 

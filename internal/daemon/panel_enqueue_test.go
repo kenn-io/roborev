@@ -484,6 +484,84 @@ synthesis_agent = "test"
 	assert.Equal("backup-model", members[0].Model)
 }
 
+func TestEnqueuePanelNamedACPMemberReplacesInheritedWorkflowModel(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	t.Cleanup(testutil.MockExecutable(t, "goose-panel-acp", 0))
+
+	const panelConfig = `
+review_model = "foreign-workflow-model"
+
+[acp.goose]
+command = "goose-panel-acp"
+model = "goose-model"
+
+[review]
+default_panel = "solo"
+
+[review.subagents.only]
+agent = "goose"
+review_type = "default"
+
+[review.panels.solo]
+members = ["only"]
+synthesis_agent = "test"
+`
+	repo := testutil.NewGitRepo(t)
+	repo.WriteFile(".roborev.toml", panelConfig)
+	repo.CommitFile("a.txt", "a", "add a")
+
+	resp := enqueuePanelViaHTTP(t, server, EnqueueRequest{
+		RepoPath: repo.Path(),
+		GitRef:   "HEAD",
+		Agent:    "test",
+	})
+
+	members, err := db.GetPanelMembers(resp.PanelRunUUID)
+	require.NoError(t, err)
+	require.Len(t, members, 1)
+	assert.Equal(t, "goose", members[0].Agent)
+	assert.Equal(t, "goose-model", members[0].Model)
+}
+
+func TestEnqueuePanelNamedACPMemberPreservesExplicitModel(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	t.Cleanup(testutil.MockExecutable(t, "goose-panel-explicit", 0))
+
+	const panelConfig = `
+review_model = "foreign-workflow-model"
+
+[acp.goose]
+command = "goose-panel-explicit"
+model = "goose-model"
+
+[review]
+default_panel = "solo"
+
+[review.subagents.only]
+agent = "goose"
+model = "member-model"
+review_type = "default"
+
+[review.panels.solo]
+members = ["only"]
+synthesis_agent = "test"
+`
+	repo := testutil.NewGitRepo(t)
+	repo.WriteFile(".roborev.toml", panelConfig)
+	repo.CommitFile("a.txt", "a", "add a")
+
+	resp := enqueuePanelViaHTTP(t, server, EnqueueRequest{
+		RepoPath: repo.Path(),
+		GitRef:   "HEAD",
+		Agent:    "test",
+	})
+
+	members, err := db.GetPanelMembers(resp.PanelRunUUID)
+	require.NoError(t, err)
+	require.Len(t, members, 1)
+	assert.Equal(t, "member-model", members[0].Model)
+}
+
 // TestEnqueuePanelLookaheadMemberUsesAnalyzeConfig verifies that a lookahead
 // panel member with no explicit agent resolves its agent/model from the generic
 // per-type [analyze.lookahead] config. The lookahead review type carries no

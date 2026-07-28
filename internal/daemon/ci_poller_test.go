@@ -3692,6 +3692,43 @@ func TestProcessPRNamedPanelMembers(t *testing.T) {
 	}
 }
 
+func TestProcessPRNamedPanelACPMemberReplacesInheritedWorkflowModel(t *testing.T) {
+	p, db, _, repo, cfg := newCIPanelGitHarness(t)
+	cfg.CI.Panel = "ci"
+	cfg.ReviewModel = "foreign-workflow-model"
+	cfg.ACP = config.ACPAgentConfigs{
+		"goose": {Command: "goose", Model: "goose-model"},
+	}
+	cfg.Review = config.ReviewConfig{
+		Subagents: map[string]config.SubagentSpec{
+			"rev": {Agent: "goose", ReviewType: "review"},
+		},
+		Panels: map[string]config.PanelSpec{
+			"ci": {Members: []string{"rev"}, SynthesisAgent: "test"},
+		},
+	}
+	p.loadRepoConfigFn = func(string) (*config.RepoConfig, error) {
+		return &config.RepoConfig{}, nil
+	}
+
+	base := repo.HeadSHA()
+	head := repo.CommitFile("app.go", "package app\n", "feat: app")
+	p.mergeBaseFn = func(_, _, _ string) (string, error) { return base, nil }
+
+	err := p.processPR(context.Background(), "acme/api", ghPR{
+		Number: 17, HeadRefOid: head, BaseRefName: "main",
+	}, cfg)
+	require.NoError(t, err)
+
+	panel, err := db.GetCIPanelByPRSHA("acme/api", 17, head)
+	require.NoError(t, err)
+	members, err := db.GetPanelMembers(panel.PanelRunUUID)
+	require.NoError(t, err)
+	require.Len(t, members, 1)
+	assert.Equal(t, "goose", members[0].Agent)
+	assert.Equal(t, "goose-model", members[0].Model)
+}
+
 func TestProcessPRNamedPanelMemberUsesBackupModelWhenPreferredUnavailable(t *testing.T) {
 	assert := assert.New(t)
 	p, db, _, repo, cfg := newCIPanelGitHarness(t)

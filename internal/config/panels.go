@@ -159,6 +159,7 @@ type ResolvedMember struct {
 	Agent         string `json:"agent"`
 	AgentExplicit bool   `json:"agent_explicit,omitempty"`
 	Model         string `json:"model"`
+	ModelExplicit bool   `json:"model_explicit,omitempty"`
 	Provider      string `json:"provider"`
 	Reasoning     string `json:"reasoning"`
 	ReviewType    string `json:"review_type"`
@@ -340,6 +341,7 @@ func resolveMemberFromConfig(
 		Agent:         agent,
 		AgentExplicit: strings.TrimSpace(spec.Agent) != "",
 		Model:         model,
+		ModelExplicit: strings.TrimSpace(spec.Model) != "",
 		Provider:      spec.Provider,
 		Reasoning:     reasoning,
 		ReviewType:    reviewType,

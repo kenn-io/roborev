@@ -5,7 +5,6 @@ import (
 	"fmt"
 	"os"
 	"os/exec"
-	"sort"
 	"strings"
 	"time"
 
@@ -41,20 +40,23 @@ Examples:
 				return fmt.Errorf("load global config: %w", err)
 			}
 
-			names := agent.Available()
-			sort.Strings(names)
+			// Use current directory as repo path for the smoke test.
+			repoPath, err := os.Getwd()
+			if err != nil {
+				repoPath = "."
+			}
+			repoCfg, err := config.LoadRepoConfig(repoPath)
+			if err != nil {
+				return fmt.Errorf("load repo config: %w", err)
+			}
+
+			names := agent.AvailableNamesFromConfig(repoCfg, cfg)
 
 			timeout := time.Duration(timeoutSecs) * time.Second
 			smokePrompt := "Respond with exactly: OK"
 			if largePrompt {
 				smokePrompt = "Respond with exactly: OK\n" +
 					strings.Repeat("// padding line\n", 2200)
-			}
-
-			// Use current directory as repo path for the smoke test
-			repoPath, err := os.Getwd()
-			if err != nil {
-				repoPath = "."
 			}
 
 			var passed, failed, skipped int
@@ -67,7 +69,7 @@ Examples:
 					continue
 				}
 
-				a, err := agent.GetAvailableExactWithConfig(repoPath, name, cfg)
+				a, err := agent.GetAvailableExactWithConfigFromConfig(repoCfg, name, cfg)
 				if err != nil {
 					fmt.Printf("  - %-14s %s\n", name, err)
 					skipped++

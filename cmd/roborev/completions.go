@@ -2,6 +2,7 @@ package main
 
 import (
 	"fmt"
+	"os"
 
 	"github.com/spf13/cobra"
 
@@ -13,7 +14,15 @@ import (
 // Panics if the flag doesn't exist on the command (programming error).
 func registerAgentCompletion(cmd *cobra.Command) {
 	if err := cmd.RegisterFlagCompletionFunc("agent", func(_ *cobra.Command, _ []string, _ string) ([]cobra.Completion, cobra.ShellCompDirective) {
-		return agent.Available(), cobra.ShellCompDirectiveNoFileComp
+		cfg, err := config.LoadGlobal()
+		if err != nil {
+			return agent.Available(), cobra.ShellCompDirectiveNoFileComp
+		}
+		var repoCfg *config.RepoConfig
+		if repoPath, err := os.Getwd(); err == nil {
+			repoCfg, _ = config.LoadRepoConfig(repoPath)
+		}
+		return agent.AvailableNamesFromConfig(repoCfg, cfg), cobra.ShellCompDirectiveNoFileComp
 	}); err != nil {
 		panic(fmt.Sprintf("registering agent completion for %s: %v", cmd.Name(), err))
 	}

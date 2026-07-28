@@ -788,7 +788,7 @@ func (p *CIPoller) resolveCIPanelMemberExecution(
 		resolvedAgent = resolved.Name()
 	}
 	model := member.Model
-	if !resolution.AgentMatches(resolvedAgent, member.Agent) {
+	if !member.ModelExplicit {
 		model = resolution.ModelForSelectedAgent(resolvedAgent, cfg.CI.Model)
 	}
 	return resolvedAgent, model, nil
