@@ -23,6 +23,21 @@ change does not replace hook integrations with ACP: ACP controls sessions for
 which roborev is the client, while these hooks steer sessions already running
 inside an independently launched coding-agent harness.
 
+## Success Criteria
+
+- A default install selects every locally installed kit-supported harness and
+  preserves unrelated native hook configuration.
+- An explicit install can target any one of the eight profiles or all eight.
+- Every profile receives a valid native response and a self-contained default
+  reminder that can resolve roborev findings without a separately installed
+  roborev skill.
+- Existing Codex, Claude Code, and Factory Droid hook entries are replaced on
+  the next install instead of duplicated.
+- Hermes delivers reminders with the repository and lineage that triggered
+  them even if the session changes directories before its next `Stop`.
+- Roborev contains no native harness config mutation, payload normalization,
+  tool-name translation, or response encoding that kit already provides.
+
 ## Library Boundary
 
 Kit owns:
@@ -76,14 +91,30 @@ The executable candidates are:
 Config-directory detection honors environment-specific locations through
 kit's `agenthook.ConfigPath` implementation.
 
+The complete install and dump flag contract is:
+
+| Flag | Install | Dump | New semantics and migration |
+|------|---------|------|-----------------------------|
+| `--agent` | Optional; empty means auto, a profile selects one, `all` selects eight | Required; exactly one profile | Existing explicit `codex`, `claude`, and `droid` values continue to work. |
+| `--binary` | Retained for auto, one, or all | Not supported | Kit builds a profile-specific command from the resolved executable. |
+| `--command` | One explicit profile only | One explicit profile only | Used verbatim after validation that it contains `agent-hook run` and selects the requested profile with `--agent`; it cannot be combined with `--binary`. |
+| `--config` | One explicit profile only | One explicit profile only | Uniform replacement for agent-specific config flags. |
+| `--codex-config` | Removed | Not supported | Replace with `--agent codex --config PATH`. |
+| `--claude-config` | Removed | Not supported | Replace with `--agent claude --config PATH`. |
+| `--scope` | Removed | Removed | Omit `--scope user`; project-scoped Factory Droid installation remains unsupported. |
+| `--timeout` | Retained for auto, one, or all | Retained | Applies one duration to all three installed lifecycle hooks; bare integers remain seconds and kit converts to each profile's native unit. |
+| `--dry-run` | Retained | Not supported | Plans every selected profile without writing. |
+
+Removed flags fail through Cobra's normal unknown-flag error. Documentation
+gives the replacement invocation rather than carrying deprecated aliases.
+
 `--agent <name>` selects one profile deterministically. `--agent all` selects
 all eight profiles without checking installation. If automatic selection finds
 none, the command fails with an actionable error that suggests an explicit
 agent name or `--agent all`.
 
 `--config` overrides the config path only when one explicit profile is
-selected. The agent-specific `--codex-config` and `--claude-config` flags are
-removed. `--command` is likewise restricted to one explicit profile because a
+selected. `--command` is likewise restricted to one explicit profile because a
 raw command must identify the native profile passed to `agent-hook run`.
 `--binary` remains valid for automatic, explicit, and all-profile installs;
 kit builds the correctly quoted per-profile commands from the resolved binary.
@@ -121,7 +152,10 @@ and Factory Droid path policy as `install`.
 `roborev agent-hook run` accepts every kit profile through `--agent`. Commands
 written by the installer always include the flag. The command resolves the
 profile through kit and passes stdin and stdout to `agenthook.Handle` with a
-roborev handler.
+roborev handler. `--agent` is required; users upgrading an existing stable
+binary installation run `roborev agent-hook install` once to replace old
+commands that did not identify their profile. No permanent legacy parser or
+profile guess is retained.
 
 ## Runtime Architecture
 
@@ -148,23 +182,52 @@ context when the daemon triggers a reminder. For `Stop`, it returns a
 `StopOutput` with a blocking decision and the reminder reason. Kit translates
 those types into each harness's supported native response.
 
+The default instruction is self-contained across all profiles:
+
+```text
+Resolve open roborev findings now. Use the roborev-fix skill if available;
+otherwise run `roborev fix --open --list`, inspect each job with
+`roborev show --job <id> --json`, fix and verify all findings, record each fix
+with `roborev comment --commenter agent-hook --job <id> "<summary>"`, then run
+`roborev close <id>` before continuing.
+```
+
+Existing configuration and environment overrides continue to replace this
+instruction. Shipped skills remain the richer path for Claude Code, Codex, and
+Factory Droid, but they are no longer a prerequisite for a useful reminder.
+
 ## Delivery-Aware Triggering
 
 Hermes can observe `PostToolUse` but cannot inject control output at that
 boundary. Its control-capable boundary for roborev reminders is `Stop`.
 
 Roborev therefore marks post-tool requests with whether that profile can
-deliver a post-tool reminder. When delivery is unavailable, the state daemon
-records commit and review state but does not consume the trigger, increment the
-reminder count, or reset counters. The next `Stop` evaluates pending commit and
-failed-review thresholds in addition to the normal stop threshold, emits the
-pending reminder, and resets counters only after choosing that deliverable
-response.
+deliver a post-tool reminder. When delivery is unavailable and a threshold is
+reached, the state daemon persists a `PendingReminder` containing the rendered
+reason, trigger kind, tracked repository, worktree, branch, HEAD, lineage key,
+relevant counts, and creation time. It reserves that trigger by advancing its
+per-scope bookkeeping and resetting only the affected scope's counters, which
+prevents duplicate pending reminders while later activity begins a fresh
+counting window. The delivered-reminder count and delivery timestamps do not
+advance until a control-capable boundary emits the reminder.
+
+Pending reminders are keyed by repository lineage within the session. The next
+`Stop` selects a pending reminder independently of the stop payload's CWD, emits
+its stored reason, removes only that entry, and records delivery. Multiple
+pending entries are ordered by trigger priority (failed reviews before commits)
+and then creation time. Lower-priority and other-repository entries remain
+pending for later stop boundaries; a normal stop-threshold reminder is likewise
+left unconsumed when a pending reminder wins.
 
 Profiles with post-tool context support keep the existing immediate reminder
-behavior. Trigger priority at `Stop` is failed reviews, then commits, then the
-turn threshold, so the most actionable reason is reported without emitting
-multiple reminders at one boundary.
+behavior. Trigger priority at any single boundary is failed reviews, then
+commits, then the turn threshold, so only one reminder is emitted at a time.
+
+`PendingReminder` is an optional, `omitempty` field in the existing session
+state. State written by older releases loads with no pending entries and needs
+no migration or dual-read path. Once the upgraded daemon writes state, older
+binaries are not expected to preserve the new pending queue; daemon and client
+versions continue to roll forward together.
 
 ## Error Handling
 
@@ -192,7 +255,11 @@ Tests cover only roborev-owned behavior and its integration seam with kit:
 - the hook specification, marker, and per-profile run arguments passed to kit;
 - one real kit-backed install/run path proving the integration boundary;
 - fail-open handler behavior when the local daemon is unavailable; and
-- deferred post-tool triggering followed by delivery and reset at `Stop`.
+- deferred post-tool triggering followed by delivery at `Stop` after a CWD
+  change and after a `git -C` command targets another repository;
+- priority and retention when multiple repository lineages have pending
+  reminders; and
+- loading existing session state without a pending-reminder field.
 
 Tests do not replicate kit's matrix of native config formats, event mappings,
 command quoting, normalization, or response encodings. Existing tests whose
@@ -208,13 +275,32 @@ The README and Zensical documentation will:
 - describe automatic installed-agent detection;
 - document explicit `--agent <name>` and `--agent all` behavior;
 - replace agent-specific config flags with `--config`;
+- include a command-by-command migration table for removed flags and the
+  one-time reinstall required by old hook commands;
 - describe native JSON or YAML dump output;
 - retain stable-binary guidance; and
-- explain that Hermes delivers post-tool triggers at the next stop boundary.
+- explain Hermes's scoped, queued delivery at later stop boundaries; and
+- document the self-contained fallback workflow when no roborev skill exists.
 
 Quickstart checks continue to focus on the coding agents for which roborev
 ships fix/refine skills. General hook installation and status output cover all
-kit profiles; expanding roborev's skill packages is outside this change.
+kit profiles. Expanding roborev's skill packages is unnecessary for this change
+because every installed profile receives the actionable fallback instruction.
+
+## Implementation Sequence
+
+1. Upgrade `go.kenn.io/kit` to v0.14.0 and validate the public `agenthook` API
+   seam without changing user-visible behavior.
+2. Add the typed roborev handler and switch runtime normalization and response
+   encoding to kit.
+3. Add scoped pending reminders and their state tests before enabling Hermes
+   post-tool deferral.
+4. Replace install and dump config mutation with kit, add installed-profile
+   detection, and enforce the complete CLI flag contract.
+5. Remove superseded native installer, detector, input-mapping, and response
+   code after the kit-backed paths pass.
+6. Update README and Zensical documentation, run package and repository quality
+   gates, and commit the implementation in reviewable stages.
 
 ## Non-Goals
 
