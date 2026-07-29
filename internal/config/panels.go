@@ -393,7 +393,10 @@ func resolveSynthesisFromConfig(
 	}
 	model := panel.SynthesisModel
 	if model == "" {
-		if panel.SynthesisAgent != "" {
+		_, configuredACP := ResolveACPAgentConfigFromConfig(
+			agent, repoCfg, globalCfg,
+		)
+		if panel.SynthesisAgent != "" || configuredACP {
 			model = resolveExplicitPanelAgentModelFromConfig(
 				agent, repoCfg, globalCfg, "fix", reasoning,
 			)

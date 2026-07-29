@@ -607,6 +607,41 @@ synthesis_backup_agent = "owl"
 	assert.Equal(t, "acp.goose", single.Agent)
 }
 
+func TestEnqueuePanelInheritedNamedACPSynthesisStoresNamespacedIdentity(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	t.Cleanup(testutil.MockExecutable(t, "goose-inherited-synthesis", 0))
+
+	repo := testutil.NewGitRepo(t)
+	repo.WriteFile(".roborev.toml", `
+agent = "codex"
+model = "codex-model"
+fix_agent = "goose"
+
+[acp.goose]
+command = "goose-inherited-synthesis"
+model = "goose-model"
+
+[review]
+default_panel = "inherited-synthesis"
+
+[review.subagents.only]
+agent = "test"
+review_type = "default"
+
+[review.panels.inherited-synthesis]
+members = ["only"]
+`)
+	repo.CommitFile("a.txt", "a", "add a")
+
+	resp := enqueuePanelViaHTTP(t, server, EnqueueRequest{
+		RepoPath: repo.Path(), GitRef: "HEAD", Agent: "test",
+	})
+	synth, err := db.GetSynthesisJob(resp.PanelRunUUID)
+	require.NoError(t, err)
+	assert.Equal(t, "acp.goose", synth.Agent)
+	assert.Equal(t, "goose-model", synth.Model)
+}
+
 func TestEnqueuePanelUnavailableNamedACPStoresNamespacedIdentity(t *testing.T) {
 	server, db, _ := newTestServer(t)
 	repo := testutil.NewGitRepo(t)

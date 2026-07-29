@@ -367,7 +367,7 @@ func TestResolvePanelNamedACPSynthesisUsesPairedModel(t *testing.T) {
 	assert.Equal(t, "goose-model", synth.Model)
 }
 
-func TestResolvePanelNamedACPSynthesisDoesNotCrossConfigLayers(t *testing.T) {
+func TestResolvePanelInheritedNamedACPSynthesisUsesPairedModel(t *testing.T) {
 	global := &Config{
 		DefaultAgent: "codex",
 		FixAgent:     "codex",
@@ -378,10 +378,9 @@ func TestResolvePanelNamedACPSynthesisDoesNotCrossConfigLayers(t *testing.T) {
 	}
 	repo := &RepoConfig{FixAgent: "goose"}
 
-	synth, err := resolveSynthesisFromConfig(
-		PanelSpec{SynthesisAgent: "goose"}, repo, global,
-	)
+	synth, err := resolveSynthesisFromConfig(PanelSpec{}, repo, global)
 	require.NoError(t, err)
+	assert.Equal(t, "goose", synth.Agent)
 	assert.Equal(t, "goose-model", synth.Model)
 }
 
