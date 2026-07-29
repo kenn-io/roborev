@@ -3746,7 +3746,7 @@ func TestProcessPRNamedPanelMemberUsesBackupModelWhenPreferredUnavailable(t *tes
 	cfg.ReviewBackupModel = "named-panel-backup-model"
 	cfg.Review = config.ReviewConfig{
 		Subagents: map[string]config.SubagentSpec{
-			"rev": {Agent: primaryAgent, ReviewType: "review"},
+			"rev": {Agent: primaryAgent, Model: "primary-only-model", ReviewType: "review"},
 		},
 		Panels: map[string]config.PanelSpec{
 			"ci": {Members: []string{"rev"}, SynthesisAgent: "test"},
@@ -4295,6 +4295,51 @@ func TestBuildPanelOpts_RecordsPRBranchOnJobs(t *testing.T) {
 		"CI synthesis job must record the PR base (target) branch so branch-filtered hooks fire")
 	assert.Empty(t, synthOpts.Branch,
 		"CI synthesis job must not set Branch (it would leak into branch-scoped local flows)")
+}
+
+func TestBuildPanelOptsSnapshotsEffectiveACPExecutionConfig(t *testing.T) {
+	p := &CIPoller{}
+	p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, *config.Config) (string, error) {
+		return "prebuilt prompt", nil
+	}
+	cfg := config.DefaultConfig()
+	cfg.ACP = config.ACPAgentConfigs{
+		"owl":    {Command: "global-owl"},
+		"unused": {Command: "global-unused"},
+	}
+	repoCfg := &config.RepoConfig{ACP: config.ACPAgentConfigs{
+		"goose": {Command: "default-branch-goose", Args: []string{"acp"}},
+	}}
+
+	memberOpts, synthOpts, err := p.buildPanelOpts(context.Background(), buildPanelOptsInput{
+		repo:    &storage.Repo{ID: 1, RootPath: t.TempDir()},
+		repoCfg: repoCfg,
+		cfg:     cfg,
+		ghRepo:  "acme/widgets",
+		gitRef:  "base..head",
+		members: []config.ResolvedMember{{Name: "reviewer", Agent: "goose"}},
+		synth: config.SynthesisSpec{
+			Agent: "owl", BackupAgent: "goose",
+		},
+	})
+	require.NoError(t, err)
+	require.Len(t, memberOpts, 1)
+
+	var memberSnapshot struct {
+		ACP config.ACPAgentConfigs `json:"acp"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(memberOpts[0].PanelMemberConfigJSON), &memberSnapshot))
+	assert.Equal(t, "default-branch-goose", memberSnapshot.ACP["goose"].Command)
+	assert.NotContains(t, memberSnapshot.ACP, "owl")
+	assert.NotContains(t, memberSnapshot.ACP, "unused")
+
+	var synthSnapshot struct {
+		ACP config.ACPAgentConfigs `json:"acp"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(synthOpts.PanelMemberConfigJSON), &synthSnapshot))
+	assert.Equal(t, "global-owl", synthSnapshot.ACP["owl"].Command)
+	assert.Equal(t, "default-branch-goose", synthSnapshot.ACP["goose"].Command)
+	assert.NotContains(t, synthSnapshot.ACP, "unused")
 }
 
 // installFakeKata copies the test binary to a temp dir as `kata` and points

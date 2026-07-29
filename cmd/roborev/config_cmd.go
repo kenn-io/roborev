@@ -93,7 +93,14 @@ func findRepoRoot(resolver RepoResolver) (string, error) {
 	if err != nil {
 		return "", err
 	}
+	return findRepoRootFrom(dir)
+}
 
+func findRepoRootFrom(dir string) (string, error) {
+	dir, err := filepath.Abs(dir)
+	if err != nil {
+		return "", err
+	}
 	for {
 		ok, err := hasGitMetadata(dir)
 		if err != nil {
@@ -237,6 +244,16 @@ func getValueForScope(resolver RepoResolver, key string, scope configScope) (str
 		cfg, err := config.LoadGlobal()
 		if err != nil {
 			return "", fmt.Errorf("load global config: %w", err)
+		}
+		parts := strings.SplitN(key, ".", 3)
+		if len(parts) == 3 && parts[0] == "acp" {
+			raw, err := config.LoadRawGlobal()
+			if err != nil {
+				return "", fmt.Errorf("load global config: %w", err)
+			}
+			if raw == nil || !config.IsKeyInTOMLFile(raw, key) {
+				return "", fmt.Errorf("key %q is not set in global config", key)
+			}
 		}
 		return config.GetConfigValue(cfg, key)
 	}

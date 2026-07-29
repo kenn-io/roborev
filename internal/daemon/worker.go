@@ -699,7 +699,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 
 	// Get the configured job agent. Backup failover is handled explicitly by
 	// failOrRetryAgent so jobs never silently run on the hardcoded fallback chain.
-	baseAgent, err := agent.GetPreferredOrBackupWithConfig(job.RepoPath, job.Agent, cfg)
+	baseAgent, err := resolveReviewJobAgent(job, cfg)
 	if err != nil {
 		log.Printf("[%s] Error getting agent: %v", workerID, err)
 		wp.failOrRetryAgent(workerID, job, job.Agent, fmt.Sprintf("get agent: %v", err))

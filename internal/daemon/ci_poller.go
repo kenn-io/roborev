@@ -788,8 +788,8 @@ func (p *CIPoller) resolveCIPanelMemberExecution(
 		resolvedAgent = resolved.Name()
 	}
 	model := member.Model
-	if !member.ModelExplicit {
-		model = resolution.ModelForSelectedAgent(resolvedAgent, cfg.CI.Model)
+	if !member.ModelExplicit || !resolution.AgentMatches(resolvedAgent, member.Agent) {
+		model = resolution.ModelForSelectedAgent(resolvedAgent, "")
 	}
 	return resolvedAgent, model, nil
 }
@@ -1091,7 +1091,17 @@ func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) (
 				in.ghRepo, in.prNumber, m.Name, m.Agent, err)
 			storedPrompt = ""
 		}
-		cfgJSON, _ := json.Marshal(m)
+		cfgJSON, err := json.Marshal(ciPanelMemberConfig{
+			ResolvedMember: m,
+			ACP: snapshotACPExecutionConfig(
+				in.repoCfg, in.cfg, m.Agent,
+			),
+		})
+		if err != nil {
+			return nil, storage.EnqueueOpts{}, fmt.Errorf(
+				"snapshot ACP config for panel member %q: %w", m.Name, err,
+			)
+		}
 		memberOpts = append(memberOpts, storage.EnqueueOpts{
 			RepoID:                in.repo.ID,
 			GitRef:                in.gitRef,
@@ -1113,20 +1123,32 @@ func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) (
 		})
 	}
 
+	var synthSnapshot []byte
+	synthACP := snapshotACPExecutionConfig(
+		in.repoCfg, in.cfg, in.synth.Agent, in.synth.BackupAgent,
+	)
+	if len(synthACP) > 0 {
+		encoded, marshalErr := json.Marshal(ciACPExecutionConfig{ACP: synthACP})
+		if marshalErr != nil {
+			return nil, storage.EnqueueOpts{}, fmt.Errorf("snapshot synthesis ACP config: %w", marshalErr)
+		}
+		synthSnapshot = encoded
+	}
 	synthOpts := storage.EnqueueOpts{
-		RepoID:       in.repo.ID,
-		GitRef:       in.gitRef,
-		CIBaseBranch: in.baseBranch,
-		Agent:        in.synth.Agent,
-		Model:        in.synth.Model,
-		Reasoning:    in.synth.Reasoning,
-		BackupAgent:  in.synth.BackupAgent,
-		BackupModel:  in.synth.BackupModel,
-		MinSeverity:  synthesisMinSeverity,
-		JobType:      storage.JobTypeSynthesis,
-		PanelRole:    storage.PanelRoleSynthesis,
-		PanelName:    in.panelName,
-		ClaimBlocked: true,
+		RepoID:                in.repo.ID,
+		GitRef:                in.gitRef,
+		CIBaseBranch:          in.baseBranch,
+		Agent:                 in.synth.Agent,
+		Model:                 in.synth.Model,
+		Reasoning:             in.synth.Reasoning,
+		BackupAgent:           in.synth.BackupAgent,
+		BackupModel:           in.synth.BackupModel,
+		MinSeverity:           synthesisMinSeverity,
+		JobType:               storage.JobTypeSynthesis,
+		PanelRole:             storage.PanelRoleSynthesis,
+		PanelName:             in.panelName,
+		PanelMemberConfigJSON: string(synthSnapshot),
+		ClaimBlocked:          true,
 	}
 	return memberOpts, synthOpts, nil
 }

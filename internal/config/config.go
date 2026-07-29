@@ -326,6 +326,9 @@ func ValidateACPAgentConfig(name string, cfg ACPAgentConfig) error {
 	if name != rawName {
 		return fmt.Errorf("ACP agent name %q must not contain surrounding whitespace", rawName)
 	}
+	if strings.Contains(name, ".") {
+		return fmt.Errorf("ACP agent name %q must not contain dots", name)
+	}
 	if canonical, builtIn := agentname.BuiltIn(name); builtIn {
 		return fmt.Errorf("ACP agent name %q conflicts with built-in agent %q", name, canonical)
 	}
@@ -824,7 +827,7 @@ func LoadRepoConfigFromRef(repoPath, ref string) (*RepoConfig, error) {
 		return nil, &ConfigParseError{Ref: ref, Err: err}
 	}
 	if err := validateACPAgentConfigs(cfg.ACP); err != nil {
-		return nil, fmt.Errorf("config at %s: %w", ref, err)
+		return nil, &ConfigParseError{Ref: ref, Err: err}
 	}
 	return &cfg, nil
 }

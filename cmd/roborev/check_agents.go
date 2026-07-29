@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"fmt"
-	"os"
 	"os/exec"
 	"strings"
 	"time"
@@ -40,12 +39,7 @@ Examples:
 				return fmt.Errorf("load global config: %w", err)
 			}
 
-			// Use current directory as repo path for the smoke test.
-			repoPath, err := os.Getwd()
-			if err != nil {
-				repoPath = "."
-			}
-			repoCfg, err := config.LoadRepoConfig(repoPath)
+			repoCfg, repoPath, err := loadCommandRepoConfig(cmd)
 			if err != nil {
 				return fmt.Errorf("load repo config: %w", err)
 			}

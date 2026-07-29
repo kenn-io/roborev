@@ -1,9 +1,12 @@
 package main
 
 import (
+	"os"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
+	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/testutil"
 )
@@ -28,5 +31,19 @@ func TestCheckAgentsDiscoversConfiguredACPAgent(t *testing.T) {
 	output := captureOutput(t, cmd.Execute)
 
 	assert.Regexp(t, `(?m)^  - goose\s+agent "goose" command "missing-goose-acp" unavailable:`, output)
+	assert.Contains(t, output, "1 skipped")
+}
+
+func TestCheckAgentsDiscoversRepoACPAgentFromNestedDirectory(t *testing.T) {
+	env := setupConfigEnv(t, "", "[acp.goose]\ncommand = 'missing-nested-goose-acp'\n")
+	nested := filepath.Join(env.RepoDir, "nested", "directory")
+	require.NoError(t, os.MkdirAll(nested, 0o755))
+	t.Chdir(nested)
+
+	cmd := checkAgentsCmd()
+	cmd.SetArgs([]string{"--agent", "goose", "--timeout", "1"})
+	output := captureOutput(t, cmd.Execute)
+
+	assert.Regexp(t, `(?m)^  - goose\s+agent "goose" command "missing-nested-goose-acp" unavailable:`, output)
 	assert.Contains(t, output, "1 skipped")
 }

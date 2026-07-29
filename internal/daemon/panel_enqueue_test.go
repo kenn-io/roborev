@@ -484,6 +484,49 @@ synthesis_agent = "test"
 	assert.Equal("backup-model", members[0].Model)
 }
 
+func TestEnqueuePanelExplicitModelUsesBackupModelAfterFailover(t *testing.T) {
+	server, db, _ := newTestServer(t)
+
+	const primaryAgent = "panel-explicit-model-unavailable"
+	agent.Register(&unavailableSynthesisCommandAgent{
+		name:    primaryAgent,
+		command: "roborev-missing-panel-explicit-model",
+	})
+	t.Cleanup(func() { agent.Unregister(primaryAgent) })
+
+	const panelWithBackup = `
+review_backup_agent = "test"
+review_backup_model = "backup-model"
+
+[review]
+default_panel = "solo"
+
+[review.subagents.only]
+agent = "panel-explicit-model-unavailable"
+model = "primary-only-model"
+review_type = "default"
+
+[review.panels.solo]
+members = ["only"]
+synthesis_agent = "test"
+`
+	repo := testutil.NewGitRepo(t)
+	repo.WriteFile(".roborev.toml", panelWithBackup)
+	repo.CommitFile("a.txt", "a", "add a")
+
+	resp := enqueuePanelViaHTTP(t, server, EnqueueRequest{
+		RepoPath: repo.Path(),
+		GitRef:   "HEAD",
+		Agent:    "test",
+	})
+
+	members, err := db.GetPanelMembers(resp.PanelRunUUID)
+	require.NoError(t, err)
+	require.Len(t, members, 1)
+	assert.Equal(t, "test", members[0].Agent)
+	assert.Equal(t, "backup-model", members[0].Model)
+}
+
 func TestEnqueuePanelNamedACPMemberReplacesInheritedWorkflowModel(t *testing.T) {
 	server, db, _ := newTestServer(t)
 	t.Cleanup(testutil.MockExecutable(t, "goose-panel-acp", 0))

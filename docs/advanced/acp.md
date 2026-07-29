@@ -256,10 +256,10 @@ disable_mode_negotiation = false   # Skip SetSessionMode RPC
 | `mode` | string | | Default agent mode (overrides `read_only_mode` unless explicitly opting in) |
 | `disable_mode_negotiation` | bool | `false` | Skip ACP `SetSessionMode` RPC while keeping authorization behavior |
 
-The subtable key is the agent name. It must not be empty or collide with a
-built-in agent name or alias. In repository configuration, an `[acp.<name>]`
-entry replaces the complete global entry with the same name; other global ACP
-entries remain available.
+The subtable key is the agent name. It must not be empty, contain dots, or
+collide with a built-in agent name or alias. In repository configuration, an
+`[acp.<name>]` entry replaces the complete global entry with the same name;
+other global ACP entries remain available.
 
 The earlier singleton format is no longer accepted. Move the old `name` value
 into the table header:

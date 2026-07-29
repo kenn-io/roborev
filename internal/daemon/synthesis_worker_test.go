@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"os"
@@ -401,6 +402,46 @@ func TestConfigureSynthesisAgentUsesBackupModelForNamedACPBackup(t *testing.T) {
 	configuredACP, ok := configured.(*agent.ACPAgent)
 	require.True(t, ok)
 	assert.Equal("backup-model", configuredACP.Model)
+}
+
+func TestConfigureSynthesisAgentUsesCISnapshottedACPConfig(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	binDir := t.TempDir()
+	frozenCommand := filepath.Join(binDir, "frozen-synthesis-goose")
+	liveCommand := filepath.Join(binDir, "live-synthesis-goose")
+	if runtime.GOOS == "windows" {
+		frozenCommand += ".cmd"
+		liveCommand += ".cmd"
+	}
+	script := []byte("#!/bin/sh\nexit 0\n")
+	require.NoError(t, os.WriteFile(frozenCommand, script, 0o755))
+	require.NoError(t, os.WriteFile(liveCommand, script, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(tc.TmpDir, ".roborev.toml"),
+		fmt.Appendf(nil, "[acp.goose]\ncommand = %q\n", liveCommand), 0o644))
+	snapshot, err := json.Marshal(struct {
+		ACP config.ACPAgentConfigs `json:"acp"`
+	}{ACP: config.ACPAgentConfigs{"goose": {Command: frozenCommand}}})
+	require.NoError(t, err)
+
+	_, _, synthJob := enqueuePanelRun(t, tc, "ci-acp-synthesis", []memberSpec{
+		{name: "m0", agent: "test"},
+	})
+	_, err = tc.DB.Exec(
+		`UPDATE review_jobs
+		 SET status = 'running', worker_id = ?, source = ?, agent = ?, panel_member_config_json = ?
+		 WHERE id = ?`,
+		testWorkerID, storage.JobSourceCI, "goose", string(snapshot), synthJob.ID,
+	)
+	require.NoError(t, err)
+	job, err := tc.DB.GetJobByID(synthJob.ID)
+	require.NoError(t, err)
+
+	configured, agentName, err := tc.Pool.configureSynthesisAgent(testWorkerID, job)
+	require.NoError(t, err)
+	assert.Equal(t, "goose", agentName)
+	configuredACP, ok := configured.(*agent.ACPAgent)
+	require.True(t, ok)
+	assert.Equal(t, frozenCommand, configuredACP.CommandName())
 }
 
 // TestSynthesisAllFailedRendersHeadSHA covers F11: the all-failed review header

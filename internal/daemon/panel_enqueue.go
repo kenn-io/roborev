@@ -542,7 +542,7 @@ func resolvePanelMemberExecution(
 		return agentName, model
 	}
 	selectedName := selected.Name()
-	if !m.ModelExplicit {
+	if !m.ModelExplicit || !resolution.AgentMatches(selectedName, m.Agent) {
 		model = resolution.ModelForSelectedAgent(selectedName, "")
 	}
 	return selectedName, model

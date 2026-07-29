@@ -1057,6 +1057,7 @@ func TestLoadConfigRejectsInvalidNamedACPAgents(t *testing.T) {
 		{name: "missing command", toml: "[acp.goose]\nargs = [\"acp\"]\n", wantError: "requires a command"},
 		{name: "built-in", toml: "[acp.codex]\ncommand = \"goose\"\n", wantError: "conflicts with built-in agent"},
 		{name: "alias", toml: "[acp.claude]\ncommand = \"goose\"\n", wantError: "conflicts with built-in agent"},
+		{name: "dotted name", toml: "[acp.\"foo.bar\"]\ncommand = \"foo-acp\"\n", wantError: "must not contain dots"},
 	}
 
 	for _, scope := range []string{"global", "repository"} {
@@ -3453,6 +3454,17 @@ func TestLoadRepoConfigFromRef(t *testing.T) {
 		}
 		require.NotNil(t, cfg, "expected non-nil config")
 		assert.Equal(t, "Use descriptive variable names.", cfg.ReviewGuidelines, "got review guidelines")
+	})
+
+	t.Run("classifies invalid ACP config as parse error", func(t *testing.T) {
+		writeTestFile(t, dir, ".roborev.toml", "[acp.codex]\ncommand = \"goose\"\n")
+		execGit(t, dir, "add", ".roborev.toml")
+		execGit(t, dir, "commit", "-m", "add invalid ACP config")
+		invalidSHA := execGit(t, dir, "rev-parse", "HEAD")
+
+		_, err := LoadRepoConfigFromRef(dir, invalidSHA)
+		require.Error(t, err)
+		assert.True(t, IsConfigParseError(err))
 	})
 
 	t.Run("returns nil for nonexistent ref", func(t *testing.T) {

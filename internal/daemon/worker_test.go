@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"database/sql"
+	"encoding/json"
 	"fmt"
 	"io"
 	"log"
@@ -2206,6 +2207,37 @@ func TestResolveBackupAgentUsesConfiguredACPName(t *testing.T) {
 	job := &storage.ReviewJob{Agent: "codex", RepoPath: t.TempDir()}
 
 	assert.Equal(t, "my-acp", pool.resolveBackupAgent(job))
+}
+
+func TestResolveReviewJobAgentUsesCISnapshottedACPConfig(t *testing.T) {
+	binDir := t.TempDir()
+	frozenCommand := filepath.Join(binDir, "frozen-goose")
+	liveCommand := filepath.Join(binDir, "live-goose")
+	if runtime.GOOS == "windows" {
+		frozenCommand += ".cmd"
+		liveCommand += ".cmd"
+	}
+	script := []byte("#!/bin/sh\nexit 0\n")
+	require.NoError(t, os.WriteFile(frozenCommand, script, 0o755))
+	require.NoError(t, os.WriteFile(liveCommand, script, 0o755))
+
+	repoPath := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repoPath, ".roborev.toml"),
+		fmt.Appendf(nil, "[acp.goose]\ncommand = %q\n", liveCommand), 0o644))
+	snapshot, err := json.Marshal(struct {
+		ACP config.ACPAgentConfigs `json:"acp"`
+	}{ACP: config.ACPAgentConfigs{"goose": {Command: frozenCommand}}})
+	require.NoError(t, err)
+	job := &storage.ReviewJob{
+		Source: storage.JobSourceCI, RepoPath: repoPath, Agent: "goose",
+		PanelMemberConfigJSON: string(snapshot),
+	}
+
+	configured, err := resolveReviewJobAgent(job, config.DefaultConfig())
+	require.NoError(t, err)
+	configuredACP, ok := configured.(*agent.ACPAgent)
+	require.True(t, ok)
+	assert.Equal(t, frozenCommand, configuredACP.CommandName())
 }
 
 func TestFailOrRetryInner_QuotaSkipsRetries(t *testing.T) {
