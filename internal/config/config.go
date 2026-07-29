@@ -348,31 +348,11 @@ func validateACPAgentConfigs(configs ACPAgentConfigs) error {
 	return nil
 }
 
-func validateAgentReferences(cfg any, acp ACPAgentConfigs) error {
-	return walkAgentReferences(reflect.ValueOf(cfg), "", acp)
+func validateAgentReferences(cfg any) error {
+	return walkAgentReferences(reflect.ValueOf(cfg), "")
 }
 
-func validateAgentReference(name string, acp ACPAgentConfigs) error {
-	name = strings.TrimSpace(name)
-	if err := agentname.ValidateReference(name); err != nil {
-		return err
-	}
-	if _, builtIn := agentname.BuiltIn(name); builtIn {
-		return nil
-	}
-	if _, canonicalACP := agentname.ACPConfigName(name); canonicalACP {
-		return nil
-	}
-	if _, configuredACP := acp[name]; configuredACP {
-		return fmt.Errorf(
-			"named ACP agent %q must use %q",
-			name, agentname.NamedACP(name),
-		)
-	}
-	return nil
-}
-
-func walkAgentReferences(value reflect.Value, path string, acp ACPAgentConfigs) error {
+func walkAgentReferences(value reflect.Value, path string) error {
 	if !value.IsValid() {
 		return nil
 	}
@@ -380,7 +360,7 @@ func walkAgentReferences(value reflect.Value, path string, acp ACPAgentConfigs) 
 		if value.IsNil() {
 			return nil
 		}
-		return walkAgentReferences(value.Elem(), path, acp)
+		return walkAgentReferences(value.Elem(), path)
 	}
 	if value.Kind() != reflect.Struct {
 		return nil
@@ -401,14 +381,14 @@ func walkAgentReferences(value reflect.Value, path string, acp ACPAgentConfigs) 
 
 		if field.Kind() == reflect.String &&
 			(tag == "agent" || strings.HasSuffix(tag, "_agent")) {
-			if err := validateAgentReference(field.String(), acp); err != nil {
+			if err := agentname.ValidateReference(field.String()); err != nil {
 				return fmt.Errorf("%s: %w", fieldPath, err)
 			}
 			continue
 		}
 		if field.Kind() == reflect.Slice && tag == "agents" {
 			for j := range field.Len() {
-				if err := validateAgentReference(field.Index(j).String(), acp); err != nil {
+				if err := agentname.ValidateReference(field.Index(j).String()); err != nil {
 					return fmt.Errorf("%s[%d]: %w", fieldPath, j, err)
 				}
 			}
@@ -422,17 +402,17 @@ func walkAgentReferences(value reflect.Value, path string, acp ACPAgentConfigs) 
 			for _, key := range keys {
 				entryPath := fmt.Sprintf("%s.%v", fieldPath, key.Interface())
 				if tag == "reviews" {
-					if err := validateAgentReference(fmt.Sprint(key.Interface()), acp); err != nil {
+					if err := agentname.ValidateReference(fmt.Sprint(key.Interface())); err != nil {
 						return fmt.Errorf("%s: %w", entryPath, err)
 					}
 				}
-				if err := walkAgentReferences(field.MapIndex(key), entryPath, acp); err != nil {
+				if err := walkAgentReferences(field.MapIndex(key), entryPath); err != nil {
 					return err
 				}
 			}
 			continue
 		}
-		if err := walkAgentReferences(field, fieldPath, acp); err != nil {
+		if err := walkAgentReferences(field, fieldPath); err != nil {
 			return err
 		}
 	}
@@ -443,7 +423,7 @@ func validateConfig(cfg any, acp ACPAgentConfigs) error {
 	if err := validateACPAgentConfigs(acp); err != nil {
 		return err
 	}
-	return validateAgentReferences(cfg, acp)
+	return validateAgentReferences(cfg)
 }
 
 // RepoConfig holds per-repo overrides

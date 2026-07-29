@@ -524,7 +524,7 @@ func TestEnqueueAnalysisJobAppliesAnalyzeConfig(t *testing.T) {
 	repo.CommitFile("main.go", "package main", "initial")
 	require.NoError(t, os.WriteFile(filepath.Join(repo.Dir, ".roborev.toml"), []byte(`
 [analyze.refactor]
-agent = "configured-agent"
+agent = "gemini"
 model = "configured-model"
 reasoning = "fast"
 `), 0o644))
@@ -540,7 +540,7 @@ reasoning = "fast"
 			w.WriteHeader(http.StatusCreated)
 			_ = json.NewEncoder(w).Encode(storage.ReviewJob{
 				ID:     42,
-				Agent:  "configured-agent",
+				Agent:  "gemini",
 				Status: storage.JobStatusQueued,
 			})
 		},
@@ -549,7 +549,7 @@ reasoning = "fast"
 	_, err := enqueueAnalysisJob(t.Context(), mustParseEndpoint(t, ts.URL), repo.Dir, "test prompt", "", "refactor", analyzeOptions{})
 	require.NoError(t, err, "enqueueAnalysisJob")
 
-	assert.Equal(t, "configured-agent", got.Agent)
+	assert.Equal(t, "gemini", got.Agent)
 	assert.Equal(t, "configured-model", got.Model)
 	assert.Equal(t, "fast", got.Reasoning)
 	assert.Empty(t, got.ReviewType)

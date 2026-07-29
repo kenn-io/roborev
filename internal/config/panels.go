@@ -366,9 +366,9 @@ func validateSubagentTimeout(timeout string) error {
 // resolveSynthesis resolves the synthesis agent/model/reasoning: the panel's
 // explicit synthesis_agent/synthesis_model else the fix-workflow resolution,
 // and the fix-workflow reasoning (synthesis consolidates like a fix). An
-// omitted synthesis_model on a panel that pins an explicit synthesis_agent
-// inherits only a workflow-specific fix model, never a generic default_model/
-// repo model paired with a different default agent (mirrors member resolution).
+// omitted synthesis_model inherits a workflow or default model only when the
+// configuration layer supplying that model resolves to the selected agent
+// (mirrors member resolution).
 func resolveSynthesis(panel PanelSpec, repoPath string, globalCfg *Config) (SynthesisSpec, error) {
 	repoCfg, _ := LoadRepoConfig(repoPath)
 	return resolveSynthesisFromConfig(panel, repoCfg, globalCfg)
@@ -428,43 +428,30 @@ func resolveExplicitPanelAgentModelFromConfig(
 	}
 
 	selectedAgent = strings.TrimSpace(selectedAgent)
-	if repoAgent, ok := repoPanelAgentForWorkflow(repoCfg, workflow, reasoning); ok {
-		if strings.TrimSpace(repoAgent) != selectedAgent {
-			return acpCfg.Model
+	if model := repoPanelModelForWorkflow(repoCfg, workflow, reasoning); model != "" {
+		pairedAgent, ok := repoPanelAgentForWorkflow(repoCfg, workflow, reasoning)
+		if !ok {
+			pairedAgent = globalPanelAgentForWorkflow(globalCfg, workflow, reasoning)
 		}
-		if model := repoPanelModelForWorkflow(repoCfg, workflow, reasoning); model != "" {
+		if strings.TrimSpace(pairedAgent) == selectedAgent {
 			return model
 		}
-		if strings.TrimSpace(repoCfg.Agent) == selectedAgent {
-			if model := strings.TrimSpace(repoCfg.Model); model != "" {
-				return model
-			}
+	}
+	if repoCfg != nil && strings.TrimSpace(repoCfg.Agent) == selectedAgent {
+		if model := strings.TrimSpace(repoCfg.Model); model != "" {
+			return model
 		}
-		return acpCfg.Model
 	}
-	workflowAgent := strings.TrimSpace(ResolveAgentForWorkflowFromConfig(
-		"", repoCfg, globalCfg, workflow, reasoning,
-	))
-	defaultAgent := strings.TrimSpace(ResolveAgentFromConfig("", repoCfg, globalCfg))
-	if workflowAgent != selectedAgent {
-		if defaultAgent == selectedAgent {
-			if model := ResolveModelFromConfig("", repoCfg, globalCfg); model != "" {
-				return model
-			}
+	if model := globalPanelModelForWorkflow(globalCfg, workflow, reasoning); model != "" &&
+		strings.TrimSpace(globalPanelAgentForWorkflow(globalCfg, workflow, reasoning)) == selectedAgent {
+		return model
+	}
+	if globalCfg != nil && strings.TrimSpace(globalCfg.DefaultAgent) == selectedAgent {
+		if model := strings.TrimSpace(globalCfg.DefaultModel); model != "" {
+			return model
 		}
-		return acpCfg.Model
 	}
-
-	model := workflowModel
-	if defaultAgent == selectedAgent {
-		model = ResolveModelForWorkflowFromConfig(
-			"", repoCfg, globalCfg, workflow, reasoning,
-		)
-	}
-	if model == "" {
-		return acpCfg.Model
-	}
-	return model
+	return acpCfg.Model
 }
 
 func repoPanelAgentForWorkflow(
@@ -504,6 +491,47 @@ func repoPanelModelForWorkflow(
 	}
 	if workflowAllowsAnalyzeFallback(workflow) {
 		return analyzeField(repoCfg.Analyze, workflow, false)
+	}
+	return ""
+}
+
+func globalPanelAgentForWorkflow(
+	globalCfg *Config, workflow, reasoning string,
+) string {
+	if globalCfg == nil {
+		return "codex"
+	}
+	if value := globalWorkflowField(globalCfg, workflow, reasoning, true); value != "" {
+		return value
+	}
+	if value := globalWorkflowField(globalCfg, workflow, "", true); value != "" {
+		return value
+	}
+	if workflowAllowsAnalyzeFallback(workflow) {
+		if value := analyzeField(globalCfg.Analyze, workflow, true); value != "" {
+			return value
+		}
+	}
+	if value := strings.TrimSpace(globalCfg.DefaultAgent); value != "" {
+		return value
+	}
+	return "codex"
+}
+
+func globalPanelModelForWorkflow(
+	globalCfg *Config, workflow, reasoning string,
+) string {
+	if globalCfg == nil {
+		return ""
+	}
+	if value := globalWorkflowField(globalCfg, workflow, reasoning, false); value != "" {
+		return value
+	}
+	if value := globalWorkflowField(globalCfg, workflow, "", false); value != "" {
+		return value
+	}
+	if workflowAllowsAnalyzeFallback(workflow) {
+		return analyzeField(globalCfg.Analyze, workflow, false)
 	}
 	return ""
 }

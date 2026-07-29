@@ -446,22 +446,18 @@ func TestEnqueuePanelMemberUsesBackupModelWhenPreferredUnavailable(t *testing.T)
 	assert := assert.New(t)
 	server, db, _ := newTestServer(t)
 
-	const primaryAgent = "panel-unavailable-primary"
-	agent.Register(&unavailableSynthesisCommandAgent{
-		name:    primaryAgent,
-		command: "roborev-missing-panel-primary",
-	})
-	t.Cleanup(func() { agent.Unregister(primaryAgent) })
-
 	const panelWithBackup = `
 review_backup_agent = "test"
 review_backup_model = "backup-model"
+
+[acp.unavailable-primary]
+command = "roborev-missing-panel-primary"
 
 [review]
 default_panel = "solo"
 
 [review.subagents.only]
-agent = "panel-unavailable-primary"
+agent = "acp.unavailable-primary"
 review_type = "default"
 
 [review.panels.solo]
@@ -488,22 +484,18 @@ synthesis_agent = "test"
 func TestEnqueuePanelExplicitModelUsesBackupModelAfterFailover(t *testing.T) {
 	server, db, _ := newTestServer(t)
 
-	const primaryAgent = "panel-explicit-model-unavailable"
-	agent.Register(&unavailableSynthesisCommandAgent{
-		name:    primaryAgent,
-		command: "roborev-missing-panel-explicit-model",
-	})
-	t.Cleanup(func() { agent.Unregister(primaryAgent) })
-
 	const panelWithBackup = `
 review_backup_agent = "test"
 review_backup_model = "backup-model"
+
+[acp.explicit-model-unavailable]
+command = "roborev-missing-panel-explicit-model"
 
 [review]
 default_panel = "solo"
 
 [review.subagents.only]
-agent = "panel-explicit-model-unavailable"
+agent = "acp.explicit-model-unavailable"
 model = "primary-only-model"
 review_type = "default"
 
@@ -784,12 +776,6 @@ func TestEnqueuePanelOmittedMemberAgentAutoDetectDoesNotInheritRequestedModel(t 
 	assert := assert.New(t)
 	server, db, _ := newTestServer(t)
 
-	const primaryAgent = "panel-unavailable-default"
-	agent.Register(&unavailableSynthesisCommandAgent{
-		name:    primaryAgent,
-		command: "roborev-missing-panel-default",
-	})
-	t.Cleanup(func() { agent.Unregister(primaryAgent) })
 	agent.Register(&agent.FakeAgent{NameStr: "panel-auto-detected"})
 	t.Cleanup(func() { agent.Unregister("panel-auto-detected") })
 
@@ -800,7 +786,10 @@ func TestEnqueuePanelOmittedMemberAgentAutoDetectDoesNotInheritRequestedModel(t 
 	t.Setenv("PATH", binDir)
 
 	const panelWithOmittedAgent = `
-agent = "panel-unavailable-default"
+agent = "acp.unavailable-default"
+
+[acp.unavailable-default]
+command = "roborev-missing-panel-default"
 
 [review]
 default_panel = "solo"
@@ -890,7 +879,7 @@ review_type = "default"
 
 [review.panels.solo]
 members = ["only"]
-synthesis_agent = "synthesis-exec"
+synthesis_agent = "codex"
 synthesis_model = "synth-model"
 synthesis_backup_agent = "claude-code"
 synthesis_backup_model = "opus"
@@ -908,7 +897,7 @@ synthesis_backup_model = "opus"
 	synth, err := db.GetSynthesisJob(resp.PanelRunUUID)
 	require.NoError(t, err)
 	require.NotNil(t, synth)
-	assert.Equal("synthesis-exec", synth.Agent, "single-member synthesis keeps execution agent")
+	assert.Equal("codex", synth.Agent, "single-member synthesis keeps execution agent")
 	assert.Equal("synth-model", synth.Model, "single-member synthesis keeps execution model")
 	assert.Equal("standard", synth.Reasoning, "single-member synthesis keeps execution reasoning")
 	assert.Equal("claude-code", synth.BackupAgent, "single-member must not clear backup agent")
@@ -933,7 +922,7 @@ review_type = "default"
 
 [review.panels.solo]
 members = ["only"]
-synthesis_agent = "synthesis-exec"
+synthesis_agent = "codex"
 `
 	repo := testutil.NewGitRepo(t)
 	repo.WriteFile(".roborev.toml", single)
@@ -952,7 +941,7 @@ synthesis_agent = "synthesis-exec"
 	synth, err := db.GetJobByID(resp.ID)
 	require.NoError(t, err)
 	assert.Equal("test", members[0].Agent, "member row carries the member's agent")
-	assert.Equal("synthesis-exec", synth.Agent, "parent row carries the synthesis execution agent")
+	assert.Equal("codex", synth.Agent, "parent row carries the synthesis execution agent")
 }
 
 // TestEnqueuePanelUndefinedIsHardError verifies an undefined --panel is a 400

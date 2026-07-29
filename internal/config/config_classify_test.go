@@ -73,11 +73,11 @@ func TestResolveClassifyAgent(t *testing.T) {
 
 	t.Run("falls back to repo config", func(t *testing.T) {
 		testDir := t.TempDir()
-		writeRepoConfigStr(t, testDir, `classify_agent = "repo-agent"`)
+		writeRepoConfigStr(t, testDir, `classify_agent = "gemini"`)
 
 		agent, err := ResolveClassifyAgent("", testDir, nil)
 		require.NoError(t, err)
-		assert.Equal(t, "repo-agent", agent)
+		assert.Equal(t, "gemini", agent)
 	})
 
 	t.Run("falls back to global config", func(t *testing.T) {
@@ -129,7 +129,7 @@ func TestResolveClassifyReasoning(t *testing.T) {
 func TestResolveBackupClassifyAgent(t *testing.T) {
 	t.Run("repo config takes precedence", func(t *testing.T) {
 		testDir := t.TempDir()
-		writeRepoConfigStr(t, testDir, `classify_backup_agent = "repo-backup"`)
+		writeRepoConfigStr(t, testDir, `classify_backup_agent = "gemini"`)
 
 		globalCfg := &Config{
 			ClassifyBackupAgent: "global-backup",
@@ -137,7 +137,7 @@ func TestResolveBackupClassifyAgent(t *testing.T) {
 
 		agent, err := ResolveBackupClassifyAgent(testDir, globalCfg)
 		require.NoError(t, err)
-		assert.Equal(t, "repo-backup", agent)
+		assert.Equal(t, "gemini", agent)
 	})
 
 	t.Run("falls back to global config", func(t *testing.T) {

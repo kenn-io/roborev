@@ -1061,7 +1061,10 @@ func TestLoadConfigRejectsInvalidNamedACPAgents(t *testing.T) {
 		{name: "built-in", toml: "[acp.codex]\ncommand = \"goose\"\n", wantError: "conflicts with built-in agent"},
 		{name: "alias", toml: "[acp.claude]\ncommand = \"goose\"\n", wantError: "conflicts with built-in agent"},
 		{name: "dotted name", toml: "[acp.\"foo.bar\"]\ncommand = \"foo-acp\"\n", wantError: "must not contain dots"},
-		{name: "bare ACP reference", toml: "fix_agent = \"goose\"\n[acp.goose]\ncommand = \"goose\"\n", wantError: `must use "acp.goose"`},
+		{name: "bare custom reference", toml: "fix_agent = \"goose\"\n", wantError: `must use "acp.goose"`},
+		{name: "bare nested panel reference", toml: "[review.subagents.only]\nagent = \"goose\"\n", wantError: `must use "acp.goose"`},
+		{name: "bare CI agent reference", toml: "[ci]\nagents = [\"goose\"]\n", wantError: `must use "acp.goose"`},
+		{name: "bare CI reviews key", toml: "[ci.reviews]\ngoose = [\"default\"]\n", wantError: `must use "acp.goose"`},
 	}
 
 	for _, scope := range []string{"global", "repository"} {
@@ -2284,36 +2287,36 @@ func TestResolveAnalyzeConfig(t *testing.T) {
 	}{
 		{
 			name:     "repo analysis table overrides workflow fallback",
-			repo:     "[analyze.refactor]\nagent = \"repo-agent\"\nmodel = \"repo-model\"\n",
+			repo:     "[analyze.refactor]\nagent = \"gemini\"\nmodel = \"repo-model\"\n",
 			global:   &Config{ReviewAgent: "global-review", ReviewModel: "global-review-model"},
 			analysis: "refactor", fallback: "review", reasoning: "standard",
-			wantAgent: "repo-agent", wantModel: "repo-model",
+			wantAgent: "gemini", wantModel: "repo-model",
 		},
 		{
 			name:     "global analysis table used when repo lacks entry",
-			repo:     "review_agent = \"repo-review\"\n",
+			repo:     "review_agent = \"gemini\"\n",
 			global:   &Config{Analyze: map[string]AnalyzeConfig{"refactor": {Agent: "global-agent", Model: "global-model"}}},
 			analysis: "refactor", fallback: "review", reasoning: "standard",
-			wantAgent: "repo-review", wantModel: "global-model",
+			wantAgent: "gemini", wantModel: "global-model",
 		},
 		{
 			name:     "cli agent and model override analysis table",
 			cliAgent: "cli-agent", cliModel: "cli-model",
-			repo:     "[analyze.refactor]\nagent = \"repo-agent\"\nmodel = \"repo-model\"\n",
+			repo:     "[analyze.refactor]\nagent = \"gemini\"\nmodel = \"repo-model\"\n",
 			analysis: "refactor", fallback: "review", reasoning: "standard",
 			wantAgent: "cli-agent", wantModel: "cli-model",
 		},
 		{
 			name:     "missing analysis table falls back to workflow",
-			repo:     "review_agent = \"repo-review\"\nreview_model = \"repo-review-model\"\n",
+			repo:     "review_agent = \"gemini\"\nreview_model = \"repo-review-model\"\n",
 			analysis: "duplication", fallback: "review", reasoning: "standard",
-			wantAgent: "repo-review", wantModel: "repo-review-model",
+			wantAgent: "gemini", wantModel: "repo-review-model",
 		},
 		{
 			name:     "security analysis falls back to security workflow",
-			repo:     "review_agent = \"repo-review\"\nsecurity_agent = \"repo-security\"\n",
+			repo:     "review_agent = \"gemini\"\nsecurity_agent = \"claude-code\"\n",
 			analysis: "security", fallback: "security", reasoning: "standard",
-			wantAgent: "repo-security",
+			wantAgent: "claude-code",
 		},
 	}
 
@@ -2509,7 +2512,7 @@ func TestResolveBackupAgentForWorkflow(t *testing.T) {
 		{"global backup for design", nil, &Config{DesignBackupAgent: "droid"}, "design", "droid"},
 
 		// Repo backup agent overrides global
-		{"repo overrides global", M{"review_backup_agent": "repo-test"}, &Config{ReviewBackupAgent: "global-test"}, "review", "repo-test"},
+		{"repo overrides global", M{"review_backup_agent": "test"}, &Config{ReviewBackupAgent: "global-test"}, "review", "test"},
 		{"repo backup only", M{"review_backup_agent": "test"}, nil, "review", "test"},
 
 		// Different workflows resolve independently
@@ -2529,11 +2532,11 @@ func TestResolveBackupAgentForWorkflow(t *testing.T) {
 		{"global default_backup_agent for any workflow", nil, &Config{DefaultBackupAgent: "test"}, "fix", "test"},
 		{"global workflow-specific overrides default", nil, &Config{DefaultBackupAgent: "test", ReviewBackupAgent: "claude"}, "review", "claude"},
 		{"global default used when workflow not set", nil, &Config{DefaultBackupAgent: "test", ReviewBackupAgent: "claude"}, "fix", "test"},
-		{"repo backup_agent generic", M{"backup_agent": "repo-fallback"}, nil, "review", "repo-fallback"},
-		{"repo backup_agent generic for any workflow", M{"backup_agent": "repo-fallback"}, nil, "refine", "repo-fallback"},
-		{"repo workflow-specific overrides repo generic", M{"backup_agent": "generic", "review_backup_agent": "specific"}, nil, "review", "specific"},
-		{"repo generic overrides global workflow-specific", M{"backup_agent": "repo"}, &Config{ReviewBackupAgent: "global"}, "review", "repo"},
-		{"repo generic overrides global default", M{"backup_agent": "repo"}, &Config{DefaultBackupAgent: "global"}, "review", "repo"},
+		{"repo backup_agent generic", M{"backup_agent": "gemini"}, nil, "review", "gemini"},
+		{"repo backup_agent generic for any workflow", M{"backup_agent": "gemini"}, nil, "refine", "gemini"},
+		{"repo workflow-specific overrides repo generic", M{"backup_agent": "codex", "review_backup_agent": "gemini"}, nil, "review", "gemini"},
+		{"repo generic overrides global workflow-specific", M{"backup_agent": "gemini"}, &Config{ReviewBackupAgent: "global"}, "review", "gemini"},
+		{"repo generic overrides global default", M{"backup_agent": "gemini"}, &Config{DefaultBackupAgent: "global"}, "review", "gemini"},
 	}
 
 	for _, tt := range tests {

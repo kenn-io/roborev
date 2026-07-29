@@ -370,8 +370,8 @@ func TestResolvePanelNamedACPSynthesisUsesPairedModel(t *testing.T) {
 func TestResolvePanelInheritedNamedACPSynthesisUsesPairedModel(t *testing.T) {
 	global := &Config{
 		DefaultAgent: "codex",
-		FixAgent:     "codex",
-		FixModel:     "codex-model",
+		FixAgent:     "acp.goose",
+		FixModel:     "global-goose-model",
 		ACP: ACPAgentConfigs{
 			"goose": {Command: "goose", Model: "goose-model"},
 		},
@@ -381,7 +381,38 @@ func TestResolvePanelInheritedNamedACPSynthesisUsesPairedModel(t *testing.T) {
 	synth, err := resolveSynthesisFromConfig(PanelSpec{}, repo, global)
 	require.NoError(t, err)
 	assert.Equal(t, "acp.goose", synth.Agent)
-	assert.Equal(t, "goose-model", synth.Model)
+	assert.Equal(t, "global-goose-model", synth.Model)
+}
+
+func TestResolvePanelInheritedNamedACPSynthesisUsesMatchingGlobalDefaultModel(t *testing.T) {
+	global := &Config{
+		DefaultAgent: "acp.goose",
+		DefaultModel: "global-default-model",
+		ACP: ACPAgentConfigs{
+			"goose": {Command: "goose", Model: "goose-model"},
+		},
+	}
+	repo := &RepoConfig{Agent: "acp.goose"}
+
+	synth, err := resolveSynthesisFromConfig(PanelSpec{}, repo, global)
+	require.NoError(t, err)
+	assert.Equal(t, "acp.goose", synth.Agent)
+	assert.Equal(t, "global-default-model", synth.Model)
+}
+
+func TestResolvePanelExplicitNamedACPSynthesisUsesMatchingRepoDefaultModel(t *testing.T) {
+	global := &Config{ACP: ACPAgentConfigs{
+		"goose": {Command: "goose", Model: "goose-model"},
+	}}
+	repo := &RepoConfig{
+		Agent: "acp.goose", Model: "repo-goose-model", FixAgent: "codex",
+	}
+
+	synth, err := resolveSynthesisFromConfig(
+		PanelSpec{SynthesisAgent: "acp.goose"}, repo, global,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "repo-goose-model", synth.Model)
 }
 
 // TestResolveSynthesisBackupPassThrough verifies F7: synthesis_backup_agent /

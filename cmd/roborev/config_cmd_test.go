@@ -299,7 +299,7 @@ func TestRequireRepoRoot(t *testing.T) {
 }
 
 func TestGetValueForScopeMergedPrefersLocal(t *testing.T) {
-	env := setupConfigEnv(t, "review_agent = \"global-agent\"\n", "review_agent = \"local-agent\"\n")
+	env := setupConfigEnv(t, "review_agent = \"codex\"\n", "review_agent = \"gemini\"\n")
 
 	nestedDir := filepath.Join(env.RepoDir, "a", "b")
 	require.NoError(t, os.MkdirAll(nestedDir, 0o755), "create nested dir")
@@ -309,7 +309,7 @@ func TestGetValueForScopeMergedPrefersLocal(t *testing.T) {
 
 	got, err := getValueForScope(env.Resolver, "review_agent", scopeMerged)
 	require.NoError(t, err)
-	require.Equal(t, "local-agent", got)
+	require.Equal(t, "gemini", got)
 }
 
 func TestGetValueForScopeMergedRepoResolutionError(t *testing.T) {
@@ -590,7 +590,7 @@ func TestSetRawMapKey(t *testing.T) {
 }
 
 func TestGetValueForScopeMergedMalformedLocalConfig(t *testing.T) {
-	env := setupConfigEnv(t, `review_agent = "global-agent"\n`, "invalid toml [[[")
+	env := setupConfigEnv(t, `review_agent = "codex"\n`, "invalid toml [[[")
 
 	_, err := getValueForScope(env.Resolver, "review_agent", scopeMerged)
 	require.ErrorContains(t, err, "load repo config")

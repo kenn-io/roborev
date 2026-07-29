@@ -62,10 +62,20 @@ func NamedACP(configName string) string {
 // entries must always be referenced by their canonical acp.<name> identity.
 func ValidateReference(name string) error {
 	name = strings.TrimSpace(name)
-	if strings.HasPrefix(name, ACPPrefix) {
-		if _, ok := ACPConfigName(name); !ok {
-			return fmt.Errorf("invalid ACP agent identity %q; expected acp.<name>", name)
-		}
+	if name == "" {
+		return nil
 	}
-	return nil
+	if _, builtIn := BuiltIn(name); builtIn {
+		return nil
+	}
+	if _, canonicalACP := ACPConfigName(name); canonicalACP {
+		return nil
+	}
+	if strings.HasPrefix(name, ACPPrefix) {
+		return fmt.Errorf("invalid ACP agent identity %q; expected acp.<name>", name)
+	}
+	return fmt.Errorf(
+		"unknown agent %q; named ACP agents must use %q",
+		name, NamedACP(name),
+	)
 }

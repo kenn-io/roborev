@@ -266,6 +266,43 @@ identity everywhere an agent is referenced, such as `--agent acp.goose` or
 `review_agent = "acp.goose"`. Bare `goose` references are invalid, and queued
 jobs store the same canonical identity.
 
+### Migrating Bare Agent References
+
+Named ACP references that omit the `acp.` prefix are rejected during config
+loading and saving. Replace the value or CI review key everywhere the agent is
+routed; the `[acp.<name>]` table header itself does not change:
+
+```toml
+# Before (invalid)
+fix_agent = "goose"
+
+# After
+fix_agent = "acp.goose"
+
+[ci.reviews]
+"acp.goose" = ["default", "security"]
+
+[review.subagents.goose]
+agent = "acp.goose"
+
+[review.panels.default]
+members = ["goose"]
+synthesis_agent = "acp.goose"
+synthesis_backup_agent = "codex"
+
+[analyze.refactor]
+agent = "acp.goose"
+
+[acp.goose]
+command = "goose"
+args = ["acp"]
+```
+
+Apply the same replacement to default, workflow, backup, CI, panel, synthesis,
+and analysis agent settings. roborev intentionally does not create a bare-name
+alias or rewrite configuration automatically; the validation error names the
+required canonical identity.
+
 Namespacing and frozen CI execution configuration apply to newly queued jobs;
 existing bare-name rows are not rewritten. Cancel and re-enqueue an active
 legacy job when it must use the frozen configuration. For new CI panel jobs, the

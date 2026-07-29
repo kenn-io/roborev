@@ -423,8 +423,8 @@ func TestE2EAutoDesign_Dedup_SecondDispatchNoOp(t *testing.T) {
 }
 
 func TestE2EAutoDesign_ClassifierFailed_MarksSkipped(t *testing.T) {
-	// Classifier config fails (no classify_agent registered as a
-	// SchemaAgent with the sentinel name "no-such-agent"). The worker
+	// Classifier config fails because the built-in test agent does not
+	// implement SchemaAgent. The worker
 	// converts the classify row to status=skipped via
 	// completeClassifyAsSkip and bumps ClassifierFailed.
 	e := newAutoDesignE2E(t)
@@ -437,10 +437,11 @@ func TestE2EAutoDesign_ClassifierFailed_MarksSkipped(t *testing.T) {
 	sha := e.repo.CommitFile("src/noop.go", "package src\n\nfunc a() {\n"+body.String()+"}\n",
 		"feat: tweak")
 
-	// Override classify_agent to an unknown name so agent.Get fails.
+	// Override classify_agent to a valid agent identity without the required
+	// classifier capability.
 	require.NoError(t, os.WriteFile(filepath.Join(e.repo.Path(), ".roborev.toml"),
 		[]byte(`agent = "test"
-classify_agent = "no-such-agent"
+classify_agent = "test"
 
 [auto_design_review]
 enabled = true
