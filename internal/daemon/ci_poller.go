@@ -1012,14 +1012,26 @@ func (p *CIPoller) maybeAppendDesignMember(
 		if !p.commitWarrantsDesign(ctx, repo.RootPath, sha, hh) {
 			continue
 		}
+		reasoning := ciReasoning(repoCfg)
 		designAgent, designModel := resolveCIAutoDesignAgent(repoCfg, cfg)
+		designAgent = agent.StorageNameFromConfig(designAgent, repoCfg, cfg)
+		var backupAgent, backupModel string
+		if resolution, err := agent.ResolveWorkflowConfigFromConfig(
+			designAgent, repoCfg, cfg, "design", reasoning,
+		); err == nil {
+			backupAgent, backupModel = ciMemberBackupExecution(
+				resolution, designAgent, repoCfg, cfg,
+			)
+		}
 		return append(members, config.ResolvedMember{
-			Name:       "design",
-			Index:      len(members),
-			Agent:      designAgent,
-			Model:      designModel,
-			ReviewType: config.ReviewTypeDesign,
-			Reasoning:  ciReasoning(repoCfg),
+			Name:        "design",
+			Index:       len(members),
+			Agent:       designAgent,
+			Model:       designModel,
+			ReviewType:  config.ReviewTypeDesign,
+			Reasoning:   reasoning,
+			BackupAgent: backupAgent,
+			BackupModel: backupModel,
 		})
 	}
 	return members

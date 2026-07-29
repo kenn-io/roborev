@@ -344,6 +344,29 @@ func TestResolvePanelExplicitSynthesisAgentSkipsGenericModel(t *testing.T) {
 	assert.Empty(synth.Model)
 }
 
+func TestResolvePanelNamedACPSynthesisUsesPairedModel(t *testing.T) {
+	global := &Config{
+		DefaultAgent: "codex",
+		FixModel:     "foreign-fix-model",
+		ACP: ACPAgentConfigs{
+			"goose": {Command: "goose", Model: "goose-model"},
+		},
+		Review: ReviewConfig{
+			Subagents: map[string]SubagentSpec{
+				"default": {Agent: "test", ReviewType: "default"},
+			},
+			Panels: map[string]PanelSpec{
+				"p": {Members: []string{"default"}, SynthesisAgent: "goose"},
+			},
+		},
+	}
+
+	_, synth, err := ResolvePanel("p", "", global)
+	require.NoError(t, err)
+	assert.Equal(t, "goose", synth.Agent)
+	assert.Equal(t, "goose-model", synth.Model)
+}
+
 // TestResolveSynthesisBackupPassThrough verifies F7: synthesis_backup_agent /
 // synthesis_backup_model are passed straight through to SynthesisSpec.BackupAgent
 // / BackupModel with no resolution or fallback, via BOTH ResolvePanel and

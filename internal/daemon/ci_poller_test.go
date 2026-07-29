@@ -3491,6 +3491,50 @@ func TestProcessPRAutoDesignUsesConfiguredBackupModel(t *testing.T) {
 	assert.Equal("design-backup-model", design.Model)
 }
 
+func TestProcessPRAutoDesignPersistsNamedACPBackupSnapshot(t *testing.T) {
+	p, db, _, repo, cfg := newCIPanelGitHarness(t)
+	cfg.DesignAgent = "test"
+	cfg.DesignBackupAgent = "goose"
+	cfg.DesignBackupModel = "goose-design-backup-model"
+	cfg.ACP = config.ACPAgentConfigs{
+		"goose": {Command: "goose-design-backup-acp"},
+	}
+	p.loadRepoConfigFn = func(string) (*config.RepoConfig, error) {
+		enabled := true
+		rc := &config.RepoConfig{}
+		rc.AutoDesignReview.Enabled = &enabled
+		return rc, nil
+	}
+
+	base := repo.HeadSHA()
+	head := repo.CommitFile("db/migrations/004_invoices.sql",
+		"CREATE TABLE invoices(id INT);\n", "feat: add invoices table")
+	p.mergeBaseFn = func(_, _, _ string) (string, error) { return base, nil }
+
+	err := p.processPR(context.Background(), "acme/api", ghPR{
+		Number: 16, HeadRefOid: head, BaseRefName: "main",
+	}, cfg)
+	require.NoError(t, err)
+	panel, err := db.GetCIPanelByPRSHA("acme/api", 16, head)
+	require.NoError(t, err)
+	members, err := db.GetPanelMembers(panel.PanelRunUUID)
+	require.NoError(t, err)
+
+	var design *storage.ReviewJob
+	for i := range members {
+		if members[i].ReviewType == config.ReviewTypeDesign {
+			design = &members[i]
+			break
+		}
+	}
+	require.NotNil(t, design)
+	assert.Equal(t, "acp.goose", design.BackupAgent)
+	assert.Equal(t, "goose-design-backup-model", design.BackupModel)
+	var snapshot ciACPExecutionConfig
+	require.NoError(t, json.Unmarshal([]byte(design.PanelMemberConfigJSON), &snapshot))
+	assert.Equal(t, "goose-design-backup-acp", snapshot.ACP["goose"].Command)
+}
+
 func TestProcessPRAutoDesignUsesCIModelOverride(t *testing.T) {
 	assert := assert.New(t)
 	p, db, _, repo, cfg := newCIPanelGitHarness(t)

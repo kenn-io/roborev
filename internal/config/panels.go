@@ -329,10 +329,9 @@ func resolveMemberFromConfig(
 	model := spec.Model
 	if model == "" {
 		if spec.Agent != "" {
-			// Explicit agent: inherit only a workflow-specific model; never a
-			// generic default_model/repo model paired with a different default
-			// agent.
-			model = ResolveWorkflowModelFromConfig(repoCfg, globalCfg, workflow, reasoning)
+			model = resolveExplicitPanelAgentModelFromConfig(
+				agent, repoCfg, globalCfg, workflow, reasoning,
+			)
 		} else {
 			model = ResolveModelForWorkflowFromConfig("", repoCfg, globalCfg, workflow, reasoning)
 		}
@@ -395,10 +394,9 @@ func resolveSynthesisFromConfig(
 	model := panel.SynthesisModel
 	if model == "" {
 		if panel.SynthesisAgent != "" {
-			// Explicit synthesis agent: inherit only a workflow-specific fix
-			// model, never a generic default_model/repo model paired with a
-			// different default agent.
-			model = ResolveWorkflowModelFromConfig(repoCfg, globalCfg, "fix", reasoning)
+			model = resolveExplicitPanelAgentModelFromConfig(
+				agent, repoCfg, globalCfg, "fix", reasoning,
+			)
 		} else {
 			model = ResolveModelForWorkflowFromConfig("", repoCfg, globalCfg, "fix", reasoning)
 		}
@@ -408,6 +406,48 @@ func resolveSynthesisFromConfig(
 		BackupAgent: panel.SynthesisBackupAgent,
 		BackupModel: panel.SynthesisBackupModel,
 	}, nil
+}
+
+func resolveExplicitPanelAgentModelFromConfig(
+	selectedAgent string,
+	repoCfg *RepoConfig,
+	globalCfg *Config,
+	workflow, reasoning string,
+) string {
+	workflowModel := ResolveWorkflowModelFromConfig(
+		repoCfg, globalCfg, workflow, reasoning,
+	)
+	acpCfg, configuredACP := ResolveACPAgentConfigFromConfig(
+		selectedAgent, repoCfg, globalCfg,
+	)
+	if !configuredACP {
+		return workflowModel
+	}
+
+	selectedAgent = strings.TrimSpace(selectedAgent)
+	workflowAgent := strings.TrimSpace(ResolveAgentForWorkflowFromConfig(
+		"", repoCfg, globalCfg, workflow, reasoning,
+	))
+	defaultAgent := strings.TrimSpace(ResolveAgentFromConfig("", repoCfg, globalCfg))
+	if workflowAgent != selectedAgent {
+		if defaultAgent == selectedAgent {
+			if model := ResolveModelFromConfig("", repoCfg, globalCfg); model != "" {
+				return model
+			}
+		}
+		return acpCfg.Model
+	}
+
+	model := workflowModel
+	if defaultAgent == selectedAgent {
+		model = ResolveModelForWorkflowFromConfig(
+			"", repoCfg, globalCfg, workflow, reasoning,
+		)
+	}
+	if model == "" {
+		return acpCfg.Model
+	}
+	return model
 }
 
 // canonicalMemberReviewType canonicalizes a subagent's review_type, treating
