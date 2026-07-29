@@ -4,38 +4,17 @@ import (
 	"testing"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
-func TestBuildOutputForStopBlocks(t *testing.T) {
-	output := BuildOutput(Input{HookEventName: "Stop"}, Response{
-		Triggered: true,
-		Reason:    "Invoke $roborev-fix.",
-	})
-
-	assert.Equal(t, "block", output["decision"])
-	assert.Contains(t, output["reason"], "Invoke $roborev-fix.")
-	assert.Contains(t, output["reason"], "continue the task")
-}
-
-func TestBuildOutputForPostToolUseAddsContext(t *testing.T) {
-	output := BuildOutput(Input{HookEventName: "PostToolUse"}, Response{
-		Triggered: true,
-		Reason:    "Invoke $roborev-fix.",
-	})
-
-	assert.NotContains(t, output, "decision")
-	specific, ok := output["hookSpecificOutput"].(map[string]any)
-	require.True(t, ok)
-	assert.Equal(t, "PostToolUse", specific["hookEventName"])
+func TestPostToolUseAdditionalContextContinuesInterruptedTask(t *testing.T) {
 	assert.Equal(
 		t,
 		"Invoke $roborev-fix. If Roborev issues are found, fix them, "+
 			"then continue the task you were doing before this hook interrupted you.",
-		specific["additionalContext"],
+		PostToolUseAdditionalContext("Invoke $roborev-fix."),
 	)
 }
 
-func TestBuildOutputWhenNotTriggeredIsEmpty(t *testing.T) {
-	assert.Empty(t, BuildOutput(Input{HookEventName: "Stop"}, Response{}))
+func TestPostToolUseAdditionalContextUsesFallback(t *testing.T) {
+	assert.Equal(t, postToolUseContinuationInstruction, PostToolUseAdditionalContext(""))
 }

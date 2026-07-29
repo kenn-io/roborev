@@ -14,7 +14,6 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
-	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -291,37 +290,37 @@ func TestBuildHookReasonsAreCompactOneLine(t *testing.T) {
 		Instruction: DefaultInstruction,
 		Event: Input{
 			SessionID: "019e94d7-4320-73a3-8833-e697eb1ea5cb",
-			CWD:       "/Users/wesm/.superset/worktrees/roborev/agent-hook-integration",
+			CWD:       "/workspace/roborev/agent-hook-integration",
 		},
 	}
 	st := SessionState{
 		Count:                  4,
 		CommitCount:            2,
 		FailedReviewCount:      1,
-		LastCommitRepo:         "/Users/wesm/.superset/worktrees/roborev/agent-hook-integration",
-		LastFailedReviewRepo:   "/Users/wesm/.superset/worktrees/roborev/agent-hook-integration",
+		LastCommitRepo:         "/workspace/roborev/agent-hook-integration",
+		LastFailedReviewRepo:   "/workspace/roborev/agent-hook-integration",
 		LastFailedReviewBranch: "agent-hook-integration",
 	}
 
 	failed := buildFailedReviewReason(req, st)
-	assert.Equal(`Invoke the $roborev-fix skill now. 1 open failed roborev review on "agent-hook-integration".`, failed)
+	assert.Equal(DefaultInstruction+` 1 open failed roborev review on "agent-hook-integration".`, failed)
 	assert.NotContains(failed, "\n")
 	assert.NotContains(failed, req.Event.SessionID)
-	assert.NotContains(failed, "/Users/wesm")
+	assert.NotContains(failed, "/workspace/roborev")
 	assert.NotContains(failed, "continue the task")
 
-	stop := buildStopReason(req, st.Count)
-	assert.Equal("Invoke the $roborev-fix skill now. 4 Stop hooks reached.", stop)
+	stop := buildStopReason(req, st)
+	assert.Equal(DefaultInstruction+" 4 Stop hooks reached.", stop)
 	assert.NotContains(stop, "\n")
 	assert.NotContains(stop, req.Event.SessionID)
-	assert.NotContains(stop, "/Users/wesm")
+	assert.NotContains(stop, "/workspace/roborev")
 	assert.NotContains(stop, "continue the task")
 
 	commit := buildCommitReason(req, st.CommitCount, st.LastCommitRepo)
-	assert.Equal(`Invoke the $roborev-fix skill now. 2 commits reached in "agent-hook-integration".`, commit)
+	assert.Equal(DefaultInstruction+` 2 commits reached in "agent-hook-integration".`, commit)
 	assert.NotContains(commit, "\n")
 	assert.NotContains(commit, req.Event.SessionID)
-	assert.NotContains(commit, "/Users/wesm")
+	assert.NotContains(commit, "/workspace/roborev")
 }
 
 func TestSanitizeLabelStripsControlCharsAndCaps(t *testing.T) {
@@ -354,19 +353,18 @@ func TestBuildFailedReviewReasonSanitizesUntrustedBranch(t *testing.T) {
 
 func TestApplyFailedReviewTriggerScopesDedupPerRepoBranch(t *testing.T) {
 	assert := assert.New(t)
-	now := time.Now()
 	st := SessionState{}
 	req := Request{FailedReviewThreshold: 1}
 
 	// Repo A reaches the threshold and prompts.
-	assert.True(applyFailedReviewTrigger(req, &st, "/repoA", "main", repoHeadKey("/repoA", "main"), 3, true, now))
+	assert.True(applyFailedReviewTrigger(req, &st, "/repoA", "main", repoHeadKey("/repoA", "main"), 3, true))
 	// Same repo/branch and count: deduped, no new failures.
-	assert.False(applyFailedReviewTrigger(req, &st, "/repoA", "main", repoHeadKey("/repoA", "main"), 3, true, now))
+	assert.False(applyFailedReviewTrigger(req, &st, "/repoA", "main", repoHeadKey("/repoA", "main"), 3, true))
 	// A different repo with a lower count must still prompt; repo A's higher
 	// triggered count must not suppress it.
-	assert.True(applyFailedReviewTrigger(req, &st, "/repoB", "main", repoHeadKey("/repoB", "main"), 2, true, now))
+	assert.True(applyFailedReviewTrigger(req, &st, "/repoB", "main", repoHeadKey("/repoB", "main"), 2, true))
 	// A different branch in the same repo is independent too.
-	assert.True(applyFailedReviewTrigger(req, &st, "/repoA", "feature", repoHeadKey("/repoA", "feature"), 1, true, now))
+	assert.True(applyFailedReviewTrigger(req, &st, "/repoA", "feature", repoHeadKey("/repoA", "feature"), 1, true))
 }
 
 func TestRecordPostToolUseFailedReviewPromptUsesNewBranchLineageKey(t *testing.T) {
@@ -412,49 +410,6 @@ func TestRecordPostToolUseFailedReviewPromptUsesNewBranchLineageKey(t *testing.T
 	featureResp := post()
 	assert.True(featureResp.Triggered, "a descendant branch must not reuse main's failed-review dedupe key")
 	assert.Equal("failed_reviews", featureResp.TriggeredBy)
-}
-
-func TestRecordToolUseAcceptsGrokShellToolNames(t *testing.T) {
-	assert := assert.New(t)
-	for _, name := range []string{"run_terminal_command", "run_terminal_cmd", "Bash"} {
-		assert.True(isShellCommandTool(name), "expected shell tool %q", name)
-	}
-	assert.False(isShellCommandTool("read_file"))
-	assert.False(isShellCommandTool("search_replace"))
-}
-
-func TestRecordToolUseAcceptsDroidExecuteForCommitTracking(t *testing.T) {
-	assert := assert.New(t)
-	repo := testutil.NewGitRepo(t)
-	initial := repo.CommitFile("main.go", "package main\n", "initial")
-	store := &StateStore{path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
-
-	record := func(eventName, command string) Response {
-		resp, err := store.Record(Request{
-			Event: Input{
-				SessionID:     "session-1",
-				CWD:           repo.Path(),
-				HookEventName: eventName,
-				ToolName:      "Execute",
-				ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"` + command + `"`)},
-			},
-			CommitThreshold: 1,
-		})
-		require.NoError(t, err)
-		return resp
-	}
-
-	preResp := record("PreToolUse", "git commit -m second")
-	branchKey := repoHeadKey(repo.Path(), "main")
-	assert.False(preResp.Skipped)
-	assert.Equal(initial, store.sessions["session-1"].RepoHeads[branchKey])
-
-	next := repo.CommitFile("second.go", "package main\n", "second")
-	postResp := record("PostToolUse", "git commit -m second")
-	assert.False(postResp.Skipped)
-	assert.Equal(1, postResp.CommitCount)
-	assert.Equal(next, store.sessions["session-1"].RepoHeads[branchKey])
-	assert.Equal([]string{next}, store.sessions["session-1"].CommitSHAsSincePrompt[branchKey])
 }
 
 func TestRecordToolUseSkipsNonShellToolNames(t *testing.T) {
@@ -972,131 +927,6 @@ func TestRecordStopSkipsUntrackedRepo(t *testing.T) {
 	assert.Empty(store.sessions, "untracked repos should not mutate hook state")
 }
 
-func TestRecordStopSuppressesReminderWhileWorkspaceIsSnoozed(t *testing.T) {
-	assert := assert.New(t)
-	repo := testutil.NewGitRepo(t)
-	head := repo.CommitFile("main.go", "package main\n", "initial")
-
-	jobRequests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/repos/resolve" {
-			assert.Equal(repo.Path(), r.URL.Query().Get("path"))
-			assert.Equal("main", r.URL.Query().Get("branch"))
-			assert.NoError(json.NewEncoder(w).Encode(map[string]any{
-				"tracked": true,
-				"repo": map[string]any{
-					"root_path":                repo.Path(),
-					"name":                     filepath.Base(repo.Path()),
-					"agent_hook_snoozed_until": time.Now().Add(time.Hour).UTC(),
-				},
-			}))
-			return
-		}
-		jobRequests++
-		http.Error(w, "review lookup should be suppressed", http.StatusInternalServerError)
-	}))
-	t.Cleanup(server.Close)
-
-	worktreeKey := worktreeSequenceKey(repo.Path(), repo.Path())
-	branchKey := repoHeadKey(repo.Path(), "main")
-	store := &StateStore{
-		path: filepath.Join(t.TempDir(), "state.json"),
-		sessions: map[string]SessionState{
-			"session-1": {
-				StopCountsSincePrompt:       map[string]int{branchKey: 3},
-				CommitSHAsSincePrompt:       map[string][]string{branchKey: {"old-head"}},
-				FailedReviewTriggeredCounts: map[string]int{branchKey: 1},
-			},
-		},
-	}
-	resp, err := store.Record(Request{
-		Event: Input{
-			SessionID:     "session-1",
-			CWD:           repo.Path(),
-			HookEventName: "Stop",
-		},
-		Threshold:             1,
-		FailedReviewThreshold: 1,
-		Instruction:           "Run roborev fix.",
-		RoborevServerAddr:     server.URL,
-	})
-
-	require.NoError(t, err)
-	assert.True(resp.Skipped)
-	assert.False(resp.Triggered)
-	assert.Equal(0, jobRequests, "snoozed hooks should not poll or count reviews")
-	state := store.sessions["session-1"]
-	assert.Empty(state.StopCountsSincePrompt)
-	assert.Zero(state.ReminderPromptCount)
-	assert.Empty(state.CommitSHAsSincePrompt)
-	assert.Empty(state.FailedReviewTriggeredCounts)
-	assert.Equal(head, state.RepoHeads[worktreeKey])
-	assert.Equal(head, state.RepoHeads[branchKey])
-}
-
-func TestStopReminderProgressIsScopedAcrossSnoozedWorkspaces(t *testing.T) {
-	assert := assert.New(t)
-	repoA := testutil.NewGitRepo(t)
-	repoA.CommitFile("a.go", "package a\n", "initial A")
-	repoB := testutil.NewGitRepo(t)
-	repoB.CommitFile("b.go", "package b\n", "initial B")
-
-	var snoozeA atomic.Bool
-	closed := false
-	verdict := "F"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/repos/resolve" {
-			root := r.URL.Query().Get("path")
-			repo := map[string]any{
-				"root_path": root,
-				"name":      filepath.Base(root),
-			}
-			if root == repoA.Path() && snoozeA.Load() {
-				repo["agent_hook_snoozed_until"] = time.Now().Add(time.Hour).UTC()
-			}
-			assert.NoError(json.NewEncoder(w).Encode(map[string]any{
-				"tracked": true,
-				"repo":    repo,
-			}))
-			return
-		}
-		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{
-			Jobs: []storage.ReviewJob{
-				{Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main"},
-			},
-		}))
-	}))
-	t.Cleanup(server.Close)
-
-	store := &StateStore{
-		path:     filepath.Join(t.TempDir(), "state.json"),
-		sessions: map[string]SessionState{},
-	}
-	record := func(cwd string) Response {
-		resp, err := store.Record(Request{
-			Event: Input{
-				SessionID:     "session-1",
-				CWD:           cwd,
-				HookEventName: "Stop",
-			},
-			Threshold:             2,
-			FailedReviewThreshold: 0,
-			Instruction:           "Run roborev fix.",
-			RoborevServerAddr:     server.URL,
-		})
-		require.NoError(t, err)
-		return resp
-	}
-
-	assert.False(record(repoA.Path()).Triggered)
-	assert.False(record(repoB.Path()).Triggered,
-		"repo A Stop progress must not trigger repo B")
-	snoozeA.Store(true)
-	assert.True(record(repoA.Path()).Skipped)
-	assert.True(record(repoB.Path()).Triggered,
-		"snoozing repo A must preserve repo B Stop progress")
-}
-
 func TestRecordPreToolUseBaselinesUntrackedRepoForLaterPostCommitRegistration(t *testing.T) {
 	assert := assert.New(t)
 	repo := testutil.NewGitRepo(t)
@@ -1156,64 +986,6 @@ func TestRecordPreToolUseBaselinesUntrackedRepoForLaterPostCommitRegistration(t 
 	require.NoError(t, err)
 
 	assert.True(post.Triggered, "first commit after baseline should count once the repo is registered")
-	assert.Equal("commit", post.TriggeredBy)
-}
-
-func TestRecordPreAndPostToolUseTrackDroidExecuteCommits(t *testing.T) {
-	assert := assert.New(t)
-	repo := testutil.NewGitRepo(t)
-	repo.CommitFile("main.go", "package main\n", "initial")
-
-	closed := false
-	verdict := "F"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/repos/resolve" {
-			assert.NoError(json.NewEncoder(w).Encode(map[string]any{
-				"tracked": true,
-				"repo": map[string]string{
-					"root_path": repo.Path(),
-					"name":      filepath.Base(repo.Path()),
-				},
-			}))
-			return
-		}
-		assert.Equal("/api/jobs", r.URL.Path)
-		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{
-			Jobs: []storage.ReviewJob{
-				{Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main"},
-			},
-		}))
-	}))
-	t.Cleanup(server.Close)
-
-	store := &StateStore{
-		path:     filepath.Join(t.TempDir(), "state.json"),
-		sessions: map[string]SessionState{},
-	}
-	req := Request{
-		Event: Input{
-			SessionID:     "session-1",
-			CWD:           repo.Path(),
-			HookEventName: "PreToolUse",
-			ToolName:      "Execute",
-			ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"git commit -m feature"`)},
-		},
-		CommitThreshold:   1,
-		Instruction:       "Run roborev fix.",
-		RoborevServerAddr: server.URL,
-	}
-
-	pre, err := store.Record(req)
-	require.NoError(t, err)
-	assert.False(pre.Skipped, "Droid Execute must seed the commit baseline")
-
-	repo.CommitFile("feature.go", "package main\n", "feature")
-	postReq := req
-	postReq.Event.HookEventName = "PostToolUse"
-	post, err := store.Record(postReq)
-	require.NoError(t, err)
-
-	assert.True(post.Triggered, "Droid Execute must count the commit after the baseline")
 	assert.Equal("commit", post.TriggeredBy)
 }
 
@@ -2146,4 +1918,126 @@ func TestCountOpenFailedReviewsRequestsOmittedPrompts(t *testing.T) {
 	require.NotNil(t, query)
 	assert.Equal("true", query.Get("omit_prompt"),
 		"hook count queries must not pull full prompts over the wire")
+}
+
+func TestDeferredPostToolReminderCoalescesAndSurvivesCWDChange(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("main.go", "package main\n", "initial")
+	failed := true
+	server := newDeferredReminderServer(t, repo.Path(), &failed)
+	store := &StateStore{path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	base := Request{
+		Event: Input{
+			SessionID: "session-1",
+			CWD:       repo.Path(),
+			ToolName:  "Bash",
+			ToolInput: map[string]json.RawMessage{"command": json.RawMessage(`"git commit -m feature"`)},
+		},
+		CommitThreshold:       1,
+		Instruction:           "Resolve reviews.",
+		RoborevServerAddr:     server.URL,
+		DeferPostToolReminder: true,
+	}
+
+	queueCommit := func(name string) {
+		pre := base
+		pre.Event.HookEventName = "PreToolUse"
+		_, err := store.Record(pre)
+		require.NoError(t, err)
+		repo.CommitFile(name+".go", "package main\n", name)
+		post := base
+		post.Event.HookEventName = "PostToolUse"
+		resp, err := store.Record(post)
+		require.NoError(t, err)
+		assert.False(t, resp.Triggered)
+	}
+
+	queueCommit("first")
+	state := store.sessions["session-1"]
+	require.Len(t, state.PendingReminders, 1)
+	var first PendingReminder
+	for _, pending := range state.PendingReminders {
+		first = pending
+	}
+
+	queueCommit("second")
+	state = store.sessions["session-1"]
+	require.Len(t, state.PendingReminders, 1)
+	var coalesced PendingReminder
+	for _, pending := range state.PendingReminders {
+		coalesced = pending
+	}
+	assert.Equal(t, first.CreatedAt, coalesced.CreatedAt)
+	assert.Equal(t, 2, coalesced.CommitCount)
+	assert.Zero(t, state.ReminderPromptCount)
+
+	resp, err := store.Record(Request{
+		Event:             Input{SessionID: "session-1", CWD: t.TempDir(), HookEventName: "Stop"},
+		RoborevServerAddr: server.URL,
+	})
+	require.NoError(t, err)
+	assert.True(t, resp.Triggered)
+	assert.Equal(t, "commit", resp.TriggeredBy)
+	assert.Contains(t, resp.Reason, repo.Path())
+	assert.Contains(t, resp.Reason, "change to")
+	assert.Empty(t, store.sessions["session-1"].PendingReminders)
+	assert.Equal(t, 1, store.sessions["session-1"].ReminderPromptCount)
+}
+
+func TestDeferredFailedReviewReminderIsRevalidatedBeforeDelivery(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("main.go", "package main\n", "initial")
+	failed := true
+	server := newDeferredReminderServer(t, repo.Path(), &failed)
+	store := &StateStore{path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+
+	resp, err := store.Record(Request{
+		Event: Input{
+			SessionID:     "session-1",
+			CWD:           repo.Path(),
+			HookEventName: "PostToolUse",
+			ToolName:      "Bash",
+			ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"go test ./..."`)},
+		},
+		FailedReviewThreshold: 1,
+		Instruction:           "Resolve reviews.",
+		RoborevServerAddr:     server.URL,
+		DeferPostToolReminder: true,
+	})
+	require.NoError(t, err)
+	assert.False(t, resp.Triggered)
+	require.Len(t, store.sessions["session-1"].PendingReminders, 1)
+
+	failed = false
+	stop, err := store.Record(Request{
+		Event:             Input{SessionID: "session-1", CWD: t.TempDir(), HookEventName: "Stop"},
+		RoborevServerAddr: server.URL,
+	})
+	require.NoError(t, err)
+	assert.False(t, stop.Triggered)
+	assert.True(t, stop.Skipped)
+	assert.Empty(t, store.sessions["session-1"].PendingReminders)
+	assert.Zero(t, store.sessions["session-1"].ReminderPromptCount)
+}
+
+func newDeferredReminderServer(t *testing.T, repoPath string, failed *bool) *httptest.Server {
+	t.Helper()
+	closed := false
+	verdict := "F"
+	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/repos/resolve" {
+			assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				"tracked": true,
+				"repo":    map[string]string{"root_path": repoPath, "name": filepath.Base(repoPath)},
+			}))
+			return
+		}
+		jobs := []storage.ReviewJob{}
+		if *failed {
+			jobs = append(jobs, storage.ReviewJob{
+				Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main",
+			})
+		}
+		assert.NoError(t, json.NewEncoder(w).Encode(jobsResponse{Jobs: jobs}))
+	}))
 }

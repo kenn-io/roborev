@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	kitagenthook "go.kenn.io/kit/agenthook"
+
 	"go.kenn.io/roborev/internal/agenthook"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/githook"
@@ -44,7 +46,6 @@ var quickstartCheckIDs = []string{
 	"configured_agent",
 	"agent_hook_claude",
 	"agent_hook_codex",
-	"agent_hook_grok",
 	"skills_installed",
 }
 
@@ -52,6 +53,8 @@ func detectState(ctx context.Context, repoRoot string, inGitRepo bool) quickstar
 	daemonUp := daemonReachable()
 	global, _ := config.LoadGlobal()
 	agent := resolveQuickstartReviewAgent(repoRoot, global)
+	claudePath, _ := kitagenthook.ConfigPath(kitagenthook.AgentClaude)
+	codexPath, _ := kitagenthook.ConfigPath(kitagenthook.AgentCodex)
 
 	checks := []quickstartCheck{
 		checkDaemon(daemonUp),
@@ -59,12 +62,10 @@ func detectState(ctx context.Context, repoRoot string, inGitRepo bool) quickstar
 		checkRepoRegistered(repoRoot, inGitRepo, daemonUp),
 		checkRepoConfig(repoRoot, inGitRepo, agent),
 		checkConfiguredAgent(repoRoot, inGitRepo, agent),
-		checkAgentHook("agent_hook_claude", agenthook.DefaultClaudeSettingsPath(),
-			"claude", "roborev agent-hook install --agent claude"),
-		checkAgentHook("agent_hook_codex", agenthook.DefaultCodexHooksPath(),
-			"codex", "roborev agent-hook install --agent codex"),
-		checkAgentHook("agent_hook_grok", agenthook.DefaultGrokHooksPath(),
-			"grok", "roborev agent-hook install --agent grok"),
+		checkAgentHook("agent_hook_claude", kitagenthook.AgentClaude, claudePath,
+			"roborev agent-hook install --agent claude"),
+		checkAgentHook("agent_hook_codex", kitagenthook.AgentCodex, codexPath,
+			"roborev agent-hook install --agent codex"),
 		checkSkills(),
 	}
 
@@ -216,9 +217,9 @@ func checkConfiguredAgent(repoRoot string, inGitRepo bool, agent string) quickst
 	return c
 }
 
-func checkAgentHook(id, path, agent, fix string) quickstartCheck {
+func checkAgentHook(id string, agent kitagenthook.Agent, path, fix string) quickstartCheck {
 	c := quickstartCheck{ID: id}
-	installed, err := agenthook.InstalledForAgent(path, agent)
+	installed, err := agenthook.Installed(agent, path)
 	if err != nil {
 		c.Status = statusUnknown
 		c.Details = fmt.Sprintf("could not read %s: %v", path, err)
@@ -255,7 +256,6 @@ func agentsWithRequiredQuickstartSkills(statuses []skills.AgentStatus) []string 
 		skills.AgentClaude: "Claude Code",
 		skills.AgentCodex:  "Codex",
 		skills.AgentDroid:  "Factory Droid",
-		skills.AgentGrok:   "Grok Build",
 	}
 	var installedFor []string
 	for _, status := range statuses {
@@ -269,18 +269,9 @@ func agentsWithRequiredQuickstartSkills(statuses []skills.AgentStatus) []string 
 				break
 			}
 		}
-		if !complete {
-			continue
+		if complete {
+			installedFor = append(installedFor, labels[status.Agent])
 		}
-		label := labels[status.Agent]
-		if label == "" {
-			// Never emit "skills installed for " with a blank agent name.
-			label = string(status.Agent)
-		}
-		if label == "" {
-			continue
-		}
-		installedFor = append(installedFor, label)
 	}
 	return installedFor
 }

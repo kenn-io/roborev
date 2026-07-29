@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"fmt"
 	"io"
 	"strconv"
@@ -10,8 +9,10 @@ import (
 	"time"
 
 	"github.com/spf13/cobra"
+	kitagenthook "go.kenn.io/kit/agenthook"
 
 	"go.kenn.io/roborev/internal/agenthook"
+	"go.kenn.io/roborev/internal/githook"
 )
 
 func agentHookCmd() *cobra.Command {
@@ -39,15 +40,22 @@ func agentHookRunCmd() *cobra.Command {
 		Args:                  cobra.NoArgs,
 		DisableFlagsInUseLine: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			resolved, err := agenthook.ResolveOptionsForAgent(agent, opts, agentHookFlagChanges(cmd))
+			if strings.TrimSpace(agent) == "" {
+				return fmt.Errorf("--agent is required")
+			}
+			profile, err := kitagenthook.ParseAgent(agent)
 			if err != nil {
 				return err
 			}
-			return runAgentHook(resolved, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
+			resolved, err := agenthook.ResolveOptionsForAgent(string(profile), opts, agentHookFlagChanges(cmd))
+			if err != nil {
+				return err
+			}
+			return runAgentHook(profile, resolved, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
 		},
 	}
 	addAgentHookRunFlags(cmd, &opts)
-	cmd.Flags().StringVar(&agent, "agent", agent, "hook option profile for this run: droid, grok, or empty/default")
+	cmd.Flags().StringVar(&agent, "agent", agent, "agent hook profile for this run")
 	return cmd
 }
 
@@ -117,46 +125,35 @@ func agentHookDaemonRunCmd() *cobra.Command {
 func agentHookInstallCmd() *cobra.Command {
 	hookBinary := ""
 	opts := agenthook.InstallOptions{
-		Agent:            "all",
-		CodexConfigPath:  agenthook.DefaultCodexHooksPath(),
-		ClaudeConfigPath: agenthook.DefaultClaudeSettingsPath(),
-		GrokConfigPath:   agenthook.DefaultGrokHooksPath(),
-		Scope:            "user",
-		Timeout:          10 * time.Second,
+		Timeout: 10 * time.Second,
 	}
 	cmd := &cobra.Command{
 		Use:                   "install",
-		Short:                 "Install Codex, Claude, and Grok agent hook entries",
+		Short:                 "Install hooks for detected or selected coding agents",
 		Args:                  cobra.NoArgs,
 		DisableFlagsInUseLine: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			runner := "agent-hook run"
-			switch strings.ToLower(strings.TrimSpace(opts.Agent)) {
-			case "droid":
-				runner = "agent-hook run --agent droid"
-			case "grok":
-				runner = "agent-hook run --agent grok"
+			if hookBinary != "" && opts.Command != "" {
+				return fmt.Errorf("--binary and --command cannot be used together")
 			}
-			command, notice, err := agenthook.ResolveHookCommandWithRunner(opts.Command, hookBinary, runner)
-			if err != nil {
-				return err
+			if opts.Command == "" {
+				resolution, err := githook.ResolveRoborevPath(hookBinary)
+				if err != nil {
+					return fmt.Errorf("resolve roborev binary: %w", err)
+				}
+				opts.Executable = resolution.Path
+				if resolution.Notice != "" {
+					fmt.Fprintln(cmd.OutOrStdout(), resolution.Notice)
+				}
 			}
-			if notice != "" {
-				fmt.Fprintln(cmd.OutOrStdout(), notice)
-			}
-			opts.Command = command
 			return agenthook.RunInstall(opts, cmd.OutOrStdout())
 		},
 	}
-	cmd.Flags().StringVar(&opts.Agent, "agent", opts.Agent, "agent config to update: codex, claude, droid, grok, or all")
+	cmd.Flags().StringVar(&opts.Agent, "agent", opts.Agent, "agent profile to update; empty detects installed agents, all updates every profile")
 	cmd.Flags().StringVar(&opts.Command, "command", opts.Command, "hook command to install; defaults to this binary plus 'agent-hook run'")
 	cmd.Flags().StringVar(&hookBinary, "binary", "", "roborev binary path to bake into agent hooks (for version-manager shims)")
 	cmd.Flags().StringVar(&opts.ConfigPath, "config", opts.ConfigPath, "hook config path for a single selected agent")
-	cmd.Flags().StringVar(&opts.CodexConfigPath, "codex-config", opts.CodexConfigPath, "Codex hooks.json path")
-	cmd.Flags().StringVar(&opts.ClaudeConfigPath, "claude-config", opts.ClaudeConfigPath, "Claude settings.json path")
-	cmd.Flags().StringVar(&opts.GrokConfigPath, "grok-config", opts.GrokConfigPath, "Grok Build hooks JSON path")
-	cmd.Flags().StringVar(&opts.Scope, "scope", opts.Scope, "Factory Droid config scope to update: user")
-	cmd.Flags().Var(&agentHookSecondsOrDuration{d: &opts.Timeout}, "timeout", "Codex hook timeout (e.g. 10s, 1m, or bare integer seconds)")
+	cmd.Flags().Var(&agentHookSecondsOrDuration{d: &opts.Timeout}, "timeout", "hook timeout (e.g. 10s, 1m, or bare integer seconds)")
 	cmd.Flags().BoolVar(&opts.DryRun, "dry-run", opts.DryRun, "print what would change without writing files")
 	return cmd
 }
@@ -169,31 +166,23 @@ func agentHookDumpCmd() *cobra.Command {
 		Args:                  cobra.NoArgs,
 		DisableFlagsInUseLine: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			runner := "agent-hook run"
-			switch strings.ToLower(strings.TrimSpace(opts.Agent)) {
-			case "droid":
-				runner = "agent-hook run --agent droid"
-			case "grok":
-				runner = "agent-hook run --agent grok"
+			if opts.Command == "" {
+				resolution, err := githook.ResolveRoborevPath("")
+				if err != nil {
+					return fmt.Errorf("resolve roborev binary: %w", err)
+				}
+				opts.Executable = resolution.Path
+				if resolution.Notice != "" {
+					fmt.Fprintln(cmd.ErrOrStderr(), resolution.Notice)
+				}
 			}
-			command, notice, err := agenthook.ResolveHookCommandWithRunner(opts.Command, "", runner)
-			if err != nil {
-				return err
-			}
-			// Notices are advisory warnings; keep them off stdout so the dumped
-			// JSON config stays clean for piping.
-			if notice != "" {
-				fmt.Fprintln(cmd.ErrOrStderr(), agenthook.TranslateBinaryNotice(notice))
-			}
-			opts.Command = command
 			return agenthook.RunDump(opts, cmd.OutOrStdout())
 		},
 	}
-	cmd.Flags().StringVar(&opts.Agent, "agent", opts.Agent, "agent config to dump: codex, claude, droid, or grok")
+	cmd.Flags().StringVar(&opts.Agent, "agent", opts.Agent, "agent profile to dump")
 	cmd.Flags().StringVar(&opts.Command, "command", opts.Command, "hook command to install; defaults to this binary plus 'agent-hook run'")
 	cmd.Flags().StringVar(&opts.ConfigPath, "config", opts.ConfigPath, "config path to read and merge into; defaults to the agent's standard path")
-	cmd.Flags().StringVar(&opts.Scope, "scope", opts.Scope, "Factory Droid config scope to dump: user")
-	cmd.Flags().Var(&agentHookSecondsOrDuration{d: &opts.Timeout}, "timeout", "Codex hook timeout (e.g. 10s, 1m, or bare integer seconds)")
+	cmd.Flags().Var(&agentHookSecondsOrDuration{d: &opts.Timeout}, "timeout", "hook timeout (e.g. 10s, 1m, or bare integer seconds)")
 	return cmd
 }
 
@@ -228,38 +217,28 @@ func agentHookResetCmd() *cobra.Command {
 	return cmd
 }
 
-func runAgentHook(opts agenthook.Options, stdin io.Reader, stdout, stderr io.Writer) error {
-	return runHook(opts, "agent-hook", stdin, stdout, stderr)
+func runAgentHook(
+	agent kitagenthook.Agent,
+	opts agenthook.Options,
+	stdin io.Reader,
+	stdout, stderr io.Writer,
+) error {
+	return runHook(agent, opts, stdin, stdout, stderr)
 }
 
-// runHook is the shared core behind the agent-hook run command. It reads an
-// agent harness hook payload from stdin, records it with the shared
-// agenthook daemon, and emits the harness-compatible JSON output. label is used
-// in diagnostics so the invoking agent knows which integration produced them.
-func runHook(opts agenthook.Options, label string, stdin io.Reader, stdout, stderr io.Writer) error {
-	// DecodeInput accepts Claude snake_case and Grok camelCase envelopes.
-	input, err := agenthook.DecodeInput(stdin)
-	if err != nil {
-		return fmt.Errorf("decode %s input: %w", label, err)
-	}
-	if input.SessionID == "" {
-		return fmt.Errorf("%s input missing session_id", label)
-	}
-
-	resp, err := postAgentHook(context.Background(), agenthook.Request{
-		Event:                 input,
-		Threshold:             opts.TurnThreshold,
-		CommitThreshold:       opts.CommitThreshold,
-		FailedReviewThreshold: opts.FailedReviewThreshold,
-		Instruction:           opts.Instruction,
-		RoborevServerAddr:     opts.RoborevServerAddr,
-	})
-	if err != nil {
-		fmt.Fprintf(stderr, "roborev %s: %v\n", label, err)
-		return json.NewEncoder(stdout).Encode(map[string]any{})
-	}
-
-	return json.NewEncoder(stdout).Encode(agenthook.BuildOutput(input, resp))
+func runHook(
+	agent kitagenthook.Agent,
+	opts agenthook.Options,
+	stdin io.Reader,
+	stdout, stderr io.Writer,
+) error {
+	return kitagenthook.Handle(
+		context.Background(),
+		agent,
+		stdin,
+		stdout,
+		newRoborevAgentHookHandler(agent, opts, stderr),
+	)
 }
 
 func addAgentHookRunFlags(cmd *cobra.Command, opts *agenthook.Options) {

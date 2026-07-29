@@ -7,10 +7,11 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	kitagenthook "go.kenn.io/kit/agenthook"
 )
 
 func TestInstalledMissingFile(t *testing.T) {
-	ok, err := Installed(filepath.Join(t.TempDir(), "nope.json"))
+	ok, err := Installed(kitagenthook.AgentClaude, filepath.Join(t.TempDir(), "nope.json"))
 	require.NoError(t, err)
 	assert.False(t, ok)
 }
@@ -21,7 +22,7 @@ func TestInstalledDetectsRoborevHook(t *testing.T) {
 	content := `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"roborev agent-hook run"}]}]}}`
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 
-	ok, err := Installed(path)
+	ok, err := Installed(kitagenthook.AgentClaude, path)
 	require.NoError(t, err)
 	assert.True(t, ok)
 }
@@ -43,7 +44,7 @@ func TestInstalledIgnoresUnrelatedHooks(t *testing.T) {
 	content := `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"echo hi"}]}]}}`
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 
-	ok, err := Installed(path)
+	ok, err := Installed(kitagenthook.AgentClaude, path)
 	require.NoError(t, err)
 	assert.False(t, ok)
 }
@@ -52,6 +53,6 @@ func TestInstalledInvalidJSON(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "settings.json")
 	require.NoError(t, os.WriteFile(path, []byte("{not json"), 0o644))
-	_, err := Installed(path)
+	_, err := Installed(kitagenthook.AgentClaude, path)
 	assert.Error(t, err)
 }

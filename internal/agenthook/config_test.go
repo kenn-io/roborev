@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	kitagenthook "go.kenn.io/kit/agenthook"
 )
 
 func TestResolveOptionsUsesDefaultsWithoutConfig(t *testing.T) {
@@ -85,6 +86,17 @@ instruction = "config instruction"
 	assert.Equal(t, 5, opts.FailedReviewThreshold)
 	assert.Equal(t, "env instruction", opts.Instruction)
 	assert.Equal(t, "127.0.0.1:9999", opts.RoborevServerAddr)
+}
+
+func TestResolveOptionsForEveryKitAgent(t *testing.T) {
+	clearAgentHookEnv(t)
+	for _, profile := range kitagenthook.Profiles() {
+		t.Run(string(profile.Agent), func(t *testing.T) {
+			opts, err := ResolveOptionsForAgent(string(profile.Agent), DefaultOptions(), nil)
+			require.NoError(t, err)
+			assert.Equal(t, DefaultInstruction, opts.Instruction)
+		})
+	}
 }
 
 func TestResolveOptionsAllowsZeroTurnThresholdFromConfig(t *testing.T) {

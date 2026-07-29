@@ -27,13 +27,14 @@ your agentic loop while context is fresh.
 ![How roborev works](https://roborev.io/assets/static/how-it-works.svg)
 
 - **Post-commit reviews** - a git hook reviews every commit in the background (any agent).
-- **Agent hook** - watches your Claude Code / Codex session and tells the agent to run the roborev-fix skill when findings pile up.
+- **Agent hook** - watches supported coding-agent sessions and brings open
+  roborev findings back into the active workflow.
 
 ```bash
 roborev init                  # layer 1: per-commit reviews
 roborev skills install
-roborev agent-hook install    # layer 2: mid-session fix loop (Codex/Claude)
-roborev agent-hook install --agent droid  # layer 2: mid-session fix loop (Factory Droid)
+roborev agent-hook install    # layer 2: auto-detect and wire installed agents
+roborev agent-hook install --agent all  # or wire every supported profile
 ```
 
 Before you ship, run the `/roborev-refine` skill: it re-reviews and fixes your
@@ -53,9 +54,8 @@ roborev tui           # View reviews in interactive UI
 If roborev is managed by a version manager, `roborev init` and
 `roborev agent-hook install` try to install hooks with the stable shim/symlink.
 You can also choose the exact binary path with
-`roborev init --binary ~/.local/share/mise/shims/roborev`,
-`roborev agent-hook install --binary ~/.local/share/mise/shims/roborev`, or
-`roborev agent-hook install --agent droid --binary ~/.local/share/mise/shims/roborev`.
+`roborev init --binary ~/.local/share/mise/shims/roborev`, or
+`roborev agent-hook install --binary ~/.local/share/mise/shims/roborev`.
 
 ![roborev review](https://roborev.io/assets/generated/tui-review.svg)
 
@@ -65,14 +65,14 @@ You can also choose the exact binary path with
   git hooks. No remote review workflow required.
 - **Auto-Fix** - `roborev fix` feeds review findings to an agent that
   applies fixes and commits. `roborev refine` iterates until reviews pass.
-- **Agent Hook** - Optional Codex, Claude Code, and Factory Droid harness hooks
-  can prompt active sessions to run the fix skill when roborev has open failed
-  reviews.
+- **Agent Hook** - Optional hooks for Claude Code, Codex, Copilot CLI, Cursor,
+  Factory Droid, Gemini CLI, Hermes, and Qwen bring open findings back into the
+  active agent session.
 - **Code Analysis** - Built-in analysis types (duplication, complexity,
   refactoring, test fixtures, dead code, security) that agents can fix
   automatically.
 - **Multi-Agent** - Works with Codex, Claude Code, Gemini, Copilot,
-  OpenCode, Cursor, Kiro, Kilo, Droid, Pi, and Grok Build.
+  OpenCode, Cursor, Kiro, Kilo, Droid, and Pi.
 - **Runs Locally** - No hosted service or additional infrastructure.
   Reviews are orchestrated on your machine using the coding agents
   you already have configured.
@@ -95,10 +95,12 @@ command line non-interactively with `roborev fix`.
 changes and commits. The new commit gets reviewed automatically,
 closing the loop.
 
-For Codex, Claude Code, and Factory Droid sessions, `roborev agent-hook install`
-can add an optional harness hook that prompts the active session to invoke
-`$roborev-fix` (or `/roborev-fix` for Droid) after configured turn, commit, or
-failed-review thresholds are met.
+`roborev agent-hook install` auto-detects installed Claude Code, Codex, Copilot
+CLI, Cursor, Factory Droid, Gemini CLI, Hermes, and Qwen harnesses and adds
+optional hooks after configured turn, commit, or failed-review thresholds are
+met. Reminders include a complete CLI fallback when no roborev skill is
+installed. Hermes delivers queued post-tool reminders at `Stop`; Cursor records
+the same events but emits no control response.
 The hook uses a separate local `roborev-agent-hook` daemon for session counters;
 it does not run inside the main roborev daemon.
 
@@ -195,17 +197,15 @@ leaving Markdown tables unchanged. Use `make check-renovate-config` to validate
 | `roborev fix` | Fix open reviews (or specify job IDs) |
 | `roborev refine` | Auto-fix loop: fix, re-review, repeat |
 | `roborev analyze <type>` | Run code analysis with optional auto-fix |
-| `roborev agent-hook install` | Install optional Codex/Claude agent harness hooks |
-| `roborev agent-hook install --agent droid` | Install optional Factory Droid harness hooks |
-| `roborev snooze` | Silence Agent Hook reminders in the current worktree and branch |
-| `roborev snooze off` | Resume Agent Hook reminders in the current worktree and branch |
+| `roborev agent-hook install` | Install hooks for detected coding agents |
+| `roborev agent-hook install --agent all` | Install all eight kit-backed profiles |
 | `roborev compact` | Verify and consolidate open review findings |
 | `roborev show [sha]` | Display review for commit |
 | `roborev export reviews` | Export completed reviews as JSON |
 | `roborev export ci-metrics` | Export finalized CI panel metrics as JSON |
 | `roborev run "<task>"` | Execute a task with an AI agent |
 | `roborev close <id>` | Close a review |
-| `roborev skills install` | Install agent skills for Claude/Codex/Droid/Grok |
+| `roborev skills install` | Install agent skills for Claude/Codex |
 
 See [full command reference](https://roborev.io/commands/) for all options.
 
@@ -260,8 +260,6 @@ Project-specific review instructions here.
 """
 # Optional: use repo guidelines instead of appending global review_guidelines.
 review_guidelines_supersede_global = false
-# Optional: disable the REVIEW.md fallback explicitly.
-review_md_fallback = true
 
 # Optional: metadata for roborev-owned fix commits and prompt hints for agent-owned fix commits.
 fix_commit_author = "Your Name <you@example.com>"
@@ -271,12 +269,6 @@ fix_commit_co_authored_by = ["Pair Reviewer <pair@example.com>"]
 You can also set `review_guidelines` in `~/.roborev/config.toml`. Global
 guidelines apply to every repo and are appended before repo guidelines by
 default.
-
-If `review_guidelines` is unset or empty, roborev falls back to a `REVIEW.md`
-file at the repo root — the same file Claude Code's Code Review auto-discovers,
-so one committed file can drive both reviewers. Set `review_md_fallback = false`
-to opt out explicitly. Like `.roborev.toml`, `REVIEW.md` is read from the default
-branch when one resolves, and from the working tree when it does not.
 
 `snapshot_dir` must be repo-relative. `roborev init` ensures it is ignored in `.gitignore`; snapshot creation also adds a local `.git/info/exclude` fallback for existing checkouts whose ignore setup is stale.
 
@@ -349,7 +341,6 @@ hook, so a configured integration never goes dark unnoticed.
 | Kilo | `npm install -g @kilocode/cli` |
 | Droid | [factory.ai](https://factory.ai/) |
 | Pi | [pi.dev](https://pi.dev/) |
-| Grok Build | [x.ai/cli](https://x.ai/cli) (`curl -fsSL https://x.ai/cli/install.sh \| bash`) |
 
 roborev auto-detects installed agents.
 
