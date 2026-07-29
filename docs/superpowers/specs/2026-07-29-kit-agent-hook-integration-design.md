@@ -34,7 +34,8 @@ inside an independently launched coding-agent harness.
   reminder because kit v0.14.0 exposes no Cursor control response at
   `PostToolUse` or `Stop`.
 - Existing Codex, Claude Code, and Factory Droid hook entries are replaced on
-  the next install instead of duplicated.
+  the next install instead of duplicated, while unrelated commands that happen
+  to contain `agent-hook run` are preserved.
 - Hermes delivers reminders with the repository and lineage that triggered
   them even if the session changes directories before its next `Stop`.
 - Roborev contains no native harness config mutation, payload normalization,
@@ -133,11 +134,12 @@ Each generated command identifies its profile:
 roborev agent-hook run --agent <profile>
 ```
 
-The stable ownership marker is `agent-hook run`. It matches entries created by
-older roborev releases, so the first kit-backed installation replaces those
-entries in place rather than leaving duplicate commands. The marker excludes
-the executable path and therefore survives version-manager and binary-path
-changes.
+The stable ownership marker is `roborev`. Agent-hook config commands containing
+that application namespace are roborev-owned, including entries created by
+older roborev releases, so the first kit-backed installation replaces them in
+place. A command owned by another application that happens to contain
+`agent-hook run` is not removed. Explicit `--command` overrides must contain the
+same marker; the marker is independent of a particular absolute binary path.
 
 ### Dump
 
@@ -184,8 +186,10 @@ output. For reminder-capable profiles, `PostToolUse` returns a
 `PostToolUseOutput` with additional context when the daemon triggers a reminder,
 and `Stop` returns a `StopOutput` with a blocking decision and the reminder
 reason. Kit translates those types into each harness's supported native
-response. Cursor always returns zero typed outputs: its kit profile can observe
-these events but cannot encode control output for either reminder boundary.
+response. Cursor sends the same request data and thresholds as every other
+profile, so daemon accounting and trigger evaluation remain uniform, but the
+handler always returns zero typed outputs because Cursor cannot encode control
+output at either reminder boundary.
 
 The default instruction is self-contained across all profiles:
 
@@ -210,37 +214,51 @@ Roborev therefore marks post-tool requests with whether that profile can
 deliver a post-tool reminder. When delivery is unavailable and a threshold is
 reached, the state daemon persists a `PendingReminder` containing the rendered
 reason, trigger kind, tracked repository, worktree, branch, HEAD, lineage key,
-relevant counts, and creation time. It reserves that trigger by advancing its
-per-scope bookkeeping and resetting only the affected scope's counters, which
-prevents duplicate pending reminders while later activity begins a fresh
-counting window. The delivered-reminder count and delivery timestamps do not
-advance until a control-capable boundary emits the reminder.
+relevant counts, and creation time. The reason identifies the absolute
+triggering worktree and tells the agent to change to it before running the
+fallback roborev commands. The daemon reserves that trigger by advancing its
+per-scope bookkeeping and resetting only the affected scope's counters, while
+later activity begins a fresh counting window. The delivered-reminder count and
+delivery timestamps do not advance until a control-capable boundary emits the
+reminder.
 
-Pending reminders are keyed by repository lineage within the session. The next
-`Stop` selects a pending reminder independently of the stop payload's CWD, emits
-its stored reason, removes only that entry, and records delivery. Multiple
-pending entries are ordered by trigger priority (failed reviews before commits)
-and then creation time. Lower-priority and other-repository entries remain
-pending for later stop boundaries; a normal stop-threshold reminder is likewise
-left unconsumed when a pending reminder wins.
+Pending reminders are keyed by repository lineage and trigger kind within the
+session. A repeated threshold crossing for an already-pending key coalesces
+into that entry: it preserves the original creation time, refreshes repository
+metadata and reason, and accumulates the relevant count. The next `Stop`
+selects a pending reminder independently of the stop payload's CWD, emits its
+stored reason, removes only that entry, and records delivery. Multiple pending
+entries are ordered by trigger priority (failed reviews before commits), then
+creation time, then key. Before delivery, a failed-review entry is revalidated
+against its stored repository lineage; an entry whose reviews are no longer
+actionable is discarded without incrementing delivery counters. Lower-priority
+and other-repository entries remain pending for later stop boundaries; a normal
+stop-threshold reminder is likewise left unconsumed when a pending reminder
+wins.
 
 Profiles with post-tool context support keep the existing immediate reminder
 behavior. Trigger priority at any single boundary is failed reviews, then
 commits, then the turn threshold, so only one reminder is emitted at a time.
 
-Cursor still sends normalized `PreToolUse`, `PostToolUse`, and `Stop` events to
-the daemon for baseline and session accounting, but the handler zeroes all
-three thresholds before posting them. The daemon therefore records activity
-without consuming counters, incrementing reminder counts, or returning a
-trigger that Cursor cannot encode. The handler returns empty native responses
-for Cursor even if a test double or unexpected daemon response says it
-triggered.
+Cursor sends normalized `PreToolUse`, `PostToolUse`, and `Stop` events to the
+daemon with the same configured thresholds as every other profile. The daemon
+therefore applies the same baseline, counters, deduplication, and trigger
+accounting. The Cursor handler discards any triggered daemon response and emits
+an empty native response because kit v0.14.0 has no Cursor control output at
+either reminder boundary.
 
-`PendingReminder` is an optional, `omitempty` field in the existing session
+`PendingReminders` is an optional, `omitempty` field in the existing session
 state. State written by older releases loads with no pending entries and needs
 no migration or dual-read path. Once the upgraded daemon writes state, older
 binaries are not expected to preserve the new pending queue; daemon and client
 versions continue to roll forward together.
+
+`roborev agent-hook status` exposes pending reminders as part of the existing
+session state JSON. `roborev agent-hook reset SESSION_ID` and `reset --all`
+clear them through the existing session-reset behavior. There is no separate
+pending-reminder cleanup API or expiry clock: resolved failed-review entries are
+discarded by delivery-time revalidation, and commit entries remain scoped to
+and clearable with their owning session.
 
 ## Error Handling
 
@@ -267,8 +285,8 @@ Tests cover only roborev-owned behavior and its integration seam with kit:
 - validation of uniform `--config`, raw `--command`, and no-agent cases;
 - the hook specification, marker, and per-profile run arguments passed to kit;
 - one real kit-backed install/run path proving the integration boundary;
-- Cursor requests zero every threshold and emit empty responses even when the
-  daemon reports a trigger;
+- Cursor forwards the same configured thresholds as other profiles and emits
+  empty responses even when the daemon reports a trigger;
 - the Hermes handler marks post-tool requests for deferred delivery and
   propagates normalized event fields into daemon requests;
 - fail-open handler behavior when the local daemon is unavailable; and
@@ -276,6 +294,8 @@ Tests cover only roborev-owned behavior and its integration seam with kit:
   change and after a `git -C` command targets another repository;
 - priority and retention when multiple repository lineages have pending
   reminders; and
+- coalescing repeated same-lineage triggers while preserving creation order,
+  and discarding resolved failed-review reminders before delivery;
 - loading existing session state without a pending-reminder field.
 
 Tests do not replicate kit's matrix of native config formats, event mappings,
@@ -316,7 +336,8 @@ instruction.
 3. Add scoped pending reminders and their state tests before enabling Hermes
    post-tool deferral.
 4. Replace install and dump config mutation with kit, add installed-profile
-   detection, and enforce the complete CLI flag contract.
+   detection, and enforce the complete CLI flag contract in the same atomic
+   change as required profile dispatch.
 5. Remove superseded native installer, detector, input-mapping, and response
    code after the kit-backed paths pass.
 6. Update README and Zensical documentation, run package and repository quality

@@ -28,7 +28,9 @@ runtime bridge between the two packages.
 - The default install selects profiles whose executable is on `PATH` or whose
   kit-resolved config directory exists; `--agent all` selects all eight.
 - Every installed command is `roborev agent-hook run --agent PROFILE` and uses
-  the stable ownership marker `agent-hook run`.
+  the application-namespaced ownership marker `roborev`, which also identifies
+  commands created by older roborev releases without matching another
+  application's `agent-hook run` command.
 - Use one uniform `--config` override; remove `--codex-config`,
   `--claude-config`, and `--scope` without aliases.
 - Keep `--timeout` and convert its `time.Duration` through kit's native units.
@@ -150,9 +152,9 @@ func TestRunAgentHookCursorSuppressesUnsupportedControlOutput(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.JSONEq(t, `{}`, stdout.String())
-	assert.Zero(t, got.Threshold)
-	assert.Zero(t, got.CommitThreshold)
-	assert.Zero(t, got.FailedReviewThreshold)
+	assert.Equal(t, agenthook.DefaultTurnThreshold, got.Threshold)
+	assert.Equal(t, agenthook.DefaultCommitThreshold, got.CommitThreshold)
+	assert.Equal(t, agenthook.DefaultFailedReviewThreshold, got.FailedReviewThreshold)
 }
 
 func TestResolveOptionsForEveryKitAgent(t *testing.T) {
@@ -240,9 +242,9 @@ stop reminders. `Stop` must copy `StopHookActive` and
 `LastAssistantMessage` from the typed stop input into the internal event before
 posting; pre/post methods must copy `ToolUseID`, and post must also copy the
 typed tool response. Add a table-driven handler test that captures each posted
-request and asserts those fields survive kit normalization. For Cursor, copy
-the runtime options, set all three thresholds to zero before constructing the
-request, and return zero typed output regardless of the daemon response.
+request and asserts those fields survive kit normalization. Cursor posts the
+same request and thresholds as every other profile, then returns zero typed
+output regardless of the daemon response.
 
 Change `runHook` to accept `kitagenthook.Agent` and delegate the finite stdin
 reader and stdout writer to:
@@ -274,12 +276,12 @@ go test ./internal/agenthook -run 'TestResolveOptions|TestPostToolUseAdditionalC
 
 Expected: PASS, including the existing daemon-unavailable fail-open case.
 
-- [ ] **Step 6: Commit the typed runtime seam**
+- [ ] **Step 6: Keep the typed runtime seam uncommitted until profile-bearing
+  commands land**
 
-```bash
-git add go.mod go.sum cmd/roborev/agent_hook_cmd.go cmd/roborev/agent_hook_handler.go cmd/roborev/agent_hook_test.go internal/agenthook/config.go internal/agenthook/config_test.go internal/agenthook/output.go internal/agenthook/output_test.go
-git commit -m "refactor: route agent hooks through kit"
-```
+Task 1 intentionally remains in the working tree. Existing installed commands
+do not all carry `--agent`, so typed dispatch, the kit-backed installer, and the
+required CLI profile contract form one atomic commit at the end of Task 4.
 
 ### Task 2: Persist and deliver scoped Hermes reminders
 
@@ -349,6 +351,8 @@ func TestDeferredPostToolReminderKeepsDashCRepositoryAtStop(t *testing.T) {
 	assert.True(t, stopResp.Triggered)
 	assert.Equal(t, "commit", stopResp.TriggeredBy)
 	assert.Contains(t, stopResp.Reason, repoDisplayName(inner.Path()))
+	assert.Contains(t, stopResp.Reason, inner.Path())
+	assert.Contains(t, stopResp.Reason, "change to")
 }
 ```
 
@@ -360,6 +364,14 @@ uses repo B as the subsequent `Stop` CWD, and asserts repo A's stored reason is
 delivered independently of repo B. Add a
 state-load test that writes a session without `pending_reminders`, calls
 `LoadState`, and asserts the new map is empty.
+
+Add tests that cross the same lineage-and-trigger threshold twice before a
+`Stop` and assert there is one coalesced entry whose `CreatedAt` is unchanged
+and whose relevant count is accumulated. Add a failed-review test that queues
+an entry, resolves the review before `Stop`, and asserts delivery discards the
+stale entry without incrementing `ReminderPromptCount`. Assert pending entries
+appear through the existing status payload and disappear through the existing
+session reset path rather than adding a separate cleanup API.
 
 Add a handler integration test in `cmd/roborev/agent_hook_test.go` that runs a
 native Hermes `PostToolUse` payload, captures the daemon request, and asserts
@@ -404,7 +416,9 @@ PendingReminders map[string]PendingReminder `json:"pending_reminders,omitempty"`
 ```
 
 Use `lineageKey + "\x00" + triggeredBy` as the pending map key so a failed
-review and a commit for one lineage can remain independently queued.
+review and a commit for one lineage can remain independently queued. When that
+key already exists, update its reason and repository metadata, accumulate the
+relevant count, and preserve its original `CreatedAt`.
 
 - [ ] **Step 4: Reserve triggers and deliver them before resolving Stop CWD**
 
@@ -422,10 +436,15 @@ func (s *StateStore) deliverPendingReminder(sessionID string) (Response, bool, e
 ```
 
 Sort candidates by `failed_reviews` before `commit`, then by `CreatedAt`, then
-by map key for deterministic ties. Remove only the selected entry, increment
+by map key for deterministic ties. Re-query failed reviews using each pending
+entry's stored repository, branch, and HEAD before selecting it; discard a
+resolved entry without updating delivery counters and continue to the next
+candidate. Remove only the selected actionable entry, increment
 `ReminderPromptCount`, set the matching delivery timestamp, save state, and
 return a triggered response carrying the stored reason and counts. A pending
-delivery must work even when the stop CWD is outside any repository.
+delivery must work even when the stop CWD is outside any repository. The stored
+reason must identify the absolute `WorktreeRoot` and explicitly tell the agent
+to change to that worktree before running fallback commands.
 
 Set `DeferPostToolReminder: h.agent == kitagenthook.AgentHermes` in Task 1's
 handler request construction.
@@ -441,12 +460,11 @@ go test ./cmd/roborev -run 'TestRunAgentHook'
 
 Expected: PASS; existing immediate Codex/Claude/Droid behavior remains green.
 
-- [ ] **Step 6: Commit scoped deferred delivery**
+- [ ] **Step 6: Keep scoped delivery with the atomic profile migration**
 
-```bash
-git add internal/agenthook/types.go internal/agenthook/state.go internal/agenthook/state_test.go cmd/roborev/agent_hook_handler.go cmd/roborev/agent_hook_test.go
-git commit -m "feat: defer scoped Hermes reminders to stop"
-```
+Do not commit yet. Task 2 depends on Task 1's typed handler, which becomes
+user-reachable only with Task 4's required profile-bearing commands. Commit the
+complete runtime and installation migration after Task 4 passes.
 
 ### Task 3: Replace config mutation with kit and add profile discovery
 
@@ -508,6 +526,11 @@ func TestSelectProfilesAllUsesKitOrder(t *testing.T) {
 	}, agents)
 }
 ```
+
+The auto-detection fixture must redirect `HOME`, `USERPROFILE`,
+`LOCALAPPDATA`, `CODEX_HOME`, `CLAUDE_CONFIG_DIR`, `COPILOT_HOME`,
+`GEMINI_CLI_HOME`, `HERMES_HOME`, and `QWEN_HOME` into the test's private
+scratch root so host agent installations cannot affect the result.
 
 In `install_test.go`, add one integration seam test that installs Qwen to a
 temporary settings file and asserts the resulting command contains
@@ -593,7 +616,7 @@ kitagenthook.InstallOptions{
 	Executable: opts.Executable,
 	Arguments: []string{"agent-hook", "run", "--agent", string(agent)},
 	Command: opts.Command,
-	Marker: "agent-hook run",
+	Marker: "roborev",
 	Hooks: []kitagenthook.Hook{
 		{Event: kitagenthook.EventPreToolUse, Matcher: kitagenthook.ToolBash, Timeout: opts.Timeout},
 		{Event: kitagenthook.EventPostToolUse, Matcher: kitagenthook.ToolBash, Timeout: opts.Timeout},
@@ -604,30 +627,59 @@ kitagenthook.InstallOptions{
 
 Use `PlanInstall` for dry-run and dump, `Install` otherwise, and `errors.Join`
 after attempting every selected profile. Validate `--command` contains the
-marker and either `--agent PROFILE` or `--agent=PROFILE`. Reject config and raw
-command overrides unless `Agent` names one explicit profile.
+application marker and exactly one effective `--agent PROFILE` or
+`--agent=PROFILE` selection. Reject config and raw command overrides unless
+`Agent` names one explicit profile.
 
-Implement raw-command profile validation from only the suffix after the stable
-marker, so a quoted executable path cannot affect selection:
+Implement raw-command profile validation from only the suffix after
+`agent-hook run`, so a quoted executable path cannot affect selection. Scan all
+arguments until an argument terminator, reject missing values and any repeated
+`--agent` flag (including a duplicate with the same value), and require the one
+effective value to equal the requested profile:
 
 ```go
-func commandSelectsAgent(command string, agent kitagenthook.Agent) bool {
+func commandAgent(command string) (kitagenthook.Agent, error) {
 	index := strings.Index(command, agentHookRunner)
 	if index < 0 {
-		return false
+		return "", errors.New("command must invoke agent-hook run")
 	}
 	fields := strings.Fields(command[index+len(agentHookRunner):])
-	for i, field := range fields {
-		if field == "--agent="+string(agent) {
-			return true
+	selected := ""
+	for i := 0; i < len(fields); i++ {
+		field := fields[i]
+		if field == "--" {
+			break
 		}
-		if field == "--agent" && i+1 < len(fields) && fields[i+1] == string(agent) {
-			return true
+		value := ""
+		switch {
+		case field == "--agent":
+			if i+1 >= len(fields) || fields[i+1] == "--" {
+				return "", errors.New("--agent requires a value")
+			}
+			i++
+			value = fields[i]
+		case strings.HasPrefix(field, "--agent="):
+			value = strings.TrimPrefix(field, "--agent=")
+		default:
+			continue
 		}
+		if value == "" {
+			return "", errors.New("--agent requires a value")
+		}
+		if selected != "" {
+			return "", errors.New("command must select exactly one agent")
+		}
+		selected = value
 	}
-	return false
+	if selected == "" {
+		return "", errors.New("command must select an agent")
+	}
+	return kitagenthook.ParseAgent(selected)
 }
 ```
+
+Cover repeated identical flags, conflicting flags, both assignment forms,
+missing values, and `--agent` after `--`.
 
 Wrap per-profile failures with the kit display name and resolved config path
 before joining them; successful earlier profiles remain installed.
@@ -640,7 +692,7 @@ Replace the schema-agnostic JSON walker in `detect.go` with:
 
 ```go
 func Installed(agent kitagenthook.Agent, path string) (bool, error) {
-	result, err := kitagenthook.PlanUninstall(agent, path, "agent-hook run")
+	result, err := kitagenthook.PlanUninstall(agent, path, "roborev")
 	if err != nil {
 		return false, err
 	}
@@ -658,14 +710,13 @@ go test ./internal/agenthook -run 'TestSelectProfiles|TestRunInstall|TestRunDump
 
 Expected: PASS, with no tests asserting kit's own native formatting details.
 
-- [ ] **Step 6: Commit kit-backed installation**
+- [ ] **Step 6: Continue directly to the CLI callers**
 
-```bash
-git add internal/agenthook/profiles.go internal/agenthook/profiles_test.go internal/agenthook/droid_path.go internal/agenthook/droid_path_test.go internal/agenthook/install.go internal/agenthook/install_test.go internal/agenthook/detect.go internal/agenthook/detect_test.go
-git commit -m "feat: install agent hooks through kit profiles"
-```
+Do not commit the rewritten option and detector APIs before their CLI and
+quickstart callers are updated. Task 3 and Task 4 are one atomic implementation
+unit.
 
-### Task 4: Enforce the uniform CLI and update quickstart detection
+### Task 4: Atomically enforce the uniform CLI and finish the kit migration
 
 **Files:**
 
@@ -778,12 +829,17 @@ rg -n 'InstallSpec|ExecuteMatcher|BuildOutput|jsonContainsRoborevHook|codexSpecs
 Expected: no production references. Do not add a test asserting these symbols
 stay absent.
 
-- [ ] **Step 6: Commit the uniform CLI**
+- [ ] **Step 6: Commit the atomic runtime, installer, and CLI migration**
 
 ```bash
-git add cmd/roborev/agent_hook_cmd.go cmd/roborev/agent_hook_test.go cmd/roborev/quickstart.go cmd/roborev/quickstart_cmd_test.go internal/agenthook/state.go
-git commit -m "feat: expose every kit agent-hook profile"
+git add go.mod go.sum cmd/roborev/agent_hook_cmd.go cmd/roborev/agent_hook_handler.go cmd/roborev/agent_hook_test.go cmd/roborev/quickstart.go cmd/roborev/quickstart_cmd_test.go internal/agenthook
+git commit -m "feat: centralize agent hooks through kit"
 ```
+
+This is deliberately the first implementation commit after the reviewed design
+and plan: every installed command and every runtime invocation now supplies the
+same required profile, so no intermediate commit ships an ambiguous dispatcher
+or uncompilable caller/API split.
 
 ### Task 5: Document migration and run repository quality gates
 
@@ -904,9 +960,12 @@ Run:
 git status --short --branch
 git log --oneline origin/main..HEAD
 git pull --rebase origin main
+# If the rebase changed the tested tree, repeat Step 3 and Step 4 before push.
 git push --set-upstream origin HEAD
 git status --short --branch
 ```
 
 Expected: the worktree is clean and the branch reports up to date with its
-upstream. Do not open or merge a pull request unless the user separately asks.
+upstream. Any tree changed by the rebase has passed the scratch build/tests and
+repository hooks again. Do not open or merge a pull request unless the user
+separately asks.
