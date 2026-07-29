@@ -28,9 +28,11 @@ inside an independently launched coding-agent harness.
 - A default install selects every locally installed kit-supported harness and
   preserves unrelated native hook configuration.
 - An explicit install can target any one of the eight profiles or all eight.
-- Every profile receives a valid native response and a self-contained default
-  reminder that can resolve roborev findings without a separately installed
-  roborev skill.
+- Every profile receives a valid native response. Seven profiles receive a
+  self-contained default reminder that can resolve roborev findings without a
+  separately installed roborev skill; Cursor records events but emits no
+  reminder because kit v0.14.0 exposes no Cursor control response at
+  `PostToolUse` or `Stop`.
 - Existing Codex, Claude Code, and Factory Droid hook entries are replaced on
   the next install instead of duplicated.
 - Hermes delivers reminders with the repository and lineage that triggered
@@ -60,7 +62,8 @@ Roborev owns:
 - threshold and instruction configuration;
 - communication with the local hook daemon;
 - commit, turn, and failed-review accounting; and
-- the decision to emit or defer a reminder.
+- the decision to emit, defer, or suppress a reminder based on profile
+  capability.
 
 No copied native config or response logic remains in roborev. The existing
 Factory Droid path-safety policy remains because it is a roborev security
@@ -177,10 +180,12 @@ names are already normalized to kit's `ToolBash`, so roborev no longer needs
 native tool-name aliases such as Factory Droid's `Execute`.
 
 For `PreToolUse`, the handler records the baseline and returns an empty typed
-output. For `PostToolUse`, it returns a `PostToolUseOutput` with additional
-context when the daemon triggers a reminder. For `Stop`, it returns a
-`StopOutput` with a blocking decision and the reminder reason. Kit translates
-those types into each harness's supported native response.
+output. For reminder-capable profiles, `PostToolUse` returns a
+`PostToolUseOutput` with additional context when the daemon triggers a reminder,
+and `Stop` returns a `StopOutput` with a blocking decision and the reminder
+reason. Kit translates those types into each harness's supported native
+response. Cursor always returns zero typed outputs: its kit profile can observe
+these events but cannot encode control output for either reminder boundary.
 
 The default instruction is self-contained across all profiles:
 
@@ -223,6 +228,14 @@ Profiles with post-tool context support keep the existing immediate reminder
 behavior. Trigger priority at any single boundary is failed reviews, then
 commits, then the turn threshold, so only one reminder is emitted at a time.
 
+Cursor still sends normalized `PreToolUse`, `PostToolUse`, and `Stop` events to
+the daemon for baseline and session accounting, but the handler zeroes all
+three thresholds before posting them. The daemon therefore records activity
+without consuming counters, incrementing reminder counts, or returning a
+trigger that Cursor cannot encode. The handler returns empty native responses
+for Cursor even if a test double or unexpected daemon response says it
+triggered.
+
 `PendingReminder` is an optional, `omitempty` field in the existing session
 state. State written by older releases loads with no pending entries and needs
 no migration or dual-read path. Once the upgraded daemon writes state, older
@@ -254,6 +267,10 @@ Tests cover only roborev-owned behavior and its integration seam with kit:
 - validation of uniform `--config`, raw `--command`, and no-agent cases;
 - the hook specification, marker, and per-profile run arguments passed to kit;
 - one real kit-backed install/run path proving the integration boundary;
+- Cursor requests zero every threshold and emit empty responses even when the
+  daemon reports a trigger;
+- the Hermes handler marks post-tool requests for deferred delivery and
+  propagates normalized event fields into daemon requests;
 - fail-open handler behavior when the local daemon is unavailable; and
 - deferred post-tool triggering followed by delivery at `Stop` after a CWD
   change and after a `git -C` command targets another repository;
@@ -280,12 +297,15 @@ The README and Zensical documentation will:
 - describe native JSON or YAML dump output;
 - retain stable-binary guidance; and
 - explain Hermes's scoped, queued delivery at later stop boundaries; and
+- explain that Cursor integration is tracking-only because its post-tool and
+  stop hooks have no control response; and
 - document the self-contained fallback workflow when no roborev skill exists.
 
 Quickstart checks continue to focus on the coding agents for which roborev
 ships fix/refine skills. General hook installation and status output cover all
 kit profiles. Expanding roborev's skill packages is unnecessary for this change
-because every installed profile receives the actionable fallback instruction.
+because every reminder-capable profile receives the actionable fallback
+instruction.
 
 ## Implementation Sequence
 
