@@ -2,6 +2,11 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
+	"fmt"
+	"os"
+	"path/filepath"
+	"runtime"
 	"testing"
 	"time"
 
@@ -9,6 +14,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/agent"
+	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -311,7 +318,8 @@ func TestRerunPanelPreservesSynthesisBackup(t *testing.T) {
 	synth := storage.EnqueueOpts{
 		RepoID: repo.ID, GitRef: "abc123", Agent: "primary",
 		BackupAgent: "backup", BackupModel: "backup-model",
-		PanelRunUUID: runUUID, PanelRole: storage.PanelRoleSynthesis, PanelName: "p",
+		PanelMemberConfigJSON: `{"acp":{"primary":{"command":"frozen-primary"}}}`,
+		PanelRunUUID:          runUUID, PanelRole: storage.PanelRoleSynthesis, PanelName: "p",
 	}
 	_, synthJob, err := db.EnqueuePanelRun(members, synth)
 	require.NoError(t, err)
@@ -321,6 +329,58 @@ func TestRerunPanelPreservesSynthesisBackup(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal("backup", newSynth.BackupAgent)
 	assert.Equal("backup-model", newSynth.BackupModel)
+	assert.JSONEq(synth.PanelMemberConfigJSON, newSynth.PanelMemberConfigJSON)
+}
+
+func TestRerunCIPanelPreservesSynthesisACPSnapshot(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	repoPath := t.TempDir()
+	repo, err := db.GetOrCreateRepo(repoPath)
+	require.NoError(t, err)
+
+	binDir := t.TempDir()
+	frozenCommand := filepath.Join(binDir, "frozen-rerun-goose")
+	liveCommand := filepath.Join(binDir, "live-rerun-goose")
+	if runtime.GOOS == "windows" {
+		frozenCommand += ".cmd"
+		liveCommand += ".cmd"
+	}
+	script := []byte("#!/bin/sh\nexit 0\n")
+	require.NoError(t, os.WriteFile(frozenCommand, script, 0o755))
+	require.NoError(t, os.WriteFile(liveCommand, script, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(repoPath, ".roborev.toml"),
+		fmt.Appendf(nil, "[acp.goose]\ncommand = %q\n", liveCommand), 0o644))
+	snapshot, err := json.Marshal(ciACPExecutionConfig{ACP: config.ACPAgentConfigs{
+		"goose": {Command: frozenCommand},
+	}})
+	require.NoError(t, err)
+
+	runUUID := uuid.NewString()
+	members := []storage.EnqueueOpts{{
+		RepoID: repo.ID, GitRef: "base..head", Agent: "test",
+		PanelRunUUID: runUUID, PanelRole: storage.PanelRoleMember,
+		PanelName: "ci", PanelMemberName: "m0",
+	}}
+	synth := storage.EnqueueOpts{
+		RepoID: repo.ID, GitRef: "base..head", Agent: "acp.goose",
+		Source: storage.JobSourceCI, PanelMemberConfigJSON: string(snapshot),
+		PanelRunUUID: runUUID, PanelRole: storage.PanelRoleSynthesis, PanelName: "ci",
+	}
+	_, synthJob, err := db.EnqueuePanelRun(members, synth)
+	require.NoError(t, err)
+
+	newUUID, _ := rerunAndLoadNewRun(t, server, db, runUUID, synthJob.ID)
+	newSynth, err := db.GetSynthesisJob(newUUID)
+	require.NoError(t, err)
+	assert.JSONEq(t, string(snapshot), newSynth.PanelMemberConfigJSON)
+
+	pool := NewWorkerPool(db, NewStaticConfig(config.DefaultConfig()), 1, NewBroadcaster(), nil, nil)
+	configured, agentName, err := pool.configureSynthesisAgent(testWorkerID, newSynth)
+	require.NoError(t, err)
+	assert.Equal(t, "acp.goose", agentName)
+	configuredACP, ok := configured.(*agent.ACPAgent)
+	require.True(t, ok)
+	assert.Equal(t, frozenCommand, configuredACP.CommandName())
 }
 
 // TestRerunPanelPreservesOutputPrefix verifies a prefixed panel (analyze/compact

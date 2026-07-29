@@ -2206,7 +2206,7 @@ func TestResolveBackupAgentUsesConfiguredACPName(t *testing.T) {
 	pool := NewWorkerPool(nil, NewStaticConfig(cfg), 1, NewBroadcaster(), nil, nil)
 	job := &storage.ReviewJob{Agent: "codex", RepoPath: t.TempDir()}
 
-	assert.Equal(t, "my-acp", pool.resolveBackupAgent(job))
+	assert.Equal(t, "acp.my-acp", pool.resolveBackupAgent(job))
 }
 
 func TestResolveReviewJobAgentUsesCISnapshottedACPConfig(t *testing.T) {
@@ -2229,7 +2229,7 @@ func TestResolveReviewJobAgentUsesCISnapshottedACPConfig(t *testing.T) {
 	}{ACP: config.ACPAgentConfigs{"goose": {Command: frozenCommand}}})
 	require.NoError(t, err)
 	job := &storage.ReviewJob{
-		Source: storage.JobSourceCI, RepoPath: repoPath, Agent: "goose",
+		Source: storage.JobSourceCI, RepoPath: repoPath, Agent: "acp.goose",
 		PanelMemberConfigJSON: string(snapshot),
 	}
 
@@ -2237,6 +2237,7 @@ func TestResolveReviewJobAgentUsesCISnapshottedACPConfig(t *testing.T) {
 	require.NoError(t, err)
 	configuredACP, ok := configured.(*agent.ACPAgent)
 	require.True(t, ok)
+	assert.Equal(t, "acp.goose", configuredACP.Name())
 	assert.Equal(t, frozenCommand, configuredACP.CommandName())
 }
 

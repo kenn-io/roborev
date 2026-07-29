@@ -9,6 +9,41 @@ import (
 	"go.kenn.io/roborev/internal/config"
 )
 
+const namedACPStoragePrefix = "acp."
+
+// ACPConfigName returns the configuration key represented by an agent name.
+// Persisted named ACP identities use acp.<name>; user-facing selection keeps
+// accepting the bare configured name.
+func ACPConfigName(name string) string {
+	name = strings.TrimSpace(name)
+	if configName, ok := strings.CutPrefix(name, namedACPStoragePrefix); ok {
+		return configName
+	}
+	return name
+}
+
+func storedACPAgentName(name string) string {
+	name = ACPConfigName(name)
+	if name == "" {
+		return ""
+	}
+	return namedACPStoragePrefix + name
+}
+
+// StorageNameFromConfig returns the durable database identity for an agent.
+// Named ACP entries are namespaced so stored jobs never confuse a configured
+// entry with a built-in agent identity.
+func StorageNameFromConfig(
+	name string,
+	repoCfg *config.RepoConfig,
+	cfg *config.Config,
+) string {
+	if isConfiguredACPAgentNameFromConfig(name, cfg, repoCfg) {
+		return storedACPAgentName(name)
+	}
+	return strings.TrimSpace(name)
+}
+
 func defaultACPAgentConfig() *config.ACPAgentConfig {
 	return &config.ACPAgentConfig{
 		Command:         defaultACPCommand,
@@ -30,7 +65,7 @@ func isConfiguredACPAgentName(name string, cfg *config.Config, repoPath string) 
 }
 
 func isConfiguredACPAgentNameFromConfig(name string, cfg *config.Config, repoCfg *config.RepoConfig) bool {
-	rawName := strings.TrimSpace(name)
+	rawName := ACPConfigName(name)
 	if rawName == "" {
 		return false
 	}
@@ -51,14 +86,16 @@ func configuredACPAgentFromConfig(
 	repoCfg *config.RepoConfig,
 	cfg *config.Config,
 ) (*ACPAgent, error) {
-	acpCfg, ok := config.ResolveACPAgentConfigFromConfig(name, repoCfg, cfg)
+	configName := ACPConfigName(name)
+	acpCfg, ok := config.ResolveACPAgentConfigFromConfig(configName, repoCfg, cfg)
 	if !ok {
-		return nil, fmt.Errorf("ACP agent %q is not configured", strings.TrimSpace(name))
+		return nil, fmt.Errorf("ACP agent %q is not configured", configName)
 	}
-	return configuredACPAgentWithConfig(name, &acpCfg)
+	return configuredACPAgentWithConfig(configName, &acpCfg)
 }
 
 func configuredACPAgentWithConfig(name string, acpCfg *config.ACPAgentConfig) (*ACPAgent, error) {
+	name = ACPConfigName(name)
 	candidate := config.ACPAgentConfig{}
 	if acpCfg != nil {
 		candidate = *acpCfg
@@ -66,7 +103,7 @@ func configuredACPAgentWithConfig(name string, acpCfg *config.ACPAgentConfig) (*
 	if err := config.ValidateACPAgentConfig(name, candidate); err != nil {
 		return nil, err
 	}
-	return NewACPAgentFromConfig(name, &candidate), nil
+	return NewACPAgentFromConfig(storedACPAgentName(name), &candidate), nil
 }
 
 // resolveAvailableBackupWithConfig returns the first backup agent whose

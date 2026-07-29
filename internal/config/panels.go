@@ -166,6 +166,8 @@ type ResolvedMember struct {
 	Instructions  string `json:"instructions"`
 	AllowFailure  bool   `json:"allow_failure,omitempty"`
 	Timeout       string `json:"timeout,omitempty"`
+	BackupAgent   string `json:"backup_agent,omitempty"`
+	BackupModel   string `json:"backup_model,omitempty"`
 }
 
 // SynthesisSpec is the resolved agent/model/reasoning for a panel's synthesis

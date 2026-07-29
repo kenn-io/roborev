@@ -351,7 +351,7 @@ func TestConfigureSynthesisAgentKeepsPrimaryModelForConfiguredACPAlias(t *testin
 		`UPDATE review_jobs
 		 SET status = 'running', worker_id = ?, agent = ?, model = ?, backup_agent = ?, backup_model = ?
 		 WHERE id = ?`,
-		testWorkerID, "primary-acp", "primary-model", "acp", "backup-model", synthJob.ID,
+		testWorkerID, "acp.primary-acp", "primary-model", "acp", "backup-model", synthJob.ID,
 	)
 	require.NoError(t, err)
 	job, err := tc.DB.GetJobByID(synthJob.ID)
@@ -360,7 +360,7 @@ func TestConfigureSynthesisAgentKeepsPrimaryModelForConfiguredACPAlias(t *testin
 	configured, agentName, err := tc.Pool.configureSynthesisAgent(testWorkerID, job)
 	require.NoError(t, err)
 
-	assert.Equal("primary-acp", agentName)
+	assert.Equal("acp.primary-acp", agentName)
 	configuredACP, ok := configured.(*agent.ACPAgent)
 	require.True(t, ok)
 	assert.Equal("primary-model", configuredACP.Model)
@@ -389,7 +389,7 @@ func TestConfigureSynthesisAgentUsesBackupModelForNamedACPBackup(t *testing.T) {
 		`UPDATE review_jobs
 		 SET status = 'running', worker_id = ?, agent = ?, model = ?, backup_agent = ?, backup_model = ?
 		 WHERE id = ?`,
-		testWorkerID, "codex", "primary-model", "goose", "backup-model", synthJob.ID,
+		testWorkerID, "codex", "primary-model", "acp.goose", "backup-model", synthJob.ID,
 	)
 	require.NoError(t, err)
 	job, err := tc.DB.GetJobByID(synthJob.ID)
@@ -398,7 +398,7 @@ func TestConfigureSynthesisAgentUsesBackupModelForNamedACPBackup(t *testing.T) {
 	configured, agentName, err := tc.Pool.configureSynthesisAgent(testWorkerID, job)
 	require.NoError(t, err)
 
-	assert.Equal("goose", agentName)
+	assert.Equal("acp.goose", agentName)
 	configuredACP, ok := configured.(*agent.ACPAgent)
 	require.True(t, ok)
 	assert.Equal("backup-model", configuredACP.Model)
@@ -430,7 +430,7 @@ func TestConfigureSynthesisAgentUsesCISnapshottedACPConfig(t *testing.T) {
 		`UPDATE review_jobs
 		 SET status = 'running', worker_id = ?, source = ?, agent = ?, panel_member_config_json = ?
 		 WHERE id = ?`,
-		testWorkerID, storage.JobSourceCI, "goose", string(snapshot), synthJob.ID,
+		testWorkerID, storage.JobSourceCI, "acp.goose", string(snapshot), synthJob.ID,
 	)
 	require.NoError(t, err)
 	job, err := tc.DB.GetJobByID(synthJob.ID)
@@ -438,7 +438,7 @@ func TestConfigureSynthesisAgentUsesCISnapshottedACPConfig(t *testing.T) {
 
 	configured, agentName, err := tc.Pool.configureSynthesisAgent(testWorkerID, job)
 	require.NoError(t, err)
-	assert.Equal(t, "goose", agentName)
+	assert.Equal(t, "acp.goose", agentName)
 	configuredACP, ok := configured.(*agent.ACPAgent)
 	require.True(t, ok)
 	assert.Equal(t, frozenCommand, configuredACP.CommandName())

@@ -261,6 +261,10 @@ collide with a built-in agent name or alias. In repository configuration, an
 `[acp.<name>]` entry replaces the complete global entry with the same name;
 other global ACP entries remain available.
 
+Select a named entry with its configured name, such as `--agent goose`. Queued
+jobs namespace that identity as `acp.goose`, so stored reviews and failover
+metadata cannot confuse it with a built-in agent.
+
 The earlier singleton format is no longer accepted. Move the old `name` value
 into the table header:
 

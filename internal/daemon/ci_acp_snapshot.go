@@ -3,7 +3,6 @@ package daemon
 import (
 	"encoding/json"
 	"fmt"
-	"strings"
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
@@ -27,7 +26,7 @@ func snapshotACPExecutionConfig(
 	effective := config.ResolveACPAgentConfigsFromConfig(repoCfg, cfg)
 	var snapshot config.ACPAgentConfigs
 	for _, name := range names {
-		name = strings.TrimSpace(name)
+		name = agent.ACPConfigName(name)
 		acpCfg, ok := effective[name]
 		if name == "" || !ok {
 			continue

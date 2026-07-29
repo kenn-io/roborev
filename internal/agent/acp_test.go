@@ -166,7 +166,7 @@ func TestGetAvailableWithConfigResolvesACPAlias(t *testing.T) {
 
 	acpAgent, ok := resolved.(*ACPAgent)
 	require.True(t, ok, "Expected ACP agent, got %T", resolved)
-	require.Equal(t, "custom-acp", acpAgent.Name())
+	require.Equal(t, "acp.custom-acp", acpAgent.Name())
 	require.Equal(t, "go", acpAgent.Command, "Expected ACP command from config, got %q", acpAgent.Command)
 }
 
@@ -200,7 +200,7 @@ func TestGetAvailableWithConfigEmptyRepoPathDoesNotReadCWD(t *testing.T) {
 
 	acpAgent, ok := resolved.(*ACPAgent)
 	require.True(t, ok, "Expected ACP agent, got %T", resolved)
-	require.Equal(t, "global-acp", acpAgent.Name())
+	require.Equal(t, "acp.global-acp", acpAgent.Name())
 	require.Equal(t, "global-acp", acpAgent.Command)
 }
 

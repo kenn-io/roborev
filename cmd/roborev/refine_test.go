@@ -257,7 +257,7 @@ func TestSelectRefineAgentNamedACPConfigUsesACPResolution(t *testing.T) {
 
 	acpAgent, ok := selected.(*agent.ACPAgent)
 	assert.True(t, ok)
-	assert.Equal(t, "codex-acp", acpAgent.Name())
+	assert.Equal(t, "acp.codex-acp", acpAgent.Name())
 	assert.Equal(t, "acp-agent", acpAgent.CommandName())
 }
 

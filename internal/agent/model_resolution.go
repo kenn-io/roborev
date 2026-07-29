@@ -310,7 +310,7 @@ func acpSelectedWithUnpairedWorkflowAgent(
 func workflowModelComparableAgentName(name string, repoPath string, cfg *config.Config) string {
 	name = strings.TrimSpace(name)
 	if isConfiguredACPAgentName(name, cfg, repoPath) {
-		return name
+		return storedACPAgentName(name)
 	}
 	return CanonicalName(name)
 }
@@ -318,7 +318,7 @@ func workflowModelComparableAgentName(name string, repoPath string, cfg *config.
 func workflowModelComparableAgentNameFromConfig(name string, repoCfg *config.RepoConfig, cfg *config.Config) string {
 	name = strings.TrimSpace(name)
 	if isConfiguredACPAgentNameFromConfig(name, cfg, repoCfg) {
-		return name
+		return storedACPAgentName(name)
 	}
 	return CanonicalName(name)
 }
@@ -337,11 +337,11 @@ func (w WorkflowConfig) resolveACPAgentConfig(selectedAgent string) *config.ACPA
 	)
 	if w.RepoConfig != nil {
 		acpCfg, ok = config.ResolveACPAgentConfigFromConfig(
-			selectedAgent, w.RepoConfig, w.GlobalConfig,
+			ACPConfigName(selectedAgent), w.RepoConfig, w.GlobalConfig,
 		)
 	} else {
 		acpCfg, ok = config.ResolveACPAgentConfig(
-			selectedAgent, w.RepoPath, w.GlobalConfig,
+			ACPConfigName(selectedAgent), w.RepoPath, w.GlobalConfig,
 		)
 	}
 	if !ok {

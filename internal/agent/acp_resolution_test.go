@@ -49,7 +49,7 @@ func TestConfiguredACPAgent(t *testing.T) {
 
 	agent, err := configuredACPAgent("custom-acp", "/tmp/repo", cfg)
 	require.NoError(t, err)
-	assert.Equal(t, "custom-acp", agent.agentName)
+	assert.Equal(t, "acp.custom-acp", agent.agentName)
 	assert.Equal(t, "custom-cmd", agent.Command)
 	assert.Equal(t, "custom-model", agent.Model)
 }
@@ -76,12 +76,12 @@ func TestGetAvailableExactWithConfigSupportsMultipleACPAgents(t *testing.T) {
 
 	goose, err := GetAvailableExactWithConfigFromConfig(nil, "goose", cfg)
 	require.NoError(t, err)
-	assert.Equal(t, "goose", goose.Name())
+	assert.Equal(t, "acp.goose", goose.Name())
 	assert.Equal(t, gooseBin, goose.(CommandAgent).CommandName())
 
 	foo, err := GetAvailableExactWithConfigFromConfig(nil, "foo", cfg)
 	require.NoError(t, err)
-	assert.Equal(t, "foo", foo.Name())
+	assert.Equal(t, "acp.foo", foo.Name())
 	assert.Equal(t, fooBin, foo.(CommandAgent).CommandName())
 }
 
@@ -94,7 +94,11 @@ func TestGetAvailableWithConfigACPAsBackup(t *testing.T) {
 	}}
 	got, err := GetAvailableWithConfig("", "codex", cfg, "my-acp")
 	require.NoError(t, err)
-	assert.Equal(t, "my-acp", got.Name())
+	assert.Equal(t, "acp.my-acp", got.Name())
+
+	stored, err := GetAvailableExactWithConfigFromConfig(nil, "acp.my-acp", cfg)
+	require.NoError(t, err)
+	assert.Equal(t, "acp.my-acp", stored.Name())
 }
 
 func TestConfiguredACPAgentRejectsInvalidEntries(t *testing.T) {

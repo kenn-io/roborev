@@ -707,17 +707,19 @@ func (p *CIPoller) resolveCIMatrixMembers(
 
 	members := make([]config.ResolvedMember, 0, len(matrix))
 	for i, entry := range matrix {
-		resolvedAgent, resolvedModel, err := p.resolveMatrixMemberAgent(repo, repoCfg, cfg, entry, reasoning)
+		resolvedAgent, resolvedModel, backupAgent, backupModel, err := p.resolveMatrixMemberAgent(repo, repoCfg, cfg, entry, reasoning)
 		if err != nil {
 			return nil, config.SynthesisSpec{}, err
 		}
 		members = append(members, config.ResolvedMember{
-			Name:       fmt.Sprintf("%s-%s", resolvedAgent, namedReviewType(entry.ReviewType)),
-			Index:      i,
-			Agent:      resolvedAgent,
-			Model:      resolvedModel,
-			ReviewType: entry.ReviewType,
-			Reasoning:  reasoning,
+			Name:        fmt.Sprintf("%s-%s", resolvedAgent, namedReviewType(entry.ReviewType)),
+			Index:       i,
+			Agent:       resolvedAgent,
+			Model:       resolvedModel,
+			ReviewType:  entry.ReviewType,
+			Reasoning:   reasoning,
+			BackupAgent: backupAgent,
+			BackupModel: backupModel,
 		})
 	}
 
@@ -736,7 +738,7 @@ func (p *CIPoller) resolveCINamedPanelMembers(
 	out := make([]config.ResolvedMember, len(members))
 	copy(out, members)
 	for i := range out {
-		resolvedAgent, resolvedModel, err := p.resolveCIPanelMemberExecution(
+		resolvedAgent, resolvedModel, backupAgent, backupModel, err := p.resolveCIPanelMemberExecution(
 			repoCfg, cfg, out[i],
 		)
 		if err != nil {
@@ -744,6 +746,8 @@ func (p *CIPoller) resolveCINamedPanelMembers(
 		}
 		out[i].Agent = resolvedAgent
 		out[i].Model = resolvedModel
+		out[i].BackupAgent = backupAgent
+		out[i].BackupModel = backupModel
 	}
 	return out, nil
 }
@@ -752,13 +756,13 @@ func (p *CIPoller) resolveCIPanelMemberExecution(
 	repoCfg *config.RepoConfig,
 	cfg *config.Config,
 	member config.ResolvedMember,
-) (string, string, error) {
+) (string, string, string, string, error) {
 	workflow := workflowForPanelReviewType(member.ReviewType)
 	resolution, err := agent.ResolveWorkflowConfigFromConfig(
 		member.Agent, repoCfg, cfg, workflow, member.Reasoning,
 	)
 	if err != nil {
-		return "", "", fmt.Errorf("resolve workflow config: %w", err)
+		return "", "", "", "", fmt.Errorf("resolve workflow config: %w", err)
 	}
 	resolvedAgent := resolution.PreferredAgent
 	strictWorkflowAgent := member.AgentExplicit ||
@@ -769,7 +773,7 @@ func (p *CIPoller) resolveCIPanelMemberExecution(
 	if p.agentResolverFn != nil {
 		name, err := p.agentResolverFn(resolvedAgent)
 		if err != nil {
-			return "", "", fmt.Errorf("%w for type=%s: %w", errNoCIAgent, member.ReviewType, err)
+			return "", "", "", "", fmt.Errorf("%w for type=%s: %w", errNoCIAgent, member.ReviewType, err)
 		}
 		resolvedAgent = name
 	} else if !strictWorkflowAgent {
@@ -777,21 +781,39 @@ func (p *CIPoller) resolveCIPanelMemberExecution(
 			repoCfg, resolvedAgent, cfg, resolution.BackupAgent,
 		)
 		if err != nil {
-			return "", "", fmt.Errorf("%w for type=%s: %w", errNoCIAgent, member.ReviewType, err)
+			return "", "", "", "", fmt.Errorf("%w for type=%s: %w", errNoCIAgent, member.ReviewType, err)
 		}
 		resolvedAgent = resolved.Name()
 	} else if resolved, err := agent.GetPreferredOrBackupWithConfigFromConfig(
 		repoCfg, resolvedAgent, cfg, resolution.BackupAgent,
 	); err != nil {
-		return "", "", fmt.Errorf("%w for type=%s: %w", errNoCIAgent, member.ReviewType, err)
+		return "", "", "", "", fmt.Errorf("%w for type=%s: %w", errNoCIAgent, member.ReviewType, err)
 	} else {
 		resolvedAgent = resolved.Name()
 	}
+	resolvedAgent = agent.StorageNameFromConfig(resolvedAgent, repoCfg, cfg)
 	model := member.Model
 	if !member.ModelExplicit || !resolution.AgentMatches(resolvedAgent, member.Agent) {
 		model = resolution.ModelForSelectedAgent(resolvedAgent, "")
 	}
-	return resolvedAgent, model, nil
+	backupAgent, backupModel := ciMemberBackupExecution(
+		resolution, resolvedAgent, repoCfg, cfg,
+	)
+	return resolvedAgent, model, backupAgent, backupModel, nil
+}
+
+func ciMemberBackupExecution(
+	resolution agent.WorkflowConfig,
+	selectedAgent string,
+	repoCfg *config.RepoConfig,
+	cfg *config.Config,
+) (string, string) {
+	backupAgent := strings.TrimSpace(resolution.BackupAgent)
+	if backupAgent == "" || resolution.AgentMatches(selectedAgent, backupAgent) {
+		return "", ""
+	}
+	return agent.StorageNameFromConfig(backupAgent, repoCfg, cfg),
+		resolution.ModelForSelectedAgent(backupAgent, "")
 }
 
 // resolveMatrixMemberAgent resolves the effective agent and model for one
@@ -802,11 +824,11 @@ func (p *CIPoller) resolveMatrixMemberAgent(
 	cfg *config.Config,
 	entry config.AgentReviewType,
 	reasoning string,
-) (string, string, error) {
+) (string, string, string, string, error) {
 	workflow := config.WorkflowForReviewType(entry.ReviewType)
 	resolution, err := agent.ResolveWorkflowConfigFromConfig(entry.Agent, repoCfg, cfg, workflow, reasoning)
 	if err != nil {
-		return "", "", fmt.Errorf("resolve workflow config: %w", err)
+		return "", "", "", "", fmt.Errorf("resolve workflow config: %w", err)
 	}
 	resolvedAgent := resolution.PreferredAgent
 	strictWorkflowAgent := config.HasWorkflowAgentOverrideFromConfig(
@@ -816,7 +838,7 @@ func (p *CIPoller) resolveMatrixMemberAgent(
 	if p.agentResolverFn != nil {
 		name, err := p.agentResolverFn(resolvedAgent)
 		if err != nil {
-			return "", "", fmt.Errorf("%w for type=%s: %w", errNoCIAgent, entry.ReviewType, err)
+			return "", "", "", "", fmt.Errorf("%w for type=%s: %w", errNoCIAgent, entry.ReviewType, err)
 		}
 		resolvedAgent = name
 	} else if autoDetectAgent {
@@ -824,17 +846,22 @@ func (p *CIPoller) resolveMatrixMemberAgent(
 			repoCfg, resolvedAgent, cfg, resolution.BackupAgent,
 		)
 		if err != nil {
-			return "", "", fmt.Errorf("%w for type=%s: %w", errNoCIAgent, entry.ReviewType, err)
+			return "", "", "", "", fmt.Errorf("%w for type=%s: %w", errNoCIAgent, entry.ReviewType, err)
 		}
 		resolvedAgent = resolved.Name()
 	} else if resolved, err := agent.GetPreferredOrBackupWithConfigFromConfig(
 		repoCfg, resolvedAgent, cfg, resolution.BackupAgent,
 	); err != nil {
-		return "", "", fmt.Errorf("%w for type=%s: %w", errNoCIAgent, entry.ReviewType, err)
+		return "", "", "", "", fmt.Errorf("%w for type=%s: %w", errNoCIAgent, entry.ReviewType, err)
 	} else {
 		resolvedAgent = resolved.Name()
 	}
-	return resolvedAgent, resolution.ModelForSelectedAgent(resolvedAgent, cfg.CI.Model), nil
+	resolvedAgent = agent.StorageNameFromConfig(resolvedAgent, repoCfg, cfg)
+	backupAgent, backupModel := ciMemberBackupExecution(
+		resolution, resolvedAgent, repoCfg, cfg,
+	)
+	return resolvedAgent, resolution.ModelForSelectedAgent(resolvedAgent, cfg.CI.Model),
+		backupAgent, backupModel, nil
 }
 
 // resolveCIMatrix returns the (agent, reviewType) matrix and reasoning for a PR,
@@ -1094,7 +1121,7 @@ func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) (
 		cfgJSON, err := json.Marshal(ciPanelMemberConfig{
 			ResolvedMember: m,
 			ACP: snapshotACPExecutionConfig(
-				in.repoCfg, in.cfg, m.Agent,
+				in.repoCfg, in.cfg, m.Agent, m.BackupAgent,
 			),
 		})
 		if err != nil {
@@ -1108,6 +1135,8 @@ func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) (
 			CIBaseBranch:          in.baseBranch,
 			Agent:                 m.Agent,
 			Model:                 m.Model,
+			BackupAgent:           m.BackupAgent,
+			BackupModel:           m.BackupModel,
 			Provider:              m.Provider,
 			Reasoning:             m.Reasoning,
 			ReviewType:            m.ReviewType,
@@ -1124,6 +1153,8 @@ func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) (
 	}
 
 	var synthSnapshot []byte
+	synthAgent := agent.StorageNameFromConfig(in.synth.Agent, in.repoCfg, in.cfg)
+	synthBackupAgent := agent.StorageNameFromConfig(in.synth.BackupAgent, in.repoCfg, in.cfg)
 	synthACP := snapshotACPExecutionConfig(
 		in.repoCfg, in.cfg, in.synth.Agent, in.synth.BackupAgent,
 	)
@@ -1138,10 +1169,10 @@ func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) (
 		RepoID:                in.repo.ID,
 		GitRef:                in.gitRef,
 		CIBaseBranch:          in.baseBranch,
-		Agent:                 in.synth.Agent,
+		Agent:                 synthAgent,
 		Model:                 in.synth.Model,
 		Reasoning:             in.synth.Reasoning,
-		BackupAgent:           in.synth.BackupAgent,
+		BackupAgent:           synthBackupAgent,
 		BackupModel:           in.synth.BackupModel,
 		MinSeverity:           synthesisMinSeverity,
 		JobType:               storage.JobTypeSynthesis,

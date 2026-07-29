@@ -423,7 +423,10 @@ func (s *Server) enqueuePanelRun(ctx context.Context, in panelRunInputs) (*RawJS
 
 	runUUID := uuid.NewString()
 	memberOpts := panelMemberOpts(in.descriptor, in.panelName, runUUID, members, in.resolutionPath, in.cfg)
-	synthOpts := panelSynthesisOpts(in.descriptor, in.panelName, runUUID, synth)
+	repoCfg, _ := config.LoadRepoConfig(in.resolutionPath)
+	synthOpts := panelSynthesisOpts(
+		in.descriptor, in.panelName, runUUID, synth, repoCfg, in.cfg,
+	)
 
 	var memberJobs []*storage.ReviewJob
 	var synthJob *storage.ReviewJob
@@ -560,11 +563,14 @@ func workflowForPanelReviewType(reviewType string) string {
 func panelSynthesisOpts(
 	descriptor targetDescriptor, panelName, runUUID string,
 	synth config.SynthesisSpec,
+	repoCfg *config.RepoConfig, cfg *config.Config,
 ) storage.EnqueueOpts {
 	o := descriptor.baseOpts()
 	o.JobType = storage.JobTypeSynthesis
-	o.Agent, o.Model, o.Reasoning = synth.Agent, synth.Model, synth.Reasoning
-	o.BackupAgent, o.BackupModel = synth.BackupAgent, synth.BackupModel
+	o.Agent = agent.StorageNameFromConfig(synth.Agent, repoCfg, cfg)
+	o.Model, o.Reasoning = synth.Model, synth.Reasoning
+	o.BackupAgent = agent.StorageNameFromConfig(synth.BackupAgent, repoCfg, cfg)
+	o.BackupModel = synth.BackupModel
 	o.PanelRunUUID, o.PanelRole = runUUID, storage.PanelRoleSynthesis
 	o.PanelName, o.ClaimBlocked = panelName, true
 	return o

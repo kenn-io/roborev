@@ -3033,7 +3033,7 @@ func TestResolveMatrixMemberAgentBlankAgentAutoDetectsAvailableAgent(t *testing.
 	agent.Register(&agent.FakeAgent{NameStr: "ci-auto-daemon"})
 	t.Cleanup(func() { agent.Unregister("ci-auto-daemon") })
 
-	resolvedAgent, resolvedModel, err := h.Poller.resolveMatrixMemberAgent(
+	resolvedAgent, resolvedModel, _, _, err := h.Poller.resolveMatrixMemberAgent(
 		h.Repo,
 		nil,
 		h.Cfg,
@@ -3056,7 +3056,7 @@ func TestResolveMatrixMemberAgentBlankAgentHonorsConfiguredCommandOverride(t *te
 	t.Setenv("PATH", binDir)
 	h.Cfg.CodexCmd = "ci-codex"
 
-	resolvedAgent, resolvedModel, err := h.Poller.resolveMatrixMemberAgent(
+	resolvedAgent, resolvedModel, _, _, err := h.Poller.resolveMatrixMemberAgent(
 		h.Repo,
 		nil,
 		h.Cfg,
@@ -3075,7 +3075,7 @@ func TestResolveMatrixMemberAgentBlankAgentWithExplicitBackupStaysStrict(t *test
 	agent.Register(&agent.FakeAgent{NameStr: "ci-unrelated-daemon"})
 	t.Cleanup(func() { agent.Unregister("ci-unrelated-daemon") })
 
-	resolvedAgent, resolvedModel, err := h.Poller.resolveMatrixMemberAgent(
+	resolvedAgent, resolvedModel, _, _, err := h.Poller.resolveMatrixMemberAgent(
 		h.Repo,
 		nil,
 		h.Cfg,
@@ -3095,7 +3095,7 @@ func TestResolveMatrixMemberAgentBlankAgentWithExplicitPrimaryStaysStrict(t *tes
 	agent.Register(&agent.FakeAgent{NameStr: "ci-unrelated-primary"})
 	t.Cleanup(func() { agent.Unregister("ci-unrelated-primary") })
 
-	resolvedAgent, resolvedModel, err := h.Poller.resolveMatrixMemberAgent(
+	resolvedAgent, resolvedModel, _, _, err := h.Poller.resolveMatrixMemberAgent(
 		h.Repo,
 		nil,
 		h.Cfg,
@@ -3134,7 +3134,7 @@ func TestResolveMatrixMemberAgentUsesPassedRepoConfigForACPAvailability(t *testi
 		},
 	}}
 
-	resolvedAgent, resolvedModel, err := h.Poller.resolveMatrixMemberAgent(
+	resolvedAgent, resolvedModel, _, _, err := h.Poller.resolveMatrixMemberAgent(
 		h.Repo,
 		repoCfg,
 		h.Cfg,
@@ -3142,7 +3142,7 @@ func TestResolveMatrixMemberAgentUsesPassedRepoConfigForACPAvailability(t *testi
 		"standard",
 	)
 	require.NoError(t, err)
-	assert.Equal(t, "branch-acp", resolvedAgent)
+	assert.Equal(t, "acp.branch-acp", resolvedAgent)
 	assert.Equal(t, "branch-model", resolvedModel)
 }
 
@@ -3725,7 +3725,7 @@ func TestProcessPRNamedPanelACPMemberReplacesInheritedWorkflowModel(t *testing.T
 	members, err := db.GetPanelMembers(panel.PanelRunUUID)
 	require.NoError(t, err)
 	require.Len(t, members, 1)
-	assert.Equal(t, "goose", members[0].Agent)
+	assert.Equal(t, "acp.goose", members[0].Agent)
 	assert.Equal(t, "goose-model", members[0].Model)
 }
 
@@ -4317,20 +4317,26 @@ func TestBuildPanelOptsSnapshotsEffectiveACPExecutionConfig(t *testing.T) {
 		cfg:     cfg,
 		ghRepo:  "acme/widgets",
 		gitRef:  "base..head",
-		members: []config.ResolvedMember{{Name: "reviewer", Agent: "goose"}},
+		members: []config.ResolvedMember{{
+			Name: "reviewer", Agent: "acp.goose",
+			BackupAgent: "acp.owl", BackupModel: "owl-backup-model",
+		}},
 		synth: config.SynthesisSpec{
 			Agent: "owl", BackupAgent: "goose",
 		},
 	})
 	require.NoError(t, err)
 	require.Len(t, memberOpts, 1)
+	assert.Equal(t, "acp.goose", memberOpts[0].Agent)
+	assert.Equal(t, "acp.owl", memberOpts[0].BackupAgent)
+	assert.Equal(t, "owl-backup-model", memberOpts[0].BackupModel)
 
 	var memberSnapshot struct {
 		ACP config.ACPAgentConfigs `json:"acp"`
 	}
 	require.NoError(t, json.Unmarshal([]byte(memberOpts[0].PanelMemberConfigJSON), &memberSnapshot))
 	assert.Equal(t, "default-branch-goose", memberSnapshot.ACP["goose"].Command)
-	assert.NotContains(t, memberSnapshot.ACP, "owl")
+	assert.Equal(t, "global-owl", memberSnapshot.ACP["owl"].Command)
 	assert.NotContains(t, memberSnapshot.ACP, "unused")
 
 	var synthSnapshot struct {
@@ -4340,6 +4346,30 @@ func TestBuildPanelOptsSnapshotsEffectiveACPExecutionConfig(t *testing.T) {
 	assert.Equal(t, "global-owl", synthSnapshot.ACP["owl"].Command)
 	assert.Equal(t, "default-branch-goose", synthSnapshot.ACP["goose"].Command)
 	assert.NotContains(t, synthSnapshot.ACP, "unused")
+	assert.Equal(t, "acp.owl", synthOpts.Agent)
+	assert.Equal(t, "acp.goose", synthOpts.BackupAgent)
+}
+
+func TestResolveCIPanelMemberExecutionPersistsNamedACPBackup(t *testing.T) {
+	t.Cleanup(testutil.MockExecutable(t, "goose-ci-backup-acp", 0))
+	cfg := config.DefaultConfig()
+	cfg.ReviewBackupAgent = "goose"
+	cfg.ReviewBackupModel = "goose-backup-model"
+	cfg.ACP = config.ACPAgentConfigs{
+		"goose": {Command: "goose-ci-backup-acp"},
+	}
+
+	selected, model, backup, backupModel, err := (&CIPoller{}).resolveCIPanelMemberExecution(
+		&config.RepoConfig{}, cfg,
+		config.ResolvedMember{
+			Agent: "test", AgentExplicit: true, ReviewType: "default",
+		},
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "test", selected)
+	assert.Empty(t, model)
+	assert.Equal(t, "acp.goose", backup)
+	assert.Equal(t, "goose-backup-model", backupModel)
 }
 
 // installFakeKata copies the test binary to a temp dir as `kata` and points

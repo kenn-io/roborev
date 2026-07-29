@@ -489,7 +489,9 @@ func TestWorkflowConfigKeepsNamedACPModelsIsolated(t *testing.T) {
 	}
 
 	assert.Equal(t, "goose-model", resolution.ModelForSelectedAgent("goose", ""))
+	assert.Equal(t, "goose-model", resolution.ModelForSelectedAgent("acp.goose", ""))
 	assert.Equal(t, "foo-model", resolution.ModelForSelectedAgent("foo", ""))
+	assert.True(t, resolution.AgentMatches("acp.goose", "goose"))
 	assert.False(t, resolution.AgentMatches("goose", "foo"))
 }
 

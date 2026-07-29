@@ -16,6 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/agent"
+	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 )
@@ -562,8 +563,48 @@ synthesis_agent = "test"
 	members, err := db.GetPanelMembers(resp.PanelRunUUID)
 	require.NoError(t, err)
 	require.Len(t, members, 1)
-	assert.Equal(t, "goose", members[0].Agent)
+	assert.Equal(t, "acp.goose", members[0].Agent)
 	assert.Equal(t, "goose-model", members[0].Model)
+}
+
+func TestEnqueueStoresNamedACPAgentIdentities(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	t.Cleanup(testutil.MockExecutable(t, "goose-storage-acp", 0))
+
+	repo := testutil.NewGitRepo(t)
+	repo.WriteFile(".roborev.toml", `
+[acp.goose]
+command = "goose-storage-acp"
+
+[acp.owl]
+command = "owl-storage-acp"
+
+[review]
+default_panel = "named-synthesis"
+
+[review.subagents.only]
+agent = "test"
+review_type = "default"
+
+[review.panels.named-synthesis]
+members = ["only"]
+synthesis_agent = "goose"
+synthesis_backup_agent = "owl"
+`)
+	repo.CommitFile("a.txt", "a", "add a")
+
+	resp := enqueuePanelViaHTTP(t, server, EnqueueRequest{
+		RepoPath: repo.Path(), GitRef: "HEAD", Agent: "test",
+	})
+	synth, err := db.GetSynthesisJob(resp.PanelRunUUID)
+	require.NoError(t, err)
+	assert.Equal(t, "acp.goose", synth.Agent)
+	assert.Equal(t, "acp.owl", synth.BackupAgent)
+
+	single := enqueuePanelViaHTTP(t, server, EnqueueRequest{
+		RepoPath: repo.Path(), GitRef: "HEAD", Agent: "goose", Panel: config.PanelNone,
+	})
+	assert.Equal(t, "acp.goose", single.Agent)
 }
 
 func TestEnqueuePanelNamedACPMemberPreservesExplicitModel(t *testing.T) {
