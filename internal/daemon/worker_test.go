@@ -2241,6 +2241,29 @@ func TestResolveReviewJobAgentUsesCISnapshottedACPConfig(t *testing.T) {
 	assert.Equal(t, frozenCommand, configuredACP.CommandName())
 }
 
+func TestResolveReviewJobAgentLegacyCIUsesWorkingTreeACPConfig(t *testing.T) {
+	binDir := t.TempDir()
+	liveCommand := filepath.Join(binDir, "live-goose")
+	if runtime.GOOS == "windows" {
+		liveCommand += ".cmd"
+	}
+	require.NoError(t, os.WriteFile(liveCommand, []byte("#!/bin/sh\nexit 0\n"), 0o755))
+
+	repoPath := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repoPath, ".roborev.toml"),
+		fmt.Appendf(nil, "[acp.goose]\ncommand = %q\n", liveCommand), 0o644))
+	job := &storage.ReviewJob{
+		Source: storage.JobSourceCI, RepoPath: repoPath, Agent: "acp.goose",
+		PanelMemberConfigJSON: `{"name":"legacy-member"}`,
+	}
+
+	configured, err := resolveReviewJobAgent(job, config.DefaultConfig())
+	require.NoError(t, err)
+	configuredACP, ok := configured.(*agent.ACPAgent)
+	require.True(t, ok)
+	assert.Equal(t, liveCommand, configuredACP.CommandName())
+}
+
 func TestCIMemberFailoverUsesSnapshottedACPBackup(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	binDir := t.TempDir()

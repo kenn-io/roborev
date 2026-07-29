@@ -1130,11 +1130,17 @@ func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) (
 				in.ghRepo, in.prNumber, m.Name, m.Agent, err)
 			storedPrompt = ""
 		}
+		acpSnapshot, err := snapshotACPExecutionConfig(
+			in.repoCfg, in.cfg, m.Agent, m.BackupAgent,
+		)
+		if err != nil {
+			return nil, storage.EnqueueOpts{}, fmt.Errorf(
+				"snapshot ACP config for panel member %q: %w", m.Name, err,
+			)
+		}
 		cfgJSON, err := json.Marshal(ciPanelMemberConfig{
 			ResolvedMember: m,
-			ACP: snapshotACPExecutionConfig(
-				in.repoCfg, in.cfg, m.Agent, m.BackupAgent,
-			),
+			ACP:            acpSnapshot,
 		})
 		if err != nil {
 			return nil, storage.EnqueueOpts{}, fmt.Errorf(
@@ -1167,9 +1173,14 @@ func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) (
 	var synthSnapshot []byte
 	synthAgent := agent.StorageNameFromConfig(in.synth.Agent, in.repoCfg, in.cfg)
 	synthBackupAgent := agent.StorageNameFromConfig(in.synth.BackupAgent, in.repoCfg, in.cfg)
-	synthACP := snapshotACPExecutionConfig(
+	synthACP, err := snapshotACPExecutionConfig(
 		in.repoCfg, in.cfg, in.synth.Agent, in.synth.BackupAgent,
 	)
+	if err != nil {
+		return nil, storage.EnqueueOpts{}, fmt.Errorf(
+			"snapshot synthesis ACP config: %w", err,
+		)
+	}
 	if len(synthACP) > 0 {
 		encoded, marshalErr := json.Marshal(ciACPExecutionConfig{ACP: synthACP})
 		if marshalErr != nil {

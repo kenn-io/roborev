@@ -3,6 +3,7 @@ package daemon
 import (
 	"encoding/json"
 	"fmt"
+	"strings"
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
@@ -22,21 +23,25 @@ func snapshotACPExecutionConfig(
 	repoCfg *config.RepoConfig,
 	cfg *config.Config,
 	names ...string,
-) config.ACPAgentConfigs {
+) (config.ACPAgentConfigs, error) {
 	effective := config.ResolveACPAgentConfigsFromConfig(repoCfg, cfg)
 	var snapshot config.ACPAgentConfigs
 	for _, name := range names {
-		name = agent.ACPConfigName(name)
-		acpCfg, ok := effective[name]
-		if name == "" || !ok {
+		canonicalName := strings.TrimSpace(name)
+		configName := agent.ACPConfigName(canonicalName)
+		if configName == "" {
 			continue
+		}
+		acpCfg, ok := effective[configName]
+		if !ok {
+			return nil, fmt.Errorf("ACP agent %q is not configured", canonicalName)
 		}
 		if snapshot == nil {
 			snapshot = make(config.ACPAgentConfigs)
 		}
-		snapshot[name] = acpCfg
+		snapshot[configName] = acpCfg
 	}
-	return snapshot
+	return snapshot, nil
 }
 
 func ciACPRepoConfig(job *storage.ReviewJob) (*config.RepoConfig, bool, error) {

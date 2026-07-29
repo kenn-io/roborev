@@ -4394,6 +4394,77 @@ func TestBuildPanelOptsSnapshotsEffectiveACPExecutionConfig(t *testing.T) {
 	assert.Equal(t, "acp.goose", synthOpts.BackupAgent)
 }
 
+func TestBuildPanelOptsRejectsACPReferencesMissingFromDefaultBranch(t *testing.T) {
+	repoPath := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(repoPath, ".roborev.toml"),
+		[]byte("[acp.goose]\ncommand = \"working-tree-goose\"\n"), 0o644))
+
+	tests := []struct {
+		name        string
+		members     []config.ResolvedMember
+		synth       config.SynthesisSpec
+		wantContext string
+	}{
+		{
+			name: "member primary",
+			members: []config.ResolvedMember{
+				{Name: "valid", Agent: "codex"},
+				{Name: "reviewer", Agent: "acp.goose"},
+			},
+			synth:       config.SynthesisSpec{Agent: "codex"},
+			wantContext: `panel member "reviewer"`,
+		},
+		{
+			name: "member backup",
+			members: []config.ResolvedMember{{
+				Name: "reviewer", Agent: "codex", BackupAgent: "acp.goose",
+			}},
+			synth:       config.SynthesisSpec{Agent: "codex"},
+			wantContext: `panel member "reviewer"`,
+		},
+		{
+			name:        "synthesis primary",
+			members:     []config.ResolvedMember{{Name: "reviewer", Agent: "codex"}},
+			synth:       config.SynthesisSpec{Agent: "acp.goose"},
+			wantContext: "synthesis",
+		},
+		{
+			name:    "synthesis backup",
+			members: []config.ResolvedMember{{Name: "reviewer", Agent: "codex"}},
+			synth: config.SynthesisSpec{
+				Agent: "codex", BackupAgent: "acp.goose",
+			},
+			wantContext: "synthesis",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			p := &CIPoller{}
+			p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, *config.Config) (string, error) {
+				return "prebuilt prompt", nil
+			}
+			memberOpts, synthOpts, err := p.buildPanelOpts(
+				context.Background(), buildPanelOptsInput{
+					repo:    &storage.Repo{ID: 1, RootPath: repoPath},
+					repoCfg: &config.RepoConfig{},
+					cfg:     config.DefaultConfig(),
+					ghRepo:  "acme/widgets",
+					gitRef:  "base..head",
+					members: tt.members,
+					synth:   tt.synth,
+				},
+			)
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "acp.goose")
+			assert.Contains(t, err.Error(), "not configured")
+			assert.Contains(t, err.Error(), tt.wantContext)
+			assert.Empty(t, memberOpts)
+			assert.Equal(t, storage.EnqueueOpts{}, synthOpts)
+		})
+	}
+}
+
 func TestResolveCIPanelMemberExecutionPersistsNamedACPBackup(t *testing.T) {
 	t.Cleanup(testutil.MockExecutable(t, "goose-ci-backup-acp", 0))
 	cfg := config.DefaultConfig()
