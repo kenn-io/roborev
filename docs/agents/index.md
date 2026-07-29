@@ -255,8 +255,8 @@ args = ["acp"]
 disable_mode_negotiation = true
 ```
 
-The subtable key is the agent name, so these entries can be selected with
-`--agent codex-acp` and `--agent goose`.
+The subtable key supplies the suffix of the canonical agent identity, so these
+entries can be selected with `--agent acp.codex-acp` and `--agent acp.goose`.
 
 See the [Agent Client Protocol (ACP) guide](/advanced/acp/) for setup examples,
 the full configuration reference, mode negotiation, and troubleshooting.

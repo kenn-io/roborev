@@ -418,6 +418,19 @@ func TestSetConfigKeyRejectsInvalidNamedACPWithoutChangingFile(t *testing.T) {
 			require.NoError(t, err)
 			assert.Equal(t, before, after)
 		})
+
+		t.Run(scope.name+"/bare ACP reference", func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), scope.fileName)
+			require.NoError(t, setConfigKey(path, "acp.goose.command", "goose", scope.global))
+			before, err := os.ReadFile(path)
+			require.NoError(t, err)
+
+			err = setConfigKey(path, "fix_agent", "goose", scope.global)
+			require.ErrorContains(t, err, `must use "acp.goose"`)
+			after, err := os.ReadFile(path)
+			require.NoError(t, err)
+			assert.Equal(t, before, after)
+		})
 	}
 }
 

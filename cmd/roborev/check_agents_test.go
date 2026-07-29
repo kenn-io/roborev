@@ -27,10 +27,10 @@ func TestCheckAgentsDiscoversConfiguredACPAgent(t *testing.T) {
 	setupConfigEnv(t, "[acp.goose]\ncommand = 'missing-goose-acp'\n", "")
 
 	cmd := checkAgentsCmd()
-	cmd.SetArgs([]string{"--agent", "goose", "--timeout", "1"})
+	cmd.SetArgs([]string{"--agent", "acp.goose", "--timeout", "1"})
 	output := captureOutput(t, cmd.Execute)
 
-	assert.Regexp(t, `(?m)^  - goose\s+agent "goose" command "missing-goose-acp" unavailable:`, output)
+	assert.Regexp(t, `(?m)^  - acp\.goose\s+agent "acp\.goose" command "missing-goose-acp" unavailable:`, output)
 	assert.Contains(t, output, "1 skipped")
 }
 
@@ -41,9 +41,9 @@ func TestCheckAgentsDiscoversRepoACPAgentFromNestedDirectory(t *testing.T) {
 	t.Chdir(nested)
 
 	cmd := checkAgentsCmd()
-	cmd.SetArgs([]string{"--agent", "goose", "--timeout", "1"})
+	cmd.SetArgs([]string{"--agent", "acp.goose", "--timeout", "1"})
 	output := captureOutput(t, cmd.Execute)
 
-	assert.Regexp(t, `(?m)^  - goose\s+agent "goose" command "missing-nested-goose-acp" unavailable:`, output)
+	assert.Regexp(t, `(?m)^  - acp\.goose\s+agent "acp\.goose" command "missing-nested-goose-acp" unavailable:`, output)
 	assert.Contains(t, output, "1 skipped")
 }

@@ -34,8 +34,8 @@ func TestAgentFlagCompletionIncludesNamedACPAgents(t *testing.T) {
 	require.True(t, ok)
 	got, directive := completion(cmd, nil, "")
 
-	assert.Contains(t, got, cobra.Completion("goose"))
-	assert.Contains(t, got, cobra.Completion("foo"))
+	assert.Contains(t, got, cobra.Completion("acp.goose"))
+	assert.Contains(t, got, cobra.Completion("acp.foo"))
 	assert.Equal(t, cobra.ShellCompDirectiveNoFileComp, directive)
 }
 
@@ -50,7 +50,7 @@ func TestAgentFlagCompletionDiscoversRepoACPAgentFromNestedDirectory(t *testing.
 	require.True(t, ok)
 	got, directive := completion(cmd, nil, "")
 
-	assert.Contains(t, got, cobra.Completion("goose"))
+	assert.Contains(t, got, cobra.Completion("acp.goose"))
 	assert.Equal(t, cobra.ShellCompDirectiveNoFileComp, directive)
 }
 
@@ -65,7 +65,7 @@ func TestAgentFlagCompletionUsesCommandRepoFlag(t *testing.T) {
 	require.True(t, ok)
 	got, directive := completion(cmd, nil, "")
 
-	assert.Contains(t, got, cobra.Completion("foo"))
-	assert.NotContains(t, got, cobra.Completion("goose"))
+	assert.Contains(t, got, cobra.Completion("acp.foo"))
+	assert.NotContains(t, got, cobra.Completion("acp.goose"))
 	assert.Equal(t, cobra.ShellCompDirectiveNoFileComp, directive)
 }

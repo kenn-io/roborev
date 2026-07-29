@@ -2,7 +2,12 @@
 // depending on either config parsing or agent implementations.
 package agentname
 
-import "strings"
+import (
+	"fmt"
+	"strings"
+)
+
+const ACPPrefix = "acp."
 
 var canonicalByName = map[string]string{
 	"codex":       "codex",
@@ -35,4 +40,32 @@ func Canonical(name string) string {
 func BuiltIn(name string) (string, bool) {
 	canonical, ok := canonicalByName[strings.TrimSpace(name)]
 	return canonical, ok
+}
+
+// ACPConfigName returns the [acp.<name>] table key represented by a canonical
+// named ACP agent identity. Bare names are not agent identities.
+func ACPConfigName(name string) (string, bool) {
+	name = strings.TrimSpace(name)
+	configName, ok := strings.CutPrefix(name, ACPPrefix)
+	if !ok || configName == "" || strings.Contains(configName, ".") {
+		return "", false
+	}
+	return configName, true
+}
+
+// NamedACP returns the canonical agent identity for an [acp.<name>] table key.
+func NamedACP(configName string) string {
+	return ACPPrefix + strings.TrimSpace(configName)
+}
+
+// ValidateReference validates an agent-valued configuration field. Custom ACP
+// entries must always be referenced by their canonical acp.<name> identity.
+func ValidateReference(name string) error {
+	name = strings.TrimSpace(name)
+	if strings.HasPrefix(name, ACPPrefix) {
+		if _, ok := ACPConfigName(name); !ok {
+			return fmt.Errorf("invalid ACP agent identity %q; expected acp.<name>", name)
+		}
+	}
+	return nil
 }

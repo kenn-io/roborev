@@ -54,7 +54,7 @@ end-to-end communication:
 
 ```bash
 which codex-acp          # or your configured command
-roborev review HEAD --agent codex-acp --panel none
+roborev review HEAD --agent acp.codex-acp --panel none
 ```
 
 ## Custom ACP Agents
@@ -69,7 +69,7 @@ command = "/usr/local/bin/my-acp-agent"
 args = ["--verbose"]
 ```
 
-Once configured, the agent can be selected with `--agent my-agent`.
+Once configured, the agent can be selected with `--agent acp.my-agent`.
 
 ### Example: Goose with a ChatGPT Subscription
 
@@ -109,14 +109,14 @@ review flows.
 Run one single-agent review with Goose:
 
 ```bash
-roborev review HEAD --agent goose --panel none
+roborev review HEAD --agent acp.goose --panel none
 ```
 
 To use Goose for reviews by default while retaining the built-in Codex adapter
 as a backup:
 
 ```toml
-review_agent = "goose"
+review_agent = "acp.goose"
 review_backup_agent = "codex"
 
 [acp.goose]
@@ -164,7 +164,7 @@ command = "agy-acp"
 model = "gemini-3.5-flash"
 ```
 
-Then select it anywhere agents are routable: `--agent agy-sdk`, per-workflow
+Then select it anywhere agents are routable: `--agent acp.agy-sdk`, per-workflow
 agents, backup agents, or panel members. Bridge model IDs accept an optional
 thinking suffix (`gemini-3.5-flash:high`), which is how a reasoning level
 reaches the model — roborev's ACP client transmits only mode and model, not
@@ -235,7 +235,7 @@ Pick by how you authenticate to Gemini:
 Configure each agent in an `[acp.<name>]` subtable of `~/.roborev/config.toml`:
 
 ```toml
-[acp.my-agent]                     # Select with --agent my-agent
+[acp.my-agent]                     # Select with --agent acp.my-agent
 command = "/usr/local/bin/my-acp"  # ACP agent command (required)
 args = ["--verbose"]               # Additional arguments
 model = "my-model"                 # Default model
@@ -261,9 +261,10 @@ collide with a built-in agent name or alias. In repository configuration, an
 `[acp.<name>]` entry replaces the complete global entry with the same name;
 other global ACP entries remain available.
 
-Select a named entry with its configured name, such as `--agent goose`. Queued
-jobs namespace that identity as `acp.goose`, so stored reviews and failover
-metadata cannot confuse it with a built-in agent.
+The table key defines the agent's only valid identity: `acp.goose`. Use that
+identity everywhere an agent is referenced, such as `--agent acp.goose` or
+`review_agent = "acp.goose"`. Bare `goose` references are invalid, and queued
+jobs store the same canonical identity.
 
 Namespacing and frozen CI execution configuration apply to newly queued jobs;
 existing bare-name rows are not rewritten. Cancel and re-enqueue an active
@@ -348,8 +349,8 @@ names.
 
 Workflow models follow their paired workflow agent. If `review_agent = "codex"`
 and `review_model = "gpt-5.4"`, selecting a Gemini ACP agent with
-`--agent agy-sdk` does not pass `gpt-5.4` to that agent; the ACP agent keeps its
-`[acp.agy-sdk].model` instead. This also applies when the workflow agent is
+`--agent acp.agy-sdk` does not pass `gpt-5.4` to that agent; the ACP agent keeps
+its `[acp.agy-sdk].model` instead. This also applies when the workflow agent is
 inherited from the default agent.
 
 A workflow model does apply when its workflow agent resolves to the selected ACP

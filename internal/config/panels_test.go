@@ -356,14 +356,14 @@ func TestResolvePanelNamedACPSynthesisUsesPairedModel(t *testing.T) {
 				"default": {Agent: "test", ReviewType: "default"},
 			},
 			Panels: map[string]PanelSpec{
-				"p": {Members: []string{"default"}, SynthesisAgent: "goose"},
+				"p": {Members: []string{"default"}, SynthesisAgent: "acp.goose"},
 			},
 		},
 	}
 
 	_, synth, err := ResolvePanel("p", "", global)
 	require.NoError(t, err)
-	assert.Equal(t, "goose", synth.Agent)
+	assert.Equal(t, "acp.goose", synth.Agent)
 	assert.Equal(t, "goose-model", synth.Model)
 }
 
@@ -376,11 +376,11 @@ func TestResolvePanelInheritedNamedACPSynthesisUsesPairedModel(t *testing.T) {
 			"goose": {Command: "goose", Model: "goose-model"},
 		},
 	}
-	repo := &RepoConfig{FixAgent: "goose"}
+	repo := &RepoConfig{FixAgent: "acp.goose"}
 
 	synth, err := resolveSynthesisFromConfig(PanelSpec{}, repo, global)
 	require.NoError(t, err)
-	assert.Equal(t, "goose", synth.Agent)
+	assert.Equal(t, "acp.goose", synth.Agent)
 	assert.Equal(t, "goose-model", synth.Model)
 }
 

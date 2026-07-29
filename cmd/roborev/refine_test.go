@@ -252,7 +252,7 @@ func TestSelectRefineAgentNamedACPConfigUsesACPResolution(t *testing.T) {
 		},
 	}}
 
-	selected, err := selectRefineAgent("", cfg, "codex-acp", agent.ReasoningFast, "")
+	selected, err := selectRefineAgent("", cfg, "acp.codex-acp", agent.ReasoningFast, "")
 	require.NoError(t, err, "selectRefineAgent failed: %v")
 
 	acpAgent, ok := selected.(*agent.ACPAgent)

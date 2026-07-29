@@ -20,7 +20,8 @@ import (
 func TestModelForSelectedAgentACPWorkflowModelPrecedence(t *testing.T) {
 	t.Parallel()
 
-	const acpName = "agy-sdk"
+	const acpConfigName = "agy-sdk"
+	const acpName = "acp.agy-sdk"
 	const acpModel = "gemini-3.5-flash"
 
 	tests := []struct {
@@ -39,7 +40,7 @@ func TestModelForSelectedAgentACPWorkflowModelPrecedence(t *testing.T) {
 			cfg: &config.Config{
 				DefaultAgent: "codex",
 				ReviewModel:  "gpt-5.4",
-				ACP:          config.ACPAgentConfigs{acpName: {Model: acpModel}},
+				ACP:          config.ACPAgentConfigs{acpConfigName: {Model: acpModel}},
 			},
 			workflow:      "review",
 			level:         "standard",
@@ -53,7 +54,7 @@ func TestModelForSelectedAgentACPWorkflowModelPrecedence(t *testing.T) {
 				DefaultAgent: "codex",
 				ReviewAgent:  acpName,
 				ReviewModel:  "gpt-5.4",
-				ACP:          config.ACPAgentConfigs{acpName: {Model: acpModel}},
+				ACP:          config.ACPAgentConfigs{acpConfigName: {Model: acpModel}},
 			},
 			workflow:      "review",
 			level:         "standard",
@@ -66,7 +67,7 @@ func TestModelForSelectedAgentACPWorkflowModelPrecedence(t *testing.T) {
 			cfg: &config.Config{
 				DefaultAgent: "codex",
 				ReviewModel:  "gpt-5.4",
-				ACP:          config.ACPAgentConfigs{acpName: {Model: acpModel}},
+				ACP:          config.ACPAgentConfigs{acpConfigName: {Model: acpModel}},
 			},
 			workflow:      "review",
 			level:         "standard",
@@ -81,7 +82,7 @@ func TestModelForSelectedAgentACPWorkflowModelPrecedence(t *testing.T) {
 			cfg: &config.Config{
 				DefaultAgent: "codex",
 				ReviewModel:  "gpt-5.4",
-				ACP:          config.ACPAgentConfigs{acpName: {Model: acpModel}},
+				ACP:          config.ACPAgentConfigs{acpConfigName: {Model: acpModel}},
 			},
 			workflow:      "review",
 			level:         "standard",
@@ -93,7 +94,7 @@ func TestModelForSelectedAgentACPWorkflowModelPrecedence(t *testing.T) {
 			name: "acp selected, no workflow model -> acp model",
 			cfg: &config.Config{
 				DefaultAgent: "codex",
-				ACP:          config.ACPAgentConfigs{acpName: {Model: acpModel}},
+				ACP:          config.ACPAgentConfigs{acpConfigName: {Model: acpModel}},
 			},
 			workflow:      "review",
 			level:         "standard",
@@ -106,7 +107,7 @@ func TestModelForSelectedAgentACPWorkflowModelPrecedence(t *testing.T) {
 			cfg: &config.Config{
 				DefaultAgent:        "codex",
 				ReviewModelThorough: "gpt-5.4-thorough",
-				ACP:                 config.ACPAgentConfigs{acpName: {Model: acpModel}},
+				ACP:                 config.ACPAgentConfigs{acpConfigName: {Model: acpModel}},
 			},
 			workflow:      "review",
 			level:         "thorough",
@@ -123,7 +124,7 @@ func TestModelForSelectedAgentACPWorkflowModelPrecedence(t *testing.T) {
 				DefaultAgent: acpName,
 				ReviewAgent:  "codex",
 				ReviewModel:  "gpt-5.4",
-				ACP:          config.ACPAgentConfigs{acpName: {Model: acpModel}},
+				ACP:          config.ACPAgentConfigs{acpConfigName: {Model: acpModel}},
 			},
 			workflow:      "review",
 			level:         "standard",
@@ -140,7 +141,7 @@ func TestModelForSelectedAgentACPWorkflowModelPrecedence(t *testing.T) {
 				DefaultModel: "gemini-custom",
 				ReviewAgent:  "codex",
 				ReviewModel:  "gpt-5.4",
-				ACP:          config.ACPAgentConfigs{acpName: {Model: acpModel}},
+				ACP:          config.ACPAgentConfigs{acpConfigName: {Model: acpModel}},
 			},
 			workflow:      "review",
 			level:         "standard",
@@ -155,7 +156,7 @@ func TestModelForSelectedAgentACPWorkflowModelPrecedence(t *testing.T) {
 			cfg: &config.Config{
 				DefaultAgent: acpName,
 				ReviewModel:  "gemini-paired",
-				ACP:          config.ACPAgentConfigs{acpName: {Model: acpModel}},
+				ACP:          config.ACPAgentConfigs{acpConfigName: {Model: acpModel}},
 			},
 			workflow:      "review",
 			level:         "standard",
@@ -169,7 +170,7 @@ func TestModelForSelectedAgentACPWorkflowModelPrecedence(t *testing.T) {
 				DefaultAgent:        "codex",
 				ReviewAgentThorough: acpName,
 				ReviewModelThorough: "gpt-5.4-thorough",
-				ACP:                 config.ACPAgentConfigs{acpName: {Model: acpModel}},
+				ACP:                 config.ACPAgentConfigs{acpConfigName: {Model: acpModel}},
 			},
 			workflow:      "review",
 			level:         "thorough",
@@ -353,7 +354,7 @@ func TestResolveWorkflowModelForAgentSkipsGenericDefaultModel(t *testing.T) {
 	}
 }
 
-func TestResolveWorkflowModelForAgentACPDefaultAlias(t *testing.T) {
+func TestResolveWorkflowModelForAgentACPDefaultIdentity(t *testing.T) {
 	t.Parallel()
 
 	tests := []struct {
@@ -366,7 +367,7 @@ func TestResolveWorkflowModelForAgentACPDefaultAlias(t *testing.T) {
 			name:     "fix keeps default model for acp default alias",
 			workflow: "fix",
 			cfg: &config.Config{
-				DefaultAgent: "custom-acp",
+				DefaultAgent: "acp.custom-acp",
 				DefaultModel: "gpt-5.4",
 				ACP:          config.ACPAgentConfigs{"custom-acp": {}},
 			},
@@ -376,7 +377,7 @@ func TestResolveWorkflowModelForAgentACPDefaultAlias(t *testing.T) {
 			name:     "review keeps default model for acp default alias",
 			workflow: "review",
 			cfg: &config.Config{
-				DefaultAgent: "custom-acp",
+				DefaultAgent: "acp.custom-acp",
 				DefaultModel: "gpt-5.4",
 				ACP:          config.ACPAgentConfigs{"custom-acp": {}},
 			},
@@ -386,7 +387,7 @@ func TestResolveWorkflowModelForAgentACPDefaultAlias(t *testing.T) {
 			name:     "refine keeps default model for acp default alias",
 			workflow: "refine",
 			cfg: &config.Config{
-				DefaultAgent: "custom-acp",
+				DefaultAgent: "acp.custom-acp",
 				DefaultModel: "gpt-5.4",
 				ACP:          config.ACPAgentConfigs{"custom-acp": {}},
 			},
@@ -396,7 +397,7 @@ func TestResolveWorkflowModelForAgentACPDefaultAlias(t *testing.T) {
 			name:     "security keeps default model for acp default alias",
 			workflow: "security",
 			cfg: &config.Config{
-				DefaultAgent: "custom-acp",
+				DefaultAgent: "acp.custom-acp",
 				DefaultModel: "gpt-5.4",
 				ACP:          config.ACPAgentConfigs{"custom-acp": {}},
 			},
@@ -406,7 +407,7 @@ func TestResolveWorkflowModelForAgentACPDefaultAlias(t *testing.T) {
 			name:     "design keeps default model for acp default alias",
 			workflow: "design",
 			cfg: &config.Config{
-				DefaultAgent: "custom-acp",
+				DefaultAgent: "acp.custom-acp",
 				DefaultModel: "gpt-5.4",
 				ACP:          config.ACPAgentConfigs{"custom-acp": {}},
 			},
@@ -418,7 +419,7 @@ func TestResolveWorkflowModelForAgentACPDefaultAlias(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			got := ResolveWorkflowModelForAgent(
-				"custom-acp",
+				"acp.custom-acp",
 				"",
 				repoPath,
 				tt.cfg,
@@ -435,7 +436,7 @@ func TestResolveWorkflowModelForAgentRepoDefaultACPAgent(t *testing.T) {
 
 	repoPath := t.TempDir()
 	if err := os.WriteFile(filepath.Join(repoPath, ".roborev.toml"), []byte(`
-agent = "custom-acp"
+agent = "acp.custom-acp"
 `), 0o644); err != nil {
 		require.NoError(t, err)
 	}
@@ -447,7 +448,7 @@ agent = "custom-acp"
 	}
 
 	got := ResolveWorkflowModelForAgent(
-		"custom-acp",
+		"acp.custom-acp",
 		"",
 		repoPath,
 		cfg,
@@ -488,11 +489,10 @@ func TestWorkflowConfigKeepsNamedACPModelsIsolated(t *testing.T) {
 		Reasoning:    "standard",
 	}
 
-	assert.Equal(t, "goose-model", resolution.ModelForSelectedAgent("goose", ""))
 	assert.Equal(t, "goose-model", resolution.ModelForSelectedAgent("acp.goose", ""))
-	assert.Equal(t, "foo-model", resolution.ModelForSelectedAgent("foo", ""))
-	assert.True(t, resolution.AgentMatches("acp.goose", "goose"))
-	assert.False(t, resolution.AgentMatches("goose", "foo"))
+	assert.Equal(t, "foo-model", resolution.ModelForSelectedAgent("acp.foo", ""))
+	assert.False(t, resolution.AgentMatches("acp.goose", "goose"))
+	assert.False(t, resolution.AgentMatches("acp.goose", "acp.foo"))
 }
 
 func TestResolveWorkflowConfigModelForSelectedAgent_BackupWithoutModelKeepsDefault(t *testing.T) {
@@ -529,7 +529,8 @@ func TestResolveWorkflowConfigModelForSelectedAgent_BackupWithoutModelKeepsDefau
 func TestModelForSelectedAgentACPBackupPairing(t *testing.T) {
 	t.Parallel()
 
-	const acpName = "agy-acp"
+	const acpConfigName = "agy-acp"
+	const acpName = "acp.agy-acp"
 	const acpModel = "gemini-3.5-flash"
 
 	tests := []struct {
@@ -550,7 +551,7 @@ func TestModelForSelectedAgentACPBackupPairing(t *testing.T) {
 				ReviewAgent:       "gemini",
 				ReviewBackupAgent: acpName,
 				ReviewBackupModel: "gemini-3.5-flash:high",
-				ACP:               config.ACPAgentConfigs{acpName: {Model: acpModel}},
+				ACP:               config.ACPAgentConfigs{acpConfigName: {Model: acpModel}},
 			},
 			workflow:      "review",
 			selectedAgent: acpName,
@@ -566,7 +567,7 @@ func TestModelForSelectedAgentACPBackupPairing(t *testing.T) {
 				DefaultAgent:      "codex",
 				ReviewAgent:       "gemini",
 				ReviewBackupAgent: acpName,
-				ACP:               config.ACPAgentConfigs{acpName: {Model: acpModel}},
+				ACP:               config.ACPAgentConfigs{acpConfigName: {Model: acpModel}},
 			},
 			workflow:      "review",
 			selectedAgent: acpName,
@@ -588,7 +589,7 @@ func TestModelForSelectedAgentACPBackupPairing(t *testing.T) {
 				ReviewAgent:        "gemini",
 				ReviewBackupAgent:  acpName,
 				DefaultBackupModel: "gpt-5.4-mini",
-				ACP:                config.ACPAgentConfigs{acpName: {Model: acpModel}},
+				ACP:                config.ACPAgentConfigs{acpConfigName: {Model: acpModel}},
 			},
 			workflow:      "review",
 			selectedAgent: acpName,
@@ -606,7 +607,7 @@ func TestModelForSelectedAgentACPBackupPairing(t *testing.T) {
 				ReviewBackupAgent:  acpName,
 				DefaultBackupAgent: "claude",
 				DefaultBackupModel: "claude-sonnet",
-				ACP:                config.ACPAgentConfigs{acpName: {Model: acpModel}},
+				ACP:                config.ACPAgentConfigs{acpConfigName: {Model: acpModel}},
 			},
 			workflow:      "review",
 			selectedAgent: acpName,
@@ -623,7 +624,7 @@ func TestModelForSelectedAgentACPBackupPairing(t *testing.T) {
 				ReviewAgent:        "gemini",
 				ReviewBackupAgent:  acpName,
 				DefaultBackupModel: "gpt-5.4-mini",
-				ACP:                config.ACPAgentConfigs{acpName: {}},
+				ACP:                config.ACPAgentConfigs{acpConfigName: {}},
 			},
 			workflow:      "review",
 			selectedAgent: acpName,
@@ -639,7 +640,7 @@ func TestModelForSelectedAgentACPBackupPairing(t *testing.T) {
 				ReviewAgent:        "gemini",
 				DefaultBackupAgent: acpName,
 				DefaultBackupModel: "gemini-3.0-pro",
-				ACP:                config.ACPAgentConfigs{acpName: {Model: acpModel}},
+				ACP:                config.ACPAgentConfigs{acpConfigName: {Model: acpModel}},
 			},
 			workflow:      "review",
 			selectedAgent: acpName,
@@ -658,7 +659,7 @@ func TestModelForSelectedAgentACPBackupPairing(t *testing.T) {
 				ReviewAgent:        "gemini",
 				DefaultBackupAgent: acpName,
 				ReviewBackupModel:  "gemini-3.5-flash:high",
-				ACP:                config.ACPAgentConfigs{acpName: {Model: acpModel}},
+				ACP:                config.ACPAgentConfigs{acpConfigName: {Model: acpModel}},
 			},
 			workflow:      "review",
 			selectedAgent: acpName,
@@ -678,7 +679,7 @@ func TestModelForSelectedAgentACPBackupPairing(t *testing.T) {
 				ReviewAgent:        "gemini",
 				ReviewBackupAgent:  "claude",
 				DefaultBackupModel: "claude-sonnet",
-				ACP:                config.ACPAgentConfigs{acpName: {Model: acpModel}},
+				ACP:                config.ACPAgentConfigs{acpConfigName: {Model: acpModel}},
 			},
 			workflow:      "review",
 			selectedAgent: "claude-code",
@@ -699,7 +700,7 @@ func TestModelForSelectedAgentACPBackupPairing(t *testing.T) {
 				DefaultAgent:      "codex",
 				ReviewAgent:       "gemini",
 				ReviewBackupModel: "gpt-5.4",
-				ACP:               config.ACPAgentConfigs{acpName: {Model: acpModel}},
+				ACP:               config.ACPAgentConfigs{acpConfigName: {Model: acpModel}},
 			},
 			workflow:      "review",
 			selectedAgent: acpName,
@@ -719,7 +720,7 @@ func TestModelForSelectedAgentACPBackupPairing(t *testing.T) {
 				ReviewAgent:       "gemini",
 				ReviewBackupAgent: acpName,
 				ReviewBackupModel: "gemini-3.0-pro",
-				ACP:               config.ACPAgentConfigs{acpName: {Model: acpModel}},
+				ACP:               config.ACPAgentConfigs{acpConfigName: {Model: acpModel}},
 			},
 			workflow:      "review",
 			selectedAgent: acpName,
@@ -738,7 +739,7 @@ func TestModelForSelectedAgentACPBackupPairing(t *testing.T) {
 				DefaultAgent:      "codex",
 				ReviewAgent:       "gemini",
 				ReviewBackupAgent: acpName,
-				ACP:               config.ACPAgentConfigs{acpName: {Model: acpModel}},
+				ACP:               config.ACPAgentConfigs{acpConfigName: {Model: acpModel}},
 			},
 			workflow:      "review",
 			selectedAgent: acpName,
@@ -756,7 +757,7 @@ func TestModelForSelectedAgentACPBackupPairing(t *testing.T) {
 			cfg: &config.Config{
 				DefaultAgent: "codex",
 				ReviewAgent:  "gemini",
-				ACP:          config.ACPAgentConfigs{acpName: {Model: acpModel}},
+				ACP:          config.ACPAgentConfigs{acpConfigName: {Model: acpModel}},
 			},
 			workflow:      "review",
 			selectedAgent: acpName,
@@ -775,7 +776,7 @@ func TestModelForSelectedAgentACPBackupPairing(t *testing.T) {
 				DefaultAgent:      "codex",
 				ReviewAgent:       "gemini",
 				ReviewBackupModel: "gpt-5.4",
-				ACP:               config.ACPAgentConfigs{acpName: {Model: acpModel}},
+				ACP:               config.ACPAgentConfigs{acpConfigName: {Model: acpModel}},
 			},
 			workflow:      "review",
 			selectedAgent: "claude-code",

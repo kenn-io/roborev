@@ -1032,6 +1032,8 @@ func TestLoadConfigRejectsLegacyACPShapeWithMigrationHint(t *testing.T) {
 func TestLoadGlobalNamedACPAgent(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	require.NoError(t, os.WriteFile(path, []byte(`
+fix_agent = "acp.goose"
+
 [acp.goose]
 command = "goose"
 args = ["acp"]
@@ -1040,6 +1042,7 @@ model = "configured-model"
 
 	cfg, err := LoadGlobalFrom(path)
 	require.NoError(t, err)
+	assert.Equal(t, "acp.goose", cfg.FixAgent)
 	goose, ok := ResolveACPAgentConfigFromConfig("goose", nil, cfg)
 	require.True(t, ok)
 	assert.Equal(t, "goose", goose.Command)
@@ -1058,6 +1061,7 @@ func TestLoadConfigRejectsInvalidNamedACPAgents(t *testing.T) {
 		{name: "built-in", toml: "[acp.codex]\ncommand = \"goose\"\n", wantError: "conflicts with built-in agent"},
 		{name: "alias", toml: "[acp.claude]\ncommand = \"goose\"\n", wantError: "conflicts with built-in agent"},
 		{name: "dotted name", toml: "[acp.\"foo.bar\"]\ncommand = \"foo-acp\"\n", wantError: "must not contain dots"},
+		{name: "bare ACP reference", toml: "fix_agent = \"goose\"\n[acp.goose]\ncommand = \"goose\"\n", wantError: `must use "acp.goose"`},
 	}
 
 	for _, scope := range []string{"global", "repository"} {

@@ -3138,7 +3138,7 @@ func TestResolveMatrixMemberAgentUsesPassedRepoConfigForACPAvailability(t *testi
 		h.Repo,
 		repoCfg,
 		h.Cfg,
-		config.AgentReviewType{Agent: "branch-acp", ReviewType: "default"},
+		config.AgentReviewType{Agent: "acp.branch-acp", ReviewType: "default"},
 		"standard",
 	)
 	require.NoError(t, err)
@@ -3494,7 +3494,7 @@ func TestProcessPRAutoDesignUsesConfiguredBackupModel(t *testing.T) {
 func TestProcessPRAutoDesignPersistsNamedACPBackupSnapshot(t *testing.T) {
 	p, db, _, repo, cfg := newCIPanelGitHarness(t)
 	cfg.DesignAgent = "test"
-	cfg.DesignBackupAgent = "goose"
+	cfg.DesignBackupAgent = "acp.goose"
 	cfg.DesignBackupModel = "goose-design-backup-model"
 	cfg.ACP = config.ACPAgentConfigs{
 		"goose": {Command: "goose-design-backup-acp"},
@@ -3745,7 +3745,7 @@ func TestProcessPRNamedPanelACPMemberReplacesInheritedWorkflowModel(t *testing.T
 	}
 	cfg.Review = config.ReviewConfig{
 		Subagents: map[string]config.SubagentSpec{
-			"rev": {Agent: "goose", ReviewType: "review"},
+			"rev": {Agent: "acp.goose", ReviewType: "review"},
 		},
 		Panels: map[string]config.PanelSpec{
 			"ci": {Members: []string{"rev"}, SynthesisAgent: "test"},
@@ -4366,7 +4366,7 @@ func TestBuildPanelOptsSnapshotsEffectiveACPExecutionConfig(t *testing.T) {
 			BackupAgent: "acp.owl", BackupModel: "owl-backup-model",
 		}},
 		synth: config.SynthesisSpec{
-			Agent: "owl", BackupAgent: "goose",
+			Agent: "acp.owl", BackupAgent: "acp.goose",
 		},
 	})
 	require.NoError(t, err)
@@ -4397,7 +4397,7 @@ func TestBuildPanelOptsSnapshotsEffectiveACPExecutionConfig(t *testing.T) {
 func TestResolveCIPanelMemberExecutionPersistsNamedACPBackup(t *testing.T) {
 	t.Cleanup(testutil.MockExecutable(t, "goose-ci-backup-acp", 0))
 	cfg := config.DefaultConfig()
-	cfg.ReviewBackupAgent = "goose"
+	cfg.ReviewBackupAgent = "acp.goose"
 	cfg.ReviewBackupModel = "goose-backup-model"
 	cfg.ACP = config.ACPAgentConfigs{
 		"goose": {Command: "goose-ci-backup-acp"},

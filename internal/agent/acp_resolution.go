@@ -6,28 +6,25 @@ import (
 	"sort"
 	"strings"
 
+	"go.kenn.io/roborev/internal/agentname"
 	"go.kenn.io/roborev/internal/config"
 )
 
-const namedACPStoragePrefix = "acp."
-
 // ACPConfigName returns the configuration key represented by an agent name.
-// Persisted named ACP identities use acp.<name>; user-facing selection keeps
-// accepting the bare configured name.
+// Named ACP agents have exactly one identity: acp.<name>.
 func ACPConfigName(name string) string {
-	name = strings.TrimSpace(name)
-	if configName, ok := strings.CutPrefix(name, namedACPStoragePrefix); ok {
+	if configName, ok := agentname.ACPConfigName(name); ok {
 		return configName
 	}
-	return name
+	return ""
 }
 
-func storedACPAgentName(name string) string {
-	name = ACPConfigName(name)
-	if name == "" {
+func namedACPAgentName(configName string) string {
+	configName = strings.TrimSpace(configName)
+	if configName == "" {
 		return ""
 	}
-	return namedACPStoragePrefix + name
+	return agentname.NamedACP(configName)
 }
 
 // StorageNameFromConfig returns the durable database identity for an agent.
@@ -38,10 +35,12 @@ func StorageNameFromConfig(
 	repoCfg *config.RepoConfig,
 	cfg *config.Config,
 ) string {
-	if isConfiguredACPAgentNameFromConfig(name, cfg, repoCfg) {
-		return storedACPAgentName(name)
+	name = strings.TrimSpace(name)
+	if configName := ACPConfigName(name); configName != "" &&
+		isConfiguredACPAgentNameFromConfig(name, cfg, repoCfg) {
+		return namedACPAgentName(configName)
 	}
-	return strings.TrimSpace(name)
+	return name
 }
 
 func defaultACPAgentConfig() *config.ACPAgentConfig {
@@ -95,7 +94,7 @@ func configuredACPAgentFromConfig(
 }
 
 func configuredACPAgentWithConfig(name string, acpCfg *config.ACPAgentConfig) (*ACPAgent, error) {
-	name = ACPConfigName(name)
+	name = strings.TrimSpace(name)
 	candidate := config.ACPAgentConfig{}
 	if acpCfg != nil {
 		candidate = *acpCfg
@@ -103,7 +102,7 @@ func configuredACPAgentWithConfig(name string, acpCfg *config.ACPAgentConfig) (*
 	if err := config.ValidateACPAgentConfig(name, candidate); err != nil {
 		return nil, err
 	}
-	return NewACPAgentFromConfig(storedACPAgentName(name), &candidate), nil
+	return NewACPAgentFromConfig(namedACPAgentName(name), &candidate), nil
 }
 
 // resolveAvailableBackupWithConfig returns the first backup agent whose
@@ -247,7 +246,7 @@ func GetPreferredOrBackupWithConfigFromConfig(
 func AvailableNamesFromConfig(repoCfg *config.RepoConfig, cfg *config.Config) []string {
 	known := Available()
 	for name := range config.ResolveACPAgentConfigsFromConfig(repoCfg, cfg) {
-		known = append(known, name)
+		known = append(known, namedACPAgentName(name))
 	}
 	sort.Strings(known)
 	return known
@@ -323,7 +322,10 @@ func GetAvailableExactWithConfigFromConfig(repoCfg *config.RepoConfig, name stri
 	canonical := resolveAlias(rawName)
 	a, err := Get(canonical)
 	if err != nil {
-		return nil, err
+		return nil, &UnknownAgentError{
+			Name:  canonical,
+			Known: AvailableNamesFromConfig(repoCfg, cfg),
+		}
 	}
 
 	if ca, ok := a.(CommandAgent); ok {

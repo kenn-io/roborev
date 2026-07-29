@@ -2090,7 +2090,7 @@ func TestResolveBackupModelSkipsMispairedACPInheritedDefault(t *testing.T) {
 	// from default_backup_model -> [acp.<name>].model wins.
 	cfg := config.DefaultConfig()
 	cfg.ACP = config.ACPAgentConfigs{"agy-acp": {Model: "gemini-3.5-flash"}}
-	cfg.ReviewBackupAgent = "agy-acp"
+	cfg.ReviewBackupAgent = "acp.agy-acp"
 	cfg.DefaultBackupModel = "gpt-5.4-mini"
 	pool := NewWorkerPool(nil, NewStaticConfig(cfg), 1, NewBroadcaster(), nil, nil)
 	assert.Equal("gemini-3.5-flash", pool.resolveBackupModel(job))
@@ -2099,7 +2099,7 @@ func TestResolveBackupModelSkipsMispairedACPInheritedDefault(t *testing.T) {
 	// default_backup_model configured alongside it is honored.
 	cfgPaired := config.DefaultConfig()
 	cfgPaired.ACP = config.ACPAgentConfigs{"agy-acp": {Model: "gemini-3.5-flash"}}
-	cfgPaired.DefaultBackupAgent = "agy-acp"
+	cfgPaired.DefaultBackupAgent = "acp.agy-acp"
 	cfgPaired.DefaultBackupModel = "gemini-3.0-pro"
 	poolPaired := NewWorkerPool(nil, NewStaticConfig(cfgPaired), 1, NewBroadcaster(), nil, nil)
 	assert.Equal("gemini-3.0-pro", poolPaired.resolveBackupModel(job))
@@ -2119,7 +2119,7 @@ func TestResolveBackupModelSkipsMispairedACPInheritedDefault(t *testing.T) {
 	repoOverridePath := t.TempDir()
 	require.NoError(t, os.WriteFile(
 		filepath.Join(repoOverridePath, ".roborev.toml"),
-		[]byte("review_backup_agent = \"agy-acp\"\n"),
+		[]byte("review_backup_agent = \"acp.agy-acp\"\n"),
 		0o644,
 	))
 	cfgCross := config.DefaultConfig()
@@ -2201,7 +2201,7 @@ func TestResolveBackupAgentUsesConfiguredACPName(t *testing.T) {
 	t.Setenv("PATH", fakeBin)
 
 	cfg := config.DefaultConfig()
-	cfg.ReviewBackupAgent = "my-acp"
+	cfg.ReviewBackupAgent = "acp.my-acp"
 	cfg.ACP = config.ACPAgentConfigs{"my-acp": {Command: acpPath}}
 	pool := NewWorkerPool(nil, NewStaticConfig(cfg), 1, NewBroadcaster(), nil, nil)
 	job := &storage.ReviewJob{Agent: "codex", RepoPath: t.TempDir()}

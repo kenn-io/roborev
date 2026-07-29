@@ -543,7 +543,7 @@ model = "goose-model"
 default_panel = "solo"
 
 [review.subagents.only]
-agent = "goose"
+agent = "acp.goose"
 review_type = "default"
 
 [review.panels.solo]
@@ -588,8 +588,8 @@ review_type = "default"
 
 [review.panels.named-synthesis]
 members = ["only"]
-synthesis_agent = "goose"
-synthesis_backup_agent = "owl"
+synthesis_agent = "acp.goose"
+synthesis_backup_agent = "acp.owl"
 `)
 	repo.CommitFile("a.txt", "a", "add a")
 
@@ -602,9 +602,32 @@ synthesis_backup_agent = "owl"
 	assert.Equal(t, "acp.owl", synth.BackupAgent)
 
 	single := enqueuePanelViaHTTP(t, server, EnqueueRequest{
-		RepoPath: repo.Path(), GitRef: "HEAD", Agent: "goose", Panel: config.PanelNone,
+		RepoPath: repo.Path(), GitRef: "HEAD", Agent: "acp.goose", Panel: config.PanelNone,
 	})
 	assert.Equal(t, "acp.goose", single.Agent)
+}
+
+func TestEnqueueRejectsBareNamedACPIdentity(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	t.Cleanup(testutil.MockExecutable(t, "goose-canonical-acp", 0))
+
+	repo := testutil.NewGitRepo(t)
+	repo.WriteFile(".roborev.toml", `
+[acp.goose]
+command = "goose-canonical-acp"
+`)
+	repo.CommitFile("a.txt", "a", "add a")
+
+	req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", EnqueueRequest{
+		RepoPath: repo.Path(), GitRef: "HEAD", Agent: "goose", Panel: config.PanelNone,
+	})
+	w := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(w, req)
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+
+	jobs, err := db.ListJobs("", "", 0, 0)
+	require.NoError(t, err)
+	assert.Empty(t, jobs)
 }
 
 func TestEnqueuePanelInheritedNamedACPSynthesisStoresNamespacedIdentity(t *testing.T) {
@@ -615,7 +638,7 @@ func TestEnqueuePanelInheritedNamedACPSynthesisStoresNamespacedIdentity(t *testi
 	repo.WriteFile(".roborev.toml", `
 agent = "codex"
 model = "codex-model"
-fix_agent = "goose"
+fix_agent = "acp.goose"
 
 [acp.goose]
 command = "goose-inherited-synthesis"
@@ -653,7 +676,7 @@ command = "missing-goose-panel-acp"
 default_panel = "unavailable"
 
 [review.subagents.only]
-agent = "goose"
+agent = "acp.goose"
 review_type = "default"
 
 [review.panels.unavailable]
@@ -686,7 +709,7 @@ model = "goose-model"
 default_panel = "solo"
 
 [review.subagents.only]
-agent = "goose"
+agent = "acp.goose"
 model = "member-model"
 review_type = "default"
 

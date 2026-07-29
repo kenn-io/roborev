@@ -152,7 +152,7 @@ func TestNewACPAgentFromConfigDisableModeNegotiation(t *testing.T) {
 	require.False(t, nonAgentic.mutatingOperationsAllowed(), "expected mutating operations denied in non-agentic mode when negotiation is disabled")
 }
 
-func TestGetAvailableWithConfigResolvesACPAlias(t *testing.T) {
+func TestGetAvailableWithConfigResolvesCanonicalACPIdentity(t *testing.T) {
 	t.Parallel()
 
 	cfg := &config.Config{ACP: config.ACPAgentConfigs{
@@ -161,7 +161,7 @@ func TestGetAvailableWithConfigResolvesACPAlias(t *testing.T) {
 		},
 	}}
 
-	resolved, err := GetAvailableWithConfig("", "custom-acp", cfg)
+	resolved, err := GetAvailableWithConfig("", "acp.custom-acp", cfg)
 	require.NoError(t, err, "GetAvailableWithConfig failed: %v")
 
 	acpAgent, ok := resolved.(*ACPAgent)
@@ -195,7 +195,7 @@ func TestGetAvailableWithConfigEmptyRepoPathDoesNotReadCWD(t *testing.T) {
 		},
 	}}
 
-	resolved, err := GetAvailableWithConfig("", "global-acp", cfg)
+	resolved, err := GetAvailableWithConfig("", "acp.global-acp", cfg)
 	require.NoError(t, err)
 
 	acpAgent, ok := resolved.(*ACPAgent)
@@ -222,7 +222,8 @@ func TestGetAvailableWithConfigResolvesConfiguredACPNameAlias(t *testing.T) {
 		},
 	}}
 
-	_, err := GetAvailableWithConfig("", "claude", cfg)
+	entry := cfg.ACP["claude"]
+	_, err := configuredACPAgentWithConfig("claude", &entry)
 	require.ErrorContains(t, err, "conflicts with built-in agent")
 }
 
@@ -244,7 +245,7 @@ func TestGetAvailableWithConfigFallsBackToCanonicalACPWhenConfiguredCommandMissi
 		},
 	}}
 
-	resolved, err := GetAvailableWithConfig("", "custom-acp", cfg)
+	resolved, err := GetAvailableWithConfig("", "acp.custom-acp", cfg)
 	require.NoError(t, err, "GetAvailableWithConfig failed: %v")
 
 	commandAgent, ok := resolved.(CommandAgent)
@@ -276,7 +277,7 @@ func TestGetAvailableWithConfigResolvedACPBranchFallsBackWhenConfiguredCommandMi
 		},
 	}}
 
-	resolved, err := GetAvailableWithConfig("", "custom-acp", cfg)
+	resolved, err := GetAvailableWithConfig("", "acp.custom-acp", cfg)
 	require.NoError(t, err, "GetAvailableWithConfig failed: %v")
 
 	commandAgent, ok := resolved.(CommandAgent)
@@ -1227,7 +1228,7 @@ func TestGetAvailableWithConfigACPFallbackBackupUsesConfigCmd(t *testing.T) {
 	}
 
 	resolved, err := GetAvailableWithConfig(
-		"", "my-acp", cfg, "claude-code",
+		"", "acp.my-acp", cfg, "claude-code",
 	)
 	require.NoError(t, err,
 		"backup should resolve via config cmd when ACP is unavailable")

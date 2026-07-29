@@ -61,7 +61,7 @@ func TestResolveDesignAgentGenericDefaultAgentCanAutoDetect(t *testing.T) {
 
 func TestResolveDesignAgentUnavailableNamedACPStoresNamespacedIdentity(t *testing.T) {
 	cfg := config.DefaultConfig()
-	cfg.DesignAgent = "goose"
+	cfg.DesignAgent = "acp.goose"
 	cfg.ACP = config.ACPAgentConfigs{
 		"goose": {Command: "missing-goose-design-acp"},
 	}

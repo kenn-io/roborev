@@ -16,8 +16,9 @@ func TestIsConfiguredACPAgentName(t *testing.T) {
 	cfg := &config.Config{ACP: config.ACPAgentConfigs{
 		"custom-acp": {Command: "custom-acp"},
 	}}
-	assert.True(t, isConfiguredACPAgentName("custom-acp", cfg, "/tmp/repo"))
-	assert.True(t, isConfiguredACPAgentName("  custom-acp  ", cfg, "/tmp/repo"))
+	assert.True(t, isConfiguredACPAgentName("acp.custom-acp", cfg, "/tmp/repo"))
+	assert.True(t, isConfiguredACPAgentName("  acp.custom-acp  ", cfg, "/tmp/repo"))
+	assert.False(t, isConfiguredACPAgentName("custom-acp", cfg, "/tmp/repo"))
 	assert.False(t, isConfiguredACPAgentName("other-acp", cfg, "/tmp/repo"))
 	assert.False(t, isConfiguredACPAgentName("", cfg, "/tmp/repo"))
 	assert.False(t, isConfiguredACPAgentName(defaultACPName, nil, "/tmp/repo"))
@@ -27,7 +28,7 @@ func TestIsConfiguredACPAgentName(t *testing.T) {
 [acp.repo-acp]
 command = "repo-acp"
 `), 0o644))
-	assert.True(t, isConfiguredACPAgentName("repo-acp", &config.Config{}, repo))
+	assert.True(t, isConfiguredACPAgentName("acp.repo-acp", &config.Config{}, repo))
 }
 
 func TestDefaultACPAgentConfig(t *testing.T) {
@@ -47,7 +48,7 @@ func TestConfiguredACPAgent(t *testing.T) {
 		},
 	}}
 
-	agent, err := configuredACPAgent("custom-acp", "/tmp/repo", cfg)
+	agent, err := configuredACPAgent("acp.custom-acp", "/tmp/repo", cfg)
 	require.NoError(t, err)
 	assert.Equal(t, "acp.custom-acp", agent.agentName)
 	assert.Equal(t, "custom-cmd", agent.Command)
@@ -74,15 +75,20 @@ func TestGetAvailableExactWithConfigSupportsMultipleACPAgents(t *testing.T) {
 		"foo":   {Command: fooBin},
 	}}
 
-	goose, err := GetAvailableExactWithConfigFromConfig(nil, "goose", cfg)
+	goose, err := GetAvailableExactWithConfigFromConfig(nil, "acp.goose", cfg)
 	require.NoError(t, err)
 	assert.Equal(t, "acp.goose", goose.Name())
 	assert.Equal(t, gooseBin, goose.(CommandAgent).CommandName())
 
-	foo, err := GetAvailableExactWithConfigFromConfig(nil, "foo", cfg)
+	foo, err := GetAvailableExactWithConfigFromConfig(nil, "acp.foo", cfg)
 	require.NoError(t, err)
 	assert.Equal(t, "acp.foo", foo.Name())
 	assert.Equal(t, fooBin, foo.(CommandAgent).CommandName())
+
+	_, err = GetAvailableExactWithConfigFromConfig(nil, "goose", cfg)
+	var unknown *UnknownAgentError
+	require.ErrorAs(t, err, &unknown)
+	assert.Equal(t, "goose", unknown.Name)
 }
 
 func TestGetAvailableWithConfigACPAsBackup(t *testing.T) {
@@ -92,7 +98,7 @@ func TestGetAvailableWithConfigACPAsBackup(t *testing.T) {
 	cfg := &config.Config{ACP: config.ACPAgentConfigs{
 		"my-acp": {Command: acpBin},
 	}}
-	got, err := GetAvailableWithConfig("", "codex", cfg, "my-acp")
+	got, err := GetAvailableWithConfig("", "codex", cfg, "acp.my-acp")
 	require.NoError(t, err)
 	assert.Equal(t, "acp.my-acp", got.Name())
 
@@ -114,8 +120,7 @@ func TestConfiguredACPAgentRejectsInvalidEntries(t *testing.T) {
 	}
 	for _, tc := range tests {
 		t.Run(tc.name, func(t *testing.T) {
-			cfg := &config.Config{ACP: config.ACPAgentConfigs{tc.agentName: tc.config}}
-			_, err := GetAvailableExactWithConfigFromConfig(nil, tc.agentName, cfg)
+			_, err := configuredACPAgentWithConfig(tc.agentName, &tc.config)
 			require.ErrorContains(t, err, tc.wantError)
 		})
 	}
