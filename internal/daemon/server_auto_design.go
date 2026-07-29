@@ -273,7 +273,7 @@ func resolveDesignFollowUpAgentFromConfig(
 		if modelOverride != "" {
 			designModel = modelOverride
 		}
-		return designAgent, designModel
+		return agent.StorageNameFromConfig(designAgent, repoCfg, cfg), designModel
 	}
 	primary := resolution.PreferredAgent
 	strictDesignAgent := config.HasWorkflowAgentOverrideFromConfig(
@@ -292,9 +292,11 @@ func resolveDesignFollowUpAgentFromConfig(
 		// Nothing installed — fall back to the primary name anyway so
 		// the row has a readable agent value, even if the worker will
 		// error. Better than persisting the sentinel.
-		return primary, resolution.ModelForSelectedAgent(primary, modelOverride)
+		return agent.StorageNameFromConfig(primary, repoCfg, cfg),
+			resolution.ModelForSelectedAgent(primary, modelOverride)
 	}
-	return chosen.Name(), resolution.ModelForSelectedAgent(chosen.Name(), modelOverride)
+	chosenName := agent.StorageNameFromConfig(chosen.Name(), repoCfg, cfg)
+	return chosenName, resolution.ModelForSelectedAgent(chosenName, modelOverride)
 }
 
 func (s *Server) insertSkippedDesign(parent *storage.ReviewJob, reason string) error {

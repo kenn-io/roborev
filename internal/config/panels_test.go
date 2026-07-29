@@ -367,6 +367,24 @@ func TestResolvePanelNamedACPSynthesisUsesPairedModel(t *testing.T) {
 	assert.Equal(t, "goose-model", synth.Model)
 }
 
+func TestResolvePanelNamedACPSynthesisDoesNotCrossConfigLayers(t *testing.T) {
+	global := &Config{
+		DefaultAgent: "codex",
+		FixAgent:     "codex",
+		FixModel:     "codex-model",
+		ACP: ACPAgentConfigs{
+			"goose": {Command: "goose", Model: "goose-model"},
+		},
+	}
+	repo := &RepoConfig{FixAgent: "goose"}
+
+	synth, err := resolveSynthesisFromConfig(
+		PanelSpec{SynthesisAgent: "goose"}, repo, global,
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "goose-model", synth.Model)
+}
+
 // TestResolveSynthesisBackupPassThrough verifies F7: synthesis_backup_agent /
 // synthesis_backup_model are passed straight through to SynthesisSpec.BackupAgent
 // / BackupModel with no resolution or fallback, via BOTH ResolvePanel and

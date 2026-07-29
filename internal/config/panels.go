@@ -425,6 +425,20 @@ func resolveExplicitPanelAgentModelFromConfig(
 	}
 
 	selectedAgent = strings.TrimSpace(selectedAgent)
+	if repoAgent, ok := repoPanelAgentForWorkflow(repoCfg, workflow, reasoning); ok {
+		if strings.TrimSpace(repoAgent) != selectedAgent {
+			return acpCfg.Model
+		}
+		if model := repoPanelModelForWorkflow(repoCfg, workflow, reasoning); model != "" {
+			return model
+		}
+		if strings.TrimSpace(repoCfg.Agent) == selectedAgent {
+			if model := strings.TrimSpace(repoCfg.Model); model != "" {
+				return model
+			}
+		}
+		return acpCfg.Model
+	}
 	workflowAgent := strings.TrimSpace(ResolveAgentForWorkflowFromConfig(
 		"", repoCfg, globalCfg, workflow, reasoning,
 	))
@@ -448,6 +462,47 @@ func resolveExplicitPanelAgentModelFromConfig(
 		return acpCfg.Model
 	}
 	return model
+}
+
+func repoPanelAgentForWorkflow(
+	repoCfg *RepoConfig, workflow, reasoning string,
+) (string, bool) {
+	if repoCfg == nil {
+		return "", false
+	}
+	if value := repoWorkflowField(repoCfg, workflow, reasoning, true); value != "" {
+		return value, true
+	}
+	if value := repoWorkflowField(repoCfg, workflow, "", true); value != "" {
+		return value, true
+	}
+	if workflowAllowsAnalyzeFallback(workflow) {
+		if value := analyzeField(repoCfg.Analyze, workflow, true); value != "" {
+			return value, true
+		}
+	}
+	if value := strings.TrimSpace(repoCfg.Agent); value != "" {
+		return value, true
+	}
+	return "", false
+}
+
+func repoPanelModelForWorkflow(
+	repoCfg *RepoConfig, workflow, reasoning string,
+) string {
+	if repoCfg == nil {
+		return ""
+	}
+	if value := repoWorkflowField(repoCfg, workflow, reasoning, false); value != "" {
+		return value
+	}
+	if value := repoWorkflowField(repoCfg, workflow, "", false); value != "" {
+		return value
+	}
+	if workflowAllowsAnalyzeFallback(workflow) {
+		return analyzeField(repoCfg.Analyze, workflow, false)
+	}
+	return ""
 }
 
 // canonicalMemberReviewType canonicalizes a subagent's review_type, treating

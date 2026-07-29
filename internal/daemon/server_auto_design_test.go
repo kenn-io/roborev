@@ -59,6 +59,17 @@ func TestResolveDesignAgentGenericDefaultAgentCanAutoDetect(t *testing.T) {
 	assert.Empty(t, designModel)
 }
 
+func TestResolveDesignAgentUnavailableNamedACPStoresNamespacedIdentity(t *testing.T) {
+	cfg := config.DefaultConfig()
+	cfg.DesignAgent = "goose"
+	cfg.ACP = config.ACPAgentConfigs{
+		"goose": {Command: "missing-goose-design-acp"},
+	}
+
+	designAgent, _ := resolveDesignAgent(t.TempDir(), cfg)
+	assert.Equal(t, "acp.goose", designAgent)
+}
+
 func TestMaybeDispatchAutoDesign_HeuristicTrigger(t *testing.T) {
 	srv, repo := newAutoDesignTestServer(t)
 	enableAutoDesignReviewForRepo(t, repo.RootPath)

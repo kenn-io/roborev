@@ -2241,6 +2241,55 @@ func TestResolveReviewJobAgentUsesCISnapshottedACPConfig(t *testing.T) {
 	assert.Equal(t, frozenCommand, configuredACP.CommandName())
 }
 
+func TestCIMemberFailoverUsesSnapshottedACPBackup(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	binDir := t.TempDir()
+	frozenCommand := filepath.Join(binDir, "frozen-backup-goose")
+	liveCommand := filepath.Join(binDir, "live-backup-goose")
+	if runtime.GOOS == "windows" {
+		frozenCommand += ".cmd"
+		liveCommand += ".cmd"
+	}
+	script := []byte("#!/bin/sh\nexit 0\n")
+	require.NoError(t, os.WriteFile(frozenCommand, script, 0o755))
+	require.NoError(t, os.WriteFile(liveCommand, script, 0o755))
+	require.NoError(t, os.WriteFile(filepath.Join(tc.TmpDir, ".roborev.toml"),
+		fmt.Appendf(nil, "[acp.goose]\ncommand = %q\n", liveCommand), 0o644))
+	snapshot, err := json.Marshal(ciPanelMemberConfig{
+		ResolvedMember: config.ResolvedMember{
+			Agent: "test", BackupAgent: "acp.goose", BackupModel: "backup-model",
+		},
+		ACP: config.ACPAgentConfigs{"goose": {Command: frozenCommand}},
+	})
+	require.NoError(t, err)
+	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
+		RepoID: tc.Repo.ID, GitRef: testutil.GetHeadSHA(t, tc.TmpDir),
+		Agent: "test", Model: "primary-model", Source: storage.JobSourceCI,
+		BackupAgent: "acp.goose", BackupModel: "backup-model",
+		PanelMemberConfigJSON: string(snapshot),
+	})
+	require.NoError(t, err)
+	claimed, err := tc.DB.ClaimJob(testWorkerID)
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+
+	failedOver, err := tc.DB.FailoverJob(
+		job.ID, testWorkerID, "acp.goose", "backup-model",
+	)
+	require.NoError(t, err)
+	require.True(t, failedOver)
+	failedOverJob, err := tc.DB.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "acp.goose", failedOverJob.Agent)
+	assert.Equal(t, "backup-model", failedOverJob.Model)
+
+	configured, err := resolveReviewJobAgent(failedOverJob, config.DefaultConfig())
+	require.NoError(t, err)
+	configuredACP, ok := configured.(*agent.ACPAgent)
+	require.True(t, ok)
+	assert.Equal(t, frozenCommand, configuredACP.CommandName())
+}
+
 func TestFailOrRetryInner_QuotaSkipsRetries(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)

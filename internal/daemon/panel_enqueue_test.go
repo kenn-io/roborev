@@ -607,6 +607,35 @@ synthesis_backup_agent = "owl"
 	assert.Equal(t, "acp.goose", single.Agent)
 }
 
+func TestEnqueuePanelUnavailableNamedACPStoresNamespacedIdentity(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	repo := testutil.NewGitRepo(t)
+	repo.WriteFile(".roborev.toml", `
+[acp.goose]
+command = "missing-goose-panel-acp"
+
+[review]
+default_panel = "unavailable"
+
+[review.subagents.only]
+agent = "goose"
+review_type = "default"
+
+[review.panels.unavailable]
+members = ["only"]
+synthesis_agent = "test"
+`)
+	repo.CommitFile("a.txt", "a", "add a")
+
+	resp := enqueuePanelViaHTTP(t, server, EnqueueRequest{
+		RepoPath: repo.Path(), GitRef: "HEAD", Agent: "test",
+	})
+	members, err := db.GetPanelMembers(resp.PanelRunUUID)
+	require.NoError(t, err)
+	require.Len(t, members, 1)
+	assert.Equal(t, "acp.goose", members[0].Agent)
+}
+
 func TestEnqueuePanelNamedACPMemberPreservesExplicitModel(t *testing.T) {
 	server, db, _ := newTestServer(t)
 	t.Cleanup(testutil.MockExecutable(t, "goose-panel-explicit", 0))

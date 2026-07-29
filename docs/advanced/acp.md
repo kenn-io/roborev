@@ -265,6 +265,12 @@ Select a named entry with its configured name, such as `--agent goose`. Queued
 jobs namespace that identity as `acp.goose`, so stored reviews and failover
 metadata cannot confuse it with a built-in agent.
 
+Namespacing and frozen CI execution configuration apply to newly queued jobs;
+existing bare-name rows are not rewritten. Cancel and re-enqueue an active
+legacy job when it must use the frozen configuration. For new CI panel jobs, the
+snapshot follows retries, member failover, and manual panel reruns. Legacy CI
+rows without a snapshot continue to resolve against the live configuration.
+
 The earlier singleton format is no longer accepted. Move the old `name` value
 into the table header:
 
