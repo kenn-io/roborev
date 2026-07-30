@@ -862,6 +862,22 @@ func TestTUIQueueCollapsedPanelShowsAggregatedMemberCost(t *testing.T) {
 	assert.Contains(t, out, "~$0.35", "collapsed parent row shows summed member costs")
 }
 
+func TestTUIQueueCostCellDistinguishesMissingAmountFromZero(t *testing.T) {
+	m := model{}
+
+	drifted := storage.ReviewJob{
+		TokenUsage: `{"total_output_tokens":200,"has_cost":true}`,
+	}
+	assert.Empty(t, m.jobCostCell(drifted),
+		"a cost flag without an amount must not render as a free run")
+
+	free := storage.ReviewJob{
+		TokenUsage: `{"cost_usd":0,"has_cost":true}`,
+	}
+	assert.Equal(t, "~$0.00", m.jobCostCell(free),
+		"an explicit zero remains a priced free run")
+}
+
 func TestTUIQueueCollapsedPanelShowsSummaryCostBeforeExpansion(t *testing.T) {
 	parent := makeJob(10, withRef("syn"), withStatus(storage.JobStatusDone),
 		withSynthesis("R", storage.PanelSummary{

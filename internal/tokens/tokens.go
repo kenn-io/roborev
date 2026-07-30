@@ -434,6 +434,20 @@ func ParseJSON(data string) *Usage {
 	if err := json.Unmarshal([]byte(data), &u); err != nil {
 		return nil
 	}
+	// Historical rows written during the agentsview cost-shape transition can
+	// carry has_cost without cost_usd. Normalize that drift at the parse
+	// boundary so every consumer agrees that HasCost means an amount was
+	// actually recorded. A non-nil RawMessage preserves an explicit zero while
+	// treating both an absent key and JSON null as unpriced.
+	if u.HasCost {
+		var raw struct {
+			CostUSD *json.RawMessage `json:"cost_usd"`
+		}
+		if err := json.Unmarshal([]byte(data), &raw); err != nil ||
+			raw.CostUSD == nil {
+			u.HasCost = false
+		}
+	}
 	if !u.HasUsageData() {
 		return nil
 	}

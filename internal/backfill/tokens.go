@@ -1,7 +1,6 @@
 package backfill
 
 import (
-	"encoding/json"
 	"fmt"
 
 	"go.kenn.io/roborev/internal/storage"
@@ -143,15 +142,7 @@ func MergeTokenUsage(existingJSON string, fetched *tokens.Usage) *tokens.Usage {
 // drifted shape and needs re-fetching.
 func hasRecordedCost(tokenUsage string) bool {
 	usage := tokens.ParseJSON(tokenUsage)
-	if usage == nil || !usage.HasCost {
-		return false
-	}
-	var raw map[string]json.RawMessage
-	if err := json.Unmarshal([]byte(tokenUsage), &raw); err != nil {
-		return false
-	}
-	amount, ok := raw["cost_usd"]
-	return ok && string(amount) != "null"
+	return usage != nil && usage.HasCost
 }
 
 func NeedsTokenCostBackfill(tokenUsage string) bool {

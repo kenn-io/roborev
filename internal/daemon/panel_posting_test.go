@@ -192,6 +192,22 @@ func TestPanelCommitStatus(t *testing.T) {
 	}
 }
 
+func TestPanelTotalCostExcludesFlagWithoutAmount(t *testing.T) {
+	synth := &storage.ReviewJob{
+		TokenUsage: `{"total_output_tokens":200,"has_cost":true}`,
+	}
+	members := []storage.BatchReviewResult{
+		{TokenUsage: `{"cost_usd":0.11,"has_cost":true}`},
+		{TokenUsage: `{"peak_context_tokens":100,"has_cost":true}`},
+	}
+
+	cost, priced, total := panelTotalCost(synth, members)
+	assert.InDelta(t, 0.11, cost, 1e-9)
+	assert.Equal(t, 1, priced,
+		"amount-less flags must not make panel pricing look complete")
+	assert.Equal(t, 3, total)
+}
+
 // TestSynthesisCompletedPostsOnce verifies a synthesis review.completed posts
 // the persisted review exactly once even under duplicate event delivery (the
 // posting CAS is idempotent) and finalizes the panel row (posted_at set).

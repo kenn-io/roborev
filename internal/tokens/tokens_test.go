@@ -138,6 +138,27 @@ func TestParseJSON(t *testing.T) {
 		assert.InDelta(t, 0.05, u.CostUSD, 1e-9)
 	})
 
+	t.Run("cost flag without amount is unpriced", func(t *testing.T) {
+		u := ParseJSON(`{"total_output_tokens":200,"has_cost":true}`)
+		require.NotNil(t, u)
+		assert.False(t, u.HasCost)
+	})
+
+	t.Run("null cost amount is unpriced", func(t *testing.T) {
+		u := ParseJSON(
+			`{"total_output_tokens":200,"cost_usd":null,"has_cost":true}`,
+		)
+		require.NotNil(t, u)
+		assert.False(t, u.HasCost)
+	})
+
+	t.Run("explicit zero cost remains priced", func(t *testing.T) {
+		u := ParseJSON(`{"cost_usd":0,"has_cost":true}`)
+		require.NotNil(t, u)
+		assert.True(t, u.HasCost)
+		assert.Zero(t, u.CostUSD)
+	})
+
 	t.Run("codex input buckets", func(t *testing.T) {
 		u := ParseJSON(
 			`{"input_tokens":79150,"cached_input_tokens":2560,` +
