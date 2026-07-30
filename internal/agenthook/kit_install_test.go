@@ -2,8 +2,10 @@ package agenthook
 
 import (
 	"bytes"
+	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -80,6 +82,94 @@ func TestRunInstallUsesKitForQwen(t *testing.T) {
 	assert.Contains(t, string(body), "agent-hook run --agent qwen")
 	assert.Contains(t, string(body), agentHookMarker)
 	assert.Contains(t, stdout.String(), "installed Qwen Code agent hooks")
+}
+
+func TestRunInstallMigratesLegacyProfileHooks(t *testing.T) {
+	tests := []struct {
+		agent      string
+		legacy     string
+		preserved  string
+		configName string
+	}{
+		{
+			agent:      "codex",
+			legacy:     `'C:\Program Files\roborev.exe' agent-hook run --turn-threshold 3`,
+			preserved:  `/other/bin/roborev agent-hook run --agent droid`,
+			configName: "hooks.json",
+		},
+		{
+			agent:      "claude",
+			legacy:     `/old/bin/roborev agent-hook run --config /tmp/roborev.toml`,
+			preserved:  `/other/bin/roborev agent-hook run --agent droid`,
+			configName: "settings.json",
+		},
+		{
+			agent:      "droid",
+			legacy:     `/old/bin/roborev agent-hook run --config /tmp/roborev.toml --agent=droid`,
+			preserved:  `/other/bin/roborev agent-hook run`,
+			configName: "hooks.json",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.agent, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), tt.configName)
+			fixture, err := json.Marshal(map[string]any{
+				"hooks": map[string]any{
+					"Stop": []any{map[string]any{
+						"hooks": []any{
+							map[string]any{"type": "command", "command": tt.legacy},
+							map[string]any{"type": "command", "command": tt.preserved},
+						},
+					}},
+				},
+			})
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(path, fixture, 0o600))
+
+			err = RunInstall(InstallOptions{
+				Agent:      tt.agent,
+				Executable: "/new/bin/roborev",
+				ConfigPath: path,
+				Timeout:    10 * time.Second,
+			}, &bytes.Buffer{})
+			require.NoError(t, err)
+
+			body, err := os.ReadFile(path)
+			require.NoError(t, err)
+			var root map[string]any
+			require.NoError(t, json.Unmarshal(body, &root))
+			var commands []string
+			var collectCommands func(any)
+			collectCommands = func(value any) {
+				switch typed := value.(type) {
+				case map[string]any:
+					if command, ok := typed["command"].(string); ok {
+						commands = append(commands, command)
+					}
+					for _, child := range typed {
+						collectCommands(child)
+					}
+				case []any:
+					for _, child := range typed {
+						collectCommands(child)
+					}
+				}
+			}
+			collectCommands(root["hooks"])
+
+			assert.NotContains(t, commands, tt.legacy)
+			assert.Contains(t, commands, tt.preserved)
+			installed := 0
+			for _, command := range commands {
+				if strings.Contains(command, "agent-hook run --agent "+tt.agent) &&
+					strings.Contains(command, agentHookMarker) {
+					installed++
+				}
+			}
+			assert.Equal(t, 3, installed)
+		})
+	}
 }
 
 func TestRunInstallRejectsCommandForDifferentProfile(t *testing.T) {

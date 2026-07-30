@@ -98,10 +98,32 @@ func runInstall(agent kitagenthook.Agent, opts InstallOptions) (kitagenthook.Res
 	if err != nil {
 		return kitagenthook.Result{}, err
 	}
-	if opts.DryRun {
-		return kitagenthook.PlanInstall(agent, kitOpts)
+	planned, err := kitagenthook.PlanInstall(agent, kitOpts)
+	if err != nil {
+		return kitagenthook.Result{}, err
 	}
-	return kitagenthook.Install(agent, kitOpts)
+	legacyCommands, err := legacyHookCommands(agent, planned.ConfigPath)
+	if err != nil {
+		return kitagenthook.Result{}, err
+	}
+	if opts.DryRun {
+		planned.Changed = planned.Changed || len(legacyCommands) > 0
+		return planned, nil
+	}
+
+	migrated := false
+	for _, command := range legacyCommands {
+		result, uninstallErr := kitagenthook.Uninstall(agent, planned.ConfigPath, command)
+		if uninstallErr != nil {
+			return kitagenthook.Result{}, fmt.Errorf("remove legacy agent hook: %w", uninstallErr)
+		}
+		migrated = migrated || result.Changed
+	}
+	result, err := kitagenthook.Install(agent, kitOpts)
+	if migrated {
+		result.Changed = true
+	}
+	return result, err
 }
 
 func validatedKitInstallOptions(

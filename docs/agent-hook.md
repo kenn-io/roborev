@@ -97,9 +97,11 @@ combined with `--binary`.
 
 Run `roborev agent-hook install` once after upgrading. The new registrations
 carry a feature-specific ownership marker so later installs replace only roborev
-agent hooks and preserve unrelated commands. Profile-less commands from older
-releases are not a supported runtime format; remove any that remain in an agent
-config after the one-time reinstall.
+agent hooks and preserve unrelated commands. The installer recognizes direct
+roborev commands written by the previous Codex, Claude, and Factory Droid
+integrations, removes them from that profile's config, and replaces them with
+the profile-bearing registration. Unrelated commands and unrecognizable custom
+wrappers remain untouched.
 
 The CLI flag migration is:
 
