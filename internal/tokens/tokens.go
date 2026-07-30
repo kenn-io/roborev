@@ -79,14 +79,14 @@ type costEnvelope struct {
 
 // resolveCostUSD converts either cost shape to dollars, reporting whether a
 // cost was actually present. An explicit `"cost_usd": null` is absent, not $0;
-// a real 0 (or 0 microdollars) is a valid free run. The float field wins when
-// both are populated, since it is the more explicit of the two.
+// a real 0 (or 0 microdollars) is a valid free run. The microdollar envelope
+// wins when both are populated because it is the current agentsview format.
 func resolveCostUSD(costUSD *float64, cost *costEnvelope) (float64, bool) {
-	if costUSD != nil {
-		return *costUSD, true
-	}
 	if cost != nil && cost.Microdollars != nil {
 		return float64(*cost.Microdollars) / 1e6, true
+	}
+	if costUSD != nil {
+		return *costUSD, true
 	}
 	return 0, false
 }

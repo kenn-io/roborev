@@ -1005,11 +1005,11 @@ When `has_cost` is true, the cost must arrive in one of two shapes. Either
 }
 ```
 
-roborev accepts either and prefers `cost_usd` when both are present. When using
-the envelope, omit `cost_usd` rather than sending it as `null` — the published
-schema types it as a plain number. roborev itself tolerates an explicit `null`
-and treats it as absent, but that leniency is deliberate defensiveness, not part
-of the contract.
+roborev accepts either and prefers the `cost` envelope when both are present.
+When using the envelope, omit `cost_usd` rather than sending it as `null` — the
+published schema types it as a plain number. roborev itself tolerates an
+explicit `null` and treats it as absent, but that leniency is deliberate
+defensiveness, not part of the contract.
 
 A session priced at exactly zero must send an explicit `0` (or `0`
 microdollars); absent is not the same as free. Flagging `has_cost` with neither

@@ -592,11 +592,11 @@ func TestUsageFromSessionPayloadCostShapes(t *testing.T) {
 			wantUSD:  0.598641,
 		},
 		{
-			name: "both present prefers explicit cost_usd",
+			name: "both present prefers microdollar envelope",
 			body: `{"has_token_data":false,"cost_usd":0.42,` +
 				`"cost":{"microdollars":999999},"has_cost":true}`,
 			wantCost: true,
-			wantUSD:  0.42,
+			wantUSD:  0.999999,
 		},
 		{
 			name:     "zero microdollars is a valid free run",
