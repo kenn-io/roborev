@@ -333,6 +333,17 @@ func TestSanitizeLabelStripsControlCharsAndCaps(t *testing.T) {
 	assert.Len(sanitizeLabel(strings.Repeat("x", 200)), 64, "length is capped")
 }
 
+func TestDeferredReminderReasonPreservesWindowsPath(t *testing.T) {
+	worktree := `C:\Users\runner\work\roborev`
+
+	reason := deferredReminderReason("Resolve reviews.", worktree)
+
+	assert.Equal(t,
+		`Resolve reviews. The triggering worktree is "C:\Users\runner\work\roborev"; change to it before running roborev commands.`,
+		reason,
+	)
+}
+
 func TestBuildFailedReviewReasonSanitizesUntrustedBranch(t *testing.T) {
 	assert := assert.New(t)
 	req := Request{Instruction: "Run roborev fix."}

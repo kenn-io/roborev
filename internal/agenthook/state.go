@@ -493,9 +493,15 @@ func queuePendingReminder(st *SessionState, reminder PendingReminder) {
 }
 
 func deferredReminderReason(reason, worktree string) string {
+	cleanWorktree := strings.Map(func(r rune) rune {
+		if r == '"' || unicode.IsControl(r) {
+			return -1
+		}
+		return r
+	}, filepath.Clean(worktree))
 	return fmt.Sprintf(
-		"%s The triggering worktree is %q; change to it before running roborev commands.",
-		strings.TrimSpace(reason), filepath.Clean(worktree),
+		"%s The triggering worktree is \"%s\"; change to it before running roborev commands.",
+		strings.TrimSpace(reason), cleanWorktree,
 	)
 }
 
