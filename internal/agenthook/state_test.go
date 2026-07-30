@@ -14,6 +14,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -333,15 +334,28 @@ func TestSanitizeLabelStripsControlCharsAndCaps(t *testing.T) {
 	assert.Len(sanitizeLabel(strings.Repeat("x", 200)), 64, "length is capped")
 }
 
-func TestDeferredReminderReasonPreservesWindowsPath(t *testing.T) {
-	worktree := `C:\Users\runner\work\roborev`
-
-	reason := deferredReminderReason("Resolve reviews.", worktree)
-
-	assert.Equal(t,
-		`Resolve reviews. The triggering worktree is "C:\Users\runner\work\roborev"; change to it before running roborev commands.`,
-		reason,
-	)
+func TestDeferredReminderReasonPreservesPaths(t *testing.T) {
+	tests := []struct {
+		name     string
+		worktree string
+		want     string
+	}{
+		{
+			name:     "windows separators",
+			worktree: `C:\Users\runner\work\roborev`,
+			want:     `Resolve reviews. The triggering worktree is "C:\Users\runner\work\roborev"; change to it before running roborev commands.`,
+		},
+		{
+			name:     "unix double quote",
+			worktree: `/tmp/quoted-"repo"`,
+			want:     `Resolve reviews. The triggering worktree is "/tmp/quoted-\"repo\""; change to it before running roborev commands.`,
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, deferredReminderReason("Resolve reviews.", tt.worktree))
+		})
+	}
 }
 
 func TestBuildFailedReviewReasonSanitizesUntrustedBranch(t *testing.T) {
@@ -1934,8 +1948,8 @@ func TestCountOpenFailedReviewsRequestsOmittedPrompts(t *testing.T) {
 func TestDeferredPostToolReminderCoalescesAndSurvivesCWDChange(t *testing.T) {
 	repo := testutil.NewGitRepo(t)
 	repo.CommitFile("main.go", "package main\n", "initial")
-	failed := true
-	server := newDeferredReminderServer(t, repo.Path(), &failed)
+	failedReviewCount := 1
+	server := newDeferredReminderServer(t, repo.Path(), &failedReviewCount)
 	store := &StateStore{path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
 	base := Request{
 		Event: Input{
@@ -1998,8 +2012,8 @@ func TestDeferredPostToolReminderCoalescesAndSurvivesCWDChange(t *testing.T) {
 func TestDeferredFailedReviewReminderIsRevalidatedBeforeDelivery(t *testing.T) {
 	repo := testutil.NewGitRepo(t)
 	repo.CommitFile("main.go", "package main\n", "initial")
-	failed := true
-	server := newDeferredReminderServer(t, repo.Path(), &failed)
+	failedReviewCount := 1
+	server := newDeferredReminderServer(t, repo.Path(), &failedReviewCount)
 	store := &StateStore{path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
 
 	resp, err := store.Record(Request{
@@ -2019,7 +2033,7 @@ func TestDeferredFailedReviewReminderIsRevalidatedBeforeDelivery(t *testing.T) {
 	assert.False(t, resp.Triggered)
 	require.Len(t, store.sessions["session-1"].PendingReminders, 1)
 
-	failed = false
+	failedReviewCount = 0
 	stop, err := store.Record(Request{
 		Event:             Input{SessionID: "session-1", CWD: t.TempDir(), HookEventName: "Stop"},
 		RoborevServerAddr: server.URL,
@@ -2031,7 +2045,115 @@ func TestDeferredFailedReviewReminderIsRevalidatedBeforeDelivery(t *testing.T) {
 	assert.Zero(t, store.sessions["session-1"].ReminderPromptCount)
 }
 
-func newDeferredReminderServer(t *testing.T, repoPath string, failed *bool) *httptest.Server {
+func TestDeferredFailedReviewReminderReopensAndRefreshesAfterResolution(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("main.go", "package main\n", "initial")
+	failedReviewCount := 2
+	server := newDeferredReminderServer(t, repo.Path(), &failedReviewCount)
+	store := &StateStore{path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	request := Request{
+		Event: Input{
+			SessionID:     "session-1",
+			CWD:           repo.Path(),
+			HookEventName: "PostToolUse",
+			ToolName:      "Bash",
+			ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"go test ./..."`)},
+		},
+		FailedReviewThreshold: 2,
+		Instruction:           "Resolve reviews.",
+		RoborevServerAddr:     server.URL,
+		DeferPostToolReminder: true,
+	}
+
+	_, err := store.Record(request)
+	require.NoError(t, err)
+	require.Len(t, store.sessions["session-1"].PendingReminders, 1)
+
+	failedReviewCount = 0
+	_, err = store.Record(Request{
+		Event:             Input{SessionID: "session-1", CWD: t.TempDir(), HookEventName: "Stop"},
+		RoborevServerAddr: server.URL,
+	})
+	require.NoError(t, err)
+	state := store.sessions["session-1"]
+	assert.Empty(t, state.PendingReminders)
+	assert.Empty(t, state.FailedReviewTriggeredCounts)
+	assert.Zero(t, state.FailedReviewCount)
+
+	failedReviewCount = 2
+	_, err = store.Record(request)
+	require.NoError(t, err)
+	require.Len(t, store.sessions["session-1"].PendingReminders, 1)
+
+	failedReviewCount = 3
+	response, err := store.Record(Request{
+		Event:             Input{SessionID: "session-1", CWD: t.TempDir(), HookEventName: "Stop"},
+		RoborevServerAddr: server.URL,
+	})
+	require.NoError(t, err)
+	assert.True(t, response.Triggered)
+	assert.Equal(t, 3, response.FailedReviewCount)
+	assert.Contains(t, response.Reason, "3 open failed roborev reviews")
+}
+
+func TestDeferredCommitReminderIsDiscardedAfterReviewsResolve(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("main.go", "package main\n", "initial")
+	failedReviewCount := 1
+	server := newDeferredReminderServer(t, repo.Path(), &failedReviewCount)
+	store := &StateStore{path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	base := Request{
+		Event: Input{
+			SessionID: "session-1",
+			CWD:       repo.Path(),
+			ToolName:  "Bash",
+			ToolInput: map[string]json.RawMessage{"command": json.RawMessage(`"git commit -m feature"`)},
+		},
+		CommitThreshold:       1,
+		Instruction:           "Resolve reviews.",
+		RoborevServerAddr:     server.URL,
+		DeferPostToolReminder: true,
+	}
+
+	pre := base
+	pre.Event.HookEventName = "PreToolUse"
+	_, err := store.Record(pre)
+	require.NoError(t, err)
+	repo.CommitFile("feature.go", "package main\n", "feature")
+	post := base
+	post.Event.HookEventName = "PostToolUse"
+	_, err = store.Record(post)
+	require.NoError(t, err)
+	require.Len(t, store.sessions["session-1"].PendingReminders, 1)
+
+	failedReviewCount = 0
+	response, err := store.Record(Request{
+		Event:             Input{SessionID: "session-1", CWD: t.TempDir(), HookEventName: "Stop"},
+		RoborevServerAddr: server.URL,
+	})
+	require.NoError(t, err)
+	assert.False(t, response.Triggered)
+	assert.Empty(t, store.sessions["session-1"].PendingReminders)
+	assert.Zero(t, store.sessions["session-1"].ReminderPromptCount)
+}
+
+func TestQueuePendingReminderKeepsLatestAbsoluteFailedReviewCount(t *testing.T) {
+	createdAt := time.Now().UTC().Add(-time.Minute)
+	state := SessionState{}
+	queuePendingReminder(&state, PendingReminder{
+		TriggeredBy: "failed_reviews", LineageKey: "repo", FailedReviewCount: 2, CreatedAt: createdAt,
+	})
+	queuePendingReminder(&state, PendingReminder{
+		TriggeredBy: "failed_reviews", LineageKey: "repo", FailedReviewCount: 4, CreatedAt: time.Now().UTC(),
+	})
+
+	require.Len(t, state.PendingReminders, 1)
+	pending := state.PendingReminders["repo\x00failed_reviews"]
+	assert.Equal(t, 4, pending.FailedReviewCount)
+	assert.Equal(t, createdAt, pending.CreatedAt)
+}
+
+func newDeferredReminderServer(t *testing.T, repoPath string, failedReviewCount *int) *httptest.Server {
 	t.Helper()
 	closed := false
 	verdict := "F"
@@ -2044,7 +2166,7 @@ func newDeferredReminderServer(t *testing.T, repoPath string, failed *bool) *htt
 			return
 		}
 		jobs := []storage.ReviewJob{}
-		if *failed {
+		for range *failedReviewCount {
 			jobs = append(jobs, storage.ReviewJob{
 				Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main",
 			})

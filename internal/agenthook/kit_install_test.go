@@ -20,7 +20,9 @@ func TestKitInstallOptionsUseProfileSpecificRunArguments(t *testing.T) {
 				Timeout:    10 * time.Second,
 			})
 
-			assert.Equal(t, []string{"agent-hook", "run", "--agent", string(profile.Agent)}, opts.Arguments)
+			assert.Equal(t, []string{
+				"agent-hook", "run", "--agent", string(profile.Agent), agentHookMarker,
+			}, opts.Arguments)
 			assert.Equal(t, agentHookMarker, opts.Marker)
 			assert.Len(t, opts.Hooks, 3)
 		})
@@ -36,11 +38,15 @@ func TestCommandAgentRequiresExactlyOneSelection(t *testing.T) {
 	}{
 		{name: "space form", command: "roborev agent-hook run --agent qwen", want: kitagenthook.AgentQwen},
 		{name: "equals form", command: "roborev agent-hook run --agent=qwen", want: kitagenthook.AgentQwen},
+		{name: "quoted executable and agent", command: `"/opt/Roborev Dev" agent-hook run --agent "qwen"`, want: kitagenthook.AgentQwen},
 		{name: "duplicate", command: "roborev agent-hook run --agent qwen --agent qwen", wantErr: "exactly one"},
 		{name: "conflict", command: "roborev agent-hook run --agent qwen --agent gemini", wantErr: "exactly one"},
 		{name: "missing value", command: "roborev agent-hook run --agent", wantErr: "requires a value"},
 		{name: "empty value", command: "roborev agent-hook run --agent=", wantErr: "requires a value"},
-		{name: "after terminator", command: "roborev agent-hook run -- --agent qwen", wantErr: "must select an agent"},
+		{name: "argument terminator", command: "roborev agent-hook run -- --agent qwen", wantErr: "argument terminator"},
+		{name: "quoted data", command: `echo "roborev agent-hook run --agent qwen"`, wantErr: "must invoke"},
+		{name: "chained command", command: "roborev agent-hook run --agent qwen; echo skipped", wantErr: "shell operator"},
+		{name: "quoted invocation", command: `sh -c "roborev agent-hook run --agent qwen"`, wantErr: "must invoke"},
 	}
 
 	for _, tt := range tests {
@@ -63,7 +69,7 @@ func TestRunInstallUsesKitForQwen(t *testing.T) {
 
 	err := RunInstall(InstallOptions{
 		Agent:      "qwen",
-		Executable: "/opt/bin/roborev",
+		Executable: "/opt/bin/custom-hook",
 		ConfigPath: path,
 		Timeout:    10 * time.Second,
 	}, &stdout)
@@ -72,6 +78,7 @@ func TestRunInstallUsesKitForQwen(t *testing.T) {
 	body, err := os.ReadFile(path)
 	require.NoError(t, err)
 	assert.Contains(t, string(body), "agent-hook run --agent qwen")
+	assert.Contains(t, string(body), agentHookMarker)
 	assert.Contains(t, stdout.String(), "installed Qwen Code agent hooks")
 }
 
@@ -88,6 +95,21 @@ func TestRunInstallRejectsCommandForDifferentProfile(t *testing.T) {
 	require.ErrorContains(t, err, "selects qwen, not gemini")
 	_, statErr := os.Stat(path)
 	assert.ErrorIs(t, statErr, os.ErrNotExist)
+}
+
+func TestRunInstallAddsOwnershipMarkerToCustomCommand(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "settings.json")
+
+	err := RunInstall(InstallOptions{
+		Agent:      "qwen",
+		Command:    `"/opt/Roborev Dev" agent-hook run --agent "qwen"`,
+		ConfigPath: path,
+	}, &bytes.Buffer{})
+
+	require.NoError(t, err)
+	body, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Contains(t, string(body), agentHookMarker)
 }
 
 func TestRunDumpWritesCompleteNativeConfig(t *testing.T) {

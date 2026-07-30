@@ -23,8 +23,8 @@ func TestCheckAgentHookUsesKitProfile(t *testing.T) {
 	_, err := kitagenthook.Install(kitagenthook.AgentCodex, kitagenthook.InstallOptions{
 		ConfigPath: path,
 		Executable: "/opt/bin/roborev",
-		Arguments:  []string{"agent-hook", "run", "--agent", "codex"},
-		Marker:     "roborev",
+		Arguments:  []string{"agent-hook", "run", "--agent", "codex", "--source=roborev-agent-hook"},
+		Marker:     "--source=roborev-agent-hook",
 		Hooks:      []kitagenthook.Hook{{Event: kitagenthook.EventStop}},
 	})
 	require.NoError(t, err)

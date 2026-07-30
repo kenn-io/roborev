@@ -19,6 +19,10 @@ provide the richest path where available; every reminder-capable profile also
 gets a CLI fallback. Claude Desktop does not expose harness hooks, so only Layer
 1 runs there.
 
+Quickstart health checks remain focused on Claude Code and Codex because those
+are the harnesses with bundled roborev skills. Use `roborev agent-hook install`
+and agent-native config inspection to manage the other supported profiles.
+
 ## Skills: drive roborev from your coding agent
 
 Skills are the main way you and your agent use roborev from inside a session,

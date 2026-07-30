@@ -89,6 +89,7 @@ type SessionState struct {
 type PendingReminder struct {
 	TriggeredBy       string    `json:"triggered_by"`
 	Reason            string    `json:"reason"`
+	Instruction       string    `json:"instruction,omitempty"`
 	TrackedRepoRoot   string    `json:"tracked_repo_root"`
 	WorktreeRoot      string    `json:"worktree_root"`
 	Branch            string    `json:"branch,omitempty"`

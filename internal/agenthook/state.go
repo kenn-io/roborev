@@ -11,6 +11,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
+	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -415,6 +416,7 @@ func (s *StateStore) recordPostToolUse(req Request) (Response, error) {
 			queuePendingReminder(&st, PendingReminder{
 				TriggeredBy:       "failed_reviews",
 				Reason:            deferredReminderReason(buildFailedReviewReason(req, st), scope.WorktreeRoot),
+				Instruction:       req.Instruction,
 				TrackedRepoRoot:   scope.TrackedRepoRoot,
 				WorktreeRoot:      scope.WorktreeRoot,
 				Branch:            scope.Branch,
@@ -426,15 +428,17 @@ func (s *StateStore) recordPostToolUse(req Request) (Response, error) {
 		}
 		if commitTriggered {
 			queuePendingReminder(&st, PendingReminder{
-				TriggeredBy:     "commit",
-				Reason:          deferredReminderReason(buildCommitReason(req, triggeringCommitCount, scope.WorktreeRoot), scope.WorktreeRoot),
-				TrackedRepoRoot: scope.TrackedRepoRoot,
-				WorktreeRoot:    scope.WorktreeRoot,
-				Branch:          scope.Branch,
-				Head:            scope.Head,
-				LineageKey:      lineageKey,
-				CommitCount:     triggeringCommitCount,
-				CreatedAt:       now,
+				TriggeredBy:       "commit",
+				Reason:            deferredReminderReason(buildCommitReason(req, triggeringCommitCount, scope.WorktreeRoot), scope.WorktreeRoot),
+				Instruction:       req.Instruction,
+				TrackedRepoRoot:   scope.TrackedRepoRoot,
+				WorktreeRoot:      scope.WorktreeRoot,
+				Branch:            scope.Branch,
+				Head:              scope.Head,
+				LineageKey:        lineageKey,
+				CommitCount:       triggeringCommitCount,
+				FailedReviewCount: failedReviewCount,
+				CreatedAt:         now,
 			})
 		}
 		resetPromptCountersForKeys(&st, promptResetKeys(scope, lineageKey))
@@ -487,21 +491,16 @@ func queuePendingReminder(st *SessionState, reminder PendingReminder) {
 	if existing, ok := st.PendingReminders[key]; ok {
 		reminder.CreatedAt = existing.CreatedAt
 		reminder.CommitCount += existing.CommitCount
-		reminder.FailedReviewCount += existing.FailedReviewCount
 	}
 	st.PendingReminders[key] = reminder
 }
 
 func deferredReminderReason(reason, worktree string) string {
-	cleanWorktree := strings.Map(func(r rune) rune {
-		if r == '"' || unicode.IsControl(r) {
-			return -1
-		}
-		return r
-	}, filepath.Clean(worktree))
+	quotedWorktree := strconv.Quote(filepath.Clean(worktree))
+	quotedWorktree = strings.ReplaceAll(quotedWorktree, `\\`, `\`)
 	return fmt.Sprintf(
-		"%s The triggering worktree is \"%s\"; change to it before running roborev commands.",
-		strings.TrimSpace(reason), cleanWorktree,
+		"%s The triggering worktree is %s; change to it before running roborev commands.",
+		strings.TrimSpace(reason), quotedWorktree,
 	)
 }
 
@@ -537,21 +536,28 @@ func (s *StateStore) deliverPendingReminder(req Request) (Response, bool, error)
 
 	for _, candidate := range candidates {
 		pending := candidate.reminder
+		count, ok := countOpenFailedReviews(
+			context.Background(), pending.TrackedRepoRoot, pending.Branch,
+			pending.Head, req.RoborevServerAddr,
+		)
+		if !ok {
+			return Response{SessionID: req.Event.SessionID, Skipped: true}, true, nil
+		}
+		if count == 0 {
+			if err := s.discardResolvedPendingReminder(req.Event.SessionID, candidate); err != nil {
+				return Response{}, false, err
+			}
+			continue
+		}
+		pending.FailedReviewCount = count
 		if pending.TriggeredBy == "failed_reviews" {
-			count, ok := countOpenFailedReviews(
-				context.Background(), pending.TrackedRepoRoot, pending.Branch,
-				pending.Head, req.RoborevServerAddr,
-			)
-			if !ok {
-				return Response{SessionID: req.Event.SessionID, Skipped: true}, true, nil
-			}
-			if count == 0 {
-				if err := s.removePendingReminder(req.Event.SessionID, candidate); err != nil {
-					return Response{}, false, err
-				}
-				continue
-			}
-			pending.FailedReviewCount = count
+			reasonReq := req
+			reasonReq.Instruction = pending.Instruction
+			pending.Reason = deferredReminderReason(buildFailedReviewReason(reasonReq, SessionState{
+				FailedReviewCount:      count,
+				LastFailedReviewRepo:   pending.TrackedRepoRoot,
+				LastFailedReviewBranch: pending.Branch,
+			}), pending.WorktreeRoot)
 		}
 
 		s.mu.Lock()
@@ -593,7 +599,7 @@ func (s *StateStore) deliverPendingReminder(req Request) (Response, bool, error)
 	return Response{}, false, nil
 }
 
-func (s *StateStore) removePendingReminder(
+func (s *StateStore) discardResolvedPendingReminder(
 	sessionID string,
 	candidate pendingReminderCandidate,
 ) error {
@@ -605,6 +611,15 @@ func (s *StateStore) removePendingReminder(
 		return nil
 	}
 	delete(st.PendingReminders, candidate.key)
+	dedupeKey := current.LineageKey
+	if dedupeKey == "" {
+		dedupeKey = repoHeadKey(current.TrackedRepoRoot, current.Branch)
+	}
+	delete(st.FailedReviewTriggeredCounts, dedupeKey)
+	if st.LastFailedReviewRepo == current.TrackedRepoRoot &&
+		st.LastFailedReviewBranch == current.Branch {
+		st.FailedReviewCount = 0
+	}
 	s.sessions[sessionID] = st
 	return s.saveLocked()
 }

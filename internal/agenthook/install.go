@@ -6,13 +6,14 @@ import (
 	"io"
 	"strings"
 	"time"
+	"unicode"
 
 	kitagenthook "go.kenn.io/kit/agenthook"
 )
 
 const (
 	agentHookRunner = "agent-hook run"
-	agentHookMarker = "roborev"
+	agentHookMarker = "--source=roborev-agent-hook"
 )
 
 type InstallOptions struct {
@@ -108,9 +109,6 @@ func validatedKitInstallOptions(
 	opts InstallOptions,
 ) (kitagenthook.InstallOptions, error) {
 	if opts.Command != "" {
-		if !strings.Contains(opts.Command, agentHookMarker) {
-			return kitagenthook.InstallOptions{}, fmt.Errorf("hook command must contain ownership marker %q", agentHookMarker)
-		}
 		selected, err := commandAgent(opts.Command)
 		if err != nil {
 			return kitagenthook.InstallOptions{}, err
@@ -136,10 +134,14 @@ func validatedKitInstallOptions(
 }
 
 func kitInstallOptions(agent kitagenthook.Agent, opts InstallOptions) kitagenthook.InstallOptions {
+	command := strings.TrimSpace(opts.Command)
+	if command != "" {
+		command += " " + agentHookMarker
+	}
 	kitOpts := kitagenthook.InstallOptions{
 		ConfigPath: opts.ConfigPath,
 		Executable: opts.Executable,
-		Command:    opts.Command,
+		Command:    command,
 		Marker:     agentHookMarker,
 		Hooks: []kitagenthook.Hook{
 			{Event: kitagenthook.EventPreToolUse, Matcher: kitagenthook.ToolBash, Timeout: opts.Timeout},
@@ -148,22 +150,26 @@ func kitInstallOptions(agent kitagenthook.Agent, opts InstallOptions) kitagentho
 		},
 	}
 	if opts.Command == "" {
-		kitOpts.Arguments = []string{"agent-hook", "run", "--agent", string(agent)}
+		kitOpts.Arguments = []string{
+			"agent-hook", "run", "--agent", string(agent), agentHookMarker,
+		}
 	}
 	return kitOpts
 }
 
 func commandAgent(command string) (kitagenthook.Agent, error) {
-	_, suffix, ok := strings.Cut(command, agentHookRunner)
-	if !ok {
+	fields, err := splitHookCommand(command)
+	if err != nil {
+		return "", err
+	}
+	if len(fields) < 3 || fields[1] != "agent-hook" || fields[2] != "run" {
 		return "", fmt.Errorf("hook command must invoke %s", agentHookRunner)
 	}
-	fields := strings.Fields(suffix)
 	selected := ""
-	for i := 0; i < len(fields); i++ {
+	for i := 3; i < len(fields); i++ {
 		field := fields[i]
 		if field == "--" {
-			break
+			return "", fmt.Errorf("hook command must not contain an argument terminator")
 		}
 		value := ""
 		switch {
@@ -190,6 +196,69 @@ func commandAgent(command string) (kitagenthook.Agent, error) {
 		return "", fmt.Errorf("hook command must select an agent")
 	}
 	return kitagenthook.ParseAgent(selected)
+}
+
+func splitHookCommand(command string) ([]string, error) {
+	var fields []string
+	var field strings.Builder
+	var quote rune
+	escaped := false
+	started := false
+	flush := func() {
+		if !started {
+			return
+		}
+		fields = append(fields, field.String())
+		field.Reset()
+		started = false
+	}
+
+	for _, r := range strings.TrimSpace(command) {
+		if escaped {
+			field.WriteRune(r)
+			started = true
+			escaped = false
+			continue
+		}
+		if quote != 0 {
+			switch {
+			case r == quote:
+				quote = 0
+			case quote == '"' && r == '\\':
+				escaped = true
+			default:
+				field.WriteRune(r)
+			}
+			started = true
+			continue
+		}
+
+		switch {
+		case unicode.IsControl(r):
+			return nil, fmt.Errorf("hook command must be a single command line")
+		case unicode.IsSpace(r):
+			flush()
+		case r == '\'' || r == '"':
+			quote = r
+			started = true
+		case r == '\\':
+			escaped = true
+			started = true
+		case strings.ContainsRune(";&|<>()`#", r):
+			return nil, fmt.Errorf("hook command contains unsupported shell operator %q", r)
+		default:
+			field.WriteRune(r)
+			started = true
+		}
+	}
+	if quote != 0 {
+		return nil, fmt.Errorf("hook command contains an unterminated quote")
+	}
+	if escaped {
+		return nil, fmt.Errorf("hook command contains an incomplete escape")
+	}
+	flush()
+	return fields, nil
 }
 
 func profileError(agent kitagenthook.Agent, configuredPath string, err error) error {

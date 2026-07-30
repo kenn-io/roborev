@@ -19,7 +19,7 @@ func TestInstalledMissingFile(t *testing.T) {
 func TestInstalledDetectsRoborevHook(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "settings.json")
-	content := `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"roborev agent-hook run"}]}]}}`
+	content := `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"roborev agent-hook run --source=roborev-agent-hook"}]}]}}`
 	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
 
 	ok, err := Installed(kitagenthook.AgentClaude, path)

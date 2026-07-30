@@ -30,6 +30,7 @@ func TestAgentHookInstallSupportsExplicitQwenProfile(t *testing.T) {
 	body, err := os.ReadFile(path)
 	require.NoError(t, err)
 	assert.Contains(t, string(body), "agent-hook run --agent qwen")
+	assert.Contains(t, string(body), "--source=roborev-agent-hook")
 }
 
 func TestAgentHookInstallRejectsMultiProfileConfigOverride(t *testing.T) {

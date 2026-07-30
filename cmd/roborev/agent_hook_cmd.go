@@ -34,6 +34,7 @@ func agentHookCmd() *cobra.Command {
 func agentHookRunCmd() *cobra.Command {
 	opts := agenthook.DefaultOptions()
 	agent := ""
+	source := ""
 	cmd := &cobra.Command{
 		Use:                   "run",
 		Short:                 "Read an agent hook payload from stdin and emit hook JSON",
@@ -56,6 +57,8 @@ func agentHookRunCmd() *cobra.Command {
 	}
 	addAgentHookRunFlags(cmd, &opts)
 	cmd.Flags().StringVar(&agent, "agent", agent, "agent hook profile for this run")
+	cmd.Flags().StringVar(&source, "source", source, "agent hook registration owner")
+	_ = cmd.Flags().MarkHidden("source")
 	return cmd
 }
 

@@ -87,15 +87,19 @@ binary explicitly when needed:
 roborev agent-hook install --binary ~/.local/share/mise/shims/roborev
 ```
 
-`--command` supplies a complete command for one explicit profile. It must invoke
-`agent-hook run`, contain the roborev ownership marker, and select exactly one
-matching `--agent`. It cannot be combined with `--binary`.
+`--command` supplies one complete command for an explicit profile. It must
+directly invoke `agent-hook run` and select exactly one matching `--agent`;
+shell pipelines, chaining, command substitutions, and wrappers are rejected.
+Roborev adds its ownership marker before installation. `--command` cannot be
+combined with `--binary`.
 
 ### Upgrading existing hooks
 
-Run `roborev agent-hook install` once after upgrading. Kit replaces older
-roborev-owned Codex, Claude Code, and Factory Droid commands with
-profile-bearing commands while preserving unrelated hooks.
+Run `roborev agent-hook install` once after upgrading. The new registrations
+carry a feature-specific ownership marker so later installs replace only roborev
+agent hooks and preserve unrelated commands. Profile-less commands from older
+releases are not a supported runtime format; remove any that remain in an agent
+config after the one-time reinstall.
 
 The CLI flag migration is:
 
