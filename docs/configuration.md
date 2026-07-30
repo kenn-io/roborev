@@ -988,8 +988,32 @@ The endpoint should return JSON compatible with
 ```
 
 `has_token_data` and `has_cost` are required booleans. When `has_token_data` is
-true, token counts are required. When `has_cost` is true, `cost_usd` is
-required. A `404` response is treated as no usage data for that session.
+true, token counts are required. A `404` response is treated as no usage data
+for that session.
+
+When `has_cost` is true, the cost must arrive in one of two shapes. Either
+`cost_usd` as a float, or the integer envelope agentsview adopted in v0.39.0:
+
+```json
+{
+  "total_output_tokens": 4762,
+  "peak_context_tokens": 70092,
+  "has_token_data": true,
+  "cost": { "microdollars": 131767 },
+  "has_cost": true,
+  "cost_source": "computed"
+}
+```
+
+roborev accepts either and prefers `cost_usd` when both are present. When using
+the envelope, omit `cost_usd` rather than sending it as `null` — the published
+schema types it as a plain number. roborev itself tolerates an explicit `null`
+and treats it as absent, but that leniency is deliberate defensiveness, not part
+of the contract.
+
+A session priced at exactly zero must send an explicit `0` (or `0`
+microdollars); absent is not the same as free. Flagging `has_cost` with neither
+field is a schema error.
 
 ### Agentic Mode
 

@@ -2017,6 +2017,12 @@ type PanelSummary struct {
 	FirstStartedAt      *time.Time `json:"first_started_at,omitempty"`
 }
 
+// memberHasCost is the priced-row predicate for panel members: the unaliased
+// counterpart of hasCost in cost.go, and subject to the same rule that a
+// has_cost flag with no cost_usd carries no dollars and is not priced.
+const memberHasCost = "json_valid(token_usage) AND json_extract(token_usage, '$.has_cost') " +
+	"AND json_extract(token_usage, '$.cost_usd') IS NOT NULL"
+
 // GetPanelSummaries computes the member breakdown for each given panel run in
 // one GROUP BY aggregate (no per-row N+1). Runs with no member rows are
 // absent from the returned map.
@@ -2038,8 +2044,8 @@ func (db *DB) GetPanelSummaries(runUUIDs []string) (map[string]PanelSummary, err
 		       COALESCE(SUM(CASE WHEN status = 'failed' THEN 1 ELSE 0 END), 0),
 		       COALESCE(SUM(CASE WHEN status = 'canceled' THEN 1 ELSE 0 END), 0),
 		       COALESCE(SUM(CASE WHEN status = 'skipped' THEN 1 ELSE 0 END), 0),
-		       COALESCE(SUM(CASE WHEN json_valid(token_usage) AND json_extract(token_usage, '$.has_cost') THEN 1 ELSE 0 END), 0),
-		       COALESCE(SUM(CASE WHEN json_valid(token_usage) AND json_extract(token_usage, '$.has_cost') THEN json_extract(token_usage, '$.cost_usd') ELSE 0 END), 0),
+		       COALESCE(SUM(CASE WHEN `+memberHasCost+` THEN 1 ELSE 0 END), 0),
+		       COALESCE(SUM(CASE WHEN `+memberHasCost+` THEN json_extract(token_usage, '$.cost_usd') ELSE 0 END), 0),
 		       MIN(started_at)
 		FROM review_jobs
 		WHERE panel_role = 'member' AND panel_run_uuid IN (%s)

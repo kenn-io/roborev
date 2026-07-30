@@ -432,6 +432,33 @@ func TestReviewHydrationIncludesPanelFields(t *testing.T) {
 	assert.Equal("branch_final", bySHA.Job.PanelName)
 }
 
+// TestGetPanelSummariesExcludesMembersWithNoCostAmount mirrors the cost
+// aggregate guard for panel rollups: a member flagged has_cost with no cost_usd
+// contributes no dollars, so counting it as priced would report the panel's
+// member cost as complete while real spend went unrecorded.
+func TestGetPanelSummariesExcludesMembersWithNoCostAmount(t *testing.T) {
+	assert := assert.New(t)
+	db := openTestDB(t)
+	t.Cleanup(func() { db.Close() })
+	repo := createRepo(t, db, "/tmp/panel-no-amount")
+
+	_, members := enqueuePanelRun(t, db, repo.ID, "run-drift", 2)
+	setStatus(t, db, members[0].ID, JobStatusDone)
+	setStatus(t, db, members[1].ID, JobStatusDone)
+	seedCost(t, db, members[0].ID, `{"cost_usd":0.30,"has_cost":true}`)
+	seedCost(t, db, members[1].ID, `{"peak_context_tokens":100,"has_cost":true}`)
+
+	got, err := db.GetPanelSummaries([]string{"run-drift"})
+	require.NoError(t, err)
+
+	sum := got["run-drift"]
+	assert.Equal(2, sum.MembersTotal)
+	assert.Equal(1, sum.MembersWithCost, "a flag with no amount is not priced")
+	assert.InDelta(0.30, sum.MembersCostUSD, 0.000001)
+	assert.False(sum.MembersCostComplete,
+		"member cost is not complete while dollars are missing")
+}
+
 func TestGetPanelSummaries(t *testing.T) {
 	assert := assert.New(t)
 	db := openTestDB(t)

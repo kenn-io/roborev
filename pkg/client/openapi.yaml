@@ -299,6 +299,13 @@ components:
         - jobs_total
         - complete
       type: object
+    CostEnvelope:
+      additionalProperties: false
+      properties:
+        microdollars:
+          format: int64
+          type: integer
+      type: object
     DaemonStatus:
       additionalProperties: false
       properties:
@@ -2033,6 +2040,8 @@ components:
         cached_input_tokens:
           format: int64
           type: integer
+        cost:
+          $ref: "#/components/schemas/CostEnvelope"
         cost_usd:
           format: double
           type: number

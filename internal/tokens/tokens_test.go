@@ -2,6 +2,7 @@ package tokens
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"net/http"
 	"net/http/httptest"
@@ -69,6 +70,21 @@ func TestFormatSummary(t *testing.T) {
 			"cost only",
 			Usage{CostUSD: 0.05, HasCost: true},
 			"~$0.05",
+		},
+		{
+			"cache writes are reported alongside reads",
+			Usage{
+				InputTokens: 24594, CachedInputTokens: 1408,
+				CacheCreationTokens: 8192, OutputTokens: 290,
+			},
+			"24.6k in (1.4k cached, 8.2k written) · 290 out",
+		},
+		{
+			// Cache writes alone are real consumption, so the summary must
+			// not collapse to an empty string.
+			"cache writes alone still summarize",
+			Usage{CacheCreationTokens: 512},
+			"0 ctx (512 written) · 0 out",
 		},
 	}
 
@@ -161,6 +177,33 @@ func TestParseCodexUsageJSONL(t *testing.T) {
 	assert.Equal(t, "job_log_turn_completed", usage.UsageSource)
 	assert.Equal(t, "thread-123", usage.ThreadID)
 	assert.Positive(t, usage.EventOffset)
+}
+
+// Codex reports cache-creation tokens separately from cache reads. The field
+// exists as of codex-cli 0.146.0 and must not be folded into
+// cached_input_tokens, which counts cache *reads*.
+func TestParseCodexUsageJSONLCapturesCacheWriteTokens(t *testing.T) {
+	log := `{"type":"turn.completed","usage":{"input_tokens":24594,` +
+		`"cached_input_tokens":1408,"cache_write_input_tokens":8192,` +
+		`"output_tokens":290,"reasoning_output_tokens":158}}` + "\n"
+
+	usage, err := ParseCodexUsageJSONL(strings.NewReader(log))
+	require.NoError(t, err)
+	require.NotNil(t, usage)
+	assert.Equal(t, int64(24594), usage.InputTokens)
+	assert.Equal(t, int64(1408), usage.CachedInputTokens)
+	assert.Equal(t, int64(8192), usage.CacheCreationTokens)
+	assert.Equal(t, int64(290), usage.OutputTokens)
+}
+
+// A turn that only wrote cache still consumed tokens, so it is usage data.
+func TestParseCodexUsageJSONLCacheWriteAloneIsUsage(t *testing.T) {
+	usage, err := ParseCodexUsageJSONL(strings.NewReader(
+		`{"type":"turn.completed","usage":{"cache_write_input_tokens":512}}` + "\n",
+	))
+	require.NoError(t, err)
+	require.NotNil(t, usage)
+	assert.Equal(t, int64(512), usage.CacheCreationTokens)
 }
 
 func TestParseCodexUsageJSONLIgnoresMissingUsage(t *testing.T) {
@@ -517,6 +560,152 @@ func TestFetchForSessionWithConfigRequiresAgentsviewWhenRequested(t *testing.T) 
 	assert.Contains(t, err.Error(), "agentsview lookup")
 }
 
+// agentsview v0.39.0 moved the cost from a "cost_usd" float to a
+// "cost": {"microdollars": N} envelope. Both shapes must decode, and a null
+// cost_usd must never be read as a valid $0.
+func TestUsageFromSessionPayloadCostShapes(t *testing.T) {
+	tests := []struct {
+		name      string
+		body      string
+		wantErr   string
+		wantCost  bool
+		wantUSD   float64
+		wantNoUse bool
+	}{
+		{
+			name:     "legacy cost_usd float",
+			body:     `{"has_token_data":false,"cost_usd":0.42,"has_cost":true}`,
+			wantCost: true,
+			wantUSD:  0.42,
+		},
+		{
+			name:     "microdollar envelope",
+			body:     `{"has_token_data":false,"cost":{"microdollars":131767},"has_cost":true}`,
+			wantCost: true,
+			wantUSD:  0.131767,
+		},
+		{
+			name: "null cost_usd falls back to microdollars",
+			body: `{"has_token_data":false,"cost_usd":null,` +
+				`"cost":{"microdollars":598641},"has_cost":true}`,
+			wantCost: true,
+			wantUSD:  0.598641,
+		},
+		{
+			name: "both present prefers explicit cost_usd",
+			body: `{"has_token_data":false,"cost_usd":0.42,` +
+				`"cost":{"microdollars":999999},"has_cost":true}`,
+			wantCost: true,
+			wantUSD:  0.42,
+		},
+		{
+			name:     "zero microdollars is a valid free run",
+			body:     `{"has_token_data":false,"cost":{"microdollars":0},"has_cost":true}`,
+			wantCost: true,
+			wantUSD:  0,
+		},
+		{
+			name:     "zero cost_usd is a valid free run",
+			body:     `{"has_token_data":false,"cost_usd":0,"has_cost":true}`,
+			wantCost: true,
+			wantUSD:  0,
+		},
+		{
+			name:    "has_cost with neither field is a schema error",
+			body:    `{"has_token_data":false,"has_cost":true}`,
+			wantErr: "missing cost",
+		},
+		{
+			name: "null microdollars is not a valid zero",
+			body: `{"has_token_data":false,"cost":{"microdollars":null},` +
+				`"has_cost":true}`,
+			wantErr: "missing cost",
+		},
+		{
+			name:      "no cost and no tokens means no usage",
+			body:      `{"has_token_data":false,"has_cost":false}`,
+			wantNoUse: true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var payload SessionUsagePayload
+			require.NoError(t, json.Unmarshal([]byte(tt.body), &payload))
+
+			usage, err := UsageFromSessionPayload(payload)
+			if tt.wantErr != "" {
+				require.Error(t, err)
+				assert.Nil(t, usage)
+				assert.Contains(t, err.Error(), tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			if tt.wantNoUse {
+				assert.Nil(t, usage)
+				return
+			}
+			require.NotNil(t, usage)
+			assert.Equal(t, tt.wantCost, usage.HasCost)
+			assert.InDelta(t, tt.wantUSD, usage.CostUSD, 1e-9)
+		})
+	}
+}
+
+func TestFetchForSessionCLIParsesMicrodollarCost(t *testing.T) {
+	installFakeAgentsview(t, `#!/bin/sh
+if [ "$1" = "session" ] && [ "$2" = "usage" ]; then
+  echo '{"session_id":"s","agent":"codex","total_output_tokens":4762,"peak_context_tokens":70092,"has_token_data":true,"cost_usd":null,"cost":{"microdollars":598641},"has_cost":true,"cost_source":"computed"}'
+  exit 0
+fi
+echo "unexpected args: $@" >&2
+exit 99
+`)
+
+	usage, err := FetchForSession(context.Background(), "s")
+	require.NoError(t, err)
+	require.NotNil(t, usage)
+	assert.Equal(t, int64(4762), usage.OutputTokens)
+	assert.Equal(t, int64(70092), usage.PeakContextTokens)
+	assert.True(t, usage.HasCost)
+	assert.InDelta(t, 0.598641, usage.CostUSD, 1e-9)
+}
+
+// An unpriced session must not be recorded as a $0 review: dropping the cost
+// flag keeps it out of the priced numerator instead of deflating the total.
+func TestFetchForSessionCLIHasCostWithoutAmountDropsCost(t *testing.T) {
+	installFakeAgentsview(t, `#!/bin/sh
+if [ "$1" = "session" ] && [ "$2" = "usage" ]; then
+  echo '{"session_id":"s","agent":"codex","total_output_tokens":300,"peak_context_tokens":5000,"has_token_data":true,"has_cost":true}'
+  exit 0
+fi
+echo "unexpected args: $@" >&2
+exit 99
+`)
+
+	usage, err := FetchForSession(context.Background(), "s")
+	require.NoError(t, err)
+	require.NotNil(t, usage)
+	assert.Equal(t, int64(300), usage.OutputTokens)
+	assert.False(t, usage.HasCost)
+	assert.Zero(t, usage.CostUSD)
+}
+
+func TestFetchForSessionCLIHasCostWithoutAmountOrTokensMeansNoUsage(t *testing.T) {
+	installFakeAgentsview(t, `#!/bin/sh
+if [ "$1" = "session" ] && [ "$2" = "usage" ]; then
+  echo '{"session_id":"s","agent":"codex","has_token_data":false,"has_cost":true}'
+  exit 0
+fi
+echo "unexpected args: $@" >&2
+exit 99
+`)
+
+	usage, err := FetchForSession(context.Background(), "s")
+	require.NoError(t, err)
+	assert.Nil(t, usage)
+}
+
 func TestToJSON(t *testing.T) {
 	t.Run("nil", func(t *testing.T) {
 		assert.Empty(t, ToJSON(nil))
@@ -532,6 +721,14 @@ func TestToJSON(t *testing.T) {
 		require.NotNil(t, got)
 		assert.Equal(t, orig.PeakContextTokens, got.PeakContextTokens)
 		assert.Equal(t, orig.OutputTokens, got.OutputTokens)
+	})
+
+	// A run priced at exactly $0 must persist the amount, not just the flag.
+	// Dropping it would make a real free run byte-identical to the drifted
+	// rows that recorded has_cost with no dollars.
+	t.Run("explicit zero cost survives serialization", func(t *testing.T) {
+		s := ToJSON(&Usage{OutputTokens: 300, CostUSD: 0, HasCost: true})
+		assert.Contains(t, s, `"cost_usd":0`)
 	})
 
 	t.Run("round trip with cost", func(t *testing.T) {

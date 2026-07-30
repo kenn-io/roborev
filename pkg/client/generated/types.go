@@ -184,6 +184,10 @@ type CostAggregate struct {
 	TotalUsd     float64 `json:"total_usd"`
 }
 
+type CostEnvelope struct {
+	Microdollars *int64 `json:"microdollars,omitempty"`
+}
+
 type DaemonStatus struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema              *string           `json:"$schema,omitempty"`
@@ -1442,20 +1446,35 @@ func (r ReviewJob) Validate() error {
 }
 
 type SessionUsagePayload struct {
-	Agent             *string  `json:"agent,omitempty"`
-	CachedInputTokens *int64   `json:"cached_input_tokens,omitempty"`
-	CostUsd           *float64 `json:"cost_usd,omitempty"`
-	HasCost           *bool    `json:"has_cost,omitempty"`
-	HasTokenData      *bool    `json:"has_token_data,omitempty"`
-	InputTokens       *int64   `json:"input_tokens,omitempty"`
-	PeakContextTokens *int64   `json:"peak_context_tokens,omitempty"`
-	Project           *string  `json:"project,omitempty"`
-	SessionID         string   `json:"session_id" validate:"required"`
-	TotalOutputTokens *int64   `json:"total_output_tokens,omitempty"`
+	Agent             *string       `json:"agent,omitempty"`
+	CachedInputTokens *int64        `json:"cached_input_tokens,omitempty"`
+	Cost              *CostEnvelope `json:"cost,omitempty"`
+	CostUsd           *float64      `json:"cost_usd,omitempty"`
+	HasCost           *bool         `json:"has_cost,omitempty"`
+	HasTokenData      *bool         `json:"has_token_data,omitempty"`
+	InputTokens       *int64        `json:"input_tokens,omitempty"`
+	PeakContextTokens *int64        `json:"peak_context_tokens,omitempty"`
+	Project           *string       `json:"project,omitempty"`
+	SessionID         string        `json:"session_id" validate:"required"`
+	TotalOutputTokens *int64        `json:"total_output_tokens,omitempty"`
 }
 
 func (s SessionUsagePayload) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(s))
+	var errors runtime.ValidationErrors
+	if s.Cost != nil {
+		if v, ok := any(s.Cost).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Cost", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(s.SessionID, "required"); err != nil {
+		errors = errors.Append("SessionID", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type ShutdownOutputBody struct {

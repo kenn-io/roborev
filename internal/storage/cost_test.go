@@ -217,6 +217,68 @@ func TestGetCostAggregateIncludesPricedRowsWithoutMarker(t *testing.T) {
 	assert.True(c.Complete, "coverage is complete when the only row is priced")
 }
 
+// TestGetCostAggregateExcludesFlaggedRowsWithNoAmount guards the SQL side of
+// the agentsview v0.39.0 drift: a row flagged has_cost but carrying no cost_usd
+// has no dollars to contribute, so counting it as priced would report $0 spend
+// and full coverage while real money went unrecorded. An explicit $0 is a real
+// free run and must still count.
+func TestGetCostAggregateExcludesFlaggedRowsWithNoAmount(t *testing.T) {
+	assert := assert.New(t)
+	db := openTestDB(t)
+	t.Cleanup(func() { db.Close() })
+
+	repo := createRepo(t, db, "/tmp/cost-no-amount")
+	commit := createCommit(t, db, repo.ID, "no-amount-sha")
+
+	drifted := enqueueJob(t, db, repo.ID, commit.ID, "no-amount-sha")
+	setJobStatus(t, db, drifted.ID, JobStatusDone)
+	seedCost(t, db, drifted.ID, `{"peak_context_tokens":100,"has_cost":true}`)
+
+	opts := CostOptions{RepoPaths: []string{repo.RootPath}}
+	c, err := db.GetCostAggregate(opts)
+	require.NoError(t, err)
+	assert.Equal(1, c.JobsTotal, "the row still proves an agent ran")
+	assert.Equal(0, c.JobsWithCost, "a flag with no amount is not priced")
+	assert.InDelta(0.0, c.TotalUSD, 0.0001)
+	assert.False(c.Complete, "coverage is not complete while dollars are missing")
+
+	free := enqueueJob(t, db, repo.ID, commit.ID, "no-amount-sha")
+	setJobStatus(t, db, free.ID, JobStatusDone)
+	seedCost(t, db, free.ID, `{"peak_context_tokens":100,"cost_usd":0,"has_cost":true}`)
+
+	c, err = db.GetCostAggregate(opts)
+	require.NoError(t, err)
+	assert.Equal(2, c.JobsTotal)
+	assert.Equal(1, c.JobsWithCost, "an explicit $0 is a priced free run")
+	assert.InDelta(0.0, c.TotalUSD, 0.0001)
+}
+
+// TestGetCostAggregateIncludesCacheWriteOnlyRowsWithoutMarker extends the
+// agentRanByUsage fallback to cache-creation tokens. A marker-less row whose
+// only recorded consumption is cache writes still proves an agent ran, so
+// leaving it out of the denominator would overstate coverage.
+func TestGetCostAggregateIncludesCacheWriteOnlyRowsWithoutMarker(t *testing.T) {
+	assert := assert.New(t)
+	db := openTestDB(t)
+	t.Cleanup(func() { db.Close() })
+
+	repo := createRepo(t, db, "/tmp/cost-cache-write")
+	commit := createCommit(t, db, repo.ID, "cache-write-sha")
+	job := enqueueJob(t, db, repo.ID, commit.ID, "cache-write-sha")
+	setJobStatus(t, db, job.ID, JobStatusDone)
+
+	sessionID := "sess-cache-write"
+	setJobSession(t, db, job.ID, sessionID)
+	require.NoError(t, db.SaveJobTokenUsage(
+		job.ID, sessionID, `{"cache_creation_tokens":8192}`))
+
+	c, err := db.GetCostAggregate(CostOptions{RepoPaths: []string{repo.RootPath}})
+	require.NoError(t, err)
+	assert.Equal(1, c.JobsTotal, "cache writes prove an agent ran")
+	assert.Equal(0, c.JobsWithCost, "the row carries no cost")
+	assert.False(c.Complete, "an unpriced eligible row leaves coverage partial")
+}
+
 // TestGetCostAggregateRerunClearsStaleCost guards against attributing a prior
 // run's spend to a re-run job. Re-enqueuing must clear token_usage and the
 // agent_invoked marker, so a second run that reports no cost is counted as

@@ -1,6 +1,7 @@
 package backfill
 
 import (
+	"encoding/json"
 	"fmt"
 
 	"go.kenn.io/roborev/internal/storage"
@@ -102,6 +103,9 @@ func MergeTokenUsage(existingJSON string, fetched *tokens.Usage) *tokens.Usage {
 	if merged.CachedInputTokens == 0 {
 		merged.CachedInputTokens = existing.CachedInputTokens
 	}
+	if merged.CacheCreationTokens == 0 {
+		merged.CacheCreationTokens = existing.CacheCreationTokens
+	}
 	if merged.UsageSource == "" {
 		merged.UsageSource = existing.UsageSource
 	}
@@ -111,16 +115,47 @@ func MergeTokenUsage(existingJSON string, fetched *tokens.Usage) *tokens.Usage {
 	if merged.EventOffset == 0 {
 		merged.EventOffset = existing.EventOffset
 	}
-	if !merged.HasCost && existing.HasCost {
+	// Keep whichever side actually carries dollars rather than the freshest one:
+	// a re-fetch can come back unpriced (agentsview flagging has_cost with no
+	// amount), and letting that overwrite a real recorded figure would lose
+	// spend that was already measured.
+	//
+	// Gating on hasRecordedCost means a stored flag with no amount is never
+	// carried forward. Such a row is exactly what this repair removes, and
+	// resurrecting the flag would keep it in the priced numerator at $0. A
+	// freshly fetched $0 still survives, since that is a real free run rather
+	// than an amount that went missing.
+	if hasRecordedCost(existingJSON) && (!merged.HasCost || merged.CostUSD == 0) {
 		merged.CostUSD = existing.CostUSD
 		merged.HasCost = true
 	}
 	return &merged
 }
 
-func NeedsTokenCostBackfill(tokenUsage string) bool {
+// hasRecordedCost reports whether a row carries an actual dollar figure, not
+// just the has_cost flag. The two came apart when agentsview v0.39.0 moved cost
+// into a microdollar envelope roborev could not yet read: the flag was stored,
+// the amount was lost, and the row silently priced itself at $0.
+//
+// Presence of the cost_usd key is what separates the two, which is why Usage
+// serializes it unconditionally. A row recording an explicit 0 is a real free
+// run and is left alone; a row flagged priced with no amount at all is the
+// drifted shape and needs re-fetching.
+func hasRecordedCost(tokenUsage string) bool {
 	usage := tokens.ParseJSON(tokenUsage)
-	return usage == nil || !usage.HasCost
+	if usage == nil || !usage.HasCost {
+		return false
+	}
+	var raw map[string]json.RawMessage
+	if err := json.Unmarshal([]byte(tokenUsage), &raw); err != nil {
+		return false
+	}
+	amount, ok := raw["cost_usd"]
+	return ok && string(amount) != "null"
+}
+
+func NeedsTokenCostBackfill(tokenUsage string) bool {
+	return !hasRecordedCost(tokenUsage)
 }
 
 func NeedsTokenUsageBackfill(tokenUsage string) bool {
@@ -130,9 +165,10 @@ func NeedsTokenUsageBackfill(tokenUsage string) bool {
 	}
 	hasTokenCounts := usage.InputTokens != 0 ||
 		usage.CachedInputTokens != 0 ||
+		usage.CacheCreationTokens != 0 ||
 		usage.OutputTokens != 0 ||
 		usage.PeakContextTokens != 0
-	return !hasTokenCounts || !usage.HasCost
+	return !hasTokenCounts || !hasRecordedCost(tokenUsage)
 }
 
 func ApplyTokenUsage(
