@@ -496,7 +496,7 @@ func queuePendingReminder(st *SessionState, reminder PendingReminder) {
 }
 
 func deferredReminderReason(reason, worktree string) string {
-	quotedWorktree := strconv.Quote(filepath.Clean(worktree))
+	quotedWorktree := strconv.Quote(worktree)
 	quotedWorktree = strings.ReplaceAll(quotedWorktree, `\\`, `\`)
 	return fmt.Sprintf(
 		"%s The triggering worktree is %s; change to it before running roborev commands.",
