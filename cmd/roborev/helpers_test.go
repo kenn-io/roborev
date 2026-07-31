@@ -545,3 +545,53 @@ func newMockServer(t *testing.T, opts MockServerOpts) (*httptest.Server, *MockSe
 	t.Cleanup(ts.Close)
 	return ts, state
 }
+
+// TestShortRefRangeIsNotTruncatedIntoAFakeSHA pins the fix for the bug filed as
+// roborev#fxt8 ("review from a linked git worktree targets the main checkout's
+// HEAD"). The filed diagnosis was wrong twice over: it is not worktree-specific
+// (a plain checkout reproduces it identically), and the review content was always
+// correct. The whole symptom was this display function.
+//
+// A branch review stores GitRef as a RANGE ("<merge-base>..HEAD", see
+// review.go tryBranchReview / gitRef = rangeRef). The old implementation returned
+// ref[:17] for any range longer than 17 chars, which slices away the ".." and
+// leaves the first 17 characters of the merge-base SHA — a string that reads as a
+// plain commit SHA. Rendered by `roborev list`, `roborev status` and the "Enqueued
+// job N for X" line, it made every branch review look like a review OF the base
+// commit. Four agents plus the repo owner concluded reviews were reviewing the
+// wrong code; go365 review stages marked their findings-addressed criteria
+// UNVERIFIABLE on the strength of it.
+//
+// The invariant: a range must never render as something indistinguishable from a
+// single SHA.
+func TestShortRefRangeIsNotTruncatedIntoAFakeSHA(t *testing.T) {
+	// Exact shape from the live reproduction: full 40-char merge-base + "..HEAD".
+	const mergeBase = "e3cd4fd9fca529bfa11c8f4d3b2a1908e7c6d5b4"
+	got := shortRef(mergeBase + "..HEAD")
+
+	if !strings.Contains(got, "..") {
+		t.Errorf("range ref rendered without %q, so it is indistinguishable from a single SHA: got %q", "..", got)
+	}
+	if got == mergeBase[:17] {
+		t.Errorf("range ref truncated to a fake SHA %q — this is the fxt8 symptom", got)
+	}
+	// The base side must still be recognizable, and the tip must survive.
+	if !strings.HasPrefix(got, mergeBase[:7]) {
+		t.Errorf("base side of range not recognizable: got %q, want prefix %q", got, mergeBase[:7])
+	}
+	if !strings.HasSuffix(got, "HEAD") {
+		t.Errorf("tip side of range lost: got %q, want suffix %q", got, "HEAD")
+	}
+}
+
+// TestShortRefSingleSHAUnchanged guards the other half of the contract: the fix
+// must not disturb single-SHA rendering, which is the common case.
+func TestShortRefSingleSHAUnchanged(t *testing.T) {
+	got := shortRef("8ef9037c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f60")
+	if want := "8ef9037"; got != want {
+		t.Errorf("shortRef(single SHA) = %q, want %q", got, want)
+	}
+	if strings.Contains(got, "..") {
+		t.Errorf("single SHA must not render as a range: got %q", got)
+	}
+}
