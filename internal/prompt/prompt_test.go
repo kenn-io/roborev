@@ -1743,8 +1743,6 @@ func TestLoadGuidelines(t *testing.T) {
 			wantNotContains: "REVIEW.md rule.",
 		},
 		{
-			// No remote, so no default branch resolves: the working tree is
-			// the only source either file can come from.
 			// No remote and no main/master branch, so no default branch
 			// resolves. REVIEW.md is left uncommitted so only the working-tree
 			// read can produce it.
@@ -1796,6 +1794,18 @@ func TestLoadGuidelines(t *testing.T) {
 				}
 			},
 			wantNotContains: "Filesystem guideline",
+		},
+		{
+			// A config too broken to read suppresses REVIEW.md as well: the
+			// operator's intent is unreadable either way.
+			name:          "ParseErrorBlocksReviewMD",
+			defaultBranch: "main",
+			setupGit: func(t *testing.T, r *testRepo) {
+				t.Helper()
+				commitReviewMD("main", "REVIEW.md rule.",
+					"review_guidelines = INVALID[[[")(t, r)
+			},
+			wantNotContains: "REVIEW.md rule.",
 		},
 		{
 			name:          "GitErrorFallsBackToFilesystem",

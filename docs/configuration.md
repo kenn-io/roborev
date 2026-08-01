@@ -271,6 +271,10 @@ from the repo's default branch, so a pull request cannot change the instructions
 its own review runs under. Repos with no resolvable default branch, and local
 `roborev run` prompts, read the working-tree copy.
 
+An unparseable `.roborev.toml` on the default branch suppresses `REVIEW.md` too
+— roborev cannot tell what the repo intended, so it reviews with no guidelines
+rather than a partial set, and logs the parse error.
+
 Guidelines are included in the review prompt for local and daemon review jobs,
 so they shape what the reviewer flags and what it ignores. Common uses:
 
