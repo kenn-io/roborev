@@ -890,12 +890,7 @@ func ResolveReuseReviewSessionLookback(repoPath string, globalCfg *Config) int {
 func LoadRepoConfigFromRef(repoPath, ref string) (*RepoConfig, error) {
 	data, err := git.ReadFile(repoPath, ref, ".roborev.toml")
 	if err != nil {
-		errMsg := err.Error()
-		// git show emits these specific patterns when the path is missing:
-		//   "path '...' does not exist in '...'"
-		//   "path '...' exists on disk, but not in '...'"
-		if strings.Contains(errMsg, "does not exist in") ||
-			strings.Contains(errMsg, "exists on disk, but not in") {
+		if git.IsMissingPathError(err) {
 			return nil, nil
 		}
 		return nil, fmt.Errorf("read .roborev.toml at %s: %w", ref, err)

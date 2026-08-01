@@ -265,10 +265,11 @@ Do not flag sanitization for data that never crosses a trust boundary.
 ```
 
 `review_guidelines` always wins when it is set, and `REVIEW.md` merges with
-global guidelines exactly like repo guidelines do. Like `.roborev.toml`,
-`REVIEW.md` is read from the repo's default branch, so a pull request cannot
-change the instructions its own review runs under; local `roborev run` prompts
-read the working-tree copy.
+global guidelines exactly like repo guidelines do — including
+`review_guidelines_supersede_global`. Like `.roborev.toml`, `REVIEW.md` is read
+from the repo's default branch, so a pull request cannot change the instructions
+its own review runs under. Repos with no resolvable default branch, and local
+`roborev run` prompts, read the working-tree copy.
 
 Guidelines are included in the review prompt for local and daemon review jobs,
 so they shape what the reviewer flags and what it ignores. Common uses:

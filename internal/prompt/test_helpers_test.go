@@ -348,23 +348,6 @@ type guidelinesRepoContext struct {
 // and remote setup (the caller must set up origin/fetch/symbolic-ref
 // if needed). This avoids running git fetch on a repo where setupGit
 // may have corrupted objects.
-// commitReviewMD returns a setupGuidelinesRepo setupGit hook that commits a
-// repo-root REVIEW.md on the default branch, optionally alongside a
-// .roborev.toml, and wires origin/HEAD so default-branch reads resolve.
-func commitReviewMD(defaultBranch, reviewMD, repoTOML string) func(t *testing.T, r *testRepo) {
-	return func(t *testing.T, r *testRepo) {
-		t.Helper()
-		files := map[string]string{"REVIEW.md": reviewMD + "\n"}
-		if repoTOML != "" {
-			files[".roborev.toml"] = repoTOML
-		}
-		r.fastCommitFiles(files, "add review policy")
-		r.git("remote", "add", "origin", r.dir)
-		r.git("fetch", "origin")
-		r.git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/"+defaultBranch)
-	}
-}
-
 func setupGuidelinesRepo(t *testing.T, defaultBranch, baseGuidelines, branchGuidelines string, setupGit func(t *testing.T, r *testRepo)) guidelinesRepoContext {
 	t.Helper()
 	r := newTestRepoWithBranch(t, defaultBranch)
@@ -405,5 +388,22 @@ func setupGuidelinesRepo(t *testing.T, defaultBranch, baseGuidelines, branchGuid
 		Dir:        r.dir,
 		BaseSHA:    baseSHA,
 		FeatureSHA: featureSHA,
+	}
+}
+
+// commitReviewMD returns a setupGuidelinesRepo setupGit hook that commits a
+// repo-root REVIEW.md on the default branch, optionally alongside a
+// .roborev.toml, and wires origin/HEAD so default-branch reads resolve.
+func commitReviewMD(defaultBranch, reviewMD, repoTOML string) func(t *testing.T, r *testRepo) {
+	return func(t *testing.T, r *testRepo) {
+		t.Helper()
+		files := map[string]string{"REVIEW.md": reviewMD + "\n"}
+		if repoTOML != "" {
+			files[".roborev.toml"] = repoTOML
+		}
+		r.fastCommitFiles(files, "add review policy")
+		r.git("remote", "add", "origin", r.dir)
+		r.git("fetch", "origin")
+		r.git("symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/"+defaultBranch)
 	}
 }

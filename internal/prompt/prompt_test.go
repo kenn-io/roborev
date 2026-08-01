@@ -1717,16 +1717,45 @@ func TestLoadGuidelines(t *testing.T) {
 			wantNotContains: "Injected",
 		},
 		{
-			// Nothing committed on the default branch: an uncommitted
-			// REVIEW.md must not reach a daemon review prompt.
+			// A default branch resolves, so an uncommitted REVIEW.md must
+			// not reach a daemon review prompt; the filesystem config the
+			// existing fallback reads still does.
 			name:          "WorkingTreeReviewMDIgnored",
 			defaultBranch: "main",
 			setupFilesystem: func(t *testing.T, dir string) {
 				t.Helper()
 				require.NoError(t, os.WriteFile(filepath.Join(dir, "REVIEW.md"),
 					[]byte("Injected: uncommitted policy.\n"), 0o644))
+				require.NoError(t, os.WriteFile(filepath.Join(dir, ".roborev.toml"),
+					[]byte("review_guidelines = \"Filesystem rule.\"\n"), 0o644))
 			},
+			wantContains:    "Filesystem rule.",
 			wantNotContains: "Injected",
+		},
+		{
+			// The filesystem fallback owns explicit review_guidelines even
+			// when the default branch commits a REVIEW.md.
+			name:          "FilesystemGuidelinesWinOverReviewMD",
+			defaultBranch: "main",
+			setupGit:      commitReviewMD("main", "REVIEW.md rule.", ""),
+			setupFilesystem: func(t *testing.T, dir string) {
+				t.Helper()
+				require.NoError(t, os.WriteFile(filepath.Join(dir, ".roborev.toml"),
+					[]byte("review_guidelines = \"Filesystem rule.\"\n"), 0o644))
+			},
+			wantContains:    "Filesystem rule.",
+			wantNotContains: "REVIEW.md rule.",
+		},
+		{
+			// No remote, so no default branch resolves: the working tree is
+			// the only source either file can come from.
+			name:          "ReviewMDFromWorkingTreeWithoutDefaultBranch",
+			defaultBranch: "main",
+			setupGit: func(t *testing.T, r *testRepo) {
+				t.Helper()
+				r.fastCommitFile("REVIEW.md", "Local-only rule.\n", "add review policy")
+			},
+			wantContains: "Local-only rule.",
 		},
 		{
 			name:          "FallsBackToFilesystem",
@@ -1906,6 +1935,21 @@ func TestBuildSinglePrompt_RepoGuidelinesSupersedeGlobalWhenConfigured(t *testin
 
 	section := extractGuidelinesSection(prompt)
 	assertContains(t, section, "Repo rule.", "expected repo guidelines in prompt")
+	assertNotContains(t, section, "Global rule.", "global guidelines should be superseded")
+}
+
+func TestBuildSinglePrompt_ReviewMDInheritsSupersedeGlobal(t *testing.T) {
+	ctx := setupGuidelinesRepo(t, "main", "", "",
+		commitReviewMD("main", "REVIEW.md rule.",
+			"review_guidelines_supersede_global = true\n"))
+	cfg := &config.Config{ReviewGuidelines: "Global rule."}
+
+	b := NewBuilderWithConfig(nil, cfg)
+	prompt, err := b.ForRepo(ctx.Dir, 0).Build(ctx.BaseSHA, 0, "test", "review", "")
+	require.NoError(t, err, "Build: %v", err)
+
+	section := extractGuidelinesSection(prompt)
+	assertContains(t, section, "REVIEW.md rule.", "expected REVIEW.md guidelines in prompt")
 	assertNotContains(t, section, "Global rule.", "global guidelines should be superseded")
 }
 

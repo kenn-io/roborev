@@ -1184,6 +1184,21 @@ func ReadFile(repoPath, sha, filePath string) ([]byte, error) {
 	return stdout.Bytes(), nil
 }
 
+// IsMissingPathError reports whether a ReadFile error means the path is
+// absent at that ref rather than a git failure. git show emits these two
+// messages for a missing path:
+//
+//	"path '...' does not exist in '...'"
+//	"path '...' exists on disk, but not in '...'"
+func IsMissingPathError(err error) bool {
+	if err == nil {
+		return false
+	}
+	msg := err.Error()
+	return strings.Contains(msg, "does not exist in") ||
+		strings.Contains(msg, "exists on disk, but not in")
+}
+
 // GetParentCommits returns the N commits before the given commit (not including it)
 // Returns commits in reverse chronological order (most recent parent first)
 func GetParentCommits(repoPath, sha string, count int) ([]string, error) {
