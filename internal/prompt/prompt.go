@@ -1462,6 +1462,42 @@ type loadedGuidelines struct {
 	supersedeGlobal bool
 }
 
+// reviewMDFile is the repo-root file Claude Code's Code Review
+// auto-discovers for review-only instructions. roborev reads it as a
+// backup for .roborev.toml's review_guidelines so one committed file can
+// drive both reviewers; review_guidelines still wins when it is set.
+const reviewMDFile = "REVIEW.md"
+
+// withReviewMD backfills guidelines from REVIEW.md when the repo config
+// sets none. read is deferred so repos that configure review_guidelines
+// never pay for the lookup.
+func withReviewMD(g loadedGuidelines, read func() string) loadedGuidelines {
+	if strings.TrimSpace(g.text) == "" {
+		g.text = read()
+	}
+	return g
+}
+
+// reviewMDFromRef reads REVIEW.md at a git ref. Absence and read errors
+// are both "no guidelines" — the file is optional.
+func reviewMDFromRef(repoPath, ref string) string {
+	data, err := git.ReadFile(repoPath, ref, reviewMDFile)
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
+// reviewMDFromDisk reads REVIEW.md from the working tree, for the same
+// local/dirty paths that read .roborev.toml off disk.
+func reviewMDFromDisk(repoPath string) string {
+	data, err := os.ReadFile(filepath.Join(repoPath, reviewMDFile))
+	if err != nil {
+		return ""
+	}
+	return string(data)
+}
+
 // LoadGuidelines loads repo review guidelines from the repo's default
 // branch, falling back to filesystem config when the default branch
 // has no .roborev.toml.
@@ -1489,6 +1525,7 @@ func LoadGuidelinesLocal(repoPath string, globalCfg *config.Config) string {
 			supersedeGlobal: fsCfg.ReviewGuidelinesSupersedeGlobal,
 		}
 	}
+	repo = withReviewMD(repo, func() string { return reviewMDFromDisk(repoPath) })
 	return mergeGuidelines(globalGuidelines(globalCfg), repo.text, repo.supersedeGlobal)
 }
 
@@ -1530,15 +1567,23 @@ func loadRepoGuidelines(ctx context.Context, repoPath string) loadedGuidelines {
 			log.Printf("prompt: failed to read .roborev.toml from %s: %v"+
 				" (will try filesystem)", defaultBranch, err)
 		} else if cfg != nil {
-			return loadedGuidelines{
+			return withReviewMD(loadedGuidelines{
 				text:            cfg.ReviewGuidelines,
 				supersedeGlobal: cfg.ReviewGuidelinesSupersedeGlobal,
-			}
+			}, func() string { return reviewMDFromRef(repoPath, defaultBranch) })
+		} else if md := reviewMDFromRef(repoPath, defaultBranch); strings.TrimSpace(md) != "" {
+			// No .roborev.toml on the default branch, but REVIEW.md is
+			// there. Prefer it over filesystem config: it comes from the
+			// same injection-safe ref the config read would have used.
+			return loadedGuidelines{text: md}
 		}
 	}
 
 	// Fall back to filesystem config when default branch has no config
-	// (e.g., no remote, or .roborev.toml not yet committed).
+	// (e.g., no remote, or .roborev.toml not yet committed). REVIEW.md is
+	// deliberately not read from the working tree here: an untrusted branch
+	// can add one, and the default-branch read above is the only source this
+	// path can trust. Working-tree REVIEW.md belongs to LoadGuidelinesLocal.
 	if fsCfg, err := config.LoadRepoConfig(repoPath); err == nil && fsCfg != nil {
 		return loadedGuidelines{
 			text:            fsCfg.ReviewGuidelines,

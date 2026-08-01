@@ -283,7 +283,7 @@ Configured via `[ci]` section: `enabled`, `github_repo`, `poll_interval`, `agent
 
 **System prompts**: Vary by review type (standard, security, design) and agent. Include bug/security/testing/regression/quality criteria.
 
-**Context**: Includes recent reviews in repo, project guidelines from `.roborev.toml`, previous review attempts for same commit, developer responses.
+**Context**: Includes recent reviews in repo, project guidelines from `.roborev.toml` (falling back to a repo-root `REVIEW.md` when `review_guidelines` is unset), previous review attempts for same commit, developer responses.
 
 **Max prompt size**: 250KB (configurable). Falls back to file listing if diff exceeds limit.
 

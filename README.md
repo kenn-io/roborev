@@ -268,6 +268,11 @@ You can also set `review_guidelines` in `~/.roborev/config.toml`. Global
 guidelines apply to every repo and are appended before repo guidelines by
 default.
 
+If `review_guidelines` is unset, roborev falls back to a `REVIEW.md` file at the
+repo root — the same file Claude Code's Code Review auto-discovers, so one
+committed file can drive both reviewers. Like `.roborev.toml`, it is read from
+the default branch.
+
 `snapshot_dir` must be repo-relative. `roborev init` ensures it is ignored in `.gitignore`; snapshot creation also adds a local `.git/info/exclude` fallback for existing checkouts whose ignore setup is stale.
 
 See [configuration guide](https://roborev.io/configuration/) for all options.

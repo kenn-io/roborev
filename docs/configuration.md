@@ -251,6 +251,25 @@ guidelines are appended after them. Set
 `review_guidelines_supersede_global = true` in `.roborev.toml` when a repo needs
 to replace the global rules entirely.
 
+#### REVIEW.md
+
+When `.roborev.toml` sets no `review_guidelines`, roborev falls back to a
+`REVIEW.md` file at the repo root — the same file Claude Code's Code Review
+auto-discovers, so one committed file can drive both reviewers:
+
+```markdown
+# Review instructions
+
+Performance is critical - flag any O(n^2) or worse algorithms.
+Do not flag sanitization for data that never crosses a trust boundary.
+```
+
+`review_guidelines` always wins when it is set, and `REVIEW.md` merges with
+global guidelines exactly like repo guidelines do. Like `.roborev.toml`,
+`REVIEW.md` is read from the repo's default branch, so a pull request cannot
+change the instructions its own review runs under; local `roborev run` prompts
+read the working-tree copy.
+
 Guidelines are included in the review prompt for local and daemon review jobs,
 so they shape what the reviewer flags and what it ignores. Common uses:
 

@@ -133,7 +133,7 @@ CLI (roborev) -> HTTP API -> Daemon -> Worker Pool -> Agent adapters
 - Repo config: `.roborev.toml` at repo root
 - Config precedence is generally: CLI flags -> repo config -> global config -> defaults
 - Reasoning defaults: review = `thorough`, fix = `standard`, refine = `standard`
-- Repo config can include `review_guidelines`; prompt building pulls these into reviews
+- Repo config can include `review_guidelines`; prompt building pulls these into reviews, falling back to a repo-root `REVIEW.md` when it is unset
 - `roborev init` installs or upgrades git hooks; daemon startup warns about stale hooks
 - `roborev refine` is agentic and may run with unsafe capabilities depending on flags/config; use only on trusted code
 

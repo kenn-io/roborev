@@ -319,6 +319,17 @@ func TestBuildPromptWithContext(t *testing.T) {
 		assert.Contains(t, result, "Always use tabs for indentation")
 	})
 
+	t.Run("falls back to REVIEW.md when config sets no guidelines", func(t *testing.T) {
+		repoPath := createRepoWithConfig(t, `agent = "claude-code"`)
+		require.NoError(t, os.WriteFile(filepath.Join(repoPath, "REVIEW.md"),
+			[]byte("Flag missing e2e tests.\n"), 0o644))
+
+		result := buildPromptWithContext(repoPath, "test prompt")
+
+		assert.Contains(t, result, "## Project Guidelines")
+		assert.Contains(t, result, "Flag missing e2e tests.")
+	})
+
 	t.Run("appends global and project guidelines", func(t *testing.T) {
 		dataDir := t.TempDir()
 		t.Setenv("ROBOREV_DATA_DIR", dataDir)
