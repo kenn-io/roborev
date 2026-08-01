@@ -1571,6 +1571,9 @@ func loadRepoGuidelines(ctx context.Context, repoPath string) loadedGuidelines {
 		cfg, err := config.LoadRepoConfigFromRef(repoPath, defaultBranch)
 		if err != nil {
 			if config.IsConfigParseError(err) {
+				// A broken config suppresses every fallback, REVIEW.md
+				// included: the operator's intent is unreadable, so guessing
+				// at guidelines is worse than reviewing without them.
 				log.Printf("prompt: invalid .roborev.toml on %s: %v",
 					defaultBranch, err)
 				return loadedGuidelines{}

@@ -1717,19 +1717,15 @@ func TestLoadGuidelines(t *testing.T) {
 			wantNotContains: "Injected",
 		},
 		{
-			// A default branch resolves, so an uncommitted REVIEW.md must
-			// not reach a daemon review prompt; the filesystem config the
-			// existing fallback reads still does.
+			// A default branch resolves, so the REVIEW.md read runs against
+			// the ref and an uncommitted one never reaches the prompt.
 			name:          "WorkingTreeReviewMDIgnored",
 			defaultBranch: "main",
 			setupFilesystem: func(t *testing.T, dir string) {
 				t.Helper()
 				require.NoError(t, os.WriteFile(filepath.Join(dir, "REVIEW.md"),
 					[]byte("Injected: uncommitted policy.\n"), 0o644))
-				require.NoError(t, os.WriteFile(filepath.Join(dir, ".roborev.toml"),
-					[]byte("review_guidelines = \"Filesystem rule.\"\n"), 0o644))
 			},
-			wantContains:    "Filesystem rule.",
 			wantNotContains: "Injected",
 		},
 		{
@@ -1749,11 +1745,19 @@ func TestLoadGuidelines(t *testing.T) {
 		{
 			// No remote, so no default branch resolves: the working tree is
 			// the only source either file can come from.
+			// No remote and no main/master branch, so no default branch
+			// resolves. REVIEW.md is left uncommitted so only the working-tree
+			// read can produce it.
 			name:          "ReviewMDFromWorkingTreeWithoutDefaultBranch",
-			defaultBranch: "main",
+			defaultBranch: "develop",
 			setupGit: func(t *testing.T, r *testRepo) {
 				t.Helper()
-				r.fastCommitFile("REVIEW.md", "Local-only rule.\n", "add review policy")
+				r.fastCommitFile("README.md", "init\n", "initial")
+			},
+			setupFilesystem: func(t *testing.T, dir string) {
+				t.Helper()
+				require.NoError(t, os.WriteFile(filepath.Join(dir, "REVIEW.md"),
+					[]byte("Local-only rule.\n"), 0o644))
 			},
 			wantContains: "Local-only rule.",
 		},
