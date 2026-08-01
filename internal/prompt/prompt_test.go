@@ -1800,11 +1800,8 @@ func TestLoadGuidelines(t *testing.T) {
 			// operator's intent is unreadable either way.
 			name:          "ParseErrorBlocksReviewMD",
 			defaultBranch: "main",
-			setupGit: func(t *testing.T, r *testRepo) {
-				t.Helper()
-				commitReviewMD("main", "REVIEW.md rule.",
-					"review_guidelines = INVALID[[[")(t, r)
-			},
+			setupGit: commitReviewMD("main", "REVIEW.md rule.",
+				"review_guidelines = INVALID[[["),
 			wantNotContains: "REVIEW.md rule.",
 		},
 		{
