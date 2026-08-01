@@ -273,9 +273,10 @@ reviews, local `roborev run` prompts, and repos with no resolvable default
 branch read the working-tree copy instead.
 
 An unparseable `.roborev.toml` on the default branch suppresses `REVIEW.md` too
-— roborev cannot tell what the repo intended, so those reviews run with no
-guidelines rather than a partial set, and log the parse error. Reviews that read
-the working-tree copy are unaffected and still fall back to `REVIEW.md`.
+— roborev cannot tell what the repo intended, so those reviews drop the repo
+layer entirely rather than run on part of it, and log the parse error. Global
+guidelines still apply. Reviews that read the working-tree copy are unaffected
+and still fall back to `REVIEW.md`.
 
 Guidelines are included in the review prompt for local and daemon review jobs,
 so they shape what the reviewer flags and what it ignores. Common uses:
