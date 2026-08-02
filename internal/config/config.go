@@ -564,6 +564,14 @@ type RepoConfig struct {
 
 	// ACP (Agent Client Protocol) configurations for this repo
 	ACP ACPAgentConfigs `toml:"acp,omitempty"`
+
+	reviewGuidelinesSet bool
+}
+
+// HasReviewGuidelines reports whether review_guidelines was present in the
+// decoded repo config, including when its value was explicitly empty.
+func (c *RepoConfig) HasReviewGuidelines() bool {
+	return c != nil && c.reviewGuidelinesSet
 }
 
 const (
@@ -776,9 +784,11 @@ func LoadRepoConfig(repoPath string) (*RepoConfig, error) {
 	}
 
 	var cfg RepoConfig
-	if _, err := toml.DecodeFile(path, &cfg); err != nil {
+	md, err := toml.DecodeFile(path, &cfg)
+	if err != nil {
 		return nil, err
 	}
+	cfg.reviewGuidelinesSet = md.IsDefined("review_guidelines")
 	if err := validateConfig(&cfg, cfg.ACP); err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}
@@ -897,9 +907,11 @@ func LoadRepoConfigFromRef(repoPath, ref string) (*RepoConfig, error) {
 	}
 
 	var cfg RepoConfig
-	if _, err := toml.Decode(string(data), &cfg); err != nil {
+	md, err := toml.Decode(string(data), &cfg)
+	if err != nil {
 		return nil, &ConfigParseError{Ref: ref, Err: err}
 	}
+	cfg.reviewGuidelinesSet = md.IsDefined("review_guidelines")
 	if err := validateConfig(&cfg, cfg.ACP); err != nil {
 		return nil, &ConfigParseError{Ref: ref, Err: err}
 	}
@@ -1074,9 +1086,11 @@ func loadRepoConfigFile(path string) (*RepoConfig, error) {
 		return nil, nil
 	}
 	var cfg RepoConfig
-	if _, err := toml.DecodeFile(path, &cfg); err != nil {
+	md, err := toml.DecodeFile(path, &cfg)
+	if err != nil {
 		return nil, err
 	}
+	cfg.reviewGuidelinesSet = md.IsDefined("review_guidelines")
 	if err := validateConfig(&cfg, cfg.ACP); err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}

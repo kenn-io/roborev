@@ -1459,6 +1459,7 @@ func orderedPreviousReviewViews(contexts []HistoricalReviewContext) []previousRe
 
 type loadedGuidelines struct {
 	text            string
+	configured      bool
 	supersedeGlobal bool
 }
 
@@ -1469,10 +1470,10 @@ type loadedGuidelines struct {
 const reviewMDFile = "REVIEW.md"
 
 // withReviewMD backfills guidelines from REVIEW.md when the repo config
-// sets none. read is deferred so repos that configure review_guidelines
+// omits review_guidelines. read is deferred so repos that define the key
 // never pay for the lookup.
 func withReviewMD(g loadedGuidelines, read func() string) loadedGuidelines {
-	if strings.TrimSpace(g.text) == "" {
+	if !g.configured {
 		g.text = read()
 	}
 	return g
@@ -1526,6 +1527,7 @@ func LoadGuidelinesLocal(repoPath string, globalCfg *config.Config) string {
 	if fsCfg, err := config.LoadRepoConfig(repoPath); err == nil && fsCfg != nil {
 		repo = loadedGuidelines{
 			text:            fsCfg.ReviewGuidelines,
+			configured:      fsCfg.HasReviewGuidelines(),
 			supersedeGlobal: fsCfg.ReviewGuidelinesSupersedeGlobal,
 		}
 	}
@@ -1583,6 +1585,7 @@ func loadRepoGuidelines(ctx context.Context, repoPath string) loadedGuidelines {
 		} else if cfg != nil {
 			return withReviewMD(loadedGuidelines{
 				text:            cfg.ReviewGuidelines,
+				configured:      cfg.HasReviewGuidelines(),
 				supersedeGlobal: cfg.ReviewGuidelinesSupersedeGlobal,
 			}, readReviewMD)
 		}
@@ -1596,6 +1599,7 @@ func loadRepoGuidelines(ctx context.Context, repoPath string) loadedGuidelines {
 	if fsCfg, err := config.LoadRepoConfig(repoPath); err == nil && fsCfg != nil {
 		fs = loadedGuidelines{
 			text:            fsCfg.ReviewGuidelines,
+			configured:      fsCfg.HasReviewGuidelines(),
 			supersedeGlobal: fsCfg.ReviewGuidelinesSupersedeGlobal,
 		}
 	}
