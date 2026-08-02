@@ -3954,6 +3954,23 @@ func TestResolveReuseReviewSessionLookbackInheritsGlobalAfterUnrelatedRepoSave(t
 	assert.Equal(t, 25, got)
 }
 
+func TestSaveRepoConfigKeepsReviewGuidelinesAbsentAfterUnrelatedEdit(t *testing.T) {
+	dir := t.TempDir()
+	err := SaveRepoConfigTo(filepath.Join(dir, ".roborev.toml"), &RepoConfig{
+		DisplayName: "backend",
+	})
+	require.NoError(t, err)
+
+	rawRepo, err := LoadRawRepo(dir)
+	require.NoError(t, err)
+	assert.False(t, IsKeyInTOMLFile(rawRepo, "review_guidelines"))
+
+	cfg, err := LoadRepoConfig(dir)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.False(t, cfg.HasReviewGuidelines())
+}
+
 func TestResolvedThrottleInterval(t *testing.T) {
 	tests := []struct {
 		name  string

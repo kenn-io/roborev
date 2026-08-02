@@ -1667,6 +1667,11 @@ func filterUnintendedZeroRepoConfigKeys(
 		!explicit["reuse_review_session_lookback"] {
 		data = removeTopLevelTOMLAssignment(data, "reuse_review_session_lookback")
 	}
+	if cfg.ReviewGuidelines == "" &&
+		!rawKeyPresent(raw, "review_guidelines") &&
+		!explicit["review_guidelines"] {
+		data = removeTopLevelTOMLAssignment(data, "review_guidelines")
+	}
 	return data
 }
 
