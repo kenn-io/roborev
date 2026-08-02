@@ -641,7 +641,8 @@ func TestHookRunnerBranchFilter(t *testing.T) {
 		Agent:    "test",
 		Verdict:  "F",
 	})
-	waitForFile(t, markerFile, 5*time.Second)
+	hr.WaitUntilIdle()
+	assert.FileExists(t, markerFile)
 }
 
 func TestHookRunnerWebhookPostsEventJSON(t *testing.T) {
