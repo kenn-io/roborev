@@ -764,6 +764,16 @@ func TestShortRef(t *testing.T) {
 			ref:  "abc1234567890..def",
 			want: "abc1234..def",
 		},
+		{
+			name: "range with branch endpoint",
+			ref:  "abc1234567890..feature/long-name",
+			want: "abc1234..feature/long-name",
+		},
+		{
+			name: "range with revision suffix",
+			ref:  "abc1234567890^..feature/long-name",
+			want: "abc1234^..feature/long-name",
+		},
 	}
 
 	for _, tt := range tests {

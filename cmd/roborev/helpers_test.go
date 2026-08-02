@@ -20,6 +20,7 @@ import (
 	"github.com/go-git/go-git/v5/plumbing"
 	"github.com/go-git/go-git/v5/plumbing/object"
 	"github.com/spf13/cobra"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/daemon"
@@ -546,52 +547,23 @@ func newMockServer(t *testing.T, opts MockServerOpts) (*httptest.Server, *MockSe
 	return ts, state
 }
 
-// TestShortRefRangeIsNotTruncatedIntoAFakeSHA pins the fix for the bug filed as
-// roborev#fxt8 ("review from a linked git worktree targets the main checkout's
-// HEAD"). The filed diagnosis was wrong twice over: it is not worktree-specific
-// (a plain checkout reproduces it identically), and the review content was always
-// correct. The whole symptom was this display function.
-//
-// A branch review stores GitRef as a RANGE ("<merge-base>..HEAD", see
-// review.go tryBranchReview / gitRef = rangeRef). The old implementation returned
-// ref[:17] for any range longer than 17 chars, which slices away the ".." and
-// leaves the first 17 characters of the merge-base SHA — a string that reads as a
-// plain commit SHA. Rendered by `roborev list`, `roborev status` and the "Enqueued
-// job N for X" line, it made every branch review look like a review OF the base
-// commit. Four agents plus the repo owner concluded reviews were reviewing the
-// wrong code; go365 review stages marked their findings-addressed criteria
-// UNVERIFIABLE on the strength of it.
-//
-// The invariant: a range must never render as something indistinguishable from a
-// single SHA.
-func TestShortRefRangeIsNotTruncatedIntoAFakeSHA(t *testing.T) {
-	// Exact shape from the live reproduction: full 40-char merge-base + "..HEAD".
-	const mergeBase = "e3cd4fd9fca529bfa11c8f4d3b2a1908e7c6d5b4"
-	got := shortRef(mergeBase + "..HEAD")
+func TestShortRef(t *testing.T) {
+	const fullSHA = "8ef9037c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f60"
+	tests := []struct {
+		name string
+		ref  string
+		want string
+	}{
+		{"single SHA", fullSHA, "8ef9037"},
+		{"SHA range", fullSHA + "..abcdef1234567890", "8ef9037..abcdef1"},
+		{"symbolic endpoint", fullSHA + "..HEAD", "8ef9037..HEAD"},
+		{"branch endpoint", fullSHA + "..feature/long-name", "8ef9037..feature/long-name"},
+		{"revision suffix", fullSHA + "^..feature/long-name", "8ef9037^..feature/long-name"},
+	}
 
-	if !strings.Contains(got, "..") {
-		t.Errorf("range ref rendered without %q, so it is indistinguishable from a single SHA: got %q", "..", got)
-	}
-	if got == mergeBase[:17] {
-		t.Errorf("range ref truncated to a fake SHA %q — this is the fxt8 symptom", got)
-	}
-	// The base side must still be recognizable, and the tip must survive.
-	if !strings.HasPrefix(got, mergeBase[:7]) {
-		t.Errorf("base side of range not recognizable: got %q, want prefix %q", got, mergeBase[:7])
-	}
-	if !strings.HasSuffix(got, "HEAD") {
-		t.Errorf("tip side of range lost: got %q, want suffix %q", got, "HEAD")
-	}
-}
-
-// TestShortRefSingleSHAUnchanged guards the other half of the contract: the fix
-// must not disturb single-SHA rendering, which is the common case.
-func TestShortRefSingleSHAUnchanged(t *testing.T) {
-	got := shortRef("8ef9037c1d2e3f4a5b6c7d8e9f0a1b2c3d4e5f60")
-	if want := "8ef9037"; got != want {
-		t.Errorf("shortRef(single SHA) = %q, want %q", got, want)
-	}
-	if strings.Contains(got, "..") {
-		t.Errorf("single SHA must not render as a range: got %q", got)
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, shortRef(tt.ref))
+		})
 	}
 }

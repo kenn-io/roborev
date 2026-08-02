@@ -2943,6 +2943,7 @@ func TestShortRef(t *testing.T) {
 		{"task label passthrough", "run", "run"},
 		{"dirty ref passthrough", "dirty", "dirty"},
 		{"branch name passthrough", "feature/very-long-name", "feature/very-long-name"},
+		{"range with revision suffixes", "abc1234def5678^2..99887766aabbcc~3", "abc1234^2..9988776~3"},
 		{"analysis label passthrough", "duplication", "duplication"},
 	}
 	for _, tt := range tests {

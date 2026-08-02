@@ -5,11 +5,11 @@ import (
 	"errors"
 	"fmt"
 	"os"
-	"strings"
 
 	"github.com/spf13/cobra"
 	gitrepo "go.kenn.io/kit/git/repo"
 
+	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/githook"
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -88,18 +88,7 @@ func quietExit(cmd *cobra.Command, err error) error {
 }
 
 func shortRef(ref string) string {
-	// For ranges like "abc123..def456", short-SHA each side and keep the ".."
-	// separator. Truncating the whole string to a fixed width instead (the old
-	// behaviour) slices the ".." off a long range and leaves a bare prefix of the
-	// merge-base SHA — which reads as a plain commit SHA. Branch reviews store
-	// GitRef as "<merge-base>..HEAD" (review.go, gitRef = rangeRef), so every
-	// branch review rendered as though it had reviewed the base commit. That was
-	// the entirety of roborev#fxt8, misfiled as a worktree HEAD-resolution bug.
-	// For single SHAs, truncate to 7 chars.
-	if before, after, ok := strings.Cut(ref, ".."); ok {
-		return gitrepo.ShortSHA(before) + ".." + gitrepo.ShortSHA(after)
-	}
-	return gitrepo.ShortSHA(ref)
+	return git.ShortRef(ref)
 }
 
 // shortJobRef returns a display-friendly ref for a job, handling special job types.

@@ -2547,12 +2547,17 @@ func ShortRef(ref string) string {
 	return shortenIfHex(ref)
 }
 
-// shortenIfHex truncates s to 7 characters only if it looks like a
-// hex SHA (all hex digits and longer than 7 chars). Non-hex strings
-// like branch names or task labels are returned unchanged.
+// shortenIfHex truncates the object name in s to 7 characters only if it
+// looks like a hex SHA. Revision suffixes are preserved. Non-hex strings like
+// branch names or task labels are returned unchanged.
 func shortenIfHex(s string) string {
-	if len(s) > 7 && isHex(s) {
-		return s[:7]
+	objectName := s
+	suffix := ""
+	if i := strings.IndexAny(s, "^~"); i >= 0 {
+		objectName, suffix = s[:i], s[i:]
+	}
+	if len(objectName) > 7 && isHex(objectName) {
+		return objectName[:7] + suffix
 	}
 	return s
 }
