@@ -669,6 +669,7 @@ func TestReviewGuidelinesValidInGlobalAndRepoConfig(t *testing.T) {
 	assert := assert.New(t)
 	assert.NoError(SetConfigValue(&Config{}, "review_guidelines", "Global rule"))
 	assert.NoError(SetConfigValue(&RepoConfig{}, "review_guidelines", "Repo rule"))
+	assert.NoError(SetConfigValue(&RepoConfig{}, "review_md_fallback", "false"))
 	assert.NoError(SetConfigValue(&RepoConfig{}, "review_guidelines_supersede_global", "true"))
 }
 

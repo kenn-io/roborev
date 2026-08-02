@@ -3968,7 +3968,21 @@ func TestSaveRepoConfigKeepsReviewGuidelinesAbsentAfterUnrelatedEdit(t *testing.
 	cfg, err := LoadRepoConfig(dir)
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
-	assert.False(t, cfg.HasReviewGuidelines())
+	assert.True(t, cfg.UsesReviewMDFallback())
+}
+
+func TestSaveRepoConfigPreservesReviewMDFallbackOptOut(t *testing.T) {
+	dir := t.TempDir()
+	disabled := false
+	err := SaveRepoConfigTo(filepath.Join(dir, ".roborev.toml"), &RepoConfig{
+		ReviewMDFallback: &disabled,
+	})
+	require.NoError(t, err)
+
+	cfg, err := LoadRepoConfig(dir)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	assert.False(t, cfg.UsesReviewMDFallback())
 }
 
 func TestResolvedThrottleInterval(t *testing.T) {

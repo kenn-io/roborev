@@ -434,6 +434,7 @@ type RepoConfig struct {
 	BackupModel                     string   `toml:"backup_model" comment:"Backup model for this repo if the primary model fails."`
 	ReviewContextCount              int      `toml:"review_context_count" comment:"Number of related reviews to include as context for this repo."`
 	ReviewGuidelines                string   `toml:"review_guidelines" comment:"Extra review instructions added to prompts for this repo."`
+	ReviewMDFallback                *bool    `toml:"review_md_fallback" comment:"Use REVIEW.md when review_guidelines is empty or unset."`
 	ReviewGuidelinesSupersedeGlobal bool     `toml:"review_guidelines_supersede_global" comment:"Use repo review_guidelines instead of appending global review_guidelines."`
 	JobTimeoutMinutes               int      `toml:"job_timeout_minutes" comment:"Override the review job timeout in minutes for this repo."`
 	HookTimeoutSeconds              int      `toml:"hook_timeout_seconds" comment:"Override the post-commit hook request timeout (in seconds) for this repo. Useful for large repos where the enqueue handler's git calls are slow. 0 or negative inherits the global / platform default."`
@@ -564,14 +565,11 @@ type RepoConfig struct {
 
 	// ACP (Agent Client Protocol) configurations for this repo
 	ACP ACPAgentConfigs `toml:"acp,omitempty"`
-
-	reviewGuidelinesSet bool
 }
 
-// HasReviewGuidelines reports whether review_guidelines was present in the
-// decoded repo config, including when its value was explicitly empty.
-func (c *RepoConfig) HasReviewGuidelines() bool {
-	return c != nil && c.reviewGuidelinesSet
+// UsesReviewMDFallback reports whether REVIEW.md may supply repo guidelines.
+func (c *RepoConfig) UsesReviewMDFallback() bool {
+	return c == nil || c.ReviewMDFallback == nil || *c.ReviewMDFallback
 }
 
 const (
@@ -784,11 +782,9 @@ func LoadRepoConfig(repoPath string) (*RepoConfig, error) {
 	}
 
 	var cfg RepoConfig
-	md, err := toml.DecodeFile(path, &cfg)
-	if err != nil {
+	if _, err := toml.DecodeFile(path, &cfg); err != nil {
 		return nil, err
 	}
-	cfg.reviewGuidelinesSet = md.IsDefined("review_guidelines")
 	if err := validateConfig(&cfg, cfg.ACP); err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}
@@ -907,11 +903,9 @@ func LoadRepoConfigFromRef(repoPath, ref string) (*RepoConfig, error) {
 	}
 
 	var cfg RepoConfig
-	md, err := toml.Decode(string(data), &cfg)
-	if err != nil {
+	if _, err := toml.Decode(string(data), &cfg); err != nil {
 		return nil, &ConfigParseError{Ref: ref, Err: err}
 	}
-	cfg.reviewGuidelinesSet = md.IsDefined("review_guidelines")
 	if err := validateConfig(&cfg, cfg.ACP); err != nil {
 		return nil, &ConfigParseError{Ref: ref, Err: err}
 	}
@@ -1086,11 +1080,9 @@ func loadRepoConfigFile(path string) (*RepoConfig, error) {
 		return nil, nil
 	}
 	var cfg RepoConfig
-	md, err := toml.DecodeFile(path, &cfg)
-	if err != nil {
+	if _, err := toml.DecodeFile(path, &cfg); err != nil {
 		return nil, err
 	}
-	cfg.reviewGuidelinesSet = md.IsDefined("review_guidelines")
 	if err := validateConfig(&cfg, cfg.ACP); err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}

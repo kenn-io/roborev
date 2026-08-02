@@ -1527,7 +1527,7 @@ func LoadGuidelinesLocal(repoPath string, globalCfg *config.Config) string {
 	if fsCfg, err := config.LoadRepoConfig(repoPath); err == nil && fsCfg != nil {
 		repo = loadedGuidelines{
 			text:            fsCfg.ReviewGuidelines,
-			configured:      fsCfg.HasReviewGuidelines(),
+			configured:      strings.TrimSpace(fsCfg.ReviewGuidelines) != "" || !fsCfg.UsesReviewMDFallback(),
 			supersedeGlobal: fsCfg.ReviewGuidelinesSupersedeGlobal,
 		}
 	}
@@ -1585,7 +1585,7 @@ func loadRepoGuidelines(ctx context.Context, repoPath string) loadedGuidelines {
 		} else if cfg != nil {
 			return withReviewMD(loadedGuidelines{
 				text:            cfg.ReviewGuidelines,
-				configured:      cfg.HasReviewGuidelines(),
+				configured:      strings.TrimSpace(cfg.ReviewGuidelines) != "" || !cfg.UsesReviewMDFallback(),
 				supersedeGlobal: cfg.ReviewGuidelinesSupersedeGlobal,
 			}, readReviewMD)
 		}
@@ -1599,7 +1599,7 @@ func loadRepoGuidelines(ctx context.Context, repoPath string) loadedGuidelines {
 	if fsCfg, err := config.LoadRepoConfig(repoPath); err == nil && fsCfg != nil {
 		fs = loadedGuidelines{
 			text:            fsCfg.ReviewGuidelines,
-			configured:      fsCfg.HasReviewGuidelines(),
+			configured:      strings.TrimSpace(fsCfg.ReviewGuidelines) != "" || !fsCfg.UsesReviewMDFallback(),
 			supersedeGlobal: fsCfg.ReviewGuidelinesSupersedeGlobal,
 		}
 	}

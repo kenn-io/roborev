@@ -1704,10 +1704,17 @@ func TestLoadGuidelines(t *testing.T) {
 			wantNotContains: "REVIEW.md rule.",
 		},
 		{
-			name:          "ConfiguredEmptyGuidelinesSuppressReviewMD",
+			name:          "LegacyEmptyGuidelinesUseReviewMD",
 			defaultBranch: "main",
 			setupGit: commitReviewMD("main", "REVIEW.md rule.",
 				"review_guidelines = \"\"\n"),
+			wantContains: "REVIEW.md rule.",
+		},
+		{
+			name:          "DisabledReviewMDFallbackSuppressesReviewMD",
+			defaultBranch: "main",
+			setupGit: commitReviewMD("main", "REVIEW.md rule.",
+				"review_md_fallback = false\n"),
 			wantNotContains: "REVIEW.md rule.",
 		},
 		{
@@ -1867,13 +1874,16 @@ func TestLoadGuidelines(t *testing.T) {
 	}
 }
 
-func TestLoadGuidelinesLocalEmptyGuidelinesSuppressReviewMD(t *testing.T) {
+func TestLoadGuidelinesLocalReviewMDFallback(t *testing.T) {
 	repoPath := t.TempDir()
 	require.NoError(t, os.WriteFile(filepath.Join(repoPath, ".roborev.toml"),
 		[]byte("review_guidelines = \"\"\n"), 0o644))
 	require.NoError(t, os.WriteFile(filepath.Join(repoPath, "REVIEW.md"),
 		[]byte("REVIEW.md rule.\n"), 0o644))
+	assert.Equal(t, "REVIEW.md rule.", LoadGuidelinesLocal(repoPath, nil))
 
+	require.NoError(t, os.WriteFile(filepath.Join(repoPath, ".roborev.toml"),
+		[]byte("review_md_fallback = false\n"), 0o644))
 	assert.Empty(t, LoadGuidelinesLocal(repoPath, nil))
 }
 
