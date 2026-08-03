@@ -14,8 +14,8 @@ func TestBuildOutputForStopBlocks(t *testing.T) {
 	})
 
 	assert.Equal(t, "block", output["decision"])
-	assert.Equal(t, "Invoke $roborev-fix.", output["reason"])
-	assert.NotContains(t, output["reason"], "continue the task")
+	assert.Contains(t, output["reason"], "Invoke $roborev-fix.")
+	assert.Contains(t, output["reason"], "continue the task")
 }
 
 func TestBuildOutputForPostToolUseAddsContext(t *testing.T) {
