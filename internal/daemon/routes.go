@@ -122,6 +122,13 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 			o.Tags = []string{"repos"}
 		})
 
+	huma.Post(api, "/api/agent-hook/snooze", s.humaSetAgentHookSnooze,
+		func(o *huma.Operation) {
+			o.OperationID = "set-agent-hook-snooze"
+			o.Summary = "Set or clear an agent-hook workspace snooze"
+			o.Tags = []string{"agent-hook"}
+		})
+
 	huma.Get(api, "/api/branches", s.humaListBranches,
 		func(o *huma.Operation) {
 			o.OperationID = "list-branches"

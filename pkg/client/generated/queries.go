@@ -223,6 +223,9 @@ type ListReposQuery struct {
 type ResolveRepoQuery struct {
 	// Path Absolute path or path inside a repository
 	Path *string `json:"path,omitempty"`
+
+	// Branch Current branch for agent-hook snooze lookup
+	Branch *string `json:"branch,omitempty"`
 }
 
 type GetReviewQuery struct {

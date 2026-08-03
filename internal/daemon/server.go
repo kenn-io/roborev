@@ -1483,6 +1483,65 @@ func (s *Server) humaResolveRepo(
 		Identity: repo.Identity,
 		Name:     repo.Name,
 	}
+	snooze, err := s.db.ActiveAgentHookSnooze(
+		repo.RootPath, path, input.Branch, time.Now(),
+	)
+	if err != nil {
+		return nil, huma.Error500InternalServerError(
+			fmt.Sprintf("lookup agent hook snooze: %v", err),
+		)
+	}
+	if snooze != nil {
+		resp.Body.Repo.AgentHookSnoozedUntil = &snooze.SnoozedUntil
+	}
+	return resp, nil
+}
+
+func (s *Server) humaSetAgentHookSnooze(
+	_ context.Context, input *AgentHookSnoozeInput,
+) (*AgentHookSnoozeOutput, error) {
+	req := input.Body
+	if strings.TrimSpace(req.RepoPath) == "" ||
+		strings.TrimSpace(req.WorktreePath) == "" {
+		return nil, huma.Error400BadRequest(
+			"repo_path and worktree_path are required",
+		)
+	}
+
+	resp := &AgentHookSnoozeOutput{}
+	if !req.Enabled {
+		err := s.db.ClearAgentHookSnooze(
+			req.RepoPath, req.WorktreePath, req.Branch,
+		)
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, huma.Error404NotFound("repository is not tracked")
+		}
+		if err != nil {
+			return nil, huma.Error500InternalServerError(
+				fmt.Sprintf("clear agent hook snooze: %v", err),
+			)
+		}
+		return resp, nil
+	}
+
+	if !req.SnoozedUntil.After(time.Now()) {
+		return nil, huma.Error400BadRequest(
+			"snoozed_until must be in the future",
+		)
+	}
+	snooze, err := s.db.SetAgentHookSnooze(
+		req.RepoPath, req.WorktreePath, req.Branch, req.SnoozedUntil,
+	)
+	if errors.Is(err, sql.ErrNoRows) {
+		return nil, huma.Error404NotFound("repository is not tracked")
+	}
+	if err != nil {
+		return nil, huma.Error500InternalServerError(
+			fmt.Sprintf("set agent hook snooze: %v", err),
+		)
+	}
+	resp.Body.Snoozed = true
+	resp.Body.SnoozedUntil = &snooze.SnoozedUntil
 	return resp, nil
 }
 

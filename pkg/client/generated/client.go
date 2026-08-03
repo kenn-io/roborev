@@ -35,6 +35,10 @@ type ClientInterface interface {
 	ListActivity(ctx context.Context, options *ListActivityRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListActivityResponse, error)
 	ListActivityWithResponse(ctx context.Context, options *ListActivityRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListActivityResp, error)
 
+	// SetAgentHookSnooze Set or clear an agent-hook workspace snooze
+	SetAgentHookSnooze(ctx context.Context, options *SetAgentHookSnoozeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SetAgentHookSnoozeResponse, error)
+	SetAgentHookSnoozeWithResponse(ctx context.Context, options *SetAgentHookSnoozeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SetAgentHookSnoozeResp, error)
+
 	// ListBranches List branches with job counts
 	ListBranches(ctx context.Context, options *ListBranchesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListBranchesResponse, error)
 	ListBranchesWithResponse(ctx context.Context, options *ListBranchesRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ListBranchesResp, error)
@@ -238,6 +242,70 @@ func (c *Client) ListActivity(ctx context.Context, options *ListActivityRequestO
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/activity")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// SetAgentHookSnooze Set or clear an agent-hook workspace snooze
+func (c *Client) SetAgentHookSnooze(ctx context.Context, options *SetAgentHookSnoozeRequestOptions, reqEditors ...runtime.RequestEditorFn) (*SetAgentHookSnoozeResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/agent-hook/snooze",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*SetAgentHookSnoozeResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(SetAgentHookSnoozeErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "SetAgentHookSnoozeErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(SetAgentHookSnoozeResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "SetAgentHookSnoozeResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/agent-hook/snooze")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}
@@ -1910,7 +1978,8 @@ func (c *Client) ResolveRepo(ctx context.Context, options *ResolveRepoRequestOpt
 	var err error
 
 	queryEncoding := map[string]runtime.QueryEncoding{
-		"path": {Style: "form", Explode: &[]bool{false}[0]},
+		"branch": {Style: "form", Explode: &[]bool{false}[0]},
+		"path":   {Style: "form", Explode: &[]bool{false}[0]},
 	}
 	reqParams := runtime.RequestOptionsParameters{
 		RequestURL:    c.apiClient.GetBaseURL() + "/api/repos/resolve",

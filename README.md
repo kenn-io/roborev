@@ -197,6 +197,8 @@ leaving Markdown tables unchanged. Use `make check-renovate-config` to validate
 | `roborev analyze <type>` | Run code analysis with optional auto-fix |
 | `roborev agent-hook install` | Install optional Codex/Claude agent harness hooks |
 | `roborev agent-hook install --agent droid` | Install optional Factory Droid harness hooks |
+| `roborev snooze` | Silence Agent Hook reminders in the current worktree and branch |
+| `roborev snooze off` | Resume Agent Hook reminders in the current worktree and branch |
 | `roborev compact` | Verify and consolidate open review findings |
 | `roborev show [sha]` | Display review for commit |
 | `roborev export reviews` | Export completed reviews as JSON |

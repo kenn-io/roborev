@@ -787,6 +787,7 @@ func TestHumaOpenAPISpec(t *testing.T) {
 		"/api/comments":          "get",
 		"/api/repos":             "get",
 		"/api/repos/resolve":     "get",
+		"/api/agent-hook/snooze": "post",
 		"/api/branches":          "get",
 		"/api/status":            "get",
 		"/api/summary":           "get",

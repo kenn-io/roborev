@@ -1,6 +1,8 @@
 package daemon
 
 import (
+	"time"
+
 	"go.kenn.io/roborev/internal/backfill"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/tokens"
@@ -321,14 +323,16 @@ type ListReposOutput struct {
 
 // ResolveRepoInput holds query parameters for resolving a tracked repo.
 type ResolveRepoInput struct {
-	Path string `query:"path" doc:"Absolute path or path inside a repository"`
+	Path   string `query:"path" doc:"Absolute path or path inside a repository"`
+	Branch string `query:"branch" doc:"Current branch for agent-hook snooze lookup"`
 }
 
 // ResolvedRepo is the tracked repo metadata returned by GET /api/repos/resolve.
 type ResolvedRepo struct {
-	RootPath string `json:"root_path"`
-	Identity string `json:"identity"`
-	Name     string `json:"name"`
+	RootPath              string     `json:"root_path"`
+	Identity              string     `json:"identity"`
+	Name                  string     `json:"name"`
+	AgentHookSnoozedUntil *time.Time `json:"agent_hook_snoozed_until,omitempty"`
 }
 
 // ResolveRepoOutput is the response for GET /api/repos/resolve.
@@ -336,6 +340,27 @@ type ResolveRepoOutput struct {
 	Body struct {
 		Tracked bool          `json:"tracked"`
 		Repo    *ResolvedRepo `json:"repo,omitempty"`
+	}
+}
+
+// AgentHookSnoozeRequest updates the local agent-hook snooze for one checkout
+// and branch. Enabled=false clears the record.
+type AgentHookSnoozeRequest struct {
+	RepoPath     string    `json:"repo_path"`
+	WorktreePath string    `json:"worktree_path"`
+	Branch       string    `json:"branch,omitempty"`
+	Enabled      bool      `json:"enabled"`
+	SnoozedUntil time.Time `json:"snoozed_until,omitempty"`
+}
+
+type AgentHookSnoozeInput struct {
+	Body AgentHookSnoozeRequest
+}
+
+type AgentHookSnoozeOutput struct {
+	Body struct {
+		Snoozed      bool       `json:"snoozed"`
+		SnoozedUntil *time.Time `json:"snoozed_until,omitempty"`
 	}
 }
 

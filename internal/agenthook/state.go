@@ -32,14 +32,16 @@ type hookScope struct {
 	Branch              string
 	WorktreeKey         string
 	CandidateLineageKey string
+	SnoozedUntil        time.Time
 	Tracked             bool
 }
 
 type trackedRepoResolution struct {
-	Tracked  bool
-	RootPath string
-	Identity string
-	Name     string
+	Tracked      bool
+	RootPath     string
+	Identity     string
+	Name         string
+	SnoozedUntil time.Time
 }
 
 type gitScope struct {
@@ -146,6 +148,9 @@ func (s *StateStore) recordStop(req Request) (Response, error) {
 			Skipped:               true,
 		}, nil
 	}
+	if scope.SnoozedUntil.After(time.Now()) {
+		return s.recordSnoozed(req, scope)
+	}
 	failedReviewCount, haveFailedReviewCount := countOpenFailedReviews(
 		context.Background(), scope.TrackedRepoRoot, scope.Branch, scope.Head, req.RoborevServerAddr,
 	)
@@ -241,6 +246,9 @@ func (s *StateStore) recordPreToolUse(req Request) (Response, error) {
 			Skipped:               true,
 		}, nil
 	}
+	if scope.SnoozedUntil.After(time.Now()) {
+		return s.recordSnoozed(req, scope)
+	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
@@ -292,6 +300,9 @@ func (s *StateStore) recordPostToolUse(req Request) (Response, error) {
 			FailedReviewThreshold: req.FailedReviewThreshold,
 			Skipped:               true,
 		}, nil
+	}
+	if scope.SnoozedUntil.After(time.Now()) {
+		return s.recordSnoozed(req, scope)
 	}
 
 	failedReviewCount, haveFailedReviewCount := 0, false
@@ -428,6 +439,43 @@ func (s *StateStore) recordPostToolUse(req Request) (Response, error) {
 		resp.Reason = buildCommitReason(req, triggeringCommitCount, scope.WorktreeRoot)
 	}
 	return resp, nil
+}
+
+// recordSnoozed advances the checkout baselines without accumulating reminder
+// thresholds. Reviews keep running in the main daemon; only this agent-facing
+// hook response is suppressed. Advancing HEAD prevents commits made during the
+// snooze from producing an immediate catch-up reminder after it expires.
+func (s *StateStore) recordSnoozed(req Request, scope hookScope) (Response, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	st := s.sessions[req.Event.SessionID]
+	lineageKey := ensureLineageKey(&st, scope)
+	keys := uniqueStrings(append(
+		[]string{scope.WorktreeKey},
+		commitSequenceKeys(scope, lineageKey)...,
+	))
+	recordSequenceHeads(&st, scope, keys)
+	resetPromptCountersForKeys(&st, keys)
+	delete(st.FailedReviewTriggeredCounts, lineageKey)
+	st.FailedReviewCount = 0
+	st.LastCWD = req.Event.CWD
+	st.LastSeenAt = time.Now().UTC()
+	s.sessions[req.Event.SessionID] = st
+	if err := s.saveLocked(); err != nil {
+		return Response{}, err
+	}
+
+	return Response{
+		SessionID:             req.Event.SessionID,
+		Count:                 st.Count,
+		Threshold:             req.Threshold,
+		CommitCount:           st.CommitCount,
+		CommitThreshold:       req.CommitThreshold,
+		FailedReviewThreshold: req.FailedReviewThreshold,
+		ReminderPromptCount:   st.ReminderPromptCount,
+		Skipped:               true,
+	}, nil
 }
 
 func hasActionableFailedReviews(count int, ok bool) bool {
@@ -767,12 +815,16 @@ func resolveHookScope(ctx context.Context, cwd, configuredAddr string) (hookScop
 	}
 	trackedRoot := mainRepoRoot(gitInfo)
 	tracked := true
-	if resolved, known := resolveTrackedRepo(ctx, gitInfo.WorktreeRoot, configuredAddr); known {
+	var snoozedUntil time.Time
+	if resolved, known := resolveTrackedRepo(
+		ctx, gitInfo.WorktreeRoot, gitInfo.Branch, configuredAddr,
+	); known {
 		if !resolved.Tracked {
 			tracked = false
 		} else if strings.TrimSpace(resolved.RootPath) != "" {
 			trackedRoot = strings.TrimSpace(resolved.RootPath)
 		}
+		snoozedUntil = resolved.SnoozedUntil
 	}
 	return hookScope{
 		WorktreeRoot:    gitInfo.WorktreeRoot,
@@ -783,11 +835,14 @@ func resolveHookScope(ctx context.Context, cwd, configuredAddr string) (hookScop
 		CandidateLineageKey: lineageSequenceKey(
 			trackedRoot, gitInfo.Branch, gitInfo.WorktreeRoot, gitInfo.Head,
 		),
-		Tracked: tracked,
+		SnoozedUntil: snoozedUntil,
+		Tracked:      tracked,
 	}, true
 }
 
-func resolveTrackedRepo(ctx context.Context, path, configuredAddr string) (trackedRepoResolution, bool) {
+func resolveTrackedRepo(
+	ctx context.Context, path, branch, configuredAddr string,
+) (trackedRepoResolution, bool) {
 	ep, ok := roborevEndpoint(configuredAddr)
 	if !ok {
 		return trackedRepoResolution{}, false
@@ -795,6 +850,7 @@ func resolveTrackedRepo(ctx context.Context, path, configuredAddr string) (track
 	client := ep.HTTPClient(2 * time.Second)
 	values := url.Values{}
 	values.Set("path", path)
+	values.Set("branch", branch)
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ep.BaseURL()+"/api/repos/resolve?"+values.Encode(), nil)
 	if err != nil {
 		return trackedRepoResolution{}, false
@@ -810,9 +866,10 @@ func resolveTrackedRepo(ctx context.Context, path, configuredAddr string) (track
 	var out struct {
 		Tracked *bool `json:"tracked"`
 		Repo    *struct {
-			RootPath string `json:"root_path"`
-			Identity string `json:"identity"`
-			Name     string `json:"name"`
+			RootPath              string     `json:"root_path"`
+			Identity              string     `json:"identity"`
+			Name                  string     `json:"name"`
+			AgentHookSnoozedUntil *time.Time `json:"agent_hook_snoozed_until,omitempty"`
 		} `json:"repo,omitempty"`
 	}
 	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
@@ -826,6 +883,9 @@ func resolveTrackedRepo(ctx context.Context, path, configuredAddr string) (track
 		resolved.RootPath = out.Repo.RootPath
 		resolved.Identity = out.Repo.Identity
 		resolved.Name = out.Repo.Name
+		if out.Repo.AgentHookSnoozedUntil != nil {
+			resolved.SnoozedUntil = *out.Repo.AgentHookSnoozedUntil
+		}
 	}
 	return resolved, true
 }

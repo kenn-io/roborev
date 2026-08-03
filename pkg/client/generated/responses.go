@@ -15,6 +15,10 @@ type ListActivityResponse = ActivityOutputBody
 
 type ListActivityErrorResponse = ErrorModel
 
+type SetAgentHookSnoozeResponse = AgentHookSnoozeOutputBody
+
+type SetAgentHookSnoozeErrorResponse = ErrorModel
+
 type ListBranchesResponse = ListBranchesOutputBody
 
 type ListBranchesErrorResponse = ErrorModel
@@ -238,6 +242,13 @@ type ListActivityResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *ListActivityResponse
+}
+
+type SetAgentHookSnoozeResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *SetAgentHookSnoozeResponse
 }
 
 type ListBranchesResp struct {

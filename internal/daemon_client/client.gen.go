@@ -163,6 +163,25 @@ type AddCommentRequest struct {
 	Sha       *string `json:"sha,omitempty"`
 }
 
+// AgentHookSnoozeOutputBody defines model for AgentHookSnoozeOutputBody.
+type AgentHookSnoozeOutputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema       *string    `json:"$schema,omitempty"`
+	Snoozed      bool       `json:"snoozed"`
+	SnoozedUntil *time.Time `json:"snoozed_until,omitempty"`
+}
+
+// AgentHookSnoozeRequest defines model for AgentHookSnoozeRequest.
+type AgentHookSnoozeRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema       *string    `json:"$schema,omitempty"`
+	Branch       *string    `json:"branch,omitempty"`
+	Enabled      bool       `json:"enabled"`
+	RepoPath     string     `json:"repo_path"`
+	SnoozedUntil *time.Time `json:"snoozed_until,omitempty"`
+	WorktreePath string     `json:"worktree_path"`
+}
+
 // AgentStats defines model for AgentStats.
 type AgentStats struct {
 	Agent              string  `json:"agent"`
@@ -256,6 +275,11 @@ type CostAggregate struct {
 	JobsTotal    int64   `json:"jobs_total"`
 	JobsWithCost int64   `json:"jobs_with_cost"`
 	TotalUsd     float64 `json:"total_usd"`
+}
+
+// CostEnvelope defines model for CostEnvelope.
+type CostEnvelope struct {
+	Microdollars *int64 `json:"microdollars,omitempty"`
 }
 
 // DaemonStatus defines model for DaemonStatus.
@@ -841,9 +865,10 @@ type ResolveRepoOutputBody struct {
 
 // ResolvedRepo defines model for ResolvedRepo.
 type ResolvedRepo struct {
-	Identity string `json:"identity"`
-	Name     string `json:"name"`
-	RootPath string `json:"root_path"`
+	AgentHookSnoozedUntil *time.Time `json:"agent_hook_snoozed_until,omitempty"`
+	Identity              string     `json:"identity"`
+	Name                  string     `json:"name"`
+	RootPath              string     `json:"root_path"`
 }
 
 // Response defines model for Response.
@@ -943,16 +968,17 @@ type ReviewJob struct {
 
 // SessionUsagePayload defines model for SessionUsagePayload.
 type SessionUsagePayload struct {
-	Agent             *string  `json:"agent,omitempty"`
-	CachedInputTokens *int64   `json:"cached_input_tokens,omitempty"`
-	CostUsd           *float64 `json:"cost_usd,omitempty"`
-	HasCost           *bool    `json:"has_cost"`
-	HasTokenData      *bool    `json:"has_token_data"`
-	InputTokens       *int64   `json:"input_tokens,omitempty"`
-	PeakContextTokens *int64   `json:"peak_context_tokens,omitempty"`
-	Project           *string  `json:"project,omitempty"`
-	SessionId         string   `json:"session_id"`
-	TotalOutputTokens *int64   `json:"total_output_tokens,omitempty"`
+	Agent             *string       `json:"agent,omitempty"`
+	CachedInputTokens *int64        `json:"cached_input_tokens,omitempty"`
+	Cost              *CostEnvelope `json:"cost,omitempty"`
+	CostUsd           *float64      `json:"cost_usd,omitempty"`
+	HasCost           *bool         `json:"has_cost"`
+	HasTokenData      *bool         `json:"has_token_data"`
+	InputTokens       *int64        `json:"input_tokens,omitempty"`
+	PeakContextTokens *int64        `json:"peak_context_tokens,omitempty"`
+	Project           *string       `json:"project,omitempty"`
+	SessionId         string        `json:"session_id"`
+	TotalOutputTokens *int64        `json:"total_output_tokens,omitempty"`
 }
 
 // ShutdownOutputBody defines model for ShutdownOutputBody.
@@ -1228,6 +1254,9 @@ type ListReposParams struct {
 type ResolveRepoParams struct {
 	// Path Absolute path or path inside a repository
 	Path *string `form:"path,omitempty" json:"path,omitempty"`
+
+	// Branch Current branch for agent-hook snooze lookup
+	Branch *string `form:"branch,omitempty" json:"branch,omitempty"`
 }
 
 // GetReviewParams defines parameters for GetReview.
@@ -1268,6 +1297,9 @@ type SyncNowParams struct {
 	// Stream Stream sync progress as NDJSON when set to 1
 	Stream *string `form:"stream,omitempty" json:"stream,omitempty"`
 }
+
+// SetAgentHookSnoozeJSONRequestBody defines body for SetAgentHookSnooze for application/json ContentType.
+type SetAgentHookSnoozeJSONRequestBody = AgentHookSnoozeRequest
 
 // AddCommentJSONRequestBody defines body for AddComment for application/json ContentType.
 type AddCommentJSONRequestBody = AddCommentRequest
@@ -1383,6 +1415,11 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 type ClientInterface interface {
 	// ListActivity request
 	ListActivity(ctx context.Context, params *ListActivityParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// SetAgentHookSnoozeWithBody request with any body
+	SetAgentHookSnoozeWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	SetAgentHookSnooze(ctx context.Context, body SetAgentHookSnoozeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ListBranches request
 	ListBranches(ctx context.Context, params *ListBranchesParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1518,6 +1555,30 @@ type ClientInterface interface {
 
 func (c *Client) ListActivity(ctx context.Context, params *ListActivityParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListActivityRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) SetAgentHookSnoozeWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetAgentHookSnoozeRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) SetAgentHookSnooze(ctx context.Context, body SetAgentHookSnoozeJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewSetAgentHookSnoozeRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -2149,6 +2210,46 @@ func NewListActivityRequest(server string, params *ListActivityParams) (*http.Re
 	if err != nil {
 		return nil, err
 	}
+
+	return req, nil
+}
+
+// NewSetAgentHookSnoozeRequest calls the generic SetAgentHookSnooze builder with application/json body
+func NewSetAgentHookSnoozeRequest(server string, body SetAgentHookSnoozeJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewSetAgentHookSnoozeRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewSetAgentHookSnoozeRequestWithBody generates requests for SetAgentHookSnooze with any type of body
+func NewSetAgentHookSnoozeRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/agent-hook/snooze")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
 
 	return req, nil
 }
@@ -3805,6 +3906,22 @@ func NewResolveRepoRequest(server string, params *ResolveRepoParams) (*http.Requ
 
 		}
 
+		if params.Branch != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "branch", *params.Branch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
 		queryURL.RawQuery = queryValues.Encode()
 	}
 
@@ -4283,6 +4400,11 @@ type ClientWithResponsesInterface interface {
 	// ListActivityWithResponse request
 	ListActivityWithResponse(ctx context.Context, params *ListActivityParams, reqEditors ...RequestEditorFn) (*ListActivityResponse, error)
 
+	// SetAgentHookSnoozeWithBodyWithResponse request with any body
+	SetAgentHookSnoozeWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetAgentHookSnoozeResponse, error)
+
+	SetAgentHookSnoozeWithResponse(ctx context.Context, body SetAgentHookSnoozeJSONRequestBody, reqEditors ...RequestEditorFn) (*SetAgentHookSnoozeResponse, error)
+
 	// ListBranchesWithResponse request
 	ListBranchesWithResponse(ctx context.Context, params *ListBranchesParams, reqEditors ...RequestEditorFn) (*ListBranchesResponse, error)
 
@@ -4432,6 +4554,29 @@ func (r ListActivityResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r ListActivityResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type SetAgentHookSnoozeResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *AgentHookSnoozeOutputBody
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r SetAgentHookSnoozeResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r SetAgentHookSnoozeResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -5261,6 +5406,23 @@ func (c *ClientWithResponses) ListActivityWithResponse(ctx context.Context, para
 	return ParseListActivityResponse(rsp)
 }
 
+// SetAgentHookSnoozeWithBodyWithResponse request with arbitrary body returning *SetAgentHookSnoozeResponse
+func (c *ClientWithResponses) SetAgentHookSnoozeWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetAgentHookSnoozeResponse, error) {
+	rsp, err := c.SetAgentHookSnoozeWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetAgentHookSnoozeResponse(rsp)
+}
+
+func (c *ClientWithResponses) SetAgentHookSnoozeWithResponse(ctx context.Context, body SetAgentHookSnoozeJSONRequestBody, reqEditors ...RequestEditorFn) (*SetAgentHookSnoozeResponse, error) {
+	rsp, err := c.SetAgentHookSnooze(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseSetAgentHookSnoozeResponse(rsp)
+}
+
 // ListBranchesWithResponse request returning *ListBranchesResponse
 func (c *ClientWithResponses) ListBranchesWithResponse(ctx context.Context, params *ListBranchesParams, reqEditors ...RequestEditorFn) (*ListBranchesResponse, error) {
 	rsp, err := c.ListBranches(ctx, params, reqEditors...)
@@ -5696,6 +5858,39 @@ func ParseListActivityResponse(rsp *http.Response) (*ListActivityResponse, error
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest ActivityOutputBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseSetAgentHookSnoozeResponse parses an HTTP response from a SetAgentHookSnoozeWithResponse call
+func ParseSetAgentHookSnoozeResponse(rsp *http.Response) (*SetAgentHookSnoozeResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &SetAgentHookSnoozeResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AgentHookSnoozeOutputBody
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}

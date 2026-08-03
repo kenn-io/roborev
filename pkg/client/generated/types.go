@@ -55,6 +55,27 @@ func (a AddCommentRequest) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(a))
 }
 
+type AgentHookSnoozeOutputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema       *string    `json:"$schema,omitempty"`
+	Snoozed      bool       `json:"snoozed"`
+	SnoozedUntil *time.Time `json:"snoozed_until,omitempty"`
+}
+
+type AgentHookSnoozeRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema       *string    `json:"$schema,omitempty"`
+	Branch       *string    `json:"branch,omitempty"`
+	Enabled      bool       `json:"enabled"`
+	RepoPath     string     `json:"repo_path" validate:"required"`
+	SnoozedUntil *time.Time `json:"snoozed_until,omitempty"`
+	WorktreePath string     `json:"worktree_path" validate:"required"`
+}
+
+func (a AgentHookSnoozeRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(a))
+}
+
 type AgentStats struct {
 	Agent              string  `json:"agent" validate:"required"`
 	Errors             int64   `json:"errors"`
@@ -1283,9 +1304,10 @@ func (r ResolveRepoOutputBody) Validate() error {
 }
 
 type ResolvedRepo struct {
-	Identity string `json:"identity" validate:"required"`
-	Name     string `json:"name" validate:"required"`
-	RootPath string `json:"root_path" validate:"required"`
+	AgentHookSnoozedUntil *time.Time `json:"agent_hook_snoozed_until,omitempty"`
+	Identity              string     `json:"identity" validate:"required"`
+	Name                  string     `json:"name" validate:"required"`
+	RootPath              string     `json:"root_path" validate:"required"`
 }
 
 func (r ResolvedRepo) Validate() error {

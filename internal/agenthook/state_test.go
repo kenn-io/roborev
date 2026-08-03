@@ -963,6 +963,68 @@ func TestRecordStopSkipsUntrackedRepo(t *testing.T) {
 	assert.Empty(store.sessions, "untracked repos should not mutate hook state")
 }
 
+func TestRecordStopSuppressesReminderWhileWorkspaceIsSnoozed(t *testing.T) {
+	assert := assert.New(t)
+	repo := testutil.NewGitRepo(t)
+	head := repo.CommitFile("main.go", "package main\n", "initial")
+
+	jobRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/repos/resolve" {
+			assert.Equal(repo.Path(), r.URL.Query().Get("path"))
+			assert.Equal("main", r.URL.Query().Get("branch"))
+			assert.NoError(json.NewEncoder(w).Encode(map[string]any{
+				"tracked": true,
+				"repo": map[string]any{
+					"root_path":                repo.Path(),
+					"name":                     filepath.Base(repo.Path()),
+					"agent_hook_snoozed_until": time.Now().Add(time.Hour).UTC(),
+				},
+			}))
+			return
+		}
+		jobRequests++
+		http.Error(w, "review lookup should be suppressed", http.StatusInternalServerError)
+	}))
+	t.Cleanup(server.Close)
+
+	worktreeKey := worktreeSequenceKey(repo.Path(), repo.Path())
+	branchKey := repoHeadKey(repo.Path(), "main")
+	store := &StateStore{
+		path: filepath.Join(t.TempDir(), "state.json"),
+		sessions: map[string]SessionState{
+			"session-1": {
+				StopCountSincePrompt:        3,
+				CommitSHAsSincePrompt:       map[string][]string{branchKey: {"old-head"}},
+				FailedReviewTriggeredCounts: map[string]int{branchKey: 1},
+			},
+		},
+	}
+	resp, err := store.Record(Request{
+		Event: Input{
+			SessionID:     "session-1",
+			CWD:           repo.Path(),
+			HookEventName: "Stop",
+		},
+		Threshold:             1,
+		FailedReviewThreshold: 1,
+		Instruction:           "Run roborev fix.",
+		RoborevServerAddr:     server.URL,
+	})
+
+	require.NoError(t, err)
+	assert.True(resp.Skipped)
+	assert.False(resp.Triggered)
+	assert.Equal(0, jobRequests, "snoozed hooks should not poll or count reviews")
+	state := store.sessions["session-1"]
+	assert.Zero(state.StopCountSincePrompt)
+	assert.Zero(state.ReminderPromptCount)
+	assert.Empty(state.CommitSHAsSincePrompt)
+	assert.Empty(state.FailedReviewTriggeredCounts)
+	assert.Equal(head, state.RepoHeads[worktreeKey])
+	assert.Equal(head, state.RepoHeads[branchKey])
+}
+
 func TestRecordPreToolUseBaselinesUntrackedRepoForLaterPostCommitRegistration(t *testing.T) {
 	assert := assert.New(t)
 	repo := testutil.NewGitRepo(t)

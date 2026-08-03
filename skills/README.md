@@ -17,6 +17,7 @@ Skills are updated automatically when you run `roborev update`.
 | `/roborev-fix [job_id...]` | Fix all open review findings (or specific jobs) in one pass |
 | `/roborev-design-review <path-or-job-id>` | Review a design proposal for completeness and feasibility |
 | `/roborev-respond <job_id> [message]` | Add a response to a review |
+| `/roborev-snooze [on\|off] [duration]` | Silence or resume Agent Hook reminders in the current workspace |
 
 ## Example Workflow
 
@@ -51,5 +52,5 @@ After fixing, document what was done:
 
 | Agent | Invocation |
 |-------|------------|
-| Claude Code | `/roborev-fix`, `/roborev-design-review`, `/roborev-respond` |
-| Codex | `$roborev-fix`, `$roborev-design-review`, `$roborev-respond` |
+| Claude Code | `/roborev-fix`, `/roborev-design-review`, `/roborev-respond`, `/roborev-snooze` |
+| Codex | `$roborev-fix`, `$roborev-design-review`, `$roborev-respond`, `$roborev-snooze` |

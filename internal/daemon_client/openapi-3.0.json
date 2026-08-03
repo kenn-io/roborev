@@ -85,6 +85,63 @@
         ],
         "type": "object"
       },
+      "AgentHookSnoozeOutputBody": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "example": "https://example.com/AgentHookSnoozeOutputBody.json",
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "snoozed": {
+            "type": "boolean"
+          },
+          "snoozed_until": {
+            "format": "date-time",
+            "type": "string"
+          }
+        },
+        "required": [
+          "snoozed"
+        ],
+        "type": "object"
+      },
+      "AgentHookSnoozeRequest": {
+        "additionalProperties": false,
+        "properties": {
+          "$schema": {
+            "description": "A URL to the JSON Schema for this object.",
+            "example": "https://example.com/AgentHookSnoozeRequest.json",
+            "format": "uri",
+            "readOnly": true,
+            "type": "string"
+          },
+          "branch": {
+            "type": "string"
+          },
+          "enabled": {
+            "type": "boolean"
+          },
+          "repo_path": {
+            "type": "string"
+          },
+          "snoozed_until": {
+            "format": "date-time",
+            "type": "string"
+          },
+          "worktree_path": {
+            "type": "string"
+          }
+        },
+        "required": [
+          "repo_path",
+          "worktree_path",
+          "enabled"
+        ],
+        "type": "object"
+      },
       "AgentStats": {
         "additionalProperties": false,
         "properties": {
@@ -386,6 +443,16 @@
           "jobs_total",
           "complete"
         ],
+        "type": "object"
+      },
+      "CostEnvelope": {
+        "additionalProperties": false,
+        "properties": {
+          "microdollars": {
+            "format": "int64",
+            "type": "integer"
+          }
+        },
         "type": "object"
       },
       "DaemonStatus": {
@@ -2296,6 +2363,10 @@
       "ResolvedRepo": {
         "additionalProperties": false,
         "properties": {
+          "agent_hook_snoozed_until": {
+            "format": "date-time",
+            "type": "string"
+          },
           "identity": {
             "type": "string"
           },
@@ -2645,6 +2716,9 @@
           "cached_input_tokens": {
             "format": "int64",
             "type": "integer"
+          },
+          "cost": {
+            "$ref": "#/components/schemas/CostEnvelope"
           },
           "cost_usd": {
             "format": "double",
@@ -3004,6 +3078,47 @@
         "summary": "List recent daemon activity",
         "tags": [
           "daemon"
+        ]
+      }
+    },
+    "/api/agent-hook/snooze": {
+      "post": {
+        "operationId": "set-agent-hook-snooze",
+        "requestBody": {
+          "content": {
+            "application/json": {
+              "schema": {
+                "$ref": "#/components/schemas/AgentHookSnoozeRequest"
+              }
+            }
+          },
+          "required": true
+        },
+        "responses": {
+          "200": {
+            "content": {
+              "application/json": {
+                "schema": {
+                  "$ref": "#/components/schemas/AgentHookSnoozeOutputBody"
+                }
+              }
+            },
+            "description": "OK"
+          },
+          "default": {
+            "content": {
+              "application/problem+json": {
+                "schema": {
+                  "$ref": "#/components/schemas/ErrorModel"
+                }
+              }
+            },
+            "description": "Error"
+          }
+        },
+        "summary": "Set or clear an agent-hook workspace snooze",
+        "tags": [
+          "agent-hook"
         ]
       }
     },
@@ -4518,6 +4633,16 @@
             "name": "path",
             "schema": {
               "description": "Absolute path or path inside a repository",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Current branch for agent-hook snooze lookup",
+            "explode": false,
+            "in": "query",
+            "name": "branch",
+            "schema": {
+              "description": "Current branch for agent-hook snooze lookup",
               "type": "string"
             }
           }

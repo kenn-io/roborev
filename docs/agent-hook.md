@@ -71,6 +71,31 @@ stay off unless `commit_threshold` is set above `0`. Failed-review counts are
 scoped to the current git branch. Older jobs without a stored branch are
 included, matching `roborev fix` discovery.
 
+## Snoozing Reminders
+
+Silence Agent Hook reminders temporarily when a session needs a longer stretch
+of implementation work:
+
+```bash
+roborev snooze                 # defaults to eight hours
+roborev snooze on --duration 2h
+roborev snooze off             # resume immediately
+```
+
+The snooze is scoped to the current linked worktree and branch. Switching
+branches or working in another checkout does not inherit it. The deadline is
+stored as local workspace state in roborev's SQLite database and expires
+automatically.
+
+Snoozing affects only the coding-agent harness reminder. Post-commit reviews
+continue to enqueue, workers continue processing them, and failed reviews keep
+accumulating for later attention. The hook advances its local commit baselines
+while snoozed so it does not emit a catch-up reminder for every commit made
+during the quiet period.
+
+The bundled `/roborev-snooze` skill (or `$roborev-snooze` in Codex) exposes both
+the `on` and `off` operations from an agent session.
+
 ## Quick Start
 
 The reminder tells the agent to run the `$roborev-fix` skill, so install

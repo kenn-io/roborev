@@ -31,12 +31,14 @@ var derivedDroidSkills = []string{
 	"roborev-respond",
 	"roborev-review",
 	"roborev-review-branch",
+	"roborev-snooze",
 }
 
 var derivedClaudeSkills = []string{
 	"roborev-fix",
 	"roborev-refine",
 	"roborev-respond",
+	"roborev-snooze",
 }
 
 func skillDerivations() []skillDerivation {

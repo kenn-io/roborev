@@ -47,6 +47,7 @@ func main() {
 	rootCmd.AddCommand(enqueueCmd()) // hidden alias for backward compatibility
 	rootCmd.AddCommand(waitCmd())
 	rootCmd.AddCommand(statusCmd())
+	rootCmd.AddCommand(snoozeCmd())
 	rootCmd.AddCommand(pauseCmd())
 	rootCmd.AddCommand(unpauseCmd())
 	rootCmd.AddCommand(listCmd())

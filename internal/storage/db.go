@@ -157,6 +157,18 @@ CREATE TABLE IF NOT EXISTS daemon_state (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- agent_hook_snoozes is local-only workspace state. It is deliberately not
+-- synced to PostgreSQL because worktree paths and snooze intent are specific to
+-- this machine.
+CREATE TABLE IF NOT EXISTS agent_hook_snoozes (
+  repo_id INTEGER NOT NULL REFERENCES repos(id) ON DELETE CASCADE,
+  worktree_path TEXT NOT NULL,
+  branch TEXT NOT NULL,
+  snoozed_until TEXT NOT NULL,
+  updated_at TEXT NOT NULL DEFAULT (datetime('now')),
+  PRIMARY KEY (repo_id, worktree_path, branch)
+);
+
 CREATE INDEX IF NOT EXISTS idx_review_jobs_status ON review_jobs(status);
 CREATE INDEX IF NOT EXISTS idx_review_jobs_repo ON review_jobs(repo_id);
 CREATE INDEX IF NOT EXISTS idx_review_jobs_git_ref ON review_jobs(git_ref);

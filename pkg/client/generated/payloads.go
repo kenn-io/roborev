@@ -2,6 +2,8 @@
 
 package generated
 
+type SetAgentHookSnoozeBody = AgentHookSnoozeRequest
+
 type AddCommentBody = AddCommentRequest
 
 type EnqueueJobBody = EnqueueRequest
