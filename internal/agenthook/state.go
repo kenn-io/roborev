@@ -174,14 +174,18 @@ func (s *StateStore) recordStop(req Request) (Response, error) {
 
 	now := time.Now().UTC()
 	st.Count++
-	st.StopCountSincePrompt++
+	if st.StopCountsSincePrompt == nil {
+		st.StopCountsSincePrompt = map[string]int{}
+	}
+	st.StopCountsSincePrompt[lineageKey]++
+	stopCountSincePrompt := st.StopCountsSincePrompt[lineageKey]
 	st.LastTurnID = req.Event.TurnID
 	st.LastCWD = req.Event.CWD
 	st.LastSeenAt = now
 	recordSequenceHeads(&st, scope, []string{scope.WorktreeKey})
 
 	actionableReviews := hasActionableFailedReviews(failedReviewCount, haveFailedReviewCount)
-	stopTriggered := thresholdReady(st.StopCountSincePrompt, req.Threshold) && actionableReviews
+	stopTriggered := thresholdReady(stopCountSincePrompt, req.Threshold) && actionableReviews
 	if stopTriggered {
 		st.TriggeredAt = now
 	}
@@ -214,7 +218,7 @@ func (s *StateStore) recordStop(req Request) (Response, error) {
 		resp.Reason = buildFailedReviewReason(req, st)
 	case stopTriggered:
 		resp.TriggeredBy = "stop"
-		resp.Reason = buildStopReason(req, st)
+		resp.Reason = buildStopReason(req, stopCountSincePrompt)
 	}
 	return resp, nil
 }
@@ -452,7 +456,7 @@ func (s *StateStore) recordSnoozed(req Request, scope hookScope) (Response, erro
 	st := s.sessions[req.Event.SessionID]
 	lineageKey := ensureLineageKey(&st, scope)
 	keys := uniqueStrings(append(
-		[]string{scope.WorktreeKey},
+		[]string{scope.WorktreeKey, lineageKey},
 		commitSequenceKeys(scope, lineageKey)...,
 	))
 	recordSequenceHeads(&st, scope, keys)
@@ -490,13 +494,11 @@ func isShellCommandTool(toolName string) bool {
 	return toolName == "" || toolName == "Bash" || toolName == ExecuteMatcher
 }
 
-// resetPromptCounters restarts the per-prompt counters after a reminder fires.
-// StopCountSincePrompt is session-wide, but commit counts are cleared only for
-// the checkout being prompted so a prompt in one repo or branch cannot discard a
-// deferred commit reminder owed to another.
+// resetPromptCountersForKeys restarts the per-workspace counters after a
+// reminder fires without discarding progress owed to another repo or branch.
 func resetPromptCountersForKeys(st *SessionState, keys []string) {
-	st.StopCountSincePrompt = 0
 	for _, key := range uniqueStrings(keys) {
+		delete(st.StopCountsSincePrompt, key)
 		delete(st.CommitCountsSincePrompt, key)
 		delete(st.CommitSHAsSincePrompt, key)
 	}
@@ -525,7 +527,9 @@ func commitSequenceKeys(scope hookScope, lineageKey string) []string {
 }
 
 func promptResetKeys(scope hookScope, lineageKey string) []string {
-	return commitSequenceKeys(scope, lineageKey)
+	return uniqueStrings(append(
+		[]string{lineageKey}, commitSequenceKeys(scope, lineageKey)...,
+	))
 }
 
 func recordSequenceHeads(st *SessionState, scope hookScope, keys []string) {
@@ -668,8 +672,8 @@ func applyFailedReviewTrigger(
 	return true
 }
 
-func buildStopReason(req Request, st SessionState) string {
-	return buildPromptReason(req, fmt.Sprintf("%s reached.", countPhrase(st.Count, "Stop hook", "Stop hooks")))
+func buildStopReason(req Request, count int) string {
+	return buildPromptReason(req, fmt.Sprintf("%s reached.", countPhrase(count, "Stop hook", "Stop hooks")))
 }
 
 // buildCommitReason describes the commit reminder for the checkout that triggered

@@ -657,6 +657,15 @@ func (db *DB) DeleteRepo(repoID int64, cascade bool) error {
 		}
 	}
 
+	// SQLite foreign-key enforcement is connection-local and may be disabled,
+	// so repository lifecycle operations must clean up local snooze state
+	// explicitly rather than relying on ON DELETE CASCADE.
+	if _, err := conn.ExecContext(ctx,
+		`DELETE FROM agent_hook_snoozes WHERE repo_id = ?`, repoID,
+	); err != nil {
+		return err
+	}
+
 	// Delete the repo itself
 	result, err := conn.ExecContext(ctx, `DELETE FROM repos WHERE id = ?`, repoID)
 	if err != nil {
@@ -700,6 +709,37 @@ func (db *DB) MergeRepos(sourceRepoID, targetRepoID int64) (int64, error) {
 			}
 		}
 	}()
+
+	// Preserve machine-local Agent Hook snoozes when duplicate repository rows
+	// are consolidated. For an identical worktree/branch key, keep the later
+	// deadline so merging cannot shorten an active quiet period.
+	_, err = conn.ExecContext(ctx, `
+		INSERT INTO agent_hook_snoozes
+			(repo_id, worktree_path, branch, snoozed_until, updated_at)
+		SELECT ?, worktree_path, branch, snoozed_until, updated_at
+		FROM agent_hook_snoozes
+		WHERE repo_id = ?
+		ON CONFLICT(repo_id, worktree_path, branch) DO UPDATE SET
+			snoozed_until = CASE
+				WHEN julianday(excluded.snoozed_until) >
+					julianday(agent_hook_snoozes.snoozed_until)
+				THEN excluded.snoozed_until
+				ELSE agent_hook_snoozes.snoozed_until
+			END,
+			updated_at = CASE
+				WHEN julianday(excluded.updated_at) >
+					julianday(agent_hook_snoozes.updated_at)
+				THEN excluded.updated_at
+				ELSE agent_hook_snoozes.updated_at
+			END`, targetRepoID, sourceRepoID)
+	if err != nil {
+		return 0, err
+	}
+	if _, err := conn.ExecContext(ctx,
+		`DELETE FROM agent_hook_snoozes WHERE repo_id = ?`, sourceRepoID,
+	); err != nil {
+		return 0, err
+	}
 
 	// Move all commits from source to target
 	// Note: commits.sha is UNIQUE, so this will fail if both repos have

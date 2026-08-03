@@ -670,13 +670,25 @@ func TestGetRepoStats(t *testing.T) {
 func TestDeleteRepo(t *testing.T) {
 	t.Run("delete empty repo", func(t *testing.T) {
 		db, repo := setupDBAndRepo(t, "delete-empty")
+		db.SetMaxOpenConns(1)
+		_, err := db.Exec(`PRAGMA foreign_keys = OFF`)
+		require.NoError(t, err)
+		_, err = db.SetAgentHookSnooze(
+			repo.RootPath, repo.RootPath, "main", time.Now().Add(time.Hour),
+		)
+		require.NoError(t, err)
 
-		err := db.DeleteRepo(repo.ID, false)
+		err = db.DeleteRepo(repo.ID, false)
 		require.NoError(t, err, "DeleteRepo failed: %v")
 
 		// Verify deleted
 		_, err = db.GetRepoByID(repo.ID)
 		require.Error(t, err)
+		var snoozeCount int
+		require.NoError(t, db.QueryRow(
+			`SELECT COUNT(*) FROM agent_hook_snoozes WHERE repo_id = ?`, repo.ID,
+		).Scan(&snoozeCount))
+		assert.Zero(t, snoozeCount)
 	})
 
 	t.Run("delete repo with jobs without cascade returns error", func(t *testing.T) {
@@ -819,6 +831,50 @@ func TestMergeRepos(t *testing.T) {
 		var orphanedCount int
 		db.QueryRow(`SELECT COUNT(*) FROM commits WHERE repo_id = ?`, source.ID).Scan(&orphanedCount)
 		assert.Equal(t, 0, orphanedCount)
+	})
+
+	t.Run("merge preserves source snoozes and later conflict deadline", func(t *testing.T) {
+		db := openTestDB(t)
+		defer db.Close()
+
+		source := createRepo(t, db, filepath.Join(t.TempDir(), "merge-snooze-source"))
+		target := createRepo(t, db, filepath.Join(t.TempDir(), "merge-snooze-target"))
+		sharedWorktree := filepath.Join(t.TempDir(), "shared-worktree")
+		uniqueWorktree := filepath.Join(t.TempDir(), "source-worktree")
+		now := time.Now().UTC()
+		sourceUntil := now.Add(8 * time.Hour)
+		_, err := db.SetAgentHookSnooze(
+			source.RootPath, sharedWorktree, "main", sourceUntil,
+		)
+		require.NoError(t, err)
+		_, err = db.SetAgentHookSnooze(
+			source.RootPath, uniqueWorktree, "feature", now.Add(4*time.Hour),
+		)
+		require.NoError(t, err)
+		_, err = db.SetAgentHookSnooze(
+			target.RootPath, sharedWorktree, "main", now.Add(2*time.Hour),
+		)
+		require.NoError(t, err)
+
+		_, err = db.MergeRepos(source.ID, target.ID)
+		require.NoError(t, err)
+
+		conflict, err := db.ActiveAgentHookSnooze(
+			target.RootPath, sharedWorktree, "main", now,
+		)
+		require.NoError(t, err)
+		require.NotNil(t, conflict)
+		assert.Equal(t, sourceUntil, conflict.SnoozedUntil)
+		unique, err := db.ActiveAgentHookSnooze(
+			target.RootPath, uniqueWorktree, "feature", now,
+		)
+		require.NoError(t, err)
+		require.NotNil(t, unique)
+		var sourceCount int
+		require.NoError(t, db.QueryRow(
+			`SELECT COUNT(*) FROM agent_hook_snoozes WHERE repo_id = ?`, source.ID,
+		).Scan(&sourceCount))
+		assert.Zero(t, sourceCount)
 	})
 }
 

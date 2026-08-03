@@ -310,7 +310,7 @@ func TestBuildHookReasonsAreCompactOneLine(t *testing.T) {
 	assert.NotContains(failed, "/Users/wesm")
 	assert.NotContains(failed, "continue the task")
 
-	stop := buildStopReason(req, st)
+	stop := buildStopReason(req, st.Count)
 	assert.Equal("Invoke the $roborev-fix skill now. 4 Stop hooks reached.", stop)
 	assert.NotContains(stop, "\n")
 	assert.NotContains(stop, req.Event.SessionID)
@@ -994,7 +994,7 @@ func TestRecordStopSuppressesReminderWhileWorkspaceIsSnoozed(t *testing.T) {
 		path: filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{
 			"session-1": {
-				StopCountSincePrompt:        3,
+				StopCountsSincePrompt:       map[string]int{branchKey: 3},
 				CommitSHAsSincePrompt:       map[string][]string{branchKey: {"old-head"}},
 				FailedReviewTriggeredCounts: map[string]int{branchKey: 1},
 			},
@@ -1017,12 +1017,75 @@ func TestRecordStopSuppressesReminderWhileWorkspaceIsSnoozed(t *testing.T) {
 	assert.False(resp.Triggered)
 	assert.Equal(0, jobRequests, "snoozed hooks should not poll or count reviews")
 	state := store.sessions["session-1"]
-	assert.Zero(state.StopCountSincePrompt)
+	assert.Empty(state.StopCountsSincePrompt)
 	assert.Zero(state.ReminderPromptCount)
 	assert.Empty(state.CommitSHAsSincePrompt)
 	assert.Empty(state.FailedReviewTriggeredCounts)
 	assert.Equal(head, state.RepoHeads[worktreeKey])
 	assert.Equal(head, state.RepoHeads[branchKey])
+}
+
+func TestStopReminderProgressIsScopedAcrossSnoozedWorkspaces(t *testing.T) {
+	assert := assert.New(t)
+	repoA := testutil.NewGitRepo(t)
+	repoA.CommitFile("a.go", "package a\n", "initial A")
+	repoB := testutil.NewGitRepo(t)
+	repoB.CommitFile("b.go", "package b\n", "initial B")
+
+	var snoozeA atomic.Bool
+	closed := false
+	verdict := "F"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/repos/resolve" {
+			root := r.URL.Query().Get("path")
+			repo := map[string]any{
+				"root_path": root,
+				"name":      filepath.Base(root),
+			}
+			if root == repoA.Path() && snoozeA.Load() {
+				repo["agent_hook_snoozed_until"] = time.Now().Add(time.Hour).UTC()
+			}
+			assert.NoError(json.NewEncoder(w).Encode(map[string]any{
+				"tracked": true,
+				"repo":    repo,
+			}))
+			return
+		}
+		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{
+			Jobs: []storage.ReviewJob{
+				{Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main"},
+			},
+		}))
+	}))
+	t.Cleanup(server.Close)
+
+	store := &StateStore{
+		path:     filepath.Join(t.TempDir(), "state.json"),
+		sessions: map[string]SessionState{},
+	}
+	record := func(cwd string) Response {
+		resp, err := store.Record(Request{
+			Event: Input{
+				SessionID:     "session-1",
+				CWD:           cwd,
+				HookEventName: "Stop",
+			},
+			Threshold:             2,
+			FailedReviewThreshold: 0,
+			Instruction:           "Run roborev fix.",
+			RoborevServerAddr:     server.URL,
+		})
+		require.NoError(t, err)
+		return resp
+	}
+
+	assert.False(record(repoA.Path()).Triggered)
+	assert.False(record(repoB.Path()).Triggered,
+		"repo A Stop progress must not trigger repo B")
+	snoozeA.Store(true)
+	assert.True(record(repoA.Path()).Skipped)
+	assert.True(record(repoB.Path()).Triggered,
+		"snoozing repo A must preserve repo B Stop progress")
 }
 
 func TestRecordPreToolUseBaselinesUntrackedRepoForLaterPostCommitRegistration(t *testing.T) {

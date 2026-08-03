@@ -63,7 +63,7 @@ type Response struct {
 
 type SessionState struct {
 	Count                       int                 `json:"count"`
-	StopCountSincePrompt        int                 `json:"stop_count_since_prompt,omitempty"`
+	StopCountsSincePrompt       map[string]int      `json:"stop_counts_since_prompt,omitempty"`
 	CommitCount                 int                 `json:"commit_count,omitempty"`
 	CommitCountsSincePrompt     map[string]int      `json:"commit_counts_since_prompt,omitempty"`
 	CommitSHAsSincePrompt       map[string][]string `json:"commit_shas_since_prompt,omitempty"`
