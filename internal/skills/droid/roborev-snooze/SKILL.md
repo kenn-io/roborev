@@ -1,6 +1,7 @@
 ---
 name: roborev-snooze
 description: Use only when the user explicitly invokes /roborev-snooze
+disable-model-invocation: true
 ---
 
 # roborev-snooze

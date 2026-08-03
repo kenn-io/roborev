@@ -10,6 +10,9 @@ snoozed.
 /roborev-snooze [on|off] [duration]
 ```
 
+This skill is human-triggered only. Invoke it explicitly with the slash command;
+the model must not select it automatically.
+
 Run the matching command:
 
 ```bash

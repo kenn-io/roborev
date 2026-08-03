@@ -97,9 +97,9 @@ before roborev receives the path. Custom destinations are not tracked by
     description still requires explicit roborev invocation. See the
     [syntax table](#agent-specific-syntax) for more examples.
 
-    Factory supports `disable-model-invocation`, but the current bundled
-    Droid-derived definitions do not set that available machine-readable policy.
-    They rely on description and body guardrails instead.
+    Factory supports `disable-model-invocation`. The bundled `/roborev-snooze`
+    definition sets that policy, so only a human can trigger it. Other Droid-derived
+    definitions rely on description and body guardrails.
 
 ### Review a commit
 

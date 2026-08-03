@@ -44,17 +44,24 @@ var derivedClaudeSkills = []string{
 func skillDerivations() []skillDerivation {
 	derivations := make([]skillDerivation, 0, len(derivedDroidSkills)+len(derivedClaudeSkills))
 	for _, skillName := range derivedDroidSkills {
-		derivations = append(derivations, skillDerivation{
-			TargetAgent: AgentDroid,
-			SkillName:   skillName,
-			Replacements: []stringReplacement{
-				{
-					Old: ", plugin\n`$roborev:" + skillName + "`, or structured Codex skill selection",
-					New: ", or structured\nFactory skill selection",
-				},
-				{Old: "$roborev", New: "/roborev"},
-				{Old: "CLAUDE.md", New: "AGENTS.md"},
+		replacements := []stringReplacement{
+			{
+				Old: ", plugin\n`$roborev:" + skillName + "`, or structured Codex skill selection",
+				New: ", or structured\nFactory skill selection",
 			},
+			{Old: "$roborev", New: "/roborev"},
+			{Old: "CLAUDE.md", New: "AGENTS.md"},
+		}
+		if skillName == "roborev-snooze" {
+			replacements = append([]stringReplacement{{
+				Old: "invokes $" + skillName + "\n---",
+				New: "invokes /" + skillName + "\ndisable-model-invocation: true\n---",
+			}}, replacements...)
+		}
+		derivations = append(derivations, skillDerivation{
+			TargetAgent:  AgentDroid,
+			SkillName:    skillName,
+			Replacements: replacements,
 		})
 	}
 	for _, skillName := range derivedClaudeSkills {

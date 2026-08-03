@@ -921,7 +921,13 @@ func TestDerivedExplicitInvocationWordingUsesTargetAgent(t *testing.T) {
 		assert.NotContains(t, text, "roborev:", "%s retains Codex plugin namespace", relPath)
 		if strings.HasPrefix(relPath, "droid/") {
 			assert.Contains(t, text, "`/"+skillName+"`, or structured Factory skill selection", relPath)
-			assert.NotContains(t, text, "disable-model-invocation", "%s must not carry the Claude-only frontmatter policy", relPath)
+			if skillName == "roborev-snooze" {
+				assert.Contains(t, text, "disable-model-invocation: true",
+					"roborev-snooze must be human-triggered only")
+			} else {
+				assert.NotContains(t, text, "disable-model-invocation",
+					"%s must not carry model-invocation policy", relPath)
+			}
 		} else {
 			assert.Contains(t, text, "`/"+skillName+"`, or structured Claude Code skill selection", relPath)
 			if skillName == "roborev-fix" {
