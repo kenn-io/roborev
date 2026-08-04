@@ -119,12 +119,6 @@ func resolveExecutable(command string) (string, error) {
 	if command == "" {
 		return "", os.ErrNotExist
 	}
-	if filepath.IsAbs(command) {
-		if _, err := os.Stat(command); err != nil {
-			return "", err
-		}
-		return command, nil
-	}
 	return exec.LookPath(command)
 }
 

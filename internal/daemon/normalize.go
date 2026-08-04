@@ -17,11 +17,73 @@ func GetNormalizer(agentName string) OutputNormalizer {
 		return NormalizeClaudeOutput
 	case "codex":
 		return NormalizeCodexOutput
+	case "grok":
+		return NormalizeGrokOutput
 	case "opencode":
 		return NormalizeOpenCodeOutput
 	default:
 		return NormalizeGenericOutput
 	}
+}
+
+// NormalizeGrokOutput parses Grok Build's streaming-json format and extracts
+// readable text, tool activity, and errors while suppressing lifecycle noise.
+func NormalizeGrokOutput(line string) *OutputLine {
+	line = strings.TrimSpace(line)
+	if line == "" {
+		return nil
+	}
+
+	var ev struct {
+		Type     string `json:"type"`
+		Data     string `json:"data,omitempty"`
+		Message  string `json:"message,omitempty"`
+		ToolName string `json:"toolName,omitempty"`
+		Title    string `json:"title,omitempty"`
+		Kind     string `json:"kind,omitempty"`
+		Status   string `json:"status,omitempty"`
+		Error    string `json:"error,omitempty"`
+	}
+	if err := json.Unmarshal([]byte(line), &ev); err != nil {
+		return &OutputLine{Text: sanitizeControl(line), Type: "text"}
+	}
+
+	switch ev.Type {
+	case "text":
+		if ev.Data == "" {
+			return nil
+		}
+		return &OutputLine{Text: sanitizeControl(ev.Data), Type: "text"}
+	case "tool_call":
+		name := firstGrokNonEmpty(ev.ToolName, ev.Title, ev.Kind)
+		if name == "" {
+			return &OutputLine{Text: "[Tool call]", Type: "tool"}
+		}
+		return &OutputLine{Text: "[Tool: " + sanitizeControl(name) + "]", Type: "tool"}
+	case "tool_call_update":
+		name := firstGrokNonEmpty(ev.ToolName, ev.Title, ev.Kind)
+		if ev.Status == "failed" || ev.Status == "error" || ev.Error != "" {
+			detail := firstGrokNonEmpty(ev.Error, name, "tool call failed")
+			return &OutputLine{Text: "[Tool error: " + sanitizeControl(detail) + "]", Type: "error"}
+		}
+		return nil
+	case "error":
+		detail := firstGrokNonEmpty(ev.Message, ev.Data, "error in stream")
+		return &OutputLine{Text: "[Error: " + sanitizeControl(detail) + "]", Type: "error"}
+	case "thought", "reasoning", "plan", "end", "session", "session_start":
+		return nil
+	default:
+		return nil
+	}
+}
+
+func firstGrokNonEmpty(values ...string) string {
+	for _, value := range values {
+		if value != "" {
+			return value
+		}
+	}
+	return ""
 }
 
 // claudeNoisePatterns are status messages from Claude CLI that aren't useful progress info

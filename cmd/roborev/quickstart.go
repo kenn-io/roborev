@@ -60,11 +60,11 @@ func detectState(ctx context.Context, repoRoot string, inGitRepo bool) quickstar
 		checkRepoConfig(repoRoot, inGitRepo, agent),
 		checkConfiguredAgent(repoRoot, inGitRepo, agent),
 		checkAgentHook("agent_hook_claude", agenthook.DefaultClaudeSettingsPath(),
-			"roborev agent-hook install --agent claude"),
+			"claude", "roborev agent-hook install --agent claude"),
 		checkAgentHook("agent_hook_codex", agenthook.DefaultCodexHooksPath(),
-			"roborev agent-hook install --agent codex"),
+			"codex", "roborev agent-hook install --agent codex"),
 		checkAgentHook("agent_hook_grok", agenthook.DefaultGrokHooksPath(),
-			"roborev agent-hook install --agent grok"),
+			"grok", "roborev agent-hook install --agent grok"),
 		checkSkills(),
 	}
 
@@ -216,9 +216,9 @@ func checkConfiguredAgent(repoRoot string, inGitRepo bool, agent string) quickst
 	return c
 }
 
-func checkAgentHook(id, path, fix string) quickstartCheck {
+func checkAgentHook(id, path, agent, fix string) quickstartCheck {
 	c := quickstartCheck{ID: id}
-	installed, err := agenthook.Installed(path)
+	installed, err := agenthook.InstalledForAgent(path, agent)
 	if err != nil {
 		c.Status = statusUnknown
 		c.Details = fmt.Sprintf("could not read %s: %v", path, err)

@@ -142,6 +142,34 @@ func TestNormalizeOpenCodeOutput(t *testing.T) {
 	})
 }
 
+func TestNormalizeGrokOutput(t *testing.T) {
+	runNormalizeTests(t, NormalizeGrokOutput, []normalizeTestCase{
+		{
+			name:     "Text",
+			input:    `{"type":"text","data":"Line 1\nLine 2"}`,
+			wantText: "Line 1 Line 2",
+			wantType: "text",
+		},
+		{
+			name:     "ToolCall",
+			input:    `{"type":"tool_call","toolName":"read_file"}`,
+			wantText: "[Tool: read_file]",
+			wantType: "tool",
+		},
+		{
+			name:     "Error",
+			input:    `{"type":"error","message":"auth failed"}`,
+			wantText: "[Error: auth failed]",
+			wantType: "error",
+		},
+		{
+			name:    "Lifecycle",
+			input:   `{"type":"end","stopReason":"end_turn"}`,
+			wantNil: true,
+		},
+	})
+}
+
 func TestNormalizeGenericOutput(t *testing.T) {
 	runNormalizeTests(t, NormalizeGenericOutput, []normalizeTestCase{
 		{
@@ -179,6 +207,12 @@ func TestGetNormalizer(t *testing.T) {
 		{
 			agent:    "codex",
 			input:    `{"type":"item.completed","item":{"type":"agent_message","text":"hello"}}`,
+			wantText: "hello",
+			wantType: "text",
+		},
+		{
+			agent:    "grok",
+			input:    `{"type":"text","data":"hello"}`,
 			wantText: "hello",
 			wantType: "text",
 		},

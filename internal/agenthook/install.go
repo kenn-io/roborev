@@ -259,7 +259,9 @@ func rewriteHookRunner(command, runner string) string {
 		return out
 	}
 	if idx := strings.LastIndex(command, agentHookRunner); idx != -1 {
-		return strings.TrimSpace(command[:idx]) + " " + runner
+		prefix := strings.TrimSpace(command[:idx])
+		suffix := command[idx+len(agentHookRunner):]
+		return prefix + " " + runner + suffix
 	}
 	// User-supplied custom hook command: preserve byte-for-byte.
 	return command

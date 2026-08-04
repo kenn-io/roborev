@@ -204,9 +204,23 @@ func TestQuickstartCheckIDsStableNine(t *testing.T) {
 func TestCheckAgentHookGrokFixCommand(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "missing-hooks.json")
-	check := checkAgentHook("agent_hook_grok", path, "roborev agent-hook install --agent grok")
+	check := checkAgentHook("agent_hook_grok", path, "grok", "roborev agent-hook install --agent grok")
 	assert.Equal(t, statusMissing, check.Status)
 	assert.Equal(t, "roborev agent-hook install --agent grok", check.FixCommand)
+}
+
+func TestCheckAgentHookRecognizesInstalledGrokHook(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hooks.json")
+	content := `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"roborev agent-hook run --agent grok"}]}]}}`
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	check := checkAgentHook(
+		"agent_hook_grok",
+		path,
+		"grok",
+		"roborev agent-hook install --agent grok",
+	)
+	assert.Equal(t, statusOK, check.Status)
 }
 
 func writeQuickstartSkill(t *testing.T, home, configDir, name string) {

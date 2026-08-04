@@ -907,6 +907,15 @@ func TestRewriteHookRunner(t *testing.T) {
 	got := rewriteHookRunner(`/stable/bin/roborev agent-hook run`, grokAgentHookRunner)
 	assert.Equal(t, `/stable/bin/roborev agent-hook run --agent grok`, got)
 
+	got = rewriteHookRunner(
+		`/custom/roborev agent-hook run --turn-threshold 99`,
+		grokAgentHookRunner,
+	)
+	assert.Equal(t,
+		`/custom/roborev agent-hook run --agent grok --turn-threshold 99`,
+		got,
+	)
+
 	// Custom commands must not be rewritten under --agent all.
 	custom := `custom-hook --mode review`
 	assert.Equal(t, custom, rewriteHookRunner(custom, grokAgentHookRunner))

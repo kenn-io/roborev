@@ -26,6 +26,17 @@ func TestInstalledDetectsRoborevHook(t *testing.T) {
 	assert.True(t, ok)
 }
 
+func TestInstalledForAgentDetectsGrokHook(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "hooks.json")
+	content := `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"roborev agent-hook run --agent grok"}]}]}}`
+	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+
+	ok, err := InstalledForAgent(path, "grok")
+	require.NoError(t, err)
+	assert.True(t, ok)
+}
+
 func TestInstalledIgnoresUnrelatedHooks(t *testing.T) {
 	dir := t.TempDir()
 	path := filepath.Join(dir, "settings.json")

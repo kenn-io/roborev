@@ -404,7 +404,7 @@ func (a *GrokAgent) run(ctx context.Context, repoPath, prompt string, output io.
 		if errors.Is(runResult.ParseErr, errNoGrokJSON) {
 			return "", fmt.Errorf("grok CLI did not emit valid streaming-json events; upgrade grok or check CLI compatibility: %w", errNoGrokJSON)
 		}
-		return "", runResult.ParseErr
+		return runResult.Result, runResult.ParseErr
 	}
 
 	if runResult.Result == "" {
@@ -423,8 +423,8 @@ type grokStreamEvent struct {
 }
 
 // parseGrokStreamingJSON parses Grok's native streaming-json NDJSON stream
-// and extracts concatenated type=text payloads. type=error becomes a hard
-// failure when no text was collected.
+// and extracts concatenated type=text payloads. Any type=error event is a hard
+// failure; collected text is returned only as diagnostic context.
 func parseGrokStreamingJSON(r io.Reader, output io.Writer) (string, error) {
 	var text strings.Builder
 	var errorMessages []string
@@ -466,8 +466,8 @@ func parseGrokStreamingJSON(r io.Reader, output io.Writer) (string, error) {
 	}
 
 	result := text.String()
-	if len(errorMessages) > 0 && result == "" {
-		return "", fmt.Errorf("grok stream errors: %s", strings.Join(errorMessages, "; "))
+	if len(errorMessages) > 0 {
+		return result, fmt.Errorf("grok stream errors: %s", strings.Join(errorMessages, "; "))
 	}
 	return result, nil
 }

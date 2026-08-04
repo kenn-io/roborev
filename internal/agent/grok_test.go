@@ -256,20 +256,37 @@ func TestParseGrokStreamingJSON(t *testing.T) {
 		assert.Contains(t, err.Error(), "auth failed")
 	})
 
-	t.Run("error after text returns text", func(t *testing.T) {
+	t.Run("error after text returns partial text and failure", func(t *testing.T) {
 		input := strings.Join([]string{
 			`{"type":"text","data":"partial"}`,
 			`{"type":"error","message":"later fail"}`,
 		}, "\n") + "\n"
 		got, err := parseGrokStreamingJSON(strings.NewReader(input), nil)
-		require.NoError(t, err)
 		assert.Equal(t, "partial", got)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "later fail")
 	})
 
 	t.Run("no events", func(t *testing.T) {
 		_, err := parseGrokStreamingJSON(strings.NewReader("not json\n"), nil)
 		require.ErrorIs(t, err, errNoGrokJSON)
 	})
+}
+
+func TestGrokReviewReturnsPartialTextWithStreamError(t *testing.T) {
+	script := `#!/bin/sh
+case "$1" in *etxtbsy*) exit 0;; esac
+printf '%s\n' '{"type":"text","data":"partial review"}'
+printf '%s\n' '{"type":"error","message":"turn failed"}'
+exit 0
+`
+	cmdPath := writeTempCommand(t, script)
+	a := NewGrokAgent(cmdPath)
+
+	result, err := a.Review(context.Background(), t.TempDir(), "abc", "review", nil)
+	assert.Equal(t, "partial review", result)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "turn failed")
 }
 
 func TestGrokReviewWithMockCLI(t *testing.T) {

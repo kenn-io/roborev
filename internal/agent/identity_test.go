@@ -131,6 +131,22 @@ func TestCommandLooksLikeGrok_VersionProbeCopy(t *testing.T) {
 	assert.False(t, commandIsUsableCursorCandidate(agent))
 }
 
+func TestResolveExecutableRejectsDirectory(t *testing.T) {
+	_, err := resolveExecutable(t.TempDir())
+	assert.Error(t, err)
+}
+
+func TestResolveExecutableRejectsNonExecutableFile(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("Windows executable checks use file extensions instead of mode bits")
+	}
+	path := filepath.Join(t.TempDir(), "not-executable")
+	require.NoError(t, os.WriteFile(path, []byte("not a command"), 0o644))
+
+	_, err := resolveExecutable(path)
+	assert.Error(t, err)
+}
+
 func TestCursorNeverReceivesPositionalProbe(t *testing.T) {
 	// Cursor fixture records any positional argv. Probing identity must not
 	// write the marker — only --version / -v are allowed.
