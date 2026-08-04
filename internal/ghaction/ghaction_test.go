@@ -42,6 +42,11 @@ func TestValidate(t *testing.T) {
 			cfg:  WorkflowConfig{Agents: []string{"kilo"}},
 		},
 		{
+			name:    "pi is not allowed in CI",
+			cfg:     WorkflowConfig{Agents: []string{"pi"}},
+			wantErr: "invalid agent",
+		},
+		{
 			name:    "invalid agent",
 			cfg:     WorkflowConfig{Agents: []string{"evil; rm -rf /"}},
 			wantErr: "invalid agent",

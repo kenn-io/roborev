@@ -426,7 +426,7 @@ type grokStreamEvent struct {
 // and extracts concatenated type=text payloads. Any type=error event is a hard
 // failure; collected text is returned only as diagnostic context.
 func parseGrokStreamingJSON(r io.Reader, output io.Writer) (string, error) {
-	var text strings.Builder
+	reviewText := newTrailingReviewText()
 	var errorMessages []string
 	var validEventsParsed bool
 
@@ -443,8 +443,10 @@ func parseGrokStreamingJSON(r io.Reader, output io.Writer) (string, error) {
 		switch ev.Type {
 		case "text":
 			if ev.Data != "" {
-				text.WriteString(ev.Data)
+				reviewText.Add(ev.Data)
 			}
+		case "tool_call", "tool_call_update":
+			reviewText.ResetAfterTool()
 		case "error":
 			msg := ev.Message
 			if msg == "" {
@@ -458,14 +460,14 @@ func parseGrokStreamingJSON(r io.Reader, output io.Writer) (string, error) {
 		return nil
 	})
 	if err != nil {
-		return text.String(), err
+		return reviewText.Join(""), err
 	}
 
 	if !validEventsParsed {
 		return "", errNoGrokJSON
 	}
 
-	result := text.String()
+	result := reviewText.Join("")
 	if len(errorMessages) > 0 {
 		return result, fmt.Errorf("grok stream errors: %s", strings.Join(errorMessages, "; "))
 	}

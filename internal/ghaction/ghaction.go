@@ -14,11 +14,13 @@ import (
 )
 
 // Allowed values for validation (prevent injection).
+// Pi remains local-only: its review mode does not yet disable builtin tools,
+// so it must not receive generated-workflow credentials on untrusted PRs.
 var (
 	allowedAgents = []string{
 		"codex", "claude-code", "gemini",
 		"copilot", "opencode", "cursor",
-		"kiro", "kilo", "droid", "pi", "grok",
+		"kiro", "kilo", "droid", "grok",
 	}
 	safeVersionRE = regexp.MustCompile(
 		`^[0-9]+\.[0-9]+\.[0-9]+(-[A-Za-z0-9.]+)?$`)

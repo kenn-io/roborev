@@ -235,7 +235,7 @@ func TestGrokAllowUnsafeAgentsEnablesAgenticArgs(t *testing.T) {
 func TestParseGrokStreamingJSON(t *testing.T) {
 	t.Parallel()
 
-	t.Run("concatenates text events", func(t *testing.T) {
+	t.Run("keeps final text after tool call", func(t *testing.T) {
 		input := strings.Join([]string{
 			`{"type":"thought","data":"thinking..."}`,
 			`{"type":"text","data":"Hello "}`,
@@ -246,7 +246,19 @@ func TestParseGrokStreamingJSON(t *testing.T) {
 
 		got, err := parseGrokStreamingJSON(strings.NewReader(input), nil)
 		require.NoError(t, err)
-		assert.Equal(t, "Hello world", got)
+		assert.Equal(t, "world", got)
+	})
+
+	t.Run("keeps final text after tool call update", func(t *testing.T) {
+		input := strings.Join([]string{
+			`{"type":"text","data":"provisional"}`,
+			`{"type":"tool_call_update","toolCallId":"1","status":"completed"}`,
+			`{"type":"text","data":"final review"}`,
+		}, "\n") + "\n"
+
+		got, err := parseGrokStreamingJSON(strings.NewReader(input), nil)
+		require.NoError(t, err)
+		assert.Equal(t, "final review", got)
 	})
 
 	t.Run("error without text fails", func(t *testing.T) {
