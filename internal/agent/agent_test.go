@@ -45,6 +45,8 @@ func TestCanonicalNameAliases(t *testing.T) {
 		{input: "claude", want: "claude-code"},
 		{input: "agent", want: "cursor"},
 		{input: "cursor", want: "cursor"},
+		{input: "grok-build", want: "grok"},
+		{input: "grok", want: "grok"},
 	}
 
 	for _, tt := range tests {
@@ -220,6 +222,7 @@ var agentFixtures = []agentTestDef{
 	{"opencode", func(s string) Agent { return NewOpenCodeAgent(s) }, "--model", "", "anthropic/claude-sonnet-4", false, false},
 	{"cursor", func(s string) Agent { return NewCursorAgent(s) }, "--model", "auto", "claude-sonnet-4", false, false},
 	{"kilo", func(s string) Agent { return NewKiloAgent(s) }, "--model", "", "anthropic/claude-sonnet-4-20250514", false, false},
+	{"grok", func(s string) Agent { return NewGrokAgent(s) }, "-m", "", "grok-4.5", false, false},
 }
 
 func assertArgsNotContain(t *testing.T, cmdLine, flag string) {
@@ -414,6 +417,22 @@ func TestSessionAgentsPreserveStateAcrossCloneMethods(t *testing.T) {
 				assert.Equal(t, ReasoningThorough, pi.Reasoning)
 				assert.True(t, pi.Agentic)
 				assert.Equal(t, config.DefaultPiJSONSchemaExtension, pi.JSONSchemaExtension)
+			},
+		},
+		{
+			name: "grok",
+			agent: NewGrokAgent("grok").
+				WithSessionID("session-123").
+				WithModel("grok-4.5").
+				WithReasoning(ReasoningThorough).
+				WithAgentic(true),
+			verify: func(t *testing.T, a Agent) {
+				grok, ok := a.(*GrokAgent)
+				require.True(t, ok)
+				assert.Equal(t, "session-123", grok.SessionID)
+				assert.Equal(t, "grok-4.5", grok.Model)
+				assert.Equal(t, ReasoningThorough, grok.Reasoning)
+				assert.True(t, grok.Agentic)
 			},
 		},
 	}

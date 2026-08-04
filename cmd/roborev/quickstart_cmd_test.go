@@ -7,12 +7,14 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/skills"
 )
 
 func TestCheckConfiguredAgentRequiresNonEmptyGlobalDefault(t *testing.T) {
@@ -150,6 +152,63 @@ func TestCheckSkillsAcceptsCodexFixAndRefine(t *testing.T) {
 	assert.Contains(t, check.Details, "Codex")
 }
 
+func TestCheckSkillsAcceptsGrokFixAndRefine(t *testing.T) {
+	home := t.TempDir()
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("HOMEDRIVE", "")
+	t.Setenv("HOMEPATH", "")
+	t.Setenv("GROK_HOME", filepath.Join(home, ".grok"))
+
+	writeQuickstartSkill(t, home, ".grok", "roborev-fix")
+	writeQuickstartSkill(t, home, ".grok", "roborev-refine")
+
+	check := checkSkills()
+
+	assert.Equal(t, statusOK, check.Status)
+	assert.Contains(t, check.Details, "Grok Build")
+}
+
+func TestAgentsWithRequiredQuickstartSkills_UnknownAgentNoBlankLabel(t *testing.T) {
+	// Unknown agent enum still produces a non-empty label (never "for ").
+	statuses := []skills.AgentStatus{
+		{
+			Agent:     skills.Agent("future-agent"),
+			Available: true,
+			Skills: map[string]skills.SkillState{
+				"roborev-fix":    skills.SkillCurrent,
+				"roborev-refine": skills.SkillCurrent,
+			},
+		},
+	}
+	got := agentsWithRequiredQuickstartSkills(statuses)
+	require.Len(t, got, 1)
+	assert.Equal(t, "future-agent", got[0])
+	assert.NotContains(t, strings.Join(got, " and "), "  ")
+}
+
+func TestQuickstartCheckIDsStableNine(t *testing.T) {
+	assert.Equal(t, []string{
+		"daemon_running",
+		"post_commit_hook",
+		"repo_registered",
+		"repo_config",
+		"configured_agent",
+		"agent_hook_claude",
+		"agent_hook_codex",
+		"agent_hook_grok",
+		"skills_installed",
+	}, quickstartCheckIDs)
+}
+
+func TestCheckAgentHookGrokFixCommand(t *testing.T) {
+	dir := t.TempDir()
+	path := filepath.Join(dir, "missing-hooks.json")
+	check := checkAgentHook("agent_hook_grok", path, "roborev agent-hook install --agent grok")
+	assert.Equal(t, statusMissing, check.Status)
+	assert.Equal(t, "roborev agent-hook install --agent grok", check.FixCommand)
+}
+
 func writeQuickstartSkill(t *testing.T, home, configDir, name string) {
 	t.Helper()
 	path := filepath.Join(home, configDir, "skills", name, "SKILL.md")
@@ -201,12 +260,14 @@ func TestDetectStateSchema(t *testing.T) {
 
 	assert.True(state.InGitRepo)
 
-	// Exactly the eight stable IDs, in order.
+	// Exactly the nine stable IDs, in order (includes agent_hook_grok).
 	var ids []string
 	for _, c := range state.Checks {
 		ids = append(ids, c.ID)
 	}
 	assert.Equal(quickstartCheckIDs, ids)
+	assert.Len(ids, 9)
+	assert.Contains(ids, "agent_hook_grok")
 
 	for _, c := range state.Checks {
 		assert.Contains([]checkStatus{statusOK, statusMissing, statusUnknown}, c.Status, c.ID)

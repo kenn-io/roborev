@@ -1239,6 +1239,13 @@ func TestGlamourStyleRespectsColorMode(t *testing.T) {
 		require.NotNil(t, style.Document.Color)
 		assert.Equal(t, lightDocColor, *style.Document.Color)
 	})
+	t.Run("light mode wins over ambient NO_COLOR for style base", func(t *testing.T) {
+		t.Setenv("ROBOREV_COLOR_MODE", "light")
+		t.Setenv("NO_COLOR", "1")
+		style := GlamourStyle()
+		require.NotNil(t, style.Document.Color)
+		assert.Equal(t, lightDocColor, *style.Document.Color)
+	})
 	t.Run("none mode selects dark style as base", func(t *testing.T) {
 		t.Setenv("ROBOREV_COLOR_MODE", "none")
 		t.Setenv("NO_COLOR", "")

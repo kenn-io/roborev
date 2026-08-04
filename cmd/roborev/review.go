@@ -411,7 +411,7 @@ Examples:
 
 	cmd.Flags().StringVar(&repoPath, "repo", "", "path to git repository (default: current directory)")
 	cmd.Flags().StringVar(&sha, "sha", "HEAD", "commit SHA to review (used when no positional args)")
-	cmd.Flags().StringVar(&agent, "agent", "", "agent to use (codex, claude-code, gemini, copilot, opencode, cursor, kiro, kilo, pi)")
+	cmd.Flags().StringVar(&agent, "agent", "", "agent to use (codex, claude-code, gemini, copilot, opencode, cursor, kiro, kilo, droid, pi, grok)")
 	cmd.Flags().StringVar(&model, "model", "", "model for agent (format varies: opencode uses provider/model, others use model name)")
 	cmd.Flags().StringVar(&reasoning, "reasoning", "", "reasoning level: fast, standard, medium, thorough (default), or maximum")
 	cmd.Flags().BoolVar(&fast, "fast", false, "shorthand for --reasoning fast")

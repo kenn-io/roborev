@@ -300,15 +300,14 @@ func (a *ACPAgent) runPrompt(
 	// Create the ACP connection
 	conn := acp.NewClientSideConnection(client, stdinPipe, stdoutPipe)
 
-	_, err = conn.Initialize(ctx, acp.InitializeRequest{
+	if _, err := conn.Initialize(ctx, acp.InitializeRequest{
 		ProtocolVersion: acp.ProtocolVersionNumber,
 		ClientInfo: &acp.Implementation{
 			Name:    "roborev",
 			Version: version.Version,
 		},
 		ClientCapabilities: clientCapabilities,
-	})
-	if err != nil {
+	}); err != nil {
 		// Check process state to provide better error context
 		if cmd.ProcessState != nil && cmd.ProcessState.Exited() {
 			return "", fmt.Errorf("failed to initialize ACP connection (agent exited with code %d): %w",

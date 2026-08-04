@@ -1,5 +1,5 @@
 // Package skills provides embedded skill files for AI agents (Claude Code, Codex,
-// Factory Droid) and installation utilities.
+// Factory Droid, Grok Build) and installation utilities.
 package skills
 
 import (
@@ -27,6 +27,9 @@ var codexSkills embed.FS
 //go:embed droid/*/SKILL.md
 var droidSkills embed.FS
 
+//go:embed grok/*/SKILL.md
+var grokSkills embed.FS
+
 // Agent represents a supported AI agent
 type Agent string
 
@@ -34,6 +37,7 @@ const (
 	AgentClaude Agent = "claude"
 	AgentCodex  Agent = "codex"
 	AgentDroid  Agent = "droid"
+	AgentGrok   Agent = "grok"
 )
 
 type agentSpec struct {
@@ -56,6 +60,7 @@ var supportedAgents = []agentSpec{
 	{agent: AgentClaude, configDirName: ".claude", configDirEnv: "CLAUDE_CONFIG_DIR", embedFS: claudeSkills, embedDir: "claude"},
 	{agent: AgentCodex, configDirName: ".codex", configDirEnv: "CODEX_HOME", embedFS: codexSkills, embedDir: "codex"},
 	{agent: AgentDroid, configDirName: ".factory", embedFS: droidSkills, embedDir: "droid"},
+	{agent: AgentGrok, configDirName: ".grok", configDirEnv: "GROK_HOME", embedFS: grokSkills, embedDir: "grok"},
 }
 
 var userHomeDir = os.UserHomeDir
@@ -268,7 +273,7 @@ func Update() ([]InstallResult, error) {
 func InstallToPath(agent Agent, skillsDir string) (InstallResult, error) {
 	spec, ok := lookupAgent(agent)
 	if !ok {
-		return InstallResult{}, fmt.Errorf("unsupported agent %q (expected claude, codex, or droid)", agent)
+		return InstallResult{}, fmt.Errorf("unsupported agent %q (expected claude, codex, droid, or grok)", agent)
 	}
 	return installSkills(spec, skillsDir)
 }

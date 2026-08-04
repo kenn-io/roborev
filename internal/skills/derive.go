@@ -41,8 +41,28 @@ var derivedClaudeSkills = []string{
 	"roborev-snooze",
 }
 
+// Grok Build uses slash-style skill invocation like Claude Code and discovers
+// skills under ~/.grok/skills (see Grok Build user guide).
+//
+// Capability set matches Droid's full derived surface (Claude-peer plus
+// review/design/lookahead skills referenced by those documents), not the
+// smaller Claude install set, so cross-links resolve without dangling
+// /roborev-* references.
+var derivedGrokSkills = []string{
+	"roborev-design-review",
+	"roborev-design-review-branch",
+	"roborev-fix",
+	"roborev-lookahead-review",
+	"roborev-lookahead-review-branch",
+	"roborev-refine",
+	"roborev-respond",
+	"roborev-review",
+	"roborev-review-branch",
+	"roborev-snooze",
+}
+
 func skillDerivations() []skillDerivation {
-	derivations := make([]skillDerivation, 0, len(derivedDroidSkills)+len(derivedClaudeSkills))
+	derivations := make([]skillDerivation, 0, len(derivedDroidSkills)+len(derivedClaudeSkills)+len(derivedGrokSkills))
 	for _, skillName := range derivedDroidSkills {
 		replacements := []stringReplacement{
 			{
@@ -89,6 +109,30 @@ func skillDerivations() []skillDerivation {
 			Replacements: replacements,
 		})
 	}
+	for _, skillName := range derivedGrokSkills {
+		replacements := []stringReplacement{
+			{
+				Old: ", plugin\n`$roborev:" + skillName + "`, or structured Codex skill selection",
+				New: ", or structured\nGrok Build skill selection",
+			},
+			{Old: "$roborev", New: "/roborev"},
+			// Grok project rules use AGENTS.md (CLAUDE.md is a compatibility alias).
+			{Old: "CLAUDE.md", New: "AGENTS.md"},
+		}
+		// Same model-invocation rules as Claude: roborev-fix stays invocable
+		// for agent-hook Stop; other skills are explicit-only.
+		if skillName != "roborev-fix" {
+			replacements = append([]stringReplacement{{
+				Old: "invokes $" + skillName + "\n---",
+				New: "invokes /" + skillName + "\ndisable-model-invocation: true\n---",
+			}}, replacements...)
+		}
+		derivations = append(derivations, skillDerivation{
+			TargetAgent:  AgentGrok,
+			SkillName:    skillName,
+			Replacements: replacements,
+		})
+	}
 	return derivations
 }
 
@@ -128,6 +172,10 @@ func validateSkillDerivation(derivation skillDerivation) error {
 		if !slices.Contains(derivedClaudeSkills, derivation.SkillName) {
 			return fmt.Errorf("unknown claude derived skill %q", derivation.SkillName)
 		}
+	case AgentGrok:
+		if !slices.Contains(derivedGrokSkills, derivation.SkillName) {
+			return fmt.Errorf("unknown grok derived skill %q", derivation.SkillName)
+		}
 	default:
 		return fmt.Errorf("unsupported derived target agent %q", derivation.TargetAgent)
 	}
@@ -144,6 +192,9 @@ func WriteDerivedSkillFiles(skillRoot string) error {
 
 	for relPath, content := range derived {
 		dest := filepath.Join(skillRoot, filepath.FromSlash(relPath))
+		if err := os.MkdirAll(filepath.Dir(dest), 0o755); err != nil {
+			return fmt.Errorf("mkdir %s: %w", filepath.Dir(dest), err)
+		}
 		if err := os.WriteFile(dest, content, 0o644); err != nil {
 			return fmt.Errorf("write %s: %w", relPath, err)
 		}

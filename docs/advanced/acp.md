@@ -39,6 +39,8 @@ Set `command` to the wrapper binary in your ACP config:
 command = "codex-acp"
 ```
 
+Grok Build is a first-class CommandAgent (`--agent grok`), not an ACP adapter.
+
 ### Environment Variable Override
 
 Override the ACP command for a single invocation without editing config files:

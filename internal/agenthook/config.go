@@ -15,6 +15,8 @@ const (
 	DefaultFailedReviewThreshold = 4
 	DefaultInstruction           = "Invoke the $roborev-fix skill now."
 	DefaultDroidInstruction      = "Run the roborev-fix skill to address the unresolved roborev findings, then continue."
+	// Grok Build skills use slash invocation (/roborev-fix), not Codex $.
+	DefaultGrokInstruction = "Invoke the /roborev-fix skill now."
 
 	TurnThresholdEnv         = "ROBOREV_AGENT_HOOK_TURN_THRESHOLD"
 	CommitThresholdEnv       = "ROBOREV_AGENT_HOOK_COMMIT_THRESHOLD"
@@ -58,10 +60,12 @@ func ResolveOptionsForAgent(agent string, cli Options, changed map[string]bool) 
 	switch agent {
 	case "", "agent", "codex", "claude":
 		return resolveAgentOptions(cli, changed)
+	case "grok":
+		return resolveGrokOptions(cli, changed)
 	case "droid":
 		return resolveDroidOptions(cli, changed)
 	default:
-		return Options{}, fmt.Errorf("agent must be codex, claude, droid, or empty")
+		return Options{}, fmt.Errorf("agent must be codex, claude, droid, grok, or empty")
 	}
 }
 
@@ -72,6 +76,50 @@ func resolveAgentOptions(cli Options, changed map[string]bool) (Options, error) 
 	}
 	if err := applyConfig(&opts); err != nil {
 		return Options{}, err
+	}
+	applyEnv(&opts)
+	if changed["turn-threshold"] {
+		opts.TurnThreshold = cli.TurnThreshold
+	}
+	if changed["commit-threshold"] {
+		opts.CommitThreshold = cli.CommitThreshold
+	}
+	if changed["failed-review-threshold"] {
+		opts.FailedReviewThreshold = cli.FailedReviewThreshold
+	}
+	if changed["instruction"] {
+		opts.Instruction = cli.Instruction
+	}
+	if changed["roborev-server"] {
+		opts.RoborevServerAddr = cli.RoborevServerAddr
+	}
+	if opts.TurnThreshold < 0 {
+		return Options{}, fmt.Errorf("turn threshold must be >= 0")
+	}
+	if opts.CommitThreshold < 0 {
+		return Options{}, fmt.Errorf("commit threshold must be >= 0")
+	}
+	if opts.FailedReviewThreshold < 0 {
+		return Options{}, fmt.Errorf("failed review threshold must be >= 0")
+	}
+	return opts, nil
+}
+
+func resolveGrokOptions(cli Options, changed map[string]bool) (Options, error) {
+	// Share [agent_hook] config/env with Claude/Codex, but default to slash-form
+	// skill invocation that matches Grok skill install paths.
+	opts := DefaultOptions()
+	opts.Instruction = DefaultGrokInstruction
+	if changed["config"] {
+		opts.ConfigPath = cli.ConfigPath
+	}
+	if err := applyConfig(&opts); err != nil {
+		return Options{}, err
+	}
+	// applyConfig overwrites Instruction when the TOML field is non-empty; when
+	// unset, restore the Grok-specific default (not the Claude $ form).
+	if opts.Instruction == DefaultInstruction {
+		opts.Instruction = DefaultGrokInstruction
 	}
 	applyEnv(&opts)
 	if changed["turn-threshold"] {

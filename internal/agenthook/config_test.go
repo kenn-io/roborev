@@ -219,3 +219,15 @@ func clearAgentHookEnv(t *testing.T) {
 		t.Setenv(name, "")
 	}
 }
+
+func TestResolveOptionsForAgentGrokUsesSlashInstruction(t *testing.T) {
+	assert := assert.New(t)
+	// Empty config file so defaults apply without a user-set instruction.
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(path, []byte(""), 0o600))
+	opts, err := ResolveOptionsForAgent("grok", Options{ConfigPath: path}, map[string]bool{"config": true})
+	require.NoError(t, err)
+	assert.Equal(DefaultGrokInstruction, opts.Instruction)
+	assert.Contains(opts.Instruction, "/roborev-fix")
+	assert.NotContains(opts.Instruction, "$roborev-fix")
+}

@@ -204,16 +204,14 @@ func TestGetAvailableWithConfigEmptyRepoPathDoesNotReadCWD(t *testing.T) {
 	require.Equal(t, "global-acp", acpAgent.Command)
 }
 
-func TestGetAvailableWithConfigResolvesConfiguredACPNameAlias(t *testing.T) {
+func TestGetAvailableWithConfigKeepsNamedACPSeparateFromBuiltInAlias(t *testing.T) {
 	fakeBin := t.TempDir()
 	binName := defaultACPCommand
 	if runtime.GOOS == "windows" {
 		binName += ".exe"
 	}
 	acpPath := filepath.Join(fakeBin, binName)
-	if err := os.WriteFile(acpPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		require.NoError(t, err, "failed to create fake acp-agent binary: %v")
-	}
+	require.NoError(t, os.WriteFile(acpPath, []byte("#!/bin/sh\nexit 0\n"), 0o755))
 	t.Setenv("PATH", fakeBin)
 
 	cfg := &config.Config{ACP: config.ACPAgentConfigs{
@@ -222,9 +220,12 @@ func TestGetAvailableWithConfigResolvesConfiguredACPNameAlias(t *testing.T) {
 		},
 	}}
 
-	entry := cfg.ACP["claude"]
-	_, err := configuredACPAgentWithConfig("claude", &entry)
-	require.ErrorContains(t, err, "conflicts with built-in agent")
+	resolved, err := GetAvailableWithConfig("", "acp.claude", cfg)
+	require.NoError(t, err)
+	acpAgent, ok := resolved.(*ACPAgent)
+	require.True(t, ok)
+	assert.Equal(t, "acp.claude", acpAgent.Name())
+	assert.Equal(t, defaultACPCommand, acpAgent.CommandName())
 }
 
 func TestGetAvailableWithConfigFallsBackToCanonicalACPWhenConfiguredCommandMissing(t *testing.T) {
@@ -888,15 +889,10 @@ func TestReadTextFileWindow(t *testing.T) {
 }
 
 func TestACPAliasCollisionFixed(t *testing.T) {
+	clearIdentityProbeCache()
 	fakeBin := t.TempDir()
-	agentBin := "agent"
-	if runtime.GOOS == "windows" {
-		agentBin += ".exe"
-	}
-	agentPath := filepath.Join(fakeBin, agentBin)
-	if err := os.WriteFile(agentPath, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
-		require.NoError(t, err, "failed to create fake agent binary: %v")
-	}
+	// Cursor availability requires a conclusive not-Grok version probe.
+	_ = writeProbeScript(t, fakeBin, "agent", "cursor agent 1.0.0")
 	t.Setenv("PATH", fakeBin)
 
 	cfg := &config.Config{ACP: config.ACPAgentConfigs{
@@ -1100,16 +1096,10 @@ func TestGetAvailableWithConfigCodexCmd(t *testing.T) {
 }
 
 func TestGetAvailableWithConfigCursorCmd(t *testing.T) {
+	clearIdentityProbeCache()
 	fakeBin := t.TempDir()
-	wrapper := "custom-cursor"
-	if runtime.GOOS == "windows" {
-		wrapper += ".exe"
-	}
-	err := os.WriteFile(
-		filepath.Join(fakeBin, wrapper),
-		[]byte("#!/bin/sh\nexit 0\n"), 0o755,
-	)
-	require.NoError(t, err)
+	// cursor_cmd must answer --version as non-Grok or identity fails closed.
+	cursorPath := writeProbeScript(t, fakeBin, "custom-cursor", "cursor agent 2.0.0")
 	t.Setenv("PATH", fakeBin)
 
 	originalRegistry := registry
@@ -1119,7 +1109,7 @@ func TestGetAvailableWithConfigCursorCmd(t *testing.T) {
 	t.Cleanup(func() { registry = originalRegistry })
 
 	cfg := &config.Config{
-		CursorCmd: filepath.Join(fakeBin, wrapper),
+		CursorCmd: cursorPath,
 	}
 
 	resolved, err := GetAvailableWithConfig("", "cursor", cfg)
@@ -1128,7 +1118,7 @@ func TestGetAvailableWithConfigCursorCmd(t *testing.T) {
 
 	ca, ok := resolved.(CommandAgent)
 	require.True(t, ok)
-	assert.Equal(t, filepath.Join(fakeBin, wrapper), ca.CommandName())
+	assert.Equal(t, cursorPath, ca.CommandName())
 }
 
 func TestGetAvailableWithConfigPiCmd(t *testing.T) {

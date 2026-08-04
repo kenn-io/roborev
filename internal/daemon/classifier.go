@@ -43,9 +43,11 @@ func newClassifierAdapter(a agent.SchemaAgent, maxBytes int, output io.Writer) *
 	return &classifierAdapter{agent: a, maxBytes: maxBytes, output: output}
 }
 
+// classifyResult uses pointers so missing required fields are distinguishable
+// from legitimate zero values (false / empty string).
 type classifyResult struct {
-	DesignReview bool   `json:"design_review"`
-	Reason       string `json:"reason"`
+	DesignReview *bool   `json:"design_review"`
+	Reason       *string `json:"reason"`
 }
 
 // Decide implements autotype.Classifier.
@@ -71,11 +73,39 @@ func (c *classifierAdapter) Decide(ctx context.Context, in autotype.Input) (bool
 		return false, "", fmt.Errorf("classifier agent: %w", err)
 	}
 
-	var out classifyResult
-	if err := json.Unmarshal(raw, &out); err != nil {
-		return false, "", fmt.Errorf("invalid classifier output: %w (%q)", err, string(raw))
+	out, err := decodeClassifyResult(raw)
+	if err != nil {
+		return false, "", err
 	}
-	return out.DesignReview, sanitizeClassifierReason(out.Reason), nil
+	return *out.DesignReview, sanitizeClassifierReason(*out.Reason), nil
+}
+
+// decodeClassifyResult parses exactly one JSON object with DisallowUnknownFields
+// and requires both design_review and reason. Defense in depth after the agent
+// returns schema-constrained output; no generic schema-validation dependency.
+func decodeClassifyResult(raw json.RawMessage) (classifyResult, error) {
+	trimmed := strings.TrimSpace(string(raw))
+	if trimmed == "" {
+		return classifyResult{}, fmt.Errorf("invalid classifier output: empty")
+	}
+	dec := json.NewDecoder(strings.NewReader(trimmed))
+	dec.DisallowUnknownFields()
+	var out classifyResult
+	if err := dec.Decode(&out); err != nil {
+		return classifyResult{}, fmt.Errorf("invalid classifier output: %w (%q)", err, string(raw))
+	}
+	// Reject trailing documents or non-whitespace junk after the first value.
+	rest := strings.TrimSpace(trimmed[dec.InputOffset():])
+	if rest != "" {
+		return classifyResult{}, fmt.Errorf("invalid classifier output: trailing JSON (%q)", string(raw))
+	}
+	if out.DesignReview == nil {
+		return classifyResult{}, fmt.Errorf("invalid classifier output: missing design_review (%q)", string(raw))
+	}
+	if out.Reason == nil {
+		return classifyResult{}, fmt.Errorf("invalid classifier output: missing reason (%q)", string(raw))
+	}
+	return out, nil
 }
 
 // sanitizeClassifierReason caps length and strips control characters from

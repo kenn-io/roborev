@@ -72,7 +72,7 @@ You can also choose the exact binary path with
   refactoring, test fixtures, dead code, security) that agents can fix
   automatically.
 - **Multi-Agent** - Works with Codex, Claude Code, Gemini, Copilot,
-  OpenCode, Cursor, Kiro, Kilo, Droid, and Pi.
+  OpenCode, Cursor, Kiro, Kilo, Droid, Pi, and Grok Build.
 - **Runs Locally** - No hosted service or additional infrastructure.
   Reviews are orchestrated on your machine using the coding agents
   you already have configured.
@@ -205,7 +205,7 @@ leaving Markdown tables unchanged. Use `make check-renovate-config` to validate
 | `roborev export ci-metrics` | Export finalized CI panel metrics as JSON |
 | `roborev run "<task>"` | Execute a task with an AI agent |
 | `roborev close <id>` | Close a review |
-| `roborev skills install` | Install agent skills for Claude/Codex |
+| `roborev skills install` | Install agent skills for Claude/Codex/Droid/Grok |
 
 See [full command reference](https://roborev.io/commands/) for all options.
 
@@ -349,6 +349,7 @@ hook, so a configured integration never goes dark unnoticed.
 | Kilo | `npm install -g @kilocode/cli` |
 | Droid | [factory.ai](https://factory.ai/) |
 | Pi | [pi.dev](https://pi.dev/) |
+| Grok Build | [x.ai/cli](https://x.ai/cli) (`curl -fsSL https://x.ai/cli/install.sh \| bash`) |
 
 roborev auto-detects installed agents.
 

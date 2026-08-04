@@ -130,8 +130,8 @@ Before enabling the CI poller, you need:
 
 1. **At least one AI agent** installed. The poller auto-detects installed agents
     in this order: `codex`, `claude-code`, `gemini`, `copilot`, `opencode`,
-    `cursor`, `kiro`, `kilo`, `droid`, `pi`. You can check what's available
-    with:
+    `cursor`, `kiro`, `kilo`, `droid`, `pi`, `grok`. You can check what's
+    available with:
 
     ```bash
     roborev check-agents             # smoke-test all installed agents
@@ -745,7 +745,8 @@ set, it takes priority over the matrix fields for that repo.
 | `batch_timeout` | string | `"15m"` | Maximum time to wait for panel members before posting available results. Set `"0"` to disable. |
 
 When `agents` is empty, the poller auto-detects the first available agent from:
-codex, claude-code, gemini, copilot, opencode, cursor, kiro, kilo, droid, pi.
+codex, claude-code, gemini, copilot, opencode, cursor, kiro, kilo, droid, pi,
+grok.
 
 ### Quiet Hours Options
 

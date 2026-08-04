@@ -83,7 +83,7 @@ roborev review --branch --panel none          # Force single-agent review
 | `--quiet` | Only show progress/elapsed time |
 | `--branch [name]` | Review all commits on branch since base (optionally specify branch name) |
 | `--base <branch>` | Base branch for `--branch` comparison (default: auto-detect) |
-| `--agent <name>` | Use a specific agent for review: a built-in (`codex`, `claude-code`, `gemini`, `copilot`, `opencode`, `cursor`, `kiro`, `kilo`, `droid`, `pi`) or a configured ACP agent |
+| `--agent <name>` | Use a specific agent for review: a built-in (`codex`, `claude-code`, `gemini`, `copilot`, `opencode`, `cursor`, `kiro`, `kilo`, `droid`, `pi`, `grok`) or a configured ACP agent |
 | `-m, --model <model>` | Model to use (format varies by agent) |
 | `--type <type>` | Review type (`security`, `design`, `lookahead`); changes system prompt |
 | `--reasoning <level>` | Set reasoning depth (`maximum`/`thorough`/`standard`/`fast`) |

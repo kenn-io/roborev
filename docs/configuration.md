@@ -528,6 +528,7 @@ gemini_cmd = "gemini"                 # Pin legacy Gemini CLI instead of auto-pr
 cursor_cmd = "/usr/local/bin/agent"
 opencode_cmd = "/usr/local/bin/opencode-wrapper"
 pi_cmd = "~/bin/pi"
+grok_cmd = "/opt/bin/grok"
 ```
 
 | Option | Default command |
@@ -538,6 +539,7 @@ pi_cmd = "~/bin/pi"
 | `cursor_cmd` | `agent` |
 | `opencode_cmd` | `opencode` |
 | `pi_cmd` | `pi` |
+| `grok_cmd` | `grok` |
 
 These overrides affect both agent execution and availability detection. Without
 them, roborev only checks for the default command name when deciding whether an
@@ -545,6 +547,11 @@ agent is installed. Gemini is the exception: when `gemini_cmd` is unset, roborev
 auto-prefers `agy` before the legacy `gemini` command; set
 `gemini_cmd = "gemini"` to pin the legacy CLI, for example when using explicit
 Gemini model overrides.
+
+A custom `cursor_cmd` must forward `--version` or `-v` to Cursor and produce
+non-empty version output that does not identify as Grok. Wrappers that ignore
+version flags, hang, or print nothing are treated as unavailable (fail-closed
+identity probe), so a Grok-only `agent` alias cannot be selected as Cursor.
 
 ### Agent Name Validation
 
@@ -742,6 +749,7 @@ column_borders = true             # Show separators between TUI columns
 | `cursor_cmd` | string | `agent` | Custom path or name for the Cursor binary | Yes |
 | `opencode_cmd` | string | `opencode` | Custom path or name for the OpenCode binary | Yes |
 | `pi_cmd` | string | `pi` | Custom path or name for the Pi binary | Yes |
+| `grok_cmd` | string | `grok` | Custom path or name for the Grok Build binary | Yes |
 | `exclude_patterns` | array | `[]` | Filenames or glob patterns to exclude from review diffs globally | Yes |
 | `default_max_prompt_size` | int | 200000 | Default maximum prompt size in bytes for review prompts | Yes |
 
@@ -1324,9 +1332,11 @@ to a design-review job or marks it skipped accordingly.
 | `classify_backup_agent` | string | - | Fallback classifier agent on quota exhaustion or failure |
 | `classify_backup_model` | string | - | Fallback classifier model |
 
-Currently `claude-code` (via `--json-schema`) and `pi` (via the configured JSON
-schema extension) implement the structured-output capability. Other agents are
-rejected at config-resolve time with a list of valid choices.
+Currently `claude-code` (via `--json-schema`), `grok` (via headless
+`--json-schema` with fail-closed tool denial and validated `structuredOutput`
+only), and `pi` (via the configured JSON schema extension) implement the
+structured-output capability. Other agents are rejected at config-resolve time
+with a list of valid choices.
 
 These keys live at the top level of the config file (not inside
 `[auto_design_review]`), since they describe the classifier agent the same way

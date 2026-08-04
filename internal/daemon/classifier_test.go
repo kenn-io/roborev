@@ -104,6 +104,56 @@ func TestClassifierAdapter_InvalidJSON(t *testing.T) {
 	assert.ErrorContains(t, err, "invalid")
 }
 
+func TestDecodeClassifyResult(t *testing.T) {
+	t.Parallel()
+
+	t.Run("valid", func(t *testing.T) {
+		out, err := decodeClassifyResult([]byte(`{"design_review":true,"reason":"big"}`))
+		require.NoError(t, err)
+		require.NotNil(t, out.DesignReview)
+		require.NotNil(t, out.Reason)
+		assert.True(t, *out.DesignReview)
+		assert.Equal(t, "big", *out.Reason)
+	})
+
+	t.Run("false is not missing", func(t *testing.T) {
+		out, err := decodeClassifyResult([]byte(`{"design_review":false,"reason":""}`))
+		require.NoError(t, err)
+		assert.False(t, *out.DesignReview)
+		assert.Empty(t, *out.Reason)
+	})
+
+	t.Run("empty object missing fields", func(t *testing.T) {
+		_, err := decodeClassifyResult([]byte(`{}`))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "missing")
+	})
+
+	t.Run("unknown fields fail", func(t *testing.T) {
+		_, err := decodeClassifyResult([]byte(`{"design_review":true,"reason":"x","extra":1}`))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "invalid")
+	})
+
+	t.Run("trailing JSON fails", func(t *testing.T) {
+		_, err := decodeClassifyResult([]byte(`{"design_review":true,"reason":"x"}{"more":1}`))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "trailing")
+	})
+
+	t.Run("missing reason", func(t *testing.T) {
+		_, err := decodeClassifyResult([]byte(`{"design_review":true}`))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "reason")
+	})
+
+	t.Run("missing design_review", func(t *testing.T) {
+		_, err := decodeClassifyResult([]byte(`{"reason":"only"}`))
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), "design_review")
+	})
+}
+
 func TestClassifierAdapter_SanitizesReason_Length(t *testing.T) {
 	long := strings.Repeat("a", 1000)
 	ad := newClassifierAdapter(&fakeSchemaAgent{

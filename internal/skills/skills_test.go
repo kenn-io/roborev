@@ -7,6 +7,7 @@ import (
 	"os"
 	"path"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"testing"
 	"testing/fstest"
@@ -533,7 +534,7 @@ func TestInstallToPathRejectsUnsupportedAgentWithoutCreatingDestination(t *testi
 	skillsDir := filepath.Join(t.TempDir(), "skills")
 
 	_, err := InstallToPath(Agent("unknown"), skillsDir)
-	require.EqualError(t, err, `unsupported agent "unknown" (expected claude, codex, or droid)`)
+	require.EqualError(t, err, `unsupported agent "unknown" (expected claude, codex, droid, or grok)`)
 
 	_, statErr := os.Stat(skillsDir)
 	assert.ErrorIs(t, statErr, os.ErrNotExist)
@@ -831,13 +832,13 @@ func TestListSkillsReportsSupportedAgents(t *testing.T) {
 	}
 
 	assert.ElementsMatch(t,
-		[]Agent{AgentClaude, AgentCodex, AgentDroid},
+		[]Agent{AgentClaude, AgentCodex, AgentDroid, AgentGrok},
 		skillsByDir["roborev-review"].SupportedAgents)
 	assert.ElementsMatch(t,
-		[]Agent{AgentClaude, AgentCodex, AgentDroid},
+		[]Agent{AgentClaude, AgentCodex, AgentDroid, AgentGrok},
 		skillsByDir["roborev-lookahead-review"].SupportedAgents)
 	assert.ElementsMatch(t,
-		[]Agent{AgentClaude, AgentCodex, AgentDroid},
+		[]Agent{AgentClaude, AgentCodex, AgentDroid, AgentGrok},
 		skillsByDir["roborev-lookahead-review-branch"].SupportedAgents)
 }
 
@@ -901,12 +902,54 @@ func TestDroidSkillsUseDroidAdaptations(t *testing.T) {
 func TestDerivedSkillFilesAreCurrent(t *testing.T) {
 	derived, err := renderDerivedSkills(os.DirFS("."))
 	require.NoError(t, err)
-	require.Len(t, derived, 14)
+	// 10 droid + 4 claude + 10 grok (full capability-set parity for Grok)
+	require.Len(t, derived, 24)
 
 	for relPath, want := range derived {
 		got, err := os.ReadFile(filepath.FromSlash(relPath))
 		require.NoError(t, err, "read checked-in derived skill %s", relPath)
 		assert.Equal(t, string(want), string(got), "derived skill %s is stale; run `go generate ./internal/skills`", relPath)
+	}
+}
+
+func TestGrokSkillsCapabilityParityAndLinks(t *testing.T) {
+	// Capability set matches Droid (full derived surface), not the smaller
+	// Claude install set — so review/design/lookahead cross-links resolve.
+	assert.ElementsMatch(t, derivedDroidSkills, derivedGrokSkills)
+
+	spec, ok := lookupAgent(AgentGrok)
+	require.True(t, ok)
+	skills, err := embeddedSkillsForAgent(spec)
+	require.NoError(t, err)
+	require.NotEmpty(t, skills)
+
+	installed := make(map[string]struct{}, len(skills))
+	for _, s := range skills {
+		installed[s.DirName] = struct{}{}
+		content := string(s.Content)
+		assert.NotContains(t, content, "$roborev", "grok skill %s must use /roborev slash invocation", s.DirName)
+		assert.NotContains(t, content, "CLAUDE.md", "grok skill %s must reference AGENTS.md", s.DirName)
+		assert.NotContains(t, content, "plugin\n`$roborev", "no Codex plugin namespace remains")
+		assert.Contains(t, content, "/roborev-", "grok skill %s should use /roborev- slash invocation", s.DirName)
+		assert.Contains(t, content, "AGENTS.md", "grok skill %s should reference AGENTS.md", s.DirName)
+		if s.DirName == "roborev-fix" {
+			assert.NotContains(t, content, "disable-model-invocation: true",
+				"roborev-fix must stay model-invocable for agent hooks")
+		} else {
+			assert.Contains(t, content, "disable-model-invocation: true",
+				"non-fix grok skills must be explicit-only")
+		}
+	}
+
+	// Every /roborev-* cross-link in Grok skills must resolve to an installed skill.
+	linkRE := regexp.MustCompile(`/roborev-[a-z0-9-]+`)
+	for _, s := range skills {
+		for _, m := range linkRE.FindAllString(string(s.Content), -1) {
+			name := strings.TrimPrefix(m, "/")
+			// Strip optional suffixes already matched as full skill names.
+			_, ok := installed[name]
+			assert.True(t, ok, "dangling skill link %s in %s", m, s.DirName)
+		}
 	}
 }
 
@@ -919,7 +962,8 @@ func TestDerivedExplicitInvocationWordingUsesTargetAgent(t *testing.T) {
 		skillName := path.Base(path.Dir(relPath))
 		assert.NotContains(t, text, "structured Codex skill selection", "%s retains Codex-specific wording", relPath)
 		assert.NotContains(t, text, "roborev:", "%s retains Codex plugin namespace", relPath)
-		if strings.HasPrefix(relPath, "droid/") {
+		switch {
+		case strings.HasPrefix(relPath, "droid/"):
 			assert.Contains(t, text, "`/"+skillName+"`, or structured Factory skill selection", relPath)
 			if skillName == "roborev-snooze" {
 				assert.Contains(t, text, "disable-model-invocation: true",
@@ -928,7 +972,15 @@ func TestDerivedExplicitInvocationWordingUsesTargetAgent(t *testing.T) {
 				assert.NotContains(t, text, "disable-model-invocation",
 					"%s must not carry model-invocation policy", relPath)
 			}
-		} else {
+		case strings.HasPrefix(relPath, "grok/"):
+			assert.Contains(t, text, "`/"+skillName+"`, or structured Grok Build skill selection", relPath)
+			if skillName == "roborev-fix" {
+				assert.NotContains(t, text, "disable-model-invocation",
+					"roborev-fix must stay model-invocable for the agent-hook instruction")
+			} else {
+				assert.Contains(t, text, "disable-model-invocation: true", "%s missing frontmatter policy", relPath)
+			}
+		default:
 			assert.Contains(t, text, "`/"+skillName+"`, or structured Claude Code skill selection", relPath)
 			if skillName == "roborev-fix" {
 				assert.NotContains(t, text, "disable-model-invocation",
@@ -941,7 +993,7 @@ func TestDerivedExplicitInvocationWordingUsesTargetAgent(t *testing.T) {
 }
 
 func TestFixSkillsUseHeredocForCommentText(t *testing.T) {
-	for _, agent := range []Agent{AgentClaude, AgentCodex, AgentDroid} {
+	for _, agent := range []Agent{AgentClaude, AgentCodex, AgentDroid, AgentGrok} {
 		t.Run(string(agent), func(t *testing.T) {
 			spec, ok := lookupAgent(agent)
 			require.True(t, ok)

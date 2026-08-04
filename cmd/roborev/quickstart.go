@@ -44,6 +44,7 @@ var quickstartCheckIDs = []string{
 	"configured_agent",
 	"agent_hook_claude",
 	"agent_hook_codex",
+	"agent_hook_grok",
 	"skills_installed",
 }
 
@@ -62,6 +63,8 @@ func detectState(ctx context.Context, repoRoot string, inGitRepo bool) quickstar
 			"roborev agent-hook install --agent claude"),
 		checkAgentHook("agent_hook_codex", agenthook.DefaultCodexHooksPath(),
 			"roborev agent-hook install --agent codex"),
+		checkAgentHook("agent_hook_grok", agenthook.DefaultGrokHooksPath(),
+			"roborev agent-hook install --agent grok"),
 		checkSkills(),
 	}
 
@@ -252,6 +255,7 @@ func agentsWithRequiredQuickstartSkills(statuses []skills.AgentStatus) []string 
 		skills.AgentClaude: "Claude Code",
 		skills.AgentCodex:  "Codex",
 		skills.AgentDroid:  "Factory Droid",
+		skills.AgentGrok:   "Grok Build",
 	}
 	var installedFor []string
 	for _, status := range statuses {
@@ -265,9 +269,18 @@ func agentsWithRequiredQuickstartSkills(statuses []skills.AgentStatus) []string 
 				break
 			}
 		}
-		if complete {
-			installedFor = append(installedFor, labels[status.Agent])
+		if !complete {
+			continue
 		}
+		label := labels[status.Agent]
+		if label == "" {
+			// Never emit "skills installed for " with a blank agent name.
+			label = string(status.Agent)
+		}
+		if label == "" {
+			continue
+		}
+		installedFor = append(installedFor, label)
 	}
 	return installedFor
 }

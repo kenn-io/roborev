@@ -235,6 +235,7 @@ type Config struct {
 	CursorCmd     string `toml:"cursor_cmd"`
 	PiCmd         string `toml:"pi_cmd"`
 	OpenCodeCmd   string `toml:"opencode_cmd"`
+	GrokCmd       string `toml:"grok_cmd"`
 
 	// API keys (optional - agents use subscription auth by default)
 	AnthropicAPIKey string `toml:"anthropic_api_key" sensitive:"true"`
@@ -329,9 +330,6 @@ func ValidateACPAgentConfig(name string, cfg ACPAgentConfig) error {
 	}
 	if strings.Contains(name, ".") {
 		return fmt.Errorf("ACP agent name %q must not contain dots", name)
-	}
-	if canonical, builtIn := agentname.BuiltIn(name); builtIn {
-		return fmt.Errorf("ACP agent name %q conflicts with built-in agent %q", name, canonical)
 	}
 	if strings.TrimSpace(cfg.Command) == "" {
 		return fmt.Errorf("ACP agent %q requires a command", name)
@@ -601,6 +599,7 @@ func DefaultConfig() *Config {
 		CursorCmd:          "agent",
 		PiCmd:              "pi",
 		OpenCodeCmd:        "opencode",
+		GrokCmd:            "grok",
 		MouseEnabled:       true,
 		Cost: CostConfig{
 			Timeout: "10s",

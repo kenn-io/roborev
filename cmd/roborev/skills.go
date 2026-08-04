@@ -14,7 +14,7 @@ func skillsCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "skills",
 		Short: "Manage AI agent skills",
-		Long:  "Install and manage roborev skills for AI agents (Claude Code, Codex, Factory Droid)",
+		Long:  "Install and manage roborev skills for AI agents (Claude Code, Codex, Factory Droid, Grok Build)",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			available, err := skills.ListSkills()
 			if err != nil {
@@ -37,6 +37,7 @@ func skillsCmd() *cobra.Command {
 				{skills.AgentClaude, "Claude Code", "/"},
 				{skills.AgentCodex, "Codex", "$"},
 				{skills.AgentDroid, "Factory Droid", "/"},
+				{skills.AgentGrok, "Grok Build", "/"},
 			}
 
 			fmt.Println("Skills:")
@@ -117,9 +118,10 @@ Skills are installed for agents whose config directories exist:
   - Claude Code: ~/.claude/skills/ (or $CLAUDE_CONFIG_DIR/skills/ if set)
   - Codex: ~/.codex/skills/ (or $CODEX_HOME/skills/ if set)
   - Factory Droid: ~/.factory/skills/
+  - Grok Build: ~/.grok/skills/ (or $GROK_HOME/skills/ if set)
 
 Use --path to install directly into a custom final skills directory. Custom
-installs use the Claude variant by default; use --agent to select codex or droid.
+installs use the Claude variant by default; use --agent to select codex, droid, or grok.
 
 This command is idempotent - running it multiple times is safe.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
@@ -184,7 +186,7 @@ This command is idempotent - running it multiple times is safe.`,
 			}
 
 			if !anyInstalled {
-				fmt.Println("\nNo agents found. Install Claude Code, Codex, or Factory Droid first, then run this command.")
+				fmt.Println("\nNo agents found. Install Claude Code, Codex, Factory Droid, or Grok Build first, then run this command.")
 			} else {
 				fmt.Println("\nSkills installed! Try:")
 				for _, agent := range installedAgents {
@@ -195,6 +197,8 @@ This command is idempotent - running it multiple times is safe.`,
 						fmt.Println("  Codex: $roborev-review, $roborev-review-branch, $roborev-design-review, $roborev-design-review-branch, $roborev-fix, $roborev-respond")
 					case skills.AgentDroid:
 						fmt.Println("  Factory Droid: /roborev-review, /roborev-review-branch, /roborev-design-review, /roborev-design-review-branch, /roborev-lookahead-review, /roborev-lookahead-review-branch, /roborev-fix, /roborev-respond")
+					case skills.AgentGrok:
+						fmt.Println("  Grok Build: /roborev-review, /roborev-review-branch, /roborev-design-review, /roborev-design-review-branch, /roborev-lookahead-review, /roborev-lookahead-review-branch, /roborev-fix, /roborev-refine, /roborev-respond")
 					}
 				}
 			}
@@ -204,7 +208,7 @@ This command is idempotent - running it multiple times is safe.`,
 	}
 
 	installCmd.Flags().StringVar(&installPath, "path", "", "install directly into this final skills directory")
-	installCmd.Flags().StringVar(&installAgent, "agent", string(skills.AgentClaude), "skill variant for --path (claude, codex, or droid)")
+	installCmd.Flags().StringVar(&installAgent, "agent", string(skills.AgentClaude), "skill variant for --path (claude, codex, droid, or grok)")
 
 	updateCmd := &cobra.Command{
 		Use:   "update",

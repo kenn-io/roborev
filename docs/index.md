@@ -111,7 +111,7 @@ through the cracks.
 - **Multi-Agent**
 
     Works with Codex, Claude Code, Gemini, Copilot, OpenCode, Cursor, Droid, Kilo,
-    Kiro, and Pi. Auto-detects installed agents.
+    Kiro, Pi, and Grok Build. Auto-detects installed agents.
 
 - **Rich Markdown Display**
 

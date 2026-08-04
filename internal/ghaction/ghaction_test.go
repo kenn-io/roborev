@@ -114,6 +114,10 @@ func TestGenerate(t *testing.T) {
 				"$GITHUB_PATH",
 				`"$HOME/.local/bin/roborev" version`,
 				"api.github.com",
+				// Pin agent identity so Grok/Cursor collision and ambiguous
+				// fallback cannot silently rewrite the matrix.
+				`--agent "codex"`,
+				`--synthesis-agent "codex"`,
 			},
 			notWantStrs: []string{
 				"--commit",
@@ -121,7 +125,6 @@ func TestGenerate(t *testing.T) {
 				"comment --pr",
 				"actions/checkout@v4",
 				"--local",
-				"--agent codex",
 				"Post results",
 				"/usr/local/bin",
 				"--ignore-missing",
@@ -140,6 +143,20 @@ func TestGenerate(t *testing.T) {
 				"@anthropic-ai/claude-code@latest",
 				"OPENAI_API_KEY",
 				"ANTHROPIC_API_KEY",
+				`--agent "codex,claude-code"`,
+				`--synthesis-agent "codex"`,
+			},
+		},
+		{
+			name: "grok agent pins agent and synthesis",
+			cfg: WorkflowConfig{
+				Agents: []string{"grok"},
+			},
+			wantStrs: []string{
+				"XAI_API_KEY",
+				"https://x.ai/cli/install.sh",
+				`--agent "grok"`,
+				`--synthesis-agent "grok"`,
 			},
 		},
 		{
@@ -349,6 +366,14 @@ func TestAgentInstallCmd(t *testing.T) {
 			agent:   "droid",
 			wantPkg: "droid-cli",
 		},
+		{
+			agent:   "pi",
+			wantPkg: "@mariozechner/pi-coding-agent@latest",
+		},
+		{
+			agent:   "grok",
+			wantPkg: "https://x.ai/cli/install.sh",
+		},
 	}
 	for _, tt := range tests {
 		t.Run(tt.agent, func(t *testing.T) {
@@ -453,6 +478,8 @@ func TestAgentEnvVar(t *testing.T) {
 		{"kiro", "GITHUB_TOKEN"},
 		{"kilo", "ANTHROPIC_API_KEY"},
 		{"droid", "OPENAI_API_KEY"},
+		{"pi", "OPENAI_API_KEY"},
+		{"grok", "XAI_API_KEY"},
 	}
 	for _, tt := range tests {
 		t.Run(tt.agent, func(t *testing.T) {

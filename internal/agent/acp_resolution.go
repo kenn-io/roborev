@@ -148,6 +148,9 @@ func resolveAvailableBackupWithConfig(
 // to an executable command, considering config command overrides. If a
 // config override points to an available binary, the agent is considered
 // available even when the default command isn't in PATH.
+//
+// Overrides use the same identity validation as default commands (e.g.
+// cursor_cmd must not resolve to Grok's agent alias).
 func isAvailableWithConfig(name string, cfg *config.Config) bool {
 	name = resolveAlias(name)
 	registryMu.RLock()
@@ -162,8 +165,7 @@ func isAvailableWithConfig(name string, cfg *config.Config) bool {
 	}
 	// Check the configured command first — it takes priority.
 	if override := commandOverrideForAgent(name, cfg); override != "" {
-		_, err := exec.LookPath(override)
-		return err == nil
+		return availableCommandForAgent(ca, override)
 	}
 	// Fall back to the default (hardcoded) command.
 	return firstAvailableCommand(ca) != ""
@@ -330,8 +332,8 @@ func GetAvailableExactWithConfigFromConfig(repoCfg *config.RepoConfig, name stri
 
 	if ca, ok := a.(CommandAgent); ok {
 		if override := commandOverrideForAgent(canonical, cfg); override != "" {
-			if _, err := exec.LookPath(override); err != nil {
-				return nil, fmt.Errorf("agent %q command %q unavailable: %w", canonical, override, err)
+			if !availableCommandForAgent(ca, override) {
+				return nil, fmt.Errorf("agent %q command %q unavailable", canonical, override)
 			}
 			return applyAgentConfigOverrides(applyCommandOverrides(a, cfg), cfg), nil
 		}

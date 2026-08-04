@@ -16,6 +16,10 @@ type agentSpec struct {
 	FallbackRank     int
 	CommandOverride  func(*config.Config) string
 	CloneWithCommand func(Agent, string) Agent
+	// ValidateCommand optionally rejects a LookPath hit that is not this
+	// agent (e.g. Cursor's "agent" colliding with Grok's installer alias).
+	// When nil, any existing executable is accepted.
+	ValidateCommand func(command string) bool
 }
 
 var allAgentSpecs = []agentSpec{
@@ -111,6 +115,9 @@ var allAgentSpecs = []agentSpec{
 			clone.Command = command
 			return &clone
 		},
+		// Grok Build's installer also creates an "agent" symlink/copy.
+		// Only treat PATH "agent" as Cursor when it is not Grok.
+		ValidateCommand: commandIsUsableCursorCandidate,
 	},
 	{
 		Name:           "kiro",
@@ -136,6 +143,24 @@ var allAgentSpecs = []agentSpec{
 		},
 		CloneWithCommand: func(a Agent, command string) Agent {
 			agent, ok := a.(*PiAgent)
+			if !ok {
+				return a
+			}
+			clone := *agent
+			clone.Command = command
+			return &clone
+		},
+	},
+	{
+		Name:           "grok",
+		DefaultCommand: "grok",
+		Aliases:        []string{"grok-build"},
+		FallbackRank:   11,
+		CommandOverride: func(cfg *config.Config) string {
+			return cfg.GrokCmd
+		},
+		CloneWithCommand: func(a Agent, command string) Agent {
+			agent, ok := a.(*GrokAgent)
 			if !ok {
 				return a
 			}

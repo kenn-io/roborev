@@ -20,6 +20,7 @@ installed.
 | Kilo | `kilo` | `npm install -g @kilocode/cli` |
 | Kiro | `kiro-cli` | See [kiro.dev](https://kiro.dev/) |
 | Pi | `pi` | `npm install -g @mariozechner/pi-coding-agent` |
+| Grok Build | `grok` | `curl -fsSL https://x.ai/cli/install.sh \| bash` ([x.ai/cli](https://x.ai/cli)) |
 
 ## Auto-Detection
 
@@ -35,6 +36,7 @@ roborev auto-detects installed agents and falls back in this order:
 1. Kilo
 1. Droid
 1. Pi
+1. Grok Build
 
 The first available agent is used unless you specify one explicitly.
 
@@ -86,6 +88,7 @@ roborev refine --model claude-sonnet-4-20250514
 | Kilo | `provider/model` | `anthropic/claude-sonnet-4-20250514`, `openai/gpt-4.1` |
 | Kiro | Model name | (see Kiro docs) |
 | Pi | Model name | `claude-sonnet-4-20250514`, `gpt-4.1` |
+| Grok Build | xAI model ID | `grok-4.5` (see [x.ai/cli](https://x.ai/cli)) |
 
 ### Configuration
 
@@ -272,9 +275,104 @@ and commands):
 | Kilo | Full (runs autonomously) |
 | Kiro | Full (uses `--trust-all-tools`) |
 | Pi | Full (tools execute without confirmation) |
+| Grok Build | Full (uses `--always-approve` in agentic mode; review uses layered read-only safety — see below) |
 
 See [Custom Tasks & Agentic Mode](/advanced/custom-tasks/) for details on review
 vs agentic modes.
+
+## Grok Build
+
+[Grok Build](https://x.ai/cli) (`grok`) is xAI's coding agent
+([source](https://github.com/xai-org/grok-build)). roborev drives it in
+**headless mode** — the same one-shot CommandAgent pattern as Claude Code and
+Codex — not the long-lived ACP stdio server.
+
+```bash
+# Install
+curl -fsSL https://x.ai/cli/install.sh | bash
+grok login   # or set XAI_API_KEY
+
+# Use as a first-class agent
+roborev review --agent grok HEAD
+roborev config set agent grok
+```
+
+Alias `grok-build` resolves to `grok`. Override the binary path with `grok_cmd`
+in config when `grok` is not on `PATH`.
+
+### Review vs agentic launch lines
+
+Non-agentic review is **layered**, not absolute "all tools disabled":
+
+1. `--sandbox read-only` — OS-level filesystem/network sandbox
+1. `--tools read_file,grep,list_dir` — positive built-in allowlist
+1. `--disallowed-tools <mutating + MCP meta>` — closes residual MCP
+    `search_tool`/`use_tool` and other mutating defaults that can outlive the
+    allowlist alone
+1. `--no-subagents` and `--disable-web-search`
+
+```bash
+grok --no-auto-update --output-format streaming-json \
+  --sandbox read-only --tools read_file,grep,list_dir \
+  --disallowed-tools <mutating defaults including search_tool,use_tool,...> \
+  --no-subagents --disable-web-search \
+  [--model <id>] [--reasoning-effort <level>] [--resume <id>] \
+  --prompt-file <path>
+```
+
+Agentic mode (`roborev fix` / `allow_unsafe_agents` / job `agentic`):
+
+```bash
+grok --no-auto-update --output-format streaming-json --always-approve \
+  [--model <id>] [--reasoning-effort <level>] [--resume <id>] \
+  --prompt-file <path>
+```
+
+Reasoning mapping: `maximum` → `max`, `thorough` → `high`, `medium` → `medium`,
+`fast` → `low`. Standard leaves Grok's default effort.
+
+Session resume uses Grok's `--resume` flag when a session ID is available (same
+`SessionAgent` path as Claude/Codex).
+
+### Classification (`SchemaAgent`)
+
+Grok implements `SchemaAgent` for design-routing (`classify_agent = "grok"`) via
+headless `--json-schema`. Classification uses **structural tool isolation** (not
+absolute Claude-style deny-all equivalence):
+
+- non-empty `--tools <seed>` (empty `--tools ""` is **not** used — Grok
+    normalizes an empty CSV to "no override", leaving the default toolset)
+- `--disallowed-tools` lists the seed plus every known default Grok Build tool
+    and MCP meta (`search_tool`/`use_tool`); when both flags are set, the
+    denylist wins on overlap
+- `--sandbox read-only`, `--no-subagents`, `--disable-web-search`
+- `--max-turns 1`, `--no-memory`, `--no-plan`
+- never `--always-approve`
+- only Grok-validated `structuredOutput` is accepted; free-form `text` and
+    `structuredOutputError` fail the classify call
+
+Residual drift remains if Grok adds tools or aliases; re-validate the deny list
+against the auditable pins in source (`grokToolsCLIVersion`, `grokToolsRepoRev`,
+`grokToolsMonorepoRev`).
+
+### Skills, hooks, and streaming
+
+Install roborev skills into `~/.grok/skills` with `roborev skills install` (full
+review/design/fix/refine/respond surface). Optional mid-session fix hooks:
+`roborev agent-hook install --agent grok`. Headless `streaming-json` events
+(`text`, `thought`, `tool_call`, …) render through the shared TTY formatter.
+
+### Cursor identity note
+
+The official Grok installer also creates an `agent` symlink/copy. roborev
+identifies Cursor via the `agent` command but rejects Grok's alias so a
+Grok-only machine is not misdetected as Cursor (local availability and generated
+GitHub Actions workflows both pin explicit agent names). Identity probes are
+**prompt-safe**: they use only documented version flags (`--version` / `-v`) —
+never positional prompts that Cursor would treat as an agent session — and treat
+inconclusive results (timeout, crash, empty or oversize version output) as
+unavailable rather than as Cursor. Probes are bounded (context deadline plus a
+short `WaitDelay` so orphan pipes cannot hang availability checks forever).
 
 ## ACP (Agent Client Protocol)
 

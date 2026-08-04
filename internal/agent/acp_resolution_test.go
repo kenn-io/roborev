@@ -107,21 +107,7 @@ func TestGetAvailableWithConfigACPAsBackup(t *testing.T) {
 	assert.Equal(t, "acp.my-acp", stored.Name())
 }
 
-func TestConfiguredACPAgentRejectsInvalidEntries(t *testing.T) {
-	tests := []struct {
-		name      string
-		agentName string
-		config    config.ACPAgentConfig
-		wantError string
-	}{
-		{name: "empty command", agentName: "goose", wantError: "requires a command"},
-		{name: "built-in", agentName: "codex", config: config.ACPAgentConfig{Command: "goose"}, wantError: "conflicts"},
-		{name: "alias", agentName: "claude", config: config.ACPAgentConfig{Command: "goose"}, wantError: "conflicts"},
-	}
-	for _, tc := range tests {
-		t.Run(tc.name, func(t *testing.T) {
-			_, err := configuredACPAgentWithConfig(tc.agentName, &tc.config)
-			require.ErrorContains(t, err, tc.wantError)
-		})
-	}
+func TestConfiguredACPAgentRejectsMissingCommand(t *testing.T) {
+	_, err := configuredACPAgentWithConfig("goose", &config.ACPAgentConfig{})
+	require.ErrorContains(t, err, "requires a command")
 }

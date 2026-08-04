@@ -9,6 +9,18 @@ All notable changes to roborev, grouped by minor release.
 
 **New features**
 
+- First-class [Grok Build](https://x.ai/cli) agent support (`--agent grok`,
+    alias `grok-build`) as a Claude-peer CommandAgent. Non-agentic review uses
+    layered safety (`--sandbox read-only`, read-only `--tools`, explicit
+    `--disallowed-tools` including MCP meta, `--no-subagents`,
+    `--disable-web-search`). Agentic jobs use `--always-approve`. Classification
+    is fail-closed (no empty `--tools`, deny-list + one turn) and accepts only
+    validated `structuredOutput`. Cursor/`agent` identity is disambiguated from
+    Grok's installer alias; generated GitHub Actions pin `--agent` and
+    `--synthesis-agent`. Also: streaming-json TTY formatting, full skills parity
+    under `~/.grok/skills`, and `roborev agent-hook install --agent grok`.
+    Override the binary with `grok_cmd`. Authenticate with `grok login` or
+    `XAI_API_KEY`. See [Supported Agents](/agents/#grok-build).
 - ACP configuration now supports multiple named agents through `[acp.<name>]`
     subtables. Repository entries replace only the matching global agent, and
     commands, models, backups, CI jobs, and synthesis remain isolated by name.

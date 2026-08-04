@@ -4,7 +4,6 @@ import (
 	"context"
 	"fmt"
 	"io"
-	"os/exec"
 	"sort"
 	"strings"
 	"sync"
@@ -299,7 +298,7 @@ func firstAvailableCommand(a CommandAgent) string {
 			if command == "" {
 				continue
 			}
-			if _, err := exec.LookPath(command); err == nil {
+			if availableCommandForAgent(a, command) {
 				return command
 			}
 		}
@@ -310,10 +309,43 @@ func firstAvailableCommand(a CommandAgent) string {
 	if command == "" {
 		return ""
 	}
-	if _, err := exec.LookPath(command); err == nil {
+	if availableCommandForAgent(a, command) {
 		return command
 	}
 	return ""
+}
+
+// availableCommandForAgent reports whether command exists (PATH or absolute)
+// and passes this agent's identity validator, if any. Use this for both
+// default CommandName values and config overrides (cursor_cmd, etc.) so
+// Cursor never silently claims a Grok binary.
+func availableCommandForAgent(a CommandAgent, command string) bool {
+	if a == nil || command == "" {
+		return false
+	}
+	return commandAvailable(command, commandValidatorFor(a))
+}
+
+// commandValidatorFor returns the identity check for this agent, if any.
+func commandValidatorFor(a CommandAgent) func(string) bool {
+	spec, ok := agentSpecsByName[resolveAlias(a.Name())]
+	if !ok || spec.ValidateCommand == nil {
+		return nil
+	}
+	return spec.ValidateCommand
+}
+
+// commandAvailable reports whether command exists on PATH (or as an absolute
+// path) and passes an optional identity validator (Cursor vs Grok "agent").
+func commandAvailable(command string, validate func(string) bool) bool {
+	path, err := resolveExecutable(command)
+	if err != nil {
+		return false
+	}
+	if validate != nil && !validate(path) {
+		return false
+	}
+	return true
 }
 
 func applyResolvedCommand(a Agent) Agent {

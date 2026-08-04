@@ -370,15 +370,15 @@ func TestSetConfigKeyNestedCreation(t *testing.T) {
 	assertConfigValue(t, path, "ci.poll_interval", "10m")
 }
 
-func TestSetConfigKeyNamedACPAgent(t *testing.T) {
+func TestSetConfigKeyNamedACPAgentCanShareBuiltInName(t *testing.T) {
 	path := setupConfigFile(t)
 
-	require.NoError(t, setConfigKey(path, "acp.goose.command", "goose", true))
-	require.NoError(t, setConfigKey(path, "acp.goose.args", "acp", true))
-	assertConfigValue(t, path, "acp.goose.command", "goose")
-	args, ok := getNestedValue(t, readTOML(t, path), "acp.goose.args").([]any)
+	require.NoError(t, setConfigKey(path, "acp.grok.command", "grok", true))
+	require.NoError(t, setConfigKey(path, "acp.grok.args", "agent,--always-approve,stdio", true))
+	assertConfigValue(t, path, "acp.grok.command", "grok")
+	args, ok := getNestedValue(t, readTOML(t, path), "acp.grok.args").([]any)
 	require.True(t, ok)
-	assert.Equal(t, []any{"acp"}, args)
+	assert.Equal(t, []any{"agent", "--always-approve", "stdio"}, args)
 }
 
 func TestSetConfigKeyRejectsInvalidNamedACPWithoutChangingFile(t *testing.T) {
@@ -394,14 +394,6 @@ func TestSetConfigKeyRejectsInvalidNamedACPWithoutChangingFile(t *testing.T) {
 			path := filepath.Join(t.TempDir(), scope.fileName)
 			err := setConfigKey(path, "acp.goose.args", "acp", scope.global)
 			require.ErrorContains(t, err, "requires a command")
-			_, statErr := os.Stat(path)
-			require.ErrorIs(t, statErr, os.ErrNotExist)
-		})
-
-		t.Run(scope.name+"/built-in collision", func(t *testing.T) {
-			path := filepath.Join(t.TempDir(), scope.fileName)
-			err := setConfigKey(path, "acp.codex.command", "goose", scope.global)
-			require.ErrorContains(t, err, "conflicts with built-in agent")
 			_, statErr := os.Stat(path)
 			require.ErrorIs(t, statErr, os.ErrNotExist)
 		})

@@ -37,7 +37,8 @@ func adaptiveColor(light, dark string) color.Color {
 }
 
 // Formatter wraps an io.Writer to transform raw NDJSON stream output
-// from Claude into compact, human-readable progress lines.
+// from Claude, Gemini, Codex, OpenCode, Pi, and Grok Build into compact,
+// human-readable progress lines.
 //
 // In TTY mode, tool calls are shown as one-line summaries:
 //
@@ -64,6 +65,17 @@ type Formatter struct {
 	piRenderedToolIDs       map[string]struct{}
 	piLastAssistantText     string
 	codexCommands           codexCommandTracker
+	// Grok Build: render each tool_call once; remember name/title/kind so
+	// tool_call_update events (which often omit toolName) can still render.
+	grokRenderedToolIDs map[string]struct{}
+	grokToolByID        map[string]grokToolInfo
+}
+
+// grokToolInfo is metadata captured from a Grok tool_call for later updates.
+type grokToolInfo struct {
+	name  string
+	title string
+	kind  string
 }
 
 // New creates a Formatter that writes to w. When isTTY is true,
@@ -110,14 +122,16 @@ func GlamourStyle() gansi.StyleConfig {
 	var style gansi.StyleConfig
 	isDark := true
 	switch {
-	case mode == "none" || termenv.EnvNoColor():
-		// Use dark style as base; colors will be stripped by Ascii profile.
-		style = styles.DarkStyleConfig
 	case mode == "dark":
 		style = styles.DarkStyleConfig
 	case mode == "light":
+		// Explicit light wins over ambient NO_COLOR for style base selection;
+		// ResolveColorProfile still returns Ascii when colors must be suppressed.
 		style = styles.LightStyleConfig
 		isDark = false
+	case mode == "none" || termenv.EnvNoColor():
+		// Use dark style as base; colors will be stripped by Ascii profile.
+		style = styles.DarkStyleConfig
 	default: // "auto" or ""
 		style = styles.LightStyleConfig
 		isDark = termenv.HasDarkBackground()
@@ -190,7 +204,7 @@ func (f *Formatter) Flush() {
 }
 
 // streamEvent is a unified representation of stream-json events from
-// Claude Code, Gemini CLI, and Codex CLI.
+// Claude Code, Gemini CLI, Codex CLI, OpenCode, Pi, and Grok Build.
 //
 // Claude:  {"type":"assistant","message":{"content":[{"type":"tool_use","name":"Read","input":{...}}]}}
 // Gemini:  {"type":"tool_use","tool_name":"read_file","parameters":{"file_path":"..."}}
@@ -200,13 +214,20 @@ func (f *Formatter) Flush() {
 // Codex:   {"type":"item.completed","item":{"type":"agent_message","text":"..."}}
 //
 //	{"type":"item.started","item":{"type":"command_execution","command":"bash -lc ls"}}
+//
+// Grok:    {"type":"text","data":"..."} / {"type":"thought","data":"..."}
+//
+//	{"type":"tool_call","toolCallId":"...","toolName":"read_file",
+//	 "title":"Read","kind":"read","rawInput":{...}}
+//	{"type":"error","message":"auth failed"}  // message is a string
+//
+// Message is json.RawMessage because Claude nests an object under "message"
+// while Grok error events put a plain string there. Decode per event type.
 type streamEvent struct {
 	Type string `json:"type"`
-	// Claude: nested message with content blocks
-	Message *struct {
-		Role    string          `json:"role,omitempty"`
-		Content json.RawMessage `json:"content,omitempty"`
-	} `json:"message,omitempty"`
+	// Claude assistant / Pi message_end: nested object.
+	// Grok error: JSON string. Decode with decodeClaudeMessage / jsonStringField.
+	Message json.RawMessage `json:"message,omitempty"`
 	// Gemini: top-level fields
 	Role       string          `json:"role,omitempty"`
 	Content    json.RawMessage `json:"content,omitempty"`
@@ -221,6 +242,14 @@ type streamEvent struct {
 	ToolCallID            string                   `json:"toolCallId,omitempty"`
 	PiToolName            string                   `json:"toolName,omitempty"`
 	Args                  json.RawMessage          `json:"args,omitempty"`
+	// Grok Build headless streaming-json fields (ACP leaf names).
+	Data      string          `json:"data,omitempty"`
+	Status    string          `json:"status,omitempty"` // tool_call_update status
+	Error     string          `json:"error,omitempty"`
+	RawInput  json.RawMessage `json:"rawInput,omitempty"`
+	RawOutput json.RawMessage `json:"rawOutput,omitempty"`
+	Title     string          `json:"title,omitempty"`
+	Kind      string          `json:"kind,omitempty"`
 }
 
 // codexItem represents the item field in codex JSONL events.
@@ -259,24 +288,31 @@ type contentBlock struct {
 // Gemini CLI, opencode, and similar agents so the renderer does not
 // need per-agent special cases for cosmetic naming differences.
 var toolAliases = map[string]string{
-	"read":            "Read",
-	"readfile":        "Read",
-	"edit":            "Edit",
-	"multiedit":       "Edit",
-	"replace":         "Edit",
-	"write":           "Write",
-	"writefile":       "Write",
-	"bash":            "Bash",
-	"runshellcommand": "Bash",
-	"shell":           "Bash",
-	"grep":            "Grep",
-	"search":          "Grep",
-	"glob":            "Glob",
-	"list":            "List",
-	"listdir":         "List",
-	"ls":              "List",
-	"webfetch":        "WebFetch",
-	"fetch":           "WebFetch",
+	"read":               "Read",
+	"readfile":           "Read",
+	"edit":               "Edit",
+	"multiedit":          "Edit",
+	"replace":            "Edit",
+	"searchreplace":      "Edit",
+	"write":              "Write",
+	"writefile":          "Write",
+	"bash":               "Bash",
+	"runshellcommand":    "Bash",
+	"runterminalcmd":     "Bash",
+	"runterminalcommand": "Bash",
+	"shell":              "Bash",
+	"grep":               "Grep",
+	"search":             "Grep",
+	"glob":               "Glob",
+	"list":               "List",
+	"listdir":            "List",
+	"ls":                 "List",
+	"webfetch":           "WebFetch",
+	"websearch":          "WebSearch",
+	"fetch":              "WebFetch",
+	"searchtool":         "SearchTool",
+	"usetool":            "UseTool",
+	"task":               "Task",
 }
 
 // normalizeToolKey lowercases s and strips underscores/dashes so
@@ -328,9 +364,9 @@ func (f *Formatter) processLine(line string) {
 
 	switch ev.Type {
 	case "assistant":
-		// Claude format
-		if ev.Message != nil {
-			f.processAssistantContent(ev.Message.Content)
+		// Claude format: nested message object under "message".
+		if _, content, ok := decodeClaudeMessage(ev.Message); ok {
+			f.processAssistantContent(content)
 		}
 	case "message":
 		// Gemini format: assistant text
@@ -349,8 +385,8 @@ func (f *Formatter) processLine(line string) {
 	case "message_end":
 		// Pi format: some streams only include the completed
 		// assistant content on message_end.
-		if ev.Message != nil {
-			f.processPiMessageEnd(ev.Message.Role, ev.Message.Content)
+		if role, content, ok := decodeClaudeMessage(ev.Message); ok {
+			f.processPiMessageEnd(role, content)
 		}
 	case "tool_execution_start":
 		// Pi format: render each tool call once, at start, so
@@ -361,24 +397,261 @@ func (f *Formatter) processLine(line string) {
 		// 1.4+ emits "tool_use" where earlier versions used
 		// "tool". Route by payload shape: an opencode event
 		// carries a nested "part" object; a Gemini tool_use
-		// carries top-level tool_name/parameters.
+		// carries top-level tool_name/parameters; Grok emits
+		// type=text with a top-level "data" field.
 		switch {
 		case ev.Part != nil:
 			f.processOpenCodePart(ev.Type, ev.Part)
 		case ev.Type == "tool_use" && ev.ToolName != "":
 			f.formatToolUse(ev.ToolName, ev.Parameters)
+		case ev.Type == "text" && ev.Data != "":
+			// Grok Build streaming-json assistant text.
+			f.writeText(SanitizeControlKeepNewlines(ev.Data))
+		case ev.Type == "reasoning" && ev.Data != "":
+			// Some Grok builds may emit reasoning as type=reasoning.
+			text := strings.TrimSpace(sanitizeControl(ev.Data))
+			if text != "" {
+				f.writeReasoning(text)
+			}
+		}
+	case "thought":
+		// Grok Build reasoning/thinking presentation.
+		text := strings.TrimSpace(sanitizeControl(ev.Data))
+		if text != "" {
+			f.writeReasoning(text)
+		}
+	case "tool_call":
+		f.processGrokToolCall(ev)
+	case "tool_call_update":
+		// Track completion/failure without re-rendering the initial tool line.
+		f.processGrokToolCallUpdate(ev)
+	case "plan":
+		// Grok plan events: suppress by default (lifecycle/progress noise);
+		// useful plan deltas are rare in headless review streams.
+	case "error":
+		// Grok: {"type":"error","message":"<string>"}. Message is RawMessage
+		// so the outer Unmarshal succeeds; decode the string form here.
+		// Also accept data/error fields for defensive compatibility.
+		msg := strings.TrimSpace(sanitizeControl(jsonStringField(ev.Message)))
+		if msg == "" {
+			msg = strings.TrimSpace(sanitizeControl(ev.Data))
+		}
+		if msg == "" {
+			msg = strings.TrimSpace(sanitizeControl(ev.Error))
+		}
+		if msg != "" {
+			f.writeText("error: " + msg)
 		}
 	case "step_start", "step_finish":
 		// OpenCode lifecycle events — suppress
 	case "result", "tool_result", "init",
 		"thread.started", "turn.started", "turn.completed",
 		"session", "agent_start", "turn_start", "turn_end",
-		"agent_end", "message_start",
+		"agent_end", "message_start", "end",
 		"tool_execution_update", "tool_execution_end":
-		// Suppress lifecycle events
+		// Suppress lifecycle events (including Grok end/session)
 	default:
 		// Suppress system, user, and other events
 	}
+}
+
+func (f *Formatter) processGrokToolCall(ev streamEvent) {
+	id := ev.ToolCallID
+	if id != "" {
+		if f.grokRenderedToolIDs == nil {
+			f.grokRenderedToolIDs = make(map[string]struct{})
+		}
+		if _, seen := f.grokRenderedToolIDs[id]; seen {
+			return
+		}
+		f.grokRenderedToolIDs[id] = struct{}{}
+	}
+
+	name := grokToolDisplayName(ev, nil)
+	if id != "" {
+		if f.grokToolByID == nil {
+			f.grokToolByID = make(map[string]grokToolInfo)
+		}
+		f.grokToolByID[id] = grokToolInfo{
+			name:  firstNonEmpty(ev.PiToolName, ev.ToolName),
+			title: ev.Title,
+			kind:  ev.Kind,
+		}
+	}
+	if name == "" {
+		return
+	}
+
+	// Official streaming-json uses rawInput; keep args/parameters as fallbacks.
+	args := ev.RawInput
+	if len(args) == 0 {
+		args = ev.Args
+	}
+	if len(args) == 0 {
+		args = ev.Parameters
+	}
+	// Cap unbounded payloads for display safety.
+	if len(args) > 4096 {
+		args = args[:4096]
+	}
+	f.formatToolUse(name, args)
+}
+
+func (f *Formatter) processGrokToolCallUpdate(ev streamEvent) {
+	// Only surface failures; success updates are silent so we do not
+	// duplicate the initial tool_call line. Status (or a top-level Error
+	// field) is the signal — do not treat arbitrary rawOutput keys as failure.
+	status := strings.ToLower(strings.TrimSpace(ev.Status))
+	if status != "failed" && status != "error" && strings.TrimSpace(ev.Error) == "" {
+		return
+	}
+	msg := grokFailureDetail(ev)
+	if msg == "" {
+		msg = "tool failed"
+	}
+
+	var cached *grokToolInfo
+	if id := ev.ToolCallID; id != "" && f.grokToolByID != nil {
+		if info, ok := f.grokToolByID[id]; ok {
+			cached = &info
+		}
+	}
+	name := grokToolDisplayName(ev, cached)
+	if name == "" {
+		name = "tool"
+	}
+	display := canonicalToolName(name)
+	if display == "" {
+		display = name
+	}
+	if len(msg) > 80 {
+		msg = msg[:77] + "..."
+	}
+	f.writeTool(display, "failed: "+msg)
+}
+
+// grokToolDisplayName prefers toolName, then title/kind, then cached meta
+// from the matching tool_call (updates often omit toolName).
+func grokToolDisplayName(ev streamEvent, cached *grokToolInfo) string {
+	if n := firstNonEmpty(ev.PiToolName, ev.ToolName); n != "" {
+		return n
+	}
+	if ev.Title != "" {
+		return ev.Title
+	}
+	if ev.Kind != "" {
+		return ev.Kind
+	}
+	if cached != nil {
+		if n := firstNonEmpty(cached.name, cached.title, cached.kind); n != "" {
+			return n
+		}
+	}
+	return ""
+}
+
+// grokFailureDetail extracts a human-readable failure message from a
+// tool_call_update. Official events put results in rawOutput/content;
+// also accept top-level error/data for defensive compatibility.
+func grokFailureDetail(ev streamEvent) string {
+	if msg := strings.TrimSpace(sanitizeControl(ev.Error)); msg != "" {
+		return msg
+	}
+	if msg := strings.TrimSpace(sanitizeControl(ev.Data)); msg != "" {
+		return msg
+	}
+	if msg := extractFailureFromJSON(ev.RawOutput); msg != "" {
+		return msg
+	}
+	if msg := extractFailureFromJSON(ev.Content); msg != "" {
+		return msg
+	}
+	return ""
+}
+
+// extractFailureFromJSON pulls an error-ish string from rawOutput/content.
+// Accepts a plain string, an object with error/message/stderr/detail, or an
+// array of {type,text} / string content blocks.
+func extractFailureFromJSON(raw json.RawMessage) string {
+	if len(raw) == 0 || string(raw) == "null" {
+		return ""
+	}
+	if s := jsonStringField(raw); s != "" {
+		return strings.TrimSpace(sanitizeControl(s))
+	}
+	var obj map[string]json.RawMessage
+	if err := json.Unmarshal(raw, &obj); err == nil {
+		for _, k := range []string{"error", "message", "stderr", "detail"} {
+			if s := jsonString(obj[k]); s != "" {
+				return strings.TrimSpace(sanitizeControl(s))
+			}
+		}
+	}
+	var blocks []json.RawMessage
+	if err := json.Unmarshal(raw, &blocks); err == nil {
+		for _, b := range blocks {
+			if s := jsonStringField(b); s != "" {
+				return strings.TrimSpace(sanitizeControl(s))
+			}
+			var block struct {
+				Type    string `json:"type"`
+				Text    string `json:"text"`
+				Content string `json:"content"`
+			}
+			if json.Unmarshal(b, &block) == nil {
+				if s := firstNonEmpty(block.Text, block.Content); s != "" {
+					return strings.TrimSpace(sanitizeControl(s))
+				}
+			}
+		}
+	}
+	return ""
+}
+
+// decodeClaudeMessage decodes Claude/Pi nested message objects from Message.
+// Returns ok=false when raw is empty, a JSON string (Grok error shape), or
+// otherwise not an object with content.
+func decodeClaudeMessage(raw json.RawMessage) (role string, content json.RawMessage, ok bool) {
+	if len(raw) == 0 || string(raw) == "null" {
+		return "", nil, false
+	}
+	// Grok error uses a JSON string here; refuse that shape.
+	if raw[0] == '"' {
+		return "", nil, false
+	}
+	var m struct {
+		Role    string          `json:"role,omitempty"`
+		Content json.RawMessage `json:"content,omitempty"`
+	}
+	if err := json.Unmarshal(raw, &m); err != nil {
+		return "", nil, false
+	}
+	if len(m.Content) == 0 {
+		return m.Role, nil, false
+	}
+	return m.Role, m.Content, true
+}
+
+// jsonStringField unmarshals raw as a JSON string. Returns "" for non-strings
+// (objects, arrays, numbers) so Claude's nested message object is ignored.
+func jsonStringField(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var s string
+	if err := json.Unmarshal(raw, &s); err != nil {
+		return ""
+	}
+	return s
+}
+
+func firstNonEmpty(vals ...string) string {
+	for _, v := range vals {
+		if strings.TrimSpace(v) != "" {
+			return v
+		}
+	}
+	return ""
 }
 
 func (f *Formatter) processCodexItem(eventType string, item *codexItem) {
@@ -585,6 +858,12 @@ func (f *Formatter) formatToolUse(name string, input json.RawMessage) {
 		if path == "" {
 			path = jsonString(fields["path"])
 		}
+		if path == "" {
+			path = jsonString(fields["targetfile"]) // Grok read_file
+		}
+		if path == "" {
+			path = jsonString(fields["file"])
+		}
 		f.writeTool(display, path)
 	case "Bash":
 		cmd := jsonString(fields["command"])
@@ -603,7 +882,11 @@ func (f *Formatter) formatToolUse(name string, input json.RawMessage) {
 	case "Glob":
 		f.writeTool(display, jsonString(fields["pattern"]))
 	case "List":
-		f.writeTool(display, jsonString(fields["path"]))
+		path := jsonString(fields["path"])
+		if path == "" {
+			path = jsonString(fields["targetdirectory"]) // Grok list_dir
+		}
+		f.writeTool(display, path)
 	case "WebFetch":
 		f.writeTool(display, jsonString(fields["url"]))
 	default:

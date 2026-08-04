@@ -2,12 +2,18 @@ package agenthook
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
+	"strings"
 	"sync"
 	"time"
 )
 
 const ServiceName = "roborev-agent-hook"
 
+// Input is the normalized hook payload used by roborev's agent-hook daemon.
+// Claude/Codex send snake_case keys; Grok Build sends camelCase (see
+// xai-org/grok-build HookEventEnvelope). DecodeInput accepts both.
 type Input struct {
 	SessionID      string                     `json:"session_id"`
 	TranscriptPath string                     `json:"transcript_path,omitempty"`
@@ -20,6 +26,109 @@ type Input struct {
 	ToolUseID      string                     `json:"tool_use_id,omitempty"`
 	ToolInput      map[string]json.RawMessage `json:"tool_input,omitempty"`
 	ToolResponse   json.RawMessage            `json:"tool_response,omitempty"`
+}
+
+// DecodeInput reads a harness hook payload and normalizes Claude snake_case and
+// Grok camelCase envelopes into Input. Hook event names are canonicalized to
+// Claude-style PascalCase (PreToolUse, PostToolUse, Stop) so StateStore.Record
+// can share one switch.
+func DecodeInput(r io.Reader) (Input, error) {
+	var raw map[string]json.RawMessage
+	if err := json.NewDecoder(r).Decode(&raw); err != nil {
+		return Input{}, err
+	}
+	return inputFromRaw(raw)
+}
+
+func inputFromRaw(raw map[string]json.RawMessage) (Input, error) {
+	var in Input
+	in.SessionID = firstString(raw, "session_id", "sessionId")
+	in.TranscriptPath = firstString(raw, "transcript_path", "transcriptPath")
+	in.CWD = firstString(raw, "cwd")
+	in.HookEventName = NormalizeHookEventName(firstString(raw, "hook_event_name", "hookEventName"))
+	in.TurnID = firstString(raw, "turn_id", "turnId", "prompt_id", "promptId")
+	in.StopHookActive = firstBool(raw, "stop_hook_active", "stopHookActive")
+	in.LastAssistant = firstString(raw, "last_assistant_message", "lastAssistantMessage")
+	in.ToolName = firstString(raw, "tool_name", "toolName")
+	in.ToolUseID = firstString(raw, "tool_use_id", "toolUseId")
+	if toolInput, ok := firstRaw(raw, "tool_input", "toolInput"); ok {
+		var m map[string]json.RawMessage
+		if err := json.Unmarshal(toolInput, &m); err != nil {
+			return Input{}, fmt.Errorf("decode tool_input: %w", err)
+		}
+		in.ToolInput = m
+	}
+	if resp, ok := firstRaw(raw, "tool_response", "toolResponse", "tool_result", "toolResult"); ok {
+		in.ToolResponse = resp
+	}
+	return in, nil
+}
+
+// NormalizeHookEventName maps harness event spellings onto the PascalCase names
+// StateStore.Record expects. Grok serializes display names like pre_tool_use /
+// stop; Claude sends PreToolUse / Stop.
+func NormalizeHookEventName(name string) string {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "pretooluse", "pre_tool_use":
+		return "PreToolUse"
+	case "posttooluse", "post_tool_use":
+		return "PostToolUse"
+	case "stop":
+		return "Stop"
+	case "":
+		return ""
+	default:
+		// Preserve already-canonical PascalCase and unknown events (skipped).
+		return strings.TrimSpace(name)
+	}
+}
+
+func firstString(raw map[string]json.RawMessage, keys ...string) string {
+	for _, key := range keys {
+		v, ok := raw[key]
+		if !ok {
+			continue
+		}
+		var s string
+		if err := json.Unmarshal(v, &s); err != nil {
+			continue
+		}
+		if s != "" {
+			return s
+		}
+	}
+	return ""
+}
+
+func firstBool(raw map[string]json.RawMessage, keys ...string) bool {
+	for _, key := range keys {
+		v, ok := raw[key]
+		if !ok {
+			continue
+		}
+		var b bool
+		if err := json.Unmarshal(v, &b); err != nil {
+			continue
+		}
+		// First successfully decoded key wins — including explicit false.
+		// Do not skip false and fall through to later aliases.
+		return b
+	}
+	return false
+}
+
+func firstRaw(raw map[string]json.RawMessage, keys ...string) (json.RawMessage, bool) {
+	for _, key := range keys {
+		v, ok := raw[key]
+		if !ok {
+			continue
+		}
+		if len(v) == 0 || string(v) == "null" {
+			continue
+		}
+		return v, true
+	}
+	return nil, false
 }
 
 func (i Input) Command() string {

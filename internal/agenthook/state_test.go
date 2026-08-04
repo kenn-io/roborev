@@ -414,6 +414,15 @@ func TestRecordPostToolUseFailedReviewPromptUsesNewBranchLineageKey(t *testing.T
 	assert.Equal("failed_reviews", featureResp.TriggeredBy)
 }
 
+func TestRecordToolUseAcceptsGrokShellToolNames(t *testing.T) {
+	assert := assert.New(t)
+	for _, name := range []string{"run_terminal_command", "run_terminal_cmd", "Bash"} {
+		assert.True(isShellCommandTool(name), "expected shell tool %q", name)
+	}
+	assert.False(isShellCommandTool("read_file"))
+	assert.False(isShellCommandTool("search_replace"))
+}
+
 func TestRecordToolUseAcceptsDroidExecuteForCommitTracking(t *testing.T) {
 	assert := assert.New(t)
 	repo := testutil.NewGitRepo(t)

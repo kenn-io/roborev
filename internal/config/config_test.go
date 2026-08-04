@@ -1050,6 +1050,25 @@ model = "configured-model"
 	assert.Equal(t, "configured-model", goose.Model)
 }
 
+func TestLoadGlobalNamedACPAgentCanShareBuiltInName(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(path, []byte(`
+fix_agent = "acp.grok"
+
+[acp.grok]
+command = "grok"
+args = ["agent", "--always-approve", "stdio"]
+`), 0o600))
+
+	cfg, err := LoadGlobalFrom(path)
+	require.NoError(t, err)
+	assert.Equal(t, "acp.grok", cfg.FixAgent)
+	grok, ok := ResolveACPAgentConfigFromConfig("acp.grok", nil, cfg)
+	require.True(t, ok)
+	assert.Equal(t, "grok", grok.Command)
+	assert.Equal(t, []string{"agent", "--always-approve", "stdio"}, grok.Args)
+}
+
 func TestLoadConfigRejectsInvalidNamedACPAgents(t *testing.T) {
 	tests := []struct {
 		name      string
@@ -1058,8 +1077,6 @@ func TestLoadConfigRejectsInvalidNamedACPAgents(t *testing.T) {
 	}{
 		{name: "empty name", toml: "[acp.\"\"]\ncommand = \"goose\"\n", wantError: "empty ACP agent name"},
 		{name: "missing command", toml: "[acp.goose]\nargs = [\"acp\"]\n", wantError: "requires a command"},
-		{name: "built-in", toml: "[acp.codex]\ncommand = \"goose\"\n", wantError: "conflicts with built-in agent"},
-		{name: "alias", toml: "[acp.claude]\ncommand = \"goose\"\n", wantError: "conflicts with built-in agent"},
 		{name: "dotted name", toml: "[acp.\"foo.bar\"]\ncommand = \"foo-acp\"\n", wantError: "must not contain dots"},
 		{name: "bare custom reference", toml: "fix_agent = \"goose\"\n", wantError: `must use "acp.goose"`},
 		{name: "bare nested panel reference", toml: "[review.subagents.only]\nagent = \"goose\"\n", wantError: `must use "acp.goose"`},
@@ -3464,7 +3481,7 @@ func TestLoadRepoConfigFromRef(t *testing.T) {
 	})
 
 	t.Run("classifies invalid ACP config as parse error", func(t *testing.T) {
-		writeTestFile(t, dir, ".roborev.toml", "[acp.codex]\ncommand = \"goose\"\n")
+		writeTestFile(t, dir, ".roborev.toml", "[acp.goose]\nargs = [\"acp\"]\n")
 		execGit(t, dir, "add", ".roborev.toml")
 		execGit(t, dir, "commit", "-m", "add invalid ACP config")
 		invalidSHA := execGit(t, dir, "rev-parse", "HEAD")

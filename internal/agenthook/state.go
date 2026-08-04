@@ -491,7 +491,14 @@ func thresholdReady(countSincePrompt, threshold int) bool {
 }
 
 func isShellCommandTool(toolName string) bool {
-	return toolName == "" || toolName == "Bash" || toolName == ExecuteMatcher
+	// Claude: Bash. Droid: Execute. Grok Build: model-facing run_terminal_command
+	// (and internal run_terminal_cmd; Bash is a Claude-compat matcher alias).
+	switch toolName {
+	case "", "Bash", ExecuteMatcher, "run_terminal_command", "run_terminal_cmd":
+		return true
+	default:
+		return false
+	}
 }
 
 // resetPromptCountersForKeys restarts the per-workspace counters after a

@@ -101,16 +101,17 @@ type Agent interface {
 
 ### Registered agents
 
-codex, claude-code, gemini, copilot, opencode, cursor, kiro, kilo, droid, pi, test
+codex, claude-code, gemini, copilot, opencode, cursor, kiro, kilo, droid, pi, grok, test
 
 ### Aliases
 
 - `"claude"` → `"claude-code"`
 - `"agent"` → `"cursor"`
+- `"grok-build"` → `"grok"`
 
 ### Availability
 
-Agents are discovered via PATH lookup (`CommandAgent.CommandName()`). The `test` agent is always available. `GetAvailable(preferred)` walks a fallback cascade: codex → claude-code → gemini → copilot → opencode → cursor → kiro → kilo → droid → pi.
+Agents are discovered via PATH lookup (`CommandAgent.CommandName()`). The `test` agent is always available. `GetAvailable(preferred)` walks a fallback cascade: codex → claude-code → gemini → copilot → opencode → cursor → kiro → kilo → droid → pi → grok.
 
 ### Reasoning levels
 

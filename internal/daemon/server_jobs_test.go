@@ -1637,11 +1637,45 @@ func TestHandleEnqueuePromptJob(t *testing.T) {
 	})
 }
 
+// mockAgentPathStub returns a PATH stub script for availability tests.
+// Cursor's default command name ("agent") must answer --version/-v with
+// non-Grok text so commandIsUsableCursorCandidate accepts it; empty exit-0
+// stubs fail closed as identityUnknown after the Grok/Cursor disambiguation
+// work.
+func mockAgentPathStub(bin string) (name, content string) {
+	if runtime.GOOS == "windows" {
+		name = bin + ".cmd"
+		if bin == "agent" {
+			content = "@echo off\r\n" +
+				"if \"%~1\"==\"--version\" (\r\n" +
+				"  echo cursor agent 1.2.3\r\n" +
+				"  exit /b 0\r\n" +
+				")\r\n" +
+				"if \"%~1\"==\"-v\" (\r\n" +
+				"  echo cursor agent 1.2.3\r\n" +
+				"  exit /b 0\r\n" +
+				")\r\n" +
+				"exit /b 0\r\n"
+			return name, content
+		}
+		return name, "@exit /b 0\r\n"
+	}
+	name = bin
+	if bin == "agent" {
+		content = "#!/bin/sh\n" +
+			"case \"$1\" in\n" +
+			"  --version|-v) echo 'cursor agent 1.2.3';;\n" +
+			"  *) exit 0;;\n" +
+			"esac\n"
+		return name, content
+	}
+	return name, "#!/bin/sh\nexit 0\n"
+}
+
 func TestResolveSingleAgentAvailability(t *testing.T) {
 	// The full enqueue handler already has broad git-target coverage. Keep this
 	// table focused on the availability/status mapper so it does not pay git
 	// root and descriptor-freezing costs for every resolver case.
-	mockScript := "#!/bin/sh\nexit 0\n"
 
 	tests := []struct {
 		name          string
@@ -1731,16 +1765,11 @@ func TestResolveSingleAgentAvailability(t *testing.T) {
 				cfg.DefaultBackupAgent = tt.backupAgent
 			}
 
-			// Isolate PATH: only mock binaries + git (no real agent CLIs)
+			// Isolate PATH: only mock binaries (no real agent CLIs)
 			origPath := os.Getenv("PATH")
 			mockDir := t.TempDir()
 			for _, bin := range tt.mockBinaries {
-				name := bin
-				content := mockScript
-				if runtime.GOOS == "windows" {
-					name = bin + ".cmd"
-					content = "@exit /b 0\r\n"
-				}
+				name, content := mockAgentPathStub(bin)
 				if err := os.WriteFile(filepath.Join(mockDir, name), []byte(content), 0o755); err != nil {
 					require.Condition(t, func() bool {
 						return false

@@ -847,3 +847,130 @@ func readJSONFile(t *testing.T, path string) map[string]any {
 	require.NoError(t, json.Unmarshal(body, &root))
 	return root
 }
+
+func TestRunDumpGrokCreatesHookConfig(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "roborev.json")
+	command := "/tmp/roborev agent-hook run --agent grok"
+
+	var stdout bytes.Buffer
+	err := RunDump(DumpOptions{
+		Agent:      "grok",
+		Command:    command,
+		ConfigPath: path,
+		Timeout:    10 * time.Second,
+	}, &stdout)
+
+	require.NoError(t, err)
+	var root map[string]any
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &root))
+	assertCommandCount(t, root, "PostToolUse", command, 1)
+	assertCommandCount(t, root, "Stop", command, 1)
+	assert.Equal(t, GrokShellMatcher, firstMatcher(t, root, "PostToolUse"))
+	assert.InDelta(t, 10, firstCommandTimeout(t, root, "Stop", command), 0)
+}
+
+func TestRunInstallGrokIsIdempotent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "roborev.json")
+	command := "/tmp/roborev agent-hook run --agent grok"
+
+	var first, second bytes.Buffer
+	require.NoError(t, RunInstall(InstallOptions{
+		Agent:      "grok",
+		Command:    command,
+		ConfigPath: path,
+		Timeout:    10 * time.Second,
+	}, &first))
+	assert.Contains(t, first.String(), "installed Grok Build agent hooks")
+
+	require.NoError(t, RunInstall(InstallOptions{
+		Agent:      "grok",
+		Command:    command,
+		ConfigPath: path,
+		Timeout:    10 * time.Second,
+	}, &second))
+	assert.Contains(t, second.String(), "Grok Build agent hooks already installed")
+
+	body, err := os.ReadFile(path)
+	require.NoError(t, err)
+	var root map[string]any
+	require.NoError(t, json.Unmarshal(body, &root))
+	assertCommandCount(t, root, "Stop", command, 1)
+	assert.Equal(t, GrokShellMatcher, firstMatcher(t, root, "PreToolUse"))
+}
+
+func TestDefaultGrokHooksPathHonorsGrokHome(t *testing.T) {
+	t.Setenv("GROK_HOME", "/tmp/custom-grok")
+	assert.Equal(t, filepath.Join("/tmp/custom-grok", "hooks", "roborev.json"), DefaultGrokHooksPath())
+}
+
+func TestRewriteHookRunner(t *testing.T) {
+	got := rewriteHookRunner(`/stable/bin/roborev agent-hook run`, grokAgentHookRunner)
+	assert.Equal(t, `/stable/bin/roborev agent-hook run --agent grok`, got)
+
+	// Custom commands must not be rewritten under --agent all.
+	custom := `custom-hook --mode review`
+	assert.Equal(t, custom, rewriteHookRunner(custom, grokAgentHookRunner))
+}
+
+func TestRunInstallAgentAllPreservesCustomCommand(t *testing.T) {
+	// Agent "all" rewrites only roborev-generated agent-hook runners for Grok.
+	// An explicit custom command must be installed with exact command equality
+	// on every target (not a JSON substring check).
+	dir := t.TempDir()
+	codexPath := filepath.Join(dir, "codex.json")
+	claudePath := filepath.Join(dir, "claude.json")
+	grokPath := filepath.Join(dir, "grok.json")
+	custom := `custom-hook --mode review`
+
+	var stdout bytes.Buffer
+	err := RunInstall(InstallOptions{
+		Agent:            "all",
+		Command:          custom,
+		CodexConfigPath:  codexPath,
+		ClaudeConfigPath: claudePath,
+		GrokConfigPath:   grokPath,
+	}, &stdout)
+	require.NoError(t, err)
+
+	for _, path := range []string{codexPath, claudePath, grokPath} {
+		body, err := os.ReadFile(path)
+		require.NoError(t, err, path)
+		var root map[string]any
+		require.NoError(t, json.Unmarshal(body, &root), path)
+		assertInstalledCommandsEqual(t, root, custom)
+	}
+}
+
+// assertInstalledCommandsEqual walks every command hook in a hooks config and
+// asserts each command field equals want exactly.
+func assertInstalledCommandsEqual(t *testing.T, root map[string]any, want string) {
+	t.Helper()
+	assert := assert.New(t)
+	require := require.New(t)
+	found := 0
+	hooksRoot, ok := root["hooks"].(map[string]any)
+	require.True(ok, "hooks root missing")
+	for event, rawEntries := range hooksRoot {
+		entries, ok := rawEntries.([]any)
+		require.True(ok, "event %s entries", event)
+		for _, rawEntry := range entries {
+			entry, ok := rawEntry.(map[string]any)
+			require.True(ok, "event %s entry", event)
+			rawHooks, ok := entry["hooks"].([]any)
+			if !ok {
+				continue
+			}
+			for _, rawHook := range rawHooks {
+				hookObj, ok := rawHook.(map[string]any)
+				require.True(ok)
+				if hookObj["type"] != "command" {
+					continue
+				}
+				cmd, _ := hookObj["command"].(string)
+				assert.Equal(want, cmd, "event %s command must match custom exactly", event)
+				found++
+			}
+		}
+	}
+	assert.Positive(found, "expected at least one installed command hook")
+}

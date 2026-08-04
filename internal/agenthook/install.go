@@ -26,10 +26,21 @@ const agentHookRunner = "agent-hook run"
 // Droid install never clobbers plain Codex/Claude hook entries and vice versa.
 const droidAgentHookRunner = "agent-hook run --agent droid"
 
+// grokAgentHookRunner selects Grok Build hooks. Distinct from agentHookRunner so
+// a Grok install never clobbers Codex/Claude entries (and vice versa).
+const grokAgentHookRunner = "agent-hook run --agent grok"
+
 // ExecuteMatcher is the Factory Droid tool name for shell commands. PreToolUse
 // and PostToolUse hooks match it to track turns and commits, mirroring the
 // Codex/Claude Bash matcher.
 const ExecuteMatcher = "Execute"
+
+// GrokShellMatcher matches Grok Build shell tool invocations.
+// Live model-facing id is run_terminal_command (agent renames run_terminal_cmd);
+// Bash is the Claude-compat matcher alias that expands to run_terminal_command
+// (xai-org/grok-build claude_alias + HookMatcher). Include all three so install
+// stays robust across internal id / rename / migrated Claude matchers.
+const GrokShellMatcher = "Bash|run_terminal_command|run_terminal_cmd"
 
 var droidPathCaseInsensitive = runtime.GOOS == "windows"
 
@@ -39,6 +50,7 @@ type InstallOptions struct {
 	ConfigPath       string
 	CodexConfigPath  string
 	ClaudeConfigPath string
+	GrokConfigPath   string
 	Scope            string
 	Timeout          time.Duration
 	DryRun           bool
@@ -69,8 +81,8 @@ func RunInstall(opts InstallOptions, stdout io.Writer) error {
 	if agent == "" {
 		agent = "all"
 	}
-	if agent != "all" && agent != "codex" && agent != "claude" && agent != "droid" {
-		return fmt.Errorf("agent must be codex, claude, droid, or all")
+	if agent != "all" && agent != "codex" && agent != "claude" && agent != "droid" && agent != "grok" {
+		return fmt.Errorf("agent must be codex, claude, droid, grok, or all")
 	}
 	if opts.Timeout < 0 {
 		return fmt.Errorf("timeout must be >= 0")
@@ -104,6 +116,29 @@ func RunInstall(opts InstallOptions, stdout io.Writer) error {
 			return err
 		}
 		printInstallResult(stdout, "Claude", path, changed, opts.DryRun)
+	}
+	if agent == "all" || agent == "grok" {
+		// "all" uses the Codex/Claude plain runner command; rewrite its suffix
+		// to the Grok-specific runner so install never clobbers shared entries.
+		grokCommand := command
+		if agent == "all" {
+			grokCommand = rewriteHookRunner(command, grokAgentHookRunner)
+		}
+		path := opts.GrokConfigPath
+		if agent == "grok" && opts.ConfigPath != "" {
+			path = opts.ConfigPath
+		}
+		if path == "" {
+			path = DefaultGrokHooksPath()
+		}
+		if path == "" {
+			return fmt.Errorf("could not resolve Grok Build hooks path")
+		}
+		changed, err := InstallSpecs(path, grokSpecs(grokCommand, opts.Timeout), grokAgentHookRunner, opts.DryRun)
+		if err != nil {
+			return err
+		}
+		printInstallResult(stdout, "Grok Build", path, changed, opts.DryRun)
 	}
 	if agent == "droid" {
 		scope, err := normalizeDroidScope(opts.Scope)
@@ -169,8 +204,17 @@ func RunDump(opts DumpOptions, stdout io.Writer) error {
 		}
 		specs = droidSpecs(command, opts.Timeout)
 		runner = droidAgentHookRunner
+	case "grok":
+		if path == "" {
+			path = DefaultGrokHooksPath()
+		}
+		if path == "" {
+			return fmt.Errorf("could not resolve Grok Build hooks path")
+		}
+		specs = grokSpecs(command, opts.Timeout)
+		runner = grokAgentHookRunner
 	default:
-		return fmt.Errorf("agent must be codex, claude, or droid")
+		return fmt.Errorf("agent must be codex, claude, droid, or grok")
 	}
 
 	root, _, _, err := PlanSpecs(path, specs, runner)
@@ -188,13 +232,37 @@ func RunDump(opts DumpOptions, stdout io.Writer) error {
 func resolveInstallCommand(agent, command string) (string, error) {
 	command = strings.TrimSpace(command)
 	if command == "" {
-		if agent == "droid" {
+		switch agent {
+		case "droid":
 			command, _, err := ResolveHookCommandWithRunner("", "", droidAgentHookRunner)
+			return command, err
+		case "grok":
+			command, _, err := ResolveHookCommandWithRunner("", "", grokAgentHookRunner)
 			return command, err
 		}
 		return defaultInstallCommand()
 	}
 	return command, nil
+}
+
+// rewriteHookRunner replaces a trailing "agent-hook run..." suffix with runner,
+// preserving the binary path prefix. Empty command generates a full runner
+// via ResolveHookCommandWithRunner. Explicit custom commands that do not
+// contain agentHookRunner are returned unchanged (never silently rewritten).
+func rewriteHookRunner(command, runner string) string {
+	command = strings.TrimSpace(command)
+	if command == "" {
+		out, _, err := ResolveHookCommandWithRunner("", "", runner)
+		if err != nil {
+			return runner
+		}
+		return out
+	}
+	if idx := strings.LastIndex(command, agentHookRunner); idx != -1 {
+		return strings.TrimSpace(command[:idx]) + " " + runner
+	}
+	// User-supplied custom hook command: preserve byte-for-byte.
+	return command
 }
 
 func printInstallResult(stdout io.Writer, name, path string, changed, dryRun bool) {
@@ -251,6 +319,32 @@ func claudeSpecs(command string) []InstallSpec {
 		{
 			Event:   "Stop",
 			Command: command,
+		},
+	}
+}
+
+func grokSpecs(command string, timeout time.Duration) []InstallSpec {
+	secs := int(timeout.Seconds())
+	return []InstallSpec{
+		{
+			Event:          "PreToolUse",
+			Matcher:        GrokShellMatcher,
+			Command:        command,
+			Timeout:        secs,
+			IncludeTimeout: true,
+		},
+		{
+			Event:          "PostToolUse",
+			Matcher:        GrokShellMatcher,
+			Command:        command,
+			Timeout:        secs,
+			IncludeTimeout: true,
+		},
+		{
+			Event:          "Stop",
+			Command:        command,
+			Timeout:        secs,
+			IncludeTimeout: true,
 		},
 	}
 }
@@ -535,7 +629,7 @@ func isRoborevHookCommand(command, runner string) bool {
 	}
 
 	baseRunner := runner
-	if runner == droidAgentHookRunner {
+	if runner == droidAgentHookRunner || runner == grokAgentHookRunner {
 		baseRunner = agentHookRunner
 	}
 
@@ -546,9 +640,11 @@ func isRoborevHookCommand(command, runner string) bool {
 
 	switch runner {
 	case agentHookRunner:
-		return !selectsDroidAgent(suffix)
+		return !selectsDroidAgent(suffix) && !selectsGrokAgent(suffix)
 	case droidAgentHookRunner:
 		return selectsDroidAgent(suffix)
+	case grokAgentHookRunner:
+		return selectsGrokAgent(suffix)
 	default:
 		return true
 	}
@@ -574,13 +670,21 @@ func hookCommandRunnerSuffix(command, runner string) (string, bool) {
 }
 
 func selectsDroidAgent(suffix string) bool {
+	return selectsNamedAgent(suffix, "droid")
+}
+
+func selectsGrokAgent(suffix string) bool {
+	return selectsNamedAgent(suffix, "grok")
+}
+
+func selectsNamedAgent(suffix, name string) bool {
 	fields := shellFields(suffix)
 	for i, field := range fields {
 		field = cleanShellToken(field)
-		if field == "--agent=droid" {
+		if field == "--agent="+name {
 			return true
 		}
-		if field == "--agent" && i+1 < len(fields) && cleanShellToken(fields[i+1]) == "droid" {
+		if field == "--agent" && i+1 < len(fields) && cleanShellToken(fields[i+1]) == name {
 			return true
 		}
 	}
@@ -699,6 +803,20 @@ func DefaultClaudeSettingsPath() string {
 		return ""
 	}
 	return filepath.Join(home, ".claude", "settings.json")
+}
+
+// DefaultGrokHooksPath returns ~/.grok/hooks/roborev.json (or $GROK_HOME/...).
+// Grok discovers all JSON files under hooks/; a dedicated roborev.json keeps
+// our entries separate from other user hooks.
+func DefaultGrokHooksPath() string {
+	if dir := os.Getenv("GROK_HOME"); dir != "" {
+		return filepath.Join(dir, "hooks", "roborev.json")
+	}
+	home, err := os.UserHomeDir()
+	if err != nil || home == "" {
+		return ""
+	}
+	return filepath.Join(home, ".grok", "hooks", "roborev.json")
 }
 
 // DefaultDroidHooksPath returns the user-scoped Factory Droid hooks.json path.
