@@ -37,51 +37,6 @@ func setupRunner(t *testing.T, cfg *config.Config) (*HookRunner, Broadcaster) {
 	return hr, b
 }
 
-func poll(t *testing.T, timeout time.Duration, condition func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(timeout)
-	for time.Now().Before(deadline) {
-		if condition() {
-			return
-		}
-		time.Sleep(50 * time.Millisecond)
-	}
-	require.Condition(t, func() bool {
-		return false
-	}, "condition not met within %v", timeout)
-}
-
-// waitForFile polls for the existence of a file until the timeout expires.
-func waitForFile(t *testing.T, path string, timeout time.Duration) {
-	t.Helper()
-	waitForFiles(t, timeout, path)
-}
-
-// waitForFiles polls for the existence of multiple files until the timeout expires.
-func waitForFiles(t *testing.T, timeout time.Duration, paths ...string) {
-	t.Helper()
-	poll(t, timeout, func() bool {
-		for _, path := range paths {
-			if _, err := os.Stat(path); err != nil {
-				return false
-			}
-		}
-		return true
-	})
-}
-
-// waitForFileContent polls until the file exists and has non-empty content.
-func waitForFileContent(t *testing.T, path string, timeout time.Duration) string {
-	t.Helper()
-	var content []byte
-	poll(t, timeout, func() bool {
-		var err error
-		content, err = os.ReadFile(path)
-		return err == nil && len(content) > 0
-	})
-	return string(content)
-}
-
 // noopCmd returns a platform-appropriate no-op shell command.
 func noopCmd() string {
 	if runtime.GOOS == "windows" {
@@ -497,7 +452,7 @@ func TestHookRunnerFiresHooks(t *testing.T) {
 		},
 	}
 
-	_, broadcaster := setupRunner(t, cfg)
+	hr, broadcaster := setupRunner(t, cfg)
 
 	broadcaster.Broadcast(Event{
 		Type:     "review.completed",
@@ -510,7 +465,8 @@ func TestHookRunnerFiresHooks(t *testing.T) {
 		Verdict:  "P",
 	})
 
-	waitForFile(t, markerFile, 5*time.Second)
+	hr.WaitUntilIdle()
+	assert.FileExists(t, markerFile)
 }
 
 func TestHookRunnerWorkingDirectory(t *testing.T) {
@@ -526,7 +482,7 @@ func TestHookRunnerWorkingDirectory(t *testing.T) {
 		},
 	}
 
-	_, broadcaster := setupRunner(t, cfg)
+	hr, broadcaster := setupRunner(t, cfg)
 
 	broadcaster.Broadcast(Event{
 		Type:     "review.failed",
@@ -539,7 +495,11 @@ func TestHookRunnerWorkingDirectory(t *testing.T) {
 		Error:    "fail",
 	})
 
-	dataStr := waitForFileContent(t, markerFile, 5*time.Second)
+	hr.WaitUntilIdle()
+	data, err := os.ReadFile(markerFile)
+	require.NoError(t, err)
+	require.NotEmpty(t, data)
+	dataStr := string(data)
 
 	got := filepath.Clean(strings.TrimSpace(dataStr))
 	want := filepath.Clean(tmpDir)
@@ -881,7 +841,7 @@ event = "review.failed"
 command = "`+touchCmd(markerRepo)+`"
 `)
 
-	_, broadcaster := setupRunner(t, cfg)
+	hr, broadcaster := setupRunner(t, cfg)
 
 	// Fire event for the repo
 	broadcaster.Broadcast(Event{
@@ -894,8 +854,8 @@ command = "`+touchCmd(markerRepo)+`"
 		Error: "fail",
 	})
 
-	// Wait for hooks to run
-	waitForFile(t, markerRepo, 5*time.Second)
+	hr.WaitUntilIdle()
+	require.FileExists(t, markerRepo)
 
 	// The global config's Hooks slice must still have exactly 1 element
 	if len(cfg.Hooks) != 1 {
@@ -925,7 +885,7 @@ event = "review.failed"
 command = "`+touchCmd(repoMarker)+`"
 `)
 
-	_, broadcaster := setupRunner(t, cfg)
+	hr, broadcaster := setupRunner(t, cfg)
 
 	broadcaster.Broadcast(Event{
 		Type:  "review.failed",
@@ -937,7 +897,9 @@ command = "`+touchCmd(repoMarker)+`"
 		Error: "fail",
 	})
 
-	waitForFiles(t, 5*time.Second, globalMarker, repoMarker)
+	hr.WaitUntilIdle()
+	assert.FileExists(t, globalMarker)
+	assert.FileExists(t, repoMarker)
 }
 
 func TestHookRunnerRepoOnlyHooks(t *testing.T) {
@@ -953,7 +915,7 @@ event = "review.completed"
 command = "`+touchCmd(markerFile)+`"
 `)
 
-	_, broadcaster := setupRunner(t, cfg)
+	hr, broadcaster := setupRunner(t, cfg)
 
 	broadcaster.Broadcast(Event{
 		Type:    "review.completed",
@@ -965,7 +927,8 @@ command = "`+touchCmd(markerFile)+`"
 		Verdict: "P",
 	})
 
-	waitForFile(t, markerFile, 5*time.Second)
+	hr.WaitUntilIdle()
+	assert.FileExists(t, markerFile)
 }
 
 func TestHookRunnerRepoHookDoesNotFireForOtherRepo(t *testing.T) {

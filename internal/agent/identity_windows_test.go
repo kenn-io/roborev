@@ -19,18 +19,19 @@ import (
 func TestWindowsProbeFixture_VersionFlagsAndPositionals(t *testing.T) {
 	dir := t.TempDir()
 	marker := filepath.Join(dir, "positional.log")
-	bin := writeProbeScriptWithMarker(t, dir, "cursor-fixture", "cursor agent 1.2.3", marker)
+	versionLine := "grok 0.2.118 (abc) [stable]"
+	bin := writeProbeScriptWithMarker(t, dir, "grok-fixture", versionLine, marker)
 
 	t.Run("--version", func(t *testing.T) {
 		out, err := exec.Command(bin, "--version").CombinedOutput()
 		require.NoError(t, err, "stdout/stderr: %s", out)
-		assert.Contains(t, string(out), "cursor agent 1.2.3")
+		assert.Contains(t, string(out), versionLine)
 	})
 
 	t.Run("-v", func(t *testing.T) {
 		out, err := exec.Command(bin, "-v").CombinedOutput()
 		require.NoError(t, err, "stdout/stderr: %s", out)
-		assert.Contains(t, string(out), "cursor agent 1.2.3")
+		assert.Contains(t, string(out), versionLine)
 	})
 
 	t.Run("positional version", func(t *testing.T) {

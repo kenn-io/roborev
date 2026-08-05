@@ -35,16 +35,19 @@ func writeProbeScriptWithMarker(t *testing.T, dir, name, versionLine, marker str
 		//
 		// Put version text in a quoted set variable so parentheses in the
 		// string (e.g. "grok 0.2.118 (abc)") cannot close the if-block early.
+		// Expand it after cmd.exe parses the block so metacharacters in the
+		// value are emitted as text rather than reinterpreted as syntax.
 		var b strings.Builder
 		b.WriteString("@echo off\r\n")
+		b.WriteString("setlocal EnableDelayedExpansion\r\n")
 		b.WriteString("set \"PROBE_VERSION=" + versionLine + "\"\r\n")
 		b.WriteString("if \"%~1\"==\"--help-probe-etxtbsy\" exit /b 0\r\n")
 		b.WriteString("if \"%~1\"==\"--version\" (\r\n")
-		b.WriteString("  echo %PROBE_VERSION%\r\n")
+		b.WriteString("  echo(!PROBE_VERSION!\r\n")
 		b.WriteString("  exit /b 0\r\n")
 		b.WriteString(")\r\n")
 		b.WriteString("if \"%~1\"==\"-v\" (\r\n")
-		b.WriteString("  echo %PROBE_VERSION%\r\n")
+		b.WriteString("  echo(!PROBE_VERSION!\r\n")
 		b.WriteString("  exit /b 0\r\n")
 		b.WriteString(")\r\n")
 		if marker != "" {
