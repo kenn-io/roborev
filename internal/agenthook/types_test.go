@@ -98,7 +98,8 @@ func TestSessionStateMigratesLegacyStopCountToKnownLineage(t *testing.T) {
 	var state SessionState
 	err := json.Unmarshal([]byte(`{
 		"stop_count_since_prompt": 3,
-		"worktree_lineage_keys": {"worktree": "lineage"}
+		"worktree_lineage_keys": {"worktree": "lineage"},
+		"repo_heads": {"worktree": "abc123", "lineage": "abc123"}
 	}`), &state)
 
 	require.NoError(t, err)

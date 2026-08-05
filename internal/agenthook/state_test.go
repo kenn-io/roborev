@@ -2164,6 +2164,34 @@ func TestDeferredReminderDoesNotEscapeSnoozedWorkspace(t *testing.T) {
 	assert.Empty(t, store.sessions["session-1"].PendingReminders)
 }
 
+func TestDeferredReminderIsDiscardedWhenRepositoryIsUntracked(t *testing.T) {
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "/api/repos/resolve", r.URL.Path)
+		assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"tracked": false}))
+	}))
+	t.Cleanup(server.Close)
+	pending := PendingReminder{
+		TriggeredBy: "failed_reviews", Reason: "Resolve reviews.",
+		TrackedRepoRoot: "/repo", WorktreeRoot: "/worktree", Branch: "main",
+		LineageKey: "repo", CreatedAt: time.Now().UTC(),
+	}
+	store := &StateStore{
+		path: filepath.Join(t.TempDir(), "state.json"),
+		sessions: map[string]SessionState{
+			"session-1": {PendingReminders: map[string]PendingReminder{pendingReminderKey(pending): pending}},
+		},
+	}
+
+	response, err := store.Record(Request{
+		Event:             Input{SessionID: "session-1", CWD: t.TempDir(), HookEventName: "Stop"},
+		RoborevServerAddr: server.URL,
+	})
+
+	require.NoError(t, err)
+	assert.False(t, response.Triggered)
+	assert.Empty(t, store.sessions["session-1"].PendingReminders)
+}
+
 func TestDeferredFailedReviewReminderIsRevalidatedBeforeDelivery(t *testing.T) {
 	repo := testutil.NewGitRepo(t)
 	repo.CommitFile("main.go", "package main\n", "initial")

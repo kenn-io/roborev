@@ -197,13 +197,16 @@ func (s *SessionState) UnmarshalJSON(body []byte) error {
 }
 
 func legacyStopCountLineage(state SessionState) string {
-	if len(state.WorktreeLineageKeys) > 1 || len(state.RepoHeads) > 1 {
+	if len(state.WorktreeLineageKeys) > 1 {
 		return ""
 	}
 	if len(state.WorktreeLineageKeys) == 1 {
 		for _, lineage := range state.WorktreeLineageKeys {
 			return lineage
 		}
+	}
+	if len(state.RepoHeads) > 1 {
+		return ""
 	}
 	if len(state.RepoHeads) == 1 {
 		for key := range state.RepoHeads {

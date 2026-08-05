@@ -159,6 +159,11 @@ open: a diagnostic goes to stderr and the harness receives an empty native
 response. Invalid native payloads or unsupported profile names remain normal CLI
 errors.
 
+Persisting reminder state is the at-most-once delivery boundary. Cancellation
+observed before that commit leaves a reminder queued; a disconnect after the
+commit can consume it because coding-agent hook protocols do not acknowledge
+receipt.
+
 ### Hermes
 
 Hermes observes post-tool events but cannot inject control output there. When a

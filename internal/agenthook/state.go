@@ -692,11 +692,11 @@ func (s *StateStore) deliverPendingReminder(
 	lookupUnavailable := false
 	for _, candidate := range candidates {
 		pending := candidate.reminder
-		snoozed, known := pendingReminderSnoozed(ctx, pending, req.RoborevServerAddr)
+		suppressed, known := pendingReminderSuppressed(ctx, pending, req.RoborevServerAddr)
 		if err := ctx.Err(); err != nil {
 			return Response{}, false, err
 		}
-		if known && snoozed {
+		if known && suppressed {
 			if err := s.discardPendingReminder(ctx, req.Event.SessionID, candidate); err != nil {
 				return Response{}, false, err
 			}
@@ -734,6 +734,9 @@ func (s *StateStore) deliverPendingReminder(
 		}
 
 		s.mu.Lock()
+		// Persistence is the at-most-once delivery boundary. The hook protocol
+		// has no acknowledgment, so cancellation observed after this point
+		// cannot safely distinguish a delivered response from a disconnect.
 		if err := ctx.Err(); err != nil {
 			s.mu.Unlock()
 			return Response{}, false, err
@@ -794,7 +797,7 @@ func (s *StateStore) deliverPendingReminder(
 	return Response{}, false, nil
 }
 
-func pendingReminderSnoozed(
+func pendingReminderSuppressed(
 	ctx context.Context,
 	pending PendingReminder,
 	configuredAddr string,
@@ -804,7 +807,7 @@ func pendingReminderSnoozed(
 		path = pending.TrackedRepoRoot
 	}
 	resolved, known := resolveTrackedRepo(ctx, path, pending.Branch, configuredAddr)
-	return known && resolved.SnoozedUntil.After(time.Now()), known
+	return known && (!resolved.Tracked || resolved.SnoozedUntil.After(time.Now())), known
 }
 
 func (s *StateStore) discardPendingReminder(
