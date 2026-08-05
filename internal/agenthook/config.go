@@ -16,7 +16,6 @@ const (
 	DefaultCommitThreshold       = 0
 	DefaultFailedReviewThreshold = 4
 	DefaultInstruction           = config.DefaultAgentHookInstruction
-	DefaultGrokInstruction       = "Invoke the /roborev-fix skill now."
 
 	TurnThresholdEnv         = "ROBOREV_AGENT_HOOK_TURN_THRESHOLD"
 	CommitThresholdEnv       = "ROBOREV_AGENT_HOOK_COMMIT_THRESHOLD"
@@ -61,7 +60,7 @@ func ResolveOptionsForAgent(agent string, cli Options, changed map[string]bool) 
 		return resolveAgentOptions(cli, changed)
 	}
 	if agent == string(AgentGrok) {
-		return resolveGrokOptions(cli, changed)
+		return resolveAgentOptions(cli, changed)
 	}
 	profile, err := kitagenthook.ParseAgent(agent)
 	if err != nil {
@@ -71,46 +70,6 @@ func ResolveOptionsForAgent(agent string, cli Options, changed map[string]bool) 
 		return resolveDroidOptions(cli, changed)
 	}
 	return resolveAgentOptions(cli, changed)
-}
-
-func resolveGrokOptions(cli Options, changed map[string]bool) (Options, error) {
-	opts := DefaultOptions()
-	opts.Instruction = DefaultGrokInstruction
-	if changed["config"] {
-		opts.ConfigPath = cli.ConfigPath
-	}
-	if err := applyConfig(&opts); err != nil {
-		return Options{}, err
-	}
-	if opts.Instruction == DefaultInstruction {
-		opts.Instruction = DefaultGrokInstruction
-	}
-	applyEnv(&opts)
-	if changed["turn-threshold"] {
-		opts.TurnThreshold = cli.TurnThreshold
-	}
-	if changed["commit-threshold"] {
-		opts.CommitThreshold = cli.CommitThreshold
-	}
-	if changed["failed-review-threshold"] {
-		opts.FailedReviewThreshold = cli.FailedReviewThreshold
-	}
-	if changed["instruction"] {
-		opts.Instruction = cli.Instruction
-	}
-	if changed["roborev-server"] {
-		opts.RoborevServerAddr = cli.RoborevServerAddr
-	}
-	if opts.TurnThreshold < 0 {
-		return Options{}, fmt.Errorf("turn threshold must be >= 0")
-	}
-	if opts.CommitThreshold < 0 {
-		return Options{}, fmt.Errorf("commit threshold must be >= 0")
-	}
-	if opts.FailedReviewThreshold < 0 {
-		return Options{}, fmt.Errorf("failed review threshold must be >= 0")
-	}
-	return opts, nil
 }
 
 func resolveAgentOptions(cli Options, changed map[string]bool) (Options, error) {
