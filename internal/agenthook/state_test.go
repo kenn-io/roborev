@@ -2366,6 +2366,55 @@ func TestDeferredReminderCancellationDoesNotConsumeCandidate(t *testing.T) {
 	assert.Zero(t, store.sessions["session-1"].ReminderPromptCount)
 }
 
+func TestRecordCancellationDoesNotMutateAnyEvent(t *testing.T) {
+	for _, event := range []string{"PreToolUse", "PostToolUse", "Stop"} {
+		t.Run(event, func(t *testing.T) {
+			repo := testutil.NewGitRepo(t)
+			repo.CommitFile("main.go", "package main\n", "initial")
+			started := make(chan struct{})
+			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+				if r.URL.Path == "/api/repos/resolve" && event != "PreToolUse" {
+					assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+						"tracked": true,
+						"repo":    map[string]any{"root_path": repo.Path(), "name": filepath.Base(repo.Path())},
+					}))
+					return
+				}
+				close(started)
+				<-r.Context().Done()
+			}))
+			t.Cleanup(server.Close)
+			input := Input{SessionID: "session-1", CWD: repo.Path(), HookEventName: event}
+			switch event {
+			case "PreToolUse":
+				input.ToolName = "Bash"
+				input.ToolInput = map[string]json.RawMessage{"command": json.RawMessage(`"git commit -m test"`)}
+			case "PostToolUse":
+				input.ToolName = "Bash"
+				input.ToolInput = map[string]json.RawMessage{"command": json.RawMessage(`"go test ./..."`)}
+			}
+			store := &StateStore{
+				path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{},
+			}
+			ctx, cancel := context.WithCancel(context.Background())
+			errCh := make(chan error, 1)
+			go func() {
+				_, err := store.RecordContext(ctx, Request{
+					Event: input, RoborevServerAddr: server.URL,
+				})
+				errCh <- err
+			}()
+			<-started
+			cancel()
+
+			err := <-errCh
+
+			require.ErrorIs(t, err, context.Canceled)
+			assert.Empty(t, store.sessions)
+		})
+	}
+}
+
 func TestDeferredReminderContinuesAfterEarlierLookupFailure(t *testing.T) {
 	closed := false
 	verdict := "F"

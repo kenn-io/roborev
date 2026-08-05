@@ -5,11 +5,13 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"maps"
 	"net/http"
 	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"sort"
 	"strings"
 	"time"
@@ -122,14 +124,31 @@ func (s *StateStore) Record(req Request) (Response, error) {
 	return s.RecordContext(context.Background(), req)
 }
 
+func cloneSessionState(state SessionState) SessionState {
+	state.StopCountsSincePrompt = maps.Clone(state.StopCountsSincePrompt)
+	state.CommitCountsSincePrompt = maps.Clone(state.CommitCountsSincePrompt)
+	state.FailedReviewTriggeredCounts = maps.Clone(state.FailedReviewTriggeredCounts)
+	state.RepoHeads = maps.Clone(state.RepoHeads)
+	state.WorktreeLineageKeys = maps.Clone(state.WorktreeLineageKeys)
+	state.PendingReminders = maps.Clone(state.PendingReminders)
+	state.CommitSHAsSincePrompt = maps.Clone(state.CommitSHAsSincePrompt)
+	for key, shas := range state.CommitSHAsSincePrompt {
+		state.CommitSHAsSincePrompt[key] = slices.Clone(shas)
+	}
+	return state
+}
+
 func (s *StateStore) RecordContext(ctx context.Context, req Request) (Response, error) {
+	if err := ctx.Err(); err != nil {
+		return Response{}, err
+	}
 	switch req.Event.HookEventName {
 	case "PreToolUse":
-		return s.recordPreToolUse(req)
+		return s.recordPreToolUse(ctx, req)
 	case "", "Stop":
 		return s.recordStop(ctx, req)
 	case "PostToolUse":
-		return s.recordPostToolUse(req)
+		return s.recordPostToolUse(ctx, req)
 	default:
 		return Response{SessionID: req.Event.SessionID, Skipped: true}, nil
 	}
@@ -152,7 +171,7 @@ func (s *StateStore) recordStop(ctx context.Context, req Request) (Response, err
 	}
 	scope, ok := resolveHookScope(ctx, req.Event.CWD, req.RoborevServerAddr)
 	if ok && scope.SnoozedUntil.After(time.Now()) {
-		return s.recordSnoozed(req, scope)
+		return s.recordSnoozed(ctx, req, scope)
 	}
 	if resp, delivered, err := s.deliverPendingReminder(ctx, req); err != nil || delivered {
 		return resp, err
@@ -179,8 +198,11 @@ func (s *StateStore) recordStop(ctx context.Context, req Request) (Response, err
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return Response{}, err
+	}
 
-	st := s.sessions[req.Event.SessionID]
+	st := cloneSessionState(s.sessions[req.Event.SessionID])
 	lineageKey := ensureLineageKey(&st, scope)
 
 	now := time.Now().UTC()
@@ -212,6 +234,9 @@ func (s *StateStore) recordStop(ctx context.Context, req Request) (Response, err
 		}
 		resetPromptCountersForKeys(&st, promptResetKeys(scope, lineageKey))
 	}
+	if err := ctx.Err(); err != nil {
+		return Response{}, err
+	}
 	s.sessions[req.Event.SessionID] = st
 	if err := s.saveLocked(); err != nil {
 		return Response{}, err
@@ -237,7 +262,7 @@ func (s *StateStore) recordStop(ctx context.Context, req Request) (Response, err
 	return resp, nil
 }
 
-func (s *StateStore) recordPreToolUse(req Request) (Response, error) {
+func (s *StateStore) recordPreToolUse(ctx context.Context, req Request) (Response, error) {
 	if !isShellCommandTool(req.Event.ToolName) {
 		return Response{
 			SessionID:             req.Event.SessionID,
@@ -255,7 +280,7 @@ func (s *StateStore) recordPreToolUse(req Request) (Response, error) {
 		}, nil
 	}
 
-	scope, ok := resolveHookScope(context.Background(), commandGitDir(req.Event.CWD, req.Event.Command()), req.RoborevServerAddr)
+	scope, ok := resolveHookScope(ctx, commandGitDir(req.Event.CWD, req.Event.Command()), req.RoborevServerAddr)
 	if !ok {
 		return Response{
 			SessionID:             req.Event.SessionID,
@@ -265,13 +290,16 @@ func (s *StateStore) recordPreToolUse(req Request) (Response, error) {
 		}, nil
 	}
 	if scope.SnoozedUntil.After(time.Now()) {
-		return s.recordSnoozed(req, scope)
+		return s.recordSnoozed(ctx, req, scope)
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return Response{}, err
+	}
 
-	st := s.sessions[req.Event.SessionID]
+	st := cloneSessionState(s.sessions[req.Event.SessionID])
 	if st.RepoHeads == nil {
 		st.RepoHeads = map[string]string{}
 	}
@@ -279,6 +307,9 @@ func (s *StateStore) recordPreToolUse(req Request) (Response, error) {
 	recordSequenceHeads(&st, scope, commitSequenceKeys(scope, lineageKey))
 	st.LastCWD = req.Event.CWD
 	st.LastSeenAt = time.Now().UTC()
+	if err := ctx.Err(); err != nil {
+		return Response{}, err
+	}
 	s.sessions[req.Event.SessionID] = st
 	if err := s.saveLocked(); err != nil {
 		return Response{}, err
@@ -291,7 +322,7 @@ func (s *StateStore) recordPreToolUse(req Request) (Response, error) {
 	}, nil
 }
 
-func (s *StateStore) recordPostToolUse(req Request) (Response, error) {
+func (s *StateStore) recordPostToolUse(ctx context.Context, req Request) (Response, error) {
 	if !isShellCommandTool(req.Event.ToolName) {
 		return Response{
 			SessionID:             req.Event.SessionID,
@@ -310,7 +341,7 @@ func (s *StateStore) recordPostToolUse(req Request) (Response, error) {
 		gitDir = commandGitDir(req.Event.CWD, command)
 	}
 
-	scope, ok := resolveHookScope(context.Background(), gitDir, req.RoborevServerAddr)
+	scope, ok := resolveHookScope(ctx, gitDir, req.RoborevServerAddr)
 	if !ok {
 		return Response{
 			SessionID:             req.Event.SessionID,
@@ -320,20 +351,23 @@ func (s *StateStore) recordPostToolUse(req Request) (Response, error) {
 		}, nil
 	}
 	if scope.SnoozedUntil.After(time.Now()) {
-		return s.recordSnoozed(req, scope)
+		return s.recordSnoozed(ctx, req, scope)
 	}
 
 	failedReviewCount, haveFailedReviewCount := 0, false
 	if scope.Tracked {
 		failedReviewCount, haveFailedReviewCount = countOpenFailedReviews(
-			context.Background(), scope.TrackedRepoRoot, scope.Branch, scope.Head, req.RoborevServerAddr,
+			ctx, scope.TrackedRepoRoot, scope.Branch, scope.Head, req.RoborevServerAddr,
 		)
 	}
 
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return Response{}, err
+	}
 
-	st := s.sessions[req.Event.SessionID]
+	st := cloneSessionState(s.sessions[req.Event.SessionID])
 	if st.RepoHeads == nil {
 		st.RepoHeads = map[string]string{}
 	}
@@ -367,6 +401,9 @@ func (s *StateStore) recordPostToolUse(req Request) (Response, error) {
 				continue
 			}
 			newCommits, continuous := newCommitSHAs(scope.WorktreeRoot, previousHead, scope.Head)
+			if err := ctx.Err(); err != nil {
+				return Response{}, err
+			}
 			if !continuous {
 				if st.CommitSHAsSincePrompt == nil {
 					st.CommitSHAsSincePrompt = map[string][]string{}
@@ -466,6 +503,9 @@ func (s *StateStore) recordPostToolUse(req Request) (Response, error) {
 		}
 		resetPromptCountersForKeys(&st, promptResetKeys(scope, lineageKey))
 	}
+	if err := ctx.Err(); err != nil {
+		return Response{}, err
+	}
 	s.sessions[req.Event.SessionID] = st
 	if err := s.saveLocked(); err != nil {
 		return Response{}, err
@@ -498,11 +538,18 @@ func (s *StateStore) recordPostToolUse(req Request) (Response, error) {
 
 // recordSnoozed advances checkout baselines without accumulating reminder
 // thresholds. Review work continues; only agent-facing reminders are muted.
-func (s *StateStore) recordSnoozed(req Request, scope hookScope) (Response, error) {
+func (s *StateStore) recordSnoozed(
+	ctx context.Context,
+	req Request,
+	scope hookScope,
+) (Response, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
+	if err := ctx.Err(); err != nil {
+		return Response{}, err
+	}
 
-	st := s.sessions[req.Event.SessionID]
+	st := cloneSessionState(s.sessions[req.Event.SessionID])
 	lineageKey := ensureLineageKey(&st, scope)
 	keys := uniqueStrings(append(
 		[]string{scope.WorktreeKey, lineageKey},
@@ -519,6 +566,9 @@ func (s *StateStore) recordSnoozed(req Request, scope hookScope) (Response, erro
 	st.FailedReviewCount = 0
 	st.LastCWD = req.Event.CWD
 	st.LastSeenAt = time.Now().UTC()
+	if err := ctx.Err(); err != nil {
+		return Response{}, err
+	}
 	s.sessions[req.Event.SessionID] = st
 	if err := s.saveLocked(); err != nil {
 		return Response{}, err
@@ -647,7 +697,7 @@ func (s *StateStore) deliverPendingReminder(
 			return Response{}, false, err
 		}
 		if known && snoozed {
-			if err := s.discardPendingReminder(req.Event.SessionID, candidate); err != nil {
+			if err := s.discardPendingReminder(ctx, req.Event.SessionID, candidate); err != nil {
 				return Response{}, false, err
 			}
 			continue
@@ -664,7 +714,7 @@ func (s *StateStore) deliverPendingReminder(
 			continue
 		}
 		if count == 0 {
-			if err := s.discardPendingReminder(req.Event.SessionID, candidate); err != nil {
+			if err := s.discardPendingReminder(ctx, req.Event.SessionID, candidate); err != nil {
 				return Response{}, false, err
 			}
 			continue
@@ -688,7 +738,7 @@ func (s *StateStore) deliverPendingReminder(
 			s.mu.Unlock()
 			return Response{}, false, err
 		}
-		st = s.sessions[req.Event.SessionID]
+		st = cloneSessionState(s.sessions[req.Event.SessionID])
 		current, ok := st.PendingReminders[candidate.key]
 		if !ok || current != candidate.reminder {
 			s.mu.Unlock()
@@ -713,6 +763,10 @@ func (s *StateStore) deliverPendingReminder(
 			st.FailedReviewTriggeredAt = now
 		case "commit":
 			st.CommitTriggeredAt = now
+		}
+		if err := ctx.Err(); err != nil {
+			s.mu.Unlock()
+			return Response{}, false, err
 		}
 		s.sessions[req.Event.SessionID] = st
 		err := s.saveLocked()
@@ -754,12 +808,16 @@ func pendingReminderSnoozed(
 }
 
 func (s *StateStore) discardPendingReminder(
+	ctx context.Context,
 	sessionID string,
 	candidate pendingReminderCandidate,
 ) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	st := s.sessions[sessionID]
+	if err := ctx.Err(); err != nil {
+		return err
+	}
+	st := cloneSessionState(s.sessions[sessionID])
 	current, ok := st.PendingReminders[candidate.key]
 	if !ok || current != candidate.reminder {
 		return nil
@@ -773,6 +831,9 @@ func (s *StateStore) discardPendingReminder(
 	if st.LastFailedReviewRepo == current.TrackedRepoRoot &&
 		st.LastFailedReviewBranch == current.Branch {
 		st.FailedReviewCount = 0
+	}
+	if err := ctx.Err(); err != nil {
+		return err
 	}
 	s.sessions[sessionID] = st
 	return s.saveLocked()

@@ -104,3 +104,16 @@ func TestSessionStateMigratesLegacyStopCountToKnownLineage(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, map[string]int{"lineage": 3}, state.StopCountsSincePrompt)
 }
+
+func TestSessionStateResetsAmbiguousLegacyStopCount(t *testing.T) {
+	var state SessionState
+	err := json.Unmarshal([]byte(`{
+		"stop_count_since_prompt": 3,
+		"last_failed_review_repo": "/repo-a",
+		"last_failed_review_branch": "main",
+		"worktree_lineage_keys": {"worktree-a": "lineage-a", "worktree-b": "lineage-b"}
+	}`), &state)
+
+	require.NoError(t, err)
+	assert.Empty(t, state.StopCountsSincePrompt)
+}
