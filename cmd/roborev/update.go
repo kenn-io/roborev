@@ -7,6 +7,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"slices"
 	"strings"
 	"time"
 
@@ -387,6 +388,15 @@ func repairHooksAfterUpdate(binDir string, noRestart bool, run repairHookRunner)
 	fmt.Println("OK")
 }
 
+func installedSkillsNeedUpdate() bool {
+	return slices.ContainsFunc([]skills.Agent{
+		skills.AgentClaude,
+		skills.AgentCodex,
+		skills.AgentDroid,
+		skills.AgentGrok,
+	}, skills.IsInstalled)
+}
+
 func updateCmd() *cobra.Command {
 	var checkOnly bool
 	var yes bool
@@ -510,7 +520,7 @@ launchd or systemd).`,
 
 			// Update skills using the NEW binary (current process has old embedded skills)
 			// Use "skills update" to only update agents that already have skills installed
-			if skills.IsInstalled(skills.AgentClaude) || skills.IsInstalled(skills.AgentCodex) || skills.IsInstalled(skills.AgentDroid) {
+			if installedSkillsNeedUpdate() {
 				fmt.Print("Updating skills... ")
 				newBinary := updatedRoborevBinary(binDir)
 				skillsCmd := exec.Command(newBinary, "skills", "update")

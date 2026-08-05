@@ -27,6 +27,7 @@ import (
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/git"
+	"go.kenn.io/roborev/internal/skills"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/version"
 )
@@ -786,6 +787,25 @@ func TestUpdateCmdHasNoRestartFlag(t *testing.T) {
 	require.NotNil(t, flag, "expected --no-restart flag to be defined")
 	assert.Equal(t, "false", flag.DefValue)
 	assert.Contains(t, flag.Usage, "skip daemon restart")
+}
+
+func TestInstalledSkillsNeedUpdateForGrokOnlyInstall(t *testing.T) {
+	tmpHome := t.TempDir()
+	t.Setenv("HOME", tmpHome)
+	t.Setenv("USERPROFILE", tmpHome)
+	t.Setenv("CLAUDE_CONFIG_DIR", filepath.Join(tmpHome, "missing-claude"))
+	t.Setenv("CODEX_HOME", filepath.Join(tmpHome, "missing-codex"))
+
+	grokHome := filepath.Join(tmpHome, "grok")
+	t.Setenv("GROK_HOME", grokHome)
+	skillDir := filepath.Join(grokHome, "skills", "roborev-fix")
+	require.NoError(t, os.MkdirAll(skillDir, 0o755))
+	require.NoError(t, os.WriteFile(
+		filepath.Join(skillDir, "SKILL.md"), []byte("test"), 0o644,
+	))
+
+	assert.True(t, skills.IsInstalled(skills.AgentGrok))
+	assert.True(t, installedSkillsNeedUpdate())
 }
 
 func TestRepairHooksAfterUpdateUsesRegisteredRepos(t *testing.T) {
