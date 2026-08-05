@@ -749,17 +749,17 @@ func (s *StateStore) deliverPendingReminder(
 		st.FailedReviewCount = count
 		st.LastFailedReviewRepo = pending.TrackedRepoRoot
 		st.LastFailedReviewBranch = pending.Branch
-		if st.FailedReviewTriggeredCounts == nil {
-			st.FailedReviewTriggeredCounts = map[string]int{}
-		}
-		dedupeKey := pending.LineageKey
-		if dedupeKey == "" {
-			dedupeKey = repoHeadKey(pending.TrackedRepoRoot, pending.Branch)
-		}
-		st.FailedReviewTriggeredCounts[dedupeKey] = count
 		now := time.Now().UTC()
 		switch pending.TriggeredBy {
 		case "failed_reviews":
+			if st.FailedReviewTriggeredCounts == nil {
+				st.FailedReviewTriggeredCounts = map[string]int{}
+			}
+			dedupeKey := pending.LineageKey
+			if dedupeKey == "" {
+				dedupeKey = repoHeadKey(pending.TrackedRepoRoot, pending.Branch)
+			}
+			st.FailedReviewTriggeredCounts[dedupeKey] = count
 			st.FailedReviewTriggeredAt = now
 		case "commit":
 			st.CommitTriggeredAt = now

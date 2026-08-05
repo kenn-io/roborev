@@ -57,14 +57,24 @@ func TestAgentHookInstallRejectsBinaryWithCommand(t *testing.T) {
 	assert.ErrorContains(t, err, "--binary and --command cannot be used together")
 }
 
-func TestAgentHookRunRequiresProfile(t *testing.T) {
+func TestAgentHookRunSupportsLegacyProfilelessRegistration(t *testing.T) {
+	oldPost := postAgentHook
+	var got agenthook.Request
+	postAgentHook = func(_ context.Context, req agenthook.Request) (agenthook.Response, error) {
+		got = req
+		return agenthook.Response{Triggered: true, Reason: "resolve reviews"}, nil
+	}
+	t.Cleanup(func() { postAgentHook = oldPost })
+
+	var stdout bytes.Buffer
 	cmd := agentHookCmd()
+	cmd.SetIn(strings.NewReader(`{"session_id":"legacy-1","hook_event_name":"Stop"}`))
+	cmd.SetOut(&stdout)
 	cmd.SetArgs([]string{"run"})
 
-	err := cmd.Execute()
-
-	require.Error(t, err)
-	assert.ErrorContains(t, err, "--agent is required")
+	require.NoError(t, cmd.Execute())
+	assert.Equal(t, "legacy-1", got.Event.SessionID)
+	assert.JSONEq(t, `{"decision":"block","reason":"resolve reviews If Roborev issues are found, fix them, then continue the task you were doing before this hook interrupted you."}`, stdout.String())
 }
 
 func TestAgentHookRemovedFlagsAreRejected(t *testing.T) {

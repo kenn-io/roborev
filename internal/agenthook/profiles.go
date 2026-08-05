@@ -8,6 +8,8 @@ import (
 	"strings"
 
 	kitagenthook "go.kenn.io/kit/agenthook"
+
+	reviewagent "go.kenn.io/roborev/internal/agent"
 )
 
 const AgentGrok kitagenthook.Agent = "grok"
@@ -64,6 +66,12 @@ func SelectProfiles(raw string) ([]kitagenthook.Agent, error) {
 
 func profileInstalled(agent kitagenthook.Agent) bool {
 	for _, executable := range profileExecutables[agent] {
+		if agent == kitagenthook.AgentCursor && executable == "agent" {
+			if reviewagent.IsAvailable("cursor") {
+				return true
+			}
+			continue
+		}
 		if _, err := exec.LookPath(executable); err == nil {
 			return true
 		}

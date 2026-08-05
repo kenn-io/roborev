@@ -66,6 +66,39 @@ func TestSelectProfilesAllUsesKitOrderThenGrok(t *testing.T) {
 	}, agents)
 }
 
+func TestSelectProfilesDoesNotTreatGrokAgentAliasAsCursor(t *testing.T) {
+	root := t.TempDir()
+	home := filepath.Join(root, "home")
+	bin := filepath.Join(root, "bin")
+	require.NoError(t, os.MkdirAll(home, 0o755))
+	require.NoError(t, os.MkdirAll(bin, 0o755))
+
+	t.Setenv("HOME", home)
+	t.Setenv("USERPROFILE", home)
+	t.Setenv("LOCALAPPDATA", filepath.Join(root, "local-app-data"))
+	t.Setenv("PATH", bin)
+	for _, name := range []string{
+		"CODEX_HOME", "CLAUDE_CONFIG_DIR", "COPILOT_HOME",
+		"GEMINI_CLI_HOME", "HERMES_HOME", "QWEN_HOME",
+	} {
+		t.Setenv(name, filepath.Join(root, "agent-homes", name))
+	}
+
+	extension := ""
+	if runtime.GOOS == "windows" {
+		extension = ".exe"
+	}
+	grok := filepath.Join(bin, "grok"+extension)
+	alias := filepath.Join(bin, "agent"+extension)
+	require.NoError(t, os.WriteFile(grok, []byte("grok fixture"), 0o755))
+	require.NoError(t, os.Link(grok, alias))
+
+	agents, err := SelectProfiles("")
+
+	require.NoError(t, err)
+	assert.Equal(t, []kitagenthook.Agent{AgentGrok}, agents)
+}
+
 func TestSelectProfilesAutoReturnsActionableErrorWhenNothingDetected(t *testing.T) {
 	root := t.TempDir()
 	t.Setenv("HOME", filepath.Join(root, "home"))

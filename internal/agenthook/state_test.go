@@ -2456,6 +2456,7 @@ func TestDeferredReminderContinuesAfterEarlierLookupFailure(t *testing.T) {
 	assert.Equal(t, "commit", response.TriggeredBy)
 	assert.Equal(t, "Second.", response.Reason)
 	assert.Contains(t, store.sessions["session-1"].PendingReminders, pendingReminderKey(first))
+	assert.Empty(t, store.sessions["session-1"].FailedReviewTriggeredCounts)
 }
 
 func TestQueuePendingReminderKeepsLatestAbsoluteFailedReviewCount(t *testing.T) {

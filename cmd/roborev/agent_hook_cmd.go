@@ -44,7 +44,17 @@ func agentHookRunCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			rawAgent := strings.ToLower(strings.TrimSpace(agent))
 			if rawAgent == "" {
-				return fmt.Errorf("--agent is required")
+				// Releases before v0.64 installed profile-less Codex and Claude
+				// commands. Keep that dispatcher through v0.66 so existing hooks
+				// continue working until the bounded migration in #1012 replaces
+				// them with profile-specific kit registrations.
+				resolved, err := agenthook.ResolveOptionsForAgent("", opts, agentHookFlagChanges(cmd))
+				if err != nil {
+					return err
+				}
+				return runLegacyAgentHook(
+					cmd.Context(), resolved, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
+				)
 			}
 			resolved, err := agenthook.ResolveOptionsForAgent(rawAgent, opts, agentHookFlagChanges(cmd))
 			if err != nil {
@@ -85,6 +95,34 @@ func runGrokAgentHook(opts agenthook.Options, stdin io.Reader, stdout, stderr io
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "roborev Grok Build: %v\n", err)
+		return json.NewEncoder(stdout).Encode(map[string]any{})
+	}
+	return json.NewEncoder(stdout).Encode(agenthook.BuildOutput(input, resp))
+}
+
+func runLegacyAgentHook(
+	ctx context.Context,
+	opts agenthook.Options,
+	stdin io.Reader,
+	stdout, stderr io.Writer,
+) error {
+	input, err := agenthook.DecodeInput(stdin)
+	if err != nil {
+		return fmt.Errorf("decode agent-hook input: %w", err)
+	}
+	if input.SessionID == "" {
+		return fmt.Errorf("agent-hook input missing session_id")
+	}
+	resp, err := postAgentHook(ctx, agenthook.Request{
+		Event:                 input,
+		Threshold:             opts.TurnThreshold,
+		CommitThreshold:       opts.CommitThreshold,
+		FailedReviewThreshold: opts.FailedReviewThreshold,
+		Instruction:           opts.Instruction,
+		RoborevServerAddr:     opts.RoborevServerAddr,
+	})
+	if err != nil {
+		fmt.Fprintf(stderr, "roborev agent-hook: %v\n", err)
 		return json.NewEncoder(stdout).Encode(map[string]any{})
 	}
 	return json.NewEncoder(stdout).Encode(agenthook.BuildOutput(input, resp))
