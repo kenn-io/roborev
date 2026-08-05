@@ -170,11 +170,19 @@ func (s *StateStore) recordStop(ctx context.Context, req Request) (Response, err
 		}, nil
 	}
 	scope, ok := resolveHookScope(ctx, req.Event.CWD, req.RoborevServerAddr)
+	var snoozedResponse Response
 	if ok && scope.SnoozedUntil.After(time.Now()) {
-		return s.recordSnoozed(ctx, req, scope)
+		var err error
+		snoozedResponse, err = s.recordSnoozed(ctx, req, scope)
+		if err != nil {
+			return Response{}, err
+		}
 	}
 	if resp, delivered, err := s.deliverPendingReminder(ctx, req); err != nil || delivered {
 		return resp, err
+	}
+	if snoozedResponse.Skipped {
+		return snoozedResponse, nil
 	}
 	if !ok {
 		return Response{

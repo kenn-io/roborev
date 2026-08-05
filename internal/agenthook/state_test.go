@@ -2153,7 +2153,7 @@ func TestDeferredReminderDoesNotEscapeSnoozedWorkspace(t *testing.T) {
 	}
 
 	response, err := store.Record(Request{
-		Event:             Input{SessionID: "session-1", CWD: repoB.Path(), HookEventName: "Stop"},
+		Event:             Input{SessionID: "session-1", CWD: repoA.Path(), HookEventName: "Stop"},
 		RoborevServerAddr: server.URL,
 	})
 
