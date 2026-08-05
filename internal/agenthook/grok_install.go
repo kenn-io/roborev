@@ -209,7 +209,8 @@ func removeGrokOwnedHooks(hooks map[string]any, path string) error {
 				// Main briefly installed Grok commands before the common ownership
 				// marker landed. Remove this exact direct form through v0.66 so an
 				// upgrade cannot double-fire hooks. See #1012.
-				if ok && (strings.Contains(command, agentHookMarker) || isGrokHookCommand(command)) {
+				if ok && (strings.Contains(command, agentHookMarker) ||
+					isLegacyHookCommand(AgentGrok, command)) {
 					continue
 				}
 				keptHandlers = append(keptHandlers, rawHandler)

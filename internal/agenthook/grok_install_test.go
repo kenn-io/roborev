@@ -16,9 +16,13 @@ import (
 func TestRunInstallGrokUsesDedicatedHookConfig(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "roborev.json")
 	legacy := "/opt/roborev agent-hook run --agent grok"
+	unowned := "/opt/user-hook agent-hook run --agent grok"
 	fixture, err := json.Marshal(map[string]any{
 		"hooks": map[string]any{"Stop": []any{map[string]any{
-			"hooks": []any{map[string]any{"type": "command", "command": legacy}},
+			"hooks": []any{
+				map[string]any{"type": "command", "command": legacy},
+				map[string]any{"type": "command", "command": unowned},
+			},
 		}}},
 	})
 	require.NoError(t, err)
@@ -42,6 +46,7 @@ func TestRunInstallGrokUsesDedicatedHookConfig(t *testing.T) {
 	assert.Len(t, hooks, 3)
 	assert.Contains(t, string(body), GrokShellMatcher)
 	assert.Contains(t, string(body), agentHookMarker)
+	assert.Contains(t, string(body), unowned)
 	installed := 0
 	for _, rawEntries := range hooks {
 		for _, rawEntry := range rawEntries.([]any) {

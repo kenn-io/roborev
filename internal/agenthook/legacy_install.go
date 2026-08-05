@@ -164,6 +164,8 @@ func isLegacyHookCommand(agent kitagenthook.Agent, command string) bool {
 		return selectedAgent == ""
 	case kitagenthook.AgentDroid:
 		return strings.EqualFold(selectedAgent, string(kitagenthook.AgentDroid))
+	case AgentGrok:
+		return strings.EqualFold(selectedAgent, string(AgentGrok))
 	default:
 		return false
 	}
