@@ -11,7 +11,6 @@ import (
 	"path/filepath"
 	"runtime"
 	"sort"
-	"strconv"
 	"strings"
 	"time"
 	"unicode"
@@ -496,12 +495,58 @@ func queuePendingReminder(st *SessionState, reminder PendingReminder) {
 }
 
 func deferredReminderReason(reason, worktree string) string {
-	quotedWorktree := strconv.Quote(worktree)
-	quotedWorktree = strings.ReplaceAll(quotedWorktree, `\\`, `\`)
 	return fmt.Sprintf(
 		"%s The triggering worktree is %s; change to it before running roborev commands.",
-		strings.TrimSpace(reason), quotedWorktree,
+		strings.TrimSpace(reason), quoteReminderWorktree(worktree),
 	)
+}
+
+func quoteReminderWorktree(worktree string) string {
+	runes := []rune(worktree)
+	var quoted strings.Builder
+	quoted.WriteByte('"')
+	for i := 0; i < len(runes); {
+		switch runes[i] {
+		case '\\':
+			end := i
+			for end < len(runes) && runes[end] == '\\' {
+				end++
+			}
+			count := end - i
+			switch {
+			case end == len(runes):
+				quoted.WriteString(strings.Repeat(`\`, count*2))
+			case runes[end] == '"':
+				quoted.WriteString(strings.Repeat(`\`, count*2+1))
+				quoted.WriteByte('"')
+				end++
+			default:
+				quoted.WriteString(strings.Repeat(`\`, count))
+			}
+			i = end
+		case '"':
+			quoted.WriteString(`\"`)
+			i++
+		case '\n':
+			quoted.WriteString(`\n`)
+			i++
+		case '\r':
+			quoted.WriteString(`\r`)
+			i++
+		case '\t':
+			quoted.WriteString(`\t`)
+			i++
+		default:
+			if unicode.IsControl(runes[i]) {
+				fmt.Fprintf(&quoted, `\u%04x`, runes[i])
+			} else {
+				quoted.WriteRune(runes[i])
+			}
+			i++
+		}
+	}
+	quoted.WriteByte('"')
+	return quoted.String()
 }
 
 type pendingReminderCandidate struct {
@@ -534,6 +579,7 @@ func (s *StateStore) deliverPendingReminder(req Request) (Response, bool, error)
 		return left.key < right.key
 	})
 
+	lookupUnavailable := false
 	for _, candidate := range candidates {
 		pending := candidate.reminder
 		count, ok := countOpenFailedReviews(
@@ -541,7 +587,8 @@ func (s *StateStore) deliverPendingReminder(req Request) (Response, bool, error)
 			pending.Head, req.RoborevServerAddr,
 		)
 		if !ok {
-			return Response{SessionID: req.Event.SessionID, Skipped: true}, true, nil
+			lookupUnavailable = true
+			continue
 		}
 		if count == 0 {
 			if err := s.discardResolvedPendingReminder(req.Event.SessionID, candidate); err != nil {
@@ -550,7 +597,10 @@ func (s *StateStore) deliverPendingReminder(req Request) (Response, bool, error)
 			continue
 		}
 		pending.FailedReviewCount = count
-		if pending.TriggeredBy == "failed_reviews" {
+		// Releases before v0.64 persisted only Reason. Preserve that custom
+		// instruction instead of rebuilding with the current default. Remove
+		// this fallback after v0.66 ships with the hook migration. See #1012.
+		if pending.TriggeredBy == "failed_reviews" && pending.Instruction != "" {
 			reasonReq := req
 			reasonReq.Instruction = pending.Instruction
 			pending.Reason = deferredReminderReason(buildFailedReviewReason(reasonReq, SessionState{
@@ -595,6 +645,9 @@ func (s *StateStore) deliverPendingReminder(req Request) (Response, bool, error)
 			TriggeredBy:           pending.TriggeredBy,
 			Reason:                pending.Reason,
 		}, true, nil
+	}
+	if lookupUnavailable {
+		return Response{SessionID: req.Event.SessionID, Skipped: true}, true, nil
 	}
 	return Response{}, false, nil
 }

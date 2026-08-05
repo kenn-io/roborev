@@ -89,6 +89,10 @@ func RunDump(opts DumpOptions, stdout io.Writer) error {
 	if err != nil {
 		return profileError(agent, opts.ConfigPath, err)
 	}
+	result, err = planLegacyHookMigration(agent, result)
+	if err != nil {
+		return profileError(agent, opts.ConfigPath, err)
+	}
 	_, err = stdout.Write(result.Data)
 	return err
 }
@@ -102,28 +106,20 @@ func runInstall(agent kitagenthook.Agent, opts InstallOptions) (kitagenthook.Res
 	if err != nil {
 		return kitagenthook.Result{}, err
 	}
-	legacyCommands, err := legacyHookCommands(agent, planned.ConfigPath)
+	planned, err = planLegacyHookMigration(agent, planned)
 	if err != nil {
 		return kitagenthook.Result{}, err
 	}
 	if opts.DryRun {
-		planned.Changed = planned.Changed || len(legacyCommands) > 0
 		return planned, nil
 	}
-
-	migrated := false
-	for _, command := range legacyCommands {
-		result, uninstallErr := kitagenthook.Uninstall(agent, planned.ConfigPath, command)
-		if uninstallErr != nil {
-			return kitagenthook.Result{}, fmt.Errorf("remove legacy agent hook: %w", uninstallErr)
-		}
-		migrated = migrated || result.Changed
+	if !planned.Changed {
+		return planned, nil
 	}
-	result, err := kitagenthook.Install(agent, kitOpts)
-	if migrated {
-		result.Changed = true
+	if err := commitAgentHookConfig(planned.ConfigPath, planned.Data); err != nil {
+		return kitagenthook.Result{}, err
 	}
-	return result, err
+	return planned, nil
 }
 
 func validatedKitInstallOptions(
@@ -225,6 +221,7 @@ func splitHookCommand(command string) ([]string, error) {
 	var field strings.Builder
 	var quote rune
 	escaped := false
+	previousUnescapedDollar := false
 	started := false
 	flush := func() {
 		if !started {
@@ -240,16 +237,24 @@ func splitHookCommand(command string) ([]string, error) {
 			field.WriteRune(r)
 			started = true
 			escaped = false
+			previousUnescapedDollar = false
 			continue
 		}
 		if quote != 0 {
 			switch {
 			case r == quote:
 				quote = 0
+				previousUnescapedDollar = false
 			case quote == '"' && r == '\\':
 				escaped = true
+				previousUnescapedDollar = false
+			case quote == '"' && r == '`':
+				return nil, fmt.Errorf("hook command contains unsupported shell operator %q", r)
+			case quote == '"' && r == '(' && previousUnescapedDollar:
+				return nil, fmt.Errorf("hook command contains unsupported shell operator %q", "$(")
 			default:
 				field.WriteRune(r)
+				previousUnescapedDollar = quote == '"' && r == '$'
 			}
 			started = true
 			continue

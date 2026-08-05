@@ -49,6 +49,8 @@ func TestCommandAgentRequiresExactlyOneSelection(t *testing.T) {
 		{name: "quoted data", command: `echo "roborev agent-hook run --agent qwen"`, wantErr: "must invoke"},
 		{name: "chained command", command: "roborev agent-hook run --agent qwen; echo skipped", wantErr: "shell operator"},
 		{name: "quoted invocation", command: `sh -c "roborev agent-hook run --agent qwen"`, wantErr: "must invoke"},
+		{name: "quoted command substitution", command: `roborev agent-hook run --agent "$(agent)"`, wantErr: "shell operator"},
+		{name: "quoted backticks", command: "roborev agent-hook run --agent \"`agent`\"", wantErr: "shell operator"},
 	}
 
 	for _, tt := range tests {
@@ -94,19 +96,19 @@ func TestRunInstallMigratesLegacyProfileHooks(t *testing.T) {
 		{
 			agent:      "codex",
 			legacy:     `'C:\Program Files\roborev.exe' agent-hook run --turn-threshold 3`,
-			preserved:  `/other/bin/roborev agent-hook run --agent droid`,
+			preserved:  `'C:\Program Files\roborev.exe' agent-hook run --agent droid`,
 			configName: "hooks.json",
 		},
 		{
 			agent:      "claude",
 			legacy:     `/old/bin/roborev agent-hook run --config /tmp/roborev.toml`,
-			preserved:  `/other/bin/roborev agent-hook run --agent droid`,
+			preserved:  `/old/bin/roborev agent-hook run --agent droid`,
 			configName: "settings.json",
 		},
 		{
 			agent:      "droid",
 			legacy:     `/old/bin/roborev agent-hook run --config /tmp/roborev.toml --agent=droid`,
-			preserved:  `/other/bin/roborev agent-hook run`,
+			preserved:  `/old/bin/roborev agent-hook run`,
 			configName: "hooks.json",
 		},
 	}
@@ -217,4 +219,35 @@ func TestRunDumpWritesCompleteNativeConfig(t *testing.T) {
 	assert.Contains(t, stdout.String(), "agent-hook run --agent qwen")
 	_, statErr := os.Stat(path)
 	assert.ErrorIs(t, statErr, os.ErrNotExist)
+}
+
+func TestRunDumpMigratesLegacyHooksWithoutChangingSource(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "hooks.json")
+	legacy := `/old/bin/roborev agent-hook run --turn-threshold 3`
+	source, err := json.Marshal(map[string]any{
+		"custom": "preserved",
+		"hooks": map[string]any{
+			"Stop": []any{map[string]any{
+				"hooks": []any{map[string]any{"type": "command", "command": legacy}},
+			}},
+		},
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(path, source, 0o600))
+	var stdout bytes.Buffer
+
+	err = RunDump(DumpOptions{
+		Agent:      "codex",
+		Executable: "/new/bin/roborev",
+		ConfigPath: path,
+		Timeout:    10 * time.Second,
+	}, &stdout)
+
+	require.NoError(t, err)
+	assert.NotContains(t, stdout.String(), legacy)
+	assert.Contains(t, stdout.String(), "agent-hook run --agent codex")
+	assert.Contains(t, stdout.String(), `"custom": "preserved"`)
+	unchanged, err := os.ReadFile(path)
+	require.NoError(t, err)
+	assert.Equal(t, source, unchanged)
 }

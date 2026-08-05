@@ -164,7 +164,9 @@ Queued reminders retain the absolute triggering worktree and tell the agent to
 change to it before running fallback commands, even if the session changed
 directories or used `git -C`. Repeated triggers coalesce without losing their
 original queue position. Failed-review reminders are rechecked before delivery
-and discarded if the reviews have been resolved.
+and discarded if the reviews have been resolved. Commit reminders receive the
+same recheck, so no queued reminder is delivered after its failed reviews are
+resolved.
 
 ### Cursor
 
