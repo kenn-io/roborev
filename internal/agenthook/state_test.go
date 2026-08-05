@@ -2468,15 +2468,19 @@ func TestDeferredReminderContinuesAfterEarlierLookupFailure(t *testing.T) {
 	store := &StateStore{
 		path: filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{
-			"session-1": {PendingReminders: map[string]PendingReminder{
-				pendingReminderKey(first): first, pendingReminderKey(second): second,
-			}},
+			"session-1": {
+				PendingReminders: map[string]PendingReminder{
+					pendingReminderKey(first): first, pendingReminderKey(second): second,
+				},
+				FailedReviewTriggeredCounts: map[string]int{"second": 4},
+			},
 		},
 	}
 
 	response, err := store.Record(Request{
-		Event:             Input{SessionID: "session-1", CWD: t.TempDir(), HookEventName: "Stop"},
-		RoborevServerAddr: server.URL,
+		Event:                 Input{SessionID: "session-1", CWD: t.TempDir(), HookEventName: "Stop"},
+		FailedReviewThreshold: 4,
+		RoborevServerAddr:     server.URL,
 	})
 
 	require.NoError(t, err)
