@@ -198,13 +198,20 @@ embeds the token in a clone URL), `CI_DEPLOY_PASSWORD`,
 `CI_DEPENDENCY_PROXY_PASSWORD`, the deprecated `CI_JOB_JWT*` tokens, and the
 pre-9.0 `CI_BUILD_TOKEN` and `CI_BUILD_REPO` spellings GitLab still injects —
 since stripping only `CI_JOB_TOKEN` would leave it readable from the
-environment. This bounds the obvious channel; it is not a sandbox. Agents run as
-the same user as roborev, so on Linux one that executes commands can still read
-the parent's environment through `/proc`, and roborev holds the token there
-because that is where the note is posted from. Treat the strip as removing the
-casual path, and the choice of setup below — not the strip — as what decides
-whether an untrusted author's content is reviewed by a job holding a token worth
-stealing. Non-secret identity such as `CI_SERVER_URL`, `CI_PROJECT_PATH`, and
+environment. The same scrub covers the `--help` capability probes roborev runs
+before a review, which would otherwise start the agent binary with the tokens
+still in place, and it drops the runtime preload variables — `NODE_OPTIONS`,
+`LD_PRELOAD`, `LD_AUDIT`, `DYLD_INSERT_LIBRARIES` — that would run code of the
+pipeline starter's choosing inside those processes. Set `NODE_OPTIONS` for your
+own job steps if you need it, not for the review.
+
+This bounds the obvious channels; it is not a sandbox. Agents run as the same
+user as roborev, so on Linux one that executes commands can still read the
+parent's environment through `/proc`, and roborev holds the token there because
+that is where the note is posted from. Treat the strip as removing the casual
+path, and the choice of setup below — not the strip — as what decides whether an
+untrusted author's content is reviewed by a job holding a token worth stealing.
+Non-secret identity such as `CI_SERVER_URL`, `CI_PROJECT_PATH`, and
 `CI_REGISTRY_USER` stays. `GH_TOKEN` and `GITHUB_TOKEN` are removed too, except
 for the `copilot` and `kiro` CLIs, which authenticate with a GitHub token and
 cannot run without it; agents launched over ACP have no such exemption, and

@@ -129,11 +129,11 @@ func TestRemovedEnvKeysEmptyWhenNothingStripped(t *testing.T) {
 	assert.Empty(t, removedEnvKeys(before, StripForgeCredentials(before)))
 }
 
-func TestStripForgeCredentialsLoggedStripsAndReturns(t *testing.T) {
+func TestStripUntrustedEnvLoggedStripsAndReturns(t *testing.T) {
 	assert := assert.New(t)
 
 	env := []string{"PATH=/bin", "GITLAB_TOKEN=glpat-secret"}
-	got := StripForgeCredentialsLogged(env, "test site")
+	got := StripUntrustedEnvLogged(env, "test site")
 
 	assert.Equal([]string{"PATH=/bin"}, got)
 	// The input slice must not be mutated: callers pass cmd.Environ() and

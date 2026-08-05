@@ -204,7 +204,7 @@ func (a *ACPAgent) runPrompt(
 	// ACP agents do not go through configureSubprocess, so strip forge
 	// credentials here too (see forge_env.go). There is no opt-out, so log
 	// what was removed to keep a resulting auth failure diagnosable.
-	cmd.Env = StripForgeCredentialsLogged(cmd.Environ(), "acp agent "+a.Command)
+	cmd.Env = StripUntrustedEnvLogged(cmd.Environ(), "acp agent "+a.Command)
 
 	// Set up stdio pipes for communication with the agent
 	var stdinPipe io.WriteCloser

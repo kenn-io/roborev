@@ -404,3 +404,85 @@ func TestStripForgeCredentialsCaseInsensitive(t *testing.T) {
 		})
 	}
 }
+
+// Capability probes (`claude --help` and friends) run the agent binary before
+// any review starts. They went through configureCapabilityProbe, which never
+// touched cmd.Env, so the probe inherited the forge tokens the review
+// subprocess is careful to drop.
+func TestConfigureCapabilityProbeStripsForgeCredentials(t *testing.T) {
+	forgeCredentialTestEnv(t)
+	assert := assert.New(t)
+
+	cmd := exec.CommandContext(context.Background(), "does-not-run")
+	configureCapabilityProbe(cmd)
+
+	require.NotEmpty(t, cmd.Env, "configureCapabilityProbe must populate cmd.Env")
+	for _, key := range ForgeCredentialEnvKeys() {
+		assert.NotContains(envKeys(cmd.Env), key,
+			"probe must not inherit forge credential %s", key)
+	}
+	assert.Contains(cmd.Env, "GOOGLE_APPLICATION_CREDENTIALS=/run/secrets/sa.json",
+		"provider credentials must survive so the probe still runs")
+}
+
+// A runtime preload variable turns any child process into arbitrary code
+// execution: NODE_OPTIONS=--require=<file> runs that file inside every Node
+// CLI, and LD_PRELOAD/DYLD_INSERT_LIBRARIES do the same for native binaries.
+// These are ordinary environment variables, so a GitLab pipeline starter can
+// set them as pipeline variables and point them at a file in the tree under
+// review.
+func TestPreloadEnvKeysAreStripped(t *testing.T) {
+	assert := assert.New(t)
+
+	preload := []string{
+		"NODE_OPTIONS=--require=/tmp/evil.js",
+		"LD_PRELOAD=/tmp/evil.so",
+		"LD_AUDIT=/tmp/evil.so",
+		"DYLD_INSERT_LIBRARIES=/tmp/evil.dylib",
+	}
+	env := append([]string{"PATH=/usr/bin"}, preload...)
+
+	stripped := StripUntrustedEnv(env)
+	assert.Contains(stripped, "PATH=/usr/bin", "unrelated variables must survive")
+	for _, entry := range preload {
+		assert.NotContains(stripped, entry,
+			"preload variable %s must be stripped", entry)
+	}
+}
+
+// Both spawn paths have to drop preload variables: the probe runs the agent
+// binary first, and the review subprocess runs it with untrusted content.
+func TestSpawnPathsStripPreloadEnv(t *testing.T) {
+	tests := []struct {
+		name      string
+		configure func(*exec.Cmd)
+	}{
+		{"Subprocess", func(cmd *exec.Cmd) { configureSubprocess(cmd) }},
+		{"CapabilityProbe", configureCapabilityProbe},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("NODE_OPTIONS", "--require=/tmp/evil.js")
+			t.Setenv("LD_PRELOAD", "/tmp/evil.so")
+
+			cmd := exec.CommandContext(context.Background(), "does-not-run")
+			tt.configure(cmd)
+
+			require.NotEmpty(t, cmd.Env)
+			keys := envKeys(cmd.Env)
+			assert.NotContains(t, keys, "NODE_OPTIONS")
+			assert.NotContains(t, keys, "LD_PRELOAD")
+		})
+	}
+}
+
+// envKeys returns just the names from a KEY=VALUE environment slice.
+func envKeys(env []string) []string {
+	keys := make([]string, 0, len(env))
+	for _, e := range env {
+		key, _, _ := strings.Cut(e, "=")
+		keys = append(keys, key)
+	}
+	return keys
+}

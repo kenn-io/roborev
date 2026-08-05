@@ -356,7 +356,7 @@ func (c *acpClient) CreateTerminal(ctx context.Context, params acp.CreateTermina
 	// fix-up for cmd.Dir above survives. The strip is not logged here: the
 	// agent process launch in acp_agent.go already named the removed variables
 	// from the same environment, and a review can open many terminals.
-	env := StripForgeCredentials(cmd.Environ())
+	env := StripUntrustedEnv(cmd.Environ())
 	for _, envVar := range params.Env {
 		env = append(env, fmt.Sprintf("%s=%s", envVar.Name, envVar.Value))
 	}

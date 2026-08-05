@@ -63,9 +63,9 @@ func configureSubprocess(cmd *exec.Cmd, opts ...subprocessOption) *subprocessTra
 	// Logged for the same reason the ACP path logs it: an agentic fix job whose
 	// plan shells out to gh fails with "authentication required" and nothing in
 	// that error points at roborev having removed the token.
-	cmd.Env = logRemovedForgeCredentials(
+	cmd.Env = logRemovedUntrustedEnv(
 		cmd.Env,
-		stripForgeCredentials(cmd.Env, cfg.keepGitHubCredentials),
+		stripUntrustedEnv(cmd.Env, cfg.keepGitHubCredentials),
 		"agent "+filepath.Base(cmd.Path))
 	cmd.Env = append(cmd.Env, "GIT_OPTIONAL_LOCKS=0")
 
@@ -92,6 +92,17 @@ func configureSubprocess(cmd *exec.Cmd, opts ...subprocessOption) *subprocessTra
 
 func configureCapabilityProbe(cmd *exec.Cmd) {
 	procutil.HideConsole(cmd)
+	// A probe runs the agent binary (`claude --help` and friends) before any
+	// review starts, so it needs the same environment scrub as the review
+	// subprocess. Skipping it left the forge tokens readable to anything a
+	// preload hook injected into that binary, ahead of the sanitized run.
+	if cmd.Env == nil {
+		cmd.Env = cmd.Environ()
+	}
+	cmd.Env = logRemovedUntrustedEnv(
+		cmd.Env,
+		stripUntrustedEnv(cmd.Env, false),
+		"agent probe "+filepath.Base(cmd.Path))
 	if cmd.Path != "" &&
 		!filepath.IsAbs(cmd.Path) &&
 		strings.ContainsAny(cmd.Path, `/\`) {

@@ -17,8 +17,11 @@ import (
 // cmd/roborev/ci.go and internal/{github,gitlab}), so filtering the child
 // environment does not affect comment posting or any other API call.
 //
-// The strip happens at a single choke point, configureSubprocess in
-// process.go, so a newly added agent cannot forget to do it.
+// The strip happens at the choke points in process.go — configureSubprocess
+// for the run itself and configureCapabilityProbe for the `--help` probes that
+// precede it — so a newly added agent cannot forget to do it. Both also drop
+// the runtime preload variables below, since a preloaded hook runs inside the
+// agent binary and would otherwise read whatever that process can.
 
 // gitlabForgeCredentialEnvKeys lists the GitLab credentials roborev reads to
 // post merge request notes. No agent CLI authenticates with any of them, so
@@ -89,6 +92,37 @@ var githubForgeCredentialEnvKeys = []string{
 //   - GITHUB_API_URL, GH_HOST, CI_SERVER_URL, GITLAB_HOST, GL_HOST. Endpoint
 //     hostnames, not secrets; an agent learning them leaks nothing.
 
+// preloadEnvKeys lists environment variables that make a process run code
+// chosen by whoever set them, before the program's own entry point.
+//
+// NODE_OPTIONS=--require=<file> preloads that file into every Node CLI, which
+// is what the claude-code and gemini agents are; LD_PRELOAD and LD_AUDIT do the
+// same for native binaries on Linux, and DYLD_INSERT_LIBRARIES on macOS. They
+// are ordinary variables, so in CI whoever starts the pipeline can set them —
+// the same capability that could otherwise redirect the API origin — and point
+// them at a file in the tree under review.
+//
+// Stripping them is not about secrecy but about who chooses the code: roborev
+// spawns these processes, so their code has to come from the agent binary, not
+// from the job environment. A job that legitimately needs NODE_OPTIONS (memory
+// tuning, say) must set it for its own steps, not for roborev's children.
+var preloadEnvKeys = []string{
+	"NODE_OPTIONS",
+	"LD_PRELOAD",
+	"LD_AUDIT",
+	"DYLD_INSERT_LIBRARIES",
+}
+
+// StripUntrustedEnv returns a copy of env without the values roborev refuses
+// to hand a child process: forge credentials and runtime preload hooks.
+func StripUntrustedEnv(env []string) []string {
+	return stripUntrustedEnv(env, false)
+}
+
+func stripUntrustedEnv(env []string, keepGitHub bool) []string {
+	return filterEnv(stripForgeCredentials(env, keepGitHub), preloadEnvKeys...)
+}
+
 // ForgeCredentialEnvKeys returns the forge credential environment variable
 // names roborev keeps out of agent subprocesses.
 func ForgeCredentialEnvKeys() []string {
@@ -109,8 +143,8 @@ func StripForgeCredentials(env []string) []string {
 	return stripForgeCredentials(env, false)
 }
 
-// StripForgeCredentialsLogged behaves like StripForgeCredentials and, when a
-// credential was actually present, logs which variables it removed.
+// StripUntrustedEnvLogged behaves like StripUntrustedEnv and, when something
+// was actually present, logs which variables it removed.
 //
 // ACP-launched agents have no equivalent of the withGitHubCredentials() opt-out
 // that copilot and kiro-cli use: the ACP transport hands the agent an arbitrary
@@ -120,17 +154,17 @@ func StripForgeCredentials(env []string) []string {
 // nothing in that error points at the strip. The log line names the removed
 // variables so the cause is diagnosable from the job output. site identifies the
 // launch path for the log message.
-func StripForgeCredentialsLogged(env []string, site string) []string {
-	return logRemovedForgeCredentials(env, StripForgeCredentials(env), site)
+func StripUntrustedEnvLogged(env []string, site string) []string {
+	return logRemovedUntrustedEnv(env, StripUntrustedEnv(env), site)
 }
 
-// logRemovedForgeCredentials reports which entries the strip removed, by name
+// logRemovedUntrustedEnv reports which entries the strip removed, by name
 // only, and returns stripped unchanged. Silent when nothing was removed, so the
 // common case of no forge credentials in the environment stays quiet.
-func logRemovedForgeCredentials(before, stripped []string, site string) []string {
+func logRemovedUntrustedEnv(before, stripped []string, site string) []string {
 	if removed := removedEnvKeys(before, stripped); len(removed) > 0 {
 		log.Printf(
-			"%s: removed forge credentials from agent environment: %s "+
+			"%s: removed untrusted variables from agent environment: %s "+
 				"(see internal/agent/forge_env.go)",
 			site, strings.Join(removed, ", "))
 	}
