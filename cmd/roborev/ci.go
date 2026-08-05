@@ -205,9 +205,11 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 	// on it. Posting checks again afterwards, to catch a force push that
 	// lands while the reviews run.
 	if opts.comment && forge == ciForgeGitLab {
-		if err := verifyGitLabMRHead(
-			ctx, opts, resolveHeadSHA(root, gitRef),
-		); err != nil {
+		switch err := verifyGitLabMRRange(ctx, opts, root, gitRef); {
+		case errors.Is(err, errMRHeadMoved):
+			fmt.Println("roborev: " + err.Error() + " — nothing to post")
+			return nil
+		case err != nil:
 			return err
 		}
 	}
@@ -335,8 +337,7 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 		upsert := config.ResolveCIUpsertComments(
 			repoCfg, globalCfg)
 		if err := postForgeComment(
-			ctx, forge, opts, comment, upsert,
-			resolveHeadSHA(root, gitRef),
+			ctx, forge, opts, comment, upsert, root, gitRef,
 		); err != nil {
 			return err
 		}
@@ -459,43 +460,76 @@ func detectGitRefForForge(forge ciForge, repoPath string) (string, error) {
 }
 
 // postForgeComment posts the synthesized review to the active forge.
-// headSHA is the head of the range that was reviewed, used to check that the
-// verdict still describes the merge request it is about to land on.
+// repoPath and gitRef describe the range that was reviewed, used to check that
+// the verdict still describes the merge request it is about to land on.
 func postForgeComment(
 	ctx context.Context,
 	forge ciForge,
 	opts ciReviewOpts,
 	body string,
 	upsert bool,
-	headSHA string,
+	repoPath, gitRef string,
 ) error {
 	if forge == ciForgeGitLab {
-		return postGitLabCIComment(ctx, opts, body, upsert, headSHA)
+		return postGitLabCIComment(ctx, opts, body, upsert, repoPath, gitRef)
 	}
 	return postGitHubCIComment(ctx, opts, body, upsert)
 }
 
-// verifyGitLabMRHead checks that headSHA is the merge request's current head.
+// errMRHeadMoved reports that the merge request advanced past the commits this
+// run reviewed. The verdict is about code the merge request no longer has, so
+// there is nothing valid left to post; the run stops without failing.
+var errMRHeadMoved = errors.New("merge request head moved during the review")
+
+// verifyGitLabMRRange checks that the reviewed range is the merge request the
+// note will land on, in both extent and head.
 //
-// It runs only when --pr was passed explicitly, which is the protected-branch
-// flow: there --pr and --ref are independent inputs, and whoever starts the
-// pipeline chooses them, so nothing otherwise stops a run from reviewing one
-// range and posting a passing verdict to an unrelated merge request — or, with
-// upsert, replacing a note that carried findings. An auto-detected --pr comes
-// from CI_MERGE_REQUEST_IID, which GitLab binds to the pipeline's own commits,
-// and whose head is legitimately a synthetic merge commit in a shallow
-// merged-results checkout, so the check would reject a correct run.
-func verifyGitLabMRHead(
-	ctx context.Context, opts ciReviewOpts, headSHA string,
+// With an explicit --pr — the protected-branch flow — --pr and --ref are
+// independent inputs chosen by whoever starts the pipeline, so the range is
+// validated in full: it must be a real BASE..HEAD range, end at the merge
+// request's head, and start no later than the merge request's own base.
+// Checking only the head would still let HEAD~1..HEAD post a passing verdict
+// covering the last commit of many, or — with upsert — replace a note that
+// carried findings.
+//
+// A starting point earlier than the merge request's base is allowed: it
+// reviews more than the merge request, which omits nothing. This also absorbs
+// the case where GitLab's recorded base is staler than the merge base the job
+// computed locally.
+//
+// An auto-detected --pr is bound to the pipeline's own commits by GitLab, so
+// the range itself is not re-derived. The head is still compared, because a
+// force push landing mid-review would otherwise let this run post about code
+// the merge request no longer has. That comparison uses the source branch SHA
+// CI reported rather than the checked-out commit, which in a merged-results
+// pipeline is a synthetic merge commit that never equals the head.
+func verifyGitLabMRRange(
+	ctx context.Context, opts ciReviewOpts, repoPath, gitRef string,
 ) error {
-	if opts.pr == 0 {
-		return nil
+	explicit := opts.pr != 0
+	mrIID := opts.pr
+	if !explicit {
+		detected, err := detectMRIID()
+		if err != nil {
+			// Not a merge request pipeline: there is no merge request to bind
+			// to, and posting would already have failed for want of an IID.
+			return nil
+		}
+		mrIID = detected
 	}
-	headSHA = strings.TrimSpace(headSHA)
-	if headSHA == "" {
-		return fmt.Errorf(
-			"--comment with --pr %d requires a reviewable head commit, "+
-				"but the ref range named none", opts.pr)
+
+	// The commit CI said the source branch was at when this pipeline started.
+	// Only meaningful for an auto-detected run; an explicit --pr validates the
+	// range instead.
+	reported := strings.TrimSpace(
+		os.Getenv("CI_MERGE_REQUEST_SOURCE_BRANCH_SHA"))
+	if reported == "" {
+		reported = strings.TrimSpace(os.Getenv("CI_COMMIT_SHA"))
+	}
+	if !explicit && reported == "" {
+		// Nothing to compare against, so an API round-trip would tell us
+		// nothing.
+		return nil
 	}
 
 	glRepo := opts.glRepo
@@ -512,20 +546,90 @@ func verifyGitLabMRHead(
 	if err != nil {
 		return err
 	}
-	mrHead, err := client.MergeRequestHeadSHA(ctx, glRepo, opts.pr)
+	refs, err := client.MergeRequestRefs(ctx, glRepo, mrIID)
+	if err != nil {
+		return fmt.Errorf("verify merge request !%d: %w", mrIID, err)
+	}
+
+	if !explicit {
+		if !strings.EqualFold(reported, refs.HeadSHA) {
+			return fmt.Errorf(
+				"%w: reviewed %s, merge request !%d is now at %s",
+				errMRHeadMoved, reported, mrIID, refs.HeadSHA)
+		}
+		return nil
+	}
+
+	base, head, ok := strings.Cut(gitRef, "..")
+	base, head = strings.TrimSpace(base), strings.TrimSpace(head)
+	if !ok || base == "" || head == "" {
+		return fmt.Errorf(
+			"--comment with --pr %d requires an explicit BASE..HEAD range, "+
+				"got %q: a single ref reviews one commit and would post a "+
+				"verdict covering only that commit", mrIID, gitRef)
+	}
+	base, head = resolveRev(repoPath, base), resolveRev(repoPath, head)
+	if strings.EqualFold(base, head) {
+		return fmt.Errorf(
+			"--comment with --pr %d requires a non-empty range, but %q "+
+				"covers no commits", mrIID, gitRef)
+	}
+	if !strings.EqualFold(head, refs.HeadSHA) {
+		return fmt.Errorf(
+			"refusing to post: reviewed up to %s but merge request !%d is "+
+				"at %s — the note would describe code the merge request does "+
+				"not have (review the merge request head, or re-run against "+
+				"the current one)",
+			head, mrIID, refs.HeadSHA)
+	}
+	return verifyRangeCoversMR(repoPath, base, mrIID, refs.BaseSHA)
+}
+
+// verifyRangeCoversMR checks that a range starting at base leaves none of the
+// merge request's commits out. That holds when base is the merge request's own
+// base or an ancestor of it; anything later starts inside the merge request and
+// hides the commits before it.
+func verifyRangeCoversMR(
+	repoPath, base string, mrIID int, mrBase string,
+) error {
+	mrBase = strings.TrimSpace(mrBase)
+	if mrBase == "" {
+		// GitLab reports no diff base for a merge request it has not finished
+		// preparing. Nothing to compare against, and the head already matched.
+		return nil
+	}
+	if strings.EqualFold(base, mrBase) {
+		return nil
+	}
+	covers, err := git.IsAncestor(repoPath, base, mrBase)
 	if err != nil {
 		return fmt.Errorf(
-			"verify merge request !%d head: %w", opts.pr, err)
+			"refusing to post: could not tell whether the reviewed range "+
+				"covers merge request !%d (its base %s may be missing from "+
+				"this clone — increase GIT_DEPTH or fetch more history): %w",
+			mrIID, mrBase, err)
 	}
-	if !strings.EqualFold(mrHead, headSHA) {
+	if !covers {
 		return fmt.Errorf(
-			"refusing to post: reviewed %s but merge request !%d is at %s "+
-				"— the note would describe code the merge request does not "+
-				"have (pass a --ref whose head is the merge request head, "+
-				"or re-run against the current head)",
-			headSHA, opts.pr, mrHead)
+			"refusing to post: the reviewed range starts at %s, after merge "+
+				"request !%d's base %s, so it omits commits the merge "+
+				"request contains and the note would cover only part of it",
+			base, mrIID, mrBase)
 	}
 	return nil
+}
+
+// resolveRev expands a ref or abbreviated SHA to a full commit SHA, returning
+// it unchanged when the clone cannot resolve it so the caller compares — and
+// reports — what was actually asked for.
+func resolveRev(repoPath, rev string) string {
+	if repoPath == "" || rev == "" {
+		return rev
+	}
+	if full, err := git.ResolveSHA(repoPath, rev+"^{commit}"); err == nil {
+		return full
+	}
+	return rev
 }
 
 func postGitHubCIComment(
@@ -573,12 +677,12 @@ func postGitLabCIComment(
 	opts ciReviewOpts,
 	body string,
 	upsert bool,
-	headSHA string,
+	repoPath, gitRef string,
 ) error {
 	// Re-checked here, not only before the review, so a force push landing
 	// while the matrix ran cannot leave a verdict about code the merge
 	// request no longer has.
-	if err := verifyGitLabMRHead(ctx, opts, headSHA); err != nil {
+	if err := verifyGitLabMRRange(ctx, opts, repoPath, gitRef); err != nil {
 		return err
 	}
 
@@ -1010,22 +1114,6 @@ func detectMRIID() (int, error) {
 			"invalid CI_MERGE_REQUEST_IID %q", raw)
 	}
 	return iid, nil
-}
-
-// resolveHeadSHA returns the full commit SHA at the head of a ref range.
-// The head may be a branch name or an abbreviated SHA when it came from
-// --ref, while the forge reports full SHAs, so the two are only comparable
-// once this has resolved it. An unresolvable head is returned as written, so
-// the comparison reports a mismatch rather than silently passing.
-func resolveHeadSHA(repoPath, gitRef string) string {
-	head := extractHeadSHA(gitRef)
-	if head == "" || repoPath == "" {
-		return head
-	}
-	if full, err := git.ResolveSHA(repoPath, head+"^{commit}"); err == nil {
-		return full
-	}
-	return head
 }
 
 // extractHeadSHA extracts the HEAD SHA from a git ref range.

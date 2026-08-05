@@ -852,7 +852,7 @@ func TestCreateMRComment_TruncationUTF8Safe(t *testing.T) {
 
 // MergeRequestHeadSHA is what binds a reviewed range to the merge request the
 // note lands on, so it has to read the source-branch head GitLab reports.
-func TestMergeRequestHeadSHA(t *testing.T) {
+func TestMergeRequestRefs(t *testing.T) {
 	srv := httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			assert.Contains(t, r.URL.EscapedPath(),
@@ -862,6 +862,10 @@ func TestMergeRequestHeadSHA(t *testing.T) {
 			assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
 				"iid": 7,
 				"sha": "feedface00000000000000000000000000000000",
+				"diff_refs": map[string]any{
+					"base_sha": "ba5e0000000000000000000000000000000000ba",
+					"head_sha": "feedface00000000000000000000000000000000",
+				},
 			}))
 		}))
 	t.Cleanup(srv.Close)
@@ -869,16 +873,18 @@ func TestMergeRequestHeadSHA(t *testing.T) {
 	client, err := NewClient("token", WithBaseURL(srv.URL))
 	require.NoError(t, err)
 
-	sha, err := client.MergeRequestHeadSHA(
+	refs, err := client.MergeRequestRefs(
 		context.Background(), "group/project", 7)
 	require.NoError(t, err)
-	assert.Equal(t, "feedface00000000000000000000000000000000", sha)
+	assert.Equal(t, "feedface00000000000000000000000000000000", refs.HeadSHA)
+	assert.Equal(t, "ba5e0000000000000000000000000000000000ba", refs.BaseSHA,
+		"the diff base is what bounds the range, so it must be reported too")
 }
 
-func TestMergeRequestHeadSHA_RejectsBadProject(t *testing.T) {
+func TestMergeRequestRefs_RejectsBadProject(t *testing.T) {
 	client, err := NewClient("token")
 	require.NoError(t, err)
 
-	_, err = client.MergeRequestHeadSHA(context.Background(), "nogroup", 7)
+	_, err = client.MergeRequestRefs(context.Background(), "nogroup", 7)
 	require.ErrorContains(t, err, "invalid GitLab project")
 }

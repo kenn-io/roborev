@@ -21,27 +21,40 @@ import (
 // github.CommentMarker so comment formatting stays consistent across forges.
 const CommentMarker = "<!-- roborev-pr-comment -->"
 
-// MergeRequestHeadSHA returns the head commit of the merge request's source
-// branch. Callers use it to check that the range they reviewed is the one the
-// note will describe: --pr and --ref are independent inputs, so nothing else
-// ties the verdict to the merge request it lands on.
-func (c *Client) MergeRequestHeadSHA(
+// MRRefs are the commits that bound a merge request's diff.
+type MRRefs struct {
+	// HeadSHA is the head commit of the source branch.
+	HeadSHA string
+	// BaseSHA is the commit the merge request is diffed against. It is empty
+	// when GitLab reports no diff refs, which happens on merge requests it has
+	// not finished preparing.
+	BaseSHA string
+}
+
+// MergeRequestRefs returns the commits bounding the merge request's diff.
+// Callers use them to check that the range they reviewed is the one the note
+// will describe: --pr and --ref are independent inputs, so nothing else ties
+// the verdict to the merge request it lands on, in either extent or head.
+func (c *Client) MergeRequestRefs(
 	ctx context.Context, project string, mrIID int,
-) (string, error) {
+) (MRRefs, error) {
 	project, err := parseProject(project)
 	if err != nil {
-		return "", err
+		return MRRefs{}, err
 	}
 	mr, _, err := c.api.MergeRequests.GetMergeRequest(
 		project, int64(mrIID), nil, gogitlab.WithContext(ctx))
 	if err != nil {
-		return "", fmt.Errorf("get merge request: %w", err)
+		return MRRefs{}, fmt.Errorf("get merge request: %w", err)
 	}
 	if mr == nil || strings.TrimSpace(mr.SHA) == "" {
-		return "", fmt.Errorf(
+		return MRRefs{}, fmt.Errorf(
 			"merge request !%d reports no head commit", mrIID)
 	}
-	return strings.TrimSpace(mr.SHA), nil
+	return MRRefs{
+		HeadSHA: strings.TrimSpace(mr.SHA),
+		BaseSHA: strings.TrimSpace(mr.DiffRefs.BaseSha),
+	}, nil
 }
 
 // FindExistingMRComment searches for an existing roborev note on the given

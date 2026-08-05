@@ -152,16 +152,26 @@ copy the example job below.
     ```
 
     `--pr` and `--ref` arrive as separate inputs here, and whoever starts the
-    pipeline chooses them, so roborev binds them itself: with an explicit `--pr`
-    it asks the API for the merge request's head and refuses to post when the
-    reviewed range ends somewhere else. Without that, a trigger could review a
-    harmless range while naming another merge request and have the bot post a
-    passing verdict on code nobody read — or, with `upsert_comments`, replace a
-    note that carried findings. The check runs before the review matrix and
-    again just before posting, so a force push landing mid-review is caught too.
-    Derive the range from the merge request (`git rev-parse FETCH_HEAD` after
-    the fetch above) rather than from trigger-supplied variables, and it will
-    match.
+    pipeline chooses them, so roborev binds them itself. With an explicit `--pr`
+    it asks the API for the merge request's head and base, and requires the
+    reviewed range to be a real `BASE..HEAD` range that ends at that head and
+    starts no later than that base. Without the full check, a trigger could
+    review a harmless range — or a narrowed one like `HEAD~1..HEAD`, which ends
+    at the right commit while hiding every earlier one — and have the bot post a
+    passing verdict on code nobody read, or, with `upsert_comments`, replace a
+    note that carried findings. Starting earlier than the merge request's base
+    is allowed, since reviewing more omits nothing. The check runs before the
+    review matrix and again just before posting, so a force push landing
+    mid-review is caught too. Derive the range from the merge request
+    (`git rev-parse FETCH_HEAD` after the fetch above, and `git merge-base`
+    against the target branch) rather than from trigger-supplied variables, and
+    it will match.
+
+    Merge request pipelines, where the IID is auto-detected, are bound to their
+    own commits by GitLab, so the range is taken as given. The head is still
+    compared before posting: if the source branch was force-pushed while the
+    reviews ran, this job prints that the head moved and exits without posting,
+    leaving the verdict to the pipeline for the new head.
 
     That comes with a trade-off, and it is the reason the flags above are not
     optional: from inside the worktree, roborev reads `.roborev.toml` from the
