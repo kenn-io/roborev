@@ -187,10 +187,10 @@ func (s *StateStore) recordStop(ctx context.Context, req Request) (Response, err
 	}
 	scope, ok := resolveHookScope(ctx, req.Event.CWD, req.RoborevServerAddr)
 	snoozed := ok && scope.SnoozedUntil.After(time.Now())
-	var prepare func(*SessionState)
+	var prepare func(*SessionState) Response
 	if snoozed {
-		prepare = func(st *SessionState) {
-			applySnoozedState(st, req, scope)
+		prepare = func(st *SessionState) Response {
+			return applySnoozedState(st, req, scope)
 		}
 	}
 	if resp, delivered, err := s.deliverPendingReminder(ctx, req, prepare); err != nil || delivered {
@@ -693,7 +693,7 @@ type pendingReminderCandidate struct {
 func (s *StateStore) deliverPendingReminder(
 	ctx context.Context,
 	req Request,
-	prepare func(*SessionState),
+	prepare func(*SessionState) Response,
 ) (Response, bool, error) {
 	s.mu.Lock()
 	st := s.sessions[req.Event.SessionID]
@@ -702,10 +702,6 @@ func (s *StateStore) deliverPendingReminder(
 		candidates = append(candidates, pendingReminderCandidate{key: key, reminder: reminder})
 	}
 	s.mu.Unlock()
-	if len(candidates) == 0 {
-		return Response{}, false, nil
-	}
-
 	sort.Slice(candidates, func(i, j int) bool {
 		left, right := candidates[i], candidates[j]
 		leftPriority := pendingReminderPriority(left.reminder.TriggeredBy)
@@ -719,6 +715,8 @@ func (s *StateStore) deliverPendingReminder(
 		return left.key < right.key
 	})
 
+	discards := make([]pendingReminderCandidate, 0, len(candidates))
+	lookupUnavailable := false
 	for _, candidate := range candidates {
 		pending := candidate.reminder
 		suppressed, known := pendingReminderSuppressed(ctx, pending, req.RoborevServerAddr)
@@ -726,9 +724,7 @@ func (s *StateStore) deliverPendingReminder(
 			return Response{}, false, err
 		}
 		if known && suppressed {
-			if err := s.discardPendingReminder(ctx, req.Event.SessionID, candidate); err != nil {
-				return Response{}, false, err
-			}
+			discards = append(discards, candidate)
 			continue
 		}
 		count, ok := countOpenFailedReviews(
@@ -739,12 +735,11 @@ func (s *StateStore) deliverPendingReminder(
 			return Response{}, false, err
 		}
 		if !ok {
+			lookupUnavailable = true
 			continue
 		}
 		if count == 0 {
-			if err := s.discardPendingReminder(ctx, req.Event.SessionID, candidate); err != nil {
-				return Response{}, false, err
-			}
+			discards = append(discards, candidate)
 			continue
 		}
 		pending.FailedReviewCount = count
@@ -770,6 +765,7 @@ func (s *StateStore) deliverPendingReminder(
 			return Response{}, false, err
 		}
 		st = cloneSessionState(s.sessions[req.Event.SessionID])
+		applyPendingReminderDiscards(&st, discards)
 		current, ok := st.PendingReminders[candidate.key]
 		if !ok || current != candidate.reminder {
 			s.mu.Unlock()
@@ -829,6 +825,50 @@ func (s *StateStore) deliverPendingReminder(
 			Reason:                pending.Reason,
 		}, true, nil
 	}
+
+	if lookupUnavailable {
+		if prepare == nil {
+			return Response{}, false, nil
+		}
+		if err := ctx.Err(); err != nil {
+			return Response{}, false, err
+		}
+		s.mu.Lock()
+		st = cloneSessionState(s.sessions[req.Event.SessionID])
+		resp := prepare(&st)
+		s.mu.Unlock()
+		return resp, true, nil
+	}
+	if len(discards) == 0 && prepare == nil {
+		return Response{}, false, nil
+	}
+
+	s.mu.Lock()
+	if err := ctx.Err(); err != nil {
+		s.mu.Unlock()
+		return Response{}, false, err
+	}
+	st = cloneSessionState(s.sessions[req.Event.SessionID])
+	changed := applyPendingReminderDiscards(&st, discards)
+	resp := Response{}
+	if prepare != nil {
+		resp = prepare(&st)
+		changed = true
+	}
+	if err := ctx.Err(); err != nil {
+		s.mu.Unlock()
+		return Response{}, false, err
+	}
+	if changed {
+		if err := s.saveSessionLocked(req.Event.SessionID, st); err != nil {
+			s.mu.Unlock()
+			return Response{}, false, err
+		}
+	}
+	s.mu.Unlock()
+	if prepare != nil {
+		return resp, true, nil
+	}
 	return Response{}, false, nil
 }
 
@@ -845,35 +885,29 @@ func pendingReminderSuppressed(
 	return known && (!resolved.Tracked || resolved.SnoozedUntil.After(time.Now())), known
 }
 
-func (s *StateStore) discardPendingReminder(
-	ctx context.Context,
-	sessionID string,
-	candidate pendingReminderCandidate,
-) error {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	if err := ctx.Err(); err != nil {
-		return err
+func applyPendingReminderDiscards(
+	st *SessionState,
+	candidates []pendingReminderCandidate,
+) bool {
+	changed := false
+	for _, candidate := range candidates {
+		current, ok := st.PendingReminders[candidate.key]
+		if !ok || current != candidate.reminder {
+			continue
+		}
+		delete(st.PendingReminders, candidate.key)
+		dedupeKey := current.LineageKey
+		if dedupeKey == "" {
+			dedupeKey = repoHeadKey(current.TrackedRepoRoot, current.Branch)
+		}
+		delete(st.FailedReviewTriggeredCounts, dedupeKey)
+		if st.LastFailedReviewRepo == current.TrackedRepoRoot &&
+			st.LastFailedReviewBranch == current.Branch {
+			st.FailedReviewCount = 0
+		}
+		changed = true
 	}
-	st := cloneSessionState(s.sessions[sessionID])
-	current, ok := st.PendingReminders[candidate.key]
-	if !ok || current != candidate.reminder {
-		return nil
-	}
-	delete(st.PendingReminders, candidate.key)
-	dedupeKey := current.LineageKey
-	if dedupeKey == "" {
-		dedupeKey = repoHeadKey(current.TrackedRepoRoot, current.Branch)
-	}
-	delete(st.FailedReviewTriggeredCounts, dedupeKey)
-	if st.LastFailedReviewRepo == current.TrackedRepoRoot &&
-		st.LastFailedReviewBranch == current.Branch {
-		st.FailedReviewCount = 0
-	}
-	if err := ctx.Err(); err != nil {
-		return err
-	}
-	return s.saveSessionLocked(sessionID, st)
+	return changed
 }
 
 func pendingReminderPriority(triggeredBy string) int {

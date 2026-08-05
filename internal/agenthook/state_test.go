@@ -2399,28 +2399,49 @@ func TestSnoozedStopCancellationDoesNotMutateSession(t *testing.T) {
 	repo.CommitFile("main.go", "package main\n", "initial")
 	started := make(chan struct{})
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/repos/resolve" && r.URL.Query().Get("path") == repo.Path() {
-			assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
-				"tracked": true,
-				"repo": map[string]any{
-					"root_path": repo.Path(), "name": filepath.Base(repo.Path()),
-					"agent_hook_snoozed_until": time.Now().Add(time.Hour).UTC(),
-				},
-			}))
+		if r.URL.Path == "/api/repos/resolve" {
+			switch r.URL.Query().Get("path") {
+			case repo.Path():
+				assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+					"tracked": true,
+					"repo": map[string]any{
+						"root_path": repo.Path(), "name": filepath.Base(repo.Path()),
+						"agent_hook_snoozed_until": time.Now().Add(time.Hour).UTC(),
+					},
+				}))
+				return
+			case "/resolved":
+				assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+					"tracked": true,
+					"repo":    map[string]string{"root_path": "/resolved", "name": "resolved"},
+				}))
+				return
+			}
+		}
+		if r.URL.Query().Get("repo") == "/resolved" {
+			assert.NoError(t, json.NewEncoder(w).Encode(jobsResponse{}))
 			return
 		}
 		close(started)
 		<-r.Context().Done()
 	}))
 	t.Cleanup(server.Close)
-	pending := PendingReminder{
+	resolved := PendingReminder{
+		TriggeredBy: "failed_reviews", Reason: "Resolved.",
+		TrackedRepoRoot: "/resolved", WorktreeRoot: "/resolved", Branch: "main",
+		LineageKey: "resolved", CreatedAt: time.Now().UTC().Add(-time.Minute),
+	}
+	blocked := PendingReminder{
 		TriggeredBy: "failed_reviews", Reason: "Resolve reviews.",
 		TrackedRepoRoot: "/other", WorktreeRoot: "/other", Branch: "main",
 		LineageKey: "other", CreatedAt: time.Now().UTC(),
 	}
 	initial := SessionState{
 		StopCountsSincePrompt: map[string]int{"existing": 2},
-		PendingReminders:      map[string]PendingReminder{pendingReminderKey(pending): pending},
+		PendingReminders: map[string]PendingReminder{
+			pendingReminderKey(resolved): resolved,
+			pendingReminderKey(blocked):  blocked,
+		},
 	}
 	store := &StateStore{
 		path: filepath.Join(t.TempDir(), "state.json"),
