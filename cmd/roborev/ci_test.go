@@ -1722,7 +1722,7 @@ func TestVerifyGitLabMRRange_DerivedRangeIsChecked(t *testing.T) {
 			context.Background(), ciReviewOpts{}, repo.Path(),
 			base+".."+head, false)
 		require.Error(t, err)
-		assert.NotErrorIs(t, err, errMRHeadMoved)
+		require.NotErrorIs(t, err, errMRHeadMoved)
 		assert.Contains(t, err.Error(), movedTo)
 	})
 }
@@ -1766,7 +1766,7 @@ func TestVerifyGitLabMRRange_RecheckTreatsMovedHeadAsRace(t *testing.T) {
 
 	err := verifyMRRangeErr(context.Background(), opts, repo.Path(), gitRef, false)
 	require.Error(t, err)
-	assert.NotErrorIs(t, err, errMRHeadMoved,
+	require.NotErrorIs(t, err, errMRHeadMoved,
 		"a first-pass mismatch is bad input and must fail loudly")
 
 	err = verifyMRRangeErr(context.Background(), opts, repo.Path(), gitRef, true)
