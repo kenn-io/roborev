@@ -2028,7 +2028,7 @@ func TestDeferredPostToolReminderCoalescesAndWaitsForTriggeringBranch(t *testing
 func TestDeferredReminderWaitsWhenRepositoryIdentityChanges(t *testing.T) {
 	assert := assert.New(t)
 	repo := testutil.NewGitRepo(t)
-	head := repo.CommitFile("main.go", "package main\n", "initial")
+	repo.CommitFile("main.go", "package main\n", "initial")
 	jobLookups := 0
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/repos/resolve" {
@@ -2047,7 +2047,7 @@ func TestDeferredReminderWaitsWhenRepositoryIdentityChanges(t *testing.T) {
 	pending := PendingReminder{
 		TriggeredBy: "failed_reviews", Reason: "Resolve reviews.",
 		TrackedRepoRoot: repo.Path(), TrackedRepoIdentity: "original",
-		WorktreeRoot: repo.Path(), Branch: "main", Head: head,
+		WorktreeRoot: repo.Path(), Branch: "main",
 		LineageKey: repoHeadKey(repo.Path(), "main"), CreatedAt: time.Now().UTC(),
 	}
 	key := pendingReminderKey(pending)
@@ -2523,11 +2523,13 @@ func TestSnoozedStopCancellationDoesNotMutateSession(t *testing.T) {
 }
 
 func TestDeferredReminderPersistenceFailureDoesNotConsumeCandidate(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	head := repo.CommitFile("main.go", "package main\n", "initial")
 	failedReviewCount := 1
-	server := newDeferredReminderServer(t, "/repo", &failedReviewCount)
+	server := newDeferredReminderServer(t, repo.Path(), &failedReviewCount)
 	pending := PendingReminder{
 		TriggeredBy: "failed_reviews", Reason: "Resolve reviews.",
-		TrackedRepoRoot: "/repo", WorktreeRoot: "/repo", Branch: "main",
+		TrackedRepoRoot: repo.Path(), WorktreeRoot: repo.Path(), Branch: "main", Head: head,
 		LineageKey: "repo", CreatedAt: time.Now().UTC(),
 	}
 	key := pendingReminderKey(pending)
@@ -2599,11 +2601,23 @@ func TestRecordCancellationDoesNotMutateAnyEvent(t *testing.T) {
 }
 
 func TestDeferredReminderContinuesAfterEarlierLookupFailure(t *testing.T) {
+	available := testutil.NewGitRepo(t)
+	availableHead := available.CommitFile("main.go", "package main\n", "initial")
 	closed := false
 	verdict := "F"
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("repo") == "/unavailable" {
+		if r.URL.Query().Get("path") == "/unavailable" ||
+			r.URL.Query().Get("repo") == "/unavailable" {
 			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if r.URL.Path == "/api/repos/resolve" {
+			assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				"tracked": true,
+				"repo": map[string]string{
+					"root_path": available.Path(), "name": filepath.Base(available.Path()),
+				},
+			}))
 			return
 		}
 		assert.NoError(t, json.NewEncoder(w).Encode(jobsResponse{Jobs: []storage.ReviewJob{{
@@ -2617,8 +2631,10 @@ func TestDeferredReminderContinuesAfterEarlierLookupFailure(t *testing.T) {
 		Branch: "main", LineageKey: "first", CreatedAt: createdAt,
 	}
 	second := PendingReminder{
-		TriggeredBy: "commit", Reason: "Second.", TrackedRepoRoot: "/available",
-		Branch: "main", LineageKey: "second", CreatedAt: createdAt.Add(time.Second),
+		TriggeredBy: "commit", Reason: "Second.",
+		TrackedRepoRoot: available.Path(), WorktreeRoot: available.Path(),
+		Branch: "main", Head: availableHead,
+		LineageKey: "second", CreatedAt: createdAt.Add(time.Second),
 	}
 	store := &StateStore{
 		path: filepath.Join(t.TempDir(), "state.json"),
@@ -2697,6 +2713,8 @@ func TestSnoozedStopPersistsCleanupWhenReminderLookupIsUnavailable(t *testing.T)
 	assert := assert.New(t)
 	repo := testutil.NewGitRepo(t)
 	repo.CommitFile("main.go", "package main\n", "initial")
+	resolvedRepo := testutil.NewGitRepo(t)
+	resolvedHead := resolvedRepo.CommitFile("resolved.go", "package resolved\n", "initial")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.URL.Path == "/api/repos/resolve" {
 			switch r.URL.Query().Get("path") {
@@ -2709,15 +2727,17 @@ func TestSnoozedStopPersistsCleanupWhenReminderLookupIsUnavailable(t *testing.T)
 					},
 				}))
 				return
-			case "/resolved":
+			case resolvedRepo.Path():
 				assert.NoError(json.NewEncoder(w).Encode(map[string]any{
 					"tracked": true,
-					"repo":    map[string]string{"root_path": "/resolved", "name": "resolved"},
+					"repo": map[string]string{
+						"root_path": resolvedRepo.Path(), "name": filepath.Base(resolvedRepo.Path()),
+					},
 				}))
 				return
 			}
 		}
-		if r.URL.Query().Get("repo") == "/resolved" {
+		if r.URL.Query().Get("repo") == resolvedRepo.Path() {
 			assert.NoError(json.NewEncoder(w).Encode(jobsResponse{}))
 			return
 		}
@@ -2727,7 +2747,8 @@ func TestSnoozedStopPersistsCleanupWhenReminderLookupIsUnavailable(t *testing.T)
 	createdAt := time.Now().UTC()
 	resolved := PendingReminder{
 		TriggeredBy: "failed_reviews", Reason: "Resolved.",
-		TrackedRepoRoot: "/resolved", WorktreeRoot: "/resolved", Branch: "main",
+		TrackedRepoRoot: resolvedRepo.Path(), WorktreeRoot: resolvedRepo.Path(),
+		Branch: "main", Head: resolvedHead,
 		LineageKey: "resolved", CreatedAt: createdAt,
 	}
 	unavailable := PendingReminder{

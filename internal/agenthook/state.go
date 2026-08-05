@@ -884,10 +884,6 @@ func pendingReminderLineageMatches(
 	resolved trackedRepoResolution,
 	known bool,
 ) bool {
-	// A missing head does not provide enough information to reject delivery.
-	if pending.Head == "" {
-		return true
-	}
 	current, ok := currentGitScopeContext(ctx, pending.WorktreeRoot)
 	if !ok {
 		return false
@@ -905,6 +901,10 @@ func pendingReminderLineageMatches(
 	}
 	if pending.TrackedRepoIdentity != "" && resolved.Identity != pending.TrackedRepoIdentity {
 		return false
+	}
+	// A missing head does not provide enough information for a finer lineage check.
+	if pending.Head == "" {
+		return true
 	}
 	if pending.Branch != "" {
 		return current.Branch == pending.Branch

@@ -15,6 +15,7 @@ import (
 	"github.com/stretchr/testify/require"
 	gitrepo "go.kenn.io/kit/git/repo"
 
+	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 )
@@ -22,9 +23,9 @@ import (
 func TestHandleResolveRepo(t *testing.T) {
 	server, db, _ := newTestServer(t)
 	repo := testutil.NewTestRepo(t)
-	identity := "https://github.com/test/resolve-repo.git"
 	registeredRoot, err := gitrepo.MainRoot(context.Background(), repo.Root)
 	require.NoError(t, err)
+	identity := config.ResolveRepoIdentity(registeredRoot, nil)
 	stored, err := db.GetOrCreateRepo(registeredRoot, identity)
 	require.NoError(t, err)
 
@@ -103,6 +104,29 @@ func TestHandleResolveRepo(t *testing.T) {
 		}
 		testutil.DecodeJSON(t, w, &response)
 
+		assert.False(t, response.Tracked)
+		assert.Nil(t, response.Repo)
+	})
+
+	t.Run("changed repository identity returns untracked", func(t *testing.T) {
+		require.NoError(t, os.WriteFile(
+			filepath.Join(registeredRoot, ".roborev-id"), []byte("replacement\n"), 0o644,
+		))
+		req := httptest.NewRequest(
+			http.MethodGet,
+			"/api/repos/resolve?path="+url.QueryEscape(repo.Root),
+			nil,
+		)
+		w := httptest.NewRecorder()
+
+		server.httpServer.Handler.ServeHTTP(w, req)
+
+		testutil.AssertStatusCode(t, w, http.StatusOK)
+		var response struct {
+			Tracked bool `json:"tracked"`
+			Repo    any  `json:"repo,omitempty"`
+		}
+		testutil.DecodeJSON(t, w, &response)
 		assert.False(t, response.Tracked)
 		assert.Nil(t, response.Repo)
 	})
