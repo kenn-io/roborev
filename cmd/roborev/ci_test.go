@@ -1412,3 +1412,51 @@ func TestSplitTrimmed(t *testing.T) {
 		}
 	}
 }
+
+// --min-severity must pin the review-level threshold, not just the synthesis
+// filter. In the documented MR-head worktree flow, .roborev.toml comes from the
+// tree under review, so an author could otherwise set
+// review_min_severity = "critical" and keep medium/high findings from ever
+// being reported — leaving synthesis nothing to filter and a clean-looking pass.
+func TestResolveCIReviewMinSeverity(t *testing.T) {
+	tests := []struct {
+		name        string
+		flag        string
+		repoSetting string
+		want        string
+	}{
+		{
+			name:        "FlagBeatsRepoConfig",
+			flag:        "medium",
+			repoSetting: "critical",
+			want:        "medium",
+		},
+		{
+			name:        "RepoConfigAppliesWithoutFlag",
+			flag:        "",
+			repoSetting: "critical",
+			want:        "critical",
+		},
+		{
+			name:        "EmptyWhenNeitherIsSet",
+			flag:        "",
+			repoSetting: "",
+			want:        "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repo := testutil.NewTestRepoWithCommit(t)
+			if tt.repoSetting != "" {
+				repo.WriteFile(".roborev.toml",
+					"review_min_severity = \""+tt.repoSetting+"\"\n")
+			}
+
+			got, err := resolveCIReviewMinSeverity(
+				ciReviewOpts{minSeverity: tt.flag}, repo.Path(), nil)
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}

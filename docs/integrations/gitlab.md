@@ -96,10 +96,22 @@ choice right back to whoever started the pipeline). The flag also pins the forge
 choice itself: it selects GitLab outright, so an injected `GITHUB_ACTIONS=true`
 cannot steer the run to the GitHub client — which matters for jobs that carry a
 GitHub token for the `copilot` or `kiro` agents, since that client resolves its
-origin from the equally injectable `GITHUB_API_URL`. Independently of the pin,
-roborev refuses to send the token to a plaintext `http` origin (loopback
-excepted) or to a URL that embeds credentials, whichever way the origin was
-resolved.
+origin from the equally injectable `GITHUB_API_URL`. A pinned run also stops
+consulting `HTTP_PROXY`/`HTTPS_PROXY`: a proxy redirects where the token's bytes
+go without changing the hostname, and those are ordinary variables a pipeline
+starter can set. The trade-off is that a pinned job cannot egress through a
+proxy; drop the pin if your runner requires one, and treat that as choosing the
+unprotected setup below. Independently of the pin, roborev refuses to send the
+token to a plaintext `http` origin (loopback excepted) or to a URL that embeds
+credentials, whichever way the origin was resolved.
+
+One environment-controlled knob is deliberately not neutralized: the system
+certificate store still honors `SSL_CERT_FILE` and `SSL_CERT_DIR`, because
+self-hosted instances behind an internal CA need them. On its own a substituted
+CA grants nothing — it lets the job trust a certificate, not intercept a
+connection — but combined with a network position it would. Pinning the origin
+removes the proxy half of that pair, which is the half a pipeline variable can
+supply.
 
 The pin closes the redirect channel; it does not change who may hold the token.
 Anyone who can run job code on a branch whose pipeline can read `GITLAB_TOKEN`
@@ -144,15 +156,18 @@ copy the example job below.
     merge request's tree, so its author controls the `[ci]` settings. Left
     unpinned, they could swap in a weaker agent, drop review types, or raise
     `min_severity` to hide their own findings. Flags outrank the file, so pin
-    whatever must not be author-controlled. `review_guidelines` has no flag: it
-    is read from the default branch, but only when that branch both resolves in
-    the checkout *and* has a committed `.roborev.toml`. If either is missing —
-    and a project that never committed one always misses the second — it falls
-    back to the merge request's tree, where the author controls it. Commit a
-    `.roborev.toml` on the default branch and make sure the job can resolve that
-    branch (fetch it, or set `origin/HEAD`). The token stays out of the agents
-    either way — this is about the review's integrity, not its exposure. If the
-    runner reuses its workspace, finish with
+    whatever must not be author-controlled. `--min-severity` pins both halves of
+    the run: the synthesis filter and the threshold the individual reviews are
+    prompted with, so a `review_min_severity` in the merge request's tree cannot
+    stop findings from being reported in the first place. `review_guidelines`
+    has no flag: it is read from the default branch, but only when that branch
+    both resolves in the checkout *and* has a committed `.roborev.toml`. If
+    either is missing — and a project that never committed one always misses the
+    second — it falls back to the merge request's tree, where the author
+    controls it. Commit a `.roborev.toml` on the default branch and make sure
+    the job can resolve that branch (fetch it, or set `origin/HEAD`). The token
+    stays out of the agents either way — this is about the review's integrity,
+    not its exposure. If the runner reuses its workspace, finish with
     `cd "$CI_PROJECT_DIR" && git worktree remove --force "$mr_tree"` so the next
     run starts clean; the `cd` matters because git refuses to remove the
     worktree you are standing in.
@@ -183,7 +198,13 @@ embeds the token in a clone URL), `CI_DEPLOY_PASSWORD`,
 `CI_DEPENDENCY_PROXY_PASSWORD`, the deprecated `CI_JOB_JWT*` tokens, and the
 pre-9.0 `CI_BUILD_TOKEN` and `CI_BUILD_REPO` spellings GitLab still injects —
 since stripping only `CI_JOB_TOKEN` would leave it readable from the
-environment. Non-secret identity such as `CI_SERVER_URL`, `CI_PROJECT_PATH`, and
+environment. This bounds the obvious channel; it is not a sandbox. Agents run as
+the same user as roborev, so on Linux one that executes commands can still read
+the parent's environment through `/proc`, and roborev holds the token there
+because that is where the note is posted from. Treat the strip as removing the
+casual path, and the choice of setup below — not the strip — as what decides
+whether an untrusted author's content is reviewed by a job holding a token worth
+stealing. Non-secret identity such as `CI_SERVER_URL`, `CI_PROJECT_PATH`, and
 `CI_REGISTRY_USER` stays. `GH_TOKEN` and `GITHUB_TOKEN` are removed too, except
 for the `copilot` and `kiro` CLIs, which authenticate with a GitHub token and
 cannot run without it; agents launched over ACP have no such exemption, and

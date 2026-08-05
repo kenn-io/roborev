@@ -255,8 +255,7 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 	}
 
 	// Resolve review-level min severity for prompt injection
-	reviewMinSev, err := config.ResolveReviewMinSeverity(
-		"", root, globalCfg)
+	reviewMinSev, err := resolveCIReviewMinSeverity(opts, root, globalCfg)
 	if err != nil {
 		return err
 	}
@@ -338,6 +337,21 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 // precedence, matching `roborev refine`; otherwise the ANTHROPIC_API_KEY
 // environment variable is used, which is how CI systems hand the credential
 // to the job.
+// resolveCIReviewMinSeverity picks the threshold the member reviews are
+// prompted with. --min-severity is passed through as the explicit value so the
+// flag pins both halves of the run: without it, only synthesis honored the
+// flag while the review prompts took `review_min_severity` from the checkout's
+// .roborev.toml. In the protected MR-head worktree flow that file belongs to
+// the author under review, who could raise it to "critical" and keep medium
+// and high findings from ever being reported — leaving synthesis nothing to
+// filter and the job looking clean.
+func resolveCIReviewMinSeverity(
+	opts ciReviewOpts, repoPath string, globalCfg *config.Config,
+) (string, error) {
+	return config.ResolveReviewMinSeverity(
+		opts.minSeverity, repoPath, globalCfg)
+}
+
 func resolveCIAnthropicAPIKey(configKey string) string {
 	if key := strings.TrimSpace(configKey); key != "" {
 		return key
@@ -999,5 +1013,11 @@ func ciGitLabClient(ctx context.Context, glHost string) (*glpkg.Client, error) {
 	if token == "" {
 		return nil, fmt.Errorf("GitLab authentication required: set GITLAB_TOKEN or GL_TOKEN, or authenticate with glab auth login")
 	}
-	return glpkg.NewClient(token, glpkg.WithBaseURL(apiBaseURL))
+	clientOpts := []glpkg.ClientOption{glpkg.WithBaseURL(apiBaseURL)}
+	if strings.TrimSpace(glHost) != "" {
+		// The operator pinned the origin in the job script, so honor that
+		// against every environment-controlled redirect, proxies included.
+		clientOpts = append(clientOpts, glpkg.WithPinnedOrigin())
+	}
+	return glpkg.NewClient(token, clientOpts...)
 }

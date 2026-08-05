@@ -36,6 +36,7 @@ type ClientOption func(*clientOptions) error
 type clientOptions struct {
 	baseURL        string
 	disableRetries bool
+	pinnedOrigin   bool
 }
 
 type Client struct {
@@ -89,6 +90,18 @@ func WithBaseURL(raw string) ClientOption {
 			return fmt.Errorf("parse base URL: %w", err)
 		}
 		opts.baseURL = raw
+		return nil
+	}
+}
+
+// WithPinnedOrigin marks the base URL as a security pin rather than a mere
+// default. The client then stops consulting HTTP_PROXY/HTTPS_PROXY, which are
+// ordinary environment variables a GitLab pipeline starter can set as pipeline
+// variables: a proxy is a redirect of where the token's bytes go, so honoring
+// one would defeat the pin without ever changing the pinned hostname.
+func WithPinnedOrigin() ClientOption {
+	return func(opts *clientOptions) error {
+		opts.pinnedOrigin = true
 		return nil
 	}
 }
@@ -225,6 +238,36 @@ func GitLabAPIBaseURL(rawBase string) (string, error) {
 	return parsed.String(), nil
 }
 
+// newHTTPClient builds the HTTP client the API client runs on.
+//
+// A nil Transport means http.DefaultTransport, unlike the pooled client the
+// GitLab library installs by default; that is what keeps the test-time forge
+// API guard effective. A pinned origin is the one case that needs its own
+// transport, to stop the proxy environment from redirecting the token.
+func newHTTPClient(pinnedOrigin bool) *http.Client {
+	client := &http.Client{Timeout: defaultHTTPTimeout}
+	if pinnedOrigin {
+		client.Transport = proxylessTransport(http.DefaultTransport)
+	}
+	return client
+}
+
+// proxylessTransport returns base with environment proxy lookup disabled.
+//
+// Only the stock *http.Transport is rewritten. Anything else is returned
+// untouched: the test-time forge API guard swaps http.DefaultTransport for a
+// wrapper, and replacing it here would disable that guard. A test binary is
+// not where a pipeline variable is the threat, so leaving it alone is safe.
+func proxylessTransport(base http.RoundTripper) http.RoundTripper {
+	transport, ok := base.(*http.Transport)
+	if !ok {
+		return base
+	}
+	pinned := transport.Clone()
+	pinned.Proxy = nil
+	return pinned
+}
+
 // isLoopbackHost reports whether host names the local machine. Loopback is
 // exempt from the https requirement in GitLabAPIBaseURL: traffic to it never
 // crosses a network, and local test stubs listen on plain http.
@@ -257,10 +300,7 @@ func NewClient(token string, opts ...ClientOption) (*Client, error) {
 		}
 	}
 
-	// A plain http.Client uses http.DefaultTransport, unlike the pooled
-	// client the GitLab library installs by default. That keeps the
-	// test-time forge API guard effective.
-	httpClient := &http.Client{Timeout: defaultHTTPTimeout}
+	httpClient := newHTTPClient(cfg.pinnedOrigin)
 
 	apiOpts := []gogitlab.ClientOptionFunc{
 		gogitlab.WithHTTPClient(httpClient),

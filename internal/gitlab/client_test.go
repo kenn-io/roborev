@@ -3,7 +3,9 @@ package gitlab
 import (
 	"context"
 	"errors"
+	"net/http"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -284,4 +286,56 @@ func TestParseProject(t *testing.T) {
 func TestNewClient_RejectsInvalidBaseURL(t *testing.T) {
 	_, err := NewClient("token", WithBaseURL("://bad"))
 	require.Error(t, err)
+}
+
+// An explicit origin pin must also pin where the bytes go. HTTP(S)_PROXY are
+// ordinary environment variables, so a GitLab pipeline starter can set them as
+// pipeline variables and route the token through a host of their choosing
+// without ever changing the pinned hostname.
+func TestProxylessTransportDropsEnvironmentProxy(t *testing.T) {
+	stock := &http.Transport{
+		Proxy:               http.ProxyFromEnvironment,
+		TLSHandshakeTimeout: 7 * time.Second,
+	}
+
+	pinned, ok := proxylessTransport(stock).(*http.Transport)
+	require.True(t, ok)
+	assert.Nil(t, pinned.Proxy,
+		"a pinned client must not consult HTTP(S)_PROXY")
+	assert.Equal(t, 7*time.Second, pinned.TLSHandshakeTimeout,
+		"unrelated transport settings must be preserved")
+	assert.NotNil(t, stock.Proxy, "the input must not be mutated")
+}
+
+// The test-time forge API guard replaces http.DefaultTransport with a wrapper
+// that is not an *http.Transport. Leaving it untouched keeps the guard active.
+func TestProxylessTransportLeavesNonStockTransportAlone(t *testing.T) {
+	wrapped := roundTripperFunc(func(*http.Request) (*http.Response, error) {
+		return nil, nil
+	})
+	assert.NotNil(t, proxylessTransport(wrapped))
+}
+
+// A pinned origin has to actually get the proxyless transport; an unpinned one
+// must keep a nil Transport so http.DefaultTransport — and with it the
+// test-time forge API guard — stays in play.
+func TestNewHTTPClientPinnedOriginInstallsTransport(t *testing.T) {
+	assert.NotNil(t, newHTTPClient(true).Transport,
+		"a pinned client must carry its own transport")
+	assert.Nil(t, newHTTPClient(false).Transport,
+		"an unpinned client must keep using the default transport")
+}
+
+// WithPinnedOrigin must reach the client options; otherwise the pin silently
+// resolves to an ordinary client.
+func TestWithPinnedOriginSetsOption(t *testing.T) {
+	var cfg clientOptions
+	require.NoError(t, WithPinnedOrigin()(&cfg))
+	assert.True(t, cfg.pinnedOrigin)
+}
+
+type roundTripperFunc func(*http.Request) (*http.Response, error)
+
+func (f roundTripperFunc) RoundTrip(r *http.Request) (*http.Response, error) {
+	return f(r)
 }
