@@ -836,6 +836,14 @@ func (s *StateStore) deliverPendingReminder(
 		s.mu.Lock()
 		st = cloneSessionState(s.sessions[req.Event.SessionID])
 		resp := prepare(&st)
+		if err := ctx.Err(); err != nil {
+			s.mu.Unlock()
+			return Response{}, false, err
+		}
+		if err := s.saveSessionLocked(req.Event.SessionID, st); err != nil {
+			s.mu.Unlock()
+			return Response{}, false, err
+		}
 		s.mu.Unlock()
 		return resp, true, nil
 	}

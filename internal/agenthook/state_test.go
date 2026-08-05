@@ -2638,6 +2638,53 @@ func TestUnavailableDeferredReminderDoesNotSuppressStopProcessing(t *testing.T) 
 	assert.Contains(t, store.sessions["session-1"].PendingReminders, key)
 }
 
+func TestSnoozedStopPersistsBaselinesWhenUnrelatedReminderIsUnavailable(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("main.go", "package main\n", "initial")
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/repos/resolve" && r.URL.Query().Get("path") == repo.Path() {
+			assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				"tracked": true,
+				"repo": map[string]any{
+					"root_path": repo.Path(), "name": filepath.Base(repo.Path()),
+					"agent_hook_snoozed_until": time.Now().Add(time.Hour).UTC(),
+				},
+			}))
+			return
+		}
+		http.Error(w, "unavailable", http.StatusServiceUnavailable)
+	}))
+	t.Cleanup(server.Close)
+	pending := PendingReminder{
+		TriggeredBy: "failed_reviews", Reason: "Unavailable.",
+		TrackedRepoRoot: "/unavailable", WorktreeRoot: "/unavailable", Branch: "main",
+		LineageKey: "unavailable", CreatedAt: time.Now().UTC(),
+	}
+	key := pendingReminderKey(pending)
+	lineageKey := repoHeadKey(repo.Path(), "main")
+	store := &StateStore{
+		path: filepath.Join(t.TempDir(), "state.json"),
+		sessions: map[string]SessionState{
+			"session-1": {
+				StopCountsSincePrompt: map[string]int{lineageKey: 2},
+				PendingReminders:      map[string]PendingReminder{key: pending},
+			},
+		},
+	}
+
+	response, err := store.Record(Request{
+		Event:             Input{SessionID: "session-1", CWD: repo.Path(), HookEventName: "Stop"},
+		RoborevServerAddr: server.URL,
+	})
+
+	require.NoError(t, err)
+	assert.True(t, response.Skipped)
+	state := store.sessions["session-1"]
+	assert.NotContains(t, state.StopCountsSincePrompt, lineageKey)
+	assert.Contains(t, state.PendingReminders, key)
+	assert.Equal(t, repo.Path(), state.LastCWD)
+}
+
 func TestStopPromptSupersedesUnavailableReminderForSameLineage(t *testing.T) {
 	repo := testutil.NewGitRepo(t)
 	repo.CommitFile("main.go", "package main\n", "initial")
