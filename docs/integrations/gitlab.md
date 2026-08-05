@@ -167,6 +167,21 @@ copy the example job below.
     against the target branch) rather than from trigger-supplied variables, and
     it will match.
 
+    The range must start exactly where the merge request's diff does. Starting
+    earlier is refused as well as starting later: reviewing more looks harmless,
+    but the diff is computed tree to tree, so a change the merge request makes
+    can cancel against an opposing change between the two bases and vanish from
+    what the agents see.
+
+    One thing roborev cannot defend here, because it happens before roborev runs:
+    a loader variable such as `LD_PRELOAD` in the job environment is applied by
+    the dynamic loader when the `roborev` process itself starts, and can point
+    at a file committed to the merge request. roborev strips those variables
+    from the processes it spawns, but by then its own process is already running
+    with them. Unset `LD_PRELOAD`, `LD_AUDIT`, `DYLD_INSERT_LIBRARIES`, and
+    `NODE_OPTIONS` in the protected job before invoking roborev if pipeline
+    variables there are not trusted.
+
     Merge request pipelines, where the IID is auto-detected, are bound to their
     own commits by GitLab, so the range is taken as given. The head is still
     compared before posting: if the source branch was force-pushed while the

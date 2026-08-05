@@ -1554,18 +1554,35 @@ func TestVerifyGitLabMRRange(t *testing.T) {
 			repo.Path(), base+".."+head))
 	})
 
-	// Starting further back reviews more than the merge request, which omits
-	// nothing, so it is allowed.
-	t.Run("WiderRangePasses", func(t *testing.T) {
+	// A base earlier than the merge request's is refused too. It looks
+	// harmless — reviewing more omits nothing — but a change the merge request
+	// makes can cancel against one between the two bases, leaving a diff that
+	// shows less than the merge request actually does.
+	t.Run("WiderRangeFails", func(t *testing.T) {
 		repo, base, head := buildRepo(t)
-		api := &stubGitLabMRAPI{headSHA: head, baseSHA: base}
+		// The merge request's base is one commit later than the range's.
+		mrBase := strings.TrimSpace(repo.RevParse("HEAD~1"))
+		api := &stubGitLabMRAPI{headSHA: head, baseSHA: mrBase}
 		api.start(t)
 
-		// The merge request's base is now a commit ahead of the range base.
-		older := base
-		require.NoError(t, verifyGitLabMRRange(
+		err := verifyGitLabMRRange(
 			context.Background(), ciReviewOpts{pr: 7},
-			repo.Path(), older+".."+head))
+			repo.Path(), base+".."+head)
+		require.ErrorContains(t, err, mrBase)
+	})
+
+	// GitLab omits the diff base on a merge request it has not finished
+	// preparing. Accepting any base there would let a narrowed range through,
+	// so the run stops instead.
+	t.Run("MissingMRBaseFails", func(t *testing.T) {
+		repo, base, head := buildRepo(t)
+		api := &stubGitLabMRAPI{headSHA: head, baseSHA: ""}
+		api.start(t)
+
+		err := verifyGitLabMRRange(
+			context.Background(), ciReviewOpts{pr: 7},
+			repo.Path(), base+".."+head)
+		require.ErrorContains(t, err, "no diff base")
 	})
 
 	t.Run("NarrowedRangeFails", func(t *testing.T) {
@@ -1580,8 +1597,8 @@ func TestVerifyGitLabMRRange(t *testing.T) {
 			context.Background(), ciReviewOpts{pr: 7},
 			repo.Path(), narrowed+".."+head)
 		require.Error(t, err)
-		assert.Contains(t, err.Error(), "omits",
-			"the error must say what is wrong with the range")
+		assert.Contains(t, err.Error(), base,
+			"the error must name the base the range should have started at")
 	})
 
 	t.Run("SingleRefFails", func(t *testing.T) {

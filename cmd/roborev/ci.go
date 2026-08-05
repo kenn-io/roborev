@@ -585,36 +585,37 @@ func verifyGitLabMRRange(
 	return verifyRangeCoversMR(repoPath, base, mrIID, refs.BaseSHA)
 }
 
-// verifyRangeCoversMR checks that a range starting at base leaves none of the
-// merge request's commits out. That holds when base is the merge request's own
-// base or an ancestor of it; anything later starts inside the merge request and
-// hides the commits before it.
+// verifyRangeCoversMR checks that the reviewed range starts exactly where the
+// merge request's diff does.
+//
+// Equality rather than "at least as much": a base earlier than the merge
+// request's looks harmless, since reviewing more cannot omit commits, but the
+// diff is computed tree to tree, so a change the merge request makes can cancel
+// against an opposing change between the two bases and disappear from what the
+// agents see. A merge request that reverts a recent commit is the ordinary way
+// to hit that, and in the protected flow whoever supplies --ref could pick the
+// base deliberately.
+//
+// An absent diff base fails closed. GitLab omits it on a merge request it has
+// not finished preparing, and accepting any base in that window would let a
+// narrowed range post a verdict covering part of the change.
 func verifyRangeCoversMR(
 	repoPath, base string, mrIID int, mrBase string,
 ) error {
 	mrBase = strings.TrimSpace(mrBase)
 	if mrBase == "" {
-		// GitLab reports no diff base for a merge request it has not finished
-		// preparing. Nothing to compare against, and the head already matched.
-		return nil
-	}
-	if strings.EqualFold(base, mrBase) {
-		return nil
-	}
-	covers, err := git.IsAncestor(repoPath, base, mrBase)
-	if err != nil {
 		return fmt.Errorf(
-			"refusing to post: could not tell whether the reviewed range "+
-				"covers merge request !%d (its base %s may be missing from "+
-				"this clone — increase GIT_DEPTH or fetch more history): %w",
-			mrIID, mrBase, err)
+			"refusing to post: merge request !%d reports no diff base, so "+
+				"the reviewed range cannot be checked against it (GitLab may "+
+				"still be preparing the merge request — re-run once it is "+
+				"ready)", mrIID)
 	}
-	if !covers {
+	if !strings.EqualFold(resolveRev(repoPath, base), resolveRev(repoPath, mrBase)) {
 		return fmt.Errorf(
-			"refusing to post: the reviewed range starts at %s, after merge "+
-				"request !%d's base %s, so it omits commits the merge "+
-				"request contains and the note would cover only part of it",
-			base, mrIID, mrBase)
+			"refusing to post: the reviewed range starts at %s but merge "+
+				"request !%d's diff starts at %s, so the note would not "+
+				"describe the same change (review %s..<merge request head>)",
+			base, mrIID, mrBase, mrBase)
 	}
 	return nil
 }
