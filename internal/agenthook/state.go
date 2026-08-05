@@ -186,19 +186,18 @@ func (s *StateStore) recordStop(ctx context.Context, req Request) (Response, err
 		}, nil
 	}
 	scope, ok := resolveHookScope(ctx, req.Event.CWD, req.RoborevServerAddr)
-	var snoozedResponse Response
-	if ok && scope.SnoozedUntil.After(time.Now()) {
-		var err error
-		snoozedResponse, err = s.recordSnoozed(ctx, req, scope)
-		if err != nil {
-			return Response{}, err
+	snoozed := ok && scope.SnoozedUntil.After(time.Now())
+	var prepare func(*SessionState)
+	if snoozed {
+		prepare = func(st *SessionState) {
+			applySnoozedState(st, req, scope)
 		}
 	}
-	if resp, delivered, err := s.deliverPendingReminder(ctx, req); err != nil || delivered {
+	if resp, delivered, err := s.deliverPendingReminder(ctx, req, prepare); err != nil || delivered {
 		return resp, err
 	}
-	if snoozedResponse.Skipped {
-		return snoozedResponse, nil
+	if snoozed {
+		return s.recordSnoozed(ctx, req, scope)
 	}
 	if !ok {
 		return Response{
@@ -571,13 +570,24 @@ func (s *StateStore) recordSnoozed(
 	}
 
 	st := cloneSessionState(s.sessions[req.Event.SessionID])
-	lineageKey := ensureLineageKey(&st, scope)
+	resp := applySnoozedState(&st, req, scope)
+	if err := ctx.Err(); err != nil {
+		return Response{}, err
+	}
+	if err := s.saveSessionLocked(req.Event.SessionID, st); err != nil {
+		return Response{}, err
+	}
+	return resp, nil
+}
+
+func applySnoozedState(st *SessionState, req Request, scope hookScope) Response {
+	lineageKey := ensureLineageKey(st, scope)
 	keys := uniqueStrings(append(
 		[]string{scope.WorktreeKey, lineageKey},
 		commitSequenceKeys(scope, lineageKey)...,
 	))
-	recordSequenceHeads(&st, scope, keys)
-	resetPromptCountersForKeys(&st, keys)
+	recordSequenceHeads(st, scope, keys)
+	resetPromptCountersForKeys(st, keys)
 	delete(st.FailedReviewTriggeredCounts, lineageKey)
 	for key, pending := range st.PendingReminders {
 		if pending.LineageKey == lineageKey {
@@ -587,12 +597,6 @@ func (s *StateStore) recordSnoozed(
 	st.FailedReviewCount = 0
 	st.LastCWD = req.Event.CWD
 	st.LastSeenAt = time.Now().UTC()
-	if err := ctx.Err(); err != nil {
-		return Response{}, err
-	}
-	if err := s.saveSessionLocked(req.Event.SessionID, st); err != nil {
-		return Response{}, err
-	}
 	return Response{
 		SessionID:             req.Event.SessionID,
 		Count:                 st.Count,
@@ -602,7 +606,7 @@ func (s *StateStore) recordSnoozed(
 		FailedReviewThreshold: req.FailedReviewThreshold,
 		ReminderPromptCount:   st.ReminderPromptCount,
 		Skipped:               true,
-	}, nil
+	}
 }
 
 func pendingReminderKey(reminder PendingReminder) string {
@@ -684,6 +688,7 @@ type pendingReminderCandidate struct {
 func (s *StateStore) deliverPendingReminder(
 	ctx context.Context,
 	req Request,
+	prepare func(*SessionState),
 ) (Response, bool, error) {
 	s.mu.Lock()
 	st := s.sessions[req.Event.SessionID]
@@ -764,6 +769,14 @@ func (s *StateStore) deliverPendingReminder(
 		if !ok || current != candidate.reminder {
 			s.mu.Unlock()
 			continue
+		}
+		if prepare != nil {
+			prepare(&st)
+			current, ok = st.PendingReminders[candidate.key]
+			if !ok || current != candidate.reminder {
+				s.mu.Unlock()
+				continue
+			}
 		}
 		delete(st.PendingReminders, candidate.key)
 		st.ReminderPromptCount++

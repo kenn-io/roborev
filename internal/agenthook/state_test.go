@@ -2394,6 +2394,58 @@ func TestDeferredReminderCancellationDoesNotConsumeCandidate(t *testing.T) {
 	assert.Zero(t, store.sessions["session-1"].ReminderPromptCount)
 }
 
+func TestSnoozedStopCancellationDoesNotMutateSession(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("main.go", "package main\n", "initial")
+	started := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/repos/resolve" && r.URL.Query().Get("path") == repo.Path() {
+			assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				"tracked": true,
+				"repo": map[string]any{
+					"root_path": repo.Path(), "name": filepath.Base(repo.Path()),
+					"agent_hook_snoozed_until": time.Now().Add(time.Hour).UTC(),
+				},
+			}))
+			return
+		}
+		close(started)
+		<-r.Context().Done()
+	}))
+	t.Cleanup(server.Close)
+	pending := PendingReminder{
+		TriggeredBy: "failed_reviews", Reason: "Resolve reviews.",
+		TrackedRepoRoot: "/other", WorktreeRoot: "/other", Branch: "main",
+		LineageKey: "other", CreatedAt: time.Now().UTC(),
+	}
+	initial := SessionState{
+		StopCountsSincePrompt: map[string]int{"existing": 2},
+		PendingReminders:      map[string]PendingReminder{pendingReminderKey(pending): pending},
+	}
+	store := &StateStore{
+		path: filepath.Join(t.TempDir(), "state.json"),
+		sessions: map[string]SessionState{
+			"session-1": initial,
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	go func() {
+		_, err := store.RecordContext(ctx, Request{
+			Event:             Input{SessionID: "session-1", CWD: repo.Path(), HookEventName: "Stop"},
+			RoborevServerAddr: server.URL,
+		})
+		errCh <- err
+	}()
+	<-started
+	cancel()
+
+	err := <-errCh
+
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Equal(t, initial, store.sessions["session-1"])
+}
+
 func TestDeferredReminderPersistenceFailureDoesNotConsumeCandidate(t *testing.T) {
 	failedReviewCount := 1
 	server := newDeferredReminderServer(t, "/repo", &failedReviewCount)
