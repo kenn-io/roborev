@@ -2025,6 +2025,50 @@ func TestDeferredPostToolReminderCoalescesAndWaitsForTriggeringBranch(t *testing
 	assert.Equal(t, 1, store.sessions["session-1"].ReminderPromptCount)
 }
 
+func TestDeferredReminderWaitsWhenRepositoryIdentityChanges(t *testing.T) {
+	assert := assert.New(t)
+	repo := testutil.NewGitRepo(t)
+	head := repo.CommitFile("main.go", "package main\n", "initial")
+	jobLookups := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/repos/resolve" {
+			assert.NoError(json.NewEncoder(w).Encode(map[string]any{
+				"tracked": true,
+				"repo": map[string]string{
+					"root_path": repo.Path(), "identity": "replacement", "name": "repo",
+				},
+			}))
+			return
+		}
+		jobLookups++
+		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{}))
+	}))
+	t.Cleanup(server.Close)
+	pending := PendingReminder{
+		TriggeredBy: "failed_reviews", Reason: "Resolve reviews.",
+		TrackedRepoRoot: repo.Path(), TrackedRepoIdentity: "original",
+		WorktreeRoot: repo.Path(), Branch: "main", Head: head,
+		LineageKey: repoHeadKey(repo.Path(), "main"), CreatedAt: time.Now().UTC(),
+	}
+	key := pendingReminderKey(pending)
+	store := &StateStore{
+		path: filepath.Join(t.TempDir(), "state.json"),
+		sessions: map[string]SessionState{
+			"session-1": {PendingReminders: map[string]PendingReminder{key: pending}},
+		},
+	}
+
+	response, err := store.Record(Request{
+		Event:             Input{SessionID: "session-1", CWD: t.TempDir(), HookEventName: "Stop"},
+		RoborevServerAddr: server.URL,
+	})
+
+	require.NoError(t, err)
+	assert.False(response.Triggered)
+	assert.Contains(store.sessions["session-1"].PendingReminders, key)
+	assert.Zero(jobLookups)
+}
+
 func TestRecordStopSuppressesReminderWhileWorkspaceIsSnoozed(t *testing.T) {
 	assert := assert.New(t)
 	repo := testutil.NewGitRepo(t)

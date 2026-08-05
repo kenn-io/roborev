@@ -220,17 +220,18 @@ func legacyStopCountLineage(state SessionState) string {
 }
 
 type PendingReminder struct {
-	TriggeredBy       string    `json:"triggered_by"`
-	Reason            string    `json:"reason"`
-	Instruction       string    `json:"instruction,omitempty"`
-	TrackedRepoRoot   string    `json:"tracked_repo_root"`
-	WorktreeRoot      string    `json:"worktree_root"`
-	Branch            string    `json:"branch,omitempty"`
-	Head              string    `json:"head,omitempty"`
-	LineageKey        string    `json:"lineage_key"`
-	CommitCount       int       `json:"commit_count,omitempty"`
-	FailedReviewCount int       `json:"failed_review_count,omitempty"`
-	CreatedAt         time.Time `json:"created_at"`
+	TriggeredBy         string    `json:"triggered_by"`
+	Reason              string    `json:"reason"`
+	Instruction         string    `json:"instruction,omitempty"`
+	TrackedRepoRoot     string    `json:"tracked_repo_root"`
+	TrackedRepoIdentity string    `json:"tracked_repo_identity,omitempty"`
+	WorktreeRoot        string    `json:"worktree_root"`
+	Branch              string    `json:"branch,omitempty"`
+	Head                string    `json:"head,omitempty"`
+	LineageKey          string    `json:"lineage_key"`
+	CommitCount         int       `json:"commit_count,omitempty"`
+	FailedReviewCount   int       `json:"failed_review_count,omitempty"`
+	CreatedAt           time.Time `json:"created_at"`
 }
 
 type Snapshot struct {

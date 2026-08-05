@@ -31,6 +31,7 @@ var agentHookGit = gitcmd.New()
 type hookScope struct {
 	WorktreeRoot        string
 	TrackedRepoRoot     string
+	TrackedRepoIdentity string
 	Head                string
 	Branch              string
 	WorktreeKey         string
@@ -494,31 +495,33 @@ func (s *StateStore) recordPostToolUse(ctx context.Context, req Request) (Respon
 	if promptTriggered && req.DeferPostToolReminder {
 		if failedReviewTriggered {
 			queuePendingReminder(&st, PendingReminder{
-				TriggeredBy:       "failed_reviews",
-				Reason:            deferredReminderReason(buildFailedReviewReason(req, st), scope.WorktreeRoot),
-				Instruction:       req.Instruction,
-				TrackedRepoRoot:   scope.TrackedRepoRoot,
-				WorktreeRoot:      scope.WorktreeRoot,
-				Branch:            scope.Branch,
-				Head:              scope.Head,
-				LineageKey:        lineageKey,
-				FailedReviewCount: failedReviewCount,
-				CreatedAt:         now,
+				TriggeredBy:         "failed_reviews",
+				Reason:              deferredReminderReason(buildFailedReviewReason(req, st), scope.WorktreeRoot),
+				Instruction:         req.Instruction,
+				TrackedRepoRoot:     scope.TrackedRepoRoot,
+				TrackedRepoIdentity: scope.TrackedRepoIdentity,
+				WorktreeRoot:        scope.WorktreeRoot,
+				Branch:              scope.Branch,
+				Head:                scope.Head,
+				LineageKey:          lineageKey,
+				FailedReviewCount:   failedReviewCount,
+				CreatedAt:           now,
 			})
 		}
 		if commitTriggered {
 			queuePendingReminder(&st, PendingReminder{
-				TriggeredBy:       "commit",
-				Reason:            deferredReminderReason(buildCommitReason(req, triggeringCommitCount, scope.WorktreeRoot), scope.WorktreeRoot),
-				Instruction:       req.Instruction,
-				TrackedRepoRoot:   scope.TrackedRepoRoot,
-				WorktreeRoot:      scope.WorktreeRoot,
-				Branch:            scope.Branch,
-				Head:              scope.Head,
-				LineageKey:        lineageKey,
-				CommitCount:       triggeringCommitCount,
-				FailedReviewCount: failedReviewCount,
-				CreatedAt:         now,
+				TriggeredBy:         "commit",
+				Reason:              deferredReminderReason(buildCommitReason(req, triggeringCommitCount, scope.WorktreeRoot), scope.WorktreeRoot),
+				Instruction:         req.Instruction,
+				TrackedRepoRoot:     scope.TrackedRepoRoot,
+				TrackedRepoIdentity: scope.TrackedRepoIdentity,
+				WorktreeRoot:        scope.WorktreeRoot,
+				Branch:              scope.Branch,
+				Head:                scope.Head,
+				LineageKey:          lineageKey,
+				CommitCount:         triggeringCommitCount,
+				FailedReviewCount:   failedReviewCount,
+				CreatedAt:           now,
 			})
 		}
 		resetPromptCountersForKeys(&st, promptResetKeys(scope, lineageKey))
@@ -718,15 +721,15 @@ func (s *StateStore) deliverPendingReminder(
 	discards := make([]pendingReminderCandidate, 0, len(candidates))
 	for _, candidate := range candidates {
 		pending := candidate.reminder
-		suppressed, known := pendingReminderSuppressed(ctx, pending, req.RoborevServerAddr)
+		resolved, known := resolvePendingReminderRepo(ctx, pending, req.RoborevServerAddr)
 		if err := ctx.Err(); err != nil {
 			return Response{}, false, err
 		}
-		if known && suppressed {
+		if known && (!resolved.Tracked || resolved.SnoozedUntil.After(time.Now())) {
 			discards = append(discards, candidate)
 			continue
 		}
-		if !pendingReminderLineageMatches(ctx, pending) {
+		if !pendingReminderLineageMatches(ctx, pending, resolved, known) {
 			if err := ctx.Err(); err != nil {
 				return Response{}, false, err
 			}
@@ -863,26 +866,44 @@ func (s *StateStore) deliverPendingReminder(
 	return Response{}, false, nil
 }
 
-func pendingReminderSuppressed(
+func resolvePendingReminderRepo(
 	ctx context.Context,
 	pending PendingReminder,
 	configuredAddr string,
-) (bool, bool) {
+) (trackedRepoResolution, bool) {
 	path := pending.WorktreeRoot
 	if path == "" {
 		path = pending.TrackedRepoRoot
 	}
-	resolved, known := resolveTrackedRepo(ctx, path, pending.Branch, configuredAddr)
-	return known && (!resolved.Tracked || resolved.SnoozedUntil.After(time.Now())), known
+	return resolveTrackedRepo(ctx, path, pending.Branch, configuredAddr)
 }
 
-func pendingReminderLineageMatches(ctx context.Context, pending PendingReminder) bool {
+func pendingReminderLineageMatches(
+	ctx context.Context,
+	pending PendingReminder,
+	resolved trackedRepoResolution,
+	known bool,
+) bool {
 	// A missing head does not provide enough information to reject delivery.
 	if pending.Head == "" {
 		return true
 	}
 	current, ok := currentGitScopeContext(ctx, pending.WorktreeRoot)
 	if !ok {
+		return false
+	}
+	if filepath.Clean(current.WorktreeRoot) != filepath.Clean(pending.WorktreeRoot) ||
+		filepath.Clean(mainRepoRoot(ctx, current)) != filepath.Clean(pending.TrackedRepoRoot) {
+		return false
+	}
+	if !known || !resolved.Tracked {
+		return false
+	}
+	if resolved.RootPath != "" &&
+		filepath.Clean(resolved.RootPath) != filepath.Clean(pending.TrackedRepoRoot) {
+		return false
+	}
+	if pending.TrackedRepoIdentity != "" && resolved.Identity != pending.TrackedRepoIdentity {
 		return false
 	}
 	if pending.Branch != "" {
@@ -1266,7 +1287,8 @@ func resolveHookScope(ctx context.Context, cwd, configuredAddr string) (hookScop
 	if !ok {
 		return hookScope{}, false
 	}
-	trackedRoot := mainRepoRoot(gitInfo)
+	trackedRoot := mainRepoRoot(ctx, gitInfo)
+	trackedIdentity := ""
 	tracked := true
 	var snoozedUntil time.Time
 	if resolved, known := resolveTrackedRepo(
@@ -1277,14 +1299,16 @@ func resolveHookScope(ctx context.Context, cwd, configuredAddr string) (hookScop
 		} else if strings.TrimSpace(resolved.RootPath) != "" {
 			trackedRoot = strings.TrimSpace(resolved.RootPath)
 		}
+		trackedIdentity = strings.TrimSpace(resolved.Identity)
 		snoozedUntil = resolved.SnoozedUntil
 	}
 	return hookScope{
-		WorktreeRoot:    gitInfo.WorktreeRoot,
-		TrackedRepoRoot: trackedRoot,
-		Head:            gitInfo.Head,
-		Branch:          gitInfo.Branch,
-		WorktreeKey:     worktreeSequenceKey(trackedRoot, gitInfo.WorktreeRoot),
+		WorktreeRoot:        gitInfo.WorktreeRoot,
+		TrackedRepoRoot:     trackedRoot,
+		TrackedRepoIdentity: trackedIdentity,
+		Head:                gitInfo.Head,
+		Branch:              gitInfo.Branch,
+		WorktreeKey:         worktreeSequenceKey(trackedRoot, gitInfo.WorktreeRoot),
 		CandidateLineageKey: lineageSequenceKey(
 			trackedRoot, gitInfo.Branch, gitInfo.WorktreeRoot, gitInfo.Head,
 		),
@@ -1351,32 +1375,32 @@ func resolveTrackedRepo(
 // checkout root still drives branch and HEAD detection; only the repo filter
 // needs the main root. Falls back to worktreeRoot when resolution fails (for
 // example a plain checkout, where the two roots are identical).
-func mainRepoRoot(scope gitScope) string {
+func mainRepoRoot(ctx context.Context, scope gitScope) string {
 	if scope.GitDir == "" || scope.CommonDir == "" || scope.GitDir == scope.CommonDir {
 		return scope.WorktreeRoot
 	}
-	if bareCommonDir(scope.CommonDir) {
+	if bareCommonDir(ctx, scope.CommonDir) {
 		return scope.WorktreeRoot
 	}
 	if filepath.Base(scope.CommonDir) == ".git" {
 		return filepath.Dir(scope.CommonDir)
 	}
-	worktree := configuredWorktree(scope.CommonDir)
+	worktree := configuredWorktree(ctx, scope.CommonDir)
 	if worktree == "" {
 		return scope.WorktreeRoot
 	}
 	return worktree
 }
 
-func bareCommonDir(commonDir string) bool {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+func bareCommonDir(parent context.Context, commonDir string) bool {
+	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
 	defer cancel()
 	out, err := agentHookGit.Output(ctx, "", "config", "--file", filepath.Join(commonDir, "config"), "--bool", "core.bare")
 	return err == nil && strings.TrimSpace(string(out)) == "true"
 }
 
-func configuredWorktree(commonDir string) string {
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+func configuredWorktree(parent context.Context, commonDir string) string {
+	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
 	defer cancel()
 	out, err := agentHookGit.Output(ctx, "", "config", "--file", filepath.Join(commonDir, "config"), "core.worktree")
 	if err != nil {
