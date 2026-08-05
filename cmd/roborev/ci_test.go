@@ -585,8 +585,10 @@ func TestDetectGitLabGitRef_FirstPushUsesDefaultBranch(t *testing.T) {
 		"the whole push must be reviewed, not just its last commit")
 }
 
-// Head already contained in the default branch means the push added nothing on
-// top of it, so the commit itself is the whole review.
+// Head already contained in the default branch means the push added no commits
+// of its own. Reviewing the commit it points at would report on code that is
+// already on the default branch and was reviewed when it landed there, so the
+// run reports that there is nothing to review instead.
 func TestDetectGitLabGitRef_FirstPushContainedInDefaultBranch(t *testing.T) {
 	repo := testutil.NewTestRepoWithCommit(t)
 	head := repo.HeadSHA()
@@ -597,8 +599,8 @@ func TestDetectGitLabGitRef_FirstPushContainedInDefaultBranch(t *testing.T) {
 	t.Setenv("CI_DEFAULT_BRANCH", defaultBranch)
 
 	got, err := detectGitLabGitRef(repo.Path())
-	require.NoError(t, err)
-	assert.Equal(t, head, got)
+	require.ErrorIs(t, err, errNoChangesToReview)
+	assert.Empty(t, got)
 }
 
 // The default branch's own first push — a brand-new repository's initial

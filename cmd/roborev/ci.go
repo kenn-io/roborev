@@ -187,7 +187,13 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 	gitRef := opts.ref
 	if gitRef == "" {
 		detected, err := detectGitRefForForge(forge, root)
-		if err != nil {
+		switch {
+		case errors.Is(err, errNoChangesToReview):
+			// Not a failure: the push added nothing to review, so there is
+			// no verdict to reach and nothing to post.
+			fmt.Println("roborev: no changes to review")
+			return nil
+		case err != nil:
 			return fmt.Errorf(
 				"--ref not provided and auto-detection "+
 					"failed: %w", err)
@@ -697,6 +703,10 @@ func detectPRNumber() (int, error) {
 // zeroSHA is the all-zero SHA GitLab reports for the first push on a branch.
 const zeroSHA = "0000000000000000000000000000000000000000"
 
+// errNoChangesToReview reports that the push contains nothing this run should
+// review. It is not a failure: the job stops early and exits zero.
+var errNoChangesToReview = errors.New("no changes to review")
+
 // detectGitLabProjectPath returns the GitLab project the merge request belongs
 // to. CI_MERGE_REQUEST_PROJECT_PATH is the merge request's target project and
 // is the one CI_MERGE_REQUEST_IID is scoped to; CI_PROJECT_PATH is the project
@@ -887,9 +897,11 @@ func gitLabFirstPushRef(repoPath, head string) (string, error) {
 			continue
 		}
 		if mergeBase == head {
-			// head is already contained in the default branch, so the push added
-			// nothing on top of it. Reviewing the commit itself is the whole job.
-			return head, nil
+			// head is already contained in the default branch, so the push
+			// carried no commits of its own. The commit it points at was
+			// reviewed when it landed on the default branch, and reviewing it
+			// again would report on code this push did not touch.
+			return "", errNoChangesToReview
 		}
 		return mergeBase + ".." + head, nil
 	}

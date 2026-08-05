@@ -368,17 +368,21 @@ zeros: the push usually carries several commits, so reviewing only the tip would
 report a verdict on the last one and say nothing about the rest. If the default
 branch is unset or missing from the clone, the range cannot be reconstructed and
 the job stops and asks for an explicit `--ref` rather than review a fraction of
-the push. The default branch's own first push — a brand-new repository's initial
-pipeline — has no base at all: a single-commit push is reviewed as that commit,
-and a multi-commit one stops and asks for `--ref` the same way. The
-single-commit case is accepted only when the commit is a real root: a shallow
-clone that cut a multi-commit push down to its tip still records the parent in
-the raw commit object, and roborev checks it and fails with the same `GIT_DEPTH`
-guidance instead of reviewing the tip. In practice `CI_COMMIT_BEFORE_SHA` is the
-one that runs: GitLab sets `CI_MERGE_REQUEST_DIFF_BASE_SHA` in every merge
-request pipeline, while `CI_MERGE_REQUEST_TARGET_BRANCH_SHA` appears only in
-merged-results and merge-train pipelines, so the diff base is always there too
-and wins first. The target-branch entry is kept only in case that ever changes.
+the push. A branch whose head is already contained in the default branch added
+no commits of its own; that commit was reviewed when it landed on the default
+branch, so the job prints `no changes to review` and exits zero rather than
+reporting on code the push did not touch. The default branch's own first push —
+a brand-new repository's initial pipeline — has no base at all: a single-commit
+push is reviewed as that commit, and a multi-commit one stops and asks for
+`--ref` the same way. The single-commit case is accepted only when the commit is
+a real root: a shallow clone that cut a multi-commit push down to its tip still
+records the parent in the raw commit object, and roborev checks it and fails
+with the same `GIT_DEPTH` guidance instead of reviewing the tip. In practice
+`CI_COMMIT_BEFORE_SHA` is the one that runs: GitLab sets
+`CI_MERGE_REQUEST_DIFF_BASE_SHA` in every merge request pipeline, while
+`CI_MERGE_REQUEST_TARGET_BRANCH_SHA` appears only in merged-results and
+merge-train pipelines, so the diff base is always there too and wins first. The
+target-branch entry is kept only in case that ever changes.
 
 Both fallbacks are branch tips rather than diff bases, so roborev resolves
 `git merge-base <fallback> <head>` in the checkout and starts the range there.
