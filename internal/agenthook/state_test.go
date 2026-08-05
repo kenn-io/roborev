@@ -1950,7 +1950,7 @@ func TestCountOpenFailedReviewsRequestsOmittedPrompts(t *testing.T) {
 		"hook count queries must not pull full prompts over the wire")
 }
 
-func TestDeferredPostToolReminderCoalescesAndSurvivesCWDChange(t *testing.T) {
+func TestDeferredPostToolReminderCoalescesAndWaitsForTriggeringBranch(t *testing.T) {
 	repo := testutil.NewGitRepo(t)
 	repo.CommitFile("main.go", "package main\n", "initial")
 	failedReviewCount := 1
@@ -2001,6 +2001,17 @@ func TestDeferredPostToolReminderCoalescesAndSurvivesCWDChange(t *testing.T) {
 	assert.Equal(t, 2, coalesced.CommitCount)
 	assert.Zero(t, state.ReminderPromptCount)
 
+	repo.CheckoutNewBranch("other")
+	waiting, err := store.Record(Request{
+		Event:             Input{SessionID: "session-1", CWD: t.TempDir(), HookEventName: "Stop"},
+		RoborevServerAddr: server.URL,
+	})
+	require.NoError(t, err)
+	assert.False(t, waiting.Triggered)
+	assert.Len(t, store.sessions["session-1"].PendingReminders, 1)
+	assert.Zero(t, store.sessions["session-1"].ReminderPromptCount)
+
+	repo.Checkout("main")
 	resp, err := store.Record(Request{
 		Event:             Input{SessionID: "session-1", CWD: t.TempDir(), HookEventName: "Stop"},
 		RoborevServerAddr: server.URL,

@@ -726,6 +726,12 @@ func (s *StateStore) deliverPendingReminder(
 			discards = append(discards, candidate)
 			continue
 		}
+		if !pendingReminderLineageMatches(ctx, pending) {
+			if err := ctx.Err(); err != nil {
+				return Response{}, false, err
+			}
+			continue
+		}
 		count, ok := countOpenFailedReviews(
 			ctx, pending.TrackedRepoRoot, pending.Branch,
 			pending.Head, req.RoborevServerAddr,
@@ -868,6 +874,21 @@ func pendingReminderSuppressed(
 	}
 	resolved, known := resolveTrackedRepo(ctx, path, pending.Branch, configuredAddr)
 	return known && (!resolved.Tracked || resolved.SnoozedUntil.After(time.Now())), known
+}
+
+func pendingReminderLineageMatches(ctx context.Context, pending PendingReminder) bool {
+	// A missing head does not provide enough information to reject delivery.
+	if pending.Head == "" {
+		return true
+	}
+	current, ok := currentGitScopeContext(ctx, pending.WorktreeRoot)
+	if !ok {
+		return false
+	}
+	if pending.Branch != "" {
+		return current.Branch == pending.Branch
+	}
+	return current.Branch == "" && current.Head == pending.Head
 }
 
 func applyPendingReminderDiscards(
@@ -1184,10 +1205,14 @@ func repoDisplayName(repoPath string) string {
 }
 
 func currentGitScope(cwd string) (gitScope, bool) {
+	return currentGitScopeContext(context.Background(), cwd)
+}
+
+func currentGitScopeContext(parent context.Context, cwd string) (gitScope, bool) {
 	if cwd == "" {
 		return gitScope{}, false
 	}
-	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)
+	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
 	defer cancel()
 	out, err := agentHookGit.Output(ctx, cwd,
 		"rev-parse", "--show-toplevel", "--git-dir", "--git-common-dir", "HEAD", "--abbrev-ref", "HEAD")
@@ -1237,7 +1262,7 @@ func absGitPath(base, path string) string {
 }
 
 func resolveHookScope(ctx context.Context, cwd, configuredAddr string) (hookScope, bool) {
-	gitInfo, ok := currentGitScope(cwd)
+	gitInfo, ok := currentGitScopeContext(ctx, cwd)
 	if !ok {
 		return hookScope{}, false
 	}
