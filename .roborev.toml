@@ -79,6 +79,43 @@ daemon never checks out PR branches — the working tree is always the
 operator's own checkout. Do not flag filesystem fallback as a trust-boundary
 issue or claim that PR authors can influence config via the working tree.
 
+## CI pipeline mode (`roborev ci review`, GitHub Actions and GitLab CI)
+
+The CI path has a documented trust model in docs/integrations/gitlab.md. Read
+it before reporting a finding against `cmd/roborev/ci.go`, `internal/gitlab/`,
+or the agent environment scrub, and do not re-report what it already states as
+an accepted residual:
+
+- The environment scrub keeps forge tokens out of agent subprocesses and
+  capability probes. It is a bound on the casual channel, not a sandbox. Agents
+  run as the same user as roborev, so `/proc/<ppid>/environ`, debuggers, and
+  similar same-UID paths remain reachable by design. Do not ask for UID/PID
+  isolation, container-per-agent, or a minimal environment built from trusted
+  config: that is an architectural change to how every agent in the project
+  runs, not a CI fix, and it applies identically to the pre-existing GitHub
+  path.
+- Loader variables (`LD_PRELOAD`, `NODE_OPTIONS`, ...) are stripped from
+  processes roborev spawns. roborev cannot defend against one set in its own
+  job environment, because the dynamic loader applies it before roborev's code
+  runs. That mitigation is operator-side and documented.
+- A default GitLab Runner leaves the job token in the checkout's `.git/config`.
+  roborev does not rewrite the user's git config; the fix is
+  `FF_GIT_URLS_WITHOUT_TOKENS` or stripping the remote, and it is documented.
+- `SSL_CERT_FILE`/`SSL_CERT_DIR` stay honored so self-hosted instances behind
+  an internal CA keep working. A substituted CA alone is not interception.
+- The notes API has no conditional write, so any head check before posting
+  leaves a one-round-trip TOCTOU window. Rechecking after the write only moves
+  it. The note body names the reviewed commit, which is the intended mitigation.
+- `.roborev.toml` is read from the tree under review in the MR-head worktree
+  flow, so its author controls `[ci]` settings. Flags outrank the file and the
+  docs say to pin what must not be author-controlled. Report a *specific*
+  setting that is unpinnable and has a security consequence; do not re-report
+  the general class.
+
+Findings about the GitLab MR binding (that the reviewed range must match the
+merge request the note lands on) are welcome when they identify a concrete
+range or head that would slip through. Prefer the smallest fix that closes it.
+
 ## Verdict parsing and review output shape
 
 Verdict parsing is intentionally simple and deterministic. Prefer explicit

@@ -193,18 +193,24 @@ copy the example job below.
     merge request's tree, so its author controls the `[ci]` settings. Left
     unpinned, they could swap in a weaker agent, drop review types, or raise
     `min_severity` to hide their own findings. Flags outrank the file, so pin
-    whatever must not be author-controlled. `--min-severity` pins both halves of
-    the run: the synthesis filter and the threshold the individual reviews are
-    prompted with, so a `review_min_severity` in the merge request's tree cannot
-    stop findings from being reported in the first place. `review_guidelines`
-    has no flag: it is read from the default branch, but only when that branch
-    both resolves in the checkout *and* has a committed `.roborev.toml`. If
-    either is missing — and a project that never committed one always misses the
-    second — it falls back to the merge request's tree, where the author
-    controls it. Commit a `.roborev.toml` on the default branch and make sure
-    the job can resolve that branch (fetch it, or set `origin/HEAD`). The token
-    stays out of the agents either way — this is about the review's integrity,
-    not its exposure. If the runner reuses its workspace, finish with
+    whatever must not be author-controlled. Model settings are the gap worth
+    knowing about: `ci review` has no `--model` flag, and a model spec may carry
+    a proxy URL (`<model>@https://host`), so an author who controls
+    `.roborev.toml` can route the review through a server that returns whatever
+    verdict they like. If that matters, review from the protected checkout
+    rather than the merge request worktree, which is the default described
+    above. `--min-severity` pins both halves of the run: the synthesis filter
+    and the threshold the individual reviews are prompted with, so a
+    `review_min_severity` in the merge request's tree cannot stop findings from
+    being reported in the first place. `review_guidelines` has no flag: it is
+    read from the default branch, but only when that branch both resolves in the
+    checkout *and* has a committed `.roborev.toml`. If either is missing — and a
+    project that never committed one always misses the second — it falls back to
+    the merge request's tree, where the author controls it. Commit a
+    `.roborev.toml` on the default branch and make sure the job can resolve that
+    branch (fetch it, or set `origin/HEAD`). The token stays out of the agents
+    either way — this is about the review's integrity, not its exposure. If the
+    runner reuses its workspace, finish with
     `cd "$CI_PROJECT_DIR" && git worktree remove --force "$mr_tree"` so the next
     run starts clean; the `cd` matters because git refuses to remove the
     worktree you are standing in.
