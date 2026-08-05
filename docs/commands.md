@@ -581,20 +581,23 @@ usage. Jobs whose session files have been deleted are skipped.
 ## CI Review
 
 ```bash
-roborev ci review                            # Auto-detect from GitHub Actions env
+roborev ci review                            # Auto-detect from GitHub Actions / GitLab CI env
 roborev ci review --ref HEAD~3..HEAD         # Explicit ref range
-roborev ci review --gh-repo myorg/myrepo --pr 42  # Explicit repo and PR
-roborev ci review --agent codex --agent gemini     # Multiple agents
-roborev ci review --comment                  # Post results as PR comment
+roborev ci review --gh-repo myorg/myrepo --pr 42  # Explicit GitHub repo and PR
+roborev ci review --gl-repo mygroup/myproject --pr 42  # Explicit GitLab project and MR
+roborev ci review --agent codex,gemini        # Multiple agents
+roborev ci review --comment                  # Post results as PR/MR comment
 ```
 
 | Flag | Description |
 |------|-------------|
-| `--ref <range>` | Git ref or range to review (default: auto-detect from `GITHUB_REF`) |
-| `--comment` | Post results as a PR comment via `gh` |
+| `--ref <range>` | Git ref or range to review (default: auto-detect from `GITHUB_REF` or `CI_COMMIT_SHA`) |
+| `--comment` | Post results as a PR comment (GitHub) or MR note (GitLab) |
 | `--gh-repo <owner/repo>` | GitHub repo (default: `GITHUB_REPOSITORY` env var) |
-| `--pr <number>` | PR number (default: extracted from `GITHUB_EVENT_PATH`) |
-| `--agent <names>` | Agents to use (repeatable, default: auto-detect) |
+| `--gl-repo <group/project>` | GitLab project path, subgroups allowed (default: `CI_MERGE_REQUEST_PROJECT_PATH`, then `CI_PROJECT_PATH`); mutually exclusive with `--gh-repo` |
+| `--gl-host <url>` | GitLab server URL or hostname; selects GitLab (default: `CI_SERVER_URL`, then `GITLAB_HOST`/`GL_HOST`); hardcode it in the job script when `GITLAB_TOKEN` is protected; mutually exclusive with `--gh-repo` |
+| `--pr <number>` | PR number / GitLab MR IID (default: `GITHUB_EVENT_PATH` or `CI_MERGE_REQUEST_IID`) |
+| `--agent <names>` | Agents to use (comma-separated, default: auto-detect) |
 | `--review-types <types>` | Review types to run (comma-separated: `security`, `design`, `lookahead`, `default`) |
 | `--reasoning <level>` | Reasoning depth (`thorough`/`standard`/`fast`) |
 | `--min-severity <level>` | Minimum severity to report (`low`/`medium`/`high`/`critical`) |
@@ -607,10 +610,27 @@ In GitHub Actions, `ci review` auto-detects `GITHUB_REPOSITORY`, `GITHUB_REF`,
 and `GITHUB_EVENT_PATH` so you can run it with no flags. Outside GitHub Actions,
 pass `--gh-repo` and `--ref` explicitly.
 
+In GitLab CI, `ci review` auto-detects the project
+(`CI_MERGE_REQUEST_PROJECT_PATH`, the merge request's target project, falling
+back to `CI_PROJECT_PATH`), `CI_MERGE_REQUEST_IID`, `CI_SERVER_URL`, and the
+review range: `CI_MERGE_REQUEST_DIFF_BASE_SHA` as the base and
+`CI_MERGE_REQUEST_SOURCE_BRANCH_SHA` (merged results pipelines) or
+`CI_COMMIT_SHA` as the head. Forge detection precedence is: explicit flags
+(`--gl-repo`/`--gl-host` for GitLab, `--gh-repo` for GitHub), then GitLab CI
+(`GITLAB_CI=true`), then GitHub Actions (`GITHUB_ACTIONS=true`) — the GitLab
+indicator wins when both are set because a GitLab pipeline starter can inject
+`GITHUB_ACTIONS=true`, while the reverse requires committed workflow code.
+Posting an MR note requires a project access token with the `api` scope exposed
+as `GITLAB_TOKEN` — `CI_JOB_TOKEN` cannot create notes. When that token is a
+protected variable, hardcode `--gl-host https://gitlab.example.com` in the job
+script: `CI_SERVER_URL` is overridable by whoever starts the pipeline, the
+script is not. See the [GitLab Integration](/integrations/gitlab/) trust model.
+
 Exit codes: `0` on success or when all agents were skipped due to quota
 exhaustion, non-zero on real failures.
 
-See: [GitHub Integration](/integrations/github/)
+See: [GitHub Integration](/integrations/github/),
+[GitLab Integration](/integrations/gitlab/)
 
 ## GitHub Actions Setup
 

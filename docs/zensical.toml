@@ -24,6 +24,7 @@ nav = [
   {"Configuration" = "configuration.md"},
   {"Supported Agents" = "agents/index.md"},
   {"GitHub Integration" = "integrations/github.md"},
+  {"GitLab Integration" = "integrations/gitlab.md"},
   {"Guides" = [
     {"Reviewing Code" = "guides/reviewing-code.md"},
     {"Responding to Reviews" = "guides/responding-to-reviews.md"},

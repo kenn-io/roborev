@@ -165,7 +165,9 @@ func (a *KiroAgent) Review(ctx context.Context, repoPath, commitSHA, prompt stri
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
 	cmd.Env = os.Environ()
-	tracker := configureSubprocess(cmd)
+	// kiro-cli authenticates with a GitHub token, so it is exempt from
+	// the GitHub half of the forge credential strip (see forge_env.go).
+	tracker := configureSubprocess(cmd, withGitHubCredentials())
 
 	// kiro-cli emits ANSI terminal escape codes that are not
 	// suitable for streaming. Capture and return stripped text.

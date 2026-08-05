@@ -285,11 +285,10 @@ func TestFormatSingleResult_Truncation(t *testing.T) {
 
 func TestFormatSingleResult_TruncationUTF8Safe(t *testing.T) {
 	// Place a 4-byte emoji so it straddles the actual cut boundary.
-	// The cut point is maxLen = MaxCommentLen - len("\n\n...(truncated)")
+	// The cut point is maxLen = MaxCommentLen - len(CommentTruncSuffix)
 	// applied to r.Output. Put the emoji starting 2 bytes before that
 	// so a naive byte slice would land inside the 4-byte character.
-	const truncSuffix = "\n\n...(truncated)"
-	maxLen := MaxCommentLen - len(truncSuffix)
+	maxLen := MaxCommentLen - len(CommentTruncSuffix)
 	paddingLen := maxLen - 2
 	r := ReviewResult{
 		Agent:      "codex",
@@ -320,6 +319,35 @@ func TestFormatSynthesizedComment(t *testing.T) {
 	assert.NotContains(t, comment, "types:")
 	assert.NotContains(t, comment, "security")
 	assert.NotContains(t, comment, "design")
+}
+
+// Both per-review truncations cut at a fixed byte offset, so a multi-byte rune
+// straddling it must not be split. FormatRawBatchComment's output is posted as a
+// real PR/MR comment, and BuildSynthesisPrompt's feeds the synthesis agent.
+func TestPerReviewTruncationIsUTF8Safe(t *testing.T) {
+	// Place a 4-byte emoji so it straddles the 15000-byte cut.
+	const maxPerReview = 15000
+	oversized := strings.Repeat("x", maxPerReview-2) + "😀" + strings.Repeat("y", 100)
+	reviews := []ReviewResult{{
+		Agent:      "codex",
+		ReviewType: "security",
+		Status:     ResultDone,
+		Output:     oversized,
+	}}
+
+	t.Run("FormatRawBatchComment", func(t *testing.T) {
+		comment := FormatRawBatchComment(reviews, "def456789012")
+		require.True(t, utf8.ValidString(comment),
+			"posted comment must not contain a split rune")
+		assert.Contains(t, comment, OutputTruncSuffix)
+	})
+
+	t.Run("BuildSynthesisPrompt", func(t *testing.T) {
+		prompt := BuildSynthesisPrompt(reviews, "medium")
+		require.True(t, utf8.ValidString(prompt),
+			"synthesis prompt must not contain a split rune")
+		assert.Contains(t, prompt, OutputTruncSuffix)
+	})
 }
 
 func TestFormatRawBatchComment(t *testing.T) {

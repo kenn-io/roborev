@@ -53,6 +53,7 @@ CLI (roborev) → HTTP API → Daemon (roborev daemon run) → Worker Pool → A
 | `internal/worktree/` | Isolated git worktrees for fix jobs |
 | `internal/review/` | Synthesis, batch processing, verdict parsing |
 | `internal/github/` | GitHub REST API wrappers |
+| `internal/gitlab/` | GitLab REST API wrappers (MR notes, token/base-URL resolution) |
 | `internal/githook/` | Git hook installation/management |
 | `internal/ghaction/` | GitHub Actions integration |
 | `internal/kata/` | Kata task-ledger client (CLI shell-out), ref parsing, context resolution |
@@ -81,6 +82,8 @@ CLI (roborev) → HTTP API → Daemon (roborev daemon run) → Worker Pool → A
 | `internal/prompt/prompt.go` | Prompt builder (single, range, dirty) |
 | `internal/worktree/worktree.go` | Worktree create/patch-capture/apply |
 | `internal/review/synthesis.go` | Multi-agent review synthesis for CI |
+| `internal/gitlab/client.go` | GitLab client, token and API base-URL resolution |
+| `internal/gitlab/comment.go` | MR note upsert, quick-action escaping, create recovery |
 | `internal/kata/client.go` | Kata CLI client (Binding, List, Show, Create) |
 | `internal/kata/context.go` | Resolve kata context for prompts (off/current/open) |
 

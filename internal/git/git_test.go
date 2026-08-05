@@ -3398,3 +3398,68 @@ func TestGetDirtyDiffKataLocalToml(t *testing.T) {
 		assert.Contains(t, diff, "steered")
 	})
 }
+
+func TestCommitCount(t *testing.T) {
+	repo := NewTestRepoWithCommit(t)
+	repo.CommitFile("second.txt", "two", "second commit")
+
+	count, err := CommitCount(repo.Dir, "HEAD")
+	require.NoError(t, err)
+	assert.Equal(t, 2, count)
+}
+
+func TestCommitCount_SingleCommit(t *testing.T) {
+	repo := NewTestRepoWithCommit(t)
+
+	count, err := CommitCount(repo.Dir, "HEAD")
+	require.NoError(t, err)
+	assert.Equal(t, 1, count)
+}
+
+func TestCommitCount_UnknownRev(t *testing.T) {
+	repo := NewTestRepoWithCommit(t)
+
+	_, err := CommitCount(repo.Dir, "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+	require.Error(t, err)
+}
+
+func TestIsRootCommit(t *testing.T) {
+	repo := NewTestRepoWithCommit(t)
+
+	root, err := IsRootCommit(repo.Dir, "HEAD")
+	require.NoError(t, err)
+	assert.True(t, root)
+
+	repo.CommitFile("second.txt", "two", "second commit")
+	root, err = IsRootCommit(repo.Dir, "HEAD")
+	require.NoError(t, err)
+	assert.False(t, root)
+}
+
+// A shallow clone grafts away the boundary commit's parents: rev-list reports
+// none, but the raw commit object still names them. IsRootCommit must read the
+// raw object so cut history is not mistaken for a root commit.
+func TestIsRootCommit_ShallowBoundaryIsNotRoot(t *testing.T) {
+	src := NewTestRepoWithCommit(t)
+	src.CommitFile("second.txt", "two", "second commit")
+
+	cloneDir := filepath.Join(t.TempDir(), "clone")
+	runGit(t, t.TempDir(), "clone", "--depth", "1", "file://"+src.Dir, cloneDir)
+
+	count, err := CommitCount(cloneDir, "HEAD")
+	require.NoError(t, err)
+	require.Equal(t, 1, count,
+		"shallow clone must hide the parent from rev-list for this test to bite")
+
+	root, err := IsRootCommit(cloneDir, "HEAD")
+	require.NoError(t, err)
+	assert.False(t, root,
+		"a shallow boundary commit has parents in its raw object and is not a root")
+}
+
+func TestIsRootCommit_UnknownRev(t *testing.T) {
+	repo := NewTestRepoWithCommit(t)
+
+	_, err := IsRootCommit(repo.Dir, "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef")
+	require.Error(t, err)
+}

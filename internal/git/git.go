@@ -2319,6 +2319,43 @@ func GetMergeBase(repoPath, ref1, ref2 string) (string, error) {
 	return strings.TrimSpace(string(out)), nil
 }
 
+// CommitCount returns the number of commits reachable from rev.
+func CommitCount(repoPath, rev string) (int, error) {
+	cmd := newGitCmd("rev-list", "--count", rev)
+	cmd.Dir = repoPath
+
+	out, err := cmd.Output()
+	if err != nil {
+		return 0, fmt.Errorf("git rev-list --count %s: %w", rev, err)
+	}
+	count, err := strconv.Atoi(strings.TrimSpace(string(out)))
+	if err != nil {
+		return 0, fmt.Errorf("parse rev-list count %q: %w", out, err)
+	}
+	return count, nil
+}
+
+// IsRootCommit reports whether rev's commit object records no parents. It
+// reads the raw object rather than walking history: a shallow clone grafts
+// away the boundary commit's parents, so rev-list-based checks see a parentless
+// commit there, while the raw object still names its parents.
+func IsRootCommit(repoPath, rev string) (bool, error) {
+	cmd := newGitCmd("cat-file", "commit", rev)
+	cmd.Dir = repoPath
+
+	out, err := cmd.Output()
+	if err != nil {
+		return false, fmt.Errorf("git cat-file commit %s: %w", rev, err)
+	}
+	header, _, _ := strings.Cut(string(out), "\n\n")
+	for line := range strings.SplitSeq(header, "\n") {
+		if strings.HasPrefix(line, "parent ") {
+			return false, nil
+		}
+	}
+	return true, nil
+}
+
 // GetCommitsSince returns all commits from mergeBase to HEAD (exclusive of mergeBase)
 // Returns commits in chronological order (oldest first)
 func GetCommitsSince(repoPath, mergeBase string) ([]string, error) {

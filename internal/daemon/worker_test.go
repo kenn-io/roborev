@@ -371,7 +371,7 @@ func TestWorkerCIPanelMemberRunsAgainstReviewedHeadWorktree(t *testing.T) {
 	staleHead := repo.HeadSHA()
 	baseSHA := repo.CommitFile("README.md", "base\n", "base")
 	repo.CommitFile("go.mod", "module go.kenn.io/middleman\n", "module migration")
-	headSHA := repo.CommitFile("internal/testenv/githubguard/githubguard.go", "package githubguard\n", "guard")
+	headSHA := repo.CommitFile("internal/testenv/forgeguard/forgeguard.go", "package forgeguard\n", "guard")
 	repo.Checkout("--detach", staleHead)
 
 	storedRepo, err := db.GetOrCreateRepo(repo.Path(), "https://github.com/kenn-io/middleman.git")

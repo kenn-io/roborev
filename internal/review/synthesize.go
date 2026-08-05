@@ -115,14 +115,7 @@ func formatSingleResult(
 			gitrepo.ShortSHA(headSHA))
 	}
 
-	output := r.Output
-	const truncSuffix = "\n\n...(truncated)"
-	maxLen := MaxCommentLen - len(truncSuffix)
-	if len(output) > MaxCommentLen {
-		output = TrimPartialRune(output[:maxLen]) + truncSuffix
-	}
-
-	return header + output
+	return header + TruncateComment(r.Output)
 }
 
 func runSynthesis(

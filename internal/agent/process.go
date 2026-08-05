@@ -22,7 +22,28 @@ type subprocessTracker struct {
 	canceledByContext atomic.Bool
 }
 
-func configureSubprocess(cmd *exec.Cmd) *subprocessTracker {
+// subprocessConfig holds the options configureSubprocess accepts.
+type subprocessConfig struct {
+	keepGitHubCredentials bool
+}
+
+type subprocessOption func(*subprocessConfig)
+
+// withGitHubCredentials keeps GH_TOKEN/GITHUB_TOKEN in the child
+// environment. Only for agent CLIs that authenticate with a GitHub token
+// and cannot start without it (copilot, kiro-cli); see forge_env.go.
+func withGitHubCredentials() subprocessOption {
+	return func(cfg *subprocessConfig) {
+		cfg.keepGitHubCredentials = true
+	}
+}
+
+func configureSubprocess(cmd *exec.Cmd, opts ...subprocessOption) *subprocessTracker {
+	var cfg subprocessConfig
+	for _, opt := range opts {
+		opt(&cfg)
+	}
+
 	procutil.HideConsole(cmd)
 	cmd.WaitDelay = subprocessWaitDelay
 
@@ -35,6 +56,17 @@ func configureSubprocess(cmd *exec.Cmd) *subprocessTracker {
 	if cmd.Env == nil {
 		cmd.Env = cmd.Environ()
 	}
+	// Single choke point for forge credential removal: agents process
+	// untrusted PR/MR content and must not be able to read the tokens
+	// roborev posts comments with. See forge_env.go.
+	//
+	// Logged for the same reason the ACP path logs it: an agentic fix job whose
+	// plan shells out to gh fails with "authentication required" and nothing in
+	// that error points at roborev having removed the token.
+	cmd.Env = logRemovedForgeCredentials(
+		cmd.Env,
+		stripForgeCredentials(cmd.Env, cfg.keepGitHubCredentials),
+		"agent "+filepath.Base(cmd.Path))
 	cmd.Env = append(cmd.Env, "GIT_OPTIONAL_LOCKS=0")
 
 	tracker := &subprocessTracker{}

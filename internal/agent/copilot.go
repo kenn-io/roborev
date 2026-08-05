@@ -212,7 +212,9 @@ func (a *CopilotAgent) Review(ctx context.Context, repoPath, commitSHA, prompt s
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Stdin = strings.NewReader(prompt)
 	cmd.Dir = repoPath
-	tracker := configureSubprocess(cmd)
+	// copilot authenticates with a GitHub token, so it is exempt from the
+	// GitHub half of the forge credential strip (see forge_env.go).
+	tracker := configureSubprocess(cmd, withGitHubCredentials())
 
 	var stdout, stderr bytes.Buffer
 	if sw := newSyncWriter(output); sw != nil {

@@ -21,6 +21,7 @@ ROUTES = [
     "/configuration/",
     "/agents/",
     "/integrations/github/",
+    "/integrations/gitlab/",
     "/guides/reviewing-code/",
     "/guides/responding-to-reviews/",
     "/guides/agent-skills/",

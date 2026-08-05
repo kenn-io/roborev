@@ -1167,10 +1167,13 @@ jobs:
 ```
 
 Adjust the agent and secrets to match your setup. For multi-agent reviews, pass
-`--agent` multiple times or use `--review-types` to run different review types.
+a comma-separated list (`--agent codex,gemini`) or use `--review-types` to run
+different review types.
 
 ## See Also
 
+- [GitLab Integration](/integrations/gitlab/): The equivalent GitLab CI pipeline
+    setup
 - [Configuration](/configuration/): Global and per-repo settings
 - [Event Streaming](/advanced/streaming/): Stream review events for custom
     integrations

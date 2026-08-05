@@ -1,7 +1,10 @@
 package main
 
 import (
+	"context"
 	"encoding/json"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -12,6 +15,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/config"
+	glpkg "go.kenn.io/roborev/internal/gitlab"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 func installFakeGHAuthToken(t *testing.T, token string) {
@@ -25,6 +30,36 @@ func installFakeGHAuthToken(t *testing.T, token string) {
 	script := "#!/bin/sh\nif [ \"$1\" = \"auth\" ] && [ \"$2\" = \"token\" ]; then\n  printf '%s\\n' " + "'" + token + "'\n  exit 0\nfi\nexit 1\n"
 	require.NoError(t, os.WriteFile(scriptPath, []byte(script), 0o755))
 	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+func installFakeGlabAuthToken(t *testing.T, token string) {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("skipping fake glab helper on Windows")
+	}
+
+	dir := t.TempDir()
+	scriptPath := filepath.Join(dir, "glab")
+	script := "#!/bin/sh\nif [ \"$1\" = \"auth\" ] && [ \"$2\" = \"token\" ]; then\n  printf '%s\\n' " + "'" + token + "'\n  exit 0\nfi\nexit 1\n"
+	require.NoError(t, os.WriteFile(scriptPath, []byte(script), 0o755))
+	t.Setenv("PATH", dir+string(os.PathListSeparator)+os.Getenv("PATH"))
+}
+
+// clearForgeCIEnv removes the CI environment variables the forge detection
+// looks at so tests are not affected by the ambient environment.
+func clearForgeCIEnv(t *testing.T) {
+	t.Helper()
+	for _, key := range []string{
+		"GITHUB_ACTIONS", "GITHUB_REPOSITORY", "GITHUB_EVENT_PATH", "GITHUB_REF",
+		"GITLAB_CI", "CI_PROJECT_PATH", "CI_MERGE_REQUEST_PROJECT_PATH",
+		"CI_MERGE_REQUEST_IID",
+		"CI_COMMIT_SHA", "CI_COMMIT_BEFORE_SHA", "CI_COMMIT_BRANCH",
+		"CI_MERGE_REQUEST_DIFF_BASE_SHA", "CI_MERGE_REQUEST_TARGET_BRANCH_SHA",
+		"CI_MERGE_REQUEST_SOURCE_BRANCH_SHA", "CI_DEFAULT_BRANCH",
+		"CI_SERVER_URL", "GITLAB_HOST", "GL_HOST", "GITLAB_TOKEN", "GL_TOKEN",
+	} {
+		t.Setenv(key, "")
+	}
 }
 
 func TestCIReviewCmd_Help(t *testing.T) {
@@ -44,6 +79,8 @@ func TestCIReviewCmd_Help(t *testing.T) {
 		"--ref",
 		"--comment",
 		"--gh-repo",
+		"--gl-repo",
+		"--gl-host",
 		"--pr",
 		"--agent",
 		"--review-types",
@@ -76,8 +113,13 @@ func TestCIReviewCmd_Validation(t *testing.T) {
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			if tt.clearEnv {
-				t.Setenv("GITHUB_EVENT_PATH", "")
-				t.Setenv("GITHUB_REF", "")
+				// Ref auto-detection runs after the repo-root check, so
+				// reaching it needs a git repo as the working directory.
+				// Without one the command fails earlier with "not a git
+				// repository" — which is what happens in a build sandbox
+				// that copies the source without .git.
+				t.Chdir(testutil.InitTestRepo(t).Root)
+				clearForgeCIEnv(t)
 			}
 			cmd := ciCmd()
 			cmd.SetArgs(tt.args)
@@ -152,6 +194,964 @@ func TestDetectPRNumber_NoEnv(t *testing.T) {
 
 	_, err := detectPRNumber()
 	require.Error(t, err)
+}
+
+func TestDetectCIForge(t *testing.T) {
+	tests := []struct {
+		name          string
+		opts          ciReviewOpts
+		githubActions string
+		gitlabCI      string
+		want          ciForge
+		wantErr       string
+	}{
+		{
+			name: "DefaultsToGitHub",
+			want: ciForgeGitHub,
+		},
+		{
+			name: "GHRepoFlag",
+			opts: ciReviewOpts{ghRepo: "owner/repo"},
+			want: ciForgeGitHub,
+		},
+		{
+			name: "GLRepoFlag",
+			opts: ciReviewOpts{glRepo: "group/project"},
+			want: ciForgeGitLab,
+		},
+		{
+			name:     "GLRepoFlagBeatsGitHubActionsEnv",
+			opts:     ciReviewOpts{glRepo: "group/project"},
+			gitlabCI: "true", githubActions: "true",
+			want: ciForgeGitLab,
+		},
+		{
+			name:          "GHRepoFlagBeatsGitLabCIEnv",
+			opts:          ciReviewOpts{ghRepo: "owner/repo"},
+			gitlabCI:      "true",
+			githubActions: "",
+			want:          ciForgeGitHub,
+		},
+		{
+			// Both indicators present is the injection case: a GitLab
+			// pipeline starter can set GITHUB_ACTIONS=true as a pipeline
+			// variable, while GITLAB_CI inside real GitHub Actions can only
+			// come from committed workflow code. The GitLab indicator is the
+			// one that cannot be forged from outside the job script, so it
+			// wins — flipping to the GitHub client would resolve the API
+			// origin from equally injectable GITHUB_API_URL.
+			name:          "GitLabCIEnvBeatsGitHubActionsEnv",
+			githubActions: "true",
+			gitlabCI:      "true",
+			want:          ciForgeGitLab,
+		},
+		{
+			name: "GLHostFlag",
+			opts: ciReviewOpts{glHost: "https://gitlab.example.com"},
+			want: ciForgeGitLab,
+		},
+		{
+			// The origin pin must pin forge selection too: an injected
+			// GITHUB_ACTIONS=true must not steer a --gl-host run to the
+			// GitHub client, which the pin never touches.
+			name:          "GLHostFlagBeatsGitHubActionsEnv",
+			opts:          ciReviewOpts{glHost: "https://gitlab.example.com"},
+			githubActions: "true",
+			want:          ciForgeGitLab,
+		},
+		{
+			name: "GHRepoWithGLHostRejected",
+			opts: ciReviewOpts{
+				ghRepo: "owner/repo",
+				glHost: "https://gitlab.example.com",
+			},
+			wantErr: "mutually exclusive",
+		},
+		{
+			name:     "GitLabCIEnv",
+			gitlabCI: "true",
+			want:     ciForgeGitLab,
+		},
+		{
+			name:     "GitLabCIEnvNumericTruthy",
+			gitlabCI: "1",
+			want:     ciForgeGitLab,
+		},
+		{
+			name:     "GitLabCIEnvFalseFallsBackToGitHub",
+			gitlabCI: "false",
+			want:     ciForgeGitHub,
+		},
+		{
+			name:    "BothRepoFlagsRejected",
+			opts:    ciReviewOpts{ghRepo: "owner/repo", glRepo: "group/project"},
+			wantErr: "mutually exclusive",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clearForgeCIEnv(t)
+			t.Setenv("GITHUB_ACTIONS", tt.githubActions)
+			t.Setenv("GITLAB_CI", tt.gitlabCI)
+
+			got, err := detectCIForge(tt.opts)
+			if tt.wantErr != "" {
+				require.ErrorContains(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestCIReviewCmd_RepoFlagsMutuallyExclusive(t *testing.T) {
+	tests := []struct {
+		name   string
+		flags  []string
+		wanted []string
+	}{
+		{
+			name: "GHRepoWithGLRepo",
+			flags: []string{
+				"--gh-repo", "owner/repo", "--gl-repo", "group/project",
+			},
+			wanted: []string{"gh-repo", "gl-repo"},
+		},
+		{
+			name: "GHRepoWithGLHost",
+			flags: []string{
+				"--gh-repo", "owner/repo",
+				"--gl-host", "https://gitlab.example.com",
+			},
+			wanted: []string{"gh-repo", "gl-host"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cmd := ciCmd()
+			cmd.SetArgs(append([]string{"review", "--ref", "abc"}, tt.flags...))
+			var buf strings.Builder
+			cmd.SetOut(&buf)
+			cmd.SetErr(&buf)
+
+			err := cmd.Execute()
+			require.Error(t, err)
+			for _, want := range tt.wanted {
+				assert.Contains(t, err.Error(), want)
+			}
+		})
+	}
+}
+
+func TestDetectGitLabGitRef(t *testing.T) {
+	tests := []struct {
+		name             string
+		commitSHA        string
+		sourceBranchSHA  string
+		diffBaseSHA      string
+		targetBranchSHA  string
+		commitBeforeSHA  string
+		want             string
+		wantErrSubstring string
+	}{
+		{
+			name:        "MergeRequestDiffBase",
+			commitSHA:   "head111",
+			diffBaseSHA: "base000",
+			want:        "base000..head111",
+		},
+		{
+			// Merged results pipeline: CI_COMMIT_SHA is the
+			// synthetic merge commit, so the source branch HEAD
+			// must win to keep target changes out of the diff.
+			name:            "SourceBranchSHAWinsOverCommitSHA",
+			commitSHA:       "merged999",
+			sourceBranchSHA: "source111",
+			diffBaseSHA:     "base000",
+			want:            "base000..source111",
+		},
+		{
+			name:            "EmptySourceBranchSHAFallsThrough",
+			commitSHA:       "head111",
+			sourceBranchSHA: "",
+			diffBaseSHA:     "base000",
+			want:            "base000..head111",
+		},
+		{
+			name:            "IgnoresZeroSourceBranchSHA",
+			commitSHA:       "head111",
+			sourceBranchSHA: "0000000000000000000000000000000000000000",
+			diffBaseSHA:     "base000",
+			want:            "base000..head111",
+		},
+		{
+			// No base and no default branch to derive one from: the pushed
+			// range is unknowable, so asking for --ref beats reviewing the tip.
+			name:             "SourceBranchSHAWithoutBaseErrors",
+			sourceBranchSHA:  "source111",
+			wantErrSubstring: "--ref",
+		},
+		{
+			name:            "DiffBaseWinsOverTargetBranch",
+			commitSHA:       "head111",
+			diffBaseSHA:     "base000",
+			targetBranchSHA: "target999",
+			want:            "base000..head111",
+		},
+		{
+			name:            "FallsBackToTargetBranchSHA",
+			commitSHA:       "head111",
+			targetBranchSHA: "target999",
+			want:            "target999..head111",
+		},
+		{
+			name:            "FallsBackToCommitBeforeSHA",
+			commitSHA:       "head111",
+			commitBeforeSHA: "before777",
+			want:            "before777..head111",
+		},
+		{
+			// A zero before-SHA is a first push. It is still not a usable base,
+			// and with no default branch the range cannot be reconstructed.
+			name:             "IgnoresZeroCommitBeforeSHA",
+			commitSHA:        "head111",
+			commitBeforeSHA:  "0000000000000000000000000000000000000000",
+			wantErrSubstring: "first push",
+		},
+		{
+			name:             "NoBaseErrorsWithoutDefaultBranch",
+			commitSHA:        "head111",
+			wantErrSubstring: "CI_DEFAULT_BRANCH",
+		},
+		{
+			name:             "MissingCommitSHA",
+			wantErrSubstring: "CI_COMMIT_SHA",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clearForgeCIEnv(t)
+			t.Setenv("CI_COMMIT_SHA", tt.commitSHA)
+			t.Setenv("CI_MERGE_REQUEST_SOURCE_BRANCH_SHA", tt.sourceBranchSHA)
+			t.Setenv("CI_MERGE_REQUEST_DIFF_BASE_SHA", tt.diffBaseSHA)
+			t.Setenv("CI_MERGE_REQUEST_TARGET_BRANCH_SHA", tt.targetBranchSHA)
+			t.Setenv("CI_COMMIT_BEFORE_SHA", tt.commitBeforeSHA)
+
+			// A temp dir that is not a repo makes merge-base
+			// resolution fail, exercising the tip fallback.
+			got, err := detectGitLabGitRef(t.TempDir())
+			if tt.wantErrSubstring != "" {
+				require.ErrorContains(t, err, tt.wantErrSubstring)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestDetectGitRefForForge_UsesForgeSpecificEnv(t *testing.T) {
+	clearForgeCIEnv(t)
+	setupFakeGitHubEvent(t, map[string]any{
+		"pull_request": map[string]any{
+			"base": map[string]string{"sha": "ghbase"},
+			"head": map[string]string{"sha": "ghhead"},
+		},
+	})
+	t.Setenv("CI_COMMIT_SHA", "glhead")
+	t.Setenv("CI_MERGE_REQUEST_DIFF_BASE_SHA", "glbase")
+
+	ghRef, err := detectGitRefForForge(ciForgeGitHub, t.TempDir())
+	require.NoError(t, err)
+	assert.Equal(t, "ghbase..ghhead", ghRef)
+
+	glRef, err := detectGitRefForForge(ciForgeGitLab, t.TempDir())
+	require.NoError(t, err)
+	assert.Equal(t, "glbase..glhead", glRef)
+}
+
+// TestDetectGitLabGitRef_DivergedBranches covers the fallback bases, which are
+// branch tips rather than diff bases. When the target branch advanced after the
+// branches diverged, comparing tips would report target-only commits as
+// removals, so the range must start at the merge base instead.
+func TestDetectGitLabGitRef_DivergedBranches(t *testing.T) {
+	tests := []struct {
+		name    string
+		baseEnv string
+	}{
+		{"TargetBranchSHA", "CI_MERGE_REQUEST_TARGET_BRANCH_SHA"},
+		{"CommitBeforeSHA", "CI_COMMIT_BEFORE_SHA"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+
+			repo := testutil.NewTestRepoWithCommit(t)
+			mergeBase := repo.HeadSHA()
+			defaultBranch := strings.TrimSpace(
+				repo.RevParse("--abbrev-ref", "HEAD"))
+
+			// Source branch: one commit on top of the merge base.
+			repo.CheckoutNewBranch("feature")
+			head := repo.CommitFile("feature.txt", "feature", "feature work")
+
+			// Target branch advances after the divergence.
+			repo.CheckoutBranch(defaultBranch)
+			targetTip := repo.CommitFile("target.txt", "target", "target work")
+			assert.NotEqual(mergeBase, targetTip)
+
+			clearForgeCIEnv(t)
+			t.Setenv("CI_COMMIT_SHA", head)
+			t.Setenv(tt.baseEnv, targetTip)
+
+			got, err := detectGitLabGitRef(repo.Path())
+			require.NoError(t, err)
+			assert.Equal(mergeBase+".."+head, got)
+			assert.NotContains(got, targetTip)
+		})
+	}
+}
+
+// TestDetectGitLabGitRef_MissingBaseErrors covers the shallow-clone case. When a
+// base was named but is not in the clone, neither way out is good: base..head
+// fails on the missing commit in every later git operation, and narrowing to
+// head alone is worse still, because a single ref is diffed with `git show` — one
+// commit — so a multi-commit merge request would be reviewed as its last commit
+// and could still post a passing verdict. Failing with an actionable message is
+// the honest option.
+//
+// The diff-base case matters most: it skips gitLabMergeBase entirely, so the
+// presence check is the only thing standing between a shallow clone and a wrong
+// answer. It is also the path every normal merge request pipeline takes, where
+// GitLab clones with GIT_DEPTH=20 by default.
+func TestDetectGitLabGitRef_MissingBaseErrors(t *testing.T) {
+	const absentSHA = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+
+	baseKeys := []string{
+		"CI_MERGE_REQUEST_DIFF_BASE_SHA",
+		"CI_MERGE_REQUEST_TARGET_BRANCH_SHA",
+		"CI_COMMIT_BEFORE_SHA",
+	}
+
+	for _, baseKey := range baseKeys {
+		t.Run(baseKey, func(t *testing.T) {
+			assert := assert.New(t)
+			repo := testutil.NewTestRepoWithCommit(t)
+			head := repo.HeadSHA()
+
+			clearForgeCIEnv(t)
+			t.Setenv("CI_COMMIT_SHA", head)
+			t.Setenv(baseKey, absentSHA)
+
+			got, err := detectGitLabGitRef(repo.Path())
+			require.Error(t, err)
+			assert.Empty(got,
+				"no ref may be returned when the range cannot be covered")
+			assert.Contains(err.Error(), absentSHA)
+			assert.Contains(err.Error(), "GIT_DEPTH",
+				"the error must tell the operator how to fix it")
+		})
+	}
+}
+
+// A branch's first push leaves every base candidate empty or zero, but it still
+// carries a range: CI_COMMIT_BEFORE_SHA is zero only on the first push, and merge
+// request pipelines always set the diff base. Returning head alone would diff a
+// multi-commit push with `git show` and post a verdict covering its last commit,
+// so the range is reconstructed from the default branch instead.
+func TestDetectGitLabGitRef_FirstPushUsesDefaultBranch(t *testing.T) {
+	repo := testutil.NewTestRepoWithCommit(t)
+	mergeBase := repo.HeadSHA()
+	defaultBranch := strings.TrimSpace(repo.RevParse("--abbrev-ref", "HEAD"))
+
+	// Two commits on a new branch, as a first push would carry.
+	repo.CheckoutNewBranch("feature")
+	repo.CommitFile("one.txt", "one", "first of the push")
+	head := repo.CommitFile("two.txt", "two", "second of the push")
+
+	clearForgeCIEnv(t)
+	t.Setenv("CI_COMMIT_SHA", head)
+	t.Setenv("CI_COMMIT_BEFORE_SHA", zeroSHA)
+	t.Setenv("CI_DEFAULT_BRANCH", defaultBranch)
+
+	got, err := detectGitLabGitRef(repo.Path())
+	require.NoError(t, err)
+	assert.Equal(t, mergeBase+".."+head, got,
+		"the whole push must be reviewed, not just its last commit")
+}
+
+// Head already contained in the default branch means the push added nothing on
+// top of it, so the commit itself is the whole review.
+func TestDetectGitLabGitRef_FirstPushContainedInDefaultBranch(t *testing.T) {
+	repo := testutil.NewTestRepoWithCommit(t)
+	head := repo.HeadSHA()
+	defaultBranch := strings.TrimSpace(repo.RevParse("--abbrev-ref", "HEAD"))
+
+	clearForgeCIEnv(t)
+	t.Setenv("CI_COMMIT_SHA", head)
+	t.Setenv("CI_DEFAULT_BRANCH", defaultBranch)
+
+	got, err := detectGitLabGitRef(repo.Path())
+	require.NoError(t, err)
+	assert.Equal(t, head, got)
+}
+
+// The default branch's own first push — a brand-new repository's initial
+// pipeline — reaches the first-push fallback with the pushed branch equal to
+// CI_DEFAULT_BRANCH, so the merge base of the default branch with head is head
+// itself. Returning head there would review one commit of a multi-commit
+// initial push and imply the rest passed. A single-commit initial push has no
+// such gap: the commit is the whole push.
+func TestDetectGitLabGitRef_DefaultBranchFirstPush(t *testing.T) {
+	t.Run("MultiCommitErrors", func(t *testing.T) {
+		assert := assert.New(t)
+		repo := testutil.NewTestRepoWithCommit(t)
+		repo.CommitFile("second.txt", "two", "second of the push")
+		head := repo.HeadSHA()
+		branch := strings.TrimSpace(repo.RevParse("--abbrev-ref", "HEAD"))
+
+		clearForgeCIEnv(t)
+		t.Setenv("CI_COMMIT_SHA", head)
+		t.Setenv("CI_COMMIT_BEFORE_SHA", zeroSHA)
+		t.Setenv("CI_DEFAULT_BRANCH", branch)
+		t.Setenv("CI_COMMIT_BRANCH", branch)
+
+		got, err := detectGitLabGitRef(repo.Path())
+		require.Error(t, err)
+		assert.Empty(got,
+			"a multi-commit initial push must not be narrowed to its tip")
+		assert.Contains(err.Error(), "initial push")
+		assert.Contains(err.Error(), "--ref",
+			"the error must tell the operator how to proceed")
+	})
+
+	t.Run("SingleCommitReviewsHead", func(t *testing.T) {
+		repo := testutil.NewTestRepoWithCommit(t)
+		head := repo.HeadSHA()
+		branch := strings.TrimSpace(repo.RevParse("--abbrev-ref", "HEAD"))
+
+		clearForgeCIEnv(t)
+		t.Setenv("CI_COMMIT_SHA", head)
+		t.Setenv("CI_COMMIT_BEFORE_SHA", zeroSHA)
+		t.Setenv("CI_DEFAULT_BRANCH", branch)
+		t.Setenv("CI_COMMIT_BRANCH", branch)
+
+		got, err := detectGitLabGitRef(repo.Path())
+		require.NoError(t, err)
+		assert.Equal(t, head, got)
+	})
+
+	// A GIT_DEPTH=1 checkout of a multi-commit initial push reports a
+	// rev-list count of one: the graft hides the parent. The raw commit
+	// object still names it, so the cut must be detected and the run must
+	// fail with the shallow-clone guidance rather than review the tip and
+	// imply the rest passed.
+	t.Run("ShallowMultiCommitErrors", func(t *testing.T) {
+		assert := assert.New(t)
+		src := testutil.NewTestRepoWithCommit(t)
+		head := src.CommitFile("second.txt", "two", "second of the push")
+		branch := strings.TrimSpace(src.RevParse("--abbrev-ref", "HEAD"))
+
+		cloneDir := filepath.Join(t.TempDir(), "clone")
+		// file:// forces the transport path — a plain local-path clone
+		// copies everything and ignores --depth.
+		src.Run("clone", "--depth", "1", "file://"+src.Path(), cloneDir)
+
+		clearForgeCIEnv(t)
+		t.Setenv("CI_COMMIT_SHA", head)
+		t.Setenv("CI_COMMIT_BEFORE_SHA", zeroSHA)
+		t.Setenv("CI_DEFAULT_BRANCH", branch)
+		t.Setenv("CI_COMMIT_BRANCH", branch)
+
+		got, err := detectGitLabGitRef(cloneDir)
+		require.Error(t, err)
+		assert.Empty(got,
+			"a shallow clone must not pass off the tip as the whole push")
+		assert.Contains(err.Error(), "GIT_DEPTH",
+			"the error must tell the operator how to fix it")
+	})
+
+	// The same depth-1 checkout of a genuinely single-commit push must still
+	// work: the fetched commit is a real root, so nothing was cut.
+	t.Run("ShallowSingleCommitReviewsHead", func(t *testing.T) {
+		src := testutil.NewTestRepoWithCommit(t)
+		head := src.HeadSHA()
+		branch := strings.TrimSpace(src.RevParse("--abbrev-ref", "HEAD"))
+
+		cloneDir := filepath.Join(t.TempDir(), "clone")
+		src.Run("clone", "--depth", "1", "file://"+src.Path(), cloneDir)
+
+		clearForgeCIEnv(t)
+		t.Setenv("CI_COMMIT_SHA", head)
+		t.Setenv("CI_COMMIT_BEFORE_SHA", zeroSHA)
+		t.Setenv("CI_DEFAULT_BRANCH", branch)
+		t.Setenv("CI_COMMIT_BRANCH", branch)
+
+		got, err := detectGitLabGitRef(cloneDir)
+		require.NoError(t, err)
+		assert.Equal(t, head, got)
+	})
+}
+
+// Without a resolvable default branch there is no way to tell a one-commit push
+// from a twelve-commit one, so the run must stop and ask rather than review the
+// tip and imply the rest passed.
+func TestDetectGitLabGitRef_FirstPushWithoutDefaultBranchErrors(t *testing.T) {
+	tests := []struct {
+		name          string
+		defaultBranch string
+		wantSubstring string
+	}{
+		{
+			name:          "Unset",
+			defaultBranch: "",
+			wantSubstring: "CI_DEFAULT_BRANCH",
+		},
+		{
+			name:          "NotInClone",
+			defaultBranch: "no-such-branch",
+			wantSubstring: "could not be resolved",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			repo := testutil.NewTestRepoWithCommit(t)
+			head := repo.HeadSHA()
+
+			clearForgeCIEnv(t)
+			t.Setenv("CI_COMMIT_SHA", head)
+			t.Setenv("CI_COMMIT_BEFORE_SHA", zeroSHA)
+			t.Setenv("CI_DEFAULT_BRANCH", tt.defaultBranch)
+
+			got, err := detectGitLabGitRef(repo.Path())
+			require.Error(t, err)
+			assert.Empty(got)
+			assert.Contains(err.Error(), tt.wantSubstring)
+			assert.Contains(err.Error(), "--ref",
+				"the error must tell the operator how to proceed")
+		})
+	}
+}
+
+// TestDetectGitLabGitRef_MissingHead covers the shallow merged-results checkout.
+// CI_MERGE_REQUEST_SOURCE_BRANCH_SHA is the preferred head because CI_COMMIT_SHA
+// is a synthetic merge commit there — but with GIT_DEPTH=1 the merge commit is the
+// only thing fetched, so the source branch HEAD can be absent. Returning it would
+// make every later git operation fail on a commit the clone does not have.
+func TestDetectGitLabGitRef_MissingHead(t *testing.T) {
+	const absentSHA = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+	const otherAbsentSHA = "feedfacefeedfacefeedfacefeedfacefeedface"
+
+	tests := []struct {
+		name string
+		// configure sets the CI env for repo and returns the expected ref.
+		configure      func(t *testing.T, repo *testutil.TestRepo) string
+		wantErrSubstrs []string
+	}{
+		{
+			// The fallback has to be usable on its own: the range must name
+			// the checked-out SHA, not the absent source branch HEAD.
+			name: "FallsBackToCheckedOutSHA",
+			configure: func(t *testing.T, repo *testutil.TestRepo) string {
+				base := repo.HeadSHA()
+				head := repo.CommitFile("feature.txt", "feature", "feature work")
+				t.Setenv("CI_MERGE_REQUEST_SOURCE_BRANCH_SHA", absentSHA)
+				t.Setenv("CI_COMMIT_SHA", head)
+				t.Setenv("CI_MERGE_REQUEST_DIFF_BASE_SHA", base)
+				return base + ".." + head
+			},
+		},
+		{
+			// Guards the merged-results preference: when the source branch
+			// HEAD is present it must still win over CI_COMMIT_SHA.
+			name: "PresentSourceSHAStillWins",
+			configure: func(t *testing.T, repo *testutil.TestRepo) string {
+				merged := repo.HeadSHA()
+				source := repo.CommitFile("feature.txt", "feature", "feature work")
+				t.Setenv("CI_MERGE_REQUEST_SOURCE_BRANCH_SHA", source)
+				t.Setenv("CI_COMMIT_SHA", merged)
+				// A diff base keeps this on the merge request path, so the
+				// assertion stays about head preference. Had CI_COMMIT_SHA won,
+				// head would be merged and the range would collapse.
+				t.Setenv("CI_MERGE_REQUEST_DIFF_BASE_SHA", merged)
+				return merged + ".." + source
+			},
+		},
+		{
+			// Neither candidate is in the clone, so there is nothing to
+			// degrade to. An actionable shallow-clone error beats a ref that
+			// fails deeper in the pipeline.
+			name: "NeitherHeadPresentErrors",
+			configure: func(t *testing.T, _ *testutil.TestRepo) string {
+				t.Setenv("CI_MERGE_REQUEST_SOURCE_BRANCH_SHA", absentSHA)
+				t.Setenv("CI_COMMIT_SHA", otherAbsentSHA)
+				return ""
+			},
+			wantErrSubstrs: []string{absentSHA, otherAbsentSHA, "GIT_DEPTH"},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+
+			repo := testutil.NewTestRepoWithCommit(t)
+			clearForgeCIEnv(t)
+			want := tt.configure(t, repo)
+
+			got, err := detectGitLabGitRef(repo.Path())
+			if len(tt.wantErrSubstrs) > 0 {
+				require.Error(t, err)
+				for _, substr := range tt.wantErrSubstrs {
+					assert.Contains(err.Error(), substr)
+				}
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(want, got)
+			assert.NotContains(got, absentSHA,
+				"a head that is absent from the clone must not appear in the range")
+		})
+	}
+}
+
+// A base that resolves but has no common ancestor with head still compares tips:
+// the commits exist, so the range is usable even though it is imprecise.
+func TestDetectGitLabGitRef_UnrelatedBaseComparesTips(t *testing.T) {
+	repo := testutil.NewTestRepoWithCommit(t)
+	head := repo.HeadSHA()
+	// A real commit object that shares no history with head, so merge-base
+	// finds nothing while the object itself is present.
+	unrelated := repo.UnrelatedCommit("unrelated root")
+
+	clearForgeCIEnv(t)
+	t.Setenv("CI_COMMIT_SHA", head)
+	t.Setenv("CI_MERGE_REQUEST_TARGET_BRANCH_SHA", unrelated)
+
+	got, err := detectGitLabGitRef(repo.Path())
+	require.NoError(t, err)
+	assert.Equal(t, unrelated+".."+head, got)
+}
+
+// TestDetectGitLabGitRef_DiffBaseSkipsMergeBase pins that the diff base is used
+// verbatim: GitLab already resolved it against the target branch. The base here
+// is the advanced target tip, which is not an ancestor of head, so resolving a
+// merge base would visibly rewrite it.
+func TestDetectGitLabGitRef_DiffBaseSkipsMergeBase(t *testing.T) {
+	assert := assert.New(t)
+
+	repo := testutil.NewTestRepoWithCommit(t)
+	mergeBase := repo.HeadSHA()
+	defaultBranch := strings.TrimSpace(repo.RevParse("--abbrev-ref", "HEAD"))
+
+	repo.CheckoutNewBranch("feature")
+	head := repo.CommitFile("feature.txt", "feature", "feature work")
+
+	repo.CheckoutBranch(defaultBranch)
+	targetTip := repo.CommitFile("target.txt", "target", "target work")
+
+	clearForgeCIEnv(t)
+	t.Setenv("CI_COMMIT_SHA", head)
+	t.Setenv("CI_MERGE_REQUEST_DIFF_BASE_SHA", targetTip)
+
+	got, err := detectGitLabGitRef(repo.Path())
+	require.NoError(t, err)
+	assert.Equal(targetTip+".."+head, got)
+	assert.NotContains(got, mergeBase, "diff base must not be rewritten")
+}
+
+func TestDetectMRIID(t *testing.T) {
+	tests := []struct {
+		name    string
+		iid     string
+		want    int
+		wantErr bool
+	}{
+		{"Valid", "42", 42, false},
+		{"Whitespace", " 7 ", 7, false},
+		{"Missing", "", 0, true},
+		{"NotANumber", "abc", 0, true},
+		{"Zero", "0", 0, true},
+		{"Negative", "-3", 0, true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clearForgeCIEnv(t)
+			t.Setenv("CI_MERGE_REQUEST_IID", tt.iid)
+
+			got, err := detectMRIID()
+			if tt.wantErr {
+				require.Error(t, err)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
+}
+
+func TestDetectGitLabProjectPath(t *testing.T) {
+	tests := []struct {
+		name          string
+		mrProjectPath string
+		projectPath   string
+		want          string
+	}{
+		{
+			name:        "BranchPipelineUsesProjectPath",
+			projectPath: "group/project",
+			want:        "group/project",
+		},
+		{
+			// Fork MR pipelines run in the fork, so CI_PROJECT_PATH
+			// is the source project while the MR IID belongs to the
+			// target project.
+			name:          "MRProjectPathWins",
+			mrProjectPath: "group/project",
+			projectPath:   "contributor/project",
+			want:          "group/project",
+		},
+		{
+			name:          "IgnoresBlankMRProjectPath",
+			mrProjectPath: "   ",
+			projectPath:   "group/project",
+			want:          "group/project",
+		},
+		{
+			name: "NothingSet",
+			want: "",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			clearForgeCIEnv(t)
+			t.Setenv("CI_MERGE_REQUEST_PROJECT_PATH", tt.mrProjectPath)
+			t.Setenv("CI_PROJECT_PATH", tt.projectPath)
+
+			assert.Equal(t, tt.want, detectGitLabProjectPath())
+		})
+	}
+}
+
+func TestPostGitLabCIComment_MissingProject(t *testing.T) {
+	clearForgeCIEnv(t)
+
+	err := postGitLabCIComment(
+		context.Background(), ciReviewOpts{}, "body", false)
+	require.ErrorContains(t, err, "--gl-repo")
+}
+
+func TestPostGitLabCIComment_MissingMRIID(t *testing.T) {
+	clearForgeCIEnv(t)
+	t.Setenv("CI_PROJECT_PATH", "group/project")
+
+	err := postGitLabCIComment(
+		context.Background(), ciReviewOpts{}, "body", false)
+	require.ErrorContains(t, err, "CI_MERGE_REQUEST_IID")
+}
+
+// stubGitLabNotesAPI serves the minimal notes API surface `--comment` uses and
+// records what the command sent.
+type stubGitLabNotesAPI struct {
+	existingNotes []map[string]any
+	createdBodies []string
+	updatedBodies []string
+	requestPaths  []string
+}
+
+func (s *stubGitLabNotesAPI) start(t *testing.T) string {
+	t.Helper()
+
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			s.requestPaths = append(s.requestPaths, r.URL.EscapedPath())
+			var payload struct {
+				Body string `json:"body"`
+			}
+			switch r.Method {
+			case http.MethodGet:
+				notes := s.existingNotes
+				if notes == nil {
+					notes = []map[string]any{}
+				}
+				assert.NoError(t, json.NewEncoder(w).Encode(notes))
+			case http.MethodPost:
+				assert.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+				s.createdBodies = append(s.createdBodies, payload.Body)
+				w.WriteHeader(http.StatusCreated)
+				assert.NoError(t, json.NewEncoder(w).Encode(
+					map[string]any{"id": 999, "body": payload.Body}))
+			case http.MethodPut:
+				assert.NoError(t, json.NewDecoder(r.Body).Decode(&payload))
+				s.updatedBodies = append(s.updatedBodies, payload.Body)
+				assert.NoError(t, json.NewEncoder(w).Encode(
+					map[string]any{"id": 42, "body": payload.Body}))
+			default:
+				http.NotFound(w, r)
+			}
+		}))
+	t.Cleanup(srv.Close)
+
+	clearForgeCIEnv(t)
+	t.Setenv("CI_SERVER_URL", srv.URL)
+	t.Setenv("GITLAB_TOKEN", "stub-token")
+	t.Setenv("CI_PROJECT_PATH", "group/project")
+	t.Setenv("CI_MERGE_REQUEST_IID", "7")
+	return srv.URL
+}
+
+func TestPostGitLabCIComment_CreatesNewNote(t *testing.T) {
+	api := &stubGitLabNotesAPI{}
+	api.start(t)
+
+	require.NoError(t, postGitLabCIComment(
+		context.Background(), ciReviewOpts{}, "review body", false))
+	require.Len(t, api.createdBodies, 1)
+	assert.Empty(t, api.updatedBodies)
+	assert.Contains(t, api.createdBodies[0], glpkg.CommentMarker)
+	assert.Contains(t, api.createdBodies[0], "review body")
+}
+
+func TestPostGitLabCIComment_UpsertUpdatesExistingNote(t *testing.T) {
+	api := &stubGitLabNotesAPI{
+		existingNotes: []map[string]any{
+			{"id": 42, "body": glpkg.CommentMarker + "\nold"},
+		},
+	}
+	api.start(t)
+
+	require.NoError(t, postGitLabCIComment(
+		context.Background(), ciReviewOpts{}, "review body", true))
+	require.Len(t, api.updatedBodies, 1)
+	assert.Empty(t, api.createdBodies)
+	assert.Contains(t, api.updatedBodies[0], "review body")
+}
+
+func TestPostGitLabCIComment_WithoutUpsertIgnoresExistingNote(t *testing.T) {
+	api := &stubGitLabNotesAPI{
+		existingNotes: []map[string]any{
+			{"id": 42, "body": glpkg.CommentMarker + "\nold"},
+		},
+	}
+	api.start(t)
+
+	require.NoError(t, postGitLabCIComment(
+		context.Background(), ciReviewOpts{}, "review body", false))
+	require.Len(t, api.createdBodies, 1)
+	assert.Empty(t, api.updatedBodies)
+}
+
+func TestPostGitLabCIComment_UsesExplicitFlagsOverEnv(t *testing.T) {
+	api := &stubGitLabNotesAPI{}
+	// start() sets CI_PROJECT_PATH=group/project and
+	// CI_MERGE_REQUEST_IID=7; the flags must win over both.
+	api.start(t)
+
+	require.NoError(t, postGitLabCIComment(
+		context.Background(),
+		ciReviewOpts{glRepo: "group/subgroup/project", pr: 11},
+		"review body", false))
+	require.Len(t, api.createdBodies, 1)
+	require.Len(t, api.requestPaths, 1)
+	assert.Contains(t, api.requestPaths[0],
+		"group%2Fsubgroup%2Fproject/merge_requests/11/notes")
+}
+
+func TestPostGitLabCIComment_UsesEnvProjectAndIID(t *testing.T) {
+	api := &stubGitLabNotesAPI{}
+	api.start(t)
+
+	require.NoError(t, postGitLabCIComment(
+		context.Background(), ciReviewOpts{}, "review body", false))
+	require.Len(t, api.requestPaths, 1)
+	assert.Contains(t, api.requestPaths[0],
+		"group%2Fproject/merge_requests/7/notes")
+}
+
+func TestPostGitLabCIComment_PrefersMRTargetProject(t *testing.T) {
+	api := &stubGitLabNotesAPI{}
+	// start() sets CI_PROJECT_PATH=group/project; a fork pipeline would
+	// report the fork there while the MR IID belongs to the target project.
+	api.start(t)
+	t.Setenv("CI_PROJECT_PATH", "contributor/project")
+	t.Setenv("CI_MERGE_REQUEST_PROJECT_PATH", "group/project")
+
+	require.NoError(t, postGitLabCIComment(
+		context.Background(), ciReviewOpts{}, "review body", false))
+	require.Len(t, api.requestPaths, 1)
+	assert.Contains(t, api.requestPaths[0],
+		"group%2Fproject/merge_requests/7/notes")
+	assert.NotContains(t, api.requestPaths[0], "contributor")
+}
+
+// TestPostGitLabCIComment_GLHostFlagBeatsEnv pins the origin pin. CI_SERVER_URL
+// is a predefined variable a pipeline starter can override with a custom
+// variable, while --gl-host comes from the job script, which they cannot
+// rewrite — so the flag must win and the env-derived origin must never be
+// contacted.
+func TestPostGitLabCIComment_GLHostFlagBeatsEnv(t *testing.T) {
+	pinned := &stubGitLabNotesAPI{}
+	pinnedURL := pinned.start(t)
+	decoy := &stubGitLabNotesAPI{}
+	// Started second, so CI_SERVER_URL now points at the decoy.
+	decoy.start(t)
+
+	require.NoError(t, postGitLabCIComment(
+		context.Background(),
+		ciReviewOpts{glHost: pinnedURL},
+		"review body", false))
+	require.Len(t, pinned.createdBodies, 1)
+	assert.Empty(t, decoy.requestPaths,
+		"the env-derived origin must not receive the token when --gl-host is set")
+}
+
+// A plaintext non-loopback origin would expose the token in transit, so the
+// client refuses to be built at all — before any review work is spent.
+func TestCIGitLabClient_RejectsPlaintextHTTPOrigin(t *testing.T) {
+	clearForgeCIEnv(t)
+	t.Setenv("GITLAB_TOKEN", "token")
+	t.Setenv("CI_SERVER_URL", "http://gitlab.example.com")
+
+	_, err := ciGitLabClient(context.Background(), "")
+	require.ErrorContains(t, err, "https")
+}
+
+func TestCIGitLabClient_UsesGlabAuthTokenFallback(t *testing.T) {
+	clearForgeCIEnv(t)
+	installFakeGlabAuthToken(t, "glab-auth-token")
+
+	client, err := ciGitLabClient(context.Background(), "")
+	require.NoError(t, err)
+	require.NotNil(t, client)
+}
+
+func TestCIGitLabClient_UsesCIServerURLForSelfHostedHost(t *testing.T) {
+	clearForgeCIEnv(t)
+	installFakeGlabAuthToken(t, "self-hosted-token")
+	t.Setenv("CI_SERVER_URL", "https://gitlab.example.com")
+
+	client, err := ciGitLabClient(context.Background(), "")
+	require.NoError(t, err)
+	require.NotNil(t, client)
+}
+
+func TestCIGitLabClient_MissingTokenErrors(t *testing.T) {
+	clearForgeCIEnv(t)
+	// Point PATH at an empty dir so no real glab CLI can answer.
+	t.Setenv("PATH", t.TempDir())
+
+	_, err := ciGitLabClient(context.Background(), "")
+	require.ErrorContains(t, err, "GitLab authentication required")
 }
 
 func TestExtractHeadSHA(t *testing.T) {
@@ -294,7 +1294,7 @@ func TestCIGitHubClient_UsesGHAuthTokenFallback(t *testing.T) {
 	t.Setenv("GH_TOKEN", "")
 	t.Setenv("GITHUB_TOKEN", "")
 
-	client, err := ciGitHubClient()
+	client, err := ciGitHubClient(context.Background())
 	require.NoError(t, err)
 	require.NotNil(t, client)
 }
@@ -306,7 +1306,7 @@ func TestCIGitHubClient_UsesGitHubAPIURLForHostname(t *testing.T) {
 	t.Setenv("GH_HOST", "")
 	t.Setenv("GITHUB_API_URL", "https://ghe.example.com/api/v3/")
 
-	client, err := ciGitHubClient()
+	client, err := ciGitHubClient(context.Background())
 	require.NoError(t, err)
 	require.NotNil(t, client)
 }
@@ -349,6 +1349,49 @@ func TestResolveCISynthesisAgent(t *testing.T) {
 		CI: config.CIConfig{SynthesisAgent: "gemini"},
 	})
 	assert.Equal(t, "codex", got)
+}
+
+// TestResolveCIAnthropicAPIKey must not run in parallel: it mutates
+// ANTHROPIC_API_KEY in the process environment.
+func TestResolveCIAnthropicAPIKey(t *testing.T) {
+	tests := []struct {
+		name      string
+		configKey string
+		envKey    string
+		want      string
+	}{
+		{
+			name:      "config key wins over env",
+			configKey: "sk-config",
+			envKey:    "sk-env",
+			want:      "sk-config",
+		},
+		{
+			name:      "env used when config empty",
+			configKey: "",
+			envKey:    "sk-env",
+			want:      "sk-env",
+		},
+		{
+			name:      "blank config falls through to env",
+			configKey: "   ",
+			envKey:    " sk-env ",
+			want:      "sk-env",
+		},
+		{
+			name:      "empty when neither is set",
+			configKey: "",
+			envKey:    "",
+			want:      "",
+		},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Setenv("ANTHROPIC_API_KEY", tt.envKey)
+			assert.Equal(t, tt.want,
+				resolveCIAnthropicAPIKey(tt.configKey))
+		})
+	}
 }
 
 func TestSplitTrimmed(t *testing.T) {

@@ -11,6 +11,7 @@ import (
 	"net/url"
 	"os"
 	"os/exec"
+	"runtime"
 	"slices"
 	"strings"
 	"sync"
@@ -483,12 +484,34 @@ func filterEnv(env []string, keys ...string) []string {
 	result := make([]string, 0, len(env))
 	for _, e := range env {
 		k, _, _ := strings.Cut(e, "=")
-		strip := slices.Contains(keys, k)
+		strip := envKeyIn(keys, k)
 		if !strip {
 			result = append(result, e)
 		}
 	}
 	return result
+}
+
+// envKeysAreCaseInsensitive reports whether the platform treats environment
+// variable names case-insensitively. It is a variable so tests can exercise
+// both behaviours on any host.
+var envKeysAreCaseInsensitive = runtime.GOOS == "windows"
+
+// envKeyIn reports whether key names any entry of keys, matching the way the
+// platform resolves environment variables. Windows lookups are
+// case-insensitive: a process that sets GitLab_Token can read it back as
+// GITLAB_TOKEN, so an exact comparison would leave a credential in the child
+// environment while roborev still resolves it for API calls.
+func envKeyIn(keys []string, key string) bool {
+	if !envKeysAreCaseInsensitive {
+		return slices.Contains(keys, key)
+	}
+	for _, k := range keys {
+		if strings.EqualFold(k, key) {
+			return true
+		}
+	}
+	return false
 }
 
 // claudeStripKeys lists every Anthropic-related env var that roborev

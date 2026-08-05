@@ -250,34 +250,63 @@ func TestUpsertPRComment_Update(t *testing.T) {
 	assert.True(t, strings.HasPrefix(api.patchedBodies[0], CommentMarker+"\n"))
 }
 
-func TestUpsertPRComment_Patch403FallsBackToCreate(t *testing.T) {
-	api := newCommentAPIServer(t)
-	api.issueCommentsByPR[1] = []*googlegithub.IssueComment{
-		issueComment(42, CommentMarker+"\nold", "alice", "User", ""),
+// Both statuses reach the create fallback through a different isGitHubStatus
+// branch, so both must post the already-prepared body: one marker, and one
+// truncation pass. Table-driven to keep the two branches in lockstep, matching
+// the GitLab twin.
+func TestUpsertPRComment_PatchFallsBackToCreate(t *testing.T) {
+	statuses := []struct {
+		name   string
+		status int
+	}{
+		{"Forbidden", http.StatusForbidden},
+		{"NotFound", http.StatusNotFound},
 	}
-	api.patchStatus = http.StatusForbidden
-	srv := httptest.NewServer(http.HandlerFunc(api.handler))
-	defer srv.Close()
 
-	client := newTestGitHubClient(t, "", srv)
-	require.NoError(t, client.UpsertPRComment(context.Background(), "owner/repo", 1, "updated body"))
-	require.Len(t, api.patchedBodies, 1)
-	require.Len(t, api.createdBodies, 1)
-}
+	for _, tt := range statuses {
+		t.Run(tt.name, func(t *testing.T) {
+			t.Run("PreparesBodyOnce", func(t *testing.T) {
+				assert := assert.New(t)
+				api := newCommentAPIServer(t)
+				api.issueCommentsByPR[1] = []*googlegithub.IssueComment{
+					issueComment(42, CommentMarker+"\nold", "alice", "User", ""),
+				}
+				api.patchStatus = tt.status
+				srv := httptest.NewServer(http.HandlerFunc(api.handler))
+				defer srv.Close()
 
-func TestUpsertPRComment_Patch404FallsBackToCreate(t *testing.T) {
-	api := newCommentAPIServer(t)
-	api.issueCommentsByPR[1] = []*googlegithub.IssueComment{
-		issueComment(42, CommentMarker+"\nold", "alice", "User", ""),
+				client := newTestGitHubClient(t, "", srv)
+				require.NoError(t, client.UpsertPRComment(
+					context.Background(), "owner/repo", 1, "updated body"))
+				require.Len(t, api.patchedBodies, 1)
+				require.Len(t, api.createdBodies, 1)
+				assert.Equal(1, strings.Count(api.createdBodies[0], CommentMarker))
+			})
+
+			// An oversized body pins the other half of the double-prepare bug:
+			// preparing twice would truncate an already-capped body again.
+			t.Run("TruncatesOnce", func(t *testing.T) {
+				assert := assert.New(t)
+				api := newCommentAPIServer(t)
+				api.issueCommentsByPR[1] = []*googlegithub.IssueComment{
+					issueComment(42, CommentMarker+"\nold", "alice", "User", ""),
+				}
+				api.patchStatus = tt.status
+				srv := httptest.NewServer(http.HandlerFunc(api.handler))
+				defer srv.Close()
+
+				client := newTestGitHubClient(t, "", srv)
+				require.NoError(t, client.UpsertPRComment(context.Background(),
+					"owner/repo", 1, strings.Repeat("x", review.MaxCommentLen+500)))
+				require.Len(t, api.createdBodies, 1)
+
+				body := api.createdBodies[0]
+				assert.LessOrEqual(len(body), review.MaxCommentLen)
+				assert.Equal(1, strings.Count(body, CommentMarker))
+				assert.Equal(1, strings.Count(body, review.CommentTruncSuffix))
+			})
+		})
 	}
-	api.patchStatus = http.StatusNotFound
-	srv := httptest.NewServer(http.HandlerFunc(api.handler))
-	defer srv.Close()
-
-	client := newTestGitHubClient(t, "", srv)
-	require.NoError(t, client.UpsertPRComment(context.Background(), "owner/repo", 1, "updated body"))
-	require.Len(t, api.patchedBodies, 1)
-	require.Len(t, api.createdBodies, 1)
 }
 
 func TestUpsertPRComment_PatchErrorReturnsError(t *testing.T) {

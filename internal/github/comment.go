@@ -54,22 +54,20 @@ func (c *Client) FindExistingComment(ctx context.Context, ghRepo string, prNumbe
 // prepareBody prepends the CommentMarker and truncates to
 // review.MaxCommentLen, preserving UTF-8 safety.
 func prepareBody(body string) string {
-	body = CommentMarker + "\n" + body
-
-	const truncSuffix = "\n\n...(truncated — comment exceeded size limit)"
-	maxBody := review.MaxCommentLen - len(truncSuffix)
-	if len(body) > review.MaxCommentLen {
-		body = review.TrimPartialRune(body[:maxBody]) + truncSuffix
-	}
-	return body
+	return review.TruncateComment(CommentMarker + "\n" + body)
 }
 
 // CreatePRComment posts a new roborev PR comment. It prepends the
 // CommentMarker and truncates to review.MaxCommentLen, then always
 // creates a new comment (no find/patch).
 func (c *Client) CreatePRComment(ctx context.Context, ghRepo string, prNumber int, body string) error {
-	body = prepareBody(body)
+	return c.createPreparedComment(ctx, ghRepo, prNumber, prepareBody(body))
+}
 
+// createPreparedComment posts a body that already went through prepareBody.
+// Keeping the raw POST separate is what lets UpsertPRComment fall back to a
+// create without prepending a second marker or truncating twice.
+func (c *Client) createPreparedComment(ctx context.Context, ghRepo string, prNumber int, body string) error {
 	owner, repo, err := parseRepo(ghRepo)
 	if err != nil {
 		return err
@@ -105,7 +103,7 @@ func (c *Client) UpsertPRComment(ctx context.Context, ghRepo string, prNumber in
 			return nil
 		}
 	}
-	return c.CreatePRComment(ctx, ghRepo, prNumber, body)
+	return c.createPreparedComment(ctx, ghRepo, prNumber, body)
 }
 
 func (c *Client) patchComment(ctx context.Context, ghRepo string, commentID int64, body string) error {

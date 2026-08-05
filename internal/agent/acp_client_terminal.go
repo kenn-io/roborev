@@ -350,14 +350,17 @@ func (c *acpClient) CreateTerminal(ctx context.Context, params acp.CreateTermina
 	procutil.HideConsole(cmd)
 	cmd.Dir = cwd
 
-	// Set environment variables if specified
-	if len(params.Env) > 0 {
-		env := os.Environ()
-		for _, envVar := range params.Env {
-			env = append(env, fmt.Sprintf("%s=%s", envVar.Name, envVar.Value))
-		}
-		cmd.Env = env
+	// The agent chooses this command line, so it is the most direct
+	// exfiltration channel there is: never hand it forge credentials
+	// (see forge_env.go). cmd.Environ() rather than os.Environ() so the PWD
+	// fix-up for cmd.Dir above survives. The strip is not logged here: the
+	// agent process launch in acp_agent.go already named the removed variables
+	// from the same environment, and a review can open many terminals.
+	env := StripForgeCredentials(cmd.Environ())
+	for _, envVar := range params.Env {
+		env = append(env, fmt.Sprintf("%s=%s", envVar.Name, envVar.Value))
 	}
+	cmd.Env = env
 
 	// Create output buffer with mutex for thread safety
 	output := &bytes.Buffer{}

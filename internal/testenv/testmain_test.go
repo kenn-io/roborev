@@ -6,6 +6,6 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	InstallGitHubAPIGuard()
+	InstallForgeAPIGuard()
 	os.Exit(m.Run())
 }

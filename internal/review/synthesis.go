@@ -96,12 +96,7 @@ func BuildSynthesisPrompt(
 			b.WriteString(
 				"(review skipped — provider unavailable)")
 		} else if r.Output != "" {
-			output := r.Output
-			if len(output) > maxPerReview {
-				output = output[:maxPerReview] +
-					"\n\n...(truncated)"
-			}
-			b.WriteString(output)
+			b.WriteString(TruncateOutput(r.Output, maxPerReview))
 		} else if r.Status == ResultFailed {
 			b.WriteString("(no output — review failed)")
 		}
@@ -181,13 +176,11 @@ func FormatRawBatchComment(
 				"**Error:** Review failed. " +
 					"Check CI logs for details.\n\n")
 		} else if r.Output != "" {
-			output := r.Output
+			// This body is posted as a real PR/MR comment, so the cut has to be
+			// UTF-8 safe: a raw slice can split a multi-byte rune and the API
+			// receives U+FFFD.
 			const maxLen = 15000
-			if len(output) > maxLen {
-				output = output[:maxLen] +
-					"\n\n...(truncated)"
-			}
-			b.WriteString(output)
+			b.WriteString(TruncateOutput(r.Output, maxLen))
 			b.WriteString("\n\n")
 		} else {
 			b.WriteString("(no output)\n\n")
