@@ -120,6 +120,22 @@ func (s *StateStore) saveLocked() error {
 	return nil
 }
 
+// saveSessionLocked publishes a cloned session only when its atomic state-file
+// replacement succeeds. Callers must hold s.mu.
+func (s *StateStore) saveSessionLocked(sessionID string, state SessionState) error {
+	previous, existed := s.sessions[sessionID]
+	s.sessions[sessionID] = state
+	if err := s.saveLocked(); err != nil {
+		if existed {
+			s.sessions[sessionID] = previous
+		} else {
+			delete(s.sessions, sessionID)
+		}
+		return err
+	}
+	return nil
+}
+
 func (s *StateStore) Record(req Request) (Response, error) {
 	return s.RecordContext(context.Background(), req)
 }
@@ -245,8 +261,7 @@ func (s *StateStore) recordStop(ctx context.Context, req Request) (Response, err
 	if err := ctx.Err(); err != nil {
 		return Response{}, err
 	}
-	s.sessions[req.Event.SessionID] = st
-	if err := s.saveLocked(); err != nil {
+	if err := s.saveSessionLocked(req.Event.SessionID, st); err != nil {
 		return Response{}, err
 	}
 
@@ -318,8 +333,7 @@ func (s *StateStore) recordPreToolUse(ctx context.Context, req Request) (Respons
 	if err := ctx.Err(); err != nil {
 		return Response{}, err
 	}
-	s.sessions[req.Event.SessionID] = st
-	if err := s.saveLocked(); err != nil {
+	if err := s.saveSessionLocked(req.Event.SessionID, st); err != nil {
 		return Response{}, err
 	}
 
@@ -514,8 +528,7 @@ func (s *StateStore) recordPostToolUse(ctx context.Context, req Request) (Respon
 	if err := ctx.Err(); err != nil {
 		return Response{}, err
 	}
-	s.sessions[req.Event.SessionID] = st
-	if err := s.saveLocked(); err != nil {
+	if err := s.saveSessionLocked(req.Event.SessionID, st); err != nil {
 		return Response{}, err
 	}
 
@@ -577,8 +590,7 @@ func (s *StateStore) recordSnoozed(
 	if err := ctx.Err(); err != nil {
 		return Response{}, err
 	}
-	s.sessions[req.Event.SessionID] = st
-	if err := s.saveLocked(); err != nil {
+	if err := s.saveSessionLocked(req.Event.SessionID, st); err != nil {
 		return Response{}, err
 	}
 	return Response{
@@ -697,7 +709,6 @@ func (s *StateStore) deliverPendingReminder(
 		return left.key < right.key
 	})
 
-	lookupUnavailable := false
 	for _, candidate := range candidates {
 		pending := candidate.reminder
 		suppressed, known := pendingReminderSuppressed(ctx, pending, req.RoborevServerAddr)
@@ -718,7 +729,6 @@ func (s *StateStore) deliverPendingReminder(
 			return Response{}, false, err
 		}
 		if !ok {
-			lookupUnavailable = true
 			continue
 		}
 		if count == 0 {
@@ -782,8 +792,7 @@ func (s *StateStore) deliverPendingReminder(
 			s.mu.Unlock()
 			return Response{}, false, err
 		}
-		s.sessions[req.Event.SessionID] = st
-		err := s.saveLocked()
+		err := s.saveSessionLocked(req.Event.SessionID, st)
 		s.mu.Unlock()
 		if err != nil {
 			return Response{}, false, err
@@ -801,9 +810,6 @@ func (s *StateStore) deliverPendingReminder(
 			TriggeredBy:           pending.TriggeredBy,
 			Reason:                pending.Reason,
 		}, true, nil
-	}
-	if lookupUnavailable {
-		return Response{SessionID: req.Event.SessionID, Skipped: true}, true, nil
 	}
 	return Response{}, false, nil
 }
@@ -849,8 +855,7 @@ func (s *StateStore) discardPendingReminder(
 	if err := ctx.Err(); err != nil {
 		return err
 	}
-	s.sessions[sessionID] = st
-	return s.saveLocked()
+	return s.saveSessionLocked(sessionID, st)
 }
 
 func pendingReminderPriority(triggeredBy string) int {

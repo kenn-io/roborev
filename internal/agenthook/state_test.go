@@ -2394,6 +2394,33 @@ func TestDeferredReminderCancellationDoesNotConsumeCandidate(t *testing.T) {
 	assert.Zero(t, store.sessions["session-1"].ReminderPromptCount)
 }
 
+func TestDeferredReminderPersistenceFailureDoesNotConsumeCandidate(t *testing.T) {
+	failedReviewCount := 1
+	server := newDeferredReminderServer(t, "/repo", &failedReviewCount)
+	pending := PendingReminder{
+		TriggeredBy: "failed_reviews", Reason: "Resolve reviews.",
+		TrackedRepoRoot: "/repo", WorktreeRoot: "/repo", Branch: "main",
+		LineageKey: "repo", CreatedAt: time.Now().UTC(),
+	}
+	key := pendingReminderKey(pending)
+	store := &StateStore{
+		path: t.TempDir(),
+		sessions: map[string]SessionState{
+			"session-1": {PendingReminders: map[string]PendingReminder{key: pending}},
+		},
+	}
+
+	_, err := store.Record(Request{
+		Event:             Input{SessionID: "session-1", CWD: t.TempDir(), HookEventName: "Stop"},
+		RoborevServerAddr: server.URL,
+	})
+
+	require.Error(t, err)
+	state := store.sessions["session-1"]
+	assert.Contains(t, state.PendingReminders, key)
+	assert.Zero(t, state.ReminderPromptCount)
+}
+
 func TestRecordCancellationDoesNotMutateAnyEvent(t *testing.T) {
 	for _, event := range []string{"PreToolUse", "PostToolUse", "Stop"} {
 		t.Run(event, func(t *testing.T) {
@@ -2489,6 +2516,53 @@ func TestDeferredReminderContinuesAfterEarlierLookupFailure(t *testing.T) {
 	assert.Equal(t, "Second.", response.Reason)
 	assert.Contains(t, store.sessions["session-1"].PendingReminders, pendingReminderKey(first))
 	assert.Empty(t, store.sessions["session-1"].FailedReviewTriggeredCounts)
+}
+
+func TestUnavailableDeferredReminderDoesNotSuppressStopProcessing(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("main.go", "package main\n", "initial")
+	closed := false
+	verdict := "F"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Query().Get("path") == "/unavailable" || r.URL.Query().Get("repo") == "/unavailable" {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		if r.URL.Path == "/api/repos/resolve" {
+			assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				"tracked": true,
+				"repo":    map[string]string{"root_path": repo.Path(), "name": filepath.Base(repo.Path())},
+			}))
+			return
+		}
+		assert.NoError(t, json.NewEncoder(w).Encode(jobsResponse{Jobs: []storage.ReviewJob{{
+			Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main",
+		}}}))
+	}))
+	t.Cleanup(server.Close)
+	pending := PendingReminder{
+		TriggeredBy: "failed_reviews", Reason: "Unavailable.",
+		TrackedRepoRoot: "/unavailable", WorktreeRoot: "/unavailable", Branch: "main",
+		LineageKey: "unavailable", CreatedAt: time.Now().UTC(),
+	}
+	key := pendingReminderKey(pending)
+	store := &StateStore{
+		path: filepath.Join(t.TempDir(), "state.json"),
+		sessions: map[string]SessionState{
+			"session-1": {PendingReminders: map[string]PendingReminder{key: pending}},
+		},
+	}
+
+	response, err := store.Record(Request{
+		Event:             Input{SessionID: "session-1", CWD: repo.Path(), HookEventName: "Stop"},
+		Threshold:         1,
+		RoborevServerAddr: server.URL,
+	})
+
+	require.NoError(t, err)
+	assert.True(t, response.Triggered)
+	assert.Equal(t, "stop", response.TriggeredBy)
+	assert.Contains(t, store.sessions["session-1"].PendingReminders, key)
 }
 
 func TestQueuePendingReminderKeepsLatestAbsoluteFailedReviewCount(t *testing.T) {
