@@ -2617,6 +2617,54 @@ func TestUnavailableDeferredReminderDoesNotSuppressStopProcessing(t *testing.T) 
 	assert.Contains(t, store.sessions["session-1"].PendingReminders, key)
 }
 
+func TestStopPromptSupersedesUnavailableReminderForSameLineage(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("main.go", "package main\n", "initial")
+	closed := false
+	verdict := "F"
+	var jobLookups atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/repos/resolve" {
+			assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				"tracked": true,
+				"repo":    map[string]string{"root_path": repo.Path(), "name": filepath.Base(repo.Path())},
+			}))
+			return
+		}
+		if jobLookups.Add(1) == 1 {
+			http.Error(w, "unavailable", http.StatusServiceUnavailable)
+			return
+		}
+		assert.NoError(t, json.NewEncoder(w).Encode(jobsResponse{Jobs: []storage.ReviewJob{{
+			Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main",
+		}}}))
+	}))
+	t.Cleanup(server.Close)
+	lineageKey := repoHeadKey(repo.Path(), "main")
+	pending := PendingReminder{
+		TriggeredBy: "failed_reviews", Reason: "Unavailable.",
+		TrackedRepoRoot: repo.Path(), WorktreeRoot: repo.Path(), Branch: "main",
+		LineageKey: lineageKey, CreatedAt: time.Now().UTC(),
+	}
+	store := &StateStore{
+		path: filepath.Join(t.TempDir(), "state.json"),
+		sessions: map[string]SessionState{
+			"session-1": {PendingReminders: map[string]PendingReminder{pendingReminderKey(pending): pending}},
+		},
+	}
+
+	response, err := store.Record(Request{
+		Event:             Input{SessionID: "session-1", CWD: repo.Path(), HookEventName: "Stop"},
+		Threshold:         1,
+		RoborevServerAddr: server.URL,
+	})
+
+	require.NoError(t, err)
+	assert.True(t, response.Triggered)
+	assert.Equal(t, "stop", response.TriggeredBy)
+	assert.Empty(t, store.sessions["session-1"].PendingReminders)
+}
+
 func TestQueuePendingReminderKeepsLatestAbsoluteFailedReviewCount(t *testing.T) {
 	createdAt := time.Now().UTC().Add(-time.Minute)
 	state := SessionState{}

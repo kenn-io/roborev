@@ -256,6 +256,11 @@ func (s *StateStore) recordStop(ctx context.Context, req Request) (Response, err
 			st.FailedReviewTriggeredAt = now
 		}
 		resetPromptCountersForKeys(&st, promptResetKeys(scope, lineageKey))
+		for key, pending := range st.PendingReminders {
+			if pending.LineageKey == lineageKey {
+				delete(st.PendingReminders, key)
+			}
+		}
 	}
 	if err := ctx.Err(); err != nil {
 		return Response{}, err
