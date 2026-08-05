@@ -2638,36 +2638,58 @@ func TestUnavailableDeferredReminderDoesNotSuppressStopProcessing(t *testing.T) 
 	assert.Contains(t, store.sessions["session-1"].PendingReminders, key)
 }
 
-func TestSnoozedStopPersistsBaselinesWhenUnrelatedReminderIsUnavailable(t *testing.T) {
+func TestSnoozedStopPersistsCleanupWhenReminderLookupIsUnavailable(t *testing.T) {
+	assert := assert.New(t)
 	repo := testutil.NewGitRepo(t)
 	repo.CommitFile("main.go", "package main\n", "initial")
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/repos/resolve" && r.URL.Query().Get("path") == repo.Path() {
-			assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
-				"tracked": true,
-				"repo": map[string]any{
-					"root_path": repo.Path(), "name": filepath.Base(repo.Path()),
-					"agent_hook_snoozed_until": time.Now().Add(time.Hour).UTC(),
-				},
-			}))
+		if r.URL.Path == "/api/repos/resolve" {
+			switch r.URL.Query().Get("path") {
+			case repo.Path():
+				assert.NoError(json.NewEncoder(w).Encode(map[string]any{
+					"tracked": true,
+					"repo": map[string]any{
+						"root_path": repo.Path(), "name": filepath.Base(repo.Path()),
+						"agent_hook_snoozed_until": time.Now().Add(time.Hour).UTC(),
+					},
+				}))
+				return
+			case "/resolved":
+				assert.NoError(json.NewEncoder(w).Encode(map[string]any{
+					"tracked": true,
+					"repo":    map[string]string{"root_path": "/resolved", "name": "resolved"},
+				}))
+				return
+			}
+		}
+		if r.URL.Query().Get("repo") == "/resolved" {
+			assert.NoError(json.NewEncoder(w).Encode(jobsResponse{}))
 			return
 		}
 		http.Error(w, "unavailable", http.StatusServiceUnavailable)
 	}))
 	t.Cleanup(server.Close)
-	pending := PendingReminder{
+	createdAt := time.Now().UTC()
+	resolved := PendingReminder{
+		TriggeredBy: "failed_reviews", Reason: "Resolved.",
+		TrackedRepoRoot: "/resolved", WorktreeRoot: "/resolved", Branch: "main",
+		LineageKey: "resolved", CreatedAt: createdAt,
+	}
+	unavailable := PendingReminder{
 		TriggeredBy: "failed_reviews", Reason: "Unavailable.",
 		TrackedRepoRoot: "/unavailable", WorktreeRoot: "/unavailable", Branch: "main",
-		LineageKey: "unavailable", CreatedAt: time.Now().UTC(),
+		LineageKey: "unavailable", CreatedAt: createdAt.Add(time.Second),
 	}
-	key := pendingReminderKey(pending)
+	resolvedKey := pendingReminderKey(resolved)
+	unavailableKey := pendingReminderKey(unavailable)
 	lineageKey := repoHeadKey(repo.Path(), "main")
 	store := &StateStore{
 		path: filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{
 			"session-1": {
-				StopCountsSincePrompt: map[string]int{lineageKey: 2},
-				PendingReminders:      map[string]PendingReminder{key: pending},
+				StopCountsSincePrompt:       map[string]int{lineageKey: 2},
+				PendingReminders:            map[string]PendingReminder{resolvedKey: resolved, unavailableKey: unavailable},
+				FailedReviewTriggeredCounts: map[string]int{"resolved": 4},
 			},
 		},
 	}
@@ -2678,11 +2700,13 @@ func TestSnoozedStopPersistsBaselinesWhenUnrelatedReminderIsUnavailable(t *testi
 	})
 
 	require.NoError(t, err)
-	assert.True(t, response.Skipped)
+	assert.True(response.Skipped)
 	state := store.sessions["session-1"]
-	assert.NotContains(t, state.StopCountsSincePrompt, lineageKey)
-	assert.Contains(t, state.PendingReminders, key)
-	assert.Equal(t, repo.Path(), state.LastCWD)
+	assert.NotContains(state.StopCountsSincePrompt, lineageKey)
+	assert.NotContains(state.PendingReminders, resolvedKey)
+	assert.Contains(state.PendingReminders, unavailableKey)
+	assert.NotContains(state.FailedReviewTriggeredCounts, "resolved")
+	assert.Equal(repo.Path(), state.LastCWD)
 }
 
 func TestStopPromptSupersedesUnavailableReminderForSameLineage(t *testing.T) {

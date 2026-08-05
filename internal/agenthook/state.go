@@ -716,7 +716,6 @@ func (s *StateStore) deliverPendingReminder(
 	})
 
 	discards := make([]pendingReminderCandidate, 0, len(candidates))
-	lookupUnavailable := false
 	for _, candidate := range candidates {
 		pending := candidate.reminder
 		suppressed, known := pendingReminderSuppressed(ctx, pending, req.RoborevServerAddr)
@@ -735,7 +734,6 @@ func (s *StateStore) deliverPendingReminder(
 			return Response{}, false, err
 		}
 		if !ok {
-			lookupUnavailable = true
 			continue
 		}
 		if count == 0 {
@@ -826,27 +824,6 @@ func (s *StateStore) deliverPendingReminder(
 		}, true, nil
 	}
 
-	if lookupUnavailable {
-		if prepare == nil {
-			return Response{}, false, nil
-		}
-		if err := ctx.Err(); err != nil {
-			return Response{}, false, err
-		}
-		s.mu.Lock()
-		st = cloneSessionState(s.sessions[req.Event.SessionID])
-		resp := prepare(&st)
-		if err := ctx.Err(); err != nil {
-			s.mu.Unlock()
-			return Response{}, false, err
-		}
-		if err := s.saveSessionLocked(req.Event.SessionID, st); err != nil {
-			s.mu.Unlock()
-			return Response{}, false, err
-		}
-		s.mu.Unlock()
-		return resp, true, nil
-	}
 	if len(discards) == 0 && prepare == nil {
 		return Response{}, false, nil
 	}
