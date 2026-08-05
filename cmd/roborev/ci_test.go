@@ -1655,6 +1655,27 @@ func TestVerifyGitLabMRRange_AutoDetected(t *testing.T) {
 			context.Background(), ciReviewOpts{}, t.TempDir(), "base..head"))
 	})
 
+	// An explicit --ref must be validated in full even when the IID came from
+	// the environment: otherwise a narrowed range posts a passing verdict.
+	t.Run("ExplicitRefIsFullyValidated", func(t *testing.T) {
+		repo := testutil.NewTestRepoWithCommit(t)
+		base := repo.HeadSHA()
+		repo.CheckoutNewBranch("feature")
+		repo.CommitFile("one.txt", "one", "first")
+		head := repo.CommitFile("two.txt", "two", "second")
+		narrowed := strings.TrimSpace(repo.RevParse("HEAD~1"))
+
+		api := &stubGitLabMRAPI{headSHA: head, baseSHA: base}
+		api.start(t)
+		t.Setenv("CI_MERGE_REQUEST_IID", "7")
+		t.Setenv("CI_MERGE_REQUEST_SOURCE_BRANCH_SHA", head)
+
+		err := verifyGitLabMRRange(
+			context.Background(), ciReviewOpts{ref: narrowed + ".." + head},
+			repo.Path(), narrowed+".."+head)
+		require.ErrorContains(t, err, base)
+	})
+
 	t.Run("ForcePushedHeadIsStale", func(t *testing.T) {
 		api := &stubGitLabMRAPI{headSHA: mrHead}
 		api.start(t)

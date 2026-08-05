@@ -336,9 +336,16 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 	if opts.comment {
 		upsert := config.ResolveCIUpsertComments(
 			repoCfg, globalCfg)
-		if err := postForgeComment(
+		switch err := postForgeComment(
 			ctx, forge, opts, comment, upsert, root, gitRef,
-		); err != nil {
+		); {
+		case errors.Is(err, errMRHeadMoved):
+			// Same benign race as before the review, so same outcome: the
+			// verdict is about code the merge request no longer has, and a
+			// pipeline for the new head will post its own.
+			fmt.Println("roborev: " + err.Error() + " — nothing to post")
+			return nil
+		case err != nil:
 			return err
 		}
 	}
@@ -506,7 +513,10 @@ var errMRHeadMoved = errors.New("merge request head moved during the review")
 func verifyGitLabMRRange(
 	ctx context.Context, opts ciReviewOpts, repoPath, gitRef string,
 ) error {
-	explicit := opts.pr != 0
+	// An explicit --ref gets the full range check even when the IID came from
+	// the environment: the range is then an input roborev did not derive, so
+	// nothing else establishes that it covers the merge request.
+	explicit := opts.pr != 0 || strings.TrimSpace(opts.ref) != ""
 	mrIID := opts.pr
 	if !explicit {
 		detected, err := detectMRIID()
