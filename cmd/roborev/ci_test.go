@@ -946,7 +946,7 @@ func TestPostGitLabCIComment_MissingProject(t *testing.T) {
 	clearForgeCIEnv(t)
 
 	err := postGitLabCIComment(
-		context.Background(), ciReviewOpts{}, "body", false)
+		context.Background(), ciReviewOpts{}, "body", false, "")
 	require.ErrorContains(t, err, "--gl-repo")
 }
 
@@ -955,7 +955,7 @@ func TestPostGitLabCIComment_MissingMRIID(t *testing.T) {
 	t.Setenv("CI_PROJECT_PATH", "group/project")
 
 	err := postGitLabCIComment(
-		context.Background(), ciReviewOpts{}, "body", false)
+		context.Background(), ciReviewOpts{}, "body", false, "")
 	require.ErrorContains(t, err, "CI_MERGE_REQUEST_IID")
 }
 
@@ -966,6 +966,9 @@ type stubGitLabNotesAPI struct {
 	createdBodies []string
 	updatedBodies []string
 	requestPaths  []string
+	// mrHeadSHA is what the merge request lookup reports; the head binding
+	// only runs when --pr was passed explicitly.
+	mrHeadSHA string
 }
 
 func (s *stubGitLabNotesAPI) start(t *testing.T) string {
@@ -974,7 +977,14 @@ func (s *stubGitLabNotesAPI) start(t *testing.T) string {
 	srv := httptest.NewServer(http.HandlerFunc(
 		func(w http.ResponseWriter, r *http.Request) {
 			w.Header().Set("Content-Type", "application/json")
-			s.requestPaths = append(s.requestPaths, r.URL.EscapedPath())
+			path := r.URL.EscapedPath()
+			if !strings.Contains(path, "/notes") {
+				// The merge request lookup behind the head binding.
+				assert.NoError(t, json.NewEncoder(w).Encode(
+					map[string]any{"iid": 7, "sha": s.mrHeadSHA}))
+				return
+			}
+			s.requestPaths = append(s.requestPaths, path)
 			var payload struct {
 				Body string `json:"body"`
 			}
@@ -1015,7 +1025,7 @@ func TestPostGitLabCIComment_CreatesNewNote(t *testing.T) {
 	api.start(t)
 
 	require.NoError(t, postGitLabCIComment(
-		context.Background(), ciReviewOpts{}, "review body", false))
+		context.Background(), ciReviewOpts{}, "review body", false, ""))
 	require.Len(t, api.createdBodies, 1)
 	assert.Empty(t, api.updatedBodies)
 	assert.Contains(t, api.createdBodies[0], glpkg.CommentMarker)
@@ -1031,7 +1041,7 @@ func TestPostGitLabCIComment_UpsertUpdatesExistingNote(t *testing.T) {
 	api.start(t)
 
 	require.NoError(t, postGitLabCIComment(
-		context.Background(), ciReviewOpts{}, "review body", true))
+		context.Background(), ciReviewOpts{}, "review body", true, ""))
 	require.Len(t, api.updatedBodies, 1)
 	assert.Empty(t, api.createdBodies)
 	assert.Contains(t, api.updatedBodies[0], "review body")
@@ -1046,21 +1056,24 @@ func TestPostGitLabCIComment_WithoutUpsertIgnoresExistingNote(t *testing.T) {
 	api.start(t)
 
 	require.NoError(t, postGitLabCIComment(
-		context.Background(), ciReviewOpts{}, "review body", false))
+		context.Background(), ciReviewOpts{}, "review body", false, ""))
 	require.Len(t, api.createdBodies, 1)
 	assert.Empty(t, api.updatedBodies)
 }
 
 func TestPostGitLabCIComment_UsesExplicitFlagsOverEnv(t *testing.T) {
-	api := &stubGitLabNotesAPI{}
+	const mrHead = "feedface00000000000000000000000000000000"
+	api := &stubGitLabNotesAPI{mrHeadSHA: mrHead}
 	// start() sets CI_PROJECT_PATH=group/project and
 	// CI_MERGE_REQUEST_IID=7; the flags must win over both.
 	api.start(t)
 
+	// An explicit --pr also turns on the head binding, so the reviewed head
+	// has to be the one the merge request reports.
 	require.NoError(t, postGitLabCIComment(
 		context.Background(),
 		ciReviewOpts{glRepo: "group/subgroup/project", pr: 11},
-		"review body", false))
+		"review body", false, mrHead))
 	require.Len(t, api.createdBodies, 1)
 	require.Len(t, api.requestPaths, 1)
 	assert.Contains(t, api.requestPaths[0],
@@ -1072,7 +1085,7 @@ func TestPostGitLabCIComment_UsesEnvProjectAndIID(t *testing.T) {
 	api.start(t)
 
 	require.NoError(t, postGitLabCIComment(
-		context.Background(), ciReviewOpts{}, "review body", false))
+		context.Background(), ciReviewOpts{}, "review body", false, ""))
 	require.Len(t, api.requestPaths, 1)
 	assert.Contains(t, api.requestPaths[0],
 		"group%2Fproject/merge_requests/7/notes")
@@ -1087,7 +1100,7 @@ func TestPostGitLabCIComment_PrefersMRTargetProject(t *testing.T) {
 	t.Setenv("CI_MERGE_REQUEST_PROJECT_PATH", "group/project")
 
 	require.NoError(t, postGitLabCIComment(
-		context.Background(), ciReviewOpts{}, "review body", false))
+		context.Background(), ciReviewOpts{}, "review body", false, ""))
 	require.Len(t, api.requestPaths, 1)
 	assert.Contains(t, api.requestPaths[0],
 		"group%2Fproject/merge_requests/7/notes")
@@ -1109,7 +1122,7 @@ func TestPostGitLabCIComment_GLHostFlagBeatsEnv(t *testing.T) {
 	require.NoError(t, postGitLabCIComment(
 		context.Background(),
 		ciReviewOpts{glHost: pinnedURL},
-		"review body", false))
+		"review body", false, ""))
 	require.Len(t, pinned.createdBodies, 1)
 	assert.Empty(t, decoy.requestPaths,
 		"the env-derived origin must not receive the token when --gl-host is set")
@@ -1459,4 +1472,96 @@ func TestResolveCIReviewMinSeverity(t *testing.T) {
 			assert.Equal(t, tt.want, got)
 		})
 	}
+}
+
+// stubGitLabMRAPI serves the merge request lookup the head binding needs,
+// alongside the notes endpoints, and records whether the note was posted.
+type stubGitLabMRAPI struct {
+	headSHA string
+	posted  bool
+}
+
+func (s *stubGitLabMRAPI) start(t *testing.T) {
+	t.Helper()
+
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			path := r.URL.EscapedPath()
+			switch {
+			case strings.HasSuffix(path, "/notes") && r.Method == http.MethodPost:
+				s.posted = true
+				w.WriteHeader(http.StatusCreated)
+				assert.NoError(t, json.NewEncoder(w).Encode(
+					map[string]any{"id": 1, "body": "posted"}))
+			case strings.HasSuffix(path, "/notes"):
+				assert.NoError(t, json.NewEncoder(w).Encode([]map[string]any{}))
+			default:
+				assert.NoError(t, json.NewEncoder(w).Encode(
+					map[string]any{"iid": 7, "sha": s.headSHA}))
+			}
+		}))
+	t.Cleanup(srv.Close)
+
+	clearForgeCIEnv(t)
+	t.Setenv("CI_SERVER_URL", srv.URL)
+	t.Setenv("GITLAB_TOKEN", "stub-token")
+	t.Setenv("CI_PROJECT_PATH", "group/project")
+}
+
+// An explicitly supplied --pr is the protected-branch flow, where --pr and
+// --ref arrive as separate inputs and a pipeline trigger can choose them
+// independently. Reviewing one range and posting a verdict to an unrelated
+// merge request would forge a passing review, so the head has to match.
+func TestVerifyGitLabMRHead(t *testing.T) {
+	const mrHead = "feedface00000000000000000000000000000000"
+	const other = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+
+	t.Run("MatchingHeadPasses", func(t *testing.T) {
+		api := &stubGitLabMRAPI{headSHA: mrHead}
+		api.start(t)
+
+		require.NoError(t, verifyGitLabMRHead(
+			context.Background(), ciReviewOpts{pr: 7}, mrHead))
+	})
+
+	t.Run("MismatchedHeadFails", func(t *testing.T) {
+		api := &stubGitLabMRAPI{headSHA: mrHead}
+		api.start(t)
+
+		err := verifyGitLabMRHead(
+			context.Background(), ciReviewOpts{pr: 7}, other)
+		require.Error(t, err)
+		assert.Contains(t, err.Error(), mrHead)
+		assert.Contains(t, err.Error(), other)
+	})
+
+	// Auto-detected merge request pipelines are bound by GitLab itself, and
+	// their head can legitimately be the synthetic merge commit of a shallow
+	// merged-results checkout, so the check must not run there.
+	t.Run("AutoDetectedPRSkipsCheck", func(t *testing.T) {
+		api := &stubGitLabMRAPI{headSHA: mrHead}
+		api.start(t)
+
+		require.NoError(t, verifyGitLabMRHead(
+			context.Background(), ciReviewOpts{pr: 0}, other))
+	})
+}
+
+// The binding is re-checked immediately before posting, so a force push landing
+// mid-review cannot leave a verdict describing code the merge request no longer
+// has.
+func TestPostGitLabCIComment_RefusesStaleHead(t *testing.T) {
+	const mrHead = "feedface00000000000000000000000000000000"
+	const reviewed = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+
+	api := &stubGitLabMRAPI{headSHA: mrHead}
+	api.start(t)
+
+	err := postGitLabCIComment(
+		context.Background(),
+		ciReviewOpts{pr: 7}, "body", false, reviewed)
+	require.Error(t, err)
+	assert.False(t, api.posted,
+		"no note may be posted once the head no longer matches")
 }

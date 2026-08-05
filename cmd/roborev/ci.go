@@ -195,6 +195,17 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 		gitRef = detected
 	}
 
+	// Bind the range to the merge request before spending the review matrix
+	// on it. Posting checks again afterwards, to catch a force push that
+	// lands while the reviews run.
+	if opts.comment && forge == ciForgeGitLab {
+		if err := verifyGitLabMRHead(
+			ctx, opts, resolveHeadSHA(root, gitRef),
+		); err != nil {
+			return err
+		}
+	}
+
 	// Load configs (warn on error, don't fail)
 	globalCfg, err := config.LoadGlobal()
 	if err != nil {
@@ -319,6 +330,7 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 			repoCfg, globalCfg)
 		if err := postForgeComment(
 			ctx, forge, opts, comment, upsert,
+			resolveHeadSHA(root, gitRef),
 		); err != nil {
 			return err
 		}
@@ -441,17 +453,73 @@ func detectGitRefForForge(forge ciForge, repoPath string) (string, error) {
 }
 
 // postForgeComment posts the synthesized review to the active forge.
+// headSHA is the head of the range that was reviewed, used to check that the
+// verdict still describes the merge request it is about to land on.
 func postForgeComment(
 	ctx context.Context,
 	forge ciForge,
 	opts ciReviewOpts,
 	body string,
 	upsert bool,
+	headSHA string,
 ) error {
 	if forge == ciForgeGitLab {
-		return postGitLabCIComment(ctx, opts, body, upsert)
+		return postGitLabCIComment(ctx, opts, body, upsert, headSHA)
 	}
 	return postGitHubCIComment(ctx, opts, body, upsert)
+}
+
+// verifyGitLabMRHead checks that headSHA is the merge request's current head.
+//
+// It runs only when --pr was passed explicitly, which is the protected-branch
+// flow: there --pr and --ref are independent inputs, and whoever starts the
+// pipeline chooses them, so nothing otherwise stops a run from reviewing one
+// range and posting a passing verdict to an unrelated merge request — or, with
+// upsert, replacing a note that carried findings. An auto-detected --pr comes
+// from CI_MERGE_REQUEST_IID, which GitLab binds to the pipeline's own commits,
+// and whose head is legitimately a synthetic merge commit in a shallow
+// merged-results checkout, so the check would reject a correct run.
+func verifyGitLabMRHead(
+	ctx context.Context, opts ciReviewOpts, headSHA string,
+) error {
+	if opts.pr == 0 {
+		return nil
+	}
+	headSHA = strings.TrimSpace(headSHA)
+	if headSHA == "" {
+		return fmt.Errorf(
+			"--comment with --pr %d requires a reviewable head commit, "+
+				"but the ref range named none", opts.pr)
+	}
+
+	glRepo := opts.glRepo
+	if glRepo == "" {
+		glRepo = detectGitLabProjectPath()
+	}
+	if glRepo == "" {
+		return fmt.Errorf(
+			"--comment requires --gl-repo or " +
+				"CI_MERGE_REQUEST_PROJECT_PATH/CI_PROJECT_PATH env var")
+	}
+
+	client, err := ciGitLabClient(ctx, opts.glHost)
+	if err != nil {
+		return err
+	}
+	mrHead, err := client.MergeRequestHeadSHA(ctx, glRepo, opts.pr)
+	if err != nil {
+		return fmt.Errorf(
+			"verify merge request !%d head: %w", opts.pr, err)
+	}
+	if !strings.EqualFold(mrHead, headSHA) {
+		return fmt.Errorf(
+			"refusing to post: reviewed %s but merge request !%d is at %s "+
+				"— the note would describe code the merge request does not "+
+				"have (pass a --ref whose head is the merge request head, "+
+				"or re-run against the current head)",
+			headSHA, opts.pr, mrHead)
+	}
+	return nil
 }
 
 func postGitHubCIComment(
@@ -499,7 +567,15 @@ func postGitLabCIComment(
 	opts ciReviewOpts,
 	body string,
 	upsert bool,
+	headSHA string,
 ) error {
+	// Re-checked here, not only before the review, so a force push landing
+	// while the matrix ran cannot leave a verdict about code the merge
+	// request no longer has.
+	if err := verifyGitLabMRHead(ctx, opts, headSHA); err != nil {
+		return err
+	}
+
 	glRepo := opts.glRepo
 	if glRepo == "" {
 		glRepo = detectGitLabProjectPath()
@@ -922,6 +998,22 @@ func detectMRIID() (int, error) {
 			"invalid CI_MERGE_REQUEST_IID %q", raw)
 	}
 	return iid, nil
+}
+
+// resolveHeadSHA returns the full commit SHA at the head of a ref range.
+// The head may be a branch name or an abbreviated SHA when it came from
+// --ref, while the forge reports full SHAs, so the two are only comparable
+// once this has resolved it. An unresolvable head is returned as written, so
+// the comparison reports a mismatch rather than silently passing.
+func resolveHeadSHA(repoPath, gitRef string) string {
+	head := extractHeadSHA(gitRef)
+	if head == "" || repoPath == "" {
+		return head
+	}
+	if full, err := git.ResolveSHA(repoPath, head+"^{commit}"); err == nil {
+		return full
+	}
+	return head
 }
 
 // extractHeadSHA extracts the HEAD SHA from a git ref range.

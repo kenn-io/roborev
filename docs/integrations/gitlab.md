@@ -151,6 +151,18 @@ copy the example job below.
       --agent claude-code --review-types security,default --min-severity medium
     ```
 
+    `--pr` and `--ref` arrive as separate inputs here, and whoever starts the
+    pipeline chooses them, so roborev binds them itself: with an explicit `--pr`
+    it asks the API for the merge request's head and refuses to post when the
+    reviewed range ends somewhere else. Without that, a trigger could review a
+    harmless range while naming another merge request and have the bot post a
+    passing verdict on code nobody read — or, with `upsert_comments`, replace a
+    note that carried findings. The check runs before the review matrix and
+    again just before posting, so a force push landing mid-review is caught too.
+    Derive the range from the merge request (`git rev-parse FETCH_HEAD` after
+    the fetch above) rather than from trigger-supplied variables, and it will
+    match.
+
     That comes with a trade-off, and it is the reason the flags above are not
     optional: from inside the worktree, roborev reads `.roborev.toml` from the
     merge request's tree, so its author controls the `[ci]` settings. Left

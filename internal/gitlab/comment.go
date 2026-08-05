@@ -21,6 +21,29 @@ import (
 // github.CommentMarker so comment formatting stays consistent across forges.
 const CommentMarker = "<!-- roborev-pr-comment -->"
 
+// MergeRequestHeadSHA returns the head commit of the merge request's source
+// branch. Callers use it to check that the range they reviewed is the one the
+// note will describe: --pr and --ref are independent inputs, so nothing else
+// ties the verdict to the merge request it lands on.
+func (c *Client) MergeRequestHeadSHA(
+	ctx context.Context, project string, mrIID int,
+) (string, error) {
+	project, err := parseProject(project)
+	if err != nil {
+		return "", err
+	}
+	mr, _, err := c.api.MergeRequests.GetMergeRequest(
+		project, int64(mrIID), nil, gogitlab.WithContext(ctx))
+	if err != nil {
+		return "", fmt.Errorf("get merge request: %w", err)
+	}
+	if mr == nil || strings.TrimSpace(mr.SHA) == "" {
+		return "", fmt.Errorf(
+			"merge request !%d reports no head commit", mrIID)
+	}
+	return strings.TrimSpace(mr.SHA), nil
+}
+
 // FindExistingMRComment searches for an existing roborev note on the given
 // merge request. It returns the note ID if found, or 0 if no match exists.
 func (c *Client) FindExistingMRComment(ctx context.Context, project string, mrIID int) (int64, error) {

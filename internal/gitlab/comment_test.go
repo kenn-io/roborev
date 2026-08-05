@@ -849,3 +849,36 @@ func TestCreateMRComment_TruncationUTF8Safe(t *testing.T) {
 	assert.LessOrEqual(t, len(body), review.MaxCommentLen)
 	assert.True(t, utf8.ValidString(body))
 }
+
+// MergeRequestHeadSHA is what binds a reviewed range to the merge request the
+// note lands on, so it has to read the source-branch head GitLab reports.
+func TestMergeRequestHeadSHA(t *testing.T) {
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			assert.Contains(t, r.URL.EscapedPath(),
+				"group%2Fproject/merge_requests/7")
+			assert.NotContains(t, r.URL.EscapedPath(), "notes")
+			w.Header().Set("Content-Type", "application/json")
+			assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				"iid": 7,
+				"sha": "feedface00000000000000000000000000000000",
+			}))
+		}))
+	t.Cleanup(srv.Close)
+
+	client, err := NewClient("token", WithBaseURL(srv.URL))
+	require.NoError(t, err)
+
+	sha, err := client.MergeRequestHeadSHA(
+		context.Background(), "group/project", 7)
+	require.NoError(t, err)
+	assert.Equal(t, "feedface00000000000000000000000000000000", sha)
+}
+
+func TestMergeRequestHeadSHA_RejectsBadProject(t *testing.T) {
+	client, err := NewClient("token")
+	require.NoError(t, err)
+
+	_, err = client.MergeRequestHeadSHA(context.Background(), "nogroup", 7)
+	require.ErrorContains(t, err, "invalid GitLab project")
+}
