@@ -1490,6 +1490,7 @@ type stubGitLabMRAPI struct {
 	headSHA string
 	baseSHA string
 	posted  bool
+	mrPaths []string
 }
 
 func (s *stubGitLabMRAPI) start(t *testing.T) {
@@ -1508,6 +1509,13 @@ func (s *stubGitLabMRAPI) start(t *testing.T) {
 			case strings.HasSuffix(path, "/notes"):
 				assert.NoError(t, json.NewEncoder(w).Encode([]map[string]any{}))
 			default:
+				s.mrPaths = append(s.mrPaths, path)
+				// Routed by IID so a lookup of the wrong merge request — !0
+				// when detection is skipped, say — cannot silently pass.
+				if !strings.Contains(path, "/merge_requests/7") {
+					http.NotFound(w, r)
+					return
+				}
 				assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
 					"iid": 7,
 					"sha": s.headSHA,
@@ -1551,7 +1559,7 @@ func TestVerifyGitLabMRRange(t *testing.T) {
 
 		require.NoError(t, verifyGitLabMRRange(
 			context.Background(), ciReviewOpts{pr: 7},
-			repo.Path(), base+".."+head))
+			repo.Path(), base+".."+head, false))
 	})
 
 	// A base earlier than the merge request's is refused too. It looks
@@ -1567,7 +1575,7 @@ func TestVerifyGitLabMRRange(t *testing.T) {
 
 		err := verifyGitLabMRRange(
 			context.Background(), ciReviewOpts{pr: 7},
-			repo.Path(), base+".."+head)
+			repo.Path(), base+".."+head, false)
 		require.ErrorContains(t, err, mrBase)
 	})
 
@@ -1581,7 +1589,7 @@ func TestVerifyGitLabMRRange(t *testing.T) {
 
 		err := verifyGitLabMRRange(
 			context.Background(), ciReviewOpts{pr: 7},
-			repo.Path(), base+".."+head)
+			repo.Path(), base+".."+head, false)
 		require.ErrorContains(t, err, "no diff base")
 	})
 
@@ -1595,7 +1603,7 @@ func TestVerifyGitLabMRRange(t *testing.T) {
 		narrowed := strings.TrimSpace(repo.RevParse("HEAD~1"))
 		err := verifyGitLabMRRange(
 			context.Background(), ciReviewOpts{pr: 7},
-			repo.Path(), narrowed+".."+head)
+			repo.Path(), narrowed+".."+head, false)
 		require.Error(t, err)
 		assert.Contains(t, err.Error(), base,
 			"the error must name the base the range should have started at")
@@ -1607,7 +1615,7 @@ func TestVerifyGitLabMRRange(t *testing.T) {
 		api.start(t)
 
 		err := verifyGitLabMRRange(
-			context.Background(), ciReviewOpts{pr: 7}, repo.Path(), head)
+			context.Background(), ciReviewOpts{pr: 7}, repo.Path(), head, false)
 		require.ErrorContains(t, err, "BASE..HEAD")
 	})
 
@@ -1618,7 +1626,7 @@ func TestVerifyGitLabMRRange(t *testing.T) {
 
 		err := verifyGitLabMRRange(
 			context.Background(), ciReviewOpts{pr: 7},
-			repo.Path(), head+".."+head)
+			repo.Path(), head+".."+head, false)
 		require.Error(t, err)
 	})
 
@@ -1630,7 +1638,7 @@ func TestVerifyGitLabMRRange(t *testing.T) {
 
 		err := verifyGitLabMRRange(
 			context.Background(), ciReviewOpts{pr: 7},
-			repo.Path(), base+".."+head)
+			repo.Path(), base+".."+head, false)
 		require.ErrorContains(t, err, otherHead)
 	})
 }
@@ -1652,7 +1660,7 @@ func TestVerifyGitLabMRRange_AutoDetected(t *testing.T) {
 		t.Setenv("CI_MERGE_REQUEST_SOURCE_BRANCH_SHA", mrHead)
 
 		require.NoError(t, verifyGitLabMRRange(
-			context.Background(), ciReviewOpts{}, t.TempDir(), "base..head"))
+			context.Background(), ciReviewOpts{}, t.TempDir(), "base..head", false))
 	})
 
 	// An explicit --ref must be validated in full even when the IID came from
@@ -1672,8 +1680,11 @@ func TestVerifyGitLabMRRange_AutoDetected(t *testing.T) {
 
 		err := verifyGitLabMRRange(
 			context.Background(), ciReviewOpts{ref: narrowed + ".." + head},
-			repo.Path(), narrowed+".."+head)
+			repo.Path(), narrowed+".."+head, false)
 		require.ErrorContains(t, err, base)
+		require.NotEmpty(t, api.mrPaths)
+		assert.Contains(t, api.mrPaths[0], "/merge_requests/7",
+			"the IID must still be detected when only --ref was supplied")
 	})
 
 	t.Run("ForcePushedHeadIsStale", func(t *testing.T) {
@@ -1683,7 +1694,7 @@ func TestVerifyGitLabMRRange_AutoDetected(t *testing.T) {
 		t.Setenv("CI_MERGE_REQUEST_SOURCE_BRANCH_SHA", oldHead)
 
 		err := verifyGitLabMRRange(
-			context.Background(), ciReviewOpts{}, t.TempDir(), "base..head")
+			context.Background(), ciReviewOpts{}, t.TempDir(), "base..head", false)
 		require.ErrorIs(t, err, errMRHeadMoved)
 	})
 
@@ -1698,8 +1709,34 @@ func TestVerifyGitLabMRRange_AutoDetected(t *testing.T) {
 		t.Setenv("CI_COMMIT_SHA", "5ynthe71c000000000000000000000000000000a")
 
 		require.NoError(t, verifyGitLabMRRange(
-			context.Background(), ciReviewOpts{}, t.TempDir(), "base..head"))
+			context.Background(), ciReviewOpts{}, t.TempDir(), "base..head", false))
 	})
+}
+
+// A head that moves between the initial validation and the pre-post recheck is
+// the same benign race an auto-detected run reports, not the bad input a
+// first-pass mismatch means, so the recheck reports it as such and the job
+// exits without failing.
+func TestVerifyGitLabMRRange_RecheckTreatsMovedHeadAsRace(t *testing.T) {
+	repo := testutil.NewTestRepoWithCommit(t)
+	base := repo.HeadSHA()
+	repo.CheckoutNewBranch("feature")
+	head := repo.CommitFile("one.txt", "one", "first")
+
+	const movedTo = "feedface00000000000000000000000000000000"
+	api := &stubGitLabMRAPI{headSHA: movedTo, baseSHA: base}
+	api.start(t)
+
+	opts := ciReviewOpts{pr: 7}
+	gitRef := base + ".." + head
+
+	err := verifyGitLabMRRange(context.Background(), opts, repo.Path(), gitRef, false)
+	require.Error(t, err)
+	assert.NotErrorIs(t, err, errMRHeadMoved,
+		"a first-pass mismatch is bad input and must fail loudly")
+
+	err = verifyGitLabMRRange(context.Background(), opts, repo.Path(), gitRef, true)
+	require.ErrorIs(t, err, errMRHeadMoved)
 }
 
 // The binding is re-checked immediately before posting, so a force push landing

@@ -146,8 +146,11 @@ copy the example job below.
     mr_tree="$(mktemp -d)"
     git worktree add "$mr_tree" FETCH_HEAD
     cd "$mr_tree"
-    roborev ci review --comment --pr <iid> --ref <base>..<head> \
+    PATH=/usr/local/bin:/usr/bin:/bin \
+      /usr/local/bin/roborev ci review --comment --pr <iid> \
+      --ref <base>..<head> \
       --gl-host https://gitlab.example.com \
+      --gl-repo mygroup/myproject \
       --agent claude-code --review-types security,default --min-severity medium
     ```
 
