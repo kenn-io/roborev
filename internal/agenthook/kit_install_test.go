@@ -51,6 +51,7 @@ func TestCommandAgentRequiresExactlyOneSelection(t *testing.T) {
 		{name: "quoted invocation", command: `sh -c "roborev agent-hook run --agent qwen"`, wantErr: "must invoke"},
 		{name: "quoted command substitution", command: `roborev agent-hook run --agent "$(agent)"`, wantErr: "shell operator"},
 		{name: "quoted backticks", command: "roborev agent-hook run --agent \"`agent`\"", wantErr: "shell operator"},
+		{name: "escaped newline substitution", command: "roborev agent-hook run --agent \"$\\\n(agent)\"", wantErr: "single command line"},
 	}
 
 	for _, tt := range tests {

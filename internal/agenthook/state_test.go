@@ -2109,6 +2109,61 @@ func TestStopReminderProgressIsScopedAcrossSnoozedWorkspaces(t *testing.T) {
 	assert.True(record(repoB.Path()).Triggered)
 }
 
+func TestDeferredReminderDoesNotEscapeSnoozedWorkspace(t *testing.T) {
+	repoA := testutil.NewGitRepo(t)
+	repoA.CommitFile("a.go", "package a\n", "initial A")
+	repoB := testutil.NewGitRepo(t)
+	repoB.CommitFile("b.go", "package b\n", "initial B")
+	closed := false
+	verdict := "F"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/repos/resolve" {
+			path := r.URL.Query().Get("path")
+			repo := map[string]any{"root_path": path, "name": filepath.Base(path)}
+			if path == repoA.Path() {
+				repo["agent_hook_snoozed_until"] = time.Now().Add(time.Hour).UTC()
+			}
+			assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"tracked": true, "repo": repo}))
+			return
+		}
+		assert.NoError(t, json.NewEncoder(w).Encode(jobsResponse{Jobs: []storage.ReviewJob{{
+			Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main",
+		}}}))
+	}))
+	t.Cleanup(server.Close)
+	createdAt := time.Now().UTC()
+	snoozed := PendingReminder{
+		TriggeredBy: "failed_reviews", Reason: "Snoozed.",
+		TrackedRepoRoot: repoA.Path(), WorktreeRoot: repoA.Path(), Branch: "main",
+		LineageKey: "repo-a", CreatedAt: createdAt,
+	}
+	actionable := PendingReminder{
+		TriggeredBy: "commit", Reason: "Actionable.",
+		TrackedRepoRoot: repoB.Path(), WorktreeRoot: repoB.Path(), Branch: "main",
+		LineageKey: "repo-b", CreatedAt: createdAt.Add(time.Second),
+	}
+	store := &StateStore{
+		path: filepath.Join(t.TempDir(), "state.json"),
+		sessions: map[string]SessionState{
+			"session-1": {PendingReminders: map[string]PendingReminder{
+				pendingReminderKey(snoozed):    snoozed,
+				pendingReminderKey(actionable): actionable,
+			}},
+		},
+	}
+
+	response, err := store.Record(Request{
+		Event:             Input{SessionID: "session-1", CWD: repoB.Path(), HookEventName: "Stop"},
+		RoborevServerAddr: server.URL,
+	})
+
+	require.NoError(t, err)
+	assert.True(t, response.Triggered)
+	assert.Equal(t, "commit", response.TriggeredBy)
+	assert.Equal(t, "Actionable.", response.Reason)
+	assert.Empty(t, store.sessions["session-1"].PendingReminders)
+}
+
 func TestDeferredFailedReviewReminderIsRevalidatedBeforeDelivery(t *testing.T) {
 	repo := testutil.NewGitRepo(t)
 	repo.CommitFile("main.go", "package main\n", "initial")
@@ -2265,6 +2320,50 @@ func TestDeferredReminderPreservesLegacyInstruction(t *testing.T) {
 	assert.True(t, response.Triggered)
 	assert.Equal(t, legacyReason, response.Reason)
 	assert.Equal(t, 2, response.FailedReviewCount)
+	state := store.sessions["session-1"]
+	assert.Equal(t, 2, state.FailedReviewCount)
+	assert.Equal(t, 2, state.FailedReviewTriggeredCounts["repo"])
+	assert.Equal(t, repo.Path(), state.LastFailedReviewRepo)
+	assert.Equal(t, "main", state.LastFailedReviewBranch)
+}
+
+func TestDeferredReminderCancellationDoesNotConsumeCandidate(t *testing.T) {
+	started := make(chan struct{})
+	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+		close(started)
+		<-r.Context().Done()
+	}))
+	t.Cleanup(server.Close)
+	pending := PendingReminder{
+		TriggeredBy: "failed_reviews", Reason: "Resolve reviews.",
+		TrackedRepoRoot: "/repo", Branch: "main", LineageKey: "repo",
+		CreatedAt: time.Now().UTC(),
+	}
+	key := pendingReminderKey(pending)
+	store := &StateStore{
+		path: filepath.Join(t.TempDir(), "state.json"),
+		sessions: map[string]SessionState{
+			"session-1": {PendingReminders: map[string]PendingReminder{key: pending}},
+		},
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	errCh := make(chan error, 1)
+	cwd := t.TempDir()
+	go func() {
+		_, err := store.RecordContext(ctx, Request{
+			Event:             Input{SessionID: "session-1", CWD: cwd, HookEventName: "Stop"},
+			RoborevServerAddr: server.URL,
+		})
+		errCh <- err
+	}()
+	<-started
+	cancel()
+
+	err := <-errCh
+
+	require.ErrorIs(t, err, context.Canceled)
+	assert.Contains(t, store.sessions["session-1"].PendingReminders, key)
+	assert.Zero(t, store.sessions["session-1"].ReminderPromptCount)
 }
 
 func TestDeferredReminderContinuesAfterEarlierLookupFailure(t *testing.T) {

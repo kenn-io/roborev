@@ -119,11 +119,15 @@ func (s *StateStore) saveLocked() error {
 }
 
 func (s *StateStore) Record(req Request) (Response, error) {
+	return s.RecordContext(context.Background(), req)
+}
+
+func (s *StateStore) RecordContext(ctx context.Context, req Request) (Response, error) {
 	switch req.Event.HookEventName {
 	case "PreToolUse":
 		return s.recordPreToolUse(req)
 	case "", "Stop":
-		return s.recordStop(req)
+		return s.recordStop(ctx, req)
 	case "PostToolUse":
 		return s.recordPostToolUse(req)
 	default:
@@ -131,7 +135,7 @@ func (s *StateStore) Record(req Request) (Response, error) {
 	}
 }
 
-func (s *StateStore) recordStop(req Request) (Response, error) {
+func (s *StateStore) recordStop(ctx context.Context, req Request) (Response, error) {
 	if req.Event.StopHookActive {
 		s.mu.Lock()
 		st := s.sessions[req.Event.SessionID]
@@ -146,11 +150,11 @@ func (s *StateStore) recordStop(req Request) (Response, error) {
 			Skipped:               true,
 		}, nil
 	}
-	scope, ok := resolveHookScope(context.Background(), req.Event.CWD, req.RoborevServerAddr)
+	scope, ok := resolveHookScope(ctx, req.Event.CWD, req.RoborevServerAddr)
 	if ok && scope.SnoozedUntil.After(time.Now()) {
 		return s.recordSnoozed(req, scope)
 	}
-	if resp, delivered, err := s.deliverPendingReminder(req); err != nil || delivered {
+	if resp, delivered, err := s.deliverPendingReminder(ctx, req); err != nil || delivered {
 		return resp, err
 	}
 	if !ok {
@@ -170,7 +174,7 @@ func (s *StateStore) recordStop(req Request) (Response, error) {
 		}, nil
 	}
 	failedReviewCount, haveFailedReviewCount := countOpenFailedReviews(
-		context.Background(), scope.TrackedRepoRoot, scope.Branch, scope.Head, req.RoborevServerAddr,
+		ctx, scope.TrackedRepoRoot, scope.Branch, scope.Head, req.RoborevServerAddr,
 	)
 
 	s.mu.Lock()
@@ -607,7 +611,10 @@ type pendingReminderCandidate struct {
 	reminder PendingReminder
 }
 
-func (s *StateStore) deliverPendingReminder(req Request) (Response, bool, error) {
+func (s *StateStore) deliverPendingReminder(
+	ctx context.Context,
+	req Request,
+) (Response, bool, error) {
 	s.mu.Lock()
 	st := s.sessions[req.Event.SessionID]
 	candidates := make([]pendingReminderCandidate, 0, len(st.PendingReminders))
@@ -635,16 +642,29 @@ func (s *StateStore) deliverPendingReminder(req Request) (Response, bool, error)
 	lookupUnavailable := false
 	for _, candidate := range candidates {
 		pending := candidate.reminder
+		snoozed, known := pendingReminderSnoozed(ctx, pending, req.RoborevServerAddr)
+		if err := ctx.Err(); err != nil {
+			return Response{}, false, err
+		}
+		if known && snoozed {
+			if err := s.discardPendingReminder(req.Event.SessionID, candidate); err != nil {
+				return Response{}, false, err
+			}
+			continue
+		}
 		count, ok := countOpenFailedReviews(
-			context.Background(), pending.TrackedRepoRoot, pending.Branch,
+			ctx, pending.TrackedRepoRoot, pending.Branch,
 			pending.Head, req.RoborevServerAddr,
 		)
+		if err := ctx.Err(); err != nil {
+			return Response{}, false, err
+		}
 		if !ok {
 			lookupUnavailable = true
 			continue
 		}
 		if count == 0 {
-			if err := s.discardResolvedPendingReminder(req.Event.SessionID, candidate); err != nil {
+			if err := s.discardPendingReminder(req.Event.SessionID, candidate); err != nil {
 				return Response{}, false, err
 			}
 			continue
@@ -664,6 +684,10 @@ func (s *StateStore) deliverPendingReminder(req Request) (Response, bool, error)
 		}
 
 		s.mu.Lock()
+		if err := ctx.Err(); err != nil {
+			s.mu.Unlock()
+			return Response{}, false, err
+		}
 		st = s.sessions[req.Event.SessionID]
 		current, ok := st.PendingReminders[candidate.key]
 		if !ok || current != candidate.reminder {
@@ -672,6 +696,17 @@ func (s *StateStore) deliverPendingReminder(req Request) (Response, bool, error)
 		}
 		delete(st.PendingReminders, candidate.key)
 		st.ReminderPromptCount++
+		st.FailedReviewCount = count
+		st.LastFailedReviewRepo = pending.TrackedRepoRoot
+		st.LastFailedReviewBranch = pending.Branch
+		if st.FailedReviewTriggeredCounts == nil {
+			st.FailedReviewTriggeredCounts = map[string]int{}
+		}
+		dedupeKey := pending.LineageKey
+		if dedupeKey == "" {
+			dedupeKey = repoHeadKey(pending.TrackedRepoRoot, pending.Branch)
+		}
+		st.FailedReviewTriggeredCounts[dedupeKey] = count
 		now := time.Now().UTC()
 		switch pending.TriggeredBy {
 		case "failed_reviews":
@@ -705,7 +740,20 @@ func (s *StateStore) deliverPendingReminder(req Request) (Response, bool, error)
 	return Response{}, false, nil
 }
 
-func (s *StateStore) discardResolvedPendingReminder(
+func pendingReminderSnoozed(
+	ctx context.Context,
+	pending PendingReminder,
+	configuredAddr string,
+) (bool, bool) {
+	path := pending.WorktreeRoot
+	if path == "" {
+		path = pending.TrackedRepoRoot
+	}
+	resolved, known := resolveTrackedRepo(ctx, path, pending.Branch, configuredAddr)
+	return known && resolved.SnoozedUntil.After(time.Now()), known
+}
+
+func (s *StateStore) discardPendingReminder(
 	sessionID string,
 	candidate pendingReminderCandidate,
 ) error {

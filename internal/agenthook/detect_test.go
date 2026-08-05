@@ -1,6 +1,7 @@
 package agenthook
 
 import (
+	"encoding/json"
 	"os"
 	"path/filepath"
 	"testing"
@@ -28,14 +29,26 @@ func TestInstalledDetectsRoborevHook(t *testing.T) {
 }
 
 func TestInstalledForAgentDetectsGrokHook(t *testing.T) {
-	dir := t.TempDir()
-	path := filepath.Join(dir, "hooks.json")
-	content := `{"hooks":{"Stop":[{"hooks":[{"type":"command","command":"roborev agent-hook run --agent grok"}]}]}}`
-	require.NoError(t, os.WriteFile(path, []byte(content), 0o644))
+	for _, command := range []string{
+		`roborev agent-hook run --agent grok`,
+		`roborev agent-hook run --agent=grok`,
+		`roborev agent-hook run --agent "grok"`,
+	} {
+		t.Run(command, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "hooks.json")
+			content, err := json.Marshal(map[string]any{
+				"hooks": map[string]any{"Stop": []any{map[string]any{
+					"hooks": []any{map[string]any{"type": "command", "command": command}},
+				}}},
+			})
+			require.NoError(t, err)
+			require.NoError(t, os.WriteFile(path, content, 0o644))
 
-	ok, err := InstalledForAgent(path, "grok")
-	require.NoError(t, err)
-	assert.True(t, ok)
+			ok, err := InstalledForAgent(path, "grok")
+			require.NoError(t, err)
+			assert.True(t, ok)
+		})
+	}
 }
 
 func TestInstalledIgnoresUnrelatedHooks(t *testing.T) {

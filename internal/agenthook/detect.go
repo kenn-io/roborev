@@ -42,11 +42,12 @@ func InstalledForAgent(path, agent string) (bool, error) {
 
 func containsGrokHook(value any) bool {
 	switch typed := value.(type) {
-	case string:
-		return strings.Contains(typed, "agent-hook run --agent grok")
 	case []any:
 		return slices.ContainsFunc(typed, containsGrokHook)
 	case map[string]any:
+		if command, ok := typed["command"].(string); ok && isGrokHookCommand(command) {
+			return true
+		}
 		for _, child := range typed {
 			if containsGrokHook(child) {
 				return true
@@ -54,4 +55,9 @@ func containsGrokHook(value any) bool {
 		}
 	}
 	return false
+}
+
+func isGrokHookCommand(command string) bool {
+	agent, err := commandAgent(command)
+	return err == nil && agent == AgentGrok
 }

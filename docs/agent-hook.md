@@ -115,6 +115,11 @@ The CLI flag migration is:
 
 Removed flags are not retained as aliases.
 
+Persisted session state is also read forward during this window. A legacy
+session-wide Stop count moves to its single identifiable recent workspace;
+ambiguous multi-workspace progress resets instead of being assigned to the wrong
+checkout.
+
 ## Declarative Config
 
 `dump` requires one profile and writes the complete planned native config to

@@ -1,6 +1,7 @@
 package agenthook
 
 import (
+	"encoding/json"
 	"strings"
 	"testing"
 
@@ -91,4 +92,15 @@ func TestNormalizeHookEventName(t *testing.T) {
 	assert.Equal("Stop", NormalizeHookEventName("Stop"))
 	assert.Empty(NormalizeHookEventName(""))
 	assert.Equal("SessionStart", NormalizeHookEventName("SessionStart"))
+}
+
+func TestSessionStateMigratesLegacyStopCountToKnownLineage(t *testing.T) {
+	var state SessionState
+	err := json.Unmarshal([]byte(`{
+		"stop_count_since_prompt": 3,
+		"worktree_lineage_keys": {"worktree": "lineage"}
+	}`), &state)
+
+	require.NoError(t, err)
+	assert.Equal(t, map[string]int{"lineage": 3}, state.StopCountsSincePrompt)
 }

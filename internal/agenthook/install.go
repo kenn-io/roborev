@@ -251,6 +251,9 @@ func splitHookCommand(command string) ([]string, error) {
 	}
 
 	for _, r := range strings.TrimSpace(command) {
+		if unicode.IsControl(r) {
+			return nil, fmt.Errorf("hook command must be a single command line")
+		}
 		if escaped {
 			field.WriteRune(r)
 			started = true
@@ -279,8 +282,6 @@ func splitHookCommand(command string) ([]string, error) {
 		}
 
 		switch {
-		case unicode.IsControl(r):
-			return nil, fmt.Errorf("hook command must be a single command line")
 		case unicode.IsSpace(r):
 			flush()
 		case r == '\'' || r == '"':
