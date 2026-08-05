@@ -881,6 +881,36 @@ func TestMergeRequestRefs(t *testing.T) {
 		"the diff base is what bounds the range, so it must be reported too")
 }
 
+// GitLab recomputes diff_refs asynchronously, so a force push can leave the
+// reported base describing the previous head. Pairing that base with the new
+// head would compare a range against a diff that never existed.
+func TestMergeRequestRefs_RejectsDiffRefsForAnotherHead(t *testing.T) {
+	const head = "feedface00000000000000000000000000000000"
+	const staleHead = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
+
+	srv := httptest.NewServer(http.HandlerFunc(
+		func(w http.ResponseWriter, r *http.Request) {
+			w.Header().Set("Content-Type", "application/json")
+			assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				"iid": 7,
+				"sha": head,
+				"diff_refs": map[string]any{
+					"base_sha": "ba5e0000000000000000000000000000000000ba",
+					"head_sha": staleHead,
+				},
+			}))
+		}))
+	t.Cleanup(srv.Close)
+
+	client, err := NewClient("token", WithBaseURL(srv.URL))
+	require.NoError(t, err)
+
+	_, err = client.MergeRequestRefs(context.Background(), "group/project", 7)
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), head)
+	assert.Contains(t, err.Error(), staleHead)
+}
+
 func TestMergeRequestRefs_RejectsBadProject(t *testing.T) {
 	client, err := NewClient("token")
 	require.NoError(t, err)

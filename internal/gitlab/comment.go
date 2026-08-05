@@ -51,8 +51,20 @@ func (c *Client) MergeRequestRefs(
 		return MRRefs{}, fmt.Errorf(
 			"merge request !%d reports no head commit", mrIID)
 	}
+	head := strings.TrimSpace(mr.SHA)
+	// GitLab recomputes diff_refs asynchronously, so shortly after a push the
+	// reported base can still describe the previous head. Returning that base
+	// alongside the current head would have callers check a range against a
+	// diff that never existed, so say the refs disagree instead.
+	if diffHead := strings.TrimSpace(mr.DiffRefs.HeadSha); diffHead != "" &&
+		!strings.EqualFold(diffHead, head) {
+		return MRRefs{}, fmt.Errorf(
+			"merge request !%d is at %s but its diff still describes %s "+
+				"(GitLab is preparing the diff — retry shortly)",
+			mrIID, head, diffHead)
+	}
 	return MRRefs{
-		HeadSHA: strings.TrimSpace(mr.SHA),
+		HeadSHA: head,
 		BaseSHA: strings.TrimSpace(mr.DiffRefs.BaseSha),
 	}, nil
 }
