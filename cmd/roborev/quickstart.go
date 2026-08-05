@@ -46,6 +46,7 @@ var quickstartCheckIDs = []string{
 	"configured_agent",
 	"agent_hook_claude",
 	"agent_hook_codex",
+	"agent_hook_grok",
 	"skills_installed",
 }
 
@@ -55,6 +56,7 @@ func detectState(ctx context.Context, repoRoot string, inGitRepo bool) quickstar
 	agent := resolveQuickstartReviewAgent(repoRoot, global)
 	claudePath, _ := kitagenthook.ConfigPath(kitagenthook.AgentClaude)
 	codexPath, _ := kitagenthook.ConfigPath(kitagenthook.AgentCodex)
+	grokPath := agenthook.DefaultGrokHooksPath()
 
 	checks := []quickstartCheck{
 		checkDaemon(daemonUp),
@@ -62,10 +64,12 @@ func detectState(ctx context.Context, repoRoot string, inGitRepo bool) quickstar
 		checkRepoRegistered(repoRoot, inGitRepo, daemonUp),
 		checkRepoConfig(repoRoot, inGitRepo, agent),
 		checkConfiguredAgent(repoRoot, inGitRepo, agent),
-		checkAgentHook("agent_hook_claude", kitagenthook.AgentClaude, claudePath,
+		checkAgentHook("agent_hook_claude", claudePath, "claude",
 			"roborev agent-hook install --agent claude"),
-		checkAgentHook("agent_hook_codex", kitagenthook.AgentCodex, codexPath,
+		checkAgentHook("agent_hook_codex", codexPath, "codex",
 			"roborev agent-hook install --agent codex"),
+		checkAgentHook("agent_hook_grok", grokPath, "grok",
+			"roborev agent-hook install --agent grok"),
 		checkSkills(),
 	}
 
@@ -217,9 +221,9 @@ func checkConfiguredAgent(repoRoot string, inGitRepo bool, agent string) quickst
 	return c
 }
 
-func checkAgentHook(id string, agent kitagenthook.Agent, path, fix string) quickstartCheck {
+func checkAgentHook(id, path, agent, fix string) quickstartCheck {
 	c := quickstartCheck{ID: id}
-	installed, err := agenthook.Installed(agent, path)
+	installed, err := agenthook.InstalledForAgent(path, agent)
 	if err != nil {
 		c.Status = statusUnknown
 		c.Details = fmt.Sprintf("could not read %s: %v", path, err)
@@ -256,6 +260,7 @@ func agentsWithRequiredQuickstartSkills(statuses []skills.AgentStatus) []string 
 		skills.AgentClaude: "Claude Code",
 		skills.AgentCodex:  "Codex",
 		skills.AgentDroid:  "Factory Droid",
+		skills.AgentGrok:   "Grok Build",
 	}
 	var installedFor []string
 	for _, status := range statuses {
@@ -269,8 +274,15 @@ func agentsWithRequiredQuickstartSkills(statuses []skills.AgentStatus) []string 
 				break
 			}
 		}
-		if complete {
-			installedFor = append(installedFor, labels[status.Agent])
+		if !complete {
+			continue
+		}
+		label := labels[status.Agent]
+		if label == "" {
+			label = string(status.Agent)
+		}
+		if label != "" {
+			installedFor = append(installedFor, label)
 		}
 	}
 	return installedFor

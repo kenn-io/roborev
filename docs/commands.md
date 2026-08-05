@@ -833,7 +833,7 @@ See: [Configuration](/configuration/#post-commit-review-mode)
 
 ```bash
 roborev agent-hook install              # Install profiles for detected agents
-roborev agent-hook install --agent all  # Install all eight profiles
+roborev agent-hook install --agent all  # Install all nine integrations
 roborev agent-hook install --agent hermes --config ~/.hermes/config.yaml
 roborev agent-hook install --binary ~/.local/bin/roborev
 roborev agent-hook dump --agent qwen    # Native JSON config on stdout
@@ -846,7 +846,7 @@ roborev agent-hook daemon start         # start | status | stop | restart
 
 | Flag | Description |
 |------|-------------|
-| `--agent <name>` | `claude`, `codex`, `copilot`, `cursor`, `droid`, `gemini`, `hermes`, `qwen`, or `all` for install |
+| `--agent <name>` | `claude`, `codex`, `copilot`, `cursor`, `droid`, `gemini`, `hermes`, `qwen`, `grok`, or `all` for install |
 | `--dry-run` | Report whether each target needs changes without writing (`install`) |
 | `--config <path>` | Override the native config path for one explicit profile |
 | `--command <cmd>` | Override the full command for one explicit profile; it must select the same agent |

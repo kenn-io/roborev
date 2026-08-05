@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"strconv"
@@ -41,14 +42,18 @@ func agentHookRunCmd() *cobra.Command {
 		Args:                  cobra.NoArgs,
 		DisableFlagsInUseLine: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			if strings.TrimSpace(agent) == "" {
+			rawAgent := strings.ToLower(strings.TrimSpace(agent))
+			if rawAgent == "" {
 				return fmt.Errorf("--agent is required")
 			}
-			profile, err := kitagenthook.ParseAgent(agent)
+			resolved, err := agenthook.ResolveOptionsForAgent(rawAgent, opts, agentHookFlagChanges(cmd))
 			if err != nil {
 				return err
 			}
-			resolved, err := agenthook.ResolveOptionsForAgent(string(profile), opts, agentHookFlagChanges(cmd))
+			if rawAgent == string(agenthook.AgentGrok) {
+				return runGrokAgentHook(resolved, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr())
+			}
+			profile, err := kitagenthook.ParseAgent(rawAgent)
 			if err != nil {
 				return err
 			}
@@ -60,6 +65,29 @@ func agentHookRunCmd() *cobra.Command {
 	cmd.Flags().StringVar(&source, "source", source, "agent hook registration owner")
 	_ = cmd.Flags().MarkHidden("source")
 	return cmd
+}
+
+func runGrokAgentHook(opts agenthook.Options, stdin io.Reader, stdout, stderr io.Writer) error {
+	input, err := agenthook.DecodeInput(stdin)
+	if err != nil {
+		return fmt.Errorf("decode Grok Build input: %w", err)
+	}
+	if input.SessionID == "" {
+		return fmt.Errorf("decode Grok Build input: missing session_id")
+	}
+	resp, err := postAgentHook(context.Background(), agenthook.Request{
+		Event:                 input,
+		Threshold:             opts.TurnThreshold,
+		CommitThreshold:       opts.CommitThreshold,
+		FailedReviewThreshold: opts.FailedReviewThreshold,
+		Instruction:           opts.Instruction,
+		RoborevServerAddr:     opts.RoborevServerAddr,
+	})
+	if err != nil {
+		fmt.Fprintf(stderr, "roborev Grok Build: %v\n", err)
+		return json.NewEncoder(stdout).Encode(map[string]any{})
+	}
+	return json.NewEncoder(stdout).Encode(agenthook.BuildOutput(input, resp))
 }
 
 func agentHookDaemonCmd() *cobra.Command {

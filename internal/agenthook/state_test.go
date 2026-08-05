@@ -310,7 +310,7 @@ func TestBuildHookReasonsAreCompactOneLine(t *testing.T) {
 	assert.NotContains(failed, "/workspace/roborev")
 	assert.NotContains(failed, "continue the task")
 
-	stop := buildStopReason(req, st)
+	stop := buildStopReason(req, st.Count)
 	assert.Equal(DefaultInstruction+" 4 Stop hooks reached.", stop)
 	assert.NotContains(stop, "\n")
 	assert.NotContains(stop, req.Event.SessionID)
@@ -2012,6 +2012,101 @@ func TestDeferredPostToolReminderCoalescesAndSurvivesCWDChange(t *testing.T) {
 	assert.Contains(t, resp.Reason, "change to")
 	assert.Empty(t, store.sessions["session-1"].PendingReminders)
 	assert.Equal(t, 1, store.sessions["session-1"].ReminderPromptCount)
+}
+
+func TestRecordStopSuppressesReminderWhileWorkspaceIsSnoozed(t *testing.T) {
+	assert := assert.New(t)
+	repo := testutil.NewGitRepo(t)
+	head := repo.CommitFile("main.go", "package main\n", "initial")
+	jobRequests := 0
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/repos/resolve" {
+			assert.Equal(repo.Path(), r.URL.Query().Get("path"))
+			assert.Equal("main", r.URL.Query().Get("branch"))
+			assert.NoError(json.NewEncoder(w).Encode(map[string]any{
+				"tracked": true,
+				"repo": map[string]any{
+					"root_path": repo.Path(), "name": filepath.Base(repo.Path()),
+					"agent_hook_snoozed_until": time.Now().Add(time.Hour).UTC(),
+				},
+			}))
+			return
+		}
+		jobRequests++
+		http.Error(w, "review lookup should be suppressed", http.StatusInternalServerError)
+	}))
+	t.Cleanup(server.Close)
+	worktreeKey := worktreeSequenceKey(repo.Path(), repo.Path())
+	branchKey := repoHeadKey(repo.Path(), "main")
+	store := &StateStore{
+		path: filepath.Join(t.TempDir(), "state.json"),
+		sessions: map[string]SessionState{
+			"session-1": {
+				StopCountsSincePrompt:       map[string]int{branchKey: 3},
+				CommitSHAsSincePrompt:       map[string][]string{branchKey: {"old-head"}},
+				FailedReviewTriggeredCounts: map[string]int{branchKey: 1},
+			},
+		},
+	}
+
+	resp, err := store.Record(Request{
+		Event:     Input{SessionID: "session-1", CWD: repo.Path(), HookEventName: "Stop"},
+		Threshold: 1, FailedReviewThreshold: 1, Instruction: "Run roborev fix.",
+		RoborevServerAddr: server.URL,
+	})
+
+	require.NoError(t, err)
+	assert.True(resp.Skipped)
+	assert.False(resp.Triggered)
+	assert.Equal(0, jobRequests)
+	state := store.sessions["session-1"]
+	assert.Empty(state.StopCountsSincePrompt)
+	assert.Zero(state.ReminderPromptCount)
+	assert.Empty(state.CommitSHAsSincePrompt)
+	assert.Empty(state.FailedReviewTriggeredCounts)
+	assert.Equal(head, state.RepoHeads[worktreeKey])
+	assert.Equal(head, state.RepoHeads[branchKey])
+}
+
+func TestStopReminderProgressIsScopedAcrossSnoozedWorkspaces(t *testing.T) {
+	assert := assert.New(t)
+	repoA := testutil.NewGitRepo(t)
+	repoA.CommitFile("a.go", "package a\n", "initial A")
+	repoB := testutil.NewGitRepo(t)
+	repoB.CommitFile("b.go", "package b\n", "initial B")
+	var snoozeA atomic.Bool
+	closed := false
+	verdict := "F"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/repos/resolve" {
+			root := r.URL.Query().Get("path")
+			repo := map[string]any{"root_path": root, "name": filepath.Base(root)}
+			if root == repoA.Path() && snoozeA.Load() {
+				repo["agent_hook_snoozed_until"] = time.Now().Add(time.Hour).UTC()
+			}
+			assert.NoError(json.NewEncoder(w).Encode(map[string]any{"tracked": true, "repo": repo}))
+			return
+		}
+		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{Jobs: []storage.ReviewJob{{
+			Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main",
+		}}}))
+	}))
+	t.Cleanup(server.Close)
+	store := &StateStore{path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	record := func(cwd string) Response {
+		resp, err := store.Record(Request{
+			Event:     Input{SessionID: "session-1", CWD: cwd, HookEventName: "Stop"},
+			Threshold: 2, Instruction: "Run roborev fix.", RoborevServerAddr: server.URL,
+		})
+		require.NoError(t, err)
+		return resp
+	}
+
+	assert.False(record(repoA.Path()).Triggered)
+	assert.False(record(repoB.Path()).Triggered)
+	snoozeA.Store(true)
+	assert.True(record(repoA.Path()).Skipped)
+	assert.True(record(repoB.Path()).Triggered)
 }
 
 func TestDeferredFailedReviewReminderIsRevalidatedBeforeDelivery(t *testing.T) {

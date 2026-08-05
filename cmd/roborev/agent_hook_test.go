@@ -3,6 +3,7 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"os"
@@ -132,7 +133,11 @@ func TestRunAgentHookEncodesKitStopResponse(t *testing.T) {
 	)
 
 	require.NoError(t, err)
-	assert.JSONEq(t, `{"decision":"block","reason":"resolve reviews"}`, stdout.String())
+	var output map[string]any
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &output))
+	assert.Equal(t, "block", output["decision"])
+	assert.Contains(t, output["reason"], "resolve reviews")
+	assert.Contains(t, output["reason"], "continue the task")
 }
 
 func TestRunAgentHookCursorSuppressesUnsupportedControlOutput(t *testing.T) {

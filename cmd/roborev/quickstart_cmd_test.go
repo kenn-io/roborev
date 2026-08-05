@@ -31,8 +31,8 @@ func TestCheckAgentHookUsesKitProfile(t *testing.T) {
 
 	check := checkAgentHook(
 		"agent_hook_codex",
-		kitagenthook.AgentCodex,
 		path,
+		string(kitagenthook.AgentCodex),
 		"roborev agent-hook install --agent codex",
 	)
 

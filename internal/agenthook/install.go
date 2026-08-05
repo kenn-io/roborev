@@ -69,9 +69,13 @@ func RunDump(opts DumpOptions, stdout io.Writer) error {
 	if raw == "" || strings.EqualFold(raw, "all") {
 		return fmt.Errorf("dump requires one explicit agent")
 	}
-	agent, err := kitagenthook.ParseAgent(raw)
-	if err != nil {
-		return err
+	agent := AgentGrok
+	if !strings.EqualFold(raw, string(AgentGrok)) {
+		var err error
+		agent, err = kitagenthook.ParseAgent(raw)
+		if err != nil {
+			return err
+		}
 	}
 	installOpts := InstallOptions{
 		Agent:      raw,
@@ -80,6 +84,14 @@ func RunDump(opts DumpOptions, stdout io.Writer) error {
 		ConfigPath: opts.ConfigPath,
 		Timeout:    opts.Timeout,
 		DryRun:     true,
+	}
+	if agent == AgentGrok {
+		result, err := planGrokInstall(installOpts)
+		if err != nil {
+			return profileError(agent, opts.ConfigPath, err)
+		}
+		_, err = stdout.Write(result.Data)
+		return err
 	}
 	kitOpts, err := validatedKitInstallOptions(agent, installOpts)
 	if err != nil {
@@ -98,6 +110,9 @@ func RunDump(opts DumpOptions, stdout io.Writer) error {
 }
 
 func runInstall(agent kitagenthook.Agent, opts InstallOptions) (kitagenthook.Result, error) {
+	if agent == AgentGrok {
+		return runGrokInstall(opts)
+	}
 	kitOpts, err := validatedKitInstallOptions(agent, opts)
 	if err != nil {
 		return kitagenthook.Result{}, err
@@ -213,6 +228,9 @@ func commandAgent(command string) (kitagenthook.Agent, error) {
 	if selected == "" {
 		return "", fmt.Errorf("hook command must select an agent")
 	}
+	if strings.EqualFold(selected, string(AgentGrok)) {
+		return AgentGrok, nil
+	}
 	return kitagenthook.ParseAgent(selected)
 }
 
@@ -290,9 +308,16 @@ func splitHookCommand(command string) ([]string, error) {
 
 func profileError(agent kitagenthook.Agent, configuredPath string, err error) error {
 	profile, _ := kitagenthook.LookupProfile(agent)
+	if agent == AgentGrok {
+		profile.DisplayName = "Grok Build"
+	}
 	path := configuredPath
 	if path == "" {
-		path, _ = kitagenthook.ConfigPath(agent)
+		if agent == AgentGrok {
+			path = DefaultGrokHooksPath()
+		} else {
+			path, _ = kitagenthook.ConfigPath(agent)
+		}
 	}
 	if path == "" {
 		return fmt.Errorf("%s: %w", profile.DisplayName, err)
@@ -302,6 +327,9 @@ func profileError(agent kitagenthook.Agent, configuredPath string, err error) er
 
 func printInstallResult(stdout io.Writer, result kitagenthook.Result, dryRun bool) {
 	profile, _ := kitagenthook.LookupProfile(result.Agent)
+	if result.Agent == AgentGrok {
+		profile.DisplayName = "Grok Build"
+	}
 	switch {
 	case dryRun && result.Changed:
 		fmt.Fprintf(stdout, "would update %s agent hooks in %s\n", profile.DisplayName, result.ConfigPath)

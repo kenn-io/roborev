@@ -115,6 +115,6 @@ func (h roborevAgentHookHandler) Stop(
 	}
 	return kitagenthook.StopOutput{
 		Decision: kitagenthook.DecisionBlock,
-		Reason:   resp.Reason,
+		Reason:   agenthook.StopReason(resp.Reason),
 	}, nil
 }

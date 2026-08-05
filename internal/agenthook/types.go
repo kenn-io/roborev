@@ -2,6 +2,9 @@ package agenthook
 
 import (
 	"encoding/json"
+	"fmt"
+	"io"
+	"strings"
 	"sync"
 	"time"
 )
@@ -20,6 +23,87 @@ type Input struct {
 	ToolUseID      string                     `json:"tool_use_id,omitempty"`
 	ToolInput      map[string]json.RawMessage `json:"tool_input,omitempty"`
 	ToolResponse   json.RawMessage            `json:"tool_response,omitempty"`
+}
+
+// DecodeInput normalizes Claude-style snake_case and Grok Build camelCase
+// hook envelopes for the one profile that kit does not yet expose.
+func DecodeInput(r io.Reader) (Input, error) {
+	var raw map[string]json.RawMessage
+	if err := json.NewDecoder(r).Decode(&raw); err != nil {
+		return Input{}, err
+	}
+	var input Input
+	input.SessionID = firstString(raw, "session_id", "sessionId")
+	input.TranscriptPath = firstString(raw, "transcript_path", "transcriptPath")
+	input.CWD = firstString(raw, "cwd")
+	input.HookEventName = NormalizeHookEventName(firstString(raw, "hook_event_name", "hookEventName"))
+	input.TurnID = firstString(raw, "turn_id", "turnId", "prompt_id", "promptId")
+	input.StopHookActive = firstBool(raw, "stop_hook_active", "stopHookActive")
+	input.LastAssistant = firstString(raw, "last_assistant_message", "lastAssistantMessage")
+	input.ToolName = firstString(raw, "tool_name", "toolName")
+	input.ToolUseID = firstString(raw, "tool_use_id", "toolUseId")
+	if toolInput, ok := firstRaw(raw, "tool_input", "toolInput"); ok {
+		if err := json.Unmarshal(toolInput, &input.ToolInput); err != nil {
+			return Input{}, fmt.Errorf("decode tool_input: %w", err)
+		}
+	}
+	if response, ok := firstRaw(raw, "tool_response", "toolResponse", "tool_result", "toolResult"); ok {
+		input.ToolResponse = response
+	}
+	return input, nil
+}
+
+func NormalizeHookEventName(name string) string {
+	switch strings.ToLower(strings.TrimSpace(name)) {
+	case "pretooluse", "pre_tool_use":
+		return "PreToolUse"
+	case "posttooluse", "post_tool_use":
+		return "PostToolUse"
+	case "stop":
+		return "Stop"
+	case "":
+		return ""
+	default:
+		return strings.TrimSpace(name)
+	}
+}
+
+func firstString(raw map[string]json.RawMessage, keys ...string) string {
+	for _, key := range keys {
+		value, ok := raw[key]
+		if !ok {
+			continue
+		}
+		var decoded string
+		if err := json.Unmarshal(value, &decoded); err == nil && decoded != "" {
+			return decoded
+		}
+	}
+	return ""
+}
+
+func firstBool(raw map[string]json.RawMessage, keys ...string) bool {
+	for _, key := range keys {
+		value, ok := raw[key]
+		if !ok {
+			continue
+		}
+		var decoded bool
+		if err := json.Unmarshal(value, &decoded); err == nil {
+			return decoded
+		}
+	}
+	return false
+}
+
+func firstRaw(raw map[string]json.RawMessage, keys ...string) (json.RawMessage, bool) {
+	for _, key := range keys {
+		value, ok := raw[key]
+		if ok && len(value) > 0 && string(value) != "null" {
+			return value, true
+		}
+	}
+	return nil, false
 }
 
 func (i Input) Command() string {
@@ -64,7 +148,7 @@ type Response struct {
 
 type SessionState struct {
 	Count                       int                        `json:"count"`
-	StopCountSincePrompt        int                        `json:"stop_count_since_prompt,omitempty"`
+	StopCountsSincePrompt       map[string]int             `json:"stop_counts_since_prompt,omitempty"`
 	CommitCount                 int                        `json:"commit_count,omitempty"`
 	CommitCountsSincePrompt     map[string]int             `json:"commit_counts_since_prompt,omitempty"`
 	CommitSHAsSincePrompt       map[string][]string        `json:"commit_shas_since_prompt,omitempty"`

@@ -56,11 +56,12 @@ Install hooks for every locally detected coding agent:
 roborev agent-hook install
 ```
 
-An agent is detected when its executable is on `PATH` or its kit-resolved config
-directory already exists. The executable candidates are `claude`, `codex`,
-`copilot`, `agent` (Cursor), `droid`, `gemini`, `hermes`, and `qwen`.
+An agent is detected when its executable is on `PATH` or its config directory
+already exists. The executable candidates are `claude`, `codex`, `copilot`,
+`agent` (Cursor), `droid`, `gemini`, `hermes`, `qwen`, and `grok`.
 
-Select one profile or deliberately install all eight:
+Select one profile or deliberately install all nine integrations (the eight kit
+profiles plus Grok Build):
 
 ```bash
 roborev agent-hook install --agent qwen
@@ -174,6 +175,26 @@ Cursor sends the same normalized events, thresholds, and accounting requests as
 every other profile. Kit v0.14.0 cannot encode control output for Cursor's
 post-tool or stop boundaries, so roborev always emits an empty Cursor response.
 Only response delivery differs; event handling remains uniform.
+
+## Snoozing Reminders
+
+Silence Agent Hook reminders temporarily when a session needs a longer stretch
+of implementation work:
+
+```bash
+roborev snooze                 # defaults to eight hours
+roborev snooze on --duration 2h
+roborev snooze off             # resume immediately
+```
+
+The snooze is scoped to the current linked worktree and branch. Switching
+branches or working in another checkout does not inherit it. Reviews continue to
+enqueue and failed reviews keep accumulating; only the coding-agent reminder is
+muted. Hook baselines advance while snoozed, avoiding a catch-up reminder for
+every commit made during the quiet period.
+
+The bundled `/roborev-snooze` skill (or `$roborev-snooze` in Codex) exposes both
+the `on` and `off` operations from an agent session.
 
 ## Configuration
 

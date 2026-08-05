@@ -96,11 +96,11 @@ changes and commits. The new commit gets reviewed automatically,
 closing the loop.
 
 `roborev agent-hook install` auto-detects installed Claude Code, Codex, Copilot
-CLI, Cursor, Factory Droid, Gemini CLI, Hermes, and Qwen harnesses and adds
-optional hooks after configured turn, commit, or failed-review thresholds are
-met. Reminders include a complete CLI fallback when no roborev skill is
-installed. Hermes delivers queued post-tool reminders at `Stop`; Cursor records
-the same events but emits no control response.
+CLI, Cursor, Factory Droid, Gemini CLI, Hermes, Qwen, and Grok Build harnesses
+and adds optional hooks after configured turn, commit, or failed-review
+thresholds are met. Reminders include a complete CLI fallback when no roborev
+skill is installed. Hermes delivers queued post-tool reminders at `Stop`; Cursor
+records the same events but emits no control response.
 The hook uses a separate local `roborev-agent-hook` daemon for session counters;
 it does not run inside the main roborev daemon.
 
@@ -198,14 +198,16 @@ leaving Markdown tables unchanged. Use `make check-renovate-config` to validate
 | `roborev refine` | Auto-fix loop: fix, re-review, repeat |
 | `roborev analyze <type>` | Run code analysis with optional auto-fix |
 | `roborev agent-hook install` | Install hooks for detected coding agents |
-| `roborev agent-hook install --agent all` | Install all eight kit-backed profiles |
+| `roborev agent-hook install --agent all` | Install all nine supported integrations |
+| `roborev snooze` | Silence Agent Hook reminders in the current worktree and branch |
+| `roborev snooze off` | Resume Agent Hook reminders in the current worktree and branch |
 | `roborev compact` | Verify and consolidate open review findings |
 | `roborev show [sha]` | Display review for commit |
 | `roborev export reviews` | Export completed reviews as JSON |
 | `roborev export ci-metrics` | Export finalized CI panel metrics as JSON |
 | `roborev run "<task>"` | Execute a task with an AI agent |
 | `roborev close <id>` | Close a review |
-| `roborev skills install` | Install agent skills for Claude/Codex |
+| `roborev skills install` | Install agent skills for Claude/Codex/Droid/Grok |
 
 See [full command reference](https://roborev.io/commands/) for all options.
 

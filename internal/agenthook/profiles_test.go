@@ -49,7 +49,7 @@ func TestSelectProfilesAutoDetectsExecutableOrConfigDirectory(t *testing.T) {
 	}, agents)
 }
 
-func TestSelectProfilesAllUsesKitOrder(t *testing.T) {
+func TestSelectProfilesAllUsesKitOrderThenGrok(t *testing.T) {
 	agents, err := SelectProfiles("all")
 
 	require.NoError(t, err)
@@ -62,6 +62,7 @@ func TestSelectProfilesAllUsesKitOrder(t *testing.T) {
 		kitagenthook.AgentGemini,
 		kitagenthook.AgentHermes,
 		kitagenthook.AgentQwen,
+		AgentGrok,
 	}, agents)
 }
 
