@@ -536,13 +536,6 @@ func verifyGitLabMRRange(
 		}
 		mrIID = detected
 	}
-	// Whether the range was supplied or derived by roborev decides only how a
-	// head mismatch is reported, not whether the range is checked. Every
-	// posted range is checked: the CI variables the derived range comes from
-	// are themselves overridable by whoever starts the pipeline, so trusting
-	// them would leave the same hole the flags close.
-	supplied := opts.pr != 0 || strings.TrimSpace(opts.ref) != ""
-
 	glRepo := opts.glRepo
 	if glRepo == "" {
 		glRepo = detectGitLabProjectPath()
@@ -580,10 +573,13 @@ func verifyGitLabMRRange(
 				"%q covers no commits", mrIID, gitRef)
 	}
 	if !strings.EqualFold(head, refs.HeadSHA) {
-		if recheck || !supplied {
-			// Either the head moved while the review ran, or the pipeline's
-			// own variables are already behind the merge request. Both mean
-			// this verdict is about code the merge request no longer has.
+		if recheck {
+			// The range matched when the review started, so the head moved
+			// while it ran: a race, and the only case that provably is one.
+			// A mismatch on the first pass is not — the range simply does not
+			// describe this merge request, whether it was mistyped or the
+			// variables it came from were overridden — so it fails loudly
+			// rather than exiting clean with nothing reviewed.
 			return "", headMovedError(head, mrIID, refs.HeadSHA)
 		}
 		return "", fmt.Errorf(

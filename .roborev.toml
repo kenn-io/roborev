@@ -112,9 +112,28 @@ an accepted residual:
   setting that is unpinnable and has a security consequence; do not re-report
   the general class.
 
+- Provider routing (`OPENAI_BASE_URL`, `GH_HOST`, `ANTHROPIC_BASE_URL`, a proxy
+  URL in a model spec, ACP `command`) is deliberately configurable, and agents
+  must be able to read provider credentials or they cannot review anything.
+  Redirecting a provider endpoint in an untrusted pipeline is a known,
+  documented gap that spans every agent and both forges; it needs one design
+  for trusted provider routing, not per-variable stripping bolted onto the
+  GitLab path. Do not re-report it as a GitLab CI finding.
+- `MergeRequestDiffRefs` is a value type in the client library, not a pointer.
+  `mr.DiffRefs` cannot be nil and `diff_refs: null` unmarshals to the zero
+  struct, which the empty-base check already rejects. This has been reported
+  twice; it is not a nil dereference.
+
 Findings about the GitLab MR binding (that the reviewed range must match the
 merge request the note lands on) are welcome when they identify a concrete
 range or head that would slip through. Prefer the smallest fix that closes it.
+
+Name the actor when reporting a CI finding: "an attacker can set X" is only
+meaningful with who they are and what they already hold. In the unprotected
+setup the merge request author already holds the token, so redirecting anything
+gains them nothing; in the protected setup the actor is someone who can start a
+protected pipeline with variables but cannot change the job script. A finding
+that does not distinguish these is not actionable.
 
 ## Verdict parsing and review output shape
 

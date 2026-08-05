@@ -1708,10 +1708,10 @@ func TestVerifyGitLabMRRange_DerivedRangeIsChecked(t *testing.T) {
 		require.ErrorContains(t, err, base)
 	})
 
-	// A head the merge request has moved past is reported as a race rather
-	// than a hard failure, since a derived range is not something an operator
-	// got wrong.
-	t.Run("StaleHeadIsReportedAsMoved", func(t *testing.T) {
+	// A first-pass mismatch fails loudly even for a derived range: only the
+	// recheck can prove a race, and exiting clean here would let overridden CI
+	// variables produce a green job with nothing reviewed.
+	t.Run("StaleHeadFailsOnFirstPass", func(t *testing.T) {
 		repo, base, head := build(t)
 		const movedTo = "feedface00000000000000000000000000000000"
 		api := &stubGitLabMRAPI{headSHA: movedTo, baseSHA: base}
@@ -1721,7 +1721,9 @@ func TestVerifyGitLabMRRange_DerivedRangeIsChecked(t *testing.T) {
 		err := verifyMRRangeErr(
 			context.Background(), ciReviewOpts{}, repo.Path(),
 			base+".."+head, false)
-		require.ErrorIs(t, err, errMRHeadMoved)
+		require.Error(t, err)
+		assert.NotErrorIs(t, err, errMRHeadMoved)
+		assert.Contains(t, err.Error(), movedTo)
 	})
 }
 
