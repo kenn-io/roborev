@@ -205,12 +205,17 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 	// on it. Posting checks again afterwards, to catch a force push that
 	// lands while the reviews run.
 	if opts.comment && forge == ciForgeGitLab {
-		switch err := verifyGitLabMRRange(ctx, opts, root, gitRef, false); {
+		canonical, err := verifyGitLabMRRange(ctx, opts, root, gitRef, false)
+		switch {
 		case errors.Is(err, errMRHeadMoved):
 			fmt.Println("roborev: " + err.Error() + " — nothing to post")
 			return nil
 		case err != nil:
 			return err
+		case canonical != "":
+			// Review exactly the commits that were checked, not the
+			// expressions they came from.
+			gitRef = canonical
 		}
 	}
 
@@ -520,93 +525,78 @@ func headMovedError(reviewed string, mrIID int, current string) error {
 func verifyGitLabMRRange(
 	ctx context.Context, opts ciReviewOpts, repoPath, gitRef string,
 	recheck bool,
-) error {
-	// Which merge request, and how thoroughly to check the range, are separate
-	// questions. The IID comes from the flag or the environment either way; the
-	// range gets the full check whenever it was supplied rather than derived by
-	// roborev, since then nothing else establishes that it covers the merge
-	// request.
+) (string, error) {
 	mrIID := opts.pr
 	if mrIID == 0 {
 		detected, err := detectMRIID()
 		if err != nil {
 			// Not a merge request pipeline: there is no merge request to bind
 			// to, and posting would already have failed for want of an IID.
-			return nil
+			return "", nil
 		}
 		mrIID = detected
 	}
-	explicit := opts.pr != 0 || strings.TrimSpace(opts.ref) != ""
-
-	// The commit CI said the source branch was at when this pipeline started.
-	// Only meaningful for an auto-detected run; an explicit --pr validates the
-	// range instead.
-	reported := strings.TrimSpace(
-		os.Getenv("CI_MERGE_REQUEST_SOURCE_BRANCH_SHA"))
-	if reported == "" {
-		reported = strings.TrimSpace(os.Getenv("CI_COMMIT_SHA"))
-	}
-	if !explicit && reported == "" {
-		// Nothing to compare against, so an API round-trip would tell us
-		// nothing.
-		return nil
-	}
+	// Whether the range was supplied or derived by roborev decides only how a
+	// head mismatch is reported, not whether the range is checked. Every
+	// posted range is checked: the CI variables the derived range comes from
+	// are themselves overridable by whoever starts the pipeline, so trusting
+	// them would leave the same hole the flags close.
+	supplied := opts.pr != 0 || strings.TrimSpace(opts.ref) != ""
 
 	glRepo := opts.glRepo
 	if glRepo == "" {
 		glRepo = detectGitLabProjectPath()
 	}
 	if glRepo == "" {
-		return fmt.Errorf(
+		return "", fmt.Errorf(
 			"--comment requires --gl-repo or " +
 				"CI_MERGE_REQUEST_PROJECT_PATH/CI_PROJECT_PATH env var")
 	}
 
 	client, err := ciGitLabClient(ctx, opts.glHost)
 	if err != nil {
-		return err
+		return "", err
 	}
 	refs, err := client.MergeRequestRefs(ctx, glRepo, mrIID)
 	if err != nil {
-		return fmt.Errorf("verify merge request !%d: %w", mrIID, err)
-	}
-
-	if !explicit {
-		if !strings.EqualFold(reported, refs.HeadSHA) {
-			return headMovedError(reported, mrIID, refs.HeadSHA)
-		}
-		return nil
+		return "", fmt.Errorf("verify merge request !%d: %w", mrIID, err)
 	}
 
 	base, head, ok := strings.Cut(gitRef, "..")
 	base, head = strings.TrimSpace(base), strings.TrimSpace(head)
 	if !ok || base == "" || head == "" {
-		return fmt.Errorf(
-			"--comment with --pr %d requires an explicit BASE..HEAD range, "+
+		return "", fmt.Errorf(
+			"--comment on merge request !%d requires a BASE..HEAD range, "+
 				"got %q: a single ref reviews one commit and would post a "+
 				"verdict covering only that commit", mrIID, gitRef)
 	}
+	// Resolved once, here, and handed back for the review to use. Passing the
+	// original expressions on would let a revision like ":/fix" name one
+	// commit while it is checked and another while it is reviewed.
 	base, head = resolveRev(repoPath, base), resolveRev(repoPath, head)
 	if strings.EqualFold(base, head) {
-		return fmt.Errorf(
-			"--comment with --pr %d requires a non-empty range, but %q "+
-				"covers no commits", mrIID, gitRef)
+		return "", fmt.Errorf(
+			"--comment on merge request !%d requires a non-empty range, but "+
+				"%q covers no commits", mrIID, gitRef)
 	}
 	if !strings.EqualFold(head, refs.HeadSHA) {
-		if recheck {
-			// The range was right when the review started, so the head moved
-			// while it ran: the same benign race an auto-detected run reports,
-			// not the bad input a first-pass mismatch means.
-			return headMovedError(head, mrIID, refs.HeadSHA)
+		if recheck || !supplied {
+			// Either the head moved while the review ran, or the pipeline's
+			// own variables are already behind the merge request. Both mean
+			// this verdict is about code the merge request no longer has.
+			return "", headMovedError(head, mrIID, refs.HeadSHA)
 		}
-		return fmt.Errorf(
+		return "", fmt.Errorf(
 			"refusing to post: reviewed up to %s but merge request !%d is "+
 				"at %s — the note would describe code the merge request does "+
 				"not have (review the merge request head, or re-run against "+
 				"the current one)",
 			head, mrIID, refs.HeadSHA)
 	}
-	return verifyRangeCoversMR(repoPath, base, mrIID, refs.BaseSHA)
+	if err := verifyRangeCoversMR(repoPath, base, mrIID, refs.BaseSHA); err != nil {
+		return "", err
+	}
+	return base + ".." + head, nil
 }
 
 // verifyRangeCoversMR checks that the reviewed range starts exactly where the
@@ -707,7 +697,9 @@ func postGitLabCIComment(
 	// Re-checked here, not only before the review, so a force push landing
 	// while the matrix ran cannot leave a verdict about code the merge
 	// request no longer has.
-	if err := verifyGitLabMRRange(ctx, opts, repoPath, gitRef, true); err != nil {
+	if _, err := verifyGitLabMRRange(
+		ctx, opts, repoPath, gitRef, true,
+	); err != nil {
 		return err
 	}
 

@@ -185,11 +185,16 @@ copy the example job below.
     `NODE_OPTIONS` in the protected job before invoking roborev if pipeline
     variables there are not trusted.
 
-    Merge request pipelines, where the IID is auto-detected, are bound to their
-    own commits by GitLab, so the range is taken as given. The head is still
-    compared before posting: if the source branch was force-pushed while the
-    reviews ran, this job prints that the head moved and exits without posting,
-    leaving the verdict to the pipeline for the new head.
+    Ranges roborev derives from the CI variables are checked the same way, because
+    those variables are themselves overridable by whoever starts the pipeline;
+    trusting them would leave open the hole the flags close. The practical
+    consequence is for merged results pipelines on a shallow clone, where the
+    checked-out commit is GitLab's synthetic merge commit rather than the merge
+    request head: the job now stops and asks for more history instead of
+    reviewing that commit, so keep `GIT_DEPTH: 0` as the example does. A head
+    the merge request has already moved past is reported as a race rather than
+    an error — the job says the head moved and exits without posting, leaving
+    the verdict to the pipeline for the new head.
 
     That comes with a trade-off, and it is the reason the flags above are not
     optional: from inside the worktree, roborev reads `.roborev.toml` from the

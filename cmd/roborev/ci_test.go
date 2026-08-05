@@ -948,7 +948,7 @@ func TestPostGitLabCIComment_MissingProject(t *testing.T) {
 	clearForgeCIEnv(t)
 
 	err := postGitLabCIComment(
-		context.Background(), ciReviewOpts{}, "body", false, "", "")
+		context.Background(), ciReviewOpts{}, "body", false, "", stubMRRef)
 	require.ErrorContains(t, err, "--gl-repo")
 }
 
@@ -957,9 +957,17 @@ func TestPostGitLabCIComment_MissingMRIID(t *testing.T) {
 	t.Setenv("CI_PROJECT_PATH", "group/project")
 
 	err := postGitLabCIComment(
-		context.Background(), ciReviewOpts{}, "body", false, "", "")
+		context.Background(), ciReviewOpts{}, "body", false, "", stubMRRef)
 	require.ErrorContains(t, err, "CI_MERGE_REQUEST_IID")
 }
+
+// stubMRBase and stubMRHead are the merge request refs the notes stub reports,
+// so posting tests can pass a range that satisfies the binding check.
+const (
+	stubMRBase = "ba5e0000000000000000000000000000000000ba"
+	stubMRHead = "feedface00000000000000000000000000000000"
+	stubMRRef  = stubMRBase + ".." + stubMRHead
+)
 
 // stubGitLabNotesAPI serves the minimal notes API surface `--comment` uses and
 // records what the command sent.
@@ -1021,6 +1029,13 @@ func (s *stubGitLabNotesAPI) start(t *testing.T) string {
 		}))
 	t.Cleanup(srv.Close)
 
+	if s.mrHeadSHA == "" {
+		s.mrHeadSHA = stubMRHead
+	}
+	if s.mrBaseSHA == "" {
+		s.mrBaseSHA = stubMRBase
+	}
+
 	clearForgeCIEnv(t)
 	t.Setenv("CI_SERVER_URL", srv.URL)
 	t.Setenv("GITLAB_TOKEN", "stub-token")
@@ -1034,7 +1049,7 @@ func TestPostGitLabCIComment_CreatesNewNote(t *testing.T) {
 	api.start(t)
 
 	require.NoError(t, postGitLabCIComment(
-		context.Background(), ciReviewOpts{}, "review body", false, "", ""))
+		context.Background(), ciReviewOpts{}, "review body", false, "", stubMRRef))
 	require.Len(t, api.createdBodies, 1)
 	assert.Empty(t, api.updatedBodies)
 	assert.Contains(t, api.createdBodies[0], glpkg.CommentMarker)
@@ -1050,7 +1065,7 @@ func TestPostGitLabCIComment_UpsertUpdatesExistingNote(t *testing.T) {
 	api.start(t)
 
 	require.NoError(t, postGitLabCIComment(
-		context.Background(), ciReviewOpts{}, "review body", true, "", ""))
+		context.Background(), ciReviewOpts{}, "review body", true, "", stubMRRef))
 	require.Len(t, api.updatedBodies, 1)
 	assert.Empty(t, api.createdBodies)
 	assert.Contains(t, api.updatedBodies[0], "review body")
@@ -1065,7 +1080,7 @@ func TestPostGitLabCIComment_WithoutUpsertIgnoresExistingNote(t *testing.T) {
 	api.start(t)
 
 	require.NoError(t, postGitLabCIComment(
-		context.Background(), ciReviewOpts{}, "review body", false, "", ""))
+		context.Background(), ciReviewOpts{}, "review body", false, "", stubMRRef))
 	require.Len(t, api.createdBodies, 1)
 	assert.Empty(t, api.updatedBodies)
 }
@@ -1095,7 +1110,7 @@ func TestPostGitLabCIComment_UsesEnvProjectAndIID(t *testing.T) {
 	api.start(t)
 
 	require.NoError(t, postGitLabCIComment(
-		context.Background(), ciReviewOpts{}, "review body", false, "", ""))
+		context.Background(), ciReviewOpts{}, "review body", false, "", stubMRRef))
 	require.Len(t, api.requestPaths, 1)
 	assert.Contains(t, api.requestPaths[0],
 		"group%2Fproject/merge_requests/7/notes")
@@ -1110,7 +1125,7 @@ func TestPostGitLabCIComment_PrefersMRTargetProject(t *testing.T) {
 	t.Setenv("CI_MERGE_REQUEST_PROJECT_PATH", "group/project")
 
 	require.NoError(t, postGitLabCIComment(
-		context.Background(), ciReviewOpts{}, "review body", false, "", ""))
+		context.Background(), ciReviewOpts{}, "review body", false, "", stubMRRef))
 	require.Len(t, api.requestPaths, 1)
 	assert.Contains(t, api.requestPaths[0],
 		"group%2Fproject/merge_requests/7/notes")
@@ -1132,7 +1147,7 @@ func TestPostGitLabCIComment_GLHostFlagBeatsEnv(t *testing.T) {
 	require.NoError(t, postGitLabCIComment(
 		context.Background(),
 		ciReviewOpts{glHost: pinnedURL},
-		"review body", false, "", ""))
+		"review body", false, "", stubMRRef))
 	require.Len(t, pinned.createdBodies, 1)
 	assert.Empty(t, decoy.requestPaths,
 		"the env-derived origin must not receive the token when --gl-host is set")
@@ -1484,6 +1499,15 @@ func TestResolveCIReviewMinSeverity(t *testing.T) {
 	}
 }
 
+// verifyMRRangeErr calls verifyGitLabMRRange and keeps only the error; the
+// canonical range it returns is asserted separately where it matters.
+func verifyMRRangeErr(
+	ctx context.Context, opts ciReviewOpts, repoPath, gitRef string, recheck bool,
+) error {
+	_, err := verifyGitLabMRRange(ctx, opts, repoPath, gitRef, recheck)
+	return err
+}
+
 // stubGitLabMRAPI serves the merge request lookup the head binding needs,
 // alongside the notes endpoints, and records whether the note was posted.
 type stubGitLabMRAPI struct {
@@ -1557,7 +1581,7 @@ func TestVerifyGitLabMRRange(t *testing.T) {
 		api := &stubGitLabMRAPI{headSHA: head, baseSHA: base}
 		api.start(t)
 
-		require.NoError(t, verifyGitLabMRRange(
+		require.NoError(t, verifyMRRangeErr(
 			context.Background(), ciReviewOpts{pr: 7},
 			repo.Path(), base+".."+head, false))
 	})
@@ -1573,7 +1597,7 @@ func TestVerifyGitLabMRRange(t *testing.T) {
 		api := &stubGitLabMRAPI{headSHA: head, baseSHA: mrBase}
 		api.start(t)
 
-		err := verifyGitLabMRRange(
+		err := verifyMRRangeErr(
 			context.Background(), ciReviewOpts{pr: 7},
 			repo.Path(), base+".."+head, false)
 		require.ErrorContains(t, err, mrBase)
@@ -1587,7 +1611,7 @@ func TestVerifyGitLabMRRange(t *testing.T) {
 		api := &stubGitLabMRAPI{headSHA: head, baseSHA: ""}
 		api.start(t)
 
-		err := verifyGitLabMRRange(
+		err := verifyMRRangeErr(
 			context.Background(), ciReviewOpts{pr: 7},
 			repo.Path(), base+".."+head, false)
 		require.ErrorContains(t, err, "no diff base")
@@ -1601,7 +1625,7 @@ func TestVerifyGitLabMRRange(t *testing.T) {
 		// head~1 is inside the merge request, so this range hides its first
 		// commit while still ending at the right head.
 		narrowed := strings.TrimSpace(repo.RevParse("HEAD~1"))
-		err := verifyGitLabMRRange(
+		err := verifyMRRangeErr(
 			context.Background(), ciReviewOpts{pr: 7},
 			repo.Path(), narrowed+".."+head, false)
 		require.Error(t, err)
@@ -1614,7 +1638,7 @@ func TestVerifyGitLabMRRange(t *testing.T) {
 		api := &stubGitLabMRAPI{headSHA: head, baseSHA: base}
 		api.start(t)
 
-		err := verifyGitLabMRRange(
+		err := verifyMRRangeErr(
 			context.Background(), ciReviewOpts{pr: 7}, repo.Path(), head, false)
 		require.ErrorContains(t, err, "BASE..HEAD")
 	})
@@ -1624,7 +1648,7 @@ func TestVerifyGitLabMRRange(t *testing.T) {
 		api := &stubGitLabMRAPI{headSHA: head, baseSHA: head}
 		api.start(t)
 
-		err := verifyGitLabMRRange(
+		err := verifyMRRangeErr(
 			context.Background(), ciReviewOpts{pr: 7},
 			repo.Path(), head+".."+head, false)
 		require.Error(t, err)
@@ -1636,81 +1660,89 @@ func TestVerifyGitLabMRRange(t *testing.T) {
 		api := &stubGitLabMRAPI{headSHA: otherHead, baseSHA: base}
 		api.start(t)
 
-		err := verifyGitLabMRRange(
+		err := verifyMRRangeErr(
 			context.Background(), ciReviewOpts{pr: 7},
 			repo.Path(), base+".."+head, false)
 		require.ErrorContains(t, err, otherHead)
 	})
 }
 
-// An auto-detected merge request pipeline is bound to its own commits by
-// GitLab, so the range is not re-derived. The head is still checked against
-// what CI reported, because a force push during the review would otherwise let
-// this run post a verdict about code the merge request no longer has. The
-// comparison uses the source branch SHA CI reported rather than the checked-out
-// commit, which in a merged-results pipeline is a synthetic merge commit.
-func TestVerifyGitLabMRRange_AutoDetected(t *testing.T) {
-	const mrHead = "feedface00000000000000000000000000000000"
-	const oldHead = "deadbeefdeadbeefdeadbeefdeadbeefdeadbeef"
-
-	t.Run("UnchangedHeadPasses", func(t *testing.T) {
-		api := &stubGitLabMRAPI{headSHA: mrHead}
-		api.start(t)
-		t.Setenv("CI_MERGE_REQUEST_IID", "7")
-		t.Setenv("CI_MERGE_REQUEST_SOURCE_BRANCH_SHA", mrHead)
-
-		require.NoError(t, verifyGitLabMRRange(
-			context.Background(), ciReviewOpts{}, t.TempDir(), "base..head", false))
-	})
-
-	// An explicit --ref must be validated in full even when the IID came from
-	// the environment: otherwise a narrowed range posts a passing verdict.
-	t.Run("ExplicitRefIsFullyValidated", func(t *testing.T) {
-		repo := testutil.NewTestRepoWithCommit(t)
-		base := repo.HeadSHA()
+// A derived range gets the same check as a supplied one. The CI variables it
+// comes from are overridable by whoever starts the pipeline, so trusting them
+// would leave open the hole the flags close: injected variables could name a
+// narrowed range and still post a passing note.
+func TestVerifyGitLabMRRange_DerivedRangeIsChecked(t *testing.T) {
+	build := func(t *testing.T) (repo *testutil.TestRepo, base, head string) {
+		t.Helper()
+		repo = testutil.NewTestRepoWithCommit(t)
+		base = repo.HeadSHA()
 		repo.CheckoutNewBranch("feature")
 		repo.CommitFile("one.txt", "one", "first")
-		head := repo.CommitFile("two.txt", "two", "second")
-		narrowed := strings.TrimSpace(repo.RevParse("HEAD~1"))
+		head = repo.CommitFile("two.txt", "two", "second")
+		return repo, base, head
+	}
 
+	t.Run("MatchingRangePasses", func(t *testing.T) {
+		repo, base, head := build(t)
 		api := &stubGitLabMRAPI{headSHA: head, baseSHA: base}
 		api.start(t)
 		t.Setenv("CI_MERGE_REQUEST_IID", "7")
-		t.Setenv("CI_MERGE_REQUEST_SOURCE_BRANCH_SHA", head)
 
-		err := verifyGitLabMRRange(
-			context.Background(), ciReviewOpts{ref: narrowed + ".." + head},
-			repo.Path(), narrowed+".."+head, false)
-		require.ErrorContains(t, err, base)
-		require.NotEmpty(t, api.mrPaths)
-		assert.Contains(t, api.mrPaths[0], "/merge_requests/7",
-			"the IID must still be detected when only --ref was supplied")
+		canonical, err := verifyGitLabMRRange(
+			context.Background(), ciReviewOpts{}, repo.Path(),
+			base+".."+head, false)
+		require.NoError(t, err)
+		assert.Equal(t, base+".."+head, canonical)
 	})
 
-	t.Run("ForcePushedHeadIsStale", func(t *testing.T) {
-		api := &stubGitLabMRAPI{headSHA: mrHead}
+	t.Run("NarrowedRangeFails", func(t *testing.T) {
+		repo, base, head := build(t)
+		api := &stubGitLabMRAPI{headSHA: head, baseSHA: base}
 		api.start(t)
 		t.Setenv("CI_MERGE_REQUEST_IID", "7")
-		t.Setenv("CI_MERGE_REQUEST_SOURCE_BRANCH_SHA", oldHead)
 
-		err := verifyGitLabMRRange(
-			context.Background(), ciReviewOpts{}, t.TempDir(), "base..head", false)
+		narrowed := strings.TrimSpace(repo.RevParse("HEAD~1"))
+		err := verifyMRRangeErr(
+			context.Background(), ciReviewOpts{}, repo.Path(),
+			narrowed+".."+head, false)
+		require.ErrorContains(t, err, base)
+	})
+
+	// A head the merge request has moved past is reported as a race rather
+	// than a hard failure, since a derived range is not something an operator
+	// got wrong.
+	t.Run("StaleHeadIsReportedAsMoved", func(t *testing.T) {
+		repo, base, head := build(t)
+		const movedTo = "feedface00000000000000000000000000000000"
+		api := &stubGitLabMRAPI{headSHA: movedTo, baseSHA: base}
+		api.start(t)
+		t.Setenv("CI_MERGE_REQUEST_IID", "7")
+
+		err := verifyMRRangeErr(
+			context.Background(), ciReviewOpts{}, repo.Path(),
+			base+".."+head, false)
 		require.ErrorIs(t, err, errMRHeadMoved)
 	})
+}
 
-	// A merged-results pipeline reports the synthetic merge commit in
-	// CI_COMMIT_SHA; comparing that to the merge request head would call every
-	// such run stale.
-	t.Run("SyntheticMergeCommitIsNotCompared", func(t *testing.T) {
-		api := &stubGitLabMRAPI{headSHA: mrHead}
-		api.start(t)
-		t.Setenv("CI_MERGE_REQUEST_IID", "7")
-		t.Setenv("CI_MERGE_REQUEST_SOURCE_BRANCH_SHA", mrHead)
-		t.Setenv("CI_COMMIT_SHA", "5ynthe71c000000000000000000000000000000a")
+// The canonical range replaces the expressions it was resolved from, so a
+// revision like ":/fix" cannot name one commit while it is checked and another
+// while it is reviewed.
+func TestVerifyGitLabMRRange_ReturnsResolvedRange(t *testing.T) {
+	repo := testutil.NewTestRepoWithCommit(t)
+	base := repo.HeadSHA()
+	repo.CheckoutNewBranch("feature")
+	head := repo.CommitFile("one.txt", "one", "first")
 
-		require.NoError(t, verifyGitLabMRRange(
-			context.Background(), ciReviewOpts{}, t.TempDir(), "base..head", false))
-	})
+	api := &stubGitLabMRAPI{headSHA: head, baseSHA: base}
+	api.start(t)
+
+	canonical, err := verifyGitLabMRRange(
+		context.Background(), ciReviewOpts{pr: 7}, repo.Path(),
+		base+"..feature", false)
+	require.NoError(t, err)
+	assert.Equal(t, base+".."+head, canonical,
+		"the reviewed range must name commits, not the refs they came from")
 }
 
 // A head that moves between the initial validation and the pre-post recheck is
@@ -1730,12 +1762,12 @@ func TestVerifyGitLabMRRange_RecheckTreatsMovedHeadAsRace(t *testing.T) {
 	opts := ciReviewOpts{pr: 7}
 	gitRef := base + ".." + head
 
-	err := verifyGitLabMRRange(context.Background(), opts, repo.Path(), gitRef, false)
+	err := verifyMRRangeErr(context.Background(), opts, repo.Path(), gitRef, false)
 	require.Error(t, err)
 	assert.NotErrorIs(t, err, errMRHeadMoved,
 		"a first-pass mismatch is bad input and must fail loudly")
 
-	err = verifyGitLabMRRange(context.Background(), opts, repo.Path(), gitRef, true)
+	err = verifyMRRangeErr(context.Background(), opts, repo.Path(), gitRef, true)
 	require.ErrorIs(t, err, errMRHeadMoved)
 }
 
