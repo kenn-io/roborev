@@ -55,16 +55,15 @@ func TestOpenCodeReviewModelFlag(t *testing.T) {
 	}
 }
 
-func TestOpenCodeReviewPipesPromptViaStdin(t *testing.T) {
+func TestOpenCodeReviewPassesPromptAsArgument(t *testing.T) {
 	t.Parallel()
 	skipIfWindows(t)
 
 	prompt := "Review this commit carefully"
 	_, args, stdin := runMockOpenCodeReview(t, "", prompt, nil)
 
-	assert.Equal(t, strings.TrimSpace(stdin), prompt)
-
-	assertNotContains(t, args, prompt)
+	assert.Contains(t, args, prompt)
+	assert.Empty(t, strings.TrimSpace(stdin))
 }
 
 func TestOpenCodeReviewParsesJSONStream(t *testing.T) {

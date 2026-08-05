@@ -99,14 +99,13 @@ func (a *OpenCodeAgent) Review(
 	repoPath, commitSHA, prompt string,
 	output io.Writer,
 ) (string, error) {
-	args := a.buildArgs()
+	args := append(a.buildArgs(), prompt)
 
 	runResult, runErr := runStreamingCLI(ctx, streamingCLISpec{
 		Name:    "opencode",
 		Command: a.Command,
 		Args:    args,
 		Dir:     repoPath,
-		Stdin:   strings.NewReader(prompt),
 		Output:  output,
 		// opencode prints sqlite-migration progress to stderr
 		// on every invocation, drowning the live log with
