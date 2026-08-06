@@ -1727,6 +1727,19 @@ func TestVerifyGitLabMRRange_DerivedRangeIsChecked(t *testing.T) {
 	})
 }
 
+// A run that can never post fails during preflight rather than after the
+// review matrix: the merge request IID is what posting needs, and nothing
+// about it improves by spending a multi-agent review first.
+func TestVerifyGitLabMRRange_MissingMRIIDFailsEarly(t *testing.T) {
+	clearForgeCIEnv(t)
+	t.Setenv("CI_PROJECT_PATH", "group/project")
+
+	err := verifyMRRangeErr(
+		context.Background(), ciReviewOpts{}, t.TempDir(), "base..head", false)
+	require.ErrorContains(t, err, "CI_MERGE_REQUEST_IID")
+	assert.Contains(t, err.Error(), "--pr")
+}
+
 // The canonical range replaces the expressions it was resolved from, so a
 // revision like ":/fix" cannot name one commit while it is checked and another
 // while it is reviewed.

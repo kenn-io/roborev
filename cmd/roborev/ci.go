@@ -553,16 +553,8 @@ func verifyGitLabMRRange(
 	ctx context.Context, opts ciReviewOpts, repoPath, gitRef string,
 	recheck bool,
 ) (string, error) {
-	mrIID := opts.pr
-	if mrIID == 0 {
-		detected, err := detectMRIID()
-		if err != nil {
-			// Not a merge request pipeline: there is no merge request to bind
-			// to, and posting would already have failed for want of an IID.
-			return "", nil
-		}
-		mrIID = detected
-	}
+	// Project first, then merge request, so the message names whichever is
+	// missing in the same order posting would have reported it.
 	glRepo := opts.glRepo
 	if glRepo == "" {
 		glRepo = detectGitLabProjectPath()
@@ -571,6 +563,20 @@ func verifyGitLabMRRange(
 		return "", fmt.Errorf(
 			"--comment requires --gl-repo or " +
 				"CI_MERGE_REQUEST_PROJECT_PATH/CI_PROJECT_PATH env var")
+	}
+
+	mrIID := opts.pr
+	if mrIID == 0 {
+		detected, err := detectMRIID()
+		if err != nil {
+			// Reported here rather than at posting time: this runs before the
+			// review matrix, so a run that can never post fails in a second
+			// instead of after a full multi-agent review.
+			return "", fmt.Errorf(
+				"--comment requires --pr or auto-detection from "+
+					"CI_MERGE_REQUEST_IID: %w", err)
+		}
+		mrIID = detected
 	}
 
 	client, err := ciGitLabClient(ctx, opts.glHost)
