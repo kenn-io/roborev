@@ -1808,7 +1808,8 @@ func TestPostGitLabCIComment_RefusesStaleHead(t *testing.T) {
 // worktree flow the merge request's own .roborev.toml decided whether an
 // earlier note — findings and all — got replaced. The flag pins it either way.
 func TestResolveCIUpsert(t *testing.T) {
-	repoOn := &config.RepoConfig{CI: config.RepoCIConfig{UpsertComments: ptrTo(true)}}
+	on, off := true, false
+	repoOn := &config.RepoConfig{CI: config.RepoCIConfig{UpsertComments: &on}}
 
 	tests := []struct {
 		name string
@@ -1817,8 +1818,8 @@ func TestResolveCIUpsert(t *testing.T) {
 		want bool
 	}{
 		{name: "RepoConfigAppliesWithoutFlag", repo: repoOn, want: true},
-		{name: "FlagFalseBeatsRepoConfig", flag: ptrTo(false), repo: repoOn, want: false},
-		{name: "FlagTrueBeatsAbsentRepoConfig", flag: ptrTo(true), want: true},
+		{name: "FlagFalseBeatsRepoConfig", flag: &off, repo: repoOn, want: false},
+		{name: "FlagTrueBeatsAbsentRepoConfig", flag: &on, want: true},
 		{name: "DefaultsToAppendOnly", want: false},
 	}
 
@@ -1830,4 +1831,62 @@ func TestResolveCIUpsert(t *testing.T) {
 	}
 }
 
-func ptrTo[T any](v T) *T { return &v }
+// Global config is the operator's file, so it may not come from the tree under
+// review. Any way of pointing ROBOREV_DATA_DIR (or HOME) into the checkout
+// lands here: a relative path resolving against the working directory, a
+// symlink such as /proc/self/cwd that is absolute but resolves inside it, or
+// the checkout's own absolute path. Without this an author could commit a
+// config.toml whose codex_cmd names a binary they also committed.
+func TestLoadCIGlobalConfig(t *testing.T) {
+	writeConfig := func(t *testing.T, dir string) {
+		t.Helper()
+		require.NoError(t, os.MkdirAll(dir, 0o755))
+		require.NoError(t, os.WriteFile(
+			filepath.Join(dir, "config.toml"),
+			[]byte("codex_cmd = \"./payload\"\n"), 0o644))
+	}
+
+	t.Run("OutsideCheckoutIsLoaded", func(t *testing.T) {
+		repo := testutil.NewTestRepoWithCommit(t)
+		dataDir := t.TempDir()
+		writeConfig(t, dataDir)
+		t.Setenv("ROBOREV_DATA_DIR", dataDir)
+
+		cfg := loadCIGlobalConfig(repo.Path())
+		require.NotNil(t, cfg)
+		assert.Equal(t, "./payload", cfg.CodexCmd)
+	})
+
+	t.Run("InsideCheckoutIsIgnored", func(t *testing.T) {
+		repo := testutil.NewTestRepoWithCommit(t)
+		writeConfig(t, filepath.Join(repo.Path(), "ci-data"))
+		t.Setenv("ROBOREV_DATA_DIR", filepath.Join(repo.Path(), "ci-data"))
+
+		assert.Nil(t, loadCIGlobalConfig(repo.Path()),
+			"config committed to the reviewed tree must not be trusted")
+	})
+
+	t.Run("CheckoutRootIsIgnored", func(t *testing.T) {
+		repo := testutil.NewTestRepoWithCommit(t)
+		writeConfig(t, repo.Path())
+		t.Setenv("ROBOREV_DATA_DIR", repo.Path())
+
+		assert.Nil(t, loadCIGlobalConfig(repo.Path()))
+	})
+
+	// A symlink that is absolute but resolves into the checkout, which is what
+	// /proc/self/cwd is on Linux.
+	t.Run("SymlinkIntoCheckoutIsIgnored", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("symlink creation needs privileges on Windows")
+		}
+		repo := testutil.NewTestRepoWithCommit(t)
+		writeConfig(t, repo.Path())
+		link := filepath.Join(t.TempDir(), "cwd")
+		require.NoError(t, os.Symlink(repo.Path(), link))
+		t.Setenv("ROBOREV_DATA_DIR", link)
+
+		assert.Nil(t, loadCIGlobalConfig(repo.Path()),
+			"an absolute path that resolves into the checkout is still the checkout")
+	})
+}

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"log"
 	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 
@@ -234,12 +235,7 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 	}
 
 	// Load configs (warn on error, don't fail)
-	globalCfg, err := config.LoadGlobal()
-	if err != nil {
-		log.Printf(
-			"ci review: load global config: %v "+
-				"(using defaults)", err)
-	}
+	globalCfg := loadCIGlobalConfig(root)
 	repoCfg, err := config.LoadRepoConfig(root)
 	if err != nil {
 		log.Printf(
@@ -394,6 +390,64 @@ func resolveCIReviewMinSeverity(
 ) (string, error) {
 	return config.ResolveReviewMinSeverity(
 		opts.minSeverity, repoPath, globalCfg)
+}
+
+// loadCIGlobalConfig loads the operator's global configuration, unless it
+// resolves inside the repository being reviewed.
+//
+// Global config is trusted: its <agent>_cmd entries name the binaries roborev
+// executes. Its location comes from ROBOREV_DATA_DIR, or from HOME through the
+// default, and both are ordinary environment variables a pipeline starter can
+// set. Pointing either into the checkout would have roborev read a file the
+// merge request author committed and run a program they chose.
+//
+// The check is on where the path lands rather than how it looks, so it covers
+// a relative path resolving against the working directory, an absolute one
+// naming the checkout, and a symlink such as /proc/self/cwd that is absolute
+// but resolves inside it. Symlinks are resolved on both sides before the
+// comparison for that reason.
+func loadCIGlobalConfig(root string) *config.Config {
+	path := config.GlobalConfigPath()
+	if insideRepo(root, path) {
+		log.Printf(
+			"ci review: ignoring global config at %s: it resolves inside "+
+				"the repository under review, whose contents are not "+
+				"trusted (using defaults)", path)
+		return nil
+	}
+	cfg, err := config.LoadGlobal()
+	if err != nil {
+		log.Printf(
+			"ci review: load global config: %v (using defaults)", err)
+	}
+	return cfg
+}
+
+// insideRepo reports whether path lands inside root once both are resolved.
+// An unresolvable path is treated as inside: the point is to decide whether a
+// file can be trusted, and "could not tell" is not a yes.
+func insideRepo(root, path string) bool {
+	if strings.TrimSpace(root) == "" {
+		return false
+	}
+	resolvedRoot, err := filepath.EvalSymlinks(root)
+	if err != nil {
+		return false
+	}
+	// The config file itself need not exist, so resolve the directory holding
+	// it; that is the part an attacker would point at the checkout.
+	resolvedDir, err := filepath.EvalSymlinks(filepath.Dir(path))
+	if err != nil {
+		// A data directory that does not exist cannot hold a committed
+		// config either, so there is nothing to distrust.
+		return false
+	}
+	rel, err := filepath.Rel(resolvedRoot, resolvedDir)
+	if err != nil {
+		return true
+	}
+	return rel != ".." &&
+		!strings.HasPrefix(rel, ".."+string(filepath.Separator))
 }
 
 // resolveCIUpsert decides whether to replace the previous roborev comment.

@@ -4,7 +4,6 @@ import (
 	"context"
 	"errors"
 	"fmt"
-	"log"
 	"maps"
 	"net/url"
 	"os"
@@ -14,7 +13,6 @@ import (
 	"runtime"
 	"slices"
 	"strings"
-	"sync"
 	"time"
 
 	"github.com/BurntSushi/toml"
@@ -636,29 +634,11 @@ func DefaultConfig() *Config {
 	return cfg
 }
 
-// dataDirWarnOnce keeps the relative-path warning to one line per process,
-// since DataDir is called from many places.
-var dataDirWarnOnce sync.Once
-
 // DataDir returns the roborev data directory.
-// Uses ROBOREV_DATA_DIR env var if set, otherwise ~/.roborev.
-//
-// A relative override is ignored. It would resolve against the working
-// directory, which during a CI review is the tree under review: an author
-// could commit a config.toml there and have it read as trusted global
-// configuration, whose <agent>_cmd entries choose the binary roborev
-// executes. A data directory that moves with the working directory is not a
-// global location in any case.
+// Uses ROBOREV_DATA_DIR env var if set, otherwise ~/.roborev
 func DataDir() string {
 	if dir := os.Getenv("ROBOREV_DATA_DIR"); dir != "" {
-		if filepath.IsAbs(dir) {
-			return dir
-		}
-		dataDirWarnOnce.Do(func() {
-			log.Printf(
-				"warning: ignoring relative ROBOREV_DATA_DIR %q — "+
-					"set an absolute path", dir)
-		})
+		return dir
 	}
 	home, _ := os.UserHomeDir()
 	return filepath.Join(home, ".roborev")

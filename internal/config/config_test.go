@@ -4969,27 +4969,3 @@ func TestSaveGlobalToHasNoCommentedExample(t *testing.T) {
 	assert.NotContains(t, string(raw), "# [[hooks]]",
 		"normal rewrites must not reintroduce the commented example")
 }
-
-// A relative ROBOREV_DATA_DIR resolves against the working directory. In a CI
-// review that is the tree under review, so honoring it would let an author
-// commit a config.toml that roborev reads as trusted global configuration —
-// and through the <agent>_cmd overrides, choose the binary roborev executes.
-// A global location that depends on the working directory is not meaningful
-// anyway, so a relative value is ignored.
-func TestDataDir_IgnoresRelativeOverride(t *testing.T) {
-	home, err := os.UserHomeDir()
-	require.NoError(t, err)
-
-	for _, dir := range []string{".", "./sub", "sub", ".."} {
-		t.Run(dir, func(t *testing.T) {
-			t.Setenv("ROBOREV_DATA_DIR", dir)
-			assert.Equal(t, filepath.Join(home, ".roborev"), DataDir())
-		})
-	}
-}
-
-func TestDataDir_HonorsAbsoluteOverride(t *testing.T) {
-	dir := t.TempDir()
-	t.Setenv("ROBOREV_DATA_DIR", dir)
-	assert.Equal(t, dir, DataDir())
-}
