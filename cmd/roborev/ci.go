@@ -38,6 +38,7 @@ func ciReviewCmd() *cobra.Command {
 		ghRepoFlag     string
 		glRepoFlag     string
 		glHostFlag     string
+		upsertFlag     bool
 		prFlag         int
 		agentFlag      string
 		reviewTypes    string
@@ -62,6 +63,13 @@ Flags override config values. When run inside GitHub ` +
 			`GitLab CI, --ref, --gl-repo, and --pr (the merge ` +
 			`request IID) are auto-detected instead.`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			// Tri-state: absent leaves the config chain alone, present pins
+			// it, which is the point in the protected flow where the merge
+			// request's own .roborev.toml would otherwise decide.
+			var upsert *bool
+			if cmd.Flags().Changed("upsert-comments") {
+				upsert = &upsertFlag
+			}
 			return runCIReview(
 				cmd.Context(), ciReviewOpts{
 					ref:            refFlag,
@@ -69,6 +77,7 @@ Flags override config values. When run inside GitHub ` +
 					ghRepo:         ghRepoFlag,
 					glRepo:         glRepoFlag,
 					glHost:         glHostFlag,
+					upsertComments: upsert,
 					pr:             prFlag,
 					agents:         agentFlag,
 					reviewTypes:    reviewTypes,
@@ -95,6 +104,10 @@ Flags override config values. When run inside GitHub ` +
 			"script when GITLAB_TOKEN is a protected variable)")
 	cmd.MarkFlagsMutuallyExclusive("gh-repo", "gl-repo")
 	cmd.MarkFlagsMutuallyExclusive("gh-repo", "gl-host")
+	cmd.Flags().BoolVar(&upsertFlag, "upsert-comments", false,
+		"update the previous roborev comment instead of adding a new one "+
+			"(overrides config; pin --upsert-comments=false to keep the "+
+			"record append-only when repo config is not trusted)")
 	cmd.Flags().IntVar(&prFlag, "pr", 0,
 		"PR number / GitLab MR IID "+
 			"(auto from event JSON / GITHUB_REF / CI_MERGE_REQUEST_IID)")
@@ -118,6 +131,7 @@ type ciReviewOpts struct {
 	ghRepo         string
 	glRepo         string
 	glHost         string
+	upsertComments *bool
 	pr             int
 	agents         string
 	reviewTypes    string
@@ -339,8 +353,7 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 
 	// Post as PR/MR comment if requested
 	if opts.comment {
-		upsert := config.ResolveCIUpsertComments(
-			repoCfg, globalCfg)
+		upsert := resolveCIUpsert(opts, repoCfg, globalCfg)
 		switch err := postForgeComment(
 			ctx, forge, opts, comment, upsert, root, gitRef,
 		); {
@@ -381,6 +394,20 @@ func resolveCIReviewMinSeverity(
 ) (string, error) {
 	return config.ResolveReviewMinSeverity(
 		opts.minSeverity, repoPath, globalCfg)
+}
+
+// resolveCIUpsert decides whether to replace the previous roborev comment.
+// The flag wins so a protected job can pin it: upsert_comments is otherwise
+// the one [ci] setting with no override, and in the merge-request worktree
+// flow the author's .roborev.toml would decide whether an earlier note — the
+// findings in it included — gets replaced.
+func resolveCIUpsert(
+	opts ciReviewOpts, repoCfg *config.RepoConfig, globalCfg *config.Config,
+) bool {
+	if opts.upsertComments != nil {
+		return *opts.upsertComments
+	}
+	return config.ResolveCIUpsertComments(repoCfg, globalCfg)
 }
 
 func resolveCIAnthropicAPIKey(configKey string) string {

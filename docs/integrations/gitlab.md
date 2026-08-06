@@ -151,6 +151,7 @@ copy the example job below.
       --ref <base>..<head> \
       --gl-host https://gitlab.example.com \
       --gl-repo mygroup/myproject \
+      --upsert-comments=false \
       --agent claude-code --review-types security,default --min-severity medium
     ```
 
@@ -377,6 +378,7 @@ Subgroup paths are supported: `--gl-repo group/subgroup/project`.
 | `--pr <iid>` | Merge request IID (default: `CI_MERGE_REQUEST_IID`) |
 | `--ref <range>` | Git ref or range to review (default: `CI_MERGE_REQUEST_DIFF_BASE_SHA..<mr head>`) |
 | `--comment` | Post the result as a merge request note |
+| `--upsert-comments` | Update the previous roborev note instead of adding one (overrides `[ci] upsert_comments`) |
 | `--agent <names>` | Agents to use (comma-separated, default: auto-detect) |
 | `--review-types <types>` | Review types to run (`security`, `design`, `lookahead`, `default`) |
 | `--reasoning <level>` | Reasoning depth (`thorough`/`standard`/`fast`) |

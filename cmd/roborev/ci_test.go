@@ -1790,3 +1790,31 @@ func TestPostGitLabCIComment_RefusesStaleHead(t *testing.T) {
 	assert.False(t, api.posted,
 		"no note may be posted once the head no longer matches")
 }
+
+// upsert_comments is the one [ci] setting with no flag, so in the protected
+// worktree flow the merge request's own .roborev.toml decided whether an
+// earlier note — findings and all — got replaced. The flag pins it either way.
+func TestResolveCIUpsert(t *testing.T) {
+	repoOn := &config.RepoConfig{CI: config.RepoCIConfig{UpsertComments: ptrTo(true)}}
+
+	tests := []struct {
+		name string
+		flag *bool
+		repo *config.RepoConfig
+		want bool
+	}{
+		{name: "RepoConfigAppliesWithoutFlag", repo: repoOn, want: true},
+		{name: "FlagFalseBeatsRepoConfig", flag: ptrTo(false), repo: repoOn, want: false},
+		{name: "FlagTrueBeatsAbsentRepoConfig", flag: ptrTo(true), want: true},
+		{name: "DefaultsToAppendOnly", want: false},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, resolveCIUpsert(
+				ciReviewOpts{upsertComments: tt.flag}, tt.repo, nil))
+		})
+	}
+}
+
+func ptrTo[T any](v T) *T { return &v }

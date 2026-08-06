@@ -601,6 +601,7 @@ roborev ci review --comment                  # Post results as PR/MR comment
 | `--review-types <types>` | Review types to run (comma-separated: `security`, `design`, `lookahead`, `default`) |
 | `--reasoning <level>` | Reasoning depth (`thorough`/`standard`/`fast`) |
 | `--min-severity <level>` | Minimum severity to report (`low`/`medium`/`high`/`critical`) |
+| `--upsert-comments` | Update the previous roborev comment instead of adding one (overrides `[ci] upsert_comments`) |
 | `--synthesis-agent <name>` | Agent for combining multi-job results |
 
 Runs a one-shot review without a daemon or database. Designed for CI pipelines
