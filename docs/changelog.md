@@ -7,20 +7,23 @@ All notable changes to roborev, grouped by minor release.
 
 ## Unreleased
 
+______________________________________________________________________
+
+## 0.64.0
+
+<small>2026-08-06</small>
+
 **New features**
 
-- First-class [Grok Build](https://x.ai/cli) agent support (`--agent grok`,
-    alias `grok-build`) as a Claude-peer CommandAgent. Non-agentic review uses
-    layered safety (`--sandbox read-only`, read-only `--tools`, explicit
-    `--disallowed-tools` including MCP meta, `--no-subagents`,
-    `--disable-web-search`). Agentic jobs use `--always-approve`. Classification
-    is fail-closed (no empty `--tools`, deny-list + one turn) and accepts only
-    validated `structuredOutput`. Cursor/`agent` identity is disambiguated from
-    Grok's installer alias; generated GitHub Actions pin `--agent` and
-    `--synthesis-agent`. Also: streaming-json TTY formatting, full skills parity
-    under `~/.grok/skills`, and `roborev agent-hook install --agent grok`.
-    Override the binary with `grok_cmd`. Authenticate with `grok login` or
-    `XAI_API_KEY`. See [Supported Agents](/agents/#grok-build).
+- `roborev ci review` can review GitLab merge requests in GitLab CI, resolve
+    merge request ranges automatically, and create or update MR notes. It also
+    supports self-managed GitLab hosts and explicit project, host, and MR
+    selection. See [GitLab Integration](/integrations/gitlab/).
+- [Grok Build](https://x.ai/cli) is now a first-class agent under `--agent grok`
+    (alias `grok-build`), with streamed output, session resume, structured
+    classification, agentic jobs, bundled skills, and Agent Hook support.
+    Reviews use layered read-only restrictions, while agentic work continues to
+    require the unsafe-agent opt-in. See [Grok Build](/agents/#grok-build).
 - ACP configuration now supports multiple named agents through `[acp.<name>]`
     subtables. Repository entries replace only the matching global agent, and
     commands, models, backups, CI jobs, and synthesis remain isolated by name.
@@ -28,6 +31,84 @@ All notable changes to roborev, grouped by minor release.
     subscription authentication. This is a breaking configuration change:
     migrate `[acp]` plus `name = "foo"` to `[acp.foo]`. See
     [Agent Client Protocol (ACP)](/advanced/acp/).
+- `roborev snooze` temporarily silences Agent Hook reminders for the current
+    repository, linked worktree, and branch without pausing review enqueueing or
+    processing. Bundled Claude Code, Codex, and Factory Droid skills expose the
+    same workflow. See [Snoozing Reminders](/agent-hook/#snoozing-reminders).
+- `roborev skills install --path <directory>` installs a selected bundled skill
+    variant into a custom final skills directory, supporting agents such as Pi
+    whose personal skill paths roborev does not auto-detect. See
+    [Agent Skills](/guides/agent-skills/).
+- PostgreSQL sync passwords can use `${file:/absolute/path}` references in
+    `postgres_url`, keeping credentials out of the TOML file and making them
+    available to daemons that do not inherit the operator's environment. See
+    [Credential Expansion](/advanced/postgres-sync/#credential-expansion).
+
+**Improvements**
+
+- Agent Hook Stop reminders now tell the coding agent to resume its interrupted
+    task after addressing roborev findings, preserving multi-turn work that had
+    paused at a specification, approval, or implementation checkpoint.
+- Repositories with no configured `review_guidelines` now fall back to a
+    repository-root `REVIEW.md`. Configured guidelines still take precedence,
+    and commit/range reviews read the fallback from the default branch to
+    prevent the reviewed change from rewriting its own policy. See
+    [Review Guidelines](/configuration/#review-guidelines).
+- `roborev check-agents` now honors configured agent command overrides, so its
+    smoke tests exercise the same wrapper or binary as actual jobs.
+- Concurrent post-commit hooks now coalesce identical automatic review requests
+    by repository, resolved Git ref, and review target. Explicit review commands
+    still enqueue fresh work. See
+    [Post-Commit Reviews](/automation/post-commit-reviews/).
+- CI synthesis summaries that explicitly report a passing review now produce a
+    passing verdict, while structured severity findings continue to take
+    precedence as failures.
+- Metadata job listings no longer hydrate completed-job prompts and review
+    outputs that callers do not use, substantially reducing daemon response size
+    and transient memory use. Active-job prompts remain available to the TUI.
+- Review prompts now discourage test recommendations that merely search source
+    text or mirror constants, and instead require observable behavior,
+    invariants, failure modes, or integration boundaries.
+
+**Bug fixes**
+
+- CLI output now renders commit ranges as two shortened refs separated by `..`
+    instead of truncating the range into a value that looks like one commit.
+- `roborev show --prompt <job_id>` can read the stored prompt while a job is
+    still queued or running.
+- The TUI displays `(detached @ <shortsha>)` for branchless detached-HEAD commit
+    reviews instead of leaving the Branch column blank.
+- Token backfill and cost displays now accept agentsview v0.39.0's
+    `cost.microdollars` format while remaining compatible with the older
+    `cost_usd` field.
+- Empty Antigravity review runs now fail and engage retry or backup-agent
+    handling instead of being recorded as completed placeholder reviews. See
+    [Gemini: Antigravity vs Legacy CLI](/agents/#gemini-antigravity-vs-legacy-cli).
+
+**Acknowledgements**
+
+- Thanks to [Nico Albers](https://github.com/nicoa) for GitLab merge request
+    support in `roborev ci review`.
+- Thanks to [Enzo Tironi](https://github.com/EnzoTironi) for first-class Grok
+    Build support.
+- Thanks to [Marius van Niekerk](https://github.com/mariusvniekerk) for named
+    ACP agents and Goose, workspace-scoped snoozing, custom skill paths,
+    config-aware agent checks, post-commit deduplication, and slimmer job
+    listings.
+- Thanks to [TechnoPhobe01](https://github.com/Technophobe01) for file-backed
+    PostgreSQL password references.
+- Thanks to [Phillip Cloud](https://github.com/cpcloud) for Stop-hook task
+    continuation and stronger test-recommendation guidance.
+- Thanks to [Sam Odio](https://github.com/srosro) for the repository-root
+    `REVIEW.md` fallback.
+- Thanks to [Wes McKinney](https://github.com/wesm) for recognizing passing CI
+    synthesis summaries.
+- Thanks to [Nat Torkington](https://github.com/njt) for accurate commit-range
+    display.
+- Thanks to [Matthew Jacobs](https://github.com/mjacobs) for queued-job prompt
+    access, detached-HEAD TUI labels, and agentsview cost compatibility.
+- Thanks to [Graham Taylor](https://github.com/gwtaylor) for failing empty
+    Antigravity reviews so retries and backup agents can run.
 
 ______________________________________________________________________
 
@@ -54,11 +135,6 @@ ______________________________________________________________________
 
 **Improvements**
 
-- `roborev skills install --path <directory>` installs bundled skills directly
-    into a custom final skills directory, defaulting to the Claude-compatible
-    variant and supporting explicit `--agent claude|codex|droid` selection. This
-    supports personal skill directories such as Pi's `~/.pi/agent/skills/`. See
-    [Agent Skills](/guides/agent-skills/).
 - The bundled `roborev-fix` skills now distinguish current operative invocations
     and direct Agent Hook instructions from literal skill syntax inside pasted
     findings, logs, transcripts, quotations, and examples, preventing historical

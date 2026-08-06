@@ -87,7 +87,9 @@ unreadable, configuration validation warns about it and the reference expands to
 an empty value, causing the PostgreSQL connection to fail.
 
 File references and environment variables can be used together in the same URL.
-Restart the daemon after changing either form of sync configuration.
+Restart the daemon after editing `postgres_url`. Updating only the contents of a
+referenced password file does not require a restart; roborev reads it again on
+the next connection attempt.
 
 ## Changing Sync Servers
 

@@ -62,6 +62,11 @@ outside a git repository it returns `{}` and stays out of the way. Reminders
 also depend on the roborev daemon reporting an open failed review, so a
 repository roborev does not track never produces a reminder.
 
+When a Stop hook emits a blocking reminder, the response also tells the agent to
+resume the task it was doing after addressing the review findings. This keeps a
+review repair from replacing work that paused at a specification, approval, or
+implementation checkpoint.
+
 If the main roborev daemon is unavailable, the failed-review check is skipped.
 Turn and commit counts still work through the local hook daemon, but they only
 prompt the agent once roborev reports at least one open failed review.

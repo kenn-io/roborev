@@ -142,6 +142,10 @@ roborev log <job_id>             # View job log
 | `--prompt` | Show the prompt sent to the agent instead of the review output |
 | `--json` | Output as JSON for machine-readable workflows |
 
+When the argument is a numeric job ID, `--prompt` can display the stored prompt
+while the job is queued or running; review output does not exist until the job
+completes.
+
 `roborev show` displays review comments after the review output when comments
 exist, matching the layout in the TUI review detail view.
 
@@ -878,6 +882,9 @@ roborev check-agents --timeout 30   # Set timeout per agent (seconds)
 |------|-------------|
 | `--agent <name>` | Test only this agent |
 | `--timeout <secs>` | Timeout per agent (default: 60) |
+
+Health checks honor configured `*_cmd` overrides, so they test the same binary
+or wrapper that roborev uses for review and agentic jobs.
 
 ## Agent Skills
 

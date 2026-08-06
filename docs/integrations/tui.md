@@ -193,6 +193,10 @@ The queue displays two separate status columns:
     the job itself errored. A job can finish successfully (Status = Done) with a
     Fail verdict if the reviewer flagged problems.
 
+For a commit review with no resolvable branch, the Branch column displays
+`(detached @ <shortsha>)` instead of an empty value. The label is display-only;
+branch filtering continues to group the review under `(none)`.
+
 The default-visible "Cost" column shows the model-pricing estimate from
 [agentsview](/commands/#token-usage) for jobs that have reported usage. The cell
 stays blank for unpriced models, for jobs whose usage has not been fetched yet,
