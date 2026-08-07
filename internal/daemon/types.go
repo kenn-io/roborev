@@ -207,7 +207,7 @@ type ExportCICostInput struct {
 	Since  string `query:"since" doc:"Inclusive finished_at lower bound (RFC3339 or YYYY-MM-DD)"`
 	Until  string `query:"until" doc:"Exclusive finished_at upper bound (RFC3339 or YYYY-MM-DD; date-only means through that UTC day)"`
 	Limit  int    `query:"limit" default:"500" doc:"Maximum jobs in this page"`
-	Cursor string `query:"cursor" doc:"Opaque next_cursor from a previous page. Resumes strictly after its (finished_at, job_id) position; mutually exclusive with since."`
+	Cursor string `query:"cursor" doc:"Opaque next_cursor from a previous page. Resumes strictly after its (cost-change revision, job_id) position; mutually exclusive with since."`
 	Legacy bool   `query:"legacy" doc:"Export structurally identified pre-panel CI jobs. Cursors cannot be reused across modes."`
 }
 

@@ -255,10 +255,11 @@ completion time, agent, panel role, terminal status, and estimated USD cost.
 Jobs whose agent ran but whose model cannot be priced remain present with
 `cost_usd: null`; a reported free run is represented as `0`.
 
-Cost rows are ordered by `(finished_at, job_id)` and follow the same database
-reset and opaque cursor contract as the other exports. `--legacy` selects the
-structurally identified pre-panel CI era for a one-time historical backfill;
-regular and legacy cost cursors cannot be mixed.
+Cost rows are ordered by `(cost-change revision, job_id)`, so a job whose
+pricing is recorded after an earlier export resurfaces on cursor resume. The
+export follows the same database-reset and opaque-cursor contract as the other
+exports. `--legacy` selects the structurally identified pre-panel CI era for a
+one-time historical backfill; regular and legacy cost cursors cannot be mixed.
 
 ## Configuration
 

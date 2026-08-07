@@ -49,7 +49,7 @@ type ExportCICostJob struct {
 type ciCostCursor struct {
 	Version    int    `json:"version"`
 	DatabaseID string `json:"database_id"`
-	FinishedAt string `json:"finished_at"`
+	UpdatedAt  string `json:"updated_at"`
 	JobID      int64  `json:"job_id"`
 	Legacy     bool   `json:"legacy,omitempty"`
 }
@@ -59,8 +59,8 @@ type ciCostCursor struct {
 var ErrExportCICostCursorModeMismatch = errors.New("ci cost cursor mode mismatch")
 
 // ExportCICosts returns one bounded page of cost-eligible CI jobs ordered by
-// (finished_at, id). Legacy mode reconstructs the frozen pre-panel CI units
-// and emits their eligible member jobs rather than source-tagged panel jobs.
+// (updated_at, id), so pricing changes after an earlier export resurface the
+// job on cursor resume. Legacy mode reconstructs the frozen pre-panel CI units.
 func (db *DB) ExportCICosts(opts ExportCICostOptions) (ExportCICostPage, error) {
 	switch {
 	case opts.Limit <= 0:
@@ -81,25 +81,30 @@ func (db *DB) ExportCICosts(opts ExportCICostOptions) (ExportCICostPage, error) 
 
 func (db *DB) exportRegularCICosts(opts ExportCICostOptions, cursor *ciCostCursor) (ExportCICostPage, error) {
 	finishedExpr := sqliteNormalizedTimestampExpr("j.finished_at")
-	conditions := []string{"j.source = ?", costEligible}
+	updatedExpr := sqliteNormalizedTimestampExpr("j.updated_at")
+	conditions := []string{regularCICostOwnershipCondition, costEligible}
 	args := []any{JobSourceCI}
-	conditions, args = appendCICostBounds(conditions, args, finishedExpr, opts, cursor)
+	conditions, args = appendCICostBounds(conditions, args, finishedExpr, updatedExpr, opts, cursor)
 	args = append(args, opts.Limit+1)
 
 	query := `
-		SELECT j.id, j.uuid, j.finished_at, j.agent, j.model, j.provider,
+		SELECT j.id, j.updated_at, j.uuid, j.finished_at, j.agent, j.model, j.provider,
 		       CASE WHEN j.panel_role = '` + PanelRoleSynthesis + `'
 		            THEN '` + PanelRoleSynthesis + `' ELSE '` + PanelRoleMember + `' END,
 		       j.status, j.token_usage
 		FROM review_jobs j
 		WHERE ` + strings.Join(conditions, " AND ") + `
-		ORDER BY ` + finishedExpr + ` ASC, j.id ASC
+		ORDER BY ` + updatedExpr + ` ASC, j.id ASC
 		LIMIT ?`
 	return db.queryCICostPage(query, args, opts.Limit, false)
 }
 
+const regularCICostOwnershipCondition = `(j.source = ? OR EXISTS (
+	SELECT 1 FROM ci_pr_panels p WHERE p.panel_run_uuid = j.panel_run_uuid
+))`
+
 func appendCICostBounds(
-	conditions []string, args []any, finishedExpr string,
+	conditions []string, args []any, finishedExpr, updatedExpr string,
 	opts ExportCICostOptions, cursor *ciCostCursor,
 ) ([]string, []any) {
 	if !opts.Since.IsZero() {
@@ -112,8 +117,8 @@ func appendCICostBounds(
 	}
 	if cursor != nil {
 		conditions = append(conditions,
-			"("+finishedExpr+" > datetime(?) OR ("+finishedExpr+" = datetime(?) AND j.id > ?))")
-		args = append(args, cursor.FinishedAt, cursor.FinishedAt, cursor.JobID)
+			"("+updatedExpr+" > datetime(?) OR ("+updatedExpr+" = datetime(?) AND j.id > ?))")
+		args = append(args, cursor.UpdatedAt, cursor.UpdatedAt, cursor.JobID)
 	}
 	return conditions, args
 }
@@ -128,24 +133,25 @@ func (db *DB) exportLegacyCICosts(opts ExportCICostOptions, cursor *ciCostCursor
 	}
 
 	finishedExpr := sqliteNormalizedTimestampExpr("j.finished_at")
+	updatedExpr := sqliteNormalizedTimestampExpr("j.updated_at")
 	conditions := []string{
 		legacyUnitJobConditions,
 		legacyUnitTimeExpr("j.enqueued_at") + " <= w.window_end",
 		costEligible,
 	}
 	args := []any{eraEnd, eraEnd, eraEnd}
-	conditions, args = appendCICostBounds(conditions, args, finishedExpr, opts, cursor)
+	conditions, args = appendCICostBounds(conditions, args, finishedExpr, updatedExpr, opts, cursor)
 	args = append(args, opts.Limit+1)
 
 	query := `
 		WITH ` + legacyCICostValidUnitsCTE() + `
-		SELECT j.id, j.uuid, j.finished_at, j.agent, j.model, j.provider,
+		SELECT j.id, j.updated_at, j.uuid, j.finished_at, j.agent, j.model, j.provider,
 		       'review', j.status, j.token_usage
 		FROM review_jobs j
 		JOIN valid_units v ON v.repo_id = j.repo_id AND v.git_ref = j.git_ref
 		JOIN unit_windows w ON w.repo_id = j.repo_id AND w.git_ref = j.git_ref
 		WHERE ` + strings.Join(conditions, " AND ") + `
-		ORDER BY ` + finishedExpr + ` ASC, j.id ASC
+		ORDER BY ` + updatedExpr + ` ASC, j.id ASC
 		LIMIT ?`
 	return db.queryCICostPage(query, args, opts.Limit, true)
 }
@@ -176,8 +182,9 @@ func (db *DB) queryCICostPage(query string, args []any, limit int, legacy bool) 
 
 	page := ExportCICostPage{Jobs: []ExportCICostJob{}}
 	var lastID int64
+	var lastUpdatedAt string
 	for rows.Next() {
-		id, job, err := scanCICostRow(rows)
+		id, updatedAt, job, err := scanCICostRow(rows)
 		if err != nil {
 			return ExportCICostPage{}, err
 		}
@@ -187,6 +194,7 @@ func (db *DB) queryCICostPage(query string, args []any, limit int, legacy bool) 
 		}
 		page.Jobs = append(page.Jobs, job)
 		lastID = id
+		lastUpdatedAt = updatedAt
 	}
 	if err := rows.Err(); err != nil {
 		return ExportCICostPage{}, err
@@ -197,7 +205,7 @@ func (db *DB) queryCICostPage(query string, args []any, limit int, legacy bool) 
 		if err != nil {
 			return ExportCICostPage{}, err
 		}
-		next := encodeCICostCursor(databaseID, page.Jobs[len(page.Jobs)-1].FinishedAt, lastID, legacy)
+		next := encodeCICostCursor(databaseID, lastUpdatedAt, lastID, legacy)
 		if next != "" {
 			page.NextCursor = &next
 		}
@@ -205,18 +213,19 @@ func (db *DB) queryCICostPage(query string, args []any, limit int, legacy bool) 
 	return page, nil
 }
 
-func scanCICostRow(rows *sql.Rows) (int64, ExportCICostJob, error) {
+func scanCICostRow(rows *sql.Rows) (int64, string, ExportCICostJob, error) {
 	var (
 		id         int64
 		job        ExportCICostJob
+		updatedAt  sql.NullString
 		finishedAt sql.NullString
 		model      sql.NullString
 		provider   sql.NullString
 		tokenUsage sql.NullString
 	)
-	if err := rows.Scan(&id, &job.JobUUID, &finishedAt, &job.Agent, &model,
+	if err := rows.Scan(&id, &updatedAt, &job.JobUUID, &finishedAt, &job.Agent, &model,
 		&provider, &job.Role, &job.Status, &tokenUsage); err != nil {
-		return 0, ExportCICostJob{}, fmt.Errorf("scan ci cost row: %w", err)
+		return 0, "", ExportCICostJob{}, fmt.Errorf("scan ci cost row: %w", err)
 	}
 	if finishedAt.Valid {
 		job.FinishedAt = formatExportTime(parseSQLiteTime(finishedAt.String))
@@ -228,16 +237,16 @@ func scanCICostRow(rows *sql.Rows) (int64, ExportCICostJob, error) {
 		job.Provider = &provider.String
 	}
 	job.CostUSD = parseExportCost(tokenUsage).USD
-	return id, job, nil
+	return id, formatExportTime(parseSQLiteTime(updatedAt.String)), job, nil
 }
 
-func encodeCICostCursor(databaseID, finishedAt string, jobID int64, legacy bool) string {
-	if databaseID == "" || finishedAt == "" || jobID <= 0 {
+func encodeCICostCursor(databaseID, updatedAt string, jobID int64, legacy bool) string {
+	if databaseID == "" || updatedAt == "" || jobID <= 0 {
 		return ""
 	}
 	data, err := json.Marshal(ciCostCursor{
 		Version: ciCostCursorVersion, DatabaseID: databaseID,
-		FinishedAt: finishedAt, JobID: jobID, Legacy: legacy,
+		UpdatedAt: updatedAt, JobID: jobID, Legacy: legacy,
 	})
 	if err != nil {
 		log.Printf("storage: warning: encode ci cost cursor: %v", err)
@@ -261,18 +270,18 @@ func (db *DB) resolveCICostCursor(cursor string, legacy bool) (*ciCostCursor, er
 	if decoded.Version != ciCostCursorVersion {
 		return nil, fmt.Errorf("invalid ci cost cursor: unsupported version %d", decoded.Version)
 	}
-	if decoded.DatabaseID == "" || decoded.FinishedAt == "" || decoded.JobID <= 0 {
+	if decoded.DatabaseID == "" || decoded.UpdatedAt == "" || decoded.JobID <= 0 {
 		return nil, errors.New("invalid ci cost cursor: missing fields")
 	}
 	if decoded.Legacy != legacy {
 		return nil, fmt.Errorf("%w: cursor legacy=%v does not match requested legacy=%v",
 			ErrExportCICostCursorModeMismatch, decoded.Legacy, legacy)
 	}
-	finishedAt, err := time.Parse(time.RFC3339Nano, decoded.FinishedAt)
+	updatedAt, err := time.Parse(time.RFC3339Nano, decoded.UpdatedAt)
 	if err != nil {
 		return nil, fmt.Errorf("invalid ci cost cursor timestamp: %w", err)
 	}
-	decoded.FinishedAt = finishedAt.UTC().Format(time.RFC3339)
+	decoded.UpdatedAt = updatedAt.UTC().Format(time.RFC3339)
 
 	databaseID, err := db.GetDatabaseID()
 	if err != nil {
@@ -290,18 +299,16 @@ func (db *DB) resolveCICostCursor(cursor string, legacy bool) (*ciCostCursor, er
 		return nil, err
 	}
 	if !exists {
-		return nil, fmt.Errorf("%w: finished_at %q job_id %d",
-			ErrExportCursorNotFound, decoded.FinishedAt, decoded.JobID)
+		return nil, fmt.Errorf("%w: updated_at %q job_id %d",
+			ErrExportCursorNotFound, decoded.UpdatedAt, decoded.JobID)
 	}
 	return &decoded, nil
 }
 
 func (db *DB) ciCostCursorRowExists(cursor ciCostCursor, legacy bool) (bool, error) {
-	finishedExpr := sqliteNormalizedTimestampExpr("j.finished_at")
 	query := `SELECT COUNT(1) FROM review_jobs j
-		WHERE j.id = ? AND ` + finishedExpr + ` = datetime(?)
-		  AND j.source = ? AND ` + costEligible
-	args := []any{cursor.JobID, cursor.FinishedAt, JobSourceCI}
+		WHERE j.id = ? AND ` + regularCICostOwnershipCondition + ` AND ` + costEligible
+	args := []any{cursor.JobID, JobSourceCI}
 	if legacy {
 		eraEnd, err := db.legacyPanelEraEnd()
 		if err != nil {
@@ -310,7 +317,6 @@ func (db *DB) ciCostCursorRowExists(cursor ciCostCursor, legacy bool) (bool, err
 		if eraEnd == "" {
 			return false, nil
 		}
-		finishedExpr = sqliteNormalizedTimestampExpr("j.finished_at")
 		query = `WITH ` + legacyCICostValidUnitsCTE() + `
 			SELECT COUNT(1)
 			FROM review_jobs j
@@ -319,8 +325,8 @@ func (db *DB) ciCostCursorRowExists(cursor ciCostCursor, legacy bool) (bool, err
 			WHERE ` + legacyUnitJobConditions + `
 			  AND ` + legacyUnitTimeExpr("j.enqueued_at") + ` <= w.window_end
 			  AND ` + costEligible + `
-			  AND j.id = ? AND ` + finishedExpr + ` = datetime(?)`
-		args = []any{eraEnd, eraEnd, eraEnd, cursor.JobID, cursor.FinishedAt}
+			  AND j.id = ?`
+		args = []any{eraEnd, eraEnd, eraEnd, cursor.JobID}
 	}
 	var count int
 	if err := db.QueryRow(query, args...).Scan(&count); err != nil {

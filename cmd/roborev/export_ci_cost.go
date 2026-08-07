@@ -37,10 +37,11 @@ Export cost-eligible CI jobs as a JSON document for external cost reporting.
 Successful, failed, and canceled attempts are included when an agent ran;
 jobs without usable pricing remain in the export with cost_usd set to null.
 
-Rows are ordered by finished_at, job_id ascending. Use --cursor with the
-next_cursor value from a previous export to resume strictly after that
-position. --cursor cannot be used with --since; --until and --limit still
-apply. A cursor from a different database is rejected with exit code 3.
+Rows are ordered by each job's cost-change revision and job_id, so pricing
+recorded after an earlier export resurfaces that job on cursor resume. Use
+--cursor with the next_cursor value from a previous export. --cursor cannot
+be used with --since; --until and --limit still apply. A cursor from a
+different database is rejected with exit code 3.
 
 Use --legacy to export eligible jobs from the frozen pre-panel CI era. The
 same structural grouping used by ci-metrics identifies historical CI units.
@@ -68,7 +69,7 @@ Legacy cursors cannot be resumed against a regular export, or vice versa.`),
 	}
 	cmd.Flags().StringVar(&opts.format, "format", "json", "output format")
 	cmd.Flags().StringVar(&opts.since, "since", "", "inclusive finished_at lower bound (RFC3339 or YYYY-MM-DD)")
-	cmd.Flags().StringVar(&opts.until, "until", "", "exclusive finished_at upper bound (RFC3339 or YYYY-MM-DD)")
+	cmd.Flags().StringVar(&opts.until, "until", "", "finished_at upper bound (RFC3339 exclusive; YYYY-MM-DD includes that UTC day)")
 	cmd.Flags().StringVar(&opts.cursor, "cursor", "", "opaque next_cursor from a previous export; cannot be used with --since")
 	cmd.Flags().IntVar(&opts.limit, "limit", 0, "maximum number of jobs to emit")
 	cmd.Flags().BoolVar(&opts.legacy, "legacy", false,

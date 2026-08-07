@@ -301,7 +301,7 @@ roborev export ci-costs --legacy
 |------|-------------|
 | `--format json` | Output format. JSON is the only supported format and the default |
 | `--since <time>` | Inclusive `finished_at` lower bound. Accepts RFC3339 or `YYYY-MM-DD` |
-| `--until <time>` | Exclusive `finished_at` upper bound. Accepts RFC3339 or `YYYY-MM-DD` |
+| `--until <time>` | `finished_at` upper bound. RFC3339 is exclusive; `YYYY-MM-DD` includes that full UTC day |
 | `--cursor <opaque>` | Resume strictly after a previous `next_cursor`. Mutually exclusive with `--since` |
 | `--limit <n>` | Maximum jobs to emit |
 | `--legacy` | Export the frozen pre-panel CI era as a one-time backfill instead of panel jobs |
@@ -317,11 +317,13 @@ cannot be priced remains in the export with `cost_usd: null`. A known zero-cost
 job uses `0`, which is distinct from missing pricing. Consumers can therefore
 measure cost coverage without dropping eligible work.
 
-Rows are ordered by `(finished_at, job_id)` ascending and use the same stable
-`database_id`, opaque cursor, and exit-code `3` database-reset behavior as the
-other exports. Without `--limit`, the CLI follows cursors and emits all matching
-rows in one document. With `--limit`, it stops after the requested number and
-preserves the daemon's `truncated` and `next_cursor` fields for resumption.
+Rows are ordered by `(cost-change revision, job_id)` ascending, so a job whose
+pricing is stored or backfilled after an earlier export resurfaces on cursor
+resume. Documents use the same stable `database_id`, opaque cursor, and
+exit-code `3` database-reset behavior as the other exports. Without `--limit`,
+the CLI follows cursors and emits all matching rows in one document. With
+`--limit`, it stops after the requested number and preserves the daemon's
+`truncated` and `next_cursor` fields for resumption.
 
 `--legacy` exports structurally identified CI review jobs from the frozen
 pre-panel era. It is intended for a one-time historical backfill. Legacy and

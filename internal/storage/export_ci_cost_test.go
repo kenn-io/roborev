@@ -33,11 +33,64 @@ func seedExportCICostJob(t *testing.T, db *DB, repoID int64, seed ciCostJobSeed)
 	require.NoError(t, err)
 	_, err = db.Exec(`UPDATE review_jobs
 		SET status = ?, started_at = '2026-08-01 00:00:00', finished_at = ?,
-		    agent_invoked = ?, token_usage = ?
-		WHERE id = ?`, seed.status, seed.finishedAt, seed.agentInvoked,
+		    updated_at = ?, agent_invoked = ?, token_usage = ?
+		WHERE id = ?`, seed.status, seed.finishedAt, seed.finishedAt, seed.agentInvoked,
 		seed.tokenUsage, job.ID)
 	require.NoError(t, err)
 	return job
+}
+
+func TestExportCICostsIncludesMappedPanelJobWithoutSource(t *testing.T) {
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
+	job := seedExportCICostJob(t, db, repo.ID, ciCostJobSeed{
+		gitRef: "mapped-panel", status: JobStatusDone, role: PanelRoleMember,
+		agentInvoked: true, tokenUsage: `{"has_cost":true,"cost_usd":0.5}`,
+		finishedAt: "2026-08-01 01:00:00",
+	})
+	_, err := db.Exec(`INSERT INTO ci_pr_panels
+		(github_repo, pr_number, head_sha, panel_run_uuid, created_at)
+		VALUES ('owner/project', 1, 'head', ?, '2026-08-01 00:00:00')`, "run-mapped-panel")
+	require.NoError(t, err)
+
+	page, err := db.ExportCICosts(ExportCICostOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, []string{job.UUID}, costJobUUIDs(page.Jobs))
+}
+
+func TestExportCICostsResumeIncludesLatePricingUpdate(t *testing.T) {
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
+	firstJob := seedExportCICostJob(t, db, repo.ID, ciCostJobSeed{
+		gitRef: "first-unpriced", status: JobStatusDone, source: JobSourceCI,
+		role: PanelRoleMember, agentInvoked: true, tokenUsage: `{}`,
+		finishedAt: "2026-08-01 01:00:00",
+	})
+	secondJob := seedExportCICostJob(t, db, repo.ID, ciCostJobSeed{
+		gitRef: "second", status: JobStatusDone, source: JobSourceCI,
+		role: PanelRoleMember, agentInvoked: true, tokenUsage: `{}`,
+		finishedAt: "2026-08-01 02:00:00",
+	})
+
+	first, err := db.ExportCICosts(ExportCICostOptions{Limit: 1})
+	require.NoError(t, err)
+	assert.Equal(t, []string{firstJob.UUID}, costJobUUIDs(first.Jobs))
+	require.NotNil(t, first.NextCursor)
+
+	_, err = db.Exec(`UPDATE review_jobs
+		SET token_usage = '{"has_cost":true,"cost_usd":0.75}',
+		    updated_at = '2026-08-01 03:00:00'
+		WHERE id = ?`, firstJob.ID)
+	require.NoError(t, err)
+
+	resumed, err := db.ExportCICosts(ExportCICostOptions{Cursor: *first.NextCursor, Limit: 10})
+	require.NoError(t, err)
+	assert.Equal(t, []string{secondJob.UUID, firstJob.UUID}, costJobUUIDs(resumed.Jobs))
+	require.Len(t, resumed.Jobs, 2)
+	require.NotNil(t, resumed.Jobs[1].CostUSD)
+	assert.InDelta(t, 0.75, *resumed.Jobs[1].CostUSD, 1e-12)
 }
 
 func costJobsByUUID(jobs []ExportCICostJob) map[string]ExportCICostJob {
@@ -178,7 +231,7 @@ func TestExportCICostsPaginationAndCursorSafety(t *testing.T) {
 
 	foreign, err := json.Marshal(ciCostCursor{
 		Version: ciCostCursorVersion, DatabaseID: "foreign-database",
-		FinishedAt: "2026-08-01T02:00:00Z", JobID: secondJob.ID,
+		UpdatedAt: "2026-08-01T02:00:00Z", JobID: secondJob.ID,
 	})
 	require.NoError(t, err)
 	_, err = db.ExportCICosts(ExportCICostOptions{
