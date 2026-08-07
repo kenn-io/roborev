@@ -1426,6 +1426,10 @@ func (s *Server) humaExportCICosts(
 		}
 		return nil, huma.Error400BadRequest(err.Error())
 	}
+	if sinceOut == nil && !page.EffectiveSince.IsZero() {
+		value := page.EffectiveSince.UTC().Format(time.RFC3339)
+		sinceOut = &value
+	}
 	databaseID, err := s.db.GetDatabaseID()
 	if err != nil {
 		return nil, fmt.Errorf("get database ID: %w", err)

@@ -3,10 +3,15 @@ package main
 import (
 	"encoding/json"
 	"net/http"
+	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/daemon"
+	"go.kenn.io/roborev/internal/storage"
 )
 
 func writeCICostTestPage(t *testing.T, w http.ResponseWriter, truncated bool, next *string, jobs []map[string]any) {
@@ -73,6 +78,87 @@ func TestExportCICostCmdFollowsCursors(t *testing.T) {
 	require.Len(t, doc.Jobs, 2)
 	assert.Equal("job-1", doc.Jobs[0]["job_uuid"])
 	assert.Equal("job-2", doc.Jobs[1]["job_uuid"])
+}
+
+func TestExportCICostCmdAutoPaginationPreservesSince(t *testing.T) {
+	db, err := storage.Open(filepath.Join(t.TempDir(), "reviews.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	repo, err := db.GetOrCreateRepo(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	seed := func(gitRef, finishedAt string) *storage.ReviewJob {
+		job, enqueueErr := db.EnqueueJob(storage.EnqueueOpts{
+			RepoID: repo.ID, GitRef: gitRef, Agent: "test-agent",
+			Source: storage.JobSourceCI, PanelRole: storage.PanelRoleMember,
+			PanelRunUUID: "run-" + gitRef,
+		})
+		require.NoError(t, enqueueErr)
+		_, updateErr := db.Exec(`UPDATE review_jobs
+			SET status = 'done', started_at = ?, finished_at = ?,
+			    updated_at = ?, agent_invoked = 1, token_usage = '{}'
+			WHERE id = ?`, finishedAt, finishedAt, finishedAt, job.ID)
+		require.NoError(t, updateErr)
+		return job
+	}
+	oldJob := seed("old", "2026-07-01 01:00:00")
+	firstJob := seed("first", "2026-08-01 01:00:00")
+	secondJob := seed("second", "2026-08-01 02:00:00")
+	since := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	sinceText := since.Format(time.RFC3339)
+
+	callCount := 0
+	NewMockDaemon(t, MockRefineHooks{
+		OnUnhandled: func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool {
+			if r.URL.Path != "/api/export/ci-costs" {
+				return false
+			}
+			callCount++
+			opts := storage.ExportCICostOptions{
+				Cursor: r.URL.Query().Get("cursor"), Limit: 1,
+			}
+			var windowSince *string
+			if r.URL.Query().Get("since") != "" {
+				require.Equal(t, "2026-08-01", r.URL.Query().Get("since"))
+				opts.Since = since
+				windowSince = &sinceText
+			}
+			page, exportErr := db.ExportCICosts(opts)
+			require.NoError(t, exportErr)
+			if callCount == 1 {
+				_, updateErr := db.Exec(`UPDATE review_jobs
+					SET token_usage = '{"has_cost":true,"cost_usd":0.75}'
+					WHERE id = ?`, oldJob.ID)
+				require.NoError(t, updateErr)
+			}
+			databaseID, idErr := db.GetDatabaseID()
+			require.NoError(t, idErr)
+			w.Header().Set("Content-Type", "application/json")
+			require.NoError(t, json.NewEncoder(w).Encode(daemon.ExportCICostDocument{
+				SchemaVersion: 1,
+				Tool:          "roborev",
+				ToolVersion:   "test",
+				GeneratedAt:   "2026-08-07T12:00:00Z",
+				DatabaseID:    databaseID,
+				Window: daemon.ExportReviewsWindow{
+					Field: "finished_at", Since: windowSince,
+				},
+				Truncated:  page.Truncated,
+				NextCursor: page.NextCursor,
+				Jobs:       page.Jobs,
+			}))
+			return true
+		},
+	})
+
+	output := runExportCmd(t, "ci-costs", "--since", "2026-08-01")
+	var doc daemon.ExportCICostDocument
+	require.NoError(t, json.Unmarshal([]byte(output), &doc))
+	assert.Equal(t, 2, callCount)
+	require.NotNil(t, doc.Window.Since)
+	assert.Equal(t, sinceText, *doc.Window.Since)
+	require.Len(t, doc.Jobs, 2)
+	assert.Equal(t, firstJob.UUID, doc.Jobs[0].JobUUID)
+	assert.Equal(t, secondJob.UUID, doc.Jobs[1].JobUUID)
 }
 
 func TestExportCICostCmdPropagatesLimitAndLegacy(t *testing.T) {

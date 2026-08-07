@@ -147,6 +147,44 @@ func TestExportCICostsResumeIncludesSameSecondPricingUpdate(t *testing.T) {
 	assert.InDelta(t, 0.75, *resumed.Jobs[1].CostUSD, 1e-12)
 }
 
+func TestExportCICostsCursorPreservesSinceAcrossPricingRevisions(t *testing.T) {
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
+	oldJob := seedExportCICostJob(t, db, repo.ID, ciCostJobSeed{
+		gitRef: "old", status: JobStatusDone, source: JobSourceCI,
+		role: PanelRoleMember, agentInvoked: true, tokenUsage: `{}`,
+		finishedAt: "2026-07-01 01:00:00",
+	})
+	firstJob := seedExportCICostJob(t, db, repo.ID, ciCostJobSeed{
+		gitRef: "first-in-window", status: JobStatusDone, source: JobSourceCI,
+		role: PanelRoleMember, agentInvoked: true, tokenUsage: `{}`,
+		finishedAt: "2026-08-01 01:00:00",
+	})
+	secondJob := seedExportCICostJob(t, db, repo.ID, ciCostJobSeed{
+		gitRef: "second-in-window", status: JobStatusDone, source: JobSourceCI,
+		role: PanelRoleMember, agentInvoked: true, tokenUsage: `{}`,
+		finishedAt: "2026-08-01 02:00:00",
+	})
+	since := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+
+	first, err := db.ExportCICosts(ExportCICostOptions{Since: since, Limit: 1})
+	require.NoError(t, err)
+	assert.Equal(t, []string{firstJob.UUID}, costJobUUIDs(first.Jobs))
+	require.NotNil(t, first.NextCursor)
+
+	_, err = db.Exec(`UPDATE review_jobs
+		SET token_usage = '{"has_cost":true,"cost_usd":0.75}'
+		WHERE id = ?`, oldJob.ID)
+	require.NoError(t, err)
+
+	second, err := db.ExportCICosts(ExportCICostOptions{
+		Cursor: *first.NextCursor, Limit: 10,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, []string{secondJob.UUID}, costJobUUIDs(second.Jobs))
+}
+
 func costJobsByUUID(jobs []ExportCICostJob) map[string]ExportCICostJob {
 	out := make(map[string]ExportCICostJob, len(jobs))
 	for _, job := range jobs {

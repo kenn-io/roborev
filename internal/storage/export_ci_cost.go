@@ -28,9 +28,10 @@ type ExportCICostOptions struct {
 
 // ExportCICostPage is one bounded page of cost-eligible CI jobs.
 type ExportCICostPage struct {
-	Jobs       []ExportCICostJob `json:"jobs"`
-	Truncated  bool              `json:"truncated"`
-	NextCursor *string           `json:"next_cursor"`
+	Jobs           []ExportCICostJob `json:"jobs"`
+	Truncated      bool              `json:"truncated"`
+	NextCursor     *string           `json:"next_cursor"`
+	EffectiveSince time.Time         `json:"-"`
 }
 
 // ExportCICostJob is one CI job where an agent ran. CostUSD is nil when the
@@ -47,11 +48,12 @@ type ExportCICostJob struct {
 }
 
 type ciCostCursor struct {
-	Version    int    `json:"version"`
-	DatabaseID string `json:"database_id"`
-	Revision   int64  `json:"revision"`
-	JobID      int64  `json:"job_id"`
-	Legacy     bool   `json:"legacy,omitempty"`
+	Version    int        `json:"version"`
+	DatabaseID string     `json:"database_id"`
+	Revision   int64      `json:"revision"`
+	JobID      int64      `json:"job_id"`
+	Legacy     bool       `json:"legacy,omitempty"`
+	Since      *time.Time `json:"since,omitempty"`
 }
 
 // ErrExportCICostCursorModeMismatch is returned when a cursor minted for one
@@ -74,10 +76,20 @@ func (db *DB) ExportCICosts(opts ExportCICostOptions) (ExportCICostPage, error) 
 	if err != nil {
 		return ExportCICostPage{}, err
 	}
-	if opts.Legacy {
-		return db.exportLegacyCICosts(opts, cursor)
+	if cursor != nil && cursor.Since != nil {
+		opts.Since = cursor.Since.UTC()
 	}
-	return db.exportRegularCICosts(opts, cursor)
+	var page ExportCICostPage
+	if opts.Legacy {
+		page, err = db.exportLegacyCICosts(opts, cursor)
+	} else {
+		page, err = db.exportRegularCICosts(opts, cursor)
+	}
+	if err != nil {
+		return ExportCICostPage{}, err
+	}
+	page.EffectiveSince = opts.Since
+	return page, nil
 }
 
 func (db *DB) exportRegularCICosts(opts ExportCICostOptions, cursor *ciCostCursor) (ExportCICostPage, error) {
@@ -96,7 +108,7 @@ func (db *DB) exportRegularCICosts(opts ExportCICostOptions, cursor *ciCostCurso
 		WHERE ` + strings.Join(conditions, " AND ") + `
 		ORDER BY j.ci_cost_revision ASC, j.id ASC
 		LIMIT ?`
-	return db.queryCICostPage(query, args, opts.Limit, false)
+	return db.queryCICostPage(query, args, opts.Limit, false, opts.Since)
 }
 
 const regularCICostOwnershipCondition = `(j.source = ? OR EXISTS (
@@ -152,7 +164,7 @@ func (db *DB) exportLegacyCICosts(opts ExportCICostOptions, cursor *ciCostCursor
 		WHERE ` + strings.Join(conditions, " AND ") + `
 		ORDER BY j.ci_cost_revision ASC, j.id ASC
 		LIMIT ?`
-	return db.queryCICostPage(query, args, opts.Limit, true)
+	return db.queryCICostPage(query, args, opts.Limit, true, opts.Since)
 }
 
 // legacyCICostValidUnitsCTE reuses the same membership and adjacency rules as
@@ -172,7 +184,9 @@ func legacyCICostValidUnitsCTE() string {
 		)`
 }
 
-func (db *DB) queryCICostPage(query string, args []any, limit int, legacy bool) (ExportCICostPage, error) {
+func (db *DB) queryCICostPage(
+	query string, args []any, limit int, legacy bool, since time.Time,
+) (ExportCICostPage, error) {
 	rows, err := db.Query(query, args...)
 	if err != nil {
 		return ExportCICostPage{}, fmt.Errorf("query ci cost export: %w", err)
@@ -204,7 +218,7 @@ func (db *DB) queryCICostPage(query string, args []any, limit int, legacy bool) 
 		if err != nil {
 			return ExportCICostPage{}, err
 		}
-		next := encodeCICostCursor(databaseID, lastRevision, lastID, legacy)
+		next := encodeCICostCursor(databaseID, lastRevision, lastID, legacy, since)
 		if next != "" {
 			page.NextCursor = &next
 		}
@@ -239,13 +253,20 @@ func scanCICostRow(rows *sql.Rows) (int64, int64, ExportCICostJob, error) {
 	return id, revision, job, nil
 }
 
-func encodeCICostCursor(databaseID string, revision, jobID int64, legacy bool) string {
+func encodeCICostCursor(
+	databaseID string, revision, jobID int64, legacy bool, since time.Time,
+) string {
 	if databaseID == "" || revision <= 0 || jobID <= 0 {
 		return ""
 	}
+	var normalizedSince *time.Time
+	if !since.IsZero() {
+		value := since.UTC()
+		normalizedSince = &value
+	}
 	data, err := json.Marshal(ciCostCursor{
 		Version: ciCostCursorVersion, DatabaseID: databaseID,
-		Revision: revision, JobID: jobID, Legacy: legacy,
+		Revision: revision, JobID: jobID, Legacy: legacy, Since: normalizedSince,
 	})
 	if err != nil {
 		log.Printf("storage: warning: encode ci cost cursor: %v", err)
@@ -275,6 +296,10 @@ func (db *DB) resolveCICostCursor(cursor string, legacy bool) (*ciCostCursor, er
 	if decoded.Legacy != legacy {
 		return nil, fmt.Errorf("%w: cursor legacy=%v does not match requested legacy=%v",
 			ErrExportCICostCursorModeMismatch, decoded.Legacy, legacy)
+	}
+	if decoded.Since != nil {
+		value := decoded.Since.UTC()
+		decoded.Since = &value
 	}
 	databaseID, err := db.GetDatabaseID()
 	if err != nil {

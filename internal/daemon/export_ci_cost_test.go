@@ -129,3 +129,35 @@ func TestHumaExportCICostsValidation(t *testing.T) {
 		"/api/export/ci-costs?legacy=true&cursor="+url.QueryEscape(*doc.NextCursor), nil)
 	assert.Equal(t, http.StatusBadRequest, rr.Code, rr.Body.String())
 }
+
+func TestHumaExportCICostsCursorPreservesSince(t *testing.T) {
+	srv, db, _ := newTestServer(t)
+	repo := testutil.CreateTestRepo(t, db)
+	oldJob := seedRouteCICostJob(t, db, repo.ID, "old", "2026-07-01 01:00:00")
+	firstJob := seedRouteCICostJob(t, db, repo.ID, "first", "2026-08-01 01:00:00")
+	secondJob := seedRouteCICostJob(t, db, repo.ID, "second", "2026-08-01 02:00:00")
+
+	rr := serveHuma(t, srv, http.MethodGet,
+		"/api/export/ci-costs?since=2026-08-01&limit=1", nil)
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+	var first ExportCICostDocument
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &first))
+	require.Len(t, first.Jobs, 1)
+	assert.Equal(t, firstJob.UUID, first.Jobs[0].JobUUID)
+	require.NotNil(t, first.NextCursor)
+
+	_, err := db.Exec(`UPDATE review_jobs
+		SET token_usage = '{"has_cost":true,"cost_usd":0.75}'
+		WHERE id = ?`, oldJob.ID)
+	require.NoError(t, err)
+
+	rr = serveHuma(t, srv, http.MethodGet,
+		"/api/export/ci-costs?cursor="+url.QueryEscape(*first.NextCursor), nil)
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+	var resumed ExportCICostDocument
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resumed))
+	require.NotNil(t, resumed.Window.Since)
+	assert.Equal(t, "2026-08-01T00:00:00Z", *resumed.Window.Since)
+	require.Len(t, resumed.Jobs, 1)
+	assert.Equal(t, secondJob.UUID, resumed.Jobs[0].JobUUID)
+}
