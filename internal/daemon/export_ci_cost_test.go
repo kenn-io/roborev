@@ -112,7 +112,7 @@ func TestHumaExportCICostsValidation(t *testing.T) {
 
 	foreign, err := json.Marshal(map[string]any{
 		"version": 1, "database_id": "foreign-database",
-		"updated_at": "2026-08-02T12:00:00Z", "job_id": 1,
+		"revision": 1, "job_id": 1,
 	})
 	require.NoError(t, err)
 	foreignCursor := base64.RawURLEncoding.EncodeToString(foreign)

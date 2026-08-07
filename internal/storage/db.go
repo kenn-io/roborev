@@ -64,7 +64,8 @@ CREATE TABLE IF NOT EXISTS review_jobs (
   skip_reason TEXT,
   source TEXT,
   backup_agent TEXT NOT NULL DEFAULT '',
-  backup_model TEXT NOT NULL DEFAULT ''
+  backup_model TEXT NOT NULL DEFAULT '',
+  ci_cost_revision INTEGER NOT NULL DEFAULT 0
 );
 
 CREATE TABLE IF NOT EXISTS reviews (
@@ -1197,6 +1198,10 @@ func (db *DB) migrate() error {
 	// every Open() and is a no-op once the tables are gone. Placed last
 	// so it observes the final review_jobs state after the rebuilds above.
 	if err := db.drainAndDropOldCIBatchTables(); err != nil {
+		return err
+	}
+
+	if err := db.migrateCICostExportState(); err != nil {
 		return err
 	}
 
