@@ -43,16 +43,17 @@ func TestExportCICostCmdFollowsCursors(t *testing.T) {
 			calls = append(calls, r.URL.RawQuery)
 			assert.Equal(http.MethodGet, r.Method)
 			assert.Equal("json", r.URL.Query().Get("format"))
-			assert.Equal("2026-08-07", r.URL.Query().Get("until"))
 			switch len(calls) {
 			case 1:
 				assert.Equal("2026-08-01", r.URL.Query().Get("since"))
+				assert.Equal("2026-08-07", r.URL.Query().Get("until"))
 				assert.Empty(r.URL.Query().Get("cursor"))
 				writeCICostTestPage(t, w, true, new("cursor-1"), []map[string]any{
 					{"job_uuid": "job-1", "finished_at": "2026-08-01T01:00:00Z", "agent": "agent-a", "role": "member", "status": "done", "cost_usd": 0.25},
 				})
 			case 2:
 				assert.Empty(r.URL.Query().Get("since"))
+				assert.Empty(r.URL.Query().Get("until"))
 				assert.Equal("cursor-1", r.URL.Query().Get("cursor"))
 				writeCICostTestPage(t, w, false, new("cursor-2"), []map[string]any{
 					{"job_uuid": "job-2", "finished_at": "2026-08-01T02:00:00Z", "agent": "agent-b", "role": "synthesis", "status": "failed", "cost_usd": nil},
@@ -198,6 +199,7 @@ func TestExportCICostCmdValidatesOptions(t *testing.T) {
 		{"ci-costs", "--limit", "0"},
 		{"ci-costs", "--limit", "-1"},
 		{"ci-costs", "--cursor", "cursor", "--since", "2026-08-01"},
+		{"ci-costs", "--cursor", "cursor", "--until", "2026-08-02"},
 	} {
 		cmd := exportCmd()
 		cmd.SetArgs(args)

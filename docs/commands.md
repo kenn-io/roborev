@@ -317,12 +317,13 @@ cannot be priced remains in the export with `cost_usd: null`. A known zero-cost
 job uses `0`, which is distinct from missing pricing. Consumers can therefore
 measure cost coverage without dropping eligible work.
 
-Rows are ordered by `(cost-change revision, job_id)` ascending, so a job whose
-pricing is stored or backfilled after an earlier export resurfaces on cursor
-resume. Documents use the same stable `database_id`, opaque cursor, and
-exit-code `3` database-reset behavior as the other exports. Without `--limit`,
-the CLI follows cursors and emits all matching rows in one document. With
-`--limit`, it stops after the requested number and preserves the daemon's
+Rows are ordered by `(finished_at, job_id)` ascending for stable pagination. A
+fresh export over an overlapping window returns current pricing for every
+matching job, so an idempotent consumer can pick up prices stored or backfilled
+after an earlier export. Documents use the same stable `database_id`, opaque
+cursor, and exit-code `3` database-reset behavior as the other exports. Without
+`--limit`, the CLI follows cursors and emits all matching rows in one document.
+With `--limit`, it stops after the requested number and preserves the daemon's
 `truncated` and `next_cursor` fields for resumption.
 
 `--legacy` exports structurally identified CI review jobs from the frozen

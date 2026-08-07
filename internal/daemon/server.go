@@ -1404,8 +1404,8 @@ func (s *Server) humaExportCICosts(
 	if input.Format != "" && input.Format != "json" {
 		return nil, huma.Error400BadRequest("unsupported export format")
 	}
-	if input.Cursor != "" && input.Since != "" {
-		return nil, huma.Error400BadRequest("cursor cannot be used with since")
+	if input.Cursor != "" && (input.Since != "" || input.Until != "") {
+		return nil, huma.Error400BadRequest("cursor cannot be used with since or until")
 	}
 	since, sinceOut, err := parseExportTimeBound(input.Since, false)
 	if err != nil {
@@ -1429,6 +1429,10 @@ func (s *Server) humaExportCICosts(
 	if sinceOut == nil && !page.EffectiveSince.IsZero() {
 		value := page.EffectiveSince.UTC().Format(time.RFC3339)
 		sinceOut = &value
+	}
+	if untilOut == nil && !page.EffectiveUntil.IsZero() {
+		value := page.EffectiveUntil.UTC().Format(time.RFC3339)
+		untilOut = &value
 	}
 	databaseID, err := s.db.GetDatabaseID()
 	if err != nil {

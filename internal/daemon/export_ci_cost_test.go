@@ -112,7 +112,7 @@ func TestHumaExportCICostsValidation(t *testing.T) {
 
 	foreign, err := json.Marshal(map[string]any{
 		"version": 1, "database_id": "foreign-database",
-		"revision": 1, "job_id": 1,
+		"finished_at": "2026-08-02T12:00:00Z", "job_id": 1,
 	})
 	require.NoError(t, err)
 	foreignCursor := base64.RawURLEncoding.EncodeToString(foreign)
@@ -125,6 +125,9 @@ func TestHumaExportCICostsValidation(t *testing.T) {
 	var doc ExportCICostDocument
 	require.NoError(t, json.Unmarshal(regular.Body.Bytes(), &doc))
 	require.NotNil(t, doc.NextCursor)
+	rr = serveHuma(t, srv, http.MethodGet,
+		"/api/export/ci-costs?until=2026-08-03&cursor="+url.QueryEscape(*doc.NextCursor), nil)
+	assert.Equal(t, http.StatusBadRequest, rr.Code, rr.Body.String())
 	rr = serveHuma(t, srv, http.MethodGet,
 		"/api/export/ci-costs?legacy=true&cursor="+url.QueryEscape(*doc.NextCursor), nil)
 	assert.Equal(t, http.StatusBadRequest, rr.Code, rr.Body.String())

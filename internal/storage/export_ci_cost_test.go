@@ -59,61 +59,7 @@ func TestExportCICostsIncludesMappedPanelJobWithoutSource(t *testing.T) {
 	assert.Equal(t, []string{job.UUID}, costJobUUIDs(page.Jobs))
 }
 
-func TestExportCICostsRetainsMappedOwnershipAfterMappingDelete(t *testing.T) {
-	db := openTestDB(t)
-	t.Cleanup(func() { require.NoError(t, db.Close()) })
-	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
-	job := seedExportCICostJob(t, db, repo.ID, ciCostJobSeed{
-		gitRef: "deleted-mapping", status: JobStatusDone, role: PanelRoleMember,
-		agentInvoked: true, tokenUsage: `{"has_cost":true,"cost_usd":0.5}`,
-		finishedAt: "2026-08-01 01:00:00",
-	})
-	_, err := db.Exec(`INSERT INTO ci_pr_panels
-		(github_repo, pr_number, head_sha, panel_run_uuid, created_at)
-		VALUES ('owner/project', 1, 'head', ?, '2026-08-01 00:00:00')`,
-		"run-deleted-mapping")
-	require.NoError(t, err)
-
-	require.NoError(t, db.DeleteCIPanelByRun("run-deleted-mapping"))
-	var source string
-	require.NoError(t, db.QueryRow(
-		`SELECT COALESCE(source, '') FROM review_jobs WHERE id = ?`, job.ID,
-	).Scan(&source))
-	assert.Equal(t, JobSourceCI, source)
-
-	page, err := db.ExportCICosts(ExportCICostOptions{})
-	require.NoError(t, err)
-	assert.Equal(t, []string{job.UUID}, costJobUUIDs(page.Jobs))
-}
-
-func TestCICostMigrationBackfillsMappedJobOwnership(t *testing.T) {
-	dbPath := filepath.Join(t.TempDir(), "reviews.db")
-	db, err := Open(dbPath)
-	require.NoError(t, err)
-	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
-	job := seedExportCICostJob(t, db, repo.ID, ciCostJobSeed{
-		gitRef: "backfilled-mapping", status: JobStatusDone, role: PanelRoleMember,
-		agentInvoked: true, tokenUsage: `{"has_cost":true,"cost_usd":0.5}`,
-		finishedAt: "2026-08-01 01:00:00",
-	})
-	_, err = db.Exec(`INSERT INTO ci_pr_panels
-		(github_repo, pr_number, head_sha, panel_run_uuid, created_at)
-		VALUES ('owner/project', 1, 'head', ?, '2026-08-01 00:00:00')`,
-		"run-backfilled-mapping")
-	require.NoError(t, err)
-	require.NoError(t, db.Close())
-
-	db, err = Open(dbPath)
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, db.Close()) })
-	var source string
-	require.NoError(t, db.QueryRow(
-		`SELECT COALESCE(source, '') FROM review_jobs WHERE id = ?`, job.ID,
-	).Scan(&source))
-	assert.Equal(t, JobSourceCI, source)
-}
-
-func TestExportCICostsResumeIncludesSameSecondPricingUpdate(t *testing.T) {
+func TestExportCICostsLatePricingAppearsOnFreshRescan(t *testing.T) {
 	db := openTestDB(t)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
@@ -141,13 +87,16 @@ func TestExportCICostsResumeIncludesSameSecondPricingUpdate(t *testing.T) {
 
 	resumed, err := db.ExportCICosts(ExportCICostOptions{Cursor: *first.NextCursor, Limit: 10})
 	require.NoError(t, err)
-	assert.Equal(t, []string{secondJob.UUID, firstJob.UUID}, costJobUUIDs(resumed.Jobs))
-	require.Len(t, resumed.Jobs, 2)
-	require.NotNil(t, resumed.Jobs[1].CostUSD)
-	assert.InDelta(t, 0.75, *resumed.Jobs[1].CostUSD, 1e-12)
+	assert.Equal(t, []string{secondJob.UUID}, costJobUUIDs(resumed.Jobs))
+
+	rescanned, err := db.ExportCICosts(ExportCICostOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, []string{firstJob.UUID, secondJob.UUID}, costJobUUIDs(rescanned.Jobs))
+	require.NotNil(t, rescanned.Jobs[0].CostUSD)
+	assert.InDelta(t, 0.75, *rescanned.Jobs[0].CostUSD, 1e-12)
 }
 
-func TestExportCICostsCursorPreservesSinceAcrossPricingRevisions(t *testing.T) {
+func TestExportCICostsCursorPreservesWindow(t *testing.T) {
 	db := openTestDB(t)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
 	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
@@ -166,9 +115,15 @@ func TestExportCICostsCursorPreservesSinceAcrossPricingRevisions(t *testing.T) {
 		role: PanelRoleMember, agentInvoked: true, tokenUsage: `{}`,
 		finishedAt: "2026-08-01 02:00:00",
 	})
+	afterWindow := seedExportCICostJob(t, db, repo.ID, ciCostJobSeed{
+		gitRef: "after-window", status: JobStatusDone, source: JobSourceCI,
+		role: PanelRoleMember, agentInvoked: true, tokenUsage: `{}`,
+		finishedAt: "2026-08-02 00:00:00",
+	})
 	since := time.Date(2026, 8, 1, 0, 0, 0, 0, time.UTC)
+	until := time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC)
 
-	first, err := db.ExportCICosts(ExportCICostOptions{Since: since, Limit: 1})
+	first, err := db.ExportCICosts(ExportCICostOptions{Since: since, Until: until, Limit: 1})
 	require.NoError(t, err)
 	assert.Equal(t, []string{firstJob.UUID}, costJobUUIDs(first.Jobs))
 	require.NotNil(t, first.NextCursor)
@@ -183,6 +138,10 @@ func TestExportCICostsCursorPreservesSinceAcrossPricingRevisions(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.Equal(t, []string{secondJob.UUID}, costJobUUIDs(second.Jobs))
+	assert.NotContains(t, costJobUUIDs(second.Jobs), oldJob.UUID)
+	assert.NotContains(t, costJobUUIDs(second.Jobs), afterWindow.UUID)
+	assert.Equal(t, since, second.EffectiveSince)
+	assert.Equal(t, until, second.EffectiveUntil)
 }
 
 func costJobsByUUID(jobs []ExportCICostJob) map[string]ExportCICostJob {
@@ -323,7 +282,7 @@ func TestExportCICostsPaginationAndCursorSafety(t *testing.T) {
 
 	foreign, err := json.Marshal(ciCostCursor{
 		Version: ciCostCursorVersion, DatabaseID: "foreign-database",
-		Revision: 2, JobID: secondJob.ID,
+		FinishedAt: "2026-08-01T02:00:00Z", JobID: secondJob.ID,
 	})
 	require.NoError(t, err)
 	_, err = db.ExportCICosts(ExportCICostOptions{

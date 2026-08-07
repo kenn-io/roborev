@@ -2716,12 +2716,12 @@ paths:
             description: Maximum jobs in this page
             format: int64
             type: integer
-        - description: Opaque next_cursor from a previous page. Resumes strictly after its (cost-change revision, job_id) position; mutually exclusive with since.
+        - description: Opaque next_cursor from a previous page. Resumes strictly after its (finished_at, job_id) position and retains the original time bounds; mutually exclusive with since and until.
           explode: false
           in: query
           name: cursor
           schema:
-            description: Opaque next_cursor from a previous page. Resumes strictly after its (cost-change revision, job_id) position; mutually exclusive with since.
+            description: Opaque next_cursor from a previous page. Resumes strictly after its (finished_at, job_id) position and retains the original time bounds; mutually exclusive with since and until.
             type: string
         - description: Export structurally identified pre-panel CI jobs. Cursors cannot be reused across modes.
           explode: false
