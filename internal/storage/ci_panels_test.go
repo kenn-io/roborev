@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"path/filepath"
 	"sort"
 	"sync"
 	"testing"
@@ -321,6 +322,22 @@ func TestDeleteCIPanelByRun(t *testing.T) {
 
 	_, err := db.GetCIPanelByPRSHA("o/r", 4, "runsha")
 	require.ErrorIs(t, err, sql.ErrNoRows, "row gone after delete by run uuid")
+}
+
+func TestDeleteCIPanelByRunDoesNotClaimUnmappedPanel(t *testing.T) {
+	db := openTestDB(t)
+	t.Cleanup(func() { db.Close() })
+	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
+	job, err := db.EnqueueJob(EnqueueOpts{
+		RepoID: repo.ID, GitRef: "manual", Agent: "test",
+		PanelRunUUID: "manual-run", PanelRole: PanelRoleMember,
+	})
+	require.NoError(t, err)
+
+	require.NoError(t, db.DeleteCIPanelByRun("manual-run"))
+	var source sql.NullString
+	require.NoError(t, db.QueryRow(`SELECT source FROM review_jobs WHERE id = ?`, job.ID).Scan(&source))
+	assert.False(t, source.Valid, "an unmapped user panel must remain non-CI")
 }
 
 func TestGetCIPanelByPRSHAAndSynthesisJobID(t *testing.T) {
@@ -677,12 +694,12 @@ func TestCreateCIPanelRunAtomicity(t *testing.T) {
 	_, err = conn.ExecContext(ctx, "BEGIN IMMEDIATE")
 	require.NoError(t, err)
 
-	// Call sequence: call 1 = retired-row cleanup, call 2 = INSERT OR IGNORE
-	// mapping, call 3 = reserve attempt row, calls 4..len+3 = member inserts,
-	// call len+4 = synthesis insert. Failing on the synthesis insert proves the
-	// mapping row, the reserved attempt row, AND every member job row roll back
-	// together.
-	failing := &failingExecer{inner: conn, failAt: len(members) + 4}
+	// Call sequence: call 1 = preserve retired-row ownership, call 2 = retired-row
+	// cleanup, call 3 = INSERT OR IGNORE mapping, call 4 = reserve attempt row,
+	// calls 5..len+4 = member inserts, call len+5 = synthesis insert. Failing on
+	// the synthesis insert proves the mapping row, the reserved attempt row, AND
+	// every member job row roll back together.
+	failing := &failingExecer{inner: conn, failAt: len(members) + 5}
 	_, _, _, err = db.createCIPanelRunTx(ctx, failing, "o/r", 11, "atomicsha", members, synthesis, machineID, time.Now())
 	require.Error(t, err)
 	require.ErrorContains(t, err, "insert panel synthesis")

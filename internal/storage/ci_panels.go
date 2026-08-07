@@ -215,6 +215,20 @@ func (db *DB) createCIPanelRunTx(ctx context.Context, exec execer, githubRepo st
 ) (bool, []*ReviewJob, *ReviewJob, error) {
 	runUUID := GenerateUUID()
 
+	// Rows created before source was persisted are CI-owned only through this
+	// mapping. Preserve that ownership before replacing a retired same-HEAD
+	// mapping so historical retry costs remain exportable.
+	if _, err := exec.ExecContext(ctx,
+		`UPDATE review_jobs
+		 SET source = ?
+		 WHERE COALESCE(source, '') = ''
+		   AND panel_run_uuid IN (
+		       SELECT panel_run_uuid FROM ci_pr_panels
+		       WHERE github_repo = ? AND pr_number = ? AND head_sha = ?
+		         AND retired_at IS NOT NULL
+		   )`, JobSourceCI, githubRepo, prNumber, headSHA); err != nil {
+		return false, nil, nil, err
+	}
 	if _, err := exec.ExecContext(ctx,
 		`DELETE FROM ci_pr_panels
 		 WHERE github_repo = ? AND pr_number = ? AND head_sha = ? AND retired_at IS NOT NULL`,
@@ -552,14 +566,45 @@ func (db *DB) LatestPanelTimeForPR(githubRepo string, prNumber int) (time.Time, 
 	return parseSQLiteTime(createdAt.String), nil
 }
 
-// DeleteCIPanel removes a single ci_pr_panels mapping row (supersede/cleanup).
+// DeleteCIPanel removes a single ci_pr_panels mapping row (supersede/cleanup),
+// preserving CI ownership on source-less historical jobs before the mapping is
+// removed.
 func (db *DB) DeleteCIPanel(id int64) error {
-	_, err := db.Exec(`DELETE FROM ci_pr_panels WHERE id = ?`, id)
-	return err
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`UPDATE review_jobs
+		SET source = ?
+		WHERE COALESCE(source, '') = ''
+		  AND panel_run_uuid = (SELECT panel_run_uuid FROM ci_pr_panels WHERE id = ?)`,
+		JobSourceCI, id); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM ci_pr_panels WHERE id = ?`, id); err != nil {
+		return err
+	}
+	return tx.Commit()
 }
 
-// DeleteCIPanelByRun removes the mapping row for a panel run uuid.
+// DeleteCIPanelByRun removes the mapping row for a panel run uuid, preserving
+// CI ownership on source-less historical jobs before the mapping is removed.
 func (db *DB) DeleteCIPanelByRun(panelRunUUID string) error {
-	_, err := db.Exec(`DELETE FROM ci_pr_panels WHERE panel_run_uuid = ?`, panelRunUUID)
-	return err
+	tx, err := db.Begin()
+	if err != nil {
+		return err
+	}
+	defer func() { _ = tx.Rollback() }()
+	if _, err := tx.Exec(`UPDATE review_jobs
+		SET source = ?
+		WHERE COALESCE(source, '') = '' AND panel_run_uuid = ?
+		  AND EXISTS (SELECT 1 FROM ci_pr_panels WHERE panel_run_uuid = ?)`,
+		JobSourceCI, panelRunUUID, panelRunUUID); err != nil {
+		return err
+	}
+	if _, err := tx.Exec(`DELETE FROM ci_pr_panels WHERE panel_run_uuid = ?`, panelRunUUID); err != nil {
+		return err
+	}
+	return tx.Commit()
 }

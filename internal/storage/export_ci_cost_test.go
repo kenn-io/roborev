@@ -57,6 +57,11 @@ func TestExportCICostsIncludesMappedPanelJobWithoutSource(t *testing.T) {
 	page, err := db.ExportCICosts(ExportCICostOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, []string{job.UUID}, costJobUUIDs(page.Jobs))
+
+	require.NoError(t, db.DeleteCIPanelByRun("run-mapped-panel"))
+	page, err = db.ExportCICosts(ExportCICostOptions{})
+	require.NoError(t, err)
+	assert.Equal(t, []string{job.UUID}, costJobUUIDs(page.Jobs))
 }
 
 func TestExportCICostsLatePricingAppearsOnFreshRescan(t *testing.T) {
@@ -309,7 +314,7 @@ func TestExportCICostsIncludesRetiredRetryJobs(t *testing.T) {
 	require.Len(t, firstMembers, 1)
 	_, err = db.Exec(`UPDATE review_jobs SET status = 'failed', started_at = '2026-08-01 01:00:00',
 		finished_at = '2026-08-01 01:01:00', agent_invoked = 1,
-		token_usage = '{"has_cost":true,"cost_usd":0.5}' WHERE id = ?`, firstMembers[0].ID)
+		token_usage = '{"has_cost":true,"cost_usd":0.5}', source = NULL WHERE id = ?`, firstMembers[0].ID)
 	require.NoError(t, err)
 	firstPanel, err := db.GetCIPanelByPRSHA("owner/project", 1, "head")
 	require.NoError(t, err)
