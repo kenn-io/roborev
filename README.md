@@ -203,6 +203,7 @@ leaving Markdown tables unchanged. Use `make check-renovate-config` to validate
 | `roborev show [sha]` | Display review for commit |
 | `roborev export reviews` | Export completed reviews as JSON |
 | `roborev export ci-metrics` | Export finalized CI panel metrics as JSON |
+| `roborev export ci-costs` | Export job-level CI costs as JSON |
 | `roborev run "<task>"` | Execute a task with an AI agent |
 | `roborev close <id>` | Close a review |
 | `roborev skills install` | Install agent skills for Claude/Codex/Droid/Grok |
@@ -247,6 +248,17 @@ Pass `--legacy` to export the frozen pre-panel CI era instead (rows with
 outcome `legacy_review`, one per reviewed PR head, from before panel runs
 existed) as a one-time backfill; legacy and panel cursors are namespaced
 and cannot be resumed against each other's export.
+
+Use `roborev export ci-costs` to emit cost-eligible CI jobs, including terminal
+retry attempts that are no longer retained by a panel. Each row records its
+completion time, agent, panel role, terminal status, and estimated USD cost.
+Jobs whose agent ran but whose model cannot be priced remain present with
+`cost_usd: null`; a reported free run is represented as `0`.
+
+Cost rows are ordered by `(finished_at, job_id)` and follow the same database
+reset and opaque cursor contract as the other exports. `--legacy` selects the
+structurally identified pre-panel CI era for a one-time historical backfill;
+regular and legacy cost cursors cannot be mixed.
 
 ## Configuration
 

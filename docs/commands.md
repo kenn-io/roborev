@@ -287,6 +287,46 @@ grouped from related completed review jobs before the database's first panel
 activity. It is intended for a one-time historical backfill. Legacy and
 panel-era cursors are namespaced and cannot be resumed against each other.
 
+## Exporting CI Costs
+
+```bash
+roborev export ci-costs
+roborev export ci-costs --since 2026-07-01 --until 2026-07-31
+roborev export ci-costs --limit 1000
+roborev export ci-costs --cursor "$NEXT_CURSOR" --until 2026-08-01
+roborev export ci-costs --legacy
+```
+
+| Flag | Description |
+|------|-------------|
+| `--format json` | Output format. JSON is the only supported format and the default |
+| `--since <time>` | Inclusive `finished_at` lower bound. Accepts RFC3339 or `YYYY-MM-DD` |
+| `--until <time>` | Exclusive `finished_at` upper bound. Accepts RFC3339 or `YYYY-MM-DD` |
+| `--cursor <opaque>` | Resume strictly after a previous `next_cursor`. Mutually exclusive with `--since` |
+| `--limit <n>` | Maximum jobs to emit |
+| `--legacy` | Export the frozen pre-panel CI era as a one-time backfill instead of panel jobs |
+
+`roborev export ci-costs` emits one JSON document containing job-level cost
+records for CI review work. Eligible terminal attempts are included even when a
+later retry replaced them in a panel. Skipped, passthrough, pre-agent, and
+manual jobs are excluded. Each row contains `job_uuid`, `finished_at`, `agent`,
+`role`, `status`, and `cost_usd`.
+
+Cost is approximate and can be partial. A job whose agent ran but whose usage
+cannot be priced remains in the export with `cost_usd: null`. A known zero-cost
+job uses `0`, which is distinct from missing pricing. Consumers can therefore
+measure cost coverage without dropping eligible work.
+
+Rows are ordered by `(finished_at, job_id)` ascending and use the same stable
+`database_id`, opaque cursor, and exit-code `3` database-reset behavior as the
+other exports. Without `--limit`, the CLI follows cursors and emits all matching
+rows in one document. With `--limit`, it stops after the requested number and
+preserves the daemon's `truncated` and `next_cursor` fields for resumption.
+
+`--legacy` exports structurally identified CI review jobs from the frozen
+pre-panel era. It is intended for a one-time historical backfill. Legacy and
+panel-era cursors are namespaced and cannot be resumed against each other.
+
 ## Job Logs
 
 ```bash

@@ -43,6 +43,7 @@ func exportCmd() *cobra.Command {
 	}
 	cmd.AddCommand(exportReviewsCmd())
 	cmd.AddCommand(exportCIMetricsCmd())
+	cmd.AddCommand(exportCICostCmd())
 	return cmd
 }
 
