@@ -25,6 +25,13 @@ Invocation must be explicit: literal personal `$roborev-snooze`, plugin
 Requests such as “silence review notifications” without one of these explicit
 mechanisms must use native behavior and must not run roborev.
 
+## Sandbox access
+
+roborev uses a local daemon. If a command fails with `permission denied`, the sandbox may be
+blocking access to its loopback port or Unix socket. Retry the same command with
+`sandbox_permissions: "require_escalated"`. Do not start or restart the daemon because a
+sandboxed status probe cannot reach it.
+
 ## Instructions
 
 This skill requires you to execute the matching command and report its result.

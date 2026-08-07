@@ -8,6 +8,8 @@ import (
 	"strings"
 	"time"
 
+	kitagenthook "go.kenn.io/kit/agenthook"
+
 	"go.kenn.io/roborev/internal/agenthook"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/githook"
@@ -52,6 +54,9 @@ func detectState(ctx context.Context, repoRoot string, inGitRepo bool) quickstar
 	daemonUp := daemonReachable()
 	global, _ := config.LoadGlobal()
 	agent := resolveQuickstartReviewAgent(repoRoot, global)
+	claudePath, _ := kitagenthook.ConfigPath(kitagenthook.AgentClaude)
+	codexPath, _ := kitagenthook.ConfigPath(kitagenthook.AgentCodex)
+	grokPath := agenthook.DefaultGrokHooksPath()
 
 	checks := []quickstartCheck{
 		checkDaemon(daemonUp),
@@ -59,12 +64,12 @@ func detectState(ctx context.Context, repoRoot string, inGitRepo bool) quickstar
 		checkRepoRegistered(repoRoot, inGitRepo, daemonUp),
 		checkRepoConfig(repoRoot, inGitRepo, agent),
 		checkConfiguredAgent(repoRoot, inGitRepo, agent),
-		checkAgentHook("agent_hook_claude", agenthook.DefaultClaudeSettingsPath(),
-			"claude", "roborev agent-hook install --agent claude"),
-		checkAgentHook("agent_hook_codex", agenthook.DefaultCodexHooksPath(),
-			"codex", "roborev agent-hook install --agent codex"),
-		checkAgentHook("agent_hook_grok", agenthook.DefaultGrokHooksPath(),
-			"grok", "roborev agent-hook install --agent grok"),
+		checkAgentHook("agent_hook_claude", claudePath, "claude",
+			"roborev agent-hook install --agent claude"),
+		checkAgentHook("agent_hook_codex", codexPath, "codex",
+			"roborev agent-hook install --agent codex"),
+		checkAgentHook("agent_hook_grok", grokPath, "grok",
+			"roborev agent-hook install --agent grok"),
 		checkSkills(),
 	}
 
@@ -274,13 +279,11 @@ func agentsWithRequiredQuickstartSkills(statuses []skills.AgentStatus) []string 
 		}
 		label := labels[status.Agent]
 		if label == "" {
-			// Never emit "skills installed for " with a blank agent name.
 			label = string(status.Agent)
 		}
-		if label == "" {
-			continue
+		if label != "" {
+			installedFor = append(installedFor, label)
 		}
-		installedFor = append(installedFor, label)
 	}
 	return installedFor
 }

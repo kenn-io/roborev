@@ -794,6 +794,14 @@ loopback. This provides filesystem-level access control: the socket is created
 with `0600` permissions and its parent directory with `0700`, so only the owning
 user can connect.
 
+The default TCP daemon also tries to expose this private socket as an alternate
+endpoint. Clients can fall back to it when a sandbox blocks TCP loopback. This
+alternate is best-effort: if the socket cannot be created, the daemon warns and
+continues serving TCP. Its path is namespaced by the configured data directory
+and advertised through daemon runtime metadata, so isolated daemons do not
+replace one another's fallback. An explicit `server_addr = "unix://"`
+configuration remains socket-only.
+
 To enable Unix domain sockets, set `server_addr` to `unix://`:
 
 ```toml

@@ -46,24 +46,23 @@ The `roborev-fix` and `roborev-refine` skills come from `roborev skills install`
 
 ## Layer 2 - Agent hook
 
-The agent hook watches your coding-agent session and, once review work piles up,
-tells the agent to run the roborev-fix skill before the session ends - closing
-the write -> review -> fix loop automatically. (Claude Code invokes it as
-`/roborev-fix`, Codex as `$roborev-fix`.)
+The agent hook watches supported coding-agent sessions and, once review work
+piles up, supplies either the roborev-fix skill or a complete CLI fallback
+before the session ends - closing the write -> review -> fix loop automatically.
 
 ```bash
-roborev skills install        # install the roborev-fix skill
-roborev agent-hook install    # wire the hook into Claude Code / Codex
+roborev skills install        # optional richer workflow for bundled agents
+roborev agent-hook install    # auto-detect and wire installed agent harnesses
 ```
 
 See [Agent Hook](../agent-hook.md) for thresholds and configuration.
 
 ### Why CLI, not Desktop?
 
-The agent hook relies on harness hooks (`PreToolUse` / `PostToolUse` / `Stop`)
-that the Claude Code CLI and Codex expose. Claude Desktop does not expose these
-hooks, so Layer 2 does not run there. Layer 1 (post-commit reviews) works
-regardless of which agent or app you use.
+The agent hook relies on harness lifecycle hooks supplied by Claude Code, Codex,
+Copilot CLI, Cursor, Factory Droid, Gemini CLI, Hermes, and Qwen. Claude Desktop
+does not expose these hooks, so Layer 2 does not run there. Layer 1 (post-commit
+reviews) works regardless of which agent or app you use.
 
 ## Let an agent finish setup
 

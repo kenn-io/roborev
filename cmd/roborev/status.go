@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -11,9 +12,12 @@ import (
 	"github.com/spf13/cobra"
 	gitrepo "go.kenn.io/kit/git/repo"
 
+	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/githook"
 	"go.kenn.io/roborev/internal/storage"
 )
+
+var statusEnsureDaemon = ensureDaemon
 
 type statusJSONResult struct {
 	Running bool                  `json:"running"`
@@ -48,7 +52,22 @@ func statusCmd() *cobra.Command {
 			}
 
 			// Ensure daemon is running (and restart if version mismatch)
-			if err := ensureDaemon(); err != nil {
+			if err := statusEnsureDaemon(); err != nil {
+				if errors.Is(err, daemon.ErrDaemonAccessDenied) {
+					message := fmt.Sprintf(
+						"%v; if roborev is running in a sandbox, allow loopback or Unix socket access and retry",
+						err,
+					)
+					if jsonOutput {
+						return writeJSONResult(statusJSONResult{
+							Running: true,
+							Error:   message,
+						})
+					}
+					fmt.Println("Daemon: status unavailable")
+					fmt.Println(message)
+					return nil
+				}
 				if jsonOutput {
 					return writeJSONResult(statusJSONResult{Running: false})
 				}

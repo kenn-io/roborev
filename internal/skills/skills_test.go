@@ -223,6 +223,43 @@ func TestClaudeSkillBodiesAcceptEveryExplicitInvocationPath(t *testing.T) {
 	}
 }
 
+func TestAgentSkillsDocumentSandboxRecovery(t *testing.T) {
+	tests := []struct {
+		agent          Agent
+		parameter      string
+		otherParameter string
+	}{
+		{
+			agent:          AgentCodex,
+			parameter:      `sandbox_permissions: "require_escalated"`,
+			otherParameter: "dangerouslyDisableSandbox: true",
+		},
+		{
+			agent:          AgentClaude,
+			parameter:      "dangerouslyDisableSandbox: true",
+			otherParameter: `sandbox_permissions: "require_escalated"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.agent), func(t *testing.T) {
+			spec, ok := lookupAgent(tt.agent)
+			require.True(t, ok)
+			skills, err := embeddedSkillsForAgent(spec)
+			require.NoError(t, err)
+			require.Len(t, skills, 10)
+
+			for _, skill := range skills {
+				content := strings.Join(strings.Fields(string(skill.Content)), " ")
+				assert.Contains(t, content, "roborev uses a local daemon", skill.DirName)
+				assert.Contains(t, content, "Do not start or restart the daemon", skill.DirName)
+				assert.Contains(t, content, tt.parameter, skill.DirName)
+				assert.NotContains(t, content, tt.otherParameter, skill.DirName)
+			}
+		})
+	}
+}
+
 func TestPluginDefaultPromptsExplicitlyInvokeNamespacedSkills(t *testing.T) {
 	data, err := os.ReadFile(filepath.Join("..", "..", ".codex-plugin", "plugin.json"))
 	require.NoError(t, err)
@@ -988,6 +1025,23 @@ func TestDerivedExplicitInvocationWordingUsesTargetAgent(t *testing.T) {
 			} else {
 				assert.Contains(t, text, "disable-model-invocation: true", "%s missing Claude frontmatter policy", relPath)
 			}
+		}
+	}
+}
+
+func TestDerivedSandboxWordingUsesTargetAgent(t *testing.T) {
+	derived, err := renderDerivedSkills(os.DirFS("."))
+	require.NoError(t, err)
+
+	for relPath, content := range derived {
+		text := strings.Join(strings.Fields(string(content)), " ")
+		if strings.HasPrefix(relPath, "droid/") || strings.HasPrefix(relPath, "grok/") {
+			assert.Contains(t, text, "runtime's supported sandbox escalation mechanism", relPath)
+			assert.NotContains(t, text, `sandbox_permissions: "require_escalated"`, relPath)
+			assert.NotContains(t, text, "dangerouslyDisableSandbox: true", relPath)
+		} else {
+			assert.Contains(t, text, "dangerouslyDisableSandbox: true", relPath)
+			assert.NotContains(t, text, `sandbox_permissions: "require_escalated"`, relPath)
 		}
 	}
 }

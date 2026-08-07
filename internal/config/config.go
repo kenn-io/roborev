@@ -573,6 +573,11 @@ func (c *RepoConfig) UsesReviewMDFallback() bool {
 const (
 	DefaultPiJSONSchemaExtension = "npm:@nqbao/pi-json-schema@0.1.1"
 	DefaultAgentQuotaCooldown    = 30 * time.Minute
+	DefaultAgentHookInstruction  = "Resolve open roborev findings now. Use the roborev-fix skill if available; " +
+		"otherwise run `roborev fix --open --list`, inspect each job with " +
+		"`roborev show --job <id> --json`, fix and verify all findings, record each fix with " +
+		"`roborev comment --commenter agent-hook --job <id> \"<summary>\"`, then run " +
+		"`roborev close <id>` before continuing."
 
 	// DefaultHookTimeout bounds how long the post-commit hook waits for the
 	// daemon's enqueue handler before giving up so a stalled daemon never
@@ -608,13 +613,13 @@ func DefaultConfig() *Config {
 			TurnThreshold:         5,
 			CommitThreshold:       0,
 			FailedReviewThreshold: 4,
-			Instruction:           "Invoke the $roborev-fix skill now.",
+			Instruction:           DefaultAgentHookInstruction,
 		},
 		DroidHook: DroidHookConfig{
 			TurnThreshold:         5,
 			CommitThreshold:       0,
 			FailedReviewThreshold: 4,
-			Instruction:           "Run the roborev-fix skill to address the unresolved roborev findings, then continue.",
+			Instruction:           DefaultAgentHookInstruction,
 		},
 		KataContext: KataContextConfig{Mode: KataModeOff, MaxChars: defaultKataMaxChars},
 		Agent: AgentConfig{

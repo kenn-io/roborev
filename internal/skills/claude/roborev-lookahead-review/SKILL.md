@@ -24,6 +24,13 @@ Claude Code skill selection.
 Requests such as “check this commit for peekahead” without one of these explicit
 mechanisms must use native behavior and must not run roborev.
 
+## Sandbox access
+
+roborev uses a local daemon. If a command fails with `permission denied`, the sandbox may be
+blocking access to its loopback port or Unix socket. Retry the same Bash command with
+`dangerouslyDisableSandbox: true`. Do not start or restart the daemon because a sandboxed
+status probe cannot reach it.
+
 ## When NOT to invoke this skill
 
 Do NOT invoke this skill when the user is presenting or pasting existing review

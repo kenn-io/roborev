@@ -137,7 +137,7 @@ func registerRoutes(mux *http.ServeMux, state *StateStore, shutdown chan<- struc
 			http.Error(w, "missing session_id", http.StatusBadRequest)
 			return
 		}
-		resp, err := state.Record(req)
+		resp, err := state.RecordContext(r.Context(), req)
 		if err != nil {
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 			return

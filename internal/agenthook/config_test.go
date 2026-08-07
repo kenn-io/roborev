@@ -7,6 +7,7 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	kitagenthook "go.kenn.io/kit/agenthook"
 )
 
 func TestResolveOptionsUsesDefaultsWithoutConfig(t *testing.T) {
@@ -85,6 +86,17 @@ instruction = "config instruction"
 	assert.Equal(t, 5, opts.FailedReviewThreshold)
 	assert.Equal(t, "env instruction", opts.Instruction)
 	assert.Equal(t, "127.0.0.1:9999", opts.RoborevServerAddr)
+}
+
+func TestResolveOptionsForEveryKitAgent(t *testing.T) {
+	clearAgentHookEnv(t)
+	for _, profile := range kitagenthook.Profiles() {
+		t.Run(string(profile.Agent), func(t *testing.T) {
+			opts, err := ResolveOptionsForAgent(string(profile.Agent), DefaultOptions(), nil)
+			require.NoError(t, err)
+			assert.Equal(t, DefaultInstruction, opts.Instruction)
+		})
+	}
 }
 
 func TestResolveOptionsAllowsZeroTurnThresholdFromConfig(t *testing.T) {
@@ -220,14 +232,12 @@ func clearAgentHookEnv(t *testing.T) {
 	}
 }
 
-func TestResolveOptionsForAgentGrokUsesSlashInstruction(t *testing.T) {
-	assert := assert.New(t)
-	// Empty config file so defaults apply without a user-set instruction.
+func TestResolveOptionsForAgentGrokUsesSelfContainedInstruction(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	require.NoError(t, os.WriteFile(path, []byte(""), 0o600))
 	opts, err := ResolveOptionsForAgent("grok", Options{ConfigPath: path}, map[string]bool{"config": true})
+
 	require.NoError(t, err)
-	assert.Equal(DefaultGrokInstruction, opts.Instruction)
-	assert.Contains(opts.Instruction, "/roborev-fix")
-	assert.NotContains(opts.Instruction, "$roborev-fix")
+	assert.Equal(t, DefaultInstruction, opts.Instruction)
+	assert.Contains(t, opts.Instruction, "roborev fix --open --list")
 }

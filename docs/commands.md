@@ -824,6 +824,12 @@ roborev uninstall-hook           # Remove hook
 | `--json` | Emit daemon and queue status as JSON. Includes the active daemon endpoint as `network`, `address`, and `port` fields alongside queue counters and version fields |
 | `--force` | Overwrite an existing post-commit hook with a fresh one |
 
+If daemon access is denied, `roborev status` reports the status as unavailable
+and suggests allowing loopback or Unix-socket access when running in a sandbox.
+It does not treat permission denial as proof that the daemon is stopped, and it
+does not start or restart the daemon. JSON output keeps `running: true` and
+includes the access error.
+
 `pause` and `unpause` are daemon-wide queue controls. Pausing prevents workers
 from starting new queued jobs, but running jobs continue to completion. A paused
 queue survives daemon restarts and is shown in `roborev status` and the TUI. Use
@@ -874,11 +880,13 @@ See: [Configuration](/configuration/#post-commit-review-mode)
 ## Agent Hook
 
 ```bash
-roborev agent-hook install              # Install Codex + Claude hook entries
-roborev agent-hook install --agent codex --dry-run   # Preview one harness
+roborev agent-hook install              # Install profiles for detected agents
+roborev agent-hook install --agent all  # Install all nine integrations
+roborev agent-hook install --agent hermes --config ~/.hermes/config.yaml
 roborev agent-hook install --binary ~/.local/bin/roborev
-roborev agent-hook dump --agent claude  # Print hook config JSON (declarative setups)
-roborev agent-hook run                  # Read a hook payload from stdin (harness calls this)
+roborev agent-hook dump --agent qwen    # Native JSON config on stdout
+roborev agent-hook dump --agent hermes  # Native YAML config on stdout
+roborev agent-hook run --agent cursor   # Harness runtime; --agent is required
 roborev agent-hook status               # Tracked session counters as JSON
 roborev agent-hook reset <session-id>   # Reset one session (or --all)
 roborev agent-hook daemon start         # start | status | stop | restart
@@ -886,31 +894,26 @@ roborev agent-hook daemon start         # start | status | stop | restart
 
 | Flag | Description |
 |------|-------------|
-| `--agent <name>` | Target harness: `codex`, `claude`, `droid`, or `all` (`all` for `install` only) |
+| `--agent <name>` | `claude`, `codex`, `copilot`, `cursor`, `droid`, `gemini`, `hermes`, `qwen`, `grok`, or `all` for install |
 | `--dry-run` | Report whether each target needs changes without writing (`install`) |
-| `--command <cmd>` | Override the installed hook command (default: resolved roborev binary + `agent-hook run`) |
+| `--config <path>` | Override the native config path for one explicit profile |
+| `--command <cmd>` | Override the full command for one explicit profile; it must select the same agent |
 | `--binary <path>` | Resolve and bake this roborev binary path into installed agent hooks. Mutually exclusive with `--command` |
-| `--scope user` | Factory Droid config scope (`--agent droid` only) |
 
-`roborev agent-hook` is an opt-in Codex, Claude Code, and Factory Droid
-integration that prompts the agent to run the fix skill when review work piles
-up. See [Agent Hook](/agent-hook/).
+The default install detects agents by executable or existing config directory;
+`--agent all` skips detection. Factory Droid remains user-scoped and rejects
+project `.factory/hooks.json` paths. Hermes queues post-tool reminders for a
+later `Stop`. Cursor records the same events as other profiles but emits no
+control response.
 
-```bash
-roborev agent-hook install --agent droid             # Install Factory Droid hook entries (user scope)
-roborev agent-hook install --agent droid --binary ~/.local/bin/roborev
-roborev agent-hook dump --agent droid --scope user   # Print hook config JSON (declarative setups)
-roborev agent-hook run --agent droid                 # Read a hook payload from stdin (Droid calls this)
-roborev agent-hook status                            # Tracked session counters as JSON (shared daemon)
-roborev agent-hook reset <session-id>                # Reset one session (or --all)
-```
+After upgrading existing hooks, run `roborev agent-hook install` once. It
+replaces recognizable Codex, Claude, and Factory Droid registrations from the
+previous installer with profile-bearing commands while preserving unrelated
+hooks. Replace `--codex-config` or `--claude-config` with
+`--agent NAME --config PATH`; remove `--scope user`.
 
-Use `--agent droid` to install Factory Droid hook entries that prompt Droid to
-run `/roborev-fix` when review work piles up, sharing the same local state
-daemon. The Droid profile installs to user scope by default
-(`~/.factory/hooks.json`); roborev does not install project-scoped Factory hooks
-because `.factory/hooks.json` is executable repo-local configuration. See
-[Agent Hook](/agent-hook/).
+See [Agent Hook](/agent-hook/) for profile detection, threshold configuration,
+the fallback fix workflow, and declarative config details.
 
 ## Checking Agents
 

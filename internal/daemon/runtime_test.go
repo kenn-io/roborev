@@ -1,7 +1,9 @@
 package daemon
 
 import (
+	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"math"
 	"net"
@@ -11,11 +13,13 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"syscall"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	kitdaemon "go.kenn.io/kit/daemon"
 
 	"go.kenn.io/roborev/internal/testenv"
 )
@@ -161,7 +165,12 @@ func TestRuntimeInfoReadWrite(t *testing.T) {
 
 	t.Run("WriteAndRead", func(t *testing.T) {
 		// Write runtime info
-		err := WriteRuntime(DaemonEndpoint{Network: "tcp", Address: defaultTestAddr}, "test-version")
+		alternate := DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7374"}
+		err := WriteRuntime(
+			DaemonEndpoint{Network: "tcp", Address: defaultTestAddr},
+			&alternate,
+			"test-version",
+		)
 		if err != nil {
 			require.Condition(t, func() bool {
 				return false
@@ -191,6 +200,8 @@ func TestRuntimeInfoReadWrite(t *testing.T) {
 				return false
 			}, "Expected version 'test-version', got '%s'", info.Version)
 		}
+		assert.Equal(t, "tcp", info.AlternateNetwork)
+		assert.Equal(t, alternate.Address, info.AlternateAddress)
 	})
 
 	t.Run("Remove", func(t *testing.T) {
@@ -490,6 +501,141 @@ func TestRuntimeInfo_Endpoint(t *testing.T) {
 	info = RuntimeInfo{PID: 1, Address: "127.0.0.1:7373", Network: ""}
 	ep = info.Endpoint()
 	assert.Equal("tcp", ep.Network)
+}
+
+func TestRuntimeInfoEndpoints(t *testing.T) {
+	t.Run("primary only", func(t *testing.T) {
+		info := RuntimeInfo{Network: "tcp", Address: defaultTestAddr}
+		assert.Equal(t, []DaemonEndpoint{{Network: "tcp", Address: defaultTestAddr}}, info.Endpoints())
+	})
+
+	t.Run("valid alternate", func(t *testing.T) {
+		if runtime.GOOS == "windows" {
+			t.Skip("Unix sockets are not supported on Windows")
+		}
+		alternatePath := "/tmp/rr-runtime-alt.sock"
+		info := RuntimeInfo{
+			Network:          "tcp",
+			Address:          defaultTestAddr,
+			AlternateNetwork: "unix",
+			AlternateAddress: alternatePath,
+		}
+		assert.Equal(t, []DaemonEndpoint{
+			{Network: "tcp", Address: defaultTestAddr},
+			{Network: "unix", Address: alternatePath},
+		}, info.Endpoints())
+	})
+
+	t.Run("incomplete alternate", func(t *testing.T) {
+		info := RuntimeInfo{
+			Network:          "tcp",
+			Address:          defaultTestAddr,
+			AlternateNetwork: "unix",
+		}
+		assert.Equal(t, []DaemonEndpoint{{Network: "tcp", Address: defaultTestAddr}}, info.Endpoints())
+	})
+
+	t.Run("non-loopback alternate", func(t *testing.T) {
+		info := RuntimeInfo{
+			Network:          "tcp",
+			Address:          defaultTestAddr,
+			AlternateNetwork: "tcp",
+			AlternateAddress: "192.0.2.1:7373",
+		}
+		assert.Equal(t, []DaemonEndpoint{{Network: "tcp", Address: defaultTestAddr}}, info.Endpoints())
+	})
+
+	t.Run("duplicate alternate", func(t *testing.T) {
+		info := RuntimeInfo{
+			Network:          "tcp",
+			Address:          defaultTestAddr,
+			AlternateNetwork: "tcp",
+			AlternateAddress: defaultTestAddr,
+		}
+		assert.Equal(t, []DaemonEndpoint{{Network: "tcp", Address: defaultTestAddr}}, info.Endpoints())
+	})
+}
+
+func TestDiscoverRuntimeRecords(t *testing.T) {
+	const alternateAddr = "127.0.0.1:7374"
+	record := kitdaemon.RuntimeRecord{
+		PID:     42,
+		Network: "tcp",
+		Address: defaultTestAddr,
+		Metadata: map[string]string{
+			runtimeAlternateNetworkKey: "tcp",
+			runtimeAlternateAddressKey: alternateAddr,
+		},
+	}
+	denied := &net.OpError{Op: "dial", Net: "tcp", Err: syscall.EPERM}
+
+	t.Run("falls back after primary access denied", func(t *testing.T) {
+		got, err := discoverRuntimeRecords(t.Context(), []kitdaemon.RuntimeRecord{record}, func(_ context.Context, ep DaemonEndpoint) (*PingInfo, error) {
+			if ep.Address == defaultTestAddr {
+				return nil, denied
+			}
+			return &PingInfo{OK: true, Service: daemonServiceName, PID: record.PID}, nil
+		})
+
+		require.NoError(t, err)
+		assert.Equal(t, "tcp", got.Network)
+		assert.Equal(t, alternateAddr, got.Address)
+	})
+
+	t.Run("preserves access denied after every endpoint fails", func(t *testing.T) {
+		_, err := discoverRuntimeRecords(t.Context(), []kitdaemon.RuntimeRecord{record}, func(context.Context, DaemonEndpoint) (*PingInfo, error) {
+			return nil, denied
+		})
+
+		require.ErrorIs(t, err, ErrDaemonAccessDenied)
+	})
+
+	t.Run("ordinary failures mean not found", func(t *testing.T) {
+		_, err := discoverRuntimeRecords(t.Context(), []kitdaemon.RuntimeRecord{record}, func(context.Context, DaemonEndpoint) (*PingInfo, error) {
+			return nil, errors.New("connection refused")
+		})
+
+		require.ErrorIs(t, err, os.ErrNotExist)
+	})
+
+	for name, pingPID := range map[string]int{
+		"missing ping PID":    0,
+		"mismatched ping PID": record.PID + 1,
+	} {
+		t.Run(name, func(t *testing.T) {
+			_, err := discoverRuntimeRecords(t.Context(), []kitdaemon.RuntimeRecord{record}, func(context.Context, DaemonEndpoint) (*PingInfo, error) {
+				return &PingInfo{OK: true, Service: daemonServiceName, PID: pingPID}, nil
+			})
+
+			require.ErrorIs(t, err, os.ErrNotExist)
+		})
+	}
+}
+
+func TestCleanupZombieDaemonsPreservesAccessDeniedRuntime(t *testing.T) {
+	testenv.SetDataDir(t)
+	socketDir, err := os.MkdirTemp("/tmp", "rr-denied-*")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, os.RemoveAll(socketDir)) })
+	socketPath := filepath.Join(socketDir, "daemon.sock")
+	require.NoError(t, os.WriteFile(socketPath, nil, 0o600))
+
+	primary := DaemonEndpoint{Network: "tcp", Address: defaultTestAddr}
+	alternate := DaemonEndpoint{Network: "unix", Address: socketPath}
+	require.NoError(t, WriteRuntime(primary, &alternate, "test-version"))
+	runtimePath := RuntimePath()
+
+	origProbe := probeRuntimeEndpoint
+	probeRuntimeEndpoint = func(context.Context, DaemonEndpoint) (*PingInfo, error) {
+		return nil, &net.OpError{Op: "dial", Net: "local", Err: syscall.EPERM}
+	}
+	t.Cleanup(func() { probeRuntimeEndpoint = origProbe })
+
+	cleaned := CleanupZombieDaemons(primary)
+
+	assert.Zero(t, cleaned)
+	assert.FileExists(t, runtimePath)
+	assert.FileExists(t, socketPath)
 }
 
 func TestListAllRuntimesWithGlobMetacharacters(t *testing.T) {

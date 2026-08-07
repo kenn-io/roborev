@@ -1,15 +1,20 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"errors"
 	"fmt"
+	"log"
 	"net"
 	"net/http"
 	"net/http/httptest"
+	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"sync"
+	"syscall"
 	"testing"
 	"time"
 
@@ -175,6 +180,56 @@ func newTestActivityLog() *ActivityLog {
 	}
 }
 
+func setShortRuntimeDir(t *testing.T) string {
+	t.Helper()
+	if runtime.GOOS == "windows" {
+		t.Skip("Unix sockets are not supported on Windows")
+	}
+	dir, err := os.MkdirTemp("/tmp", "rr-xdg-*")
+	require.NoError(t, err)
+	require.NoError(t, os.Chmod(dir, 0o700))
+	t.Cleanup(func() { require.NoError(t, os.RemoveAll(dir)) })
+	t.Setenv("XDG_RUNTIME_DIR", dir)
+	return dir
+}
+
+func startServerAndWaitForRuntime(t *testing.T, server *Server) (<-chan error, *RuntimeInfo) {
+	t.Helper()
+	errCh := make(chan error, 1)
+	go func() { errCh <- server.Start(context.Background()) }()
+
+	var info *RuntimeInfo
+	var startErr error
+	require.Eventually(t, func() bool {
+		select {
+		case startErr = <-errCh:
+			return true
+		default:
+		}
+		var err error
+		info, err = ReadRuntime()
+		return err == nil
+	}, 5*time.Second, 10*time.Millisecond)
+	require.NoError(t, startErr)
+	require.NotNil(t, info)
+	return errCh, info
+}
+
+func stopTestServer(t *testing.T, server *Server, errCh <-chan error) {
+	t.Helper()
+	require.NoError(t, server.Stop())
+	var stopErr error
+	require.Eventually(t, func() bool {
+		select {
+		case stopErr = <-errCh:
+			return true
+		default:
+			return false
+		}
+	}, 5*time.Second, 10*time.Millisecond)
+	require.NoError(t, stopErr)
+}
+
 func TestServerStartRejectsNonLoopbackBindAddr(t *testing.T) {
 	tests := []struct {
 		name string
@@ -204,6 +259,32 @@ func TestServerStartRejectsNonLoopbackBindAddr(t *testing.T) {
 			}
 		})
 	}
+}
+
+func TestServerStartRejectsAccessDeniedExistingDaemon(t *testing.T) {
+	testenv.SetDataDir(t)
+	require.NoError(t, WriteRuntime(
+		DaemonEndpoint{Network: "tcp", Address: defaultTestAddr},
+		nil,
+		"test-version",
+	))
+
+	origProbe := probeRuntimeEndpoint
+	probeRuntimeEndpoint = func(context.Context, DaemonEndpoint) (*PingInfo, error) {
+		return nil, &net.OpError{Op: "dial", Net: "tcp", Err: syscall.EACCES}
+	}
+	t.Cleanup(func() { probeRuntimeEndpoint = origProbe })
+
+	db, _ := testutil.OpenTestDBWithDir(t)
+	cfg := config.DefaultConfig()
+	cfg.ServerAddr = "127.0.0.1:0"
+	server := NewServer(db, cfg, "")
+	t.Cleanup(func() { require.NoError(t, server.Close()) })
+
+	err := server.Start(t.Context())
+	require.ErrorIs(t, err, ErrDaemonAccessDenied)
+	assert.FileExists(t, RuntimePath())
+	assert.Empty(t, server.endpoint.Address)
 }
 
 func TestWaitForServerReadySurfacesServeError(t *testing.T) {
@@ -395,6 +476,92 @@ func TestServerStartSupportsIPv6LoopbackBindAddr(t *testing.T) {
 	require.Condition(t, func() bool {
 		return false
 	}, "timed out waiting for IPv6 daemon runtime")
+}
+
+func TestServerServesPrimaryAndAuxiliaryEndpoints(t *testing.T) {
+	testenv.SetDataDir(t)
+	setShortRuntimeDir(t)
+
+	db, _ := testutil.OpenTestDBWithDir(t)
+	cfg := config.DefaultConfig()
+	cfg.ServerAddr = "127.0.0.1:0"
+	server := NewServer(db, cfg, "")
+	errCh, info := startServerAndWaitForRuntime(t, server)
+
+	endpoints := info.Endpoints()
+	require.Len(t, endpoints, 2)
+	assert.Equal(t, "tcp", endpoints[0].Network)
+	assert.Equal(t, "unix", endpoints[1].Network)
+	for _, endpoint := range endpoints {
+		_, err := ProbeDaemon(endpoint, time.Second)
+		require.NoError(t, err)
+	}
+	assert.FileExists(t, endpoints[1].Address)
+
+	stopTestServer(t, server, errCh)
+	assert.NoFileExists(t, endpoints[1].Address)
+}
+
+func TestServerContinuesWhenAuxiliaryListenerFails(t *testing.T) {
+	testenv.SetDataDir(t)
+	setShortRuntimeDir(t)
+
+	origListen := listenAuxiliaryEndpointForServer
+	listenAuxiliaryEndpointForServer = func(DaemonEndpoint) (net.Listener, *DaemonEndpoint, error) {
+		return nil, nil, errors.New("synthetic auxiliary bind failure")
+	}
+	t.Cleanup(func() { listenAuxiliaryEndpointForServer = origListen })
+
+	origLogOutput := log.Writer()
+	var logOutput bytes.Buffer
+	log.SetOutput(&logOutput)
+	t.Cleanup(func() { log.SetOutput(origLogOutput) })
+
+	db, _ := testutil.OpenTestDBWithDir(t)
+	cfg := config.DefaultConfig()
+	cfg.ServerAddr = "127.0.0.1:0"
+	server := NewServer(db, cfg, "")
+	errCh, info := startServerAndWaitForRuntime(t, server)
+
+	assert.Len(t, info.Endpoints(), 1)
+	_, err := ProbeDaemon(info.Endpoint(), time.Second)
+	require.NoError(t, err)
+	assert.Contains(t, logOutput.String(), "auxiliary Unix listener")
+	assert.Contains(t, logOutput.String(), "synthetic auxiliary bind failure")
+
+	stopTestServer(t, server, errCh)
+}
+
+func TestServerSocketActivationSkipsAuxiliaryListener(t *testing.T) {
+	testenv.SetDataDir(t)
+	setShortRuntimeDir(t)
+
+	listener, err := net.Listen("tcp", "127.0.0.1:0")
+	require.NoError(t, err)
+	endpoint := DaemonEndpoint{Network: "tcp", Address: listener.Addr().String()}
+	origSystemd := getSystemdListenerForServer
+	getSystemdListenerForServer = func() (net.Listener, DaemonEndpoint, error) {
+		return listener, endpoint, nil
+	}
+	t.Cleanup(func() { getSystemdListenerForServer = origSystemd })
+
+	origListen := listenAuxiliaryEndpointForServer
+	auxiliaryCalls := 0
+	listenAuxiliaryEndpointForServer = func(DaemonEndpoint) (net.Listener, *DaemonEndpoint, error) {
+		auxiliaryCalls++
+		return nil, nil, nil
+	}
+	t.Cleanup(func() { listenAuxiliaryEndpointForServer = origListen })
+
+	db, _ := testutil.OpenTestDBWithDir(t)
+	server := NewServer(db, config.DefaultConfig(), "")
+	errCh, info := startServerAndWaitForRuntime(t, server)
+
+	assert.Equal(t, endpoint, info.Endpoint())
+	assert.Len(t, info.Endpoints(), 1)
+	assert.Zero(t, auxiliaryCalls)
+
+	stopTestServer(t, server, errCh)
 }
 
 func TestNewServerAllowUnsafeAgents(t *testing.T) {
