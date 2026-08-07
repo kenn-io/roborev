@@ -607,6 +607,11 @@ Older agentsview versions still record token counts; the cost column stays blank
 for unpriced models and for jobs whose usage has not yet been fetched. The tilde
 marks the value as a model-pricing estimate rather than a billed amount.
 
+Fresh agent sessions can finish before agentsview has indexed their final usage.
+roborev briefly retries a missing session lookup before storing the job-log
+token fallback, so normally indexed reviews receive their cost without a later
+backfill.
+
 If you run a central usage service, configure `[cost] endpoint` to fetch usage
 over HTTP instead of through the local `agentsview` CLI. See
 [Cost Usage Endpoint](/configuration/#cost-usage-endpoint).

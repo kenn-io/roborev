@@ -68,6 +68,8 @@ func newWorkerTestContext(t *testing.T, workers int) *workerTestContext {
 	b := NewBroadcaster()
 	pool := NewWorkerPool(db, NewStaticConfig(cfg), cfg.MaxWorkers, b, nil, nil)
 	pool.retryBackoff = 0 // keep retry-driven tests fast
+	pool.tokenUsageIndexRetryWindow = 20 * time.Millisecond
+	pool.tokenUsageIndexRetryInterval = time.Millisecond
 
 	return &workerTestContext{
 		DB:          db,
@@ -917,6 +919,78 @@ func TestCaptureTokenUsageForSessionUsesCodexJobLog(t *testing.T) {
 	assert.InDelta(t, 0.42, usage.CostUSD, 1e-9)
 	assert.Equal(t, "job_log_turn_completed", usage.UsageSource)
 	assert.Equal(t, "thread-123", usage.ThreadID)
+}
+
+func TestCaptureTokenUsageForSessionRetriesUntilFreshSessionIsIndexed(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	tc := newWorkerTestContext(t, 1)
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
+	require.NoError(t, tc.DB.CompleteJob(job.ID, "codex", "prompt", "No issues found."))
+
+	var attempts atomic.Int32
+	tc.Pool.tokenUsageFetcher = func(context.Context, string) (*tokens.Usage, error) {
+		if attempts.Add(1) < 3 {
+			return nil, nil
+		}
+		return &tokens.Usage{
+			OutputTokens: 481,
+			CostUSD:      0.17,
+			HasCost:      true,
+		}, nil
+	}
+
+	tc.Pool.captureTokenUsageForSession(
+		context.Background(), testWorkerID, job, "fresh-session-123",
+	)
+
+	updated, err := tc.DB.GetJobByID(job.ID)
+	require.NoError(t, err)
+	usage := tokens.ParseJSON(updated.TokenUsage)
+	require.NotNil(t, usage)
+	assert.Equal(t, int32(3), attempts.Load())
+	assert.Equal(t, int64(481), usage.OutputTokens)
+	assert.True(t, usage.HasCost)
+	assert.InDelta(t, 0.17, usage.CostUSD, 1e-9)
+}
+
+func TestCaptureTokenUsageForSessionStopsRetryingAtContextDeadline(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	tc := newWorkerTestContext(t, 1)
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
+	require.NoError(t, tc.DB.CompleteJob(job.ID, "codex", "prompt", "No issues found."))
+
+	logPath := JobLogPath(job.ID)
+	require.NoError(t, os.MkdirAll(filepath.Dir(logPath), 0o700))
+	require.NoError(t, os.WriteFile(logPath, []byte(
+		`{"type":"thread.started","thread_id":"fresh-session-456"}`+"\n"+
+			`{"type":"turn.completed","usage":{"input_tokens":1024,`+
+			`"output_tokens":64}}`+"\n",
+	), 0o600))
+
+	var attempts atomic.Int32
+	tc.Pool.tokenUsageFetcher = func(context.Context, string) (*tokens.Usage, error) {
+		attempts.Add(1)
+		return nil, nil
+	}
+
+	ctx, cancel := context.WithTimeout(context.Background(), 5*time.Millisecond)
+	defer cancel()
+	started := time.Now()
+	tc.Pool.captureTokenUsageForSession(
+		ctx, testWorkerID, job, "fresh-session-456",
+	)
+
+	updated, err := tc.DB.GetJobByID(job.ID)
+	require.NoError(t, err)
+	usage := tokens.ParseJSON(updated.TokenUsage)
+	require.NotNil(t, usage)
+	assert.GreaterOrEqual(t, attempts.Load(), int32(2))
+	assert.Less(t, time.Since(started), 250*time.Millisecond)
+	assert.Equal(t, int64(1024), usage.InputTokens)
+	assert.Equal(t, int64(64), usage.OutputTokens)
+	assert.False(t, usage.HasCost)
 }
 
 func TestProcessJob_UsesStoredReviewPromptOverride(t *testing.T) {

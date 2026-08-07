@@ -27,7 +27,11 @@ import (
 	"go.kenn.io/roborev/internal/tokens"
 )
 
-const agentTimeoutErrorPrefix = "agent timeout after"
+const (
+	agentTimeoutErrorPrefix      = "agent timeout after"
+	tokenUsageIndexRetryWindow   = 3 * time.Second
+	tokenUsageIndexRetryInterval = 500 * time.Millisecond
+)
 
 // WorkerPool manages a pool of review workers
 type WorkerPool struct {
@@ -63,6 +67,10 @@ type WorkerPool struct {
 	// configured tokens.FetchForSessionWithConfig path; tests substitute a
 	// deterministic fetcher.
 	tokenUsageFetcher func(context.Context, string) (*tokens.Usage, error)
+	// tokenUsageIndexRetryWindow and tokenUsageIndexRetryInterval bound the
+	// fresh-session indexing retry. Tests shorten both values.
+	tokenUsageIndexRetryWindow   time.Duration
+	tokenUsageIndexRetryInterval time.Duration
 
 	// Output capture for tail command
 	outputBuffers *OutputBuffer
@@ -83,20 +91,22 @@ type WorkerPool struct {
 // NewWorkerPool creates a new worker pool
 func NewWorkerPool(db *storage.DB, cfgGetter ConfigGetter, numWorkers int, broadcaster Broadcaster, errorLog *ErrorLog, activityLog *ActivityLog) *WorkerPool {
 	return &WorkerPool{
-		db:             db,
-		cfgGetter:      cfgGetter,
-		broadcaster:    broadcaster,
-		errorLog:       errorLog,
-		activityLog:    activityLog,
-		numWorkers:     numWorkers,
-		stopCh:         make(chan struct{}),
-		readyCh:        make(chan struct{}),
-		runningJobs:    make(map[int64]context.CancelFunc),
-		pendingCancels: make(map[int64]bool),
-		agentCooldowns: make(map[string]time.Time),
-		outputBuffers:  NewOutputBuffer(512*1024, 4*1024*1024), // 512KB/job, 4MB total
-		classify:       agent.ClassifyLimit,
-		retryBackoff:   2 * time.Second,
+		db:                           db,
+		cfgGetter:                    cfgGetter,
+		broadcaster:                  broadcaster,
+		errorLog:                     errorLog,
+		activityLog:                  activityLog,
+		numWorkers:                   numWorkers,
+		stopCh:                       make(chan struct{}),
+		readyCh:                      make(chan struct{}),
+		runningJobs:                  make(map[int64]context.CancelFunc),
+		pendingCancels:               make(map[int64]bool),
+		agentCooldowns:               make(map[string]time.Time),
+		outputBuffers:                NewOutputBuffer(512*1024, 4*1024*1024), // 512KB/job, 4MB total
+		classify:                     agent.ClassifyLimit,
+		retryBackoff:                 2 * time.Second,
+		tokenUsageIndexRetryWindow:   tokenUsageIndexRetryWindow,
+		tokenUsageIndexRetryInterval: tokenUsageIndexRetryInterval,
 	}
 }
 
@@ -1374,7 +1384,9 @@ func (wp *WorkerPool) captureTokenUsageForSession(
 				)
 			}
 		}
-		fetched, tokenErr := fetcher(ctx, capturedSession)
+		fetched, tokenErr := wp.fetchFreshSessionUsage(
+			ctx, fetcher, capturedSession,
+		)
 		if tokenErr != nil {
 			log.Printf("[%s] Warning: fetch token usage for job %d: %v",
 				workerID, job.ID, tokenErr)
@@ -1405,6 +1417,38 @@ func (wp *WorkerPool) captureTokenUsageForSession(
 	if err != nil {
 		log.Printf("[%s] Warning: save token usage for job %d: %v",
 			workerID, job.ID, err)
+	}
+}
+
+func (wp *WorkerPool) fetchFreshSessionUsage(
+	ctx context.Context,
+	fetcher func(context.Context, string) (*tokens.Usage, error),
+	sessionID string,
+) (*tokens.Usage, error) {
+	retryCtx, cancel := context.WithTimeout(ctx, wp.tokenUsageIndexRetryWindow)
+	defer cancel()
+
+	for {
+		usage, err := fetcher(retryCtx, sessionID)
+		if err != nil {
+			if retryCtx.Err() != nil {
+				return nil, nil
+			}
+			return nil, err
+		}
+		if usage != nil {
+			return usage, nil
+		}
+
+		timer := time.NewTimer(wp.tokenUsageIndexRetryInterval)
+		select {
+		case <-retryCtx.Done():
+			if !timer.Stop() {
+				<-timer.C
+			}
+			return nil, nil
+		case <-timer.C:
+		}
 	}
 }
 

@@ -72,6 +72,8 @@ ______________________________________________________________________
 
 **Bug fixes**
 
+- Fresh review sessions briefly retry missing agentsview usage lookups, avoiding
+    permanently token-only jobs when indexing finishes just after the review.
 - CLI output now renders commit ranges as two shortened refs separated by `..`
     instead of truncating the range into a value that looks like one commit.
 - `roborev show --prompt <job_id>` can read the stored prompt while a job is
