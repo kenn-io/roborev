@@ -21,6 +21,13 @@ Grok Build skill selection.
 Requests such as “respond to this review” without one of these explicit mechanisms must use
 native behavior and must not run roborev.
 
+## Sandbox access
+
+roborev uses a local daemon. If a command fails with `permission denied`, the sandbox may be
+blocking access to its loopback port or Unix socket. Retry the same command with
+the runtime's supported sandbox escalation mechanism. Do not start or restart the daemon because a
+sandboxed status probe cannot reach it.
+
 ## IMPORTANT
 
 This skill requires you to **execute bash commands** to record the comment and close the review. The task is not complete until you run both commands and see confirmation output.

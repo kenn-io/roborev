@@ -9,6 +9,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/version"
 )
@@ -17,6 +18,44 @@ type statusJSONOutput struct {
 	Running bool                 `json:"running"`
 	Daemon  storage.DaemonStatus `json:"daemon"`
 	Jobs    []storage.ReviewJob  `json:"jobs,omitempty"`
+	Error   string               `json:"error,omitempty"`
+}
+
+func TestStatusCmdReportsAccessDeniedAsSandboxRestriction(t *testing.T) {
+	origEnsure := statusEnsureDaemon
+	statusEnsureDaemon = func() error { return daemon.ErrDaemonAccessDenied }
+	t.Cleanup(func() { statusEnsureDaemon = origEnsure })
+
+	output := captureStdout(t, func() {
+		cmd := statusCmd()
+		err := cmd.Execute()
+		require.NoError(t, err)
+	})
+
+	assert.Contains(t, output, "Daemon: status unavailable")
+	assert.Contains(t, output, "sandbox")
+	assert.Contains(t, output, "loopback or Unix socket")
+	assert.NotContains(t, output, "Daemon: not running")
+	assert.NotContains(t, output, "Start with: roborev daemon start")
+}
+
+func TestStatusCmdJSONReportsAccessDeniedAsRunning(t *testing.T) {
+	origEnsure := statusEnsureDaemon
+	statusEnsureDaemon = func() error { return daemon.ErrDaemonAccessDenied }
+	t.Cleanup(func() { statusEnsureDaemon = origEnsure })
+
+	output := captureStdout(t, func() {
+		cmd := statusCmd()
+		cmd.SetArgs([]string{"--json"})
+		err := cmd.Execute()
+		require.NoError(t, err)
+	})
+
+	var parsed statusJSONOutput
+	require.NoError(t, json.Unmarshal([]byte(output), &parsed))
+	assert.True(t, parsed.Running)
+	assert.Contains(t, parsed.Error, "sandbox")
+	assert.Contains(t, parsed.Error, "loopback or Unix socket")
 }
 
 func TestStatusCmdDoesNotReportNotRunningWhenStatusRequestTimesOut(t *testing.T) {

@@ -35,29 +35,30 @@ import (
 
 // Server is the HTTP API server for the daemon
 type Server struct {
-	db              *storage.DB
-	configWatcher   *ConfigWatcher
-	broadcaster     Broadcaster
-	workerPool      *WorkerPool
-	httpServer      *http.Server
-	syncWorker      *storage.SyncWorker
-	ciPoller        *CIPoller
-	hookRunner      *HookRunner
-	errorLog        *ErrorLog
-	activityLog     *ActivityLog
-	telemetry       telemetry.Client
-	telemetryOnce   sync.Once
-	telemetryStop   chan struct{}
-	startTime       time.Time
-	endpointMu      sync.Mutex // protects endpoint (written by Start, read by Stop)
-	endpoint        DaemonEndpoint
-	socketActivated bool // true if started via systemd socket activation
-	stopOnce        sync.Once
-	stopErr         error
-	sweepMu         sync.Mutex         // protects sweepCancel (written by Start, read by Stop)
-	sweepCancel     context.CancelFunc // cancels the panel sweep goroutine on Stop
-	shutdownCh      chan struct{}      // closed when /api/shutdown is requested
-	shutdownOnce    sync.Once
+	db                *storage.DB
+	configWatcher     *ConfigWatcher
+	broadcaster       Broadcaster
+	workerPool        *WorkerPool
+	httpServer        *http.Server
+	syncWorker        *storage.SyncWorker
+	ciPoller          *CIPoller
+	hookRunner        *HookRunner
+	errorLog          *ErrorLog
+	activityLog       *ActivityLog
+	telemetry         telemetry.Client
+	telemetryOnce     sync.Once
+	telemetryStop     chan struct{}
+	startTime         time.Time
+	endpointMu        sync.Mutex // protects endpoint (written by Start, read by Stop)
+	endpoint          DaemonEndpoint
+	alternateEndpoint *DaemonEndpoint
+	socketActivated   bool // true if started via systemd socket activation
+	stopOnce          sync.Once
+	stopErr           error
+	sweepMu           sync.Mutex         // protects sweepCancel (written by Start, read by Stop)
+	sweepCancel       context.CancelFunc // cancels the panel sweep goroutine on Stop
+	shutdownCh        chan struct{}      // closed when /api/shutdown is requested
+	shutdownOnce      sync.Once
 
 	// Cached machine ID to avoid INSERT on every status request
 	machineIDMu sync.Mutex
@@ -65,6 +66,11 @@ type Server struct {
 }
 
 const dailyTelemetryInterval = 24 * time.Hour
+
+var (
+	getSystemdListenerForServer      = getSystemdListener
+	listenAuxiliaryEndpointForServer = listenAuxiliaryEndpoint
+)
 
 // NewServer creates a new daemon server
 func NewServer(db *storage.DB, cfg *config.Config, configPath string) *Server {
@@ -153,7 +159,7 @@ func (s *Server) Start(ctx context.Context) error {
 	cfg := s.configWatcher.Config()
 
 	// Check for socket activation before falling back to the config
-	listener, ep, err := getSystemdListener()
+	listener, ep, err := getSystemdListenerForServer()
 	if err != nil {
 		return err
 	}
@@ -179,8 +185,15 @@ func (s *Server) Start(ctx context.Context) error {
 		}
 	}
 
-	// Check if a responsive daemon is still running after cleanup
-	if info, err := GetAnyRunningDaemon(); err == nil && IsDaemonAlive(info.Endpoint()) {
+	// Check if a responsive daemon is still running after cleanup.
+	info, discoveryErr := GetAnyRunningDaemon()
+	if IsDaemonAccessDenied(discoveryErr) {
+		if listener != nil {
+			_ = listener.Close()
+		}
+		return discoveryErr
+	}
+	if discoveryErr == nil && IsDaemonAlive(info.Endpoint()) {
 		if listener != nil {
 			_ = listener.Close()
 		}
@@ -202,30 +215,10 @@ func (s *Server) Start(ctx context.Context) error {
 		// Bind the listener before publishing runtime metadata so concurrent CLI
 		// invocations cannot race a half-started daemon and kill it as a zombie.
 		if ep.IsUnix() {
-			socketPath := ep.Address
-			socketDir := filepath.Dir(socketPath)
-			if err := os.MkdirAll(socketDir, 0o700); err != nil {
-				s.configWatcher.Stop()
-				return fmt.Errorf("create socket directory: %w", err)
-			}
-			// Verify the parent directory has safe permissions (owner-only)
-			if fi, err := os.Stat(socketDir); err == nil {
-				if perm := fi.Mode().Perm(); perm&0o077 != 0 {
-					s.configWatcher.Stop()
-					return fmt.Errorf("socket directory %s has unsafe permissions %o (must not be group/world accessible)", socketDir, perm)
-				}
-			}
-			// Remove stale socket from a previous run
-			os.Remove(socketPath)
-			listener, err = ep.Listener()
+			listener, err = listenUnixEndpoint(ep)
 			if err != nil {
 				s.configWatcher.Stop()
-				return fmt.Errorf("listen on %s: %w", ep, err)
-			}
-			if err := os.Chmod(socketPath, 0o600); err != nil {
-				_ = listener.Close()
-				s.configWatcher.Stop()
-				return fmt.Errorf("chmod socket: %w", err)
+				return err
 			}
 		} else {
 			// TCP: find an available port first
@@ -281,10 +274,50 @@ func (s *Server) Start(ctx context.Context) error {
 		return nil
 	}
 
+	var alternate *DaemonEndpoint
+	if !s.socketActivated {
+		auxListener, candidate, auxErr := listenAuxiliaryEndpointForServer(ep)
+		if auxErr != nil {
+			log.Printf("Warning: auxiliary Unix listener unavailable: %v", auxErr)
+		} else if auxListener != nil && candidate != nil {
+			auxServeErrCh := make(chan error, 1)
+			log.Printf("Starting auxiliary HTTP server on %s", candidate)
+			go func() {
+				auxServeErrCh <- s.httpServer.Serve(auxListener)
+			}()
+			auxReady, auxExited, readyErr := waitForServerReady(
+				ctx, *candidate, 2*time.Second, auxServeErrCh,
+			)
+			if readyErr != nil || !auxReady {
+				_ = auxListener.Close()
+				_ = os.Remove(candidate.Address)
+				if readyErr == nil {
+					readyErr = fmt.Errorf("listener exited before becoming ready")
+				}
+				log.Printf("Warning: auxiliary Unix listener unavailable: %v", readyErr)
+				if !auxExited {
+					_ = awaitServeExitOnUnreadyStartup(false, auxServeErrCh)
+				}
+			} else {
+				alternate = candidate
+				go func() {
+					serveErr := <-auxServeErrCh
+					if serveErr != nil && !errors.Is(serveErr, http.ErrServerClosed) {
+						log.Printf("Auxiliary Unix listener stopped: %v", serveErr)
+					}
+				}()
+			}
+		}
+	}
+
+	s.endpointMu.Lock()
+	s.alternateEndpoint = alternate
+	s.endpointMu.Unlock()
+
 	s.startPanelSweep(ctx)
 
 	// Write runtime info only after the HTTP server is accepting requests.
-	if err := WriteRuntime(ep, version.Version); err != nil {
+	if err := WriteRuntime(ep, alternate, version.Version); err != nil {
 		log.Printf("Warning: failed to write runtime info: %v", err)
 	}
 
@@ -510,9 +543,13 @@ func (s *Server) stopOnce0() error {
 	// Clean up Unix domain socket (if we created it)
 	s.endpointMu.Lock()
 	ep := s.endpoint
+	alternate := s.alternateEndpoint
 	s.endpointMu.Unlock()
 	if ep.IsUnix() && !s.socketActivated {
 		os.Remove(ep.Address)
+	}
+	if alternate != nil {
+		os.Remove(alternate.Address)
 	}
 
 	// Stop CI poller

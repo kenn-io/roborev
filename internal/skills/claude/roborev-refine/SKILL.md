@@ -36,6 +36,13 @@ behavior and must not run roborev.
 This skill intentionally focuses on the current branch flow. It does not expose
 `roborev refine --all-branches` or `roborev refine --list`.
 
+## Sandbox access
+
+roborev uses a local daemon. If a command fails with `permission denied`, the sandbox may be
+blocking access to its loopback port or Unix socket. Retry the same Bash command with
+`dangerouslyDisableSandbox: true`. Do not start or restart the daemon because a
+sandboxed status probe cannot reach it.
+
 ## When NOT to invoke this skill
 
 Do NOT invoke this skill when the user is presenting or pasting existing review

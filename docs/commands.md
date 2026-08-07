@@ -782,6 +782,12 @@ roborev uninstall-hook           # Remove hook
 | `--json` | Emit daemon and queue status as JSON. Includes the active daemon endpoint as `network`, `address`, and `port` fields alongside queue counters and version fields |
 | `--force` | Overwrite an existing post-commit hook with a fresh one |
 
+If daemon access is denied, `roborev status` reports the status as unavailable
+and suggests allowing loopback or Unix-socket access when running in a sandbox.
+It does not treat permission denial as proof that the daemon is stopped, and it
+does not start or restart the daemon. JSON output keeps `running: true` and
+includes the access error.
+
 `pause` and `unpause` are daemon-wide queue controls. Pausing prevents workers
 from starting new queued jobs, but running jobs continue to completion. A paused
 queue survives daemon restarts and is shown in `roborev status` and the TUI. Use
