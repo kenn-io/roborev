@@ -121,6 +121,15 @@ const regularCICostOwnershipCondition = `(j.source = ? OR EXISTS (
 	SELECT 1 FROM ci_pr_panels p WHERE p.panel_run_uuid = j.panel_run_uuid
 ))`
 
+// legacyCostEligible supplements costEligible's modern invocation evidence.
+// Pre-panel rows predate agent_invoked, but a done review/range job proves the
+// review agent completed successfully. Failed and canceled rows still require
+// the marker or usage evidence because they may have stopped before invocation.
+// Callers also apply legacyUnitJobConditions, which limits this inference to
+// structurally identified pre-panel review/range jobs.
+const legacyCostEligible = "j.started_at IS NOT NULL AND j.finished_at IS NOT NULL " +
+	"AND (j.status = 'done' OR j.agent_invoked = 1 OR (" + agentRanByUsage + "))"
+
 func appendCICostBounds(
 	conditions []string, args []any, finishedExpr string,
 	opts ExportCICostOptions, cursor *ciCostCursor,
@@ -154,7 +163,7 @@ func (db *DB) exportLegacyCICosts(opts ExportCICostOptions, cursor *ciCostCursor
 	conditions := []string{
 		legacyUnitJobConditions,
 		legacyUnitTimeExpr("j.enqueued_at") + " <= w.window_end",
-		costEligible,
+		legacyCostEligible,
 	}
 	args := []any{eraEnd, eraEnd, eraEnd}
 	conditions, args = appendCICostBounds(conditions, args, finishedExpr, opts, cursor)
@@ -363,7 +372,7 @@ func (db *DB) ciCostCursorRowExists(cursor ciCostCursor, legacy bool) (bool, err
 			JOIN unit_windows w ON w.repo_id = j.repo_id AND w.git_ref = j.git_ref
 			WHERE ` + legacyUnitJobConditions + `
 			  AND ` + legacyUnitTimeExpr("j.enqueued_at") + ` <= w.window_end
-			  AND ` + costEligible + `
+			  AND ` + legacyCostEligible + `
 			  AND j.id = ?
 			  AND ` + sqliteNormalizedTimestampExpr("j.finished_at") + ` = datetime(?)`
 		args = []any{eraEnd, eraEnd, eraEnd, cursor.JobID, cursor.FinishedAt}

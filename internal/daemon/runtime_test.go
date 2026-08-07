@@ -614,9 +614,7 @@ func TestDiscoverRuntimeRecords(t *testing.T) {
 
 func TestCleanupZombieDaemonsPreservesAccessDeniedRuntime(t *testing.T) {
 	testenv.SetDataDir(t)
-	socketDir, err := os.MkdirTemp("/tmp", "rr-denied-*")
-	require.NoError(t, err)
-	t.Cleanup(func() { require.NoError(t, os.RemoveAll(socketDir)) })
+	socketDir := t.TempDir()
 	socketPath := filepath.Join(socketDir, "daemon.sock")
 	require.NoError(t, os.WriteFile(socketPath, nil, 0o600))
 

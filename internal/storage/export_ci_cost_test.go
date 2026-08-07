@@ -337,6 +337,29 @@ func seedLegacyCICostJob(t *testing.T, db *DB, repoID int64, gitRef, agent, enqu
 	return job
 }
 
+func TestExportCICostsLegacyInfersDoneJobInvocation(t *testing.T) {
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
+	seedPanelEraMarker(t, db, "2026-06-01 00:00:00")
+
+	doneA := seedLegacyCIJob(t, db, repo.ID, "base..legacy", "agent-a",
+		"2026-03-01 10:00:00", "2026-03-01 10:05:00")
+	doneB := seedLegacyCIJob(t, db, repo.ID, "base..legacy", "agent-b",
+		"2026-03-01 10:00:10", "2026-03-01 10:06:00")
+	failed := seedLegacyCIJob(t, db, repo.ID, "base..legacy", "agent-c",
+		"2026-03-01 10:00:20", "2026-03-01 10:07:00")
+	_, err := db.Exec(`UPDATE review_jobs SET status = 'failed' WHERE id = ?`, failed.ID)
+	require.NoError(t, err)
+
+	page, err := db.ExportCICosts(ExportCICostOptions{Legacy: true})
+	require.NoError(t, err)
+	assert.Equal(t, []string{doneA.UUID, doneB.UUID}, costJobUUIDs(page.Jobs))
+	require.Len(t, page.Jobs, 2)
+	assert.Nil(t, page.Jobs[0].CostUSD)
+	assert.Nil(t, page.Jobs[1].CostUSD)
+}
+
 func TestExportCICostsLegacyReconstructionAndPagination(t *testing.T) {
 	db := openTestDB(t)
 	t.Cleanup(func() { require.NoError(t, db.Close()) })
