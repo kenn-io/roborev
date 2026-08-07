@@ -756,6 +756,94 @@ components:
       required:
         - error
       type: object
+    ExportCICostDocument:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/ExportCICostDocument.json
+          format: uri
+          readOnly: true
+          type: string
+        database_id:
+          description: Stable identity for the local review database; changes when the database is recreated.
+          type: string
+        generated_at:
+          type: string
+        jobs:
+          items:
+            $ref: "#/components/schemas/ExportCICostJob"
+          type:
+            - array
+            - "null"
+        legacy:
+          type: boolean
+        next_cursor:
+          description: Opaque resume cursor emitted when jobs is non-empty.
+          type:
+            - string
+            - "null"
+        schema_version:
+          format: int64
+          type: integer
+        tool:
+          type: string
+        tool_version:
+          type: string
+        truncated:
+          description: True when more matching rows are available immediately.
+          type: boolean
+        window:
+          $ref: "#/components/schemas/ExportReviewsWindow"
+      required:
+        - schema_version
+        - tool
+        - tool_version
+        - generated_at
+        - database_id
+        - legacy
+        - window
+        - truncated
+        - next_cursor
+        - jobs
+      type: object
+    ExportCICostJob:
+      additionalProperties: false
+      properties:
+        agent:
+          type: string
+        cost_usd:
+          format: double
+          type:
+            - number
+            - "null"
+        finished_at:
+          type: string
+        job_uuid:
+          type: string
+        model:
+          type:
+            - string
+            - "null"
+        provider:
+          type:
+            - string
+            - "null"
+        role:
+          type: string
+        status:
+          type: string
+      required:
+        - job_uuid
+        - finished_at
+        - agent
+        - model
+        - provider
+        - role
+        - status
+        - cost_usd
+      type: object
     ExportCIMetricsDocument:
       additionalProperties: false
       properties:
@@ -2593,6 +2681,77 @@ paths:
       summary: Enqueue a daemon job
       tags:
         - jobs
+  /api/export/ci-costs:
+    get:
+      operationId: export-ci-costs
+      parameters:
+        - description: Output format; only json is supported
+          explode: false
+          in: query
+          name: format
+          schema:
+            default: json
+            description: Output format; only json is supported
+            type: string
+        - description: Inclusive finished_at lower bound (RFC3339 or YYYY-MM-DD)
+          explode: false
+          in: query
+          name: since
+          schema:
+            description: Inclusive finished_at lower bound (RFC3339 or YYYY-MM-DD)
+            type: string
+        - description: Exclusive finished_at upper bound (RFC3339 or YYYY-MM-DD; date-only means through that UTC day)
+          explode: false
+          in: query
+          name: until
+          schema:
+            description: Exclusive finished_at upper bound (RFC3339 or YYYY-MM-DD; date-only means through that UTC day)
+            type: string
+        - description: Maximum jobs in this page
+          explode: false
+          in: query
+          name: limit
+          schema:
+            default: 500
+            description: Maximum jobs in this page
+            format: int64
+            type: integer
+        - description: Opaque next_cursor from a previous page. Resumes strictly after its (finished_at, job_id) position; mutually exclusive with since.
+          explode: false
+          in: query
+          name: cursor
+          schema:
+            description: Opaque next_cursor from a previous page. Resumes strictly after its (finished_at, job_id) position; mutually exclusive with since.
+            type: string
+        - description: Export structurally identified pre-panel CI jobs. Cursors cannot be reused across modes.
+          explode: false
+          in: query
+          name: legacy
+          schema:
+            description: Export structurally identified pre-panel CI jobs. Cursors cannot be reused across modes.
+            type: boolean
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ExportCICostDocument"
+          description: OK
+        "409":
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Cursor database_id does not match this local database
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: Export job-level CI costs
+      tags:
+        - reviews
   /api/export/ci-metrics:
     get:
       operationId: export-ci-metrics

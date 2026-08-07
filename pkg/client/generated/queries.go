@@ -56,6 +56,26 @@ func (g GetCostQuery) Validate() error {
 	return errors
 }
 
+type ExportCiCostsQuery struct {
+	// Format Output format; only json is supported
+	Format *string `json:"format,omitempty"`
+
+	// Since Inclusive finished_at lower bound (RFC3339 or YYYY-MM-DD)
+	Since *string `json:"since,omitempty"`
+
+	// Until Exclusive finished_at upper bound (RFC3339 or YYYY-MM-DD; date-only means through that UTC day)
+	Until *string `json:"until,omitempty"`
+
+	// Limit Maximum jobs in this page
+	Limit *int64 `json:"limit,omitempty"`
+
+	// Cursor Opaque next_cursor from a previous page. Resumes strictly after its (finished_at, job_id) position; mutually exclusive with since.
+	Cursor *string `json:"cursor,omitempty"`
+
+	// Legacy Export structurally identified pre-panel CI jobs. Cursors cannot be reused across modes.
+	Legacy *bool `json:"legacy,omitempty"`
+}
+
 type ExportCiMetricsQuery struct {
 	// Format Output format; only json is supported
 	Format *string `json:"format,omitempty"`

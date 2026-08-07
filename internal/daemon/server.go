@@ -1361,6 +1361,59 @@ func (s *Server) humaExportCIMetrics(
 	return resp, nil
 }
 
+func (s *Server) humaExportCICosts(
+	ctx context.Context, input *ExportCICostInput,
+) (*ExportCICostOutput, error) {
+	if input.Format != "" && input.Format != "json" {
+		return nil, huma.Error400BadRequest("unsupported export format")
+	}
+	if input.Cursor != "" && input.Since != "" {
+		return nil, huma.Error400BadRequest("cursor cannot be used with since")
+	}
+	since, sinceOut, err := parseExportTimeBound(input.Since, false)
+	if err != nil {
+		return nil, huma.Error400BadRequest("invalid since")
+	}
+	until, untilOut, err := parseExportTimeBound(input.Until, true)
+	if err != nil {
+		return nil, huma.Error400BadRequest("invalid until")
+	}
+
+	page, err := s.db.ExportCICosts(storage.ExportCICostOptions{
+		Since: since, Until: until, Cursor: input.Cursor,
+		Limit: input.Limit, Legacy: input.Legacy,
+	})
+	if err != nil {
+		if errors.Is(err, storage.ErrExportCursorDatabaseMismatch) {
+			return nil, huma.Error409Conflict(err.Error())
+		}
+		return nil, huma.Error400BadRequest(err.Error())
+	}
+	databaseID, err := s.db.GetDatabaseID()
+	if err != nil {
+		return nil, fmt.Errorf("get database ID: %w", err)
+	}
+
+	resp := &ExportCICostOutput{}
+	resp.Body = ExportCICostDocument{
+		SchemaVersion: 1,
+		Tool:          "roborev",
+		ToolVersion:   version.Version,
+		GeneratedAt:   time.Now().UTC().Format(time.RFC3339),
+		DatabaseID:    databaseID,
+		Legacy:        input.Legacy,
+		Window: ExportReviewsWindow{
+			Field: "finished_at",
+			Since: sinceOut,
+			Until: untilOut,
+		},
+		Truncated:  page.Truncated,
+		NextCursor: page.NextCursor,
+		Jobs:       page.Jobs,
+	}
+	return resp, nil
+}
+
 func parseExportTimeBound(raw string, upper bool) (time.Time, *string, error) {
 	raw = strings.TrimSpace(raw)
 	if raw == "" {

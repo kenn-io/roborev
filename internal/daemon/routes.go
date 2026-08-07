@@ -97,6 +97,28 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 			}
 		})
 
+	huma.Get(api, "/api/export/ci-costs", s.humaExportCICosts,
+		func(o *huma.Operation) {
+			o.OperationID = "export-ci-costs"
+			o.Summary = "Export job-level CI costs"
+			o.Tags = []string{"reviews"}
+			if o.Responses == nil {
+				o.Responses = map[string]*huma.Response{}
+			}
+			o.Responses["409"] = &huma.Response{
+				Description: "Cursor database_id does not match this local database",
+				Content: map[string]*huma.MediaType{
+					"application/problem+json": {Schema: jsonSchema(api, huma.ErrorModel{})},
+				},
+			}
+			o.Responses["default"] = &huma.Response{
+				Description: "Error",
+				Content: map[string]*huma.MediaType{
+					"application/problem+json": {Schema: jsonSchema(api, huma.ErrorModel{})},
+				},
+			}
+		})
+
 	// /api/job/output is registered as a plain HandleFunc
 	// (not Huma) because its stream=1 mode uses NDJSON
 	// streaming which doesn't fit Huma's typed response model.

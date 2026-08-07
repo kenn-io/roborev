@@ -199,6 +199,37 @@ type ExportCIMetricsOutput struct {
 	Body ExportCIMetricsDocument
 }
 
+// -- GET /api/export/ci-costs --
+
+// ExportCICostInput holds query parameters for exporting job-level CI costs.
+type ExportCICostInput struct {
+	Format string `query:"format" default:"json" doc:"Output format; only json is supported"`
+	Since  string `query:"since" doc:"Inclusive finished_at lower bound (RFC3339 or YYYY-MM-DD)"`
+	Until  string `query:"until" doc:"Exclusive finished_at upper bound (RFC3339 or YYYY-MM-DD; date-only means through that UTC day)"`
+	Limit  int    `query:"limit" default:"500" doc:"Maximum jobs in this page"`
+	Cursor string `query:"cursor" doc:"Opaque next_cursor from a previous page. Resumes strictly after its (finished_at, job_id) position; mutually exclusive with since."`
+	Legacy bool   `query:"legacy" doc:"Export structurally identified pre-panel CI jobs. Cursors cannot be reused across modes."`
+}
+
+// ExportCICostDocument is the response body for GET /api/export/ci-costs.
+type ExportCICostDocument struct {
+	SchemaVersion int                       `json:"schema_version"`
+	Tool          string                    `json:"tool"`
+	ToolVersion   string                    `json:"tool_version"`
+	GeneratedAt   string                    `json:"generated_at"`
+	DatabaseID    string                    `json:"database_id" doc:"Stable identity for the local review database; changes when the database is recreated."`
+	Legacy        bool                      `json:"legacy"`
+	Window        ExportReviewsWindow       `json:"window"`
+	Truncated     bool                      `json:"truncated" doc:"True when more matching rows are available immediately."`
+	NextCursor    *string                   `json:"next_cursor" doc:"Opaque resume cursor emitted when jobs is non-empty."`
+	Jobs          []storage.ExportCICostJob `json:"jobs"`
+}
+
+// ExportCICostOutput is the response for GET /api/export/ci-costs.
+type ExportCICostOutput struct {
+	Body ExportCICostDocument
+}
+
 // -- Shared request/response types (used by Huma handlers) --
 
 // CancelJobRequest is the JSON body for POST /api/job/cancel.

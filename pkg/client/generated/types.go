@@ -472,6 +472,79 @@ func (s ErrorResponse) Error() string {
 	return "unmapped client error"
 }
 
+type ExportCICostDocument struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+
+	// DatabaseID Stable identity for the local review database; changes when the database is recreated.
+	DatabaseID  string            `json:"database_id" validate:"required"`
+	GeneratedAt string            `json:"generated_at" validate:"required"`
+	Jobs        []ExportCICostJob `json:"jobs,omitempty" validate:"required"`
+	Legacy      bool              `json:"legacy"`
+
+	// NextCursor Opaque resume cursor emitted when jobs is non-empty.
+	NextCursor    *string `json:"next_cursor,omitempty" validate:"required"`
+	SchemaVersion int64   `json:"schema_version"`
+	Tool          string  `json:"tool" validate:"required"`
+	ToolVersion   string  `json:"tool_version" validate:"required"`
+
+	// Truncated True when more matching rows are available immediately.
+	Truncated bool                `json:"truncated"`
+	Window    ExportReviewsWindow `json:"window"`
+}
+
+func (e ExportCICostDocument) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(e.DatabaseID, "required"); err != nil {
+		errors = errors.Append("DatabaseID", err)
+	}
+	if err := typesValidator.Var(e.GeneratedAt, "required"); err != nil {
+		errors = errors.Append("GeneratedAt", err)
+	}
+	for i, item := range e.Jobs {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Jobs[%d]", i), err)
+			}
+		}
+	}
+	if e.NextCursor != nil {
+		if err := typesValidator.Var(e.NextCursor, "required"); err != nil {
+			errors = errors.Append("NextCursor", err)
+		}
+	}
+	if err := typesValidator.Var(e.Tool, "required"); err != nil {
+		errors = errors.Append("Tool", err)
+	}
+	if err := typesValidator.Var(e.ToolVersion, "required"); err != nil {
+		errors = errors.Append("ToolVersion", err)
+	}
+	if v, ok := any(e.Window).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Window", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type ExportCICostJob struct {
+	Agent      string   `json:"agent" validate:"required"`
+	CostUsd    *float64 `json:"cost_usd,omitempty"`
+	FinishedAt string   `json:"finished_at" validate:"required"`
+	JobUUID    string   `json:"job_uuid" validate:"required"`
+	Model      *string  `json:"model,omitempty" validate:"required"`
+	Provider   *string  `json:"provider,omitempty" validate:"required"`
+	Role       string   `json:"role" validate:"required"`
+	Status     string   `json:"status" validate:"required"`
+}
+
+func (e ExportCICostJob) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(e))
+}
+
 type ExportCIMetricsDocument struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema *string `json:"$schema,omitempty"`
