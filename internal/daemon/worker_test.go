@@ -954,6 +954,29 @@ func TestCaptureTokenUsageForSessionRetriesUntilFreshSessionIsIndexed(t *testing
 	assert.InDelta(t, 0.17, usage.CostUSD, 1e-9)
 }
 
+func TestCaptureTokenUsageForSessionDoesNotRetryUnavailableProvider(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("PATH handling differs on Windows")
+	}
+
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	tc := newWorkerTestContext(t, 1)
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
+	require.NoError(t, tc.DB.CompleteJob(job.ID, "codex", "prompt", "No issues found."))
+
+	tc.Pool.tokenUsageIndexRetryWindow = 400 * time.Millisecond
+	tc.Pool.tokenUsageIndexRetryInterval = 200 * time.Millisecond
+	t.Setenv("PATH", t.TempDir())
+
+	started := time.Now()
+	tc.Pool.captureTokenUsageForSession(
+		context.Background(), testWorkerID, job, "fresh-session-789",
+	)
+
+	assert.Less(t, time.Since(started), 100*time.Millisecond)
+}
+
 func TestCaptureTokenUsageForSessionStopsRetryingAtContextDeadline(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	tc := newWorkerTestContext(t, 1)

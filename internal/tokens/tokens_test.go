@@ -578,6 +578,7 @@ func TestFetchForSessionWithConfigRequiresAgentsviewWhenRequested(t *testing.T) 
 
 	require.Error(t, err)
 	assert.Nil(t, usage)
+	require.ErrorIs(t, err, ErrUsageProviderUnavailable)
 	assert.Contains(t, err.Error(), "agentsview lookup")
 }
 

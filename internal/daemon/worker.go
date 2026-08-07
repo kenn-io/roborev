@@ -1378,8 +1378,9 @@ func (wp *WorkerPool) captureTokenUsageForSession(
 				return tokens.FetchForSessionWithConfig(
 					ctx, sessionID,
 					tokens.FetchConfig{
-						Endpoint: cfg.Cost.Endpoint,
-						Timeout:  cfg.Cost.ResolvedTimeout(),
+						Endpoint:   cfg.Cost.Endpoint,
+						Timeout:    cfg.Cost.ResolvedTimeout(),
+						RequireCLI: true,
 					},
 				)
 			}
@@ -1387,11 +1388,12 @@ func (wp *WorkerPool) captureTokenUsageForSession(
 		fetched, tokenErr := wp.fetchFreshSessionUsage(
 			ctx, fetcher, capturedSession,
 		)
-		if tokenErr != nil {
+		switch {
+		case tokenErr == nil:
+			usage = backfill.MergeTokenUsage(tokens.ToJSON(usage), fetched)
+		case !errors.Is(tokenErr, tokens.ErrUsageProviderUnavailable):
 			log.Printf("[%s] Warning: fetch token usage for job %d: %v",
 				workerID, job.ID, tokenErr)
-		} else {
-			usage = backfill.MergeTokenUsage(tokens.ToJSON(usage), fetched)
 		}
 	}
 
