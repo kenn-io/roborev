@@ -308,10 +308,11 @@ func TestDaemonSignalCleanup(t *testing.T) {
 	}()
 
 	// Wait for the signal handler to be installed (race-free).
+	// Allow for database initialization overhead under the race detector.
 	var sigCh chan os.Signal
 	select {
 	case sigCh = <-sigReady:
-	case <-time.After(5 * time.Second):
+	case <-time.After(10 * time.Second):
 		require.Condition(t, func() bool {
 			return false
 		}, "timed out waiting for signal handler setup")
