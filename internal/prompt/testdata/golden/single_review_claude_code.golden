@@ -19,21 +19,21 @@ Do not include any front matter such as "Reviewing the diff..." or "I'm checking
 
 ## Review Criteria
 
-Report only findings the developer would act on — there is no credit for volume. Review in sequence:
+Report only findings the developer would act on. Review in sequence:
 
-- **Line scan**: Read every hunk line by line, and read the enclosing function of each hunk — a bug on an unchanged line of a touched function is in scope when the change re-exposes it or fails to fix it. For each line, ask what input, state, timing, or platform makes it wrong: inverted or wrong conditions, off-by-one errors, null/undefined issues, race conditions, errors swallowed instead of propagated, and the classic pitfalls of the file's language.
-- **Removed behavior**: For every line the diff deletes or replaces, name the invariant or behavior it enforced, then find where the new code re-establishes it. A guard, error path, validation, or covering test that is removed and never re-established is a finding.
-- **Callers and callees**: For each changed function or type, find its callers and check the call sites against new preconditions, changed return shapes, and new error paths. Check whether other changes in the same diff make an existing call unsafe.
+- **Line scan**: Read every hunk and the enclosing function of each — bugs on unchanged lines of a touched function are in scope. For each line, ask what input, state, or timing makes it wrong: inverted conditions, off-by-one, null/undefined, races, swallowed errors, language pitfalls.
+- **Removed behavior**: For every deleted or replaced line, name the invariant it enforced and find where the new code re-establishes it. Removed and never re-established is a finding.
+- **Callers and callees**: Check callers of each changed function against new preconditions, changed return shapes, and new error paths.
 - **Security**: Injection vulnerabilities, auth issues, data exposure.
-- **Testing gaps**: Newly introduced behavior with no covering test. Do not demand coverage at an additional level (e.g. a full-stack e2e) when an existing test at any level already pins the same behavior — name the specific behavior that is unpinned, not the kind of test you would prefer to exist.
-- **Code quality**: Duplication of an existing helper (name the helper), unnecessary complexity (name the simpler form that does the same job), wasted work on hot paths (name the cheaper alternative). A quality finding without a named alternative is not reportable.
+- **Testing gaps**: New behavior with no covering test. Do not demand a test at an additional level (e.g. e2e) when an existing test already pins the behavior.
+- **Code quality**: Duplication, needless complexity, wasted work — only reportable when you name the concrete alternative (the existing helper, the simpler form, the cheaper approach).
 
 Do not report issues without specific evidence in the diff. In particular, do not report:
 - Hypothetical issues in code not shown in the diff
 - Style preferences or naming opinions that do not affect correctness
 - "Missing tests" unless the change introduces testable behavior with no coverage
 - Patterns that are consistent with the codebase conventions visible in context
-- Findings that assume a deployment model — mixed-version rollouts, existing installed data, external consumers of an interface — without evidence for that model in the repository (release history, versioned APIs, migration machinery, stated guidelines). If the project guidelines state a policy on compatibility or hardening, follow it in both directions.
+- Deployment-model assumptions (mixed-version rollouts, legacy data, external consumers) with no supporting evidence in the repository or its guidelines
 
 Severity definitions:
 
@@ -41,21 +41,13 @@ Severity definitions:
 - **Medium**: Will cause degraded behavior under specific conditions, or blocks future maintainability
 - **Low**: Minor improvement opportunity with no immediate functional impact
 
-State the concrete trigger for every Medium or High finding. A transient inconsistency that self-corrects without user-visible harm is Low, not Medium or High. If you cannot describe a plausible sequence of events that reaches the failing state, cap the severity at Low.
+Name the concrete trigger for every Medium or High finding; a transient state that self-corrects without user-visible harm, or one you cannot plausibly reach, is Low.
 
 ## Before Finalizing
 
-Before finalizing, re-judge each candidate finding against the code and classify it:
+Before finalizing, re-check each finding against the code: keep it only if you can cite the triggering input or state, or a real mechanism whose trigger is uncertain (say what would confirm it); drop it if the code or a guard elsewhere disproves it. Verify claims about a dependency's behavior against the pinned version, not memory. Every finding must cite the narrowest location, carry a severity matching its described impact, and not contradict another finding.
 
-- **Confirmed**: you can name the input or state that triggers it and the wrong result; cite the line.
-- **Plausible**: the mechanism is real but the trigger is uncertain; state what would confirm it.
-- **Refuted**: the code does not say what the finding claims, or a guard elsewhere already handles it; cite the line that disproves it.
-
-Report confirmed and plausible findings; drop refuted ones. Do not drop a finding merely for being "speculative" when the triggering state is realistic (concurrency, error paths, cold caches, missing optional fields). When a finding depends on the behavior of a third-party dependency, verify it against the pinned version's actual source or documentation and cite what you found — never assert library behavior from memory.
-
-Also verify the report itself: every finding must reference the narrowest applicable location (line number when possible, file or diff-level when the issue is an omission or spans a range), the severity must match the impact you described, and no two findings should contradict each other. Drop any finding that fails these checks.
-
-List findings most-severe first. Report every confirmed or plausible bug, security, or regression finding regardless of count, but include only quality and testing findings clearly worth the developer's time — there is no credit for volume. If two findings describe the same defect at the same location for the same reason, keep only the one with the more concrete failure scenario; if several findings make the same point in different places, merge them into one finding that lists every location.
+List findings most-severe first. Merge duplicates and findings that make the same point in different places. Report every verified bug regardless of count; include quality and testing findings only when clearly worth acting on.
 
 Do not review the commit message. Focus only on the code changes in the diff.
 
