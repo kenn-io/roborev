@@ -10,6 +10,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"slices"
 	"strings"
 
 	"go.kenn.io/roborev/internal/config"
@@ -26,6 +27,7 @@ type PiAgent struct {
 	Agentic             bool           // Agentic mode
 	SessionID           string         // Existing session ID to resume
 	JSONSchemaExtension string         // Pi extension source for classifier schema output
+	LaunchArgs          []string       // Additional arguments prepended to every Pi invocation
 }
 
 // NewPiAgent creates a new pi agent
@@ -57,6 +59,7 @@ func (a *PiAgent) clone(opts ...agentCloneOption) *PiAgent {
 		Agentic:             cfg.Agentic,
 		SessionID:           cfg.SessionID,
 		JSONSchemaExtension: a.JSONSchemaExtension,
+		LaunchArgs:          slices.Clone(a.LaunchArgs),
 	}
 }
 
@@ -107,7 +110,8 @@ func (a *PiAgent) CommandLine() string {
 }
 
 func (a *PiAgent) buildArgs(sessionPath string) []string {
-	args := []string{"-p", "--mode", "json"}
+	args := slices.Clone(a.LaunchArgs)
+	args = append(args, "-p", "--mode", "json")
 	if sessionPath != "" {
 		args = append(args, "--session", sessionPath)
 	}
@@ -135,7 +139,8 @@ func (a *PiAgent) thinkingLevel() string {
 }
 
 func (a *PiAgent) classifyArgs(promptPath, outputPath string, schema json.RawMessage) []string {
-	args := []string{
+	args := slices.Clone(a.LaunchArgs)
+	args = append(args,
 		"--no-session",
 		"--no-extensions",
 		"--no-builtin-tools",
@@ -148,7 +153,7 @@ func (a *PiAgent) classifyArgs(promptPath, outputPath string, schema json.RawMes
 		"--json-output", outputPath,
 		"--json-fallback", "none",
 		"-p",
-	}
+	)
 	if a.Provider != "" {
 		args = append(args, "--provider", a.Provider)
 	}

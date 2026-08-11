@@ -85,7 +85,8 @@ type CodexConfig struct {
 }
 
 type PiConfig struct {
-	JSONSchemaExtension string `toml:"jsonschemaextension" comment:"Pi extension source for classifier JSON schema output."`
+	JSONSchemaExtension string   `toml:"jsonschemaextension" comment:"Pi extension source for classifier JSON schema output."`
+	LaunchArgs          []string `toml:"launch_args" comment:"Additional arguments prepended to every Pi invocation."`
 }
 
 type AgentConfig struct {

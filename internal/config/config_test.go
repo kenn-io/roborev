@@ -143,18 +143,20 @@ func TestSaveAndLoadGlobal(t *testing.T) {
 	}, "Expected MaxWorkers 8, got %d", loaded.MaxWorkers)
 }
 
-func TestLoadGlobalPiJSONSchemaExtension(t *testing.T) {
+func TestLoadGlobalPiConfig(t *testing.T) {
 	testenv.SetDataDir(t)
 
 	path := filepath.Join(DataDir(), "config.toml")
 	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o755))
 	require.NoError(t, os.WriteFile(path, []byte(`[agent.pi]
 jsonschemaextension = "/opt/roborev/pi-json-schema/index.ts"
+launch_args = ["--extension", "npm:@example/pi-provider"]
 `), 0o600))
 
 	cfg, err := LoadGlobalFrom(path)
 	require.NoError(t, err)
 	assert.Equal(t, "/opt/roborev/pi-json-schema/index.ts", cfg.Agent.Pi.JSONSchemaExtension)
+	assert.Equal(t, []string{"--extension", "npm:@example/pi-provider"}, cfg.Agent.Pi.LaunchArgs)
 }
 
 func TestLoadGlobalCostConfigFromTOML(t *testing.T) {

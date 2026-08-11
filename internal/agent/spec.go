@@ -264,11 +264,16 @@ func applyAgentConfigOverrides(a Agent, cfg *config.Config) Agent {
 	switch agent := a.(type) {
 	case *PiAgent:
 		ext := strings.TrimSpace(cfg.Agent.Pi.JSONSchemaExtension)
-		if ext == "" || ext == agent.JSONSchemaExtension {
+		if ext == "" {
+			ext = agent.JSONSchemaExtension
+		}
+		launchArgs := slices.Clone(cfg.Agent.Pi.LaunchArgs)
+		if ext == agent.JSONSchemaExtension && slices.Equal(launchArgs, agent.LaunchArgs) {
 			return a
 		}
 		clone := *agent
 		clone.JSONSchemaExtension = ext
+		clone.LaunchArgs = launchArgs
 		return &clone
 	case *CodexAgent:
 		overrides := cfg.Agent.Codex.ConfigOverrideArgs()

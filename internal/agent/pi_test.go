@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 
@@ -44,6 +45,17 @@ func TestResolvePiSessionPath(t *testing.T) {
 	require.NoError(t, os.MkdirAll(filepath.Dir(sessionPath), 0o755))
 	require.NoError(t, os.WriteFile(sessionPath, []byte("{}\n"), 0o644))
 	assert.Equal(t, sessionPath, resolvePiSessionPath(sessionID))
+}
+
+func TestPiCloneOwnsLaunchArgs(t *testing.T) {
+	t.Parallel()
+
+	base := NewPiAgent("pi")
+	base.LaunchArgs = []string{"--extension", "npm:@example/pi-provider"}
+	clone := base.WithSessionID("session-123").(*PiAgent)
+
+	base.LaunchArgs[1] = "changed"
+	assert.Equal(t, []string{"--extension", "npm:@example/pi-provider"}, clone.LaunchArgs)
 }
 
 func TestPiReviewSessionFlag(t *testing.T) {
@@ -92,6 +104,61 @@ func TestPiCommandLineOmitsResolvedSessionPath(t *testing.T) {
 	assert.NotContains(t, cmdLine, "--session")
 	assert.NotContains(t, cmdLine, sessionPath)
 	assert.Contains(t, cmdLine, "-p --mode json")
+}
+
+func TestPiLaunchArgsPrecedeManagedArgsForEveryInvocation(t *testing.T) {
+	t.Parallel()
+
+	wantPrefix := []string{"--extension", "npm:@example/pi-provider"}
+	base := NewPiAgent("pi")
+	base.Provider = "cpa"
+	base.Model = "gpt-test"
+	base.Reasoning = ReasoningFast
+	configured := *base
+	configured.LaunchArgs = slices.Clone(wantPrefix)
+	schema := jsonRaw(`{"type":"object"}`)
+	classifyInstruction := "Classify according to the attached instructions and write the result with the structured JSON output tool."
+
+	tests := []struct {
+		name          string
+		withoutLaunch []string
+		withLaunch    []string
+		managed       []string
+	}{
+		{
+			name:          "review",
+			withoutLaunch: base.buildArgs(""),
+			withLaunch:    configured.buildArgs(""),
+			managed:       []string{"-p", "--mode", "json", "--provider", "cpa", "--model", "gpt-test", "--thinking", "low"},
+		},
+		{
+			name:          "resumed review",
+			withoutLaunch: base.buildArgs("/tmp/pi-session.jsonl"),
+			withLaunch:    configured.buildArgs("/tmp/pi-session.jsonl"),
+			managed:       []string{"-p", "--mode", "json", "--session", "/tmp/pi-session.jsonl", "--provider", "cpa", "--model", "gpt-test", "--thinking", "low"},
+		},
+		{
+			name:          "classifier",
+			withoutLaunch: base.classifyArgs("prompt.md", "result.json", schema),
+			withLaunch:    configured.classifyArgs("prompt.md", "result.json", schema),
+			managed: []string{
+				"--no-session", "--no-extensions", "--no-builtin-tools", "--no-skills",
+				"--no-prompt-templates", "--no-themes", "--no-context-files",
+				"--extension", config.DefaultPiJSONSchemaExtension,
+				"--json-schema", string(schema), "--json-output", "result.json",
+				"--json-fallback", "none", "-p", "--provider", "cpa",
+				"--model", "gpt-test", "--thinking", "low", "@prompt.md", classifyInstruction,
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.managed, tt.withoutLaunch)
+			wantConfigured := append(slices.Clone(wantPrefix), tt.managed...)
+			assert.Equal(t, wantConfigured, tt.withLaunch)
+		})
+	}
 }
 
 func TestPiClassifyWithSchemaUsesLockedDownSchemaOutput(t *testing.T) {

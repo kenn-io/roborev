@@ -84,22 +84,29 @@ func TestAgentSpecsCommandOverrides(t *testing.T) {
 	}
 }
 
-func TestApplyAgentConfigOverridesPiJSONSchemaExtension(t *testing.T) {
+func TestApplyAgentConfigOverridesPiConfig(t *testing.T) {
 	t.Parallel()
 
-	agent := NewPiAgent("pi")
-	overridden := applyAgentConfigOverrides(agent, &config.Config{
+	base := NewPiAgent("pi")
+	cfg := &config.Config{
 		Agent: config.AgentConfig{
 			Pi: config.PiConfig{
 				JSONSchemaExtension: "/opt/roborev/pi-json-schema/index.ts",
+				LaunchArgs:          []string{"--extension", "npm:@example/pi-provider"},
 			},
 		},
-	})
+	}
+	overridden := applyAgentConfigOverrides(base, cfg)
 
 	pi, ok := overridden.(*PiAgent)
 	require.True(t, ok)
 	assert.Equal(t, "/opt/roborev/pi-json-schema/index.ts", pi.JSONSchemaExtension)
-	assert.Equal(t, config.DefaultPiJSONSchemaExtension, agent.JSONSchemaExtension)
+	assert.Equal(t, []string{"--extension", "npm:@example/pi-provider"}, pi.LaunchArgs)
+	assert.Equal(t, config.DefaultPiJSONSchemaExtension, base.JSONSchemaExtension)
+	assert.Empty(t, base.LaunchArgs)
+
+	cfg.Agent.Pi.LaunchArgs[1] = "changed"
+	assert.Equal(t, []string{"--extension", "npm:@example/pi-provider"}, pi.LaunchArgs)
 }
 
 func TestApplyAgentConfigOverridesCodexConfig(t *testing.T) {
