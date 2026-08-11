@@ -15,9 +15,10 @@ one instance of the broader need to pass user-selected Pi CLI arguments.
 ## Goal
 
 Allow users to supply arbitrary, tokenized launch arguments for every Pi
-invocation without requiring an executable wrapper. The feature must preserve
-roborev's control over workflow, safety, model, reasoning, session, and output
-arguments.
+invocation without requiring an executable wrapper. Roborev must append its
+workflow, safety, model, reasoning, session, and output arguments after the
+configured prefix so well-formed duplicate options follow Pi's normal
+last-occurrence behavior.
 
 ## Configuration
 
@@ -36,6 +37,12 @@ does not perform shell parsing, interpolation, or word splitting. Shell
 operators and a flag combined with its value in one string are therefore not
 supported.
 
+`launch_args` is an advanced raw-argv escape hatch. Arguments that stop option
+parsing (such as standalone `--`), request early exit, or omit a required value
+are unsupported and may prevent Pi from running the managed invocation.
+Roborev does not validate these forms because Pi extensions can define their
+own flags and value requirements.
+
 The setting applies to every built-in Pi workflow, including ordinary reviews,
 agentic runs, resumed sessions, and structured-output classification. It is
 global-only, matching the existing `[agent.pi]` and `[agent.codex]` settings.
@@ -44,9 +51,10 @@ global-only, matching the existing `[agent.pi]` and `[agent.codex]` settings.
 
 User launch arguments are copied into the argument list first. Roborev then
 appends its managed arguments for the selected workflow. This follows the
-precedence used for Codex config passthrough: when a CLI treats the last
-occurrence of an option as authoritative, roborev's model, reasoning, session,
-output, and safety choices win.
+ordering used for Codex config passthrough: for well-formed duplicate options,
+Pi's last-occurrence behavior gives roborev's later model, reasoning, session,
+output, and safety choices precedence. This ordering is not a validation or
+security boundary for arbitrary malformed argv.
 
 Repeatable additive options such as Pi's `--extension` remain effective even
 when roborev subsequently adds `--no-extensions`; Pi defines that combination

@@ -6,7 +6,7 @@
 
 **Approved spec/design:** `docs/superpowers/specs/2026-08-11-pi-launch-args-design.md`
 
-**Architecture:** Extend the existing Pi-specific config and agent value objects with an owned `[]string` argument slice. Agent resolution copies the configured slice, and both Pi argument builders start with that slice before appending roborev-managed arguments, preserving the existing Codex-style precedence rule.
+**Architecture:** Extend the existing Pi-specific config and agent value objects with an owned `[]string` argument slice. Agent resolution copies the configured slice, and both Pi argument builders start with that slice before appending roborev-managed arguments, following the existing Codex-style ordering for well-formed options.
 
 **Tech Stack:** Go, BurntSushi TOML configuration, Testify assertions, Zensical Markdown documentation.
 
@@ -17,6 +17,7 @@
 - `launch_args` is global under `[agent.pi]` and applies to every built-in Pi invocation.
 - Each TOML array element becomes exactly one process argument; roborev performs no shell parsing, interpolation, or word splitting.
 - User launch arguments precede roborev-managed model, reasoning, session, output, and safety arguments.
+- Parser-control tokens, early-exit flags, and options missing required values are unsupported; extension-defined flags make generic argv validation impractical.
 - The classifier retains `--no-extensions`; explicitly supplied `--extension` arguments remain additive.
 - Do not add a shared raw-argument abstraction for other built-in agents.
 - Do not add dependencies or test Pi's external extension-deduplication behavior.
@@ -324,7 +325,10 @@ After the existing `jsonschemaextension` example in `docs/configuration.md`, add
 Additional Pi CLI arguments can be prepended to every Pi invocation with
 `launch_args`. Each array entry is passed as one argument without shell parsing.
 Roborev appends its managed arguments afterward so its workflow and safety
-settings retain precedence.
+settings retain precedence for well-formed duplicate options. This ordering is
+not a validation boundary: parser-control tokens such as standalone `--`,
+early-exit flags, and options missing required values are unsupported and may
+prevent Pi from running the managed invocation.
 
 ```toml
 [agent.pi]
