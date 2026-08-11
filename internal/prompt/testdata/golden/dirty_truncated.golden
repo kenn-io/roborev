@@ -11,8 +11,8 @@ Review in sequence:
 - **Testing gaps**: New behavior with no covering test. Do not demand a test at an additional level (e.g. e2e) when an existing test already pins the behavior.
 - **Code quality**: Duplication, needless complexity, wasted work — only reportable when you name the concrete alternative (the existing helper, the simpler form, the cheaper approach).
 
-Do not report issues without specific evidence in the diff. In particular, do not report:
-- Hypothetical issues in code not shown in the diff
+Do not report issues without specific evidence. In particular, do not report:
+- Defects neither caused, exposed, nor left unfixed by this change — context outside the diff may substantiate a finding, not be its subject
 - Style preferences or naming opinions that do not affect correctness
 - "Missing tests" unless the change introduces testable behavior with no coverage
 - Patterns that are consistent with the codebase conventions visible in context
@@ -31,7 +31,7 @@ Severity definitions:
 
 Name the concrete trigger for every Medium or High finding; a transient state that self-corrects without user-visible harm, or one you cannot plausibly reach, is Low.
 
-Before finalizing, re-check each finding against the code: keep it only if you can cite the triggering input or state, or a real mechanism whose trigger is uncertain (say what would confirm it); drop it if the code or a guard elsewhere disproves it. Verify claims about a dependency's behavior against the pinned version, not memory. Every finding must cite the narrowest location, carry a severity matching its described impact, and not contradict another finding.
+Before finalizing, re-check each finding against the code: keep it only if you can cite a concrete scenario that reaches it (exact timing or environment may be uncertain — name what would confirm it); drop it if the code or a guard elsewhere disproves it. Verify claims about a dependency's behavior against the pinned version, not memory. Every finding must cite the narrowest location, carry a severity matching its described impact, and not contradict another finding.
 
 List findings most-severe first. Merge duplicates and findings that make the same point in different places. Report every verified bug regardless of count; include quality and testing findings only when clearly worth acting on.
 
@@ -42,4 +42,223 @@ IMPORTANT: You are being invoked by roborev to perform this review directly. Do 
 Return only the final review content. Do NOT include process narration, progress updates, or front matter such as "Reviewing the diff..." or "I'm checking...".
 If you use tools while reviewing, finish all tool use before emitting the final review, and put the final review only after the last tool call.
 
-IMPORTANT: Do not report a missing test when the only proposed test would be tautological. In particular, do not recommend tests that merely match source code against a
+IMPORTANT: Do not report a missing test when the only proposed test would be tautological. In particular, do not recommend tests that merely match source code against a regex, check that code text is present, or restate a constant's configured or literal value. Test recommendations must exercise observable behavior, meaningful invariants, failure modes, or integration boundaries, with assertions that are not trivially true by construction.
+
+IMPORTANT: Judge whether a feature or API exists from the project's toolchain and dependency manifests, not your own memory, which may be stale. This cuts both ways: do not flag valid recent features as broken, and do not miss calls to APIs that genuinely do not exist for the project's versions.
+
+Check the manifests for each changed file's language, including every language a multi-language change touches. Common ones:
+
+- Go: go.mod / go.sum.
+- TypeScript / JavaScript: package.json, a lockfile (yarn.lock, package-lock.json, pnpm-lock.yaml), tsconfig.json.
+- Python: pyproject.toml, requirements.txt, uv/pixi lockfiles.
+- Other languages: the equivalent manifests (Cargo.toml, pom.xml, build.gradle, Gemfile).
+
+Current date: GOLDEN_DATE (UTC)
+
+## Uncommitted Changes
+
+The following changes have not yet been committed.
+
+### Diff
+
+(Diff too large to include in full)
+```diff
+diff --git a/big.txt b/big.txt
+new file mode 100644
+index 0000000..1111111
+--- /dev/null
++++ b/big.txt
+@@ -0,0 +1,500 @@
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a line of content
++a lin
+... (truncated)
+```
