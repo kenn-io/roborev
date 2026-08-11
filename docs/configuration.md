@@ -1170,6 +1170,24 @@ and so locked-down environments do not need to fetch it at runtime:
 pi install npm:@nqbao/pi-json-schema
 ```
 
+Additional Pi CLI arguments can be prepended to every Pi invocation with
+`launch_args`. Each array entry is passed as one argument without shell parsing.
+Roborev appends its managed arguments afterward so its workflow and safety
+settings retain precedence.
+
+```toml
+[agent.pi]
+launch_args = [
+  "--extension",
+  "npm:@example/pi-provider",
+]
+```
+
+This is useful when a model provider is registered by an extension. Classifier
+jobs retain `--no-extensions`, but Pi still loads extensions named explicitly
+with `--extension`. The same launch arguments are also passed to normal reviews
+and agentic Pi runs.
+
 ## Hooks
 
 Run shell commands when reviews complete or fail. See the

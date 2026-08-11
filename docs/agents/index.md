@@ -255,7 +255,16 @@ Override the extension source in global config if you vendor or mirror it:
 jsonschemaextension = "/opt/roborev/pi-json-schema/index.ts"
 ```
 
-See [Pi Classifier Options](/configuration/#pi-classifier-options).
+If the selected Pi model is registered by another extension, pass that extension
+explicitly on every Pi launch:
+
+```toml
+[agent.pi]
+launch_args = ["--extension", "npm:@example/pi-provider"]
+```
+
+See [Pi Classifier Options](/configuration/#pi-classifier-options) for argument
+ordering and tokenization details.
 
 ## Agentic Support
 

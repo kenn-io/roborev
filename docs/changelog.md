@@ -7,6 +7,14 @@ All notable changes to roborev, grouped by minor release.
 
 ## Unreleased
 
+**New features**
+
+- Pi agents accept global `[agent.pi] launch_args`, passed as tokenized
+    arguments to every Pi invocation before roborev-managed workflow and safety
+    options. This allows isolated classifier jobs to load extension-defined
+    model providers explicitly while retaining `--no-extensions` discovery
+    isolation.
+
 ______________________________________________________________________
 
 ## 0.64.0
