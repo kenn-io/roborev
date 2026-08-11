@@ -10,6 +10,7 @@ import (
 // AgentHookSnooze is a local agent-hook suppression window for one checkout
 // and branch.
 type AgentHookSnooze struct {
+	RepoName     string    `json:"repo_name"`
 	RepoPath     string    `json:"repo_path"`
 	WorktreePath string    `json:"worktree_path"`
 	Branch       string    `json:"branch"`
@@ -44,6 +45,7 @@ func (db *DB) SetAgentHookSnooze(
 		return nil, fmt.Errorf("set agent hook snooze: %w", err)
 	}
 	return &AgentHookSnooze{
+		RepoName:     repo.Name,
 		RepoPath:     repo.RootPath,
 		WorktreePath: normalizedWorktree,
 		Branch:       branch,
@@ -107,9 +109,48 @@ func (db *DB) ActiveAgentHookSnooze(
 		return nil, nil
 	}
 	return &AgentHookSnooze{
+		RepoName:     repo.Name,
 		RepoPath:     repo.RootPath,
 		WorktreePath: normalizedWorktree,
 		Branch:       branch,
 		SnoozedUntil: until,
 	}, nil
+}
+
+// ListActiveAgentHookSnoozes returns every unexpired local Agent Hook snooze.
+func (db *DB) ListActiveAgentHookSnoozes(now time.Time) ([]AgentHookSnooze, error) {
+	rows, err := db.Query(`
+		SELECT r.name, r.root_path, s.worktree_path, s.branch, s.snoozed_until
+		FROM agent_hook_snoozes s
+		JOIN repos r ON r.id = s.repo_id
+		WHERE julianday(s.snoozed_until) > julianday(?)
+		ORDER BY r.name, s.worktree_path, s.branch`,
+		now.UTC().Format(time.RFC3339Nano),
+	)
+	if err != nil {
+		return nil, fmt.Errorf("list active agent hook snoozes: %w", err)
+	}
+	defer rows.Close()
+
+	snoozes := make([]AgentHookSnooze, 0)
+	for rows.Next() {
+		var snooze AgentHookSnooze
+		var untilRaw string
+		if err := rows.Scan(
+			&snooze.RepoName, &snooze.RepoPath, &snooze.WorktreePath,
+			&snooze.Branch, &untilRaw,
+		); err != nil {
+			return nil, fmt.Errorf("scan active agent hook snooze: %w", err)
+		}
+		until, err := time.Parse(time.RFC3339Nano, untilRaw)
+		if err != nil {
+			return nil, fmt.Errorf("parse agent hook snooze deadline: %w", err)
+		}
+		snooze.SnoozedUntil = until
+		snoozes = append(snoozes, snooze)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("list active agent hook snoozes: %w", err)
+	}
+	return snoozes, nil
 }
