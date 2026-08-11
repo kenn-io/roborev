@@ -150,7 +150,7 @@ func TestBuildCompactPrompt(t *testing.T) {
 				"Job 123",
 				"Finding 1: Issue in main.go",
 				"abc123d", // short SHA
-				"Do not include any front matter",
+				"front matter",
 				"Use the review output format above",
 				"Every verified finding that still applies must be repeated",
 				"Return the verified findings in the review JSON findings array",
