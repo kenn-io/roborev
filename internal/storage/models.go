@@ -329,24 +329,25 @@ type AutoDesignStatus struct {
 }
 
 type DaemonStatus struct {
-	Version             string `json:"version"`
-	QueuedJobs          int    `json:"queued_jobs"`
-	RunningJobs         int    `json:"running_jobs"`
-	CompletedJobs       int    `json:"completed_jobs"`
-	FailedJobs          int    `json:"failed_jobs"`
-	CanceledJobs        int    `json:"canceled_jobs"`
-	AppliedJobs         int    `json:"applied_jobs"`
-	RebasedJobs         int    `json:"rebased_jobs"`
-	SkippedJobs         int    `json:"skipped_jobs"`
-	ActiveWorkers       int    `json:"active_workers"`
-	MaxWorkers          int    `json:"max_workers"`
-	QueuePaused         bool   `json:"queue_paused"`
-	Network             string `json:"network,omitempty"`
-	Address             string `json:"address,omitempty"`
-	Port                int    `json:"port,omitempty"`
-	MachineID           string `json:"machine_id,omitempty"`            // Local machine ID for remote job detection
-	ConfigReloadedAt    string `json:"config_reloaded_at,omitempty"`    // Last config reload timestamp (RFC3339Nano)
-	ConfigReloadCounter uint64 `json:"config_reload_counter,omitempty"` // Monotonic reload counter (for sub-second detection)
+	ActiveSnoozes       []AgentHookSnooze `json:"active_snoozes"`
+	Version             string            `json:"version"`
+	QueuedJobs          int               `json:"queued_jobs"`
+	RunningJobs         int               `json:"running_jobs"`
+	CompletedJobs       int               `json:"completed_jobs"`
+	FailedJobs          int               `json:"failed_jobs"`
+	CanceledJobs        int               `json:"canceled_jobs"`
+	AppliedJobs         int               `json:"applied_jobs"`
+	RebasedJobs         int               `json:"rebased_jobs"`
+	SkippedJobs         int               `json:"skipped_jobs"`
+	ActiveWorkers       int               `json:"active_workers"`
+	MaxWorkers          int               `json:"max_workers"`
+	QueuePaused         bool              `json:"queue_paused"`
+	Network             string            `json:"network,omitempty"`
+	Address             string            `json:"address,omitempty"`
+	Port                int               `json:"port,omitempty"`
+	MachineID           string            `json:"machine_id,omitempty"`            // Local machine ID for remote job detection
+	ConfigReloadedAt    string            `json:"config_reloaded_at,omitempty"`    // Last config reload timestamp (RFC3339Nano)
+	ConfigReloadCounter uint64            `json:"config_reload_counter,omitempty"` // Monotonic reload counter (for sub-second detection)
 
 	AutoDesign *AutoDesignStatus `json:"auto_design,omitempty"` // Auto design review counters; nil when disabled everywhere
 }

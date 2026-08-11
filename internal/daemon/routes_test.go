@@ -185,6 +185,50 @@ func TestHumaGetStatus(t *testing.T) {
 	assert.Equal(t, 7373, status.Port)
 }
 
+func TestHumaGetStatusIncludesActiveSnoozes(t *testing.T) {
+	srv, db, _ := newTestServer(t)
+	repo := testutil.CreateTestRepo(t, db)
+	until := time.Now().Add(time.Hour).UTC()
+	_, err := db.SetAgentHookSnooze(
+		repo.RootPath, repo.RootPath, "main", until,
+	)
+	require.NoError(t, err)
+
+	rr := serveHuma(t, srv, http.MethodGet, "/api/status", nil)
+	require.Equal(t, http.StatusOK, rr.Code)
+	var body struct {
+		ActiveSnoozes []storage.AgentHookSnooze `json:"active_snoozes"`
+	}
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &body))
+	require.Len(t, body.ActiveSnoozes, 1)
+	assert.Equal(t, repo.Name, body.ActiveSnoozes[0].RepoName)
+	assert.Equal(t, repo.RootPath, body.ActiveSnoozes[0].RepoPath)
+	assert.Equal(t, repo.RootPath, body.ActiveSnoozes[0].WorktreePath)
+	assert.Equal(t, "main", body.ActiveSnoozes[0].Branch)
+	assert.Equal(t, until, body.ActiveSnoozes[0].SnoozedUntil)
+}
+
+func TestHumaGetStatusUsesEmptyActiveSnoozeArray(t *testing.T) {
+	srv, _, _ := newTestServer(t)
+	rr := serveHuma(t, srv, http.MethodGet, "/api/status", nil)
+	require.Equal(t, http.StatusOK, rr.Code)
+
+	var body struct {
+		ActiveSnoozes json.RawMessage `json:"active_snoozes"`
+	}
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &body))
+	assert.JSONEq(t, `[]`, string(body.ActiveSnoozes))
+}
+
+func TestHumaGetStatusFailsWhenActiveSnoozesCannotBeRead(t *testing.T) {
+	srv, db, _ := newTestServer(t)
+	_, err := db.Exec(`DROP TABLE agent_hook_snoozes`)
+	require.NoError(t, err)
+
+	rr := serveHuma(t, srv, http.MethodGet, "/api/status", nil)
+	assert.Equal(t, http.StatusInternalServerError, rr.Code)
+}
+
 func TestHumaGetReview_NotFound(t *testing.T) {
 	srv, _, _ := newTestServer(t)
 

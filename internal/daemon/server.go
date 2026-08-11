@@ -1684,6 +1684,12 @@ func (s *Server) humaGetStatus(
 			fmt.Sprintf("get counts: %v", err),
 		)
 	}
+	activeSnoozes, err := s.db.ListActiveAgentHookSnoozes(time.Now())
+	if err != nil {
+		return nil, huma.Error500InternalServerError(
+			fmt.Sprintf("list active agent hook snoozes: %v", err),
+		)
+	}
 
 	configReloadedAt := ""
 	if t := s.configWatcher.LastReloadedAt(); !t.IsZero() {
@@ -1704,6 +1710,7 @@ func (s *Server) humaGetStatus(
 
 	resp := &GetStatusOutput{}
 	resp.Body = storage.DaemonStatus{
+		ActiveSnoozes:       activeSnoozes,
 		Version:             version.Version,
 		QueuedJobs:          queued,
 		RunningJobs:         running,

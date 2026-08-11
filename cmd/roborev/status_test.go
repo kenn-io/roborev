@@ -117,3 +117,50 @@ func TestStatusCmdJSONIncludesDaemonEndpoint(t *testing.T) {
 	assert.Equal(t, "127.0.0.1:7373", parsed.Daemon.Address)
 	assert.Equal(t, 7373, parsed.Daemon.Port)
 }
+
+func TestStatusCmdJSONIncludesActiveSnoozes(t *testing.T) {
+	until := time.Date(2026, 8, 10, 20, 30, 0, 0, time.UTC)
+	snooze := storage.AgentHookSnooze{
+		RepoName:     "roborev",
+		RepoPath:     "/src/roborev",
+		WorktreePath: "/worktrees/snooze-status",
+		Branch:       "feature/snooze-status",
+		SnoozedUntil: until,
+	}
+	md := NewMockDaemon(t, MockRefineHooks{
+		OnStatus: func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
+			_ = json.NewEncoder(w).Encode(map[string]any{
+				"version":        version.Version,
+				"active_snoozes": []storage.AgentHookSnooze{snooze},
+			})
+			return true
+		},
+		OnUnhandled: func(w http.ResponseWriter, r *http.Request, _ *mockRefineState) bool {
+			if r.URL.Path != "/api/health" {
+				return false
+			}
+			_ = json.NewEncoder(w).Encode(storage.HealthStatus{
+				Healthy: true,
+				Version: version.Version,
+			})
+			return true
+		},
+	})
+	defer md.Close()
+
+	output := captureStdout(t, func() {
+		cmd := statusCmd()
+		cmd.SetArgs([]string{"--json"})
+		err := cmd.Execute()
+		require.NoError(t, err)
+	})
+
+	var parsed struct {
+		Daemon struct {
+			ActiveSnoozes []storage.AgentHookSnooze `json:"active_snoozes"`
+		} `json:"daemon"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(output), &parsed))
+	require.Len(t, parsed.Daemon.ActiveSnoozes, 1)
+	assert.Equal(t, snooze, parsed.Daemon.ActiveSnoozes[0])
+}

@@ -64,6 +64,27 @@ components:
         - commenter
         - comment
       type: object
+    AgentHookSnooze:
+      additionalProperties: false
+      properties:
+        branch:
+          type: string
+        repo_name:
+          type: string
+        repo_path:
+          type: string
+        snoozed_until:
+          format: date-time
+          type: string
+        worktree_path:
+          type: string
+      required:
+        - repo_name
+        - repo_path
+        - worktree_path
+        - branch
+        - snoozed_until
+      type: object
     AgentHookSnoozeOutputBody:
       additionalProperties: false
       properties:
@@ -360,6 +381,12 @@ components:
           format: uri
           readOnly: true
           type: string
+        active_snoozes:
+          items:
+            $ref: "#/components/schemas/AgentHookSnooze"
+          type:
+            - array
+            - "null"
         active_workers:
           format: int64
           type: integer
@@ -412,6 +439,7 @@ components:
         version:
           type: string
       required:
+        - active_snoozes
         - version
         - queued_jobs
         - running_jobs

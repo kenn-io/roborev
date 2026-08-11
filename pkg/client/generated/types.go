@@ -55,6 +55,18 @@ func (a AddCommentRequest) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(a))
 }
 
+type AgentHookSnooze struct {
+	Branch       string    `json:"branch" validate:"required"`
+	RepoName     string    `json:"repo_name" validate:"required"`
+	RepoPath     string    `json:"repo_path" validate:"required"`
+	SnoozedUntil time.Time `json:"snoozed_until" validate:"required"`
+	WorktreePath string    `json:"worktree_path" validate:"required"`
+}
+
+func (a AgentHookSnooze) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(a))
+}
+
 type AgentHookSnoozeOutputBody struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema       *string    `json:"$schema,omitempty"`
@@ -212,6 +224,7 @@ type CostEnvelope struct {
 type DaemonStatus struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema              *string           `json:"$schema,omitempty"`
+	ActiveSnoozes       []AgentHookSnooze `json:"active_snoozes,omitempty" validate:"required"`
 	ActiveWorkers       int64             `json:"active_workers"`
 	Address             *string           `json:"address,omitempty"`
 	AppliedJobs         int64             `json:"applied_jobs"`
@@ -235,6 +248,13 @@ type DaemonStatus struct {
 
 func (d DaemonStatus) Validate() error {
 	var errors runtime.ValidationErrors
+	for i, item := range d.ActiveSnoozes {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("ActiveSnoozes[%d]", i), err)
+			}
+		}
+	}
 	if d.AutoDesign != nil {
 		if v, ok := any(d.AutoDesign).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
