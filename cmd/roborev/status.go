@@ -5,6 +5,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/http"
 	"os"
 	"text/tabwriter"
 	"time"
@@ -85,6 +86,11 @@ func statusCmd() *cobra.Command {
 				return writeStatusUnavailable(err)
 			}
 			defer resp.Body.Close()
+			if resp.StatusCode != http.StatusOK {
+				return writeStatusUnavailable(
+					fmt.Errorf("daemon returned %s", resp.Status),
+				)
+			}
 
 			var status storage.DaemonStatus
 			if err := json.NewDecoder(resp.Body).Decode(&status); err != nil {
@@ -178,6 +184,24 @@ func statusCmd() *cobra.Command {
 					}
 					fmt.Println()
 				}
+			}
+
+			if len(status.ActiveSnoozes) > 0 {
+				fmt.Println("Active Snoozes:")
+				w := tabwriter.NewWriter(os.Stdout, 0, 0, 2, ' ', 0)
+				fmt.Fprintln(w, "  Repo\tWorktree\tBranch\tUntil")
+				for _, snooze := range status.ActiveSnoozes {
+					fmt.Fprintf(w, "  %s\t%s\t%s\t%s\n",
+						snooze.RepoName,
+						snooze.WorktreePath,
+						snooze.Branch,
+						snooze.SnoozedUntil.Local().Format("Jan 02 15:04 MST"),
+					)
+				}
+				if err := w.Flush(); err != nil {
+					return fmt.Errorf("flush active snoozes: %w", err)
+				}
+				fmt.Println()
 			}
 
 			if len(jobs) > 0 {

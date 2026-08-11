@@ -74,8 +74,10 @@ fallback status poll.
 
 If the active-snooze storage query fails, the daemon status request will fail
 through the existing status error path instead of returning incomplete state
-that could falsely present a checkout as unsnoozed. Existing CLI and TUI status
-transport handling remains unchanged.
+that could falsely present a checkout as unsnoozed. The CLI will reject every
+non-200 daemon status response before decoding it and report status as
+unavailable in both human and JSON modes. Existing TUI status transport
+handling remains unchanged.
 
 Paths are compared in their normalized stored form. The normal TUI automatic
 branch filter is not created for detached HEAD, so that broad default view does
@@ -88,6 +90,7 @@ Focused tests will cover:
 - storage listing only active snoozes with repository metadata and stable order;
 - daemon status JSON containing active snooze records;
 - human and JSON `roborev status` output with and without active snoozes;
+- human and JSON `roborev status` output for a daemon status error;
 - TUI matching of exact repo, worktree, and branch context;
 - absence of the TUI badge for broad, different-branch, and sibling-worktree
   filters;

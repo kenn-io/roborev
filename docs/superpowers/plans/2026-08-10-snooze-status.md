@@ -195,6 +195,7 @@ List active Agent Hook snoozes
 
 - Modify: `internal/storage/models.go`
 - Modify: `internal/daemon/server.go`
+- Modify: `cmd/roborev/status.go`
 - Test: `internal/daemon/routes_test.go`
 - Test: `cmd/roborev/status_test.go`
 - Regenerate: `pkg/client/openapi.yaml`
@@ -275,6 +276,10 @@ func TestHumaGetStatusFailsWhenActiveSnoozesCannotBeRead(t *testing.T) {
 }
 ```
 
+Add human and JSON CLI tests whose status hook returns HTTP 500. Assert that
+both modes report `500 Internal Server Error` as unavailable and do not emit
+zero-valued queue data.
+
 - [ ] **Step 2: Run all new status tests and verify RED**
 
 Run:
@@ -310,6 +315,16 @@ if err != nil {
 Assign `ActiveSnoozes: activeSnoozes` in the `storage.DaemonStatus` literal.
 The storage query returns a non-nil empty slice so JSON clients receive `[]`
 when nothing is snoozed.
+
+In `cmd/roborev/status.go`, reject the response before decoding it:
+
+```go
+if resp.StatusCode != http.StatusOK {
+	return writeStatusUnavailable(
+		fmt.Errorf("daemon returned %s", resp.Status),
+	)
+}
+```
 
 - [ ] **Step 4: Regenerate the public API artifacts**
 
