@@ -100,3 +100,23 @@ func TestUnpauseCmdPostsQueueUnpause(t *testing.T) {
 	assert.True(t, called)
 	assert.Contains(t, output, "Queue unpaused")
 }
+
+func TestPauseCmdRejectsMalformedQueueResponse(t *testing.T) {
+	md := NewMockDaemon(t, MockRefineHooks{
+		OnUnhandled: func(
+			w http.ResponseWriter, r *http.Request, _ *mockRefineState,
+		) bool {
+			if r.Method != http.MethodPost || r.URL.Path != "/api/queue/pause" {
+				return false
+			}
+			_, _ = w.Write([]byte("not json"))
+			return true
+		},
+	})
+	defer md.Close()
+
+	err := pauseCmd().Execute()
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "parse queue pause response")
+}

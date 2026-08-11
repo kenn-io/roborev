@@ -1,10 +1,8 @@
 package main
 
 import (
-	"encoding/json"
+	"context"
 	"fmt"
-	"net/http"
-	"time"
 
 	"github.com/spf13/cobra"
 
@@ -51,28 +49,12 @@ func setQueuePaused(paused bool) error {
 	}
 
 	ep := getDaemonEndpoint()
-	addr := ep.BaseURL()
-	path := "/api/queue/unpause"
-	if paused {
-		path = "/api/queue/pause"
-	}
-
-	resp, err := ep.HTTPClient(2*time.Second).Post(addr+path, "application/json", nil)
+	queuePaused, err := requestQueuePaused(context.Background(), ep, paused)
 	if err != nil {
-		return fmt.Errorf("update queue pause state: %w", err)
-	}
-	defer resp.Body.Close()
-
-	if resp.StatusCode != http.StatusOK {
-		return fmt.Errorf("update queue pause state: daemon returned %s", resp.Status)
+		return err
 	}
 
-	var result queuePauseResponse
-	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
-		return fmt.Errorf("parse queue pause response: %w", err)
-	}
-
-	if result.QueuePaused {
+	if queuePaused {
 		fmt.Println("Queue paused. Running jobs will continue; no new jobs will start.")
 	} else {
 		fmt.Println("Queue unpaused. Workers will start queued jobs again.")
