@@ -3,7 +3,7 @@ name = "roborev-documentation"
 version = "0.0.0"
 requires-python = ">=3.12"
 dependencies = [
-  "zensical==0.0.46",
+  "zensical==0.0.53",
 ]
 
 [tool.uv]
@@ -13,5 +13,5 @@ package = false
 dev = [
     "mdformat==1.0.0",
     "mdformat-front-matters==2.0.0",
-    "mdformat-mkdocs==5.2.1",
+    "mdformat-mkdocs==5.3.0",
 ]
