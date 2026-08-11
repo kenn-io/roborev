@@ -84,6 +84,25 @@ func TestShutdownPausesClaimsAndRestoresQueueStateAfterStop(t *testing.T) {
 	assert.False(t, paused)
 }
 
+func TestShutdownRejectsQueueMutationsWhileDraining(t *testing.T) {
+	server := setupTestServer(t)
+
+	shutdown := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(
+		shutdown, httptest.NewRequest(http.MethodPost, "/api/shutdown", nil),
+	)
+	require.Equal(t, http.StatusOK, shutdown.Code, shutdown.Body.String())
+
+	unpause := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(
+		unpause, httptest.NewRequest(http.MethodPost, "/api/queue/unpause", nil),
+	)
+	assert.Equal(t, http.StatusConflict, unpause.Code)
+	paused, err := server.db.IsQueuePaused()
+	require.NoError(t, err)
+	assert.True(t, paused)
+}
+
 func TestStopKeepsRuntimePublishedUntilWorkersFinish(t *testing.T) {
 	testenv.SetDataDir(t)
 	server := setupTestServer(t)

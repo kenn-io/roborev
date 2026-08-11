@@ -496,6 +496,22 @@ func KillDaemon(info *RuntimeInfo) bool {
 		removeRuntimeFile()
 		return true
 	}
+	if info.PID > 0 {
+		switch identifyProcess(info.PID) {
+		case processNotRoborev:
+			removeRuntimeFile()
+			return true
+		case processUnknown:
+			ping, err := ProbeDaemon(ep, 2*time.Second)
+			if err != nil {
+				return false
+			}
+			if ping.PID != info.PID {
+				removeRuntimeFile()
+				return true
+			}
+		}
+	}
 
 	// First try graceful HTTP shutdown
 	if ep.Address != "" {

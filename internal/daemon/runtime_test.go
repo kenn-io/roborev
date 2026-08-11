@@ -233,7 +233,8 @@ func TestRuntimeInfoReadWrite(t *testing.T) {
 	})
 }
 
-func TestKillDaemonDoesNotForceKillWhenGracefulShutdownIsUnavailable(t *testing.T) {
+func TestKillDaemonCleansRuntimeForNonRoborevPIDWithoutShutdown(t *testing.T) {
+	testenv.SetDataDir(t)
 	// Verify that isLoopbackAddr correctly rejects non-loopback addresses,
 	// which prevents KillDaemon from making HTTP requests to them.
 	if isLoopbackAddr("192.168.1.100:7373") {
@@ -247,16 +248,18 @@ func TestKillDaemonDoesNotForceKillWhenGracefulShutdownIsUnavailable(t *testing.
 		return processNotRoborev
 	})
 
-	// A rejected endpoint cannot confirm that the daemon has begun draining, so
-	// lifecycle code must leave the process alone.
+	runtimePath := filepath.Join(t.TempDir(), "daemon.json")
+	require.NoError(t, os.WriteFile(runtimePath, []byte("{}"), 0o600))
 	info := &RuntimeInfo{
-		PID:     os.Getpid(),          // Existing PID, but mocked as not-roborev
-		Address: "192.168.1.100:7373", // Non-loopback address
+		PID:        os.Getpid(),          // Existing PID, but mocked as not-roborev
+		Address:    "192.168.1.100:7373", // Non-loopback address
+		SourcePath: runtimePath,
 	}
 
 	result := KillDaemon(info)
 
-	assert.False(t, result)
+	assert.True(t, result)
+	assert.NoFileExists(t, runtimePath)
 }
 
 func TestListAllRuntimesSkipsUnreadableFiles(t *testing.T) {

@@ -59,8 +59,7 @@ type Server struct {
 	sweepCancel       context.CancelFunc // cancels the panel sweep goroutine on Stop
 	shutdownCh        chan struct{}      // closed when /api/shutdown is requested
 	shutdownOnce      sync.Once
-	shutdownDrainOnce sync.Once
-	shutdownDrainErr  error
+	shutdownDrainMu   sync.Mutex
 	shutdownWasPaused bool
 	shutdownDraining  bool
 
@@ -563,6 +562,14 @@ func (s *Server) stopOnce0() error {
 	// Stop worker pool
 	s.workerPool.Stop()
 
+	// Stop accepting mutations once workers have finished. Runtime discovery
+	// remains published until all completion work below is finalized.
+	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
+	defer cancel()
+	if err := s.httpServer.Shutdown(ctx); err != nil {
+		log.Printf("HTTP server shutdown error: %v", err)
+	}
+
 	// Stop hook runner
 	if s.hookRunner != nil {
 		s.hookRunner.WaitUntilIdle()
@@ -576,12 +583,6 @@ func (s *Server) stopOnce0() error {
 	}
 
 	s.restoreQueuePauseState()
-
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := s.httpServer.Shutdown(ctx); err != nil {
-		log.Printf("HTTP server shutdown error: %v", err)
-	}
 
 	// Clean up Unix domain sockets after the server stops accepting requests.
 	s.endpointMu.Lock()
@@ -613,11 +614,15 @@ func (s *Server) stopOnce0() error {
 }
 
 func (s *Server) restoreQueuePauseState() {
-	if !s.shutdownDraining {
+	s.shutdownDrainMu.Lock()
+	draining := s.shutdownDraining
+	wasPaused := s.shutdownWasPaused
+	s.shutdownDrainMu.Unlock()
+	if !draining {
 		return
 	}
 	for {
-		if err := s.db.SetQueuePaused(s.shutdownWasPaused); err == nil {
+		if err := s.db.SetQueuePaused(wasPaused); err == nil {
 			return
 		} else {
 			log.Printf("Restore queue pause state failed; retrying: %v", err)
@@ -1782,6 +1787,11 @@ func (s *Server) humaGetStatus(
 func (s *Server) humaPauseQueue(
 	ctx context.Context, input *QueuePauseInput,
 ) (*QueuePauseOutput, error) {
+	s.shutdownDrainMu.Lock()
+	defer s.shutdownDrainMu.Unlock()
+	if s.shutdownDraining {
+		return nil, huma.Error409Conflict("daemon shutdown in progress")
+	}
 	if err := s.db.SetQueuePaused(true); err != nil {
 		return nil, huma.Error500InternalServerError(
 			fmt.Sprintf("pause queue: %v", err),
@@ -1795,6 +1805,11 @@ func (s *Server) humaPauseQueue(
 func (s *Server) humaUnpauseQueue(
 	ctx context.Context, input *QueuePauseInput,
 ) (*QueuePauseOutput, error) {
+	s.shutdownDrainMu.Lock()
+	defer s.shutdownDrainMu.Unlock()
+	if s.shutdownDraining {
+		return nil, huma.Error409Conflict("daemon shutdown in progress")
+	}
 	if err := s.db.SetQueuePaused(false); err != nil {
 		return nil, huma.Error500InternalServerError(
 			fmt.Sprintf("unpause queue: %v", err),
@@ -3076,21 +3091,22 @@ func (s *Server) humaShutdown(
 }
 
 func (s *Server) beginShutdownDrain() error {
-	s.shutdownDrainOnce.Do(func() {
-		paused, err := s.db.IsQueuePaused()
-		if err != nil {
-			s.shutdownDrainErr = fmt.Errorf("read queue pause state: %w", err)
-			return
-		}
-		if err := s.db.SetQueuePaused(true); err != nil {
-			s.shutdownDrainErr = fmt.Errorf("pause queue for shutdown: %w", err)
-			return
-		}
-		s.shutdownWasPaused = paused
-		s.shutdownDraining = true
-		s.workerPool.BeginStop()
-	})
-	return s.shutdownDrainErr
+	s.shutdownDrainMu.Lock()
+	defer s.shutdownDrainMu.Unlock()
+	if s.shutdownDraining {
+		return nil
+	}
+	paused, err := s.db.IsQueuePaused()
+	if err != nil {
+		return fmt.Errorf("read queue pause state: %w", err)
+	}
+	if err := s.db.SetQueuePaused(true); err != nil {
+		return fmt.Errorf("pause queue for shutdown: %w", err)
+	}
+	s.shutdownWasPaused = paused
+	s.shutdownDraining = true
+	s.workerPool.BeginStop()
+	return nil
 }
 
 // RequestShutdown signals that the daemon should shut down gracefully.
