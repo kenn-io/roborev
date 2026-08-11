@@ -61,19 +61,19 @@ func TestGetSystemPrompt_Fallbacks(t *testing.T) {
 			name:         "Codex Review",
 			agent:        "codex",
 			command:      "review",
-			wantContains: []string{"## Review Findings", "Do not include any front matter", "Do NOT build the project, run the test suite, or execute the code while reviewing.", "finish all tool use before emitting the final review"},
+			wantContains: []string{"## Review Findings", "front matter", "Do NOT build the project, run the test suite, or execute the code while reviewing.", "after the last tool call"},
 		},
 		{
 			name:         "Claude Review",
 			agent:        "claude-code",
 			command:      "review",
-			wantContains: []string{"## Review Findings", "Do not include any front matter", "Do NOT build the project, run the test suite, or execute the code while reviewing.", "finish all tool use before emitting the final review"},
+			wantContains: []string{"## Review Findings", "front matter", "Do NOT build the project, run the test suite, or execute the code while reviewing.", "after the last tool call"},
 		},
 		{
 			name:         "Gemini Review",
 			agent:        "gemini",
 			command:      "review",
-			wantContains: []string{"Do NOT explain your process", "Do NOT build the project, run the test suite, or execute the code while reviewing.", "finish all tool use before emitting the final review"},
+			wantContains: []string{"Do NOT explain your process", "Do NOT build the project, run the test suite, or execute the code while reviewing.", "after the last tool call"},
 		},
 		{
 			name:      "Codex Range (Review Fallback)",
@@ -367,11 +367,6 @@ func TestGetSystemPrompt_AntiTestSlopInstruction(t *testing.T) {
 			got := getSystemPrompt(tt.agent, tt.command, mockNow)
 
 			assert.Contains(got, "only proposed test would be tautological")
-			assert.Contains(got, "match source code against a regex")
-			assert.Contains(got, "check that code text is present")
-			assert.Contains(got, "constant's configured or literal value")
-			assert.Contains(got, "observable behavior, meaningful invariants, failure modes, or integration boundaries")
-			assert.Contains(got, "not trivially true by construction")
 		})
 	}
 

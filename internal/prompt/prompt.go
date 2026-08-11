@@ -51,10 +51,9 @@ const MaxPromptSize = 250 * 1024
 // in the prompt than in deterministic parsing heuristics.
 const noSkillsInstruction = `
 
-IMPORTANT: You are being invoked by roborev to perform this review directly. Do NOT use any external skills, slash commands, or CLI tools (such as "roborev review") to delegate this task. Perform the review yourself by analyzing the diff provided below.
+IMPORTANT: Perform this review yourself. Do NOT use any external skills, slash commands, or CLI tools (such as "roborev review") to delegate it.
 
-Return only the final review content. Do NOT include process narration, progress updates, or front matter such as "Reviewing the diff..." or "I'm checking...".
-If you use tools while reviewing, finish all tool use before emitting the final review, and put the final review only after the last tool call.`
+Return only the final review content. Do NOT include process narration or front matter such as "Reviewing the diff...". Finish all tool use first and put the final review only after the last tool call.`
 
 // toolchainVerificationInstruction tells reviewers to base version- and
 // availability-related findings on the repo's actual toolchain and dependency
@@ -64,20 +63,13 @@ If you use tools while reviewing, finish all tool use before emitting the final 
 // Checking the manifests keeps the call accurate in both directions.
 const toolchainVerificationInstruction = `
 
-IMPORTANT: Judge whether a feature or API exists from the project's toolchain and dependency manifests, not your own memory, which may be stale. This cuts both ways: do not flag valid recent features as broken, and do not miss calls to APIs that genuinely do not exist for the project's versions.
-
-Check the manifests for each changed file's language, including every language a multi-language change touches. Common ones:
-
-- Go: go.mod / go.sum.
-- TypeScript / JavaScript: package.json, a lockfile (yarn.lock, package-lock.json, pnpm-lock.yaml), tsconfig.json.
-- Python: pyproject.toml, requirements.txt, uv/pixi lockfiles.
-- Other languages: the equivalent manifests (Cargo.toml, pom.xml, build.gradle, Gemfile).`
+IMPORTANT: Judge whether a feature or API exists from the project's toolchain and dependency manifests (go.mod, package.json plus lockfile, pyproject.toml, Cargo.toml, and equivalents), not your own memory, which may be stale. This cuts both ways: do not flag valid recent features as broken, and do not miss calls to APIs that genuinely do not exist for the pinned versions. Check every language the change touches.`
 
 // antiTestSlopInstruction keeps reviewers from recommending tests that cannot
 // detect a behavioral regression because their assertions restate the code.
 const antiTestSlopInstruction = `
 
-IMPORTANT: Do not report a missing test when the only proposed test would be tautological. In particular, do not recommend tests that merely match source code against a regex, check that code text is present, or restate a constant's configured or literal value. Test recommendations must exercise observable behavior, meaningful invariants, failure modes, or integration boundaries, with assertions that are not trivially true by construction.`
+IMPORTANT: Do not report a missing test when the only proposed test would be tautological — one that matches source text against a regex, checks that code is present, or restates a constant's value. Recommended tests must exercise observable behavior, invariants, failure modes, or integration boundaries.`
 
 // HistoricalReviewContext holds a commit SHA and its associated review (if any) plus responses.
 type HistoricalReviewContext struct {
