@@ -4,8 +4,8 @@
 - **Security**: Injection vulnerabilities, auth issues, data exposure.
 - **Testing gaps**: New behavior with no covering test. Do not demand a test at an additional level (e.g. e2e) when an existing test already pins the behavior.
 - **Code quality**: Duplication, needless complexity, wasted work — only reportable when you name the concrete alternative (the existing helper, the simpler form, the cheaper approach).{{end}}
-{{define "review_do_not_report"}}Do not report issues without specific evidence in the diff. In particular, do not report:
-- Hypothetical issues in code not shown in the diff
+{{define "review_do_not_report"}}Do not report issues without specific evidence. In particular, do not report:
+- Defects neither caused, exposed, nor left unfixed by this change — context outside the diff may substantiate a finding, not be its subject
 - Style preferences or naming opinions that do not affect correctness
 - "Missing tests" unless the change introduces testable behavior with no coverage
 - Patterns that are consistent with the codebase conventions visible in context
@@ -17,7 +17,7 @@
 - **Low**: Minor improvement opportunity with no immediate functional impact
 
 Name the concrete trigger for every Medium or High finding; a transient state that self-corrects without user-visible harm, or one you cannot plausibly reach, is Low.{{end}}
-{{define "review_verify"}}Before finalizing, re-check each finding against the code: keep it only if you can cite the triggering input or state, or a real mechanism whose trigger is uncertain (say what would confirm it); drop it if the code or a guard elsewhere disproves it. Verify claims about a dependency's behavior against the pinned version, not memory. Every finding must cite the narrowest location, carry a severity matching its described impact, and not contradict another finding.{{end}}
+{{define "review_verify"}}Before finalizing, re-check each finding against the code: keep it only if you can cite a concrete scenario that reaches it (exact timing or environment may be uncertain — name what would confirm it); drop it if the code or a guard elsewhere disproves it. Verify claims about a dependency's behavior against the pinned version, not memory. Every finding must cite the narrowest location, carry a severity matching its described impact, and not contradict another finding.{{end}}
 {{define "review_output_rules"}}List findings most-severe first. Merge duplicates and findings that make the same point in different places. Report every verified bug regardless of count; include quality and testing findings only when clearly worth acting on.{{end}}
 {{define "project_guidelines"}}{{with .ProjectGuidelines}}{{.Heading}}
 
