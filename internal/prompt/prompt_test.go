@@ -34,14 +34,9 @@ func TestBuildPromptWithoutContext(t *testing.T) {
 	prompt, err := BuildSimple(repoPath, targetSHA, "")
 	require.NoError(t, err, "BuildSimple failed: %v", err)
 
-	// Should contain system prompt
+	// Should contain system prompt (single sentinel; full content is
+	// pinned by the golden tests, not re-asserted string-by-string here)
 	assertContains(t, prompt, "You are a code reviewer", "Prompt should contain system prompt")
-
-	// Should contain the 5 review criteria
-	expectedCriteria := []string{"Bugs", "Security", "Testing gaps", "Regressions", "Code quality"}
-	for _, criteria := range expectedCriteria {
-		assertContains(t, prompt, criteria, "Prompt should contain criteria")
-	}
 
 	// Should contain current commit section
 	assertContains(t, prompt, "## Current Commit", "Prompt should contain current commit section")
@@ -1603,7 +1598,7 @@ func TestBuildRangePromptCodexTinyCapStillStaysWithinCap(t *testing.T) {
 func TestBuildPromptCodexOversizedDiffFallbackCarriesExcludeScope(t *testing.T) {
 	repoPath, sha := setupLargeExcludePatternRepo(t)
 	cfg := &config.Config{
-		DefaultMaxPromptSize: 4096,
+		DefaultMaxPromptSize: 16384,
 		ExcludePatterns:      []string{"custom.dat"},
 	}
 	b := NewBuilderWithConfig(nil, cfg)

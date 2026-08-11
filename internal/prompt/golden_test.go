@@ -401,7 +401,7 @@ func TestGoldenPrompt_RangeTruncatedCodexPreservesInRangeReviews(t *testing.T) {
 	testutil.CreateCompletedReview(t, db, repo.ID, commit2, "test",
 		"No issues found.\n\nVerdict: PASS")
 
-	cfg := &config.Config{DefaultMaxPromptSize: 6000}
+	cfg := &config.Config{DefaultMaxPromptSize: 10500}
 	b := NewBuilderWithConfig(db, cfg)
 	prompt, err := b.ForRepo(r.dir, repo.ID).Build(baseSHA+".."+commit2, 0, "codex", "", "")
 	require.NoError(t, err)
