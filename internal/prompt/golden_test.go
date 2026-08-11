@@ -2,6 +2,7 @@ package prompt
 
 import (
 	"flag"
+	"fmt"
 	"os"
 	"path/filepath"
 	"regexp"
@@ -34,7 +35,29 @@ var (
 func scrubDynamic(s string) string {
 	s = dateScrubber.ReplaceAllString(s, "Current date: GOLDEN_DATE (UTC)")
 	s = tsScrubber.ReplaceAllString(s, "GOLDEN_TIMESTAMP")
-	return s
+	return collapseRepeatedLines(s)
+}
+
+// collapseRepeatedLines folds runs of 3+ identical non-empty lines into the
+// line plus a count marker. Oversized-diff fixtures are hundreds of repeated
+// filler lines; the goldens pin where truncation cuts, not the filler itself.
+func collapseRepeatedLines(s string) string {
+	lines := strings.Split(s, "\n")
+	out := lines[:0]
+	for i := 0; i < len(lines); {
+		j := i
+		for j < len(lines) && lines[j] == lines[i] {
+			j++
+		}
+		if run := j - i; run >= 3 && lines[i] != "" {
+			out = append(out, lines[i],
+				fmt.Sprintf("[golden: previous line repeated %d more times]", run-1))
+		} else {
+			out = append(out, lines[i:j]...)
+		}
+		i = j
+	}
+	return strings.Join(out, "\n")
 }
 
 // assertGolden compares got against testdata/golden/<name>, or rewrites the

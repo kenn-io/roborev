@@ -263,20 +263,17 @@ func TestBuildCompactPrompt(t *testing.T) {
 			},
 			branch: "",
 			wantContains: []string{
+				// One marker per composed block: agent review system
+				// prompt, compact preamble, verify/dedupe instructions.
+				// Content wording is pinned by prompt-package goldens,
+				// not re-asserted here.
+				"You are a code reviewer. Review the code changes shown below.",
 				"Verification and Consolidation Request",
+				"Verify each finding against the current codebase",
 				"1 open review",
 				"Job 123",
 				"Finding 1: Issue in main.go",
 				"abc123d", // short SHA
-				"front matter",
-				"Use the review output format above",
-				"Every verified finding that still applies must be repeated",
-				"Separate repeated findings with the same `---` delimiter",
-				"may mention how many prior findings were dropped",
-			},
-			wantNotContain: []string{
-				"If verified findings remain, format it exactly like this",
-				"     - **Severity**: High/Medium/Low",
 			},
 		},
 		{
