@@ -827,8 +827,13 @@ roborev uninstall-hook           # Remove hook
 
 | Flag | Description |
 |------|-------------|
-| `--json` | Emit daemon and queue status as JSON. Includes the active daemon endpoint as `network`, `address`, and `port` fields alongside queue counters and version fields |
+| `--json` | Emit daemon and queue status as JSON. Includes active snoozes under `daemon.active_snoozes` and the active daemon endpoint as `network`, `address`, and `port` fields alongside queue counters and version fields |
 | `--force` | Overwrite an existing post-commit hook with a fresh one |
+
+When Agent Hook reminders are snoozed, `roborev status` lists every active scope
+with its repository, exact worktree, branch, and local expiry time. The section
+is omitted when no snoozes are active. JSON output exposes the same records
+under `daemon.active_snoozes`.
 
 If daemon access is denied, `roborev status` reports the status as unavailable
 and suggests allowing loopback or Unix-socket access when running in a sandbox.

@@ -205,6 +205,12 @@ enqueue and failed reviews keep accumulating; only the coding-agent reminder is
 muted. Hook baselines advance while snoozed, avoiding a catch-up reminder for
 every commit made during the quiet period.
 
+Run `roborev status` to list every active snooze with its exact repository,
+worktree, branch, and expiry. When the TUI is launched from a snoozed checkout
+with automatic repository and branch filters enabled, its title shows the snooze
+deadline. Clearing or changing either filter hides the badge because the view no
+longer identifies that exact snooze scope.
+
 The bundled `/roborev-snooze` skill (or `$roborev-snooze` in Codex) exposes both
 the `on` and `off` operations from an agent session.
 

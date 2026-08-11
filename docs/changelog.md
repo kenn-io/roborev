@@ -15,6 +15,13 @@ All notable changes to roborev, grouped by minor release.
     model providers explicitly while retaining `--no-extensions` discovery
     isolation.
 
+**Improvements**
+
+- `roborev status` now lists active Agent Hook snoozes with their exact
+    repository, worktree, branch, and expiry, while the TUI shows a contextual
+    snooze badge for an exactly filtered checkout. See
+    [Snoozing Reminders](/agent-hook/#snoozing-reminders).
+
 ______________________________________________________________________
 
 ## 0.64.0
