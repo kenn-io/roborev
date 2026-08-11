@@ -847,6 +847,10 @@ queue survives daemon restarts and is shown in `roborev status` and the TUI. Use
 `cancel` when you need to stop one queued or running job instead of pausing the
 whole queue.
 
+Daemon shutdown also stops workers from claiming new jobs. If work is active,
+restart reports that it is waiting, lets running jobs and worker finalization
+finish without a timeout, and only then starts the replacement daemon.
+
 !!! tip "Broken post-commit hook?"
 
     If your post-commit hook was corrupted during a previous upgrade (e.g. a stray

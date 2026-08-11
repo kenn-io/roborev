@@ -126,21 +126,26 @@ func (wp *WorkerPool) Start() {
 	})
 }
 
-// Stop gracefully shuts down the worker pool. Safe to call
-// multiple times; only the first call performs shutdown.
+// Stop gracefully shuts down the worker pool. Safe to call multiple times.
 func (wp *WorkerPool) Stop() {
+	wp.BeginStop()
+	// Wait for Start to finish wg.Add before calling Wait.
+	// If Start was never called, readyCh stays open and there is nothing to wait
+	// for. Any later workers see the closed stopCh and exit immediately.
+	select {
+	case <-wp.readyCh:
+		log.Println("Stopping worker pool...")
+		wp.wg.Wait()
+		log.Println("Worker pool stopped")
+	default:
+	}
+}
+
+// BeginStop synchronously prevents workers from claiming another job without
+// waiting for currently active workers to finish.
+func (wp *WorkerPool) BeginStop() {
 	wp.stopOnce.Do(func() {
 		close(wp.stopCh)
-		// Wait for Start to finish wg.Add before calling Wait.
-		// If Start was never called, readyCh stays open but
-		// stopCh is closed, so any late workers exit immediately.
-		select {
-		case <-wp.readyCh:
-			log.Println("Stopping worker pool...")
-			wp.wg.Wait()
-			log.Println("Worker pool stopped")
-		default:
-		}
 	})
 }
 

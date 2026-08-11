@@ -256,46 +256,15 @@ func restartDaemonAfterUpdate(binDir string, noRestart bool) {
 			)
 			return
 		}
-		// Treat as unresolved and continue to kill fallback.
+		// Treat the handoff as unresolved.
 		exited = false
 	}
 	if !exited {
-		// Forcefully kill orphaned/stuck daemon processes.
-		killAllDaemonsForUpdate()
-		exitedAfterKill, newPIDAfterKill := waitForDaemonExit(
-			previousPID, updateRestartWaitTimeout,
+		fmt.Printf(
+			"warning: daemon pid %d is still running;"+
+				" restart it manually\n", previousPID,
 		)
-		if newPIDAfterKill > 0 {
-			// Apply the same stop-failure safety gate here to avoid
-			// accepting a manager restart while other pre-update
-			// daemon runtimes are still present.
-			if stopFailed && (initialPIDsErr != nil || pidInSet(initialRuntimePIDs, newPIDAfterKill) || !initialPIDsExited(initialRuntimePIDs, newPIDAfterKill)) {
-				fmt.Println(
-					"warning: daemon restart detected but older daemon runtimes" +
-						" remain; restart it manually",
-				)
-				return
-			}
-			// Do not report success until the handoff daemon is responsive.
-			if waitForNewDaemonReady(updateRestartWaitTimeout) {
-				fmt.Println("OK")
-				return
-			}
-			// A replacement PID already exists; avoid manually starting
-			// another daemon instance while handoff is still warming up.
-			fmt.Println(
-				"warning: daemon handoff detected but replacement is not ready;" +
-					" restart it manually",
-			)
-			return
-		}
-		if !exitedAfterKill {
-			fmt.Printf(
-				"warning: daemon pid %d is still running;"+
-					" restart it manually\n", previousPID,
-			)
-			return
-		}
+		return
 	}
 
 	// stopDaemonForUpdate reported failure; do not manually start a new daemon

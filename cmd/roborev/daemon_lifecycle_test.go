@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"net"
 	"net/http"
 	"net/http/httptest"
@@ -309,6 +310,28 @@ func TestStartDaemonUsesAlternateAwareDiscoveryInsideStartLock(t *testing.T) {
 	t.Cleanup(func() { getAnyRunningDaemonForStart = origGet })
 
 	require.NoError(t, startDaemon())
+}
+
+func TestRestartDaemonDoesNotStartAfterGracefulStopFailure(t *testing.T) {
+	origStop := stopDaemonForRestart
+	origStart := startDaemonAfterRestart
+	t.Cleanup(func() {
+		stopDaemonForRestart = origStop
+		startDaemonAfterRestart = origStart
+	})
+
+	stopErr := errors.New("graceful shutdown unavailable")
+	stopDaemonForRestart = func() error { return stopErr }
+	startCalls := 0
+	startDaemonAfterRestart = func() error {
+		startCalls++
+		return nil
+	}
+
+	err := restartDaemon()
+
+	require.ErrorIs(t, err, stopErr)
+	assert.Zero(t, startCalls)
 }
 
 func TestStartDaemonDoesNotSpawnAfterAccessDeniedDiscoveryInsideStartLock(t *testing.T) {

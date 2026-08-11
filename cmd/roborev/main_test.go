@@ -888,7 +888,6 @@ func main() {
 type restartStubs struct {
 	stopCalls  int
 	startCalls int
-	killCalls  int
 }
 
 func stubRestartVars(t *testing.T) *restartStubs {
@@ -897,7 +896,6 @@ func stubRestartVars(t *testing.T) *restartStubs {
 	origList := listAllRuntimes
 	origPIDAlive := isPIDAliveForUpdate
 	origStop := stopDaemonForUpdate
-	origKill := killAllDaemonsForUpdate
 	origStart := startUpdatedDaemon
 	origWait := updateRestartWaitTimeout
 	origPoll := updateRestartPollInterval
@@ -906,7 +904,6 @@ func stubRestartVars(t *testing.T) *restartStubs {
 		listAllRuntimes = origList
 		isPIDAliveForUpdate = origPIDAlive
 		stopDaemonForUpdate = origStop
-		killAllDaemonsForUpdate = origKill
 		startUpdatedDaemon = origStart
 		updateRestartWaitTimeout = origWait
 		updateRestartPollInterval = origPoll
@@ -926,9 +923,6 @@ func stubRestartVars(t *testing.T) *restartStubs {
 	stopDaemonForUpdate = func() error {
 		s.stopCalls++
 		return nil
-	}
-	killAllDaemonsForUpdate = func() {
-		s.killCalls++
 	}
 	startUpdatedDaemon = func(string) error {
 		s.startCalls++
@@ -1131,84 +1125,6 @@ func TestInitialPIDsExitedAllowsManagerPID(t *testing.T) {
 	require.True(t, ok, "expected true when only allowPID remains alive")
 }
 
-func TestRestartDaemonAfterUpdateStopFailureManagerRestartNeedsCleanup(t *testing.T) {
-	s := stubRestartVars(t)
-
-	var getCalls int
-	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
-		getCalls++
-		// Initial probe sees old daemon.
-		if getCalls == 1 {
-			return &daemon.RuntimeInfo{PID: 100, Address: "127.0.0.1:7373"}, nil
-		}
-		// During first wait loop, manager PID appears but old runtime still exists.
-		if s.killCalls == 0 {
-			return &daemon.RuntimeInfo{PID: 200, Address: "127.0.0.1:7373"}, nil
-		}
-		// After forced kill and manual start, readiness probe succeeds.
-		if s.startCalls > 0 {
-			return &daemon.RuntimeInfo{PID: 300, Address: "127.0.0.1:7373"}, nil
-		}
-		// During second wait loop after kill, no daemon responds.
-		return nil, os.ErrNotExist
-	}
-	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
-		if s.killCalls == 0 {
-			// Before cleanup, one original PID still exists.
-			return []*daemon.RuntimeInfo{
-				{PID: 100, Address: "127.0.0.1:7373"},
-				{PID: 101, Address: "127.0.0.1:7373"},
-			}, nil
-		}
-		// Cleanup removed old daemons.
-		return nil, nil
-	}
-	stopDaemonForUpdate = func() error {
-		s.stopCalls++
-		return errors.New("cannot stop all daemons")
-	}
-
-	output := captureStdout(t, func() {
-		restartDaemonAfterUpdate("/tmp/bin", false)
-	})
-
-	assert.Contains(t, output, "warning: failed to stop daemon: cannot stop all daemons")
-	assert.Equal(t, 1, s.killCalls)
-	assert.Equal(t, 1, s.startCalls)
-	assert.False(t, !strings.Contains(output, "Restarting daemon...") || !strings.Contains(output, "OK"))
-}
-
-func TestRestartDaemonAfterUpdateManagerRestartedAfterKill(t *testing.T) {
-	s := stubRestartVars(t)
-
-	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
-		if s.killCalls == 0 {
-			// Before forced kill, old daemon stays on the same PID.
-			return &daemon.RuntimeInfo{PID: 100, Address: "127.0.0.1:7373"}, nil
-		}
-		// After forced kill, external manager restarts the daemon.
-		return &daemon.RuntimeInfo{PID: 500, Address: "127.0.0.1:7373"}, nil
-	}
-	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
-		if s.killCalls == 0 {
-			return []*daemon.RuntimeInfo{
-				{PID: 100, Address: "127.0.0.1:7373"},
-			}, nil
-		}
-		return []*daemon.RuntimeInfo{
-			{PID: 500, Address: "127.0.0.1:7373"},
-		}, nil
-	}
-
-	output := captureStdout(t, func() {
-		restartDaemonAfterUpdate("/tmp/bin", false)
-	})
-
-	assert.Equal(t, 1, s.killCalls)
-	assert.Equal(t, 0, s.startCalls)
-	assert.Contains(t, output, "Restarting daemon... OK")
-}
-
 func TestRestartDaemonAfterUpdateManagerHandoffUnresponsiveUsesRuntimePID(t *testing.T) {
 	s := stubRestartVars(t)
 
@@ -1244,94 +1160,9 @@ func TestRestartDaemonAfterUpdateManagerHandoffUnresponsiveUsesRuntimePID(t *tes
 		restartDaemonAfterUpdate("/tmp/bin", false)
 	})
 
-	assert.Equal(t, 0, s.killCalls)
 	assert.Equal(t, 0, s.startCalls)
 	assert.NotContains(t, output, "Restarting daemon... OK")
 	assert.Contains(t, output, "warning: daemon handoff detected but replacement is not ready; restart it manually")
-}
-
-func TestRestartDaemonAfterUpdateManagerHandoffAfterKillNotReadyWarnsNoStart(t *testing.T) {
-	s := stubRestartVars(t)
-
-	var handoffSeen bool
-	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
-		if s.killCalls == 0 {
-			// Initial probe + first wait loop see only the old daemon,
-			// forcing timeout and kill fallback.
-			return &daemon.RuntimeInfo{PID: 100, Address: "127.0.0.1:7373"}, nil
-		}
-		if !handoffSeen {
-			// After kill fallback, handoff PID appears once.
-			handoffSeen = true
-			return &daemon.RuntimeInfo{PID: 500, Address: "127.0.0.1:7373"}, nil
-		}
-		// Replacement remains unresponsive during readiness polling.
-		return nil, os.ErrNotExist
-	}
-
-	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
-		if s.killCalls == 0 {
-			return []*daemon.RuntimeInfo{
-				{PID: 100, Address: "127.0.0.1:7373"},
-			}, nil
-		}
-		return []*daemon.RuntimeInfo{
-			{PID: 500, Address: "127.0.0.1:7373"},
-		}, nil
-	}
-
-	isPIDAliveForUpdate = func(pid int) bool {
-		return pid == 500
-	}
-
-	output := captureStdout(t, func() {
-		restartDaemonAfterUpdate("/tmp/bin", false)
-	})
-
-	assert.Equal(t, 1, s.killCalls)
-	assert.Equal(t, 0, s.startCalls)
-	assert.Contains(t, output, "warning: daemon handoff detected but replacement is not ready; restart it manually")
-	assert.NotContains(t, output, "Restarting daemon... OK")
-}
-
-func TestRestartDaemonAfterUpdateManagerRestartedAfterKillWithLingeringInitialPID(t *testing.T) {
-	s := stubRestartVars(t)
-
-	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
-		if s.killCalls == 0 {
-			// Before forced kill, old daemon stays on the same PID.
-			return &daemon.RuntimeInfo{PID: 100, Address: "127.0.0.1:7373"}, nil
-		}
-		// After forced kill, external manager restarts one daemon PID.
-		return &daemon.RuntimeInfo{PID: 500, Address: "127.0.0.1:7373"}, nil
-	}
-	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
-		if s.killCalls == 0 {
-			// Initial runtime snapshot includes multiple daemon PIDs.
-			return []*daemon.RuntimeInfo{
-				{PID: 100, Address: "127.0.0.1:7373"},
-				{PID: 101, Address: "127.0.0.1:7373"},
-			}, nil
-		}
-		// After kill, previousPID is gone but another initial PID remains.
-		return []*daemon.RuntimeInfo{
-			{PID: 101, Address: "127.0.0.1:7373"},
-			{PID: 500, Address: "127.0.0.1:7373"},
-		}, nil
-	}
-	stopDaemonForUpdate = func() error {
-		s.stopCalls++
-		return errors.New("cannot stop all daemons")
-	}
-
-	output := captureStdout(t, func() {
-		restartDaemonAfterUpdate("/tmp/bin", false)
-	})
-
-	assert.Equal(t, 1, s.killCalls)
-	assert.Equal(t, 0, s.startCalls)
-	assert.Contains(t, output, "warning: daemon restart detected but older daemon runtimes remain; restart it manually")
-	assert.NotContains(t, output, "Restarting daemon... OK")
 }
 
 func TestRestartDaemonAfterUpdateStopFailedPreviousPIDExitedButInitialPIDLingering(t *testing.T) {
@@ -1377,7 +1208,6 @@ func TestRestartDaemonAfterUpdateStopFailedPreviousPIDExitedButInitialPIDLingeri
 		restartDaemonAfterUpdate("/tmp/bin", false)
 	})
 
-	assert.Equal(t, 0, s.killCalls)
 	assert.Equal(t, 0, s.startCalls)
 	assert.Contains(t, output, "warning: older daemon runtimes still present after stop; restart it manually")
 	assert.NotContains(t, output, "Restarting daemon... OK")
@@ -1429,133 +1259,25 @@ func TestRestartDaemonAfterUpdateStopFailedInitialSnapshotErrorWithLingeringRunt
 		restartDaemonAfterUpdate("/tmp/bin", false)
 	})
 
-	assert.Equal(t, 0, s.killCalls)
 	assert.Equal(t, 0, s.startCalls)
 	assert.Contains(t, output, "warning: older daemon runtimes still present after stop; restart it manually")
 }
 
-func TestRestartDaemonAfterUpdateStopFailedHandoffNotReadyWarnsNoStart(t *testing.T) {
-	s := stubRestartVars(t)
-
-	var handoffSeen bool
-	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
-		if s.killCalls == 0 {
-			// Initial probe + first wait loop see only the old daemon,
-			// forcing timeout and kill fallback.
-			return &daemon.RuntimeInfo{PID: 100, Address: "127.0.0.1:7373"}, nil
-		}
-		if !handoffSeen {
-			// Second wait loop sees manager handoff PID once.
-			handoffSeen = true
-			return &daemon.RuntimeInfo{PID: 500, Address: "127.0.0.1:7373"}, nil
-		}
-		// Replacement remains unresponsive during readiness polling.
-		return nil, os.ErrNotExist
-	}
-
-	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
-		if s.killCalls == 0 {
-			return []*daemon.RuntimeInfo{
-				{PID: 100, Address: "127.0.0.1:7373"},
-			}, nil
-		}
-		// previousPID is gone; only replacement PID runtime remains.
-		return []*daemon.RuntimeInfo{
-			{PID: 500, Address: "127.0.0.1:7373"},
-		}, nil
-	}
-
-	isPIDAliveForUpdate = func(pid int) bool {
-		return pid == 500
-	}
-
-	stopDaemonForUpdate = func() error {
-		s.stopCalls++
-		return errors.New("cannot stop daemon")
-	}
-
-	output := captureStdout(t, func() {
-		restartDaemonAfterUpdate("/tmp/bin", false)
-	})
-
-	assert.Equal(t, 1, s.killCalls)
-	assert.Equal(t, 0, s.startCalls)
-	assert.Contains(t, output, "warning: daemon handoff detected but replacement is not ready; restart it manually")
-	assert.NotContains(t, output, "Restarting daemon... OK")
-}
-
-func TestRestartDaemonAfterUpdateStopFailedPreExistingPIDNotAcceptedAsHandoff(t *testing.T) {
-	s := stubRestartVars(t)
-
-	var getCalls int
-	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
-		getCalls++
-		if getCalls == 1 {
-			// Initial probe sees previous PID.
-			return &daemon.RuntimeInfo{PID: 100, Address: "127.0.0.1:7373"}, nil
-		}
-		// Existing daemon PID 200 remains responsive throughout.
-		return &daemon.RuntimeInfo{PID: 200, Address: "127.0.0.1:7373"}, nil
-	}
-
-	var listCalls int
-	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
-		listCalls++
-		if listCalls == 1 {
-			// Initial snapshot already includes PID 200.
-			return []*daemon.RuntimeInfo{
-				{PID: 100, Address: "127.0.0.1:7373"},
-				{PID: 200, Address: "127.0.0.1:7373"},
-			}, nil
-		}
-		// previousPID disappeared, but pre-existing PID 200 remains.
-		return []*daemon.RuntimeInfo{
-			{PID: 200, Address: "127.0.0.1:7373"},
-		}, nil
-	}
-	isPIDAliveForUpdate = func(pid int) bool {
-		return pid == 200
-	}
-	stopDaemonForUpdate = func() error {
-		s.stopCalls++
-		return errors.New("cannot stop daemon")
-	}
-
-	output := captureStdout(t, func() {
-		restartDaemonAfterUpdate("/tmp/bin", false)
-	})
-
-	assert.Equal(t, 1, s.killCalls)
-	assert.Equal(t, 0, s.startCalls)
-	assert.Contains(t, output, "warning: daemon restart detected but older daemon runtimes remain; restart it manually")
-	assert.NotContains(t, output, "Restarting daemon... OK")
-}
-
-// Fix #2: Probe failure with runtime files should use PID from
-// runtime files and still attempt stop/wait/start.
 func TestRestartDaemonAfterUpdateProbeFailFallback(t *testing.T) {
 	s := stubRestartVars(t)
-	// This test needs 5 getAnyRunningDaemon calls to succeed. On
-	// Windows the default timer resolution is ~15ms, so the 5ms
-	// timeout from stubRestartVars expires before enough poll
-	// iterations run. Use a longer timeout.
 	updateRestartWaitTimeout = 200 * time.Millisecond
 
 	var getCalls int
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
 		getCalls++
 		if getCalls <= 2 {
-			// Initial probe + first waitForDaemonExit poll fail.
 			return nil, os.ErrNotExist
 		}
 		if getCalls <= 4 {
-			// Continue failing until the old runtime disappears.
 			return nil, os.ErrNotExist
 		}
-		// After manual start, daemon responds with new PID.
 		return &daemon.RuntimeInfo{PID: 300, Address: "127.0.0.1:7373"}, nil
 	}
-	// Runtime files exist with a known PID.
 	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
 		if getCalls <= 3 {
 			return []*daemon.RuntimeInfo{
@@ -1574,14 +1296,12 @@ func TestRestartDaemonAfterUpdateProbeFailFallback(t *testing.T) {
 	assert.Equal(t, 1, s.startCalls)
 }
 
-// Fix #2: No responsive daemon and no runtime files should skip silently.
 func TestRestartDaemonAfterUpdateNoDaemon(t *testing.T) {
 	s := stubRestartVars(t)
 
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
 		return nil, os.ErrNotExist
 	}
-	// No runtime files either.
 	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
 		return nil, nil
 	}
@@ -1595,7 +1315,6 @@ func TestRestartDaemonAfterUpdateNoDaemon(t *testing.T) {
 	assert.Equal(t, 0, s.startCalls)
 }
 
-// Fix #3: Unmanaged daemon exits quickly — no 2s delay.
 func TestRestartDaemonAfterUpdateExitsQuickly(t *testing.T) {
 	s := stubRestartVars(t)
 
@@ -1606,10 +1325,8 @@ func TestRestartDaemonAfterUpdateExitsQuickly(t *testing.T) {
 			return &daemon.RuntimeInfo{PID: 100, Address: "127.0.0.1:7373"}, nil
 		}
 		if getCalls == 2 {
-			// Daemon exited after stop.
 			return nil, os.ErrNotExist
 		}
-		// After manual start, daemon is ready.
 		return &daemon.RuntimeInfo{PID: 400, Address: "127.0.0.1:7373"}, nil
 	}
 

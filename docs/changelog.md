@@ -22,6 +22,12 @@ All notable changes to roborev, grouped by minor release.
     snooze badge for an exactly filtered checkout. See
     [Snoozing Reminders](/agent-hook/#snoozing-reminders).
 
+**Bug fixes**
+
+- Daemon restarts now stop new job claims and wait indefinitely for running
+    reviews and worker finalization instead of force-killing the daemon after a
+    short graceful-shutdown window.
+
 ______________________________________________________________________
 
 ## 0.64.0

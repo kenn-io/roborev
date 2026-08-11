@@ -7,7 +7,6 @@ import (
 	"strconv"
 	"strings"
 	"syscall"
-	"time"
 )
 
 // processIdentity represents the result of identifying a process.
@@ -174,43 +173,6 @@ func looksLikeFlagValue(token string) bool {
 // isProcessAlive checks whether a process with the given PID exists.
 func isProcessAlive(pid int) bool {
 	return processExists(pid)
-}
-
-// killProcess kills a process by PID on Windows.
-// Returns true only if the process is confirmed dead.
-// Verifies the process is a roborev daemon before killing to prevent
-// killing unrelated processes if the PID was reused.
-func killProcess(pid int) bool {
-	// Check if process exists before trying to kill
-	if !processExists(pid) {
-		return true // Already dead
-	}
-
-	// Verify this is actually a roborev daemon process before killing
-	switch identifyProcess(pid) {
-	case processNotRoborev:
-		// Confirmed not a roborev process - PID was reused, daemon is gone
-		return true
-	case processUnknown:
-		// Can't determine identity - be conservative, don't kill or clean up
-		return false
-	case processIsRoborev:
-		// Confirmed roborev daemon - proceed with kill below
-	}
-
-	// Use taskkill to terminate the process
-	cmd := HiddenCommand("taskkill", "/PID", strconv.Itoa(pid), "/F")
-	_ = cmd.Run() // Ignore error - we'll verify with processExists
-
-	// Wait for process to fully terminate
-	for range 10 {
-		time.Sleep(100 * time.Millisecond)
-		if !processExists(pid) {
-			return true // Process is gone
-		}
-	}
-
-	return false // Still running after repeated attempts
 }
 
 // processExists checks if a process with the given PID exists using the

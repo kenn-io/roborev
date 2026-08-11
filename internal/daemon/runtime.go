@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"net/http"
 	"os"
 	"path/filepath"
 	"strconv"
@@ -463,8 +464,8 @@ func isLoopbackAddr(addr string) bool {
 	return ip.IsLoopback()
 }
 
-// KillDaemon attempts to gracefully shut down a daemon, then force kill if needed.
-// Returns true if the daemon was killed or is no longer running.
+// KillDaemon requests graceful shutdown and waits until the daemon exits.
+// Returns true if the daemon is no longer running.
 // Only removes runtime file if the daemon is confirmed dead.
 func KillDaemon(info *RuntimeInfo) bool {
 	if info == nil {
@@ -473,12 +474,9 @@ func KillDaemon(info *RuntimeInfo) bool {
 
 	ep := info.Endpoint()
 
-	// Helper to remove the runtime file using SourcePath if available, otherwise by PID.
-	// Also cleans up Unix domain sockets.
+	// Remove only this process's runtime record. The endpoint may already belong
+	// to a service-manager replacement.
 	removeRuntimeFile := func() {
-		if ep.IsUnix() {
-			os.Remove(ep.Address)
-		}
 		if info.SourcePath != "" {
 			os.Remove(info.SourcePath)
 		} else if info.PID > 0 {
@@ -486,14 +484,17 @@ func KillDaemon(info *RuntimeInfo) bool {
 		}
 	}
 
-	// Confirmed dead means no ping response AND, when a PID is known, the
-	// process is gone. Legacy (pre-v0.57) daemons never answer /api/ping, so
-	// the HTTP check alone would declare them dead while they still run.
+	// When a PID is known, confirm that exact process exited. A service manager
+	// may start a replacement daemon on the same endpoint immediately.
 	confirmedDead := func() bool {
-		if info.PID > 0 && isProcessAlive(info.PID) {
-			return false
+		if info.PID > 0 {
+			return !isProcessAlive(info.PID)
 		}
 		return !IsDaemonAlive(ep)
+	}
+	if confirmedDead() {
+		removeRuntimeFile()
+		return true
 	}
 
 	// First try graceful HTTP shutdown
@@ -501,36 +502,27 @@ func KillDaemon(info *RuntimeInfo) bool {
 		client := ep.HTTPClient(2 * time.Second)
 		resp, err := client.Post(ep.BaseURL()+"/api/shutdown", "application/json", nil)
 		if err == nil {
+			accepted := resp.StatusCode >= http.StatusOK &&
+				resp.StatusCode < http.StatusMultipleChoices
 			resp.Body.Close()
-			// Wait for graceful shutdown
-			for range 10 {
-				time.Sleep(200 * time.Millisecond)
-				if confirmedDead() {
-					removeRuntimeFile()
-					return true
-				}
+			if !accepted {
+				return false
 			}
-		}
-	}
-
-	// HTTP shutdown failed or timed out, try OS-level kill
-	// Only do this if we have a valid PID
-	if info.PID > 0 {
-		if killProcess(info.PID) {
+			waitForGracefulDaemonExit(200*time.Millisecond, confirmedDead)
 			removeRuntimeFile()
 			return true
 		}
-		// Kill failed - don't remove runtime file, daemon may still be running
 		return false
 	}
-
-	// No valid PID, just check if it's still alive
-	if ep.Address != "" && !IsDaemonAlive(ep) {
-		removeRuntimeFile()
-		return true
-	}
-
 	return false
+}
+
+func waitForGracefulDaemonExit(
+	pollInterval time.Duration, confirmedDead func() bool,
+) {
+	for !confirmedDead() {
+		time.Sleep(pollInterval)
+	}
 }
 
 // CleanupZombieDaemons finds and kills all unresponsive daemons.
@@ -568,24 +560,23 @@ func CleanupZombieDaemons(target DaemonEndpoint) int {
 		if IsDaemonAccessDenied(probeErr) {
 			continue
 		}
-
-		// Unresponsive — try to kill it. When the zombie's
-		// socket matches the target (e.g. a systemd-managed
-		// socket we're about to serve on), kill the process
-		// and clean up the runtime file but preserve the socket.
-		if ep.IsUnix() && ep.Address == target.Address {
-			if info.PID > 0 && !killProcess(info.PID) {
-				// Could not confirm kill; leave runtime
-				// metadata so the next attempt can retry.
-				continue
+		if info.PID > 0 && identifyProcess(info.PID) == processNotRoborev {
+			if ep.IsUnix() && ep.Address != target.Address {
+				os.Remove(ep.Address)
 			}
 			if info.SourcePath != "" {
 				os.Remove(info.SourcePath)
-			} else if info.PID > 0 {
+			} else {
 				RemoveRuntimeForPID(info.PID)
 			}
 			cleaned++
-		} else if KillDaemon(info) {
+			continue
+		}
+
+		// Never stop an unresponsive live process during cleanup: it may be
+		// running a review. Records without a PID are safe to remove only when
+		// their endpoint is also confirmed dead.
+		if info.PID <= 0 && KillDaemon(info) {
 			cleaned++
 		}
 	}

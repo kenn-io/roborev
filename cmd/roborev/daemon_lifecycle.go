@@ -32,12 +32,12 @@ var (
 
 	// Update daemon restart controls - exposed for testing. The wait must
 	// absorb slow Windows cold starts (antivirus rescans a freshly updated
-	// binary) without falling into the force-kill path.
+	// binary) before reporting that manual intervention is needed.
 	updateRestartWaitTimeout  = 10 * time.Second
 	updateRestartPollInterval = 200 * time.Millisecond
 
 	// Probe retry controls for ensureDaemon - exposed for testing. A single
-	// failed probe must not trigger a destructive kill-and-restart: the
+	// failed probe must not trigger an unnecessary restart: the
 	// daemon may be mid-startup or briefly too busy to answer.
 	ensureProbeAttempts   = 3
 	ensureProbeRetryDelay = 1 * time.Second
@@ -54,8 +54,9 @@ var (
 	restartDaemonForEnsure      = restartDaemon
 	startDaemonForEnsure        = startDaemon
 	startDaemonDetached         = startDetachedDaemon
+	stopDaemonForRestart        = stopDaemon
+	startDaemonAfterRestart     = startDaemon
 	stopDaemonForUpdate         = stopDaemon
-	killAllDaemonsForUpdate     = killAllDaemons
 	startUpdatedDaemon          = func(binDir string) error {
 		newBinary := filepath.Join(binDir, "roborev")
 		if runtime.GOOS == "windows" {
@@ -420,6 +421,10 @@ func stopDaemon() error {
 	// Kill all found daemons, track failures
 	var lastErr error
 	for _, info := range runtimes {
+		fmt.Fprintln(
+			os.Stderr,
+			"Waiting for daemon shutdown; no new reviews will start, and any running reviews will finish first...",
+		)
 		if !daemon.KillDaemon(info) {
 			lastErr = fmt.Errorf("failed to kill daemon (pid %d)", info.PID)
 		}
@@ -428,18 +433,12 @@ func stopDaemon() error {
 	return lastErr
 }
 
-// killAllDaemons kills any roborev daemon processes that might be running
-// This handles orphaned processes from old binaries or crashed restarts
-func killAllDaemons() {
-	killAllDaemonsPlatform()
-	time.Sleep(200 * time.Millisecond)
-}
-
 // restartDaemon stops the running daemon and starts a new one
 func restartDaemon() error {
-	_ = stopDaemon() // Ignore error - killAllDaemons is the fallback
-	// Also kill any orphaned daemon processes from old binaries
-	killAllDaemons()
+	if err := stopDaemonForRestart(); err != nil &&
+		!errors.Is(err, ErrDaemonNotRunning) {
+		return err
+	}
 
 	// Checkpoint WAL to ensure clean state for new daemon
 	// Retry a few times in case daemon hasn't fully released the DB
@@ -467,5 +466,5 @@ func restartDaemon() error {
 		}
 	}
 
-	return startDaemon()
+	return startDaemonAfterRestart()
 }

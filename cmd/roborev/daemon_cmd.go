@@ -231,25 +231,16 @@ func daemonRunCmd() *cobra.Command {
 				}
 
 				cancel() // Cancel context to stop config watcher
-				if ciPoller != nil {
-					ciPoller.Stop()
-				}
-				if syncWorker != nil {
-					// Final push before shutdown to ensure local changes are synced
-					if err := syncWorker.FinalPush(); err != nil {
-						log.Printf("Final sync push error: %v", err)
-					}
-					syncWorker.Stop()
-				}
-				if err := server.Stop(); err != nil {
-					log.Printf("Shutdown error: %v", err)
-				}
+				_ = server.Stop()
 				// Note: Don't call os.Exit here - let server.Start() return naturally
 				// after Stop() is called. This allows proper cleanup and testability.
 			}()
 
-			// Start server (blocks until shutdown)
-			return server.Start(ctx)
+			// Start blocks until HTTP serving stops. Join Stop before returning so
+			// the process cannot exit while workers are still finalizing.
+			startErr := server.Start(ctx)
+			stopErr := server.Stop()
+			return errors.Join(startErr, stopErr)
 		},
 	}
 
