@@ -289,6 +289,26 @@ func (m model) costSegmentText() (string, bool) {
 	return fmt.Sprintf("~$%.2f (%d/%d)", m.cost.TotalUSD, m.cost.JobsWithCost, m.cost.JobsTotal), true
 }
 
+func (m model) activeSnooze(now time.Time) *storage.AgentHookSnooze {
+	if len(m.activeRepoFilter) != 1 ||
+		m.activeRepoFilter[0] != m.cwdRepoRoot ||
+		m.activeBranchFilter == "" ||
+		m.activeBranchFilter != m.cwdBranch ||
+		m.cwdWorktreePath == "" {
+		return nil
+	}
+	for i := range m.status.ActiveSnoozes {
+		snooze := &m.status.ActiveSnoozes[i]
+		if snooze.RepoPath == m.cwdRepoRoot &&
+			snooze.WorktreePath == m.cwdWorktreePath &&
+			snooze.Branch == m.cwdBranch &&
+			snooze.SnoozedUntil.After(now) {
+			return snooze
+		}
+	}
+	return nil
+}
+
 // statusSeg is one segment of the queue status line. Segments with a lower prio
 // are dropped first when the line does not fit the terminal width.
 type statusSeg struct {
@@ -428,6 +448,11 @@ func (m model) renderQueueTitle() string {
 	// filters and in compact mode, where the status line is hidden.
 	if m.status.QueuePaused {
 		app += " " + warningFlashStyle.Render("[PAUSED]")
+	}
+	if snooze := m.activeSnooze(time.Now()); snooze != nil {
+		label := "[SNOOZED until " +
+			snooze.SnoozedUntil.Local().Format("Jan 02 15:04") + "]"
+		app += " " + warningFlashStyle.Render(label)
 	}
 
 	filters := m.titleFilters()

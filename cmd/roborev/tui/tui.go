@@ -352,9 +352,10 @@ type model struct {
 	// Track if branch backfill has run this session (one-time migration)
 	branchBackfillDone bool
 
-	// Repo root and branch detected from cwd at launch (for filter sort priority)
+	// Repo, worktree, and branch detected from cwd at launch.
 	cwdRepoRoot     string
 	cwdRepoIdentity string
+	cwdWorktreePath string
 	cwdBranch       string
 
 	// Pending closed state changes (prevents flash during refresh race)
@@ -490,6 +491,23 @@ func newClipboard() ClipboardWriter {
 	return &realClipboard{}
 }
 
+func detectCwdRepoContext(
+	ctx context.Context, path string,
+) (repoRoot, repoIdentity, worktreePath, branch string) {
+	worktreeRoot, err := gitrepo.Root(ctx, path)
+	if err != nil || worktreeRoot == "" {
+		return "", "", "", ""
+	}
+	worktreePath = filepath.ToSlash(filepath.Clean(worktreeRoot))
+	mainRoot, err := gitrepo.MainRoot(ctx, worktreeRoot)
+	if err != nil || mainRoot == "" {
+		return "", "", "", ""
+	}
+	repoRoot = filepath.ToSlash(filepath.Clean(mainRoot))
+	return repoRoot, config.ResolveRepoIdentity(repoRoot, nil), worktreePath,
+		gitrepo.CurrentBranch(ctx, worktreeRoot)
+}
+
 func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 	var opt options
 	for _, o := range opts {
@@ -511,7 +529,7 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 	hiddenCols := parseHiddenColumns(nil)
 	colOrder := parseColumnOrder(nil)
 	taskColOrder := parseTaskColumnOrder(nil)
-	var cwdRepoRoot, cwdRepoIdentity, cwdBranch string
+	var cwdRepoRoot, cwdRepoIdentity, cwdWorktreePath, cwdBranch string
 	var globalCfg *config.Config
 
 	if !opt.disableExternalIO {
@@ -544,12 +562,7 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 			taskColOrder = parseTaskColumnOrder(cfg.TaskColumnOrder)
 		}
 
-		// Detect current repo/branch for filter sort priority
-		if repoRoot, err := gitrepo.MainRoot(ctx, "."); err == nil && repoRoot != "" {
-			cwdRepoRoot = repoRoot
-			cwdRepoIdentity = config.ResolveRepoIdentity(repoRoot, nil)
-			cwdBranch = gitrepo.CurrentBranch(ctx, ".")
-		}
+		cwdRepoRoot, cwdRepoIdentity, cwdWorktreePath, cwdBranch = detectCwdRepoContext(ctx, ".")
 	}
 
 	var sseCh chan struct{}
@@ -578,7 +591,9 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 	var lockedRepo, lockedBranch bool
 
 	if opt.repoFilter != "" {
-		activeRepoFilter = []string{opt.repoFilter}
+		activeRepoFilter = []string{
+			filepath.ToSlash(filepath.Clean(opt.repoFilter)),
+		}
 		filterStack = append(filterStack, filterTypeRepo)
 		lockedRepo = true
 	} else if autoFilterRepo && cwdRepoRoot != "" {
@@ -620,6 +635,7 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 		lockedBranchFilter:  lockedBranch,
 		cwdRepoRoot:         cwdRepoRoot,
 		cwdRepoIdentity:     cwdRepoIdentity,
+		cwdWorktreePath:     cwdWorktreePath,
 		cwdBranch:           cwdBranch,
 		displayNames:        make(map[string]string),      // Cache display names to avoid disk reads on render
 		branchNames:         make(map[int64]string),       // Cache derived branch names to avoid git calls on render
