@@ -41,7 +41,6 @@ type RuntimeInfo struct {
 	SourcePath       string `json:"-"` // Path to the runtime file (not serialized, set by ListAllRuntimes)
 	AlternateNetwork string `json:"-"`
 	AlternateAddress string `json:"-"`
-	Legacy           bool   `json:"-"`
 }
 
 // Endpoint returns a DaemonEndpoint for this runtime.
@@ -270,7 +269,6 @@ func listLegacyRuntimes() []*RuntimeInfo {
 			Address:    legacy.Addr,
 			Version:    legacy.Version,
 			SourcePath: path,
-			Legacy:     true,
 		})
 	}
 	return runtimes
@@ -578,25 +576,17 @@ func CleanupZombieDaemons(target DaemonEndpoint) int {
 		if IsDaemonAccessDenied(probeErr) {
 			continue
 		}
-		if info.PID > 0 {
-			switch identifyProcess(info.PID) {
-			case processNotRoborev:
-				if ep.IsUnix() && ep.Address != target.Address {
-					os.Remove(ep.Address)
-				}
-				if info.SourcePath != "" {
-					os.Remove(info.SourcePath)
-				} else {
-					RemoveRuntimeForPID(info.PID)
-				}
-				cleaned++
-				continue
-			case processIsRoborev:
-				if info.Legacy && KillDaemon(info) {
-					cleaned++
-				}
-				continue
+		if info.PID > 0 && identifyProcess(info.PID) == processNotRoborev {
+			if ep.IsUnix() && ep.Address != target.Address {
+				os.Remove(ep.Address)
 			}
+			if info.SourcePath != "" {
+				os.Remove(info.SourcePath)
+			} else {
+				RemoveRuntimeForPID(info.PID)
+			}
+			cleaned++
+			continue
 		}
 
 		// Never stop an unresponsive live process during cleanup: it may be

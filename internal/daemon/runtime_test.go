@@ -10,7 +10,6 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
-	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -460,58 +459,28 @@ func TestCleanupZombieDaemonsPreservesTargetSocket(t *testing.T) {
 	assert.FileExists(socketPath, "target socket must be preserved")
 }
 
-func TestCleanupZombieDaemonsGracefullyStopsIdentifiedLegacyDaemon(t *testing.T) {
+func TestCleanupZombieDaemonsPreservesIdentifiedLiveLegacyDaemon(t *testing.T) {
 	dataDir := testenv.SetDataDir(t)
-	child := exec.Command(os.Args[0], "-test.run=TestLegacyDaemonProcessHelper")
-	child.Env = append(os.Environ(), "ROBOREV_LEGACY_DAEMON_HELPER=1")
-	require.NoError(t, child.Start())
-	t.Cleanup(func() {
-		if child.ProcessState == nil || !child.ProcessState.Exited() {
-			_ = child.Process.Kill()
-			_ = child.Wait()
-		}
-	})
-
 	addr, mux := startMockDaemon(t)
 	shutdownCalled := make(chan struct{}, 1)
 	mux.HandleFunc("/api/shutdown", func(w http.ResponseWriter, r *http.Request) {
-		if err := child.Process.Kill(); err != nil {
-			http.Error(w, err.Error(), http.StatusInternalServerError)
-			return
-		}
-		if err := child.Wait(); err != nil {
-			var exitErr *exec.ExitError
-			if !errors.As(err, &exitErr) {
-				http.Error(w, err.Error(), http.StatusInternalServerError)
-				return
-			}
-		}
 		shutdownCalled <- struct{}{}
 		w.WriteHeader(http.StatusOK)
 	})
 	legacyPath := writeLegacyRuntimeFile(
-		t, dataDir, fmt.Sprintf("daemon.%d.json", child.Process.Pid),
-		child.Process.Pid, addr,
+		t, dataDir, fmt.Sprintf("daemon.%d.json", os.Getpid()),
+		os.Getpid(), addr,
 	)
 	mockIdentifyProcess(t, func(pid int) processIdentity {
-		assert.Equal(t, child.Process.Pid, pid)
+		assert.Equal(t, os.Getpid(), pid)
 		return processIsRoborev
 	})
 
 	cleaned := CleanupZombieDaemons(DaemonEndpoint{})
 
-	assert.Equal(t, 1, cleaned)
-	assert.NoFileExists(t, legacyPath)
-	assert.NotEmpty(t, shutdownCalled)
-}
-
-func TestLegacyDaemonProcessHelper(t *testing.T) {
-	if os.Getenv("ROBOREV_LEGACY_DAEMON_HELPER") != "1" {
-		return
-	}
-	for {
-		time.Sleep(time.Hour)
-	}
+	assert.Zero(t, cleaned)
+	assert.FileExists(t, legacyPath)
+	assert.Empty(t, shutdownCalled)
 }
 
 func TestRuntimeInfo_Endpoint(t *testing.T) {

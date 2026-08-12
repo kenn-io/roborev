@@ -70,8 +70,8 @@ jobs:
           tar -xzf $archive -C $extractDir
           "old_binary=$extractDir\roborev.exe" | Out-File -FilePath $env:GITHUB_OUTPUT -Append
 
-      - name: Run v0.56 daemon migration repro
+      - name: Verify v0.56 replacement safety
         shell: pwsh
         env:
           ROBOREV_MIGRATION_OLD_BINARY: ${{ steps.old.outputs.old_binary }}
-        run: go test -timeout 10m -tags "integration migration" ./cmd/roborev -run TestWindowsV056DaemonMigrationStart -count=1 -v
+        run: go test -timeout 10m -tags "integration migration" ./cmd/roborev -run TestWindowsV056DaemonMigrationRefusesUnsafeReplacement -count=1 -v

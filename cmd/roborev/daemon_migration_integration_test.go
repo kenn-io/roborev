@@ -16,7 +16,7 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func TestWindowsV056DaemonMigrationStart(t *testing.T) {
+func TestWindowsV056DaemonMigrationRefusesUnsafeReplacement(t *testing.T) {
 	if runtime.GOOS != "windows" {
 		t.Skip("Windows-only daemon migration repro")
 	}
@@ -69,31 +69,30 @@ func TestWindowsV056DaemonMigrationStart(t *testing.T) {
 		return err == nil && len(matches) > 0
 	}), "v0.56 daemon never published legacy runtime. Output:\n%s", legacyOutput.String())
 
-	startOut := runMigrationCmd(t, ".", append(os.Environ(), "ROBOREV_DATA_DIR="+dataDir),
-		currentBin, "--verbose", "daemon", "start")
-	assert.Contains(t, startOut, "Daemon started")
+	startCtx, cancelStart := context.WithTimeout(context.Background(), 45*time.Second)
+	defer cancelStart()
+	startCmd := exec.CommandContext(startCtx, currentBin, "--verbose", "daemon", "start")
+	startCmd.Dir = "."
+	startCmd.Env = append(os.Environ(), "ROBOREV_DATA_DIR="+dataDir)
+	startOut, startErr := startCmd.CombinedOutput()
+	require.Error(t, startErr)
+	assert.Contains(t, string(startOut), "failed to start daemon: context deadline exceeded")
 
+	legacyExited := false
 	select {
 	case <-legacyDone:
-		// The upgraded CLI should have stopped the legacy daemon before starting
-		// the replacement daemon.
-	case <-time.After(10 * time.Second):
-		require.Fail(t, "v0.56 daemon still running after upgraded daemon start",
-			"Output:\n%s", legacyOutput.String())
+		legacyExited = true
+	default:
 	}
-
-	statusOut := runMigrationCmd(t, ".", append(os.Environ(), "ROBOREV_DATA_DIR="+dataDir),
-		currentBin, "status")
-	assert.Contains(t, statusOut, "Daemon: running")
-	assert.NotContains(t, statusOut, "Daemon: not running")
+	assert.False(t, legacyExited, "replacement refusal must not stop the v0.56 daemon")
 
 	legacyMatches, err := filepath.Glob(filepath.Join(dataDir, "daemon.*.json"))
 	require.NoError(t, err)
-	assert.Empty(t, legacyMatches, "legacy root runtime files must be cleaned up")
+	assert.NotEmpty(t, legacyMatches, "legacy runtime must remain for manual recovery")
 
 	currentMatches, err := filepath.Glob(filepath.Join(dataDir, "runtime", "daemon.*.json"))
 	require.NoError(t, err)
-	assert.NotEmpty(t, currentMatches, "replacement daemon must publish a kit runtime record")
+	assert.Empty(t, currentMatches, "replacement daemon must not start beside v0.56")
 }
 
 func runMigrationCmd(t *testing.T, dir string, env []string, name string, args ...string) string {
