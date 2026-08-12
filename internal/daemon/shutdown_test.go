@@ -10,6 +10,8 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testenv"
 )
 
@@ -62,7 +64,7 @@ func TestShutdownEndpointRejectsGet(t *testing.T) {
 	}
 }
 
-func TestShutdownPausesClaimsAndRestoresQueueStateAfterStop(t *testing.T) {
+func TestShutdownBlocksClaimsWithoutChangingQueuePause(t *testing.T) {
 	server := setupTestServer(t)
 
 	paused, err := server.db.IsQueuePaused()
@@ -74,14 +76,17 @@ func TestShutdownPausesClaimsAndRestoresQueueStateAfterStop(t *testing.T) {
 		w, httptest.NewRequest(http.MethodPost, "/api/shutdown", nil),
 	)
 	require.Equal(t, http.StatusOK, w.Code, w.Body.String())
-	paused, err = server.db.IsQueuePaused()
+	draining, err := server.db.IsShutdownDraining()
 	require.NoError(t, err)
-	assert.True(t, paused)
-
-	require.NoError(t, server.Stop())
+	assert.True(t, draining)
 	paused, err = server.db.IsQueuePaused()
 	require.NoError(t, err)
 	assert.False(t, paused)
+
+	require.NoError(t, server.Stop())
+	draining, err = server.db.IsShutdownDraining()
+	require.NoError(t, err)
+	assert.False(t, draining)
 }
 
 func TestShutdownRejectsQueueMutationsWhileDraining(t *testing.T) {
@@ -98,9 +103,45 @@ func TestShutdownRejectsQueueMutationsWhileDraining(t *testing.T) {
 		unpause, httptest.NewRequest(http.MethodPost, "/api/queue/unpause", nil),
 	)
 	assert.Equal(t, http.StatusConflict, unpause.Code)
-	paused, err := server.db.IsQueuePaused()
+	draining, err := server.db.IsShutdownDraining()
 	require.NoError(t, err)
-	assert.True(t, paused)
+	assert.True(t, draining)
+}
+
+func TestStopRetriesDrainPreparationAfterTransientFailure(t *testing.T) {
+	server := setupTestServer(t)
+
+	_, err := server.db.Exec(`DROP TABLE daemon_state`)
+	require.NoError(t, err)
+	require.ErrorContains(t, server.Stop(), "block job claims for shutdown")
+
+	_, err = server.db.Exec(`
+		CREATE TABLE daemon_state (
+			key TEXT PRIMARY KEY,
+			value TEXT NOT NULL,
+			updated_at TEXT NOT NULL DEFAULT (datetime('now'))
+		)
+	`)
+	require.NoError(t, err)
+	require.NoError(t, server.Stop())
+}
+
+func TestServerStartClearsInterruptedShutdownDrain(t *testing.T) {
+	testenv.SetDataDir(t)
+	db, err := storage.Open(t.TempDir() + "/test.db")
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	require.NoError(t, db.SetShutdownDraining(true))
+
+	cfg := config.DefaultConfig()
+	cfg.ServerAddr = "127.0.0.1:0"
+	server := newServerWithLogs(db, cfg, "", newTestErrorLog(), newTestActivityLog())
+	errCh, _ := startServerAndWaitForRuntime(t, server)
+
+	draining, err := db.IsShutdownDraining()
+	require.NoError(t, err)
+	assert.False(t, draining)
+	stopTestServer(t, server, errCh)
 }
 
 func TestStopKeepsRuntimePublishedUntilWorkersFinish(t *testing.T) {
@@ -118,8 +159,8 @@ func TestStopKeepsRuntimePublishedUntilWorkersFinish(t *testing.T) {
 	go func() { stopDone <- server.Stop() }()
 
 	require.Eventually(t, func() bool {
-		paused, err := server.db.IsQueuePaused()
-		return err == nil && paused
+		draining, err := server.db.IsShutdownDraining()
+		return err == nil && draining
 	}, time.Second, time.Millisecond)
 	assert.FileExists(t, RuntimePath())
 	assert.Never(t, func() bool {

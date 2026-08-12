@@ -60,7 +60,6 @@ type Server struct {
 	shutdownCh        chan struct{}      // closed when /api/shutdown is requested
 	shutdownOnce      sync.Once
 	shutdownDrainMu   sync.Mutex
-	shutdownWasPaused bool
 	shutdownDraining  bool
 
 	// Cached machine ID to avoid INSERT on every status request
@@ -216,6 +215,12 @@ func (s *Server) Start(ctx context.Context) error {
 			}
 			return fmt.Errorf("daemon process still running (pid %d)", runtime.PID)
 		}
+	}
+	if err := s.db.SetShutdownDraining(false); err != nil {
+		if listener != nil {
+			_ = listener.Close()
+		}
+		return fmt.Errorf("clear interrupted shutdown drain: %w", err)
 	}
 
 	// Reset stale jobs from previous runs
@@ -524,6 +529,9 @@ func getSystemdListener() (net.Listener, DaemonEndpoint, error) {
 // when the test body has already called Stop explicitly), and prevents
 // the "close of closed channel" panic when hookRunner.Stop runs twice.
 func (s *Server) Stop() error {
+	if err := s.beginShutdownDrain(); err != nil {
+		return err
+	}
 	s.stopOnce.Do(func() {
 		s.stopErr = s.stopOnce0()
 	})
@@ -531,10 +539,6 @@ func (s *Server) Stop() error {
 }
 
 func (s *Server) stopOnce0() error {
-	if err := s.beginShutdownDrain(); err != nil {
-		return err
-	}
-
 	// Log daemon stop before shutting down components
 	if s.activityLog != nil {
 		uptime := time.Since(s.startTime)
@@ -582,8 +586,6 @@ func (s *Server) stopOnce0() error {
 		s.syncWorker.Stop()
 	}
 
-	s.restoreQueuePauseState()
-
 	// Clean up Unix domain sockets after the server stops accepting requests.
 	s.endpointMu.Lock()
 	ep := s.endpoint
@@ -608,24 +610,24 @@ func (s *Server) stopOnce0() error {
 
 	// Keep discovery metadata published until all daemon work and HTTP serving
 	// have stopped, so another daemon cannot start during finalization.
+	s.clearShutdownDrain()
 	RemoveRuntime()
 
 	return nil
 }
 
-func (s *Server) restoreQueuePauseState() {
+func (s *Server) clearShutdownDrain() {
 	s.shutdownDrainMu.Lock()
 	draining := s.shutdownDraining
-	wasPaused := s.shutdownWasPaused
 	s.shutdownDrainMu.Unlock()
 	if !draining {
 		return
 	}
 	for {
-		if err := s.db.SetQueuePaused(wasPaused); err == nil {
+		if err := s.db.SetShutdownDraining(false); err == nil {
 			return
 		} else {
-			log.Printf("Restore queue pause state failed; retrying: %v", err)
+			log.Printf("Clear shutdown drain state failed; retrying: %v", err)
 		}
 		time.Sleep(time.Second)
 	}
@@ -3096,14 +3098,9 @@ func (s *Server) beginShutdownDrain() error {
 	if s.shutdownDraining {
 		return nil
 	}
-	paused, err := s.db.IsQueuePaused()
-	if err != nil {
-		return fmt.Errorf("read queue pause state: %w", err)
+	if err := s.db.SetShutdownDraining(true); err != nil {
+		return fmt.Errorf("block job claims for shutdown: %w", err)
 	}
-	if err := s.db.SetQueuePaused(true); err != nil {
-		return fmt.Errorf("pause queue for shutdown: %w", err)
-	}
-	s.shutdownWasPaused = paused
 	s.shutdownDraining = true
 	s.workerPool.BeginStop()
 	return nil

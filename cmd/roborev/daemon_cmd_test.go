@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"errors"
 	"os"
 	"path/filepath"
 	"testing"
@@ -10,6 +11,21 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestStopDaemonWithRetryRepeatsPreparationFailures(t *testing.T) {
+	attempts := 0
+	stop := func() error {
+		attempts++
+		if attempts < 3 {
+			return errors.New("temporary database failure")
+		}
+		return nil
+	}
+
+	stopDaemonWithRetry(stop, 0)
+
+	assert.Equal(t, 3, attempts)
+}
 
 func TestDaemonRunValidatesHookEnabledAutoDesignHeuristics(t *testing.T) {
 	tmp := t.TempDir()

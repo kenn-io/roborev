@@ -9,6 +9,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"time"
 
 	"github.com/spf13/cobra"
 
@@ -231,7 +232,7 @@ func daemonRunCmd() *cobra.Command {
 				}
 
 				cancel() // Cancel context to stop config watcher
-				_ = server.Stop()
+				stopDaemonWithRetry(server.Stop, time.Second)
 				// Note: Don't call os.Exit here - let server.Start() return naturally
 				// after Stop() is called. This allows proper cleanup and testability.
 			}()
@@ -250,4 +251,15 @@ func daemonRunCmd() *cobra.Command {
 	cmd.Flags().IntVar(&workers, "workers", 0, "number of workers (overrides config)")
 
 	return cmd
+}
+
+func stopDaemonWithRetry(stop func() error, retryDelay time.Duration) {
+	for {
+		if err := stop(); err != nil {
+			log.Printf("Prepare daemon shutdown failed; retrying: %v", err)
+			time.Sleep(retryDelay)
+			continue
+		}
+		return
+	}
 }

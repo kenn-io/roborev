@@ -5,7 +5,10 @@ import (
 	"fmt"
 )
 
-const queuePausedStateKey = "queue_paused"
+const (
+	queuePausedStateKey      = "queue_paused"
+	shutdownDrainingStateKey = "shutdown_draining"
+)
 
 // IsQueuePaused returns whether daemon workers should stop claiming new jobs.
 func (db *DB) IsQueuePaused() (bool, error) {
@@ -22,16 +25,40 @@ func (db *DB) IsQueuePaused() (bool, error) {
 
 // SetQueuePaused persists whether daemon workers should stop claiming new jobs.
 func (db *DB) SetQueuePaused(paused bool) error {
+	return db.setDaemonBoolState(queuePausedStateKey, paused, "queue paused")
+}
+
+// IsShutdownDraining returns whether workers must stop claiming jobs while a
+// daemon finishes a graceful shutdown.
+func (db *DB) IsShutdownDraining() (bool, error) {
+	var value string
+	err := db.QueryRow(`SELECT value FROM daemon_state WHERE key = ?`, shutdownDrainingStateKey).Scan(&value)
+	if err != nil {
+		if err == sql.ErrNoRows {
+			return false, nil
+		}
+		return false, fmt.Errorf("get shutdown draining state: %w", err)
+	}
+	return value == "true" || value == "1", nil
+}
+
+// SetShutdownDraining persists the recoverable claim gate used only while a
+// daemon finishes a graceful shutdown.
+func (db *DB) SetShutdownDraining(draining bool) error {
+	return db.setDaemonBoolState(shutdownDrainingStateKey, draining, "shutdown draining")
+}
+
+func (db *DB) setDaemonBoolState(key string, enabled bool, label string) error {
 	value := "false"
-	if paused {
+	if enabled {
 		value = "true"
 	}
 	_, err := db.Exec(`
 		INSERT INTO daemon_state (key, value, updated_at) VALUES (?, ?, datetime('now'))
 		ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
-	`, queuePausedStateKey, value)
+	`, key, value)
 	if err != nil {
-		return fmt.Errorf("set queue paused state: %w", err)
+		return fmt.Errorf("set %s state: %w", label, err)
 	}
 	return nil
 }

@@ -23,6 +23,37 @@ func TestClaimJobReturnsNilWhenQueuePaused(t *testing.T) {
 	assert.Nil(t, claimed)
 }
 
+func TestClaimJobReturnsNilWhileShutdownDrainIsActive(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, t.TempDir())
+	commit := createCommit(t, db, repo.ID, "abc123")
+	_, err := db.EnqueueJob(EnqueueOpts{RepoID: repo.ID, CommitID: commit.ID, GitRef: commit.SHA, Agent: "test"})
+	require.NoError(t, err)
+	require.NoError(t, db.SetShutdownDraining(true))
+
+	claimed, err := db.ClaimJob("worker-1")
+	require.NoError(t, err)
+	assert.Nil(t, claimed)
+}
+
+func TestClearShutdownDrainingPreservesQueuePause(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	require.NoError(t, db.SetQueuePaused(true))
+	require.NoError(t, db.SetShutdownDraining(true))
+	require.NoError(t, db.SetShutdownDraining(false))
+
+	paused, err := db.IsQueuePaused()
+	require.NoError(t, err)
+	assert.True(t, paused)
+	draining, err := db.IsShutdownDraining()
+	require.NoError(t, err)
+	assert.False(t, draining)
+}
+
 func TestQueuePauseStateDefaultsAndPersists(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "test.db")
 
