@@ -920,6 +920,67 @@ func TestCIPollerStartStopHealth(t *testing.T) {
 	}
 }
 
+func TestCIPollerStopDrainsQueuedEventsBeforeReturning(t *testing.T) {
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	comments := h.CaptureComments()
+	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 91, "stop-drain-head", "base..stop-drain-head",
+		[]jobSpec{{Agent: "test", ReviewType: "review", Status: "done", Output: "Finding A"}})
+	h.completeSynthesisWithReview(t, synth.ID, "## Combined findings\nVerified finding A.")
+	queuedPanel, queuedSynth, _ := h.seedCIPanelRun(t, "acme/api", 92, "stop-drain-queued", "base..stop-drain-queued",
+		[]jobSpec{{Agent: "test", ReviewType: "review", Status: "done", Output: "Finding B"}})
+	h.completeSynthesisWithReview(t, queuedSynth.ID, "## Combined findings\nVerified finding B.")
+
+	broadcaster := NewBroadcaster()
+	h.Poller.broadcaster = broadcaster
+	h.Poller.prPostTargetFn = func(_ context.Context, _ string, pr int) (panelPostTarget, error) {
+		if pr == 91 {
+			return panelPostTarget{Open: true, HeadSHA: "stop-drain-head"}, nil
+		}
+		return panelPostTarget{Open: true, HeadSHA: "stop-drain-queued"}, nil
+	}
+	releasePost := make(chan struct{})
+	postStarted := make(chan struct{})
+	h.Poller.postPRCommentFn = func(repo string, pr int, body string) error {
+		if pr == 91 {
+			close(postStarted)
+			<-releasePost
+		}
+		*comments = append(*comments, capturedComment{repo, pr, body})
+		return nil
+	}
+	require.NoError(t, h.Poller.Start())
+	broadcaster.Broadcast(ciEvent(synth.ID, "review.completed"))
+	<-postStarted
+	broadcaster.Broadcast(ciEvent(queuedSynth.ID, "review.completed"))
+
+	stopDone := make(chan struct{})
+	go func() {
+		h.Poller.Stop()
+		close(stopDone)
+	}()
+	assert.Never(t, func() bool {
+		select {
+		case <-stopDone:
+			return true
+		default:
+			return false
+		}
+	}, 20*time.Millisecond, time.Millisecond)
+
+	close(releasePost)
+	require.Eventually(t, func() bool {
+		select {
+		case <-stopDone:
+			return true
+		default:
+			return false
+		}
+	}, time.Second, time.Millisecond)
+	assert.Len(t, *comments, 2)
+	assert.True(t, h.panelPostedAt(t, panel.ID))
+	assert.True(t, h.panelPostedAt(t, queuedPanel.ID))
+}
+
 func TestCIPollerStartMakesTransientAttemptsDue(t *testing.T) {
 	db := testutil.OpenTestDB(t)
 	now := time.Now()

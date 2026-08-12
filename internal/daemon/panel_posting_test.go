@@ -312,7 +312,8 @@ func TestSynthesisCanceledDoesNotPostRawFallback(t *testing.T) {
 	eventCh := make(chan Event, 1)
 	eventCh <- ciEvent(synth.ID, "review.canceled")
 	close(eventCh)
-	h.Poller.listenForEvents(make(chan struct{}), eventCh)
+	doneCh := make(chan struct{})
+	h.Poller.listenForEvents(eventCh, doneCh)
 
 	assert.Empty(*comments, "canceled synthesis must not post stale raw fallback")
 	assert.Empty(*statuses, "canceled synthesis must not set commit status")

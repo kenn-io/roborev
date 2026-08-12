@@ -113,12 +113,13 @@ type CIPoller struct {
 	// owned by the single poll goroutine.
 	quietHours *config.QuietHoursWindow
 
-	subID      int // broadcaster subscription ID for event listening
-	stopCh     chan struct{}
-	doneCh     chan struct{}
-	cancelFunc context.CancelFunc // cancels the context for external commands
-	mu         sync.Mutex
-	running    bool
+	subID       int // broadcaster subscription ID for event listening
+	stopCh      chan struct{}
+	doneCh      chan struct{}
+	eventDoneCh chan struct{}
+	cancelFunc  context.CancelFunc // cancels the context for external commands
+	mu          sync.Mutex
+	running     bool
 }
 
 // NewCIPoller creates a new CI poller.
@@ -210,6 +211,7 @@ func (p *CIPoller) Start() error {
 
 	p.stopCh = make(chan struct{})
 	p.doneCh = make(chan struct{})
+	p.eventDoneCh = make(chan struct{})
 	p.cancelFunc = cancel
 	p.running = true
 
@@ -226,7 +228,9 @@ func (p *CIPoller) Start() error {
 	if p.broadcaster != nil {
 		subID, eventCh := p.broadcaster.Subscribe("")
 		p.subID = subID
-		go p.listenForEvents(stopCh, eventCh)
+		go p.listenForEvents(eventCh, p.eventDoneCh)
+	} else {
+		close(p.eventDoneCh)
 	}
 
 	go p.run(ctx, stopCh, doneCh, interval)
@@ -234,7 +238,9 @@ func (p *CIPoller) Start() error {
 	return nil
 }
 
-// Stop gracefully shuts down the CI poller
+// Stop shuts down both CI loops. Closing stopCh makes the polling loop inert.
+// Unsubscribing closes the FIFO event channel after its buffered events, so the
+// listener finishes queued handlers before eventDoneCh joins it.
 func (p *CIPoller) Stop() {
 	p.mu.Lock()
 	if !p.running {
@@ -243,17 +249,19 @@ func (p *CIPoller) Stop() {
 	}
 	stopCh := p.stopCh
 	doneCh := p.doneCh
+	eventDoneCh := p.eventDoneCh
 	cancel := p.cancelFunc
+	subID := p.subID
 	p.running = false
 	p.mu.Unlock()
 
 	cancel() // Cancel context for external commands
 	close(stopCh)
-	<-doneCh
-
-	if p.broadcaster != nil && p.subID != 0 {
-		p.broadcaster.Unsubscribe(p.subID)
+	if p.broadcaster != nil && subID != 0 {
+		p.broadcaster.Unsubscribe(subID)
 	}
+	<-doneCh
+	<-eventDoneCh
 }
 
 // HealthCheck returns whether the CI poller is healthy
@@ -1787,23 +1795,16 @@ func gitFetchPRHead(ctx context.Context, repoPath string, prNumber int, env []st
 
 // listenForEvents subscribes to broadcaster events and posts PR comments
 // when CI-triggered reviews complete or fail.
-func (p *CIPoller) listenForEvents(stopCh chan struct{}, eventCh <-chan Event) {
-	for {
-		select {
-		case <-stopCh:
-			return
-		case event, ok := <-eventCh:
-			if !ok {
-				return
-			}
-			switch event.Type {
-			case "review.completed":
-				p.handleReviewCompleted(event)
-			case "review.failed":
-				p.handleReviewFailed(event)
-			case "review.canceled":
-				p.handleReviewCanceled(event)
-			}
+func (p *CIPoller) listenForEvents(eventCh <-chan Event, doneCh chan<- struct{}) {
+	defer close(doneCh)
+	for event := range eventCh {
+		switch event.Type {
+		case "review.completed":
+			p.handleReviewCompleted(event)
+		case "review.failed":
+			p.handleReviewFailed(event)
+		case "review.canceled":
+			p.handleReviewCanceled(event)
 		}
 	}
 }
