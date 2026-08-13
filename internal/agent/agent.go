@@ -14,7 +14,7 @@ import (
 type ReasoningLevel string
 
 const (
-	// ReasoningMaximum uses the highest available reasoning (e.g., codex xhigh, claude max)
+	// ReasoningMaximum uses the highest compatible reasoning for the selected model.
 	ReasoningMaximum ReasoningLevel = "maximum"
 	// ReasoningThorough uses deep reasoning for thorough analysis (slower)
 	ReasoningThorough ReasoningLevel = "thorough"

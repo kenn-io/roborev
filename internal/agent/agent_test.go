@@ -167,25 +167,63 @@ func TestParseReasoningLevel(t *testing.T) {
 
 func TestCodexReasoningEffortMapping(t *testing.T) {
 	tests := []struct {
+		name  string
+		model string
 		level ReasoningLevel
 		want  string
 	}{
-		{ReasoningMaximum, "xhigh"},
-		{ReasoningThorough, "high"},
-		{ReasoningFast, "low"},
-		{ReasoningStandard, ""},
-		{ReasoningLow, "low"},
-		{ReasoningMedium, "medium"},
-		{ReasoningHigh, "high"},
-		{ReasoningXHigh, "xhigh"},
-		{ReasoningMax, "max"},
+		{"maximum without explicit model", "", ReasoningMaximum, "xhigh"},
+		{"maximum with older model", "gpt-5.5", ReasoningMaximum, "xhigh"},
+		{"maximum with unknown model", "custom-model", ReasoningMaximum, "xhigh"},
+		{"maximum with unknown GPT-5.6 variant", "gpt-5.6-preview", ReasoningMaximum, "xhigh"},
+		{"maximum with GPT-5.6 sol", "gpt-5.6-sol", ReasoningMaximum, "max"},
+		{"maximum with GPT-5.6 terra", "gpt-5.6-terra", ReasoningMaximum, "max"},
+		{"maximum with GPT-5.6 luna", "gpt-5.6-luna", ReasoningMaximum, "max"},
+		{"explicit xhigh with GPT-5.6", "gpt-5.6-luna", ReasoningXHigh, "xhigh"},
+		{"thorough", "", ReasoningThorough, "high"},
+		{"fast", "", ReasoningFast, "low"},
+		{"standard", "", ReasoningStandard, ""},
+		{"exact low", "", ReasoningLow, "low"},
+		{"exact medium", "", ReasoningMedium, "medium"},
+		{"exact high", "", ReasoningHigh, "high"},
+		{"exact xhigh", "", ReasoningXHigh, "xhigh"},
+		{"exact max", "", ReasoningMax, "max"},
 	}
 
 	for _, tt := range tests {
-		a := NewCodexAgent("").WithReasoning(tt.level)
-		codex, ok := a.(*CodexAgent)
-		require.True(t, ok, "expected CodexAgent, got %T", a)
-		assert.Equal(t, tt.want, codex.codexReasoningEffort(), "codexReasoningEffort(%q)", tt.level)
+		t.Run(tt.name, func(t *testing.T) {
+			a := NewCodexAgent("").WithModel(tt.model).WithReasoning(tt.level)
+			codex, ok := a.(*CodexAgent)
+			require.True(t, ok, "expected CodexAgent, got %T", a)
+			assert.Equal(t, tt.want, codex.codexReasoningEffort())
+		})
+	}
+}
+
+func TestCodexBuildArgsGPT56MaximumReasoning(t *testing.T) {
+	tests := []struct {
+		name  string
+		agent Agent
+	}{
+		{
+			name: "model then reasoning",
+			agent: NewCodexAgent("").
+				WithModel("gpt-5.6-luna").
+				WithReasoning(ReasoningMaximum),
+		},
+		{
+			name: "reasoning then model",
+			agent: NewCodexAgent("").
+				WithReasoning(ReasoningMaximum).
+				WithModel("gpt-5.6-luna"),
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Contains(t, tt.agent.CommandLine(), "-m gpt-5.6-luna")
+			assert.Contains(t, tt.agent.CommandLine(), `-c model_reasoning_effort="max"`)
+		})
 	}
 }
 
