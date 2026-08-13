@@ -981,6 +981,48 @@ func TestCIPollerStopDrainsQueuedEventsBeforeReturning(t *testing.T) {
 	assert.True(t, h.panelPostedAt(t, queuedPanel.ID))
 }
 
+func TestServerStopKeepsCIEventListenerUntilWorkersFinish(t *testing.T) {
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	comments := h.CaptureComments()
+	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 93, "worker-finish-head", "base..worker-finish-head",
+		[]jobSpec{{Agent: "test", ReviewType: "review", Status: "done", Output: "Finding A"}})
+	h.completeSynthesisWithReview(t, synth.ID, "## Combined findings\nVerified finding A.")
+
+	server := newServerWithLogs(h.DB, h.Cfg, "", newTestErrorLog(), newTestActivityLog())
+	baseSubscribers := server.Broadcaster().SubscriberCount()
+	h.Poller.broadcaster = server.Broadcaster()
+	h.Poller.prPostTargetFn = func(context.Context, string, int) (panelPostTarget, error) {
+		return panelPostTarget{Open: true, HeadSHA: "worker-finish-head"}, nil
+	}
+	require.NoError(t, h.Poller.Start())
+	server.SetCIPoller(h.Poller)
+
+	releaseWorker := make(chan struct{})
+	server.workerPool.wg.Add(1)
+	close(server.workerPool.readyCh)
+	go func() {
+		<-releaseWorker
+		server.workerPool.wg.Done()
+	}()
+
+	stopDone := make(chan error, 1)
+	go func() { stopDone <- server.Stop() }()
+	require.Eventually(t, func() bool {
+		healthy, _ := h.Poller.HealthCheck()
+		return !healthy
+	}, time.Second, time.Millisecond)
+	assert.Equal(t, baseSubscribers+1, server.Broadcaster().SubscriberCount())
+	require.ErrorContains(t, h.Poller.Start(), "already running or stopping")
+
+	server.Broadcaster().Broadcast(ciEvent(synth.ID, "review.completed"))
+	require.Eventually(t, func() bool { return h.panelPostedAt(t, panel.ID) }, time.Second, time.Millisecond)
+	assert.Len(t, *comments, 1)
+
+	close(releaseWorker)
+	require.NoError(t, <-stopDone)
+	assert.Zero(t, server.Broadcaster().SubscriberCount())
+}
+
 func TestCIPollerStartMakesTransientAttemptsDue(t *testing.T) {
 	db := testutil.OpenTestDB(t)
 	now := time.Now()

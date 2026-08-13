@@ -113,13 +113,16 @@ type CIPoller struct {
 	// owned by the single poll goroutine.
 	quietHours *config.QuietHoursWindow
 
-	subID       int // broadcaster subscription ID for event listening
-	stopCh      chan struct{}
-	doneCh      chan struct{}
-	eventDoneCh chan struct{}
-	cancelFunc  context.CancelFunc // cancels the context for external commands
-	mu          sync.Mutex
-	running     bool
+	subID          int // broadcaster subscription ID for event listening
+	stopCh         chan struct{}
+	doneCh         chan struct{}
+	eventDoneCh    chan struct{}
+	cancelFunc     context.CancelFunc // cancels the context for external commands
+	mu             sync.Mutex
+	running        bool
+	stopping       bool
+	pollStopping   bool
+	eventsStopping bool
 }
 
 // NewCIPoller creates a new CI poller.
@@ -193,8 +196,8 @@ func (p *CIPoller) Start() error {
 	p.mu.Lock()
 	defer p.mu.Unlock()
 
-	if p.running {
-		return fmt.Errorf("CI poller already running")
+	if p.running || p.stopping {
+		return fmt.Errorf("CI poller already running or stopping")
 	}
 
 	cfg := p.cfgGetter.Config()
@@ -214,6 +217,9 @@ func (p *CIPoller) Start() error {
 	p.eventDoneCh = make(chan struct{})
 	p.cancelFunc = cancel
 	p.running = true
+	p.stopping = false
+	p.pollStopping = false
+	p.eventsStopping = false
 
 	stopCh := p.stopCh
 	doneCh := p.doneCh
@@ -238,30 +244,60 @@ func (p *CIPoller) Start() error {
 	return nil
 }
 
-// Stop shuts down both CI loops. Closing stopCh makes the polling loop inert.
-// Unsubscribing closes the FIFO event channel after its buffered events, so the
-// listener finishes queued handlers before eventDoneCh joins it.
-func (p *CIPoller) Stop() {
+// BeginStop makes the polling loop inert and waits for its current poll to
+// return. The event listener remains subscribed so active workers can still
+// deliver completion events during the daemon drain.
+func (p *CIPoller) BeginStop() {
 	p.mu.Lock()
-	if !p.running {
+	if !p.running && !p.stopping {
 		p.mu.Unlock()
 		return
 	}
 	stopCh := p.stopCh
 	doneCh := p.doneCh
-	eventDoneCh := p.eventDoneCh
 	cancel := p.cancelFunc
-	subID := p.subID
-	p.running = false
+	startStop := !p.pollStopping
+	if startStop {
+		p.running = false
+		p.stopping = true
+		p.pollStopping = true
+	}
 	p.mu.Unlock()
 
-	cancel() // Cancel context for external commands
-	close(stopCh)
-	if p.broadcaster != nil && subID != 0 {
-		p.broadcaster.Unsubscribe(subID)
+	if startStop {
+		cancel() // Cancel polling and its external commands.
+		close(stopCh)
 	}
 	<-doneCh
+}
+
+// Stop sends the event-listener poison pill after polling has stopped. Closing
+// the FIFO event channel leaves buffered completion events ahead of the close,
+// and eventDoneCh joins queued or active handlers before returning.
+func (p *CIPoller) Stop() {
+	p.BeginStop()
+
+	p.mu.Lock()
+	if !p.stopping {
+		p.mu.Unlock()
+		return
+	}
+	eventDoneCh := p.eventDoneCh
+	subID := p.subID
+	startStop := !p.eventsStopping
+	if startStop {
+		p.eventsStopping = true
+	}
+	p.mu.Unlock()
+
+	if startStop && p.broadcaster != nil && subID != 0 {
+		p.broadcaster.Unsubscribe(subID)
+	}
 	<-eventDoneCh
+
+	p.mu.Lock()
+	p.stopping = false
+	p.mu.Unlock()
 }
 
 // HealthCheck returns whether the CI poller is healthy

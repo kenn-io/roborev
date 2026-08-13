@@ -555,9 +555,10 @@ func (s *Server) stopOnce0() error {
 	// Stop config watcher
 	s.configWatcher.Stop()
 
-	// Stop CI poller
+	// Stop new CI polling work. Keep its completion listener subscribed while
+	// active workers finish so their terminal events are still finalized.
 	if s.ciPoller != nil {
-		s.ciPoller.Stop()
+		s.ciPoller.BeginStop()
 	}
 
 	// Stop the panel sweep goroutine
@@ -565,6 +566,12 @@ func (s *Server) stopOnce0() error {
 
 	// Stop worker pool
 	s.workerPool.Stop()
+
+	// Workers cannot emit more completion events. Send the listener poison pill,
+	// drain its FIFO queue, and join any active CI post before teardown continues.
+	if s.ciPoller != nil {
+		s.ciPoller.Stop()
+	}
 
 	// Stop accepting mutations once workers have finished. Runtime discovery
 	// remains published until all completion work below is finalized.
