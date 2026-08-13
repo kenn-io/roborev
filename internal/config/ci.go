@@ -463,7 +463,7 @@ type RepoCIConfig struct {
 	Panel string `toml:"panel" comment:"Named [review.panels.X] panel for CI."`
 
 	// Reasoning overrides the reasoning level for CI reviews.
-	Reasoning string `toml:"reasoning" comment:"Override the CI reasoning level for this repo: fast, standard, medium, thorough, or maximum."`
+	Reasoning string `toml:"reasoning" comment:"Override the CI reasoning level for this repo. Legacy: fast, standard, thorough, maximum. Exact: low, medium, high, xhigh, max."`
 
 	// MinSeverity overrides the minimum severity filter for CI synthesis.
 	MinSeverity string `toml:"min_severity" comment:"Override the minimum CI severity included in synthesized output."`

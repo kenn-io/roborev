@@ -89,13 +89,15 @@ func (a *ClaudeAgent) WithSessionID(sessionID string) Agent {
 // claudeEffort maps ReasoningLevel to Claude Code's --effort flag values
 func (a *ClaudeAgent) claudeEffort() string {
 	switch a.Reasoning {
-	case ReasoningMaximum:
+	case ReasoningMaximum, ReasoningMax:
 		return "max"
-	case ReasoningThorough:
+	case ReasoningXHigh:
+		return "xhigh"
+	case ReasoningThorough, ReasoningHigh:
 		return "high"
 	case ReasoningMedium:
 		return "medium"
-	case ReasoningFast:
+	case ReasoningFast, ReasoningLow:
 		return "low"
 	default:
 		return "" // use claude default (standard = no override)

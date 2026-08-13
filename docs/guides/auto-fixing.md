@@ -97,7 +97,7 @@ those values directly with Git's `--author` and `--trailer` options. See
 | `--model <model>` | Model for agent |
 | `--max-iterations <n>` | Maximum fix iterations (default: 10) |
 | `--quiet` | Show elapsed time instead of agent output |
-| `--reasoning <level>` | Reasoning depth: fast, standard, thorough |
+| `--reasoning <level>` | Legacy or exact reasoning level; see [Reasoning Levels](/configuration/#reasoning-levels) |
 | `--fast` | Shorthand for `--reasoning fast` |
 | `--since <commit>` | Refine commits since a specific commit |
 | `--branch <name>` | Validate the current branch before refining (guardrail, does not switch branches) |

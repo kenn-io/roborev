@@ -9,6 +9,9 @@ All notable changes to roborev, grouped by minor release.
 
 **New features**
 
+- Reasoning accepts exact `low`, `medium`, `high`, `xhigh`, and `max` values and
+    forwards them unchanged to agents that support each tier. The legacy `fast`,
+    `standard`, `thorough`, and `maximum` mappings remain unchanged.
 - Pi agents accept global `[agent.pi] launch_args`, passed as tokenized
     arguments to every Pi invocation before roborev-managed workflow and safety
     options. This allows isolated classifier jobs to load extension-defined

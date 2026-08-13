@@ -13,7 +13,7 @@ import (
 type AnalyzeConfig struct {
 	Agent     string `toml:"agent" comment:"Agent override for this analysis type."`
 	Model     string `toml:"model" comment:"Model override for this analysis type."`
-	Reasoning string `toml:"reasoning" comment:"Reasoning level for this analysis type: fast, standard, medium, thorough, or maximum."`
+	Reasoning string `toml:"reasoning" comment:"Reasoning level for this analysis type. Legacy: fast, standard, thorough, maximum. Exact: low, medium, high, xhigh, max."`
 }
 
 // ResolveAnalyzeConfig resolves the agent/model/reasoning that should be sent

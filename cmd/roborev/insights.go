@@ -76,7 +76,7 @@ Examples:
 	cmd.Flags().StringVar(&since, "since", "30d", "time window for reviews (e.g., 7d, 30d, 90d)")
 	cmd.Flags().StringVar(&agentName, "agent", "", "agent to use for analysis (default: from config)")
 	cmd.Flags().StringVar(&model, "model", "", "model for agent")
-	cmd.Flags().StringVar(&reasoning, "reasoning", "", "reasoning level: fast, standard, or thorough")
+	cmd.Flags().StringVar(&reasoning, "reasoning", "", "reasoning level: legacy presets fast, standard, thorough, maximum; exact tiers low, medium, high, xhigh, max")
 	cmd.Flags().BoolVar(&wait, "wait", true, "wait for completion and display result")
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "output job info as JSON")
 	registerAgentCompletion(cmd)

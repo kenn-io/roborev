@@ -148,12 +148,12 @@ func TestParseReasoningLevel(t *testing.T) {
 		want  ReasoningLevel
 	}{
 		{"maximum", ReasoningMaximum},
-		{"max", ReasoningMaximum},
-		{"xhigh", ReasoningMaximum},
+		{"max", ReasoningMax},
+		{"xhigh", ReasoningXHigh},
 		{"thorough", ReasoningThorough},
-		{"high", ReasoningThorough},
+		{"high", ReasoningHigh},
 		{"fast", ReasoningFast},
-		{"low", ReasoningFast},
+		{"low", ReasoningLow},
 		{"medium", ReasoningMedium},
 		{"standard", ReasoningStandard},
 		{"", ReasoningStandard},
@@ -174,6 +174,11 @@ func TestCodexReasoningEffortMapping(t *testing.T) {
 		{ReasoningThorough, "high"},
 		{ReasoningFast, "low"},
 		{ReasoningStandard, ""},
+		{ReasoningLow, "low"},
+		{ReasoningMedium, "medium"},
+		{ReasoningHigh, "high"},
+		{ReasoningXHigh, "xhigh"},
+		{ReasoningMax, "max"},
 	}
 
 	for _, tt := range tests {
@@ -194,6 +199,10 @@ func TestClaudeEffortMapping(t *testing.T) {
 		{ReasoningMedium, "medium"},
 		{ReasoningFast, "low"},
 		{ReasoningStandard, ""},
+		{ReasoningLow, "low"},
+		{ReasoningHigh, "high"},
+		{ReasoningXHigh, "xhigh"},
+		{ReasoningMax, "max"},
 	}
 
 	for _, tt := range tests {
@@ -201,6 +210,95 @@ func TestClaudeEffortMapping(t *testing.T) {
 		claude, ok := a.(*ClaudeAgent)
 		require.True(t, ok, "expected ClaudeAgent, got %T", a)
 		assert.Equal(t, tt.want, claude.claudeEffort(), "claudeEffort(%q)", tt.level)
+	}
+}
+
+func TestOtherReasoningEffortMappings(t *testing.T) {
+	type effortCase struct {
+		level ReasoningLevel
+		want  string
+	}
+	tests := []struct {
+		name      string
+		mapEffort func(ReasoningLevel) string
+		levels    []effortCase
+	}{
+		{
+			name: "grok",
+			mapEffort: func(level ReasoningLevel) string {
+				return NewGrokAgent("").WithReasoning(level).(*GrokAgent).grokReasoningEffort()
+			},
+			levels: []effortCase{
+				{ReasoningMaximum, "max"},
+				{ReasoningThorough, "high"},
+				{ReasoningFast, "low"},
+				{ReasoningStandard, ""},
+				{ReasoningLow, "low"},
+				{ReasoningMedium, "medium"},
+				{ReasoningHigh, "high"},
+				{ReasoningXHigh, "xhigh"},
+				{ReasoningMax, "max"},
+			},
+		},
+		{
+			name: "droid",
+			mapEffort: func(level ReasoningLevel) string {
+				return NewDroidAgent("").WithReasoning(level).(*DroidAgent).droidReasoningEffort()
+			},
+			levels: []effortCase{
+				{ReasoningMaximum, "high"},
+				{ReasoningThorough, "high"},
+				{ReasoningFast, "low"},
+				{ReasoningStandard, ""},
+				{ReasoningLow, "low"},
+				{ReasoningMedium, "medium"},
+				{ReasoningHigh, "high"},
+				{ReasoningXHigh, ""},
+				{ReasoningMax, ""},
+			},
+		},
+		{
+			name: "kilo",
+			mapEffort: func(level ReasoningLevel) string {
+				return NewKiloAgent("").WithReasoning(level).(*KiloAgent).kiloVariant()
+			},
+			levels: []effortCase{
+				{ReasoningMaximum, "high"},
+				{ReasoningThorough, "high"},
+				{ReasoningFast, "minimal"},
+				{ReasoningStandard, ""},
+				{ReasoningLow, "low"},
+				{ReasoningMedium, "medium"},
+				{ReasoningHigh, "high"},
+				{ReasoningXHigh, "xhigh"},
+				{ReasoningMax, "max"},
+			},
+		},
+		{
+			name: "pi",
+			mapEffort: func(level ReasoningLevel) string {
+				return NewPiAgent("").WithReasoning(level).(*PiAgent).thinkingLevel()
+			},
+			levels: []effortCase{
+				{ReasoningMaximum, "high"},
+				{ReasoningThorough, "high"},
+				{ReasoningFast, "low"},
+				{ReasoningStandard, "medium"},
+				{ReasoningLow, "low"},
+				{ReasoningMedium, "medium"},
+				{ReasoningHigh, "high"},
+				{ReasoningXHigh, "xhigh"},
+				{ReasoningMax, "max"},
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			for _, level := range tt.levels {
+				assert.Equal(t, level.want, tt.mapEffort(level.level), "effort for %q", level.level)
+			}
+		})
 	}
 }
 

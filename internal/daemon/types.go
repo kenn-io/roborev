@@ -18,7 +18,7 @@ type EnqueueRequest struct {
 	Model        string   `json:"model,omitempty"`         // Model to use (for opencode: provider/model format)
 	DiffContent  string   `json:"diff_content,omitempty"`  // Pre-captured diff for dirty reviews
 	DirtyFiles   []string `json:"dirty_files,omitempty"`   // Unfiltered dirty file names for prompt metadata
-	Reasoning    string   `json:"reasoning,omitempty"`     // Reasoning level: thorough, standard, fast
+	Reasoning    string   `json:"reasoning,omitempty"`     // Legacy or exact reasoning level
 	ReviewType   string   `json:"review_type,omitempty"`   // Review type (e.g., "security") — changes system prompt
 	CustomPrompt string   `json:"custom_prompt,omitempty"` // Custom prompt for ad-hoc agent work
 	Agentic      bool     `json:"agentic,omitempty"`       // Enable agentic mode (allow file edits)

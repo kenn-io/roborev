@@ -175,7 +175,7 @@ To fix an existing analysis job, use: roborev fix <job_id>
 
 	cmd.Flags().StringVar(&agentName, "agent", "", "agent to use for analysis (default: from config)")
 	cmd.Flags().StringVar(&model, "model", "", "model for analysis agent")
-	cmd.Flags().StringVar(&reasoning, "reasoning", "", "reasoning level: fast, standard, medium, thorough, or maximum")
+	cmd.Flags().StringVar(&reasoning, "reasoning", "", "reasoning level: legacy presets fast, standard, thorough, maximum; exact tiers low, medium, high, xhigh, max")
 	cmd.Flags().BoolVar(&wait, "wait", false, "wait for job to complete and show result")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "suppress output (just enqueue)")
 	cmd.Flags().BoolVar(&listTypes, "list", false, "list available analysis types")

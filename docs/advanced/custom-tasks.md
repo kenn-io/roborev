@@ -103,7 +103,7 @@ cat review-checklist.txt | roborev run --wait
 |------|-------------|
 | `--wait` | Wait for task to complete and show result |
 | `--agent` | Agent to use (default: from config) |
-| `--reasoning` | Reasoning level: `fast`, `standard`, or `thorough` |
+| `--reasoning` | Legacy or exact reasoning level; see [Reasoning Levels](/configuration/#reasoning-levels) |
 | `--no-context` | Don't include repository context in prompt |
 | `--agentic` | Enable agentic mode (allow file edits and commands) |
 | `--yolo` | Alias for `--agentic` |

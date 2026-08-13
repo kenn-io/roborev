@@ -58,9 +58,11 @@ func (a *DroidAgent) WithModel(model string) Agent {
 // droidReasoningEffort maps ReasoningLevel to droid-specific effort values
 func (a *DroidAgent) droidReasoningEffort() string {
 	switch a.Reasoning {
-	case ReasoningMaximum, ReasoningThorough:
+	case ReasoningMaximum, ReasoningThorough, ReasoningHigh:
 		return "high"
-	case ReasoningFast:
+	case ReasoningMedium:
+		return "medium"
+	case ReasoningFast, ReasoningLow:
 		return "low"
 	default:
 		return "" // use droid default

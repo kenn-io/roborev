@@ -129,10 +129,14 @@ func (a *PiAgent) buildArgs(sessionPath string) []string {
 
 func (a *PiAgent) thinkingLevel() string {
 	switch a.Reasoning {
-	case ReasoningMaximum, ReasoningThorough:
+	case ReasoningMaximum, ReasoningThorough, ReasoningHigh:
 		return "high"
-	case ReasoningFast:
+	case ReasoningFast, ReasoningLow:
 		return "low"
+	case ReasoningXHigh:
+		return "xhigh"
+	case ReasoningMax:
+		return "max"
 	default: // Standard
 		return "medium"
 	}

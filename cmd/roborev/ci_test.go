@@ -1307,6 +1307,12 @@ func TestResolveCIReasoning(t *testing.T) {
 	t.Run("explicit flag wins", func(t *testing.T) {
 		got, err := config.ResolveCIReasoning("high", nil, nil)
 		require.NoError(t, err)
+		assert.Equal(t, "high", got)
+	})
+
+	t.Run("legacy explicit flag is unchanged", func(t *testing.T) {
+		got, err := config.ResolveCIReasoning("thorough", nil, nil)
+		require.NoError(t, err)
 		assert.Equal(t, "thorough", got)
 	})
 

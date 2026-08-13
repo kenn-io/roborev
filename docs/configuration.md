@@ -94,7 +94,8 @@ review_context_count = 5   # Recent reviews to include as context
 display_name = "backend"   # Custom name shown in TUI (optional)
 excluded_branches = ["wip", "scratch"]  # Branches to skip reviews on
 
-# Reasoning levels: thorough, standard, fast
+# Legacy levels: fast, standard, thorough, maximum
+# Exact agent efforts: low, medium, high, xhigh, max
 review_reasoning = "thorough"  # For code reviews (default: thorough)
 refine_reasoning = "standard"  # For refine command (default: standard)
 
@@ -135,8 +136,8 @@ max_chars = 50000
 | `post_commit_review` | string | Post-commit hook behavior: `"commit"` (default) or `"branch"` |
 | `hook_timeout_seconds` | int | Override the post-commit hook request timeout for this repo, in seconds. Useful for large repos where the daemon's enqueue git calls are slow. Read filesystem-only from this checkout's `.roborev.toml` (a linked worktree without its own file does not inherit the main checkout's value). Zero or negative values inherit the global / platform default |
 | `auto_close_passing_reviews` | bool | Automatically close reviews that pass with no findings |
-| `review_reasoning` | string | Reasoning level for reviews: thorough, standard, fast |
-| `refine_reasoning` | string | Reasoning level for refine: thorough, standard, fast |
+| `review_reasoning` | string | Reasoning level for reviews. See [Reasoning Levels](#reasoning-levels) |
+| `refine_reasoning` | string | Reasoning level for refine. See [Reasoning Levels](#reasoning-levels) |
 | `review_min_severity` | string | Minimum severity for reviews: `critical`, `high`, `medium`, or `low`. Cascades: CLI flag > repo config > global config |
 | `fix_min_severity` | string | Minimum severity for `fix`: `critical`, `high`, `medium`, or `low` |
 | `refine_min_severity` | string | Minimum severity for `refine`: `critical`, `high`, `medium`, or `low` |
@@ -381,7 +382,11 @@ reasoning level:
 
 - `{workflow}_model_{level}` or `{workflow}_agent_{level}`
 - `workflow` is `review`, `refine`, `fix`, `security`, or `design`
-- `level` is `thorough`, `standard`, or `fast`
+- `level` is a legacy or exact value from [Reasoning Levels](#reasoning-levels)
+
+For compatibility, exact `low`, `high`, `xhigh`, and `max` routing falls back to
+the corresponding `fast`, `thorough`, or `maximum` key when an exact key is not
+configured.
 
 The fallback hierarchy for each workflow is:
 
@@ -1360,7 +1365,7 @@ to a design-review job or marks it skipped accordingly.
 |--------|------|---------|-------------|
 | `classify_agent` | string | `claude-code` | Agent for the routing classifier. Must implement structured-output (`SchemaAgent`) capability |
 | `classify_model` | string | agent default | Model for the classifier agent |
-| `classify_reasoning` | string | `fast` | Reasoning level: `fast`, `standard`, `medium`, `thorough`, or `maximum` |
+| `classify_reasoning` | string | `fast` | Legacy or exact value from [Reasoning Levels](#reasoning-levels) |
 | `classify_backup_agent` | string | - | Fallback classifier agent on quota exhaustion or failure |
 | `classify_backup_model` | string | - | Fallback classifier model |
 
@@ -1399,24 +1404,32 @@ when the feature is disabled across all repos.
 
 ## Reasoning Levels
 
-Reasoning levels control how deeply the AI analyzes code.
+Reasoning levels control how deeply the AI analyzes code. The exact values
+`low`, `medium`, `high`, `xhigh`, and `max` request the same-named native effort
+from agents that support it. An unsupported exact tier is left unset rather than
+collapsed into a different tier.
 
-| Level | Description | Best For |
-|-------|-------------|----------|
-| `maximum` | Deepest analysis; maps to Codex `xhigh` reasoning | Complex reviews requiring maximum depth |
-| `thorough` | Deep analysis with extended thinking | Code reviews (default) |
-| `standard` | Balanced analysis | Refine command (default) |
-| `fast` | Quick responses | Rapid feedback |
+The legacy values keep their established per-agent behavior:
 
-`maximum` is accepted as `max` or `xhigh` on the command line. For agents
-without an xhigh equivalent (Droid, Kilo, Pi), it maps to their highest
-available level (same as thorough).
+| Legacy value | Codex | Claude | Grok | Droid | Kilo | Pi |
+|--------------|-------|--------|------|-------|------|----|
+| `fast` | `low` | `low` | `low` | `low` | `minimal` | `low` |
+| `standard` | default | default | default | default | default | `medium` |
+| `thorough` | `high` | `high` | `high` | `high` | `high` | `high` |
+| `maximum` | `xhigh` | `max` | `max` | `high` | `high` | `high` |
+
+Native support is agent-specific. Codex, Claude, Grok, and Pi accept all five
+exact values. Droid accepts `low`, `medium`, and `high`. Kilo passes exact
+values through as model variants, so availability depends on the selected
+provider and model. Agents without a reasoning flag ignore the level while
+workflow-specific agent and model routing still uses its exact name.
 
 Set per-command with `--reasoning`, or per-repo in `.roborev.toml`:
 
 ```bash
 roborev review --reasoning fast      # Quick review
 roborev refine --reasoning thorough  # Careful fixes
+roborev review --reasoning xhigh     # Exact native xhigh effort
 ```
 
 ## Authentication

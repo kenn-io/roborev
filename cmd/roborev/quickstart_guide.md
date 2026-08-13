@@ -115,5 +115,5 @@ default_agent = "codex"
 default_model = "gpt-5-codex"
 ```
 
-For per-workflow routing and reasoning levels (fast / standard / thorough), see
+For per-workflow routing and legacy or exact reasoning levels, see
 https://roborev.io/configuration/.

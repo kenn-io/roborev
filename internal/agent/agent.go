@@ -24,24 +24,50 @@ const (
 	ReasoningStandard ReasoningLevel = "standard"
 	// ReasoningFast uses minimal reasoning for quick responses
 	ReasoningFast ReasoningLevel = "fast"
+	// ReasoningLow requests the agent's native low effort.
+	ReasoningLow ReasoningLevel = "low"
+	// ReasoningHigh requests the agent's native high effort.
+	ReasoningHigh ReasoningLevel = "high"
+	// ReasoningXHigh requests the agent's native xhigh effort.
+	ReasoningXHigh ReasoningLevel = "xhigh"
+	// ReasoningMax requests the agent's native max effort.
+	ReasoningMax ReasoningLevel = "max"
 )
 
 // ReasoningLevels returns the canonical reasoning level names.
 func ReasoningLevels() []string {
-	return []string{string(ReasoningFast), string(ReasoningStandard), string(ReasoningMedium), string(ReasoningThorough), string(ReasoningMaximum)}
+	return []string{
+		string(ReasoningFast),
+		string(ReasoningStandard),
+		string(ReasoningThorough),
+		string(ReasoningMaximum),
+		string(ReasoningLow),
+		string(ReasoningMedium),
+		string(ReasoningHigh),
+		string(ReasoningXHigh),
+		string(ReasoningMax),
+	}
 }
 
 // ParseReasoningLevel converts a string to ReasoningLevel, defaulting to standard
 func ParseReasoningLevel(s string) ReasoningLevel {
 	switch s {
-	case "maximum", "max", "xhigh":
+	case "maximum":
 		return ReasoningMaximum
-	case "thorough", "high":
+	case "thorough":
 		return ReasoningThorough
+	case "high":
+		return ReasoningHigh
 	case "medium":
 		return ReasoningMedium
-	case "fast", "low":
+	case "fast":
 		return ReasoningFast
+	case "low":
+		return ReasoningLow
+	case "xhigh":
+		return ReasoningXHigh
+	case "max":
+		return ReasoningMax
 	case "standard", "":
 		return ReasoningStandard
 	default:

@@ -126,9 +126,9 @@ type Config struct {
 	JobTimeoutMinutes          int    `toml:"job_timeout_minutes"`
 	HookTimeoutSeconds         int    `toml:"hook_timeout_seconds" comment:"Post-commit hook request timeout in seconds. 0 or negative uses the platform default (3 on most systems, 30 on Windows where git subprocess spawns are slow)."`
 	AgentQuotaCooldown         string `toml:"agent_quota_cooldown" comment:"Maximum daemon-wide cooldown after an agent quota error, as a Go duration such as 30m."`
-	ReviewReasoning            string `toml:"review_reasoning" comment:"Default reasoning level for reviews: fast, standard, medium, thorough, or maximum."`
-	RefineReasoning            string `toml:"refine_reasoning" comment:"Default reasoning level for refine: fast, standard, medium, thorough, or maximum."`
-	FixReasoning               string `toml:"fix_reasoning" comment:"Default reasoning level for fix: fast, standard, medium, thorough, or maximum."`
+	ReviewReasoning            string `toml:"review_reasoning" comment:"Default reasoning for reviews. Legacy: fast, standard, thorough, maximum. Exact: low, medium, high, xhigh, max."`
+	RefineReasoning            string `toml:"refine_reasoning" comment:"Default reasoning for refine. Legacy: fast, standard, thorough, maximum. Exact: low, medium, high, xhigh, max."`
+	FixReasoning               string `toml:"fix_reasoning" comment:"Default reasoning for fix. Legacy: fast, standard, thorough, maximum. Exact: low, medium, high, xhigh, max."`
 
 	// Analysis-type-specific agent/model configuration
 	Analyze map[string]AnalyzeConfig `toml:"analyze"`
@@ -136,69 +136,109 @@ type Config struct {
 	// Workflow-specific agent/model configuration
 	ReviewAgent           string `toml:"review_agent"`
 	ReviewAgentFast       string `toml:"review_agent_fast"`
+	ReviewAgentLow        string `toml:"review_agent_low"`
 	ReviewAgentStandard   string `toml:"review_agent_standard"`
 	ReviewAgentMedium     string `toml:"review_agent_medium"`
 	ReviewAgentThorough   string `toml:"review_agent_thorough"`
+	ReviewAgentHigh       string `toml:"review_agent_high"`
+	ReviewAgentXHigh      string `toml:"review_agent_xhigh"`
 	ReviewAgentMaximum    string `toml:"review_agent_maximum"`
+	ReviewAgentMax        string `toml:"review_agent_max"`
 	RefineAgent           string `toml:"refine_agent"`
 	RefineAgentFast       string `toml:"refine_agent_fast"`
+	RefineAgentLow        string `toml:"refine_agent_low"`
 	RefineAgentStandard   string `toml:"refine_agent_standard"`
 	RefineAgentMedium     string `toml:"refine_agent_medium"`
 	RefineAgentThorough   string `toml:"refine_agent_thorough"`
+	RefineAgentHigh       string `toml:"refine_agent_high"`
+	RefineAgentXHigh      string `toml:"refine_agent_xhigh"`
 	RefineAgentMaximum    string `toml:"refine_agent_maximum"`
+	RefineAgentMax        string `toml:"refine_agent_max"`
 	ReviewModel           string `toml:"review_model"`
 	ReviewModelFast       string `toml:"review_model_fast"`
+	ReviewModelLow        string `toml:"review_model_low"`
 	ReviewModelStandard   string `toml:"review_model_standard"`
 	ReviewModelMedium     string `toml:"review_model_medium"`
 	ReviewModelThorough   string `toml:"review_model_thorough"`
+	ReviewModelHigh       string `toml:"review_model_high"`
+	ReviewModelXHigh      string `toml:"review_model_xhigh"`
 	ReviewModelMaximum    string `toml:"review_model_maximum"`
+	ReviewModelMax        string `toml:"review_model_max"`
 	RefineModel           string `toml:"refine_model"`
 	RefineModelFast       string `toml:"refine_model_fast"`
+	RefineModelLow        string `toml:"refine_model_low"`
 	RefineModelStandard   string `toml:"refine_model_standard"`
 	RefineModelMedium     string `toml:"refine_model_medium"`
 	RefineModelThorough   string `toml:"refine_model_thorough"`
+	RefineModelHigh       string `toml:"refine_model_high"`
+	RefineModelXHigh      string `toml:"refine_model_xhigh"`
 	RefineModelMaximum    string `toml:"refine_model_maximum"`
+	RefineModelMax        string `toml:"refine_model_max"`
 	FixAgent              string `toml:"fix_agent"`
 	FixAgentFast          string `toml:"fix_agent_fast"`
+	FixAgentLow           string `toml:"fix_agent_low"`
 	FixAgentStandard      string `toml:"fix_agent_standard"`
 	FixAgentMedium        string `toml:"fix_agent_medium"`
 	FixAgentThorough      string `toml:"fix_agent_thorough"`
+	FixAgentHigh          string `toml:"fix_agent_high"`
+	FixAgentXHigh         string `toml:"fix_agent_xhigh"`
 	FixAgentMaximum       string `toml:"fix_agent_maximum"`
+	FixAgentMax           string `toml:"fix_agent_max"`
 	FixModel              string `toml:"fix_model"`
 	FixModelFast          string `toml:"fix_model_fast"`
+	FixModelLow           string `toml:"fix_model_low"`
 	FixModelStandard      string `toml:"fix_model_standard"`
 	FixModelMedium        string `toml:"fix_model_medium"`
 	FixModelThorough      string `toml:"fix_model_thorough"`
+	FixModelHigh          string `toml:"fix_model_high"`
+	FixModelXHigh         string `toml:"fix_model_xhigh"`
 	FixModelMaximum       string `toml:"fix_model_maximum"`
+	FixModelMax           string `toml:"fix_model_max"`
 	SecurityAgent         string `toml:"security_agent"`
 	SecurityAgentFast     string `toml:"security_agent_fast"`
+	SecurityAgentLow      string `toml:"security_agent_low"`
 	SecurityAgentStandard string `toml:"security_agent_standard"`
 	SecurityAgentMedium   string `toml:"security_agent_medium"`
 	SecurityAgentThorough string `toml:"security_agent_thorough"`
+	SecurityAgentHigh     string `toml:"security_agent_high"`
+	SecurityAgentXHigh    string `toml:"security_agent_xhigh"`
 	SecurityAgentMaximum  string `toml:"security_agent_maximum"`
+	SecurityAgentMax      string `toml:"security_agent_max"`
 	SecurityModel         string `toml:"security_model"`
 	SecurityModelFast     string `toml:"security_model_fast"`
+	SecurityModelLow      string `toml:"security_model_low"`
 	SecurityModelStandard string `toml:"security_model_standard"`
 	SecurityModelMedium   string `toml:"security_model_medium"`
 	SecurityModelThorough string `toml:"security_model_thorough"`
+	SecurityModelHigh     string `toml:"security_model_high"`
+	SecurityModelXHigh    string `toml:"security_model_xhigh"`
 	SecurityModelMaximum  string `toml:"security_model_maximum"`
+	SecurityModelMax      string `toml:"security_model_max"`
 	DesignAgent           string `toml:"design_agent"`
 	DesignAgentFast       string `toml:"design_agent_fast"`
+	DesignAgentLow        string `toml:"design_agent_low"`
 	DesignAgentStandard   string `toml:"design_agent_standard"`
 	DesignAgentMedium     string `toml:"design_agent_medium"`
 	DesignAgentThorough   string `toml:"design_agent_thorough"`
+	DesignAgentHigh       string `toml:"design_agent_high"`
+	DesignAgentXHigh      string `toml:"design_agent_xhigh"`
 	DesignAgentMaximum    string `toml:"design_agent_maximum"`
+	DesignAgentMax        string `toml:"design_agent_max"`
 	DesignModel           string `toml:"design_model"`
 	DesignModelFast       string `toml:"design_model_fast"`
+	DesignModelLow        string `toml:"design_model_low"`
 	DesignModelStandard   string `toml:"design_model_standard"`
 	DesignModelMedium     string `toml:"design_model_medium"`
 	DesignModelThorough   string `toml:"design_model_thorough"`
+	DesignModelHigh       string `toml:"design_model_high"`
+	DesignModelXHigh      string `toml:"design_model_xhigh"`
 	DesignModelMaximum    string `toml:"design_model_maximum"`
+	DesignModelMax        string `toml:"design_model_max"`
 
 	// Classify workflow (routing classifier for auto design review)
 	ClassifyAgent       string `toml:"classify_agent" comment:"Agent for the design-review routing classifier. Must implement SchemaAgent capability."`
 	ClassifyModel       string `toml:"classify_model" comment:"Model for the classifier agent. Empty = agent default."`
-	ClassifyReasoning   string `toml:"classify_reasoning" comment:"Reasoning level for the classifier: fast, standard, medium, thorough, or maximum."`
+	ClassifyReasoning   string `toml:"classify_reasoning" comment:"Reasoning for the classifier. Legacy: fast, standard, thorough, maximum. Exact: low, medium, high, xhigh, max."`
 	ClassifyBackupAgent string `toml:"classify_backup_agent" comment:"Fallback classifier agent on quota exhaustion / failure."`
 	ClassifyBackupModel string `toml:"classify_backup_model" comment:"Fallback classifier model."`
 
@@ -440,9 +480,9 @@ type RepoConfig struct {
 	ExcludedBranches                []string `toml:"excluded_branches" comment:"Branches that should be skipped for automatic review in this repo."`
 	ExcludedCommitPatterns          []string `toml:"excluded_commit_patterns" comment:"Commit message substrings that should skip review for this repo."`
 	DisplayName                     string   `toml:"display_name" comment:"Display name shown for this repo in the TUI and output."`
-	ReviewReasoning                 string   `toml:"review_reasoning" comment:"Reasoning level for reviews in this repo: fast, standard, medium, thorough, or maximum."`
-	RefineReasoning                 string   `toml:"refine_reasoning" comment:"Reasoning level for refine in this repo: fast, standard, medium, thorough, or maximum."`
-	FixReasoning                    string   `toml:"fix_reasoning" comment:"Reasoning level for fix in this repo: fast, standard, medium, thorough, or maximum."`
+	ReviewReasoning                 string   `toml:"review_reasoning" comment:"Reasoning for reviews in this repo. Legacy: fast, standard, thorough, maximum. Exact: low, medium, high, xhigh, max."`
+	RefineReasoning                 string   `toml:"refine_reasoning" comment:"Reasoning for refine in this repo. Legacy: fast, standard, thorough, maximum. Exact: low, medium, high, xhigh, max."`
+	FixReasoning                    string   `toml:"fix_reasoning" comment:"Reasoning for fix in this repo. Legacy: fast, standard, thorough, maximum. Exact: low, medium, high, xhigh, max."`
 	FixMinSeverity                  string   `toml:"fix_min_severity" comment:"Minimum severity for fix in this repo: critical, high, medium, or low."`     // Minimum severity for fix: critical, high, medium, low
 	RefineMinSeverity               string   `toml:"refine_min_severity" comment:"Minimum severity for refine in this repo: critical, high, medium, low."`  // Minimum severity for refine: critical, high, medium, low
 	ReviewMinSeverity               string   `toml:"review_min_severity" comment:"Minimum severity for reviews in this repo: critical, high, medium, low."` // Minimum severity for review: critical, high, medium, low
@@ -469,64 +509,104 @@ type RepoConfig struct {
 	// Workflow-specific agent/model configuration
 	ReviewAgent           string `toml:"review_agent" comment:"Agent override for standard review in this repo."`
 	ReviewAgentFast       string `toml:"review_agent_fast" comment:"Agent override for fast review in this repo."`
+	ReviewAgentLow        string `toml:"review_agent_low" comment:"Agent override for low review in this repo."`
 	ReviewAgentStandard   string `toml:"review_agent_standard" comment:"Agent override for standard review in this repo."`
 	ReviewAgentMedium     string `toml:"review_agent_medium" comment:"Agent override for medium review in this repo."`
 	ReviewAgentThorough   string `toml:"review_agent_thorough" comment:"Agent override for thorough review in this repo."`
+	ReviewAgentHigh       string `toml:"review_agent_high" comment:"Agent override for high review in this repo."`
+	ReviewAgentXHigh      string `toml:"review_agent_xhigh" comment:"Agent override for xhigh review in this repo."`
 	ReviewAgentMaximum    string `toml:"review_agent_maximum" comment:"Agent override for maximum review in this repo."`
+	ReviewAgentMax        string `toml:"review_agent_max" comment:"Agent override for max review in this repo."`
 	RefineAgent           string `toml:"refine_agent" comment:"Agent override for refine in this repo."`
 	RefineAgentFast       string `toml:"refine_agent_fast" comment:"Agent override for fast refine in this repo."`
+	RefineAgentLow        string `toml:"refine_agent_low" comment:"Agent override for low refine in this repo."`
 	RefineAgentStandard   string `toml:"refine_agent_standard" comment:"Agent override for standard refine in this repo."`
 	RefineAgentMedium     string `toml:"refine_agent_medium" comment:"Agent override for medium refine in this repo."`
 	RefineAgentThorough   string `toml:"refine_agent_thorough" comment:"Agent override for thorough refine in this repo."`
+	RefineAgentHigh       string `toml:"refine_agent_high" comment:"Agent override for high refine in this repo."`
+	RefineAgentXHigh      string `toml:"refine_agent_xhigh" comment:"Agent override for xhigh refine in this repo."`
 	RefineAgentMaximum    string `toml:"refine_agent_maximum" comment:"Agent override for maximum refine in this repo."`
+	RefineAgentMax        string `toml:"refine_agent_max" comment:"Agent override for max refine in this repo."`
 	ReviewModel           string `toml:"review_model" comment:"Model override for standard review in this repo."`
 	ReviewModelFast       string `toml:"review_model_fast" comment:"Model override for fast review in this repo."`
+	ReviewModelLow        string `toml:"review_model_low" comment:"Model override for low review in this repo."`
 	ReviewModelStandard   string `toml:"review_model_standard" comment:"Model override for standard review in this repo."`
 	ReviewModelMedium     string `toml:"review_model_medium" comment:"Model override for medium review in this repo."`
 	ReviewModelThorough   string `toml:"review_model_thorough" comment:"Model override for thorough review in this repo."`
+	ReviewModelHigh       string `toml:"review_model_high" comment:"Model override for high review in this repo."`
+	ReviewModelXHigh      string `toml:"review_model_xhigh" comment:"Model override for xhigh review in this repo."`
 	ReviewModelMaximum    string `toml:"review_model_maximum" comment:"Model override for maximum review in this repo."`
+	ReviewModelMax        string `toml:"review_model_max" comment:"Model override for max review in this repo."`
 	RefineModel           string `toml:"refine_model" comment:"Model override for standard refine in this repo."`
 	RefineModelFast       string `toml:"refine_model_fast" comment:"Model override for fast refine in this repo."`
+	RefineModelLow        string `toml:"refine_model_low" comment:"Model override for low refine in this repo."`
 	RefineModelStandard   string `toml:"refine_model_standard" comment:"Model override for standard refine in this repo."`
 	RefineModelMedium     string `toml:"refine_model_medium" comment:"Model override for medium refine in this repo."`
 	RefineModelThorough   string `toml:"refine_model_thorough" comment:"Model override for thorough refine in this repo."`
+	RefineModelHigh       string `toml:"refine_model_high" comment:"Model override for high refine in this repo."`
+	RefineModelXHigh      string `toml:"refine_model_xhigh" comment:"Model override for xhigh refine in this repo."`
 	RefineModelMaximum    string `toml:"refine_model_maximum" comment:"Model override for maximum refine in this repo."`
+	RefineModelMax        string `toml:"refine_model_max" comment:"Model override for max refine in this repo."`
 	FixAgent              string `toml:"fix_agent" comment:"Agent override for fix in this repo."`
 	FixAgentFast          string `toml:"fix_agent_fast" comment:"Agent override for fast fix in this repo."`
+	FixAgentLow           string `toml:"fix_agent_low" comment:"Agent override for low fix in this repo."`
 	FixAgentStandard      string `toml:"fix_agent_standard" comment:"Agent override for standard fix in this repo."`
 	FixAgentMedium        string `toml:"fix_agent_medium" comment:"Agent override for medium fix in this repo."`
 	FixAgentThorough      string `toml:"fix_agent_thorough" comment:"Agent override for thorough fix in this repo."`
+	FixAgentHigh          string `toml:"fix_agent_high" comment:"Agent override for high fix in this repo."`
+	FixAgentXHigh         string `toml:"fix_agent_xhigh" comment:"Agent override for xhigh fix in this repo."`
 	FixAgentMaximum       string `toml:"fix_agent_maximum" comment:"Agent override for maximum fix in this repo."`
+	FixAgentMax           string `toml:"fix_agent_max" comment:"Agent override for max fix in this repo."`
 	FixModel              string `toml:"fix_model" comment:"Model override for standard fix in this repo."`
 	FixModelFast          string `toml:"fix_model_fast" comment:"Model override for fast fix in this repo."`
+	FixModelLow           string `toml:"fix_model_low" comment:"Model override for low fix in this repo."`
 	FixModelStandard      string `toml:"fix_model_standard" comment:"Model override for standard fix in this repo."`
 	FixModelMedium        string `toml:"fix_model_medium" comment:"Model override for medium fix in this repo."`
 	FixModelThorough      string `toml:"fix_model_thorough" comment:"Model override for thorough fix in this repo."`
+	FixModelHigh          string `toml:"fix_model_high" comment:"Model override for high fix in this repo."`
+	FixModelXHigh         string `toml:"fix_model_xhigh" comment:"Model override for xhigh fix in this repo."`
 	FixModelMaximum       string `toml:"fix_model_maximum" comment:"Model override for maximum fix in this repo."`
+	FixModelMax           string `toml:"fix_model_max" comment:"Model override for max fix in this repo."`
 	SecurityAgent         string `toml:"security_agent" comment:"Agent override for security review in this repo."`
 	SecurityAgentFast     string `toml:"security_agent_fast" comment:"Agent override for fast security review in this repo."`
+	SecurityAgentLow      string `toml:"security_agent_low" comment:"Agent override for low security review in this repo."`
 	SecurityAgentStandard string `toml:"security_agent_standard" comment:"Agent override for standard security review in this repo."`
 	SecurityAgentMedium   string `toml:"security_agent_medium" comment:"Agent override for medium security review in this repo."`
 	SecurityAgentThorough string `toml:"security_agent_thorough" comment:"Agent override for thorough security review in this repo."`
+	SecurityAgentHigh     string `toml:"security_agent_high" comment:"Agent override for high security review in this repo."`
+	SecurityAgentXHigh    string `toml:"security_agent_xhigh" comment:"Agent override for xhigh security review in this repo."`
 	SecurityAgentMaximum  string `toml:"security_agent_maximum" comment:"Agent override for maximum security review in this repo."`
+	SecurityAgentMax      string `toml:"security_agent_max" comment:"Agent override for max security review in this repo."`
 	SecurityModel         string `toml:"security_model" comment:"Model override for standard security review in this repo."`
 	SecurityModelFast     string `toml:"security_model_fast" comment:"Model override for fast security review in this repo."`
+	SecurityModelLow      string `toml:"security_model_low" comment:"Model override for low security review in this repo."`
 	SecurityModelStandard string `toml:"security_model_standard" comment:"Model override for standard security review in this repo."`
 	SecurityModelMedium   string `toml:"security_model_medium" comment:"Model override for medium security review in this repo."`
 	SecurityModelThorough string `toml:"security_model_thorough" comment:"Model override for thorough security review in this repo."`
+	SecurityModelHigh     string `toml:"security_model_high" comment:"Model override for high security review in this repo."`
+	SecurityModelXHigh    string `toml:"security_model_xhigh" comment:"Model override for xhigh security review in this repo."`
 	SecurityModelMaximum  string `toml:"security_model_maximum" comment:"Model override for maximum security review in this repo."`
+	SecurityModelMax      string `toml:"security_model_max" comment:"Model override for max security review in this repo."`
 	DesignAgent           string `toml:"design_agent" comment:"Agent override for design review in this repo."`
 	DesignAgentFast       string `toml:"design_agent_fast" comment:"Agent override for fast design review in this repo."`
+	DesignAgentLow        string `toml:"design_agent_low" comment:"Agent override for low design review in this repo."`
 	DesignAgentStandard   string `toml:"design_agent_standard" comment:"Agent override for standard design review in this repo."`
 	DesignAgentMedium     string `toml:"design_agent_medium" comment:"Agent override for medium design review in this repo."`
 	DesignAgentThorough   string `toml:"design_agent_thorough" comment:"Agent override for thorough design review in this repo."`
+	DesignAgentHigh       string `toml:"design_agent_high" comment:"Agent override for high design review in this repo."`
+	DesignAgentXHigh      string `toml:"design_agent_xhigh" comment:"Agent override for xhigh design review in this repo."`
 	DesignAgentMaximum    string `toml:"design_agent_maximum" comment:"Agent override for maximum design review in this repo."`
+	DesignAgentMax        string `toml:"design_agent_max" comment:"Agent override for max design review in this repo."`
 	DesignModel           string `toml:"design_model" comment:"Model override for standard design review in this repo."`
 	DesignModelFast       string `toml:"design_model_fast" comment:"Model override for fast design review in this repo."`
+	DesignModelLow        string `toml:"design_model_low" comment:"Model override for low design review in this repo."`
 	DesignModelStandard   string `toml:"design_model_standard" comment:"Model override for standard design review in this repo."`
 	DesignModelMedium     string `toml:"design_model_medium" comment:"Model override for medium design review in this repo."`
 	DesignModelThorough   string `toml:"design_model_thorough" comment:"Model override for thorough design review in this repo."`
+	DesignModelHigh       string `toml:"design_model_high" comment:"Model override for high design review in this repo."`
+	DesignModelXHigh      string `toml:"design_model_xhigh" comment:"Model override for xhigh design review in this repo."`
 	DesignModelMaximum    string `toml:"design_model_maximum" comment:"Model override for maximum design review in this repo."`
+	DesignModelMax        string `toml:"design_model_max" comment:"Model override for max design review in this repo."`
 
 	// Classify workflow (per-repo overrides)
 	ClassifyAgent       string `toml:"classify_agent" comment:"Override classifier agent for this repo."`

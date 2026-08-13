@@ -78,7 +78,7 @@ type ReviewJob struct {
 	Provider          string     `json:"provider,omitempty"`           // Effective provider for this run (e.g., anthropic, openai)
 	RequestedModel    string     `json:"requested_model,omitempty"`    // Explicitly requested model; empty means reevaluate on rerun
 	RequestedProvider string     `json:"requested_provider,omitempty"` // Explicitly requested provider; empty means reevaluate on rerun
-	Reasoning         string     `json:"reasoning,omitempty"`          // thorough, standard, fast (default: thorough)
+	Reasoning         string     `json:"reasoning,omitempty"`          // Legacy or exact reasoning level (default: thorough)
 	JobType           string     `json:"job_type"`                     // one of the JobType* constants above
 	Status            JobStatus  `json:"status"`
 	EnqueuedAt        time.Time  `json:"enqueued_at"`

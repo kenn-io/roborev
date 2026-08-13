@@ -2105,6 +2105,18 @@ func TestResolveAgentForWorkflow(t *testing.T) {
 		{"medium global level-specific", "", nil, &Config{ReviewAgentMedium: "claude"}, "review", "medium", "claude"},
 		{"medium falls back to workflow", "", M{"review_agent": "claude"}, nil, "review", "medium", "claude"},
 		{"medium falls back to generic", "", M{"agent": "claude"}, nil, "review", "medium", "claude"},
+
+		// Exact native levels
+		{"low repo level-specific", "", M{"review_agent_low": "claude"}, nil, "review", "low", "claude"},
+		{"low global level-specific", "", nil, &Config{ReviewAgentLow: "claude"}, "review", "low", "claude"},
+		{"high repo level-specific", "", M{"review_agent_high": "claude"}, nil, "review", "high", "claude"},
+		{"xhigh global level-specific", "", nil, &Config{ReviewAgentXHigh: "claude"}, "review", "xhigh", "claude"},
+		{"max repo level-specific", "", M{"review_agent_max": "claude"}, nil, "review", "max", "claude"},
+		{"low falls back to legacy fast key", "", M{"review_agent_fast": "claude"}, nil, "review", "low", "claude"},
+		{"high falls back to legacy thorough key", "", nil, &Config{ReviewAgentThorough: "claude"}, "review", "high", "claude"},
+		{"xhigh falls back to legacy maximum key", "", M{"review_agent_maximum": "claude"}, nil, "review", "xhigh", "claude"},
+		{"max falls back to legacy maximum key", "", nil, &Config{ReviewAgentMaximum: "claude"}, "review", "max", "claude"},
+		{"exact key overrides legacy fallback", "", M{"review_agent_low": "droid", "review_agent_fast": "claude"}, nil, "review", "low", "droid"},
 	}
 
 	for _, tt := range tests {
@@ -2398,6 +2410,13 @@ func TestResolveModelForWorkflow(t *testing.T) {
 		{"design level-specific model", "", M{"design_model": "gpt-4", "design_model_fast": "claude-3"}, nil, "design", "fast", "claude-3"},
 		{"design falls back to generic model", "", M{"model": "gpt-4"}, nil, "design", "fast", "gpt-4"},
 		{"design isolated from review model", "", M{"review_model": "gpt-4"}, nil, "design", "fast", ""},
+
+		// Exact native levels
+		{"low repo level-specific", "", M{"review_model_low": "gpt-low"}, nil, "review", "low", "gpt-low"},
+		{"high global level-specific", "", nil, &Config{ReviewModelHigh: "gpt-high"}, "review", "high", "gpt-high"},
+		{"xhigh repo level-specific", "", M{"review_model_xhigh": "gpt-xhigh"}, nil, "review", "xhigh", "gpt-xhigh"},
+		{"max global level-specific", "", nil, &Config{ReviewModelMax: "gpt-max"}, "review", "max", "gpt-max"},
+		{"xhigh falls back to legacy maximum key", "", M{"review_model_maximum": "legacy-model"}, nil, "review", "xhigh", "legacy-model"},
 	}
 
 	for _, tt := range tests {
@@ -2773,6 +2792,41 @@ discord_webhook_url = "https://discord.com/api/webhooks/123/token"
 	require.NoError(t, err)
 	require.NotNil(t, cfg)
 	assert.Equal(t, "https://discord.com/api/webhooks/123/token", cfg.CI.DiscordWebhookURL)
+}
+
+func TestNormalizeReasoning(t *testing.T) {
+	tests := []struct {
+		name    string
+		input   string
+		want    string
+		wantErr bool
+	}{
+		{name: "legacy fast", input: "fast", want: "fast"},
+		{name: "legacy standard", input: "standard", want: "standard"},
+		{name: "legacy thorough", input: "thorough", want: "thorough"},
+		{name: "legacy maximum", input: "maximum", want: "maximum"},
+		{name: "exact low", input: "low", want: "low"},
+		{name: "exact medium", input: "medium", want: "medium"},
+		{name: "exact high", input: "high", want: "high"},
+		{name: "exact xhigh", input: "xhigh", want: "xhigh"},
+		{name: "exact max", input: "max", want: "max"},
+		{name: "normalizes case and space", input: "  XHIGH  ", want: "xhigh"},
+		{name: "empty", input: "", want: ""},
+		{name: "unknown", input: "ultra", wantErr: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			got, err := NormalizeReasoning(tt.input)
+			if tt.wantErr {
+				require.Error(t, err)
+				assert.Empty(t, got)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.want, got)
+		})
+	}
 }
 
 func TestNormalizeMinSeverity(t *testing.T) {

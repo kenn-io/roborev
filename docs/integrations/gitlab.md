@@ -381,7 +381,7 @@ Subgroup paths are supported: `--gl-repo group/subgroup/project`.
 | `--upsert-comments` | Update the previous roborev note instead of adding one (overrides `[ci] upsert_comments`) |
 | `--agent <names>` | Agents to use (comma-separated, default: auto-detect) |
 | `--review-types <types>` | Review types to run (`security`, `design`, `lookahead`, `default`) |
-| `--reasoning <level>` | Reasoning depth (`thorough`/`standard`/`fast`) |
+| `--reasoning <level>` | Legacy or exact reasoning level; see [Reasoning Levels](/configuration/#reasoning-levels) |
 | `--min-severity <level>` | Minimum severity to report (`low`/`medium`/`high`/`critical`) |
 | `--synthesis-agent <name>` | Agent for combining multi-job results |
 

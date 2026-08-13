@@ -206,7 +206,7 @@ Examples:
 
 	cmd.Flags().StringVar(&agentName, "agent", "", "agent to use for fixes (default: from config)")
 	cmd.Flags().StringVar(&model, "model", "", "model for agent")
-	cmd.Flags().StringVar(&reasoning, "reasoning", "", "reasoning level: fast, standard, medium, thorough, or maximum")
+	cmd.Flags().StringVar(&reasoning, "reasoning", "", "reasoning level: legacy presets fast, standard, thorough, maximum; exact tiers low, medium, high, xhigh, max")
 	cmd.Flags().StringVar(&minSeverity, "min-severity", "", "minimum finding severity to address: critical, high, medium, or low")
 	cmd.Flags().BoolVarP(&quiet, "quiet", "q", false, "suppress progress output")
 	cmd.Flags().BoolVar(&open, "open", false, "deprecated: open is now the default behavior")

@@ -699,7 +699,7 @@ panel = "ci"                         # run named [review.panels.ci] for this rep
 # Or omit panel and use the compatible matrix:
 # agents = ["gemini"]
 # review_types = ["security", "default"]
-reasoning = "standard"               # override reasoning level (thorough, standard, fast)
+reasoning = "standard"               # override legacy or exact reasoning level
 ```
 
 Per-repo overrides take priority over the global `[ci]` config. Any field not
@@ -712,7 +712,7 @@ set, it takes priority over the matrix fields for that repo.
 | `agents` | array | global `agents` | Agents for CI reviews of this repo |
 | `review_types` | array | global `review_types` | Review types for CI reviews of this repo |
 | `reviews` | table | global `reviews` | Granular agent-to-review-type map (overrides `agents` and `review_types`; empty table disables reviews) |
-| `reasoning` | string | `"thorough"` | Reasoning level: `thorough`, `standard`, or `fast` |
+| `reasoning` | string | `"thorough"` | Legacy or exact reasoning level; see [Reasoning Levels](/configuration/#reasoning-levels) |
 | `min_severity` | string | `"low"` | Minimum severity to include: `low`, `medium`, `high`, or `critical` |
 | `upsert_comments` | bool | global `upsert_comments` | Override global comment upsert setting for this repo |
 | `include_costs` | bool | global `include_costs` | Include token cost estimates in PR comment footers for this repo |

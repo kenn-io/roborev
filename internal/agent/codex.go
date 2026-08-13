@@ -123,12 +123,16 @@ func WithCodexUserConfigIgnored(a Agent, ignored bool) Agent {
 // codexReasoningEffort maps ReasoningLevel to codex-specific effort values
 func (a *CodexAgent) codexReasoningEffort() string {
 	switch a.Reasoning {
-	case ReasoningMaximum:
+	case ReasoningMaximum, ReasoningXHigh:
 		return "xhigh"
-	case ReasoningThorough:
+	case ReasoningThorough, ReasoningHigh:
 		return "high"
-	case ReasoningFast:
+	case ReasoningMedium:
+		return "medium"
+	case ReasoningFast, ReasoningLow:
 		return "low"
+	case ReasoningMax:
+		return "max"
 	default:
 		return "" // use codex default
 	}

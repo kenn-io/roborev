@@ -337,8 +337,9 @@ grok --no-auto-update --output-format streaming-json --always-approve \
   --prompt-file <path>
 ```
 
-Reasoning mapping: `maximum` → `max`, `thorough` → `high`, `medium` → `medium`,
-`fast` → `low`. Standard leaves Grok's default effort.
+Legacy reasoning mapping: `maximum` → `max`, `thorough` → `high`, `fast` →
+`low`. Standard leaves Grok's default effort. Exact `low`, `medium`, `high`,
+`xhigh`, and `max` values pass through unchanged.
 
 Session resume uses Grok's `--resume` flag when a session ID is available (same
 `SessionAgent` path as Claude/Codex).

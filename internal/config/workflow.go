@@ -77,7 +77,7 @@ func WorkflowForReviewType(reviewType string) string {
 }
 
 // NormalizeReasoning validates and normalizes a reasoning level string.
-// Returns the canonical form (maximum, thorough, medium, standard, fast) or an error if invalid.
+// Returns the canonical legacy or exact effort name, or an error if invalid.
 // Returns empty string (no error) for empty input.
 func NormalizeReasoning(value string) (string, error) {
 	normalized := strings.ToLower(strings.TrimSpace(value))
@@ -86,16 +86,16 @@ func NormalizeReasoning(value string) (string, error) {
 	}
 
 	switch normalized {
-	case "maximum", "max", "xhigh":
+	case "maximum":
 		return "maximum", nil
-	case "thorough", "high":
+	case "thorough":
 		return "thorough", nil
-	case "medium":
-		return "medium", nil
 	case "standard":
 		return "standard", nil
-	case "fast", "low":
+	case "fast":
 		return "fast", nil
+	case "low", "medium", "high", "xhigh", "max":
+		return normalized, nil
 	default:
 		return "", fmt.Errorf("invalid reasoning level: %q", value)
 	}
@@ -774,18 +774,42 @@ func workflowFieldKey(workflow, level string, isAgent bool) string {
 // globalWorkflowField switch statements with a single, tag-driven lookup that
 // automatically supports new workflows/levels when fields are added.
 func lookupWorkflowField(v reflect.Value, workflow, level string, isAgent bool) string {
-	key := workflowFieldKey(workflow, level, isAgent)
+	levels := []string{level}
+	if legacy := legacyReasoningFallback(level); legacy != "" {
+		levels = append(levels, legacy)
+	}
+
 	t := v.Type()
-	for i := 0; i < t.NumField(); i++ {
-		tag := t.Field(i).Tag.Get("toml")
-		if tag == "" {
-			continue
-		}
-		if strings.Split(tag, ",")[0] == key {
-			return strings.TrimSpace(v.Field(i).String())
+	for _, candidate := range levels {
+		key := workflowFieldKey(workflow, candidate, isAgent)
+		for i := 0; i < t.NumField(); i++ {
+			tag := t.Field(i).Tag.Get("toml")
+			if tag == "" {
+				continue
+			}
+			if strings.Split(tag, ",")[0] == key {
+				if value := strings.TrimSpace(v.Field(i).String()); value != "" {
+					return value
+				}
+			}
 		}
 	}
 	return ""
+}
+
+// legacyReasoningFallback preserves level-specific routing for values that
+// were accepted as aliases before exact native efforts were introduced.
+func legacyReasoningFallback(level string) string {
+	switch level {
+	case "low":
+		return "fast"
+	case "high":
+		return "thorough"
+	case "xhigh", "max":
+		return "maximum"
+	default:
+		return ""
+	}
 }
 
 func repoWorkflowField(r *RepoConfig, workflow, level string, isAgent bool) string {

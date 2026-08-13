@@ -253,13 +253,15 @@ func (a *GrokAgent) WithSessionID(sessionID string) Agent {
 // values (none/minimal/low/medium/high/xhigh/max). Standard leaves Grok's default.
 func (a *GrokAgent) grokReasoningEffort() string {
 	switch a.Reasoning {
-	case ReasoningMaximum:
+	case ReasoningMaximum, ReasoningMax:
 		return "max"
-	case ReasoningThorough:
+	case ReasoningXHigh:
+		return "xhigh"
+	case ReasoningThorough, ReasoningHigh:
 		return "high"
 	case ReasoningMedium:
 		return "medium"
-	case ReasoningFast:
+	case ReasoningFast, ReasoningLow:
 		return "low"
 	default:
 		return ""

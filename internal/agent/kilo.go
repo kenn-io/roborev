@@ -80,6 +80,16 @@ func (a *KiloAgent) kiloVariant() string {
 		return "high"
 	case ReasoningFast:
 		return "minimal"
+	case ReasoningLow:
+		return "low"
+	case ReasoningMedium:
+		return "medium"
+	case ReasoningHigh:
+		return "high"
+	case ReasoningXHigh:
+		return "xhigh"
+	case ReasoningMax:
+		return "max"
 	default:
 		return "" // use kilo default
 	}

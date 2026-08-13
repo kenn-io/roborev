@@ -313,7 +313,7 @@ max_prompt_size = 204800
 |------|-------------|
 | `--agent <name>` | Agent to use for analysis (default: from config) |
 | `--model <model>` | Model for analysis agent |
-| `--reasoning <level>` | Reasoning depth: `fast`, `standard`, or `thorough` |
+| `--reasoning <level>` | Legacy or exact reasoning level; see [Reasoning Levels](/configuration/#reasoning-levels) |
 | `--branch [name]` | Analyze files changed on branch (optionally specify branch name with `--branch=name`) |
 | `--base <branch>` | Base branch for `--branch` comparison (default: auto-detect) |
 | `--wait` | Wait for job to complete and show result |
@@ -332,7 +332,7 @@ max_prompt_size = 204800
 |------|-------------|
 | `--agent <name>` | Agent to use for fixes (default: from config) |
 | `--model <model>` | Model for fix agent |
-| `--reasoning <level>` | Reasoning depth: `fast`, `standard`, or `thorough` |
+| `--reasoning <level>` | Legacy or exact reasoning level; see [Reasoning Levels](/configuration/#reasoning-levels) |
 | `--quiet` | Suppress agent output |
 | `--open` | Fix all open reviews on the current branch (default when no job IDs given) |
 | `--batch` | Concatenate multiple reviews into a single agent prompt instead of fixing one at a time |
