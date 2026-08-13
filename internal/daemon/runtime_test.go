@@ -847,6 +847,25 @@ func TestRequestGracefulDaemonShutdownUsesSharedContextForDelayedAcceptance(t *t
 	assert.True(t, requestGracefulDaemonShutdown(ctx, ep, dead.Load))
 }
 
+func TestRequestGracefulDaemonShutdownRetriesServerErrors(t *testing.T) {
+	var attempts atomic.Int32
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if attempts.Add(1) == 1 {
+			http.Error(w, "temporary drain failure", http.StatusInternalServerError)
+			return
+		}
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+	ep := DaemonEndpoint{Network: "tcp", Address: strings.TrimPrefix(server.URL, "http://")}
+
+	assert.True(t, requestGracefulDaemonShutdown(ctx, ep, func() bool { return false }))
+	assert.Equal(t, int32(2), attempts.Load())
+}
+
 func TestKillDaemonCleansDeadRuntimeWhenEndpointIsUnavailable(t *testing.T) {
 	testenv.SetDataDir(t)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")

@@ -550,8 +550,14 @@ func requestGracefulDaemonShutdown(
 		if err == nil {
 			accepted := resp.StatusCode >= http.StatusOK &&
 				resp.StatusCode < http.StatusMultipleChoices
+			retryable := resp.StatusCode >= http.StatusInternalServerError
 			resp.Body.Close()
-			return accepted
+			if accepted {
+				return true
+			}
+			if !retryable {
+				return false
+			}
 		}
 		if confirmedDead() {
 			return true
