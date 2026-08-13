@@ -37,6 +37,7 @@ type Options struct {
 	CommitThreshold       int
 	FailedReviewThreshold int
 	Instruction           string
+	FixGuidelines         string
 	RoborevServerAddr     string
 }
 
@@ -56,20 +57,35 @@ func ResolveOptions(cli Options, changed map[string]bool) (Options, error) {
 
 func ResolveOptionsForAgent(agent string, cli Options, changed map[string]bool) (Options, error) {
 	agent = strings.ToLower(strings.TrimSpace(agent))
+	var (
+		opts Options
+		err  error
+	)
 	if agent == "" {
-		return resolveAgentOptions(cli, changed)
+		opts, err = resolveAgentOptions(cli, changed)
+	} else if agent == string(AgentGrok) {
+		opts, err = resolveAgentOptions(cli, changed)
+	} else {
+		var profile kitagenthook.Agent
+		profile, err = kitagenthook.ParseAgent(agent)
+		if err == nil && profile == kitagenthook.AgentDroid {
+			opts, err = resolveDroidOptions(cli, changed)
+		} else if err == nil {
+			opts, err = resolveAgentOptions(cli, changed)
+		}
 	}
-	if agent == string(AgentGrok) {
-		return resolveAgentOptions(cli, changed)
-	}
-	profile, err := kitagenthook.ParseAgent(agent)
 	if err != nil {
 		return Options{}, err
 	}
-	if profile == kitagenthook.AgentDroid {
-		return resolveDroidOptions(cli, changed)
+	if opts.ConfigPath == config.GlobalConfigPath() {
+		return opts, nil
 	}
-	return resolveAgentOptions(cli, changed)
+	cfg, err := config.LoadGlobal()
+	if err != nil {
+		return Options{}, fmt.Errorf("load roborev config %s: %w", config.GlobalConfigPath(), err)
+	}
+	opts.FixGuidelines = cfg.FixGuidelines
+	return opts, nil
 }
 
 func resolveAgentOptions(cli Options, changed map[string]bool) (Options, error) {
@@ -155,6 +171,9 @@ func applyConfig(opts *Options) error {
 	if cfg.AgentHook.Instruction != "" {
 		opts.Instruction = cfg.AgentHook.Instruction
 	}
+	if opts.ConfigPath == config.GlobalConfigPath() {
+		opts.FixGuidelines = cfg.FixGuidelines
+	}
 	return nil
 }
 
@@ -168,6 +187,9 @@ func applyDroidConfig(opts *Options) error {
 	opts.FailedReviewThreshold = cfg.DroidHook.FailedReviewThreshold
 	if cfg.DroidHook.Instruction != "" {
 		opts.Instruction = cfg.DroidHook.Instruction
+	}
+	if opts.ConfigPath == config.GlobalConfigPath() {
+		opts.FixGuidelines = cfg.FixGuidelines
 	}
 	return nil
 }

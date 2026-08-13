@@ -95,7 +95,9 @@ func (h roborevAgentHookHandler) PostToolUse(
 		return kitagenthook.PostToolUseOutput{}, nil
 	}
 	return kitagenthook.PostToolUseOutput{
-		AdditionalContext: agenthook.PostToolUseAdditionalContext(resp.Reason),
+		AdditionalContext: agenthook.PostToolUseAdditionalContextWithFixGuidelines(
+			resp.Reason, h.opts.FixGuidelines,
+		),
 	}, nil
 }
 
@@ -115,6 +117,6 @@ func (h roborevAgentHookHandler) Stop(
 	}
 	return kitagenthook.StopOutput{
 		Decision: kitagenthook.DecisionBlock,
-		Reason:   agenthook.StopReason(resp.Reason),
+		Reason:   agenthook.StopReasonWithFixGuidelines(resp.Reason, h.opts.FixGuidelines),
 	}, nil
 }

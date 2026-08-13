@@ -97,7 +97,7 @@ func runGrokAgentHook(opts agenthook.Options, stdin io.Reader, stdout, stderr io
 		fmt.Fprintf(stderr, "roborev Grok Build: %v\n", err)
 		return json.NewEncoder(stdout).Encode(map[string]any{})
 	}
-	return json.NewEncoder(stdout).Encode(agenthook.BuildOutput(input, resp))
+	return json.NewEncoder(stdout).Encode(agenthook.BuildOutputWithFixGuidelines(input, resp, opts.FixGuidelines))
 }
 
 func runLegacyAgentHook(
@@ -125,7 +125,7 @@ func runLegacyAgentHook(
 		fmt.Fprintf(stderr, "roborev agent-hook: %v\n", err)
 		return json.NewEncoder(stdout).Encode(map[string]any{})
 	}
-	return json.NewEncoder(stdout).Encode(agenthook.BuildOutput(input, resp))
+	return json.NewEncoder(stdout).Encode(agenthook.BuildOutputWithFixGuidelines(input, resp, opts.FixGuidelines))
 }
 
 func agentHookDaemonCmd() *cobra.Command {

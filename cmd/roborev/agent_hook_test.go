@@ -58,6 +58,7 @@ func TestAgentHookInstallRejectsBinaryWithCommand(t *testing.T) {
 }
 
 func TestAgentHookRunSupportsLegacyProfilelessRegistration(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	oldPost := postAgentHook
 	var got agenthook.Request
 	postAgentHook = func(_ context.Context, req agenthook.Request) (agenthook.Response, error) {
@@ -75,6 +76,40 @@ func TestAgentHookRunSupportsLegacyProfilelessRegistration(t *testing.T) {
 	require.NoError(t, cmd.Execute())
 	assert.Equal(t, "legacy-1", got.Event.SessionID)
 	assert.JSONEq(t, `{"decision":"block","reason":"resolve reviews If Roborev issues are found, fix them, then continue the task you were doing before this hook interrupted you."}`, stdout.String())
+}
+
+// If a legacy or Grok encoder bypasses policy-aware output, users get different
+// review handling depending on which supported hook registration they use.
+func TestLegacyAndGrokAgentHooksAppendFixGuidelines(t *testing.T) {
+	oldPost := postAgentHook
+	postAgentHook = func(context.Context, agenthook.Request) (agenthook.Response, error) {
+		return agenthook.Response{Triggered: true, Reason: "resolve reviews"}, nil
+	}
+	t.Cleanup(func() { postAgentHook = oldPost })
+
+	for _, tc := range []struct {
+		name string
+		run  func(agenthook.Options, io.Reader, io.Writer, io.Writer) error
+	}{
+		{name: "legacy", run: func(opts agenthook.Options, in io.Reader, out, errOut io.Writer) error {
+			return runLegacyAgentHook(context.Background(), opts, in, out, errOut)
+		}},
+		{name: "grok", run: runGrokAgentHook},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout bytes.Buffer
+			opts := agenthook.DefaultOptions()
+			opts.FixGuidelines = "Verify before editing."
+			err := tc.run(opts, strings.NewReader(`{"session_id":"s1","hook_event_name":"Stop"}`), &stdout, io.Discard)
+			require.NoError(t, err)
+
+			var output map[string]any
+			require.NoError(t, json.Unmarshal(stdout.Bytes(), &output))
+			reason, ok := output["reason"].(string)
+			require.True(t, ok)
+			assert.Equal(t, true, strings.HasSuffix(strings.TrimSpace(reason), "Verify before editing."))
+		})
+	}
 }
 
 func TestAgentHookRemovedFlagsAreRejected(t *testing.T) {
@@ -148,6 +183,68 @@ func TestRunAgentHookEncodesKitStopResponse(t *testing.T) {
 	assert.Equal(t, "block", output["decision"])
 	assert.Contains(t, output["reason"], "resolve reviews")
 	assert.Contains(t, output["reason"], "continue the task")
+}
+
+// If kit-backed profiles omit policy composition, most supported hooks keep
+// applying review findings without the user's evaluation policy.
+func TestRunAgentHookAppendsFixGuidelinesToKitOutput(t *testing.T) {
+	oldPost := postAgentHook
+	postAgentHook = func(context.Context, agenthook.Request) (agenthook.Response, error) {
+		return agenthook.Response{Triggered: true, Reason: "resolve reviews"}, nil
+	}
+	t.Cleanup(func() { postAgentHook = oldPost })
+
+	for _, profile := range []kitagenthook.Agent{kitagenthook.AgentQwen, kitagenthook.AgentDroid} {
+		t.Run(string(profile), func(t *testing.T) {
+			var stdout bytes.Buffer
+			opts := agenthook.DefaultOptions()
+			opts.FixGuidelines = "Verify before editing."
+			err := runAgentHook(
+				profile,
+				opts,
+				strings.NewReader(`{"session_id":"s1","hook_event_name":"Stop"}`),
+				&stdout,
+				io.Discard,
+			)
+			require.NoError(t, err)
+
+			var output map[string]any
+			require.NoError(t, json.Unmarshal(stdout.Bytes(), &output))
+			reason, ok := output["reason"].(string)
+			require.True(t, ok)
+			assert.Equal(t, true, strings.HasSuffix(strings.TrimSpace(reason), "Verify before editing."))
+		})
+	}
+}
+
+// If the PostToolUse path is missed, commit-triggered reminders use a different
+// policy contract from Stop-triggered reminders.
+func TestRunAgentHookAppendsFixGuidelinesToPostToolUse(t *testing.T) {
+	oldPost := postAgentHook
+	postAgentHook = func(context.Context, agenthook.Request) (agenthook.Response, error) {
+		return agenthook.Response{Triggered: true, Reason: "resolve reviews"}, nil
+	}
+	t.Cleanup(func() { postAgentHook = oldPost })
+
+	var stdout bytes.Buffer
+	opts := agenthook.DefaultOptions()
+	opts.FixGuidelines = "Verify before editing."
+	err := runAgentHook(
+		kitagenthook.AgentClaude,
+		opts,
+		strings.NewReader(`{"session_id":"s1","hook_event_name":"PostToolUse","tool_name":"Bash","tool_input":{},"tool_response":{}}`),
+		&stdout,
+		io.Discard,
+	)
+	require.NoError(t, err)
+
+	var output struct {
+		HookSpecificOutput struct {
+			AdditionalContext string `json:"additionalContext"`
+		} `json:"hookSpecificOutput"`
+	}
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &output))
+	assert.Equal(t, true, strings.HasSuffix(strings.TrimSpace(output.HookSpecificOutput.AdditionalContext), "Verify before editing."))
 }
 
 func TestRunAgentHookCursorSuppressesUnsupportedControlOutput(t *testing.T) {
