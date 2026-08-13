@@ -162,7 +162,7 @@ func TestBuildGenericFixPromptWithCommitMetadata(t *testing.T) {
 		},
 	}
 
-	p := buildGenericFixPromptWithMetadata("Found bug in foo.go", "", nil, metadata)
+	p := buildGenericFixPromptWithMetadata("Found bug in foo.go", "", nil, metadata, "")
 
 	assert.Contains(t, p, "## Commit Metadata")
 	assert.Contains(t, p, "Use this commit author: `Fix Author <fix-author@example.com>`")
@@ -171,7 +171,7 @@ func TestBuildGenericFixPromptWithCommitMetadata(t *testing.T) {
 }
 
 func TestBuildGenericFixPromptOmitsEmptyCommitMetadata(t *testing.T) {
-	p := buildGenericFixPromptWithMetadata("Found bug in foo.go", "", nil, config.FixCommitMetadata{})
+	p := buildGenericFixPromptWithMetadata("Found bug in foo.go", "", nil, config.FixCommitMetadata{}, "")
 
 	assert.NotContains(t, p, "## Commit Metadata")
 }
@@ -189,7 +189,7 @@ func TestBuildBatchFixPromptWithCommitMetadata(t *testing.T) {
 		CoAuthors: []string{"Reviewer One <one@example.com>"},
 	}
 
-	p := buildBatchFixPromptWithMetadata(entries, "", metadata)
+	p := buildBatchFixPromptWithMetadata(entries, "", metadata, "")
 
 	assert.Contains(t, p, "## Commit Metadata")
 	assert.Contains(t, p, "Use this commit author: `Fix Author <fix-author@example.com>`")
@@ -242,11 +242,45 @@ func TestBuildGenericCommitPromptWithCommitMetadata(t *testing.T) {
 		CoAuthors: []string{"Reviewer One <one@example.com>"},
 	}
 
-	prompt := buildGenericCommitPromptWithMetadata(metadata)
+	prompt := buildGenericCommitPromptWithMetadata(metadata, "")
 
 	assert.Contains(t, prompt, "## Commit Metadata")
 	assert.Contains(t, prompt, "Use this commit author: `Fix Author <fix-author@example.com>`")
 	assert.Contains(t, prompt, "Co-authored-by: Reviewer One <one@example.com>")
+}
+
+// If policy-aware framing is lost, direct fix agents return to blindly applying
+// every review suggestion.
+func TestBuildGenericFixPromptWithFixGuidelines(t *testing.T) {
+	policy := "Verify the premise before changing code."
+	got := buildGenericFixPromptWithMetadata(
+		"Finding text", "", nil, config.FixCommitMetadata{}, policy,
+	)
+
+	assert.Contains(t, got, "Evaluate each finding against the autofix guidelines")
+	assert.Contains(t, got, "record any finding intentionally not applied")
+	assert.NotContains(t, got, "Please apply the suggested changes")
+	assert.Equal(t, 1, strings.Count(got, policy))
+	assert.True(t, strings.HasSuffix(strings.TrimSpace(got), policy))
+}
+
+// If batch prompt assembly emits policy before review output or more than once,
+// untrusted findings can follow trusted policy or waste the size budget.
+func TestBuildBatchFixPromptWithFixGuidelines(t *testing.T) {
+	policy := "Verify the premise before changing code."
+	entries := []batchEntry{{
+		jobID: 1,
+		job:   &storage.ReviewJob{GitRef: "abc123"},
+		review: &storage.Review{
+			Output: "Finding text",
+		},
+	}}
+	got := buildBatchFixPromptWithMetadata(entries, "", config.FixCommitMetadata{}, policy)
+
+	assert.Contains(t, got, "Evaluate each finding against the autofix guidelines")
+	assert.NotContains(t, got, "Address all findings across all reviews")
+	assert.Equal(t, 1, strings.Count(got, policy))
+	assert.True(t, strings.HasSuffix(strings.TrimSpace(got), policy))
 }
 
 func TestFetchJob(t *testing.T) {
@@ -644,6 +678,92 @@ func TestFixSingleJob(t *testing.T) {
 	outputStr := output.String()
 	assert.Contains(t, outputStr, "Issues")
 	assert.Contains(t, outputStr, "closed")
+}
+
+// If the direct command path forgets to thread global policy into its builder,
+// unit-level formatting can pass while the actual fix agent never receives it.
+func TestFixSingleJobPassesGlobalFixGuidelinesToAgent(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", dataDir)
+	require.NoError(t, os.WriteFile(filepath.Join(dataDir, "config.toml"), []byte(`fix_guidelines = "Direct policy sentinel"`), 0o600))
+	repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
+	ts, _ := newMockServer(t, MockServerOpts{
+		ReviewOutput: "## Issues\n- Found minor issue",
+		OnJobs: func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{{ID: 99, Status: storage.JobStatusDone, Agent: "test"}}})
+		},
+	})
+	patchServerAddr(t, ts.URL)
+
+	tester := agent.NewTestAgent()
+	tracker := &fixSessionTracker{base: tester, out: io.Discard}
+	cmd, _ := newTestCmd(t)
+	require.NoError(t, fixSingleJob(cmd, repo.Dir, 99, fixOptions{agentName: "test", reasoning: "fast"}, tracker))
+
+	calls := tester.Calls()
+	require.NotEmpty(t, calls)
+	assert.Contains(t, calls[0].Prompt, "Direct policy sentinel")
+}
+
+// If the batch production path omits policy routing, batch fixes behave
+// differently from direct fixes despite sharing the same global setting.
+func TestProcessFixBatchPassesGlobalFixGuidelinesToAgent(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", dataDir)
+	require.NoError(t, os.WriteFile(filepath.Join(dataDir, "config.toml"), []byte(`fix_guidelines = "Batch policy sentinel"`), 0o600))
+	repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
+	ts, _ := newMockServer(t, MockServerOpts{
+		ReviewOutput: "## Issues\n- Found minor issue",
+		OnJobs: func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{{ID: 99, Status: storage.JobStatusDone, Agent: "test"}}})
+		},
+	})
+	patchServerAddr(t, ts.URL)
+
+	tester := agent.NewTestAgent()
+	tracker := &fixSessionTracker{base: tester, out: io.Discard}
+	cmd, _ := newTestCmd(t)
+	roots := currentRepoRoots{worktreeRoot: repo.Dir, mainRepoRoot: repo.Dir}
+	require.NoError(t, processFixBatch(context.Background(), cmd, roots, []int64{99}, 0, fixOptions{agentName: "test", reasoning: "fast"}, tracker))
+
+	calls := tester.Calls()
+	require.NotEmpty(t, calls)
+	assert.Contains(t, calls[0].Prompt, "Batch policy sentinel")
+}
+
+// If either agent-running path ignores a global parse error, users can get a
+// panic or an unguided fix instead of an actionable configuration failure.
+func TestFixFlowsRejectMalformedGlobalBeforeAgent(t *testing.T) {
+	for _, mode := range []string{"direct", "batch"} {
+		t.Run(mode, func(t *testing.T) {
+			dataDir := t.TempDir()
+			t.Setenv("ROBOREV_DATA_DIR", dataDir)
+			configPath := filepath.Join(dataDir, "config.toml")
+			require.NoError(t, os.WriteFile(configPath, []byte(`fix_guidelines = [`), 0o600))
+			repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
+			ts, _ := newMockServer(t, MockServerOpts{
+				ReviewOutput: "## Issues\n- Found minor issue",
+				OnJobs: func(w http.ResponseWriter, _ *http.Request) {
+					writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{{ID: 99, Status: storage.JobStatusDone, Agent: "test"}}})
+				},
+			})
+			patchServerAddr(t, ts.URL)
+
+			tester := agent.NewTestAgent()
+			tracker := &fixSessionTracker{base: tester, out: io.Discard}
+			cmd, _ := newTestCmd(t)
+			var err error
+			if mode == "direct" {
+				err = fixSingleJob(cmd, repo.Dir, 99, fixOptions{agentName: "test"}, tracker)
+			} else {
+				roots := currentRepoRoots{worktreeRoot: repo.Dir, mainRepoRoot: repo.Dir}
+				err = processFixBatch(context.Background(), cmd, roots, []int64{99}, 0, fixOptions{agentName: "test"}, tracker)
+			}
+
+			require.ErrorContains(t, err, configPath)
+			assert.Empty(t, tester.Calls())
+		})
+	}
 }
 
 func TestFixSingleJobRecoversPostFixDaemonCalls(t *testing.T) {
@@ -1578,9 +1698,10 @@ func TestFixJobDirect_RetryThreadsCapturedSessionID(t *testing.T) {
 	capture := agent.NewSessionCaptureWriter(io.Discard, nil)
 
 	_, err := fixJobDirect(context.Background(), fixJobParams{
-		RepoRoot: dir,
-		Agent:    tester,
-		Output:   capture,
+		RepoRoot:      dir,
+		Agent:         tester,
+		Output:        capture,
+		FixGuidelines: "Verify before committing.",
 	}, "fix things")
 	require.NoError(t, err)
 
@@ -1589,6 +1710,8 @@ func TestFixJobDirect_RetryThreadsCapturedSessionID(t *testing.T) {
 	assert.Empty(t, calls[0].SessionID, "first call is fresh")
 	assert.Equal(t, "test-session-1", calls[1].SessionID,
 		"retry must resume the first call's session so the tracker captures the latest context")
+	assert.Contains(t, calls[1].Prompt, "Verify before committing.")
+	assert.Contains(t, calls[1].Prompt, "Check the pending changes against the autofix guidelines")
 }
 
 func TestBuildBatchFixPrompt(t *testing.T) {
@@ -1756,6 +1879,32 @@ func TestSplitIntoBatches(t *testing.T) {
 					i, len(p))
 			}
 		}
+	})
+
+	t.Run("configured policy uses exact real-prompt boundary", func(t *testing.T) {
+		entries := []batchEntry{
+			makeEntry(1, 120),
+			makeEntry(2, 120),
+			makeEntry(3, 120),
+		}
+		policy := "Verify each premise before editing."
+		metadata := config.FixCommitMetadata{Author: "Fixer <fixer@example.com>"}
+		maxSize := len(buildBatchFixPromptWithMetadata(entries[:2], "high", metadata, policy))
+		opts := batchSplitOptions{
+			MaxSize:       maxSize,
+			MinSeverity:   "high",
+			Metadata:      metadata,
+			FixGuidelines: policy,
+		}
+
+		exact := splitIntoBatches(entries, opts)
+		require.Len(t, exact, 2)
+		assert.Len(t, exact[0], 2)
+		assert.LessOrEqual(t, len(buildBatchFixPromptWithMetadata(exact[0], "high", metadata, policy)), maxSize)
+
+		opts.MaxSize--
+		split := splitIntoBatches(entries, opts)
+		assert.Greater(t, len(split), len(exact))
 	})
 
 	t.Run("count cap forces multiple batches when size would allow one", func(t *testing.T) {

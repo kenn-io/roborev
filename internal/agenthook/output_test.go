@@ -24,7 +24,7 @@ func TestPostToolUseAdditionalContextUsesFallback(t *testing.T) {
 // workflow text can override or dilute the user's final policy.
 func TestStopReasonWithFixGuidelinesEndsWithPolicy(t *testing.T) {
 	got := StopReasonWithFixGuidelines("Resolve reviews.", "Verify before editing.")
-	assert.Equal(t, true, strings.HasSuffix(got, "Verify before editing."))
+	assert.True(t, strings.HasSuffix(got, "Verify before editing."))
 	assert.Contains(t, got, continuationInstruction)
 }
 

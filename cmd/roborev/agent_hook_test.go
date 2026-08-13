@@ -107,7 +107,7 @@ func TestLegacyAndGrokAgentHooksAppendFixGuidelines(t *testing.T) {
 			require.NoError(t, json.Unmarshal(stdout.Bytes(), &output))
 			reason, ok := output["reason"].(string)
 			require.True(t, ok)
-			assert.Equal(t, true, strings.HasSuffix(strings.TrimSpace(reason), "Verify before editing."))
+			assert.True(t, strings.HasSuffix(strings.TrimSpace(reason), "Verify before editing."))
 		})
 	}
 }
@@ -212,7 +212,7 @@ func TestRunAgentHookAppendsFixGuidelinesToKitOutput(t *testing.T) {
 			require.NoError(t, json.Unmarshal(stdout.Bytes(), &output))
 			reason, ok := output["reason"].(string)
 			require.True(t, ok)
-			assert.Equal(t, true, strings.HasSuffix(strings.TrimSpace(reason), "Verify before editing."))
+			assert.True(t, strings.HasSuffix(strings.TrimSpace(reason), "Verify before editing."))
 		})
 	}
 }
@@ -244,7 +244,7 @@ func TestRunAgentHookAppendsFixGuidelinesToPostToolUse(t *testing.T) {
 		} `json:"hookSpecificOutput"`
 	}
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &output))
-	assert.Equal(t, true, strings.HasSuffix(strings.TrimSpace(output.HookSpecificOutput.AdditionalContext), "Verify before editing."))
+	assert.True(t, strings.HasSuffix(strings.TrimSpace(output.HookSpecificOutput.AdditionalContext), "Verify before editing."))
 }
 
 func TestRunAgentHookCursorSuppressesUnsupportedControlOutput(t *testing.T) {

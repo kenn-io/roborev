@@ -57,23 +57,17 @@ func ResolveOptions(cli Options, changed map[string]bool) (Options, error) {
 
 func ResolveOptionsForAgent(agent string, cli Options, changed map[string]bool) (Options, error) {
 	agent = strings.ToLower(strings.TrimSpace(agent))
-	var (
-		opts Options
-		err  error
-	)
-	if agent == "" {
-		opts, err = resolveAgentOptions(cli, changed)
-	} else if agent == string(AgentGrok) {
-		opts, err = resolveAgentOptions(cli, changed)
-	} else {
-		var profile kitagenthook.Agent
-		profile, err = kitagenthook.ParseAgent(agent)
-		if err == nil && profile == kitagenthook.AgentDroid {
-			opts, err = resolveDroidOptions(cli, changed)
-		} else if err == nil {
-			opts, err = resolveAgentOptions(cli, changed)
+	resolver := resolveAgentOptions
+	if agent != "" && agent != string(AgentGrok) {
+		profile, err := kitagenthook.ParseAgent(agent)
+		if err != nil {
+			return Options{}, err
+		}
+		if profile == kitagenthook.AgentDroid {
+			resolver = resolveDroidOptions
 		}
 	}
+	opts, err := resolver(cli, changed)
 	if err != nil {
 		return Options{}, err
 	}

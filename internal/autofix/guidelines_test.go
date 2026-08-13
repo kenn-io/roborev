@@ -21,6 +21,6 @@ func TestAppendGuidelinesPlacesTrimmedPolicyLast(t *testing.T) {
 	got := AppendGuidelines("review reminder", policy)
 
 	assert.Equal(t, 1, strings.Count(got, "Verify every finding."))
-	assert.Equal(t, true, strings.HasSuffix(got, "Verify every finding.\n  Explain skipped changes."))
+	assert.True(t, strings.HasSuffix(got, "Verify every finding.\n  Explain skipped changes."))
 	assert.Contains(t, got, GuidelinesHeading)
 }
