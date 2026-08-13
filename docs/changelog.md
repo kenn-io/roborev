@@ -11,7 +11,7 @@ All notable changes to roborev, grouped by minor release.
 
 - Reasoning accepts exact `low`, `medium`, `high`, `xhigh`, and `max` values and
     forwards them unchanged to agents that support each tier. The legacy `fast`,
-    `standard`, `thorough`, and `maximum` mappings remain unchanged.
+    `standard`, `thorough`, and `maximum` presets remain compatible.
 - Pi agents accept global `[agent.pi] launch_args`, passed as tokenized
     arguments to every Pi invocation before roborev-managed workflow and safety
     options. This allows isolated classifier jobs to load extension-defined
@@ -30,6 +30,9 @@ All notable changes to roborev, grouped by minor release.
 - Daemon restarts now stop new job claims and wait indefinitely for running
     reviews and worker finalization instead of force-killing the daemon after a
     short graceful-shutdown window.
+- The Codex `maximum` preset now requests literal `max` for explicit GPT-5.6
+    `sol`, `terra`, and `luna` models. Older, default, and unknown models retain
+    the compatible `xhigh` mapping, while exact `xhigh` remains distinct.
 
 ______________________________________________________________________
 

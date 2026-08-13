@@ -1416,13 +1416,18 @@ The legacy values keep their established per-agent behavior:
 | `fast` | `low` | `low` | `low` | `low` | `minimal` | `low` |
 | `standard` | default | default | default | default | default | `medium` |
 | `thorough` | `high` | `high` | `high` | `high` | `high` | `high` |
-| `maximum` | `xhigh` | `max` | `max` | `high` | `high` | `high` |
+| `maximum` | GPT-5.6 `sol`/`terra`/`luna`: `max`; otherwise `xhigh` | `max` | `max` | `high` | `high` | `high` |
 
 Native support is agent-specific. Codex, Claude, Grok, and Pi accept all five
 exact values. Droid accepts `low`, `medium`, and `high`. Kilo passes exact
 values through as model variants, so availability depends on the selected
 provider and model. Agents without a reasoning flag ignore the level while
 workflow-specific agent and model routing still uses its exact name.
+
+For Codex, the legacy `maximum` preset requests literal `max` only when the
+selected model is explicitly `gpt-5.6-sol`, `gpt-5.6-terra`, or `gpt-5.6-luna`.
+Older, default, and unknown models keep the compatible `xhigh` mapping. Use the
+exact `xhigh` value to request `xhigh` on every Codex model, including GPT-5.6.
 
 Set per-command with `--reasoning`, or per-repo in `.roborev.toml`:
 
