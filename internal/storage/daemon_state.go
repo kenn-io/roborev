@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"fmt"
 )
@@ -46,6 +47,23 @@ func (db *DB) IsShutdownDraining() (bool, error) {
 // daemon finishes a graceful shutdown.
 func (db *DB) SetShutdownDraining(draining bool) error {
 	return db.setDaemonBoolState(shutdownDrainingStateKey, draining, "shutdown draining")
+}
+
+// SetShutdownDrainingContext updates the shutdown claim gate within a caller's
+// cleanup deadline.
+func (db *DB) SetShutdownDrainingContext(ctx context.Context, draining bool) error {
+	value := "false"
+	if draining {
+		value = "true"
+	}
+	_, err := db.ExecContext(ctx, `
+		INSERT INTO daemon_state (key, value, updated_at) VALUES (?, ?, datetime('now'))
+		ON CONFLICT(key) DO UPDATE SET value = excluded.value, updated_at = excluded.updated_at
+	`, shutdownDrainingStateKey, value)
+	if err != nil {
+		return fmt.Errorf("set shutdown draining state: %w", err)
+	}
+	return nil
 }
 
 func (db *DB) setDaemonBoolState(key string, enabled bool, label string) error {

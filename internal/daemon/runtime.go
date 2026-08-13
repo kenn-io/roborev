@@ -513,24 +513,55 @@ func KillDaemon(info *RuntimeInfo) bool {
 		}
 	}
 
-	// First try graceful HTTP shutdown
+	// Request graceful shutdown within one shared preparation budget. Once the
+	// daemon accepts the request, wait without a deadline for the exact process
+	// so running reviews still have unlimited time to finish.
 	if ep.Address != "" {
-		client := ep.HTTPClient(2 * time.Second)
-		resp, err := client.Post(ep.BaseURL()+"/api/shutdown", "application/json", nil)
-		if err == nil {
-			accepted := resp.StatusCode >= http.StatusOK &&
-				resp.StatusCode < http.StatusMultipleChoices
-			resp.Body.Close()
-			if !accepted {
-				return false
-			}
+		shutdownCleanupCtx, cancelShutdownCleanup := context.WithTimeout(
+			context.Background(), shutdownCleanupTimeout,
+		)
+		defer cancelShutdownCleanup()
+		if requestGracefulDaemonShutdown(shutdownCleanupCtx, ep, confirmedDead) {
 			waitForGracefulDaemonExit(200*time.Millisecond, confirmedDead)
 			removeRuntimeFile()
 			return true
 		}
-		return false
 	}
 	return false
+}
+
+func requestGracefulDaemonShutdown(
+	ctx context.Context,
+	ep DaemonEndpoint,
+	confirmedDead func() bool,
+) bool {
+	client := ep.HTTPClient(0)
+	for {
+		if confirmedDead() {
+			return true
+		}
+		req, err := http.NewRequestWithContext(
+			ctx, http.MethodPost, ep.BaseURL()+"/api/shutdown", nil,
+		)
+		if err != nil {
+			return false
+		}
+		resp, err := client.Do(req)
+		if err == nil {
+			accepted := resp.StatusCode >= http.StatusOK &&
+				resp.StatusCode < http.StatusMultipleChoices
+			resp.Body.Close()
+			return accepted
+		}
+		if confirmedDead() {
+			return true
+		}
+		select {
+		case <-ctx.Done():
+			return confirmedDead()
+		case <-time.After(shutdownCleanupRetryInterval):
+		}
+	}
 }
 
 func waitForGracefulDaemonExit(

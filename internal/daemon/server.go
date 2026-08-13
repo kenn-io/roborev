@@ -70,6 +70,11 @@ type Server struct {
 const dailyTelemetryInterval = 24 * time.Hour
 
 var (
+	shutdownCleanupTimeout       = 35 * time.Second
+	shutdownCleanupRetryInterval = 200 * time.Millisecond
+)
+
+var (
 	getSystemdListenerForServer      = getSystemdListener
 	listenAuxiliaryEndpointForServer = listenAuxiliaryEndpoint
 )
@@ -573,12 +578,19 @@ func (s *Server) stopOnce0() error {
 		s.ciPoller.Stop()
 	}
 
+	// Bound post-worker cleanup with one shared budget. Running reviews have
+	// already finished, so this deadline applies only to daemon teardown.
+	shutdownCleanupCtx, cancelShutdownCleanup := context.WithTimeout(
+		context.Background(), shutdownCleanupTimeout,
+	)
+	defer cancelShutdownCleanup()
+	var cleanupErr error
+
 	// Stop accepting mutations once workers have finished. Runtime discovery
 	// remains published until all completion work below is finalized.
-	ctx, cancel := context.WithTimeout(context.Background(), 30*time.Second)
-	defer cancel()
-	if err := s.httpServer.Shutdown(ctx); err != nil {
+	if err := s.httpServer.Shutdown(shutdownCleanupCtx); err != nil {
 		log.Printf("HTTP server shutdown error: %v", err)
+		cleanupErr = errors.Join(cleanupErr, fmt.Errorf("shutdown HTTP server: %w", err))
 	}
 
 	// Stop hook runner
@@ -617,26 +629,34 @@ func (s *Server) stopOnce0() error {
 
 	// Keep discovery metadata published until all daemon work and HTTP serving
 	// have stopped, so another daemon cannot start during finalization.
-	s.clearShutdownDrain()
+	if err := s.clearShutdownDrain(shutdownCleanupCtx); err != nil {
+		cleanupErr = errors.Join(cleanupErr, err)
+	}
 	RemoveRuntime()
 
-	return nil
+	return cleanupErr
 }
 
-func (s *Server) clearShutdownDrain() {
+func (s *Server) clearShutdownDrain(ctx context.Context) error {
 	s.shutdownDrainMu.Lock()
 	draining := s.shutdownDraining
 	s.shutdownDrainMu.Unlock()
 	if !draining {
-		return
+		return nil
 	}
+	var lastErr error
 	for {
-		if err := s.db.SetShutdownDraining(false); err == nil {
-			return
+		if err := s.db.SetShutdownDrainingContext(ctx, false); err == nil {
+			return nil
 		} else {
+			lastErr = err
 			log.Printf("Clear shutdown drain state failed; retrying: %v", err)
 		}
-		time.Sleep(time.Second)
+		select {
+		case <-ctx.Done():
+			return fmt.Errorf("clear shutdown drain state: %w", errors.Join(lastErr, ctx.Err()))
+		case <-time.After(shutdownCleanupRetryInterval):
+		}
 	}
 }
 

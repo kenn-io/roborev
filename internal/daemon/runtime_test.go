@@ -831,6 +831,22 @@ func TestKillDaemonReturnsWhenKnownProcessExitsAndEndpointIsReused(t *testing.T)
 	assert.True(t, result)
 }
 
+func TestRequestGracefulDaemonShutdownUsesSharedContextForDelayedAcceptance(t *testing.T) {
+	var dead atomic.Bool
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		time.Sleep(50 * time.Millisecond)
+		dead.Store(true)
+		w.WriteHeader(http.StatusOK)
+	}))
+	defer server.Close()
+
+	ctx, cancel := context.WithTimeout(context.Background(), 200*time.Millisecond)
+	defer cancel()
+	ep := DaemonEndpoint{Network: "tcp", Address: strings.TrimPrefix(server.URL, "http://")}
+
+	assert.True(t, requestGracefulDaemonShutdown(ctx, ep, dead.Load))
+}
+
 func TestKillDaemonCleansDeadRuntimeWhenEndpointIsUnavailable(t *testing.T) {
 	testenv.SetDataDir(t)
 	listener, err := net.Listen("tcp", "127.0.0.1:0")
