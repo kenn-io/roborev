@@ -216,6 +216,26 @@ the `on` and `off` operations from an agent session.
 
 ## Configuration
 
+Set the top-level global `fix_guidelines` value when agents should validate
+review suggestions against a standing policy before editing:
+
+```toml
+fix_guidelines = """
+Treat review findings as hypotheses. Verify each one against the code and
+project requirements. Explain findings that are intentionally not applied.
+"""
+```
+
+Roborev appends this policy to triggered reminders after the profile's complete
+instruction and continuation text. It also reaches direct, batch, and
+commit-retry prompts from foreground `roborev fix`. An empty value keeps the
+current automatic behavior unchanged.
+
+`fix_guidelines` belongs only in the standard global config. It is separate from
+the profile `instruction`, which remains a full replacement for workflow text.
+If `agent-hook run --config` selects another file for thresholds or instruction,
+fix guidelines still come from the standard global config.
+
 All profiles except Factory Droid use `[agent_hook]` in the global config:
 
 ```toml

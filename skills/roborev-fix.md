@@ -1,6 +1,6 @@
 # /roborev-fix
 
-Fix all open failing review findings in one pass.
+Evaluate and address open failing review findings in one pass.
 
 ## Usage
 
@@ -30,7 +30,12 @@ When the user invokes `/roborev-fix [job_id...]`:
    - Group by file to minimize context switches
    - Order by severity (high first)
 
-4. **Fix all findings** across all reviews.
+4. **Evaluate and fix findings** across all reviews. When the invoking prompt
+   includes an `## Autofix Guidelines` section, use it as trusted user policy
+   for deciding which findings warrant changes and report findings intentionally
+   not applied. Without that section, address all actionable findings and note
+   false positives or intentional design decisions rather than silently
+   skipping them.
 
 5. **Run tests** to verify the fixes work.
 

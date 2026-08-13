@@ -14,6 +14,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/autofix"
 )
 
 type agentCase struct {
@@ -1067,6 +1069,28 @@ func TestFixSkillsUseHeredocForCommentText(t *testing.T) {
 			assert.NotContains(t, content, "Escape quotes and special characters in the bash command")
 			assert.Equal(t, 0, strings.Count(content, `roborev comment --commenter roborev-fix --job 1019 "`))
 			assert.Equal(t, 0, strings.Count(content, `roborev comment --commenter roborev-fix --job 1021 "`))
+		})
+	}
+}
+
+// If the runtime policy heading and shipped skill drift apart, an Agent Hook
+// invocation can supply policy the selected skill does not recognize.
+func TestFixSkillsRecognizeRuntimeAutofixGuidelines(t *testing.T) {
+	for _, agent := range []Agent{AgentClaude, AgentCodex, AgentDroid, AgentGrok} {
+		t.Run(string(agent), func(t *testing.T) {
+			spec, ok := lookupAgent(agent)
+			require.True(t, ok)
+			skills, err := embeddedSkillsForAgent(spec)
+			require.NoError(t, err)
+
+			var content string
+			for _, skill := range skills {
+				if skill.DirName == "roborev-fix" {
+					content = string(skill.Content)
+				}
+			}
+			require.NotEmpty(t, content)
+			assert.Contains(t, content, autofix.GuidelinesHeading)
 		})
 	}
 }

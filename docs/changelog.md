@@ -28,6 +28,12 @@ All notable changes to roborev, grouped by minor release.
     forwards them unchanged to agents that support each tier. The legacy `fast`,
     `standard`, `thorough`, and `maximum` presets remain compatible. See
     [Reasoning Levels](/configuration/#reasoning-levels).
+- Global autofix guidelines. Set `fix_guidelines` in `~/.roborev/config.toml` to
+    give every Agent Hook profile and foreground `roborev fix` agent policy for
+    evaluating review findings, including when a suggestion should be verified
+    or intentionally not applied. Existing automatic behavior remains unchanged
+    when the setting is empty. See
+    [Fix Guidelines](/configuration/#fix-guidelines).
 - Pi agents accept global `[agent.pi] launch_args`, passed as tokenized
     arguments to every Pi invocation before roborev-managed workflow and safety
     options. This allows isolated classifier jobs to load extension-defined

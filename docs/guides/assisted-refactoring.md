@@ -121,6 +121,11 @@ The agent reads the review findings, applies changes, commits, and closes the
 review. This is a one-shot fix. For an iterative loop with re-review, see
 [`roborev refine`](/guides/auto-fixing/).
 
+To require the fix agent to verify suggestions rather than apply them blindly,
+set global [`fix_guidelines`](/configuration/#fix-guidelines). The policy
+reaches direct fixes, batch fixes, and commit retries. It does not change the
+separate `analyze --fix` or `refine` workflows.
+
 Use `--batch` to concatenate multiple reviews into a single prompt so the agent
 sees all findings at once. This is faster and gives the agent more context to
 make coordinated fixes across related issues. Reviews are packed into batches

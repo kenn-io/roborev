@@ -217,6 +217,30 @@ environment running `roborev`.
 or newer. `fix_commit_author` uses Git's long-standing `--author` option and is
 not gated on trailer support.
 
+### Fix Guidelines
+
+Use the global-only `fix_guidelines` setting to tell Agent Hook and foreground
+`roborev fix` agents how to evaluate review findings instead of blindly applying
+every suggestion:
+
+```toml
+# ~/.roborev/config.toml
+fix_guidelines = """
+Treat review findings as hypotheses. Verify each one against the code and
+project requirements. Explain findings that are intentionally not applied.
+"""
+```
+
+The value applies to direct fixes, batch fixes, and commit retries. It also
+appears at the end of triggered reminders for every Agent Hook profile. Missing
+or empty guidance preserves the existing automatic behavior.
+
+This key is not accepted in `.roborev.toml` and has no CLI or environment
+override. Agent Hook's `--config` option still controls profile thresholds and
+the full-replacement `instruction`, but it does not redirect `fix_guidelines`
+away from the standard global config. `roborev analyze --fix` and
+`roborev refine` keep their existing, separate prompt behavior.
+
 ### Review Guidelines
 
 Use `review_guidelines` to give the AI reviewer persistent context: suppress
