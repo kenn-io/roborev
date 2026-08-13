@@ -288,6 +288,18 @@ func TestLoadGlobalConfigWithReviewGuidelines(t *testing.T) {
 	assert.Equal(t, "Prefer small, focused changes.", cfg.ReviewGuidelines)
 }
 
+// If global fix policy loading breaks, autofix agents silently lose the user's
+// review-handling policy and fall back to applying every finding.
+func TestLoadGlobalConfigWithFixGuidelines(t *testing.T) {
+	testenv.SetDataDir(t)
+	path := GlobalConfigPath()
+	require.NoError(t, os.WriteFile(path, []byte(`fix_guidelines = "Verify findings before editing."`), 0o600))
+
+	cfg, err := LoadGlobal()
+	require.NoError(t, err)
+	assert.Equal(t, "Verify findings before editing.", cfg.FixGuidelines)
+}
+
 func TestLoadRepoConfigWithGuidelines(t *testing.T) {
 	tmpDir := newTempRepo(t, `
 agent = "claude-code"

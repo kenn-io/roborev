@@ -673,6 +673,16 @@ func TestReviewGuidelinesValidInGlobalAndRepoConfig(t *testing.T) {
 	assert.NoError(SetConfigValue(&RepoConfig{}, "review_guidelines_supersede_global", "true"))
 }
 
+// If key scope drifts, a repo config can appear to set policy that the global
+// hook process will never read.
+func TestFixGuidelinesIsGlobalOnly(t *testing.T) {
+	global := &Config{}
+	require.NoError(t, SetConfigValue(global, "fix_guidelines", "Global policy"))
+	assert.Equal(t, "Global policy", global.FixGuidelines)
+	assert.True(t, IsGlobalKey("fix_guidelines"))
+	assert.Error(t, SetConfigValue(&RepoConfig{}, "fix_guidelines", "Repo policy"))
+}
+
 func TestListExplicitKeys(t *testing.T) {
 	tests := []struct {
 		name   string

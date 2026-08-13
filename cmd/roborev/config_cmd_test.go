@@ -433,6 +433,20 @@ func TestSetConfigKeyInvalidKey(t *testing.T) {
 	require.Error(t, err, "expected error for invalid key")
 }
 
+// If command scope validation drifts, users can persist a repo-local policy
+// that Agent Hook and roborev fix will ignore.
+func TestSetConfigKeyFixGuidelinesIsGlobalOnly(t *testing.T) {
+	globalPath := setupConfigFile(t)
+	require.NoError(t, setConfigKey(globalPath, "fix_guidelines", "Verify first", true))
+	assertConfigValue(t, globalPath, "fix_guidelines", "Verify first")
+
+	repoPath := setupConfigFile(t)
+	err := setConfigKey(repoPath, "fix_guidelines", "Repo policy", false)
+	require.ErrorContains(t, err, "global setting")
+	_, statErr := os.Stat(repoPath)
+	require.ErrorIs(t, statErr, os.ErrNotExist)
+}
+
 func TestSetConfigKeySlice(t *testing.T) {
 	path := setupConfigFile(t)
 

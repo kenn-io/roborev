@@ -128,6 +128,7 @@ type Config struct {
 	ReviewContextCount         int    `toml:"review_context_count"`
 	ReuseReviewSessionLookback int    `toml:"reuse_review_session_lookback"` // 0 means no candidate cap
 	ReviewGuidelines           string `toml:"review_guidelines" comment:"Extra review instructions added to prompts globally."`
+	FixGuidelines              string `toml:"fix_guidelines" comment:"Policy for evaluating review findings during automated fixes."`
 	DefaultAgent               string `toml:"default_agent" comment:"Default agent when no workflow-specific agent is set."`
 	DefaultModel               string `toml:"default_model"` // Default model for agents (format varies by agent)
 	DefaultBackupAgent         string `toml:"default_backup_agent"`
