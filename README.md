@@ -3,7 +3,7 @@
   <img alt="roborev" src="https://roborev.io/assets/static/logo-with-text-light.svg">
 </picture>
 
-[![Go](https://img.shields.io/badge/Go-1.21+-00ADD8?logo=go&logoColor=white)](https://go.dev/)
+[![Go](https://img.shields.io/badge/Go-1.26.6+-00ADD8?logo=go&logoColor=white)](https://go.dev/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 [![Docs](https://img.shields.io/badge/Docs-roborev.io-blue)](https://roborev.io)
 
