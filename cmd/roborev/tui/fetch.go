@@ -705,18 +705,30 @@ func (m model) loadComments(
 	return decodeAPIBody(resp.Body, out)
 }
 
+// dispatchFailedCommentsFetch is the single entry point for the
+// synthesized-review comments fetch: it advances the side channel's own
+// request identity and stamps it onto the outgoing request, so a stale
+// response can never overwrite a newer fetch's result or a post-success
+// local append. Standalone-statement rule applies (see
+// dispatchReviewFetch's evaluation-order pitfall above).
+func (m *model) dispatchFailedCommentsFetch(jobID int64) tea.Cmd {
+	m.failedCommentsSeq++
+	return m.fetchFailedJobComments(jobID, m.failedCommentsSeq)
+}
+
 // fetchFailedJobComments loads persisted comments for a job whose review
-// is synthesized -- see failedCommentsMsg.
-func (m model) fetchFailedJobComments(jobID int64) tea.Cmd {
+// is synthesized -- see failedCommentsMsg. Reached only through
+// dispatchFailedCommentsFetch, which owns the seq bump.
+func (m model) fetchFailedJobComments(jobID int64, seq uint64) tea.Cmd {
 	return func() tea.Msg {
 		var result struct {
 			Responses []storage.Response `json:"responses"`
 		}
 		query := &daemonclient.ListCommentsQuery{JobID: &jobID}
 		if err := m.loadComments(query, &result); err != nil {
-			return failedCommentsMsg{jobID: jobID, err: err}
+			return failedCommentsMsg{jobID: jobID, err: err, seq: seq}
 		}
-		return failedCommentsMsg{jobID: jobID, responses: result.Responses}
+		return failedCommentsMsg{jobID: jobID, responses: result.Responses, seq: seq}
 	}
 }
 

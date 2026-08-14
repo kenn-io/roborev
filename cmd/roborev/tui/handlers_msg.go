@@ -1974,6 +1974,14 @@ func (m model) handleRerunResultMsg(
 // and must not be stomped by this side channel, and a response for a job
 // the user has navigated away from is simply stale.
 func (m model) handleFailedCommentsMsg(msg failedCommentsMsg) (tea.Model, tea.Cmd) {
+	if msg.seq != m.failedCommentsSeq {
+		// A newer comments fetch has since gone out: synthesized reviews
+		// all share ID 0, so without this identity an OLDER dispatch's
+		// response (navigate away and back re-dispatches, and the
+		// post-success refetch always re-dispatches) could land last and
+		// overwrite the newer result or a just-appended comment.
+		return m, nil
+	}
 	if m.currentReview == nil || m.currentReview.JobID != msg.jobID ||
 		m.currentReview.ID != 0 || m.selectedJobID != msg.jobID {
 		return m, nil
@@ -2016,7 +2024,12 @@ func (m model) handleCommentResultMsg(
 				Response:  msg.comment,
 				CreatedAt: time.Now(),
 			})
-			return m, nil
+			// Reconcile the optimistic append with server truth, and --
+			// via the seq bump -- doom any pre-post comments fetch still
+			// in flight, whose response would otherwise land WITHOUT the
+			// just-submitted comment and wipe the append.
+			cmd := m.dispatchFailedCommentsFetch(msg.jobID)
+			return m, cmd
 		}
 		// splitActive() -- not the coarser m.layout == layoutSplit -- is
 		// the knob: it encodes "the split pane is actually rendering",

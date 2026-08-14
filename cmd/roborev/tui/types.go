@@ -392,6 +392,11 @@ type failedCommentsMsg struct {
 	jobID     int64
 	responses []storage.Response
 	err       error
+	// seq is m.failedCommentsSeq stamped at dispatch; a mismatch on
+	// arrival means a newer comments fetch has since gone out and this
+	// response must not overwrite its result (or a post-success local
+	// append). See failedCommentsSeq's doc comment (tui.go).
+	seq uint64
 }
 
 type commentResultMsg struct {

@@ -489,7 +489,7 @@ func synthesizeFailedReview(job *storage.ReviewJob, prev *storage.Review) *stora
 func (m *model) acceptSynthesizedFailure(jobID int64, fresh *storage.Review) tea.Cmd {
 	m.reviewFetchSeq++
 	m.acceptReview(reviewMsg{review: fresh, jobID: jobID, fetchSeq: m.reviewFetchSeq})
-	return m.fetchFailedJobComments(jobID)
+	return m.dispatchFailedCommentsFetch(jobID)
 }
 
 // reviewJobCompletionChanged reports whether job has completed AGAIN since

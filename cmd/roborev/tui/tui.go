@@ -742,6 +742,18 @@ type model struct {
 	// re-accept it and pop the prompt view open with no fresh keypress.
 	promptFetchSeq uint64
 
+	// failedCommentsSeq is the request identity for the synthesized-review
+	// comments side channel (failedCommentsMsg), the same shape as
+	// promptFetchSeq: bumped by dispatchFailedCommentsFetch at every
+	// dispatch and stamped onto the outgoing request; the handler drops a
+	// response whose stamp is stale. Without it, synthesized reviews all
+	// sharing ID 0 lets an OLDER fetch's response land after a newer one
+	// (navigate away and back re-dispatches) or after the post-success
+	// local append (wiping the just-submitted comment until the next
+	// refresh). The post-success path re-dispatches through the same
+	// bump, so its refetch is always the newest request.
+	failedCommentsSeq uint64
+
 	// reviewFetchSeq is the single monotonically increasing epoch stamped
 	// onto every fetch that produces a reviewMsg, follow or not:
 	// fetchReview is the only constructor of that message and

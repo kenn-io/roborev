@@ -6205,7 +6205,7 @@ func TestCommentOnSynthesizedFailedReviewAppendsLocally(t *testing.T) {
 		jobID: 1, responder: "wes", comment: "known flake, not a regression",
 	})
 	got := res.(model)
-	assert.Nil(cmd, "no refresh fetch can succeed for a review with no persisted row")
+	assert.NotNil(cmd, "the append dispatches a reconciling comments refetch")
 	require.Len(got.currentResponses, 1)
 	assert.Equal("known flake, not a regression", got.currentResponses[0].Response)
 	assert.Equal("wes", got.currentResponses[0].Responder)
@@ -6213,6 +6213,48 @@ func TestCommentOnSynthesizedFailedReviewAppendsLocally(t *testing.T) {
 	lines := strings.Join(got.renderDetailPane(88, 25), "\n")
 	assert.Contains(lines, "known flake, not a regression",
 		"the appended comment must render under the failure review")
+}
+
+// TestStaleFailedCommentsResponseCannotOverwriteNewerState: the comments
+// side channel carries its own request identity. A pre-post fetch's
+// response landing after the post-success local append must be dropped
+// (the append's own reconciling refetch bumped the seq), and an older
+// dispatch's response landing after a newer dispatch's must be dropped
+// too -- synthesized reviews all share ID 0, so nothing else tells the
+// two requests apart.
+func TestStaleFailedCommentsResponseCannotOverwriteNewerState(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	m := splitModel(withSelection(2, 1)) // job 1: failed, selected
+
+	// First display dispatches fetch #1 (pre-post: server has no comments).
+	m, cmd := m.splitReconcileDetail()
+	require.NotNil(cmd)
+	preP0stSeq := m.failedCommentsSeq
+
+	// The user's comment posts successfully: local append + refetch #2.
+	res, cmd2 := m.handleCommentResultMsg(commentResultMsg{
+		jobID: 1, responder: "wes", comment: "fresh comment",
+	})
+	m = res.(model)
+	require.NotNil(cmd2)
+	require.Len(m.currentResponses, 1)
+
+	// Fetch #1's response (empty, served before the POST) lands late:
+	// it must not wipe the appended comment.
+	res, _ = m.handleFailedCommentsMsg(failedCommentsMsg{jobID: 1, seq: preP0stSeq})
+	m = res.(model)
+	require.Len(m.currentResponses, 1,
+		"a stale pre-post response must not wipe the just-appended comment")
+	assert.Equal("fresh comment", m.currentResponses[0].Response)
+
+	// Refetch #2's response (server truth, includes the comment) lands.
+	res, _ = m.handleFailedCommentsMsg(failedCommentsMsg{
+		jobID: 1, seq: m.failedCommentsSeq,
+		responses: []storage.Response{{Responder: "wes", Response: "fresh comment"}},
+	})
+	m = res.(model)
+	assert.Len(m.currentResponses, 1, "server truth replaces the optimistic copy exactly once")
 }
 
 // TestFailedReviewCommentsSurviveNavigationRoundTrip: every synthesized
@@ -6228,7 +6270,7 @@ func TestFailedReviewCommentsSurviveNavigationRoundTrip(t *testing.T) {
 	m, cmd := m.splitReconcileDetail()
 	require.NotNil(cmd)
 	res, _ := m.handleFailedCommentsMsg(failedCommentsMsg{
-		jobID:     1,
+		jobID: 1, seq: m.failedCommentsSeq,
 		responses: []storage.Response{{Responder: "wes", Response: "known flake"}},
 	})
 	m = res.(model)
@@ -6238,7 +6280,7 @@ func TestFailedReviewCommentsSurviveNavigationRoundTrip(t *testing.T) {
 	m = m.moveSelectionToJobID(3)
 	m, _ = m.followSelectionChange(1)
 	res, _ = m.handleFailedCommentsMsg(failedCommentsMsg{
-		jobID:     1,
+		jobID: 1, seq: m.failedCommentsSeq,
 		responses: []storage.Response{{Responder: "eve", Response: "should not land"}},
 	})
 	m = res.(model)
@@ -6255,7 +6297,7 @@ func TestFailedReviewCommentsSurviveNavigationRoundTrip(t *testing.T) {
 
 	// The fetch response restores them and they render.
 	res, _ = m.handleFailedCommentsMsg(failedCommentsMsg{
-		jobID:     1,
+		jobID: 1, seq: m.failedCommentsSeq,
 		responses: []storage.Response{{Responder: "wes", Response: "known flake"}},
 	})
 	m = res.(model)
