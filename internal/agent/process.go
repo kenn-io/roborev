@@ -19,7 +19,17 @@ import (
 var subprocessWaitDelay = 5 * time.Second
 
 type subprocessTracker struct {
+	// canceledByContext records that the context watcher's kill actually
+	// terminated the process (Cancel ran and the kill succeeded).
 	canceledByContext atomic.Bool
+	// closedPipeOnContext records that closeOnContextDone closed the
+	// process's stdout pipe because the context fired. This is a separate
+	// signal from canceledByContext on purpose: the pipe close can
+	// SIGPIPE the process and Wait can reap it before the watcher's kill
+	// runs, making the kill return os.ErrProcessDone -- so the kill-based
+	// marker stays false even though context cancellation terminated the
+	// process. Classification (contextProcessError) accepts either.
+	closedPipeOnContext atomic.Bool
 }
 
 // subprocessConfig holds the options configureSubprocess accepts.
@@ -113,7 +123,11 @@ func configureCapabilityProbe(cmd *exec.Cmd) {
 	cmd.Dir = os.TempDir()
 }
 
-func closeOnContextDone(ctx context.Context, c io.Closer) func() {
+// closeOnContextDone closes c when ctx fires (unless stopped first). When
+// tracker is non-nil, a context-driven close is recorded on it BEFORE the
+// close, so a SIGPIPE death it causes can never be observed by Wait ahead
+// of the marker -- see subprocessTracker.closedPipeOnContext.
+func closeOnContextDone(ctx context.Context, c io.Closer, tracker *subprocessTracker) func() {
 	if c == nil || ctx.Done() == nil {
 		return func() {}
 	}
@@ -125,6 +139,9 @@ func closeOnContextDone(ctx context.Context, c io.Closer) func() {
 		case <-ctx.Done():
 			if stopped.Load() {
 				return
+			}
+			if tracker != nil {
+				tracker.closedPipeOnContext.Store(true)
 			}
 			_ = c.Close()
 		case <-done:
@@ -145,20 +162,24 @@ func contextProcessError(
 	if ctxErr == nil {
 		return nil
 	}
+	// Either marker proves context cancellation acted on the process: the
+	// watcher's kill succeeded, or the context-driven pipe close ran --
+	// which can SIGPIPE the process and get it reaped before the kill
+	// (making the kill return os.ErrProcessDone and leaving the
+	// kill-based marker false).
+	ctxActed := tracker != nil &&
+		(tracker.canceledByContext.Load() || tracker.closedPipeOnContext.Load())
 	if runErr != nil {
 		if errors.Is(runErr, ctxErr) ||
 			errors.Is(runErr, exec.ErrWaitDelay) ||
-			(tracker != nil &&
-				tracker.canceledByContext.Load() &&
-				processErrIndicatesContextTermination(runErr)) {
+			(ctxActed && processErrIndicatesContextTermination(runErr)) {
 			return ctxErr
 		}
 		return nil
 	}
 	if parseErr != nil &&
 		parseErrIndicatesClosedPipe(parseErr) &&
-		tracker != nil &&
-		tracker.canceledByContext.Load() {
+		ctxActed {
 		return ctxErr
 	}
 	return nil

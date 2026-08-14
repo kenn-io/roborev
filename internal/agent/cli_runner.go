@@ -54,7 +54,7 @@ func runStreamingCLI(ctx context.Context, spec streamingCLISpec) (streamingCLIRe
 	if err != nil {
 		return result, fmt.Errorf("create stdout pipe: %w", err)
 	}
-	stopClosingPipe := closeOnContextDone(ctx, stdoutPipe)
+	stopClosingPipe := closeOnContextDone(ctx, stdoutPipe, tracker)
 	defer stopClosingPipe()
 
 	if err := cmd.Start(); err != nil {

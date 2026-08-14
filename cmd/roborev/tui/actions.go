@@ -282,7 +282,10 @@ func (m model) submitComment(jobID int64, text string) tea.Cmd {
 			return commentResultMsg{jobID: jobID, err: fmt.Errorf("submit comment: %w", err)}
 		}
 
-		return commentResultMsg{jobID: jobID, err: nil}
+		return commentResultMsg{
+			jobID: jobID, err: nil,
+			responder: commenter, comment: strings.TrimSpace(text),
+		}
 	}
 }
 

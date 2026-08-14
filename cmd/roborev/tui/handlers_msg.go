@@ -1975,6 +1975,25 @@ func (m model) handleCommentResultMsg(
 			m.commentText = ""
 			m.commentJobID = 0
 		}
+		// A synthesized failed-job review has no persisted review row
+		// (ID == 0): the refresh fetch below would 404 against
+		// /api/review and the just-created comment would never appear.
+		// The daemon stored the comment keyed by the job, so append what
+		// was posted directly; a later real review fetch (e.g. after a
+		// rerun completes) supersedes this local copy with server state.
+		// No selection gate needed: unlike the fetch branches below, a
+		// local append advances no ordering epoch, so it cannot supersede
+		// anything.
+		if m.currentReview != nil && m.currentReview.JobID == msg.jobID &&
+			m.currentReview.ID == 0 {
+			m.currentResponses = append(m.currentResponses, storage.Response{
+				JobID:     &msg.jobID,
+				Responder: msg.responder,
+				Response:  msg.comment,
+				CreatedAt: time.Now(),
+			})
+			return m, nil
+		}
 		// splitActive() -- not the coarser m.layout == layoutSplit -- is
 		// the knob: it encodes "the split pane is actually rendering",
 		// including the tasks-origin exclusion. A tasks-origin review is

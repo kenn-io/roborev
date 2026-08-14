@@ -6190,6 +6190,31 @@ func TestEligibleReviewRowExcludesLiveJobs(t *testing.T) {
 	assert.True(eligibleReviewRow(storage.ReviewJob{Status: storage.JobStatusFailed}))
 }
 
+// TestCommentOnSynthesizedFailedReviewAppendsLocally: a synthesized
+// failed-job review has no persisted review row, so the comment refresh's
+// /api/review fetch would 404 and the created comment would never appear.
+// The handler must append the posted comment directly instead.
+func TestCommentOnSynthesizedFailedReviewAppendsLocally(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	m := splitModel(withSelection(2, 1)) // job 1: failed
+	m.currentReview = synthesizeFailedReview(&m.jobs[2], nil)
+	require.Zero(m.currentReview.ID, "sanity: synthesized reviews have no persisted row")
+
+	res, cmd := m.handleCommentResultMsg(commentResultMsg{
+		jobID: 1, responder: "wes", comment: "known flake, not a regression",
+	})
+	got := res.(model)
+	assert.Nil(cmd, "no refresh fetch can succeed for a review with no persisted row")
+	require.Len(got.currentResponses, 1)
+	assert.Equal("known flake, not a regression", got.currentResponses[0].Response)
+	assert.Equal("wes", got.currentResponses[0].Responder)
+
+	lines := strings.Join(got.renderDetailPane(88, 25), "\n")
+	assert.Contains(lines, "known flake, not a regression",
+		"the appended comment must render under the failure review")
+}
+
 // TestClosingLastVisibleJobClearsSelection: with hide-closed on, closing
 // the only visible job must clear the selection (like the cancel twin) --
 // left pointing at the now-hidden job, the list shows "No jobs" while the

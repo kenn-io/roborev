@@ -28,7 +28,7 @@ func TestCloseOnContextDoneClosesOnCancel(t *testing.T) {
 	defer cancel()
 
 	closer := &countingCloser{}
-	stop := closeOnContextDone(ctx, closer)
+	stop := closeOnContextDone(ctx, closer, nil)
 	defer stop()
 
 	cancel()
@@ -47,7 +47,7 @@ func TestCloseOnContextDoneStopPreventsClose(t *testing.T) {
 	defer cancel()
 
 	closer := &countingCloser{}
-	stop := closeOnContextDone(ctx, closer)
+	stop := closeOnContextDone(ctx, closer, nil)
 	stop()
 	cancel()
 	time.Sleep(20 * time.Millisecond)
@@ -57,7 +57,7 @@ func TestCloseOnContextDoneStopPreventsClose(t *testing.T) {
 
 func TestCloseOnContextDoneBackgroundIsNoop(t *testing.T) {
 	closer := &countingCloser{}
-	stop := closeOnContextDone(context.Background(), closer)
+	stop := closeOnContextDone(context.Background(), closer, nil)
 	stop()
 
 	require.Equal(t, int32(0), closer.closed.Load(), "background context should not close the closer")
@@ -205,4 +205,37 @@ func TestConfigureSubprocessDoesNotMarkCanceledWhenProcessAlreadyExited(t *testi
 		require.ErrorIs(t, err, os.ErrProcessDone, "expected os.ErrProcessDone, got %v", err)
 	}
 	require.False(t, tracker.canceledByContext.Load(), "tracker should stay false when cancel runs after process exit")
+}
+
+// TestContextPipeCloseClassifiesSIGPIPEWithoutKill covers the reap-before-
+// kill ordering: the context-driven pipe close SIGPIPEs the process and
+// Wait reaps it before the watcher's kill runs, so the kill returns
+// os.ErrProcessDone and canceledByContext stays false. The pipe-close
+// marker (closedPipeOnContext) is what lets contextProcessError still
+// classify the SIGPIPE death as context termination.
+func TestContextPipeCloseClassifiesSIGPIPEWithoutKill(t *testing.T) {
+	skipIfWindows(t)
+
+	// A real SIGPIPE death: Wait returns an ExitError with
+	// "signal: broken pipe", the same shape as an agent killed by the
+	// context-driven pipe close.
+	cmd := exec.Command("sh", "-c", "kill -PIPE $$")
+	runErr := cmd.Run()
+	require.Error(t, runErr)
+	require.Contains(t, runErr.Error(), "signal: broken pipe")
+
+	tracker := &subprocessTracker{}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	closer := &countingCloser{}
+	stop := closeOnContextDone(ctx, closer, tracker)
+	defer stop()
+	require.Eventually(t, tracker.closedPipeOnContext.Load,
+		time.Second, time.Millisecond,
+		"the context-driven close must record itself on the tracker")
+	require.False(t, tracker.canceledByContext.Load(),
+		"sanity: the kill-based marker never fired in this ordering")
+
+	require.ErrorIs(t, contextProcessError(ctx, tracker, runErr, nil), context.Canceled,
+		"SIGPIPE after a context-driven pipe close is context termination")
 }

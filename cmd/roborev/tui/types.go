@@ -384,6 +384,13 @@ type repoBranchesMsg struct {
 type commentResultMsg struct {
 	jobID int64
 	err   error
+	// responder/comment echo what was posted, so the handler can append
+	// the created comment locally when the displayed review has no
+	// persisted row to refresh from (a synthesized failed-job review:
+	// the /api/review refresh would 404 and the comment would never
+	// appear). Unset on error.
+	responder string
+	comment   string
 }
 type clipboardResultMsg struct {
 	err  error
