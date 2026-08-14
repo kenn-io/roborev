@@ -6190,6 +6190,59 @@ func TestEligibleReviewRowExcludesLiveJobs(t *testing.T) {
 	assert.True(eligibleReviewRow(storage.ReviewJob{Status: storage.JobStatusFailed}))
 }
 
+// TestClosingLastVisibleJobClearsSelection: with hide-closed on, closing
+// the only visible job must clear the selection (like the cancel twin) --
+// left pointing at the now-hidden job, the list shows "No jobs" while the
+// detail pane stays actionable for the invisible review. The rollback
+// restores by msg.jobID, so a server rejection still re-selects it.
+func TestClosingLastVisibleJobClearsSelection(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	closed := false
+	finishedAt := splitTestFinishedAt
+	only := storage.ReviewJob{
+		ID: 2, GitRef: "bbbb222", RepoName: "repoA", Agent: "codex",
+		Status: storage.JobStatusDone, Closed: &closed, FinishedAt: &finishedAt,
+	}
+	m := splitModel(withTestJobs(only), withSelection(0, 2))
+	m.hideClosed = true
+
+	res, cmd := m.handleCloseKey()
+	got := res.(model)
+	require.NotNil(cmd)
+	assert.Equal(int64(0), got.selectedJobID, "no visible replacement: the selection must clear")
+	assert.Equal(-1, got.selectedIdx)
+
+	// A server rejection rolls the selection back onto the job.
+	res, _ = got.handleClosedResultMsg(closedResultMsg{
+		jobID: 2, restoreSelection: true, oldState: false, newState: true,
+		seq: got.closedSeq, err: errors.New("daemon unreachable"),
+	})
+	assert.Equal(int64(2), res.(model).selectedJobID,
+		"the rollback must restore the selection from the cleared state")
+}
+
+// TestNormalizeSelectionClearsWhenNothingVisible: returning to the queue
+// with the selection on a hidden job and no visible job anywhere must
+// clear the selection, matching normalizeSelectionIfHidden's own
+// out-of-bounds branch.
+func TestNormalizeSelectionClearsWhenNothingVisible(t *testing.T) {
+	assert := assert.New(t)
+	closed := true
+	finishedAt := splitTestFinishedAt
+	only := storage.ReviewJob{
+		ID: 2, GitRef: "bbbb222", RepoName: "repoA", Agent: "codex",
+		Status: storage.JobStatusDone, Closed: &closed, FinishedAt: &finishedAt,
+	}
+	m := splitModel(withTestJobs(only), withSelection(0, 2))
+	m.hideClosed = true
+
+	m.normalizeSelectionIfHidden()
+	assert.Equal(int64(0), m.selectedJobID,
+		"a hidden selection with no visible replacement must clear")
+	assert.Equal(-1, m.selectedIdx)
+}
+
 // TestRunningTaskPromptNotOverwrittenByReconcile: opening a running task's
 // prompt moves the selection to the fix job like the completed-task path.
 // Left on the previous queue job, split reconciliation would keep

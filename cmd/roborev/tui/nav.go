@@ -234,6 +234,14 @@ func (m *model) normalizeSelectionIfHidden() {
 		if idx >= 0 {
 			m.selectedIdx = idx
 			m.updateSelectedJobID()
+		} else {
+			// No visible job anywhere (e.g. the last one was just closed
+			// with hide-closed on): clear rather than leave the selection
+			// on a hidden job -- the list shows "No jobs" while the detail
+			// pane would stay actionable for the invisible review. Matches
+			// the out-of-bounds branch above.
+			m.selectedIdx = -1
+			m.selectedJobID = 0
 		}
 	} else if m.selectedJobID != m.jobs[m.selectedIdx].ID {
 		// Resync stale selectedJobID (e.g., a job was removed from

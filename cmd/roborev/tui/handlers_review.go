@@ -110,8 +110,16 @@ func (m model) handleCloseKey() (tea.Model, tea.Cmd) {
 				if idx >= 0 {
 					m.selectedIdx = idx
 					m.updateSelectedJobID()
-					restoreSelection = true
+				} else {
+					// Closing the LAST visible job: clear the selection like
+					// the cancel twin below, or the list shows "No jobs"
+					// while the detail pane stays actionable for the hidden
+					// review. The rollback restores by msg.jobID
+					// (selectJobByID), so it works from a cleared selection.
+					m.selectedIdx = -1
+					m.selectedJobID = 0
 				}
+				restoreSelection = true
 			}
 			return m, m.closeReviewInBackground(job.ID, newState, oldState, seq, restoreSelection)
 		}
