@@ -1,6 +1,7 @@
 package tui
 
 import (
+	"fmt"
 	"io"
 	"time"
 
@@ -35,11 +36,88 @@ func (m model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleColumnOptionsInput(msg)
 	}
 
+	// Review-scoped actions must not fire against a review the detail pane
+	// has already moved past (see guardStaleSplitDetailAction).
+	if mm, blocked := m.guardStaleSplitDetailAction(msg); blocked {
+		return mm, nil
+	}
+
 	// Global keys shared across queue/review/prompt/commitMsg/help views
-	return m.handleGlobalKey(msg)
+	prevSelected := m.selectedJobID
+	res, cmd := m.handleGlobalKey(msg)
+	if mm, ok := res.(model); ok && mm.currentView == viewQueue {
+		mm, followCmd := mm.followSelectionChange(prevSelected)
+		if followCmd != nil {
+			return mm, tea.Batch(cmd, followCmd)
+		}
+		return mm, cmd
+	}
+	return res, cmd
+}
+
+// guardStaleSplitDetailAction blocks the review-scoped action keys while
+// the split detail pane is showing a review that is NOT the selected job's.
+// Split's two panes advance independently: detail navigation (stepReviewNav's
+// arrow keys) moves selectedJobID immediately and only replaces
+// m.currentReview once the async fetch lands, so in that window every
+// review-scoped key -- 'a' (close), 'c' (comment), 'F' (fix), 'p' (prompt),
+// 'm' (commit message), 'y' (copy) -- would act on the PREVIOUS job's
+// review while the list already highlights the new one. 'F' is the worst of
+// them: it opens the inline fix panel over the newly selected job while
+// bound to the old job's ID, so submitting starts a fix for the wrong job.
+//
+// The predicate is m.selectedReviewLoaded() (helpers.go) -- the same one
+// tab (handleTabKey) and the detail-pane click (split_render.go) already
+// use to refuse handing review actions to the wrong job -- so all three
+// entry points agree by construction.
+//
+// Only the split DETAIL pane is gated: splitActive() excludes a
+// tasks-origin review (rendered full-screen even on a split-capable
+// terminal), whose displayed review legitimately has nothing to do with
+// the queue selection, and list focus (currentView == viewQueue) acts on
+// the selected JOB rather than on currentReview, so neither is affected.
+//
+// The three keys with side effects flash, because silently swallowing a
+// close/comment/fix reads as a broken keyboard; the three read-only ones
+// (prompt/commit message/copy) are silent, since a flash on every stray
+// keypress during the sub-second load window would be noise.
+func (m model) guardStaleSplitDetailAction(msg tea.KeyMsg) (model, bool) {
+	if !m.splitActive() || m.currentView != viewReview || m.selectedReviewLoaded() {
+		return m, false
+	}
+	switch msg.String() {
+	case "a", "c", "F":
+		m.setFlash("Review still loading", 2*time.Second, m.currentView)
+		return m, true
+	case "p", "m", "y":
+		return m, true
+	}
+	return m, false
+}
+
+// mouseNavWithFollow invokes nav (handleUpKey/handleDownKey) and routes any
+// resulting queue selection change through followSelectionChange, mirroring
+// handleKeyMsg's viewQueue wrapper. Mouse events never pass through
+// handleKeyMsg, so without this the non-split wheel paths would move the
+// selection while skipping the abandonment chokepoint, leaving pending
+// review/fix intents armed for a job the cursor already left.
+func (m model) mouseNavWithFollow(nav func() (tea.Model, tea.Cmd)) (tea.Model, tea.Cmd) {
+	prevSelected := m.selectedJobID
+	res, cmd := nav()
+	if mm, ok := res.(model); ok && mm.currentView == viewQueue {
+		mm, followCmd := mm.followSelectionChange(prevSelected)
+		if followCmd != nil {
+			return mm, tea.Batch(cmd, followCmd)
+		}
+		return mm, cmd
+	}
+	return res, cmd
 }
 
 func (m model) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
+	if m.splitActive() {
+		return m.handleSplitMouse(msg)
+	}
 	mouse := msg.Mouse()
 	switch msg.(type) {
 	case tea.MouseWheelMsg:
@@ -57,7 +135,7 @@ func (m model) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
-			return m.handleUpKey()
+			return m.mouseNavWithFollow(m.handleUpKey)
 		case tea.MouseWheelDown:
 			if m.currentView == viewColumnOptions {
 				if m.colOptionsIdx < len(m.colOptionsList)-1 {
@@ -71,7 +149,7 @@ func (m model) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 				}
 				return m, nil
 			}
-			return m.handleDownKey()
+			return m.mouseNavWithFollow(m.handleDownKey)
 		default:
 			return m, nil
 		}
@@ -81,7 +159,9 @@ func (m model) handleMouseMsg(msg tea.MouseMsg) (tea.Model, tea.Cmd) {
 		}
 		switch m.currentView {
 		case viewQueue:
+			prevSelected := m.selectedJobID
 			m.handleQueueMouseClick(mouse.X, mouse.Y)
+			return m.followSelectionChange(prevSelected)
 		case viewTasks:
 			m.handleTasksMouseClick(mouse.Y)
 		case viewColumnOptions:
@@ -172,8 +252,40 @@ func (m model) handleGlobalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleTogglePauseKey()
 	case "tab":
 		return m.handleTabKey()
+	case "L":
+		return m.handleToggleLayoutKey()
 	}
 	return m, nil
+}
+
+// handleToggleLayoutKey toggles between split and stacked layout, locking
+// the user's preference so it survives subsequent resizes.
+func (m model) handleToggleLayoutKey() (tea.Model, tea.Cmd) {
+	if m.currentView != viewQueue && m.currentView != viewReview {
+		return m, nil
+	}
+	target := layoutSplit
+	if m.layout == layoutSplit {
+		target = layoutStacked
+	}
+	// applyLayout below is a direct transition that bypasses resolveLayout,
+	// so distraction-free's stacked override (see resolveLayout) must be
+	// enforced here too or L would re-engage the split composition while
+	// the title-plus-list-only contract is active.
+	if target == layoutSplit && m.distractionFree {
+		m.setFlash("Split layout is unavailable in distraction-free mode (press D to exit)",
+			3*time.Second, m.currentView)
+		return m, nil
+	}
+	if target == layoutSplit && pickLayout(m.width, m.height) != layoutSplit {
+		m.setFlash(fmt.Sprintf("Terminal too small for split view (needs %dx%d)",
+			splitMinWidth, splitMinHeight), 3*time.Second, m.currentView)
+		return m, nil
+	}
+	m.layoutLocked = true
+	m.preferredLayout = target
+	m.applyLayout(target)
+	return m.maybeBootstrapDetail()
 }
 
 // handleTogglePauseKey pauses or resumes daemon queue processing. Pause is a
@@ -195,6 +307,37 @@ func (m model) handleTogglePauseKey() (tea.Model, tea.Cmd) {
 }
 
 func (m model) handleQuitKey() (tea.Model, tea.Cmd) {
+	// A tasks-origin review renders full-screen even in split (splitActive()
+	// excludes it -- see its doc comment), so this split-pane-specific
+	// "back to the queue list" shortcut must not fire for it; falling
+	// through to the general viewReview branch below returns to
+	// reviewFromView (viewTasks) instead, via the same logic that handles
+	// every other full-screen review return.
+	if m.layout == layoutSplit && m.currentView == viewReview && m.reviewFromView != viewTasks {
+		if m.reviewFixPanelOpen {
+			m.closeFixPanel()
+			return m, nil
+		}
+		m.focus = focusList
+		m.currentView = viewQueue
+		// The review just left may now be hidden -- closing it with
+		// hideClosed enabled removes its row -- which would leave the
+		// selection pointing at a job with no highlighted row, so later
+		// actions would target a job the user cannot see. Normalize
+		// exactly as the stacked return path does, and refill the queue
+		// when hideClosed pruned it (the same refill the stacked path
+		// performs). The follow transition (followSelectionChange) is NOT
+		// called here: handleKeyMsg's wrapper performs it after this
+		// handler returns to viewQueue, against the prevSelected it
+		// captured before dispatch, so calling it here too would
+		// double-bump detailFollowGen and schedule a stale extra tick.
+		m.normalizeSelectionIfHidden()
+		if m.hideClosed && !m.loadingJobs {
+			m.loadingJobs = true
+			return m, m.fetchJobs()
+		}
+		return m, nil
+	}
 	if m.currentView == viewReview {
 		returnTo := m.reviewFromView
 		if returnTo == 0 {
@@ -214,8 +357,8 @@ func (m model) handleQuitKey() (tea.Model, tea.Cmd) {
 		m.paginateNav = 0
 		if m.promptFromQueue {
 			m.currentView = viewQueue
-			m.currentReview = nil
 			m.promptScroll = 0
+			m = m.preserveOrClearReviewOnQueueReturn()
 		} else {
 			m.currentView = viewReview
 			m.promptScroll = 0
@@ -332,16 +475,45 @@ func (m model) handleLeftKey() (tea.Model, tea.Cmd) {
 	return m.handlePrevKey()
 }
 
+// queueNavUp moves the queue cursor one row toward newer entries, flashing
+// the boundary when the move clamps in place. Shared by handleUpKey's
+// viewQueue arm and the split list pane's wheel-up (handleSplitMouse), so
+// keyboard and wheel navigation cannot drift apart.
+func (m model) queueNavUp() (model, tea.Cmd) {
+	prevID := m.selectedJobID
+	m = m.moveQueueSelection(-1)
+	// id unchanged after a clamped move ⇒ already at the top; re-flash the boundary hint.
+	if m.selectedJobID == prevID {
+		m.setFlash("No newer review", 2*time.Second, viewQueue)
+	}
+	return m, nil
+}
+
+// queueNavDown moves the queue cursor one row toward older entries,
+// prefetching near the end of loaded data and resuming pagination at the
+// bottom boundary. Shared by handleDownKey's viewQueue arm and the split
+// list pane's wheel-down (handleSplitMouse), so wheel users can pull older
+// pages exactly like keyboard users.
+func (m model) queueNavDown() (model, tea.Cmd) {
+	prevID := m.selectedJobID
+	m = m.moveQueueSelection(+1)
+	if m.selectedJobID != prevID {
+		if cmd := m.maybePrefetch(m.selectedIdx); cmd != nil {
+			return m, cmd
+		}
+	} else if m.canPaginate() {
+		m.loadingMore = true
+		return m, m.fetchMoreJobs()
+	} else if !m.hasMore || m.activeBranchFilter == branchNone {
+		m.setFlash("No older review", 2*time.Second, viewQueue)
+	}
+	return m, nil
+}
+
 func (m model) handleUpKey() (tea.Model, tea.Cmd) {
 	switch m.currentView {
 	case viewQueue:
-		prevID := m.selectedJobID
-		m = m.moveQueueSelection(-1)
-		// id unchanged after a clamped move ⇒ already at the top; re-flash the boundary hint.
-		if m.selectedJobID == prevID {
-			m.setFlash("No newer review", 2*time.Second, viewQueue)
-		}
-		return m, nil
+		return m.queueNavUp()
 	case viewReview:
 		if m.reviewScroll > 0 {
 			m.reviewScroll--
@@ -417,6 +589,19 @@ func (m *model) resolveAbsentSelection(
 // stepReviewNav walks the flattened rows for the queue-origin review view in
 // direction dir (-1 = newer, +1 = older) and opens the target review, or
 // flashes/paginates at the boundary. Never indexes m.jobs by a stale index.
+//
+// Takes the shared detail-follow transition (followSelectionChange) like
+// every other selection-moving site. It was long argued not to need one,
+// because eligibleReviewRow admits only done/failed jobs and both branches
+// below replace currentReview for the new job -- true for the CONTENT, and
+// false for splitDetailErr: renderDetailPane's done branch
+// renders that error whenever currentReview does not yet match the selected
+// job, which is exactly the state this function creates for the duration of
+// the dispatched fetch. So a reconcile follow that failed while job X was
+// displayed left "Failed to load review: ..." rendering under job Y's status
+// card the moment the user arrowed to it. Routing through the shared
+// transition clears it (and stops any tail, and disarms the intent) instead
+// of hand-clearing one field here.
 func (m model) stepReviewNav(dir int) (tea.Model, tea.Cmd) {
 	job, found, present := m.contentNavStep(dir, eligibleReviewRow)
 	if !present {
@@ -428,26 +613,44 @@ func (m model) stepReviewNav(dir int) (tea.Model, tea.Cmd) {
 	} else if !found {
 		return m, m.contentNavBoundary(viewReview, dir)
 	}
+	prevSelected := m.selectedJobID
 	m.closeFixPanel()
 	m = m.moveSelectionToJobID(job.ID)
 	m.reviewScroll = 0
+	// Before the dispatch: the gen bump must precede the fetch it stamps,
+	// and disarmPendingReviewOpen must precede the re-arm below.
+	var followCmd tea.Cmd
+	m, followCmd = m.followSelectionChange(prevSelected)
 	switch job.Status {
 	case storage.JobStatusDone:
-		return m, m.fetchReview(job.ID)
+		cmd := m.dispatchReviewFetch(job.ID)
+		return m, tea.Batch(followCmd, cmd)
 	case storage.JobStatusFailed:
 		m.currentBranch = ""
-		m.currentReview = &storage.Review{
-			Agent:  job.Agent,
-			Output: "Job failed:\n\n" + job.Error,
-			Job:    &job,
-		}
+		m.currentResponses = nil
+		m.currentReview = synthesizeFailedReview(&job, m.currentReview)
 	}
-	return m, nil
+	return m, followCmd
 }
 
 // stepPromptNav walks the flattened rows for the queue-origin prompt view in
 // direction dir (-1 = newer, +1 = older) and opens the target prompt, or
 // flashes/paginates at the boundary.
+//
+// Takes the shared detail-follow transition (followSelectionChange), same as
+// stepLogNav. An earlier audit marked this site safe, but for the narrower
+// question of whether a pending INTENT could be stranded here -- not for
+// whether the split detail PANE follows the selection. It does not follow on
+// its own: eligiblePromptRow admits RUNNING and QUEUED jobs, so prompt nav
+// can move the selection from one running job to another, and for those the
+// branch below writes only a synthetic prompt-only review. Nothing stops the
+// pane's live log tail for the job navigated away from (paneLogSeq is bumped
+// only by scheduleDetailFollow), nothing clears a splitDetailErr belonging to
+// it, and nothing starts the NEW job's tail until an unrelated jobs refresh
+// reconciles it -- so the previous job's buffered log or error kept rendering
+// beneath the new job's status. The Done branch's fetchReviewForPrompt has
+// the same gap: it writes currentReview through handlePromptMsg without
+// touching any pane-follow state.
 func (m model) stepPromptNav(dir int) (tea.Model, tea.Cmd) {
 	job, found, present := m.contentNavStep(dir, eligiblePromptRow)
 	if !present {
@@ -459,10 +662,18 @@ func (m model) stepPromptNav(dir int) (tea.Model, tea.Cmd) {
 	} else if !found {
 		return m, m.contentNavBoundary(viewKindPrompt, dir)
 	}
+	prevSelected := m.selectedJobID
 	m = m.moveSelectionToJobID(job.ID)
 	m.promptScroll = 0
+	var followCmd tea.Cmd
+	m, followCmd = m.followSelectionChange(prevSelected)
 	if job.Status == storage.JobStatusDone {
-		return m, m.fetchReviewForPrompt(job.ID)
+		// Batched, not returned in place of the prompt fetch: both must
+		// run. Dispatched as a standalone statement so the returned m
+		// carries the seq bump (dispatchReviewFetch's evaluation-order
+		// pitfall, fetch.go).
+		promptCmd := m.dispatchPromptFetch(job.ID)
+		return m, tea.Batch(followCmd, promptCmd)
 	}
 	if (job.Status == storage.JobStatusRunning || job.Status == storage.JobStatusQueued) && job.Prompt != "" {
 		m.currentReview = &storage.Review{
@@ -471,12 +682,25 @@ func (m model) stepPromptNav(dir int) (tea.Model, tea.Cmd) {
 			Job:    &job,
 		}
 	}
-	return m, nil
+	return m, followCmd
 }
 
 // stepLogNav walks the flattened rows for the queue-origin log view in direction
 // dir (-1 = newer, +1 = older) and opens the target log, or flashes/paginates
 // at the boundary.
+//
+// Its target view (viewLog) never touches currentReview -- the log view's
+// content lives entirely in separate fields (logLines, paneLog*) -- so
+// without an explicit follow here the split detail pane would keep
+// showing the job the user navigated away from until an unrelated jobs
+// refresh reconciled it (see cmd/roborev/tui's PR review finding on
+// handlers.go:27). followSelectionChange only gates on m.layout (not
+// splitActive()), so this still arms the debounced follow while the log view
+// is on screen in split layout; the resulting tick/fetch lands quietly in
+// the background and the pane is already caught up by the time the user
+// returns to the queue. In stacked layout (or tasks-origin log nav, which
+// never reaches this function -- see handleNextKey/handlePrevKey's
+// logFromView == viewTasks branch) followSelectionChange is a no-op.
 func (m model) stepLogNav(dir int) (tea.Model, tea.Cmd) {
 	job, found, present := m.contentNavStep(dir, eligibleLogRow)
 	if !present {
@@ -488,9 +712,13 @@ func (m model) stepLogNav(dir int) (tea.Model, tea.Cmd) {
 	} else if !found {
 		return m, m.contentNavBoundary(viewLog, dir)
 	}
+	prevSelected := m.selectedJobID
 	m = m.moveSelectionToJobID(job.ID)
 	m.logStreaming = false
-	return m.openLogView(job.ID, job.Status, m.logFromView)
+	var followCmd tea.Cmd
+	m, followCmd = m.followSelectionChange(prevSelected)
+	logModel, logCmd := m.openLogView(job.ID, job.Status, m.logFromView)
+	return logModel, tea.Batch(followCmd, logCmd)
 }
 
 func (m model) handleNextKey() (tea.Model, tea.Cmd) {
@@ -527,18 +755,7 @@ func (m model) nextFixLog() (tea.Model, tea.Cmd) {
 func (m model) handleDownKey() (tea.Model, tea.Cmd) {
 	switch m.currentView {
 	case viewQueue:
-		prevID := m.selectedJobID
-		m = m.moveQueueSelection(+1)
-		if m.selectedJobID != prevID {
-			if cmd := m.maybePrefetch(m.selectedIdx); cmd != nil {
-				return m, cmd
-			}
-		} else if m.canPaginate() {
-			m.loadingMore = true
-			return m, m.fetchMoreJobs()
-		} else if !m.hasMore || m.activeBranchFilter == branchNone {
-			m.setFlash("No older review", 2*time.Second, viewQueue)
-		}
+		return m.queueNavDown()
 	case viewReview:
 		m.reviewScroll++
 		if m.mdCache != nil && m.reviewScroll > m.mdCache.lastReviewMaxScroll {
@@ -675,6 +892,35 @@ func (m model) handleHelpKey() (tea.Model, tea.Cmd) {
 }
 
 func (m model) handleEscKey() (tea.Model, tea.Cmd) {
+	// See handleQuitKey's matching comment: a tasks-origin review must
+	// fall through to the general viewReview branch below (which returns
+	// to reviewFromView == viewTasks) instead of this split-pane-specific
+	// "back to the queue list" shortcut.
+	if m.layout == layoutSplit && m.currentView == viewReview && m.reviewFromView != viewTasks {
+		if m.reviewFixPanelOpen {
+			m.closeFixPanel()
+			return m, nil
+		}
+		m.focus = focusList
+		m.currentView = viewQueue
+		// The review just left may now be hidden -- closing it with
+		// hideClosed enabled removes its row -- which would leave the
+		// selection pointing at a job with no highlighted row, so later
+		// actions would target a job the user cannot see. Normalize
+		// exactly as the stacked return path does, and refill the queue
+		// when hideClosed pruned it (the same refill the stacked path
+		// performs). The follow transition (followSelectionChange) is NOT
+		// called here: handleKeyMsg's wrapper performs it after this
+		// handler returns to viewQueue, against the prevSelected it
+		// captured before dispatch, so calling it here too would
+		// double-bump detailFollowGen and schedule a stale extra tick.
+		m.normalizeSelectionIfHidden()
+		if m.hideClosed && !m.loadingJobs {
+			m.loadingJobs = true
+			return m, m.fetchJobs()
+		}
+		return m, nil
+	}
 	if m.currentView == viewQueue && len(m.filterStack) > 0 {
 		popped := m.popFilter()
 		if popped == filterTypeRepo || popped == filterTypeBranch {
@@ -712,8 +958,8 @@ func (m model) handleEscKey() (tea.Model, tea.Cmd) {
 		m.paginateNav = 0
 		if m.promptFromQueue {
 			m.currentView = viewQueue
-			m.currentReview = nil
 			m.promptScroll = 0
+			m = m.preserveOrClearReviewOnQueueReturn()
 		} else {
 			m.currentView = viewReview
 			m.promptScroll = 0

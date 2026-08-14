@@ -54,6 +54,8 @@ type stateSnapshot struct {
 	JobCount        int              `json:"job_count"`
 	VisibleJobCount int              `json:"visible_job_count"`
 	Stats           storage.JobStats `json:"stats"`
+	Layout          string           `json:"layout"`
+	Focus           string           `json:"focus"`
 }
 
 // jobSnapshot is a lightweight job representation for the get-jobs query.

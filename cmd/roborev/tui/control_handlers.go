@@ -76,6 +76,10 @@ func (m model) handleControlMutation(
 // --- Query response builders ---
 
 func (m model) buildStateResponse() controlResponse {
+	focus := ""
+	if m.layout == layoutSplit {
+		focus = m.focus.String()
+	}
 	return controlResponse{
 		OK: true,
 		Data: stateSnapshot{
@@ -89,6 +93,8 @@ func (m model) buildStateResponse() controlResponse {
 			JobCount:        len(m.jobs),
 			VisibleJobCount: len(m.getVisibleJobs()),
 			Stats:           m.jobStats,
+			Layout:          m.layout.String(),
+			Focus:           focus,
 		},
 	}
 }
@@ -337,9 +343,24 @@ func (m model) handleCtrlSelectJob(
 					),
 				}, nil
 			}
+			prevSelected := m.selectedJobID
 			m.selectedIdx = i
 			m.selectedJobID = params.JobID
-			return m, controlResponse{OK: true}, nil
+			// In split layout a selection change must go through the same
+			// detail-follow path as keyboard/mouse navigation. Mutating
+			// selectedIdx/selectedJobID alone left the detail pane showing
+			// the PREVIOUS job's live tail (and any splitDetailErr from it)
+			// until the next jobs refresh reconciled it, and left an
+			// in-flight pane-log fetch for the old job able to land:
+			// handlePaneLogOutputMsg's seq+jobID gates both still reference
+			// the old job on this path, so nothing rejected it -- including
+			// a successful response, which would clear an error belonging
+			// to the newly selected job. scheduleDetailFollow bumps
+			// paneLogSeq when the selection moved off the tailed job
+			// (invalidating exactly those responses), clears
+			// splitDetailErr, and arms the debounced fetch for the new job.
+			mm, cmd := m.followSelectionChange(prevSelected)
+			return mm, controlResponse{OK: true}, cmd
 		}
 	}
 	return m, controlResponse{
@@ -376,9 +397,15 @@ func (m model) handleCtrlSetView(
 		}, nil
 	}
 
-	m.currentView = v
 	var cmd tea.Cmd
-	if v == viewTasks {
+	if v == viewQueue {
+		// Same repair as the keyboard exits: the tasks flow may have moved
+		// the selection to a fix job no queue row resolves -- see
+		// exitTasksToQueue. A no-op when the selection still resolves
+		// (including when this call didn't come from the tasks view).
+		m, cmd = m.exitTasksToQueue()
+	} else {
+		m.currentView = v
 		cmd = m.startFetchFixJobs()
 	}
 	return m, controlResponse{OK: true}, cmd
@@ -439,7 +466,24 @@ func (m model) handleCtrlCloseReview(
 		newState: newState, seq: seq,
 	}
 	m.applyStatsDelta(newState)
+	// Mirrors handleCloseKey's split-list optimistic flip (R9): without
+	// this, the control-socket close route leaves the split detail pane's
+	// header showing the stale closed state until the user reselects, the
+	// same staleness R9 fixed for the key path. Keyed by the same seq as
+	// pendingClosed so handleClosedResultMsg's rollback-on-failure path
+	// rolls both back together; the rollback itself is effectively a
+	// no-op here in the sense that it just reverts to oldState, same as
+	// the key path.
+	if m.currentReview != nil && m.currentReview.JobID == params.JobID {
+		m.currentReview.Closed = newState
+	}
 
+	// The hideClosed branch below hides the job just closed and moves the
+	// selection to an adjacent row. That is a selection change like any
+	// other and must take the shared detail-follow transition, or the
+	// detail pane (and a fix panel still bound to the just-closed job)
+	// stays pointed at it while the list highlights something else.
+	prevSelected := m.selectedJobID
 	restoreSelection := false
 	if m.hideClosed && newState &&
 		m.selectedJobID == params.JobID {
@@ -461,10 +505,11 @@ func (m model) handleCtrlCloseReview(
 		}
 	}
 
-	return m, controlResponse{OK: true},
-		m.closeReviewInBackground(
-			params.JobID, newState, oldState, seq, restoreSelection,
-		)
+	closeCmd := m.closeReviewInBackground(
+		params.JobID, newState, oldState, seq, restoreSelection,
+	)
+	m, followCmd := m.followSelectionChange(prevSelected)
+	return m, controlResponse{OK: true}, tea.Batch(closeCmd, followCmd)
 }
 
 func (m model) handleCtrlCancelJob(
@@ -513,6 +558,10 @@ func (m model) handleCtrlCancelJob(
 	now := time.Now()
 	job.FinishedAt = &now
 
+	// Same as the close path above: canceling the selected job hides it
+	// when hideClosed is on, so the selection move below has to take the
+	// shared detail-follow transition.
+	prevSelected := m.selectedJobID
 	restoreSelection := false
 	if m.hideClosed && m.selectedJobID == params.JobID {
 		idx := m.findPrevVisibleJob(m.selectedIdx)
@@ -532,11 +581,12 @@ func (m model) handleCtrlCancelJob(
 		restoreSelection = true
 	}
 
-	return m, controlResponse{OK: true},
-		m.cancelJob(
-			params.JobID, oldStatus, oldFinishedAt,
-			restoreSelection,
-		)
+	cancelCmd := m.cancelJob(
+		params.JobID, oldStatus, oldFinishedAt,
+		restoreSelection,
+	)
+	m, followCmd := m.followSelectionChange(prevSelected)
+	return m, controlResponse{OK: true}, tea.Batch(cancelCmd, followCmd)
 }
 
 func (m model) handleCtrlRerunJob(
@@ -580,6 +630,19 @@ func (m model) handleCtrlRerunJob(
 		}, nil
 	}
 
+	// Same suppression as the keyboard path: a synthesis
+	// parent's row stays terminal while its rerun is in flight, so the
+	// status check above cannot stop a second request from spawning a
+	// second full panel run. An explicit error, rather than a silent
+	// success, so a scripted caller can tell the two apart.
+	if job.IsSynthesisJob() && m.panelRerunInFlight[job.ID] {
+		return m, controlResponse{
+			Error: fmt.Sprintf(
+				"panel rerun already in flight for job %d", job.ID,
+			),
+		}, nil
+	}
+
 	snap := rerunSnapshot{
 		jobID:         job.ID,
 		oldStatus:     job.Status,
@@ -588,17 +651,29 @@ func (m model) handleCtrlRerunJob(
 		oldError:      job.Error,
 		oldClosed:     job.Closed,
 		oldVerdict:    job.Verdict,
+		// Same as the keyboard path: a synthesis parent's rerun spawns a
+		// new panel run with new job IDs, not a new attempt of this job.
+		spawnsNewRun: job.IsSynthesisJob(),
 	}
-	job.Status = storage.JobStatusQueued
-	job.StartedAt = nil
-	job.FinishedAt = nil
-	job.Error = ""
-	// Clear review-derived fields so the rerun job is visible
-	// under hideClosed and doesn't expose stale verdict data.
-	// The daemon deletes the review row on rerun; this keeps
-	// the local optimistic state consistent until the next fetch.
-	job.Closed = nil
-	job.Verdict = nil
+	// Same gate as the keyboard path: this optimistic
+	// re-queue is only consistent with what the daemon will do when the
+	// daemon really re-runs THIS row. A synthesis parent's rerun enqueues a
+	// separate run and leaves this row -- and its review -- exactly as they
+	// are, so the mutation would be wrong from the instant it was made.
+	if !snap.spawnsNewRun {
+		job.Status = storage.JobStatusQueued
+		job.StartedAt = nil
+		job.FinishedAt = nil
+		job.Error = ""
+		// Clear review-derived fields so the rerun job is visible
+		// under hideClosed and doesn't expose stale verdict data.
+		// For an ordinary rerun the daemon deletes the review row, so this
+		// keeps the local optimistic state consistent until the next fetch.
+		job.Closed = nil
+		job.Verdict = nil
+	} else {
+		m.markPanelRerunInFlight(job.ID)
+	}
 
 	return m, controlResponse{OK: true}, m.rerunJob(snap)
 }

@@ -36,6 +36,32 @@ func panelReviewHeader(job storage.ReviewJob, members []storage.ReviewJob) strin
 	return fmt.Sprintf("%d reviewers: %s", s.MembersTotal, panelOutcomeSplit(s))
 }
 
+// reviewContentString builds the markdown-source content for a review:
+// panel header (synthesis parent only) + review output + comment responses.
+// Shared by the full-screen review view and the split detail pane.
+func (m model) reviewContentString(review *storage.Review) string {
+	var content strings.Builder
+	if review.Job != nil && review.Job.IsSynthesisJob() {
+		if header := panelReviewHeader(*review.Job, m.panelMembers[review.Job.PanelRunUUID]); header != "" {
+			content.WriteString(sanitizeForDisplay(header))
+			content.WriteString("\n\n")
+		}
+	}
+	content.WriteString(review.Output)
+
+	// Append responses if any
+	if len(m.currentResponses) > 0 {
+		content.WriteString("\n\n--- Comments ---\n")
+		for _, r := range m.currentResponses {
+			timestamp := r.CreatedAt.Format("Jan 02 15:04")
+			fmt.Fprintf(&content, "\n[%s] %s:\n", timestamp, r.Responder)
+			content.WriteString(r.Response)
+			content.WriteString("\n")
+		}
+	}
+	return content.String()
+}
+
 func (m model) renderReviewView() string {
 	var b strings.Builder
 
@@ -121,32 +147,11 @@ func (m model) renderReviewView() string {
 		b.WriteString("\x1b[K\n") // Clear to end of line
 	}
 
-	// Build content: panel header (synthesis parent only) + review output + responses
-	var content strings.Builder
-	if review.Job != nil && review.Job.IsSynthesisJob() {
-		if header := panelReviewHeader(*review.Job, m.panelMembers[review.Job.PanelRunUUID]); header != "" {
-			content.WriteString(sanitizeForDisplay(header))
-			content.WriteString("\n\n")
-		}
-	}
-	content.WriteString(review.Output)
-
-	// Append responses if any
-	if len(m.currentResponses) > 0 {
-		content.WriteString("\n\n--- Comments ---\n")
-		for _, r := range m.currentResponses {
-			timestamp := r.CreatedAt.Format("Jan 02 15:04")
-			fmt.Fprintf(&content, "\n[%s] %s:\n", timestamp, r.Responder)
-			content.WriteString(r.Response)
-			content.WriteString("\n")
-		}
-	}
-
 	// Render markdown content with glamour (cached), falling back to plain text wrapping.
 	// wrapWidth caps at 100 for readability; maxWidth uses actual terminal width for truncation.
 	maxWidth := max(20, m.width-4)
 	wrapWidth := min(maxWidth, 100)
-	contentStr := content.String()
+	contentStr := m.reviewContentString(review)
 	var lines []string
 	if m.mdCache != nil {
 		lines = m.mdCache.getReviewLines(contentStr, wrapWidth, maxWidth, review.ID)
@@ -232,7 +237,12 @@ func (m model) renderReviewView() string {
 
 			// Input content — show tail so cursor always visible
 			inputDisplay := m.fixPromptText
-			maxInputLen := innerWidth - 3 // " > " (3) + "_" (1) = 4 overhead, but Width handles right padding
+			// lipgloss v2's Width is border-box: content wider than
+			// innerWidth-2 wraps the box to 4+ lines, overflowing the
+			// 5-line panelReserve and pushing the frame past the terminal
+			// height. " > " (3) + "_" (1) = 4 overhead, so the input
+			// itself may use innerWidth-6.
+			maxInputLen := innerWidth - 6
 			if runewidth.StringWidth(inputDisplay) > maxInputLen {
 				runes := []rune(inputDisplay)
 				for runewidth.StringWidth(string(runes)) > maxInputLen {
@@ -260,8 +270,9 @@ func (m model) renderReviewView() string {
 			if inputDisplay == "" {
 				inputDisplay = "(blank = default)"
 			}
-			if runewidth.StringWidth(inputDisplay) > innerWidth-2 {
-				inputDisplay = runewidth.Truncate(inputDisplay, innerWidth-2, "")
+			// Border-box again: " " (1) + display must fit in innerWidth-2.
+			if runewidth.StringWidth(inputDisplay) > innerWidth-3 {
+				inputDisplay = runewidth.Truncate(inputDisplay, innerWidth-3, "")
 			}
 			content := " " + inputDisplay
 			boxStyle := lipgloss.NewStyle().

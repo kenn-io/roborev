@@ -171,6 +171,10 @@ limited.
 The same compact layout activates automatically when the terminal height is
 below 15 rows.
 
+Distraction-free mode always uses the stacked single-column layout, even on
+terminals large enough for the split view; toggling it off restores the split
+view when the terminal fits.
+
 ## Column Customization
 
 Press `o` in the queue or tasks view to open the column options modal. From
@@ -420,7 +424,7 @@ read this file to discover running TUI instances.
 
 | Command | Description |
 |---------|-------------|
-| `get-state` | Current view, filters, hide-closed state, selected job ID, job counts |
+| `get-state` | Current view, filters, hide-closed state, selected job ID, job counts, layout, focus |
 | `get-filter` | Active repo and branch filters with lock status |
 | `get-jobs` | List of visible jobs (ID, agent, status, repo, branch, verdict) |
 | `get-selected` | Currently selected job and whether it has a review |
@@ -452,9 +456,13 @@ Send a request as a single JSON line:
 Responses include an `ok` field, optional `error`, and optional `data`:
 
 ```json
-{"ok": true, "data": {"view": "queue", "job_count": 15, ...}}
+{"ok": true, "data": {"view": "queue", "job_count": 15, "layout": "split", "focus": "list", ...}}
 {"ok": false, "error": "job not found"}
 ```
+
+The `get-state` response's `layout` field is always `"stacked"` or `"split"`.
+`focus` is only meaningful in split layout: it's `"list"` or `"detail"` when
+`layout` is `"split"`, and an empty string otherwise.
 
 ### Example
 

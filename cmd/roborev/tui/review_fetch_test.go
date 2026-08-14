@@ -16,24 +16,37 @@ func TestTUIFetchReviewNotFound(t *testing.T) {
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusNotFound)
 	})
-	cmd := m.fetchReview(999)
+	cmd := m.fetchReview(999, 1)
 	msg := cmd()
 
-	errMsg, ok := msg.(errMsg)
-	assert.True(t, ok)
-	assert.Equal(t, "no review found", errMsg.Error())
+	// fetchReview's failure is the typed reviewErrMsg, not the generic
+	// errMsg -- see reviewErrMsg's doc comment (types.go).
+	rem, ok := msg.(reviewErrMsg)
+	require.True(t, ok)
+	assert.Equal(t, int64(999), rem.jobID)
+	assert.Equal(t, "no review found", rem.err.Error())
+	// This and TestTUIFetchReviewServerError are the ONLY tests exercising
+	// fetchReview's REAL failure path (mockServerModel, not a hand-built
+	// message) -- if fetchReview ever stamped fetchSeq: 0 instead of the
+	// fetchSeq it was called with, every handler gated on
+	// msg.fetchSeq == m.reviewFetchSeq would silently treat every ordinary
+	// failure as stale/superseded and swallow it, with no other test
+	// catching the regression.
+	assert.Equal(t, uint64(1), rem.fetchSeq)
 }
 
 func TestTUIFetchReviewServerError(t *testing.T) {
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		w.WriteHeader(http.StatusInternalServerError)
 	})
-	cmd := m.fetchReview(1)
+	cmd := m.fetchReview(1, 1)
 	msg := cmd()
 
-	errMsg, ok := msg.(errMsg)
-	assert.True(t, ok)
-	assert.Equal(t, "fetch review: 500 Internal Server Error", errMsg.Error())
+	rem, ok := msg.(reviewErrMsg)
+	require.True(t, ok)
+	assert.Equal(t, int64(1), rem.jobID)
+	assert.Equal(t, "fetch review: 500 Internal Server Error", rem.err.Error())
+	assert.Equal(t, uint64(1), rem.fetchSeq)
 }
 
 func TestTUIFetchReviewFallbackSHAResponses(t *testing.T) {
@@ -83,7 +96,7 @@ func TestTUIFetchReviewFallbackSHAResponses(t *testing.T) {
 
 		w.WriteHeader(http.StatusNotFound)
 	})
-	cmd := m.fetchReview(42)
+	cmd := m.fetchReview(42, 1)
 	msg := cmd()
 
 	reviewMsg, ok := msg.(reviewMsg)
@@ -142,7 +155,7 @@ func TestTUIFetchReviewNoFallbackForRangeReview(t *testing.T) {
 
 		w.WriteHeader(http.StatusNotFound)
 	})
-	cmd := m.fetchReview(42)
+	cmd := m.fetchReview(42, 1)
 	msg := cmd()
 
 	_, ok := msg.(reviewMsg)
@@ -197,7 +210,7 @@ func TestTUIFetchReviewNoFallbackForDirtyReviewWithCommitID(t *testing.T) {
 
 		w.WriteHeader(http.StatusNotFound)
 	})
-	cmd := m.fetchReview(42)
+	cmd := m.fetchReview(42, 1)
 	msg := cmd()
 
 	reviewMsg, ok := msg.(reviewMsg)

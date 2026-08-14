@@ -492,6 +492,10 @@ func TestTUIClosedRollbackRestoresSelectionAfterLeavingQueue(t *testing.T) {
 	assertSelection(t, m, 2, 3)
 
 	m.currentView = viewReview
+	// viewReview requires a loaded review (normalizeSplitState repairs a
+	// dangling viewReview/nil-currentReview pair back to viewQueue in
+	// every layout); this test only cares about selection rollback.
+	m.currentReview = &storage.Review{JobID: 3, Job: &m.jobs[2]}
 
 	m, _ = updateModel(t, m, closedResultMsg{
 		jobID:            2,

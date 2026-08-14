@@ -226,6 +226,7 @@ func (m model) rerunJob(snap rerunSnapshot) tea.Cmd {
 			oldError:      snap.oldError,
 			oldClosed:     snap.oldClosed,
 			oldVerdict:    snap.oldVerdict,
+			spawnsNewRun:  snap.spawnsNewRun,
 			err:           err,
 		}
 	}
@@ -241,6 +242,21 @@ type rerunSnapshot struct {
 	oldError      string
 	oldClosed     *bool
 	oldVerdict    *string
+	// spawnsNewRun is true when the daemon will answer this rerun by
+	// enqueueing a BRAND-NEW run with new job IDs instead of re-running
+	// this job in place -- i.e. this job is a panel synthesis parent
+	// (internal/daemon/server.go routes those to rerunPanelRun, which
+	// clones the members and the synthesis row under a fresh
+	// panel_run_uuid and leaves the original run intact as history).
+	//
+	// Captured HERE, at dispatch, rather than looked up when the result
+	// lands: both dispatchers already hold the job, whereas by the time
+	// rerunResultMsg arrives the job may have left m.jobs (a filter change
+	// or a refresh), and a failed lookup would silently pick the wrong
+	// branch in handleRerunResultMsg -- which is the one thing this flag
+	// exists to get right. See that handler and m.jobAttemptGen's contract
+	// clause 2 (tui.go).
+	spawnsNewRun bool
 }
 
 func (m model) submitComment(jobID int64, text string) tea.Cmd {

@@ -28,8 +28,10 @@ func TestReviewFixPanelOpenFromReview(t *testing.T) {
 }
 
 func TestReviewFixPanelTabTogglesReviewFocus(t *testing.T) {
+	job := makeJob(1)
 	m := initTestModel(
 		withCurrentView(viewReview),
+		withReview(&storage.Review{JobID: 1, Job: &job}),
 		withFixPanel(true, true),
 	)
 
@@ -43,8 +45,10 @@ func TestReviewFixPanelTabTogglesReviewFocus(t *testing.T) {
 }
 
 func TestReviewFixPanelTextInput(t *testing.T) {
+	job := makeJob(1)
 	m := initTestModel(
 		withCurrentView(viewReview),
+		withReview(&storage.Review{JobID: 1, Job: &job}),
 		withFixPanel(true, true),
 	)
 
@@ -66,8 +70,10 @@ func TestReviewFixPanelTextNotCapturedWhenUnfocused(t *testing.T) {
 }
 
 func TestReviewFixPanelEscWhenFocusedClosesPanel(t *testing.T) {
+	job := makeJob(1)
 	m := initTestModel(
 		withCurrentView(viewReview),
+		withReview(&storage.Review{JobID: 1, Job: &job}),
 		withFixPanel(true, true),
 		withFixPrompt(0, "some text"),
 	)
@@ -240,7 +246,12 @@ func TestFixPanelPendingNotConsumedByWrongReview(t *testing.T) {
 	})
 
 	assert.False(t, got.reviewFixPanelOpen)
-	assert.True(t, got.reviewFixPanelPending)
+	// The pending panel is bound to job 5, and the pane has just accepted
+	// job 10's review: acceptReview closes a panel (open OR pending) whose
+	// job is not the one now displayed, so the pending flag is dropped
+	// with it rather than left armed for a job the user is no longer on.
+	assert.False(t, got.reviewFixPanelPending)
+	assert.Zero(t, got.fixPromptJobID)
 }
 
 func TestFixPanelPendingClearedOnStaleFetch(t *testing.T) {

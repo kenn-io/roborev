@@ -259,11 +259,48 @@ func (m *model) resetQueueForFilterChange() {
 	m.hasMore = false
 	m.loadingMore = false
 	m.paginateNav = 0
+	prevSelected := m.selectedJobID
 	m.selectedIdx = -1
 	m.selectedJobID = 0
 	m.fetchSeq++
 	m.queueColGen++
 	m.loadingJobs = true
+	// Zeroing the selection is a selection change like any other, so it
+	// abandons a job-scoped intent bound to the job it just deselected --
+	// same rule as followSelectionChange and handleJobsMsg's normalization
+	// (the same rule stated on followSelectionChange, layout.go).
+	//
+	// The reactive path does NOT cover this one: it clears an intent only
+	// when a message for the old job arrives while selectedJobID differs.
+	// Here selectedJobID becomes 0, but the refetch this reset triggers can
+	// RE-SELECT the very job the intent is bound to (normalization picks
+	// the first visible row) before that message ever arrives -- at which
+	// point the intent looks perfectly current again and the next response
+	// for the job, typically reconcile's follow, opens the review or
+	// springs the fix panel open with the user's filter change as the only
+	// thing they actually asked for. Keyed on the deselected job so an
+	// intent for some other job is untouched; closeFixPanelIfJobChanged is
+	// self-guarding the same way (fixPromptJobID != selectedJobID, now 0).
+	if m.pendingReviewOpenJobID != 0 && m.pendingReviewOpenJobID == prevSelected {
+		m.disarmPendingReviewOpen()
+	}
+	m.closeFixPanelIfJobChanged()
+	// ABANDONMENT bumper (see detailFollowGen's contract, tui.go): the
+	// disarms above make abandoned intents unservable, but an armed-era
+	// ORDINARY dispatch for the deselected job would still be gen-fresh
+	// when the refetch re-selects that job, and openReviewView would
+	// switch views off a filter change the user made for other reasons --
+	// the same hole handleJobsMsg's normalization bump closes. The inline
+	// disarms this contract class requires are exactly the ones above.
+	if prevSelected != 0 {
+		m.detailFollowGen++
+		// Same abandonment event, same request-scoped state: doom an
+		// in-flight prompt response and release the reconcile suppression
+		// slot for the abandoned era -- left armed, the slot would
+		// suppress the replacement fetch if the refetch re-selects the
+		// same job. See abandonInFlightSelectionRequests (layout.go).
+		m.abandonInFlightSelectionRequests()
+	}
 }
 
 // isJobVisible checks if a job passes all active filters
@@ -296,7 +333,7 @@ func (m model) branchMatchesFilter(job storage.ReviewJob) bool {
 	branch := m.getBranchForJob(job)
 	// The detached placeholder is display-only; for filter identity those
 	// jobs group under (none), matching how the server-side branch list
-	// counts their empty stored branch (#499).
+	// counts their empty stored branch.
 	if branch == "" || isDetachedLabel(branch) {
 		branch = branchNone
 	}

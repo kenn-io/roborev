@@ -105,6 +105,71 @@ func (m *model) selectedJob() (*storage.ReviewJob, bool) {
 	return nil, false
 }
 
+// selectedReviewLoaded reports whether m.currentReview is populated AND
+// belongs to the currently selected job's CURRENT attempt. Split layout's
+// list and detail panes advance independently: selecting a different (e.g.
+// running or queued) job updates selectedJobID immediately, while the detail
+// pane's review only catches up once the debounced follow-fetch lands (or
+// never, if the newly selected job has no review at all). Entry points that
+// hand review-scoped actions (close/comment/fix/scroll) to m.currentReview --
+// entering detail focus via tab or a detail-pane click -- must use this
+// instead of a bare `m.currentReview != nil` check, or those actions can
+// land on the stale review's job instead of the one now highlighted.
+//
+// A JobID match alone can still name a PREVIOUS attempt's review: job IDs
+// are reused across reruns, and an external rerun (another client) arrives
+// as a plain jobs-refresh status change with no local handleRerunResultMsg
+// to clear the loaded review. Mirror splitReconcileDetail's attempt-freshness
+// signals: an observed queued/running window since the review was loaded
+// (paneReviewSeenNonTerminal) means a fresh attempt exists that has not been
+// accepted yet; a job currently in a non-terminal state definitionally
+// outdates the loaded review (renderDetailPane shows a status card for it,
+// not the review, so acting on the review would target invisible content);
+// and for a done job the completion-timestamp comparison catches a rerun
+// whose whole queued/running window fell between two jobs refreshes. A
+// failed job needs no extra check here: splitReconcileDetail rebuilds its
+// synthesized review synchronously on the same jobs refresh that observes
+// the failure.
+func (m *model) selectedReviewLoaded() bool {
+	if m.currentReview == nil {
+		return false
+	}
+	job, ok := m.selectedJob()
+	if !ok {
+		// An anchored review's job can be absent from m.jobs entirely:
+		// hide-closed prunes a just-closed job from the refresh while
+		// handleJobsMsg deliberately preserves the review-anchored
+		// selection. There is no row to check freshness against, and the
+		// loaded review is the only truth the TUI holds for the job the
+		// user is reading -- treat it as loaded so the pane keeps
+		// rendering it and review actions (unclose, comment) still work.
+		// JobID != 0 excludes synthetic prompt-only reviews, which set
+		// only the embedded Job.
+		return m.currentReview.JobID != 0 && m.currentReview.JobID == m.selectedJobID
+	}
+	if m.currentReview.JobID != job.ID {
+		return false
+	}
+	if m.paneReviewSeenNonTerminalJob == job.ID {
+		return false
+	}
+	switch job.Status {
+	case storage.JobStatusDone:
+		return !reviewJobCompletionChanged(m.currentReview, job)
+	case storage.JobStatusFailed:
+		// Failed needs the completion-identity check too: a rerun whose
+		// whole queued/running window fell between refreshes and then
+		// FAILED leaves a loaded earlier attempt (its done review, or an
+		// identically-worded earlier failure) matching on JobID with the
+		// observation signal never set. The failure synthesis embeds the
+		// row's FinishedAt at build time, so the comparison works for
+		// synthesized reviews exactly as for fetched ones.
+		return !reviewJobCompletionChanged(m.currentReview, job)
+	default:
+		return false
+	}
+}
+
 // selectedIsMember reports whether selectedJobID names a side-fetched panel
 // member (present in panelMembers, absent from m.jobs). Used to keep a member
 // selected across a parents-only refresh, since the member is not in m.jobs.

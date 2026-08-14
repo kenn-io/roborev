@@ -574,313 +574,20 @@ func (m model) renderQueueView() string {
 		visCols := m.visibleColumns()
 
 		// Compute per-column max content widths, using cache when data hasn't changed.
-		allHeaders := [colCount]string{"", "JobID", "Ref", "Branch", "Repo", "Agent", "Queued", "Elapsed", "Status", "P/F", "Closed", "Session", "Req Model", "Req Provider", "Cost"}
-		var contentWidth map[int]int
-		if m.queueColCache.gen == m.queueColGen {
-			contentWidth = m.queueColCache.contentWidths
-		} else {
-			contentWidth = make(map[int]int, len(visCols))
-			for _, c := range visCols {
-				contentWidth[c] = lipgloss.Width(allHeaders[c])
-			}
-			for i := range rows {
-				fullRow := m.queueFullRowCells(rows[i], hasAnyPanel, treeColor)
-				for _, c := range visCols {
-					contentWidth[c] = max(contentWidth[c], lipgloss.Width(fullRow[c]))
-				}
-			}
-			m.queueColCache.gen = m.queueColGen
-			m.queueColCache.contentWidths = contentWidth
+		contentWidth := m.queueContentWidths(rows, visCols, hasAnyPanel, treeColor)
+
+		tableLines := m.renderQueueTable(rows, m.width, visibleRows, visCols, contentWidth)
+		for _, line := range tableLines {
+			b.WriteString(line)
+			b.WriteString("\x1b[K\n")
 		}
-
-		// Compute column widths: fixed columns get their natural size,
-		// flexible columns (Ref, Branch, Repo) absorb excess space.
-		bordersOn := m.colBordersOn
-		borderColor := adaptiveColor("248", "242")
-
-		// Spacing per column: non-first, non-sel columns get 1 char of spacing
-		// (either PaddingRight or border ▕ + PaddingLeft = 2 chars)
-		spacing := func(tableCol int, logCol int) int {
-			if logCol == colSel || tableCol == 0 {
-				return 0
-			}
-			if bordersOn {
-				return 2 // ▕ + PaddingLeft(1)
-			}
-			return 1 // PaddingRight(1)
-		}
-
-		// Fixed-width columns: exact sizes (content + padding, not counting inter-column spacing)
-		fixedWidth := map[int]int{
-			colSel:               2,
-			colJobID:             max(contentWidth[colJobID], 5),
-			colStatus:            max(contentWidth[colStatus], 6), // "Status" header = 6, auto-sizes to content
-			colQueued:            12,
-			colElapsed:           8,
-			colPF:                3,                                                    // "P/F" header = 3
-			colHandled:           max(contentWidth[colHandled], 6),                     // "Closed" header = 6
-			colAgent:             min(max(contentWidth[colAgent], 5), 12),              // "Agent" header = 5, cap at 12
-			colSessionID:         min(max(contentWidth[colSessionID], 7), 12),          // "Session" header = 7, cap at 12
-			colRequestedModel:    min(max(contentWidth[colRequestedModel], 9), 24),     // "Req Model" header = 9
-			colRequestedProvider: min(max(contentWidth[colRequestedProvider], 12), 24), // "Req Provider" header = 12
-			colCost:              max(contentWidth[colCost], 4),                        // "Cost" header = 4
-		}
-
-		// Flexible columns absorb excess space
-		flexCols := []int{colRef, colBranch, colRepo}
-
-		// Compute total fixed consumption
-		totalFixed := 0
-		for ti, c := range visCols {
-			sp := spacing(ti, c)
-			if fw, ok := fixedWidth[c]; ok {
-				totalFixed += fw + sp
-			} else {
-				totalFixed += sp // spacing is always consumed
-			}
-		}
-
-		remaining := m.width - totalFixed
-		// Distribute remaining space among flex columns.
-		// colWidths stores content-only width; StyleFunc adds spacing via
-		// s.Width(w + spacing(col, logicalCol)) so the total column width
-		// on screen = content width + inter-column spacing.
-		colWidths := make(map[int]int, len(visCols))
-		maps.Copy(colWidths, fixedWidth)
-
-		// Build visible-only flex list once.
-		var visFlex []int
-		for _, c := range flexCols {
-			if !m.hiddenColumns[c] {
-				visFlex = append(visFlex, c)
-			}
-		}
-
-		if len(visFlex) > 0 && remaining > 0 {
-			// Two-phase distribution: first guarantee each flex
-			// column at least min(contentWidth, equalShare), then
-			// distribute surplus proportionally to remaining
-			// content headroom. This prevents a single wide column
-			// from starving narrower ones.
-			equalShare := remaining / len(visFlex)
-
-			// Phase 1: allocate floors.
-			distributed := 0
-			for _, c := range visFlex {
-				floor := min(contentWidth[c], equalShare)
-				colWidths[c] = max(floor, 1)
-				distributed += colWidths[c]
-			}
-
-			// Drain overshoot from max(...,1) inflation when
-			// remaining < len(visFlex).
-			if distributed > remaining {
-				drainFlexOverflow(visFlex, colWidths, distributed-remaining)
-				distributed = remaining
-			}
-
-			// Compute headroom from actual allocated widths.
-			totalHeadroom := 0
-			headroom := make(map[int]int, len(visFlex))
-			for _, c := range visFlex {
-				h := contentWidth[c] - colWidths[c]
-				if h > 0 {
-					headroom[c] = h
-					totalHeadroom += h
-				}
-			}
-
-			// Phase 2: distribute surplus proportionally to
-			// content headroom (columns already at content width
-			// have zero headroom and get nothing extra).
-			surplus := remaining - distributed
-			if surplus > 0 && totalHeadroom > 0 {
-				phase2 := 0
-				for i, c := range visFlex {
-					var extra int
-					if i == len(visFlex)-1 {
-						extra = surplus - phase2
-					} else {
-						extra = surplus * headroom[c] / totalHeadroom
-					}
-					colWidths[c] += extra
-					phase2 += extra
-				}
-			} else if surplus > 0 {
-				// All columns at content width — distribute
-				// remaining space equally.
-				for i, c := range visFlex {
-					extra := surplus / (len(visFlex) - i)
-					colWidths[c] += extra
-					surplus -= extra
-				}
-			}
-		} else if len(visFlex) > 0 {
-			// No remaining space: give flex columns 1 char each to
-			// avoid overflow at very narrow terminal widths.
-			for _, c := range visFlex {
-				colWidths[c] = 1
-			}
-		}
-
-		// Build visible rows for the window
-		windowRows := rows[start:end]
-		tableRows := make([][]string, 0, end-start)
-		for i := range windowRows {
-			sel := "  "
-			if start+i == visibleSelectedIdx {
-				sel = "> "
-			}
-			fullRow := m.queueFullRowCells(windowRows[i], hasAnyPanel, treeColor)
-			fullRow[colSel] = sel
-
-			row := make([]string, len(visCols))
-			for vi, c := range visCols {
-				row[vi] = fullRow[c]
-			}
-			tableRows = append(tableRows, row)
-		}
-
-		// Compute the selected row index within the visible window
-		selectedWindowIdx := visibleSelectedIdx - start
-
-		// Find the last visible table column index (for padding logic)
-		lastVisCol := len(visCols) - 1
-
-		// Group banding: a panel parent and its members share one zebra band so
-		// the nesting reads as a group. Only computed (and applied) when the page
-		// has panels, so a panel-free page keeps its original un-banded bytes.
-		var bands []bool
-		if hasAnyPanel {
-			bands = groupBanding(rows)
-		}
-
-		t := table.New().
-			BorderTop(false).
-			BorderBottom(false).
-			BorderLeft(false).
-			BorderRight(false).
-			BorderColumn(false).
-			BorderRow(false).
-			BorderHeader(!compact).
-			Border(lipgloss.Border{
-				Top:    "─",
-				Bottom: "─",
-				Middle: "─",
-			}).
-			Width(m.width).
-			Wrap(false).
-			StyleFunc(func(row, col int) lipgloss.Style {
-				s := lipgloss.NewStyle()
-
-				// Map table col index to logical column
-				logicalCol := colSel
-				if col >= 0 && col < len(visCols) {
-					logicalCol = visCols[col]
-				}
-
-				// Inter-column spacing: non-sel, non-first columns get border or padding
-				if logicalCol != colSel && col > 0 {
-					if bordersOn {
-						s = s.Border(lipgloss.Border{Left: "▕"}, false, false, false, true).
-							BorderForeground(borderColor).PaddingLeft(1)
-					} else if col < lastVisCol {
-						s = s.PaddingRight(1)
-					}
-				}
-
-				// Set explicit width for all columns (includes spacing)
-				w := colWidths[logicalCol]
-				if w > 0 {
-					s = s.Width(w + spacing(col, logicalCol))
-				}
-
-				// Right-align elapsed column
-				if logicalCol == colElapsed {
-					s = s.Align(lipgloss.Right)
-				}
-
-				// Header row styling
-				if row == table.HeaderRow {
-					return s.Foreground(adaptiveColor("242", "246"))
-				}
-
-				// Selection highlighting — uniform background, no per-cell coloring
-				if row == selectedWindowIdx {
-					bg := adaptiveColor("153", "24")
-					s = s.Background(bg)
-					if bordersOn {
-						s = s.BorderBackground(bg)
-					}
-					return s
-				}
-
-				// Group banding for non-selected rows: every other panel group
-				// gets a subtle background so a parent and its members read as
-				// one block. Foreground per-cell coloring is applied on top.
-				if absIdx := start + row; bands != nil && absIdx < len(bands) && bands[absIdx] {
-					bg := adaptiveColor("254", "236") // subtle zebra band
-					s = s.Background(bg)
-					if bordersOn {
-						s = s.BorderBackground(bg)
-					}
-				}
-
-				// Per-cell coloring for non-selected rows
-				if row >= 0 && row < len(windowRows) {
-					job := windowRows[row].job
-					switch logicalCol {
-					case colStatus:
-						if c := statusColor(job.Status); c != nil {
-							s = s.Foreground(c)
-						}
-					case colPF:
-						if c := verdictColor(job.Verdict); c != nil {
-							s = s.Foreground(c)
-						}
-					case colHandled:
-						if job.Closed != nil {
-							if *job.Closed {
-								s = s.Foreground(closedStyle.GetForeground())
-							} else {
-								s = s.Foreground(queuedStyle.GetForeground())
-							}
-						}
-					}
-				}
-				return s
-			})
-
-		// Always set headers — lipgloss table drops the last data row
-		// when Headers() is not called.
-		headers := make([]string, len(visCols))
-		if !compact {
-			for vi, c := range visCols {
-				headers[vi] = allHeaders[c]
-			}
-		}
-		t = t.Headers(headers...)
-		t = t.Rows(tableRows...)
-
-		tableStr := t.Render()
-
-		// In compact mode, strip the empty header line we added as a
-		// workaround (it renders as a row of spaces).
-		if compact {
-			if idx := strings.Index(tableStr, "\n"); idx >= 0 {
-				tableStr = tableStr[idx+1:]
-			}
-		}
-		b.WriteString(tableStr)
-		b.WriteString("\x1b[K\n")
 
 		// Pad with clear-to-end-of-line sequences to prevent ghost text
-		tableLines := strings.Count(tableStr, "\n") + 1
 		headerLines := 0
 		if !compact {
 			headerLines = 2 // header + separator
 		}
-		jobLinesWritten := tableLines - headerLines
+		jobLinesWritten := len(tableLines) - headerLines
 		for jobLinesWritten < visibleRows {
 			b.WriteString("\x1b[K\n")
 			jobLinesWritten++
@@ -930,6 +637,341 @@ func (m model) renderQueueView() string {
 	output += "\x1b[J" // Clear to end of screen to prevent artifacts
 
 	return output
+}
+
+// queueContentWidths computes each visible column's max content width across
+// rows, using m.queueColCache (keyed on m.queueColGen) to skip recomputation
+// when nothing has changed since the last render. Callers should always pass
+// the full m.visibleColumns() set as visCols (never a pane-narrowed subset)
+// so the cached map stays a superset that any pane-specific column subset
+// can safely index into.
+func (m model) queueContentWidths(rows []queueRow, visCols []int, hasAnyPanel, treeColor bool) map[int]int {
+	allHeaders := [colCount]string{"", "JobID", "Ref", "Branch", "Repo", "Agent", "Queued", "Elapsed", "Status", "P/F", "Closed", "Session", "Req Model", "Req Provider", "Cost"}
+	var contentWidth map[int]int
+	if m.queueColCache.gen == m.queueColGen {
+		contentWidth = m.queueColCache.contentWidths
+	} else {
+		contentWidth = make(map[int]int, len(visCols))
+		for _, c := range visCols {
+			contentWidth[c] = lipgloss.Width(allHeaders[c])
+		}
+		for i := range rows {
+			fullRow := m.queueFullRowCells(rows[i], hasAnyPanel, treeColor)
+			for _, c := range visCols {
+				contentWidth[c] = max(contentWidth[c], lipgloss.Width(fullRow[c]))
+			}
+		}
+		m.queueColCache.gen = m.queueColGen
+		m.queueColCache.contentWidths = contentWidth
+	}
+	return contentWidth
+}
+
+// renderQueueTable renders the queue table (header row, separator when
+// borders are enabled, and the windowed data rows) sized to width, and
+// returns the rendered lines with no "\x1b[K" escapes — callers append their
+// own clear-to-end-of-line sequences as they write each line out. Windowing
+// is computed internally via queueWindowStart/visibleSelectedRowIndex,
+// exactly as the inline code in renderQueueView did before extraction.
+func (m model) renderQueueTable(rows []queueRow, width, visibleRows int, visCols []int, contentWidth map[int]int) []string {
+	compact := m.queueCompact()
+	hasAnyPanel := anyPanelRow(rows)
+	treeColor := queueColorEnabled()
+	allHeaders := [colCount]string{"", "JobID", "Ref", "Branch", "Repo", "Agent", "Queued", "Elapsed", "Status", "P/F", "Closed", "Session", "Req Model", "Req Provider", "Cost"}
+
+	visibleSelectedIdx := visibleSelectedRowIndex(rows, m.selectedJobID)
+	start, end := queueWindowStart(len(rows), visibleSelectedIdx, visibleRows)
+
+	// Compute column widths: fixed columns get their natural size,
+	// flexible columns (Ref, Branch, Repo) absorb excess space.
+	bordersOn := m.colBordersOn
+	borderColor := adaptiveColor("248", "242")
+
+	// Spacing per column: non-first, non-sel columns get 1 char of spacing
+	// (either PaddingRight or border ▕ + PaddingLeft = 2 chars)
+	spacing := func(tableCol int, logCol int) int {
+		if logCol == colSel || tableCol == 0 {
+			return 0
+		}
+		if bordersOn {
+			return 2 // ▕ + PaddingLeft(1)
+		}
+		return 1 // PaddingRight(1)
+	}
+
+	// Fixed-width columns: exact sizes (content + padding, not counting inter-column spacing)
+	fixedWidth := map[int]int{
+		colSel:               2,
+		colJobID:             max(contentWidth[colJobID], 5),
+		colStatus:            max(contentWidth[colStatus], 6), // "Status" header = 6, auto-sizes to content
+		colQueued:            12,
+		colElapsed:           8,
+		colPF:                3,                                                    // "P/F" header = 3
+		colHandled:           max(contentWidth[colHandled], 6),                     // "Closed" header = 6
+		colAgent:             min(max(contentWidth[colAgent], 5), 12),              // "Agent" header = 5, cap at 12
+		colSessionID:         min(max(contentWidth[colSessionID], 7), 12),          // "Session" header = 7, cap at 12
+		colRequestedModel:    min(max(contentWidth[colRequestedModel], 9), 24),     // "Req Model" header = 9
+		colRequestedProvider: min(max(contentWidth[colRequestedProvider], 12), 24), // "Req Provider" header = 12
+		colCost:              max(contentWidth[colCost], 4),                        // "Cost" header = 4
+	}
+
+	// Flexible columns absorb excess space
+	flexCols := []int{colRef, colBranch, colRepo}
+
+	// Compute total fixed consumption
+	totalFixed := 0
+	for ti, c := range visCols {
+		sp := spacing(ti, c)
+		if fw, ok := fixedWidth[c]; ok {
+			totalFixed += fw + sp
+		} else {
+			totalFixed += sp // spacing is always consumed
+		}
+	}
+
+	remaining := width - totalFixed
+	// Distribute remaining space among flex columns.
+	// colWidths stores content-only width; StyleFunc adds spacing via
+	// s.Width(w + spacing(col, logicalCol)) so the total column width
+	// on screen = content width + inter-column spacing.
+	colWidths := make(map[int]int, len(visCols))
+	maps.Copy(colWidths, fixedWidth)
+
+	// Build visible-only flex list once. A flex column only absorbs excess
+	// space when it's both user-visible (not in hiddenColumns) and actually
+	// present in visCols — callers such as renderQueuePaneBody may pass a
+	// pane-narrowed visCols that drops colBranch/colRepo while they remain
+	// user-visible; without the visCols membership check, remaining width
+	// would be split across those phantom (unrendered) columns and starve
+	// the ones actually on screen.
+	inVisCols := make(map[int]bool, len(visCols))
+	for _, c := range visCols {
+		inVisCols[c] = true
+	}
+	var visFlex []int
+	for _, c := range flexCols {
+		if !m.hiddenColumns[c] && inVisCols[c] {
+			visFlex = append(visFlex, c)
+		}
+	}
+
+	if len(visFlex) > 0 && remaining > 0 {
+		// Two-phase distribution: first guarantee each flex
+		// column at least min(contentWidth, equalShare), then
+		// distribute surplus proportionally to remaining
+		// content headroom. This prevents a single wide column
+		// from starving narrower ones.
+		equalShare := remaining / len(visFlex)
+
+		// Phase 1: allocate floors.
+		distributed := 0
+		for _, c := range visFlex {
+			floor := min(contentWidth[c], equalShare)
+			colWidths[c] = max(floor, 1)
+			distributed += colWidths[c]
+		}
+
+		// Drain overshoot from max(...,1) inflation when
+		// remaining < len(visFlex).
+		if distributed > remaining {
+			drainFlexOverflow(visFlex, colWidths, distributed-remaining)
+			distributed = remaining
+		}
+
+		// Compute headroom from actual allocated widths.
+		totalHeadroom := 0
+		headroom := make(map[int]int, len(visFlex))
+		for _, c := range visFlex {
+			h := contentWidth[c] - colWidths[c]
+			if h > 0 {
+				headroom[c] = h
+				totalHeadroom += h
+			}
+		}
+
+		// Phase 2: distribute surplus proportionally to
+		// content headroom (columns already at content width
+		// have zero headroom and get nothing extra).
+		surplus := remaining - distributed
+		if surplus > 0 && totalHeadroom > 0 {
+			phase2 := 0
+			for i, c := range visFlex {
+				var extra int
+				if i == len(visFlex)-1 {
+					extra = surplus - phase2
+				} else {
+					extra = surplus * headroom[c] / totalHeadroom
+				}
+				colWidths[c] += extra
+				phase2 += extra
+			}
+		} else if surplus > 0 {
+			// All columns at content width — distribute
+			// remaining space equally.
+			for i, c := range visFlex {
+				extra := surplus / (len(visFlex) - i)
+				colWidths[c] += extra
+				surplus -= extra
+			}
+		}
+	} else if len(visFlex) > 0 {
+		// No remaining space: give flex columns 1 char each to
+		// avoid overflow at very narrow terminal widths.
+		for _, c := range visFlex {
+			colWidths[c] = 1
+		}
+	}
+
+	// Build visible rows for the window
+	windowRows := rows[start:end]
+	tableRows := make([][]string, 0, end-start)
+	for i := range windowRows {
+		sel := "  "
+		if start+i == visibleSelectedIdx {
+			sel = "> "
+		}
+		fullRow := m.queueFullRowCells(windowRows[i], hasAnyPanel, treeColor)
+		fullRow[colSel] = sel
+
+		row := make([]string, len(visCols))
+		for vi, c := range visCols {
+			row[vi] = fullRow[c]
+		}
+		tableRows = append(tableRows, row)
+	}
+
+	// Compute the selected row index within the visible window
+	selectedWindowIdx := visibleSelectedIdx - start
+
+	// Find the last visible table column index (for padding logic)
+	lastVisCol := len(visCols) - 1
+
+	// Group banding: a panel parent and its members share one zebra band so
+	// the nesting reads as a group. Only computed (and applied) when the page
+	// has panels, so a panel-free page keeps its original un-banded bytes.
+	var bands []bool
+	if hasAnyPanel {
+		bands = groupBanding(rows)
+	}
+
+	t := table.New().
+		BorderTop(false).
+		BorderBottom(false).
+		BorderLeft(false).
+		BorderRight(false).
+		BorderColumn(false).
+		BorderRow(false).
+		BorderHeader(!compact).
+		Border(lipgloss.Border{
+			Top:    "─",
+			Bottom: "─",
+			Middle: "─",
+		}).
+		Width(width).
+		Wrap(false).
+		StyleFunc(func(row, col int) lipgloss.Style {
+			s := lipgloss.NewStyle()
+
+			// Map table col index to logical column
+			logicalCol := colSel
+			if col >= 0 && col < len(visCols) {
+				logicalCol = visCols[col]
+			}
+
+			// Inter-column spacing: non-sel, non-first columns get border or padding
+			if logicalCol != colSel && col > 0 {
+				if bordersOn {
+					s = s.Border(lipgloss.Border{Left: "▕"}, false, false, false, true).
+						BorderForeground(borderColor).PaddingLeft(1)
+				} else if col < lastVisCol {
+					s = s.PaddingRight(1)
+				}
+			}
+
+			// Set explicit width for all columns (includes spacing)
+			w := colWidths[logicalCol]
+			if w > 0 {
+				s = s.Width(w + spacing(col, logicalCol))
+			}
+
+			// Right-align elapsed column
+			if logicalCol == colElapsed {
+				s = s.Align(lipgloss.Right)
+			}
+
+			// Header row styling
+			if row == table.HeaderRow {
+				return s.Foreground(adaptiveColor("242", "246"))
+			}
+
+			// Selection highlighting — uniform background, no per-cell coloring
+			if row == selectedWindowIdx {
+				bg := adaptiveColor("153", "24")
+				s = s.Background(bg)
+				if bordersOn {
+					s = s.BorderBackground(bg)
+				}
+				return s
+			}
+
+			// Group banding for non-selected rows: every other panel group
+			// gets a subtle background so a parent and its members read as
+			// one block. Foreground per-cell coloring is applied on top.
+			if absIdx := start + row; bands != nil && absIdx < len(bands) && bands[absIdx] {
+				bg := adaptiveColor("254", "236") // subtle zebra band
+				s = s.Background(bg)
+				if bordersOn {
+					s = s.BorderBackground(bg)
+				}
+			}
+
+			// Per-cell coloring for non-selected rows
+			if row >= 0 && row < len(windowRows) {
+				job := windowRows[row].job
+				switch logicalCol {
+				case colStatus:
+					if c := statusColor(job.Status); c != nil {
+						s = s.Foreground(c)
+					}
+				case colPF:
+					if c := verdictColor(job.Verdict); c != nil {
+						s = s.Foreground(c)
+					}
+				case colHandled:
+					if job.Closed != nil {
+						if *job.Closed {
+							s = s.Foreground(closedStyle.GetForeground())
+						} else {
+							s = s.Foreground(queuedStyle.GetForeground())
+						}
+					}
+				}
+			}
+			return s
+		})
+
+	// Always set headers — lipgloss table drops the last data row
+	// when Headers() is not called.
+	headers := make([]string, len(visCols))
+	if !compact {
+		for vi, c := range visCols {
+			headers[vi] = allHeaders[c]
+		}
+	}
+	t = t.Headers(headers...)
+	t = t.Rows(tableRows...)
+
+	tableStr := t.Render()
+
+	// In compact mode, strip the empty header line we added as a
+	// workaround (it renders as a row of spaces).
+	if compact {
+		if idx := strings.Index(tableStr, "\n"); idx >= 0 {
+			tableStr = tableStr[idx+1:]
+		}
+	}
+
+	return strings.Split(tableStr, "\n")
 }
 
 // jobCells returns plain text cell values for a job row.

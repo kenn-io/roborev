@@ -507,7 +507,7 @@ func (m model) fetchBranchesForRepo(
 // unbackfilled: a detached single-commit review renders a
 // "(detached @ <sha>)" placeholder from its empty stored branch, and
 // persisting the branchNone sentinel would freeze the row at "(none)"
-// (#499). Backfill runs once per TUI session (branchBackfillDone), so the
+// Backfill runs once per TUI session (branchBackfillDone), so the
 // repeated lookup cost for skipped rows is bounded.
 func backfillBranchValue(job storage.ReviewJob, machineID string) (string, bool) {
 	// Mark task jobs (run, analyze, custom) or dirty jobs with no-branch sentinel
@@ -721,18 +721,153 @@ func (m model) loadJob(jobID int64) (*storage.ReviewJob, error) {
 	return nil, fmt.Errorf("job %d not found", jobID)
 }
 
-func (m model) fetchReview(jobID int64) tea.Cmd {
+// dispatchReviewFetch is the ONE entry point for an ordinary (non-follow)
+// review-content fetch: it bumps the shared ordering epoch and stamps the
+// new value onto the request. Every caller goes through it (or through
+// dispatchReviewFollow, its follow-tagged twin) so no dispatcher can be
+// added that skips the epoch -- see m.reviewFetchSeq's doc comment
+// (tui.go). The pointer receiver is what makes the bump stick; the value
+// snapshot the command closes over is taken after it.
+//
+// CALL IT ON ITS OWN LINE -- every one of the call sites is written
+//
+//	cmd := m.dispatchReviewFetch(job.ID)
+//	return m, cmd
+//
+// and NOT the tempting one-liner `return m, m.dispatchReviewFetch(job.ID)`.
+// In a return statement Go evaluates the function calls among the operands
+// first, but the order of a plain variable operand (m) relative to those
+// calls is unspecified -- so the one-liner may return the model as it was
+// BEFORE the bump, silently stamping a request with an epoch the model
+// never advanced to. Such a request can never be accepted (its stamp will
+// never equal m.reviewFetchSeq) and the fetch is simply lost. The same
+// applies to any other pointer-receiver mutation returned alongside m.
+func (m *model) dispatchReviewFetch(jobID int64) tea.Cmd {
+	m.reviewFetchSeq++
+	// Arm the pending-open intent (see pendingReviewOpenJobID's doc comment,
+	// tui.go) BEFORE the fetch closure captures m.currentView below, so a
+	// follow fetch that later races this one and lands first still knows
+	// where to switch to. Matches what fetchReview stamps onto the message
+	// as dispatchedFrom -- both read m.currentView at this same point.
+	m.pendingReviewOpenJobID = jobID
+	m.pendingReviewOpenOrigin = m.currentView
+	// This dispatch's own identity (see pendingReviewOpenSeq's
+	// doc comment, tui.go): m.reviewFetchSeq was just bumped above, so this
+	// is the exact value fetchReview will stamp onto the outgoing request.
+	m.pendingReviewOpenSeq = m.reviewFetchSeq
+	// A fresh arm gets its own single follow-failure retry (see
+	// pendingReviewOpenRetried's doc comment, tui.go). Reset here rather
+	// than at every clear site: "retried" is only ever read while an
+	// intent is armed.
+	m.pendingReviewOpenRetried = false
+	return m.fetchReview(jobID, m.reviewFetchSeq)
+}
+
+// dispatchReviewFollow is dispatchReviewFetch's follow-tagged twin: same
+// epoch, same stamp, but the response updates the split detail pane's
+// content without stealing focus or switching views, and its failures land
+// in m.splitDetailErr. See fetchReviewFollow.
+func (m *model) dispatchReviewFollow(jobID int64) tea.Cmd {
+	m.reviewFetchSeq++
+	return m.fetchReviewFollow(jobID, m.reviewFetchSeq)
+}
+
+// fetchReview dispatches the review fetch shared by every review-loading
+// path -- queue Enter, tasks Enter/P, stepReviewNav, pagination nav, the
+// queue 'F' fix-panel fetch, and (via fetchReviewFollow) the split-view
+// debounced follow. The resulting reviewMsg is stamped with the dispatch
+// origin, m.detailFollowGen, the fetch epoch fetchSeq, and this job's
+// attempt counter m.jobAttemptGen[jobID], all captured at command-CREATION
+// time (m is a value snapshot here, so these reflect state at dispatch, not
+// whatever it drifts to before the response lands).
+// Callers reach this through dispatchReviewFetch/dispatchReviewFollow,
+// which own the epoch bump.
+func (m model) fetchReview(jobID int64, fetchSeq uint64) tea.Cmd {
+	// dispatchedFrom: the view the user was actually on when the fetch was
+	// issued, regardless of where they navigate before it resolves (see
+	// reviewMsg.dispatchedFrom).
+	origin := m.currentView
+	// gen: originally stamped only by fetchReviewFollow for split-view
+	// follow fetches, so handleReviewMsg's follow path could reject a
+	// response whose m.detailFollowGen had moved on by the time it landed
+	// (a new selection via scheduleDetailFollow, or a rerun-success
+	// clear/bump of the same job via handleRerunResultMsg -- see that
+	// handler's doc comment for the full race). Stamping it here instead,
+	// on every fetchReview call, closes the same race for NON-follow
+	// fetches: a regular fetchReview already in flight when a rerun of the
+	// SAME selected job succeeds can land afterward with the jobID check
+	// alone still passing (a rerun reuses the job ID and doesn't move the
+	// selection), restoring the previous attempt's review -- after which
+	// splitReconcileDetail/handleDetailFollowTick see currentReview.JobID
+	// already matching and skip fetching the rerun's actual result.
+	// detailFollowGen is bumped by every abandonment path in BOTH layouts
+	// -- followSelectionChange's stacked branch, scheduleDetailFollow,
+	// handleJobsMsg's normalization epilogue, resetQueueForFilterChange
+	// (the authoritative bumper list lives on the field's doc comment,
+	// tui.go) -- so a fetch dispatched and landing without an intervening
+	// abandonment lands at an unchanged gen and is unaffected. The
+	// stacked-mode bump is load-bearing: it is what dooms an abandoned
+	// dispatch's response after Enter on X, navigate to Y, return to X.
+	// See handleReviewMsg for the rejection check, and detailFollowGen's
+	// doc comment (tui.go) for the contract any bumper must satisfy.
+	//
+	// Rerun invalidation is NOT gen's job -- the per-job attempt stamp
+	// below covers that, for any job.
+	gen := m.detailFollowGen
+	// attempt: this JOB's confirmed-rerun count at dispatch time. Stamped
+	// here, alongside gen and fetchSeq, because fetchReview is the single
+	// constructor of reviewMsg/reviewErrMsg -- clause 3 of jobAttemptGen's
+	// contract (tui.go). Reading a nil map is legal and yields 0, the
+	// correct "no rerun of this job observed yet" value, so no dispatcher
+	// has to care whether the map has been populated.
+	attempt := m.jobAttemptGen[jobID]
 	return func() tea.Msg {
 		review, err := m.loadReview(jobID)
 		if err != nil {
-			return errMsg(err)
+			// Typed, not the generic errMsg:
+			// jobID/gen/fetchSeq let handleReviewErrMsg resolve
+			// pendingReviewOpenJobID/the pending fix panel for THIS job on a
+			// genuine failure, the same way handleReviewFollowErrMsg already
+			// does for a follow's failure. fetchReviewFollow below re-tags
+			// this into reviewFollowErrMsg for its own wrapped call.
+			return reviewErrMsg{
+				jobID: jobID, err: err, gen: gen,
+				fetchSeq: fetchSeq, attempt: attempt,
+			}
 		}
 
 		responses := m.loadResponses(jobID, review)
 
 		branchName := reviewBranchName(review.Job)
 
-		return reviewMsg{review: review, responses: responses, jobID: jobID, branchName: branchName}
+		return reviewMsg{
+			review: review, responses: responses, jobID: jobID,
+			branchName: branchName, dispatchedFrom: origin, gen: gen,
+			fetchSeq: fetchSeq, attempt: attempt,
+		}
+	}
+}
+
+// fetchReviewFollow wraps fetchReview, tagging the resulting reviewMsg as a
+// split-view follow fetch so the handler updates the pane without stealing
+// focus or switching views. A fetch failure is re-tagged from fetchReview's
+// own reviewErrMsg (jobID/gen/fetchSeq already correct, captured by
+// fetchReview at the same command-creation point) into reviewFollowErrMsg,
+// so handleReviewFollowErrMsg can record it in m.splitDetailErr for the pane
+// to render instead of the plain review-open resolution
+// handleReviewErrMsg performs for an ordinary fetch's failure.
+func (m model) fetchReviewFollow(jobID int64, fetchSeq uint64) tea.Cmd {
+	inner := m.fetchReview(jobID, fetchSeq)
+	return func() tea.Msg {
+		msg := inner()
+		if rm, ok := msg.(reviewMsg); ok {
+			rm.follow = true
+			return rm
+		}
+		if em, ok := msg.(reviewErrMsg); ok {
+			return reviewFollowErrMsg(em)
+		}
+		return msg
 	}
 }
 
@@ -762,13 +897,37 @@ func reviewBranchName(job *storage.ReviewJob) string {
 	return detachedBranchLabel(*job)
 }
 
-func (m model) fetchReviewForPrompt(jobID int64) tea.Cmd {
+// dispatchPromptFetch is the single entry point for prompt fetches: it
+// advances the prompt path's own request identity and stamps it (plus the
+// dispatch-origin view) onto the outgoing request. Callers must invoke it
+// as a standalone statement, never inline in a return -- the same
+// evaluation-order pitfall documented on dispatchReviewFetch above.
+func (m *model) dispatchPromptFetch(jobID int64) tea.Cmd {
+	m.promptFetchSeq++
+	return m.fetchReviewForPrompt(jobID, m.promptFetchSeq)
+}
+
+// fetchReviewForPrompt loads a done job's review so the prompt view can
+// show the prompt it was built from. It writes the SAME currentReview
+// field as fetchReview, so it stamps the same per-job attempt counter at
+// dispatch (jobAttemptGen contract clause 3, tui.go) -- a rerun of the job
+// abandons this request exactly as it abandons a review fetch. It does not
+// join the shared fetch epoch (see handlePromptMsg for why); staleness is
+// tracked by the prompt path's own promptFetchSeq, stamped here along with
+// the dispatch-origin view. Reached only through dispatchPromptFetch,
+// which owns the seq bump.
+func (m model) fetchReviewForPrompt(jobID int64, promptSeq uint64) tea.Cmd {
+	attempt := m.jobAttemptGen[jobID]
+	origin := m.currentView
 	return func() tea.Msg {
 		review, err := m.loadReview(jobID)
 		if err != nil {
 			return errMsg(err)
 		}
-		return promptMsg{review: review, jobID: jobID}
+		return promptMsg{
+			review: review, jobID: jobID, attempt: attempt,
+			promptSeq: promptSeq, dispatchedFrom: origin,
+		}
 	}
 }
 
@@ -910,6 +1069,121 @@ func (m model) fetchJobLog(jobID int64) tea.Cmd {
 		}
 
 		return logOutputMsg{
+			lines:     lines,
+			hasMore:   hasMore,
+			newOffset: newOffset,
+			append:    isIncremental,
+			seq:       seq,
+			fmtr:      renderFmtr,
+		}
+	}
+}
+
+// fetchPaneLog is fetchJobLog's fetch/format logic cloned for the split
+// detail pane's live log tail: same /api/job/log incremental-fetch
+// protocol, but reading/writing the model's paneLog* fields and emitting
+// paneLogOutputMsg so the pane's stream never collides with the full-screen
+// log view's independent offset/formatter/seq state. Keep the two in sync
+// if the log-fetch protocol changes.
+func (m model) fetchPaneLog(jobID int64) tea.Cmd {
+	baseURL := m.endpoint.BaseURL()
+	width := m.paneLogWidth()
+	client := m.client
+	style := m.glamourStyle
+	offset := m.paneLogOffset
+	fmtr := m.paneLogFmtr
+	seq := m.paneLogSeq
+	return func() tea.Msg {
+		url := fmt.Sprintf(
+			"%s/api/job/log?job_id=%d&offset=%d",
+			baseURL, jobID, offset,
+		)
+		resp, err := client.Get(url)
+		if err != nil {
+			return paneLogOutputMsg{jobID: jobID, err: err, seq: seq}
+		}
+		defer resp.Body.Close()
+
+		if resp.StatusCode == http.StatusNotFound {
+			return paneLogOutputMsg{jobID: jobID, err: errNoLog, seq: seq}
+		}
+		if resp.StatusCode != http.StatusOK {
+			return paneLogOutputMsg{
+				jobID: jobID,
+				err:   fmt.Errorf("fetch log: %s", resp.Status),
+				seq:   seq,
+			}
+		}
+
+		// Determine if job is still running from header
+		jobStatus := resp.Header.Get("X-Job-Status")
+		hasMore := jobStatus == "running"
+
+		// Parse new offset from response header
+		newOffset := offset
+		if v := resp.Header.Get("X-Log-Offset"); v != "" {
+			if parsed, perr := strconv.ParseInt(
+				v, 10, 64,
+			); perr == nil {
+				newOffset = parsed
+			}
+		}
+
+		// Server reset offset (log truncated/rotated) — force
+		// full replace even if we sent a nonzero offset.
+		isIncremental := offset > 0 && fmtr != nil
+		if newOffset < offset {
+			isIncremental = false
+		}
+
+		// No new data — return early with current state
+		if newOffset == offset && isIncremental {
+			return paneLogOutputMsg{
+				jobID:     jobID,
+				hasMore:   hasMore,
+				newOffset: newOffset,
+				append:    true,
+				seq:       seq,
+			}
+		}
+
+		// Render JSONL through streamFormatter. Use pre-computed
+		// glamour style to avoid terminal queries from goroutine.
+		var buf bytes.Buffer
+		var renderFmtr *streamfmt.Formatter
+		if isIncremental {
+			// Reuse persistent formatter — redirect its output
+			// to a fresh buffer for this batch only.
+			fmtr.SetWriter(&buf)
+			renderFmtr = fmtr
+		} else {
+			renderFmtr = streamfmt.NewWithWidth(
+				&buf, width, style,
+			)
+		}
+
+		if err := streamfmt.RenderLogWith(
+			resp.Body, renderFmtr, &buf,
+		); err != nil {
+			return paneLogOutputMsg{jobID: jobID, err: err, seq: seq}
+		}
+
+		// Split rendered output into lines
+		raw := buf.String()
+		var lines []logLine
+		if raw != "" {
+			for s := range strings.SplitSeq(raw, "\n") {
+				lines = append(lines, logLine{text: s})
+			}
+			// Remove trailing empty line from final newline
+			if len(lines) > 0 &&
+				lines[len(lines)-1].text == "" {
+				lines = lines[:len(lines)-1]
+			}
+		}
+
+		return paneLogOutputMsg{
+			jobID:     jobID,
 			lines:     lines,
 			hasMore:   hasMore,
 			newOffset: newOffset,

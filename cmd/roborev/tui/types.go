@@ -120,6 +120,24 @@ type logOutputMsg struct {
 // logTickMsg triggers a refresh of the log output
 type logTickMsg struct{}
 
+// paneLogOutputMsg delivers output lines for the split detail pane's live
+// log tail. Mirrors logOutputMsg but is keyed to the pane's own
+// paneLog* model fields so it never collides with the full-screen log
+// view's independent offset/formatter/seq state.
+type paneLogOutputMsg struct {
+	jobID     int64 // job this fetch was issued for -- checked alongside seq (see handlePaneLogOutputMsg)
+	lines     []logLine
+	hasMore   bool // true if job is still running
+	err       error
+	newOffset int64                // byte offset for next fetch
+	append    bool                 // true = append lines, false = replace (server-side offset reset)
+	seq       uint64               // fetch sequence number for stale detection
+	fmtr      *streamfmt.Formatter // formatter used for rendering (persist for incremental reuse)
+}
+
+// paneLogTickMsg triggers a poll of the split detail pane's live log tail.
+type paneLogTickMsg struct{ seq uint64 }
+
 // displayTickMsg triggers a local repaint without polling the daemon.
 type displayTickMsg struct{}
 
@@ -147,11 +165,134 @@ type reviewMsg struct {
 	responses  []storage.Response // Responses for this review
 	jobID      int64              // The job ID that was requested (for race condition detection)
 	branchName string             // Pre-computed branch name (empty if not applicable)
+	follow     bool               // true for split-view debounced follow fetches: update content only
+	// gen is m.detailFollowGen captured at dispatch time by fetchReview
+	// (every review fetch, follow or not -- fetchReviewFollow just
+	// inherits it). handleReviewMsg rejects a response whose gen no longer
+	// matches m.detailFollowGen when it lands, so a fetch outlived by a
+	// generation bump (a new split-mode selection, or a rerun-success
+	// bump for the same selected job) can't resurrect stale content --
+	// including a rerun that reuses the job ID, which the jobID-only
+	// staleness check above it can't tell apart from its own predecessor.
+	gen uint64
+	// dispatchedFrom is the view that was current when fetchReview built
+	// this command -- the fetch's true ORIGIN. handleReviewMsg's
+	// view-switch guard compares it against the view the user is on when
+	// the response lands, so a fetch can only pull the user into the
+	// review view from the view it was dispatched from. m.reviewFromView
+	// cannot serve that role: it is the RETURN target (where Esc goes back
+	// to), so a fetch dispatched from inside viewReview by arrow-key nav
+	// carries reviewFromView == viewQueue and would re-open the review
+	// after the user had already escaped back to the queue.
+	dispatchedFrom viewKind
+	// fetchSeq is m.reviewFetchSeq captured at dispatch time by EVERY
+	// review-content fetch, follow or not (both dispatch entry points,
+	// dispatchReviewFetch and dispatchReviewFollow, bump the shared epoch
+	// and stamp the new value). handleReviewMsg applies a response to
+	// currentReview/currentResponses/currentBranch only while its fetchSeq
+	// still equals the CURRENT m.reviewFetchSeq; an older one -- from any
+	// dispatcher, ordinary or follow -- arriving after a newer one was
+	// dispatched is dropped instead of overwriting the fresher content.
+	// See m.reviewFetchSeq's doc comment (tui.go).
+	fetchSeq uint64
+	// attempt is m.jobAttemptGen[jobID] captured at dispatch time by
+	// fetchReview -- the number of reruns of THIS job confirmed before the
+	// fetch went out. A response whose stamp no longer matches the job's
+	// current value belongs to an attempt the user has since superseded and
+	// is rejected outright by all three handlers. Unlike gen (one global
+	// counter, bumped by selection-driven refreshes) this is per job, so a
+	// rerun of job X invalidates X's in-flight fetches without touching a
+	// legitimate one for job Y. See m.jobAttemptGen's contract (tui.go).
+	attempt uint64
 }
-type promptMsg struct {
-	review *storage.Review
-	jobID  int64 // The job ID that was requested (for stale response detection)
+
+// reviewErrMsg carries a fetch failure from an ORDINARY (non-follow)
+// review fetch (fetchReview), fetchReviewFollow's typed-failure
+// counterpart for the path fetchReviewFollow doesn't wrap. A generic,
+// jobID-less errMsg cannot be tied back to pendingReviewOpenJobID or a
+// pending 'F' request, so a genuinely failed ordinary fetch would leave
+// both silently armed indefinitely -- neither the disarm-on-selection-
+// change nor the follow handler's resolve-on-failure block ever runs for
+// it. See handleReviewErrMsg.
+type reviewErrMsg struct {
+	jobID int64
+	err   error
+	// gen/fetchSeq mirror reviewMsg's fields exactly -- captured by
+	// fetchReview at the same point, for the same reason (see
+	// reviewMsg.gen/fetchSeq's doc comments): a stale failure must be
+	// rejected the same way a stale success would be, so a jobID match
+	// alone can't wrongly resolve a fresher, still-in-flight request for
+	// the same job.
+	gen      uint64
+	fetchSeq uint64
+	// attempt mirrors reviewMsg.attempt -- see its doc comment. A failure
+	// belonging to a superseded attempt is dropped just like a success
+	// would be.
+	attempt uint64
 }
+
+// reviewFollowErrMsg carries a fetch failure from a split-view follow fetch
+// (fetchReviewFollow), tagged with the jobID it was fetching for so a stale
+// response (the selection moved on before the fetch resolved) doesn't
+// clobber the detail pane with an outdated error. Kept distinct from the
+// generic errMsg so handleReviewFollowErrMsg can record it in
+// m.splitDetailErr without misattributing unrelated errMsg sources (e.g.
+// branch/repo list fetch failures) to the detail pane.
+type reviewFollowErrMsg struct {
+	jobID int64
+	err   error
+	// gen is m.detailFollowGen captured at dispatch time, mirroring
+	// reviewMsg.gen exactly: without it, a follow fetch's
+	// FAILURE was matched on jobID alone, so a stale error from a fetch
+	// dispatched for a job the user has since navigated away from and
+	// back to could overwrite splitDetailErr for the reselected job --
+	// while its success counterpart was already correctly rejected by
+	// gen. handleReviewFollowErrMsg discards a response whose gen no
+	// longer matches m.detailFollowGen, same as handleReviewMsg does for
+	// reviewMsg.
+	gen uint64
+	// fetchSeq mirrors reviewMsg.fetchSeq -- see its doc comment.
+	// m.reviewFetchSeq captured at dispatch time by every dispatcher.
+	fetchSeq uint64
+	// attempt mirrors reviewMsg.attempt -- see its doc comment. Copied
+	// verbatim from the reviewErrMsg fetchReviewFollow re-tags.
+	attempt uint64
+}
+
+// detailFollowTickMsg fires after the split-view follow debounce; stale
+// generations are dropped.
+type (
+	detailFollowTickMsg struct{ gen uint64 }
+	promptMsg           struct {
+		review *storage.Review
+		jobID  int64 // The job ID that was requested (for stale response detection)
+		// promptSeq is m.promptFetchSeq stamped at dispatch; a mismatch on
+		// arrival means the request was superseded by a newer prompt fetch or
+		// abandoned by a selection change (followSelectionChange bumps the
+		// counter), and the response is dropped. dispatchedFrom is the view the
+		// user was on at dispatch: handlePromptMsg switches into the prompt
+		// view only from that view (or from the prompt view itself, for
+		// stepPromptNav), so a slow response cannot yank the user out of a
+		// filter/tasks/help view they opened while it was in flight -- the same
+		// guard shape as reviewMsg.dispatchedFrom/openReviewView.
+		promptSeq      uint64
+		dispatchedFrom viewKind
+		// attempt is m.jobAttemptGen[jobID] captured at dispatch time by
+		// fetchReviewForPrompt, exactly as fetchReview stamps reviewMsg.attempt
+		// This path loads /api/review into the SAME
+		// currentReview field the split detail pane renders, so a response from
+		// an attempt a confirmed rerun has superseded poisons the pane the same
+		// way -- and worse, it overwrites the nil handleRerunResultMsg just
+		// wrote, after which reconcile's `currentReview.JobID == job.ID`
+		// idempotency check skips refetching the rerun's real result.
+		//
+		// This message deliberately does NOT carry the fetch epoch or
+		// detailFollowGen, unlike reviewMsg -- see handlePromptMsg's doc
+		// comment for the derivation.
+		attempt uint64
+	}
+)
+
 type (
 	closedMsg       bool
 	closedResultMsg struct {
@@ -185,7 +326,12 @@ type rerunResultMsg struct {
 	oldError      string
 	oldClosed     *bool
 	oldVerdict    *string
-	err           error
+	// spawnsNewRun mirrors rerunSnapshot.spawnsNewRun -- see its doc
+	// comment (actions.go). True means the daemon answered this rerun by
+	// enqueueing a new run with NEW job IDs, so nothing about THIS job's
+	// loaded content or in-flight fetches was superseded.
+	spawnsNewRun bool
+	err          error
 }
 type (
 	errMsg       error

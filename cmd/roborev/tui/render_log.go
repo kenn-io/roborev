@@ -281,6 +281,7 @@ func helpLines(tasksEnabled, noQuit bool) []string {
 				{"p", "View prompt"},
 				{"l", "View agent log"},
 				{"m", "View commit message"},
+				{"tab", "Focus detail pane (split)"},
 			},
 		},
 		{
@@ -317,6 +318,7 @@ func helpLines(tasksEnabled, noQuit bool) []string {
 				{"m", "View commit message"},
 				{"F", "Trigger fix (opens inline panel)"},
 				{"esc/q", "Back to queue"},
+				{"esc", "Back to list (split)"},
 			},
 		},
 		{
@@ -359,6 +361,7 @@ func helpLines(tasksEnabled, noQuit bool) []string {
 			keys: func() []struct{ key, desc string } {
 				keys := []struct{ key, desc string }{
 					{"?", "Toggle this help"},
+					{"L", "Toggle split layout"},
 				}
 				if !noQuit {
 					keys = append(keys, struct{ key, desc string }{

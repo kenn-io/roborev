@@ -176,5 +176,12 @@ func processErrIndicatesContextTermination(err error) bool {
 	}
 	msg := err.Error()
 	return strings.Contains(msg, "signal: killed") ||
-		strings.Contains(msg, "signal: terminated")
+		strings.Contains(msg, "signal: terminated") ||
+		// A subprocess that writes to its stdout pipe AFTER the
+		// context-cancel path closed it dies of SIGPIPE before the kill
+		// signal can land -- the same context-caused termination through a
+		// different delivery race. Safe to classify here because the call
+		// site additionally requires canceledByContext: a broken pipe is
+		// only treated as context termination when WE closed the pipe.
+		strings.Contains(msg, "signal: broken pipe")
 }

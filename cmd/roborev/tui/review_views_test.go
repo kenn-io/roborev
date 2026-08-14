@@ -132,6 +132,10 @@ func TestTUICommitMsgViewNavigationWithQ(t *testing.T) {
 	m.currentView = viewCommitMsg
 	m.commitMsgFromView = viewReview
 	m.commitMsgContent = "test message"
+	// The commitMsg->viewReview return relies on currentReview still being
+	// loaded (normalizeSplitState repairs a dangling viewReview/nil-review
+	// pair back to viewQueue in every layout).
+	m.currentReview = makeReview(1, &storage.ReviewJob{ID: 1})
 
 	// Press 'q' to go back
 	m2, _ := pressKey(m, 'q')

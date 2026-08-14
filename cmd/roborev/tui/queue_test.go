@@ -3481,6 +3481,8 @@ func TestContentNavSelectionGoneFlashesStable(t *testing.T) {
 	m := seededPanelModel(t)
 	m.selectedJobID, m.selectedIdx = 11, -1 // member, but R is NOT expanded → 11 not in rows
 	m.currentView = viewReview
+	member := m.panelMembers["R"][0] // job 11
+	m.currentReview = &storage.Review{JobID: member.ID, Job: &member}
 	before := m.currentReview
 	m, _ = pressKey(m, 'k')
 	assert.Equal(t, int64(11), m.selectedJobID, "selection unchanged when gone from rows")
@@ -3577,6 +3579,8 @@ func TestContentNavHiddenMemberFlashesStable(t *testing.T) {
 	m := seededPanelModel(t)                // members 11,12 in panelMembers, not m.jobs
 	m.selectedJobID, m.selectedIdx = 11, -1 // member, but R is NOT expanded → 11 absent from rows
 	m.currentView = viewReview
+	member := m.panelMembers["R"][0] // job 11
+	m.currentReview = &storage.Review{JobID: member.ID, Job: &member}
 	before := m.currentReview
 
 	assert.True(m.selectedIsMember(), "selection is a side-fetched member")

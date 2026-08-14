@@ -43,6 +43,17 @@ func (m model) moveQueueSelection(delta int) model {
 }
 
 // eligibleReviewRow reports whether a job can be opened in the review view.
+//
+// This predicate is a content filter only, NOT a pane-follow guarantee:
+// its consumers (stepReviewNav in handlers.go, handleJobsMsg's pagination
+// viewReview arm in handlers_msg.go) take the shared selection transition
+// (followSelectionChange) like every other selection-moving site, so
+// widening this predicate cannot strand pane state.
+//
+// What remains is a product decision, not a correctness constraint: the
+// review view has nothing to show for a job that has not produced a review
+// yet, so running and queued jobs stay out of its nav.
+// TestEligibleReviewRowExcludesLiveJobs (split_test.go) pins that decision.
 func eligibleReviewRow(j storage.ReviewJob) bool {
 	return j.Status == storage.JobStatusDone || j.Status == storage.JobStatusFailed
 }

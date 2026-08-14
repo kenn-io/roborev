@@ -84,12 +84,34 @@ func (m model) handleDistractionFreeKey() (tea.Model, tea.Cmd) {
 		return m, nil
 	}
 	m.distractionFree = !m.distractionFree
-	return m, nil
+	// Distraction-free forces stacked layout (see resolveLayout). Apply
+	// the transition through the same machinery a resize uses so
+	// view/focus mapping and the pane-log teardown stay consistent, and
+	// bootstrap the detail pane when toggling OFF re-engages split.
+	var followCmd tea.Cmd
+	if next := m.resolveLayout(); next != m.layout {
+		m.applyLayout(next)
+		m, followCmd = m.maybeBootstrapDetail()
+	}
+	return m, followCmd
 }
 
 func (m model) handleEnterKey() (tea.Model, tea.Cmd) {
+	if m.currentView != viewQueue {
+		return m, nil
+	}
+	// In split layout the detail pane already follows the queue cursor, so by
+	// the time Enter is pressed the review is already displayed -- Enter used
+	// to move focus into the detail pane (same as tab), which read as
+	// "nothing happened" since the pane content doesn't change. Make it a
+	// no-op in split (list focus) regardless of the selected job's status;
+	// tab remains the way to focus the detail pane. Stacked layout is
+	// unaffected.
+	if m.layout == layoutSplit {
+		return m, nil
+	}
 	job, ok := m.selectedJob()
-	if m.currentView != viewQueue || !ok {
+	if !ok {
 		return m, nil
 	}
 	if mm, handled := m.panelInProgressFlash(*job); handled {
@@ -98,15 +120,12 @@ func (m model) handleEnterKey() (tea.Model, tea.Cmd) {
 	switch job.Status {
 	case storage.JobStatusDone:
 		m.reviewFromView = viewQueue
-		return m, m.enterReviewCmd(*job)
+		cmd := m.enterReviewCmd(*job)
+		return m, cmd
 	case storage.JobStatusFailed:
 		m.currentBranch = ""
-		jobCopy := *job
-		m.currentReview = &storage.Review{
-			Agent:  job.Agent,
-			Output: "Job failed:\n\n" + job.Error,
-			Job:    &jobCopy,
-		}
+		m.currentResponses = nil
+		m.currentReview = synthesizeFailedReview(job, m.currentReview)
 		m.reviewFromView = viewQueue
 		m.currentView = viewReview
 		m.reviewScroll = 0
@@ -156,11 +175,15 @@ func (m model) flashNoReviewYet(job storage.ReviewJob) model {
 // shows fresh per-member verdicts rather than a PanelSummary fallback or a
 // status captured while a member was still running; a member's own review does
 // not trigger a member fetch.
-func (m model) enterReviewCmd(job storage.ReviewJob) tea.Cmd {
+// Pointer receiver: dispatchReviewFetch bumps the shared fetch epoch on
+// the model, and that bump has to survive back to the caller (see
+// m.reviewFetchSeq's doc comment, tui.go).
+func (m *model) enterReviewCmd(job storage.ReviewJob) tea.Cmd {
+	cmd := m.dispatchReviewFetch(job.ID)
 	if job.IsSynthesisJob() && m.panelMembersNeedFetch(job.PanelRunUUID) {
-		return tea.Batch(m.fetchReview(job.ID), m.fetchPanelMembers(job.PanelRunUUID))
+		return tea.Batch(cmd, m.fetchPanelMembers(job.PanelRunUUID))
 	}
-	return m.fetchReview(job.ID)
+	return cmd
 }
 
 // panelMembersNeedFetch reports whether a synthesis run's members should be

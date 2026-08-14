@@ -351,6 +351,30 @@ func (m model) handleWorktreeConfirmKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	return m, nil
 }
 
+// exitTasksToQueue returns to the queue view from the tasks flow,
+// repairing the selection when the flow moved it off the queue: opening a
+// task's review points selectedJobID at the FIX job (handleTasksKey's
+// Enter -- required so handleReviewMsg's jobID==selectedJobID acceptance
+// gate admits that fetch), and no queue row or panel member can resolve a
+// fix job's ID. Left in place, the queue renders no highlighted row and
+// the split detail pane says "No job selected" until a jobs refresh
+// normalizes it. selectedIdx is untouched by the tasks flow, so
+// normalizeSelectionIfHidden restores the row under it, and the shared
+// follow transition re-points the split pane. A selection that still
+// resolves (a queue job, or a side-fetched panel member -- which
+// normalizeSelectionIfHidden would wrongly clobber) is left alone.
+// Shared by every tasks-to-queue exit: handleTasksKey's esc/T,
+// handleToggleTasksKey, and the control socket's set-view.
+func (m model) exitTasksToQueue() (model, tea.Cmd) {
+	m.currentView = viewQueue
+	if _, ok := m.selectedJob(); ok {
+		return m, nil
+	}
+	prevSelected := m.selectedJobID
+	m.normalizeSelectionIfHidden()
+	return m.followSelectionChange(prevSelected)
+}
+
 // handleTasksKey handles key input in the tasks view.
 func (m model) handleTasksKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 	if isSubmitKey(msg) {
@@ -360,6 +384,22 @@ func (m model) handleTasksKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 			switch {
 			case job.Status == storage.JobStatusRunning:
 				if job.Prompt != "" {
+					// Move the QUEUE selection to the fix job and take the
+					// shared transition, exactly like the completed-task
+					// Enter below and the 'P' case: left pointing at the
+					// previously selected queue job, split reconciliation
+					// keeps following THAT job on every refresh and its
+					// follow fetch would replace currentReview -- swapping
+					// the displayed prompt's backing review out from under
+					// the user. With the selection on the fix job (absent
+					// from m.jobs), reconcile resolves nothing and any
+					// stale response fails the jobID gate;
+					// exitTasksToQueue repairs the selection on the way
+					// back to the queue.
+					prevSelected := m.selectedJobID
+					m.selectedJobID = job.ID
+					var followCmd tea.Cmd
+					m, followCmd = m.followSelectionChange(prevSelected)
 					m.currentReview = &storage.Review{
 						Agent:  job.Agent,
 						Prompt: job.Prompt,
@@ -369,14 +409,22 @@ func (m model) handleTasksKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					m.currentView = viewKindPrompt
 					m.promptScroll = 0
 					m.promptFromQueue = false
-					return m, nil
+					return m, followCmd
 				}
 				// No prompt yet, go straight to log view
 				return m.openLogView(job.ID, job.Status, viewTasks)
 			case job.HasViewableOutput():
+				// Moves the QUEUE selection to a fix job, so it takes the
+				// shared detail-follow transition like every other
+				// selection change -- see the note on the 'P' case below,
+				// which has the identical shape.
+				prevSelected := m.selectedJobID
 				m.selectedJobID = job.ID
 				m.reviewFromView = viewTasks
-				return m, m.fetchReview(job.ID)
+				var followCmd tea.Cmd
+				m, followCmd = m.followSelectionChange(prevSelected)
+				cmd := m.dispatchReviewFetch(job.ID)
+				return m, tea.Batch(followCmd, cmd)
 			case job.Status == storage.JobStatusFailed:
 				return m.openLogView(job.ID, job.Status, viewTasks)
 			}
@@ -393,8 +441,7 @@ func (m model) handleTasksKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		}
 		return m, tea.Quit
 	case "esc", "T":
-		m.currentView = viewQueue
-		return m, nil
+		return m.exitTasksToQueue()
 	case "o":
 		return m.handleColumnOptionsKey()
 	case "up", "k":
@@ -470,9 +517,25 @@ func (m model) handleTasksKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.setFlash("No parent review for this task", 2*time.Second, viewTasks)
 				return m, nil
 			}
+			// This moves the QUEUE selection from inside the Tasks
+			// view, which handleKeyMsg dispatches through its early
+			// modal switch -- BEFORE its followSelectionChange wrapper
+			// -- so this handler must apply the shared transition
+			// itself, or the split pane keeps tailing the job the
+			// selection moved off until the next poll/refresh heals it.
+			//
+			// Called BEFORE the dispatch, deliberately: the gen bump must
+			// precede the fetch it stamps (otherwise the request is born
+			// stale), and disarmPendingReviewOpen must run before
+			// dispatchReviewFetch re-arms the intent for the job opened
+			// here.
+			prevSelected := m.selectedJobID
 			m.selectedJobID = *job.ParentJobID
 			m.reviewFromView = viewTasks
-			return m, m.fetchReview(*job.ParentJobID)
+			var followCmd tea.Cmd
+			m, followCmd = m.followSelectionChange(prevSelected)
+			cmd := m.dispatchReviewFetch(*job.ParentJobID)
+			return m, tea.Batch(followCmd, cmd)
 		}
 		return m, nil
 	case "?":

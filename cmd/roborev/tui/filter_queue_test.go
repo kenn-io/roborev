@@ -548,7 +548,9 @@ func TestTUIAutoRepoFilterKeepsTrackedCloneWithSharedIdentity(t *testing.T) {
 
 func TestTUIBKeyNoOpOutsideQueue(t *testing.T) {
 	m := newModel(localhostEndpoint, withExternalIODisabled())
+	job := makeJob(1)
 	m.currentView = viewReview
+	m.currentReview = &storage.Review{JobID: 1, Job: &job} // viewReview requires a loaded review (normalizeSplitState repairs otherwise)
 
 	m2, cmd := pressKey(m, 'b')
 
