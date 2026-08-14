@@ -65,7 +65,7 @@ func (db *DB) GetReviewByCommitSHA(sha string) (*Review, error) {
 		WHERE j.git_ref = ?
 		  AND j.job_type IN ('review','range','dirty','synthesis','compact')
 		  AND COALESCE(j.panel_role, '') != 'member'
-		ORDER BY j.enqueued_at DESC, j.id DESC
+		ORDER BY `+sqliteNormalizedTimestampExpr("j.enqueued_at")+` DESC, j.id DESC
 		LIMIT 1
 	`, sha).Scan(&jobID)
 	if err != nil {
@@ -157,7 +157,7 @@ func (db *DB) FindReusableSessionCandidates(
 		  AND j.session_id <> ''
 		  AND COALESCE(NULLIF(j.review_type, ''), 'default') = ?
 		  AND COALESCE(j.worktree_path, '') = ?
-		ORDER BY COALESCE(j.finished_at, j.updated_at, j.enqueued_at) DESC, j.id DESC`
+		ORDER BY ` + sqliteNormalizedTimestampExpr("COALESCE(j.finished_at, j.updated_at, j.enqueued_at)") + ` DESC, j.id DESC`
 	baseArgs := []any{repoID, branch, agent, reviewType, worktreePath}
 	if limit <= 0 {
 		jobs, _, err := db.scanReusableSessionCandidates(query, baseArgs, 0)

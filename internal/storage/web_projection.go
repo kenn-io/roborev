@@ -17,7 +17,7 @@ func (db *DB) GetLatestLogicalReviewJob(repoPath, branch string) (*ReviewJob, er
 		query += " AND j.branch = ?"
 		args = append(args, branch)
 	}
-	query += " ORDER BY j.enqueued_at DESC, j.id DESC LIMIT 1"
+	query += " ORDER BY " + sqliteNormalizedTimestampExpr("j.enqueued_at") + " DESC, j.id DESC LIMIT 1"
 
 	var jobID int64
 	if err := db.QueryRow(query, args...).Scan(&jobID); err != nil {

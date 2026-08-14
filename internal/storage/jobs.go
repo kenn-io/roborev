@@ -42,7 +42,7 @@ func parseSQLiteTime(s string) time.Time {
 		return t
 	}
 	// Try SQLite datetime format (from datetime('now'))
-	if t, err := time.Parse("2006-01-02 15:04:05", s); err == nil {
+	if t, err := time.Parse(sqliteTimestampLayout, s); err == nil {
 		return t
 	}
 	// Try with timezone
@@ -482,7 +482,7 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 			WHERE status = 'queued'
 			  AND claim_blocked = 0
 			  AND (retry_not_before IS NULL OR retry_not_before <= ?)
-			ORDER BY enqueued_at, id
+			ORDER BY `+sqliteNormalizedTimestampExpr("enqueued_at")+`, id
 			LIMIT 1
 		)
 		AND NOT EXISTS (
@@ -968,7 +968,9 @@ func (db *DB) ReenqueueJobWithRequest(jobID int64, opts ReenqueueOpts, requestID
 		return 0, err
 	}
 
-	nowStr := time.Now().Format(time.RFC3339)
+	now := time.Now()
+	enqueuedAt := formatSQLiteTimestamp(now)
+	updatedAt := now.Format(time.RFC3339)
 
 	// Reset job status and replace effective execution settings with the
 	// newly resolved values for this rerun. Clear prompt_prebuilt and prompt
@@ -996,7 +998,7 @@ func (db *DB) ReenqueueJobWithRequest(jobID int64, opts ReenqueueOpts, requestID
 		    status IN ('done', 'failed', 'skipped')
 		    OR (status = 'canceled' AND worker_id IS NULL)
 		  )
-	`, nowStr, nullString(opts.Model), nullString(opts.Provider), nowStr, jobID)
+	`, enqueuedAt, nullString(opts.Model), nullString(opts.Provider), updatedAt, jobID)
 	if err != nil {
 		return 0, err
 	}
@@ -1980,7 +1982,7 @@ func (db *DB) ListJobsByStatus(repoID int64, status JobStatus) ([]ReviewJob, err
 		       COALESCE(skip_reason, ''), COALESCE(source, ''), enqueued_at
 		FROM review_jobs
 		WHERE repo_id = ? AND status = ?
-		ORDER BY enqueued_at DESC
+		ORDER BY `+sqliteNormalizedTimestampExpr("enqueued_at")+` DESC
 	`, repoID, string(status))
 	if err != nil {
 		return nil, err
@@ -1999,9 +2001,7 @@ func (db *DB) ListJobsByStatus(repoID int64, status JobStatus) ([]ReviewJob, err
 			id := commitID
 			j.CommitID = &id
 		}
-		if t, err := time.Parse(time.RFC3339, enq); err == nil {
-			j.EnqueuedAt = t
-		}
+		j.EnqueuedAt = parseSQLiteTime(enq)
 		out = append(out, j)
 	}
 	return out, rows.Err()

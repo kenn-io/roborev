@@ -59,6 +59,28 @@ func TestJobLifecycle(t *testing.T) {
 	assert.Equal(t, JobStatusDone, updatedJob.Status)
 }
 
+func TestClaimJobOrdersMixedEnqueueTimestampFormats(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	_, jobs := seedJobs(t, db, "/tmp/mixed-enqueue-order", 2)
+
+	_, err := db.Exec(
+		`UPDATE review_jobs SET enqueued_at = ? WHERE id = ?`,
+		"2026-08-14T08:00:00Z", jobs[0].ID,
+	)
+	require.NoError(t, err)
+	_, err = db.Exec(
+		`UPDATE review_jobs SET enqueued_at = ? WHERE id = ?`,
+		"2026-08-14 09:00:00", jobs[1].ID,
+	)
+	require.NoError(t, err)
+
+	claimed, err := db.ClaimJob("mixed-timestamp-worker")
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	assert.Equal(t, jobs[0].ID, claimed.ID)
+}
+
 func TestJobFailure(t *testing.T) {
 	env := setupJobEnv(t, "/tmp/test-repo", "def456")
 	claimJob(t, env.db, "worker-1")
@@ -999,6 +1021,14 @@ func TestReenqueueJob(t *testing.T) {
 		updated, err := isolatedDB.GetJobByID(job.ID)
 		require.NoError(t, err)
 		assert.WithinDuration(t, time.Now(), updated.EnqueuedAt, 2*time.Second)
+
+		var storedEnqueuedAt string
+		err = isolatedDB.QueryRow(
+			`SELECT enqueued_at FROM review_jobs WHERE id = ?`, job.ID,
+		).Scan(&storedEnqueuedAt)
+		require.NoError(t, err)
+		_, err = time.Parse("2006-01-02 15:04:05", storedEnqueuedAt)
+		assert.NoError(t, err)
 	})
 
 	t.Run("rerun queued job fails", func(t *testing.T) {
