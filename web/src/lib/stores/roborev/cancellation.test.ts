@@ -80,7 +80,7 @@ describe("Roborev request cancellation", () => {
             error: undefined,
           });
         }
-        if (path === "/api/comments") {
+        if (path === "/api/ui/review-projection") {
           return Promise.resolve({ data: { responses: [] }, error: undefined });
         }
         return Promise.resolve({
@@ -122,6 +122,76 @@ describe("Roborev request cancellation", () => {
     expect(store.getError()).toBeNull();
     expect(store.isLoading()).toBe(false);
     expect(onError).not.toHaveBeenCalled();
+  });
+
+  it("loads merged historical comments from the review projection", async () => {
+    const get = vi.fn((path: string) => {
+      if (path === "/api/review") {
+        return Promise.resolve({
+          data: {
+            id: 7,
+            job_id: 42,
+            output: "review output",
+            prompt: "review prompt",
+            closed: false,
+          },
+          error: undefined,
+        });
+      }
+      if (path === "/api/comments") {
+        return Promise.resolve({
+          data: {
+            responses: [
+              {
+                id: 2,
+                created_at: "2026-08-14T12:02:00Z",
+                responder: "reviewer-b",
+                response: "Job-linked response",
+                job_id: 42,
+              },
+            ],
+          },
+          error: undefined,
+        });
+      }
+      if (path === "/api/ui/review-projection") {
+        return Promise.resolve({
+          data: {
+            responses: [
+              {
+                id: 1,
+                created_at: "2026-08-14T12:01:00Z",
+                responder: "reviewer-a",
+                response: "Historical commit response",
+              },
+              {
+                id: 2,
+                created_at: "2026-08-14T12:02:00Z",
+                responder: "reviewer-b",
+                response: "Job-linked response",
+              },
+            ],
+          },
+          error: undefined,
+        });
+      }
+      return Promise.resolve({
+        data: {
+          jobs: [],
+          has_more: false,
+          stats: { done: 0, closed: 0, open: 0 },
+        },
+        error: undefined,
+      });
+    });
+    const store = reviewStore({ GET: get } as never);
+
+    store.setSelectedJobId(42);
+    store.loadReview(42);
+
+    await vi.waitFor(() => expect(store.getReview()?.job_id).toBe(42));
+    expect(store.getResponses().map((response) => response.id)).toEqual([1, 2]);
+    expect(get.mock.calls.map(([path]) => path)).not.toContain("/api/comments");
   });
 
   it("aborts stale job-list transport when a newer list becomes authoritative", async () => {
@@ -202,7 +272,7 @@ describe("Roborev request cancellation", () => {
             error: undefined,
           });
         }
-        if (path === "/api/comments") {
+        if (path === "/api/ui/review-projection") {
           return Promise.resolve({ data: { responses: [] }, error: undefined });
         }
         return Promise.resolve({
@@ -284,7 +354,7 @@ describe("Roborev request cancellation", () => {
           error: undefined,
         });
       }
-      if (path === "/api/comments") {
+      if (path === "/api/ui/review-projection") {
         return Promise.resolve({
           data: { responses: commentCommitted ? [acceptedComment] : [] },
           error: undefined,

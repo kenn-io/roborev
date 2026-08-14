@@ -986,7 +986,7 @@ func (db *DB) ReenqueueJobWithRequest(jobID int64, opts ReenqueueOpts, requestID
 	// the same reason.
 	result, err := conn.ExecContext(ctx, `
 		UPDATE review_jobs
-		SET status = 'queued', worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = 0, patch = NULL, session_id = NULL, token_usage = NULL, command_line = NULL, agent_invoked = 0, synced_at = NULL, model = ?, provider = ?,
+		SET status = 'queued', enqueued_at = ?, worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = 0, patch = NULL, session_id = NULL, token_usage = NULL, command_line = NULL, agent_invoked = 0, synced_at = NULL, model = ?, provider = ?,
 		    prompt_prebuilt = 0,
 		    prompt = CASE WHEN job_type IN ('task', 'compact', 'fix', 'insights') THEN prompt ELSE NULL END,
 		    skip_reason = NULL,
@@ -996,7 +996,7 @@ func (db *DB) ReenqueueJobWithRequest(jobID int64, opts ReenqueueOpts, requestID
 		    status IN ('done', 'failed', 'skipped')
 		    OR (status = 'canceled' AND worker_id IS NULL)
 		  )
-	`, nullString(opts.Model), nullString(opts.Provider), nowStr, jobID)
+	`, nowStr, nullString(opts.Model), nullString(opts.Provider), nowStr, jobID)
 	if err != nil {
 		return 0, err
 	}

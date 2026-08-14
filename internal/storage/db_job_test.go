@@ -984,6 +984,23 @@ func TestReenqueueJob(t *testing.T) {
 		assert.Equal(t, JobStatusQueued, updated.Status)
 	})
 
+	t.Run("rerun resets enqueue time for the new attempt", func(t *testing.T) {
+		isolatedDB := openTestDB(t)
+		defer isolatedDB.Close()
+		_, _, job := createJobChain(t, isolatedDB, "/tmp/test-repo", "rerun-enqueue-time")
+		oldEnqueuedAt := time.Now().Add(-30 * 24 * time.Hour).UTC().Truncate(time.Second)
+		_, err := isolatedDB.Exec(
+			`UPDATE review_jobs SET status = 'done', enqueued_at = ? WHERE id = ?`,
+			oldEnqueuedAt.Format(time.RFC3339), job.ID,
+		)
+		require.NoError(t, err)
+
+		require.NoError(t, isolatedDB.ReenqueueJob(job.ID, ReenqueueOpts{}))
+		updated, err := isolatedDB.GetJobByID(job.ID)
+		require.NoError(t, err)
+		assert.WithinDuration(t, time.Now(), updated.EnqueuedAt, 2*time.Second)
+	})
+
 	t.Run("rerun queued job fails", func(t *testing.T) {
 		_, _, job := createJobChain(t, db, "/tmp/test-repo", "rerun-queued")
 

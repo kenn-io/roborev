@@ -52,7 +52,7 @@ describe("review store composition", () => {
             error: undefined,
           });
         }
-        if (path === "/api/comments") {
+        if (path === "/api/ui/review-projection") {
           return Promise.resolve({ data: { responses: [] }, error: undefined });
         }
         if (options?.params?.query?.id === 42) {

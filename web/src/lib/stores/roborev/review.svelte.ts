@@ -54,10 +54,10 @@ export function createReviewStore(opts: ReviewStoreOptions) {
               signal,
             }),
           ),
-          comments: executeRoborevRequest(
-            "GET Roborev review comments",
+          projection: executeRoborevRequest(
+            "GET Roborev review projection",
             (signal) =>
-              client.GET("/api/comments", {
+              client.GET("/api/ui/review-projection", {
                 params: { query: { job_id: jobId } },
                 signal,
               }),
@@ -86,12 +86,15 @@ export function createReviewStore(opts: ReviewStoreOptions) {
           }),
         );
       }
-      if (result.comments.error !== undefined) {
+      if (
+        result.projection.error !== undefined &&
+        !(notFound && result.projection.response?.status === 404)
+      ) {
         return yield* Effect.fail(
           RoborevResponseError.make({
-            operation: "GET Roborev review comments",
+            operation: "GET Roborev review projection",
             message: "Failed to load review comments",
-            cause: result.comments.error,
+            cause: result.projection.error,
           }),
         );
       }
@@ -104,7 +107,7 @@ export function createReviewStore(opts: ReviewStoreOptions) {
       return {
         review: fetchedReview,
         selectedJob: fetchedJob,
-        responses: result.comments.data?.responses ?? [],
+        responses: result.projection.data?.responses ?? [],
         reviewNotFound: notFound,
       } satisfies ReviewAuthority;
     },
@@ -267,9 +270,7 @@ export function createReviewStore(opts: ReviewStoreOptions) {
                 (candidate) =>
                   !baselineResponseIDs.has(candidate.id) &&
                   candidate.responder === "web" &&
-                  candidate.response === text &&
-                  (candidate.job_id === undefined ||
-                    candidate.job_id === jobId),
+                  candidate.response === text,
               );
               return accepted === undefined
                 ? Option.none<ReviewResponse>()

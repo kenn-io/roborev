@@ -243,7 +243,7 @@ describe("App", () => {
           });
         }
         if (url.pathname === "/api/review") return response(404);
-        if (url.pathname === "/api/comments") {
+        if (url.pathname === "/api/ui/review-projection") {
           return response(200, { responses: [] });
         }
         if (url.pathname === "/api/job/cancel") {
@@ -324,7 +324,7 @@ describe("App", () => {
             job: selectedJob(),
           });
         }
-        if (url.pathname === "/api/comments") {
+        if (url.pathname === "/api/ui/review-projection") {
           return response(200, { responses: [] });
         }
         if (url.pathname === "/api/stream/events") {
