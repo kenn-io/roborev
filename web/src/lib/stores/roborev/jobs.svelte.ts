@@ -688,6 +688,9 @@ export function createJobsStore(opts: JobsStoreOptions) {
             ),
           ),
       });
+      yield* Effect.sync(() => {
+        if (selectedJobId === id) selectedReviewRevision += 1;
+      });
       if (response.job_id !== id) {
         yield* Effect.sync(() => opts.navigate(response.job_id));
       }

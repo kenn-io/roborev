@@ -260,15 +260,20 @@ func aggregateAnalytics(rows []analyticsRow, opts AnalyticsOptions) (*AnalyticsS
 	buckets := map[time.Time]*analyticsAccumulator{}
 
 	for _, row := range rows {
+		logicalReview := isLogicalReview(row)
+		eligibleAttempt := row.eligible && matchesAnalyticsAttemptFilters(row, opts)
+		if !logicalReview && !eligibleAttempt {
+			continue
+		}
 		project := analyticsAccumulatorFor(projects, row.project)
 		source := analyticsAccumulatorFor(sources, row.source)
 		bucket := analyticsAccumulatorForTime(buckets, analyticsBucketStart(row.finishedAt, opts.Bucket))
-		if isLogicalReview(row) {
+		if logicalReview {
 			for _, acc := range []*analyticsAccumulator{total, project, source, bucket} {
 				acc.addReview(row)
 			}
 		}
-		if row.eligible && matchesAnalyticsAttemptFilters(row, opts) {
+		if eligibleAttempt {
 			agent := analyticsAccumulatorFor(agents, row.agent)
 			model := analyticsAccumulatorFor(models, row.model)
 			for _, acc := range []*analyticsAccumulator{total, project, source, agent, model, bucket} {

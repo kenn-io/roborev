@@ -132,7 +132,7 @@ func TestUICmdMatchesExplicitServerToItsRuntime(t *testing.T) {
 	assert.Equal(t, "https://selected.example.com/reviews", opened)
 }
 
-func TestUICmdMatchesExplicitServerToProbedDaemonPID(t *testing.T) {
+func TestUICmdMatchesEquivalentLoopbackServerToProbedDaemonPID(t *testing.T) {
 	const livePID = 222
 	probe := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
 		assert.NoError(t, json.NewEncoder(w).Encode(daemon.PingInfo{
@@ -145,12 +145,13 @@ func TestUICmdMatchesExplicitServerToProbedDaemonPID(t *testing.T) {
 	originalParsed := parsedServerEndpoint
 	originalList := uiListAllRuntimes
 	originalOpen := openBrowserURL
-	serverAddr = strings.TrimPrefix(probe.URL, "http://")
+	runtimeAddress := strings.TrimPrefix(probe.URL, "http://")
+	serverAddr = strings.Replace(runtimeAddress, "127.0.0.1", "localhost", 1)
 	parsedServerEndpoint = nil
 	uiListAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
 		return []*daemon.RuntimeInfo{
 			{PID: 111, Address: serverAddr, WebOrigin: "https://stale.example.com"},
-			{PID: livePID, Address: serverAddr, WebOrigin: "https://live.example.com"},
+			{PID: livePID, Address: runtimeAddress, WebOrigin: "https://live.example.com"},
 		}, nil
 	}
 	var opened string

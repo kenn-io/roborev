@@ -72,10 +72,17 @@ func uiRuntimeInfo() (*daemon.RuntimeInfo, error) {
 	if err != nil {
 		return nil, err
 	}
-	for _, runtimeInfo := range runtimes {
-		if slices.Contains(runtimeInfo.Endpoints(), selected) &&
-			(probe.PID == 0 || runtimeInfo.PID == probe.PID) {
-			return runtimeInfo, nil
+	if probe.PID != 0 {
+		for _, runtimeInfo := range runtimes {
+			if runtimeInfo.PID == probe.PID {
+				return runtimeInfo, nil
+			}
+		}
+	} else {
+		for _, runtimeInfo := range runtimes {
+			if slices.Contains(runtimeInfo.Endpoints(), selected) {
+				return runtimeInfo, nil
+			}
 		}
 	}
 	return nil, fmt.Errorf("browser metadata is unavailable for the selected daemon")

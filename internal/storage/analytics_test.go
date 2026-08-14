@@ -287,6 +287,36 @@ func TestGetAnalyticsRejectsExcessiveTimeBuckets(t *testing.T) {
 	require.ErrorIs(t, err, ErrAnalyticsRangeTooLarge)
 }
 
+func TestGetAnalyticsIgnoresIneligibleJobsWhenBuildingDimensions(t *testing.T) {
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	base := time.Date(2026, time.June, 1, 0, 0, 0, 0, time.UTC)
+	oldRepo := createRepo(t, db, filepath.Join(t.TempDir(), "old-project"))
+	recentRepo := createRepo(t, db, filepath.Join(t.TempDir(), "recent-project"))
+	recent := base.Add((MaxAnalyticsTimeBuckets + 2) * time.Hour)
+
+	seedAnalyticsJob(t, db, oldRepo, analyticsJobSeed{
+		name: "irrelevant-task", jobType: JobTypeTask, status: JobStatusDone,
+		source: JobSourceCI, enqueuedAt: base.Add(-time.Minute), finishedAt: base,
+	})
+	seedAnalyticsJob(t, db, recentRepo, analyticsJobSeed{
+		name: "recent-review", jobType: JobTypeReview, status: JobStatusDone,
+		source: JobSourcePostCommit, enqueuedAt: recent.Add(-time.Minute),
+		startedAt: recent.Add(-time.Minute), finishedAt: recent, verdict: new(1),
+	})
+
+	got, err := db.GetAnalytics(AnalyticsOptions{
+		Until: recent.Add(time.Hour), Bucket: AnalyticsBucketHour,
+	})
+	require.NoError(t, err)
+	require.Len(t, got.Projects, 1)
+	assert.Equal(t, recentRepo.Name, got.Projects[0].Project)
+	require.Len(t, got.Sources, 1)
+	assert.Equal(t, JobSourcePostCommit, got.Sources[0].Value)
+	require.Len(t, got.TimeSeries, 1)
+	assert.Equal(t, 1, got.TimeSeries[0].Reviews.Total)
+}
+
 func TestGetAnalyticsFiltersPopulationsIndependently(t *testing.T) {
 	assert := assert.New(t)
 	db := openTestDB(t)

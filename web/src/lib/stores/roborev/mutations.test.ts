@@ -204,12 +204,16 @@ describe("Roborev mutation ownership", () => {
       owner: "rerun-baseline-test",
       navigate: vi.fn(),
     });
+    store.setSelectedJobId(17);
+    const reviewRevision = store.getSelectedReviewRevision();
 
     store.rerunJob(17);
 
     await vi.waitFor(() => expect(post).toHaveBeenCalledOnce());
     await vi.waitFor(() => expect(events).toContain("get:17"));
+    await vi.waitFor(() => expect(store.isRerunning(17)).toBe(false));
     expect(events.slice(0, 2)).toEqual(["post", "get:17"]);
+    expect(store.getSelectedReviewRevision()).toBe(reviewRevision + 1);
   });
 
   it("keeps a delayed rerun request ordered ahead of later actions", async () => {
