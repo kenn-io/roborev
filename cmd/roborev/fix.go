@@ -1194,25 +1194,10 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		}
 	}
 
-	// Add response and mark as closed
-	responseText := "Fix applied via `roborev fix` command"
-	if result.CommitCreated {
-		responseText = fmt.Sprintf("Fix applied via `roborev fix` command (commit: %s)", gitrepo.ShortSHA(result.NewCommitSHA))
-	}
-
-	if err := addJobResponse(ctx, addr, jobID, "roborev-fix", responseText); err != nil {
-		if !opts.quiet {
-			cmd.Printf("Warning: could not add response to job: %v\n", err)
-		}
-	}
-
-	if err := markJobClosed(ctx, addr, jobID); err != nil {
-		if !opts.quiet {
-			cmd.Printf("Warning: could not close job: %v\n", err)
-		}
-	} else if !opts.quiet {
-		cmd.Printf("Job %d closed\n", jobID)
-	}
+	responseText := buildFixOutcomeResponse(
+		result, "`roborev fix` command", fixCfg.FixGuidelines,
+	)
+	recordAndCloseFixJob(ctx, cmd, addr, jobID, responseText, opts.quiet)
 
 	return nil
 }
@@ -1512,21 +1497,13 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 		if batchSize > 0 {
 			flagLabel = "--batch-size"
 		}
-		responseText := fmt.Sprintf("Fix applied via `roborev fix %s`", flagLabel)
-		if result.CommitCreated {
-			responseText = fmt.Sprintf("Fix applied via `roborev fix %s` (commit: %s)", flagLabel, gitrepo.ShortSHA(result.NewCommitSHA))
-		}
+		responseText := buildFixOutcomeResponse(
+			result, fmt.Sprintf("`roborev fix %s`", flagLabel), cfg.FixGuidelines,
+		)
 		for _, e := range batch {
-			if addErr := addJobResponse(ctx, batchAddr, e.jobID, "roborev-fix", responseText); addErr != nil && !opts.quiet {
-				cmd.Printf("Warning: could not add response to job %d: %v\n", e.jobID, addErr)
-			}
-			if markErr := markJobClosed(ctx, batchAddr, e.jobID); markErr != nil {
-				if !opts.quiet {
-					cmd.Printf("Warning: could not close job %d: %v\n", e.jobID, markErr)
-				}
-			} else if !opts.quiet {
-				cmd.Printf("Job %d closed\n", e.jobID)
-			}
+			recordAndCloseFixJob(
+				ctx, cmd, batchAddr, e.jobID, responseText, opts.quiet,
+			)
 		}
 	}
 
@@ -1537,7 +1514,7 @@ const (
 	batchPromptHeader               = "# Batch Fix Request\n\nThe following reviews found issues that need to be fixed.\nAddress all findings across all reviews in a single pass.\n\n"
 	batchPromptHeaderWithGuidelines = "# Batch Fix Request\n\nThe following reviews found issues that need to be evaluated and addressed.\nEvaluate each finding against the autofix guidelines. Apply changes for findings that warrant a fix, and record any finding intentionally not applied with the reason it was skipped.\n\n"
 	batchPromptFooter               = "## Instructions\n\nPlease apply fixes for all the findings above.\nFocus on the highest priority items first.\nAfter making changes, verify the code compiles/passes linting,\nrun relevant tests, and create a git commit summarizing all changes.\n"
-	batchPromptFooterWithGuidelines = "## Instructions\n\nApply fixes for findings that warrant a change and record intentionally skipped findings.\nFocus on the highest priority items first.\nAfter making changes, verify the code compiles/passes linting,\nrun relevant tests, and create a git commit summarizing all changes.\n"
+	batchPromptFooterWithGuidelines = "## Instructions\n\nApply fixes for findings that warrant a change and record intentionally skipped findings.\nFor each job ID, state whether it was fixed or skipped and explain why.\nFocus on the highest priority items first.\nAfter making changes, verify the code compiles/passes linting,\nrun relevant tests, and create a git commit summarizing all changes.\n"
 )
 
 func buildBatchPromptHeader(fixGuidelines string) string {
@@ -1867,6 +1844,58 @@ func buildGenericCommitPromptWithMetadata(metadata config.FixCommitMetadata, fix
 	sb.WriteString("- Be concise but informative\n")
 	sb.WriteString(formatFixCommitMetadataInstructions(metadata))
 	return autofix.AppendGuidelines(sb.String(), fixGuidelines)
+}
+
+func buildFixOutcomeResponse(
+	result *fixJobResult, commandLabel, fixGuidelines string,
+) string {
+	policyAware := strings.TrimSpace(fixGuidelines) != ""
+	status := "Fix applied"
+	if policyAware {
+		switch {
+		case result.CommitCreated:
+			status = "Changes applied"
+		case result.NoChanges:
+			status = "No changes applied"
+		default:
+			status = "Changes left uncommitted"
+		}
+	}
+
+	response := fmt.Sprintf("%s via %s", status, commandLabel)
+	if result.CommitCreated {
+		response += fmt.Sprintf(" (commit: %s)", gitrepo.ShortSHA(result.NewCommitSHA))
+	}
+	if policyAware {
+		if report := strings.TrimSpace(result.AgentOutput); report != "" {
+			response += "\n\nAgent report:\n" + report
+		}
+	}
+	return response
+}
+
+func recordAndCloseFixJob(
+	ctx context.Context,
+	cmd *cobra.Command,
+	serverAddr string,
+	jobID int64,
+	responseText string,
+	quiet bool,
+) {
+	if err := addJobResponse(ctx, serverAddr, jobID, "roborev-fix", responseText); err != nil {
+		if !quiet {
+			cmd.Printf("Warning: could not add response to job %d: %v\n", jobID, err)
+		}
+		return
+	}
+
+	if err := markJobClosed(ctx, serverAddr, jobID); err != nil {
+		if !quiet {
+			cmd.Printf("Warning: could not close job %d: %v\n", jobID, err)
+		}
+	} else if !quiet {
+		cmd.Printf("Job %d closed\n", jobID)
+	}
 }
 
 // addJobResponse adds a response/comment to a job

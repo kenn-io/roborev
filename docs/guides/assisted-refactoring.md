@@ -124,7 +124,9 @@ review. This is a one-shot fix. For an iterative loop with re-review, see
 To require the fix agent to verify suggestions rather than apply them blindly,
 set global [`fix_guidelines`](/configuration/#fix-guidelines). The policy
 reaches direct fixes, batch fixes, and commit retries. It does not change the
-separate `analyze --fix` or `refine` workflows.
+separate `analyze --fix` or `refine` workflows. When the agent intentionally
+leaves a finding unchanged, the job records the no-change outcome and the
+agent's explanation before it closes.
 
 Use `--batch` to concatenate multiple reviews into a single prompt so the agent
 sees all findings at once. This is faster and gives the agent more context to

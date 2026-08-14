@@ -283,6 +283,35 @@ func TestBuildBatchFixPromptWithFixGuidelines(t *testing.T) {
 	assert.True(t, strings.HasSuffix(strings.TrimSpace(got), policy))
 }
 
+// If a batch agent does not identify each job in its final disposition, the
+// shared report cannot tell users which review was fixed or skipped.
+func TestBuildBatchFixPromptRequestsPerJobDispositionWithGuidelines(t *testing.T) {
+	entries := []batchEntry{
+		{
+			jobID: 41,
+			job:   &storage.ReviewJob{GitRef: "abc123"},
+			review: &storage.Review{
+				Output: "First finding",
+			},
+		},
+		{
+			jobID: 42,
+			job:   &storage.ReviewJob{GitRef: "def456"},
+			review: &storage.Review{
+				Output: "Second finding",
+			},
+		},
+	}
+
+	got := buildBatchFixPromptWithMetadata(
+		entries, "", config.FixCommitMetadata{}, "Verify each finding.",
+	)
+
+	assert.Contains(t, got, "For each job ID, state whether it was fixed or skipped")
+	assert.Contains(t, got, "Job 41")
+	assert.Contains(t, got, "Job 42")
+}
+
 func TestFetchJob(t *testing.T) {
 	tests := []struct {
 		name       string
@@ -729,6 +758,114 @@ func TestProcessFixBatchPassesGlobalFixGuidelinesToAgent(t *testing.T) {
 	calls := tester.Calls()
 	require.NotEmpty(t, calls)
 	assert.Contains(t, calls[0].Prompt, "Batch policy sentinel")
+}
+
+// If a policy-aware no-change outcome is still labeled as an applied fix,
+// users lose the agent's reason for intentionally skipping the finding.
+func TestFixSingleJobRecordsSkippedOutcomeBeforeClosing(t *testing.T) {
+	dataDir := t.TempDir()
+	repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
+	failed := "F"
+	var operations []string
+	var commentBody []byte
+	_ = newMockDaemonBuilder(t).
+		WithHandler("/api/jobs", func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{{
+				ID: 99, Status: storage.JobStatusDone, Agent: "test", Verdict: &failed,
+			}}})
+		}).
+		WithHandler("/api/review", func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, storage.Review{JobID: 99, Output: "Finding"})
+		}).
+		WithHandler("/api/comments", func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, map[string]any{"responses": []storage.Response{}})
+		}).
+		WithHandler("/api/comment", func(w http.ResponseWriter, r *http.Request) {
+			operations = append(operations, "comment")
+			commentBody, _ = io.ReadAll(r.Body)
+			w.WriteHeader(http.StatusCreated)
+		}).
+		WithHandler("/api/review/close", func(w http.ResponseWriter, _ *http.Request) {
+			operations = append(operations, "close")
+			w.WriteHeader(http.StatusOK)
+		}).
+		Build()
+	t.Setenv("ROBOREV_DATA_DIR", dataDir)
+	require.NoError(t, os.WriteFile(filepath.Join(dataDir, "config.toml"), []byte(`fix_guidelines = "Verify before editing"`), 0o600))
+
+	fixAgent := &agent.FakeAgent{
+		NameStr: "test",
+		ReviewFn: func(_ context.Context, _, _, _ string, _ io.Writer) (string, error) {
+			return "Skipped job 99 because the finding conflicts with project policy.", nil
+		},
+	}
+	cmd, _ := newTestCmd(t)
+	err := fixSingleJob(
+		cmd, repo.Dir, 99, fixOptions{agentName: "test", quiet: true},
+		&fixSessionTracker{base: fixAgent, out: io.Discard},
+	)
+	require.NoError(t, err)
+
+	var request struct {
+		Comment string `json:"comment"`
+	}
+	require.NoError(t, json.Unmarshal(commentBody, &request))
+	assert := assert.New(t)
+	assert.Equal([]string{"comment", "close"}, operations)
+	assert.Contains(request.Comment, "No changes applied")
+	assert.Contains(request.Comment, "Skipped job 99 because the finding conflicts with project policy.")
+	assert.NotContains(request.Comment, "Fix applied")
+}
+
+// If the outcome comment cannot be persisted but batch processing still
+// closes the job, the review loses its only fixed/skipped disposition.
+func TestProcessFixBatchKeepsJobOpenWhenOutcomeCommentFails(t *testing.T) {
+	dataDir := t.TempDir()
+	repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
+	failed := "F"
+	var commentCalls atomic.Int32
+	var closeCalls atomic.Int32
+	_ = newMockDaemonBuilder(t).
+		WithHandler("/api/jobs", func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{{
+				ID: 99, Status: storage.JobStatusDone, Agent: "test", Verdict: &failed,
+			}}})
+		}).
+		WithHandler("/api/review", func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, storage.Review{JobID: 99, Output: "Finding"})
+		}).
+		WithHandler("/api/comments", func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, map[string]any{"responses": []storage.Response{}})
+		}).
+		WithHandler("/api/comment", func(w http.ResponseWriter, _ *http.Request) {
+			commentCalls.Add(1)
+			http.Error(w, "comment unavailable", http.StatusInternalServerError)
+		}).
+		WithHandler("/api/review/close", func(w http.ResponseWriter, _ *http.Request) {
+			closeCalls.Add(1)
+			w.WriteHeader(http.StatusOK)
+		}).
+		Build()
+	t.Setenv("ROBOREV_DATA_DIR", dataDir)
+	require.NoError(t, os.WriteFile(filepath.Join(dataDir, "config.toml"), []byte(`fix_guidelines = "Verify before editing"`), 0o600))
+
+	fixAgent := &agent.FakeAgent{
+		NameStr: "test",
+		ReviewFn: func(_ context.Context, _, _, _ string, _ io.Writer) (string, error) {
+			return "Job 99 skipped because no change is warranted.", nil
+		},
+	}
+	cmd, _ := newTestCmd(t)
+	roots := currentRepoRoots{worktreeRoot: repo.Dir, mainRepoRoot: repo.Dir}
+	err := processFixBatch(
+		context.Background(), cmd, roots, []int64{99}, 0,
+		fixOptions{agentName: "test", quiet: true},
+		&fixSessionTracker{base: fixAgent, out: io.Discard},
+	)
+	require.NoError(t, err)
+
+	assert.EqualValues(t, 1, commentCalls.Load())
+	assert.EqualValues(t, 0, closeCalls.Load())
 }
 
 // If either agent-running path ignores a global parse error, users can get a
