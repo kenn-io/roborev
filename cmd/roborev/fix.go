@@ -406,7 +406,11 @@ func fixJobDirect(ctx context.Context, params fixJobParams, fixPrompt string) (*
 			}
 		}
 	}
-	if _, retryErr := retryAgent.Review(ctx, params.RepoRoot, "HEAD", buildGenericCommitPromptWithMetadata(params.Metadata, params.FixGuidelines), out); retryErr != nil {
+	retryOutput, retryErr := retryAgent.Review(ctx, params.RepoRoot, "HEAD", buildGenericCommitPromptWithMetadata(params.Metadata, params.FixGuidelines), out)
+	if strings.TrimSpace(retryOutput) != "" {
+		agentOutput = retryOutput
+	}
+	if retryErr != nil {
 		// Classify the retry error so quota/session limits abort
 		// instead of being demoted to a warning — otherwise the fix
 		// loop keeps invoking the exhausted agent on every following
@@ -1197,7 +1201,9 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 	responseText := buildFixOutcomeResponse(
 		result, "`roborev fix` command", fixCfg.FixGuidelines,
 	)
-	recordAndCloseFixJob(ctx, cmd, addr, jobID, responseText, opts.quiet)
+	recordAndCloseFixJob(
+		ctx, cmd, addr, jobID, responseText, fixCfg.FixGuidelines, opts.quiet,
+	)
 
 	return nil
 }
@@ -1497,12 +1503,13 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 		if batchSize > 0 {
 			flagLabel = "--batch-size"
 		}
-		responseText := buildFixOutcomeResponse(
+		responseText := buildBatchFixOutcomeResponse(
 			result, fmt.Sprintf("`roborev fix %s`", flagLabel), cfg.FixGuidelines,
 		)
 		for _, e := range batch {
 			recordAndCloseFixJob(
-				ctx, cmd, batchAddr, e.jobID, responseText, opts.quiet,
+				ctx, cmd, batchAddr, e.jobID, responseText,
+				cfg.FixGuidelines, opts.quiet,
 			)
 		}
 	}
@@ -1874,19 +1881,39 @@ func buildFixOutcomeResponse(
 	return response
 }
 
+func buildBatchFixOutcomeResponse(
+	result *fixJobResult, commandLabel, fixGuidelines string,
+) string {
+	if strings.TrimSpace(fixGuidelines) == "" {
+		return buildFixOutcomeResponse(result, commandLabel, fixGuidelines)
+	}
+
+	response := fmt.Sprintf("Batch outcome recorded via %s", commandLabel)
+	if result.CommitCreated {
+		response += fmt.Sprintf(" (commit: %s)", gitrepo.ShortSHA(result.NewCommitSHA))
+	}
+	if report := strings.TrimSpace(result.AgentOutput); report != "" {
+		response += "\n\nAgent report:\n" + report
+	}
+	return response
+}
+
 func recordAndCloseFixJob(
 	ctx context.Context,
 	cmd *cobra.Command,
 	serverAddr string,
 	jobID int64,
 	responseText string,
+	fixGuidelines string,
 	quiet bool,
 ) {
 	if err := addJobResponse(ctx, serverAddr, jobID, "roborev-fix", responseText); err != nil {
 		if !quiet {
 			cmd.Printf("Warning: could not add response to job %d: %v\n", jobID, err)
 		}
-		return
+		if strings.TrimSpace(fixGuidelines) != "" {
+			return
+		}
 	}
 
 	if err := markJobClosed(ctx, serverAddr, jobID); err != nil {

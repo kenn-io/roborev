@@ -868,6 +868,125 @@ func TestProcessFixBatchKeepsJobOpenWhenOutcomeCommentFails(t *testing.T) {
 	assert.EqualValues(t, 0, closeCalls.Load())
 }
 
+// If an empty-policy fix stops closing jobs after a comment failure, enabling
+// outcome recording changes the legacy automatic-fix behavior by default.
+func TestProcessFixBatchPreservesLegacyCloseWhenCommentFailsWithoutGuidelines(t *testing.T) {
+	dataDir := t.TempDir()
+	repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
+	failed := "F"
+	var closeCalls atomic.Int32
+	_ = newMockDaemonBuilder(t).
+		WithHandler("/api/jobs", func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{{
+				ID: 99, Status: storage.JobStatusDone, Agent: "test", Verdict: &failed,
+			}}})
+		}).
+		WithHandler("/api/review", func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, storage.Review{JobID: 99, Output: "Finding"})
+		}).
+		WithHandler("/api/comments", func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, map[string]any{"responses": []storage.Response{}})
+		}).
+		WithHandler("/api/comment", func(w http.ResponseWriter, _ *http.Request) {
+			http.Error(w, "comment unavailable", http.StatusInternalServerError)
+		}).
+		WithHandler("/api/review/close", func(w http.ResponseWriter, _ *http.Request) {
+			closeCalls.Add(1)
+			w.WriteHeader(http.StatusOK)
+		}).
+		Build()
+	t.Setenv("ROBOREV_DATA_DIR", dataDir)
+
+	fixAgent := &agent.FakeAgent{
+		NameStr: "test",
+		ReviewFn: func(_ context.Context, _, _, _ string, _ io.Writer) (string, error) {
+			return "fix complete", nil
+		},
+	}
+	cmd, _ := newTestCmd(t)
+	roots := currentRepoRoots{worktreeRoot: repo.Dir, mainRepoRoot: repo.Dir}
+	err := processFixBatch(
+		context.Background(), cmd, roots, []int64{99}, 0,
+		fixOptions{agentName: "test", quiet: true},
+		&fixSessionTracker{base: fixAgent, out: io.Discard},
+	)
+	require.NoError(t, err)
+	assert.EqualValues(t, 1, closeCalls.Load())
+}
+
+// If a mixed policy-aware batch labels every job from the aggregate commit
+// result, a skipped job is falsely recorded as having changes applied.
+func TestProcessFixBatchUsesNeutralStatusForMixedPolicyOutcome(t *testing.T) {
+	dataDir := t.TempDir()
+	repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
+	failed := "F"
+	comments := make(map[int64]string)
+	var decodeErr error
+	_ = newMockDaemonBuilder(t).
+		WithHandler("/api/jobs", func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{
+				{ID: 99, Status: storage.JobStatusDone, Agent: "test", Verdict: &failed},
+				{ID: 100, Status: storage.JobStatusDone, Agent: "test", Verdict: &failed},
+			}})
+		}).
+		WithHandler("/api/review", func(w http.ResponseWriter, r *http.Request) {
+			jobID := int64(99)
+			if r.URL.Query().Get("job_id") == "100" {
+				jobID = 100
+			}
+			writeJSON(w, storage.Review{JobID: jobID, Output: "Finding"})
+		}).
+		WithHandler("/api/comments", func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, map[string]any{"responses": []storage.Response{}})
+		}).
+		WithHandler("/api/comment", func(w http.ResponseWriter, r *http.Request) {
+			var request struct {
+				JobID   int64  `json:"job_id"`
+				Comment string `json:"comment"`
+			}
+			decodeErr = json.NewDecoder(r.Body).Decode(&request)
+			comments[request.JobID] = request.Comment
+			w.WriteHeader(http.StatusCreated)
+		}).
+		WithHandler("/api/review/close", func(w http.ResponseWriter, _ *http.Request) {
+			w.WriteHeader(http.StatusOK)
+		}).
+		Build()
+	t.Setenv("ROBOREV_DATA_DIR", dataDir)
+	require.NoError(t, os.WriteFile(filepath.Join(dataDir, "config.toml"), []byte(`fix_guidelines = "Verify before editing"`), 0o600))
+
+	fixAgent := &agent.FakeAgent{
+		NameStr: "test",
+		ReviewFn: func(_ context.Context, repoPath, _, _ string, _ io.Writer) (string, error) {
+			require.NoError(t, os.WriteFile(filepath.Join(repoPath, "fix.txt"), []byte("fixed\n"), 0o644))
+			for _, args := range [][]string{{"add", "fix.txt"}, {"commit", "-m", "fix: apply batch change"}} {
+				cmd := exec.Command("git", args...)
+				cmd.Dir = repoPath
+				output, err := cmd.CombinedOutput()
+				require.NoError(t, err, "git %v: %s", args, output)
+			}
+			return "Job 99 fixed.\nJob 100 skipped because no change was warranted.", nil
+		},
+	}
+	cmd, _ := newTestCmd(t)
+	roots := currentRepoRoots{worktreeRoot: repo.Dir, mainRepoRoot: repo.Dir}
+	err := processFixBatch(
+		context.Background(), cmd, roots, []int64{99, 100}, 0,
+		fixOptions{agentName: "test", quiet: true},
+		&fixSessionTracker{base: fixAgent, out: io.Discard},
+	)
+	require.NoError(t, err)
+	require.NoError(t, decodeErr)
+
+	require.Len(t, comments, 2)
+	for _, comment := range comments {
+		assert.Contains(t, comment, "Batch outcome recorded")
+		assert.Contains(t, comment, "Job 99 fixed.")
+		assert.Contains(t, comment, "Job 100 skipped")
+		assert.NotContains(t, comment, "Changes applied")
+	}
+}
+
 // If either agent-running path ignores a global parse error, users can get a
 // panic or an unguided fix instead of an actionable configuration failure.
 func TestFixFlowsRejectMalformedGlobalBeforeAgent(t *testing.T) {
@@ -1849,6 +1968,45 @@ func TestFixJobDirect_RetryThreadsCapturedSessionID(t *testing.T) {
 		"retry must resume the first call's session so the tracker captures the latest context")
 	assert.Contains(t, calls[1].Prompt, "Verify before committing.")
 	assert.Contains(t, calls[1].Prompt, "Check the pending changes against the autofix guidelines")
+}
+
+func TestFixJobDirect_RetryUsesFinalAgentOutput(t *testing.T) {
+	repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
+	calls := 0
+	ag := &agent.FakeAgent{
+		NameStr: "test",
+		ReviewFn: func(_ context.Context, repoPath, _, _ string, _ io.Writer) (string, error) {
+			calls++
+			if calls == 1 {
+				err := os.WriteFile(filepath.Join(repoPath, "fix.txt"), []byte("pending\n"), 0o644)
+				return "initial report", err
+			}
+
+			for _, args := range [][]string{
+				{"add", "fix.txt"},
+				{"commit", "-m", "fix: apply reviewed change"},
+			} {
+				cmd := exec.Command("git", args...)
+				cmd.Dir = repoPath
+				output, err := cmd.CombinedOutput()
+				if err != nil {
+					return "", fmt.Errorf("git %v: %w (%s)", args, err, output)
+				}
+			}
+			return "final retry report", nil
+		},
+	}
+
+	result, err := fixJobDirect(context.Background(), fixJobParams{
+		RepoRoot:      repo.Dir,
+		Agent:         ag,
+		FixGuidelines: "Verify the finding before committing.",
+	}, "fix things")
+	require.NoError(t, err)
+
+	assert.Equal(t, 2, calls)
+	assert.True(t, result.CommitCreated)
+	assert.Equal(t, "final retry report", result.AgentOutput)
 }
 
 func TestBuildBatchFixPrompt(t *testing.T) {

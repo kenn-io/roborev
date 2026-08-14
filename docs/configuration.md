@@ -234,9 +234,10 @@ project requirements. Explain findings that are intentionally not applied.
 The value applies to direct fixes, batch fixes, and commit retries. It also
 appears at the end of triggered reminders for every Agent Hook profile. Missing
 or empty guidance preserves the existing automatic behavior. With guidance
-configured, `roborev fix` records whether changes were applied and preserves the
-agent's final explanation before closing each review. Batch agents report a
-fixed or skipped disposition for every job ID.
+configured, direct `roborev fix` runs record whether changes were applied and
+preserve the agent's final explanation before closing each review. Batch runs
+record a neutral batch outcome, while the agent report gives every job ID a
+fixed or skipped disposition.
 
 This key is not accepted in `.roborev.toml` and has no CLI or environment
 override. Agent Hook's `--config` option still controls profile thresholds and
