@@ -422,9 +422,10 @@ func (m model) handleDetailFollowTick(msg detailFollowTickMsg) (tea.Model, tea.C
 	case storage.JobStatusFailed:
 		// Synchronous rebuild routed through the shared ordered acceptance
 		// (epoch bump + acceptReview) so a pre-rerun in-flight response
-		// cannot overwrite it -- see acceptSynthesizedFailure.
-		m.acceptSynthesizedFailure(job.ID, synthesizeFailedReview(job, m.currentReview))
-		return m, nil
+		// cannot overwrite it -- see acceptSynthesizedFailure. The
+		// returned cmd loads the job's persisted comments.
+		cmd := m.acceptSynthesizedFailure(job.ID, synthesizeFailedReview(job, m.currentReview))
+		return m, cmd
 	case storage.JobStatusRunning:
 		return m.startPaneLog(*job)
 	}
@@ -479,9 +480,16 @@ func synthesizeFailedReview(job *storage.ReviewJob, prev *storage.Review) *stora
 // superseded same-job response arriving later finds content already
 // present and at most serves its own open intent via handleReviewMsg's
 // fallback switch; it can no longer replace content.
-func (m *model) acceptSynthesizedFailure(jobID int64, fresh *storage.Review) {
+//
+// The returned cmd loads the job's persisted comments: acceptance clears
+// currentResponses, and no review fetch can ever repopulate them for a
+// synthesized review (the /api/review request 404s), so without this a
+// navigation round-trip or a fresh TUI would show the failure with its
+// comments permanently missing. Callers must run the cmd.
+func (m *model) acceptSynthesizedFailure(jobID int64, fresh *storage.Review) tea.Cmd {
 	m.reviewFetchSeq++
 	m.acceptReview(reviewMsg{review: fresh, jobID: jobID, fetchSeq: m.reviewFetchSeq})
+	return m.fetchFailedJobComments(jobID)
 }
 
 // reviewJobCompletionChanged reports whether job has completed AGAIN since
@@ -840,9 +848,10 @@ func (m model) splitReconcileDetail() (model, tea.Cmd) {
 		// (epoch bump + acceptReview): sibling clears, scroll reset, the
 		// scoped observation clear and the pending-intent consumes all run
 		// there, and the epoch bump dooms any pre-rerun in-flight response
-		// for this job -- see acceptSynthesizedFailure.
-		m.acceptSynthesizedFailure(job.ID, fresh)
-		return m, nil
+		// for this job -- see acceptSynthesizedFailure. The returned cmd
+		// loads the job's persisted comments.
+		cmd := m.acceptSynthesizedFailure(job.ID, fresh)
+		return m, cmd
 	case storage.JobStatusRunning:
 		if m.paneLogJobID != job.ID || !m.paneLogStreaming {
 			// Restarting the tail invalidates any earlier error; clear it

@@ -1585,7 +1585,7 @@ func TestSplitReconcileDetailFailedIdempotent(t *testing.T) {
 
 	got, cmd := m.splitReconcileDetail()
 	require.NotNil(t, got.currentReview)
-	assert.Nil(cmd)
+	assert.NotNil(cmd, "the rebuild dispatches the persisted-comments fetch")
 	assert.False(got.paneLogStreaming)
 	firstReview := got.currentReview
 	seqAfterFirst := got.paneLogSeq
@@ -1615,7 +1615,7 @@ func TestSplitReconcileDetailReplacesStaleFailedReviewFromRerun(t *testing.T) {
 	m.paneLogJobID, m.paneLogSeq, m.paneLogStreaming = 1, 5, true
 
 	got, cmd := m.splitReconcileDetail()
-	assert.Nil(cmd)
+	assert.NotNil(cmd, "the rebuild dispatches the persisted-comments fetch")
 	require.NotNil(got.currentReview)
 	assert.Contains(got.currentReview.Output, "boom", "must rebuild with the CURRENT job.Error, not keep the stale attempt's text")
 	assert.NotContains(got.currentReview.Output, "stale error from a previous attempt")
@@ -4141,7 +4141,7 @@ func TestSplitReconcileDetailReplacesFailedReviewWithChangedMetadataDespiteSameE
 	failedJobs[2].Agent = "codex"
 	m.jobs = failedJobs
 	got, cmd := m.splitReconcileDetail()
-	assert.Nil(cmd, "the Failed branch rebuilds locally, not via a fetch")
+	assert.NotNil(cmd, "the local rebuild also dispatches the persisted-comments fetch")
 	require.NotNil(got.currentReview)
 	assert.Equal("codex", got.currentReview.Job.Agent, "must rebuild with the CURRENT job metadata despite identical rendered error text")
 }
@@ -6213,6 +6213,54 @@ func TestCommentOnSynthesizedFailedReviewAppendsLocally(t *testing.T) {
 	lines := strings.Join(got.renderDetailPane(88, 25), "\n")
 	assert.Contains(lines, "known flake, not a regression",
 		"the appended comment must render under the failure review")
+}
+
+// TestFailedReviewCommentsSurviveNavigationRoundTrip: every synthesized
+// acceptance dispatches a persisted-comments fetch, so comments on a
+// failed job's review survive navigating away and back (the rebuild
+// clears the in-memory copy; the fetch restores server state).
+func TestFailedReviewCommentsSurviveNavigationRoundTrip(t *testing.T) {
+	assert := assert.New(t)
+	require := require.New(t)
+	m := splitModel(withSelection(2, 1)) // job 1: failed, selected
+
+	// First display: reconcile synthesizes and dispatches the fetch.
+	m, cmd := m.splitReconcileDetail()
+	require.NotNil(cmd)
+	res, _ := m.handleFailedCommentsMsg(failedCommentsMsg{
+		jobID:     1,
+		responses: []storage.Response{{Responder: "wes", Response: "known flake"}},
+	})
+	m = res.(model)
+	require.Len(m.currentResponses, 1)
+
+	// Navigate away: a late comments response for job 1 is stale now.
+	m = m.moveSelectionToJobID(3)
+	m, _ = m.followSelectionChange(1)
+	res, _ = m.handleFailedCommentsMsg(failedCommentsMsg{
+		jobID:     1,
+		responses: []storage.Response{{Responder: "eve", Response: "should not land"}},
+	})
+	m = res.(model)
+	assert.NotContains(strings.Join(m.renderDetailPane(88, 25), "\n"), "should not land")
+
+	// Back to job 1: the tick re-synthesizes and re-dispatches the fetch.
+	m = m.moveSelectionToJobID(1)
+	m, _ = m.followSelectionChange(3)
+	res, tickCmd := m.handleDetailFollowTick(detailFollowTickMsg{gen: m.detailFollowGen})
+	m = res.(model)
+	require.NotNil(m.currentReview)
+	require.NotNil(tickCmd, "the re-synthesis must re-dispatch the comments fetch")
+	require.Empty(m.currentResponses, "sanity: the rebuild cleared the in-memory comments")
+
+	// The fetch response restores them and they render.
+	res, _ = m.handleFailedCommentsMsg(failedCommentsMsg{
+		jobID:     1,
+		responses: []storage.Response{{Responder: "wes", Response: "known flake"}},
+	})
+	m = res.(model)
+	assert.Contains(strings.Join(m.renderDetailPane(88, 25), "\n"), "known flake",
+		"comments must survive the navigation round-trip")
 }
 
 // TestClosingLastVisibleJobClearsSelection: with hide-closed on, closing

@@ -381,6 +381,19 @@ type repoBranchesMsg struct {
 	expandOnLoad bool               // Set expanded=true when branches arrive
 	searchSeq    int                // Search generation; stale errors don't set fetchFailed
 }
+
+// failedCommentsMsg delivers persisted comments for a job whose review is
+// SYNTHESIZED (a failed job has no review row, so the ordinary review
+// fetch that normally carries responses 404s and can never load them).
+// Dispatched by acceptSynthesizedFailure alongside every synthesized
+// acceptance; accepted only while that job's synthetic review (ID == 0)
+// is still the loaded, selected content.
+type failedCommentsMsg struct {
+	jobID     int64
+	responses []storage.Response
+	err       error
+}
+
 type commentResultMsg struct {
 	jobID int64
 	err   error

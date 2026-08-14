@@ -626,9 +626,10 @@ func (m model) stepReviewNav(dir int) (tea.Model, tea.Cmd) {
 		cmd := m.dispatchReviewFetch(job.ID)
 		return m, tea.Batch(followCmd, cmd)
 	case storage.JobStatusFailed:
-		m.currentBranch = ""
-		m.currentResponses = nil
-		m.currentReview = synthesizeFailedReview(&job, m.currentReview)
+		// Shared synthesized acceptance: also loads persisted comments,
+		// which no review fetch can carry for a row-less review.
+		commentsCmd := m.acceptSynthesizedFailure(job.ID, synthesizeFailedReview(&job, m.currentReview))
+		return m, tea.Batch(followCmd, commentsCmd)
 	}
 	return m, followCmd
 }

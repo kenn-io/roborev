@@ -41,7 +41,7 @@ func TestTUIReviewNavigation(t *testing.T) {
 			wantIdx:       3,
 			wantJobID:     4,
 			wantScroll:    0,
-			wantCmd:       false, // Failed job = inline, no fetch
+			wantCmd:       true, // Failed job = inline synthesis + persisted-comments fetch
 		},
 		{
 			name: "K Prev skips queued/running",
@@ -59,7 +59,7 @@ func TestTUIReviewNavigation(t *testing.T) {
 			wantIdx:       3,
 			wantJobID:     4,
 			wantScroll:    0,
-			wantCmd:       false,
+			wantCmd:       true, // inline synthesis + persisted-comments fetch
 		},
 		{
 			name: "Left Arrow acts like J (Prev)",
@@ -128,7 +128,7 @@ func TestTUIReviewNavigation(t *testing.T) {
 			key:                  'j',
 			wantIdx:              1,
 			wantJobID:            2,
-			wantCmd:              false,
+			wantCmd:              true, // inline synthesis + persisted-comments fetch
 			checkFailedJobInline: true,
 		},
 	}

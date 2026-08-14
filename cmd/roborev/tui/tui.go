@@ -1254,6 +1254,8 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		result, cmd = m.handleReviewErrMsg(msg)
 	case reviewFollowErrMsg:
 		result, cmd = m.handleReviewFollowErrMsg(msg)
+	case failedCommentsMsg:
+		result, cmd = m.handleFailedCommentsMsg(msg)
 	case detailFollowTickMsg:
 		result, cmd = m.handleDetailFollowTick(msg)
 	case promptMsg:

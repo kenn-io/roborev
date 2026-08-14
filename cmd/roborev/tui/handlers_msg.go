@@ -283,9 +283,12 @@ func (m model) handleJobsMsg(msg jobsMsg) (tea.Model, tea.Cmd) {
 					cmd := m.dispatchReviewFetch(job.ID)
 					return m, tea.Batch(navFollowCmd, cmd)
 				case storage.JobStatusFailed:
-					m.currentBranch = ""
-					m.currentResponses = nil
-					m.currentReview = synthesizeFailedReview(&job, m.currentReview)
+					// Shared synthesized acceptance: also loads persisted
+					// comments, which no review fetch can carry for a
+					// row-less review. Folded into navFollowCmd so the
+					// arm's fall-through bookkeeping below still runs.
+					commentsCmd := m.acceptSynthesizedFailure(job.ID, synthesizeFailedReview(&job, m.currentReview))
+					navFollowCmd = tea.Batch(navFollowCmd, commentsCmd)
 				}
 			}
 		case viewKindPrompt:
@@ -1961,6 +1964,27 @@ func (m model) handleRerunResultMsg(
 			3*time.Second, origin,
 		)
 	}
+	return m, nil
+}
+
+// handleFailedCommentsMsg applies persisted comments fetched for a
+// synthesized failed-job review (see failedCommentsMsg). Accepted only
+// while that job's synthetic review is still the loaded, selected content:
+// a persisted review's responses arrive with its own epoch-ordered fetch
+// and must not be stomped by this side channel, and a response for a job
+// the user has navigated away from is simply stale.
+func (m model) handleFailedCommentsMsg(msg failedCommentsMsg) (tea.Model, tea.Cmd) {
+	if m.currentReview == nil || m.currentReview.JobID != msg.jobID ||
+		m.currentReview.ID != 0 || m.selectedJobID != msg.jobID {
+		return m, nil
+	}
+	if msg.err != nil {
+		// Comments are additive context on a failure review; a failed
+		// load keeps the review itself fully usable, so no error surface
+		// beyond leaving the existing (possibly locally-appended) state.
+		return m, nil
+	}
+	m.currentResponses = msg.responses
 	return m, nil
 }
 

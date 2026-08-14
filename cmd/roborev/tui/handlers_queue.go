@@ -123,13 +123,13 @@ func (m model) handleEnterKey() (tea.Model, tea.Cmd) {
 		cmd := m.enterReviewCmd(*job)
 		return m, cmd
 	case storage.JobStatusFailed:
-		m.currentBranch = ""
-		m.currentResponses = nil
-		m.currentReview = synthesizeFailedReview(job, m.currentReview)
+		// Routed through the shared synthesized acceptance so the job's
+		// persisted comments load too -- no review fetch can ever carry
+		// them for a review with no persisted row.
+		cmd := m.acceptSynthesizedFailure(job.ID, synthesizeFailedReview(job, m.currentReview))
 		m.reviewFromView = viewQueue
 		m.currentView = viewReview
-		m.reviewScroll = 0
-		return m, nil
+		return m, cmd
 	}
 	return m.flashNoReviewYet(*job), nil
 }

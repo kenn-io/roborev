@@ -705,6 +705,21 @@ func (m model) loadComments(
 	return decodeAPIBody(resp.Body, out)
 }
 
+// fetchFailedJobComments loads persisted comments for a job whose review
+// is synthesized -- see failedCommentsMsg.
+func (m model) fetchFailedJobComments(jobID int64) tea.Cmd {
+	return func() tea.Msg {
+		var result struct {
+			Responses []storage.Response `json:"responses"`
+		}
+		query := &daemonclient.ListCommentsQuery{JobID: &jobID}
+		if err := m.loadComments(query, &result); err != nil {
+			return failedCommentsMsg{jobID: jobID, err: err}
+		}
+		return failedCommentsMsg{jobID: jobID, responses: result.Responses}
+	}
+}
+
 func (m model) loadJob(jobID int64) (*storage.ReviewJob, error) {
 	params := neturl.Values{}
 	params.Set("id", fmt.Sprintf("%d", jobID))
