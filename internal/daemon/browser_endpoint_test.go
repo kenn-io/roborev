@@ -37,6 +37,16 @@ func TestBrowserEndpointResolution(t *testing.T) {
 		assert.Equal(t, "https://reviews.example.com", endpoint.Origin)
 		assert.Contains(t, endpoint.Address, "127.0.0.1:")
 	})
+
+	t.Run("rejects a non-loopback bind without normalized config", func(t *testing.T) {
+		endpoint, err := ResolveBrowserEndpoint(config.WebConfig{
+			Enabled: true, Listen: "0.0.0.0:0", PublicOrigin: "https://reviews.example.com", AuthToken: testBrowserAuthToken,
+		})
+		if endpoint.Listener != nil {
+			t.Cleanup(func() { require.NoError(t, endpoint.Listener.Close()) })
+		}
+		require.ErrorContains(t, err, "loopback")
+	})
 }
 
 func TestBrowserDialAddressUsesLoopbackForUnspecifiedBind(t *testing.T) {

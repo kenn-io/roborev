@@ -735,7 +735,7 @@ column_borders = true             # Show separators between TUI columns
 | `default_model` | string | agent default | Model to use (format varies by agent) | Yes |
 | `server_addr` | string | 127.0.0.1:7373 | Daemon listen address. Use `unix://` for Unix domain socket (see [Unix Domain Socket](#unix-domain-socket)) | No |
 | `web.enabled` | bool | true | Serve the embedded browser application on a separate listener | No |
-| `web.listen` | string | 127.0.0.1:0 | Browser listener address. Port 0 selects an available ephemeral port | No |
+| `web.listen` | string | 127.0.0.1:0 | Loopback browser listener address. Port 0 selects an available ephemeral port | No |
 | `web.public_origin` | string | - | Exact HTTPS origin exposed by a reverse proxy | No |
 | `web.auth_token` | string | - | Base64url-encoded 32-byte random token exchanged for a process-local browser session | No |
 | `max_workers` | int | 4 | Number of parallel review workers | No |
@@ -816,8 +816,8 @@ auth_token = "paste-the-generated-token-here"
 The proxy must preserve the public `Host`, set conventional forwarding headers,
 and avoid buffering `/api/stream/events` and streamed `/api/job/output`
 responses. The public origin must match the browser origin exactly and must use
-HTTPS for remote access. Binding the browser listener to a non-loopback address
-also requires both HTTPS `public_origin` and `auth_token`; the CLI API remains
+HTTPS for remote access. Roborev rejects non-loopback browser listener addresses
+so credentials are never sent over a plaintext network hop. The CLI API remains
 private on its original listener.
 
 The browser exchanges the daemon token for an HTTP-only cookie and tab-scoped

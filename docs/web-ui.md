@@ -92,7 +92,8 @@ retry. It never displays results from old filters under a new filter selection.
 
 Remote browser access requires an HTTPS reverse proxy and a Roborev browser
 token. Keep both the CLI listener and browser listener on loopback; expose only
-the browser listener through the proxy.
+the browser listener through the proxy. Roborev rejects a non-loopback browser
+listener because the daemon-to-proxy connection uses plain HTTP.
 
 Choose a fixed loopback port. Generate the required 32-byte base64url token:
 

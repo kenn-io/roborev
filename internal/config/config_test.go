@@ -5065,9 +5065,9 @@ func TestWebConfigNormalization(t *testing.T) {
 		{name: "reject origin userinfo", contents: "[web]\npublic_origin = \"https://user@reviews.example.com\"\n", wantErr: "origin"},
 		{name: "reject remote HTTP", contents: "[web]\npublic_origin = \"http://reviews.example.com\"\n", wantErr: "HTTPS"},
 		{name: "reject unauthenticated proxy origin", contents: "[web]\nlisten = \"127.0.0.1:7374\"\npublic_origin = \"https://reviews.example.com\"\n", wantErr: "auth token"},
-		{name: "reject unauthenticated remote bind", contents: "[web]\nlisten = \"0.0.0.0:7374\"\npublic_origin = \"https://reviews.example.com\"\n", wantErr: "auth token"},
-		{name: "reject weak remote token", contents: "[web]\nlisten = \"0.0.0.0:7374\"\npublic_origin = \"https://reviews.example.com\"\nauth_token = \"secret\"\n", wantErr: "base64url-encoded 32-byte"},
-		{name: "accept authenticated remote bind", contents: "[web]\nlisten = \"0.0.0.0:7374\"\npublic_origin = \"https://reviews.example.com\"\nauth_token = \"" + strongToken + "\"\n", wantOrigin: "https://reviews.example.com"},
+		{name: "reject unauthenticated remote bind", contents: "[web]\nlisten = \"0.0.0.0:7374\"\npublic_origin = \"https://reviews.example.com\"\n", wantErr: "loopback"},
+		{name: "reject weak remote token", contents: "[web]\nlisten = \"127.0.0.1:7374\"\npublic_origin = \"https://reviews.example.com\"\nauth_token = \"secret\"\n", wantErr: "base64url-encoded 32-byte"},
+		{name: "reject authenticated remote bind", contents: "[web]\nlisten = \"0.0.0.0:7374\"\npublic_origin = \"https://reviews.example.com\"\nauth_token = \"" + strongToken + "\"\n", wantErr: "loopback"},
 		{name: "reject empty origin hostname", contents: "[web]\npublic_origin = \"https://:443\"\nauth_token = \"" + strongToken + "\"\n", wantErr: "origin"},
 	}
 	for _, tt := range tests {

@@ -103,7 +103,7 @@ type CostConfig struct {
 
 type WebConfig struct {
 	Enabled      bool   `toml:"enabled" comment:"Serve the browser application on a separate listener."`
-	Listen       string `toml:"listen" comment:"Browser listener address. Port 0 selects an ephemeral port."`
+	Listen       string `toml:"listen" comment:"Loopback browser listener address. Port 0 selects an ephemeral port."`
 	PublicOrigin string `toml:"public_origin" comment:"Exact HTTPS browser origin used by a reverse proxy."`
 	AuthToken    string `toml:"auth_token" sensitive:"true" comment:"Token exchanged for a process-local browser session."`
 }
@@ -796,6 +796,9 @@ func normalizeWebConfig(web *WebConfig) error {
 		return fmt.Errorf("web listen address: %w", err)
 	}
 	loopback := isLoopbackHost(host)
+	if !loopback {
+		return fmt.Errorf("web listener must use a loopback address")
+	}
 	if web.AuthToken != "" {
 		if err := ValidateWebAuthToken(web.AuthToken); err != nil {
 			return err
@@ -814,14 +817,6 @@ func normalizeWebConfig(web *WebConfig) error {
 		}
 		if !isLoopbackHost(parsedOrigin.Hostname()) && web.AuthToken == "" {
 			return fmt.Errorf("web auth token is required for a non-loopback public origin")
-		}
-	}
-	if !loopback {
-		if web.AuthToken == "" {
-			return fmt.Errorf("web auth token is required for a non-loopback listener")
-		}
-		if !strings.HasPrefix(web.PublicOrigin, "https://") {
-			return fmt.Errorf("web public origin must use HTTPS for a non-loopback listener")
 		}
 	}
 	return nil

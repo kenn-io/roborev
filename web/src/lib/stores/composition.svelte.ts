@@ -27,25 +27,31 @@ export function createReviewStores(options: ReviewStoreOptions): ReviewStores {
     ...(options.onError !== undefined && { onError: options.onError }),
   };
 
+  const roborevDaemon = createDaemonStore({
+    client: options.client,
+    runtime: options.runtime,
+  });
+  const roborevJobs = createJobsStore({
+    client: options.client,
+    owner,
+    navigate: options.navigate,
+    ...shared,
+  });
+  const roborevReview = createReviewStore({
+    client: options.client,
+    owner,
+    refreshJobs: roborevJobs.loadJobsEffect,
+    ...shared,
+  });
+  const roborevLog = createLogStore({
+    baseUrl: "/",
+    ...shared,
+  });
+
   return {
-    roborevDaemon: createDaemonStore({
-      client: options.client,
-      runtime: options.runtime,
-    }),
-    roborevJobs: createJobsStore({
-      client: options.client,
-      owner,
-      navigate: options.navigate,
-      ...shared,
-    }),
-    roborevReview: createReviewStore({
-      client: options.client,
-      owner,
-      ...shared,
-    }),
-    roborevLog: createLogStore({
-      baseUrl: "/",
-      ...shared,
-    }),
+    roborevDaemon,
+    roborevJobs,
+    roborevReview,
+    roborevLog,
   };
 }

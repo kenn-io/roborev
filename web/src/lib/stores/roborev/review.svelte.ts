@@ -29,6 +29,7 @@ export interface ReviewStoreOptions {
   runtime: AppRuntime;
   owner: string;
   onError?: (msg: string) => void;
+  refreshJobs?: () => Effect.Effect<void, never, RoborevWorkflow>;
 }
 
 export function createReviewStore(opts: ReviewStoreOptions) {
@@ -171,41 +172,43 @@ export function createReviewStore(opts: ReviewStoreOptions) {
   const closeReviewEffect = (jobId: number, closed: boolean) =>
     Effect.gen(function* () {
       const workflow = yield* RoborevWorkflow;
-      return yield* workflow.mutate({
-        key: `review:${jobId}`,
-        operation: "close Roborev review",
-        mutation: executeRoborevRequest("close Roborev review", (signal) =>
-          client.POST("/api/review/close", {
-            body: { job_id: jobId, closed },
-            signal,
-          }),
-        ).pipe(
-          Effect.flatMap((result) =>
-            result.error
-              ? Effect.fail(
-                  RoborevMutationError.make({
-                    operation: "close Roborev review",
-                    cause: result.error,
-                  }),
-                )
-              : Effect.succeed(closed),
-          ),
-        ),
-        reconcile: (acknowledged) =>
-          reconcileReview(jobId).pipe(
-            Effect.map((authority) =>
-              authority.review?.closed === closed
-                ? Option.some(Option.getOrElse(acknowledged, () => closed))
-                : Option.none<boolean>(),
+      return yield* workflow
+        .mutate({
+          key: `review:${jobId}`,
+          operation: "close Roborev review",
+          mutation: executeRoborevRequest("close Roborev review", (signal) =>
+            client.POST("/api/review/close", {
+              body: { job_id: jobId, closed },
+              signal,
+            }),
+          ).pipe(
+            Effect.flatMap((result) =>
+              result.error
+                ? Effect.fail(
+                    RoborevMutationError.make({
+                      operation: "close Roborev review",
+                      cause: result.error,
+                    }),
+                  )
+                : Effect.succeed(closed),
             ),
           ),
-        onAcknowledgedRefreshFailure: () =>
-          Effect.sync(() =>
-            opts.onError?.(
-              "Review state changed, but the refreshed review is unavailable",
+          reconcile: (acknowledged) =>
+            reconcileReview(jobId).pipe(
+              Effect.map((authority) =>
+                authority.review?.closed === closed
+                  ? Option.some(Option.getOrElse(acknowledged, () => closed))
+                  : Option.none<boolean>(),
+              ),
             ),
-          ),
-      });
+          onAcknowledgedRefreshFailure: () =>
+            Effect.sync(() =>
+              opts.onError?.(
+                "Review state changed, but the refreshed review is unavailable",
+              ),
+            ),
+        })
+        .pipe(Effect.tap(() => opts.refreshJobs?.() ?? Effect.void));
     });
 
   function closeReview(jobId: number): void {

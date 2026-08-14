@@ -22,6 +22,13 @@ func ResolveBrowserEndpoint(web config.WebConfig) (BrowserEndpoint, error) {
 	if !web.Enabled {
 		return BrowserEndpoint{}, nil
 	}
+	host, _, err := net.SplitHostPort(web.Listen)
+	if err != nil {
+		return BrowserEndpoint{}, fmt.Errorf("browser listener address: %w", err)
+	}
+	if !isLoopbackListenerHost(host) {
+		return BrowserEndpoint{}, fmt.Errorf("browser listener must use a loopback address")
+	}
 	listener, err := net.Listen("tcp", web.Listen)
 	if err != nil {
 		return BrowserEndpoint{}, fmt.Errorf("listen for browser traffic: %w", err)
@@ -40,6 +47,15 @@ func ResolveBrowserEndpoint(web config.WebConfig) (BrowserEndpoint, error) {
 		Enabled:           true,
 		remoteAuthEnabled: web.AuthToken != "",
 	}, nil
+}
+
+func isLoopbackListenerHost(host string) bool {
+	host = strings.Trim(strings.ToLower(host), "[]")
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 func dialAddress(address net.Addr) *url.URL {
