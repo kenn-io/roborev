@@ -37,6 +37,9 @@ func loadDistribution(files fs.FS) (*assetCatalog, error) {
 }
 
 func validateReleaseDistribution(files fs.FS) (*assetCatalog, error) {
+	if err := validateDistributionFiles(files); err != nil {
+		return nil, err
+	}
 	index, err := fs.ReadFile(files, "index.html")
 	if err != nil {
 		return nil, fmt.Errorf("read web index: %w", err)
@@ -79,6 +82,31 @@ func validateReleaseDistribution(files fs.FS) (*assetCatalog, error) {
 		}
 	}
 	return catalog, nil
+}
+
+func validateDistributionFiles(files fs.FS) error {
+	return fs.WalkDir(files, ".", func(assetPath string, entry fs.DirEntry, walkErr error) error {
+		if walkErr != nil {
+			return walkErr
+		}
+		if assetPath == "." || entry.IsDir() {
+			return nil
+		}
+		if entry.Type()&fs.ModeSymlink != 0 {
+			return fmt.Errorf("distribution asset %q is not a regular file", assetPath)
+		}
+		info, err := entry.Info()
+		if err != nil {
+			return fmt.Errorf("inspect distribution asset %q: %w", assetPath, err)
+		}
+		if !info.Mode().IsRegular() {
+			return fmt.Errorf("distribution asset %q is not a regular file", assetPath)
+		}
+		if assetPath == "index.html" || assetPath == viteManifestPath {
+			return nil
+		}
+		return validateAssetPath(assetPath)
+	})
 }
 
 func isCompilationStub(index []byte) bool {

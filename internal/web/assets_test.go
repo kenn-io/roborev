@@ -68,6 +68,13 @@ func TestValidateReleaseDistributionAcceptsCompleteViteGraph(t *testing.T) {
 	}, catalog.immutable)
 }
 
+func TestValidateReleaseDistributionRejectsUnsafeUnreferencedFile(t *testing.T) {
+	files := completeDistribution()
+	files["token.json"] = &fstest.MapFile{Data: []byte(`{"value":"not-a-real-token"}`)}
+	_, err := validateReleaseDistribution(files)
+	require.ErrorContains(t, err, "secret-like")
+}
+
 func TestLoadAssetCatalogRejectsTraversalAndSecretLikePaths(t *testing.T) {
 	tests := []struct {
 		name string

@@ -2960,7 +2960,7 @@ export interface operations {
                 limit?: number;
                 /** @description Skip N results (requires limit>0) */
                 offset?: number;
-                /** @description Cursor: return jobs with ID < this value */
+                /** @description Cursor job ID: resume after its enqueue-time position */
                 before?: number;
             };
             header?: never;

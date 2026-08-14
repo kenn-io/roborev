@@ -102,6 +102,14 @@ async function rejectUnsafeFilesystemEntries(
     }
     if (entry.isDirectory()) {
       await rejectUnsafeFilesystemEntries(root, fullPath);
+      continue;
+    }
+    const asset = relative(root, fullPath).split(sep).join("/");
+    if (!entry.isFile()) {
+      throw new Error(`distribution entry is not a regular file: ${asset}`);
+    }
+    if (asset !== "index.html" && asset !== ".vite/manifest.json") {
+      validateManifestPath(asset);
     }
   }
 }

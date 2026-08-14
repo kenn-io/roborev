@@ -104,7 +104,7 @@ type ListJobsInput struct {
 	RepoPrefix         string   `query:"repo_prefix" doc:"Filter repos by path prefix"`
 	Limit              int      `query:"limit" default:"-999999" doc:"Max results (default 50, 0=unlimited, max 10000)"`
 	Offset             int      `query:"offset" default:"-1" doc:"Skip N results (requires limit>0)"`
-	Before             int64    `query:"before" default:"-1" doc:"Cursor: return jobs with ID < this value"`
+	Before             int64    `query:"before" default:"-1" doc:"Cursor job ID: resume after its enqueue-time position"`
 }
 
 // ListJobsOutput is the response for GET /api/jobs.

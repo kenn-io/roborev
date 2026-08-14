@@ -410,7 +410,14 @@ export function createJobsStore(opts: JobsStoreOptions) {
         return;
       }
       const workflow = yield* RoborevWorkflow;
-      const cursor = Math.min(...jobs.map((job) => job.id));
+      const cursor = jobs.reduce((oldest, candidate) => {
+        const candidateTime = Date.parse(candidate.enqueued_at);
+        const oldestTime = Date.parse(oldest.enqueued_at);
+        return candidateTime < oldestTime ||
+          (candidateTime === oldestTime && candidate.id < oldest.id)
+          ? candidate
+          : oldest;
+      }).id;
       const query = buildQuery();
       query.limit = DEFAULT_PAGE_LIMIT;
       query.before = cursor;

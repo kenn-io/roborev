@@ -1206,6 +1206,33 @@ func TestListJobsWithBeforeCursor(t *testing.T) {
 	})
 }
 
+func TestListJobsPaginatesRerunsByEnqueueTime(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	_, jobs := seedJobs(t, db, "/tmp/rerun-cursor-repo", 3)
+	base := time.Now().Add(-3 * time.Hour).UTC().Truncate(time.Second)
+
+	for index, job := range jobs {
+		_, err := db.Exec(
+			`UPDATE review_jobs SET status = 'done', enqueued_at = ? WHERE id = ?`,
+			base.Add(time.Duration(index)*time.Hour).Format(time.RFC3339), job.ID,
+		)
+		require.NoError(t, err)
+	}
+	require.NoError(t, db.ReenqueueJob(jobs[0].ID, ReenqueueOpts{}))
+
+	first, err := db.ListJobs("", "", 2, 0)
+	require.NoError(t, err)
+	require.Len(t, first, 2)
+	assert.Equal(t, jobs[0].ID, first[0].ID)
+	assert.Equal(t, jobs[2].ID, first[1].ID)
+
+	second, err := db.ListJobs("", "", 2, 0, WithBeforeCursor(first[1].ID))
+	require.NoError(t, err)
+	require.Len(t, second, 1)
+	assert.Equal(t, jobs[1].ID, second[0].ID)
+}
+
 func TestListJobsWithoutPrompt(t *testing.T) {
 	assert := assert.New(t)
 	db := openTestDB(t)

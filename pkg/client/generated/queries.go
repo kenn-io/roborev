@@ -192,7 +192,7 @@ type ListJobsQuery struct {
 	// Offset Skip N results (requires limit>0)
 	Offset *int64 `json:"offset,omitempty"`
 
-	// Before Cursor: return jobs with ID < this value
+	// Before Cursor job ID: resume after its enqueue-time position
 	Before *int64 `json:"before,omitempty"`
 }
 

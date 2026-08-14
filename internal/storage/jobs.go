@@ -1256,7 +1256,8 @@ func WithHideClassifyJobs() ListJobsOption {
 	return func(o *listJobsOptions) { o.hideClassifyJobs = true }
 }
 
-// WithBeforeCursor filters jobs to those with ID < cursor (for cursor pagination).
+// WithBeforeCursor resumes after the enqueue-time position of the cursor job.
+// Unknown cursor IDs retain the legacy numeric-ID fallback.
 func WithBeforeCursor(id int64) ListJobsOption {
 	return func(o *listJobsOptions) { o.beforeCursor = &id }
 }
@@ -1386,8 +1387,13 @@ func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions) (s
 		args = append(args, o.excludePanelRole)
 	}
 	if o.beforeCursor != nil {
-		conditions = append(conditions, "j.id < ?")
-		args = append(args, *o.beforeCursor)
+		conditions = append(conditions, "("+
+			"(EXISTS (SELECT 1 FROM review_jobs cursor WHERE cursor.id = ?) AND ("+
+			sqliteNormalizedTimestampExpr("j.enqueued_at")+", j.id) < (SELECT "+
+			sqliteNormalizedTimestampExpr("cursor.enqueued_at")+", cursor.id "+
+			"FROM review_jobs cursor WHERE cursor.id = ?)) OR "+
+			"(NOT EXISTS (SELECT 1 FROM review_jobs cursor WHERE cursor.id = ?) AND j.id < ?))")
+		args = append(args, *o.beforeCursor, *o.beforeCursor, *o.beforeCursor, *o.beforeCursor)
 	}
 
 	if len(conditions) == 0 {
@@ -1434,7 +1440,7 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 	queryFilters, args := buildJobFilterClause(statusFilter, repoFilter, options)
 	query += queryFilters
 
-	query += " ORDER BY j.id DESC"
+	query += " ORDER BY " + sqliteNormalizedTimestampExpr("j.enqueued_at") + " DESC, j.id DESC"
 
 	if limit > 0 {
 		query += " LIMIT ?"

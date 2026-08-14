@@ -901,6 +901,40 @@ describe("createJobsStore pagination", () => {
     expect(paginationCalls[1]?.[1]?.params.query.limit).toBe(50);
   });
 
+  it("uses the oldest enqueue position as the pagination cursor", async () => {
+    const recentlyRerun = {
+      ...makeJob(1),
+      enqueued_at: "2026-04-11T12:00:00Z",
+    };
+    const olderHighId = {
+      ...makeJob(100),
+      enqueued_at: "2026-04-11T10:00:00Z",
+    };
+    const client = {
+      GET: vi.fn().mockImplementation(async (_path, options) => {
+        const query = options.params.query as { before?: number };
+        return {
+          data: {
+            jobs:
+              query.before === undefined ? [recentlyRerun, olderHighId] : [],
+            has_more: query.before === undefined,
+            stats: { done: 2, closed: 0, open: 2 },
+          },
+          error: undefined,
+        };
+      }),
+    };
+    const store = createJobsStore({
+      client: client as never,
+      navigate: vi.fn(),
+    });
+
+    await loadJobs(store);
+    await loadMoreJobs(store);
+
+    expect(client.GET.mock.calls[1]?.[1]?.params.query.before).toBe(100);
+  });
+
   it("does not load beyond the daemon result limit", async () => {
     const client = {
       GET: vi.fn().mockResolvedValue({

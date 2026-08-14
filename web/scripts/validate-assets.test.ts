@@ -77,6 +77,12 @@ test("rejects symlinked assets", async () => {
   await expect(validateAssetGraph(root)).rejects.toThrow("symlink");
 });
 
+test("rejects unsafe unreferenced distribution files", async () => {
+  const root = await validDistribution();
+  await writeFile(join(root, "token.json"), '{"value":"not-a-real-token"}');
+  await expect(validateAssetGraph(root)).rejects.toThrow("secret-like");
+});
+
 test.each([
   "../outside.js",
   "assets/.hidden.js",
