@@ -2948,6 +2948,50 @@ func TestCIPollerProcessPR_PostedSameHeadIsAlreadyReviewed(t *testing.T) {
 	assert.Empty(*captured, "posted same-head panel must be treated as already reviewed, not throttled")
 }
 
+func TestCIPollerProcessPR_DistinguishesSameHeadReplayFromCrossHeadThrottle(t *testing.T) {
+	assert := assert.New(t)
+	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+	h.Cfg.CI.ReviewTypes = []string{"security"}
+	h.Cfg.CI.Agents = []string{"codex"}
+	h.Cfg.CI.ThrottleInterval = "1h"
+	h.Poller = NewCIPoller(
+		h.DB, NewStaticConfig(h.Cfg), nil,
+	)
+	h.stubProcessPRGit()
+	h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) {
+		return "base-sha", nil
+	}
+
+	err := h.Poller.processPR(
+		context.Background(), "acme/api",
+		ghPR{Number: 73, HeadRefOid: "reviewed-sha", BaseRefName: "main"}, h.Cfg)
+	require.NoError(t, err, "first processPR")
+	panel, err := h.DB.GetCIPanelByPRSHA("acme/api", 73, "reviewed-sha")
+	require.NoError(t, err)
+	require.NoError(t, h.DB.MarkPanelPosted(panel.ID, storage.PanelOutcomeReviewPosted))
+
+	captured := h.CaptureCommitStatuses()
+	err = h.Poller.processPR(
+		context.Background(), "acme/api",
+		ghPR{Number: 73, HeadRefOid: "reviewed-sha", BaseRefName: "main"}, h.Cfg)
+	require.NoError(t, err, "same-head replay")
+
+	assert.Empty(*captured, "same-head replay must be silently deduplicated")
+
+	*captured = nil
+	err = h.Poller.processPR(
+		context.Background(), "acme/api",
+		ghPR{Number: 73, HeadRefOid: "new-sha", BaseRefName: "main"}, h.Cfg)
+	require.NoError(t, err, "cross-head retry")
+
+	assert.False(h.hasPanel(t, "acme/api", 73, "new-sha"),
+		"new HEAD inside the pull-request throttle window must not create a run")
+	require.Len(t, *captured, 1, "expected one deferred status for the new HEAD")
+	assert.Equal("new-sha", (*captured)[0].SHA)
+	assert.Equal("pending", (*captured)[0].State)
+	assert.Contains((*captured)[0].Desc, "Review deferred")
+}
+
 func TestCIPollerProcessPR_LegacyCIReviewDoesNotSuppressPanel(t *testing.T) {
 	assert := assert.New(t)
 	h := newCIPollerHarness(t, "git@github.com:acme/api.git")

@@ -37,7 +37,7 @@ func (h *ciPollerHarness) seedCIPanelRun(
 		members = append(members, storage.EnqueueOpts{
 			RepoID: h.Repo.ID, GitRef: gitRef, Agent: s.Agent, ReviewType: s.ReviewType,
 			JobType: storage.JobTypeReview, PanelName: "ci", PanelMemberName: s.Agent,
-			PanelMemberIndex: i,
+			PanelMemberIndex: i, PanelMemberConfigJSON: s.PanelMemberConfigJSON,
 		})
 	}
 	synthesis := storage.EnqueueOpts{
@@ -234,6 +234,94 @@ func TestSynthesisCompletedPostsOnce(t *testing.T) {
 	assert.Equal(storage.PanelOutcomeReviewPosted, *got.Outcome)
 }
 
+func TestSynthesisCompletedReportsMemberExecutionStatus(t *testing.T) {
+	quotaErr := reviewpkg.QuotaErrorPrefix + "agent quota exhausted"
+	timeoutErr := reviewpkg.TimeoutErrorPrefix + "review deadline reached"
+	outageErr := reviewpkg.OutageErrorPrefix + "provider unavailable"
+
+	cases := []struct {
+		name      string
+		members   []jobSpec
+		wantState string
+		wantDesc  string
+	}{
+		{
+			name: "completed member",
+			members: []jobSpec{
+				{Agent: "codex", ReviewType: "review", Status: "done", Output: "Member finding"},
+			},
+			wantState: "success",
+			wantDesc:  "Review complete",
+		},
+		{
+			name: "allowed failure with completed sibling",
+			members: []jobSpec{
+				{Agent: "codex", ReviewType: "review", Status: "done", Output: "Member finding"},
+				{Agent: "pi", ReviewType: "security", Status: "failed", Error: "agent failed", PanelMemberConfigJSON: `{"allow_failure":true}`},
+			},
+			wantState: "success",
+			wantDesc:  "Review complete",
+		},
+		{
+			name: "required failure with completed sibling",
+			members: []jobSpec{
+				{Agent: "codex", ReviewType: "review", Status: "done", Output: "Member finding"},
+				{Agent: "pi", ReviewType: "security", Status: "failed", Error: "agent failed"},
+			},
+			wantState: "failure",
+			wantDesc:  "Review complete (1/2 jobs failed)",
+		},
+		{
+			name: "quota skip with completed sibling",
+			members: []jobSpec{
+				{Agent: "codex", ReviewType: "review", Status: "done", Output: "Member finding"},
+				{Agent: "pi", ReviewType: "security", Status: "failed", Error: quotaErr},
+			},
+			wantState: "success",
+			wantDesc:  "Review complete (1 agent(s) skipped)",
+		},
+		{
+			name: "timeout skip with completed sibling",
+			members: []jobSpec{
+				{Agent: "codex", ReviewType: "review", Status: "done", Output: "Member finding"},
+				{Agent: "pi", ReviewType: "security", Status: "canceled", Error: timeoutErr},
+			},
+			wantState: "success",
+			wantDesc:  "Review complete (1 agent(s) skipped)",
+		},
+		{
+			name: "outage skip with completed sibling",
+			members: []jobSpec{
+				{Agent: "codex", ReviewType: "review", Status: "done", Output: "Member finding"},
+				{Agent: "pi", ReviewType: "security", Status: "failed", Error: outageErr},
+			},
+			wantState: "success",
+			wantDesc:  "Review complete (1 agent(s) skipped)",
+		},
+	}
+
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+			comments := h.CaptureComments()
+			statuses := h.CaptureCommitStatuses()
+			headSHA := fmt.Sprintf("status-%d", i)
+
+			_, synth, _ := h.seedCIPanelRun(t, "acme/api", 100+i, headSHA, "base.."+headSHA, tc.members)
+			h.completeSynthesisWithReview(t, synth.ID, "## Combined findings\nMember finding")
+
+			h.Poller.handleReviewCompleted(ciEvent(synth.ID, "review.completed"))
+
+			require.Len(t, *comments, 1, "synthesis result posts once")
+			assert.Contains(t, (*comments)[0].Body, "Member finding")
+			require.Len(t, *statuses, 1, "posting sets one commit status")
+			assert.Equal(t, headSHA, (*statuses)[0].SHA)
+			assert.Equal(t, tc.wantState, (*statuses)[0].State)
+			assert.Equal(t, tc.wantDesc, (*statuses)[0].Desc)
+		})
+	}
+}
+
 // TestSynthesisFailedPostsRawFallback covers F4: when the synthesis agent fails
 // (no persisted review), the member findings still reach the PR via
 // FormatRawBatchComment, status is set, and the row is finalized.
@@ -262,41 +350,52 @@ func TestSynthesisFailedPostsRawFallback(t *testing.T) {
 	assert.Equal(storage.PanelOutcomeReviewPosted, *got.Outcome)
 }
 
-// TestSynthesisQuotaFailureDefersInsteadOfRawFallback covers the quota-exhausted
-// synthesis case: the members produced real review output but the consolidation
-// step failed on quota exhaustion. Rather than posting the degraded "Synthesis
-// unavailable" raw fallback, the run defers for a later retry (when quota
-// resets) — no comment, a pending status, a deferred attempt, and a retired
-// panel — so the PR eventually gets a properly synthesized comment.
-func TestSynthesisQuotaFailureDefersInsteadOfRawFallback(t *testing.T) {
-	assert := assert.New(t)
-	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
-	comments := h.CaptureComments()
-	statuses := h.CaptureCommitStatuses()
+// TestSynthesisRecoverableFailureDefersInsteadOfRawFallback covers synthesis
+// failures that can recover on a later attempt. The members produced real
+// review output, but quota exhaustion or a provider outage prevented
+// consolidation. The run defers instead of publishing a degraded raw fallback.
+func TestSynthesisRecoverableFailureDefersInsteadOfRawFallback(t *testing.T) {
+	cases := []struct {
+		name    string
+		errText string
+	}{
+		{name: "quota", errText: reviewpkg.QuotaErrorPrefix + "agent test quota exhausted"},
+		{name: "provider outage", errText: reviewpkg.OutageErrorPrefix + "provider unavailable"},
+	}
 
-	const headSHA = "synthquota123456"
-	created, err := h.DB.ReserveReviewAttempt("acme/api", 90, headSHA, time.Now())
-	require.NoError(t, err)
-	require.True(t, created, "attempt row reserved")
+	for i, tc := range cases {
+		t.Run(tc.name, func(t *testing.T) {
+			assert := assert.New(t)
+			h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+			comments := h.CaptureComments()
+			statuses := h.CaptureCommitStatuses()
+			pr := 90 + i
+			headSHA := fmt.Sprintf("synth-recoverable-%d", i)
 
-	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 90, headSHA, "base.."+headSHA,
-		[]jobSpec{{Agent: "test", ReviewType: "review", Status: "done", Output: "Member finding X"}})
-	h.markJobFailed(t, synth.ID, reviewpkg.QuotaErrorPrefix+"agent test quota exhausted")
+			created, err := h.DB.ReserveReviewAttempt("acme/api", pr, headSHA, time.Now())
+			require.NoError(t, err)
+			require.True(t, created, "attempt row reserved")
 
-	h.Poller.handleReviewFailed(ciEvent(synth.ID, "review.failed"))
+			panel, synth, _ := h.seedCIPanelRun(t, "acme/api", pr, headSHA, "base.."+headSHA,
+				[]jobSpec{{Agent: "test", ReviewType: "review", Status: "done", Output: "Member finding X"}})
+			h.markJobFailed(t, synth.ID, tc.errText)
 
-	assert.Empty(*comments, "synthesis quota failure must not post the degraded raw fallback")
-	require.Len(t, *statuses, 1, "synthesis quota defer sets exactly one status")
-	assert.Equal("pending", (*statuses)[0].State, "synthesis quota defer status is pending, never failure")
-	assert.False(h.panelPostedAt(t, panel.ID), "deferred panel is not marked posted")
-	assert.True(h.panelRetiredAt(t, panel.ID), "deferred panel is retired (removed from active set)")
+			h.Poller.handleReviewFailed(ciEvent(synth.ID, "review.failed"))
 
-	attempt, err := h.DB.GetReviewAttempt("acme/api", 90, headSHA)
-	require.NoError(t, err)
-	require.NotNil(t, attempt)
-	assert.Equal("deferred", attempt.State, "attempt deferred for retry")
-	assert.Equal("transient", attempt.LastErrorClass, "quota defer records the retryable class")
-	assert.NotNil(attempt.NextAttemptAt, "quota defer schedules a next attempt")
+			assert.Empty(*comments, "recoverable synthesis failure must not post the degraded raw fallback")
+			require.Len(t, *statuses, 1, "recoverable synthesis defer sets exactly one status")
+			assert.Equal("pending", (*statuses)[0].State, "recoverable synthesis defer status is pending")
+			assert.False(h.panelPostedAt(t, panel.ID), "deferred panel is not marked posted")
+			assert.True(h.panelRetiredAt(t, panel.ID), "deferred panel is retired")
+
+			attempt, err := h.DB.GetReviewAttempt("acme/api", pr, headSHA)
+			require.NoError(t, err)
+			require.NotNil(t, attempt)
+			assert.Equal("deferred", attempt.State, "attempt deferred for retry")
+			assert.Equal("transient", attempt.LastErrorClass, "defer records the retryable class")
+			assert.NotNil(attempt.NextAttemptAt, "defer schedules a next attempt")
+		})
+	}
 }
 
 func TestSynthesisCanceledDoesNotPostRawFallback(t *testing.T) {
