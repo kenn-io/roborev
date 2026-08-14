@@ -901,7 +901,7 @@ describe("createJobsStore pagination", () => {
     expect(paginationCalls[1]?.[1]?.params.query.limit).toBe(50);
   });
 
-  it("uses the oldest enqueue position as the pagination cursor", async () => {
+  it("uses the opaque cursor returned with the current page", async () => {
     const recentlyRerun = {
       ...makeJob(1),
       enqueued_at: "2026-04-11T12:00:00Z",
@@ -912,12 +912,17 @@ describe("createJobsStore pagination", () => {
     };
     const client = {
       GET: vi.fn().mockImplementation(async (_path, options) => {
-        const query = options.params.query as { before?: number };
+        const query = options.params.query as {
+          before?: number;
+          cursor?: string;
+        };
         return {
           data: {
             jobs:
-              query.before === undefined ? [recentlyRerun, olderHighId] : [],
-            has_more: query.before === undefined,
+              query.cursor === undefined ? [recentlyRerun, olderHighId] : [],
+            has_more: query.cursor === undefined,
+            next_cursor:
+              query.cursor === undefined ? "stable-enqueue-cursor" : null,
             stats: { done: 2, closed: 0, open: 2 },
           },
           error: undefined,
@@ -932,7 +937,10 @@ describe("createJobsStore pagination", () => {
     await loadJobs(store);
     await loadMoreJobs(store);
 
-    expect(client.GET.mock.calls[1]?.[1]?.params.query.before).toBe(100);
+    expect(client.GET.mock.calls[1]?.[1]?.params.query.cursor).toBe(
+      "stable-enqueue-cursor",
+    );
+    expect(client.GET.mock.calls[1]?.[1]?.params.query.before).toBeUndefined();
   });
 
   it("does not load beyond the daemon result limit", async () => {

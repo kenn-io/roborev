@@ -192,8 +192,11 @@ type ListJobsQuery struct {
 	// Offset Skip N results (requires limit>0)
 	Offset *int64 `json:"offset,omitempty"`
 
-	// Before Cursor job ID: resume after its enqueue-time position
+	// Before Deprecated numeric job cursor retained for compatibility
 	Before *int64 `json:"before,omitempty"`
+
+	// Cursor Opaque next_cursor from a previous page; resumes after its immutable enqueue-time position
+	Cursor *string `json:"cursor,omitempty"`
 }
 
 func (l ListJobsQuery) Validate() error {

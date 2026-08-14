@@ -1541,6 +1541,8 @@ export interface components {
             filtered_stats?: components["schemas"]["JobStats"];
             has_more: boolean;
             jobs: components["schemas"]["ReviewJob"][] | null;
+            /** @description Opaque resume cursor when more jobs are available */
+            next_cursor: string | null;
             stats?: components["schemas"]["JobStats"];
         };
         ListReposOutputBody: {
@@ -2960,8 +2962,10 @@ export interface operations {
                 limit?: number;
                 /** @description Skip N results (requires limit>0) */
                 offset?: number;
-                /** @description Cursor job ID: resume after its enqueue-time position */
+                /** @description Deprecated numeric job cursor retained for compatibility */
                 before?: number;
+                /** @description Opaque next_cursor from a previous page; resumes after its immutable enqueue-time position */
+                cursor?: string;
             };
             header?: never;
             path?: never;

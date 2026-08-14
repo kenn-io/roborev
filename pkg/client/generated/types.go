@@ -1417,7 +1417,10 @@ type ListJobsOutputBody struct {
 	FilteredStats *JobStats   `json:"filtered_stats,omitempty"`
 	HasMore       bool        `json:"has_more"`
 	Jobs          []ReviewJob `json:"jobs,omitempty" validate:"required"`
-	Stats         *JobStats   `json:"stats,omitempty"`
+
+	// NextCursor Opaque resume cursor when more jobs are available
+	NextCursor *string   `json:"next_cursor,omitempty" validate:"required"`
+	Stats      *JobStats `json:"stats,omitempty"`
 }
 
 func (l ListJobsOutputBody) Validate() error {
@@ -1434,6 +1437,11 @@ func (l ListJobsOutputBody) Validate() error {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append(fmt.Sprintf("Jobs[%d]", i), err)
 			}
+		}
+	}
+	if l.NextCursor != nil {
+		if err := typesValidator.Var(l.NextCursor, "required"); err != nil {
+			errors = errors.Append("NextCursor", err)
 		}
 	}
 	if l.Stats != nil {

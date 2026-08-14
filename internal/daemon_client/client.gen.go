@@ -850,7 +850,10 @@ type ListJobsOutputBody struct {
 	FilteredStats *JobStats    `json:"filtered_stats,omitempty"`
 	HasMore       bool         `json:"has_more"`
 	Jobs          *[]ReviewJob `json:"jobs"`
-	Stats         *JobStats    `json:"stats,omitempty"`
+
+	// NextCursor Opaque resume cursor when more jobs are available
+	NextCursor *string   `json:"next_cursor"`
+	Stats      *JobStats `json:"stats,omitempty"`
 }
 
 // ListReposOutputBody defines model for ListReposOutputBody.
@@ -1527,8 +1530,11 @@ type ListJobsParams struct {
 	// Offset Skip N results (requires limit>0)
 	Offset *int64 `form:"offset,omitempty" json:"offset,omitempty"`
 
-	// Before Cursor: return jobs with ID < this value
+	// Before Deprecated numeric job cursor retained for compatibility
 	Before *int64 `form:"before,omitempty" json:"before,omitempty"`
+
+	// Cursor Opaque next_cursor from a previous page; resumes after its immutable enqueue-time position
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
 
 // ListJobsParamsBranchIncludeEmpty defines parameters for ListJobs.
@@ -4184,6 +4190,22 @@ func NewListJobsRequest(server string, params *ListJobsParams) (*http.Request, e
 		if params.Before != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "before", *params.Before, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 				return nil, err

@@ -2328,13 +2328,19 @@
             "nullable": true,
             "type": "array"
           },
+          "next_cursor": {
+            "description": "Opaque resume cursor when more jobs are available",
+            "nullable": true,
+            "type": "string"
+          },
           "stats": {
             "$ref": "#/components/schemas/JobStats"
           }
         },
         "required": [
           "jobs",
-          "has_more"
+          "has_more",
+          "next_cursor"
         ],
         "type": "object"
       },
@@ -5344,15 +5350,25 @@
             }
           },
           {
-            "description": "Cursor: return jobs with ID \u003c this value",
+            "description": "Deprecated numeric job cursor retained for compatibility",
             "explode": false,
             "in": "query",
             "name": "before",
             "schema": {
               "default": -1,
-              "description": "Cursor: return jobs with ID \u003c this value",
+              "description": "Deprecated numeric job cursor retained for compatibility",
               "format": "int64",
               "type": "integer"
+            }
+          },
+          {
+            "description": "Opaque next_cursor from a previous page; resumes after its immutable enqueue-time position",
+            "explode": false,
+            "in": "query",
+            "name": "cursor",
+            "schema": {
+              "description": "Opaque next_cursor from a previous page; resumes after its immutable enqueue-time position",
+              "type": "string"
             }
           }
         ],

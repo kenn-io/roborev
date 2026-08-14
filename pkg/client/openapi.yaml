@@ -1818,11 +1818,17 @@ components:
           type:
             - array
             - "null"
+        next_cursor:
+          description: Opaque resume cursor when more jobs are available
+          type:
+            - string
+            - "null"
         stats:
           $ref: "#/components/schemas/JobStats"
       required:
         - jobs
         - has_more
+        - next_cursor
       type: object
     ListReposOutputBody:
       additionalProperties: false
@@ -3944,15 +3950,22 @@ paths:
             description: Skip N results (requires limit>0)
             format: int64
             type: integer
-        - description: "Cursor job ID: resume after its enqueue-time position"
+        - description: Deprecated numeric job cursor retained for compatibility
           explode: false
           in: query
           name: before
           schema:
             default: -1
-            description: "Cursor job ID: resume after its enqueue-time position"
+            description: Deprecated numeric job cursor retained for compatibility
             format: int64
             type: integer
+        - description: Opaque next_cursor from a previous page; resumes after its immutable enqueue-time position
+          explode: false
+          in: query
+          name: cursor
+          schema:
+            description: Opaque next_cursor from a previous page; resumes after its immutable enqueue-time position
+            type: string
       responses:
         "200":
           content:

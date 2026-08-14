@@ -44,6 +44,7 @@ export interface JobStatusCounts {
 interface JobsAuthority {
   readonly jobs: ReadonlyArray<ReviewJob>;
   readonly hasMore: boolean;
+  readonly nextCursor: string | undefined;
   readonly stats: JobStats;
   readonly filteredStatusCounts: Option.Option<JobStatusCounts>;
   readonly countScope: string;
@@ -137,6 +138,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
   let jobs = $state<ReviewJob[]>([]);
   let loading = $state(false);
   let hasMore = $state(false);
+  let nextCursor: string | undefined;
   let stats = $state<JobStats>({
     queued: 0,
     running: 0,
@@ -318,6 +320,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
     return {
       jobs: result.data?.jobs ?? [],
       hasMore: result.data?.has_more ?? false,
+      nextCursor: result.data?.next_cursor ?? undefined,
       stats,
       filteredStatusCounts: filtered
         ? Option.some(statusCountsFromStats(exactStats))
@@ -332,6 +335,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
       if (JSON.stringify(buildQuery()) !== authority.queryScope) return [];
       jobs = sortJobs([...authority.jobs]);
       hasMore = authority.hasMore && jobs.length < MAX_LOADED_JOBS;
+      nextCursor = authority.nextCursor;
       stats = authority.stats;
       if (Option.isSome(authority.filteredStatusCounts)) {
         filteredStatusCounts = authority.filteredStatusCounts.value;
@@ -410,17 +414,20 @@ export function createJobsStore(opts: JobsStoreOptions) {
         return;
       }
       const workflow = yield* RoborevWorkflow;
-      const cursor = jobs.reduce((oldest, candidate) => {
-        const candidateTime = Date.parse(candidate.enqueued_at);
-        const oldestTime = Date.parse(oldest.enqueued_at);
-        return candidateTime < oldestTime ||
-          (candidateTime === oldestTime && candidate.id < oldest.id)
-          ? candidate
-          : oldest;
-      }).id;
       const query = buildQuery();
       query.limit = DEFAULT_PAGE_LIMIT;
-      query.before = cursor;
+      if (nextCursor) {
+        query.cursor = nextCursor;
+      } else {
+        query.before = jobs.reduce((oldest, candidate) => {
+          const candidateTime = Date.parse(candidate.enqueued_at);
+          const oldestTime = Date.parse(oldest.enqueued_at);
+          return candidateTime < oldestTime ||
+            (candidateTime === oldestTime && candidate.id < oldest.id)
+            ? candidate
+            : oldest;
+        }).id;
+      }
       yield* workflow.jobs(
         opts.owner,
         Effect.gen(function* () {
@@ -450,6 +457,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
             jobs = sortJobs([...jobs, ...fresh]);
             hasMore =
               (result.data?.has_more ?? false) && jobs.length < MAX_LOADED_JOBS;
+            nextCursor = result.data?.next_cursor ?? undefined;
             loadedLimit = Math.max(DEFAULT_PAGE_LIMIT, jobs.length);
           });
         }).pipe(

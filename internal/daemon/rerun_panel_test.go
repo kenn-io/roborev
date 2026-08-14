@@ -89,6 +89,32 @@ func TestRerunSynthesisRejectsNonTerminal(t *testing.T) {
 	assert.NotEmpty(t, runUUID)
 }
 
+func TestRerunPanelRejectsMemberStillStopping(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	runUUID, members, synth := enqueueServerPanelRun(t, db, 2)
+	markJobStatus(t, db, synth.ID, storage.JobStatusCanceled)
+	for _, member := range members {
+		markJobStatus(t, db, member.ID, storage.JobStatusCanceled)
+	}
+	_, err := db.Exec(
+		"UPDATE review_jobs SET worker_id = ? WHERE id = ?",
+		"worker-still-stopping", members[0].ID,
+	)
+	require.NoError(t, err)
+
+	_, err = server.humaRerunJob(context.Background(), &RerunJobInput{
+		Body: RerunJobRequest{JobID: synth.ID},
+	})
+	require.ErrorContains(t, err, "still stopping")
+
+	var count int
+	require.NoError(t, db.QueryRow(
+		"SELECT COUNT(DISTINCT panel_run_uuid) FROM review_jobs WHERE panel_run_uuid != ''",
+	).Scan(&count))
+	assert.Equal(t, 1, count, "rejected rerun must not create a replacement panel")
+	assert.NotEmpty(t, runUUID)
+}
+
 func TestRerunPanelRequestIsIdempotent(t *testing.T) {
 	server, db, _ := newTestServer(t)
 	oldRunUUID, _, synth := enqueueServerPanelRun(t, db, 2)

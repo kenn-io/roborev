@@ -1278,7 +1278,18 @@ func (s *Server) humaListJobs(
 			listOpts, storage.WithRepoPrefix(repoPrefix),
 		)
 	}
-	if input.Before > 0 {
+	if input.Cursor != "" && input.Before > 0 {
+		return nil, huma.Error400BadRequest("cursor and before are mutually exclusive")
+	}
+	position, enqueuedAt, cursorErr := s.decodeJobListCursor(input.Cursor)
+	if cursorErr != nil {
+		return nil, huma.Error400BadRequest(cursorErr.Error())
+	}
+	if position != nil {
+		listOpts = append(
+			listOpts, storage.WithBeforePosition(enqueuedAt, position.JobID),
+		)
+	} else if input.Before > 0 {
 		listOpts = append(
 			listOpts, storage.WithBeforeCursor(input.Before),
 		)
@@ -1311,6 +1322,16 @@ func (s *Server) humaListJobs(
 	if limit > 0 && len(jobs) > limit {
 		hasMore = true
 		jobs = jobs[:limit]
+	}
+	var nextCursor *string
+	if hasMore && len(jobs) > 0 {
+		encoded, cursorErr := s.encodeJobListCursor(jobs[len(jobs)-1])
+		if cursorErr != nil {
+			return nil, huma.Error500InternalServerError(
+				fmt.Sprintf("encode jobs cursor: %v", cursorErr),
+			)
+		}
+		nextCursor = &encoded
 	}
 
 	if input.OmitPrompt == "true" {
@@ -1398,6 +1419,7 @@ func (s *Server) humaListJobs(
 	resp := &ListJobsOutput{}
 	resp.Body.Jobs = jobs
 	resp.Body.HasMore = hasMore
+	resp.Body.NextCursor = nextCursor
 	resp.Body.Stats = &stats
 	resp.Body.FilteredStats = filteredStats
 	return resp, nil

@@ -1197,9 +1197,15 @@ type listJobsOptions struct {
 	repoPrefix         string
 	repoPaths          []string
 	beforeCursor       *int64
+	beforePosition     *jobListPosition
 	panelRun           string
 	excludePanelRole   string
 	omitPrompt         bool
+}
+
+type jobListPosition struct {
+	enqueuedAt time.Time
+	id         int64
 }
 
 // WithGitRef filters jobs by git ref.
@@ -1260,6 +1266,14 @@ func WithHideClassifyJobs() ListJobsOption {
 // Unknown cursor IDs retain the legacy numeric-ID fallback.
 func WithBeforeCursor(id int64) ListJobsOption {
 	return func(o *listJobsOptions) { o.beforeCursor = &id }
+}
+
+// WithBeforePosition resumes after an immutable enqueue-time ordering
+// position. Unlike WithBeforeCursor, it does not reload mutable job state.
+func WithBeforePosition(enqueuedAt time.Time, id int64) ListJobsOption {
+	return func(o *listJobsOptions) {
+		o.beforePosition = &jobListPosition{enqueuedAt: enqueuedAt, id: id}
+	}
 }
 
 // WithRepoPrefix filters jobs to repos whose root_path starts with the given prefix.
@@ -1386,7 +1400,11 @@ func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions) (s
 		conditions = append(conditions, "COALESCE(j.panel_role, '') != ?")
 		args = append(args, o.excludePanelRole)
 	}
-	if o.beforeCursor != nil {
+	if o.beforePosition != nil {
+		conditions = append(conditions, "("+
+			sqliteNormalizedTimestampExpr("j.enqueued_at")+", j.id) < (datetime(?), ?)")
+		args = append(args, o.beforePosition.enqueuedAt.UTC().Format(time.RFC3339Nano), o.beforePosition.id)
+	} else if o.beforeCursor != nil {
 		conditions = append(conditions, "("+
 			"(EXISTS (SELECT 1 FROM review_jobs cursor WHERE cursor.id = ?) AND ("+
 			sqliteNormalizedTimestampExpr("j.enqueued_at")+", j.id) < (SELECT "+

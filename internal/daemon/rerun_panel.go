@@ -49,6 +49,9 @@ func (s *Server) rerunPanelRun(job *storage.ReviewJob, requestID string) (*Rerun
 		return nil, huma.Error400BadRequest("panel run has no members to rerun")
 	}
 	for i := range members {
+		if members[i].WorkerID != "" {
+			return nil, huma.Error409Conflict("panel member is still stopping")
+		}
 		if panelRerunWorktreeIsInvalid(&members[i]) {
 			return nil, huma.Error400BadRequest(
 				"panel rerun worktree path is stale or invalid",
