@@ -21,12 +21,19 @@
         system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
+          goPinned = pkgs.go_1_26.overrideAttrs (_: rec {
+            version = "1.26.6";
+            src = pkgs.fetchurl {
+              url = "https://go.dev/dl/go${version}.src.tar.gz";
+              hash = "sha256-oHIcVMaIkBRI13rZs+x+p8R0cwdV/4kTgukuy5P/LLE=";
+            };
+          });
+          buildGoModule = pkgs.buildGoModule.override { go = goPinned; };
         in
         {
-          default = pkgs.buildGoModule {
+          default = buildGoModule {
             pname = "roborev";
             version = "0.64.0";
-            go = pkgs.go_1_26;
 
             src = ./.;
 
@@ -66,11 +73,18 @@
         system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
+          goPinned = pkgs.go_1_26.overrideAttrs (_: rec {
+            version = "1.26.6";
+            src = pkgs.fetchurl {
+              url = "https://go.dev/dl/go${version}.src.tar.gz";
+              hash = "sha256-oHIcVMaIkBRI13rZs+x+p8R0cwdV/4kTgukuy5P/LLE=";
+            };
+          });
         in
         {
           default = pkgs.mkShell {
             buildInputs = with pkgs; [
-              go_1_26
+              goPinned
               gopls
               gotools
             ];
