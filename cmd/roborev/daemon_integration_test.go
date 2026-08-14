@@ -91,7 +91,7 @@ func TestDaemonRunStartsAndShutdownsCleanly(t *testing.T) {
 	// Use longer timeout for race detector which adds significant overhead.
 	myPID := os.Getpid()
 
-	if !waitForDaemonReady(t, 10*time.Second, myPID) {
+	if !waitForDaemonReady(t, 30*time.Second, myPID) {
 		// Provide more context for debugging CI failures
 		runtimes, _ := daemon.ListAllRuntimes()
 		require.Condition(t, func() bool {

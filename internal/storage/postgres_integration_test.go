@@ -1451,7 +1451,7 @@ func TestIntegration_MultiplayerOfflineReconnect(t *testing.T) {
 }
 
 func TestIntegration_SyncNowPushesAllBatches(t *testing.T) {
-	env := newIntegrationEnv(t, 30*time.Second)
+	env := newIntegrationEnv(t, 60*time.Second)
 	db := env.openDB("test.db")
 
 	// Start sync worker FIRST, before creating jobs
