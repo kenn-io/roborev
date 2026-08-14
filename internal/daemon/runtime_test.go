@@ -185,6 +185,7 @@ func TestRuntimeInfoReadWrite(t *testing.T) {
 			DaemonEndpoint{Network: "tcp", Address: defaultTestAddr},
 			&alternate,
 			"test-version",
+			nil,
 		)
 		if err != nil {
 			require.Condition(t, func() bool {
@@ -231,6 +232,40 @@ func TestRuntimeInfoReadWrite(t *testing.T) {
 			}, "Expected error after RemoveRuntime")
 		}
 	})
+}
+
+func TestRuntimeInfoRoundTripsBrowserMetadata(t *testing.T) {
+	testenv.SetDataDir(t)
+	browser := &BrowserRuntimeInfo{
+		Address:      "127.0.0.1:7400",
+		Origin:       "https://reviews.example.com",
+		Capabilities: []string{"web-ui-v1", "web-session-v1"},
+	}
+	require.NoError(t, WriteRuntime(
+		DaemonEndpoint{Network: "tcp", Address: defaultTestAddr}, nil, "test-version", browser,
+	))
+	info, err := ReadRuntime()
+	require.NoError(t, err)
+	assert.Equal(t, browser.Address, info.WebAddress)
+	assert.Equal(t, browser.Origin, info.WebOrigin)
+	assert.Equal(t, browser.Capabilities, info.WebCapabilities)
+
+	raw, err := os.ReadFile(RuntimePath())
+	require.NoError(t, err)
+	for _, secret := range []string{"auth_token", "cookie", "csrf", "tab_token", "instance_id"} {
+		assert.NotContains(t, strings.ToLower(string(raw)), secret)
+	}
+}
+
+func TestWriteRuntimeRejectsInvalidBrowserCapabilities(t *testing.T) {
+	testenv.SetDataDir(t)
+	for _, capabilities := range [][]string{{""}, {" web-ui-v1"}, {"web-ui-v1", "web-ui-v1"}} {
+		err := WriteRuntime(
+			DaemonEndpoint{Network: "tcp", Address: defaultTestAddr}, nil, "test-version",
+			&BrowserRuntimeInfo{Address: "127.0.0.1:7400", Origin: "http://127.0.0.1:7400", Capabilities: capabilities},
+		)
+		require.Error(t, err)
+	}
 }
 
 func TestKillDaemonCleansRuntimeForNonRoborevPIDWithoutShutdown(t *testing.T) {
@@ -621,7 +656,7 @@ func TestCleanupZombieDaemonsPreservesAccessDeniedRuntime(t *testing.T) {
 
 	primary := DaemonEndpoint{Network: "tcp", Address: defaultTestAddr}
 	alternate := DaemonEndpoint{Network: "unix", Address: socketPath}
-	require.NoError(t, WriteRuntime(primary, &alternate, "test-version"))
+	require.NoError(t, WriteRuntime(primary, &alternate, "test-version", nil))
 	runtimePath := RuntimePath()
 
 	origProbe := probeRuntimeEndpoint

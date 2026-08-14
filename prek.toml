@@ -42,3 +42,19 @@ language = "system"
 entry = "make check-actions"
 files = "^\\.github/workflows/.*\\.ya?ml$"
 pass_filenames = false
+
+[[repos.hooks]]
+id = "web-check"
+name = "web check"
+language = "system"
+entry = "bun run web:check"
+files = "^(package\\.json|bun\\.lock|web/|packages/roborev-ui/)"
+pass_filenames = false
+
+[[repos.hooks]]
+id = "web-test"
+name = "web test"
+language = "system"
+entry = "bun run web:test"
+files = "^(package\\.json|bun\\.lock|web/|packages/roborev-ui/)"
+pass_filenames = false

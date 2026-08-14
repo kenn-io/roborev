@@ -102,6 +102,334 @@ func (a AgentStats) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(a))
 }
 
+type AnalyticsAttemptStats struct {
+	Duration AnalyticsPercentiles `json:"duration"`
+	Eligible int64                `json:"eligible"`
+}
+
+func (a AnalyticsAttemptStats) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(a.Duration).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Duration", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type AnalyticsCostStats struct {
+	Complete         bool    `json:"complete"`
+	Coverage         float64 `json:"coverage"`
+	EligibleAttempts int64   `json:"eligible_attempts"`
+	PricedAttempts   int64   `json:"priced_attempts"`
+	TotalUsd         float64 `json:"total_usd"`
+}
+
+type AnalyticsDimensionRow struct {
+	Attempts      AnalyticsAttemptStats `json:"attempts"`
+	Cost          AnalyticsCostStats    `json:"cost"`
+	ReviewLatency AnalyticsPercentiles  `json:"review_latency"`
+	Reviews       AnalyticsReviewStats  `json:"reviews"`
+	Value         string                `json:"value" validate:"required"`
+	Verdicts      AnalyticsVerdictStats `json:"verdicts"`
+}
+
+func (a AnalyticsDimensionRow) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(a.Attempts).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Attempts", err)
+		}
+	}
+	if v, ok := any(a.Cost).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Cost", err)
+		}
+	}
+	if v, ok := any(a.ReviewLatency).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ReviewLatency", err)
+		}
+	}
+	if v, ok := any(a.Reviews).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Reviews", err)
+		}
+	}
+	if err := typesValidator.Var(a.Value, "required"); err != nil {
+		errors = errors.Append("Value", err)
+	}
+	if v, ok := any(a.Verdicts).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Verdicts", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type AnalyticsFilterOptions struct {
+	Agents   []string `json:"agents,omitempty" validate:"required"`
+	Models   []string `json:"models,omitempty" validate:"required"`
+	Projects []string `json:"projects,omitempty" validate:"required"`
+	Sources  []string `json:"sources,omitempty" validate:"required"`
+}
+
+func (a AnalyticsFilterOptions) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(a))
+}
+
+type AnalyticsFilters struct {
+	Agents   []string   `json:"agents,omitempty" validate:"required"`
+	Bucket   string     `json:"bucket" validate:"required"`
+	Models   []string   `json:"models,omitempty" validate:"required"`
+	Projects []string   `json:"projects,omitempty" validate:"required"`
+	Since    *time.Time `json:"since,omitempty"`
+	Sources  []string   `json:"sources,omitempty" validate:"required"`
+	Until    time.Time  `json:"until" validate:"required"`
+}
+
+func (a AnalyticsFilters) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(a))
+}
+
+type AnalyticsPercentiles struct {
+	P50Secs float64 `json:"p50_secs"`
+	P90Secs float64 `json:"p90_secs"`
+	P99Secs float64 `json:"p99_secs"`
+}
+
+type AnalyticsProjectRow struct {
+	Attempts      AnalyticsAttemptStats `json:"attempts"`
+	Cost          AnalyticsCostStats    `json:"cost"`
+	Project       string                `json:"project" validate:"required"`
+	ReviewLatency AnalyticsPercentiles  `json:"review_latency"`
+	Reviews       AnalyticsReviewStats  `json:"reviews"`
+	Verdicts      AnalyticsVerdictStats `json:"verdicts"`
+}
+
+func (a AnalyticsProjectRow) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(a.Attempts).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Attempts", err)
+		}
+	}
+	if v, ok := any(a.Cost).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Cost", err)
+		}
+	}
+	if err := typesValidator.Var(a.Project, "required"); err != nil {
+		errors = errors.Append("Project", err)
+	}
+	if v, ok := any(a.ReviewLatency).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ReviewLatency", err)
+		}
+	}
+	if v, ok := any(a.Reviews).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Reviews", err)
+		}
+	}
+	if v, ok := any(a.Verdicts).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Verdicts", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type AnalyticsReviewStats struct {
+	Canceled     int64   `json:"canceled"`
+	Done         int64   `json:"done"`
+	Failed       int64   `json:"failed"`
+	FailureRate  float64 `json:"failure_rate"`
+	RunErrorRate float64 `json:"run_error_rate"`
+	RunErrors    int64   `json:"run_errors"`
+	Skipped      int64   `json:"skipped"`
+	Total        int64   `json:"total"`
+}
+
+type AnalyticsSnapshot struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema        *string                 `json:"$schema,omitempty"`
+	Agents        []AnalyticsDimensionRow `json:"agents,omitempty" validate:"required"`
+	Filters       AnalyticsFilters        `json:"filters"`
+	Models        []AnalyticsDimensionRow `json:"models,omitempty" validate:"required"`
+	Options       AnalyticsFilterOptions  `json:"options"`
+	Projects      []AnalyticsProjectRow   `json:"projects,omitempty" validate:"required"`
+	SchemaVersion int64                   `json:"schema_version"`
+	Sources       []AnalyticsDimensionRow `json:"sources,omitempty" validate:"required"`
+	Summary       AnalyticsSummary        `json:"summary"`
+	TimeSeries    []AnalyticsTimeBucket   `json:"time_series,omitempty" validate:"required"`
+}
+
+func (a AnalyticsSnapshot) Validate() error {
+	var errors runtime.ValidationErrors
+	for i, item := range a.Agents {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Agents[%d]", i), err)
+			}
+		}
+	}
+	if v, ok := any(a.Filters).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Filters", err)
+		}
+	}
+	for i, item := range a.Models {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Models[%d]", i), err)
+			}
+		}
+	}
+	if v, ok := any(a.Options).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Options", err)
+		}
+	}
+	for i, item := range a.Projects {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Projects[%d]", i), err)
+			}
+		}
+	}
+	for i, item := range a.Sources {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Sources[%d]", i), err)
+			}
+		}
+	}
+	if v, ok := any(a.Summary).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Summary", err)
+		}
+	}
+	for i, item := range a.TimeSeries {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("TimeSeries[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type AnalyticsSummary struct {
+	Attempts      AnalyticsAttemptStats `json:"attempts"`
+	Cost          AnalyticsCostStats    `json:"cost"`
+	ReviewLatency AnalyticsPercentiles  `json:"review_latency"`
+	Reviews       AnalyticsReviewStats  `json:"reviews"`
+	Verdicts      AnalyticsVerdictStats `json:"verdicts"`
+}
+
+func (a AnalyticsSummary) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(a.Attempts).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Attempts", err)
+		}
+	}
+	if v, ok := any(a.Cost).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Cost", err)
+		}
+	}
+	if v, ok := any(a.ReviewLatency).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ReviewLatency", err)
+		}
+	}
+	if v, ok := any(a.Reviews).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Reviews", err)
+		}
+	}
+	if v, ok := any(a.Verdicts).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Verdicts", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type AnalyticsTimeBucket struct {
+	Attempts      AnalyticsAttemptStats `json:"attempts"`
+	Cost          AnalyticsCostStats    `json:"cost"`
+	End           time.Time             `json:"end" validate:"required"`
+	ReviewLatency AnalyticsPercentiles  `json:"review_latency"`
+	Reviews       AnalyticsReviewStats  `json:"reviews"`
+	Start         time.Time             `json:"start" validate:"required"`
+	Verdicts      AnalyticsVerdictStats `json:"verdicts"`
+}
+
+func (a AnalyticsTimeBucket) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(a.Attempts).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Attempts", err)
+		}
+	}
+	if v, ok := any(a.Cost).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Cost", err)
+		}
+	}
+	if err := typesValidator.Var(a.End, "required"); err != nil {
+		errors = errors.Append("End", err)
+	}
+	if v, ok := any(a.ReviewLatency).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ReviewLatency", err)
+		}
+	}
+	if v, ok := any(a.Reviews).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Reviews", err)
+		}
+	}
+	if err := typesValidator.Var(a.Start, "required"); err != nil {
+		errors = errors.Append("Start", err)
+	}
+	if v, ok := any(a.Verdicts).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Verdicts", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type AnalyticsVerdictStats struct {
+	FailClosed  int64   `json:"fail_closed"`
+	FailOpen    int64   `json:"fail_open"`
+	FailureRate float64 `json:"failure_rate"`
+	Passed      int64   `json:"passed"`
+	Rated       int64   `json:"rated"`
+}
+
 type AutoDesignStatus struct {
 	ClassifierFailed    int64 `json:"classifier_failed"`
 	Enabled             bool  `json:"enabled"`
@@ -244,6 +572,7 @@ type DaemonStatus struct {
 	RunningJobs         int64             `json:"running_jobs"`
 	SkippedJobs         int64             `json:"skipped_jobs"`
 	Version             string            `json:"version" validate:"required"`
+	WebCapabilities     []string          `json:"web_capabilities,omitempty" validate:"required"`
 }
 
 func (d DaemonStatus) Validate() error {
@@ -269,6 +598,9 @@ func (d DaemonStatus) Validate() error {
 	}
 	if err := typesValidator.Var(d.Version, "required"); err != nil {
 		errors = errors.Append("Version", err)
+	}
+	if err := typesValidator.Var(d.WebCapabilities, "required"); err != nil {
+		errors = errors.Append("WebCapabilities", err)
 	}
 	if len(errors) == 0 {
 		return nil
@@ -979,9 +1311,14 @@ type JobIDRequest struct {
 }
 
 type JobStats struct {
-	Closed int64 `json:"closed"`
-	Done   int64 `json:"done"`
-	Open   int64 `json:"open"`
+	Canceled int64 `json:"canceled"`
+	Closed   int64 `json:"closed"`
+	Done     int64 `json:"done"`
+	Failed   int64 `json:"failed"`
+	Open     int64 `json:"open"`
+	Queued   int64 `json:"queued"`
+	Running  int64 `json:"running"`
+	Skipped  int64 `json:"skipped"`
 }
 
 type JobStatusOutputBody struct {
@@ -1076,14 +1413,22 @@ func (l ListCommentsOutputBody) Validate() error {
 
 type ListJobsOutputBody struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema  *string     `json:"$schema,omitempty"`
-	HasMore bool        `json:"has_more"`
-	Jobs    []ReviewJob `json:"jobs,omitempty" validate:"required"`
-	Stats   *JobStats   `json:"stats,omitempty"`
+	Schema        *string     `json:"$schema,omitempty"`
+	FilteredStats *JobStats   `json:"filtered_stats,omitempty"`
+	HasMore       bool        `json:"has_more"`
+	Jobs          []ReviewJob `json:"jobs,omitempty" validate:"required"`
+	Stats         *JobStats   `json:"stats,omitempty"`
 }
 
 func (l ListJobsOutputBody) Validate() error {
 	var errors runtime.ValidationErrors
+	if l.FilteredStats != nil {
+		if v, ok := any(l.FilteredStats).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("FilteredStats", err)
+			}
+		}
+	}
 	for i, item := range l.Jobs {
 		if v, ok := any(item).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -1364,14 +1709,22 @@ func (r RepoWithCount) Validate() error {
 
 type RerunJobOutputBody struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema  *string `json:"$schema,omitempty"`
-	Success bool    `json:"success"`
+	Schema    *string `json:"$schema,omitempty"`
+	JobID     int64   `json:"job_id"`
+	RequestID string  `json:"request_id" validate:"required"`
+	RunUUID   *string `json:"run_uuid,omitempty"`
+	Success   bool    `json:"success"`
+}
+
+func (r RerunJobOutputBody) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(r))
 }
 
 type RerunJobRequest struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema *string `json:"$schema,omitempty"`
-	JobID  int64   `json:"job_id"`
+	Schema    *string `json:"$schema,omitempty"`
+	JobID     int64   `json:"job_id"`
+	RequestID *string `json:"request_id,omitempty"`
 }
 
 type ResolveRepoOutputBody struct {
@@ -1558,6 +1911,124 @@ func (r ReviewJob) Validate() error {
 		return nil
 	}
 	return errors
+}
+
+type ReviewProjection struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema        *string                    `json:"$schema,omitempty"`
+	Job           ReviewProjectionJob        `json:"job"`
+	PanelMembers  []ReviewProjectionJob      `json:"panel_members,omitempty" validate:"required"`
+	Responses     []ReviewProjectionResponse `json:"responses,omitempty" validate:"required"`
+	Review        *ReviewProjectionReview    `json:"review,omitempty"`
+	SchemaVersion int64                      `json:"schema_version"`
+}
+
+func (r ReviewProjection) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(r.Job).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Job", err)
+		}
+	}
+	for i, item := range r.PanelMembers {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("PanelMembers[%d]", i), err)
+			}
+		}
+	}
+	for i, item := range r.Responses {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Responses[%d]", i), err)
+			}
+		}
+	}
+	if r.Review != nil {
+		if v, ok := any(r.Review).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Review", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type ReviewProjectionJob struct {
+	Agent           string        `json:"agent" validate:"required"`
+	Branch          *string       `json:"branch,omitempty"`
+	CommitSubject   *string       `json:"commit_subject,omitempty"`
+	EnqueuedAt      time.Time     `json:"enqueued_at" validate:"required"`
+	FinishedAt      *time.Time    `json:"finished_at,omitempty"`
+	GitRef          string        `json:"git_ref" validate:"required"`
+	ID              int64         `json:"id"`
+	Model           *string       `json:"model,omitempty"`
+	PanelMemberName *string       `json:"panel_member_name,omitempty"`
+	PanelName       *string       `json:"panel_name,omitempty"`
+	PanelRole       *string       `json:"panel_role,omitempty"`
+	PanelSummary    *PanelSummary `json:"panel_summary,omitempty"`
+	Project         string        `json:"project" validate:"required"`
+	ReviewType      *string       `json:"review_type,omitempty"`
+	Source          *string       `json:"source,omitempty"`
+	StartedAt       *time.Time    `json:"started_at,omitempty"`
+	Status          string        `json:"status" validate:"required"`
+	UUID            *string       `json:"uuid,omitempty"`
+	Verdict         *string       `json:"verdict,omitempty"`
+}
+
+func (r ReviewProjectionJob) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(r.Agent, "required"); err != nil {
+		errors = errors.Append("Agent", err)
+	}
+	if err := typesValidator.Var(r.EnqueuedAt, "required"); err != nil {
+		errors = errors.Append("EnqueuedAt", err)
+	}
+	if err := typesValidator.Var(r.GitRef, "required"); err != nil {
+		errors = errors.Append("GitRef", err)
+	}
+	if r.PanelSummary != nil {
+		if v, ok := any(r.PanelSummary).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("PanelSummary", err)
+			}
+		}
+	}
+	if err := typesValidator.Var(r.Project, "required"); err != nil {
+		errors = errors.Append("Project", err)
+	}
+	if err := typesValidator.Var(r.Status, "required"); err != nil {
+		errors = errors.Append("Status", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type ReviewProjectionResponse struct {
+	CreatedAt time.Time `json:"created_at" validate:"required"`
+	ID        int64     `json:"id"`
+	Responder string    `json:"responder" validate:"required"`
+	Response  string    `json:"response" validate:"required"`
+}
+
+func (r ReviewProjectionResponse) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(r))
+}
+
+type ReviewProjectionReview struct {
+	Closed    bool      `json:"closed"`
+	CreatedAt time.Time `json:"created_at" validate:"required"`
+	ID        int64     `json:"id"`
+	Output    string    `json:"output" validate:"required"`
+}
+
+func (r ReviewProjectionReview) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(r))
 }
 
 type SessionUsagePayload struct {
@@ -1750,4 +2221,66 @@ type VerdictStats struct {
 	Passed         int64   `json:"passed"`
 	ResolutionRate float64 `json:"resolution_rate"`
 	Total          int64   `json:"total"`
+}
+
+type WebBootstrapInputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+}
+
+type WebLoginRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+	Token  string  `json:"token" validate:"required,min=1"`
+}
+
+func (w WebLoginRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(w))
+}
+
+type WebSessionCredentials struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema    *string   `json:"$schema,omitempty"`
+	Csrf      string    `json:"csrf" validate:"required"`
+	ExpiresAt time.Time `json:"expires_at" validate:"required"`
+	Session   string    `json:"session" validate:"required"`
+}
+
+func (w WebSessionCredentials) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(w))
+}
+
+type WebSessionError struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema    *string `json:"$schema,omitempty"`
+	ErrorData string  `json:"error" validate:"required"`
+}
+
+func (w WebSessionError) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(w))
+}
+
+func (s WebSessionError) Error() string {
+	return "unmapped client error"
+}
+
+type WebSessionStatus struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema         *string                        `json:"$schema,omitempty"`
+	Authenticated  bool                           `json:"authenticated"`
+	Authentication WebSessionStatusAuthentication `json:"authentication" validate:"required"`
+	ExpiresAt      *time.Time                     `json:"expires_at,omitempty"`
+}
+
+func (w WebSessionStatus) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(w.Authentication).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Authentication", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }

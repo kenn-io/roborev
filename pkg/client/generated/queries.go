@@ -294,3 +294,37 @@ type SyncNowQuery struct {
 	// Stream Stream sync progress as NDJSON when set to 1
 	Stream *string `json:"stream,omitempty"`
 }
+
+type GetWebAnalyticsQuery struct {
+	// Since Inclusive RFC 3339 finished-at bound; omit with an explicit until for all time
+	Since *string `json:"since,omitempty"`
+
+	// Until Exclusive RFC 3339 finished-at bound
+	Until *string `json:"until,omitempty"`
+
+	// Project Exact displayed project names (repeatable)
+	Project []string `json:"project,omitempty"`
+
+	// Source Exact stored source values (repeatable)
+	Source []string `json:"source,omitempty"`
+
+	// Agent Exact agent filter for attempt metrics
+	Agent *string `json:"agent,omitempty"`
+
+	// Model Exact model filter for attempt metrics
+	Model *string `json:"model,omitempty"`
+
+	// Bucket UTC time bucket: hour, day, week, or month
+	Bucket *string `json:"bucket,omitempty"`
+}
+
+type GetReviewProjectionQuery struct {
+	// JobID Daemon-local review job ID
+	JobID *int64 `json:"job_id,omitempty"`
+
+	// Repo Exact repository path for contextual lookup
+	Repo *string `json:"repo,omitempty"`
+
+	// Branch Optional exact branch for contextual lookup
+	Branch *string `json:"branch,omitempty"`
+}

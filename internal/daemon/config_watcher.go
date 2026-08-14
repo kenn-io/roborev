@@ -40,7 +40,7 @@ func (sc *StaticConfig) Config() *config.Config {
 // agent_quota_cooldown, allow_unsafe_agents, anthropic_api_key,
 // review_context_count.
 //
-// Settings requiring restart: server_addr, max_workers, [sync] section.
+// Settings requiring restart: server_addr, max_workers, [web], [sync] section.
 // These are read at startup and the running values are preserved even if the
 // config file changes. CLI flag overrides (--addr, --workers) only apply to
 // restart-required settings, so they remain in effect for the daemon's lifetime.
@@ -205,6 +205,8 @@ func (cw *ConfigWatcher) reloadConfig() {
 
 	cw.cfgMu.Lock()
 	oldCfg := cw.cfg
+	requestedWeb := newCfg.Web
+	newCfg.Web = oldCfg.Web
 	cw.cfg = newCfg
 	cw.lastReloadedAt = time.Now()
 	cw.reloadCounter++
@@ -217,6 +219,9 @@ func (cw *ConfigWatcher) reloadConfig() {
 
 	// Log what changed (for debugging)
 	logConfigChanges(oldCfg, newCfg)
+	if requestedWeb != oldCfg.Web {
+		log.Printf("Config change: [web] settings changed (requires daemon restart to take effect)")
+	}
 
 	// Broadcast config reloaded event to notify connected clients
 	cw.broadcaster.Broadcast(Event{

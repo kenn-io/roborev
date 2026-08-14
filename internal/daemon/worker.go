@@ -554,7 +554,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 
 	// Register for cancellation tracking
 	wp.registerRunningJob(job.ID, cancel)
-	defer wp.unregisterRunningJob(job.ID)
+	defer wp.finishRunningJob(workerID, job.ID)
 
 	// Synthesis jobs route to their own handler before the cooldown gate: the
 	// all-failed and passthrough branches call no agent, so a synthesis-agent
@@ -997,6 +997,16 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		Findings:     output,
 		WorktreePath: eventWorktreePath,
 	})
+}
+
+func (wp *WorkerPool) finishRunningJob(workerID string, jobID int64) {
+	// Remove the old cancellation handler before releasing the database row.
+	// Once worker_id becomes NULL, a rerun may be claimed and register a new
+	// handler for the same job ID.
+	wp.unregisterRunningJob(jobID)
+	if _, err := wp.db.ReleaseCanceledJob(jobID, workerID); err != nil {
+		log.Printf("[%s] Error releasing canceled job %d: %v", workerID, jobID, err)
+	}
 }
 
 func shouldAppendReviewJobLog(job *storage.ReviewJob) bool {

@@ -23,6 +23,9 @@ const (
 	daemonServiceName          = "roborev"
 	runtimeAlternateNetworkKey = "alternate_network"
 	runtimeAlternateAddressKey = "alternate_address"
+	runtimeWebAddressKey       = "web_address"
+	runtimeWebOriginKey        = "web_origin"
+	runtimeWebCapabilitiesKey  = "web_capabilities"
 )
 
 // ErrDaemonAccessDenied means a daemon runtime was found but local permissions
@@ -33,14 +36,25 @@ var probeRuntimeEndpoint = probeRuntimeRecord
 
 // RuntimeInfo stores daemon runtime state
 type RuntimeInfo struct {
-	PID              int    `json:"pid"`
-	Network          string `json:"network,omitempty"`
-	Address          string `json:"address"`
-	Service          string `json:"service,omitempty"`
-	Version          string `json:"version,omitempty"`
-	SourcePath       string `json:"-"` // Path to the runtime file (not serialized, set by ListAllRuntimes)
-	AlternateNetwork string `json:"-"`
-	AlternateAddress string `json:"-"`
+	PID              int      `json:"pid"`
+	Network          string   `json:"network,omitempty"`
+	Address          string   `json:"address"`
+	Service          string   `json:"service,omitempty"`
+	Version          string   `json:"version,omitempty"`
+	SourcePath       string   `json:"-"` // Path to the runtime file (not serialized, set by ListAllRuntimes)
+	AlternateNetwork string   `json:"-"`
+	AlternateAddress string   `json:"-"`
+	WebAddress       string   `json:"-"`
+	WebOrigin        string   `json:"-"`
+	WebCapabilities  []string `json:"-"`
+}
+
+// BrowserRuntimeInfo is the non-secret discovery information published for
+// the daemon's optional browser listener.
+type BrowserRuntimeInfo struct {
+	Address      string
+	Origin       string
+	Capabilities []string
 }
 
 // Endpoint returns a DaemonEndpoint for this runtime.
@@ -112,7 +126,7 @@ func DiscoverOptions(timeout time.Duration) kitdaemon.DiscoverOptions {
 
 func runtimeInfoFromRecord(rec kitdaemon.RuntimeRecord) *RuntimeInfo {
 	ep := daemonEndpointFromKit(rec.Endpoint())
-	return &RuntimeInfo{
+	info := &RuntimeInfo{
 		PID:              rec.PID,
 		Network:          ep.Network,
 		Address:          ep.Address,
@@ -121,7 +135,13 @@ func runtimeInfoFromRecord(rec kitdaemon.RuntimeRecord) *RuntimeInfo {
 		SourcePath:       rec.SourcePath,
 		AlternateNetwork: rec.Metadata[runtimeAlternateNetworkKey],
 		AlternateAddress: rec.Metadata[runtimeAlternateAddressKey],
+		WebAddress:       rec.Metadata[runtimeWebAddressKey],
+		WebOrigin:        rec.Metadata[runtimeWebOriginKey],
 	}
+	if raw := rec.Metadata[runtimeWebCapabilitiesKey]; raw != "" {
+		info.WebCapabilities = strings.Split(raw, ",")
+	}
+	return info
 }
 
 func pingInfoFromKit(info kitdaemon.PingInfo) *PingInfo {
@@ -149,8 +169,9 @@ func RuntimePathForPID(pid int) string {
 
 // WriteRuntime saves the daemon runtime info atomically.
 // Uses write-to-temp-then-rename to prevent readers from seeing partial writes.
-func WriteRuntime(primary DaemonEndpoint, alternate *DaemonEndpoint, version string) error {
+func WriteRuntime(primary DaemonEndpoint, alternate *DaemonEndpoint, version string, browser *BrowserRuntimeInfo) error {
 	rec := kitdaemon.NewRuntimeRecord(daemonServiceName, version, primary.kitEndpoint())
+	rec.Metadata = make(map[string]string)
 	if alternate != nil {
 		info := RuntimeInfo{
 			Network:          primary.Network,
@@ -159,14 +180,40 @@ func WriteRuntime(primary DaemonEndpoint, alternate *DaemonEndpoint, version str
 			AlternateAddress: alternate.Address,
 		}
 		if len(info.Endpoints()) == 2 {
-			rec.Metadata = map[string]string{
-				runtimeAlternateNetworkKey: alternate.Network,
-				runtimeAlternateAddressKey: alternate.Address,
-			}
+			rec.Metadata[runtimeAlternateNetworkKey] = alternate.Network
+			rec.Metadata[runtimeAlternateAddressKey] = alternate.Address
 		}
+	}
+	if browser != nil {
+		if err := validateBrowserRuntime(*browser); err != nil {
+			return err
+		}
+		rec.Metadata[runtimeWebAddressKey] = browser.Address
+		rec.Metadata[runtimeWebOriginKey] = browser.Origin
+		rec.Metadata[runtimeWebCapabilitiesKey] = strings.Join(browser.Capabilities, ",")
+	}
+	if len(rec.Metadata) == 0 {
+		rec.Metadata = nil
 	}
 	_, err := runtimeStore().Write(rec)
 	return err
+}
+
+func validateBrowserRuntime(browser BrowserRuntimeInfo) error {
+	if strings.TrimSpace(browser.Address) == "" || strings.TrimSpace(browser.Origin) == "" {
+		return fmt.Errorf("browser runtime address and origin are required")
+	}
+	seen := make(map[string]struct{}, len(browser.Capabilities))
+	for _, capability := range browser.Capabilities {
+		if capability == "" || capability != strings.TrimSpace(capability) || strings.Contains(capability, ",") {
+			return fmt.Errorf("invalid browser capability %q", capability)
+		}
+		if _, found := seen[capability]; found {
+			return fmt.Errorf("duplicate browser capability %q", capability)
+		}
+		seen[capability] = struct{}{}
+	}
+	return nil
 }
 
 // ReadRuntime reads the daemon runtime info for the current process

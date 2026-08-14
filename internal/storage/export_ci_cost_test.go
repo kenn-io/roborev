@@ -198,9 +198,14 @@ func TestExportCICostsRegularEligibilityAndPricing(t *testing.T) {
 		tokenUsage: `{"has_cost":true,"cost_usd":"unknown"}`,
 		finishedAt: "2026-08-01 05:00:00",
 	})
+	skipped := seedExportCICostJob(t, db, repo.ID, ciCostJobSeed{
+		gitRef: "skipped", status: JobStatusSkipped, source: JobSourceCI,
+		role: PanelRoleMember, agentInvoked: true,
+		tokenUsage: `{"has_cost":true,"cost_usd":1}`,
+		finishedAt: "2026-08-01 06:00:00",
+	})
 
 	for _, seed := range []ciCostJobSeed{
-		{gitRef: "skipped", status: JobStatusSkipped, source: JobSourceCI, role: PanelRoleMember, agentInvoked: true, tokenUsage: `{"has_cost":true,"cost_usd":1}`, finishedAt: "2026-08-01 06:00:00"},
 		{gitRef: "passthrough", status: JobStatusDone, source: JobSourceCI, role: PanelRoleSynthesis, finishedAt: "2026-08-01 07:00:00"},
 		{gitRef: "pre-agent", status: JobStatusFailed, source: JobSourceCI, role: PanelRoleMember, finishedAt: "2026-08-01 08:00:00"},
 		{gitRef: "manual", status: JobStatusDone, role: PanelRoleMember, agentInvoked: true, tokenUsage: `{"has_cost":true,"cost_usd":1}`, finishedAt: "2026-08-01 09:00:00"},
@@ -210,12 +215,12 @@ func TestExportCICostsRegularEligibilityAndPricing(t *testing.T) {
 
 	page, err := db.ExportCICosts(ExportCICostOptions{})
 	require.NoError(t, err)
-	require.Len(t, page.Jobs, 5)
+	require.Len(t, page.Jobs, 6)
 	assert.False(t, page.Truncated)
 	require.NotNil(t, page.NextCursor)
 
 	byUUID := costJobsByUUID(page.Jobs)
-	assert.Equal(t, []string{priced.UUID, unpriced.UUID, zero.UUID, usageProof.UUID, malformedCost.UUID}, costJobUUIDs(page.Jobs))
+	assert.Equal(t, []string{priced.UUID, unpriced.UUID, zero.UUID, usageProof.UUID, malformedCost.UUID, skipped.UUID}, costJobUUIDs(page.Jobs))
 
 	got := byUUID[priced.UUID]
 	assert.Equal(t, "2026-08-01T01:00:00Z", got.FinishedAt)
@@ -237,6 +242,8 @@ func TestExportCICostsRegularEligibilityAndPricing(t *testing.T) {
 	assert.Zero(t, *byUUID[zero.UUID].CostUSD)
 	assert.Nil(t, byUUID[usageProof.UUID].CostUSD)
 	assert.Nil(t, byUUID[malformedCost.UUID].CostUSD)
+	require.NotNil(t, byUUID[skipped.UUID].CostUSD)
+	assert.InDelta(t, 1, *byUUID[skipped.UUID].CostUSD, 1e-12)
 }
 
 func TestExportCICostsOrderingAndBounds(t *testing.T) {

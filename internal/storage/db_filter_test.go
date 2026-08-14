@@ -363,12 +363,12 @@ func TestListJobsWithRepoPaths(t *testing.T) {
 	require.Equal(t, "repo1", claimed.RepoName)
 	require.NoError(t, db.CompleteJob(claimed.ID, "codex", "prompt", "output"))
 
-	inScope, err := db.CountJobStats("",
+	inScope, err := db.CountJobStats("", "",
 		WithRepoPaths([]string{repo1.RootPath, repo2.RootPath}))
 	require.NoError(t, err)
 	assert.Equal(1, inScope.Done, "repo1's done job counted when repo1 is in scope")
 
-	outOfScope, err := db.CountJobStats("", WithRepoPaths([]string{repo3.RootPath}))
+	outOfScope, err := db.CountJobStats("", "", WithRepoPaths([]string{repo3.RootPath}))
 	require.NoError(t, err)
 	assert.Equal(0, outOfScope.Done, "repo1's done job excluded when only repo3 is in scope")
 }
@@ -985,12 +985,16 @@ func TestPrefixFilterWithSpecialChars(t *testing.T) {
 
 	t.Run("CountJobStats with special-char prefix", func(t *testing.T) {
 		stats, err := db.CountJobStats(
-			"", WithRepoPrefix(wsPrefix),
+			"", "", WithRepoPrefix(wsPrefix),
 		)
 		require.NoError(t, err, "CountJobStats failed: %v")
 
 		assert.Equal(t, 2, stats.Done)
 		assert.Equal(t, 2, stats.Open)
+		assert.Equal(t, 0, stats.Queued)
+		assert.Equal(t, 0, stats.Running)
+		assert.Equal(t, 0, stats.Failed)
+		assert.Equal(t, 0, stats.Canceled)
 	})
 
 	t.Run("ListReposWithReviewCounts with special-char prefix", func(t *testing.T) {
@@ -1018,7 +1022,7 @@ func TestPrefixFilterWithSpecialChars(t *testing.T) {
 		assert.Len(t, jobs, 1)
 
 		stats, err := db.CountJobStats(
-			"", WithRepoPrefix(`C:\Users\dev\workspace`),
+			"", "", WithRepoPrefix(`C:\Users\dev\workspace`),
 		)
 		require.NoError(t, err, "CountJobStats with backslash prefix should not error: %v")
 		assert.Equal(t, 1, stats.Open)

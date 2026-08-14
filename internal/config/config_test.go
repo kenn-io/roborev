@@ -5042,3 +5042,45 @@ func TestSaveGlobalToHasNoCommentedExample(t *testing.T) {
 	assert.NotContains(t, string(raw), "# [[hooks]]",
 		"normal rewrites must not reintroduce the commented example")
 }
+
+func TestWebConfigDefaultsAndSensitiveToken(t *testing.T) {
+	cfg := DefaultConfig()
+	assert.True(t, cfg.Web.Enabled)
+	assert.Equal(t, "127.0.0.1:0", cfg.Web.Listen)
+	assert.True(t, IsSensitiveKey("web.auth_token"))
+	assert.Equal(t, "****cret", MaskValue("test-secret"))
+}
+
+func TestWebConfigNormalization(t *testing.T) {
+	const strongToken = "MDEyMzQ1Njc4OWFiY2RlZmdoaWprbG1ub3BxcnN0dXY"
+	tests := []struct {
+		name       string
+		contents   string
+		wantOrigin string
+		wantErr    string
+	}{
+		{name: "loopback defaults", contents: "[web]\nlisten = \"127.0.0.1:0\"\n"},
+		{name: "canonical public origin", contents: "[web]\npublic_origin = \"HTTPS://REVIEWS.EXAMPLE.COM:443\"\nauth_token = \"" + strongToken + "\"\n", wantOrigin: "https://reviews.example.com"},
+		{name: "reject origin path", contents: "[web]\npublic_origin = \"https://reviews.example.com/path\"\n", wantErr: "origin"},
+		{name: "reject origin userinfo", contents: "[web]\npublic_origin = \"https://user@reviews.example.com\"\n", wantErr: "origin"},
+		{name: "reject remote HTTP", contents: "[web]\npublic_origin = \"http://reviews.example.com\"\n", wantErr: "HTTPS"},
+		{name: "reject unauthenticated proxy origin", contents: "[web]\nlisten = \"127.0.0.1:7374\"\npublic_origin = \"https://reviews.example.com\"\n", wantErr: "auth token"},
+		{name: "reject unauthenticated remote bind", contents: "[web]\nlisten = \"0.0.0.0:7374\"\npublic_origin = \"https://reviews.example.com\"\n", wantErr: "auth token"},
+		{name: "reject weak remote token", contents: "[web]\nlisten = \"0.0.0.0:7374\"\npublic_origin = \"https://reviews.example.com\"\nauth_token = \"secret\"\n", wantErr: "base64url-encoded 32-byte"},
+		{name: "accept authenticated remote bind", contents: "[web]\nlisten = \"0.0.0.0:7374\"\npublic_origin = \"https://reviews.example.com\"\nauth_token = \"" + strongToken + "\"\n", wantOrigin: "https://reviews.example.com"},
+		{name: "reject empty origin hostname", contents: "[web]\npublic_origin = \"https://:443\"\nauth_token = \"" + strongToken + "\"\n", wantErr: "origin"},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.toml")
+			require.NoError(t, os.WriteFile(path, []byte(tt.contents), 0o600))
+			cfg, err := LoadGlobalFrom(path)
+			if tt.wantErr != "" {
+				require.ErrorContains(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantOrigin, cfg.Web.PublicOrigin)
+		})
+	}
+}

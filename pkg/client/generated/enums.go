@@ -8,6 +8,23 @@ import (
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 )
 
+type WebSessionStatusAuthentication string
+
+const (
+	Local WebSessionStatusAuthentication = "local"
+	Token WebSessionStatusAuthentication = "token"
+)
+
+// Validate checks if the WebSessionStatusAuthentication value is valid
+func (w WebSessionStatusAuthentication) Validate() error {
+	switch w {
+	case Local, Token:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid WebSessionStatusAuthentication value, got: %v", w))
+	}
+}
+
 // GetCostQueryBranchEmpty Only jobs with empty/unset branch
 type GetCostQueryBranchEmpty string
 

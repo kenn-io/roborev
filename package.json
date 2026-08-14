@@ -1,0 +1,12 @@
+{
+  "private": true,
+  "workspaces": ["web", "packages/*"],
+  "packageManager": "bun@1.3.14",
+  "scripts": {
+    "web:check": "bun run --cwd web check",
+    "web:test": "bun run --cwd web test && bun run --cwd packages/roborev-ui test",
+    "web:test:e2e": "bun run --cwd web test:e2e",
+    "web:build": "bun run --cwd web build",
+    "web:generate": "bun run --cwd web generate"
+  }
+}

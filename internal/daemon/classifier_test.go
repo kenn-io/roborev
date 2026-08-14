@@ -104,6 +104,27 @@ func TestClassifierAdapter_InvalidJSON(t *testing.T) {
 	assert.ErrorContains(t, err, "invalid")
 }
 
+func TestClassifierAdapter_MarksInvocationOnlyAfterPromptBuild(t *testing.T) {
+	invoked := false
+	fake := &fakeSchemaAgent{
+		result: []byte(`{"design_review":false,"reason":"small"}`),
+	}
+	ad := newClassifierAdapter(fake, 1, nil).withBeforeInvoke(func() {
+		invoked = true
+	})
+
+	_, _, err := ad.Decide(context.Background(), autotype.Input{})
+	require.Error(t, err)
+	assert.False(t, invoked)
+
+	ad = newClassifierAdapter(fake, 20*1024, nil).withBeforeInvoke(func() {
+		invoked = true
+	})
+	_, _, err = ad.Decide(context.Background(), autotype.Input{})
+	require.NoError(t, err)
+	assert.True(t, invoked)
+}
+
 func TestDecodeClassifyResult(t *testing.T) {
 	t.Parallel()
 

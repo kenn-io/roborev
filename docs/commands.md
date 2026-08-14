@@ -13,7 +13,8 @@ description: Quick reference for all roborev commands and flags
 roborev init [--agent <name>]    # Initialize repo + daemon + hook
                                  # --no-daemon: skip auto-starting daemon
 roborev fix                      # Fix open reviews
-roborev status                   # Check daemon and queue
+roborev daemon status            # Check daemon, web UI, and queue
+roborev status                   # Backward-compatible status alias
 roborev pause                    # Pause queue processing
 roborev unpause                  # Resume queue processing
 roborev cancel <job_id>          # Cancel one queued or running job
@@ -25,6 +26,8 @@ roborev tui                      # Interactive terminal UI
                                  # --branch: pre-filter to branch
                                  # --no-quit: suppress keyboard quit
                                  # --control-socket: custom socket path
+roborev ui                       # Open the native browser application
+roborev ui 42                    # Open browser review detail for local job 42
 roborev version                  # Show version
 roborev version --json           # Show stable machine-readable version data
 ```
@@ -131,8 +134,10 @@ roborev show --prompt <job_id>   # Show the prompt sent to the agent
 roborev list                     # List jobs for current repo/branch
 roborev list --open              # List only open reviews
 roborev list --closed            # List only closed reviews
-roborev tui                      # Interactive browser
+roborev tui                      # Interactive terminal UI
 roborev tui --repo --branch      # Pre-filtered to current repo+branch
+roborev ui                       # Open the browser review workspace
+roborev ui 42                    # Deep-link to browser review detail
 roborev log <job_id>             # View job log
 ```
 
@@ -148,6 +153,19 @@ completes.
 
 `roborev show` displays review comments after the review output when comments
 exist, matching the layout in the TUI review detail view.
+
+`roborev ui` starts the daemon when needed, reads the browser origin from the
+live daemon runtime, and opens `/reviews`. An optional positive numeric job ID
+opens `/reviews/<job-id>`. Job IDs are local to that daemon's SQLite database,
+so a numeric deep link is not portable to another machine even when review data
+is synchronized. Authentication tokens are never placed in the launch URL. The
+browser listener is enabled on loopback by default, so an installed release
+needs no additional configuration for local use: run `roborev ui` and the
+application displays the reviews from the same SQLite database used by the CLI
+and terminal UI.
+
+See [Browser UI](/web-ui/) for analytics definitions, remote HTTPS access, and
+the production Tailscale Serve setup.
 
 For panel parent reviews, `roborev show` also displays a one-line reviewer
 summary. `roborev show --json` includes an additive `panel` object with the run
@@ -811,13 +829,14 @@ See: [Repository Management](/guides/repository-management/)
 roborev daemon start             # Start background daemon
 roborev daemon stop              # Stop daemon
 roborev daemon restart           # Restart daemon
+roborev daemon status            # Show daemon, web UI, and queue status
 roborev daemon run               # Run in foreground
 roborev pause                    # Pause queue processing
 roborev unpause                  # Resume queue processing
 roborev cancel <job_id>          # Cancel one queued or running job
 
-roborev status                   # Show daemon and queue status
-roborev status --json            # Structured status for scripting
+roborev status                   # Backward-compatible status alias
+roborev daemon status --json     # Structured status for scripting
 
 roborev post-commit              # Hook entry point (called by git hook)
 roborev install-hook             # Install post-commit hook
@@ -827,25 +846,30 @@ roborev uninstall-hook           # Remove hook
 
 | Flag | Description |
 |------|-------------|
-| `--json` | Emit daemon and queue status as JSON. Includes active snoozes under `daemon.active_snoozes` and the active daemon endpoint as `network`, `address`, and `port` fields alongside queue counters and version fields |
+| `--json` | Emit daemon, web UI, and queue status as JSON. Includes the canonical browser origin as `web_url`, active snoozes under `daemon.active_snoozes`, and the active daemon endpoint as `network`, `address`, and `port` fields alongside queue counters and version fields |
 | `--force` | Overwrite an existing post-commit hook with a fresh one |
 
-When Agent Hook reminders are snoozed, `roborev status` lists every active scope
-with its repository, exact worktree, branch, and local expiry time. The section
-is omitted when no snoozes are active. JSON output exposes the same records
-under `daemon.active_snoozes`.
+`roborev daemon start`, `roborev daemon restart`, and `roborev daemon status`
+print the canonical browser URL. If the running daemon has no browser listener,
+they print `Web UI: unavailable` instead of silently omitting the application.
+The older `roborev status` command remains an alias with identical output.
 
-If daemon access is denied, `roborev status` reports the status as unavailable
-and suggests allowing loopback or Unix-socket access when running in a sandbox.
-It does not treat permission denial as proof that the daemon is stopped, and it
-does not start or restart the daemon. JSON output keeps `running: true` and
-includes the access error.
+When Agent Hook reminders are snoozed, `roborev daemon status` lists every
+active scope with its repository, exact worktree, branch, and local expiry time.
+The section is omitted when no snoozes are active. JSON output exposes the same
+records under `daemon.active_snoozes`.
+
+If daemon access is denied, `roborev daemon status` reports the status as
+unavailable and suggests allowing loopback or Unix-socket access when running in
+a sandbox. It does not treat permission denial as proof that the daemon is
+stopped, and it does not start or restart the daemon. JSON output keeps
+`running: true` and includes the access error.
 
 `pause` and `unpause` are daemon-wide queue controls. Pausing prevents workers
 from starting new queued jobs, but running jobs continue to completion. A paused
-queue survives daemon restarts and is shown in `roborev status` and the TUI. Use
-`cancel` when you need to stop one queued or running job instead of pausing the
-whole queue.
+queue survives daemon restarts and is shown in `roborev daemon status` and the
+TUI. Use `cancel` when you need to stop one queued or running job instead of
+pausing the whole queue.
 
 Daemon shutdown also stops workers from claiming new jobs. If work is active,
 restart reports that it is waiting, lets running jobs and worker finalization

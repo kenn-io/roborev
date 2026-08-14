@@ -17,6 +17,24 @@ import (
 	"github.com/oapi-codegen/runtime"
 )
 
+// Defines values for WebSessionStatusAuthentication.
+const (
+	Local WebSessionStatusAuthentication = "local"
+	Token WebSessionStatusAuthentication = "token"
+)
+
+// Valid indicates whether the value is a known member of the WebSessionStatusAuthentication enum.
+func (e WebSessionStatusAuthentication) Valid() bool {
+	switch e {
+	case Local:
+		return true
+	case Token:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for GetCostParamsBranchEmpty.
 const (
 	GetCostParamsBranchEmptyFalse GetCostParamsBranchEmpty = "false"
@@ -163,6 +181,15 @@ type AddCommentRequest struct {
 	Sha       *string `json:"sha,omitempty"`
 }
 
+// AgentHookSnooze defines model for AgentHookSnooze.
+type AgentHookSnooze struct {
+	Branch       string    `json:"branch"`
+	RepoName     string    `json:"repo_name"`
+	RepoPath     string    `json:"repo_path"`
+	SnoozedUntil time.Time `json:"snoozed_until"`
+	WorktreePath string    `json:"worktree_path"`
+}
+
 // AgentHookSnoozeOutputBody defines model for AgentHookSnoozeOutputBody.
 type AgentHookSnoozeOutputBody struct {
 	// Schema A URL to the JSON Schema for this object.
@@ -191,6 +218,123 @@ type AgentStats struct {
 	PassRate           float64 `json:"pass_rate"`
 	Passed             int64   `json:"passed"`
 	Total              int64   `json:"total"`
+}
+
+// AnalyticsAttemptStats defines model for AnalyticsAttemptStats.
+type AnalyticsAttemptStats struct {
+	Duration AnalyticsPercentiles `json:"duration"`
+	Eligible int64                `json:"eligible"`
+}
+
+// AnalyticsCostStats defines model for AnalyticsCostStats.
+type AnalyticsCostStats struct {
+	Complete         bool    `json:"complete"`
+	Coverage         float64 `json:"coverage"`
+	EligibleAttempts int64   `json:"eligible_attempts"`
+	PricedAttempts   int64   `json:"priced_attempts"`
+	TotalUsd         float64 `json:"total_usd"`
+}
+
+// AnalyticsDimensionRow defines model for AnalyticsDimensionRow.
+type AnalyticsDimensionRow struct {
+	Attempts      AnalyticsAttemptStats `json:"attempts"`
+	Cost          AnalyticsCostStats    `json:"cost"`
+	ReviewLatency AnalyticsPercentiles  `json:"review_latency"`
+	Reviews       AnalyticsReviewStats  `json:"reviews"`
+	Value         string                `json:"value"`
+	Verdicts      AnalyticsVerdictStats `json:"verdicts"`
+}
+
+// AnalyticsFilterOptions defines model for AnalyticsFilterOptions.
+type AnalyticsFilterOptions struct {
+	Agents   *[]string `json:"agents"`
+	Models   *[]string `json:"models"`
+	Projects *[]string `json:"projects"`
+	Sources  *[]string `json:"sources"`
+}
+
+// AnalyticsFilters defines model for AnalyticsFilters.
+type AnalyticsFilters struct {
+	Agents   *[]string  `json:"agents"`
+	Bucket   string     `json:"bucket"`
+	Models   *[]string  `json:"models"`
+	Projects *[]string  `json:"projects"`
+	Since    *time.Time `json:"since,omitempty"`
+	Sources  *[]string  `json:"sources"`
+	Until    time.Time  `json:"until"`
+}
+
+// AnalyticsPercentiles defines model for AnalyticsPercentiles.
+type AnalyticsPercentiles struct {
+	P50Secs float64 `json:"p50_secs"`
+	P90Secs float64 `json:"p90_secs"`
+	P99Secs float64 `json:"p99_secs"`
+}
+
+// AnalyticsProjectRow defines model for AnalyticsProjectRow.
+type AnalyticsProjectRow struct {
+	Attempts      AnalyticsAttemptStats `json:"attempts"`
+	Cost          AnalyticsCostStats    `json:"cost"`
+	Project       string                `json:"project"`
+	ReviewLatency AnalyticsPercentiles  `json:"review_latency"`
+	Reviews       AnalyticsReviewStats  `json:"reviews"`
+	Verdicts      AnalyticsVerdictStats `json:"verdicts"`
+}
+
+// AnalyticsReviewStats defines model for AnalyticsReviewStats.
+type AnalyticsReviewStats struct {
+	Canceled     int64   `json:"canceled"`
+	Done         int64   `json:"done"`
+	Failed       int64   `json:"failed"`
+	FailureRate  float64 `json:"failure_rate"`
+	RunErrorRate float64 `json:"run_error_rate"`
+	RunErrors    int64   `json:"run_errors"`
+	Skipped      int64   `json:"skipped"`
+	Total        int64   `json:"total"`
+}
+
+// AnalyticsSnapshot defines model for AnalyticsSnapshot.
+type AnalyticsSnapshot struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema        *string                  `json:"$schema,omitempty"`
+	Agents        *[]AnalyticsDimensionRow `json:"agents"`
+	Filters       AnalyticsFilters         `json:"filters"`
+	Models        *[]AnalyticsDimensionRow `json:"models"`
+	Options       AnalyticsFilterOptions   `json:"options"`
+	Projects      *[]AnalyticsProjectRow   `json:"projects"`
+	SchemaVersion int64                    `json:"schema_version"`
+	Sources       *[]AnalyticsDimensionRow `json:"sources"`
+	Summary       AnalyticsSummary         `json:"summary"`
+	TimeSeries    *[]AnalyticsTimeBucket   `json:"time_series"`
+}
+
+// AnalyticsSummary defines model for AnalyticsSummary.
+type AnalyticsSummary struct {
+	Attempts      AnalyticsAttemptStats `json:"attempts"`
+	Cost          AnalyticsCostStats    `json:"cost"`
+	ReviewLatency AnalyticsPercentiles  `json:"review_latency"`
+	Reviews       AnalyticsReviewStats  `json:"reviews"`
+	Verdicts      AnalyticsVerdictStats `json:"verdicts"`
+}
+
+// AnalyticsTimeBucket defines model for AnalyticsTimeBucket.
+type AnalyticsTimeBucket struct {
+	Attempts      AnalyticsAttemptStats `json:"attempts"`
+	Cost          AnalyticsCostStats    `json:"cost"`
+	End           time.Time             `json:"end"`
+	ReviewLatency AnalyticsPercentiles  `json:"review_latency"`
+	Reviews       AnalyticsReviewStats  `json:"reviews"`
+	Start         time.Time             `json:"start"`
+	Verdicts      AnalyticsVerdictStats `json:"verdicts"`
+}
+
+// AnalyticsVerdictStats defines model for AnalyticsVerdictStats.
+type AnalyticsVerdictStats struct {
+	FailClosed  int64   `json:"fail_closed"`
+	FailOpen    int64   `json:"fail_open"`
+	FailureRate float64 `json:"failure_rate"`
+	Passed      int64   `json:"passed"`
+	Rated       int64   `json:"rated"`
 }
 
 // AutoDesignStatus defines model for AutoDesignStatus.
@@ -285,26 +429,28 @@ type CostEnvelope struct {
 // DaemonStatus defines model for DaemonStatus.
 type DaemonStatus struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema              *string           `json:"$schema,omitempty"`
-	ActiveWorkers       int64             `json:"active_workers"`
-	Address             *string           `json:"address,omitempty"`
-	AppliedJobs         int64             `json:"applied_jobs"`
-	AutoDesign          *AutoDesignStatus `json:"auto_design,omitempty"`
-	CanceledJobs        int64             `json:"canceled_jobs"`
-	CompletedJobs       int64             `json:"completed_jobs"`
-	ConfigReloadCounter *int64            `json:"config_reload_counter,omitempty"`
-	ConfigReloadedAt    *string           `json:"config_reloaded_at,omitempty"`
-	FailedJobs          int64             `json:"failed_jobs"`
-	MachineId           *string           `json:"machine_id,omitempty"`
-	MaxWorkers          int64             `json:"max_workers"`
-	Network             *string           `json:"network,omitempty"`
-	Port                *int64            `json:"port,omitempty"`
-	QueuePaused         bool              `json:"queue_paused"`
-	QueuedJobs          int64             `json:"queued_jobs"`
-	RebasedJobs         int64             `json:"rebased_jobs"`
-	RunningJobs         int64             `json:"running_jobs"`
-	SkippedJobs         int64             `json:"skipped_jobs"`
-	Version             string            `json:"version"`
+	Schema              *string            `json:"$schema,omitempty"`
+	ActiveSnoozes       *[]AgentHookSnooze `json:"active_snoozes"`
+	ActiveWorkers       int64              `json:"active_workers"`
+	Address             *string            `json:"address,omitempty"`
+	AppliedJobs         int64              `json:"applied_jobs"`
+	AutoDesign          *AutoDesignStatus  `json:"auto_design,omitempty"`
+	CanceledJobs        int64              `json:"canceled_jobs"`
+	CompletedJobs       int64              `json:"completed_jobs"`
+	ConfigReloadCounter *int64             `json:"config_reload_counter,omitempty"`
+	ConfigReloadedAt    *string            `json:"config_reloaded_at,omitempty"`
+	FailedJobs          int64              `json:"failed_jobs"`
+	MachineId           *string            `json:"machine_id,omitempty"`
+	MaxWorkers          int64              `json:"max_workers"`
+	Network             *string            `json:"network,omitempty"`
+	Port                *int64             `json:"port,omitempty"`
+	QueuePaused         bool               `json:"queue_paused"`
+	QueuedJobs          int64              `json:"queued_jobs"`
+	RebasedJobs         int64              `json:"rebased_jobs"`
+	RunningJobs         int64              `json:"running_jobs"`
+	SkippedJobs         int64              `json:"skipped_jobs"`
+	Version             string             `json:"version"`
+	WebCapabilities     *[]string          `json:"web_capabilities"`
 }
 
 // DurationStats defines model for DurationStats.
@@ -457,6 +603,40 @@ type ErrorResponse struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema *string `json:"$schema,omitempty"`
 	Error  string  `json:"error"`
+}
+
+// ExportCICostDocument defines model for ExportCICostDocument.
+type ExportCICostDocument struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+
+	// DatabaseId Stable identity for the local review database; changes when the database is recreated.
+	DatabaseId  string             `json:"database_id"`
+	GeneratedAt string             `json:"generated_at"`
+	Jobs        *[]ExportCICostJob `json:"jobs"`
+	Legacy      bool               `json:"legacy"`
+
+	// NextCursor Opaque resume cursor emitted when jobs is non-empty.
+	NextCursor    *string `json:"next_cursor"`
+	SchemaVersion int64   `json:"schema_version"`
+	Tool          string  `json:"tool"`
+	ToolVersion   string  `json:"tool_version"`
+
+	// Truncated True when more matching rows are available immediately.
+	Truncated bool                `json:"truncated"`
+	Window    ExportReviewsWindow `json:"window"`
+}
+
+// ExportCICostJob defines model for ExportCICostJob.
+type ExportCICostJob struct {
+	Agent      string   `json:"agent"`
+	CostUsd    *float64 `json:"cost_usd"`
+	FinishedAt string   `json:"finished_at"`
+	JobUuid    string   `json:"job_uuid"`
+	Model      *string  `json:"model"`
+	Provider   *string  `json:"provider"`
+	Role       string   `json:"role"`
+	Status     string   `json:"status"`
 }
 
 // ExportCIMetricsDocument defines model for ExportCIMetricsDocument.
@@ -616,9 +796,14 @@ type JobIDRequest struct {
 
 // JobStats defines model for JobStats.
 type JobStats struct {
-	Closed int64 `json:"closed"`
-	Done   int64 `json:"done"`
-	Open   int64 `json:"open"`
+	Canceled int64 `json:"canceled"`
+	Closed   int64 `json:"closed"`
+	Done     int64 `json:"done"`
+	Failed   int64 `json:"failed"`
+	Open     int64 `json:"open"`
+	Queued   int64 `json:"queued"`
+	Running  int64 `json:"running"`
+	Skipped  int64 `json:"skipped"`
 }
 
 // JobStatusOutputBody defines model for JobStatusOutputBody.
@@ -661,10 +846,11 @@ type ListCommentsOutputBody struct {
 // ListJobsOutputBody defines model for ListJobsOutputBody.
 type ListJobsOutputBody struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema  *string      `json:"$schema,omitempty"`
-	HasMore bool         `json:"has_more"`
-	Jobs    *[]ReviewJob `json:"jobs"`
-	Stats   *JobStats    `json:"stats,omitempty"`
+	Schema        *string      `json:"$schema,omitempty"`
+	FilteredStats *JobStats    `json:"filtered_stats,omitempty"`
+	HasMore       bool         `json:"has_more"`
+	Jobs          *[]ReviewJob `json:"jobs"`
+	Stats         *JobStats    `json:"stats,omitempty"`
 }
 
 // ListReposOutputBody defines model for ListReposOutputBody.
@@ -844,15 +1030,19 @@ type RepoWithCount struct {
 // RerunJobOutputBody defines model for RerunJobOutputBody.
 type RerunJobOutputBody struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema  *string `json:"$schema,omitempty"`
-	Success bool    `json:"success"`
+	Schema    *string `json:"$schema,omitempty"`
+	JobId     int64   `json:"job_id"`
+	RequestId string  `json:"request_id"`
+	RunUuid   *string `json:"run_uuid,omitempty"`
+	Success   bool    `json:"success"`
 }
 
 // RerunJobRequest defines model for RerunJobRequest.
 type RerunJobRequest struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema *string `json:"$schema,omitempty"`
-	JobId  int64   `json:"job_id"`
+	Schema    *string `json:"$schema,omitempty"`
+	JobId     int64   `json:"job_id"`
+	RequestId *string `json:"request_id,omitempty"`
 }
 
 // ResolveRepoOutputBody defines model for ResolveRepoOutputBody.
@@ -966,6 +1156,56 @@ type ReviewJob struct {
 	WorktreePath          *string       `json:"worktree_path,omitempty"`
 }
 
+// ReviewProjection defines model for ReviewProjection.
+type ReviewProjection struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema        *string                     `json:"$schema,omitempty"`
+	Job           ReviewProjectionJob         `json:"job"`
+	PanelMembers  *[]ReviewProjectionJob      `json:"panel_members"`
+	Responses     *[]ReviewProjectionResponse `json:"responses"`
+	Review        *ReviewProjectionReview     `json:"review,omitempty"`
+	SchemaVersion int64                       `json:"schema_version"`
+}
+
+// ReviewProjectionJob defines model for ReviewProjectionJob.
+type ReviewProjectionJob struct {
+	Agent           string        `json:"agent"`
+	Branch          *string       `json:"branch,omitempty"`
+	CommitSubject   *string       `json:"commit_subject,omitempty"`
+	EnqueuedAt      time.Time     `json:"enqueued_at"`
+	FinishedAt      *time.Time    `json:"finished_at,omitempty"`
+	GitRef          string        `json:"git_ref"`
+	Id              int64         `json:"id"`
+	Model           *string       `json:"model,omitempty"`
+	PanelMemberName *string       `json:"panel_member_name,omitempty"`
+	PanelName       *string       `json:"panel_name,omitempty"`
+	PanelRole       *string       `json:"panel_role,omitempty"`
+	PanelSummary    *PanelSummary `json:"panel_summary,omitempty"`
+	Project         string        `json:"project"`
+	ReviewType      *string       `json:"review_type,omitempty"`
+	Source          *string       `json:"source,omitempty"`
+	StartedAt       *time.Time    `json:"started_at,omitempty"`
+	Status          string        `json:"status"`
+	Uuid            *string       `json:"uuid,omitempty"`
+	Verdict         *string       `json:"verdict,omitempty"`
+}
+
+// ReviewProjectionResponse defines model for ReviewProjectionResponse.
+type ReviewProjectionResponse struct {
+	CreatedAt time.Time `json:"created_at"`
+	Id        int64     `json:"id"`
+	Responder string    `json:"responder"`
+	Response  string    `json:"response"`
+}
+
+// ReviewProjectionReview defines model for ReviewProjectionReview.
+type ReviewProjectionReview struct {
+	Closed    bool      `json:"closed"`
+	CreatedAt time.Time `json:"created_at"`
+	Id        int64     `json:"id"`
+	Output    string    `json:"output"`
+}
+
 // SessionUsagePayload defines model for SessionUsagePayload.
 type SessionUsagePayload struct {
 	Agent             *string       `json:"agent,omitempty"`
@@ -1061,6 +1301,47 @@ type VerdictStats struct {
 	Total          int64   `json:"total"`
 }
 
+// WebBootstrapInputBody defines model for WebBootstrapInputBody.
+type WebBootstrapInputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+}
+
+// WebLoginRequest defines model for WebLoginRequest.
+type WebLoginRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+	Token  string  `json:"token"`
+}
+
+// WebSessionCredentials defines model for WebSessionCredentials.
+type WebSessionCredentials struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema    *string   `json:"$schema,omitempty"`
+	Csrf      string    `json:"csrf"`
+	ExpiresAt time.Time `json:"expires_at"`
+	Session   string    `json:"session"`
+}
+
+// WebSessionError defines model for WebSessionError.
+type WebSessionError struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+	Error  string  `json:"error"`
+}
+
+// WebSessionStatus defines model for WebSessionStatus.
+type WebSessionStatus struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema         *string                        `json:"$schema,omitempty"`
+	Authenticated  bool                           `json:"authenticated"`
+	Authentication WebSessionStatusAuthentication `json:"authentication"`
+	ExpiresAt      *time.Time                     `json:"expires_at,omitempty"`
+}
+
+// WebSessionStatusAuthentication defines model for WebSessionStatus.Authentication.
+type WebSessionStatusAuthentication string
+
 // ListActivityParams defines parameters for ListActivity.
 type ListActivityParams struct {
 	// Limit Maximum entries to return
@@ -1102,6 +1383,27 @@ type GetCostParams struct {
 
 // GetCostParamsBranchEmpty defines parameters for GetCost.
 type GetCostParamsBranchEmpty string
+
+// ExportCiCostsParams defines parameters for ExportCiCosts.
+type ExportCiCostsParams struct {
+	// Format Output format; only json is supported
+	Format *string `form:"format,omitempty" json:"format,omitempty"`
+
+	// Since Inclusive finished_at lower bound (RFC3339 or YYYY-MM-DD)
+	Since *string `form:"since,omitempty" json:"since,omitempty"`
+
+	// Until Exclusive finished_at upper bound (RFC3339 or YYYY-MM-DD; date-only means through that UTC day)
+	Until *string `form:"until,omitempty" json:"until,omitempty"`
+
+	// Limit Maximum jobs in this page
+	Limit *int64 `form:"limit,omitempty" json:"limit,omitempty"`
+
+	// Cursor Opaque next_cursor from a previous page. Resumes strictly after its (finished_at, job_id) position and retains the original time bounds; mutually exclusive with since and until.
+	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
+
+	// Legacy Export structurally identified pre-panel CI jobs. Cursors cannot be reused across modes.
+	Legacy *bool `form:"legacy,omitempty" json:"legacy,omitempty"`
+}
 
 // ExportCiMetricsParams defines parameters for ExportCiMetrics.
 type ExportCiMetricsParams struct {
@@ -1298,6 +1600,42 @@ type SyncNowParams struct {
 	Stream *string `form:"stream,omitempty" json:"stream,omitempty"`
 }
 
+// GetWebAnalyticsParams defines parameters for GetWebAnalytics.
+type GetWebAnalyticsParams struct {
+	// Since Inclusive RFC 3339 finished-at bound; omit with an explicit until for all time
+	Since *string `form:"since,omitempty" json:"since,omitempty"`
+
+	// Until Exclusive RFC 3339 finished-at bound
+	Until *string `form:"until,omitempty" json:"until,omitempty"`
+
+	// Project Exact displayed project names (repeatable)
+	Project *[]string `form:"project,omitempty" json:"project,omitempty"`
+
+	// Source Exact stored source values (repeatable)
+	Source *[]string `form:"source,omitempty" json:"source,omitempty"`
+
+	// Agent Exact agent filter for attempt metrics
+	Agent *string `form:"agent,omitempty" json:"agent,omitempty"`
+
+	// Model Exact model filter for attempt metrics
+	Model *string `form:"model,omitempty" json:"model,omitempty"`
+
+	// Bucket UTC time bucket: hour, day, week, or month
+	Bucket *string `form:"bucket,omitempty" json:"bucket,omitempty"`
+}
+
+// GetReviewProjectionParams defines parameters for GetReviewProjection.
+type GetReviewProjectionParams struct {
+	// JobId Daemon-local review job ID
+	JobId *int64 `form:"job_id,omitempty" json:"job_id,omitempty"`
+
+	// Repo Exact repository path for contextual lookup
+	Repo *string `form:"repo,omitempty" json:"repo,omitempty"`
+
+	// Branch Optional exact branch for contextual lookup
+	Branch *string `form:"branch,omitempty" json:"branch,omitempty"`
+}
+
 // SetAgentHookSnoozeJSONRequestBody defines body for SetAgentHookSnooze for application/json ContentType.
 type SetAgentHookSnoozeJSONRequestBody = AgentHookSnoozeRequest
 
@@ -1339,6 +1677,12 @@ type CloseReviewJSONRequestBody = CloseReviewRequest
 
 // BackfillTokensJSONRequestBody defines body for BackfillTokens for application/json ContentType.
 type BackfillTokensJSONRequestBody = BackfillTokensRequest
+
+// BootstrapWebSessionJSONRequestBody defines body for BootstrapWebSession for application/json ContentType.
+type BootstrapWebSessionJSONRequestBody = WebBootstrapInputBody
+
+// LoginWebSessionJSONRequestBody defines body for LoginWebSession for application/json ContentType.
+type LoginWebSessionJSONRequestBody = WebLoginRequest
 
 // RequestEditorFn  is the function signature for the RequestEditor callback function
 type RequestEditorFn func(ctx context.Context, req *http.Request) error
@@ -1439,6 +1783,9 @@ type ClientInterface interface {
 	EnqueueJobWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	EnqueueJob(ctx context.Context, body EnqueueJobJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ExportCiCosts request
+	ExportCiCosts(ctx context.Context, params *ExportCiCostsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// ExportCiMetrics request
 	ExportCiMetrics(ctx context.Context, params *ExportCiMetricsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -1551,6 +1898,28 @@ type ClientInterface interface {
 	BackfillTokensWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	BackfillTokens(ctx context.Context, body BackfillTokensJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetWebAnalytics request
+	GetWebAnalytics(ctx context.Context, params *GetWebAnalyticsParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetReviewProjection request
+	GetReviewProjection(ctx context.Context, params *GetReviewProjectionParams, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// LogoutWebSession request
+	LogoutWebSession(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// GetWebSessionStatus request
+	GetWebSessionStatus(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// BootstrapWebSessionWithBody request with any body
+	BootstrapWebSessionWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	BootstrapWebSession(ctx context.Context, body BootstrapWebSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// LoginWebSessionWithBody request with any body
+	LoginWebSessionWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	LoginWebSession(ctx context.Context, body LoginWebSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 func (c *Client) ListActivity(ctx context.Context, params *ListActivityParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -1663,6 +2032,18 @@ func (c *Client) EnqueueJobWithBody(ctx context.Context, contentType string, bod
 
 func (c *Client) EnqueueJob(ctx context.Context, body EnqueueJobJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewEnqueueJobRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ExportCiCosts(ctx context.Context, params *ExportCiCostsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewExportCiCostsRequest(c.Server, params)
 	if err != nil {
 		return nil, err
 	}
@@ -2165,6 +2546,102 @@ func (c *Client) BackfillTokens(ctx context.Context, body BackfillTokensJSONRequ
 	return c.Client.Do(req)
 }
 
+func (c *Client) GetWebAnalytics(ctx context.Context, params *GetWebAnalyticsParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetWebAnalyticsRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetReviewProjection(ctx context.Context, params *GetReviewProjectionParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetReviewProjectionRequest(c.Server, params)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) LogoutWebSession(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewLogoutWebSessionRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) GetWebSessionStatus(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewGetWebSessionStatusRequest(c.Server)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) BootstrapWebSessionWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBootstrapWebSessionRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) BootstrapWebSession(ctx context.Context, body BootstrapWebSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewBootstrapWebSessionRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) LoginWebSessionWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewLoginWebSessionRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) LoginWebSession(ctx context.Context, body LoginWebSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewLoginWebSessionRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
 // NewListActivityRequest generates requests for ListActivity
 func NewListActivityRequest(server string, params *ListActivityParams) (*http.Request, error) {
 	var err error
@@ -2557,6 +3034,135 @@ func NewEnqueueJobRequestWithBody(server string, contentType string, body io.Rea
 	}
 
 	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewExportCiCostsRequest generates requests for ExportCiCosts
+func NewExportCiCostsRequest(server string, params *ExportCiCostsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/export/ci-costs")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Format != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "format", *params.Format, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Since != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "since", *params.Since, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Until != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "until", *params.Until, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Limit != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "limit", *params.Limit, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Cursor != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "cursor", *params.Cursor, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Legacy != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "legacy", *params.Legacy, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "boolean", Format: ""}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
 
 	return req, nil
 }
@@ -4354,6 +4960,366 @@ func NewBackfillTokensRequestWithBody(server string, contentType string, body io
 	return req, nil
 }
 
+// NewGetWebAnalyticsRequest generates requests for GetWebAnalytics
+func NewGetWebAnalyticsRequest(server string, params *GetWebAnalyticsParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/ui/analytics")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.Since != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "since", *params.Since, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Until != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "until", *params.Until, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Project != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "project", *params.Project, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Source != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", true, "source", *params.Source, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "array", Format: ""}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Agent != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "agent", *params.Agent, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Model != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "model", *params.Model, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Bucket != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "bucket", *params.Bucket, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetReviewProjectionRequest generates requests for GetReviewProjection
+func NewGetReviewProjectionRequest(server string, params *GetReviewProjectionParams) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/ui/review-projection")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	if params != nil {
+		queryValues := queryURL.Query()
+
+		if params.JobId != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "job_id", *params.JobId, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "integer", Format: "int64"}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Repo != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "repo", *params.Repo, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.Branch != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "branch", *params.Branch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		queryURL.RawQuery = queryValues.Encode()
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewLogoutWebSessionRequest generates requests for LogoutWebSession
+func NewLogoutWebSessionRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/ui/session")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("DELETE", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewGetWebSessionStatusRequest generates requests for GetWebSessionStatus
+func NewGetWebSessionStatusRequest(server string) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/ui/session")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("GET", queryURL.String(), nil)
+	if err != nil {
+		return nil, err
+	}
+
+	return req, nil
+}
+
+// NewBootstrapWebSessionRequest calls the generic BootstrapWebSession builder with application/json body
+func NewBootstrapWebSessionRequest(server string, body BootstrapWebSessionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewBootstrapWebSessionRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewBootstrapWebSessionRequestWithBody generates requests for BootstrapWebSession with any type of body
+func NewBootstrapWebSessionRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/ui/session/bootstrap")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewLoginWebSessionRequest calls the generic LoginWebSession builder with application/json body
+func NewLoginWebSessionRequest(server string, body LoginWebSessionJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewLoginWebSessionRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewLoginWebSessionRequestWithBody generates requests for LoginWebSession with any type of body
+func NewLoginWebSessionRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/ui/session/login")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 func (c *Client) applyEditors(ctx context.Context, req *http.Request, additionalEditors []RequestEditorFn) error {
 	for _, r := range c.RequestEditors {
 		if err := r(ctx, req); err != nil {
@@ -4423,6 +5389,9 @@ type ClientWithResponsesInterface interface {
 	EnqueueJobWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*EnqueueJobResponse, error)
 
 	EnqueueJobWithResponse(ctx context.Context, body EnqueueJobJSONRequestBody, reqEditors ...RequestEditorFn) (*EnqueueJobResponse, error)
+
+	// ExportCiCostsWithResponse request
+	ExportCiCostsWithResponse(ctx context.Context, params *ExportCiCostsParams, reqEditors ...RequestEditorFn) (*ExportCiCostsResponse, error)
 
 	// ExportCiMetricsWithResponse request
 	ExportCiMetricsWithResponse(ctx context.Context, params *ExportCiMetricsParams, reqEditors ...RequestEditorFn) (*ExportCiMetricsResponse, error)
@@ -4535,6 +5504,28 @@ type ClientWithResponsesInterface interface {
 	BackfillTokensWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BackfillTokensResponse, error)
 
 	BackfillTokensWithResponse(ctx context.Context, body BackfillTokensJSONRequestBody, reqEditors ...RequestEditorFn) (*BackfillTokensResponse, error)
+
+	// GetWebAnalyticsWithResponse request
+	GetWebAnalyticsWithResponse(ctx context.Context, params *GetWebAnalyticsParams, reqEditors ...RequestEditorFn) (*GetWebAnalyticsResponse, error)
+
+	// GetReviewProjectionWithResponse request
+	GetReviewProjectionWithResponse(ctx context.Context, params *GetReviewProjectionParams, reqEditors ...RequestEditorFn) (*GetReviewProjectionResponse, error)
+
+	// LogoutWebSessionWithResponse request
+	LogoutWebSessionWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*LogoutWebSessionResponse, error)
+
+	// GetWebSessionStatusWithResponse request
+	GetWebSessionStatusWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetWebSessionStatusResponse, error)
+
+	// BootstrapWebSessionWithBodyWithResponse request with any body
+	BootstrapWebSessionWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BootstrapWebSessionResponse, error)
+
+	BootstrapWebSessionWithResponse(ctx context.Context, body BootstrapWebSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*BootstrapWebSessionResponse, error)
+
+	// LoginWebSessionWithBodyWithResponse request with any body
+	LoginWebSessionWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*LoginWebSessionResponse, error)
+
+	LoginWebSessionWithResponse(ctx context.Context, body LoginWebSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*LoginWebSessionResponse, error)
 }
 
 type ListActivityResponse struct {
@@ -4700,6 +5691,30 @@ func (r EnqueueJobResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r EnqueueJobResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ExportCiCostsResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *ExportCICostDocument
+	ApplicationproblemJSON409     *ErrorModel
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r ExportCiCostsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ExportCiCostsResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -5397,6 +6412,152 @@ func (r BackfillTokensResponse) StatusCode() int {
 	return 0
 }
 
+type GetWebAnalyticsResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *AnalyticsSnapshot
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r GetWebAnalyticsResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetWebAnalyticsResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetReviewProjectionResponse struct {
+	Body                          []byte
+	HTTPResponse                  *http.Response
+	JSON200                       *ReviewProjection
+	ApplicationproblemJSONDefault *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r GetReviewProjectionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetReviewProjectionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type LogoutWebSessionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON400      *WebSessionError
+	JSON401      *WebSessionError
+	JSON403      *WebSessionError
+}
+
+// Status returns HTTPResponse.Status
+func (r LogoutWebSessionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r LogoutWebSessionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type GetWebSessionStatusResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *WebSessionStatus
+	JSON400      *WebSessionError
+}
+
+// Status returns HTTPResponse.Status
+func (r GetWebSessionStatusResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r GetWebSessionStatusResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type BootstrapWebSessionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *WebSessionCredentials
+	JSON400      *WebSessionError
+	JSON401      *WebSessionError
+	JSON403      *WebSessionError
+	JSON415      *WebSessionError
+}
+
+// Status returns HTTPResponse.Status
+func (r BootstrapWebSessionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r BootstrapWebSessionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type LoginWebSessionResponse struct {
+	Body         []byte
+	HTTPResponse *http.Response
+	JSON200      *WebSessionCredentials
+	JSON400      *WebSessionError
+	JSON401      *WebSessionError
+	JSON403      *WebSessionError
+	JSON415      *WebSessionError
+	JSON429      *WebSessionError
+}
+
+// Status returns HTTPResponse.Status
+func (r LoginWebSessionResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r LoginWebSessionResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 // ListActivityWithResponse request returning *ListActivityResponse
 func (c *ClientWithResponses) ListActivityWithResponse(ctx context.Context, params *ListActivityParams, reqEditors ...RequestEditorFn) (*ListActivityResponse, error) {
 	rsp, err := c.ListActivity(ctx, params, reqEditors...)
@@ -5482,6 +6643,15 @@ func (c *ClientWithResponses) EnqueueJobWithResponse(ctx context.Context, body E
 		return nil, err
 	}
 	return ParseEnqueueJobResponse(rsp)
+}
+
+// ExportCiCostsWithResponse request returning *ExportCiCostsResponse
+func (c *ClientWithResponses) ExportCiCostsWithResponse(ctx context.Context, params *ExportCiCostsParams, reqEditors ...RequestEditorFn) (*ExportCiCostsResponse, error) {
+	rsp, err := c.ExportCiCosts(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseExportCiCostsResponse(rsp)
 }
 
 // ExportCiMetricsWithResponse request returning *ExportCiMetricsResponse
@@ -5842,6 +7012,76 @@ func (c *ClientWithResponses) BackfillTokensWithResponse(ctx context.Context, bo
 	return ParseBackfillTokensResponse(rsp)
 }
 
+// GetWebAnalyticsWithResponse request returning *GetWebAnalyticsResponse
+func (c *ClientWithResponses) GetWebAnalyticsWithResponse(ctx context.Context, params *GetWebAnalyticsParams, reqEditors ...RequestEditorFn) (*GetWebAnalyticsResponse, error) {
+	rsp, err := c.GetWebAnalytics(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetWebAnalyticsResponse(rsp)
+}
+
+// GetReviewProjectionWithResponse request returning *GetReviewProjectionResponse
+func (c *ClientWithResponses) GetReviewProjectionWithResponse(ctx context.Context, params *GetReviewProjectionParams, reqEditors ...RequestEditorFn) (*GetReviewProjectionResponse, error) {
+	rsp, err := c.GetReviewProjection(ctx, params, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetReviewProjectionResponse(rsp)
+}
+
+// LogoutWebSessionWithResponse request returning *LogoutWebSessionResponse
+func (c *ClientWithResponses) LogoutWebSessionWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*LogoutWebSessionResponse, error) {
+	rsp, err := c.LogoutWebSession(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseLogoutWebSessionResponse(rsp)
+}
+
+// GetWebSessionStatusWithResponse request returning *GetWebSessionStatusResponse
+func (c *ClientWithResponses) GetWebSessionStatusWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*GetWebSessionStatusResponse, error) {
+	rsp, err := c.GetWebSessionStatus(ctx, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseGetWebSessionStatusResponse(rsp)
+}
+
+// BootstrapWebSessionWithBodyWithResponse request with arbitrary body returning *BootstrapWebSessionResponse
+func (c *ClientWithResponses) BootstrapWebSessionWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*BootstrapWebSessionResponse, error) {
+	rsp, err := c.BootstrapWebSessionWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseBootstrapWebSessionResponse(rsp)
+}
+
+func (c *ClientWithResponses) BootstrapWebSessionWithResponse(ctx context.Context, body BootstrapWebSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*BootstrapWebSessionResponse, error) {
+	rsp, err := c.BootstrapWebSession(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseBootstrapWebSessionResponse(rsp)
+}
+
+// LoginWebSessionWithBodyWithResponse request with arbitrary body returning *LoginWebSessionResponse
+func (c *ClientWithResponses) LoginWebSessionWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*LoginWebSessionResponse, error) {
+	rsp, err := c.LoginWebSessionWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseLoginWebSessionResponse(rsp)
+}
+
+func (c *ClientWithResponses) LoginWebSessionWithResponse(ctx context.Context, body LoginWebSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*LoginWebSessionResponse, error) {
+	rsp, err := c.LoginWebSession(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseLoginWebSessionResponse(rsp)
+}
+
 // ParseListActivityResponse parses an HTTP response from a ListActivityWithResponse call
 func ParseListActivityResponse(rsp *http.Response) (*ListActivityResponse, error) {
 	bodyBytes, err := io.ReadAll(rsp.Body)
@@ -6099,6 +7339,46 @@ func ParseEnqueueJobResponse(rsp *http.Response) (*EnqueueJobResponse, error) {
 			return nil, err
 		}
 		response.JSON503 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseExportCiCostsResponse parses an HTTP response from a ExportCiCostsWithResponse call
+func ParseExportCiCostsResponse(rsp *http.Response) (*ExportCiCostsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ExportCiCostsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ExportCICostDocument
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
 
 	}
 
@@ -7096,6 +8376,260 @@ func ParseBackfillTokensResponse(rsp *http.Response) (*BackfillTokensResponse, e
 			return nil, err
 		}
 		response.JSON500 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetWebAnalyticsResponse parses an HTTP response from a GetWebAnalyticsWithResponse call
+func ParseGetWebAnalyticsResponse(rsp *http.Response) (*GetWebAnalyticsResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetWebAnalyticsResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest AnalyticsSnapshot
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetReviewProjectionResponse parses an HTTP response from a GetReviewProjectionWithResponse call
+func ParseGetReviewProjectionResponse(rsp *http.Response) (*GetReviewProjectionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetReviewProjectionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ReviewProjection
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSONDefault = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseLogoutWebSessionResponse parses an HTTP response from a LogoutWebSessionWithResponse call
+func ParseLogoutWebSessionResponse(rsp *http.Response) (*LogoutWebSessionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &LogoutWebSessionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest WebSessionError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest WebSessionError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest WebSessionError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseGetWebSessionStatusResponse parses an HTTP response from a GetWebSessionStatusWithResponse call
+func ParseGetWebSessionStatusResponse(rsp *http.Response) (*GetWebSessionStatusResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &GetWebSessionStatusResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest WebSessionStatus
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest WebSessionError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseBootstrapWebSessionResponse parses an HTTP response from a BootstrapWebSessionWithResponse call
+func ParseBootstrapWebSessionResponse(rsp *http.Response) (*BootstrapWebSessionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &BootstrapWebSessionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest WebSessionCredentials
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest WebSessionError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest WebSessionError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest WebSessionError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
+		var dest WebSessionError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON415 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseLoginWebSessionResponse parses an HTTP response from a LoginWebSessionWithResponse call
+func ParseLoginWebSessionResponse(rsp *http.Response) (*LoginWebSessionResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &LoginWebSessionResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest WebSessionCredentials
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 400:
+		var dest WebSessionError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON400 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 401:
+		var dest WebSessionError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON401 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 403:
+		var dest WebSessionError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON403 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 415:
+		var dest WebSessionError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON415 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 429:
+		var dest WebSessionError
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON429 = &dest
 
 	}
 

@@ -58,9 +58,11 @@ const agentRanByUsage = "json_valid(j.token_usage) AND (" +
 // covers rows predating the marker. Terminal rows that never run an agent (panel
 // synthesis passthrough/all-failed/all-passed, or a job that failed a pre-agent
 // gate) carry neither signal and stay out of the denominator, so coverage is not
-// dragged below 100% by rows that could never report cost.
+// dragged below 100% by rows that could never report cost. Invoked classifier
+// attempts remain eligible when their terminal review row is marked skipped.
 const costEligible = "j.started_at IS NOT NULL AND j.finished_at IS NOT NULL " +
-	"AND j.status != 'skipped' AND (j.agent_invoked = 1 OR (" + agentRanByUsage + "))"
+	"AND j.status IN ('done','applied','rebased','failed','canceled','skipped') " +
+	"AND (j.agent_invoked = 1 OR (" + agentRanByUsage + "))"
 
 // GetCostAggregate computes approximate agent spend for the given scope on a
 // fresh read.

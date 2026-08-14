@@ -110,9 +110,10 @@ type ListJobsInput struct {
 // ListJobsOutput is the response for GET /api/jobs.
 type ListJobsOutput struct {
 	Body struct {
-		Jobs    []storage.ReviewJob `json:"jobs"`
-		HasMore bool                `json:"has_more"`
-		Stats   *storage.JobStats   `json:"stats,omitempty"`
+		Jobs          []storage.ReviewJob `json:"jobs"`
+		HasMore       bool                `json:"has_more"`
+		Stats         *storage.JobStats   `json:"stats,omitempty"`
+		FilteredStats *storage.JobStats   `json:"filtered_stats,omitempty"`
 	}
 }
 
@@ -239,7 +240,8 @@ type CancelJobRequest struct {
 
 // RerunJobRequest is the JSON body for POST /api/job/rerun.
 type RerunJobRequest struct {
-	JobID int64 `json:"job_id"`
+	JobID     int64  `json:"job_id"`
+	RequestID string `json:"request_id,omitempty"`
 }
 
 // AddCommentRequest is the JSON body for POST /api/comment.
@@ -288,7 +290,10 @@ type RerunJobInput struct {
 // RerunJobOutput is the response for POST /api/job/rerun.
 type RerunJobOutput struct {
 	Body struct {
-		Success bool `json:"success"`
+		Success   bool   `json:"success"`
+		JobID     int64  `json:"job_id"`
+		RequestID string `json:"request_id"`
+		RunUUID   string `json:"run_uuid,omitempty"`
 	}
 }
 

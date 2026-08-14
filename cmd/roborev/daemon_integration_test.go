@@ -226,7 +226,10 @@ func TestDaemonShutdownBySignal(t *testing.T) {
 	// 3. Wait for daemon to be ready
 	// The daemon writes runtime/daemon.<pid>.json
 	daemonJSON := filepath.Join(tmpDir, "runtime", fmt.Sprintf("daemon.%d.json", cmd.Process.Pid))
-	if !waitFor(t, 5*time.Second, func() bool {
+	// This package runs concurrently with the full repository under the race
+	// detector. Daemon startup can spend several seconds opening and migrating
+	// its isolated database while the runner is saturated.
+	if !waitFor(t, 30*time.Second, func() bool {
 		_, err := os.Stat(daemonJSON)
 		return err == nil
 	}) {
@@ -406,8 +409,15 @@ func TestDaemonLifecycleEndToEnd(t *testing.T) {
 
 	// Wait for the daemon to publish its runtime record and answer pings.
 	pid := cmd.Process.Pid
+	startupTimeout := 30 * time.Second
+	if runtime.GOOS == "windows" {
+		// The Windows CI runner executes all Go packages concurrently. Under that
+		// I/O load, opening and migrating the isolated SQLite database can take
+		// longer than the normal startup deadline.
+		startupTimeout = 2 * time.Minute
+	}
 	var info *daemon.RuntimeInfo
-	require.True(t, waitFor(t, 30*time.Second, func() bool {
+	require.True(t, waitFor(t, startupTimeout, func() bool {
 		read, err := daemon.ReadRuntimeForPID(pid)
 		if err != nil {
 			return false

@@ -1,0 +1,163 @@
+<script lang="ts">
+  import { TopBar, type TopBarTab } from "@kenn-io/kit-ui";
+  import { Effect } from "effect";
+  import { onDestroy } from "svelte";
+
+  import { createRoborevClient } from "../api/client";
+  import { createRouter } from "../router/router.svelte";
+  import { setAppRuntime, setRoborevClient } from "../runtime/context";
+  import { makeAppRuntime } from "../runtime/runtime";
+  import { createReviewStores } from "../stores/composition.svelte";
+  import { provideReviewStores } from "../stores/context";
+  import AnalyticsView from "../views/AnalyticsView.svelte";
+  import ReviewsView from "../views/ReviewsView.svelte";
+
+  const runtime = makeAppRuntime();
+  const client = createRoborevClient("/");
+  const router = createRouter();
+  const route = $derived(router.getRoute());
+  const navigationTabs: TopBarTab[] = [
+    { id: "reviews", label: "Reviews" },
+    { id: "analytics", label: "Analytics" },
+  ];
+  let actionError = $state<string | null>(null);
+  const stores = createReviewStores({
+    runtime,
+    client,
+    navigate: router.navigateToReview,
+    onError: (message) => {
+      actionError = message;
+    },
+  });
+  setAppRuntime(runtime);
+  setRoborevClient(client);
+  provideReviewStores(stores);
+
+  const polling = runtime.runCommand(stores.roborevDaemon.pollingEffect, {
+    operation: "poll Roborev daemon status",
+    safeContext: {},
+    onFailure: () => {},
+  });
+
+  onDestroy(() => {
+    polling.interrupt();
+    stores.roborevJobs.dispose();
+    router.dispose();
+    void Effect.runPromise(runtime.disposeEffect);
+  });
+
+  function navigateReviews(event: MouseEvent): void {
+    if (!shouldHandleNavigation(event)) return;
+    event.preventDefault();
+    router.navigateToReview();
+  }
+
+  function navigatePage(page: string): void {
+    if (page === "analytics") {
+      router.navigateToAnalytics();
+      return;
+    }
+    router.navigateToReview();
+  }
+
+  function shouldHandleNavigation(event: MouseEvent): boolean {
+    return (
+      event.button === 0 &&
+      !event.metaKey &&
+      !event.ctrlKey &&
+      !event.shiftKey &&
+      !event.altKey
+    );
+  }
+</script>
+
+<div class="app-shell">
+  <TopBar
+    class="app-header"
+    tabs={navigationTabs}
+    active={route.page}
+    onchange={navigatePage}
+    ariaLabel="Application"
+  >
+    {#snippet left()}
+      <a class="brand" href="/reviews" onclick={navigateReviews}>Roborev</a>
+    {/snippet}
+  </TopBar>
+
+  <div class="app-content">
+    {#if route.page === "analytics"}
+      <AnalyticsView />
+    {:else}
+      <ReviewsView jobId={route.jobId} />
+    {/if}
+  </div>
+  {#if actionError}
+    <div class="action-error" role="alert">
+      <span>{actionError}</span>
+      <button
+        type="button"
+        aria-label="Dismiss error"
+        onclick={() => (actionError = null)}>Dismiss</button
+      >
+    </div>
+  {/if}
+</div>
+
+<style>
+  .app-shell {
+    display: flex;
+    width: 100%;
+    min-height: 0;
+    min-width: 0;
+    flex: 1;
+    flex-direction: column;
+    background: var(--bg-primary);
+    color: var(--text-primary);
+  }
+
+  :global(.app-header) {
+    --header-height: 48px;
+  }
+
+  .brand {
+    display: inline-flex;
+    align-items: center;
+    color: var(--text-primary);
+    font-size: var(--font-size-md);
+    font-weight: 700;
+    letter-spacing: -0.01em;
+    text-decoration: none;
+    white-space: nowrap;
+  }
+
+  .app-content {
+    display: flex;
+    min-height: 0;
+    min-width: 0;
+    flex: 1;
+  }
+
+  .action-error {
+    position: fixed;
+    right: 16px;
+    bottom: 16px;
+    z-index: 100;
+    display: flex;
+    max-width: min(420px, calc(100vw - 32px));
+    align-items: center;
+    gap: 12px;
+    padding: 10px 12px;
+    border: 1px solid var(--accent-red);
+    border-radius: var(--radius-md);
+    background: var(--bg-surface);
+    box-shadow: var(--shadow-md);
+    color: var(--text-primary);
+  }
+
+  .action-error button {
+    border: 0;
+    background: transparent;
+    color: var(--text-secondary);
+    cursor: pointer;
+  }
+</style>

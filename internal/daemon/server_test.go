@@ -267,6 +267,7 @@ func TestServerStartRejectsAccessDeniedExistingDaemon(t *testing.T) {
 		DaemonEndpoint{Network: "tcp", Address: defaultTestAddr},
 		nil,
 		"test-version",
+		nil,
 	))
 
 	origProbe := probeRuntimeEndpoint

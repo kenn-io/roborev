@@ -21,6 +21,7 @@ nav = [
   ]},
   {"CLI Commands" = "commands.md"},
   {"Terminal UI" = "integrations/tui.md"},
+  {"Browser UI" = "web-ui.md"},
   {"Configuration" = "configuration.md"},
   {"Supported Agents" = "agents/index.md"},
   {"GitHub Integration" = "integrations/github.md"},

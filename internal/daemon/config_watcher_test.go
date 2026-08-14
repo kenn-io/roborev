@@ -321,6 +321,24 @@ func TestConfigWatcher_InvalidConfigDoesNotCrash(t *testing.T) {
 	}
 }
 
+func TestConfigWatcherPreservesRestartRequiredWebConfig(t *testing.T) {
+	h := newConfigWatcherHarness(t, `[web]
+listen = "127.0.0.1:7400"
+public_origin = "https://reviews.example.com"
+auth_token = "MDEyMzQ1Njc4OWFiY2RlZmdoaWprbG1ub3BxcnN0dXY"
+`)
+
+	h.updateConfigAndWait(t, `[web]
+listen = "127.0.0.1:7500"
+public_origin = "https://review-ui.example.com"
+auth_token = "YWJjZGVmZ2hpamtsbW5vcHFyc3R1dnd4eXowMTIzNDU"
+`)
+
+	assert.Equal(t, "127.0.0.1:7400", h.Watcher.Config().Web.Listen)
+	assert.Equal(t, "https://reviews.example.com", h.Watcher.Config().Web.PublicOrigin)
+	assert.Equal(t, testBrowserAuthToken, h.Watcher.Config().Web.AuthToken)
+}
+
 func TestConfigGetter_Interface(t *testing.T) {
 	// Verify both StaticConfig and ConfigWatcher implement ConfigGetter
 	var _ ConfigGetter = (*StaticConfig)(nil)

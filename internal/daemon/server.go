@@ -35,32 +35,39 @@ import (
 
 // Server is the HTTP API server for the daemon
 type Server struct {
-	db                *storage.DB
-	configWatcher     *ConfigWatcher
-	broadcaster       Broadcaster
-	workerPool        *WorkerPool
-	httpServer        *http.Server
-	syncWorker        *storage.SyncWorker
-	ciPoller          *CIPoller
-	hookRunner        *HookRunner
-	errorLog          *ErrorLog
-	activityLog       *ActivityLog
-	telemetry         telemetry.Client
-	telemetryOnce     sync.Once
-	telemetryStop     chan struct{}
-	startTime         time.Time
-	endpointMu        sync.Mutex // protects endpoint (written by Start, read by Stop)
-	endpoint          DaemonEndpoint
-	alternateEndpoint *DaemonEndpoint
-	socketActivated   bool // true if started via systemd socket activation
-	stopOnce          sync.Once
-	stopErr           error
-	sweepMu           sync.Mutex         // protects sweepCancel (written by Start, read by Stop)
-	sweepCancel       context.CancelFunc // cancels the panel sweep goroutine on Stop
-	shutdownCh        chan struct{}      // closed when /api/shutdown is requested
-	shutdownOnce      sync.Once
-	shutdownDrainMu   sync.Mutex
-	shutdownDraining  bool
+	db                      *storage.DB
+	configWatcher           *ConfigWatcher
+	broadcaster             Broadcaster
+	workerPool              *WorkerPool
+	httpServer              *http.Server
+	browserMu               sync.Mutex
+	browserServer           *http.Server
+	browserListener         net.Listener
+	browserRuntime          *BrowserRuntimeInfo
+	browserStopping         bool
+	allowWebCompilationStub bool
+	webDevOrigin            string
+	syncWorker              *storage.SyncWorker
+	ciPoller                *CIPoller
+	hookRunner              *HookRunner
+	errorLog                *ErrorLog
+	activityLog             *ActivityLog
+	telemetry               telemetry.Client
+	telemetryOnce           sync.Once
+	telemetryStop           chan struct{}
+	startTime               time.Time
+	endpointMu              sync.Mutex // protects endpoint (written by Start, read by Stop)
+	endpoint                DaemonEndpoint
+	alternateEndpoint       *DaemonEndpoint
+	socketActivated         bool // true if started via systemd socket activation
+	stopOnce                sync.Once
+	stopErr                 error
+	sweepMu                 sync.Mutex         // protects sweepCancel (written by Start, read by Stop)
+	sweepCancel             context.CancelFunc // cancels the panel sweep goroutine on Stop
+	shutdownCh              chan struct{}      // closed when /api/shutdown is requested
+	shutdownOnce            sync.Once
+	shutdownDrainMu         sync.Mutex
+	shutdownDraining        bool
 
 	// Cached machine ID to avoid INSERT on every status request
 	machineIDMu sync.Mutex
@@ -79,8 +86,25 @@ var (
 	listenAuxiliaryEndpointForServer = listenAuxiliaryEndpoint
 )
 
-// NewServer creates a new daemon server
-func NewServer(db *storage.DB, cfg *config.Config, configPath string) *Server {
+// ServerOption customizes a daemon server before it starts.
+type ServerOption func(*Server)
+
+// WithWebDevelopmentOrigin adds one exact loopback origin for the disposable
+// development server. Production callers must not set this option.
+func WithWebDevelopmentOrigin(origin string) ServerOption {
+	return func(server *Server) {
+		server.webDevOrigin = origin
+	}
+}
+
+func withWebCompilationStub() ServerOption {
+	return func(server *Server) {
+		server.allowWebCompilationStub = true
+	}
+}
+
+// NewServer creates a new daemon server.
+func NewServer(db *storage.DB, cfg *config.Config, configPath string, options ...ServerOption) *Server {
 	// Initialize error log
 	errorLog, err := NewErrorLog(DefaultErrorLogPath())
 	if err != nil {
@@ -93,7 +117,11 @@ func NewServer(db *storage.DB, cfg *config.Config, configPath string) *Server {
 		log.Printf("Warning: failed to create activity log: %v", err)
 	}
 
-	return newServerWithLogs(db, cfg, configPath, errorLog, activityLog)
+	server := newServerWithLogs(db, cfg, configPath, errorLog, activityLog)
+	for _, option := range options {
+		option(server)
+	}
+	return server
 }
 
 func newServerWithLogs(
@@ -342,12 +370,29 @@ func (s *Server) Start(ctx context.Context) error {
 	s.alternateEndpoint = alternate
 	s.endpointMu.Unlock()
 
+	browserRuntime, err := s.startBrowserServer(cfg.Web)
+	if err != nil {
+		_ = s.httpServer.Close()
+		s.configWatcher.Stop()
+		s.workerPool.Stop()
+		return err
+	}
+	s.browserMu.Lock()
+	if s.browserStopping {
+		s.browserMu.Unlock()
+		_ = s.httpServer.Close()
+		s.configWatcher.Stop()
+		s.workerPool.Stop()
+		return fmt.Errorf("server stopped during browser startup")
+	}
+	s.browserRuntime = browserRuntime
 	s.startPanelSweep(ctx)
 
 	// Write runtime info only after the HTTP server is accepting requests.
-	if err := WriteRuntime(ep, alternate, version.Version); err != nil {
+	if err := WriteRuntime(ep, alternate, version.Version, browserRuntime); err != nil {
 		log.Printf("Warning: failed to write runtime info: %v", err)
 	}
+	s.browserMu.Unlock()
 
 	s.captureDaemonStartedTelemetry(cfg)
 	s.startDailyTelemetryLoop(ctx, cfg)
@@ -553,12 +598,20 @@ func (s *Server) stopOnce0() error {
 			map[string]string{"uptime": formatDuration(uptime)},
 		)
 	}
-
 	// Stop telemetry loop
 	close(s.telemetryStop)
 
 	// Stop config watcher
 	s.configWatcher.Stop()
+
+	// Prevent a browser listener that is still starting from becoming available
+	// after shutdown has begun. The active listener remains available while
+	// workers drain, matching the CLI listener's graceful shutdown behavior.
+	s.browserMu.Lock()
+	s.browserStopping = true
+	browserServer := s.browserServer
+	browserListener := s.browserListener
+	s.browserMu.Unlock()
 
 	// Stop new CI polling work. Keep its completion listener subscribed while
 	// active workers finish so their terminal events are still finalized.
@@ -591,6 +644,22 @@ func (s *Server) stopOnce0() error {
 	if err := s.httpServer.Shutdown(shutdownCleanupCtx); err != nil {
 		log.Printf("HTTP server shutdown error: %v", err)
 		cleanupErr = errors.Join(cleanupErr, fmt.Errorf("shutdown HTTP server: %w", err))
+	}
+	if browserServer != nil {
+		if err := browserServer.Shutdown(shutdownCleanupCtx); err != nil {
+			log.Printf("Browser HTTP server shutdown error: %v", err)
+			cleanupErr = errors.Join(
+				cleanupErr,
+				fmt.Errorf("shutdown browser HTTP server: %w", err),
+			)
+		}
+	} else if browserListener != nil {
+		if err := browserListener.Close(); err != nil && !errors.Is(err, net.ErrClosed) {
+			cleanupErr = errors.Join(
+				cleanupErr,
+				fmt.Errorf("close browser listener: %w", err),
+			)
+		}
 	}
 
 	// Stop hook runner
@@ -1250,9 +1319,15 @@ func (s *Server) humaListJobs(
 
 	attachPanelSummaries(s.db, jobs)
 
-	// Stats use same repo/branch filters but ignore closed
-	// and pagination.
+	// Stats describe the aggregate population for the active scope and ignore
+	// pagination. The closed-state filter intentionally applies only to the
+	// listing: queue consumers use Stats to report both open and closed totals.
+	// FilteredStats below carries the exact closed-filtered counts for browser
+	// views that need counts matching the visible rows.
 	var statsOpts []storage.ListJobsOption
+	if input.GitRef != "" {
+		statsOpts = append(statsOpts, storage.WithGitRef(input.GitRef))
+	}
 	if input.Branch != "" {
 		if input.BranchIncludeEmpty == "true" {
 			statsOpts = append(
@@ -1295,17 +1370,36 @@ func (s *Server) humaListJobs(
 		statsOpts,
 		storage.WithExcludePanelRole(storage.PanelRoleMember),
 	)
-	stats, statsErr := s.db.CountJobStats(repo, statsOpts...)
+	stats, statsErr := s.db.CountJobStats(input.Status, repo, statsOpts...)
 	if statsErr != nil {
 		log.Printf(
 			"Warning: failed to count job stats: %v", statsErr,
 		)
+	}
+	var filteredStats *storage.JobStats
+	if input.Closed == "true" || input.Closed == "false" {
+		filteredOpts := append(
+			append([]storage.ListJobsOption(nil), statsOpts...),
+			storage.WithClosed(input.Closed == "true"),
+		)
+		filtered, filteredErr := s.db.CountJobStats(
+			input.Status, repo, filteredOpts...,
+		)
+		if filteredErr != nil {
+			log.Printf(
+				"Warning: failed to count closed-filtered job stats: %v",
+				filteredErr,
+			)
+		} else {
+			filteredStats = &filtered
+		}
 	}
 
 	resp := &ListJobsOutput{}
 	resp.Body.Jobs = jobs
 	resp.Body.HasMore = hasMore
 	resp.Body.Stats = &stats
+	resp.Body.FilteredStats = filteredStats
 	return resp, nil
 }
 
@@ -1809,6 +1903,7 @@ func (s *Server) humaGetStatus(
 		MachineID:           s.getMachineID(),
 		ConfigReloadedAt:    configReloadedAt,
 		ConfigReloadCounter: configReloadCounter,
+		WebCapabilities:     []string{"review-projection-v1", "analytics-v1"},
 	}
 	return resp, nil
 }
@@ -1974,6 +2069,22 @@ func (s *Server) humaRerunJob(
 			"job_id is required",
 		)
 	}
+	if input.Body.RequestID != "" {
+		result, found, err := s.db.GetRerunRequest(input.Body.RequestID, input.Body.JobID)
+		if err != nil {
+			return nil, huma.Error500InternalServerError(
+				fmt.Sprintf("load rerun request: %v", err),
+			)
+		}
+		if found {
+			resp := &RerunJobOutput{}
+			resp.Body.Success = true
+			resp.Body.JobID = result.JobID
+			resp.Body.RequestID = input.Body.RequestID
+			resp.Body.RunUUID = result.PanelRunUUID
+			return resp, nil
+		}
+	}
 
 	job, err := s.db.GetJobByID(input.Body.JobID)
 	if err != nil {
@@ -1986,13 +2097,16 @@ func (s *Server) humaRerunJob(
 			fmt.Sprintf("load job: %v", err),
 		)
 	}
+	if job.Status == storage.JobStatusCanceled && job.WorkerID != "" {
+		return nil, huma.Error409Conflict("canceled job is still stopping")
+	}
 
 	// Rerunning a panel synthesis parent spawns a brand-new panel run (fresh
 	// members + a re-blocked synthesis) rather than re-queueing the parent in
 	// place, so the new run gets fresh member reviews to synthesize.
 	// rerunPanelRun enforces the terminal-state guard.
 	if job.IsSynthesisJob() {
-		return s.rerunPanelRun(job)
+		return s.rerunPanelRun(job, input.Body.RequestID)
 	}
 	if job.PanelRole == storage.PanelRoleMember {
 		return nil, huma.Error400BadRequest(
@@ -2007,12 +2121,12 @@ func (s *Server) humaRerunJob(
 		return nil, huma.Error400BadRequest(err.Error())
 	}
 
-	err = s.db.ReenqueueJob(
+	resultJobID, err := s.db.ReenqueueJobWithRequest(
 		input.Body.JobID,
 		storage.ReenqueueOpts{
 			Model:    model,
 			Provider: provider,
-		},
+		}, input.Body.RequestID,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -2027,6 +2141,8 @@ func (s *Server) humaRerunJob(
 
 	resp := &RerunJobOutput{}
 	resp.Body.Success = true
+	resp.Body.JobID = resultJobID
+	resp.Body.RequestID = input.Body.RequestID
 	return resp, nil
 }
 
@@ -3207,6 +3323,16 @@ func (s *Server) humaJobOutput(
 
 		if input.Stream != "1" {
 			lines := s.workerPool.GetJobOutput(jobID)
+			if len(lines) == 0 && jobStatusHasPersistedOutput(job.Status) {
+				normalizerAgent := agent.CanonicalName(job.Agent)
+				if review, reviewErr := s.db.GetReviewByJobID(jobID); reviewErr == nil && review.Agent != "" {
+					normalizerAgent = agent.CanonicalName(review.Agent)
+				}
+				persisted, err := readNormalizedJobOutput(jobID, normalizerAgent)
+				if err == nil {
+					lines = persisted
+				}
+			}
 			if lines == nil {
 				lines = []OutputLine{}
 			}
@@ -3284,6 +3410,17 @@ func (s *Server) humaJobOutput(
 			}
 		}
 	}}, nil
+}
+
+func jobStatusHasPersistedOutput(status storage.JobStatus) bool {
+	switch status {
+	case storage.JobStatusDone, storage.JobStatusFailed,
+		storage.JobStatusCanceled, storage.JobStatusApplied,
+		storage.JobStatusRebased, storage.JobStatusSkipped:
+		return true
+	default:
+		return false
+	}
 }
 
 func (s *Server) humaJobLog(

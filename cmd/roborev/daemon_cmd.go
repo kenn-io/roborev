@@ -20,6 +20,12 @@ import (
 	"go.kenn.io/roborev/internal/version"
 )
 
+var (
+	daemonEnsure   = ensureDaemon
+	daemonStop     = stopDaemon
+	daemonDiscover = uiRuntimeInfo
+)
+
 func daemonCmd() *cobra.Command {
 	cmd := &cobra.Command{
 		Use:   "daemon",
@@ -30,10 +36,10 @@ func daemonCmd() *cobra.Command {
 		Use:   "start",
 		Short: "Start the daemon",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := ensureDaemon(); err != nil {
+			if err := daemonEnsure(); err != nil {
 				return err
 			}
-			fmt.Println("Daemon started")
+			writeDaemonLifecycleResult("Daemon started")
 			return nil
 		},
 	})
@@ -42,7 +48,7 @@ func daemonCmd() *cobra.Command {
 		Use:   "stop",
 		Short: "Stop the daemon",
 		RunE: func(cmd *cobra.Command, args []string) error {
-			if err := stopDaemon(); errors.Is(err, ErrDaemonNotRunning) {
+			if err := daemonStop(); errors.Is(err, ErrDaemonNotRunning) {
 				fmt.Println("Daemon was not running")
 				return nil
 			} else if err != nil {
@@ -58,35 +64,57 @@ func daemonCmd() *cobra.Command {
 		Short: "Restart the daemon",
 		RunE: func(cmd *cobra.Command, args []string) error {
 			wasRunning := true
-			if err := stopDaemon(); errors.Is(err, ErrDaemonNotRunning) {
+			if err := daemonStop(); errors.Is(err, ErrDaemonNotRunning) {
 				wasRunning = false
 			} else if err != nil {
 				return err
 			}
-			if err := ensureDaemon(); err != nil {
+			if err := daemonEnsure(); err != nil {
 				return err
 			}
 			if wasRunning {
-				fmt.Println("Daemon restarted")
+				writeDaemonLifecycleResult("Daemon restarted")
 			} else {
-				fmt.Println("Daemon started (was not running)")
+				writeDaemonLifecycleResult("Daemon started (was not running)")
 			}
 			return nil
 		},
 	})
 
+	cmd.AddCommand(statusCmd())
 	cmd.AddCommand(daemonRunCmd())
 
 	return cmd
 }
 
+func writeDaemonLifecycleResult(message string) {
+	fmt.Println(message)
+	fmt.Printf("Web UI: %s\n", displayWebUIURL(discoverWebUIURL(daemonDiscover)))
+}
+
+func discoverWebUIURL(discover func() (*daemon.RuntimeInfo, error)) string {
+	runtimeInfo, err := discover()
+	if err != nil || runtimeInfo == nil || runtimeInfo.WebOrigin == "" {
+		return ""
+	}
+	return runtimeInfo.WebOrigin
+}
+
+func displayWebUIURL(webURL string) string {
+	if webURL == "" {
+		return "unavailable"
+	}
+	return webURL
+}
+
 // daemonRunCmd runs the daemon in the foreground (used by "daemon start" internally)
 func daemonRunCmd() *cobra.Command {
 	var (
-		dbPath     string
-		configPath string
-		addr       string
-		workers    int
+		dbPath       string
+		configPath   string
+		addr         string
+		workers      int
+		webDevOrigin string
 	)
 
 	cmd := &cobra.Command{
@@ -195,7 +223,11 @@ func daemonRunCmd() *cobra.Command {
 			defer cancel()
 
 			// Create and start server
-			server := daemon.NewServer(db, cfg, configPath)
+			var serverOptions []daemon.ServerOption
+			if webDevOrigin != "" {
+				serverOptions = append(serverOptions, daemon.WithWebDevelopmentOrigin(webDevOrigin))
+			}
+			server := daemon.NewServer(db, cfg, configPath, serverOptions...)
 			server.SetTelemetry(telemetryReporter)
 			if syncWorker != nil {
 				server.SetSyncWorker(syncWorker)
@@ -249,6 +281,10 @@ func daemonRunCmd() *cobra.Command {
 	cmd.Flags().StringVar(&configPath, "config", config.GlobalConfigPath(), "path to config file")
 	cmd.Flags().StringVar(&addr, "addr", "", "server address (overrides config)")
 	cmd.Flags().IntVar(&workers, "workers", 0, "number of workers (overrides config)")
+	cmd.Flags().StringVar(&webDevOrigin, "web-dev-origin", "", "exact loopback origin for web development")
+	if err := cmd.Flags().MarkHidden("web-dev-origin"); err != nil {
+		panic(err)
+	}
 
 	return cmd
 }

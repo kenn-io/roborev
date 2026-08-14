@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bufio"
 	"bytes"
 	"fmt"
 	"io"
@@ -17,7 +18,10 @@ import (
 
 var jobLogOpenRetryInterval = 5 * time.Second
 
-const maxBufferedJobLogBytes = 256 * 1024
+const (
+	maxBufferedJobLogBytes     = 256 * 1024
+	maxNormalizedJobOutputSize = 512 * 1024
+)
 
 // JobLogDir returns the directory for per-job log files.
 func JobLogDir() string {
@@ -93,6 +97,48 @@ func CleanJobLogs(maxAge time.Duration) int {
 // error if the file doesn't exist.
 func ReadJobLog(jobID int64) ([]byte, error) {
 	return os.ReadFile(JobLogPath(jobID))
+}
+
+// readNormalizedJobOutput returns the tail of a persisted job log in the same
+// shape as live worker output. This keeps completed-job output available after
+// the daemon restarts without loading an unbounded log into memory.
+func readNormalizedJobOutput(jobID int64, agentName string) ([]OutputLine, error) {
+	f, err := os.Open(JobLogPath(jobID))
+	if err != nil {
+		return nil, err
+	}
+	defer f.Close()
+
+	info, err := f.Stat()
+	if err != nil {
+		return nil, err
+	}
+	start := max(info.Size()-maxNormalizedJobOutputSize, 0)
+	if _, err := f.Seek(start, io.SeekStart); err != nil {
+		return nil, err
+	}
+
+	scanner := bufio.NewScanner(f)
+	scanner.Buffer(make([]byte, 64*1024), maxNormalizedJobOutputSize)
+	if start > 0 {
+		// The tail normally begins in the middle of a record.
+		scanner.Scan()
+	}
+
+	normalize := GetNormalizer(agentName)
+	lines := make([]OutputLine, 0)
+	for scanner.Scan() {
+		line := normalize(scanner.Text())
+		if line == nil {
+			continue
+		}
+		line.Timestamp = info.ModTime()
+		lines = append(lines, *line)
+	}
+	if err := scanner.Err(); err != nil {
+		return nil, err
+	}
+	return lines, nil
 }
 
 // JobLogExists reports whether a log file exists for the given job.

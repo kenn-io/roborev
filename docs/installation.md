@@ -82,6 +82,11 @@ Ensure `$GOPATH/bin` is in your PATH:
 export PATH="$PATH:$(go env GOPATH)/bin"
 ```
 
+Go module source archives contain a compilation stub rather than generated web
+assets, so `go install ...@latest` installs the CLI and terminal UI but leaves
+the browser listener disabled. Use a release package or `make install` when you
+need the browser application.
+
 ## Build from Source
 
 ```bash
@@ -90,7 +95,8 @@ cd roborev
 make install
 ```
 
-The `make install` target builds with version information embedded (e.g.,
+The `make install` target requires Bun 1.3.14, builds and validates the browser
+application, and embeds it alongside version information (for example,
 `v0.7.0-5-gabcdef`).
 
 For quick iteration during development:

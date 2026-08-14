@@ -167,7 +167,7 @@ func NewMockDaemon(t *testing.T, hooks MockRefineHooks) *MockDaemon {
 	require.NoError(t, os.MkdirAll(tmpDir, 0o755), "failed to create data dir")
 	mockAddr := ts.URL[7:] // strip "http://"
 	require.NoError(t,
-		daemon.WriteRuntime(daemon.DaemonEndpoint{Network: "tcp", Address: mockAddr}, nil, version.Version),
+		daemon.WriteRuntime(daemon.DaemonEndpoint{Network: "tcp", Address: mockAddr}, nil, version.Version, nil),
 		"failed to write daemon runtime")
 
 	origServerAddr := serverAddr

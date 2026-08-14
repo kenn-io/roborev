@@ -16,9 +16,104 @@ import (
 
 type statusJSONOutput struct {
 	Running bool                 `json:"running"`
+	WebURL  string               `json:"web_url,omitempty"`
 	Daemon  storage.DaemonStatus `json:"daemon"`
 	Jobs    []storage.ReviewJob  `json:"jobs,omitempty"`
 	Error   string               `json:"error,omitempty"`
+}
+
+func TestStatusCmdShowsWebUIURL(t *testing.T) {
+	md := NewMockDaemon(t, MockRefineHooks{})
+	defer md.Close()
+
+	withStatusWebRuntime(t, func() (*daemon.RuntimeInfo, error) {
+		return &daemon.RuntimeInfo{WebOrigin: "https://reviews.example.com"}, nil
+	})
+
+	output := captureStdout(t, func() {
+		require.NoError(t, statusCmd().Execute())
+	})
+
+	assert.Contains(t, output, "Web UI: https://reviews.example.com\n")
+}
+
+func TestStatusCmdShowsUnavailableWebUI(t *testing.T) {
+	md := NewMockDaemon(t, MockRefineHooks{})
+	defer md.Close()
+
+	withStatusWebRuntime(t, func() (*daemon.RuntimeInfo, error) {
+		return &daemon.RuntimeInfo{}, nil
+	})
+
+	output := captureStdout(t, func() {
+		require.NoError(t, statusCmd().Execute())
+	})
+
+	assert.Contains(t, output, "Web UI: unavailable\n")
+}
+
+func TestStatusCmdJSONIncludesEmptyWebUIURLWhenUnavailable(t *testing.T) {
+	md := NewMockDaemon(t, MockRefineHooks{})
+	defer md.Close()
+
+	withStatusWebRuntime(t, func() (*daemon.RuntimeInfo, error) {
+		return &daemon.RuntimeInfo{}, nil
+	})
+
+	output := captureStdout(t, func() {
+		cmd := statusCmd()
+		cmd.SetArgs([]string{"--json"})
+		require.NoError(t, cmd.Execute())
+	})
+
+	var parsed map[string]any
+	require.NoError(t, json.Unmarshal([]byte(output), &parsed))
+	assert.Contains(t, parsed, "web_url")
+	assert.Empty(t, parsed["web_url"])
+}
+
+func TestStatusCmdJSONIncludesWebUIURL(t *testing.T) {
+	md := NewMockDaemon(t, MockRefineHooks{})
+	defer md.Close()
+
+	withStatusWebRuntime(t, func() (*daemon.RuntimeInfo, error) {
+		return &daemon.RuntimeInfo{WebOrigin: "https://reviews.example.com"}, nil
+	})
+
+	output := captureStdout(t, func() {
+		cmd := statusCmd()
+		cmd.SetArgs([]string{"--json"})
+		require.NoError(t, cmd.Execute())
+	})
+
+	var parsed statusJSONOutput
+	require.NoError(t, json.Unmarshal([]byte(output), &parsed))
+	assert.Equal(t, "https://reviews.example.com", parsed.WebURL)
+}
+
+func TestDaemonStatusUsesSharedStatusOutput(t *testing.T) {
+	md := NewMockDaemon(t, MockRefineHooks{})
+	defer md.Close()
+
+	withStatusWebRuntime(t, func() (*daemon.RuntimeInfo, error) {
+		return &daemon.RuntimeInfo{WebOrigin: "https://reviews.example.com"}, nil
+	})
+
+	output := captureStdout(t, func() {
+		cmd := daemonCmd()
+		cmd.SetArgs([]string{"status"})
+		require.NoError(t, cmd.Execute())
+	})
+
+	assert.Contains(t, output, "Daemon: running")
+	assert.Contains(t, output, "Web UI: https://reviews.example.com\n")
+}
+
+func withStatusWebRuntime(t *testing.T, discover func() (*daemon.RuntimeInfo, error)) {
+	t.Helper()
+	original := statusDiscover
+	statusDiscover = discover
+	t.Cleanup(func() { statusDiscover = original })
 }
 
 func TestStatusCmdReportsAccessDeniedAsSandboxRestriction(t *testing.T) {
@@ -33,6 +128,7 @@ func TestStatusCmdReportsAccessDeniedAsSandboxRestriction(t *testing.T) {
 	})
 
 	assert.Contains(t, output, "Daemon: status unavailable")
+	assert.Contains(t, output, "Web UI: unavailable")
 	assert.Contains(t, output, "sandbox")
 	assert.Contains(t, output, "loopback or Unix socket")
 	assert.NotContains(t, output, "Daemon: not running")

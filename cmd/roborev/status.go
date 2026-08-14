@@ -18,10 +18,14 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 )
 
-var statusEnsureDaemon = ensureDaemon
+var (
+	statusEnsureDaemon = ensureDaemon
+	statusDiscover     = uiRuntimeInfo
+)
 
 type statusJSONResult struct {
 	Running bool                  `json:"running"`
+	WebURL  string                `json:"web_url"`
 	Daemon  *storage.DaemonStatus `json:"daemon,omitempty"`
 	Health  *storage.HealthStatus `json:"health,omitempty"`
 	Jobs    []storage.ReviewJob   `json:"jobs,omitempty"`
@@ -33,8 +37,9 @@ func statusCmd() *cobra.Command {
 
 	cmd := &cobra.Command{
 		Use:   "status",
-		Short: "Show daemon and queue status",
+		Short: "Show daemon, browser UI, and queue status",
 		RunE: func(cmd *cobra.Command, args []string) error {
+			webURL := ""
 			writeJSONResult := func(result statusJSONResult) error {
 				enc := json.NewEncoder(os.Stdout)
 				enc.SetIndent("", "  ")
@@ -44,10 +49,12 @@ func statusCmd() *cobra.Command {
 				if jsonOutput {
 					return writeJSONResult(statusJSONResult{
 						Running: true,
+						WebURL:  webURL,
 						Error:   err.Error(),
 					})
 				}
 				fmt.Println("Daemon: running")
+				fmt.Printf("Web UI: %s\n", displayWebUIURL(webURL))
 				fmt.Printf("Status: unavailable: %v\n", err)
 				return nil
 			}
@@ -62,10 +69,12 @@ func statusCmd() *cobra.Command {
 					if jsonOutput {
 						return writeJSONResult(statusJSONResult{
 							Running: true,
+							WebURL:  webURL,
 							Error:   message,
 						})
 					}
 					fmt.Println("Daemon: status unavailable")
+					fmt.Printf("Web UI: %s\n", displayWebUIURL(webURL))
 					fmt.Println(message)
 					return nil
 				}
@@ -77,6 +86,7 @@ func statusCmd() *cobra.Command {
 				fmt.Println("Start with: roborev daemon start")
 				return nil
 			}
+			webURL = discoverWebUIURL(statusDiscover)
 
 			ep := getDaemonEndpoint()
 			addr := ep.BaseURL()
@@ -127,6 +137,7 @@ func statusCmd() *cobra.Command {
 			if jsonOutput {
 				return writeJSONResult(statusJSONResult{
 					Running: true,
+					WebURL:  webURL,
 					Daemon:  &status,
 					Health:  health,
 					Jobs:    jobs,
@@ -142,6 +153,7 @@ func statusCmd() *cobra.Command {
 				daemonLine += fmt.Sprintf(" [%s]", status.Version)
 			}
 			fmt.Println(daemonLine)
+			fmt.Printf("Web UI: %s\n", displayWebUIURL(webURL))
 			workersLine := fmt.Sprintf("Workers: %d/%d active", status.ActiveWorkers, status.MaxWorkers)
 			if status.QueuePaused {
 				workersLine += " (paused)"

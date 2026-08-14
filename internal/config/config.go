@@ -2,9 +2,11 @@ package config
 
 import (
 	"context"
+	"encoding/base64"
 	"errors"
 	"fmt"
 	"maps"
+	"net"
 	"net/url"
 	"os"
 	"path/filepath"
@@ -97,6 +99,13 @@ type AgentConfig struct {
 type CostConfig struct {
 	Endpoint string `toml:"endpoint" comment:"HTTP usage endpoint template for cost/token lookup. Use {session_id}; set empty to use agentsview CLI lookup only."`
 	Timeout  string `toml:"timeout" comment:"Timeout for HTTP usage endpoint lookups."`
+}
+
+type WebConfig struct {
+	Enabled      bool   `toml:"enabled" comment:"Serve the browser application on a separate listener."`
+	Listen       string `toml:"listen" comment:"Browser listener address. Port 0 selects an ephemeral port."`
+	PublicOrigin string `toml:"public_origin" comment:"Exact HTTPS browser origin used by a reverse proxy."`
+	AuthToken    string `toml:"auth_token" sensitive:"true" comment:"Token exchanged for a process-local browser session."`
 }
 
 // ResolvedTimeout returns the HTTP usage lookup timeout.
@@ -292,6 +301,9 @@ type Config struct {
 
 	// Cost/token usage lookup configuration
 	Cost CostConfig `toml:"cost"`
+
+	// Browser application configuration
+	Web WebConfig `toml:"web"`
 
 	// Agent-specific behavior
 	Agent AgentConfig `toml:"agent"`
@@ -690,6 +702,10 @@ func DefaultConfig() *Config {
 		Cost: CostConfig{
 			Timeout: "10s",
 		},
+		Web: WebConfig{
+			Enabled: true,
+			Listen:  "127.0.0.1:0",
+		},
 		AgentHook: AgentHookConfig{
 			TurnThreshold:         5,
 			CommitThreshold:       0,
@@ -764,8 +780,101 @@ func LoadGlobalFrom(path string) (*Config, error) {
 	if err := cfg.CI.NormalizeInstallations(); err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}
+	if err := normalizeWebConfig(&cfg.Web); err != nil {
+		return nil, fmt.Errorf("config: %w", err)
+	}
 
 	return cfg, nil
+}
+
+func normalizeWebConfig(web *WebConfig) error {
+	if web.Listen == "" {
+		web.Listen = "127.0.0.1:0"
+	}
+	host, _, err := net.SplitHostPort(web.Listen)
+	if err != nil {
+		return fmt.Errorf("web listen address: %w", err)
+	}
+	loopback := isLoopbackHost(host)
+	if web.AuthToken != "" {
+		if err := ValidateWebAuthToken(web.AuthToken); err != nil {
+			return err
+		}
+	}
+
+	if web.PublicOrigin != "" {
+		origin, err := normalizeWebOrigin(web.PublicOrigin)
+		if err != nil {
+			return err
+		}
+		web.PublicOrigin = origin
+		parsedOrigin, err := url.Parse(origin)
+		if err != nil {
+			return fmt.Errorf("web public origin: %w", err)
+		}
+		if !isLoopbackHost(parsedOrigin.Hostname()) && web.AuthToken == "" {
+			return fmt.Errorf("web auth token is required for a non-loopback public origin")
+		}
+	}
+	if !loopback {
+		if web.AuthToken == "" {
+			return fmt.Errorf("web auth token is required for a non-loopback listener")
+		}
+		if !strings.HasPrefix(web.PublicOrigin, "https://") {
+			return fmt.Errorf("web public origin must use HTTPS for a non-loopback listener")
+		}
+	}
+	return nil
+}
+
+// ValidateWebAuthToken requires the canonical representation of a 256-bit
+// browser token. Configuration docs direct users to generate these bytes with
+// a cryptographically secure random source rather than choosing a password.
+func ValidateWebAuthToken(token string) error {
+	decoded, err := base64.RawURLEncoding.Strict().DecodeString(token)
+	if err != nil || len(decoded) != 32 || base64.RawURLEncoding.EncodeToString(decoded) != token {
+		return fmt.Errorf("web auth token must be a base64url-encoded 32-byte random value")
+	}
+	return nil
+}
+
+func normalizeWebOrigin(raw string) (string, error) {
+	origin, err := url.Parse(raw)
+	if err != nil || origin.Scheme == "" || origin.Host == "" || origin.User != nil || origin.Path != "" || origin.RawQuery != "" || origin.Fragment != "" {
+		return "", fmt.Errorf("web public origin must be an exact HTTP or HTTPS origin")
+	}
+	scheme := strings.ToLower(origin.Scheme)
+	if scheme != "http" && scheme != "https" {
+		return "", fmt.Errorf("web public origin must use HTTP or HTTPS")
+	}
+	hostname := strings.ToLower(origin.Hostname())
+	if hostname == "" {
+		return "", fmt.Errorf("web public origin must include a hostname")
+	}
+	if scheme == "http" && !isLoopbackHost(hostname) {
+		return "", fmt.Errorf("web public origin must use HTTPS unless it is loopback")
+	}
+	port := origin.Port()
+	if (scheme == "http" && port == "80") || (scheme == "https" && port == "443") {
+		port = ""
+	}
+	authority := hostname
+	if strings.Contains(hostname, ":") {
+		authority = "[" + hostname + "]"
+	}
+	if port != "" {
+		authority = net.JoinHostPort(hostname, port)
+	}
+	return scheme + "://" + authority, nil
+}
+
+func isLoopbackHost(host string) bool {
+	host = strings.Trim(strings.ToLower(host), "[]")
+	if host == "localhost" {
+		return true
+	}
+	ip := net.ParseIP(host)
+	return ip != nil && ip.IsLoopback()
 }
 
 // HiddenColumnsNoneSentinel is saved to hidden_columns when the

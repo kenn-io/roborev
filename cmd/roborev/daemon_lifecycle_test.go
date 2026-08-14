@@ -296,7 +296,7 @@ func TestStartDaemonUsesAlternateAwareDiscoveryInsideStartLock(t *testing.T) {
 		Network: "unix",
 		Address: filepath.Join(t.TempDir(), "daemon.sock"),
 	}
-	require.NoError(t, daemon.WriteRuntime(primary, &alternate, version.Version))
+	require.NoError(t, daemon.WriteRuntime(primary, &alternate, version.Version, nil))
 
 	origGet := getAnyRunningDaemonForStart
 	getAnyRunningDaemonForStart = func(context.Context) (*daemon.RuntimeInfo, error) {

@@ -133,6 +133,7 @@ func TestStopBoundsDrainStateCleanupWithSharedContext(t *testing.T) {
 		DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373"},
 		nil,
 		"test",
+		nil,
 	))
 
 	originalTimeout := shutdownCleanupTimeout
@@ -195,6 +196,7 @@ func TestStopKeepsRuntimePublishedUntilWorkersFinish(t *testing.T) {
 		DaemonEndpoint{Network: "tcp", Address: "127.0.0.1:7373"},
 		nil,
 		"test",
+		nil,
 	))
 
 	server.workerPool.wg.Add(1)
@@ -228,4 +230,48 @@ func TestStopKeepsRuntimePublishedUntilWorkersFinish(t *testing.T) {
 	}, time.Second, time.Millisecond)
 	require.NoError(t, stopErr)
 	assert.NoFileExists(t, RuntimePath())
+}
+
+func TestStopKeepsBrowserAvailableUntilWorkersFinish(t *testing.T) {
+	server := setupTestServer(t)
+	server.allowWebCompilationStub = true
+	web := config.DefaultConfig().Web
+	web.Listen = "127.0.0.1:0"
+	runtime, err := server.startBrowserServer(web)
+	require.NoError(t, err)
+	require.NotNil(t, runtime)
+
+	server.workerPool.wg.Add(1)
+	close(server.workerPool.readyCh)
+	stopDone := make(chan error, 1)
+	go func() { stopDone <- server.Stop() }()
+
+	require.Eventually(t, func() bool {
+		draining, drainErr := server.db.IsShutdownDraining()
+		return drainErr == nil && draining
+	}, time.Second, time.Millisecond)
+	response, err := http.Get(runtime.Origin + "/api/ping")
+	require.NoError(t, err)
+	require.NoError(t, response.Body.Close())
+	assert.Equal(t, http.StatusOK, response.StatusCode)
+
+	server.workerPool.wg.Done()
+	var stopErr error
+	require.Eventually(t, func() bool {
+		select {
+		case stopErr = <-stopDone:
+			return true
+		default:
+			return false
+		}
+	}, time.Second, time.Millisecond)
+	require.NoError(t, stopErr)
+	assert.Eventually(t, func() bool {
+		client := &http.Client{Timeout: 50 * time.Millisecond}
+		response, requestErr := client.Get(runtime.Origin + "/api/ping")
+		if response != nil {
+			_ = response.Body.Close()
+		}
+		return requestErr != nil
+	}, time.Second, 10*time.Millisecond)
 }

@@ -53,6 +53,20 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 			o.Tags = []string{"reviews"}
 		})
 
+	huma.Get(api, "/api/ui/review-projection", s.humaGetReviewProjection,
+		func(o *huma.Operation) {
+			o.OperationID = "get-review-projection"
+			o.Summary = "Get a versioned read-only review projection"
+			o.Tags = []string{"web-ui"}
+		})
+
+	huma.Get(api, "/api/ui/analytics", s.humaGetWebAnalytics,
+		func(o *huma.Operation) {
+			o.OperationID = "get-web-analytics"
+			o.Summary = "Get a coherent SQLite analytics snapshot"
+			o.Tags = []string{"web-ui"}
+		})
+
 	huma.Get(api, "/api/export/reviews", s.humaExportReviews,
 		func(o *huma.Operation) {
 			o.OperationID = "export-reviews"
@@ -399,6 +413,7 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 func OpenAPISpec() ([]byte, error) {
 	mux := http.NewServeMux()
 	api := (&Server{}).registerHumaAPI(mux)
+	(&Server{}).registerBrowserRoutes(api)
 	return json.MarshalIndent(api.OpenAPI(), "", "  ")
 }
 
@@ -407,6 +422,7 @@ func OpenAPISpec() ([]byte, error) {
 func OpenAPISpecYAML() ([]byte, error) {
 	mux := http.NewServeMux()
 	api := (&Server{}).registerHumaAPI(mux)
+	(&Server{}).registerBrowserRoutes(api)
 	return api.OpenAPI().YAML()
 }
 
@@ -415,6 +431,7 @@ func OpenAPISpecYAML() ([]byte, error) {
 func OpenAPISpec30() ([]byte, error) {
 	mux := http.NewServeMux()
 	api := (&Server{}).registerHumaAPI(mux)
+	(&Server{}).registerBrowserRoutes(api)
 	spec, err := api.OpenAPI().Downgrade()
 	if err != nil {
 		return nil, err
@@ -430,6 +447,7 @@ func OpenAPISpec30() ([]byte, error) {
 func OpenAPISpec30YAML() ([]byte, error) {
 	mux := http.NewServeMux()
 	api := (&Server{}).registerHumaAPI(mux)
+	(&Server{}).registerBrowserRoutes(api)
 	return api.OpenAPI().DowngradeYAML()
 }
 

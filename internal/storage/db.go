@@ -169,6 +169,16 @@ CREATE TABLE IF NOT EXISTS agent_hook_snoozes (
   PRIMARY KEY (repo_id, worktree_path, branch)
 );
 
+-- rerun_requests makes POST /api/job/rerun safe to retry after a client loses
+-- the response. The result points at the requeued job or the new synthesis job.
+CREATE TABLE IF NOT EXISTS rerun_requests (
+  request_id TEXT PRIMARY KEY,
+  source_job_id INTEGER NOT NULL,
+  result_job_id INTEGER NOT NULL,
+  panel_run_uuid TEXT,
+  created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
 CREATE INDEX IF NOT EXISTS idx_review_jobs_status ON review_jobs(status);
 CREATE INDEX IF NOT EXISTS idx_review_jobs_repo ON review_jobs(repo_id);
 CREATE INDEX IF NOT EXISTS idx_review_jobs_git_ref ON review_jobs(git_ref);
@@ -1968,6 +1978,13 @@ func (db *DB) ResetStaleJobs() error {
 			WHERE j.panel_run_uuid = ci_pr_panels.panel_run_uuid
 			  AND j.status IN ('queued', 'running')
 		  )
+	`); err != nil {
+		return err
+	}
+	if _, err := db.Exec(`
+		UPDATE review_jobs
+		SET worker_id = NULL
+		WHERE status != 'running' AND worker_id IS NOT NULL
 	`); err != nil {
 		return err
 	}

@@ -734,6 +734,10 @@ column_borders = true             # Show separators between TUI columns
 | `default_backup_model` | string | - | Model paired with `default_backup_agent` | Yes |
 | `default_model` | string | agent default | Model to use (format varies by agent) | Yes |
 | `server_addr` | string | 127.0.0.1:7373 | Daemon listen address. Use `unix://` for Unix domain socket (see [Unix Domain Socket](#unix-domain-socket)) | No |
+| `web.enabled` | bool | true | Serve the embedded browser application on a separate listener | No |
+| `web.listen` | string | 127.0.0.1:0 | Browser listener address. Port 0 selects an available ephemeral port | No |
+| `web.public_origin` | string | - | Exact HTTPS origin exposed by a reverse proxy | No |
+| `web.auth_token` | string | - | Base64url-encoded 32-byte random token exchanged for a process-local browser session | No |
 | `max_workers` | int | 4 | Number of parallel review workers | No |
 | `job_timeout_minutes` | int | 30 | Per-job timeout in minutes | Yes |
 | `hook_timeout_seconds` | int | `3` (`30` on Windows) | Post-commit hook request timeout, in seconds. Raise it on Windows or large repos where the daemon's enqueue git calls are slow. Zero or negative values are ignored and fall back to the platform default | Yes |
@@ -781,8 +785,57 @@ column_borders = true             # Show separators between TUI columns
 The daemon automatically watches `~/.roborev/config.toml` for changes. Most
 settings take effect immediately without restarting the daemon.
 
-**Settings that require daemon restart:** `server_addr`, `max_workers`, and the
-`[sync]` section.
+**Settings that require daemon restart:** `server_addr`, `max_workers`, the
+`[web]` section, and the `[sync]` section.
+
+### Browser Application
+
+Roborev serves its embedded browser application from a listener separate from
+the loopback CLI API. Local browser access works without additional
+configuration: `roborev ui` starts the daemon when needed and opens the
+runtime-advertised browser origin.
+
+To expose that listener through an HTTPS reverse proxy, keep the daemon-side
+listener on loopback and configure an exact public origin plus a 32-byte random
+token. Generate a compatible base64url value with:
+
+```bash
+openssl rand -base64 32 | tr '+/' '-_' | tr -d '='
+```
+
+Paste that command's output as `auth_token`:
+
+```toml
+[web]
+enabled = true
+listen = "127.0.0.1:7374"
+public_origin = "https://reviews.example.com"
+auth_token = "paste-the-generated-token-here"
+```
+
+The proxy must preserve the public `Host`, set conventional forwarding headers,
+and avoid buffering `/api/stream/events` and streamed `/api/job/output`
+responses. The public origin must match the browser origin exactly and must use
+HTTPS for remote access. Binding the browser listener to a non-loopback address
+also requires both HTTPS `public_origin` and `auth_token`; the CLI API remains
+private on its original listener.
+
+The browser exchanges the daemon token for an HTTP-only cookie and tab-scoped
+credentials. The token is entered after the public shell opens and is never
+retained by the application. Sessions are process-local, so every daemon restart
+requires the token again. When `auth_token` is configured, browser access from
+the daemon host requires the token too. Invalid logins trigger a process-wide
+exponential cooldown. A valid token bypasses that cooldown and resets the
+failure count immediately.
+
+The shell itself is public so a cross-site deep link can load while the session
+cookie uses `SameSite=Strict`. Its subsequent same-origin bootstrap request
+receives the cookie and creates credentials stored only for that tab. Disable
+the listener with `web.enabled = false`; in that mode, `roborev ui` reports that
+browser access needs to be configured instead of opening a dead URL.
+
+See [Browser UI](/web-ui/) for the exact installed-user workflow, a Tailscale
+Serve recipe, browser-session behavior, and the analytics metric definitions.
 
 ### Data Directory
 

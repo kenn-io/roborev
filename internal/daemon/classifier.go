@@ -31,9 +31,10 @@ var classifySchema = json.RawMessage(`{
 
 // classifierAdapter bridges autotype.Classifier to a SchemaAgent.
 type classifierAdapter struct {
-	agent    agent.SchemaAgent
-	maxBytes int
-	output   io.Writer
+	agent        agent.SchemaAgent
+	maxBytes     int
+	output       io.Writer
+	beforeInvoke func()
 }
 
 func newClassifierAdapter(a agent.SchemaAgent, maxBytes int, output io.Writer) *classifierAdapter {
@@ -41,6 +42,11 @@ func newClassifierAdapter(a agent.SchemaAgent, maxBytes int, output io.Writer) *
 		maxBytes = 20 * 1024
 	}
 	return &classifierAdapter{agent: a, maxBytes: maxBytes, output: output}
+}
+
+func (c *classifierAdapter) withBeforeInvoke(callback func()) *classifierAdapter {
+	c.beforeInvoke = callback
+	return c
 }
 
 // classifyResult uses pointers so missing required fields are distinguishable
@@ -67,6 +73,9 @@ func (c *classifierAdapter) Decide(ctx context.Context, in autotype.Input) (bool
 	logOutput := c.output
 	if logOutput == nil {
 		logOutput = io.Discard
+	}
+	if c.beforeInvoke != nil {
+		c.beforeInvoke()
 	}
 	raw, err := c.agent.ClassifyWithSchema(ctx, in.RepoPath, in.GitRef, p, classifySchema, logOutput)
 	if err != nil {

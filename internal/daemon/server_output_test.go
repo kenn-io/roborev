@@ -33,6 +33,7 @@ type jobOutputResponse struct {
 
 func TestHandleJobOutput(t *testing.T) {
 	server, db, tmpDir := newTestServer(t)
+	t.Setenv("ROBOREV_DATA_DIR", tmpDir)
 
 	t.Run("missing job_id", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodGet, "/api/job/output", nil)
@@ -91,6 +92,71 @@ func TestHandleJobOutput(t *testing.T) {
 
 		assert.Equal(t, "done", resp.Status)
 		assert.False(t, resp.HasMore, "expected has_more=false for completed job")
+	})
+
+	t.Run("polling completed job restores persisted output", func(t *testing.T) {
+		job := createTestJob(t, db, filepath.Join(tmpDir, "test-repo-persisted"), "def456", "test-agent")
+		setJobStatus(t, db, job.ID, storage.JobStatusDone)
+		require.NoError(t, os.MkdirAll(JobLogDir(), 0o700))
+		require.NoError(t, os.WriteFile(
+			JobLogPath(job.ID),
+			[]byte("first persisted line\nsecond persisted line\n"),
+			0o600,
+		))
+
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/job/output?job_id=%d", job.ID), nil)
+		w := httptest.NewRecorder()
+		server.httpServer.Handler.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+		var resp jobOutputResponse
+		testutil.DecodeJSON(t, w, &resp)
+		require.Len(t, resp.Lines, 2)
+		assert.Equal(t, []string{"first persisted line", "second persisted line"}, []string{
+			resp.Lines[0].Text,
+			resp.Lines[1].Text,
+		})
+		assert.Equal(t, []string{"text", "text"}, []string{
+			resp.Lines[0].LineType,
+			resp.Lines[1].LineType,
+		})
+	})
+
+	t.Run("polling queued job does not restore output from a prior attempt", func(t *testing.T) {
+		job := createTestJob(t, db, filepath.Join(tmpDir, "test-repo-requeued"), "queue123", "test-agent")
+		require.NoError(t, os.MkdirAll(JobLogDir(), 0o700))
+		require.NoError(t, os.WriteFile(JobLogPath(job.ID), []byte("stale attempt\n"), 0o600))
+
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/job/output?job_id=%d", job.ID), nil)
+		w := httptest.NewRecorder()
+		server.httpServer.Handler.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+		var resp jobOutputResponse
+		testutil.DecodeJSON(t, w, &resp)
+		assert.Empty(t, resp.Lines)
+	})
+
+	t.Run("polling completed job normalizes persisted output with review agent", func(t *testing.T) {
+		job := createTestJob(t, db, filepath.Join(tmpDir, "test-repo-agent-alias"), "agent123", "claude")
+		setJobStatus(t, db, job.ID, storage.JobStatusRunning)
+		require.NoError(t, db.CompleteJob(job.ID, "claude-code", "prompt", "No issues found."))
+		require.NoError(t, os.MkdirAll(JobLogDir(), 0o700))
+		require.NoError(t, os.WriteFile(
+			JobLogPath(job.ID),
+			[]byte(`{"type":"assistant","message":{"content":"normalized review output"}}`+"\n"),
+			0o600,
+		))
+
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/job/output?job_id=%d", job.ID), nil)
+		w := httptest.NewRecorder()
+		server.httpServer.Handler.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+		var resp jobOutputResponse
+		testutil.DecodeJSON(t, w, &resp)
+		require.Len(t, resp.Lines, 1)
+		assert.Equal(t, "normalized review output", resp.Lines[0].Text)
 	})
 
 	t.Run("stream completed job returns NDJSON complete", func(t *testing.T) {

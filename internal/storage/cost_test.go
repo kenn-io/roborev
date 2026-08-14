@@ -50,25 +50,29 @@ func TestGetCostAggregate(t *testing.T) {
 	skipped := mkJob("sha-skip", "feat", JobStatusDone, `{"cost_usd":9.99,"has_cost":true}`)
 	_, err := db.Exec(`UPDATE review_jobs SET status='skipped' WHERE id=?`, skipped.ID)
 	require.NoError(t, err)
+	nonTerminal := mkJob("sha-running-finished", "feat", JobStatusDone, `{"cost_usd":8.88,"has_cost":true}`)
+	_, err = db.Exec(`UPDATE review_jobs SET status='running' WHERE id=?`, nonTerminal.ID)
+	require.NoError(t, err)
 
 	cq := mkJob("sha-cancel-queue", "feat", JobStatusQueued, "")
 	_, err = db.Exec(`UPDATE review_jobs SET status='canceled', started_at=NULL, finished_at=datetime('now') WHERE id=?`, cq.ID)
 	require.NoError(t, err)
 
-	// Whole repo: 4 eligible (done, failed, cancel-run, empty), 3 priced, $1.75.
+	// Whole repo: 5 eligible (done, failed, cancel-run, invoked skip, empty),
+	// 4 priced, $11.74.
 	all, err := db.GetCostAggregate(CostOptions{RepoPaths: []string{repo.RootPath}})
 	require.NoError(t, err)
-	assert.Equal(4, all.JobsTotal)
-	assert.Equal(3, all.JobsWithCost)
-	assert.InDelta(1.75, all.TotalUSD, 0.0001)
+	assert.Equal(5, all.JobsTotal)
+	assert.Equal(4, all.JobsWithCost)
+	assert.InDelta(11.74, all.TotalUSD, 0.0001)
 	assert.False(all.Complete)
 
-	// Branch "feat": 3 eligible, 2 priced, $1.50.
+	// Branch "feat": 4 eligible, 3 priced, $11.49.
 	feat, err := db.GetCostAggregate(CostOptions{RepoPaths: []string{repo.RootPath}, Branch: "feat"})
 	require.NoError(t, err)
-	assert.Equal(3, feat.JobsTotal)
-	assert.Equal(2, feat.JobsWithCost)
-	assert.InDelta(1.50, feat.TotalUSD, 0.0001)
+	assert.Equal(4, feat.JobsTotal)
+	assert.Equal(3, feat.JobsWithCost)
+	assert.InDelta(11.49, feat.TotalUSD, 0.0001)
 
 	// Empty branch only: 1 eligible, 1 priced, $0.25, complete.
 	empty, err := db.GetCostAggregate(CostOptions{RepoPaths: []string{repo.RootPath}, BranchEmpty: true})
@@ -369,6 +373,16 @@ func TestResetStaleJobsClearsCostMetadata(t *testing.T) {
 	repo := createRepo(t, db, "/tmp/reset-stale")
 	commit := createCommit(t, db, repo.ID, "reset-sha")
 	job := enqueueJob(t, db, repo.ID, commit.ID, "reset-sha")
+	canceled := enqueueJob(
+		t, db, repo.ID, createCommit(t, db, repo.ID, "reset-canceled-sha").ID,
+		"reset-canceled-sha",
+	)
+	_, err := db.Exec(`
+		UPDATE review_jobs
+		SET status = 'canceled', worker_id = 'stale-canceled-worker'
+		WHERE id = ?
+	`, canceled.ID)
+	require.NoError(t, err)
 
 	// A running job that already carries a session id, the agent_invoked marker,
 	// and a cost (e.g. from a late write that landed on the running re-attempt).
@@ -388,6 +402,10 @@ func TestResetStaleJobsClearsCostMetadata(t *testing.T) {
 	assert.Empty(reloaded.CommandLine, "stale command line cleared on restart recovery")
 	assert.False(getJobAgentInvoked(t, db, job.ID),
 		"stale agent-ran marker cleared on restart recovery")
+	reloadedCanceled, err := db.GetJobByID(canceled.ID)
+	require.NoError(t, err)
+	assert.Empty(reloadedCanceled.WorkerID,
+		"terminal worker ownership cleared on restart recovery")
 }
 
 // TestGetCostAggregateExcludesPreAgentFailure verifies a job that reached a

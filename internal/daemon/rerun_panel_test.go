@@ -17,6 +17,7 @@ import (
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 // findOtherPanelRunUUID returns the single panel_run_uuid present in the DB that
@@ -88,6 +89,31 @@ func TestRerunSynthesisRejectsNonTerminal(t *testing.T) {
 	assert.NotEmpty(t, runUUID)
 }
 
+func TestRerunPanelRequestIsIdempotent(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	oldRunUUID, _, synth := enqueueServerPanelRun(t, db, 2)
+	markJobStatus(t, db, synth.ID, storage.JobStatusDone)
+	input := &RerunJobInput{Body: RerunJobRequest{
+		JobID: synth.ID, RequestID: "panel-request-one",
+	}}
+
+	first, err := server.humaRerunJob(context.Background(), input)
+	require.NoError(t, err)
+	markJobStatus(t, db, synth.ID, storage.JobStatusRunning)
+	second, err := server.humaRerunJob(context.Background(), input)
+	require.NoError(t, err)
+
+	assert.Equal(t, first.Body, second.Body)
+	assert.NotEqual(t, synth.ID, first.Body.JobID)
+	assert.Equal(t, "panel-request-one", first.Body.RequestID)
+	var runCount int
+	require.NoError(t, db.QueryRow(
+		"SELECT COUNT(DISTINCT panel_run_uuid) FROM review_jobs WHERE panel_run_uuid != ''",
+	).Scan(&runCount))
+	assert.Equal(t, 2, runCount, "the duplicate request must not create another panel")
+	assert.NotEqual(t, oldRunUUID, first.Body.RunUUID)
+}
+
 func TestRerunPanelMemberRejectsDirectRerun(t *testing.T) {
 	server, db, _ := newTestServer(t)
 	runUUID, members, _ := enqueueServerPanelRun(t, db, 2)
@@ -108,6 +134,52 @@ func TestRerunPanelMemberRejectsDirectRerun(t *testing.T) {
 	).Scan(&count))
 	assert.Equal(t, 1, count, "direct member rerun must not create a new panel run")
 	assert.NotEmpty(t, runUUID)
+}
+
+func TestRerunPanelRejectsStaleWorktrees(t *testing.T) {
+	for _, target := range []string{"member", "synthesis"} {
+		t.Run(target, func(t *testing.T) {
+			server, db, tempDir := newTestServer(t)
+			repoPath := filepath.Join(tempDir, "repo")
+			testutil.InitTestGitRepo(t, repoPath)
+			repo, err := db.GetOrCreateRepo(repoPath)
+			require.NoError(t, err)
+
+			stalePath := filepath.Join(tempDir, "removed-worktree")
+			runUUID := uuid.NewString()
+			member := storage.EnqueueOpts{
+				RepoID: repo.ID, GitRef: "HEAD", Agent: "test",
+				PanelRunUUID: runUUID, PanelRole: storage.PanelRoleMember,
+				PanelName: "panel", PanelMemberName: "member",
+			}
+			synthesis := storage.EnqueueOpts{
+				RepoID: repo.ID, GitRef: "HEAD", Agent: "test",
+				PanelRunUUID: runUUID, PanelRole: storage.PanelRoleSynthesis,
+				PanelName: "panel",
+			}
+			if target == "member" {
+				member.WorktreePath = stalePath
+			} else {
+				synthesis.WorktreePath = stalePath
+			}
+			_, synthJob, err := db.EnqueuePanelRun(
+				[]storage.EnqueueOpts{member}, synthesis,
+			)
+			require.NoError(t, err)
+			markJobStatus(t, db, synthJob.ID, storage.JobStatusDone)
+
+			_, err = server.humaRerunJob(context.Background(), &RerunJobInput{
+				Body: RerunJobRequest{JobID: synthJob.ID},
+			})
+			require.ErrorContains(t, err, "worktree path is stale or invalid")
+
+			var runCount int
+			require.NoError(t, db.QueryRow(
+				"SELECT COUNT(DISTINCT panel_run_uuid) FROM review_jobs WHERE panel_run_uuid != ''",
+			).Scan(&runCount))
+			assert.Equal(t, 1, runCount, "rejected rerun must not create a new panel")
+		})
+	}
 }
 
 func TestRerunSynthesisCreatesNewRun(t *testing.T) {

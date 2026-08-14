@@ -270,6 +270,54 @@ func TestWorkerPoolPendingCancellationAfterDBCancel(t *testing.T) {
 	}
 }
 
+func TestCanceledJobCannotRerunUntilBlockedAgentExits(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	started := make(chan struct{})
+	cancelObserved := make(chan struct{})
+	release := make(chan struct{})
+	finished := make(chan struct{})
+	var releaseOnce sync.Once
+	releaseAgent := func() { releaseOnce.Do(func() { close(release) }) }
+	t.Cleanup(func() {
+		releaseAgent()
+		<-finished
+	})
+
+	agentName := "blocked-cancel-rerun"
+	agent.Register(&agent.FakeAgent{
+		NameStr: agentName,
+		ReviewFn: func(ctx context.Context, _, _, _ string, _ io.Writer) (string, error) {
+			close(started)
+			<-ctx.Done()
+			close(cancelObserved)
+			<-release
+			return "", ctx.Err()
+		},
+	})
+	t.Cleanup(func() { agent.Unregister(agentName) })
+
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, agentName)
+	go func() {
+		defer close(finished)
+		tc.Pool.processJob(testWorkerID, job)
+	}()
+
+	<-started
+	require.NoError(t, tc.DB.CancelJob(job.ID))
+	require.True(t, tc.Pool.CancelJob(job.ID))
+	<-cancelObserved
+
+	require.ErrorIs(t, tc.DB.ReenqueueJob(job.ID, storage.ReenqueueOpts{}), sql.ErrNoRows)
+
+	releaseAgent()
+	<-finished
+	updated, err := tc.DB.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Empty(t, updated.WorkerID)
+	require.NoError(t, tc.DB.ReenqueueJob(job.ID, storage.ReenqueueOpts{}))
+}
+
 func TestWorkerPoolCancelInvalidJob(t *testing.T) {
 	db := testutil.OpenTestDB(t)
 

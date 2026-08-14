@@ -8,6 +8,11 @@ changelog:
 release:
   mode: keep-existing
 
+before:
+  hooks:
+    - make web-release-check
+    - make web-embed
+
 builds:
   - id: roborev
     main: ./cmd/roborev

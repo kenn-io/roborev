@@ -329,8 +329,17 @@ func (db *DB) insertJobTx(ctx context.Context, exec execer, opts EnqueueOpts, ui
 // before its members run. On any insert error the whole run rolls back and no
 // rows persist.
 func (db *DB) EnqueuePanelRun(members []EnqueueOpts, synthesis EnqueueOpts) ([]*ReviewJob, *ReviewJob, error) {
-	memberJobs, synthJob, _, err := db.enqueuePanelRun(members, synthesis, false)
+	memberJobs, synthJob, _, err := db.enqueuePanelRun(members, synthesis, false, "", 0)
 	return memberJobs, synthJob, err
+}
+
+// EnqueuePanelRerun atomically creates a replacement panel and records the
+// request result. Repeating requestID returns the first synthesis job without
+// inserting another panel.
+func (db *DB) EnqueuePanelRerun(
+	members []EnqueueOpts, synthesis EnqueueOpts, requestID string, sourceJobID int64,
+) ([]*ReviewJob, *ReviewJob, bool, error) {
+	return db.enqueuePanelRun(members, synthesis, false, requestID, sourceJobID)
 }
 
 // EnqueuePostCommitPanelRun atomically inserts a hook-originated panel unless
@@ -346,11 +355,12 @@ func (db *DB) EnqueuePostCommitPanelRun(
 		members[i].Source = JobSourcePostCommit
 	}
 	synthesis.Source = JobSourcePostCommit
-	return db.enqueuePanelRun(members, synthesis, true)
+	return db.enqueuePanelRun(members, synthesis, true, "", 0)
 }
 
 func (db *DB) enqueuePanelRun(
 	members []EnqueueOpts, synthesis EnqueueOpts, deduplicate bool,
+	rerunRequestID string, rerunSourceJobID int64,
 ) ([]*ReviewJob, *ReviewJob, bool, error) {
 	machineID, _ := db.GetMachineID()
 	now := time.Now()
@@ -373,6 +383,23 @@ func (db *DB) enqueuePanelRun(
 			}
 		}
 	}()
+	if rerunRequestID != "" {
+		result, found, err := lookupRerunRequest(ctx, conn, rerunRequestID, rerunSourceJobID)
+		if err != nil {
+			return nil, nil, false, err
+		}
+		if found {
+			synthJob, err := db.getJobByIDTx(ctx, conn, result.JobID)
+			if err != nil {
+				return nil, nil, false, err
+			}
+			if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+				return nil, nil, false, err
+			}
+			committed = true
+			return nil, synthJob, true, nil
+		}
+	}
 	if deduplicate {
 		duplicate, err := hasNonCanceledJob(ctx, conn, members[0])
 		if err != nil {
@@ -390,6 +417,11 @@ func (db *DB) enqueuePanelRun(
 	memberJobs, synthJob, err := db.enqueuePanelRunTx(ctx, conn, members, synthesis, machineID, now)
 	if err != nil {
 		return nil, nil, false, err
+	}
+	if rerunRequestID != "" {
+		if err := recordRerunRequest(ctx, conn, rerunRequestID, rerunSourceJobID, synthJob.ID, synthesis.PanelRunUUID); err != nil {
+			return nil, nil, false, err
+		}
 	}
 
 	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
@@ -523,6 +555,35 @@ func (db *DB) MarkJobAgentInvoked(jobID int64, workerID, cmdLine string) error {
 		 WHERE id = ? AND status = 'running' AND worker_id = ?`,
 		cmdLine, jobID, workerID)
 	return err
+}
+
+// MarkClassifyAgentInvoked records the actual classifier selected for an
+// auto-design attempt. Classify rows start with the auto-design sentinel, so
+// retaining that placeholder would misattribute invoked skips in analytics.
+// The active-attempt guard matches MarkJobAgentInvoked.
+func (db *DB) MarkClassifyAgentInvoked(
+	jobID int64, workerID, agent, model, cmdLine string,
+) error {
+	result, err := db.Exec(`
+		UPDATE review_jobs
+		SET agent = ?, model = ?, command_line = ?, agent_invoked = 1
+		WHERE id = ?
+		  AND job_type = 'classify'
+		  AND source = 'auto_design'
+		  AND status = 'running'
+		  AND worker_id = ?
+	`, agent, nullString(model), cmdLine, jobID, workerID)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows == 0 {
+		return sql.ErrNoRows
+	}
+	return nil
 }
 
 // SaveJobSessionID stores the captured agent session ID for a job.
@@ -861,15 +922,23 @@ type ReenqueueOpts struct {
 // This allows manual re-running of jobs to get a fresh review.
 // For done jobs, the existing review is deleted to avoid unique constraint violations.
 func (db *DB) ReenqueueJob(jobID int64, opts ReenqueueOpts) error {
+	_, err := db.ReenqueueJobWithRequest(jobID, opts, "")
+	return err
+}
+
+// ReenqueueJobWithRequest resets a terminal job and records a stable result for
+// requestID in the same transaction. Repeating requestID returns the original
+// result without resetting the active attempt again.
+func (db *DB) ReenqueueJobWithRequest(jobID int64, opts ReenqueueOpts, requestID string) (int64, error) {
 	ctx := context.Background()
 	conn, err := db.Conn(ctx)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	defer conn.Close()
 
 	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
-		return err
+		return 0, err
 	}
 	committed := false
 	defer func() {
@@ -879,11 +948,24 @@ func (db *DB) ReenqueueJob(jobID int64, opts ReenqueueOpts) error {
 			}
 		}
 	}()
+	if requestID != "" {
+		result, found, err := lookupRerunRequest(ctx, conn, requestID, jobID)
+		if err != nil {
+			return 0, err
+		}
+		if found {
+			if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+				return 0, err
+			}
+			committed = true
+			return result.JobID, nil
+		}
+	}
 
 	// Delete any existing review for this job (for done jobs being rerun)
 	_, err = conn.ExecContext(ctx, `DELETE FROM reviews WHERE job_id = ?`, jobID)
 	if err != nil {
-		return err
+		return 0, err
 	}
 
 	nowStr := time.Now().Format(time.RFC3339)
@@ -909,25 +991,110 @@ func (db *DB) ReenqueueJob(jobID int64, opts ReenqueueOpts) error {
 		    prompt = CASE WHEN job_type IN ('task', 'compact', 'fix', 'insights') THEN prompt ELSE NULL END,
 		    skip_reason = NULL,
 		    updated_at = ?
-		WHERE id = ? AND status IN ('done', 'failed', 'canceled', 'skipped')
+		WHERE id = ?
+		  AND (
+		    status IN ('done', 'failed', 'skipped')
+		    OR (status = 'canceled' AND worker_id IS NULL)
+		  )
 	`, nullString(opts.Model), nullString(opts.Provider), nowStr, jobID)
 	if err != nil {
-		return err
+		return 0, err
 	}
 	rows, err := result.RowsAffected()
 	if err != nil {
-		return err
+		return 0, err
 	}
 	if rows == 0 {
-		return sql.ErrNoRows
+		return 0, sql.ErrNoRows
+	}
+	if requestID != "" {
+		if err := recordRerunRequest(ctx, conn, requestID, jobID, jobID, ""); err != nil {
+			return 0, err
+		}
 	}
 
 	_, err = conn.ExecContext(ctx, "COMMIT")
 	if err != nil {
-		return err
+		return 0, err
 	}
 	committed = true
-	return nil
+	return jobID, nil
+}
+
+// ReleaseCanceledJob clears ownership only after the canceled worker has
+// finished unwinding. ReenqueueJobWithRequest requires this release so an old
+// attempt cannot overlap a new attempt that reuses the same job row.
+func (db *DB) ReleaseCanceledJob(jobID int64, workerID string) (bool, error) {
+	result, err := db.Exec(`
+		UPDATE review_jobs
+		SET worker_id = NULL, updated_at = ?
+		WHERE id = ? AND status = 'canceled' AND worker_id = ?
+	`, time.Now().Format(time.RFC3339), jobID, workerID)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	return rows > 0, err
+}
+
+type RerunRequestResult struct {
+	JobID        int64
+	PanelRunUUID string
+}
+
+// GetRerunRequest returns the stable result of a previously accepted rerun.
+func (db *DB) GetRerunRequest(requestID string, sourceJobID int64) (RerunRequestResult, bool, error) {
+	return lookupRerunRequest(context.Background(), db, requestID, sourceJobID)
+}
+
+func lookupRerunRequest(
+	ctx context.Context, q interface {
+		QueryRowContext(context.Context, string, ...any) *sql.Row
+	}, requestID string, sourceJobID int64,
+) (RerunRequestResult, bool, error) {
+	var result RerunRequestResult
+	var storedSourceID int64
+	err := q.QueryRowContext(ctx, `
+		SELECT source_job_id, result_job_id, COALESCE(panel_run_uuid, '')
+		FROM rerun_requests WHERE request_id = ?
+	`, requestID).Scan(&storedSourceID, &result.JobID, &result.PanelRunUUID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return RerunRequestResult{}, false, nil
+	}
+	if err != nil {
+		return RerunRequestResult{}, false, err
+	}
+	if storedSourceID != sourceJobID {
+		return RerunRequestResult{}, false, fmt.Errorf(
+			"rerun request %q belongs to job %d", requestID, storedSourceID,
+		)
+	}
+	return result, true, nil
+}
+
+func recordRerunRequest(
+	ctx context.Context, exec execer, requestID string, sourceJobID, resultJobID int64, panelRunUUID string,
+) error {
+	_, err := exec.ExecContext(ctx, `
+		INSERT INTO rerun_requests (request_id, source_job_id, result_job_id, panel_run_uuid)
+		VALUES (?, ?, ?, ?)
+	`, requestID, sourceJobID, resultJobID, nullString(panelRunUUID))
+	return err
+}
+
+// getJobByIDTx reads a job on the transaction's connection. It is used only to
+// return an existing idempotent panel-rerun result.
+func (db *DB) getJobByIDTx(
+	ctx context.Context,
+	q interface {
+		QueryRowContext(context.Context, string, ...any) *sql.Row
+	},
+	jobID int64,
+) (*ReviewJob, error) {
+	var job ReviewJob
+	err := q.QueryRowContext(ctx, `SELECT id, panel_run_uuid FROM review_jobs WHERE id = ?`, jobID).
+		Scan(&job.ID, &job.PanelRunUUID)
+	return &job, err
 }
 
 // RetryJob requeues a running job for retry if retry_count < maxRetries.
@@ -1316,28 +1483,47 @@ func (db *DB) ListJobs(statusFilter string, repoFilter string, limit, offset int
 // GetJobByID returns a job by ID with joined fields
 // JobStats holds aggregate counts for the queue status line.
 type JobStats struct {
-	Done   int `json:"done"`
-	Closed int `json:"closed"`
-	Open   int `json:"open"`
+	Queued   int `json:"queued"`
+	Running  int `json:"running"`
+	Done     int `json:"done"`
+	Failed   int `json:"failed"`
+	Canceled int `json:"canceled"`
+	Skipped  int `json:"skipped"`
+	Closed   int `json:"closed"`
+	Open     int `json:"open"`
 }
 
-// CountJobStats returns aggregate done/closed/open counts
-// using the same filter logic as ListJobs (repo, branch, closed).
-func (db *DB) CountJobStats(repoFilter string, opts ...ListJobsOption) (JobStats, error) {
+// CountJobStats returns aggregate status and resolution counts using the same
+// filter logic as ListJobs.
+func (db *DB) CountJobStats(statusFilter, repoFilter string, opts ...ListJobsOption) (JobStats, error) {
 	query := `
 		SELECT
+			COALESCE(SUM(CASE WHEN j.status = 'queued' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN j.status = 'running' THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN j.status = 'done' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN j.status = 'failed' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN j.status = 'canceled' THEN 1 ELSE 0 END), 0),
+			COALESCE(SUM(CASE WHEN j.status = 'skipped' THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN j.status = 'done' AND rv.closed = 1 THEN 1 ELSE 0 END), 0),
 			COALESCE(SUM(CASE WHEN j.status = 'done' AND (rv.closed IS NULL OR rv.closed = 0) THEN 1 ELSE 0 END), 0)
 		FROM review_jobs j
 		JOIN repos r ON r.id = j.repo_id
 		LEFT JOIN reviews rv ON rv.job_id = j.id
 	`
-	queryFilters, args := buildJobFilterClause("", repoFilter, collectListJobsOptions(opts...))
+	queryFilters, args := buildJobFilterClause(statusFilter, repoFilter, collectListJobsOptions(opts...))
 	query += queryFilters
 
 	var stats JobStats
-	err := db.QueryRow(query, args...).Scan(&stats.Done, &stats.Closed, &stats.Open)
+	err := db.QueryRow(query, args...).Scan(
+		&stats.Queued,
+		&stats.Running,
+		&stats.Done,
+		&stats.Failed,
+		&stats.Canceled,
+		&stats.Skipped,
+		&stats.Closed,
+		&stats.Open,
+	)
 	return stats, err
 }
 

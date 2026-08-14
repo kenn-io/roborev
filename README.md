@@ -49,6 +49,7 @@ cd your-repo
 roborev init          # Install post-commit hook
 git commit -m "..."   # Reviews happen automatically
 roborev tui           # View reviews in interactive UI
+roborev ui            # Open reviews in the native browser UI
 ```
 
 If roborev is managed by a version manager, `roborev init` and
@@ -77,6 +78,8 @@ You can also choose the exact binary path with
   Reviews are orchestrated on your machine using the coding agents
   you already have configured.
 - **Interactive TUI** - Real-time review queue with vim-style navigation.
+- **Native Browser UI** - Browse, filter, inspect, comment on, close, cancel,
+  and rerun reviews from the application embedded in the local daemon.
 - **Review Verification** - `roborev compact` verifies findings against
   current code, filters false positives, and consolidates related issues
   into a single review.
@@ -163,6 +166,10 @@ powershell -ExecutionPolicy ByPass -c "irm https://roborev.io/install.ps1 | iex"
 go install go.kenn.io/roborev/cmd/roborev@latest
 ```
 
+The Go module source archive does not include generated browser assets. This
+installation path provides the CLI and terminal UI; install a release package
+or build with `make install` for the embedded browser application.
+
 ## Developer Setup
 
 This repo uses [`prek`](https://prek.j178.dev/) for local pre-commit checks.
@@ -190,7 +197,8 @@ leaving Markdown tables unchanged. Use `make check-renovate-config` to validate
 |---------|-------------|
 | `roborev init` | Initialize roborev in current repo |
 | `roborev tui` | Interactive terminal UI |
-| `roborev status` | Show daemon and queue status |
+| `roborev daemon status` | Show daemon, browser UI, and queue status |
+| `roborev status` | Backward-compatible status alias |
 | `roborev review <sha>` | Queue a commit for review |
 | `roborev review --branch` | Review all commits on current branch |
 | `roborev review --dirty` | Review uncommitted changes |

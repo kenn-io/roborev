@@ -12,6 +12,12 @@ All notable changes to roborev, grouped by minor release.
 - Reasoning accepts exact `low`, `medium`, `high`, `xhigh`, and `max` values and
     forwards them unchanged to agents that support each tier. The legacy `fast`,
     `standard`, `thorough`, and `maximum` presets remain compatible.
+- Roborev now embeds an authenticated native browser review workspace on a
+    separate daemon listener. `roborev ui [job-id]` opens the job list or a
+    review deep link with filtering, sorting, panel detail, Markdown output,
+    comments, logs, prompts, keyboard controls, and review/job mutations. Local
+    use bootstraps automatically; remote HTTPS deployments exchange a token for
+    a browser session without exposing the private CLI listener.
 - Pi agents accept global `[agent.pi] launch_args`, passed as tokenized
     arguments to every Pi invocation before roborev-managed workflow and safety
     options. This allows isolated classifier jobs to load extension-defined
@@ -20,6 +26,11 @@ All notable changes to roborev, grouped by minor release.
 
 **Improvements**
 
+- `roborev daemon start`, `roborev daemon restart`, and the new canonical
+    `roborev daemon status` command print the browser application's URL, or an
+    explicit unavailable state when browser serving is disabled. The existing
+    `roborev status` form remains available with identical output, and JSON
+    status includes the additive `web_url` field.
 - `roborev status` now lists active Agent Hook snoozes with their exact
     repository, worktree, branch, and expiry, while the TUI shows a contextual
     snooze badge for an exactly filtered checkout. See
@@ -620,7 +631,7 @@ ______________________________________________________________________
 - Binary overrides for agent hooks. `roborev agent-hook install --binary <path>`
     bakes a stable roborev shim or explicit binary path into Codex and Claude
     Code hook configs, mirroring the git-hook `roborev init --binary` workflow.
-    See [Agent Hook Quick Start](/agent-hook/#quick-start).
+    See [Agent Hook installation](/agent-hook/#install).
 
 **Improvements**
 

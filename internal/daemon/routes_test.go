@@ -183,6 +183,8 @@ func TestHumaGetStatus(t *testing.T) {
 	assert.Equal(t, "tcp", status.Network)
 	assert.Equal(t, "127.0.0.1:7373", status.Address)
 	assert.Equal(t, 7373, status.Port)
+	assert.Contains(t, status.WebCapabilities, "review-projection-v1")
+	assert.Contains(t, status.WebCapabilities, "analytics-v1")
 }
 
 func TestHumaGetStatusIncludesActiveSnoozes(t *testing.T) {

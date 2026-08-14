@@ -1,0 +1,183 @@
+---
+title: Browser UI
+description: Browse reviews and analyze project review health in the native Roborev web application
+---
+
+Roborev includes a browser application in its release packages. It is served by
+the same daemon that owns the review queue and SQLite database, on a separate
+browser-only listener.
+
+## Open the Application
+
+For normal local use, install a Roborev release and run:
+
+```bash
+roborev ui
+```
+
+The command starts the daemon when needed and opens its browser application. No
+web configuration is required: the browser listener is enabled on loopback and
+uses an available port by default.
+
+Open a particular review with its local job ID:
+
+```bash
+roborev ui 42
+```
+
+This opens `/reviews/42`. Job IDs belong to one daemon's SQLite database, so a
+numeric review URL is not portable between machines.
+
+The application has two workspaces:
+
+- **Reviews** provides the live queue, filters, logs, prompts, rendered review
+    output, comments, and review actions.
+- **Analytics** summarizes cost, latency, failures, outcomes, and agent attempts
+    from the daemon's SQLite history.
+
+The Go module source archive does not contain the generated application assets.
+An installation made with `go install` still provides the CLI and terminal UI,
+but the native browser application requires a release package or a source build
+made with `make build`.
+
+## Analytics
+
+Open **Analytics** in the application shell, or navigate directly to
+`/analytics`. Filters are encoded in the URL, so a time range and project,
+source, agent, model, or bucket selection can be bookmarked and shared with
+another user of the same daemon.
+
+Project analytics use the display names shown elsewhere in Roborev. Repositories
+with the same display name are intentionally grouped together.
+
+The page separates two populations:
+
+- A **logical review** is a standalone review, range review, dirty review,
+    compact review, or panel synthesis parent. Panel member jobs are not counted
+    as additional logical reviews.
+- An **agent attempt** is a terminal job that actually invoked an agent. Cost
+    and attempt latency use this population.
+
+The headline values have these meanings:
+
+- **Failure rate** is failing review verdicts divided by all rated reviews:
+    `F / (P + F)`. Both open and addressed failures remain failures. Reviews
+    without a parsed verdict do not enter the denominator.
+- **Run errors** are logical reviews whose daemon jobs failed to complete. They
+    are operational errors, not failing review verdicts, and are reported
+    separately with canceled and skipped reviews.
+- **Review latency** runs from enqueue to finish. A panel synthesis parent's
+    latency therefore includes the complete panel run. Percentiles use linear
+    interpolation.
+- **Estimated cost** includes eligible attempts that have a readable cost in
+    their token-usage data. It counts attempts by `finished_at` within the
+    selected half-open time range and is not an external billing total.
+- **Pricing coverage** is priced eligible attempts divided by all eligible
+    attempts. When coverage is incomplete, estimated cost is a lower bound.
+    Retries clear the prior job's token-usage data, so historical retried work
+    can also be undercounted.
+- **Outcomes** partition verdicts into pass, fail-open, and fail-addressed.
+    Addressed means the review's mutable `closed` state is true. Historical
+    outcome mixes can therefore change when a user closes or reopens a review.
+
+Agent and model filters apply to attempt metrics. Logical-review metrics retain
+their review-based population rather than silently changing meaning.
+
+Analytics refresh when the page opens, when its filters change, when the browser
+regains focus, or when **Refresh** is selected. If a refresh for the current
+filters fails, the page labels the existing snapshot as stale and offers a
+retry. It never displays results from old filters under a new filter selection.
+
+## Private Network Access
+
+Remote browser access requires an HTTPS reverse proxy and a Roborev browser
+token. Keep both the CLI listener and browser listener on loopback; expose only
+the browser listener through the proxy.
+
+Choose a fixed loopback port. Generate the required 32-byte base64url token:
+
+```bash
+openssl rand -base64 32 | tr '+/' '-_' | tr -d '='
+```
+
+Paste the generated value into `~/.roborev/config.toml`:
+
+```toml
+[web]
+enabled = true
+listen = "127.0.0.1:7374"
+public_origin = "https://reviews.example.com"
+auth_token = "paste-the-generated-token-here"
+```
+
+`public_origin` must be the exact origin users open, without a path or trailing
+slash. Protect the config file because it contains the login token. Restart the
+daemon after changing any `[web]` setting:
+
+```bash
+roborev daemon restart
+```
+
+The restart output prints the canonical `Web UI` URL. You can retrieve it again
+at any time with `roborev daemon status`; if browser serving is disabled, both
+commands report `Web UI: unavailable` explicitly.
+
+### Tailscale Serve
+
+[Tailscale Serve](https://tailscale.com/docs/reference/tailscale-cli/serve) can
+provide the private HTTPS reverse proxy. Configure the fixed listener above,
+then run:
+
+```bash
+tailscale serve --bg http://127.0.0.1:7374
+```
+
+Use the HTTPS origin printed by `tailscale serve` as `web.public_origin`, then
+restart Roborev. Open that origin on another device in the tailnet and enter the
+configured `web.auth_token` when prompted.
+
+Do not use Tailscale Funnel for this setup: Serve keeps access inside the
+tailnet. Tailnet policy remains the network-level access boundary, while the
+Roborev token remains required by the daemon.
+
+### Other Reverse Proxies
+
+An alternative proxy must:
+
+- terminate HTTPS and preserve the public `Host`;
+- set conventional forwarding headers;
+- pass streaming responses without buffering, especially `/api/stream/events`
+    and `/api/job/output?stream=1`; and
+- route only the browser listener, never the CLI listener.
+
+Forwarding headers do not authenticate a request. Roborev validates the exact
+Host and Origin before checking the browser session.
+
+## Browser Sessions
+
+For loopback-only use without `web.auth_token`, Roborev creates a local browser
+session automatically. Once remote authentication is configured, every browser,
+including one on the daemon host, must enter the token.
+
+The login exchanges the token for an HTTP-only cookie and credentials stored in
+the current tab's `sessionStorage`. The application does not retain the daemon
+token. Opening a deep link in a new tab uses the cookie to bootstrap fresh
+tab-scoped credentials.
+
+Browser sessions are held in memory. Restarting or upgrading the daemon signs
+out every browser tab, and remote users must enter the token again. This is
+intentional; sessions are never written to disk.
+
+Invalid token exchanges trigger a process-wide exponential cooldown of up to one
+minute. The daemon checks a valid token before applying that cooldown, so a
+valid login remains available and resets the failure count immediately.
+
+Disable the browser listener with:
+
+```bash
+roborev config set web.enabled false --global
+roborev daemon restart
+```
+
+With the listener disabled, `roborev ui` reports that browser access is
+unavailable instead of opening a dead URL.

@@ -215,6 +215,7 @@ func TestProcessClassifyJob_WritesStandardLogAndCommandLine(t *testing.T) {
 
 	cfg := config.DefaultConfig()
 	cfg.ClassifyAgent = "fake-schema"
+	cfg.ClassifyModel = "fake-model"
 	tc.Pool.cfgGetter = NewStaticConfig(cfg)
 
 	_, err := tc.DB.GetOrCreateCommit(tc.Repo.ID, "classify-log", "Author", "s", time.Now())
@@ -229,6 +230,7 @@ func TestProcessClassifyJob_WritesStandardLogAndCommandLine(t *testing.T) {
 	claimed, err := tc.DB.ClaimJob("worker-classify-log")
 	require.NoError(t, err)
 	require.Equal(t, jobID, claimed.ID)
+	_, events := tc.Broadcaster.Subscribe("")
 
 	tc.Pool.processClassifyJob(context.Background(), "worker-classify-log", claimed)
 
@@ -238,9 +240,14 @@ func TestProcessClassifyJob_WritesStandardLogAndCommandLine(t *testing.T) {
 
 	got, err := tc.DB.GetJobByID(jobID)
 	require.NoError(t, err)
+	assert.Equal(t, "fake-schema", got.Agent)
+	assert.Equal(t, "fake-model", got.Model)
 	assert.Equal(t, "fake-schema classify --json", got.CommandLine)
 	assert.Equal(t, storage.JobStatusSkipped, got.Status)
 	assert.Equal(t, "local change", got.SkipReason)
+	event, ok := waitForEvent(t, events, time.Second)
+	require.True(t, ok)
+	assert.Equal(t, "fake-schema", event.Agent)
 }
 
 // waitForEvent reads one event from ch within timeout.
