@@ -46,13 +46,12 @@ The default instruction is self-contained. It uses the richer `roborev-fix`
 skill when available and otherwise tells the agent how to discover, inspect,
 fix, comment on, and close each review with the CLI. Installing skills remains
 recommended for Claude Code, Codex, and Factory Droid, but it is not required
-for the other profiles to receive an actionable reminder.
+for the other profiles to receive an actionable reminder. The built-in default
+also forbids expanding the current task: out-of-scope or unclear findings stay
+untouched until the user gives direction.
 
-Every emitted reminder also carries a non-overridable scope gate. Automatic
-fixes may address only findings that are clearly within the user's current task.
-If a finding is outside that scope or its scope is unclear, the agent must leave
-it unchanged and ask the user for direction. It must not close that review as
-resolved. This guard is appended even when `instruction` is customized.
+`instruction` is a complete override. Custom instructions are emitted without
+the built-in scope or continuation guidance.
 
 ## Install
 

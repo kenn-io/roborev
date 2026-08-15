@@ -58,10 +58,10 @@ All notable changes to roborev, grouped by minor release.
     started. Before upgrading from a release with the auxiliary daemon, stop it
     with that release's `roborev agent-hook daemon stop` command. See
     [Agent Hook](/agent-hook/#upgrading-existing-hooks).
-- Agent Hook autofix reminders now enforce the user's current task as an
+- Default Agent Hook autofix reminders now keep the user's current task as an
     immutable scope boundary. Agents leave out-of-scope or unclear findings
-    untouched and ask the user before doing broader work, even when the hook's
-    main instruction is customized.
+    untouched and ask the user before doing broader work. Custom instructions
+    remain complete overrides.
 - `roborev status` now lists active Agent Hook snoozes with their exact
     repository, worktree, branch, and expiry, while the TUI shows a contextual
     snooze badge for an exactly filtered checkout. See

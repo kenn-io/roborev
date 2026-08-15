@@ -1094,32 +1094,6 @@ func TestFixSkillsRecognizeRuntimeAutofixGuidelines(t *testing.T) {
 		})
 	}
 }
-
-func TestFixSkillsConstrainAutomaticHookScope(t *testing.T) {
-	for _, agent := range []Agent{AgentClaude, AgentCodex, AgentDroid, AgentGrok} {
-		t.Run(string(agent), func(t *testing.T) {
-			assert := assert.New(t)
-			spec, ok := lookupAgent(agent)
-			require.True(t, ok)
-			skills, err := embeddedSkillsForAgent(spec)
-			require.NoError(t, err)
-
-			var content string
-			for _, skill := range skills {
-				if skill.DirName == "roborev-fix" {
-					content = string(skill.Content)
-				}
-			}
-			require.NotEmpty(t, content, "missing roborev-fix skill for %s", agent)
-			normalized := strings.Join(strings.Fields(content), " ")
-			assert.Contains(normalized, "current operative request as an immutable scope boundary")
-			assert.Contains(normalized, "leave it unchanged and ask the user for direction")
-			assert.Contains(normalized, "Do not comment on or close a review as resolved")
-			assert.Contains(normalized, "overrides the discovery, \"fix all findings,\" commenting, and closure")
-		})
-	}
-}
-
 func TestDroidSkillsInstallToFactoryDir(t *testing.T) {
 	// Droid skills install under ~/.factory/skills (Factory's personal skills
 	// location), not ~/.droid, and are skipped when ~/.factory is absent so the

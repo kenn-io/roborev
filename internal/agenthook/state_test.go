@@ -386,14 +386,12 @@ func TestBuildHookReasonsAreCompactOneLine(t *testing.T) {
 	assert.NotContains(failed, "\n")
 	assert.NotContains(failed, req.Event.SessionID)
 	assert.NotContains(failed, "/workspace/roborev")
-	assert.NotContains(failed, "continue the task")
 
 	stop := buildStopReason(req, st.Count)
 	assert.Equal(DefaultInstruction+" 4 Stop hooks reached.", stop)
 	assert.NotContains(stop, "\n")
 	assert.NotContains(stop, req.Event.SessionID)
 	assert.NotContains(stop, "/workspace/roborev")
-	assert.NotContains(stop, "continue the task")
 
 	commit := buildCommitReason(req, st.CommitCount, st.LastCommitRepo)
 	assert.Equal(DefaultInstruction+` 2 commits reached in "agent-hook-integration".`, commit)

@@ -7,20 +7,25 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-func TestPostToolUseAdditionalContextContinuesInterruptedTask(t *testing.T) {
+func TestPostToolUseAdditionalContextPreservesResolvedInstruction(t *testing.T) {
 	assert.Equal(
 		t,
-		"Invoke $roborev-fix. Never expand the scope of the user's current task to address "+
-			"Roborev findings. Fix only findings that are clearly within that scope; if a finding is "+
-			"outside it or its scope is unclear, leave it unchanged and ask the user for direction. "+
-			"Otherwise, after handling permitted findings, continue the task you were doing before "+
-			"this hook interrupted you.",
+		"Invoke $roborev-fix.",
 		PostToolUseAdditionalContext("Invoke $roborev-fix."),
 	)
 }
 
-func TestPostToolUseAdditionalContextUsesFallback(t *testing.T) {
-	assert.Equal(t, postToolUseContinuationInstruction, PostToolUseAdditionalContext(""))
+func TestPostToolUseAdditionalContextFallsBackToDefaultInstruction(t *testing.T) {
+	assert.Equal(t, DefaultInstruction, PostToolUseAdditionalContext(""))
+}
+
+func TestDefaultInstructionDefersOutOfScopeFindings(t *testing.T) {
+	assert := assert.New(t)
+	instruction := PostToolUseAdditionalContext("")
+
+	assert.Contains(instruction, "Never expand the scope of the user's current task")
+	assert.Contains(instruction, "leave it unchanged and ask the user for direction")
+	assert.Contains(instruction, "continue the task you were doing before this hook interrupted you")
 }
 
 // If policy is appended before the continuation instruction, the hook's own
