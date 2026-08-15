@@ -48,6 +48,12 @@ fix, comment on, and close each review with the CLI. Installing skills remains
 recommended for Claude Code, Codex, and Factory Droid, but it is not required
 for the other profiles to receive an actionable reminder.
 
+Every emitted reminder also carries a non-overridable scope gate. Automatic
+fixes may address only findings that are clearly within the user's current task.
+If a finding is outside that scope or its scope is unclear, the agent must leave
+it unchanged and ask the user for direction. It must not close that review as
+resolved. This guard is appended even when `instruction` is customized.
+
 ## Install
 
 Install hooks for every locally detected coding agent:

@@ -669,9 +669,15 @@ const (
 	DefaultAgentQuotaCooldown    = 30 * time.Minute
 	DefaultAgentHookInstruction  = "Resolve open roborev findings now. Use the roborev-fix skill if available; " +
 		"otherwise run `roborev fix --open --list`, inspect each job with " +
-		"`roborev show --job <id> --json`, fix and verify all findings, record each fix with " +
+		"`roborev show --job <id> --json`, fix and verify only findings within the user's " +
+		"current task, and for each review fully resolved within that scope, record the fix with " +
 		"`roborev comment --commenter agent-hook --job <id> \"<summary>\"`, then run " +
 		"`roborev close <id>` before continuing."
+	// AgentHookScopeInstruction is appended to every triggered reminder, even
+	// when the main hook instruction is customized.
+	AgentHookScopeInstruction = "Never expand the scope of the user's current task to address " +
+		"Roborev findings. Fix only findings that are clearly within that scope; if a finding is " +
+		"outside it or its scope is unclear, leave it unchanged and ask the user for direction."
 
 	// DefaultHookTimeout bounds how long the post-commit hook waits for the
 	// daemon's enqueue handler before giving up so a stalled daemon never

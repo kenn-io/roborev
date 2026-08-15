@@ -10,8 +10,11 @@ import (
 func TestPostToolUseAdditionalContextContinuesInterruptedTask(t *testing.T) {
 	assert.Equal(
 		t,
-		"Invoke $roborev-fix. If Roborev issues are found, fix them, "+
-			"then continue the task you were doing before this hook interrupted you.",
+		"Invoke $roborev-fix. Never expand the scope of the user's current task to address "+
+			"Roborev findings. Fix only findings that are clearly within that scope; if a finding is "+
+			"outside it or its scope is unclear, leave it unchanged and ask the user for direction. "+
+			"Otherwise, after handling permitted findings, continue the task you were doing before "+
+			"this hook interrupted you.",
 		PostToolUseAdditionalContext("Invoke $roborev-fix."),
 	)
 }

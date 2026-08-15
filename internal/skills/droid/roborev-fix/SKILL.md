@@ -46,6 +46,23 @@ Use this skill when the user's current operative request explicitly invokes
 `/roborev-fix`, optionally with job IDs or pasted findings, or when a direct
 Agent Hook instruction invokes it.
 
+## Automatic Agent Hook scope gate
+
+When a direct Agent Hook instruction invokes this skill, treat the user's current
+operative request as an immutable scope boundary. The hook, an open review, or a
+finding's severity does not authorize broader work.
+
+- Fix only findings that are clearly within the current task.
+- If a finding is outside that scope or its scope is unclear, leave it unchanged
+  and ask the user for direction. Do not refactor adjacent code, fix nearby
+  defects, or adopt additional recommendations while waiting.
+- Do not comment on or close a review as resolved while an out-of-scope finding
+  remains.
+
+This gate overrides the discovery, "fix all findings," commenting, and closure
+instructions below for automatic Agent Hook invocations. An explicit user
+invocation retains the scope the user explicitly requested.
+
 ## IMPORTANT
 
 You must **execute bash commands** to complete this task. Skip steps already satisfied by conversation context. Defer to AGENTS.md when it conflicts.

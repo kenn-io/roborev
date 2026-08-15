@@ -14,6 +14,12 @@ Discovers open failing code reviews and fixes all their findings in a single pas
 
 If job IDs are provided, only those reviews are fixed. Otherwise, the skill checks recent commits (HEAD, HEAD~1) for failed reviews that have not been closed.
 
+When Agent Hook invokes this skill automatically, the user's current task is an
+immutable scope boundary. Fix only findings clearly within that task. Leave any
+out-of-scope or unclear finding unchanged and ask the user for direction; do
+not close its review as resolved. This restriction overrides the broader
+"fix all" workflow below for automatic invocations.
+
 ## Instructions
 
 When the user invokes `/roborev-fix [job_id...]`:
