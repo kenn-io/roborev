@@ -1165,8 +1165,20 @@ func (s *Server) humaListJobs(
 			)
 		}
 		job.Patch = nil
+		review, reviewErr := s.db.GetReviewByJobID(job.ID)
+		if reviewErr == nil {
+			job.Closed = &review.Closed
+			if review.Job != nil {
+				job.Verdict = review.Job.Verdict
+			}
+		} else if !errors.Is(reviewErr, sql.ErrNoRows) {
+			return nil, huma.Error500InternalServerError(
+				fmt.Sprintf("load job review metadata: %v", reviewErr),
+			)
+		}
 		resp := &ListJobsOutput{}
 		resp.Body.Jobs = []storage.ReviewJob{*job}
+		attachPanelSummaries(s.db, resp.Body.Jobs)
 		if input.OmitPrompt == "true" {
 			stripJobPrompts(resp.Body.Jobs)
 		}

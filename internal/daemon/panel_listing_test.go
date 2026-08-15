@@ -143,6 +143,26 @@ func TestListJobsAttachesPanelSummary(t *testing.T) {
 	assert.True(checked, "expected to see the synthesis parent in the listing")
 }
 
+// TestListJobsByIDAttachesPresentationMetadata verifies that an off-page
+// single-job lookup carries the same verdict and panel summary as a row from
+// the paginated listing.
+func TestListJobsByIDAttachesPresentationMetadata(t *testing.T) {
+	server, db, _ := newTestServer(t)
+
+	_, synthID, _ := enqueueTrioPanel(t, server)
+	_, err := db.Exec(`UPDATE review_jobs SET status = 'running' WHERE id = ?`, synthID)
+	require.NoError(t, err)
+	require.NoError(t, db.CompleteJob(synthID, "test", "prompt", "PASS\n\nPanel review"))
+
+	jobs := listJobsViaHTTP(t, server, "?id="+stringID(synthID))
+
+	require.Len(t, jobs, 1)
+	require.NotNil(t, jobs[0].Verdict)
+	assert.Equal(t, "P", *jobs[0].Verdict)
+	require.NotNil(t, jobs[0].PanelSummary)
+	assert.Equal(t, 3, jobs[0].PanelSummary.MembersTotal)
+}
+
 // TestListJobsStatsExcludeMembers verifies the listing's aggregate stats count
 // a panel run as its single synthesis parent, not its N members — keeping the
 // queue header consistent with the parent-only rows.
