@@ -162,6 +162,9 @@ type ListJobsQuery struct {
 	// Branch Filter by branch name
 	Branch *string `json:"branch,omitempty"`
 
+	// BranchEmpty Only jobs with empty or unset branch
+	BranchEmpty *ListJobsQueryBranchEmpty `json:"branch_empty,omitempty"`
+
 	// BranchIncludeEmpty Include jobs with no branch when filtering by branch
 	BranchIncludeEmpty *ListJobsQueryBranchIncludeEmpty `json:"branch_include_empty,omitempty"`
 
@@ -201,6 +204,13 @@ type ListJobsQuery struct {
 
 func (l ListJobsQuery) Validate() error {
 	var errors runtime.ValidationErrors
+	if l.BranchEmpty != nil {
+		if v, ok := any(l.BranchEmpty).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("BranchEmpty", err)
+			}
+		}
+	}
 	if l.BranchIncludeEmpty != nil {
 		if v, ok := any(l.BranchIncludeEmpty).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {

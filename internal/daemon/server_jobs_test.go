@@ -215,6 +215,17 @@ func TestHandleListJobsClosedFilter(t *testing.T) {
 		resp := fetchJobs(t, server, "branch=main")
 		assert.Len(t, resp.Jobs, 2, "expected 2 jobs on main")
 	})
+
+	t.Run("empty branch filter", func(t *testing.T) {
+		commit3, err := db.GetOrCreateCommit(repo.ID, "ccc", "A", "S3", time.Now())
+		require.NoError(t, err)
+		_, err = db.EnqueueJob(storage.EnqueueOpts{RepoID: repo.ID, CommitID: commit3.ID, GitRef: "ccc", Agent: "codex"})
+		require.NoError(t, err)
+
+		resp := fetchJobs(t, server, "branch_empty=true")
+		require.Len(t, resp.Jobs, 1)
+		assert.Empty(t, resp.Jobs[0].Branch)
+	})
 }
 
 func TestHandleEnqueueExcludedBranch(t *testing.T) {

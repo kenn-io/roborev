@@ -94,6 +94,7 @@ type ListJobsInput struct {
 	Repo               []string `query:"repo,explode" doc:"Filter by repo root path (repeatable)"`
 	GitRef             string   `query:"git_ref" doc:"Filter by git ref"`
 	Branch             string   `query:"branch" doc:"Filter by branch name"`
+	BranchEmpty        string   `query:"branch_empty" doc:"Only jobs with empty or unset branch" enum:"true,false,"`
 	BranchIncludeEmpty string   `query:"branch_include_empty" doc:"Include jobs with no branch when filtering by branch" enum:"true,false,"`
 	Closed             string   `query:"closed" doc:"Filter by review closed state" enum:"true,false,"`
 	JobType            string   `query:"job_type" doc:"Filter by job type"`

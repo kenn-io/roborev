@@ -1191,6 +1191,7 @@ type ListJobsOption func(*listJobsOptions)
 type listJobsOptions struct {
 	gitRef             string
 	branch             string
+	branchEmpty        bool
 	branchIncludeEmpty bool
 	closed             *bool
 	jobType            string
@@ -1218,6 +1219,11 @@ func WithGitRef(ref string) ListJobsOption {
 // WithBranch filters jobs by exact branch name.
 func WithBranch(branch string) ListJobsOption {
 	return func(o *listJobsOptions) { o.branch = branch }
+}
+
+// WithEmptyBranch filters jobs whose branch is empty or unset.
+func WithEmptyBranch() ListJobsOption {
+	return func(o *listJobsOptions) { o.branchEmpty = true }
 }
 
 // WithBranchOrEmpty filters jobs by branch name, also including jobs
@@ -1355,7 +1361,9 @@ func buildJobFilterClause(statusFilter, repoFilter string, o listJobsOptions) (s
 		conditions = append(conditions, "j.git_ref = ?")
 		args = append(args, o.gitRef)
 	}
-	if o.branch != "" {
+	if o.branchEmpty {
+		conditions = append(conditions, "(j.branch = '' OR j.branch IS NULL)")
+	} else if o.branch != "" {
 		if o.branchIncludeEmpty {
 			conditions = append(conditions, "(j.branch = ? OR j.branch = '' OR j.branch IS NULL)")
 		} else {

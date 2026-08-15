@@ -3860,6 +3860,17 @@ paths:
           schema:
             description: Filter by branch name
             type: string
+        - description: Only jobs with empty or unset branch
+          explode: false
+          in: query
+          name: branch_empty
+          schema:
+            description: Only jobs with empty or unset branch
+            enum:
+              - "true"
+              - "false"
+              - ""
+            type: string
         - description: Include jobs with no branch when filtering by branch
           explode: false
           in: query

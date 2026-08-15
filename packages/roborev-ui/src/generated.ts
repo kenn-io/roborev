@@ -2942,6 +2942,8 @@ export interface operations {
                 git_ref?: string;
                 /** @description Filter by branch name */
                 branch?: string;
+                /** @description Only jobs with empty or unset branch */
+                branch_empty?: "true" | "false" | "";
                 /** @description Include jobs with no branch when filtering by branch */
                 branch_include_empty?: "true" | "false" | "";
                 /** @description Filter by review closed state */

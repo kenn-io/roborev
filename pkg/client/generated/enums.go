@@ -43,11 +43,30 @@ func (g GetCostQueryBranchEmpty) Validate() error {
 	}
 }
 
+// ListJobsQueryBranchEmpty Only jobs with empty or unset branch
+type ListJobsQueryBranchEmpty string
+
+const (
+	Empty                         ListJobsQueryBranchEmpty = ""
+	ListJobsQueryBranchEmptyFalse ListJobsQueryBranchEmpty = "false"
+	ListJobsQueryBranchEmptyTrue  ListJobsQueryBranchEmpty = "true"
+)
+
+// Validate checks if the ListJobsQueryBranchEmpty value is valid
+func (l ListJobsQueryBranchEmpty) Validate() error {
+	switch l {
+	case Empty, ListJobsQueryBranchEmptyFalse, ListJobsQueryBranchEmptyTrue:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ListJobsQueryBranchEmpty value, got: %v", l))
+	}
+}
+
 // ListJobsQueryBranchIncludeEmpty Include jobs with no branch when filtering by branch
 type ListJobsQueryBranchIncludeEmpty string
 
 const (
-	Empty                                ListJobsQueryBranchIncludeEmpty = ""
+	ListJobsQueryBranchIncludeEmptyEmpty ListJobsQueryBranchIncludeEmpty = ""
 	ListJobsQueryBranchIncludeEmptyFalse ListJobsQueryBranchIncludeEmpty = "false"
 	ListJobsQueryBranchIncludeEmptyTrue  ListJobsQueryBranchIncludeEmpty = "true"
 )
@@ -55,7 +74,7 @@ const (
 // Validate checks if the ListJobsQueryBranchIncludeEmpty value is valid
 func (l ListJobsQueryBranchIncludeEmpty) Validate() error {
 	switch l {
-	case Empty, ListJobsQueryBranchIncludeEmptyFalse, ListJobsQueryBranchIncludeEmptyTrue:
+	case ListJobsQueryBranchIncludeEmptyEmpty, ListJobsQueryBranchIncludeEmptyFalse, ListJobsQueryBranchIncludeEmptyTrue:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid ListJobsQueryBranchIncludeEmpty value, got: %v", l))

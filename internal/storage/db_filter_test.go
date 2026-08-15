@@ -508,6 +508,13 @@ func TestWithBranchOrEmpty(t *testing.T) {
 
 		assert.Len(t, jobs, 2)
 	})
+
+	t.Run("WithEmptyBranch returns only branchless jobs", func(t *testing.T) {
+		jobs, err := db.ListJobs("", "", 50, 0, WithEmptyBranch())
+		require.NoError(t, err)
+		require.Len(t, jobs, 1)
+		assert.Empty(t, jobs[0].Branch)
+	})
 }
 
 func TestListJobsAndGetJobByIDReturnAgentic(t *testing.T) {

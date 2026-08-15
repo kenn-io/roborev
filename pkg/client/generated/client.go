@@ -1552,6 +1552,7 @@ func (c *Client) ListJobs(ctx context.Context, options *ListJobsRequestOptions, 
 	queryEncoding := map[string]runtime.QueryEncoding{
 		"before":               {Style: "form", Explode: &[]bool{false}[0]},
 		"branch":               {Style: "form", Explode: &[]bool{false}[0]},
+		"branch_empty":         {Style: "form", Explode: &[]bool{false}[0]},
 		"branch_include_empty": {Style: "form", Explode: &[]bool{false}[0]},
 		"closed":               {Style: "form", Explode: &[]bool{false}[0]},
 		"cursor":               {Style: "form", Explode: &[]bool{false}[0]},

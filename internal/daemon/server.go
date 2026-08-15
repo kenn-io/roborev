@@ -1238,7 +1238,9 @@ func (s *Server) humaListJobs(
 			listOpts, storage.WithGitRef(input.GitRef),
 		)
 	}
-	if input.Branch != "" {
+	if input.BranchEmpty == "true" {
+		listOpts = append(listOpts, storage.WithEmptyBranch())
+	} else if input.Branch != "" {
 		if input.BranchIncludeEmpty == "true" {
 			listOpts = append(
 				listOpts,

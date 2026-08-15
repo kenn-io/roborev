@@ -185,7 +185,8 @@ export function createJobsStore(opts: JobsStoreOptions) {
   function buildQuery(): ListJobsQuery {
     const q: ListJobsQuery = { limit: loadedLimit };
     if (filterRepo) q.repo = [filterRepo];
-    if (filterBranch) q.branch = filterBranch;
+    if (filterBranch === "(none)") q.branch_empty = "true";
+    else if (filterBranch) q.branch = filterBranch;
     if (filterStatus) q.status = filterStatus;
     if (filterSearch) q.git_ref = filterSearch;
     if (booleanFilterPreferences.hideClosed) q.closed = "false";

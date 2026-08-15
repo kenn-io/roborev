@@ -100,6 +100,33 @@ function makeJob(
 }
 
 describe("createJobsStore filter preferences", () => {
+  it("maps the branchless display sentinel to the empty branch query", async () => {
+    const client = {
+      GET: vi.fn().mockResolvedValue({
+        data: {
+          jobs: [],
+          has_more: false,
+          stats: { done: 0, closed: 0, open: 0 },
+        },
+        error: undefined,
+      }),
+    };
+    const store = createJobsStore({
+      client: client as never,
+      navigate: vi.fn(),
+    });
+
+    store.setFilter("branch", "(none)");
+    await vi.waitFor(() => expect(client.GET).toHaveBeenCalled());
+
+    expect(client.GET.mock.calls.at(-1)?.[1]?.params.query).toEqual(
+      expect.objectContaining({ branch_empty: "true", limit: 50 }),
+    );
+    expect(client.GET.mock.calls.at(-1)?.[1]?.params.query).not.toHaveProperty(
+      "branch",
+    );
+  });
+
   it("restores filter choices in a new store and applies them to the jobs query", async () => {
     const client = {
       GET: vi.fn().mockResolvedValue({
