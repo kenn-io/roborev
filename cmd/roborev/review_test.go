@@ -49,7 +49,9 @@ func setupTestEnvironment(
 }
 
 type capturedEnqueue struct {
+	RepoPath  string `json:"repo_path"`
 	GitRef    string `json:"git_ref"`
+	Branch    string `json:"branch"`
 	Reasoning string `json:"reasoning"`
 }
 
@@ -458,6 +460,36 @@ func TestReviewBranchFlag(t *testing.T) {
 		req := <-reqCh
 		assert.Contains(t, req.GitRef, mainSHA)
 		assert.True(t, strings.HasSuffix(req.GitRef, "..HEAD"))
+	})
+
+	t.Run("branch review stays in the invoked linked worktree", func(t *testing.T) {
+		repo, mux := setupTestEnvironment(t)
+		reqCh := mockEnqueue(t, mux)
+
+		mainSHA := repo.CommitFile("base.txt", "base", "initial")
+		other := filepath.Join(t.TempDir(), "other")
+		target := filepath.Join(t.TempDir(), "target")
+		otherParent, err := filepath.EvalSymlinks(filepath.Dir(other))
+		require.NoError(t, err)
+		otherRoot := filepath.Join(otherParent, filepath.Base(other))
+		targetParent, err := filepath.EvalSymlinks(filepath.Dir(target))
+		require.NoError(t, err)
+		targetRoot := filepath.Join(targetParent, filepath.Base(target))
+		repo.Run("worktree", "add", "-b", "other", otherRoot)
+		repo.Run("worktree", "add", "-b", "feature", targetRoot)
+		runGitForCommit(t, targetRoot, "commit", "--allow-empty", "-m", "feature commit")
+
+		// A shared core.worktree value can point Git's reported top level at a
+		// sibling even though target's .git file and HEAD identify target.
+		repo.Run("config", "--file", filepath.Join(repo.Dir, ".git", "config"), "core.worktree", otherRoot)
+
+		_, _, err = executeReviewCmd("--repo", targetRoot, "--branch", "--quiet")
+		require.NoError(t, err)
+
+		req := <-reqCh
+		assert.Equal(t, targetRoot, req.RepoPath)
+		assert.Equal(t, "feature", req.Branch)
+		assert.Equal(t, mainSHA+"..HEAD", req.GitRef)
 	})
 
 	t.Run("branch review uses branch base before url upstream", func(t *testing.T) {

@@ -106,7 +106,7 @@ Examples:
 			}
 
 			// Get repo root
-			root, err := gitrepo.Root(ctx, repoPath)
+			root, err := git.GetRepoRoot(repoPath)
 			if err != nil {
 				if quiet {
 					return nil // Not a repo - silent exit for hooks
