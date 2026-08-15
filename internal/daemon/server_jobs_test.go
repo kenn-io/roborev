@@ -225,6 +225,8 @@ func TestHandleListJobsClosedFilter(t *testing.T) {
 		resp := fetchJobs(t, server, "branch_empty=true")
 		require.Len(t, resp.Jobs, 1)
 		assert.Empty(t, resp.Jobs[0].Branch)
+		assert.Equal(t, 1, resp.Stats.Queued)
+		assert.Equal(t, 0, resp.Stats.Done)
 	})
 }
 

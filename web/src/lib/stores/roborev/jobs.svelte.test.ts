@@ -106,7 +106,14 @@ describe("createJobsStore filter preferences", () => {
         data: {
           jobs: [],
           has_more: false,
-          stats: { done: 0, closed: 0, open: 0 },
+          stats: {
+            queued: 1,
+            running: 0,
+            done: 0,
+            failed: 0,
+            closed: 0,
+            open: 0,
+          },
         },
         error: undefined,
       }),
@@ -116,6 +123,7 @@ describe("createJobsStore filter preferences", () => {
       navigate: vi.fn(),
     });
 
+    store.setFilter("showAutoDesign", true);
     store.setFilter("branch", "(none)");
     await vi.waitFor(() => expect(client.GET).toHaveBeenCalled());
 
@@ -125,6 +133,13 @@ describe("createJobsStore filter preferences", () => {
     expect(client.GET.mock.calls.at(-1)?.[1]?.params.query).not.toHaveProperty(
       "branch",
     );
+    expect(store.usesFilteredStatusCounts()).toBe(true);
+    expect(store.getFilteredStatusCounts()).toEqual({
+      queued: 1,
+      running: 0,
+      done: 0,
+      failed: 0,
+    });
   });
 
   it("restores filter choices in a new store and applies them to the jobs query", async () => {
@@ -158,7 +173,9 @@ describe("createJobsStore filter preferences", () => {
     expect(client.GET).toHaveBeenCalledWith(
       "/api/jobs",
       expect.objectContaining({
-        params: { query: { closed: "false", limit: 50 } },
+        params: {
+          query: { closed: "false", limit: 50, omit_prompt: "true" },
+        },
       }),
     );
   });
@@ -202,7 +219,9 @@ describe("createJobsStore filter preferences", () => {
       expect(secondClient.GET).toHaveBeenCalledWith(
         "/api/jobs",
         expect.objectContaining({
-          params: { query: { closed: "false", limit: 50 } },
+          params: {
+            query: { closed: "false", limit: 50, omit_prompt: "true" },
+          },
         }),
       ),
     );
@@ -261,7 +280,9 @@ describe("createJobsStore filter preferences", () => {
       expect(secondClient.GET).toHaveBeenCalledWith(
         "/api/jobs",
         expect.objectContaining({
-          params: { query: { closed: "false", limit: 50 } },
+          params: {
+            query: { closed: "false", limit: 50, omit_prompt: "true" },
+          },
         }),
       );
     } finally {
@@ -811,6 +832,7 @@ describe("createJobsStore filtered status counts", () => {
           query: expect.objectContaining({
             hide_classify_jobs: "true",
             limit: 50,
+            omit_prompt: "true",
           }),
         },
       }),
@@ -819,7 +841,6 @@ describe("createJobsStore filtered status counts", () => {
       string,
       unknown
     >;
-    expect(query).not.toHaveProperty("omit_prompt");
     expect(query.limit).not.toBe(0);
   });
 });
