@@ -983,6 +983,13 @@ describe("createJobsStore pagination", () => {
     });
 
     await loadJobs(store);
+
+    expect(store.getJobs().map((job) => job.id)).toEqual([1, 100]);
+    expect(store.getSortColumn()).toBe("enqueued_at");
+    expect(store.canSortJobs()).toBe(false);
+    store.setSortColumn("id");
+    expect(store.getJobs().map((job) => job.id)).toEqual([1, 100]);
+
     await loadMoreJobs(store);
 
     expect(client.GET.mock.calls[1]?.[1]?.params.query.cursor).toBe(

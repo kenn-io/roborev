@@ -62,7 +62,7 @@
   }
 
   function handleHeaderClick(col: ColumnDef): void {
-    if (!col.sortable) return;
+    if (!col.sortable || !jobsStore?.canSortJobs()) return;
     jobsStore?.setSortColumn(col.key);
   }
 </script>
@@ -75,7 +75,11 @@
       <tr>
         {#each columns as col (col.label)}
           <th
-            class:sortable={col.sortable}
+            class:sortable={col.sortable && jobsStore?.canSortJobs()}
+            aria-disabled={col.sortable && !jobsStore?.canSortJobs()}
+            title={col.sortable && !jobsStore?.canSortJobs()
+              ? "Load all results to sort this column"
+              : undefined}
             onclick={() => handleHeaderClick(col)}
           >
             {col.label}{sortIndicator(col)}

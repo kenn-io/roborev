@@ -220,7 +220,12 @@ func (wp *WorkerPool) applyClassifyVerdict(workerID string, job *storage.ReviewJ
 	autoDesignMetrics.RecordClassifier(yes, false)
 	if yes {
 		designAgent, designModel := wp.resolveDesignFollowUp(job.RepoPath)
+		if err := markJobLogForAppend(job.ID); err != nil {
+			log.Printf("[%s] Preserve classifier log for job %d: %v", workerID, job.ID, err)
+			discardJobLogAppendMarker(job.ID)
+		}
 		if err := wp.db.PromoteClassifyToDesignReview(job.ID, workerID, designAgent, designModel); err != nil {
+			discardJobLogAppendMarker(job.ID)
 			log.Printf("[%s] PromoteClassifyToDesignReview for %d: %v", workerID, job.ID, err)
 			wp.failClassifyOnDBError(workerID, job, "promote classify to design review", err)
 		}

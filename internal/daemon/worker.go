@@ -565,6 +565,22 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		return
 	}
 
+	// Isolate persisted output at the start of the attempt, before checkout,
+	// prompt, configuration, or cooldown failures can terminate it. A promoted
+	// classifier row carries its classifier output into the design review once;
+	// every other attempt starts with an empty log.
+	appendJobLog := false
+	if job.JobType == storage.JobTypeClassify {
+		discardJobLogAppendMarker(job.ID)
+	} else {
+		appendJobLog = consumeJobLogAppendMarker(job.ID)
+	}
+	if !appendJobLog {
+		if err := truncateJobLog(job.ID); err != nil {
+			log.Printf("[%s] Warning: truncate job log for job %d: %v", workerID, job.ID, err)
+		}
+	}
+
 	// Skip immediately if the agent is in quota cooldown.
 	// Resolve alias so "claude" checks cooldown for "claude-code".
 	canonicalAgent := agent.CanonicalName(job.Agent)
@@ -801,7 +817,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// transient filesystem failures so resource pressure does not permanently
 	// disable logging for the rest of the job.
 	var jobLog *jobLogWriter
-	if shouldAppendReviewJobLog(job) {
+	if appendJobLog {
 		jobLog = newAppendingJobLogWriter(job.ID)
 	} else {
 		jobLog = newJobLogWriter(job.ID)
@@ -1007,10 +1023,6 @@ func (wp *WorkerPool) finishRunningJob(workerID string, jobID int64) {
 	if _, err := wp.db.ReleaseCanceledJob(jobID, workerID); err != nil {
 		log.Printf("[%s] Error releasing canceled job %d: %v", workerID, jobID, err)
 	}
-}
-
-func shouldAppendReviewJobLog(job *storage.ReviewJob) bool {
-	return job.Source == "auto_design" && job.RetryCount == 0
 }
 
 func (wp *WorkerPool) autoClosePassingReview(workerID string, job *storage.ReviewJob, output string) {

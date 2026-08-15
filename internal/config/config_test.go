@@ -5084,3 +5084,17 @@ func TestWebConfigNormalization(t *testing.T) {
 		})
 	}
 }
+
+func TestDisabledWebConfigIgnoresInactiveSettings(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(path, []byte(`[web]
+enabled = false
+listen = "not-a-listener"
+public_origin = "not-an-origin"
+auth_token = "weak"
+`), 0o600))
+
+	cfg, err := LoadGlobalFrom(path)
+	require.NoError(t, err)
+	assert.False(t, cfg.Web.Enabled)
+}

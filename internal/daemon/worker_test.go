@@ -1264,6 +1264,7 @@ func TestProcessJob_PromotedAutoDesignAppendsExistingClassifierLog(t *testing.T)
 	require.NoError(t, err)
 	require.NoError(t, os.MkdirAll(JobLogDir(), 0o700))
 	require.NoError(t, os.WriteFile(JobLogPath(jobID), []byte("classifier progress\n"), 0o600))
+	require.NoError(t, markJobLogForAppend(jobID))
 
 	claimed, err := tc.DB.ClaimJob("worker-promoted-log")
 	require.NoError(t, err)
@@ -1274,6 +1275,28 @@ func TestProcessJob_PromotedAutoDesignAppendsExistingClassifierLog(t *testing.T)
 	require.NoError(t, err)
 	assert.Contains(t, string(data), "classifier progress")
 	assert.Contains(t, string(data), "design review progress")
+}
+
+func TestProcessJob_RerunClearsLogBeforeSetupFailure(t *testing.T) {
+	setupTestEnv(t)
+	tc := newWorkerTestContext(t, 1)
+
+	job := tc.createAndClaimJob(t, "missing-ref", "worker-old-attempt")
+	failed, err := tc.DB.FailJob(job.ID, "worker-old-attempt", "old attempt failed")
+	require.NoError(t, err)
+	require.True(t, failed)
+	require.NoError(t, os.MkdirAll(JobLogDir(), 0o700))
+	require.NoError(t, os.WriteFile(JobLogPath(job.ID), []byte("old attempt output\n"), 0o600))
+	require.NoError(t, tc.DB.ReenqueueJob(job.ID, storage.ReenqueueOpts{}))
+
+	rerun, err := tc.DB.ClaimJob("worker-new-attempt")
+	require.NoError(t, err)
+	require.Equal(t, job.ID, rerun.ID)
+	tc.Pool.processJob("worker-new-attempt", rerun)
+
+	data, err := os.ReadFile(JobLogPath(job.ID))
+	require.NoError(t, err)
+	assert.NotContains(t, string(data), "old attempt output")
 }
 
 func TestProcessJob_RetriedAutoDesignTruncatesPreviousReviewLog(t *testing.T) {
@@ -1338,25 +1361,6 @@ func TestProcessJob_RetriedAutoDesignTruncatesPreviousReviewLog(t *testing.T) {
 	assert.NotContains(t, logText, "classifier progress")
 	assert.NotContains(t, logText, "stale failed review")
 	assert.Contains(t, logText, "retry review progress")
-}
-
-func TestShouldAppendReviewJobLogForAutoDesignWithoutExistingLog(t *testing.T) {
-	setupTestEnv(t)
-	job := &storage.ReviewJob{ID: 909, Source: "auto_design"}
-
-	assert.False(t, JobLogExists(job.ID))
-	assert.True(t, shouldAppendReviewJobLog(job))
-	assert.False(t, shouldAppendReviewJobLog(&storage.ReviewJob{ID: 910}))
-}
-
-func TestShouldAppendReviewJobLogOnlyForFirstAutoDesignAttempt(t *testing.T) {
-	job := &storage.ReviewJob{
-		ID:         909,
-		Source:     "auto_design",
-		RetryCount: 1,
-	}
-
-	assert.False(t, shouldAppendReviewJobLog(job))
 }
 
 func TestApplyCodexReviewSettings(t *testing.T) {

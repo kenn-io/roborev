@@ -33,6 +33,40 @@ func JobLogPath(jobID int64) string {
 	return filepath.Join(JobLogDir(), fmt.Sprintf("%d.log", jobID))
 }
 
+func jobLogAppendMarkerPath(jobID int64) string {
+	return filepath.Join(JobLogDir(), fmt.Sprintf("%d.append", jobID))
+}
+
+// markJobLogForAppend preserves classifier output for the immediately
+// following promoted design-review attempt. The marker is created before the
+// database row becomes claimable and is consumed exactly once by processJob.
+func markJobLogForAppend(jobID int64) error {
+	dir := JobLogDir()
+	if err := os.MkdirAll(dir, 0o700); err != nil {
+		return fmt.Errorf("create job log dir %s: %w", dir, err)
+	}
+	return os.WriteFile(jobLogAppendMarkerPath(jobID), nil, 0o600)
+}
+
+func consumeJobLogAppendMarker(jobID int64) bool {
+	err := os.Remove(jobLogAppendMarkerPath(jobID))
+	return err == nil
+}
+
+func discardJobLogAppendMarker(jobID int64) {
+	if err := os.Remove(jobLogAppendMarkerPath(jobID)); err != nil && !os.IsNotExist(err) {
+		log.Printf("Warning: cannot remove job log append marker for job %d: %v", jobID, err)
+	}
+}
+
+func truncateJobLog(jobID int64) error {
+	f, err := openJobLogFile(jobID, os.O_CREATE|os.O_WRONLY|os.O_TRUNC)
+	if err != nil {
+		return err
+	}
+	return f.Close()
+}
+
 func openJobLogFile(jobID int64, flags int) (*os.File, error) {
 	dir := JobLogDir()
 	if err := os.MkdirAll(dir, 0o700); err != nil {

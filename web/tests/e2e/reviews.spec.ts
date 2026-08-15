@@ -107,10 +107,16 @@ test.describe.serial("native review workspace", () => {
     await expect(page.locator(".count-done")).toContainText("0 done");
 
     await selectStatus(page, "All statuses");
+    const idHeader = page.locator("th", { hasText: "ID" });
+    await expect(idHeader).toHaveAttribute("aria-disabled", "true");
+    await page.locator(".load-more-btn").click();
+    await expect(page.locator(".load-more-btn")).toBeHidden();
+    await expect(idHeader).not.toHaveAttribute("aria-disabled", "true");
     const firstBefore = Number(
       (await page.locator(".col-id .mono").first().textContent())?.trim(),
     );
-    await page.locator("th.sortable", { hasText: "ID" }).click();
+    await idHeader.click();
+    await idHeader.click();
     const firstAfter = Number(
       (await page.locator(".col-id .mono").first().textContent())?.trim(),
     );

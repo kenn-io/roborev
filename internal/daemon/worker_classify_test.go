@@ -317,6 +317,8 @@ func TestApplyClassifyVerdict_PromoteDoesNotBroadcast(t *testing.T) {
 
 	_, ok := waitForEvent(t, ch, 200*time.Millisecond)
 	assert.False(t, ok, "promote path must not broadcast a terminal event")
+	assert.True(t, consumeJobLogAppendMarker(jobID))
+	assert.False(t, consumeJobLogAppendMarker(jobID), "append marker must be one-shot")
 }
 
 func TestCompleteClassifyAsSkip_BroadcastsTerminalEvent(t *testing.T) {

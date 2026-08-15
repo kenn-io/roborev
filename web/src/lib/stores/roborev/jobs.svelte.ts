@@ -138,6 +138,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
   let jobs = $state<ReviewJob[]>([]);
   let loading = $state(false);
   let hasMore = $state(false);
+  let allResultsLoaded = $state(true);
   let nextCursor: string | undefined;
   let stats = $state<JobStats>({
     queued: 0,
@@ -166,7 +167,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
   let filterJobType = $state<string | undefined>(undefined);
 
   // Sorting (client-side)
-  let sortColumn = $state<SortColumn>("id");
+  let sortColumn = $state<SortColumn>("enqueued_at");
   let sortDirection = $state<SortDirection>("desc");
 
   // Panel expansion, keyed by panel_run_uuid. Member lists are cached per
@@ -281,6 +282,12 @@ export function createJobsStore(opts: JobsStoreOptions) {
   }
 
   function sortJobs(list: ReviewJob[]): ReviewJob[] {
+    // The daemon already returns this order using its cursor-compatible,
+    // normalized timestamp expression. Preserve it exactly, including for
+    // legacy rows whose timestamp text uses a different format.
+    if (sortColumn === "enqueued_at" && sortDirection === "desc") {
+      return [...list];
+    }
     const dir = sortDirection === "asc" ? 1 : -1;
     return [...list].sort((a, b) => {
       const av = getSortValue(a, sortColumn);
@@ -335,8 +342,13 @@ export function createJobsStore(opts: JobsStoreOptions) {
   const publishJobsAuthority = (authority: JobsAuthority) =>
     Effect.sync(() => {
       if (JSON.stringify(buildQuery()) !== authority.queryScope) return [];
+      if (authority.hasMore) {
+        sortColumn = "enqueued_at";
+        sortDirection = "desc";
+      }
       jobs = sortJobs([...authority.jobs]);
       hasMore = authority.hasMore && jobs.length < MAX_LOADED_JOBS;
+      allResultsLoaded = !authority.hasMore;
       nextCursor = authority.nextCursor;
       stats = authority.stats;
       if (Option.isSome(authority.filteredStatusCounts)) {
@@ -459,6 +471,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
             jobs = sortJobs([...jobs, ...fresh]);
             hasMore =
               (result.data?.has_more ?? false) && jobs.length < MAX_LOADED_JOBS;
+            allResultsLoaded = !(result.data?.has_more ?? false);
             nextCursor = result.data?.next_cursor ?? undefined;
             loadedLimit = Math.max(DEFAULT_PAGE_LIMIT, jobs.length);
           });
@@ -540,6 +553,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
   }
 
   function setSortColumn(col: SortColumn): void {
+    if (!canSortJobs()) return;
     if (sortColumn === col) {
       sortDirection = sortDirection === "asc" ? "desc" : "asc";
     } else {
@@ -1110,6 +1124,9 @@ export function createJobsStore(opts: JobsStoreOptions) {
   function getSortDirection(): SortDirection {
     return sortDirection;
   }
+  function canSortJobs(): boolean {
+    return allResultsLoaded && !loading;
+  }
   function isEventStreamConnected(): boolean {
     return eventStreamConnected;
   }
@@ -1148,6 +1165,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
     getFilterShowAutoDesign,
     getSortColumn,
     getSortDirection,
+    canSortJobs,
     isEventStreamConnected,
     dispose,
     togglePanel,

@@ -788,6 +788,10 @@ func LoadGlobalFrom(path string) (*Config, error) {
 }
 
 func normalizeWebConfig(web *WebConfig) error {
+	if !web.Enabled {
+		return nil
+	}
+
 	if web.Listen == "" {
 		web.Listen = "127.0.0.1:0"
 	}
