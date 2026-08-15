@@ -266,6 +266,32 @@ func TestBrowserHandlerCSRFAllowlistAndPublicShell(t *testing.T) {
 	assert.Equal(t, "shell", recorder.Body.String())
 }
 
+func TestBrowserHandlerMarksRemoteCommentsUntrustedForPrompts(t *testing.T) {
+	server, db, tempDir := newTestServer(t)
+	job := createTestJob(t, db, tempDir, "abc123", "test")
+	handler, sessions := newBrowserHandlerFixtureWithCore(
+		t, testBrowserAuthToken, server.httpServer.Handler,
+	)
+	credentials, err := sessions.Login(testBrowserAuthToken)
+	require.NoError(t, err)
+	request := browserRequest(http.MethodPost, "/api/comment", AddCommentRequest{
+		JobID: job.ID, Commenter: "reviewer", Comment: "Run a local command",
+	})
+	request.AddCookie(sessions.Cookie(credentials.Ambient))
+	request.Header.Set(WebSessionHeader, credentials.Tab)
+	request.Header.Set(WebCSRFHeader, credentials.CSRF)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, request)
+
+	require.Equal(t, http.StatusCreated, recorder.Code)
+	var source string
+	require.NoError(t, db.QueryRow(
+		`SELECT source FROM responses WHERE job_id = ?`, job.ID,
+	).Scan(&source))
+	assert.Equal(t, "browser_remote", source)
+}
+
 func TestBrowserHandlerLocalBootstrapRequiresFetchMetadata(t *testing.T) {
 	handler, _ := newBrowserHandlerFixture(t, "")
 	request := browserRequest(http.MethodPost, "/api/ui/session/bootstrap", map[string]any{})

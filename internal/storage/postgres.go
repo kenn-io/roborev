@@ -15,12 +15,12 @@ import (
 )
 
 // PostgreSQL schema version - increment when schema changes
-const pgSchemaVersion = 17
+const pgSchemaVersion = 18
 
 // pgSchemaName is the PostgreSQL schema used to isolate roborev tables
 const pgSchemaName = "roborev"
 
-//go:embed schemas/postgres_v17.sql
+//go:embed schemas/postgres_v18.sql
 var pgSchemaSQL string
 
 // pgSchemaStatements returns the individual DDL statements for schema creation.
@@ -397,6 +397,11 @@ func (p *PgPool) EnsureSchema(ctx context.Context) error {
 				return fmt.Errorf("v17 migration (add agent_invoked): %w", err)
 			}
 		}
+		if currentVersion < 18 {
+			if _, err = p.pool.Exec(ctx, `ALTER TABLE responses ADD COLUMN IF NOT EXISTS source TEXT NOT NULL DEFAULT 'local'`); err != nil {
+				return fmt.Errorf("v18 migration (add response source): %w", err)
+			}
+		}
 		// Update version
 		_, err = p.pool.Exec(ctx, `INSERT INTO schema_version (version) VALUES ($1) ON CONFLICT (version) DO NOTHING`, pgSchemaVersion)
 		if err != nil {
@@ -764,10 +769,10 @@ func (p *PgPool) UpsertReview(ctx context.Context, r SyncableReview) error {
 func (p *PgPool) InsertResponse(ctx context.Context, r SyncableResponse) error {
 	_, err := p.pool.Exec(ctx, `
 		INSERT INTO responses (
-			uuid, job_uuid, responder, response, source_machine_id, created_at
-		) VALUES ($1, $2, $3, $4, $5, $6)
+			uuid, job_uuid, responder, response, source, source_machine_id, created_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7)
 		ON CONFLICT (uuid) DO NOTHING
-	`, r.UUID, r.JobUUID, r.Responder, r.Response, r.SourceMachineID, r.CreatedAt)
+	`, r.UUID, r.JobUUID, r.Responder, r.Response, normalizeResponseSource(r.Source), r.SourceMachineID, r.CreatedAt)
 	return err
 }
 
@@ -981,6 +986,7 @@ type PulledResponse struct {
 	JobUUID         string
 	Responder       string
 	Response        string
+	Source          string
 	SourceMachineID string
 	CreatedAt       time.Time
 	InsertedAt      time.Time
@@ -1001,7 +1007,7 @@ func (p *PgPool) PullResponses(ctx context.Context, excludeMachineID string, cur
 
 	rows, err := p.pool.Query(ctx, `
 		SELECT
-			r.uuid, r.job_uuid, r.responder, r.response, r.source_machine_id, r.created_at, r.inserted_at, r.id
+			r.uuid, r.job_uuid, r.responder, r.response, r.source, r.source_machine_id, r.created_at, r.inserted_at, r.id
 		FROM responses r
 		WHERE (r.source_machine_id IS NULL OR r.source_machine_id != $1)
 		AND (r.inserted_at > $2 OR (r.inserted_at = $2 AND r.id > $3))
@@ -1021,7 +1027,7 @@ func (p *PgPool) PullResponses(ctx context.Context, excludeMachineID string, cur
 		var r PulledResponse
 
 		err := rows.Scan(
-			&r.UUID, &r.JobUUID, &r.Responder, &r.Response, &r.SourceMachineID, &r.CreatedAt, &r.InsertedAt, &lastID,
+			&r.UUID, &r.JobUUID, &r.Responder, &r.Response, &r.Source, &r.SourceMachineID, &r.CreatedAt, &r.InsertedAt, &lastID,
 		)
 		if err != nil {
 			return nil, cursor, fmt.Errorf("scan response: %w", err)
@@ -1124,10 +1130,10 @@ func (p *PgPool) BatchInsertResponses(ctx context.Context, responses []SyncableR
 	for _, r := range responses {
 		batch.Queue(`
 			INSERT INTO responses (
-				uuid, job_uuid, responder, response, source_machine_id, created_at
-			) VALUES ($1, $2, $3, $4, $5, $6)
+				uuid, job_uuid, responder, response, source, source_machine_id, created_at
+			) VALUES ($1, $2, $3, $4, $5, $6, $7)
 			ON CONFLICT (uuid) DO NOTHING
-		`, r.UUID, r.JobUUID, r.Responder, r.Response, r.SourceMachineID, r.CreatedAt)
+		`, r.UUID, r.JobUUID, r.Responder, r.Response, normalizeResponseSource(r.Source), r.SourceMachineID, r.CreatedAt)
 	}
 
 	br := p.pool.SendBatch(ctx, batch)

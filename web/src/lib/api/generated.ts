@@ -1818,6 +1818,7 @@ export interface components {
             job_id?: number;
             responder: string;
             response: string;
+            source?: string;
             source_machine_id?: string;
             /** Format: date-time */
             synced_at?: string;

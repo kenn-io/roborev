@@ -84,7 +84,7 @@ func (s *Server) fetchInsightsReviews(
 		reviews = append(reviews, prompt.InsightsReviewFromJob(
 			job,
 			review.Output,
-			responses,
+			storage.PromptTrustedResponses(responses),
 			review.Closed,
 		))
 		if len(reviews) >= maxInsightsReviews {

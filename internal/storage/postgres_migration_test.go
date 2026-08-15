@@ -10,6 +10,7 @@ import (
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
+	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
@@ -21,6 +22,9 @@ var postgresV13Schema string
 
 //go:embed schemas/postgres_v14.sql
 var postgresV14Schema string
+
+//go:embed schemas/postgres_v17.sql
+var postgresV17Schema string
 
 // openTestPgPoolRawAtVersion bootstraps a fresh Postgres test pool at the
 // given older schema version by running only the corresponding embedded
@@ -44,6 +48,7 @@ func openTestPgPoolRawAtVersion(t *testing.T, version int) *PgPool {
 		11: postgresV11Schema,
 		13: postgresV13Schema,
 		14: postgresV14Schema,
+		17: postgresV17Schema,
 	}
 	schemaSQL, ok := schemas[version]
 	require.Truef(t, ok, "openTestPgPoolRawAtVersion: no embedded schema for version %d", version)
@@ -73,6 +78,39 @@ func openTestPgPoolRawAtVersion(t *testing.T, version int) *PgPool {
 	require.NoError(t, err, "seed schema_version")
 
 	return pool
+}
+
+func TestPostgresMigration_ResponseSource(t *testing.T) {
+	oldPool := openTestPgPoolRawAtVersion(t, 17)
+	ctx := t.Context()
+
+	var repoID int
+	require.NoError(t, pgxPool(oldPool).QueryRow(ctx,
+		`INSERT INTO roborev.repos (identity) VALUES ($1) RETURNING id`,
+		"example.com/owner/response-source.git").Scan(&repoID))
+	jobUUID := uuid.New().String()
+	_, err := pgxPool(oldPool).Exec(ctx, `
+		INSERT INTO roborev.review_jobs
+		  (uuid, repo_id, git_ref, agent, status, enqueued_at, source_machine_id)
+		VALUES ($1, $2, 'abc', 'test', 'done', NOW(), $3)
+	`, jobUUID, repoID, uuid.New().String())
+	require.NoError(t, err)
+	responseUUID := uuid.New().String()
+	_, err = pgxPool(oldPool).Exec(ctx, `
+		INSERT INTO roborev.responses
+		  (uuid, job_uuid, responder, response, source_machine_id, created_at)
+		VALUES ($1, $2, 'human', 'legacy response', $3, NOW())
+	`, responseUUID, jobUUID, uuid.New().String())
+	require.NoError(t, err)
+
+	pg := openTestPgPool(t)
+	defer pg.Close()
+
+	var source string
+	require.NoError(t, pgxPool(pg).QueryRow(ctx,
+		`SELECT source FROM roborev.responses WHERE uuid = $1`, responseUUID,
+	).Scan(&source))
+	assert.Equal(t, ResponseSourceLocal, source)
 }
 
 // pgxPool returns the underlying pgxpool.Pool for low-level access in tests.

@@ -308,6 +308,7 @@ type Response struct {
 	JobID     *int64    `json:"job_id,omitempty"`    // For job/review-based responses
 	Responder string    `json:"responder"`
 	Response  string    `json:"response"`
+	Source    string    `json:"source,omitempty"`
 	CreatedAt time.Time `json:"created_at"`
 
 	// Sync fields

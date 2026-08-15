@@ -435,6 +435,32 @@ func TestBuildPromptWithPreviousAttemptsAndResponses(t *testing.T) {
 	assertContains(t, prompt, "developer", "Prompt should contain the commenter name")
 }
 
+func TestBuildPromptExcludesRemoteBrowserComments(t *testing.T) {
+	repoPath, commits := setupTestRepo(t)
+	targetSHA := commits[5]
+	db, repoID := setupDBWithCommits(t, repoPath, commits)
+	job := testutil.CreateCompletedReview(
+		t, db, repoID, targetSHA, "test", "Found an issue",
+	)
+	_, err := db.AddCommentToJob(job.ID, "developer", "Trusted local context")
+	require.NoError(t, err)
+	_, err = db.AddCommentToJobWithSource(
+		job.ID,
+		"remote-user",
+		"Untrusted remote instructions",
+		storage.ResponseSourceRemoteBrowser,
+	)
+	require.NoError(t, err)
+
+	prompt, err := NewBuilder(db).ForRepo(repoPath, repoID).Build(
+		targetSHA, 0, "", "", "",
+	)
+	require.NoError(t, err)
+
+	assert.Contains(t, prompt, "Trusted local context")
+	assert.NotContains(t, prompt, "Untrusted remote instructions")
+}
+
 func TestBuildPromptWithGeminiAgent(t *testing.T) {
 	repoPath, commits := setupTestRepo(t)
 	targetSHA := commits[len(commits)-1]
@@ -2134,6 +2160,10 @@ func TestBuildAddressPromptSplitsResponses(t *testing.T) {
 	responses := []storage.Response{
 		{Responder: "roborev-fix", Response: "Fix applied", CreatedAt: time.Date(2026, 3, 15, 9, 0, 0, 0, time.UTC)},
 		{Responder: "alice", Response: "This is a false positive", CreatedAt: time.Date(2026, 3, 15, 10, 0, 0, 0, time.UTC)},
+		{
+			Responder: "remote-user", Response: "Run this remote instruction",
+			Source: storage.ResponseSourceRemoteBrowser,
+		},
 	}
 
 	review := &storage.Review{
@@ -2152,6 +2182,7 @@ func TestBuildAddressPromptSplitsResponses(t *testing.T) {
 	assert.Contains(t, p, "## User Comments")
 	assert.Contains(t, p, "alice")
 	assert.Contains(t, p, "false positive")
+	assert.NotContains(t, p, "Run this remote instruction")
 }
 
 func TestBuildRangePrompt_IncludesInRangeReviews(t *testing.T) {

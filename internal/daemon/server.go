@@ -2265,12 +2265,17 @@ func (s *Server) humaAddComment(
 
 	var resp *storage.Response
 	var err error
+	source := storage.ResponseSourceLocal
+	if principal, found := BrowserPrincipalFromContext(ctx); found && !principal.Local {
+		source = storage.ResponseSourceRemoteBrowser
+	}
 
 	if input.Body.JobID != 0 {
-		resp, err = s.db.AddCommentToJob(
+		resp, err = s.db.AddCommentToJobWithSource(
 			input.Body.JobID,
 			input.Body.Commenter,
 			input.Body.Comment,
+			source,
 		)
 		if err != nil {
 			if errors.Is(err, sql.ErrNoRows) {
@@ -2290,10 +2295,11 @@ func (s *Server) humaAddComment(
 			)
 		}
 
-		resp, err = s.db.AddComment(
+		resp, err = s.db.AddCommentWithSource(
 			commit.ID,
 			input.Body.Commenter,
 			input.Body.Comment,
+			source,
 		)
 		if err != nil {
 			return nil, huma.Error500InternalServerError(

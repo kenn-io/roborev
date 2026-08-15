@@ -82,6 +82,7 @@ CREATE TABLE IF NOT EXISTS responses (
   commit_id INTEGER REFERENCES commits(id),
   responder TEXT NOT NULL,
   response TEXT NOT NULL,
+  source TEXT NOT NULL DEFAULT 'local',
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
@@ -1567,6 +1568,7 @@ func (db *DB) migrateSyncColumns() error {
 		{"uuid", "TEXT"},
 		{"source_machine_id", "TEXT"},
 		{"synced_at", "TEXT"},
+		{"source", "TEXT NOT NULL DEFAULT 'local'"},
 	} {
 		has, err := hasColumn("responses", col.name)
 		if err != nil {

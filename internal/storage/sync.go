@@ -703,6 +703,7 @@ type SyncableResponse struct {
 	JobUUID         string
 	Responder       string
 	Response        string
+	Source          string
 	SourceMachineID string
 	CreatedAt       time.Time
 }
@@ -713,7 +714,7 @@ func (db *DB) GetCommentsToSync(machineID string, limit int) ([]SyncableResponse
 	rows, err := db.Query(`
 		SELECT
 			r.id, r.uuid, r.job_id, j.uuid,
-			r.responder, r.response, r.source_machine_id, r.created_at
+			r.responder, r.response, r.source, r.source_machine_id, r.created_at
 		FROM responses r
 		JOIN review_jobs j ON r.job_id = j.id
 		WHERE r.source_machine_id = ?
@@ -737,7 +738,7 @@ func (db *DB) GetCommentsToSync(machineID string, limit int) ([]SyncableResponse
 
 		err := rows.Scan(
 			&r.ID, &r.UUID, &jobID, &r.JobUUID,
-			&r.Responder, &r.Response, &r.SourceMachineID, &createdAt,
+			&r.Responder, &r.Response, &r.Source, &r.SourceMachineID, &createdAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan response: %w", err)
@@ -886,10 +887,10 @@ func (db *DB) UpsertPulledResponse(r PulledResponse) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	_, err = db.Exec(`
 		INSERT INTO responses (
-			uuid, job_id, responder, response, source_machine_id, created_at, synced_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?)
+			uuid, job_id, responder, response, source, source_machine_id, created_at, synced_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(uuid) DO NOTHING
-	`, r.UUID, jobID, r.Responder, r.Response, r.SourceMachineID, r.CreatedAt.Format(time.RFC3339), now)
+	`, r.UUID, jobID, r.Responder, r.Response, normalizeResponseSource(r.Source), r.SourceMachineID, r.CreatedAt.Format(time.RFC3339), now)
 	return err
 }
 

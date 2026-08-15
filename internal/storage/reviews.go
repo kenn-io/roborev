@@ -401,15 +401,48 @@ func (db *DB) GetReviewByID(reviewID int64) (*Review, error) {
 	return &r, nil
 }
 
+const (
+	ResponseSourceLocal         = "local"
+	ResponseSourceRemoteBrowser = "browser_remote"
+)
+
+// PromptTrustedResponses returns only comments created through trusted local
+// control paths. Unknown provenance is excluded so a newer, untrusted source
+// cannot become agent instructions when read by an older prompt builder.
+func PromptTrustedResponses(responses []Response) []Response {
+	trusted := make([]Response, 0, len(responses))
+	for _, response := range responses {
+		if response.Source == "" || response.Source == ResponseSourceLocal {
+			trusted = append(trusted, response)
+		}
+	}
+	return trusted
+}
+
+func normalizeResponseSource(source string) string {
+	if source == "" {
+		return ResponseSourceLocal
+	}
+	return source
+}
+
 // AddComment adds a comment to a commit (legacy - use AddCommentToJob for new code)
 func (db *DB) AddComment(commitID int64, responder, response string) (*Response, error) {
+	return db.AddCommentWithSource(
+		commitID, responder, response, ResponseSourceLocal,
+	)
+}
+
+// AddCommentWithSource adds a legacy commit comment with explicit provenance.
+func (db *DB) AddCommentWithSource(commitID int64, responder, response, source string) (*Response, error) {
+	source = normalizeResponseSource(source)
 	uuid := GenerateUUID()
 	machineID, _ := db.GetMachineID()
 	now := time.Now()
 	nowStr := now.Format(time.RFC3339)
 
-	result, err := db.Exec(`INSERT INTO responses (commit_id, responder, response, uuid, source_machine_id, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
-		commitID, responder, response, uuid, machineID, nowStr)
+	result, err := db.Exec(`INSERT INTO responses (commit_id, responder, response, source, uuid, source_machine_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		commitID, responder, response, source, uuid, machineID, nowStr)
 	if err != nil {
 		return nil, err
 	}
@@ -420,6 +453,7 @@ func (db *DB) AddComment(commitID int64, responder, response string) (*Response,
 		CommitID:        &commitID,
 		Responder:       responder,
 		Response:        response,
+		Source:          source,
 		CreatedAt:       now,
 		UUID:            uuid,
 		SourceMachineID: machineID,
@@ -428,6 +462,14 @@ func (db *DB) AddComment(commitID int64, responder, response string) (*Response,
 
 // AddCommentToJob adds a comment linked to a job/review
 func (db *DB) AddCommentToJob(jobID int64, responder, response string) (*Response, error) {
+	return db.AddCommentToJobWithSource(
+		jobID, responder, response, ResponseSourceLocal,
+	)
+}
+
+// AddCommentToJobWithSource adds a job comment with explicit provenance.
+func (db *DB) AddCommentToJobWithSource(jobID int64, responder, response, source string) (*Response, error) {
+	source = normalizeResponseSource(source)
 	// Verify job exists first to return proper 404 instead of FK violation or orphaned row
 	var exists int
 	err := db.QueryRow(`SELECT 1 FROM review_jobs WHERE id = ?`, jobID).Scan(&exists)
@@ -443,8 +485,8 @@ func (db *DB) AddCommentToJob(jobID int64, responder, response string) (*Respons
 	now := time.Now()
 	nowStr := now.Format(time.RFC3339)
 
-	result, err := db.Exec(`INSERT INTO responses (job_id, responder, response, uuid, source_machine_id, created_at) VALUES (?, ?, ?, ?, ?, ?)`,
-		jobID, responder, response, uuid, machineID, nowStr)
+	result, err := db.Exec(`INSERT INTO responses (job_id, responder, response, source, uuid, source_machine_id, created_at) VALUES (?, ?, ?, ?, ?, ?, ?)`,
+		jobID, responder, response, source, uuid, machineID, nowStr)
 	if err != nil {
 		return nil, err
 	}
@@ -455,6 +497,7 @@ func (db *DB) AddCommentToJob(jobID int64, responder, response string) (*Respons
 		JobID:           &jobID,
 		Responder:       responder,
 		Response:        response,
+		Source:          source,
 		CreatedAt:       now,
 		UUID:            uuid,
 		SourceMachineID: machineID,
@@ -464,7 +507,7 @@ func (db *DB) AddCommentToJob(jobID int64, responder, response string) (*Respons
 // GetCommentsForCommit returns all comments for a commit
 func (db *DB) GetCommentsForCommit(commitID int64) ([]Response, error) {
 	rows, err := db.Query(`
-		SELECT id, commit_id, job_id, responder, response, created_at
+		SELECT id, commit_id, job_id, responder, response, source, created_at
 		FROM responses
 		WHERE commit_id = ?
 		ORDER BY created_at ASC
@@ -479,7 +522,7 @@ func (db *DB) GetCommentsForCommit(commitID int64) ([]Response, error) {
 		var r Response
 		var createdAt string
 		var commitIDNull, jobIDNull sql.NullInt64
-		if err := rows.Scan(&r.ID, &commitIDNull, &jobIDNull, &r.Responder, &r.Response, &createdAt); err != nil {
+		if err := rows.Scan(&r.ID, &commitIDNull, &jobIDNull, &r.Responder, &r.Response, &r.Source, &createdAt); err != nil {
 			return nil, err
 		}
 		if commitIDNull.Valid {
@@ -498,7 +541,7 @@ func (db *DB) GetCommentsForCommit(commitID int64) ([]Response, error) {
 // GetCommentsForJob returns all comments linked to a job
 func (db *DB) GetCommentsForJob(jobID int64) ([]Response, error) {
 	rows, err := db.Query(`
-		SELECT id, commit_id, job_id, responder, response, created_at
+		SELECT id, commit_id, job_id, responder, response, source, created_at
 		FROM responses
 		WHERE job_id = ?
 		ORDER BY created_at ASC
@@ -513,7 +556,7 @@ func (db *DB) GetCommentsForJob(jobID int64) ([]Response, error) {
 		var r Response
 		var createdAt string
 		var commitIDNull, jobIDNull sql.NullInt64
-		if err := rows.Scan(&r.ID, &commitIDNull, &jobIDNull, &r.Responder, &r.Response, &createdAt); err != nil {
+		if err := rows.Scan(&r.ID, &commitIDNull, &jobIDNull, &r.Responder, &r.Response, &r.Source, &createdAt); err != nil {
 			return nil, err
 		}
 		if commitIDNull.Valid {

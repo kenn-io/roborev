@@ -1622,7 +1622,7 @@ func (b *Builder) previousAttemptContexts(gitRef string) []reviewAttemptContext 
 		if review.JobID > 0 {
 			responses, err := b.db.GetCommentsForJob(review.JobID)
 			if err == nil {
-				attempt.Responses = responses
+				attempt.Responses = storage.PromptTrustedResponses(responses)
 			}
 		}
 		attempts = append(attempts, attempt)
@@ -1660,7 +1660,7 @@ func (b *Builder) lookupReviewContexts(shas []string, skipMissing bool) []Histor
 		ctx := HistoricalReviewContext{SHA: sha, Review: review}
 		if review.JobID > 0 {
 			if responses, err := b.db.GetCommentsForJob(review.JobID); err == nil {
-				ctx.Responses = responses
+				ctx.Responses = storage.PromptTrustedResponses(responses)
 			}
 		}
 		contexts = append(contexts, ctx)
@@ -1696,7 +1696,7 @@ func IsToolResponse(r storage.Response) bool {
 }
 
 func SplitResponses(responses []storage.Response) (toolAttempts, userComments []storage.Response) {
-	for _, r := range responses {
+	for _, r := range storage.PromptTrustedResponses(responses) {
 		if IsToolResponse(r) {
 			toolAttempts = append(toolAttempts, r)
 		} else {

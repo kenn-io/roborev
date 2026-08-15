@@ -1777,6 +1777,7 @@ type Response struct {
 	JobID           *int64     `json:"job_id,omitempty"`
 	Responder       string     `json:"responder" validate:"required"`
 	Response        string     `json:"response" validate:"required"`
+	Source          *string    `json:"source,omitempty"`
 	SourceMachineID *string    `json:"source_machine_id,omitempty"`
 	SyncedAt        *time.Time `json:"synced_at,omitempty"`
 	UUID            *string    `json:"uuid,omitempty"`

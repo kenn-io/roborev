@@ -725,7 +725,12 @@ func TestGetCommentsToSync_LegacyCommentsExcluded(t *testing.T) {
 	err = h.db.MarkJobSynced(job.ID)
 	require.NoError(t, err, "MarkJobSynced failed: %v")
 
-	jobResp, err := h.db.AddCommentToJob(job.ID, "human", "This is a job response")
+	jobResp, err := h.db.AddCommentToJobWithSource(
+		job.ID,
+		"human",
+		"This is a job response",
+		ResponseSourceRemoteBrowser,
+	)
 	require.NoError(t, err, "AddCommentToJob failed: %v")
 
 	result, err := h.db.Exec(`
@@ -744,6 +749,7 @@ func TestGetCommentsToSync_LegacyCommentsExcluded(t *testing.T) {
 	for _, r := range responses {
 		if r.ID == jobResp.ID {
 			foundJobResp = true
+			assert.Equal(t, ResponseSourceRemoteBrowser, r.Source)
 		}
 		if r.ID == legacyRespID {
 			foundLegacyResp = true

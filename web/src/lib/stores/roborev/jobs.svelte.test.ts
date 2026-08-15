@@ -531,6 +531,93 @@ describe("createJobsStore event stream", () => {
     expect(store.isEventStreamConnected()).toBe(false);
   });
 
+  it("keeps event reconciliation alive across overlapping list requests", async () => {
+    const encoder = new TextEncoder();
+    let bodyController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              bodyController = controller;
+            },
+          }),
+          { status: 200 },
+        ),
+    );
+    let requestCount = 0;
+    let firstSignal: AbortSignal | undefined;
+    let resolveFirst:
+      | ((value: {
+          data: {
+            jobs: never[];
+            has_more: boolean;
+            stats: { done: number; closed: number; open: number };
+          };
+          error: undefined;
+        }) => void)
+      | undefined;
+    const client = {
+      GET: vi.fn(
+        (_path: string, options: { signal?: AbortSignal } | undefined) => {
+          requestCount += 1;
+          if (requestCount !== 1) {
+            return Promise.resolve({
+              data: {
+                jobs: [],
+                has_more: false,
+                stats: { done: 0, closed: 0, open: 0 },
+              },
+              error: undefined,
+            });
+          }
+          return new Promise((resolve, reject) => {
+            firstSignal = options?.signal;
+            resolveFirst = resolve;
+            options?.signal?.addEventListener("abort", () => {
+              reject(new DOMException("Aborted", "AbortError"));
+            });
+          });
+        },
+      ),
+    };
+    const store = createJobsStore({
+      client: client as never,
+      navigate: vi.fn(),
+    });
+    store.setSelectedJobId(42);
+    const eventOwner = store.connectEventStream("/api/roborev");
+    await vi.waitFor(() => expect(store.isEventStreamConnected()).toBe(true));
+
+    bodyController?.enqueue(
+      encoder.encode(
+        '{"type":"review.completed","ts":"2026-08-04T13:00:00Z","job_id":42}\n',
+      ),
+    );
+    await vi.waitFor(() => expect(client.GET).toHaveBeenCalledTimes(1));
+    await loadJobs(store);
+    expect(client.GET).toHaveBeenCalledTimes(2);
+    expect(firstSignal?.aborted).toBe(false);
+    resolveFirst?.({
+      data: {
+        jobs: [],
+        has_more: false,
+        stats: { done: 0, closed: 0, open: 0 },
+      },
+      error: undefined,
+    });
+
+    bodyController?.enqueue(
+      encoder.encode(
+        '{"type":"review.closed","ts":"2026-08-04T13:01:00Z","job_id":42}\n',
+      ),
+    );
+    await vi.waitFor(() => expect(client.GET).toHaveBeenCalledTimes(3));
+
+    expect(store.isEventStreamConnected()).toBe(true);
+    store.disconnectEventStream(eventOwner);
+  });
+
   it("treats malformed event records as a reconnectable stream failure", async () => {
     vi.useFakeTimers();
     const encoder = new TextEncoder();

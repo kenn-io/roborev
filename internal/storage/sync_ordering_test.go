@@ -49,6 +49,7 @@ func TestUpsertPulledResponse_WithParentJob(t *testing.T) {
 		JobUUID:         job.UUID,
 		Responder:       "human",
 		Response:        "Test response for existing job",
+		Source:          ResponseSourceRemoteBrowser,
 		SourceMachineID: GenerateUUID(),
 		CreatedAt:       time.Now(),
 	}
@@ -58,10 +59,14 @@ func TestUpsertPulledResponse_WithParentJob(t *testing.T) {
 
 	// Verify response was inserted
 	var count int
-	err = h.db.QueryRow(`SELECT COUNT(*) FROM responses WHERE uuid = ?`, response.UUID).Scan(&count)
+	var source string
+	err = h.db.QueryRow(
+		`SELECT COUNT(*), MAX(source) FROM responses WHERE uuid = ?`, response.UUID,
+	).Scan(&count, &source)
 	require.NoError(t, err, "Failed to count responses: %v")
 
 	assert.Equal(t, 1, count)
+	assert.Equal(t, ResponseSourceRemoteBrowser, source)
 }
 
 func TestSyncCursorLookbackDefaultAndOverride(t *testing.T) {

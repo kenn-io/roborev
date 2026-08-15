@@ -822,6 +822,7 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 				JobUUID:         r.JobUUID,
 				Responder:       r.Responder,
 				Response:        r.Response,
+				Source:          r.Source,
 				SourceMachineID: r.SourceMachineID,
 				CreatedAt:       r.CreatedAt,
 			}

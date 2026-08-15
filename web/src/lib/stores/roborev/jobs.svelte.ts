@@ -378,12 +378,12 @@ export function createJobsStore(opts: JobsStoreOptions) {
       ),
     );
 
-  const loadJobsRequestEffect = () =>
+  const loadJobsRequestEffect = (requestOwner = opts.owner) =>
     Effect.gen(function* () {
       const workflow = yield* RoborevWorkflow;
       const query = buildQuery();
       return yield* workflow.jobs(
-        opts.owner,
+        requestOwner,
         Effect.sync(() => {
           loading = true;
           storeError = null;
@@ -912,7 +912,11 @@ export function createJobsStore(opts: JobsStoreOptions) {
   const connectEventStreamEffect = (baseUrl: string, eventOwner: string) =>
     Effect.gen(function* () {
       const workflow = yield* RoborevWorkflow;
-      const reconcile = loadJobsRequestEffect().pipe(
+      // Stream reconciliation has independent latest-request ownership. UI
+      // filtering, pagination, and refreshes intentionally cancel one another,
+      // but must never interrupt the stream callback that keeps live state in
+      // sync.
+      const reconcile = loadJobsRequestEffect(eventOwner).pipe(
         Effect.provideService(RoborevWorkflow, workflow),
         Effect.mapError((cause) =>
           RoborevStreamError.make({
@@ -976,7 +980,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
   const disconnectEventStreamEffect = (eventOwner: string) =>
     Effect.gen(function* () {
       const workflow = yield* RoborevWorkflow;
-      yield* workflow.disconnectEvents(eventOwner);
+      yield* workflow.stop(eventOwner);
       yield* Effect.sync(() => {
         if (activeEventOwner !== eventOwner) return;
         activeEventOwner = undefined;
