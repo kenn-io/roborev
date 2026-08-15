@@ -19,7 +19,8 @@
   const stores = getReviewStores();
   const client = getRoborevClient();
   const runtime = getAppRuntime();
-  const owner = makeRoborevOwner("repository-picker");
+  const reposOwner = makeRoborevOwner("repository-picker-repos");
+  const branchesOwner = makeRoborevOwner("repository-picker-branches");
 
   let open = $state(false);
   let search = $state("");
@@ -28,6 +29,7 @@
   let branches = $state.raw<BranchWithCount[]>([]);
   let loadingBranches = $state(false);
   let pickerRef = $state<HTMLDivElement>();
+  let branchGeneration = 0;
 
   const selectedRepo = $derived(stores.roborevJobs?.getFilterRepo());
   const selectedBranch = $derived(stores.roborevJobs?.getFilterBranch());
@@ -57,7 +59,7 @@
       : Effect.gen(function* () {
           const workflow = yield* RoborevWorkflow;
           yield* workflow.catalog(
-            owner,
+            reposOwner,
             executeRoborevRequest("list Roborev repositories", (signal) =>
               client.GET("/api/repos", { signal }),
             ).pipe(
@@ -82,15 +84,29 @@
   function loadRepos(): void {
     runtime.runCommand(loadReposEffect, {
       operation: "list Roborev repositories",
-      safeContext: { owner },
+      safeContext: { owner: reposOwner },
       onFailure: () => {},
     });
   }
 
   function toggleRepo(rootPath: string): void {
+    branchGeneration += 1;
+    const generation = branchGeneration;
+    branches = [];
     if (expandedRepo === rootPath) {
       expandedRepo = undefined;
-      branches = [];
+      loadingBranches = false;
+      runtime.runCommand(
+        Effect.gen(function* () {
+          const workflow = yield* RoborevWorkflow;
+          yield* workflow.stopCatalog(branchesOwner);
+        }),
+        {
+          operation: "stop Roborev branch list",
+          safeContext: { owner: branchesOwner },
+          onFailure: () => {},
+        },
+      );
       return;
     }
     expandedRepo = rootPath;
@@ -103,7 +119,7 @@
       Effect.gen(function* () {
         const workflow = yield* RoborevWorkflow;
         yield* workflow.catalog(
-          owner,
+          branchesOwner,
           executeRoborevRequest("list Roborev branches", (signal) =>
             client.GET("/api/branches", {
               params: { query: { repo: [rootPath] } },
@@ -120,13 +136,23 @@
                     }),
                   )
                 : Effect.sync(() => {
-                    branches = result.data?.branches ?? [];
+                    if (
+                      branchGeneration === generation &&
+                      expandedRepo === rootPath
+                    ) {
+                      branches = result.data?.branches ?? [];
+                    }
                   }),
             ),
             Effect.catch(() => Effect.void),
             Effect.ensuring(
               Effect.sync(() => {
-                loadingBranches = false;
+                if (
+                  branchGeneration === generation &&
+                  expandedRepo === rootPath
+                ) {
+                  loadingBranches = false;
+                }
               }),
             ),
           ),
@@ -134,7 +160,7 @@
       }),
       {
         operation: "list Roborev branches",
-        safeContext: { owner },
+        safeContext: { owner: branchesOwner },
         onFailure: () => {},
       },
     );
@@ -178,11 +204,17 @@
     runtime.runCommand(
       Effect.gen(function* () {
         const workflow = yield* RoborevWorkflow;
-        yield* workflow.stopCatalog(owner);
+        yield* Effect.all(
+          [
+            workflow.stopCatalog(reposOwner),
+            workflow.stopCatalog(branchesOwner),
+          ],
+          { concurrency: "unbounded" },
+        );
       }),
       {
         operation: "stop Roborev repository picker",
-        safeContext: { owner },
+        safeContext: { repos_owner: reposOwner, branches_owner: branchesOwner },
         onFailure: () => {},
       },
     );

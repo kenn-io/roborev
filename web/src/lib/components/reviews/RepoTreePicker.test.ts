@@ -1,4 +1,10 @@
-import { cleanup, fireEvent, render, screen } from "@testing-library/svelte";
+import {
+  cleanup,
+  fireEvent,
+  render,
+  screen,
+  waitFor,
+} from "@testing-library/svelte";
 import { Effect } from "effect";
 import {
   afterEach,
@@ -90,5 +96,119 @@ describe("RepoTreePicker", () => {
     await fireEvent.mouseDown(document.body);
 
     expect(screen.queryByPlaceholderText("Filter repos...")).toBeNull();
+  });
+
+  it("keeps the newer repository loading while an older branch request is canceled", async () => {
+    const projectABranches = Promise.withResolvers<{
+      data: { branches: Array<{ name: string; count: number }> };
+    }>();
+    const projectBBranches = Promise.withResolvers<{
+      data: { branches: Array<{ name: string; count: number }> };
+    }>();
+    client.GET.mockImplementation((path, options) => {
+      if (path === "/api/repos") {
+        return Promise.resolve({
+          data: {
+            repos: [
+              {
+                root_path: "/workspace/project-a",
+                name: "project-a",
+                count: 4,
+              },
+              {
+                root_path: "/workspace/project-b",
+                name: "project-b",
+                count: 2,
+              },
+            ],
+          },
+        });
+      }
+      const repo = options?.params?.query?.repo?.[0];
+      return repo === "/workspace/project-a"
+        ? projectABranches.promise
+        : projectBBranches.promise;
+    });
+    render(RepoTreePicker);
+
+    await fireEvent.click(screen.getByRole("button", { name: /all repos/i }));
+    await screen.findByText("project-b");
+    const expandButtons = screen.getAllByTitle("Show branches");
+
+    await fireEvent.click(expandButtons[0]);
+    await waitFor(() =>
+      expect(client.GET).toHaveBeenCalledWith(
+        "/api/branches",
+        expect.objectContaining({
+          params: { query: { repo: ["/workspace/project-a"] } },
+        }),
+      ),
+    );
+    await fireEvent.click(expandButtons[1]);
+    await waitFor(() =>
+      expect(client.GET).toHaveBeenCalledWith(
+        "/api/branches",
+        expect.objectContaining({
+          params: { query: { repo: ["/workspace/project-b"] } },
+        }),
+      ),
+    );
+
+    expect(screen.getByText("Loading...")).toBeTruthy();
+    expect(screen.queryByText("No branches")).toBeNull();
+
+    projectABranches.resolve({
+      data: { branches: [{ name: "stale-a", count: 1 }] },
+    });
+    await Promise.resolve();
+    expect(screen.getByText("Loading...")).toBeTruthy();
+    expect(screen.queryByText("stale-a")).toBeNull();
+
+    projectBBranches.resolve({
+      data: { branches: [{ name: "current-b", count: 1 }] },
+    });
+    await screen.findByText("current-b");
+    expect(screen.queryByText("stale-a")).toBeNull();
+  });
+
+  it("does not expose a previous repository's branches when the next request fails", async () => {
+    client.GET.mockImplementation((path, options) => {
+      if (path === "/api/repos") {
+        return Promise.resolve({
+          data: {
+            repos: [
+              {
+                root_path: "/workspace/project-a",
+                name: "project-a",
+                count: 4,
+              },
+              {
+                root_path: "/workspace/project-b",
+                name: "project-b",
+                count: 2,
+              },
+            ],
+          },
+        });
+      }
+      const repo = options?.params?.query?.repo?.[0];
+      return Promise.resolve(
+        repo === "/workspace/project-a"
+          ? { data: { branches: [{ name: "project-a-main", count: 1 }] } }
+          : { error: { message: "branch lookup failed" } },
+      );
+    });
+    render(RepoTreePicker);
+
+    await fireEvent.click(screen.getByRole("button", { name: /all repos/i }));
+    await screen.findByText("project-b");
+    const expandButtons = screen.getAllByTitle("Show branches");
+
+    await fireEvent.click(expandButtons[0]);
+    await screen.findByText("project-a-main");
+    await fireEvent.click(expandButtons[1]);
+
+    await screen.findByText("No branches");
+    expect(screen.queryByText("project-a-main")).toBeNull();
   });
 });
