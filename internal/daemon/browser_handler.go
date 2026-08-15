@@ -1,6 +1,7 @@
 package daemon
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -8,6 +9,8 @@ import (
 	"strconv"
 	"strings"
 	"time"
+
+	"go.kenn.io/roborev/internal/storage"
 )
 
 type routeKey struct {
@@ -93,11 +96,217 @@ func (s *Server) newBrowserHandler(
 			w.Header().Set("Cache-Control", "private, no-store")
 			w.Header().Add("Vary", "Cookie")
 			w.Header().Add("Vary", WebSessionHeader)
-			core.ServeHTTP(w, request.WithContext(context.WithValue(request.Context(), browserPrincipalContextKey{}, principal)))
+			authenticated := request.WithContext(context.WithValue(
+				request.Context(), browserPrincipalContextKey{}, principal,
+			))
+			switch request.URL.Path {
+			case "/api/jobs":
+				serveBrowserJobs(w, authenticated, core)
+			case "/api/review":
+				serveBrowserReview(w, authenticated, core)
+			default:
+				core.ServeHTTP(w, authenticated)
+			}
 			return
 		}
 		static.ServeHTTP(w, request)
 	}), nil
+}
+
+// browserReviewJob is an explicit presentation allowlist. Storage jobs carry
+// execution metadata such as agent command lines, reusable session IDs,
+// resolved panel configuration, worker ownership, and checkout paths. Those
+// fields are useful to the loopback CLI API but must never cross the browser
+// listener boundary merely because a field was added to storage.ReviewJob.
+type browserReviewJob struct {
+	ID               int64                 `json:"id"`
+	RepoID           int64                 `json:"repo_id"`
+	CommitID         *int64                `json:"commit_id,omitempty"`
+	GitRef           string                `json:"git_ref"`
+	Branch           string                `json:"branch,omitempty"`
+	Agent            string                `json:"agent"`
+	Model            string                `json:"model,omitempty"`
+	Provider         string                `json:"provider,omitempty"`
+	Reasoning        string                `json:"reasoning,omitempty"`
+	JobType          string                `json:"job_type"`
+	Status           storage.JobStatus     `json:"status"`
+	EnqueuedAt       time.Time             `json:"enqueued_at"`
+	StartedAt        *time.Time            `json:"started_at,omitempty"`
+	FinishedAt       *time.Time            `json:"finished_at,omitempty"`
+	Prompt           string                `json:"prompt,omitempty"`
+	RetryCount       int                   `json:"retry_count"`
+	Agentic          bool                  `json:"agentic"`
+	PromptPrebuilt   bool                  `json:"prompt_prebuilt"`
+	ReviewType       string                `json:"review_type,omitempty"`
+	PatchID          string                `json:"patch_id,omitempty"`
+	OutputPrefix     string                `json:"output_prefix,omitempty"`
+	SkipReason       string                `json:"skip_reason,omitempty"`
+	Source           string                `json:"source,omitempty"`
+	ParentJobID      *int64                `json:"parent_job_id,omitempty"`
+	MinSeverity      string                `json:"min_severity,omitempty"`
+	PanelRunUUID     string                `json:"panel_run_uuid,omitempty"`
+	PanelRole        string                `json:"panel_role,omitempty"`
+	PanelName        string                `json:"panel_name,omitempty"`
+	PanelMemberName  string                `json:"panel_member_name,omitempty"`
+	PanelMemberIndex int                   `json:"panel_member_index,omitempty"`
+	TokenUsage       string                `json:"token_usage,omitempty"`
+	UUID             string                `json:"uuid,omitempty"`
+	RepoPath         string                `json:"repo_path,omitempty"`
+	RepoName         string                `json:"repo_name,omitempty"`
+	CommitSubject    string                `json:"commit_subject,omitempty"`
+	Closed           *bool                 `json:"closed,omitempty"`
+	Verdict          *string               `json:"verdict,omitempty"`
+	PanelSummary     *storage.PanelSummary `json:"panel_summary,omitempty"`
+}
+
+type browserJobsResponse struct {
+	Jobs          []browserReviewJob `json:"jobs"`
+	HasMore       bool               `json:"has_more"`
+	NextCursor    *string            `json:"next_cursor"`
+	Stats         *storage.JobStats  `json:"stats,omitempty"`
+	FilteredStats *storage.JobStats  `json:"filtered_stats,omitempty"`
+}
+
+type browserReviewResponse struct {
+	ID          int64             `json:"id"`
+	JobID       int64             `json:"job_id"`
+	Agent       string            `json:"agent"`
+	Prompt      string            `json:"prompt"`
+	Output      string            `json:"output"`
+	CreatedAt   time.Time         `json:"created_at"`
+	Closed      bool              `json:"closed"`
+	VerdictBool *int              `json:"verdict_bool,omitempty"`
+	Job         *browserReviewJob `json:"job,omitempty"`
+}
+
+func projectBrowserReviewJob(job storage.ReviewJob) browserReviewJob {
+	return browserReviewJob{
+		ID: job.ID, RepoID: job.RepoID, CommitID: job.CommitID,
+		GitRef: job.GitRef, Branch: job.Branch, Agent: job.Agent,
+		Model: job.Model, Provider: job.Provider, Reasoning: job.Reasoning,
+		JobType: job.JobType, Status: job.Status, EnqueuedAt: job.EnqueuedAt,
+		StartedAt: job.StartedAt, FinishedAt: job.FinishedAt, Prompt: job.Prompt,
+		RetryCount: job.RetryCount, Agentic: job.Agentic,
+		PromptPrebuilt: job.PromptPrebuilt, ReviewType: job.ReviewType,
+		PatchID: job.PatchID, OutputPrefix: job.OutputPrefix,
+		SkipReason: job.SkipReason, Source: job.Source, ParentJobID: job.ParentJobID,
+		MinSeverity: job.MinSeverity, PanelRunUUID: job.PanelRunUUID,
+		PanelRole: job.PanelRole, PanelName: job.PanelName,
+		PanelMemberName: job.PanelMemberName, PanelMemberIndex: job.PanelMemberIndex,
+		TokenUsage: job.TokenUsage, UUID: job.UUID, RepoPath: job.RepoPath,
+		RepoName: job.RepoName, CommitSubject: job.CommitSubject, Closed: job.Closed,
+		Verdict: job.Verdict, PanelSummary: job.PanelSummary,
+	}
+}
+
+func serveBrowserJobs(w http.ResponseWriter, request *http.Request, core http.Handler) {
+	serveProjectedBrowserJSON(w, request, core, func(data []byte) (any, error) {
+		var source struct {
+			Jobs          []storage.ReviewJob `json:"jobs"`
+			HasMore       bool                `json:"has_more"`
+			NextCursor    *string             `json:"next_cursor"`
+			Stats         *storage.JobStats   `json:"stats,omitempty"`
+			FilteredStats *storage.JobStats   `json:"filtered_stats,omitempty"`
+		}
+		if err := json.Unmarshal(data, &source); err != nil {
+			return nil, err
+		}
+		jobs := make([]browserReviewJob, len(source.Jobs))
+		for i := range source.Jobs {
+			jobs[i] = projectBrowserReviewJob(source.Jobs[i])
+		}
+		return browserJobsResponse{
+			Jobs: jobs, HasMore: source.HasMore, NextCursor: source.NextCursor,
+			Stats: source.Stats, FilteredStats: source.FilteredStats,
+		}, nil
+	})
+}
+
+func serveBrowserReview(w http.ResponseWriter, request *http.Request, core http.Handler) {
+	serveProjectedBrowserJSON(w, request, core, func(data []byte) (any, error) {
+		var source *storage.Review
+		if err := json.Unmarshal(data, &source); err != nil {
+			return nil, err
+		}
+		if source == nil {
+			return nil, nil
+		}
+		projected := browserReviewResponse{
+			ID: source.ID, JobID: source.JobID, Agent: source.Agent,
+			Prompt: source.Prompt, Output: source.Output, CreatedAt: source.CreatedAt,
+			Closed: source.Closed, VerdictBool: source.VerdictBool,
+		}
+		if source.Job != nil {
+			job := projectBrowserReviewJob(*source.Job)
+			projected.Job = &job
+		}
+		return projected, nil
+	})
+}
+
+type browserResponseCapture struct {
+	header http.Header
+	body   bytes.Buffer
+	status int
+}
+
+func newBrowserResponseCapture() *browserResponseCapture {
+	return &browserResponseCapture{header: make(http.Header)}
+}
+
+func (capture *browserResponseCapture) Header() http.Header { return capture.header }
+
+func (capture *browserResponseCapture) WriteHeader(status int) {
+	if capture.status == 0 {
+		capture.status = status
+	}
+}
+
+func (capture *browserResponseCapture) Write(data []byte) (int, error) {
+	if capture.status == 0 {
+		capture.status = http.StatusOK
+	}
+	return capture.body.Write(data)
+}
+
+func serveProjectedBrowserJSON(
+	w http.ResponseWriter,
+	request *http.Request,
+	core http.Handler,
+	project func([]byte) (any, error),
+) {
+	capture := newBrowserResponseCapture()
+	core.ServeHTTP(capture, request)
+	status := capture.status
+	if status == 0 {
+		status = http.StatusOK
+	}
+	if status < http.StatusOK || status >= http.StatusMultipleChoices {
+		copyBrowserResponse(w, capture.header, status, capture.body.Bytes())
+		return
+	}
+	value, err := project(capture.body.Bytes())
+	if err != nil {
+		writeBrowserError(w, http.StatusInternalServerError, "browser_response_invalid")
+		return
+	}
+	copyBrowserHeaders(w.Header(), capture.header)
+	w.Header().Del("Content-Length")
+	writeBrowserJSON(w, status, value)
+}
+
+func copyBrowserResponse(w http.ResponseWriter, header http.Header, status int, body []byte) {
+	copyBrowserHeaders(w.Header(), header)
+	w.WriteHeader(status)
+	_, _ = w.Write(body)
+}
+
+func copyBrowserHeaders(destination, source http.Header) {
+	for key, values := range source {
+		for _, value := range values {
+			destination.Add(key, value)
+		}
+	}
 }
 
 func handleBrowserSession(w http.ResponseWriter, request *http.Request, policy BrowserPolicy, sessions *BrowserSessionManager) {
