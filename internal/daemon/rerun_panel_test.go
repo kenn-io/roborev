@@ -7,6 +7,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"sync"
 	"testing"
 	"time"
 
@@ -169,6 +170,49 @@ func TestRerunPanelRequestIsIdempotent(t *testing.T) {
 	).Scan(&runCount))
 	assert.Equal(t, 2, runCount, "the duplicate request must not create another panel")
 	assert.NotEqual(t, oldRunUUID, first.Body.RunUUID)
+}
+
+func TestRerunPanelConcurrentRequestsShareSuccessor(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	_, _, synth := enqueueServerPanelRun(t, db, 2)
+	markJobStatus(t, db, synth.ID, storage.JobStatusDone)
+
+	start := make(chan struct{})
+	outputs := make(chan *RerunJobOutput, 2)
+	errors := make(chan error, 2)
+	var workers sync.WaitGroup
+	for _, requestID := range []string{"panel-request-one", "panel-request-two"} {
+		workers.Go(func() {
+			<-start
+			output, err := server.humaRerunJob(context.Background(), &RerunJobInput{
+				Body: RerunJobRequest{JobID: synth.ID, RequestID: requestID},
+			})
+			outputs <- output
+			errors <- err
+		})
+	}
+	close(start)
+	workers.Wait()
+	close(outputs)
+	close(errors)
+
+	for err := range errors {
+		require.NoError(t, err)
+	}
+	results := make([]*RerunJobOutput, 0, 2)
+	for output := range outputs {
+		require.NotNil(t, output)
+		results = append(results, output)
+	}
+	require.Len(t, results, 2)
+	assert.Equal(t, results[0].Body.JobID, results[1].Body.JobID)
+	assert.Equal(t, results[0].Body.RunUUID, results[1].Body.RunUUID)
+
+	var runCount int
+	require.NoError(t, db.QueryRow(
+		"SELECT COUNT(DISTINCT panel_run_uuid) FROM review_jobs WHERE panel_run_uuid != ''",
+	).Scan(&runCount))
+	assert.Equal(t, 2, runCount, "concurrent requests must create one successor panel")
 }
 
 func TestRerunPanelMemberRejectsDirectRerun(t *testing.T) {

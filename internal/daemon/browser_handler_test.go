@@ -331,6 +331,69 @@ func TestBrowserHandlerMarksRemoteCommentsUntrustedForPrompts(t *testing.T) {
 	}
 }
 
+func TestBrowserHandlerRemoteReviewMutationsDoNotRunHooks(t *testing.T) {
+	t.Run("close", func(t *testing.T) {
+		server, db, tempDir := newTestServer(t)
+		markerFile := filepath.Join(tempDir, "remote-close-hook")
+		server.configWatcher.Config().Hooks = []config.HookConfig{{
+			Event: "review.closed", Command: touchCmd(markerFile),
+		}}
+		job := createTestJob(t, db, tempDir, "close-review", "test")
+		_, err := db.Exec(
+			"UPDATE review_jobs SET status = 'running' WHERE id = ?", job.ID,
+		)
+		require.NoError(t, err)
+		require.NoError(t, db.CompleteJob(job.ID, "test", "prompt", "PASS"))
+		_, eventCh := server.broadcaster.Subscribe("")
+		handler, sessions := newBrowserHandlerFixtureWithCore(
+			t, testBrowserAuthToken, server.httpServer.Handler,
+		)
+		request := authenticatedBrowserMutationRequest(
+			t, sessions, "/api/review/close", CloseReviewRequest{
+				JobID: job.ID, Closed: true,
+			},
+		)
+		recorder := httptest.NewRecorder()
+
+		handler.ServeHTTP(recorder, request)
+
+		require.Equal(t, http.StatusOK, recorder.Code)
+		server.hookRunner.WaitUntilIdle()
+		assert.NoFileExists(t, markerFile)
+		require.Len(t, eventCh, 1)
+		event := <-eventCh
+		assert.Equal(t, "review.closed", event.Type)
+		assert.Equal(t, job.ID, event.JobID)
+	})
+
+	t.Run("cancel", func(t *testing.T) {
+		server, db, tempDir := newTestServer(t)
+		markerFile := filepath.Join(tempDir, "remote-cancel-hook")
+		server.configWatcher.Config().Hooks = []config.HookConfig{{
+			Event: "review.canceled", Command: touchCmd(markerFile),
+		}}
+		job := createTestJob(t, db, tempDir, "cancel-review", "test")
+		_, eventCh := server.broadcaster.Subscribe("")
+		handler, sessions := newBrowserHandlerFixtureWithCore(
+			t, testBrowserAuthToken, server.httpServer.Handler,
+		)
+		request := authenticatedBrowserMutationRequest(
+			t, sessions, "/api/job/cancel", CancelJobRequest{JobID: job.ID},
+		)
+		recorder := httptest.NewRecorder()
+
+		handler.ServeHTTP(recorder, request)
+
+		require.Equal(t, http.StatusOK, recorder.Code)
+		server.hookRunner.WaitUntilIdle()
+		assert.NoFileExists(t, markerFile)
+		require.Len(t, eventCh, 1)
+		event := <-eventCh
+		assert.Equal(t, "review.canceled", event.Type)
+		assert.Equal(t, job.ID, event.JobID)
+	})
+}
+
 func TestBrowserHandlerRemoteSessionRestrictsPrivilegedJobMutations(t *testing.T) {
 	tests := []struct {
 		name       string

@@ -333,9 +333,9 @@ func (db *DB) EnqueuePanelRun(members []EnqueueOpts, synthesis EnqueueOpts) ([]*
 	return memberJobs, synthJob, err
 }
 
-// EnqueuePanelRerun atomically creates a replacement panel and records the
-// request result. Repeating requestID returns the first synthesis job without
-// inserting another panel.
+// EnqueuePanelRerun atomically creates one replacement for a source panel and
+// records the result. Repeating either the request ID or source synthesis job
+// returns the first successor without inserting another panel.
 func (db *DB) EnqueuePanelRerun(
 	members []EnqueueOpts, synthesis EnqueueOpts, requestID string, sourceJobID int64,
 ) ([]*ReviewJob, *ReviewJob, bool, error) {
@@ -400,6 +400,23 @@ func (db *DB) enqueuePanelRun(
 			return nil, synthJob, true, nil
 		}
 	}
+	if rerunSourceJobID != 0 {
+		result, found, err := lookupPanelRerunBySource(ctx, conn, rerunSourceJobID)
+		if err != nil {
+			return nil, nil, false, err
+		}
+		if found {
+			synthJob, err := db.getJobByIDTx(ctx, conn, result.JobID)
+			if err != nil {
+				return nil, nil, false, err
+			}
+			if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+				return nil, nil, false, err
+			}
+			committed = true
+			return nil, synthJob, true, nil
+		}
+	}
 	if deduplicate {
 		duplicate, err := hasNonCanceledJob(ctx, conn, members[0])
 		if err != nil {
@@ -418,8 +435,12 @@ func (db *DB) enqueuePanelRun(
 	if err != nil {
 		return nil, nil, false, err
 	}
-	if rerunRequestID != "" {
-		if err := recordRerunRequest(ctx, conn, rerunRequestID, rerunSourceJobID, synthJob.ID, synthesis.PanelRunUUID); err != nil {
+	if rerunSourceJobID != 0 {
+		ledgerRequestID := rerunRequestID
+		if ledgerRequestID == "" {
+			ledgerRequestID = GenerateUUID()
+		}
+		if err := recordRerunRequest(ctx, conn, ledgerRequestID, rerunSourceJobID, synthJob.ID, synthesis.PanelRunUUID); err != nil {
 			return nil, nil, false, err
 		}
 	}
@@ -1072,6 +1093,28 @@ func lookupRerunRequest(
 		return RerunRequestResult{}, false, fmt.Errorf(
 			"rerun request %q belongs to job %d", requestID, storedSourceID,
 		)
+	}
+	return result, true, nil
+}
+
+func lookupPanelRerunBySource(
+	ctx context.Context, q interface {
+		QueryRowContext(context.Context, string, ...any) *sql.Row
+	}, sourceJobID int64,
+) (RerunRequestResult, bool, error) {
+	var result RerunRequestResult
+	err := q.QueryRowContext(ctx, `
+		SELECT result_job_id, COALESCE(panel_run_uuid, '')
+		FROM rerun_requests
+		WHERE source_job_id = ? AND COALESCE(panel_run_uuid, '') != ''
+		ORDER BY created_at, result_job_id
+		LIMIT 1
+	`, sourceJobID).Scan(&result.JobID, &result.PanelRunUUID)
+	if errors.Is(err, sql.ErrNoRows) {
+		return RerunRequestResult{}, false, nil
+	}
+	if err != nil {
+		return RerunRequestResult{}, false, err
 	}
 	return result, true, nil
 }

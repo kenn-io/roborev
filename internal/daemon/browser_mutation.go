@@ -14,6 +14,13 @@ func remoteBrowserPrincipal(ctx context.Context) bool {
 	return found && !principal.Local
 }
 
+// eventForMutationPrincipal keeps remote browser mutations visible to live UI
+// subscribers without allowing them to trigger privileged local hooks.
+func eventForMutationPrincipal(ctx context.Context, event Event) Event {
+	event.SuppressHooks = remoteBrowserPrincipal(ctx)
+	return event
+}
+
 func browserCancellationAllowsReview(job *storage.ReviewJob) bool {
 	return job != nil &&
 		job.IsReviewJob() &&

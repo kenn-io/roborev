@@ -7,6 +7,7 @@ import {
   FiberMap,
   Layer,
   Option,
+  Queue,
   Ref,
   Schedule,
   Schema,
@@ -64,6 +65,9 @@ export interface RoborevWorkflowService {
     readonly onEvent: (
       event: RoborevEvent,
     ) => Effect.Effect<void, RoborevStreamError>;
+    readonly onEventReconcile?:
+      | Effect.Effect<void, RoborevStreamError>
+      | undefined;
     readonly onReconnect: (
       checkpoint: string | undefined,
     ) => Effect.Effect<void, RoborevStreamError>;
@@ -346,6 +350,9 @@ export const makeRoborevWorkflow: Effect.Effect<
       readonly onEvent: (
         event: RoborevEvent,
       ) => Effect.Effect<void, RoborevStreamError>;
+      readonly onEventReconcile?:
+        | Effect.Effect<void, RoborevStreamError>
+        | undefined;
       readonly onReconnect: (
         checkpoint: string | undefined,
       ) => Effect.Effect<void, RoborevStreamError>;
@@ -356,6 +363,7 @@ export const makeRoborevWorkflow: Effect.Effect<
         next.set(options.owner, 0);
         return next;
       });
+      const reconcileSignals = yield* Queue.sliding<true>(1);
       const stream = Stream.unwrap(
         Ref.modify(
           eventAttempts,
@@ -380,7 +388,12 @@ export const makeRoborevWorkflow: Effect.Effect<
                         );
                   return reconcile.pipe(Effect.andThen(options.onOpen));
                 }
+                const scheduleReconcile =
+                  options.onEventReconcile === undefined
+                    ? Effect.void
+                    : Queue.offer(reconcileSignals, true).pipe(Effect.asVoid);
                 return options.onEvent(event).pipe(
+                  Effect.andThen(scheduleReconcile),
                   Effect.andThen(
                     Ref.update(eventCheckpoints, (checkpoints) => {
                       const next = new Map(checkpoints);
@@ -397,11 +410,24 @@ export const makeRoborevWorkflow: Effect.Effect<
         Stream.tapError(options.onError),
         Stream.retry(eventRetrySchedule),
       );
-      yield* FiberMap.run(
-        eventFibers,
-        options.owner,
-        Stream.runDrain(stream).pipe(Effect.catch(() => Effect.void)),
+      const runStream = Stream.runDrain(stream).pipe(
+        Effect.catch(() => Effect.void),
       );
+      const run =
+        options.onEventReconcile === undefined
+          ? runStream
+          : Effect.zip(
+              runStream,
+              Effect.forever(
+                Queue.take(reconcileSignals).pipe(
+                  Effect.andThen(options.onEventReconcile),
+                  Effect.retry(eventRetrySchedule),
+                  Effect.catch(() => Effect.void),
+                ),
+              ),
+              { concurrent: true },
+            ).pipe(Effect.asVoid);
+      yield* FiberMap.run(eventFibers, options.owner, run);
     },
   );
 

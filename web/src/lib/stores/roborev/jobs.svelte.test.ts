@@ -620,6 +620,93 @@ describe("createJobsStore event stream", () => {
     store.disconnectEventStream(eventOwner);
   });
 
+  it("drains burst events while coalescing a slow reconciliation", async () => {
+    const encoder = new TextEncoder();
+    let bodyController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              bodyController = controller;
+            },
+          }),
+          { status: 200 },
+        ),
+    );
+
+    type JobsResponse = {
+      data: {
+        jobs: ReviewJob[];
+        has_more: boolean;
+        stats: { done: number; running: number; closed: number; open: number };
+      };
+      error: undefined;
+    };
+    const pending: Array<(value: JobsResponse) => void> = [];
+    let requestCount = 0;
+    const client = {
+      GET: vi.fn(() => {
+        requestCount += 1;
+        if (requestCount === 1) {
+          return Promise.resolve({
+            data: {
+              jobs: [],
+              has_more: false,
+              stats: { done: 0, running: 0, closed: 0, open: 0 },
+            },
+            error: undefined,
+          });
+        }
+        return new Promise<JobsResponse>((resolve) => pending.push(resolve));
+      }),
+    };
+    const store = createJobsStore({
+      client: client as never,
+      navigate: vi.fn(),
+    });
+    store.setSelectedJobId(42);
+    const initialRevision = store.getSelectedReviewRevision();
+    const eventOwner = store.connectEventStream("/api/roborev");
+    await vi.waitFor(() => expect(store.isEventStreamConnected()).toBe(true));
+
+    const emitEvent = (index: number) => {
+      bodyController?.enqueue(
+        encoder.encode(
+          `{"type":"review.completed","ts":"2026-08-04T13:00:${String(index).padStart(2, "0")}Z","job_id":42,"repo":"/workspace/repo","repo_name":"repo","sha":"abc123"}\n`,
+        ),
+      );
+    };
+    emitEvent(0);
+    await vi.waitFor(() => expect(client.GET).toHaveBeenCalledTimes(2));
+    for (let index = 1; index < 12; index += 1) {
+      emitEvent(index);
+    }
+
+    await vi.waitFor(() =>
+      expect(store.getSelectedReviewRevision()).toBe(initialRevision + 12),
+    );
+    pending[0]?.({
+      data: {
+        jobs: [{ ...makeJob(42), status: "running" }],
+        has_more: false,
+        stats: { done: 0, running: 1, closed: 0, open: 1 },
+      },
+      error: undefined,
+    });
+    await vi.waitFor(() => expect(client.GET).toHaveBeenCalledTimes(3));
+    pending[1]?.({
+      data: {
+        jobs: [{ ...makeJob(42), status: "done" }],
+        has_more: false,
+        stats: { done: 1, running: 0, closed: 0, open: 1 },
+      },
+      error: undefined,
+    });
+    await vi.waitFor(() => expect(store.getJobs()[0]?.status).toBe("done"));
+    store.disconnectEventStream(eventOwner);
+  });
+
   it("discards an older list response after event reconciliation publishes", async () => {
     const encoder = new TextEncoder();
     let bodyController: ReadableStreamDefaultController<Uint8Array> | undefined;

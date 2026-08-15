@@ -919,24 +919,26 @@ export function createJobsStore(opts: JobsStoreOptions) {
   const connectEventStreamEffect = (baseUrl: string, eventOwner: string) =>
     Effect.gen(function* () {
       const workflow = yield* RoborevWorkflow;
+      const liveReconcileOwner = `${eventOwner}:reconcile`;
       // Stream reconciliation has independent latest-request ownership. UI
       // filtering, pagination, and refreshes intentionally cancel one another,
       // but must never interrupt the stream callback that keeps live state in
       // sync.
-      const reconcile = loadJobsRequestEffect(eventOwner).pipe(
-        Effect.provideService(RoborevWorkflow, workflow),
-        Effect.mapError((cause) =>
-          RoborevStreamError.make({
-            operation: "reconcile Roborev jobs before reconnect",
-            retryable: true,
-            cause,
-          }),
-        ),
-      );
+      const reconcile = (owner: string) =>
+        loadJobsRequestEffect(owner).pipe(
+          Effect.provideService(RoborevWorkflow, workflow),
+          Effect.mapError((cause) =>
+            RoborevStreamError.make({
+              operation: "reconcile Roborev jobs from live events",
+              retryable: true,
+              cause,
+            }),
+          ),
+        );
       yield* workflow.connectEvents({
         owner: eventOwner,
         baseUrl,
-        onInitialOpen: reconcile,
+        onInitialOpen: reconcile(eventOwner),
         onOpen: Effect.sync(() => {
           if (activeEventOwner !== eventOwner) return;
           eventStreamConnected = true;
@@ -951,7 +953,8 @@ export function createJobsStore(opts: JobsStoreOptions) {
             ) {
               selectedReviewRevision += 1;
             }
-          }).pipe(Effect.andThen(reconcile)),
+          }),
+        onEventReconcile: reconcile(liveReconcileOwner),
         onReconnect: () =>
           Effect.sync(() => {
             if (
@@ -963,7 +966,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
               // before resuming the stream.
               selectedReviewRevision += 1;
             }
-          }).pipe(Effect.andThen(reconcile)),
+          }).pipe(Effect.andThen(reconcile(eventOwner))),
         onError: () =>
           Effect.sync(() => {
             if (activeEventOwner !== eventOwner) return;
@@ -991,6 +994,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
     Effect.gen(function* () {
       const workflow = yield* RoborevWorkflow;
       yield* workflow.stop(eventOwner);
+      yield* workflow.stop(`${eventOwner}:reconcile`);
       yield* Effect.sync(() => {
         if (activeEventOwner !== eventOwner) return;
         activeEventOwner = undefined;

@@ -2112,10 +2112,14 @@ func (s *Server) humaCancelJob(
 	if job == nil {
 		job, _ = s.db.GetJobByID(input.Body.JobID)
 	}
-	s.broadcaster.Broadcast(eventForJob("review.canceled", job, input.Body.JobID))
+	s.broadcaster.Broadcast(eventForMutationPrincipal(
+		ctx, eventForJob("review.canceled", job, input.Body.JobID),
+	))
 	for i := range canceledMembers {
 		member := &canceledMembers[i]
-		s.broadcaster.Broadcast(eventForJob("review.canceled", member, member.ID))
+		s.broadcaster.Broadcast(eventForMutationPrincipal(
+			ctx, eventForJob("review.canceled", member, member.ID),
+		))
 	}
 
 	resp := &CancelJobOutput{}
@@ -2269,7 +2273,7 @@ func (s *Server) humaCloseReview(
 		evt.Branch = job.HookBranch()
 		evt.Agent = job.Agent
 	}
-	s.broadcaster.Broadcast(evt)
+	s.broadcaster.Broadcast(eventForMutationPrincipal(ctx, evt))
 
 	resp := &CloseReviewOutput{}
 	resp.Body.Success = true
@@ -2353,8 +2357,7 @@ func (s *Server) humaAddComment(
 			commentEvent.RepoName = repo.Name
 		}
 	}
-	commentEvent.SuppressHooks = source == storage.ResponseSourceRemoteBrowser
-	s.broadcaster.Broadcast(commentEvent)
+	s.broadcaster.Broadcast(eventForMutationPrincipal(ctx, commentEvent))
 
 	return &AddCommentOutput{Body: resp}, nil
 }
