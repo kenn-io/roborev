@@ -1532,6 +1532,75 @@ func TestRecordPostToolUseAmendAfterBranchAttachmentKeepsDetachedCommitThreshold
 	assert.Empty(store.sessions["session-1"].CommitSHAsSincePrompt[branchKey])
 }
 
+func TestRecordPostToolUseAmendAfterBranchAttachmentDoesNotRepeatAcknowledgedReviews(t *testing.T) {
+	assert := assert.New(t)
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("main.go", "package main\n", "initial")
+	repo.CheckoutDetached()
+	reviewHead := repo.CommitFile("feature-a.go", "package main\n", "detached")
+
+	closed := false
+	verdict := "F"
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if r.URL.Path == "/api/repos/resolve" {
+			assert.NoError(json.NewEncoder(w).Encode(map[string]any{
+				"tracked": true,
+				"repo": map[string]string{
+					"root_path": repo.Path(),
+					"name":      filepath.Base(repo.Path()),
+				},
+			}))
+			return
+		}
+		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{
+			Jobs: []storage.ReviewJob{{
+				ID: 101, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: reviewHead,
+			}},
+		}))
+	}))
+	t.Cleanup(server.Close)
+
+	store := &StateStore{path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	baseReq := Request{
+		Event: Input{
+			SessionID:     "session-1",
+			CWD:           repo.Path(),
+			HookEventName: "PostToolUse",
+			ToolName:      "Bash",
+			ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"go test ./..."`)},
+		},
+		CommitThreshold:       1,
+		FailedReviewThreshold: 1,
+		Instruction:           "Resolve reviews.",
+		RoborevServerAddr:     server.URL,
+	}
+
+	first, err := store.Record(baseReq)
+	require.NoError(t, err)
+	assert.True(first.Triggered)
+
+	repo.CheckoutBranchForce("feature/attached")
+	checkout := baseReq
+	checkout.Event.ToolInput = map[string]json.RawMessage{"command": json.RawMessage(`"git checkout -B feature/attached"`)}
+	_, err = store.Record(checkout)
+	require.NoError(t, err)
+
+	repo.CommitFile("feature-b.go", "package main\n", "attached")
+	commit := baseReq
+	commit.Event.ToolInput = map[string]json.RawMessage{"command": json.RawMessage(`"git commit -m attached"`)}
+	atCommit, err := store.Record(commit)
+	require.NoError(t, err)
+	assert.False(atCommit.Triggered)
+
+	repo.WriteFile("feature-b.go", "package main\nconst amended = true\n")
+	repo.AmendCommit("attached amended", "feature-b.go")
+	commit.Event.ToolInput = map[string]json.RawMessage{"command": json.RawMessage(`"git commit --amend -m attached amended"`)}
+	atAmend, err := store.Record(commit)
+	require.NoError(t, err)
+
+	assert.False(atAmend.Triggered, "amend must not repeat a review acknowledged before branch attachment")
+}
+
 func TestRecordPostToolUseDetachedFailedReviewDedupeScopesByWorktree(t *testing.T) {
 	assert := assert.New(t)
 	repo := testutil.NewGitRepo(t)

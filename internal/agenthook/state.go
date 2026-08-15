@@ -441,8 +441,6 @@ func (s *StateStore) recordPostToolUse(ctx context.Context, req Request) (Respon
 		priorLineageKey = st.WorktreeLineageKeys[scope.WorktreeKey]
 	}
 	lineageKey := ensureLineageKey(&st, scope)
-	actionableReviewIDs := unacknowledgedReviewIDs(st, lineageKey, openFailedReviewIDs)
-	failedReviewCount := len(actionableReviewIDs)
 	preserveDetachedRewriteLineage := false
 	if commitCommand && scope.Branch != "" && detachedLineageKey(priorLineageKey) && lineageKey != priorLineageKey {
 		previousWorktreeHead := st.RepoHeads[scope.WorktreeKey]
@@ -511,6 +509,8 @@ func (s *StateStore) recordPostToolUse(ctx context.Context, req Request) (Respon
 		st.LastCommitHead = scope.Head
 	}
 
+	actionableReviewIDs := unacknowledgedReviewIDs(st, lineageKey, openFailedReviewIDs)
+	failedReviewCount := len(actionableReviewIDs)
 	actionableReviews := hasActionableFailedReviews(failedReviewCount, haveFailedReviewCount)
 	// The commit reminder fires once this checkout's threshold is met and
 	// actionable failed reviews exist; it does not require a commit in this exact
