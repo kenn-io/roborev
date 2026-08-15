@@ -359,6 +359,8 @@ describe("Roborev mutation ownership", () => {
       owner: "mutation-revalidation-test",
       navigate: vi.fn(),
     });
+    store.setSelectedJobId(17);
+    const reviewRevision = store.getSelectedReviewRevision();
     const initial = runtime.runCommand(store.loadJobsEffect(), {
       operation: "load Roborev jobs",
       safeContext: {},
@@ -373,5 +375,6 @@ describe("Roborev mutation ownership", () => {
     );
     expect(store.getJobs()[0]?.status).toBe("canceled");
     expect(get.mock.calls.length).toBeGreaterThan(2);
+    expect(store.getSelectedReviewRevision()).toBe(reviewRevision + 1);
   });
 });

@@ -194,6 +194,46 @@ describe("Roborev request cancellation", () => {
     expect(get.mock.calls.map(([path]) => path)).not.toContain("/api/comments");
   });
 
+  it("uses the selected job prompt when no completed review exists", async () => {
+    const get = vi.fn((path: string) => {
+      if (path === "/api/review" || path === "/api/ui/review-projection") {
+        return Promise.resolve({
+          data: undefined,
+          error: { detail: "not found" },
+          response: { status: 404 },
+        });
+      }
+      return Promise.resolve({
+        data: {
+          jobs: [
+            {
+              id: 42,
+              repo_id: 1,
+              git_ref: "abc123",
+              agent: "test",
+              job_type: "review",
+              status: "failed",
+              enqueued_at: "2026-08-14T12:00:00Z",
+              prompt: "persisted review prompt",
+              retry_count: 0,
+              agentic: false,
+              prompt_prebuilt: false,
+            },
+          ],
+          has_more: false,
+        },
+        error: undefined,
+      });
+    });
+    const store = reviewStore({ GET: get } as never);
+
+    store.setSelectedJobId(42);
+    store.loadReview(42);
+
+    await vi.waitFor(() => expect(store.isLoading()).toBe(false));
+    expect(store.getPrompt()).toBe("persisted review prompt");
+  });
+
   it("aborts stale job-list transport when a newer list becomes authoritative", async () => {
     const staleSignals: AbortSignal[] = [];
     let calls = 0;

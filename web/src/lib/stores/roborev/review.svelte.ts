@@ -375,7 +375,7 @@ export function createReviewStore(opts: ReviewStoreOptions) {
     return reviewNotFound;
   }
   function getPrompt(): string {
-    return review?.prompt ?? "";
+    return review?.prompt ?? selectedJob?.prompt ?? "";
   }
   function getOutput(): string {
     return review?.output ?? "";

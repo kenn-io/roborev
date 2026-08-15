@@ -619,7 +619,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
       const workflow = yield* RoborevWorkflow;
       const query = buildQuery();
       const observedValue = { success: true } satisfies CancelJobResponse;
-      return yield* workflow.mutate({
+      const response = yield* workflow.mutate({
         key: `job:${id}`,
         operation: "cancel Roborev job",
         mutation: executeRoborevRequest("cancel Roborev job", (signal) =>
@@ -656,6 +656,10 @@ export function createJobsStore(opts: JobsStoreOptions) {
             ),
           ),
       });
+      yield* Effect.sync(() => {
+        if (selectedJobId === id) selectedReviewRevision += 1;
+      });
+      return response;
     });
 
   function cancelJob(id: number): void {

@@ -38,6 +38,8 @@ All notable changes to roborev, grouped by minor release.
 
 **Bug fixes**
 
+- Remote browser sessions can no longer cancel or rerun agentic or stored-prompt
+    jobs. Ordinary non-agentic review and panel actions remain available.
 - Daemon restarts now stop new job claims and wait indefinitely for running
     reviews and worker finalization instead of force-killing the daemon after a
     short graceful-shutdown window.

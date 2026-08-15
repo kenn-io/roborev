@@ -11,6 +11,8 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+
+	"go.kenn.io/roborev/internal/storage"
 )
 
 func newBrowserHandlerFixture(t *testing.T, authToken string) (http.Handler, *BrowserSessionManager) {
@@ -60,6 +62,19 @@ func authenticatedBrowserRequest(
 	request := browserRequest(method, path, nil)
 	request.AddCookie(sessions.Cookie(credentials.Ambient))
 	request.Header.Set(WebSessionHeader, credentials.Tab)
+	return request
+}
+
+func authenticatedBrowserMutationRequest(
+	t *testing.T, sessions *BrowserSessionManager, path string, body any,
+) *http.Request {
+	t.Helper()
+	credentials, err := sessions.Login(testBrowserAuthToken)
+	require.NoError(t, err)
+	request := browserRequest(http.MethodPost, path, body)
+	request.AddCookie(sessions.Cookie(credentials.Ambient))
+	request.Header.Set(WebSessionHeader, credentials.Tab)
+	request.Header.Set(WebCSRFHeader, credentials.CSRF)
 	return request
 }
 
@@ -290,6 +305,146 @@ func TestBrowserHandlerMarksRemoteCommentsUntrustedForPrompts(t *testing.T) {
 		`SELECT source FROM responses WHERE job_id = ?`, job.ID,
 	).Scan(&source))
 	assert.Equal(t, "browser_remote", source)
+}
+
+func TestBrowserHandlerRemoteSessionRestrictsPrivilegedJobMutations(t *testing.T) {
+	tests := []struct {
+		name       string
+		path       string
+		jobType    string
+		agentic    bool
+		prebuilt   bool
+		startState storage.JobStatus
+		wantStatus int
+		wantState  storage.JobStatus
+	}{
+		{
+			name: "cancel stored-prompt task", path: "/api/job/cancel",
+			jobType: storage.JobTypeTask, startState: storage.JobStatusQueued,
+			wantStatus: http.StatusForbidden, wantState: storage.JobStatusQueued,
+		},
+		{
+			name: "cancel agentic review", path: "/api/job/cancel",
+			jobType: storage.JobTypeReview, agentic: true,
+			startState: storage.JobStatusQueued,
+			wantStatus: http.StatusForbidden, wantState: storage.JobStatusQueued,
+		},
+		{
+			name: "rerun stored-prompt task", path: "/api/job/rerun",
+			jobType: storage.JobTypeTask, startState: storage.JobStatusDone,
+			wantStatus: http.StatusForbidden, wantState: storage.JobStatusDone,
+		},
+		{
+			name: "rerun agentic review", path: "/api/job/rerun",
+			jobType: storage.JobTypeReview, agentic: true,
+			startState: storage.JobStatusDone,
+			wantStatus: http.StatusForbidden, wantState: storage.JobStatusDone,
+		},
+		{
+			name: "rerun prebuilt review prompt", path: "/api/job/rerun",
+			jobType: storage.JobTypeReview, prebuilt: true,
+			startState: storage.JobStatusDone,
+			wantStatus: http.StatusForbidden, wantState: storage.JobStatusDone,
+		},
+		{
+			name: "cancel ordinary review", path: "/api/job/cancel",
+			jobType: storage.JobTypeReview, startState: storage.JobStatusQueued,
+			wantStatus: http.StatusOK, wantState: storage.JobStatusCanceled,
+		},
+		{
+			name: "rerun ordinary review", path: "/api/job/rerun",
+			jobType: storage.JobTypeReview, startState: storage.JobStatusDone,
+			wantStatus: http.StatusOK, wantState: storage.JobStatusQueued,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server, db, tempDir := newTestServer(t)
+			repo, err := db.GetOrCreateRepo(tempDir)
+			require.NoError(t, err)
+			commit, err := db.GetOrCreateCommit(
+				repo.ID, "abc123", "Author", "Subject", time.Now(),
+			)
+			require.NoError(t, err)
+			job, err := db.EnqueueJob(storage.EnqueueOpts{
+				RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123",
+				Agent: "test", JobType: tt.jobType, Agentic: tt.agentic,
+				Prompt: "stored instruction", PromptPrebuilt: tt.prebuilt,
+			})
+			require.NoError(t, err)
+			if tt.startState != storage.JobStatusQueued {
+				setJobStatus(t, db, job.ID, tt.startState)
+			}
+
+			handler, sessions := newBrowserHandlerFixtureWithCore(
+				t, testBrowserAuthToken, server.httpServer.Handler,
+			)
+			body := map[string]any{"job_id": job.ID}
+			if tt.path == "/api/job/rerun" {
+				body["request_id"] = "browser-request"
+			}
+			request := authenticatedBrowserMutationRequest(t, sessions, tt.path, body)
+			recorder := httptest.NewRecorder()
+
+			handler.ServeHTTP(recorder, request)
+
+			assert.Equal(t, tt.wantStatus, recorder.Code, recorder.Body.String())
+			updated, err := db.GetJobByID(job.ID)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantState, updated.Status)
+		})
+	}
+}
+
+func TestBrowserHandlerRemoteSessionRejectsPrivilegedPanelMembers(t *testing.T) {
+	for _, path := range []string{"/api/job/cancel", "/api/job/rerun"} {
+		t.Run(path, func(t *testing.T) {
+			server, db, tempDir := newTestServer(t)
+			repo, err := db.GetOrCreateRepo(tempDir)
+			require.NoError(t, err)
+			const runUUID = "remote-panel-run"
+			members, synth, err := db.EnqueuePanelRun(
+				[]storage.EnqueueOpts{{
+					RepoID: repo.ID, GitRef: "base..head", Agent: "test",
+					JobType: storage.JobTypeRange, Agentic: true,
+					PanelRunUUID: runUUID, PanelRole: storage.PanelRoleMember,
+					PanelName: "review", PanelMemberName: "security",
+				}},
+				storage.EnqueueOpts{
+					RepoID: repo.ID, GitRef: "base..head", Agent: "test",
+					PanelRunUUID: runUUID, PanelRole: storage.PanelRoleSynthesis,
+					PanelName: "review",
+				},
+			)
+			require.NoError(t, err)
+			require.Len(t, members, 1)
+			startState := storage.JobStatusQueued
+			if path == "/api/job/rerun" {
+				startState = storage.JobStatusDone
+				setJobStatus(t, db, synth.ID, startState)
+			}
+			handler, sessions := newBrowserHandlerFixtureWithCore(
+				t, testBrowserAuthToken, server.httpServer.Handler,
+			)
+			body := map[string]any{"job_id": synth.ID}
+			if path == "/api/job/rerun" {
+				body["request_id"] = "panel-browser-request"
+			}
+			request := authenticatedBrowserMutationRequest(t, sessions, path, body)
+			recorder := httptest.NewRecorder()
+
+			handler.ServeHTTP(recorder, request)
+
+			assert.Equal(t, http.StatusForbidden, recorder.Code, recorder.Body.String())
+			updatedSynth, err := db.GetJobByID(synth.ID)
+			require.NoError(t, err)
+			assert.Equal(t, startState, updatedSynth.Status)
+			updatedMember, err := db.GetJobByID(members[0].ID)
+			require.NoError(t, err)
+			assert.Equal(t, storage.JobStatusQueued, updatedMember.Status)
+		})
+	}
 }
 
 func TestBrowserHandlerLocalBootstrapRequiresFetchMetadata(t *testing.T) {

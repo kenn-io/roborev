@@ -2071,6 +2071,21 @@ func (s *Server) humaCancelJob(
 		log.Printf("cancel job %d: panel routing lookup failed: %v",
 			input.Body.JobID, jobErr)
 	}
+	if remoteBrowserPrincipal(ctx) && jobErr != nil {
+		if errors.Is(jobErr, sql.ErrNoRows) {
+			return nil, huma.Error404NotFound(
+				"job not found or not cancellable",
+			)
+		}
+		return nil, huma.Error500InternalServerError(
+			fmt.Sprintf("load job: %v", jobErr),
+		)
+	}
+	if jobErr == nil {
+		if err := s.authorizeBrowserJobMutation(ctx, job); err != nil {
+			return nil, err
+		}
+	}
 	if err := s.db.CancelJob(input.Body.JobID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return nil, huma.Error404NotFound(
@@ -2107,6 +2122,20 @@ func (s *Server) humaRerunJob(
 			"job_id is required",
 		)
 	}
+	job, err := s.db.GetJobByID(input.Body.JobID)
+	if err != nil {
+		if errors.Is(err, sql.ErrNoRows) {
+			return nil, huma.Error404NotFound(
+				"job not found or not rerunnable",
+			)
+		}
+		return nil, huma.Error500InternalServerError(
+			fmt.Sprintf("load job: %v", err),
+		)
+	}
+	if err := s.authorizeBrowserJobMutation(ctx, job); err != nil {
+		return nil, err
+	}
 	if input.Body.RequestID != "" {
 		result, found, err := s.db.GetRerunRequest(input.Body.RequestID, input.Body.JobID)
 		if err != nil {
@@ -2122,18 +2151,6 @@ func (s *Server) humaRerunJob(
 			resp.Body.RunUUID = result.PanelRunUUID
 			return resp, nil
 		}
-	}
-
-	job, err := s.db.GetJobByID(input.Body.JobID)
-	if err != nil {
-		if errors.Is(err, sql.ErrNoRows) {
-			return nil, huma.Error404NotFound(
-				"job not found or not rerunnable",
-			)
-		}
-		return nil, huma.Error500InternalServerError(
-			fmt.Sprintf("load job: %v", err),
-		)
 	}
 	if job.Status == storage.JobStatusCanceled && job.WorkerID != "" {
 		return nil, huma.Error409Conflict("canceled job is still stopping")
