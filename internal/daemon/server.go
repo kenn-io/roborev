@@ -2159,7 +2159,7 @@ func (s *Server) humaRerunJob(
 		return nil, huma.Error400BadRequest(err.Error())
 	}
 
-	resultJobID, err := s.db.ReenqueueJobWithRequest(
+	resultJobID, replayed, err := s.db.ReenqueueJobWithRequest(
 		input.Body.JobID,
 		storage.ReenqueueOpts{
 			Model:    model,
@@ -2176,12 +2176,30 @@ func (s *Server) humaRerunJob(
 			fmt.Sprintf("rerun job: %v", err),
 		)
 	}
+	if !replayed {
+		s.broadcastRerunEnqueued(resultJobID, job.UUID, job)
+	}
 
 	resp := &RerunJobOutput{}
 	resp.Body.Success = true
 	resp.Body.JobID = resultJobID
 	resp.Body.RequestID = input.Body.RequestID
 	return resp, nil
+}
+
+func (s *Server) broadcastRerunEnqueued(
+	jobID int64, jobUUID string, source *storage.ReviewJob,
+) {
+	s.broadcaster.Broadcast(Event{
+		Type:     "job.enqueued",
+		TS:       time.Now(),
+		JobID:    jobID,
+		JobUUID:  jobUUID,
+		Repo:     source.RepoPath,
+		RepoName: source.RepoName,
+		SHA:      source.GitRef,
+		Agent:    source.Agent,
+	})
 }
 
 func (s *Server) humaCloseReview(

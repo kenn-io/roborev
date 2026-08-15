@@ -638,7 +638,7 @@ describe("createJobsStore event stream", () => {
     expect(globalThis.fetch).toHaveBeenCalledTimes(2);
   });
 
-  it("reconciles the last job checkpoint before reconnecting the event stream", async () => {
+  it("opens the replacement event stream before reconciling its checkpoint", async () => {
     vi.useFakeTimers();
     const sequence: string[] = [];
     const bodies: ReadableStreamDefaultController<Uint8Array>[] = [];
@@ -679,11 +679,13 @@ describe("createJobsStore event stream", () => {
 
     const secondStream = sequence.indexOf("stream:2");
     expect(secondStream).toBeGreaterThan(0);
-    expect(sequence.slice(0, secondStream)).toContain("jobs");
+    expect(sequence.indexOf("jobs", secondStream)).toBeGreaterThan(
+      secondStream,
+    );
     store.disconnectEventStream(eventOwner);
   });
 
-  it("does not reopen the event stream until reconnect reconciliation succeeds", async () => {
+  it("keeps a reopened event stream disconnected until reconciliation succeeds", async () => {
     vi.useFakeTimers();
     const bodies: ReadableStreamDefaultController<Uint8Array>[] = [];
     globalThis.fetch = vi.fn(
@@ -727,11 +729,12 @@ describe("createJobsStore event stream", () => {
     bodies[0]?.close();
     await vi.waitFor(() => expect(store.isEventStreamConnected()).toBe(false));
     await vi.advanceTimersByTimeAsync(500);
-    await Promise.resolve();
-
-    expect(bodies).toHaveLength(1);
-    await vi.advanceTimersByTimeAsync(1_000);
     await vi.waitFor(() => expect(bodies).toHaveLength(2));
+
+    expect(store.isEventStreamConnected()).toBe(false);
+    await vi.advanceTimersByTimeAsync(500);
+    await vi.waitFor(() => expect(bodies).toHaveLength(3));
+    await vi.waitFor(() => expect(store.isEventStreamConnected()).toBe(true));
     store.disconnectEventStream(eventOwner);
   });
 });

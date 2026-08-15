@@ -138,15 +138,27 @@ func TestRerunPanelRequestIsIdempotent(t *testing.T) {
 	server, db, _ := newTestServer(t)
 	oldRunUUID, _, synth := enqueueServerPanelRun(t, db, 2)
 	markJobStatus(t, db, synth.ID, storage.JobStatusDone)
+	source, err := db.GetJobByID(synth.ID)
+	require.NoError(t, err)
+	subscriberID, events := server.broadcaster.Subscribe("")
+	defer server.broadcaster.Unsubscribe(subscriberID)
 	input := &RerunJobInput{Body: RerunJobRequest{
 		JobID: synth.ID, RequestID: "panel-request-one",
 	}}
 
 	first, err := server.humaRerunJob(context.Background(), input)
 	require.NoError(t, err)
+	require.Len(t, events, 1)
+	event := <-events
+	assert.Equal(t, "job.enqueued", event.Type)
+	assert.Equal(t, first.Body.JobID, event.JobID)
+	assert.Equal(t, source.RepoPath, event.Repo)
+	assert.Equal(t, source.RepoName, event.RepoName)
+	assert.Equal(t, source.GitRef, event.SHA)
 	markJobStatus(t, db, synth.ID, storage.JobStatusRunning)
 	second, err := server.humaRerunJob(context.Background(), input)
 	require.NoError(t, err)
+	assert.Empty(t, events, "idempotent replay must not broadcast again")
 
 	assert.Equal(t, first.Body, second.Body)
 	assert.NotEqual(t, synth.ID, first.Body.JobID)

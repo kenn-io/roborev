@@ -96,10 +96,13 @@ func (s *Server) rerunPanelRun(job *storage.ReviewJob, requestID string) (*Rerun
 	}
 	synthOpts := panelRerunSynthesisOpts(job, runUUID, synthDiff, synthDirtyFiles, source)
 
-	_, synthJob, _, err := s.db.EnqueuePanelRerun(memberOpts, synthOpts, requestID, job.ID)
+	_, synthJob, replayed, err := s.db.EnqueuePanelRerun(memberOpts, synthOpts, requestID, job.ID)
 	if err != nil {
 		return nil, huma.Error500InternalServerError(
 			fmt.Sprintf("enqueue rerun panel: %v", err))
+	}
+	if !replayed {
+		s.broadcastRerunEnqueued(synthJob.ID, synthJob.UUID, job)
 	}
 
 	resp := &RerunJobOutput{}

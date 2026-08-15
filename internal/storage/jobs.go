@@ -922,23 +922,25 @@ type ReenqueueOpts struct {
 // This allows manual re-running of jobs to get a fresh review.
 // For done jobs, the existing review is deleted to avoid unique constraint violations.
 func (db *DB) ReenqueueJob(jobID int64, opts ReenqueueOpts) error {
-	_, err := db.ReenqueueJobWithRequest(jobID, opts, "")
+	_, _, err := db.ReenqueueJobWithRequest(jobID, opts, "")
 	return err
 }
 
 // ReenqueueJobWithRequest resets a terminal job and records a stable result for
 // requestID in the same transaction. Repeating requestID returns the original
-// result without resetting the active attempt again.
-func (db *DB) ReenqueueJobWithRequest(jobID int64, opts ReenqueueOpts, requestID string) (int64, error) {
+// result with replayed=true without resetting the active attempt again.
+func (db *DB) ReenqueueJobWithRequest(
+	jobID int64, opts ReenqueueOpts, requestID string,
+) (resultJobID int64, replayed bool, err error) {
 	ctx := context.Background()
 	conn, err := db.Conn(ctx)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	defer conn.Close()
 
 	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	committed := false
 	defer func() {
@@ -951,21 +953,21 @@ func (db *DB) ReenqueueJobWithRequest(jobID int64, opts ReenqueueOpts, requestID
 	if requestID != "" {
 		result, found, err := lookupRerunRequest(ctx, conn, requestID, jobID)
 		if err != nil {
-			return 0, err
+			return 0, false, err
 		}
 		if found {
 			if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
-				return 0, err
+				return 0, false, err
 			}
 			committed = true
-			return result.JobID, nil
+			return result.JobID, true, nil
 		}
 	}
 
 	// Delete any existing review for this job (for done jobs being rerun)
 	_, err = conn.ExecContext(ctx, `DELETE FROM reviews WHERE job_id = ?`, jobID)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 
 	now := time.Now()
@@ -1000,27 +1002,27 @@ func (db *DB) ReenqueueJobWithRequest(jobID int64, opts ReenqueueOpts, requestID
 		  )
 	`, enqueuedAt, nullString(opts.Model), nullString(opts.Provider), updatedAt, jobID)
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	rows, err := result.RowsAffected()
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	if rows == 0 {
-		return 0, sql.ErrNoRows
+		return 0, false, sql.ErrNoRows
 	}
 	if requestID != "" {
 		if err := recordRerunRequest(ctx, conn, requestID, jobID, jobID, ""); err != nil {
-			return 0, err
+			return 0, false, err
 		}
 	}
 
 	_, err = conn.ExecContext(ctx, "COMMIT")
 	if err != nil {
-		return 0, err
+		return 0, false, err
 	}
 	committed = true
-	return jobID, nil
+	return jobID, false, nil
 }
 
 // ReleaseCanceledJob clears ownership only after the canceled worker has

@@ -614,6 +614,45 @@ func TestHandleRerunJob(t *testing.T) {
 	})
 }
 
+func TestRerunJobBroadcastsOnlyAcceptedRequest(t *testing.T) {
+	server, db, tempDir := newTestServer(t)
+	repo, err := db.GetOrCreateRepo(tempDir)
+	require.NoError(t, err)
+	commit, err := db.GetOrCreateCommit(
+		repo.ID, "rerun-broadcast", "Author", "Subject", time.Now(),
+	)
+	require.NoError(t, err)
+	job, err := db.EnqueueJob(storage.EnqueueOpts{
+		RepoID: repo.ID, CommitID: commit.ID,
+		GitRef: "rerun-broadcast", Agent: "test",
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.CancelJob(job.ID))
+
+	subscriberID, events := server.broadcaster.Subscribe("")
+	defer server.broadcaster.Unsubscribe(subscriberID)
+	body := RerunJobRequest{JobID: job.ID, RequestID: "rerun-broadcast-request"}
+
+	first := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", body)
+	firstResponse := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(firstResponse, first)
+	require.Equal(t, http.StatusOK, firstResponse.Code, firstResponse.Body.String())
+	require.Len(t, events, 1)
+	event := <-events
+	assert.Equal(t, "job.enqueued", event.Type)
+	assert.Equal(t, job.ID, event.JobID)
+	assert.Equal(t, repo.RootPath, event.Repo)
+	assert.Equal(t, repo.Name, event.RepoName)
+	assert.Equal(t, job.GitRef, event.SHA)
+	assert.Equal(t, job.Agent, event.Agent)
+
+	replay := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", body)
+	replayResponse := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(replayResponse, replay)
+	require.Equal(t, http.StatusOK, replayResponse.Code, replayResponse.Body.String())
+	assert.Empty(t, events, "idempotent replay must not broadcast again")
+}
+
 func TestWorkflowForJobFixType(t *testing.T) {
 	assert := assert.New(t)
 	assert.Equal("fix", workflowForJob(storage.JobTypeFix, config.ReviewTypeDefault))

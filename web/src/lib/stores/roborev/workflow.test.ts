@@ -1,6 +1,8 @@
 import { assert, it } from "@effect/vitest";
 import { Deferred, Effect, Fiber, Option, Ref } from "effect";
+import { TestClock } from "effect/testing";
 import { TransientTransportError } from "../../api/effect-errors";
+import { StreamingFetch } from "../../browser/streaming-fetch";
 import {
   makeRoborevWorkflow,
   RoborevMutationBlocked,
@@ -218,6 +220,63 @@ it.effect(
         }
       }),
     ),
+);
+
+it.effect(
+  "opens the replacement event stream before reconciling a reconnect",
+  () => {
+    let fetchCount = 0;
+    let fetchCountAtReconnect = 0;
+    let resolveFirstFetch!: () => void;
+    const firstFetch = new Promise<void>((resolve) => {
+      resolveFirstFetch = resolve;
+    });
+    let resolveFirstError!: () => void;
+    const firstError = new Promise<void>((resolve) => {
+      resolveFirstError = resolve;
+    });
+    let resolveReconnect!: () => void;
+    const reconnected = new Promise<void>((resolve) => {
+      resolveReconnect = resolve;
+    });
+    return Effect.scoped(
+      Effect.gen(function* () {
+        const workflow = yield* makeRoborevWorkflow;
+
+        yield* workflow.connectEvents({
+          owner: "reconnect-owner",
+          baseUrl: "http://roborev.test",
+          onOpen: Effect.void,
+          onEvent: () => Effect.void,
+          onReconnect: () =>
+            Effect.sync(() => {
+              fetchCountAtReconnect = fetchCount;
+              resolveReconnect();
+            }),
+          onError: () => Effect.sync(resolveFirstError),
+        });
+
+        yield* Effect.promise(() => firstFetch);
+        yield* Effect.promise(() => firstError);
+        yield* TestClock.adjust("500 millis");
+        yield* Effect.promise(() => reconnected);
+
+        assert.strictEqual(fetchCountAtReconnect, 2);
+        yield* workflow.disconnectEvents("reconnect-owner");
+      }),
+    ).pipe(
+      Effect.provideService(StreamingFetch, {
+        fetch: async () => {
+          fetchCount += 1;
+          if (fetchCount === 1) {
+            resolveFirstFetch();
+            return new Response("");
+          }
+          return new Response(new ReadableStream<Uint8Array>());
+        },
+      }),
+    );
+  },
 );
 
 it.effect(

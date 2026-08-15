@@ -364,30 +364,34 @@ export const makeRoborevWorkflow: Effect.Effect<
             return [attempt, next];
           },
         ).pipe(
-          Effect.flatMap((attempt) =>
-            attempt === 0
-              ? Effect.succeed(roborevEventStream(options.baseUrl))
-              : Ref.get(eventCheckpoints).pipe(
-                  Effect.flatMap((checkpoints) =>
-                    options.onReconnect(checkpoints.get(options.owner)),
+          Effect.map((attempt) =>
+            roborevEventStream(options.baseUrl).pipe(
+              Stream.tap((event) => {
+                if (event instanceof RoborevStreamOpened) {
+                  const reconcile =
+                    attempt === 0
+                      ? Effect.void
+                      : Ref.get(eventCheckpoints).pipe(
+                          Effect.flatMap((checkpoints) =>
+                            options.onReconnect(checkpoints.get(options.owner)),
+                          ),
+                        );
+                  return reconcile.pipe(Effect.andThen(options.onOpen));
+                }
+                return options.onEvent(event).pipe(
+                  Effect.andThen(
+                    Ref.update(eventCheckpoints, (checkpoints) => {
+                      const next = new Map(checkpoints);
+                      next.set(options.owner, event.ts);
+                      return next;
+                    }),
                   ),
-                  Effect.as(roborevEventStream(options.baseUrl)),
-                ),
+                );
+              }),
+            ),
           ),
         ),
       ).pipe(
-        Stream.tap((event) => {
-          if (event instanceof RoborevStreamOpened) return options.onOpen;
-          return options.onEvent(event).pipe(
-            Effect.andThen(
-              Ref.update(eventCheckpoints, (checkpoints) => {
-                const next = new Map(checkpoints);
-                next.set(options.owner, event.ts);
-                return next;
-              }),
-            ),
-          );
-        }),
         Stream.tapError(options.onError),
         Stream.retry(eventRetrySchedule),
       );
