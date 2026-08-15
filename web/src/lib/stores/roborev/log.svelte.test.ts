@@ -138,6 +138,37 @@ describe("createLogStore", () => {
     ]);
   });
 
+  it("reconciles the authoritative snapshot after a completed stream", async () => {
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        ndjsonResponse([{ type: "line", text: "first", line_type: "text" }]),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            lines: [
+              { text: "first", line_type: "text" },
+              { text: "record dropped by stream", line_type: "text" },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    const store = createLogStore({ baseUrl: "http://roborev.test" });
+
+    await runLogEffect(store.startStreamingEffect(81, "complete-reconcile"));
+
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(requestURL(fetchMock.mock.calls[1]![0])).toBe(
+      "http://roborev.test/api/job/output?job_id=81",
+    );
+    expect(store.getLines().map((line) => line.text)).toEqual([
+      "first",
+      "record dropped by stream",
+    ]);
+  });
+
   it("reconnects a live output stream after a transient transport failure", async () => {
     const fetchMock = vi
       .spyOn(globalThis, "fetch")
@@ -151,12 +182,26 @@ describe("createLogStore", () => {
             line_type: "text",
           },
         ]),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            lines: [
+              {
+                ts: "2026-04-11T11:00:03Z",
+                text: "reconnected output",
+                line_type: "text",
+              },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
       );
     const store = createLogStore({ baseUrl: "http://roborev.test" });
 
     await runLogEffect(store.startStreamingEffect(79, "reconnect-test"));
 
-    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(store.getLines().map((line) => line.text)).toEqual([
       "reconnected output",
     ]);
@@ -186,12 +231,23 @@ describe("createLogStore", () => {
           { type: "line", text: "first", line_type: "text" },
           { type: "line", text: "second", line_type: "text" },
         ]),
+      )
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            lines: [
+              { text: "first", line_type: "text" },
+              { text: "second", line_type: "text" },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
       );
     const store = createLogStore({ baseUrl: "http://roborev.test" });
 
     await runLogEffect(store.startStreamingEffect(80, "partial-reconnect"));
 
-    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(fetchMock).toHaveBeenCalledTimes(4);
     expect(store.getLines().map((line) => line.text)).toEqual([
       "first",
       "second",

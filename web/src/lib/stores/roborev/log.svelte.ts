@@ -106,6 +106,16 @@ export function createLogStore(opts: LogStoreOptions) {
             while: (failure) =>
               failure instanceof RoborevStreamError && failure.retryable,
           }),
+          Effect.andThen(
+            loadRoborevJobOutput(opts.baseUrl, jobId).pipe(
+              Effect.tap((snapshot) =>
+                Effect.sync(() => {
+                  if (activeLogOwner !== logOwner) return;
+                  lines = (snapshot.lines ?? []).map(logLineFromPayload);
+                }),
+              ),
+            ),
+          ),
           Effect.catch((failure) =>
             Effect.sync(() => {
               if (activeLogOwner !== logOwner) return;
