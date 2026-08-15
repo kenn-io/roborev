@@ -108,6 +108,7 @@ Events are emitted as newline-delimited JSON (JSONL):
 | `review.canceled` | Review was canceled |
 | `review.closed` | Review was marked closed |
 | `review.reopened` | Review was reopened |
+| `review.commented` | A comment was added to a job or commit |
 
 ## Event Fields
 

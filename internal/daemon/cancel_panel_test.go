@@ -112,6 +112,37 @@ func TestCancelSynthesisCascades(t *testing.T) {
 	_ = runUUID
 }
 
+func TestCancelSynthesisBroadcastsEveryCanceledJob(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	_, members, synth := enqueueServerPanelRun(t, db, 2)
+	_, eventCh := server.broadcaster.Subscribe("")
+
+	_, err := server.humaCancelJob(context.Background(), &CancelJobInput{
+		Body: CancelJobRequest{JobID: synth.ID},
+	})
+	require.NoError(t, err)
+
+	wantIDs := map[int64]struct{}{
+		synth.ID:      {},
+		members[0].ID: {},
+		members[1].ID: {},
+	}
+	for range 3 {
+		select {
+		case event := <-eventCh:
+			assert.Equal(t, "review.canceled", event.Type)
+			assert.Contains(t, wantIDs, event.JobID)
+			assert.NotEmpty(t, event.Repo)
+			assert.NotEmpty(t, event.RepoName)
+			assert.Equal(t, "deadbeef", event.SHA)
+			delete(wantIDs, event.JobID)
+		case <-time.After(time.Second):
+			require.FailNow(t, "timed out waiting for review.canceled events")
+		}
+	}
+	assert.Empty(t, wantIDs)
+}
+
 func TestCancelCISynthesisRetiresPanelMapping(t *testing.T) {
 	assert := assert.New(t)
 	server, db, _ := newTestServer(t)

@@ -158,6 +158,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
   let highlightedJobId = $state<number | undefined>(undefined);
   let rerunningJobIds = $state<Set<number>>(new Set());
   let loadedLimit = DEFAULT_PAGE_LIMIT;
+  let jobsAuthorityGeneration = 0;
 
   // Filters
   let filterRepo = $state<string | undefined>(undefined);
@@ -339,8 +340,9 @@ export function createJobsStore(opts: JobsStoreOptions) {
     } satisfies JobsAuthority;
   });
 
-  const publishJobsAuthority = (authority: JobsAuthority) =>
+  const publishJobsAuthority = (authority: JobsAuthority, generation: number) =>
     Effect.sync(() => {
+      if (generation !== jobsAuthorityGeneration) return [];
       if (JSON.stringify(buildQuery()) !== authority.queryScope) return [];
       if (authority.hasMore) {
         sortColumn = "enqueued_at";
@@ -366,17 +368,18 @@ export function createJobsStore(opts: JobsStoreOptions) {
     });
 
   const refreshJobsAuthority = (query: ListJobsQuery) =>
-    fetchJobsAuthority(query).pipe(
-      Effect.tap((authority) =>
-        publishJobsAuthority(authority).pipe(
-          Effect.flatMap((expandedRuns) =>
-            Effect.forEach(expandedRuns, fetchPanelMembersEffect, {
-              discard: true,
-            }),
-          ),
-        ),
-      ),
-    );
+    Effect.gen(function* () {
+      const generation = yield* Effect.sync(() => {
+        jobsAuthorityGeneration += 1;
+        return jobsAuthorityGeneration;
+      });
+      const authority = yield* fetchJobsAuthority(query);
+      const expandedRuns = yield* publishJobsAuthority(authority, generation);
+      yield* Effect.forEach(expandedRuns, fetchPanelMembersEffect, {
+        discard: true,
+      });
+      return authority;
+    });
 
   const loadJobsRequestEffect = (requestOwner = opts.owner) =>
     Effect.gen(function* () {
@@ -941,7 +944,9 @@ export function createJobsStore(opts: JobsStoreOptions) {
           Effect.sync(() => {
             if (
               activeEventOwner === eventOwner &&
-              selectedJobId === event.job_id
+              selectedJobId !== undefined &&
+              (selectedJobId === event.job_id ||
+                event.type === "review.commented")
             ) {
               selectedReviewRevision += 1;
             }

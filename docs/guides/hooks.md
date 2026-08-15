@@ -107,17 +107,18 @@ type = "beads"
 | `review.started` | A review job starts processing |
 | `review.completed` | A review finishes successfully (verdict is `P` for pass or `F` for fail) |
 | `review.failed` | A review job fails after exhausting retries (agent error, timeout, etc.) |
-| `review.canceled` | A running review is canceled. Canceling a still-queued job emits no event |
+| `review.canceled` | A queued or running review is canceled |
 | `review.closed` | A review is marked closed |
 | `review.reopened` | A closed review is reopened |
+| `review.commented` | A comment is added to a job or commit |
 | `review.*` | Wildcard: matches any `review.` event |
 
 Note the distinction between `review.completed` with verdict `F` (the review ran
 successfully and found issues) and `review.failed` (the review job itself
 errored out). For terminal notifications only, configure separate
 `review.completed` and `review.failed` hooks. `review.*` also matches started,
-canceled, closed, and reopened events, which is useful for webhooks and
-built-ins that ignore irrelevant event types internally.
+canceled, closed, reopened, and commented events, which is useful for webhooks
+and built-ins that ignore irrelevant event types internally.
 
 ## Branch Filtering
 

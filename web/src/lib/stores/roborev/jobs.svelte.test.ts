@@ -618,6 +618,124 @@ describe("createJobsStore event stream", () => {
     store.disconnectEventStream(eventOwner);
   });
 
+  it("discards an older list response after event reconciliation publishes", async () => {
+    const encoder = new TextEncoder();
+    let bodyController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              bodyController = controller;
+            },
+          }),
+          { status: 200 },
+        ),
+    );
+
+    type JobsResponse = {
+      data: {
+        jobs: ReviewJob[];
+        has_more: boolean;
+        stats: { done: number; running: number; closed: number; open: number };
+      };
+      error: undefined;
+    };
+    const pending: Array<(value: JobsResponse) => void> = [];
+    const client = {
+      GET: vi.fn(
+        () =>
+          new Promise<JobsResponse>((resolve) => {
+            pending.push(resolve);
+          }),
+      ),
+    };
+    const store = createJobsStore({
+      client: client as never,
+      navigate: vi.fn(),
+    });
+    const eventOwner = store.connectEventStream("/api/roborev");
+    await vi.waitFor(() => expect(store.isEventStreamConnected()).toBe(true));
+
+    const olderLoad = loadJobs(store);
+    await vi.waitFor(() => expect(pending).toHaveLength(1));
+    bodyController?.enqueue(
+      encoder.encode(
+        '{"type":"review.completed","ts":"2026-08-04T13:00:00Z","job_id":42,"repo":"/workspace/repo","repo_name":"repo","sha":"abc123"}\n',
+      ),
+    );
+    await vi.waitFor(() => expect(pending).toHaveLength(2));
+
+    pending[1]?.({
+      data: {
+        jobs: [{ ...makeJob(42), status: "done" }],
+        has_more: false,
+        stats: { done: 1, running: 0, closed: 0, open: 1 },
+      },
+      error: undefined,
+    });
+    await vi.waitFor(() => expect(store.getJobs()[0]?.status).toBe("done"));
+
+    pending[0]?.({
+      data: {
+        jobs: [{ ...makeJob(42), status: "running" }],
+        has_more: false,
+        stats: { done: 0, running: 1, closed: 0, open: 1 },
+      },
+      error: undefined,
+    });
+    await olderLoad;
+
+    expect(store.getJobs()[0]?.status).toBe("done");
+    expect(store.getStats().running).toBe(0);
+    store.disconnectEventStream(eventOwner);
+  });
+
+  it("invalidates the selected review for commit-scoped comment events", async () => {
+    const encoder = new TextEncoder();
+    let bodyController: ReadableStreamDefaultController<Uint8Array> | undefined;
+    globalThis.fetch = vi.fn(
+      async () =>
+        new Response(
+          new ReadableStream<Uint8Array>({
+            start(controller) {
+              bodyController = controller;
+            },
+          }),
+          { status: 200 },
+        ),
+    );
+    const client = {
+      GET: vi.fn().mockResolvedValue({
+        data: {
+          jobs: [],
+          has_more: false,
+          stats: { done: 0, closed: 0, open: 0 },
+        },
+        error: undefined,
+      }),
+    };
+    const store = createJobsStore({
+      client: client as never,
+      navigate: vi.fn(),
+    });
+    store.setSelectedJobId(42);
+    const revision = store.getSelectedReviewRevision();
+    const eventOwner = store.connectEventStream("/api/roborev");
+    await vi.waitFor(() => expect(store.isEventStreamConnected()).toBe(true));
+
+    bodyController?.enqueue(
+      encoder.encode(
+        '{"type":"review.commented","ts":"2026-08-04T13:00:00Z","job_id":0,"repo":"/workspace/repo","repo_name":"repo","sha":"abc123"}\n',
+      ),
+    );
+
+    await vi.waitFor(() =>
+      expect(store.getSelectedReviewRevision()).toBe(revision + 1),
+    );
+    store.disconnectEventStream(eventOwner);
+  });
+
   it("treats malformed event records as a reconnectable stream failure", async () => {
     vi.useFakeTimers();
     const encoder = new TextEncoder();

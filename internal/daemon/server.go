@@ -2106,8 +2106,17 @@ func (s *Server) humaCancelJob(
 	// complete the synthesis despite the user's cancel. Canceling the parent
 	// first makes the later MaybeReleasePanelSynthesis a no-op on an
 	// already-terminal row.
-	s.cascadeCancelPanelMembers(job)
+	canceledMembers := s.cascadeCancelPanelMembers(job)
 	s.releaseSynthesisIfCanceledMember(job)
+
+	if job == nil {
+		job, _ = s.db.GetJobByID(input.Body.JobID)
+	}
+	s.broadcaster.Broadcast(eventForJob("review.canceled", job, input.Body.JobID))
+	for i := range canceledMembers {
+		member := &canceledMembers[i]
+		s.broadcaster.Broadcast(eventForJob("review.canceled", member, member.ID))
+	}
 
 	resp := &CancelJobOutput{}
 	resp.Body.Success = true
@@ -2281,6 +2290,7 @@ func (s *Server) humaAddComment(
 	}
 
 	var resp *storage.Response
+	var commentEvent Event
 	var err error
 	source := storage.ResponseSourceLocal
 	if principal, found := BrowserPrincipalFromContext(ctx); found && !principal.Local {
@@ -2304,6 +2314,11 @@ func (s *Server) humaAddComment(
 				fmt.Sprintf("add comment: %v", err),
 			)
 		}
+		job, jobErr := s.db.GetJobByID(input.Body.JobID)
+		if jobErr != nil {
+			log.Printf("comment on job %d: load event metadata: %v", input.Body.JobID, jobErr)
+		}
+		commentEvent = eventForJob("review.commented", job, input.Body.JobID)
 	} else {
 		commit, commitErr := s.db.GetCommitBySHA(input.Body.SHA)
 		if commitErr != nil {
@@ -2323,7 +2338,20 @@ func (s *Server) humaAddComment(
 				fmt.Sprintf("add comment: %v", err),
 			)
 		}
+		commentEvent = Event{
+			Type: "review.commented",
+			TS:   time.Now(),
+			SHA:  commit.SHA,
+		}
+		repo, repoErr := s.db.GetRepoByID(commit.RepoID)
+		if repoErr != nil {
+			log.Printf("comment on commit %s: load event metadata: %v", commit.SHA, repoErr)
+		} else {
+			commentEvent.Repo = repo.RootPath
+			commentEvent.RepoName = repo.Name
+		}
 	}
+	s.broadcaster.Broadcast(commentEvent)
 
 	return &AddCommentOutput{Body: resp}, nil
 }

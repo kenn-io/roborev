@@ -1013,6 +1013,59 @@ func TestHandleAddCommentWithoutReview(t *testing.T) {
 	}
 }
 
+func TestHandleAddCommentBroadcastsEvent(t *testing.T) {
+	t.Run("job comment", func(t *testing.T) {
+		server, db, tmpDir := newTestServer(t)
+		job := createTestJob(t, db, filepath.Join(tmpDir, "test-repo"), "abc123", "test")
+		_, eventCh := server.broadcaster.Subscribe("")
+
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/comment", AddCommentRequest{
+			JobID: job.ID, Commenter: "reviewer", Comment: "Looks good",
+		})
+		w := httptest.NewRecorder()
+		server.httpServer.Handler.ServeHTTP(w, req)
+		require.Equal(t, http.StatusCreated, w.Code)
+
+		select {
+		case event := <-eventCh:
+			assert.Equal(t, "review.commented", event.Type)
+			assert.Equal(t, job.ID, event.JobID)
+			assert.Equal(t, "abc123", event.SHA)
+			assert.NotEmpty(t, event.Repo)
+			assert.NotEmpty(t, event.RepoName)
+		case <-time.After(time.Second):
+			require.FailNow(t, "timed out waiting for review.commented event")
+		}
+	})
+
+	t.Run("commit comment", func(t *testing.T) {
+		server, db, tmpDir := newTestServer(t)
+		repo, err := db.GetOrCreateRepo(filepath.Join(tmpDir, "test-repo"))
+		require.NoError(t, err)
+		_, err = db.GetOrCreateCommit(repo.ID, "def456", "Author", "Subject", time.Now())
+		require.NoError(t, err)
+		_, eventCh := server.broadcaster.Subscribe("")
+
+		req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/comment", AddCommentRequest{
+			SHA: "def456", Commenter: "reviewer", Comment: "Commit context",
+		})
+		w := httptest.NewRecorder()
+		server.httpServer.Handler.ServeHTTP(w, req)
+		require.Equal(t, http.StatusCreated, w.Code)
+
+		select {
+		case event := <-eventCh:
+			assert.Equal(t, "review.commented", event.Type)
+			assert.Zero(t, event.JobID)
+			assert.Equal(t, "def456", event.SHA)
+			assert.Equal(t, repo.RootPath, event.Repo)
+			assert.Equal(t, repo.Name, event.RepoName)
+		case <-time.After(time.Second):
+			require.FailNow(t, "timed out waiting for review.commented event")
+		}
+	})
+}
+
 func TestHandleCloseReview_BroadcastsEvent(t *testing.T) {
 	assert := assert.New(t)
 	server, db, tmpDir := newTestServer(t)
