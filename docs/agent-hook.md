@@ -42,13 +42,17 @@ Roborev scopes commit and failed-review accounting to repository lineage, so
 activity in one worktree does not consume another worktree's reminder. Outside a
 tracked git repository the hook returns an empty native response.
 
-The default instruction is self-contained. It uses the richer `roborev-fix`
-skill when available and otherwise tells the agent how to discover, inspect,
-fix, comment on, and close each review with the CLI. Installing skills remains
-recommended for Claude Code, Codex, and Factory Droid, but it is not required
-for the other profiles to receive an actionable reminder. The built-in default
-also forbids expanding the current task: out-of-scope or unclear findings stay
-untouched until the user gives direction.
+The default instruction names the exact review job IDs and invokes the
+`roborev-fix` skill for only those jobs. It never runs `roborev fix --open` or
+discovers additional reviews. The skill treats every finding as an unverified
+claim: invalid findings are documented and closed without code changes, valid
+in-scope findings are fixed and verified, and valid out-of-scope or unclear
+findings remain open until the user gives direction.
+
+Delivered review IDs are acknowledged in the Agent Hook daemon's session state,
+scoped to the repository lineage. They do not trigger another reminder in that
+session, while newly created review IDs still do. Deferred reminders acknowledge
+their IDs only when delivered.
 
 `instruction` is a complete override. Custom instructions are emitted without
 the built-in scope or continuation guidance.
@@ -82,6 +86,11 @@ roborev agent-hook install --agent hermes --config ~/.hermes/config.yaml
 Automatic and `all` installs attempt every selected profile and report all
 errors after preserving successful installs. `--dry-run` plans the same changes
 without writing.
+
+For Claude Code, Codex, Factory Droid, and Grok Build, installation also creates
+or updates that profile's bundled roborev skills before activating the hook.
+Other hook profiles do not currently have bundled skill variants and receive no
+CLI fallback.
 
 Factory Droid remains user-scoped. Roborev rejects project `.factory/hooks.json`
 paths because they are executable repository-local configuration.
@@ -159,7 +168,8 @@ roborev agent-hook run --agent <profile>
 passes it through kit's typed dispatcher, posts a normalized request to the
 regular roborev daemon, and lets kit encode the native response.
 
-The regular daemon loads and persists session accounting at:
+The regular daemon loads and persists session accounting and delivered review
+IDs at:
 
 ```text
 ${ROBOREV_DATA_DIR:-~/.roborev}/agent-hook/state.json
@@ -187,7 +197,7 @@ trigger type. The next Hermes `Stop` delivers one reminder, ordered by failed
 reviews before commits and then creation time.
 
 Queued reminders retain the absolute triggering worktree and tell the agent to
-change to it before running fallback commands, even if the session changed
+change to it before running review commands, even if the session changed
 directories or used `git -C`. Delivery waits until that worktree is back on the
 triggering branch, or the exact triggering commit for a detached checkout, so
 the fallback commands query the intended lineage. Repeated triggers coalesce

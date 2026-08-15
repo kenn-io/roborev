@@ -19,21 +19,12 @@ func TestPostToolUseAdditionalContextFallsBackToDefaultInstruction(t *testing.T)
 	assert.Equal(t, DefaultInstruction, PostToolUseAdditionalContext(""))
 }
 
-func TestDefaultInstructionDefersOutOfScopeFindings(t *testing.T) {
-	assert := assert.New(t)
-	instruction := PostToolUseAdditionalContext("")
-
-	assert.Contains(instruction, "Never expand the scope of the user's current task")
-	assert.Contains(instruction, "leave it unchanged and ask the user for direction")
-	assert.Contains(instruction, "continue the task you were doing before this hook interrupted you")
-}
-
-// If policy is appended before the continuation instruction, the hook's own
-// workflow text can override or dilute the user's final policy.
+// User policy must remain the final instruction so preceding workflow text
+// cannot override or dilute it.
 func TestStopReasonWithFixGuidelinesEndsWithPolicy(t *testing.T) {
 	got := StopReasonWithFixGuidelines("Resolve reviews.", "Verify before editing.")
 	assert.True(t, strings.HasSuffix(got, "Verify before editing."))
-	assert.Contains(t, got, continuationInstruction)
+	assert.Contains(t, got, "Resolve reviews.")
 }
 
 // If an untriggered response gains policy output, passive hook events begin

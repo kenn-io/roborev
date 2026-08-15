@@ -32,8 +32,7 @@ your agentic loop while context is fresh.
 
 ```bash
 roborev init                  # layer 1: per-commit reviews
-roborev skills install
-roborev agent-hook install    # layer 2: auto-detect and wire installed agents
+roborev agent-hook install    # layer 2: wire agents and bundled skills
 roborev agent-hook install --agent all  # or wire every supported profile
 ```
 
@@ -103,11 +102,13 @@ closing the loop.
 `roborev agent-hook install` auto-detects installed Claude Code, Codex, Copilot
 CLI, Cursor, Factory Droid, Gemini CLI, Hermes, Qwen, and Grok Build harnesses
 and adds optional hooks after configured turn, commit, or failed-review
-thresholds are met. Reminders include a complete CLI fallback when no roborev
-skill is installed. Hermes delivers queued post-tool reminders at `Stop`; Cursor
-records the same events but emits no control response.
+thresholds are met. Reminders name exact review IDs, invoke the bundled
+`roborev-fix` skill, and include a complete CLI fallback when no roborev skill is
+installed; they do not run `roborev fix --open`. Supported profiles get current
+bundled skills during hook installation. Hermes delivers queued post-tool
+reminders at `Stop`; Cursor records the same events but emits no control response.
 Installed hooks post events to the regular roborev daemon. That daemon evaluates
-the reminders and persists session counters in
+the reminders and persists session counters and delivered review IDs in
 `${ROBOREV_DATA_DIR:-~/.roborev}/agent-hook/state.json`. Hook callbacks fail open
 when the daemon is unavailable, so they do not block the coding agent.
 

@@ -30,17 +30,6 @@ func DefaultGrokHooksPath() string {
 	return filepath.Join(home, "hooks", "roborev.json")
 }
 
-func runGrokInstall(opts InstallOptions) (kitagenthook.Result, error) {
-	result, err := planGrokInstall(opts)
-	if err != nil || opts.DryRun || !result.Changed {
-		return result, err
-	}
-	if err := commitAgentHookConfig(result.ConfigPath, result.Data); err != nil {
-		return kitagenthook.Result{}, err
-	}
-	return result, nil
-}
-
 func planGrokInstall(opts InstallOptions) (kitagenthook.Result, error) {
 	path := strings.TrimSpace(opts.ConfigPath)
 	if path == "" {

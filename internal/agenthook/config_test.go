@@ -280,5 +280,4 @@ func TestResolveOptionsForAgentGrokUsesSelfContainedInstruction(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, DefaultInstruction, opts.Instruction)
-	assert.Contains(t, opts.Instruction, "roborev fix --open --list")
 }

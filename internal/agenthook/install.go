@@ -4,11 +4,14 @@ import (
 	"errors"
 	"fmt"
 	"io"
+	"path/filepath"
 	"strings"
 	"time"
 	"unicode"
 
 	kitagenthook "go.kenn.io/kit/agenthook"
+
+	"go.kenn.io/roborev/internal/skills"
 )
 
 const (
@@ -110,23 +113,28 @@ func RunDump(opts DumpOptions, stdout io.Writer) error {
 }
 
 func runInstall(agent kitagenthook.Agent, opts InstallOptions) (kitagenthook.Result, error) {
+	var planned kitagenthook.Result
+	var err error
 	if agent == AgentGrok {
-		return runGrokInstall(opts)
+		planned, err = planGrokInstall(opts)
+	} else {
+		var kitOpts kitagenthook.InstallOptions
+		kitOpts, err = validatedKitInstallOptions(agent, opts)
+		if err == nil {
+			planned, err = kitagenthook.PlanInstall(agent, kitOpts)
+		}
+		if err == nil {
+			planned, err = planLegacyHookMigration(agent, planned)
+		}
 	}
-	kitOpts, err := validatedKitInstallOptions(agent, opts)
-	if err != nil {
-		return kitagenthook.Result{}, err
-	}
-	planned, err := kitagenthook.PlanInstall(agent, kitOpts)
-	if err != nil {
-		return kitagenthook.Result{}, err
-	}
-	planned, err = planLegacyHookMigration(agent, planned)
 	if err != nil {
 		return kitagenthook.Result{}, err
 	}
 	if opts.DryRun {
 		return planned, nil
+	}
+	if err := installAgentHookSkills(agent, planned.ConfigPath); err != nil {
+		return kitagenthook.Result{}, err
 	}
 	if !planned.Changed {
 		return planned, nil
@@ -135,6 +143,31 @@ func runInstall(agent kitagenthook.Agent, opts InstallOptions) (kitagenthook.Res
 		return kitagenthook.Result{}, err
 	}
 	return planned, nil
+}
+
+func installAgentHookSkills(agent kitagenthook.Agent, configPath string) error {
+	var skillAgent skills.Agent
+	switch agent {
+	case kitagenthook.AgentClaude:
+		skillAgent = skills.AgentClaude
+	case kitagenthook.AgentCodex:
+		skillAgent = skills.AgentCodex
+	case kitagenthook.AgentDroid:
+		skillAgent = skills.AgentDroid
+	case AgentGrok:
+		skillAgent = skills.AgentGrok
+	default:
+		return nil
+	}
+
+	configDir := filepath.Dir(configPath)
+	if agent == AgentGrok && strings.EqualFold(filepath.Base(configDir), "hooks") {
+		configDir = filepath.Dir(configDir)
+	}
+	if _, err := skills.InstallToPath(skillAgent, filepath.Join(configDir, "skills")); err != nil {
+		return fmt.Errorf("install bundled %s skills: %w", skillAgent, err)
+	}
+	return nil
 }
 
 func validatedKitInstallOptions(

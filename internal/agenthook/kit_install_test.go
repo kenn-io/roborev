@@ -87,6 +87,41 @@ func TestRunInstallUsesKitForQwen(t *testing.T) {
 	assert.Contains(t, stdout.String(), "installed Qwen Code agent hooks")
 }
 
+func TestRunInstallInstallsAndUpdatesBundledSkillsForSupportedProfiles(t *testing.T) {
+	tests := []struct {
+		agent      string
+		configName string
+	}{
+		{agent: "claude", configName: "settings.json"},
+		{agent: "codex", configName: "hooks.json"},
+		{agent: "droid", configName: "hooks.json"},
+		{agent: "grok", configName: filepath.Join("hooks", "roborev.json")},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.agent, func(t *testing.T) {
+			root := t.TempDir()
+			configPath := filepath.Join(root, tt.configName)
+			opts := InstallOptions{
+				Agent: tt.agent, Executable: "/opt/bin/roborev",
+				ConfigPath: configPath, Timeout: 10 * time.Second,
+			}
+
+			require.NoError(t, RunInstall(opts, &bytes.Buffer{}))
+			skillPath := filepath.Join(root, "skills", "roborev-fix", "SKILL.md")
+			installed, err := os.ReadFile(skillPath)
+			require.NoError(t, err)
+			assert.NotEmpty(t, installed)
+
+			require.NoError(t, os.WriteFile(skillPath, []byte("stale"), 0o644))
+			require.NoError(t, RunInstall(opts, &bytes.Buffer{}))
+			updated, err := os.ReadFile(skillPath)
+			require.NoError(t, err)
+			assert.NotEqual(t, []byte("stale"), updated)
+		})
+	}
+}
+
 func TestRunInstallMigratesLegacyProfileHooks(t *testing.T) {
 	tests := []struct {
 		agent      string

@@ -143,6 +143,8 @@ type Response struct {
 	Skipped               bool   `json:"skipped,omitempty"`
 }
 
+type reviewIDSet map[int64]struct{}
+
 type SessionState struct {
 	Count                       int                        `json:"count"`
 	StopCountsSincePrompt       map[string]int             `json:"stop_counts_since_prompt,omitempty"`
@@ -151,6 +153,7 @@ type SessionState struct {
 	CommitSHAsSincePrompt       map[string][]string        `json:"commit_shas_since_prompt,omitempty"`
 	FailedReviewCount           int                        `json:"failed_review_count,omitempty"`
 	FailedReviewTriggeredCounts map[string]int             `json:"failed_review_triggered_counts,omitempty"`
+	AcknowledgedReviewIDs       map[string]reviewIDSet     `json:"acknowledged_review_ids,omitempty"`
 	ReminderPromptCount         int                        `json:"remind_count,omitempty"`
 	LastTurnID                  string                     `json:"last_turn_id,omitempty"`
 	LastCWD                     string                     `json:"last_cwd,omitempty"`

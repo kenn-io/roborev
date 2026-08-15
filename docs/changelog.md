@@ -59,9 +59,15 @@ All notable changes to roborev, grouped by minor release.
     with that release's `roborev agent-hook daemon stop` command. See
     [Agent Hook](/agent-hook/#upgrading-existing-hooks).
 - Default Agent Hook autofix reminders now keep the user's current task as an
-    immutable scope boundary. Agents leave out-of-scope or unclear findings
-    untouched and ask the user before doing broader work. Custom instructions
-    remain complete overrides.
+    immutable scope boundary, name exact review job IDs, and invoke only the
+    bundled `roborev-fix` skill. They never run `roborev fix --open` or discover
+    additional reviews. Custom instructions remain complete overrides.
+- The bundled `roborev-fix` skills now require agents to prove every finding
+    against current code before editing. Invalid reviews are documented and
+    closed without code changes; valid out-of-scope findings remain open for
+    user direction.
+- `roborev agent-hook install` now installs or updates bundled skills
+    automatically for Claude Code, Codex, Factory Droid, and Grok Build.
 - `roborev status` now lists active Agent Hook snoozes with their exact
     repository, worktree, branch, and expiry, while the TUI shows a contextual
     snooze badge for an exactly filtered checkout. See
@@ -101,6 +107,10 @@ All notable changes to roborev, grouped by minor release.
 - Fresh agent sessions now receive a short, bounded agentsview usage-indexing
     retry before Roborev falls back to job-log token data, reducing permanently
     missing cost estimates. See [Token Usage](/commands/#token-usage).
+- Agent Hook remembers delivered review IDs per agent session and repository
+    lineage, preventing repeated reminders for the same reviews while allowing
+    newly created reviews to trigger. Deferred reminders acknowledge IDs only
+    when they are delivered.
 - The Codex `maximum` preset now requests literal `max` for explicit GPT-5.6
     `sol`, `terra`, and `luna` models. Older, default, and unknown models retain
     the compatible `xhigh` mapping, while exact `xhigh` remains distinct.

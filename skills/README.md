@@ -9,6 +9,8 @@ roborev skills install
 ```
 
 Skills are updated automatically when you run `roborev update`.
+`roborev agent-hook install` also installs or updates the matching bundled
+skills for Claude Code, Codex, Factory Droid, and Grok Build.
 
 ## Skills
 
@@ -37,10 +39,10 @@ Ask your agent to fix it:
 
 The agent will:
 1. Fetch the review
-2. Read the relevant files
-3. Fix issues by priority (high severity first)
-4. Run tests to verify
-5. Offer to commit the changes
+2. Validate every finding against the current code
+3. Fix and verify valid in-scope issues
+4. Document and close invalid reviews without code changes
+5. Leave valid out-of-scope findings open for user direction
 
 After fixing, document what was done:
 

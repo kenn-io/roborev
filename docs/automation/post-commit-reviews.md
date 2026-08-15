@@ -42,17 +42,17 @@ Then act on the reviews in whichever way fits how you work:
     re-reviews until every review passes.
 
 The `roborev-fix` and `roborev-refine` skills come from `roborev skills install`
-(see [Agent Skills](../guides/agent-skills.md)).
+(see [Agent Skills](../guides/agent-skills.md)). Agent Hook installation updates
+the bundled skills automatically for supported profiles.
 
 ## Layer 2 - Agent hook
 
 The agent hook watches supported coding-agent sessions and, once review work
-piles up, supplies either the roborev-fix skill or a complete CLI fallback
-before the session ends - closing the write -> review -> fix loop automatically.
+piles up, supplies exact review IDs to the `roborev-fix` skill before the
+session ends. It never runs the separate `roborev fix --open` agent workflow.
 
 ```bash
-roborev skills install        # optional richer workflow for bundled agents
-roborev agent-hook install    # auto-detect and wire installed agent harnesses
+roborev agent-hook install    # wire harnesses and update supported bundled skills
 ```
 
 See [Agent Hook](../agent-hook.md) for thresholds and configuration.

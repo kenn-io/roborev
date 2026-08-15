@@ -74,6 +74,12 @@ before roborev receives the path. Custom destinations are not tracked by
     an invocation; Claude Code, Codex, and Factory Droid must handle the surrounding
     request with their native agent behavior.
 
+    An Agent Hook invocation names exact job IDs and never broadens the user's
+    active task. The skill does not discover other reviews in that mode. It first
+    proves or disproves each finding against the current code, fixes only valid
+    in-scope findings, closes invalid reviews with evidence and no code change, and
+    leaves valid out-of-scope findings open for user direction.
+
     **Claude Code** enforces this in skill metadata: the bundled skills set
     `disable-model-invocation: true`, so the model never selects a roborev skill on
     its own. Invoke a skill by typing its slash command (`/roborev-review-branch`)
@@ -212,11 +218,11 @@ The agent:
 
 1. Discovers open reviews (or uses provided job IDs)
 1. Fetches all reviews and collects findings
-1. Groups findings by file and prioritizes by severity
-1. Fixes all issues across all reviews
-1. Runs tests to verify
-1. Records a comment on each closed review
-1. Offers to commit
+1. Proves each finding against the current code and repository constraints
+1. Fixes and verifies valid findings within the current task
+1. Documents and closes invalid reviews without changing code
+1. Leaves valid out-of-scope reviews open and asks the user
+1. Audits the original review IDs before reporting completion
 
 This is the interactive equivalent of `roborev fix --batch` -- the agent sees
 all findings at once and can make coordinated fixes across related issues.
@@ -229,8 +235,9 @@ Target a specific job ID with `/roborev-fix`:
 /roborev-fix 1019
 ```
 
-The agent fetches the review, fixes issues by priority, runs tests, and offers
-to commit.
+The agent fetches the review, validates every finding, fixes and verifies only
+valid in-scope issues, and records evidence before closing the review. Valid
+out-of-scope findings remain open.
 
 !!! note
 

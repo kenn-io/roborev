@@ -174,6 +174,10 @@ func cloneSessionState(state SessionState) SessionState {
 	state.StopCountsSincePrompt = maps.Clone(state.StopCountsSincePrompt)
 	state.CommitCountsSincePrompt = maps.Clone(state.CommitCountsSincePrompt)
 	state.FailedReviewTriggeredCounts = maps.Clone(state.FailedReviewTriggeredCounts)
+	state.AcknowledgedReviewIDs = maps.Clone(state.AcknowledgedReviewIDs)
+	for key, ids := range state.AcknowledgedReviewIDs {
+		state.AcknowledgedReviewIDs[key] = maps.Clone(ids)
+	}
 	state.RepoHeads = maps.Clone(state.RepoHeads)
 	state.WorktreeLineageKeys = maps.Clone(state.WorktreeLineageKeys)
 	state.PendingReminders = maps.Clone(state.PendingReminders)
@@ -245,7 +249,7 @@ func (s *StateStore) recordStop(ctx context.Context, req Request) (Response, err
 			Skipped:               true,
 		}, nil
 	}
-	failedReviewCount, haveFailedReviewCount := countOpenFailedReviews(
+	openFailedReviewIDs, haveFailedReviewCount := findOpenFailedReviewIDs(
 		ctx, s.reviews, scope.TrackedRepoRoot, scope.Branch, scope.Head,
 	)
 
@@ -257,6 +261,8 @@ func (s *StateStore) recordStop(ctx context.Context, req Request) (Response, err
 
 	st := cloneSessionState(s.sessions[req.Event.SessionID])
 	lineageKey := ensureLineageKey(&st, scope)
+	actionableReviewIDs := unacknowledgedReviewIDs(st, lineageKey, openFailedReviewIDs)
+	failedReviewCount := len(actionableReviewIDs)
 
 	now := time.Now().UTC()
 	st.Count++
@@ -281,6 +287,8 @@ func (s *StateStore) recordStop(ctx context.Context, req Request) (Response, err
 	)
 	promptTriggered := stopTriggered || failedReviewTriggered
 	if promptTriggered {
+		acknowledgeReviewIDs(&st, lineageKey, actionableReviewIDs)
+		delete(st.FailedReviewTriggeredCounts, lineageKey)
 		st.ReminderPromptCount++
 		if failedReviewTriggered {
 			st.FailedReviewTriggeredAt = now
@@ -311,10 +319,10 @@ func (s *StateStore) recordStop(ctx context.Context, req Request) (Response, err
 	switch {
 	case failedReviewTriggered:
 		resp.TriggeredBy = "failed_reviews"
-		resp.Reason = buildFailedReviewReason(req, st)
+		resp.Reason = buildFailedReviewReason(req, st, actionableReviewIDs)
 	case stopTriggered:
 		resp.TriggeredBy = "stop"
-		resp.Reason = buildStopReason(req, stopCountSincePrompt)
+		resp.Reason = buildStopReason(req, stopCountSincePrompt, actionableReviewIDs)
 	}
 	return resp, nil
 }
@@ -410,9 +418,10 @@ func (s *StateStore) recordPostToolUse(ctx context.Context, req Request) (Respon
 		return s.recordSnoozed(ctx, req, scope)
 	}
 
-	failedReviewCount, haveFailedReviewCount := 0, false
+	var openFailedReviewIDs reviewIDSet
+	haveFailedReviewCount := false
 	if scope.Tracked {
-		failedReviewCount, haveFailedReviewCount = countOpenFailedReviews(
+		openFailedReviewIDs, haveFailedReviewCount = findOpenFailedReviewIDs(
 			ctx, s.reviews, scope.TrackedRepoRoot, scope.Branch, scope.Head,
 		)
 	}
@@ -432,6 +441,8 @@ func (s *StateStore) recordPostToolUse(ctx context.Context, req Request) (Respon
 		priorLineageKey = st.WorktreeLineageKeys[scope.WorktreeKey]
 	}
 	lineageKey := ensureLineageKey(&st, scope)
+	actionableReviewIDs := unacknowledgedReviewIDs(st, lineageKey, openFailedReviewIDs)
+	failedReviewCount := len(actionableReviewIDs)
 	preserveDetachedRewriteLineage := false
 	if commitCommand && scope.Branch != "" && detachedLineageKey(priorLineageKey) && lineageKey != priorLineageKey {
 		previousWorktreeHead := st.RepoHeads[scope.WorktreeKey]
@@ -525,7 +536,7 @@ func (s *StateStore) recordPostToolUse(ctx context.Context, req Request) (Respon
 		if failedReviewTriggered {
 			queuePendingReminder(&st, PendingReminder{
 				TriggeredBy:         "failed_reviews",
-				Reason:              deferredReminderReason(buildFailedReviewReason(req, st), scope.WorktreeRoot),
+				Reason:              deferredReminderReason(buildFailedReviewReason(req, st, actionableReviewIDs), scope.WorktreeRoot),
 				Instruction:         req.Instruction,
 				TrackedRepoRoot:     scope.TrackedRepoRoot,
 				TrackedRepoIdentity: scope.TrackedRepoIdentity,
@@ -540,7 +551,7 @@ func (s *StateStore) recordPostToolUse(ctx context.Context, req Request) (Respon
 		if commitTriggered {
 			queuePendingReminder(&st, PendingReminder{
 				TriggeredBy:         "commit",
-				Reason:              deferredReminderReason(buildCommitReason(req, triggeringCommitCount, scope.WorktreeRoot), scope.WorktreeRoot),
+				Reason:              deferredReminderReason(buildCommitReason(req, triggeringCommitCount, scope.WorktreeRoot, actionableReviewIDs), scope.WorktreeRoot),
 				Instruction:         req.Instruction,
 				TrackedRepoRoot:     scope.TrackedRepoRoot,
 				TrackedRepoIdentity: scope.TrackedRepoIdentity,
@@ -555,6 +566,8 @@ func (s *StateStore) recordPostToolUse(ctx context.Context, req Request) (Respon
 		}
 		resetPromptCountersForKeys(&st, promptResetKeys(scope, lineageKey))
 	} else if promptTriggered {
+		acknowledgeReviewIDs(&st, lineageKey, actionableReviewIDs)
+		delete(st.FailedReviewTriggeredCounts, lineageKey)
 		st.ReminderPromptCount++
 		if failedReviewTriggered {
 			st.FailedReviewTriggeredAt = now
@@ -585,10 +598,10 @@ func (s *StateStore) recordPostToolUse(ctx context.Context, req Request) (Respon
 	switch {
 	case failedReviewTriggered:
 		resp.TriggeredBy = "failed_reviews"
-		resp.Reason = buildFailedReviewReason(req, st)
+		resp.Reason = buildFailedReviewReason(req, st, actionableReviewIDs)
 	case commitTriggered:
 		resp.TriggeredBy = "commit"
-		resp.Reason = buildCommitReason(req, triggeringCommitCount, scope.WorktreeRoot)
+		resp.Reason = buildCommitReason(req, triggeringCommitCount, scope.WorktreeRoot, actionableReviewIDs)
 	}
 	return resp, nil
 }
@@ -764,9 +777,8 @@ func (s *StateStore) deliverPendingReminder(
 			}
 			continue
 		}
-		count, ok := countOpenFailedReviews(
-			ctx, s.reviews, pending.TrackedRepoRoot, pending.Branch,
-			pending.Head,
+		openFailedReviewIDs, ok := findOpenFailedReviewIDs(
+			ctx, s.reviews, pending.TrackedRepoRoot, pending.Branch, pending.Head,
 		)
 		if err := ctx.Err(); err != nil {
 			return Response{}, false, err
@@ -774,22 +786,9 @@ func (s *StateStore) deliverPendingReminder(
 		if !ok {
 			continue
 		}
-		if count == 0 {
+		if len(openFailedReviewIDs) == 0 {
 			discards = append(discards, candidate)
 			continue
-		}
-		pending.FailedReviewCount = count
-		// Releases before v0.64 persisted only Reason. Preserve that custom
-		// instruction instead of rebuilding with the current default. Remove
-		// this fallback after v0.66 ships with the hook migration. See #1012.
-		if pending.TriggeredBy == "failed_reviews" && pending.Instruction != "" {
-			reasonReq := req
-			reasonReq.Instruction = pending.Instruction
-			pending.Reason = deferredReminderReason(buildFailedReviewReason(reasonReq, SessionState{
-				FailedReviewCount:      count,
-				LastFailedReviewRepo:   pending.TrackedRepoRoot,
-				LastFailedReviewBranch: pending.Branch,
-			}), pending.WorktreeRoot)
 		}
 
 		s.mu.Lock()
@@ -815,27 +814,56 @@ func (s *StateStore) deliverPendingReminder(
 				continue
 			}
 		}
-		delete(st.PendingReminders, candidate.key)
-		st.ReminderPromptCount++
-		st.FailedReviewCount = count
-		st.LastFailedReviewRepo = pending.TrackedRepoRoot
-		st.LastFailedReviewBranch = pending.Branch
 		dedupeKey := pending.LineageKey
 		if dedupeKey == "" {
 			dedupeKey = repoHeadKey(pending.TrackedRepoRoot, pending.Branch)
 		}
+		actionableReviewIDs := unacknowledgedReviewIDs(st, dedupeKey, openFailedReviewIDs)
+		if len(actionableReviewIDs) == 0 {
+			delete(st.PendingReminders, candidate.key)
+			delete(st.FailedReviewTriggeredCounts, dedupeKey)
+			st.FailedReviewCount = 0
+			if err := s.saveSessionLocked(req.Event.SessionID, st); err != nil {
+				s.mu.Unlock()
+				return Response{}, false, err
+			}
+			s.mu.Unlock()
+			continue
+		}
+		pending.FailedReviewCount = len(actionableReviewIDs)
+		// Releases before v0.64 persisted only Reason. Preserve that custom
+		// instruction instead of rebuilding with the current default. Remove
+		// this fallback after v0.66 ships with the hook migration. See #1012.
+		if pending.Instruction != "" {
+			reasonReq := req
+			reasonReq.Instruction = pending.Instruction
+			switch pending.TriggeredBy {
+			case "failed_reviews":
+				pending.Reason = deferredReminderReason(buildFailedReviewReason(reasonReq, SessionState{
+					FailedReviewCount:      len(actionableReviewIDs),
+					LastFailedReviewRepo:   pending.TrackedRepoRoot,
+					LastFailedReviewBranch: pending.Branch,
+				}, actionableReviewIDs), pending.WorktreeRoot)
+			case "commit":
+				pending.Reason = deferredReminderReason(buildCommitReason(
+					reasonReq, pending.CommitCount, pending.TrackedRepoRoot, actionableReviewIDs,
+				), pending.WorktreeRoot)
+			}
+		} else {
+			pending.Reason += formatReviewJobIDs(actionableReviewIDs)
+		}
+		delete(st.PendingReminders, candidate.key)
+		acknowledgeReviewIDs(&st, dedupeKey, actionableReviewIDs)
+		delete(st.FailedReviewTriggeredCounts, dedupeKey)
+		st.ReminderPromptCount++
+		st.FailedReviewCount = len(actionableReviewIDs)
+		st.LastFailedReviewRepo = pending.TrackedRepoRoot
+		st.LastFailedReviewBranch = pending.Branch
 		now := time.Now().UTC()
 		switch pending.TriggeredBy {
 		case "failed_reviews":
-			if st.FailedReviewTriggeredCounts == nil {
-				st.FailedReviewTriggeredCounts = map[string]int{}
-			}
-			st.FailedReviewTriggeredCounts[dedupeKey] = count
 			st.FailedReviewTriggeredAt = now
 		case "commit":
-			if req.FailedReviewThreshold > 0 && count < req.FailedReviewThreshold {
-				delete(st.FailedReviewTriggeredCounts, dedupeKey)
-			}
 			st.CommitTriggeredAt = now
 		}
 		if err := ctx.Err(); err != nil {
@@ -1169,8 +1197,9 @@ func applyFailedReviewTrigger(
 	return true
 }
 
-func buildStopReason(req Request, count int) string {
-	return buildPromptReason(req, fmt.Sprintf("%s reached.", countPhrase(count, "Stop hook", "Stop hooks")))
+func buildStopReason(req Request, count int, reviewIDs reviewIDSet) string {
+	detail := fmt.Sprintf("%s reached.", countPhrase(count, "Stop hook", "Stop hooks"))
+	return buildPromptReason(req, detail+formatReviewJobIDs(reviewIDs))
 }
 
 // buildCommitReason describes the commit reminder for the checkout that triggered
@@ -1178,22 +1207,57 @@ func buildStopReason(req Request, count int) string {
 // before it is reset), not the session-wide totals, so a deferred reminder for one
 // repo reports that repo and its count rather than whichever repo committed most
 // recently.
-func buildCommitReason(req Request, count int, repo string) string {
+func buildCommitReason(req Request, count int, repo string, reviewIDs reviewIDSet) string {
 	detail := fmt.Sprintf("%s reached", countPhrase(count, "commit", "commits"))
 	if repoName := quotedLabel(repoDisplayName(repo)); repoName != "" {
 		detail += " in " + repoName
 	}
-	return buildPromptReason(req, detail+".")
+	return buildPromptReason(req, detail+"."+formatReviewJobIDs(reviewIDs))
 }
 
-func buildFailedReviewReason(req Request, st SessionState) string {
+func buildFailedReviewReason(req Request, st SessionState, reviewIDs reviewIDSet) string {
 	detail := countPhrase(st.FailedReviewCount, "open failed roborev review", "open failed roborev reviews")
 	if branch := quotedLabel(st.LastFailedReviewBranch); branch != "" {
 		detail += " on " + branch
 	} else if repoName := quotedLabel(repoDisplayName(st.LastFailedReviewRepo)); repoName != "" {
 		detail += " in " + repoName
 	}
-	return buildPromptReason(req, detail+".")
+	return buildPromptReason(req, detail+"."+formatReviewJobIDs(reviewIDs))
+}
+
+// formatReviewJobIDs names the exact daemon-selected reviews in reminder context.
+func formatReviewJobIDs(reviewIDs reviewIDSet) string {
+	if len(reviewIDs) == 0 {
+		return ""
+	}
+	formatted := make([]string, 0, len(reviewIDs))
+	for _, id := range slices.Sorted(maps.Keys(reviewIDs)) {
+		formatted = append(formatted, fmt.Sprintf("%d", id))
+	}
+	return " Review job IDs: " + strings.Join(formatted, ", ") + "."
+}
+
+func unacknowledgedReviewIDs(st SessionState, lineageKey string, openReviewIDs reviewIDSet) reviewIDSet {
+	actionable := maps.Clone(openReviewIDs)
+	for id := range st.AcknowledgedReviewIDs[lineageKey] {
+		delete(actionable, id)
+	}
+	return actionable
+}
+
+func acknowledgeReviewIDs(st *SessionState, lineageKey string, reviewIDs reviewIDSet) {
+	if len(reviewIDs) == 0 {
+		return
+	}
+	if st.AcknowledgedReviewIDs == nil {
+		st.AcknowledgedReviewIDs = map[string]reviewIDSet{}
+	}
+	acknowledged := maps.Clone(st.AcknowledgedReviewIDs[lineageKey])
+	if acknowledged == nil {
+		acknowledged = reviewIDSet{}
+	}
+	maps.Copy(acknowledged, reviewIDs)
+	st.AcknowledgedReviewIDs[lineageKey] = acknowledged
 }
 
 // sanitizeLabel makes an untrusted git branch or repo (directory) name safe to
@@ -1665,12 +1729,21 @@ func countOpenFailedReviews(
 	reviews ReviewSource,
 	repoRoot, branch, head string,
 ) (int, bool) {
+	ids, ok := findOpenFailedReviewIDs(ctx, reviews, repoRoot, branch, head)
+	return len(ids), ok
+}
+
+func findOpenFailedReviewIDs(
+	ctx context.Context,
+	reviews ReviewSource,
+	repoRoot, branch, head string,
+) (reviewIDSet, bool) {
 	if repoRoot == "" || reviews == nil {
-		return 0, false
+		return nil, false
 	}
 	jobs, ok := reviews.ListOpenReviewJobs(ctx, repoRoot, branch)
 	if !ok {
-		return 0, false
+		return nil, false
 	}
 	var lineageMatcher *roborevgit.BranchLineageMatcher
 	lineageMatcherLoaded := false
@@ -1681,7 +1754,7 @@ func countOpenFailedReviews(
 		}
 		return lineageMatcher != nil && lineageMatcher.Matches(ref)
 	}
-	count := 0
+	ids := make(reviewIDSet, len(jobs))
 	for _, job := range jobs {
 		if job.Status != "" && job.Status != storage.JobStatusDone {
 			continue
@@ -1696,10 +1769,10 @@ func countOpenFailedReviews(
 			continue
 		}
 		if job.Verdict != nil && strings.EqualFold(*job.Verdict, "F") {
-			count++
+			ids[job.ID] = struct{}{}
 		}
 	}
-	return count, true
+	return ids, true
 }
 
 // failedReviewCountsForHead reports whether an open failed review returned by
