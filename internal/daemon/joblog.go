@@ -175,6 +175,25 @@ func readNormalizedJobOutput(jobID int64, agentName string) ([]OutputLine, error
 	return lines, nil
 }
 
+// readNormalizedJobOutputForAttempt rejects a persisted log that predates the
+// current attempt. Normal attempt startup truncates the file before any setup
+// can fail; this timestamp check keeps the output endpoint fail-closed if that
+// truncation is blocked by a filesystem error.
+func readNormalizedJobOutputForAttempt(
+	jobID int64, agentName string, startedAt *time.Time,
+) ([]OutputLine, error) {
+	if startedAt != nil {
+		info, err := os.Stat(JobLogPath(jobID))
+		if err != nil {
+			return nil, err
+		}
+		if info.ModTime().Before(*startedAt) {
+			return nil, nil
+		}
+	}
+	return readNormalizedJobOutput(jobID, agentName)
+}
+
 // JobLogExists reports whether a log file exists for the given job.
 func JobLogExists(jobID int64) bool {
 	_, err := os.Stat(JobLogPath(jobID))

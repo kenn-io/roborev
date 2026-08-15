@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -126,6 +127,26 @@ func TestHandleJobOutput(t *testing.T) {
 		job := createTestJob(t, db, filepath.Join(tmpDir, "test-repo-requeued"), "queue123", "test-agent")
 		require.NoError(t, os.MkdirAll(JobLogDir(), 0o700))
 		require.NoError(t, os.WriteFile(JobLogPath(job.ID), []byte("stale attempt\n"), 0o600))
+
+		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/job/output?job_id=%d", job.ID), nil)
+		w := httptest.NewRecorder()
+		server.httpServer.Handler.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code, "body: %s", w.Body.String())
+		var resp jobOutputResponse
+		testutil.DecodeJSON(t, w, &resp)
+		assert.Empty(t, resp.Lines)
+	})
+
+	t.Run("polling failed rerun ignores output older than the attempt", func(t *testing.T) {
+		job := createTestJob(t, db, filepath.Join(tmpDir, "test-repo-failed-rerun"), "retry123", "test-agent")
+		setJobStatus(t, db, job.ID, storage.JobStatusFailed)
+		require.NoError(t, os.MkdirAll(JobLogDir(), 0o700))
+		require.NoError(t, os.WriteFile(JobLogPath(job.ID), []byte("prior attempt output\n"), 0o600))
+		oldTime := time.Now().Add(-time.Hour)
+		require.NoError(t, os.Chtimes(JobLogPath(job.ID), oldTime, oldTime))
+		require.NoError(t, db.ReenqueueJob(job.ID, storage.ReenqueueOpts{}))
+		setJobStatus(t, db, job.ID, storage.JobStatusFailed)
 
 		req := httptest.NewRequest(http.MethodGet, fmt.Sprintf("/api/job/output?job_id=%d", job.ID), nil)
 		w := httptest.NewRecorder()

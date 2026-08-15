@@ -91,12 +91,23 @@ func (s *Server) newBrowserHandler(
 					return
 				}
 			}
-			_ = ambient
+			requestContext := request.Context()
+			if isAuthenticatedBrowserStream(request) {
+				streamContext, cancel, lifetimeErr := browserStreamContext(
+					requestContext, sessions, ambient, tab,
+				)
+				if lifetimeErr != nil {
+					writeBrowserError(w, http.StatusUnauthorized, "web_session_required")
+					return
+				}
+				defer cancel()
+				requestContext = streamContext
+			}
 			w.Header().Set("Cache-Control", "private, no-store")
 			w.Header().Add("Vary", "Cookie")
 			w.Header().Add("Vary", WebSessionHeader)
 			authenticated := request.WithContext(context.WithValue(
-				request.Context(), browserPrincipalContextKey{}, principal,
+				requestContext, browserPrincipalContextKey{}, principal,
 			))
 			switch request.URL.Path {
 			case "/api/jobs":
@@ -110,6 +121,33 @@ func (s *Server) newBrowserHandler(
 		}
 		static.ServeHTTP(w, request)
 	}), nil
+}
+
+func isAuthenticatedBrowserStream(request *http.Request) bool {
+	return request.URL.Path == "/api/stream/events" ||
+		(request.URL.Path == "/api/job/output" && request.URL.Query().Get("stream") == "1")
+}
+
+func browserStreamContext(
+	parent context.Context,
+	sessions *BrowserSessionManager,
+	ambient, tab string,
+) (context.Context, context.CancelFunc, error) {
+	revoked, remaining, err := sessions.sessionLifetime(ambient, tab)
+	if err != nil {
+		return nil, nil, err
+	}
+	ctx, cancel := context.WithCancel(parent)
+	timer := time.AfterFunc(remaining, cancel)
+	go func() {
+		select {
+		case <-revoked:
+			cancel()
+		case <-ctx.Done():
+		}
+		timer.Stop()
+	}()
+	return ctx, cancel, nil
 }
 
 // browserReviewJob is an explicit presentation allowlist. Storage jobs carry

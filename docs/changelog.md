@@ -40,8 +40,10 @@ All notable changes to roborev, grouped by minor release.
 
 - Browser clients now preserve the newest job state when list requests overlap
     live events, and cancellations and comments refresh other open clients.
-- Remote browser sessions can no longer cancel or rerun agentic or stored-prompt
-    jobs. Ordinary non-agentic review and panel actions remain available.
+- Remote browser sessions can cancel ordinary non-agentic reviews but cannot
+    rerun jobs. Session expiry and logout now close active browser streams.
+- Persisted job output is shown only when its log belongs to the current
+    attempt, so a failed rerun cannot fall back to an older attempt's output.
 - Daemon restarts now stop new job claims and wait indefinitely for running
     reviews and worker finalization instead of force-killing the daemon after a
     short graceful-shutdown window.

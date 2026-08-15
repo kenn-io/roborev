@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"bytes"
+	"context"
 	"crypto/rand"
 	"encoding/json"
 	"net/http"
@@ -27,6 +28,12 @@ func newBrowserHandlerFixture(t *testing.T, authToken string) (http.Handler, *Br
 func newBrowserHandlerFixtureWithCore(
 	t *testing.T, authToken string, core http.Handler,
 ) (http.Handler, *BrowserSessionManager) {
+	return newBrowserHandlerFixtureWithCoreAndTTL(t, authToken, core, 0)
+}
+
+func newBrowserHandlerFixtureWithCoreAndTTL(
+	t *testing.T, authToken string, core http.Handler, ttl time.Duration,
+) (http.Handler, *BrowserSessionManager) {
 	t.Helper()
 	policy, err := NewBrowserPolicy(BrowserEndpoint{
 		Address:           "127.0.0.1:7374",
@@ -39,6 +46,7 @@ func newBrowserHandlerFixtureWithCore(
 		Origin:     "http://127.0.0.1:7374",
 		AuthToken:  authToken,
 		AllowLocal: authToken == "",
+		TTL:        ttl,
 		Entropy:    rand.Reader,
 		Clock:      time.Now,
 	})
@@ -354,7 +362,7 @@ func TestBrowserHandlerRemoteSessionRestrictsPrivilegedJobMutations(t *testing.T
 		{
 			name: "rerun ordinary review", path: "/api/job/rerun",
 			jobType: storage.JobTypeReview, startState: storage.JobStatusDone,
-			wantStatus: http.StatusOK, wantState: storage.JobStatusQueued,
+			wantStatus: http.StatusForbidden, wantState: storage.JobStatusDone,
 		},
 	}
 
@@ -395,6 +403,85 @@ func TestBrowserHandlerRemoteSessionRestrictsPrivilegedJobMutations(t *testing.T
 			assert.Equal(t, tt.wantState, updated.Status)
 		})
 	}
+}
+
+func TestBrowserHandlerStreamsStopWithSession(t *testing.T) {
+	startStream := func(
+		t *testing.T,
+		handler http.Handler,
+		sessions *BrowserSessionManager,
+		credentials SessionCredentials,
+	) (context.CancelFunc, <-chan struct{}) {
+		t.Helper()
+		ctx, cancel := context.WithCancel(context.Background())
+		request := browserRequest(http.MethodGet, "/api/stream/events", nil).WithContext(ctx)
+		request.AddCookie(sessions.Cookie(credentials.Ambient))
+		request.Header.Set(WebSessionHeader, credentials.Tab)
+		done := make(chan struct{})
+		go func() {
+			handler.ServeHTTP(httptest.NewRecorder(), request)
+			close(done)
+		}()
+		return cancel, done
+	}
+
+	t.Run("logout", func(t *testing.T) {
+		started := make(chan struct{})
+		core := http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+			close(started)
+			<-request.Context().Done()
+		})
+		handler, sessions := newBrowserHandlerFixtureWithCore(t, testBrowserAuthToken, core)
+		credentials, err := sessions.Login(testBrowserAuthToken)
+		require.NoError(t, err)
+		cancel, done := startStream(t, handler, sessions, credentials)
+		defer cancel()
+		<-started
+
+		logout := browserRequest(http.MethodDelete, "/api/ui/session", nil)
+		logout.AddCookie(sessions.Cookie(credentials.Ambient))
+		logout.Header.Set(WebSessionHeader, credentials.Tab)
+		logout.Header.Set(WebCSRFHeader, credentials.CSRF)
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, logout)
+		require.Equal(t, http.StatusNoContent, recorder.Code)
+
+		stopped := false
+		select {
+		case <-done:
+			stopped = true
+		case <-time.After(250 * time.Millisecond):
+		}
+		cancel()
+		<-done
+		assert.True(t, stopped, "logout must cancel an active browser stream")
+	})
+
+	t.Run("expiry", func(t *testing.T) {
+		started := make(chan struct{})
+		core := http.HandlerFunc(func(_ http.ResponseWriter, request *http.Request) {
+			close(started)
+			<-request.Context().Done()
+		})
+		handler, sessions := newBrowserHandlerFixtureWithCoreAndTTL(
+			t, testBrowserAuthToken, core, 50*time.Millisecond,
+		)
+		credentials, err := sessions.Login(testBrowserAuthToken)
+		require.NoError(t, err)
+		cancel, done := startStream(t, handler, sessions, credentials)
+		defer cancel()
+		<-started
+
+		expired := false
+		select {
+		case <-done:
+			expired = true
+		case <-time.After(500 * time.Millisecond):
+		}
+		cancel()
+		<-done
+		assert.True(t, expired, "session expiry must cancel an active browser stream")
+	})
 }
 
 func TestBrowserHandlerRemoteSessionRejectsPrivilegedPanelMembers(t *testing.T) {

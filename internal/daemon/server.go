@@ -2082,7 +2082,7 @@ func (s *Server) humaCancelJob(
 		)
 	}
 	if jobErr == nil {
-		if err := s.authorizeBrowserJobMutation(ctx, job); err != nil {
+		if err := s.authorizeBrowserJobCancellation(ctx, job); err != nil {
 			return nil, err
 		}
 	}
@@ -2142,8 +2142,10 @@ func (s *Server) humaRerunJob(
 			fmt.Sprintf("load job: %v", err),
 		)
 	}
-	if err := s.authorizeBrowserJobMutation(ctx, job); err != nil {
-		return nil, err
+	if remoteBrowserPrincipal(ctx) {
+		return nil, huma.Error403Forbidden(
+			"remote browser sessions cannot rerun jobs",
+		)
 	}
 	if input.Body.RequestID != "" {
 		result, found, err := s.db.GetRerunRequest(input.Body.RequestID, input.Body.JobID)
@@ -3435,7 +3437,9 @@ func (s *Server) humaJobOutput(
 				if review, reviewErr := s.db.GetReviewByJobID(jobID); reviewErr == nil && review.Agent != "" {
 					normalizerAgent = agent.CanonicalName(review.Agent)
 				}
-				persisted, err := readNormalizedJobOutput(jobID, normalizerAgent)
+				persisted, err := readNormalizedJobOutputForAttempt(
+					jobID, normalizerAgent, job.StartedAt,
+				)
 				if err == nil {
 					lines = persisted
 				}

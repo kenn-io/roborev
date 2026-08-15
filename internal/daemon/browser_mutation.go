@@ -14,7 +14,7 @@ func remoteBrowserPrincipal(ctx context.Context) bool {
 	return found && !principal.Local
 }
 
-func browserMutationAllowsReview(job *storage.ReviewJob) bool {
+func browserCancellationAllowsReview(job *storage.ReviewJob) bool {
 	return job != nil &&
 		job.IsReviewJob() &&
 		!job.Agentic &&
@@ -22,17 +22,16 @@ func browserMutationAllowsReview(job *storage.ReviewJob) bool {
 		!job.UsesStoredPrompt()
 }
 
-// authorizeBrowserJobMutation restricts remote browser principals to ordinary
-// code reviews. Stored-prompt and agentic jobs can run commands or modify the
-// daemon owner's checkout, so only the loopback API and local browser sessions
-// may cancel or rerun them.
-func (s *Server) authorizeBrowserJobMutation(
+// authorizeBrowserJobCancellation restricts remote browser principals to
+// ordinary code reviews. Remote reruns are rejected separately because even a
+// nominally non-agentic agent can gain tools through daemon configuration.
+func (s *Server) authorizeBrowserJobCancellation(
 	ctx context.Context, job *storage.ReviewJob,
 ) error {
 	if !remoteBrowserPrincipal(ctx) {
 		return nil
 	}
-	if browserMutationAllowsReview(job) {
+	if browserCancellationAllowsReview(job) {
 		return nil
 	}
 	if job != nil && job.IsSynthesisJob() &&
@@ -44,15 +43,15 @@ func (s *Server) authorizeBrowserJobMutation(
 			)
 		}
 		for i := range members {
-			if !browserMutationAllowsReview(&members[i]) {
+			if !browserCancellationAllowsReview(&members[i]) {
 				return huma.Error403Forbidden(
-					"remote browser sessions may only mutate non-agentic review jobs",
+					"remote browser sessions may only cancel non-agentic review jobs",
 				)
 			}
 		}
 		return nil
 	}
 	return huma.Error403Forbidden(
-		"remote browser sessions may only mutate non-agentic review jobs",
+		"remote browser sessions may only cancel non-agentic review jobs",
 	)
 }

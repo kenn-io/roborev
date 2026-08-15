@@ -62,6 +62,7 @@ type ambientSession struct {
 	id        [32]byte
 	principal BrowserPrincipal
 	expiresAt time.Time
+	revoked   chan struct{}
 }
 
 type tabSession struct {
@@ -170,7 +171,10 @@ func (m *BrowserSessionManager) newSession(principal BrowserPrincipal) (SessionC
 	}
 	ambientID := sha256.Sum256([]byte(ambientValue))
 	expires := m.clock().Add(m.ttl)
-	m.ambient[ambientID] = ambientSession{id: ambientID, principal: principal, expiresAt: expires}
+	m.ambient[ambientID] = ambientSession{
+		id: ambientID, principal: principal, expiresAt: expires,
+		revoked: make(chan struct{}),
+	}
 	return m.newTabLocked(ambientValue, ambientID, expires)
 }
 
@@ -249,7 +253,31 @@ func (m *BrowserSessionManager) Logout(ambient string) {
 	m.mu.Lock()
 	defer m.mu.Unlock()
 	ambientID := sha256.Sum256([]byte(ambient))
-	delete(m.ambient, ambientID)
+	m.revokeAmbientLocked(ambientID)
+}
+
+func (m *BrowserSessionManager) sessionLifetime(
+	ambient, tab string,
+) (<-chan struct{}, time.Duration, error) {
+	m.mu.Lock()
+	defer m.mu.Unlock()
+	m.cleanupLocked()
+	ambientID := sha256.Sum256([]byte(ambient))
+	tabID := sha256.Sum256([]byte(tab))
+	session, ambientFound := m.ambient[ambientID]
+	tabRecord, tabFound := m.tabs[tabID]
+	if !ambientFound || !tabFound || subtle.ConstantTimeCompare(ambientID[:], tabRecord.ambientID[:]) != 1 {
+		return nil, 0, ErrWebSessionRequired
+	}
+	return session.revoked, session.expiresAt.Sub(m.clock()), nil
+}
+
+func (m *BrowserSessionManager) revokeAmbientLocked(ambientID [32]byte) {
+	session, found := m.ambient[ambientID]
+	if found {
+		delete(m.ambient, ambientID)
+		close(session.revoked)
+	}
 	for tabID, record := range m.tabs {
 		if subtle.ConstantTimeCompare(ambientID[:], record.ambientID[:]) == 1 {
 			delete(m.tabs, tabID)
@@ -282,7 +310,7 @@ func (m *BrowserSessionManager) cleanupLocked() {
 	now := m.clock()
 	for id, session := range m.ambient {
 		if !now.Before(session.expiresAt) {
-			delete(m.ambient, id)
+			m.revokeAmbientLocked(id)
 		}
 	}
 	for id, tab := range m.tabs {

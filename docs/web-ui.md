@@ -170,12 +170,14 @@ tab-scoped credentials.
 
 Browser sessions are held in memory. Restarting or upgrading the daemon signs
 out every browser tab, and remote users must enter the token again. This is
-intentional; sessions are never written to disk.
+intentional; sessions are never written to disk. Logging out or reaching the
+session expiry also closes any active event or job-output streams.
 
-Remote browser sessions can cancel or rerun only non-agentic code reviews.
-Stored-prompt workflows, including background tasks and fixes, remain available
-only through the loopback CLI API or an automatically bootstrapped local browser
-session. Panel actions use the same rule for every member of the panel.
+Remote browser sessions can cancel only non-agentic code reviews and cannot
+rerun jobs. Reruns and stored-prompt workflows, including background tasks and
+fixes, remain available through the loopback CLI API or an automatically
+bootstrapped local browser session. Panel cancellations use the same rule for
+every member of the panel.
 
 Invalid token exchanges trigger a process-wide exponential cooldown of up to one
 minute. The daemon checks a valid token before applying that cooldown, so a
