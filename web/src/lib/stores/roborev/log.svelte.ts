@@ -54,8 +54,10 @@ export function createLogStore(opts: LogStoreOptions) {
       });
       if (previousOwner !== undefined && previousOwner !== logOwner)
         yield* workflow.stopLog(previousOwner);
+      let appendAfterRequeue = false;
       const streamAttempt = Effect.suspend(() => {
-        let replayIndex = 0;
+        let replayIndex = appendAfterRequeue ? lines.length : 0;
+        appendAfterRequeue = false;
         return Stream.runForEach(
           roborevJobOutputStream(opts.baseUrl, jobId),
           (payload) =>
@@ -84,6 +86,7 @@ export function createLogStore(opts: LogStoreOptions) {
           (failure) =>
             failure instanceof RoborevStreamError &&
             failure.retryable &&
+            failure.status !== "queued" &&
             lines.length > 0,
           (failure) =>
             loadRoborevJobOutput(opts.baseUrl, jobId).pipe(
@@ -101,6 +104,16 @@ export function createLogStore(opts: LogStoreOptions) {
         logOwner,
         jobId,
         streamAttempt.pipe(
+          Effect.tapError((failure) =>
+            Effect.sync(() => {
+              if (
+                failure instanceof RoborevStreamError &&
+                failure.status === "queued"
+              ) {
+                appendAfterRequeue = true;
+              }
+            }),
+          ),
           Effect.retry({
             schedule: reconnectSchedule,
             while: (failure) =>

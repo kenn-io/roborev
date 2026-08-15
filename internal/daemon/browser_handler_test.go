@@ -7,12 +7,14 @@ import (
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
+	"path/filepath"
 	"testing"
 	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -291,7 +293,12 @@ func TestBrowserHandlerCSRFAllowlistAndPublicShell(t *testing.T) {
 
 func TestBrowserHandlerMarksRemoteCommentsUntrustedForPrompts(t *testing.T) {
 	server, db, tempDir := newTestServer(t)
+	markerFile := filepath.Join(tempDir, "remote-comment-hook")
+	server.configWatcher.Config().Hooks = []config.HookConfig{{
+		Event: "review.commented", Command: touchCmd(markerFile),
+	}}
 	job := createTestJob(t, db, tempDir, "abc123", "test")
+	_, eventCh := server.broadcaster.Subscribe("")
 	handler, sessions := newBrowserHandlerFixtureWithCore(
 		t, testBrowserAuthToken, server.httpServer.Handler,
 	)
@@ -313,6 +320,15 @@ func TestBrowserHandlerMarksRemoteCommentsUntrustedForPrompts(t *testing.T) {
 		`SELECT source FROM responses WHERE job_id = ?`, job.ID,
 	).Scan(&source))
 	assert.Equal(t, "browser_remote", source)
+	server.hookRunner.WaitUntilIdle()
+	assert.NoFileExists(t, markerFile)
+	select {
+	case event := <-eventCh:
+		assert.Equal(t, "review.commented", event.Type)
+		assert.Equal(t, job.ID, event.JobID)
+	case <-time.After(time.Second):
+		require.FailNow(t, "timed out waiting for review.commented event")
+	}
 }
 
 func TestBrowserHandlerRemoteSessionRestrictsPrivilegedJobMutations(t *testing.T) {

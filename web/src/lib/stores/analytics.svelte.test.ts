@@ -114,6 +114,28 @@ describe("analytics store URL filters", () => {
     );
     store.dispose();
   });
+
+  it.each([
+    { range: "90d" as const, bucket: "hour" as const, expected: "day" },
+    { range: "1y" as const, bucket: "hour" as const, expected: "day" },
+    { range: "all" as const, bucket: "week" as const, expected: "month" },
+  ])(
+    "widens $range/$bucket requests to $expected buckets",
+    async ({ range, bucket, expected }) => {
+      const loader = vi.fn<AnalyticsLoader>().mockResolvedValue(snapshot(1));
+      const store = createAnalyticsStore({ loader });
+
+      await store.setFilters({ range, bucket });
+
+      expect(store.getFilters().bucket).toBe(expected);
+      expect(loader).toHaveBeenLastCalledWith(
+        expect.objectContaining({ bucket: expected }),
+        expect.any(AbortSignal),
+      );
+      expect(new URLSearchParams(location.search).get("bucket")).toBe(expected);
+      store.dispose();
+    },
+  );
 });
 
 describe("analytics store request ownership", () => {

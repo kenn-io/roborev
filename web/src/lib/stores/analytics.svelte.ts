@@ -51,6 +51,12 @@ const VALID_BUCKETS = new Set<AnalyticsBucket>([
   "week",
   "month",
 ]);
+const BUCKET_ORDER: Record<Exclude<AnalyticsBucket, "auto">, number> = {
+  hour: 0,
+  day: 1,
+  week: 2,
+  month: 3,
+};
 
 export function createAnalyticsStore(options: AnalyticsStoreOptions) {
   const loader = options.loader ?? makeAnalyticsLoader(options.client);
@@ -207,8 +213,10 @@ export function readAnalyticsFilters(search: string): AnalyticsFilters {
 function normalizeAnalyticsFilters(
   filters: AnalyticsFilters,
 ): AnalyticsFilters {
+  const range = VALID_RANGES.has(filters.range) ? filters.range : "30d";
+  const bucket = VALID_BUCKETS.has(filters.bucket) ? filters.bucket : "auto";
   return {
-    range: VALID_RANGES.has(filters.range) ? filters.range : "30d",
+    range,
     projects: sortedUniqueNonempty(filters.projects),
     // The daemon's stored value for manually queued reviews is the empty
     // string. Preserve it as an explicit filter instead of treating it as an
@@ -216,8 +224,22 @@ function normalizeAnalyticsFilters(
     sources: sortedUnique(filters.sources),
     agent: filters.agent.trim(),
     model: filters.model.trim(),
-    bucket: VALID_BUCKETS.has(filters.bucket) ? filters.bucket : "auto",
+    bucket: compatibleAnalyticsBucket(range, bucket),
   };
+}
+
+function compatibleAnalyticsBucket(
+  range: AnalyticsRange,
+  bucket: AnalyticsBucket,
+): AnalyticsBucket {
+  if (bucket === "auto") return bucket;
+  const minimum =
+    range === "all"
+      ? "month"
+      : range === "90d" || range === "1y"
+        ? "day"
+        : "hour";
+  return BUCKET_ORDER[bucket] < BUCKET_ORDER[minimum] ? minimum : bucket;
 }
 
 function writeAnalyticsFilters(

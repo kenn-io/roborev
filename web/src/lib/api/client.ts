@@ -45,6 +45,7 @@ export class RoborevStreamError extends Schema.TaggedErrorClass<RoborevStreamErr
   {
     operation: Schema.String,
     retryable: Schema.Boolean,
+    status: Schema.optionalKey(Schema.String),
     cause: Schema.Defect(),
   },
 ) {}
@@ -336,6 +337,16 @@ export function roborevJobOutputStream(
         ).pipe(
           Stream.flatMap((record) => {
             if (record.type === "complete") {
+              if (record.status === "queued") {
+                return Stream.fail(
+                  RoborevStreamError.make({
+                    operation: "stream Roborev job output",
+                    retryable: true,
+                    status: record.status,
+                    cause: new Error("Roborev job was requeued"),
+                  }),
+                );
+              }
               completed = true;
               return Stream.empty;
             }

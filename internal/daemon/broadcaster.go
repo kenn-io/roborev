@@ -10,19 +10,20 @@ import (
 
 // Event represents a review event that can be broadcast
 type Event struct {
-	Type         string    `json:"type"`
-	TS           time.Time `json:"ts"`
-	JobID        int64     `json:"job_id"`
-	JobUUID      string    `json:"job_uuid,omitempty"`
-	Repo         string    `json:"repo"`
-	RepoName     string    `json:"repo_name"`
-	SHA          string    `json:"sha"`
-	Branch       string    `json:"branch,omitempty"`
-	Agent        string    `json:"agent,omitempty"`
-	Verdict      string    `json:"verdict,omitempty"`
-	Findings     string    `json:"findings,omitempty"`
-	Error        string    `json:"error,omitempty"`
-	WorktreePath string    `json:"worktree_path,omitempty"`
+	Type          string    `json:"type"`
+	TS            time.Time `json:"ts"`
+	JobID         int64     `json:"job_id"`
+	JobUUID       string    `json:"job_uuid,omitempty"`
+	Repo          string    `json:"repo"`
+	RepoName      string    `json:"repo_name"`
+	SHA           string    `json:"sha"`
+	Branch        string    `json:"branch,omitempty"`
+	Agent         string    `json:"agent,omitempty"`
+	Verdict       string    `json:"verdict,omitempty"`
+	Findings      string    `json:"findings,omitempty"`
+	Error         string    `json:"error,omitempty"`
+	WorktreePath  string    `json:"worktree_path,omitempty"`
+	SuppressHooks bool      `json:"-"`
 }
 
 func eventForJob(eventType string, job *storage.ReviewJob, fallbackID int64) Event {

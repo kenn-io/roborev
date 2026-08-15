@@ -137,6 +137,9 @@ func (hr *HookRunner) Stop() {
 
 // handleEvent checks all configured hooks against the event and fires matches.
 func (hr *HookRunner) handleEvent(event Event) {
+	if event.SuppressHooks {
+		return
+	}
 	// Only handle review events
 	if !strings.HasPrefix(event.Type, "review.") {
 		return

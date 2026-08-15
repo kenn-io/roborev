@@ -46,16 +46,14 @@ function requestSignal(
     : (init?.signal ?? undefined);
 }
 
-function ndjsonResponse(lines: unknown[]): Response {
+function ndjsonResponse(lines: unknown[], status = "done"): Response {
   const body = new ReadableStream<Uint8Array>({
     start(controller) {
       for (const line of lines) {
         controller.enqueue(encoder.encode(`${JSON.stringify(line)}\n`));
       }
       controller.enqueue(
-        encoder.encode(
-          `${JSON.stringify({ type: "complete", status: "done" })}\n`,
-        ),
+        encoder.encode(`${JSON.stringify({ type: "complete", status })}\n`),
       );
       controller.close();
     },
@@ -204,6 +202,68 @@ describe("createLogStore", () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
     expect(store.getLines().map((line) => line.text)).toEqual([
       "reconnected output",
+    ]);
+  });
+
+  it("keeps existing output and reconnects when an attempt is requeued", async () => {
+    let nextAttempt: ReadableStreamDefaultController<Uint8Array> | undefined;
+    const nextAttemptResponse = new Response(
+      new ReadableStream<Uint8Array>({
+        start(controller) {
+          nextAttempt = controller;
+        },
+      }),
+      { status: 200 },
+    );
+    const fetchMock = vi
+      .spyOn(globalThis, "fetch")
+      .mockResolvedValueOnce(
+        ndjsonResponse(
+          [{ type: "line", text: "first attempt", line_type: "text" }],
+          "queued",
+        ),
+      )
+      .mockResolvedValueOnce(nextAttemptResponse)
+      .mockResolvedValueOnce(
+        new Response(
+          JSON.stringify({
+            lines: [
+              { text: "first attempt", line_type: "text" },
+              { text: "second attempt", line_type: "text" },
+            ],
+          }),
+          { status: 200, headers: { "Content-Type": "application/json" } },
+        ),
+      );
+    const store = createLogStore({ baseUrl: "http://roborev.test" });
+
+    const streaming = runLogEffect(
+      store.startStreamingEffect(82, "requeue-reconnect"),
+    );
+    await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledTimes(2), {
+      timeout: 2_000,
+    });
+    expect(store.getLines().map((line) => line.text)).toEqual([
+      "first attempt",
+    ]);
+
+    nextAttempt?.enqueue(
+      encoder.encode(
+        `${JSON.stringify({ type: "line", text: "second attempt", line_type: "text" })}\n`,
+      ),
+    );
+    nextAttempt?.enqueue(
+      encoder.encode(
+        `${JSON.stringify({ type: "complete", status: "done" })}\n`,
+      ),
+    );
+    nextAttempt?.close();
+    await streaming;
+
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+    expect(store.getLines().map((line) => line.text)).toEqual([
+      "first attempt",
+      "second attempt",
     ]);
   });
 

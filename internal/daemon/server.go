@@ -2353,6 +2353,7 @@ func (s *Server) humaAddComment(
 			commentEvent.RepoName = repo.Name
 		}
 	}
+	commentEvent.SuppressHooks = source == storage.ResponseSourceRemoteBrowser
 	s.broadcaster.Broadcast(commentEvent)
 
 	return &AddCommentOutput{Body: resp}, nil
