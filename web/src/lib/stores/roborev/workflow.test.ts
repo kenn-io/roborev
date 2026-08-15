@@ -246,6 +246,7 @@ it.effect(
         yield* workflow.connectEvents({
           owner: "reconnect-owner",
           baseUrl: "http://roborev.test",
+          onInitialOpen: Effect.void,
           onOpen: Effect.void,
           onEvent: () => Effect.void,
           onReconnect: () =>

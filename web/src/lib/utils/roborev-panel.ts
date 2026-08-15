@@ -19,7 +19,11 @@ export function isTerminalStatus(status: string): boolean {
 }
 
 export function canRerunJob(job: ReviewJob): boolean {
-  return job.panel_role !== "member" && RERUNNABLE_STATUSES.has(job.status);
+  return (
+    job.panel_role !== "member" &&
+    !(job.status === "skipped" && job.source === "auto_design") &&
+    RERUNNABLE_STATUSES.has(job.status)
+  );
 }
 
 export function isPanelParent(job: ReviewJob): boolean {

@@ -516,6 +516,7 @@ describe("createJobsStore event stream", () => {
 
     const eventOwner = store.connectEventStream("/api/roborev");
     await vi.waitFor(() => expect(store.isEventStreamConnected()).toBe(true));
+    expect(client.GET).toHaveBeenCalledTimes(1);
     bodyController?.enqueue(encoder.encode('{"type":"review.com'));
     bodyController?.enqueue(
       encoder.encode(
@@ -523,7 +524,7 @@ describe("createJobsStore event stream", () => {
       ),
     );
 
-    await vi.waitFor(() => expect(client.GET).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(client.GET).toHaveBeenCalledTimes(2));
     store.disconnectEventStream(eventOwner);
 
     await vi.waitFor(() => expect(bodyCancelled).toBe(true));
@@ -561,7 +562,7 @@ describe("createJobsStore event stream", () => {
       GET: vi.fn(
         (_path: string, options: { signal?: AbortSignal } | undefined) => {
           requestCount += 1;
-          if (requestCount !== 1) {
+          if (requestCount !== 2) {
             return Promise.resolve({
               data: {
                 jobs: [],
@@ -588,15 +589,16 @@ describe("createJobsStore event stream", () => {
     store.setSelectedJobId(42);
     const eventOwner = store.connectEventStream("/api/roborev");
     await vi.waitFor(() => expect(store.isEventStreamConnected()).toBe(true));
+    expect(client.GET).toHaveBeenCalledTimes(1);
 
     bodyController?.enqueue(
       encoder.encode(
         '{"type":"review.completed","ts":"2026-08-04T13:00:00Z","job_id":42}\n',
       ),
     );
-    await vi.waitFor(() => expect(client.GET).toHaveBeenCalledTimes(1));
+    await vi.waitFor(() => expect(client.GET).toHaveBeenCalledTimes(2));
     await loadJobs(store);
-    expect(client.GET).toHaveBeenCalledTimes(2);
+    expect(client.GET).toHaveBeenCalledTimes(3);
     expect(firstSignal?.aborted).toBe(false);
     resolveFirst?.({
       data: {
@@ -612,7 +614,7 @@ describe("createJobsStore event stream", () => {
         '{"type":"review.closed","ts":"2026-08-04T13:01:00Z","job_id":42}\n',
       ),
     );
-    await vi.waitFor(() => expect(client.GET).toHaveBeenCalledTimes(3));
+    await vi.waitFor(() => expect(client.GET).toHaveBeenCalledTimes(4));
 
     expect(store.isEventStreamConnected()).toBe(true);
     store.disconnectEventStream(eventOwner);
@@ -655,18 +657,27 @@ describe("createJobsStore event stream", () => {
       navigate: vi.fn(),
     });
     const eventOwner = store.connectEventStream("/api/roborev");
+    await vi.waitFor(() => expect(pending).toHaveLength(1));
+    pending[0]?.({
+      data: {
+        jobs: [],
+        has_more: false,
+        stats: { done: 0, running: 0, closed: 0, open: 0 },
+      },
+      error: undefined,
+    });
     await vi.waitFor(() => expect(store.isEventStreamConnected()).toBe(true));
 
     const olderLoad = loadJobs(store);
-    await vi.waitFor(() => expect(pending).toHaveLength(1));
+    await vi.waitFor(() => expect(pending).toHaveLength(2));
     bodyController?.enqueue(
       encoder.encode(
         '{"type":"review.completed","ts":"2026-08-04T13:00:00Z","job_id":42,"repo":"/workspace/repo","repo_name":"repo","sha":"abc123"}\n',
       ),
     );
-    await vi.waitFor(() => expect(pending).toHaveLength(2));
+    await vi.waitFor(() => expect(pending).toHaveLength(3));
 
-    pending[1]?.({
+    pending[2]?.({
       data: {
         jobs: [{ ...makeJob(42), status: "done" }],
         has_more: false,
@@ -676,7 +687,7 @@ describe("createJobsStore event stream", () => {
     });
     await vi.waitFor(() => expect(store.getJobs()[0]?.status).toBe("done"));
 
-    pending[0]?.({
+    pending[1]?.({
       data: {
         jobs: [{ ...makeJob(42), status: "running" }],
         has_more: false,
@@ -908,7 +919,7 @@ describe("createJobsStore event stream", () => {
     const client = {
       GET: vi.fn().mockImplementation(async () => {
         reconciliationRound += 1;
-        if (reconciliationRound <= 1) {
+        if (reconciliationRound <= 2) {
           return {
             data: undefined,
             error: { message: "authority unavailable" },

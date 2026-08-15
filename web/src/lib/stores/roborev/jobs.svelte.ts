@@ -936,6 +936,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
       yield* workflow.connectEvents({
         owner: eventOwner,
         baseUrl,
+        onInitialOpen: reconcile,
         onOpen: Effect.sync(() => {
           if (activeEventOwner !== eventOwner) return;
           eventStreamConnected = true;

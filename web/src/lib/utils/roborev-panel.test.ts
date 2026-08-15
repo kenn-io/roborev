@@ -105,6 +105,13 @@ describe("canRerunJob", () => {
     expect(canRerunJob(makeJob({ status: "applied" }))).toBe(false);
     expect(canRerunJob(makeMember(0))).toBe(false);
   });
+
+  it("does not offer reruns for skipped auto-design jobs", () => {
+    expect(
+      canRerunJob(makeJob({ status: "skipped", source: "auto_design" })),
+    ).toBe(false);
+    expect(canRerunJob(makeJob({ status: "skipped" }))).toBe(true);
+  });
 });
 
 describe("panelStatusLabel", () => {

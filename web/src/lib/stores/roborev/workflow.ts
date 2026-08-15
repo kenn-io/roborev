@@ -59,6 +59,7 @@ export interface RoborevWorkflowService {
   readonly connectEvents: (options: {
     readonly owner: string;
     readonly baseUrl: string;
+    readonly onInitialOpen: Effect.Effect<void, RoborevStreamError>;
     readonly onOpen: Effect.Effect<void>;
     readonly onEvent: (
       event: RoborevEvent,
@@ -340,6 +341,7 @@ export const makeRoborevWorkflow: Effect.Effect<
     function* (options: {
       readonly owner: string;
       readonly baseUrl: string;
+      readonly onInitialOpen: Effect.Effect<void, RoborevStreamError>;
       readonly onOpen: Effect.Effect<void>;
       readonly onEvent: (
         event: RoborevEvent,
@@ -370,7 +372,7 @@ export const makeRoborevWorkflow: Effect.Effect<
                 if (event instanceof RoborevStreamOpened) {
                   const reconcile =
                     attempt === 0
-                      ? Effect.void
+                      ? options.onInitialOpen
                       : Ref.get(eventCheckpoints).pipe(
                           Effect.flatMap((checkpoints) =>
                             options.onReconnect(checkpoints.get(options.owner)),
