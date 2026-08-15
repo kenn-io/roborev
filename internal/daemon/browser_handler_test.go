@@ -159,6 +159,67 @@ func TestBrowserHandlerOmitsInternalJobMetadata(t *testing.T) {
 	}
 }
 
+func TestBrowserHandlerRejectsRawJobLogs(t *testing.T) {
+	const secret = "SENTINEL_RAW_LOG_SESSION"
+	coreCalled := false
+	core := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		coreCalled = true
+		_, _ = w.Write([]byte(`{"type":"thread.started","thread_id":"` + secret + `"}`))
+	})
+	handler, sessions := newBrowserHandlerFixtureWithCore(t, testBrowserAuthToken, core)
+	request := authenticatedBrowserRequest(
+		t, sessions, http.MethodGet, "/api/job/log?job_id=7",
+	)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, request)
+
+	assert.Equal(t, http.StatusNotFound, recorder.Code)
+	assert.False(t, coreCalled)
+	assert.NotContains(t, recorder.Body.String(), secret)
+}
+
+func TestBrowserHandlerProjectsSafeTokenUsage(t *testing.T) {
+	const secret = "SENTINEL_TOKEN_USAGE_SESSION"
+	unsafeUsage := `{"input_tokens":231582,"cached_input_tokens":189952,"cache_creation_tokens":1200,"total_output_tokens":2542,"peak_context_tokens":47248,"cost_usd":0.347212,"has_cost":true,"thread_id":"` + secret + `","metadata":{"session_id":"` + secret + `"}}`
+	core := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"jobs": []map[string]any{{
+				"id": 7, "repo_id": 2, "git_ref": "HEAD", "agent": "test",
+				"job_type": "review", "status": "done",
+				"enqueued_at": "2026-01-02T03:04:05Z", "retry_count": 0,
+				"agentic": false, "prompt_prebuilt": false, "token_usage": unsafeUsage,
+			}},
+			"has_more": false, "next_cursor": nil,
+		})
+	})
+	handler, sessions := newBrowserHandlerFixtureWithCore(t, testBrowserAuthToken, core)
+	request := authenticatedBrowserRequest(t, sessions, http.MethodGet, "/api/jobs")
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, request)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.NotContains(t, recorder.Body.String(), secret)
+	var response struct {
+		Jobs []struct {
+			TokenUsage string `json:"token_usage"`
+		} `json:"jobs"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+	require.Len(t, response.Jobs, 1)
+	assert.JSONEq(t, `{
+		"input_tokens": 231582,
+		"cached_input_tokens": 189952,
+		"cache_creation_tokens": 1200,
+		"total_output_tokens": 2542,
+		"peak_context_tokens": 47248,
+		"cost_usd": 0.347212,
+		"has_cost": true
+	}`, response.Jobs[0].TokenUsage)
+}
+
 func TestBrowserHandlerRateLimitsRepeatedLoginAttempts(t *testing.T) {
 	handler, _ := newBrowserHandlerFixture(t, testBrowserAuthToken)
 
@@ -220,6 +281,80 @@ func TestBrowserHandlerLocalBootstrapRequiresFetchMetadata(t *testing.T) {
 	handler.ServeHTTP(recorder, request)
 	assert.Equal(t, http.StatusOK, recorder.Code)
 	assert.NotEmpty(t, recorder.Header().Get("Set-Cookie"))
+}
+
+func TestBrowserHandlerLocalBootstrapAllowsOriginlessOwnerHost(t *testing.T) {
+	handler, _ := newBrowserHandlerFixture(t, "")
+	request := browserRequest(http.MethodPost, "/api/ui/session/bootstrap", map[string]any{})
+	request.Header.Del("Origin")
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, request)
+
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.NotEmpty(t, recorder.Header().Get("Set-Cookie"))
+}
+
+func TestBrowserHandlerOriginlessBootstrapKeepsLocalTrustBoundary(t *testing.T) {
+	tests := []struct {
+		name   string
+		auth   string
+		mutate func(*http.Request)
+	}{
+		{
+			name: "cross-site fetch",
+			mutate: func(request *http.Request) {
+				request.Header.Set("Sec-Fetch-Site", "cross-site")
+			},
+		},
+		{
+			name: "forwarded request",
+			mutate: func(request *http.Request) {
+				request.Header.Set("X-Forwarded-For", "192.0.2.10")
+			},
+		},
+		{
+			name: "non-loopback peer",
+			mutate: func(request *http.Request) {
+				request.RemoteAddr = "192.0.2.10:50000"
+			},
+		},
+		{name: "remote authentication configured", auth: testBrowserAuthToken},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler, _ := newBrowserHandlerFixture(t, tt.auth)
+			request := browserRequest(
+				http.MethodPost, "/api/ui/session/bootstrap", map[string]any{},
+			)
+			request.Header.Del("Origin")
+			if tt.mutate != nil {
+				tt.mutate(request)
+			}
+			recorder := httptest.NewRecorder()
+
+			handler.ServeHTTP(recorder, request)
+
+			assert.Equal(t, http.StatusForbidden, recorder.Code)
+			assert.Empty(t, recorder.Header().Values("Set-Cookie"))
+		})
+	}
+
+	for _, origin := range []string{"null", "https://attacker.example"} {
+		t.Run("explicit origin "+origin, func(t *testing.T) {
+			handler, _ := newBrowserHandlerFixture(t, "")
+			request := browserRequest(
+				http.MethodPost, "/api/ui/session/bootstrap", map[string]any{},
+			)
+			request.Header.Set("Origin", origin)
+			recorder := httptest.NewRecorder()
+
+			handler.ServeHTTP(recorder, request)
+
+			assert.Equal(t, http.StatusForbidden, recorder.Code)
+			assert.Empty(t, recorder.Header().Values("Set-Cookie"))
+		})
+	}
 }
 
 func TestBrowserSessionRoutesAppearOnlyInCombinedOpenAPI(t *testing.T) {

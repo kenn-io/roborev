@@ -103,12 +103,14 @@ func (p BrowserPolicy) AllowsLocalSession(request *http.Request) bool {
 	if _, found := p.loopbackHosts[host]; !found {
 		return false
 	}
-	origin, err := normalizeOriginHeader(request.Header.Get("Origin"))
-	if err != nil {
-		return false
-	}
-	if _, found := p.loopbackOrigins[origin]; !found {
-		return false
+	if rawOrigin := request.Header.Get("Origin"); rawOrigin != "" {
+		origin, err := normalizeOriginHeader(rawOrigin)
+		if err != nil {
+			return false
+		}
+		if _, found := p.loopbackOrigins[origin]; !found {
+			return false
+		}
 	}
 	peer, _, err := net.SplitHostPort(request.RemoteAddr)
 	if err != nil {

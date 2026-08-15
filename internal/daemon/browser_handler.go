@@ -35,7 +35,6 @@ var browserAPIRoutes = map[routeKey]routePolicy{
 	{http.MethodGet, "/api/repos"}:                authenticatedRoute,
 	{http.MethodGet, "/api/branches"}:             authenticatedRoute,
 	{http.MethodGet, "/api/job/output"}:           authenticatedRoute,
-	{http.MethodGet, "/api/job/log"}:              authenticatedRoute,
 	{http.MethodGet, "/api/stream/events"}:        authenticatedRoute,
 	{http.MethodGet, "/api/ui/review-projection"}: authenticatedRoute,
 	{http.MethodGet, "/api/ui/analytics"}:         authenticatedRoute,
@@ -159,6 +158,19 @@ type browserReviewJob struct {
 	PanelSummary     *storage.PanelSummary `json:"panel_summary,omitempty"`
 }
 
+// browserTokenUsage is the numeric presentation subset of persisted token
+// usage. The storage envelope also carries resumable agent identifiers and
+// collection cursors, which must remain confined to the loopback API.
+type browserTokenUsage struct {
+	InputTokens         *int64   `json:"input_tokens,omitempty"`
+	CachedInputTokens   *int64   `json:"cached_input_tokens,omitempty"`
+	CacheCreationTokens *int64   `json:"cache_creation_tokens,omitempty"`
+	OutputTokens        *int64   `json:"total_output_tokens,omitempty"`
+	PeakContextTokens   *int64   `json:"peak_context_tokens,omitempty"`
+	CostUSD             *float64 `json:"cost_usd,omitempty"`
+	HasCost             bool     `json:"has_cost,omitempty"`
+}
+
 type browserJobsResponse struct {
 	Jobs          []browserReviewJob `json:"jobs"`
 	HasMore       bool               `json:"has_more"`
@@ -193,10 +205,31 @@ func projectBrowserReviewJob(job storage.ReviewJob) browserReviewJob {
 		MinSeverity: job.MinSeverity, PanelRunUUID: job.PanelRunUUID,
 		PanelRole: job.PanelRole, PanelName: job.PanelName,
 		PanelMemberName: job.PanelMemberName, PanelMemberIndex: job.PanelMemberIndex,
-		TokenUsage: job.TokenUsage, UUID: job.UUID, RepoPath: job.RepoPath,
+		TokenUsage: projectBrowserTokenUsage(job.TokenUsage), UUID: job.UUID,
+		RepoPath: job.RepoPath,
 		RepoName: job.RepoName, CommitSubject: job.CommitSubject, Closed: job.Closed,
 		Verdict: job.Verdict, PanelSummary: job.PanelSummary,
 	}
+}
+
+func projectBrowserTokenUsage(raw string) string {
+	if strings.TrimSpace(raw) == "" {
+		return ""
+	}
+	var usage browserTokenUsage
+	if err := json.Unmarshal([]byte(raw), &usage); err != nil {
+		return ""
+	}
+	if usage.InputTokens == nil && usage.CachedInputTokens == nil &&
+		usage.CacheCreationTokens == nil && usage.OutputTokens == nil &&
+		usage.PeakContextTokens == nil && usage.CostUSD == nil && !usage.HasCost {
+		return ""
+	}
+	projected, err := json.Marshal(usage)
+	if err != nil {
+		return ""
+	}
+	return string(projected)
 }
 
 func serveBrowserJobs(w http.ResponseWriter, request *http.Request, core http.Handler) {
@@ -335,11 +368,7 @@ func handleBrowserSession(w http.ResponseWriter, request *http.Request, policy B
 		http.SetCookie(w, sessions.Cookie(credentials.Ambient))
 		writeBrowserCredentials(w, credentials)
 	case request.Method == http.MethodPost && request.URL.Path == "/api/ui/session/bootstrap":
-		if err := policy.ValidateOrigin(request); err != nil {
-			writeBrowserError(w, http.StatusForbidden, "invalid_origin")
-			return
-		}
-		if request.Header.Get("Sec-Fetch-Site") != "same-origin" || request.Header.Get("Sec-Fetch-Mode") != "cors" || request.Header.Get("Sec-Fetch-Dest") != "empty" {
+		if !browserBootstrapOriginAllowed(request, policy) {
 			writeBrowserError(w, http.StatusForbidden, "invalid_origin")
 			return
 		}
@@ -386,6 +415,19 @@ func handleBrowserSession(w http.ResponseWriter, request *http.Request, policy B
 	default:
 		http.NotFound(w, request)
 	}
+}
+
+func browserBootstrapOriginAllowed(request *http.Request, policy BrowserPolicy) bool {
+	if request.Header.Get("Origin") == "" {
+		return policy.AllowsLocalSession(request) &&
+			!strings.EqualFold(strings.TrimSpace(request.Header.Get("Sec-Fetch-Site")), "cross-site")
+	}
+	if policy.ValidateOrigin(request) != nil {
+		return false
+	}
+	return request.Header.Get("Sec-Fetch-Site") == "same-origin" &&
+		request.Header.Get("Sec-Fetch-Mode") == "cors" &&
+		request.Header.Get("Sec-Fetch-Dest") == "empty"
 }
 
 func authenticateBrowserRequest(request *http.Request, sessions *BrowserSessionManager) (BrowserPrincipal, string, string, error) {

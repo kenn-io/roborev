@@ -157,8 +157,11 @@ Host and Origin before checking the browser session.
 ## Browser Sessions
 
 For loopback-only use without `web.auth_token`, Roborev creates a local browser
-session automatically. Once remote authentication is configured, every browser,
-including one on the daemon host, must enter the token.
+session automatically. Owner-local browser bootstrap also supports clients that
+omit the `Origin` header, but only for a direct loopback connection with an
+exact loopback Host, no forwarding headers, no remote authentication, and no
+cross-site fetch metadata. Once remote authentication is configured, every
+browser, including one on the daemon host, must enter the token.
 
 The login exchanges the token for an HTTP-only cookie and credentials stored in
 the current tab's `sessionStorage`. The application does not retain the daemon

@@ -51,11 +51,15 @@ func TestBrowserPolicyLocalSessionRequiresEveryTrustCondition(t *testing.T) {
 	request.RemoteAddr = "127.0.0.1:50000"
 	request.Header.Set("Origin", "http://127.0.0.1:5173")
 	assert.True(t, policy.AllowsLocalSession(request))
+	request.Header.Del("Origin")
+	assert.True(t, policy.AllowsLocalSession(request))
+	request.Header.Set("Origin", "http://127.0.0.1:5173")
 
 	mutations := []func(*httpRequest){
 		func(req *httpRequest) { req.RemoteAddr = "192.0.2.1:50000" },
 		func(req *httpRequest) { req.Host = "reviews.example.com" },
 		func(req *httpRequest) { req.Header.Set("Origin", "https://reviews.example.com") },
+		func(req *httpRequest) { req.Header.Set("Origin", "null") },
 		func(req *httpRequest) { req.Header.Set("X-Forwarded-For", "192.0.2.1") },
 	}
 	for _, mutate := range mutations {
