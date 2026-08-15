@@ -115,6 +115,25 @@ func TestRerunPanelRejectsMemberStillStopping(t *testing.T) {
 	assert.NotEmpty(t, runUUID)
 }
 
+func TestRerunPanelAllowsCompletedClaimedMember(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	oldRunUUID, members, synth := enqueueServerPanelRun(t, db, 1)
+	claimed, err := db.ClaimJob("worker-completed")
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	require.Equal(t, members[0].ID, claimed.ID)
+	require.NoError(t, db.CompleteJob(claimed.ID, "test", "prompt", "P"))
+	markJobStatus(t, db, synth.ID, storage.JobStatusDone)
+
+	_, err = server.humaRerunJob(context.Background(), &RerunJobInput{
+		Body: RerunJobRequest{JobID: synth.ID},
+	})
+	require.NoError(t, err)
+
+	newRunUUID := findOtherPanelRunUUID(t, db, oldRunUUID)
+	assert.NotEqual(t, oldRunUUID, newRunUUID)
+}
+
 func TestRerunPanelRequestIsIdempotent(t *testing.T) {
 	server, db, _ := newTestServer(t)
 	oldRunUUID, _, synth := enqueueServerPanelRun(t, db, 2)
