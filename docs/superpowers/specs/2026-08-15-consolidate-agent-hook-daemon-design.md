@@ -36,6 +36,12 @@ There is no SQLite migration, dual read/write period, fallback daemon, or new
 state format. Once the main daemon has loaded the snapshot, it is the only
 process allowed to mutate Agent Hook state.
 
+There is also no legacy-daemon takeover path. The new binary does not discover,
+stop, signal, or retain lifecycle support for an already-running Agent Hook
+daemon. Operators upgrading from a release with the auxiliary daemon must stop
+it before starting the upgraded regular daemon. New hook invocations target the
+regular daemon exclusively.
+
 ## Data Flow
 
 1. An installed coding-agent hook invokes `roborev agent-hook run --agent ...`.
@@ -61,9 +67,11 @@ A brief main-daemon restart may drop hook events during the outage. This is
 acceptable because review state is also unavailable during that interval. The
 persisted JSON snapshot is reloaded when the regular daemon returns.
 
-If the JSON snapshot cannot be loaded, regular daemon startup must fail with a
-clear Agent Hook state error rather than silently discarding counters or
-overwriting the file.
+If the JSON snapshot cannot be loaded, the regular daemon preserves it without
+overwriting it and continues serving reviews and all unrelated features. Agent
+Hook event, status, and reset endpoints return a clear state-loading error until
+the file is repaired or explicitly removed by the operator. Roborev does not
+silently reset corrupt state.
 
 ## User-Facing Surface
 
@@ -82,10 +90,11 @@ manual lifecycle management for a second process.
 ## Verification
 
 Focused tests will prove that the regular daemon loads a pre-existing Agent
-Hook JSON snapshot, serves hook/status/reset requests against it, and persists
-updates to the same file. CLI tests will prove direct regular-daemon requests
-and fail-open behavior. Existing Agent Hook state-machine tests remain the
-primary coverage for reminder and persistence semantics.
+Hook JSON snapshot, serves hook/status/reset requests against it, persists
+updates to the same file, and keeps unrelated daemon APIs available when the
+snapshot is invalid. CLI tests will prove direct regular-daemon requests and
+fail-open behavior. Existing Agent Hook state-machine tests remain the primary
+coverage for reminder and persistence semantics.
 
 Removal of obsolete commands, environment variables, runtime files, and
 lifecycle implementation will be verified through the diff, compilation, and
