@@ -218,6 +218,31 @@ func TestJobLogWriter(t *testing.T) {
 		assert.Equal(t, "new\n", string(data))
 	})
 
+	t.Run("truncate_mode_survives_initial_open_failure", func(t *testing.T) {
+		setupTestEnv(t)
+		previousRetry := jobLogOpenRetryInterval
+		jobLogOpenRetryInterval = time.Hour
+		t.Cleanup(func() {
+			jobLogOpenRetryInterval = previousRetry
+		})
+
+		require.NoError(t, os.MkdirAll(JobLogPath(207), 0o700))
+		w := newJobLogWriter(207)
+		_, err := w.Write([]byte("buffered\n"))
+		require.NoError(t, err)
+
+		require.NoError(t, os.Remove(JobLogPath(207)))
+		require.NoError(t, os.WriteFile(JobLogPath(207), []byte("stale\n"), 0o600))
+		jobLogOpenRetryInterval = 0
+		_, err = w.Write([]byte("current\n"))
+		require.NoError(t, err)
+		require.NoError(t, w.Close())
+
+		data, err := os.ReadFile(JobLogPath(207))
+		require.NoError(t, err)
+		assert.Equal(t, "buffered\ncurrent\n", string(data))
+	})
+
 	t.Run("retries_after_initial_open_failure", func(t *testing.T) {
 		setupTestEnv(t)
 		prevRetry := jobLogOpenRetryInterval

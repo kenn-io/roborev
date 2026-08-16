@@ -225,14 +225,15 @@ const (
 // a bounded amount of output in memory so jobs still get on-disk logs once the
 // filesystem recovers.
 type jobLogWriter struct {
-	mu      sync.Mutex
-	jobID   int64
-	f       io.WriteCloser
-	buf     bytes.Buffer
-	notice  bytes.Buffer
-	lastTry time.Time
-	dropped int
-	noticed int
+	mu              sync.Mutex
+	jobID           int64
+	f               io.WriteCloser
+	buf             bytes.Buffer
+	notice          bytes.Buffer
+	lastTry         time.Time
+	dropped         int
+	noticed         int
+	truncatePending bool
 }
 
 func newJobLogWriter(jobID int64) *jobLogWriter {
@@ -244,8 +245,11 @@ func newAppendingJobLogWriter(jobID int64) *jobLogWriter {
 }
 
 func newJobLogWriterWithMode(jobID int64, mode jobLogOpenMode) *jobLogWriter {
-	w := &jobLogWriter{jobID: jobID}
-	w.tryOpenLocked(mode == jobLogTruncate)
+	w := &jobLogWriter{
+		jobID:           jobID,
+		truncatePending: mode == jobLogTruncate,
+	}
+	w.tryOpenLocked()
 	return w
 }
 
@@ -257,7 +261,7 @@ func (w *jobLogWriter) Write(p []byte) (int, error) {
 		return 0, nil
 	}
 	if w.f == nil && time.Since(w.lastTry) >= jobLogOpenRetryInterval {
-		w.tryOpenLocked(false)
+		w.tryOpenLocked()
 	}
 	if w.f != nil {
 		if err := w.flushBufferedLocked(); err == nil {
@@ -284,7 +288,7 @@ func (w *jobLogWriter) Close() error {
 	w.mu.Lock()
 	defer w.mu.Unlock()
 	if w.f == nil {
-		w.tryOpenLocked(false)
+		w.tryOpenLocked()
 	}
 	if w.f == nil {
 		return nil
@@ -298,10 +302,10 @@ func (w *jobLogWriter) Close() error {
 	return f.Close()
 }
 
-func (w *jobLogWriter) tryOpenLocked(truncate bool) {
+func (w *jobLogWriter) tryOpenLocked() {
 	w.lastTry = time.Now()
 	flags := os.O_CREATE | os.O_WRONLY
-	if truncate {
+	if w.truncatePending {
 		flags |= os.O_TRUNC
 	} else {
 		flags |= os.O_APPEND
@@ -312,6 +316,7 @@ func (w *jobLogWriter) tryOpenLocked(truncate bool) {
 		return
 	}
 	w.f = f
+	w.truncatePending = false
 }
 
 func (w *jobLogWriter) flushBufferedLocked() error {

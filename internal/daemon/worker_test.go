@@ -176,6 +176,30 @@ func (c *workerTestContext) reconfigurePool(cfg *config.Config) {
 	c.Pool.retryBackoff = 0
 }
 
+func requireOutputChannelClosed(t *testing.T, ch <-chan OutputLine) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		select {
+		case _, ok := <-ch:
+			return !ok
+		default:
+			return false
+		}
+	}, time.Second, time.Millisecond, "job output channel remained open")
+}
+
+func TestSubscribeJobOutputClosesLateTerminalSubscription(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	job := tc.createJob(t, "terminal-output")
+	setJobStatus(t, tc.DB, job.ID, storage.JobStatusDone)
+
+	_, ch, cancel := tc.Pool.SubscribeJobOutput(job.ID)
+	defer cancel()
+
+	requireOutputChannelClosed(t, ch)
+	assert.False(t, tc.Pool.HasJobOutput(job.ID))
+}
+
 func TestWorkerPoolConcurrency(t *testing.T) {
 	t.Parallel()
 	tc := newWorkerTestContext(t, 4)
@@ -1834,9 +1858,12 @@ func TestProcessJob_OversizedFinalPromptFailsBeforeAnyAgent(t *testing.T) {
 	claimed, err := tc.DB.ClaimJob(testWorkerID)
 	require.NoError(t, err)
 	require.Equal(t, job.ID, claimed.ID)
+	_, output, cancelOutput := tc.Pool.SubscribeJobOutput(job.ID)
+	defer cancelOutput()
 
 	tc.Pool.processJob(testWorkerID, claimed)
 
+	requireOutputChannelClosed(t, output)
 	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusFailed)
 	assert.False(t, agentCalled, "oversized final prompt must not be submitted")
 	assert.Equal(t, 0, updated.RetryCount)

@@ -506,8 +506,11 @@ func TestSynthesisAllFailed(t *testing.T) {
 	}
 
 	synth := releaseAndClaimSynthesis(t, tc, runUUID)
-	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
+	_, output, cancelOutput := tc.Pool.SubscribeJobOutput(synth.ID)
+	defer cancelOutput()
+	tc.Pool.processJob(testWorkerID, synth)
 
+	requireOutputChannelClosed(t, output)
 	tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
 	review, err := tc.DB.GetReviewByJobID(synth.ID)
 	require.NoError(t, err)

@@ -172,7 +172,14 @@ func (wp *WorkerPool) GetJobOutput(jobID int64) []OutputLine {
 // SubscribeJobOutput returns initial lines and a channel for new output.
 // Call cancel when done to unsubscribe.
 func (wp *WorkerPool) SubscribeJobOutput(jobID int64) ([]OutputLine, <-chan OutputLine, func()) {
-	return wp.outputBuffers.Subscribe(jobID)
+	initial, ch, cancel := wp.outputBuffers.Subscribe(jobID)
+	// Close a subscription that raced with attempt teardown. CloseJob removes
+	// the live buffer, so a subscriber arriving just afterward can create a new
+	// one; the authoritative status check turns that buffer into a closed stream.
+	if job, err := wp.db.GetJobByID(jobID); err == nil && job.Status != storage.JobStatusRunning {
+		wp.outputBuffers.CloseJob(jobID)
+	}
+	return initial, ch, cancel
 }
 
 // HasJobOutput returns true if there's active output capture for a job.
@@ -582,6 +589,9 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// Register for cancellation tracking
 	wp.registerRunningJob(job.ID, cancel)
 	defer wp.finishRunningJob(workerID, job.ID)
+	// Every attempt owns the lifetime of its output stream, including paths that
+	// fail before an agent starts and synthesis paths that do not invoke one.
+	defer wp.outputBuffers.CloseJob(job.ID)
 
 	// Synthesis jobs route to their own handler before the cooldown gate: the
 	// all-failed and passthrough branches call no agent, so a synthesis-agent
