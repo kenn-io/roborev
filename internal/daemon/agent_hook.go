@@ -23,24 +23,31 @@ type daemonAgentHookSource struct {
 func (s daemonAgentHookSource) ResolveTrackedRepo(
 	ctx context.Context, path, branch string,
 ) (agenthook.TrackedRepoResolution, bool) {
-	path = strings.TrimSpace(path)
-	if path == "" {
+	if strings.TrimSpace(path) == "" {
 		return agenthook.TrackedRepoResolution{}, false
 	}
+	resolved, err := resolveTrackedRepo(ctx, s.db, path, branch)
+	return resolved, err == nil
+}
+
+func resolveTrackedRepo(
+	ctx context.Context, db *storage.DB, path, branch string,
+) (agenthook.TrackedRepoResolution, error) {
+	path = strings.TrimSpace(path)
 	lookupPath := path
 	if repoRoot, err := gitrepo.MainRoot(ctx, path); err == nil {
 		lookupPath = repoRoot
 	}
-	repo, err := s.db.GetRepoByPath(lookupPath)
+	repo, err := db.GetRepoByPath(lookupPath)
 	if errors.Is(err, sql.ErrNoRows) {
-		return agenthook.TrackedRepoResolution{}, true
+		return agenthook.TrackedRepoResolution{}, nil
 	}
 	if err != nil {
-		return agenthook.TrackedRepoResolution{}, false
+		return agenthook.TrackedRepoResolution{}, fmt.Errorf("lookup repo: %w", err)
 	}
 	if repo.Identity != "" &&
 		config.ResolveRepoIdentity(lookupPath, nil) != repo.Identity {
-		return agenthook.TrackedRepoResolution{}, true
+		return agenthook.TrackedRepoResolution{}, nil
 	}
 	resolved := agenthook.TrackedRepoResolution{
 		Tracked:  true,
@@ -48,16 +55,16 @@ func (s daemonAgentHookSource) ResolveTrackedRepo(
 		Identity: repo.Identity,
 		Name:     repo.Name,
 	}
-	snooze, err := s.db.ActiveAgentHookSnooze(
+	snooze, err := db.ActiveAgentHookSnooze(
 		repo.RootPath, path, branch, time.Now(),
 	)
 	if err != nil {
-		return agenthook.TrackedRepoResolution{}, false
+		return agenthook.TrackedRepoResolution{}, fmt.Errorf("lookup agent hook snooze: %w", err)
 	}
 	if snooze != nil {
 		resolved.SnoozedUntil = snooze.SnoozedUntil
 	}
-	return resolved, true
+	return resolved, nil
 }
 
 func (s daemonAgentHookSource) ListOpenReviewJobs(

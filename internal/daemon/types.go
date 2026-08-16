@@ -420,6 +420,8 @@ type AgentHookEventOutput struct {
 	Body AgentHookEventResponse
 }
 
+// Keep distinct names because Huma registers component schemas by Go type name;
+// agenthook.Request and Response collide with other daemon schema names.
 type AgentHookEventRequest agenthook.Request
 
 type AgentHookEventResponse agenthook.Response

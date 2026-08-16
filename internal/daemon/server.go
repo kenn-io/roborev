@@ -1779,41 +1779,25 @@ func (s *Server) humaResolveRepo(
 		return nil, huma.Error400BadRequest("path is required")
 	}
 
-	lookupPath := path
-	if repoRoot, err := gitrepo.MainRoot(ctx, path); err == nil {
-		lookupPath = repoRoot
-	}
-
-	repo, err := s.db.GetRepoByPath(lookupPath)
-	if errors.Is(err, sql.ErrNoRows) {
-		return &ResolveRepoOutput{}, nil
-	}
+	resolved, err := resolveTrackedRepo(ctx, s.db, path, input.Branch)
 	if err != nil {
 		return nil, huma.Error500InternalServerError(
-			fmt.Sprintf("lookup repo: %v", err),
+			err.Error(),
 		)
 	}
-	if repo.Identity != "" && config.ResolveRepoIdentity(lookupPath, nil) != repo.Identity {
+	if !resolved.Tracked {
 		return &ResolveRepoOutput{}, nil
 	}
 
 	resp := &ResolveRepoOutput{}
 	resp.Body.Tracked = true
 	resp.Body.Repo = &ResolvedRepo{
-		RootPath: repo.RootPath,
-		Identity: repo.Identity,
-		Name:     repo.Name,
+		RootPath: resolved.RootPath,
+		Identity: resolved.Identity,
+		Name:     resolved.Name,
 	}
-	snooze, err := s.db.ActiveAgentHookSnooze(
-		repo.RootPath, path, input.Branch, time.Now(),
-	)
-	if err != nil {
-		return nil, huma.Error500InternalServerError(
-			fmt.Sprintf("lookup agent hook snooze: %v", err),
-		)
-	}
-	if snooze != nil {
-		resp.Body.Repo.AgentHookSnoozedUntil = &snooze.SnoozedUntil
+	if !resolved.SnoozedUntil.IsZero() {
+		resp.Body.Repo.AgentHookSnoozedUntil = &resolved.SnoozedUntil
 	}
 	return resp, nil
 }
