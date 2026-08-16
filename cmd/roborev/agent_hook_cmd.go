@@ -25,7 +25,6 @@ func agentHookCmd() *cobra.Command {
 		agentHookRunCmd(),
 		agentHookInstallCmd(),
 		agentHookDumpCmd(),
-		agentHookDaemonCmd(),
 		agentHookStatusCmd(),
 		agentHookResetCmd(),
 	)
@@ -85,13 +84,12 @@ func runGrokAgentHook(opts agenthook.Options, stdin io.Reader, stdout, stderr io
 	if input.SessionID == "" {
 		return fmt.Errorf("decode Grok Build input: missing session_id")
 	}
-	resp, err := postAgentHook(context.Background(), agenthook.Request{
+	resp, err := postAgentHook(context.Background(), opts.RoborevServerAddr, agenthook.Request{
 		Event:                 input,
 		Threshold:             opts.TurnThreshold,
 		CommitThreshold:       opts.CommitThreshold,
 		FailedReviewThreshold: opts.FailedReviewThreshold,
 		Instruction:           opts.Instruction,
-		RoborevServerAddr:     opts.RoborevServerAddr,
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "roborev Grok Build: %v\n", err)
@@ -113,82 +111,18 @@ func runLegacyAgentHook(
 	if input.SessionID == "" {
 		return fmt.Errorf("agent-hook input missing session_id")
 	}
-	resp, err := postAgentHook(ctx, agenthook.Request{
+	resp, err := postAgentHook(ctx, opts.RoborevServerAddr, agenthook.Request{
 		Event:                 input,
 		Threshold:             opts.TurnThreshold,
 		CommitThreshold:       opts.CommitThreshold,
 		FailedReviewThreshold: opts.FailedReviewThreshold,
 		Instruction:           opts.Instruction,
-		RoborevServerAddr:     opts.RoborevServerAddr,
 	})
 	if err != nil {
 		fmt.Fprintf(stderr, "roborev agent-hook: %v\n", err)
 		return json.NewEncoder(stdout).Encode(map[string]any{})
 	}
 	return json.NewEncoder(stdout).Encode(agenthook.BuildOutputWithFixGuidelines(input, resp, opts.FixGuidelines))
-}
-
-func agentHookDaemonCmd() *cobra.Command {
-	cmd := &cobra.Command{
-		Use:   "daemon",
-		Short: "Manage the local agent hook state daemon",
-	}
-	cmd.AddCommand(
-		agentHookDaemonRunCmd(),
-		&cobra.Command{
-			Use:                   "start",
-			Short:                 "Start the local agent hook state daemon",
-			Args:                  cobra.NoArgs,
-			DisableFlagsInUseLine: true,
-			RunE: func(cmd *cobra.Command, _ []string) error {
-				return agenthook.RunDaemonStart(cmd.OutOrStdout())
-			},
-		},
-		&cobra.Command{
-			Use:                   "status",
-			Short:                 "Print agent hook daemon process status as JSON",
-			Args:                  cobra.NoArgs,
-			DisableFlagsInUseLine: true,
-			RunE: func(cmd *cobra.Command, _ []string) error {
-				return agenthook.RunDaemonStatus(cmd.OutOrStdout())
-			},
-		},
-		&cobra.Command{
-			Use:                   "stop",
-			Short:                 "Stop the local agent hook state daemon",
-			Args:                  cobra.NoArgs,
-			DisableFlagsInUseLine: true,
-			RunE: func(cmd *cobra.Command, _ []string) error {
-				return agenthook.RunDaemonStop(cmd.OutOrStdout())
-			},
-		},
-		&cobra.Command{
-			Use:                   "restart",
-			Short:                 "Restart the local agent hook state daemon",
-			Args:                  cobra.NoArgs,
-			DisableFlagsInUseLine: true,
-			RunE: func(cmd *cobra.Command, _ []string) error {
-				return agenthook.RunDaemonRestart(cmd.OutOrStdout())
-			},
-		},
-	)
-	return cmd
-}
-
-func agentHookDaemonRunCmd() *cobra.Command {
-	addr := defaultAgentHookDaemonAddress()
-	cmd := &cobra.Command{
-		Use:                   "run",
-		Short:                 "Run the local agent hook state daemon in the foreground",
-		Args:                  cobra.NoArgs,
-		DisableFlagsInUseLine: true,
-		Hidden:                true,
-		RunE: func(cmd *cobra.Command, _ []string) error {
-			return runAgentHookDaemon(addr, cmd.ErrOrStderr())
-		},
-	}
-	cmd.Flags().StringVar(&addr, "addr", addr, "daemon listen address")
-	return cmd
 }
 
 func agentHookInstallCmd() *cobra.Command {
@@ -262,7 +196,7 @@ func agentHookStatusCmd() *cobra.Command {
 		Args:                  cobra.NoArgs,
 		DisableFlagsInUseLine: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
-			return agenthook.RunStatus(cmd.OutOrStdout())
+			return runAgentHookStatus(cmd.OutOrStdout())
 		},
 	}
 }
@@ -279,7 +213,7 @@ func agentHookResetCmd() *cobra.Command {
 			if len(args) > 0 {
 				sessionID = args[0]
 			}
-			return agenthook.RunReset(opts, sessionID, cmd.OutOrStdout())
+			return runAgentHookReset(opts, sessionID, cmd.OutOrStdout())
 		},
 	}
 	cmd.Flags().BoolVar(&opts.All, "all", false, "reset all sessions")

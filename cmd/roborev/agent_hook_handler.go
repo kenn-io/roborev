@@ -50,7 +50,6 @@ func (h roborevAgentHookHandler) request(
 		CommitThreshold:       h.opts.CommitThreshold,
 		FailedReviewThreshold: h.opts.FailedReviewThreshold,
 		Instruction:           h.opts.Instruction,
-		RoborevServerAddr:     h.opts.RoborevServerAddr,
 		DeferPostToolReminder: h.agent == kitagenthook.AgentHermes,
 	}, nil
 }
@@ -59,7 +58,7 @@ func (h roborevAgentHookHandler) post(
 	ctx context.Context,
 	req agenthook.Request,
 ) (agenthook.Response, bool) {
-	resp, err := postAgentHook(ctx, req)
+	resp, err := postAgentHook(ctx, h.opts.RoborevServerAddr, req)
 	if err != nil {
 		fmt.Fprintf(h.stderr, "roborev agent-hook: %v\n", err)
 		return agenthook.Response{}, false

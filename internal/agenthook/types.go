@@ -9,8 +9,6 @@ import (
 	"time"
 )
 
-const ServiceName = "roborev-agent-hook"
-
 type Input struct {
 	SessionID      string                     `json:"session_id"`
 	TranscriptPath string                     `json:"transcript_path,omitempty"`
@@ -127,7 +125,6 @@ type Request struct {
 	CommitThreshold       int    `json:"commit_threshold"`
 	FailedReviewThreshold int    `json:"failed_review_threshold"`
 	Instruction           string `json:"instruction"`
-	RoborevServerAddr     string `json:"roborev_server_addr,omitempty"`
 	DeferPostToolReminder bool   `json:"defer_post_tool_reminder,omitempty"`
 }
 
@@ -242,6 +239,7 @@ type StateStore struct {
 	mu       sync.Mutex
 	path     string
 	sessions map[string]SessionState
+	reviews  ReviewSource
 }
 
 type ResetOptions struct {

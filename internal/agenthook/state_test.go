@@ -81,6 +81,59 @@ func TestThresholdReady(t *testing.T) {
 	assert.True(t, thresholdReady(3, 3))
 }
 
+func TestStateStoreSessionsReturnsDeepSnapshot(t *testing.T) {
+	store := &StateStore{
+		path: filepath.Join(t.TempDir(), "state.json"),
+		sessions: map[string]SessionState{
+			"session-1": {
+				Count:                 2,
+				StopCountsSincePrompt: map[string]int{"repo-a": 3},
+			},
+		},
+	}
+
+	got := store.Sessions()
+	gotSession := got["session-1"]
+	gotSession.StopCountsSincePrompt["repo-a"] = 9
+	got["session-1"] = gotSession
+
+	current := store.Sessions()["session-1"]
+	assert.Equal(t, 2, current.Count)
+	assert.Equal(t, 3, current.StopCountsSincePrompt["repo-a"])
+}
+
+func TestStateStoreResetPersistsSelectedSession(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	store := &StateStore{
+		path: StatePath(),
+		sessions: map[string]SessionState{
+			"session-1": {Count: 1},
+			"session-2": {Count: 2},
+		},
+	}
+
+	require.NoError(t, store.Reset("session-1", false))
+
+	body, err := os.ReadFile(StatePath())
+	require.NoError(t, err)
+	var snapshot Snapshot
+	require.NoError(t, json.Unmarshal(body, &snapshot))
+	assert.NotContains(t, snapshot.Sessions, "session-1")
+	assert.Contains(t, snapshot.Sessions, "session-2")
+}
+
+func TestStateStoreResetRollsBackWhenSaveFails(t *testing.T) {
+	store := &StateStore{
+		path:     t.TempDir(),
+		sessions: map[string]SessionState{"session-1": {Count: 2}},
+	}
+
+	err := store.Reset("session-1", false)
+
+	require.Error(t, err)
+	assert.Equal(t, 2, store.Sessions()["session-1"].Count)
+}
+
 func TestRepoHeadKey(t *testing.T) {
 	assert := assert.New(t)
 	assert.Equal("/repo", repoHeadKey("/repo", ""))
@@ -164,7 +217,7 @@ func TestCountOpenFailedReviewsExcludesUnreachableBranchlessReviews(t *testing.T
 	}))
 	t.Cleanup(server.Close)
 
-	count, ok := countOpenFailedReviews(context.Background(), repo.Path(), "main", head, server.URL)
+	count, ok := countOpenFailedReviews(context.Background(), NewHTTPReviewSource(server.URL), repo.Path(), "main", head)
 
 	assert.True(ok)
 	assert.Equal(4, count, "only the unreachable branchless review must be excluded on a branch query")
@@ -190,7 +243,7 @@ func TestCountOpenFailedReviewsExcludesBaseBranchBranchlessReviews(t *testing.T)
 	}))
 	t.Cleanup(server.Close)
 
-	count, ok := countOpenFailedReviews(context.Background(), repo.Path(), "feature/lineage", featureHead, server.URL)
+	count, ok := countOpenFailedReviews(context.Background(), NewHTTPReviewSource(server.URL), repo.Path(), "feature/lineage", featureHead)
 
 	assert.True(ok)
 	assert.Equal(1, count, "only the branchless review outside trunk history should count")
@@ -239,7 +292,7 @@ func TestCountOpenFailedReviewsCachesBranchlessLineageContext(t *testing.T) {
 	require.NoError(os.WriteFile(wrapperPath, []byte(wrapper), 0o755))
 	t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	count, ok := countOpenFailedReviews(context.Background(), repo.Path(), "feature/lineage", featureHead, server.URL)
+	count, ok := countOpenFailedReviews(context.Background(), NewHTTPReviewSource(server.URL), repo.Path(), "feature/lineage", featureHead)
 
 	assert.True(ok)
 	assert.Equal(len(jobs), count)
@@ -279,7 +332,7 @@ func TestCountOpenFailedReviewsExcludesNonReviewJobTypes(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	count, ok := countOpenFailedReviews(context.Background(), repo.Path(), "main", head, server.URL)
+	count, ok := countOpenFailedReviews(context.Background(), NewHTTPReviewSource(server.URL), repo.Path(), "main", head)
 
 	assert.True(ok)
 	assert.Equal(1, count, "only failed review jobs count; passed reviews and non-review job types are not actionable")
@@ -413,7 +466,11 @@ func TestRecordPostToolUseFailedReviewPromptUsesNewBranchLineageKey(t *testing.T
 	}))
 	t.Cleanup(server.Close)
 
-	store := &StateStore{path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	store := &StateStore{
+		path:     filepath.Join(t.TempDir(), "state.json"),
+		sessions: map[string]SessionState{},
+		reviews:  NewHTTPReviewSource(server.URL),
+	}
 	post := func() Response {
 		resp, err := store.Record(Request{
 			Event: Input{
@@ -425,7 +482,6 @@ func TestRecordPostToolUseFailedReviewPromptUsesNewBranchLineageKey(t *testing.T
 			},
 			FailedReviewThreshold: 1,
 			Instruction:           "Run roborev fix.",
-			RoborevServerAddr:     server.URL,
 		})
 		require.NoError(t, err)
 		return resp
@@ -481,7 +537,7 @@ func TestRecordStopFailedReviewPromptUsesNewDetachedLineageKey(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	store := &StateStore{path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	store := &StateStore{reviews: NewHTTPReviewSource(server.URL), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
 	stop := func() Response {
 		resp, err := store.Record(Request{
 			Event: Input{
@@ -491,7 +547,6 @@ func TestRecordStopFailedReviewPromptUsesNewDetachedLineageKey(t *testing.T) {
 			},
 			FailedReviewThreshold: 1,
 			Instruction:           "Run roborev fix.",
-			RoborevServerAddr:     server.URL,
 		})
 		require.NoError(t, err)
 		return resp
@@ -526,7 +581,7 @@ func TestRecordStopFailedReviewPromptDoesNotReuseStaleDetachedLineage(t *testing
 	}))
 	t.Cleanup(server.Close)
 
-	store := &StateStore{path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	store := &StateStore{reviews: NewHTTPReviewSource(server.URL), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
 	stop := func() Response {
 		resp, err := store.Record(Request{
 			Event: Input{
@@ -536,7 +591,6 @@ func TestRecordStopFailedReviewPromptDoesNotReuseStaleDetachedLineage(t *testing
 			},
 			FailedReviewThreshold: 1,
 			Instruction:           "Run roborev fix.",
-			RoborevServerAddr:     server.URL,
 		})
 		require.NoError(t, err)
 		return resp
@@ -579,7 +633,7 @@ func TestRecordPostToolUseCommitReminderStaysInCommitRepo(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	store := &StateStore{path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	store := &StateStore{reviews: NewHTTPReviewSource(server.URL), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
 	post := func(cwd, command string) Response {
 		resp, err := store.Record(Request{
 			Event: Input{
@@ -589,9 +643,8 @@ func TestRecordPostToolUseCommitReminderStaysInCommitRepo(t *testing.T) {
 				ToolName:      "Bash",
 				ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"` + command + `"`)},
 			},
-			CommitThreshold:   1,
-			Instruction:       "Run roborev fix.",
-			RoborevServerAddr: server.URL,
+			CommitThreshold: 1,
+			Instruction:     "Run roborev fix.",
 		})
 		require.NoError(t, err)
 		return resp
@@ -636,7 +689,7 @@ func TestRecordPostToolUseCommitReminderDoesNotFollowUnrelatedBranchInSameWorktr
 	}))
 	t.Cleanup(server.Close)
 
-	store := &StateStore{path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	store := &StateStore{reviews: NewHTTPReviewSource(server.URL), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
 	post := func(command string) Response {
 		resp, err := store.Record(Request{
 			Event: Input{
@@ -646,9 +699,8 @@ func TestRecordPostToolUseCommitReminderDoesNotFollowUnrelatedBranchInSameWorktr
 				ToolName:      "Bash",
 				ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"` + command + `"`)},
 			},
-			CommitThreshold:   1,
-			Instruction:       "Run roborev fix.",
-			RoborevServerAddr: server.URL,
+			CommitThreshold: 1,
+			Instruction:     "Run roborev fix.",
 		})
 		require.NoError(t, err)
 		return resp
@@ -715,7 +767,7 @@ func TestRecordPostToolUseFailedReviewPromptKeepsOtherRepoCommitReminder(t *test
 	}))
 	t.Cleanup(server.Close)
 
-	store := &StateStore{path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	store := &StateStore{reviews: NewHTTPReviewSource(server.URL), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
 	post := func(cwd, command string) Response {
 		resp, err := store.Record(Request{
 			Event: Input{
@@ -728,7 +780,6 @@ func TestRecordPostToolUseFailedReviewPromptKeepsOtherRepoCommitReminder(t *test
 			CommitThreshold:       1,
 			FailedReviewThreshold: 2,
 			Instruction:           "Run roborev fix.",
-			RoborevServerAddr:     server.URL,
 		})
 		require.NoError(t, err)
 		return resp
@@ -771,14 +822,14 @@ func TestRecordStopTracksReminderPromptCount(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	store := &StateStore{
+		reviews:  NewHTTPReviewSource(server.URL),
 		path:     filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{},
 	}
 	req := Request{
-		Event:             Input{SessionID: "session-1", CWD: repo.Path(), HookEventName: "Stop"},
-		Threshold:         1,
-		Instruction:       "Run roborev fix.",
-		RoborevServerAddr: server.URL,
+		Event:       Input{SessionID: "session-1", CWD: repo.Path(), HookEventName: "Stop"},
+		Threshold:   1,
+		Instruction: "Run roborev fix.",
 	}
 
 	first, err := store.Record(req)
@@ -828,6 +879,7 @@ func TestRecordStopQueriesMainRepoRootFromWorktree(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	store := &StateStore{
+		reviews:  NewHTTPReviewSource(server.URL),
 		path:     filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{},
 	}
@@ -840,7 +892,6 @@ func TestRecordStopQueriesMainRepoRootFromWorktree(t *testing.T) {
 		Threshold:             5,
 		FailedReviewThreshold: 1,
 		Instruction:           "Run roborev fix.",
-		RoborevServerAddr:     server.URL,
 	})
 
 	require.NoError(t, err)
@@ -890,6 +941,7 @@ func TestRecordStopTriggersFailedReviewWithoutRepoConfig(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	store := &StateStore{
+		reviews:  NewHTTPReviewSource(server.URL),
 		path:     filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{},
 	}
@@ -902,7 +954,6 @@ func TestRecordStopTriggersFailedReviewWithoutRepoConfig(t *testing.T) {
 		Threshold:             5,
 		FailedReviewThreshold: 1,
 		Instruction:           "Run roborev fix.",
-		RoborevServerAddr:     server.URL,
 	})
 
 	require.NoError(t, err)
@@ -935,6 +986,7 @@ func TestRecordStopSkipsUntrackedRepo(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	store := &StateStore{
+		reviews:  NewHTTPReviewSource(server.URL),
 		path:     filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{},
 	}
@@ -947,7 +999,6 @@ func TestRecordStopSkipsUntrackedRepo(t *testing.T) {
 		Threshold:             1,
 		FailedReviewThreshold: 1,
 		Instruction:           "Run roborev fix.",
-		RoborevServerAddr:     server.URL,
 	})
 
 	require.NoError(t, err)
@@ -989,6 +1040,7 @@ func TestRecordPreToolUseBaselinesUntrackedRepoForLaterPostCommitRegistration(t 
 	t.Cleanup(server.Close)
 
 	store := &StateStore{
+		reviews:  NewHTTPReviewSource(server.URL),
 		path:     filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{},
 	}
@@ -1000,9 +1052,8 @@ func TestRecordPreToolUseBaselinesUntrackedRepoForLaterPostCommitRegistration(t 
 			ToolName:      "Bash",
 			ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"git commit -m feature"`)},
 		},
-		CommitThreshold:   1,
-		Instruction:       "Run roborev fix.",
-		RoborevServerAddr: server.URL,
+		CommitThreshold: 1,
+		Instruction:     "Run roborev fix.",
 	}
 
 	pre, err := store.Record(req)
@@ -1056,6 +1107,7 @@ func TestRecordStopTriggersFailedReviewOnDetachedHead(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	store := &StateStore{
+		reviews:  NewHTTPReviewSource(server.URL),
 		path:     filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{},
 	}
@@ -1068,7 +1120,6 @@ func TestRecordStopTriggersFailedReviewOnDetachedHead(t *testing.T) {
 		Threshold:             5,
 		FailedReviewThreshold: 1,
 		Instruction:           "Run roborev fix.",
-		RoborevServerAddr:     server.URL,
 	})
 
 	require.NoError(t, err)
@@ -1112,6 +1163,7 @@ func TestRecordStopTriggersFailedRangeReviewOnDetachedHead(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	store := &StateStore{
+		reviews:  NewHTTPReviewSource(server.URL),
 		path:     filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{},
 	}
@@ -1124,7 +1176,6 @@ func TestRecordStopTriggersFailedRangeReviewOnDetachedHead(t *testing.T) {
 		Threshold:             5,
 		FailedReviewThreshold: 1,
 		Instruction:           "Run roborev fix.",
-		RoborevServerAddr:     server.URL,
 	})
 
 	require.NoError(t, err)
@@ -1173,6 +1224,7 @@ func TestRecordStopDetachedHeadCountsReachableBranchfulReview(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	store := &StateStore{
+		reviews:  NewHTTPReviewSource(server.URL),
 		path:     filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{},
 	}
@@ -1185,7 +1237,6 @@ func TestRecordStopDetachedHeadCountsReachableBranchfulReview(t *testing.T) {
 		Threshold:             5,
 		FailedReviewThreshold: 1,
 		Instruction:           "Run roborev fix.",
-		RoborevServerAddr:     server.URL,
 	})
 
 	require.NoError(t, err)
@@ -1226,6 +1277,7 @@ func TestRecordStopDetachedHeadDoesNotTriggerForUnrelatedFailedReviews(t *testin
 	t.Cleanup(server.Close)
 
 	store := &StateStore{
+		reviews:  NewHTTPReviewSource(server.URL),
 		path:     filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{},
 	}
@@ -1238,7 +1290,6 @@ func TestRecordStopDetachedHeadDoesNotTriggerForUnrelatedFailedReviews(t *testin
 		Threshold:             5,
 		FailedReviewThreshold: 1,
 		Instruction:           "Run roborev fix.",
-		RoborevServerAddr:     server.URL,
 	})
 
 	require.NoError(t, err)
@@ -1266,6 +1317,7 @@ func TestRecordPostToolUseFirstCommitWithoutBaselineDoesNotCount(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	store := &StateStore{
+		reviews:  NewHTTPReviewSource(server.URL),
 		path:     filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{},
 	}
@@ -1284,7 +1336,6 @@ func TestRecordPostToolUseFirstCommitWithoutBaselineDoesNotCount(t *testing.T) {
 		CommitThreshold:       1,
 		FailedReviewThreshold: 0,
 		Instruction:           "Run roborev fix.",
-		RoborevServerAddr:     server.URL,
 	})
 
 	require.NoError(t, err)
@@ -1304,6 +1355,7 @@ func TestRecordPreToolUseBaselineLetsFirstCommitCount(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	store := &StateStore{
+		reviews:  NewHTTPReviewSource(server.URL),
 		path:     filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{},
 	}
@@ -1315,9 +1367,8 @@ func TestRecordPreToolUseBaselineLetsFirstCommitCount(t *testing.T) {
 			ToolName:      "Bash",
 			ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"git commit -m second"`)},
 		},
-		CommitThreshold:   5,
-		Instruction:       "Run roborev fix.",
-		RoborevServerAddr: server.URL,
+		CommitThreshold: 5,
+		Instruction:     "Run roborev fix.",
 	}
 
 	pre, err := store.Record(req)
@@ -1346,6 +1397,7 @@ func TestRecordPostToolUseCountsCommitAfterBaseline(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	store := &StateStore{
+		reviews:  NewHTTPReviewSource(server.URL),
 		path:     filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{},
 	}
@@ -1357,9 +1409,8 @@ func TestRecordPostToolUseCountsCommitAfterBaseline(t *testing.T) {
 			ToolName:      "Bash",
 			ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"git status"`)},
 		},
-		CommitThreshold:   5,
-		Instruction:       "Run roborev fix.",
-		RoborevServerAddr: server.URL,
+		CommitThreshold: 5,
+		Instruction:     "Run roborev fix.",
 	}
 
 	// First observation establishes the HEAD baseline without counting.
@@ -1399,6 +1450,7 @@ func TestRecordPostToolUseCommitSliceSurvivesBranchAttachment(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	store := &StateStore{
+		reviews:  NewHTTPReviewSource(server.URL),
 		path:     filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{},
 	}
@@ -1410,9 +1462,8 @@ func TestRecordPostToolUseCommitSliceSurvivesBranchAttachment(t *testing.T) {
 			ToolName:      "Bash",
 			ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"git status"`)},
 		},
-		CommitThreshold:   10,
-		Instruction:       "Run roborev fix.",
-		RoborevServerAddr: server.URL,
+		CommitThreshold: 10,
+		Instruction:     "Run roborev fix.",
 	}
 
 	_, err := store.Record(baseReq)
@@ -1476,6 +1527,7 @@ func TestRecordPostToolUseAmendAfterBranchAttachmentKeepsDetachedCommitThreshold
 	t.Cleanup(server.Close)
 
 	store := &StateStore{
+		reviews:  NewHTTPReviewSource(server.URL),
 		path:     filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{},
 	}
@@ -1487,9 +1539,8 @@ func TestRecordPostToolUseAmendAfterBranchAttachmentKeepsDetachedCommitThreshold
 			ToolName:      "Bash",
 			ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"git status"`)},
 		},
-		CommitThreshold:   2,
-		Instruction:       "Run roborev fix.",
-		RoborevServerAddr: server.URL,
+		CommitThreshold: 2,
+		Instruction:     "Run roborev fix.",
 	}
 
 	_, err := store.Record(baseReq)
@@ -1548,7 +1599,7 @@ func TestRecordPostToolUseDetachedFailedReviewDedupeScopesByWorktree(t *testing.
 	}))
 	t.Cleanup(server.Close)
 
-	store := &StateStore{path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	store := &StateStore{reviews: NewHTTPReviewSource(server.URL), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
 	post := func(cwd string) Response {
 		resp, err := store.Record(Request{
 			Event: Input{
@@ -1560,7 +1611,6 @@ func TestRecordPostToolUseDetachedFailedReviewDedupeScopesByWorktree(t *testing.
 			},
 			FailedReviewThreshold: 1,
 			Instruction:           "Run roborev fix.",
-			RoborevServerAddr:     server.URL,
 		})
 		require.NoError(t, err)
 		return resp
@@ -1594,7 +1644,7 @@ func TestRecordPostToolUseDetachedFailedReviewDedupeScopesByDetachedHead(t *test
 	}))
 	t.Cleanup(server.Close)
 
-	store := &StateStore{path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	store := &StateStore{reviews: NewHTTPReviewSource(server.URL), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
 	post := func() Response {
 		resp, err := store.Record(Request{
 			Event: Input{
@@ -1606,7 +1656,6 @@ func TestRecordPostToolUseDetachedFailedReviewDedupeScopesByDetachedHead(t *test
 			},
 			FailedReviewThreshold: 1,
 			Instruction:           "Run roborev fix.",
-			RoborevServerAddr:     server.URL,
 		})
 		require.NoError(t, err)
 		return resp
@@ -1645,7 +1694,7 @@ func TestRecordPostToolUseCountsCommitInOtherRepoViaDashC(t *testing.T) {
 
 	cmd, err := json.Marshal(`git -C "` + inner.Path() + `" commit -m feature`)
 	require.NoError(t, err)
-	store := &StateStore{path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	store := &StateStore{reviews: NewHTTPReviewSource(server.URL), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
 	req := Request{
 		Event: Input{
 			SessionID:     "session-1",
@@ -1654,9 +1703,8 @@ func TestRecordPostToolUseCountsCommitInOtherRepoViaDashC(t *testing.T) {
 			ToolName:      "Bash",
 			ToolInput:     map[string]json.RawMessage{"command": cmd},
 		},
-		CommitThreshold:   1,
-		Instruction:       "Run roborev fix.",
-		RoborevServerAddr: server.URL,
+		CommitThreshold: 1,
+		Instruction:     "Run roborev fix.",
 	}
 
 	// The baseline records the inner repo's HEAD even though the hook cwd is outer.
@@ -1700,7 +1748,7 @@ func TestRecordPostToolUseCommitReasonReportsTriggeringRepo(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	store := &StateStore{path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	store := &StateStore{reviews: NewHTTPReviewSource(server.URL), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
 	post := func(repo *testutil.TestRepo, command string) Response {
 		resp, err := store.Record(Request{
 			Event: Input{
@@ -1710,9 +1758,8 @@ func TestRecordPostToolUseCommitReasonReportsTriggeringRepo(t *testing.T) {
 				ToolName:      "Bash",
 				ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"` + command + `"`)},
 			},
-			CommitThreshold:   1,
-			Instruction:       "Run roborev fix.",
-			RoborevServerAddr: server.URL,
+			CommitThreshold: 1,
+			Instruction:     "Run roborev fix.",
 		})
 		require.NoError(t, err)
 		return resp
@@ -1756,6 +1803,7 @@ func TestRecordPostToolUseCommitTriggersWhenReviewLagsBehindCommit(t *testing.T)
 	t.Cleanup(server.Close)
 
 	store := &StateStore{
+		reviews:  NewHTTPReviewSource(server.URL),
 		path:     filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{},
 	}
@@ -1767,9 +1815,8 @@ func TestRecordPostToolUseCommitTriggersWhenReviewLagsBehindCommit(t *testing.T)
 			ToolName:      "Bash",
 			ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"git status"`)},
 		},
-		CommitThreshold:   1,
-		Instruction:       "Run roborev fix.",
-		RoborevServerAddr: server.URL,
+		CommitThreshold: 1,
+		Instruction:     "Run roborev fix.",
 	}
 
 	// Establish the HEAD baseline without counting.
@@ -1816,6 +1863,7 @@ func TestRecordPostToolUseAmendPreservesDeferredCommitReminder(t *testing.T) {
 	t.Cleanup(server.Close)
 
 	store := &StateStore{
+		reviews:  NewHTTPReviewSource(server.URL),
 		path:     filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{},
 	}
@@ -1827,9 +1875,8 @@ func TestRecordPostToolUseAmendPreservesDeferredCommitReminder(t *testing.T) {
 			ToolName:      "Bash",
 			ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"git status"`)},
 		},
-		CommitThreshold:   1,
-		Instruction:       "Run roborev fix.",
-		RoborevServerAddr: server.URL,
+		CommitThreshold: 1,
+		Instruction:     "Run roborev fix.",
 	}
 
 	_, err := store.Record(base)
@@ -1880,7 +1927,7 @@ func TestRecordPostToolUseAmendPreservesEarlierPendingCommits(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	store := &StateStore{path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	store := &StateStore{reviews: NewHTTPReviewSource(server.URL), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
 	base := Request{
 		Event: Input{
 			SessionID:     "session-1",
@@ -1889,9 +1936,8 @@ func TestRecordPostToolUseAmendPreservesEarlierPendingCommits(t *testing.T) {
 			ToolName:      "Bash",
 			ToolInput:     map[string]json.RawMessage{"command": json.RawMessage(`"git status"`)},
 		},
-		CommitThreshold:   2,
-		Instruction:       "Run roborev fix.",
-		RoborevServerAddr: server.URL,
+		CommitThreshold: 2,
+		Instruction:     "Run roborev fix.",
 	}
 
 	_, err := store.Record(base)
@@ -1941,7 +1987,7 @@ func TestCountOpenFailedReviewsRequestsOmittedPrompts(t *testing.T) {
 	}))
 	t.Cleanup(server.Close)
 
-	_, ok := countOpenFailedReviews(context.Background(), repo.Path(), "main", head, server.URL)
+	_, ok := countOpenFailedReviews(context.Background(), NewHTTPReviewSource(server.URL), repo.Path(), "main", head)
 
 	require.True(t, ok)
 	query, _ := gotQuery.Load().(url.Values)
@@ -1955,7 +2001,7 @@ func TestDeferredPostToolReminderCoalescesAndWaitsForTriggeringBranch(t *testing
 	repo.CommitFile("main.go", "package main\n", "initial")
 	failedReviewCount := 1
 	server := newDeferredReminderServer(t, repo.Path(), &failedReviewCount)
-	store := &StateStore{path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	store := &StateStore{reviews: NewHTTPReviewSource(server.URL), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
 	base := Request{
 		Event: Input{
 			SessionID: "session-1",
@@ -1965,7 +2011,6 @@ func TestDeferredPostToolReminderCoalescesAndWaitsForTriggeringBranch(t *testing
 		},
 		CommitThreshold:       1,
 		Instruction:           "Resolve reviews.",
-		RoborevServerAddr:     server.URL,
 		DeferPostToolReminder: true,
 	}
 
@@ -2003,8 +2048,7 @@ func TestDeferredPostToolReminderCoalescesAndWaitsForTriggeringBranch(t *testing
 
 	repo.CheckoutNewBranch("other")
 	waiting, err := store.Record(Request{
-		Event:             Input{SessionID: "session-1", CWD: t.TempDir(), HookEventName: "Stop"},
-		RoborevServerAddr: server.URL,
+		Event: Input{SessionID: "session-1", CWD: t.TempDir(), HookEventName: "Stop"},
 	})
 	require.NoError(t, err)
 	assert.False(t, waiting.Triggered)
@@ -2013,8 +2057,7 @@ func TestDeferredPostToolReminderCoalescesAndWaitsForTriggeringBranch(t *testing
 
 	repo.Checkout("main")
 	resp, err := store.Record(Request{
-		Event:             Input{SessionID: "session-1", CWD: t.TempDir(), HookEventName: "Stop"},
-		RoborevServerAddr: server.URL,
+		Event: Input{SessionID: "session-1", CWD: t.TempDir(), HookEventName: "Stop"},
 	})
 	require.NoError(t, err)
 	assert.True(t, resp.Triggered)
@@ -2052,15 +2095,15 @@ func TestDeferredReminderWaitsWhenRepositoryIdentityChanges(t *testing.T) {
 	}
 	key := pendingReminderKey(pending)
 	store := &StateStore{
-		path: filepath.Join(t.TempDir(), "state.json"),
+		reviews: NewHTTPReviewSource(server.URL),
+		path:    filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{
 			"session-1": {PendingReminders: map[string]PendingReminder{key: pending}},
 		},
 	}
 
 	response, err := store.Record(Request{
-		Event:             Input{SessionID: "session-1", CWD: t.TempDir(), HookEventName: "Stop"},
-		RoborevServerAddr: server.URL,
+		Event: Input{SessionID: "session-1", CWD: t.TempDir(), HookEventName: "Stop"},
 	})
 
 	require.NoError(t, err)
@@ -2094,7 +2137,8 @@ func TestRecordStopSuppressesReminderWhileWorkspaceIsSnoozed(t *testing.T) {
 	worktreeKey := worktreeSequenceKey(repo.Path(), repo.Path())
 	branchKey := repoHeadKey(repo.Path(), "main")
 	store := &StateStore{
-		path: filepath.Join(t.TempDir(), "state.json"),
+		reviews: NewHTTPReviewSource(server.URL),
+		path:    filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{
 			"session-1": {
 				StopCountsSincePrompt:       map[string]int{branchKey: 3},
@@ -2107,7 +2151,6 @@ func TestRecordStopSuppressesReminderWhileWorkspaceIsSnoozed(t *testing.T) {
 	resp, err := store.Record(Request{
 		Event:     Input{SessionID: "session-1", CWD: repo.Path(), HookEventName: "Stop"},
 		Threshold: 1, FailedReviewThreshold: 1, Instruction: "Run roborev fix.",
-		RoborevServerAddr: server.URL,
 	})
 
 	require.NoError(t, err)
@@ -2147,11 +2190,11 @@ func TestStopReminderProgressIsScopedAcrossSnoozedWorkspaces(t *testing.T) {
 		}}}))
 	}))
 	t.Cleanup(server.Close)
-	store := &StateStore{path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	store := &StateStore{reviews: NewHTTPReviewSource(server.URL), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
 	record := func(cwd string) Response {
 		resp, err := store.Record(Request{
 			Event:     Input{SessionID: "session-1", CWD: cwd, HookEventName: "Stop"},
-			Threshold: 2, Instruction: "Run roborev fix.", RoborevServerAddr: server.URL,
+			Threshold: 2, Instruction: "Run roborev fix.",
 		})
 		require.NoError(t, err)
 		return resp
@@ -2198,7 +2241,8 @@ func TestDeferredReminderDoesNotEscapeSnoozedWorkspace(t *testing.T) {
 		LineageKey: "repo-b", CreatedAt: createdAt.Add(time.Second),
 	}
 	store := &StateStore{
-		path: filepath.Join(t.TempDir(), "state.json"),
+		reviews: NewHTTPReviewSource(server.URL),
+		path:    filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{
 			"session-1": {PendingReminders: map[string]PendingReminder{
 				pendingReminderKey(snoozed):    snoozed,
@@ -2208,8 +2252,7 @@ func TestDeferredReminderDoesNotEscapeSnoozedWorkspace(t *testing.T) {
 	}
 
 	response, err := store.Record(Request{
-		Event:             Input{SessionID: "session-1", CWD: repoA.Path(), HookEventName: "Stop"},
-		RoborevServerAddr: server.URL,
+		Event: Input{SessionID: "session-1", CWD: repoA.Path(), HookEventName: "Stop"},
 	})
 
 	require.NoError(t, err)
@@ -2231,15 +2274,15 @@ func TestDeferredReminderIsDiscardedWhenRepositoryIsUntracked(t *testing.T) {
 		LineageKey: "repo", CreatedAt: time.Now().UTC(),
 	}
 	store := &StateStore{
-		path: filepath.Join(t.TempDir(), "state.json"),
+		reviews: NewHTTPReviewSource(server.URL),
+		path:    filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{
 			"session-1": {PendingReminders: map[string]PendingReminder{pendingReminderKey(pending): pending}},
 		},
 	}
 
 	response, err := store.Record(Request{
-		Event:             Input{SessionID: "session-1", CWD: t.TempDir(), HookEventName: "Stop"},
-		RoborevServerAddr: server.URL,
+		Event: Input{SessionID: "session-1", CWD: t.TempDir(), HookEventName: "Stop"},
 	})
 
 	require.NoError(t, err)
@@ -2252,7 +2295,7 @@ func TestDeferredFailedReviewReminderIsRevalidatedBeforeDelivery(t *testing.T) {
 	repo.CommitFile("main.go", "package main\n", "initial")
 	failedReviewCount := 1
 	server := newDeferredReminderServer(t, repo.Path(), &failedReviewCount)
-	store := &StateStore{path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	store := &StateStore{reviews: NewHTTPReviewSource(server.URL), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
 
 	resp, err := store.Record(Request{
 		Event: Input{
@@ -2264,7 +2307,6 @@ func TestDeferredFailedReviewReminderIsRevalidatedBeforeDelivery(t *testing.T) {
 		},
 		FailedReviewThreshold: 1,
 		Instruction:           "Resolve reviews.",
-		RoborevServerAddr:     server.URL,
 		DeferPostToolReminder: true,
 	})
 	require.NoError(t, err)
@@ -2273,8 +2315,7 @@ func TestDeferredFailedReviewReminderIsRevalidatedBeforeDelivery(t *testing.T) {
 
 	failedReviewCount = 0
 	stop, err := store.Record(Request{
-		Event:             Input{SessionID: "session-1", CWD: t.TempDir(), HookEventName: "Stop"},
-		RoborevServerAddr: server.URL,
+		Event: Input{SessionID: "session-1", CWD: t.TempDir(), HookEventName: "Stop"},
 	})
 	require.NoError(t, err)
 	assert.False(t, stop.Triggered)
@@ -2288,7 +2329,7 @@ func TestDeferredFailedReviewReminderReopensAndRefreshesAfterResolution(t *testi
 	repo.CommitFile("main.go", "package main\n", "initial")
 	failedReviewCount := 2
 	server := newDeferredReminderServer(t, repo.Path(), &failedReviewCount)
-	store := &StateStore{path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	store := &StateStore{reviews: NewHTTPReviewSource(server.URL), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
 	request := Request{
 		Event: Input{
 			SessionID:     "session-1",
@@ -2299,7 +2340,6 @@ func TestDeferredFailedReviewReminderReopensAndRefreshesAfterResolution(t *testi
 		},
 		FailedReviewThreshold: 2,
 		Instruction:           "Resolve reviews.",
-		RoborevServerAddr:     server.URL,
 		DeferPostToolReminder: true,
 	}
 
@@ -2309,8 +2349,7 @@ func TestDeferredFailedReviewReminderReopensAndRefreshesAfterResolution(t *testi
 
 	failedReviewCount = 0
 	_, err = store.Record(Request{
-		Event:             Input{SessionID: "session-1", CWD: t.TempDir(), HookEventName: "Stop"},
-		RoborevServerAddr: server.URL,
+		Event: Input{SessionID: "session-1", CWD: t.TempDir(), HookEventName: "Stop"},
 	})
 	require.NoError(t, err)
 	state := store.sessions["session-1"]
@@ -2325,8 +2364,7 @@ func TestDeferredFailedReviewReminderReopensAndRefreshesAfterResolution(t *testi
 
 	failedReviewCount = 3
 	response, err := store.Record(Request{
-		Event:             Input{SessionID: "session-1", CWD: t.TempDir(), HookEventName: "Stop"},
-		RoborevServerAddr: server.URL,
+		Event: Input{SessionID: "session-1", CWD: t.TempDir(), HookEventName: "Stop"},
 	})
 	require.NoError(t, err)
 	assert.True(t, response.Triggered)
@@ -2339,7 +2377,7 @@ func TestDeferredCommitReminderIsDiscardedAfterReviewsResolve(t *testing.T) {
 	repo.CommitFile("main.go", "package main\n", "initial")
 	failedReviewCount := 1
 	server := newDeferredReminderServer(t, repo.Path(), &failedReviewCount)
-	store := &StateStore{path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	store := &StateStore{reviews: NewHTTPReviewSource(server.URL), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
 	base := Request{
 		Event: Input{
 			SessionID: "session-1",
@@ -2349,7 +2387,6 @@ func TestDeferredCommitReminderIsDiscardedAfterReviewsResolve(t *testing.T) {
 		},
 		CommitThreshold:       1,
 		Instruction:           "Resolve reviews.",
-		RoborevServerAddr:     server.URL,
 		DeferPostToolReminder: true,
 	}
 
@@ -2366,8 +2403,7 @@ func TestDeferredCommitReminderIsDiscardedAfterReviewsResolve(t *testing.T) {
 
 	failedReviewCount = 0
 	response, err := store.Record(Request{
-		Event:             Input{SessionID: "session-1", CWD: t.TempDir(), HookEventName: "Stop"},
-		RoborevServerAddr: server.URL,
+		Event: Input{SessionID: "session-1", CWD: t.TempDir(), HookEventName: "Stop"},
 	})
 	require.NoError(t, err)
 	assert.False(t, response.Triggered)
@@ -2387,16 +2423,16 @@ func TestDeferredReminderPreservesLegacyInstruction(t *testing.T) {
 		LineageKey: "repo", FailedReviewCount: 1, CreatedAt: time.Now().UTC(),
 	}
 	store := &StateStore{
-		path: filepath.Join(t.TempDir(), "state.json"),
+		reviews: NewHTTPReviewSource(server.URL),
+		path:    filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{
 			"session-1": {PendingReminders: map[string]PendingReminder{pendingReminderKey(pending): pending}},
 		},
 	}
 
 	response, err := store.Record(Request{
-		Event:             Input{SessionID: "session-1", CWD: t.TempDir(), HookEventName: "Stop"},
-		Instruction:       "Use the new default workflow.",
-		RoborevServerAddr: server.URL,
+		Event:       Input{SessionID: "session-1", CWD: t.TempDir(), HookEventName: "Stop"},
+		Instruction: "Use the new default workflow.",
 	})
 
 	require.NoError(t, err)
@@ -2424,7 +2460,8 @@ func TestDeferredReminderCancellationDoesNotConsumeCandidate(t *testing.T) {
 	}
 	key := pendingReminderKey(pending)
 	store := &StateStore{
-		path: filepath.Join(t.TempDir(), "state.json"),
+		reviews: NewHTTPReviewSource(server.URL),
+		path:    filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{
 			"session-1": {PendingReminders: map[string]PendingReminder{key: pending}},
 		},
@@ -2434,8 +2471,7 @@ func TestDeferredReminderCancellationDoesNotConsumeCandidate(t *testing.T) {
 	cwd := t.TempDir()
 	go func() {
 		_, err := store.RecordContext(ctx, Request{
-			Event:             Input{SessionID: "session-1", CWD: cwd, HookEventName: "Stop"},
-			RoborevServerAddr: server.URL,
+			Event: Input{SessionID: "session-1", CWD: cwd, HookEventName: "Stop"},
 		})
 		errCh <- err
 	}()
@@ -2499,7 +2535,8 @@ func TestSnoozedStopCancellationDoesNotMutateSession(t *testing.T) {
 		},
 	}
 	store := &StateStore{
-		path: filepath.Join(t.TempDir(), "state.json"),
+		reviews: NewHTTPReviewSource(server.URL),
+		path:    filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{
 			"session-1": initial,
 		},
@@ -2508,8 +2545,7 @@ func TestSnoozedStopCancellationDoesNotMutateSession(t *testing.T) {
 	errCh := make(chan error, 1)
 	go func() {
 		_, err := store.RecordContext(ctx, Request{
-			Event:             Input{SessionID: "session-1", CWD: repo.Path(), HookEventName: "Stop"},
-			RoborevServerAddr: server.URL,
+			Event: Input{SessionID: "session-1", CWD: repo.Path(), HookEventName: "Stop"},
 		})
 		errCh <- err
 	}()
@@ -2534,15 +2570,15 @@ func TestDeferredReminderPersistenceFailureDoesNotConsumeCandidate(t *testing.T)
 	}
 	key := pendingReminderKey(pending)
 	store := &StateStore{
-		path: t.TempDir(),
+		reviews: NewHTTPReviewSource(server.URL),
+		path:    t.TempDir(),
 		sessions: map[string]SessionState{
 			"session-1": {PendingReminders: map[string]PendingReminder{key: pending}},
 		},
 	}
 
 	_, err := store.Record(Request{
-		Event:             Input{SessionID: "session-1", CWD: t.TempDir(), HookEventName: "Stop"},
-		RoborevServerAddr: server.URL,
+		Event: Input{SessionID: "session-1", CWD: t.TempDir(), HookEventName: "Stop"},
 	})
 
 	require.Error(t, err)
@@ -2579,13 +2615,14 @@ func TestRecordCancellationDoesNotMutateAnyEvent(t *testing.T) {
 				input.ToolInput = map[string]json.RawMessage{"command": json.RawMessage(`"go test ./..."`)}
 			}
 			store := &StateStore{
-				path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{},
+				reviews: NewHTTPReviewSource(server.URL),
+				path:    filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{},
 			}
 			ctx, cancel := context.WithCancel(context.Background())
 			errCh := make(chan error, 1)
 			go func() {
 				_, err := store.RecordContext(ctx, Request{
-					Event: input, RoborevServerAddr: server.URL,
+					Event: input,
 				})
 				errCh <- err
 			}()
@@ -2637,7 +2674,8 @@ func TestDeferredReminderContinuesAfterEarlierLookupFailure(t *testing.T) {
 		LineageKey: "second", CreatedAt: createdAt.Add(time.Second),
 	}
 	store := &StateStore{
-		path: filepath.Join(t.TempDir(), "state.json"),
+		reviews: NewHTTPReviewSource(server.URL),
+		path:    filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{
 			"session-1": {
 				PendingReminders: map[string]PendingReminder{
@@ -2651,7 +2689,6 @@ func TestDeferredReminderContinuesAfterEarlierLookupFailure(t *testing.T) {
 	response, err := store.Record(Request{
 		Event:                 Input{SessionID: "session-1", CWD: t.TempDir(), HookEventName: "Stop"},
 		FailedReviewThreshold: 4,
-		RoborevServerAddr:     server.URL,
 	})
 
 	require.NoError(t, err)
@@ -2691,16 +2728,16 @@ func TestUnavailableDeferredReminderDoesNotSuppressStopProcessing(t *testing.T) 
 	}
 	key := pendingReminderKey(pending)
 	store := &StateStore{
-		path: filepath.Join(t.TempDir(), "state.json"),
+		reviews: NewHTTPReviewSource(server.URL),
+		path:    filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{
 			"session-1": {PendingReminders: map[string]PendingReminder{key: pending}},
 		},
 	}
 
 	response, err := store.Record(Request{
-		Event:             Input{SessionID: "session-1", CWD: repo.Path(), HookEventName: "Stop"},
-		Threshold:         1,
-		RoborevServerAddr: server.URL,
+		Event:     Input{SessionID: "session-1", CWD: repo.Path(), HookEventName: "Stop"},
+		Threshold: 1,
 	})
 
 	require.NoError(t, err)
@@ -2760,7 +2797,8 @@ func TestSnoozedStopPersistsCleanupWhenReminderLookupIsUnavailable(t *testing.T)
 	unavailableKey := pendingReminderKey(unavailable)
 	lineageKey := repoHeadKey(repo.Path(), "main")
 	store := &StateStore{
-		path: filepath.Join(t.TempDir(), "state.json"),
+		reviews: NewHTTPReviewSource(server.URL),
+		path:    filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{
 			"session-1": {
 				StopCountsSincePrompt:       map[string]int{lineageKey: 2},
@@ -2771,8 +2809,7 @@ func TestSnoozedStopPersistsCleanupWhenReminderLookupIsUnavailable(t *testing.T)
 	}
 
 	response, err := store.Record(Request{
-		Event:             Input{SessionID: "session-1", CWD: repo.Path(), HookEventName: "Stop"},
-		RoborevServerAddr: server.URL,
+		Event: Input{SessionID: "session-1", CWD: repo.Path(), HookEventName: "Stop"},
 	})
 
 	require.NoError(t, err)
@@ -2815,16 +2852,16 @@ func TestStopPromptSupersedesUnavailableReminderForSameLineage(t *testing.T) {
 		LineageKey: lineageKey, CreatedAt: time.Now().UTC(),
 	}
 	store := &StateStore{
-		path: filepath.Join(t.TempDir(), "state.json"),
+		reviews: NewHTTPReviewSource(server.URL),
+		path:    filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{
 			"session-1": {PendingReminders: map[string]PendingReminder{pendingReminderKey(pending): pending}},
 		},
 	}
 
 	response, err := store.Record(Request{
-		Event:             Input{SessionID: "session-1", CWD: repo.Path(), HookEventName: "Stop"},
-		Threshold:         1,
-		RoborevServerAddr: server.URL,
+		Event:     Input{SessionID: "session-1", CWD: repo.Path(), HookEventName: "Stop"},
+		Threshold: 1,
 	})
 
 	require.NoError(t, err)

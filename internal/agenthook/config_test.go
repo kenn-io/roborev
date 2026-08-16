@@ -262,7 +262,6 @@ func clearAgentHookEnv(t *testing.T) {
 		FailedReviewThresholdEnv,
 		InstructionEnv,
 		RoborevServerEnv,
-		DaemonAddrEnv,
 		DroidTurnThresholdEnv,
 		DroidCommitThresholdEnv,
 		DroidFailedReviewThresholdEnv,

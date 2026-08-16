@@ -6,8 +6,6 @@ import (
 	"errors"
 	"fmt"
 	"maps"
-	"net/http"
-	"net/url"
 	"os"
 	"path/filepath"
 	"runtime"
@@ -21,7 +19,6 @@ import (
 	gitrepo "go.kenn.io/kit/git/repo"
 
 	"go.kenn.io/roborev/internal/config"
-	roborevdaemon "go.kenn.io/roborev/internal/daemon"
 	roborevgit "go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -40,7 +37,7 @@ type hookScope struct {
 	Tracked             bool
 }
 
-type trackedRepoResolution struct {
+type TrackedRepoResolution struct {
 	Tracked      bool
 	RootPath     string
 	Identity     string
@@ -56,11 +53,12 @@ type gitScope struct {
 	Branch       string
 }
 
-func LoadState() (*StateStore, error) {
+func LoadState(reviews ReviewSource) (*StateStore, error) {
 	path := StatePath()
 	s := &StateStore{
 		path:     path,
 		sessions: map[string]SessionState{},
+		reviews:  reviews,
 	}
 	file, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -141,6 +139,37 @@ func (s *StateStore) Record(req Request) (Response, error) {
 	return s.RecordContext(context.Background(), req)
 }
 
+// Sessions returns an isolated snapshot of all tracked session state.
+func (s *StateStore) Sessions() map[string]SessionState {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	sessions := make(map[string]SessionState, len(s.sessions))
+	for id, state := range s.sessions {
+		sessions[id] = cloneSessionState(state)
+	}
+	return sessions
+}
+
+// Reset removes one session or all sessions and persists the updated snapshot.
+func (s *StateStore) Reset(sessionID string, all bool) error {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+
+	previous := s.sessions
+	if all {
+		s.sessions = map[string]SessionState{}
+	} else {
+		s.sessions = maps.Clone(s.sessions)
+		delete(s.sessions, sessionID)
+	}
+	if err := s.saveLocked(); err != nil {
+		s.sessions = previous
+		return err
+	}
+	return nil
+}
+
 func cloneSessionState(state SessionState) SessionState {
 	state.StopCountsSincePrompt = maps.Clone(state.StopCountsSincePrompt)
 	state.CommitCountsSincePrompt = maps.Clone(state.CommitCountsSincePrompt)
@@ -186,7 +215,7 @@ func (s *StateStore) recordStop(ctx context.Context, req Request) (Response, err
 			Skipped:               true,
 		}, nil
 	}
-	scope, ok := resolveHookScope(ctx, req.Event.CWD, req.RoborevServerAddr)
+	scope, ok := s.resolveHookScope(ctx, req.Event.CWD)
 	snoozed := ok && scope.SnoozedUntil.After(time.Now())
 	var prepare func(*SessionState) Response
 	if snoozed {
@@ -217,7 +246,7 @@ func (s *StateStore) recordStop(ctx context.Context, req Request) (Response, err
 		}, nil
 	}
 	failedReviewCount, haveFailedReviewCount := countOpenFailedReviews(
-		ctx, scope.TrackedRepoRoot, scope.Branch, scope.Head, req.RoborevServerAddr,
+		ctx, s.reviews, scope.TrackedRepoRoot, scope.Branch, scope.Head,
 	)
 
 	s.mu.Lock()
@@ -308,7 +337,7 @@ func (s *StateStore) recordPreToolUse(ctx context.Context, req Request) (Respons
 		}, nil
 	}
 
-	scope, ok := resolveHookScope(ctx, commandGitDir(req.Event.CWD, req.Event.Command()), req.RoborevServerAddr)
+	scope, ok := s.resolveHookScope(ctx, commandGitDir(req.Event.CWD, req.Event.Command()))
 	if !ok {
 		return Response{
 			SessionID:             req.Event.SessionID,
@@ -368,7 +397,7 @@ func (s *StateStore) recordPostToolUse(ctx context.Context, req Request) (Respon
 		gitDir = commandGitDir(req.Event.CWD, command)
 	}
 
-	scope, ok := resolveHookScope(ctx, gitDir, req.RoborevServerAddr)
+	scope, ok := s.resolveHookScope(ctx, gitDir)
 	if !ok {
 		return Response{
 			SessionID:             req.Event.SessionID,
@@ -384,7 +413,7 @@ func (s *StateStore) recordPostToolUse(ctx context.Context, req Request) (Respon
 	failedReviewCount, haveFailedReviewCount := 0, false
 	if scope.Tracked {
 		failedReviewCount, haveFailedReviewCount = countOpenFailedReviews(
-			ctx, scope.TrackedRepoRoot, scope.Branch, scope.Head, req.RoborevServerAddr,
+			ctx, s.reviews, scope.TrackedRepoRoot, scope.Branch, scope.Head,
 		)
 	}
 
@@ -721,7 +750,7 @@ func (s *StateStore) deliverPendingReminder(
 	discards := make([]pendingReminderCandidate, 0, len(candidates))
 	for _, candidate := range candidates {
 		pending := candidate.reminder
-		resolved, known := resolvePendingReminderRepo(ctx, pending, req.RoborevServerAddr)
+		resolved, known := s.resolvePendingReminderRepo(ctx, pending)
 		if err := ctx.Err(); err != nil {
 			return Response{}, false, err
 		}
@@ -736,8 +765,8 @@ func (s *StateStore) deliverPendingReminder(
 			continue
 		}
 		count, ok := countOpenFailedReviews(
-			ctx, pending.TrackedRepoRoot, pending.Branch,
-			pending.Head, req.RoborevServerAddr,
+			ctx, s.reviews, pending.TrackedRepoRoot, pending.Branch,
+			pending.Head,
 		)
 		if err := ctx.Err(); err != nil {
 			return Response{}, false, err
@@ -866,22 +895,24 @@ func (s *StateStore) deliverPendingReminder(
 	return Response{}, false, nil
 }
 
-func resolvePendingReminderRepo(
+func (s *StateStore) resolvePendingReminderRepo(
 	ctx context.Context,
 	pending PendingReminder,
-	configuredAddr string,
-) (trackedRepoResolution, bool) {
+) (TrackedRepoResolution, bool) {
 	path := pending.WorktreeRoot
 	if path == "" {
 		path = pending.TrackedRepoRoot
 	}
-	return resolveTrackedRepo(ctx, path, pending.Branch, configuredAddr)
+	if s.reviews == nil {
+		return TrackedRepoResolution{}, false
+	}
+	return s.reviews.ResolveTrackedRepo(ctx, path, pending.Branch)
 }
 
 func pendingReminderLineageMatches(
 	ctx context.Context,
 	pending PendingReminder,
-	resolved trackedRepoResolution,
+	resolved TrackedRepoResolution,
 	known bool,
 ) bool {
 	current, ok := currentGitScopeContext(ctx, pending.WorktreeRoot)
@@ -1282,7 +1313,7 @@ func absGitPath(base, path string) string {
 	return filepath.Clean(path)
 }
 
-func resolveHookScope(ctx context.Context, cwd, configuredAddr string) (hookScope, bool) {
+func (s *StateStore) resolveHookScope(ctx context.Context, cwd string) (hookScope, bool) {
 	gitInfo, ok := currentGitScopeContext(ctx, cwd)
 	if !ok {
 		return hookScope{}, false
@@ -1291,16 +1322,19 @@ func resolveHookScope(ctx context.Context, cwd, configuredAddr string) (hookScop
 	trackedIdentity := ""
 	tracked := true
 	var snoozedUntil time.Time
-	if resolved, known := resolveTrackedRepo(
-		ctx, gitInfo.WorktreeRoot, gitInfo.Branch, configuredAddr,
-	); known {
-		if !resolved.Tracked {
-			tracked = false
-		} else if strings.TrimSpace(resolved.RootPath) != "" {
-			trackedRoot = strings.TrimSpace(resolved.RootPath)
+	if s.reviews != nil {
+		resolved, known := s.reviews.ResolveTrackedRepo(
+			ctx, gitInfo.WorktreeRoot, gitInfo.Branch,
+		)
+		if known {
+			if !resolved.Tracked {
+				tracked = false
+			} else if strings.TrimSpace(resolved.RootPath) != "" {
+				trackedRoot = strings.TrimSpace(resolved.RootPath)
+			}
+			trackedIdentity = strings.TrimSpace(resolved.Identity)
+			snoozedUntil = resolved.SnoozedUntil
 		}
-		trackedIdentity = strings.TrimSpace(resolved.Identity)
-		snoozedUntil = resolved.SnoozedUntil
 	}
 	return hookScope{
 		WorktreeRoot:        gitInfo.WorktreeRoot,
@@ -1315,56 +1349,6 @@ func resolveHookScope(ctx context.Context, cwd, configuredAddr string) (hookScop
 		SnoozedUntil: snoozedUntil,
 		Tracked:      tracked,
 	}, true
-}
-
-func resolveTrackedRepo(
-	ctx context.Context, path, branch, configuredAddr string,
-) (trackedRepoResolution, bool) {
-	ep, ok := roborevEndpoint(configuredAddr)
-	if !ok {
-		return trackedRepoResolution{}, false
-	}
-	client := ep.HTTPClient(2 * time.Second)
-	values := url.Values{}
-	values.Set("path", path)
-	values.Set("branch", branch)
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ep.BaseURL()+"/api/repos/resolve?"+values.Encode(), nil)
-	if err != nil {
-		return trackedRepoResolution{}, false
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return trackedRepoResolution{}, false
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return trackedRepoResolution{}, false
-	}
-	var out struct {
-		Tracked *bool `json:"tracked"`
-		Repo    *struct {
-			RootPath              string     `json:"root_path"`
-			Identity              string     `json:"identity"`
-			Name                  string     `json:"name"`
-			AgentHookSnoozedUntil *time.Time `json:"agent_hook_snoozed_until,omitempty"`
-		} `json:"repo,omitempty"`
-	}
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
-		return trackedRepoResolution{}, false
-	}
-	if out.Tracked == nil {
-		return trackedRepoResolution{}, false
-	}
-	resolved := trackedRepoResolution{Tracked: *out.Tracked}
-	if out.Repo != nil {
-		resolved.RootPath = out.Repo.RootPath
-		resolved.Identity = out.Repo.Identity
-		resolved.Name = out.Repo.Name
-		if out.Repo.AgentHookSnoozedUntil != nil {
-			resolved.SnoozedUntil = *out.Repo.AgentHookSnoozedUntil
-		}
-	}
-	return resolved, true
 }
 
 // mainRepoRoot resolves the main repository root for daemon API queries,
@@ -1659,10 +1643,6 @@ func cleanShellToken(token string) string {
 	return strings.Trim(token, " \t\r\n'\"`;$&|(){}[]<>")
 }
 
-type jobsResponse struct {
-	Jobs []storage.ReviewJob `json:"jobs"`
-}
-
 // countsAsFailedReview reports whether job is a review whose F verdict should
 // drive the failed-review reminder. Review (single/range/dirty), synthesis, and
 // compact jobs produce meaningful P/F verdicts; task, insights, fix, and classify
@@ -1680,41 +1660,16 @@ func countsAsFailedReview(job storage.ReviewJob) bool {
 	}
 }
 
-func countOpenFailedReviews(ctx context.Context, repoRoot, branch, head, configuredAddr string) (int, bool) {
-	if repoRoot == "" {
+func countOpenFailedReviews(
+	ctx context.Context,
+	reviews ReviewSource,
+	repoRoot, branch, head string,
+) (int, bool) {
+	if repoRoot == "" || reviews == nil {
 		return 0, false
 	}
-	ep, ok := roborevEndpoint(configuredAddr)
+	jobs, ok := reviews.ListOpenReviewJobs(ctx, repoRoot, branch)
 	if !ok {
-		return 0, false
-	}
-	client := ep.HTTPClient(2 * time.Second)
-	values := url.Values{}
-	values.Set("repo", repoRoot)
-	if branch != "" {
-		values.Set("branch", branch)
-		values.Set("branch_include_empty", "true")
-	}
-	values.Set("status", "done")
-	values.Set("closed", "false")
-	values.Set("limit", "10000")
-	// Only job metadata is needed to count verdicts; full prompts would add
-	// tens of megabytes of JSON per hook event on busy repos.
-	values.Set("omit_prompt", "true")
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, ep.BaseURL()+"/api/jobs?"+values.Encode(), nil)
-	if err != nil {
-		return 0, false
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		return 0, false
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		return 0, false
-	}
-	var out jobsResponse
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
 		return 0, false
 	}
 	var lineageMatcher *roborevgit.BranchLineageMatcher
@@ -1727,7 +1682,7 @@ func countOpenFailedReviews(ctx context.Context, repoRoot, branch, head, configu
 		return lineageMatcher != nil && lineageMatcher.Matches(ref)
 	}
 	count := 0
-	for _, job := range out.Jobs {
+	for _, job := range jobs {
 		if job.Status != "" && job.Status != storage.JobStatusDone {
 			continue
 		}
@@ -1797,16 +1752,4 @@ func refReachableFromHead(repoRoot, ref, head string) bool {
 	}
 	ok, err := roborevgit.IsAncestor(repoRoot, ref, head)
 	return err == nil && ok
-}
-
-func roborevEndpoint(configuredAddr string) (roborevdaemon.DaemonEndpoint, bool) {
-	if configuredAddr != "" {
-		ep, err := roborevdaemon.ParseEndpoint(configuredAddr)
-		return ep, err == nil
-	}
-	info, err := roborevdaemon.GetAnyRunningDaemon()
-	if err != nil {
-		return roborevdaemon.DaemonEndpoint{}, false
-	}
-	return info.Endpoint(), true
 }

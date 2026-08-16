@@ -22,7 +22,6 @@ const (
 	FailedReviewThresholdEnv = "ROBOREV_AGENT_HOOK_FAILED_REVIEW_THRESHOLD"
 	InstructionEnv           = "ROBOREV_AGENT_HOOK_INSTRUCTION"
 	RoborevServerEnv         = "ROBOREV_AGENT_HOOK_ROBOREV_ADDR"
-	DaemonAddrEnv            = "ROBOREV_AGENT_HOOK_DAEMON_ADDR"
 
 	DroidTurnThresholdEnv         = "ROBOREV_DROID_HOOK_TURN_THRESHOLD"
 	DroidCommitThresholdEnv       = "ROBOREV_DROID_HOOK_COMMIT_THRESHOLD"

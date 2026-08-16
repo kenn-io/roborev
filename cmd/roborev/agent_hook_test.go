@@ -6,6 +6,8 @@ import (
 	"encoding/json"
 	"errors"
 	"io"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"path/filepath"
 	"strings"
@@ -32,6 +34,50 @@ func TestAgentHookInstallSupportsExplicitQwenProfile(t *testing.T) {
 	require.NoError(t, err)
 	assert.Contains(t, string(body), "agent-hook run --agent qwen")
 	assert.Contains(t, string(body), "--source=roborev-agent-hook")
+}
+
+func TestPostAgentHookUsesRegularDaemonEndpoint(t *testing.T) {
+	var gotPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_ = json.NewEncoder(w).Encode(agenthook.Response{
+			SessionID: "session-1",
+			Triggered: true,
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	response, err := postAgentHook(
+		context.Background(), strings.TrimPrefix(server.URL, "http://"),
+		agenthook.Request{Event: agenthook.Input{SessionID: "session-1"}},
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, "/api/agent-hook/event", gotPath)
+	assert.Equal(t, "session-1", response.SessionID)
+	assert.True(t, response.Triggered)
+}
+
+func TestRunAgentHookUsesConfiguredRegularDaemonEndpoint(t *testing.T) {
+	var gotPath string
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		_ = json.NewEncoder(w).Encode(agenthook.Response{SessionID: "session-1"})
+	}))
+	t.Cleanup(server.Close)
+	opts := agenthook.DefaultOptions()
+	opts.RoborevServerAddr = strings.TrimPrefix(server.URL, "http://")
+
+	err := runAgentHook(
+		kitagenthook.AgentClaude,
+		opts,
+		strings.NewReader(`{"session_id":"session-1","hook_event_name":"Stop"}`),
+		io.Discard,
+		io.Discard,
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, "/api/agent-hook/event", gotPath)
 }
 
 func TestAgentHookInstallRejectsMultiProfileConfigOverride(t *testing.T) {
@@ -61,7 +107,7 @@ func TestAgentHookRunSupportsLegacyProfilelessRegistration(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	oldPost := postAgentHook
 	var got agenthook.Request
-	postAgentHook = func(_ context.Context, req agenthook.Request) (agenthook.Response, error) {
+	postAgentHook = func(_ context.Context, _ string, req agenthook.Request) (agenthook.Response, error) {
 		got = req
 		return agenthook.Response{Triggered: true, Reason: "resolve reviews"}, nil
 	}
@@ -126,23 +172,9 @@ func TestAgentHookRemovedFlagsAreRejected(t *testing.T) {
 	}
 }
 
-func TestAgentHookDaemonHasLifecycleSubcommands(t *testing.T) {
-	daemonCmd, _, err := agentHookCmd().Find([]string{"daemon"})
-	require.NoError(t, err)
-	require.Equal(t, "daemon", daemonCmd.Name())
-
-	got := map[string]bool{}
-	for _, sub := range daemonCmd.Commands() {
-		got[sub.Name()] = true
-	}
-	for _, want := range []string{"run", "start", "status", "stop", "restart"} {
-		assert.True(t, got[want], "missing daemon subcommand %q", want)
-	}
-}
-
 func TestRunAgentHookFailsOpenWhenDaemonUnavailable(t *testing.T) {
 	oldPost := postAgentHook
-	postAgentHook = func(context.Context, agenthook.Request) (agenthook.Response, error) {
+	postAgentHook = func(context.Context, string, agenthook.Request) (agenthook.Response, error) {
 		return agenthook.Response{}, errors.New("daemon unavailable")
 	}
 	t.Cleanup(func() { postAgentHook = oldPost })
@@ -163,7 +195,7 @@ func TestRunAgentHookFailsOpenWhenDaemonUnavailable(t *testing.T) {
 
 func TestRunAgentHookEncodesKitStopResponse(t *testing.T) {
 	oldPost := postAgentHook
-	postAgentHook = func(context.Context, agenthook.Request) (agenthook.Response, error) {
+	postAgentHook = func(context.Context, string, agenthook.Request) (agenthook.Response, error) {
 		return agenthook.Response{Triggered: true, Reason: "resolve reviews"}, nil
 	}
 	t.Cleanup(func() { postAgentHook = oldPost })
@@ -250,7 +282,7 @@ func TestRunAgentHookAppendsFixGuidelinesToPostToolUse(t *testing.T) {
 func TestRunAgentHookCursorSuppressesUnsupportedControlOutput(t *testing.T) {
 	oldPost := postAgentHook
 	var got agenthook.Request
-	postAgentHook = func(_ context.Context, req agenthook.Request) (agenthook.Response, error) {
+	postAgentHook = func(_ context.Context, _ string, req agenthook.Request) (agenthook.Response, error) {
 		got = req
 		return agenthook.Response{Triggered: true, Reason: "must not be encoded"}, nil
 	}
@@ -275,7 +307,7 @@ func TestRunAgentHookCursorSuppressesUnsupportedControlOutput(t *testing.T) {
 func TestRunAgentHookHermesDefersPostToolReminder(t *testing.T) {
 	oldPost := postAgentHook
 	var got agenthook.Request
-	postAgentHook = func(_ context.Context, req agenthook.Request) (agenthook.Response, error) {
+	postAgentHook = func(_ context.Context, _ string, req agenthook.Request) (agenthook.Response, error) {
 		got = req
 		return agenthook.Response{Triggered: true, Reason: "defer this"}, nil
 	}
@@ -341,7 +373,7 @@ func TestRunAgentHookPreservesNormalizedEventFields(t *testing.T) {
 		t.Run(tt.name, func(t *testing.T) {
 			oldPost := postAgentHook
 			var got agenthook.Request
-			postAgentHook = func(_ context.Context, req agenthook.Request) (agenthook.Response, error) {
+			postAgentHook = func(_ context.Context, _ string, req agenthook.Request) (agenthook.Response, error) {
 				got = req
 				return agenthook.Response{}, nil
 			}
