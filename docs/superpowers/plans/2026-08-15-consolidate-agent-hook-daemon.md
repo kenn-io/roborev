@@ -314,8 +314,10 @@ s.agentHookState, s.agentHookStateErr = agenthook.LoadState(daemonAgentHookSourc
 
 Do not fail `Server.Start` when `agentHookStateErr != nil`. Preserve the error
 on `Server`, do not overwrite or reset the unreadable snapshot, and let only
-Agent Hook endpoints return the wrapped state-loading error. The normal test
-package remains isolated through its existing `TestMain`.
+Agent Hook endpoints return the wrapped state-loading error for that server's
+lifetime. Recovery requires repairing or removing the file and restarting the
+regular daemon. The normal test package remains isolated through its existing
+`TestMain`.
 
 - [ ] **Step 5: Register event, sessions, and reset operations**
 

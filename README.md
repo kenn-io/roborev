@@ -106,8 +106,10 @@ and adds optional hooks after configured turn, commit, or failed-review
 thresholds are met. Reminders include a complete CLI fallback when no roborev
 skill is installed. Hermes delivers queued post-tool reminders at `Stop`; Cursor
 records the same events but emits no control response.
-The hook uses a separate local `roborev-agent-hook` daemon for session counters;
-it does not run inside the main roborev daemon.
+Installed hooks post events to the regular roborev daemon. That daemon evaluates
+the reminders and persists session counters in
+`${ROBOREV_DATA_DIR:-~/.roborev}/agent-hook/state.json`. Hook callbacks fail open
+when the daemon is unavailable, so they do not block the coding agent.
 
 For fully automated iteration (advanced feature), use `refine`:
 
@@ -349,6 +351,7 @@ hook, so a configured integration never goes dark unnoticed.
 | `ROBOREV_AGENT_HOOK_TURN_THRESHOLD` | Override agent-hook Stop threshold |
 | `ROBOREV_AGENT_HOOK_COMMIT_THRESHOLD` | Override agent-hook commit threshold |
 | `ROBOREV_AGENT_HOOK_FAILED_REVIEW_THRESHOLD` | Override agent-hook failed-review threshold |
+| `ROBOREV_AGENT_HOOK_ROBOREV_ADDR` | Override the regular daemon address used by Agent Hook |
 | `ROBOREV_DROID_HOOK_TURN_THRESHOLD` | Override Factory Droid agent-hook Stop threshold |
 | `ROBOREV_DROID_HOOK_COMMIT_THRESHOLD` | Override Factory Droid agent-hook commit threshold |
 | `ROBOREV_DROID_HOOK_FAILED_REVIEW_THRESHOLD` | Override Factory Droid agent-hook failed-review threshold |

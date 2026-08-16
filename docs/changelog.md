@@ -52,6 +52,12 @@ All notable changes to roborev, grouped by minor release.
     explicit unavailable state when browser serving is disabled. The existing
     `roborev status` form remains available with identical output, and JSON
     status includes the additive `web_url` field.
+- Agent Hook now uses the regular roborev daemon for event handling, session
+    inspection, and resets. The daemon reuses existing counters from
+    `${ROBOREV_DATA_DIR:-~/.roborev}/agent-hook/state.json`; no second daemon is
+    started. Before upgrading from a release with the auxiliary daemon, stop it
+    with that release's `roborev agent-hook daemon stop` command. See
+    [Agent Hook](/agent-hook/#upgrading-existing-hooks).
 - `roborev status` now lists active Agent Hook snoozes with their exact
     repository, worktree, branch, and expiry, while the TUI shows a contextual
     snooze badge for an exactly filtered checkout. See

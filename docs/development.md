@@ -35,14 +35,16 @@ roborev/
 ## Architecture
 
 ```
-CLI (roborev) -> HTTP API -> Daemon (roborev daemon run) -> Worker Pool -> Agents
-                                |
-                            SQLite DB
+CLI / Agent hooks -> HTTP API -> Daemon (roborev daemon run) -> Worker Pool -> Agents
+                                     |
+                                     +-> SQLite DB
+                                     +-> Agent Hook JSON state
 ```
 
 - **Daemon**: HTTP server on port 7373 (auto-finds available port if busy)
 - **Workers**: Pool of 4 (configurable) parallel review workers
 - **Storage**: SQLite at `~/.roborev/reviews.db` with WAL mode
+- **Agent Hook state**: JSON at `~/.roborev/agent-hook/state.json`
 
 ## Key Files
 

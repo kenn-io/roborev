@@ -96,6 +96,13 @@ combined with `--binary`.
 
 ### Upgrading existing hooks
 
+!!! warning "Stop the old Agent Hook daemon before upgrading"
+
+    If the installed release provides the auxiliary Agent Hook daemon, run that
+    release's `roborev agent-hook daemon stop` command before installing or starting
+    the new release. The new release removes that command and contains no
+    old-process discovery, takeover, or shutdown fallback.
+
 Run `roborev agent-hook install` once after upgrading. The new registrations
 carry a feature-specific ownership marker so later installs replace only roborev
 agent hooks and preserve unrelated commands. The installer recognizes direct
@@ -145,19 +152,22 @@ roborev agent-hook run --agent <profile>
 
 `run` requires `--agent`, reads one finite native hook payload from stdin,
 passes it through kit's typed dispatcher, posts a normalized request to the
-local `roborev-agent-hook` daemon, and lets kit encode the native response.
+regular roborev daemon, and lets kit encode the native response.
 
-The local hook daemon stores only session accounting under:
+The regular daemon loads and persists session accounting at:
 
 ```text
-${ROBOREV_DATA_DIR:-~/.roborev}/agent-hook/
+${ROBOREV_DATA_DIR:-~/.roborev}/agent-hook/state.json
 ```
 
-It is separate from the main roborev daemon, which remains the source of truth
-for repositories, jobs, and review verdicts. Hook-daemon communication fails
-open: a diagnostic goes to stderr and the harness receives an empty native
-response. Invalid native payloads or unsupported profile names remain normal CLI
-errors.
+The same process reads repository registration, review jobs, verdicts, and
+workspace snoozes from the review database. Hook communication fails open: a
+diagnostic goes to stderr and the harness receives an empty native response.
+Invalid native payloads or unsupported profile names remain normal CLI errors.
+If the JSON snapshot is unreadable, only Agent Hook event, status, and reset
+operations are unavailable; review and queue APIs continue to run, and roborev
+does not overwrite the unreadable file. Repair or remove the file, then restart
+the regular daemon to load it again.
 
 Persisting reminder state is the at-most-once delivery boundary. Cancellation
 observed before that commit leaves a reminder queued; a disconnect after the
@@ -264,8 +274,9 @@ Set a threshold to `0` to disable that trigger. Resolution order is:
 run flags > environment variables > profile config section > defaults
 ```
 
-`ROBOREV_AGENT_HOOK_DAEMON_ADDR` selects a particular local hook-daemon address.
-Address overrides are operational and are not persisted in TOML.
+`--roborev-server` and `ROBOREV_AGENT_HOOK_ROBOREV_ADDR` select the regular
+roborev daemon used by the hook callback. Address overrides are operational and
+are not persisted in TOML.
 
 ## Inspecting Sessions
 
@@ -282,11 +293,5 @@ roborev agent-hook reset <session-id>
 roborev agent-hook reset --all
 ```
 
-Manual daemon lifecycle commands are available when needed:
-
-```bash
-roborev agent-hook daemon start
-roborev agent-hook daemon status
-roborev agent-hook daemon stop
-roborev agent-hook daemon restart
-```
+These commands use the regular roborev daemon; there is no separate Agent Hook
+process to manage.

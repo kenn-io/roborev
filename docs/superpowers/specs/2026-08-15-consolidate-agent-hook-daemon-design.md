@@ -69,9 +69,10 @@ persisted JSON snapshot is reloaded when the regular daemon returns.
 
 If the JSON snapshot cannot be loaded, the regular daemon preserves it without
 overwriting it and continues serving reviews and all unrelated features. Agent
-Hook event, status, and reset endpoints return a clear state-loading error until
-the file is repaired or explicitly removed by the operator. Roborev does not
-silently reset corrupt state.
+Hook event, status, and reset endpoints return a clear state-loading error. The
+daemon loads this file only during startup, so the operator must repair or
+remove the file and then restart the regular daemon. Roborev does not silently
+reset corrupt state or retry the load inside the same process.
 
 ## User-Facing Surface
 

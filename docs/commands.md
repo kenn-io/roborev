@@ -932,7 +932,6 @@ roborev agent-hook dump --agent hermes  # Native YAML config on stdout
 roborev agent-hook run --agent cursor   # Harness runtime; --agent is required
 roborev agent-hook status               # Tracked session counters as JSON
 roborev agent-hook reset <session-id>   # Reset one session (or --all)
-roborev agent-hook daemon start         # start | status | stop | restart
 ```
 
 | Flag | Description |
@@ -948,6 +947,11 @@ The default install detects agents by executable or existing config directory;
 project `.factory/hooks.json` paths. Hermes queues post-tool reminders for a
 later `Stop`. Cursor records the same events as other profiles but emits no
 control response.
+
+If the old release provides `roborev agent-hook daemon`, run that release's
+`roborev agent-hook daemon stop` before installing or starting the new release.
+The new release uses only the regular roborev daemon and does not take over an
+old auxiliary process.
 
 After upgrading existing hooks, run `roborev agent-hook install` once. It
 replaces recognizable Codex, Claude, and Factory Droid registrations from the
