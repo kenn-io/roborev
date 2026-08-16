@@ -3,6 +3,7 @@ package daemon
 import (
 	"time"
 
+	"go.kenn.io/roborev/internal/agenthook"
 	"go.kenn.io/roborev/internal/backfill"
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/tokens"
@@ -400,6 +401,41 @@ type AgentHookSnoozeOutput struct {
 	Body struct {
 		Snoozed      bool       `json:"snoozed"`
 		SnoozedUntil *time.Time `json:"snoozed_until,omitempty"`
+	}
+}
+
+type AgentHookSessionsInput struct{}
+
+type AgentHookSessionsOutput struct {
+	Body struct {
+		Sessions map[string]agenthook.SessionState `json:"sessions"`
+	}
+}
+
+type AgentHookEventInput struct {
+	Body AgentHookEventRequest
+}
+
+type AgentHookEventOutput struct {
+	Body AgentHookEventResponse
+}
+
+type AgentHookEventRequest agenthook.Request
+
+type AgentHookEventResponse agenthook.Response
+
+type AgentHookResetRequest struct {
+	All       bool   `json:"all,omitempty"`
+	SessionID string `json:"session_id,omitempty"`
+}
+
+type AgentHookResetInput struct {
+	Body AgentHookResetRequest
+}
+
+type AgentHookResetOutput struct {
+	Body struct {
+		OK bool `json:"ok"`
 	}
 }
 

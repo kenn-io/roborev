@@ -23,6 +23,7 @@ import (
 	gitrepo "go.kenn.io/kit/git/repo"
 
 	"go.kenn.io/roborev/internal/agent"
+	"go.kenn.io/roborev/internal/agenthook"
 	"go.kenn.io/roborev/internal/backfill"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/git"
@@ -70,6 +71,8 @@ type Server struct {
 	shutdownDraining        bool
 	updateDrain             *updateDrainLease
 	updateCoordinator       *updateDrainCoordinator
+	agentHookState          *agenthook.StateStore
+	agentHookStateErr       error
 
 	// Cached machine ID to avoid INSERT on every status request
 	machineIDMu sync.Mutex
@@ -158,6 +161,9 @@ func newServerWithLogs(
 		shutdownCh:    make(chan struct{}),
 	}
 	s.updateCoordinator = &updateDrainCoordinator{server: s, now: time.Now}
+	s.agentHookState, s.agentHookStateErr = agenthook.LoadState(
+		daemonAgentHookSource{db: db},
+	)
 
 	mux := http.NewServeMux()
 	s.registerHumaAPI(mux)

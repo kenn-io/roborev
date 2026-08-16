@@ -165,6 +165,27 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 			o.Tags = []string{"agent-hook"}
 		})
 
+	huma.Get(api, "/api/agent-hook/sessions", s.humaAgentHookSessions,
+		func(o *huma.Operation) {
+			o.OperationID = "list-agent-hook-sessions"
+			o.Summary = "List Agent Hook sessions"
+			o.Tags = []string{"agent-hook"}
+		})
+
+	huma.Post(api, "/api/agent-hook/event", s.humaAgentHookEvent,
+		func(o *huma.Operation) {
+			o.OperationID = "record-agent-hook-event"
+			o.Summary = "Record an Agent Hook event"
+			o.Tags = []string{"agent-hook"}
+		})
+
+	huma.Post(api, "/api/agent-hook/reset", s.humaAgentHookReset,
+		func(o *huma.Operation) {
+			o.OperationID = "reset-agent-hook-sessions"
+			o.Summary = "Reset Agent Hook sessions"
+			o.Tags = []string{"agent-hook"}
+		})
+
 	huma.Get(api, "/api/branches", s.humaListBranches,
 		func(o *huma.Operation) {
 			o.OperationID = "list-branches"

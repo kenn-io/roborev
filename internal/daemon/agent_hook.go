@@ -1,0 +1,143 @@
+package daemon
+
+import (
+	"context"
+	"database/sql"
+	"errors"
+	"fmt"
+	"strings"
+	"time"
+
+	"github.com/danielgtaylor/huma/v2"
+	gitrepo "go.kenn.io/kit/git/repo"
+
+	"go.kenn.io/roborev/internal/agenthook"
+	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/storage"
+)
+
+type daemonAgentHookSource struct {
+	db *storage.DB
+}
+
+func (s daemonAgentHookSource) ResolveTrackedRepo(
+	ctx context.Context, path, branch string,
+) (agenthook.TrackedRepoResolution, bool) {
+	path = strings.TrimSpace(path)
+	if path == "" {
+		return agenthook.TrackedRepoResolution{}, false
+	}
+	lookupPath := path
+	if repoRoot, err := gitrepo.MainRoot(ctx, path); err == nil {
+		lookupPath = repoRoot
+	}
+	repo, err := s.db.GetRepoByPath(lookupPath)
+	if errors.Is(err, sql.ErrNoRows) {
+		return agenthook.TrackedRepoResolution{}, true
+	}
+	if err != nil {
+		return agenthook.TrackedRepoResolution{}, false
+	}
+	if repo.Identity != "" &&
+		config.ResolveRepoIdentity(lookupPath, nil) != repo.Identity {
+		return agenthook.TrackedRepoResolution{}, true
+	}
+	resolved := agenthook.TrackedRepoResolution{
+		Tracked:  true,
+		RootPath: repo.RootPath,
+		Identity: repo.Identity,
+		Name:     repo.Name,
+	}
+	snooze, err := s.db.ActiveAgentHookSnooze(
+		repo.RootPath, path, branch, time.Now(),
+	)
+	if err != nil {
+		return agenthook.TrackedRepoResolution{}, false
+	}
+	if snooze != nil {
+		resolved.SnoozedUntil = snooze.SnoozedUntil
+	}
+	return resolved, true
+}
+
+func (s daemonAgentHookSource) ListOpenReviewJobs(
+	_ context.Context, repoRoot, branch string,
+) ([]storage.ReviewJob, bool) {
+	opts := []storage.ListJobsOption{
+		storage.WithoutPrompt(),
+		storage.WithClosed(false),
+		storage.WithExcludePanelRole(storage.PanelRoleMember),
+	}
+	if branch != "" {
+		opts = append(opts, storage.WithBranchOrEmpty(branch))
+	}
+	jobs, err := s.db.ListJobs(
+		string(storage.JobStatusDone), repoRoot, 10000, 0, opts...,
+	)
+	if err != nil {
+		return nil, false
+	}
+	return jobs, true
+}
+
+func (s *Server) agentHookStore() (*agenthook.StateStore, error) {
+	if s.agentHookStateErr != nil {
+		return nil, huma.Error503ServiceUnavailable(
+			"Agent Hook state is unavailable: " + s.agentHookStateErr.Error(),
+		)
+	}
+	return s.agentHookState, nil
+}
+
+func (s *Server) humaAgentHookEvent(
+	ctx context.Context, input *AgentHookEventInput,
+) (*AgentHookEventOutput, error) {
+	state, err := s.agentHookStore()
+	if err != nil {
+		return nil, err
+	}
+	if strings.TrimSpace(input.Body.Event.SessionID) == "" {
+		return nil, huma.Error400BadRequest("session_id is required")
+	}
+	response, err := state.RecordContext(ctx, agenthook.Request(input.Body))
+	if err != nil {
+		return nil, huma.Error500InternalServerError(
+			fmt.Sprintf("record Agent Hook event: %v", err),
+		)
+	}
+	return &AgentHookEventOutput{Body: AgentHookEventResponse(response)}, nil
+}
+
+func (s *Server) humaAgentHookSessions(
+	_ context.Context, _ *AgentHookSessionsInput,
+) (*AgentHookSessionsOutput, error) {
+	state, err := s.agentHookStore()
+	if err != nil {
+		return nil, err
+	}
+	resp := &AgentHookSessionsOutput{}
+	resp.Body.Sessions = state.Sessions()
+	return resp, nil
+}
+
+func (s *Server) humaAgentHookReset(
+	_ context.Context, input *AgentHookResetInput,
+) (*AgentHookResetOutput, error) {
+	state, err := s.agentHookStore()
+	if err != nil {
+		return nil, err
+	}
+	if !input.Body.All && strings.TrimSpace(input.Body.SessionID) == "" {
+		return nil, huma.Error400BadRequest(
+			"session_id or all=true is required",
+		)
+	}
+	if err := state.Reset(input.Body.SessionID, input.Body.All); err != nil {
+		return nil, huma.Error500InternalServerError(
+			fmt.Sprintf("reset Agent Hook state: %v", err),
+		)
+	}
+	resp := &AgentHookResetOutput{}
+	resp.Body.OK = true
+	return resp, nil
+}
