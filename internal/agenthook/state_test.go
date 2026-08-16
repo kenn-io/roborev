@@ -4,9 +4,6 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
-	"net/http"
-	"net/http/httptest"
-	"net/url"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -22,6 +19,50 @@ import (
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testutil"
 )
+
+type fakeReviewSource struct {
+	resolve func(context.Context, string, string) (TrackedRepoResolution, bool)
+	list    func(context.Context, string, string) ([]storage.ReviewJob, bool)
+}
+
+func (f fakeReviewSource) ResolveTrackedRepo(
+	ctx context.Context, path, branch string,
+) (TrackedRepoResolution, bool) {
+	if f.resolve == nil {
+		return TrackedRepoResolution{}, false
+	}
+	return f.resolve(ctx, path, branch)
+}
+
+func (f fakeReviewSource) ListOpenReviewJobs(
+	ctx context.Context, repoRoot, branch string,
+) ([]storage.ReviewJob, bool) {
+	if f.list == nil {
+		return nil, false
+	}
+	return f.list(ctx, repoRoot, branch)
+}
+
+func reviewSourceWithJobs(jobs ...storage.ReviewJob) ReviewSource {
+	return fakeReviewSource{
+		list: func(context.Context, string, string) ([]storage.ReviewJob, bool) {
+			return jobs, true
+		},
+	}
+}
+
+func trackedReviewSource(root string, jobs ...storage.ReviewJob) ReviewSource {
+	return fakeReviewSource{
+		resolve: func(context.Context, string, string) (TrackedRepoResolution, bool) {
+			return TrackedRepoResolution{
+				Tracked: true, RootPath: root, Name: filepath.Base(root),
+			}, true
+		},
+		list: func(context.Context, string, string) ([]storage.ReviewJob, bool) {
+			return jobs, true
+		},
+	}
+}
 
 func TestIsCommitProducingCommand(t *testing.T) {
 	for _, tc := range []struct {
@@ -212,12 +253,7 @@ func TestCountOpenFailedReviewsExcludesUnreachableBranchlessReviews(t *testing.T
 		job("", reachable),   // branchless but reachable from HEAD -> counts
 		job("", unreachable), // unrelated branchless review -> must NOT count
 	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{Jobs: jobs}))
-	}))
-	t.Cleanup(server.Close)
-
-	count, ok := countOpenFailedReviews(context.Background(), NewHTTPReviewSource(server.URL), repo.Path(), "main", head)
+	count, ok := countOpenFailedReviews(context.Background(), reviewSourceWithJobs(jobs...), repo.Path(), "main", head)
 
 	assert.True(ok)
 	assert.Equal(4, count, "only the unreachable branchless review must be excluded on a branch query")
@@ -238,12 +274,9 @@ func TestCountOpenFailedReviewsExcludesBaseBranchBranchlessReviews(t *testing.T)
 		{Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: mainOnly},
 		{Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: featureHead},
 	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{Jobs: jobs}))
-	}))
-	t.Cleanup(server.Close)
-
-	count, ok := countOpenFailedReviews(context.Background(), NewHTTPReviewSource(server.URL), repo.Path(), "feature/lineage", featureHead)
+	count, ok := countOpenFailedReviews(
+		context.Background(), reviewSourceWithJobs(jobs...), repo.Path(), "feature/lineage", featureHead,
+	)
 
 	assert.True(ok)
 	assert.Equal(1, count, "only the branchless review outside trunk history should count")
@@ -268,11 +301,6 @@ func TestCountOpenFailedReviewsCachesBranchlessLineageContext(t *testing.T) {
 		jobs = append(jobs, storage.ReviewJob{Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: ref})
 	}
 	featureHead := repo.HeadSHA()
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{Jobs: jobs}))
-	}))
-	t.Cleanup(server.Close)
-
 	gitPath, err := exec.LookPath("git")
 	require.NoError(err)
 	countPath := filepath.Join(t.TempDir(), "git-count")
@@ -292,7 +320,9 @@ func TestCountOpenFailedReviewsCachesBranchlessLineageContext(t *testing.T) {
 	require.NoError(os.WriteFile(wrapperPath, []byte(wrapper), 0o755))
 	t.Setenv("PATH", wrapperDir+string(os.PathListSeparator)+os.Getenv("PATH"))
 
-	count, ok := countOpenFailedReviews(context.Background(), NewHTTPReviewSource(server.URL), repo.Path(), "feature/lineage", featureHead)
+	count, ok := countOpenFailedReviews(
+		context.Background(), reviewSourceWithJobs(jobs...), repo.Path(), "feature/lineage", featureHead,
+	)
 
 	assert.True(ok)
 	assert.Equal(len(jobs), count)
@@ -327,12 +357,7 @@ func TestCountOpenFailedReviewsExcludesNonReviewJobTypes(t *testing.T) {
 		job(storage.JobTypeInsights, failVerdict),
 		job(storage.JobTypeClassify, failVerdict),
 	}
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{Jobs: jobs}))
-	}))
-	t.Cleanup(server.Close)
-
-	count, ok := countOpenFailedReviews(context.Background(), NewHTTPReviewSource(server.URL), repo.Path(), "main", head)
+	count, ok := countOpenFailedReviews(context.Background(), reviewSourceWithJobs(jobs...), repo.Path(), "main", head)
 
 	assert.True(ok)
 	assert.Equal(1, count, "only failed review jobs count; passed reviews and non-review job types are not actionable")
@@ -457,19 +482,12 @@ func TestRecordPostToolUseFailedReviewPromptUsesNewBranchLineageKey(t *testing.T
 
 	closed := false
 	verdict := "F"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{
-			Jobs: []storage.ReviewJob{
-				{Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict},
-			},
-		}))
-	}))
-	t.Cleanup(server.Close)
-
 	store := &StateStore{
 		path:     filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{},
-		reviews:  NewHTTPReviewSource(server.URL),
+		reviews: reviewSourceWithJobs(storage.ReviewJob{
+			Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict,
+		}),
 	}
 	post := func() Response {
 		resp, err := store.Record(Request{
@@ -528,16 +546,12 @@ func TestRecordStopFailedReviewPromptUsesNewDetachedLineageKey(t *testing.T) {
 
 	closed := false
 	verdict := "F"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{
-			Jobs: []storage.ReviewJob{
-				{Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: head},
-			},
-		}))
-	}))
-	t.Cleanup(server.Close)
-
-	store := &StateStore{reviews: NewHTTPReviewSource(server.URL), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	store := &StateStore{
+		reviews: reviewSourceWithJobs(storage.ReviewJob{
+			Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: head,
+		}),
+		path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{},
+	}
 	stop := func() Response {
 		resp, err := store.Record(Request{
 			Event: Input{
@@ -572,16 +586,16 @@ func TestRecordStopFailedReviewPromptDoesNotReuseStaleDetachedLineage(t *testing
 	reviewRef := firstHead
 	closed := false
 	verdict := "F"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{
-			Jobs: []storage.ReviewJob{
-				{Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: reviewRef},
+	store := &StateStore{
+		reviews: fakeReviewSource{
+			list: func(context.Context, string, string) ([]storage.ReviewJob, bool) {
+				return []storage.ReviewJob{{
+					Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: reviewRef,
+				}}, true
 			},
-		}))
-	}))
-	t.Cleanup(server.Close)
-
-	store := &StateStore{reviews: NewHTTPReviewSource(server.URL), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+		},
+		path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{},
+	}
 	stop := func() Response {
 		resp, err := store.Record(Request{
 			Event: Input{
@@ -622,18 +636,16 @@ func TestRecordPostToolUseCommitReminderStaysInCommitRepo(t *testing.T) {
 	bReady.Store(true) // repo B already has a failed review; repo A's lags.
 	closed := false
 	verdict := "F"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		repoParam := r.URL.Query().Get("repo")
+	reviews := fakeReviewSource{list: func(_ context.Context, repoParam, _ string) ([]storage.ReviewJob, bool) {
 		ready := (repoParam == repoA.Path() && aReady.Load()) || (repoParam == repoB.Path() && bReady.Load())
 		jobs := []storage.ReviewJob{}
 		if ready {
 			jobs = append(jobs, storage.ReviewJob{Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict})
 		}
-		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{Jobs: jobs}))
-	}))
-	t.Cleanup(server.Close)
+		return jobs, true
+	}}
 
-	store := &StateStore{reviews: NewHTTPReviewSource(server.URL), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	store := &StateStore{reviews: reviews, path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
 	post := func(cwd, command string) Response {
 		resp, err := store.Record(Request{
 			Event: Input{
@@ -675,21 +687,20 @@ func TestRecordPostToolUseCommitReminderDoesNotFollowUnrelatedBranchInSameWorktr
 	failed := false
 	closed := false
 	verdict := "F"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	reviews := fakeReviewSource{list: func(_ context.Context, _ string, branch string) ([]storage.ReviewJob, bool) {
 		jobs := []storage.ReviewJob{}
 		if failed {
 			jobs = append(jobs, storage.ReviewJob{
 				Status:  storage.JobStatusDone,
 				Closed:  &closed,
 				Verdict: &verdict,
-				Branch:  r.URL.Query().Get("branch"),
+				Branch:  branch,
 			})
 		}
-		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{Jobs: jobs}))
-	}))
-	t.Cleanup(server.Close)
+		return jobs, true
+	}}
 
-	store := &StateStore{reviews: NewHTTPReviewSource(server.URL), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	store := &StateStore{reviews: reviews, path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
 	post := func(command string) Response {
 		resp, err := store.Record(Request{
 			Event: Input{
@@ -750,8 +761,7 @@ func TestRecordPostToolUseFailedReviewPromptKeepsOtherRepoCommitReminder(t *test
 	// Repo B has two failed reviews (meets FailedReviewThreshold); repo A has one
 	// once its review lands - actionable for the commit reminder but below the
 	// failed-review threshold, so only the commit path can prompt repo A.
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		repoParam := r.URL.Query().Get("repo")
+	reviews := fakeReviewSource{list: func(_ context.Context, repoParam, _ string) ([]storage.ReviewJob, bool) {
 		n := 0
 		switch {
 		case repoParam == repoB.Path() && bReady.Load():
@@ -763,11 +773,10 @@ func TestRecordPostToolUseFailedReviewPromptKeepsOtherRepoCommitReminder(t *test
 		for i := 0; i < n; i++ {
 			jobs = append(jobs, storage.ReviewJob{Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict})
 		}
-		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{Jobs: jobs}))
-	}))
-	t.Cleanup(server.Close)
+		return jobs, true
+	}}
 
-	store := &StateStore{reviews: NewHTTPReviewSource(server.URL), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	store := &StateStore{reviews: reviews, path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
 	post := func(cwd, command string) Response {
 		resp, err := store.Record(Request{
 			Event: Input{
@@ -812,17 +821,16 @@ func TestRecordStopTracksReminderPromptCount(t *testing.T) {
 	closed := false
 	verdict := "F"
 	failed := true
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	reviews := fakeReviewSource{list: func(context.Context, string, string) ([]storage.ReviewJob, bool) {
 		jobs := []storage.ReviewJob{}
 		if failed {
 			jobs = append(jobs, storage.ReviewJob{Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict})
 		}
-		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{Jobs: jobs}))
-	}))
-	t.Cleanup(server.Close)
+		return jobs, true
+	}}
 
 	store := &StateStore{
-		reviews:  NewHTTPReviewSource(server.URL),
+		reviews:  reviews,
 		path:     filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{},
 	}
@@ -868,18 +876,13 @@ func TestRecordStopQueriesMainRepoRootFromWorktree(t *testing.T) {
 	var gotRepo string
 	closed := false
 	verdict := "F"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotRepo = r.URL.Query().Get("repo")
-		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{
-			Jobs: []storage.ReviewJob{
-				{Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict},
-			},
-		}))
-	}))
-	t.Cleanup(server.Close)
-
 	store := &StateStore{
-		reviews:  NewHTTPReviewSource(server.URL),
+		reviews: fakeReviewSource{list: func(_ context.Context, repoRoot, _ string) ([]storage.ReviewJob, bool) {
+			gotRepo = repoRoot
+			return []storage.ReviewJob{{
+				Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict,
+			}}, true
+		}},
 		path:     filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{},
 	}
@@ -915,33 +918,22 @@ func TestRecordStopTriggersFailedReviewWithoutRepoConfig(t *testing.T) {
 
 	closed := false
 	verdict := "F"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/repos/resolve" {
-			assert.Equal(repo.Path(), r.URL.Query().Get("path"))
-			assert.NoError(json.NewEncoder(w).Encode(map[string]any{
-				"tracked": true,
-				"repo": map[string]string{
-					"root_path": repo.Path(),
-					"name":      filepath.Base(repo.Path()),
-				},
-			}))
-			return
-		}
-		assert.Equal("/api/jobs", r.URL.Path)
-		assert.Equal(repo.Path(), r.URL.Query().Get("repo"))
-		assert.Equal("main", r.URL.Query().Get("branch"))
-		assert.Equal("false", r.URL.Query().Get("closed"))
-		assert.Equal("done", r.URL.Query().Get("status"))
-		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{
-			Jobs: []storage.ReviewJob{
-				{Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict},
-			},
-		}))
-	}))
-	t.Cleanup(server.Close)
-
 	store := &StateStore{
-		reviews:  NewHTTPReviewSource(server.URL),
+		reviews: fakeReviewSource{
+			resolve: func(_ context.Context, path, _ string) (TrackedRepoResolution, bool) {
+				assert.Equal(repo.Path(), path)
+				return TrackedRepoResolution{
+					Tracked: true, RootPath: repo.Path(), Name: filepath.Base(repo.Path()),
+				}, true
+			},
+			list: func(_ context.Context, repoRoot, branch string) ([]storage.ReviewJob, bool) {
+				assert.Equal(repo.Path(), repoRoot)
+				assert.Equal("main", branch)
+				return []storage.ReviewJob{{
+					Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict,
+				}}, true
+			},
+		},
 		path:     filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{},
 	}
@@ -969,24 +961,18 @@ func TestRecordStopSkipsUntrackedRepo(t *testing.T) {
 	repo.CommitFile("main.go", "package main\n", "initial")
 
 	jobRequests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/repos/resolve" {
-			assert.Equal(repo.Path(), r.URL.Query().Get("path"))
-			assert.NoError(json.NewEncoder(w).Encode(map[string]any{
-				"tracked": false,
-				"repo":    nil,
-			}))
-			return
-		}
-		if r.URL.Path == "/api/jobs" {
-			jobRequests++
-		}
-		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{}))
-	}))
-	t.Cleanup(server.Close)
 
 	store := &StateStore{
-		reviews:  NewHTTPReviewSource(server.URL),
+		reviews: fakeReviewSource{
+			resolve: func(_ context.Context, path, _ string) (TrackedRepoResolution, bool) {
+				assert.Equal(repo.Path(), path)
+				return TrackedRepoResolution{Tracked: false}, true
+			},
+			list: func(context.Context, string, string) ([]storage.ReviewJob, bool) {
+				jobRequests++
+				return nil, true
+			},
+		},
 		path:     filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{},
 	}
@@ -1016,31 +1002,22 @@ func TestRecordPreToolUseBaselinesUntrackedRepoForLaterPostCommitRegistration(t 
 	resolveCalls := 0
 	closed := false
 	verdict := "F"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/repos/resolve" {
+	reviews := fakeReviewSource{
+		resolve: func(_ context.Context, _ string, _ string) (TrackedRepoResolution, bool) {
 			resolveCalls++
-			tracked := resolveCalls > 1
-			resp := map[string]any{"tracked": tracked}
-			if tracked {
-				resp["repo"] = map[string]string{
-					"root_path": repo.Path(),
-					"name":      filepath.Base(repo.Path()),
-				}
-			}
-			assert.NoError(json.NewEncoder(w).Encode(resp))
-			return
-		}
-		assert.Equal("/api/jobs", r.URL.Path)
-		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{
-			Jobs: []storage.ReviewJob{
-				{Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main"},
-			},
-		}))
-	}))
-	t.Cleanup(server.Close)
+			return TrackedRepoResolution{
+				Tracked: resolveCalls > 1, RootPath: repo.Path(), Name: filepath.Base(repo.Path()),
+			}, true
+		},
+		list: func(context.Context, string, string) ([]storage.ReviewJob, bool) {
+			return []storage.ReviewJob{{
+				Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main",
+			}}, true
+		},
+	}
 
 	store := &StateStore{
-		reviews:  NewHTTPReviewSource(server.URL),
+		reviews:  reviews,
 		path:     filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{},
 	}
@@ -1078,36 +1055,10 @@ func TestRecordStopTriggersFailedReviewOnDetachedHead(t *testing.T) {
 
 	closed := false
 	verdict := "F"
-	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/repos/resolve" {
-			assert.NoError(json.NewEncoder(w).Encode(map[string]any{
-				"tracked": true,
-				"repo": map[string]string{
-					"root_path": repo.Path(),
-					"name":      filepath.Base(repo.Path()),
-				},
-			}))
-			return
-		}
-		requests++
-		assert.Equal("/api/jobs", r.URL.Path)
-		assert.Equal(repo.Path(), r.URL.Query().Get("repo"))
-		assert.Empty(r.URL.Query().Get("branch"))
-		assert.Empty(r.URL.Query().Get("branch_include_empty"))
-		assert.Empty(r.URL.Query().Get("git_ref"))
-		assert.Equal("false", r.URL.Query().Get("closed"))
-		assert.Equal("done", r.URL.Query().Get("status"))
-		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{
-			Jobs: []storage.ReviewJob{
-				{Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: head},
-			},
-		}))
-	}))
-	t.Cleanup(server.Close)
-
 	store := &StateStore{
-		reviews:  NewHTTPReviewSource(server.URL),
+		reviews: trackedReviewSource(repo.Path(), storage.ReviewJob{
+			Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: head,
+		}),
 		path:     filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{},
 	}
@@ -1127,7 +1078,6 @@ func TestRecordStopTriggersFailedReviewOnDetachedHead(t *testing.T) {
 	assert.True(resp.Triggered)
 	assert.Equal("failed_reviews", resp.TriggeredBy)
 	assert.Equal(1, resp.FailedReviewCount)
-	assert.Equal(1, requests)
 }
 
 func TestRecordStopTriggersFailedRangeReviewOnDetachedHead(t *testing.T) {
@@ -1139,31 +1089,10 @@ func TestRecordStopTriggersFailedRangeReviewOnDetachedHead(t *testing.T) {
 
 	closed := false
 	verdict := "F"
-	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/repos/resolve" {
-			assert.NoError(json.NewEncoder(w).Encode(map[string]any{
-				"tracked": true,
-				"repo": map[string]string{
-					"root_path": repo.Path(),
-					"name":      filepath.Base(repo.Path()),
-				},
-			}))
-			return
-		}
-		requests++
-		assert.Empty(r.URL.Query().Get("branch"))
-		assert.Empty(r.URL.Query().Get("git_ref"))
-		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{
-			Jobs: []storage.ReviewJob{
-				{Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: base + ".." + head},
-			},
-		}))
-	}))
-	t.Cleanup(server.Close)
-
 	store := &StateStore{
-		reviews:  NewHTTPReviewSource(server.URL),
+		reviews: trackedReviewSource(repo.Path(), storage.ReviewJob{
+			Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: base + ".." + head,
+		}),
 		path:     filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{},
 	}
@@ -1183,7 +1112,6 @@ func TestRecordStopTriggersFailedRangeReviewOnDetachedHead(t *testing.T) {
 	assert.True(resp.Triggered)
 	assert.Equal("failed_reviews", resp.TriggeredBy)
 	assert.Equal(1, resp.FailedReviewCount)
-	assert.Equal(1, requests)
 }
 
 func TestRecordStopDetachedHeadCountsReachableBranchfulReview(t *testing.T) {
@@ -1195,36 +1123,11 @@ func TestRecordStopDetachedHeadCountsReachableBranchfulReview(t *testing.T) {
 
 	closed := false
 	verdict := "F"
-	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/repos/resolve" {
-			assert.NoError(json.NewEncoder(w).Encode(map[string]any{
-				"tracked": true,
-				"repo": map[string]string{
-					"root_path": repo.Path(),
-					"name":      filepath.Base(repo.Path()),
-				},
-			}))
-			return
-		}
-		requests++
-		assert.Empty(r.URL.Query().Get("branch"))
-		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{
-			Jobs: []storage.ReviewJob{
-				{
-					Status:  storage.JobStatusDone,
-					Closed:  &closed,
-					Verdict: &verdict,
-					Branch:  "feature/attached-later",
-					GitRef:  base + ".." + head,
-				},
-			},
-		}))
-	}))
-	t.Cleanup(server.Close)
-
 	store := &StateStore{
-		reviews:  NewHTTPReviewSource(server.URL),
+		reviews: trackedReviewSource(repo.Path(), storage.ReviewJob{
+			Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict,
+			Branch: "feature/attached-later", GitRef: base + ".." + head,
+		}),
 		path:     filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{},
 	}
@@ -1243,7 +1146,6 @@ func TestRecordStopDetachedHeadCountsReachableBranchfulReview(t *testing.T) {
 	assert.True(resp.Triggered)
 	assert.Equal("failed_reviews", resp.TriggeredBy)
 	assert.Equal(1, resp.FailedReviewCount)
-	assert.Equal(1, requests)
 }
 
 func TestRecordStopDetachedHeadDoesNotTriggerForUnrelatedFailedReviews(t *testing.T) {
@@ -1254,30 +1156,10 @@ func TestRecordStopDetachedHeadDoesNotTriggerForUnrelatedFailedReviews(t *testin
 
 	closed := false
 	verdict := "F"
-	requests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/repos/resolve" {
-			assert.NoError(json.NewEncoder(w).Encode(map[string]any{
-				"tracked": true,
-				"repo": map[string]string{
-					"root_path": repo.Path(),
-					"name":      filepath.Base(repo.Path()),
-				},
-			}))
-			return
-		}
-		requests++
-		assert.Empty(r.URL.Query().Get("git_ref"))
-		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{
-			Jobs: []storage.ReviewJob{
-				{Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: head + "^..unrelated"},
-			},
-		}))
-	}))
-	t.Cleanup(server.Close)
-
 	store := &StateStore{
-		reviews:  NewHTTPReviewSource(server.URL),
+		reviews: trackedReviewSource(repo.Path(), storage.ReviewJob{
+			Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: head + "^..unrelated",
+		}),
 		path:     filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{},
 	}
@@ -1297,7 +1179,6 @@ func TestRecordStopDetachedHeadDoesNotTriggerForUnrelatedFailedReviews(t *testin
 	assert.False(resp.Triggered)
 	assert.Empty(resp.TriggeredBy)
 	assert.Equal(0, resp.FailedReviewCount)
-	assert.Equal(1, requests)
 }
 
 func TestRecordPostToolUseFirstCommitWithoutBaselineDoesNotCount(t *testing.T) {
@@ -1307,17 +1188,10 @@ func TestRecordPostToolUseFirstCommitWithoutBaselineDoesNotCount(t *testing.T) {
 
 	closed := false
 	verdict := "F"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{
-			Jobs: []storage.ReviewJob{
-				{Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict},
-			},
-		}))
-	}))
-	t.Cleanup(server.Close)
-
 	store := &StateStore{
-		reviews:  NewHTTPReviewSource(server.URL),
+		reviews: reviewSourceWithJobs(storage.ReviewJob{
+			Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict,
+		}),
 		path:     filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{},
 	}
@@ -1349,13 +1223,8 @@ func TestRecordPreToolUseBaselineLetsFirstCommitCount(t *testing.T) {
 	repo := testutil.NewGitRepo(t)
 	repo.CommitFile("main.go", "package main\n", "initial")
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{Jobs: []storage.ReviewJob{}}))
-	}))
-	t.Cleanup(server.Close)
-
 	store := &StateStore{
-		reviews:  NewHTTPReviewSource(server.URL),
+		reviews:  reviewSourceWithJobs(),
 		path:     filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{},
 	}
@@ -1391,13 +1260,8 @@ func TestRecordPostToolUseCountsCommitAfterBaseline(t *testing.T) {
 	repo := testutil.NewGitRepo(t)
 	repo.CommitFile("main.go", "package main\n", "initial")
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{Jobs: []storage.ReviewJob{}}))
-	}))
-	t.Cleanup(server.Close)
-
 	store := &StateStore{
-		reviews:  NewHTTPReviewSource(server.URL),
+		reviews:  reviewSourceWithJobs(),
 		path:     filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{},
 	}
@@ -1434,23 +1298,8 @@ func TestRecordPostToolUseCommitSliceSurvivesBranchAttachment(t *testing.T) {
 	repo.CommitFile("main.go", "package main\n", "initial")
 	repo.CheckoutDetached()
 
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/repos/resolve" {
-			assert.NoError(json.NewEncoder(w).Encode(map[string]any{
-				"tracked": true,
-				"repo": map[string]string{
-					"root_path": repo.Path(),
-					"name":      filepath.Base(repo.Path()),
-				},
-			}))
-			return
-		}
-		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{}))
-	}))
-	t.Cleanup(server.Close)
-
 	store := &StateStore{
-		reviews:  NewHTTPReviewSource(server.URL),
+		reviews:  trackedReviewSource(repo.Path()),
 		path:     filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{},
 	}
@@ -1502,32 +1351,26 @@ func TestRecordPostToolUseAmendAfterBranchAttachmentKeepsDetachedCommitThreshold
 	failed := false
 	closed := false
 	verdict := "F"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/repos/resolve" {
-			assert.NoError(json.NewEncoder(w).Encode(map[string]any{
-				"tracked": true,
-				"repo": map[string]string{
-					"root_path": repo.Path(),
-					"name":      filepath.Base(repo.Path()),
-				},
-			}))
-			return
-		}
-		jobs := []storage.ReviewJob{}
-		if failed {
-			jobs = append(jobs, storage.ReviewJob{
-				Status:  storage.JobStatusDone,
-				Closed:  &closed,
-				Verdict: &verdict,
-				Branch:  r.URL.Query().Get("branch"),
-			})
-		}
-		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{Jobs: jobs}))
-	}))
-	t.Cleanup(server.Close)
+	reviews := fakeReviewSource{
+		resolve: func(context.Context, string, string) (TrackedRepoResolution, bool) {
+			return TrackedRepoResolution{Tracked: true, RootPath: repo.Path()}, true
+		},
+		list: func(_ context.Context, _ string, branch string) ([]storage.ReviewJob, bool) {
+			jobs := []storage.ReviewJob{}
+			if failed {
+				jobs = append(jobs, storage.ReviewJob{
+					Status:  storage.JobStatusDone,
+					Closed:  &closed,
+					Verdict: &verdict,
+					Branch:  branch,
+				})
+			}
+			return jobs, true
+		},
+	}
 
 	store := &StateStore{
-		reviews:  NewHTTPReviewSource(server.URL),
+		reviews:  reviews,
 		path:     filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{},
 	}
@@ -1590,16 +1433,12 @@ func TestRecordPostToolUseDetachedFailedReviewDedupeScopesByWorktree(t *testing.
 
 	closed := false
 	verdict := "F"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{
-			Jobs: []storage.ReviewJob{
-				{Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: base},
-			},
-		}))
-	}))
-	t.Cleanup(server.Close)
-
-	store := &StateStore{reviews: NewHTTPReviewSource(server.URL), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	store := &StateStore{
+		reviews: reviewSourceWithJobs(storage.ReviewJob{
+			Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: base,
+		}),
+		path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{},
+	}
 	post := func(cwd string) Response {
 		resp, err := store.Record(Request{
 			Event: Input{
@@ -1635,16 +1474,14 @@ func TestRecordPostToolUseDetachedFailedReviewDedupeScopesByDetachedHead(t *test
 	reviewRef := firstHead
 	closed := false
 	verdict := "F"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
-		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{
-			Jobs: []storage.ReviewJob{
-				{Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: reviewRef},
-			},
-		}))
-	}))
-	t.Cleanup(server.Close)
-
-	store := &StateStore{reviews: NewHTTPReviewSource(server.URL), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	store := &StateStore{
+		reviews: fakeReviewSource{list: func(context.Context, string, string) ([]storage.ReviewJob, bool) {
+			return []storage.ReviewJob{{
+				Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: reviewRef,
+			}}, true
+		}},
+		path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{},
+	}
 	post := func() Response {
 		resp, err := store.Record(Request{
 			Event: Input{
@@ -1683,18 +1520,17 @@ func TestRecordPostToolUseCountsCommitInOtherRepoViaDashC(t *testing.T) {
 	// A failed review exists for the inner repo - the one the -C commit lands in.
 	closed := false
 	verdict := "F"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	reviews := fakeReviewSource{list: func(_ context.Context, repoRoot, _ string) ([]storage.ReviewJob, bool) {
 		jobs := []storage.ReviewJob{}
-		if r.URL.Query().Get("repo") == inner.Path() {
+		if repoRoot == inner.Path() {
 			jobs = append(jobs, storage.ReviewJob{Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict})
 		}
-		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{Jobs: jobs}))
-	}))
-	t.Cleanup(server.Close)
+		return jobs, true
+	}}
 
 	cmd, err := json.Marshal(`git -C "` + inner.Path() + `" commit -m feature`)
 	require.NoError(t, err)
-	store := &StateStore{reviews: NewHTTPReviewSource(server.URL), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	store := &StateStore{reviews: reviews, path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
 	req := Request{
 		Event: Input{
 			SessionID:     "session-1",
@@ -1739,16 +1575,15 @@ func TestRecordPostToolUseCommitReasonReportsTriggeringRepo(t *testing.T) {
 	// Repo A's failed review only becomes visible after its commit, deferring A's
 	// commit reminder. Repo B has no failed reviews; its later commit advances the
 	// session-wide CommitCount and LastCommitRepo to B.
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+	reviews := fakeReviewSource{list: func(_ context.Context, repoRoot, _ string) ([]storage.ReviewJob, bool) {
 		jobs := []storage.ReviewJob{}
-		if r.URL.Query().Get("repo") == repoA.Path() && aReviewVisible.Load() {
+		if repoRoot == repoA.Path() && aReviewVisible.Load() {
 			jobs = append(jobs, storage.ReviewJob{Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict})
 		}
-		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{Jobs: jobs}))
-	}))
-	t.Cleanup(server.Close)
+		return jobs, true
+	}}
 
-	store := &StateStore{reviews: NewHTTPReviewSource(server.URL), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	store := &StateStore{reviews: reviews, path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
 	post := func(repo *testutil.TestRepo, command string) Response {
 		resp, err := store.Record(Request{
 			Event: Input{
@@ -1793,17 +1628,16 @@ func TestRecordPostToolUseCommitTriggersWhenReviewLagsBehindCommit(t *testing.T)
 	failed := false
 	closed := false
 	verdict := "F"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	reviews := fakeReviewSource{list: func(context.Context, string, string) ([]storage.ReviewJob, bool) {
 		jobs := []storage.ReviewJob{}
 		if failed {
 			jobs = append(jobs, storage.ReviewJob{Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict})
 		}
-		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{Jobs: jobs}))
-	}))
-	t.Cleanup(server.Close)
+		return jobs, true
+	}}
 
 	store := &StateStore{
-		reviews:  NewHTTPReviewSource(server.URL),
+		reviews:  reviews,
 		path:     filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{},
 	}
@@ -1853,17 +1687,16 @@ func TestRecordPostToolUseAmendPreservesDeferredCommitReminder(t *testing.T) {
 	failed := false
 	closed := false
 	verdict := "F"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	reviews := fakeReviewSource{list: func(context.Context, string, string) ([]storage.ReviewJob, bool) {
 		jobs := []storage.ReviewJob{}
 		if failed {
 			jobs = append(jobs, storage.ReviewJob{Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict})
 		}
-		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{Jobs: jobs}))
-	}))
-	t.Cleanup(server.Close)
+		return jobs, true
+	}}
 
 	store := &StateStore{
-		reviews:  NewHTTPReviewSource(server.URL),
+		reviews:  reviews,
 		path:     filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{},
 	}
@@ -1918,16 +1751,15 @@ func TestRecordPostToolUseAmendPreservesEarlierPendingCommits(t *testing.T) {
 	failed := false
 	closed := false
 	verdict := "F"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+	reviews := fakeReviewSource{list: func(context.Context, string, string) ([]storage.ReviewJob, bool) {
 		jobs := []storage.ReviewJob{}
 		if failed {
 			jobs = append(jobs, storage.ReviewJob{Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict})
 		}
-		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{Jobs: jobs}))
-	}))
-	t.Cleanup(server.Close)
+		return jobs, true
+	}}
 
-	store := &StateStore{reviews: NewHTTPReviewSource(server.URL), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	store := &StateStore{reviews: reviews, path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
 	base := Request{
 		Event: Input{
 			SessionID:     "session-1",
@@ -1975,33 +1807,12 @@ func TestRecordPostToolUseAmendPreservesEarlierPendingCommits(t *testing.T) {
 	assert.Equal("commit", atLater.TriggeredBy)
 }
 
-func TestCountOpenFailedReviewsRequestsOmittedPrompts(t *testing.T) {
-	assert := assert.New(t)
-	repo := testutil.NewGitRepo(t)
-	head := repo.CommitFile("base.txt", "base\n", "base")
-
-	var gotQuery atomic.Value
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotQuery.Store(r.URL.Query())
-		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{}))
-	}))
-	t.Cleanup(server.Close)
-
-	_, ok := countOpenFailedReviews(context.Background(), NewHTTPReviewSource(server.URL), repo.Path(), "main", head)
-
-	require.True(t, ok)
-	query, _ := gotQuery.Load().(url.Values)
-	require.NotNil(t, query)
-	assert.Equal("true", query.Get("omit_prompt"),
-		"hook count queries must not pull full prompts over the wire")
-}
-
 func TestDeferredPostToolReminderCoalescesAndWaitsForTriggeringBranch(t *testing.T) {
 	repo := testutil.NewGitRepo(t)
 	repo.CommitFile("main.go", "package main\n", "initial")
 	failedReviewCount := 1
-	server := newDeferredReminderServer(t, repo.Path(), &failedReviewCount)
-	store := &StateStore{reviews: NewHTTPReviewSource(server.URL), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	reviews := newDeferredReminderSource(repo.Path(), &failedReviewCount)
+	store := &StateStore{reviews: reviews, path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
 	base := Request{
 		Event: Input{
 			SessionID: "session-1",
@@ -2073,20 +1884,17 @@ func TestDeferredReminderWaitsWhenRepositoryIdentityChanges(t *testing.T) {
 	repo := testutil.NewGitRepo(t)
 	repo.CommitFile("main.go", "package main\n", "initial")
 	jobLookups := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/repos/resolve" {
-			assert.NoError(json.NewEncoder(w).Encode(map[string]any{
-				"tracked": true,
-				"repo": map[string]string{
-					"root_path": repo.Path(), "identity": "replacement", "name": "repo",
-				},
-			}))
-			return
-		}
-		jobLookups++
-		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{}))
-	}))
-	t.Cleanup(server.Close)
+	reviews := fakeReviewSource{
+		resolve: func(context.Context, string, string) (TrackedRepoResolution, bool) {
+			return TrackedRepoResolution{
+				Tracked: true, RootPath: repo.Path(), Identity: "replacement", Name: "repo",
+			}, true
+		},
+		list: func(context.Context, string, string) ([]storage.ReviewJob, bool) {
+			jobLookups++
+			return nil, true
+		},
+	}
 	pending := PendingReminder{
 		TriggeredBy: "failed_reviews", Reason: "Resolve reviews.",
 		TrackedRepoRoot: repo.Path(), TrackedRepoIdentity: "original",
@@ -2095,7 +1903,7 @@ func TestDeferredReminderWaitsWhenRepositoryIdentityChanges(t *testing.T) {
 	}
 	key := pendingReminderKey(pending)
 	store := &StateStore{
-		reviews: NewHTTPReviewSource(server.URL),
+		reviews: reviews,
 		path:    filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{
 			"session-1": {PendingReminders: map[string]PendingReminder{key: pending}},
@@ -2117,27 +1925,24 @@ func TestRecordStopSuppressesReminderWhileWorkspaceIsSnoozed(t *testing.T) {
 	repo := testutil.NewGitRepo(t)
 	head := repo.CommitFile("main.go", "package main\n", "initial")
 	jobRequests := 0
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/repos/resolve" {
-			assert.Equal(repo.Path(), r.URL.Query().Get("path"))
-			assert.Equal("main", r.URL.Query().Get("branch"))
-			assert.NoError(json.NewEncoder(w).Encode(map[string]any{
-				"tracked": true,
-				"repo": map[string]any{
-					"root_path": repo.Path(), "name": filepath.Base(repo.Path()),
-					"agent_hook_snoozed_until": time.Now().Add(time.Hour).UTC(),
-				},
-			}))
-			return
-		}
-		jobRequests++
-		http.Error(w, "review lookup should be suppressed", http.StatusInternalServerError)
-	}))
-	t.Cleanup(server.Close)
+	reviews := fakeReviewSource{
+		resolve: func(_ context.Context, path, branch string) (TrackedRepoResolution, bool) {
+			assert.Equal(repo.Path(), path)
+			assert.Equal("main", branch)
+			return TrackedRepoResolution{
+				Tracked: true, RootPath: repo.Path(), Name: filepath.Base(repo.Path()),
+				SnoozedUntil: time.Now().Add(time.Hour).UTC(),
+			}, true
+		},
+		list: func(context.Context, string, string) ([]storage.ReviewJob, bool) {
+			jobRequests++
+			return nil, false
+		},
+	}
 	worktreeKey := worktreeSequenceKey(repo.Path(), repo.Path())
 	branchKey := repoHeadKey(repo.Path(), "main")
 	store := &StateStore{
-		reviews: NewHTTPReviewSource(server.URL),
+		reviews: reviews,
 		path:    filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{
 			"session-1": {
@@ -2175,22 +1980,21 @@ func TestStopReminderProgressIsScopedAcrossSnoozedWorkspaces(t *testing.T) {
 	var snoozeA atomic.Bool
 	closed := false
 	verdict := "F"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/repos/resolve" {
-			root := r.URL.Query().Get("path")
-			repo := map[string]any{"root_path": root, "name": filepath.Base(root)}
+	reviews := fakeReviewSource{
+		resolve: func(_ context.Context, root, _ string) (TrackedRepoResolution, bool) {
+			resolved := TrackedRepoResolution{Tracked: true, RootPath: root, Name: filepath.Base(root)}
 			if root == repoA.Path() && snoozeA.Load() {
-				repo["agent_hook_snoozed_until"] = time.Now().Add(time.Hour).UTC()
+				resolved.SnoozedUntil = time.Now().Add(time.Hour).UTC()
 			}
-			assert.NoError(json.NewEncoder(w).Encode(map[string]any{"tracked": true, "repo": repo}))
-			return
-		}
-		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{Jobs: []storage.ReviewJob{{
-			Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main",
-		}}}))
-	}))
-	t.Cleanup(server.Close)
-	store := &StateStore{reviews: NewHTTPReviewSource(server.URL), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+			return resolved, true
+		},
+		list: func(context.Context, string, string) ([]storage.ReviewJob, bool) {
+			return []storage.ReviewJob{{
+				Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main",
+			}}, true
+		},
+	}
+	store := &StateStore{reviews: reviews, path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
 	record := func(cwd string) Response {
 		resp, err := store.Record(Request{
 			Event:     Input{SessionID: "session-1", CWD: cwd, HookEventName: "Stop"},
@@ -2214,21 +2018,20 @@ func TestDeferredReminderDoesNotEscapeSnoozedWorkspace(t *testing.T) {
 	repoB.CommitFile("b.go", "package b\n", "initial B")
 	closed := false
 	verdict := "F"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/repos/resolve" {
-			path := r.URL.Query().Get("path")
-			repo := map[string]any{"root_path": path, "name": filepath.Base(path)}
+	reviews := fakeReviewSource{
+		resolve: func(_ context.Context, path, _ string) (TrackedRepoResolution, bool) {
+			resolved := TrackedRepoResolution{Tracked: true, RootPath: path, Name: filepath.Base(path)}
 			if path == repoA.Path() {
-				repo["agent_hook_snoozed_until"] = time.Now().Add(time.Hour).UTC()
+				resolved.SnoozedUntil = time.Now().Add(time.Hour).UTC()
 			}
-			assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"tracked": true, "repo": repo}))
-			return
-		}
-		assert.NoError(t, json.NewEncoder(w).Encode(jobsResponse{Jobs: []storage.ReviewJob{{
-			Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main",
-		}}}))
-	}))
-	t.Cleanup(server.Close)
+			return resolved, true
+		},
+		list: func(context.Context, string, string) ([]storage.ReviewJob, bool) {
+			return []storage.ReviewJob{{
+				Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main",
+			}}, true
+		},
+	}
 	createdAt := time.Now().UTC()
 	snoozed := PendingReminder{
 		TriggeredBy: "failed_reviews", Reason: "Snoozed.",
@@ -2241,7 +2044,7 @@ func TestDeferredReminderDoesNotEscapeSnoozedWorkspace(t *testing.T) {
 		LineageKey: "repo-b", CreatedAt: createdAt.Add(time.Second),
 	}
 	store := &StateStore{
-		reviews: NewHTTPReviewSource(server.URL),
+		reviews: reviews,
 		path:    filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{
 			"session-1": {PendingReminders: map[string]PendingReminder{
@@ -2263,19 +2066,16 @@ func TestDeferredReminderDoesNotEscapeSnoozedWorkspace(t *testing.T) {
 }
 
 func TestDeferredReminderIsDiscardedWhenRepositoryIsUntracked(t *testing.T) {
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		assert.Equal(t, "/api/repos/resolve", r.URL.Path)
-		assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"tracked": false}))
-	}))
-	t.Cleanup(server.Close)
 	pending := PendingReminder{
 		TriggeredBy: "failed_reviews", Reason: "Resolve reviews.",
 		TrackedRepoRoot: "/repo", WorktreeRoot: "/worktree", Branch: "main",
 		LineageKey: "repo", CreatedAt: time.Now().UTC(),
 	}
 	store := &StateStore{
-		reviews: NewHTTPReviewSource(server.URL),
-		path:    filepath.Join(t.TempDir(), "state.json"),
+		reviews: fakeReviewSource{resolve: func(context.Context, string, string) (TrackedRepoResolution, bool) {
+			return TrackedRepoResolution{Tracked: false}, true
+		}},
+		path: filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{
 			"session-1": {PendingReminders: map[string]PendingReminder{pendingReminderKey(pending): pending}},
 		},
@@ -2294,8 +2094,8 @@ func TestDeferredFailedReviewReminderIsRevalidatedBeforeDelivery(t *testing.T) {
 	repo := testutil.NewGitRepo(t)
 	repo.CommitFile("main.go", "package main\n", "initial")
 	failedReviewCount := 1
-	server := newDeferredReminderServer(t, repo.Path(), &failedReviewCount)
-	store := &StateStore{reviews: NewHTTPReviewSource(server.URL), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	reviews := newDeferredReminderSource(repo.Path(), &failedReviewCount)
+	store := &StateStore{reviews: reviews, path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
 
 	resp, err := store.Record(Request{
 		Event: Input{
@@ -2328,8 +2128,8 @@ func TestDeferredFailedReviewReminderReopensAndRefreshesAfterResolution(t *testi
 	repo := testutil.NewGitRepo(t)
 	repo.CommitFile("main.go", "package main\n", "initial")
 	failedReviewCount := 2
-	server := newDeferredReminderServer(t, repo.Path(), &failedReviewCount)
-	store := &StateStore{reviews: NewHTTPReviewSource(server.URL), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	reviews := newDeferredReminderSource(repo.Path(), &failedReviewCount)
+	store := &StateStore{reviews: reviews, path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
 	request := Request{
 		Event: Input{
 			SessionID:     "session-1",
@@ -2376,8 +2176,8 @@ func TestDeferredCommitReminderIsDiscardedAfterReviewsResolve(t *testing.T) {
 	repo := testutil.NewGitRepo(t)
 	repo.CommitFile("main.go", "package main\n", "initial")
 	failedReviewCount := 1
-	server := newDeferredReminderServer(t, repo.Path(), &failedReviewCount)
-	store := &StateStore{reviews: NewHTTPReviewSource(server.URL), path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	reviews := newDeferredReminderSource(repo.Path(), &failedReviewCount)
+	store := &StateStore{reviews: reviews, path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
 	base := Request{
 		Event: Input{
 			SessionID: "session-1",
@@ -2415,7 +2215,7 @@ func TestDeferredReminderPreservesLegacyInstruction(t *testing.T) {
 	repo := testutil.NewGitRepo(t)
 	repo.CommitFile("main.go", "package main\n", "initial")
 	failedReviewCount := 2
-	server := newDeferredReminderServer(t, repo.Path(), &failedReviewCount)
+	reviews := newDeferredReminderSource(repo.Path(), &failedReviewCount)
 	legacyReason := "Use the custom legacy workflow."
 	pending := PendingReminder{
 		TriggeredBy: "failed_reviews", Reason: legacyReason,
@@ -2423,7 +2223,7 @@ func TestDeferredReminderPreservesLegacyInstruction(t *testing.T) {
 		LineageKey: "repo", FailedReviewCount: 1, CreatedAt: time.Now().UTC(),
 	}
 	store := &StateStore{
-		reviews: NewHTTPReviewSource(server.URL),
+		reviews: reviews,
 		path:    filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{
 			"session-1": {PendingReminders: map[string]PendingReminder{pendingReminderKey(pending): pending}},
@@ -2448,11 +2248,11 @@ func TestDeferredReminderPreservesLegacyInstruction(t *testing.T) {
 
 func TestDeferredReminderCancellationDoesNotConsumeCandidate(t *testing.T) {
 	started := make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(_ http.ResponseWriter, r *http.Request) {
+	reviews := fakeReviewSource{resolve: func(ctx context.Context, _, _ string) (TrackedRepoResolution, bool) {
 		close(started)
-		<-r.Context().Done()
-	}))
-	t.Cleanup(server.Close)
+		<-ctx.Done()
+		return TrackedRepoResolution{}, false
+	}}
 	pending := PendingReminder{
 		TriggeredBy: "failed_reviews", Reason: "Resolve reviews.",
 		TrackedRepoRoot: "/repo", Branch: "main", LineageKey: "repo",
@@ -2460,7 +2260,7 @@ func TestDeferredReminderCancellationDoesNotConsumeCandidate(t *testing.T) {
 	}
 	key := pendingReminderKey(pending)
 	store := &StateStore{
-		reviews: NewHTTPReviewSource(server.URL),
+		reviews: reviews,
 		path:    filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{
 			"session-1": {PendingReminders: map[string]PendingReminder{key: pending}},
@@ -2489,34 +2289,23 @@ func TestSnoozedStopCancellationDoesNotMutateSession(t *testing.T) {
 	repo := testutil.NewGitRepo(t)
 	repo.CommitFile("main.go", "package main\n", "initial")
 	started := make(chan struct{})
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/repos/resolve" {
-			switch r.URL.Query().Get("path") {
+	reviews := fakeReviewSource{
+		resolve: func(ctx context.Context, path, _ string) (TrackedRepoResolution, bool) {
+			switch path {
 			case repo.Path():
-				assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
-					"tracked": true,
-					"repo": map[string]any{
-						"root_path": repo.Path(), "name": filepath.Base(repo.Path()),
-						"agent_hook_snoozed_until": time.Now().Add(time.Hour).UTC(),
-					},
-				}))
-				return
+				return TrackedRepoResolution{
+					Tracked: true, RootPath: repo.Path(), Name: filepath.Base(repo.Path()),
+					SnoozedUntil: time.Now().Add(time.Hour).UTC(),
+				}, true
 			case "/resolved":
-				assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
-					"tracked": true,
-					"repo":    map[string]string{"root_path": "/resolved", "name": "resolved"},
-				}))
-				return
+				return TrackedRepoResolution{Tracked: true, RootPath: "/resolved", Name: "resolved"}, true
 			}
-		}
-		if r.URL.Query().Get("repo") == "/resolved" {
-			assert.NoError(t, json.NewEncoder(w).Encode(jobsResponse{}))
-			return
-		}
-		close(started)
-		<-r.Context().Done()
-	}))
-	t.Cleanup(server.Close)
+			close(started)
+			<-ctx.Done()
+			return TrackedRepoResolution{}, false
+		},
+		list: func(context.Context, string, string) ([]storage.ReviewJob, bool) { return nil, true },
+	}
 	resolved := PendingReminder{
 		TriggeredBy: "failed_reviews", Reason: "Resolved.",
 		TrackedRepoRoot: "/resolved", WorktreeRoot: "/resolved", Branch: "main",
@@ -2535,7 +2324,7 @@ func TestSnoozedStopCancellationDoesNotMutateSession(t *testing.T) {
 		},
 	}
 	store := &StateStore{
-		reviews: NewHTTPReviewSource(server.URL),
+		reviews: reviews,
 		path:    filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{
 			"session-1": initial,
@@ -2562,7 +2351,7 @@ func TestDeferredReminderPersistenceFailureDoesNotConsumeCandidate(t *testing.T)
 	repo := testutil.NewGitRepo(t)
 	head := repo.CommitFile("main.go", "package main\n", "initial")
 	failedReviewCount := 1
-	server := newDeferredReminderServer(t, repo.Path(), &failedReviewCount)
+	reviews := newDeferredReminderSource(repo.Path(), &failedReviewCount)
 	pending := PendingReminder{
 		TriggeredBy: "failed_reviews", Reason: "Resolve reviews.",
 		TrackedRepoRoot: repo.Path(), WorktreeRoot: repo.Path(), Branch: "main", Head: head,
@@ -2570,7 +2359,7 @@ func TestDeferredReminderPersistenceFailureDoesNotConsumeCandidate(t *testing.T)
 	}
 	key := pendingReminderKey(pending)
 	store := &StateStore{
-		reviews: NewHTTPReviewSource(server.URL),
+		reviews: reviews,
 		path:    t.TempDir(),
 		sessions: map[string]SessionState{
 			"session-1": {PendingReminders: map[string]PendingReminder{key: pending}},
@@ -2593,18 +2382,23 @@ func TestRecordCancellationDoesNotMutateAnyEvent(t *testing.T) {
 			repo := testutil.NewGitRepo(t)
 			repo.CommitFile("main.go", "package main\n", "initial")
 			started := make(chan struct{})
-			server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-				if r.URL.Path == "/api/repos/resolve" && event != "PreToolUse" {
-					assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
-						"tracked": true,
-						"repo":    map[string]any{"root_path": repo.Path(), "name": filepath.Base(repo.Path())},
-					}))
-					return
-				}
+			waitForCancel := func(ctx context.Context) {
 				close(started)
-				<-r.Context().Done()
-			}))
-			t.Cleanup(server.Close)
+				<-ctx.Done()
+			}
+			reviews := fakeReviewSource{
+				resolve: func(ctx context.Context, _, _ string) (TrackedRepoResolution, bool) {
+					if event == "PreToolUse" {
+						waitForCancel(ctx)
+						return TrackedRepoResolution{}, false
+					}
+					return TrackedRepoResolution{Tracked: true, RootPath: repo.Path()}, true
+				},
+				list: func(ctx context.Context, _, _ string) ([]storage.ReviewJob, bool) {
+					waitForCancel(ctx)
+					return nil, false
+				},
+			}
 			input := Input{SessionID: "session-1", CWD: repo.Path(), HookEventName: event}
 			switch event {
 			case "PreToolUse":
@@ -2615,7 +2409,7 @@ func TestRecordCancellationDoesNotMutateAnyEvent(t *testing.T) {
 				input.ToolInput = map[string]json.RawMessage{"command": json.RawMessage(`"go test ./..."`)}
 			}
 			store := &StateStore{
-				reviews: NewHTTPReviewSource(server.URL),
+				reviews: reviews,
 				path:    filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{},
 			}
 			ctx, cancel := context.WithCancel(context.Background())
@@ -2642,26 +2436,24 @@ func TestDeferredReminderContinuesAfterEarlierLookupFailure(t *testing.T) {
 	availableHead := available.CommitFile("main.go", "package main\n", "initial")
 	closed := false
 	verdict := "F"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("path") == "/unavailable" ||
-			r.URL.Query().Get("repo") == "/unavailable" {
-			http.Error(w, "unavailable", http.StatusServiceUnavailable)
-			return
-		}
-		if r.URL.Path == "/api/repos/resolve" {
-			assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
-				"tracked": true,
-				"repo": map[string]string{
-					"root_path": available.Path(), "name": filepath.Base(available.Path()),
-				},
-			}))
-			return
-		}
-		assert.NoError(t, json.NewEncoder(w).Encode(jobsResponse{Jobs: []storage.ReviewJob{{
-			Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main",
-		}}}))
-	}))
-	t.Cleanup(server.Close)
+	reviews := fakeReviewSource{
+		resolve: func(_ context.Context, path, _ string) (TrackedRepoResolution, bool) {
+			if path == "/unavailable" {
+				return TrackedRepoResolution{}, false
+			}
+			return TrackedRepoResolution{
+				Tracked: true, RootPath: available.Path(), Name: filepath.Base(available.Path()),
+			}, true
+		},
+		list: func(_ context.Context, repoRoot, _ string) ([]storage.ReviewJob, bool) {
+			if repoRoot == "/unavailable" {
+				return nil, false
+			}
+			return []storage.ReviewJob{{
+				Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main",
+			}}, true
+		},
+	}
 	createdAt := time.Now().UTC()
 	first := PendingReminder{
 		TriggeredBy: "failed_reviews", Reason: "First.", TrackedRepoRoot: "/unavailable",
@@ -2674,7 +2466,7 @@ func TestDeferredReminderContinuesAfterEarlierLookupFailure(t *testing.T) {
 		LineageKey: "second", CreatedAt: createdAt.Add(time.Second),
 	}
 	store := &StateStore{
-		reviews: NewHTTPReviewSource(server.URL),
+		reviews: reviews,
 		path:    filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{
 			"session-1": {
@@ -2704,23 +2496,22 @@ func TestUnavailableDeferredReminderDoesNotSuppressStopProcessing(t *testing.T) 
 	repo.CommitFile("main.go", "package main\n", "initial")
 	closed := false
 	verdict := "F"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Query().Get("path") == "/unavailable" || r.URL.Query().Get("repo") == "/unavailable" {
-			http.Error(w, "unavailable", http.StatusServiceUnavailable)
-			return
-		}
-		if r.URL.Path == "/api/repos/resolve" {
-			assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
-				"tracked": true,
-				"repo":    map[string]string{"root_path": repo.Path(), "name": filepath.Base(repo.Path())},
-			}))
-			return
-		}
-		assert.NoError(t, json.NewEncoder(w).Encode(jobsResponse{Jobs: []storage.ReviewJob{{
-			Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main",
-		}}}))
-	}))
-	t.Cleanup(server.Close)
+	reviews := fakeReviewSource{
+		resolve: func(_ context.Context, path, _ string) (TrackedRepoResolution, bool) {
+			if path == "/unavailable" {
+				return TrackedRepoResolution{}, false
+			}
+			return TrackedRepoResolution{Tracked: true, RootPath: repo.Path(), Name: filepath.Base(repo.Path())}, true
+		},
+		list: func(_ context.Context, repoRoot, _ string) ([]storage.ReviewJob, bool) {
+			if repoRoot == "/unavailable" {
+				return nil, false
+			}
+			return []storage.ReviewJob{{
+				Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main",
+			}}, true
+		},
+	}
 	pending := PendingReminder{
 		TriggeredBy: "failed_reviews", Reason: "Unavailable.",
 		TrackedRepoRoot: "/unavailable", WorktreeRoot: "/unavailable", Branch: "main",
@@ -2728,7 +2519,7 @@ func TestUnavailableDeferredReminderDoesNotSuppressStopProcessing(t *testing.T) 
 	}
 	key := pendingReminderKey(pending)
 	store := &StateStore{
-		reviews: NewHTTPReviewSource(server.URL),
+		reviews: reviews,
 		path:    filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{
 			"session-1": {PendingReminders: map[string]PendingReminder{key: pending}},
@@ -2752,35 +2543,25 @@ func TestSnoozedStopPersistsCleanupWhenReminderLookupIsUnavailable(t *testing.T)
 	repo.CommitFile("main.go", "package main\n", "initial")
 	resolvedRepo := testutil.NewGitRepo(t)
 	resolvedHead := resolvedRepo.CommitFile("resolved.go", "package resolved\n", "initial")
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/repos/resolve" {
-			switch r.URL.Query().Get("path") {
+	reviews := fakeReviewSource{
+		resolve: func(_ context.Context, path, _ string) (TrackedRepoResolution, bool) {
+			switch path {
 			case repo.Path():
-				assert.NoError(json.NewEncoder(w).Encode(map[string]any{
-					"tracked": true,
-					"repo": map[string]any{
-						"root_path": repo.Path(), "name": filepath.Base(repo.Path()),
-						"agent_hook_snoozed_until": time.Now().Add(time.Hour).UTC(),
-					},
-				}))
-				return
+				return TrackedRepoResolution{
+					Tracked: true, RootPath: repo.Path(), Name: filepath.Base(repo.Path()),
+					SnoozedUntil: time.Now().Add(time.Hour).UTC(),
+				}, true
 			case resolvedRepo.Path():
-				assert.NoError(json.NewEncoder(w).Encode(map[string]any{
-					"tracked": true,
-					"repo": map[string]string{
-						"root_path": resolvedRepo.Path(), "name": filepath.Base(resolvedRepo.Path()),
-					},
-				}))
-				return
+				return TrackedRepoResolution{
+					Tracked: true, RootPath: resolvedRepo.Path(), Name: filepath.Base(resolvedRepo.Path()),
+				}, true
 			}
-		}
-		if r.URL.Query().Get("repo") == resolvedRepo.Path() {
-			assert.NoError(json.NewEncoder(w).Encode(jobsResponse{}))
-			return
-		}
-		http.Error(w, "unavailable", http.StatusServiceUnavailable)
-	}))
-	t.Cleanup(server.Close)
+			return TrackedRepoResolution{}, false
+		},
+		list: func(_ context.Context, repoRoot, _ string) ([]storage.ReviewJob, bool) {
+			return nil, repoRoot == resolvedRepo.Path()
+		},
+	}
 	createdAt := time.Now().UTC()
 	resolved := PendingReminder{
 		TriggeredBy: "failed_reviews", Reason: "Resolved.",
@@ -2797,7 +2578,7 @@ func TestSnoozedStopPersistsCleanupWhenReminderLookupIsUnavailable(t *testing.T)
 	unavailableKey := pendingReminderKey(unavailable)
 	lineageKey := repoHeadKey(repo.Path(), "main")
 	store := &StateStore{
-		reviews: NewHTTPReviewSource(server.URL),
+		reviews: reviews,
 		path:    filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{
 			"session-1": {
@@ -2828,23 +2609,19 @@ func TestStopPromptSupersedesUnavailableReminderForSameLineage(t *testing.T) {
 	closed := false
 	verdict := "F"
 	var jobLookups atomic.Int32
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/repos/resolve" {
-			assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
-				"tracked": true,
-				"repo":    map[string]string{"root_path": repo.Path(), "name": filepath.Base(repo.Path())},
-			}))
-			return
-		}
-		if jobLookups.Add(1) == 1 {
-			http.Error(w, "unavailable", http.StatusServiceUnavailable)
-			return
-		}
-		assert.NoError(t, json.NewEncoder(w).Encode(jobsResponse{Jobs: []storage.ReviewJob{{
-			Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main",
-		}}}))
-	}))
-	t.Cleanup(server.Close)
+	reviews := fakeReviewSource{
+		resolve: func(context.Context, string, string) (TrackedRepoResolution, bool) {
+			return TrackedRepoResolution{Tracked: true, RootPath: repo.Path(), Name: filepath.Base(repo.Path())}, true
+		},
+		list: func(context.Context, string, string) ([]storage.ReviewJob, bool) {
+			if jobLookups.Add(1) == 1 {
+				return nil, false
+			}
+			return []storage.ReviewJob{{
+				Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main",
+			}}, true
+		},
+	}
 	lineageKey := repoHeadKey(repo.Path(), "main")
 	pending := PendingReminder{
 		TriggeredBy: "failed_reviews", Reason: "Unavailable.",
@@ -2852,7 +2629,7 @@ func TestStopPromptSupersedesUnavailableReminderForSameLineage(t *testing.T) {
 		LineageKey: lineageKey, CreatedAt: time.Now().UTC(),
 	}
 	store := &StateStore{
-		reviews: NewHTTPReviewSource(server.URL),
+		reviews: reviews,
 		path:    filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{
 			"session-1": {PendingReminders: map[string]PendingReminder{pendingReminderKey(pending): pending}},
@@ -2886,24 +2663,21 @@ func TestQueuePendingReminderKeepsLatestAbsoluteFailedReviewCount(t *testing.T) 
 	assert.Equal(t, createdAt, pending.CreatedAt)
 }
 
-func newDeferredReminderServer(t *testing.T, repoPath string, failedReviewCount *int) *httptest.Server {
-	t.Helper()
+func newDeferredReminderSource(repoPath string, failedReviewCount *int) ReviewSource {
 	closed := false
 	verdict := "F"
-	return httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/repos/resolve" {
-			assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
-				"tracked": true,
-				"repo":    map[string]string{"root_path": repoPath, "name": filepath.Base(repoPath)},
-			}))
-			return
-		}
-		jobs := []storage.ReviewJob{}
-		for range *failedReviewCount {
-			jobs = append(jobs, storage.ReviewJob{
-				Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main",
-			})
-		}
-		assert.NoError(t, json.NewEncoder(w).Encode(jobsResponse{Jobs: jobs}))
-	}))
+	return fakeReviewSource{
+		resolve: func(context.Context, string, string) (TrackedRepoResolution, bool) {
+			return TrackedRepoResolution{Tracked: true, RootPath: repoPath, Name: filepath.Base(repoPath)}, true
+		},
+		list: func(context.Context, string, string) ([]storage.ReviewJob, bool) {
+			jobs := make([]storage.ReviewJob, 0, *failedReviewCount)
+			for range *failedReviewCount {
+				jobs = append(jobs, storage.ReviewJob{
+					Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, Branch: "main",
+				})
+			}
+			return jobs, true
+		},
+	}
 }
