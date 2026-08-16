@@ -712,9 +712,9 @@ func TestIntegration_FinalPush(t *testing.T) {
 
 	repo, _ := db.GetOrCreateRepo(env.TmpDir, "git@github.com:test/finalpush.git")
 
-	// Create 150 jobs without commits to match previous test behavior
-	// (replacing createBatchReviews which forces commits)
-	for i := 0; i < 150; i++ {
+	// One more than a full batch proves FinalPush drains multiple batches.
+	jobCount := syncBatchSize + 1
+	for i := 0; i < jobCount; i++ {
 		if _, err := tryCreateCompletedReviewWithoutCommit(db, repo.ID); err != nil {
 			require.Condition(t, func() bool {
 				return false
@@ -722,7 +722,7 @@ func TestIntegration_FinalPush(t *testing.T) {
 		}
 	}
 
-	worker := startSyncWorker(t, db, env.pgURL, "finalpush-test", "1h")
+	worker := startSyncWorkerNoSync(t, db, env.pgURL, "finalpush-test", "1h")
 
 	if err := worker.FinalPush(); err != nil {
 		require.Condition(t, func() bool {
@@ -730,12 +730,12 @@ func TestIntegration_FinalPush(t *testing.T) {
 		}, "FinalPush failed: %v", err)
 	}
 
-	env.assertPgCount("review_jobs", 150)
+	env.assertPgCount("review_jobs", jobCount)
 	env.assertPgCountWhere(
-		"review_jobs", "commit_id IS NULL", nil, 150,
+		"review_jobs", "commit_id IS NULL", nil, jobCount,
 	)
 	env.assertPgCount("commits", 0)
-	env.assertPgCount("reviews", 150)
+	env.assertPgCount("reviews", jobCount)
 }
 
 func TestIntegration_FinalPush_NoCommit(t *testing.T) {
