@@ -55,6 +55,88 @@ func (a AddCommentRequest) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(a))
 }
 
+type AgentHookEventRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema                *string `json:"$schema,omitempty"`
+	CommitThreshold       int64   `json:"commit_threshold"`
+	DeferPostToolReminder *bool   `json:"defer_post_tool_reminder,omitempty"`
+	Event                 Input   `json:"event"`
+	FailedReviewThreshold int64   `json:"failed_review_threshold"`
+	Instruction           string  `json:"instruction" validate:"required"`
+	Threshold             int64   `json:"threshold"`
+}
+
+func (a AgentHookEventRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if v, ok := any(a.Event).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Event", err)
+		}
+	}
+	if err := typesValidator.Var(a.Instruction, "required"); err != nil {
+		errors = errors.Append("Instruction", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type AgentHookEventResponse struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema                *string `json:"$schema,omitempty"`
+	CommitCount           *int64  `json:"commit_count,omitempty"`
+	CommitThreshold       *int64  `json:"commit_threshold,omitempty"`
+	Count                 int64   `json:"count"`
+	FailedReviewCount     *int64  `json:"failed_review_count,omitempty"`
+	FailedReviewThreshold *int64  `json:"failed_review_threshold,omitempty"`
+	Reason                *string `json:"reason,omitempty"`
+	RemindCount           *int64  `json:"remind_count,omitempty"`
+	SessionID             string  `json:"session_id" validate:"required"`
+	Skipped               *bool   `json:"skipped,omitempty"`
+	Threshold             int64   `json:"threshold"`
+	Triggered             bool    `json:"triggered"`
+	TriggeredBy           *string `json:"triggered_by,omitempty"`
+}
+
+func (a AgentHookEventResponse) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(a))
+}
+
+type AgentHookResetOutputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema *string `json:"$schema,omitempty"`
+	Ok     bool    `json:"ok"`
+}
+
+type AgentHookResetRequest struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema    *string `json:"$schema,omitempty"`
+	All       *bool   `json:"all,omitempty"`
+	SessionID *string `json:"session_id,omitempty"`
+}
+
+type AgentHookSessionsOutputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema   *string                 `json:"$schema,omitempty"`
+	Sessions map[string]SessionState `json:"sessions"`
+}
+
+func (a AgentHookSessionsOutputBody) Validate() error {
+	var errors runtime.ValidationErrors
+	for k, v := range a.Sessions {
+		if validator, ok := any(v).(runtime.Validator); ok {
+			if err := validator.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Sessions[%s]", k), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type AgentHookSnooze struct {
 	Branch       string    `json:"branch" validate:"required"`
 	RepoName     string    `json:"repo_name" validate:"required"`
@@ -1307,6 +1389,24 @@ func (h HealthStatus) Validate() error {
 	return errors
 }
 
+type Input struct {
+	Cwd                  *string             `json:"cwd,omitempty"`
+	HookEventName        *string             `json:"hook_event_name,omitempty"`
+	LastAssistantMessage *string             `json:"last_assistant_message,omitempty"`
+	SessionID            string              `json:"session_id" validate:"required"`
+	StopHookActive       *bool               `json:"stop_hook_active,omitempty"`
+	ToolInput            map[string]struct{} `json:"tool_input,omitempty"`
+	ToolName             *string             `json:"tool_name,omitempty"`
+	ToolResponse         *struct{}           `json:"tool_response,omitempty"`
+	ToolUseID            *string             `json:"tool_use_id,omitempty"`
+	TranscriptPath       *string             `json:"transcript_path,omitempty"`
+	TurnID               *string             `json:"turn_id,omitempty"`
+}
+
+func (i Input) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(i))
+}
+
 type JobIDRequest struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema *string `json:"$schema,omitempty"`
@@ -1603,6 +1703,25 @@ type PanelSummary struct {
 }
 
 func (p PanelSummary) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+}
+
+type PendingReminder struct {
+	Branch              *string   `json:"branch,omitempty"`
+	CommitCount         *int64    `json:"commit_count,omitempty"`
+	CreatedAt           time.Time `json:"created_at" validate:"required"`
+	FailedReviewCount   *int64    `json:"failed_review_count,omitempty"`
+	Head                *string   `json:"head,omitempty"`
+	Instruction         *string   `json:"instruction,omitempty"`
+	LineageKey          string    `json:"lineage_key" validate:"required"`
+	Reason              string    `json:"reason" validate:"required"`
+	TrackedRepoIdentity *string   `json:"tracked_repo_identity,omitempty"`
+	TrackedRepoRoot     string    `json:"tracked_repo_root" validate:"required"`
+	TriggeredBy         string    `json:"triggered_by" validate:"required"`
+	WorktreeRoot        string    `json:"worktree_root" validate:"required"`
+}
+
+func (p PendingReminder) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(p))
 }
 
@@ -2047,6 +2166,45 @@ type ReviewProjectionReview struct {
 
 func (r ReviewProjectionReview) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(r))
+}
+
+type SessionState struct {
+	CommitCount                 *int64                     `json:"commit_count,omitempty"`
+	CommitCountsSincePrompt     map[string]int64           `json:"commit_counts_since_prompt,omitempty"`
+	CommitShasSincePrompt       map[string][]string        `json:"commit_shas_since_prompt,omitempty"`
+	CommitTriggeredAt           *time.Time                 `json:"commit_triggered_at,omitempty"`
+	Count                       int64                      `json:"count"`
+	FailedReviewCount           *int64                     `json:"failed_review_count,omitempty"`
+	FailedReviewTriggeredAt     *time.Time                 `json:"failed_review_triggered_at,omitempty"`
+	FailedReviewTriggeredCounts map[string]int64           `json:"failed_review_triggered_counts,omitempty"`
+	LastCommitHead              *string                    `json:"last_commit_head,omitempty"`
+	LastCommitRepo              *string                    `json:"last_commit_repo,omitempty"`
+	LastCwd                     *string                    `json:"last_cwd,omitempty"`
+	LastFailedReviewBranch      *string                    `json:"last_failed_review_branch,omitempty"`
+	LastFailedReviewRepo        *string                    `json:"last_failed_review_repo,omitempty"`
+	LastSeenAt                  *time.Time                 `json:"last_seen_at,omitempty"`
+	LastTurnID                  *string                    `json:"last_turn_id,omitempty"`
+	PendingReminders            map[string]PendingReminder `json:"pending_reminders,omitempty"`
+	RemindCount                 *int64                     `json:"remind_count,omitempty"`
+	RepoHeads                   map[string]string          `json:"repo_heads,omitempty"`
+	StopCountsSincePrompt       map[string]int64           `json:"stop_counts_since_prompt,omitempty"`
+	TriggeredAt                 *time.Time                 `json:"triggered_at,omitempty"`
+	WorktreeLineageKeys         map[string]string          `json:"worktree_lineage_keys,omitempty"`
+}
+
+func (s SessionState) Validate() error {
+	var errors runtime.ValidationErrors
+	for k, v := range s.PendingReminders {
+		if validator, ok := any(v).(runtime.Validator); ok {
+			if err := validator.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("PendingReminders[%s]", k), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type SessionUsagePayload struct {

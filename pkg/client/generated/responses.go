@@ -15,6 +15,18 @@ type ListActivityResponse = ActivityOutputBody
 
 type ListActivityErrorResponse = ErrorModel
 
+type RecordAgentHookEventResponse = AgentHookEventResponse
+
+type RecordAgentHookEventErrorResponse = ErrorModel
+
+type ResetAgentHookSessionsResponse = AgentHookResetOutputBody
+
+type ResetAgentHookSessionsErrorResponse = ErrorModel
+
+type ListAgentHookSessionsResponse = AgentHookSessionsOutputBody
+
+type ListAgentHookSessionsErrorResponse = ErrorModel
+
 type SetAgentHookSnoozeResponse = AgentHookSnoozeOutputBody
 
 type SetAgentHookSnoozeErrorResponse = ErrorModel
@@ -298,6 +310,27 @@ type ListActivityResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *ListActivityResponse
+}
+
+type RecordAgentHookEventResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *RecordAgentHookEventResponse
+}
+
+type ResetAgentHookSessionsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ResetAgentHookSessionsResponse
+}
+
+type ListAgentHookSessionsResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListAgentHookSessionsResponse
 }
 
 type SetAgentHookSnoozeResp struct {
