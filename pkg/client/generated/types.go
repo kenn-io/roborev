@@ -2247,16 +2247,41 @@ func (w WebLoginRequest) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(w))
 }
 
+type WebSessionCapabilities struct {
+	CancelAnyJob    bool `json:"cancel_any_job"`
+	CancelReviewJob bool `json:"cancel_review_job"`
+	RerunJob        bool `json:"rerun_job"`
+}
+
 type WebSessionCredentials struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema    *string   `json:"$schema,omitempty"`
-	Csrf      string    `json:"csrf" validate:"required"`
-	ExpiresAt time.Time `json:"expires_at" validate:"required"`
-	Session   string    `json:"session" validate:"required"`
+	Schema       *string                `json:"$schema,omitempty"`
+	Capabilities WebSessionCapabilities `json:"capabilities"`
+	Csrf         string                 `json:"csrf" validate:"required"`
+	ExpiresAt    time.Time              `json:"expires_at" validate:"required"`
+	Session      string                 `json:"session" validate:"required"`
 }
 
 func (w WebSessionCredentials) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(w))
+	var errors runtime.ValidationErrors
+	if v, ok := any(w.Capabilities).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Capabilities", err)
+		}
+	}
+	if err := typesValidator.Var(w.Csrf, "required"); err != nil {
+		errors = errors.Append("Csrf", err)
+	}
+	if err := typesValidator.Var(w.ExpiresAt, "required"); err != nil {
+		errors = errors.Append("ExpiresAt", err)
+	}
+	if err := typesValidator.Var(w.Session, "required"); err != nil {
+		errors = errors.Append("Session", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type WebSessionError struct {
@@ -2278,6 +2303,7 @@ type WebSessionStatus struct {
 	Schema         *string                        `json:"$schema,omitempty"`
 	Authenticated  bool                           `json:"authenticated"`
 	Authentication WebSessionStatusAuthentication `json:"authentication" validate:"required"`
+	Capabilities   *WebSessionCapabilities        `json:"capabilities,omitempty"`
 	ExpiresAt      *time.Time                     `json:"expires_at,omitempty"`
 }
 
@@ -2286,6 +2312,13 @@ func (w WebSessionStatus) Validate() error {
 	if v, ok := any(w.Authentication).(runtime.Validator); ok {
 		if err := v.Validate(); err != nil {
 			errors = errors.Append("Authentication", err)
+		}
+	}
+	if w.Capabilities != nil {
+		if v, ok := any(w.Capabilities).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Capabilities", err)
+			}
 		}
 	}
 	if len(errors) == 0 {

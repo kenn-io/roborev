@@ -21,6 +21,11 @@ describe("review store composition", () => {
       runtime,
       client: {} as never,
       navigate,
+      getCapabilities: () => ({
+        cancelAnyJob: true,
+        cancelReviewJob: true,
+        rerunJob: true,
+      }),
     });
 
     stores.roborevJobs.selectJob(42);
@@ -105,6 +110,11 @@ describe("review store composition", () => {
       runtime,
       client: { GET: get, POST: post } as never,
       navigate: vi.fn(),
+      getCapabilities: () => ({
+        cancelAnyJob: true,
+        cancelReviewJob: true,
+        rerunJob: true,
+      }),
     });
 
     expect(stores.roborevJobs.isEventStreamConnected()).toBe(false);

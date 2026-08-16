@@ -2992,6 +2992,20 @@ components:
       required:
         - token
       type: object
+    WebSessionCapabilities:
+      additionalProperties: false
+      properties:
+        cancel_any_job:
+          type: boolean
+        cancel_review_job:
+          type: boolean
+        rerun_job:
+          type: boolean
+      required:
+        - cancel_any_job
+        - cancel_review_job
+        - rerun_job
+      type: object
     WebSessionCredentials:
       additionalProperties: false
       properties:
@@ -3002,6 +3016,8 @@ components:
           format: uri
           readOnly: true
           type: string
+        capabilities:
+          $ref: "#/components/schemas/WebSessionCapabilities"
         csrf:
           type: string
         expires_at:
@@ -3013,6 +3029,7 @@ components:
         - session
         - csrf
         - expires_at
+        - capabilities
       type: object
     WebSessionError:
       additionalProperties: false
@@ -3046,6 +3063,8 @@ components:
             - local
             - token
           type: string
+        capabilities:
+          $ref: "#/components/schemas/WebSessionCapabilities"
         expires_at:
           format: date-time
           type: string

@@ -52,10 +52,11 @@ type BrowserPrincipal struct {
 }
 
 type SessionCredentials struct {
-	Ambient string
-	Tab     string
-	CSRF    string
-	Expires time.Time
+	Ambient   string
+	Tab       string
+	CSRF      string
+	Expires   time.Time
+	Principal BrowserPrincipal
 }
 
 type ambientSession struct {
@@ -175,7 +176,7 @@ func (m *BrowserSessionManager) newSession(principal BrowserPrincipal) (SessionC
 		id: ambientID, principal: principal, expiresAt: expires,
 		revoked: make(chan struct{}),
 	}
-	return m.newTabLocked(ambientValue, ambientID, expires)
+	return m.newTabLocked(ambientValue, ambientID, expires, principal)
 }
 
 func (m *BrowserSessionManager) Bootstrap(ambient string) (SessionCredentials, error) {
@@ -187,10 +188,15 @@ func (m *BrowserSessionManager) Bootstrap(ambient string) (SessionCredentials, e
 	if !found {
 		return SessionCredentials{}, ErrWebSessionRequired
 	}
-	return m.newTabLocked(ambient, session.id, session.expiresAt)
+	return m.newTabLocked(ambient, session.id, session.expiresAt, session.principal)
 }
 
-func (m *BrowserSessionManager) newTabLocked(ambient string, ambientID [32]byte, expires time.Time) (SessionCredentials, error) {
+func (m *BrowserSessionManager) newTabLocked(
+	ambient string,
+	ambientID [32]byte,
+	expires time.Time,
+	principal BrowserPrincipal,
+) (SessionCredentials, error) {
 	tabValue, err := randomToken(m.entropy, 32)
 	if err != nil {
 		return SessionCredentials{}, err
@@ -205,7 +211,10 @@ func (m *BrowserSessionManager) newTabLocked(ambient string, ambientID [32]byte,
 		csrfHash:  sha256.Sum256([]byte(csrfValue)),
 		expiresAt: expires,
 	}
-	return SessionCredentials{Ambient: ambient, Tab: tabValue, CSRF: csrfValue, Expires: expires}, nil
+	return SessionCredentials{
+		Ambient: ambient, Tab: tabValue, CSRF: csrfValue, Expires: expires,
+		Principal: principal,
+	}, nil
 }
 
 func (m *BrowserSessionManager) Authenticate(ambient, tab string) (BrowserPrincipal, error) {

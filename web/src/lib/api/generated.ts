@@ -2116,6 +2116,11 @@ export interface components {
             readonly $schema?: string;
             token: string;
         };
+        WebSessionCapabilities: {
+            cancel_any_job: boolean;
+            cancel_review_job: boolean;
+            rerun_job: boolean;
+        };
         WebSessionCredentials: {
             /**
              * Format: uri
@@ -2123,6 +2128,7 @@ export interface components {
              * @example https://example.com/WebSessionCredentials.json
              */
             readonly $schema?: string;
+            capabilities: components["schemas"]["WebSessionCapabilities"];
             csrf: string;
             /** Format: date-time */
             expires_at: string;
@@ -2147,6 +2153,7 @@ export interface components {
             authenticated: boolean;
             /** @enum {string} */
             authentication: "local" | "token";
+            capabilities?: components["schemas"]["WebSessionCapabilities"];
             /** Format: date-time */
             expires_at?: string;
         };

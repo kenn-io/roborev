@@ -388,9 +388,7 @@ test.describe.serial("native review workspace", () => {
     ).toBeVisible();
   });
 
-  test("cancels and reruns jobs through authoritative daemon state", async ({
-    page,
-  }) => {
+  test("shows only actions supported by a token session", async ({ page }) => {
     await openReview(page, 50);
     const queuedActions = page.getByRole("group", { name: "Review actions" });
     await queuedActions.getByRole("button", { name: "Cancel" }).click();
@@ -400,11 +398,23 @@ test.describe.serial("native review workspace", () => {
 
     await openReview(page, 48);
     const failedActions = page.getByRole("group", { name: "Review actions" });
-    await failedActions.getByRole("button", { name: "Rerun" }).click();
     await expect(
-      page.locator(".review-dock-header .status-badge"),
-    ).toContainText("queued");
+      failedActions.getByRole("button", { name: "Rerun" }),
+    ).toHaveCount(0);
   });
+
+  test(
+    "reruns jobs through a local session",
+    { tag: "@local-session" },
+    async ({ page }) => {
+      await openReview(page, 48);
+      const actions = page.getByRole("group", { name: "Review actions" });
+      await actions.getByRole("button", { name: "Rerun" }).click();
+      await expect(
+        page.locator(".review-dock-header .status-badge"),
+      ).toContainText("queued");
+    },
+  );
 
   test("expands panel members fetched from the daemon", async ({ page }) => {
     await openReviews(page);

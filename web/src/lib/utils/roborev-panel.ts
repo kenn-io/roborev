@@ -1,4 +1,5 @@
 import type { components } from "../api/generated";
+import type { SessionCapabilities } from "../api/session";
 import { parseCostUsd } from "./roborev-usage";
 
 type ReviewJob = components["schemas"]["ReviewJob"];
@@ -23,6 +24,34 @@ export function canRerunJob(job: ReviewJob): boolean {
     job.panel_role !== "member" &&
     !(job.status === "skipped" && job.source === "auto_design") &&
     RERUNNABLE_STATUSES.has(job.status)
+  );
+}
+
+export function canCancelJob(
+  job: ReviewJob,
+  capabilities: SessionCapabilities,
+  panelMembers?: ReviewJob[],
+): boolean {
+  if (job.status !== "queued" && job.status !== "running") return false;
+  if (capabilities.cancelAnyJob) return true;
+  if (!capabilities.cancelReviewJob) return false;
+  if (job.panel_role === "synthesis") {
+    return (
+      panelMembers !== undefined &&
+      panelMembers.length > 0 &&
+      panelMembers.every(isRemoteCancelableReview)
+    );
+  }
+  return isRemoteCancelableReview(job);
+}
+
+function isRemoteCancelableReview(job: ReviewJob): boolean {
+  return (
+    (job.job_type === "review" ||
+      job.job_type === "range" ||
+      job.job_type === "dirty") &&
+    !job.agentic &&
+    !job.prompt_prebuilt
   );
 }
 

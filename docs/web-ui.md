@@ -177,7 +177,8 @@ Remote browser sessions can cancel only non-agentic code reviews and cannot
 rerun jobs. Reruns and stored-prompt workflows, including background tasks and
 fixes, remain available through the loopback CLI API or an automatically
 bootstrapped local browser session. Panel cancellations use the same rule for
-every member of the panel.
+every member of the panel. The application hides cancel and rerun controls when
+the current browser session or selected job does not permit them.
 
 Invalid token exchanges trigger a process-wide exponential cooldown of up to one
 minute. The daemon checks a valid token before applying that cooldown, so a

@@ -11,15 +11,30 @@ export type Fetch = (
 ) => Promise<Response>;
 
 export type SessionResult =
-  | { state: "authenticated"; expiresAt: string }
+  | {
+      state: "authenticated";
+      expiresAt: string;
+      capabilities: SessionCapabilities;
+    }
   | { state: "login-required" }
   | { state: "rate-limited"; retryAfterSeconds: number }
   | { state: "error"; message: string };
+
+export interface SessionCapabilities {
+  cancelAnyJob: boolean;
+  cancelReviewJob: boolean;
+  rerunJob: boolean;
+}
 
 interface CredentialBody {
   session: string;
   csrf: string;
   expires_at: string;
+  capabilities: {
+    cancel_any_job: boolean;
+    cancel_review_job: boolean;
+    rerun_job: boolean;
+  };
 }
 
 export function clearTabSession(): void {
@@ -168,7 +183,15 @@ async function exchangeCredentials(
   }
   sessionStorage.setItem(sessionKey, bodyValue.session);
   sessionStorage.setItem(csrfKey, bodyValue.csrf);
-  return { state: "authenticated", expiresAt: bodyValue.expires_at };
+  return {
+    state: "authenticated",
+    expiresAt: bodyValue.expires_at,
+    capabilities: {
+      cancelAnyJob: bodyValue.capabilities.cancel_any_job,
+      cancelReviewJob: bodyValue.capabilities.cancel_review_job,
+      rerunJob: bodyValue.capabilities.rerun_job,
+    },
+  };
 }
 
 function isCredentialBody(value: unknown): value is CredentialBody {
@@ -182,6 +205,14 @@ function isCredentialBody(value: unknown): value is CredentialBody {
     typeof candidate.csrf === "string" &&
     candidate.csrf.length > 0 &&
     typeof candidate.expires_at === "string" &&
-    candidate.expires_at.length > 0
+    candidate.expires_at.length > 0 &&
+    typeof candidate.capabilities === "object" &&
+    candidate.capabilities !== null &&
+    typeof (candidate.capabilities as Record<string, unknown>)
+      .cancel_any_job === "boolean" &&
+    typeof (candidate.capabilities as Record<string, unknown>)
+      .cancel_review_job === "boolean" &&
+    typeof (candidate.capabilities as Record<string, unknown>).rerun_job ===
+      "boolean"
   );
 }

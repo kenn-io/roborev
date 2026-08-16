@@ -13,6 +13,7 @@
   import LogViewer from "./LogViewer.svelte";
   import PromptViewer from "./PromptViewer.svelte";
   import {
+    canCancelJob,
     canRerunJob,
     isPanelParent,
     isTerminalStatus,
@@ -77,11 +78,6 @@
     }
   }
 
-  const canCancel = $derived(
-    selectedJob?.status === "queued" || selectedJob?.status === "running",
-  );
-
-  const canRerun = $derived(selectedJob ? canRerunJob(selectedJob) : false);
   const rerunPending = $derived(
     selectedJob
       ? (stores.roborevJobs?.isRerunning(selectedJob.id) ?? false)
@@ -126,6 +122,18 @@
     if (!runUuid) return undefined;
     return stores.roborevJobs?.getPanelMembers(runUuid);
   });
+
+  const canCancel = $derived(
+    selectedJob
+      ? canCancelJob(selectedJob, stores.getCapabilities(), panelMembers)
+      : false,
+  );
+
+  const canRerun = $derived(
+    stores.getCapabilities().rerunJob && selectedJob
+      ? canRerunJob(selectedJob)
+      : false,
+  );
 
   const panelHeader = $derived(
     selectedJob ? panelReviewHeader(selectedJob, panelMembers) : null,

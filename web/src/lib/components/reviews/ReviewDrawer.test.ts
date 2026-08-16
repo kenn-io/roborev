@@ -23,8 +23,16 @@ const state = vi.hoisted(() => ({
   closeReview: vi.fn(),
   copyOutput: vi.fn(),
   jobStatus: "done",
+  jobType: "review",
+  agentic: false,
+  promptPrebuilt: false,
   panelRole: undefined as string | undefined,
   rerunning: false,
+  capabilities: {
+    cancelAnyJob: true,
+    cancelReviewJob: true,
+    rerunJob: true,
+  },
 }));
 
 type ReviewJob = components["schemas"]["ReviewJob"];
@@ -59,6 +67,9 @@ vi.mock("../../stores/context", () => ({
         {
           ...job,
           status: state.jobStatus,
+          job_type: state.jobType,
+          agentic: state.agentic,
+          prompt_prebuilt: state.promptPrebuilt,
           panel_role: state.panelRole,
         },
       ],
@@ -86,6 +97,7 @@ vi.mock("../../stores/context", () => ({
       closeReview: state.closeReview,
       copyOutput: state.copyOutput,
     },
+    getCapabilities: () => state.capabilities,
   }),
 }));
 
@@ -100,8 +112,16 @@ describe("ReviewDrawer", () => {
     state.closeReview.mockReset();
     state.copyOutput.mockReset();
     state.jobStatus = "done";
+    state.jobType = "review";
+    state.agentic = false;
+    state.promptPrebuilt = false;
     state.panelRole = undefined;
     state.rerunning = false;
+    state.capabilities = {
+      cancelAnyJob: true,
+      cancelReviewJob: true,
+      rerunJob: true,
+    };
     vi.stubGlobal(
       "ResizeObserver",
       class {
@@ -221,5 +241,21 @@ describe("ReviewDrawer", () => {
     render(ReviewDrawer);
 
     expect(screen.getByRole("button", { name: /Rerun/ })).toBeDisabled();
+  });
+
+  it("hides controls forbidden to token-authenticated sessions", () => {
+    state.capabilities = {
+      cancelAnyJob: false,
+      cancelReviewJob: true,
+      rerunJob: false,
+    };
+    const completedReview = render(ReviewDrawer);
+    expect(screen.queryByRole("button", { name: "Rerun" })).toBeNull();
+    completedReview.unmount();
+
+    state.jobStatus = "queued";
+    state.jobType = "compact";
+    render(ReviewDrawer);
+    expect(screen.queryByRole("button", { name: "Cancel" })).toBeNull();
   });
 });

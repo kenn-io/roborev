@@ -126,6 +126,15 @@ func TestBrowserHandlerLoginBootstrapAndAuthenticatedRoutes(t *testing.T) {
 	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &credentials))
 	assert.NotEmpty(t, credentials.Session)
 	assert.NotEmpty(t, credentials.CSRF)
+	var loginEnvelope struct {
+		Capabilities map[string]bool `json:"capabilities"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &loginEnvelope))
+	assert.Equal(t, map[string]bool{
+		"cancel_any_job":    false,
+		"cancel_review_job": true,
+		"rerun_job":         false,
+	}, loginEnvelope.Capabilities)
 	cookies := recorder.Result().Cookies()
 	require.Len(t, cookies, 1)
 	assert.Equal(t, sessions.CookieName(), cookies[0].Name)
@@ -696,6 +705,15 @@ func TestBrowserHandlerLocalBootstrapRequiresFetchMetadata(t *testing.T) {
 	handler.ServeHTTP(recorder, request)
 	assert.Equal(t, http.StatusOK, recorder.Code)
 	assert.NotEmpty(t, recorder.Header().Get("Set-Cookie"))
+	var envelope struct {
+		Capabilities map[string]bool `json:"capabilities"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &envelope))
+	assert.Equal(t, map[string]bool{
+		"cancel_any_job":    true,
+		"cancel_review_job": true,
+		"rerun_job":         true,
+	}, envelope.Capabilities)
 }
 
 func TestBrowserHandlerLocalBootstrapAllowsOriginlessOwnerHost(t *testing.T) {

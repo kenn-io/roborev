@@ -7,6 +7,11 @@ const credentials = {
   session: "tab-session",
   csrf: "csrf-value",
   expires_at: "2026-08-13T20:00:00Z",
+  capabilities: {
+    cancel_any_job: true,
+    cancel_review_job: true,
+    rerun_job: true,
+  },
 };
 
 function response(status: number, body?: unknown): Response {

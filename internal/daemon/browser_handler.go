@@ -484,9 +484,11 @@ func writeBrowserSessionStatus(w http.ResponseWriter, request *http.Request, pol
 		authentication = "token"
 	}
 	status := WebSessionStatus{Authentication: authentication}
-	_, ambient, tab, err := authenticateBrowserRequest(request, sessions)
+	principal, ambient, tab, err := authenticateBrowserRequest(request, sessions)
 	if err == nil {
 		status.Authenticated = true
+		capabilities := webSessionCapabilities(principal)
+		status.Capabilities = &capabilities
 		if expiry, expiryErr := sessions.SessionExpiry(ambient, tab); expiryErr == nil {
 			status.ExpiresAt = &expiry
 		}
@@ -497,7 +499,14 @@ func writeBrowserSessionStatus(w http.ResponseWriter, request *http.Request, pol
 func writeBrowserCredentials(w http.ResponseWriter, credentials SessionCredentials) {
 	writeBrowserJSON(w, http.StatusOK, WebSessionCredentials{
 		Session: credentials.Tab, CSRF: credentials.CSRF, ExpiresAt: credentials.Expires,
+		Capabilities: webSessionCapabilities(credentials.Principal),
 	})
+}
+
+func webSessionCapabilities(principal BrowserPrincipal) WebSessionCapabilities {
+	return WebSessionCapabilities{
+		CancelAnyJob: principal.Local, CancelReviewJob: true, RerunJob: principal.Local,
+	}
 }
 
 func readBrowserJSON(w http.ResponseWriter, request *http.Request, destination any) bool {

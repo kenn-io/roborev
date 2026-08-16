@@ -1,7 +1,12 @@
 <script lang="ts">
   import { onMount, tick } from "svelte";
 
-  import { bootstrapSession, login, sessionLostEvent } from "./lib/api/session";
+  import {
+    bootstrapSession,
+    login,
+    sessionLostEvent,
+    type SessionCapabilities,
+  } from "./lib/api/session";
   import AppShell from "./lib/components/AppShell.svelte";
 
   type ViewState = "checking" | "login" | "authenticated" | "error";
@@ -13,6 +18,11 @@
   let retryAfterSeconds = 0;
   let cooldownDeadline = 0;
   let cooldownTimer: ReturnType<typeof setInterval> | undefined;
+  let capabilities: SessionCapabilities = {
+    cancelAnyJob: false,
+    cancelReviewJob: false,
+    rerunJob: false,
+  };
 
   onMount(() => {
     document.documentElement.classList.add("dark");
@@ -81,6 +91,7 @@
     switch (result.state) {
       case "authenticated":
         clearCooldown();
+        capabilities = result.capabilities;
         view = "authenticated";
         break;
       case "login-required":
@@ -140,7 +151,7 @@
       </form>
     </section>
   {:else if view === "authenticated"}
-    <AppShell />
+    <AppShell {capabilities} />
   {:else}
     <section class="card status" role="alert">
       <p class="eyebrow">Connection problem</p>

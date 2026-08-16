@@ -7,7 +7,11 @@
   import JobTable from "../components/reviews/JobTable.svelte";
   import ReviewDrawer from "../components/reviews/ReviewDrawer.svelte";
   import ShortcutHelpModal from "../components/reviews/ShortcutHelpModal.svelte";
-  import { canRerunJob, isPanelParent } from "../utils/roborev-panel";
+  import {
+    canCancelJob,
+    canRerunJob,
+    isPanelParent,
+  } from "../utils/roborev-panel";
 
   interface Props {
     jobId?: number;
@@ -119,10 +123,22 @@
         }
         break;
       case "x": {
-        const xId = stores.roborevJobs?.getSelectedJobId();
-        if (xId !== undefined) {
+        const jobsStore = stores.roborevJobs;
+        const xId = jobsStore?.getSelectedJobId();
+        const selected =
+          jobsStore?.getVisibleJobs().find((job) => job.id === xId) ??
+          stores.roborevReview?.getSelectedJob();
+        const members = selected?.panel_run_uuid
+          ? jobsStore?.getPanelMembers(selected.panel_run_uuid)
+          : undefined;
+        if (
+          jobsStore &&
+          xId !== undefined &&
+          selected &&
+          canCancelJob(selected, stores.getCapabilities(), members)
+        ) {
           e.preventDefault();
-          stores.roborevJobs?.cancelJob(xId);
+          jobsStore.cancelJob(xId);
         }
         break;
       }
@@ -136,6 +152,7 @@
           jobsStore &&
           rId !== undefined &&
           selected &&
+          stores.getCapabilities().rerunJob &&
           canRerunJob(selected) &&
           !jobsStore.isRerunning(rId)
         ) {

@@ -3066,6 +3066,9 @@
           "response": {
             "type": "string"
           },
+          "source": {
+            "type": "string"
+          },
           "source_machine_id": {
             "type": "string"
           },
@@ -3883,6 +3886,26 @@
         ],
         "type": "object"
       },
+      "WebSessionCapabilities": {
+        "additionalProperties": false,
+        "properties": {
+          "cancel_any_job": {
+            "type": "boolean"
+          },
+          "cancel_review_job": {
+            "type": "boolean"
+          },
+          "rerun_job": {
+            "type": "boolean"
+          }
+        },
+        "required": [
+          "cancel_any_job",
+          "cancel_review_job",
+          "rerun_job"
+        ],
+        "type": "object"
+      },
       "WebSessionCredentials": {
         "additionalProperties": false,
         "properties": {
@@ -3892,6 +3915,9 @@
             "format": "uri",
             "readOnly": true,
             "type": "string"
+          },
+          "capabilities": {
+            "$ref": "#/components/schemas/WebSessionCapabilities"
           },
           "csrf": {
             "type": "string"
@@ -3907,7 +3933,8 @@
         "required": [
           "session",
           "csrf",
-          "expires_at"
+          "expires_at",
+          "capabilities"
         ],
         "type": "object"
       },
@@ -3949,6 +3976,9 @@
               "token"
             ],
             "type": "string"
+          },
+          "capabilities": {
+            "$ref": "#/components/schemas/WebSessionCapabilities"
           },
           "expires_at": {
             "format": "date-time",
@@ -5222,6 +5252,21 @@
             "name": "branch",
             "schema": {
               "description": "Filter by branch name",
+              "type": "string"
+            }
+          },
+          {
+            "description": "Only jobs with empty or unset branch",
+            "explode": false,
+            "in": "query",
+            "name": "branch_empty",
+            "schema": {
+              "description": "Only jobs with empty or unset branch",
+              "enum": [
+                "true",
+                "false",
+                ""
+              ],
               "type": "string"
             }
           },

@@ -4,6 +4,7 @@
   import { onDestroy } from "svelte";
 
   import { createRoborevClient } from "../api/client";
+  import type { SessionCapabilities } from "../api/session";
   import { createRouter } from "../router/router.svelte";
   import { setAppRuntime, setRoborevClient } from "../runtime/context";
   import { makeAppRuntime } from "../runtime/runtime";
@@ -11,6 +12,11 @@
   import { provideReviewStores } from "../stores/context";
   import AnalyticsView from "../views/AnalyticsView.svelte";
   import ReviewsView from "../views/ReviewsView.svelte";
+
+  interface Props {
+    capabilities: SessionCapabilities;
+  }
+  let { capabilities }: Props = $props();
 
   const runtime = makeAppRuntime();
   const client = createRoborevClient("/");
@@ -25,6 +31,7 @@
     runtime,
     client,
     navigate: router.navigateToReview,
+    getCapabilities: () => capabilities,
     onError: (message) => {
       actionError = message;
     },

@@ -13,6 +13,11 @@ const credentials = {
   session: "tab-session",
   csrf: "csrf-value",
   expires_at: "2026-08-13T20:00:00Z",
+  capabilities: {
+    cancel_any_job: false,
+    cancel_review_job: true,
+    rerun_job: false,
+  },
 };
 
 function response(status: number, body?: unknown): Response {
@@ -35,6 +40,11 @@ describe("browser session client", () => {
     await expect(bootstrapSession(fetchMock)).resolves.toEqual({
       state: "authenticated",
       expiresAt: credentials.expires_at,
+      capabilities: {
+        cancelAnyJob: false,
+        cancelReviewJob: true,
+        rerunJob: false,
+      },
     });
     expect(fetchMock).toHaveBeenCalledWith("/api/ui/session/bootstrap", {
       method: "POST",
@@ -56,6 +66,11 @@ describe("browser session client", () => {
     await expect(login("one-time-secret", fetchMock)).resolves.toEqual({
       state: "authenticated",
       expiresAt: credentials.expires_at,
+      capabilities: {
+        cancelAnyJob: false,
+        cancelReviewJob: true,
+        rerunJob: false,
+      },
     });
     const [url, options] = fetchMock.mock.calls[0] as unknown as [
       string,

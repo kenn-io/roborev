@@ -53,6 +53,27 @@ func (e GetCostParamsBranchEmpty) Valid() bool {
 	}
 }
 
+// Defines values for ListJobsParamsBranchEmpty.
+const (
+	ListJobsParamsBranchEmptyEmpty ListJobsParamsBranchEmpty = ""
+	ListJobsParamsBranchEmptyFalse ListJobsParamsBranchEmpty = "false"
+	ListJobsParamsBranchEmptyTrue  ListJobsParamsBranchEmpty = "true"
+)
+
+// Valid indicates whether the value is a known member of the ListJobsParamsBranchEmpty enum.
+func (e ListJobsParamsBranchEmpty) Valid() bool {
+	switch e {
+	case ListJobsParamsBranchEmptyEmpty:
+		return true
+	case ListJobsParamsBranchEmptyFalse:
+		return true
+	case ListJobsParamsBranchEmptyTrue:
+		return true
+	default:
+		return false
+	}
+}
+
 // Defines values for ListJobsParamsBranchIncludeEmpty.
 const (
 	ListJobsParamsBranchIncludeEmptyEmpty ListJobsParamsBranchIncludeEmpty = ""
@@ -139,16 +160,16 @@ func (e ListJobsParamsOmitPrompt) Valid() bool {
 
 // Defines values for GetSummaryParamsAll.
 const (
-	GetSummaryParamsAllFalse GetSummaryParamsAll = "false"
-	GetSummaryParamsAllTrue  GetSummaryParamsAll = "true"
+	False GetSummaryParamsAll = "false"
+	True  GetSummaryParamsAll = "true"
 )
 
 // Valid indicates whether the value is a known member of the GetSummaryParamsAll enum.
 func (e GetSummaryParamsAll) Valid() bool {
 	switch e {
-	case GetSummaryParamsAllFalse:
+	case False:
 		return true
-	case GetSummaryParamsAllTrue:
+	case True:
 		return true
 	default:
 		return false
@@ -1074,6 +1095,7 @@ type Response struct {
 	JobId           *int64     `json:"job_id,omitempty"`
 	Responder       string     `json:"responder"`
 	Response        string     `json:"response"`
+	Source          *string    `json:"source,omitempty"`
 	SourceMachineId *string    `json:"source_machine_id,omitempty"`
 	SyncedAt        *time.Time `json:"synced_at,omitempty"`
 	Uuid            *string    `json:"uuid,omitempty"`
@@ -1317,13 +1339,21 @@ type WebLoginRequest struct {
 	Token  string  `json:"token"`
 }
 
+// WebSessionCapabilities defines model for WebSessionCapabilities.
+type WebSessionCapabilities struct {
+	CancelAnyJob    bool `json:"cancel_any_job"`
+	CancelReviewJob bool `json:"cancel_review_job"`
+	RerunJob        bool `json:"rerun_job"`
+}
+
 // WebSessionCredentials defines model for WebSessionCredentials.
 type WebSessionCredentials struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema    *string   `json:"$schema,omitempty"`
-	Csrf      string    `json:"csrf"`
-	ExpiresAt time.Time `json:"expires_at"`
-	Session   string    `json:"session"`
+	Schema       *string                `json:"$schema,omitempty"`
+	Capabilities WebSessionCapabilities `json:"capabilities"`
+	Csrf         string                 `json:"csrf"`
+	ExpiresAt    time.Time              `json:"expires_at"`
+	Session      string                 `json:"session"`
 }
 
 // WebSessionError defines model for WebSessionError.
@@ -1339,6 +1369,7 @@ type WebSessionStatus struct {
 	Schema         *string                        `json:"$schema,omitempty"`
 	Authenticated  bool                           `json:"authenticated"`
 	Authentication WebSessionStatusAuthentication `json:"authentication"`
+	Capabilities   *WebSessionCapabilities        `json:"capabilities,omitempty"`
 	ExpiresAt      *time.Time                     `json:"expires_at,omitempty"`
 }
 
@@ -1500,6 +1531,9 @@ type ListJobsParams struct {
 	// Branch Filter by branch name
 	Branch *string `form:"branch,omitempty" json:"branch,omitempty"`
 
+	// BranchEmpty Only jobs with empty or unset branch
+	BranchEmpty *ListJobsParamsBranchEmpty `form:"branch_empty,omitempty" json:"branch_empty,omitempty"`
+
 	// BranchIncludeEmpty Include jobs with no branch when filtering by branch
 	BranchIncludeEmpty *ListJobsParamsBranchIncludeEmpty `form:"branch_include_empty,omitempty" json:"branch_include_empty,omitempty"`
 
@@ -1536,6 +1570,9 @@ type ListJobsParams struct {
 	// Cursor Opaque next_cursor from a previous page; resumes after its immutable enqueue-time position
 	Cursor *string `form:"cursor,omitempty" json:"cursor,omitempty"`
 }
+
+// ListJobsParamsBranchEmpty defines parameters for ListJobs.
+type ListJobsParamsBranchEmpty string
 
 // ListJobsParamsBranchIncludeEmpty defines parameters for ListJobs.
 type ListJobsParamsBranchIncludeEmpty string
@@ -4014,6 +4051,22 @@ func NewListJobsRequest(server string, params *ListJobsParams) (*http.Request, e
 		if params.Branch != nil {
 
 			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "branch", *params.Branch, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
+				return nil, err
+			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
+				return nil, err
+			} else {
+				for k, v := range parsed {
+					for _, v2 := range v {
+						queryValues.Add(k, v2)
+					}
+				}
+			}
+
+		}
+
+		if params.BranchEmpty != nil {
+
+			if queryFrag, err := runtime.StyleParamWithOptions("form", false, "branch_empty", *params.BranchEmpty, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationQuery, Type: "string", Format: ""}); err != nil {
 				return nil, err
 			} else if parsed, err := url.ParseQuery(queryFrag); err != nil {
 				return nil, err

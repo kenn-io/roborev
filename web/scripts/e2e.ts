@@ -175,14 +175,55 @@ export async function runBrowserTests(): Promise<number> {
     });
     const controlOrigin = await listenLoopback(controlServer);
     assertRunning();
-    return await run(
+    const remoteResult = await run(
       "bunx",
-      ["playwright", "test", "--config", "playwright.config.ts"],
+      [
+        "playwright",
+        "test",
+        "--config",
+        "playwright.config.ts",
+        "--grep-invert",
+        "@local-session",
+      ],
       webRoot,
       {
         ROBOREV_E2E_CONTROL_ORIGIN: controlOrigin,
         ROBOREV_E2E_ORIGIN: origin,
         ROBOREV_E2E_TOKEN: browserToken,
+      },
+      false,
+      commands,
+    );
+    if (remoteResult !== 0) return remoteResult;
+
+    if (daemon) await stop(daemon);
+    assertRunning();
+    await writeFile(
+      config,
+      browserConfig(Number(new URL(origin).port), false),
+      { mode: 0o600 },
+    );
+    daemon = startDaemon();
+    const localOrigin = await waitForBrowserOrigin(dataDir, daemon);
+    if (localOrigin !== origin) {
+      throw new Error("browser origin changed for local-session tests");
+    }
+
+    return await run(
+      "bunx",
+      [
+        "playwright",
+        "test",
+        "--config",
+        "playwright.config.ts",
+        "--grep",
+        "@local-session",
+      ],
+      webRoot,
+      {
+        ROBOREV_E2E_CONTROL_ORIGIN: controlOrigin,
+        ROBOREV_E2E_ORIGIN: localOrigin,
+        ROBOREV_E2E_TOKEN: "",
       },
       false,
       commands,
@@ -235,8 +276,9 @@ export function isolatedDaemonEnvironment(
   return environment;
 }
 
-function browserConfig(port: number): string {
-  return `max_workers = 0\n\n[web]\nenabled = true\nlisten = "127.0.0.1:${port}"\nauth_token = "${browserToken}"\n`;
+function browserConfig(port: number, tokenAuthentication = true): string {
+  const auth = tokenAuthentication ? `auth_token = "${browserToken}"\n` : "";
+  return `max_workers = 0\n\n[web]\nenabled = true\nlisten = "127.0.0.1:${port}"\n${auth}`;
 }
 
 async function listenLoopback(server: Server): Promise<string> {

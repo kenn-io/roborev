@@ -14,15 +14,23 @@ type WebLoginRequest struct {
 }
 
 type WebSessionCredentials struct {
-	Session   string    `json:"session"`
-	CSRF      string    `json:"csrf"`
-	ExpiresAt time.Time `json:"expires_at"`
+	Session      string                 `json:"session"`
+	CSRF         string                 `json:"csrf"`
+	ExpiresAt    time.Time              `json:"expires_at"`
+	Capabilities WebSessionCapabilities `json:"capabilities"`
+}
+
+type WebSessionCapabilities struct {
+	CancelAnyJob    bool `json:"cancel_any_job"`
+	CancelReviewJob bool `json:"cancel_review_job"`
+	RerunJob        bool `json:"rerun_job"`
 }
 
 type WebSessionStatus struct {
-	Authentication string     `json:"authentication" enum:"local,token"`
-	Authenticated  bool       `json:"authenticated"`
-	ExpiresAt      *time.Time `json:"expires_at,omitempty"`
+	Authentication string                  `json:"authentication" enum:"local,token"`
+	Authenticated  bool                    `json:"authenticated"`
+	ExpiresAt      *time.Time              `json:"expires_at,omitempty"`
+	Capabilities   *WebSessionCapabilities `json:"capabilities,omitempty"`
 }
 
 type WebSessionError struct {
