@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -177,4 +178,23 @@ func TestAgentHookMutationEndpointsRejectMissingSessionTarget(t *testing.T) {
 		got := serveHuma(t, server, http.MethodPost, request.path, request.body)
 		assert.Equal(t, http.StatusBadRequest, got.Code, request.path)
 	}
+}
+
+func TestAgentHookEventAcceptsLargeToolResponse(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	server, _, _ := newTestServer(t)
+	body, err := json.Marshal(agenthook.Request{
+		Event: agenthook.Input{
+			SessionID:     "session-1",
+			HookEventName: "Notification",
+			ToolResponse: json.RawMessage(
+				`{"output":"` + strings.Repeat("x", 1<<20) + `"}`,
+			),
+		},
+	})
+	require.NoError(t, err)
+
+	got := serveHuma(t, server, http.MethodPost, "/api/agent-hook/event", body)
+
+	assert.Equal(t, http.StatusOK, got.Code, got.Body.String())
 }

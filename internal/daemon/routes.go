@@ -177,6 +177,7 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 			o.OperationID = "record-agent-hook-event"
 			o.Summary = "Record an Agent Hook event"
 			o.Tags = []string{"agent-hook"}
+			o.MaxBodyBytes = -1
 		})
 
 	huma.Post(api, "/api/agent-hook/reset", s.humaAgentHookReset,
