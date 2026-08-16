@@ -25,31 +25,14 @@ func postAgentHookRequest(
 	if err != nil {
 		return agenthook.Response{}, err
 	}
-	body, err := json.Marshal(req)
-	if err != nil {
-		return agenthook.Response{}, err
-	}
-	httpReq, err := http.NewRequestWithContext(
-		ctx, http.MethodPost, ep.BaseURL()+"/api/agent-hook/event", bytes.NewReader(body),
+	body, err := doAgentHookRequest(
+		ctx, ep, http.MethodPost, "/api/agent-hook/event", req,
 	)
 	if err != nil {
 		return agenthook.Response{}, err
 	}
-	httpReq.Header.Set("Content-Type", "application/json")
-	resp, err := ep.HTTPClient(5 * time.Second).Do(httpReq)
-	if err != nil {
-		return agenthook.Response{}, err
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return agenthook.Response{}, fmt.Errorf(
-			"roborev daemon returned %d: %s",
-			resp.StatusCode, strings.TrimSpace(string(body)),
-		)
-	}
 	var out agenthook.Response
-	if err := json.NewDecoder(resp.Body).Decode(&out); err != nil {
+	if err := json.Unmarshal(body, &out); err != nil {
 		return agenthook.Response{}, err
 	}
 	return out, nil
@@ -60,21 +43,13 @@ func runAgentHookStatus(stdout io.Writer) error {
 	if err != nil {
 		return err
 	}
-	resp, err := ep.HTTPClient(5 * time.Second).Get(
-		ep.BaseURL() + "/api/agent-hook/sessions",
+	body, err := doAgentHookRequest(
+		context.Background(), ep, http.MethodGet, "/api/agent-hook/sessions", nil,
 	)
 	if err != nil {
 		return err
 	}
-	defer resp.Body.Close()
-	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf(
-			"roborev daemon returned %d: %s",
-			resp.StatusCode, strings.TrimSpace(string(body)),
-		)
-	}
-	_, err = io.Copy(stdout, resp.Body)
+	_, err = stdout.Write(body)
 	return err
 }
 
@@ -86,30 +61,51 @@ func runAgentHookReset(opts agenthook.ResetOptions, sessionID string, stdout io.
 	if err != nil {
 		return err
 	}
-	body, err := json.Marshal(map[string]any{
-		"all":        opts.All,
-		"session_id": sessionID,
-	})
-	if err != nil {
-		return err
-	}
-	resp, err := ep.HTTPClient(5*time.Second).Post(
-		ep.BaseURL()+"/api/agent-hook/reset",
-		"application/json", bytes.NewReader(body),
+	body, err := doAgentHookRequest(
+		context.Background(), ep, http.MethodPost, "/api/agent-hook/reset",
+		map[string]any{"all": opts.All, "session_id": sessionID},
 	)
 	if err != nil {
 		return err
 	}
+	_, err = stdout.Write(body)
+	return err
+}
+
+func doAgentHookRequest(
+	ctx context.Context,
+	ep daemon.DaemonEndpoint,
+	method, path string,
+	reqBody any,
+) ([]byte, error) {
+	var body io.Reader
+	if reqBody != nil {
+		encoded, err := json.Marshal(reqBody)
+		if err != nil {
+			return nil, err
+		}
+		body = bytes.NewReader(encoded)
+	}
+	httpReq, err := http.NewRequestWithContext(ctx, method, ep.BaseURL()+path, body)
+	if err != nil {
+		return nil, err
+	}
+	if reqBody != nil {
+		httpReq.Header.Set("Content-Type", "application/json")
+	}
+	resp, err := ep.HTTPClient(5 * time.Second).Do(httpReq)
+	if err != nil {
+		return nil, err
+	}
 	defer resp.Body.Close()
+	responseBody, readErr := io.ReadAll(resp.Body)
 	if resp.StatusCode != http.StatusOK {
-		body, _ := io.ReadAll(resp.Body)
-		return fmt.Errorf(
+		return nil, fmt.Errorf(
 			"roborev daemon returned %d: %s",
-			resp.StatusCode, strings.TrimSpace(string(body)),
+			resp.StatusCode, strings.TrimSpace(string(responseBody)),
 		)
 	}
-	_, err = io.Copy(stdout, resp.Body)
-	return err
+	return responseBody, readErr
 }
 
 func agentHookEndpoint(addr string) (daemon.DaemonEndpoint, error) {
