@@ -255,6 +255,38 @@ func TestRerunPanelConcurrentRequestsShareSuccessor(t *testing.T) {
 	assert.Equal(t, 2, runCount, "concurrent requests must create one successor panel")
 }
 
+func TestRerunPanelCompletedSuccessorAllowsFreshRequest(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	originalRunUUID, _, synth := enqueueServerPanelRun(t, db, 2)
+	markPanelMembersStatus(t, db, originalRunUUID, storage.JobStatusDone)
+	markJobStatus(t, db, synth.ID, storage.JobStatusDone)
+
+	firstInput := &RerunJobInput{Body: RerunJobRequest{
+		JobID: synth.ID, RequestID: "panel-request-one",
+	}}
+	first, err := server.humaRerunJob(context.Background(), firstInput)
+	require.NoError(t, err)
+	markPanelMembersStatus(t, db, first.Body.RunUUID, storage.JobStatusDone)
+	markJobStatus(t, db, first.Body.JobID, storage.JobStatusDone)
+
+	second, err := server.humaRerunJob(context.Background(), &RerunJobInput{
+		Body: RerunJobRequest{JobID: synth.ID, RequestID: "panel-request-two"},
+	})
+	require.NoError(t, err)
+	assert.NotEqual(t, first.Body.JobID, second.Body.JobID)
+	assert.NotEqual(t, first.Body.RunUUID, second.Body.RunUUID)
+
+	replayedFirst, err := server.humaRerunJob(context.Background(), firstInput)
+	require.NoError(t, err)
+	assert.Equal(t, first.Body, replayedFirst.Body)
+
+	var runCount int
+	require.NoError(t, db.QueryRow(
+		"SELECT COUNT(DISTINCT panel_run_uuid) FROM review_jobs WHERE panel_run_uuid != ''",
+	).Scan(&runCount))
+	assert.Equal(t, 3, runCount, "a completed successor must not block a later rerun")
+}
+
 func TestRerunPanelMemberRejectsDirectRerun(t *testing.T) {
 	server, db, _ := newTestServer(t)
 	runUUID, members, _ := enqueueServerPanelRun(t, db, 2)

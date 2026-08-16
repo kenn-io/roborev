@@ -334,8 +334,9 @@ func (db *DB) EnqueuePanelRun(members []EnqueueOpts, synthesis EnqueueOpts) ([]*
 }
 
 // EnqueuePanelRerun atomically creates one replacement for a source panel and
-// records the result. Repeating either the request ID or source synthesis job
-// returns the first successor without inserting another panel.
+// records the result. Repeating a request ID always returns its original
+// result. A different request returns an existing successor only while that
+// panel is active; once it finishes, the source may be rerun again.
 func (db *DB) EnqueuePanelRerun(
 	members []EnqueueOpts, synthesis EnqueueOpts, requestID string, sourceJobID int64,
 ) ([]*ReviewJob, *ReviewJob, bool, error) {
@@ -1104,10 +1105,20 @@ func lookupPanelRerunBySource(
 ) (RerunRequestResult, bool, error) {
 	var result RerunRequestResult
 	err := q.QueryRowContext(ctx, `
-		SELECT result_job_id, COALESCE(panel_run_uuid, '')
-		FROM rerun_requests
-		WHERE source_job_id = ? AND COALESCE(panel_run_uuid, '') != ''
-		ORDER BY created_at, result_job_id
+		SELECT rr.result_job_id, COALESCE(rr.panel_run_uuid, '')
+		FROM rerun_requests rr
+		WHERE rr.source_job_id = ?
+		  AND COALESCE(rr.panel_run_uuid, '') != ''
+		  AND EXISTS (
+			SELECT 1
+			FROM review_jobs j
+			WHERE j.panel_run_uuid = rr.panel_run_uuid
+			  AND (
+				j.status IN ('queued', 'running')
+				OR (j.status = 'canceled' AND COALESCE(j.worker_id, '') != '')
+			  )
+		  )
+		ORDER BY rr.created_at DESC, rr.result_job_id DESC
 		LIMIT 1
 	`, sourceJobID).Scan(&result.JobID, &result.PanelRunUUID)
 	if errors.Is(err, sql.ErrNoRows) {
