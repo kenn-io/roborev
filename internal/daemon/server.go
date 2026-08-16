@@ -3749,6 +3749,7 @@ func (s *Server) humaStreamEvents(
 
 		subID, eventCh := s.broadcaster.Subscribe(input.Repo)
 		defer s.broadcaster.Unsubscribe(subID)
+		flusher.Flush()
 
 		encoder := json.NewEncoder(writer)
 		for {

@@ -73,6 +73,16 @@ func TestHandleStreamEvents(t *testing.T) {
 		}
 	})
 
+	t.Run("flushes headers after subscribing", func(t *testing.T) {
+		cancel, w, done := startStreamHandler(t, server, "/api/stream/events")
+		require.Eventually(
+			t, w.wasFlushed, time.Second, 5*time.Millisecond,
+			"stream handshake must complete before the first event",
+		)
+		cancel()
+		<-done
+	})
+
 	t.Run("wrong method fails", func(t *testing.T) {
 		req := httptest.NewRequest(http.MethodPost, "/api/stream/events", nil)
 		w := httptest.NewRecorder()

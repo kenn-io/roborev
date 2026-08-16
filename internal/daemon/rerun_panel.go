@@ -49,6 +49,9 @@ func (s *Server) rerunPanelRun(job *storage.ReviewJob, requestID string) (*Rerun
 		return nil, huma.Error400BadRequest("panel run has no members to rerun")
 	}
 	for i := range members {
+		if !isRerunnableStatus(members[i].Status) {
+			return nil, huma.Error409Conflict("panel member is not rerunnable")
+		}
 		// Successful and failed terminal jobs retain their historical worker ID.
 		// A canceled job is different: its worker may still be unwinding and
 		// using the shared worktree until ReleaseCanceledJobWorker clears the

@@ -51,13 +51,24 @@ func markJobStatus(t *testing.T, db *storage.DB, jobID int64, status storage.Job
 	require.NoError(t, err)
 }
 
-// rerunAndLoadNewRun marks the synthesis job done (rerun requires a terminal
-// parent), reruns it, locates the single new panel run the rerun creates, and
-// returns that run's UUID and members.
+func markPanelMembersStatus(
+	t *testing.T, db *storage.DB, runUUID string, status storage.JobStatus,
+) {
+	t.Helper()
+	members, err := db.GetPanelMembers(runUUID)
+	require.NoError(t, err)
+	for i := range members {
+		markJobStatus(t, db, members[i].ID, status)
+	}
+}
+
+// rerunAndLoadNewRun marks the source members and synthesis job done, reruns
+// the panel, locates the single new run, and returns its UUID and members.
 func rerunAndLoadNewRun(
 	t *testing.T, server *Server, db *storage.DB, oldUUID string, synthID int64,
 ) (string, []storage.ReviewJob) {
 	t.Helper()
+	markPanelMembersStatus(t, db, oldUUID, storage.JobStatusDone)
 	markJobStatus(t, db, synthID, storage.JobStatusDone)
 	_, err := server.humaRerunJob(context.Background(), &RerunJobInput{
 		Body: RerunJobRequest{JobID: synthID},
@@ -116,6 +127,33 @@ func TestRerunPanelRejectsMemberStillStopping(t *testing.T) {
 	assert.NotEmpty(t, runUUID)
 }
 
+func TestRerunPanelRejectsActiveMembers(t *testing.T) {
+	for _, status := range []storage.JobStatus{
+		storage.JobStatusQueued,
+		storage.JobStatusRunning,
+	} {
+		t.Run(string(status), func(t *testing.T) {
+			server, db, _ := newTestServer(t)
+			runUUID, members, synth := enqueueServerPanelRun(t, db, 2)
+			markJobStatus(t, db, synth.ID, storage.JobStatusCanceled)
+			markJobStatus(t, db, members[0].ID, status)
+			markJobStatus(t, db, members[1].ID, storage.JobStatusDone)
+
+			_, err := server.humaRerunJob(context.Background(), &RerunJobInput{
+				Body: RerunJobRequest{JobID: synth.ID},
+			})
+			require.ErrorContains(t, err, "panel member is not rerunnable")
+
+			var count int
+			require.NoError(t, db.QueryRow(
+				"SELECT COUNT(DISTINCT panel_run_uuid) FROM review_jobs WHERE panel_run_uuid != ''",
+			).Scan(&count))
+			assert.Equal(t, 1, count, "rejected rerun must not create a replacement panel")
+			assert.NotEmpty(t, runUUID)
+		})
+	}
+}
+
 func TestRerunPanelAllowsCompletedClaimedMember(t *testing.T) {
 	server, db, _ := newTestServer(t)
 	oldRunUUID, members, synth := enqueueServerPanelRun(t, db, 1)
@@ -138,6 +176,7 @@ func TestRerunPanelAllowsCompletedClaimedMember(t *testing.T) {
 func TestRerunPanelRequestIsIdempotent(t *testing.T) {
 	server, db, _ := newTestServer(t)
 	oldRunUUID, _, synth := enqueueServerPanelRun(t, db, 2)
+	markPanelMembersStatus(t, db, oldRunUUID, storage.JobStatusDone)
 	markJobStatus(t, db, synth.ID, storage.JobStatusDone)
 	source, err := db.GetJobByID(synth.ID)
 	require.NoError(t, err)
@@ -174,7 +213,8 @@ func TestRerunPanelRequestIsIdempotent(t *testing.T) {
 
 func TestRerunPanelConcurrentRequestsShareSuccessor(t *testing.T) {
 	server, db, _ := newTestServer(t)
-	_, _, synth := enqueueServerPanelRun(t, db, 2)
+	runUUID, _, synth := enqueueServerPanelRun(t, db, 2)
+	markPanelMembersStatus(t, db, runUUID, storage.JobStatusDone)
 	markJobStatus(t, db, synth.ID, storage.JobStatusDone)
 
 	start := make(chan struct{})
@@ -263,10 +303,12 @@ func TestRerunPanelRejectsStaleWorktrees(t *testing.T) {
 			} else {
 				synthesis.WorktreePath = stalePath
 			}
-			_, synthJob, err := db.EnqueuePanelRun(
+			createdMembers, synthJob, err := db.EnqueuePanelRun(
 				[]storage.EnqueueOpts{member}, synthesis,
 			)
 			require.NoError(t, err)
+			require.Len(t, createdMembers, 1)
+			markJobStatus(t, db, createdMembers[0].ID, storage.JobStatusDone)
 			markJobStatus(t, db, synthJob.ID, storage.JobStatusDone)
 
 			_, err = server.humaRerunJob(context.Background(), &RerunJobInput{
