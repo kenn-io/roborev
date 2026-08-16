@@ -773,18 +773,21 @@ func LoadGlobalFrom(path string) (*Config, error) {
 
 	// Migrate deprecated config keys
 	cfg.migrateDeprecated(md)
-	if err := validateConfig(cfg, cfg.ACP); err != nil {
-		return nil, fmt.Errorf("config: %w", err)
-	}
-
-	if err := cfg.CI.NormalizeInstallations(); err != nil {
-		return nil, fmt.Errorf("config: %w", err)
-	}
-	if err := normalizeWebConfig(&cfg.Web); err != nil {
+	if err := normalizeGlobalConfig(cfg); err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}
 
 	return cfg, nil
+}
+
+func normalizeGlobalConfig(cfg *Config) error {
+	if err := validateConfig(cfg, cfg.ACP); err != nil {
+		return err
+	}
+	if err := cfg.CI.NormalizeInstallations(); err != nil {
+		return err
+	}
+	return normalizeWebConfig(&cfg.Web)
 }
 
 func normalizeWebConfig(web *WebConfig) error {
@@ -1690,7 +1693,7 @@ func SaveGlobal(cfg *Config) error {
 
 // SaveGlobalTo saves the global configuration to a specific path.
 func SaveGlobalTo(path string, cfg *Config) error {
-	if err := validateConfig(cfg, cfg.ACP); err != nil {
+	if err := normalizeGlobalConfig(cfg); err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
@@ -1743,7 +1746,7 @@ const defaultHooksExample = `
 // appending a commented [[hooks]] example. It writes atomically (temp file +
 // rename) with 0600 permissions. Use SaveGlobalTo for subsequent rewrites.
 func WriteDefaultGlobalConfigTo(path string, cfg *Config) error {
-	if err := validateConfig(cfg, cfg.ACP); err != nil {
+	if err := normalizeGlobalConfig(cfg); err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

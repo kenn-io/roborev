@@ -5043,6 +5043,54 @@ func TestSaveGlobalToHasNoCommentedExample(t *testing.T) {
 		"normal rewrites must not reintroduce the commented example")
 }
 
+func TestSaveGlobalToRejectsInvalidWebConfig(t *testing.T) {
+	tests := []struct {
+		name    string
+		mutate  func(*WebConfig)
+		wantErr string
+	}{
+		{
+			name: "weak token",
+			mutate: func(web *WebConfig) {
+				web.AuthToken = "weak"
+			},
+			wantErr: "base64url-encoded 32-byte",
+		},
+		{
+			name: "non-loopback listener",
+			mutate: func(web *WebConfig) {
+				web.Listen = "0.0.0.0:7374"
+			},
+			wantErr: "loopback",
+		},
+		{
+			name: "unauthenticated public origin",
+			mutate: func(web *WebConfig) {
+				web.PublicOrigin = "https://reviews.example.com"
+			},
+			wantErr: "auth token",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.toml")
+			require.NoError(t, SaveGlobalTo(path, DefaultConfig()))
+			before, err := os.ReadFile(path)
+			require.NoError(t, err)
+
+			cfg := DefaultConfig()
+			tt.mutate(&cfg.Web)
+			err = SaveGlobalTo(path, cfg)
+
+			require.ErrorContains(t, err, tt.wantErr)
+			after, readErr := os.ReadFile(path)
+			require.NoError(t, readErr)
+			assert.Equal(t, before, after)
+		})
+	}
+}
+
 func TestWebConfigDefaultsAndSensitiveToken(t *testing.T) {
 	cfg := DefaultConfig()
 	assert.True(t, cfg.Web.Enabled)
