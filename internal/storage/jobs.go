@@ -411,6 +411,14 @@ func (db *DB) enqueuePanelRun(
 			if err != nil {
 				return nil, nil, false, err
 			}
+			if rerunRequestID != "" {
+				if err := recordRerunRequest(
+					ctx, conn, rerunRequestID, rerunSourceJobID,
+					result.JobID, result.PanelRunUUID,
+				); err != nil {
+					return nil, nil, false, err
+				}
+			}
 			if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
 				return nil, nil, false, err
 			}
