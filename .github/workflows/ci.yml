@@ -155,7 +155,11 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p test-results
-          go test -json -timeout 30m -race -shuffle=on -tags integration ./... 2>&1 |
+          # The daemon package is large enough to exceed Go's package timeout
+          # under the race detector, so dedicated jobs shard it below.
+          go list ./... |
+            rg -v '^go\.kenn\.io/roborev/internal/daemon$' |
+            xargs go test -json -timeout 30m -race -shuffle=on -tags integration 2>&1 |
             tee "test-results/${{ matrix.os }}-test.jsonl"
 
       - name: Test (macOS)
@@ -211,6 +215,45 @@ jobs:
         env:
           CGO_ENABLED: 0
 
+  daemon-race:
+    needs: go-changes
+    if: needs.go-changes.outputs.changed == 'true'
+    name: daemon race (${{ matrix.shard.name }})
+    strategy:
+      fail-fast: false
+      matrix:
+        shard:
+          - name: a-f
+            pattern: '^Test[A-F]'
+          - name: g-m-t-z
+            pattern: '^Test[G-MT-Z]'
+          - name: n-s
+            pattern: '^Test[N-S]'
+    runs-on: ${{ github.repository == 'kenn-io/roborev' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'kenn-linux-x64-public' || 'ubuntu-latest' }}
+    steps:
+      - uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1  # v7.0.1
+
+      - uses: actions/setup-go@924ae3a1cded613372ab5595356fb5720e22ba16  # v6.5.0
+        with:
+          go-version: '1.26.6'
+          cache: ${{ github.repository == 'kenn-io/roborev' && (github.event_name == 'push' && github.ref == 'refs/heads/main' || (github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && github.event.pull_request.base.repo.full_name == github.repository)) && 'false' || 'true' }}
+
+      - name: Test daemon with race detection
+        run: |
+          set -o pipefail
+          mkdir -p test-results
+          go test -json -timeout 20m -race -shuffle=on -tags integration \
+            -run '${{ matrix.shard.pattern }}' ./internal/daemon 2>&1 |
+            tee "test-results/daemon-${{ matrix.shard.name }}.jsonl"
+
+      - name: Upload test JSON
+        if: always()
+        uses: actions/upload-artifact@043fb46d1a93c77aae656e7c1c64a875d1fc6a0a  # v7.0.1
+        with:
+          name: daemon-${{ matrix.shard.name }}-test-json
+          path: test-results/daemon-${{ matrix.shard.name }}.jsonl
+          if-no-files-found: ignore
+
   coverage:
     needs: go-changes
     if: needs.go-changes.outputs.changed == 'true'
@@ -225,8 +268,10 @@ jobs:
 
       - name: Test with coverage
         # -p 1 serializes package execution to avoid ROBOREV_DATA_DIR race conditions
-        # between tests in different packages that modify this environment variable
-        run: go test -timeout 30m -race -shuffle=on -tags integration -p 1 -coverprofile=coverage.out ./...
+        # between tests in different packages that modify this environment variable.
+        # Race coverage runs in the test and daemon-race jobs; repeating it here
+        # makes the daemon package exceed its timeout without improving coverage.
+        run: go test -timeout 30m -shuffle=on -tags integration -p 1 -coverprofile=coverage.out ./...
 
       - name: Upload coverage
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f  # v7.0.0

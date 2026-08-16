@@ -12,10 +12,10 @@ import (
 // It delegates to the shared cascadePanelMembers helper so the member-cancel
 // loop is single-sourced between the HTTP cancel path and the CI poller.
 func (s *Server) cascadeCancelPanelMembers(
-	job *storage.ReviewJob, suppressHooks bool,
+	job *storage.ReviewJob, callerBroadcastsEvent bool,
 ) []storage.ReviewJob {
 	return cascadePanelMembers(s.db, func(id int64) {
-		s.workerPool.cancelJob(id, suppressHooks)
+		s.workerPool.cancelJob(id, callerBroadcastsEvent)
 	}, job)
 }
 

@@ -34,8 +34,8 @@ const (
 )
 
 type runningJobCancellation struct {
-	cancel        context.CancelFunc
-	suppressHooks bool
+	cancel                context.CancelFunc
+	callerBroadcastsEvent bool
 }
 
 // WorkerPool manages a pool of review workers
@@ -56,7 +56,7 @@ type WorkerPool struct {
 
 	// Track running jobs for cancellation
 	runningJobs    map[int64]runningJobCancellation
-	pendingCancels map[int64]bool // job ID -> whether terminal hooks are suppressed
+	pendingCancels map[int64]bool // job ID -> whether the caller broadcasts the event
 	runningJobsMu  sync.Mutex
 
 	// Agent cooldowns for quota exhaustion
@@ -187,10 +187,10 @@ func (wp *WorkerPool) CancelJob(jobID int64) bool {
 	return wp.cancelJob(jobID, false)
 }
 
-// cancelJob carries hook suppression from authenticated remote mutations to
-// the worker's terminal event. Local cancellation callers use CancelJob.
-func (wp *WorkerPool) cancelJob(jobID int64, suppressHooks bool) bool {
-	if cancel, ok := wp.registeredJobCancel(jobID, suppressHooks); ok {
+// cancelJob records whether another layer owns the terminal event. Direct
+// worker-pool callers use CancelJob and leave the event to the worker.
+func (wp *WorkerPool) cancelJob(jobID int64, callerBroadcastsEvent bool) bool {
+	if cancel, ok := wp.registeredJobCancel(jobID, callerBroadcastsEvent); ok {
 		log.Printf("Canceling job %d", jobID)
 		cancel()
 		return true
@@ -203,7 +203,7 @@ func (wp *WorkerPool) cancelJob(jobID int64, suppressHooks bool) bool {
 	if err != nil {
 		// DB error - but job may have registered while we were trying to read
 		// Re-check runningJobs before giving up
-		if cancel, ok := wp.registeredJobCancel(jobID, suppressHooks); ok {
+		if cancel, ok := wp.registeredJobCancel(jobID, callerBroadcastsEvent); ok {
 			log.Printf("Canceling job %d (registered during failed DB check)", jobID)
 			cancel()
 			return true
@@ -219,7 +219,7 @@ func (wp *WorkerPool) cancelJob(jobID int64, suppressHooks bool) bool {
 	}
 
 	// Re-lock and check if job was registered while we were checking DB
-	if cancel, ok := wp.registeredJobCancel(jobID, suppressHooks); ok {
+	if cancel, ok := wp.registeredJobCancel(jobID, callerBroadcastsEvent); ok {
 		log.Printf("Canceling job %d (registered during DB check)", jobID)
 		cancel()
 		return true
@@ -244,7 +244,7 @@ func (wp *WorkerPool) cancelJob(jobID int64, suppressHooks bool) bool {
 
 	// Final check if job registered while we did the second DB lookup
 	if running, ok := wp.runningJobs[jobID]; ok {
-		running.suppressHooks = running.suppressHooks || suppressHooks
+		running.callerBroadcastsEvent = running.callerBroadcastsEvent || callerBroadcastsEvent
 		wp.runningJobs[jobID] = running
 		wp.runningJobsMu.Unlock()
 		log.Printf("Canceling job %d (registered during second DB check)", jobID)
@@ -253,14 +253,14 @@ func (wp *WorkerPool) cancelJob(jobID int64, suppressHooks bool) bool {
 	}
 
 	// Mark for pending cancellation
-	wp.pendingCancels[jobID] = wp.pendingCancels[jobID] || suppressHooks
+	wp.pendingCancels[jobID] = wp.pendingCancels[jobID] || callerBroadcastsEvent
 	wp.runningJobsMu.Unlock()
 	log.Printf("Job %d not yet registered, marking for pending cancellation", jobID)
 	return true
 }
 
 func (wp *WorkerPool) registeredJobCancel(
-	jobID int64, suppressHooks bool,
+	jobID int64, callerBroadcastsEvent bool,
 ) (context.CancelFunc, bool) {
 	wp.runningJobsMu.Lock()
 	defer wp.runningJobsMu.Unlock()
@@ -268,7 +268,7 @@ func (wp *WorkerPool) registeredJobCancel(
 	if !ok {
 		return nil, false
 	}
-	running.suppressHooks = running.suppressHooks || suppressHooks
+	running.callerBroadcastsEvent = running.callerBroadcastsEvent || callerBroadcastsEvent
 	wp.runningJobs[jobID] = running
 	return running.cancel, true
 }
@@ -285,9 +285,9 @@ func (wp *WorkerPool) isJobCancellable(job *storage.ReviewJob) bool {
 // immediately cancels it.
 func (wp *WorkerPool) registerRunningJob(jobID int64, cancel context.CancelFunc) {
 	wp.runningJobsMu.Lock()
-	suppressHooks, pending := wp.pendingCancels[jobID]
+	callerBroadcastsEvent, pending := wp.pendingCancels[jobID]
 	wp.runningJobs[jobID] = runningJobCancellation{
-		cancel: cancel, suppressHooks: suppressHooks,
+		cancel: cancel, callerBroadcastsEvent: callerBroadcastsEvent,
 	}
 
 	// Check if this job was canceled before we registered it
@@ -310,10 +310,10 @@ func (wp *WorkerPool) IsJobPendingCancel(jobID int64) bool {
 	return pending
 }
 
-func (wp *WorkerPool) cancellationSuppressesHooks(jobID int64) bool {
+func (wp *WorkerPool) cancellationEventOwnedByCaller(jobID int64) bool {
 	wp.runningJobsMu.Lock()
 	defer wp.runningJobsMu.Unlock()
-	return wp.runningJobs[jobID].suppressHooks
+	return wp.runningJobs[jobID].callerBroadcastsEvent
 }
 
 // unregisterRunningJob removes a job from the running jobs map
@@ -905,19 +905,19 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		// Check if this was a cancellation
 		if ctx.Err() == context.Canceled {
 			log.Printf("[%s] Job %d was canceled", workerID, job.ID)
-			// Broadcast cancellation event
-			wp.broadcaster.Broadcast(Event{
-				Type:          "review.canceled",
-				TS:            time.Now(),
-				JobID:         job.ID,
-				Repo:          job.RepoPath,
-				RepoName:      job.RepoName,
-				SHA:           job.GitRef,
-				Branch:        job.HookBranch(),
-				Agent:         agentName,
-				WorktreePath:  eventWorktreePath,
-				SuppressHooks: wp.cancellationSuppressesHooks(job.ID),
-			})
+			if !wp.cancellationEventOwnedByCaller(job.ID) {
+				wp.broadcaster.Broadcast(Event{
+					Type:         "review.canceled",
+					TS:           time.Now(),
+					JobID:        job.ID,
+					Repo:         job.RepoPath,
+					RepoName:     job.RepoName,
+					SHA:          job.GitRef,
+					Branch:       job.HookBranch(),
+					Agent:        agentName,
+					WorktreePath: eventWorktreePath,
+				})
+			}
 			// Member canceled is terminal — release the panel synthesis.
 			wp.releaseIfPanelMember(job)
 			return // Job already marked as canceled in DB, nothing more to do

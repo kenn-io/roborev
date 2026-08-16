@@ -313,6 +313,74 @@ func TestHandleCancelJob(t *testing.T) {
 	}
 }
 
+func TestRunningJobCancellationBroadcastsOnce(t *testing.T) {
+	server, db, tempDir := newTestServer(t)
+	testutil.InitTestGitRepo(t, tempDir)
+	markerFile := filepath.Join(tempDir, "local-running-cancel-hook")
+	server.configWatcher.Config().Hooks = []config.HookConfig{{
+		Event: "review.canceled", Command: touchCmd(markerFile),
+	}}
+
+	started := make(chan struct{})
+	finished := make(chan struct{})
+	const agentName = "local-cancel-blocking"
+	agent.Register(&agent.FakeAgent{
+		NameStr: agentName,
+		ReviewFn: func(ctx context.Context, _, _, _ string, _ io.Writer) (string, error) {
+			close(started)
+			<-ctx.Done()
+			return "", ctx.Err()
+		},
+	})
+	t.Cleanup(func() { agent.Unregister(agentName) })
+
+	job := createTestJob(
+		t, db, tempDir, testutil.GetHeadSHA(t, tempDir), agentName,
+	)
+	claimed, err := db.ClaimJob("local-cancel-worker")
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+	go func() {
+		defer close(finished)
+		server.workerPool.processJob("local-cancel-worker", claimed)
+	}()
+	t.Cleanup(func() {
+		server.workerPool.CancelJob(job.ID)
+		<-finished
+	})
+	require.Eventually(t, func() bool {
+		select {
+		case <-started:
+			return true
+		default:
+			return false
+		}
+	}, 5*time.Second, 10*time.Millisecond)
+
+	_, eventCh := server.broadcaster.Subscribe("")
+	req := testutil.MakeJSONRequest(
+		t, http.MethodPost, "/api/job/cancel", CancelJobRequest{JobID: job.ID},
+	)
+	recorder := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(recorder, req)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	require.Eventually(t, func() bool {
+		select {
+		case <-finished:
+			return true
+		default:
+			return false
+		}
+	}, 5*time.Second, 10*time.Millisecond)
+	server.hookRunner.WaitUntilIdle()
+	assert.FileExists(t, markerFile)
+	require.Len(t, eventCh, 1)
+	event := <-eventCh
+	assert.Equal(t, "review.canceled", event.Type)
+	assert.Equal(t, job.ID, event.JobID)
+}
+
 func TestHandleRerunJob(t *testing.T) {
 	server, db, tmpDir := newTestServer(t)
 

@@ -2096,8 +2096,7 @@ func (s *Server) humaCancelJob(
 			fmt.Sprintf("cancel job: %v", err),
 		)
 	}
-	suppressHooks := remoteBrowserPrincipal(ctx)
-	s.workerPool.cancelJob(input.Body.JobID, suppressHooks)
+	s.workerPool.cancelJob(input.Body.JobID, true)
 
 	s.retireCIPanelForCanceledSynthesis(job)
 
@@ -2107,7 +2106,7 @@ func (s *Server) humaCancelJob(
 	// complete the synthesis despite the user's cancel. Canceling the parent
 	// first makes the later MaybeReleasePanelSynthesis a no-op on an
 	// already-terminal row.
-	canceledMembers := s.cascadeCancelPanelMembers(job, suppressHooks)
+	canceledMembers := s.cascadeCancelPanelMembers(job, true)
 	s.releaseSynthesisIfCanceledMember(job)
 
 	if job == nil {
