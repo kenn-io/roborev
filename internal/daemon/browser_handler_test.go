@@ -5,6 +5,7 @@ import (
 	"context"
 	"crypto/rand"
 	"encoding/json"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"path/filepath"
@@ -14,8 +15,10 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 func newBrowserHandlerFixture(t *testing.T, authToken string) (http.Handler, *BrowserSessionManager) {
@@ -391,6 +394,71 @@ func TestBrowserHandlerRemoteReviewMutationsDoNotRunHooks(t *testing.T) {
 		event := <-eventCh
 		assert.Equal(t, "review.canceled", event.Type)
 		assert.Equal(t, job.ID, event.JobID)
+	})
+
+	t.Run("cancel running", func(t *testing.T) {
+		server, db, tempDir := newTestServer(t)
+		testutil.InitTestGitRepo(t, tempDir)
+		markerFile := filepath.Join(tempDir, "remote-running-cancel-hook")
+		server.configWatcher.Config().Hooks = []config.HookConfig{{
+			Event: "review.canceled", Command: touchCmd(markerFile),
+		}}
+		started := make(chan struct{})
+		finished := make(chan struct{})
+		const agentName = "remote-cancel-blocking"
+		agent.Register(&agent.FakeAgent{
+			NameStr: agentName,
+			ReviewFn: func(ctx context.Context, _, _, _ string, _ io.Writer) (string, error) {
+				close(started)
+				<-ctx.Done()
+				return "", ctx.Err()
+			},
+		})
+		t.Cleanup(func() { agent.Unregister(agentName) })
+
+		job := createTestJob(
+			t, db, tempDir, testutil.GetHeadSHA(t, tempDir), agentName,
+		)
+		claimed, err := db.ClaimJob("remote-browser-worker")
+		require.NoError(t, err)
+		require.Equal(t, job.ID, claimed.ID)
+		go func() {
+			defer close(finished)
+			server.workerPool.processJob("remote-browser-worker", claimed)
+		}()
+		t.Cleanup(func() {
+			server.workerPool.CancelJob(job.ID)
+			<-finished
+		})
+		require.Eventually(t, func() bool {
+			select {
+			case <-started:
+				return true
+			default:
+				return false
+			}
+		}, 5*time.Second, 10*time.Millisecond)
+
+		handler, sessions := newBrowserHandlerFixtureWithCore(
+			t, testBrowserAuthToken, server.httpServer.Handler,
+		)
+		request := authenticatedBrowserMutationRequest(
+			t, sessions, "/api/job/cancel", CancelJobRequest{JobID: job.ID},
+		)
+		recorder := httptest.NewRecorder()
+		handler.ServeHTTP(recorder, request)
+
+		require.Equal(t, http.StatusOK, recorder.Code)
+		require.Eventually(t, func() bool {
+			select {
+			case <-finished:
+				return true
+			default:
+				return false
+			}
+		}, 5*time.Second, 10*time.Millisecond)
+		server.hookRunner.WaitUntilIdle()
+		assert.NoFileExists(t, markerFile)
 	})
 }
 

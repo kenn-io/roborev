@@ -11,8 +11,12 @@ import (
 // cascadeCancelPanelMembers cancels every member of a synthesis parent's run.
 // It delegates to the shared cascadePanelMembers helper so the member-cancel
 // loop is single-sourced between the HTTP cancel path and the CI poller.
-func (s *Server) cascadeCancelPanelMembers(job *storage.ReviewJob) []storage.ReviewJob {
-	return cascadePanelMembers(s.db, func(id int64) { s.workerPool.CancelJob(id) }, job)
+func (s *Server) cascadeCancelPanelMembers(
+	job *storage.ReviewJob, suppressHooks bool,
+) []storage.ReviewJob {
+	return cascadePanelMembers(s.db, func(id int64) {
+		s.workerPool.cancelJob(id, suppressHooks)
+	}, job)
 }
 
 // retireCIPanelForCanceledSynthesis makes a directly canceled CI synthesis
