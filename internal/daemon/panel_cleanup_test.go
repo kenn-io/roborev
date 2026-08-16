@@ -95,6 +95,9 @@ func (h *ciPollerHarness) backdateJobStartedAt(t *testing.T, jobID int64) {
 func TestSupersedePriorPanels(t *testing.T) {
 	assert := assert.New(t)
 	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	broadcaster := NewBroadcaster()
+	_, events := broadcaster.Subscribe("")
+	h.Poller.broadcaster = broadcaster
 
 	var canceled []int64
 	var synthID int64
@@ -130,6 +133,15 @@ func TestSupersedePriorPanels(t *testing.T) {
 	attempt, err = h.DB.GetReviewAttempt("acme/api", 7, "oldsha")
 	require.NoError(t, err)
 	assert.Nil(attempt, "superseding an old HEAD deletes its retry attempt row")
+	require.Len(t, events, 2, "each canceled panel job should notify live clients")
+	parentEvent := <-events
+	memberEvent := <-events
+	assert.Equal("review.canceled", parentEvent.Type)
+	assert.Equal(synth.ID, parentEvent.JobID)
+	assert.True(parentEvent.SuppressHooks, "CI maintenance events must not introduce hook executions")
+	assert.Equal("review.canceled", memberEvent.Type)
+	assert.Equal(members[0].ID, memberEvent.JobID)
+	assert.True(memberEvent.SuppressHooks, "CI maintenance events must not introduce hook executions")
 	_ = panel
 }
 
@@ -398,6 +410,9 @@ func TestCleanupClosedPRPanels(t *testing.T) {
 	assert := assert.New(t)
 	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
 	h.Poller.isPROpenFn = func(string, int) bool { return false } // PR is closed
+	broadcaster := NewBroadcaster()
+	_, events := broadcaster.Subscribe("")
+	h.Poller.broadcaster = broadcaster
 
 	var canceled []int64
 	h.Poller.jobCancelFn = func(jobID int64) { canceled = append(canceled, jobID) }
@@ -416,6 +431,15 @@ func TestCleanupClosedPRPanels(t *testing.T) {
 	rows, err := h.DB.GetActivePanelsForPR("acme/api", 10)
 	require.NoError(t, err)
 	assert.Empty(rows, "closed-PR mapping deleted")
+	require.Len(t, events, 2, "each canceled panel job should notify live clients")
+	parentEvent := <-events
+	memberEvent := <-events
+	assert.Equal("review.canceled", parentEvent.Type)
+	assert.Equal(synth.ID, parentEvent.JobID)
+	assert.True(parentEvent.SuppressHooks, "CI maintenance events must not introduce hook executions")
+	assert.Equal("review.canceled", memberEvent.Type)
+	assert.Equal(members[0].ID, memberEvent.JobID)
+	assert.True(memberEvent.SuppressHooks, "CI maintenance events must not introduce hook executions")
 }
 
 // TestCleanupClosedPRPanelsKeepsOpenPR verifies a still-open PR's run is left

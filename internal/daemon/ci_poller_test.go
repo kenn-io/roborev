@@ -715,7 +715,9 @@ func TestCIPollerProcessPR_EnqueuesMatrix(t *testing.T) {
 	h.Cfg.CI.ReviewTypes = []string{"security", "review"}
 	h.Cfg.CI.Agents = []string{"codex", "gemini"}
 	h.Cfg.CI.Model = "gpt-test"
-	h.Poller = NewCIPoller(h.DB, NewStaticConfig(h.Cfg), nil)
+	broadcaster := NewBroadcaster()
+	_, events := broadcaster.Subscribe("")
+	h.Poller = NewCIPoller(h.DB, NewStaticConfig(h.Cfg), broadcaster)
 	h.stubProcessPRGit()
 	h.Poller.mergeBaseFn = func(_, ref1, ref2 string) (string, error) {
 		if ref1 != "origin/main" {
@@ -755,6 +757,14 @@ func TestCIPollerProcessPR_EnqueuesMatrix(t *testing.T) {
 	} {
 		assert.True(got[key], "missing member combination %q", key)
 	}
+
+	require.Len(t, events, 1, "panel creation should notify live clients")
+	event := <-events
+	assert.Equal("job.enqueued", event.Type)
+	assert.True(event.SuppressHooks, "CI maintenance events must not introduce hook executions")
+	enqueued, err := h.DB.GetJobByID(event.JobID)
+	require.NoError(t, err)
+	assert.Equal(storage.PanelRoleSynthesis, enqueued.PanelRole)
 }
 
 func TestCIPollerPollRepo_UsesPRListAndProcessesEach(t *testing.T) {

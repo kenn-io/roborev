@@ -533,7 +533,7 @@ func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, 
 		return err
 	}
 
-	created, _, _, err := p.db.CreateCIPanelRun(ghRepo, pr.Number, pr.HeadRefOid, memberOpts, synthOpts)
+	created, _, synthJob, err := p.db.CreateCIPanelRun(ghRepo, pr.Number, pr.HeadRefOid, memberOpts, synthOpts)
 	if err != nil {
 		return fmt.Errorf("create CI panel run: %w", err)
 	}
@@ -541,6 +541,7 @@ func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, 
 		// Another poller owns this PR+HEAD; it set (or will set) the status.
 		return nil
 	}
+	p.broadcastJobEvent("job.enqueued", synthJob)
 
 	headShort := gitpkg.ShortSHA(pr.HeadRefOid)
 	log.Printf("CI poller: created panel run for %s#%d (HEAD=%s, %d members, range=%s)",
@@ -2404,7 +2405,7 @@ func (p *CIPoller) supersedePriorPanels(ghRepo string, prNumber int, newHeadSHA 
 			log.Printf("CI poller: supersede: delete review attempt for %s#%d@%s: %v",
 				ghRepo, prNumber, gitpkg.ShortSHA(row.HeadSHA), err)
 		}
-		cancelPanelRunParentFirst(p.db, p.jobCancelFn, synth)
+		p.broadcastCanceledJobs(cancelPanelRunParentFirst(p.db, p.jobCancelFn, synth))
 		superseded++
 	}
 	if superseded > 0 {
@@ -2771,8 +2772,26 @@ func (p *CIPoller) cancelClosedPRPanelRuns(ghRepo string, prNumber int) {
 			log.Printf("CI poller: closed-PR: delete mapping %s: %v", row.PanelRunUUID, err)
 			continue
 		}
-		cancelPanelRunParentFirst(p.db, p.jobCancelFn, synth)
+		p.broadcastCanceledJobs(cancelPanelRunParentFirst(p.db, p.jobCancelFn, synth))
 		log.Printf("CI poller: canceled panel run for closed PR %s#%d", ghRepo, prNumber)
+	}
+}
+
+// broadcastJobEvent announces a CI-poller mutation to live clients. CI poller
+// maintenance did not historically run user hooks, so preserve that boundary
+// while still using the shared event stream for browser reconciliation.
+func (p *CIPoller) broadcastJobEvent(eventType string, job *storage.ReviewJob) {
+	if p.broadcaster == nil || job == nil {
+		return
+	}
+	event := eventForJob(eventType, job, job.ID)
+	event.SuppressHooks = true
+	p.broadcaster.Broadcast(event)
+}
+
+func (p *CIPoller) broadcastCanceledJobs(jobs []storage.ReviewJob) {
+	for i := range jobs {
+		p.broadcastJobEvent("review.canceled", &jobs[i])
 	}
 }
 
