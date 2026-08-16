@@ -8,6 +8,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -82,6 +83,22 @@ func TestSeedRejectsExistingData(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "reviews.db")
 	require.NoError(t, Seed(path))
 	require.ErrorContains(t, Seed(path), "already contains fixture data")
+}
+
+func TestSeedRerunnableJobUsesBuiltInAgent(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "reviews.db")
+	require.NoError(t, Seed(path))
+
+	db, err := storage.Open(path)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+
+	job, err := db.GetJobByID(FailedJobID)
+	require.NoError(t, err)
+	fixtureAgent, err := agent.Get(job.Agent)
+	require.NoError(t, err)
+	_, commandBacked := fixtureAgent.(agent.CommandAgent)
+	assert.False(t, commandBacked, "rerun fixture must not require an installed agent command")
 }
 
 func scalarInt(t *testing.T, db *sql.DB, query string) int {

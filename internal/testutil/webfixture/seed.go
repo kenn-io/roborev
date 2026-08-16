@@ -294,6 +294,11 @@ func fixtureJobs() []fixtureJob {
 		jobs = append(jobs, job)
 	}
 
+	// Browser tests rerun this failed job through the production API. Keep the
+	// fixture independent of external agent commands installed on the host.
+	jobs[FailedJobID-1].agent = "test"
+	jobs[FailedJobID-1].model = ""
+
 	pricedVerdict := true
 	jobs[44].status = storage.JobStatusDone
 	jobs[44].verdict = &pricedVerdict
