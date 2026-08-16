@@ -8,5 +8,8 @@
     "web:test:e2e": "bun run --cwd web test:e2e",
     "web:build": "bun run --cwd web build",
     "web:generate": "bun run --cwd web generate"
+  },
+  "devDependencies": {
+    "playwright": "1.61.1"
   }
 }

@@ -2,7 +2,11 @@
   "lockfileVersion": 1,
   "configVersion": 1,
   "workspaces": {
-    "": {},
+    "": {
+      "devDependencies": {
+        "playwright": "1.61.1",
+      },
+    },
     "packages/roborev-ui": {
       "name": "@kenn-io/roborev-ui",
       "version": "0.1.0",
