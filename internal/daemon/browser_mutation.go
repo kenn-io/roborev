@@ -2,7 +2,6 @@ package daemon
 
 import (
 	"context"
-	"fmt"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -24,15 +23,19 @@ func eventForMutationPrincipal(ctx context.Context, event Event) Event {
 func browserCancellationAllowsReview(job *storage.ReviewJob) bool {
 	return job != nil &&
 		job.IsReviewJob() &&
+		!job.IsCIReview() &&
+		job.PanelRole == "" &&
+		job.PanelRunUUID == "" &&
 		!job.Agentic &&
 		!job.PromptPrebuilt &&
 		!job.UsesStoredPrompt()
 }
 
 // authorizeBrowserJobCancellation restricts remote browser principals to
-// ordinary code reviews. Remote reruns are rejected separately because even a
-// nominally non-agentic agent can gain tools through daemon configuration.
-func (s *Server) authorizeBrowserJobCancellation(
+// standalone non-CI code reviews. Remote reruns are rejected separately
+// because even a nominally non-agentic agent can gain tools through daemon
+// configuration.
+func (*Server) authorizeBrowserJobCancellation(
 	ctx context.Context, job *storage.ReviewJob,
 ) error {
 	if !remoteBrowserPrincipal(ctx) {
@@ -41,24 +44,7 @@ func (s *Server) authorizeBrowserJobCancellation(
 	if browserCancellationAllowsReview(job) {
 		return nil
 	}
-	if job != nil && job.IsSynthesisJob() &&
-		!job.Agentic && !job.PromptPrebuilt {
-		members, err := s.db.GetPanelMembers(job.PanelRunUUID)
-		if err != nil {
-			return huma.Error500InternalServerError(
-				fmt.Sprintf("authorize panel mutation: %v", err),
-			)
-		}
-		for i := range members {
-			if !browserCancellationAllowsReview(&members[i]) {
-				return huma.Error403Forbidden(
-					"remote browser sessions may only cancel non-agentic review jobs",
-				)
-			}
-		}
-		return nil
-	}
 	return huma.Error403Forbidden(
-		"remote browser sessions may only cancel non-agentic review jobs",
+		"remote browser sessions may only cancel standalone non-CI reviews",
 	)
 }

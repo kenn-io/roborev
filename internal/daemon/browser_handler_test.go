@@ -478,6 +478,8 @@ func TestBrowserHandlerRemoteSessionRestrictsPrivilegedJobMutations(t *testing.T
 		jobType    string
 		agentic    bool
 		prebuilt   bool
+		source     string
+		ciBase     string
 		startState storage.JobStatus
 		wantStatus int
 		wantState  storage.JobStatus
@@ -490,6 +492,18 @@ func TestBrowserHandlerRemoteSessionRestrictsPrivilegedJobMutations(t *testing.T
 		{
 			name: "cancel agentic review", path: "/api/job/cancel",
 			jobType: storage.JobTypeReview, agentic: true,
+			startState: storage.JobStatusQueued,
+			wantStatus: http.StatusForbidden, wantState: storage.JobStatusQueued,
+		},
+		{
+			name: "cancel CI review", path: "/api/job/cancel",
+			jobType: storage.JobTypeReview, source: storage.JobSourceCI,
+			startState: storage.JobStatusQueued,
+			wantStatus: http.StatusForbidden, wantState: storage.JobStatusQueued,
+		},
+		{
+			name: "cancel legacy CI review", path: "/api/job/cancel",
+			jobType: storage.JobTypeReview, ciBase: "main",
 			startState: storage.JobStatusQueued,
 			wantStatus: http.StatusForbidden, wantState: storage.JobStatusQueued,
 		},
@@ -535,6 +549,7 @@ func TestBrowserHandlerRemoteSessionRestrictsPrivilegedJobMutations(t *testing.T
 				RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123",
 				Agent: "test", JobType: tt.jobType, Agentic: tt.agentic,
 				Prompt: "stored instruction", PromptPrebuilt: tt.prebuilt,
+				Source: tt.source, CIBaseBranch: tt.ciBase,
 			})
 			require.NoError(t, err)
 			if tt.startState != storage.JobStatusQueued {
@@ -557,6 +572,54 @@ func TestBrowserHandlerRemoteSessionRestrictsPrivilegedJobMutations(t *testing.T
 			updated, err := db.GetJobByID(job.ID)
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantState, updated.Status)
+		})
+	}
+}
+
+func TestBrowserHandlerRemoteSessionRejectsPanelCancellation(t *testing.T) {
+	for _, target := range []string{"member", "synthesis"} {
+		t.Run(target, func(t *testing.T) {
+			server, db, tempDir := newTestServer(t)
+			repo, err := db.GetOrCreateRepo(tempDir)
+			require.NoError(t, err)
+			const runUUID = "remote-safe-panel-run"
+			members, synth, err := db.EnqueuePanelRun(
+				[]storage.EnqueueOpts{{
+					RepoID: repo.ID, GitRef: "base..head", Agent: "test",
+					JobType: storage.JobTypeRange, PanelRunUUID: runUUID,
+					PanelRole: storage.PanelRoleMember, PanelName: "review",
+					PanelMemberName: "default",
+				}},
+				storage.EnqueueOpts{
+					RepoID: repo.ID, GitRef: "base..head", Agent: "test",
+					PanelRunUUID: runUUID, PanelRole: storage.PanelRoleSynthesis,
+					PanelName: "review",
+				},
+			)
+			require.NoError(t, err)
+			require.Len(t, members, 1)
+			jobID := members[0].ID
+			if target == "synthesis" {
+				jobID = synth.ID
+			}
+
+			handler, sessions := newBrowserHandlerFixtureWithCore(
+				t, testBrowserAuthToken, server.httpServer.Handler,
+			)
+			request := authenticatedBrowserMutationRequest(
+				t, sessions, "/api/job/cancel", CancelJobRequest{JobID: jobID},
+			)
+			recorder := httptest.NewRecorder()
+
+			handler.ServeHTTP(recorder, request)
+
+			assert.Equal(t, http.StatusForbidden, recorder.Code, recorder.Body.String())
+			member, err := db.GetJobByID(members[0].ID)
+			require.NoError(t, err)
+			assert.Equal(t, storage.JobStatusQueued, member.Status)
+			parent, err := db.GetJobByID(synth.ID)
+			require.NoError(t, err)
+			assert.Equal(t, storage.JobStatusQueued, parent.Status)
 		})
 	}
 }

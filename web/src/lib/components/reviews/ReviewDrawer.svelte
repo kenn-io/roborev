@@ -124,9 +124,7 @@
   });
 
   const canCancel = $derived(
-    selectedJob
-      ? canCancelJob(selectedJob, stores.getCapabilities(), panelMembers)
-      : false,
+    selectedJob ? canCancelJob(selectedJob, stores.getCapabilities()) : false,
   );
 
   const canRerun = $derived(

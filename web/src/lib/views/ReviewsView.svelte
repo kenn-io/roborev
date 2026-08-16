@@ -128,14 +128,11 @@
         const selected =
           jobsStore?.getVisibleJobs().find((job) => job.id === xId) ??
           stores.roborevReview?.getSelectedJob();
-        const members = selected?.panel_run_uuid
-          ? jobsStore?.getPanelMembers(selected.panel_run_uuid)
-          : undefined;
         if (
           jobsStore &&
           xId !== undefined &&
           selected &&
-          canCancelJob(selected, stores.getCapabilities(), members)
+          canCancelJob(selected, stores.getCapabilities())
         ) {
           e.preventDefault();
           jobsStore.cancelJob(xId);

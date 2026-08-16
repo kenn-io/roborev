@@ -30,18 +30,10 @@ export function canRerunJob(job: ReviewJob): boolean {
 export function canCancelJob(
   job: ReviewJob,
   capabilities: SessionCapabilities,
-  panelMembers?: ReviewJob[],
 ): boolean {
   if (job.status !== "queued" && job.status !== "running") return false;
   if (capabilities.cancelAnyJob) return true;
   if (!capabilities.cancelReviewJob) return false;
-  if (job.panel_role === "synthesis") {
-    return (
-      panelMembers !== undefined &&
-      panelMembers.length > 0 &&
-      panelMembers.every(isRemoteCancelableReview)
-    );
-  }
   return isRemoteCancelableReview(job);
 }
 
@@ -50,6 +42,9 @@ function isRemoteCancelableReview(job: ReviewJob): boolean {
     (job.job_type === "review" ||
       job.job_type === "range" ||
       job.job_type === "dirty") &&
+    job.source !== "ci" &&
+    !job.panel_role &&
+    !job.panel_run_uuid &&
     !job.agentic &&
     !job.prompt_prebuilt
   );

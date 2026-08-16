@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type { components } from "../api/generated";
 import {
+  canCancelJob,
   canRerunJob,
   isPanelParent,
   isTerminalStatus,
@@ -111,6 +112,32 @@ describe("canRerunJob", () => {
       canRerunJob(makeJob({ status: "skipped", source: "auto_design" })),
     ).toBe(false);
     expect(canRerunJob(makeJob({ status: "skipped" }))).toBe(true);
+  });
+});
+
+describe("canCancelJob", () => {
+  const remoteCapabilities = {
+    cancelAnyJob: false,
+    cancelReviewJob: true,
+    rerunJob: false,
+  };
+
+  it("limits remote cancellation to standalone non-CI reviews", () => {
+    expect(
+      canCancelJob(makeJob({ status: "queued" }), remoteCapabilities),
+    ).toBe(true);
+    expect(
+      canCancelJob(
+        makeJob({ status: "queued", source: "ci" }),
+        remoteCapabilities,
+      ),
+    ).toBe(false);
+    expect(
+      canCancelJob(makeMember(0, { status: "queued" }), remoteCapabilities),
+    ).toBe(false);
+    expect(
+      canCancelJob(makeParent({}, { status: "queued" }), remoteCapabilities),
+    ).toBe(false);
   });
 });
 
