@@ -69,6 +69,7 @@ type Formatter struct {
 	// tool_call_update events (which often omit toolName) can still render.
 	grokRenderedToolIDs map[string]struct{}
 	grokToolByID        map[string]grokToolInfo
+	grokText            strings.Builder
 }
 
 // grokToolInfo is metadata captured from a Grok tool_call for later updates.
@@ -196,6 +197,13 @@ func (f *Formatter) Write(p []byte) (int, error) {
 
 // Flush writes any remaining buffered content.
 func (f *Formatter) Flush() {
+	f.flushInput()
+	f.flushGrokText()
+}
+
+// flushInput processes a final unterminated input line without finalizing
+// provider state that may continue in a later incremental log chunk.
+func (f *Formatter) flushInput() {
 	if len(f.buf) > 0 {
 		line := string(f.buf)
 		f.buf = nil
@@ -358,8 +366,17 @@ func (f *Formatter) processLine(line string) {
 
 	var ev streamEvent
 	if err := json.Unmarshal([]byte(line), &ev); err != nil {
+		f.flushGrokText()
 		f.writeText(SanitizeControlKeepNewlines(line))
 		return
+	}
+
+	// Grok streaming-json text events are response chunks, not complete
+	// messages. Keep adjacent chunks together so markdown wrapping sees the
+	// response as one document. Any other event is a semantic boundary.
+	isGrokText := ev.Type == "text" && ev.Data != "" && ev.Part == nil
+	if !isGrokText {
+		f.flushGrokText()
 	}
 
 	switch ev.Type {
@@ -406,7 +423,7 @@ func (f *Formatter) processLine(line string) {
 			f.formatToolUse(ev.ToolName, ev.Parameters)
 		case ev.Type == "text" && ev.Data != "":
 			// Grok Build streaming-json assistant text.
-			f.writeText(SanitizeControlKeepNewlines(ev.Data))
+			f.grokText.WriteString(SanitizeControlKeepNewlines(ev.Data))
 		case ev.Type == "reasoning" && ev.Data != "":
 			// Some Grok builds may emit reasoning as type=reasoning.
 			text := strings.TrimSpace(sanitizeControl(ev.Data))
@@ -453,6 +470,15 @@ func (f *Formatter) processLine(line string) {
 	default:
 		// Suppress system, user, and other events
 	}
+}
+
+func (f *Formatter) flushGrokText() {
+	if f.grokText.Len() == 0 {
+		return
+	}
+	text := f.grokText.String()
+	f.grokText.Reset()
+	f.writeText(text)
 }
 
 func (f *Formatter) processGrokToolCall(ev streamEvent) {
@@ -1048,6 +1074,20 @@ func RenderLog(r io.Reader, w io.Writer, isTTY bool) error {
 func RenderLogWith(
 	r io.Reader, fmtr *Formatter, plainW io.Writer,
 ) error {
+	return renderLogWith(r, fmtr, plainW, true)
+}
+
+// RenderLogChunkWith renders an incremental log chunk while retaining
+// provider state that belongs to a response continued by a later chunk.
+func RenderLogChunkWith(
+	r io.Reader, fmtr *Formatter, plainW io.Writer,
+) error {
+	return renderLogWith(r, fmtr, plainW, false)
+}
+
+func renderLogWith(
+	r io.Reader, fmtr *Formatter, plainW io.Writer, final bool,
+) error {
 	br := bufio.NewReader(r)
 	for {
 		line, err := br.ReadString('\n')
@@ -1062,6 +1102,7 @@ func RenderLogWith(
 					return werr
 				}
 			} else {
+				fmtr.flushGrokText()
 				// Non-JSON lines: sanitize ANSI/control sequences
 				// to prevent terminal spoofing from agent stderr,
 				// then word-wrap to the formatter's width.
@@ -1080,6 +1121,7 @@ func RenderLogWith(
 
 			}
 		} else if err != io.EOF {
+			fmtr.flushGrokText()
 			// Preserve blank lines for spacing in rendered output.
 			if _, werr := fmt.Fprintln(plainW); werr != nil {
 				return werr
@@ -1093,7 +1135,14 @@ func RenderLogWith(
 		}
 	}
 
-	fmtr.Flush()
+	if final {
+		fmtr.Flush()
+	} else {
+		fmtr.flushInput()
+	}
+	if fmtr.writeErr != nil {
+		return fmtr.writeErr
+	}
 	return nil
 }
 

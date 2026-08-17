@@ -13,6 +13,7 @@ func TestFormatter_GrokRendering(t *testing.T) {
 	t.Run("text data", func(t *testing.T) {
 		fix := newFixture(true)
 		fix.writeLine(`{"type":"text","data":"Hello review"}`)
+		fix.writeLine(`{"type":"end","stopReason":"EndTurn"}`)
 		fix.assertContains(t, "Hello review")
 	})
 
