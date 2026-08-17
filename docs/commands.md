@@ -366,8 +366,9 @@ roborev log clean --days 3       # Remove logs older than 3 days
 
 Job logs are persisted to `~/.roborev/logs/jobs/` so agent output remains
 available after daemon restarts. By default, `roborev log` renders NDJSON into
-compact, human-readable progress lines showing tool calls and agent text. Use
-`--raw` for the original NDJSON when scripting or debugging.
+compact, human-readable progress lines showing tool calls and agent text. It
+uses stored job metadata to select that renderer; use `--raw` for the original
+NDJSON when scripting, debugging, or reading an orphaned log file.
 
 The `clean` subcommand removes log files older than the specified number of days
 (default: 7).

@@ -36,6 +36,29 @@ func setupOldSchemaDB(t *testing.T, dbPath string, schema string, seedData strin
 	}
 }
 
+func TestOpenReadOnly(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "reviews.db")
+	db, err := Open(dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	repo, err := db.GetOrCreateRepo(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	job, err := db.EnqueueJob(EnqueueOpts{
+		RepoID: repo.ID, GitRef: "abc123", Agent: "grok",
+	})
+	require.NoError(t, err)
+
+	readOnly, err := OpenReadOnly(dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, readOnly.Close()) })
+	got, err := readOnly.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, job.Agent, got.Agent)
+
+	_, err = readOnly.Exec(`DELETE FROM review_jobs WHERE id = ?`, job.ID)
+	require.Error(t, err)
+}
+
 const legacyReviewJobSchema = `
 	CREATE TABLE repos (
 		id INTEGER PRIMARY KEY,

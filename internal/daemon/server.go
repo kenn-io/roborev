@@ -3569,8 +3569,18 @@ func (s *Server) humaJobLog(
 			return
 		}
 		logAgent := job.Agent
-		if input.PreviousAgent != "" && input.PreviousAgent != job.Agent {
-			if job.Status == storage.JobStatusQueued {
+		hasRecordedAgent := false
+		if recordedAgent, readErr := JobLogAgent(jobID); readErr == nil {
+			if job.Source != storage.JobSourceAutoDesign ||
+				recordedAgent != storage.AutoDesignAgentSentinel {
+				logAgent = recordedAgent
+				hasRecordedAgent = true
+			}
+		} else if !errors.Is(readErr, os.ErrNotExist) {
+			log.Printf("humaJobLog: read agent metadata for job %d: %v", jobID, readErr)
+		}
+		if input.PreviousAgent != "" && input.PreviousAgent != logAgent {
+			if !hasRecordedAgent && job.Status == storage.JobStatusQueued {
 				logAgent = input.PreviousAgent
 			} else if job.Source != storage.JobSourceAutoDesign {
 				offset = 0

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"log"
+	"net/url"
 	"os"
 	"path/filepath"
 	"strings"
@@ -237,6 +238,33 @@ func Open(dbPath string) (*DB, error) {
 	}
 
 	return wrapped, nil
+}
+
+// OpenReadOnly opens an existing database without creating directories,
+// changing journal settings, running migrations, or performing backfills.
+func OpenReadOnly(dbPath string) (*DB, error) {
+	absPath, err := filepath.Abs(dbPath)
+	if err != nil {
+		return nil, fmt.Errorf("resolve database path: %w", err)
+	}
+	dsn := url.URL{Scheme: "file", Path: filepath.ToSlash(absPath)}
+	query := dsn.Query()
+	query.Set("mode", "ro")
+	query.Add("_pragma", "busy_timeout(30000)")
+	dsn.RawQuery = query.Encode()
+
+	db, err := sql.Open("sqlite", dsn.String())
+	if err != nil {
+		return nil, fmt.Errorf("open database read-only: %w", err)
+	}
+	if err := db.Ping(); err != nil {
+		openErr := fmt.Errorf("open database read-only: %w", err)
+		if closeErr := db.Close(); closeErr != nil {
+			openErr = errors.Join(openErr, fmt.Errorf("close database: %w", closeErr))
+		}
+		return nil, openErr
+	}
+	return &DB{db}, nil
 }
 
 // migrate runs any needed migrations for existing databases

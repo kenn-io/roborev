@@ -615,6 +615,8 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	if !appendJobLog {
 		if err := truncateJobLog(job.ID); err != nil {
 			log.Printf("[%s] Warning: truncate job log for job %d: %v", workerID, job.ID, err)
+		} else if err := RecordJobLogAgent(job.ID, job.Agent); err != nil {
+			log.Printf("[%s] Warning: record agent for job log %d: %v", workerID, job.ID, err)
 		}
 	}
 
@@ -857,7 +859,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	if appendJobLog {
 		jobLog = newAppendingJobLogWriter(job.ID)
 	} else {
-		jobLog = newJobLogWriter(job.ID)
+		jobLog = newAgentJobLogWriter(job.ID, agentName)
 	}
 	defer func() {
 		if err := jobLog.Close(); err != nil {

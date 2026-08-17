@@ -268,7 +268,7 @@ func (wp *WorkerPool) runSynthesisAgent(
 		outputWriter.Flush()
 		wp.outputBuffers.CloseJob(job.ID)
 	}()
-	jobLog := newJobLogWriter(job.ID)
+	jobLog := newAgentJobLogWriter(job.ID, agentName)
 	defer func() {
 		if cErr := jobLog.Close(); cErr != nil {
 			log.Printf("[%s] Warning: close job log for job %d: %v", workerID, job.ID, cErr)

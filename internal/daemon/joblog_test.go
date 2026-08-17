@@ -112,6 +112,7 @@ func TestCleanJobLogs(t *testing.T) {
 		// Create an "old" log file by writing and then back-dating its mtime
 		oldPath := filepath.Join(dir, "1.log")
 		createLogFile(t, oldPath, "old", time.Now().Add(-8*24*time.Hour))
+		require.NoError(RecordJobLogAgent(1, "codex"))
 
 		// Create a "new" log file (default mtime = now)
 		newPath := filepath.Join(dir, "2.log")
@@ -127,6 +128,8 @@ func TestCleanJobLogs(t *testing.T) {
 		// Old file should be gone
 		_, err := os.Stat(oldPath)
 		assert.True(os.IsNotExist(err), "old log file should be removed")
+		_, err = os.Stat(jobLogAgentPath(1))
+		assert.True(os.IsNotExist(err), "old log agent should be removed")
 
 		// New file should remain
 		_, err = os.Stat(newPath)
@@ -146,6 +149,16 @@ func TestCleanJobLogs(t *testing.T) {
 }
 
 func TestJobLogWriter(t *testing.T) {
+	t.Run("records_agent_for_truncated_log", func(t *testing.T) {
+		setupTestEnv(t)
+		w := newAgentJobLogWriter(199, "codex")
+		require.NoError(t, w.Close())
+
+		agent, err := JobLogAgent(199)
+		require.NoError(t, err)
+		assert.Equal(t, "codex", agent)
+	})
+
 	t.Run("writes_immediately", func(t *testing.T) {
 		setupTestEnv(t)
 		w := newJobLogWriter(200)
@@ -241,6 +254,40 @@ func TestJobLogWriter(t *testing.T) {
 		data, err := os.ReadFile(JobLogPath(207))
 		require.NoError(t, err)
 		assert.Equal(t, "buffered\ncurrent\n", string(data))
+	})
+
+	t.Run("truncate_mode_waits_for_agent_identity", func(t *testing.T) {
+		setupTestEnv(t)
+		previousRetry := jobLogOpenRetryInterval
+		jobLogOpenRetryInterval = time.Hour
+		t.Cleanup(func() {
+			jobLogOpenRetryInterval = previousRetry
+		})
+
+		require.NoError(t, os.MkdirAll(jobLogAgentPath(208), 0o700))
+		blocker := filepath.Join(jobLogAgentPath(208), "blocker")
+		require.NoError(t, os.WriteFile(blocker, []byte("blocked"), 0o600))
+		w := newAgentJobLogWriter(208, "grok")
+		_, err := w.Write([]byte("buffered\n"))
+		require.NoError(t, err)
+
+		data, err := os.ReadFile(JobLogPath(208))
+		require.NoError(t, err)
+		assert.Empty(t, data)
+
+		require.NoError(t, os.Remove(blocker))
+		require.NoError(t, os.Remove(jobLogAgentPath(208)))
+		jobLogOpenRetryInterval = 0
+		_, err = w.Write([]byte("current\n"))
+		require.NoError(t, err)
+		require.NoError(t, w.Close())
+
+		data, err = os.ReadFile(JobLogPath(208))
+		require.NoError(t, err)
+		assert.Equal(t, "buffered\ncurrent\n", string(data))
+		agent, err := JobLogAgent(208)
+		require.NoError(t, err)
+		assert.Equal(t, "grok", agent)
 	})
 
 	t.Run("retries_after_initial_open_failure", func(t *testing.T) {
