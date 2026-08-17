@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE svg PUBLIC "-//W3C//DTD SVG 1.0//EN" "http://www.w3.org/TR/2001/REC-SVG-20010904/DTD/svg10.dtd">
+<svg width="310.00" height="188.00" xmlns="http://www.w3.org/2000/svg">
+<rect width="310.00" height="188.00" fill="#1a1b26" x="0.00px" y="0.00px"/>
+<g font-family="SF Mono, Menlo, Consolas, Liberation Mono, monospace" font-size="14.00px" fill="#c4c4c4" clip-path="url(#terminalMask)">
+<text x="5.00px" y="21.80px" xml:space="preserve"><tspan xml:space="preserve">$ roborev repo list</tspan></text><text x="5.00px" y="38.60px" xml:space="preserve"><tspan xml:space="preserve">NAME     PATH            REVIEWS</tspan></text><text x="5.00px" y="55.40px" xml:space="preserve"><tspan xml:space="preserve">roborev  /repos/roborev  1000</tspan></text><text x="5.00px" y="72.20px" xml:space="preserve"/><text x="5.00px" y="89.00px" xml:space="preserve"><tspan xml:space="preserve">Total: 1 repositories, 1000 reviews</tspan></text><text x="5.00px" y="105.80px" xml:space="preserve"><tspan xml:space="preserve">$</tspan></text><text x="5.00px" y="122.60px" xml:space="preserve"/><text x="5.00px" y="139.40px" xml:space="preserve"/><text x="5.00px" y="156.20px" xml:space="preserve"/>
+</g>
+</svg>
