@@ -1,6 +1,8 @@
 import { expect, test } from "@playwright/test";
 import { join } from "node:path";
 
+import { findFirstFailingJob } from "./review-selection";
+
 const outputDir = process.env.SCREENSHOT_DIR ?? "/output";
 
 test("review workspace with an open finding", async ({ page }) => {
@@ -8,11 +10,8 @@ test("review workspace with an open finding", async ({ page }) => {
 
   const jobs = page.getByRole("region", { name: "Review jobs" });
   await expect(jobs).toBeVisible();
-  const failingJob = page.locator(".job-row", {
-    has: page.locator(".verdict-fail"),
-  });
-  await expect(failingJob.first()).toBeVisible();
-  await failingJob.first().click();
+  const failingJob = await findFirstFailingJob(page);
+  await failingJob.click();
 
   await expect(
     page.getByRole("region", { name: "Review details" }),
