@@ -1094,6 +1094,7 @@ func TestFixSkillsRecognizeRuntimeAutofixGuidelines(t *testing.T) {
 		})
 	}
 }
+
 func TestDroidSkillsInstallToFactoryDir(t *testing.T) {
 	// Droid skills install under ~/.factory/skills (Factory's personal skills
 	// location), not ~/.droid, and are skipped when ~/.factory is absent so the
