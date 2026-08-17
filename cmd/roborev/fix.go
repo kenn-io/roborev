@@ -407,8 +407,13 @@ func fixJobDirect(ctx context.Context, params fixJobParams, fixPrompt string) (*
 		}
 	}
 	retryOutput, retryErr := retryAgent.Review(ctx, params.RepoRoot, "HEAD", buildGenericCommitPromptWithMetadata(params.Metadata, params.FixGuidelines), out)
-	if strings.TrimSpace(retryOutput) != "" {
-		agentOutput = retryOutput
+	if retryReport := strings.TrimSpace(retryOutput); retryReport != "" {
+		if initialReport := strings.TrimSpace(agentOutput); initialReport != "" {
+			agentOutput = "Initial fix report:\n" + initialReport +
+				"\n\nCommit retry report:\n" + retryReport
+		} else {
+			agentOutput = retryOutput
+		}
 	}
 	if retryErr != nil {
 		// Classify the retry error so quota/session limits abort

@@ -1970,7 +1970,9 @@ func TestFixJobDirect_RetryThreadsCapturedSessionID(t *testing.T) {
 	assert.Contains(t, calls[1].Prompt, "Check the pending changes against the autofix guidelines")
 }
 
-func TestFixJobDirect_RetryUsesFinalAgentOutput(t *testing.T) {
+// If a commit retry replaces the initial fix report, the persisted outcome can
+// lose the agent's fixed/skipped disposition.
+func TestFixJobDirect_RetryPreservesInitialAndFinalAgentOutput(t *testing.T) {
 	repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
 	calls := 0
 	ag := &agent.FakeAgent{
@@ -2004,9 +2006,13 @@ func TestFixJobDirect_RetryUsesFinalAgentOutput(t *testing.T) {
 	}, "fix things")
 	require.NoError(t, err)
 
-	assert.Equal(t, 2, calls)
-	assert.True(t, result.CommitCreated)
-	assert.Equal(t, "final retry report", result.AgentOutput)
+	assert := assert.New(t)
+	assert.Equal(2, calls)
+	assert.True(result.CommitCreated)
+	assert.Contains(result.AgentOutput, "Initial fix report")
+	assert.Contains(result.AgentOutput, "initial report")
+	assert.Contains(result.AgentOutput, "Commit retry report")
+	assert.Contains(result.AgentOutput, "final retry report")
 }
 
 func TestBuildBatchFixPrompt(t *testing.T) {
