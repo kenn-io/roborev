@@ -109,6 +109,25 @@ func TestAssetPublishersRejectUnexpectedFiles(t *testing.T) {
 	}
 }
 
+func TestGeneratedAssetPublisherRequiresBrowserScreenshot(t *testing.T) {
+	tempDir := t.TempDir()
+	repo := filepath.Join(tempDir, "repo")
+	sourceDir := filepath.Join(tempDir, "source")
+	require.NoError(t, os.MkdirAll(repo, 0o755))
+	git(t, repo, "init")
+	writeGeneratedAssets(t, sourceDir, "asset")
+	require.NoError(t, os.Remove(filepath.Join(sourceDir, "web-ui.png")))
+
+	scriptPath := installAssetScript(t, repo, filepath.Join("docs", "screenshots", "update-generated-assets-branch.sh"))
+	cmd := exec.Command("bash", bashPath(t, scriptPath), "--source", bashPath(t, sourceDir))
+	cmd.Dir = repo
+	output, err := cmd.CombinedOutput()
+
+	require.Error(t, err, string(output))
+	assert.Contains(t, string(output), "web-ui.png")
+	assert.Contains(t, string(output), "missing expected asset")
+}
+
 func installAssetScript(t *testing.T, repo, scriptRel string) string {
 	t.Helper()
 	script := readShellScript(t, filepath.Join("..", scriptRel))
@@ -153,6 +172,7 @@ func writeStaticAssets(t *testing.T, dir, content string) {
 func writeGeneratedAssets(t *testing.T, dir, content string) {
 	t.Helper()
 	files := []string{
+		"web-ui.png",
 		"tui-hero.svg",
 		"tui-queue.svg",
 		"tui-review.svg",

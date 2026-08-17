@@ -50,6 +50,10 @@ brew install roborev
 This also works on Linux with
 [Linuxbrew](https://docs.brew.sh/Homebrew-on-Linux).
 
+The `kenn-io/tap` repository watches official Roborev releases and manages
+formula updates from their published checksums. Roborev release jobs do not need
+a cross-repository credential to update the formula.
+
 ## Linux Packages: DEB and RPM
 
 Starting with 0.57.0, GitHub releases include `.deb` and `.rpm` packages for
@@ -89,15 +93,17 @@ need the browser application.
 
 ## Build from Source
 
+Building Roborev requires Go 1.26.6 or newer. The embedded browser application
+also requires Bun 1.3.14.
+
 ```bash
 git clone https://github.com/kenn-io/roborev
 cd roborev
 make install
 ```
 
-The `make install` target requires Bun 1.3.14, builds and validates the browser
-application, and embeds it alongside version information (for example,
-`v0.7.0-5-gabcdef`).
+The `make install` target builds and validates the browser application and
+embeds it alongside version information (for example, `v0.7.0-5-gabcdef`).
 
 For quick iteration during development:
 

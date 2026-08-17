@@ -45,14 +45,15 @@ if [[ -z "${ROBOREV_DATA_DIR:-}" ]]; then
     exit 1
 fi
 roborev config set advanced.tasks_enabled false --global
+roborev config set web.listen "127.0.0.1:7374" --global
 # Hide noisy columns so screenshots match the default-ish view. This must be
 # explicit: any "config set" rewrites the file with the hide-nothing sentinel
 # (hidden_columns = ['_']), which would otherwise unhide the default-hidden
 # Session / Req Model / Req Provider columns.
 roborev config set hidden_columns "session_id,requested_model,requested_provider" --global
 
-# --- Start tmux session (tall for hero, resized later) ---
-tmux -f /dev/null new-session -d -s "$SESSION" -x 120 -y 50
+# --- Start tmux session (large enough for the split-screen hero) ---
+tmux -f /dev/null new-session -d -s "$SESSION" -x 160 -y 50
 tmux set-option -g default-terminal "tmux-256color"
 tmux set-option -ga terminal-overrides ",*:Tc"
 tmux send-keys -t "$SESSION" "export COLORTERM=truecolor" Enter
@@ -174,8 +175,18 @@ wait_until "NAME"
 sleep 0.5
 capture "cli-repo-list"
 
+# =====================
+# Browser Screenshot
+# =====================
+echo "==> Browser screenshot"
+
+ROBOREV_SCREENSHOT_ORIGIN="http://127.0.0.1:7374" \
+SCREENSHOT_DIR="$OUTPUT_DIR" \
+npx playwright test --config /screenshots/playwright.config.ts --reporter=list
+CAPTURED=$((CAPTURED + 1))
+
 # Cleanup
 tmux kill-session -t "$SESSION" 2>/dev/null || true
 
 echo ""
-echo "Done! Generated $CAPTURED SVG files in $OUTPUT_DIR"
+echo "Done! Generated $CAPTURED screenshot files in $OUTPUT_DIR"

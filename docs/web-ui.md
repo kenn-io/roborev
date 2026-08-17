@@ -7,6 +7,10 @@ Roborev includes a browser application in its release packages. It is served by
 the same daemon that owns the review queue and SQLite database, on a separate
 browser-only listener.
 
+<figure class="hero-shot" data-lightbox>
+  <img src="/assets/generated/web-ui.png" alt="Roborev browser application showing the review queue and an open review" loading="eager">
+</figure>
+
 ## Open the Application
 
 For normal local use, install a Roborev release and run:
@@ -39,6 +43,46 @@ The Go module source archive does not contain the generated application assets.
 An installation made with `go install` still provides the CLI and terminal UI,
 but the native browser application requires a release package or a source build
 made with `make build`.
+
+## Reviews Workspace
+
+The Reviews workspace follows the daemon's queue in real time. Use the
+repository and branch picker, status filter, ref search, and closed-review
+toggle to narrow the list. Columns can be sorted after all matching rows are
+loaded. Panel reviews appear as a synthesis row that can be expanded to show its
+individual reviewers.
+
+Select a row to open its detail drawer without leaving the queue. The drawer
+provides:
+
+- rendered review output and existing comments;
+- the persisted agent log and the exact stored prompt;
+- close or reopen, rerun, and eligible cancellation actions; and
+- review-output copying and a comment form.
+
+Available actions depend on both the job and the browser session. For example, a
+running review can be canceled but has no completed output to close, while
+remote sessions have the narrower mutation policy described under
+[Browser Sessions](#browser-sessions).
+
+The most common keyboard controls are:
+
+| Key | Action |
+|-----|--------|
+| `j` / `k` | Move down or up through the queue |
+| `Enter` | Open the selected review |
+| `Left` / `Right` | Collapse or expand a review panel |
+| `/` | Focus ref search |
+| `a` | Close or reopen the open review |
+| `c` | Focus its comment field |
+| `l` / `p` | Show its log or prompt |
+| `y` | Copy its review output |
+| `Esc` | Close the detail drawer |
+| `?` | Show all keyboard shortcuts |
+
+Review deep links and Analytics filters are stored in the URL. They can be
+bookmarked on one daemon, but numeric job IDs and local data are not portable to
+a different daemon.
 
 ## Analytics
 

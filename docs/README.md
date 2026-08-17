@@ -27,7 +27,7 @@ are ignored local outputs.
 
 - `docs-assets`: curated static media, including logos, favicons, Open Graph
   images, diagrams, agent icons, and manually captured integration images.
-- `docs-generated-assets`: generated CLI and TUI screenshots.
+- `docs-generated-assets`: generated browser UI, CLI, and TUI screenshots.
 
 Docs pages should reference media through:
 

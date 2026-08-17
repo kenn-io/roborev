@@ -1,3 +1,18 @@
+FROM oven/bun:1.3.14-alpine AS web-builder
+
+RUN apk add --no-cache git
+
+WORKDIR /src
+
+COPY package.json bun.lock ./
+COPY web/package.json web/package.json
+COPY packages/roborev-ui/package.json packages/roborev-ui/package.json
+RUN bun install --frozen-lockfile
+
+COPY web web
+COPY packages packages
+RUN bun run web:build
+
 FROM golang:1.26.6-alpine AS builder
 
 WORKDIR /src
@@ -8,15 +23,18 @@ RUN go mod download
 
 # Copy source and build
 COPY . .
+COPY --from=web-builder /src/web/dist ./internal/web/dist
 ARG VERSION=dev
-RUN go build \
+RUN CGO_ENABLED=0 go build \
     -ldflags="-X go.kenn.io/roborev/internal/version.Version=${VERSION}" \
     -o /roborev ./cmd/roborev
 
-FROM alpine:3.19
+FROM node:22-bookworm
 
 # Install dependencies for freeze + tmux screenshots
-RUN apk add --no-cache ca-certificates git bash tmux
+RUN apt-get update && \
+    apt-get install -y --no-install-recommends ca-certificates git tmux wget && \
+    rm -rf /var/lib/apt/lists/*
 
 # Install freeze for SVG screenshots (detect architecture)
 RUN ARCH=$(uname -m) && \
@@ -28,6 +46,11 @@ RUN ARCH=$(uname -m) && \
 
 COPY --from=builder /roborev /usr/local/bin/roborev
 
+WORKDIR /screenshots
+COPY docs/screenshots/package.json docs/screenshots/package-lock.json ./
+RUN npm ci && npx playwright install --with-deps chromium
+COPY docs/screenshots/ ./
+
 # Create config pointing to local daemon
 RUN mkdir -p /root/.roborev && \
     echo 'server_addr = "127.0.0.1:7373"' > /root/.roborev/config.toml
@@ -36,4 +59,4 @@ RUN mkdir -p /root/.roborev && \
 RUN printf '#!/bin/sh\ncat > /dev/null\n' > /usr/local/bin/xclip && \
     chmod +x /usr/local/bin/xclip
 
-WORKDIR /screenshots
+ENTRYPOINT ["/bin/bash"]

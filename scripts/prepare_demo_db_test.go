@@ -14,7 +14,7 @@ import (
 	_ "modernc.org/sqlite"
 )
 
-var docsScreenshotRepos = []string{"roborev", "kata", "msgvault", "agentsview"}
+var docsScreenshotRepos = []string{"roborev"}
 
 func TestPrepareDemoDBUsesCanonicalRepoIdentity(t *testing.T) {
 	tempDir := t.TempDir()
@@ -139,6 +139,24 @@ High: REAL_PUBLIC_REVIEW_FINDING from /Users/Alice/roborev with api_key=abc123'
 	assert.NotContains(t, text, "REAL_PUBLIC_RESPONSE")
 	assert.NotContains(t, text, "TASK_LOCAL_SECRET")
 	assert.NotContains(t, text, "DIRTY_LOCAL_SECRET")
+}
+
+func TestPrepareDemoDBRedactsConfiguredPrivateTerms(t *testing.T) {
+	tempDir := t.TempDir()
+	sourceDB := filepath.Join(tempDir, "source.db")
+	db := createScreenshotSourceDB(t, sourceDB)
+	defer db.Close()
+
+	insertScreenshotRepo(t, db, 1, "/public/roborev", "roborev", "git@github.com:kenn-io/roborev.git")
+	insertScreenshotReview(t, db, 1, 1, "PRIVATE_SCREENSHOT_MARKER", 0)
+
+	termsFile := filepath.Join(tempDir, "private-terms.txt")
+	require.NoError(t, os.WriteFile(termsFile, []byte("# local screenshot denylist\nprivate_screenshot_marker\n"), 0o600))
+	demoDB := runPrepareDemoDBWithTerms(t, tempDir, sourceDB, termsFile)
+	text := readScreenshotDemoText(t, demoDB)
+
+	assert.NotContains(t, strings.ToLower(text), "private_screenshot_marker")
+	assert.Contains(t, text, "[REDACTED]")
 }
 
 func TestPrepareDemoDBSelectsOnlyCompletedJobsWithReviewVerdicts(t *testing.T) {
@@ -385,6 +403,11 @@ func insertScreenshotJobWithoutReview(t *testing.T, db *sql.DB, repoID, jobID in
 
 func runPrepareDemoDB(t *testing.T, tempDir, sourceDB string) string {
 	t.Helper()
+	return runPrepareDemoDBWithTerms(t, tempDir, sourceDB, "")
+}
+
+func runPrepareDemoDBWithTerms(t *testing.T, tempDir, sourceDB, termsFile string) string {
+	t.Helper()
 
 	script := readShellScript(t, filepath.Join("..", "docs", "screenshots", "prepare-demo-db.sh"))
 	scriptPath := filepath.Join(tempDir, "prepare-demo-db.sh")
@@ -393,13 +416,16 @@ func runPrepareDemoDB(t *testing.T, tempDir, sourceDB string) string {
 	homeDir := filepath.Join(tempDir, "maintainer-home")
 	require.NoError(t, os.MkdirAll(homeDir, 0o755))
 
+	environment := "export TMPDIR=" + shellQuote(bashPath(t, tempDir)) +
+		" ROBOREV_DOCS_SOURCE_DB=" + shellQuote(bashPath(t, sourceDB)) +
+		" HOME=" + shellQuote(bashPath(t, homeDir))
+	if termsFile != "" {
+		environment += " KENN_PRIVATE_TERMS_FILE=" + shellQuote(bashPath(t, termsFile))
+	}
 	cmd := exec.Command(
 		"bash",
 		"-lc",
-		"export TMPDIR="+shellQuote(bashPath(t, tempDir))+
-			" ROBOREV_DOCS_SOURCE_DB="+shellQuote(bashPath(t, sourceDB))+
-			" HOME="+shellQuote(bashPath(t, homeDir))+
-			"; exec "+shellQuote(bashPath(t, scriptPath)),
+		environment+"; exec "+shellQuote(bashPath(t, scriptPath)),
 	)
 	output, err := cmd.CombinedOutput()
 	require.NoError(t, err, string(output))

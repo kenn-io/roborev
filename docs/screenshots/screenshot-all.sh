@@ -12,7 +12,7 @@ usage() {
     cat <<EOF
 Usage: $(basename "$0") [OPTIONS]
 
-Generate roborev SVG screenshots using freeze + tmux.
+Generate Roborev CLI, TUI, and browser screenshots in Docker.
 
 Options:
   --repo PATH     Path to roborev source repo (default: current repo)
@@ -54,7 +54,7 @@ REPO="$REPO_RESOLVED"
 
 echo ""
 echo "=========================================="
-echo "  roborev SVG Screenshot Generator"
+echo "  roborev Documentation Screenshot Generator"
 echo "=========================================="
 echo ""
 
@@ -81,9 +81,8 @@ fi
 # --- Step 3: Generate screenshots ---
 mkdir -p "$OUTPUT_DIR"
 
-echo "==> Generating SVG screenshots..."
+echo "==> Generating documentation screenshots..."
 docker run --rm \
-    -v "$SCRIPT_DIR:/screenshots" \
     -v "$DEMO_DATA_DIR:/data" \
     -v "$OUTPUT_DIR:/output" \
     -v "$REPO:/repos/roborev:ro" \

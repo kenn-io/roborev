@@ -1,5 +1,5 @@
 #!/usr/bin/env bash
-# Prepare an isolated demo database from real roborev reviews of public repos.
+# Prepare an isolated demo database from real reviews of the public Roborev repo.
 
 set -euo pipefail
 
@@ -34,7 +34,7 @@ import sqlite3
 import subprocess
 import sys
 
-allowed_repos = ("roborev", "kata", "msgvault", "agentsview")
+allowed_repos = ("roborev",)
 canonical_repos = {name: f"github.com/kenn-io/{name}" for name in allowed_repos}
 review_statuses = ("done",)
 limit = int(os.environ.get("ROBOREV_DOCS_REVIEW_LIMIT", "1000"))
@@ -42,6 +42,19 @@ source_db = os.environ["SOURCE_DB"]
 dest_db = os.environ["DEST_DB"]
 home = str(pathlib.Path.home())
 home_name = pathlib.Path.home().name
+private_terms_path = pathlib.Path(
+    os.environ.get(
+        "KENN_PRIVATE_TERMS_FILE",
+        pathlib.Path.home() / ".config" / "kenn" / "private-terms.txt",
+    )
+)
+private_terms = []
+if private_terms_path.is_file():
+    private_terms = [
+        line.strip()
+        for line in private_terms_path.read_text(encoding="utf-8").splitlines()
+        if line.strip() and not line.lstrip().startswith("#")
+    ]
 
 windows_user_path_re = re.compile(
     r"(?i)\b[A-Z]:[\\/]+Users(?:[\\/]+[A-Za-z0-9._-]+(?:[\\/][^\s\"'`)>\]]*)?)?"
@@ -214,6 +227,8 @@ def sanitize_text(value):
     )
     for pattern in secret_patterns:
         sanitized = pattern.sub(lambda m: m.group(1) + m.group(2) + "[REDACTED]" if m.lastindex == 2 else "[REDACTED]", sanitized)
+    for term in private_terms:
+        sanitized = re.sub(re.escape(term), "[REDACTED]", sanitized, flags=re.IGNORECASE)
     return sanitized
 
 
@@ -369,6 +384,7 @@ def validate_sanitized():
         re.compile(r"AKIA[0-9A-Z]{16}"),
         re.compile(r"(?i)\b(api[_-]?key|secret|password)\b\s*[:=]\s*(?!\[REDACTED\])[^\s,\"')]+"),
     ]
+    private_patterns.extend(re.compile(re.escape(term), re.IGNORECASE) for term in private_terms)
     private_patterns = [p for p in private_patterns if p is not None]
     tables = dst.execute(
         "SELECT name FROM sqlite_master WHERE type = 'table' AND name NOT LIKE 'sqlite_%'"
@@ -407,10 +423,6 @@ dst.commit()
 
 copied_failures = sum(1 for row in selected_jobs if review_is_failing(row))
 copied_passes = len(selected_jobs) - copied_failures
-missing_repos = [name for name in allowed_repos if name not in {row["name"] for row in repo_rows}]
-if missing_repos:
-    print("Warning: source database did not contain repos: " + ", ".join(missing_repos), file=sys.stderr)
-
 print("Demo database created successfully")
 print(f"Repos: {len(repo_rows)}")
 print(f"Commits: {len(commit_ids)}")

@@ -60,6 +60,7 @@ branch.
 | `f` | Open filter (repo/branch tree) |
 | `b` | Open filter with branches expanded |
 | `h` | Toggle hide closed/failed/canceled |
+| `L` | Toggle split-screen or stacked layout |
 | `D` | Toggle distraction-free mode |
 | `P` | Pause or resume queue processing |
 | `g` | Jump to top of queue |
@@ -72,6 +73,30 @@ Panel reviews appear as one synthesis parent row by default. The parent row
 shows live progress while member reviewers run and a compact member summary
 after completion. Expand the row to inspect individual member jobs. Close,
 cancel, rerun, or fix the panel from the parent row, not from a member row.
+
+## Split-Screen Review
+
+At 140 columns by 36 rows or larger, the TUI automatically places the queue in a
+left pane and the selected job in a right detail pane. Moving through the queue
+updates the detail pane after a short debounce, so holding `j` or `k` does not
+issue a request for every intermediate row.
+
+The detail pane adapts to job state: completed jobs show the rendered review,
+running jobs show a live log tail, failed jobs show the error, and queued jobs
+show their metadata. When a running job finishes, its log is replaced by the
+review automatically.
+
+Press `Tab` to focus the detail pane and `Esc` to return to the queue. Review
+actions and scrolling work in the focused detail pane. `Enter` is intentionally
+a no-op while the split queue is focused because the detail already follows the
+selection. Mouse clicks focus either pane, and the wheel scrolls the pane below
+the pointer.
+
+Press `L` to lock the stacked or split preference for the TUI session. A split
+preference falls back to stacked when the terminal is too small and returns when
+it grows again. Prompt, comment, help, log, and task screens remain full-screen.
+The queue also drops lower-priority columns as needed to preserve the most
+useful fields in its narrower pane.
 
 ## Queue Pause
 

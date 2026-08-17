@@ -213,7 +213,14 @@ branches before builds:
 
 - `docs-assets` contains curated static media such as logos, favicons, diagrams,
     Open Graph images, and integration screenshots.
-- `docs-generated-assets` contains generated CLI and TUI screenshots.
+- `docs-generated-assets` contains generated browser, CLI, and TUI screenshots.
+
+The screenshot pipeline reads the normal review database only through a
+read-only SQLite connection, extracts completed clean reviews from the canonical
+public Roborev repository, sanitizes copied content, and runs the branch binary
+against that reduced database inside Docker. See the
+[screenshot pipeline guide](https://github.com/kenn-io/roborev/blob/main/docs/screenshots/README.md)
+for the capture and asset publication workflow.
 
 Install the docs toolchain and build the site:
 

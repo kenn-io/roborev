@@ -5,24 +5,39 @@ description: Release history for roborev
 
 All notable changes to roborev, grouped by minor release.
 
-## Unreleased
+## 0.65.0
+
+<small>2026-08-16</small>
 
 **New features**
 
-- Reasoning accepts exact `low`, `medium`, `high`, `xhigh`, and `max` values and
-    forwards them unchanged to agents that support each tier. The legacy `fast`,
-    `standard`, `thorough`, and `maximum` presets remain compatible.
 - Roborev now embeds an authenticated native browser review workspace on a
     separate daemon listener. `roborev ui [job-id]` opens the job list or a
     review deep link with filtering, sorting, panel detail, Markdown output,
     comments, logs, prompts, keyboard controls, and review/job mutations. Local
     use bootstraps automatically; remote HTTPS deployments exchange a token for
-    a browser session without exposing the private CLI listener.
+    a browser session without exposing the private CLI listener. Analytics
+    reports review volume, outcomes, errors, latency, agent attempts, estimated
+    cost, and pricing coverage. See [Browser UI](/web-ui/).
+- The TUI automatically shows a kata-style split-screen review workspace on
+    terminals at least 140 columns by 36 rows. The queue drives a live detail
+    pane for completed, running, failed, and queued jobs; `L` toggles layouts,
+    and smaller terminals fall back to the existing stacked view. See
+    [Split-Screen Review](/integrations/tui/#split-screen-review).
+- Reasoning accepts exact `low`, `medium`, `high`, `xhigh`, and `max` values and
+    forwards them unchanged to agents that support each tier. The legacy `fast`,
+    `standard`, `thorough`, and `maximum` presets remain compatible. See
+    [Reasoning Levels](/configuration/#reasoning-levels).
 - Pi agents accept global `[agent.pi] launch_args`, passed as tokenized
     arguments to every Pi invocation before roborev-managed workflow and safety
     options. This allows isolated classifier jobs to load extension-defined
     model providers explicitly while retaining `--no-extensions` discovery
-    isolation.
+    isolation. See [Pi Classifier Options](/configuration/#pi-classifier-options).
+- `roborev export ci-costs` exports job-level costs for eligible CI attempts,
+    including terminal retries that panel summaries cannot retain. Stable
+    cursors, overlapping-window refreshes, null-versus-zero pricing, and a
+    legacy backfill mode support incremental downstream accounting. See
+    [Exporting CI Costs](/commands/#exporting-ci-costs).
 
 **Improvements**
 
@@ -35,6 +50,25 @@ All notable changes to roborev, grouped by minor release.
     repository, worktree, branch, and expiry, while the TUI shows a contextual
     snooze badge for an exactly filtered checkout. See
     [Snoozing Reminders](/agent-hook/#snoozing-reminders).
+- Daemon restarts stop new claims and wait for active reviews, hooks, and final
+    sync to finish before starting the replacement process. The CLI reports the
+    wait instead of force-killing work after a fixed timeout.
+- `roborev review --branch` now resolves the repository and range from the
+    linked worktree that invoked it, preventing shared or stale Git
+    configuration from redirecting the review to a sibling checkout. See
+    [Git Worktrees](/guides/repository-management/#git-worktrees).
+- Agent Hook installation and runtime handling now use kit's shared coding-agent
+    profiles. One workflow supports Claude Code, Codex, Copilot CLI, Cursor,
+    Factory Droid, Gemini CLI, Hermes, and Qwen, while Roborev retains its Grok
+    integration. Existing Codex, Claude, and Droid registrations can be upgraded
+    in place. See [Agent Hook](/agent-hook/).
+- The Homebrew tap now discovers official Roborev releases and owns formula
+    updates, removing duplicate publisher logic and the cross-repository release
+    credential. See
+    [Homebrew installation](/installation/#homebrew-macos-linux).
+- Development, CI, release, and screenshot builds now require Go 1.26.6. Go,
+    JavaScript, documentation, and GitHub Actions dependencies were refreshed,
+    including fixes for known Go toolchain and `go-git` vulnerabilities.
 
 **Bug fixes**
 
@@ -44,12 +78,30 @@ All notable changes to roborev, grouped by minor release.
     rerun jobs. Session expiry and logout now close active browser streams.
 - Persisted job output is shown only when its log belongs to the current
     attempt, so a failed rerun cannot fall back to an older attempt's output.
-- Daemon restarts now stop new job claims and wait indefinitely for running
-    reviews and worker finalization instead of force-killing the daemon after a
-    short graceful-shutdown window.
+- Daemon discovery now preserves sandbox permission failures instead of treating
+    an unreachable loopback or Unix socket as proof that no daemon exists.
+    Clients can use the daemon's private Unix-socket fallback without starting a
+    competing process. See [Daemon & Hooks](/commands/#daemon-hooks).
+- Fresh agent sessions now receive a short, bounded agentsview usage-indexing
+    retry before Roborev falls back to job-log token data, reducing permanently
+    missing cost estimates. See [Token Usage](/commands/#token-usage).
 - The Codex `maximum` preset now requests literal `max` for explicit GPT-5.6
     `sol`, `terra`, and `luna` models. Older, default, and unknown models retain
     the compatible `xhigh` mapping, while exact `xhigh` remains distinct.
+
+**Acknowledgements**
+
+- Thanks to [Wes McKinney](https://github.com/wesm) for the native browser
+    application, job-level CI cost export, linked-worktree review fix,
+    usage-indexing retry, and release updates.
+- Thanks to [Graham Wheeler](https://github.com/gramster) for the TUI
+    split-screen review workspace.
+- Thanks to [Phillip Cloud](https://github.com/cpcloud) for exact
+    reasoning-effort tiers across supported agents.
+- Thanks to [Marius van Niekerk](https://github.com/mariusvniekerk) for unified
+    Agent Hook profiles, sandbox-safe daemon discovery, visible snooze status,
+    graceful daemon restarts, Pi launch arguments, and the Go 1.26.6 security
+    upgrade.
 
 ______________________________________________________________________
 

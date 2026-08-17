@@ -14,7 +14,7 @@ background, reviews every commit as agents write code, and surfaces
 issues in seconds -- before they compound. Pull code reviews into
 your agentic loop while context is fresh.
 
-![roborev TUI](https://roborev.io/assets/generated/tui-hero.svg)
+![Roborev browser application](https://roborev.io/assets/generated/web-ui.png)
 
 ## How It Works
 
@@ -78,8 +78,10 @@ You can also choose the exact binary path with
   Reviews are orchestrated on your machine using the coding agents
   you already have configured.
 - **Interactive TUI** - Real-time review queue with vim-style navigation.
+  Large terminals show the queue and selected review in a split-screen layout.
 - **Native Browser UI** - Browse, filter, inspect, comment on, close, cancel,
-  and rerun reviews from the application embedded in the local daemon.
+  and rerun reviews from the application embedded in the local daemon, then
+  explore cost, latency, reliability, and outcomes in Analytics.
 - **Review Verification** - `roborev compact` verifies findings against
   current code, filters false positives, and consolidates related issues
   into a single review.
@@ -153,7 +155,7 @@ curl -fsSL https://roborev.io/install.sh | bash
 
 **Homebrew (macOS / Linux):**
 ```bash
-brew install roborev-dev/tap/roborev
+brew install kenn-io/tap/roborev
 ```
 
 **Windows (PowerShell):**

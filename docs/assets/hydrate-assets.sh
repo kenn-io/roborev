@@ -41,6 +41,7 @@ static_assets=(
 )
 
 generated_assets=(
+  "web-ui.png"
   "tui-hero.svg"
   "tui-queue.svg"
   "tui-review.svg"

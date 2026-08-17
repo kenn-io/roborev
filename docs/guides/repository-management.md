@@ -145,6 +145,9 @@ When running commands from a worktree:
     active worktree branch
 - `roborev fix --open` filters to reviews reachable from the current worktree's
     HEAD
+- `roborev review --branch` resolves the repository root, branch, and commit
+    range from the linked worktree that invoked it, even if shared Git
+    configuration points at a sibling checkout
 - `refine` correctly finds and addresses reviews for commits in any worktree
 
 ### Detached HEAD worktrees

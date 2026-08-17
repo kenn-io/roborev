@@ -28,9 +28,31 @@ coding agent so the write -> review -> fix loop runs hands-off.
 
 [Set up automation ->](automation/post-commit-reviews.md)
 
+## Browser UI
+
+Run `roborev ui` to open the native browser application. Browse and filter the
+live review queue, inspect review output, prompts, and logs, manage jobs and
+comments, or switch to Analytics to explore cost, latency, reliability, and
+review outcomes. The application runs from the local daemon and uses the same
+SQLite history as the CLI and terminal UI.
+
 <figure class="hero-shot" data-lightbox>
-  <img src="/assets/generated/tui-hero.svg" alt="roborev TUI queue view" loading="eager">
+  <img src="/assets/generated/web-ui.png" alt="Roborev browser application showing the review queue and an open review" loading="eager">
 </figure>
+
+[Explore the browser UI ->](web-ui.md)
+
+## Terminal UI
+
+Prefer to stay in the terminal? `roborev tui` provides the same live review
+ledger with vim-style navigation. On a large terminal, its split-screen layout
+keeps the queue and selected review visible together.
+
+<figure class="hero-shot" data-lightbox>
+  <img src="/assets/generated/tui-hero.svg" alt="Roborev TUI split-screen review view" loading="lazy">
+</figure>
+
+[Explore the terminal UI ->](integrations/tui.md)
 
 <div class="agent-matrix">
   <a href="/agents/"><img src="/assets/static/agents/codex.svg" alt="Codex" data-agent="codex" width="1604" height="719" /></a>
@@ -57,6 +79,7 @@ Then from within your git repositories:
 roborev init          # Install post-commit hook
 # do some work, generate commits
 roborev tui           # Browse reviews in the terminal UI
+roborev ui            # Or browse reviews in the native browser UI
 ```
 
 For Windows, see the

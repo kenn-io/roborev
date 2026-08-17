@@ -11,6 +11,7 @@ push=false
 generate=true
 
 expected_assets=(
+  "web-ui.png"
   "tui-hero.svg"
   "tui-queue.svg"
   "tui-review.svg"
