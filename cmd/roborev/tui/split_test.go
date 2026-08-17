@@ -1419,6 +1419,44 @@ func TestPaneLogFetchRefreshesIdentityAfterFailover(t *testing.T) {
 	assert.Equal(t, []string{response}, plainLogLines(m.paneLogLines))
 }
 
+func TestPaneLogFetchReplacesAutoDesignRowsOnServerReset(t *testing.T) {
+	const response = "replacement split auto-design output"
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "50", r.URL.Query().Get("offset"))
+		assert.Equal(t, "codex", r.Header.Get("X-Job-Agent"))
+		w.Header().Set("X-Job-Agent", "grok")
+		w.Header().Set("X-Job-Source", storage.JobSourceAutoDesign)
+		w.Header().Set("X-Job-Status", "done")
+		w.Header().Set("X-Log-Offset", "100")
+		w.Header().Set("X-Log-Reset", "true")
+		_, _ = fmt.Fprintln(w, `{"type":"text","data":"replacement split auto-design output"}`)
+		_, _ = fmt.Fprintln(w, `{"type":"end"}`)
+	})
+	m.currentView = viewQueue
+	m.layout = layoutSplit
+	m.width, m.height = 150, 40
+	job := storage.ReviewJob{
+		ID: 42, Status: storage.JobStatusRunning,
+		Agent: "codex", Source: storage.JobSourceAutoDesign,
+	}
+	m.jobs = []storage.ReviewJob{job}
+	m.selectedIdx, m.selectedJobID = 0, job.ID
+	started, _ := m.startPaneLog(job)
+	m = started.(model)
+	m.paneLogOffset = 50
+	m.paneLogLines = []logLine{{text: "stale split provider output"}}
+
+	msg, ok := m.fetchPaneLog(job.ID)().(paneLogOutputMsg)
+	require.True(t, ok)
+	require.NoError(t, msg.err)
+	require.False(t, msg.append)
+	updated, _ := m.handlePaneLogOutputMsg(msg)
+	m = updated.(model)
+
+	assert.Equal(t, "grok", m.paneLogAgent)
+	assert.Equal(t, []string{response}, plainLogLines(m.paneLogLines))
+}
+
 // If a split-pane poll finalizes the Grok decoder while more bytes are
 // expected, adjacent response chunks become separate Markdown rows and wrap
 // independently.

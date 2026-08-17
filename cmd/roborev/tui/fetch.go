@@ -1051,6 +1051,7 @@ func (m model) fetchJobLog(jobID int64) tea.Cmd {
 		}
 		identityChanged := responseSource != source ||
 			(responseSource != storage.JobSourceAutoDesign && responseAgent != agent)
+		serverReset := resp.Header.Get("X-Log-Reset") == "true"
 
 		// Parse new offset from response header
 		newOffset := offset
@@ -1065,7 +1066,7 @@ func (m model) fetchJobLog(jobID int64) tea.Cmd {
 		// Server reset offset (log truncated/rotated) — force
 		// full replace even if we sent a nonzero offset.
 		isIncremental := offset > 0 && fmtr != nil
-		if newOffset < offset || identityChanged {
+		if newOffset < offset || identityChanged || serverReset {
 			isIncremental = false
 		}
 
@@ -1192,6 +1193,7 @@ func (m model) fetchPaneLog(jobID int64) tea.Cmd {
 		}
 		identityChanged := responseSource != source ||
 			(responseSource != storage.JobSourceAutoDesign && responseAgent != agent)
+		serverReset := resp.Header.Get("X-Log-Reset") == "true"
 
 		// Parse new offset from response header
 		newOffset := offset
@@ -1206,7 +1208,7 @@ func (m model) fetchPaneLog(jobID int64) tea.Cmd {
 		// Server reset offset (log truncated/rotated) — force
 		// full replace even if we sent a nonzero offset.
 		isIncremental := offset > 0 && fmtr != nil
-		if newOffset < offset || identityChanged {
+		if newOffset < offset || identityChanged || serverReset {
 			isIncremental = false
 		}
 

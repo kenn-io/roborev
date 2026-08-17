@@ -100,11 +100,13 @@ func TestRawHelpersRouteRequests(t *testing.T) {
 	jobID := "123"
 	offset := "456"
 	stream := "1"
+	agent := "codex"
 
 	tests := []struct {
 		name       string
 		wantPath   string
 		wantQuery  map[string]string
+		wantHeader map[string]string
 		wantMethod string
 		call       func(context.Context, *Client) (*http.Response, error)
 	}{
@@ -116,9 +118,11 @@ func TestRawHelpersRouteRequests(t *testing.T) {
 				"job_id": jobID,
 				"offset": offset,
 			},
+			wantHeader: map[string]string{"X-Job-Agent": agent},
 			call: func(ctx context.Context, api *Client) (*http.Response, error) {
 				return api.GetJobLogRaw(ctx, &generated.GetJobLogRequestOptions{
-					Query: &generated.GetJobLogQuery{JobID: &jobID, Offset: &offset},
+					Query:  &generated.GetJobLogQuery{JobID: &jobID, Offset: &offset},
+					Header: &generated.GetJobLogHeaders{XJobAgent: &agent},
 				})
 			},
 		},
@@ -159,6 +163,9 @@ func TestRawHelpersRouteRequests(t *testing.T) {
 				assert.Equal(tt.wantMethod, r.Method)
 				for key, value := range tt.wantQuery {
 					assert.Equal(value, r.URL.Query().Get(key))
+				}
+				for key, value := range tt.wantHeader {
+					assert.Equal(value, r.Header.Get(key))
 				}
 				_, _ = w.Write([]byte("ok"))
 			}))

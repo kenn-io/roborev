@@ -737,6 +737,49 @@ func TestHandleJobLogAutoDesignUsesPromotedAgent(t *testing.T) {
 	assert.JSONEq(t, logContent, w.Body.String())
 }
 
+// If a backup provider replaces an auto-design log after a client has read
+// the prior attempt, the handler must return the replacement from byte zero
+// and tell incremental clients to discard their buffered rows.
+func TestHandleJobLogAutoDesignFailoverSignalsReset(t *testing.T) {
+	server, db, tmpDir := newTestServer(t)
+	t.Setenv("ROBOREV_DATA_DIR", tmpDir)
+	repo, err := db.GetOrCreateRepo(filepath.Join(tmpDir, "repo"))
+	require.NoError(t, err)
+	job, err := db.EnqueueJob(storage.EnqueueOpts{
+		RepoID: repo.ID, GitRef: "abc123", Agent: "codex",
+		Source: storage.JobSourceAutoDesign,
+	})
+	require.NoError(t, err)
+	claimed, err := db.ClaimJob("primary-worker")
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+	failedOver, err := db.FailoverJob(job.ID, "primary-worker", "grok", "")
+	require.NoError(t, err)
+	require.True(t, failedOver)
+	claimed, err = db.ClaimJob("backup-worker")
+	require.NoError(t, err)
+	require.Equal(t, "grok", claimed.Agent)
+
+	const replacement = "replacement prefix and longer backup output\n"
+	require.NoError(t, os.MkdirAll(JobLogDir(), 0o700))
+	require.NoError(t, os.WriteFile(JobLogPath(job.ID), []byte(replacement), 0o600))
+	require.NoError(t, RecordJobLogAgent(job.ID, "grok"))
+
+	req := httptest.NewRequest(
+		http.MethodGet,
+		fmt.Sprintf("/api/job/log?job_id=%d&offset=%d", job.ID, len("old output\n")),
+		nil,
+	)
+	req.Header.Set("X-Job-Agent", "codex")
+	w := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusOK, w.Code)
+	assert.Equal(t, "grok", w.Header().Get("X-Job-Agent"))
+	assert.Equal(t, "true", w.Header().Get("X-Log-Reset"))
+	assert.Equal(t, replacement, w.Body.String())
+}
+
 func TestJobLogSafeEnd(t *testing.T) {
 	t.Run("empty file", func(t *testing.T) {
 		f := writeTempFile(t, []byte{})

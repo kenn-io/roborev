@@ -3570,6 +3570,7 @@ func (s *Server) humaJobLog(
 		}
 		logAgent := job.Agent
 		hasRecordedAgent := false
+		resetOffset := false
 		if recordedAgent, readErr := JobLogAgent(jobID); readErr == nil {
 			if job.Source != storage.JobSourceAutoDesign ||
 				recordedAgent != storage.AutoDesignAgentSentinel {
@@ -3582,8 +3583,9 @@ func (s *Server) humaJobLog(
 		if input.PreviousAgent != "" && input.PreviousAgent != logAgent {
 			if !hasRecordedAgent && job.Status == storage.JobStatusQueued {
 				logAgent = input.PreviousAgent
-			} else if job.Source != storage.JobSourceAutoDesign {
+			} else if job.Source != storage.JobSourceAutoDesign || hasRecordedAgent {
 				offset = 0
+				resetOffset = true
 			}
 		}
 
@@ -3617,6 +3619,7 @@ func (s *Server) humaJobLog(
 		fileSize := fi.Size()
 		if offset > fileSize {
 			offset = 0
+			resetOffset = true
 		}
 
 		endPos := fileSize
@@ -3640,6 +3643,9 @@ func (s *Server) humaJobLog(
 		hctx.SetHeader("X-Job-Agent", logAgent)
 		hctx.SetHeader("X-Job-Source", job.Source)
 		hctx.SetHeader("X-Log-Offset", strconv.FormatInt(endPos, 10))
+		if resetOffset {
+			hctx.SetHeader("X-Log-Reset", "true")
+		}
 
 		if n := endPos - offset; n > 0 {
 			if _, err := io.CopyN(hctx.BodyWriter(), f, n); err != nil {

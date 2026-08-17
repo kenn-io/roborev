@@ -52,9 +52,19 @@ func (c *Client) GetJobLogRaw(
 	reqEditors ...runtime.RequestEditorFn,
 ) (*http.Response, error) {
 	query := url.Values{}
-	if options != nil && options.Query != nil {
-		setQueryString(query, "job_id", options.Query.JobID)
-		setQueryString(query, "offset", options.Query.Offset)
+	if options != nil {
+		if options.Query != nil {
+			setQueryString(query, "job_id", options.Query.JobID)
+			setQueryString(query, "offset", options.Query.Offset)
+		}
+		if options.Header != nil && options.Header.XJobAgent != nil {
+			previousAgent := *options.Header.XJobAgent
+			headerEditor := func(_ context.Context, req *http.Request) error {
+				req.Header.Set("X-Job-Agent", previousAgent)
+				return nil
+			}
+			reqEditors = append([]runtime.RequestEditorFn{headerEditor}, reqEditors...)
+		}
 	}
 	return c.doRaw(ctx, http.MethodGet, "/api/job/log", query, reqEditors...)
 }

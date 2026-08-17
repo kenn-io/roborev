@@ -268,6 +268,42 @@ func TestTUILogFetchRefreshesIdentityAfterFailover(t *testing.T) {
 	assert.Equal(t, []string{response}, plainLogLines(m.logLines))
 }
 
+// If the replacement grows beyond the old offset, only the server's reset
+// signal distinguishes a full replacement from an incremental auto-design
+// chunk. Ignoring it leaves stale rows ahead of the new provider output.
+func TestTUILogFetchReplacesAutoDesignRowsOnServerReset(t *testing.T) {
+	const response = "replacement auto-design output"
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
+		assert.Equal(t, "50", r.URL.Query().Get("offset"))
+		assert.Equal(t, "codex", r.Header.Get("X-Job-Agent"))
+		w.Header().Set("X-Job-Agent", "grok")
+		w.Header().Set("X-Job-Source", storage.JobSourceAutoDesign)
+		w.Header().Set("X-Job-Status", "done")
+		w.Header().Set("X-Log-Offset", "100")
+		w.Header().Set("X-Log-Reset", "true")
+		_, _ = fmt.Fprintln(w, `{"type":"text","data":"replacement auto-design output"}`)
+		_, _ = fmt.Fprintln(w, `{"type":"end"}`)
+	})
+	m.width, m.height = 80, 24
+	job := storage.ReviewJob{
+		ID: 42, Status: storage.JobStatusRunning,
+		Agent: "codex", Source: storage.JobSourceAutoDesign,
+	}
+	opened, _ := m.openLogView(job, viewQueue)
+	m = opened.(model)
+	m.logOffset = 50
+	m.logLines = []logLine{{text: "stale provider output"}}
+
+	msg, ok := m.fetchJobLog(job.ID)().(logOutputMsg)
+	require.True(t, ok)
+	require.NoError(t, msg.err)
+	require.False(t, msg.append)
+	m, _ = updateModel(t, m, msg)
+
+	assert.Equal(t, "grok", m.logAgent)
+	assert.Equal(t, []string{response}, plainLogLines(m.logLines))
+}
+
 // If source identity is ignored, archived auto-design logs lose either the
 // classifier output or the appended design output, while ordinary logs regain
 // protocol-shape guessing.
