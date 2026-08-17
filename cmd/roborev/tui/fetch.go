@@ -1050,8 +1050,10 @@ func (m model) fetchJobLog(jobID int64) tea.Cmd {
 			isIncremental = false
 		}
 
-		// No new data — return early with current state
-		if newOffset == offset && isIncremental {
+		// No new data while streaming — return early with current state.
+		// A terminal poll must still finish the persistent formatter so any
+		// buffered response text is emitted even when the body is empty.
+		if newOffset == offset && isIncremental && hasMore {
 			return logOutputMsg{
 				hasMore:   hasMore,
 				newOffset: newOffset,
@@ -1165,8 +1167,10 @@ func (m model) fetchPaneLog(jobID int64) tea.Cmd {
 			isIncremental = false
 		}
 
-		// No new data — return early with current state
-		if newOffset == offset && isIncremental {
+		// No new data while streaming — return early with current state.
+		// A terminal poll must still finish the persistent formatter so any
+		// buffered response text is emitted even when the body is empty.
+		if newOffset == offset && isIncremental && hasMore {
 			return paneLogOutputMsg{
 				jobID:     jobID,
 				hasMore:   hasMore,
@@ -1191,9 +1195,11 @@ func (m model) fetchPaneLog(jobID int64) tea.Cmd {
 			)
 		}
 
-		if err := streamfmt.RenderLogWith(
-			resp.Body, renderFmtr, &buf,
-		); err != nil {
+		renderLog := streamfmt.RenderLogWith
+		if hasMore {
+			renderLog = streamfmt.RenderLogChunkWith
+		}
+		if err := renderLog(resp.Body, renderFmtr, &buf); err != nil {
 			return paneLogOutputMsg{jobID: jobID, err: err, seq: seq}
 		}
 

@@ -245,6 +245,104 @@ func TestTUILogFetchKeepsGrokTextChunksTogetherAcrossPolls(t *testing.T) {
 	assert.Equal(t, []string{response}, lines)
 }
 
+func TestTUILogFetchFlushesBufferedGrokTextAfterEmptyFinalPoll(t *testing.T) {
+	// If the terminal poll carries no new bytes, an early return can stop the
+	// poll chain without flushing Grok text buffered by the running poll.
+	assert := assert.New(t)
+	require := require.New(t)
+	const response = "This response spans polls."
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Query().Get("offset") {
+		case "0":
+			w.Header().Set("X-Job-Status", "running")
+			w.Header().Set("X-Log-Offset", "40")
+			_, _ = fmt.Fprint(w, strings.Join([]string{
+				`{"type":"text","data":"This response"}`,
+				`{"type":"text","data":" spans polls."}`,
+			}, "\n")+"\n")
+		case "40":
+			w.Header().Set("X-Job-Status", "done")
+			w.Header().Set("X-Log-Offset", "40")
+		default:
+			http.Error(w, "unexpected offset", http.StatusBadRequest)
+		}
+	})
+	m.currentView = viewLog
+	m.logJobID = 42
+	m.width = 80
+	m.height = 24
+
+	first, ok := m.fetchJobLog(42)().(logOutputMsg)
+	require.True(ok)
+	require.NoError(first.err)
+	m, _ = updateModel(t, m, first)
+	require.Empty(m.logLines)
+	require.True(m.logStreaming)
+
+	second, ok := m.fetchJobLog(42)().(logOutputMsg)
+	require.True(ok)
+	require.NoError(second.err)
+	m, _ = updateModel(t, m, second)
+
+	var lines []string
+	for _, line := range m.logLines {
+		plain := strings.TrimSpace(streamfmt.StripANSI(line.text))
+		if plain != "" {
+			lines = append(lines, plain)
+		}
+	}
+	assert.Equal([]string{response}, lines)
+}
+
+func TestTUIPaneLogFetchKeepsGrokTextChunksTogetherAcrossPolls(t *testing.T) {
+	// If each running split-pane poll finalizes its formatter, one Grok
+	// response is rendered as several poll-sized rows instead of one message.
+	assert := assert.New(t)
+	require := require.New(t)
+	const response = "This response spans polls."
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Query().Get("offset") {
+		case "0":
+			w.Header().Set("X-Job-Status", "running")
+			w.Header().Set("X-Log-Offset", "40")
+			_, _ = fmt.Fprintln(w, `{"type":"text","data":"This response"}`)
+		case "40":
+			w.Header().Set("X-Job-Status", "running")
+			w.Header().Set("X-Log-Offset", "80")
+			_, _ = fmt.Fprintln(w, `{"type":"text","data":" spans polls."}`)
+		case "80":
+			w.Header().Set("X-Job-Status", "done")
+			w.Header().Set("X-Log-Offset", "100")
+			_, _ = fmt.Fprintln(w, `{"type":"end","stopReason":"EndTurn"}`)
+		default:
+			http.Error(w, "unexpected offset", http.StatusBadRequest)
+		}
+	})
+	m.currentView = viewQueue
+	m.layout = layoutSplit
+	m.width = 150
+	m.height = 40
+	m.selectedJobID = 42
+	m.paneLogJobID = 42
+	m.paneLogStreaming = true
+
+	for range 3 {
+		msg, ok := m.fetchPaneLog(42)().(paneLogOutputMsg)
+		require.True(ok)
+		require.NoError(msg.err)
+		m, _ = updateModel(t, m, msg)
+	}
+
+	var lines []string
+	for _, line := range m.paneLogLines {
+		plain := strings.TrimSpace(streamfmt.StripANSI(line.text))
+		if plain != "" {
+			lines = append(lines, plain)
+		}
+	}
+	assert.Equal([]string{response}, lines)
+}
+
 func TestTUILogErrorDroppedOutsideLogView(t *testing.T) {
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.currentView = viewQueue
