@@ -1,6 +1,8 @@
 package streamfmt
 
 import (
+	"bytes"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -11,13 +13,14 @@ func TestFormatter_GrokRendering(t *testing.T) {
 	// Not parallel: New() → GlamourStyle() mutates package-level termstyle state.
 
 	t.Run("text data", func(t *testing.T) {
-		fix := newFixture(true)
+		fix := newFixture(true, "grok")
 		fix.writeLine(`{"type":"text","data":"Hello review"}`)
+		fix.writeLine(`{"type":"end","stopReason":"EndTurn"}`)
 		fix.assertContains(t, "Hello review")
 	})
 
 	t.Run("thought as reasoning", func(t *testing.T) {
-		fix := newFixture(true)
+		fix := newFixture(true, "grok")
 		fix.writeLine(`{"type":"thought","data":"considering the diff"}`)
 		fix.assertContains(t, "considering the diff")
 	})
@@ -25,7 +28,7 @@ func TestFormatter_GrokRendering(t *testing.T) {
 	// Official streaming-json fixtures (rawInput / title / kind), not the
 	// invented "args" shape used by earlier tests.
 	t.Run("read_file tool_call rawInput path", func(t *testing.T) {
-		fix := newFixture(true)
+		fix := newFixture(true, "grok")
 		fix.writeLine(`{"type":"tool_call","toolCallId":"call_1","title":"Read","kind":"read","status":"in_progress","toolName":"read_file","rawInput":{"path":"internal/foo.go"},"content":[],"locations":[]}`)
 		out := fix.output()
 		assert.Contains(t, out, "Read")
@@ -35,7 +38,7 @@ func TestFormatter_GrokRendering(t *testing.T) {
 	})
 
 	t.Run("grep tool_call rawInput", func(t *testing.T) {
-		fix := newFixture(true)
+		fix := newFixture(true, "grok")
 		fix.writeLine(`{"type":"tool_call","toolCallId":"2","title":"Grep","kind":"search","toolName":"grep","rawInput":{"pattern":"TODO","path":"."}}`)
 		out := fix.output()
 		assert.Contains(t, out, "Grep")
@@ -43,7 +46,7 @@ func TestFormatter_GrokRendering(t *testing.T) {
 	})
 
 	t.Run("list_dir tool_call rawInput", func(t *testing.T) {
-		fix := newFixture(true)
+		fix := newFixture(true, "grok")
 		fix.writeLine(`{"type":"tool_call","toolCallId":"3","title":"List","kind":"search","toolName":"list_dir","rawInput":{"path":"cmd"}}`)
 		out := fix.output()
 		assert.Contains(t, out, "List")
@@ -51,7 +54,7 @@ func TestFormatter_GrokRendering(t *testing.T) {
 	})
 
 	t.Run("shell agentic tool_call rawInput", func(t *testing.T) {
-		fix := newFixture(true)
+		fix := newFixture(true, "grok")
 		fix.writeLine(`{"type":"tool_call","toolCallId":"4","title":"Bash","kind":"execute","toolName":"run_terminal_cmd","rawInput":{"command":"go test ./..."}}`)
 		out := fix.output()
 		assert.Contains(t, out, "Bash")
@@ -59,7 +62,7 @@ func TestFormatter_GrokRendering(t *testing.T) {
 	})
 
 	t.Run("edit agentic tool_call rawInput", func(t *testing.T) {
-		fix := newFixture(true)
+		fix := newFixture(true, "grok")
 		fix.writeLine(`{"type":"tool_call","toolCallId":"5","title":"Edit","kind":"edit","toolName":"search_replace","rawInput":{"file_path":"a.go","old_string":"x","new_string":"y"}}`)
 		out := fix.output()
 		assert.Contains(t, out, "Edit")
@@ -67,7 +70,7 @@ func TestFormatter_GrokRendering(t *testing.T) {
 	})
 
 	t.Run("tool_call once; update without toolName does not duplicate", func(t *testing.T) {
-		fix := newFixture(true)
+		fix := newFixture(true, "grok")
 		// Official update omits toolName and carries rawOutput.
 		fix.writeLine(`{"type":"tool_call","toolCallId":"dup","title":"Read","kind":"read","toolName":"read_file","rawInput":{"path":"once.go"},"content":[],"locations":[]}`)
 		fix.writeLine(`{"type":"tool_call_update","toolCallId":"dup","status":"completed","content":[],"rawOutput":{"lines":42},"locations":[]}`)
@@ -78,7 +81,7 @@ func TestFormatter_GrokRendering(t *testing.T) {
 	})
 
 	t.Run("failed tool update from rawOutput without toolName", func(t *testing.T) {
-		fix := newFixture(true)
+		fix := newFixture(true, "grok")
 		fix.writeLine(`{"type":"tool_call","toolCallId":"f1","title":"Grep","kind":"search","toolName":"grep","rawInput":{"pattern":"x"}}`)
 		// Update has no toolName; failure detail lives in rawOutput.
 		fix.writeLine(`{"type":"tool_call_update","toolCallId":"f1","status":"failed","content":[],"rawOutput":{"error":"permission denied"}}`)
@@ -91,7 +94,7 @@ func TestFormatter_GrokRendering(t *testing.T) {
 	})
 
 	t.Run("failed update content array detail", func(t *testing.T) {
-		fix := newFixture(true)
+		fix := newFixture(true, "grok")
 		fix.writeLine(`{"type":"tool_call","toolCallId":"f2","toolName":"read_file","rawInput":{"path":"secret.go"}}`)
 		fix.writeLine(`{"type":"tool_call_update","toolCallId":"f2","status":"failed","content":[{"type":"text","text":"access denied"}]}`)
 		out := fix.output()
@@ -100,7 +103,7 @@ func TestFormatter_GrokRendering(t *testing.T) {
 	})
 
 	t.Run("title used when toolName absent", func(t *testing.T) {
-		fix := newFixture(true)
+		fix := newFixture(true, "grok")
 		// Some ACP-shaped frames may only carry title/kind + rawInput.
 		fix.writeLine(`{"type":"tool_call","toolCallId":"t1","title":"Read","kind":"read","rawInput":{"path":"only-title.go"}}`)
 		out := fix.output()
@@ -109,13 +112,13 @@ func TestFormatter_GrokRendering(t *testing.T) {
 	})
 
 	t.Run("plan suppressed", func(t *testing.T) {
-		fix := newFixture(true)
+		fix := newFixture(true, "grok")
 		fix.writeLine(`{"type":"plan","data":"1. read files 2. summarize"}`)
 		fix.assertEmpty(t)
 	})
 
 	t.Run("error event formats string message", func(t *testing.T) {
-		fix := newFixture(true)
+		fix := newFixture(true, "grok")
 		// Official Grok shape: message is a JSON string, not a Claude object.
 		line := `{"type":"error","message":"auth failed"}`
 		fix.writeLine(line)
@@ -129,7 +132,7 @@ func TestFormatter_GrokRendering(t *testing.T) {
 	})
 
 	t.Run("error with longer official-style message", func(t *testing.T) {
-		fix := newFixture(true)
+		fix := newFixture(true, "grok")
 		fix.writeLine(`{"type":"error","message":"Couldn't start session: not authenticated"}`)
 		out := fix.output()
 		assert.Contains(t, out, "error: Couldn't start session: not authenticated")
@@ -137,14 +140,14 @@ func TestFormatter_GrokRendering(t *testing.T) {
 	})
 
 	t.Run("end and session suppressed", func(t *testing.T) {
-		fix := newFixture(true)
+		fix := newFixture(true, "grok")
 		fix.writeLine(`{"type":"end","stopReason":"end_turn","sessionId":"abc"}`)
 		fix.writeLine(`{"type":"session","sessionId":"abc"}`)
 		fix.assertEmpty(t)
 	})
 
 	t.Run("non-TTY passthrough", func(t *testing.T) {
-		fix := newFixture(false)
+		fix := newFixture(false, "grok")
 		line := `{"type":"text","data":"raw"}`
 		fix.writeLine(line)
 		assert.Contains(t, fix.buf.String(), line)
@@ -153,10 +156,37 @@ func TestFormatter_GrokRendering(t *testing.T) {
 	t.Run("Claude assistant still works with Message RawMessage", func(t *testing.T) {
 		// Regression: Message is now RawMessage so Grok string errors decode;
 		// Claude nested objects must still render.
-		fix := newFixture(true)
+		fix := newFixture(true, "claude-code")
 		fix.writeLine(`{"type":"assistant","message":{"role":"assistant","content":[{"type":"text","text":"claude ok"}]}}`)
 		fix.assertContains(t, "claude ok")
 	})
+}
+
+// If incremental rendering finalizes Grok state between polls, adjacent text
+// frames no longer form one Markdown document and wrap independently.
+func TestGrokDecoderKeepsAdjacentTextAcrossIncrementalChunks(t *testing.T) {
+	var out bytes.Buffer
+	fmtr := NewWithWidth(
+		&out, 24, GlamourStyle(), DecoderForAgent("grok"),
+	)
+
+	require.NoError(t, RenderLogChunkWith(
+		strings.NewReader(`{"type":"text","data":"**adjacent"}`+"\n"),
+		fmtr,
+	))
+	assert.Empty(t, out.String())
+	require.NoError(t, RenderLogChunkWith(
+		strings.NewReader(`{"type":"text","data":" text**"}`+"\n"),
+		fmtr,
+	))
+	assert.Empty(t, out.String())
+	require.NoError(t, RenderLogWith(
+		strings.NewReader(`{"type":"end"}`+"\n"), fmtr,
+	))
+
+	plain := StripANSI(out.String())
+	assert.Contains(t, plain, "adjacent text")
+	assert.NotContains(t, plain, "**")
 }
 
 func TestDecodeClaudeMessage_RejectsString(t *testing.T) {

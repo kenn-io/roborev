@@ -11,13 +11,14 @@ import (
 )
 
 func executeRenderJobLog(
-	t *testing.T, input string, isTTY bool,
+	t *testing.T, input string, isTTY bool, agent string,
 ) string {
 	t.Helper()
 	var buf bytes.Buffer
-	require.NoError(t, RenderLog(
-		strings.NewReader(input), &buf, isTTY,
-	), "RenderLog")
+	fmtr := New(&buf, isTTY, DecoderForAgent(agent))
+	require.NoError(t, RenderLogWith(
+		strings.NewReader(input), fmtr,
+	), "RenderLogWith")
 	return buf.String()
 }
 
@@ -40,7 +41,7 @@ func TestRenderJobLog_JSONL(t *testing.T) {
 		`{"type":"assistant","message":{"content":[{"type":"text","text":"Looks good overall."}]}}`,
 	}, "\n")
 
-	out := StripANSI(executeRenderJobLog(t, input, true))
+	out := StripANSI(executeRenderJobLog(t, input, true, "claude-code"))
 
 	assertLogContains(t, out, "Reviewing the code.")
 	assertLogContains(t, out, "Read")
@@ -53,6 +54,7 @@ func TestRenderJobLog_Behaviors(t *testing.T) {
 		name        string
 		input       string
 		isJSON      bool
+		agent       string
 		wantContain []string
 		wantExclude []string
 		wantEmpty   bool
@@ -61,30 +63,35 @@ func TestRenderJobLog_Behaviors(t *testing.T) {
 			name:        "PlainText",
 			input:       "line 1\nline 2\nline 3\n",
 			isJSON:      true,
+			agent:       "plain",
 			wantContain: []string{"line 1", "line 3"},
 		},
 		{
 			name:      "Empty",
 			input:     "",
 			isJSON:    true,
+			agent:     "plain",
 			wantEmpty: true,
 		},
 		{
 			name:        "OversizedLine",
 			input:       fmt.Sprintf(`{"type":"tool_result","content":"%s"}`, strings.Repeat("x", 2*1024*1024)),
 			isJSON:      true,
+			agent:       "claude-code",
 			wantContain: []string{},
 		},
 		{
 			name:        "PlainTextPreservesBlankLines",
 			input:       "line 1\n\nline 3\n",
 			isJSON:      true,
+			agent:       "plain",
 			wantContain: []string{"line 1\n\nline 3"},
 		},
 		{
 			name:        "SanitizesControlChars",
 			input:       "\x1b[31mred text\x1b[0m\n\x1b]0;evil title\x07\nclean line",
 			isJSON:      true,
+			agent:       "plain",
 			wantContain: []string{"red text", "clean line"},
 			wantExclude: []string{"\x1b[", "\x1b]", "\x07"},
 		},
@@ -95,6 +102,7 @@ func TestRenderJobLog_Behaviors(t *testing.T) {
 				"\x1b[1mbold agent stderr\x1b[0m",
 			}, "\n"),
 			isJSON:      true,
+			agent:       "claude-code",
 			wantContain: []string{"ok", "bold agent stderr"},
 			wantExclude: []string{"\x1b[1m"},
 		},
@@ -107,13 +115,14 @@ func TestRenderJobLog_Behaviors(t *testing.T) {
 				"stderr line 2",
 			}, "\n"),
 			isJSON:      true,
+			agent:       "claude-code",
 			wantContain: []string{"stderr line 1\n\n", "stderr line 2"},
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			out := executeRenderJobLog(t, tt.input, tt.isJSON)
+			out := executeRenderJobLog(t, tt.input, tt.isJSON, tt.agent)
 			if tt.wantEmpty {
 				assert.Empty(t, out)
 			}
@@ -135,7 +144,7 @@ func TestRenderJobLog_MixedJSONAndPlainText(t *testing.T) {
 		`exit status 0`,
 	}, "\n")
 
-	out := executeRenderJobLog(t, input, false)
+	out := executeRenderJobLog(t, input, false, "claude-code")
 
 	assertLogContains(t, out, "Hello")
 	assertLogContains(t, out, "stderr: warning something")
@@ -153,6 +162,18 @@ func TestRenderJobLog_MixedJSONAndPlainText(t *testing.T) {
 		"output order wrong: Hello@%d stderr@%d Done@%d exit@%d",
 		helloIdx, stderrIdx, doneIdx, exitIdx,
 	)
+}
+
+// If non-TTY stderr is wrapped, downstream consumers receive extra record
+// boundaries instead of the original piped line.
+func TestRenderLogNonTTYPreservesLongStderr(t *testing.T) {
+	line := strings.Repeat("x", 120)
+	var out bytes.Buffer
+
+	require.NoError(t, RenderLog(
+		strings.NewReader(line+"\n"), &out, false,
+	))
+	assert.Equal(t, line+"\n", out.String())
 }
 
 func TestRenderJobLog_OpenCodeEvents(t *testing.T) {
@@ -181,7 +202,7 @@ func TestRenderJobLog_OpenCodeEvents(t *testing.T) {
 		}),
 	}, "\n")
 
-	out := StripANSI(executeRenderJobLog(t, input, true))
+	out := StripANSI(executeRenderJobLog(t, input, true, "opencode"))
 
 	assertLogContains(t, out, "Reviewing the code.")
 	assertLogContains(t, out, "Read")

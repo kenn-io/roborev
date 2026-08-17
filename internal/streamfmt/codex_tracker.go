@@ -14,14 +14,14 @@ type codexCommandTracker struct {
 // Observe records a Codex command event and reports whether the normalized
 // command text should be rendered.
 func (t *codexCommandTracker) Observe(
-	eventType string, item codexItem,
+	eventType, id, cmd string,
 ) (string, bool) {
 	if eventType != "item.started" && eventType != "item.completed" {
 		return "", false
 	}
 
-	id := strings.TrimSpace(item.ID)
-	cmd := strings.TrimSpace(item.Command)
+	id = strings.TrimSpace(id)
+	cmd = strings.TrimSpace(cmd)
 
 	if eventType == "item.started" {
 		if cmd == "" {

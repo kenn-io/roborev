@@ -192,7 +192,9 @@ func TestCodexCommandTracker(t *testing.T) {
 			var tracker codexCommandTracker
 			for _, obs := range tt.observations {
 				t.Run(obs.name, func(t *testing.T) {
-					gotCmd, gotRender := tracker.Observe(obs.eventType, obs.item)
+					gotCmd, gotRender := tracker.Observe(
+						obs.eventType, obs.item.ID, obs.item.Command,
+					)
 					assert.Equal(t, obs.wantCmd, gotCmd)
 					assert.Equal(t, obs.wantRender, gotRender)
 				})

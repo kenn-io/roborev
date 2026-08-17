@@ -1075,9 +1075,11 @@ func (m model) fetchJobLog(jobID int64) tea.Cmd {
 			)
 		}
 
-		if err := streamfmt.RenderLogWith(
-			resp.Body, renderFmtr, &buf,
-		); err != nil {
+		renderLog := streamfmt.RenderLogWith
+		if hasMore {
+			renderLog = streamfmt.RenderLogChunkWith
+		}
+		if err := renderLog(resp.Body, renderFmtr, &buf); err != nil {
 			return logOutputMsg{err: err, seq: seq}
 		}
 

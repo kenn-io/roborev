@@ -2,10 +2,12 @@ package tui
 
 import (
 	"fmt"
+	"net/http"
 	"strings"
 	"testing"
 
 	tea "charm.land/bubbletea/v2"
+	"github.com/mattn/go-runewidth"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -135,6 +137,112 @@ func TestTUILogLoadingGuard(t *testing.T) {
 
 	assert.Nil(t, cmd)
 	assert.True(t, m2.logLoading)
+}
+
+func TestTUILogFetchWrapsChunkedGrokTextAtPaneWidth(t *testing.T) {
+	// If adjacent Grok response chunks are rendered as separate messages,
+	// wide TUI log panes show one token per row and hide most of the review.
+	const response = "This commit is an empty live fire probe."
+	events := strings.Join([]string{
+		`{"type":"text","data":"This"}`,
+		`{"type":"text","data":" commit"}`,
+		`{"type":"text","data":" is an"}`,
+		`{"type":"text","data":" empty live"}`,
+		`{"type":"text","data":" fire probe."}`,
+		`{"type":"end","stopReason":"EndTurn"}`,
+	}, "\n") + "\n"
+
+	tests := []struct {
+		name      string
+		width     int
+		wantLines int
+	}{
+		{name: "wide pane", width: 80, wantLines: 1},
+		{name: "narrow pane", width: 18, wantLines: 3},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert := assert.New(t)
+			_, m := mockServerModel(t, func(w http.ResponseWriter, _ *http.Request) {
+				w.Header().Set("X-Job-Status", "done")
+				_, _ = fmt.Fprint(w, events)
+			})
+			m.currentView = viewLog
+			m.logJobID = 42
+			m.width = tt.width
+			m.height = 24
+
+			msg, ok := m.fetchJobLog(42)().(logOutputMsg)
+			require.True(t, ok)
+			require.NoError(t, msg.err)
+			require.NotNil(t, msg.fmtr)
+			assert.Equal(tt.width, msg.fmtr.Width())
+
+			var lines []string
+			for _, line := range msg.lines {
+				plain := strings.TrimSpace(streamfmt.StripANSI(line.text))
+				if plain == "" {
+					continue
+				}
+				lines = append(lines, plain)
+				assert.LessOrEqual(runewidth.StringWidth(plain), tt.width)
+			}
+
+			assert.Equal(response, strings.Join(lines, " "))
+			assert.Len(lines, tt.wantLines)
+		})
+	}
+}
+
+func TestTUILogFetchKeepsGrokTextChunksTogetherAcrossPolls(t *testing.T) {
+	// If a live-log poll finalizes Grok text before the response event ends,
+	// users still get one short row per poll after the job completes.
+	const response = "This commit is an empty live fire probe."
+	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
+		switch r.URL.Query().Get("offset") {
+		case "0":
+			w.Header().Set("X-Job-Status", "running")
+			w.Header().Set("X-Log-Offset", "40")
+			_, _ = fmt.Fprint(w, strings.Join([]string{
+				`{"type":"text","data":"This"}`,
+				`{"type":"text","data":" commit"}`,
+			}, "\n")+"\n")
+		case "40":
+			w.Header().Set("X-Job-Status", "done")
+			w.Header().Set("X-Log-Offset", "100")
+			_, _ = fmt.Fprint(w, strings.Join([]string{
+				`{"type":"text","data":" is an empty"}`,
+				`{"type":"text","data":" live fire probe."}`,
+				`{"type":"end","stopReason":"EndTurn"}`,
+			}, "\n")+"\n")
+		default:
+			http.Error(w, "unexpected offset", http.StatusBadRequest)
+		}
+	})
+	m.currentView = viewLog
+	m.logJobID = 42
+	m.width = 80
+	m.height = 24
+
+	first, ok := m.fetchJobLog(42)().(logOutputMsg)
+	require.True(t, ok)
+	require.NoError(t, first.err)
+	m, _ = updateModel(t, m, first)
+
+	second, ok := m.fetchJobLog(42)().(logOutputMsg)
+	require.True(t, ok)
+	require.NoError(t, second.err)
+	m, _ = updateModel(t, m, second)
+
+	var lines []string
+	for _, line := range m.logLines {
+		plain := strings.TrimSpace(streamfmt.StripANSI(line.text))
+		if plain != "" {
+			lines = append(lines, plain)
+		}
+	}
+	assert.Equal(t, []string{response}, lines)
 }
 
 func TestTUILogErrorDroppedOutsideLogView(t *testing.T) {
