@@ -14,7 +14,10 @@ import (
 	"go.kenn.io/roborev/internal/daemon"
 )
 
-var postAgentHook = postAgentHookRequest
+var (
+	postAgentHook         = postAgentHookRequest
+	agentHookEnsureDaemon = ensureDaemon
+)
 
 func postAgentHookRequest(
 	ctx context.Context,
@@ -39,6 +42,9 @@ func postAgentHookRequest(
 }
 
 func runAgentHookStatus(stdout io.Writer) error {
+	if err := agentHookEnsureDaemon(); err != nil {
+		return err
+	}
 	ep, err := agentHookEndpoint("")
 	if err != nil {
 		return err
@@ -56,6 +62,9 @@ func runAgentHookStatus(stdout io.Writer) error {
 func runAgentHookReset(opts agenthook.ResetOptions, sessionID string, stdout io.Writer) error {
 	if !opts.All && sessionID == "" {
 		return fmt.Errorf("reset requires a session id or --all")
+	}
+	if err := agentHookEnsureDaemon(); err != nil {
+		return err
 	}
 	ep, err := agentHookEndpoint("")
 	if err != nil {

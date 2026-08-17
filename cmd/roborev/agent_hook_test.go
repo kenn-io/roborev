@@ -80,6 +80,28 @@ func TestRunAgentHookUsesConfiguredRegularDaemonEndpoint(t *testing.T) {
 	assert.Equal(t, "/api/agent-hook/event", gotPath)
 }
 
+func TestManualAgentHookCommandsEnsureDaemon(t *testing.T) {
+	origEnsureDaemon := agentHookEnsureDaemon
+	ensureErr := errors.New("start daemon")
+	agentHookEnsureDaemon = func() error { return ensureErr }
+	t.Cleanup(func() { agentHookEnsureDaemon = origEnsureDaemon })
+
+	tests := []struct {
+		name string
+		run  func() error
+	}{
+		{name: "status", run: func() error { return runAgentHookStatus(io.Discard) }},
+		{name: "reset", run: func() error {
+			return runAgentHookReset(agenthook.ResetOptions{All: true}, "", io.Discard)
+		}},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			require.ErrorIs(t, tt.run(), ensureErr)
+		})
+	}
+}
+
 func TestAgentHookInstallRejectsMultiProfileConfigOverride(t *testing.T) {
 	cmd := agentHookCmd()
 	cmd.SetArgs([]string{"install", "--agent", "all", "--config", "hooks.json"})
