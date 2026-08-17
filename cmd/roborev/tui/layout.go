@@ -638,6 +638,8 @@ func (m model) startPaneLog(job storage.ReviewJob) (tea.Model, tea.Cmd) {
 		return m, nil // already tailing this job
 	}
 	m.paneLogJobID = job.ID
+	m.paneLogAgent = job.Agent
+	m.paneLogSource = job.Source
 	m.paneLogLines = nil
 	m.paneLogOffset = 0
 	m.paneLogSeq++
@@ -652,7 +654,10 @@ func (m model) startPaneLog(job storage.ReviewJob) (tea.Model, tea.Cmd) {
 	// job's live tail indefinitely. This is the single chokepoint: every
 	// new tail starts here.
 	m.splitDetailErr = nil
-	m.paneLogFmtr = streamfmt.NewWithWidth(io.Discard, m.paneLogWidth(), m.glamourStyle)
+	m.paneLogFmtr = streamfmt.NewWithWidth(
+		io.Discard, m.paneLogWidth(), m.glamourStyle,
+		decoderForJobLog(m.paneLogAgent, m.paneLogSource),
+	)
 	return m, m.fetchPaneLog(job.ID)
 }
 
@@ -739,6 +744,10 @@ func (m model) splitReconcileDetail() (model, tea.Cmd) {
 	}
 	switch job.Status {
 	case storage.JobStatusDone:
+		if m.paneLogJobID == job.ID && m.paneLogStreaming {
+			m.paneLogSeq++
+			m.paneLogStreaming = false
+		}
 		// job.FinishedAt is stamped fresh by the daemon on every completion
 		// (including a rerun's); reviewJobCompletionChanged compares it
 		// against the FinishedAt captured on the loaded review's embedded
@@ -809,16 +818,8 @@ func (m model) splitReconcileDetail() (model, tea.Cmd) {
 		m.reconcileFetchSeq = m.reviewFetchSeq
 		return m, cmd
 	case storage.JobStatusFailed:
-		// A failed job is never streaming, period -- stop any active tail
-		// for it BEFORE the idempotency check below, unconditionally. Round
-		// 1 only stopped the tail on the rebuild path (after the
-		// idempotency check passed), which left a live tail running
-		// whenever the check below decided the review already looked
-		// current: left claiming an active tail with no live job behind
-		// it, the poll chain would die on its next tick
-		// (handlePaneLogTickMsg's second guard) or, worse, keep polling a
-		// job that's no longer running. Bumping paneLogSeq also rejects any
-		// fetch response still in flight for the tail we just stopped.
+		// Stop any live or stale tail before applying the failed-review
+		// idempotency checks below.
 		if m.paneLogJobID == job.ID && m.paneLogStreaming {
 			m.paneLogSeq++
 			m.paneLogStreaming = false

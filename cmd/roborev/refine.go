@@ -632,7 +632,11 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 		if opts.quiet {
 			agentOutput = io.Discard
 		} else {
-			fmtr = streamfmt.New(os.Stdout, isTerminal(os.Stdout.Fd()))
+			fmtr = streamfmt.New(
+				os.Stdout,
+				isTerminal(os.Stdout.Fd()),
+				streamfmt.DecoderForAgent(addressAgent.Name()),
+			)
 			agentOutput = fmtr
 		}
 

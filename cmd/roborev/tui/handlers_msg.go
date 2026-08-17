@@ -341,9 +341,7 @@ func (m model) handleJobsMsg(msg jobsMsg) (tea.Model, tea.Cmd) {
 				job := m.jobs[nextIdx]
 				var followCmd tea.Cmd
 				m, followCmd = m.followSelectionChange(prevSelected)
-				logModel, logCmd := m.openLogView(
-					job.ID, job.Status, m.logFromView,
-				)
+				logModel, logCmd := m.openLogView(job, m.logFromView)
 				return logModel, tea.Batch(followCmd, logCmd)
 			}
 		}
@@ -1484,6 +1482,8 @@ func (m model) handleLogOutputMsg(
 		if msg.fmtr != nil {
 			m.logFmtr = msg.fmtr
 		}
+		m.logAgent = msg.agent
+		m.logSource = msg.source
 
 		if msg.append {
 			if len(msg.lines) > 0 {
@@ -1491,14 +1491,11 @@ func (m model) handleLogOutputMsg(
 					m.logLines, msg.lines...,
 				)
 			}
-		} else if len(msg.lines) > 0 {
+		} else {
 			m.logLines = msg.lines
-		} else if m.logLines == nil {
-			if !msg.hasMore {
+			if m.logLines == nil && !msg.hasMore {
 				m.logLines = []logLine{}
 			}
-		} else if msg.newOffset == 0 {
-			m.logLines = []logLine{}
 		}
 		m.logOffset = msg.newOffset
 		m.logStreaming = msg.hasMore
@@ -1597,6 +1594,8 @@ func (m model) handlePaneLogOutputMsg(msg paneLogOutputMsg) (tea.Model, tea.Cmd)
 	if msg.fmtr != nil {
 		m.paneLogFmtr = msg.fmtr
 	}
+	m.paneLogAgent = msg.agent
+	m.paneLogSource = msg.source
 	if msg.append {
 		if len(msg.lines) > 0 {
 			m.paneLogLines = append(m.paneLogLines, msg.lines...)
@@ -1649,8 +1648,8 @@ func (m model) handlePaneLogTickMsg(msg paneLogTickMsg) (tea.Model, tea.Cmd) {
 	}
 	job, ok := m.selectedJob()
 	if !ok || job.ID != m.paneLogJobID || job.Status != storage.JobStatusRunning {
-		// The tailed job stopped running (or the selection moved off it)
-		// out from under this tick. Stop claiming an active tail here --
+		// The selection moved or the job entered a state with no decoder
+		// left to finalize. Stop claiming an active tail here --
 		// leaving paneLogStreaming true with no poll chain behind it would
 		// make both splitReconcileDetail's running-branch restart guard and
 		// startPaneLog's already-tailing no-op guard believe the tail is
@@ -2313,6 +2312,7 @@ func (m model) handleWindowSizeMsg(
 				m.paneLogLines = nil
 				m.paneLogFmtr = streamfmt.NewWithWidth(
 					io.Discard, m.paneLogWidth(), m.glamourStyle,
+					decoderForJobLog(m.paneLogAgent, m.paneLogSource),
 				)
 				// The same resize that re-widths the tail can also have
 				// grown the list pane past the loaded rows -- batch the
@@ -2334,20 +2334,23 @@ func (m model) handleWindowSizeMsg(
 	}
 
 	// If terminal can show more jobs than we have, re-fetch to fill.
-	if cmd := m.maybeResizeRefill(); cmd != nil {
-		return m, tea.Batch(followCmd, cmd)
-	}
+	refillCmd := m.maybeResizeRefill()
 
 	// Width change in log view requires full re-render
-	if m.currentView == viewLog && m.logLines != nil {
+	if m.currentView == viewLog {
 		m.logOffset = 0
 		m.logLines = nil
 		m.logFmtr = streamfmt.NewWithWidth(
 			io.Discard, msg.Width, m.glamourStyle,
+			decoderForJobLog(m.logAgent, m.logSource),
 		)
 		m.logFetchSeq++
 		m.logLoading = true
-		return m, tea.Batch(followCmd, m.fetchJobLog(m.logJobID))
+		return m, tea.Batch(followCmd, m.fetchJobLog(m.logJobID), refillCmd)
+	}
+
+	if refillCmd != nil {
+		return m, tea.Batch(followCmd, refillCmd)
 	}
 
 	return m, followCmd

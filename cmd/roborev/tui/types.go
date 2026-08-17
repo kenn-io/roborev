@@ -113,6 +113,8 @@ type logOutputMsg struct {
 	err       error
 	newOffset int64                // byte offset for next fetch
 	append    bool                 // true = append lines, false = replace
+	agent     string               // response identity used by fmtr
+	source    string               // response source used by fmtr
 	seq       uint64               // fetch sequence number for stale detection
 	fmtr      *streamfmt.Formatter // formatter used for rendering (persist for incremental reuse)
 }
@@ -131,6 +133,8 @@ type paneLogOutputMsg struct {
 	err       error
 	newOffset int64                // byte offset for next fetch
 	append    bool                 // true = append lines, false = replace (server-side offset reset)
+	agent     string               // response identity used by fmtr
+	source    string               // response source used by fmtr
 	seq       uint64               // fetch sequence number for stale detection
 	fmtr      *streamfmt.Formatter // formatter used for rendering (persist for incremental reuse)
 }

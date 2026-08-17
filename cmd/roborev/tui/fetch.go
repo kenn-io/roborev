@@ -1007,13 +1007,22 @@ func (m model) fetchJobLog(jobID int64) tea.Cmd {
 	style := m.glamourStyle
 	offset := m.logOffset
 	fmtr := m.logFmtr
+	agent := m.logAgent
+	source := m.logSource
 	seq := m.logFetchSeq
 	return func() tea.Msg {
 		url := fmt.Sprintf(
 			"%s/api/job/log?job_id=%d&offset=%d",
 			baseURL, jobID, offset,
 		)
-		resp, err := client.Get(url)
+		req, err := http.NewRequest(http.MethodGet, url, nil)
+		if err != nil {
+			return logOutputMsg{err: err, seq: seq}
+		}
+		if agent != "" {
+			req.Header.Set("X-Job-Agent", agent)
+		}
+		resp, err := client.Do(req)
 		if err != nil {
 			return logOutputMsg{err: err, seq: seq}
 		}
@@ -1032,6 +1041,16 @@ func (m model) fetchJobLog(jobID int64) tea.Cmd {
 		// Determine if job is still running from header
 		jobStatus := resp.Header.Get("X-Job-Status")
 		hasMore := jobStatus == "running"
+		responseAgent := resp.Header.Get("X-Job-Agent")
+		if responseAgent == "" {
+			responseAgent = agent
+		}
+		responseSource := source
+		if _, ok := resp.Header[http.CanonicalHeaderKey("X-Job-Source")]; ok {
+			responseSource = resp.Header.Get("X-Job-Source")
+		}
+		identityChanged := responseSource != source ||
+			(responseSource != storage.JobSourceAutoDesign && responseAgent != agent)
 
 		// Parse new offset from response header
 		newOffset := offset
@@ -1046,16 +1065,20 @@ func (m model) fetchJobLog(jobID int64) tea.Cmd {
 		// Server reset offset (log truncated/rotated) — force
 		// full replace even if we sent a nonzero offset.
 		isIncremental := offset > 0 && fmtr != nil
-		if newOffset < offset {
+		if newOffset < offset || identityChanged {
 			isIncremental = false
 		}
 
-		// No new data — return early with current state
-		if newOffset == offset && isIncremental {
+		// No new data while running — return early with current state.
+		// A terminal response must still finalize the persistent decoder,
+		// even when the byte offset did not move.
+		if newOffset == offset && isIncremental && hasMore {
 			return logOutputMsg{
 				hasMore:   hasMore,
 				newOffset: newOffset,
 				append:    true,
+				agent:     responseAgent,
+				source:    responseSource,
 				seq:       seq,
 			}
 		}
@@ -1072,6 +1095,7 @@ func (m model) fetchJobLog(jobID int64) tea.Cmd {
 		} else {
 			renderFmtr = streamfmt.NewWithWidth(
 				&buf, width, style,
+				decoderForJobLog(responseAgent, responseSource),
 			)
 		}
 
@@ -1079,7 +1103,7 @@ func (m model) fetchJobLog(jobID int64) tea.Cmd {
 		if hasMore {
 			renderLog = streamfmt.RenderLogChunkWith
 		}
-		if err := renderLog(resp.Body, renderFmtr, &buf); err != nil {
+		if err := renderLog(resp.Body, renderFmtr); err != nil {
 			return logOutputMsg{err: err, seq: seq}
 		}
 
@@ -1102,6 +1126,8 @@ func (m model) fetchJobLog(jobID int64) tea.Cmd {
 			hasMore:   hasMore,
 			newOffset: newOffset,
 			append:    isIncremental,
+			agent:     responseAgent,
+			source:    responseSource,
 			seq:       seq,
 			fmtr:      renderFmtr,
 		}
@@ -1121,13 +1147,22 @@ func (m model) fetchPaneLog(jobID int64) tea.Cmd {
 	style := m.glamourStyle
 	offset := m.paneLogOffset
 	fmtr := m.paneLogFmtr
+	agent := m.paneLogAgent
+	source := m.paneLogSource
 	seq := m.paneLogSeq
 	return func() tea.Msg {
 		url := fmt.Sprintf(
 			"%s/api/job/log?job_id=%d&offset=%d",
 			baseURL, jobID, offset,
 		)
-		resp, err := client.Get(url)
+		req, err := http.NewRequest(http.MethodGet, url, nil)
+		if err != nil {
+			return paneLogOutputMsg{jobID: jobID, err: err, seq: seq}
+		}
+		if agent != "" {
+			req.Header.Set("X-Job-Agent", agent)
+		}
+		resp, err := client.Do(req)
 		if err != nil {
 			return paneLogOutputMsg{jobID: jobID, err: err, seq: seq}
 		}
@@ -1147,6 +1182,16 @@ func (m model) fetchPaneLog(jobID int64) tea.Cmd {
 		// Determine if job is still running from header
 		jobStatus := resp.Header.Get("X-Job-Status")
 		hasMore := jobStatus == "running"
+		responseAgent := resp.Header.Get("X-Job-Agent")
+		if responseAgent == "" {
+			responseAgent = agent
+		}
+		responseSource := source
+		if _, ok := resp.Header[http.CanonicalHeaderKey("X-Job-Source")]; ok {
+			responseSource = resp.Header.Get("X-Job-Source")
+		}
+		identityChanged := responseSource != source ||
+			(responseSource != storage.JobSourceAutoDesign && responseAgent != agent)
 
 		// Parse new offset from response header
 		newOffset := offset
@@ -1161,17 +1206,21 @@ func (m model) fetchPaneLog(jobID int64) tea.Cmd {
 		// Server reset offset (log truncated/rotated) — force
 		// full replace even if we sent a nonzero offset.
 		isIncremental := offset > 0 && fmtr != nil
-		if newOffset < offset {
+		if newOffset < offset || identityChanged {
 			isIncremental = false
 		}
 
-		// No new data — return early with current state
-		if newOffset == offset && isIncremental {
+		// No new data while running — return early with current state.
+		// A terminal response must still finalize the persistent decoder,
+		// even when the byte offset did not move.
+		if newOffset == offset && isIncremental && hasMore {
 			return paneLogOutputMsg{
 				jobID:     jobID,
 				hasMore:   hasMore,
 				newOffset: newOffset,
 				append:    true,
+				agent:     responseAgent,
+				source:    responseSource,
 				seq:       seq,
 			}
 		}
@@ -1188,12 +1237,15 @@ func (m model) fetchPaneLog(jobID int64) tea.Cmd {
 		} else {
 			renderFmtr = streamfmt.NewWithWidth(
 				&buf, width, style,
+				decoderForJobLog(responseAgent, responseSource),
 			)
 		}
 
-		if err := streamfmt.RenderLogWith(
-			resp.Body, renderFmtr, &buf,
-		); err != nil {
+		renderLog := streamfmt.RenderLogWith
+		if hasMore {
+			renderLog = streamfmt.RenderLogChunkWith
+		}
+		if err := renderLog(resp.Body, renderFmtr); err != nil {
 			return paneLogOutputMsg{jobID: jobID, err: err, seq: seq}
 		}
 
@@ -1217,10 +1269,19 @@ func (m model) fetchPaneLog(jobID int64) tea.Cmd {
 			hasMore:   hasMore,
 			newOffset: newOffset,
 			append:    isIncremental,
+			agent:     responseAgent,
+			source:    responseSource,
 			seq:       seq,
 			fmtr:      renderFmtr,
 		}
 	}
+}
+
+func decoderForJobLog(agent, source string) streamfmt.Decoder {
+	if source == storage.JobSourceAutoDesign {
+		return streamfmt.LegacyMixedDecoder(agent)
+	}
+	return streamfmt.DecoderForAgent(agent)
 }
 
 func (m model) fetchReviewAndCopy(jobID int64, job *storage.ReviewJob) tea.Cmd {

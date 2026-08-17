@@ -235,7 +235,7 @@ func (m model) handleLogKey2() (tea.Model, tea.Cmd) {
 	// From prompt view: view log for the job being viewed
 	if m.currentView == viewKindPrompt && m.currentReview != nil && m.currentReview.Job != nil {
 		job := m.currentReview.Job
-		return m.openLogView(job.ID, job.Status, m.reviewFromView)
+		return m.openLogView(*job, m.reviewFromView)
 	}
 
 	job, ok := m.selectedJob()
@@ -247,7 +247,7 @@ func (m model) handleLogKey2() (tea.Model, tea.Cmd) {
 		m.setFlash("Job is queued - not yet running", 2*time.Second, viewQueue)
 		return m, nil
 	default:
-		return m.openLogView(job.ID, job.Status, viewQueue)
+		return m.openLogView(*job, viewQueue)
 	}
 }
 

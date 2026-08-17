@@ -312,6 +312,8 @@ func TestHandleJobLog(t *testing.T) {
 				return false
 			}, "expected X-Job-Status queued, got %q", js)
 		}
+		assert.Equal(t, "test", w.Header().Get("X-Job-Agent"))
+		assert.Empty(t, w.Header().Get("X-Job-Source"))
 		if w.Body.String() != logContent {
 			assert.Condition(t, func() bool {
 				return false
@@ -478,6 +480,43 @@ func TestHandleJobLogOffset(t *testing.T) {
 			}, "expected second line only, got %q",
 				w.Body.String())
 		}
+	})
+
+	t.Run("queued agent change keeps prior log identity", func(t *testing.T) {
+		off := len(line1)
+		req := httptest.NewRequest(
+			http.MethodGet,
+			fmt.Sprintf("/api/job/log?job_id=%d&offset=%d", job.ID, off),
+			nil,
+		)
+		req.Header.Set("X-Job-Agent", "codex")
+		w := httptest.NewRecorder()
+		server.httpServer.Handler.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, "codex", w.Header().Get("X-Job-Agent"))
+		assert.Equal(t, line2, w.Body.String())
+	})
+
+	t.Run("running agent change resets offset", func(t *testing.T) {
+		_, err := db.Exec(`UPDATE review_jobs SET status = 'running' WHERE id = ?`, job.ID)
+		require.NoError(t, err)
+		defer func() {
+			_, cleanupErr := db.Exec(`UPDATE review_jobs SET status = 'queued' WHERE id = ?`, job.ID)
+			require.NoError(t, cleanupErr)
+		}()
+		req := httptest.NewRequest(
+			http.MethodGet,
+			fmt.Sprintf("/api/job/log?job_id=%d&offset=%d", job.ID, len(line1)),
+			nil,
+		)
+		req.Header.Set("X-Job-Agent", "codex")
+		w := httptest.NewRecorder()
+		server.httpServer.Handler.ServeHTTP(w, req)
+
+		require.Equal(t, http.StatusOK, w.Code)
+		assert.Equal(t, "test", w.Header().Get("X-Job-Agent"))
+		assert.Equal(t, logContent, w.Body.String())
 	})
 
 	t.Run("offset at end returns empty", func(t *testing.T) {

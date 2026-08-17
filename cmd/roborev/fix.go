@@ -1133,7 +1133,11 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 	underlying := io.Discard
 	var fmtr *streamfmt.Formatter
 	if !opts.quiet {
-		fmtr = streamfmt.New(cmd.OutOrStdout(), streamfmt.WriterIsTerminal(cmd.OutOrStdout()))
+		fmtr = streamfmt.New(
+			cmd.OutOrStdout(),
+			streamfmt.WriterIsTerminal(cmd.OutOrStdout()),
+			streamfmt.DecoderForAgent(currentAgent.Name()),
+		)
 		underlying = fmtr
 	}
 	capture := agent.NewSessionCaptureWriter(underlying, nil)
@@ -1438,7 +1442,11 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 		underlying := io.Discard
 		var fmtr *streamfmt.Formatter
 		if !opts.quiet {
-			fmtr = streamfmt.New(cmd.OutOrStdout(), streamfmt.WriterIsTerminal(cmd.OutOrStdout()))
+			fmtr = streamfmt.New(
+				cmd.OutOrStdout(),
+				streamfmt.WriterIsTerminal(cmd.OutOrStdout()),
+				streamfmt.DecoderForAgent(currentAgent.Name()),
+			)
 			underlying = fmtr
 		}
 		capture := agent.NewSessionCaptureWriter(underlying, nil)

@@ -618,8 +618,9 @@ type JobOutputInput struct {
 
 // JobLogInput holds query parameters for GET /api/job/log.
 type JobLogInput struct {
-	JobID  string `query:"job_id" doc:"Job ID"`
-	Offset string `query:"offset" doc:"Byte offset into the log file"`
+	JobID         string `query:"job_id" doc:"Job ID"`
+	Offset        string `query:"offset" doc:"Byte offset into the log file"`
+	PreviousAgent string `header:"X-Job-Agent" doc:"Agent identity used for the previous log chunk"`
 }
 
 // JobPatchInput holds query parameters for GET /api/job/patch.

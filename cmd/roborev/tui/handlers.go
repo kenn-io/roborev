@@ -718,7 +718,7 @@ func (m model) stepLogNav(dir int) (tea.Model, tea.Cmd) {
 	m.logStreaming = false
 	var followCmd tea.Cmd
 	m, followCmd = m.followSelectionChange(prevSelected)
-	logModel, logCmd := m.openLogView(job.ID, job.Status, m.logFromView)
+	logModel, logCmd := m.openLogView(job, m.logFromView)
 	return logModel, tea.Batch(followCmd, logCmd)
 }
 
@@ -747,7 +747,7 @@ func (m model) nextFixLog() (tea.Model, tea.Cmd) {
 		m.fixSelectedIdx = idx
 		job := m.fixJobs[idx]
 		m.logStreaming = false
-		return m.openLogView(job.ID, job.Status, viewTasks)
+		return m.openLogView(job, viewTasks)
 	}
 	m.setFlash("No newer log", 2*time.Second, viewLog)
 	return m, nil
@@ -816,7 +816,7 @@ func (m model) prevFixLog() (tea.Model, tea.Cmd) {
 		m.fixSelectedIdx = idx
 		job := m.fixJobs[idx]
 		m.logStreaming = false
-		return m.openLogView(job.ID, job.Status, viewTasks)
+		return m.openLogView(job, viewTasks)
 	}
 	m.setFlash("No older log", 2*time.Second, viewLog)
 	return m, nil
@@ -978,10 +978,12 @@ func (m model) handleEscKey() (tea.Model, tea.Cmd) {
 // openLogView opens the log view for a job of any status.
 // Running jobs stream with follow; completed jobs show a static view.
 func (m model) openLogView(
-	jobID int64, status storage.JobStatus, fromView viewKind,
+	job storage.ReviewJob, fromView viewKind,
 ) (tea.Model, tea.Cmd) {
 	m.logReviewAnchored = m.isReviewAnchored()
-	m.logJobID = jobID
+	m.logJobID = job.ID
+	m.logAgent = job.Agent
+	m.logSource = job.Source
 	m.logLines = nil
 	m.logScroll = 0
 	m.logFromView = fromView
@@ -989,11 +991,12 @@ func (m model) openLogView(
 	m.logOffset = 0
 	m.logFmtr = streamfmt.NewWithWidth(
 		io.Discard, m.width, m.glamourStyle,
+		decoderForJobLog(m.logAgent, m.logSource),
 	)
 	m.logFetchSeq++
 	m.logLoading = true
 
-	if status == storage.JobStatusRunning {
+	if job.Status == storage.JobStatusRunning {
 		m.logStreaming = true
 		m.logFollow = true
 	} else {
@@ -1001,7 +1004,7 @@ func (m model) openLogView(
 		m.logFollow = false
 	}
 
-	return m, tea.Batch(tea.ClearScreen, m.fetchJobLog(jobID))
+	return m, tea.Batch(tea.ClearScreen, m.fetchJobLog(job.ID))
 }
 
 // handleConnectionError tracks consecutive connection errors and triggers reconnection.

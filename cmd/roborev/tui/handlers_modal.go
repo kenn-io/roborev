@@ -412,7 +412,7 @@ func (m model) handleTasksKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 					return m, followCmd
 				}
 				// No prompt yet, go straight to log view
-				return m.openLogView(job.ID, job.Status, viewTasks)
+				return m.openLogView(job, viewTasks)
 			case job.HasViewableOutput():
 				// Moves the QUEUE selection to a fix job, so it takes the
 				// shared detail-follow transition like every other
@@ -426,7 +426,7 @@ func (m model) handleTasksKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				cmd := m.dispatchReviewFetch(job.ID)
 				return m, tea.Batch(followCmd, cmd)
 			case job.Status == storage.JobStatusFailed:
-				return m.openLogView(job.ID, job.Status, viewTasks)
+				return m.openLogView(job, viewTasks)
 			}
 		}
 		return m, nil
@@ -462,7 +462,7 @@ func (m model) handleTasksKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 				m.setFlash("Job is queued - not yet running", 2*time.Second, viewTasks)
 				return m, nil
 			}
-			return m.openLogView(job.ID, job.Status, viewTasks)
+			return m.openLogView(job, viewTasks)
 		}
 		return m, nil
 	case "A":

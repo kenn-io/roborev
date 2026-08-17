@@ -399,6 +399,8 @@ type model struct {
 	logFollow         bool                 // True if auto-scrolling to bottom (follow mode)
 	logOffset         int64                // Byte offset for next incremental fetch
 	logFmtr           *streamfmt.Formatter // Persistent formatter across polls
+	logAgent          string               // Agent protocol identity retained across formatter rebuilds
+	logSource         string               // Job source retained for legacy mixed-log compatibility
 	logLoading        bool                 // True while a fetch is in-flight
 	logFetchSeq       uint64               // Monotonic seq to drop stale responses
 
@@ -608,6 +610,8 @@ type model struct {
 	paneLogLines     []logLine            // buffered rendered lines (capped, see paneLogMaxLines)
 	paneLogOffset    int64                // byte offset for next incremental fetch
 	paneLogFmtr      *streamfmt.Formatter // persistent formatter across polls
+	paneLogAgent     string               // agent protocol identity retained across formatter rebuilds
+	paneLogSource    string               // job source retained for legacy mixed-log compatibility
 	paneLogSeq       uint64               // monotonic seq; drops stale responses
 	paneLogStreaming bool                 // true while the tailed job is still running
 	paneLogPaused    bool                 // tail invalidated while a transient view hid the pane; resume on return

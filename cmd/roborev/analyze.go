@@ -844,7 +844,11 @@ func runFixAgent(cmd *cobra.Command, repoPath, agentName, model, reasoning, prom
 	if quiet {
 		out = io.Discard
 	} else {
-		fmtr = streamfmt.New(cmd.OutOrStdout(), streamfmt.WriterIsTerminal(cmd.OutOrStdout()))
+		fmtr = streamfmt.New(
+			cmd.OutOrStdout(),
+			streamfmt.WriterIsTerminal(cmd.OutOrStdout()),
+			streamfmt.DecoderForAgent(a.Name()),
+		)
 		out = fmtr
 	}
 
