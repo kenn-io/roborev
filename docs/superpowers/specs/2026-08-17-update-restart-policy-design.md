@@ -29,6 +29,8 @@ sections, and download progress can run into the following install message.
 - Change the behavior of `roborev daemon stop` or a normal graceful restart.
 - Resume an interrupted agent session. An interrupted review starts a fresh
   attempt with its existing job inputs.
+- Preserve partial output from an interrupted attempt. The fresh attempt uses
+  the existing log truncation behavior, so partial output is discarded.
 - Reject enqueues during the drain. Rejecting hook-triggered enqueues could lose
   review requests when the caller does not retry.
 - Make an old daemon execute code from the newly installed binary.
@@ -50,8 +52,9 @@ The source URL and checksum remain available in verbose output. The normal
 display names the exact package, size, version, and destination without making
 the primary decision harder to scan.
 
-If the daemon has running reviews and no policy flag was supplied, the command
-prompts before downloading or installing:
+If the daemon has running reviews and no policy flag was supplied, one prompt
+both selects the policy and confirms the update before any daemon mutation,
+download, or installation:
 
 ```text
 3 reviews are currently running.
@@ -69,13 +72,14 @@ The choices have these semantics:
   and verify.
 - `interrupt`: enter the update drain, stop active agent processes cleanly,
   preserve their jobs for a fresh attempt, install, restart, and verify.
-- `abort`: if any review is active when the daemon prepares the update, leave
-  the daemon and installed binary unchanged.
+- `abort`: exit immediately and leave the daemon and installed binary
+  unchanged.
 
-When there are no running reviews, the existing update confirmation remains
-sufficient. The updater uses the `wait` policy if a review starts between the
-status check and update preparation. This preserves work without adding a
-second prompt.
+Choosing `wait` or `interrupt` expresses consent to update, so there is no
+second `Proceed with update?` prompt. When there are no running reviews, the
+existing update confirmation remains sufficient. The updater uses the `wait`
+policy if a review starts between the status check and update preparation. This
+preserves work without adding a second prompt.
 
 The successful output uses one line per phase and always terminates progress
 before printing the next phase:
@@ -90,6 +94,9 @@ Daemon       restarted (v0.65.0)
 Updated roborev to v0.65.0
 ```
 
+If no daemon was running, the phase block contains `Daemon       not running`
+instead of omitting the phase.
+
 Warnings use the same phase label. The command does not print the final
 `Updated` line when daemon restart or version verification fails.
 
@@ -98,10 +105,14 @@ Warnings use the same phase label. The command does not print the final
 Add `--running=wait|interrupt|abort` to `roborev update`.
 
 - An explicit value applies whether or not work is active by cutover time.
+- Interactive `[a]` exits immediately. The `--running=abort` policy means
+  proceed only if the daemon can atomically prepare with no running reviews.
 - Interactive use without the flag prompts only when the initial status shows
   running reviews.
 - `--yes` without `--running` uses `wait`, matching the current safe behavior
   and avoiding a compatibility change for automation.
+- A non-interactive wait has no updater-specific deadline. It is bounded by the
+  running jobs' configured timeouts, which default to 30 minutes per job.
 - `--no-restart` bypasses daemon preparation and the running-review policy. It
   continues to install only the binary and related assets, as it does today.
 - The existing `--force` retains its current meaning: allow an official release
@@ -111,9 +122,28 @@ Invalid policy values fail before any download, install, or daemon mutation.
 
 ## Daemon update preparation
 
-Add a daemon endpoint dedicated to preparing an update. Its request contains
-the selected running-review policy. Preparation is serialized with shutdown
-preparation by the daemon lifecycle mutex.
+Add daemon endpoints dedicated to preparing, renewing, and releasing an update
+drain. Preparation takes the selected running-review policy and an opaque update
+operation ID. It returns a lease token and expiry. The updater renews the lease
+in the background throughout waiting, download, installation, and pre-shutdown
+handoff. A 60-second lease renewed every 20 seconds leaves enough tolerance for
+short scheduling and network stalls without leaving an abandoned drain for
+long.
+
+The updater holds an exclusive data-directory update lock and stores its
+owner-private operation ID, target version, and policy while the operation is
+in progress. A process exit releases the lock. Re-running the update for the
+same target resumes the operation ID and re-prepares idempotently; a concurrent
+updater cannot race the same drain or installation.
+
+The updater removes the operation record after confirmed success or a clean
+release. It also removes a stale record when the running CLI version already
+matches its target, including after a manual recovery restart.
+
+Preparation is serialized with shutdown preparation by the daemon lifecycle
+mutex. The daemon tracks update-drain ownership and shutdown-drain ownership as
+separate in-memory states even though both use the existing persisted
+`shutdown_draining` claim gate.
 
 Preparation first persists the existing shutdown drain gate. `ClaimJob`
 already checks this gate in the same database statement that claims a queued
@@ -134,10 +164,27 @@ remain available to finish or unwind active work, and the daemon remains able
 to accept enqueues and answer status requests while the updater downloads the
 release.
 
-Add a matching release operation for failures before shutdown. It clears the
-drain gate so workers can claim jobs again. Release is best-effort after an
-install failure, but an inability to clear the gate is reported prominently.
-Daemon startup continues to clear an interrupted drain as a recovery fallback.
+Prepare is refused after normal shutdown has begun. If normal stop or SIGTERM
+begins while an update lease is active, `beginShutdownDrain` atomically takes
+shutdown ownership before invalidating the update lease, so the persisted gate
+never opens between owners. Release requires the matching update lease and is
+refused after shutdown takes ownership; it can never clear a normal shutdown's
+gate.
+
+The daemon automatically releases an update drain when its lease expires. A
+wait drain can clear the gate immediately. An interrupt drain first waits for
+all targeted worker contexts to unwind and for their jobs to be requeued, then
+clears the gate. Until that recovery completes, `/api/status` continues to
+expose the drain instead of silently leaving a live daemon unable to claim
+work. Re-running `roborev update` resumes and renews the recorded operation;
+`roborev daemon restart` remains the explicit recovery that clears stale drain
+state through normal startup recovery.
+
+Add `update_draining`, `update_drain_policy`, and
+`update_drain_expires_at` fields to `/api/status`. Human-readable
+`roborev status` prints the drain beside the worker/queue state, including
+whether it is waiting, interrupting, or recovering after lease expiry. Older
+clients ignore the additive JSON fields.
 
 ## Interrupt and requeue behavior
 
@@ -151,13 +198,25 @@ The worker pool gains an update-interrupt mode with these properties:
    cancellation path terminates the child process and captures its output.
 3. A job claimed just before the drain but registered just after it observes
    the update-interrupt mode and cancels immediately.
-4. Worker completion detects update interruption and leaves the job in the
-   restartable running state instead of failing, canceling, failing over, or
-   consuming a retry.
-5. Graceful shutdown joins the workers, hooks, and final sync as usual.
-6. Replacement-daemon startup uses the existing `ResetStaleJobs` recovery path
-   to turn those running rows back into queued rows and clear attempt-scoped
-   session and cost metadata.
+4. One centralized `handleUpdateInterruption` guard requires both a canceled
+   context and update-interrupt ownership of the job ID. It runs before the
+   normal cancellation, retry, classification, cooldown, and failover logic.
+   The shared fail/retry/failover helpers take enough context to invoke this
+   guard, so prompt construction, checkout/worktree creation, classification,
+   agent execution, patch capture, and synthesis all use the same exit path.
+5. The guard atomically changes the matching running attempt back to queued,
+   clears the same attempt-scoped session, cost, command, and invocation fields
+   as `ResetStaleJobs`, and preserves `retry_count`.
+6. Update interruption emits no `review.canceled` or terminal event, does not
+   release a panel member or synthesis gate, runs no completion hook, and does
+   not cool down or fail over an agent. These side effects remain unchanged for
+   normal user cancellation and real failures.
+7. Graceful shutdown joins the workers, hooks, and final sync as usual. The
+   update gate prevents an immediately requeued job from being claimed before
+   replacement readiness.
+8. Replacement-daemon startup retains the existing `ResetStaleJobs` recovery
+   path as a fallback for a process exit that occurs before the centralized
+   guard can requeue an interrupted row.
 
 This avoids a process-wide hard kill. Killing only the daemon could orphan an
 agent subprocess, while explicitly canceling jobs through the public cancel API
@@ -169,20 +228,22 @@ For a running daemon, the updater performs these steps:
 
 1. Check release metadata and display the update summary.
 2. Read daemon status and obtain the running-review policy when needed.
-3. Ask for the normal install confirmation unless `--yes` was supplied.
+3. If reviews are running, use the policy prompt as the install confirmation.
+   Otherwise ask for the normal install confirmation unless `--yes` was
+   supplied.
 4. Ask the daemon to prepare the update with the selected policy.
-5. For `wait`, poll until the persisted running-job count is zero. For
-   `interrupt`, poll until the worker pool has no active workers; interrupted
-   job rows intentionally remain running until replacement startup requeues
-   them. The terminal states why it is waiting and updates the remaining count
-   without emitting repeated prose lines.
+5. Start the lease-renewal heartbeat. For `wait`, poll until the persisted
+   running-job count is zero. For `interrupt`, poll until the worker pool has no
+   active workers and all targeted jobs are queued. The terminal states why it
+   is waiting and updates the remaining count without emitting repeated prose
+   lines.
 6. Download, verify, and atomically install the release.
 7. Request normal graceful shutdown. Because claims are gated and active work
    is finished, shutdown is bounded by normal completion cleanup rather than
    review duration.
 8. Start the installed binary and wait for a responsive daemon.
 9. Probe the replacement and require its reported version to equal the release
-   version.
+   version after normalizing one optional leading `v` on both values.
 10. Update registered hooks and installed skills with the new binary.
 11. Print the final success line.
 
@@ -197,12 +258,41 @@ For service-manager restarts, the existing replacement-PID handoff detection
 remains in use. Success still requires a responsive daemon with the expected
 version.
 
+### Download timing
+
+The update drain remains before download. The current
+`selfupdate.Client.Install` API intentionally couples HTTPS download, checksum
+verification, temporary-file cleanup, archive verification, and atomic
+installation. Separating download in this repository would duplicate
+security-sensitive unexported logic; adding a kit staging API is a separate
+cross-repository change. The renewable lease and automatic release make the
+longer drain window recoverable. A future kit staging API can move download
+before preparation without changing the daemon protocol.
+
+### Version skew
+
+The updater must tolerate a daemon from a release that predates the preparation
+API. If preparation returns HTTP 404:
+
+- `wait` prints a compatibility notice and falls back to the current synchronous
+  graceful-shutdown behavior.
+- `interrupt` fails before installation with a message that the running daemon
+  does not support safe interruption.
+- `abort` proceeds only when `/api/status` reports zero running jobs immediately
+  before installation; otherwise it aborts before changing the binary.
+
+The legacy abort fallback cannot provide the new endpoint's atomic claim gate,
+so the notice states that a job racing the final status check will be preserved
+by the graceful wait. Other preparation errors are not treated as missing API
+support.
+
 ## Failure handling
 
 - Preparation failure: do not download or install.
 - Abort conflict: clear any temporary drain and leave the binary unchanged.
-- Download or verification failure: release the update drain and leave the old
-  daemon running.
+- Download or verification failure: release the matching update lease and leave
+  the old daemon running. If the updater dies before release, lease expiry
+  performs the same recovery.
 - Install failure: attempt to release the drain, report the installation error,
   and do not claim success.
 - Shutdown failure: do not start a second daemon while the prior daemon or its
@@ -212,13 +302,17 @@ version.
 - Version mismatch after restart: report both expected and observed versions and
   fail the update command.
 - Interrupt cancellation failure: apply a bounded unwind timeout, do not
-  install, and keep the drain in place while reporting the affected jobs so a
-  retry cannot create duplicate work.
+  install, and leave the leased drain in visible recovery until the workers
+  unwind or the user restarts the daemon. Never open the gate while an agent
+  process could still duplicate a requeued job.
 
 The updater must handle Ctrl-C while waiting. Before installation it releases
-the drain and leaves the current daemon running. After installation it continues
-the safe restart handoff or reports the exact recovery command rather than
-silently abandoning a half-complete cutover.
+the drain and leaves the current daemon running. After installation, Ctrl-C
+stops the updater, releases the update lease if shutdown has not taken
+ownership, prints `binary installed; daemon still running old version — run
+roborev daemon restart`, and exits nonzero. If shutdown already owns the gate,
+release is refused and the message says the daemon is finishing shutdown before
+the same recovery command can be run.
 
 ## Testing
 
@@ -231,13 +325,24 @@ Focused tests will cover:
 - Enqueues succeeding while claims remain blocked.
 - Abort leaving both drain state and active work unchanged.
 - Wait allowing active work to finish without consuming a retry.
-- Interrupt terminating the agent process and requeueing the same job on the
-  replacement daemon.
+- Interrupt terminating the agent process and requeueing the same job without
+  consuming a retry.
+- Every pre-agent, agent, worktree, classification, patch, and synthesis error
+  path using the centralized update-interruption guard.
+- Interrupted work emitting no cancel/terminal event, panel release, hook,
+  cooldown, or failover side effect.
 - A late worker registration being interrupted.
+- Lease renewal, expiry, idempotent resume, and automatic gate release.
+- Release ownership never clearing a normal shutdown drain.
+- Prepare refusing an in-progress shutdown.
+- `roborev status` exposing active and recovering update drains.
 - Download failure releasing the drain.
 - Restart success requiring both daemon responsiveness and the expected version.
+- Version verification accepting one optional leading `v`.
+- Missing prepare endpoint behavior for wait, interrupt, and abort.
 - Manager-driven restart handoff retaining the same verification requirement.
 - Progress output ending cleanly before installation output.
+- Stable `Daemon not running` phase output.
 - Compact normal output and verbose URL/checksum output.
 
 An isolated integration test will run two synthetic jobs against a scratch data
