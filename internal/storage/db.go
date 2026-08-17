@@ -247,7 +247,11 @@ func OpenReadOnly(dbPath string) (*DB, error) {
 	if err != nil {
 		return nil, fmt.Errorf("resolve database path: %w", err)
 	}
-	dsn := url.URL{Scheme: "file", Path: filepath.ToSlash(absPath)}
+	uriPath := filepath.ToSlash(absPath)
+	if filepath.VolumeName(absPath) != "" && !strings.HasPrefix(uriPath, "/") {
+		uriPath = "/" + uriPath
+	}
+	dsn := url.URL{Scheme: "file", Path: uriPath}
 	query := dsn.Query()
 	query.Set("mode", "ro")
 	query.Add("_pragma", "busy_timeout(30000)")
