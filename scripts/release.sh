@@ -175,46 +175,19 @@ update_nix_flake() {
         ORIGINAL_REF=$(git -C "$REPO_ROOT" rev-parse HEAD)
 
     echo "Updating flake.nix version to $VERSION..."
-    sed -i.bak "s/version = \"[^\"]*\"/version = \"$VERSION\"/" "$FLAKE_FILE"
+    sed -i.bak \
+        "/pname = \"roborev\";/,/version = \"[^\"]*\";/ s/version = \"[^\"]*\"/version = \"$VERSION\"/" \
+        "$FLAKE_FILE"
     rm -f "$FLAKE_FILE.bak"
 
-    # Check if vendorHash needs updating (only if go.mod changed since last release)
+    # Recompute vendorHash and verify the updated flake.
     if command -v nix &> /dev/null; then
         echo "Checking if vendorHash needs updating..."
-
-        # Temporarily set vendorHash to empty to get the correct hash
-        local OLD_HASH=$(grep 'vendorHash = "' "$FLAKE_FILE" | sed 's/.*vendorHash = "\([^"]*\)".*/\1/')
-        sed -i.bak 's/vendorHash = "[^"]*"/vendorHash = ""/' "$FLAKE_FILE"
-
-        # Try to build and capture the expected hash
-        echo "Running nix build to compute vendorHash (this may take a moment)..."
-        local NIX_OUTPUT
-        if NIX_OUTPUT=$(nix build "$REPO_ROOT" 2>&1); then
-            # Build succeeded with empty hash - dependencies might be empty or cached
-            echo "Build succeeded, keeping existing vendorHash"
-            sed -i.bak "s|vendorHash = \"\"|vendorHash = \"$OLD_HASH\"|" "$FLAKE_FILE"
-        else
-            # Extract the expected hash from the error message
-            local NEW_HASH=$(echo "$NIX_OUTPUT" | grep -o 'sha256-[A-Za-z0-9+/=]*' | tail -1)
-            if [ -n "$NEW_HASH" ]; then
-                echo "Updating vendorHash to $NEW_HASH"
-                sed -i.bak "s|vendorHash = \"\"|vendorHash = \"$NEW_HASH\"|" "$FLAKE_FILE"
-            else
-                echo "Warning: Could not determine new vendorHash, restoring old value"
-                sed -i.bak "s|vendorHash = \"\"|vendorHash = \"$OLD_HASH\"|" "$FLAKE_FILE"
-            fi
-        fi
-        rm -f "$FLAKE_FILE.bak"
-
-        # Verify the build works
-        echo "Verifying nix build..."
-        if ! nix build "$REPO_ROOT" 2>/dev/null; then
-            echo "Error: nix build failed after updating flake.nix"
-            echo "Please fix flake.nix manually and try again"
+        if ! "$SCRIPT_DIR/update-nix-vendor-hash.sh" "$REPO_ROOT"; then
+            echo "Error: failed to update and verify flake.nix"
             git -C "$REPO_ROOT" checkout -- flake.nix
             exit 1
         fi
-        echo "Nix build successful!"
     else
         echo "Warning: nix not installed, cannot verify vendorHash"
         echo "If go.mod changed, you may need to update vendorHash manually"
