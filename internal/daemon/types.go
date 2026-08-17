@@ -413,18 +413,12 @@ type AgentHookSessionsOutput struct {
 }
 
 type AgentHookEventInput struct {
-	Body AgentHookEventRequest
+	Body agenthook.Request
 }
 
 type AgentHookEventOutput struct {
-	Body AgentHookEventResponse
+	Body agenthook.Response
 }
-
-// Keep distinct names because Huma registers component schemas by Go type name;
-// agenthook.Request and Response collide with other daemon schema names.
-type AgentHookEventRequest agenthook.Request
-
-type AgentHookEventResponse agenthook.Response
 
 type AgentHookResetRequest struct {
 	All       bool   `json:"all,omitempty"`

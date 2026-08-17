@@ -165,28 +165,6 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 			o.Tags = []string{"agent-hook"}
 		})
 
-	huma.Get(api, "/api/agent-hook/sessions", s.humaAgentHookSessions,
-		func(o *huma.Operation) {
-			o.OperationID = "list-agent-hook-sessions"
-			o.Summary = "List Agent Hook sessions"
-			o.Tags = []string{"agent-hook"}
-		})
-
-	huma.Post(api, "/api/agent-hook/event", s.humaAgentHookEvent,
-		func(o *huma.Operation) {
-			o.OperationID = "record-agent-hook-event"
-			o.Summary = "Record an Agent Hook event"
-			o.Tags = []string{"agent-hook"}
-			o.MaxBodyBytes = -1
-		})
-
-	huma.Post(api, "/api/agent-hook/reset", s.humaAgentHookReset,
-		func(o *huma.Operation) {
-			o.OperationID = "reset-agent-hook-sessions"
-			o.Summary = "Reset Agent Hook sessions"
-			o.Tags = []string{"agent-hook"}
-		})
-
 	huma.Get(api, "/api/branches", s.humaListBranches,
 		func(o *huma.Operation) {
 			o.OperationID = "list-branches"
@@ -464,6 +442,21 @@ func addUpdateDrainConflictResponse(api huma.API, operation *huma.Operation) {
 			"application/problem+json": {Schema: jsonSchema(api, huma.ErrorModel{})},
 		},
 	}
+}
+
+func (s *Server) registerAgentHookRoutes(mux *http.ServeMux) {
+	cfg := huma.DefaultConfig("roborev-agent-hook", version.Version)
+	cfg.OpenAPIPath = ""
+	cfg.DocsPath = ""
+	cfg.SchemasPath = ""
+	api := humago.New(mux, cfg)
+
+	huma.Get(api, "/api/agent-hook/sessions", s.humaAgentHookSessions)
+	huma.Post(api, "/api/agent-hook/event", s.humaAgentHookEvent,
+		func(o *huma.Operation) {
+			o.MaxBodyBytes = -1
+		})
+	huma.Post(api, "/api/agent-hook/reset", s.humaAgentHookReset)
 }
 
 // OpenAPISpec returns the daemon OpenAPI document generated from the Huma

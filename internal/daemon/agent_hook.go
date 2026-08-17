@@ -106,13 +106,13 @@ func (s *Server) humaAgentHookEvent(
 	if strings.TrimSpace(input.Body.Event.SessionID) == "" {
 		return nil, huma.Error400BadRequest("session_id is required")
 	}
-	response, err := state.RecordContext(ctx, agenthook.Request(input.Body))
+	response, err := state.RecordContext(ctx, input.Body)
 	if err != nil {
 		return nil, huma.Error500InternalServerError(
 			fmt.Sprintf("record Agent Hook event: %v", err),
 		)
 	}
-	return &AgentHookEventOutput{Body: AgentHookEventResponse(response)}, nil
+	return &AgentHookEventOutput{Body: response}, nil
 }
 
 func (s *Server) humaAgentHookSessions(

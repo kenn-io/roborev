@@ -167,6 +167,7 @@ func newServerWithLogs(
 
 	mux := http.NewServeMux()
 	s.registerHumaAPI(mux)
+	s.registerAgentHookRoutes(mux)
 
 	s.httpServer = &http.Server{
 		Addr:    cfg.ServerAddr,

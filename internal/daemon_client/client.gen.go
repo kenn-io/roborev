@@ -202,58 +202,6 @@ type AddCommentRequest struct {
 	Sha       *string `json:"sha,omitempty"`
 }
 
-// AgentHookEventRequest defines model for AgentHookEventRequest.
-type AgentHookEventRequest struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema                *string `json:"$schema,omitempty"`
-	CommitThreshold       int64   `json:"commit_threshold"`
-	DeferPostToolReminder *bool   `json:"defer_post_tool_reminder,omitempty"`
-	Event                 Input   `json:"event"`
-	FailedReviewThreshold int64   `json:"failed_review_threshold"`
-	Instruction           string  `json:"instruction"`
-	Threshold             int64   `json:"threshold"`
-}
-
-// AgentHookEventResponse defines model for AgentHookEventResponse.
-type AgentHookEventResponse struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema                *string `json:"$schema,omitempty"`
-	CommitCount           *int64  `json:"commit_count,omitempty"`
-	CommitThreshold       *int64  `json:"commit_threshold,omitempty"`
-	Count                 int64   `json:"count"`
-	FailedReviewCount     *int64  `json:"failed_review_count,omitempty"`
-	FailedReviewThreshold *int64  `json:"failed_review_threshold,omitempty"`
-	Reason                *string `json:"reason,omitempty"`
-	RemindCount           *int64  `json:"remind_count,omitempty"`
-	SessionId             string  `json:"session_id"`
-	Skipped               *bool   `json:"skipped,omitempty"`
-	Threshold             int64   `json:"threshold"`
-	Triggered             bool    `json:"triggered"`
-	TriggeredBy           *string `json:"triggered_by,omitempty"`
-}
-
-// AgentHookResetOutputBody defines model for AgentHookResetOutputBody.
-type AgentHookResetOutputBody struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema *string `json:"$schema,omitempty"`
-	Ok     bool    `json:"ok"`
-}
-
-// AgentHookResetRequest defines model for AgentHookResetRequest.
-type AgentHookResetRequest struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema    *string `json:"$schema,omitempty"`
-	All       *bool   `json:"all,omitempty"`
-	SessionId *string `json:"session_id,omitempty"`
-}
-
-// AgentHookSessionsOutputBody defines model for AgentHookSessionsOutputBody.
-type AgentHookSessionsOutputBody struct {
-	// Schema A URL to the JSON Schema for this object.
-	Schema   *string                 `json:"$schema,omitempty"`
-	Sessions map[string]SessionState `json:"sessions"`
-}
-
 // AgentHookSnooze defines model for AgentHookSnooze.
 type AgentHookSnooze struct {
 	Branch       string    `json:"branch"`
@@ -860,21 +808,6 @@ type HealthStatus struct {
 	Version       string             `json:"version"`
 }
 
-// Input defines model for Input.
-type Input struct {
-	Cwd                  *string                 `json:"cwd,omitempty"`
-	HookEventName        *string                 `json:"hook_event_name,omitempty"`
-	LastAssistantMessage *string                 `json:"last_assistant_message,omitempty"`
-	SessionId            string                  `json:"session_id"`
-	StopHookActive       *bool                   `json:"stop_hook_active,omitempty"`
-	ToolInput            *map[string]interface{} `json:"tool_input,omitempty"`
-	ToolName             *string                 `json:"tool_name,omitempty"`
-	ToolResponse         interface{}             `json:"tool_response,omitempty"`
-	ToolUseId            *string                 `json:"tool_use_id,omitempty"`
-	TranscriptPath       *string                 `json:"transcript_path,omitempty"`
-	TurnId               *string                 `json:"turn_id,omitempty"`
-}
-
 // JobIDRequest defines model for JobIDRequest.
 type JobIDRequest struct {
 	// Schema A URL to the JSON Schema for this object.
@@ -1037,22 +970,6 @@ type PanelSummary struct {
 	MembersTotal        int64      `json:"members_total"`
 	MembersWithCost     *int64     `json:"members_with_cost,omitempty"`
 	PanelRunUuid        string     `json:"panel_run_uuid"`
-}
-
-// PendingReminder defines model for PendingReminder.
-type PendingReminder struct {
-	Branch              *string   `json:"branch,omitempty"`
-	CommitCount         *int64    `json:"commit_count,omitempty"`
-	CreatedAt           time.Time `json:"created_at"`
-	FailedReviewCount   *int64    `json:"failed_review_count,omitempty"`
-	Head                *string   `json:"head,omitempty"`
-	Instruction         *string   `json:"instruction,omitempty"`
-	LineageKey          string    `json:"lineage_key"`
-	Reason              string    `json:"reason"`
-	TrackedRepoIdentity *string   `json:"tracked_repo_identity,omitempty"`
-	TrackedRepoRoot     string    `json:"tracked_repo_root"`
-	TriggeredBy         string    `json:"triggered_by"`
-	WorktreeRoot        string    `json:"worktree_root"`
 }
 
 // PingInfo defines model for PingInfo.
@@ -1312,31 +1229,6 @@ type ReviewProjectionReview struct {
 	CreatedAt time.Time `json:"created_at"`
 	Id        int64     `json:"id"`
 	Output    string    `json:"output"`
-}
-
-// SessionState defines model for SessionState.
-type SessionState struct {
-	CommitCount                 *int64                      `json:"commit_count,omitempty"`
-	CommitCountsSincePrompt     *map[string]int64           `json:"commit_counts_since_prompt,omitempty"`
-	CommitShasSincePrompt       *map[string]*[]string       `json:"commit_shas_since_prompt,omitempty"`
-	CommitTriggeredAt           *time.Time                  `json:"commit_triggered_at,omitempty"`
-	Count                       int64                       `json:"count"`
-	FailedReviewCount           *int64                      `json:"failed_review_count,omitempty"`
-	FailedReviewTriggeredAt     *time.Time                  `json:"failed_review_triggered_at,omitempty"`
-	FailedReviewTriggeredCounts *map[string]int64           `json:"failed_review_triggered_counts,omitempty"`
-	LastCommitHead              *string                     `json:"last_commit_head,omitempty"`
-	LastCommitRepo              *string                     `json:"last_commit_repo,omitempty"`
-	LastCwd                     *string                     `json:"last_cwd,omitempty"`
-	LastFailedReviewBranch      *string                     `json:"last_failed_review_branch,omitempty"`
-	LastFailedReviewRepo        *string                     `json:"last_failed_review_repo,omitempty"`
-	LastSeenAt                  *time.Time                  `json:"last_seen_at,omitempty"`
-	LastTurnId                  *string                     `json:"last_turn_id,omitempty"`
-	PendingReminders            *map[string]PendingReminder `json:"pending_reminders,omitempty"`
-	RemindCount                 *int64                      `json:"remind_count,omitempty"`
-	RepoHeads                   *map[string]string          `json:"repo_heads,omitempty"`
-	StopCountsSincePrompt       *map[string]int64           `json:"stop_counts_since_prompt,omitempty"`
-	TriggeredAt                 *time.Time                  `json:"triggered_at,omitempty"`
-	WorktreeLineageKeys         *map[string]string          `json:"worktree_lineage_keys,omitempty"`
 }
 
 // SessionUsagePayload defines model for SessionUsagePayload.
@@ -1787,12 +1679,6 @@ type GetReviewProjectionParams struct {
 	Branch *string `form:"branch,omitempty" json:"branch,omitempty"`
 }
 
-// RecordAgentHookEventJSONRequestBody defines body for RecordAgentHookEvent for application/json ContentType.
-type RecordAgentHookEventJSONRequestBody = AgentHookEventRequest
-
-// ResetAgentHookSessionsJSONRequestBody defines body for ResetAgentHookSessions for application/json ContentType.
-type ResetAgentHookSessionsJSONRequestBody = AgentHookResetRequest
-
 // SetAgentHookSnoozeJSONRequestBody defines body for SetAgentHookSnooze for application/json ContentType.
 type SetAgentHookSnoozeJSONRequestBody = AgentHookSnoozeRequest
 
@@ -1916,19 +1802,6 @@ func WithRequestEditorFn(fn RequestEditorFn) ClientOption {
 type ClientInterface interface {
 	// ListActivity request
 	ListActivity(ctx context.Context, params *ListActivityParams, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// RecordAgentHookEventWithBody request with any body
-	RecordAgentHookEventWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	RecordAgentHookEvent(ctx context.Context, body RecordAgentHookEventJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ResetAgentHookSessionsWithBody request with any body
-	ResetAgentHookSessionsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	ResetAgentHookSessions(ctx context.Context, body ResetAgentHookSessionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
-
-	// ListAgentHookSessions request
-	ListAgentHookSessions(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	// SetAgentHookSnoozeWithBody request with any body
 	SetAgentHookSnoozeWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
@@ -2094,66 +1967,6 @@ type ClientInterface interface {
 
 func (c *Client) ListActivity(ctx context.Context, params *ListActivityParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewListActivityRequest(c.Server, params)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) RecordAgentHookEventWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRecordAgentHookEventRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) RecordAgentHookEvent(ctx context.Context, body RecordAgentHookEventJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewRecordAgentHookEventRequest(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) ResetAgentHookSessionsWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewResetAgentHookSessionsRequestWithBody(c.Server, contentType, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) ResetAgentHookSessions(ctx context.Context, body ResetAgentHookSessionsJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewResetAgentHookSessionsRequest(c.Server, body)
-	if err != nil {
-		return nil, err
-	}
-	req = req.WithContext(ctx)
-	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
-		return nil, err
-	}
-	return c.Client.Do(req)
-}
-
-func (c *Client) ListAgentHookSessions(ctx context.Context, reqEditors ...RequestEditorFn) (*http.Response, error) {
-	req, err := NewListAgentHookSessionsRequest(c.Server)
 	if err != nil {
 		return nil, err
 	}
@@ -2911,113 +2724,6 @@ func NewListActivityRequest(server string, params *ListActivityParams) (*http.Re
 		}
 
 		queryURL.RawQuery = queryValues.Encode()
-	}
-
-	req, err := http.NewRequest("GET", queryURL.String(), nil)
-	if err != nil {
-		return nil, err
-	}
-
-	return req, nil
-}
-
-// NewRecordAgentHookEventRequest calls the generic RecordAgentHookEvent builder with application/json body
-func NewRecordAgentHookEventRequest(server string, body RecordAgentHookEventJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewRecordAgentHookEventRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewRecordAgentHookEventRequestWithBody generates requests for RecordAgentHookEvent with any type of body
-func NewRecordAgentHookEventRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/api/agent-hook/event")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("POST", queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewResetAgentHookSessionsRequest calls the generic ResetAgentHookSessions builder with application/json body
-func NewResetAgentHookSessionsRequest(server string, body ResetAgentHookSessionsJSONRequestBody) (*http.Request, error) {
-	var bodyReader io.Reader
-	buf, err := json.Marshal(body)
-	if err != nil {
-		return nil, err
-	}
-	bodyReader = bytes.NewReader(buf)
-	return NewResetAgentHookSessionsRequestWithBody(server, "application/json", bodyReader)
-}
-
-// NewResetAgentHookSessionsRequestWithBody generates requests for ResetAgentHookSessions with any type of body
-func NewResetAgentHookSessionsRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/api/agent-hook/reset")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
-	}
-
-	req, err := http.NewRequest("POST", queryURL.String(), body)
-	if err != nil {
-		return nil, err
-	}
-
-	req.Header.Add("Content-Type", contentType)
-
-	return req, nil
-}
-
-// NewListAgentHookSessionsRequest generates requests for ListAgentHookSessions
-func NewListAgentHookSessionsRequest(server string) (*http.Request, error) {
-	var err error
-
-	serverURL, err := url.Parse(server)
-	if err != nil {
-		return nil, err
-	}
-
-	operationPath := fmt.Sprintf("/api/agent-hook/sessions")
-	if operationPath[0] == '/' {
-		operationPath = "." + operationPath
-	}
-
-	queryURL, err := serverURL.Parse(operationPath)
-	if err != nil {
-		return nil, err
 	}
 
 	req, err := http.NewRequest("GET", queryURL.String(), nil)
@@ -5735,19 +5441,6 @@ type ClientWithResponsesInterface interface {
 	// ListActivityWithResponse request
 	ListActivityWithResponse(ctx context.Context, params *ListActivityParams, reqEditors ...RequestEditorFn) (*ListActivityResponse, error)
 
-	// RecordAgentHookEventWithBodyWithResponse request with any body
-	RecordAgentHookEventWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RecordAgentHookEventResponse, error)
-
-	RecordAgentHookEventWithResponse(ctx context.Context, body RecordAgentHookEventJSONRequestBody, reqEditors ...RequestEditorFn) (*RecordAgentHookEventResponse, error)
-
-	// ResetAgentHookSessionsWithBodyWithResponse request with any body
-	ResetAgentHookSessionsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ResetAgentHookSessionsResponse, error)
-
-	ResetAgentHookSessionsWithResponse(ctx context.Context, body ResetAgentHookSessionsJSONRequestBody, reqEditors ...RequestEditorFn) (*ResetAgentHookSessionsResponse, error)
-
-	// ListAgentHookSessionsWithResponse request
-	ListAgentHookSessionsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListAgentHookSessionsResponse, error)
-
 	// SetAgentHookSnoozeWithBodyWithResponse request with any body
 	SetAgentHookSnoozeWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetAgentHookSnoozeResponse, error)
 
@@ -5927,75 +5620,6 @@ func (r ListActivityResponse) Status() string {
 
 // StatusCode returns HTTPResponse.StatusCode
 func (r ListActivityResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type RecordAgentHookEventResponse struct {
-	Body                          []byte
-	HTTPResponse                  *http.Response
-	JSON200                       *AgentHookEventResponse
-	ApplicationproblemJSONDefault *ErrorModel
-}
-
-// Status returns HTTPResponse.Status
-func (r RecordAgentHookEventResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r RecordAgentHookEventResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type ResetAgentHookSessionsResponse struct {
-	Body                          []byte
-	HTTPResponse                  *http.Response
-	JSON200                       *AgentHookResetOutputBody
-	ApplicationproblemJSONDefault *ErrorModel
-}
-
-// Status returns HTTPResponse.Status
-func (r ResetAgentHookSessionsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ResetAgentHookSessionsResponse) StatusCode() int {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.StatusCode
-	}
-	return 0
-}
-
-type ListAgentHookSessionsResponse struct {
-	Body                          []byte
-	HTTPResponse                  *http.Response
-	JSON200                       *AgentHookSessionsOutputBody
-	ApplicationproblemJSONDefault *ErrorModel
-}
-
-// Status returns HTTPResponse.Status
-func (r ListAgentHookSessionsResponse) Status() string {
-	if r.HTTPResponse != nil {
-		return r.HTTPResponse.Status
-	}
-	return http.StatusText(0)
-}
-
-// StatusCode returns HTTPResponse.StatusCode
-func (r ListAgentHookSessionsResponse) StatusCode() int {
 	if r.HTTPResponse != nil {
 		return r.HTTPResponse.StatusCode
 	}
@@ -7018,49 +6642,6 @@ func (c *ClientWithResponses) ListActivityWithResponse(ctx context.Context, para
 	return ParseListActivityResponse(rsp)
 }
 
-// RecordAgentHookEventWithBodyWithResponse request with arbitrary body returning *RecordAgentHookEventResponse
-func (c *ClientWithResponses) RecordAgentHookEventWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RecordAgentHookEventResponse, error) {
-	rsp, err := c.RecordAgentHookEventWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRecordAgentHookEventResponse(rsp)
-}
-
-func (c *ClientWithResponses) RecordAgentHookEventWithResponse(ctx context.Context, body RecordAgentHookEventJSONRequestBody, reqEditors ...RequestEditorFn) (*RecordAgentHookEventResponse, error) {
-	rsp, err := c.RecordAgentHookEvent(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseRecordAgentHookEventResponse(rsp)
-}
-
-// ResetAgentHookSessionsWithBodyWithResponse request with arbitrary body returning *ResetAgentHookSessionsResponse
-func (c *ClientWithResponses) ResetAgentHookSessionsWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ResetAgentHookSessionsResponse, error) {
-	rsp, err := c.ResetAgentHookSessionsWithBody(ctx, contentType, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseResetAgentHookSessionsResponse(rsp)
-}
-
-func (c *ClientWithResponses) ResetAgentHookSessionsWithResponse(ctx context.Context, body ResetAgentHookSessionsJSONRequestBody, reqEditors ...RequestEditorFn) (*ResetAgentHookSessionsResponse, error) {
-	rsp, err := c.ResetAgentHookSessions(ctx, body, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseResetAgentHookSessionsResponse(rsp)
-}
-
-// ListAgentHookSessionsWithResponse request returning *ListAgentHookSessionsResponse
-func (c *ClientWithResponses) ListAgentHookSessionsWithResponse(ctx context.Context, reqEditors ...RequestEditorFn) (*ListAgentHookSessionsResponse, error) {
-	rsp, err := c.ListAgentHookSessions(ctx, reqEditors...)
-	if err != nil {
-		return nil, err
-	}
-	return ParseListAgentHookSessionsResponse(rsp)
-}
-
 // SetAgentHookSnoozeWithBodyWithResponse request with arbitrary body returning *SetAgentHookSnoozeResponse
 func (c *ClientWithResponses) SetAgentHookSnoozeWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*SetAgentHookSnoozeResponse, error) {
 	rsp, err := c.SetAgentHookSnoozeWithBody(ctx, contentType, body, reqEditors...)
@@ -7592,105 +7173,6 @@ func ParseListActivityResponse(rsp *http.Response) (*ListActivityResponse, error
 	switch {
 	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
 		var dest ActivityOutputBody
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest ErrorModel
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseRecordAgentHookEventResponse parses an HTTP response from a RecordAgentHookEventWithResponse call
-func ParseRecordAgentHookEventResponse(rsp *http.Response) (*RecordAgentHookEventResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &RecordAgentHookEventResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest AgentHookEventResponse
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest ErrorModel
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseResetAgentHookSessionsResponse parses an HTTP response from a ResetAgentHookSessionsWithResponse call
-func ParseResetAgentHookSessionsResponse(rsp *http.Response) (*ResetAgentHookSessionsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ResetAgentHookSessionsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest AgentHookResetOutputBody
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.JSON200 = &dest
-
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && true:
-		var dest ErrorModel
-		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
-			return nil, err
-		}
-		response.ApplicationproblemJSONDefault = &dest
-
-	}
-
-	return response, nil
-}
-
-// ParseListAgentHookSessionsResponse parses an HTTP response from a ListAgentHookSessionsWithResponse call
-func ParseListAgentHookSessionsResponse(rsp *http.Response) (*ListAgentHookSessionsResponse, error) {
-	bodyBytes, err := io.ReadAll(rsp.Body)
-	defer func() { _ = rsp.Body.Close() }()
-	if err != nil {
-		return nil, err
-	}
-
-	response := &ListAgentHookSessionsResponse{
-		Body:         bodyBytes,
-		HTTPResponse: rsp,
-	}
-
-	switch {
-	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
-		var dest AgentHookSessionsOutputBody
 		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
 			return nil, err
 		}
