@@ -2752,7 +2752,10 @@ export interface operations {
                 /** @description Byte offset into the log file */
                 offset?: string;
             };
-            header?: never;
+            header?: {
+                /** @description Agent identity used for the previous log chunk */
+                "X-Job-Agent"?: string;
+            };
             path?: never;
             cookie?: never;
         };

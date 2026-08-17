@@ -580,7 +580,8 @@ func (o *CreateFixJobRequestOptions) GetHeader() (map[string]string, error) {
 
 // GetJobLogRequestOptions is the options needed to make a request to GetJobLog.
 type GetJobLogRequestOptions struct {
-	Query *GetJobLogQuery
+	Query  *GetJobLogQuery
+	Header *GetJobLogHeaders
 }
 
 // Validate validates all the fields in the options.
@@ -592,6 +593,14 @@ func (o *GetJobLogRequestOptions) Validate() error {
 		if v, ok := any(o.Query).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
 				errors = errors.Append("Query", err)
+			}
+		}
+	}
+
+	if o.Header != nil {
+		if v, ok := any(o.Header).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("Header", err)
 			}
 		}
 	}
@@ -619,7 +628,7 @@ func (o *GetJobLogRequestOptions) GetBody() any {
 
 // GetHeader returns the headers as a map.
 func (o *GetJobLogRequestOptions) GetHeader() (map[string]string, error) {
-	return nil, nil
+	return runtime.AsMap[string](o.Header)
 }
 
 // GetJobOutputRequestOptions is the options needed to make a request to GetJobOutput.

@@ -3696,6 +3696,12 @@ paths:
           schema:
             description: Byte offset into the log file
             type: string
+        - description: Agent identity used for the previous log chunk
+          in: header
+          name: X-Job-Agent
+          schema:
+            description: Agent identity used for the previous log chunk
+            type: string
       responses:
         "200":
           description: OK
