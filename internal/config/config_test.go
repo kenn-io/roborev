@@ -300,6 +300,39 @@ func TestLoadGlobalConfigWithFixGuidelines(t *testing.T) {
 	assert.Equal(t, "Verify findings before editing.", cfg.FixGuidelines)
 }
 
+// If either repository loader silently accepts a global-only fix policy,
+// users can believe the policy is active while fixes still run without it.
+func TestRepoConfigLoadersRejectGlobalOnlyFixGuidelines(t *testing.T) {
+	dir := t.TempDir()
+	writeTestFile(t, dir, ".roborev.toml", `fix_guidelines = "Repo policy"`)
+	execGit(t, dir, "init")
+	execGit(t, dir, "config", "user.email", "test@example.com")
+	execGit(t, dir, "config", "user.name", "Test")
+	execGit(t, dir, "add", ".roborev.toml")
+	execGit(t, dir, "commit", "-m", "add config")
+	sha := execGit(t, dir, "rev-parse", "HEAD")
+
+	tests := []struct {
+		name string
+		load func() (*RepoConfig, error)
+	}{
+		{name: "filesystem", load: func() (*RepoConfig, error) {
+			return LoadRepoConfig(dir)
+		}},
+		{name: "git ref", load: func() (*RepoConfig, error) {
+			return LoadRepoConfigFromRef(dir, sha)
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := tt.load()
+			require.ErrorContains(t, err, "fix_guidelines")
+			assert.ErrorContains(t, err, "global")
+		})
+	}
+}
+
 func TestLoadRepoConfigWithGuidelines(t *testing.T) {
 	tmpDir := newTempRepo(t, `
 agent = "claude-code"

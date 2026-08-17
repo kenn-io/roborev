@@ -979,7 +979,11 @@ func LoadRepoConfig(repoPath string) (*RepoConfig, error) {
 	}
 
 	var cfg RepoConfig
-	if _, err := toml.DecodeFile(path, &cfg); err != nil {
+	md, err := toml.DecodeFile(path, &cfg)
+	if err != nil {
+		return nil, err
+	}
+	if err := validateRepoConfigScope(md); err != nil {
 		return nil, err
 	}
 	if err := validateConfig(&cfg, cfg.ACP); err != nil {
@@ -987,6 +991,16 @@ func LoadRepoConfig(repoPath string) (*RepoConfig, error) {
 	}
 
 	return &cfg, nil
+}
+
+func validateRepoConfigScope(md toml.MetaData) error {
+	if md.IsDefined("fix_guidelines") {
+		return fmt.Errorf(
+			"repository config key %q is global-only; move it to ~/.roborev/config.toml",
+			"fix_guidelines",
+		)
+	}
+	return nil
 }
 
 func rejectLegacyACPConfig(path string) error {
@@ -1100,7 +1114,11 @@ func LoadRepoConfigFromRef(repoPath, ref string) (*RepoConfig, error) {
 	}
 
 	var cfg RepoConfig
-	if _, err := toml.Decode(string(data), &cfg); err != nil {
+	md, err := toml.Decode(string(data), &cfg)
+	if err != nil {
+		return nil, &ConfigParseError{Ref: ref, Err: err}
+	}
+	if err := validateRepoConfigScope(md); err != nil {
 		return nil, &ConfigParseError{Ref: ref, Err: err}
 	}
 	if err := validateConfig(&cfg, cfg.ACP); err != nil {
