@@ -125,18 +125,13 @@ func renderJobLog(
 		return fmt.Errorf("load metadata for formatted log (use --raw for an orphaned log): %w", err)
 	}
 
-	logAgent := job.Agent
-	if recordedAgent, readErr := daemon.JobLogAgent(jobID); readErr == nil {
-		if job.Source != storage.JobSourceAutoDesign ||
-			recordedAgent != storage.AutoDesignAgentSentinel {
-			logAgent = recordedAgent
-		}
-	} else if !errors.Is(readErr, os.ErrNotExist) {
-		return fmt.Errorf("load formatted log identity: %w", readErr)
+	identity, err := daemon.ResolveJobLogIdentity(job)
+	if err != nil {
+		return fmt.Errorf("load formatted log identity: %w", err)
 	}
-	decoder := streamfmt.DecoderForAgent(logAgent)
-	if job.Source == storage.JobSourceAutoDesign {
-		decoder = streamfmt.LegacyMixedDecoder(logAgent)
+	decoder := streamfmt.DecoderForAgent(identity.Agent)
+	if identity.Source == storage.JobSourceAutoDesign {
+		decoder = streamfmt.LegacyMixedDecoder(identity.Agent)
 	}
 	fmtr := streamfmt.New(out, isTTY, decoder)
 	return streamfmt.RenderLogWith(f, fmtr)

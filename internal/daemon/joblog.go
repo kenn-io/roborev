@@ -3,6 +3,7 @@ package daemon
 import (
 	"bufio"
 	"bytes"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -14,6 +15,7 @@ import (
 	"time"
 
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/storage"
 )
 
 var jobLogOpenRetryInterval = 5 * time.Second
@@ -62,6 +64,32 @@ func JobLogAgent(jobID int64) (string, error) {
 		return "", fmt.Errorf("empty agent metadata for job log %d", jobID)
 	}
 	return agent, nil
+}
+
+// JobLogIdentity describes the protocol identity of persisted log bytes.
+type JobLogIdentity struct {
+	Agent    string
+	Source   string
+	Recorded bool
+}
+
+// ResolveJobLogIdentity applies persisted ownership metadata to a job row.
+func ResolveJobLogIdentity(job *storage.ReviewJob) (JobLogIdentity, error) {
+	identity := JobLogIdentity{Agent: job.Agent, Source: job.Source}
+	recordedAgent, err := JobLogAgent(job.ID)
+	if errors.Is(err, os.ErrNotExist) {
+		return identity, nil
+	}
+	if err != nil {
+		return identity, err
+	}
+	if job.Source == storage.JobSourceAutoDesign &&
+		recordedAgent == storage.AutoDesignAgentSentinel {
+		return identity, nil
+	}
+	identity.Agent = recordedAgent
+	identity.Recorded = true
+	return identity, nil
 }
 
 func jobLogAppendMarkerPath(jobID int64) string {
