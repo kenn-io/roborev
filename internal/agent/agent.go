@@ -124,6 +124,17 @@ type SessionAgent interface {
 	WithSessionID(sessionID string) Agent
 }
 
+// SupportsSessionResume reports whether the registered agent can consume a
+// prior session ID. Unknown agents are not resumable.
+func SupportsSessionResume(name string) bool {
+	a, err := Get(name)
+	if err != nil {
+		return false
+	}
+	_, ok := a.(SessionAgent)
+	return ok
+}
+
 // SynthesisAgent is implemented by agents that can combine review outputs
 // without wrapping the prompt as a code-review request.
 type SynthesisAgent interface {

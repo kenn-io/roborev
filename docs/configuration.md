@@ -530,10 +530,12 @@ Reviews without a source branch do not participate. A panel receives one
 assignment for the entire run; its members and synthesis share the attribution.
 The daemon-free `roborev ci review` command does not participate.
 
-Only review-time settings are accepted in an overlay. These include agents,
-models, reasoning, review guidelines, prompt limits, exclusion patterns, session
-reuse, review panels, and the CI review matrix. Daemon, database, sync,
-credential, hook, browser, and comment-posting settings are rejected.
+Only settings frozen into the review plan are accepted in an overlay. These
+include agents, models, backup agents, reasoning, review severity, session
+reuse, review panels, and the CI review matrix. Prompt-building and daemon
+runtime settings are rejected because workers resolve those after enqueue.
+Database, sync, credential, hook, browser, and comment-posting settings are also
+rejected.
 
 An experiment ID is immutable. To change its ratio, workflows, or overlay,
 create a new versioned ID. A repository can enable or disable a definition from

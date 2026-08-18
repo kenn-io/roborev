@@ -400,6 +400,7 @@ func TestRerunSynthesisCreatesNewRun(t *testing.T) {
 	// fail if panelRerunMemberOpts dropped any of agent/model/provider/
 	// reasoning/review_type/config.
 	oldUUID := uuid.NewString()
+	const subjectHash = "panel-subject-hash"
 	mkMember := func(name string, idx int, agent, model, provider, reasoning, reviewType string) storage.EnqueueOpts {
 		return storage.EnqueueOpts{
 			RepoID:                repo.ID,
@@ -411,6 +412,7 @@ func TestRerunSynthesisCreatesNewRun(t *testing.T) {
 			Reasoning:             reasoning,
 			ReviewType:            reviewType,
 			JobType:               storage.JobTypeReview,
+			BranchSubjectHash:     subjectHash,
 			PanelRunUUID:          oldUUID,
 			PanelRole:             storage.PanelRoleMember,
 			PanelName:             "panel",
@@ -425,8 +427,13 @@ func TestRerunSynthesisCreatesNewRun(t *testing.T) {
 	}
 	srcSynth := storage.EnqueueOpts{
 		RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123",
-		Agent: "synth-agent", PanelRunUUID: oldUUID,
+		Agent: "synth-agent", BranchSubjectHash: subjectHash, PanelRunUUID: oldUUID,
 		PanelRole: storage.PanelRoleSynthesis, PanelName: "panel",
+		Experiment: &storage.ExperimentAssignmentInput{
+			ExperimentID: "panel-v1", DefinitionHash: "definition-hash",
+			DefinitionJSON: `{"ratio":1}`, Arm: "experiment",
+			SubjectHash: subjectHash, EffectiveConfigHash: "config-hash",
+		},
 	}
 	_, oldSynth, err := db.EnqueuePanelRun(srcMembers, srcSynth)
 	require.NoError(t, err)
@@ -453,6 +460,8 @@ func TestRerunSynthesisCreatesNewRun(t *testing.T) {
 		assert.Equal(old.Reasoning, got.Reasoning, "reasoning copied")
 		assert.Equal(old.ReviewType, got.ReviewType, "review_type copied")
 		assert.Equal(old.PanelMemberConfigJSON, got.PanelMemberConfigJSON, "member config copied")
+		assert.Equal(old.BranchSubjectHash, got.BranchSubjectHash, "branch subject copied")
+		assert.Equal(old.Experiments, got.Experiments, "experiment assignment copied")
 		assert.Equal(storage.JobStatusQueued, got.Status, "rerun members start queued")
 	}
 
@@ -460,6 +469,8 @@ func TestRerunSynthesisCreatesNewRun(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(newSynth.IsSynthesisJob())
 	assert.True(newSynth.ClaimBlocked, "new synthesis re-blocked until members finish")
+	assert.Equal(oldSynthAfter.BranchSubjectHash, newSynth.BranchSubjectHash)
+	assert.Equal(oldSynthAfter.Experiments, newSynth.Experiments)
 }
 
 func TestRerunCIPanelPreservesExactCheckoutSource(t *testing.T) {

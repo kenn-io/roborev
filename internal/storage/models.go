@@ -66,43 +66,45 @@ const (
 )
 
 type ReviewJob struct {
-	ID                int64      `json:"id"`
-	RepoID            int64      `json:"repo_id"`
-	CommitID          *int64     `json:"commit_id,omitempty"`  // nil for ranges
-	GitRef            string     `json:"git_ref"`              // SHA or "start..end" for ranges
-	Branch            string     `json:"branch,omitempty"`     // Branch name at time of job creation
-	CIBaseBranch      string     `json:"-"`                    // PR base branch for CI jobs; daemon-internal, used only for event/hook branch matching
-	SessionID         string     `json:"session_id,omitempty"` // Reused prior session or captured current session ID
-	Agent             string     `json:"agent"`
-	Model             string     `json:"model,omitempty"`              // Effective model for this run (for opencode: provider/model format)
-	Provider          string     `json:"provider,omitempty"`           // Effective provider for this run (e.g., anthropic, openai)
-	RequestedModel    string     `json:"requested_model,omitempty"`    // Explicitly requested model; empty means reevaluate on rerun
-	RequestedProvider string     `json:"requested_provider,omitempty"` // Explicitly requested provider; empty means reevaluate on rerun
-	Reasoning         string     `json:"reasoning,omitempty"`          // Legacy or exact reasoning level (default: thorough)
-	JobType           string     `json:"job_type"`                     // one of the JobType* constants above
-	Status            JobStatus  `json:"status"`
-	EnqueuedAt        time.Time  `json:"enqueued_at"`
-	StartedAt         *time.Time `json:"started_at,omitempty"`
-	StartedAtRaw      string     `json:"-"` // Exact persisted value for attempt-scoped writes
-	FinishedAt        *time.Time `json:"finished_at,omitempty"`
-	WorkerID          string     `json:"worker_id,omitempty"`
-	Error             string     `json:"error,omitempty"`
-	Prompt            string     `json:"prompt,omitempty"`
-	RetryCount        int        `json:"retry_count"`
-	DiffContent       *string    `json:"diff_content,omitempty"`  // For dirty reviews (uncommitted changes)
-	DirtyFiles        []string   `json:"dirty_files,omitempty"`   // Unfiltered dirty file names for prompt metadata
-	Agentic           bool       `json:"agentic"`                 // Enable agentic mode (allow file edits)
-	PromptPrebuilt    bool       `json:"prompt_prebuilt"`         // Prompt was set at enqueue time and should be used as-is
-	ReviewType        string     `json:"review_type,omitempty"`   // Review type (e.g., "security") - changes system prompt
-	PatchID           string     `json:"patch_id,omitempty"`      // Stable patch-id for rebase tracking
-	OutputPrefix      string     `json:"output_prefix,omitempty"` // Prefix to prepend to review output
-	SkipReason        string     `json:"skip_reason,omitempty"`   // Reason a design review was skipped (status=skipped only)
-	Source            string     `json:"source,omitempty"`        // Automation source; empty for explicit/user rows
-	ParentJobID       *int64     `json:"parent_job_id,omitempty"` // Job being fixed (for fix jobs)
-	Patch             *string    `json:"patch,omitempty"`         // Generated diff patch (for completed fix jobs)
-	WorktreePath      string     `json:"worktree_path,omitempty"` // Worktree checkout path (empty = use RepoPath)
-	CommandLine       string     `json:"command_line,omitempty"`  // Actual agent command line used for this run
-	MinSeverity       string     `json:"min_severity,omitempty"`
+	ID                  int64      `json:"id"`
+	RepoID              int64      `json:"repo_id"`
+	CommitID            *int64     `json:"commit_id,omitempty"`  // nil for ranges
+	GitRef              string     `json:"git_ref"`              // SHA or "start..end" for ranges
+	Branch              string     `json:"branch,omitempty"`     // Branch name at time of job creation
+	CIBaseBranch        string     `json:"-"`                    // PR base branch for CI jobs; daemon-internal, used only for event/hook branch matching
+	SessionID           string     `json:"session_id,omitempty"` // Reused prior session or captured current session ID
+	BranchSubjectHash   string     `json:"branch_subject_hash,omitempty"`
+	ResumeSourceJobUUID string     `json:"resume_source_job_uuid,omitempty"`
+	Agent               string     `json:"agent"`
+	Model               string     `json:"model,omitempty"`              // Effective model for this run (for opencode: provider/model format)
+	Provider            string     `json:"provider,omitempty"`           // Effective provider for this run (e.g., anthropic, openai)
+	RequestedModel      string     `json:"requested_model,omitempty"`    // Explicitly requested model; empty means reevaluate on rerun
+	RequestedProvider   string     `json:"requested_provider,omitempty"` // Explicitly requested provider; empty means reevaluate on rerun
+	Reasoning           string     `json:"reasoning,omitempty"`          // Legacy or exact reasoning level (default: thorough)
+	JobType             string     `json:"job_type"`                     // one of the JobType* constants above
+	Status              JobStatus  `json:"status"`
+	EnqueuedAt          time.Time  `json:"enqueued_at"`
+	StartedAt           *time.Time `json:"started_at,omitempty"`
+	StartedAtRaw        string     `json:"-"` // Exact persisted value for attempt-scoped writes
+	FinishedAt          *time.Time `json:"finished_at,omitempty"`
+	WorkerID            string     `json:"worker_id,omitempty"`
+	Error               string     `json:"error,omitempty"`
+	Prompt              string     `json:"prompt,omitempty"`
+	RetryCount          int        `json:"retry_count"`
+	DiffContent         *string    `json:"diff_content,omitempty"`  // For dirty reviews (uncommitted changes)
+	DirtyFiles          []string   `json:"dirty_files,omitempty"`   // Unfiltered dirty file names for prompt metadata
+	Agentic             bool       `json:"agentic"`                 // Enable agentic mode (allow file edits)
+	PromptPrebuilt      bool       `json:"prompt_prebuilt"`         // Prompt was set at enqueue time and should be used as-is
+	ReviewType          string     `json:"review_type,omitempty"`   // Review type (e.g., "security") - changes system prompt
+	PatchID             string     `json:"patch_id,omitempty"`      // Stable patch-id for rebase tracking
+	OutputPrefix        string     `json:"output_prefix,omitempty"` // Prefix to prepend to review output
+	SkipReason          string     `json:"skip_reason,omitempty"`   // Reason a design review was skipped (status=skipped only)
+	Source              string     `json:"source,omitempty"`        // Automation source; empty for explicit/user rows
+	ParentJobID         *int64     `json:"parent_job_id,omitempty"` // Job being fixed (for fix jobs)
+	Patch               *string    `json:"patch,omitempty"`         // Generated diff patch (for completed fix jobs)
+	WorktreePath        string     `json:"worktree_path,omitempty"` // Worktree checkout path (empty = use RepoPath)
+	CommandLine         string     `json:"command_line,omitempty"`  // Actual agent command line used for this run
+	MinSeverity         string     `json:"min_severity,omitempty"`
 	// Job-level failover override (F7): when set, the worker prefers these
 	// over the workflow-resolved backup agent/model for this job's failover.
 	BackupAgent string `json:"backup_agent,omitempty"`
@@ -132,7 +134,8 @@ type ReviewJob struct {
 	// PanelSummary is the member breakdown for a synthesis (parent) row,
 	// attached by the listing handler for collapsed panel display. Nil for
 	// non-panel jobs and member rows.
-	PanelSummary *PanelSummary `json:"panel_summary,omitempty"`
+	PanelSummary *PanelSummary          `json:"panel_summary,omitempty"`
+	Experiments  []ExperimentAssignment `json:"experiments,omitempty"`
 
 	// ReusableSessionTarget is a joined, non-serialized SHA used only by
 	// session-reuse candidate validation. Dirty jobs keep GitRef="dirty" and

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"os"
@@ -222,7 +223,22 @@ func TestExportCIMetricsIncludesOnlyPostedPanels(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	seedPostedPanel(t, db, 1, "sha-posted", PanelOutcomeReviewPosted)
+	posted := seedPostedPanel(t, db, 1, "sha-posted", PanelOutcomeReviewPosted)
+	assignment := &ExperimentAssignmentInput{
+		ExperimentID: "ci-v1", DefinitionHash: "definition-hash",
+		DefinitionJSON: `{"ratio":1}`, Arm: "experiment",
+		SubjectHash: "subject-hash", EffectiveConfigHash: "config-hash",
+	}
+	require.NoError(t, insertExperimentAssignmentTx(
+		context.Background(), db, ReviewUnitPanel, posted.PanelRunUUID,
+		assignment, "test-machine", time.Now(),
+	))
+	members, err := db.GetPanelMembers(posted.PanelRunUUID)
+	require.NoError(t, err)
+	require.NotEmpty(t, members)
+	_, err = db.Exec(`UPDATE review_jobs SET resume_source_job_uuid = ? WHERE id = ?`,
+		"source-job-uuid", members[0].ID)
+	require.NoError(t, err)
 	// An unposted panel must not export.
 	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo2"))
 	seedPanelRunForRepo(t, db, repo.ID, "o/r", 2, "sha-unposted")
@@ -241,12 +257,20 @@ func TestExportCIMetricsIncludesOnlyPostedPanels(t *testing.T) {
 	assert.NotEmpty(t, p.PostedAt)
 	assert.NotEmpty(t, p.PanelCreatedAt)
 	assert.NotEmpty(t, p.Jobs, "panel jobs must be included")
+	require.Len(t, p.Experiments, 1)
+	assert.Equal(t, "ci-v1", p.Experiments[0].ID)
+	var lineageFound bool
 	for _, j := range p.Jobs {
 		assert.NotEmpty(t, j.JobUUID)
 		assert.Contains(t, []string{"member", "synthesis"}, j.Role)
 		assert.NotEmpty(t, j.Agent)
 		assert.NotEmpty(t, j.Status)
+		if j.ResumeSourceJobUUID != nil {
+			assert.Equal(t, "source-job-uuid", *j.ResumeSourceJobUUID)
+			lineageFound = true
+		}
 	}
+	assert.True(t, lineageFound)
 	assert.False(t, page.Truncated)
 	require.NotNil(t, page.NextCursor)
 }

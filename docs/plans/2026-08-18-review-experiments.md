@@ -138,11 +138,10 @@ highest-precedence repository layer. This reuses existing config-taking
 resolvers and avoids creating parallel agent, model, reasoning, and panel
 semantics.
 
-The initial allowlist includes configuration consumed while constructing or
-executing a review:
+The initial allowlist includes configuration frozen while constructing a review
+plan:
 
 - review agents, models, backup agents, providers, reasoning, and severity;
-- review guidelines, context count, exclusion patterns, and prompt limits;
 - `reuse_review_session` and its lookback;
 - `[review]` subagents and panels;
 - `[ci]` review matrix, named panel, reasoning, and severity settings;
@@ -151,6 +150,10 @@ executing a review:
 The overlay rejects `experiments` and settings whose effects occur outside a
 review unit, including daemon listeners, worker-pool sizing, credentials,
 database and sync configuration, hooks, and browser configuration.
+It also rejects prompt-building and worker-runtime settings such as review
+guidelines, context count, exclusion patterns, prompt limits, and job timeout;
+those are resolved after enqueue today and cannot yet be frozen faithfully as
+part of an experiment assignment.
 
 Within the overlay, nested tables merge recursively. Scalars and arrays replace
 base values. TOML key order has no effect.
@@ -197,17 +200,18 @@ type ExperimentSubject struct {
 }
 
 type ExperimentSelectionInput struct {
-	Workflow   ExperimentWorkflow
-	Subject    ExperimentSubject
-	Global     *Config
-	Repo       *RepoConfig
-	RawRepo    map[string]any
-	Explicit   map[string]any
+    Workflow ExperimentWorkflow
+    Subject  ExperimentSubject
+    Global   *Config
+    Repo     *RepoConfig
+    RawRepo  map[string]any
 }
 
 type ExperimentSelection struct {
-	RepoConfig *RepoConfig
-	Assignment *ExperimentAssignment
+    RepoConfig    *RepoConfig
+    RawRepoConfig map[string]any
+    SubjectHash   string
+    Assignment    *ExperimentAssignment
 }
 
 func SelectReviewExperiment(
@@ -233,7 +237,10 @@ single-review, local-panel, and CI-panel enqueue paths.
 Applying a partial overlay requires knowing whether zero values were explicitly
 set. The local and ref-aware repository config loaders must therefore make the
 raw TOML map available alongside the typed `RepoConfig`. Re-encoding a typed
-config is not equivalent because it loses omission information.
+config is not equivalent because it loses omission information. The two forms
+must come from the same file snapshot. If an experiment is selected and a typed
+repository config has no paired raw map, selection fails rather than fabricating
+raw configuration from typed values or silently dropping repository overrides.
 
 Existing config-taking resolvers should consume the returned effective
 `RepoConfig`. An enqueue path must not reload `.roborev.toml` after selection,
@@ -369,10 +376,12 @@ CREATE TABLE experiment_assignments (
   source_machine_id TEXT NOT NULL,
   synced_at TEXT,
   PRIMARY KEY (review_unit_kind, review_unit_uuid, experiment_id),
-  CHECK (review_unit_kind IN ('job', 'panel')),
-  CHECK (arm IN ('default', 'experiment'))
 );
 ```
+
+The application validates review-unit kinds and arm names. The database does
+not duplicate those closed sets as `CHECK` constraints, so adding a future unit
+kind or arm does not require a schema migration solely to relax validation.
 
 The application enforces one row per review unit today. The primary key already
 permits a different experiment ID to be attached later, so future concurrent or

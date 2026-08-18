@@ -203,6 +203,9 @@ func (db *DB) CreateCIPanelRun(githubRepo string, prNumber int, headSHA string,
 		return false, nil, nil, err
 	}
 	committed = true
+	if err := db.attachPanelExperimentAssignments(mems, syn); err != nil {
+		return false, nil, nil, err
+	}
 	return true, mems, syn, nil
 }
 

@@ -1074,30 +1074,47 @@ func RepoConfigPath(repoPath string) string {
 // LoadRepoConfig loads per-repo config from .roborev.toml, applying the
 // linked-worktree fallback via RepoConfigPath.
 func LoadRepoConfig(repoPath string) (*RepoConfig, error) {
+	cfg, _, err := LoadRepoConfigWithRaw(repoPath)
+	return cfg, err
+}
+
+// LoadRepoConfigWithRaw loads typed and raw repository configuration from the
+// same file contents. The raw map is authoritative for explicit zero-value
+// presence when experiment overlays are merged.
+func LoadRepoConfigWithRaw(repoPath string) (*RepoConfig, map[string]any, error) {
 	path := RepoConfigPath(repoPath)
-	if _, err := os.Stat(path); os.IsNotExist(err) {
-		return nil, nil // No repo config
+	data, err := os.ReadFile(path)
+	if os.IsNotExist(err) {
+		return nil, nil, nil // No repo config
 	}
-	if err := rejectLegacyACPConfig(path); err != nil {
-		return nil, err
+	if err != nil {
+		return nil, nil, err
+	}
+
+	raw := make(map[string]any)
+	if _, err := toml.Decode(string(data), &raw); err != nil {
+		return nil, nil, err
+	}
+	if err := rejectLegacyACPConfigRaw(raw); err != nil {
+		return nil, nil, err
 	}
 
 	var cfg RepoConfig
-	md, err := toml.DecodeFile(path, &cfg)
+	md, err := toml.Decode(string(data), &cfg)
 	if err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := validateRepoConfigScope(md); err != nil {
-		return nil, err
+		return nil, nil, err
 	}
 	if err := validateExperimentEntries(cfg.Experiments, false); err != nil {
-		return nil, fmt.Errorf("config: %w", err)
+		return nil, nil, fmt.Errorf("config: %w", err)
 	}
 	if err := validateConfig(&cfg, cfg.ACP); err != nil {
-		return nil, fmt.Errorf("config: %w", err)
+		return nil, nil, fmt.Errorf("config: %w", err)
 	}
 
-	return &cfg, nil
+	return &cfg, raw, nil
 }
 
 func validateRepoConfigScope(md toml.MetaData) error {
@@ -1115,6 +1132,10 @@ func rejectLegacyACPConfig(path string) error {
 	if _, err := toml.DecodeFile(path, &raw); err != nil {
 		return err
 	}
+	return rejectLegacyACPConfigRaw(raw)
+}
+
+func rejectLegacyACPConfigRaw(raw map[string]any) error {
 	acp, ok := raw["acp"].(map[string]any)
 	if !ok {
 		return nil
@@ -1186,7 +1207,14 @@ func ResolvePostCommitBatchSizeWithError(repoPath string) (int, error) {
 // ResolveReuseReviewSession returns whether reviews should try to resume a
 // prior session from the same branch. Priority: repo > global > default false.
 func ResolveReuseReviewSession(repoPath string, globalCfg *Config) bool {
-	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil && repoCfg.ReuseReviewSession != nil {
+	repoCfg, _ := LoadRepoConfig(repoPath)
+	return ResolveReuseReviewSessionFromConfig(repoCfg, globalCfg)
+}
+
+// ResolveReuseReviewSessionFromConfig is the config-taking core used by
+// experiment-aware enqueue paths.
+func ResolveReuseReviewSessionFromConfig(repoCfg *RepoConfig, globalCfg *Config) bool {
+	if repoCfg != nil && repoCfg.ReuseReviewSession != nil {
 		return *repoCfg.ReuseReviewSession
 	}
 	if globalCfg != nil && globalCfg.ReuseReviewSession != nil {
@@ -1217,13 +1245,21 @@ func ResolveIgnoreCodexReviewUserConfig(_ string, globalCfg *Config) bool {
 // candidates should be considered. Priority: repo > global > default unlimited.
 // Non-positive values disable the cap.
 func ResolveReuseReviewSessionLookback(repoPath string, globalCfg *Config) int {
-	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil {
-		if rawRepo, rawErr := LoadRawRepo(repoPath); rawErr == nil && IsKeyInTOMLFile(rawRepo, "reuse_review_session_lookback") {
-			if repoCfg.ReuseReviewSessionLookback <= 0 {
-				return 0
-			}
-			return repoCfg.ReuseReviewSessionLookback
+	repoCfg, _ := LoadRepoConfig(repoPath)
+	rawRepo, _ := LoadRawRepo(repoPath)
+	return ResolveReuseReviewSessionLookbackFromConfig(repoCfg, rawRepo, globalCfg)
+}
+
+// ResolveReuseReviewSessionLookbackFromConfig preserves explicit zero values
+// through the raw map while avoiding a working-tree config reload.
+func ResolveReuseReviewSessionLookbackFromConfig(
+	repoCfg *RepoConfig, rawRepo map[string]any, globalCfg *Config,
+) int {
+	if repoCfg != nil && IsKeyInTOMLFile(rawRepo, "reuse_review_session_lookback") {
+		if repoCfg.ReuseReviewSessionLookback <= 0 {
+			return 0
 		}
+		return repoCfg.ReuseReviewSessionLookback
 	}
 	if globalCfg != nil && globalCfg.ReuseReviewSessionLookback > 0 {
 		return globalCfg.ReuseReviewSessionLookback
@@ -1261,7 +1297,7 @@ func LoadRepoConfigFromRefWithRaw(repoPath, ref string) (*RepoConfig, map[string
 		return nil, nil, &ConfigParseError{Ref: ref, Err: err}
 	}
 	if err := validateExperimentEntries(cfg.Experiments, false); err != nil {
-		return nil, nil, &ConfigParseError{Ref: ref, Err: err}
+		return nil, nil, fmt.Errorf("experiment config at %s: %w", ref, err)
 	}
 	if err := validateConfig(&cfg, cfg.ACP); err != nil {
 		return nil, nil, &ConfigParseError{Ref: ref, Err: err}

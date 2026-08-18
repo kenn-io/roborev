@@ -15,12 +15,12 @@ import (
 )
 
 // PostgreSQL schema version - increment when schema changes
-const pgSchemaVersion = 18
+const pgSchemaVersion = 19
 
 // pgSchemaName is the PostgreSQL schema used to isolate roborev tables
 const pgSchemaName = "roborev"
 
-//go:embed schemas/postgres_v18.sql
+//go:embed schemas/postgres_v19.sql
 var pgSchemaSQL string
 
 // pgSchemaStatements returns the individual DDL statements for schema creation.
@@ -402,6 +402,38 @@ func (p *PgPool) EnsureSchema(ctx context.Context) error {
 				return fmt.Errorf("v18 migration (add response source): %w", err)
 			}
 		}
+		if currentVersion < 19 {
+			for _, stmt := range []string{
+				`ALTER TABLE review_jobs ADD COLUMN IF NOT EXISTS branch_subject_hash TEXT`,
+				`ALTER TABLE review_jobs ADD COLUMN IF NOT EXISTS resume_source_job_uuid TEXT`,
+				`CREATE TABLE IF NOT EXISTS experiment_definitions (
+					experiment_id TEXT PRIMARY KEY,
+					definition_hash TEXT NOT NULL,
+					definition_json TEXT NOT NULL,
+					first_seen_at TIMESTAMP WITH TIME ZONE NOT NULL,
+					source_machine_id UUID NOT NULL,
+					synced_at TIMESTAMP WITH TIME ZONE
+				)`,
+				`CREATE TABLE IF NOT EXISTS experiment_assignments (
+					review_unit_kind TEXT NOT NULL,
+					review_unit_uuid TEXT NOT NULL,
+					experiment_id TEXT NOT NULL REFERENCES experiment_definitions(experiment_id),
+					arm TEXT NOT NULL,
+					subject_hash TEXT NOT NULL,
+					effective_config_hash TEXT NOT NULL,
+					assigned_at TIMESTAMP WITH TIME ZONE NOT NULL,
+					source_machine_id UUID NOT NULL,
+					synced_at TIMESTAMP WITH TIME ZONE,
+					PRIMARY KEY (review_unit_kind, review_unit_uuid, experiment_id)
+				)`,
+				`CREATE INDEX IF NOT EXISTS idx_experiment_assignments_subject
+					ON experiment_assignments(experiment_id, subject_hash)`,
+			} {
+				if _, err = p.pool.Exec(ctx, stmt); err != nil {
+					return fmt.Errorf("v19 migration (review experiments): %w", err)
+				}
+			}
+		}
 		// Update version
 		_, err = p.pool.Exec(ctx, `INSERT INTO schema_version (version) VALUES ($1) ON CONFLICT (version) DO NOTHING`, pgSchemaVersion)
 		if err != nil {
@@ -707,12 +739,12 @@ func (p *PgPool) UpsertJob(ctx context.Context, j SyncableJob, pgRepoID int64, p
 	}
 	_, err = p.pool.Exec(ctx, `
 		INSERT INTO review_jobs (
-			uuid, repo_id, commit_id, git_ref, session_id, agent, model, provider, requested_model, requested_provider, reasoning, job_type, review_type, patch_id, status, agentic,
+			uuid, repo_id, commit_id, git_ref, session_id, branch_subject_hash, resume_source_job_uuid, agent, model, provider, requested_model, requested_provider, reasoning, job_type, review_type, patch_id, status, agentic,
 			enqueued_at, started_at, finished_at, prompt, diff_content, dirty_files, error, token_usage,
 			worktree_path, source, min_severity,
 			panel_run_uuid, panel_role, panel_name, panel_member_name, panel_member_index, panel_member_config_json,
 			source_machine_id, backup_agent, backup_model, agent_invoked, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, clock_timestamp())
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, clock_timestamp())
 		ON CONFLICT (uuid) DO UPDATE SET
 			status = EXCLUDED.status,
 			finished_at = EXCLUDED.finished_at,
@@ -723,6 +755,8 @@ func (p *PgPool) UpsertJob(ctx context.Context, j SyncableJob, pgRepoID int64, p
 			requested_provider = EXCLUDED.requested_provider,
 			git_ref = EXCLUDED.git_ref,
 			session_id = CASE WHEN EXCLUDED.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased') THEN EXCLUDED.session_id ELSE COALESCE(EXCLUDED.session_id, review_jobs.session_id) END,
+			branch_subject_hash = EXCLUDED.branch_subject_hash,
+			resume_source_job_uuid = CASE WHEN EXCLUDED.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased') THEN EXCLUDED.resume_source_job_uuid ELSE COALESCE(EXCLUDED.resume_source_job_uuid, review_jobs.resume_source_job_uuid) END,
 			commit_id = EXCLUDED.commit_id,
 			patch_id = EXCLUDED.patch_id,
 			dirty_files = COALESCE(EXCLUDED.dirty_files, review_jobs.dirty_files),
@@ -740,7 +774,7 @@ func (p *PgPool) UpsertJob(ctx context.Context, j SyncableJob, pgRepoID int64, p
 			panel_member_index = EXCLUDED.panel_member_index,
 			panel_member_config_json = EXCLUDED.panel_member_config_json,
 			updated_at = clock_timestamp()
-	`, j.UUID, pgRepoID, pgCommitID, j.GitRef, nullString(j.SessionID), j.Agent, nullString(j.Model), nullString(j.Provider), nullString(j.RequestedModel), nullString(j.RequestedProvider), nullString(j.Reasoning),
+	`, j.UUID, pgRepoID, pgCommitID, j.GitRef, nullString(j.SessionID), nullString(j.BranchSubjectHash), nullString(j.ResumeSourceJobUUID), j.Agent, nullString(j.Model), nullString(j.Provider), nullString(j.RequestedModel), nullString(j.RequestedProvider), nullString(j.Reasoning),
 		defaultStr(j.JobType, "review"), j.ReviewType, nullString(j.PatchID), j.Status, j.Agentic, j.EnqueuedAt, j.StartedAt, j.FinishedAt,
 		nullString(j.Prompt), j.DiffContent, nullString(dirtyFilesJSON), nullString(j.Error), nullString(j.TokenUsage), nullString(j.WorktreePath), nullString(j.Source), normalizeMinSeverityForWrite(j.MinSeverity),
 		nullString(j.PanelRunUUID), nullString(j.PanelRole), nullString(j.PanelName), nullString(j.PanelMemberName), j.PanelMemberIndex, nullString(j.PanelMemberConfigJSON),
@@ -764,6 +798,137 @@ func (p *PgPool) UpsertReview(ctx context.Context, r SyncableReview) error {
 	return err
 }
 
+func (p *PgPool) UpsertExperimentDefinition(ctx context.Context, definition SyncableExperimentDefinition) error {
+	if _, err := p.pool.Exec(ctx, `
+		INSERT INTO experiment_definitions (
+			experiment_id, definition_hash, definition_json, first_seen_at, source_machine_id
+		) VALUES ($1, $2, $3, $4, $5)
+		ON CONFLICT(experiment_id) DO NOTHING`, definition.ExperimentID,
+		definition.DefinitionHash, definition.DefinitionJSON, definition.FirstSeenAt,
+		definition.SourceMachineID); err != nil {
+		return err
+	}
+	var storedHash string
+	if err := p.pool.QueryRow(ctx,
+		`SELECT definition_hash FROM experiment_definitions WHERE experiment_id = $1`,
+		definition.ExperimentID).Scan(&storedHash); err != nil {
+		return err
+	}
+	if storedHash != definition.DefinitionHash {
+		return fmt.Errorf("experiment definition conflict for %q", definition.ExperimentID)
+	}
+	return nil
+}
+
+func (p *PgPool) UpsertExperimentAssignment(ctx context.Context, assignment SyncableExperimentAssignment) error {
+	if err := validateExperimentAssignment(
+		assignment.ReviewUnitKind, assignment.ReviewUnitUUID,
+		assignment.ExperimentID, assignment.Arm, assignment.SubjectHash,
+		assignment.EffectiveConfigHash,
+	); err != nil {
+		return err
+	}
+	return p.Tx(ctx, func(tx pgx.Tx) error {
+		// The schema deliberately permits multiple experiment IDs per review
+		// unit for a future active/passive design. Serialize today's
+		// one-experiment policy in application code so concurrent sync workers
+		// cannot both pass the read-before-insert validation.
+		lockKey := assignment.ReviewUnitKind + ":" + assignment.ReviewUnitUUID
+		if _, err := tx.Exec(ctx,
+			`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, lockKey,
+		); err != nil {
+			return fmt.Errorf("lock experiment assignment: %w", err)
+		}
+
+		rows, err := tx.Query(ctx, `
+			SELECT experiment_id, arm, subject_hash, effective_config_hash
+			FROM experiment_assignments
+			WHERE review_unit_kind = $1 AND review_unit_uuid = $2`,
+			assignment.ReviewUnitKind, assignment.ReviewUnitUUID)
+		if err != nil {
+			return err
+		}
+		defer rows.Close()
+		for rows.Next() {
+			var experimentID, arm, subjectHash, effectiveConfigHash string
+			if err := rows.Scan(&experimentID, &arm, &subjectHash, &effectiveConfigHash); err != nil {
+				return err
+			}
+			if experimentID != assignment.ExperimentID || arm != assignment.Arm ||
+				subjectHash != assignment.SubjectHash ||
+				effectiveConfigHash != assignment.EffectiveConfigHash {
+				return fmt.Errorf("conflicting experiment assignment for %s/%s",
+					assignment.ReviewUnitKind, assignment.ReviewUnitUUID)
+			}
+		}
+		if err := rows.Err(); err != nil {
+			return err
+		}
+		rows.Close()
+
+		if _, err := tx.Exec(ctx, `
+		INSERT INTO experiment_assignments (
+			review_unit_kind, review_unit_uuid, experiment_id, arm, subject_hash,
+			effective_config_hash, assigned_at, source_machine_id
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+		ON CONFLICT(review_unit_kind, review_unit_uuid, experiment_id) DO NOTHING`,
+			assignment.ReviewUnitKind, assignment.ReviewUnitUUID, assignment.ExperimentID,
+			assignment.Arm, assignment.SubjectHash, assignment.EffectiveConfigHash,
+			assignment.AssignedAt, assignment.SourceMachineID); err != nil {
+			return err
+		}
+		return nil
+	})
+}
+
+func (p *PgPool) PullExperimentDefinitions(ctx context.Context, excludeMachineID string) ([]SyncableExperimentDefinition, error) {
+	rows, err := p.pool.Query(ctx, `
+		SELECT experiment_id, definition_hash, definition_json, first_seen_at, source_machine_id
+		FROM experiment_definitions
+		WHERE source_machine_id != $1
+		ORDER BY experiment_id`, excludeMachineID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var definitions []SyncableExperimentDefinition
+	for rows.Next() {
+		var definition SyncableExperimentDefinition
+		if err := rows.Scan(&definition.ExperimentID, &definition.DefinitionHash,
+			&definition.DefinitionJSON, &definition.FirstSeenAt,
+			&definition.SourceMachineID); err != nil {
+			return nil, err
+		}
+		definitions = append(definitions, definition)
+	}
+	return definitions, rows.Err()
+}
+
+func (p *PgPool) PullExperimentAssignments(ctx context.Context, excludeMachineID string) ([]SyncableExperimentAssignment, error) {
+	rows, err := p.pool.Query(ctx, `
+		SELECT review_unit_kind, review_unit_uuid, experiment_id, arm, subject_hash,
+		       effective_config_hash, assigned_at, source_machine_id
+		FROM experiment_assignments
+		WHERE source_machine_id != $1
+		ORDER BY assigned_at, review_unit_kind, review_unit_uuid`, excludeMachineID)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+	var assignments []SyncableExperimentAssignment
+	for rows.Next() {
+		var assignment SyncableExperimentAssignment
+		if err := rows.Scan(&assignment.ReviewUnitKind, &assignment.ReviewUnitUUID,
+			&assignment.ExperimentID, &assignment.Arm, &assignment.SubjectHash,
+			&assignment.EffectiveConfigHash, &assignment.AssignedAt,
+			&assignment.SourceMachineID); err != nil {
+			return nil, err
+		}
+		assignments = append(assignments, assignment)
+	}
+	return assignments, rows.Err()
+}
+
 // InsertResponse inserts a response in PostgreSQL (append-only, no updates)
 func (p *PgPool) InsertResponse(ctx context.Context, r SyncableResponse) error {
 	_, err := p.pool.Exec(ctx, `
@@ -785,6 +950,8 @@ type PulledJob struct {
 	CommitTimestamp       time.Time
 	GitRef                string
 	SessionID             string
+	BranchSubjectHash     string
+	ResumeSourceJobUUID   string
 	Agent                 string
 	Model                 string
 	Provider              string
@@ -838,7 +1005,7 @@ func (p *PgPool) PullJobs(ctx context.Context, excludeMachineID string, cursor s
 	rows, err := p.pool.Query(ctx, `
 		SELECT
 			j.uuid, r.identity, COALESCE(c.sha, ''), COALESCE(c.author, ''), COALESCE(c.subject, ''), COALESCE(c.timestamp, '1970-01-01'::timestamptz),
-			j.git_ref, COALESCE(j.session_id, ''), j.agent, COALESCE(j.model, ''), COALESCE(j.provider, ''), COALESCE(j.requested_model, ''), COALESCE(j.requested_provider, ''), COALESCE(j.reasoning, ''), COALESCE(j.job_type, 'review'), COALESCE(j.review_type, ''), COALESCE(j.patch_id, ''), j.status, j.agentic, COALESCE(j.agent_invoked, FALSE),
+			j.git_ref, COALESCE(j.session_id, ''), COALESCE(j.branch_subject_hash, ''), COALESCE(j.resume_source_job_uuid, ''), j.agent, COALESCE(j.model, ''), COALESCE(j.provider, ''), COALESCE(j.requested_model, ''), COALESCE(j.requested_provider, ''), COALESCE(j.reasoning, ''), COALESCE(j.job_type, 'review'), COALESCE(j.review_type, ''), COALESCE(j.patch_id, ''), j.status, j.agentic, COALESCE(j.agent_invoked, FALSE),
 			j.enqueued_at, j.started_at, j.finished_at,
 			COALESCE(j.prompt, ''), j.diff_content, j.dirty_files, COALESCE(j.error, ''), COALESCE(j.token_usage, ''),
 			COALESCE(j.worktree_path, ''), COALESCE(j.source, ''), COALESCE(j.min_severity, ''), COALESCE(j.backup_agent, ''), COALESCE(j.backup_model, ''),
@@ -868,7 +1035,7 @@ func (p *PgPool) PullJobs(ctx context.Context, excludeMachineID string, cursor s
 
 		err := rows.Scan(
 			&j.UUID, &j.RepoIdentity, &j.CommitSHA, &j.CommitAuthor, &j.CommitSubject, &j.CommitTimestamp,
-			&j.GitRef, &j.SessionID, &j.Agent, &j.Model, &j.Provider, &j.RequestedModel, &j.RequestedProvider, &j.Reasoning, &j.JobType, &j.ReviewType, &j.PatchID, &j.Status, &j.Agentic, &j.AgentInvoked,
+			&j.GitRef, &j.SessionID, &j.BranchSubjectHash, &j.ResumeSourceJobUUID, &j.Agent, &j.Model, &j.Provider, &j.RequestedModel, &j.RequestedProvider, &j.Reasoning, &j.JobType, &j.ReviewType, &j.PatchID, &j.Status, &j.Agentic, &j.AgentInvoked,
 			&j.EnqueuedAt, &j.StartedAt, &j.FinishedAt,
 			&j.Prompt, &diffContent, &dirtyFiles, &j.Error, &j.TokenUsage,
 			&j.WorktreePath, &j.Source, &j.MinSeverity, &j.BackupAgent, &j.BackupModel,
@@ -1244,12 +1411,12 @@ func queueJobUpsert(batch *pgx.Batch, jw JobWithPgIDs) error {
 	}
 	batch.Queue(`
 			INSERT INTO review_jobs (
-				uuid, repo_id, commit_id, git_ref, session_id, agent, model, provider, requested_model, requested_provider, reasoning, job_type, review_type, patch_id, status, agentic,
+				uuid, repo_id, commit_id, git_ref, session_id, branch_subject_hash, resume_source_job_uuid, agent, model, provider, requested_model, requested_provider, reasoning, job_type, review_type, patch_id, status, agentic,
 				enqueued_at, started_at, finished_at, prompt, diff_content, dirty_files, error, token_usage,
 				worktree_path, source, min_severity,
 				panel_run_uuid, panel_role, panel_name, panel_member_name, panel_member_index, panel_member_config_json,
 				source_machine_id, backup_agent, backup_model, agent_invoked, updated_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, clock_timestamp())
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, $38, $39, clock_timestamp())
 			ON CONFLICT (uuid) DO UPDATE SET
 				status = EXCLUDED.status,
 				finished_at = EXCLUDED.finished_at,
@@ -1260,6 +1427,8 @@ func queueJobUpsert(batch *pgx.Batch, jw JobWithPgIDs) error {
 				requested_provider = EXCLUDED.requested_provider,
 				git_ref = EXCLUDED.git_ref,
 				session_id = CASE WHEN EXCLUDED.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased') THEN EXCLUDED.session_id ELSE COALESCE(EXCLUDED.session_id, review_jobs.session_id) END,
+				branch_subject_hash = EXCLUDED.branch_subject_hash,
+				resume_source_job_uuid = CASE WHEN EXCLUDED.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased') THEN EXCLUDED.resume_source_job_uuid ELSE COALESCE(EXCLUDED.resume_source_job_uuid, review_jobs.resume_source_job_uuid) END,
 				commit_id = EXCLUDED.commit_id,
 				patch_id = EXCLUDED.patch_id,
 				dirty_files = COALESCE(EXCLUDED.dirty_files, review_jobs.dirty_files),
@@ -1277,7 +1446,7 @@ func queueJobUpsert(batch *pgx.Batch, jw JobWithPgIDs) error {
 				panel_member_index = EXCLUDED.panel_member_index,
 				panel_member_config_json = EXCLUDED.panel_member_config_json,
 				updated_at = clock_timestamp()
-		`, j.UUID, jw.PgRepoID, jw.PgCommitID, j.GitRef, nullString(j.SessionID), j.Agent, nullString(j.Model), nullString(j.Provider), nullString(j.RequestedModel), nullString(j.RequestedProvider), nullString(j.Reasoning),
+		`, j.UUID, jw.PgRepoID, jw.PgCommitID, j.GitRef, nullString(j.SessionID), nullString(j.BranchSubjectHash), nullString(j.ResumeSourceJobUUID), j.Agent, nullString(j.Model), nullString(j.Provider), nullString(j.RequestedModel), nullString(j.RequestedProvider), nullString(j.Reasoning),
 		defaultStr(j.JobType, "review"), j.ReviewType, nullString(j.PatchID), j.Status, j.Agentic, j.EnqueuedAt, j.StartedAt, j.FinishedAt,
 		nullString(sanitizePostgresText(j.Prompt)), sanitizePostgresTextPointer(j.DiffContent), nullString(dirtyFilesJSON), nullString(sanitizePostgresText(j.Error)), nullString(j.TokenUsage), nullString(j.WorktreePath), nullString(j.Source), normalizeMinSeverityForWrite(j.MinSeverity),
 		nullString(j.PanelRunUUID), nullString(j.PanelRole), nullString(j.PanelName), nullString(j.PanelMemberName), j.PanelMemberIndex, nullString(j.PanelMemberConfigJSON),

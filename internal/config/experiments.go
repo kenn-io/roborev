@@ -75,8 +75,10 @@ type ExperimentAssignment struct {
 // experimental overlay and the assignment that caused it. Assignment is nil
 // when the review is not enrolled.
 type ExperimentSelection struct {
-	RepoConfig *RepoConfig
-	Assignment *ExperimentAssignment
+	RepoConfig    *RepoConfig
+	RawRepoConfig map[string]any
+	SubjectHash   string
+	Assignment    *ExperimentAssignment
 }
 
 type canonicalExperimentDefinition struct {
@@ -86,90 +88,82 @@ type canonicalExperimentDefinition struct {
 }
 
 var reviewExperimentOverlayKeys = map[string]struct{}{
-	"agent":                              {},
-	"model":                              {},
-	"backup_agent":                       {},
-	"backup_model":                       {},
-	"review_context_count":               {},
-	"review_guidelines":                  {},
-	"review_md_fallback":                 {},
-	"review_guidelines_supersede_global": {},
-	"job_timeout_minutes":                {},
-	"review_reasoning":                   {},
-	"review_min_severity":                {},
-	"exclude_patterns":                   {},
-	"max_prompt_size":                    {},
-	"reuse_review_session":               {},
-	"reuse_review_session_lookback":      {},
-	"review_agent":                       {},
-	"review_agent_fast":                  {},
-	"review_agent_low":                   {},
-	"review_agent_standard":              {},
-	"review_agent_medium":                {},
-	"review_agent_thorough":              {},
-	"review_agent_high":                  {},
-	"review_agent_xhigh":                 {},
-	"review_agent_maximum":               {},
-	"review_agent_max":                   {},
-	"review_model":                       {},
-	"review_model_fast":                  {},
-	"review_model_low":                   {},
-	"review_model_standard":              {},
-	"review_model_medium":                {},
-	"review_model_thorough":              {},
-	"review_model_high":                  {},
-	"review_model_xhigh":                 {},
-	"review_model_maximum":               {},
-	"review_model_max":                   {},
-	"review_backup_agent":                {},
-	"review_backup_model":                {},
-	"security_agent":                     {},
-	"security_agent_fast":                {},
-	"security_agent_low":                 {},
-	"security_agent_standard":            {},
-	"security_agent_medium":              {},
-	"security_agent_thorough":            {},
-	"security_agent_high":                {},
-	"security_agent_xhigh":               {},
-	"security_agent_maximum":             {},
-	"security_agent_max":                 {},
-	"security_model":                     {},
-	"security_model_fast":                {},
-	"security_model_low":                 {},
-	"security_model_standard":            {},
-	"security_model_medium":              {},
-	"security_model_thorough":            {},
-	"security_model_high":                {},
-	"security_model_xhigh":               {},
-	"security_model_maximum":             {},
-	"security_model_max":                 {},
-	"security_backup_agent":              {},
-	"security_backup_model":              {},
-	"design_agent":                       {},
-	"design_agent_fast":                  {},
-	"design_agent_low":                   {},
-	"design_agent_standard":              {},
-	"design_agent_medium":                {},
-	"design_agent_thorough":              {},
-	"design_agent_high":                  {},
-	"design_agent_xhigh":                 {},
-	"design_agent_maximum":               {},
-	"design_agent_max":                   {},
-	"design_model":                       {},
-	"design_model_fast":                  {},
-	"design_model_low":                   {},
-	"design_model_standard":              {},
-	"design_model_medium":                {},
-	"design_model_thorough":              {},
-	"design_model_high":                  {},
-	"design_model_xhigh":                 {},
-	"design_model_maximum":               {},
-	"design_model_max":                   {},
-	"design_backup_agent":                {},
-	"design_backup_model":                {},
-	"review":                             {},
-	"ci":                                 {},
-	"acp":                                {},
+	"agent":                         {},
+	"model":                         {},
+	"backup_agent":                  {},
+	"backup_model":                  {},
+	"review_reasoning":              {},
+	"review_min_severity":           {},
+	"reuse_review_session":          {},
+	"reuse_review_session_lookback": {},
+	"review_agent":                  {},
+	"review_agent_fast":             {},
+	"review_agent_low":              {},
+	"review_agent_standard":         {},
+	"review_agent_medium":           {},
+	"review_agent_thorough":         {},
+	"review_agent_high":             {},
+	"review_agent_xhigh":            {},
+	"review_agent_maximum":          {},
+	"review_agent_max":              {},
+	"review_model":                  {},
+	"review_model_fast":             {},
+	"review_model_low":              {},
+	"review_model_standard":         {},
+	"review_model_medium":           {},
+	"review_model_thorough":         {},
+	"review_model_high":             {},
+	"review_model_xhigh":            {},
+	"review_model_maximum":          {},
+	"review_model_max":              {},
+	"review_backup_agent":           {},
+	"review_backup_model":           {},
+	"security_agent":                {},
+	"security_agent_fast":           {},
+	"security_agent_low":            {},
+	"security_agent_standard":       {},
+	"security_agent_medium":         {},
+	"security_agent_thorough":       {},
+	"security_agent_high":           {},
+	"security_agent_xhigh":          {},
+	"security_agent_maximum":        {},
+	"security_agent_max":            {},
+	"security_model":                {},
+	"security_model_fast":           {},
+	"security_model_low":            {},
+	"security_model_standard":       {},
+	"security_model_medium":         {},
+	"security_model_thorough":       {},
+	"security_model_high":           {},
+	"security_model_xhigh":          {},
+	"security_model_maximum":        {},
+	"security_model_max":            {},
+	"security_backup_agent":         {},
+	"security_backup_model":         {},
+	"design_agent":                  {},
+	"design_agent_fast":             {},
+	"design_agent_low":              {},
+	"design_agent_standard":         {},
+	"design_agent_medium":           {},
+	"design_agent_thorough":         {},
+	"design_agent_high":             {},
+	"design_agent_xhigh":            {},
+	"design_agent_maximum":          {},
+	"design_agent_max":              {},
+	"design_model":                  {},
+	"design_model_fast":             {},
+	"design_model_low":              {},
+	"design_model_standard":         {},
+	"design_model_medium":           {},
+	"design_model_thorough":         {},
+	"design_model_high":             {},
+	"design_model_xhigh":            {},
+	"design_model_maximum":          {},
+	"design_model_max":              {},
+	"design_backup_agent":           {},
+	"design_backup_model":           {},
+	"review":                        {},
+	"ci":                            {},
 }
 
 var reviewExperimentCIKeys = map[string]struct{}{
@@ -188,6 +182,7 @@ func SelectReviewExperiment(in ExperimentSelectionInput) (ExperimentSelection, e
 	if !validExperimentSubject(in.Workflow, in.Subject) {
 		return result, nil
 	}
+	result.SubjectHash = hashExperimentSubject(in.Subject)
 
 	definitions, err := mergeExperimentDefinitions(in.Global, in.Repo)
 	if err != nil {
@@ -211,14 +206,20 @@ func SelectReviewExperiment(in ExperimentSelectionInput) (ExperimentSelection, e
 		return result, nil
 	}
 
-	subjectHash := hashExperimentSubject(in.Subject)
+	subjectHash := result.SubjectHash
 	definitionJSON, definitionHash, err := canonicalizeExperimentDefinition(selected)
 	if err != nil {
 		return ExperimentSelection{}, fmt.Errorf("experiment %q: %w", selectedID, err)
 	}
 	arm := assignExperimentArm(selectedID, subjectHash, *selected.Ratio)
 
-	effectiveRaw, err := effectiveRepoConfigMap(in.Repo, in.RawRepo, nil)
+	if in.Repo != nil && in.RawRepo == nil {
+		return ExperimentSelection{}, fmt.Errorf(
+			"experiment %q: repository config is missing its paired raw representation",
+			selectedID,
+		)
+	}
+	effectiveRaw, err := effectiveRepoConfigMap(in.Global, in.RawRepo, nil)
 	if err != nil {
 		return ExperimentSelection{}, err
 	}
@@ -236,6 +237,7 @@ func SelectReviewExperiment(in ExperimentSelectionInput) (ExperimentSelection, e
 	effectiveHash := sha256Hex(effectiveJSON)
 
 	result.RepoConfig = effectiveCfg
+	result.RawRepoConfig = effectiveRaw
 	result.Assignment = &ExperimentAssignment{
 		ID:                  selectedID,
 		Arm:                 arm,
@@ -407,16 +409,13 @@ func assignExperimentArm(id, subjectHash string, ratio float64) ExperimentArm {
 	return ExperimentArmDefault
 }
 
-func effectiveRepoConfigMap(repo *RepoConfig, rawRepo, overlay map[string]any) (map[string]any, error) {
-	base := cloneExperimentMap(rawRepo)
-	if base == nil && repo != nil {
-		data, err := tomlv2.Marshal(repo)
-		if err != nil {
-			return nil, fmt.Errorf("encode repository config: %w", err)
-		}
-		if err := tomlv2.Unmarshal(data, &base); err != nil {
-			return nil, fmt.Errorf("decode repository config map: %w", err)
-		}
+func effectiveRepoConfigMap(global *Config, rawRepo, overlay map[string]any) (map[string]any, error) {
+	base, err := globalReviewConfigMap(global)
+	if err != nil {
+		return nil, err
+	}
+	if rawRepo != nil {
+		base = mergeExperimentMaps(base, rawRepo)
 	}
 	if base == nil {
 		base = make(map[string]any)
@@ -425,19 +424,75 @@ func effectiveRepoConfigMap(repo *RepoConfig, rawRepo, overlay map[string]any) (
 	return mergeExperimentMaps(base, overlay), nil
 }
 
+func globalReviewConfigMap(global *Config) (map[string]any, error) {
+	if global == nil {
+		return make(map[string]any), nil
+	}
+	data, err := tomlv2.Marshal(global)
+	if err != nil {
+		return nil, fmt.Errorf("encode global config: %w", err)
+	}
+	var rawGlobal map[string]any
+	if err := tomlv2.Unmarshal(data, &rawGlobal); err != nil {
+		return nil, fmt.Errorf("decode global config map: %w", err)
+	}
+	result := make(map[string]any)
+	for key, value := range rawGlobal {
+		if key == "agent" || key == "ci" {
+			continue
+		}
+		if _, allowed := reviewExperimentOverlayKeys[key]; allowed {
+			result[key] = cloneExperimentValue(value)
+		}
+	}
+	copyGlobalDefault := func(globalKey, repoKey string) {
+		if value, ok := rawGlobal[globalKey]; ok {
+			result[repoKey] = cloneExperimentValue(value)
+		}
+	}
+	copyGlobalDefault("default_agent", "agent")
+	copyGlobalDefault("default_model", "model")
+	copyGlobalDefault("default_backup_agent", "backup_agent")
+	copyGlobalDefault("default_backup_model", "backup_model")
+	copyGlobalDefault("default_max_prompt_size", "max_prompt_size")
+	if rawCI, ok := rawGlobal["ci"].(map[string]any); ok {
+		ci := make(map[string]any)
+		for key, value := range rawCI {
+			if _, allowed := reviewExperimentCIKeys[key]; allowed {
+				ci[key] = cloneExperimentValue(value)
+			}
+		}
+		if len(ci) > 0 {
+			result["ci"] = ci
+		}
+	}
+	return result, nil
+}
+
 func decodeExperimentRepoConfig(raw map[string]any) (*RepoConfig, error) {
 	data, err := tomlv2.Marshal(raw)
 	if err != nil {
 		return nil, err
 	}
 	var cfg RepoConfig
-	if err := tomlv2.Unmarshal(data, &cfg); err != nil {
+	decoder := tomlv2.NewDecoder(bytes.NewReader(data)).DisallowUnknownFields()
+	if err := decoder.Decode(&cfg); err != nil {
 		return nil, err
 	}
 	if err := validateConfig(&cfg, cfg.ACP); err != nil {
 		return nil, err
 	}
 	return &cfg, nil
+}
+
+// FingerprintExperimentConfig returns the canonical hash stored with an
+// assignment after the caller has resolved the complete review-unit plan.
+func FingerprintExperimentConfig(value any) (string, error) {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return "", err
+	}
+	return sha256Hex(encoded), nil
 }
 
 func mergeExperimentMaps(base, overlay map[string]any) map[string]any {

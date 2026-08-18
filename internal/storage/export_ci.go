@@ -55,29 +55,31 @@ type ExportCIMetricsPage struct {
 // Jobs, by contrast, reflects the currently retained review_jobs rows for
 // the panel run and may be empty for panels whose repo was cascade-deleted.
 type ExportCIPanel struct {
-	GithubRepo     string             `json:"github_repo"`
-	PRNumber       int64              `json:"pr_number"`
-	HeadSHA        string             `json:"head_sha"`
-	PanelCreatedAt string             `json:"panel_created_at"`
-	PostedAt       string             `json:"posted_at"`
-	FirstAttemptAt *string            `json:"first_attempt_at"`
-	AttemptCount   *int64             `json:"attempt_count"`
-	Outcome        string             `json:"outcome"`
-	SynthesisAgent *string            `json:"synthesis_agent"`
-	SynthesisModel *string            `json:"synthesis_model"`
-	Jobs           []ExportCIPanelJob `json:"jobs"`
+	GithubRepo     string                 `json:"github_repo"`
+	PRNumber       int64                  `json:"pr_number"`
+	HeadSHA        string                 `json:"head_sha"`
+	PanelCreatedAt string                 `json:"panel_created_at"`
+	PostedAt       string                 `json:"posted_at"`
+	FirstAttemptAt *string                `json:"first_attempt_at"`
+	AttemptCount   *int64                 `json:"attempt_count"`
+	Outcome        string                 `json:"outcome"`
+	SynthesisAgent *string                `json:"synthesis_agent"`
+	SynthesisModel *string                `json:"synthesis_model"`
+	Jobs           []ExportCIPanelJob     `json:"jobs"`
+	Experiments    []ExperimentAssignment `json:"experiments"`
 }
 
 // ExportCIPanelJob is one member or synthesis job of an exported panel.
 type ExportCIPanelJob struct {
-	JobUUID    string  `json:"job_uuid"`
-	Role       string  `json:"role"`
-	Agent      string  `json:"agent"`
-	Model      *string `json:"model"`
-	Provider   *string `json:"provider"`
-	Status     string  `json:"status"`
-	StartedAt  *string `json:"started_at"`
-	FinishedAt *string `json:"finished_at"`
+	JobUUID             string  `json:"job_uuid"`
+	Role                string  `json:"role"`
+	Agent               string  `json:"agent"`
+	Model               *string `json:"model"`
+	Provider            *string `json:"provider"`
+	Status              string  `json:"status"`
+	StartedAt           *string `json:"started_at"`
+	FinishedAt          *string `json:"finished_at"`
+	ResumeSourceJobUUID *string `json:"resume_source_job_uuid"`
 }
 
 type ciMetricsCursor struct {
@@ -188,6 +190,10 @@ func (db *DB) exportCIMetricsPanels(opts ExportCIMetricsOptions, cursor *ciMetri
 			return ExportCIMetricsPage{}, err
 		}
 		item.panel.Jobs = jobs
+		item.panel.Experiments, err = db.GetExperimentAssignments(ReviewUnitPanel, item.runUUID)
+		if err != nil {
+			return ExportCIMetricsPage{}, err
+		}
 		page.Panels = append(page.Panels, item.panel)
 	}
 
@@ -539,7 +545,7 @@ func scanCIMetricsRow(rows *sql.Rows) (int64, ExportCIPanel, string, error) {
 func (db *DB) exportCIPanelJobs(panelRunUUID string) ([]ExportCIPanelJob, error) {
 	rows, err := db.Query(`
 		SELECT j.uuid, COALESCE(j.panel_role, ''), j.agent, j.model,
-		       j.provider, j.status, j.started_at, j.finished_at
+		       j.provider, j.status, j.started_at, j.finished_at, j.resume_source_job_uuid
 		FROM review_jobs j
 		WHERE j.panel_run_uuid = ?
 		  AND COALESCE(j.panel_role, '') IN ('member','synthesis')
@@ -552,14 +558,15 @@ func (db *DB) exportCIPanelJobs(panelRunUUID string) ([]ExportCIPanelJob, error)
 	jobs := []ExportCIPanelJob{}
 	for rows.Next() {
 		var (
-			job        ExportCIPanelJob
-			model      sql.NullString
-			provider   sql.NullString
-			startedAt  sql.NullString
-			finishedAt sql.NullString
+			job          ExportCIPanelJob
+			model        sql.NullString
+			provider     sql.NullString
+			startedAt    sql.NullString
+			finishedAt   sql.NullString
+			resumeSource sql.NullString
 		)
 		if err := rows.Scan(&job.JobUUID, &job.Role, &job.Agent, &model,
-			&provider, &job.Status, &startedAt, &finishedAt); err != nil {
+			&provider, &job.Status, &startedAt, &finishedAt, &resumeSource); err != nil {
 			return nil, fmt.Errorf("scan ci panel job: %w", err)
 		}
 		if model.Valid && model.String != "" {
@@ -575,6 +582,9 @@ func (db *DB) exportCIPanelJobs(panelRunUUID string) ([]ExportCIPanelJob, error)
 		if finishedAt.Valid {
 			v := formatExportTime(parseSQLiteTime(finishedAt.String))
 			job.FinishedAt = &v
+		}
+		if resumeSource.Valid && resumeSource.String != "" {
+			job.ResumeSourceJobUUID = &resumeSource.String
 		}
 		jobs = append(jobs, job)
 	}

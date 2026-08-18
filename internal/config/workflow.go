@@ -390,10 +390,19 @@ func ResolveRefineMinSeverity(explicit string, repoPath string, globalCfg *Confi
 // ResolveReviewMinSeverity determines minimum severity for review.
 // Priority: explicit > per-repo config > global config > "" (no filter)
 func ResolveReviewMinSeverity(explicit string, repoPath string, globalCfg *Config) (string, error) {
+	repoCfg, _ := LoadRepoConfig(repoPath)
+	return ResolveReviewMinSeverityFromConfig(explicit, repoCfg, globalCfg)
+}
+
+// ResolveReviewMinSeverityFromConfig resolves review severity from an
+// already-loaded repository config without re-reading the working tree.
+func ResolveReviewMinSeverityFromConfig(
+	explicit string, repoCfg *RepoConfig, globalCfg *Config,
+) (string, error) {
 	if strings.TrimSpace(explicit) != "" {
 		return NormalizeMinSeverity(explicit)
 	}
-	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil && strings.TrimSpace(repoCfg.ReviewMinSeverity) != "" {
+	if repoCfg != nil && strings.TrimSpace(repoCfg.ReviewMinSeverity) != "" {
 		return NormalizeMinSeverity(repoCfg.ReviewMinSeverity)
 	}
 	if globalCfg != nil && strings.TrimSpace(globalCfg.ReviewMinSeverity) != "" {

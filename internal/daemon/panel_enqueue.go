@@ -29,6 +29,7 @@ type targetDescriptor struct {
 	commitID          int64
 	gitRef            string // frozen SHA / <sha>..<sha> / "dirty"; "" for prompt
 	branch            string
+	branchSubjectHash string
 	sessionSHA        string // SHA to key session reuse on ("" for prompt jobs)
 	patchID           string
 	diffContent       string
@@ -53,7 +54,8 @@ type targetDescriptor struct {
 func (d targetDescriptor) baseOpts() storage.EnqueueOpts {
 	return storage.EnqueueOpts{
 		RepoID: d.repoID, CommitID: d.commitID, GitRef: d.gitRef, Branch: d.branch,
-		PatchID: d.patchID, DiffContent: d.diffContent, DirtyFiles: d.dirtyFiles, MinSeverity: d.minSeverity,
+		BranchSubjectHash: d.branchSubjectHash,
+		PatchID:           d.patchID, DiffContent: d.diffContent, DirtyFiles: d.dirtyFiles, MinSeverity: d.minSeverity,
 		WorktreePath: d.worktreePath, JobType: d.jobType, Prompt: d.prompt,
 		Source: d.source, PromptPrebuilt: d.promptPrebuilt, OutputPrefix: d.outputPrefix, Label: d.label,
 		Agentic: d.agentic, RequestedModel: d.requestedModel, RequestedProvider: d.requestedProvider,
@@ -405,7 +407,87 @@ type panelRunInputs struct {
 	gitRef         string
 	resolutionPath string
 	cfg            *config.Config
+	repoCfg        *config.RepoConfig
+	rawRepoCfg     map[string]any
+	experiment     *config.ExperimentAssignment
 	repo           *storage.Repo
+}
+
+type experimentJobPlan struct {
+	Agent                 string
+	Model                 string
+	Provider              string
+	Reasoning             string
+	ReviewType            string
+	MinSeverity           string
+	BackupAgent           string
+	BackupModel           string
+	PanelName             string
+	PanelMemberName       string
+	PanelMemberIndex      int
+	PanelMemberConfigJSON string
+	JobType               string
+}
+
+type experimentReviewPlan struct {
+	Members   []experimentJobPlan
+	Synthesis experimentJobPlan
+}
+
+func experimentPlanForJob(opts storage.EnqueueOpts) experimentJobPlan {
+	return experimentJobPlan{
+		Agent:                 opts.Agent,
+		Model:                 opts.Model,
+		Provider:              opts.Provider,
+		Reasoning:             opts.Reasoning,
+		ReviewType:            opts.ReviewType,
+		MinSeverity:           opts.MinSeverity,
+		BackupAgent:           opts.BackupAgent,
+		BackupModel:           opts.BackupModel,
+		PanelName:             opts.PanelName,
+		PanelMemberName:       opts.PanelMemberName,
+		PanelMemberIndex:      opts.PanelMemberIndex,
+		PanelMemberConfigJSON: opts.PanelMemberConfigJSON,
+		JobType:               opts.JobType,
+	}
+}
+
+func experimentPlanForPanel(
+	members []storage.EnqueueOpts,
+	synthesis storage.EnqueueOpts,
+) experimentReviewPlan {
+	plan := experimentReviewPlan{
+		Members:   make([]experimentJobPlan, len(members)),
+		Synthesis: experimentPlanForJob(synthesis),
+	}
+	for i := range members {
+		plan.Members[i] = experimentPlanForJob(members[i])
+	}
+	return plan
+}
+
+func storageAssignmentForExperiment(
+	assignment *config.ExperimentAssignment,
+	plan any,
+) (*storage.ExperimentAssignmentInput, error) {
+	if assignment == nil {
+		return nil, nil
+	}
+	effectiveHash, err := config.FingerprintExperimentConfig(struct {
+		EffectiveConfig string
+		Plan            any
+	}{assignment.EffectiveConfigHash, plan})
+	if err != nil {
+		return nil, err
+	}
+	return &storage.ExperimentAssignmentInput{
+		ExperimentID:        assignment.ID,
+		DefinitionHash:      assignment.DefinitionHash,
+		DefinitionJSON:      assignment.DefinitionJSON,
+		Arm:                 string(assignment.Arm),
+		SubjectHash:         assignment.SubjectHash,
+		EffectiveConfigHash: effectiveHash,
+	}, nil
 }
 
 // enqueuePanelRun resolves the selected panel and fans the frozen target out
@@ -416,17 +498,32 @@ type panelRunInputs struct {
 // are resolved up front so a selected backup agent receives its own model
 // instead of the preferred agent's model.
 func (s *Server) enqueuePanelRun(ctx context.Context, in panelRunInputs) (*RawJSONOutput, error) {
-	members, synth, err := config.ResolvePanel(in.panelName, in.resolutionPath, in.cfg)
+	members, synth, err := config.ResolveCIPanel(in.panelName, in.repoCfg, in.cfg)
 	if err != nil {
 		return rawJSONOutput(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
 	}
 
 	runUUID := uuid.NewString()
-	memberOpts := panelMemberOpts(in.descriptor, in.panelName, runUUID, members, in.resolutionPath, in.cfg)
-	repoCfg, _ := config.LoadRepoConfig(in.resolutionPath)
+	memberOpts := panelMemberOpts(in.descriptor, in.panelName, runUUID, members, in.repoCfg, in.cfg)
 	synthOpts := panelSynthesisOpts(
-		in.descriptor, in.panelName, runUUID, synth, repoCfg, in.cfg,
+		in.descriptor, in.panelName, runUUID, synth, in.repoCfg, in.cfg,
 	)
+	if in.experiment != nil {
+		assignment, assignErr := storageAssignmentForExperiment(
+			in.experiment, experimentPlanForPanel(memberOpts, synthOpts),
+		)
+		if assignErr != nil {
+			return rawJSONOutput(http.StatusInternalServerError,
+				ErrorResponse{Error: fmt.Sprintf("fingerprint experiment plan: %v", assignErr)})
+		}
+		synthOpts.Experiment = assignment
+	}
+	for i := range memberOpts {
+		memberOpts[i].SessionID, memberOpts[i].ResumeSourceJobUUID = findCompatibleReusableSession(
+			ctx, s.db, in.resolutionPath, in.descriptor.sessionSHA,
+			memberOpts[i], in.repoCfg, in.rawRepoCfg, in.cfg, synthOpts.Experiment,
+		)
+	}
 
 	var memberJobs []*storage.ReviewJob
 	var synthJob *storage.ReviewJob
@@ -499,13 +596,13 @@ func panelHasDesignMember(members []config.ResolvedMember) bool {
 // /review_type and panel fields onto the frozen base opts.
 func panelMemberOpts(
 	descriptor targetDescriptor, panelName, runUUID string, members []config.ResolvedMember,
-	repoPath string, cfg *config.Config,
+	repoCfg *config.RepoConfig, cfg *config.Config,
 ) []storage.EnqueueOpts {
 	out := make([]storage.EnqueueOpts, len(members))
 	for i, m := range members {
 		o := descriptor.baseOpts()
 		cfgJSON, _ := json.Marshal(m)
-		o.Agent, o.Model = resolvePanelMemberExecution(m, descriptor, repoPath, cfg)
+		o.Agent, o.Model = resolvePanelMemberExecution(m, descriptor, repoCfg, cfg)
 		o.Provider = m.Provider
 		o.Reasoning, o.ReviewType = m.Reasoning, m.ReviewType
 		o.PanelRunUUID, o.PanelRole = runUUID, storage.PanelRoleMember
@@ -517,9 +614,8 @@ func panelMemberOpts(
 }
 
 func resolvePanelMemberExecution(
-	m config.ResolvedMember, descriptor targetDescriptor, repoPath string, cfg *config.Config,
+	m config.ResolvedMember, descriptor targetDescriptor, repoCfg *config.RepoConfig, cfg *config.Config,
 ) (string, string) {
-	repoCfg, _ := config.LoadRepoConfig(repoPath)
 	agentName := agent.StorageNameFromConfig(m.Agent, repoCfg, cfg)
 	model := m.Model
 	resolution, err := agent.ResolveWorkflowConfigFromConfig(

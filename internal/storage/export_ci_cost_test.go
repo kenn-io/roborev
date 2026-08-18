@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"encoding/base64"
 	"encoding/json"
 	"path/filepath"
@@ -53,10 +54,26 @@ func TestExportCICostsIncludesMappedPanelJobWithoutSource(t *testing.T) {
 		(github_repo, pr_number, head_sha, panel_run_uuid, created_at)
 		VALUES ('owner/project', 1, 'head', ?, '2026-08-01 00:00:00')`, "run-mapped-panel")
 	require.NoError(t, err)
+	require.NoError(t, insertExperimentAssignmentTx(
+		context.Background(), db, ReviewUnitPanel, "run-mapped-panel",
+		&ExperimentAssignmentInput{
+			ExperimentID: "ci-v1", DefinitionHash: "definition-hash",
+			DefinitionJSON: `{"ratio":1}`, Arm: "experiment",
+			SubjectHash: "subject-hash", EffectiveConfigHash: "config-hash",
+		},
+		"test-machine", time.Now(),
+	))
+	_, err = db.Exec(`UPDATE review_jobs SET resume_source_job_uuid = ? WHERE id = ?`,
+		"source-job-uuid", job.ID)
+	require.NoError(t, err)
 
 	page, err := db.ExportCICosts(ExportCICostOptions{})
 	require.NoError(t, err)
 	assert.Equal(t, []string{job.UUID}, costJobUUIDs(page.Jobs))
+	require.Len(t, page.Jobs[0].Experiments, 1)
+	assert.Equal(t, "ci-v1", page.Jobs[0].Experiments[0].ID)
+	require.NotNil(t, page.Jobs[0].ResumeSourceJobUUID)
+	assert.Equal(t, "source-job-uuid", *page.Jobs[0].ResumeSourceJobUUID)
 
 	require.NoError(t, db.DeleteCIPanelByRun("run-mapped-panel"))
 	page, err = db.ExportCICosts(ExportCICostOptions{})

@@ -591,6 +591,11 @@ func TestRetryJob(t *testing.T) {
 	// gates cost eligibility, so a stale marker could miscount a re-attempt
 	// that fails before selecting an agent.
 	require.NoError(t, db.MarkJobAgentInvoked(job.ID, "worker-1", "codex review retry123"))
+	_, err := db.Exec(
+		`UPDATE review_jobs SET session_id = ?, resume_source_job_uuid = ? WHERE id = ?`,
+		"session-before-retry", "source-before-retry", job.ID,
+	)
+	require.NoError(t, err)
 
 	// Retry should succeed (retry_count: 0 -> 1)
 	retried, err := db.RetryJob(job.ID, "", 3, 0)
@@ -601,6 +606,8 @@ func TestRetryJob(t *testing.T) {
 	// Verify job is queued with retry_count=1 and the agent-ran marker cleared
 	updatedJob, _ := db.GetJobByID(job.ID)
 	assert.Equal(t, JobStatusQueued, updatedJob.Status)
+	assert.Empty(t, updatedJob.SessionID)
+	assert.Empty(t, updatedJob.ResumeSourceJobUUID)
 	assert.Empty(t, updatedJob.CommandLine, "retry clears the prior attempt's command line")
 	assert.False(t, getJobAgentInvoked(t, db, job.ID), "retry clears the agent_invoked marker")
 	count, _ := db.GetJobRetryCount(job.ID)
@@ -740,6 +747,11 @@ func TestFailoverJob(t *testing.T) {
 		// Claim to make it running
 		claimJob(t, db, "worker-1")
 		require.NoError(t, db.MarkJobAgentInvoked(job.ID, "worker-1", "primary review fo-abc123"))
+		_, err = db.Exec(
+			`UPDATE review_jobs SET session_id = ?, resume_source_job_uuid = ? WHERE id = ?`,
+			"session-before-failover", "source-before-failover", job.ID,
+		)
+		require.NoError(t, err)
 
 		// Failover should succeed
 		ok, err := db.FailoverJob(job.ID, "worker-1", "backup", "")
@@ -753,6 +765,8 @@ func TestFailoverJob(t *testing.T) {
 
 		assert.Equal(t, "backup", updated.Agent)
 		assert.Equal(t, JobStatusQueued, updated.Status)
+		assert.Empty(t, updated.SessionID)
+		assert.Empty(t, updated.ResumeSourceJobUUID)
 		assert.Empty(t, updated.CommandLine, "failover clears the prior agent's command line")
 		assert.False(t, getJobAgentInvoked(t, db, job.ID), "failover clears the agent_invoked marker")
 		count, _ := db.GetJobRetryCount(job.ID)

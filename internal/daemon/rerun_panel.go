@@ -98,6 +98,11 @@ func (s *Server) rerunPanelRun(job *storage.ReviewJob, requestID string) (*Rerun
 			fmt.Sprintf("load synthesis dirty files: %v", err))
 	}
 	synthOpts := panelRerunSynthesisOpts(job, runUUID, synthDiff, synthDirtyFiles, source)
+	synthOpts.Experiment, err = s.db.GetExperimentAssignmentInputForJobUUID(job.UUID)
+	if err != nil {
+		return nil, huma.Error500InternalServerError(
+			fmt.Sprintf("load panel experiment assignment: %v", err))
+	}
 
 	_, synthJob, replayed, err := s.db.EnqueuePanelRerun(memberOpts, synthOpts, requestID, job.ID)
 	if err != nil {
@@ -152,6 +157,7 @@ func panelRerunMemberOpts(m storage.ReviewJob, runUUID, diff string, dirtyFiles 
 		GitRef:                m.GitRef,
 		Branch:                m.Branch,
 		CIBaseBranch:          m.CIBaseBranch,
+		BranchSubjectHash:     m.BranchSubjectHash,
 		Agent:                 m.Agent,
 		Model:                 m.Model,
 		Provider:              m.Provider,
@@ -191,6 +197,7 @@ func panelRerunSynthesisOpts(job *storage.ReviewJob, runUUID, diff string, dirty
 		GitRef:                job.GitRef,
 		Branch:                job.Branch,
 		CIBaseBranch:          job.CIBaseBranch,
+		BranchSubjectHash:     job.BranchSubjectHash,
 		Agent:                 job.Agent,
 		Model:                 job.Model,
 		Provider:              job.Provider,

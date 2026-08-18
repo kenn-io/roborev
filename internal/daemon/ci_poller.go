@@ -53,6 +53,8 @@ type ghPRAuthor struct {
 type ghPR struct {
 	Number      int        `json:"number"`
 	HeadRefOid  string     `json:"headRefOid"`
+	HeadRefName string     `json:"headRefName"`
+	HeadRepo    string     `json:"headRepo"`
 	BaseRefName string     `json:"baseRefName"`
 	Title       string     `json:"title"`
 	Author      ghPRAuthor `json:"author"`
@@ -62,6 +64,8 @@ type ghPR struct {
 type panelPostTarget struct {
 	Open        bool
 	HeadSHA     string
+	HeadRefName string
+	HeadRepo    string
 	BaseRefName string
 	AuthorLogin string
 	Labels      []string
@@ -85,22 +89,22 @@ type CIPoller struct {
 
 	// Test seams for mocking side effects (gh/git/LLM) in unit tests.
 	// Nil means use the real implementation.
-	listOpenPRsFn       func(context.Context, string) ([]ghPR, error)
-	listTrustedActorsFn func(context.Context, string) (map[string]struct{}, error)
-	listPRDiscussionFn  func(context.Context, string, int) ([]ghpkg.PRDiscussionComment, error)
-	gitFetchFn          func(context.Context, string, []string) error
-	gitFetchPRHeadFn    func(context.Context, string, int, []string) error
-	gitCloneFn          func(ctx context.Context, ghRepo, targetPath string, env []string) error
-	mergeBaseFn         func(string, string, string) (string, error)
-	loadRepoConfigFn    func(string) (*config.RepoConfig, error)
-	buildReviewPromptFn func(context.Context, string, string, int64, int, string, string, string, string, *config.Config) (string, error)
-	postPRCommentFn     func(string, int, string) error
-	setCommitStatusFn   func(ghRepo, sha, state, description string) error
-	setSkippedCheckFn   func(ghRepo, sha, summary string) error
-	agentResolverFn     func(name string) (string, error)      // returns resolved agent name
-	jobCancelFn         func(jobID int64)                      // kills running worker process (optional)
-	isPROpenFn          func(ghRepo string, prNumber int) bool // checks if a PR is still open
-	prPostTargetFn      func(context.Context, string, int) (panelPostTarget, error)
+	listOpenPRsFn           func(context.Context, string) ([]ghPR, error)
+	listTrustedActorsFn     func(context.Context, string) (map[string]struct{}, error)
+	listPRDiscussionFn      func(context.Context, string, int) ([]ghpkg.PRDiscussionComment, error)
+	gitFetchFn              func(context.Context, string, []string) error
+	gitFetchPRHeadFn        func(context.Context, string, int, []string) error
+	gitCloneFn              func(ctx context.Context, ghRepo, targetPath string, env []string) error
+	mergeBaseFn             func(string, string, string) (string, error)
+	loadRepoConfigWithRawFn func(string) (*config.RepoConfig, map[string]any, error)
+	buildReviewPromptFn     func(context.Context, string, string, int64, int, string, string, string, string, *config.Config) (string, error)
+	postPRCommentFn         func(string, int, string) error
+	setCommitStatusFn       func(ghRepo, sha, state, description string) error
+	setSkippedCheckFn       func(ghRepo, sha, summary string) error
+	agentResolverFn         func(name string) (string, error)      // returns resolved agent name
+	jobCancelFn             func(jobID int64)                      // kills running worker process (optional)
+	isPROpenFn              func(ghRepo string, prNumber int) bool // checks if a PR is still open
+	prPostTargetFn          func(context.Context, string, int) (panelPostTarget, error)
 
 	repoResolver *RepoResolver
 
@@ -146,7 +150,7 @@ func NewCIPoller(db *storage.DB, cfgGetter ConfigGetter, broadcaster Broadcaster
 	p.gitFetchFn = gitFetchCtx
 	p.gitFetchPRHeadFn = gitFetchPRHead
 	p.mergeBaseFn = gitpkg.GetMergeBase
-	p.loadRepoConfigFn = loadCIRepoConfig
+	p.loadRepoConfigWithRawFn = loadCIRepoConfigWithRaw
 	// CI prompts deliberately carry no kata context. PR-creator trust does
 	// not extend to whoever controls the reviewed head SHA (any write
 	// collaborator can push to a same-repo PR branch), and GitHub's polling
@@ -449,7 +453,19 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 		return nil
 	}
 
-	return p.enqueuePanelRun(ctx, ghRepo, pr, cfg)
+	if err := p.enqueuePanelRun(ctx, ghRepo, pr, cfg); err != nil {
+		if !errors.Is(err, errNoCIAgent) {
+			if statusErr := p.callSetCommitStatus(
+				ghRepo, pr.HeadRefOid, "error",
+				"Review could not be queued; check configuration",
+			); statusErr != nil {
+				log.Printf("CI poller: failed to set enqueue error status for %s#%d: %v",
+					ghRepo, pr.Number, statusErr)
+			}
+		}
+		return err
+	}
+	return nil
 }
 
 // enqueuePanelRun runs the post-gate panel enqueue for a PR HEAD: find/clone the
@@ -500,9 +516,27 @@ func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, 
 	}
 
 	// Load repo config off the PR's default branch (never the working tree, F1).
-	repoCfg, err := p.loadCIRepoConfigFor(repo.RootPath, ghRepo)
+	repoCfg, rawRepoCfg, err := p.loadCIRepoConfigFor(repo.RootPath, ghRepo)
 	if err != nil {
 		return err
+	}
+	selection, err := config.SelectReviewExperiment(config.ExperimentSelectionInput{
+		Workflow: config.ExperimentWorkflowCI,
+		Subject: config.ExperimentSubject{
+			Repository: ghRepo,
+			SourceRepo: pr.HeadRepo,
+			Branch:     pr.HeadRefName,
+		},
+		Global:  cfg,
+		Repo:    repoCfg,
+		RawRepo: rawRepoCfg,
+	})
+	if err != nil {
+		return fmt.Errorf("select review experiment: %w", err)
+	}
+	repoCfg = selection.RepoConfig
+	if selection.RawRepoConfig != nil {
+		rawRepoCfg = selection.RawRepoConfig
 	}
 
 	// Resolve panel members + synthesis: a configured [ci].panel names a panel,
@@ -538,6 +572,27 @@ func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, 
 		})
 	if err != nil {
 		return err
+	}
+	if selection.SubjectHash != "" {
+		for i := range memberOpts {
+			memberOpts[i].BranchSubjectHash = selection.SubjectHash
+		}
+		synthOpts.BranchSubjectHash = selection.SubjectHash
+	}
+	if selection.Assignment != nil {
+		assignment, assignErr := storageAssignmentForExperiment(
+			selection.Assignment, experimentPlanForPanel(memberOpts, synthOpts),
+		)
+		if assignErr != nil {
+			return fmt.Errorf("fingerprint experiment plan: %w", assignErr)
+		}
+		synthOpts.Experiment = assignment
+	}
+	for i := range memberOpts {
+		memberOpts[i].SessionID, memberOpts[i].ResumeSourceJobUUID = findCompatibleReusableSession(
+			ctx, p.db, repo.RootPath, pr.HeadRefOid, memberOpts[i],
+			repoCfg, rawRepoCfg, cfg, synthOpts.Experiment,
+		)
 	}
 
 	created, _, synthJob, err := p.db.CreateCIPanelRun(ghRepo, pr.Number, pr.HeadRefOid, memberOpts, synthOpts)
@@ -592,24 +647,24 @@ func matchingCISkipLabel(prLabels, skipLabels []string) (string, bool) {
 	return "", false
 }
 
-// loadCIRepoConfigFor loads the repo's config via the configured loader (the
-// loadRepoConfigFn test seam, else loadCIRepoConfig off the default branch). A
+// loadCIRepoConfigFor loads typed and raw repo config through one loader. A
 // parse error is non-fatal — CI review falls back to global/default settings so
-// a broken repo override does not disable PR review entirely — but any other
-// load failure is returned.
-func (p *CIPoller) loadCIRepoConfigFor(repoPath, ghRepo string) (*config.RepoConfig, error) {
-	loadRepoConfig := p.loadRepoConfigFn
-	if loadRepoConfig == nil {
-		loadRepoConfig = loadCIRepoConfig
+// a broken repo override does not disable PR review entirely — but experiment
+// validation and other load failures are returned.
+func (p *CIPoller) loadCIRepoConfigFor(repoPath, ghRepo string) (*config.RepoConfig, map[string]any, error) {
+	load := p.loadRepoConfigWithRawFn
+	if load == nil {
+		load = loadCIRepoConfigWithRaw
 	}
-	repoCfg, err := loadRepoConfig(repoPath)
+	repoCfg, rawRepoCfg, err := load(repoPath)
 	if err != nil {
 		if !config.IsConfigParseError(err) {
-			return nil, fmt.Errorf("load repo config: %w", err)
+			return nil, nil, fmt.Errorf("load repo config: %w", err)
 		}
 		log.Printf("CI poller: warning: failed to load repo config for %s: %v", ghRepo, err)
+		return nil, nil, nil
 	}
-	return repoCfg, nil
+	return repoCfg, rawRepoCfg, nil
 }
 
 // alreadyReviewedPR reports whether this PR HEAD already has an in-flight,
@@ -1817,6 +1872,8 @@ func (p *CIPoller) listOpenPRs(ctx context.Context, ghRepo string) ([]ghPR, erro
 		prs = append(prs, ghPR{
 			Number:      pr.Number,
 			HeadRefOid:  pr.HeadRefOID,
+			HeadRefName: pr.HeadRefName,
+			HeadRepo:    pr.HeadRepo,
 			BaseRefName: pr.BaseRefName,
 			Title:       pr.Title,
 			Author:      ghPRAuthor{Login: pr.AuthorLogin},
@@ -2714,6 +2771,8 @@ func (p *CIPoller) retryAttemptPR(
 	return ghPR{
 		Number:      attempt.PRNumber,
 		HeadRefOid:  headSHA,
+		HeadRefName: target.HeadRefName,
+		HeadRepo:    target.HeadRepo,
 		BaseRefName: baseRefName,
 		Labels:      target.Labels,
 		// Preserve the author so kata trust gating in enqueuePanelRun does
@@ -2956,24 +3015,29 @@ func isPermanentGitHubAccessError(err error) bool {
 }
 
 func loadCIRepoConfig(repoPath string) (*config.RepoConfig, error) {
+	cfg, _, err := loadCIRepoConfigWithRaw(repoPath)
+	return cfg, err
+}
+
+func loadCIRepoConfigWithRaw(repoPath string) (*config.RepoConfig, map[string]any, error) {
 	defaultBranch, err := gitpkg.GetDefaultBranch(repoPath)
 	if err != nil {
 		// Can't determine default branch (no origin, bare repo, etc.)
 		// — fall back to filesystem.
-		return config.LoadRepoConfig(repoPath)
+		return config.LoadRepoConfigWithRaw(repoPath)
 	}
 
-	cfg, err := config.LoadRepoConfigFromRef(repoPath, defaultBranch)
+	cfg, raw, err := config.LoadRepoConfigFromRefWithRaw(repoPath, defaultBranch)
 	if err != nil {
 		// Config exists but is invalid — surface the error, don't
 		// silently fall back to a stale working-tree copy.
-		return nil, err
+		return nil, nil, err
 	}
 	if cfg != nil {
-		return cfg, nil
+		return cfg, raw, nil
 	}
 	// No .roborev.toml on the default branch — fall back to filesystem.
-	return config.LoadRepoConfig(repoPath)
+	return config.LoadRepoConfigWithRaw(repoPath)
 }
 
 // resolveMinSeverity determines the effective min_severity for synthesis.
@@ -3186,6 +3250,8 @@ func (p *CIPoller) panelPostTarget(
 	return panelPostTarget{
 		Open:        strings.EqualFold(pr.State, "open"),
 		HeadSHA:     pr.HeadRefOID,
+		HeadRefName: pr.HeadRefName,
+		HeadRepo:    pr.HeadRepo,
 		BaseRefName: pr.BaseRefName,
 		AuthorLogin: pr.AuthorLogin,
 		Labels:      pr.Labels,

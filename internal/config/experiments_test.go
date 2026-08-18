@@ -64,6 +64,52 @@ reuse_review_session = true
 	assert.Equal(t, true, definition.Config["reuse_review_session"])
 }
 
+func TestLoadRepoConfigWithRawPreservesExplicitZeroValues(t *testing.T) {
+	dir := t.TempDir()
+	writeRepoConfigStr(t, dir, `
+reuse_review_session = false
+reuse_review_session_lookback = 0
+`)
+
+	cfg, raw, err := LoadRepoConfigWithRaw(dir)
+	require.NoError(t, err)
+	require.NotNil(t, cfg)
+	require.NotNil(t, cfg.ReuseReviewSession)
+	assert.False(t, *cfg.ReuseReviewSession)
+	assert.Equal(t, 0, cfg.ReuseReviewSessionLookback)
+	assert.True(t, IsKeyInTOMLFile(raw, "reuse_review_session"))
+	assert.True(t, IsKeyInTOMLFile(raw, "reuse_review_session_lookback"))
+}
+
+func TestSelectReviewExperimentNamespacesCISourceRepository(t *testing.T) {
+	enabled := true
+	ratio := 1.0
+	input := ExperimentSelectionInput{
+		Workflow: ExperimentWorkflowCI,
+		Subject: ExperimentSubject{
+			Repository: "github.com/example/project",
+			SourceRepo: "github.com/alice/project",
+			Branch:     "feature",
+		},
+		Global: &Config{Experiments: map[string]ExperimentDefinition{
+			"ci-v1": {
+				Enabled: &enabled, Ratio: &ratio,
+				Workflows: []ExperimentWorkflow{ExperimentWorkflowCI},
+				Config:    map[string]any{"reuse_review_session": true},
+			},
+		}},
+	}
+	first, err := SelectReviewExperiment(input)
+	require.NoError(t, err)
+	require.NotNil(t, first.Assignment)
+
+	input.Subject.SourceRepo = "github.com/bob/project"
+	second, err := SelectReviewExperiment(input)
+	require.NoError(t, err)
+	require.NotNil(t, second.Assignment)
+	assert.NotEqual(t, first.Assignment.SubjectHash, second.Assignment.SubjectHash)
+}
+
 func TestSelectReviewExperimentHonorsRatioBoundaries(t *testing.T) {
 	enabled := true
 	for _, tc := range []struct {
@@ -126,15 +172,15 @@ func TestSelectReviewExperimentMergesOverlayRecursively(t *testing.T) {
 				Enabled: &enabled, Ratio: &ratio,
 				Workflows: []ExperimentWorkflow{ExperimentWorkflowReview},
 				Config: map[string]any{
-					"exclude_patterns": []any{"generated/**"},
-					"review":           map[string]any{"default_panel": "experiment"},
+					"ci":     map[string]any{"agents": []any{"codex", "test"}},
+					"review": map[string]any{"default_panel": "experiment"},
 				},
 			},
 		}},
 		Repo: &RepoConfig{},
 		RawRepo: map[string]any{
 			"review_guidelines": "base guidance",
-			"exclude_patterns":  []any{"vendor/**"},
+			"ci":                map[string]any{"agents": []any{"claude"}},
 			"review": map[string]any{
 				"hook_review_panel": "hooks",
 			},
@@ -142,10 +188,108 @@ func TestSelectReviewExperimentMergesOverlayRecursively(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.NotNil(t, selection.RepoConfig)
+	require.NotNil(t, selection.RawRepoConfig)
 	assert.Equal(t, "base guidance", selection.RepoConfig.ReviewGuidelines)
-	assert.Equal(t, []string{"generated/**"}, selection.RepoConfig.ExcludePatterns)
+	assert.Equal(t, []string{"codex", "test"}, selection.RepoConfig.CI.Agents)
 	assert.Equal(t, "experiment", selection.RepoConfig.Review.DefaultPanel)
 	assert.Equal(t, "hooks", selection.RepoConfig.Review.HookPanel)
+}
+
+func TestSelectReviewExperimentMergesOverGlobalNestedConfig(t *testing.T) {
+	enabled := true
+	ratio := 1.0
+	selection, err := SelectReviewExperiment(ExperimentSelectionInput{
+		Workflow: ExperimentWorkflowReview,
+		Subject: ExperimentSubject{
+			Repository: "github.com/example/project", Branch: "feature",
+		},
+		Global: &Config{
+			Review: ReviewConfig{Subagents: map[string]SubagentSpec{
+				"bugs": {Agent: "codex", Model: "base-model", Reasoning: "high"},
+			}},
+			Experiments: map[string]ExperimentDefinition{
+				"model-v1": {
+					Enabled: &enabled, Ratio: &ratio,
+					Workflows: []ExperimentWorkflow{ExperimentWorkflowReview},
+					Config: map[string]any{"review": map[string]any{
+						"subagents": map[string]any{"bugs": map[string]any{"model": "experiment-model"}},
+					}},
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	bugs := selection.RepoConfig.Review.Subagents["bugs"]
+	assert.Equal(t, "codex", bugs.Agent)
+	assert.Equal(t, "experiment-model", bugs.Model)
+	assert.Equal(t, "high", bugs.Reasoning)
+}
+
+func TestSelectReviewExperimentPreservesExplicitZeroPresence(t *testing.T) {
+	enabled := true
+	ratio := 1.0
+	selection, err := SelectReviewExperiment(ExperimentSelectionInput{
+		Workflow: ExperimentWorkflowReview,
+		Subject: ExperimentSubject{
+			Repository: "github.com/example/project", Branch: "feature",
+		},
+		Global: &Config{
+			ReuseReviewSessionLookback: 5,
+			Experiments: map[string]ExperimentDefinition{
+				"lookback-v1": {
+					Enabled: &enabled, Ratio: &ratio,
+					Workflows: []ExperimentWorkflow{ExperimentWorkflowReview},
+					Config:    map[string]any{"reuse_review_session_lookback": int64(0)},
+				},
+			},
+		},
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 0, selection.RepoConfig.ReuseReviewSessionLookback)
+	assert.True(t, IsKeyInTOMLFile(selection.RawRepoConfig, "reuse_review_session_lookback"))
+}
+
+func TestSelectReviewExperimentRequiresRawRepositoryConfigForOverlay(t *testing.T) {
+	enabled := true
+	ratio := 1.0
+	_, err := SelectReviewExperiment(ExperimentSelectionInput{
+		Workflow: ExperimentWorkflowReview,
+		Subject: ExperimentSubject{
+			Repository: "github.com/example/project", Branch: "feature",
+		},
+		Global: &Config{Experiments: map[string]ExperimentDefinition{
+			"session-v1": {
+				Enabled: &enabled, Ratio: &ratio,
+				Workflows: []ExperimentWorkflow{ExperimentWorkflowReview},
+				Config:    map[string]any{"reuse_review_session": true},
+			},
+		}},
+		Repo: &RepoConfig{ReviewGuidelines: "repository guidance"},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "missing its paired raw representation")
+}
+
+func TestSelectReviewExperimentRejectsUnknownNestedKey(t *testing.T) {
+	enabled := true
+	ratio := 1.0
+	_, err := SelectReviewExperiment(ExperimentSelectionInput{
+		Workflow: ExperimentWorkflowReview,
+		Subject: ExperimentSubject{
+			Repository: "github.com/example/project", Branch: "feature",
+		},
+		Global: &Config{Experiments: map[string]ExperimentDefinition{
+			"typo-v1": {
+				Enabled: &enabled, Ratio: &ratio,
+				Workflows: []ExperimentWorkflow{ExperimentWorkflowReview},
+				Config: map[string]any{"review": map[string]any{
+					"default_pnael": "typo",
+				}},
+			},
+		}},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "strict mode")
 }
 
 func TestSelectReviewExperimentRejectsDefinitionMutation(t *testing.T) {
@@ -177,10 +321,10 @@ func TestValidateExperimentEntriesRejectsUnsafeAndOverlappingConfig(t *testing.T
 	enabled := true
 	ratio := 0.5
 	err := validateExperimentEntries(map[string]ExperimentDefinition{
-		"unsafe-v1": {
+		"unsupported-v1": {
 			Enabled: &enabled, Ratio: &ratio,
 			Workflows: []ExperimentWorkflow{ExperimentWorkflowReview},
-			Config:    map[string]any{"server_addr": "127.0.0.1:9999"},
+			Config:    map[string]any{"review_guidelines": "not frozen at enqueue"},
 		},
 	}, true)
 	require.Error(t, err)

@@ -854,6 +854,8 @@ components:
           type: string
         branch:
           type: string
+        branch_subject_hash:
+          type: string
         claim_blocked:
           type: boolean
         closed:
@@ -878,6 +880,12 @@ components:
           type: string
         error:
           type: string
+        experiments:
+          items:
+            $ref: "#/components/schemas/ExperimentAssignment"
+          type:
+            - array
+            - "null"
         finished_at:
           format: date-time
           type: string
@@ -934,6 +942,8 @@ components:
         requested_model:
           type: string
         requested_provider:
+          type: string
+        resume_source_job_uuid:
           type: string
         retry_count:
           format: int64
@@ -1143,6 +1153,26 @@ components:
       required:
         - error
       type: object
+    ExperimentAssignment:
+      additionalProperties: false
+      properties:
+        arm:
+          type: string
+        definition_hash:
+          type: string
+        effective_config_hash:
+          type: string
+        id:
+          type: string
+        subject_hash:
+          type: string
+      required:
+        - id
+        - arm
+        - subject_hash
+        - definition_hash
+        - effective_config_hash
+      type: object
     ExportCICostDocument:
       additionalProperties: false
       properties:
@@ -1205,6 +1235,12 @@ components:
           type:
             - number
             - "null"
+        experiments:
+          items:
+            $ref: "#/components/schemas/ExperimentAssignment"
+          type:
+            - array
+            - "null"
         finished_at:
           type: string
         job_uuid:
@@ -1214,6 +1250,10 @@ components:
             - string
             - "null"
         provider:
+          type:
+            - string
+            - "null"
+        resume_source_job_uuid:
           type:
             - string
             - "null"
@@ -1230,6 +1270,8 @@ components:
         - role
         - status
         - cost_usd
+        - experiments
+        - resume_source_job_uuid
       type: object
     ExportCIMetricsDocument:
       additionalProperties: false
@@ -1288,6 +1330,12 @@ components:
           type:
             - integer
             - "null"
+        experiments:
+          items:
+            $ref: "#/components/schemas/ExperimentAssignment"
+          type:
+            - array
+            - "null"
         first_attempt_at:
           type:
             - string
@@ -1331,6 +1379,7 @@ components:
         - synthesis_agent
         - synthesis_model
         - jobs
+        - experiments
       type: object
     ExportCIPanelJob:
       additionalProperties: false
@@ -1351,6 +1400,10 @@ components:
           type:
             - string
             - "null"
+        resume_source_job_uuid:
+          type:
+            - string
+            - "null"
         role:
           type: string
         started_at:
@@ -1368,6 +1421,7 @@ components:
         - status
         - started_at
         - finished_at
+        - resume_source_job_uuid
       type: object
     ExportReview:
       additionalProperties: false
@@ -1397,6 +1451,12 @@ components:
           type:
             - integer
             - "null"
+        experiments:
+          items:
+            $ref: "#/components/schemas/ExperimentAssignment"
+          type:
+            - array
+            - "null"
         model:
           type:
             - string
@@ -1414,6 +1474,10 @@ components:
           type: string
         repo:
           type: string
+        resume_source_job_uuid:
+          type:
+            - string
+            - "null"
         review_id:
           type: string
         status:
@@ -1444,6 +1508,8 @@ components:
         - cost
         - content
         - subagents
+        - experiments
+        - resume_source_job_uuid
       type: object
     ExportReviewCost:
       additionalProperties: false
@@ -1562,6 +1628,10 @@ components:
             - "null"
         name:
           type: string
+        resume_source_job_uuid:
+          type:
+            - string
+            - "null"
         review_id:
           type: string
         review_type:
@@ -1581,6 +1651,7 @@ components:
         - duration_ms
         - cost
         - content
+        - resume_source_job_uuid
       type: object
     FailureStats:
       additionalProperties: false
@@ -1910,6 +1981,8 @@ components:
           type: string
         branch:
           type: string
+        branch_subject_hash:
+          type: string
         claim_blocked:
           type: boolean
         closed:
@@ -1934,6 +2007,12 @@ components:
           type: string
         error:
           type: string
+        experiments:
+          items:
+            $ref: "#/components/schemas/ExperimentAssignment"
+          type:
+            - array
+            - "null"
         finished_at:
           format: date-time
           type: string
@@ -1997,6 +2076,8 @@ components:
         requested_model:
           type: string
         requested_provider:
+          type: string
+        resume_source_job_uuid:
           type: string
         retry_count:
           format: int64
@@ -2483,6 +2564,8 @@ components:
           type: string
         branch:
           type: string
+        branch_subject_hash:
+          type: string
         claim_blocked:
           type: boolean
         closed:
@@ -2507,6 +2590,12 @@ components:
           type: string
         error:
           type: string
+        experiments:
+          items:
+            $ref: "#/components/schemas/ExperimentAssignment"
+          type:
+            - array
+            - "null"
         finished_at:
           format: date-time
           type: string
@@ -2563,6 +2652,8 @@ components:
         requested_model:
           type: string
         requested_provider:
+          type: string
+        resume_source_job_uuid:
           type: string
         retry_count:
           format: int64

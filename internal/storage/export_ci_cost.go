@@ -38,14 +38,16 @@ type ExportCICostPage struct {
 // ExportCICostJob is one CI job where an agent ran. CostUSD is nil when the
 // job has no usable recorded price; a pointer to zero is a priced free run.
 type ExportCICostJob struct {
-	JobUUID    string   `json:"job_uuid"`
-	FinishedAt string   `json:"finished_at"`
-	Agent      string   `json:"agent"`
-	Model      *string  `json:"model"`
-	Provider   *string  `json:"provider"`
-	Role       string   `json:"role"`
-	Status     string   `json:"status"`
-	CostUSD    *float64 `json:"cost_usd"`
+	JobUUID             string                 `json:"job_uuid"`
+	FinishedAt          string                 `json:"finished_at"`
+	Agent               string                 `json:"agent"`
+	Model               *string                `json:"model"`
+	Provider            *string                `json:"provider"`
+	Role                string                 `json:"role"`
+	Status              string                 `json:"status"`
+	CostUSD             *float64               `json:"cost_usd"`
+	Experiments         []ExperimentAssignment `json:"experiments"`
+	ResumeSourceJobUUID *string                `json:"resume_source_job_uuid"`
 }
 
 type ciCostCursor struct {
@@ -109,7 +111,7 @@ func (db *DB) exportRegularCICosts(opts ExportCICostOptions, cursor *ciCostCurso
 		SELECT j.id, j.finished_at, j.uuid, j.agent, j.model, j.provider,
 		       CASE WHEN j.panel_role = '` + PanelRoleSynthesis + `'
 		            THEN '` + PanelRoleSynthesis + `' ELSE '` + PanelRoleMember + `' END,
-		       j.status, j.token_usage
+		       j.status, j.token_usage, j.resume_source_job_uuid
 		FROM review_jobs j
 		WHERE ` + strings.Join(conditions, " AND ") + `
 		ORDER BY ` + finishedExpr + ` ASC, j.id ASC
@@ -172,7 +174,7 @@ func (db *DB) exportLegacyCICosts(opts ExportCICostOptions, cursor *ciCostCursor
 	query := `
 		WITH ` + legacyCICostValidUnitsCTE() + `
 		SELECT j.id, j.finished_at, j.uuid, j.agent, j.model, j.provider,
-		       'review', j.status, j.token_usage
+		       'review', j.status, j.token_usage, j.resume_source_job_uuid
 		FROM review_jobs j
 		JOIN valid_units v ON v.repo_id = j.repo_id AND v.git_ref = j.git_ref
 		JOIN unit_windows w ON w.repo_id = j.repo_id AND w.git_ref = j.git_ref
@@ -221,6 +223,10 @@ func (db *DB) queryCICostPage(
 			break
 		}
 		page.Jobs = append(page.Jobs, job)
+		page.Jobs[len(page.Jobs)-1].Experiments, err = db.GetExperimentAssignmentsForJobUUID(job.JobUUID)
+		if err != nil {
+			return ExportCICostPage{}, err
+		}
 		lastID = id
 		lastFinishedAt = finishedAt
 	}
@@ -243,15 +249,16 @@ func (db *DB) queryCICostPage(
 
 func scanCICostRow(rows *sql.Rows) (int64, string, ExportCICostJob, error) {
 	var (
-		id         int64
-		job        ExportCICostJob
-		finishedAt sql.NullString
-		model      sql.NullString
-		provider   sql.NullString
-		tokenUsage sql.NullString
+		id           int64
+		job          ExportCICostJob
+		finishedAt   sql.NullString
+		model        sql.NullString
+		provider     sql.NullString
+		tokenUsage   sql.NullString
+		resumeSource sql.NullString
 	)
 	if err := rows.Scan(&id, &finishedAt, &job.JobUUID, &job.Agent, &model,
-		&provider, &job.Role, &job.Status, &tokenUsage); err != nil {
+		&provider, &job.Role, &job.Status, &tokenUsage, &resumeSource); err != nil {
 		return 0, "", ExportCICostJob{}, fmt.Errorf("scan ci cost row: %w", err)
 	}
 	if finishedAt.Valid {
@@ -264,6 +271,10 @@ func scanCICostRow(rows *sql.Rows) (int64, string, ExportCICostJob, error) {
 		job.Provider = &provider.String
 	}
 	job.CostUSD = parseExportCost(tokenUsage).USD
+	job.Experiments = []ExperimentAssignment{}
+	if resumeSource.Valid && resumeSource.String != "" {
+		job.ResumeSourceJobUUID = &resumeSource.String
+	}
 	return id, job.FinishedAt, job, nil
 }
 

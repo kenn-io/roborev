@@ -572,6 +572,18 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 	if err != nil {
 		return stats, fmt.Errorf("get machine ID: %w", err)
 	}
+	definitions, err := w.db.GetExperimentDefinitionsToSync(machineID)
+	if err != nil {
+		return stats, fmt.Errorf("get experiment definitions to sync: %w", err)
+	}
+	for _, definition := range definitions {
+		if err := pool.UpsertExperimentDefinition(ctx, definition); err != nil {
+			return stats, fmt.Errorf("push experiment definition %s: %w", definition.ExperimentID, err)
+		}
+		if err := w.db.MarkExperimentDefinitionSynced(definition.ExperimentID); err != nil {
+			return stats, fmt.Errorf("mark experiment definition synced: %w", err)
+		}
+	}
 
 	// Push jobs - need to resolve repo/commit IDs first, then batch insert
 	jobs, err := w.db.GetJobsToSync(machineID, syncBatchSize)
@@ -634,6 +646,20 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 					log.Printf("Sync: failed to mark jobs synced: %v", err)
 				}
 			}
+		}
+	}
+
+	assignments, err := w.db.GetExperimentAssignmentsToSync(machineID)
+	if err != nil {
+		return stats, fmt.Errorf("get experiment assignments to sync: %w", err)
+	}
+	for _, assignment := range assignments {
+		if err := pool.UpsertExperimentAssignment(ctx, assignment); err != nil {
+			return stats, fmt.Errorf("push experiment assignment %s/%s: %w",
+				assignment.ReviewUnitKind, assignment.ReviewUnitUUID, err)
+		}
+		if err := w.db.MarkExperimentAssignmentSynced(assignment); err != nil {
+			return stats, fmt.Errorf("mark experiment assignment synced: %w", err)
 		}
 	}
 
@@ -709,6 +735,16 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 		return stats, fmt.Errorf("get machine ID: %w", err)
 	}
 
+	definitions, err := pool.PullExperimentDefinitions(ctx, machineID)
+	if err != nil {
+		return stats, fmt.Errorf("pull experiment definitions: %w", err)
+	}
+	for _, definition := range definitions {
+		if err := w.db.UpsertPulledExperimentDefinition(definition); err != nil {
+			return stats, fmt.Errorf("store experiment definition %s: %w", definition.ExperimentID, err)
+		}
+	}
+
 	// Pull jobs
 	jobCursor, err := w.db.GetSyncState(SyncStateLastJobCursor)
 	if err != nil {
@@ -742,6 +778,17 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 
 		if len(jobs) < 100 {
 			break
+		}
+	}
+
+	assignments, err := pool.PullExperimentAssignments(ctx, machineID)
+	if err != nil {
+		return stats, fmt.Errorf("pull experiment assignments: %w", err)
+	}
+	for _, assignment := range assignments {
+		if err := w.db.UpsertPulledExperimentAssignment(assignment); err != nil {
+			return stats, fmt.Errorf("store experiment assignment %s/%s: %w",
+				assignment.ReviewUnitKind, assignment.ReviewUnitUUID, err)
 		}
 	}
 

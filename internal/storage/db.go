@@ -44,6 +44,8 @@ CREATE TABLE IF NOT EXISTS review_jobs (
   ci_base_branch TEXT,
   session_id TEXT,
   session_resumed INTEGER NOT NULL DEFAULT 0,
+  branch_subject_hash TEXT,
+  resume_source_job_uuid TEXT,
   agent TEXT NOT NULL DEFAULT 'codex',
   model TEXT,
   requested_model TEXT,
@@ -180,6 +182,28 @@ CREATE TABLE IF NOT EXISTS rerun_requests (
   result_job_id INTEGER NOT NULL,
   panel_run_uuid TEXT,
   created_at TEXT NOT NULL DEFAULT (datetime('now'))
+);
+
+CREATE TABLE IF NOT EXISTS experiment_definitions (
+  experiment_id TEXT PRIMARY KEY,
+  definition_hash TEXT NOT NULL,
+  definition_json TEXT NOT NULL,
+  first_seen_at TEXT NOT NULL,
+  source_machine_id TEXT NOT NULL,
+  synced_at TEXT
+);
+
+CREATE TABLE IF NOT EXISTS experiment_assignments (
+  review_unit_kind TEXT NOT NULL,
+  review_unit_uuid TEXT NOT NULL,
+  experiment_id TEXT NOT NULL REFERENCES experiment_definitions(experiment_id),
+  arm TEXT NOT NULL,
+  subject_hash TEXT NOT NULL,
+  effective_config_hash TEXT NOT NULL,
+  assigned_at TEXT NOT NULL,
+  source_machine_id TEXT NOT NULL,
+  synced_at TEXT,
+  PRIMARY KEY (review_unit_kind, review_unit_uuid, experiment_id)
 );
 
 CREATE INDEX IF NOT EXISTS idx_review_jobs_status ON review_jobs(status);
@@ -1219,6 +1243,52 @@ func (db *DB) migrate() error {
 		return fmt.Errorf("migrate review_jobs constraints for auto design: %w", err)
 	}
 
+	// Review experiment attribution and session lineage. These columns stay
+	// separate from branch because CI jobs deliberately leave branch empty.
+	for _, col := range []struct {
+		name string
+		def  string
+	}{
+		{"branch_subject_hash", "TEXT"},
+		{"resume_source_job_uuid", "TEXT"},
+	} {
+		err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = ?`, col.name).Scan(&count)
+		if err != nil {
+			return fmt.Errorf("check %s column: %w", col.name, err)
+		}
+		if count == 0 {
+			if _, err = db.Exec(fmt.Sprintf(`ALTER TABLE review_jobs ADD COLUMN %s %s`, col.name, col.def)); err != nil {
+				return fmt.Errorf("add %s column: %w", col.name, err)
+			}
+		}
+	}
+	if _, err = db.Exec(`
+		CREATE TABLE IF NOT EXISTS experiment_definitions (
+		  experiment_id TEXT PRIMARY KEY,
+		  definition_hash TEXT NOT NULL,
+		  definition_json TEXT NOT NULL,
+		  first_seen_at TEXT NOT NULL,
+		  source_machine_id TEXT NOT NULL,
+		  synced_at TEXT
+		);
+		CREATE TABLE IF NOT EXISTS experiment_assignments (
+		  review_unit_kind TEXT NOT NULL,
+		  review_unit_uuid TEXT NOT NULL,
+		  experiment_id TEXT NOT NULL REFERENCES experiment_definitions(experiment_id),
+		  arm TEXT NOT NULL,
+		  subject_hash TEXT NOT NULL,
+		  effective_config_hash TEXT NOT NULL,
+		  assigned_at TEXT NOT NULL,
+		  source_machine_id TEXT NOT NULL,
+		  synced_at TEXT,
+		  PRIMARY KEY (review_unit_kind, review_unit_uuid, experiment_id)
+		);
+		CREATE INDEX IF NOT EXISTS idx_experiment_assignments_subject
+		  ON experiment_assignments(experiment_id, subject_hash)
+	`); err != nil {
+		return fmt.Errorf("create review experiment tables: %w", err)
+	}
+
 	// Panel composite index — created AFTER the rebuild above so a legacy-DB
 	// table rebuild (DROP+RENAME) cannot drop it. Used to fetch a run's
 	// members in order and locate its synthesis row.
@@ -2102,8 +2172,8 @@ func (db *DB) ResetStaleJobs() error {
 	_, err := db.Exec(`
 		UPDATE review_jobs
 		SET status = 'queued', worker_id = NULL, started_at = NULL,
-		    session_id = NULL, session_resumed = 0, token_usage = NULL,
-		    command_line = NULL, agent_invoked = 0, synced_at = NULL
+		    session_id = NULL, session_resumed = 0, resume_source_job_uuid = NULL,
+		    token_usage = NULL, command_line = NULL, agent_invoked = 0, synced_at = NULL
 		WHERE status = 'running'
 	`)
 	return err

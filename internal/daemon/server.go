@@ -881,6 +881,14 @@ func resolveRerunModelProvider(job *storage.ReviewJob, cfg *config.Config) (stri
 	if err := config.ValidateRepoConfig(resolutionPath); err != nil {
 		return "", "", fmt.Errorf("resolve workflow config: %w", err)
 	}
+	if len(job.Experiments) > 0 {
+		if err := validateRerunAgent(
+			resolutionPath, job.Agent, job.BackupAgent, cfg,
+		); err != nil {
+			return "", "", err
+		}
+		return job.Model, job.Provider, nil
+	}
 
 	workflow := workflowForJob(job.JobType, job.ReviewType)
 	resolution, err := agent.ResolveWorkflowConfig(
@@ -972,6 +980,62 @@ func (s *Server) findReusableSessionID(
 		return candidate.SessionID
 	}
 	return ""
+}
+
+func findCompatibleReusableSession(
+	ctx context.Context,
+	db *storage.DB,
+	repoPath, targetSHA string,
+	opts storage.EnqueueOpts,
+	repoCfg *config.RepoConfig,
+	rawRepoCfg map[string]any,
+	globalCfg *config.Config,
+	experiment *storage.ExperimentAssignmentInput,
+) (string, string) {
+	if !config.ResolveReuseReviewSessionFromConfig(repoCfg, globalCfg) ||
+		opts.BranchSubjectHash == "" || targetSHA == "" ||
+		opts.PanelRole == storage.PanelRoleSynthesis ||
+		!agent.SupportsSessionResume(opts.Agent) {
+		return "", ""
+	}
+	candidates, err := db.FindCompatibleReusableSessionCandidates(storage.ReusableSessionQuery{
+		RepoID:                opts.RepoID,
+		BranchSubjectHash:     opts.BranchSubjectHash,
+		Agent:                 opts.Agent,
+		Model:                 opts.Model,
+		Provider:              opts.Provider,
+		Reasoning:             opts.Reasoning,
+		ReviewType:            opts.ReviewType,
+		WorktreePath:          opts.WorktreePath,
+		PanelName:             opts.PanelName,
+		PanelMemberName:       opts.PanelMemberName,
+		PanelMemberConfigJSON: opts.PanelMemberConfigJSON,
+		Experiment:            experiment,
+		Limit: config.ResolveReuseReviewSessionLookbackFromConfig(
+			repoCfg, rawRepoCfg, globalCfg,
+		),
+	})
+	if err != nil {
+		log.Printf("enqueue: lookup compatible reusable session failed for repo=%d agent=%q: %v", opts.RepoID, opts.Agent, err)
+		return "", ""
+	}
+	const maxSessionReuseDistance = 50
+	for _, candidate := range candidates {
+		candidateSHA := strings.TrimSpace(candidate.ReusableSessionTarget)
+		if candidateSHA == "" {
+			continue
+		}
+		isAncestor, err := gitrepo.IsAncestor(ctx, repoPath, candidateSHA, targetSHA)
+		if err != nil || !isAncestor {
+			continue
+		}
+		commitsSinceCandidate, err := git.GetRangeCommits(repoPath, candidateSHA+".."+targetSHA)
+		if err != nil || len(commitsSinceCandidate) > maxSessionReuseDistance {
+			continue
+		}
+		return candidate.SessionID, candidate.UUID
+	}
+	return "", ""
 }
 
 func reusableSessionTarget(gitRef string) string {
@@ -2499,23 +2563,6 @@ func (s *Server) humaEnqueue(
 		resolutionPath = worktreePath
 	}
 
-	var reasoning string
-	if workflow == "fix" {
-		reasoning, err = config.ResolveFixReasoning(
-			req.Reasoning, resolutionPath, cfg,
-		)
-	} else {
-		reasoning, err = config.ResolveReviewReasoning(
-			req.Reasoning, resolutionPath, cfg,
-		)
-	}
-	if err != nil {
-		return rawJSONOutput(
-			http.StatusBadRequest,
-			ErrorResponse{Error: err.Error()},
-		)
-	}
-
 	var normalizedMinSev string
 	if strings.TrimSpace(req.MinSeverity) != "" {
 		normalizedMinSev, err = config.NormalizeMinSeverity(
@@ -2532,7 +2579,8 @@ func (s *Server) humaEnqueue(
 	requestedModel := strings.TrimSpace(req.Model)
 	requestedProvider := strings.TrimSpace(req.Provider)
 
-	if err := config.ValidateRepoConfig(resolutionPath); err != nil {
+	repoCfg, rawRepoCfg, err := config.LoadRepoConfigWithRaw(resolutionPath)
+	if err != nil {
 		return rawJSONOutput(
 			http.StatusBadRequest,
 			ErrorResponse{Error: fmt.Sprintf("resolve workflow config: %v", err)},
@@ -2586,7 +2634,58 @@ func (s *Server) humaEnqueue(
 		}
 	}
 
-	merged := config.MergedReviewConfig(resolutionPath, cfg)
+	var experiment *config.ExperimentAssignment
+	if descriptor.prompt == "" {
+		selection, selectErr := config.SelectReviewExperiment(config.ExperimentSelectionInput{
+			Workflow: config.ExperimentWorkflowReview,
+			Subject: config.ExperimentSubject{
+				Repository: repo.Identity,
+				Branch:     req.Branch,
+			},
+			Global:  cfg,
+			Repo:    repoCfg,
+			RawRepo: rawRepoCfg,
+		})
+		if selectErr != nil {
+			return rawJSONOutput(http.StatusBadRequest,
+				ErrorResponse{Error: fmt.Sprintf("select review experiment: %v", selectErr)})
+		}
+		repoCfg = selection.RepoConfig
+		if selection.RawRepoConfig != nil {
+			rawRepoCfg = selection.RawRepoConfig
+		}
+		experiment = selection.Assignment
+		descriptor.branchSubjectHash = selection.SubjectHash
+		if experiment != nil {
+			descriptor.minSeverity, selectErr = config.ResolveReviewMinSeverityFromConfig(
+				normalizedMinSev, repoCfg, cfg,
+			)
+			if selectErr != nil {
+				return rawJSONOutput(http.StatusBadRequest,
+					ErrorResponse{Error: fmt.Sprintf("resolve review severity: %v", selectErr)})
+			}
+		}
+	}
+
+	var reasoning string
+	if workflow == "fix" {
+		reasoning, err = config.ResolveFixReasoningFromConfig(req.Reasoning, repoCfg, cfg)
+	} else {
+		reasoning, err = config.ResolveReviewReasoningFromConfig(req.Reasoning, repoCfg, cfg)
+	}
+	if err != nil {
+		return rawJSONOutput(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+	}
+
+	var repoReview config.ReviewConfig
+	if repoCfg != nil {
+		repoReview = repoCfg.Review
+	}
+	var globalReview config.ReviewConfig
+	if cfg != nil {
+		globalReview = cfg.Review
+	}
+	merged := config.MergeReviewConfig(repoReview, globalReview)
 	panelName := selectPanelForTarget(descriptor, req, merged)
 	if panelName != "" {
 		return s.enqueuePanelRun(ctx, panelRunInputs{
@@ -2596,6 +2695,9 @@ func (s *Server) humaEnqueue(
 			gitRef:         gitRef,
 			resolutionPath: resolutionPath,
 			cfg:            cfg,
+			repoCfg:        repoCfg,
+			rawRepoCfg:     rawRepoCfg,
+			experiment:     experiment,
 			repo:           repo,
 		})
 	}
@@ -2609,6 +2711,9 @@ func (s *Server) humaEnqueue(
 		worktreePath:   worktreePath,
 		resolutionPath: resolutionPath,
 		cfg:            cfg,
+		repoCfg:        repoCfg,
+		rawRepoCfg:     rawRepoCfg,
+		experiment:     experiment,
 		workflow:       workflow,
 		reasoning:      reasoning,
 		requestedModel: requestedModel,
@@ -2627,6 +2732,9 @@ type singleAgentInputs struct {
 	worktreePath   string
 	resolutionPath string
 	cfg            *config.Config
+	repoCfg        *config.RepoConfig
+	rawRepoCfg     map[string]any
+	experiment     *config.ExperimentAssignment
 	workflow       string
 	reasoning      string
 	requestedModel string
@@ -2640,9 +2748,8 @@ type singleAgentInputs struct {
 func (s *Server) resolveSingleAgent(
 	in singleAgentInputs,
 ) (string, string, *RawJSONOutput) {
-	repoCfg, _ := config.LoadRepoConfig(in.resolutionPath)
 	resolution, err := agent.ResolveWorkflowConfigFromConfig(
-		in.req.Agent, repoCfg, in.cfg, in.workflow, in.reasoning,
+		in.req.Agent, in.repoCfg, in.cfg, in.workflow, in.reasoning,
 	)
 	if err != nil {
 		out, _ := rawJSONOutput(
@@ -2653,7 +2760,7 @@ func (s *Server) resolveSingleAgent(
 	}
 	agentName := resolution.PreferredAgent
 	resolved, err := agent.GetPreferredOrBackupWithConfigFromConfig(
-		repoCfg, agentName, in.cfg, resolution.BackupAgent,
+		in.repoCfg, agentName, in.cfg, resolution.BackupAgent,
 	)
 	if err != nil {
 		if _, ok := errors.AsType[*agent.UnknownAgentError](err); ok {
@@ -2691,12 +2798,20 @@ func (s *Server) enqueueSingleAgent(
 	o.Provider = in.descriptor.requestedProvider
 	o.Reasoning = in.reasoning
 	o.ReviewType = in.req.ReviewType
-	if in.descriptor.sessionSHA != "" {
-		o.SessionID = s.findReusableSessionID(ctx,
-			in.checkoutRoot, in.repo.ID, in.req.Branch, agentName,
-			in.req.ReviewType, in.worktreePath, in.descriptor.sessionSHA,
+	if in.experiment != nil {
+		assignment, assignErr := storageAssignmentForExperiment(
+			in.experiment, experimentPlanForJob(o),
 		)
+		if assignErr != nil {
+			return rawJSONOutput(http.StatusInternalServerError,
+				ErrorResponse{Error: fmt.Sprintf("fingerprint experiment plan: %v", assignErr)})
+		}
+		o.Experiment = assignment
 	}
+	o.SessionID, o.ResumeSourceJobUUID = findCompatibleReusableSession(
+		ctx, s.db, in.checkoutRoot, in.descriptor.sessionSHA, o,
+		in.repoCfg, in.rawRepoCfg, in.cfg, o.Experiment,
+	)
 
 	var job *storage.ReviewJob
 	var duplicate bool

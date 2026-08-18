@@ -2436,9 +2436,10 @@ func TestCIPollerProcessPR_RepoConfigLoadFailureReturnsError(t *testing.T) {
 	h.Cfg.CI.Agents = []string{"codex"}
 	h.Poller = NewCIPoller(h.DB, NewStaticConfig(h.Cfg), nil)
 	h.stubProcessPRGit()
+	statuses := h.CaptureCommitStatuses()
 	h.Poller.mergeBaseFn = func(_, _, _ string) (string, error) { return "base-sha", nil }
-	h.Poller.loadRepoConfigFn = func(string) (*config.RepoConfig, error) {
-		return nil, errors.New("read .roborev.toml at origin/main: git show failed")
+	h.Poller.loadRepoConfigWithRawFn = func(string) (*config.RepoConfig, map[string]any, error) {
+		return nil, nil, errors.New("read .roborev.toml at origin/main: git show failed")
 	}
 
 	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
@@ -2451,6 +2452,9 @@ func TestCIPollerProcessPR_RepoConfigLoadFailureReturnsError(t *testing.T) {
 
 	assert.False(t, h.hasPanel(t, "acme/api", 101, "repo-config-read-failed-sha"),
 		"no panel run on repo config load failure")
+	require.Len(t, *statuses, 1)
+	assert.Equal(t, "error", (*statuses)[0].State)
+	assert.Equal(t, "repo-config-read-failed-sha", (*statuses)[0].SHA)
 }
 
 func TestBuildSynthesisPrompt_SanitizesErrors(t *testing.T) {
@@ -3570,8 +3574,8 @@ func TestCIPollerProcessPR_NoAgentStillSupersedes(t *testing.T) {
 // enqueue, prompt prebuild, and auto-design detection run against real commits.
 // The returned poller uses the test agent and stubs git fetch/PR-head; the
 // merge base is the repo's initial commit so listCommitsInRange sees every
-// later commit. loadRepoConfigFn is left at the real loadCIRepoConfig unless a
-// test overrides it.
+// later commit. The repo-config loader is left at its production default unless
+// a test overrides it.
 func newCIPanelGitHarness(t *testing.T) (*CIPoller, *storage.DB, *storage.Repo, *testutil.TestRepo, *config.Config) {
 	t.Helper()
 	repo := testutil.NewTestRepoWithCommit(t)
@@ -3614,11 +3618,11 @@ func designMemberCount(members []storage.ReviewJob) int {
 func TestProcessPRCreatesPanelRun(t *testing.T) {
 	assert := assert.New(t)
 	p, db, _, repo, cfg := newCIPanelGitHarness(t)
-	p.loadRepoConfigFn = func(string) (*config.RepoConfig, error) {
+	p.loadRepoConfigWithRawFn = func(string) (*config.RepoConfig, map[string]any, error) {
 		enabled := true
 		rc := &config.RepoConfig{}
 		rc.AutoDesignReview.Enabled = &enabled
-		return rc, nil
+		return rc, nil, nil
 	}
 
 	base := repo.HeadSHA()
@@ -3662,11 +3666,11 @@ func TestProcessPRAutoDesignUsesConfiguredBackupModel(t *testing.T) {
 	cfg.DesignAgent = primaryAgent
 	cfg.DesignBackupAgent = "test"
 	cfg.DesignBackupModel = "design-backup-model"
-	p.loadRepoConfigFn = func(string) (*config.RepoConfig, error) {
+	p.loadRepoConfigWithRawFn = func(string) (*config.RepoConfig, map[string]any, error) {
 		enabled := true
 		rc := &config.RepoConfig{}
 		rc.AutoDesignReview.Enabled = &enabled
-		return rc, nil
+		return rc, nil, nil
 	}
 
 	base := repo.HeadSHA()
@@ -3705,11 +3709,11 @@ func TestProcessPRAutoDesignPersistsNamedACPBackupSnapshot(t *testing.T) {
 	cfg.ACP = config.ACPAgentConfigs{
 		"goose": {Command: "goose-design-backup-acp"},
 	}
-	p.loadRepoConfigFn = func(string) (*config.RepoConfig, error) {
+	p.loadRepoConfigWithRawFn = func(string) (*config.RepoConfig, map[string]any, error) {
 		enabled := true
 		rc := &config.RepoConfig{}
 		rc.AutoDesignReview.Enabled = &enabled
-		return rc, nil
+		return rc, nil, nil
 	}
 
 	base := repo.HeadSHA()
@@ -3746,11 +3750,11 @@ func TestProcessPRAutoDesignUsesCIModelOverride(t *testing.T) {
 	p, db, _, repo, cfg := newCIPanelGitHarness(t)
 	cfg.CI.Model = "ci-model-override"
 	cfg.DesignAgent = "test"
-	p.loadRepoConfigFn = func(string) (*config.RepoConfig, error) {
+	p.loadRepoConfigWithRawFn = func(string) (*config.RepoConfig, map[string]any, error) {
 		enabled := true
 		rc := &config.RepoConfig{}
 		rc.AutoDesignReview.Enabled = &enabled
-		return rc, nil
+		return rc, nil, nil
 	}
 
 	base := repo.HeadSHA()
@@ -3846,7 +3850,9 @@ func TestProcessPRSynthesisAndMembersUseSeparateMinSeverity(t *testing.T) {
 	p, db, _, repo, cfg := newCIPanelGitHarness(t)
 	cfg.CI.MinSeverity = "high"
 	cfg.ReviewMinSeverity = "medium"
-	p.loadRepoConfigFn = func(string) (*config.RepoConfig, error) { return &config.RepoConfig{}, nil }
+	p.loadRepoConfigWithRawFn = func(string) (*config.RepoConfig, map[string]any, error) {
+		return &config.RepoConfig{}, nil, nil
+	}
 
 	base := repo.HeadSHA()
 	head := repo.CommitFile("app.go", "package app\n", "feat: app")
@@ -3878,8 +3884,8 @@ func TestProcessPRMemberMinSeverityInvalidRepoFallsBackToGlobal(t *testing.T) {
 	assert := assert.New(t)
 	p, db, _, repo, cfg := newCIPanelGitHarness(t)
 	cfg.ReviewMinSeverity = "medium"
-	p.loadRepoConfigFn = func(string) (*config.RepoConfig, error) {
-		return &config.RepoConfig{ReviewMinSeverity: "not-a-severity"}, nil
+	p.loadRepoConfigWithRawFn = func(string) (*config.RepoConfig, map[string]any, error) {
+		return &config.RepoConfig{ReviewMinSeverity: "not-a-severity"}, nil, nil
 	}
 
 	base := repo.HeadSHA()
@@ -3918,7 +3924,9 @@ func TestProcessPRNamedPanelMembers(t *testing.T) {
 			"ci": {Members: []string{"sec", "rev"}, SynthesisAgent: "test"},
 		},
 	}
-	p.loadRepoConfigFn = func(string) (*config.RepoConfig, error) { return &config.RepoConfig{}, nil }
+	p.loadRepoConfigWithRawFn = func(string) (*config.RepoConfig, map[string]any, error) {
+		return &config.RepoConfig{}, nil, nil
+	}
 
 	base := repo.HeadSHA()
 	head := repo.CommitFile("app.go", "package app\n", "feat: app")
@@ -3957,8 +3965,8 @@ func TestProcessPRNamedPanelACPMemberReplacesInheritedWorkflowModel(t *testing.T
 			"ci": {Members: []string{"rev"}, SynthesisAgent: "test"},
 		},
 	}
-	p.loadRepoConfigFn = func(string) (*config.RepoConfig, error) {
-		return &config.RepoConfig{}, nil
+	p.loadRepoConfigWithRawFn = func(string) (*config.RepoConfig, map[string]any, error) {
+		return &config.RepoConfig{}, nil, nil
 	}
 
 	base := repo.HeadSHA()
@@ -4002,7 +4010,9 @@ func TestProcessPRNamedPanelMemberUsesBackupModelWhenPreferredUnavailable(t *tes
 			"ci": {Members: []string{"rev"}, SynthesisAgent: "test"},
 		},
 	}
-	p.loadRepoConfigFn = func(string) (*config.RepoConfig, error) { return &config.RepoConfig{}, nil }
+	p.loadRepoConfigWithRawFn = func(string) (*config.RepoConfig, map[string]any, error) {
+		return &config.RepoConfig{}, nil, nil
+	}
 
 	base := repo.HeadSHA()
 	head := repo.CommitFile("app.go", "package app\n", "feat: app")
@@ -4047,7 +4057,9 @@ func TestProcessPRNamedPanelOmittedAgentAutoDetectsAvailableAgent(t *testing.T) 
 			"ci": {Members: []string{"rev"}, SynthesisAgent: "test"},
 		},
 	}
-	p.loadRepoConfigFn = func(string) (*config.RepoConfig, error) { return &config.RepoConfig{}, nil }
+	p.loadRepoConfigWithRawFn = func(string) (*config.RepoConfig, map[string]any, error) {
+		return &config.RepoConfig{}, nil, nil
+	}
 
 	base := repo.HeadSHA()
 	head := repo.CommitFile("app.go", "package app\n", "feat: app")
@@ -4072,11 +4084,11 @@ func TestProcessPRNamedPanelOmittedAgentAutoDetectsAvailableAgent(t *testing.T) 
 // warrants one (a trivial doc/test change that the heuristics skip).
 func TestProcessPRAutoDesignAppendsNoneWhenNotWarranted(t *testing.T) {
 	p, db, _, repo, cfg := newCIPanelGitHarness(t)
-	p.loadRepoConfigFn = func(string) (*config.RepoConfig, error) {
+	p.loadRepoConfigWithRawFn = func(string) (*config.RepoConfig, map[string]any, error) {
 		enabled := true
 		rc := &config.RepoConfig{}
 		rc.AutoDesignReview.Enabled = &enabled
-		return rc, nil
+		return rc, nil, nil
 	}
 
 	base := repo.HeadSHA()
@@ -4103,11 +4115,11 @@ func TestProcessPRAutoDesignAppendsNoneWhenNotWarranted(t *testing.T) {
 // design member rather than dropping it.
 func TestProcessPRAutoDesignFailsOpenOnAmbiguous(t *testing.T) {
 	p, db, _, repo, cfg := newCIPanelGitHarness(t)
-	p.loadRepoConfigFn = func(string) (*config.RepoConfig, error) {
+	p.loadRepoConfigWithRawFn = func(string) (*config.RepoConfig, map[string]any, error) {
 		enabled := true
 		rc := &config.RepoConfig{}
 		rc.AutoDesignReview.Enabled = &enabled
-		return rc, nil
+		return rc, nil, nil
 	}
 
 	base := repo.HeadSHA()
@@ -4145,11 +4157,11 @@ func TestProcessPRAutoDesignFailsOpenOnAmbiguous(t *testing.T) {
 func TestProcessPRAutoDesignMultiCommitEarlierWarrants(t *testing.T) {
 	assert := assert.New(t)
 	p, db, _, repo, cfg := newCIPanelGitHarness(t)
-	p.loadRepoConfigFn = func(string) (*config.RepoConfig, error) {
+	p.loadRepoConfigWithRawFn = func(string) (*config.RepoConfig, map[string]any, error) {
 		enabled := true
 		rc := &config.RepoConfig{}
 		rc.AutoDesignReview.Enabled = &enabled
-		return rc, nil
+		return rc, nil, nil
 	}
 
 	base := repo.HeadSHA()

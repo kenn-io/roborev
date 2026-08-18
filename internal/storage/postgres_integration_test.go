@@ -706,6 +706,57 @@ func TestIntegration_SyncPullsLateVisibleResponseBeforeCursor(t *testing.T) {
 	assert.Contains(t, uuids, lateUUID)
 }
 
+func TestIntegration_ExperimentAssignmentConflictLeavesOriginalRow(t *testing.T) {
+	env := newIntegrationEnv(t, 30*time.Second)
+	assignedAt := time.Date(2026, 8, 18, 12, 0, 0, 0, time.UTC)
+	machineID := "11111111-1111-1111-1111-111111111111"
+
+	for _, definition := range []SyncableExperimentDefinition{
+		{
+			ExperimentID: "session-v1", DefinitionHash: "definition-a",
+			DefinitionJSON: `{"ratio":0.5}`, FirstSeenAt: assignedAt,
+			SourceMachineID: machineID,
+		},
+		{
+			ExperimentID: "model-v1", DefinitionHash: "definition-b",
+			DefinitionJSON: `{"ratio":0.5}`, FirstSeenAt: assignedAt,
+			SourceMachineID: machineID,
+		},
+	} {
+		require.NoError(t, env.Pool.UpsertExperimentDefinition(env.Ctx, definition))
+	}
+
+	original := SyncableExperimentAssignment{
+		ReviewUnitKind: ReviewUnitJob, ReviewUnitUUID: "job-unit-1",
+		ExperimentID: "session-v1", Arm: "experiment",
+		SubjectHash: "subject-a", EffectiveConfigHash: "config-a",
+		AssignedAt: assignedAt, SourceMachineID: machineID,
+	}
+	require.NoError(t, env.Pool.UpsertExperimentAssignment(env.Ctx, original))
+	require.NoError(t, env.Pool.UpsertExperimentAssignment(env.Ctx, original))
+
+	conflicting := original
+	conflicting.ExperimentID = "model-v1"
+	conflicting.SubjectHash = "subject-b"
+	conflicting.EffectiveConfigHash = "config-b"
+	require.Error(t, env.Pool.UpsertExperimentAssignment(env.Ctx, conflicting))
+
+	var experimentID, arm, subjectHash, effectiveConfigHash string
+	var assignmentCount int
+	err := env.Pool.pool.QueryRow(env.Ctx, `
+		SELECT experiment_id, arm, subject_hash, effective_config_hash, COUNT(*) OVER ()
+		FROM roborev.experiment_assignments
+		WHERE review_unit_kind = $1 AND review_unit_uuid = $2`,
+		ReviewUnitJob, original.ReviewUnitUUID,
+	).Scan(&experimentID, &arm, &subjectHash, &effectiveConfigHash, &assignmentCount)
+	require.NoError(t, err)
+	assert.Equal(t, 1, assignmentCount)
+	assert.Equal(t, original.ExperimentID, experimentID)
+	assert.Equal(t, original.Arm, arm)
+	assert.Equal(t, original.SubjectHash, subjectHash)
+	assert.Equal(t, original.EffectiveConfigHash, effectiveConfigHash)
+}
+
 func TestIntegration_FinalPush(t *testing.T) {
 	env := newIntegrationEnv(t, 30*time.Second)
 	db := env.openDB("test.db")

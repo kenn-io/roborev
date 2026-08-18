@@ -532,7 +532,7 @@ func TestHandleEnqueueReusesPreviousBranchSessionWhenEnabled(t *testing.T) {
 			return false
 		}, "GetMainRepoRoot failed: %v", err)
 	}
-	repo, err := db.GetOrCreateRepo(repoRoot)
+	repo, err := db.GetOrCreateRepo(repoRoot, config.ResolveRepoIdentity(repoRoot, nil))
 	if err != nil {
 		require.Condition(t, func() bool {
 			return false
@@ -546,14 +546,24 @@ func TestHandleEnqueueReusesPreviousBranchSessionWhenEnabled(t *testing.T) {
 			return false
 		}, "GetOrCreateCommit failed: %v", err)
 	}
+	selection, err := config.SelectReviewExperiment(config.ExperimentSelectionInput{
+		Workflow: config.ExperimentWorkflowReview,
+		Subject: config.ExperimentSubject{
+			Repository: repo.Identity,
+			Branch:     "feature/session",
+		},
+	})
+	require.NoError(t, err)
 
 	prevJob, err := db.EnqueueJob(storage.EnqueueOpts{
-		RepoID:     repo.ID,
-		CommitID:   commit.ID,
-		GitRef:     sha,
-		Branch:     "feature/session",
-		Agent:      "test",
-		ReviewType: config.ReviewTypeDefault,
+		RepoID:            repo.ID,
+		CommitID:          commit.ID,
+		GitRef:            sha,
+		Branch:            "feature/session",
+		BranchSubjectHash: selection.SubjectHash,
+		Agent:             "test",
+		Reasoning:         "thorough",
+		ReviewType:        config.ReviewTypeDefault,
 	})
 	if err != nil {
 		require.Condition(t, func() bool {
@@ -575,7 +585,6 @@ func TestHandleEnqueueReusesPreviousBranchSessionWhenEnabled(t *testing.T) {
 			return false
 		}, "failed to seed session_id: %v", err)
 	}
-
 	candidate, err := db.FindReusableSessionCandidate(repo.ID, "feature/session", "test", config.ReviewTypeDefault, "")
 	if err != nil {
 		require.Condition(t, func() bool {
@@ -591,7 +600,6 @@ func TestHandleEnqueueReusesPreviousBranchSessionWhenEnabled(t *testing.T) {
 			return false
 		}, "findReusableSessionID() = %q, want %q", reused, "session-123")
 	}
-
 	reqData := EnqueueRequest{RepoPath: repoDir, GitRef: "HEAD", Branch: "feature/session", Agent: "test"}
 	req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", reqData)
 	w := httptest.NewRecorder()
