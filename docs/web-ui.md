@@ -163,10 +163,11 @@ auth_token_file = "/etc/roborev/web-auth-token"
 slash, and that origin must serve only Roborev-controlled content. Serve sibling
 applications from separate origins. `base_path` is an optional canonical path
 prefix: it starts with `/`, has no trailing slash, and must be preserved by the
-reverse proxy. The browser session cookie is scoped to that prefix to reduce
-incidental transmission, but same-origin scripts can still make requests below
-it. The prefix provides routing, not isolation. `auth_token_file` and
-`auth_token` are mutually exclusive; the token file must contain exactly one
+reverse proxy. It cannot contain a percent escape, backslash, control character,
+or surrounding whitespace. The browser session cookie is scoped to that prefix
+to reduce incidental transmission, but same-origin scripts can still make
+requests below it. The prefix provides routing, not isolation. `auth_token_file`
+and `auth_token` are mutually exclusive; the token file must contain exactly one
 token. Protect the token file and restart the daemon after changing any `[web]`
 setting:
 

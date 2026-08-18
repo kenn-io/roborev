@@ -882,6 +882,9 @@ func NormalizeWebBasePath(raw string) (string, error) {
 	if raw == "" {
 		return "", nil
 	}
+	if strings.TrimSpace(raw) != raw {
+		return "", fmt.Errorf("web base path must not have surrounding whitespace")
+	}
 	if !strings.HasPrefix(raw, "/") {
 		return "", fmt.Errorf("web base path must be an absolute path")
 	}
@@ -893,6 +896,15 @@ func NormalizeWebBasePath(raw string) (string, error) {
 			return "", fmt.Errorf("web base path must not contain a query")
 		}
 		return "", fmt.Errorf("web base path must not contain a fragment")
+	}
+	if strings.ContainsRune(raw, '%') {
+		return "", fmt.Errorf("web base path must not contain percent escapes")
+	}
+	if strings.ContainsRune(raw, '\\') {
+		return "", fmt.Errorf("web base path must not contain backslashes")
+	}
+	if strings.IndexFunc(raw, unicode.IsControl) >= 0 {
+		return "", fmt.Errorf("web base path must not contain control characters")
 	}
 	if path.Clean(raw) != raw {
 		return "", fmt.Errorf("web base path must be canonical")

@@ -848,7 +848,8 @@ auth_token_file = "/etc/roborev/web-auth-token"
 must be dedicated to Roborev-controlled content. Serve sibling applications from
 separate origins. Set `base_path` separately when the proxy mounts the browser
 application below a URL prefix; it must start with `/`, have no trailing slash,
-query, fragment, or path traversal. The token file must contain exactly one
+query, fragment, percent escape, backslash, control character, surrounding
+whitespace, or path traversal. The token file must contain exactly one
 base64url-encoded 32-byte token, optionally followed by one terminal newline. It
 is mutually exclusive with `auth_token` and is read when the daemon starts, so
 the token bytes do not need to be stored in the configuration file.

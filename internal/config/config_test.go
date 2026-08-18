@@ -5193,6 +5193,11 @@ func TestWebConfigBasePathNormalization(t *testing.T) {
 		{name: "fragment", basePath: "/roborev-ci#reviews", wantErr: "fragment"},
 		{name: "dot segment", basePath: "/roborev/./ci", wantErr: "canonical"},
 		{name: "dot dot segment", basePath: "/roborev/../ci", wantErr: "canonical"},
+		{name: "percent escape", basePath: "/ui%2Freviews", wantErr: "percent escapes"},
+		{name: "backslash", basePath: `/ui\reviews`, wantErr: "backslashes"},
+		{name: "control character", basePath: "/ui\t/reviews", wantErr: "control characters"},
+		{name: "leading whitespace", basePath: " /ui", wantErr: "surrounding whitespace"},
+		{name: "trailing whitespace", basePath: "/ui ", wantErr: "surrounding whitespace"},
 	}
 
 	for _, tt := range tests {

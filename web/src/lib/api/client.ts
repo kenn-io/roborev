@@ -1,6 +1,6 @@
 import createClient from "openapi-fetch";
 import { Effect, Option, Schema, Stream } from "effect";
-import { appPath } from "../base-path";
+import { appPath, stripBasePath } from "../base-path";
 import type { paths } from "./generated";
 import { authenticatedFetch, type Fetch } from "./session";
 import { TransientTransportError } from "./effect-errors";
@@ -23,7 +23,7 @@ export function createRoborevClient(
   fetchFn?: Fetch,
 ): RoborevClient {
   const inner = fetchFn ?? globalThis.fetch.bind(globalThis);
-  const resolvedBaseUrl = baseUrl.startsWith("/") ? appPath(baseUrl) : baseUrl;
+  const resolvedBaseUrl = resolveBaseUrl(baseUrl);
   return createClient<paths>({
     baseUrl: new URL(resolvedBaseUrl, globalThis.location.origin).toString(),
     fetch: authenticatedFetch(inner),
@@ -223,11 +223,16 @@ function jobOutputUrl(
 }
 
 function apiURL(baseUrl: string, path: string): string {
-  const resolvedBaseUrl = baseUrl.startsWith("/") ? appPath(baseUrl) : baseUrl;
+  const resolvedBaseUrl = resolveBaseUrl(baseUrl);
   return new URL(
     `${resolvedBaseUrl.replace(/\/$/, "")}${path}`,
     globalThis.location.origin,
   ).toString();
+}
+
+function resolveBaseUrl(baseUrl: string): string {
+  if (!baseUrl.startsWith("/")) return baseUrl;
+  return stripBasePath(baseUrl) === "" ? appPath(baseUrl) : baseUrl;
 }
 
 export const loadRoborevJobOutput = Effect.fn("RoborevClient.loadJobOutput")(

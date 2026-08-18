@@ -26,10 +26,15 @@ describe("browser base path", () => {
 
     expect(getBasePath()).toBe("/roborev-ci");
     expect(appPath("/api/status")).toBe("/roborev-ci/api/status");
-    expect(appPath("/roborev-ci/api/status")).toBe("/roborev-ci/api/status");
     expect(appPath("/")).toBe("/roborev-ci/");
     expect(stripBasePath("/roborev-ci/analytics")).toBe("/analytics");
     expect(stripBasePath("/roborev-ci")).toBe("/");
+  });
+
+  test("prefixes an internal route that overlaps the configured prefix", () => {
+    setBasePath("/reviews");
+
+    expect(appPath("/reviews/42")).toBe("/reviews/reviews/42");
   });
 
   test("does not treat a near match as an application path", () => {

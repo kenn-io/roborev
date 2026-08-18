@@ -22,9 +22,6 @@ export function appPath(path: string): string {
     path === "" ? "/" : path.startsWith("/") ? path : `/${path}`;
   const basePath = getBasePath();
   if (basePath === "") return internalPath;
-  if (internalPath === basePath || internalPath.startsWith(`${basePath}/`)) {
-    return internalPath;
-  }
   return internalPath === "/" ? `${basePath}/` : `${basePath}${internalPath}`;
 }
 
