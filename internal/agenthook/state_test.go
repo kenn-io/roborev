@@ -1541,26 +1541,12 @@ func TestRecordPostToolUseAmendAfterBranchAttachmentDoesNotRepeatAcknowledgedRev
 
 	closed := false
 	verdict := "F"
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		if r.URL.Path == "/api/repos/resolve" {
-			assert.NoError(json.NewEncoder(w).Encode(map[string]any{
-				"tracked": true,
-				"repo": map[string]string{
-					"root_path": repo.Path(),
-					"name":      filepath.Base(repo.Path()),
-				},
-			}))
-			return
-		}
-		assert.NoError(json.NewEncoder(w).Encode(jobsResponse{
-			Jobs: []storage.ReviewJob{{
-				ID: 101, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: reviewHead,
-			}},
-		}))
-	}))
-	t.Cleanup(server.Close)
-
-	store := &StateStore{path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{}}
+	store := &StateStore{
+		reviews: reviewSourceWithJobs(storage.ReviewJob{
+			ID: 101, Status: storage.JobStatusDone, Closed: &closed, Verdict: &verdict, GitRef: reviewHead,
+		}),
+		path: filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{},
+	}
 	baseReq := Request{
 		Event: Input{
 			SessionID:     "session-1",
@@ -1572,7 +1558,6 @@ func TestRecordPostToolUseAmendAfterBranchAttachmentDoesNotRepeatAcknowledgedRev
 		CommitThreshold:       1,
 		FailedReviewThreshold: 1,
 		Instruction:           "Resolve reviews.",
-		RoborevServerAddr:     server.URL,
 	}
 
 	first, err := store.Record(baseReq)
