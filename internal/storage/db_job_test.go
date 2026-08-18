@@ -1299,6 +1299,34 @@ func TestReenqueueJob(t *testing.T) {
 		assert.Equal(t, "anthropic", updated.RequestedProvider)
 	})
 
+	t.Run("rerun restores empty non-nullable experiment plan fields", func(t *testing.T) {
+		isolatedDB := openTestDB(t)
+		defer isolatedDB.Close()
+
+		_, _, job := createJobChain(
+			t, isolatedDB, "/tmp/rerun-empty-plan", "rerun-empty-plan",
+		)
+		claimed, err := isolatedDB.ClaimJob("worker-empty-plan")
+		require.NoError(t, err)
+		require.NotNil(t, claimed)
+		require.Equal(t, job.ID, claimed.ID)
+		require.NoError(t, isolatedDB.CompleteJob(job.ID, "codex", "prompt", "output"))
+
+		err = isolatedDB.ReenqueueJob(job.ID, ReenqueueOpts{
+			Agent: "codex", Reasoning: "high", RestorePlan: true,
+		})
+		require.NoError(t, err)
+
+		updated, err := isolatedDB.GetJobByID(job.ID)
+		require.NoError(t, err)
+		assert.Equal(t, JobStatusQueued, updated.Status)
+		assert.Equal(t, "high", updated.Reasoning)
+		assert.Empty(t, updated.ReviewType)
+		assert.Empty(t, updated.MinSeverity)
+		assert.Empty(t, updated.BackupAgent)
+		assert.Empty(t, updated.BackupModel)
+	})
+
 	t.Run("rerun preserves worktree_path", func(t *testing.T) {
 		isolatedDB := openTestDB(t)
 		defer isolatedDB.Close()

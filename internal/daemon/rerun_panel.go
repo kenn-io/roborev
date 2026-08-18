@@ -2,14 +2,96 @@ package daemon
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 
 	"github.com/danielgtaylor/huma/v2"
 	"github.com/google/uuid"
 
+	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
 )
+
+type experimentPanelMemberKey struct {
+	name  string
+	index int
+}
+
+func restoreExperimentPanelPlan(
+	members []storage.EnqueueOpts,
+	synthesis *storage.EnqueueOpts,
+	assignment *storage.ExperimentAssignmentInput,
+) error {
+	if assignment == nil {
+		return nil
+	}
+	var plan experimentReviewPlan
+	if err := json.Unmarshal([]byte(assignment.EffectiveConfigJSON), &plan); err != nil {
+		return fmt.Errorf("decode frozen experiment panel plan: %w", err)
+	}
+	planHash, err := config.FingerprintExperimentConfig(plan)
+	if err != nil {
+		return fmt.Errorf("fingerprint frozen experiment panel plan: %w", err)
+	}
+	if planHash != assignment.EffectiveConfigHash {
+		return errors.New("frozen experiment panel plan does not match its attribution")
+	}
+	if len(plan.Members) != len(members) {
+		return fmt.Errorf("frozen experiment panel plan has %d members, rerun has %d",
+			len(plan.Members), len(members))
+	}
+
+	plansByMember := make(map[experimentPanelMemberKey]experimentJobPlan, len(plan.Members))
+	for _, memberPlan := range plan.Members {
+		key := experimentPanelMemberKey{
+			name: memberPlan.PanelMemberName, index: memberPlan.PanelMemberIndex,
+		}
+		if _, duplicate := plansByMember[key]; duplicate {
+			return fmt.Errorf("frozen experiment panel plan repeats member %q at index %d",
+				key.name, key.index)
+		}
+		plansByMember[key] = memberPlan
+	}
+	for i := range members {
+		key := experimentPanelMemberKey{
+			name: members[i].PanelMemberName, index: members[i].PanelMemberIndex,
+		}
+		memberPlan, ok := plansByMember[key]
+		if !ok {
+			return fmt.Errorf("frozen experiment panel plan is missing member %q at index %d",
+				key.name, key.index)
+		}
+		if memberPlan.PanelName != members[i].PanelName ||
+			memberPlan.JobType != members[i].JobType {
+			return fmt.Errorf("frozen experiment panel plan identity does not match member %q at index %d",
+				key.name, key.index)
+		}
+		applyExperimentJobPlan(&members[i], memberPlan)
+		delete(plansByMember, key)
+	}
+	if len(plansByMember) != 0 {
+		return errors.New("frozen experiment panel plan contains unmatched members")
+	}
+	if plan.Synthesis.PanelName != synthesis.PanelName ||
+		plan.Synthesis.JobType != synthesis.JobType {
+		return errors.New("frozen experiment panel synthesis identity does not match rerun")
+	}
+	applyExperimentJobPlan(synthesis, plan.Synthesis)
+	return nil
+}
+
+func applyExperimentJobPlan(opts *storage.EnqueueOpts, plan experimentJobPlan) {
+	opts.Agent = plan.Agent
+	opts.Model = plan.Model
+	opts.Provider = plan.Provider
+	opts.Reasoning = plan.Reasoning
+	opts.ReviewType = plan.ReviewType
+	opts.MinSeverity = plan.MinSeverity
+	opts.BackupAgent = plan.BackupAgent
+	opts.BackupModel = plan.BackupModel
+	opts.PanelMemberConfigJSON = plan.PanelMemberConfigJSON
+}
 
 // isRerunnableStatus reports whether a job in this status may be rerun. It
 // mirrors ReenqueueJob's terminal-state guard so panel synthesis reruns reject
@@ -102,6 +184,10 @@ func (s *Server) rerunPanelRun(job *storage.ReviewJob, requestID string) (*Rerun
 	if err != nil {
 		return nil, huma.Error500InternalServerError(
 			fmt.Sprintf("load panel experiment assignment: %v", err))
+	}
+	if err := restoreExperimentPanelPlan(memberOpts, &synthOpts, synthOpts.Experiment); err != nil {
+		return nil, huma.Error500InternalServerError(
+			fmt.Sprintf("restore panel experiment plan: %v", err))
 	}
 
 	_, synthJob, replayed, err := s.db.EnqueuePanelRerun(memberOpts, synthOpts, requestID, job.ID)

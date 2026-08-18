@@ -440,6 +440,11 @@ and synthesis plans; it is a continuation, not fresh enrollment. A newly
 requested review or panel performs deterministic selection from the currently
 enabled definition.
 
+Panel reruns verify the stored plan hash and match every member by its stable
+name and index before creating the replacement run. A malformed plan, hash
+mismatch, duplicate member, missing member, extra member, or synthesis identity
+mismatch rejects the rerun before any new job is inserted.
+
 Experiment definitions and assignments are retained as immutable audit records
 when repository deletion removes their review jobs. They no longer appear in
 job-based projections or exports, but remain available to synchronization until

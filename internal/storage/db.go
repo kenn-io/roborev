@@ -1246,6 +1246,8 @@ func (db *DB) migrate() error {
 
 	// Review experiment attribution and session lineage. These columns stay
 	// separate from branch because CI jobs deliberately leave branch empty.
+	// The experiment tables below are introduced in their final shape; no
+	// released database contains an intermediate table without the frozen plan.
 	for _, col := range []struct {
 		name string
 		def  string

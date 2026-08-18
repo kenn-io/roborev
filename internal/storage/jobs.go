@@ -1395,11 +1395,11 @@ func (db *DB) ReenqueueJobWithRequest(
 	`, enqueuedAt,
 		opts.RestorePlan, opts.Agent,
 		nullString(opts.Model), nullString(opts.Provider),
-		opts.RestorePlan, nullString(opts.Reasoning),
-		opts.RestorePlan, nullString(opts.ReviewType),
+		opts.RestorePlan, opts.Reasoning,
+		opts.RestorePlan, opts.ReviewType,
 		opts.RestorePlan, normalizeMinSeverityForWrite(opts.MinSeverity),
-		opts.RestorePlan, nullString(opts.BackupAgent),
-		opts.RestorePlan, nullString(opts.BackupModel),
+		opts.RestorePlan, opts.BackupAgent,
+		opts.RestorePlan, opts.BackupModel,
 		updatedAt, jobID)
 	if err != nil {
 		return 0, false, err

@@ -403,6 +403,8 @@ func (p *PgPool) EnsureSchema(ctx context.Context) error {
 			}
 		}
 		if currentVersion < 19 {
+			// Version 19 introduces review experiments and their frozen plans
+			// together. There is no released version-19 intermediate schema.
 			for _, stmt := range []string{
 				`ALTER TABLE review_jobs ADD COLUMN IF NOT EXISTS branch_subject_hash TEXT`,
 				`ALTER TABLE review_jobs ADD COLUMN IF NOT EXISTS resume_source_job_uuid TEXT`,
