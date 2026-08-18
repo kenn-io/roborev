@@ -364,7 +364,10 @@ func (wp *WorkerPool) handleUpdateInterruption(
 	requeued, err := wp.db.RequeueUpdateInterruptedJob(job.ID, workerID)
 	if err != nil {
 		log.Printf("[%s] Error requeueing update-interrupted job %d: %v", workerID, job.ID, err)
-		return false
+		// Keep update-owned attempts out of normal failure and cancellation
+		// handling even when the immediate transition fails. The row remains
+		// running and replacement startup's stale-job recovery requeues it.
+		return true
 	}
 	if requeued {
 		log.Printf("[%s] Requeued update-interrupted job %d", workerID, job.ID)

@@ -45,6 +45,19 @@ func TestHandleUpdateInterruptionDoesNotOverrideUserCancel(t *testing.T) {
 	tc.assertJobStatus(t, job.ID, storage.JobStatusCanceled)
 }
 
+func TestHandleUpdateInterruptionSuppressesSideEffectsWhenRequeueFails(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	job := tc.createAndClaimJob(t, "update-requeue-failure", "worker-update")
+	tc.Pool.InterruptJobsForUpdate([]int64{job.ID})
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+	require.NoError(t, tc.DB.Close())
+
+	handled := tc.Pool.handleUpdateInterruption(ctx, "worker-update", job)
+
+	assert.True(t, handled)
+}
+
 func TestRegisterRunningJobCancelsUpdateTarget(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	job := tc.createAndClaimJob(t, "update-register-race", "worker-update")
