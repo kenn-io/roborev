@@ -998,6 +998,10 @@ func findCompatibleReusableSession(
 		!agent.SupportsSessionResume(opts.Agent) {
 		return "", ""
 	}
+	machineID, err := db.GetMachineID()
+	if err != nil || machineID == "" {
+		return "", ""
+	}
 	candidates, err := db.FindCompatibleReusableSessionCandidates(storage.ReusableSessionQuery{
 		RepoID:                opts.RepoID,
 		BranchSubjectHash:     opts.BranchSubjectHash,
@@ -1010,6 +1014,7 @@ func findCompatibleReusableSession(
 		PanelName:             opts.PanelName,
 		PanelMemberName:       opts.PanelMemberName,
 		PanelMemberConfigJSON: opts.PanelMemberConfigJSON,
+		SourceMachineID:       machineID,
 		Experiment:            experiment,
 		Limit: config.ResolveReuseReviewSessionLookbackFromConfig(
 			repoCfg, rawRepoCfg, globalCfg,
@@ -2740,6 +2745,13 @@ type singleAgentInputs struct {
 	requestedModel string
 }
 
+type resolvedSingleAgent struct {
+	Agent       string
+	Model       string
+	BackupAgent string
+	BackupModel string
+}
+
 // resolveSingleAgent resolves the single-review agent for the no-panel path:
 // it applies the workflow config plus the availability gate (with failover
 // backup) and returns the chosen agent name and effective model. A non-nil
@@ -2747,7 +2759,7 @@ type singleAgentInputs struct {
 // available, 400 when the workflow config cannot be resolved).
 func (s *Server) resolveSingleAgent(
 	in singleAgentInputs,
-) (string, string, *RawJSONOutput) {
+) (resolvedSingleAgent, *RawJSONOutput) {
 	resolution, err := agent.ResolveWorkflowConfigFromConfig(
 		in.req.Agent, in.repoCfg, in.cfg, in.workflow, in.reasoning,
 	)
@@ -2756,7 +2768,7 @@ func (s *Server) resolveSingleAgent(
 			http.StatusBadRequest,
 			ErrorResponse{Error: fmt.Sprintf("resolve workflow config: %v", err)},
 		)
-		return "", "", out
+		return resolvedSingleAgent{}, out
 	}
 	agentName := resolution.PreferredAgent
 	resolved, err := agent.GetPreferredOrBackupWithConfigFromConfig(
@@ -2768,16 +2780,24 @@ func (s *Server) resolveSingleAgent(
 				http.StatusBadRequest,
 				ErrorResponse{Error: fmt.Sprintf("invalid agent: %v", err)},
 			)
-			return "", "", out
+			return resolvedSingleAgent{}, out
 		}
 		out, _ := rawJSONOutput(
 			http.StatusServiceUnavailable,
 			ErrorResponse{Error: fmt.Sprintf("no review agent available: %v", err)},
 		)
-		return "", "", out
+		return resolvedSingleAgent{}, out
 	}
 	agentName = resolved.Name()
-	return agentName, resolution.ModelForSelectedAgent(agentName, in.requestedModel), nil
+	backupAgent, backupModel := backupExecutionForSelectedAgent(
+		resolution, agentName, in.repoCfg, in.cfg,
+	)
+	return resolvedSingleAgent{
+		Agent:       agentName,
+		Model:       resolution.ModelForSelectedAgent(agentName, in.requestedModel),
+		BackupAgent: backupAgent,
+		BackupModel: backupModel,
+	}, nil
 }
 
 // enqueueSingleAgent resolves the single-review agent, enqueues one job from the
@@ -2787,14 +2807,16 @@ func (s *Server) resolveSingleAgent(
 func (s *Server) enqueueSingleAgent(
 	ctx context.Context, in singleAgentInputs,
 ) (*RawJSONOutput, error) {
-	agentName, model, early := s.resolveSingleAgent(in)
+	execution, early := s.resolveSingleAgent(in)
 	if early != nil {
 		return early, nil
 	}
 
 	o := in.descriptor.baseOpts()
-	o.Agent = agentName
-	o.Model = model
+	o.Agent = execution.Agent
+	o.Model = execution.Model
+	o.BackupAgent = execution.BackupAgent
+	o.BackupModel = execution.BackupModel
 	o.Provider = in.descriptor.requestedProvider
 	o.Reasoning = in.reasoning
 	o.ReviewType = in.req.ReviewType
@@ -2836,7 +2858,7 @@ func (s *Server) enqueueSingleAgent(
 	job.RepoPath = in.repo.RootPath
 	job.RepoName = in.repo.Name
 
-	s.finishSingleEnqueue(ctx, job, agentName, in)
+	s.finishSingleEnqueue(ctx, job, execution.Agent, in)
 	return rawJSONOutput(http.StatusCreated, EnqueueCreatedResponse{
 		ReviewJob: job,
 		UUID:      job.UUID,

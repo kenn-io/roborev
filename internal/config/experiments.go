@@ -63,12 +63,11 @@ type ExperimentSelectionInput struct {
 
 // ExperimentAssignment is immutable attribution stored with a review unit.
 type ExperimentAssignment struct {
-	ID                  string        `json:"id"`
-	Arm                 ExperimentArm `json:"arm"`
-	SubjectHash         string        `json:"subject_hash"`
-	DefinitionHash      string        `json:"definition_hash"`
-	DefinitionJSON      string        `json:"-"`
-	EffectiveConfigHash string        `json:"effective_config_hash"`
+	ID             string        `json:"id"`
+	Arm            ExperimentArm `json:"arm"`
+	SubjectHash    string        `json:"subject_hash"`
+	DefinitionHash string        `json:"definition_hash"`
+	DefinitionJSON string        `json:"-"`
 }
 
 // ExperimentSelection contains the repository configuration after applying an
@@ -230,21 +229,14 @@ func SelectReviewExperiment(in ExperimentSelectionInput) (ExperimentSelection, e
 	if err != nil {
 		return ExperimentSelection{}, fmt.Errorf("experiment %q config: %w", selectedID, err)
 	}
-	effectiveJSON, err := json.Marshal(effectiveRaw)
-	if err != nil {
-		return ExperimentSelection{}, fmt.Errorf("experiment %q effective config: %w", selectedID, err)
-	}
-	effectiveHash := sha256Hex(effectiveJSON)
-
 	result.RepoConfig = effectiveCfg
 	result.RawRepoConfig = effectiveRaw
 	result.Assignment = &ExperimentAssignment{
-		ID:                  selectedID,
-		Arm:                 arm,
-		SubjectHash:         subjectHash,
-		DefinitionHash:      definitionHash,
-		DefinitionJSON:      string(definitionJSON),
-		EffectiveConfigHash: effectiveHash,
+		ID:             selectedID,
+		Arm:            arm,
+		SubjectHash:    subjectHash,
+		DefinitionHash: definitionHash,
+		DefinitionJSON: string(definitionJSON),
 	}
 	return result, nil
 }
@@ -415,13 +407,43 @@ func effectiveRepoConfigMap(global *Config, rawRepo, overlay map[string]any) (ma
 		return nil, err
 	}
 	if rawRepo != nil {
-		base = mergeExperimentMaps(base, rawRepo)
+		base = mergeExperimentBaseMaps(base, rawRepo)
 	}
 	if base == nil {
 		base = make(map[string]any)
 	}
 	delete(base, "experiments")
 	return mergeExperimentMaps(base, overlay), nil
+}
+
+// mergeExperimentBaseMaps composes global and repository configuration with
+// the same replacement boundary as the typed resolvers. Same-named subagents
+// and panels are replaced as complete repository entries; only the experiment
+// overlay recursively merges into that resolved base entry afterward.
+func mergeExperimentBaseMaps(global, repo map[string]any) map[string]any {
+	merged := mergeExperimentMaps(global, repo)
+	globalReview, globalOK := global["review"].(map[string]any)
+	repoReview, repoOK := repo["review"].(map[string]any)
+	if !globalOK || !repoOK {
+		return merged
+	}
+	mergedReview, ok := merged["review"].(map[string]any)
+	if !ok {
+		return merged
+	}
+	for _, key := range []string{"subagents", "panels"} {
+		globalEntries, globalEntriesOK := globalReview[key].(map[string]any)
+		repoEntries, repoEntriesOK := repoReview[key].(map[string]any)
+		if !globalEntriesOK || !repoEntriesOK {
+			continue
+		}
+		entries := cloneExperimentMap(globalEntries)
+		for name, value := range repoEntries {
+			entries[name] = cloneExperimentValue(value)
+		}
+		mergedReview[key] = entries
+	}
+	return merged
 }
 
 func globalReviewConfigMap(global *Config) (map[string]any, error) {

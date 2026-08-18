@@ -225,6 +225,76 @@ func TestSelectReviewExperimentMergesOverGlobalNestedConfig(t *testing.T) {
 	assert.Equal(t, "high", bugs.Reasoning)
 }
 
+func TestSelectReviewExperimentPreservesRepoReplacementBeforeOverlay(t *testing.T) {
+	enabled := true
+	ratio := 1.0
+	selection, err := SelectReviewExperiment(ExperimentSelectionInput{
+		Workflow: ExperimentWorkflowReview,
+		Subject: ExperimentSubject{
+			Repository: "github.com/example/project", Branch: "feature",
+		},
+		Global: &Config{
+			Review: ReviewConfig{Subagents: map[string]SubagentSpec{
+				"bugs": {Agent: "codex", Model: "global-model", Reasoning: "high"},
+			}},
+			Experiments: map[string]ExperimentDefinition{
+				"provider-v1": {
+					Enabled: &enabled, Ratio: &ratio,
+					Workflows: []ExperimentWorkflow{ExperimentWorkflowReview},
+					Config: map[string]any{"review": map[string]any{
+						"subagents": map[string]any{"bugs": map[string]any{"provider": "openai"}},
+					}},
+				},
+			},
+		},
+		Repo: &RepoConfig{Review: ReviewConfig{Subagents: map[string]SubagentSpec{
+			"bugs": {Model: "repo-model"},
+		}}},
+		RawRepo: map[string]any{"review": map[string]any{
+			"subagents": map[string]any{"bugs": map[string]any{"model": "repo-model"}},
+		}},
+	})
+	require.NoError(t, err)
+	bugs := selection.RepoConfig.Review.Subagents["bugs"]
+	assert.Empty(t, bugs.Agent)
+	assert.Equal(t, "repo-model", bugs.Model)
+	assert.Equal(t, "openai", bugs.Provider)
+	assert.Empty(t, bugs.Reasoning)
+}
+
+func TestSelectReviewExperimentDefaultArmPreservesRepoReplacement(t *testing.T) {
+	enabled := true
+	ratio := 0.0
+	selection, err := SelectReviewExperiment(ExperimentSelectionInput{
+		Workflow: ExperimentWorkflowReview,
+		Subject: ExperimentSubject{
+			Repository: "github.com/example/project", Branch: "feature",
+		},
+		Global: &Config{
+			Review: ReviewConfig{Subagents: map[string]SubagentSpec{
+				"bugs": {Agent: "codex", Model: "global-model", Reasoning: "high"},
+			}},
+			Experiments: map[string]ExperimentDefinition{
+				"baseline-v1": {
+					Enabled: &enabled, Ratio: &ratio,
+					Workflows: []ExperimentWorkflow{ExperimentWorkflowReview},
+					Config:    map[string]any{"reuse_review_session": true},
+				},
+			},
+		},
+		Repo: &RepoConfig{Review: ReviewConfig{Subagents: map[string]SubagentSpec{
+			"bugs": {Model: "repo-model"},
+		}}},
+		RawRepo: map[string]any{"review": map[string]any{
+			"subagents": map[string]any{"bugs": map[string]any{"model": "repo-model"}},
+		}},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, selection.Assignment)
+	assert.Equal(t, ExperimentArmDefault, selection.Assignment.Arm)
+	assert.Equal(t, SubagentSpec{Model: "repo-model"}, selection.RepoConfig.Review.Subagents["bugs"])
+}
+
 func TestSelectReviewExperimentPreservesExplicitZeroPresence(t *testing.T) {
 	enabled := true
 	ratio := 1.0

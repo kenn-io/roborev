@@ -924,13 +924,13 @@ func (p *CIPoller) resolveCIPanelMemberExecution(
 	if !member.ModelExplicit || !resolution.AgentMatches(resolvedAgent, member.Agent) {
 		model = resolution.ModelForSelectedAgent(resolvedAgent, "")
 	}
-	backupAgent, backupModel := ciMemberBackupExecution(
+	backupAgent, backupModel := backupExecutionForSelectedAgent(
 		resolution, resolvedAgent, repoCfg, cfg,
 	)
 	return resolvedAgent, model, backupAgent, backupModel, nil
 }
 
-func ciMemberBackupExecution(
+func backupExecutionForSelectedAgent(
 	resolution agent.WorkflowConfig,
 	selectedAgent string,
 	repoCfg *config.RepoConfig,
@@ -985,7 +985,7 @@ func (p *CIPoller) resolveMatrixMemberAgent(
 		resolvedAgent = resolved.Name()
 	}
 	resolvedAgent = agent.StorageNameFromConfig(resolvedAgent, repoCfg, cfg)
-	backupAgent, backupModel := ciMemberBackupExecution(
+	backupAgent, backupModel := backupExecutionForSelectedAgent(
 		resolution, resolvedAgent, repoCfg, cfg,
 	)
 	return resolvedAgent, resolution.ModelForSelectedAgent(resolvedAgent, cfg.CI.Model),
@@ -1147,7 +1147,7 @@ func (p *CIPoller) maybeAppendDesignMember(
 		if resolution, err := agent.ResolveWorkflowConfigFromConfig(
 			designAgent, repoCfg, cfg, "design", reasoning,
 		); err == nil {
-			backupAgent, backupModel = ciMemberBackupExecution(
+			backupAgent, backupModel = backupExecutionForSelectedAgent(
 				resolution, designAgent, repoCfg, cfg,
 			)
 		}
@@ -1240,7 +1240,7 @@ type buildPanelOptsInput struct {
 // CreateCIPanelRun stamps the shared panel_run_uuid and enforces the roles, so
 // PanelRunUUID is left empty here.
 func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) ([]storage.EnqueueOpts, storage.EnqueueOpts, error) {
-	synthesisMinSeverity := resolveMinSeverity(in.cfg.CI.MinSeverity, in.repo.RootPath, in.ghRepo)
+	synthesisMinSeverity := resolveCISynthesisMinSeverity(in.repoCfg, in.cfg, in.ghRepo)
 	reviewMinSeverity := resolveCIReviewMinSeverity(in.repoCfg, in.cfg, in.ghRepo)
 	memberOpts := make([]storage.EnqueueOpts, 0, len(in.members))
 	for i, m := range in.members {
@@ -3040,34 +3040,29 @@ func loadCIRepoConfigWithRaw(repoPath string) (*config.RepoConfig, map[string]an
 	return config.LoadRepoConfigWithRaw(repoPath)
 }
 
-// resolveMinSeverity determines the effective min_severity for synthesis.
-// Priority: per-repo .roborev.toml [ci] min_severity > global [ci] min_severity > "" (no filter).
-// Invalid values are logged and skipped.
-func resolveMinSeverity(globalMinSeverity, repoPath, ghRepo string) string {
-	minSeverity := globalMinSeverity
-
-	// Try per-repo override (from default branch, not working tree)
-	if repoPath != "" {
-		repoCfg, err := loadCIRepoConfig(repoPath)
-		if err != nil {
-			log.Printf("CI poller: failed to load repo config from %s: %v (using global min_severity)", repoPath, err)
-		} else if repoCfg != nil {
-			if s := strings.TrimSpace(repoCfg.CI.MinSeverity); s != "" {
-				if normalized, err := config.NormalizeMinSeverity(s); err == nil {
-					minSeverity = normalized
-				} else {
-					log.Printf("CI poller: invalid min_severity %q in repo config for %s, using global", s, ghRepo)
-				}
-			}
+// resolveCISynthesisMinSeverity resolves synthesis severity from the already
+// selected repository configuration so an experiment overlay remains frozen in
+// the queued panel plan.
+func resolveCISynthesisMinSeverity(repoCfg *config.RepoConfig, cfg *config.Config, ghRepo string) string {
+	globalMinSeverity := ""
+	if cfg != nil {
+		globalMinSeverity = cfg.CI.MinSeverity
+	}
+	normalizedGlobal := ""
+	if strings.TrimSpace(globalMinSeverity) != "" {
+		if normalized, err := config.NormalizeMinSeverity(globalMinSeverity); err == nil {
+			normalizedGlobal = normalized
+		} else {
+			log.Printf("CI poller: invalid global min_severity %q, ignoring", globalMinSeverity)
 		}
 	}
-
-	// Normalize (handles the global value or already-normalized repo value)
-	if normalized, err := config.NormalizeMinSeverity(minSeverity); err == nil {
-		return normalized
+	if repoCfg != nil && strings.TrimSpace(repoCfg.CI.MinSeverity) != "" {
+		if normalized, err := config.NormalizeMinSeverity(repoCfg.CI.MinSeverity); err == nil {
+			return normalized
+		}
+		log.Printf("CI poller: invalid min_severity %q for %s, using global", repoCfg.CI.MinSeverity, ghRepo)
 	}
-	log.Printf("CI poller: invalid global min_severity %q, ignoring", minSeverity)
-	return ""
+	return normalizedGlobal
 }
 
 // resolveCIReviewMinSeverity determines the effective min_severity for member

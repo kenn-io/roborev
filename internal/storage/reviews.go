@@ -213,6 +213,7 @@ type ReusableSessionQuery struct {
 	PanelName             string
 	PanelMemberName       string
 	PanelMemberConfigJSON string
+	SourceMachineID       string
 	Experiment            *ExperimentAssignmentInput
 	Limit                 int
 }
@@ -220,7 +221,7 @@ type ReusableSessionQuery struct {
 // FindCompatibleReusableSessionCandidates returns successful prior reviews
 // whose resolved execution plan and experiment attribution match q.
 func (db *DB) FindCompatibleReusableSessionCandidates(q ReusableSessionQuery) ([]ReviewJob, error) {
-	if q.RepoID == 0 || q.BranchSubjectHash == "" || q.Agent == "" {
+	if q.RepoID == 0 || q.BranchSubjectHash == "" || q.Agent == "" || q.SourceMachineID == "" {
 		return nil, nil
 	}
 	if q.ReviewType == "" {
@@ -244,6 +245,7 @@ func (db *DB) FindCompatibleReusableSessionCandidates(q ReusableSessionQuery) ([
 		  AND COALESCE(j.reasoning, '') = ?
 		  AND COALESCE(NULLIF(j.review_type, ''), 'default') = ?
 		  AND COALESCE(j.worktree_path, '') = ?
+		  AND j.source_machine_id = ?
 		  AND j.status = 'done'
 		  AND COALESCE(NULLIF(j.job_type, ''), 'review') IN ('review', 'range', 'dirty')
 		  AND j.session_id IS NOT NULL
@@ -251,7 +253,7 @@ func (db *DB) FindCompatibleReusableSessionCandidates(q ReusableSessionQuery) ([
 		  AND EXISTS (SELECT 1 FROM reviews rv WHERE rv.job_id = j.id)`
 	args := []any{
 		q.RepoID, q.BranchSubjectHash, q.Agent, q.Model, q.Provider,
-		q.Reasoning, q.ReviewType, q.WorktreePath,
+		q.Reasoning, q.ReviewType, q.WorktreePath, q.SourceMachineID,
 	}
 	if q.PanelMemberName == "" {
 		query += ` AND COALESCE(j.panel_role, '') = ''`

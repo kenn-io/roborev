@@ -110,6 +110,48 @@ func TestEnqueuePanelPersistsOneExperimentForWholeRun(t *testing.T) {
 	assert.Equal(t, 1, assignmentCount)
 }
 
+func TestExperimentPersistsLocalReviewBackupPlans(t *testing.T) {
+	const backupName = "claude-code"
+
+	server, db, _ := newTestServer(t)
+	enabled := true
+	ratio := 1.0
+	server.configWatcher.Config().Experiments = map[string]config.ExperimentDefinition{
+		"backup-v1": {
+			Enabled: &enabled, Ratio: &ratio,
+			Workflows: []config.ExperimentWorkflow{config.ExperimentWorkflowReview},
+			Config: map[string]any{
+				"backup_agent": backupName,
+				"backup_model": "backup-model",
+			},
+		},
+	}
+
+	standaloneRepo := testutil.NewGitRepo(t)
+	standaloneRepo.CommitFile("review.go", "package review\n", "add review")
+	job := enqueueViaHTTP(t, server, EnqueueRequest{
+		RepoPath: standaloneRepo.Path(), GitRef: "HEAD",
+		Branch: "feature/standalone-backup", Agent: "test", Panel: config.PanelNone,
+	})
+	assert.Equal(t, backupName, job.BackupAgent)
+	assert.Equal(t, "backup-model", job.BackupModel)
+
+	panelRepo := testutil.NewGitRepo(t)
+	panelRepo.WriteFile(".roborev.toml", panelTOML)
+	panelRepo.CommitFile("review.go", "package review\n", "add panel review")
+	panel := enqueuePanelViaHTTP(t, server, EnqueueRequest{
+		RepoPath: panelRepo.Path(), GitRef: "HEAD",
+		Branch: "feature/panel-backup", Agent: "test",
+	})
+	members, err := db.GetPanelMembers(panel.PanelRunUUID)
+	require.NoError(t, err)
+	require.NotEmpty(t, members)
+	for _, member := range members {
+		assert.Equal(t, backupName, member.BackupAgent)
+		assert.Equal(t, "backup-model", member.BackupModel)
+	}
+}
+
 func TestPanelExperimentResumesCompatibleMemberSession(t *testing.T) {
 	server, db, _ := newTestServer(t)
 	enabled := true
@@ -203,5 +245,80 @@ func TestCIPollerUsesSourceBranchExperimentIdentity(t *testing.T) {
 		assert.Equal(t, synthesis.BranchSubjectHash, member.BranchSubjectHash)
 		assert.Equal(t, synthesis.Experiments, member.Experiments)
 		assert.Empty(t, member.Branch)
+	}
+}
+
+func TestCIPollerExperimentFreezesSynthesisSeverity(t *testing.T) {
+	poller, db, _, repo, cfg := newCIPanelGitHarness(t)
+	enabled := true
+	ratio := 1.0
+	cfg.CI.MinSeverity = "high"
+	cfg.Experiments = map[string]config.ExperimentDefinition{
+		"ci-severity-v1": {
+			Enabled: &enabled, Ratio: &ratio,
+			Workflows: []config.ExperimentWorkflow{config.ExperimentWorkflowCI},
+			Config: map[string]any{"ci": map[string]any{
+				"min_severity": "critical",
+			}},
+		},
+	}
+
+	base := repo.HeadSHA()
+	head := repo.CommitFile("review.go", "package review\n", "add CI review")
+	poller.mergeBaseFn = func(_, _, _ string) (string, error) { return base, nil }
+	err := poller.processPR(context.Background(), "acme/api", ghPR{
+		Number:      42,
+		HeadRefOid:  head,
+		HeadRefName: "feature/ci-severity",
+		HeadRepo:    "contributor/api",
+		BaseRefName: "main",
+	}, cfg)
+	require.NoError(t, err)
+
+	panel, err := db.GetCIPanelByPRSHA("acme/api", 42, head)
+	require.NoError(t, err)
+	require.NotNil(t, panel)
+	synthesis, err := db.GetJobByID(*panel.SynthesisJobID)
+	require.NoError(t, err)
+	assert.Equal(t, "critical", synthesis.MinSeverity)
+}
+
+func TestExperimentSessionReuseStaysOnSourceMachine(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	enabled := true
+	ratio := 1.0
+	server.configWatcher.Config().Experiments = map[string]config.ExperimentDefinition{
+		"session-v1": {
+			Enabled: &enabled, Ratio: &ratio,
+			Workflows: []config.ExperimentWorkflow{config.ExperimentWorkflowReview},
+			Config:    map[string]any{"reuse_review_session": true},
+		},
+	}
+
+	repo := testutil.NewGitRepo(t)
+	repo.WriteFile(".roborev.toml", panelTOML)
+	repo.CommitFile("review.go", "package review\n", "first review")
+	first := enqueuePanelViaHTTP(t, server, EnqueueRequest{
+		RepoPath: repo.Path(), GitRef: "HEAD",
+		Branch: "feature/machine-session", Agent: "test",
+	})
+	claimed, err := db.ClaimJob("experiment-worker")
+	require.NoError(t, err)
+	require.Equal(t, first.PanelRunUUID, claimed.PanelRunUUID)
+	require.NoError(t, db.CompleteJob(claimed.ID, "test", "prompt", "No issues found."))
+	_, err = db.Exec(`UPDATE review_jobs SET session_id = ?, source_machine_id = ? WHERE id = ?`,
+		"foreign-session", "foreign-machine", claimed.ID)
+	require.NoError(t, err)
+
+	repo.CommitFile("review.go", "package review\n\nfunc changed() {}\n", "second review")
+	second := enqueuePanelViaHTTP(t, server, EnqueueRequest{
+		RepoPath: repo.Path(), GitRef: "HEAD",
+		Branch: "feature/machine-session", Agent: "test",
+	})
+	members, err := db.GetPanelMembers(second.PanelRunUUID)
+	require.NoError(t, err)
+	for _, member := range members {
+		assert.Empty(t, member.SessionID)
+		assert.Empty(t, member.ResumeSourceJobUUID)
 	}
 }

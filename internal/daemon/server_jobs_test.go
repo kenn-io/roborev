@@ -1885,7 +1885,7 @@ func TestResolveSingleAgentAvailability(t *testing.T) {
 				reqData.Agent = tt.requestAgent
 			}
 
-			agentName, _, early := (&Server{}).resolveSingleAgent(singleAgentInputs{
+			execution, early := (&Server{}).resolveSingleAgent(singleAgentInputs{
 				req:       reqData,
 				cfg:       cfg,
 				workflow:  "review",
@@ -1898,7 +1898,7 @@ func TestResolveSingleAgentAvailability(t *testing.T) {
 			}
 
 			require.Nil(t, early)
-			assert.Equal(t, tt.expectedAgent, agentName)
+			assert.Equal(t, tt.expectedAgent, execution.Agent)
 		})
 	}
 }
@@ -2468,7 +2468,7 @@ func TestResolveSingleAgentOverrideModel(t *testing.T) {
 			cfg.DefaultAgent = tt.defaultAgent
 			cfg.DefaultModel = tt.defaultModel
 
-			_, model, early := (&Server{}).resolveSingleAgent(singleAgentInputs{
+			execution, early := (&Server{}).resolveSingleAgent(singleAgentInputs{
 				req:            EnqueueRequest{Agent: tt.reqAgent},
 				cfg:            cfg,
 				workflow:       "review",
@@ -2476,7 +2476,7 @@ func TestResolveSingleAgentOverrideModel(t *testing.T) {
 				requestedModel: tt.reqModel,
 			})
 			require.Nil(t, early)
-			assert.Equal(t, tt.wantModel, model)
+			assert.Equal(t, tt.wantModel, execution.Model)
 		})
 	}
 }

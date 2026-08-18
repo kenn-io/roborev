@@ -45,6 +45,8 @@ standalone, daemon-free `roborev ci review` command is not part of this design.
 - Enrolling one review in several experiments in this version.
 - Experimenting on fixes, refine, analyze, compact, synthesis-only tasks, or
     other non-review workflows.
+- Enrolling the local auto-design classifier or its separate follow-up job. A
+    CI auto-design member remains part of its assigned CI panel.
 - Making daemon lifecycle, database, credentials, sync, or web-server settings
     vary per review.
 - Adding experiments to the daemon-free `roborev ci review` command.
@@ -156,7 +158,10 @@ those are resolved after enqueue today and cannot yet be frozen faithfully as
 part of an experiment assignment.
 
 Within the overlay, nested tables merge recursively. Scalars and arrays replace
-base values. TOML key order has no effect.
+base values. Global and repository configuration first compose with the normal
+typed resolver boundaries: a same-named repository subagent or panel replaces
+the complete global entry. The experiment overlay then recursively merges into
+that resolved entry. TOML key order has no effect.
 
 ### Global and repository definitions
 
@@ -226,7 +231,11 @@ the interface must preserve these properties:
 - an absent assignment is a normal, non-experimental result;
 - callers receive a typed effective repository config;
 - all validation errors are returned before any job is enqueued;
-- the module owns canonical definition, subject, and effective-config hashes.
+- the module owns canonical definition and subject hashes.
+
+The enqueue boundary owns `effective_config_hash` because only it has the final
+standalone or panel plan after explicit request values and agent availability
+resolution.
 
 The deletion test for this module is strong: without it, deterministic
 assignment, merge rules, validation, and fingerprints would reappear in the
@@ -306,9 +315,9 @@ The daemon computes the subject from the resolved repository and request branch
 before resolving the agent or default panel. Selection can therefore change the
 agent, model, reasoning, reuse setting, or whether a panel is chosen.
 
-Explicit request fields are applied after the selection result. The final job
-plan supplies the assignment's effective-config hash. The job and assignment are
-inserted in one transaction.
+Explicit request fields are applied after the selection result. The final
+immutable job plan supplies the assignment's effective-config hash. The job and
+assignment are inserted in one transaction.
 
 ### Ordinary panel review
 
@@ -387,6 +396,11 @@ The application enforces one row per review unit today. The primary key already
 permits a different experiment ID to be attached later, so future concurrent or
 active/passive designs do not require replacing the storage model.
 
+`effective_config_hash` fingerprints only the immutable standalone job plan or
+complete panel plan after explicit request values and availability resolution.
+It does not include unrelated raw repository settings that are resolved later
+by prompt or worker code.
+
 There is no polymorphic foreign key from `review_unit_uuid`: `job` refers to a
 `review_jobs.uuid`, while `panel` refers to `panel_run_uuid`. Storage methods
 create assignments in the same transaction as their review unit, and read
@@ -410,10 +424,17 @@ for this attempt. It is null for a fresh attempt. The existing `session_id`
 continues to hold the actual session identifier.
 
 Retries that discard a failed resume and run fresh clear both `session_id` and
-`resume_source_job_uuid`. Re-enqueuing the same review unit preserves its
-experiment assignment and original effective job plan. A new review job or panel
-run performs deterministic selection again from the currently enabled
-definition. Existing non-experimental rerun behavior remains unchanged.
+`resume_source_job_uuid`. Re-enqueuing a standalone job preserves its assignment
+and existing same-row rerun behavior. A manual panel rerun creates a new panel
+run UUID but deliberately clones the original assignment and frozen member and
+synthesis plans; it is a continuation, not fresh enrollment. A newly requested
+review or panel performs deterministic selection from the currently enabled
+definition.
+
+Experiment definitions and assignments are retained as immutable audit records
+when repository deletion removes their review jobs. They no longer appear in
+job-based projections or exports, but remain available to synchronization until
+the data store itself is retired.
 
 ## Session reuse
 
@@ -424,6 +445,7 @@ partially resolved config.
 A candidate must match:
 
 - repository;
+- source machine ID, because supported agent session state is local;
 - branch subject hash;
 - experiment assignment state: no assignment, or the same experiment ID, arm,
     and definition hash;
@@ -448,9 +470,10 @@ a session for the next review. This is the normal first treatment exposure on a
 branch.
 
 Enqueue stores `resume_source_job_uuid` only after resolving a session-capable
-agent and a valid candidate. The worker clears the lineage if failover or retry
-turns the attempt into a fresh run. A non-session-capable agent remains a valid
-experiment parameter; it simply has no reusable-session candidate.
+agent and a valid candidate created by the same machine. The worker clears the
+lineage if failover or retry turns the attempt into a fresh run. A
+non-session-capable agent remains a valid experiment parameter; it simply has no
+reusable-session candidate.
 
 ## Structured projections and exports
 
@@ -534,7 +557,8 @@ enqueue interfaces.
 - A single job and its assignment commit or roll back together.
 - A panel stores one assignment and all projected jobs derive it.
 - A concurrent CI-panel loser stores no assignment.
-- Re-enqueuing the same job preserves assignment; a new panel run receives the
+- Re-enqueuing the same job preserves assignment; a manual panel rerun clones
+    the original assignment, while a newly requested panel receives the
     deterministic current assignment.
 - A fresh retry clears resume lineage.
 
@@ -544,6 +568,7 @@ enqueue interfaces.
     from the earlier job.
 - A different arm, member, agent, model, provider, reasoning, review type, or
     non-ancestor target does not reuse the session.
+- A synchronized job created on another machine does not supply a session.
 - Synthesis never receives a session ID.
 - A first eligible treatment job runs fresh and a later job can resume it.
 

@@ -2524,85 +2524,59 @@ func TestBuildSynthesisPrompt_WithMinSeverity(t *testing.T) {
 
 func TestResolveMinSeverity(t *testing.T) {
 	tests := []struct {
-		name       string
-		global     string
-		repoConfig string
-		repoPath   string
-		want       string
+		name   string
+		global string
+		repo   string
+		want   string
 	}{
 		{
-			name:     "empty global, no repo config",
-			global:   "",
-			repoPath: "temp",
-			want:     "",
+			name: "empty global, no repo config",
+			want: "",
 		},
 		{
-			name:     "global value used when no repo config",
-			global:   "high",
-			repoPath: "temp",
-			want:     "high",
+			name:   "global value used when no repo config",
+			global: "high",
+			want:   "high",
 		},
 		{
-			name:       "repo override takes precedence over global",
-			global:     "low",
-			repoConfig: "[ci]\nmin_severity = \"critical\"\n",
-			repoPath:   "temp",
-			want:       "critical",
+			name:   "repo override takes precedence over global",
+			global: "low",
+			repo:   "critical",
+			want:   "critical",
 		},
 		{
-			name:       "invalid repo value falls back to global",
-			global:     "medium",
-			repoConfig: "[ci]\nmin_severity = \"bogus\"\n",
-			repoPath:   "temp",
-			want:       "medium",
+			name:   "invalid repo value falls back to global",
+			global: "medium",
+			repo:   "bogus",
+			want:   "medium",
 		},
 		{
-			name:     "invalid global value returns empty",
-			global:   "bogus",
-			repoPath: "temp",
-			want:     "",
+			name:   "invalid global value returns empty",
+			global: "bogus",
+			want:   "",
 		},
 		{
-			name:       "empty repo override uses global",
-			global:     "high",
-			repoConfig: "[ci]\nreasoning = \"fast\"\n",
-			repoPath:   "temp",
-			want:       "high",
+			name:   "empty repo override uses global",
+			global: "high",
+			want:   "high",
 		},
 		{
-			name:     "empty repoPath skips repo config",
-			global:   "medium",
-			repoPath: "",
-			want:     "medium",
-		},
-		{
-			name:     "global value is case-normalized",
-			global:   "HIGH",
-			repoPath: "temp",
-			want:     "high",
+			name:   "global value is case-normalized",
+			global: "HIGH",
+			want:   "high",
 		},
 	}
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			dir := tt.repoPath
-			if dir == "temp" {
-				dir = t.TempDir()
+			cfg := config.DefaultConfig()
+			cfg.CI.MinSeverity = tt.global
+			var repoCfg *config.RepoConfig
+			if tt.repo != "" {
+				repoCfg = &config.RepoConfig{}
+				repoCfg.CI.MinSeverity = tt.repo
 			}
-			if tt.repoConfig != "" && dir != "" {
-				if err := os.WriteFile(filepath.Join(dir, ".roborev.toml"), []byte(tt.repoConfig), 0o644); err != nil {
-					require.Condition(t, func() bool {
-						return false
-					}, "write config: %v", err)
-				}
-			}
-
-			got := resolveMinSeverity(tt.global, dir, "acme/api")
-			if got != tt.want {
-				assert.Condition(t, func() bool {
-					return false
-				}, "resolveMinSeverity() = %q, want %q", got, tt.want)
-			}
+			assert.Equal(t, tt.want, resolveCISynthesisMinSeverity(repoCfg, cfg, "acme/api"))
 		})
 	}
 }

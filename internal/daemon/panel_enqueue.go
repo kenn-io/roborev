@@ -473,10 +473,7 @@ func storageAssignmentForExperiment(
 	if assignment == nil {
 		return nil, nil
 	}
-	effectiveHash, err := config.FingerprintExperimentConfig(struct {
-		EffectiveConfig string
-		Plan            any
-	}{assignment.EffectiveConfigHash, plan})
+	effectiveHash, err := config.FingerprintExperimentConfig(plan)
 	if err != nil {
 		return nil, err
 	}
@@ -602,7 +599,9 @@ func panelMemberOpts(
 	for i, m := range members {
 		o := descriptor.baseOpts()
 		cfgJSON, _ := json.Marshal(m)
-		o.Agent, o.Model = resolvePanelMemberExecution(m, descriptor, repoCfg, cfg)
+		o.Agent, o.Model, o.BackupAgent, o.BackupModel = resolvePanelMemberExecution(
+			m, descriptor, repoCfg, cfg,
+		)
 		o.Provider = m.Provider
 		o.Reasoning, o.ReviewType = m.Reasoning, m.ReviewType
 		o.PanelRunUUID, o.PanelRole = runUUID, storage.PanelRoleMember
@@ -615,14 +614,14 @@ func panelMemberOpts(
 
 func resolvePanelMemberExecution(
 	m config.ResolvedMember, descriptor targetDescriptor, repoCfg *config.RepoConfig, cfg *config.Config,
-) (string, string) {
+) (string, string, string, string) {
 	agentName := agent.StorageNameFromConfig(m.Agent, repoCfg, cfg)
 	model := m.Model
 	resolution, err := agent.ResolveWorkflowConfigFromConfig(
 		m.Agent, repoCfg, cfg, workflowForPanelReviewType(m.ReviewType), m.Reasoning,
 	)
 	if err != nil {
-		return agentName, model
+		return agentName, model, "", ""
 	}
 	strictWorkflowAgent := m.AgentExplicit ||
 		config.HasWorkflowAgentOverrideFromConfig(
@@ -640,13 +639,16 @@ func resolvePanelMemberExecution(
 		)
 	}
 	if err != nil {
-		return agentName, model
+		return agentName, model, "", ""
 	}
 	selectedName := agent.StorageNameFromConfig(selected.Name(), repoCfg, cfg)
 	if !m.ModelExplicit || !resolution.AgentMatches(selectedName, m.Agent) {
 		model = resolution.ModelForSelectedAgent(selectedName, "")
 	}
-	return selectedName, model
+	backupAgent, backupModel := backupExecutionForSelectedAgent(
+		resolution, selectedName, repoCfg, cfg,
+	)
+	return selectedName, model, backupAgent, backupModel
 }
 
 func workflowForPanelReviewType(reviewType string) string {
