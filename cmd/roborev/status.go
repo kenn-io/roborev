@@ -158,6 +158,9 @@ func statusCmd() *cobra.Command {
 			if status.QueuePaused {
 				workersLine += " (paused)"
 			}
+			if updateDrain := formatUpdateDrainStatus(status, time.Now()); updateDrain != "" {
+				workersLine += " (" + updateDrain + ")"
+			}
 			fmt.Println(workersLine)
 			fmt.Printf("Jobs:    %d queued, %d running, %d completed, %d failed, %d skipped\n",
 				status.QueuedJobs, status.RunningJobs, status.CompletedJobs, status.FailedJobs, status.SkippedJobs)
@@ -259,4 +262,25 @@ func statusCmd() *cobra.Command {
 
 	cmd.Flags().BoolVar(&jsonOutput, "json", false, "structured output for scripting")
 	return cmd
+}
+
+func formatUpdateDrainStatus(status storage.DaemonStatus, now time.Time) string {
+	if !status.UpdateDraining {
+		return ""
+	}
+	expiresAt, err := time.Parse(time.RFC3339, status.UpdateDrainExpiresAt)
+	if err == nil && !expiresAt.After(now) {
+		return fmt.Sprintf("update recovery (%s)", status.UpdateDrainPolicy)
+	}
+	if err == nil {
+		return fmt.Sprintf(
+			"update %s (lease %s)",
+			status.UpdateDrainPolicy,
+			expiresAt.Sub(now).Round(time.Second),
+		)
+	}
+	if status.UpdateDrainPolicy != "" {
+		return "update " + status.UpdateDrainPolicy
+	}
+	return "update drain"
 }

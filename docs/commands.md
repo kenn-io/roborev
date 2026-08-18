@@ -1011,6 +1011,60 @@ These flags work across most commands:
 ## Update
 
 ```bash
-roborev update                   # Update to latest version
-roborev update --force           # Force update (useful for dev builds)
+roborev update                       # Update to latest version
+roborev update --force               # Replace a development build
+roborev update --running=wait        # Finish active reviews first
+roborev update --running=interrupt   # Requeue active attempts, then update
+roborev update --running=abort       # Update only when no reviews are active
+roborev update --no-restart          # Install without daemon coordination
 ```
+
+The updater coordinates daemon replacement with the review queue:
+
+- `--running=wait` prevents new reviews from starting and waits for active
+    reviews to finish.
+- `--running=interrupt` cleanly stops active attempts and requeues them without
+    consuming a retry.
+- `--running=abort` updates only when the daemon atomically confirms that no
+    reviews are running. A busy result exits nonzero.
+- Without `--running`, interactive updates prompt when reviews are active.
+    `--yes` defaults to `wait`.
+- `--no-restart` skips daemon preparation, restart, hook repair, and skill
+    updates.
+
+When an interactive update finds active reviews, it asks once:
+
+```text
+3 reviews are currently running.
+
+  [w] Wait for them to finish, then update
+  [u] Update now; interrupt and restart them automatically
+  [a] Abort
+
+Choice [a]:
+```
+
+The daemon continues accepting enqueues during an update drain but does not
+claim them until the replacement daemon is ready. A user cancellation remains
+terminal. An update interruption starts a fresh attempt and discards the partial
+attempt log. Non-interactive waits have no updater-specific deadline; they are
+bounded by the configured job timeout (30 minutes by default).
+
+Successful updates use a compact phase summary. The final success line appears
+only after the replacement daemon is responsive and reports the installed
+version:
+
+```text
+Downloading  100% (20.3 MB)
+Installing   done
+Daemon       restarted (v0.65.0)
+Git hooks    done
+Skills       done
+
+Updated roborev to v0.65.0
+```
+
+If no daemon is running, the daemon phase says `not running`. Pressing Ctrl-C
+before installation releases the update drain. Pressing it after installation
+exits nonzero and tells you to run `roborev daemon restart` rather than claiming
+the update completed.

@@ -264,6 +264,26 @@ func TestStatusCmdJSONIncludesDaemonEndpoint(t *testing.T) {
 	assert.Equal(t, 7373, parsed.Daemon.Port)
 }
 
+func TestFormatUpdateDrainStatus(t *testing.T) {
+	now := time.Date(2026, 8, 17, 12, 0, 0, 0, time.UTC)
+	assert.Equal(t, "update wait (lease 40s)", formatUpdateDrainStatus(storage.DaemonStatus{
+		UpdateDraining:       true,
+		UpdateDrainPolicy:    "wait",
+		UpdateDrainExpiresAt: now.Add(40 * time.Second).Format(time.RFC3339),
+	}, now))
+	assert.Equal(t, "update interrupt (lease 40s)", formatUpdateDrainStatus(storage.DaemonStatus{
+		UpdateDraining:       true,
+		UpdateDrainPolicy:    "interrupt",
+		UpdateDrainExpiresAt: now.Add(40 * time.Second).Format(time.RFC3339),
+	}, now))
+	assert.Equal(t, "update recovery (interrupt)", formatUpdateDrainStatus(storage.DaemonStatus{
+		UpdateDraining:       true,
+		UpdateDrainPolicy:    "interrupt",
+		UpdateDrainExpiresAt: now.Add(-time.Second).Format(time.RFC3339),
+	}, now))
+	assert.Empty(t, formatUpdateDrainStatus(storage.DaemonStatus{}, now))
+}
+
 func TestStatusCmdJSONIncludesActiveSnoozes(t *testing.T) {
 	until := time.Date(2026, 8, 10, 20, 30, 0, 0, time.UTC)
 	snooze := storage.AgentHookSnooze{
