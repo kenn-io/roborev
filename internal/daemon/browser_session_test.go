@@ -141,6 +141,20 @@ func TestBrowserSessionCookieScope(t *testing.T) {
 	assert.True(t, expired.Expires.Before(time.Unix(1, 0)))
 }
 
+func TestBrowserSessionCookieScopeForBasePath(t *testing.T) {
+	manager, err := NewBrowserSessionManager(BrowserSessionConfig{
+		Origin:     "https://reviews.example.com",
+		AuthToken:  testBrowserAuthToken,
+		CookiePath: "/roborev-ci/",
+		Entropy:    bytes.NewReader(bytes.Repeat([]byte("entropy-for-browser-sessions-"), 1000)),
+		Clock:      time.Now,
+	})
+	require.NoError(t, err)
+	cookie := manager.Cookie("ambient-value")
+	assert.Equal(t, "/roborev-ci/", cookie.Path)
+	assert.Equal(t, "/roborev-ci/", manager.ExpiredCookie().Path)
+}
+
 func TestBrowserSessionConcurrentBootstrapAuthenticateAndLogout(t *testing.T) {
 	manager, _ := newTestBrowserSessions(t, true)
 	credentials, err := manager.Login(testBrowserAuthToken)

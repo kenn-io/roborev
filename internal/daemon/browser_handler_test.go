@@ -33,11 +33,17 @@ func newBrowserHandlerFixture(t *testing.T, authToken string) (http.Handler, *Br
 func newBrowserHandlerFixtureWithCore(
 	t *testing.T, authToken string, core http.Handler,
 ) (http.Handler, *BrowserSessionManager) {
-	return newBrowserHandlerFixtureWithCoreAndTTL(t, authToken, core, 0)
+	return newBrowserHandlerFixtureWithCoreAndTTLAndBasePath(t, authToken, core, 0, "")
 }
 
 func newBrowserHandlerFixtureWithCoreAndTTL(
 	t *testing.T, authToken string, core http.Handler, ttl time.Duration,
+) (http.Handler, *BrowserSessionManager) {
+	return newBrowserHandlerFixtureWithCoreAndTTLAndBasePath(t, authToken, core, ttl, "")
+}
+
+func newBrowserHandlerFixtureWithCoreAndTTLAndBasePath(
+	t *testing.T, authToken string, core http.Handler, ttl time.Duration, basePath string,
 ) (http.Handler, *BrowserSessionManager) {
 	t.Helper()
 	policy, err := NewBrowserPolicy(BrowserEndpoint{
@@ -51,6 +57,7 @@ func newBrowserHandlerFixtureWithCoreAndTTL(
 		Origin:     "http://127.0.0.1:7374",
 		AuthToken:  authToken,
 		AllowLocal: authToken == "",
+		CookiePath: joinBrowserPath(basePath, "/"),
 		TTL:        ttl,
 		Entropy:    rand.Reader,
 		Clock:      time.Now,
@@ -61,9 +68,48 @@ func newBrowserHandlerFixtureWithCoreAndTTL(
 		_, _ = w.Write([]byte("shell"))
 	})
 	server := &Server{}
-	handler, err := server.newBrowserHandler(core, static, policy, sessions)
+	handler, err := server.newBrowserHandler(core, static, policy, sessions, basePath)
 	require.NoError(t, err)
 	return handler, sessions
+}
+
+func TestBrowserHandlerNormalizesPrefixedRequests(t *testing.T) {
+	core := http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		_, _ = w.Write([]byte(request.URL.Path))
+	})
+	handler, sessions := newBrowserHandlerFixtureWithCoreAndTTLAndBasePath(
+		t, testBrowserAuthToken, core, 0, "/roborev-ci",
+	)
+
+	request := authenticatedBrowserRequest(t, sessions, http.MethodGet, "/roborev-ci/api/status")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.Equal(t, "/api/status", recorder.Body.String())
+}
+
+func TestBrowserHandlerRedirectsBarePrefixedPath(t *testing.T) {
+	handler, _ := newBrowserHandlerFixtureWithCoreAndTTLAndBasePath(
+		t, testBrowserAuthToken, http.NotFoundHandler(), 0, "/roborev-ci",
+	)
+	request := browserRequest(http.MethodGet, "/roborev-ci", nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	assert.Equal(t, http.StatusPermanentRedirect, recorder.Code)
+	assert.Equal(t, "/roborev-ci/", recorder.Header().Get("Location"))
+}
+
+func TestBrowserHandlerRejectsPathsOutsidePrefix(t *testing.T) {
+	coreCalled := false
+	core := http.HandlerFunc(func(http.ResponseWriter, *http.Request) { coreCalled = true })
+	handler, _ := newBrowserHandlerFixtureWithCoreAndTTLAndBasePath(
+		t, testBrowserAuthToken, core, 0, "/roborev-ci",
+	)
+	request := browserRequest(http.MethodGet, "/roborev-cinema/api/status", nil)
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, request)
+	assert.Equal(t, http.StatusNotFound, recorder.Code)
+	assert.False(t, coreCalled)
 }
 
 func authenticatedBrowserRequest(

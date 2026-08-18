@@ -24,6 +24,10 @@ func (s *Server) startBrowserServer(web config.WebConfig) (*BrowserRuntimeInfo, 
 		log.Printf("Browser application disabled: this source build does not contain production web assets")
 		return nil, nil
 	}
+	authToken, err := web.ResolveAuthToken()
+	if err != nil {
+		return nil, err
+	}
 	endpoint, err := ResolveBrowserEndpoint(web)
 	if err != nil {
 		return nil, err
@@ -45,8 +49,9 @@ func (s *Server) startBrowserServer(web config.WebConfig) (*BrowserRuntimeInfo, 
 	}
 	sessions, err := NewBrowserSessionManager(BrowserSessionConfig{
 		Origin:     sessionOrigin,
-		AuthToken:  web.AuthToken,
-		AllowLocal: web.AuthToken == "",
+		AuthToken:  authToken,
+		AllowLocal: authToken == "",
+		CookiePath: joinBrowserPath(web.BasePath, "/"),
 		Entropy:    rand.Reader,
 		Clock:      time.Now,
 	})
@@ -57,7 +62,7 @@ func (s *Server) startBrowserServer(web config.WebConfig) (*BrowserRuntimeInfo, 
 	if err != nil {
 		return fail(fmt.Errorf("load embedded browser application: %w", err))
 	}
-	handler, err := s.newBrowserHandler(s.httpServer.Handler, static, policy, sessions)
+	handler, err := s.newBrowserHandler(s.httpServer.Handler, static, policy, sessions, web.BasePath)
 	if err != nil {
 		return fail(err)
 	}
@@ -86,7 +91,7 @@ func (s *Server) startBrowserServer(web config.WebConfig) (*BrowserRuntimeInfo, 
 	go func() {
 		serveErrCh <- server.Serve(endpoint.Listener)
 	}()
-	if err := waitForBrowserReady(endpoint, serveErrCh); err != nil {
+	if err := waitForBrowserReady(endpoint, web.BasePath, serveErrCh); err != nil {
 		cancelRequests()
 		_ = server.Close()
 		return nil, err
@@ -107,7 +112,7 @@ func (s *Server) startBrowserServer(web config.WebConfig) (*BrowserRuntimeInfo, 
 	}, nil
 }
 
-func waitForBrowserReady(endpoint BrowserEndpoint, serveErrCh <-chan error) error {
+func waitForBrowserReady(endpoint BrowserEndpoint, basePath string, serveErrCh <-chan error) error {
 	client := &http.Client{Timeout: 200 * time.Millisecond}
 	deadline := time.Now().Add(2 * time.Second)
 	for time.Now().Before(deadline) {
@@ -119,7 +124,11 @@ func waitForBrowserReady(endpoint BrowserEndpoint, serveErrCh <-chan error) erro
 			return err
 		default:
 		}
-		request, err := http.NewRequest(http.MethodGet, "http://"+endpoint.DialAddress+"/api/ping", nil)
+		request, err := http.NewRequest(
+			http.MethodGet,
+			"http://"+endpoint.DialAddress+joinBrowserPath(basePath, "/api/ping"),
+			nil,
+		)
 		if err != nil {
 			return err
 		}

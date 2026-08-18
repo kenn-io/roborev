@@ -45,7 +45,7 @@ func ResolveBrowserEndpoint(web config.WebConfig) (BrowserEndpoint, error) {
 		DialAddress:       dial.Host,
 		Origin:            origin,
 		Enabled:           true,
-		remoteAuthEnabled: web.AuthToken != "",
+		remoteAuthEnabled: web.AuthToken != "" || web.AuthTokenFile != "",
 	}, nil
 }
 

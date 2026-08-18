@@ -42,6 +42,7 @@ type BrowserSessionConfig struct {
 	Origin     string
 	AuthToken  string
 	AllowLocal bool
+	CookiePath string
 	TTL        time.Duration
 	Entropy    io.Reader
 	Clock      func() time.Time
@@ -82,6 +83,7 @@ type BrowserSessionManager struct {
 	clock             func() time.Time
 	cookieName        string
 	secure            bool
+	cookiePath        string
 	ambient           map[[32]byte]ambientSession
 	tabs              map[[32]byte]tabSession
 	loginFailures     int
@@ -97,6 +99,9 @@ func NewBrowserSessionManager(config BrowserSessionConfig) (*BrowserSessionManag
 	}
 	if config.TTL <= 0 {
 		config.TTL = defaultWebTTL
+	}
+	if config.CookiePath == "" {
+		config.CookiePath = "/"
 	}
 	if config.AuthToken != "" {
 		if err := configpkg.ValidateWebAuthToken(config.AuthToken); err != nil {
@@ -119,6 +124,7 @@ func NewBrowserSessionManager(config BrowserSessionConfig) (*BrowserSessionManag
 		entropy:    config.Entropy,
 		clock:      config.Clock,
 		cookieName: "roborev_web_" + instance[:16],
+		cookiePath: config.CookiePath,
 		secure:     origin.Scheme == "https",
 		ambient:    make(map[[32]byte]ambientSession),
 		tabs:       make(map[[32]byte]tabSession),
@@ -298,7 +304,7 @@ func (m *BrowserSessionManager) Cookie(value string) *http.Cookie {
 	return &http.Cookie{
 		Name:     m.cookieName,
 		Value:    value,
-		Path:     "/",
+		Path:     m.cookiePath,
 		Expires:  m.clock().Add(m.ttl),
 		HttpOnly: true,
 		Secure:   m.secure,

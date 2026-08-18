@@ -46,6 +46,33 @@ func TestBrowserServerStartsReadyAndKeepsShutdownPrivate(t *testing.T) {
 	assert.Equal(t, http.StatusNotFound, shutdownResponse.StatusCode)
 }
 
+func TestBrowserServerUsesConfiguredBasePathForRequestsAndCookies(t *testing.T) {
+	server, _, _ := newTestServer(t)
+	server.allowWebCompilationStub = true
+	cfg := config.DefaultConfig()
+	cfg.Web.Listen = "127.0.0.1:0"
+	cfg.Web.BasePath = "/roborev-ci"
+	runtime, err := server.startBrowserServer(cfg.Web)
+	require.NoError(t, err)
+	require.NotNil(t, runtime)
+
+	request, err := http.NewRequest(
+		http.MethodPost, runtime.Origin+"/roborev-ci/api/ui/session/bootstrap", bytes.NewBufferString("{}"),
+	)
+	require.NoError(t, err)
+	request.Header.Set("Content-Type", "application/json")
+	request.Header.Set("Origin", runtime.Origin)
+	request.Header.Set("Sec-Fetch-Site", "same-origin")
+	request.Header.Set("Sec-Fetch-Mode", "cors")
+	request.Header.Set("Sec-Fetch-Dest", "empty")
+	response, err := http.DefaultClient.Do(request)
+	require.NoError(t, err)
+	t.Cleanup(func() { _ = response.Body.Close() })
+	assert.Equal(t, http.StatusOK, response.StatusCode)
+	require.Len(t, response.Cookies(), 1)
+	assert.Equal(t, "/roborev-ci/", response.Cookies()[0].Path)
+}
+
 func TestBrowserServerSkipsCompilationStubOutsideDevelopment(t *testing.T) {
 	server, _, _ := newTestServer(t)
 	server.allowWebCompilationStub = false

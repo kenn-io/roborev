@@ -56,11 +56,31 @@ func (s *Server) newBrowserHandler(
 	static http.Handler,
 	policy BrowserPolicy,
 	sessions *BrowserSessionManager,
+	basePath string,
 ) (http.Handler, error) {
 	return http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		if err := policy.ValidateHost(request); err != nil {
 			writeBrowserError(w, http.StatusBadRequest, "invalid_host")
 			return
+		}
+		normalizedPath, redirect, err := normalizeBrowserPath(request.URL.Path, basePath)
+		if err != nil {
+			http.NotFound(w, request)
+			return
+		}
+		if redirect {
+			location := joinBrowserPath(basePath, "/")
+			if request.URL.RawQuery != "" {
+				location += "?" + request.URL.RawQuery
+			}
+			w.Header().Set("Location", location)
+			w.WriteHeader(http.StatusPermanentRedirect)
+			return
+		}
+		if normalizedPath != request.URL.Path {
+			request = request.Clone(request.Context())
+			request.URL.Path = normalizedPath
+			request.URL.RawPath = ""
 		}
 		if strings.HasPrefix(request.URL.Path, "/api/ui/session") {
 			handleBrowserSession(w, request, policy, sessions)
