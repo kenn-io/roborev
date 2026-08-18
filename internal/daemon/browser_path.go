@@ -26,17 +26,12 @@ func normalizeBrowserPath(requestPath, basePath string) (string, bool, error) {
 }
 
 func joinBrowserPath(basePath, internalPath string) string {
-	if internalPath == "" {
-		internalPath = "/"
-	}
+	internalPath = strings.TrimLeft(internalPath, `/\`)
 	if basePath == "" {
-		if strings.HasPrefix(internalPath, "/") {
-			return internalPath
-		}
 		return "/" + internalPath
 	}
-	if internalPath == "/" {
+	if internalPath == "" {
 		return basePath + "/"
 	}
-	return basePath + "/" + strings.TrimPrefix(internalPath, "/")
+	return basePath + "/" + internalPath
 }

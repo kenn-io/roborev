@@ -42,6 +42,8 @@ func TestNormalizeBrowserPath(t *testing.T) {
 func TestJoinBrowserPath(t *testing.T) {
 	assert.Equal(t, "/", joinBrowserPath("", "/"))
 	assert.Equal(t, "/reviews", joinBrowserPath("", "/reviews"))
+	assert.Equal(t, "/host.example/reviews", joinBrowserPath("", "//host.example/reviews"))
+	assert.Equal(t, "/host.example/reviews", joinBrowserPath("", `\\host.example/reviews`))
 	assert.Equal(t, "/roborev-ci/", joinBrowserPath("/roborev-ci", "/"))
 	assert.Equal(t, "/roborev-ci/reviews/42", joinBrowserPath("/roborev-ci", "/reviews/42"))
 }

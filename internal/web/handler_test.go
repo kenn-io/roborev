@@ -106,6 +106,7 @@ func TestHandlerInjectsBasePathAndPrefixesRootRedirect(t *testing.T) {
 	deepLinkRecorder := httptest.NewRecorder()
 	handler.ServeHTTP(deepLinkRecorder, deepLinkRequest)
 	assert.Equal(t, http.StatusOK, deepLinkRecorder.Code)
+	assert.Contains(t, deepLinkRecorder.Header().Get("Content-Security-Policy"), "base-uri 'self'")
 	assert.Contains(t, deepLinkRecorder.Body.String(), `<meta name="roborev-base-path" content="/roborev-ci">`)
 	assert.Contains(t, deepLinkRecorder.Body.String(), `<base href="/roborev-ci/">`)
 	assert.NotContains(t, deepLinkRecorder.Body.String(), `<meta name="roborev-base-path" content="">`)
