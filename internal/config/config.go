@@ -129,22 +129,23 @@ func (c CostConfig) ResolvedTimeout() time.Duration {
 
 // Config holds the daemon configuration
 type Config struct {
-	ServerAddr                 string `toml:"server_addr"`
-	MaxWorkers                 int    `toml:"max_workers"`
-	ReviewContextCount         int    `toml:"review_context_count"`
-	ReuseReviewSessionLookback int    `toml:"reuse_review_session_lookback"` // 0 means no candidate cap
-	ReviewGuidelines           string `toml:"review_guidelines" comment:"Extra review instructions added to prompts globally."`
-	FixGuidelines              string `toml:"fix_guidelines" comment:"Policy for evaluating review findings during automated fixes."`
-	DefaultAgent               string `toml:"default_agent" comment:"Default agent when no workflow-specific agent is set."`
-	DefaultModel               string `toml:"default_model"` // Default model for agents (format varies by agent)
-	DefaultBackupAgent         string `toml:"default_backup_agent"`
-	DefaultBackupModel         string `toml:"default_backup_model"`
-	JobTimeoutMinutes          int    `toml:"job_timeout_minutes"`
-	HookTimeoutSeconds         int    `toml:"hook_timeout_seconds" comment:"Post-commit hook request timeout in seconds. 0 or negative uses the platform default (3 on most systems, 30 on Windows where git subprocess spawns are slow)."`
-	AgentQuotaCooldown         string `toml:"agent_quota_cooldown" comment:"Maximum daemon-wide cooldown after an agent quota error, as a Go duration such as 30m."`
-	ReviewReasoning            string `toml:"review_reasoning" comment:"Default reasoning for reviews. Legacy: fast, standard, thorough, maximum. Exact: low, medium, high, xhigh, max."`
-	RefineReasoning            string `toml:"refine_reasoning" comment:"Default reasoning for refine. Legacy: fast, standard, thorough, maximum. Exact: low, medium, high, xhigh, max."`
-	FixReasoning               string `toml:"fix_reasoning" comment:"Default reasoning for fix. Legacy: fast, standard, thorough, maximum. Exact: low, medium, high, xhigh, max."`
+	ServerAddr                 string                          `toml:"server_addr"`
+	MaxWorkers                 int                             `toml:"max_workers"`
+	ReviewContextCount         int                             `toml:"review_context_count"`
+	ReuseReviewSessionLookback int                             `toml:"reuse_review_session_lookback"` // 0 means no candidate cap
+	Experiments                map[string]ExperimentDefinition `toml:"experiments"`
+	ReviewGuidelines           string                          `toml:"review_guidelines" comment:"Extra review instructions added to prompts globally."`
+	FixGuidelines              string                          `toml:"fix_guidelines" comment:"Policy for evaluating review findings during automated fixes."`
+	DefaultAgent               string                          `toml:"default_agent" comment:"Default agent when no workflow-specific agent is set."`
+	DefaultModel               string                          `toml:"default_model"` // Default model for agents (format varies by agent)
+	DefaultBackupAgent         string                          `toml:"default_backup_agent"`
+	DefaultBackupModel         string                          `toml:"default_backup_model"`
+	JobTimeoutMinutes          int                             `toml:"job_timeout_minutes"`
+	HookTimeoutSeconds         int                             `toml:"hook_timeout_seconds" comment:"Post-commit hook request timeout in seconds. 0 or negative uses the platform default (3 on most systems, 30 on Windows where git subprocess spawns are slow)."`
+	AgentQuotaCooldown         string                          `toml:"agent_quota_cooldown" comment:"Maximum daemon-wide cooldown after an agent quota error, as a Go duration such as 30m."`
+	ReviewReasoning            string                          `toml:"review_reasoning" comment:"Default reasoning for reviews. Legacy: fast, standard, thorough, maximum. Exact: low, medium, high, xhigh, max."`
+	RefineReasoning            string                          `toml:"refine_reasoning" comment:"Default reasoning for refine. Legacy: fast, standard, thorough, maximum. Exact: low, medium, high, xhigh, max."`
+	FixReasoning               string                          `toml:"fix_reasoning" comment:"Default reasoning for fix. Legacy: fast, standard, thorough, maximum. Exact: low, medium, high, xhigh, max."`
 
 	// Analysis-type-specific agent/model configuration
 	Analyze map[string]AnalyzeConfig `toml:"analyze"`
@@ -486,33 +487,34 @@ func validateConfig(cfg any, acp ACPAgentConfigs) error {
 
 // RepoConfig holds per-repo overrides
 type RepoConfig struct {
-	Agent                           string   `toml:"agent" comment:"Default agent for this repo when no workflow-specific agent is set."`
-	Model                           string   `toml:"model" comment:"Default model for this repo when no workflow-specific model is set."` // Model for agents (format varies by agent)
-	BackupAgent                     string   `toml:"backup_agent" comment:"Backup agent for this repo if the primary agent fails."`
-	BackupModel                     string   `toml:"backup_model" comment:"Backup model for this repo if the primary model fails."`
-	ReviewContextCount              int      `toml:"review_context_count" comment:"Number of related reviews to include as context for this repo."`
-	ReviewGuidelines                string   `toml:"review_guidelines" comment:"Extra review instructions added to prompts for this repo."`
-	ReviewMDFallback                *bool    `toml:"review_md_fallback" comment:"Use REVIEW.md when review_guidelines is empty or unset."`
-	ReviewGuidelinesSupersedeGlobal bool     `toml:"review_guidelines_supersede_global" comment:"Use repo review_guidelines instead of appending global review_guidelines."`
-	JobTimeoutMinutes               int      `toml:"job_timeout_minutes" comment:"Override the review job timeout in minutes for this repo."`
-	HookTimeoutSeconds              int      `toml:"hook_timeout_seconds" comment:"Override the post-commit hook request timeout (in seconds) for this repo. Useful for large repos where the enqueue handler's git calls are slow. 0 or negative inherits the global / platform default."`
-	ExcludedBranches                []string `toml:"excluded_branches" comment:"Branches that should be skipped for automatic review in this repo."`
-	ExcludedCommitPatterns          []string `toml:"excluded_commit_patterns" comment:"Commit message substrings that should skip review for this repo."`
-	DisplayName                     string   `toml:"display_name" comment:"Display name shown for this repo in the TUI and output."`
-	ReviewReasoning                 string   `toml:"review_reasoning" comment:"Reasoning for reviews in this repo. Legacy: fast, standard, thorough, maximum. Exact: low, medium, high, xhigh, max."`
-	RefineReasoning                 string   `toml:"refine_reasoning" comment:"Reasoning for refine in this repo. Legacy: fast, standard, thorough, maximum. Exact: low, medium, high, xhigh, max."`
-	FixReasoning                    string   `toml:"fix_reasoning" comment:"Reasoning for fix in this repo. Legacy: fast, standard, thorough, maximum. Exact: low, medium, high, xhigh, max."`
-	FixMinSeverity                  string   `toml:"fix_min_severity" comment:"Minimum severity for fix in this repo: critical, high, medium, or low."`     // Minimum severity for fix: critical, high, medium, low
-	RefineMinSeverity               string   `toml:"refine_min_severity" comment:"Minimum severity for refine in this repo: critical, high, medium, low."`  // Minimum severity for refine: critical, high, medium, low
-	ReviewMinSeverity               string   `toml:"review_min_severity" comment:"Minimum severity for reviews in this repo: critical, high, medium, low."` // Minimum severity for review: critical, high, medium, low
-	FixCommitAuthor                 string   `toml:"fix_commit_author" comment:"Author for roborev-owned fix commits in this repo, formatted as Name <email>."`
-	FixCommitCoAuthoredBy           []string `toml:"fix_commit_co_authored_by" comment:"Co-authored-by trailers for roborev-owned fix commits in this repo, each formatted as Name <email>."`
-	ExcludePatterns                 []string `toml:"exclude_patterns" comment:"Filenames or glob patterns to exclude from review diffs for this repo."`
-	SnapshotDir                     string   `toml:"snapshot_dir" comment:"Repo-local directory for temporary oversized diff snapshots."`
-	PostCommitReview                string   `toml:"post_commit_review" comment:"Automatic post-commit review mode for this repo: commit or branch."` // "commit" (default) or "branch"
-	PostCommitBatchSize             int      `toml:"post_commit_batch_size" comment:"Enqueue one automatic post-commit review after this many commits. Values less than 2 review every commit."`
-	ReuseReviewSession              *bool    `toml:"reuse_review_session"`
-	ReuseReviewSessionLookback      int      `toml:"reuse_review_session_lookback"` // 0 means no candidate cap
+	Agent                           string                          `toml:"agent" comment:"Default agent for this repo when no workflow-specific agent is set."`
+	Model                           string                          `toml:"model" comment:"Default model for this repo when no workflow-specific model is set."` // Model for agents (format varies by agent)
+	BackupAgent                     string                          `toml:"backup_agent" comment:"Backup agent for this repo if the primary agent fails."`
+	BackupModel                     string                          `toml:"backup_model" comment:"Backup model for this repo if the primary model fails."`
+	ReviewContextCount              int                             `toml:"review_context_count" comment:"Number of related reviews to include as context for this repo."`
+	ReviewGuidelines                string                          `toml:"review_guidelines" comment:"Extra review instructions added to prompts for this repo."`
+	ReviewMDFallback                *bool                           `toml:"review_md_fallback" comment:"Use REVIEW.md when review_guidelines is empty or unset."`
+	ReviewGuidelinesSupersedeGlobal bool                            `toml:"review_guidelines_supersede_global" comment:"Use repo review_guidelines instead of appending global review_guidelines."`
+	JobTimeoutMinutes               int                             `toml:"job_timeout_minutes" comment:"Override the review job timeout in minutes for this repo."`
+	HookTimeoutSeconds              int                             `toml:"hook_timeout_seconds" comment:"Override the post-commit hook request timeout (in seconds) for this repo. Useful for large repos where the enqueue handler's git calls are slow. 0 or negative inherits the global / platform default."`
+	ExcludedBranches                []string                        `toml:"excluded_branches" comment:"Branches that should be skipped for automatic review in this repo."`
+	ExcludedCommitPatterns          []string                        `toml:"excluded_commit_patterns" comment:"Commit message substrings that should skip review for this repo."`
+	DisplayName                     string                          `toml:"display_name" comment:"Display name shown for this repo in the TUI and output."`
+	ReviewReasoning                 string                          `toml:"review_reasoning" comment:"Reasoning for reviews in this repo. Legacy: fast, standard, thorough, maximum. Exact: low, medium, high, xhigh, max."`
+	RefineReasoning                 string                          `toml:"refine_reasoning" comment:"Reasoning for refine in this repo. Legacy: fast, standard, thorough, maximum. Exact: low, medium, high, xhigh, max."`
+	FixReasoning                    string                          `toml:"fix_reasoning" comment:"Reasoning for fix in this repo. Legacy: fast, standard, thorough, maximum. Exact: low, medium, high, xhigh, max."`
+	FixMinSeverity                  string                          `toml:"fix_min_severity" comment:"Minimum severity for fix in this repo: critical, high, medium, or low."`     // Minimum severity for fix: critical, high, medium, low
+	RefineMinSeverity               string                          `toml:"refine_min_severity" comment:"Minimum severity for refine in this repo: critical, high, medium, low."`  // Minimum severity for refine: critical, high, medium, low
+	ReviewMinSeverity               string                          `toml:"review_min_severity" comment:"Minimum severity for reviews in this repo: critical, high, medium, low."` // Minimum severity for review: critical, high, medium, low
+	FixCommitAuthor                 string                          `toml:"fix_commit_author" comment:"Author for roborev-owned fix commits in this repo, formatted as Name <email>."`
+	FixCommitCoAuthoredBy           []string                        `toml:"fix_commit_co_authored_by" comment:"Co-authored-by trailers for roborev-owned fix commits in this repo, each formatted as Name <email>."`
+	ExcludePatterns                 []string                        `toml:"exclude_patterns" comment:"Filenames or glob patterns to exclude from review diffs for this repo."`
+	SnapshotDir                     string                          `toml:"snapshot_dir" comment:"Repo-local directory for temporary oversized diff snapshots."`
+	PostCommitReview                string                          `toml:"post_commit_review" comment:"Automatic post-commit review mode for this repo: commit or branch."` // "commit" (default) or "branch"
+	PostCommitBatchSize             int                             `toml:"post_commit_batch_size" comment:"Enqueue one automatic post-commit review after this many commits. Values less than 2 review every commit."`
+	ReuseReviewSession              *bool                           `toml:"reuse_review_session"`
+	ReuseReviewSessionLookback      int                             `toml:"reuse_review_session_lookback"` // 0 means no candidate cap
+	Experiments                     map[string]ExperimentDefinition `toml:"experiments"`
 
 	// CI-specific overrides (used by CI poller for this repo)
 	CI RepoCIConfig `toml:"ci"`
@@ -791,6 +793,9 @@ func LoadGlobalFrom(path string) (*Config, error) {
 }
 
 func normalizeGlobalConfig(cfg *Config) error {
+	if err := validateExperimentEntries(cfg.Experiments, true); err != nil {
+		return err
+	}
 	if err := validateConfig(cfg, cfg.ACP); err != nil {
 		return err
 	}
@@ -1085,6 +1090,9 @@ func LoadRepoConfig(repoPath string) (*RepoConfig, error) {
 	if err := validateRepoConfigScope(md); err != nil {
 		return nil, err
 	}
+	if err := validateExperimentEntries(cfg.Experiments, false); err != nil {
+		return nil, fmt.Errorf("config: %w", err)
+	}
 	if err := validateConfig(&cfg, cfg.ACP); err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}
@@ -1228,26 +1236,41 @@ func ResolveReuseReviewSessionLookback(repoPath string, globalCfg *Config) int {
 // (nil, nil) if the file doesn't exist at that ref. Returns an error
 // for unexpected git failures (bad repo, corrupted objects, etc.).
 func LoadRepoConfigFromRef(repoPath, ref string) (*RepoConfig, error) {
+	cfg, _, err := LoadRepoConfigFromRefWithRaw(repoPath, ref)
+	return cfg, err
+}
+
+// LoadRepoConfigFromRefWithRaw loads typed and raw repository configuration
+// from a git ref. The raw map preserves whether zero values were explicitly
+// configured, which experiment overlays need for recursive merging.
+func LoadRepoConfigFromRefWithRaw(repoPath, ref string) (*RepoConfig, map[string]any, error) {
 	data, err := git.ReadFile(repoPath, ref, ".roborev.toml")
 	if err != nil {
 		if git.IsMissingPathError(err) {
-			return nil, nil
+			return nil, nil, nil
 		}
-		return nil, fmt.Errorf("read .roborev.toml at %s: %w", ref, err)
+		return nil, nil, fmt.Errorf("read .roborev.toml at %s: %w", ref, err)
 	}
 
 	var cfg RepoConfig
 	md, err := toml.Decode(string(data), &cfg)
 	if err != nil {
-		return nil, &ConfigParseError{Ref: ref, Err: err}
+		return nil, nil, &ConfigParseError{Ref: ref, Err: err}
 	}
 	if err := validateRepoConfigScope(md); err != nil {
-		return nil, &ConfigParseError{Ref: ref, Err: err}
+		return nil, nil, &ConfigParseError{Ref: ref, Err: err}
+	}
+	if err := validateExperimentEntries(cfg.Experiments, false); err != nil {
+		return nil, nil, &ConfigParseError{Ref: ref, Err: err}
 	}
 	if err := validateConfig(&cfg, cfg.ACP); err != nil {
-		return nil, &ConfigParseError{Ref: ref, Err: err}
+		return nil, nil, &ConfigParseError{Ref: ref, Err: err}
 	}
-	return &cfg, nil
+	raw := make(map[string]any)
+	if _, err := toml.Decode(string(data), &raw); err != nil {
+		return nil, nil, &ConfigParseError{Ref: ref, Err: err}
+	}
+	return &cfg, raw, nil
 }
 
 // resolve returns the first non-zero value from the candidates, or defaultVal
@@ -1420,6 +1443,9 @@ func loadRepoConfigFile(path string) (*RepoConfig, error) {
 	var cfg RepoConfig
 	if _, err := toml.DecodeFile(path, &cfg); err != nil {
 		return nil, err
+	}
+	if err := validateExperimentEntries(cfg.Experiments, false); err != nil {
+		return nil, fmt.Errorf("config: %w", err)
 	}
 	if err := validateConfig(&cfg, cfg.ACP); err != nil {
 		return nil, fmt.Errorf("config: %w", err)

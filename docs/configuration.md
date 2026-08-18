@@ -7,6 +7,7 @@ roborev uses a layered configuration system. Settings are resolved in this order
 (highest to lowest priority):
 
 1. **CLI flags** (`--agent`, `--model`, `--reasoning`)
+1. **Experiment overlay** for an enrolled review
 1. **Per-repo** `.roborev.toml` in your repository root
 1. **Global** `~/.roborev/config.toml`
 1. **Defaults** (auto-detect agent, thorough reasoning for reviews)
@@ -496,6 +497,56 @@ not fail an otherwise successful panel.
 Global and repo panel maps are merged by name, with repo entries overriding
 global entries. See [Subagent Review Panels](/advanced/subagent-review-panels/)
 for the full reference.
+
+### Review Configuration Experiments
+
+Use a named experiment to compare the normal review configuration with one
+configuration overlay. Roborev deterministically assigns a repository-scoped
+source branch to the default or experimental arm, so new commits on that branch
+stay in the same arm.
+
+```toml
+[experiments.review-session-resumption-v1]
+enabled = true
+ratio = 0.5
+workflows = ["review", "ci"]
+
+[experiments.review-session-resumption-v1.config]
+reuse_review_session = true
+```
+
+`ratio` is the fraction assigned to the experimental arm and must be between
+`0.0` and `1.0`. The default arm uses the normal resolved configuration. The
+experimental arm recursively merges `config` above global and repository
+configuration but below explicit CLI or request values. Scalars and arrays
+replace base values; nested tables merge.
+
+The supported workflows are:
+
+- `review`: daemon-backed user and post-commit reviews, including panels
+- `ci`: GitHub CI-poller panel reviews
+
+Reviews without a source branch do not participate. A panel receives one
+assignment for the entire run; its members and synthesis share the attribution.
+The daemon-free `roborev ci review` command does not participate.
+
+Only review-time settings are accepted in an overlay. These include agents,
+models, reasoning, review guidelines, prompt limits, exclusion patterns, session
+reuse, review panels, and the CI review matrix. Daemon, database, sync,
+credential, hook, browser, and comment-posting settings are rejected.
+
+An experiment ID is immutable. To change its ratio, workflows, or overlay,
+create a new versioned ID. A repository can enable or disable a definition from
+global config by overriding only `enabled`:
+
+```toml
+# .roborev.toml
+[experiments.review-session-resumption-v1]
+enabled = false
+```
+
+At most one enabled experiment may apply to a workflow. Disabled experiments do
+not record assignments.
 
 ### Backup Agents
 
