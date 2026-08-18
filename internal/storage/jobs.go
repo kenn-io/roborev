@@ -587,6 +587,71 @@ func (db *DB) MarkJobAgentInvoked(jobID int64, workerID, cmdLine string) error {
 	return err
 }
 
+// RequeueUpdateInterruptedJob returns an update-interrupted attempt to the
+// queue without consuming a retry. The worker ownership guard prevents a stale
+// attempt from changing a row that was canceled or reclaimed concurrently.
+func (db *DB) RequeueUpdateInterruptedJob(
+	jobID int64, workerID string,
+) (bool, error) {
+	result, err := db.Exec(`
+		UPDATE review_jobs
+		SET status = 'queued',
+		    worker_id = NULL,
+		    started_at = NULL,
+		    session_id = NULL,
+		    token_usage = NULL,
+		    command_line = NULL,
+		    agent_invoked = 0,
+		    synced_at = NULL
+		WHERE id = ? AND status = 'running' AND worker_id = ?
+	`, jobID, workerID)
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	return rows > 0, err
+}
+
+// ListRunningJobIDs returns the jobs that own worker attempts at the time of
+// the query. Update preparation calls this after persisting the claim gate, so
+// the result is the complete cutover set.
+func (db *DB) ListRunningJobIDs() ([]int64, error) {
+	rows, err := db.Query(`
+		SELECT id FROM review_jobs WHERE status = 'running' ORDER BY id
+	`)
+	if err != nil {
+		return nil, err
+	}
+	defer rows.Close()
+
+	var ids []int64
+	for rows.Next() {
+		var id int64
+		if err := rows.Scan(&id); err != nil {
+			return nil, err
+		}
+		ids = append(ids, id)
+	}
+	return ids, rows.Err()
+}
+
+// CountRunningJobsByID reports how many update-targeted rows still own a
+// running attempt. Non-running terminal and retry states are already unwound.
+func (db *DB) CountRunningJobsByID(jobIDs []int64) (int, error) {
+	count := 0
+	for _, jobID := range jobIDs {
+		var running int
+		if err := db.QueryRow(`
+			SELECT COUNT(*) FROM review_jobs
+			WHERE id = ? AND status = 'running'
+		`, jobID).Scan(&running); err != nil {
+			return 0, err
+		}
+		count += running
+	}
+	return count, nil
+}
+
 // MarkClassifyAgentInvoked records the actual classifier selected for an
 // auto-design attempt. Classify rows start with the auto-design sentinel, so
 // retaining that placeholder would misattribute invoked skips in analytics.

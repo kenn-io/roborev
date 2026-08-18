@@ -153,6 +153,90 @@ func TestRetryJobOwnerScoped(t *testing.T) {
 	assert.Equal(t, JobStatusQueued, j.Status)
 }
 
+func TestRequeueUpdateInterruptedJobResetsAttemptWithoutRetry(t *testing.T) {
+	env := setupJobEnv(t, "/tmp/update-requeue", "update-requeue-sha")
+	claimed, err := env.db.ClaimJob("worker-A")
+	require.NoError(t, err)
+	require.Equal(t, env.job.ID, claimed.ID)
+	require.NoError(t, env.db.MarkJobAgentInvoked(
+		env.job.ID, "worker-A", "test-agent run",
+	))
+	require.NoError(t, env.db.SaveJobSessionID(
+		env.job.ID, "worker-A", "session-1",
+	))
+	require.NoError(t, env.db.SaveJobTokenUsage(
+		env.job.ID,
+		"session-1",
+		`{"cost_usd":1.25,"has_cost":true}`,
+	))
+
+	requeued, err := env.db.RequeueUpdateInterruptedJob(
+		env.job.ID, "worker-A",
+	)
+	require.NoError(t, err)
+	assert.True(t, requeued)
+
+	got, err := env.db.GetJobByID(env.job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, JobStatusQueued, got.Status)
+	assert.Equal(t, 0, got.RetryCount)
+	assert.Empty(t, got.WorkerID)
+	assert.Nil(t, got.StartedAt)
+	assert.Empty(t, got.SessionID)
+	assert.Empty(t, got.TokenUsage)
+	assert.Empty(t, got.CommandLine)
+	assert.False(t, getJobAgentInvoked(t, env.db, env.job.ID))
+}
+
+func TestRequeueUpdateInterruptedJobScopesCurrentAttempt(t *testing.T) {
+	env := setupJobEnv(t, "/tmp/update-requeue-owner", "update-owner-sha")
+	_, err := env.db.ClaimJob("worker-A")
+	require.NoError(t, err)
+
+	requeued, err := env.db.RequeueUpdateInterruptedJob(
+		env.job.ID, "worker-B",
+	)
+	require.NoError(t, err)
+	assert.False(t, requeued)
+
+	require.NoError(t, env.db.CancelJob(env.job.ID))
+	requeued, err = env.db.RequeueUpdateInterruptedJob(
+		env.job.ID, "worker-A",
+	)
+	require.NoError(t, err)
+	assert.False(t, requeued)
+
+	got, err := env.db.GetJobByID(env.job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, JobStatusCanceled, got.Status)
+}
+
+func TestRunningJobIDsAndTargetedCount(t *testing.T) {
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	_, jobs := seedJobs(t, db, "/tmp/update-running-ids", 3)
+
+	first, err := db.ClaimJob("worker-A")
+	require.NoError(t, err)
+	second, err := db.ClaimJob("worker-B")
+	require.NoError(t, err)
+
+	ids, err := db.ListRunningJobIDs()
+	require.NoError(t, err)
+	assert.Equal(t, []int64{first.ID, second.ID}, ids)
+
+	count, err := db.CountRunningJobsByID([]int64{
+		first.ID, second.ID, jobs[2].ID,
+	})
+	require.NoError(t, err)
+	assert.Equal(t, 2, count)
+
+	require.NoError(t, db.CancelJob(first.ID))
+	count, err = db.CountRunningJobsByID(ids)
+	require.NoError(t, err)
+	assert.Equal(t, 1, count)
+}
+
 func TestReviewOperations(t *testing.T) {
 	env := setupJobEnv(t, "/tmp/test-repo", "rev123")
 	claimJob(t, env.db, "worker-1")
