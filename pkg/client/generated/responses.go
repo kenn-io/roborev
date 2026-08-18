@@ -281,6 +281,18 @@ type LoginWebSessionErrorResponseJSON415 = WebSessionError
 
 type LoginWebSessionErrorResponseJSON429 = WebSessionError
 
+type PrepareUpdateResponse = UpdateDrainStatus
+
+type PrepareUpdateErrorResponse = ErrorModel
+
+type ReleaseUpdateResponse = ReleaseUpdateOutputBody
+
+type ReleaseUpdateErrorResponse = ErrorModel
+
+type RenewUpdateResponse = UpdateDrainStatus
+
+type RenewUpdateErrorResponse = ErrorModel
+
 type ListActivityResp struct {
 	HTTPResponse *http.Response
 	Body         []byte
@@ -608,4 +620,28 @@ type LoginWebSessionResp struct {
 	JSON403      *LoginWebSessionErrorResponseJSON403
 	JSON415      *LoginWebSessionErrorResponseJSON415
 	JSON429      *LoginWebSessionErrorResponseJSON429
+}
+
+type PrepareUpdateResp struct {
+	HTTPResponse                  *http.Response
+	Body                          []byte
+	StatusCode                    int
+	JSON200                       *PrepareUpdateResponse
+	ApplicationProblemPlusJSON409 *PrepareUpdateErrorResponse
+}
+
+type ReleaseUpdateResp struct {
+	HTTPResponse                  *http.Response
+	Body                          []byte
+	StatusCode                    int
+	JSON200                       *ReleaseUpdateResponse
+	ApplicationProblemPlusJSON409 *ReleaseUpdateErrorResponse
+}
+
+type RenewUpdateResp struct {
+	HTTPResponse                  *http.Response
+	Body                          []byte
+	StatusCode                    int
+	JSON200                       *RenewUpdateResponse
+	ApplicationProblemPlusJSON409 *RenewUpdateErrorResponse
 }

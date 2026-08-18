@@ -429,6 +429,53 @@ type GetStatusOutput struct {
 	Body storage.DaemonStatus
 }
 
+// -- POST /api/update/{prepare,renew,release} --
+
+type UpdateDrainRequestBody struct {
+	OwnerID string `json:"owner_id" minLength:"1"`
+	Policy  string `json:"policy" enum:"wait,interrupt,abort"`
+}
+
+type PrepareUpdateInput struct {
+	Body UpdateDrainRequestBody
+}
+
+type UpdateLeaseRequestBody struct {
+	LeaseToken string `json:"lease_token" minLength:"1"`
+}
+
+type RenewUpdateInput struct {
+	Body UpdateLeaseRequestBody
+}
+
+type ReleaseUpdateInput struct {
+	Body UpdateLeaseRequestBody
+}
+
+type UpdateDrainStatus struct {
+	LeaseToken          string    `json:"lease_token,omitempty"`
+	Policy              string    `json:"policy"`
+	ExpiresAt           time.Time `json:"expires_at"`
+	RunningJobs         int       `json:"running_jobs"`
+	TargetedRunningJobs int       `json:"targeted_running_jobs"`
+	ActiveWorkers       int       `json:"active_workers"`
+	Recovering          bool      `json:"recovering"`
+}
+
+type PrepareUpdateOutput struct {
+	Body UpdateDrainStatus
+}
+
+type RenewUpdateOutput struct {
+	Body UpdateDrainStatus
+}
+
+type ReleaseUpdateOutput struct {
+	Body struct {
+		Released bool `json:"released"`
+	}
+}
+
 // QueuePauseInput is an empty input for queue pause/unpause endpoints.
 type QueuePauseInput struct{}
 

@@ -228,6 +228,30 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 			o.Tags = []string{"daemon"}
 		})
 
+	huma.Post(api, "/api/update/prepare", s.humaPrepareUpdate,
+		func(o *huma.Operation) {
+			o.OperationID = "prepare-update"
+			o.Summary = "Prepare a leased update drain"
+			o.Tags = []string{"daemon"}
+			addUpdateDrainConflictResponse(api, o)
+		})
+
+	huma.Post(api, "/api/update/renew", s.humaRenewUpdate,
+		func(o *huma.Operation) {
+			o.OperationID = "renew-update"
+			o.Summary = "Renew an update drain lease"
+			o.Tags = []string{"daemon"}
+			addUpdateDrainConflictResponse(api, o)
+		})
+
+	huma.Post(api, "/api/update/release", s.humaReleaseUpdate,
+		func(o *huma.Operation) {
+			o.OperationID = "release-update"
+			o.Summary = "Release an update drain lease"
+			o.Tags = []string{"daemon"}
+			addUpdateDrainConflictResponse(api, o)
+		})
+
 	huma.Get(api, "/api/sync/status", s.humaSyncStatus,
 		func(o *huma.Operation) {
 			o.OperationID = "get-sync-status"
@@ -406,6 +430,18 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 		})
 
 	return api
+}
+
+func addUpdateDrainConflictResponse(api huma.API, operation *huma.Operation) {
+	if operation.Responses == nil {
+		operation.Responses = map[string]*huma.Response{}
+	}
+	operation.Responses["409"] = &huma.Response{
+		Description: "Update drain conflict",
+		Content: map[string]*huma.MediaType{
+			"application/problem+json": {Schema: jsonSchema(api, huma.ErrorModel{})},
+		},
+	}
 }
 
 // OpenAPISpec returns the daemon OpenAPI document generated from the Huma

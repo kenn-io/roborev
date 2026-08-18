@@ -68,6 +68,8 @@ type Server struct {
 	shutdownOnce            sync.Once
 	shutdownDrainMu         sync.Mutex
 	shutdownDraining        bool
+	updateDrain             *updateDrainLease
+	updateCoordinator       *updateDrainCoordinator
 
 	// Cached machine ID to avoid INSERT on every status request
 	machineIDMu sync.Mutex
@@ -155,6 +157,7 @@ func newServerWithLogs(
 		startTime:     time.Now(),
 		shutdownCh:    make(chan struct{}),
 	}
+	s.updateCoordinator = &updateDrainCoordinator{server: s, now: time.Now}
 
 	mux := http.NewServeMux()
 	s.registerHumaAPI(mux)
@@ -1943,6 +1946,12 @@ func (s *Server) humaGetStatus(
 		ConfigReloadCounter: configReloadCounter,
 		WebCapabilities:     []string{"review-projection-v1", "analytics-v1"},
 	}
+	updateDraining, updatePolicy, updateExpiresAt := s.updateDrainStatus()
+	resp.Body.UpdateDraining = updateDraining
+	resp.Body.UpdateDrainPolicy = updatePolicy
+	if !updateExpiresAt.IsZero() {
+		resp.Body.UpdateDrainExpiresAt = updateExpiresAt.Format(time.RFC3339)
+	}
 	return resp, nil
 }
 
@@ -3354,10 +3363,18 @@ func (s *Server) beginShutdownDrain() error {
 	if s.shutdownDraining {
 		return nil
 	}
-	if err := s.db.SetShutdownDraining(true); err != nil {
-		return fmt.Errorf("block job claims for shutdown: %w", err)
+	if s.updateDrain == nil {
+		if err := s.db.SetShutdownDraining(true); err != nil {
+			return fmt.Errorf("block job claims for shutdown: %w", err)
+		}
 	}
 	s.shutdownDraining = true
+	if s.updateDrain != nil {
+		if s.updateDrain.timer != nil {
+			s.updateDrain.timer.Stop()
+		}
+		s.updateDrain = nil
+	}
 	s.workerPool.BeginStop()
 	return nil
 }

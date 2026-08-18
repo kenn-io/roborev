@@ -8,6 +8,24 @@ import (
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 )
 
+type UpdateDrainRequestBodyPolicy string
+
+const (
+	Abort     UpdateDrainRequestBodyPolicy = "abort"
+	Interrupt UpdateDrainRequestBodyPolicy = "interrupt"
+	Wait      UpdateDrainRequestBodyPolicy = "wait"
+)
+
+// Validate checks if the UpdateDrainRequestBodyPolicy value is valid
+func (u UpdateDrainRequestBodyPolicy) Validate() error {
+	switch u {
+	case Abort, Interrupt, Wait:
+		return nil
+	default:
+		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid UpdateDrainRequestBodyPolicy value, got: %v", u))
+	}
+}
+
 type WebSessionStatusAuthentication string
 
 const (

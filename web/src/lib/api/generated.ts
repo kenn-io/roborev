@@ -736,6 +736,57 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/update/prepare": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Prepare a leased update drain */
+        post: operations["prepare-update"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/update/release": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Release an update drain lease */
+        post: operations["release-update"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
+    "/api/update/renew": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        get?: never;
+        put?: never;
+        /** Renew an update drain lease */
+        post: operations["renew-update"];
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
 }
 export type webhooks = Record<string, never>;
 export interface components {
@@ -1092,6 +1143,9 @@ export interface components {
             running_jobs: number;
             /** Format: int64 */
             skipped_jobs: number;
+            update_drain_expires_at?: string;
+            update_drain_policy?: string;
+            update_draining: boolean;
             version: string;
             web_capabilities: string[] | null;
         };
@@ -1696,6 +1750,15 @@ export interface components {
             readonly $schema?: string;
             repo_path: string;
         };
+        ReleaseUpdateOutputBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/ReleaseUpdateOutputBody.json
+             */
+            readonly $schema?: string;
+            released: boolean;
+        };
         RemapMapping: {
             author: string;
             new_sha: string;
@@ -2064,6 +2127,36 @@ export interface components {
             /** Format: int64 */
             updated: number;
         };
+        UpdateDrainRequestBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/UpdateDrainRequestBody.json
+             */
+            readonly $schema?: string;
+            owner_id: string;
+            /** @enum {string} */
+            policy: "wait" | "interrupt" | "abort";
+        };
+        UpdateDrainStatus: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/UpdateDrainStatus.json
+             */
+            readonly $schema?: string;
+            /** Format: int64 */
+            active_workers: number;
+            /** Format: date-time */
+            expires_at: string;
+            lease_token?: string;
+            policy: string;
+            recovering: boolean;
+            /** Format: int64 */
+            running_jobs: number;
+            /** Format: int64 */
+            targeted_running_jobs: number;
+        };
         UpdateJobBranchOutputBody: {
             /**
              * Format: uri
@@ -2084,6 +2177,15 @@ export interface components {
             branch: string;
             /** Format: int64 */
             job_id: number;
+        };
+        UpdateLeaseRequestBody: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/UpdateLeaseRequestBody.json
+             */
+            readonly $schema?: string;
+            lease_token: string;
         };
         VerdictStats: {
             /** Format: int64 */
@@ -3828,6 +3930,105 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["WebSessionError"];
+                };
+            };
+        };
+    };
+    "prepare-update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateDrainRequestBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpdateDrainStatus"];
+                };
+            };
+            /** @description Update drain conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "release-update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateLeaseRequestBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReleaseUpdateOutputBody"];
+                };
+            };
+            /** @description Update drain conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "renew-update": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody: {
+            content: {
+                "application/json": components["schemas"]["UpdateLeaseRequestBody"];
+            };
+        };
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["UpdateDrainStatus"];
+                };
+            };
+            /** @description Update drain conflict */
+            409: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
                 };
             };
         };

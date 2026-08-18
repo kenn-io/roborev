@@ -130,6 +130,61 @@ func TestUpdateInterruptionDoesNotReleasePanelSynthesis(t *testing.T) {
 	assert.True(t, synthesis.ClaimBlocked)
 }
 
+func TestUserCancelWinsUpdateInterruptionRace(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	started := make(chan struct{})
+	cancelObserved := make(chan struct{})
+	releaseAgent := make(chan struct{})
+	agentName := "update-user-cancel-agent"
+	agent.Register(&agent.FakeAgent{
+		NameStr: agentName,
+		ReviewFn: func(ctx context.Context, _, _, _ string, _ io.Writer) (string, error) {
+			close(started)
+			<-ctx.Done()
+			close(cancelObserved)
+			<-releaseAgent
+			return "", ctx.Err()
+		},
+	})
+	t.Cleanup(func() { agent.Unregister(agentName) })
+
+	runUUID, _, _ := enqueuePanelRun(t, tc, "update-user-cancel-panel", []memberSpec{
+		{name: "member", agent: agentName},
+	})
+	job := claimNext(t, tc)
+	_, events := tc.Broadcaster.Subscribe("")
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		tc.Pool.processJob(testWorkerID, job)
+	}()
+	require.True(t, waitForUpdateSignal(started, 5*time.Second), "panel member did not start")
+
+	tc.Pool.InterruptJobsForUpdate([]int64{job.ID})
+	require.True(t, waitForUpdateSignal(cancelObserved, 5*time.Second), "agent did not observe interruption")
+	require.NoError(t, tc.DB.CancelJob(job.ID))
+	require.True(t, tc.Pool.CancelJob(job.ID))
+	close(releaseAgent)
+	require.True(t, waitForUpdateSignal(done, 5*time.Second), "panel member did not unwind")
+
+	tc.assertJobStatus(t, job.ID, storage.JobStatusCanceled)
+	synthesis, err := tc.DB.GetSynthesisJob(runUUID)
+	require.NoError(t, err)
+	assert.False(t, synthesis.ClaimBlocked)
+	canceledEvents := 0
+	for {
+		select {
+		case event := <-events:
+			if event.Type == "review.canceled" && event.JobID == job.ID {
+				canceledEvents++
+			}
+		default:
+			assert.Equal(t, 1, canceledEvents)
+			return
+		}
+	}
+}
+
 func TestUpdateInterruptionPreemptsQuotaCooldown(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	job := tc.createAndClaimJobWithAgent(t, "update-quota", "worker-update", "codex")

@@ -206,6 +206,18 @@ type ClientInterface interface {
 	// LoginWebSession Exchange a daemon token for a browser session
 	LoginWebSession(ctx context.Context, options *LoginWebSessionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*LoginWebSessionResponse, error)
 	LoginWebSessionWithResponse(ctx context.Context, options *LoginWebSessionRequestOptions, reqEditors ...runtime.RequestEditorFn) (*LoginWebSessionResp, error)
+
+	// PrepareUpdate Prepare a leased update drain
+	PrepareUpdate(ctx context.Context, options *PrepareUpdateRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PrepareUpdateResponse, error)
+	PrepareUpdateWithResponse(ctx context.Context, options *PrepareUpdateRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PrepareUpdateResp, error)
+
+	// ReleaseUpdate Release an update drain lease
+	ReleaseUpdate(ctx context.Context, options *ReleaseUpdateRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReleaseUpdateResponse, error)
+	ReleaseUpdateWithResponse(ctx context.Context, options *ReleaseUpdateRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReleaseUpdateResp, error)
+
+	// RenewUpdate Renew an update drain lease
+	RenewUpdate(ctx context.Context, options *RenewUpdateRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RenewUpdateResponse, error)
+	RenewUpdateWithResponse(ctx context.Context, options *RenewUpdateRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RenewUpdateResp, error)
 }
 
 // ListActivity List recent daemon activity
@@ -3108,6 +3120,198 @@ func (c *Client) LoginWebSession(ctx context.Context, options *LoginWebSessionRe
 	}
 
 	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/ui/session/login")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// PrepareUpdate Prepare a leased update drain
+func (c *Client) PrepareUpdate(ctx context.Context, options *PrepareUpdateRequestOptions, reqEditors ...runtime.RequestEditorFn) (*PrepareUpdateResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/update/prepare",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*PrepareUpdateResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(PrepareUpdateErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "PrepareUpdateErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(PrepareUpdateResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "PrepareUpdateResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/update/prepare")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// ReleaseUpdate Release an update drain lease
+func (c *Client) ReleaseUpdate(ctx context.Context, options *ReleaseUpdateRequestOptions, reqEditors ...runtime.RequestEditorFn) (*ReleaseUpdateResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/update/release",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*ReleaseUpdateResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(ReleaseUpdateErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "ReleaseUpdateErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(ReleaseUpdateResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "ReleaseUpdateResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/update/release")
+	if err != nil {
+		return nil, fmt.Errorf("error executing request: %w", err)
+	}
+	return responseParser(ctx, resp)
+}
+
+// RenewUpdate Renew an update drain lease
+func (c *Client) RenewUpdate(ctx context.Context, options *RenewUpdateRequestOptions, reqEditors ...runtime.RequestEditorFn) (*RenewUpdateResponse, error) {
+	var err error
+	reqParams := runtime.RequestOptionsParameters{
+		RequestURL:  c.apiClient.GetBaseURL() + "/api/update/renew",
+		Method:      "POST",
+		Options:     options,
+		ContentType: "application/json",
+	}
+
+	req, err := c.apiClient.CreateRequest(ctx, reqParams, reqEditors...)
+	if err != nil {
+		return nil, fmt.Errorf("error creating request: %w", err)
+	}
+
+	responseParser := func(ctx context.Context, resp *runtime.Response) (*RenewUpdateResponse, error) {
+		bodyBytes := resp.Content
+		if resp.StatusCode != 200 {
+			target := new(RenewUpdateErrorResponse)
+			// Handle empty error response body gracefully - skip unmarshal if no content
+			if len(bodyBytes) > 0 {
+				if err = json.Unmarshal(bodyBytes, target); err != nil {
+					return nil, &runtime.ResponseDecodeError{
+						StatusCode:    resp.StatusCode,
+						ContentType:   resp.Headers.Get("Content-Type"),
+						ContentLength: len(bodyBytes),
+						TargetType:    "RenewUpdateErrorResponse",
+						Body:          bodyBytes,
+						Err:           err,
+					}
+				}
+			}
+			// Return error with (possibly empty) target
+			if errTarget, ok := any(*target).(error); ok {
+				return nil, runtime.NewClientAPIError(errTarget, runtime.WithStatusCode(resp.StatusCode))
+			}
+			return nil, runtime.NewClientAPIError(fmt.Errorf("API error (status %d): %v", resp.StatusCode, *target),
+				runtime.WithStatusCode(resp.StatusCode))
+		}
+		target := new(RenewUpdateResponse)
+		// Handle empty response body gracefully
+		if len(bodyBytes) == 0 {
+			return target, nil
+		}
+		if err = json.Unmarshal(bodyBytes, target); err != nil {
+			return nil, &runtime.ResponseDecodeError{
+				StatusCode:    resp.StatusCode,
+				ContentType:   resp.Headers.Get("Content-Type"),
+				ContentLength: len(bodyBytes),
+				TargetType:    "RenewUpdateResponse",
+				Body:          bodyBytes,
+				Err:           err,
+			}
+		}
+		return target, nil
+	}
+
+	resp, err := c.apiClient.ExecuteRequest(ctx, req, "/api/update/renew")
 	if err != nil {
 		return nil, fmt.Errorf("error executing request: %w", err)
 	}

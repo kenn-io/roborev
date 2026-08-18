@@ -551,28 +551,31 @@ type CostEnvelope struct {
 
 type DaemonStatus struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema              *string           `json:"$schema,omitempty"`
-	ActiveSnoozes       []AgentHookSnooze `json:"active_snoozes,omitempty" validate:"required"`
-	ActiveWorkers       int64             `json:"active_workers"`
-	Address             *string           `json:"address,omitempty"`
-	AppliedJobs         int64             `json:"applied_jobs"`
-	AutoDesign          *AutoDesignStatus `json:"auto_design,omitempty"`
-	CanceledJobs        int64             `json:"canceled_jobs"`
-	CompletedJobs       int64             `json:"completed_jobs"`
-	ConfigReloadCounter *int64            `json:"config_reload_counter,omitempty" validate:"omitempty,gte=0"`
-	ConfigReloadedAt    *string           `json:"config_reloaded_at,omitempty"`
-	FailedJobs          int64             `json:"failed_jobs"`
-	MachineID           *string           `json:"machine_id,omitempty"`
-	MaxWorkers          int64             `json:"max_workers"`
-	Network             *string           `json:"network,omitempty"`
-	Port                *int64            `json:"port,omitempty"`
-	QueuePaused         bool              `json:"queue_paused"`
-	QueuedJobs          int64             `json:"queued_jobs"`
-	RebasedJobs         int64             `json:"rebased_jobs"`
-	RunningJobs         int64             `json:"running_jobs"`
-	SkippedJobs         int64             `json:"skipped_jobs"`
-	Version             string            `json:"version" validate:"required"`
-	WebCapabilities     []string          `json:"web_capabilities,omitempty" validate:"required"`
+	Schema               *string           `json:"$schema,omitempty"`
+	ActiveSnoozes        []AgentHookSnooze `json:"active_snoozes,omitempty" validate:"required"`
+	ActiveWorkers        int64             `json:"active_workers"`
+	Address              *string           `json:"address,omitempty"`
+	AppliedJobs          int64             `json:"applied_jobs"`
+	AutoDesign           *AutoDesignStatus `json:"auto_design,omitempty"`
+	CanceledJobs         int64             `json:"canceled_jobs"`
+	CompletedJobs        int64             `json:"completed_jobs"`
+	ConfigReloadCounter  *int64            `json:"config_reload_counter,omitempty" validate:"omitempty,gte=0"`
+	ConfigReloadedAt     *string           `json:"config_reloaded_at,omitempty"`
+	FailedJobs           int64             `json:"failed_jobs"`
+	MachineID            *string           `json:"machine_id,omitempty"`
+	MaxWorkers           int64             `json:"max_workers"`
+	Network              *string           `json:"network,omitempty"`
+	Port                 *int64            `json:"port,omitempty"`
+	QueuePaused          bool              `json:"queue_paused"`
+	QueuedJobs           int64             `json:"queued_jobs"`
+	RebasedJobs          int64             `json:"rebased_jobs"`
+	RunningJobs          int64             `json:"running_jobs"`
+	SkippedJobs          int64             `json:"skipped_jobs"`
+	UpdateDrainExpiresAt *string           `json:"update_drain_expires_at,omitempty"`
+	UpdateDrainPolicy    *string           `json:"update_drain_policy,omitempty"`
+	UpdateDraining       bool              `json:"update_draining"`
+	Version              string            `json:"version" validate:"required"`
+	WebCapabilities      []string          `json:"web_capabilities,omitempty" validate:"required"`
 }
 
 func (d DaemonStatus) Validate() error {
@@ -1632,6 +1635,12 @@ func (r RegisterRepoRequest) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(r))
 }
 
+type ReleaseUpdateOutputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema   *string `json:"$schema,omitempty"`
+	Released bool    `json:"released"`
+}
+
 type RemapMapping struct {
 	Author    string `json:"author" validate:"required"`
 	NewSha    string `json:"new_sha" validate:"required"`
@@ -2205,6 +2214,45 @@ func (t TokenSummary) Validate() error {
 	return errors
 }
 
+type UpdateDrainRequestBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema  *string                      `json:"$schema,omitempty"`
+	OwnerID string                       `json:"owner_id" validate:"required,min=1"`
+	Policy  UpdateDrainRequestBodyPolicy `json:"policy" validate:"required"`
+}
+
+func (u UpdateDrainRequestBody) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(u.OwnerID, "required,min=1"); err != nil {
+		errors = errors.Append("OwnerID", err)
+	}
+	if v, ok := any(u.Policy).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("Policy", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
+type UpdateDrainStatus struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema              *string   `json:"$schema,omitempty"`
+	ActiveWorkers       int64     `json:"active_workers"`
+	ExpiresAt           time.Time `json:"expires_at" validate:"required"`
+	LeaseToken          *string   `json:"lease_token,omitempty"`
+	Policy              string    `json:"policy" validate:"required"`
+	Recovering          bool      `json:"recovering"`
+	RunningJobs         int64     `json:"running_jobs"`
+	TargetedRunningJobs int64     `json:"targeted_running_jobs"`
+}
+
+func (u UpdateDrainStatus) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(u))
+}
+
 type UpdateJobBranchOutputBody struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema  *string `json:"$schema,omitempty"`
@@ -2220,6 +2268,16 @@ type UpdateJobBranchRequest struct {
 }
 
 func (u UpdateJobBranchRequest) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(u))
+}
+
+type UpdateLeaseRequestBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema     *string `json:"$schema,omitempty"`
+	LeaseToken string  `json:"lease_token" validate:"required,min=1"`
+}
+
+func (u UpdateLeaseRequestBody) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(u))
 }
 
