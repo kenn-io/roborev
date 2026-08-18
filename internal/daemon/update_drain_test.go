@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"net/http/httptest"
@@ -140,6 +141,43 @@ func TestRenewAndReleaseUpdateDrain(t *testing.T) {
 	draining, err := db.IsShutdownDraining()
 	require.NoError(t, err)
 	assert.False(t, draining)
+}
+
+func TestReleaseClearsInterruptTargetsBeforeOpeningClaimGate(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	lease := prepareUpdateDrain(t, server, "owner-release-order", "interrupt")
+	const targetID int64 = 42
+	server.workerPool.InterruptJobsForUpdate([]int64{targetID})
+
+	conn, err := db.Conn(context.Background())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, conn.Close()) })
+	_, err = conn.ExecContext(context.Background(), "BEGIN IMMEDIATE")
+	require.NoError(t, err)
+	locked := true
+	t.Cleanup(func() {
+		if locked {
+			_, _ = conn.ExecContext(context.Background(), "ROLLBACK")
+		}
+	})
+
+	releaseDone := make(chan error, 1)
+	go func() {
+		_, releaseErr := server.updateCoordinator.release(lease.LeaseToken)
+		releaseDone <- releaseErr
+	}()
+	cleared := assert.Eventually(t, func() bool {
+		server.workerPool.runningJobsMu.Lock()
+		defer server.workerPool.runningJobsMu.Unlock()
+		_, targeted := server.workerPool.updateInterruptTargets[targetID]
+		return !targeted
+	}, 250*time.Millisecond, 10*time.Millisecond)
+
+	_, err = conn.ExecContext(context.Background(), "ROLLBACK")
+	require.NoError(t, err)
+	locked = false
+	require.NoError(t, <-releaseDone)
+	assert.True(t, cleared)
 }
 
 func TestWaitUpdateDrainExpiresAndReopensClaims(t *testing.T) {

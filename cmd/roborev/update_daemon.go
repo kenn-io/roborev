@@ -310,6 +310,19 @@ func requireUpdatedDaemonVersion(observed, expected string) error {
 	return nil
 }
 
+func waitForLegacyDaemonExit(ctx context.Context, previousPID int) error {
+	for !previousPIDExited(previousPID) {
+		timer := time.NewTimer(updateRestartPollInterval)
+		select {
+		case <-ctx.Done():
+			timer.Stop()
+			return ctx.Err()
+		case <-timer.C:
+		}
+	}
+	return nil
+}
+
 func restartAndVerifyUpdatedDaemon(
 	ctx context.Context,
 	binDir string,

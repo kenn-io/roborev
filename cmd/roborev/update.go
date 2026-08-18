@@ -32,6 +32,7 @@ var (
 	repairHooksForUpdateCommand     = repairHooksAfterUpdateResult
 	updateSkillsForUpdateCommand    = updateSkillsAfterUpdateResult
 	installedSkillsForUpdateCommand = installedSkillsNeedUpdate
+	waitLegacyDaemonExitForCommand  = waitForLegacyDaemonExit
 )
 
 // waitForDaemonExit polls until the daemon with previousPID no longer
@@ -624,6 +625,13 @@ func runControlledUpdate(
 		}
 		session.ShutdownOwned = true
 		session.stopHeartbeat()
+		if session.Legacy {
+			if err := waitLegacyDaemonExitForCommand(
+				operationCtx, runningDaemon.PID,
+			); err != nil {
+				return installedUpdateInterruption(session, err)
+			}
+		}
 		if err := restartUpdatedDaemonForCommand(
 			operationCtx, binDir, info.LatestVersion, runningDaemon,
 		); err != nil {

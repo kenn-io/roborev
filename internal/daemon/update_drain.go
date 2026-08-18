@@ -199,12 +199,15 @@ func (c *updateDrainCoordinator) releaseExpiredLocked(lease *updateDrainLease) e
 		c.armRecoveryRetryLocked(lease)
 		return nil
 	}
+	// Remove attempt markers while the persisted gate is still closed. Opening
+	// the gate first would let a worker reclaim a requeued target and observe a
+	// stale interrupt marker in the narrow interval between these operations.
+	s.workerPool.ClearUpdateInterruptTargets()
 	if err := s.db.SetShutdownDraining(false); err != nil {
 		lease.recovering = true
 		c.armRecoveryRetryLocked(lease)
 		return err
 	}
-	s.workerPool.ClearUpdateInterruptTargets()
 	if lease.timer != nil {
 		lease.timer.Stop()
 	}

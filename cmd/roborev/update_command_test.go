@@ -27,6 +27,7 @@ func stubUpdateCommand(t *testing.T) *update.UpdateInfo {
 	originalHooks := repairHooksForUpdateCommand
 	originalSkills := updateSkillsForUpdateCommand
 	originalSkillsInstalled := installedSkillsForUpdateCommand
+	originalWaitLegacy := waitLegacyDaemonExitForCommand
 	originalDiscover := getAnyRunningDaemon
 	originalList := listAllRuntimes
 	originalVerbose := verbose
@@ -38,6 +39,7 @@ func stubUpdateCommand(t *testing.T) *update.UpdateInfo {
 		repairHooksForUpdateCommand = originalHooks
 		updateSkillsForUpdateCommand = originalSkills
 		installedSkillsForUpdateCommand = originalSkillsInstalled
+		waitLegacyDaemonExitForCommand = originalWaitLegacy
 		getAnyRunningDaemon = originalDiscover
 		listAllRuntimes = originalList
 		verbose = originalVerbose
@@ -59,6 +61,7 @@ func stubUpdateCommand(t *testing.T) *update.UpdateInfo {
 	repairHooksForUpdateCommand = func(string, repairHookRunner) error { return nil }
 	updateSkillsForUpdateCommand = func(string) error { return nil }
 	installedSkillsForUpdateCommand = func() bool { return true }
+	waitLegacyDaemonExitForCommand = func(context.Context, int) error { return nil }
 	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) { return nil, nil }
 	return info
 }
@@ -280,6 +283,7 @@ func TestUpdateCommandRestartVerificationFailureSuppressesSuccess(t *testing.T) 
 func TestUpdateCommandLegacyWaitStillVerifiesReplacement(t *testing.T) {
 	info := stubUpdateCommand(t)
 	var restartCalls atomic.Int32
+	var waitCalls atomic.Int32
 	endpoint := updateTestEndpoint(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		w.Header().Set("Content-Type", "application/json")
 		switch r.URL.Path {
@@ -295,6 +299,11 @@ func TestUpdateCommandLegacyWaitStillVerifiesReplacement(t *testing.T) {
 	}))
 	runtimeInfo := &daemon.RuntimeInfo{PID: 42, Network: endpoint.Network, Address: endpoint.Address}
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) { return runtimeInfo, nil }
+	waitLegacyDaemonExitForCommand = func(_ context.Context, pid int) error {
+		waitCalls.Add(1)
+		assert.Equal(t, runtimeInfo.PID, pid)
+		return nil
+	}
 	restartUpdatedDaemonForCommand = func(
 		_ context.Context, _ string, version string, previous *daemon.RuntimeInfo,
 	) error {
@@ -310,6 +319,7 @@ func TestUpdateCommandLegacyWaitStillVerifiesReplacement(t *testing.T) {
 	cmd.SetArgs([]string{"--yes", "--running=wait"})
 
 	require.NoError(t, cmd.Execute())
+	assert.Equal(t, int32(1), waitCalls.Load())
 	assert.Equal(t, int32(1), restartCalls.Load())
 	assert.Contains(t, out.String(), "compatibility mode")
 	assert.Contains(t, out.String(), "Daemon       restarted ("+info.LatestVersion+")")

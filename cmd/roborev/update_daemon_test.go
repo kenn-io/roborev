@@ -146,6 +146,20 @@ func TestRequireUpdatedDaemonVersion(t *testing.T) {
 	assert.Contains(t, err.Error(), "expected v0.65.0")
 }
 
+func TestWaitForLegacyDaemonExitRespectsCancellation(t *testing.T) {
+	stubRestartVars(t)
+	isPIDAliveForUpdate = func(int) bool { return true }
+	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+		return []*daemon.RuntimeInfo{{PID: 42}}, nil
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	err := waitForLegacyDaemonExit(ctx, 42)
+
+	require.ErrorIs(t, err, context.Canceled)
+}
+
 func TestRestartAndVerifyUpdatedDaemonStartsAndChecksVersion(t *testing.T) {
 	stubs := stubRestartVars(t)
 	started := false
