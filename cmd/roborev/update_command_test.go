@@ -4,12 +4,14 @@ import (
 	"bytes"
 	"context"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"strconv"
 	"strings"
 	"sync/atomic"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -194,6 +196,49 @@ func TestUpdateCommandExplicitAbortBusyIsNonzero(t *testing.T) {
 	require.Error(t, err)
 	require.ErrorIs(t, err, errUpdateReviewsRunning)
 	assert.Equal(t, int32(1), prepareCalls.Load())
+}
+
+func TestUpdateCommandReportsRunningReviewWait(t *testing.T) {
+	stubUpdateCommand(t)
+	oldPoll := updateDrainPollInterval
+	updateDrainPollInterval = time.Millisecond
+	t.Cleanup(func() { updateDrainPollInterval = oldPoll })
+	var renewCalls atomic.Int32
+	endpoint := updateTestEndpoint(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/status":
+			_, _ = io.WriteString(w, `{"running_jobs":1}`)
+		case "/api/update/prepare":
+			_, _ = io.WriteString(w, `{"lease_token":"lease-1","policy":"wait","expires_at":"2030-01-01T00:00:00Z","running_jobs":1,"targeted_running_jobs":1,"active_workers":1,"recovering":false}`)
+		case "/api/update/renew":
+			running := 1
+			if renewCalls.Add(1) > 1 {
+				running = 0
+			}
+			_, _ = fmt.Fprintf(w, `{"lease_token":"lease-1","policy":"wait","expires_at":"2030-01-01T00:00:00Z","running_jobs":%d,"targeted_running_jobs":%d,"active_workers":%d,"recovering":false}`, running, running, running)
+		case "/api/shutdown":
+			_, _ = io.WriteString(w, `{"status":"shutting down"}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+		return &daemon.RuntimeInfo{PID: 42, Network: endpoint.Network, Address: endpoint.Address}, nil
+	}
+	restartUpdatedDaemonForCommand = func(
+		context.Context, string, string, *daemon.RuntimeInfo,
+	) error {
+		return nil
+	}
+	var out bytes.Buffer
+	cmd := updateCmd()
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--yes"})
+
+	require.NoError(t, cmd.Execute())
+	assert.Contains(t, out.String(), "Daemon       waiting for 1 running reviews")
 }
 
 func TestUpdateCommandCancelAfterInstallReleasesLease(t *testing.T) {

@@ -586,7 +586,7 @@ func runControlledUpdate(
 				cancelOperation()
 			}
 		}()
-		if err := waitForPreparedDrain(operationCtx, session, io.Discard); err != nil {
+		if err := waitForPreparedDrain(operationCtx, session, out); err != nil {
 			return preferHeartbeatFailure(err, heartbeatFailure)
 		}
 	}
