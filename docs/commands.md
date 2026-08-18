@@ -154,11 +154,12 @@ completes.
 `roborev show` displays review comments after the review output when comments
 exist, matching the layout in the TUI review detail view.
 
-`roborev ui` starts the daemon when needed, reads the browser origin from the
-live daemon runtime, and opens `/reviews`. An optional positive numeric job ID
-opens `/reviews/<job-id>`. Job IDs are local to that daemon's SQLite database,
-so a numeric deep link is not portable to another machine even when review data
-is synchronized. Authentication tokens are never placed in the launch URL. The
+`roborev ui` starts the daemon when needed, reads the browser origin and path
+prefix from the live daemon runtime, and opens `/reviews` below that prefix when
+one is configured. An optional positive numeric job ID opens `/reviews/<job-id>`
+below the same prefix. Job IDs are local to that daemon's SQLite database, so a
+numeric deep link is not portable to another machine even when review data is
+synchronized. Authentication tokens are never placed in the launch URL. The
 browser listener is enabled on loopback by default, so an installed release
 needs no additional configuration for local use: run `roborev ui` and the
 application displays the reviews from the same SQLite database used by the CLI

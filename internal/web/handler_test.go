@@ -7,13 +7,14 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"testing/fstest"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
 
 func TestHandlerServesNavigationAndAssets(t *testing.T) {
-	handler, err := NewHandler(completeDistribution())
+	handler, err := NewHandler(completeDistribution(), "")
 	require.NoError(t, err)
 
 	tests := []struct {
@@ -52,7 +53,7 @@ func TestHandlerServesNavigationAndAssets(t *testing.T) {
 func TestHandlerCompressesStaticAssetsForBrowsers(t *testing.T) {
 	distribution := completeDistribution()
 	distribution["assets/index-a1b2c3.js"].Data = bytes.Repeat([]byte(`console.log("ready")`), 100)
-	handler, err := NewHandler(distribution)
+	handler, err := NewHandler(distribution, "")
 	require.NoError(t, err)
 
 	req := httptest.NewRequest(http.MethodGet, "/assets/index-a1b2c3.js", nil)
@@ -74,7 +75,7 @@ func TestHandlerCompressesStaticAssetsForBrowsers(t *testing.T) {
 func TestHandlerDoesNotCompressWhenBrowserRejectsGzip(t *testing.T) {
 	distribution := completeDistribution()
 	distribution["assets/index-a1b2c3.js"].Data = bytes.Repeat([]byte(`console.log("ready")`), 100)
-	handler, err := NewHandler(distribution)
+	handler, err := NewHandler(distribution, "")
 	require.NoError(t, err)
 
 	req := httptest.NewRequest(http.MethodGet, "/assets/index-a1b2c3.js", nil)
@@ -88,8 +89,30 @@ func TestHandlerDoesNotCompressWhenBrowserRejectsGzip(t *testing.T) {
 	assert.Equal(t, distribution["assets/index-a1b2c3.js"].Data, recorder.Body.Bytes())
 }
 
+func TestHandlerInjectsBasePathAndPrefixesRootRedirect(t *testing.T) {
+	distribution := completeDistribution()
+	distribution["index.html"] = &fstest.MapFile{Data: []byte(`<!doctype html><meta name="roborev-web-distribution" content="production"><meta name="roborev-base-path" content=""><base href="/"><div id="app"></div>`)}
+	handler, err := NewHandler(distribution, "/roborev-ci")
+	require.NoError(t, err)
+
+	rootRequest := httptest.NewRequest(http.MethodGet, "/", nil)
+	rootRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(rootRecorder, rootRequest)
+	assert.Equal(t, http.StatusTemporaryRedirect, rootRecorder.Code)
+	assert.Equal(t, "/roborev-ci/reviews", rootRecorder.Header().Get("Location"))
+
+	deepLinkRequest := httptest.NewRequest(http.MethodGet, "/reviews/42", nil)
+	deepLinkRequest.Header.Set("Accept", "text/html")
+	deepLinkRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(deepLinkRecorder, deepLinkRequest)
+	assert.Equal(t, http.StatusOK, deepLinkRecorder.Code)
+	assert.Contains(t, deepLinkRecorder.Body.String(), `<meta name="roborev-base-path" content="/roborev-ci">`)
+	assert.Contains(t, deepLinkRecorder.Body.String(), `<base href="/roborev-ci/">`)
+	assert.NotContains(t, deepLinkRecorder.Body.String(), `<meta name="roborev-base-path" content="">`)
+}
+
 func TestHandlerRejectsNonNavigationFallbacks(t *testing.T) {
-	handler, err := NewHandler(completeDistribution())
+	handler, err := NewHandler(completeDistribution(), "")
 	require.NoError(t, err)
 
 	paths := []string{

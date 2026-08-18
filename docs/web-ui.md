@@ -29,7 +29,8 @@ Open a particular review with its local job ID:
 roborev ui 42
 ```
 
-This opens `/reviews/42`. Job IDs belong to one daemon's SQLite database, so a
+This opens `/reviews/42`, or the same route below `web.base_path` when a path
+prefix is configured. Job IDs belong to one daemon's SQLite database, so a
 numeric review URL is not portable between machines.
 
 The application has two workspaces:
@@ -87,9 +88,9 @@ a different daemon.
 ## Analytics
 
 Open **Analytics** in the application shell, or navigate directly to
-`/analytics`. Filters are encoded in the URL, so a time range and project,
-source, agent, model, or bucket selection can be bookmarked and shared with
-another user of the same daemon.
+`/analytics` (below `web.base_path` when configured). Filters are encoded in the
+URL, so a time range and project, source, agent, model, or bucket selection can
+be bookmarked and shared with another user of the same daemon.
 
 Project analytics use the display names shown elsewhere in Roborev. Repositories
 with the same display name are intentionally grouped together.
@@ -145,19 +146,25 @@ Choose a fixed loopback port. Generate the required 32-byte base64url token:
 openssl rand -base64 32 | tr '+/' '-_' | tr -d '='
 ```
 
-Paste the generated value into `~/.roborev/config.toml`:
+Store the generated value in a host-local file readable by the Roborev daemon,
+with an optional single trailing newline, and configure that file in
+`~/.roborev/config.toml`:
 
 ```toml
 [web]
 enabled = true
 listen = "127.0.0.1:7374"
 public_origin = "https://reviews.example.com"
-auth_token = "paste-the-generated-token-here"
+base_path = "/reviews"
+auth_token_file = "/etc/roborev/web-auth-token"
 ```
 
 `public_origin` must be the exact origin users open, without a path or trailing
-slash. Protect the config file because it contains the login token. Restart the
-daemon after changing any `[web]` setting:
+slash. `base_path` is an optional canonical path prefix: it starts with `/`, has
+no trailing slash, and must be preserved by the reverse proxy. The browser
+session cookie is scoped to that prefix. `auth_token_file` and `auth_token` are
+mutually exclusive; the token file must contain exactly one token. Protect the
+token file and restart the daemon after changing any `[web]` setting:
 
 ```bash
 roborev daemon restart
@@ -177,9 +184,10 @@ then run:
 tailscale serve --bg http://127.0.0.1:7374
 ```
 
-Use the HTTPS origin printed by `tailscale serve` as `web.public_origin`, then
-restart Roborev. Open that origin on another device in the tailnet and enter the
-configured `web.auth_token` when prompted.
+For this root-mounted example, use the HTTPS origin printed by `tailscale serve`
+as `web.public_origin`, then restart Roborev. Open that origin on another device
+in the tailnet and enter the configured token when prompted. A path-mounted
+deployment needs a reverse proxy that preserves the configured `base_path`.
 
 Do not use Tailscale Funnel for this setup: Serve keeps access inside the
 tailnet. Tailnet policy remains the network-level access boundary, while the

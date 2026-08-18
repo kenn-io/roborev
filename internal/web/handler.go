@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"compress/gzip"
+	"html"
 	"io/fs"
 	"net/http"
 	"strconv"
@@ -15,13 +16,14 @@ const ContentSecurityPolicy = "default-src 'self'; base-uri 'none'; object-src '
 type httpHandler = http.Handler
 
 type handler struct {
-	files   fs.FS
-	catalog *assetCatalog
-	index   []byte
-	gzip    sync.Map
+	files    fs.FS
+	catalog  *assetCatalog
+	index    []byte
+	basePath string
+	gzip     sync.Map
 }
 
-func NewHandler(files fs.FS) (http.Handler, error) {
+func NewHandler(files fs.FS, basePath string) (http.Handler, error) {
 	catalog, err := loadDistribution(files)
 	if err != nil {
 		return nil, err
@@ -30,7 +32,7 @@ func NewHandler(files fs.FS) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &handler{files: files, catalog: catalog, index: index}, nil
+	return &handler{files: files, catalog: catalog, index: renderIndex(index, basePath), basePath: basePath}, nil
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -41,7 +43,7 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	if r.URL.Path == "/" {
 		w.Header().Set("Cache-Control", "no-store")
-		w.Header().Set("Location", "/reviews")
+		w.Header().Set("Location", joinBasePath(h.basePath, "/reviews"))
 		w.WriteHeader(http.StatusTemporaryRedirect)
 		return
 	}
@@ -89,6 +91,24 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 	http.NotFound(w, r)
+}
+
+func renderIndex(index []byte, basePath string) []byte {
+	basePathHTML := html.EscapeString(basePath)
+	baseHrefHTML := html.EscapeString(joinBasePath(basePath, "/"))
+	rendered := strings.Replace(string(index), `<meta name="roborev-base-path" content="">`, `<meta name="roborev-base-path" content="`+basePathHTML+`">`, 1)
+	rendered = strings.Replace(rendered, `<base href="/">`, `<base href="`+baseHrefHTML+`">`, 1)
+	return []byte(rendered)
+}
+
+func joinBasePath(basePath, internalPath string) string {
+	if basePath == "" {
+		return internalPath
+	}
+	if internalPath == "/" {
+		return basePath + "/"
+	}
+	return basePath + "/" + strings.TrimPrefix(internalPath, "/")
 }
 
 func (h *handler) gzipAsset(assetPath string, data []byte) ([]byte, error) {

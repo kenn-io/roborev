@@ -17,12 +17,12 @@ func embeddedFiles() (fs.FS, error) {
 	return files, nil
 }
 
-func NewEmbeddedHandler() (httpHandler, error) {
+func NewEmbeddedHandler(basePath string) (httpHandler, error) {
 	files, err := embeddedFiles()
 	if err != nil {
 		return nil, err
 	}
-	return NewHandler(files)
+	return NewHandler(files, basePath)
 }
 
 func ValidateEmbeddedRelease() error {

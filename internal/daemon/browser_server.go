@@ -58,7 +58,7 @@ func (s *Server) startBrowserServer(web config.WebConfig) (*BrowserRuntimeInfo, 
 	if err != nil {
 		return fail(err)
 	}
-	static, err := webassets.NewEmbeddedHandler()
+	static, err := webassets.NewEmbeddedHandler(web.BasePath)
 	if err != nil {
 		return fail(fmt.Errorf("load embedded browser application: %w", err))
 	}
