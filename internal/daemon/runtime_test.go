@@ -239,6 +239,7 @@ func TestRuntimeInfoRoundTripsBrowserMetadata(t *testing.T) {
 	browser := &BrowserRuntimeInfo{
 		Address:      "127.0.0.1:7400",
 		Origin:       "https://reviews.example.com",
+		WebBasePath:  "/roborev-ci",
 		Capabilities: []string{"web-ui-v1", "web-session-v1"},
 	}
 	require.NoError(t, WriteRuntime(
@@ -248,6 +249,7 @@ func TestRuntimeInfoRoundTripsBrowserMetadata(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, browser.Address, info.WebAddress)
 	assert.Equal(t, browser.Origin, info.WebOrigin)
+	assert.Equal(t, browser.WebBasePath, info.WebBasePath)
 	assert.Equal(t, browser.Capabilities, info.WebCapabilities)
 
 	raw, err := os.ReadFile(RuntimePath())
@@ -255,6 +257,19 @@ func TestRuntimeInfoRoundTripsBrowserMetadata(t *testing.T) {
 	for _, secret := range []string{"auth_token", "cookie", "csrf", "tab_token", "instance_id"} {
 		assert.NotContains(t, strings.ToLower(string(raw)), secret)
 	}
+}
+
+func TestWriteRuntimeRejectsInvalidBrowserBasePath(t *testing.T) {
+	testenv.SetDataDir(t)
+	err := WriteRuntime(
+		DaemonEndpoint{Network: "tcp", Address: defaultTestAddr}, nil, "test-version",
+		&BrowserRuntimeInfo{
+			Address:     "127.0.0.1:7400",
+			Origin:      "https://reviews.example.com",
+			WebBasePath: "/roborev-ci/",
+		},
+	)
+	require.ErrorContains(t, err, "trailing slash")
 }
 
 func TestWriteRuntimeRejectsInvalidBrowserCapabilities(t *testing.T) {

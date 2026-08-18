@@ -44,6 +44,25 @@ func TestUICmdOpensReviewRoutes(t *testing.T) {
 	}
 }
 
+func TestUICmdOpensPrefixedReviewRoutes(t *testing.T) {
+	var opened string
+	withUICommandDependencies(t,
+		func() error { return nil },
+		func() (*daemon.RuntimeInfo, error) {
+			return &daemon.RuntimeInfo{
+				WebOrigin:   "https://reviews.example.com",
+				WebBasePath: "/roborev-ci",
+			}, nil
+		},
+		func(target string) error { opened = target; return nil },
+	)
+
+	cmd := uiCmd()
+	cmd.SetArgs([]string{"42"})
+	require.NoError(t, cmd.Execute())
+	assert.Equal(t, "https://reviews.example.com/roborev-ci/reviews/42", opened)
+}
+
 func TestUICmdRejectsInvalidJobIDs(t *testing.T) {
 	for _, args := range [][]string{{"0"}, {"-1"}, {"nope"}, {"1", "2"}} {
 		cmd := uiCmd()

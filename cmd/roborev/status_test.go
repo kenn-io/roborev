@@ -91,6 +91,28 @@ func TestStatusCmdJSONIncludesWebUIURL(t *testing.T) {
 	assert.Equal(t, "https://reviews.example.com", parsed.WebURL)
 }
 
+func TestStatusCmdJSONIncludesPrefixedWebUIURL(t *testing.T) {
+	md := NewMockDaemon(t, MockRefineHooks{})
+	defer md.Close()
+
+	withStatusWebRuntime(t, func() (*daemon.RuntimeInfo, error) {
+		return &daemon.RuntimeInfo{
+			WebOrigin:   "https://reviews.example.com",
+			WebBasePath: "/roborev-ci",
+		}, nil
+	})
+
+	output := captureStdout(t, func() {
+		cmd := statusCmd()
+		cmd.SetArgs([]string{"--json"})
+		require.NoError(t, cmd.Execute())
+	})
+
+	var parsed statusJSONOutput
+	require.NoError(t, json.Unmarshal([]byte(output), &parsed))
+	assert.Equal(t, "https://reviews.example.com/roborev-ci/", parsed.WebURL)
+}
+
 func TestDaemonStatusUsesSharedStatusOutput(t *testing.T) {
 	md := NewMockDaemon(t, MockRefineHooks{})
 	defer md.Close()

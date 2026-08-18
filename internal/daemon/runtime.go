@@ -25,6 +25,7 @@ const (
 	runtimeAlternateAddressKey = "alternate_address"
 	runtimeWebAddressKey       = "web_address"
 	runtimeWebOriginKey        = "web_origin"
+	runtimeWebBasePathKey      = "web_base_path"
 	runtimeWebCapabilitiesKey  = "web_capabilities"
 )
 
@@ -46,6 +47,7 @@ type RuntimeInfo struct {
 	AlternateAddress string   `json:"-"`
 	WebAddress       string   `json:"-"`
 	WebOrigin        string   `json:"-"`
+	WebBasePath      string   `json:"-"`
 	WebCapabilities  []string `json:"-"`
 }
 
@@ -54,6 +56,7 @@ type RuntimeInfo struct {
 type BrowserRuntimeInfo struct {
 	Address      string
 	Origin       string
+	WebBasePath  string
 	Capabilities []string
 }
 
@@ -137,6 +140,7 @@ func runtimeInfoFromRecord(rec kitdaemon.RuntimeRecord) *RuntimeInfo {
 		AlternateAddress: rec.Metadata[runtimeAlternateAddressKey],
 		WebAddress:       rec.Metadata[runtimeWebAddressKey],
 		WebOrigin:        rec.Metadata[runtimeWebOriginKey],
+		WebBasePath:      rec.Metadata[runtimeWebBasePathKey],
 	}
 	if raw := rec.Metadata[runtimeWebCapabilitiesKey]; raw != "" {
 		info.WebCapabilities = strings.Split(raw, ",")
@@ -190,6 +194,7 @@ func WriteRuntime(primary DaemonEndpoint, alternate *DaemonEndpoint, version str
 		}
 		rec.Metadata[runtimeWebAddressKey] = browser.Address
 		rec.Metadata[runtimeWebOriginKey] = browser.Origin
+		rec.Metadata[runtimeWebBasePathKey] = browser.WebBasePath
 		rec.Metadata[runtimeWebCapabilitiesKey] = strings.Join(browser.Capabilities, ",")
 	}
 	if len(rec.Metadata) == 0 {
@@ -202,6 +207,13 @@ func WriteRuntime(primary DaemonEndpoint, alternate *DaemonEndpoint, version str
 func validateBrowserRuntime(browser BrowserRuntimeInfo) error {
 	if strings.TrimSpace(browser.Address) == "" || strings.TrimSpace(browser.Origin) == "" {
 		return fmt.Errorf("browser runtime address and origin are required")
+	}
+	basePath, err := config.NormalizeWebBasePath(browser.WebBasePath)
+	if err != nil {
+		return fmt.Errorf("browser runtime base path: %w", err)
+	}
+	if basePath != browser.WebBasePath {
+		return fmt.Errorf("browser runtime base path is not canonical")
 	}
 	seen := make(map[string]struct{}, len(browser.Capabilities))
 	for _, capability := range browser.Capabilities {

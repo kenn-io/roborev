@@ -97,7 +97,11 @@ func discoverWebUIURL(discover func() (*daemon.RuntimeInfo, error)) string {
 	if err != nil || runtimeInfo == nil || runtimeInfo.WebOrigin == "" {
 		return ""
 	}
-	return runtimeInfo.WebOrigin
+	webURL, err := browserRootURL(runtimeInfo.WebOrigin, runtimeInfo.WebBasePath)
+	if err != nil {
+		return ""
+	}
+	return webURL
 }
 
 func displayWebUIURL(webURL string) string {

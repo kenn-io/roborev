@@ -108,6 +108,7 @@ func (s *Server) startBrowserServer(web config.WebConfig) (*BrowserRuntimeInfo, 
 	return &BrowserRuntimeInfo{
 		Address:      endpoint.DialAddress,
 		Origin:       origin,
+		WebBasePath:  web.BasePath,
 		Capabilities: append([]string(nil), browserCapabilities...),
 	}, nil
 }

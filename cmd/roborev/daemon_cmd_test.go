@@ -98,6 +98,27 @@ func TestDaemonRestartShowsPublicWebUIURL(t *testing.T) {
 	assert.Equal(t, "Daemon restarted\nWeb UI: https://reviews.example.com\n", output)
 }
 
+func TestDaemonRestartShowsPrefixedWebUIURL(t *testing.T) {
+	withDaemonCommandDependencies(t,
+		func() error { return nil },
+		func() error { return nil },
+		func() (*daemon.RuntimeInfo, error) {
+			return &daemon.RuntimeInfo{
+				WebOrigin:   "https://reviews.example.com",
+				WebBasePath: "/roborev-ci",
+			}, nil
+		},
+	)
+
+	output := captureStdout(t, func() {
+		cmd := daemonCmd()
+		cmd.SetArgs([]string{"restart"})
+		require.NoError(t, cmd.Execute())
+	})
+
+	assert.Equal(t, "Daemon restarted\nWeb UI: https://reviews.example.com/roborev-ci/\n", output)
+}
+
 func TestDaemonRestartShowsUnavailableWhenBrowserIsDisabled(t *testing.T) {
 	withDaemonCommandDependencies(t,
 		func() error { return nil },

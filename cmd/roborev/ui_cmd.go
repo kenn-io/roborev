@@ -10,6 +10,7 @@ import (
 
 	"github.com/spf13/cobra"
 
+	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
 )
 
@@ -36,7 +37,7 @@ func uiCmd() *cobra.Command {
 			if runtimeInfo.WebOrigin == "" {
 				return fmt.Errorf("the daemon browser listener is disabled")
 			}
-			target, err := uiURL(runtimeInfo.WebOrigin, args)
+			target, err := uiURL(runtimeInfo.WebOrigin, runtimeInfo.WebBasePath, args)
 			if err != nil {
 				return err
 			}
@@ -101,7 +102,15 @@ func validateUIArgs(_ *cobra.Command, args []string) error {
 	return nil
 }
 
-func uiURL(origin string, args []string) (string, error) {
+func uiURL(origin, basePath string, args []string) (string, error) {
+	path := "/reviews"
+	if len(args) == 1 {
+		path += "/" + args[0]
+	}
+	return browserURL(origin, basePath, path)
+}
+
+func browserURL(origin, basePath, internalPath string) (string, error) {
 	parsed, err := url.Parse(origin)
 	if err != nil || parsed.Host == "" || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
 		return "", fmt.Errorf("daemon published an invalid browser origin")
@@ -111,9 +120,27 @@ func uiURL(origin string, args []string) (string, error) {
 	default:
 		return "", fmt.Errorf("daemon published an invalid browser origin")
 	}
-	parsed.Path = "/reviews"
-	if len(args) == 1 {
-		parsed.Path += "/" + args[0]
+	normalizedBasePath, err := config.NormalizeWebBasePath(basePath)
+	if err != nil {
+		return "", fmt.Errorf("daemon published an invalid browser base path: %w", err)
 	}
+	parsed.Path = normalizedBasePath + internalPath
+	parsed.RawPath = ""
 	return parsed.String(), nil
+}
+
+func browserRootURL(origin, basePath string) (string, error) {
+	if basePath == "" {
+		parsed, err := url.Parse(origin)
+		if err != nil || parsed.Host == "" || parsed.User != nil || parsed.Path != "" || parsed.RawQuery != "" || parsed.Fragment != "" {
+			return "", fmt.Errorf("daemon published an invalid browser origin")
+		}
+		switch strings.ToLower(parsed.Scheme) {
+		case "http", "https":
+		default:
+			return "", fmt.Errorf("daemon published an invalid browser origin")
+		}
+		return parsed.String(), nil
+	}
+	return browserURL(origin, basePath, "/")
 }

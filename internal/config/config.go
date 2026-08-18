@@ -813,7 +813,7 @@ func normalizeWebConfig(web *WebConfig) error {
 	}
 
 	if web.BasePath != "" {
-		basePath, err := normalizeWebBasePath(web.BasePath)
+		basePath, err := NormalizeWebBasePath(web.BasePath)
 		if err != nil {
 			return err
 		}
@@ -876,7 +876,9 @@ func (web WebConfig) ResolveAuthToken() (string, error) {
 	return token, nil
 }
 
-func normalizeWebBasePath(raw string) (string, error) {
+// NormalizeWebBasePath validates the canonical external URL path prefix used
+// by the browser application. The empty string means the origin root.
+func NormalizeWebBasePath(raw string) (string, error) {
 	if raw == "" {
 		return "", nil
 	}
