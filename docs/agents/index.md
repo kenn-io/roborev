@@ -113,7 +113,8 @@ The `claude-code` agent accepts a model spec of the form `<model>@<base_url>`.
 When `<base_url>` starts with `http://` or `https://`, roborev points Claude
 Code at that endpoint and pins all tier aliases (Opus, Sonnet, Haiku, subagent)
 to the given model. This lets you use local runtimes (Ollama, LM Studio) or
-gateways (LiteLLM, OpenRouter) that expose an Anthropic-compatible API.
+gateways (LiteLLM, OpenRouter, OrcaRouter) that expose an Anthropic-compatible
+API.
 
 ```toml
 # .roborev.toml: local Ollama for reviews, real Anthropic for fixes
@@ -128,6 +129,12 @@ Or per invocation:
 roborev review --model 'glm-5.1:cloud@http://127.0.0.1:11434'
 ```
 
+```toml
+# .roborev.toml: route Claude Code reviews through the OrcaRouter gateway
+agent = "claude-code"
+review_model = "orcarouter/auto@https://api.orcarouter.ai/v1"
+```
+
 A bare proxy spec (`@http://...` with no model) is rejected with an error. The
 full URL (including any path or query string) is forwarded as-is to
 `ANTHROPIC_BASE_URL`, so include the path your gateway expects. For example,
@@ -138,7 +145,8 @@ LiteLLM typically wants a trailing `/v1`, while Ollama wants no path.
 Set `ROBOREV_CLAUDE_PROXY_TOKEN` in your environment to forward a bearer token
 to the proxy as `ANTHROPIC_AUTH_TOKEN`. If unset, roborev sends a placeholder
 token, which is sufficient for gateways that do not validate the header (such as
-Ollama).
+Ollama). For [OrcaRouter](https://www.orcarouter.ai), set it to an API key from
+your OrcaRouter account (keys start with `sk-orca-`).
 
 roborev does not forward `anthropic_api_key` (or `ANTHROPIC_API_KEY`) to proxy
 endpoints. Doing so would leak a real Anthropic credential to arbitrary third

@@ -1564,8 +1564,8 @@ roborev automatically sets `CLAUDE_NO_SOUND=1` when running Claude agents to
 suppress notification and completion sounds.
 
 To route Claude Code through a local or remote proxy (Ollama, LiteLLM, LM
-Studio, etc.) instead of Anthropic's API, use the `<model>@<base_url>` model
-spec. See
+Studio, OrcaRouter, etc.) instead of Anthropic's API, use the
+`<model>@<base_url>` model spec. See
 [Routing Claude Code to a Proxy](/agents/#routing-claude-code-to-a-proxy).
 
 ### Other Agents
