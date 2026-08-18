@@ -106,6 +106,35 @@ func TestLogCmd_RawFlag(t *testing.T) {
 	assert.Equal(rawContent, buf.String())
 }
 
+func TestLogCmdUsesExplicitDatabase(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", dataDir)
+	dbPath := filepath.Join(dataDir, "custom.db")
+	db, err := storage.Open(dbPath)
+	require.NoError(t, err)
+	repo, err := db.GetOrCreateRepo(filepath.Join(dataDir, "repo"))
+	require.NoError(t, err)
+	job, err := db.EnqueueJob(storage.EnqueueOpts{
+		RepoID: repo.ID, GitRef: "abc123", Agent: "grok",
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	require.NoError(t, os.MkdirAll(daemon.JobLogDir(), 0o700))
+	const logContent = "custom database output\n"
+	require.NoError(t, os.WriteFile(
+		daemon.JobLogPath(job.ID), []byte(logContent), 0o600,
+	))
+
+	var out bytes.Buffer
+	cmd := logCmd()
+	cmd.SetOut(&out)
+	cmd.SetArgs([]string{"--db", dbPath, fmt.Sprint(job.ID)})
+	cmd.SilenceUsage = true
+	require.NoError(t, cmd.Execute())
+	assert.Equal(t, logContent, out.String())
+}
+
 func TestRenderJobLogUsesStoredIdentity(t *testing.T) {
 	tests := []struct {
 		name          string
@@ -153,7 +182,9 @@ func TestRenderJobLogUsesStoredIdentity(t *testing.T) {
 				require.NoError(t, daemon.RecordJobLogAgent(job.ID, tt.recordedAgent))
 			}
 			var out bytes.Buffer
-			require.NoError(t, renderJobLog(job.ID, &out, true))
+			require.NoError(t, renderJobLog(
+				job.ID, &out, true, storage.DefaultDBPath(),
+			))
 			plain := streamfmt.StripANSI(out.String())
 			for _, want := range tt.want {
 				assert.Contains(t, plain, want)
@@ -197,7 +228,9 @@ func TestRenderJobLogUsesPersistedLogIdentityAfterCanceledFailover(t *testing.T)
 	require.NoError(t, db.CancelJob(job.ID))
 
 	var out bytes.Buffer
-	require.NoError(t, renderJobLog(job.ID, &out, true))
+	require.NoError(t, renderJobLog(
+		job.ID, &out, true, storage.DefaultDBPath(),
+	))
 	plain := streamfmt.StripANSI(out.String())
 	assert.Contains(t, plain, "prior provider output")
 	assert.NotContains(t, plain, `"type"`)
@@ -210,7 +243,7 @@ func TestRenderJobLogOrphanSuggestsRaw(t *testing.T) {
 		daemon.JobLogPath(42), []byte(`{"type":"assistant"}`+"\n"), 0o600,
 	))
 
-	err := renderJobLog(42, io.Discard, true)
+	err := renderJobLog(42, io.Discard, true, storage.DefaultDBPath())
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "--raw")
 }

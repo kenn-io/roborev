@@ -20,6 +20,7 @@ func logCmd() *cobra.Command {
 	var (
 		showPath  bool
 		rawOutput bool
+		dbPath    string
 	)
 
 	cmd := &cobra.Command{
@@ -71,7 +72,9 @@ Examples:
 				return nil
 			}
 
-			err = renderJobLog(jobID, out, streamfmt.WriterIsTerminal(out))
+			err = renderJobLog(
+				jobID, out, streamfmt.WriterIsTerminal(out), dbPath,
+			)
 			if isBrokenPipe(err) {
 				return nil
 			}
@@ -87,6 +90,10 @@ Examples:
 		&rawOutput, "raw", false,
 		"print raw log bytes without formatting",
 	)
+	cmd.Flags().StringVar(
+		&dbPath, "db", storage.DefaultDBPath(),
+		"path to sqlite database used for log metadata",
+	)
 
 	cmd.AddCommand(logCleanCmd())
 	return cmd
@@ -99,14 +106,16 @@ func noJobLogError(jobID int64) error {
 	)
 }
 
-func renderJobLog(jobID int64, out io.Writer, isTTY bool) (err error) {
+func renderJobLog(
+	jobID int64, out io.Writer, isTTY bool, dbPath string,
+) (err error) {
 	f, err := os.Open(daemon.JobLogPath(jobID))
 	if err != nil {
 		return noJobLogError(jobID)
 	}
 	defer func() { err = errors.Join(err, f.Close()) }()
 
-	db, err := storage.OpenReadOnly(storage.DefaultDBPath())
+	db, err := storage.OpenReadOnly(dbPath)
 	if err != nil {
 		return fmt.Errorf("load metadata for formatted log (use --raw for an orphaned log): %w", err)
 	}
