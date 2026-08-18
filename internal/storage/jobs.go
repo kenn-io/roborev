@@ -204,7 +204,7 @@ func hasNonCanceledJob(
 			SELECT 1 FROM review_jobs
 			WHERE repo_id = ? AND git_ref = ? AND job_type = ? AND status != ?
 		)`,
-		opts.RepoID, opts.GitRef, jobTypeForEnqueue(opts), JobStatusCanceled,
+		opts.RepoID, opts.GitRef, JobTypeForEnqueue(opts), JobStatusCanceled,
 	).Scan(&exists)
 	if err != nil {
 		return false, fmt.Errorf("query post-commit duplicate: %w", err)
@@ -212,7 +212,9 @@ func hasNonCanceledJob(
 	return exists, nil
 }
 
-func jobTypeForEnqueue(opts EnqueueOpts) string {
+// JobTypeForEnqueue returns the canonical job type that storage persists for
+// an enqueue request.
+func JobTypeForEnqueue(opts EnqueueOpts) string {
 	if opts.JobType != "" {
 		return opts.JobType
 	}
@@ -237,7 +239,7 @@ func (db *DB) insertJobTx(ctx context.Context, exec execer, opts EnqueueOpts, ui
 		reasoning = "thorough"
 	}
 
-	jobType := jobTypeForEnqueue(opts)
+	jobType := JobTypeForEnqueue(opts)
 
 	// For task jobs, use Label as git_ref display value
 	gitRef := opts.GitRef

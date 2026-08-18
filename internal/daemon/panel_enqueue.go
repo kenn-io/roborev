@@ -448,7 +448,7 @@ func experimentPlanForJob(opts storage.EnqueueOpts) experimentJobPlan {
 		PanelMemberName:       opts.PanelMemberName,
 		PanelMemberIndex:      opts.PanelMemberIndex,
 		PanelMemberConfigJSON: opts.PanelMemberConfigJSON,
-		JobType:               opts.JobType,
+		JobType:               storage.JobTypeForEnqueue(opts),
 	}
 }
 

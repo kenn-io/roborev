@@ -110,6 +110,65 @@ func TestEnqueuePanelPersistsOneExperimentForWholeRun(t *testing.T) {
 	assert.Equal(t, 1, assignmentCount)
 }
 
+func TestExperimentPanelRerunPreservesNormalTargetType(t *testing.T) {
+	tests := []struct {
+		name    string
+		prepare func(*testutil.TestRepo) string
+		want    string
+	}{
+		{
+			name: "single commit",
+			prepare: func(repo *testutil.TestRepo) string {
+				repo.CommitFile("review.go", "package review\n", "add review")
+				return "HEAD"
+			},
+			want: storage.JobTypeReview,
+		},
+		{
+			name: "range",
+			prepare: func(repo *testutil.TestRepo) string {
+				base := repo.CommitFile("review.go", "package review\n", "add review")
+				head := repo.CommitFile(
+					"review.go", "package review\n\nfunc changed() {}\n", "change review",
+				)
+				return base + ".." + head
+			},
+			want: storage.JobTypeRange,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server, db, _ := newTestServer(t)
+			enabled := true
+			ratio := 1.0
+			server.configWatcher.Config().Experiments = map[string]config.ExperimentDefinition{
+				"panel-rerun-v1": {
+					Enabled: &enabled, Ratio: &ratio,
+					Workflows: []config.ExperimentWorkflow{config.ExperimentWorkflowReview},
+					Config:    map[string]any{"reuse_review_session": true},
+				},
+			}
+
+			repo := testutil.NewGitRepo(t)
+			repo.WriteFile(".roborev.toml", panelTOML)
+			gitRef := tt.prepare(repo)
+			response := enqueuePanelViaHTTP(t, server, EnqueueRequest{
+				RepoPath: repo.Path(), GitRef: gitRef,
+				Branch: "feature/panel-rerun", Agent: "test",
+			})
+
+			_, members := rerunAndLoadNewRun(
+				t, server, db, response.PanelRunUUID, response.ID,
+			)
+			require.NotEmpty(t, members)
+			for _, member := range members {
+				assert.Equal(t, tt.want, member.JobType)
+			}
+		})
+	}
+}
+
 func TestExperimentPersistsLocalReviewBackupPlans(t *testing.T) {
 	const backupName = "claude-code"
 
