@@ -14,6 +14,7 @@ import (
 	"time"
 
 	tea "charm.land/bubbletea/v2"
+	gansi "charm.land/glamour/v2/ansi"
 	gitrepo "go.kenn.io/kit/git/repo"
 
 	"go.kenn.io/roborev/internal/config"
@@ -1001,281 +1002,183 @@ func (m model) fetchPanelMembers(runUUID string) tea.Cmd {
 // Uses incremental fetching: only new bytes since logOffset are
 // downloaded and rendered, reusing the persistent logFmtr state.
 func (m model) fetchJobLog(jobID int64) tea.Cmd {
-	baseURL := m.endpoint.BaseURL()
-	width := m.width
-	client := m.client
-	style := m.glamourStyle
-	offset := m.logOffset
-	fmtr := m.logFmtr
-	agent := m.logAgent
-	source := m.logSource
+	state := logFetchState{
+		baseURL: m.endpoint.BaseURL(),
+		client:  m.client,
+		width:   m.width,
+		style:   m.glamourStyle,
+		offset:  m.logOffset,
+		fmtr:    m.logFmtr,
+		agent:   m.logAgent,
+		source:  m.logSource,
+	}
 	seq := m.logFetchSeq
 	return func() tea.Msg {
-		url := fmt.Sprintf(
-			"%s/api/job/log?job_id=%d&offset=%d",
-			baseURL, jobID, offset,
-		)
-		req, err := http.NewRequest(http.MethodGet, url, nil)
-		if err != nil {
-			return logOutputMsg{err: err, seq: seq}
-		}
-		if agent != "" {
-			req.Header.Set("X-Job-Agent", agent)
-		}
-		resp, err := client.Do(req)
-		if err != nil {
-			return logOutputMsg{err: err, seq: seq}
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode == http.StatusNotFound {
-			return logOutputMsg{err: errNoLog, seq: seq}
-		}
-		if resp.StatusCode != http.StatusOK {
-			return logOutputMsg{
-				err: fmt.Errorf("fetch log: %s", resp.Status),
-				seq: seq,
-			}
-		}
-
-		// Determine if job is still running from header
-		jobStatus := resp.Header.Get("X-Job-Status")
-		hasMore := jobStatus == "running"
-		responseAgent := resp.Header.Get("X-Job-Agent")
-		if responseAgent == "" {
-			responseAgent = agent
-		}
-		responseSource := source
-		if _, ok := resp.Header[http.CanonicalHeaderKey("X-Job-Source")]; ok {
-			responseSource = resp.Header.Get("X-Job-Source")
-		}
-		identityChanged := responseSource != source ||
-			(responseSource != storage.JobSourceAutoDesign && responseAgent != agent)
-		serverReset := resp.Header.Get("X-Log-Reset") == "true"
-
-		// Parse new offset from response header
-		newOffset := offset
-		if v := resp.Header.Get("X-Log-Offset"); v != "" {
-			if parsed, perr := strconv.ParseInt(
-				v, 10, 64,
-			); perr == nil {
-				newOffset = parsed
-			}
-		}
-
-		// Server reset offset (log truncated/rotated) — force
-		// full replace even if we sent a nonzero offset.
-		isIncremental := offset > 0 && fmtr != nil
-		if newOffset < offset || identityChanged || serverReset {
-			isIncremental = false
-		}
-
-		// No new data while running — return early with current state.
-		// A terminal response must still finalize the persistent decoder,
-		// even when the byte offset did not move.
-		if newOffset == offset && isIncremental && hasMore {
-			return logOutputMsg{
-				hasMore:   hasMore,
-				newOffset: newOffset,
-				append:    true,
-				agent:     responseAgent,
-				source:    responseSource,
-				seq:       seq,
-			}
-		}
-
-		// Render JSONL through streamFormatter. Use pre-computed
-		// glamour style to avoid terminal queries from goroutine.
-		var buf bytes.Buffer
-		var renderFmtr *streamfmt.Formatter
-		if isIncremental {
-			// Reuse persistent formatter — redirect its output
-			// to a fresh buffer for this batch only.
-			fmtr.SetWriter(&buf)
-			renderFmtr = fmtr
-		} else {
-			renderFmtr = streamfmt.NewWithWidth(
-				&buf, width, style,
-				decoderForJobLog(responseAgent, responseSource),
-			)
-		}
-
-		renderLog := streamfmt.RenderLogWith
-		if hasMore {
-			renderLog = streamfmt.RenderLogChunkWith
-		}
-		if err := renderLog(resp.Body, renderFmtr); err != nil {
-			return logOutputMsg{err: err, seq: seq}
-		}
-
-		// Split rendered output into lines
-		raw := buf.String()
-		var lines []logLine
-		if raw != "" {
-			for s := range strings.SplitSeq(raw, "\n") {
-				lines = append(lines, logLine{text: s})
-			}
-			// Remove trailing empty line from final newline
-			if len(lines) > 0 &&
-				lines[len(lines)-1].text == "" {
-				lines = lines[:len(lines)-1]
-			}
-		}
-
+		result := fetchLog(jobID, state)
 		return logOutputMsg{
-			lines:     lines,
-			hasMore:   hasMore,
-			newOffset: newOffset,
-			append:    isIncremental,
-			agent:     responseAgent,
-			source:    responseSource,
+			lines:     result.lines,
+			hasMore:   result.hasMore,
+			err:       result.err,
+			newOffset: result.newOffset,
+			append:    result.append,
+			agent:     result.agent,
+			source:    result.source,
 			seq:       seq,
-			fmtr:      renderFmtr,
+			fmtr:      result.fmtr,
 		}
 	}
 }
 
-// fetchPaneLog is fetchJobLog's fetch/format logic cloned for the split
-// detail pane's live log tail: same /api/job/log incremental-fetch
-// protocol, but reading/writing the model's paneLog* fields and emitting
-// paneLogOutputMsg so the pane's stream never collides with the full-screen
-// log view's independent offset/formatter/seq state. Keep the two in sync
-// if the log-fetch protocol changes.
+// fetchPaneLog uses the split detail pane's independent stream state while
+// sharing the log-fetch protocol with the full-screen view.
 func (m model) fetchPaneLog(jobID int64) tea.Cmd {
-	baseURL := m.endpoint.BaseURL()
-	width := m.paneLogWidth()
-	client := m.client
-	style := m.glamourStyle
-	offset := m.paneLogOffset
-	fmtr := m.paneLogFmtr
-	agent := m.paneLogAgent
-	source := m.paneLogSource
+	state := logFetchState{
+		baseURL: m.endpoint.BaseURL(),
+		client:  m.client,
+		width:   m.paneLogWidth(),
+		style:   m.glamourStyle,
+		offset:  m.paneLogOffset,
+		fmtr:    m.paneLogFmtr,
+		agent:   m.paneLogAgent,
+		source:  m.paneLogSource,
+	}
 	seq := m.paneLogSeq
 	return func() tea.Msg {
-		url := fmt.Sprintf(
-			"%s/api/job/log?job_id=%d&offset=%d",
-			baseURL, jobID, offset,
-		)
-		req, err := http.NewRequest(http.MethodGet, url, nil)
-		if err != nil {
-			return paneLogOutputMsg{jobID: jobID, err: err, seq: seq}
-		}
-		if agent != "" {
-			req.Header.Set("X-Job-Agent", agent)
-		}
-		resp, err := client.Do(req)
-		if err != nil {
-			return paneLogOutputMsg{jobID: jobID, err: err, seq: seq}
-		}
-		defer resp.Body.Close()
-
-		if resp.StatusCode == http.StatusNotFound {
-			return paneLogOutputMsg{jobID: jobID, err: errNoLog, seq: seq}
-		}
-		if resp.StatusCode != http.StatusOK {
-			return paneLogOutputMsg{
-				jobID: jobID,
-				err:   fmt.Errorf("fetch log: %s", resp.Status),
-				seq:   seq,
-			}
-		}
-
-		// Determine if job is still running from header
-		jobStatus := resp.Header.Get("X-Job-Status")
-		hasMore := jobStatus == "running"
-		responseAgent := resp.Header.Get("X-Job-Agent")
-		if responseAgent == "" {
-			responseAgent = agent
-		}
-		responseSource := source
-		if _, ok := resp.Header[http.CanonicalHeaderKey("X-Job-Source")]; ok {
-			responseSource = resp.Header.Get("X-Job-Source")
-		}
-		identityChanged := responseSource != source ||
-			(responseSource != storage.JobSourceAutoDesign && responseAgent != agent)
-		serverReset := resp.Header.Get("X-Log-Reset") == "true"
-
-		// Parse new offset from response header
-		newOffset := offset
-		if v := resp.Header.Get("X-Log-Offset"); v != "" {
-			if parsed, perr := strconv.ParseInt(
-				v, 10, 64,
-			); perr == nil {
-				newOffset = parsed
-			}
-		}
-
-		// Server reset offset (log truncated/rotated) — force
-		// full replace even if we sent a nonzero offset.
-		isIncremental := offset > 0 && fmtr != nil
-		if newOffset < offset || identityChanged || serverReset {
-			isIncremental = false
-		}
-
-		// No new data while running — return early with current state.
-		// A terminal response must still finalize the persistent decoder,
-		// even when the byte offset did not move.
-		if newOffset == offset && isIncremental && hasMore {
-			return paneLogOutputMsg{
-				jobID:     jobID,
-				hasMore:   hasMore,
-				newOffset: newOffset,
-				append:    true,
-				agent:     responseAgent,
-				source:    responseSource,
-				seq:       seq,
-			}
-		}
-
-		// Render JSONL through streamFormatter. Use pre-computed
-		// glamour style to avoid terminal queries from goroutine.
-		var buf bytes.Buffer
-		var renderFmtr *streamfmt.Formatter
-		if isIncremental {
-			// Reuse persistent formatter — redirect its output
-			// to a fresh buffer for this batch only.
-			fmtr.SetWriter(&buf)
-			renderFmtr = fmtr
-		} else {
-			renderFmtr = streamfmt.NewWithWidth(
-				&buf, width, style,
-				decoderForJobLog(responseAgent, responseSource),
-			)
-		}
-
-		renderLog := streamfmt.RenderLogWith
-		if hasMore {
-			renderLog = streamfmt.RenderLogChunkWith
-		}
-		if err := renderLog(resp.Body, renderFmtr); err != nil {
-			return paneLogOutputMsg{jobID: jobID, err: err, seq: seq}
-		}
-
-		// Split rendered output into lines
-		raw := buf.String()
-		var lines []logLine
-		if raw != "" {
-			for s := range strings.SplitSeq(raw, "\n") {
-				lines = append(lines, logLine{text: s})
-			}
-			// Remove trailing empty line from final newline
-			if len(lines) > 0 &&
-				lines[len(lines)-1].text == "" {
-				lines = lines[:len(lines)-1]
-			}
-		}
-
+		result := fetchLog(jobID, state)
 		return paneLogOutputMsg{
 			jobID:     jobID,
-			lines:     lines,
-			hasMore:   hasMore,
+			lines:     result.lines,
+			hasMore:   result.hasMore,
+			err:       result.err,
+			newOffset: result.newOffset,
+			append:    result.append,
+			agent:     result.agent,
+			source:    result.source,
+			seq:       seq,
+			fmtr:      result.fmtr,
+		}
+	}
+}
+
+type logFetchState struct {
+	baseURL string
+	client  *http.Client
+	width   int
+	style   gansi.StyleConfig
+	offset  int64
+	fmtr    *streamfmt.Formatter
+	agent   string
+	source  string
+}
+
+type logFetchResult struct {
+	lines     []logLine
+	hasMore   bool
+	err       error
+	newOffset int64
+	append    bool
+	agent     string
+	source    string
+	fmtr      *streamfmt.Formatter
+}
+
+func fetchLog(jobID int64, state logFetchState) logFetchResult {
+	url := fmt.Sprintf(
+		"%s/api/job/log?job_id=%d&offset=%d",
+		state.baseURL, jobID, state.offset,
+	)
+	req, err := http.NewRequest(http.MethodGet, url, nil)
+	if err != nil {
+		return logFetchResult{err: err}
+	}
+	if state.agent != "" {
+		req.Header.Set("X-Job-Agent", state.agent)
+	}
+	resp, err := state.client.Do(req)
+	if err != nil {
+		return logFetchResult{err: err}
+	}
+	defer resp.Body.Close()
+
+	if resp.StatusCode == http.StatusNotFound {
+		return logFetchResult{err: errNoLog}
+	}
+	if resp.StatusCode != http.StatusOK {
+		return logFetchResult{err: fmt.Errorf("fetch log: %s", resp.Status)}
+	}
+
+	hasMore := resp.Header.Get("X-Job-Status") == "running"
+	responseAgent := resp.Header.Get("X-Job-Agent")
+	if responseAgent == "" {
+		responseAgent = state.agent
+	}
+	responseSource := state.source
+	if _, ok := resp.Header[http.CanonicalHeaderKey("X-Job-Source")]; ok {
+		responseSource = resp.Header.Get("X-Job-Source")
+	}
+	identityChanged := responseSource != state.source ||
+		(responseSource != storage.JobSourceAutoDesign && responseAgent != state.agent)
+	serverReset := resp.Header.Get("X-Log-Reset") == "true"
+
+	newOffset := state.offset
+	if value := resp.Header.Get("X-Log-Offset"); value != "" {
+		if parsed, parseErr := strconv.ParseInt(value, 10, 64); parseErr == nil {
+			newOffset = parsed
+		}
+	}
+
+	isIncremental := state.offset > 0 && state.fmtr != nil
+	if newOffset < state.offset || identityChanged || serverReset {
+		isIncremental = false
+	}
+	if newOffset == state.offset && isIncremental && hasMore {
+		return logFetchResult{
+			hasMore:   true,
 			newOffset: newOffset,
-			append:    isIncremental,
+			append:    true,
 			agent:     responseAgent,
 			source:    responseSource,
-			seq:       seq,
-			fmtr:      renderFmtr,
 		}
+	}
+
+	var buf bytes.Buffer
+	renderFmtr := state.fmtr
+	if isIncremental {
+		renderFmtr.SetWriter(&buf)
+	} else {
+		renderFmtr = streamfmt.NewWithWidth(
+			&buf, state.width, state.style,
+			decoderForJobLog(responseAgent, responseSource),
+		)
+	}
+
+	renderLog := streamfmt.RenderLogWith
+	if hasMore {
+		renderLog = streamfmt.RenderLogChunkWith
+	}
+	if err := renderLog(resp.Body, renderFmtr); err != nil {
+		return logFetchResult{err: err}
+	}
+
+	raw := buf.String()
+	var lines []logLine
+	if raw != "" {
+		for line := range strings.SplitSeq(raw, "\n") {
+			lines = append(lines, logLine{text: line})
+		}
+		if len(lines) > 0 && lines[len(lines)-1].text == "" {
+			lines = lines[:len(lines)-1]
+		}
+	}
+
+	return logFetchResult{
+		lines:     lines,
+		hasMore:   hasMore,
+		newOffset: newOffset,
+		append:    isIncremental,
+		agent:     responseAgent,
+		source:    responseSource,
+		fmtr:      renderFmtr,
 	}
 }
 
