@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"encoding/json"
 	"io"
 	"testing"
 	"time"
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/agent"
+	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -225,6 +227,59 @@ func TestUpdateInterruptionPreemptsClassifierTerminalPath(t *testing.T) {
 	)
 
 	tc.assertJobStatus(t, job.ID, storage.JobStatusQueued)
+}
+
+func TestUpdateInterruptionPreemptsClassifierBackup(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	started := make(chan struct{})
+	backupInvoked := make(chan struct{}, 1)
+	primaryName := "update-classifier-primary"
+	backupName := "update-classifier-backup"
+	agent.Register(&fakeSchemaAgent{
+		name: primaryName,
+		classifyFn: func(ctx context.Context) (json.RawMessage, error) {
+			close(started)
+			<-ctx.Done()
+			return nil, ctx.Err()
+		},
+	})
+	agent.Register(&fakeSchemaAgent{
+		name: backupName,
+		classifyFn: func(context.Context) (json.RawMessage, error) {
+			backupInvoked <- struct{}{}
+			return []byte(`{"design_review":false,"reason":"backup"}`), nil
+		},
+	})
+	t.Cleanup(func() {
+		agent.Unregister(primaryName)
+		agent.Unregister(backupName)
+	})
+	cfg := config.DefaultConfig()
+	cfg.ClassifyAgent = primaryName
+	cfg.ClassifyBackupAgent = backupName
+	tc.Pool.cfgGetter = NewStaticConfig(cfg)
+	job := tc.createAndClaimClassifyJob(
+		t, "update-classifier-backup", "subject", "+diff\n",
+	)
+	done := make(chan struct{})
+	go func() {
+		defer close(done)
+		tc.Pool.processJob(testWorkerID, job)
+	}()
+
+	require.True(t, waitForUpdateSignal(started, 5*time.Second))
+	tc.Pool.InterruptJobsForUpdate([]int64{job.ID})
+	require.True(t, waitForUpdateSignal(done, 5*time.Second))
+
+	tc.assertJobStatus(t, job.ID, storage.JobStatusQueued)
+	assert.Never(t, func() bool {
+		select {
+		case <-backupInvoked:
+			return true
+		default:
+			return false
+		}
+	}, 50*time.Millisecond, 5*time.Millisecond)
 }
 
 func TestUpdateInterruptionPreemptsSynthesisCompletion(t *testing.T) {

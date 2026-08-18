@@ -21,6 +21,7 @@ type fakeSchemaAgent struct {
 	result      json.RawMessage
 	err         error
 	logOutput   string
+	classifyFn  func(context.Context) (json.RawMessage, error)
 }
 
 func (f *fakeSchemaAgent) Name() string {
@@ -44,11 +45,14 @@ func (f *fakeSchemaAgent) CommandLine() string {
 }
 
 func (f *fakeSchemaAgent) ClassifyWithSchema(
-	_ context.Context,
+	ctx context.Context,
 	_, _, _ string,
 	_ json.RawMessage,
 	out io.Writer,
 ) (json.RawMessage, error) {
+	if f.classifyFn != nil {
+		return f.classifyFn(ctx)
+	}
 	if f.logOutput != "" && out != nil {
 		if _, err := io.WriteString(out, f.logOutput); err != nil {
 			return nil, err

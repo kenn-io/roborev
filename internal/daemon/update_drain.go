@@ -112,7 +112,7 @@ func (c *updateDrainCoordinator) prepare(ownerID, policy string) (UpdateDrainSta
 	if policy == updatePolicyInterrupt {
 		s.workerPool.InterruptJobsForUpdate(ids)
 	}
-	c.armExpiryLocked(lease, updateLeaseDuration)
+	c.armExpiryLocked(lease, lease.expiresAt.Sub(c.now()))
 	return c.snapshotLocked(lease)
 }
 
@@ -186,6 +186,13 @@ func (c *updateDrainCoordinator) releaseExpiredLocked(lease *updateDrainLease) e
 	s := c.server
 	if s.updateDrain != lease {
 		return nil
+	}
+	if lease.policy == updatePolicyInterrupt && s.workerPool.ActiveWorkers() == 0 {
+		if err := s.workerPool.RetryFailedUpdateRequeues(); err != nil {
+			lease.recovering = true
+			c.armRecoveryRetryLocked(lease)
+			return err
+		}
 	}
 	remaining, err := s.db.CountRunningJobsByID(lease.targeted)
 	if err != nil {

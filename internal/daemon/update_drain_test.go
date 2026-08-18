@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"net/http/httptest"
 	"testing"
@@ -194,6 +195,61 @@ func TestWaitUpdateDrainExpiresAndReopensClaims(t *testing.T) {
 		draining, err := db.IsShutdownDraining()
 		return err == nil && !draining
 	}, time.Second, 10*time.Millisecond)
+}
+
+func TestPrepareUpdateDrainTimerUsesAdvertisedExpiry(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	base := time.Now()
+	var calls int
+	server.updateCoordinator.now = func() time.Time {
+		calls++
+		if calls == 1 {
+			return base
+		}
+		return base.Add(2 * updateLeaseDuration)
+	}
+
+	prepareUpdateDrain(t, server, "owner-expired-during-prepare", "wait")
+
+	require.Eventually(t, func() bool {
+		draining, err := db.IsShutdownDraining()
+		return err == nil && !draining
+	}, time.Second, 10*time.Millisecond)
+}
+
+func TestInterruptDrainRetriesFailedAttemptRequeue(t *testing.T) {
+	server, db, dir := newTestServer(t)
+	createTestJob(t, db, dir, "retry-update-requeue", "test")
+	job, err := db.ClaimJob("worker-update")
+	require.NoError(t, err)
+	require.NotNil(t, job)
+	lease := prepareUpdateDrain(t, server, "owner-requeue-retry", "interrupt")
+	_, err = db.Exec(fmt.Sprintf(`
+		CREATE TRIGGER fail_update_requeue
+		BEFORE UPDATE ON review_jobs
+		WHEN OLD.id = %d AND NEW.status = 'queued'
+		BEGIN
+			SELECT RAISE(FAIL, 'synthetic requeue failure');
+		END
+	`, job.ID))
+	require.NoError(t, err)
+	ctx, cancel := context.WithCancel(context.Background())
+	cancel()
+
+	assert.True(t, server.workerPool.handleUpdateInterruption(ctx, "worker-update", job))
+	stored, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, storage.JobStatusRunning, stored.Status)
+
+	_, err = db.Exec(`DROP TRIGGER fail_update_requeue`)
+	require.NoError(t, err)
+	released, err := server.updateCoordinator.release(lease.LeaseToken)
+	require.NoError(t, err)
+	assert.True(t, released)
+	stored, err = db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, storage.JobStatusQueued, stored.Status)
+	assert.Equal(t, 0, stored.RetryCount)
 }
 
 func TestFailedAbortRollbackRemainsVisibleUntilGateRecovers(t *testing.T) {

@@ -8,6 +8,7 @@ import (
 	"fmt"
 	"io"
 	"log"
+	"maps"
 	"os"
 	"strings"
 	"sync"
@@ -61,6 +62,7 @@ type WorkerPool struct {
 	// cancellation, retry, failover, hook, or panel-completion side effects.
 	// The daemon's update lease owns the lifetime of this set.
 	updateInterruptTargets map[int64]struct{}
+	failedUpdateRequeues   map[int64]string
 	runningJobsMu          sync.Mutex
 
 	// Agent cooldowns for quota exhaustion
@@ -111,6 +113,7 @@ func NewWorkerPool(db *storage.DB, cfgGetter ConfigGetter, numWorkers int, broad
 		runningJobs:                  make(map[int64]runningJobCancellation),
 		pendingCancels:               make(map[int64]bool),
 		updateInterruptTargets:       make(map[int64]struct{}),
+		failedUpdateRequeues:         make(map[int64]string),
 		agentCooldowns:               make(map[string]time.Time),
 		outputBuffers:                NewOutputBuffer(512*1024, 4*1024*1024), // 512KB/job, 4MB total
 		classify:                     agent.ClassifyLimit,
@@ -342,7 +345,33 @@ func (wp *WorkerPool) InterruptJobsForUpdate(jobIDs []int64) {
 func (wp *WorkerPool) ClearUpdateInterruptTargets() {
 	wp.runningJobsMu.Lock()
 	clear(wp.updateInterruptTargets)
+	clear(wp.failedUpdateRequeues)
 	wp.runningJobsMu.Unlock()
+}
+
+// RetryFailedUpdateRequeues retries attempt-scoped transitions that failed
+// while workers were unwinding. Callers must wait until the active worker
+// count reaches zero so the old attempt cannot resume terminal handling after
+// a successful retry.
+func (wp *WorkerPool) RetryFailedUpdateRequeues() error {
+	wp.runningJobsMu.Lock()
+	pending := maps.Clone(wp.failedUpdateRequeues)
+	wp.runningJobsMu.Unlock()
+
+	var retryErr error
+	for jobID, workerID := range pending {
+		_, err := wp.db.RequeueUpdateInterruptedJob(jobID, workerID)
+		if err != nil {
+			retryErr = errors.Join(retryErr, fmt.Errorf("requeue job %d: %w", jobID, err))
+			continue
+		}
+		wp.runningJobsMu.Lock()
+		if wp.failedUpdateRequeues[jobID] == workerID {
+			delete(wp.failedUpdateRequeues, jobID)
+		}
+		wp.runningJobsMu.Unlock()
+	}
+	return retryErr
 }
 
 // handleUpdateInterruption returns a targeted canceled attempt to the queue
@@ -364,6 +393,9 @@ func (wp *WorkerPool) handleUpdateInterruption(
 	requeued, err := wp.db.RequeueUpdateInterruptedJob(job.ID, workerID)
 	if err != nil {
 		log.Printf("[%s] Error requeueing update-interrupted job %d: %v", workerID, job.ID, err)
+		wp.runningJobsMu.Lock()
+		wp.failedUpdateRequeues[job.ID] = workerID
+		wp.runningJobsMu.Unlock()
 		// Keep update-owned attempts out of normal failure and cancellation
 		// handling even when the immediate transition fails. The row remains
 		// running and replacement startup's stale-job recovery requeues it.

@@ -182,6 +182,10 @@ func (wp *WorkerPool) processClassifyJob(ctx context.Context, workerID string, j
 
 	primaryModel := config.ResolveClassifyModel("", job.RepoPath, cfg)
 	yes, reason, selected, err := tryAgent(primary, primaryModel)
+	if err != nil && wp.handleUpdateInterruption(ctx, workerID, job) {
+		closeJobLog()
+		return
+	}
 	if err != nil &&
 		backup != "" &&
 		agent.CanonicalName(backup) != agent.CanonicalName(primary) &&
