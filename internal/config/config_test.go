@@ -5178,6 +5178,149 @@ func TestWebConfigNormalization(t *testing.T) {
 	}
 }
 
+func TestWebConfigBasePathNormalization(t *testing.T) {
+	tests := []struct {
+		name         string
+		basePath     string
+		wantBasePath string
+		wantErr      string
+	}{
+		{name: "empty", basePath: "", wantBasePath: ""},
+		{name: "canonical", basePath: "/roborev-ci", wantBasePath: "/roborev-ci"},
+		{name: "missing leading slash", basePath: "roborev-ci", wantErr: "absolute"},
+		{name: "trailing slash", basePath: "/roborev-ci/", wantErr: "trailing"},
+		{name: "query", basePath: "/roborev-ci?tab=all", wantErr: "query"},
+		{name: "fragment", basePath: "/roborev-ci#reviews", wantErr: "fragment"},
+		{name: "dot segment", basePath: "/roborev/./ci", wantErr: "canonical"},
+		{name: "dot dot segment", basePath: "/roborev/../ci", wantErr: "canonical"},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			path := filepath.Join(t.TempDir(), "config.toml")
+			contents := "[web]\nbase_path = " + fmt.Sprintf("%q", tt.basePath) + "\n"
+			require.NoError(t, os.WriteFile(path, []byte(contents), 0o600))
+
+			cfg, err := LoadGlobalFrom(path)
+			if tt.wantErr != "" {
+				require.ErrorContains(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantBasePath, cfg.Web.BasePath)
+		})
+	}
+}
+
+func TestWebAuthTokenFile(t *testing.T) {
+	const strongToken = "MDEyMzQ1Njc4OWFiY2RlZmdoaWprbG1ub3BxcnN0dXY"
+	terminalToken := strongToken + "\n"
+	emptyToken := ""
+	multipleLineToken := strongToken + "\nsecond-line\n"
+	whitespaceToken := strongToken + " "
+	malformedToken := "not-a-token"
+	inlineToken := strongToken
+
+	tests := []struct {
+		name         string
+		fileContents *string
+		inlineToken  string
+		wantToken    string
+		wantErr      string
+	}{
+		{
+			name:         "terminal newline is accepted",
+			fileContents: &terminalToken,
+			wantToken:    strongToken,
+		},
+		{
+			name:         "missing file fails closed",
+			fileContents: nil,
+			wantErr:      "read web auth token file",
+		},
+		{
+			name:         "empty file fails closed",
+			fileContents: &emptyToken,
+			wantErr:      "base64url-encoded 32-byte",
+		},
+		{
+			name:         "multiple lines fail closed",
+			fileContents: &multipleLineToken,
+			wantErr:      "single token",
+		},
+		{
+			name:         "whitespace fails closed",
+			fileContents: &whitespaceToken,
+			wantErr:      "single token",
+		},
+		{
+			name:         "malformed token fails closed",
+			fileContents: &malformedToken,
+			wantErr:      "base64url-encoded 32-byte",
+		},
+		{
+			name:         "inline and file are mutually exclusive",
+			fileContents: &inlineToken,
+			inlineToken:  strongToken,
+			wantErr:      "mutually exclusive",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tokenPath := filepath.Join(t.TempDir(), "web-token")
+			if tt.fileContents != nil {
+				require.NoError(t, os.WriteFile(tokenPath, []byte(*tt.fileContents), 0o600))
+			}
+			configPath := filepath.Join(t.TempDir(), "config.toml")
+			contents := "[web]\nlisten = \"127.0.0.1:7374\"\nauth_token_file = " + fmt.Sprintf("%q", tokenPath) + "\n"
+			if tt.inlineToken != "" {
+				contents += "auth_token = " + fmt.Sprintf("%q", tt.inlineToken) + "\n"
+			}
+			require.NoError(t, os.WriteFile(configPath, []byte(contents), 0o600))
+
+			cfg, err := LoadGlobalFrom(configPath)
+			if tt.wantErr != "" {
+				require.ErrorContains(t, err, tt.wantErr)
+				return
+			}
+			require.NoError(t, err)
+			assert.Empty(t, cfg.Web.AuthToken)
+			assert.Equal(t, tokenPath, cfg.Web.AuthTokenFile)
+			resolved, err := cfg.Web.ResolveAuthToken()
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantToken, resolved)
+		})
+	}
+}
+
+func TestRemoteWebConfigAcceptsTokenFile(t *testing.T) {
+	const strongToken = "MDEyMzQ1Njc4OWFiY2RlZmdoaWprbG1ub3BxcnN0dXY"
+	tokenPath := filepath.Join(t.TempDir(), "web-token")
+	require.NoError(t, os.WriteFile(tokenPath, []byte(strongToken+"\n"), 0o600))
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(configPath, []byte("[web]\npublic_origin = \"https://reviews.example.com\"\nauth_token_file = "+fmt.Sprintf("%q", tokenPath)+"\n"), 0o600))
+
+	cfg, err := LoadGlobalFrom(configPath)
+	require.NoError(t, err)
+	resolved, err := cfg.Web.ResolveAuthToken()
+	require.NoError(t, err)
+	assert.Equal(t, strongToken, resolved)
+}
+
+func TestDisabledWebConfigIgnoresBasePathAndTokenFile(t *testing.T) {
+	path := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(path, []byte(`[web]
+enabled = false
+base_path = "not-an-absolute-path/"
+auth_token_file = "/path/that/does/not/exist"
+`), 0o600))
+
+	cfg, err := LoadGlobalFrom(path)
+	require.NoError(t, err)
+	assert.False(t, cfg.Web.Enabled)
+}
+
 func TestDisabledWebConfigIgnoresInactiveSettings(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "config.toml")
 	require.NoError(t, os.WriteFile(path, []byte(`[web]

@@ -9,6 +9,7 @@ import (
 	"net"
 	"net/url"
 	"os"
+	"path"
 	"path/filepath"
 	"reflect"
 	"regexp"
@@ -16,6 +17,7 @@ import (
 	"slices"
 	"strings"
 	"time"
+	"unicode"
 
 	"github.com/BurntSushi/toml"
 	tomlv2 "github.com/pelletier/go-toml/v2"
@@ -102,10 +104,12 @@ type CostConfig struct {
 }
 
 type WebConfig struct {
-	Enabled      bool   `toml:"enabled" comment:"Serve the browser application on a separate listener."`
-	Listen       string `toml:"listen" comment:"Loopback browser listener address. Port 0 selects an ephemeral port."`
-	PublicOrigin string `toml:"public_origin" comment:"Exact HTTPS browser origin used by a reverse proxy."`
-	AuthToken    string `toml:"auth_token" sensitive:"true" comment:"Token exchanged for a process-local browser session."`
+	Enabled       bool   `toml:"enabled" comment:"Serve the browser application on a separate listener."`
+	Listen        string `toml:"listen" comment:"Loopback browser listener address. Port 0 selects an ephemeral port."`
+	PublicOrigin  string `toml:"public_origin" comment:"Exact HTTPS browser origin used by a reverse proxy."`
+	BasePath      string `toml:"base_path" comment:"Optional browser URL path prefix."`
+	AuthToken     string `toml:"auth_token" sensitive:"true" comment:"Token exchanged for a process-local browser session."`
+	AuthTokenFile string `toml:"auth_token_file" comment:"Host-local file containing the browser auth token."`
 }
 
 // ResolvedTimeout returns the HTTP usage lookup timeout.
@@ -807,10 +811,17 @@ func normalizeWebConfig(web *WebConfig) error {
 	if !loopback {
 		return fmt.Errorf("web listener must use a loopback address")
 	}
-	if web.AuthToken != "" {
-		if err := ValidateWebAuthToken(web.AuthToken); err != nil {
+
+	if web.BasePath != "" {
+		basePath, err := normalizeWebBasePath(web.BasePath)
+		if err != nil {
 			return err
 		}
+		web.BasePath = basePath
+	}
+	resolvedToken, err := web.ResolveAuthToken()
+	if err != nil {
+		return err
 	}
 
 	if web.PublicOrigin != "" {
@@ -823,11 +834,68 @@ func normalizeWebConfig(web *WebConfig) error {
 		if err != nil {
 			return fmt.Errorf("web public origin: %w", err)
 		}
-		if !isLoopbackHost(parsedOrigin.Hostname()) && web.AuthToken == "" {
+		if !isLoopbackHost(parsedOrigin.Hostname()) && resolvedToken == "" {
 			return fmt.Errorf("web auth token is required for a non-loopback public origin")
 		}
 	}
 	return nil
+}
+
+// ResolveAuthToken validates and returns the effective browser auth token.
+// Tokens configured in a file remain outside the serialized configuration.
+func (web WebConfig) ResolveAuthToken() (string, error) {
+	if web.AuthToken != "" && web.AuthTokenFile != "" {
+		return "", fmt.Errorf("web auth_token and auth_token_file are mutually exclusive")
+	}
+	if web.AuthTokenFile == "" {
+		if web.AuthToken != "" {
+			if err := ValidateWebAuthToken(web.AuthToken); err != nil {
+				return "", err
+			}
+		}
+		return web.AuthToken, nil
+	}
+
+	raw, err := os.ReadFile(web.AuthTokenFile)
+	if err != nil {
+		return "", fmt.Errorf("read web auth token file: %w", err)
+	}
+	if len(raw) > 0 && raw[len(raw)-1] == '\n' {
+		raw = raw[:len(raw)-1]
+		if len(raw) > 0 && raw[len(raw)-1] == '\r' {
+			raw = raw[:len(raw)-1]
+		}
+	}
+	token := string(raw)
+	if strings.IndexFunc(token, unicode.IsSpace) >= 0 {
+		return "", fmt.Errorf("web auth token file must contain a single token")
+	}
+	if err := ValidateWebAuthToken(token); err != nil {
+		return "", err
+	}
+	return token, nil
+}
+
+func normalizeWebBasePath(raw string) (string, error) {
+	if raw == "" {
+		return "", nil
+	}
+	if !strings.HasPrefix(raw, "/") {
+		return "", fmt.Errorf("web base path must be an absolute path")
+	}
+	if strings.HasSuffix(raw, "/") {
+		return "", fmt.Errorf("web base path must not have a trailing slash")
+	}
+	if strings.ContainsAny(raw, "?#") {
+		if strings.ContainsRune(raw, '?') {
+			return "", fmt.Errorf("web base path must not contain a query")
+		}
+		return "", fmt.Errorf("web base path must not contain a fragment")
+	}
+	if path.Clean(raw) != raw {
+		return "", fmt.Errorf("web base path must be canonical")
+	}
+	return raw, nil
 }
 
 // ValidateWebAuthToken requires the canonical representation of a 256-bit

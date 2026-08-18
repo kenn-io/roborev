@@ -765,7 +765,9 @@ column_borders = true             # Show separators between TUI columns
 | `web.enabled` | bool | true | Serve the embedded browser application on a separate listener | No |
 | `web.listen` | string | 127.0.0.1:0 | Loopback browser listener address. Port 0 selects an available ephemeral port | No |
 | `web.public_origin` | string | - | Exact HTTPS origin exposed by a reverse proxy | No |
+| `web.base_path` | string | - | Optional canonical absolute URL path prefix, without a trailing slash | No |
 | `web.auth_token` | string | - | Base64url-encoded 32-byte random token exchanged for a process-local browser session | No |
+| `web.auth_token_file` | string | - | Host-local file containing the browser token; mutually exclusive with `web.auth_token` | No |
 | `max_workers` | int | 4 | Number of parallel review workers | No |
 | `job_timeout_minutes` | int | 30 | Per-job timeout in minutes | Yes |
 | `hook_timeout_seconds` | int | `3` (`30` on Windows) | Post-commit hook request timeout, in seconds. Raise it on Windows or large repos where the daemon's enqueue git calls are slow. Zero or negative values are ignored and fall back to the platform default | Yes |
@@ -838,8 +840,17 @@ Paste that command's output as `auth_token`:
 enabled = true
 listen = "127.0.0.1:7374"
 public_origin = "https://reviews.example.com"
-auth_token = "paste-the-generated-token-here"
+base_path = "/reviews"
+auth_token_file = "/etc/roborev/web-auth-token"
 ```
+
+`public_origin` must be an exact scheme-and-authority origin with no path. Set
+`base_path` separately when the proxy mounts the browser application below a URL
+prefix; it must start with `/`, have no trailing slash, query, fragment, or path
+traversal. The token file must contain exactly one base64url-encoded 32-byte
+token, optionally followed by one terminal newline. It is mutually exclusive
+with `auth_token` and is read when the daemon starts, so the token bytes do not
+need to be stored in the configuration file.
 
 The proxy must preserve the public `Host`, set conventional forwarding headers,
 and avoid buffering `/api/stream/events` and streamed `/api/job/output`
@@ -847,6 +858,10 @@ responses. The public origin must match the browser origin exactly and must use
 HTTPS for remote access. Roborev rejects non-loopback browser listener addresses
 so credentials are never sent over a plaintext network hop. The CLI API remains
 private on its original listener.
+
+The browser session cookie uses `/` when `base_path` is empty and
+`base_path + "/"` when a prefix is configured, keeping credentials scoped to the
+browser application on shared origins.
 
 The browser exchanges the daemon token for an HTTP-only cookie and tab-scoped
 credentials. The token is entered after the public shell opens and is never
