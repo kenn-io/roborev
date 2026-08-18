@@ -268,6 +268,48 @@ func TestRestartAndVerifyUpdatedDaemonStartsAndChecksVersion(t *testing.T) {
 	assert.Equal(t, 1, stubs.startCalls)
 }
 
+func TestRestartAndVerifyUpdatedDaemonWaitsBeyondReadinessTimeoutForShutdown(
+	t *testing.T,
+) {
+	stubs := stubRestartVars(t)
+	updateRestartWaitTimeout = 5 * time.Millisecond
+	updateRestartPollInterval = time.Millisecond
+	var probes atomic.Int32
+	var started atomic.Bool
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+		if started.Load() {
+			return &daemon.RuntimeInfo{PID: 200, Version: "v0.65.0"}, nil
+		}
+		if probes.Add(1) < 15 {
+			return &daemon.RuntimeInfo{PID: 100, Version: "v0.64.0"}, nil
+		}
+		return nil, errors.New("old daemon exited")
+	}
+	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+		if probes.Load() < 15 {
+			return []*daemon.RuntimeInfo{{PID: 100}}, nil
+		}
+		return nil, nil
+	}
+	isPIDAliveForUpdate = func(pid int) bool {
+		return pid == 100 && probes.Load() < 15
+	}
+	startUpdatedDaemon = func(string) error {
+		stubs.startCalls++
+		started.Store(true)
+		return nil
+	}
+	ctx, cancel := context.WithTimeout(context.Background(), time.Second)
+	defer cancel()
+
+	err := restartAndVerifyUpdatedDaemon(
+		ctx, "/tmp/bin", "0.65.0", &daemon.RuntimeInfo{PID: 100},
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, stubs.startCalls)
+}
+
 func TestRestartAndVerifyUpdatedDaemonRejectsWrongVersion(t *testing.T) {
 	stubRestartVars(t)
 	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {

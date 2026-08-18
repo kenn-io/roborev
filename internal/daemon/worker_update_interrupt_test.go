@@ -32,6 +32,20 @@ func TestHandleUpdateInterruptionRequeuesAttemptWithoutRetry(t *testing.T) {
 	assert.Nil(t, stored.StartedAt)
 }
 
+func TestHandleUpdateInterruptionRequeuesTargetBeforeContextCancellation(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	job := tc.createAndClaimJob(t, "update-target-before-cancel", "worker-update")
+	tc.Pool.InterruptJobsForUpdate([]int64{job.ID})
+
+	handled := tc.Pool.handleUpdateInterruption(
+		context.Background(), "worker-update", job,
+	)
+
+	assert.True(t, handled)
+	stored := tc.assertJobStatus(t, job.ID, storage.JobStatusQueued)
+	assert.Equal(t, 0, stored.RetryCount)
+}
+
 func TestHandleUpdateInterruptionDoesNotOverrideUserCancel(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	job := tc.createAndClaimJob(t, "update-user-cancel", "worker-update")

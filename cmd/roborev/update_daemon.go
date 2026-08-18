@@ -367,14 +367,9 @@ func restartAndVerifyUpdatedDaemon(
 	if previous == nil {
 		return nil
 	}
-	exited, replacementPID, err := waitForDaemonExitContext(
-		ctx, previous.PID, updateRestartWaitTimeout,
-	)
+	replacementPID, err := waitForDaemonExitContext(ctx, previous.PID)
 	if err != nil {
 		return err
-	}
-	if !exited {
-		return fmt.Errorf("daemon pid %d is still running", previous.PID)
 	}
 	if replacementPID == 0 {
 		if err := startUpdatedDaemon(binDir); err != nil {
@@ -389,26 +384,22 @@ func restartAndVerifyUpdatedDaemon(
 }
 
 func waitForDaemonExitContext(
-	ctx context.Context, previousPID int, timeout time.Duration,
-) (exited bool, replacementPID int, err error) {
-	deadline := time.Now().Add(timeout)
+	ctx context.Context, previousPID int,
+) (replacementPID int, err error) {
 	for {
 		info, discoverErr := getAnyRunningDaemon()
 		if discoverErr != nil {
 			if previousPIDExited(previousPID) {
-				return true, replacementRuntimePID(previousPID), nil
+				return replacementRuntimePID(previousPID), nil
 			}
 		} else if info.PID != previousPID && previousPIDExited(previousPID) {
-			return true, info.PID, nil
-		}
-		if time.Now().After(deadline) {
-			return false, 0, nil
+			return info.PID, nil
 		}
 		timer := time.NewTimer(updateRestartPollInterval)
 		select {
 		case <-ctx.Done():
 			timer.Stop()
-			return false, 0, ctx.Err()
+			return 0, ctx.Err()
 		case <-timer.C:
 		}
 	}

@@ -374,16 +374,14 @@ func (wp *WorkerPool) RetryFailedUpdateRequeues() error {
 	return retryErr
 }
 
-// handleUpdateInterruption returns a targeted canceled attempt to the queue
-// without consuming a retry or producing terminal side effects. The storage
+// handleUpdateInterruption returns an update-owned attempt to the queue without
+// consuming a retry or producing terminal side effects. The target marker is
+// authoritative even before context cancellation becomes visible. The storage
 // transition is guarded by both status and worker ID, so an ordinary user
 // cancellation that wins the race is never overwritten.
 func (wp *WorkerPool) handleUpdateInterruption(
-	ctx context.Context, workerID string, job *storage.ReviewJob,
+	_ context.Context, workerID string, job *storage.ReviewJob,
 ) bool {
-	if !errors.Is(ctx.Err(), context.Canceled) {
-		return false
-	}
 	wp.runningJobsMu.Lock()
 	_, targeted := wp.updateInterruptTargets[job.ID]
 	wp.runningJobsMu.Unlock()
