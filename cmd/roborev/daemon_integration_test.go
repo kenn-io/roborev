@@ -5,12 +5,15 @@ package main
 import (
 	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"sync"
 	"testing"
 	"time"
@@ -19,6 +22,8 @@ import (
 	"github.com/stretchr/testify/require"
 
 	"go.kenn.io/roborev/internal/daemon"
+	"go.kenn.io/roborev/internal/storage"
+	"go.kenn.io/roborev/internal/testutil"
 )
 
 func TestDaemonRunStartsAndShutdownsCleanly(t *testing.T) {
@@ -450,4 +455,230 @@ func TestDaemonLifecycleEndToEnd(t *testing.T) {
 		require.Fail(t, "daemon did not exit after /api/shutdown", "Output:\n%s", outputBuffer.String())
 	}
 	assert.False(t, daemon.ProcessExists(pid), "daemon process must be gone after shutdown")
+}
+
+type isolatedUpdateDaemon struct {
+	cmd      *exec.Cmd
+	endpoint daemon.DaemonEndpoint
+	done     chan error
+	output   *syncBuffer
+}
+
+func TestUpdateDrainCutoverIntegration(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("the synthetic review agent is a POSIX shell script")
+	}
+	buildDir := t.TempDir()
+	oldBinary := buildVersionedUpdateDaemon(t, buildDir, "roborev-old", "v-old")
+	newBinary := buildVersionedUpdateDaemon(t, buildDir, "roborev-new", "v-new")
+
+	for _, policy := range []runningReviewPolicy{policyWait, policyInterrupt} {
+		t.Run(string(policy), func(t *testing.T) {
+			dataDir := t.TempDir()
+			t.Setenv("ROBOREV_DATA_DIR", dataDir)
+			repo := testutil.NewGitRepo(t)
+			firstSHA := repo.CommitFile("first.txt", "first\n", "first")
+			script := writeSlowUpdateAgent(t, dataDir)
+			configPath := filepath.Join(dataDir, "config.toml")
+			configBody := fmt.Sprintf("max_workers = 1\ncodex_cmd = %s\n", strconv.Quote(script))
+			require.NoError(t, os.WriteFile(configPath, []byte(configBody), 0o600))
+			dbPath := filepath.Join(dataDir, "reviews.db")
+
+			old := startIsolatedUpdateDaemon(t, oldBinary, dataDir, dbPath, configPath)
+			assertDaemonUpdateVersion(t, old.endpoint, "v-old")
+			active := enqueueUpdateJob(t, old.endpoint, repo.Path(), firstSHA)
+			waitForUpdateJobStatus(t, old.endpoint, active.ID, storage.JobStatusRunning, 10*time.Second)
+
+			session, err := prepareUpdateDaemon(
+				context.Background(), old.endpoint, "integration-owner", policy, io.Discard,
+			)
+			require.NoError(t, err)
+			secondSHA := repo.CommitFile("second.txt", "second\n", "second")
+			queued := enqueueUpdateJob(t, old.endpoint, repo.Path(), secondSHA)
+			assert.Never(t, func() bool {
+				job, err := readUpdateJob(old.endpoint, queued.ID)
+				return err != nil || job.Status != storage.JobStatusQueued
+			}, 250*time.Millisecond, 25*time.Millisecond)
+
+			require.NoError(t, waitForPreparedDrain(context.Background(), session, io.Discard))
+			require.NoError(t, session.shutdown(context.Background()))
+			waitForIsolatedUpdateDaemonExit(t, old, 10*time.Second)
+
+			replacement := startIsolatedUpdateDaemon(t, newBinary, dataDir, dbPath, configPath)
+			assertDaemonUpdateVersion(t, replacement.endpoint, "v-new")
+			waitForUpdateJobStatus(t, replacement.endpoint, active.ID, storage.JobStatusDone, 15*time.Second)
+			waitForUpdateJobStatus(t, replacement.endpoint, queued.ID, storage.JobStatusDone, 15*time.Second)
+			assert.Equal(t, 0, getUpdateJob(t, replacement.endpoint, active.ID).RetryCount)
+
+			shutdownIsolatedUpdateDaemon(t, replacement)
+		})
+	}
+}
+
+func buildVersionedUpdateDaemon(t *testing.T, dir, name, version string) string {
+	t.Helper()
+	path := filepath.Join(dir, name)
+	cmd := exec.Command(
+		"go", "build", "-tags", "kit_posthog_disabled",
+		"-ldflags", "-X go.kenn.io/roborev/internal/version.Version="+version,
+		"-o", path, ".",
+	)
+	cmd.Env = append(os.Environ(), "CGO_ENABLED=0")
+	out, err := cmd.CombinedOutput()
+	require.NoError(t, err, "build versioned daemon: %s", out)
+	return path
+}
+
+func writeSlowUpdateAgent(t *testing.T, dir string) string {
+	t.Helper()
+	path := filepath.Join(dir, "slow-codex")
+	body := `#!/bin/sh
+case "$*" in
+  *--help*) echo "usage: codex exec --json --sandbox --ignore-user-config"; exit 0 ;;
+esac
+sleep 2
+printf '%s\n' '{"type":"thread.started","thread_id":"integration-session"}'
+printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"No issues found."}}'
+`
+	require.NoError(t, os.WriteFile(path, []byte(body), 0o755))
+	return path
+}
+
+func startIsolatedUpdateDaemon(
+	t *testing.T, binary, dataDir, dbPath, configPath string,
+) *isolatedUpdateDaemon {
+	t.Helper()
+	cmd := exec.Command(binary, "daemon", "run",
+		"--db", dbPath,
+		"--config", configPath,
+		"--addr", "127.0.0.1:0",
+	)
+	cmd.Env = append(os.Environ(), "ROBOREV_DATA_DIR="+dataDir)
+	output := new(syncBuffer)
+	cmd.Stdout = output
+	cmd.Stderr = output
+	require.NoError(t, cmd.Start())
+	instance := &isolatedUpdateDaemon{
+		cmd: cmd, done: make(chan error, 1), output: output,
+	}
+	go func() { instance.done <- cmd.Wait() }()
+	t.Cleanup(func() {
+		if cmd.ProcessState == nil || !cmd.ProcessState.Exited() {
+			_ = cmd.Process.Kill()
+			select {
+			case <-instance.done:
+			case <-time.After(2 * time.Second):
+			}
+		}
+	})
+	require.Eventually(t, func() bool {
+		info, err := daemon.ReadRuntimeForPID(cmd.Process.Pid)
+		if err != nil || !daemon.IsDaemonAlive(info.Endpoint()) {
+			return false
+		}
+		instance.endpoint = info.Endpoint()
+		return true
+	}, 30*time.Second, 50*time.Millisecond, "daemon startup output:\n%s", output.String())
+	return instance
+}
+
+func waitForIsolatedUpdateDaemonExit(
+	t *testing.T, instance *isolatedUpdateDaemon, timeout time.Duration,
+) {
+	t.Helper()
+	exited := false
+	var exitErr error
+	select {
+	case exitErr = <-instance.done:
+		exited = true
+	case <-time.After(timeout):
+	}
+	require.True(t, exited, "daemon exit timed out; output:\n%s", instance.output.String())
+	require.NoError(t, exitErr, "daemon output:\n%s", instance.output.String())
+}
+
+func shutdownIsolatedUpdateDaemon(t *testing.T, instance *isolatedUpdateDaemon) {
+	t.Helper()
+	client := instance.endpoint.HTTPClient(5 * time.Second)
+	resp, err := client.Post(instance.endpoint.BaseURL()+"/api/shutdown", "application/json", nil)
+	require.NoError(t, err)
+	require.NoError(t, resp.Body.Close())
+	assert.Equal(t, http.StatusOK, resp.StatusCode)
+	waitForIsolatedUpdateDaemonExit(t, instance, 10*time.Second)
+}
+
+func enqueueUpdateJob(
+	t *testing.T, endpoint daemon.DaemonEndpoint, repoPath, gitRef string,
+) storage.ReviewJob {
+	t.Helper()
+	body, err := json.Marshal(daemon.EnqueueRequest{
+		RepoPath: repoPath,
+		GitRef:   gitRef,
+		Agent:    "codex",
+	})
+	require.NoError(t, err)
+	client := endpoint.HTTPClient(5 * time.Second)
+	resp, err := client.Post(endpoint.BaseURL()+"/api/enqueue", "application/json", bytes.NewReader(body))
+	require.NoError(t, err)
+	defer resp.Body.Close()
+	require.Equal(t, http.StatusCreated, resp.StatusCode)
+	var job storage.ReviewJob
+	require.NoError(t, json.NewDecoder(resp.Body).Decode(&job))
+	return job
+}
+
+func getUpdateJob(
+	t *testing.T, endpoint daemon.DaemonEndpoint, jobID int64,
+) storage.ReviewJob {
+	t.Helper()
+	job, err := readUpdateJob(endpoint, jobID)
+	require.NoError(t, err)
+	return job
+}
+
+func readUpdateJob(
+	endpoint daemon.DaemonEndpoint, jobID int64,
+) (storage.ReviewJob, error) {
+	client := endpoint.HTTPClient(5 * time.Second)
+	resp, err := client.Get(fmt.Sprintf("%s/api/jobs?id=%d", endpoint.BaseURL(), jobID))
+	if err != nil {
+		return storage.ReviewJob{}, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode != http.StatusOK {
+		return storage.ReviewJob{}, fmt.Errorf("get job: HTTP %d", resp.StatusCode)
+	}
+	var result struct {
+		Jobs []storage.ReviewJob `json:"jobs"`
+	}
+	if err := json.NewDecoder(resp.Body).Decode(&result); err != nil {
+		return storage.ReviewJob{}, err
+	}
+	if len(result.Jobs) != 1 {
+		return storage.ReviewJob{}, fmt.Errorf("get job: got %d jobs", len(result.Jobs))
+	}
+	return result.Jobs[0], nil
+}
+
+func waitForUpdateJobStatus(
+	t *testing.T,
+	endpoint daemon.DaemonEndpoint,
+	jobID int64,
+	want storage.JobStatus,
+	timeout time.Duration,
+) {
+	t.Helper()
+	require.Eventually(t, func() bool {
+		job, err := readUpdateJob(endpoint, jobID)
+		return err == nil && job.Status == want
+	}, timeout, 50*time.Millisecond)
+}
+
+func assertDaemonUpdateVersion(
+	t *testing.T, endpoint daemon.DaemonEndpoint, want string,
+) {
+	t.Helper()
+	info, err := daemon.ProbeDaemon(endpoint, 5*time.Second)
+	require.NoError(t, err)
+	assert.Equal(t, want, info.Version)
 }
