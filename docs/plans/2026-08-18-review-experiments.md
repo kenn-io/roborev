@@ -424,12 +424,15 @@ for this attempt. It is null for a fresh attempt. The existing `session_id`
 continues to hold the actual session identifier.
 
 Retries that discard a failed resume and run fresh clear both `session_id` and
-`resume_source_job_uuid`. Re-enqueuing a standalone job preserves its assignment
-and existing same-row rerun behavior. A manual panel rerun creates a new panel
-run UUID but deliberately clones the original assignment and frozen member and
-synthesis plans; it is a continuation, not fresh enrollment. A newly requested
-review or panel performs deterministic selection from the currently enabled
-definition.
+`resume_source_job_uuid`. Re-enqueuing an experimental standalone job preserves
+both its assignment and its complete frozen execution plan on the same row;
+configuration changes made after the original enqueue do not affect that rerun.
+Non-experimental standalone reruns retain their existing behavior of
+re-resolving implicit execution settings. A manual panel rerun creates a new
+panel run UUID but deliberately clones the original assignment and frozen member
+and synthesis plans; it is a continuation, not fresh enrollment. A newly
+requested review or panel performs deterministic selection from the currently
+enabled definition.
 
 Experiment definitions and assignments are retained as immutable audit records
 when repository deletion removes their review jobs. They no longer appear in
@@ -557,8 +560,10 @@ enqueue interfaces.
 - A single job and its assignment commit or roll back together.
 - A panel stores one assignment and all projected jobs derive it.
 - A concurrent CI-panel loser stores no assignment.
-- Re-enqueuing the same job preserves assignment; a manual panel rerun clones
-    the original assignment, while a newly requested panel receives the
+- Re-enqueuing an experimental standalone job preserves its assignment and
+    frozen agent, model, provider, reasoning, severity, and backup plan even
+    after configuration changes. A manual panel rerun clones the original
+    assignment and plan, while a newly requested panel receives the
     deterministic current assignment.
 - A fresh retry clears resume lineage.
 

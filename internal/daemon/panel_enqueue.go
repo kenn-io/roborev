@@ -514,6 +514,13 @@ func (s *Server) enqueuePanelRun(ctx context.Context, in panelRunInputs) (*RawJS
 				ErrorResponse{Error: fmt.Sprintf("fingerprint experiment plan: %v", assignErr)})
 		}
 		synthOpts.Experiment = assignment
+	} else {
+		// Local panel members historically resolve failover at execution time.
+		// Freeze backup choices only when they are part of experiment attribution.
+		for i := range memberOpts {
+			memberOpts[i].BackupAgent = ""
+			memberOpts[i].BackupModel = ""
+		}
 	}
 	for i := range memberOpts {
 		memberOpts[i].SessionID, memberOpts[i].ResumeSourceJobUUID = findCompatibleReusableSession(

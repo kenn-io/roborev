@@ -152,6 +152,93 @@ func TestExperimentPersistsLocalReviewBackupPlans(t *testing.T) {
 	}
 }
 
+func TestNonExperimentLocalReviewsKeepRuntimeBackupResolution(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	server.configWatcher.Config().ReviewBackupAgent = "claude-code"
+	server.configWatcher.Config().ReviewBackupModel = "runtime-backup-model"
+
+	standaloneRepo := testutil.NewGitRepo(t)
+	standaloneRepo.CommitFile("review.go", "package review\n", "add review")
+	job := enqueueViaHTTP(t, server, EnqueueRequest{
+		RepoPath: standaloneRepo.Path(), GitRef: "HEAD",
+		Branch: "feature/standalone-backup", Agent: "test", Panel: config.PanelNone,
+	})
+	assert.Empty(t, job.BackupAgent)
+	assert.Empty(t, job.BackupModel)
+
+	panelRepo := testutil.NewGitRepo(t)
+	panelRepo.WriteFile(".roborev.toml", panelTOML)
+	panelRepo.CommitFile("review.go", "package review\n", "add panel review")
+	panel := enqueuePanelViaHTTP(t, server, EnqueueRequest{
+		RepoPath: panelRepo.Path(), GitRef: "HEAD",
+		Branch: "feature/panel-backup", Agent: "test",
+	})
+	members, err := db.GetPanelMembers(panel.PanelRunUUID)
+	require.NoError(t, err)
+	require.NotEmpty(t, members)
+	for _, member := range members {
+		assert.Empty(t, member.BackupAgent)
+		assert.Empty(t, member.BackupModel)
+	}
+}
+
+func TestExperimentStandaloneRerunPreservesFrozenPlan(t *testing.T) {
+	server, db, _ := newTestServer(t)
+	enabled := true
+	ratio := 1.0
+	cfg := server.configWatcher.Config()
+	cfg.Experiments = map[string]config.ExperimentDefinition{
+		"frozen-plan-v1": {
+			Enabled: &enabled, Ratio: &ratio,
+			Workflows: []config.ExperimentWorkflow{config.ExperimentWorkflowReview},
+			Config: map[string]any{
+				"review_model":        "frozen-model",
+				"review_reasoning":    "high",
+				"review_min_severity": "high",
+				"backup_agent":        "claude-code",
+				"backup_model":        "frozen-backup-model",
+			},
+		},
+	}
+
+	repo := testutil.NewGitRepo(t)
+	repo.CommitFile("review.go", "package review\n", "add review")
+	job := enqueueViaHTTP(t, server, EnqueueRequest{
+		RepoPath: repo.Path(), GitRef: "HEAD", Branch: "feature/frozen-rerun",
+		Agent: "test", Provider: "openai", Panel: config.PanelNone,
+	})
+	require.Len(t, job.Experiments, 1)
+	frozenExperiments := job.Experiments
+
+	claimed, err := db.ClaimJob("experiment-rerun-worker")
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	require.Equal(t, job.ID, claimed.ID)
+	require.NoError(t, db.CompleteJob(job.ID, job.Agent, "prompt", "No issues found."))
+
+	cfg.ReviewModel = "changed-model"
+	cfg.ReviewReasoning = "low"
+	cfg.ReviewMinSeverity = "critical"
+	cfg.ReviewBackupAgent = ""
+	cfg.ReviewBackupModel = ""
+
+	req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", RerunJobRequest{JobID: job.ID})
+	recorder := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(recorder, req)
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+
+	rerun, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, storage.JobStatusQueued, rerun.Status)
+	assert.Equal(t, "frozen-model", rerun.Model)
+	assert.Equal(t, "openai", rerun.Provider)
+	assert.Equal(t, "high", rerun.Reasoning)
+	assert.Equal(t, "high", rerun.MinSeverity)
+	assert.Equal(t, "claude-code", rerun.BackupAgent)
+	assert.Equal(t, "frozen-backup-model", rerun.BackupModel)
+	assert.Equal(t, frozenExperiments, rerun.Experiments)
+}
+
 func TestPanelExperimentResumesCompatibleMemberSession(t *testing.T) {
 	server, db, _ := newTestServer(t)
 	enabled := true

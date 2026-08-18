@@ -141,6 +141,95 @@ func TestSelectReviewExperimentHonorsRatioBoundaries(t *testing.T) {
 	}
 }
 
+func TestSelectReviewExperimentDefaultArmPreservesConfigLayers(t *testing.T) {
+	enabled := true
+	ratio := 0.0
+	selection, err := SelectReviewExperiment(ExperimentSelectionInput{
+		Workflow: ExperimentWorkflowReview,
+		Subject: ExperimentSubject{
+			Repository: "github.com/example/project", Branch: "feature",
+		},
+		Global: &Config{
+			ReviewAgent: "codex",
+			Experiments: map[string]ExperimentDefinition{
+				"baseline-v1": {
+					Enabled: &enabled, Ratio: &ratio,
+					Workflows: []ExperimentWorkflow{ExperimentWorkflowReview},
+					Config:    map[string]any{"reuse_review_session": true},
+				},
+			},
+		},
+		Repo:    &RepoConfig{Agent: "claude-code"},
+		RawRepo: map[string]any{"agent": "claude-code"},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, selection.RepoConfig)
+	assert.Equal(t, "claude-code", selection.RepoConfig.Agent)
+	assert.Empty(t, selection.RepoConfig.ReviewAgent)
+}
+
+func TestSelectReviewExperimentTreatmentPreservesUnrelatedConfigLayers(t *testing.T) {
+	enabled := true
+	ratio := 1.0
+	selection, err := SelectReviewExperiment(ExperimentSelectionInput{
+		Workflow: ExperimentWorkflowReview,
+		Subject: ExperimentSubject{
+			Repository: "github.com/example/project", Branch: "feature",
+		},
+		Global: &Config{
+			ReviewAgent: "codex",
+			Experiments: map[string]ExperimentDefinition{
+				"session-v1": {
+					Enabled: &enabled, Ratio: &ratio,
+					Workflows: []ExperimentWorkflow{ExperimentWorkflowReview},
+					Config:    map[string]any{"reuse_review_session": true},
+				},
+			},
+		},
+		Repo:    &RepoConfig{Agent: "claude-code"},
+		RawRepo: map[string]any{"agent": "claude-code"},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, selection.RepoConfig)
+	assert.Equal(t, "claude-code", selection.RepoConfig.Agent)
+	assert.Empty(t, selection.RepoConfig.ReviewAgent)
+	require.NotNil(t, selection.RepoConfig.ReuseReviewSession)
+	assert.True(t, *selection.RepoConfig.ReuseReviewSession)
+}
+
+func TestSelectReviewExperimentDefaultArmPreservesRepoCIReviewsReplacement(t *testing.T) {
+	enabled := true
+	ratio := 0.0
+	selection, err := SelectReviewExperiment(ExperimentSelectionInput{
+		Workflow: ExperimentWorkflowCI,
+		Subject: ExperimentSubject{
+			Repository: "github.com/example/project",
+			SourceRepo: "github.com/example/project",
+			Branch:     "feature",
+		},
+		Global: &Config{
+			CI: CIConfig{Reviews: map[string][]string{"codex": {"security"}}},
+			Experiments: map[string]ExperimentDefinition{
+				"baseline-v1": {
+					Enabled: &enabled, Ratio: &ratio,
+					Workflows: []ExperimentWorkflow{ExperimentWorkflowCI},
+					Config: map[string]any{"ci": map[string]any{
+						"reasoning": "high",
+					}},
+				},
+			},
+		},
+		Repo: &RepoConfig{CI: RepoCIConfig{Reviews: map[string][]string{}}},
+		RawRepo: map[string]any{"ci": map[string]any{
+			"reviews": map[string]any{},
+		}},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, selection.RepoConfig)
+	assert.NotNil(t, selection.RepoConfig.CI.Reviews)
+	assert.Empty(t, selection.RepoConfig.CI.Reviews)
+}
+
 func TestSelectReviewExperimentRequiresBranchSubject(t *testing.T) {
 	enabled := true
 	ratio := 1.0

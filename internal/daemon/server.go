@@ -2815,12 +2815,12 @@ func (s *Server) enqueueSingleAgent(
 	o := in.descriptor.baseOpts()
 	o.Agent = execution.Agent
 	o.Model = execution.Model
-	o.BackupAgent = execution.BackupAgent
-	o.BackupModel = execution.BackupModel
 	o.Provider = in.descriptor.requestedProvider
 	o.Reasoning = in.reasoning
 	o.ReviewType = in.req.ReviewType
 	if in.experiment != nil {
+		o.BackupAgent = execution.BackupAgent
+		o.BackupModel = execution.BackupModel
 		assignment, assignErr := storageAssignmentForExperiment(
 			in.experiment, experimentPlanForJob(o),
 		)

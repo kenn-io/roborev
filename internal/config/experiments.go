@@ -218,16 +218,17 @@ func SelectReviewExperiment(in ExperimentSelectionInput) (ExperimentSelection, e
 			selectedID,
 		)
 	}
-	effectiveRaw, err := effectiveRepoConfigMap(in.Global, in.RawRepo, nil)
-	if err != nil {
-		return ExperimentSelection{}, err
-	}
+	effectiveRaw := cloneExperimentMap(in.RawRepo)
+	effectiveCfg := in.Repo
 	if arm == ExperimentArmExperimental {
-		effectiveRaw = mergeExperimentMaps(effectiveRaw, selected.Config)
-	}
-	effectiveCfg, err := decodeExperimentRepoConfig(effectiveRaw)
-	if err != nil {
-		return ExperimentSelection{}, fmt.Errorf("experiment %q config: %w", selectedID, err)
+		effectiveRaw, err = applyExperimentOverlay(in.Global, effectiveRaw, selected.Config)
+		if err != nil {
+			return ExperimentSelection{}, err
+		}
+		effectiveCfg, err = decodeExperimentRepoConfig(effectiveRaw)
+		if err != nil {
+			return ExperimentSelection{}, fmt.Errorf("experiment %q config: %w", selectedID, err)
+		}
 	}
 	result.RepoConfig = effectiveCfg
 	result.RawRepoConfig = effectiveRaw
@@ -401,52 +402,75 @@ func assignExperimentArm(id, subjectHash string, ratio float64) ExperimentArm {
 	return ExperimentArmDefault
 }
 
-func effectiveRepoConfigMap(global *Config, rawRepo, overlay map[string]any) (map[string]any, error) {
-	base, err := globalReviewConfigMap(global)
+// applyExperimentOverlay applies the treatment as a synthetic repository
+// layer. Ordinary global and repository settings stay in their original
+// layers so the existing typed resolvers retain their precedence. For the
+// nested entries whose normal semantics are whole-entry replacement, only an
+// entry touched by the overlay is materialized from its effective base and
+// recursively merged.
+func applyExperimentOverlay(global *Config, rawRepo, overlay map[string]any) (map[string]any, error) {
+	effective := mergeExperimentMaps(rawRepo, overlay)
+	globalRaw, err := globalExperimentConfigMap(global)
 	if err != nil {
 		return nil, err
 	}
-	if rawRepo != nil {
-		base = mergeExperimentBaseMaps(base, rawRepo)
-	}
-	if base == nil {
-		base = make(map[string]any)
-	}
-	delete(base, "experiments")
-	return mergeExperimentMaps(base, overlay), nil
-}
 
-// mergeExperimentBaseMaps composes global and repository configuration with
-// the same replacement boundary as the typed resolvers. Same-named subagents
-// and panels are replaced as complete repository entries; only the experiment
-// overlay recursively merges into that resolved base entry afterward.
-func mergeExperimentBaseMaps(global, repo map[string]any) map[string]any {
-	merged := mergeExperimentMaps(global, repo)
-	globalReview, globalOK := global["review"].(map[string]any)
-	repoReview, repoOK := repo["review"].(map[string]any)
-	if !globalOK || !repoOK {
-		return merged
-	}
-	mergedReview, ok := merged["review"].(map[string]any)
-	if !ok {
-		return merged
-	}
+	overlayReview, _ := overlay["review"].(map[string]any)
+	repoReview, _ := rawRepo["review"].(map[string]any)
+	globalReview, _ := globalRaw["review"].(map[string]any)
+	effectiveReview, _ := effective["review"].(map[string]any)
 	for _, key := range []string{"subagents", "panels"} {
-		globalEntries, globalEntriesOK := globalReview[key].(map[string]any)
-		repoEntries, repoEntriesOK := repoReview[key].(map[string]any)
-		if !globalEntriesOK || !repoEntriesOK {
+		overlayEntries, ok := overlayReview[key].(map[string]any)
+		if !ok {
 			continue
 		}
-		entries := cloneExperimentMap(globalEntries)
-		for name, value := range repoEntries {
-			entries[name] = cloneExperimentValue(value)
+		if effectiveReview == nil {
+			effectiveReview = make(map[string]any)
+			effective["review"] = effectiveReview
 		}
-		mergedReview[key] = entries
+		effectiveEntries, _ := effectiveReview[key].(map[string]any)
+		if effectiveEntries == nil {
+			effectiveEntries = make(map[string]any)
+			effectiveReview[key] = effectiveEntries
+		}
+		repoEntries, _ := repoReview[key].(map[string]any)
+		globalEntries, _ := globalReview[key].(map[string]any)
+		for name, entryOverlay := range overlayEntries {
+			baseEntry, exists := repoEntries[name]
+			if !exists {
+				baseEntry = globalEntries[name]
+			}
+			baseMap, _ := baseEntry.(map[string]any)
+			overlayMap, _ := entryOverlay.(map[string]any)
+			effectiveEntries[name] = mergeExperimentMaps(baseMap, overlayMap)
+		}
 	}
-	return merged
+
+	// A configured repository CI review matrix replaces the global matrix,
+	// including when it is explicitly empty. The treatment may still merge a
+	// partial matrix onto that effective base because nested experiment tables
+	// are recursive overlays.
+	overlayCI, _ := overlay["ci"].(map[string]any)
+	if overlayReviews, ok := overlayCI["reviews"].(map[string]any); ok {
+		repoCI, _ := rawRepo["ci"].(map[string]any)
+		globalCI, _ := globalRaw["ci"].(map[string]any)
+		baseReviews, exists := repoCI["reviews"].(map[string]any)
+		if !exists {
+			baseReviews, _ = globalCI["reviews"].(map[string]any)
+		}
+		effectiveCI, _ := effective["ci"].(map[string]any)
+		if effectiveCI == nil {
+			effectiveCI = make(map[string]any)
+			effective["ci"] = effectiveCI
+		}
+		effectiveCI["reviews"] = mergeExperimentMaps(baseReviews, overlayReviews)
+	}
+
+	delete(effective, "experiments")
+	return effective, nil
 }
 
-func globalReviewConfigMap(global *Config) (map[string]any, error) {
+func globalExperimentConfigMap(global *Config) (map[string]any, error) {
 	if global == nil {
 		return make(map[string]any), nil
 	}
@@ -458,37 +482,7 @@ func globalReviewConfigMap(global *Config) (map[string]any, error) {
 	if err := tomlv2.Unmarshal(data, &rawGlobal); err != nil {
 		return nil, fmt.Errorf("decode global config map: %w", err)
 	}
-	result := make(map[string]any)
-	for key, value := range rawGlobal {
-		if key == "agent" || key == "ci" {
-			continue
-		}
-		if _, allowed := reviewExperimentOverlayKeys[key]; allowed {
-			result[key] = cloneExperimentValue(value)
-		}
-	}
-	copyGlobalDefault := func(globalKey, repoKey string) {
-		if value, ok := rawGlobal[globalKey]; ok {
-			result[repoKey] = cloneExperimentValue(value)
-		}
-	}
-	copyGlobalDefault("default_agent", "agent")
-	copyGlobalDefault("default_model", "model")
-	copyGlobalDefault("default_backup_agent", "backup_agent")
-	copyGlobalDefault("default_backup_model", "backup_model")
-	copyGlobalDefault("default_max_prompt_size", "max_prompt_size")
-	if rawCI, ok := rawGlobal["ci"].(map[string]any); ok {
-		ci := make(map[string]any)
-		for key, value := range rawCI {
-			if _, allowed := reviewExperimentCIKeys[key]; allowed {
-				ci[key] = cloneExperimentValue(value)
-			}
-		}
-		if len(ci) > 0 {
-			result["ci"] = ci
-		}
-	}
-	return result, nil
+	return rawGlobal, nil
 }
 
 func decodeExperimentRepoConfig(raw map[string]any) (*RepoConfig, error) {
@@ -500,6 +494,11 @@ func decodeExperimentRepoConfig(raw map[string]any) (*RepoConfig, error) {
 	decoder := tomlv2.NewDecoder(bytes.NewReader(data)).DisallowUnknownFields()
 	if err := decoder.Decode(&cfg); err != nil {
 		return nil, err
+	}
+	if rawCI, ok := raw["ci"].(map[string]any); ok {
+		if _, configured := rawCI["reviews"]; configured && cfg.CI.Reviews == nil {
+			cfg.CI.Reviews = make(map[string][]string)
+		}
 	}
 	if err := validateConfig(&cfg, cfg.ACP); err != nil {
 		return nil, err
