@@ -7,6 +7,8 @@ import (
 	"fmt"
 	"io"
 	"net/http"
+	"os"
+	"path/filepath"
 	"strconv"
 	"strings"
 	"sync/atomic"
@@ -238,7 +240,120 @@ func TestUpdateCommandReportsRunningReviewWait(t *testing.T) {
 	cmd.SetArgs([]string{"--yes"})
 
 	require.NoError(t, cmd.Execute())
-	assert.Contains(t, out.String(), "Daemon       waiting for 1 running reviews")
+	assert.Contains(t, out.String(), "Daemon       waiting for 1 running review")
+	assert.Contains(t, out.String(), "running review\n")
+}
+
+func TestUpdateCommandCoordinatesDaemonThatAppearsBeforeInstall(t *testing.T) {
+	stubUpdateCommand(t)
+	var discoveries atomic.Int32
+	var prepareCalls atomic.Int32
+	var restartCalls atomic.Int32
+	endpoint := updateTestEndpoint(t, updateDaemonHandler(0, &prepareCalls, nil, nil))
+	runtimeInfo := &daemon.RuntimeInfo{PID: 42, Network: endpoint.Network, Address: endpoint.Address}
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+		if discoveries.Add(1) == 1 {
+			return nil, errors.New("not running")
+		}
+		return runtimeInfo, nil
+	}
+	restartUpdatedDaemonForCommand = func(
+		_ context.Context, _ string, _ string, previous *daemon.RuntimeInfo,
+	) error {
+		restartCalls.Add(1)
+		assert.Same(t, runtimeInfo, previous)
+		return nil
+	}
+	cmd := updateCmd()
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	cmd.SetArgs([]string{"--yes"})
+
+	require.NoError(t, cmd.Execute())
+	assert.Equal(t, int32(1), prepareCalls.Load())
+	assert.Equal(t, int32(1), restartCalls.Load())
+}
+
+func TestUpdateCommandCoordinatesDaemonThatAppearsAfterInstall(t *testing.T) {
+	stubUpdateCommand(t)
+	var discoveries atomic.Int32
+	var prepareCalls atomic.Int32
+	var restartCalls atomic.Int32
+	endpoint := updateTestEndpoint(t, updateDaemonHandler(0, &prepareCalls, nil, nil))
+	runtimeInfo := &daemon.RuntimeInfo{PID: 42, Network: endpoint.Network, Address: endpoint.Address}
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+		if discoveries.Add(1) < 3 {
+			return nil, errors.New("not running")
+		}
+		return runtimeInfo, nil
+	}
+	restartUpdatedDaemonForCommand = func(
+		_ context.Context, _ string, _ string, previous *daemon.RuntimeInfo,
+	) error {
+		restartCalls.Add(1)
+		assert.Same(t, runtimeInfo, previous)
+		return nil
+	}
+	cmd := updateCmd()
+	cmd.SetOut(io.Discard)
+	cmd.SetErr(io.Discard)
+	cmd.SetArgs([]string{"--yes"})
+
+	require.NoError(t, cmd.Execute())
+	assert.Equal(t, int32(1), prepareCalls.Load())
+	assert.Equal(t, int32(1), restartCalls.Load())
+}
+
+func TestUpdateCommandCancelDuringHookRepairSuppressesSuccess(t *testing.T) {
+	stubUpdateCommand(t)
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+		return nil, errors.New("not running")
+	}
+	ctx, cancel := context.WithCancel(context.Background())
+	repairHooksForUpdateCommand = func(string, repairHookRunner) error {
+		cancel()
+		return nil
+	}
+	var skillCalls atomic.Int32
+	updateSkillsForUpdateCommand = func(string) error {
+		skillCalls.Add(1)
+		return nil
+	}
+	var out bytes.Buffer
+	cmd := updateCmd()
+	cmd.SetContext(ctx)
+	cmd.SetOut(&out)
+	cmd.SetErr(&out)
+	cmd.SetArgs([]string{"--yes"})
+
+	err := cmd.Execute()
+
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "binary installed")
+	assert.Equal(t, int32(0), skillCalls.Load())
+	assert.NotContains(t, out.String(), "Updated roborev to")
+}
+
+func TestDiscoverDaemonForUpdateRemovesDeadRuntime(t *testing.T) {
+	stubUpdateCommand(t)
+	oldAlive := isPIDAliveForUpdate
+	t.Cleanup(func() { isPIDAliveForUpdate = oldAlive })
+	runtimePath := filepath.Join(t.TempDir(), "daemon.json")
+	require.NoError(t, os.WriteFile(runtimePath, []byte("{}"), 0o600))
+	getAnyRunningDaemon = func() (*daemon.RuntimeInfo, error) {
+		return nil, errors.New("probe failed")
+	}
+	listAllRuntimes = func() ([]*daemon.RuntimeInfo, error) {
+		return []*daemon.RuntimeInfo{{PID: 42, SourcePath: runtimePath}}, nil
+	}
+	isPIDAliveForUpdate = func(int) bool { return false }
+
+	info, err := discoverDaemonForUpdate()
+
+	require.NoError(t, err)
+	assert.Nil(t, info)
+	_, err = os.Stat(runtimePath)
+	require.ErrorIs(t, err, os.ErrNotExist)
 }
 
 func TestUpdateCommandCancelAfterInstallReleasesLease(t *testing.T) {

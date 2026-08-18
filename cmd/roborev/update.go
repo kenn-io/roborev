@@ -506,12 +506,9 @@ func runControlledUpdate(
 
 	if !noRestart {
 		var err error
-		runningDaemon, err = getAnyRunningDaemon()
+		runningDaemon, err = discoverDaemonForUpdate()
 		if err != nil {
-			if runtimePID() != 0 {
-				return fmt.Errorf("running daemon is not responsive: %w", err)
-			}
-			runningDaemon = nil
+			return err
 		}
 	}
 
@@ -554,10 +551,30 @@ func runControlledUpdate(
 	operationCtx, cancelOperation := context.WithCancel(ctx)
 	defer cancelOperation()
 	heartbeatFailure := make(chan error, 1)
-	if runningDaemon != nil {
+	var heartbeatMonitorDone chan struct{}
+	stopHeartbeat := func() {
+		if session != nil {
+			session.stopHeartbeat()
+		}
+		if heartbeatMonitorDone != nil {
+			<-heartbeatMonitorDone
+			heartbeatMonitorDone = nil
+		}
+	}
+	defer stopHeartbeat()
+	defer func() {
+		if session != nil && session.Prepared && !session.ShutdownOwned {
+			releaseCtx, cancel := context.WithTimeout(
+				context.WithoutCancel(ctx), 2*time.Second,
+			)
+			defer cancel()
+			_, _ = session.release(releaseCtx)
+		}
+	}()
+	prepareDaemon := func(info *daemon.RuntimeInfo) error {
 		prepared, err := prepareUpdateDaemonForCommand(
 			operationCtx,
-			runningDaemon.Endpoint(),
+			info.Endpoint(),
 			storage.GenerateUUID(),
 			policy,
 			out,
@@ -569,18 +586,10 @@ func runControlledUpdate(
 			return err
 		}
 		session = prepared
-		defer func() {
-			if session.Prepared && !session.ShutdownOwned {
-				releaseCtx, cancel := context.WithTimeout(
-					context.WithoutCancel(ctx), 2*time.Second,
-				)
-				defer cancel()
-				_, _ = session.release(releaseCtx)
-			}
-		}()
 		heartbeat := session.startHeartbeat(operationCtx)
-		defer session.stopHeartbeat()
+		heartbeatMonitorDone = make(chan struct{})
 		go func() {
+			defer close(heartbeatMonitorDone)
 			if heartbeatErr, ok := <-heartbeat; ok && heartbeatErr != nil {
 				heartbeatFailure <- heartbeatErr
 				cancelOperation()
@@ -588,6 +597,24 @@ func runControlledUpdate(
 		}()
 		if err := waitForPreparedDrain(operationCtx, session, out); err != nil {
 			return preferHeartbeatFailure(err, heartbeatFailure)
+		}
+		return nil
+	}
+	if runningDaemon == nil && !noRestart {
+		appeared, err := discoverDaemonForUpdate()
+		if err != nil {
+			return err
+		}
+		if appeared != nil {
+			runningDaemon = appeared
+			if policy == "" {
+				policy = policyWait
+			}
+		}
+	}
+	if runningDaemon != nil {
+		if err := prepareDaemon(runningDaemon); err != nil {
+			return err
 		}
 	}
 
@@ -609,6 +636,23 @@ func runControlledUpdate(
 		return installedUpdateInterruption(session, preferHeartbeatFailure(err, heartbeatFailure))
 	}
 
+	if session == nil && !noRestart {
+		appeared, err := discoverDaemonForUpdate()
+		if err != nil {
+			return installedUpdateInterruption(session, err)
+		}
+		if appeared != nil {
+			runningDaemon = appeared
+			if policy == "" {
+				policy = policyWait
+			}
+			if err := prepareDaemon(runningDaemon); err != nil {
+				return installedUpdateInterruption(session, err)
+			}
+			session.Installed = true
+		}
+	}
+
 	removeLegacyDaemonBinary(binDir)
 	if noRestart {
 		printUpdatePhase(out, "Daemon", "skipped (--no-restart)")
@@ -620,11 +664,14 @@ func runControlledUpdate(
 	if session == nil {
 		printUpdatePhase(out, "Daemon", "not running")
 	} else {
+		stopHeartbeat()
+		if err := operationCtx.Err(); err != nil {
+			return installedUpdateInterruption(session, preferHeartbeatFailure(err, heartbeatFailure))
+		}
 		if err := session.shutdown(operationCtx); err != nil {
 			return installedUpdateInterruption(session, err)
 		}
 		session.ShutdownOwned = true
-		session.stopHeartbeat()
 		if session.Legacy {
 			if err := waitLegacyDaemonExitForCommand(
 				operationCtx, runningDaemon.PID,
@@ -650,6 +697,9 @@ func runControlledUpdate(
 	} else {
 		printUpdatePhase(out, "Git hooks", "done")
 	}
+	if err := operationCtx.Err(); err != nil {
+		return installedUpdateInterruption(session, err)
+	}
 	if !installedSkillsForUpdateCommand() {
 		printUpdatePhase(out, "Skills", "not installed")
 	} else if err := updateSkillsForUpdateCommand(binDir); err != nil {
@@ -657,8 +707,34 @@ func runControlledUpdate(
 	} else {
 		printUpdatePhase(out, "Skills", "done")
 	}
+	if err := operationCtx.Err(); err != nil {
+		return installedUpdateInterruption(session, err)
+	}
 	fmt.Fprintf(out, "\nUpdated roborev to %s\n", info.LatestVersion)
 	return nil
+}
+
+func discoverDaemonForUpdate() (*daemon.RuntimeInfo, error) {
+	info, probeErr := getAnyRunningDaemon()
+	if probeErr == nil {
+		return info, nil
+	}
+	runtimes, listErr := listAllRuntimes()
+	if listErr != nil {
+		return nil, fmt.Errorf("inspect daemon runtimes: %w", listErr)
+	}
+	for _, runtimeInfo := range runtimes {
+		if runtimeInfo == nil || runtimeInfo.PID <= 0 {
+			continue
+		}
+		if isPIDAliveForUpdate(runtimeInfo.PID) {
+			return nil, fmt.Errorf("running daemon is not responsive: %w", probeErr)
+		}
+		if runtimeInfo.SourcePath != "" {
+			_ = os.Remove(runtimeInfo.SourcePath)
+		}
+	}
+	return nil, nil
 }
 
 func confirmUpdate(in io.Reader, out io.Writer) (bool, error) {

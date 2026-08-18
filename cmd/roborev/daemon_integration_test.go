@@ -500,7 +500,9 @@ func TestUpdateDrainCutoverIntegration(t *testing.T) {
 				return err != nil || job.Status != storage.JobStatusQueued
 			}, 250*time.Millisecond, 25*time.Millisecond)
 
-			require.NoError(t, waitForPreparedDrain(context.Background(), session, io.Discard))
+			drainCtx, cancelDrain := context.WithTimeout(context.Background(), 20*time.Second)
+			defer cancelDrain()
+			require.NoError(t, waitForPreparedDrain(drainCtx, session, io.Discard))
 			require.NoError(t, session.shutdown(context.Background()))
 			waitForIsolatedUpdateDaemonExit(t, old, 10*time.Second)
 

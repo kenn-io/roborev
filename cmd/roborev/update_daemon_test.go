@@ -1,13 +1,16 @@
 package main
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
+	"fmt"
 	"io"
 	"net/http"
 	"net/http/httptest"
 	"net/url"
+	"strings"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -108,6 +111,30 @@ func TestUpdateDaemonLeaseRoundTrip(t *testing.T) {
 	assert.Equal(t, int32(1), releaseCalls.Load())
 }
 
+func TestUpdateDaemonRenewDoesNotMutateSharedStatus(t *testing.T) {
+	endpoint := updateTestEndpoint(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/update/prepare":
+			_, _ = io.WriteString(w, `{"lease_token":"lease-1","policy":"wait","expires_at":"2030-01-01T00:00:00Z","running_jobs":1,"targeted_running_jobs":1,"active_workers":1,"recovering":false}`)
+		case "/api/update/renew":
+			_, _ = io.WriteString(w, `{"lease_token":"lease-1","policy":"wait","expires_at":"2030-01-01T00:00:00Z","running_jobs":0,"targeted_running_jobs":0,"active_workers":0,"recovering":false}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	session, err := prepareUpdateDaemon(
+		context.Background(), endpoint, "owner", policyWait, io.Discard,
+	)
+	require.NoError(t, err)
+
+	status, err := session.renew(context.Background())
+
+	require.NoError(t, err)
+	assert.Equal(t, int64(0), status.RunningJobs)
+	assert.Equal(t, int64(1), session.status.RunningJobs)
+}
+
 func TestUpdateDaemonHeartbeatReportsLeaseLoss(t *testing.T) {
 	var renewCalls atomic.Int32
 	endpoint := updateTestEndpoint(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -137,6 +164,63 @@ func TestUpdateDaemonHeartbeatReportsLeaseLoss(t *testing.T) {
 	require.Error(t, heartbeatErr)
 	assert.Contains(t, heartbeatErr.Error(), "renew")
 	assert.Equal(t, int32(1), renewCalls.Load())
+}
+
+func TestUpdateDaemonHeartbeatCancellationIsNotLeaseFailure(t *testing.T) {
+	started := make(chan struct{})
+	release := make(chan struct{})
+	endpoint := updateTestEndpoint(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch r.URL.Path {
+		case "/api/update/prepare":
+			_, _ = io.WriteString(w, `{"lease_token":"lease-1","policy":"wait","expires_at":"2030-01-01T00:00:00Z","running_jobs":0,"targeted_running_jobs":0,"active_workers":0,"recovering":false}`)
+		case "/api/update/renew":
+			close(started)
+			<-release
+			_, _ = io.WriteString(w, `{"lease_token":"lease-1","policy":"wait","expires_at":"2030-01-01T00:00:00Z","running_jobs":0,"targeted_running_jobs":0,"active_workers":0,"recovering":false}`)
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	session, err := prepareUpdateDaemon(
+		context.Background(), endpoint, "owner", policyWait, io.Discard,
+	)
+	require.NoError(t, err)
+	oldInterval := updateLeaseRenewInterval
+	updateLeaseRenewInterval = time.Millisecond
+	t.Cleanup(func() { updateLeaseRenewInterval = oldInterval })
+
+	errCh := session.startHeartbeat(context.Background())
+	require.True(t, waitForUpdateTestSignal(started, time.Second))
+	session.stopHeartbeat()
+	close(release)
+	heartbeatErr, ok := <-errCh
+
+	assert.False(t, ok)
+	assert.NoError(t, heartbeatErr)
+}
+
+func TestWaitForPreparedInterruptReportsWorkerUnwindAndTerminatesLine(t *testing.T) {
+	var renewCalls atomic.Int32
+	endpoint := updateTestEndpoint(t, http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		running := 1
+		if renewCalls.Add(1) > 1 {
+			running = 0
+		}
+		_, _ = fmt.Fprintf(w, `{"lease_token":"lease-1","policy":"interrupt","expires_at":"2030-01-01T00:00:00Z","running_jobs":0,"targeted_running_jobs":0,"active_workers":%d,"recovering":false}`, running)
+	}))
+	session := &updateDaemonSession{
+		Endpoint: endpoint, Token: "lease-1", Policy: policyInterrupt, Prepared: true,
+	}
+	oldPoll := updateDrainPollInterval
+	updateDrainPollInterval = time.Millisecond
+	t.Cleanup(func() { updateDrainPollInterval = oldPoll })
+	var out bytes.Buffer
+
+	require.NoError(t, waitForPreparedDrain(context.Background(), session, &out))
+	assert.Contains(t, out.String(), "waiting for 1 worker to unwind")
+	assert.True(t, strings.HasSuffix(out.String(), "\n"))
 }
 
 func TestRequireUpdatedDaemonVersion(t *testing.T) {
@@ -216,4 +300,13 @@ func TestPrepareUpdateDaemonConflictIncludesDetail(t *testing.T) {
 
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "lease expires in 42s")
+}
+
+func waitForUpdateTestSignal(ch <-chan struct{}, timeout time.Duration) bool {
+	select {
+	case <-ch:
+		return true
+	case <-time.After(timeout):
+		return false
+	}
 }

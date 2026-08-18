@@ -159,8 +159,7 @@ func (s *updateDaemonSession) renew(ctx context.Context) (generated.UpdateDrainS
 	if resp == nil || resp.JSON200 == nil {
 		return generated.UpdateDrainStatus{}, errors.New("renew update lease returned no status")
 	}
-	s.status = *resp.JSON200
-	return s.status, nil
+	return *resp.JSON200, nil
 }
 
 func (s *updateDaemonSession) release(ctx context.Context) (bool, error) {
@@ -216,6 +215,9 @@ func (s *updateDaemonSession) startHeartbeat(ctx context.Context) <-chan error {
 				return
 			case <-ticker.C:
 				if _, err := s.renew(heartbeatCtx); err != nil {
+					if heartbeatCtx.Err() != nil {
+						return
+					}
 					errCh <- err
 					return
 				}
@@ -234,6 +236,12 @@ func (s *updateDaemonSession) stopHeartbeat() {
 func waitForPreparedDrain(
 	ctx context.Context, session *updateDaemonSession, out io.Writer,
 ) error {
+	wroteProgress := false
+	defer func() {
+		if wroteProgress && out != nil {
+			fmt.Fprintln(out)
+		}
+	}()
 	if session.Legacy {
 		if session.Policy != policyAbort {
 			return nil
@@ -265,7 +273,27 @@ func waitForPreparedDrain(
 			return fmt.Errorf("timed out after %s waiting for interrupted reviews to unwind", updateInterruptUnwindTimeout)
 		}
 		if out != nil {
-			fmt.Fprintf(out, "\rDaemon       waiting for %d running reviews", status.RunningJobs)
+			message := fmt.Sprintf(
+				"waiting for %d running %s",
+				status.RunningJobs, pluralUpdateCount(status.RunningJobs, "review", "reviews"),
+			)
+			if session.Policy == policyInterrupt {
+				if status.TargetedRunningJobs != 0 {
+					message = fmt.Sprintf(
+						"waiting for %d interrupted %s",
+						status.TargetedRunningJobs,
+						pluralUpdateCount(status.TargetedRunningJobs, "review", "reviews"),
+					)
+				} else {
+					message = fmt.Sprintf(
+						"waiting for %d %s to unwind",
+						status.ActiveWorkers,
+						pluralUpdateCount(status.ActiveWorkers, "worker", "workers"),
+					)
+				}
+			}
+			fmt.Fprintf(out, "\r%-13s%s", "Daemon", message)
+			wroteProgress = true
 		}
 		timer := time.NewTimer(updateDrainPollInterval)
 		select {
@@ -275,6 +303,13 @@ func waitForPreparedDrain(
 		case <-timer.C:
 		}
 	}
+}
+
+func pluralUpdateCount(count int64, singular, plural string) string {
+	if count == 1 {
+		return singular
+	}
+	return plural
 }
 
 func updateProtocolError(op string, response any, callErr error) error {
