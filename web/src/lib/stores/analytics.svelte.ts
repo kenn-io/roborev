@@ -1,3 +1,4 @@
+import { appPath } from "../base-path";
 import type { RoborevClient } from "../api/client";
 import type { components, operations } from "../api/generated";
 
@@ -253,7 +254,7 @@ function writeAnalyticsFilters(
   if (filters.agent !== "") params.set("agent", filters.agent);
   if (filters.model !== "") params.set("model", filters.model);
   if (filters.bucket !== "auto") params.set("bucket", filters.bucket);
-  const target = `${globalThis.location.pathname}?${params.toString()}`;
+  const target = `${appPath("/analytics")}?${params.toString()}`;
   if (replace) globalThis.history.replaceState(null, "", target);
   else globalThis.history.pushState(null, "", target);
 }

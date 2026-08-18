@@ -3,6 +3,7 @@
   import { Effect } from "effect";
   import { onDestroy } from "svelte";
 
+  import { appPath } from "../base-path";
   import { createRoborevClient } from "../api/client";
   import type { SessionCapabilities } from "../api/session";
   import { createRouter } from "../router/router.svelte";
@@ -19,7 +20,7 @@
   let { capabilities }: Props = $props();
 
   const runtime = makeAppRuntime();
-  const client = createRoborevClient("/");
+  const client = createRoborevClient(appPath("/"));
   const router = createRouter();
   const route = $derived(router.getRoute());
   const navigationTabs: TopBarTab[] = [
@@ -87,7 +88,9 @@
     ariaLabel="Application"
   >
     {#snippet left()}
-      <a class="brand" href="/reviews" onclick={navigateReviews}>Roborev</a>
+      <a class="brand" href={appPath("/reviews")} onclick={navigateReviews}
+        >Roborev</a
+      >
     {/snippet}
   </TopBar>
 

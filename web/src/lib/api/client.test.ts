@@ -1,5 +1,5 @@
 import { Effect, Stream } from "effect";
-import { beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import {
   createRoborevClient,
@@ -8,6 +8,10 @@ import {
 } from "./client";
 import { StreamingFetch } from "../browser/streaming-fetch";
 import { RoborevLogLinePayload } from "./schemas";
+
+afterEach(() => {
+  document.head.querySelector('meta[name="roborev-base-path"]')?.remove();
+});
 
 describe("native Roborev client", () => {
   beforeEach(() => {
@@ -28,9 +32,28 @@ describe("native Roborev client", () => {
 
     await client.GET("/api/status");
 
-    const request = fetchMock.mock.calls[0]![0] as unknown as Request;
+    const calls = fetchMock.mock.calls as unknown as Array<[RequestInfo | URL]>;
+    const request = calls[0]![0] as unknown as Request;
     expect(new URL(request.url).pathname).toBe("/api/status");
     expect(request.headers.get("X-Roborev-Web-Session")).toBe("tab");
+  });
+
+  test("prefixes API requests exactly once", async () => {
+    const meta = document.createElement("meta");
+    meta.name = "roborev-base-path";
+    meta.content = "/roborev-ci";
+    document.head.append(meta);
+    const fetchMock = vi.fn(
+      async () =>
+        new Response(JSON.stringify({ version: "dev" }), { status: 200 }),
+    );
+    const client = createRoborevClient("/roborev-ci/", fetchMock);
+
+    await client.GET("/api/status");
+
+    const calls = fetchMock.mock.calls as unknown as Array<[RequestInfo | URL]>;
+    const request = calls[0]![0] as unknown as Request;
+    expect(new URL(request.url).pathname).toBe("/roborev-ci/api/status");
   });
 
   test("decodes complete and trailing NDJSON records", async () => {

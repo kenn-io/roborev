@@ -8,6 +8,7 @@ describe("native router", () => {
   });
 
   afterEach(() => {
+    document.head.querySelector('meta[name="roborev-base-path"]')?.remove();
     history.replaceState(null, "", "/");
   });
 
@@ -41,6 +42,22 @@ describe("native router", () => {
     router.navigateToAnalytics();
     expect(router.getRoute()).toEqual({ page: "analytics" });
     expect(location.pathname).toBe("/analytics");
+    router.dispose();
+  });
+
+  test("parses and publishes routes below the configured prefix", () => {
+    const meta = document.createElement("meta");
+    meta.name = "roborev-base-path";
+    meta.content = "/roborev-ci";
+    document.head.append(meta);
+    history.replaceState(null, "", "/roborev-ci/reviews/9");
+
+    const router = createRouter();
+    expect(router.getRoute()).toEqual({ page: "reviews", jobId: 9 });
+
+    router.navigateToAnalytics();
+    expect(location.pathname).toBe("/roborev-ci/analytics");
+    expect(router.getRoute()).toEqual({ page: "analytics" });
     router.dispose();
   });
 });

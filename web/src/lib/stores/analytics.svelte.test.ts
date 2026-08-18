@@ -70,9 +70,26 @@ function deferred<T>() {
 
 afterEach(() => {
   history.replaceState(null, "", "/analytics");
+  document.head.querySelector('meta[name="roborev-base-path"]')?.remove();
 });
 
 describe("analytics store URL filters", () => {
+  it("keeps filter history below the configured prefix", async () => {
+    const meta = document.createElement("meta");
+    meta.name = "roborev-base-path";
+    meta.content = "/roborev-ci";
+    document.head.append(meta);
+    history.replaceState(null, "", "/roborev-ci/analytics");
+    const store = createAnalyticsStore({
+      loader: vi.fn(async () => snapshot(0)),
+    });
+
+    await store.setFilters({ range: "7d" });
+
+    expect(location.pathname).toBe("/roborev-ci/analytics");
+    store.dispose();
+  });
+
   it("normalizes supported filters and removes unrelated query values", () => {
     history.replaceState(
       null,

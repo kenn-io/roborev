@@ -1,3 +1,5 @@
+import { appPath } from "../base-path";
+
 const sessionKey = "roborev.web.session";
 const csrfKey = "roborev.web.csrf";
 
@@ -58,10 +60,16 @@ export function authenticatedFetch(
     const request =
       input instanceof Request
         ? new Request(input, { ...init, credentials: "same-origin" })
-        : new Request(new URL(input, globalThis.location.origin), {
-            ...init,
-            credentials: "same-origin",
-          });
+        : (() => {
+            const inputURL = new URL(input, globalThis.location.origin);
+            if (inputURL.origin === globalThis.location.origin) {
+              inputURL.pathname = appPath(inputURL.pathname);
+            }
+            return new Request(inputURL, {
+              ...init,
+              credentials: "same-origin",
+            });
+          })();
     const headers = new Headers(request.headers);
     const session = sessionStorage.getItem(sessionKey);
     if (session !== null) {
@@ -115,7 +123,7 @@ export async function login(
 
 export async function logout(fetchImpl: Fetch = fetch): Promise<void> {
   try {
-    const response = await fetchImpl("/api/ui/session", {
+    const response = await fetchImpl(appPath("/api/ui/session"), {
       method: "DELETE",
       credentials: "same-origin",
       redirect: "error",
@@ -136,7 +144,7 @@ async function exchangeCredentials(
 ): Promise<SessionResult> {
   let response: Response;
   try {
-    response = await fetchImpl(path, {
+    response = await fetchImpl(appPath(path), {
       method: "POST",
       credentials: "same-origin",
       redirect: "error",

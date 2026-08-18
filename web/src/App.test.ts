@@ -55,6 +55,7 @@ describe("App", () => {
   beforeEach(() => {
     sessionStorage.clear();
     document.documentElement.classList.remove("dark");
+    document.head.querySelector('meta[name="roborev-base-path"]')?.remove();
     history.replaceState(null, "", "/reviews");
     vi.restoreAllMocks();
   });
@@ -118,6 +119,42 @@ describe("App", () => {
     expect(token).toHaveValue("");
     expect(screen.queryByRole("button", { name: "Sign out" })).toBeNull();
     expect(JSON.stringify(fetchMock.mock.calls)).toContain("one-time-secret");
+  });
+
+  test("uses the configured prefix for the application shell and navigation", async () => {
+    const meta = document.createElement("meta");
+    meta.name = "roborev-base-path";
+    meta.content = "/roborev-ci";
+    document.head.append(meta);
+    history.replaceState(null, "", "/roborev-ci/reviews");
+
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(
+        input instanceof Request ? input.url : input,
+        location.origin,
+      );
+      if (url.pathname === "/roborev-ci/api/ui/session/bootstrap") {
+        return response(200, credentials);
+      }
+      if (url.pathname.startsWith("/roborev-ci/")) {
+        const internal = new URL(url);
+        internal.pathname = url.pathname.slice("/roborev-ci".length) || "/";
+        return applicationResponse(internal);
+      }
+      return response(404);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    render(App);
+
+    expect(
+      await screen.findByRole("region", { name: "Review jobs" }),
+    ).toBeInTheDocument();
+    expect(screen.getByRole("link", { name: "Roborev" })).toHaveAttribute(
+      "href",
+      "/roborev-ci/reviews",
+    );
+    await fireEvent.click(screen.getByRole("button", { name: "Analytics" }));
+    expect(location.pathname).toBe("/roborev-ci/analytics");
   });
 
   test("keeps login available and shows the server cooldown after throttling", async () => {

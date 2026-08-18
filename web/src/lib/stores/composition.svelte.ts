@@ -1,3 +1,4 @@
+import { appPath } from "../base-path";
 import type { RoborevClient } from "../api/client";
 import type { SessionCapabilities } from "../api/session";
 import type { OwnedAppRuntime } from "../runtime/runtime";
@@ -47,7 +48,7 @@ export function createReviewStores(options: ReviewStoreOptions): ReviewStores {
     ...shared,
   });
   const roborevLog = createLogStore({
-    baseUrl: "/",
+    baseUrl: appPath("/"),
     ...shared,
   });
 

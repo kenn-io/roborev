@@ -1,5 +1,6 @@
 import createClient from "openapi-fetch";
 import { Effect, Option, Schema, Stream } from "effect";
+import { appPath } from "../base-path";
 import type { paths } from "./generated";
 import { authenticatedFetch, type Fetch } from "./session";
 import { TransientTransportError } from "./effect-errors";
@@ -22,8 +23,9 @@ export function createRoborevClient(
   fetchFn?: Fetch,
 ): RoborevClient {
   const inner = fetchFn ?? globalThis.fetch.bind(globalThis);
+  const resolvedBaseUrl = baseUrl.startsWith("/") ? appPath(baseUrl) : baseUrl;
   return createClient<paths>({
-    baseUrl: new URL(baseUrl, globalThis.location.origin).toString(),
+    baseUrl: new URL(resolvedBaseUrl, globalThis.location.origin).toString(),
     fetch: authenticatedFetch(inner),
   });
 }
@@ -144,10 +146,7 @@ export function roborevEventStream(
   RoborevStreamError,
   import("../browser/streaming-fetch").StreamingFetch
 > {
-  const url = new URL(
-    `${baseUrl.replace(/\/$/, "")}/api/stream/events`,
-    globalThis.location.origin,
-  ).toString();
+  const url = apiURL(baseUrl, "/api/stream/events");
   return Stream.unwrap(
     Effect.gen(function* () {
       const response = yield* Effect.acquireRelease(
@@ -217,13 +216,18 @@ function jobOutputUrl(
   jobID: number,
   streaming: boolean,
 ): string {
-  const url = new URL(
-    `${baseUrl.replace(/\/$/, "")}/api/job/output`,
-    globalThis.location.origin,
-  );
+  const url = new URL(apiURL(baseUrl, "/api/job/output"));
   url.searchParams.set("job_id", String(jobID));
   if (streaming) url.searchParams.set("stream", "1");
   return url.toString();
+}
+
+function apiURL(baseUrl: string, path: string): string {
+  const resolvedBaseUrl = baseUrl.startsWith("/") ? appPath(baseUrl) : baseUrl;
+  return new URL(
+    `${resolvedBaseUrl.replace(/\/$/, "")}${path}`,
+    globalThis.location.origin,
+  ).toString();
 }
 
 export const loadRoborevJobOutput = Effect.fn("RoborevClient.loadJobOutput")(

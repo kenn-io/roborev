@@ -1,4 +1,4 @@
-import { beforeEach, describe, expect, test, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, test, vi } from "vitest";
 
 import {
   authenticatedFetch,
@@ -19,6 +19,10 @@ const credentials = {
     rerun_job: false,
   },
 };
+
+afterEach(() => {
+  document.head.querySelector('meta[name="roborev-base-path"]')?.remove();
+});
 
 function response(status: number, body?: unknown): Response {
   return new Response(body === undefined ? null : JSON.stringify(body), {
@@ -105,6 +109,21 @@ describe("browser session client", () => {
       "X-Roborev-Web-Session": credentials.session,
       "X-Roborev-CSRF": credentials.csrf,
     });
+  });
+
+  test("prefixes session requests when the application is mounted below a path", async () => {
+    const meta = document.createElement("meta");
+    meta.name = "roborev-base-path";
+    meta.content = "/roborev-ci";
+    document.head.append(meta);
+    const fetchMock = vi.fn(async () => response(200, credentials));
+
+    await bootstrapSession(fetchMock);
+    await logout(fetchMock);
+
+    const calls = fetchMock.mock.calls as unknown as Array<[string]>;
+    expect(calls[0]?.[0]).toBe("/roborev-ci/api/ui/session/bootstrap");
+    expect(calls[1]?.[0]).toBe("/roborev-ci/api/ui/session");
   });
 
   test("clears stale tab credentials when bootstrap requires login", async () => {

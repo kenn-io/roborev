@@ -5,6 +5,7 @@ const backend = process.env.ROBOREV_WEB_DEV_BACKEND;
 
 export default defineConfig({
   plugins: [svelte()],
+  base: "./",
   optimizeDeps: {
     exclude: ["@kenn-io/kit-ui"],
   },

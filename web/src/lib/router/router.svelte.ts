@@ -1,3 +1,5 @@
+import { appPath, stripBasePath } from "../base-path";
+
 export type AppRoute =
   | { page: "reviews"; jobId?: number }
   | { page: "analytics" };
@@ -18,19 +20,22 @@ export function parseRoute(pathname: string): AppRoute {
 }
 
 export function createRouter() {
-  let route = $state<AppRoute>(parseRoute(globalThis.location.pathname));
+  let route = $state<AppRoute>(
+    parseRoute(stripBasePath(globalThis.location.pathname)),
+  );
 
   const publishLocation = (): void => {
-    route = parseRoute(globalThis.location.pathname);
+    route = parseRoute(stripBasePath(globalThis.location.pathname));
   };
   globalThis.addEventListener("popstate", publishLocation);
 
   function navigate(path: string, replace = false): void {
-    if (globalThis.location.pathname !== path) {
+    const target = appPath(path);
+    if (globalThis.location.pathname !== target) {
       if (replace) {
-        globalThis.history.replaceState(null, "", path);
+        globalThis.history.replaceState(null, "", target);
       } else {
-        globalThis.history.pushState(null, "", path);
+        globalThis.history.pushState(null, "", target);
       }
     }
     publishLocation();
