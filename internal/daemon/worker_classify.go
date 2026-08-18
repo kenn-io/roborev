@@ -106,7 +106,7 @@ func (wp *WorkerPool) processClassifyJob(ctx context.Context, workerID string, j
 
 	if yes, reason, set := getTestClassifierVerdict(); set {
 		closeJobLog()
-		wp.applyClassifyVerdict(workerID, job, yes, reason)
+		wp.applyClassifyVerdictContext(ctx, workerID, job, yes, reason)
 		return
 	}
 
@@ -122,7 +122,7 @@ func (wp *WorkerPool) processClassifyJob(ctx context.Context, workerID string, j
 	if err != nil {
 		log.Printf("[%s] classifier config error for job %d: %v", workerID, job.ID, err)
 		closeJobLog()
-		wp.completeClassifyAsSkip(workerID, job, "classifier unavailable", err.Error())
+		wp.completeClassifyAsSkipContext(ctx, workerID, job, "classifier unavailable", err.Error())
 		return
 	}
 	defaultedPrimary := classifyAgentDefaulted(job.RepoPath, cfg)
@@ -194,13 +194,13 @@ func (wp *WorkerPool) processClassifyJob(ctx context.Context, workerID string, j
 	if err != nil {
 		log.Printf("[%s] classifier error for job %d: %v", workerID, job.ID, err)
 		closeJobLog()
-		wp.completeClassifyAsSkip(workerID, job,
+		wp.completeClassifyAsSkipContext(ctx, workerID, job,
 			publicClassifierSkipReason(err),
 			composeClassifyErrorDetail(err, backupErr))
 		return
 	}
 	closeJobLog()
-	wp.applyClassifyVerdict(workerID, job, yes, reason)
+	wp.applyClassifyVerdictContext(ctx, workerID, job, yes, reason)
 }
 
 func classifyAgentDefaulted(repoPath string, globalCfg *config.Config) bool {
@@ -217,6 +217,15 @@ func classifyAgentDefaulted(repoPath string, globalCfg *config.Config) bool {
 // design-workflow agent so the worker that picks the row up next can
 // actually run the review.
 func (wp *WorkerPool) applyClassifyVerdict(workerID string, job *storage.ReviewJob, yes bool, reason string) {
+	wp.applyClassifyVerdictContext(context.Background(), workerID, job, yes, reason)
+}
+
+func (wp *WorkerPool) applyClassifyVerdictContext(
+	ctx context.Context, workerID string, job *storage.ReviewJob, yes bool, reason string,
+) {
+	if wp.handleUpdateInterruption(ctx, workerID, job) {
+		return
+	}
 	autoDesignMetrics.RecordClassifier(yes, false)
 	if yes {
 		designAgent, designModel := wp.resolveDesignFollowUp(job.RepoPath)
@@ -227,7 +236,7 @@ func (wp *WorkerPool) applyClassifyVerdict(workerID string, job *storage.ReviewJ
 		if err := wp.db.PromoteClassifyToDesignReview(job.ID, workerID, designAgent, designModel); err != nil {
 			discardJobLogAppendMarker(job.ID)
 			log.Printf("[%s] PromoteClassifyToDesignReview for %d: %v", workerID, job.ID, err)
-			wp.failClassifyOnDBError(workerID, job, "promote classify to design review", err)
+			wp.failClassifyOnDBErrorContext(ctx, workerID, job, "promote classify to design review", err)
 		}
 		// On success: no terminal broadcast — the row went back to
 		// 'queued' and the normal design-review path emits its own
@@ -238,7 +247,7 @@ func (wp *WorkerPool) applyClassifyVerdict(workerID string, job *storage.ReviewJ
 	// the classifier successfully produced an answer, so no errorDetail.
 	if err := wp.db.MarkClassifyAsSkippedDesign(job.ID, workerID, reason, ""); err != nil {
 		log.Printf("[%s] MarkClassifyAsSkippedDesign for %d: %v", workerID, job.ID, err)
-		wp.failClassifyOnDBError(workerID, job, "mark classify as skipped", err)
+		wp.failClassifyOnDBErrorContext(ctx, workerID, job, "mark classify as skipped", err)
 		return
 	}
 	wp.broadcastClassifyTerminal(job)
@@ -268,10 +277,19 @@ func (wp *WorkerPool) resolveDesignFollowUp(repoPath string) (string, string) {
 // when the skip has no underlying error (setup-time config-missing
 // paths that don't actually raise an err).
 func (wp *WorkerPool) completeClassifyAsSkip(workerID string, job *storage.ReviewJob, reason, errorDetail string) {
+	wp.completeClassifyAsSkipContext(context.Background(), workerID, job, reason, errorDetail)
+}
+
+func (wp *WorkerPool) completeClassifyAsSkipContext(
+	ctx context.Context, workerID string, job *storage.ReviewJob, reason, errorDetail string,
+) {
+	if wp.handleUpdateInterruption(ctx, workerID, job) {
+		return
+	}
 	autoDesignMetrics.RecordClassifier(false, true)
 	if err := wp.db.MarkClassifyAsSkippedDesign(job.ID, workerID, reason, errorDetail); err != nil {
 		log.Printf("[%s] MarkClassifyAsSkippedDesign for failed classify %d: %v", workerID, job.ID, err)
-		wp.failClassifyOnDBError(workerID, job, "mark classify as skipped (failure path)", err)
+		wp.failClassifyOnDBErrorContext(ctx, workerID, job, "mark classify as skipped (failure path)", err)
 		return
 	}
 	wp.broadcastClassifyTerminal(job)
@@ -282,7 +300,12 @@ func (wp *WorkerPool) completeClassifyAsSkip(workerID string, job *storage.Revie
 // fails. The classify row is still in 'running' — leaving it there
 // would block worker quota and stall any CI batch waiting on the row.
 // Mark it 'failed' and broadcast review.failed so subscribers advance.
-func (wp *WorkerPool) failClassifyOnDBError(workerID string, job *storage.ReviewJob, op string, dbErr error) {
+func (wp *WorkerPool) failClassifyOnDBErrorContext(
+	ctx context.Context, workerID string, job *storage.ReviewJob, op string, dbErr error,
+) {
+	if wp.handleUpdateInterruption(ctx, workerID, job) {
+		return
+	}
 	errMsg := fmt.Sprintf("classify %s: %v", op, dbErr)
 	updated, fErr := wp.db.FailJob(job.ID, workerID, errMsg)
 	if fErr != nil {

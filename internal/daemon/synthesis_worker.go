@@ -16,7 +16,8 @@ import (
 )
 
 // errSynthesisCanceled signals that the synthesis agent run was canceled, so the
-// caller must not store a review (the job is already terminal).
+// caller must not store a review. A user-canceled job is terminal; an
+// update-interrupted attempt has already returned to the queue.
 var errSynthesisCanceled = errors.New("synthesis canceled")
 
 // processSynthesisJob executes a panel synthesis job against the run's member
@@ -33,7 +34,7 @@ func (wp *WorkerPool) processSynthesisJob(
 		// review. Use the non-agent retry/fail path: a DB read failure is not an
 		// agent fault, so it must not trigger backup-agent failover (a different
 		// agent cannot fix a storage error).
-		wp.failOrRetry(workerID, job, job.Agent, fmt.Sprintf("load panel members: %v", err))
+		wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("load panel members: %v", err))
 		return
 	}
 	results := toReviewResults(rows)
@@ -42,13 +43,13 @@ func (wp *WorkerPool) processSynthesisJob(
 	switch len(succeeded) {
 	case 0:
 		if errMsg, ok := allAvailabilitySkippedFailure(results); ok {
-			wp.failSynthesisWithoutReview(workerID, job, errMsg)
+			wp.failSynthesisWithoutReviewContext(ctx, workerID, job, errMsg)
 			return
 		}
 		// Every member failed — emit a durable fail review with no agent call.
 		// The comment renders the head SHA (FormatAllFailedComment short-SHAs its
 		// arg), so pass the head side of the frozen mergeBase..headSHA range.
-		wp.completeSynthesis(workerID, job, job.Agent, "",
+		wp.completeSynthesisContext(ctx, workerID, job, job.Agent, "",
 			reviewpkg.FormatAllFailedComment(results, headOf(job.GitRef)))
 	case 1:
 		// Exactly one member produced output — pass it through verbatim and
@@ -56,7 +57,7 @@ func (wp *WorkerPool) processSynthesisJob(
 		// filter needs to be applied, or when the member already passed and
 		// there are no findings to filter.
 		if config.IsMarkerOnlyOutput(succeeded[0].Output) {
-			wp.completeSynthesis(workerID, job, succeeded[0].Agent, "", "No issues found.")
+			wp.completeSynthesisContext(ctx, workerID, job, succeeded[0].Agent, "", "No issues found.")
 			return
 		}
 		if !singleSuccessCanPassthrough(job.MinSeverity) &&
@@ -64,10 +65,10 @@ func (wp *WorkerPool) processSynthesisJob(
 			wp.synthesizeSucceededResults(ctx, workerID, job, succeeded)
 			return
 		}
-		wp.completeSynthesis(workerID, job, succeeded[0].Agent, "", succeeded[0].Output)
+		wp.completeSynthesisContext(ctx, workerID, job, succeeded[0].Agent, "", succeeded[0].Output)
 	default:
 		if allMembersPassed(results, succeeded) {
-			wp.completeSynthesis(workerID, job, job.Agent, "", "No issues found.")
+			wp.completeSynthesisContext(ctx, workerID, job, job.Agent, "", "No issues found.")
 			return
 		}
 		// Two or more succeeded — combine and deduplicate via one agent call.
@@ -115,7 +116,7 @@ func (wp *WorkerPool) synthesizeSucceededResults(
 	// branches skip this check because they never invoke an agent.
 	canonicalAgent := agent.CanonicalName(job.Agent)
 	if wp.isAgentCoolingDown(canonicalAgent) {
-		wp.failCooldownOrFailover(workerID, job, canonicalAgent,
+		wp.failCooldownOrFailoverContext(ctx, workerID, job, canonicalAgent,
 			fmt.Sprintf("agent %s quota cooldown active", canonicalAgent))
 		return
 	}
@@ -125,7 +126,7 @@ func (wp *WorkerPool) synthesizeSucceededResults(
 		// runSynthesisAgent already handled the failure/cancel.
 		return
 	}
-	wp.completeSynthesis(workerID, job, resolvedAgent, prompt, out)
+	wp.completeSynthesisContext(ctx, workerID, job, resolvedAgent, prompt, out)
 }
 
 // headOf returns the head side of a git ref range: the part after the last
@@ -174,7 +175,12 @@ func allMembersPassed(
 	return len(results)-ignored == len(succeeded)
 }
 
-func (wp *WorkerPool) failSynthesisWithoutReview(workerID string, job *storage.ReviewJob, errorMsg string) {
+func (wp *WorkerPool) failSynthesisWithoutReviewContext(
+	ctx context.Context, workerID string, job *storage.ReviewJob, errorMsg string,
+) {
+	if wp.handleUpdateInterruption(ctx, workerID, job) {
+		return
+	}
 	if updated, err := wp.db.FailJob(job.ID, workerID, errorMsg); err != nil {
 		log.Printf("[%s] Error failing skipped synthesis job %d: %v", workerID, job.ID, err)
 	} else if updated {
@@ -192,9 +198,15 @@ func (wp *WorkerPool) failSynthesisWithoutReview(workerID string, job *storage.R
 
 // completeSynthesis stores the synthesis review, guards against the cancel race,
 // and broadcasts review.completed. The done-path mirrors processJob's tail.
-func (wp *WorkerPool) completeSynthesis(
-	workerID string, job *storage.ReviewJob, agentName, prompt, output string,
+func (wp *WorkerPool) completeSynthesisContext(
+	ctx context.Context,
+	workerID string,
+	job *storage.ReviewJob,
+	agentName, prompt, output string,
 ) {
+	if wp.handleUpdateInterruption(ctx, workerID, job) {
+		return
+	}
 	if err := wp.db.CompleteJob(job.ID, agentName, prompt, output); err != nil {
 		log.Printf("[%s] Error storing synthesis review for job %d: %v", workerID, job.ID, err)
 		return
@@ -246,7 +258,7 @@ func (wp *WorkerPool) runSynthesisAgent(
 		log.Printf("[%s] Error saving synthesis prompt for job %d: %v", workerID, job.ID, err)
 	}
 
-	a, agentName, err := wp.configureSynthesisAgent(workerID, job)
+	a, agentName, err := wp.configureSynthesisAgentContext(ctx, workerID, job)
 	if err != nil {
 		return "", "", err
 	}
@@ -299,7 +311,7 @@ func (wp *WorkerPool) runSynthesisAgent(
 			defer checkout.cleanup()
 		}
 		if checkoutErr != nil {
-			wp.failOrRetry(workerID, job, agentName, fmt.Sprintf("prepare checkout: %v", checkoutErr))
+			wp.failOrRetryContext(ctx, workerID, job, agentName, fmt.Sprintf("prepare checkout: %v", checkoutErr))
 			return "", agentName, checkoutErr
 		}
 		// Checkout succeeded and the agent is about to run; mark it invoked only
@@ -315,12 +327,18 @@ func (wp *WorkerPool) runSynthesisAgent(
 	}
 	if err != nil {
 		if errors.Is(ctx.Err(), context.Canceled) {
-			// Job was canceled mid-run; it is already terminal. Don't fail it.
+			if wp.handleUpdateInterruption(ctx, workerID, job) {
+				return "", agentName, errSynthesisCanceled
+			}
+			// A user cancellation is already terminal. Don't fail it.
 			log.Printf("[%s] Synthesis job %d canceled during agent run", workerID, job.ID)
 			return "", agentName, errSynthesisCanceled
 		}
-		wp.failOrRetryAgent(workerID, job, agentName, fmt.Sprintf("agent: %v", err))
+		wp.failOrRetryAgentContext(ctx, workerID, job, agentName, fmt.Sprintf("agent: %v", err))
 		return "", agentName, err
+	}
+	if wp.handleUpdateInterruption(ctx, workerID, job) {
+		return "", agentName, errSynthesisCanceled
 	}
 	wp.captureTokenUsageForSession(context.Background(), workerID, job, sessionWriter.SessionID())
 	return output, agentName, nil
@@ -332,10 +350,16 @@ func (wp *WorkerPool) runSynthesisAgent(
 func (wp *WorkerPool) configureSynthesisAgent(
 	workerID string, job *storage.ReviewJob,
 ) (agent.Agent, string, error) {
+	return wp.configureSynthesisAgentContext(context.Background(), workerID, job)
+}
+
+func (wp *WorkerPool) configureSynthesisAgentContext(
+	ctx context.Context, workerID string, job *storage.ReviewJob,
+) (agent.Agent, string, error) {
 	cfg := wp.cfgGetter.Config()
 	baseAgent, err := resolveConfiguredJobAgent(job, cfg, job.BackupAgent)
 	if err != nil {
-		wp.failOrRetryAgent(workerID, job, job.Agent, fmt.Sprintf("get agent: %v", err))
+		wp.failOrRetryAgentContext(ctx, workerID, job, job.Agent, fmt.Sprintf("get agent: %v", err))
 		return nil, "", err
 	}
 
