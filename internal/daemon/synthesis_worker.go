@@ -176,11 +176,16 @@ func allMembersPassed(
 }
 
 func (wp *WorkerPool) failSynthesisWithoutReviewContext(
-	ctx context.Context, workerID string, job *storage.ReviewJob, errorMsg string,
+	_ context.Context, workerID string, job *storage.ReviewJob, errorMsg string,
 ) {
-	if wp.handleUpdateInterruption(ctx, workerID, job) {
-		return
-	}
+	wp.runAttemptTransition(workerID, job, func() {
+		wp.failSynthesisWithoutReviewLocked(workerID, job, errorMsg)
+	})
+}
+
+func (wp *WorkerPool) failSynthesisWithoutReviewLocked(
+	workerID string, job *storage.ReviewJob, errorMsg string,
+) {
 	if updated, err := wp.db.FailJob(job.ID, workerID, errorMsg); err != nil {
 		log.Printf("[%s] Error failing skipped synthesis job %d: %v", workerID, job.ID, err)
 	} else if updated {
@@ -199,14 +204,21 @@ func (wp *WorkerPool) failSynthesisWithoutReviewContext(
 // completeSynthesis stores the synthesis review, guards against the cancel race,
 // and broadcasts review.completed. The done-path mirrors processJob's tail.
 func (wp *WorkerPool) completeSynthesisContext(
-	ctx context.Context,
+	_ context.Context,
 	workerID string,
 	job *storage.ReviewJob,
 	agentName, prompt, output string,
 ) {
-	if wp.handleUpdateInterruption(ctx, workerID, job) {
-		return
-	}
+	wp.runAttemptTransition(workerID, job, func() {
+		wp.completeSynthesisLocked(workerID, job, agentName, prompt, output)
+	})
+}
+
+func (wp *WorkerPool) completeSynthesisLocked(
+	workerID string,
+	job *storage.ReviewJob,
+	agentName, prompt, output string,
+) {
 	if err := wp.db.CompleteJob(job.ID, agentName, prompt, output); err != nil {
 		log.Printf("[%s] Error storing synthesis review for job %d: %v", workerID, job.ID, err)
 		return

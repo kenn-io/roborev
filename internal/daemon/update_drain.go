@@ -90,6 +90,10 @@ func (c *updateDrainCoordinator) prepare(ownerID, policy string) (UpdateDrainSta
 		}
 	}
 
+	if policy == updatePolicyInterrupt {
+		s.workerPool.attemptTransitionsMu.Lock()
+		defer s.workerPool.attemptTransitionsMu.Unlock()
+	}
 	if err := s.db.SetShutdownDraining(true); err != nil {
 		return UpdateDrainStatus{}, fmt.Errorf("block job claims for update: %w", err)
 	}
@@ -110,7 +114,7 @@ func (c *updateDrainCoordinator) prepare(ownerID, policy string) (UpdateDrainSta
 	}
 	s.updateDrain = lease
 	if policy == updatePolicyInterrupt {
-		s.workerPool.InterruptJobsForUpdate(ids)
+		s.workerPool.interruptJobsForUpdateLocked(ids)
 	}
 	c.armExpiryLocked(lease, lease.expiresAt.Sub(c.now()))
 	return c.snapshotLocked(lease)

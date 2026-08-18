@@ -13,6 +13,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -82,6 +83,55 @@ func TestPrepareUpdateDrainBlocksClaimsAndReportsRunningJobs(t *testing.T) {
 	next, err := db.ClaimJob("worker-next")
 	require.NoError(t, err)
 	assert.Nil(t, next)
+}
+
+func TestInterruptPreparationLinearizesWithRetryTransition(t *testing.T) {
+	server, db, dir := newTestServer(t)
+	createTestJob(t, db, dir, "update-retry-transition-race", "test")
+	job, err := db.ClaimJob("worker-update")
+	require.NoError(t, err)
+	require.NotNil(t, job)
+	checked := make(chan struct{})
+	release := make(chan struct{})
+	server.workerPool.classify = func(agentName, message string) agent.LimitClassification {
+		close(checked)
+		<-release
+		return agent.LimitClassification{
+			Kind: agent.LimitKindNone, Agent: agentName, Message: message,
+		}
+	}
+	transitionDone := make(chan struct{})
+	go func() {
+		defer close(transitionDone)
+		server.workerPool.failOrRetryAgentContext(
+			context.Background(), "worker-update", job, "test", "provider error",
+		)
+	}()
+	require.True(t, waitForUpdateSignal(checked, time.Second))
+	type prepareResult struct {
+		status UpdateDrainStatus
+		err    error
+	}
+	prepared := make(chan prepareResult, 1)
+	go func() {
+		status, prepareErr := server.updateCoordinator.prepare(
+			"owner-transition-race", updatePolicyInterrupt,
+		)
+		prepared <- prepareResult{status: status, err: prepareErr}
+	}()
+	assert.Never(t, func() bool {
+		return len(prepared) != 0
+	}, 20*time.Millisecond, time.Millisecond)
+
+	close(release)
+	require.True(t, waitForUpdateSignal(transitionDone, time.Second))
+	result := <-prepared
+	require.NoError(t, result.err)
+	assert.Equal(t, 0, result.status.TargetedRunningJobs)
+	stored, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, storage.JobStatusQueued, stored.Status)
+	assert.Equal(t, 1, stored.RetryCount)
 }
 
 func TestPrepareUpdateDrainOwnerAndPolicyConflicts(t *testing.T) {
