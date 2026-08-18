@@ -150,7 +150,7 @@ func TestAgentHookRunSupportsLegacyProfilelessRegistration(t *testing.T) {
 // review handling depending on which supported hook registration they use.
 func TestLegacyAndGrokAgentHooksAppendFixGuidelines(t *testing.T) {
 	oldPost := postAgentHook
-	postAgentHook = func(context.Context, agenthook.Request) (agenthook.Response, error) {
+	postAgentHook = func(context.Context, string, agenthook.Request) (agenthook.Response, error) {
 		return agenthook.Response{Triggered: true, Reason: "resolve reviews"}, nil
 	}
 	t.Cleanup(func() { postAgentHook = oldPost })
@@ -243,7 +243,7 @@ func TestRunAgentHookEncodesKitStopResponse(t *testing.T) {
 // applying review findings without the user's evaluation policy.
 func TestRunAgentHookAppendsFixGuidelinesToKitOutput(t *testing.T) {
 	oldPost := postAgentHook
-	postAgentHook = func(context.Context, agenthook.Request) (agenthook.Response, error) {
+	postAgentHook = func(context.Context, string, agenthook.Request) (agenthook.Response, error) {
 		return agenthook.Response{Triggered: true, Reason: "resolve reviews"}, nil
 	}
 	t.Cleanup(func() { postAgentHook = oldPost })
@@ -275,7 +275,7 @@ func TestRunAgentHookAppendsFixGuidelinesToKitOutput(t *testing.T) {
 // policy contract from Stop-triggered reminders.
 func TestRunAgentHookAppendsFixGuidelinesToPostToolUse(t *testing.T) {
 	oldPost := postAgentHook
-	postAgentHook = func(context.Context, agenthook.Request) (agenthook.Response, error) {
+	postAgentHook = func(context.Context, string, agenthook.Request) (agenthook.Response, error) {
 		return agenthook.Response{Triggered: true, Reason: "resolve reviews"}, nil
 	}
 	t.Cleanup(func() { postAgentHook = oldPost })
