@@ -5,6 +5,7 @@ import (
 	"archive/zip"
 	"bytes"
 	"compress/gzip"
+	"context"
 	"crypto/sha256"
 	"encoding/hex"
 	"encoding/json"
@@ -453,6 +454,53 @@ func TestUpdaterPerformUpdateInstallsWindowsZipBinary(t *testing.T) {
 	assert.Contains(t, reporter.steps.String(), "Downloading")
 	assert.Contains(t, reporter.steps.String(), "Installing "+binaryName+"... OK")
 	assert.NotEmpty(t, reporter.progress)
+}
+
+func TestUpdaterPerformUpdateContextCancelsBeforeInstall(t *testing.T) {
+	binaryName := "roborev"
+	if runtime.GOOS == "windows" {
+		binaryName = "roborev.exe"
+	}
+	binDir := t.TempDir()
+	currentBinary := filepath.Join(binDir, binaryName)
+	require.NoError(t, os.WriteFile(currentBinary, []byte("old-binary"), 0o755))
+	requestStarted := make(chan struct{})
+	updater := NewUpdater(Deps{
+		Client: &http.Client{
+			Transport: roundTripFunc(func(req *http.Request) (*http.Response, error) {
+				close(requestStarted)
+				<-req.Context().Done()
+				return nil, req.Context().Err()
+			}),
+		},
+		Version:    "v1.2.0",
+		GOOS:       runtime.GOOS,
+		GOARCH:     runtime.GOARCH,
+		Executable: func() (string, error) { return currentBinary, nil },
+		CacheDir:   t.TempDir,
+	})
+	ctx, cancel := context.WithCancel(context.Background())
+	done := make(chan error, 1)
+	go func() {
+		done <- updater.PerformUpdateContext(ctx, &UpdateInfo{
+			AssetName:   binaryName + ".tar.gz",
+			DownloadURL: "https://downloads.example/" + binaryName + ".tar.gz",
+			Checksum:    strings.Repeat("a", 64),
+		}, &testReporter{})
+	}()
+
+	started := false
+	select {
+	case <-requestStarted:
+		started = true
+	case <-time.After(time.Second):
+	}
+	require.True(t, started, "download did not start")
+	cancel()
+	require.ErrorIs(t, <-done, context.Canceled)
+	installed, err := os.ReadFile(currentBinary)
+	require.NoError(t, err)
+	assert.Equal(t, "old-binary", string(installed))
 }
 
 func createTestArchiveBytes(t *testing.T, entries []archiveEntry) []byte {

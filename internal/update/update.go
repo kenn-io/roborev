@@ -71,6 +71,12 @@ func PerformUpdate(info *UpdateInfo, progressFn func(downloaded, total int64)) e
 	})
 }
 
+func PerformUpdateWithReporter(
+	ctx context.Context, info *UpdateInfo, reporter Reporter,
+) error {
+	return defaultUpdater().PerformUpdateContext(ctx, info, reporter)
+}
+
 func RestartDaemon() error {
 	return nil
 }
@@ -302,6 +308,12 @@ func semverBase(v string) string {
 }
 
 func (u *Updater) PerformUpdate(info *UpdateInfo, reporter Reporter) error {
+	return u.PerformUpdateContext(context.Background(), info, reporter)
+}
+
+func (u *Updater) PerformUpdateContext(
+	ctx context.Context, info *UpdateInfo, reporter Reporter,
+) error {
 	reporter = normalizeReporter(reporter)
 	if info == nil {
 		return fmt.Errorf("update info is nil")
@@ -318,7 +330,7 @@ func (u *Updater) PerformUpdate(info *UpdateInfo, reporter Reporter) error {
 	dstPath := filepath.Join(installDir, targetBinary)
 
 	reporter.Stepf("Downloading %s...\n", info.AssetName)
-	ctx, cancel := context.WithTimeout(context.Background(), downloadTimeout)
+	ctx, cancel := context.WithTimeout(ctx, downloadTimeout)
 	defer cancel()
 	if err := u.client().Install(ctx, info, selfupdate.InstallOptions{
 		DestinationPath:   dstPath,
