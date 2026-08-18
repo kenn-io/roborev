@@ -421,6 +421,7 @@ func (p *PgPool) EnsureSchema(ctx context.Context) error {
 					arm TEXT NOT NULL,
 					subject_hash TEXT NOT NULL,
 					effective_config_hash TEXT NOT NULL,
+					effective_config_json TEXT NOT NULL,
 					assigned_at TIMESTAMP WITH TIME ZONE NOT NULL,
 					source_machine_id UUID NOT NULL,
 					synced_at TIMESTAMP WITH TIME ZONE,
@@ -824,7 +825,7 @@ func (p *PgPool) UpsertExperimentAssignment(ctx context.Context, assignment Sync
 	if err := validateExperimentAssignment(
 		assignment.ReviewUnitKind, assignment.ReviewUnitUUID,
 		assignment.ExperimentID, assignment.Arm, assignment.SubjectHash,
-		assignment.EffectiveConfigHash,
+		assignment.EffectiveConfigHash, assignment.EffectiveConfigJSON,
 	); err != nil {
 		return err
 	}
@@ -841,7 +842,8 @@ func (p *PgPool) UpsertExperimentAssignment(ctx context.Context, assignment Sync
 		}
 
 		rows, err := tx.Query(ctx, `
-			SELECT experiment_id, arm, subject_hash, effective_config_hash
+			SELECT experiment_id, arm, subject_hash, effective_config_hash,
+			       effective_config_json
 			FROM experiment_assignments
 			WHERE review_unit_kind = $1 AND review_unit_uuid = $2`,
 			assignment.ReviewUnitKind, assignment.ReviewUnitUUID)
@@ -850,13 +852,15 @@ func (p *PgPool) UpsertExperimentAssignment(ctx context.Context, assignment Sync
 		}
 		defer rows.Close()
 		for rows.Next() {
-			var experimentID, arm, subjectHash, effectiveConfigHash string
-			if err := rows.Scan(&experimentID, &arm, &subjectHash, &effectiveConfigHash); err != nil {
+			var experimentID, arm, subjectHash, effectiveConfigHash, effectiveConfigJSON string
+			if err := rows.Scan(&experimentID, &arm, &subjectHash,
+				&effectiveConfigHash, &effectiveConfigJSON); err != nil {
 				return err
 			}
 			if experimentID != assignment.ExperimentID || arm != assignment.Arm ||
 				subjectHash != assignment.SubjectHash ||
-				effectiveConfigHash != assignment.EffectiveConfigHash {
+				effectiveConfigHash != assignment.EffectiveConfigHash ||
+				effectiveConfigJSON != assignment.EffectiveConfigJSON {
 				return fmt.Errorf("conflicting experiment assignment for %s/%s",
 					assignment.ReviewUnitKind, assignment.ReviewUnitUUID)
 			}
@@ -869,12 +873,13 @@ func (p *PgPool) UpsertExperimentAssignment(ctx context.Context, assignment Sync
 		if _, err := tx.Exec(ctx, `
 		INSERT INTO experiment_assignments (
 			review_unit_kind, review_unit_uuid, experiment_id, arm, subject_hash,
-			effective_config_hash, assigned_at, source_machine_id
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
+			effective_config_hash, effective_config_json, assigned_at, source_machine_id
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
 		ON CONFLICT(review_unit_kind, review_unit_uuid, experiment_id) DO NOTHING`,
 			assignment.ReviewUnitKind, assignment.ReviewUnitUUID, assignment.ExperimentID,
 			assignment.Arm, assignment.SubjectHash, assignment.EffectiveConfigHash,
-			assignment.AssignedAt, assignment.SourceMachineID); err != nil {
+			assignment.EffectiveConfigJSON, assignment.AssignedAt,
+			assignment.SourceMachineID); err != nil {
 			return err
 		}
 		return nil
@@ -907,7 +912,7 @@ func (p *PgPool) PullExperimentDefinitions(ctx context.Context, excludeMachineID
 func (p *PgPool) PullExperimentAssignments(ctx context.Context, excludeMachineID string) ([]SyncableExperimentAssignment, error) {
 	rows, err := p.pool.Query(ctx, `
 		SELECT review_unit_kind, review_unit_uuid, experiment_id, arm, subject_hash,
-		       effective_config_hash, assigned_at, source_machine_id
+		       effective_config_hash, effective_config_json, assigned_at, source_machine_id
 		FROM experiment_assignments
 		WHERE source_machine_id != $1
 		ORDER BY assigned_at, review_unit_kind, review_unit_uuid`, excludeMachineID)
@@ -920,7 +925,8 @@ func (p *PgPool) PullExperimentAssignments(ctx context.Context, excludeMachineID
 		var assignment SyncableExperimentAssignment
 		if err := rows.Scan(&assignment.ReviewUnitKind, &assignment.ReviewUnitUUID,
 			&assignment.ExperimentID, &assignment.Arm, &assignment.SubjectHash,
-			&assignment.EffectiveConfigHash, &assignment.AssignedAt,
+			&assignment.EffectiveConfigHash, &assignment.EffectiveConfigJSON,
+			&assignment.AssignedAt,
 			&assignment.SourceMachineID); err != nil {
 			return nil, err
 		}

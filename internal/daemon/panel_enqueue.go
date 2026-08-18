@@ -473,7 +473,7 @@ func storageAssignmentForExperiment(
 	if assignment == nil {
 		return nil, nil
 	}
-	effectiveHash, err := config.FingerprintExperimentConfig(plan)
+	effectiveJSON, effectiveHash, err := config.EncodeExperimentConfig(plan)
 	if err != nil {
 		return nil, err
 	}
@@ -484,6 +484,7 @@ func storageAssignmentForExperiment(
 		Arm:                 string(assignment.Arm),
 		SubjectHash:         assignment.SubjectHash,
 		EffectiveConfigHash: effectiveHash,
+		EffectiveConfigJSON: effectiveJSON,
 	}, nil
 }
 

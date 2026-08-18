@@ -123,6 +123,7 @@ CREATE TABLE IF NOT EXISTS roborev.experiment_assignments (
   arm TEXT NOT NULL,
   subject_hash TEXT NOT NULL,
   effective_config_hash TEXT NOT NULL,
+  effective_config_json TEXT NOT NULL,
   assigned_at TIMESTAMP WITH TIME ZONE NOT NULL,
   source_machine_id UUID NOT NULL,
   synced_at TIMESTAMP WITH TIME ZONE,

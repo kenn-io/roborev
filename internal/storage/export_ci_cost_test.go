@@ -60,6 +60,7 @@ func TestExportCICostsIncludesMappedPanelJobWithoutSource(t *testing.T) {
 			ExperimentID: "ci-v1", DefinitionHash: "definition-hash",
 			DefinitionJSON: `{"ratio":1}`, Arm: "experiment",
 			SubjectHash: "subject-hash", EffectiveConfigHash: "config-hash",
+			EffectiveConfigJSON: `{"members":[]}`,
 		},
 		"test-machine", time.Now(),
 	))

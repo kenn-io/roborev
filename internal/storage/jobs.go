@@ -1292,8 +1292,15 @@ func (db *DB) MarkJobRebased(jobID int64) error {
 }
 
 type ReenqueueOpts struct {
-	Model    string
-	Provider string
+	Agent       string
+	Model       string
+	Provider    string
+	Reasoning   string
+	ReviewType  string
+	MinSeverity string
+	BackupAgent string
+	BackupModel string
+	RestorePlan bool
 }
 
 // ReenqueueJob resets a completed, failed, or canceled job back to queued status.
@@ -1368,7 +1375,14 @@ func (db *DB) ReenqueueJobWithRequest(
 	// the same reason.
 	result, err := conn.ExecContext(ctx, `
 		UPDATE review_jobs
-		SET status = 'queued', enqueued_at = ?, worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = 0, patch = NULL, session_id = NULL, session_resumed = 0, resume_source_job_uuid = NULL, token_usage = NULL, command_line = NULL, agent_invoked = 0, synced_at = NULL, model = ?, provider = ?,
+		SET status = 'queued', enqueued_at = ?, worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = 0, patch = NULL, session_id = NULL, session_resumed = 0, resume_source_job_uuid = NULL, token_usage = NULL, command_line = NULL, agent_invoked = 0, synced_at = NULL,
+		    agent = CASE WHEN ? THEN ? ELSE agent END,
+		    model = ?, provider = ?,
+		    reasoning = CASE WHEN ? THEN ? ELSE reasoning END,
+		    review_type = CASE WHEN ? THEN ? ELSE review_type END,
+		    min_severity = CASE WHEN ? THEN ? ELSE min_severity END,
+		    backup_agent = CASE WHEN ? THEN ? ELSE backup_agent END,
+		    backup_model = CASE WHEN ? THEN ? ELSE backup_model END,
 		    prompt_prebuilt = 0,
 		    prompt = CASE WHEN job_type IN ('task', 'compact', 'fix', 'insights') THEN prompt ELSE NULL END,
 		    skip_reason = NULL,
@@ -1378,7 +1392,15 @@ func (db *DB) ReenqueueJobWithRequest(
 		    status IN ('done', 'failed', 'skipped')
 		    OR (status = 'canceled' AND worker_id IS NULL)
 		  )
-	`, enqueuedAt, nullString(opts.Model), nullString(opts.Provider), updatedAt, jobID)
+	`, enqueuedAt,
+		opts.RestorePlan, opts.Agent,
+		nullString(opts.Model), nullString(opts.Provider),
+		opts.RestorePlan, nullString(opts.Reasoning),
+		opts.RestorePlan, nullString(opts.ReviewType),
+		opts.RestorePlan, normalizeMinSeverityForWrite(opts.MinSeverity),
+		opts.RestorePlan, nullString(opts.BackupAgent),
+		opts.RestorePlan, nullString(opts.BackupModel),
+		updatedAt, jobID)
 	if err != nil {
 		return 0, false, err
 	}

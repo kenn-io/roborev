@@ -433,6 +433,7 @@ func TestRerunSynthesisCreatesNewRun(t *testing.T) {
 			ExperimentID: "panel-v1", DefinitionHash: "definition-hash",
 			DefinitionJSON: `{"ratio":1}`, Arm: "experiment",
 			SubjectHash: subjectHash, EffectiveConfigHash: "config-hash",
+			EffectiveConfigJSON: `{"members":[]}`,
 		},
 	}
 	_, oldSynth, err := db.EnqueuePanelRun(srcMembers, srcSynth)

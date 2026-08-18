@@ -381,6 +381,7 @@ CREATE TABLE experiment_assignments (
   arm TEXT NOT NULL,
   subject_hash TEXT NOT NULL,
   effective_config_hash TEXT NOT NULL,
+  effective_config_json TEXT NOT NULL,
   assigned_at TEXT NOT NULL,
   source_machine_id TEXT NOT NULL,
   synced_at TEXT,
@@ -400,6 +401,11 @@ active/passive designs do not require replacing the storage model.
 complete panel plan after explicit request values and availability resolution.
 It does not include unrelated raw repository settings that are resolved later
 by prompt or worker code.
+
+`effective_config_json` stores that same canonical frozen plan privately with
+the assignment. It is not included in review projections or exports. A manual
+standalone rerun uses it to restore the attributed primary and backup plan after
+an execution-time failover has changed the mutable job row.
 
 There is no polymorphic foreign key from `review_unit_uuid`: `job` refers to a
 `review_jobs.uuid`, while `panel` refers to `panel_run_uuid`. Storage methods

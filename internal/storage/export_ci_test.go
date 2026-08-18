@@ -228,6 +228,7 @@ func TestExportCIMetricsIncludesOnlyPostedPanels(t *testing.T) {
 		ExperimentID: "ci-v1", DefinitionHash: "definition-hash",
 		DefinitionJSON: `{"ratio":1}`, Arm: "experiment",
 		SubjectHash: "subject-hash", EffectiveConfigHash: "config-hash",
+		EffectiveConfigJSON: `{"members":[]}`,
 	}
 	require.NoError(t, insertExperimentAssignmentTx(
 		context.Background(), db, ReviewUnitPanel, posted.PanelRunUUID,

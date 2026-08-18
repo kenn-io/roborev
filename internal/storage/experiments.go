@@ -22,6 +22,7 @@ type ExperimentAssignmentInput struct {
 	Arm                 string
 	SubjectHash         string
 	EffectiveConfigHash string
+	EffectiveConfigJSON string
 }
 
 // ExperimentAssignment is the structured attribution projected with reviews
@@ -49,6 +50,7 @@ type SyncableExperimentAssignment struct {
 	Arm                 string
 	SubjectHash         string
 	EffectiveConfigHash string
+	EffectiveConfigJSON string
 	AssignedAt          time.Time
 	SourceMachineID     string
 }
@@ -59,12 +61,14 @@ type experimentStore interface {
 }
 
 func validateExperimentAssignment(
-	kind, unitUUID, experimentID, arm, subjectHash, effectiveConfigHash string,
+	kind, unitUUID, experimentID, arm, subjectHash, effectiveConfigHash,
+	effectiveConfigJSON string,
 ) error {
 	if kind != ReviewUnitJob && kind != ReviewUnitPanel {
 		return fmt.Errorf("invalid experiment review unit kind %q", kind)
 	}
-	if unitUUID == "" || experimentID == "" || subjectHash == "" || effectiveConfigHash == "" {
+	if unitUUID == "" || experimentID == "" || subjectHash == "" ||
+		effectiveConfigHash == "" || effectiveConfigJSON == "" {
 		return errors.New("incomplete experiment assignment")
 	}
 	if arm != "default" && arm != "experiment" {
@@ -90,6 +94,7 @@ func insertExperimentAssignmentTx(
 	if err := validateExperimentAssignment(
 		kind, unitUUID, assignment.ExperimentID, assignment.Arm,
 		assignment.SubjectHash, assignment.EffectiveConfigHash,
+		assignment.EffectiveConfigJSON,
 	); err != nil {
 		return err
 	}
@@ -114,29 +119,32 @@ func insertExperimentAssignmentTx(
 		return fmt.Errorf("experiment definition conflict for %q", assignment.ExperimentID)
 	}
 
-	var existingID, existingArm, existingSubject, existingConfig string
+	var existingID, existingArm, existingSubject, existingConfig, existingConfigJSON string
 	err := exec.QueryRowContext(ctx, `
-		SELECT experiment_id, arm, subject_hash, effective_config_hash
+		SELECT experiment_id, arm, subject_hash, effective_config_hash,
+		       effective_config_json
 		FROM experiment_assignments
 		WHERE review_unit_kind = ? AND review_unit_uuid = ?
 		LIMIT 1`, kind, unitUUID).Scan(
-		&existingID, &existingArm, &existingSubject, &existingConfig)
+		&existingID, &existingArm, &existingSubject, &existingConfig,
+		&existingConfigJSON)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return fmt.Errorf("read experiment assignment: %w", err)
 	}
 	if err == nil && (existingID != assignment.ExperimentID ||
 		existingArm != assignment.Arm || existingSubject != assignment.SubjectHash ||
-		existingConfig != assignment.EffectiveConfigHash) {
+		existingConfig != assignment.EffectiveConfigHash ||
+		existingConfigJSON != assignment.EffectiveConfigJSON) {
 		return fmt.Errorf("conflicting experiment assignment for %s/%s", kind, unitUUID)
 	}
 	if _, err := exec.ExecContext(ctx, `
 		INSERT INTO experiment_assignments (
 			review_unit_kind, review_unit_uuid, experiment_id, arm, subject_hash,
-			effective_config_hash, assigned_at, source_machine_id
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+			effective_config_hash, effective_config_json, assigned_at, source_machine_id
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(review_unit_kind, review_unit_uuid, experiment_id) DO NOTHING`,
 		kind, unitUUID, assignment.ExperimentID, assignment.Arm, assignment.SubjectHash,
-		assignment.EffectiveConfigHash, nowText, machineID,
+		assignment.EffectiveConfigHash, assignment.EffectiveConfigJSON, nowText, machineID,
 	); err != nil {
 		return fmt.Errorf("store experiment assignment: %w", err)
 	}
@@ -207,7 +215,7 @@ func (db *DB) GetExperimentAssignmentInputForJobUUID(jobUUID string) (*Experimen
 	var assignment ExperimentAssignmentInput
 	err := db.QueryRow(`
 		SELECT a.experiment_id, d.definition_hash, d.definition_json, a.arm,
-		       a.subject_hash, a.effective_config_hash
+		       a.subject_hash, a.effective_config_hash, a.effective_config_json
 		FROM experiment_assignments a
 		JOIN experiment_definitions d ON d.experiment_id = a.experiment_id
 		WHERE a.review_unit_kind = ? AND a.review_unit_uuid = ?
@@ -215,7 +223,7 @@ func (db *DB) GetExperimentAssignmentInputForJobUUID(jobUUID string) (*Experimen
 		LIMIT 1`, kind, unitUUID).Scan(
 		&assignment.ExperimentID, &assignment.DefinitionHash,
 		&assignment.DefinitionJSON, &assignment.Arm, &assignment.SubjectHash,
-		&assignment.EffectiveConfigHash,
+		&assignment.EffectiveConfigHash, &assignment.EffectiveConfigJSON,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -306,7 +314,7 @@ func (db *DB) GetExperimentDefinitionsToSync(machineID string) ([]SyncableExperi
 func (db *DB) GetExperimentAssignmentsToSync(machineID string) ([]SyncableExperimentAssignment, error) {
 	rows, err := db.Query(`
 		SELECT review_unit_kind, review_unit_uuid, experiment_id, arm, subject_hash,
-		       effective_config_hash, assigned_at, source_machine_id
+		       effective_config_hash, effective_config_json, assigned_at, source_machine_id
 		FROM experiment_assignments
 		WHERE source_machine_id = ? AND synced_at IS NULL
 		ORDER BY assigned_at, review_unit_kind, review_unit_uuid`, machineID)
@@ -320,7 +328,8 @@ func (db *DB) GetExperimentAssignmentsToSync(machineID string) ([]SyncableExperi
 		var assignedAt string
 		if err := rows.Scan(&assignment.ReviewUnitKind, &assignment.ReviewUnitUUID,
 			&assignment.ExperimentID, &assignment.Arm, &assignment.SubjectHash,
-			&assignment.EffectiveConfigHash, &assignedAt, &assignment.SourceMachineID); err != nil {
+			&assignment.EffectiveConfigHash, &assignment.EffectiveConfigJSON,
+			&assignedAt, &assignment.SourceMachineID); err != nil {
 			return nil, err
 		}
 		assignment.AssignedAt = parseSQLiteTime(assignedAt)
@@ -372,7 +381,7 @@ func (db *DB) UpsertPulledExperimentAssignment(assignment SyncableExperimentAssi
 	if err := validateExperimentAssignment(
 		assignment.ReviewUnitKind, assignment.ReviewUnitUUID,
 		assignment.ExperimentID, assignment.Arm, assignment.SubjectHash,
-		assignment.EffectiveConfigHash,
+		assignment.EffectiveConfigHash, assignment.EffectiveConfigJSON,
 	); err != nil {
 		return err
 	}
@@ -383,31 +392,34 @@ func (db *DB) UpsertPulledExperimentAssignment(assignment SyncableExperimentAssi
 	}
 	defer func() { _ = tx.Rollback() }()
 
-	var existingID, existingArm, existingSubject, existingConfig string
+	var existingID, existingArm, existingSubject, existingConfig, existingConfigJSON string
 	err = tx.QueryRowContext(ctx, `
-		SELECT experiment_id, arm, subject_hash, effective_config_hash
+		SELECT experiment_id, arm, subject_hash, effective_config_hash,
+		       effective_config_json
 		FROM experiment_assignments
 		WHERE review_unit_kind = ? AND review_unit_uuid = ?
 		LIMIT 1`, assignment.ReviewUnitKind, assignment.ReviewUnitUUID).Scan(
-		&existingID, &existingArm, &existingSubject, &existingConfig)
+		&existingID, &existingArm, &existingSubject, &existingConfig,
+		&existingConfigJSON)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
 	if err == nil && (existingID != assignment.ExperimentID ||
 		existingArm != assignment.Arm || existingSubject != assignment.SubjectHash ||
-		existingConfig != assignment.EffectiveConfigHash) {
+		existingConfig != assignment.EffectiveConfigHash ||
+		existingConfigJSON != assignment.EffectiveConfigJSON) {
 		return fmt.Errorf("conflicting experiment assignment for %s/%s",
 			assignment.ReviewUnitKind, assignment.ReviewUnitUUID)
 	}
 	_, err = tx.ExecContext(ctx, `
 		INSERT INTO experiment_assignments (
 			review_unit_kind, review_unit_uuid, experiment_id, arm, subject_hash,
-			effective_config_hash, assigned_at, source_machine_id, synced_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+			effective_config_hash, effective_config_json, assigned_at, source_machine_id, synced_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(review_unit_kind, review_unit_uuid, experiment_id) DO NOTHING`,
 		assignment.ReviewUnitKind, assignment.ReviewUnitUUID, assignment.ExperimentID,
 		assignment.Arm, assignment.SubjectHash, assignment.EffectiveConfigHash,
-		assignment.AssignedAt.Format(time.RFC3339), assignment.SourceMachineID,
+		assignment.EffectiveConfigJSON, assignment.AssignedAt.Format(time.RFC3339), assignment.SourceMachineID,
 		time.Now().UTC().Format(time.RFC3339))
 	if err != nil {
 		return err

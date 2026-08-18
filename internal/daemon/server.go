@@ -868,26 +868,46 @@ func validatedWorktreePath(worktreePath, repoPath string) string {
 	return worktreePath
 }
 
-func resolveRerunModelProvider(job *storage.ReviewJob, cfg *config.Config) (string, string, error) {
+func resolveRerunOpts(
+	job *storage.ReviewJob,
+	cfg *config.Config,
+	assignment *storage.ExperimentAssignmentInput,
+) (storage.ReenqueueOpts, error) {
 	resolutionPath := job.RepoPath
 	if job.WorktreePath != "" {
 		worktreePath := validatedWorktreePath(job.WorktreePath, job.RepoPath)
 		if worktreePath == "" {
-			return "", "", fmt.Errorf("rerun job worktree path is stale or invalid")
+			return storage.ReenqueueOpts{}, fmt.Errorf("rerun job worktree path is stale or invalid")
 		}
 		resolutionPath = worktreePath
 	}
 
 	if err := config.ValidateRepoConfig(resolutionPath); err != nil {
-		return "", "", fmt.Errorf("resolve workflow config: %w", err)
+		return storage.ReenqueueOpts{}, fmt.Errorf("resolve workflow config: %w", err)
 	}
-	if len(job.Experiments) > 0 {
-		if err := validateRerunAgent(
-			resolutionPath, job.Agent, job.BackupAgent, cfg,
-		); err != nil {
-			return "", "", err
+	if assignment != nil {
+		var plan experimentJobPlan
+		if err := json.Unmarshal([]byte(assignment.EffectiveConfigJSON), &plan); err != nil {
+			return storage.ReenqueueOpts{}, fmt.Errorf("decode frozen experiment plan: %w", err)
 		}
-		return job.Model, job.Provider, nil
+		planHash, err := config.FingerprintExperimentConfig(plan)
+		if err != nil {
+			return storage.ReenqueueOpts{}, fmt.Errorf("fingerprint frozen experiment plan: %w", err)
+		}
+		if planHash != assignment.EffectiveConfigHash {
+			return storage.ReenqueueOpts{}, errors.New("frozen experiment plan does not match its attribution")
+		}
+		if err := validateRerunAgent(
+			resolutionPath, plan.Agent, plan.BackupAgent, cfg,
+		); err != nil {
+			return storage.ReenqueueOpts{}, err
+		}
+		return storage.ReenqueueOpts{
+			Agent: plan.Agent, Model: plan.Model, Provider: plan.Provider,
+			Reasoning: plan.Reasoning, ReviewType: plan.ReviewType,
+			MinSeverity: plan.MinSeverity, BackupAgent: plan.BackupAgent,
+			BackupModel: plan.BackupModel, RestorePlan: true,
+		}, nil
 	}
 
 	workflow := workflowForJob(job.JobType, job.ReviewType)
@@ -895,7 +915,7 @@ func resolveRerunModelProvider(job *storage.ReviewJob, cfg *config.Config) (stri
 		"", resolutionPath, cfg, workflow, job.Reasoning,
 	)
 	if err != nil {
-		return "", "", fmt.Errorf("resolve workflow config: %w", err)
+		return storage.ReenqueueOpts{}, fmt.Errorf("resolve workflow config: %w", err)
 	}
 
 	backupAgent := resolution.BackupAgent
@@ -903,16 +923,21 @@ func resolveRerunModelProvider(job *storage.ReviewJob, cfg *config.Config) (stri
 		backupAgent = job.BackupAgent
 	}
 	if err := validateRerunAgent(resolutionPath, job.Agent, backupAgent, cfg); err != nil {
-		return "", "", err
+		return storage.ReenqueueOpts{}, err
 	}
 
 	provider := strings.TrimSpace(job.RequestedProvider)
 	if model := strings.TrimSpace(job.RequestedModel); model != "" {
-		return model, provider, nil
+		return storage.ReenqueueOpts{Model: model, Provider: provider}, nil
 	}
 
 	model := resolution.ModelForSelectedAgent(job.Agent, "")
-	return model, provider, nil
+	return storage.ReenqueueOpts{Model: model, Provider: provider}, nil
+}
+
+func resolveRerunModelProvider(job *storage.ReviewJob, cfg *config.Config) (string, string, error) {
+	opts, err := resolveRerunOpts(job, cfg, nil)
+	return opts.Model, opts.Provider, err
 }
 
 func validateRerunAgent(repoPath string, agentName string, backupAgent string, cfg *config.Config) error {
@@ -2252,19 +2277,19 @@ func (s *Server) humaRerunJob(
 		)
 	}
 
-	model, provider, err := resolveRerunModelProvider(
-		job, s.configWatcher.Config(),
-	)
+	assignment, err := s.db.GetExperimentAssignmentInputForJobUUID(job.UUID)
+	if err != nil {
+		return nil, huma.Error500InternalServerError(
+			fmt.Sprintf("load experiment assignment: %v", err),
+		)
+	}
+	rerunOpts, err := resolveRerunOpts(job, s.configWatcher.Config(), assignment)
 	if err != nil {
 		return nil, huma.Error400BadRequest(err.Error())
 	}
 
 	resultJobID, replayed, err := s.db.ReenqueueJobWithRequest(
-		input.Body.JobID,
-		storage.ReenqueueOpts{
-			Model:    model,
-			Provider: provider,
-		}, input.Body.RequestID,
+		input.Body.JobID, rerunOpts, input.Body.RequestID,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {

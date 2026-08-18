@@ -17,6 +17,7 @@ func TestEnqueueJobStoresExperimentAtomically(t *testing.T) {
 		Arm:                 "experiment",
 		SubjectHash:         "subject-one",
 		EffectiveConfigHash: "config-one",
+		EffectiveConfigJSON: `{"agent":"codex"}`,
 	}
 	job, err := db.EnqueueJob(EnqueueOpts{
 		RepoID: repo.ID, GitRef: "first", Agent: "codex",
@@ -68,6 +69,7 @@ func TestPanelExperimentProjectsToEveryJob(t *testing.T) {
 		Arm:                 "experiment",
 		SubjectHash:         "panel-subject",
 		EffectiveConfigHash: "panel-config",
+		EffectiveConfigJSON: `{"members":[]}`,
 	}
 	members, synthesis, err := db.EnqueuePanelRun(
 		[]EnqueueOpts{{
@@ -115,6 +117,7 @@ func TestExportReviewIncludesExperimentAndResumeLineage(t *testing.T) {
 		Arm:                 "experiment",
 		SubjectHash:         "subject-hash",
 		EffectiveConfigHash: "config-hash",
+		EffectiveConfigJSON: `{"agent":"codex"}`,
 	}
 	job, err := db.EnqueueJob(EnqueueOpts{
 		RepoID: repo.ID, GitRef: "review-sha", Agent: "codex",
@@ -161,7 +164,8 @@ func TestUpsertPulledExperimentAssignmentConflictLeavesOriginalRow(t *testing.T)
 		ReviewUnitKind: ReviewUnitJob, ReviewUnitUUID: "job-unit-1",
 		ExperimentID: "session-v1", Arm: "experiment",
 		SubjectHash: "subject-a", EffectiveConfigHash: "config-a",
-		AssignedAt: assignedAt, SourceMachineID: "machine-a",
+		EffectiveConfigJSON: `{"agent":"codex"}`,
+		AssignedAt:          assignedAt, SourceMachineID: "machine-a",
 	}
 	require.NoError(t, db.UpsertPulledExperimentAssignment(original))
 	require.NoError(t, db.UpsertPulledExperimentAssignment(original))

@@ -451,6 +451,28 @@ func TestSelectReviewExperimentRejectsUnknownNestedKey(t *testing.T) {
 	assert.Contains(t, err.Error(), "strict mode")
 }
 
+func TestSelectReviewExperimentValidatesOverlayForDefaultArm(t *testing.T) {
+	enabled := true
+	ratio := 0.0
+	_, err := SelectReviewExperiment(ExperimentSelectionInput{
+		Workflow: ExperimentWorkflowReview,
+		Subject: ExperimentSubject{
+			Repository: "github.com/example/project", Branch: "feature",
+		},
+		Global: &Config{Experiments: map[string]ExperimentDefinition{
+			"invalid-control-v1": {
+				Enabled: &enabled, Ratio: &ratio,
+				Workflows: []ExperimentWorkflow{ExperimentWorkflowReview},
+				Config: map[string]any{"review": map[string]any{
+					"default_pnael": "typo",
+				}},
+			},
+		}},
+	})
+	require.Error(t, err)
+	assert.Contains(t, err.Error(), "strict mode")
+}
+
 func TestSelectReviewExperimentRejectsDefinitionMutation(t *testing.T) {
 	enabled := true
 	disabled := false

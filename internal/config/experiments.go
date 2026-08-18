@@ -220,15 +220,17 @@ func SelectReviewExperiment(in ExperimentSelectionInput) (ExperimentSelection, e
 	}
 	effectiveRaw := cloneExperimentMap(in.RawRepo)
 	effectiveCfg := in.Repo
+	overlaidRaw, err := applyExperimentOverlay(in.Global, effectiveRaw, selected.Config)
+	if err != nil {
+		return ExperimentSelection{}, err
+	}
+	overlaidCfg, err := decodeExperimentRepoConfig(overlaidRaw)
+	if err != nil {
+		return ExperimentSelection{}, fmt.Errorf("experiment %q config: %w", selectedID, err)
+	}
 	if arm == ExperimentArmExperimental {
-		effectiveRaw, err = applyExperimentOverlay(in.Global, effectiveRaw, selected.Config)
-		if err != nil {
-			return ExperimentSelection{}, err
-		}
-		effectiveCfg, err = decodeExperimentRepoConfig(effectiveRaw)
-		if err != nil {
-			return ExperimentSelection{}, fmt.Errorf("experiment %q config: %w", selectedID, err)
-		}
+		effectiveRaw = overlaidRaw
+		effectiveCfg = overlaidCfg
 	}
 	result.RepoConfig = effectiveCfg
 	result.RawRepoConfig = effectiveRaw
@@ -514,6 +516,17 @@ func FingerprintExperimentConfig(value any) (string, error) {
 		return "", err
 	}
 	return sha256Hex(encoded), nil
+}
+
+// EncodeExperimentConfig returns the canonical JSON and hash for a frozen
+// review plan. The JSON lets a later rerun restore the attributed plan after
+// execution-time failover mutates the job row.
+func EncodeExperimentConfig(value any) (string, string, error) {
+	encoded, err := json.Marshal(value)
+	if err != nil {
+		return "", "", err
+	}
+	return string(encoded), sha256Hex(encoded), nil
 }
 
 func mergeExperimentMaps(base, overlay map[string]any) map[string]any {

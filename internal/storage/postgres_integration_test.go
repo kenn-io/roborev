@@ -730,7 +730,8 @@ func TestIntegration_ExperimentAssignmentConflictLeavesOriginalRow(t *testing.T)
 		ReviewUnitKind: ReviewUnitJob, ReviewUnitUUID: "job-unit-1",
 		ExperimentID: "session-v1", Arm: "experiment",
 		SubjectHash: "subject-a", EffectiveConfigHash: "config-a",
-		AssignedAt: assignedAt, SourceMachineID: machineID,
+		EffectiveConfigJSON: `{"agent":"codex"}`,
+		AssignedAt:          assignedAt, SourceMachineID: machineID,
 	}
 	require.NoError(t, env.Pool.UpsertExperimentAssignment(env.Ctx, original))
 	require.NoError(t, env.Pool.UpsertExperimentAssignment(env.Ctx, original))

@@ -214,7 +214,17 @@ func TestExperimentStandaloneRerunPreservesFrozenPlan(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, claimed)
 	require.Equal(t, job.ID, claimed.ID)
-	require.NoError(t, db.CompleteJob(job.ID, job.Agent, "prompt", "No issues found."))
+	failedOver, err := db.FailoverJob(
+		job.ID, "experiment-rerun-worker", job.BackupAgent, job.BackupModel,
+	)
+	require.NoError(t, err)
+	assert.True(t, failedOver)
+	claimed, err = db.ClaimJob("experiment-backup-worker")
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	require.Equal(t, job.ID, claimed.ID)
+	assert.Equal(t, "claude-code", claimed.Agent)
+	require.NoError(t, db.CompleteJob(job.ID, claimed.Agent, "prompt", "No issues found."))
 
 	cfg.ReviewModel = "changed-model"
 	cfg.ReviewReasoning = "low"
@@ -230,6 +240,7 @@ func TestExperimentStandaloneRerunPreservesFrozenPlan(t *testing.T) {
 	rerun, err := db.GetJobByID(job.ID)
 	require.NoError(t, err)
 	assert.Equal(t, storage.JobStatusQueued, rerun.Status)
+	assert.Equal(t, "test", rerun.Agent)
 	assert.Equal(t, "frozen-model", rerun.Model)
 	assert.Equal(t, "openai", rerun.Provider)
 	assert.Equal(t, "high", rerun.Reasoning)
