@@ -137,8 +137,11 @@ The daemon holds at most one active update lease. Preparing again with the same
 owner ID is idempotent, which lets one updater retry a lost response. Preparing
 with a different owner while the lease is unexpired returns HTTP 409 with the
 remaining lease duration. The updater writes no operation record and takes no
-data-directory lock. After a hard process exit, the next updater prepares fresh
-once the old lease expires.
+data-directory lock. After a hard process exit before installation, the next
+updater prepares fresh once the old lease expires. A hard exit after the atomic
+install remains an explicit non-goal: without updater-side persistent state, a
+later invocation cannot infer that a stopped daemon should be started solely
+because the installed binary is already current.
 
 Preparation is serialized with shutdown preparation by the daemon lifecycle
 mutex. The daemon tracks update-drain ownership and shutdown-drain ownership as
@@ -256,8 +259,11 @@ Hook and skill updates occur only after daemon verification. A failure in those
 ancillary updates remains a warning, matching current behavior, but the output
 names the affected phase.
 
-When no daemon is running, the updater skips preparation and restart. Successful
-binary installation is sufficient for the final success line.
+When the initial probe finds no daemon, the updater checks again before
+installation and after installation. A daemon that appears at either boundary
+is prepared, drained, restarted, and version-verified before success. Only when
+both rediscovery checks still find no daemon does the phase say
+`Daemon       not running` and successful binary installation suffice.
 
 For service-manager restarts, the existing replacement-PID handoff detection
 remains in use. Success still requires a responsive daemon with the expected

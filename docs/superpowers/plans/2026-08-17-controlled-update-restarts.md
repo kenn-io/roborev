@@ -1370,7 +1370,12 @@ printUpdatePhase(out, "Skills", skillsResult)
 fmt.Fprintf(out, "\nUpdated roborev to %s\n", info.LatestVersion)
 ```
 
-If no daemon is running, print `Daemon       not running`. Do not print the final success line if restart/readiness/version verification fails. Keep hook and skill failures as phase warnings after daemon verification.
+If no daemon is running initially, rediscover it immediately before and after
+installation. Prepare and drain a daemon found before installation; prepare,
+drain, and restart one found afterward. Print `Daemon       not running` only
+when both checks remain empty. Do not print the final success line if
+restart/readiness/version verification fails. Keep hook and skill failures as
+phase warnings after daemon verification.
 
 - [ ] **Step 5: Add exact-output and ordering tests**
 

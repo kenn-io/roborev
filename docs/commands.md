@@ -1064,7 +1064,9 @@ Skills       done
 Updated roborev to v0.65.0
 ```
 
-If no daemon is running, the daemon phase says `not running`. Pressing Ctrl-C
-before installation releases the update drain. Pressing it after installation
-exits nonzero and tells you to run `roborev daemon restart` rather than claiming
-the update completed.
+If no daemon is running initially, the updater checks again before and after
+installation so a daemon started concurrently is still drained, restarted, and
+version-verified. The daemon phase says `not running` only when both checks stay
+empty. Pressing Ctrl-C before installation releases the update drain. Pressing
+it after installation exits nonzero and tells you to run
+`roborev daemon restart` rather than claiming the update completed.
