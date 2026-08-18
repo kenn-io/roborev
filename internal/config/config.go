@@ -106,8 +106,8 @@ type CostConfig struct {
 type WebConfig struct {
 	Enabled       bool   `toml:"enabled" comment:"Serve the browser application on a separate listener."`
 	Listen        string `toml:"listen" comment:"Loopback browser listener address. Port 0 selects an ephemeral port."`
-	PublicOrigin  string `toml:"public_origin" comment:"Exact HTTPS browser origin used by a reverse proxy."`
-	BasePath      string `toml:"base_path" comment:"Optional browser URL path prefix."`
+	PublicOrigin  string `toml:"public_origin" comment:"Exact dedicated HTTPS browser origin used by a reverse proxy."`
+	BasePath      string `toml:"base_path" comment:"Optional browser routing prefix; not a same-origin security boundary."`
 	AuthToken     string `toml:"auth_token" sensitive:"true" comment:"Token exchanged for a process-local browser session."`
 	AuthTokenFile string `toml:"auth_token_file" comment:"Host-local file containing the browser auth token."`
 }

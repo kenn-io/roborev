@@ -53,7 +53,7 @@ web-restore:
 web-release-check: web-embed
 	@set -e; trap '$(MAKE) web-restore' EXIT; \
 		ROBOREV_RUN_WEB_RELEASE_CHECK=1 CGO_ENABLED=0 \
-		go test ./internal/web -run '^TestEmbeddedReleaseDistribution$$' -count=1
+		go test ./internal/web -run '^TestEmbeddedRelease' -count=1
 
 release-snapshot-check:
 	@set -e; trap 'cd web && bun run assets:restore' EXIT; \

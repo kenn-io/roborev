@@ -2,6 +2,8 @@ package web
 
 import (
 	"io/fs"
+	"net/http"
+	"net/http/httptest"
 	"os"
 	"strings"
 	"testing"
@@ -13,7 +15,7 @@ import (
 
 func completeDistribution() fstest.MapFS {
 	return fstest.MapFS{
-		"index.html":              {Data: []byte(`<!doctype html><meta name="roborev-web-distribution" content="production"><div id="app"></div>`)},
+		"index.html":              {Data: []byte(`<!doctype html><meta name="roborev-web-distribution" content="production"><meta name="roborev-base-path" content="" /><base href="/" /><div id="app"></div>`)},
 		".vite/manifest.json":     {Data: []byte(`{"index.html":{"file":"assets/index-a1b2c3.js","css":["assets/index-a1b2c3.css"]}}`)},
 		"assets/index-a1b2c3.js":  {Data: []byte(`console.log("ready")`)},
 		"assets/index-a1b2c3.css": {Data: []byte(`body{margin:0}`)},
@@ -102,6 +104,23 @@ func TestEmbeddedReleaseDistribution(t *testing.T) {
 		t.Skip("release asset validation is enabled by the release target")
 	}
 	require.NoError(t, ValidateEmbeddedRelease())
+}
+
+func TestEmbeddedReleaseBasePathInjection(t *testing.T) {
+	if os.Getenv("ROBOREV_RUN_WEB_RELEASE_CHECK") != "1" {
+		t.Skip("release asset validation is enabled by the release target")
+	}
+	handler, err := NewEmbeddedHandler("/review-ui")
+	require.NoError(t, err)
+
+	req := httptest.NewRequest(http.MethodGet, "/reviews/42", nil)
+	req.Header.Set("Accept", "text/html")
+	recorder := httptest.NewRecorder()
+	handler.ServeHTTP(recorder, req)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	assert.Contains(t, recorder.Body.String(), `<meta name="roborev-base-path" content="/review-ui" />`)
+	assert.Contains(t, recorder.Body.String(), `<base href="/review-ui/" />`)
 }
 
 func TestManifestAssetMustBeRegular(t *testing.T) {

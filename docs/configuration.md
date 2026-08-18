@@ -764,8 +764,8 @@ column_borders = true             # Show separators between TUI columns
 | `server_addr` | string | 127.0.0.1:7373 | Daemon listen address. Use `unix://` for Unix domain socket (see [Unix Domain Socket](#unix-domain-socket)) | No |
 | `web.enabled` | bool | true | Serve the embedded browser application on a separate listener | No |
 | `web.listen` | string | 127.0.0.1:0 | Loopback browser listener address. Port 0 selects an available ephemeral port | No |
-| `web.public_origin` | string | - | Exact HTTPS origin exposed by a reverse proxy | No |
-| `web.base_path` | string | - | Optional canonical absolute URL path prefix, without a trailing slash | No |
+| `web.public_origin` | string | - | Exact dedicated HTTPS origin exposed by a reverse proxy | No |
+| `web.base_path` | string | - | Optional canonical routing prefix, without a trailing slash; not a same-origin security boundary | No |
 | `web.auth_token` | string | - | Base64url-encoded 32-byte random token exchanged for a process-local browser session | No |
 | `web.auth_token_file` | string | - | Host-local file containing the browser token; mutually exclusive with `web.auth_token` | No |
 | `max_workers` | int | 4 | Number of parallel review workers | No |
@@ -844,13 +844,14 @@ base_path = "/reviews"
 auth_token_file = "/etc/roborev/web-auth-token"
 ```
 
-`public_origin` must be an exact scheme-and-authority origin with no path. Set
-`base_path` separately when the proxy mounts the browser application below a URL
-prefix; it must start with `/`, have no trailing slash, query, fragment, or path
-traversal. The token file must contain exactly one base64url-encoded 32-byte
-token, optionally followed by one terminal newline. It is mutually exclusive
-with `auth_token` and is read when the daemon starts, so the token bytes do not
-need to be stored in the configuration file.
+`public_origin` must be an exact scheme-and-authority origin with no path and
+must be dedicated to Roborev-controlled content. Serve sibling applications from
+separate origins. Set `base_path` separately when the proxy mounts the browser
+application below a URL prefix; it must start with `/`, have no trailing slash,
+query, fragment, or path traversal. The token file must contain exactly one
+base64url-encoded 32-byte token, optionally followed by one terminal newline. It
+is mutually exclusive with `auth_token` and is read when the daemon starts, so
+the token bytes do not need to be stored in the configuration file.
 
 The proxy must preserve the public `Host`, set conventional forwarding headers,
 and avoid buffering `/api/stream/events` and streamed `/api/job/output`
@@ -860,8 +861,11 @@ so credentials are never sent over a plaintext network hop. The CLI API remains
 private on its original listener.
 
 The browser session cookie uses `/` when `base_path` is empty and
-`base_path + "/"` when a prefix is configured, keeping credentials scoped to the
-browser application on shared origins.
+`base_path + "/"` when a prefix is configured. That path scope reduces
+incidental cookie transmission, but it is not an authorization boundary: scripts
+on the same origin can still make requests below the prefix. `base_path`
+provides routing only, so do not host sibling applications on the Roborev
+origin.
 
 The browser exchanges the daemon token for an HTTP-only cookie and tab-scoped
 credentials. The token is entered after the public shell opens and is never

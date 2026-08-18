@@ -3,6 +3,7 @@ package web
 import (
 	"bytes"
 	"compress/gzip"
+	"fmt"
 	"html"
 	"io/fs"
 	"net/http"
@@ -12,6 +13,11 @@ import (
 )
 
 const ContentSecurityPolicy = "default-src 'self'; base-uri 'self'; object-src 'none'; frame-ancestors 'none'; form-action 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; style-src-attr 'unsafe-inline'; style-src-elem 'self' 'unsafe-inline'; img-src 'self' data:; font-src 'self'; connect-src 'self'"
+
+const (
+	browserBasePathMarker = `<meta name="roborev-base-path" content="" />`
+	browserBaseHrefMarker = `<base href="/" />`
+)
 
 type httpHandler = http.Handler
 
@@ -32,7 +38,13 @@ func NewHandler(files fs.FS, basePath string) (http.Handler, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &handler{files: files, catalog: catalog, index: renderIndex(index, basePath), basePath: basePath}, nil
+	if !catalog.stub {
+		index, err = renderIndex(index, basePath)
+		if err != nil {
+			return nil, err
+		}
+	}
+	return &handler{files: files, catalog: catalog, index: index, basePath: basePath}, nil
 }
 
 func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
@@ -93,12 +105,36 @@ func (h *handler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	http.NotFound(w, r)
 }
 
-func renderIndex(index []byte, basePath string) []byte {
+func renderIndex(index []byte, basePath string) ([]byte, error) {
 	basePathHTML := html.EscapeString(basePath)
 	baseHrefHTML := html.EscapeString(joinBasePath(basePath, "/"))
-	rendered := strings.Replace(string(index), `<meta name="roborev-base-path" content="">`, `<meta name="roborev-base-path" content="`+basePathHTML+`">`, 1)
-	rendered = strings.Replace(rendered, `<base href="/">`, `<base href="`+baseHrefHTML+`">`, 1)
-	return []byte(rendered)
+	rendered, err := replaceIndexMarker(
+		string(index),
+		browserBasePathMarker,
+		`<meta name="roborev-base-path" content="`+basePathHTML+`" />`,
+		"browser base path marker",
+	)
+	if err != nil {
+		return nil, err
+	}
+	rendered, err = replaceIndexMarker(
+		rendered,
+		browserBaseHrefMarker,
+		`<base href="`+baseHrefHTML+`" />`,
+		"browser base href marker",
+	)
+	if err != nil {
+		return nil, err
+	}
+	return []byte(rendered), nil
+}
+
+func replaceIndexMarker(index, marker, replacement, name string) (string, error) {
+	count := strings.Count(index, marker)
+	if count != 1 {
+		return "", fmt.Errorf("%s must occur exactly once, found %d", name, count)
+	}
+	return strings.Replace(index, marker, replacement, 1), nil
 }
 
 func joinBasePath(basePath, internalPath string) string {
