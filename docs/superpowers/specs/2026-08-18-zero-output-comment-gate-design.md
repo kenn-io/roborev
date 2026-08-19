@@ -41,22 +41,34 @@ successful reviews are unchanged.
 ## Error Classification
 
 Agent execution gains an unavailable category distinct from quota limits and
-genuine review results. Codex returns this category for failures before the JSON
-event protocol starts, including failures in its `exec --help` capability
-probes, command startup failure, and a nonzero process exit with no valid
-events.
+genuine review results. Codex attaches a typed pre-protocol wrapper to command
+startup failures, propagated `exec --help` capability-probe errors, and a
+nonzero process exit with no valid events. The intentional compatibility
+fallback in `codexSupportsIgnoreUserConfig` remains unchanged: a probe command
+that merely rejects the optional flag reports the capability as unsupported and
+does not become an unavailable error.
 
-The unavailable category uses a typed wrapper while the error remains in
+The worker applies the existing quota, session, and transient classifiers to
+the complete wrapped error before considering the unavailable category. A
+pre-protocol error that still contains a recognized provider or session signal
+keeps its existing cooldown, retry, prefix, and terminal behavior. Only a typed
+pre-protocol error whose limit classification is `LimitKindNone` enters the
+unavailable path.
+
+The unavailable category uses its typed wrapper while the error remains in
 memory. Storage keeps the existing string schema and persists a canonical
 `unavailable:` category prefix followed by the diagnostic. Classification uses
 the stable prefix, while local logs retain the complete wrapped cause.
 Deterministic pre-protocol failures do not consume the ordinary in-job retry
-loop. They use the existing non-retryable-agent path: fail over to the
-configured backup agent when it is available and not cooling down, otherwise
-fail the job immediately. After persistence, `unavailable:` remains a genuine
-failure for panel classification, so the daemon's higher-level CI scheduler
-continues to provide bounded recovery attempts after the environment changes.
-Daemon-free CI returns nonzero to its caller.
+loop. They use the existing non-retryable-agent path: attempt a configured,
+distinct backup agent that is not cooling down, otherwise fail the job
+immediately. Explicit stored backups retain their existing semantics and are
+not preflighted against `PATH`; if that backup attempt also fails, its error is
+classified independently. Workflow-derived backups retain their existing
+configuration-aware availability check. After persistence, `unavailable:`
+remains a genuine failure for panel classification, so the daemon's
+higher-level CI scheduler continues to provide bounded recovery attempts after
+the environment changes. Daemon-free CI returns nonzero to its caller.
 
 This classification improves retry behavior and local status, but it is not the
 security boundary. The publication policy remains the final gate even for
@@ -102,11 +114,17 @@ Behavior tests will prove:
 - daemon panels with a substantive member remain publishable;
 - the shared substantive-output helper accepts only completed, trimmed nonempty
   review output and is used by both posting flows;
-- Codex `exec --help` probe failure, command startup failure, and nonzero exit
-  without valid protocol events are classified unavailable;
-- unavailable worker failures fail over to an eligible backup agent and
-  otherwise avoid the generic immediate retry loop while retaining their
-  complete diagnostic locally;
+- propagated Codex `exec --help` probe errors, command startup failure, and
+  nonzero exit without valid protocol events are classified unavailable when
+  no quota, session, or transient signal takes precedence;
+- the `codexSupportsIgnoreUserConfig` compatibility rejection remains a
+  successful unsupported-capability fallback rather than an unavailable error;
+- no-JSON exits containing recognized quota, session, or transient signals keep
+  their existing classifications and retry or cooldown behavior;
+- unavailable worker failures attempt a configured, distinct, non-cooling
+  backup agent and otherwise avoid the generic immediate retry loop while
+  retaining their complete diagnostic locally; an explicit backup remains
+  un-preflighted and any failure from its attempt is classified independently;
 - a persisted `unavailable:` failure remains genuine for bounded CI scheduler
   recovery; and
 - no fixed operational-note formatter receives or renders raw stderr.
