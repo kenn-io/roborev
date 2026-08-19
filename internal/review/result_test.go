@@ -123,3 +123,14 @@ func TestHasSubstantiveOutput(t *testing.T) {
 		})
 	}
 }
+
+func TestUnavailableError(t *testing.T) {
+	assert.Equal(t,
+		UnavailableErrorPrefix+"agent review: native package missing",
+		UnavailableError("agent review: native package missing"),
+	)
+	assert.Equal(t,
+		UnavailableErrorPrefix+"already categorized",
+		UnavailableError(UnavailableErrorPrefix+"already categorized"),
+	)
+}

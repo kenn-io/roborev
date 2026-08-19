@@ -11,6 +11,7 @@ func TestIsTransientFailure(t *testing.T) {
 	transient := ReviewResult{Status: ResultFailed, Error: OutageErrorPrefix + "429 too many requests"}
 	quota := ReviewResult{Status: ResultFailed, Error: QuotaErrorPrefix + "quota exceeded"}
 	genuine := ReviewResult{Status: ResultFailed, Error: "model not supported"}
+	unavailable := ReviewResult{Status: ResultFailed, Error: UnavailableErrorPrefix + "native package missing"}
 	timeout := ReviewResult{Status: "canceled", Error: TimeoutErrorPrefix + "posted early"}
 	success := ReviewResult{Status: ResultDone, Output: "looks good"}
 
@@ -28,6 +29,7 @@ func TestIsTransientFailure(t *testing.T) {
 
 	// IsGenuineFailure: only the deterministic failure qualifies.
 	assert.True(IsGenuineFailure(genuine))
+	assert.True(IsGenuineFailure(unavailable))
 	assert.False(IsGenuineFailure(transient))
 	assert.False(IsGenuineFailure(quota))
 	assert.False(IsGenuineFailure(timeout))

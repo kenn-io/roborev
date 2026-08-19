@@ -128,6 +128,19 @@ func OutageError(msg string) string {
 	return OutageErrorPrefix + msg
 }
 
+// UnavailableErrorPrefix is prepended when an agent fails before producing
+// valid protocol output and no existing quota, session, or transient category
+// applies.
+const UnavailableErrorPrefix = "unavailable: "
+
+// UnavailableError prepends UnavailableErrorPrefix unless already present.
+func UnavailableError(msg string) string {
+	if strings.HasPrefix(msg, UnavailableErrorPrefix) {
+		return msg
+	}
+	return UnavailableErrorPrefix + msg
+}
+
 // TimeoutErrorPrefix is prepended to error messages when a batch job
 // is canceled because the batch exceeded its timeout and results were
 // posted with the available reviews.

@@ -69,6 +69,52 @@ func getResultByType(t *testing.T, results []ReviewResult, rType string) ReviewR
 	return ReviewResult{}
 }
 
+func TestFormatBatchAgentError(t *testing.T) {
+	tests := []struct {
+		name      string
+		agentName string
+		err       error
+		want      string
+	}{
+		{
+			name:      "unknown unavailable",
+			agentName: "codex",
+			err:       agent.MarkUnavailable(fmt.Errorf("native package missing")),
+			want:      UnavailableErrorPrefix + "agent review: native package missing",
+		},
+		{
+			name:      "transient wins over unavailable",
+			agentName: "codex",
+			err:       agent.MarkUnavailable(fmt.Errorf("503 Service Unavailable")),
+			want:      OutageErrorPrefix + "agent review: 503 Service Unavailable",
+		},
+		{
+			name:      "quota wins over unavailable",
+			agentName: "codex",
+			err:       agent.MarkUnavailable(fmt.Errorf("you've hit your usage limit")),
+			want:      QuotaErrorPrefix + "agent review: you've hit your usage limit",
+		},
+		{
+			name:      "session wins over unavailable",
+			agentName: "claude-code",
+			err:       agent.MarkUnavailable(fmt.Errorf("you've hit your session limit")),
+			want:      OutageErrorPrefix + "agent review: you've hit your session limit",
+		},
+		{
+			name:      "ordinary unknown stays unclassified",
+			agentName: "codex",
+			err:       fmt.Errorf("model not supported"),
+			want:      "agent review: model not supported",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, formatBatchAgentError(tt.agentName, tt.err))
+		})
+	}
+}
+
 func TestRunBatch(t *testing.T) {
 	t.Parallel()
 

@@ -201,12 +201,32 @@ func runSingle(
 		ctx, cfg.RepoPath, cfg.GitRef, reviewPrompt, nil)
 	if err != nil {
 		result.Status = ResultFailed
-		result.Error = fmt.Sprintf(
-			"agent review: %v", err)
+		result.Error = formatBatchAgentError(resolvedAgent.Name(), err)
 		return result
 	}
 
 	result.Status = ResultDone
 	result.Output = output
 	return result
+}
+
+func formatBatchAgentError(agentName string, err error) string {
+	msg := fmt.Sprintf("agent review: %v", err)
+	classification := agent.ClassifyLimit(agent.CanonicalName(agentName), msg)
+	switch classification.Kind {
+	case agent.LimitKindQuota:
+		if strings.HasPrefix(msg, QuotaErrorPrefix) {
+			return msg
+		}
+		return QuotaErrorPrefix + msg
+	case agent.LimitKindSession, agent.LimitKindTransient:
+		return OutageError(msg)
+	case agent.LimitKindNone:
+		if agent.IsUnavailable(err) {
+			return UnavailableError(msg)
+		}
+		return msg
+	default:
+		return msg
+	}
 }
