@@ -289,10 +289,18 @@ func (db *DB) attachExperimentAssignmentsToJobs(jobs []ReviewJob) error {
 
 func (db *DB) GetExperimentDefinitionsToSync(machineID string) ([]SyncableExperimentDefinition, error) {
 	rows, err := db.Query(`
-		SELECT experiment_id, definition_hash, definition_json, first_seen_at, source_machine_id
-		FROM experiment_definitions
-		WHERE source_machine_id = ? AND synced_at IS NULL
-		ORDER BY experiment_id`, machineID)
+		SELECT d.experiment_id, d.definition_hash, d.definition_json,
+		       d.first_seen_at, d.source_machine_id
+		FROM experiment_definitions d
+		WHERE d.synced_at IS NULL
+		  AND (d.source_machine_id = ? OR EXISTS (
+		      SELECT 1
+		      FROM experiment_assignments a
+		      WHERE a.experiment_id = d.experiment_id
+		        AND a.source_machine_id = ?
+		        AND a.synced_at IS NULL
+		  ))
+		ORDER BY d.experiment_id`, machineID, machineID)
 	if err != nil {
 		return nil, err
 	}

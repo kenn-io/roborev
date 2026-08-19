@@ -250,7 +250,10 @@ func TestSelectReviewExperimentExplicitEmptyValuesClearBaseSettings(t *testing.T
 		ReviewReasoning:   "high",
 		ReviewMinSeverity: "high",
 		Review:            ReviewConfig{DefaultPanel: "global-panel"},
-		CI:                CIConfig{Panel: "global-panel", MinSeverity: "high"},
+		CI: CIConfig{
+			Panel: "global-panel", MinSeverity: "high",
+			Agents: []string{"codex"}, ReviewTypes: []string{"design"},
+		},
 		Experiments: map[string]ExperimentDefinition{
 			"clear-v1": {
 				Enabled: &enabled, Ratio: &ratio,
@@ -265,6 +268,7 @@ func TestSelectReviewExperimentExplicitEmptyValuesClearBaseSettings(t *testing.T
 					},
 					"ci": map[string]any{
 						"panel": "", "min_severity": "",
+						"agents": []any{}, "review_types": []any{},
 					},
 				},
 			},
@@ -292,6 +296,10 @@ func TestSelectReviewExperimentExplicitEmptyValuesClearBaseSettings(t *testing.T
 	ciSeverity, err := ResolveCIMinSeverity("", selection.RepoConfig, global)
 	require.NoError(t, err)
 	assert.Empty(t, ciSeverity)
+	assert.Equal(t, []string{""}, ResolveCIAgents("", selection.RepoConfig, global))
+	assert.Equal(t, []string{ReviewTypeSecurity}, ResolveCIReviewTypes(
+		"", selection.RepoConfig, global,
+	))
 }
 
 func TestSelectReviewExperimentDefaultArmPreservesRepoCIReviewsReplacement(t *testing.T) {

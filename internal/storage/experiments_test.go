@@ -184,3 +184,33 @@ func TestUpsertPulledExperimentAssignmentConflictLeavesOriginalRow(t *testing.T)
 	assert.Equal(t, original.SubjectHash, assignments[0].SubjectHash)
 	assert.Equal(t, original.EffectiveConfigHash, assignments[0].EffectiveConfigHash)
 }
+
+func TestGetExperimentDefinitionsToSyncIncludesForeignDefinitionForLocalAssignment(t *testing.T) {
+	db, repo := setupDBAndRepo(t, "experiment-definition-dependency")
+	machineID, err := db.GetMachineID()
+	require.NoError(t, err)
+	definition := SyncableExperimentDefinition{
+		ExperimentID: "session-v1", DefinitionHash: "definition-a",
+		DefinitionJSON:  `{"ratio":0.5}`,
+		FirstSeenAt:     time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC),
+		SourceMachineID: "machine-a",
+	}
+	require.NoError(t, db.UpsertPulledExperimentDefinition(definition))
+
+	_, err = db.EnqueueJob(EnqueueOpts{
+		RepoID: repo.ID, GitRef: "review-sha", Agent: "codex",
+		Experiment: &ExperimentAssignmentInput{
+			ExperimentID: definition.ExperimentID, DefinitionHash: definition.DefinitionHash,
+			DefinitionJSON: definition.DefinitionJSON, Arm: "experiment",
+			SubjectHash: "subject-a", EffectiveConfigHash: "config-a",
+			EffectiveConfigJSON: `{"agent":"codex"}`,
+		},
+	})
+	require.NoError(t, err)
+	require.NoError(t, db.ClearAllSyncedAt())
+
+	definitions, err := db.GetExperimentDefinitionsToSync(machineID)
+	require.NoError(t, err)
+	require.Len(t, definitions, 1)
+	assert.Equal(t, definition, definitions[0])
+}

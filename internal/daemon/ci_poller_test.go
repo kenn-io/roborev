@@ -3333,6 +3333,10 @@ func TestResolveMatrixMemberAgentUsesPassedRepoConfigForACPAvailability(t *testi
 func TestCIExperimentModelsOverrideGlobalCIModel(t *testing.T) {
 	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
 	h.Cfg.CI.Model = "global-ci-model"
+	h.Cfg.CI.MinSeverity = "high"
+	h.Cfg.CI.Agents = []string{"codex"}
+	h.Cfg.CI.ReviewTypes = []string{"design"}
+	h.Cfg.ReviewMinSeverity = "high"
 	h.Cfg.DesignAgent = "test"
 	h.Poller.agentResolverFn = func(name string) (string, error) {
 		return name, nil
@@ -3344,8 +3348,12 @@ func TestCIExperimentModelsOverrideGlobalCIModel(t *testing.T) {
 			Enabled: &enabled, Ratio: &ratio,
 			Workflows: []config.ExperimentWorkflow{config.ExperimentWorkflowCI},
 			Config: map[string]any{
-				"review_model": "experiment-review-model",
-				"design_model": "experiment-design-model",
+				"review_model":        "experiment-review-model",
+				"design_model":        "experiment-design-model",
+				"review_min_severity": "",
+				"ci": map[string]any{
+					"agents": []any{}, "review_types": []any{}, "min_severity": "",
+				},
 			},
 		},
 	}
@@ -3367,6 +3375,10 @@ func TestCIExperimentModelsOverrideGlobalCIModel(t *testing.T) {
 
 	_, designModel := resolveCIAutoDesignAgent(selection.RepoConfig, h.Cfg)
 	assert.Equal(t, "experiment-design-model", designModel)
+	assert.Empty(t, resolveCISynthesisMinSeverity(selection.RepoConfig, h.Cfg, "acme/api"))
+	assert.Empty(t, resolveCIReviewMinSeverity(selection.RepoConfig, h.Cfg, "acme/api"))
+	matrix, _ := resolveCIMatrix(selection.RepoConfig, h.Cfg, "acme/api")
+	assert.Equal(t, []config.AgentReviewType{{Agent: "", ReviewType: "security"}}, matrix)
 }
 
 func TestCIPollerProcessPR_RepoReviewsMapOverride(

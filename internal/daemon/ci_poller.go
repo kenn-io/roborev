@@ -1003,7 +1003,7 @@ func resolveCIMatrix(repoCfg *config.RepoConfig, cfg *config.Config, ghRepo stri
 	if repoCfg != nil {
 		if repoMatrix := repoCfg.CI.ResolvedReviewMatrix(); repoMatrix != nil {
 			matrix = repoMatrix
-		} else if len(repoCfg.CI.Agents) > 0 || len(repoCfg.CI.ReviewTypes) > 0 {
+		} else {
 			matrix = matrixFromFlatOverrides(repoCfg, cfg)
 		}
 		if strings.TrimSpace(repoCfg.CI.Reasoning) != "" {
@@ -1020,14 +1020,8 @@ func resolveCIMatrix(repoCfg *config.RepoConfig, cfg *config.Config, ghRepo stri
 // matrixFromFlatOverrides builds the matrix from the repo's flat agents/
 // review_types lists, falling back to global lists for the unset dimension.
 func matrixFromFlatOverrides(repoCfg *config.RepoConfig, cfg *config.Config) []config.AgentReviewType {
-	reviewTypes := cfg.CI.ResolvedReviewTypes()
-	agents := cfg.CI.ResolvedAgents()
-	if len(repoCfg.CI.ReviewTypes) > 0 {
-		reviewTypes = repoCfg.CI.ReviewTypes
-	}
-	if len(repoCfg.CI.Agents) > 0 {
-		agents = repoCfg.CI.Agents
-	}
+	reviewTypes := config.ResolveCIReviewTypes("", repoCfg, cfg)
+	agents := config.ResolveCIAgents("", repoCfg, cfg)
 	matrix := make([]config.AgentReviewType, 0, len(reviewTypes)*len(agents))
 	for _, rt := range reviewTypes {
 		for _, ag := range agents {
@@ -3049,49 +3043,33 @@ func loadCIRepoConfigWithRaw(repoPath string) (*config.RepoConfig, map[string]an
 // selected repository configuration so an experiment overlay remains frozen in
 // the queued panel plan.
 func resolveCISynthesisMinSeverity(repoCfg *config.RepoConfig, cfg *config.Config, ghRepo string) string {
-	globalMinSeverity := ""
-	if cfg != nil {
-		globalMinSeverity = cfg.CI.MinSeverity
+	severity, err := config.ResolveCIMinSeverity("", repoCfg, cfg)
+	if err == nil {
+		return severity
 	}
-	normalizedGlobal := ""
-	if strings.TrimSpace(globalMinSeverity) != "" {
-		if normalized, err := config.NormalizeMinSeverity(globalMinSeverity); err == nil {
-			normalizedGlobal = normalized
-		} else {
-			log.Printf("CI poller: invalid global min_severity %q, ignoring", globalMinSeverity)
-		}
+	log.Printf("CI poller: invalid min_severity for %s, using global: %v", ghRepo, err)
+	severity, err = config.ResolveCIMinSeverity("", nil, cfg)
+	if err != nil {
+		log.Printf("CI poller: invalid global min_severity, ignoring: %v", err)
+		return ""
 	}
-	if repoCfg != nil && strings.TrimSpace(repoCfg.CI.MinSeverity) != "" {
-		if normalized, err := config.NormalizeMinSeverity(repoCfg.CI.MinSeverity); err == nil {
-			return normalized
-		}
-		log.Printf("CI poller: invalid min_severity %q for %s, using global", repoCfg.CI.MinSeverity, ghRepo)
-	}
-	return normalizedGlobal
+	return severity
 }
 
 // resolveCIReviewMinSeverity determines the effective min_severity for member
 // review prompts/jobs from the already-loaded repo/global review config.
 func resolveCIReviewMinSeverity(repoCfg *config.RepoConfig, cfg *config.Config, ghRepo string) string {
-	globalMinSeverity := ""
-	if cfg != nil {
-		globalMinSeverity = cfg.ReviewMinSeverity
+	severity, err := config.ResolveReviewMinSeverityFromConfig("", repoCfg, cfg)
+	if err == nil {
+		return severity
 	}
-	normalizedGlobal := ""
-	if strings.TrimSpace(globalMinSeverity) != "" {
-		if normalized, err := config.NormalizeMinSeverity(globalMinSeverity); err == nil {
-			normalizedGlobal = normalized
-		} else {
-			log.Printf("CI poller: invalid global review_min_severity %q, ignoring", globalMinSeverity)
-		}
+	log.Printf("CI poller: invalid review_min_severity for %s, using global: %v", ghRepo, err)
+	severity, err = config.ResolveReviewMinSeverityFromConfig("", nil, cfg)
+	if err != nil {
+		log.Printf("CI poller: invalid global review_min_severity, ignoring: %v", err)
+		return ""
 	}
-	if repoCfg != nil && strings.TrimSpace(repoCfg.ReviewMinSeverity) != "" {
-		if normalized, err := config.NormalizeMinSeverity(repoCfg.ReviewMinSeverity); err == nil {
-			return normalized
-		}
-		log.Printf("CI poller: invalid review_min_severity %q for %s, using global", repoCfg.ReviewMinSeverity, ghRepo)
-	}
-	return normalizedGlobal
+	return severity
 }
 
 func (p *CIPoller) callListOpenPRs(ctx context.Context, ghRepo string) ([]ghPR, error) {

@@ -491,6 +491,12 @@ func ResolveCIAgents(
 	if explicit != "" {
 		return splitTrimmedCSV(explicit)
 	}
+	if _, ok := experimentOverlayValue(repoCfg, "ci", "agents"); ok {
+		if len(repoCfg.CI.Agents) == 0 {
+			return []string{""}
+		}
+		return repoCfg.CI.Agents
+	}
 	var repoAgents []string
 	if repoCfg != nil {
 		repoAgents = repoCfg.CI.Agents
@@ -511,6 +517,12 @@ func ResolveCIReviewTypes(
 ) []string {
 	if explicit != "" {
 		return splitTrimmedCSV(explicit)
+	}
+	if _, ok := experimentOverlayValue(repoCfg, "ci", "review_types"); ok {
+		if len(repoCfg.CI.ReviewTypes) == 0 {
+			return []string{ReviewTypeSecurity}
+		}
+		return repoCfg.CI.ReviewTypes
 	}
 	var repoTypes []string
 	if repoCfg != nil {
