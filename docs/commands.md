@@ -823,6 +823,10 @@ roborev config set <key> <value> --global  # Set in global config
 
 roborev config list                  # List merged config
 roborev config list --show-origin    # Show where each value comes from
+
+roborev config validate              # Validate merged config and experiments
+roborev config validate --global     # Validate global config only
+roborev config validate --local      # Validate repo config only
 ```
 
 | Flag | Description |

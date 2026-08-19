@@ -465,7 +465,7 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 		if errors.As(err, &configErr) {
 			if statusErr := p.callSetCommitStatus(
 				ghRepo, pr.HeadRefOid, "error",
-				"Review could not be queued; check configuration",
+				"Review could not be queued; run roborev config validate",
 			); statusErr != nil {
 				log.Printf("CI poller: failed to set enqueue error status for %s#%d: %v",
 					ghRepo, pr.Number, statusErr)
@@ -526,6 +526,9 @@ func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, 
 	// Load repo config off the PR's default branch (never the working tree, F1).
 	repoCfg, rawRepoCfg, err := p.loadCIRepoConfigFor(repo.RootPath, ghRepo)
 	if err != nil {
+		if config.IsExperimentConfigError(err) {
+			return &ciConfigurationError{err: err}
+		}
 		return err
 	}
 	selection, err := config.SelectReviewExperiment(config.ExperimentSelectionInput{
@@ -551,7 +554,9 @@ func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, 
 
 	// Resolve panel members + synthesis: a configured [ci].panel names a panel,
 	// else the agents x review_types matrix is adapted into members.
-	members, synth, err := p.resolveCIMembers(repo, repoCfg, cfg, ghRepo)
+	members, synth, err := p.resolveCIMembers(
+		repo, repoCfg, rawRepoCfg, cfg, ghRepo,
+	)
 	if err != nil {
 		// A member's agent could not be resolved (none installed / quota):
 		// surface it on the commit status, mirroring the pre-panel rollback.
@@ -800,7 +805,8 @@ func (p *CIPoller) postDeferredStatus(ghRepo string, pr ghPR, nextEligible time.
 // an empty member slice (no error) when the resolved matrix is empty, which the
 // caller treats as "skip this PR".
 func (p *CIPoller) resolveCIMembers(
-	repo *storage.Repo, repoCfg *config.RepoConfig, cfg *config.Config, ghRepo string,
+	repo *storage.Repo, repoCfg *config.RepoConfig, rawRepoCfg map[string]any,
+	cfg *config.Config, ghRepo string,
 ) ([]config.ResolvedMember, config.SynthesisSpec, error) {
 	panelName := ciPanelName(repoCfg, cfg)
 	if panelName != "" {
@@ -814,7 +820,7 @@ func (p *CIPoller) resolveCIMembers(
 		}
 		return members, synth, nil
 	}
-	return p.resolveCIMatrixMembers(repo, repoCfg, cfg, ghRepo)
+	return p.resolveCIMatrixMembers(repo, repoCfg, rawRepoCfg, cfg, ghRepo)
 }
 
 // ciPanelName returns the configured CI panel name (repo [ci].panel over global
@@ -830,9 +836,10 @@ func ciPanelName(repoCfg *config.RepoConfig, cfg *config.Config) string {
 // the default-branch config — the same resolution an empty PanelSpec would use
 // via ResolveCIPanel — with the synthesis reasoning following the CI reasoning.
 func (p *CIPoller) resolveCIMatrixMembers(
-	repo *storage.Repo, repoCfg *config.RepoConfig, cfg *config.Config, ghRepo string,
+	repo *storage.Repo, repoCfg *config.RepoConfig, rawRepoCfg map[string]any,
+	cfg *config.Config, ghRepo string,
 ) ([]config.ResolvedMember, config.SynthesisSpec, error) {
-	matrix, reasoning := resolveCIMatrix(repoCfg, cfg, ghRepo)
+	matrix, reasoning := resolveCIMatrix(repoCfg, rawRepoCfg, cfg, ghRepo)
 	if err := validateMatrixReviewTypes(matrix); err != nil {
 		return nil, config.SynthesisSpec{}, err
 	}
@@ -1007,13 +1014,22 @@ func (p *CIPoller) resolveMatrixMemberAgent(
 // applying repo overrides over global config. Review types are canonicalized
 // and pairs that collapse to the same (agent, type) are deduplicated. A repo
 // [ci.reviews] is authoritative even when empty (disables reviews).
-func resolveCIMatrix(repoCfg *config.RepoConfig, cfg *config.Config, ghRepo string) ([]config.AgentReviewType, string) {
+func resolveCIMatrix(
+	repoCfg *config.RepoConfig, rawRepoCfg map[string]any,
+	cfg *config.Config, ghRepo string,
+) ([]config.AgentReviewType, string) {
 	matrix := cfg.CI.ResolvedReviewMatrix()
 	reasoning := "thorough"
 	if repoCfg != nil {
-		if repoMatrix := repoCfg.CI.ResolvedReviewMatrix(); repoMatrix != nil {
-			matrix = repoMatrix
-		} else {
+		switch {
+		case config.ExperimentOverridesCIReviews(repoCfg):
+			matrix = repoCfg.CI.ResolvedReviewMatrix()
+		case config.ExperimentOverridesCIFlatMatrix(repoCfg):
+			matrix = matrixFromFlatOverrides(repoCfg, cfg)
+		case config.IsKeyInTOMLFile(rawRepoCfg, "ci.reviews"):
+			matrix = repoCfg.CI.ResolvedReviewMatrix()
+		case config.IsKeyInTOMLFile(rawRepoCfg, "ci.agents") ||
+			config.IsKeyInTOMLFile(rawRepoCfg, "ci.review_types"):
 			matrix = matrixFromFlatOverrides(repoCfg, cfg)
 		}
 		if strings.TrimSpace(repoCfg.CI.Reasoning) != "" {

@@ -50,6 +50,27 @@ func IsConfigParseError(err error) bool {
 	return errors.As(err, &syntaxErr)
 }
 
+type experimentConfigError struct {
+	err error
+}
+
+func (e *experimentConfigError) Error() string { return e.err.Error() }
+func (e *experimentConfigError) Unwrap() error { return e.err }
+
+// IsExperimentConfigError reports whether err identifies an invalid
+// experiment definition or an invalid materialized experiment overlay.
+func IsExperimentConfigError(err error) bool {
+	var configErr *experimentConfigError
+	return errors.As(err, &configErr)
+}
+
+func markExperimentConfigError(err error) error {
+	if err == nil || IsExperimentConfigError(err) {
+		return err
+	}
+	return &experimentConfigError{err: err}
+}
+
 // HookConfig defines a hook that runs on review events
 type HookConfig struct {
 	Event    string   `toml:"event"`                // "review.failed", "review.completed", "review.*"
@@ -819,7 +840,7 @@ func LoadGlobalFrom(path string) (*Config, error) {
 
 func normalizeGlobalConfig(cfg *Config) error {
 	if err := validateExperimentEntries(cfg.Experiments, true); err != nil {
-		return err
+		return markExperimentConfigError(err)
 	}
 	if err := validateConfig(cfg, cfg.ACP); err != nil {
 		return err
@@ -1133,7 +1154,7 @@ func LoadRepoConfigWithRaw(repoPath string) (*RepoConfig, map[string]any, error)
 		return nil, nil, err
 	}
 	if err := validateExperimentEntries(cfg.Experiments, false); err != nil {
-		return nil, nil, fmt.Errorf("config: %w", err)
+		return nil, nil, fmt.Errorf("config: %w", markExperimentConfigError(err))
 	}
 	if err := cfg.Validate(); err != nil {
 		return nil, nil, fmt.Errorf("config: %w", err)
@@ -1322,7 +1343,9 @@ func LoadRepoConfigFromRefWithRaw(repoPath, ref string) (*RepoConfig, map[string
 		return nil, nil, &ConfigParseError{Ref: ref, Err: err}
 	}
 	if err := validateExperimentEntries(cfg.Experiments, false); err != nil {
-		return nil, nil, fmt.Errorf("experiment config at %s: %w", ref, err)
+		return nil, nil, fmt.Errorf(
+			"experiment config at %s: %w", ref, markExperimentConfigError(err),
+		)
 	}
 	if err := cfg.Validate(); err != nil {
 		return nil, nil, &ConfigParseError{Ref: ref, Err: err}
@@ -1509,7 +1532,7 @@ func loadRepoConfigFile(path string) (*RepoConfig, error) {
 		return nil, err
 	}
 	if err := validateExperimentEntries(cfg.Experiments, false); err != nil {
-		return nil, fmt.Errorf("config: %w", err)
+		return nil, fmt.Errorf("config: %w", markExperimentConfigError(err))
 	}
 	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("config: %w", err)

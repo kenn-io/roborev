@@ -197,6 +197,56 @@ func TestDetermineScope(t *testing.T) {
 	}
 }
 
+func TestValidateConfigForScopeMaterializesMergedExperiments(t *testing.T) {
+	env := setupConfigEnv(t, `
+[experiments.invalid-severity-v1]
+enabled = false
+ratio = 0.5
+workflows = ["review"]
+
+[experiments.invalid-severity-v1.config]
+review_min_severity = "urgent"
+`, "")
+
+	err := validateConfigForScope(env.Resolver, scopeMerged)
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, "invalid-severity-v1")
+	require.ErrorContains(t, err, "review_min_severity")
+}
+
+func TestValidateConfigForScopeAcceptsMergedEnablementOverride(t *testing.T) {
+	env := setupConfigEnv(t, `
+[experiments.session-v1]
+enabled = true
+ratio = 0.5
+workflows = ["review", "ci"]
+
+[experiments.session-v1.config]
+reuse_review_session = true
+`, `
+[experiments.session-v1]
+enabled = false
+`)
+
+	err := validateConfigForScope(env.Resolver, scopeMerged)
+
+	require.NoError(t, err)
+}
+
+func TestConfigValidateCommand(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	cmd := configValidateCmd()
+	var output strings.Builder
+	cmd.SetOut(&output)
+	cmd.SetArgs([]string{"--global"})
+
+	err := cmd.Execute()
+
+	require.NoError(t, err)
+	assert.Equal(t, "configuration is valid\n", output.String())
+}
+
 func TestRepoRoot(t *testing.T) {
 	t.Run("uses git resolver when available", func(t *testing.T) {
 		resolver := &stubRepoResolver{}

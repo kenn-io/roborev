@@ -86,6 +86,65 @@ type canonicalExperimentDefinition struct {
 	Config    map[string]any       `json:"config"`
 }
 
+// ValidateExperimentConfigs validates every materialized experiment overlay
+// after merging global definitions with repository enablement overrides.
+func ValidateExperimentConfigs(
+	global *Config, repo *RepoConfig, rawRepo map[string]any,
+) error {
+	if repo != nil && rawRepo == nil {
+		return markExperimentConfigError(
+			fmt.Errorf("repository config is missing its paired raw representation"),
+		)
+	}
+	definitions, err := mergeExperimentDefinitions(global, repo)
+	if err != nil {
+		return markExperimentConfigError(err)
+	}
+	return validateMaterializedExperimentConfigs(global, rawRepo, definitions)
+}
+
+// ValidateRepoExperimentConfigs validates complete experiment definitions in
+// repository config. Enablement-only entries need their global definition and
+// are validated by ValidateExperimentConfigs in merged scope.
+func ValidateRepoExperimentConfigs(repo *RepoConfig, rawRepo map[string]any) error {
+	if repo == nil {
+		return nil
+	}
+	if rawRepo == nil {
+		return markExperimentConfigError(
+			fmt.Errorf("repository config is missing its paired raw representation"),
+		)
+	}
+	if err := validateExperimentEntries(repo.Experiments, false); err != nil {
+		return markExperimentConfigError(err)
+	}
+	definitions := make(map[string]ExperimentDefinition)
+	for id, definition := range repo.Experiments {
+		if experimentDefinitionComplete(definition) {
+			definitions[id] = definition
+		}
+	}
+	return validateMaterializedExperimentConfigs(nil, rawRepo, definitions)
+}
+
+func validateMaterializedExperimentConfigs(
+	global *Config, rawRepo map[string]any,
+	definitions map[string]ExperimentDefinition,
+) error {
+	for _, id := range sortedMapKeys(definitions) {
+		effectiveRaw, err := applyExperimentOverlay(
+			global, rawRepo, definitions[id].Config,
+		)
+		if err != nil {
+			return markExperimentConfigError(fmt.Errorf("experiment %q config: %w", id, err))
+		}
+		if _, err := decodeExperimentRepoConfig(effectiveRaw); err != nil {
+			return markExperimentConfigError(fmt.Errorf("experiment %q config: %w", id, err))
+		}
+	}
+	return nil
+}
+
 var reviewExperimentOverlayKeys = map[string]struct{}{
 	"agent":                         {},
 	"model":                         {},
@@ -587,6 +646,23 @@ func ExperimentOverridesWorkflowModel(
 	repoCfg *RepoConfig, workflow, level string,
 ) bool {
 	_, ok := experimentWorkflowValue(repoCfg, workflow, level, false)
+	return ok
+}
+
+// ExperimentOverridesCIReviews reports whether the selected treatment supplies
+// a ci.reviews map.
+func ExperimentOverridesCIReviews(repoCfg *RepoConfig) bool {
+	_, ok := experimentOverlayValue(repoCfg, "ci", "reviews")
+	return ok
+}
+
+// ExperimentOverridesCIFlatMatrix reports whether the selected treatment
+// supplies ci.agents or ci.review_types.
+func ExperimentOverridesCIFlatMatrix(repoCfg *RepoConfig) bool {
+	if _, ok := experimentOverlayValue(repoCfg, "ci", "agents"); ok {
+		return true
+	}
+	_, ok := experimentOverlayValue(repoCfg, "ci", "review_types")
 	return ok
 }
 

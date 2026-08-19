@@ -3201,7 +3201,11 @@ func TestResolveCIMatrixMembersUsesPassedRepoConfigForAgentModel(t *testing.T) {
 	}
 
 	members, _, err := h.Poller.resolveCIMatrixMembers(
-		h.Repo, repoCfg, h.Cfg, "acme/api",
+		h.Repo, repoCfg, map[string]any{
+			"ci": map[string]any{
+				"agents": []any{""}, "review_types": []any{"default"},
+			},
+		}, h.Cfg, "acme/api",
 	)
 	require.NoError(t, err)
 	require.Len(t, members, 1)
@@ -3375,8 +3379,110 @@ func TestCIExperimentModelsOverrideGlobalCIModel(t *testing.T) {
 	assert.Equal(t, "experiment-design-model", designModel)
 	assert.Empty(t, resolveCISynthesisMinSeverity(selection.RepoConfig, h.Cfg, "acme/api"))
 	assert.Empty(t, resolveCIReviewMinSeverity(selection.RepoConfig, h.Cfg, "acme/api"))
-	matrix, _ := resolveCIMatrix(selection.RepoConfig, h.Cfg, "acme/api")
+	matrix, _ := resolveCIMatrix(
+		selection.RepoConfig, selection.RawRepoConfig, h.Cfg, "acme/api",
+	)
 	assert.Equal(t, []config.AgentReviewType{{Agent: "", ReviewType: "security"}}, matrix)
+}
+
+func TestResolveCIMatrixPreservesGlobalReviewsWithoutMatrixOverride(t *testing.T) {
+	global := &config.Config{}
+	global.CI.Reviews = map[string][]string{
+		"codex":  {"security"},
+		"gemini": {"review"},
+	}
+	repo := &config.RepoConfig{}
+	repo.CI.Reasoning = "standard"
+
+	matrix, reasoning := resolveCIMatrix(
+		repo,
+		map[string]any{"ci": map[string]any{"reasoning": "standard"}},
+		global,
+		"acme/api",
+	)
+
+	assert.Equal(t, []config.AgentReviewType{
+		{Agent: "codex", ReviewType: "security"},
+		{Agent: "gemini", ReviewType: "default"},
+	}, matrix)
+	assert.Equal(t, "standard", reasoning)
+}
+
+func TestResolveCIMatrixMergesExperimentReviewsByAgent(t *testing.T) {
+	enabled := true
+	ratio := 1.0
+	global := &config.Config{}
+	global.CI.Reviews = map[string][]string{
+		"codex":  {"security"},
+		"gemini": {"review"},
+	}
+	global.Experiments = map[string]config.ExperimentDefinition{
+		"ci-matrix-v1": {
+			Enabled: &enabled, Ratio: &ratio,
+			Workflows: []config.ExperimentWorkflow{config.ExperimentWorkflowCI},
+			Config: map[string]any{
+				"ci": map[string]any{
+					"reviews": map[string]any{"codex": []any{"design"}},
+				},
+			},
+		},
+	}
+	selection, err := config.SelectReviewExperiment(config.ExperimentSelectionInput{
+		Workflow: config.ExperimentWorkflowCI,
+		Subject: config.ExperimentSubject{
+			Repository: "acme/api", SourceRepo: "acme/api", Branch: "feature",
+		},
+		Global: global,
+	})
+	require.NoError(t, err)
+
+	matrix, _ := resolveCIMatrix(
+		selection.RepoConfig, selection.RawRepoConfig, global, "acme/api",
+	)
+
+	assert.Equal(t, []config.AgentReviewType{
+		{Agent: "codex", ReviewType: "design"},
+		{Agent: "gemini", ReviewType: "default"},
+	}, matrix)
+}
+
+func TestResolveCIMatrixExperimentFlatOverrideTakesPriorityOverRepoReviews(t *testing.T) {
+	enabled := true
+	ratio := 1.0
+	global := &config.Config{
+		Experiments: map[string]config.ExperimentDefinition{
+			"ci-agents-v1": {
+				Enabled: &enabled, Ratio: &ratio,
+				Workflows: []config.ExperimentWorkflow{config.ExperimentWorkflowCI},
+				Config: map[string]any{
+					"ci": map[string]any{"agents": []any{"codex"}},
+				},
+			},
+		},
+	}
+	repo := &config.RepoConfig{}
+	repo.CI.Reviews = map[string][]string{"gemini": {"design"}}
+	rawRepo := map[string]any{
+		"ci": map[string]any{
+			"reviews": map[string]any{"gemini": []any{"design"}},
+		},
+	}
+	selection, err := config.SelectReviewExperiment(config.ExperimentSelectionInput{
+		Workflow: config.ExperimentWorkflowCI,
+		Subject: config.ExperimentSubject{
+			Repository: "acme/api", SourceRepo: "acme/api", Branch: "feature",
+		},
+		Global: global, Repo: repo, RawRepo: rawRepo,
+	})
+	require.NoError(t, err)
+
+	matrix, _ := resolveCIMatrix(
+		selection.RepoConfig, selection.RawRepoConfig, global, "acme/api",
+	)
+
+	assert.Equal(t, []config.AgentReviewType{
+		{Agent: "codex", ReviewType: "security"},
+	}, matrix)
 }
 
 func TestCIPollerProcessPR_RepoReviewsMapOverride(
@@ -3585,7 +3691,41 @@ func TestCIPollerProcessPR_ExperimentValidationFailureSetsConfigurationStatus(t 
 	require.ErrorContains(t, err, "ci.min_severity")
 	require.Len(t, *statuses, 1)
 	assert.Equal(t, "error", (*statuses)[0].State)
-	assert.Contains(t, (*statuses)[0].Desc, "configuration")
+	assert.Contains(t, (*statuses)[0].Desc, "roborev config validate")
+}
+
+func TestCIPollerProcessPR_RepoExperimentValidationFailureSetsConfigurationStatus(t *testing.T) {
+	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+	h.Cfg.CI.ReviewTypes = []string{"security"}
+	h.Cfg.CI.Agents = []string{"codex"}
+	h.Poller = NewCIPoller(h.DB, NewStaticConfig(h.Cfg), nil)
+	h.stubProcessPRGit()
+	enabled := true
+	ratio := 1.0
+	validationErr := config.ValidateExperimentConfigs(&config.Config{
+		Experiments: map[string]config.ExperimentDefinition{
+			"invalid-v1": {
+				Enabled: &enabled, Ratio: &ratio,
+				Workflows: []config.ExperimentWorkflow{config.ExperimentWorkflowCI},
+				Config:    map[string]any{"not_review_config": true},
+			},
+		},
+	}, nil, nil)
+	require.Error(t, validationErr)
+	h.Poller.loadRepoConfigWithRawFn = func(string) (*config.RepoConfig, map[string]any, error) {
+		return nil, nil, validationErr
+	}
+	statuses := h.CaptureCommitStatuses()
+
+	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
+		Number: 95, HeadRefOid: "head-sha-95", HeadRefName: "feature",
+		HeadRepo: "acme/api", BaseRefName: "main",
+	}, h.Cfg)
+
+	require.ErrorContains(t, err, "not_review_config")
+	require.Len(t, *statuses, 1)
+	assert.Equal(t, "error", (*statuses)[0].State)
+	assert.Contains(t, (*statuses)[0].Desc, "roborev config validate")
 }
 
 // TestCIPollerProcessPR_NoAgentStillSupersedes covers the supersede-on-any-new-HEAD

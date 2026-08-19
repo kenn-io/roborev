@@ -83,6 +83,20 @@ default max_workers     4
 Sensitive values (API keys, database URLs) are automatically masked in list
 output, showing only the last 4 characters.
 
+### Validate configuration
+
+```bash
+roborev config validate              # merged global and repo configuration
+roborev config validate --global     # global configuration only
+roborev config validate --local      # repo configuration only
+```
+
+Validation checks ordinary configuration values and materializes experiment
+overlays before any review is queued. The merged command also checks repository
+enablement overrides against their global experiment definitions. All complete
+experiment definitions are checked, including disabled experiments, so a new
+definition can be validated before it is enabled.
+
 ## Per-Repository Configuration
 
 Create `.roborev.toml` in your repository root to customize behavior for that

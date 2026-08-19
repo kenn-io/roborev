@@ -269,8 +269,89 @@ func configCmd() *cobra.Command {
 	cmd.AddCommand(configGetCmd())
 	cmd.AddCommand(configSetCmd())
 	cmd.AddCommand(configListCmd())
+	cmd.AddCommand(configValidateCmd())
 
 	return cmd
+}
+
+func configValidateCmd() *cobra.Command {
+	var globalFlag, localFlag bool
+
+	cmd := &cobra.Command{
+		Use:   "validate",
+		Short: "Validate roborev configuration and experiments",
+		Args:  cobra.NoArgs,
+		RunE: func(cmd *cobra.Command, _ []string) error {
+			scope, err := determineScope(globalFlag, localFlag)
+			if err != nil {
+				return err
+			}
+			if err := validateConfigForScope(
+				defaultRepoResolver{ctx: cmd.Context()}, scope,
+			); err != nil {
+				return err
+			}
+			_, err = fmt.Fprintln(cmd.OutOrStdout(), "configuration is valid")
+			return err
+		},
+	}
+	cmd.Flags().BoolVar(&globalFlag, "global", false, "validate global config only")
+	cmd.Flags().BoolVar(&localFlag, "local", false, "validate local repo config only")
+
+	return cmd
+}
+
+func validateConfigForScope(resolver RepoResolver, scope configScope) error {
+	switch scope {
+	case scopeGlobal:
+		globalCfg, err := config.LoadGlobal()
+		if err != nil {
+			return fmt.Errorf("load global config: %w", err)
+		}
+		if err := config.ValidateExperimentConfigs(globalCfg, nil, nil); err != nil {
+			return fmt.Errorf("validate global config: %w", err)
+		}
+		return nil
+
+	case scopeLocal:
+		repoPath, err := requireRepoRoot(resolver)
+		if err != nil {
+			return err
+		}
+		repoCfg, rawRepo, err := config.LoadRepoConfigWithRaw(repoPath)
+		if err != nil {
+			return fmt.Errorf("load local config: %w", err)
+		}
+		if repoCfg == nil {
+			return fmt.Errorf("no local config (.roborev.toml) found")
+		}
+		if err := config.ValidateRepoExperimentConfigs(repoCfg, rawRepo); err != nil {
+			return fmt.Errorf("validate local config: %w", err)
+		}
+		return nil
+
+	default:
+		globalCfg, err := config.LoadGlobal()
+		if err != nil {
+			return fmt.Errorf("load global config: %w", err)
+		}
+		repoPath, err := repoRoot(resolver)
+		if err != nil {
+			return fmt.Errorf("determine repository root: %w", err)
+		}
+		var repoCfg *config.RepoConfig
+		var rawRepo map[string]any
+		if repoPath != "" {
+			repoCfg, rawRepo, err = config.LoadRepoConfigWithRaw(repoPath)
+			if err != nil {
+				return fmt.Errorf("load local config: %w", err)
+			}
+		}
+		if err := config.ValidateExperimentConfigs(globalCfg, repoCfg, rawRepo); err != nil {
+			return fmt.Errorf("validate merged config: %w", err)
+		}
+		return nil
+	}
 }
 
 func configGetCmd() *cobra.Command {

@@ -697,3 +697,35 @@ func TestValidateExperimentEntriesRejectsUnsafeAndOverlappingConfig(t *testing.T
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "both apply to workflow")
 }
+
+func TestValidateExperimentConfigsMaterializesDisabledDefinitions(t *testing.T) {
+	enabled := false
+	ratio := 0.5
+	err := ValidateExperimentConfigs(&Config{
+		Experiments: map[string]ExperimentDefinition{
+			"invalid-severity-v1": {
+				Enabled: &enabled, Ratio: &ratio,
+				Workflows: []ExperimentWorkflow{ExperimentWorkflowReview},
+				Config:    map[string]any{"review_min_severity": "urgent"},
+			},
+		},
+	}, nil, nil)
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, "review_min_severity")
+	assert.True(t, IsExperimentConfigError(err))
+}
+
+func TestValidateRepoExperimentConfigsAllowsEnablementOnlyOverride(t *testing.T) {
+	enabled := false
+	err := ValidateRepoExperimentConfigs(
+		&RepoConfig{Experiments: map[string]ExperimentDefinition{
+			"global-v1": {Enabled: &enabled},
+		}},
+		map[string]any{"experiments": map[string]any{
+			"global-v1": map[string]any{"enabled": false},
+		}},
+	)
+
+	require.NoError(t, err)
+}
