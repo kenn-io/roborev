@@ -78,3 +78,48 @@ func TestTrimPartialRune_NoFullStringScan(t *testing.T) {
 	got := TrimPartialRune(interior)
 	assert.Equalf(interior, got, "interior invalid bytes should be preserved, got len %d want len %d", len(got), len(interior))
 }
+
+func TestHasSubstantiveOutput(t *testing.T) {
+	tests := []struct {
+		name    string
+		results []ReviewResult
+		want    bool
+	}{
+		{name: "empty batch"},
+		{
+			name: "completed output",
+			results: []ReviewResult{{
+				Status: ResultDone,
+				Output: "## Findings\n",
+			}},
+			want: true,
+		},
+		{
+			name: "completed whitespace",
+			results: []ReviewResult{{
+				Status: ResultDone,
+				Output: " \n\t",
+			}},
+		},
+		{
+			name: "failed output",
+			results: []ReviewResult{{
+				Status: ResultFailed,
+				Output: "partial diagnostics",
+			}},
+		},
+		{
+			name: "skipped output",
+			results: []ReviewResult{{
+				Status: ResultSkipped,
+				Output: "not a review",
+			}},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			assert.Equal(t, tt.want, HasSubstantiveOutput(tt.results))
+		})
+	}
+}

@@ -35,6 +35,18 @@ const (
 	ResultSkipped = "skipped"
 )
 
+// HasSubstantiveOutput reports whether any completed review produced nonempty
+// agent-authored output. Failed and skipped results never qualify, even when
+// they carry diagnostic text.
+func HasSubstantiveOutput(results []ReviewResult) bool {
+	for _, result := range results {
+		if result.Status == ResultDone && strings.TrimSpace(result.Output) != "" {
+			return true
+		}
+	}
+	return false
+}
+
 // MaxCommentLen is the maximum length for a GitHub PR comment.
 // GitHub's hard limit is ~65536; we leave headroom.
 const MaxCommentLen = 60000

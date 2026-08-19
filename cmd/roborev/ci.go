@@ -350,8 +350,8 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 	// Post as PR/MR comment if requested
 	if opts.comment {
 		upsert := resolveCIUpsert(opts, repoCfg, globalCfg)
-		switch err := postForgeComment(
-			ctx, forge, opts, comment, upsert, root, gitRef,
+		switch err := postCIReviewComment(
+			ctx, forge, opts, results, comment, upsert, root, gitRef,
 		); {
 		case errors.Is(err, errMRHeadMoved):
 			// Same benign race as before the review, so same outcome: the
@@ -370,6 +370,22 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 	}
 
 	return nil
+}
+
+func postCIReviewComment(
+	ctx context.Context,
+	forge ciForge,
+	opts ciReviewOpts,
+	results []review.ReviewResult,
+	comment string,
+	upsert bool,
+	repoPath string,
+	gitRef string,
+) error {
+	if !review.HasSubstantiveOutput(results) {
+		return nil
+	}
+	return postForgeComment(ctx, forge, opts, comment, upsert, repoPath, gitRef)
 }
 
 // resolveCIAnthropicAPIKey picks the Anthropic API key for a pipeline run.

@@ -16,6 +16,7 @@ import (
 
 	"go.kenn.io/roborev/internal/config"
 	glpkg "go.kenn.io/roborev/internal/gitlab"
+	"go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/testutil"
 )
 
@@ -1042,6 +1043,43 @@ func (s *stubGitLabNotesAPI) start(t *testing.T) string {
 	t.Setenv("CI_PROJECT_PATH", "group/project")
 	t.Setenv("CI_MERGE_REQUEST_IID", "7")
 	return srv.URL
+}
+
+func TestPostCIReviewComment(t *testing.T) {
+	t.Run("zero output skips forge request", func(t *testing.T) {
+		api := &stubGitLabNotesAPI{}
+		api.start(t)
+
+		results := []review.ReviewResult{{
+			Agent:  "codex",
+			Status: review.ResultFailed,
+			Error:  "agent failed before producing output",
+		}}
+		err := postCIReviewComment(
+			context.Background(), ciForgeGitLab, ciReviewOpts{}, results,
+			"local diagnostic summary", false, "", stubMRRef,
+		)
+		require.NoError(t, err)
+		assert.Empty(t, api.requestPaths)
+		assert.Empty(t, api.createdBodies)
+	})
+
+	t.Run("partial success posts once", func(t *testing.T) {
+		api := &stubGitLabNotesAPI{}
+		api.start(t)
+
+		results := []review.ReviewResult{
+			{Agent: "codex", Status: review.ResultFailed, Error: "agent failed"},
+			{Agent: "gemini", Status: review.ResultDone, Output: "## Findings\n"},
+		}
+		err := postCIReviewComment(
+			context.Background(), ciForgeGitLab, ciReviewOpts{}, results,
+			"synthesized review", false, "", stubMRRef,
+		)
+		require.NoError(t, err)
+		require.Len(t, api.createdBodies, 1)
+		assert.Contains(t, api.createdBodies[0], "synthesized review")
+	})
 }
 
 func TestPostGitLabCIComment_CreatesNewNote(t *testing.T) {

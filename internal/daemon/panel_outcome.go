@@ -1,10 +1,6 @@
 package daemon
 
-import (
-	"strings"
-
-	reviewpkg "go.kenn.io/roborev/internal/review"
-)
+import reviewpkg "go.kenn.io/roborev/internal/review"
 
 // OutcomeKind enumerates how a finalized CI panel run should be resolved against
 // its member results and the HEAD's retry state. It is the decision the
@@ -73,7 +69,7 @@ func classifyPanelOutcome(
 		(reviewpkg.IsQuotaFailure(*synthesis) || reviewpkg.IsTransientFailure(*synthesis)) {
 		return PanelOutcome{Kind: OutcomeDeferTransient, LastErrorExcerpt: synthesis.Error}
 	}
-	if hasReviewOutput(results) {
+	if reviewpkg.HasSubstantiveOutput(results) {
 		return PanelOutcome{Kind: OutcomePost}
 	}
 	if r := firstMatch(results, reviewpkg.IsTransientFailure); r != nil {
@@ -90,17 +86,6 @@ func classifyPanelOutcome(
 		return PanelOutcome{Kind: kind, LastErrorExcerpt: r.Error}
 	}
 	return PanelOutcome{Kind: OutcomeAllSkip}
-}
-
-// hasReviewOutput reports whether any member produced real review output (rule 1
-// of classifyPanelOutcome): a done status with non-empty output.
-func hasReviewOutput(results []reviewpkg.ReviewResult) bool {
-	for _, r := range results {
-		if r.Status == reviewpkg.ResultDone && strings.TrimSpace(r.Output) != "" {
-			return true
-		}
-	}
-	return false
 }
 
 // firstMatch returns a pointer to the first result satisfying pred, or nil when
