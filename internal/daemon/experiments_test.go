@@ -4,6 +4,7 @@ import (
 	"context"
 	"net/http"
 	"net/http/httptest"
+	"strings"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -331,6 +332,7 @@ func TestPanelExperimentResumesCompatibleMemberSession(t *testing.T) {
 	claimed, err := db.ClaimJob("experiment-worker")
 	require.NoError(t, err)
 	require.Equal(t, first.PanelRunUUID, claimed.PanelRunUUID)
+	require.Equal(t, "bug", claimed.PanelMemberName)
 	require.NoError(t, db.CompleteJob(
 		claimed.ID, "test", "prompt", "No issues found.",
 	))
@@ -338,6 +340,12 @@ func TestPanelExperimentResumesCompatibleMemberSession(t *testing.T) {
 	_, err = db.Exec(`UPDATE review_jobs SET session_id = ? WHERE id = ?`, sessionID, claimed.ID)
 	require.NoError(t, err)
 
+	repo.WriteFile(".roborev.toml", strings.Replace(
+		panelTOML,
+		"[review.subagents.design]\nagent = \"test\"\nreview_type = \"design\"",
+		"[review.subagents.design]\nagent = \"test\"\nmodel = \"design-v2\"\nreview_type = \"design\"",
+		1,
+	))
 	secondSHA := repo.CommitFile("review.go", "package review\n\nfunc changed() {}\n", "second review")
 	require.NotEqual(t, firstSHA, secondSHA)
 	second := enqueuePanelViaHTTP(t, server, EnqueueRequest{

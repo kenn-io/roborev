@@ -2707,15 +2707,7 @@ func (s *Server) humaEnqueue(
 		return rawJSONOutput(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
 	}
 
-	var repoReview config.ReviewConfig
-	if repoCfg != nil {
-		repoReview = repoCfg.Review
-	}
-	var globalReview config.ReviewConfig
-	if cfg != nil {
-		globalReview = cfg.Review
-	}
-	merged := config.MergeReviewConfig(repoReview, globalReview)
+	merged := config.MergeReviewConfigFromConfig(repoCfg, cfg)
 	panelName := selectPanelForTarget(descriptor, req, merged)
 	if panelName != "" {
 		return s.enqueuePanelRun(ctx, panelRunInputs{

@@ -65,6 +65,26 @@ func MergeReviewConfig(repo, global ReviewConfig) ReviewConfig {
 	return merged
 }
 
+// MergeReviewConfigFromConfig preserves explicit empty panel selections from
+// a selected experiment while retaining the normal map and base precedence.
+func MergeReviewConfigFromConfig(repoCfg *RepoConfig, globalCfg *Config) ReviewConfig {
+	var repo, global ReviewConfig
+	if repoCfg != nil {
+		repo = repoCfg.Review
+	}
+	if globalCfg != nil {
+		global = globalCfg.Review
+	}
+	merged := MergeReviewConfig(repo, global)
+	if value, ok := experimentOverlayString(repoCfg, "review", "default_panel"); ok {
+		merged.DefaultPanel = value
+	}
+	if value, ok := experimentOverlayString(repoCfg, "review", "hook_review_panel"); ok {
+		merged.HookPanel = value
+	}
+	return merged
+}
+
 // MergedReviewConfig loads the repo's review config (if any) and merges it over
 // the global review config. When repoPath is empty or whitespace, no repo
 // config is loaded (global only) — guarding against LoadRepoConfig resolving
@@ -226,15 +246,7 @@ func ResolveCIPanel(
 	repoCfg *RepoConfig,
 	globalCfg *Config,
 ) ([]ResolvedMember, SynthesisSpec, error) {
-	var repoReview ReviewConfig
-	if repoCfg != nil {
-		repoReview = repoCfg.Review
-	}
-	var global ReviewConfig
-	if globalCfg != nil {
-		global = globalCfg.Review
-	}
-	merged := MergeReviewConfig(repoReview, global)
+	merged := MergeReviewConfigFromConfig(repoCfg, globalCfg)
 
 	panel, ok := merged.Panels[panelName]
 	if !ok {

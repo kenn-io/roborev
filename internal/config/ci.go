@@ -549,11 +549,32 @@ func ResolveCIMinSeverity(
 	if repoCfg != nil {
 		repoVal = repoCfg.CI.MinSeverity
 	}
+	if value, ok := experimentOverlayString(repoCfg, "ci", "min_severity"); ok {
+		if value == "" {
+			return "", nil
+		}
+		return NormalizeMinSeverity(value)
+	}
 	var globalVal string
 	if globalCfg != nil {
 		globalVal = globalCfg.CI.MinSeverity
 	}
 	return resolveNormalized("", NormalizeMinSeverity, explicit, repoVal, globalVal)
+}
+
+// ResolveCIPanelName resolves the named CI panel while preserving an explicit
+// empty experiment value, which selects the implicit matrix.
+func ResolveCIPanelName(repoCfg *RepoConfig, globalCfg *Config) string {
+	if value, ok := experimentOverlayString(repoCfg, "ci", "panel"); ok {
+		return value
+	}
+	if repoCfg != nil && strings.TrimSpace(repoCfg.CI.Panel) != "" {
+		return strings.TrimSpace(repoCfg.CI.Panel)
+	}
+	if globalCfg != nil {
+		return strings.TrimSpace(globalCfg.CI.Panel)
+	}
+	return ""
 }
 
 // ResolveCISynthesisAgent determines the synthesis agent for CI review execution.

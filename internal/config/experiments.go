@@ -512,11 +512,26 @@ func decodeExperimentRepoConfig(raw map[string]any) (*RepoConfig, error) {
 	return &cfg, nil
 }
 
-func experimentOverlayString(repoCfg *RepoConfig, key string) (string, bool) {
+func experimentOverlayValue(repoCfg *RepoConfig, path ...string) (any, bool) {
 	if repoCfg == nil || repoCfg.experimentOverlay == nil {
-		return "", false
+		return nil, false
 	}
-	value, ok := repoCfg.experimentOverlay[key]
+	var current any = repoCfg.experimentOverlay
+	for _, key := range path {
+		values, ok := current.(map[string]any)
+		if !ok {
+			return nil, false
+		}
+		current, ok = values[key]
+		if !ok {
+			return nil, false
+		}
+	}
+	return current, true
+}
+
+func experimentOverlayString(repoCfg *RepoConfig, path ...string) (string, bool) {
+	value, ok := experimentOverlayValue(repoCfg, path...)
 	if !ok {
 		return "", false
 	}

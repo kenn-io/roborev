@@ -271,10 +271,9 @@ func (db *DB) FindCompatibleReusableSessionCandidates(q ReusableSessionQuery) ([
 		query += `
 		  AND a.experiment_id = ?
 		  AND a.arm = ?
-		  AND a.effective_config_hash = ?
 		  AND d.definition_hash = ?`
 		args = append(args, q.Experiment.ExperimentID, q.Experiment.Arm,
-			q.Experiment.EffectiveConfigHash, q.Experiment.DefinitionHash)
+			q.Experiment.DefinitionHash)
 	}
 	query += ` ORDER BY ` + sqliteNormalizedTimestampExpr("COALESCE(j.finished_at, j.updated_at, j.enqueued_at)") + ` DESC, j.id DESC`
 	if q.Limit > 0 {

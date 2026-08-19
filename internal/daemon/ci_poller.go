@@ -810,10 +810,7 @@ func (p *CIPoller) resolveCIMembers(
 // ciPanelName returns the configured CI panel name (repo [ci].panel over global
 // [ci].panel), or "" when neither is set (the implicit-matrix fallback).
 func ciPanelName(repoCfg *config.RepoConfig, cfg *config.Config) string {
-	if repoCfg != nil && strings.TrimSpace(repoCfg.CI.Panel) != "" {
-		return strings.TrimSpace(repoCfg.CI.Panel)
-	}
-	return strings.TrimSpace(cfg.CI.Panel)
+	return config.ResolveCIPanelName(repoCfg, cfg)
 }
 
 // resolveCIMatrixMembers builds panel members from the agents x review_types

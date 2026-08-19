@@ -238,6 +238,12 @@ func ResolveReviewReasoningFromConfig(
 		}
 		return NormalizeReasoning(explicit)
 	}
+	if value, ok := experimentOverlayString(repoCfg, "review_reasoning"); ok {
+		if value == "" {
+			return "thorough", nil
+		}
+		return NormalizeReasoning(value)
+	}
 	if repoCfg != nil && strings.TrimSpace(repoCfg.ReviewReasoning) != "" {
 		return NormalizeReasoning(repoCfg.ReviewReasoning)
 	}
@@ -401,6 +407,12 @@ func ResolveReviewMinSeverityFromConfig(
 ) (string, error) {
 	if strings.TrimSpace(explicit) != "" {
 		return NormalizeMinSeverity(explicit)
+	}
+	if value, ok := experimentOverlayString(repoCfg, "review_min_severity"); ok {
+		if value == "" {
+			return "", nil
+		}
+		return NormalizeMinSeverity(value)
 	}
 	if repoCfg != nil && strings.TrimSpace(repoCfg.ReviewMinSeverity) != "" {
 		return NormalizeMinSeverity(repoCfg.ReviewMinSeverity)

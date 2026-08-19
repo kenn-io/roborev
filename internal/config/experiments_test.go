@@ -243,6 +243,57 @@ func TestSelectReviewExperimentOverlayWinsBaseAgentAndModelFields(t *testing.T) 
 	))
 }
 
+func TestSelectReviewExperimentExplicitEmptyValuesClearBaseSettings(t *testing.T) {
+	enabled := true
+	ratio := 1.0
+	global := &Config{
+		ReviewReasoning:   "high",
+		ReviewMinSeverity: "high",
+		Review:            ReviewConfig{DefaultPanel: "global-panel"},
+		CI:                CIConfig{Panel: "global-panel", MinSeverity: "high"},
+		Experiments: map[string]ExperimentDefinition{
+			"clear-v1": {
+				Enabled: &enabled, Ratio: &ratio,
+				Workflows: []ExperimentWorkflow{
+					ExperimentWorkflowReview, ExperimentWorkflowCI,
+				},
+				Config: map[string]any{
+					"review_reasoning":    "",
+					"review_min_severity": "",
+					"review": map[string]any{
+						"default_panel": "",
+					},
+					"ci": map[string]any{
+						"panel": "", "min_severity": "",
+					},
+				},
+			},
+		},
+	}
+	selection, err := SelectReviewExperiment(ExperimentSelectionInput{
+		Workflow: ExperimentWorkflowCI,
+		Subject: ExperimentSubject{
+			Repository: "github.com/example/project",
+			SourceRepo: "github.com/example/project",
+			Branch:     "feature",
+		},
+		Global: global, Repo: &RepoConfig{}, RawRepo: map[string]any{},
+	})
+	require.NoError(t, err)
+
+	reasoning, err := ResolveReviewReasoningFromConfig("", selection.RepoConfig, global)
+	require.NoError(t, err)
+	assert.Equal(t, "thorough", reasoning)
+	severity, err := ResolveReviewMinSeverityFromConfig("", selection.RepoConfig, global)
+	require.NoError(t, err)
+	assert.Empty(t, severity)
+	assert.Empty(t, MergeReviewConfigFromConfig(selection.RepoConfig, global).DefaultPanel)
+	assert.Empty(t, ResolveCIPanelName(selection.RepoConfig, global))
+	ciSeverity, err := ResolveCIMinSeverity("", selection.RepoConfig, global)
+	require.NoError(t, err)
+	assert.Empty(t, ciSeverity)
+}
+
 func TestSelectReviewExperimentDefaultArmPreservesRepoCIReviewsReplacement(t *testing.T) {
 	enabled := true
 	ratio := 0.0
