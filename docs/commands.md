@@ -681,6 +681,10 @@ roborev ci review --comment                  # Post results as PR/MR comment
 
 Runs a one-shot review without a daemon or database. Designed for CI pipelines
 where you want review results as part of the build, not as a background service.
+With `--comment`, roborev calls the forge only when at least one completed agent
+produced nonempty review output. If every agent fails before producing output,
+the command writes its diagnostic summary to the CI log, makes no comment
+request, and exits nonzero.
 
 In GitHub Actions, `ci review` auto-detects `GITHUB_REPOSITORY`, `GITHUB_REF`,
 and `GITHUB_EVENT_PATH` so you can run it with no flags. Outside GitHub Actions,

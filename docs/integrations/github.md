@@ -666,8 +666,12 @@ outcome:
 | Outcome | Behavior |
 |---------|----------|
 | Transient provider outage or synthesis quota failure | Defers without a PR comment, keeps the status `pending`, and retries with exponential backoff. The first delay is 2 minutes, it doubles up to a 1 hour cap, and transient retries give up after 72 hours. |
-| Genuine member failure | Retries up to 3 consecutive genuine attempts. After that, roborev posts an all failed note and sets an `error` status. |
+| Genuine member failure | Retries up to 3 consecutive genuine attempts. After that, roborev posts a fixed `Review Unavailable` note and sets an `error` status. |
 | Quota or timeout skips only | Posts an all skipped summary and uses a nonblocking status. |
+
+The fixed genuine and transient give-up notices describe only the failure
+category. Agent errors and command output remain in local logs and state; they
+are not copied into pull request comments.
 
 If panel members produced review output but the synthesis agent hits quota or a
 transient provider failure, roborev now retries the panel instead of posting the
@@ -1109,10 +1113,12 @@ The generated workflow triggers on `pull_request` events and:
 1. Checks out the PR branch with full history
 1. Downloads the pinned roborev binary and verifies its SHA256 checksum
 1. Runs `roborev ci review --comment` with the configured agents
-1. Posts review results as a PR comment
+1. Posts a PR comment only when an agent produced review output
 
 In GitHub Actions, `ci review` reads `GITHUB_REPOSITORY`, `GITHUB_REF`, and
-`GITHUB_EVENT_PATH` automatically, so no flags are needed beyond `--comment`.
+`GITHUB_EVENT_PATH` automatically, so no flags are needed beyond `--comment`. An
+all-failed run exits nonzero and leaves its diagnostics in the Actions log
+without making a GitHub comment request.
 
 ### Customizing via `.roborev.toml`
 
