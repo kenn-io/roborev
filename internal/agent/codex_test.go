@@ -345,16 +345,11 @@ func TestCodexReviewWithSessionResumePassesResumeArgs(t *testing.T) {
 func TestCodexReviewTimeoutClosesStdoutPipe(t *testing.T) {
 	skipIfWindows(t)
 
-	prevWaitDelay := subprocessWaitDelay
-	subprocessWaitDelay = 20 * time.Millisecond
-	t.Cleanup(func() {
-		subprocessWaitDelay = prevWaitDelay
-	})
-
 	cmdPath := writeTempCommand(t, `#!/bin/sh
 case "$*" in *--help*) echo "usage --sandbox"; exit 0;; esac
 (sleep 0.2) &
 printf '%s\n' '{"type":"item.completed","item":{"type":"agent_message","text":"partial"}}'
+sleep 0.2
 exit 0
 `)
 

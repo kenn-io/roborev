@@ -1870,6 +1870,49 @@ func TestProcessJob_OversizedFinalPromptFailsBeforeAnyAgent(t *testing.T) {
 	assert.Contains(t, updated.Error, "prompt exceeds size limit before agent submission")
 }
 
+func TestProcessJob_NonzeroAgentExitFailsPromptly(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("synthetic agent uses a POSIX shell")
+	}
+	assert := assert.New(t)
+
+	commandPath := filepath.Join(t.TempDir(), "codex")
+	require.NoError(t, os.WriteFile(commandPath, []byte(`#!/bin/sh
+case "$1" in *etxtbsy*) exit 0;; esac
+case "$*" in *--help*) echo "usage --sandbox"; exit 0;; esac
+(sleep 3 2>/dev/null) &
+echo '{"type":"thread.started","thread_id":"synthetic"}'
+echo 'synthetic agent failure' >&2
+exit 17
+`), 0o755))
+
+	tc := newWorkerTestContext(t, 1)
+	cfg := config.DefaultConfig()
+	cfg.CodexCmd = commandPath
+	tc.reconfigurePool(cfg)
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
+	job = tc.exhaustRetries(t, job, testWorkerID, "codex")
+	_, eventCh := tc.Broadcaster.Subscribe("")
+
+	startedAt := time.Now()
+	tc.Pool.processJob(testWorkerID, job)
+	elapsed := time.Since(startedAt)
+
+	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusFailed)
+	assert.Less(elapsed, 1500*time.Millisecond,
+		"job waited for a descendant-held stdout pipe after the agent exited")
+	assert.Contains(updated.Error, "exit status 17")
+	assert.NotContains(updated.Error, agentTimeoutErrorPrefix)
+
+	startedEvent, ok := waitForEvent(t, eventCh, time.Second)
+	require.True(t, ok, "expected review.started event")
+	assert.Equal("review.started", startedEvent.Type)
+	failedEvent, ok := waitForEvent(t, eventCh, time.Second)
+	require.True(t, ok, "expected review.failed event")
+	assert.Equal("review.failed", failedEvent.Type)
+}
+
 func TestFailOrRetryAgent_ContextWindowErrorFailsWithoutRetry(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	job := tc.createAndClaimJobWithAgent(t, "context-limit-test", testWorkerID, "codex")
