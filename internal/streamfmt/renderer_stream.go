@@ -59,6 +59,8 @@ func (r *Renderer) Render(events []Event) {
 			r.writeText(event.Text)
 		case EventReasoning:
 			r.writeReasoning(event.Text)
+		case EventReasoningBlock:
+			r.writeReasoningBlock(event.Text)
 		case EventTool:
 			r.writeTool(event.Name, event.Arg)
 		case EventLiteral:
@@ -155,6 +157,30 @@ func (r *Renderer) writeReasoning(text string) {
 	r.lastWasTool = false
 	r.hasOutput = true
 	r.writef("%s\n", sfReasoningStyle.Render(text))
+}
+
+func (r *Renderer) writeReasoningBlock(text string) {
+	text = strings.TrimSpace(SanitizeControlKeepNewlines(text))
+	if text == "" {
+		return
+	}
+	if r.lastWasTool && r.hasOutput {
+		r.writef("\n")
+	}
+	r.lastWasTool = false
+	r.hasOutput = true
+
+	lines := strings.Split(text, "\n")
+	if r.width > 0 {
+		lines = WrapText(text, r.width)
+	}
+	for _, line := range lines {
+		if line == "" {
+			r.writef("\n")
+			continue
+		}
+		r.writef("%s\n", sfReasoningStyle.Render(line))
+	}
 }
 
 func (r *Renderer) writeTool(name, arg string) {

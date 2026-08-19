@@ -8,8 +8,17 @@ import (
 type grokDecoder struct {
 	renderedToolIDs map[string]struct{}
 	toolByID        map[string]grokToolInfo
-	text            strings.Builder
+	chunkKind       grokChunkKind
+	chunks          strings.Builder
 }
+
+type grokChunkKind uint8
+
+const (
+	grokChunkNone grokChunkKind = iota
+	grokChunkText
+	grokChunkReasoning
+)
 
 type grokToolInfo struct {
 	name  string
@@ -43,17 +52,16 @@ func (d *grokDecoder) Decode(line string) []Event {
 		)
 	}
 
-	if streamEvent.Type == "text" && streamEvent.Data != "" {
-		d.text.WriteString(streamEvent.Data)
-		return nil
+	switch {
+	case streamEvent.Type == "text" && streamEvent.Data != "":
+		return d.appendChunk(grokChunkText, streamEvent.Data)
+	case (streamEvent.Type == "thought" ||
+		streamEvent.Type == "reasoning") && streamEvent.Data != "":
+		return d.appendChunk(grokChunkReasoning, streamEvent.Data)
 	}
 
 	events := d.flushBoundary()
 	switch streamEvent.Type {
-	case "thought", "reasoning":
-		if text := strings.TrimSpace(streamEvent.Data); text != "" {
-			events = append(events, Event{Kind: EventReasoning, Text: text})
-		}
 	case "tool_call":
 		if event, ok := d.decodeToolCall(streamEvent); ok {
 			events = append(events, event)
@@ -81,24 +89,38 @@ func (d *grokDecoder) Decode(line string) []Event {
 }
 
 func (d *grokDecoder) Flush() []Event {
-	if d.text.Len() == 0 {
+	if d.chunks.Len() == 0 {
+		d.chunkKind = grokChunkNone
 		return nil
 	}
-	text := d.text.String()
-	d.text.Reset()
-	return []Event{{Kind: EventText, Text: text}}
+	kind := EventText
+	if d.chunkKind == grokChunkReasoning {
+		kind = EventReasoningBlock
+	}
+	text := d.chunks.String()
+	d.chunks.Reset()
+	d.chunkKind = grokChunkNone
+	return []Event{{Kind: kind, Text: text}}
+}
+
+func (d *grokDecoder) appendChunk(
+	kind grokChunkKind, text string,
+) []Event {
+	var events []Event
+	if d.chunkKind != grokChunkNone && d.chunkKind != kind {
+		events = d.flushBoundary()
+	}
+	d.chunkKind = kind
+	d.chunks.WriteString(text)
+	return events
 }
 
 func (d *grokDecoder) flushBoundary() []Event {
-	if d.text.Len() == 0 {
+	events := d.Flush()
+	if len(events) == 0 {
 		return nil
 	}
-	text := d.text.String()
-	d.text.Reset()
-	return []Event{
-		{Kind: EventText, Text: text},
-		{Kind: EventBoundary},
-	}
+	return append(events, Event{Kind: EventBoundary})
 }
 
 func (d *grokDecoder) decodeToolCall(

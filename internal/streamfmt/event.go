@@ -7,6 +7,7 @@ const (
 	EventBoundary EventKind = iota
 	EventText
 	EventReasoning
+	EventReasoningBlock
 	EventTool
 	EventLiteral
 )

@@ -22,6 +22,7 @@ func TestFormatter_GrokRendering(t *testing.T) {
 	t.Run("thought as reasoning", func(t *testing.T) {
 		fix := newFixture(true, "grok")
 		fix.writeLine(`{"type":"thought","data":"considering the diff"}`)
+		fix.writeLine(`{"type":"end"}`)
 		fix.assertContains(t, "considering the diff")
 	})
 
@@ -187,6 +188,88 @@ func TestGrokDecoderKeepsAdjacentTextAcrossIncrementalChunks(t *testing.T) {
 	plain := StripANSI(out.String())
 	assert.Contains(t, plain, "adjacent text")
 	assert.NotContains(t, plain, "**")
+}
+
+// If Grok thought frames are rendered independently, token-sized provider
+// chunks consume one terminal row each instead of wrapping as prose.
+func TestGrokThoughtChunksRenderAsWrappedProse(t *testing.T) {
+	tests := []struct {
+		name  string
+		width int
+		want  []string
+	}{
+		{
+			name:  "wide",
+			width: 80,
+			want:  []string{"This synthetic reasoning flows as normal prose."},
+		},
+		{
+			name:  "narrow",
+			width: 24,
+			want: []string{
+				"This synthetic",
+				"reasoning flows as",
+				"normal prose.",
+			},
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			var out bytes.Buffer
+			fmtr := NewWithWidth(
+				&out, tt.width, GlamourStyle(), DecoderForAgent("grok"),
+			)
+
+			require.NoError(t, RenderLogChunkWith(
+				strings.NewReader(strings.Join([]string{
+					`{"type":"thought","data":"This synthetic"}`,
+					`{"type":"thought","data":" reasoning flows"}`,
+				}, "\n")+"\n"),
+				fmtr,
+			))
+			assert.Empty(t, out.String())
+			require.NoError(t, RenderLogWith(
+				strings.NewReader(strings.Join([]string{
+					`{"type":"thought","data":" as normal prose."}`,
+					`{"type":"end"}`,
+				}, "\n")+"\n"),
+				fmtr,
+			))
+
+			plain := strings.TrimSuffix(StripANSI(out.String()), "\n")
+			assert.Equal(t, tt.want, strings.Split(plain, "\n"))
+		})
+	}
+}
+
+// If Grok thought assembly normalizes whitespace, intentional paragraphs and
+// structured blocks collapse into one line.
+func TestGrokThoughtChunksPreserveStructuredLineBreaks(t *testing.T) {
+	var out bytes.Buffer
+	fmtr := NewWithWidth(
+		&out, 80, GlamourStyle(), DecoderForAgent("grok"),
+	)
+	input := strings.Join([]string{
+		`{"type":"thought","data":"Inspection notes:\n\n"}`,
+		`{"type":"thought","data":"- branch A\n- branch B\n\n"}`,
+		"{\"type\":\"thought\",\"data\":\"```text\\nstatus: ok\\n```\"}",
+		`{"type":"end"}`,
+	}, "\n") + "\n"
+
+	require.NoError(t, RenderLogWith(strings.NewReader(input), fmtr))
+
+	assert.Equal(t, strings.Join([]string{
+		"Inspection notes:",
+		"",
+		"- branch A",
+		"- branch B",
+		"",
+		"```text",
+		"status: ok",
+		"```",
+		"",
+	}, "\n"), StripANSI(out.String()))
 }
 
 func TestDecodeClaudeMessage_RejectsString(t *testing.T) {
