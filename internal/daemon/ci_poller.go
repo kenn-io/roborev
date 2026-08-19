@@ -988,7 +988,11 @@ func (p *CIPoller) resolveMatrixMemberAgent(
 	backupAgent, backupModel := backupExecutionForSelectedAgent(
 		resolution, resolvedAgent, repoCfg, cfg,
 	)
-	return resolvedAgent, resolution.ModelForSelectedAgent(resolvedAgent, cfg.CI.Model),
+	ciModel := cfg.CI.Model
+	if config.ExperimentOverridesWorkflowModel(repoCfg, workflow, reasoning) {
+		ciModel = ""
+	}
+	return resolvedAgent, resolution.ModelForSelectedAgent(resolvedAgent, ciModel),
 		backupAgent, backupModel, nil
 }
 
@@ -1098,7 +1102,11 @@ func resolveCIAutoDesignAgent(repoCfg *config.RepoConfig, cfg *config.Config) (s
 	if cfg != nil {
 		ciModel = cfg.CI.Model
 	}
-	return resolveDesignFollowUpAgentFromConfig(repoCfg, cfg, ciReasoning(repoCfg), ciModel)
+	reasoning := ciReasoning(repoCfg)
+	if config.ExperimentOverridesWorkflowModel(repoCfg, "design", reasoning) {
+		ciModel = ""
+	}
+	return resolveDesignFollowUpAgentFromConfig(repoCfg, cfg, reasoning, ciModel)
 }
 
 // maybeAppendDesignMember appends exactly one whole-range design member to the

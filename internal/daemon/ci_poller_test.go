@@ -3330,6 +3330,45 @@ func TestResolveMatrixMemberAgentUsesPassedRepoConfigForACPAvailability(t *testi
 	assert.Equal(t, "branch-model", resolvedModel)
 }
 
+func TestCIExperimentModelsOverrideGlobalCIModel(t *testing.T) {
+	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+	h.Cfg.CI.Model = "global-ci-model"
+	h.Cfg.DesignAgent = "test"
+	h.Poller.agentResolverFn = func(name string) (string, error) {
+		return name, nil
+	}
+	enabled := true
+	ratio := 1.0
+	h.Cfg.Experiments = map[string]config.ExperimentDefinition{
+		"ci-model-v1": {
+			Enabled: &enabled, Ratio: &ratio,
+			Workflows: []config.ExperimentWorkflow{config.ExperimentWorkflowCI},
+			Config: map[string]any{
+				"review_model": "experiment-review-model",
+				"design_model": "experiment-design-model",
+			},
+		},
+	}
+	selection, err := config.SelectReviewExperiment(config.ExperimentSelectionInput{
+		Workflow: config.ExperimentWorkflowCI,
+		Subject: config.ExperimentSubject{
+			Repository: "acme/api", SourceRepo: "acme/api", Branch: "feature",
+		},
+		Global: h.Cfg, Repo: &config.RepoConfig{}, RawRepo: map[string]any{},
+	})
+	require.NoError(t, err)
+
+	_, matrixModel, _, _, err := h.Poller.resolveMatrixMemberAgent(
+		h.Repo, selection.RepoConfig, h.Cfg,
+		config.AgentReviewType{Agent: "test", ReviewType: "default"}, "thorough",
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "experiment-review-model", matrixModel)
+
+	_, designModel := resolveCIAutoDesignAgent(selection.RepoConfig, h.Cfg)
+	assert.Equal(t, "experiment-design-model", designModel)
+}
+
 func TestCIPollerProcessPR_RepoReviewsMapOverride(
 	t *testing.T,
 ) {

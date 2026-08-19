@@ -197,6 +197,52 @@ func TestSelectReviewExperimentTreatmentPreservesUnrelatedConfigLayers(t *testin
 	assert.True(t, *selection.RepoConfig.ReuseReviewSession)
 }
 
+func TestSelectReviewExperimentOverlayWinsBaseAgentAndModelFields(t *testing.T) {
+	enabled := true
+	ratio := 1.0
+	global := &Config{
+		DefaultAgent: "claude-code", DefaultModel: "global-model",
+		ReviewAgent: "claude-code", ReviewModel: "global-review-model",
+		Experiments: map[string]ExperimentDefinition{
+			"execution-v1": {
+				Enabled: &enabled, Ratio: &ratio,
+				Workflows: []ExperimentWorkflow{ExperimentWorkflowReview},
+				Config: map[string]any{
+					"agent": "gemini",
+					"model": "",
+				},
+			},
+		},
+	}
+	selection, err := SelectReviewExperiment(ExperimentSelectionInput{
+		Workflow: ExperimentWorkflowReview,
+		Subject: ExperimentSubject{
+			Repository: "github.com/example/project", Branch: "feature",
+		},
+		Global: global,
+		Repo: &RepoConfig{
+			Agent: "claude-code", Model: "repo-model",
+			ReviewAgent: "claude-code", ReviewModel: "repo-review-model",
+		},
+		RawRepo: map[string]any{
+			"agent": "claude-code", "model": "repo-model",
+			"review_agent": "claude-code", "review_model": "repo-review-model",
+		},
+	})
+	require.NoError(t, err)
+	require.NotNil(t, selection.RepoConfig)
+
+	assert.Equal(t, "gemini", ResolveAgentForWorkflowFromConfig(
+		"", selection.RepoConfig, global, "review", "thorough",
+	))
+	assert.Empty(t, ResolveModelForWorkflowFromConfig(
+		"", selection.RepoConfig, global, "review", "thorough",
+	))
+	assert.True(t, HasWorkflowAgentOverrideFromConfig(
+		selection.RepoConfig, global, "review", "thorough",
+	))
+}
+
 func TestSelectReviewExperimentDefaultArmPreservesRepoCIReviewsReplacement(t *testing.T) {
 	enabled := true
 	ratio := 0.0

@@ -231,6 +231,7 @@ func SelectReviewExperiment(in ExperimentSelectionInput) (ExperimentSelection, e
 	if arm == ExperimentArmExperimental {
 		effectiveRaw = overlaidRaw
 		effectiveCfg = overlaidCfg
+		effectiveCfg.experimentOverlay = cloneExperimentMap(selected.Config)
 	}
 	result.RepoConfig = effectiveCfg
 	result.RawRepoConfig = effectiveRaw
@@ -509,6 +510,69 @@ func decodeExperimentRepoConfig(raw map[string]any) (*RepoConfig, error) {
 		return nil, err
 	}
 	return &cfg, nil
+}
+
+func experimentOverlayString(repoCfg *RepoConfig, key string) (string, bool) {
+	if repoCfg == nil || repoCfg.experimentOverlay == nil {
+		return "", false
+	}
+	value, ok := repoCfg.experimentOverlay[key]
+	if !ok {
+		return "", false
+	}
+	text, ok := value.(string)
+	return strings.TrimSpace(text), ok
+}
+
+func experimentWorkflowValue(
+	repoCfg *RepoConfig, workflow, level string, isAgent bool,
+) (string, bool) {
+	levels := []string{level}
+	if legacy := legacyReasoningFallback(level); legacy != "" {
+		levels = append(levels, legacy)
+	}
+	for _, candidate := range levels {
+		if value, ok := experimentOverlayString(
+			repoCfg, workflowFieldKey(workflow, candidate, isAgent),
+		); ok {
+			return value, true
+		}
+	}
+	if value, ok := experimentOverlayString(
+		repoCfg, workflowFieldKey(workflow, "", isAgent),
+	); ok {
+		return value, true
+	}
+	key := "model"
+	if isAgent {
+		key = "agent"
+	}
+	return experimentOverlayString(repoCfg, key)
+}
+
+func experimentWorkflowBackupValue(
+	repoCfg *RepoConfig, workflow string, isAgent bool,
+) (string, bool) {
+	kind := "model"
+	if isAgent {
+		kind = "agent"
+	}
+	if value, ok := experimentOverlayString(
+		repoCfg, workflow+"_backup_"+kind,
+	); ok {
+		return value, true
+	}
+	return experimentOverlayString(repoCfg, "backup_"+kind)
+}
+
+// ExperimentOverridesWorkflowModel reports whether the selected treatment
+// supplies a model for this workflow. Callers use it to distinguish a global
+// CI model from a true explicit request, which remains higher precedence.
+func ExperimentOverridesWorkflowModel(
+	repoCfg *RepoConfig, workflow, level string,
+) bool {
+	_, ok := experimentWorkflowValue(repoCfg, workflow, level, false)
+	return ok
 }
 
 // FingerprintExperimentConfig returns the canonical hash stored with an

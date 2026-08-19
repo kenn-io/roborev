@@ -487,6 +487,7 @@ func validateConfig(cfg any, acp ACPAgentConfigs) error {
 
 // RepoConfig holds per-repo overrides
 type RepoConfig struct {
+	experimentOverlay               map[string]any
 	Agent                           string                          `toml:"agent" comment:"Default agent for this repo when no workflow-specific agent is set."`
 	Model                           string                          `toml:"model" comment:"Default model for this repo when no workflow-specific model is set."` // Model for agents (format varies by agent)
 	BackupAgent                     string                          `toml:"backup_agent" comment:"Backup agent for this repo if the primary agent fails."`
@@ -1400,6 +1401,9 @@ func ResolveAgent(explicit string, repoPath string, globalCfg *Config) string {
 // ResolveAgentFromConfig is the config-taking core of ResolveAgent: it resolves
 // entirely from the passed repoCfg and globalCfg, never reading the working tree.
 func ResolveAgentFromConfig(explicit string, repoCfg *RepoConfig, globalCfg *Config) string {
+	if value, ok := experimentOverlayString(repoCfg, "agent"); ok {
+		return resolve("codex", explicit, value)
+	}
 	var repoVal string
 	if repoCfg != nil {
 		repoVal = repoCfg.Agent
@@ -1696,6 +1700,9 @@ func ResolveModel(explicit string, repoPath string, globalCfg *Config) string {
 // resolves entirely from the passed repoCfg and globalCfg, never reading the
 // working tree.
 func ResolveModelFromConfig(explicit string, repoCfg *RepoConfig, globalCfg *Config) string {
+	if value, ok := experimentOverlayString(repoCfg, "model"); ok {
+		return resolve("", strings.TrimSpace(explicit), value)
+	}
 	var repoVal string
 	if repoCfg != nil {
 		repoVal = strings.TrimSpace(repoCfg.Model)
