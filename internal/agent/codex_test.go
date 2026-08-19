@@ -564,6 +564,56 @@ func TestCodexReviewMarksNonzeroNoJSONUnavailable(t *testing.T) {
 	assert.Contains(t, err.Error(), "503 Service Unavailable")
 }
 
+func TestCodexReviewNoJSONPreservesStdoutClassificationSignals(t *testing.T) {
+	tests := []struct {
+		name     string
+		stdout   string
+		wantKind LimitKind
+	}{
+		{
+			name:     "transient",
+			stdout:   "503 Service Unavailable",
+			wantKind: LimitKindTransient,
+		},
+		{
+			name:     "quota",
+			stdout:   "You've hit your usage limit",
+			wantKind: LimitKindQuota,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a, _ := setupMockCodex(t, false, MockCLIOpts{
+				HelpOutput:  "usage --sandbox",
+				ExitCode:    1,
+				StdoutLines: []string{tt.stdout},
+			})
+
+			_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+			require.Error(t, err)
+			assert.True(t, IsUnavailable(err))
+			assert.Contains(t, err.Error(), tt.stdout)
+			assert.Equal(t, tt.wantKind, ClassifyLimit("codex", err.Error()).Kind)
+		})
+	}
+}
+
+func TestCodexReviewBoundsNoJSONStdoutDiagnostic(t *testing.T) {
+	const omittedTail = "TAIL-MUST-NOT-BE-RENDERED"
+	stdout := "503 Service Unavailable " + strings.Repeat("x", 600) + omittedTail
+	a, _ := setupMockCodex(t, false, MockCLIOpts{
+		HelpOutput:  "usage --sandbox",
+		ExitCode:    1,
+		StdoutLines: []string{stdout},
+	})
+
+	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	require.Error(t, err)
+	assert.Equal(t, LimitKindTransient, ClassifyLimit("codex", err.Error()).Kind)
+	assert.NotContains(t, err.Error(), omittedTail)
+}
+
 func TestCodexReviewNonzeroAfterValidJSONIsNotUnavailable(t *testing.T) {
 	a, _ := setupMockCodex(t, false, MockCLIOpts{
 		HelpOutput: "usage --sandbox",

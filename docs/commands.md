@@ -684,7 +684,8 @@ where you want review results as part of the build, not as a background service.
 With `--comment`, roborev calls the forge only when at least one completed agent
 produced nonempty review output. If every agent fails before producing output,
 the command writes its diagnostic summary to the CI log, makes no comment
-request, and exits nonzero.
+request, and exits nonzero for actionable failures. An all-quota batch keeps its
+existing successful exit because there is no actionable review failure.
 
 In GitHub Actions, `ci review` auto-detects `GITHUB_REPOSITORY`, `GITHUB_REF`,
 and `GITHUB_EVENT_PATH` so you can run it with no flags. Outside GitHub Actions,

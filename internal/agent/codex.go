@@ -373,13 +373,14 @@ func (a *CodexAgent) Review(ctx context.Context, repoPath, commitSHA, prompt str
 	args := runAgent.buildArgs(repoPath, agenticMode, autoApprove, sandboxBroken)
 
 	runResult, runErr := runStreamingCLI(ctx, streamingCLISpec{
-		Name:         "codex",
-		Command:      a.Command,
-		Args:         args,
-		Dir:          repoPath,
-		Stdin:        strings.NewReader(prompt),
-		Output:       output,
-		StreamStderr: true,
+		Name:          "codex",
+		Command:       a.Command,
+		Args:          args,
+		Dir:           repoPath,
+		Stdin:         strings.NewReader(prompt),
+		Output:        output,
+		StreamStderr:  true,
+		CaptureStdout: true,
 		Parse: func(r io.Reader, sw *syncWriter) (string, error) {
 			return a.parseStreamJSON(r, sw)
 		},
@@ -389,16 +390,15 @@ func (a *CodexAgent) Review(ctx context.Context, repoPath, commitSHA, prompt str
 	}
 
 	if runResult.WaitErr != nil {
-		err := formatStreamingCLIWaitError("codex", runResult, runResult.Stderr)
 		if errors.Is(runResult.ParseErr, errNoCodexJSON) {
-			return "", MarkUnavailable(err)
+			return "", MarkUnavailable(formatCodexNoJSONWaitError(runResult))
 		}
-		return "", err
+		return "", formatStreamingCLIWaitError("codex", runResult, runResult.Stderr)
 	}
 
 	if runResult.ParseErr != nil {
 		if errors.Is(runResult.ParseErr, errNoCodexJSON) {
-			return "", MarkUnavailable(fmt.Errorf("codex CLI did not emit valid --json events; upgrade codex or check CLI compatibility: %w", errNoCodexJSON))
+			return "", MarkUnavailable(formatCodexNoJSONError(runResult))
 		}
 		return "", runResult.ParseErr
 	}
@@ -408,6 +408,34 @@ func (a *CodexAgent) Review(ctx context.Context, repoPath, commitSHA, prompt str
 	}
 
 	return runResult.Result, nil
+}
+
+func formatCodexNoJSONWaitError(runResult streamingCLIResult) error {
+	return fmt.Errorf(
+		"codex failed: %w (parse error: %w)%s",
+		runResult.WaitErr,
+		errNoCodexJSON,
+		codexNoJSONDiagnostics(runResult),
+	)
+}
+
+func formatCodexNoJSONError(runResult streamingCLIResult) error {
+	return fmt.Errorf(
+		"codex CLI did not emit valid --json events; upgrade codex or check CLI compatibility: %w%s",
+		errNoCodexJSON,
+		codexNoJSONDiagnostics(runResult),
+	)
+}
+
+func codexNoJSONDiagnostics(runResult streamingCLIResult) string {
+	var detail strings.Builder
+	if stderr := truncateCLIWaitErrorOutput(runResult.Stderr); stderr != "" {
+		fmt.Fprintf(&detail, "\nstderr: %s", stderr)
+	}
+	if stdout := truncateCLIWaitErrorOutput(runResult.Stdout); stdout != "" {
+		fmt.Fprintf(&detail, "\nstdout: %s", stdout)
+	}
+	return detail.String()
 }
 
 // codexEvent represents a top-level event in codex's --json JSONL output.
