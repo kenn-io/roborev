@@ -2921,6 +2921,43 @@ func TestNormalizeMinSeverity(t *testing.T) {
 	}
 }
 
+func TestRepoConfigValidateRejectsInvalidMinSeverity(t *testing.T) {
+	tests := []struct {
+		name string
+		key  string
+		set  func(*RepoConfig)
+	}{
+		{
+			name: "fix", key: "fix_min_severity",
+			set: func(cfg *RepoConfig) { cfg.FixMinSeverity = "urgent" },
+		},
+		{
+			name: "refine", key: "refine_min_severity",
+			set: func(cfg *RepoConfig) { cfg.RefineMinSeverity = "urgent" },
+		},
+		{
+			name: "review", key: "review_min_severity",
+			set: func(cfg *RepoConfig) { cfg.ReviewMinSeverity = "urgent" },
+		},
+		{
+			name: "ci", key: "ci.min_severity",
+			set: func(cfg *RepoConfig) { cfg.CI.MinSeverity = "urgent" },
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &RepoConfig{}
+			tt.set(cfg)
+
+			err := cfg.Validate()
+
+			require.Error(t, err)
+			assert.ErrorContains(t, err, tt.key)
+		})
+	}
+}
+
 func TestRepoCIConfig(t *testing.T) {
 	t.Run("parses agents and review_types", func(t *testing.T) {
 		tmpDir := newTempRepo(t, `

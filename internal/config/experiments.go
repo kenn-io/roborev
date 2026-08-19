@@ -506,7 +506,7 @@ func decodeExperimentRepoConfig(raw map[string]any) (*RepoConfig, error) {
 			cfg.CI.Reviews = make(map[string][]string)
 		}
 	}
-	if err := validateConfig(&cfg, cfg.ACP); err != nil {
+	if err := cfg.Validate(); err != nil {
 		return nil, err
 	}
 	return &cfg, nil

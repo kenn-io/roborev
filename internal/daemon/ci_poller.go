@@ -44,6 +44,13 @@ var errLocalRepoNotFound = errors.New("no local repo found")
 // pre-panel rollback behavior.
 var errNoCIAgent = errors.New("no review agent available")
 
+type ciConfigurationError struct {
+	err error
+}
+
+func (e *ciConfigurationError) Error() string { return e.err.Error() }
+func (e *ciConfigurationError) Unwrap() error { return e.err }
+
 // ghPRAuthor represents the author of a GitHub pull request.
 type ghPRAuthor struct {
 	Login string `json:"login"`
@@ -454,7 +461,8 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 	}
 
 	if err := p.enqueuePanelRun(ctx, ghRepo, pr, cfg); err != nil {
-		if !errors.Is(err, errNoCIAgent) {
+		var configErr *ciConfigurationError
+		if errors.As(err, &configErr) {
 			if statusErr := p.callSetCommitStatus(
 				ghRepo, pr.HeadRefOid, "error",
 				"Review could not be queued; check configuration",
@@ -532,7 +540,9 @@ func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, 
 		RawRepo: rawRepoCfg,
 	})
 	if err != nil {
-		return fmt.Errorf("select review experiment: %w", err)
+		return &ciConfigurationError{
+			err: fmt.Errorf("select review experiment: %w", err),
+		}
 	}
 	repoCfg = selection.RepoConfig
 	if selection.RawRepoConfig != nil {

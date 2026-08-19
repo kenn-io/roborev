@@ -2430,7 +2430,7 @@ func TestCIPollerProcessPR_MalformedRepoConfigFallsBackToGlobal(t *testing.T) {
 	assert.Equal(t, "thorough", members[0].Reasoning)
 }
 
-func TestCIPollerProcessPR_RepoConfigLoadFailureReturnsError(t *testing.T) {
+func TestCIPollerProcessPR_RepoConfigLoadFailureDoesNotSetConfigurationStatus(t *testing.T) {
 	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
 	h.Cfg.CI.ReviewTypes = []string{"security"}
 	h.Cfg.CI.Agents = []string{"codex"}
@@ -2452,9 +2452,7 @@ func TestCIPollerProcessPR_RepoConfigLoadFailureReturnsError(t *testing.T) {
 
 	assert.False(t, h.hasPanel(t, "acme/api", 101, "repo-config-read-failed-sha"),
 		"no panel run on repo config load failure")
-	require.Len(t, *statuses, 1)
-	assert.Equal(t, "error", (*statuses)[0].State)
-	assert.Equal(t, "repo-config-read-failed-sha", (*statuses)[0].SHA)
+	assert.Empty(t, *statuses)
 }
 
 func TestBuildSynthesisPrompt_SanitizesErrors(t *testing.T) {
@@ -3539,6 +3537,55 @@ func TestCIPollerProcessPR_AgentFailureSetsErrorStatus(t *testing.T) {
 	assert.Equal("error", sc.State)
 	assert.Equal("head-sha-91", sc.SHA)
 	assert.Contains(sc.Desc, "agent")
+}
+
+func TestCIPollerProcessPR_TransientEnqueueFailureDoesNotSetConfigurationStatus(t *testing.T) {
+	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+	h.Cfg.CI.ReviewTypes = []string{"security"}
+	h.Cfg.CI.Agents = []string{"codex"}
+	h.Poller = NewCIPoller(h.DB, NewStaticConfig(h.Cfg), nil)
+	h.stubProcessPRGit()
+	h.Poller.gitFetchFn = func(context.Context, string, []string) error {
+		return errors.New("temporary fetch failure")
+	}
+	statuses := h.CaptureCommitStatuses()
+
+	err := h.Poller.processPR(
+		context.Background(), "acme/api",
+		ghPR{Number: 93, HeadRefOid: "head-sha-93", BaseRefName: "main"}, h.Cfg)
+
+	require.ErrorContains(t, err, "temporary fetch failure")
+	assert.Empty(t, *statuses)
+}
+
+func TestCIPollerProcessPR_ExperimentValidationFailureSetsConfigurationStatus(t *testing.T) {
+	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+	h.Cfg.CI.ReviewTypes = []string{"security"}
+	h.Cfg.CI.Agents = []string{"codex"}
+	enabled := true
+	ratio := 1.0
+	h.Cfg.Experiments = map[string]config.ExperimentDefinition{
+		"invalid-severity-v1": {
+			Enabled: &enabled, Ratio: &ratio,
+			Workflows: []config.ExperimentWorkflow{config.ExperimentWorkflowCI},
+			Config: map[string]any{
+				"ci": map[string]any{"min_severity": "urgent"},
+			},
+		},
+	}
+	h.Poller = NewCIPoller(h.DB, NewStaticConfig(h.Cfg), nil)
+	h.stubProcessPRGit()
+	statuses := h.CaptureCommitStatuses()
+
+	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
+		Number: 94, HeadRefOid: "head-sha-94", HeadRefName: "feature",
+		HeadRepo: "acme/api", BaseRefName: "main",
+	}, h.Cfg)
+
+	require.ErrorContains(t, err, "ci.min_severity")
+	require.Len(t, *statuses, 1)
+	assert.Equal(t, "error", (*statuses)[0].State)
+	assert.Contains(t, (*statuses)[0].Desc, "configuration")
 }
 
 // TestCIPollerProcessPR_NoAgentStillSupersedes covers the supersede-on-any-new-HEAD

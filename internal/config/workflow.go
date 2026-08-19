@@ -369,7 +369,11 @@ func ResolveFixMinSeverity(explicit string, repoPath string, globalCfg *Config) 
 	if strings.TrimSpace(explicit) != "" {
 		return NormalizeMinSeverity(explicit)
 	}
-	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil && strings.TrimSpace(repoCfg.FixMinSeverity) != "" {
+	repoCfg, err := LoadRepoConfig(repoPath)
+	if err != nil {
+		return "", err
+	}
+	if repoCfg != nil && strings.TrimSpace(repoCfg.FixMinSeverity) != "" {
 		return NormalizeMinSeverity(repoCfg.FixMinSeverity)
 	}
 	if globalCfg != nil && strings.TrimSpace(globalCfg.FixMinSeverity) != "" {
@@ -384,7 +388,11 @@ func ResolveRefineMinSeverity(explicit string, repoPath string, globalCfg *Confi
 	if strings.TrimSpace(explicit) != "" {
 		return NormalizeMinSeverity(explicit)
 	}
-	if repoCfg, err := LoadRepoConfig(repoPath); err == nil && repoCfg != nil && strings.TrimSpace(repoCfg.RefineMinSeverity) != "" {
+	repoCfg, err := LoadRepoConfig(repoPath)
+	if err != nil {
+		return "", err
+	}
+	if repoCfg != nil && strings.TrimSpace(repoCfg.RefineMinSeverity) != "" {
 		return NormalizeMinSeverity(repoCfg.RefineMinSeverity)
 	}
 	if globalCfg != nil && strings.TrimSpace(globalCfg.RefineMinSeverity) != "" {
@@ -396,7 +404,13 @@ func ResolveRefineMinSeverity(explicit string, repoPath string, globalCfg *Confi
 // ResolveReviewMinSeverity determines minimum severity for review.
 // Priority: explicit > per-repo config > global config > "" (no filter)
 func ResolveReviewMinSeverity(explicit string, repoPath string, globalCfg *Config) (string, error) {
-	repoCfg, _ := LoadRepoConfig(repoPath)
+	if strings.TrimSpace(explicit) != "" {
+		return NormalizeMinSeverity(explicit)
+	}
+	repoCfg, err := LoadRepoConfig(repoPath)
+	if err != nil {
+		return "", err
+	}
 	return ResolveReviewMinSeverityFromConfig(explicit, repoCfg, globalCfg)
 }
 

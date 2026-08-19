@@ -669,6 +669,30 @@ type RepoConfig struct {
 	ACP ACPAgentConfigs `toml:"acp,omitempty"`
 }
 
+// Validate checks values that cannot be constrained by TOML decoding alone.
+func (c *RepoConfig) Validate() error {
+	if c == nil {
+		return nil
+	}
+	if err := validateConfig(c, c.ACP); err != nil {
+		return err
+	}
+	for _, setting := range []struct {
+		key   string
+		value string
+	}{
+		{key: "fix_min_severity", value: c.FixMinSeverity},
+		{key: "refine_min_severity", value: c.RefineMinSeverity},
+		{key: "review_min_severity", value: c.ReviewMinSeverity},
+		{key: "ci.min_severity", value: c.CI.MinSeverity},
+	} {
+		if _, err := NormalizeMinSeverity(setting.value); err != nil {
+			return fmt.Errorf("%s: %w", setting.key, err)
+		}
+	}
+	return nil
+}
+
 // UsesReviewMDFallback reports whether REVIEW.md may supply repo guidelines.
 func (c *RepoConfig) UsesReviewMDFallback() bool {
 	return c == nil || c.ReviewMDFallback == nil || *c.ReviewMDFallback
@@ -1111,7 +1135,7 @@ func LoadRepoConfigWithRaw(repoPath string) (*RepoConfig, map[string]any, error)
 	if err := validateExperimentEntries(cfg.Experiments, false); err != nil {
 		return nil, nil, fmt.Errorf("config: %w", err)
 	}
-	if err := validateConfig(&cfg, cfg.ACP); err != nil {
+	if err := cfg.Validate(); err != nil {
 		return nil, nil, fmt.Errorf("config: %w", err)
 	}
 
@@ -1300,7 +1324,7 @@ func LoadRepoConfigFromRefWithRaw(repoPath, ref string) (*RepoConfig, map[string
 	if err := validateExperimentEntries(cfg.Experiments, false); err != nil {
 		return nil, nil, fmt.Errorf("experiment config at %s: %w", ref, err)
 	}
-	if err := validateConfig(&cfg, cfg.ACP); err != nil {
+	if err := cfg.Validate(); err != nil {
 		return nil, nil, &ConfigParseError{Ref: ref, Err: err}
 	}
 	raw := make(map[string]any)
@@ -1487,7 +1511,7 @@ func loadRepoConfigFile(path string) (*RepoConfig, error) {
 	if err := validateExperimentEntries(cfg.Experiments, false); err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}
-	if err := validateConfig(&cfg, cfg.ACP); err != nil {
+	if err := cfg.Validate(); err != nil {
 		return nil, fmt.Errorf("config: %w", err)
 	}
 	return &cfg, nil
@@ -1998,7 +2022,7 @@ func SaveRepoConfigTo(path string, cfg *RepoConfig) error {
 // SaveRepoConfigToWithExplicitKeys saves a per-repo configuration while
 // preserving explicit zero-valued keys named in explicitKeys.
 func SaveRepoConfigToWithExplicitKeys(path string, cfg *RepoConfig, explicitKeys ...string) error {
-	if err := validateConfig(cfg, cfg.ACP); err != nil {
+	if err := cfg.Validate(); err != nil {
 		return fmt.Errorf("config: %w", err)
 	}
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {

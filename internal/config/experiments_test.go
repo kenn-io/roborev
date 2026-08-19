@@ -623,6 +623,27 @@ func TestSelectReviewExperimentValidatesOverlayForDefaultArm(t *testing.T) {
 	assert.Contains(t, err.Error(), "strict mode")
 }
 
+func TestSelectReviewExperimentRejectsInvalidSeverityForDefaultArm(t *testing.T) {
+	enabled := true
+	ratio := 0.0
+	_, err := SelectReviewExperiment(ExperimentSelectionInput{
+		Workflow: ExperimentWorkflowReview,
+		Subject: ExperimentSubject{
+			Repository: "github.com/example/project", Branch: "feature",
+		},
+		Global: &Config{Experiments: map[string]ExperimentDefinition{
+			"invalid-severity-v1": {
+				Enabled: &enabled, Ratio: &ratio,
+				Workflows: []ExperimentWorkflow{ExperimentWorkflowReview},
+				Config:    map[string]any{"review_min_severity": "urgent"},
+			},
+		}},
+	})
+
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "review_min_severity")
+}
+
 func TestSelectReviewExperimentRejectsDefinitionMutation(t *testing.T) {
 	enabled := true
 	disabled := false
