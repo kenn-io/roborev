@@ -417,6 +417,7 @@ func (p *PgPool) EnsureSchema(ctx context.Context) error {
 					synced_at TIMESTAMP WITH TIME ZONE
 				)`,
 				`CREATE TABLE IF NOT EXISTS experiment_assignments (
+					id BIGSERIAL UNIQUE NOT NULL,
 					review_unit_kind TEXT NOT NULL,
 					review_unit_uuid TEXT NOT NULL,
 					experiment_id TEXT NOT NULL REFERENCES experiment_definitions(experiment_id),
@@ -425,12 +426,15 @@ func (p *PgPool) EnsureSchema(ctx context.Context) error {
 					effective_config_hash TEXT NOT NULL,
 					effective_config_json TEXT NOT NULL,
 					assigned_at TIMESTAMP WITH TIME ZONE NOT NULL,
+					inserted_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT clock_timestamp(),
 					source_machine_id UUID NOT NULL,
 					synced_at TIMESTAMP WITH TIME ZONE,
 					PRIMARY KEY (review_unit_kind, review_unit_uuid, experiment_id)
 				)`,
 				`CREATE INDEX IF NOT EXISTS idx_experiment_assignments_subject
 					ON experiment_assignments(experiment_id, subject_hash)`,
+				`CREATE INDEX IF NOT EXISTS idx_experiment_assignments_inserted
+					ON experiment_assignments(inserted_at, id)`,
 			} {
 				if _, err = p.pool.Exec(ctx, stmt); err != nil {
 					return fmt.Errorf("v19 migration (review experiments): %w", err)
@@ -911,30 +915,49 @@ func (p *PgPool) PullExperimentDefinitions(ctx context.Context, excludeMachineID
 	return definitions, rows.Err()
 }
 
-func (p *PgPool) PullExperimentAssignments(ctx context.Context, excludeMachineID string) ([]SyncableExperimentAssignment, error) {
+func (p *PgPool) PullExperimentAssignments(
+	ctx context.Context, excludeMachineID, cursor string, limit int,
+) ([]SyncableExperimentAssignment, string, error) {
+	var cursorTime time.Time
+	var cursorID int64
+	if cursor != "" {
+		cursorTime, cursorID, _ = parseTimestampIDCursor(cursor)
+	}
 	rows, err := p.pool.Query(ctx, `
 		SELECT review_unit_kind, review_unit_uuid, experiment_id, arm, subject_hash,
-		       effective_config_hash, effective_config_json, assigned_at, source_machine_id
+		       effective_config_hash, effective_config_json, assigned_at, source_machine_id,
+		       inserted_at, id
 		FROM experiment_assignments
 		WHERE source_machine_id != $1
-		ORDER BY assigned_at, review_unit_kind, review_unit_uuid`, excludeMachineID)
+		  AND (inserted_at > $2 OR (inserted_at = $2 AND id > $3))
+		ORDER BY inserted_at, id
+		LIMIT $4`, excludeMachineID, cursorTime, cursorID, limit)
 	if err != nil {
-		return nil, err
+		return nil, cursor, fmt.Errorf("query experiment assignments: %w", err)
 	}
 	defer rows.Close()
 	var assignments []SyncableExperimentAssignment
+	var lastInsertedAt time.Time
+	var lastID int64
 	for rows.Next() {
 		var assignment SyncableExperimentAssignment
 		if err := rows.Scan(&assignment.ReviewUnitKind, &assignment.ReviewUnitUUID,
 			&assignment.ExperimentID, &assignment.Arm, &assignment.SubjectHash,
 			&assignment.EffectiveConfigHash, &assignment.EffectiveConfigJSON,
 			&assignment.AssignedAt,
-			&assignment.SourceMachineID); err != nil {
-			return nil, err
+			&assignment.SourceMachineID, &lastInsertedAt, &lastID); err != nil {
+			return nil, cursor, fmt.Errorf("scan experiment assignment: %w", err)
 		}
 		assignments = append(assignments, assignment)
 	}
-	return assignments, rows.Err()
+	if err := rows.Err(); err != nil {
+		return nil, cursor, fmt.Errorf("experiment assignment rows: %w", err)
+	}
+	newCursor := cursor
+	if len(assignments) > 0 {
+		newCursor = formatTimestampIDCursor(lastInsertedAt, lastID)
+	}
+	return assignments, newCursor, nil
 }
 
 // InsertResponse inserts a response in PostgreSQL (append-only, no updates)

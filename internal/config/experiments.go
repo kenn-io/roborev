@@ -438,12 +438,15 @@ func applyExperimentOverlay(global *Config, rawRepo, overlay map[string]any) (ma
 		repoEntries, _ := repoReview[key].(map[string]any)
 		globalEntries, _ := globalReview[key].(map[string]any)
 		for name, entryOverlay := range overlayEntries {
+			overlayMap, ok := entryOverlay.(map[string]any)
+			if !ok {
+				return nil, fmt.Errorf("experiment review.%s.%s must be a table", key, name)
+			}
 			baseEntry, exists := repoEntries[name]
 			if !exists {
 				baseEntry = globalEntries[name]
 			}
 			baseMap, _ := baseEntry.(map[string]any)
-			overlayMap, _ := entryOverlay.(map[string]any)
 			effectiveEntries[name] = mergeExperimentMaps(baseMap, overlayMap)
 		}
 	}

@@ -351,6 +351,51 @@ func TestSelectReviewExperimentPreservesRepoReplacementBeforeOverlay(t *testing.
 	assert.Empty(t, bugs.Reasoning)
 }
 
+func TestSelectReviewExperimentRejectsNonTableReviewEntries(t *testing.T) {
+	enabled := true
+	ratio := 1.0
+	baseReview := ReviewConfig{
+		Subagents: map[string]SubagentSpec{
+			"bugs": {Agent: "codex"},
+		},
+		Panels: map[string]PanelSpec{
+			"team": {Members: []string{"bugs"}},
+		},
+	}
+
+	for _, tt := range []struct {
+		name      string
+		key       string
+		entryName string
+	}{
+		{name: "subagent", key: "subagents", entryName: "bugs"},
+		{name: "panel", key: "panels", entryName: "team"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := SelectReviewExperiment(ExperimentSelectionInput{
+				Workflow: ExperimentWorkflowReview,
+				Subject: ExperimentSubject{
+					Repository: "github.com/example/project", Branch: "feature",
+				},
+				Global: &Config{
+					Review: baseReview,
+					Experiments: map[string]ExperimentDefinition{
+						"invalid-v1": {
+							Enabled: &enabled, Ratio: &ratio,
+							Workflows: []ExperimentWorkflow{ExperimentWorkflowReview},
+							Config: map[string]any{"review": map[string]any{
+								tt.key: map[string]any{tt.entryName: "not-a-table"},
+							}},
+						},
+					},
+				},
+			})
+			require.Error(t, err)
+			assert.Contains(t, err.Error(), "review."+tt.key+"."+tt.entryName+" must be a table")
+		})
+	}
+}
+
 func TestSelectReviewExperimentDefaultArmPreservesRepoReplacement(t *testing.T) {
 	enabled := true
 	ratio := 0.0

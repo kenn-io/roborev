@@ -12,12 +12,13 @@ import (
 
 // Sync state keys
 const (
-	SyncStateMachineID        = "machine_id"
-	SyncStateLastJobCursor    = "last_job_cursor"    // ID of last synced job
-	SyncStateLastReviewCursor = "last_review_cursor" // Composite cursor for reviews (updated_at,id)
-	SyncStateLastResponseID   = "last_response_id"   // inserted_at/id cursor of last synced response
-	SyncStateSyncTargetID     = "sync_target_id"     // Database ID of last synced Postgres
-	SyncStateDatabaseID       = "database_id"        // Stable identity of this local SQLite database
+	SyncStateMachineID                      = "machine_id"
+	SyncStateLastJobCursor                  = "last_job_cursor" // ID of last synced job
+	SyncStateLastExperimentAssignmentCursor = "last_experiment_assignment_cursor"
+	SyncStateLastReviewCursor               = "last_review_cursor" // Composite cursor for reviews (updated_at,id)
+	SyncStateLastResponseID                 = "last_response_id"   // inserted_at/id cursor of last synced response
+	SyncStateSyncTargetID                   = "sync_target_id"     // Database ID of last synced Postgres
+	SyncStateDatabaseID                     = "database_id"        // Stable identity of this local SQLite database
 )
 
 // GetSyncState retrieves a value from the sync_state table.

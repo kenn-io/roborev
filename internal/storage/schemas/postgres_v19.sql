@@ -117,6 +117,7 @@ CREATE TABLE IF NOT EXISTS roborev.experiment_definitions (
 );
 
 CREATE TABLE IF NOT EXISTS roborev.experiment_assignments (
+  id BIGSERIAL UNIQUE NOT NULL,
   review_unit_kind TEXT NOT NULL,
   review_unit_uuid TEXT NOT NULL,
   experiment_id TEXT NOT NULL REFERENCES roborev.experiment_definitions(experiment_id),
@@ -125,6 +126,7 @@ CREATE TABLE IF NOT EXISTS roborev.experiment_assignments (
   effective_config_hash TEXT NOT NULL,
   effective_config_json TEXT NOT NULL,
   assigned_at TIMESTAMP WITH TIME ZONE NOT NULL,
+  inserted_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT clock_timestamp(),
   source_machine_id UUID NOT NULL,
   synced_at TIMESTAMP WITH TIME ZONE,
   PRIMARY KEY (review_unit_kind, review_unit_uuid, experiment_id)
@@ -177,6 +179,8 @@ CREATE INDEX IF NOT EXISTS idx_responses_id ON roborev.responses(id);
 -- schema is replayed.
 CREATE INDEX IF NOT EXISTS idx_experiment_assignments_subject
   ON roborev.experiment_assignments(experiment_id, subject_hash);
+CREATE INDEX IF NOT EXISTS idx_experiment_assignments_inserted
+  ON roborev.experiment_assignments(inserted_at, id);
 
 CREATE TABLE IF NOT EXISTS roborev.sync_metadata (
   key TEXT PRIMARY KEY,

@@ -439,7 +439,12 @@ func (w *SyncWorker) connect(timeout time.Duration) (bool, error) {
 			return false, fmt.Errorf("clear synced_at: %w", err)
 		}
 		// Also clear pull cursors so we pull all data from the new database
-		for _, key := range []string{SyncStateLastJobCursor, SyncStateLastReviewCursor, SyncStateLastResponseID} {
+		for _, key := range []string{
+			SyncStateLastJobCursor,
+			SyncStateLastExperimentAssignmentCursor,
+			SyncStateLastReviewCursor,
+			SyncStateLastResponseID,
+		} {
 			if err := w.db.SetSyncState(key, ""); err != nil {
 				pool.Close()
 				return false, fmt.Errorf("clear %s: %w", key, err)
@@ -781,14 +786,37 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 		}
 	}
 
-	assignments, err := pool.PullExperimentAssignments(ctx, machineID)
+	assignmentCursor, err := w.db.GetSyncState(SyncStateLastExperimentAssignmentCursor)
 	if err != nil {
-		return stats, fmt.Errorf("pull experiment assignments: %w", err)
+		return stats, fmt.Errorf("get experiment assignment cursor: %w", err)
 	}
-	for _, assignment := range assignments {
-		if err := w.db.UpsertPulledExperimentAssignment(assignment); err != nil {
-			return stats, fmt.Errorf("store experiment assignment %s/%s: %w",
-				assignment.ReviewUnitKind, assignment.ReviewUnitUUID, err)
+	assignmentQueryCursor := rewindTimestampIDCursor(assignmentCursor, syncCursorLookback())
+	maxAssignmentCursor := assignmentCursor
+	for {
+		assignments, newCursor, err := pool.PullExperimentAssignments(
+			ctx, machineID, assignmentQueryCursor, 100,
+		)
+		if err != nil {
+			return stats, fmt.Errorf("pull experiment assignments: %w", err)
+		}
+		if len(assignments) == 0 {
+			break
+		}
+		for _, assignment := range assignments {
+			if err := w.db.UpsertPulledExperimentAssignment(assignment); err != nil {
+				return stats, fmt.Errorf("store experiment assignment %s/%s: %w",
+					assignment.ReviewUnitKind, assignment.ReviewUnitUUID, err)
+			}
+		}
+		assignmentQueryCursor = newCursor
+		maxAssignmentCursor = maxTimestampIDCursor(maxAssignmentCursor, newCursor)
+		if err := w.db.SetSyncState(
+			SyncStateLastExperimentAssignmentCursor, maxAssignmentCursor,
+		); err != nil {
+			return stats, fmt.Errorf("save experiment assignment cursor: %w", err)
+		}
+		if len(assignments) < 100 {
+			break
 		}
 	}
 
