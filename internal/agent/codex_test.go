@@ -245,6 +245,18 @@ func TestCodexReviewUnsafeMissingFlagErrors(t *testing.T) {
 	assert.Contains(t, err.Error(), "does not support")
 }
 
+func TestCodexReviewMarksPropagatedCapabilityProbeErrorUnavailable(t *testing.T) {
+	a, _ := setupMockCodex(t, false, MockCLIOpts{
+		ExitCode:    1,
+		StderrLines: []string{"native package missing"},
+	})
+
+	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	require.Error(t, err)
+	assert.True(t, IsUnavailable(err))
+	assert.Contains(t, err.Error(), "native package missing")
+}
+
 func TestCodexReviewIncludesIgnoreUserConfigWhenSupported(t *testing.T) {
 	a, mock := setupMockCodex(t, false, MockCLIOpts{
 		HelpOutput:  "usage --sandbox " + codexIgnoreUserConfigFlag,
@@ -534,5 +546,48 @@ func TestCodexReviewNoValidJSONReturnsError(t *testing.T) {
 	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
 	require.Error(t, err)
 	assert.Contains(t, err.Error(), "did not emit valid --json events")
-	assert.ErrorIs(t, err, errNoCodexJSON)
+	require.ErrorIs(t, err, errNoCodexJSON)
+	assert.True(t, IsUnavailable(err))
+}
+
+func TestCodexReviewMarksNonzeroNoJSONUnavailable(t *testing.T) {
+	a, _ := setupMockCodex(t, false, MockCLIOpts{
+		HelpOutput:  "usage --sandbox",
+		ExitCode:    1,
+		StderrLines: []string{"503 Service Unavailable"},
+	})
+
+	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	require.Error(t, err)
+	assert.True(t, IsUnavailable(err))
+	require.ErrorIs(t, err, errNoCodexJSON)
+	assert.Contains(t, err.Error(), "503 Service Unavailable")
+}
+
+func TestCodexReviewNonzeroAfterValidJSONIsNotUnavailable(t *testing.T) {
+	a, _ := setupMockCodex(t, false, MockCLIOpts{
+		HelpOutput: "usage --sandbox",
+		ExitCode:   1,
+		StdoutLines: []string{
+			`{"type":"item.completed","item":{"type":"agent_message","text":"partial"}}`,
+		},
+	})
+
+	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	require.Error(t, err)
+	assert.False(t, IsUnavailable(err))
+}
+
+func TestCodexReviewMarksCommandStartupErrorUnavailable(t *testing.T) {
+	cmdPath := writeTempCommand(t, `#!/bin/sh
+case "$*" in
+  *--help*) mv "$0" "$0.gone"; echo "usage --sandbox"; exit 0;;
+esac
+exit 0
+`)
+	a := NewCodexAgent(cmdPath)
+
+	_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+	require.Error(t, err)
+	assert.True(t, IsUnavailable(err))
 }

@@ -343,7 +343,7 @@ func (a *CodexAgent) Review(ctx context.Context, repoPath, commitSHA, prompt str
 	if agenticMode {
 		supported, err := codexSupportsDangerousFlag(ctx, a.Command, runAgent.IgnoreUserConfig)
 		if err != nil {
-			return "", err
+			return "", MarkUnavailable(err)
 		}
 		if !supported {
 			return "", fmt.Errorf("codex does not support %s; upgrade codex or disable allow_unsafe_agents", codexDangerousFlag)
@@ -356,7 +356,7 @@ func (a *CodexAgent) Review(ctx context.Context, repoPath, commitSHA, prompt str
 	if !agenticMode {
 		supported, err := codexSupportsNonInteractive(ctx, a.Command, runAgent.IgnoreUserConfig)
 		if err != nil {
-			return "", err
+			return "", MarkUnavailable(err)
 		}
 		if !supported {
 			return "", fmt.Errorf("codex version too old for non-interactive execution; upgrade codex or use --agentic")
@@ -385,16 +385,20 @@ func (a *CodexAgent) Review(ctx context.Context, repoPath, commitSHA, prompt str
 		},
 	})
 	if runErr != nil {
-		return "", runErr
+		return "", MarkUnavailable(runErr)
 	}
 
 	if runResult.WaitErr != nil {
-		return "", formatStreamingCLIWaitError("codex", runResult, runResult.Stderr)
+		err := formatStreamingCLIWaitError("codex", runResult, runResult.Stderr)
+		if errors.Is(runResult.ParseErr, errNoCodexJSON) {
+			return "", MarkUnavailable(err)
+		}
+		return "", err
 	}
 
 	if runResult.ParseErr != nil {
 		if errors.Is(runResult.ParseErr, errNoCodexJSON) {
-			return "", fmt.Errorf("codex CLI did not emit valid --json events; upgrade codex or check CLI compatibility: %w", errNoCodexJSON)
+			return "", MarkUnavailable(fmt.Errorf("codex CLI did not emit valid --json events; upgrade codex or check CLI compatibility: %w", errNoCodexJSON))
 		}
 		return "", runResult.ParseErr
 	}
