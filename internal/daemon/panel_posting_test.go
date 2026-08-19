@@ -1054,14 +1054,17 @@ func TestPostPanelRunGenuineGiveUp(t *testing.T) {
 		reviewpkg.DefaultRetrySchedule.GenuineMax-1, "acme/api", 82, headSHA)
 	require.NoError(t, err)
 
+	const rawError = "private launcher detail\nsecond diagnostic line"
 	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 82, headSHA, "base.."+headSHA,
-		[]jobSpec{{Agent: "test", ReviewType: "review", Status: "failed", Error: "still broken"}})
+		[]jobSpec{{Agent: "test", ReviewType: "review", Status: "failed", Error: rawError}})
 	h.markJobFailed(t, synth.ID, "synthesis released after all members failed")
 
 	h.Poller.handleReviewFailed(ciEvent(synth.ID, "review.failed"))
 
 	require.Len(t, *comments, 1, "give-up posts a soft note")
 	assert.Contains((*comments)[0].Body, "## roborev: Review Unavailable", "give-up note header")
+	assert.NotContains((*comments)[0].Body, "private launcher detail")
+	assert.NotContains((*comments)[0].Body, "second diagnostic line")
 	require.Len(t, *statuses, 1)
 	assert.Equal("error", (*statuses)[0].State, "genuine give-up status blocks required checks")
 	assert.Equal("All reviews failed", (*statuses)[0].Desc)
@@ -1100,7 +1103,7 @@ func TestPostPanelRunTransientGiveUp(t *testing.T) {
 		oldFirst, "acme/api", 85, headSHA)
 	require.NoError(t, err)
 
-	outage := reviewpkg.OutageErrorPrefix + "429 too many requests"
+	outage := reviewpkg.OutageErrorPrefix + "private provider detail\nsecond diagnostic line"
 	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 85, headSHA, "base.."+headSHA,
 		[]jobSpec{{Agent: "test", ReviewType: "review", Status: "failed", Error: outage}})
 	h.markJobFailed(t, synth.ID, "synthesis released after all members failed")
@@ -1115,6 +1118,8 @@ func TestPostPanelRunTransientGiveUp(t *testing.T) {
 	assert.NotContains(body, "next commit", "must be the transient note, not the genuine soft note")
 	assert.NotContains(body, "Review Failed", "give-up note is not a terminal Review Failed comment")
 	assert.NotContains(body, "Check CI logs", "give-up note is not a terminal failure comment")
+	assert.NotContains(body, "private provider detail")
+	assert.NotContains(body, "second diagnostic line")
 
 	require.Len(t, *statuses, 1, "transient give-up sets exactly one status")
 	assert.Equal("success", (*statuses)[0].State, "give-up status is non-failing")

@@ -2094,7 +2094,7 @@ func (p *CIPoller) finalizePanelRun(row *storage.CIPanel, members []storage.Batc
 		p.postPanelComment(row, members, storage.PanelOutcomeNoReviewPosted)
 	case OutcomeGenuineGiveUp:
 		p.postPanelGiveUp(row,
-			reviewpkg.FormatGenuineSoftNoteComment(row.HeadSHA, out.LastErrorExcerpt),
+			reviewpkg.FormatGenuineSoftNoteComment(row.HeadSHA),
 			"error", "All reviews failed")
 	case OutcomeDeferTransient:
 		p.deferTransientPanel(row, attempt, out.LastErrorExcerpt)
@@ -2207,7 +2207,7 @@ func (p *CIPoller) postPanelGiveUp(row *storage.CIPanel, body, statusState, stat
 func (p *CIPoller) deferTransientPanel(row *storage.CIPanel, attempt *storage.ReviewAttempt, excerpt string) {
 	now := time.Now()
 	if reviewpkg.DefaultRetrySchedule.TransientExhausted(now.Sub(attempt.FirstAttemptAt)) {
-		p.postPanelGiveUp(row, reviewpkg.FormatTransientGiveUpComment(row.HeadSHA, excerpt),
+		p.postPanelGiveUp(row, reviewpkg.FormatTransientGiveUpComment(row.HeadSHA),
 			"success", "Review unavailable")
 		return
 	}

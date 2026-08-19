@@ -535,25 +535,14 @@ func TestSkippedAgentNote(t *testing.T) {
 
 func TestGiveUpAndSoftNoteComments(t *testing.T) {
 	assert := assert.New(t)
-	g := FormatTransientGiveUpComment("abc1234def", "429 too many requests")
+	g := FormatTransientGiveUpComment("abc1234def")
 	assert.Contains(g, "## roborev: Review Unavailable (`abc1234`)")
 	assert.Contains(g, "3 days")
-	assert.Contains(g, "429 too many requests")
-
-	s := FormatGenuineSoftNoteComment("abc1234def", "model not supported")
-	assert.Contains(s, "## roborev: Review Unavailable (`abc1234`)")
-	assert.Contains(s, "next commit")
-	assert.Contains(s, "model not supported")
-}
-
-func TestGiveUpAndSoftNoteCommentsSuppressEmptyExcerpt(t *testing.T) {
-	assert := assert.New(t)
-	g := FormatTransientGiveUpComment("abc1234def", "   ")
-	assert.Contains(g, "## roborev: Review Unavailable (`abc1234`)")
 	assert.NotContains(g, "Last error")
 
-	s := FormatGenuineSoftNoteComment("abc1234def", "")
+	s := FormatGenuineSoftNoteComment("abc1234def")
 	assert.Contains(s, "## roborev: Review Unavailable (`abc1234`)")
+	assert.Contains(s, "next commit")
 	assert.NotContains(s, "Last error")
 }
 

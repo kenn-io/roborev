@@ -255,43 +255,25 @@ func FormatAllFailedComment(
 }
 
 // FormatTransientGiveUpComment is posted after the 3-day transient retry cap.
-// It explains that the AI provider was repeatedly unavailable and includes a
-// one-line excerpt of the last error encountered.
-func FormatTransientGiveUpComment(headSHA, lastErrExcerpt string) string {
+// It explains that the AI provider was repeatedly unavailable without exposing
+// the underlying agent error.
+func FormatTransientGiveUpComment(headSHA string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "## roborev: Review Unavailable (`%s`)\n\n", gitrepo.ShortSHA(headSHA))
 	b.WriteString("roborev tried to review this PR for 3 days but the AI provider " +
 		"was repeatedly unavailable, so no review was produced.\n\n")
-	if strings.TrimSpace(lastErrExcerpt) != "" {
-		fmt.Fprintf(&b, "Last error: `%s`\n", oneLineExcerpt(lastErrExcerpt))
-	}
 	return b.String()
 }
 
 // FormatGenuineSoftNoteComment is posted after bounded genuine failures. It
 // notes the agent repeatedly failed to run and that roborev will retry on the
-// next commit, with a one-line excerpt of the last error.
-func FormatGenuineSoftNoteComment(headSHA, lastErrExcerpt string) string {
+// next commit without exposing the underlying agent error.
+func FormatGenuineSoftNoteComment(headSHA string) string {
 	var b strings.Builder
 	fmt.Fprintf(&b, "## roborev: Review Unavailable (`%s`)\n\n", gitrepo.ShortSHA(headSHA))
 	b.WriteString("The review agent repeatedly failed to run (likely an agent or " +
 		"configuration error). roborev will try again on the next commit.\n\n")
-	if strings.TrimSpace(lastErrExcerpt) != "" {
-		fmt.Fprintf(&b, "Last error: `%s`\n", oneLineExcerpt(lastErrExcerpt))
-	}
 	return b.String()
-}
-
-// oneLineExcerpt flattens a message to a single line (newlines to spaces,
-// carriage returns dropped) and truncates to 200 bytes for inline display.
-func oneLineExcerpt(s string) string {
-	s = strings.ReplaceAll(strings.ReplaceAll(s, "\n", " "), "\r", "")
-	s = strings.TrimSpace(s)
-	const max = 200
-	if len(s) > max {
-		s = strings.TrimRight(TrimPartialRune(s[:max]), " ") + "..."
-	}
-	return s
 }
 
 // IsQuotaFailure returns true if a review's error indicates a
