@@ -1083,7 +1083,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		}
 		log.Printf("[%s] Agent error on job %d: %v",
 			workerID, job.ID, err)
-		wp.failOrRetryAgentContext(ctx, workerID, job, agentName, fmt.Sprintf("agent: %v", err))
+		wp.failOrRetryAgentExecutionContext(ctx, workerID, job, agentName, err)
 		return
 	}
 	if wp.handleUpdateInterruption(ctx, workerID, job) {
@@ -1268,6 +1268,29 @@ func (wp *WorkerPool) failOrRetryAgentContext(
 	wp.runAttemptTransition(workerID, job, func() {
 		wp.failOrRetryInnerLocked(workerID, job, agentName, errorMsg, true)
 	})
+}
+
+// failOrRetryAgentExecutionContext preserves the typed category attached by an
+// agent adapter until existing provider-limit classification has run. Unknown
+// pre-protocol failures skip same-agent retries and use the non-retryable
+// backup path; recognized quota, session, and transient signals retain their
+// existing behavior.
+func (wp *WorkerPool) failOrRetryAgentExecutionContext(
+	ctx context.Context,
+	workerID string,
+	job *storage.ReviewJob,
+	agentName string,
+	executionErr error,
+) {
+	errorMsg := fmt.Sprintf("agent: %v", executionErr)
+	classification := wp.classify(agent.CanonicalName(agentName), errorMsg)
+	if classification.Kind == agent.LimitKindNone && agent.IsUnavailable(executionErr) {
+		wp.failoverOrFailNonRetryableAgentContext(
+			ctx, workerID, job, agentName, review.UnavailableError(errorMsg),
+		)
+		return
+	}
+	wp.failOrRetryAgentContext(ctx, workerID, job, agentName, errorMsg)
 }
 
 // finalErrorMsg tags the stored error with review.OutageErrorPrefix when an

@@ -5,6 +5,7 @@ import (
 	"context"
 	"database/sql"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -2787,6 +2788,122 @@ func TestFailOrRetryInner_UnmatchedAgentErrorLogsWarn(t *testing.T) {
 	assert.Contains(logged, "unclassified agent error", "expected WARN line for unmatched error")
 	assert.Contains(logged, "from test:", "log line should include agent name as 'from <agent>:'")
 	assert.Contains(logged, "some brand new error wording", "log line should include error preview")
+}
+
+func TestUnavailableAgentErrorFailsWithoutRetry(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	job := tc.createAndClaimJobWithAgent(t, "unavailable-no-backup", testWorkerID, "codex")
+	job.RepoPath = tc.TmpDir
+
+	tc.Pool.failOrRetryAgentExecutionContext(
+		context.Background(), testWorkerID, job, "codex",
+		agent.MarkUnavailable(errors.New("native package missing: platform helper absent")),
+	)
+
+	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusFailed)
+	assert.True(t, strings.HasPrefix(updated.Error, review.UnavailableErrorPrefix))
+	assert.Contains(t, updated.Error, "native package missing: platform helper absent")
+	retryCount, err := tc.DB.GetJobRetryCount(job.ID)
+	require.NoError(t, err)
+	assert.Zero(t, retryCount)
+}
+
+func TestUnavailableAgentErrorFailsOverWithoutRetry(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	cfg := config.DefaultConfig()
+	cfg.DefaultBackupAgent = "test"
+	tc.reconfigurePool(cfg)
+	job := tc.createAndClaimJobWithAgent(t, "unavailable-with-backup", testWorkerID, "codex")
+	job.RepoPath = tc.TmpDir
+
+	tc.Pool.failOrRetryAgentExecutionContext(
+		context.Background(), testWorkerID, job, "codex",
+		agent.MarkUnavailable(errors.New("native package missing")),
+	)
+
+	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusQueued)
+	assert.Equal(t, "test", updated.Agent)
+	retryCount, err := tc.DB.GetJobRetryCount(job.ID)
+	require.NoError(t, err)
+	assert.Zero(t, retryCount)
+}
+
+func TestUnavailableAgentErrorSkipsCoolingBackup(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	cfg := config.DefaultConfig()
+	cfg.DefaultBackupAgent = "test"
+	tc.reconfigurePool(cfg)
+	tc.Pool.cooldownAgent("test", time.Now().Add(time.Hour))
+	job := tc.createAndClaimJobWithAgent(t, "unavailable-cooling-backup", testWorkerID, "codex")
+	job.RepoPath = tc.TmpDir
+
+	tc.Pool.failOrRetryAgentExecutionContext(
+		context.Background(), testWorkerID, job, "codex",
+		agent.MarkUnavailable(errors.New("native package missing")),
+	)
+
+	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusFailed)
+	assert.Equal(t, "codex", updated.Agent)
+	assert.True(t, strings.HasPrefix(updated.Error, review.UnavailableErrorPrefix))
+}
+
+func TestUnavailableAgentErrorPreservesLimitClassification(t *testing.T) {
+	tests := []struct {
+		name       string
+		agentName  string
+		errorText  string
+		wantStatus storage.JobStatus
+		wantPrefix string
+		wantRetry  int
+		wantCool   bool
+	}{
+		{
+			name:       "transient",
+			agentName:  "codex",
+			errorText:  "503 Service Unavailable",
+			wantStatus: storage.JobStatusQueued,
+			wantRetry:  1,
+		},
+		{
+			name:       "quota",
+			agentName:  "codex",
+			errorText:  "you've hit your usage limit",
+			wantStatus: storage.JobStatusFailed,
+			wantPrefix: review.QuotaErrorPrefix,
+			wantCool:   true,
+		},
+		{
+			name:       "session",
+			agentName:  "claude-code",
+			errorText:  "you've hit your session limit",
+			wantStatus: storage.JobStatusFailed,
+			wantPrefix: review.OutageErrorPrefix,
+			wantCool:   true,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			tc := newWorkerTestContext(t, 1)
+			job := tc.createAndClaimJobWithAgent(t, "unavailable-"+tt.name, testWorkerID, tt.agentName)
+			job.RepoPath = tc.TmpDir
+
+			tc.Pool.failOrRetryAgentExecutionContext(
+				context.Background(), testWorkerID, job, tt.agentName,
+				agent.MarkUnavailable(errors.New(tt.errorText)),
+			)
+
+			updated := tc.assertJobStatus(t, job.ID, tt.wantStatus)
+			if tt.wantPrefix != "" {
+				assert.True(t, strings.HasPrefix(updated.Error, tt.wantPrefix))
+				assert.False(t, strings.HasPrefix(updated.Error, review.UnavailableErrorPrefix))
+			}
+			retryCount, err := tc.DB.GetJobRetryCount(job.ID)
+			require.NoError(t, err)
+			assert.Equal(t, tt.wantRetry, retryCount)
+			assert.Equal(t, tt.wantCool, tc.Pool.isAgentCoolingDown(tt.agentName))
+		})
+	}
 }
 
 func TestFailOrRetryInner_SetsRetryNotBefore(t *testing.T) {
