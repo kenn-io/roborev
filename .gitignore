@@ -73,6 +73,7 @@ REPORT.md
 *.db
 .codex
 .antigravitycli/
+.worktrees/
 
 # docs Vercel artifacts
 .vercel
