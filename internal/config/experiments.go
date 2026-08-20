@@ -138,8 +138,34 @@ func validateMaterializedExperimentConfigs(
 		if err != nil {
 			return markExperimentConfigError(fmt.Errorf("experiment %q config: %w", id, err))
 		}
-		if _, err := decodeExperimentRepoConfig(effectiveRaw); err != nil {
+		effectiveCfg, err := decodeExperimentRepoConfig(effectiveRaw)
+		if err != nil {
 			return markExperimentConfigError(fmt.Errorf("experiment %q config: %w", id, err))
+		}
+		effectiveCfg.experimentOverlay = cloneExperimentMap(definitions[id].Config)
+		if err := validateEffectiveExperimentConfig(global, effectiveCfg); err != nil {
+			return markExperimentConfigError(fmt.Errorf("experiment %q config: %w", id, err))
+		}
+	}
+	return nil
+}
+
+func validateEffectiveExperimentConfig(global *Config, effective *RepoConfig) error {
+	if err := effective.Validate(); err != nil {
+		return err
+	}
+	if _, err := ResolveReviewReasoningFromConfig("", effective, global); err != nil {
+		return fmt.Errorf("review_reasoning: %w", err)
+	}
+	if _, err := NormalizeReasoning(effective.CI.Reasoning); err != nil {
+		return fmt.Errorf("ci.reasoning: %w", err)
+	}
+	if err := MergeReviewConfigFromConfig(effective, global).Validate(); err != nil {
+		return fmt.Errorf("review: %w", err)
+	}
+	if panelName := ResolveCIPanelName(effective, global); panelName != "" {
+		if _, _, err := ResolveCIPanel(panelName, effective, global); err != nil {
+			return fmt.Errorf("ci.panel: %w", err)
 		}
 	}
 	return nil
@@ -287,10 +313,13 @@ func SelectReviewExperiment(in ExperimentSelectionInput) (ExperimentSelection, e
 	if err != nil {
 		return ExperimentSelection{}, fmt.Errorf("experiment %q config: %w", selectedID, err)
 	}
+	overlaidCfg.experimentOverlay = cloneExperimentMap(selected.Config)
+	if err := validateEffectiveExperimentConfig(in.Global, overlaidCfg); err != nil {
+		return ExperimentSelection{}, fmt.Errorf("experiment %q config: %w", selectedID, err)
+	}
 	if arm == ExperimentArmExperimental {
 		effectiveRaw = overlaidRaw
 		effectiveCfg = overlaidCfg
-		effectiveCfg.experimentOverlay = cloneExperimentMap(selected.Config)
 	}
 	result.RepoConfig = effectiveCfg
 	result.RawRepoConfig = effectiveRaw
@@ -334,11 +363,33 @@ func mergeExperimentDefinitions(global *Config, repo *RepoConfig) (map[string]Ex
 			merged[id] = base
 		}
 	}
+	if err := validateEnabledExperimentWorkflows(merged); err != nil {
+		return nil, err
+	}
 	return merged, nil
 }
 
-func validateExperimentEntries(entries map[string]ExperimentDefinition, global bool) error {
+func validateEnabledExperimentWorkflows(entries map[string]ExperimentDefinition) error {
 	enabledWorkflows := make(map[ExperimentWorkflow]string)
+	for _, id := range sortedMapKeys(entries) {
+		definition := entries[id]
+		if !experimentEnabled(definition) {
+			continue
+		}
+		for _, workflow := range definition.Workflows {
+			if prior := enabledWorkflows[workflow]; prior != "" {
+				return fmt.Errorf(
+					"enabled experiments %q and %q both apply to workflow %q",
+					prior, id, workflow,
+				)
+			}
+			enabledWorkflows[workflow] = id
+		}
+	}
+	return nil
+}
+
+func validateExperimentEntries(entries map[string]ExperimentDefinition, global bool) error {
 	for _, id := range sortedMapKeys(entries) {
 		if strings.TrimSpace(id) == "" {
 			return fmt.Errorf("experiment ID must not be empty")
@@ -353,16 +404,8 @@ func validateExperimentEntries(entries map[string]ExperimentDefinition, global b
 		if err := validateExperimentDefinition(id, definition); err != nil {
 			return err
 		}
-		if experimentEnabled(definition) {
-			for _, workflow := range definition.Workflows {
-				if prior := enabledWorkflows[workflow]; prior != "" {
-					return fmt.Errorf("enabled experiments %q and %q both apply to workflow %q", prior, id, workflow)
-				}
-				enabledWorkflows[workflow] = id
-			}
-		}
 	}
-	return nil
+	return validateEnabledExperimentWorkflows(entries)
 }
 
 func validateExperimentDefinition(id string, definition ExperimentDefinition) error {
@@ -564,9 +607,6 @@ func decodeExperimentRepoConfig(raw map[string]any) (*RepoConfig, error) {
 		if _, configured := rawCI["reviews"]; configured && cfg.CI.Reviews == nil {
 			cfg.CI.Reviews = make(map[string][]string)
 		}
-	}
-	if err := cfg.Validate(); err != nil {
-		return nil, err
 	}
 	return &cfg, nil
 }

@@ -377,6 +377,13 @@ func TestSelectReviewExperimentMergesOverlayRecursively(t *testing.T) {
 			"ci":                map[string]any{"agents": []any{"claude"}},
 			"review": map[string]any{
 				"hook_review_panel": "hooks",
+				"subagents": map[string]any{
+					"critic": map[string]any{"agent": "test"},
+				},
+				"panels": map[string]any{
+					"experiment": map[string]any{"members": []any{"critic"}},
+					"hooks":      map[string]any{"members": []any{"critic"}},
+				},
 			},
 		},
 	})
@@ -728,4 +735,125 @@ func TestValidateRepoExperimentConfigsAllowsEnablementOnlyOverride(t *testing.T)
 	)
 
 	require.NoError(t, err)
+}
+
+func TestValidateExperimentConfigsRejectsMergedWorkflowConflict(t *testing.T) {
+	enabled := true
+	disabled := false
+	ratio := 0.5
+	global := &Config{Experiments: map[string]ExperimentDefinition{
+		"review-a-v1": {
+			Enabled: &enabled, Ratio: &ratio,
+			Workflows: []ExperimentWorkflow{ExperimentWorkflowReview},
+			Config:    map[string]any{"reuse_review_session": true},
+		},
+		"review-b-v1": {
+			Enabled: &disabled, Ratio: &ratio,
+			Workflows: []ExperimentWorkflow{ExperimentWorkflowReview},
+			Config:    map[string]any{"review_reasoning": "high"},
+		},
+	}}
+	repo := &RepoConfig{Experiments: map[string]ExperimentDefinition{
+		"review-b-v1": {Enabled: &enabled},
+	}}
+	rawRepo := map[string]any{"experiments": map[string]any{
+		"review-b-v1": map[string]any{"enabled": true},
+	}}
+
+	err := ValidateExperimentConfigs(global, repo, rawRepo)
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, "review-a-v1")
+	require.ErrorContains(t, err, "review-b-v1")
+	require.ErrorContains(t, err, `workflow "review"`)
+}
+
+func TestValidateExperimentConfigsRejectsSemanticOverlayErrors(t *testing.T) {
+	tests := []struct {
+		name    string
+		overlay map[string]any
+		want    string
+	}{
+		{
+			name: "review reasoning",
+			overlay: map[string]any{
+				"review_reasoning": "urgent",
+			},
+			want: "review_reasoning",
+		},
+		{
+			name: "CI reasoning",
+			overlay: map[string]any{
+				"ci": map[string]any{"reasoning": "urgent"},
+			},
+			want: "ci.reasoning",
+		},
+		{
+			name: "default panel reference",
+			overlay: map[string]any{
+				"review": map[string]any{"default_panel": "missing"},
+			},
+			want: "default_panel",
+		},
+		{
+			name: "CI panel reference",
+			overlay: map[string]any{
+				"ci": map[string]any{"panel": "missing"},
+			},
+			want: "ci.panel",
+		},
+		{
+			name: "subagent reasoning",
+			overlay: map[string]any{
+				"review": map[string]any{
+					"subagents": map[string]any{
+						"critic": map[string]any{"reasoning": "urgent"},
+					},
+				},
+			},
+			want: `subagent "critic"`,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			enabled := false
+			ratio := 0.5
+			err := ValidateExperimentConfigs(&Config{
+				Experiments: map[string]ExperimentDefinition{
+					"invalid-v1": {
+						Enabled: &enabled, Ratio: &ratio,
+						Workflows: []ExperimentWorkflow{
+							ExperimentWorkflowReview, ExperimentWorkflowCI,
+						},
+						Config: tt.overlay,
+					},
+				},
+			}, nil, nil)
+
+			require.Error(t, err)
+			require.ErrorContains(t, err, tt.want)
+		})
+	}
+}
+
+func TestSelectReviewExperimentRejectsSemanticErrorForDefaultArm(t *testing.T) {
+	enabled := true
+	ratio := 0.0
+	_, err := SelectReviewExperiment(ExperimentSelectionInput{
+		Workflow: ExperimentWorkflowReview,
+		Subject: ExperimentSubject{
+			Repository: "github.com/example/project", Branch: "feature",
+		},
+		Global: &Config{Experiments: map[string]ExperimentDefinition{
+			"invalid-reasoning-v1": {
+				Enabled: &enabled, Ratio: &ratio,
+				Workflows: []ExperimentWorkflow{ExperimentWorkflowReview},
+				Config:    map[string]any{"review_reasoning": "urgent"},
+			},
+		}},
+	})
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, "review_reasoning")
 }

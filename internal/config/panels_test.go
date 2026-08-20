@@ -108,6 +108,24 @@ func TestMergeReviewConfig(t *testing.T) {
 	assert.Equal("codex", global.Subagents["security"].Agent)
 }
 
+func TestReviewConfigValidateRejectsInvalidSubagentSemantics(t *testing.T) {
+	review := ReviewConfig{Subagents: map[string]SubagentSpec{
+		"critic": {
+			Reasoning:  "urgent",
+			ReviewType: "mystery",
+			Timeout:    "never",
+		},
+	}}
+
+	err := review.Validate()
+
+	require.Error(t, err)
+	require.ErrorContains(t, err, `subagent "critic"`)
+	require.ErrorContains(t, err, "invalid reasoning")
+	require.ErrorContains(t, err, "invalid review_type")
+	require.ErrorContains(t, err, "invalid timeout")
+}
+
 func TestMergedReviewConfigEmptyRepoPathIgnoresCwd(t *testing.T) {
 	// A .roborev.toml in the process working directory must not leak into a
 	// global-only (empty repoPath) merge. Regression test: MergedReviewConfig
