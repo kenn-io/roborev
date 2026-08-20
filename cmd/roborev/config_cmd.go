@@ -308,6 +308,9 @@ func validateConfigForScope(resolver RepoResolver, scope configScope) error {
 		if err != nil {
 			return fmt.Errorf("load global config: %w", err)
 		}
+		if err := globalCfg.Validate(); err != nil {
+			return fmt.Errorf("validate global config: %w", err)
+		}
 		if err := config.ValidateExperimentConfigs(globalCfg, nil, nil); err != nil {
 			return fmt.Errorf("validate global config: %w", err)
 		}
@@ -324,6 +327,12 @@ func validateConfigForScope(resolver RepoResolver, scope configScope) error {
 		}
 		if repoCfg == nil {
 			return fmt.Errorf("no local config (.roborev.toml) found")
+		}
+		if err := repoCfg.Validate(); err != nil {
+			return fmt.Errorf("validate local config: %w", err)
+		}
+		if err := config.ValidateEffectiveReviewConfig(nil, repoCfg); err != nil {
+			return fmt.Errorf("validate local config: %w", err)
 		}
 		if err := config.ValidateRepoExperimentConfigs(repoCfg, rawRepo); err != nil {
 			return fmt.Errorf("validate local config: %w", err)
@@ -346,6 +355,15 @@ func validateConfigForScope(resolver RepoResolver, scope configScope) error {
 			if err != nil {
 				return fmt.Errorf("load local config: %w", err)
 			}
+		}
+		if err := globalCfg.Validate(); err != nil {
+			return fmt.Errorf("validate merged config: %w", err)
+		}
+		if err := repoCfg.Validate(); err != nil {
+			return fmt.Errorf("validate merged config: %w", err)
+		}
+		if err := config.ValidateEffectiveReviewConfig(globalCfg, repoCfg); err != nil {
+			return fmt.Errorf("validate merged config: %w", err)
 		}
 		if err := config.ValidateExperimentConfigs(globalCfg, repoCfg, rawRepo); err != nil {
 			return fmt.Errorf("validate merged config: %w", err)

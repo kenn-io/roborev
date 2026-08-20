@@ -143,22 +143,26 @@ func validateMaterializedExperimentConfigs(
 			return markExperimentConfigError(fmt.Errorf("experiment %q config: %w", id, err))
 		}
 		effectiveCfg.experimentOverlay = cloneExperimentMap(definitions[id].Config)
-		if err := validateEffectiveExperimentConfig(global, effectiveCfg); err != nil {
+		if err := ValidateEffectiveReviewConfig(global, effectiveCfg); err != nil {
 			return markExperimentConfigError(fmt.Errorf("experiment %q config: %w", id, err))
 		}
 	}
 	return nil
 }
 
-func validateEffectiveExperimentConfig(global *Config, effective *RepoConfig) error {
+// ValidateEffectiveReviewConfig validates review-time settings after merging
+// global and repository configuration.
+func ValidateEffectiveReviewConfig(global *Config, effective *RepoConfig) error {
 	if err := effective.Validate(); err != nil {
 		return err
 	}
 	if _, err := ResolveReviewReasoningFromConfig("", effective, global); err != nil {
 		return fmt.Errorf("review_reasoning: %w", err)
 	}
-	if _, err := NormalizeReasoning(effective.CI.Reasoning); err != nil {
-		return fmt.Errorf("ci.reasoning: %w", err)
+	if effective != nil {
+		if _, err := NormalizeReasoning(effective.CI.Reasoning); err != nil {
+			return fmt.Errorf("ci.reasoning: %w", err)
+		}
 	}
 	if err := MergeReviewConfigFromConfig(effective, global).Validate(); err != nil {
 		return fmt.Errorf("review: %w", err)
@@ -314,7 +318,7 @@ func SelectReviewExperiment(in ExperimentSelectionInput) (ExperimentSelection, e
 		return ExperimentSelection{}, fmt.Errorf("experiment %q config: %w", selectedID, err)
 	}
 	overlaidCfg.experimentOverlay = cloneExperimentMap(selected.Config)
-	if err := validateEffectiveExperimentConfig(in.Global, overlaidCfg); err != nil {
+	if err := ValidateEffectiveReviewConfig(in.Global, overlaidCfg); err != nil {
 		return ExperimentSelection{}, fmt.Errorf("experiment %q config: %w", selectedID, err)
 	}
 	if arm == ExperimentArmExperimental {

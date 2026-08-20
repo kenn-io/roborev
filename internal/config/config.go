@@ -506,6 +506,21 @@ func validateConfig(cfg any, acp ACPAgentConfigs) error {
 	return validateAgentReferences(cfg)
 }
 
+// Validate checks global values that cannot be constrained by TOML decoding
+// alone, including the effective global review configuration.
+func (c *Config) Validate() error {
+	if c == nil {
+		return nil
+	}
+	if err := validateExperimentEntries(c.Experiments, true); err != nil {
+		return markExperimentConfigError(err)
+	}
+	if err := validateConfig(c, c.ACP); err != nil {
+		return err
+	}
+	return ValidateEffectiveReviewConfig(c, nil)
+}
+
 // RepoConfig holds per-repo overrides
 type RepoConfig struct {
 	experimentOverlay               map[string]any

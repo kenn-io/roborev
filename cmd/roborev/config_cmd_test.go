@@ -234,6 +234,66 @@ enabled = false
 	require.NoError(t, err)
 }
 
+func TestValidateConfigForScopeRejectsInvalidBaseSettings(t *testing.T) {
+	tests := []struct {
+		name       string
+		globalTOML string
+		localTOML  string
+		scope      configScope
+		want       string
+	}{
+		{
+			name:       "global reasoning",
+			globalTOML: `review_reasoning = "urgent"`,
+			scope:      scopeGlobal,
+			want:       "invalid reasoning",
+		},
+		{
+			name:      "local reasoning",
+			localTOML: `review_reasoning = "urgent"`,
+			scope:     scopeLocal,
+			want:      "invalid reasoning",
+		},
+		{
+			name: "merged panel reference",
+			localTOML: `
+[review]
+default_panel = "missing"
+`,
+			scope: scopeMerged,
+			want:  "default_panel",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := setupConfigEnv(t, tt.globalTOML, tt.localTOML)
+
+			err := validateConfigForScope(env.Resolver, tt.scope)
+
+			require.Error(t, err)
+			require.ErrorContains(t, err, tt.want)
+		})
+	}
+}
+
+func TestValidateConfigForScopeValidatesMergedPanelReferences(t *testing.T) {
+	env := setupConfigEnv(t, `
+[review.subagents.critic]
+agent = "test"
+
+[review.panels.shared]
+members = ["critic"]
+`, `
+[review]
+default_panel = "shared"
+`)
+
+	err := validateConfigForScope(env.Resolver, scopeMerged)
+
+	require.NoError(t, err)
+}
+
 func TestConfigValidateCommand(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	cmd := configValidateCmd()
