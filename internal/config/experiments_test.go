@@ -789,6 +789,22 @@ func TestValidateExperimentConfigsRejectsSemanticOverlayErrors(t *testing.T) {
 			want: "ci.reasoning",
 		},
 		{
+			name: "CI flat review types",
+			overlay: map[string]any{
+				"ci": map[string]any{"review_types": []any{"mystery"}},
+			},
+			want: "ci.review_types",
+		},
+		{
+			name: "CI review matrix types",
+			overlay: map[string]any{
+				"ci": map[string]any{
+					"reviews": map[string]any{"codex": []any{"mystery"}},
+				},
+			},
+			want: "ci.reviews.codex",
+		},
+		{
 			name: "default panel reference",
 			overlay: map[string]any{
 				"review": map[string]any{"default_panel": "missing"},

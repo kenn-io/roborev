@@ -518,6 +518,9 @@ func (c *Config) Validate() error {
 	if err := validateConfig(c, c.ACP); err != nil {
 		return err
 	}
+	if err := validateCIReviewTypes(c.CI.ReviewTypes, c.CI.Reviews); err != nil {
+		return err
+	}
 	return ValidateEffectiveReviewConfig(c, nil)
 }
 
@@ -711,6 +714,9 @@ func (c *RepoConfig) Validate() error {
 		return nil
 	}
 	if err := validateConfig(c, c.ACP); err != nil {
+		return err
+	}
+	if err := validateCIReviewTypes(c.CI.ReviewTypes, c.CI.Reviews); err != nil {
 		return err
 	}
 	for _, setting := range []struct {

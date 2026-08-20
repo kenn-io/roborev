@@ -4,6 +4,7 @@ package config
 
 import (
 	"fmt"
+	"maps"
 	"os"
 	"slices"
 	"strings"
@@ -479,6 +480,23 @@ type RepoCIConfig struct {
 	// IncludeCosts overrides the global ci.include_costs setting.
 	// Use a pointer so we can distinguish "not set" from "explicitly false".
 	IncludeCosts *bool `toml:"include_costs" comment:"Override whether CI PR comments include token cost estimates."`
+}
+
+func validateCIReviewTypes(reviewTypes []string, reviews map[string][]string) error {
+	if len(reviewTypes) > 0 {
+		if _, err := ValidateReviewTypes(reviewTypes); err != nil {
+			return fmt.Errorf("ci.review_types: %w", err)
+		}
+	}
+	for _, agentName := range slices.Sorted(maps.Keys(reviews)) {
+		if len(reviews[agentName]) == 0 {
+			continue
+		}
+		if _, err := ValidateReviewTypes(reviews[agentName]); err != nil {
+			return fmt.Errorf("ci.reviews.%s: %w", agentName, err)
+		}
+	}
+	return nil
 }
 
 // ResolveCIAgents determines which agents to use for CI review execution.
