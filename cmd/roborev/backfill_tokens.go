@@ -49,8 +49,19 @@ will be skipped.`,
 			}
 
 			agentsviewCandidates := make(map[int64]bool)
-			for _, job := range backfill.TokenCandidates(jobs) {
-				agentsviewCandidates[job.ID] = true
+			var candidateCursor int64
+			for {
+				page, err := db.ListTokenCostCandidates(candidateCursor, 1000)
+				if err != nil {
+					return fmt.Errorf("list cost candidates: %w", err)
+				}
+				if len(page) == 0 {
+					break
+				}
+				for _, candidate := range page {
+					agentsviewCandidates[candidate.JobID] = true
+				}
+				candidateCursor = page[len(page)-1].JobID
 			}
 			candidates := backfill.LogTokenCandidates(jobs)
 

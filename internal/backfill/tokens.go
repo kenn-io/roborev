@@ -48,7 +48,10 @@ func TokenCandidates(jobs []storage.ReviewJob) []storage.ReviewJob {
 
 	var out []storage.ReviewJob
 	for _, job := range jobs {
-		if !job.HasViewableOutput() {
+		if !hasTerminalStatus(job.Status) {
+			continue
+		}
+		if job.StartedAt == nil {
 			continue
 		}
 		if !NeedsTokenCostBackfill(job.TokenUsage) {
@@ -71,7 +74,7 @@ func TokenCandidates(jobs []storage.ReviewJob) []storage.ReviewJob {
 func LogTokenCandidates(jobs []storage.ReviewJob) []storage.ReviewJob {
 	var out []storage.ReviewJob
 	for _, job := range jobs {
-		if !job.HasViewableOutput() {
+		if !hasTerminalStatus(job.Status) {
 			continue
 		}
 		if !NeedsTokenUsageBackfill(job.TokenUsage) {
@@ -80,6 +83,20 @@ func LogTokenCandidates(jobs []storage.ReviewJob) []storage.ReviewJob {
 		out = append(out, job)
 	}
 	return out
+}
+
+func hasTerminalStatus(status storage.JobStatus) bool {
+	switch status {
+	case storage.JobStatusDone,
+		storage.JobStatusApplied,
+		storage.JobStatusRebased,
+		storage.JobStatusFailed,
+		storage.JobStatusCanceled,
+		storage.JobStatusSkipped:
+		return true
+	default:
+		return false
+	}
 }
 
 func MergeTokenUsage(existingJSON string, fetched *tokens.Usage) *tokens.Usage {

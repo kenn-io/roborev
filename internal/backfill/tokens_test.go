@@ -1,6 +1,7 @@
 package backfill
 
 import (
+	"fmt"
 	"testing"
 	"time"
 
@@ -95,6 +96,43 @@ func TestTokenCandidatesIncludesDriftedCostRow(t *testing.T) {
 
 	require.Len(t, TokenCandidates([]storage.ReviewJob{job}), 1)
 	require.Len(t, LogTokenCandidates([]storage.ReviewJob{job}), 1)
+}
+
+func TestBackfillCandidatesIncludeEveryTerminalStatus(t *testing.T) {
+	started := time.Now()
+	statuses := []storage.JobStatus{
+		storage.JobStatusDone,
+		storage.JobStatusApplied,
+		storage.JobStatusRebased,
+		storage.JobStatusFailed,
+		storage.JobStatusCanceled,
+		storage.JobStatusSkipped,
+	}
+	jobs := make([]storage.ReviewJob, 0, len(statuses)+2)
+	for i, status := range statuses {
+		jobs = append(jobs, storage.ReviewJob{
+			ID:         int64(i + 1),
+			Status:     status,
+			SessionID:  fmt.Sprintf("session-%d", i+1),
+			StartedAt:  &started,
+			TokenUsage: `{"total_output_tokens":42}`,
+		})
+	}
+	jobs = append(jobs,
+		storage.ReviewJob{
+			ID: 100, Status: storage.JobStatusQueued,
+			SessionID: "queued-session", TokenUsage: `{"total_output_tokens":42}`,
+		},
+		storage.ReviewJob{
+			ID: 101, Status: storage.JobStatusRunning,
+			SessionID: "running-session", StartedAt: &started,
+			TokenUsage: `{"total_output_tokens":42}`,
+		},
+	)
+
+	assert := assert.New(t)
+	assert.Len(TokenCandidates(jobs), len(statuses))
+	assert.Len(LogTokenCandidates(jobs), len(statuses))
 }
 
 func TestMergeTokenUsageKeepsRecordedCostOverUnpricedFetch(t *testing.T) {

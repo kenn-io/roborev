@@ -164,7 +164,7 @@ func TestBackfillCandidates(t *testing.T) {
 			wantIDs: []int64{1, 2},
 		},
 		{
-			name: "applied/rebased jobs are eligible",
+			name: "terminal jobs are eligible",
 			jobs: []storage.ReviewJob{
 				{
 					ID: 1, Status: storage.JobStatusApplied,
@@ -174,8 +174,20 @@ func TestBackfillCandidates(t *testing.T) {
 					ID: 2, Status: storage.JobStatusRebased,
 					SessionID: "s2", StartedAt: new(now),
 				},
+				{
+					ID: 3, Status: storage.JobStatusFailed,
+					SessionID: "s3", StartedAt: new(now),
+				},
+				{
+					ID: 4, Status: storage.JobStatusCanceled,
+					SessionID: "s4", StartedAt: new(now),
+				},
+				{
+					ID: 5, Status: storage.JobStatusSkipped,
+					SessionID: "s5", StartedAt: new(now),
+				},
 			},
-			wantIDs: []int64{1, 2},
+			wantIDs: []int64{1, 2, 3, 4, 5},
 		},
 	}
 
