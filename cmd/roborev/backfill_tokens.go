@@ -124,6 +124,7 @@ will be skipped.`,
 					job.ID,
 					sessionID,
 					job.TokenUsage,
+					job.StartedAtRaw,
 					logUsage,
 					fetchedUsage,
 				)

@@ -217,11 +217,12 @@ func StoreMergedTokenUsage(
 
 // StoreCapturedTokenUsage persists per-job log usage before provider usage.
 // Log counts belong to one job even when a provider session was reused;
-// provider totals are cumulative and therefore require a unique session.
+// provider totals are cumulative and therefore require a unique session. The
+// expected start time keeps both writes bound to the selected attempt.
 func StoreCapturedTokenUsage(
 	db *storage.DB,
 	jobID int64,
-	sessionID, existingJSON string,
+	sessionID, existingJSON, expectedStartedAt string,
 	logUsage, providerUsage *tokens.Usage,
 ) (*tokens.Usage, bool, error) {
 	var stored *tokens.Usage
@@ -241,7 +242,7 @@ func StoreCapturedTokenUsage(
 			jobID,
 			sessionID,
 			existingJSON,
-			"",
+			expectedStartedAt,
 			captured.usage,
 			captured.requireUniqueSession,
 		)

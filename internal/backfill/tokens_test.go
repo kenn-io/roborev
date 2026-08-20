@@ -2,6 +2,7 @@ package backfill
 
 import (
 	"fmt"
+	"path/filepath"
 	"testing"
 	"time"
 
@@ -43,6 +44,53 @@ func TestNeedsTokenCostBackfill(t *testing.T) {
 		NeedsTokenCostBackfill(`{"has_cost":true,"cost_usd":null}`),
 		"a null amount is absent, not $0",
 	)
+}
+
+func TestStoreCapturedTokenUsageRejectsReenqueuedJob(t *testing.T) {
+	db, err := storage.Open(filepath.Join(t.TempDir(), "reviews.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	repo, err := db.GetOrCreateRepo(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	commit, err := db.GetOrCreateCommit(
+		repo.ID, "capture-race", "test", "capture race", time.Now(),
+	)
+	require.NoError(t, err)
+	job, err := db.EnqueueJob(storage.EnqueueOpts{
+		RepoID: repo.ID, CommitID: commit.ID, GitRef: commit.SHA, Agent: "codex",
+	})
+	require.NoError(t, err)
+	claimed, err := db.ClaimJob("capture-worker")
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+	require.NoError(t, db.CompleteJob(
+		job.ID, "codex", "prompt", "No issues found.",
+	))
+	selected, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+
+	_, err = db.Exec(`
+		UPDATE review_jobs
+		SET started_at = '2026-08-20T16:00:00.987654321Z',
+		    finished_at = '2026-08-20T16:00:02Z'
+		WHERE id = ?`, job.ID)
+	require.NoError(t, err)
+	_, saved, err := StoreCapturedTokenUsage(
+		db,
+		job.ID,
+		"prior-session",
+		selected.TokenUsage,
+		selected.StartedAtRaw,
+		&tokens.Usage{OutputTokens: 32, ThreadID: "prior-session"},
+		nil,
+	)
+	require.NoError(t, err)
+	assert.False(t, saved)
+
+	current, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Empty(t, current.SessionID)
+	assert.Empty(t, current.TokenUsage)
 }
 
 // A genuine free run must survive a merge intact rather than being re-flagged

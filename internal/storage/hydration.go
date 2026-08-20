@@ -133,6 +133,7 @@ func applyReviewJobScan(job *ReviewJob, fields reviewJobScanFields) {
 	if fields.StartedAt.Valid {
 		t := parseSQLiteTime(fields.StartedAt.String)
 		job.StartedAt = &t
+		job.StartedAtRaw = fields.StartedAt.String
 	}
 	if fields.FinishedAt.Valid {
 		t := parseSQLiteTime(fields.FinishedAt.String)

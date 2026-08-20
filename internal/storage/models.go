@@ -83,6 +83,7 @@ type ReviewJob struct {
 	Status            JobStatus  `json:"status"`
 	EnqueuedAt        time.Time  `json:"enqueued_at"`
 	StartedAt         *time.Time `json:"started_at,omitempty"`
+	StartedAtRaw      string     `json:"-"` // Exact persisted value for attempt-scoped writes
 	FinishedAt        *time.Time `json:"finished_at,omitempty"`
 	WorkerID          string     `json:"worker_id,omitempty"`
 	Error             string     `json:"error,omitempty"`

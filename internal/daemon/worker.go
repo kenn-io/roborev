@@ -1678,6 +1678,7 @@ func (wp *WorkerPool) captureTokenUsageForSession(
 		job.ID,
 		sessionID,
 		current.TokenUsage,
+		current.StartedAtRaw,
 		logUsage,
 		providerUsage,
 	)
