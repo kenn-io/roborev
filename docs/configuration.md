@@ -1159,6 +1159,13 @@ with the agent session ID. If `endpoint` is empty, roborev uses the `agentsview`
 CLI path. `timeout` defaults to `10s`; invalid, zero, or negative values also
 fall back to `10s`.
 
+Usage indexing can lag behind job completion. The daemon retries fresh misses
+and periodically revisits terminal jobs that still lack a recorded price. The
+missing price in SQLite is the durable retry state, so reconciliation resumes
+after daemon restarts. Provider failures do not change the completed job result.
+Deleted sessions and sessions reused by multiple started jobs can remain
+unpriced.
+
 The endpoint should return JSON compatible with
 `agentsview session usage --format json`:
 

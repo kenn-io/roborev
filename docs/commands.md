@@ -632,8 +632,9 @@ marks the value as a model-pricing estimate rather than a billed amount.
 
 Fresh agent sessions can finish before agentsview has indexed their final usage.
 roborev briefly retries a missing session lookup before storing the job-log
-token fallback, so normally indexed reviews receive their cost without a later
-backfill.
+token fallback. The daemon then continues reconciling unpriced jobs in the
+background, including after a restart, so a price that appears later is stored
+without an operator running a backfill.
 
 If you run a central usage service, configure `[cost] endpoint` to fetch usage
 over HTTP instead of through the local `agentsview` CLI. See
@@ -650,8 +651,11 @@ roborev backfill-tokens --dry-run   # Preview without writing
 |------|-------------|
 | `--dry-run` | Preview candidates without fetching or storing data |
 
-The backfill scans completed jobs that have a session ID but no stored token
-usage. Jobs whose session files have been deleted are skipped.
+The backfill scans eligible terminal jobs that need token or price data. This
+includes failed, canceled, and skipped jobs when an agent ran. Jobs whose
+session files have been deleted are skipped. Sessions reused by more than one
+started job are also skipped because their cumulative usage cannot be assigned
+safely to one job.
 
 ## CI Review
 
