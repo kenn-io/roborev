@@ -113,6 +113,7 @@ docs-deploy:
 # Regenerate the checked-in OpenAPI document and public Go client.
 api-generate:
 	go generate ./pkg/client/generated
+	cd web && bun run generate
 
 api-check:
 	@set -e; tmp="$$(mktemp -d)"; trap 'chmod -R u+w "$$tmp"; rm -rf "$$tmp"' EXIT; \

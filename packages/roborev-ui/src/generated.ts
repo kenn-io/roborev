@@ -2254,7 +2254,7 @@ export interface components {
             readonly $schema?: string;
             authenticated: boolean;
             /** @enum {string} */
-            authentication: "local" | "token";
+            authentication: "local" | "token" | "proxy";
             capabilities?: components["schemas"]["WebSessionCapabilities"];
             /** Format: date-time */
             expires_at?: string;

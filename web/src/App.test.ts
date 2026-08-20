@@ -149,6 +149,10 @@ describe("App", () => {
     expect(
       await screen.findByRole("region", { name: "Review jobs" }),
     ).toBeInTheDocument();
+    expect(
+      screen.queryByRole("heading", { name: "Connect to Roborev" }),
+    ).toBeNull();
+    expect(screen.queryByLabelText("Daemon token")).toBeNull();
     expect(screen.getByRole("link", { name: "Roborev" })).toHaveAttribute(
       "href",
       "/roborev-ci/reviews",

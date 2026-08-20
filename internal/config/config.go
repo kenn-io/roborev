@@ -108,7 +108,7 @@ const WebAuthModeProxy = "proxy"
 type WebConfig struct {
 	Enabled       bool   `toml:"enabled" comment:"Serve the browser application on a separate listener."`
 	Listen        string `toml:"listen" comment:"Loopback browser listener address. Port 0 selects an ephemeral port."`
-	PublicOrigin  string `toml:"public_origin" comment:"Exact dedicated HTTPS browser origin used by a reverse proxy."`
+	PublicOrigin  string `toml:"public_origin" comment:"Exact HTTPS browser origin used by a reverse proxy."`
 	BasePath      string `toml:"base_path" comment:"Optional browser routing prefix; not a same-origin security boundary."`
 	AuthMode      string `toml:"auth_mode" comment:"Browser admission mode. Set proxy to trust an external access boundary."`
 	AuthToken     string `toml:"auth_token" sensitive:"true" comment:"Token exchanged for a process-local browser session."`

@@ -135,12 +135,17 @@ retry. It never displays results from old filters under a new filter selection.
 
 ## Private Network Access
 
-Remote browser access requires an HTTPS reverse proxy and a Roborev browser
-token. Keep both the CLI listener and browser listener on loopback; expose only
-the browser listener through the proxy. Roborev rejects a non-loopback browser
-listener because the daemon-to-proxy connection uses plain HTTP.
+Remote browser access requires an HTTPS reverse proxy. Keep both the CLI
+listener and browser listener on loopback; expose only the browser listener
+through the proxy. Roborev rejects a non-loopback browser listener because the
+daemon-to-proxy connection uses plain HTTP.
 
-Choose a fixed loopback port. Generate the required 32-byte base64url token:
+Choose whether Roborev authenticates each browser with a token or delegates
+admission to an external proxy and private-network boundary.
+
+### Token Authentication
+
+Choose a fixed loopback port. Generate a 32-byte base64url token:
 
 ```bash
 openssl rand -base64 32 | tr '+/' '-_' | tr -d '='
@@ -179,6 +184,38 @@ The restart output prints the canonical `Web UI` URL. You can retrieve it again
 at any time with `roborev daemon status`; if browser serving is disabled, both
 commands report `Web UI: unavailable` explicitly.
 
+### Proxy Authentication
+
+When the reverse proxy and private network already restrict access to intended
+users, enable proxy mode and omit both token settings:
+
+```toml
+[web]
+enabled = true
+listen = "127.0.0.1:7374"
+public_origin = "https://reviews.example.com"
+base_path = "/reviews"
+auth_mode = "proxy"
+```
+
+Proxy mode requires an exact HTTPS `public_origin`. It automatically creates a
+remote browser session after validating the public Host, exact Origin,
+same-origin browser fetch metadata, and conventional forwarding headers. It does
+not grant owner-local capabilities: proxy users retain the existing remote
+mutation restrictions and every mutation still requires a tab-scoped CSRF
+credential.
+
+Roborev does not verify proxy identity, tailnet identity, or a proxy user
+header. The external origin and network path are the admission boundary.
+Forwarding headers confirm the expected request shape but are not
+authentication. Keep the listener loopback-bound and ensure the public origin is
+not reachable outside the intended network.
+
+Proxy mode trusts every application on the configured origin. Scripts at a
+sibling path can make same-origin requests below Roborev's `base_path`, so a
+base path is not isolation. Use a dedicated origin unless every sibling
+application is equally trusted.
+
 ### Tailscale Serve
 
 [Tailscale Serve](https://tailscale.com/docs/reference/tailscale-cli/serve) can
@@ -189,14 +226,16 @@ then run:
 tailscale serve --bg http://127.0.0.1:7374
 ```
 
-For this root-mounted example, use the HTTPS origin printed by `tailscale serve`
-as `web.public_origin`, then restart Roborev. Open that origin on another device
-in the tailnet and enter the configured token when prompted. A path-mounted
-deployment needs a reverse proxy that preserves the configured `base_path`.
+For tokenless tailnet access, set `auth_mode = "proxy"`, use the HTTPS origin
+printed by `tailscale serve` as `web.public_origin`, and restart Roborev. Open
+that origin on another device in the tailnet; no Roborev token prompt appears.
+To retain Roborev token authentication, omit `auth_mode` and configure one token
+source instead. A path-mounted deployment needs a reverse proxy that preserves
+the configured `base_path`.
 
-Do not use Tailscale Funnel for this setup: Serve keeps access inside the
-tailnet. Tailnet policy remains the network-level access boundary, while the
-Roborev token remains required by the daemon.
+Do not combine tokenless proxy mode with Tailscale Funnel. Serve keeps access
+inside the tailnet; Funnel makes the service public and therefore removes the
+network admission boundary.
 
 ### Other Reverse Proxies
 
@@ -208,8 +247,9 @@ An alternative proxy must:
     and `/api/job/output?stream=1`; and
 - route only the browser listener, never the CLI listener.
 
-Forwarding headers do not authenticate a request. Roborev validates the exact
-Host and Origin before checking the browser session.
+Forwarding headers do not authenticate a request. In proxy mode, network and
+proxy policy admit the user; Roborev then validates the exact Host, Origin, and
+same-origin fetch metadata before creating a browser session.
 
 ## Browser Sessions
 
@@ -217,18 +257,21 @@ For loopback-only use without `web.auth_token`, Roborev creates a local browser
 session automatically. Owner-local browser bootstrap also supports clients that
 omit the `Origin` header, but only for a direct loopback connection with an
 exact loopback Host, no forwarding headers, no remote authentication, and no
-cross-site fetch metadata. Once remote authentication is configured, every
-browser, including one on the daemon host, must enter the token.
+cross-site fetch metadata. In token mode, every browser, including one on the
+daemon host, must enter the token. In proxy mode, browsers admitted through the
+configured public origin bootstrap automatically.
 
-The login exchanges the token for an HTTP-only cookie and credentials stored in
-the current tab's `sessionStorage`. The application does not retain the daemon
-token. Opening a deep link in a new tab uses the cookie to bootstrap fresh
-tab-scoped credentials.
+In token mode, login exchanges the token for an HTTP-only cookie and credentials
+stored in the current tab's `sessionStorage`. The application does not retain
+the daemon token. Proxy mode creates the same credentials automatically after
+admission checks pass. Opening a deep link in a new tab uses the cookie to
+bootstrap fresh tab-scoped credentials.
 
 Browser sessions are held in memory. Restarting or upgrading the daemon signs
-out every browser tab, and remote users must enter the token again. This is
-intentional; sessions are never written to disk. Logging out or reaching the
-session expiry also closes any active event or job-output streams.
+out every browser tab. Token users must enter the token again; proxy users
+receive a replacement session automatically on their next valid bootstrap.
+Sessions are never written to disk. Logging out or reaching the session expiry
+also closes any active event or job-output streams.
 
 Remote browser sessions can cancel only standalone, non-agentic, non-CI code
 reviews and cannot rerun jobs. Panel and CI cancellations, reruns, and

@@ -764,8 +764,9 @@ column_borders = true             # Show separators between TUI columns
 | `server_addr` | string | 127.0.0.1:7373 | Daemon listen address. Use `unix://` for Unix domain socket (see [Unix Domain Socket](#unix-domain-socket)) | No |
 | `web.enabled` | bool | true | Serve the embedded browser application on a separate listener | No |
 | `web.listen` | string | 127.0.0.1:0 | Loopback browser listener address. Port 0 selects an available ephemeral port | No |
-| `web.public_origin` | string | - | Exact dedicated HTTPS origin exposed by a reverse proxy | No |
+| `web.public_origin` | string | - | Exact HTTPS origin exposed by a reverse proxy | No |
 | `web.base_path` | string | - | Optional canonical routing prefix, without a trailing slash; not a same-origin security boundary | No |
+| `web.auth_mode` | string | - | Browser admission mode; set `proxy` to delegate admission to an external access boundary | No |
 | `web.auth_token` | string | - | Base64url-encoded 32-byte random token exchanged for a process-local browser session | No |
 | `web.auth_token_file` | string | - | Host-local file containing the browser token; mutually exclusive with `web.auth_token` | No |
 | `max_workers` | int | 4 | Number of parallel review workers | No |
@@ -826,8 +827,11 @@ configuration: `roborev ui` starts the daemon when needed and opens the
 runtime-advertised browser origin.
 
 To expose that listener through an HTTPS reverse proxy, keep the daemon-side
-listener on loopback and configure an exact public origin plus a 32-byte random
-token. Generate a compatible base64url value with:
+listener on loopback and configure an exact public origin. Roborev can either
+authenticate browsers with its own token or delegate admission to the proxy and
+private network.
+
+For Roborev token authentication, generate a compatible base64url value with:
 
 ```bash
 openssl rand -base64 32 | tr '+/' '-_' | tr -d '='
@@ -844,15 +848,34 @@ base_path = "/reviews"
 auth_token_file = "/etc/roborev/web-auth-token"
 ```
 
-`public_origin` must be an exact scheme-and-authority origin with no path and
-must be dedicated to Roborev-controlled content. Serve sibling applications from
-separate origins. Set `base_path` separately when the proxy mounts the browser
-application below a URL prefix; it must start with `/`, have no trailing slash,
-query, fragment, percent escape, backslash, control character, surrounding
-whitespace, or path traversal. The token file must contain exactly one
-base64url-encoded 32-byte token, optionally followed by one terminal newline. It
-is mutually exclusive with `auth_token` and is read when the daemon starts, so
-the token bytes do not need to be stored in the configuration file.
+`public_origin` must be an exact scheme-and-authority origin with no path. Set
+`base_path` separately when the proxy mounts the browser application below a URL
+prefix; it must start with `/`, have no trailing slash, query, fragment, percent
+escape, backslash, control character, surrounding whitespace, or path traversal.
+The token file must contain exactly one base64url-encoded 32-byte token,
+optionally followed by one terminal newline. It is mutually exclusive with
+`auth_token` and is read when the daemon starts, so the token bytes do not need
+to be stored in the configuration file.
+
+To use the reverse proxy or private network as the admission boundary instead,
+configure proxy authentication and omit both token settings:
+
+```toml
+[web]
+enabled = true
+listen = "127.0.0.1:7374"
+public_origin = "https://reviews.example.com"
+base_path = "/reviews"
+auth_mode = "proxy"
+```
+
+Proxy mode is explicit and requires an exact HTTPS `public_origin`. Roborev
+automatically creates its normal process-local browser session after validating
+the public Host, exact Origin, same-origin browser fetch metadata, and
+forwarding request shape. Proxy sessions keep the restricted remote-user
+capabilities and all mutation requests still require the tab-scoped CSRF
+credential. Unknown auth modes and proxy configurations containing either token
+setting fail before the listener starts.
 
 The proxy must preserve the public `Host`, set conventional forwarding headers,
 and avoid buffering `/api/stream/events` and streamed `/api/job/output`
@@ -865,16 +888,18 @@ The browser session cookie uses `/` when `base_path` is empty and
 `base_path + "/"` when a prefix is configured. That path scope reduces
 incidental cookie transmission, but it is not an authorization boundary: scripts
 on the same origin can still make requests below the prefix. `base_path`
-provides routing only, so do not host sibling applications on the Roborev
-origin.
+provides routing only. Token deployments should use a dedicated origin. Proxy
+deployments must trust every application served from the configured origin; use
+a dedicated origin when that is not true.
 
-The browser exchanges the daemon token for an HTTP-only cookie and tab-scoped
-credentials. The token is entered after the public shell opens and is never
-retained by the application. Sessions are process-local, so every daemon restart
-requires the token again. When `auth_token` is configured, browser access from
-the daemon host requires the token too. Invalid logins trigger a process-wide
-exponential cooldown. A valid token bypasses that cooldown and resets the
-failure count immediately.
+In token mode, the browser exchanges the daemon token for an HTTP-only cookie
+and tab-scoped credentials. The token is entered after the public shell opens
+and is never retained by the application. Every daemon restart requires the
+token again, including from the daemon host. Invalid logins trigger a
+process-wide exponential cooldown. A valid token bypasses that cooldown and
+resets the failure count immediately. In proxy mode, successful same-origin
+bootstrap creates those credentials automatically; a stale cookie after restart
+is replaced without displaying the token prompt.
 
 The shell itself is public so a cross-site deep link can load while the session
 cookie uses `SameSite=Strict`. Its subsequent same-origin bootstrap request
