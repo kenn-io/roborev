@@ -564,6 +564,7 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 	job.Status = JobStatusRunning
 	job.WorkerID = workerID
 	job.StartedAt = &now
+	job.StartedAtRaw = nowStr
 	return &job, nil
 }
 

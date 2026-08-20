@@ -993,6 +993,38 @@ func TestCaptureTokenUsageForSessionUsesCodexJobLog(t *testing.T) {
 	assert.Equal(t, "thread-123", usage.ThreadID)
 }
 
+func TestCaptureTokenUsageForSessionRejectsReenqueuedJob(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	tc := newWorkerTestContext(t, 1)
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
+	require.NoError(t, tc.DB.CompleteJob(
+		job.ID, "codex", "prompt", "No issues found.",
+	))
+
+	tc.Pool.tokenUsageFetcher = func(context.Context, string) (*tokens.Usage, error) {
+		_, err := tc.DB.Exec(`
+			UPDATE review_jobs
+			SET status = 'done', started_at = '2026-08-20T16:00:00.987654321Z',
+			    finished_at = '2026-08-20T16:00:02Z', session_id = NULL,
+			    token_usage = NULL
+			WHERE id = ?`, job.ID)
+		require.NoError(t, err)
+		return &tokens.Usage{
+			OutputTokens: 32, ThreadID: "prior-session", HasCost: true, CostUSD: 0.2,
+		}, nil
+	}
+
+	tc.Pool.captureTokenUsageForSession(
+		context.Background(), testWorkerID, job, "prior-session",
+	)
+
+	updated, err := tc.DB.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Empty(t, updated.SessionID)
+	assert.Empty(t, updated.TokenUsage)
+}
+
 func TestCaptureTokenUsageForSessionKeepsJobLogWhenSessionIsReused(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	tc := newWorkerTestContext(t, 1)
