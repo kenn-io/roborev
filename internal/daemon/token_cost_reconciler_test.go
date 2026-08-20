@@ -88,9 +88,6 @@ func TestTokenCostReconcilerRecoversSessionFromJobLogAtStartup(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
-	require.NoError(t, tc.DB.MarkJobAgentInvoked(
-		job.ID, testWorkerID, "codex review",
-	))
 	require.NoError(t, tc.DB.CompleteJob(
 		job.ID, "codex", "prompt", "No issues found.",
 	))

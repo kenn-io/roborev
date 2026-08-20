@@ -19,7 +19,7 @@ const tokenCostCandidatePredicate = costEligible + `
 	AND NOT (` + hasCost + `)
 	AND COALESCE(j.session_id, '') != ''`
 
-const tokenUsageLogCandidatePredicate = costEligible + `
+const tokenUsageLogCandidatePredicate = costTerminal + `
 	AND NOT (` + hasCost + `)
 	AND COALESCE(j.session_id, '') = ''`
 
