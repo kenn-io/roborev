@@ -769,6 +769,8 @@ func (db *DB) BackfillJobTokenUsageIfCurrent(
 		     FROM review_jobs other
 		     WHERE other.id != review_jobs.id
 		       AND other.started_at IS NOT NULL
+		       AND other.session_id IS NOT NULL
+		       AND other.session_id != ''
 		       AND other.session_id = ?
 		   )))`,
 		tokenUsageJSON, sessionID, sessionID, now, jobID, sessionID,
