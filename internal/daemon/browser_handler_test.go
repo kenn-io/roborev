@@ -77,6 +77,36 @@ func newBrowserHandlerFixtureWithCoreAndTTLAndBasePath(
 	return handler, sessions
 }
 
+func newProxyBrowserHandlerFixture(t *testing.T, basePath string) (http.Handler, *BrowserSessionManager) {
+	t.Helper()
+	policy, err := NewBrowserPolicy(BrowserEndpoint{
+		Address:        "127.0.0.1:7374",
+		Origin:         "https://reviews.example.com",
+		Enabled:        true,
+		authentication: "proxy",
+	}, "")
+	require.NoError(t, err)
+	sessions, err := NewBrowserSessionManager(BrowserSessionConfig{
+		Origin:     "https://reviews.example.com",
+		AllowProxy: true,
+		CookiePath: joinBrowserPath(basePath, "/"),
+		Entropy:    rand.Reader,
+		Clock:      time.Now,
+	})
+	require.NoError(t, err)
+	core := http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		_, _ = w.Write([]byte(`{"path":"` + request.URL.Path + `"}`))
+	})
+	static := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "text/html")
+		_, _ = w.Write([]byte("shell"))
+	})
+	handler, err := (&Server{}).newBrowserHandler(core, static, policy, sessions, basePath)
+	require.NoError(t, err)
+	return handler, sessions
+}
+
 func TestBrowserHandlerNormalizesPrefixedRequests(t *testing.T) {
 	core := http.HandlerFunc(func(w http.ResponseWriter, request *http.Request) {
 		_, _ = w.Write([]byte(request.URL.Path))
@@ -154,6 +184,98 @@ func browserRequest(method, path string, body any) *http.Request {
 		request.Header.Set("Content-Type", "application/json")
 	}
 	return request
+}
+
+func proxyBrowserRequest(method, path string, body any) *http.Request {
+	request := browserRequest(method, path, body)
+	request.Host = "reviews.example.com"
+	request.Header.Set("Origin", "https://reviews.example.com")
+	request.Header.Set("Sec-Fetch-Site", "same-origin")
+	request.Header.Set("Sec-Fetch-Mode", "cors")
+	request.Header.Set("Sec-Fetch-Dest", "empty")
+	request.Header.Set("X-Forwarded-For", "192.0.2.1")
+	return request
+}
+
+func TestBrowserHandlerProxyBootstrapCreatesRemoteSession(t *testing.T) {
+	handler, sessions := newProxyBrowserHandlerFixture(t, "/reviews")
+	request := proxyBrowserRequest(
+		http.MethodPost, "/reviews/api/ui/session/bootstrap", map[string]any{},
+	)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, request)
+
+	require.Equal(t, http.StatusOK, recorder.Code, recorder.Body.String())
+	var credentials WebSessionCredentials
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &credentials))
+	assert.NotEmpty(t, credentials.Session)
+	assert.NotEmpty(t, credentials.CSRF)
+	assert.Equal(t, WebSessionCapabilities{
+		CancelAnyJob: false, CancelReviewJob: true, RerunJob: false,
+	}, credentials.Capabilities)
+	cookies := recorder.Result().Cookies()
+	require.Len(t, cookies, 1)
+	assert.Equal(t, sessions.CookieName(), cookies[0].Name)
+	assert.Equal(t, "/reviews/", cookies[0].Path)
+
+	mutation := proxyBrowserRequest(http.MethodPost, "/reviews/api/comment", map[string]any{})
+	mutation.AddCookie(cookies[0])
+	mutation.Header.Set(WebSessionHeader, credentials.Session)
+	mutationRecorder := httptest.NewRecorder()
+	handler.ServeHTTP(mutationRecorder, mutation)
+	assert.Equal(t, http.StatusForbidden, mutationRecorder.Code)
+}
+
+func TestBrowserHandlerProxyBootstrapRejectsInvalidRequestShape(t *testing.T) {
+	tests := []struct {
+		name       string
+		wantStatus int
+		mutate     func(*http.Request)
+	}{
+		{name: "loopback host", wantStatus: http.StatusUnauthorized, mutate: func(request *http.Request) { request.Host = "127.0.0.1:7374" }},
+		{name: "forged origin", wantStatus: http.StatusForbidden, mutate: func(request *http.Request) { request.Header.Set("Origin", "https://attacker.example") }},
+		{name: "missing origin", wantStatus: http.StatusForbidden, mutate: func(request *http.Request) { request.Header.Del("Origin") }},
+		{name: "cross-site fetch", wantStatus: http.StatusForbidden, mutate: func(request *http.Request) { request.Header.Set("Sec-Fetch-Site", "cross-site") }},
+		{name: "missing forwarding header", wantStatus: http.StatusUnauthorized, mutate: func(request *http.Request) { request.Header.Del("X-Forwarded-For") }},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			handler, _ := newProxyBrowserHandlerFixture(t, "")
+			request := proxyBrowserRequest(http.MethodPost, "/api/ui/session/bootstrap", map[string]any{})
+			tt.mutate(request)
+			recorder := httptest.NewRecorder()
+
+			handler.ServeHTTP(recorder, request)
+
+			assert.Equal(t, tt.wantStatus, recorder.Code)
+			assert.Empty(t, recorder.Header().Values("Set-Cookie"))
+		})
+	}
+}
+
+func TestBrowserHandlerProxyBootstrapReplacesStaleCookie(t *testing.T) {
+	handler, sessions := newProxyBrowserHandlerFixture(t, "")
+	request := proxyBrowserRequest(http.MethodPost, "/api/ui/session/bootstrap", map[string]any{})
+	request.AddCookie(sessions.Cookie("stale-ambient-session"))
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, request)
+
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	require.Len(t, recorder.Result().Cookies(), 1)
+	assert.NotEqual(t, "stale-ambient-session", recorder.Result().Cookies()[0].Value)
+}
+
+func TestBrowserHandlerProxySessionStatus(t *testing.T) {
+	handler, _ := newProxyBrowserHandlerFixture(t, "/reviews")
+	request := proxyBrowserRequest(http.MethodGet, "/reviews/api/ui/session", nil)
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, request)
+
+	assert.Equal(t, http.StatusOK, recorder.Code)
+	assert.JSONEq(t, `{"authentication":"proxy","authenticated":false}`, recorder.Body.String())
 }
 
 func TestBrowserHandlerHostRunsBeforeAuthentication(t *testing.T) {

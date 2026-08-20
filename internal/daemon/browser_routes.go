@@ -27,7 +27,7 @@ type WebSessionCapabilities struct {
 }
 
 type WebSessionStatus struct {
-	Authentication string                  `json:"authentication" enum:"local,token"`
+	Authentication string                  `json:"authentication" enum:"local,token,proxy"`
 	Authenticated  bool                    `json:"authenticated"`
 	ExpiresAt      *time.Time              `json:"expires_at,omitempty"`
 	Capabilities   *WebSessionCapabilities `json:"capabilities,omitempty"`

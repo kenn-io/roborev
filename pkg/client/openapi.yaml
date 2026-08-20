@@ -3159,6 +3159,7 @@ components:
           enum:
             - local
             - token
+            - proxy
           type: string
         capabilities:
           $ref: "#/components/schemas/WebSessionCapabilities"

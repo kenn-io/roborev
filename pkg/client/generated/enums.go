@@ -30,13 +30,14 @@ type WebSessionStatusAuthentication string
 
 const (
 	Local WebSessionStatusAuthentication = "local"
+	Proxy WebSessionStatusAuthentication = "proxy"
 	Token WebSessionStatusAuthentication = "token"
 )
 
 // Validate checks if the WebSessionStatusAuthentication value is valid
 func (w WebSessionStatusAuthentication) Validate() error {
 	switch w {
-	case Local, Token:
+	case Local, Proxy, Token:
 		return nil
 	default:
 		return runtime.NewValidationErrorsFromString("Enum", fmt.Sprintf("must be a valid WebSessionStatusAuthentication value, got: %v", w))
