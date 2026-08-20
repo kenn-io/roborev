@@ -228,13 +228,30 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 		}
 	}
 
-	// Load configs (warn on error, don't fail)
+	// Load configs (warn on error, don't fail). Repository configuration and
+	// its relative custom-review files come from the trusted side of the
+	// reviewed range, never from the checkout under review.
 	globalCfg := loadCIGlobalConfig(root)
-	repoCfg, err := config.LoadRepoConfig(root)
+	repoCfgRef, refErr := trustedCIRepoConfigRef(root, gitRef)
+	if refErr != nil {
+		// Preserve the flag-validation diagnostic when a plainly unknown type
+		// and an invalid ref are supplied together. Repository-defined types
+		// cannot be established without a valid trusted ref, but built-in and
+		// global definitions can still be checked here.
+		if opts.reviewTypes != "" {
+			if _, validationErr := config.ValidateReviewTypesFromConfig(
+				splitTrimmed(opts.reviewTypes), nil, globalCfg,
+			); validationErr != nil {
+				return validationErr
+			}
+		}
+		return fmt.Errorf("resolve trusted CI config ref: %w", refErr)
+	}
+	repoCfg, err := config.LoadRepoConfigFromRef(root, repoCfgRef)
 	if err != nil {
 		log.Printf(
-			"ci review: load repo config: %v "+
-				"(using defaults)", err)
+			"ci review: load repo config from %s: %v "+
+				"(using defaults)", repoCfgRef, err)
 	}
 
 	// The Claude adapter strips ANTHROPIC_API_KEY from the inherited
@@ -310,14 +327,15 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 	// they are not, so file context comes from the protected branch. See
 	// docs/integrations/gitlab.md for the operator-side workaround.
 	batchCfg := review.BatchConfig{
-		RepoPath:     root,
-		GitRef:       gitRef,
-		Agents:       agents,
-		ReviewTypes:  reviewTypes,
-		Reasoning:    reasoningLevel,
-		GlobalConfig: globalCfg,
-		RepoConfig:   repoCfg,
-		MinSeverity:  reviewMinSev,
+		RepoPath:      root,
+		GitRef:        gitRef,
+		Agents:        agents,
+		ReviewTypes:   reviewTypes,
+		Reasoning:     opts.reasoning,
+		GlobalConfig:  globalCfg,
+		RepoConfig:    repoCfg,
+		RepoConfigRef: repoCfgRef,
+		MinSeverity:   reviewMinSev,
 	}
 
 	results := review.RunBatch(ctx, batchCfg)
@@ -562,6 +580,24 @@ func detectGitRefForForge(forge ciForge, repoPath string) (string, error) {
 		return detectGitLabGitRef(repoPath)
 	}
 	return detectGitRef()
+}
+
+// trustedCIRepoConfigRef returns the commit whose repository configuration is
+// allowed to control a daemon-free CI review. Ranges use their base commit. A
+// single-commit review uses its first parent, or the empty tree for a root
+// commit, so the reviewed commit cannot alter its own gate.
+func trustedCIRepoConfigRef(repoPath, gitRef string) (string, error) {
+	if git.IsRange(gitRef) {
+		return git.GetRangeStart(repoPath, gitRef)
+	}
+	parents, err := git.GetCommitParents(repoPath, gitRef)
+	if err != nil {
+		return "", err
+	}
+	if len(parents) == 0 {
+		return git.EmptyTreeSHA, nil
+	}
+	return parents[0], nil
 }
 
 // postForgeComment posts the synthesized review to the active forge.

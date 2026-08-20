@@ -293,6 +293,38 @@ func TestRunBatch_WorkflowAwareResolution(t *testing.T) {
 	assert.Equal("security-agent", secResult.Agent, "security type resolved to %q, want %q", secResult.Agent, "security-agent")
 }
 
+func TestRunBatchUsesPassedRepoConfigForCustomAgent(t *testing.T) {
+	repoPath := t.TempDir()
+	require.NoError(t, os.WriteFile(
+		filepath.Join(repoPath, ".roborev.toml"),
+		[]byte("[review.types.custom]\ntemplate = \"head.tmpl\"\nagent = \"head-agent\"\n"),
+		0o644,
+	))
+	repoCfg := &config.RepoConfig{Review: config.ReviewConfig{
+		Types: map[string]config.ReviewTypeSpec{
+			"custom": {
+				Template: "base.tmpl",
+				Agent:    "base-agent",
+			},
+		},
+	}}
+	cfg := BatchConfig{
+		RepoPath:    repoPath,
+		GitRef:      "abc..def",
+		Agents:      []string{""},
+		ReviewTypes: []string{"custom"},
+		RepoConfig:  repoCfg,
+		AgentRegistry: map[string]agent.Agent{
+			"base-agent": &mockAgent{name: "base-agent"},
+			"head-agent": &mockAgent{name: "head-agent"},
+		},
+	}
+
+	results := RunBatch(context.Background(), cfg)
+	require.Len(t, results, 1)
+	assert.Equal(t, "base-agent", results[0].Agent)
+}
+
 func TestRunBatch_BlankCIAgentAutoDetectsAvailableAgent(t *testing.T) {
 	assert := assert.New(t)
 	require := require.New(t)

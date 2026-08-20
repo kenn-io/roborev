@@ -568,6 +568,33 @@ func ResolveCIReasoning(
 	return resolveNormalized("thorough", NormalizeReasoning, explicit, repoVal)
 }
 
+// ResolveCIReviewReasoningForType determines the reasoning level for one CI
+// review. An explicit CLI value or repository [ci].reasoning applies to every
+// type. Otherwise a custom type may supply its own reasoning before CI falls
+// back to "thorough".
+func ResolveCIReviewReasoningForType(
+	explicit string,
+	repoCfg *RepoConfig,
+	globalCfg *Config,
+	reviewType string,
+) (string, error) {
+	var repoVal string
+	if repoCfg != nil {
+		repoVal = repoCfg.CI.Reasoning
+	}
+	if strings.TrimSpace(explicit) != "" || strings.TrimSpace(repoVal) != "" {
+		return resolveNormalized(
+			"thorough", NormalizeReasoning, explicit, repoVal,
+		)
+	}
+	if resolved, ok := ResolveCustomReviewTypeFromConfig(
+		reviewType, repoCfg, globalCfg,
+	); ok && strings.TrimSpace(resolved.Spec.Reasoning) != "" {
+		return NormalizeReasoning(resolved.Spec.Reasoning)
+	}
+	return "thorough", nil
+}
+
 // ResolveCIMinSeverity determines the synthesis severity filter for CI review execution.
 // Priority: explicit > repo [ci].min_severity > global [ci].min_severity > "".
 func ResolveCIMinSeverity(

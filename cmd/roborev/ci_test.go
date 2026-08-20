@@ -475,6 +475,20 @@ func TestDetectGitRefForForge_UsesForgeSpecificEnv(t *testing.T) {
 	assert.Equal(t, "glbase..glhead", glRef)
 }
 
+func TestTrustedCIRepoConfigRefUsesPreReviewCommit(t *testing.T) {
+	repo := testutil.NewTestRepoWithCommit(t)
+	base := repo.HeadSHA()
+	head := repo.CommitFile("feature.txt", "feature", "feature work")
+
+	got, err := trustedCIRepoConfigRef(repo.Path(), base+".."+head)
+	require.NoError(t, err)
+	assert.Equal(t, base, got)
+
+	got, err = trustedCIRepoConfigRef(repo.Path(), head)
+	require.NoError(t, err)
+	assert.Equal(t, base, got)
+}
+
 // TestDetectGitLabGitRef_DivergedBranches covers the fallback bases, which are
 // branch tips rather than diff bases. When the target branch advanced after the
 // branches diverged, comparing tips would report target-only commits as

@@ -97,10 +97,17 @@ Templates use Go's `text/template` syntax and receive these values:
 
 Invalid template syntax and execution errors fail prompt construction with a
 configuration error. Template and include contents count toward the configured
-`max_prompt_size` budget.
+`max_prompt_size` budget. Roborev always reserves 16 KiB of that budget for the
+review target, diff, or oversized-diff snapshot reference. A custom rubric that
+would consume the remainder is rejected instead of running without the code it
+is meant to review.
 
 Do not put diff placeholders in the custom template. Roborev appends the review
 target and diff context after rendering it.
+
+Queued reviews resolve their custom type when a worker starts them. If the type
+has been removed or renamed since the job was queued, the job fails with a
+configuration error; Roborev never substitutes the generic review prompt.
 
 ## Structured results and compatible agents
 
@@ -108,6 +115,13 @@ Custom types require an agent with native JSON Schema output support. Roborev
 currently supports custom reviews with `codex`, `claude-code`, `pi`, and `grok`.
 If the selected agent lacks that capability, the job fails instead of falling
 back to unconstrained prose.
+
+Roborev does not impose one shared minimum version across those independent
+CLIs. The installed command must support the schema mechanism used by its
+adapter: `--output-schema` for Codex, `--json-schema` for Claude Code and Grok,
+and the `pi-json-schema` extension for Pi. An unsupported flag or missing Pi
+extension is reported as an agent execution error; update the CLI or install the
+extension before retrying the review.
 
 The schema is fixed by roborev. The agent must return:
 
@@ -152,6 +166,10 @@ Classify findings by impact:
 Tell the reviewer to report all real findings. Roborev applies the configured
 minimum after structured output is returned, so the template does not need to
 implement threshold filtering.
+
+When CI has no command-line `--reasoning` value or repository `[ci].reasoning`,
+a custom type's `reasoning` field controls that type. An explicit CI value
+applies to every review in the matrix.
 
 ## Thermonuclear example
 

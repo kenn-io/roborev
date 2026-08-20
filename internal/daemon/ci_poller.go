@@ -841,7 +841,15 @@ func (p *CIPoller) resolveCIMatrixMembers(
 
 	members := make([]config.ResolvedMember, 0, len(matrix))
 	for i, entry := range matrix {
-		resolvedAgent, resolvedModel, backupAgent, backupModel, err := p.resolveMatrixMemberAgent(repo, repoCfg, cfg, entry, reasoning)
+		memberReasoning, err := config.ResolveCIReviewReasoningForType(
+			"", repoCfg, cfg, entry.ReviewType,
+		)
+		if err != nil {
+			return nil, config.SynthesisSpec{}, fmt.Errorf(
+				"resolve reasoning for type %q: %w", entry.ReviewType, err,
+			)
+		}
+		resolvedAgent, resolvedModel, backupAgent, backupModel, err := p.resolveMatrixMemberAgent(repo, repoCfg, cfg, entry, memberReasoning)
 		if err != nil {
 			return nil, config.SynthesisSpec{}, err
 		}
@@ -851,7 +859,7 @@ func (p *CIPoller) resolveCIMatrixMembers(
 			Agent:       resolvedAgent,
 			Model:       resolvedModel,
 			ReviewType:  entry.ReviewType,
-			Reasoning:   reasoning,
+			Reasoning:   memberReasoning,
 			BackupAgent: backupAgent,
 			BackupModel: backupModel,
 		})

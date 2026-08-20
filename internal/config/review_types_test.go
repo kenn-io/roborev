@@ -85,3 +85,31 @@ func TestMergeReviewConfigRepoTypeReplacesGlobalType(t *testing.T) {
 	assert.Equal(t, "repo.tmpl", merged.Types["thermonuclear"].Template)
 	assert.Empty(t, merged.Types["thermonuclear"].Includes)
 }
+
+func TestResolveCIReviewReasoningForType(t *testing.T) {
+	repoCfg := &RepoConfig{Review: ReviewConfig{Types: map[string]ReviewTypeSpec{
+		"thermonuclear": {
+			Template:  "review.tmpl",
+			Reasoning: "maximum",
+		},
+	}}}
+
+	got, err := ResolveCIReviewReasoningForType(
+		"", repoCfg, nil, "thermonuclear",
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "maximum", got)
+
+	repoCfg.CI.Reasoning = "standard"
+	got, err = ResolveCIReviewReasoningForType(
+		"", repoCfg, nil, "thermonuclear",
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "standard", got)
+
+	got, err = ResolveCIReviewReasoningForType(
+		"fast", repoCfg, nil, "thermonuclear",
+	)
+	require.NoError(t, err)
+	assert.Equal(t, "fast", got)
+}
