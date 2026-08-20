@@ -700,8 +700,26 @@ func (db *DB) SaveJobSessionID(
 	if sessionID == "" {
 		return nil
 	}
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			if _, err := conn.ExecContext(ctx, "ROLLBACK"); err != nil {
+				log.Printf("jobs SaveJobSessionID: rollback failed: %v", err)
+			}
+		}
+	}()
+
 	now := time.Now().Format(time.RFC3339)
-	_, err := db.Exec(`
+	result, err := conn.ExecContext(ctx, `
 		UPDATE review_jobs
 		SET session_id = ?, updated_at = ?
 		WHERE id = ?
@@ -709,7 +727,32 @@ func (db *DB) SaveJobSessionID(
 		  AND worker_id = ?
 		  AND (session_id IS NULL OR session_id = '')
 	`, sessionID, now, jobID, workerID)
-	return err
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows > 0 {
+		if _, err := conn.ExecContext(ctx, `
+			INSERT OR IGNORE INTO review_job_session_history
+				(source_machine_id, session_id, job_uuid, started_at)
+			SELECT source_machine_id, session_id, uuid, started_at
+			FROM review_jobs
+			WHERE id = ?
+			  AND source_machine_id IS NOT NULL AND source_machine_id != ''
+			  AND session_id IS NOT NULL AND session_id != ''
+			  AND uuid IS NOT NULL AND uuid != ''
+			  AND started_at IS NOT NULL`, jobID); err != nil {
+			return err
+		}
+	}
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return err
+	}
+	committed = true
+	return nil
 }
 
 // SaveJobPatch stores the generated patch for a completed fix job
@@ -758,8 +801,49 @@ func (db *DB) BackfillJobTokenUsageIfCurrent(
 	if tokenUsageJSON == "" {
 		return false, nil
 	}
+	machineID, err := db.GetMachineID()
+	if err != nil {
+		return false, err
+	}
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return false, err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return false, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			if _, err := conn.ExecContext(ctx, "ROLLBACK"); err != nil {
+				log.Printf("jobs BackfillJobTokenUsageIfCurrent: rollback failed: %v", err)
+			}
+		}
+	}()
+
+	if sessionID != "" {
+		if _, err := conn.ExecContext(ctx, `
+			INSERT OR IGNORE INTO review_job_session_history
+				(source_machine_id, session_id, job_uuid, started_at)
+			SELECT source_machine_id, ?, uuid, started_at
+			FROM review_jobs
+			WHERE id = ?
+			  AND source_machine_id = ?
+			  AND uuid IS NOT NULL AND uuid != ''
+			  AND started_at IS NOT NULL
+			  AND (session_id IS NULL OR session_id = '' OR session_id = ?)
+			  AND (? = '' OR started_at = ?)`,
+			sessionID, jobID, machineID, sessionID,
+			expectedStartedAt, expectedStartedAt,
+		); err != nil {
+			return false, err
+		}
+	}
+
 	now := time.Now().Format(time.RFC3339)
-	result, err := db.Exec(
+	result, err := conn.ExecContext(ctx,
 		`UPDATE review_jobs
 		 SET token_usage = ?,
 		     session_id = CASE
@@ -769,6 +853,7 @@ func (db *DB) BackfillJobTokenUsageIfCurrent(
 		     updated_at = ?,
 		     synced_at = NULL
 		 WHERE id = ?
+		   AND source_machine_id = ?
 		   AND status IN ('done', 'applied', 'rebased', 'failed', 'canceled', 'skipped')
 		   AND (session_id IS NULL OR session_id = '' OR session_id = ?)
 		   AND COALESCE(token_usage, '') = ?
@@ -777,20 +862,34 @@ func (db *DB) BackfillJobTokenUsageIfCurrent(
 		     SELECT 1
 		     FROM review_jobs other
 		     WHERE other.id != review_jobs.id
+		       AND other.source_machine_id = review_jobs.source_machine_id
 		       AND other.started_at IS NOT NULL
 		       AND other.session_id IS NOT NULL
 		       AND other.session_id != ''
 		       AND other.session_id = ?
+		   ) AND NOT EXISTS (
+		     SELECT 1
+		     FROM review_job_session_history history
+		     WHERE history.source_machine_id = review_jobs.source_machine_id
+		       AND history.session_id = ?
+		       AND (history.job_uuid != review_jobs.uuid OR history.started_at != review_jobs.started_at)
 		   )))`,
-		tokenUsageJSON, sessionID, sessionID, now, jobID, sessionID,
+		tokenUsageJSON, sessionID, sessionID, now, jobID, machineID, sessionID,
 		expectedTokenUsage, expectedStartedAt, expectedStartedAt,
-		requireUniqueSession, sessionID, sessionID,
+		requireUniqueSession, sessionID, sessionID, sessionID,
 	)
 	if err != nil {
 		return false, err
 	}
 	rows, err := result.RowsAffected()
-	return rows > 0, err
+	if err != nil {
+		return false, err
+	}
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return false, err
+	}
+	committed = true
+	return rows > 0, nil
 }
 
 // CompleteFixJob atomically marks a fix job as done, stores the review,

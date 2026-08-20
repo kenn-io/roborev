@@ -139,6 +139,49 @@ func MergeTokenUsage(existingJSON string, fetched *tokens.Usage) *tokens.Usage {
 	return &merged
 }
 
+// mergeMissingTokenUsage treats the persisted row as authoritative after a
+// compare-and-swap conflict. The provider snapshot may have been fetched
+// before normal capture updated the row, so it may only fill fields that are
+// still absent; it must never replace newer counts or pricing.
+func mergeMissingTokenUsage(existingJSON string, fetched *tokens.Usage) *tokens.Usage {
+	existing := tokens.ParseJSON(existingJSON)
+	if existing == nil {
+		return MergeTokenUsage(existingJSON, fetched)
+	}
+	merged := *existing
+	if fetched == nil {
+		return &merged
+	}
+
+	if merged.OutputTokens == 0 && merged.PeakContextTokens == 0 {
+		merged.OutputTokens = fetched.OutputTokens
+		merged.PeakContextTokens = fetched.PeakContextTokens
+	}
+	if merged.InputTokens == 0 {
+		merged.InputTokens = fetched.InputTokens
+	}
+	if merged.CachedInputTokens == 0 {
+		merged.CachedInputTokens = fetched.CachedInputTokens
+	}
+	if merged.CacheCreationTokens == 0 {
+		merged.CacheCreationTokens = fetched.CacheCreationTokens
+	}
+	if merged.UsageSource == "" {
+		merged.UsageSource = fetched.UsageSource
+	}
+	if merged.ThreadID == "" {
+		merged.ThreadID = fetched.ThreadID
+	}
+	if merged.EventOffset == 0 {
+		merged.EventOffset = fetched.EventOffset
+	}
+	if !merged.HasCost && fetched.HasCost {
+		merged.CostUSD = fetched.CostUSD
+		merged.HasCost = true
+	}
+	return &merged
+}
+
 // hasRecordedCost reports whether a row carries an actual dollar figure, not
 // just the has_cost flag. The two came apart when agentsview v0.39.0 moved cost
 // into a microdollar envelope roborev could not yet read: the flag was stored,
@@ -185,8 +228,13 @@ func StoreMergedTokenUsage(
 	requireUniqueSession bool,
 ) (*tokens.Usage, bool, error) {
 	var merged *tokens.Usage
+	afterConflict := false
 	for range storeAttempts {
-		merged = MergeTokenUsage(existingJSON, fetched)
+		if afterConflict {
+			merged = mergeMissingTokenUsage(existingJSON, fetched)
+		} else {
+			merged = MergeTokenUsage(existingJSON, fetched)
+		}
 		if merged == nil {
 			return nil, false, nil
 		}
@@ -210,7 +258,11 @@ func StoreMergedTokenUsage(
 			(current.SessionID != "" && current.SessionID != sessionID) {
 			return merged, false, nil
 		}
+		if hasRecordedCost(current.TokenUsage) {
+			return tokens.ParseJSON(current.TokenUsage), false, nil
+		}
 		existingJSON = current.TokenUsage
+		afterConflict = true
 	}
 	return merged, false, nil
 }

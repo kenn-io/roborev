@@ -93,6 +93,70 @@ func TestStoreCapturedTokenUsageRejectsReenqueuedJob(t *testing.T) {
 	assert.Empty(t, current.TokenUsage)
 }
 
+func TestStoreMergedTokenUsagePreservesNewerUsageAfterConflict(t *testing.T) {
+	db, err := storage.Open(filepath.Join(t.TempDir(), "reviews.db"))
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	repo, err := db.GetOrCreateRepo(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	commit, err := db.GetOrCreateCommit(
+		repo.ID, "usage-conflict", "test", "usage conflict", time.Now(),
+	)
+	require.NoError(t, err)
+	job, err := db.EnqueueJob(storage.EnqueueOpts{
+		RepoID: repo.ID, CommitID: commit.ID, GitRef: commit.SHA, Agent: "codex",
+	})
+	require.NoError(t, err)
+	claimed, err := db.ClaimJob("usage-worker")
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+	require.NoError(t, db.MarkJobAgentInvoked(
+		job.ID, "usage-worker", "codex review",
+	))
+	require.NoError(t, db.SaveJobSessionID(
+		job.ID, "usage-worker", "usage-session",
+	))
+	require.NoError(t, db.CompleteJob(
+		job.ID, "codex", "prompt", "No issues found.",
+	))
+
+	oldUsage := `{"total_output_tokens":10,"peak_context_tokens":100}`
+	updated, err := db.BackfillJobTokenUsageIfCurrent(
+		job.ID, "usage-session", "", oldUsage, claimed.StartedAtRaw, true,
+	)
+	require.NoError(t, err)
+	require.True(t, updated)
+	newerUsage := `{"total_output_tokens":20,"peak_context_tokens":200,"has_cost":true,"cost_usd":0.66}`
+	require.NoError(t, db.SaveJobTokenUsage(
+		job.ID, "usage-session", newerUsage,
+	))
+
+	_, saved, err := StoreMergedTokenUsage(
+		db,
+		job.ID,
+		"usage-session",
+		oldUsage,
+		claimed.StartedAtRaw,
+		&tokens.Usage{
+			OutputTokens:      10,
+			PeakContextTokens: 100,
+			HasCost:           true,
+			CostUSD:           0.33,
+		},
+		true,
+	)
+	require.NoError(t, err)
+	assert.False(t, saved)
+
+	current, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	usage := tokens.ParseJSON(current.TokenUsage)
+	require.NotNil(t, usage)
+	assert.Equal(t, int64(20), usage.OutputTokens)
+	assert.Equal(t, int64(200), usage.PeakContextTokens)
+	assert.InDelta(t, 0.66, usage.CostUSD, 1e-9)
+}
+
 // A genuine free run must survive a merge intact rather than being re-flagged
 // as unpriced, which would drop it back out of the priced numerator.
 func TestMergeTokenUsageKeepsExplicitZeroCost(t *testing.T) {

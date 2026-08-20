@@ -38,10 +38,17 @@ const uniqueStartedSessionPredicate = `NOT EXISTS (
 		SELECT 1
 		FROM review_jobs other
 		WHERE other.id != j.id
+		  AND other.source_machine_id = j.source_machine_id
 		  AND other.started_at IS NOT NULL
 		  AND other.session_id IS NOT NULL
 		  AND other.session_id != ''
 		  AND other.session_id = j.session_id
+	) AND NOT EXISTS (
+		SELECT 1
+		FROM review_job_session_history history
+		WHERE history.source_machine_id = j.source_machine_id
+		  AND history.session_id = j.session_id
+		  AND (history.job_uuid != j.uuid OR history.started_at != j.started_at)
 	)`
 
 // ListTokenCostCandidates returns a bounded page ordered by job ID. afterJobID
@@ -53,15 +60,20 @@ func (db *DB) ListTokenCostCandidates(
 	if limit <= 0 {
 		return nil, nil
 	}
+	machineID, err := db.GetMachineID()
+	if err != nil {
+		return nil, fmt.Errorf("get machine ID: %w", err)
+	}
 	rows, err := db.Query(`
 		SELECT j.id, j.session_id, j.agent, COALESCE(j.token_usage, ''),
 		       j.started_at
 		FROM review_jobs j
 		WHERE j.id > ?
+		  AND j.source_machine_id = ?
 		  AND `+tokenCostCandidatePredicate+`
 		  AND `+uniqueStartedSessionPredicate+`
 		ORDER BY j.id
-		LIMIT ?`, afterJobID, limit)
+		LIMIT ?`, afterJobID, machineID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list token cost candidates: %w", err)
 	}
@@ -90,15 +102,20 @@ func (db *DB) ListTokenCostCandidates(
 // GetTokenCostCandidate returns jobID only while it remains eligible for a
 // late-price lookup. A nil result means the job is no longer a candidate.
 func (db *DB) GetTokenCostCandidate(jobID int64) (*TokenCostCandidate, error) {
+	machineID, err := db.GetMachineID()
+	if err != nil {
+		return nil, fmt.Errorf("get machine ID: %w", err)
+	}
 	var candidate TokenCostCandidate
-	err := db.QueryRow(`
+	err = db.QueryRow(`
 		SELECT j.id, j.session_id, j.agent, COALESCE(j.token_usage, ''),
 		       j.started_at
 		FROM review_jobs j
 		WHERE j.id = ?
+		  AND j.source_machine_id = ?
 		  AND `+tokenCostCandidatePredicate+`
 		  AND `+uniqueStartedSessionPredicate,
-		jobID,
+		jobID, machineID,
 	).Scan(
 		&candidate.JobID,
 		&candidate.SessionID,
@@ -124,13 +141,18 @@ func (db *DB) ListTokenUsageLogCandidates(
 	if limit <= 0 {
 		return nil, nil
 	}
+	machineID, err := db.GetMachineID()
+	if err != nil {
+		return nil, fmt.Errorf("get machine ID: %w", err)
+	}
 	rows, err := db.Query(`
 		SELECT j.id, COALESCE(j.token_usage, ''), j.started_at
 		FROM review_jobs j
 		WHERE j.id > ?
+		  AND j.source_machine_id = ?
 		  AND `+tokenUsageLogCandidatePredicate+`
 		ORDER BY j.id
-		LIMIT ?`, afterJobID, limit)
+		LIMIT ?`, afterJobID, machineID, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list token usage log candidates: %w", err)
 	}

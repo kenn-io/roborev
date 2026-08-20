@@ -1245,6 +1245,31 @@ func (db *DB) migrate() error {
 		return fmt.Errorf("create idx_review_jobs_started_session: %w", err)
 	}
 
+	// Keep a durable association for every started attempt that captured a
+	// session. Retry paths intentionally clear review_jobs.session_id, so the
+	// current row alone cannot prove that a cumulative provider session was
+	// reused by an earlier attempt. This table is local-only and is not synced.
+	if _, err = db.Exec(`CREATE TABLE IF NOT EXISTS review_job_session_history (
+		source_machine_id TEXT NOT NULL,
+		session_id TEXT NOT NULL,
+		job_uuid TEXT NOT NULL,
+		started_at TEXT NOT NULL,
+		created_at TEXT NOT NULL DEFAULT (datetime('now')),
+		PRIMARY KEY (source_machine_id, session_id, job_uuid, started_at)
+	)`); err != nil {
+		return fmt.Errorf("create review_job_session_history: %w", err)
+	}
+	if _, err = db.Exec(`INSERT OR IGNORE INTO review_job_session_history
+		(source_machine_id, session_id, job_uuid, started_at)
+		SELECT source_machine_id, session_id, uuid, started_at
+		FROM review_jobs
+		WHERE source_machine_id IS NOT NULL AND source_machine_id != ''
+		  AND session_id IS NOT NULL AND session_id != ''
+		  AND uuid IS NOT NULL AND uuid != ''
+		  AND started_at IS NOT NULL`); err != nil {
+		return fmt.Errorf("backfill review_job_session_history: %w", err)
+	}
+
 	// Retire the old CI batch subsystem (F14): cancel any in-flight
 	// batch jobs, then drop ci_pr_batch_jobs and ci_pr_batches. Runs
 	// every Open() and is a no-op once the tables are gone. Placed last
