@@ -64,7 +64,9 @@ the request:
 Missing or invalid values receive the existing bootstrap rejection. A direct
 request using the loopback listener Host cannot use proxy bootstrap. Existing
 ambient cookies can still bootstrap new tab credentials after the same request
-checks pass.
+checks pass. A stale ambient cookie from a daemon restart is replaced with a
+new proxy session after those checks pass, so proxy mode never falls back to a
+token prompt.
 
 Proxy bootstrap creates the same process-local ambient session, tab-scoped
 session credential, and CSRF credential as token login. Its principal is remote,
