@@ -46,11 +46,15 @@ func newBrowserHandlerFixtureWithCoreAndTTLAndBasePath(
 	t *testing.T, authToken string, core http.Handler, ttl time.Duration, basePath string,
 ) (http.Handler, *BrowserSessionManager) {
 	t.Helper()
+	authentication := "local"
+	if authToken != "" {
+		authentication = "token"
+	}
 	policy, err := NewBrowserPolicy(BrowserEndpoint{
-		Address:           "127.0.0.1:7374",
-		Origin:            "http://127.0.0.1:7374",
-		Enabled:           true,
-		remoteAuthEnabled: authToken != "",
+		Address:        "127.0.0.1:7374",
+		Origin:         "http://127.0.0.1:7374",
+		Enabled:        true,
+		authentication: authentication,
 	}, "")
 	require.NoError(t, err)
 	sessions, err := NewBrowserSessionManager(BrowserSessionConfig{

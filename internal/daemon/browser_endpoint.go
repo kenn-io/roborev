@@ -10,12 +10,12 @@ import (
 )
 
 type BrowserEndpoint struct {
-	Listener          net.Listener
-	Address           string
-	DialAddress       string
-	Origin            string
-	Enabled           bool
-	remoteAuthEnabled bool
+	Listener       net.Listener
+	Address        string
+	DialAddress    string
+	Origin         string
+	Enabled        bool
+	authentication string
 }
 
 func ResolveBrowserEndpoint(web config.WebConfig) (BrowserEndpoint, error) {
@@ -39,13 +39,19 @@ func ResolveBrowserEndpoint(web config.WebConfig) (BrowserEndpoint, error) {
 	if origin == "" {
 		origin = "http://" + address
 	}
+	authentication := "local"
+	if web.AuthMode == config.WebAuthModeProxy {
+		authentication = "proxy"
+	} else if web.AuthToken != "" || web.AuthTokenFile != "" {
+		authentication = "token"
+	}
 	return BrowserEndpoint{
-		Listener:          listener,
-		Address:           address,
-		DialAddress:       dial.Host,
-		Origin:            origin,
-		Enabled:           true,
-		remoteAuthEnabled: web.AuthToken != "" || web.AuthTokenFile != "",
+		Listener:       listener,
+		Address:        address,
+		DialAddress:    dial.Host,
+		Origin:         origin,
+		Enabled:        true,
+		authentication: authentication,
 	}, nil
 }
 

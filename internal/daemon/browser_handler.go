@@ -499,11 +499,7 @@ func authenticateBrowserRequest(request *http.Request, sessions *BrowserSessionM
 }
 
 func writeBrowserSessionStatus(w http.ResponseWriter, request *http.Request, policy BrowserPolicy, sessions *BrowserSessionManager) {
-	authentication := "local"
-	if policy.remoteAuthEnabled {
-		authentication = "token"
-	}
-	status := WebSessionStatus{Authentication: authentication}
+	status := WebSessionStatus{Authentication: policy.authentication}
 	principal, ambient, tab, err := authenticateBrowserRequest(request, sessions)
 	if err == nil {
 		status.Authenticated = true

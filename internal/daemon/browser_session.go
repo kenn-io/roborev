@@ -26,6 +26,7 @@ var (
 	ErrWebSessionRequired      = errors.New("web session required")
 	ErrInvalidWebCSRF          = errors.New("invalid web CSRF token")
 	ErrLocalWebSessionDisabled = errors.New("local web sessions are disabled")
+	ErrProxyWebSessionDisabled = errors.New("proxy web sessions are disabled")
 	ErrWebLoginRateLimited     = errors.New("web login rate limited")
 )
 
@@ -42,6 +43,7 @@ type BrowserSessionConfig struct {
 	Origin     string
 	AuthToken  string
 	AllowLocal bool
+	AllowProxy bool
 	CookiePath string
 	TTL        time.Duration
 	Entropy    io.Reader
@@ -78,6 +80,7 @@ type BrowserSessionManager struct {
 	authHash          [32]byte
 	authSet           bool
 	allowLocal        bool
+	allowProxy        bool
 	ttl               time.Duration
 	entropy           io.Reader
 	clock             func() time.Time
@@ -120,6 +123,7 @@ func NewBrowserSessionManager(config BrowserSessionConfig) (*BrowserSessionManag
 		authHash:   sha256.Sum256([]byte(config.AuthToken)),
 		authSet:    config.AuthToken != "",
 		allowLocal: config.AllowLocal,
+		allowProxy: config.AllowProxy,
 		ttl:        config.TTL,
 		entropy:    config.Entropy,
 		clock:      config.Clock,
@@ -165,6 +169,13 @@ func (m *BrowserSessionManager) NewLocalSession() (SessionCredentials, error) {
 		return SessionCredentials{}, ErrLocalWebSessionDisabled
 	}
 	return m.newSession(BrowserPrincipal{Local: true})
+}
+
+func (m *BrowserSessionManager) NewProxySession() (SessionCredentials, error) {
+	if !m.allowProxy {
+		return SessionCredentials{}, ErrProxyWebSessionDisabled
+	}
+	return m.newSession(BrowserPrincipal{})
 }
 
 func (m *BrowserSessionManager) newSession(principal BrowserPrincipal) (SessionCredentials, error) {

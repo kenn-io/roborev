@@ -36,6 +36,19 @@ func TestBrowserEndpointResolution(t *testing.T) {
 		t.Cleanup(func() { require.NoError(t, endpoint.Listener.Close()) })
 		assert.Equal(t, "https://reviews.example.com", endpoint.Origin)
 		assert.Contains(t, endpoint.Address, "127.0.0.1:")
+		assert.Equal(t, "token", endpoint.authentication)
+	})
+
+	t.Run("proxy authentication", func(t *testing.T) {
+		endpoint, err := ResolveBrowserEndpoint(config.WebConfig{
+			Enabled:      true,
+			Listen:       "127.0.0.1:0",
+			PublicOrigin: "https://reviews.example.com",
+			AuthMode:     config.WebAuthModeProxy,
+		})
+		require.NoError(t, err)
+		t.Cleanup(func() { require.NoError(t, endpoint.Listener.Close()) })
+		assert.Equal(t, "proxy", endpoint.authentication)
 	})
 
 	t.Run("rejects a non-loopback bind without normalized config", func(t *testing.T) {

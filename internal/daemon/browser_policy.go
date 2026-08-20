@@ -9,22 +9,21 @@ import (
 )
 
 type BrowserPolicy struct {
-	origin            string
-	acceptedHosts     map[string]struct{}
-	acceptedOrigins   map[string]struct{}
-	loopbackHosts     map[string]struct{}
-	loopbackOrigins   map[string]struct{}
-	remoteAuthEnabled bool
+	authentication  string
+	publicHost      string
+	acceptedHosts   map[string]struct{}
+	acceptedOrigins map[string]struct{}
+	loopbackHosts   map[string]struct{}
+	loopbackOrigins map[string]struct{}
 }
 
 func NewBrowserPolicy(endpoint BrowserEndpoint, developmentOrigin string) (BrowserPolicy, error) {
 	policy := BrowserPolicy{
-		origin:            endpoint.Origin,
-		acceptedHosts:     make(map[string]struct{}),
-		acceptedOrigins:   make(map[string]struct{}),
-		loopbackHosts:     make(map[string]struct{}),
-		loopbackOrigins:   make(map[string]struct{}),
-		remoteAuthEnabled: endpoint.remoteAuthEnabled,
+		authentication:  endpoint.authentication,
+		acceptedHosts:   make(map[string]struct{}),
+		acceptedOrigins: make(map[string]struct{}),
+		loopbackHosts:   make(map[string]struct{}),
+		loopbackOrigins: make(map[string]struct{}),
 	}
 	listenerHost, err := normalizeAuthority(endpoint.Address)
 	if err != nil {
@@ -34,6 +33,14 @@ func NewBrowserPolicy(endpoint BrowserEndpoint, developmentOrigin string) (Brows
 	policy.loopbackHosts[listenerHost] = struct{}{}
 
 	if err := policy.addOrigin(endpoint.Origin, false); err != nil {
+		return BrowserPolicy{}, err
+	}
+	parsedOrigin, err := url.Parse(endpoint.Origin)
+	if err != nil {
+		return BrowserPolicy{}, fmt.Errorf("invalid browser origin")
+	}
+	policy.publicHost, err = normalizeAuthority(parsedOrigin.Host)
+	if err != nil {
 		return BrowserPolicy{}, err
 	}
 	if developmentOrigin != "" {
@@ -93,7 +100,7 @@ func (p BrowserPolicy) ValidateOrigin(request *http.Request) error {
 }
 
 func (p BrowserPolicy) AllowsLocalSession(request *http.Request) bool {
-	if p.remoteAuthEnabled || hasForwardingHeader(request.Header) {
+	if p.authentication != "local" || hasForwardingHeader(request.Header) {
 		return false
 	}
 	host, err := normalizeAuthority(request.Host)
@@ -118,6 +125,17 @@ func (p BrowserPolicy) AllowsLocalSession(request *http.Request) bool {
 	}
 	ip := net.ParseIP(strings.Trim(peer, "[]"))
 	return ip != nil && ip.IsLoopback()
+}
+
+func (p BrowserPolicy) AllowsProxySession(request *http.Request) bool {
+	if p.authentication != "proxy" || !hasForwardingHeader(request.Header) {
+		return false
+	}
+	host, err := normalizeAuthority(request.Host)
+	if err != nil || host != p.publicHost {
+		return false
+	}
+	return p.ValidateOrigin(request) == nil
 }
 
 func normalizeAuthority(raw string) (string, error) {

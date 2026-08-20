@@ -9,13 +9,13 @@ import (
 	"github.com/stretchr/testify/require"
 )
 
-func testBrowserPolicy(t *testing.T, auth bool) BrowserPolicy {
+func testBrowserPolicy(t *testing.T, authentication string) BrowserPolicy {
 	t.Helper()
 	endpoint := BrowserEndpoint{
-		Address:           "127.0.0.1:7374",
-		Origin:            "https://reviews.example.com",
-		Enabled:           true,
-		remoteAuthEnabled: auth,
+		Address:        "127.0.0.1:7374",
+		Origin:         "https://reviews.example.com",
+		Enabled:        true,
+		authentication: authentication,
 	}
 	policy, err := NewBrowserPolicy(endpoint, "http://127.0.0.1:5173")
 	require.NoError(t, err)
@@ -23,7 +23,7 @@ func testBrowserPolicy(t *testing.T, auth bool) BrowserPolicy {
 }
 
 func TestBrowserPolicyValidatesExactHostAndOrigin(t *testing.T) {
-	policy := testBrowserPolicy(t, true)
+	policy := testBrowserPolicy(t, "token")
 	for _, host := range []string{"127.0.0.1:7374", "reviews.example.com", "127.0.0.1:5173", "REVIEWS.EXAMPLE.COM"} {
 		req := httptest.NewRequest("GET", "http://example.invalid/", nil)
 		req.Host = host
@@ -45,7 +45,7 @@ func TestBrowserPolicyValidatesExactHostAndOrigin(t *testing.T) {
 }
 
 func TestBrowserPolicyLocalSessionRequiresEveryTrustCondition(t *testing.T) {
-	policy := testBrowserPolicy(t, false)
+	policy := testBrowserPolicy(t, "local")
 	request := httptest.NewRequest("POST", "http://127.0.0.1:7374/api/ui/session/bootstrap", nil)
 	request.Host = "127.0.0.1:7374"
 	request.RemoteAddr = "127.0.0.1:50000"
@@ -70,7 +70,31 @@ func TestBrowserPolicyLocalSessionRequiresEveryTrustCondition(t *testing.T) {
 		mutate((*httpRequest)(req))
 		assert.False(t, policy.AllowsLocalSession(req))
 	}
-	assert.False(t, testBrowserPolicy(t, true).AllowsLocalSession(request))
+	assert.False(t, testBrowserPolicy(t, "token").AllowsLocalSession(request))
+}
+
+func TestBrowserPolicyProxySessionRequiresEveryTrustCondition(t *testing.T) {
+	policy := testBrowserPolicy(t, "proxy")
+	request := httptest.NewRequest("POST", "http://127.0.0.1:7374/api/ui/session/bootstrap", nil)
+	request.Host = "reviews.example.com"
+	request.RemoteAddr = "127.0.0.1:50000"
+	request.Header.Set("Origin", "https://reviews.example.com")
+	request.Header.Set("X-Forwarded-For", "192.0.2.1")
+	assert.True(t, policy.AllowsProxySession(request))
+
+	mutations := []func(*httpRequest){
+		func(req *httpRequest) { req.Header.Del("X-Forwarded-For") },
+		func(req *httpRequest) { req.Host = "127.0.0.1:7374" },
+		func(req *httpRequest) { req.Header.Set("Origin", "https://attacker.example") },
+	}
+	for _, mutate := range mutations {
+		req := request.Clone(request.Context())
+		req.Host = request.Host
+		req.RemoteAddr = request.RemoteAddr
+		req.Header = request.Header.Clone()
+		mutate((*httpRequest)(req))
+		assert.False(t, policy.AllowsProxySession(req))
+	}
 }
 
 type httpRequest = http.Request

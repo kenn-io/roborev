@@ -124,6 +124,25 @@ func TestBrowserSessionExpiryLogoutAndLocalPolicy(t *testing.T) {
 	require.ErrorIs(t, err, ErrLocalWebSessionDisabled)
 }
 
+func TestBrowserSessionProxyPolicyCreatesRemotePrincipal(t *testing.T) {
+	manager, err := NewBrowserSessionManager(BrowserSessionConfig{
+		Origin:     "https://reviews.example.com",
+		AllowProxy: true,
+		Entropy:    bytes.NewReader(bytes.Repeat([]byte("entropy-for-browser-sessions-"), 1000)),
+		Clock:      time.Now,
+	})
+	require.NoError(t, err)
+	credentials, err := manager.NewProxySession()
+	require.NoError(t, err)
+	principal, err := manager.Authenticate(credentials.Ambient, credentials.Tab)
+	require.NoError(t, err)
+	assert.False(t, principal.Local)
+
+	manager, _ = newTestBrowserSessions(t, false)
+	_, err = manager.NewProxySession()
+	require.ErrorIs(t, err, ErrProxyWebSessionDisabled)
+}
+
 func TestBrowserSessionCookieScope(t *testing.T) {
 	manager, _ := newTestBrowserSessions(t, true)
 	cookie := manager.Cookie("ambient-value")
