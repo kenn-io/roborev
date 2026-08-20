@@ -50,6 +50,8 @@ type WorkerPool struct {
 	numWorkers    int
 	activeWorkers atomic.Int32
 	stopCh        chan struct{}
+	stopCtx       context.Context
+	stopCancel    context.CancelFunc
 	readyCh       chan struct{} // closed after wg.Add in Start
 	startOnce     sync.Once
 	stopOnce      sync.Once
@@ -85,6 +87,11 @@ type WorkerPool struct {
 	// fresh-session indexing retry. Tests shorten both values.
 	tokenUsageIndexRetryWindow   time.Duration
 	tokenUsageIndexRetryInterval time.Duration
+	tokenCostRetryCh             chan int64
+	tokenCostScanInterval        time.Duration
+	tokenCostRetryInterval       time.Duration
+	tokenCostPageSize            int
+	tokenCostImmediateAttempts   int
 
 	// Output capture for tail command
 	outputBuffers *OutputBuffer
@@ -104,6 +111,7 @@ type WorkerPool struct {
 
 // NewWorkerPool creates a new worker pool
 func NewWorkerPool(db *storage.DB, cfgGetter ConfigGetter, numWorkers int, broadcaster Broadcaster, errorLog *ErrorLog, activityLog *ActivityLog) *WorkerPool {
+	stopCtx, stopCancel := context.WithCancel(context.Background())
 	return &WorkerPool{
 		db:                           db,
 		cfgGetter:                    cfgGetter,
@@ -112,6 +120,8 @@ func NewWorkerPool(db *storage.DB, cfgGetter ConfigGetter, numWorkers int, broad
 		activityLog:                  activityLog,
 		numWorkers:                   numWorkers,
 		stopCh:                       make(chan struct{}),
+		stopCtx:                      stopCtx,
+		stopCancel:                   stopCancel,
 		readyCh:                      make(chan struct{}),
 		runningJobs:                  make(map[int64]runningJobCancellation),
 		pendingCancels:               make(map[int64]bool),
@@ -123,6 +133,11 @@ func NewWorkerPool(db *storage.DB, cfgGetter ConfigGetter, numWorkers int, broad
 		retryBackoff:                 2 * time.Second,
 		tokenUsageIndexRetryWindow:   tokenUsageIndexRetryWindow,
 		tokenUsageIndexRetryInterval: tokenUsageIndexRetryInterval,
+		tokenCostRetryCh:             make(chan int64, tokenCostRetryBufferSize),
+		tokenCostScanInterval:        tokenCostScanInterval,
+		tokenCostRetryInterval:       tokenCostRetryInterval,
+		tokenCostPageSize:            tokenCostPageSize,
+		tokenCostImmediateAttempts:   tokenCostImmediateAttempts,
 	}
 }
 
@@ -134,8 +149,9 @@ func (wp *WorkerPool) Start() {
 			"Starting worker pool with %d workers",
 			wp.numWorkers,
 		)
-		wp.wg.Add(wp.numWorkers)
+		wp.wg.Add(wp.numWorkers + 1)
 		close(wp.readyCh)
+		go wp.runTokenCostReconciler()
 		for i := 0; i < wp.numWorkers; i++ {
 			go wp.worker(i)
 		}
@@ -161,6 +177,7 @@ func (wp *WorkerPool) Stop() {
 // waiting for currently active workers to finish.
 func (wp *WorkerPool) BeginStop() {
 	wp.stopOnce.Do(func() {
+		wp.stopCancel()
 		close(wp.stopCh)
 	})
 }
@@ -1617,22 +1634,8 @@ func (wp *WorkerPool) captureTokenUsageForSession(
 	}
 
 	if capturedSession != "" && !wasResumed {
-		fetcher := wp.tokenUsageFetcher
-		if fetcher == nil {
-			cfg := wp.cfgGetter.Config()
-			fetcher = func(ctx context.Context, sessionID string) (*tokens.Usage, error) {
-				return tokens.FetchForSessionWithConfig(
-					ctx, sessionID,
-					tokens.FetchConfig{
-						Endpoint:   cfg.Cost.Endpoint,
-						Timeout:    cfg.Cost.ResolvedTimeout(),
-						RequireCLI: true,
-					},
-				)
-			}
-		}
 		fetched, tokenErr := wp.fetchFreshSessionUsage(
-			ctx, fetcher, capturedSession,
+			ctx, wp.fetchTokenUsage, capturedSession,
 		)
 		switch {
 		case tokenErr == nil:
@@ -1641,6 +1644,11 @@ func (wp *WorkerPool) captureTokenUsageForSession(
 			log.Printf("[%s] Warning: fetch token usage for job %d: %v",
 				workerID, job.ID, tokenErr)
 		}
+	}
+	needsLateCost := capturedSession != "" && !wasResumed &&
+		backfill.NeedsTokenCostBackfill(tokens.ToJSON(usage))
+	if needsLateCost {
+		wp.queueTokenCostRetry(job.ID)
 	}
 
 	if usage == nil {
@@ -1665,7 +1673,27 @@ func (wp *WorkerPool) captureTokenUsageForSession(
 	if err != nil {
 		log.Printf("[%s] Warning: save token usage for job %d: %v",
 			workerID, job.ID, err)
+		if capturedSession != "" && !wasResumed {
+			wp.queueTokenCostRetry(job.ID)
+		}
 	}
+}
+
+func (wp *WorkerPool) fetchTokenUsage(
+	ctx context.Context, sessionID string,
+) (*tokens.Usage, error) {
+	if wp.tokenUsageFetcher != nil {
+		return wp.tokenUsageFetcher(ctx, sessionID)
+	}
+	cfg := wp.cfgGetter.Config()
+	return tokens.FetchForSessionWithConfig(
+		ctx, sessionID,
+		tokens.FetchConfig{
+			Endpoint:   cfg.Cost.Endpoint,
+			Timeout:    cfg.Cost.ResolvedTimeout(),
+			RequireCLI: true,
+		},
+	)
 }
 
 func (wp *WorkerPool) fetchFreshSessionUsage(

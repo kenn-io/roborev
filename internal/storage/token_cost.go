@@ -17,8 +17,9 @@ type TokenCostCandidate struct {
 
 const tokenCostCandidatePredicate = costEligible + `
 	AND NOT (` + hasCost + `)
-	AND COALESCE(j.session_id, '') != ''
-	AND NOT EXISTS (
+	AND COALESCE(j.session_id, '') != ''`
+
+const uniqueStartedSessionPredicate = `NOT EXISTS (
 		SELECT 1
 		FROM review_jobs other
 		WHERE other.id != j.id
@@ -36,8 +37,18 @@ func (db *DB) ListTokenCostCandidates(
 		return nil, nil
 	}
 	rows, err := db.Query(`
+		WITH unique_started_sessions AS (
+			SELECT session_id
+			FROM review_jobs
+			WHERE started_at IS NOT NULL
+			  AND COALESCE(session_id, '') != ''
+			GROUP BY session_id
+			HAVING COUNT(*) = 1
+		)
 		SELECT j.id, j.session_id, j.agent, COALESCE(j.token_usage, '')
 		FROM review_jobs j
+		JOIN unique_started_sessions unique_session
+		  ON unique_session.session_id = j.session_id
 		WHERE j.id > ?
 		  AND `+tokenCostCandidatePredicate+`
 		ORDER BY j.id
@@ -74,7 +85,8 @@ func (db *DB) GetTokenCostCandidate(jobID int64) (*TokenCostCandidate, error) {
 		SELECT j.id, j.session_id, j.agent, COALESCE(j.token_usage, '')
 		FROM review_jobs j
 		WHERE j.id = ?
-		  AND `+tokenCostCandidatePredicate,
+		  AND `+tokenCostCandidatePredicate+`
+		  AND `+uniqueStartedSessionPredicate,
 		jobID,
 	).Scan(
 		&candidate.JobID,
