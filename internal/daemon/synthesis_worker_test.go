@@ -144,7 +144,7 @@ func TestRunSynthesisAgentMarksInvokedOnlyWhenAgentRuns(t *testing.T) {
 		job, err := tc.DB.GetJobByID(synth.ID)
 		require.NoError(t, err)
 
-		_, _, runErr := tc.Pool.runSynthesisAgent(context.Background(), testWorkerID, job, "prompt")
+		_, _, _, runErr := tc.Pool.runSynthesisAgent(context.Background(), testWorkerID, job, "prompt")
 		require.Error(t, runErr, "checkout must fail before the agent runs")
 
 		failed, err := tc.DB.GetJobByID(synth.ID)
@@ -170,7 +170,7 @@ func TestRunSynthesisAgentMarksInvokedOnlyWhenAgentRuns(t *testing.T) {
 		job, err := tc.DB.GetJobByID(synth.ID)
 		require.NoError(t, err)
 
-		_, _, runErr := tc.Pool.runSynthesisAgent(context.Background(), testWorkerID, job, "prompt")
+		_, _, _, runErr := tc.Pool.runSynthesisAgent(context.Background(), testWorkerID, job, "prompt")
 		require.NoError(t, runErr)
 		assert.True(t, jobAgentInvoked(t, tc, synth.ID),
 			"a synthesis agent that actually runs must be marked agent_invoked")
@@ -793,6 +793,43 @@ func TestSynthesisCapturesTokenUsage(t *testing.T) {
 	assert.Equal("synth-session-123", fetchedSession)
 	assert.Contains(updated.TokenUsage, `"cost_usd":0.03`)
 	assert.Contains(updated.TokenUsage, `"has_cost":true`)
+}
+
+func TestSynthesisRejectsProviderCostForReusedSession(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+
+	const memberAgent = "panel-synthesis-reused-token-member"
+	registerPassingAgent(t, memberAgent)
+
+	synthAgent := &synthesisEntrypointTestAgent{
+		name:       "panel-synthesis-reused-token",
+		streamLine: `{"type":"thread.started","thread_id":"shared-synth-session"}`,
+	}
+	agent.Register(synthAgent)
+	t.Cleanup(func() { agent.Unregister(synthAgent.name) })
+
+	tc.Pool.tokenUsageFetcher = func(context.Context, string) (*tokens.Usage, error) {
+		return &tokens.Usage{CostUSD: 0.03, HasCost: true}, nil
+	}
+
+	runUUID, members, synth := enqueuePanelRun(t, tc, "synthesis-reused-token-panel", []memberSpec{
+		{name: "m0", agent: memberAgent},
+		{name: "m1", agent: memberAgent},
+	})
+	setSynthesisAgent(t, tc, runUUID, synthAgent.name)
+	completeMember(t, tc, members[0].ID, memberAgent, "Medium issue in a.go")
+	completeMember(t, tc, members[1].ID, memberAgent, "Medium issue in b.go")
+
+	reused := tc.createAndClaimJobWithAgent(t, "other-synthesis-ref", "worker-reuse", "codex")
+	require.NoError(t, tc.DB.SaveJobSessionID(
+		reused.ID, "worker-reuse", "shared-synth-session",
+	))
+	synthesis := releaseAndClaimSynthesis(t, tc, runUUID)
+	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synthesis)
+
+	updated := tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
+	usage := tokens.ParseJSON(updated.TokenUsage)
+	assert.False(t, usage != nil && usage.HasCost)
 }
 
 func TestSynthesisAutoClosesPassingReview(t *testing.T) {

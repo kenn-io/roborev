@@ -93,6 +93,8 @@ type WorkerPool struct {
 	tokenCostPageSize            int
 	tokenCostImmediateAttempts   int
 	tokenCostPendingLimit        int
+	tokenUsageLogScanInterval    time.Duration
+	tokenUsageLogPageSize        int
 
 	// Output capture for tail command
 	outputBuffers *OutputBuffer
@@ -140,6 +142,8 @@ func NewWorkerPool(db *storage.DB, cfgGetter ConfigGetter, numWorkers int, broad
 		tokenCostPageSize:            tokenCostPageSize,
 		tokenCostImmediateAttempts:   tokenCostImmediateAttempts,
 		tokenCostPendingLimit:        tokenCostRetryBufferSize,
+		tokenUsageLogScanInterval:    tokenUsageLogScanInterval,
+		tokenUsageLogPageSize:        tokenUsageLogPageSize,
 	}
 }
 
@@ -1626,14 +1630,12 @@ func (wp *WorkerPool) captureTokenUsageForSession(
 	// stream and is safe to parse below.
 	wasResumed := job.SessionID != "" && capturedSession == job.SessionID
 
-	var usage *tokens.Usage
-	hasProviderUsage := false
+	var logUsage *tokens.Usage
+	var providerUsage *tokens.Usage
 	logUsage, logErr := tokens.ParseCodexUsageFile(JobLogPath(job.ID))
 	if logErr != nil {
 		log.Printf("[%s] Warning: parse token usage from job log for job %d: %v",
 			workerID, job.ID, logErr)
-	} else if logUsage != nil {
-		usage = logUsage
 	}
 
 	if capturedSession != "" && !wasResumed {
@@ -1642,13 +1644,13 @@ func (wp *WorkerPool) captureTokenUsageForSession(
 		)
 		switch {
 		case tokenErr == nil:
-			hasProviderUsage = fetched != nil
-			usage = backfill.MergeTokenUsage(tokens.ToJSON(usage), fetched)
+			providerUsage = fetched
 		case !errors.Is(tokenErr, tokens.ErrUsageProviderUnavailable):
 			log.Printf("[%s] Warning: fetch token usage for job %d: %v",
 				workerID, job.ID, tokenErr)
 		}
 	}
+	usage := backfill.MergeTokenUsage(tokens.ToJSON(logUsage), providerUsage)
 	needsLateCost := capturedSession != "" && !wasResumed &&
 		backfill.NeedsTokenCostBackfill(tokens.ToJSON(usage))
 	if needsLateCost {
@@ -1671,17 +1673,14 @@ func (wp *WorkerPool) captureTokenUsageForSession(
 			workerID, job.ID, err)
 		return
 	}
-	if current.Status == storage.JobStatusRunning {
-		// Synthesis captures usage before committing its terminal transition.
-		// The persisted session scopes this write to the current attempt.
-		err = wp.db.SaveJobTokenUsage(job.ID, sessionID, tokens.ToJSON(usage))
-	} else {
-		// Ordinary jobs capture after completion. Use the atomic merge path so
-		// a concurrent late-price lookup cannot replace newer token counts.
-		_, _, err = backfill.StoreMergedTokenUsage(
-			wp.db, job.ID, sessionID, current.TokenUsage, usage, hasProviderUsage,
-		)
-	}
+	_, _, err = backfill.StoreCapturedTokenUsage(
+		wp.db,
+		job.ID,
+		sessionID,
+		current.TokenUsage,
+		logUsage,
+		providerUsage,
+	)
 	if err != nil {
 		log.Printf("[%s] Warning: save token usage for job %d: %v",
 			workerID, job.ID, err)

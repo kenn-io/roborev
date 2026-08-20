@@ -108,6 +108,50 @@ func TestListTokenCostCandidatesPagesByExclusiveJobID(t *testing.T) {
 	assert.Nil(t, got)
 }
 
+func TestListTokenCostCandidatesIncludesSerializedUnpricedUsage(t *testing.T) {
+	db := openTestDB(t)
+	t.Cleanup(func() { db.Close() })
+	_, jobs := seedJobs(t, db, "/tmp/token-cost-unpriced-json", 1)
+	_, err := db.Exec(`
+		UPDATE review_jobs
+		SET status = 'done', started_at = datetime('now'),
+		    finished_at = datetime('now'), session_id = 'unpriced-session',
+		    agent_invoked = 1,
+		    token_usage = '{"total_output_tokens":42,"cost_usd":0}'
+		WHERE id = ?`, jobs[0].ID)
+	require.NoError(t, err)
+
+	got, err := db.ListTokenCostCandidates(0, 100)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, jobs[0].ID, got[0].JobID)
+}
+
+func TestListTokenUsageLogCandidatesSelectsMissingSession(t *testing.T) {
+	db := openTestDB(t)
+	t.Cleanup(func() { db.Close() })
+	_, jobs := seedJobs(t, db, "/tmp/token-log-candidates", 3)
+	tokenUsage := []string{"", "", `{"has_cost":true,"cost_usd":0.25}`}
+	for i, sessionID := range []string{"", "stored-session", ""} {
+		_, err := db.Exec(`
+			UPDATE review_jobs
+			SET status = 'done', started_at = datetime('now'),
+			    finished_at = datetime('now'), session_id = ?,
+			    agent_invoked = 1, token_usage = ?
+			WHERE id = ?`,
+			sessionID,
+			tokenUsage[i],
+			jobs[i].ID,
+		)
+		require.NoError(t, err)
+	}
+
+	got, err := db.ListTokenUsageLogCandidates(0, 100)
+	require.NoError(t, err)
+	require.Len(t, got, 1)
+	assert.Equal(t, jobs[0].ID, got[0].JobID)
+}
+
 func TestBackfillJobTokenUsageIfCurrentRejectsNewSessionReuse(t *testing.T) {
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })

@@ -32,7 +32,8 @@ type CostOptions struct {
 // them would report $0 spend at full coverage while real money went unrecorded.
 // json_extract yields NULL for both an absent key and an explicit null, while a
 // genuine free run stores 0 and still counts.
-const hasCost = "json_valid(j.token_usage) AND json_extract(j.token_usage, '$.has_cost') " +
+const hasCost = "json_valid(j.token_usage) AND " +
+	"COALESCE(json_extract(j.token_usage, '$.has_cost'), 0) " +
 	"AND json_extract(j.token_usage, '$.cost_usd') IS NOT NULL"
 
 // agentRanByUsage is the fallback agent-ran signal: a token_usage blob that

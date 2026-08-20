@@ -99,9 +99,7 @@ will be skipped.`,
 						continue
 					}
 				}
-				usage := backfill.MergeTokenUsage(
-					tokens.ToJSON(logUsage), fetchedUsage,
-				)
+				usage := backfill.MergeTokenUsage(tokens.ToJSON(logUsage), fetchedUsage)
 				if usage == nil {
 					skipped++
 					continue
@@ -121,13 +119,13 @@ will be skipped.`,
 				if sessionID == "" {
 					sessionID = mergedUsage.ThreadID
 				}
-				stored, saved, err := backfill.StoreMergedTokenUsage(
+				stored, saved, err := backfill.StoreCapturedTokenUsage(
 					db,
 					job.ID,
 					sessionID,
 					job.TokenUsage,
-					usage,
-					fetchedUsage != nil,
+					logUsage,
+					fetchedUsage,
 				)
 				if err != nil {
 					log.Printf(

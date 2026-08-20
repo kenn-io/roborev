@@ -18,6 +18,8 @@ const (
 	tokenCostRetryInterval     = 15 * time.Second
 	tokenCostPageSize          = 20
 	tokenCostImmediateAttempts = 3
+	tokenUsageLogScanInterval  = 15 * time.Minute
+	tokenUsageLogPageSize      = 1000
 )
 
 type tokenCostRetryState struct {
@@ -40,9 +42,12 @@ func (wp *WorkerPool) queueTokenCostRetry(jobID int64) {
 func (wp *WorkerPool) runTokenCostReconciler() {
 	defer wp.wg.Done()
 
+	wp.recoverTokenUsageLogs(wp.stopCtx)
 	cursor := wp.reconcileTokenCostPage(wp.stopCtx, 0)
 	scanTicker := time.NewTicker(wp.tokenCostScanInterval)
 	defer scanTicker.Stop()
+	logScanTicker := time.NewTicker(wp.tokenUsageLogScanInterval)
+	defer logScanTicker.Stop()
 	retryTicker := time.NewTicker(wp.tokenCostRetryInterval)
 	defer retryTicker.Stop()
 	pending := make(map[int64]tokenCostRetryState)
@@ -57,7 +62,69 @@ func (wp *WorkerPool) runTokenCostReconciler() {
 			wp.processTokenCostRetries(wp.stopCtx, pending)
 		case <-scanTicker.C:
 			cursor = wp.reconcileTokenCostPage(wp.stopCtx, cursor)
+		case <-logScanTicker.C:
+			wp.recoverTokenUsageLogs(wp.stopCtx)
 		}
+	}
+}
+
+func (wp *WorkerPool) recoverTokenUsageLogs(ctx context.Context) {
+	var cursor int64
+	for {
+		if ctx.Err() != nil {
+			return
+		}
+		candidates, err := wp.db.ListTokenUsageLogCandidates(
+			cursor, wp.tokenUsageLogPageSize,
+		)
+		if err != nil {
+			if !errors.Is(err, context.Canceled) {
+				log.Printf("token cost reconciliation: recover job logs: %v", err)
+			}
+			return
+		}
+		if len(candidates) == 0 {
+			return
+		}
+		for _, candidate := range candidates {
+			wp.recoverTokenUsageLog(candidate)
+			cursor = candidate.JobID
+		}
+	}
+}
+
+func (wp *WorkerPool) recoverTokenUsageLog(candidate storage.TokenCostCandidate) {
+	existing := tokens.ParseJSON(candidate.TokenUsage)
+	logUsage, err := tokens.ParseCodexUsageFile(JobLogPath(candidate.JobID))
+	if err != nil {
+		log.Printf("token cost reconciliation: job %d log: %v", candidate.JobID, err)
+		return
+	}
+
+	sessionID := ""
+	if logUsage != nil {
+		sessionID = logUsage.ThreadID
+	}
+	if sessionID == "" && existing != nil {
+		sessionID = existing.ThreadID
+	}
+	if sessionID == "" {
+		return
+	}
+	usage := logUsage
+	if usage == nil {
+		usage = existing
+	}
+	_, _, err = backfill.StoreMergedTokenUsage(
+		wp.db,
+		candidate.JobID,
+		sessionID,
+		candidate.TokenUsage,
+		usage,
+		false,
+	)
+	if err != nil {
+		log.Printf("token cost reconciliation: job %d log save: %v", candidate.JobID, err)
 	}
 }
 

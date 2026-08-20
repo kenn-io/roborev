@@ -19,6 +19,10 @@ const tokenCostCandidatePredicate = costEligible + `
 	AND NOT (` + hasCost + `)
 	AND COALESCE(j.session_id, '') != ''`
 
+const tokenUsageLogCandidatePredicate = costEligible + `
+	AND NOT (` + hasCost + `)
+	AND COALESCE(j.session_id, '') = ''`
+
 const uniqueStartedSessionPredicate = `NOT EXISTS (
 		SELECT 1
 		FROM review_jobs other
@@ -94,4 +98,45 @@ func (db *DB) GetTokenCostCandidate(jobID int64) (*TokenCostCandidate, error) {
 		return nil, fmt.Errorf("get token cost candidate: %w", err)
 	}
 	return &candidate, nil
+}
+
+// ListTokenUsageLogCandidates returns terminal missing-cost jobs whose session
+// ID was not persisted. Their per-job JSONL log may still recover the session
+// and make them eligible for normal provider reconciliation.
+func (db *DB) ListTokenUsageLogCandidates(
+	afterJobID int64, limit int,
+) ([]TokenCostCandidate, error) {
+	if limit <= 0 {
+		return nil, nil
+	}
+	rows, err := db.Query(`
+		SELECT j.id, COALESCE(j.session_id, ''), j.agent,
+		       COALESCE(j.token_usage, '')
+		FROM review_jobs j
+		WHERE j.id > ?
+		  AND `+tokenUsageLogCandidatePredicate+`
+		ORDER BY j.id
+		LIMIT ?`, afterJobID, limit)
+	if err != nil {
+		return nil, fmt.Errorf("list token usage log candidates: %w", err)
+	}
+	defer rows.Close()
+
+	var candidates []TokenCostCandidate
+	for rows.Next() {
+		var candidate TokenCostCandidate
+		if err := rows.Scan(
+			&candidate.JobID,
+			&candidate.SessionID,
+			&candidate.Agent,
+			&candidate.TokenUsage,
+		); err != nil {
+			return nil, fmt.Errorf("scan token usage log candidate: %w", err)
+		}
+		candidates = append(candidates, candidate)
+	}
+	if err := rows.Err(); err != nil {
+		return nil, fmt.Errorf("iterate token usage log candidates: %w", err)
+	}
+	return candidates, nil
 }

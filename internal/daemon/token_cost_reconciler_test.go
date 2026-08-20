@@ -2,6 +2,8 @@ package daemon
 
 import (
 	"context"
+	"os"
+	"path/filepath"
 	"sync/atomic"
 	"testing"
 	"time"
@@ -78,6 +80,51 @@ func TestTokenCostReconcilerDiscoversPersistedCandidateAtStartup(t *testing.T) {
 		}
 		usage := tokens.ParseJSON(updated.TokenUsage)
 		return usage != nil && usage.HasCost
+	}, time.Second, 5*time.Millisecond)
+}
+
+func TestTokenCostReconcilerRecoversSessionFromJobLogAtStartup(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	tc := newWorkerTestContext(t, 1)
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
+	require.NoError(t, tc.DB.MarkJobAgentInvoked(
+		job.ID, testWorkerID, "codex review",
+	))
+	require.NoError(t, tc.DB.CompleteJob(
+		job.ID, "codex", "prompt", "No issues found.",
+	))
+
+	logPath := JobLogPath(job.ID)
+	require.NoError(t, os.MkdirAll(filepath.Dir(logPath), 0o700))
+	require.NoError(t, os.WriteFile(logPath, []byte(
+		`{"type":"thread.started","thread_id":"recovered-session"}`+"\n"+
+			`{"type":"turn.completed","usage":{"input_tokens":1024,`+
+			`"output_tokens":64}}`+"\n",
+	), 0o600))
+	tc.Pool.tokenUsageFetcher = func(_ context.Context, sessionID string) (*tokens.Usage, error) {
+		assert.Equal(t, "recovered-session", sessionID)
+		return &tokens.Usage{HasCost: true, CostUSD: 0.21}, nil
+	}
+	tc.Pool.recoverTokenUsageLogs(context.Background())
+	recovered, err := tc.DB.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "recovered-session", recovered.SessionID)
+	candidates, err := tc.DB.ListTokenCostCandidates(0, 10)
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+
+	tc.Pool.Start()
+	t.Cleanup(tc.Pool.Stop)
+
+	require.Eventually(t, func() bool {
+		updated, err := tc.DB.GetJobByID(job.ID)
+		if err != nil {
+			return false
+		}
+		usage := tokens.ParseJSON(updated.TokenUsage)
+		return updated.SessionID == "recovered-session" &&
+			usage != nil && usage.HasCost
 	}, time.Second, 5*time.Millisecond)
 }
 
