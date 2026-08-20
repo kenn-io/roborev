@@ -151,6 +151,68 @@ func TestTokenCostReconcilerShutdownCancelsProviderLookup(t *testing.T) {
 	}, time.Second, 5*time.Millisecond)
 }
 
+func TestTokenCostReconcilerMergesWithUsageSavedDuringLookup(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	job := seedTokenCostCandidate(
+		t, tc, "concurrent-session", `{"total_output_tokens":10}`,
+	)
+
+	started := make(chan struct{})
+	release := make(chan struct{})
+	tc.Pool.tokenUsageFetcher = func(context.Context, string) (*tokens.Usage, error) {
+		close(started)
+		<-release
+		return &tokens.Usage{HasCost: true, CostUSD: 0.33}, nil
+	}
+	tc.Pool.Start()
+	t.Cleanup(tc.Pool.Stop)
+	require.Eventually(t, func() bool {
+		select {
+		case <-started:
+			return true
+		default:
+			return false
+		}
+	}, time.Second, 5*time.Millisecond)
+
+	require.NoError(t, tc.DB.SaveJobTokenUsage(
+		job.ID,
+		"concurrent-session",
+		`{"total_output_tokens":20,"peak_context_tokens":200}`,
+	))
+	close(release)
+
+	require.Eventually(t, func() bool {
+		updated, err := tc.DB.GetJobByID(job.ID)
+		if err != nil {
+			return false
+		}
+		usage := tokens.ParseJSON(updated.TokenUsage)
+		return usage != nil && usage.HasCost
+	}, time.Second, 5*time.Millisecond)
+
+	updated, err := tc.DB.GetJobByID(job.ID)
+	require.NoError(t, err)
+	usage := tokens.ParseJSON(updated.TokenUsage)
+	require.NotNil(t, usage)
+	assert.Equal(t, int64(20), usage.OutputTokens)
+	assert.Equal(t, int64(200), usage.PeakContextTokens)
+	assert.InDelta(t, 0.33, usage.CostUSD, 1e-9)
+}
+
+func TestTokenCostRetryAdmissionIsBounded(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	tc.Pool.tokenCostPendingLimit = 2
+	pending := make(map[int64]tokenCostRetryState)
+
+	assert := assert.New(t)
+	assert.True(tc.Pool.addTokenCostRetry(pending, 1))
+	assert.True(tc.Pool.addTokenCostRetry(pending, 2))
+	assert.True(tc.Pool.addTokenCostRetry(pending, 1), "duplicate remains admitted")
+	assert.False(tc.Pool.addTokenCostRetry(pending, 3))
+	assert.Len(pending, 2)
+}
+
 func seedTokenCostCandidate(
 	t *testing.T, tc *workerTestContext, sessionID, tokenUsage string,
 ) *storage.ReviewJob {
@@ -161,7 +223,11 @@ func seedTokenCostCandidate(
 	require.NoError(t, tc.DB.SaveJobSessionID(job.ID, testWorkerID, sessionID))
 	require.NoError(t, tc.DB.CompleteJob(job.ID, "codex", "prompt", "No issues found."))
 	if tokenUsage != "" {
-		require.NoError(t, tc.DB.BackfillJobTokenUsage(job.ID, sessionID, tokenUsage))
+		updated, err := tc.DB.BackfillJobTokenUsageIfCurrent(
+			job.ID, sessionID, "", tokenUsage, true,
+		)
+		require.NoError(t, err)
+		require.True(t, updated)
 	}
 	return job
 }

@@ -819,6 +819,55 @@ func TestHumaBackfillTokensSkipsReusedSession(t *testing.T) {
 	assert.Empty(t, secondUpdated.TokenUsage)
 }
 
+func TestHumaBackfillTokensSkipsJobWithoutAgentRunEvidence(t *testing.T) {
+	srv, db, _ := newTestServer(t)
+	repo := testutil.CreateTestRepo(t, db)
+	job := testutil.CreateCompletedReview(
+		t, db, repo.ID, "pre-agent-failure", "test-agent", "review text",
+	)
+	_, err := db.Exec(
+		`UPDATE review_jobs SET session_id = ?, token_usage = NULL, agent_invoked = 0 WHERE id = ?`,
+		"uninvoked-session", job.ID,
+	)
+	require.NoError(t, err)
+
+	body, err := json.Marshal(map[string]any{
+		"sessions": []map[string]any{
+			{
+				"session_id":     "uninvoked-session",
+				"has_token_data": false,
+				"has_cost":       true,
+				"cost_usd":       0.42,
+			},
+		},
+	})
+	require.NoError(t, err)
+
+	rr := serveHuma(
+		t, srv, http.MethodPost, "/api/tokens/backfill", body,
+	)
+	require.Equal(t, http.StatusOK, rr.Code, rr.Body.String())
+
+	var resp struct {
+		Updated int `json:"updated"`
+		Skipped int `json:"skipped"`
+		Results []struct {
+			Status string `json:"status"`
+			Reason string `json:"reason"`
+		} `json:"results"`
+	}
+	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &resp))
+	assert.Zero(t, resp.Updated)
+	assert.Equal(t, 1, resp.Skipped)
+	require.Len(t, resp.Results, 1)
+	assert.Equal(t, "skipped", resp.Results[0].Status)
+	assert.Equal(t, "no eligible job", resp.Results[0].Reason)
+
+	updated, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Empty(t, updated.TokenUsage)
+}
+
 func TestHumaOpenAPISpec(t *testing.T) {
 	srv, _, _ := newTestServer(t)
 

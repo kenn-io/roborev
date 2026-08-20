@@ -92,6 +92,7 @@ type WorkerPool struct {
 	tokenCostRetryInterval       time.Duration
 	tokenCostPageSize            int
 	tokenCostImmediateAttempts   int
+	tokenCostPendingLimit        int
 
 	// Output capture for tail command
 	outputBuffers *OutputBuffer
@@ -138,6 +139,7 @@ func NewWorkerPool(db *storage.DB, cfgGetter ConfigGetter, numWorkers int, broad
 		tokenCostRetryInterval:       tokenCostRetryInterval,
 		tokenCostPageSize:            tokenCostPageSize,
 		tokenCostImmediateAttempts:   tokenCostImmediateAttempts,
+		tokenCostPendingLimit:        tokenCostRetryBufferSize,
 	}
 }
 
@@ -1625,6 +1627,7 @@ func (wp *WorkerPool) captureTokenUsageForSession(
 	wasResumed := job.SessionID != "" && capturedSession == job.SessionID
 
 	var usage *tokens.Usage
+	hasProviderUsage := false
 	logUsage, logErr := tokens.ParseCodexUsageFile(JobLogPath(job.ID))
 	if logErr != nil {
 		log.Printf("[%s] Warning: parse token usage from job log for job %d: %v",
@@ -1639,6 +1642,7 @@ func (wp *WorkerPool) captureTokenUsageForSession(
 		)
 		switch {
 		case tokenErr == nil:
+			hasProviderUsage = fetched != nil
 			usage = backfill.MergeTokenUsage(tokens.ToJSON(usage), fetched)
 		case !errors.Is(tokenErr, tokens.ErrUsageProviderUnavailable):
 			log.Printf("[%s] Warning: fetch token usage for job %d: %v",
@@ -1661,15 +1665,9 @@ func (wp *WorkerPool) captureTokenUsageForSession(
 	if sessionID == "" {
 		return
 	}
-	var err error
-	if capturedSession != "" {
-		err = wp.db.SaveJobTokenUsage(job.ID, sessionID, tokens.ToJSON(usage))
-		if err == nil {
-			err = wp.db.BackfillJobTokenUsage(job.ID, sessionID, tokens.ToJSON(usage))
-		}
-	} else {
-		err = wp.db.BackfillJobTokenUsage(job.ID, sessionID, tokens.ToJSON(usage))
-	}
+	_, _, err := backfill.StoreMergedTokenUsage(
+		wp.db, job.ID, sessionID, job.TokenUsage, usage, hasProviderUsage,
+	)
 	if err != nil {
 		log.Printf("[%s] Warning: save token usage for job %d: %v",
 			workerID, job.ID, err)

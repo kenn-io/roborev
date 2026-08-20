@@ -1235,6 +1235,16 @@ func (db *DB) migrate() error {
 		return fmt.Errorf("create idx_review_jobs_synth_blocked: %w", err)
 	}
 
+	// Missing-price reconciliation repeatedly checks whether a session belongs
+	// to exactly one started job. Keep that lookup proportional to the matching
+	// sessions rather than the full review history. This stays SQLite-only
+	// because reconciliation operates on the daemon's local jobs.
+	if _, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_review_jobs_started_session
+		ON review_jobs(session_id)
+		WHERE started_at IS NOT NULL AND session_id IS NOT NULL AND session_id != ''`); err != nil {
+		return fmt.Errorf("create idx_review_jobs_started_session: %w", err)
+	}
+
 	// Retire the old CI batch subsystem (F14): cancel any in-flight
 	// batch jobs, then drop ci_pr_batch_jobs and ci_pr_batches. Runs
 	// every Open() and is a no-op once the tables are gone. Placed last

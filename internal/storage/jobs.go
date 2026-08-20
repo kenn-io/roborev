@@ -735,16 +735,23 @@ func (db *DB) SaveJobTokenUsage(jobID int64, sessionID, tokenUsageJSON string) e
 	return err
 }
 
-// BackfillJobTokenUsage stores recovered token usage for a terminal job.
-// Unlike SaveJobTokenUsage, this path runs after the producing worker is gone,
-// so it scopes the update to a terminal row and preserves any different
-// existing session_id to avoid stamping usage onto an unrelated attempt.
-func (db *DB) BackfillJobTokenUsage(jobID int64, sessionID, tokenUsageJSON string) error {
+// BackfillJobTokenUsageIfCurrent stores recovered token usage only while the
+// terminal row still has the expected usage snapshot. The compare-and-swap
+// guard lets callers reload and re-merge when normal capture writes newer token
+// counts during a provider lookup. Provider-derived usage can additionally
+// require a unique started session, closing the same lookup-to-write race when
+// another job starts reusing that session. Per-job log usage does not need that
+// uniqueness guard.
+func (db *DB) BackfillJobTokenUsageIfCurrent(
+	jobID int64,
+	sessionID, expectedTokenUsage, tokenUsageJSON string,
+	requireUniqueSession bool,
+) (bool, error) {
 	if tokenUsageJSON == "" {
-		return nil
+		return false, nil
 	}
 	now := time.Now().Format(time.RFC3339)
-	_, err := db.Exec(
+	result, err := db.Exec(
 		`UPDATE review_jobs
 		 SET token_usage = ?,
 		     session_id = CASE
@@ -755,10 +762,23 @@ func (db *DB) BackfillJobTokenUsage(jobID int64, sessionID, tokenUsageJSON strin
 		     synced_at = NULL
 		 WHERE id = ?
 		   AND status IN ('done', 'applied', 'rebased', 'failed', 'canceled', 'skipped')
-		   AND (session_id IS NULL OR session_id = '' OR session_id = ?)`,
+		   AND (session_id IS NULL OR session_id = '' OR session_id = ?)
+		   AND COALESCE(token_usage, '') = ?
+		   AND (? = 0 OR (? != '' AND NOT EXISTS (
+		     SELECT 1
+		     FROM review_jobs other
+		     WHERE other.id != review_jobs.id
+		       AND other.started_at IS NOT NULL
+		       AND other.session_id = ?
+		   )))`,
 		tokenUsageJSON, sessionID, sessionID, now, jobID, sessionID,
+		expectedTokenUsage, requireUniqueSession, sessionID, sessionID,
 	)
-	return err
+	if err != nil {
+		return false, err
+	}
+	rows, err := result.RowsAffected()
+	return rows > 0, err
 }
 
 // CompleteFixJob atomically marks a fix job as done, stores the review,

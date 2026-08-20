@@ -52,15 +52,26 @@ func (wp *WorkerPool) runTokenCostReconciler() {
 		case <-wp.stopCtx.Done():
 			return
 		case jobID := <-wp.tokenCostRetryCh:
-			if _, exists := pending[jobID]; !exists {
-				pending[jobID] = tokenCostRetryState{ticksRemaining: 1}
-			}
+			wp.addTokenCostRetry(pending, jobID)
 		case <-retryTicker.C:
 			wp.processTokenCostRetries(wp.stopCtx, pending)
 		case <-scanTicker.C:
 			cursor = wp.reconcileTokenCostPage(wp.stopCtx, cursor)
 		}
 	}
+}
+
+func (wp *WorkerPool) addTokenCostRetry(
+	pending map[int64]tokenCostRetryState, jobID int64,
+) bool {
+	if _, exists := pending[jobID]; exists {
+		return true
+	}
+	if len(pending) >= wp.tokenCostPendingLimit {
+		return false
+	}
+	pending[jobID] = tokenCostRetryState{ticksRemaining: 1}
+	return true
 }
 
 func (wp *WorkerPool) processTokenCostRetries(
@@ -173,10 +184,16 @@ func (wp *WorkerPool) reconcileTokenCostCandidate(
 	if backfill.NeedsTokenCostBackfill(tokens.ToJSON(merged)) {
 		return false, nil
 	}
-	if err := wp.db.BackfillJobTokenUsage(
-		candidate.JobID, candidate.SessionID, tokens.ToJSON(merged),
-	); err != nil {
+	_, updated, err := backfill.StoreMergedTokenUsage(
+		wp.db,
+		candidate.JobID,
+		candidate.SessionID,
+		candidate.TokenUsage,
+		fetched,
+		true,
+	)
+	if err != nil {
 		return false, err
 	}
-	return true, nil
+	return updated, nil
 }

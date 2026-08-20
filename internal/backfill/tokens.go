@@ -11,6 +11,7 @@ const (
 	ResultUpdated = "updated"
 	ResultSkipped = "skipped"
 	ResultFailed  = "failed"
+	storeAttempts = 3
 )
 
 type SessionUsage struct {
@@ -35,9 +36,9 @@ type TokenSummary struct {
 	Results []TokenResult `json:"results"`
 }
 
-// TokenCandidates filters jobs to those eligible for token backfill:
-// completed, has a session ID, missing cost data, and the session was
-// not reused by another started job.
+// TokenCandidates filters an already-loaded job set to terminal rows with a
+// unique started session and missing cost. Database-backed callers should use
+// storage.ListTokenCostCandidates so agent-run evidence is enforced in SQL.
 func TokenCandidates(jobs []storage.ReviewJob) []storage.ReviewJob {
 	sessionCount := make(map[string]int)
 	for _, job := range jobs {
@@ -48,19 +49,9 @@ func TokenCandidates(jobs []storage.ReviewJob) []storage.ReviewJob {
 
 	var out []storage.ReviewJob
 	for _, job := range jobs {
-		if !hasTerminalStatus(job.Status) {
-			continue
-		}
-		if job.StartedAt == nil {
-			continue
-		}
-		if !NeedsTokenCostBackfill(job.TokenUsage) {
-			continue
-		}
-		if job.SessionID == "" {
-			continue
-		}
-		if sessionCount[job.SessionID] > 1 {
+		if !hasTerminalStatus(job.Status) || job.StartedAt == nil ||
+			!NeedsTokenCostBackfill(job.TokenUsage) || job.SessionID == "" ||
+			sessionCount[job.SessionID] > 1 {
 			continue
 		}
 		out = append(out, job)
@@ -69,8 +60,8 @@ func TokenCandidates(jobs []storage.ReviewJob) []storage.ReviewJob {
 }
 
 // LogTokenCandidates filters jobs whose per-job logs may contain recoverable
-// token usage. Unlike TokenCandidates, this does not require a session ID or a
-// unique session because the usage event came from the individual job log.
+// token usage. This does not require a session ID or a unique session because
+// the usage event came from the individual job log.
 func LogTokenCandidates(jobs []storage.ReviewJob) []storage.ReviewJob {
 	var out []storage.ReviewJob
 	for _, job := range jobs {
@@ -179,17 +170,65 @@ func NeedsTokenUsageBackfill(tokenUsage string) bool {
 	return !hasTokenCounts || !hasRecordedCost(tokenUsage)
 }
 
+// StoreMergedTokenUsage atomically merges recovered usage into a terminal job.
+// If normal capture updates the row during a provider lookup, this reloads the
+// latest usage and retries rather than overwriting newer token counts. Callers
+// can require storage to reject a provider session that another started job
+// began using in the meantime; per-job log usage is safe without that guard.
+func StoreMergedTokenUsage(
+	db *storage.DB,
+	jobID int64,
+	sessionID, existingJSON string,
+	fetched *tokens.Usage,
+	requireUniqueSession bool,
+) (*tokens.Usage, bool, error) {
+	var merged *tokens.Usage
+	for range storeAttempts {
+		merged = MergeTokenUsage(existingJSON, fetched)
+		if merged == nil {
+			return nil, false, nil
+		}
+		updated, err := db.BackfillJobTokenUsageIfCurrent(
+			jobID,
+			sessionID,
+			existingJSON,
+			tokens.ToJSON(merged),
+			requireUniqueSession,
+		)
+		if err != nil || updated {
+			return merged, updated, err
+		}
+
+		current, err := db.GetJobByID(jobID)
+		if err != nil {
+			return merged, false, err
+		}
+		if current.TokenUsage == existingJSON ||
+			(current.SessionID != "" && current.SessionID != sessionID) {
+			return merged, false, nil
+		}
+		existingJSON = current.TokenUsage
+	}
+	return merged, false, nil
+}
+
 func ApplyTokenUsage(
 	db *storage.DB, sessions []SessionUsage, dryRun bool,
 ) (TokenSummary, error) {
-	jobs, err := db.ListJobs("", "", 0, 0)
-	if err != nil {
-		return TokenSummary{}, fmt.Errorf("list jobs: %w", err)
-	}
-
-	candidates := make(map[string]storage.ReviewJob)
-	for _, job := range TokenCandidates(jobs) {
-		candidates[job.SessionID] = job
+	candidates := make(map[string]storage.TokenCostCandidate)
+	var cursor int64
+	for {
+		page, err := db.ListTokenCostCandidates(cursor, 1000)
+		if err != nil {
+			return TokenSummary{}, fmt.Errorf("list token cost candidates: %w", err)
+		}
+		if len(page) == 0 {
+			break
+		}
+		for _, candidate := range page {
+			candidates[candidate.SessionID] = candidate
+		}
+		cursor = page[len(page)-1].JobID
 	}
 
 	summary := TokenSummary{
@@ -225,17 +264,28 @@ func ApplyTokenUsage(
 			}
 
 			merged := MergeTokenUsage(job.TokenUsage, session.Usage)
-			result.JobID = job.ID
+			result.JobID = job.JobID
 			result.Agent = job.Agent
 			result.Summary = merged.FormatSummary()
 			if !dryRun {
-				if err := db.SaveJobTokenUsage(job.ID, job.SessionID, tokens.ToJSON(merged)); err != nil {
+				stored, updated, err := StoreMergedTokenUsage(
+					db, job.JobID, job.SessionID, job.TokenUsage, session.Usage, true,
+				)
+				if err != nil {
 					result.Status = ResultFailed
 					result.Reason = err.Error()
 					summary.Failed++
 					summary.Results = append(summary.Results, result)
 					continue
 				}
+				if !updated {
+					result.Status = ResultSkipped
+					result.Reason = "no longer eligible"
+					summary.Skipped++
+					summary.Results = append(summary.Results, result)
+					continue
+				}
+				result.Summary = stored.FormatSummary()
 			}
 			result.Status = ResultUpdated
 			summary.Updated++

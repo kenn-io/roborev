@@ -117,18 +117,30 @@ will be skipped.`,
 					continue
 				}
 
-				j := tokens.ToJSON(mergedUsage)
 				sessionID := job.SessionID
 				if sessionID == "" {
 					sessionID = mergedUsage.ThreadID
 				}
-				if err := db.BackfillJobTokenUsage(job.ID, sessionID, j); err != nil {
+				stored, saved, err := backfill.StoreMergedTokenUsage(
+					db,
+					job.ID,
+					sessionID,
+					job.TokenUsage,
+					usage,
+					fetchedUsage != nil,
+				)
+				if err != nil {
 					log.Printf(
 						"job %d: save error: %v", job.ID, err,
 					)
 					failed++
 					continue
 				}
+				if !saved {
+					skipped++
+					continue
+				}
+				mergedUsage = stored
 				updated++
 				fmt.Printf(
 					"job %d (%s): %s\n",

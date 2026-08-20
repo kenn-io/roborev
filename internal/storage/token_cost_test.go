@@ -107,3 +107,71 @@ func TestListTokenCostCandidatesPagesByExclusiveJobID(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, got)
 }
+
+func TestBackfillJobTokenUsageIfCurrentRejectsNewSessionReuse(t *testing.T) {
+	db := openTestDB(t)
+	t.Cleanup(func() { db.Close() })
+	_, jobs := seedJobs(t, db, "/tmp/token-cost-reuse-race", 2)
+	_, err := db.Exec(`
+		UPDATE review_jobs
+		SET status = 'done', started_at = datetime('now'), finished_at = datetime('now'),
+		    session_id = 'shared-session', agent_invoked = 1,
+		    token_usage = '{"total_output_tokens":10}'
+		WHERE id = ?`, jobs[0].ID)
+	require.NoError(t, err)
+	candidate, err := db.GetTokenCostCandidate(jobs[0].ID)
+	require.NoError(t, err)
+	require.NotNil(t, candidate)
+
+	_, err = db.Exec(`
+		UPDATE review_jobs
+		SET status = 'running', started_at = datetime('now'),
+		    session_id = 'shared-session', agent_invoked = 1
+		WHERE id = ?`, jobs[1].ID)
+	require.NoError(t, err)
+
+	updated, err := db.BackfillJobTokenUsageIfCurrent(
+		jobs[0].ID,
+		candidate.SessionID,
+		candidate.TokenUsage,
+		`{"total_output_tokens":10,"has_cost":true,"cost_usd":0.25}`,
+		true,
+	)
+	require.NoError(t, err)
+	assert.False(t, updated)
+
+	job, err := db.GetJobByID(jobs[0].ID)
+	require.NoError(t, err)
+	assert.Equal(t, `{"total_output_tokens":10}`, job.TokenUsage)
+}
+
+func TestBackfillJobTokenUsageIfCurrentRejectsStaleUsage(t *testing.T) {
+	db := openTestDB(t)
+	t.Cleanup(func() { db.Close() })
+	_, jobs := seedJobs(t, db, "/tmp/token-cost-stale-race", 1)
+	_, err := db.Exec(`
+		UPDATE review_jobs
+		SET status = 'done', started_at = datetime('now'), finished_at = datetime('now'),
+		    session_id = 'stale-session', agent_invoked = 1,
+		    token_usage = '{"total_output_tokens":10}'
+		WHERE id = ?`, jobs[0].ID)
+	require.NoError(t, err)
+	candidate, err := db.GetTokenCostCandidate(jobs[0].ID)
+	require.NoError(t, err)
+	require.NotNil(t, candidate)
+
+	_, err = db.Exec(
+		`UPDATE review_jobs SET token_usage = '{"total_output_tokens":20}' WHERE id = ?`,
+		jobs[0].ID,
+	)
+	require.NoError(t, err)
+	updated, err := db.BackfillJobTokenUsageIfCurrent(
+		jobs[0].ID,
+		candidate.SessionID,
+		candidate.TokenUsage,
+		`{"total_output_tokens":10,"has_cost":true,"cost_usd":0.25}`,
+		true,
+	)
+	require.NoError(t, err)
+	assert.False(t, updated)
+}

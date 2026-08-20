@@ -37,20 +37,11 @@ func (db *DB) ListTokenCostCandidates(
 		return nil, nil
 	}
 	rows, err := db.Query(`
-		WITH unique_started_sessions AS (
-			SELECT session_id
-			FROM review_jobs
-			WHERE started_at IS NOT NULL
-			  AND COALESCE(session_id, '') != ''
-			GROUP BY session_id
-			HAVING COUNT(*) = 1
-		)
 		SELECT j.id, j.session_id, j.agent, COALESCE(j.token_usage, '')
 		FROM review_jobs j
-		JOIN unique_started_sessions unique_session
-		  ON unique_session.session_id = j.session_id
 		WHERE j.id > ?
 		  AND `+tokenCostCandidatePredicate+`
+		  AND `+uniqueStartedSessionPredicate+`
 		ORDER BY j.id
 		LIMIT ?`, afterJobID, limit)
 	if err != nil {
