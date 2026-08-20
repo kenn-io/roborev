@@ -103,11 +103,14 @@ type CostConfig struct {
 	Timeout  string `toml:"timeout" comment:"Timeout for HTTP usage endpoint lookups."`
 }
 
+const WebAuthModeProxy = "proxy"
+
 type WebConfig struct {
 	Enabled       bool   `toml:"enabled" comment:"Serve the browser application on a separate listener."`
 	Listen        string `toml:"listen" comment:"Loopback browser listener address. Port 0 selects an ephemeral port."`
 	PublicOrigin  string `toml:"public_origin" comment:"Exact dedicated HTTPS browser origin used by a reverse proxy."`
 	BasePath      string `toml:"base_path" comment:"Optional browser routing prefix; not a same-origin security boundary."`
+	AuthMode      string `toml:"auth_mode" comment:"Browser admission mode. Set proxy to trust an external access boundary."`
 	AuthToken     string `toml:"auth_token" sensitive:"true" comment:"Token exchanged for a process-local browser session."`
 	AuthTokenFile string `toml:"auth_token_file" comment:"Host-local file containing the browser auth token."`
 }
@@ -819,11 +822,20 @@ func normalizeWebConfig(web *WebConfig) error {
 		}
 		web.BasePath = basePath
 	}
+	if web.AuthMode != "" && web.AuthMode != WebAuthModeProxy {
+		return fmt.Errorf("unsupported web auth mode %q", web.AuthMode)
+	}
+	if web.AuthMode == WebAuthModeProxy && (web.AuthToken != "" || web.AuthTokenFile != "") {
+		return fmt.Errorf("web proxy auth mode must not configure auth_token or auth_token_file")
+	}
 	resolvedToken, err := web.ResolveAuthToken()
 	if err != nil {
 		return err
 	}
 
+	if web.AuthMode == WebAuthModeProxy && web.PublicOrigin == "" {
+		return fmt.Errorf("web proxy auth mode requires a public origin")
+	}
 	if web.PublicOrigin != "" {
 		origin, err := normalizeWebOrigin(web.PublicOrigin)
 		if err != nil {
@@ -834,7 +846,10 @@ func normalizeWebConfig(web *WebConfig) error {
 		if err != nil {
 			return fmt.Errorf("web public origin: %w", err)
 		}
-		if !isLoopbackHost(parsedOrigin.Hostname()) && resolvedToken == "" {
+		if web.AuthMode == WebAuthModeProxy && parsedOrigin.Scheme != "https" {
+			return fmt.Errorf("web proxy auth mode requires an HTTPS public origin")
+		}
+		if web.AuthMode == "" && !isLoopbackHost(parsedOrigin.Hostname()) && resolvedToken == "" {
 			return fmt.Errorf("web auth token is required for a non-loopback public origin")
 		}
 	}

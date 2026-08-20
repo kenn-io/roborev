@@ -5147,13 +5147,20 @@ func TestWebConfigDefaultsAndSensitiveToken(t *testing.T) {
 func TestWebConfigNormalization(t *testing.T) {
 	const strongToken = "MDEyMzQ1Njc4OWFiY2RlZmdoaWprbG1ub3BxcnN0dXY"
 	tests := []struct {
-		name       string
-		contents   string
-		wantOrigin string
-		wantErr    string
+		name         string
+		contents     string
+		wantOrigin   string
+		wantAuthMode string
+		wantErr      string
 	}{
 		{name: "loopback defaults", contents: "[web]\nlisten = \"127.0.0.1:0\"\n"},
 		{name: "canonical public origin", contents: "[web]\npublic_origin = \"HTTPS://REVIEWS.EXAMPLE.COM:443\"\nauth_token = \"" + strongToken + "\"\n", wantOrigin: "https://reviews.example.com"},
+		{name: "proxy authentication", contents: "[web]\nlisten = \"127.0.0.1:7374\"\npublic_origin = \"https://reviews.example.com\"\nauth_mode = \"proxy\"\n", wantOrigin: "https://reviews.example.com", wantAuthMode: WebAuthModeProxy},
+		{name: "reject unknown auth mode", contents: "[web]\nauth_mode = \"trusted\"\n", wantErr: "auth mode"},
+		{name: "reject proxy mode without origin", contents: "[web]\nauth_mode = \"proxy\"\n", wantErr: "public origin"},
+		{name: "reject proxy mode over HTTP", contents: "[web]\npublic_origin = \"http://127.0.0.1:7374\"\nauth_mode = \"proxy\"\n", wantErr: "HTTPS"},
+		{name: "reject proxy mode with inline token", contents: "[web]\npublic_origin = \"https://reviews.example.com\"\nauth_mode = \"proxy\"\nauth_token = \"" + strongToken + "\"\n", wantErr: "must not configure"},
+		{name: "reject proxy mode with token file", contents: "[web]\npublic_origin = \"https://reviews.example.com\"\nauth_mode = \"proxy\"\nauth_token_file = \"/does/not/need/to/exist\"\n", wantErr: "must not configure"},
 		{name: "reject origin path", contents: "[web]\npublic_origin = \"https://reviews.example.com/path\"\n", wantErr: "origin"},
 		{name: "reject origin userinfo", contents: "[web]\npublic_origin = \"https://user@reviews.example.com\"\n", wantErr: "origin"},
 		{name: "reject remote HTTP", contents: "[web]\npublic_origin = \"http://reviews.example.com\"\n", wantErr: "HTTPS"},
@@ -5174,6 +5181,7 @@ func TestWebConfigNormalization(t *testing.T) {
 			}
 			require.NoError(t, err)
 			assert.Equal(t, tt.wantOrigin, cfg.Web.PublicOrigin)
+			assert.Equal(t, tt.wantAuthMode, cfg.Web.AuthMode)
 		})
 	}
 }
@@ -5332,6 +5340,7 @@ func TestDisabledWebConfigIgnoresInactiveSettings(t *testing.T) {
 enabled = false
 listen = "not-a-listener"
 public_origin = "not-an-origin"
+auth_mode = "unknown"
 auth_token = "weak"
 `), 0o600))
 
