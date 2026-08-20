@@ -298,7 +298,7 @@ func seedTokenCostCandidate(
 	require.NoError(t, tc.DB.CompleteJob(job.ID, "codex", "prompt", "No issues found."))
 	if tokenUsage != "" {
 		updated, err := tc.DB.BackfillJobTokenUsageIfCurrent(
-			job.ID, sessionID, "", tokenUsage, true,
+			job.ID, sessionID, "", tokenUsage, "", true,
 		)
 		require.NoError(t, err)
 		require.True(t, updated)

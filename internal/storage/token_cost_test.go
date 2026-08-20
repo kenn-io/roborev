@@ -153,6 +153,43 @@ func TestListTokenUsageLogCandidatesSelectsMissingSession(t *testing.T) {
 	assert.False(t, got[0].StartedAt.IsZero())
 }
 
+func TestBackfillJobTokenUsageIfCurrentRejectsReenqueuedJob(t *testing.T) {
+	db := openTestDB(t)
+	t.Cleanup(func() { db.Close() })
+	_, jobs := seedJobs(t, db, "/tmp/token-cost-attempt-race", 1)
+	_, err := db.Exec(`
+		UPDATE review_jobs
+		SET status = 'done', started_at = '2026-08-20T16:00:00.123456789Z',
+		    finished_at = '2026-08-20T16:00:01Z', agent_invoked = 1
+		WHERE id = ?`, jobs[0].ID)
+	require.NoError(t, err)
+	candidates, err := db.ListTokenUsageLogCandidates(0, 10)
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+
+	_, err = db.Exec(`
+		UPDATE review_jobs
+		SET started_at = '2026-08-20T16:00:00.987654321Z',
+		    finished_at = '2026-08-20T16:00:02Z'
+		WHERE id = ?`, jobs[0].ID)
+	require.NoError(t, err)
+	updated, err := db.BackfillJobTokenUsageIfCurrent(
+		jobs[0].ID,
+		"prior-session",
+		candidates[0].TokenUsage,
+		`{"total_output_tokens":32,"thread_id":"prior-session"}`,
+		candidates[0].StartedAtRaw,
+		false,
+	)
+	require.NoError(t, err)
+	assert.False(t, updated)
+
+	job, err := db.GetJobByID(jobs[0].ID)
+	require.NoError(t, err)
+	assert.Empty(t, job.SessionID)
+	assert.Empty(t, job.TokenUsage)
+}
+
 func TestBackfillJobTokenUsageIfCurrentRejectsNewSessionReuse(t *testing.T) {
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -180,6 +217,7 @@ func TestBackfillJobTokenUsageIfCurrentRejectsNewSessionReuse(t *testing.T) {
 		candidate.SessionID,
 		candidate.TokenUsage,
 		`{"total_output_tokens":10,"has_cost":true,"cost_usd":0.25}`,
+		"",
 		true,
 	)
 	require.NoError(t, err)
@@ -215,6 +253,7 @@ func TestBackfillJobTokenUsageIfCurrentRejectsStaleUsage(t *testing.T) {
 		candidate.SessionID,
 		candidate.TokenUsage,
 		`{"total_output_tokens":10,"has_cost":true,"cost_usd":0.25}`,
+		"",
 		true,
 	)
 	require.NoError(t, err)

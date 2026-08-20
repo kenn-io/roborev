@@ -81,6 +81,20 @@ func TestClaimJobOrdersMixedEnqueueTimestampFormats(t *testing.T) {
 	assert.Equal(t, jobs[0].ID, claimed.ID)
 }
 
+func TestClaimJobPersistsPreciseAttemptStart(t *testing.T) {
+	env := setupJobEnv(t, "/tmp/precise-attempt-start", "precise-start")
+
+	claimed, err := env.db.ClaimJob("precise-start-worker")
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	var startedAt string
+	require.NoError(t, env.db.QueryRow(
+		`SELECT started_at FROM review_jobs WHERE id = ?`, claimed.ID,
+	).Scan(&startedAt))
+
+	assert.Regexp(t, `\.\d{9}Z$`, startedAt)
+}
+
 func TestJobFailure(t *testing.T) {
 	env := setupJobEnv(t, "/tmp/test-repo", "def456")
 	claimJob(t, env.db, "worker-1")

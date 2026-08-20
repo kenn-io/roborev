@@ -96,11 +96,14 @@ func (wp *WorkerPool) recoverTokenUsageLogs(ctx context.Context) {
 
 func (wp *WorkerPool) recoverTokenUsageLog(candidate storage.TokenUsageLogCandidate) {
 	current, err := jobLogIsCurrentAttempt(candidate.JobID, &candidate.StartedAt)
-	if errors.Is(err, os.ErrNotExist) || !current {
+	if errors.Is(err, os.ErrNotExist) {
 		return
 	}
 	if err != nil {
 		log.Printf("token cost reconciliation: job %d log: %v", candidate.JobID, err)
+		return
+	}
+	if !current {
 		return
 	}
 	existing := tokens.ParseJSON(candidate.TokenUsage)
@@ -129,6 +132,7 @@ func (wp *WorkerPool) recoverTokenUsageLog(candidate storage.TokenUsageLogCandid
 		candidate.JobID,
 		sessionID,
 		candidate.TokenUsage,
+		candidate.StartedAtRaw,
 		usage,
 		false,
 	)
@@ -265,6 +269,7 @@ func (wp *WorkerPool) reconcileTokenCostCandidate(
 		candidate.JobID,
 		candidate.SessionID,
 		candidate.TokenUsage,
+		candidate.StartedAtRaw,
 		fetched,
 		true,
 	)

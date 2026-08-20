@@ -26,6 +26,12 @@ const retryNotBeforeLayout = "2006-01-02T15:04:05.000000000Z07:00"
 // Always normalizes to UTC so DST fall-back can't produce two ordered-
 // differently-but-equal local strings.
 func retryNotBeforeAt(t time.Time) string {
+	return preciseTimestampAt(t)
+}
+
+// preciseTimestampAt keeps attempt boundaries distinct even when retries start
+// within the same second.
+func preciseTimestampAt(t time.Time) string {
 	return t.UTC().Format(retryNotBeforeLayout)
 }
 
@@ -496,7 +502,7 @@ func (db *DB) enqueuePanelRunTx(ctx context.Context, exec execer, members []Enqu
 // attempt.
 func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 	now := time.Now()
-	nowStr := now.Format(time.RFC3339)
+	nowStr := preciseTimestampAt(now)
 	// retry_not_before is stored UTC + fixed-width nano (see
 	// retryNotBeforeLayout) so the SQL comparison stays monotonic with
 	// time. Format the comparison value the same way.
@@ -738,13 +744,14 @@ func (db *DB) SaveJobTokenUsage(jobID int64, sessionID, tokenUsageJSON string) e
 // BackfillJobTokenUsageIfCurrent stores recovered token usage only while the
 // terminal row still has the expected usage snapshot. The compare-and-swap
 // guard lets callers reload and re-merge when normal capture writes newer token
-// counts during a provider lookup. Provider-derived usage can additionally
-// require a unique started session, closing the same lookup-to-write race when
-// another job starts reusing that session. Per-job log usage does not need that
-// uniqueness guard.
+// counts during a provider lookup. An expected start time also prevents a
+// recovered session from crossing into a later attempt. Provider-derived usage
+// can additionally require a unique started session, closing the same
+// lookup-to-write race when another job starts reusing that session. Per-job
+// log usage does not need that uniqueness guard.
 func (db *DB) BackfillJobTokenUsageIfCurrent(
 	jobID int64,
-	sessionID, expectedTokenUsage, tokenUsageJSON string,
+	sessionID, expectedTokenUsage, tokenUsageJSON, expectedStartedAt string,
 	requireUniqueSession bool,
 ) (bool, error) {
 	if tokenUsageJSON == "" {
@@ -764,6 +771,7 @@ func (db *DB) BackfillJobTokenUsageIfCurrent(
 		   AND status IN ('done', 'applied', 'rebased', 'failed', 'canceled', 'skipped')
 		   AND (session_id IS NULL OR session_id = '' OR session_id = ?)
 		   AND COALESCE(token_usage, '') = ?
+		   AND (? = '' OR started_at = ?)
 		   AND (? = 0 OR (? != '' AND NOT EXISTS (
 		     SELECT 1
 		     FROM review_jobs other
@@ -774,7 +782,8 @@ func (db *DB) BackfillJobTokenUsageIfCurrent(
 		       AND other.session_id = ?
 		   )))`,
 		tokenUsageJSON, sessionID, sessionID, now, jobID, sessionID,
-		expectedTokenUsage, requireUniqueSession, sessionID, sessionID,
+		expectedTokenUsage, expectedStartedAt, expectedStartedAt,
+		requireUniqueSession, sessionID, sessionID,
 	)
 	if err != nil {
 		return false, err

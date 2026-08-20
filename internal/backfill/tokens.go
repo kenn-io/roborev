@@ -172,13 +172,15 @@ func NeedsTokenUsageBackfill(tokenUsage string) bool {
 
 // StoreMergedTokenUsage atomically merges recovered usage into a terminal job.
 // If normal capture updates the row during a provider lookup, this reloads the
-// latest usage and retries rather than overwriting newer token counts. Callers
-// can require storage to reject a provider session that another started job
-// began using in the meantime; per-job log usage is safe without that guard.
+// latest usage and retries rather than overwriting newer token counts. A
+// non-empty expectedStartedAt also prevents a delayed write from crossing into
+// a later attempt. Callers can require storage to reject a provider session
+// that another started job began using in the meantime; per-job log usage is
+// safe without that guard.
 func StoreMergedTokenUsage(
 	db *storage.DB,
 	jobID int64,
-	sessionID, existingJSON string,
+	sessionID, existingJSON, expectedStartedAt string,
 	fetched *tokens.Usage,
 	requireUniqueSession bool,
 ) (*tokens.Usage, bool, error) {
@@ -193,6 +195,7 @@ func StoreMergedTokenUsage(
 			sessionID,
 			existingJSON,
 			tokens.ToJSON(merged),
+			expectedStartedAt,
 			requireUniqueSession,
 		)
 		if err != nil || updated {
@@ -238,6 +241,7 @@ func StoreCapturedTokenUsage(
 			jobID,
 			sessionID,
 			existingJSON,
+			"",
 			captured.usage,
 			captured.requireUniqueSession,
 		)
@@ -311,7 +315,8 @@ func ApplyTokenUsage(
 			result.Summary = merged.FormatSummary()
 			if !dryRun {
 				stored, updated, err := StoreMergedTokenUsage(
-					db, job.JobID, job.SessionID, job.TokenUsage, session.Usage, true,
+					db, job.JobID, job.SessionID, job.TokenUsage,
+					job.StartedAtRaw, session.Usage, true,
 				)
 				if err != nil {
 					result.Status = ResultFailed

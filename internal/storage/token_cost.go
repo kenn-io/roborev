@@ -10,18 +10,20 @@ import (
 // TokenCostCandidate is the minimal persisted state needed to recover a late
 // cost from the configured usage provider.
 type TokenCostCandidate struct {
-	JobID      int64
-	SessionID  string
-	Agent      string
-	TokenUsage string
+	JobID        int64
+	SessionID    string
+	Agent        string
+	TokenUsage   string
+	StartedAtRaw string
 }
 
 // TokenUsageLogCandidate is the persisted state needed to recover a missing
 // session from a terminal job's JSONL log.
 type TokenUsageLogCandidate struct {
-	JobID      int64
-	TokenUsage string
-	StartedAt  time.Time
+	JobID        int64
+	TokenUsage   string
+	StartedAt    time.Time
+	StartedAtRaw string
 }
 
 const tokenCostCandidatePredicate = costEligible + `
@@ -52,7 +54,8 @@ func (db *DB) ListTokenCostCandidates(
 		return nil, nil
 	}
 	rows, err := db.Query(`
-		SELECT j.id, j.session_id, j.agent, COALESCE(j.token_usage, '')
+		SELECT j.id, j.session_id, j.agent, COALESCE(j.token_usage, ''),
+		       j.started_at
 		FROM review_jobs j
 		WHERE j.id > ?
 		  AND `+tokenCostCandidatePredicate+`
@@ -72,6 +75,7 @@ func (db *DB) ListTokenCostCandidates(
 			&candidate.SessionID,
 			&candidate.Agent,
 			&candidate.TokenUsage,
+			&candidate.StartedAtRaw,
 		); err != nil {
 			return nil, fmt.Errorf("scan token cost candidate: %w", err)
 		}
@@ -88,7 +92,8 @@ func (db *DB) ListTokenCostCandidates(
 func (db *DB) GetTokenCostCandidate(jobID int64) (*TokenCostCandidate, error) {
 	var candidate TokenCostCandidate
 	err := db.QueryRow(`
-		SELECT j.id, j.session_id, j.agent, COALESCE(j.token_usage, '')
+		SELECT j.id, j.session_id, j.agent, COALESCE(j.token_usage, ''),
+		       j.started_at
 		FROM review_jobs j
 		WHERE j.id = ?
 		  AND `+tokenCostCandidatePredicate+`
@@ -99,6 +104,7 @@ func (db *DB) GetTokenCostCandidate(jobID int64) (*TokenCostCandidate, error) {
 		&candidate.SessionID,
 		&candidate.Agent,
 		&candidate.TokenUsage,
+		&candidate.StartedAtRaw,
 	)
 	if errors.Is(err, sql.ErrNoRows) {
 		return nil, nil
@@ -142,6 +148,7 @@ func (db *DB) ListTokenUsageLogCandidates(
 			return nil, fmt.Errorf("scan token usage log candidate: %w", err)
 		}
 		candidate.StartedAt = parseSQLiteTime(startedAt)
+		candidate.StartedAtRaw = startedAt
 		candidates = append(candidates, candidate)
 	}
 	if err := rows.Err(); err != nil {
