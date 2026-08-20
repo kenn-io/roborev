@@ -26,6 +26,9 @@ type BatchConfig struct {
 	// matching the CI poller's behavior. When nil, agents are
 	// used as-is (backward compatible).
 	GlobalConfig *config.Config
+	// RepoConfig is the trusted repository configuration used to resolve
+	// custom review templates. When nil, the working tree config is loaded.
+	RepoConfig *config.RepoConfig
 	// AgentRegistry is an optional registry for dependency injection in testing.
 	// If nil, the global agent registry is used.
 	AgentRegistry map[string]agent.Agent
@@ -167,7 +170,10 @@ func runSingle(
 	// settings nor commit-message refs have a trusted source (unlike the
 	// daemon poller, which gates on PR author trust and default-branch
 	// config).
-	builder := prompt.NewBuilderWithConfig(nil, cfg.GlobalConfig).WithContext(ctx).ForRepo(cfg.RepoPath, 0)
+	builder := prompt.NewBuilderWithConfig(nil, cfg.GlobalConfig).
+		WithContext(ctx).
+		ForRepo(cfg.RepoPath, 0).
+		WithRepoConfig(cfg.RepoConfig, "")
 
 	// Normalize review type for prompt building
 	promptReviewType := reviewType
@@ -197,8 +203,35 @@ func runSingle(
 		"ci review: running agent=%s type=%s ref=%s",
 		resolvedAgent.Name(), reviewType, cfg.GitRef)
 
-	output, err := resolvedAgent.Review(
-		ctx, cfg.RepoPath, cfg.GitRef, reviewPrompt, nil)
+	var output string
+	if !config.IsBuiltInReviewType(reviewType) {
+		structuredAgent, ok := resolvedAgent.(agent.StructuredReviewAgent)
+		if !ok {
+			result.Status = ResultFailed
+			result.Error = fmt.Sprintf(
+				"agent %q does not support schema-constrained reviews",
+				resolvedAgent.Name(),
+			)
+			return result
+		}
+		raw, reviewErr := structuredAgent.ReviewWithSchema(
+			ctx, cfg.RepoPath, cfg.GitRef, reviewPrompt,
+			CustomReviewSchema, nil,
+		)
+		err = reviewErr
+		if err == nil {
+			structured, decodeErr := DecodeStructuredReview(raw)
+			if decodeErr != nil {
+				err = decodeErr
+			} else {
+				output = structured.Filter(cfg.MinSeverity).Markdown()
+			}
+		}
+	} else {
+		output, err = resolvedAgent.Review(
+			ctx, cfg.RepoPath, cfg.GitRef, reviewPrompt, nil,
+		)
+	}
 	if err != nil {
 		result.Status = ResultFailed
 		result.Error = formatBatchAgentError(resolvedAgent.Name(), err)

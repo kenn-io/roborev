@@ -1126,6 +1126,25 @@ func (db *DB) CompleteFixJob(jobID int64, agent, prompt, output, patch string) e
 // Only updates if job is still in 'running' state (respects cancellation).
 // If the job has an output_prefix, it will be prepended to the output.
 func (db *DB) CompleteJob(jobID int64, agent, prompt, output string) error {
+	return db.completeJob(jobID, agent, prompt, output, nil)
+}
+
+// CompleteJobWithVerdict marks a job done and stores an explicit verdict.
+// Schema-constrained custom reviews use this instead of reparsing their
+// canonical Markdown output.
+func (db *DB) CompleteJobWithVerdict(
+	jobID int64,
+	agent, prompt, output string,
+	passed bool,
+) error {
+	return db.completeJob(jobID, agent, prompt, output, &passed)
+}
+
+func (db *DB) completeJob(
+	jobID int64,
+	agent, prompt, output string,
+	passed *bool,
+) error {
 	// Get machine ID and generate UUIDs before starting transaction
 	// to avoid potential lock conflicts with GetMachineID's writes
 	now := time.Now().Format(time.RFC3339)
@@ -1184,7 +1203,13 @@ func (db *DB) CompleteJob(jobID int64, agent, prompt, output string) error {
 
 	// Insert review with sync columns
 	var verdictBoolVal any
-	if finalOutput != "" {
+	if passed != nil {
+		if *passed {
+			verdictBoolVal = 1
+		} else {
+			verdictBoolVal = 0
+		}
+	} else if finalOutput != "" {
 		verdictBoolVal = verdictToBool(ParseVerdict(finalOutput))
 	}
 	_, err = conn.ExecContext(ctx, `INSERT INTO reviews (job_id, agent, prompt, output, verdict_bool, uuid, updated_by_machine_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,

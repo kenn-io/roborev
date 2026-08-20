@@ -144,12 +144,6 @@ type ciReviewOpts struct {
 func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 	// Validate flag-only inputs early (before git/config
 	// checks) so users get clear errors even outside a repo.
-	if opts.reviewTypes != "" {
-		if _, err := config.ValidateReviewTypes(
-			splitTrimmed(opts.reviewTypes)); err != nil {
-			return err
-		}
-	}
 	if opts.reasoning != "" {
 		if _, err := config.NormalizeReasoning(
 			opts.reasoning); err != nil {
@@ -268,8 +262,9 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 		return fmt.Errorf("no review types configured " +
 			"(check --review-types flag or config)")
 	}
-	reviewTypes, err = config.ValidateReviewTypes(
-		reviewTypes)
+	reviewTypes, err = config.ValidateReviewTypesFromConfig(
+		reviewTypes, repoCfg, globalCfg,
+	)
 	if err != nil {
 		return err
 	}
@@ -321,6 +316,7 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 		ReviewTypes:  reviewTypes,
 		Reasoning:    reasoningLevel,
 		GlobalConfig: globalCfg,
+		RepoConfig:   repoCfg,
 		MinSeverity:  reviewMinSev,
 	}
 

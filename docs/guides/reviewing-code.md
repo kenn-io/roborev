@@ -166,6 +166,10 @@ model = "sonnet"
 
 When unset, it falls back to your repo or global default agent and model.
 
+You can also define schema-constrained review types backed by local Go
+templates, then use them anywhere `--type` or `review_type` is accepted. See
+[Custom Review Types](/advanced/custom-review-types/).
+
 ## Task Context from Kata
 
 If your repo is bound to a [Kata](https://github.com/kenn-io/kata) project,

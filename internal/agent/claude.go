@@ -746,5 +746,71 @@ func (a *ClaudeAgent) ClassifyWithSchema(
 	return parseClaudeClassifyStream(strings.NewReader(string(buf)))
 }
 
+func (a *ClaudeAgent) ReviewWithSchema(
+	ctx context.Context,
+	repoPath, gitRef, prompt string,
+	schema json.RawMessage,
+	out io.Writer,
+) (json.RawMessage, error) {
+	model, baseURL, err := parseModel(a.Model)
+	if err != nil {
+		return nil, err
+	}
+	agenticMode := a.Agentic || AllowUnsafeAgents()
+	if agenticMode {
+		supported, supportErr := claudeSupportsDangerousFlag(ctx, a.Command)
+		if supportErr != nil {
+			return nil, supportErr
+		}
+		if !supported {
+			return nil, fmt.Errorf(
+				"claude does not support %s; upgrade claude or disable allow_unsafe_agents",
+				claudeDangerousFlag,
+			)
+		}
+	}
+	includeEffort := a.claudeEffort() != "" &&
+		claudeSupportsEffortFlag(ctx, a.Command)
+	args := a.buildArgs(agenticMode, includeEffort)
+	args = append(args, "--json-schema", string(schema))
+
+	cmd := exec.CommandContext(ctx, a.Command, args...)
+	configureSubprocess(cmd)
+	cmd.Dir = repoPath
+	env, err := buildClaudeEnv(cmd.Environ(), model, baseURL)
+	if err != nil {
+		return nil, err
+	}
+	cmd.Env = env
+	cmd.Stdin = strings.NewReader(prompt)
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		return nil, fmt.Errorf("stdout pipe: %w", err)
+	}
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		return nil, fmt.Errorf("start claude: %w", err)
+	}
+	buf, readErr := io.ReadAll(stdout)
+	if readErr != nil {
+		_ = cmd.Wait()
+		return nil, fmt.Errorf("read stdout: %w", readErr)
+	}
+	if out != nil {
+		_, _ = out.Write(buf)
+	}
+	if err := cmd.Wait(); err != nil {
+		return nil, fmt.Errorf(
+			"claude exited: %w (stderr: %s)",
+			err, strings.TrimSpace(stderr.String()),
+		)
+	}
+	return parseClaudeClassifyStream(bytes.NewReader(buf))
+}
+
 // Compile-time assertion that ClaudeAgent implements SchemaAgent.
-var _ SchemaAgent = (*ClaudeAgent)(nil)
+var (
+	_ SchemaAgent           = (*ClaudeAgent)(nil)
+	_ StructuredReviewAgent = (*ClaudeAgent)(nil)
+)

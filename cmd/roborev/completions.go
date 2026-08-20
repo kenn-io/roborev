@@ -70,8 +70,10 @@ func registerReasoningCompletion(cmd *cobra.Command) {
 // registerReviewTypeCompletion registers shell completion for the --type flag.
 // Panics if the flag doesn't exist on the command (programming error).
 func registerReviewTypeCompletion(cmd *cobra.Command) {
-	if err := cmd.RegisterFlagCompletionFunc("type", func(_ *cobra.Command, _ []string, _ string) ([]cobra.Completion, cobra.ShellCompDirective) {
-		types := config.ExplicitReviewTypes()
+	if err := cmd.RegisterFlagCompletionFunc("type", func(cmd *cobra.Command, _ []string, _ string) ([]cobra.Completion, cobra.ShellCompDirective) {
+		globalCfg, _ := config.LoadGlobal()
+		repoCfg, _, _ := loadCommandRepoConfig(cmd)
+		types := config.ReviewTypesFromConfig(repoCfg, globalCfg)
 		completions := make([]cobra.Completion, len(types))
 		for i, t := range types {
 			completions[i] = cobra.Completion(t)

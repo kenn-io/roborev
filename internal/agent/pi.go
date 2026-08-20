@@ -243,6 +243,83 @@ func (a *PiAgent) ClassifyWithSchema(
 	return json.RawMessage(result), nil
 }
 
+func (a *PiAgent) ReviewWithSchema(
+	ctx context.Context,
+	repoPath, gitRef, prompt string,
+	schema json.RawMessage,
+	out io.Writer,
+) (json.RawMessage, error) {
+	tmpDir, err := os.MkdirTemp("", "roborev-pi-review-*")
+	if err != nil {
+		return nil, fmt.Errorf("create temp structured review dir: %w", err)
+	}
+	defer os.RemoveAll(tmpDir)
+	promptPath := filepath.Join(tmpDir, "prompt.md")
+	if err := os.WriteFile(promptPath, []byte(prompt), 0o600); err != nil {
+		return nil, fmt.Errorf("write structured review prompt: %w", err)
+	}
+	outputPath := filepath.Join(tmpDir, "result.json")
+	args := slices.Clone(a.LaunchArgs)
+	args = append(args,
+		"--no-session",
+		"--extension", a.jsonSchemaExtension(),
+		"--json-schema", string(schema),
+		"--json-output", outputPath,
+		"--json-fallback", "none",
+		"-p",
+	)
+	if a.Provider != "" {
+		args = append(args, "--provider", a.Provider)
+	}
+	if a.Model != "" {
+		args = append(args, "--model", a.Model)
+	}
+	if level := a.thinkingLevel(); level != "" {
+		args = append(args, "--thinking", level)
+	}
+	args = append(args,
+		"@"+promptPath,
+		"Review the repository according to the attached instructions and write the result with the structured JSON output tool.",
+	)
+
+	cmd := exec.CommandContext(ctx, a.Command, args...)
+	cmd.Dir = repoPath
+	tracker := configureSubprocess(cmd)
+	var stdoutBuf, stderrBuf bytes.Buffer
+	if out != nil {
+		sw := newSyncWriter(out)
+		cmd.Stdout = io.MultiWriter(&stdoutBuf, sw)
+		cmd.Stderr = io.MultiWriter(&stderrBuf, sw)
+	} else {
+		cmd.Stdout = &stdoutBuf
+		cmd.Stderr = &stderrBuf
+	}
+	if err := cmd.Run(); err != nil {
+		if ctxErr := contextProcessError(ctx, tracker, err, nil); ctxErr != nil {
+			return nil, ctxErr
+		}
+		stderr := strings.TrimSpace(stderrBuf.String())
+		if piMissingJSONSchemaExtension(stderr) {
+			return nil, fmt.Errorf(
+				"pi structured review failed: %w\nstderr: %s\n\nPi JSON Schema extension is required. Install it with: %s",
+				err, stderr, piJSONSchemaInstallCommand,
+			)
+		}
+		return nil, fmt.Errorf(
+			"pi structured review failed: %w\nstderr: %s", err, stderr,
+		)
+	}
+	result, err := os.ReadFile(outputPath)
+	if err != nil {
+		return nil, fmt.Errorf("read pi structured review output: %w", err)
+	}
+	result = bytes.TrimSpace(result)
+	if !json.Valid(result) || len(result) == 0 || result[0] != '{' {
+		return nil, fmt.Errorf("pi structured review output is not a JSON object")
+	}
+	return json.RawMessage(result), nil
+}
+
 func piMissingJSONSchemaExtension(stderr string) bool {
 	msg := strings.ToLower(stderr)
 	if !strings.Contains(msg, "unknown option") && !strings.Contains(msg, "unrecognized option") {
@@ -252,6 +329,8 @@ func piMissingJSONSchemaExtension(stderr string) bool {
 		strings.Contains(msg, "--json-output") ||
 		strings.Contains(msg, "--json-fallback")
 }
+
+var _ StructuredReviewAgent = (*PiAgent)(nil)
 
 func (a *PiAgent) Review(
 	ctx context.Context,

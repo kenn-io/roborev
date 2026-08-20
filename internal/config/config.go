@@ -524,6 +524,16 @@ func validateConfig(cfg any, acp ACPAgentConfigs) error {
 	if err := validateACPAgentConfigs(acp); err != nil {
 		return err
 	}
+	var review ReviewConfig
+	switch typed := cfg.(type) {
+	case *Config:
+		review = typed.Review
+	case *RepoConfig:
+		review = typed.Review
+	}
+	if err := validateCustomReviewTypes(review.Types); err != nil {
+		return err
+	}
 	return validateAgentReferences(cfg)
 }
 

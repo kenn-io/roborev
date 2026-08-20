@@ -90,6 +90,8 @@ type HistoricalReviewContext struct {
 type Builder struct {
 	db         *storage.DB
 	globalCfg  *config.Config // optional global config for exclude patterns
+	repoCfg    *config.RepoConfig
+	repoCfgRef string
 	ctx        context.Context
 	repoPath   string
 	repoID     int64
@@ -148,6 +150,20 @@ func (b *Builder) ForRepo(repoPath string, repoID int64) *Builder {
 func (b *Builder) WithKataClient(client kata.Client) *Builder {
 	next := *b
 	next.kataClient = client
+	return &next
+}
+
+// WithRepoConfig supplies an already-loaded repository config. When ref is
+// non-empty, repo-defined custom template files are read from that Git ref
+// instead of the working tree. CI uses this to keep prompt configuration on
+// the trusted base branch.
+func (b *Builder) WithRepoConfig(
+	repoCfg *config.RepoConfig,
+	ref string,
+) *Builder {
+	next := *b
+	next.repoCfg = repoCfg
+	next.repoCfgRef = strings.TrimSpace(ref)
 	return &next
 }
 
@@ -547,7 +563,10 @@ func (b *Builder) BuildDirty(diff string, contextCount int, agentName, reviewTyp
 // dirty file names for dependency metadata summaries. The diff itself may have
 // review exclusions applied.
 func (b *Builder) BuildDirtyWithFiles(diff string, changedFiles []string, contextCount int, agentName, reviewType, minSeverity string) (string, error) {
-	ctx := b.newPromptBuildContext(agentName, reviewType, minSeverity, "dirty", optionalSectionsView{})
+	ctx, err := b.newPromptBuildContext(agentName, reviewType, minSeverity, "dirty", optionalSectionsView{})
+	if err != nil {
+		return "", err
+	}
 	ctx.optional.DependencyMetadata = buildDependencyMetadataSection(changedFiles)
 
 	ctx.optional.ProjectGuidelines = buildProjectGuidelinesSectionView(
@@ -766,7 +785,7 @@ type promptBuildContext struct {
 	promptCap      int
 }
 
-func (b *Builder) newPromptBuildContext(agentName, reviewType, minSeverity, defaultPromptType string, optional optionalSectionsView) promptBuildContext {
+func (b *Builder) newPromptBuildContext(agentName, reviewType, minSeverity, defaultPromptType string, optional optionalSectionsView) (promptBuildContext, error) {
 	promptType := defaultPromptType
 	if !config.IsDefaultReviewType(reviewType) {
 		promptType = reviewType
@@ -775,15 +794,29 @@ func (b *Builder) newPromptBuildContext(agentName, reviewType, minSeverity, defa
 		promptType = "design-review"
 	}
 	promptCap := b.resolveMaxPromptSize()
-	requiredPrefix := GetSystemPrompt(agentName, promptType) + "\n"
-	if inst := config.SeverityInstruction(minSeverity); inst != "" {
-		requiredPrefix += inst + "\n"
+	systemPrompt, custom, err := b.resolveSystemPrompt(
+		agentName, reviewType, promptType, promptCap,
+	)
+	if err != nil {
+		return promptBuildContext{}, err
+	}
+	requiredPrefix := systemPrompt + "\n"
+	if !custom {
+		if inst := config.SeverityInstruction(minSeverity); inst != "" {
+			requiredPrefix += inst + "\n"
+		}
+	}
+	if custom && len(requiredPrefix) > promptCap {
+		return promptBuildContext{}, fmt.Errorf(
+			"custom review prompt is %d bytes but prompt limit is %d bytes",
+			len(requiredPrefix), promptCap,
+		)
 	}
 	return promptBuildContext{
 		requiredPrefix: hardCapPrompt(requiredPrefix, promptCap),
 		optional:       optional,
 		promptCap:      promptCap,
-	}
+	}, nil
 }
 
 func defaultOptionalSections(ctx context.Context, repoPath string, globalCfg *config.Config, additionalContext string) optionalSectionsView {
@@ -1097,7 +1130,10 @@ func selectRichestRangePromptView(limit int, view TemplateContext, variants []di
 
 // buildSinglePrompt constructs a prompt for a single commit
 func (b *Builder) buildSinglePrompt(sha string, contextCount int, agentName, reviewType string, opts buildOpts) (string, error) {
-	ctx := b.newPromptBuildContext(agentName, reviewType, opts.minSeverity, "review", defaultOptionalSections(b.context(), b.repoPath, b.globalCfg, opts.additionalContext))
+	ctx, err := b.newPromptBuildContext(agentName, reviewType, opts.minSeverity, "review", defaultOptionalSections(b.context(), b.repoPath, b.globalCfg, opts.additionalContext))
+	if err != nil {
+		return "", err
+	}
 
 	// Get previous reviews if requested
 	if contextCount > 0 && b.db != nil {
@@ -1221,7 +1257,10 @@ func (b *Builder) buildSinglePrompt(sha string, contextCount int, agentName, rev
 
 // buildRangePrompt constructs a prompt for a commit range
 func (b *Builder) buildRangePrompt(rangeRef string, contextCount int, agentName, reviewType string, opts buildOpts) (string, error) {
-	ctx := b.newPromptBuildContext(agentName, reviewType, opts.minSeverity, "range", defaultOptionalSections(b.context(), b.repoPath, b.globalCfg, opts.additionalContext))
+	ctx, err := b.newPromptBuildContext(agentName, reviewType, opts.minSeverity, "range", defaultOptionalSections(b.context(), b.repoPath, b.globalCfg, opts.additionalContext))
+	if err != nil {
+		return "", err
+	}
 
 	// Get previous reviews from before the range start
 	if contextCount > 0 && b.db != nil {

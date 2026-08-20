@@ -22,6 +22,7 @@ import (
 	"go.kenn.io/roborev/internal/git"
 	"go.kenn.io/roborev/internal/kata"
 	"go.kenn.io/roborev/internal/prompt"
+	reviewpkg "go.kenn.io/roborev/internal/review"
 	"go.kenn.io/roborev/internal/storage"
 )
 
@@ -150,11 +151,25 @@ Examples:
 				return usageErr(cmd, fmt.Errorf("cannot specify commits with --since"))
 			}
 
-			// Validate --type flag
-			switch reviewType {
-			case "", config.ReviewTypeSecurity, config.ReviewTypeDesign, config.ReviewTypeLookahead:
-			default:
-				return usageErr(cmd, fmt.Errorf("invalid --type %q (valid: %s)", reviewType, config.ExplicitReviewTypesHelp()))
+			// Validate --type against the effective global and repository config.
+			if reviewType != "" {
+				globalCfg, loadErr := config.LoadGlobal()
+				if loadErr != nil {
+					return fmt.Errorf("load config: %w", loadErr)
+				}
+				repoCfg, loadErr := config.LoadRepoConfig(root)
+				if loadErr != nil {
+					return fmt.Errorf("load repository config: %w", loadErr)
+				}
+				canonical, validationErr := config.ValidateReviewTypesFromConfig(
+					[]string{reviewType}, repoCfg, globalCfg,
+				)
+				if validationErr != nil {
+					return usageErr(cmd, fmt.Errorf(
+						"invalid --type %q: %w", reviewType, validationErr,
+					))
+				}
+				reviewType = canonical[0]
 			}
 
 			// Auto-install/upgrade hooks when running from CLI
@@ -443,8 +458,15 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent string, di
 		return fmt.Errorf("load config: %w", err)
 	}
 
+	repoCfg, err := config.LoadRepoConfig(repoPath)
+	if err != nil {
+		return fmt.Errorf("load repository config: %w", err)
+	}
+
 	// Resolve and validate reasoning (matches daemon behavior)
-	reasoning, err = config.ResolveReviewReasoning(reasoning, repoPath, cfg)
+	reasoning, err = config.ResolveReviewReasoningForTypeFromConfig(
+		reasoning, repoCfg, cfg, reviewType,
+	)
 	if err != nil {
 		return fmt.Errorf("invalid reasoning: %w", err)
 	}
@@ -512,7 +534,11 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent string, di
 	}
 
 	// Build prompt
-	pb := prompt.NewBuilderWithConfig(nil, cfg).WithContext(ctx).ForRepo(repoPath, 0).WithKataClient(kata.NewCLIClient(repoPath))
+	pb := prompt.NewBuilderWithConfig(nil, cfg).
+		WithContext(ctx).
+		ForRepo(repoPath, 0).
+		WithRepoConfig(repoCfg, "").
+		WithKataClient(kata.NewCLIClient(repoPath))
 	var reviewPrompt string
 	var snapshotCleanup func()
 	if diffContent != "" || len(dirtyFiles) > 0 {
@@ -535,8 +561,32 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent string, di
 		return fmt.Errorf("build prompt: %w", err)
 	}
 
-	// Run review with output writer
-	_, err = a.Review(cmd.Context(), repoPath, gitRef, reviewPrompt, out)
+	// Run review with output writer. Custom types use the native schema path,
+	// then render Roborev's canonical review text.
+	if !config.IsBuiltInReviewType(reviewType) {
+		structuredAgent, ok := a.(agent.StructuredReviewAgent)
+		if !ok {
+			return fmt.Errorf(
+				"agent %q does not support schema-constrained reviews", a.Name(),
+			)
+		}
+		raw, reviewErr := structuredAgent.ReviewWithSchema(
+			cmd.Context(), repoPath, gitRef, reviewPrompt,
+			reviewpkg.CustomReviewSchema, out,
+		)
+		if reviewErr != nil {
+			return fmt.Errorf("review failed: %w", reviewErr)
+		}
+		structured, decodeErr := reviewpkg.DecodeStructuredReview(raw)
+		if decodeErr != nil {
+			return fmt.Errorf("review failed: %w", decodeErr)
+		}
+		if !quiet {
+			fmt.Fprintln(out, structured.Filter(resolvedMinSev).Markdown())
+		}
+	} else {
+		_, err = a.Review(cmd.Context(), repoPath, gitRef, reviewPrompt, out)
+	}
 	if err != nil {
 		return fmt.Errorf("review failed: %w", err)
 	}

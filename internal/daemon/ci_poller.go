@@ -102,7 +102,7 @@ type CIPoller struct {
 	gitCloneFn              func(ctx context.Context, ghRepo, targetPath string, env []string) error
 	mergeBaseFn             func(string, string, string) (string, error)
 	loadRepoConfigWithRawFn func(string) (*config.RepoConfig, map[string]any, error)
-	buildReviewPromptFn     func(context.Context, string, string, int64, int, string, string, string, string, *config.Config) (string, error)
+	buildReviewPromptFn     func(context.Context, string, string, int64, int, string, string, string, string, *config.RepoConfig, string, *config.Config) (string, error)
 	postPRCommentFn         func(string, int, string) error
 	setCommitStatusFn       func(ghRepo, sha, state, description string) error
 	setSkippedCheckFn       func(ghRepo, sha, summary string) error
@@ -163,8 +163,11 @@ func NewCIPoller(db *storage.DB, cfgGetter ConfigGetter, broadcaster Broadcaster
 	// task-ledger content stays out of CI prompts entirely (it could
 	// otherwise surface in publicly posted PR comments). Kata context is a
 	// local-review feature; the worker also skips it for CI jobs.
-	p.buildReviewPromptFn = func(ctx context.Context, repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, minSeverity, additionalContext string, cfg *config.Config) (string, error) {
-		builder := prompt.NewBuilderWithConfig(p.db, cfg).WithContext(ctx).ForRepo(repoPath, repoID)
+	p.buildReviewPromptFn = func(ctx context.Context, repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, minSeverity, additionalContext string, repoCfg *config.RepoConfig, repoCfgRef string, cfg *config.Config) (string, error) {
+		builder := prompt.NewBuilderWithConfig(p.db, cfg).
+			WithContext(ctx).
+			ForRepo(repoPath, repoID).
+			WithRepoConfig(repoCfg, repoCfgRef)
 		return builder.BuildWithAdditionalContextAndDiffFile(
 			gitRef,
 			contextCount,
@@ -829,7 +832,7 @@ func (p *CIPoller) resolveCIMatrixMembers(
 	cfg *config.Config, ghRepo string,
 ) ([]config.ResolvedMember, config.SynthesisSpec, error) {
 	matrix, reasoning := resolveCIMatrix(repoCfg, rawRepoCfg, cfg, ghRepo)
-	if err := validateMatrixReviewTypes(matrix); err != nil {
+	if err := validateMatrixReviewTypes(matrix, repoCfg, cfg); err != nil {
 		return nil, config.SynthesisSpec{}, err
 	}
 	if len(matrix) == 0 {
@@ -1068,7 +1071,11 @@ func canonicalizeMatrix(matrix []config.AgentReviewType) []config.AgentReviewTyp
 
 // validateMatrixReviewTypes returns an error if the matrix names an invalid
 // review type, matching the pre-panel validation.
-func validateMatrixReviewTypes(matrix []config.AgentReviewType) error {
+func validateMatrixReviewTypes(
+	matrix []config.AgentReviewType,
+	repoCfg *config.RepoConfig,
+	globalCfg *config.Config,
+) error {
 	rtSet := make(map[string]bool, len(matrix))
 	for _, m := range matrix {
 		rtSet[m.ReviewType] = true
@@ -1077,7 +1084,9 @@ func validateMatrixReviewTypes(matrix []config.AgentReviewType) error {
 	for rt := range rtSet {
 		rtList = append(rtList, rt)
 	}
-	_, err := config.ValidateReviewTypes(rtList)
+	_, err := config.ValidateReviewTypesFromConfig(
+		rtList, repoCfg, globalCfg,
+	)
 	return err
 }
 
@@ -1261,7 +1270,8 @@ func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) (
 	for i, m := range in.members {
 		storedPrompt, err := p.callBuildReviewPrompt(
 			ctx, in.repo.RootPath, in.gitRef, in.repo.ID, in.cfg.ReviewContextCount,
-			m.Agent, m.ReviewType, reviewMinSeverity, in.prDiscussionContext, in.cfg,
+			m.Agent, m.ReviewType, reviewMinSeverity, in.prDiscussionContext,
+			in.repoCfg, "origin/"+in.baseBranch, in.cfg,
 		)
 		if err != nil {
 			// A canceled poller (Stop or shutdown) must abort the whole run
@@ -3136,11 +3146,14 @@ func (p *CIPoller) callMergeBase(repoPath, baseRef, headRef string) (string, err
 	return gitpkg.GetMergeBase(repoPath, baseRef, headRef)
 }
 
-func (p *CIPoller) callBuildReviewPrompt(ctx context.Context, repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, minSeverity, additionalContext string, cfg *config.Config) (string, error) {
+func (p *CIPoller) callBuildReviewPrompt(ctx context.Context, repoPath, gitRef string, repoID int64, contextCount int, agentName, reviewType, minSeverity, additionalContext string, repoCfg *config.RepoConfig, repoCfgRef string, cfg *config.Config) (string, error) {
 	if p.buildReviewPromptFn != nil {
-		return p.buildReviewPromptFn(ctx, repoPath, gitRef, repoID, contextCount, agentName, reviewType, minSeverity, additionalContext, cfg)
+		return p.buildReviewPromptFn(ctx, repoPath, gitRef, repoID, contextCount, agentName, reviewType, minSeverity, additionalContext, repoCfg, repoCfgRef, cfg)
 	}
-	builder := prompt.NewBuilderWithConfig(p.db, cfg).WithContext(ctx).ForRepo(repoPath, repoID)
+	builder := prompt.NewBuilderWithConfig(p.db, cfg).
+		WithContext(ctx).
+		ForRepo(repoPath, repoID).
+		WithRepoConfig(repoCfg, repoCfgRef)
 	return builder.BuildWithAdditionalContextAndDiffFile(
 		gitRef,
 		contextCount,

@@ -37,6 +37,7 @@ nav = [
   {"Advanced Features" = [
     {"Background Tasks" = "advanced/background-tasks.md"},
     {"Subagent Review Panels" = "advanced/subagent-review-panels.md"},
+    {"Custom Review Types" = "advanced/custom-review-types.md"},
     {"Custom Tasks & Agentic Mode" = "advanced/custom-tasks.md"},
     {"Agent Client Protocol (ACP)" = "advanced/acp.md"},
     {"PostgreSQL Sync" = "advanced/postgres-sync.md"},

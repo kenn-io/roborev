@@ -1321,7 +1321,7 @@ func TestCIPollerProcessPR_FallsBackWhenPromptPrebuildFails(t *testing.T) {
 			CreatedAt: time.Date(2026, time.March, 27, 12, 0, 0, 0, time.UTC),
 		}}, nil
 	}
-	h.Poller.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, *config.Config) (string, error) {
+	h.Poller.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, *config.RepoConfig, string, *config.Config) (string, error) {
 		return "", errors.New("prompt prebuild exploded")
 	}
 
@@ -4778,7 +4778,7 @@ func TestReconcileStuckAttempt(t *testing.T) {
 
 func TestBuildPanelOpts_RecordsPRBranchOnJobs(t *testing.T) {
 	p := &CIPoller{}
-	p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, *config.Config) (string, error) {
+	p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, *config.RepoConfig, string, *config.Config) (string, error) {
 		return "prebuilt prompt", nil
 	}
 
@@ -4808,7 +4808,7 @@ func TestBuildPanelOpts_RecordsPRBranchOnJobs(t *testing.T) {
 
 func TestBuildPanelOptsSnapshotsEffectiveACPExecutionConfig(t *testing.T) {
 	p := &CIPoller{}
-	p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, *config.Config) (string, error) {
+	p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, *config.RepoConfig, string, *config.Config) (string, error) {
 		return "prebuilt prompt", nil
 	}
 	cfg := config.DefaultConfig()
@@ -4906,7 +4906,7 @@ func TestBuildPanelOptsRejectsACPReferencesMissingFromDefaultBranch(t *testing.T
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
 			p := &CIPoller{}
-			p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, *config.Config) (string, error) {
+			p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, *config.RepoConfig, string, *config.Config) (string, error) {
 				return "prebuilt prompt", nil
 			}
 			memberOpts, synthOpts, err := p.buildPanelOpts(
@@ -4991,7 +4991,7 @@ func TestCIPromptPrebuildNeverIncludesKataContext(t *testing.T) {
 	cfg.KataContext.Mode = config.KataModeOpen
 	p := NewCIPoller(nil, NewStaticConfig(cfg), nil)
 
-	out, err := p.callBuildReviewPrompt(context.Background(), repo.Path(), sha, 0, 0, "test", "", "", "", cfg)
+	out, err := p.callBuildReviewPrompt(context.Background(), repo.Path(), sha, 0, 0, "test", "", "", "", nil, "", cfg)
 	require.NoError(t, err)
 	assert.NotContains(t, out, "Task Context (kata)",
 		"CI prompt prebuilds must never include kata task-ledger content")
@@ -5011,7 +5011,7 @@ func TestBuildPanelOptsAbortsOnCanceledPrebuild(t *testing.T) {
 
 	t.Run("cancellation aborts the run", func(t *testing.T) {
 		p := &CIPoller{}
-		p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, *config.Config) (string, error) {
+		p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, *config.RepoConfig, string, *config.Config) (string, error) {
 			return "", fmt.Errorf("building prompt: %w", context.Canceled)
 		}
 		_, _, err := p.buildPanelOpts(context.Background(), in)
@@ -5020,7 +5020,7 @@ func TestBuildPanelOptsAbortsOnCanceledPrebuild(t *testing.T) {
 
 	t.Run("other prebuild errors still enqueue without stored prompt", func(t *testing.T) {
 		p := &CIPoller{}
-		p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, *config.Config) (string, error) {
+		p.buildReviewPromptFn = func(context.Context, string, string, int64, int, string, string, string, string, *config.RepoConfig, string, *config.Config) (string, error) {
 			return "", errors.New("prompt prebuild exploded")
 		}
 		memberOpts, _, err := p.buildPanelOpts(context.Background(), in)

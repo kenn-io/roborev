@@ -1091,7 +1091,42 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// Run the review
 	log.Printf("[%s] Running %s %sreview (job %d)...",
 		workerID, agentName, rtTag, job.ID)
-	output, err := a.Review(ctx, reviewRepoPath, job.GitRef, reviewPrompt, agentOutput)
+	customReview := !config.IsBuiltInReviewType(job.ReviewType)
+	var output string
+	var explicitPassed *bool
+	if customReview {
+		structuredAgent, ok := a.(agent.StructuredReviewAgent)
+		if !ok {
+			wp.failOrRetryAgentContext(
+				ctx, workerID, job, agentName,
+				fmt.Sprintf(
+					"agent %q does not support schema-constrained reviews",
+					agentName,
+				),
+			)
+			return
+		}
+		rawResult, reviewErr := structuredAgent.ReviewWithSchema(
+			ctx, reviewRepoPath, job.GitRef, reviewPrompt,
+			review.CustomReviewSchema, agentOutput,
+		)
+		err = reviewErr
+		if err == nil {
+			structured, decodeErr := review.DecodeStructuredReview(rawResult)
+			if decodeErr != nil {
+				err = decodeErr
+			} else {
+				structured = structured.Filter(job.MinSeverity)
+				output = structured.Markdown()
+				passed := structured.Passed()
+				explicitPassed = &passed
+			}
+		}
+	} else {
+		output, err = a.Review(
+			ctx, reviewRepoPath, job.GitRef, reviewPrompt, agentOutput,
+		)
+	}
 	sessionWriter.Flush()
 	if sessionID := sessionWriter.SessionID(); sessionID != "" {
 		if saveErr := wp.db.SaveJobSessionID(job.ID, workerID, sessionID); saveErr != nil {
@@ -1176,6 +1211,13 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		if job.IsFixJob() {
 			if err := wp.db.CompleteFixJob(job.ID, agentName, reviewPrompt, output, fixPatch); err != nil {
 				log.Printf("[%s] Error storing fix review: %v", workerID, err)
+				return
+			}
+		} else if explicitPassed != nil {
+			if err := wp.db.CompleteJobWithVerdict(
+				job.ID, agentName, reviewPrompt, output, *explicitPassed,
+			); err != nil {
+				log.Printf("[%s] Error storing structured review: %v", workerID, err)
 				return
 			}
 		} else if err := wp.db.CompleteJob(job.ID, agentName, reviewPrompt, output); err != nil {

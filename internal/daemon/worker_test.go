@@ -47,6 +47,34 @@ type workerTestContext struct {
 	Broadcaster Broadcaster
 }
 
+type structuredWorkerTestAgent struct {
+	name   string
+	result json.RawMessage
+}
+
+func (a *structuredWorkerTestAgent) Name() string { return a.name }
+func (a *structuredWorkerTestAgent) Review(
+	context.Context, string, string, string, io.Writer,
+) (string, error) {
+	return "", errors.New("unexpected prose review call")
+}
+
+func (a *structuredWorkerTestAgent) ReviewWithSchema(
+	_ context.Context,
+	_, _, _ string,
+	_ json.RawMessage,
+	_ io.Writer,
+) (json.RawMessage, error) {
+	return a.result, nil
+}
+
+func (a *structuredWorkerTestAgent) WithReasoning(agent.ReasoningLevel) agent.Agent {
+	return a
+}
+func (a *structuredWorkerTestAgent) WithAgentic(bool) agent.Agent { return a }
+func (a *structuredWorkerTestAgent) WithModel(string) agent.Agent { return a }
+func (a *structuredWorkerTestAgent) CommandLine() string          { return a.name }
+
 // newWorkerTestContext creates a DB, repo, broadcaster, and worker pool with
 // the given number of workers. Pass 0 to use the config default.
 func newWorkerTestContext(t *testing.T, workers int) *workerTestContext {
@@ -293,6 +321,51 @@ func TestWorkerPoolPendingCancellationAfterDBCancel(t *testing.T) {
 			return false
 		}, "Job should have been canceled immediately on registration")
 	}
+}
+
+func TestWorkerStoresFilteredStructuredCustomReview(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	agentName := "structured-review-test"
+	agent.Register(&structuredWorkerTestAgent{
+		name: agentName,
+		result: json.RawMessage(`{
+  "summary":"Review complete.",
+  "findings":[
+    {"severity":"high","problem":"State diverges.","fix":"Use one owner."},
+    {"severity":"low","problem":"Name is vague.","fix":"Rename it."}
+  ]
+}`),
+	})
+	t.Cleanup(func() { agent.Unregister(agentName) })
+	require.NoError(t, os.WriteFile(
+		filepath.Join(tc.TmpDir, "custom-review.md"),
+		[]byte("Review state ownership."), 0o644,
+	))
+	cfg := config.DefaultConfig()
+	cfg.Review.Types = map[string]config.ReviewTypeSpec{
+		"custom-state": {Template: "custom-review.md"},
+	}
+	tc.Pool.cfgGetter = NewStaticConfig(cfg)
+
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+	job := tc.createJobWithAgent(t, sha, agentName)
+	_, err := tc.DB.Exec(
+		`UPDATE review_jobs SET review_type = ?, min_severity = ? WHERE id = ?`,
+		"custom-state", "high", job.ID,
+	)
+	require.NoError(t, err)
+	claimed, err := tc.DB.ClaimJob(testWorkerID)
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+
+	tc.Pool.processJob(testWorkerID, claimed)
+
+	stored, err := tc.DB.GetReviewByJobID(job.ID)
+	require.NoError(t, err)
+	assert.Contains(t, stored.Output, "State diverges.")
+	assert.NotContains(t, stored.Output, "Name is vague.")
+	require.NotNil(t, stored.VerdictBool)
+	assert.Equal(t, 0, *stored.VerdictBool)
 }
 
 func TestCanceledJobCannotRerunUntilBlockedAgentExits(t *testing.T) {

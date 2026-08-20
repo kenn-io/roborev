@@ -61,6 +61,21 @@ func TestJobLifecycle(t *testing.T) {
 	assert.Equal(t, JobStatusDone, updatedJob.Status)
 }
 
+func TestCompleteJobWithVerdictUsesExplicitVerdict(t *testing.T) {
+	env := setupJobEnv(t, "/tmp/structured-verdict", "structured123")
+	claimed := claimJob(t, env.db, "worker-1")
+	require.NotNil(t, claimed)
+
+	require.NoError(t, env.db.CompleteJobWithVerdict(
+		env.job.ID, "codex", "prompt", "No issues found.", false,
+	))
+	var verdict sql.NullInt64
+	require.NoError(t, env.db.QueryRow(
+		`SELECT verdict_bool FROM reviews WHERE job_id = ?`, env.job.ID,
+	).Scan(&verdict))
+	assert.Equal(t, sql.NullInt64{Int64: 0, Valid: true}, verdict)
+}
+
 func TestClaimJobOrdersMixedEnqueueTimestampFormats(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()

@@ -476,6 +476,14 @@ Types that have them — `review`, `refine`, `fix`, `security`, `design` — ign
 Reasoning is unaffected by this block for reviews; it follows `review_reasoning`
 (the block's `reasoning` field applies only to `roborev analyze <type>` runs).
 
+### Custom Review Types
+
+Custom domain-specific review types are configured under
+`[review.types.<name>]`. They support a Go template, named file includes, and
+optional agent, model, and reasoning overrides. See
+[Custom Review Types](/advanced/custom-review-types/) for path rules, template
+values, structured output, and examples.
+
 ### Review Panels
 
 Use `[review]` to configure subagent review panels. A panel fans one daemon

@@ -544,6 +544,71 @@ func (a *GrokAgent) ClassifyWithSchema(
 	return parseGrokClassifyJSON(stdoutBuf.Bytes())
 }
 
+func (a *GrokAgent) ReviewWithSchema(
+	ctx context.Context,
+	repoPath, gitRef, prompt string,
+	schema json.RawMessage,
+	out io.Writer,
+) (json.RawMessage, error) {
+	tmpFile, err := os.CreateTemp("", "roborev-grok-review-*.md")
+	if err != nil {
+		return nil, fmt.Errorf("create temp structured review prompt: %w", err)
+	}
+	promptPath := tmpFile.Name()
+	defer os.Remove(promptPath)
+	if _, err := tmpFile.WriteString(prompt); err != nil {
+		tmpFile.Close()
+		return nil, fmt.Errorf("write structured review prompt: %w", err)
+	}
+	if err := tmpFile.Close(); err != nil {
+		return nil, fmt.Errorf("close structured review prompt: %w", err)
+	}
+
+	args := []string{
+		"--no-auto-update",
+		"--output-format", "json",
+		"--json-schema", string(schema),
+	}
+	if model := strings.TrimSpace(a.Model); model != "" {
+		args = append(args, "-m", model)
+	}
+	if effort := a.grokReasoningEffort(); effort != "" {
+		args = append(args, "--reasoning-effort", effort)
+	}
+	if sessionID := sanitizedResumeSessionID(a.SessionID); sessionID != "" {
+		args = append(args, "--resume", sessionID)
+	}
+	if a.Agentic || AllowUnsafeAgents() {
+		args = append(args, "--always-approve")
+	} else {
+		args = appendGrokReviewSafetyArgs(args)
+	}
+	args = append(args, "--prompt-file", promptPath)
+
+	cmd := exec.CommandContext(ctx, a.Command, args...)
+	cmd.Dir = repoPath
+	tracker := configureSubprocess(cmd)
+	var stdoutBuf, stderrBuf bytes.Buffer
+	if out != nil {
+		sw := newSyncWriter(out)
+		cmd.Stdout = io.MultiWriter(&stdoutBuf, sw)
+		cmd.Stderr = io.MultiWriter(&stderrBuf, sw)
+	} else {
+		cmd.Stdout = &stdoutBuf
+		cmd.Stderr = &stderrBuf
+	}
+	if err := cmd.Run(); err != nil {
+		if ctxErr := contextProcessError(ctx, tracker, err, nil); ctxErr != nil {
+			return nil, ctxErr
+		}
+		return nil, fmt.Errorf(
+			"grok structured review failed: %w\nstderr: %s",
+			err, strings.TrimSpace(stderrBuf.String()),
+		)
+	}
+	return parseGrokClassifyJSON(stdoutBuf.Bytes())
+}
+
 // grokJSONResult is the single-object --output-format json payload.
 // Grok emits camelCase structuredOutput / structuredOutputError (see
 // xai-grok-pager headless reducer attach_structured_output).
@@ -598,6 +663,8 @@ func parseGrokClassifyJSON(raw []byte) (json.RawMessage, error) {
 	}
 	return validateGrokClassifyJSON("structuredOutput", so)
 }
+
+var _ StructuredReviewAgent = (*GrokAgent)(nil)
 
 func validateGrokClassifyJSON(label string, raw json.RawMessage) (json.RawMessage, error) {
 	trimmed := bytes.TrimSpace(raw)

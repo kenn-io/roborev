@@ -2511,16 +2511,6 @@ func (s *Server) humaEnqueue(
 	if req.ReviewType == "" {
 		req.ReviewType = config.ReviewTypeDefault
 	}
-	canonical, err := config.ValidateReviewTypes(
-		[]string{req.ReviewType},
-	)
-	if err != nil {
-		return rawJSONOutput(
-			http.StatusBadRequest,
-			ErrorResponse{Error: err.Error()},
-		)
-	}
-	req.ReviewType = canonical[0]
 
 	metadata := git.OpenEnqueueMetadataReader(ctx, req.RepoPath)
 	checkoutRoot, err := metadata.Root()
@@ -2543,6 +2533,24 @@ func (s *Server) humaEnqueue(
 	if filepath.Clean(checkoutRoot) != filepath.Clean(repoRoot) {
 		worktreePath = filepath.Clean(checkoutRoot)
 	}
+	cfg := s.configWatcher.Config()
+	repoCfg, err := config.LoadRepoConfig(checkoutRoot)
+	if err != nil {
+		return rawJSONOutput(
+			http.StatusBadRequest,
+			ErrorResponse{Error: fmt.Sprintf("resolve workflow config: %v", err)},
+		)
+	}
+	canonical, err := config.ValidateReviewTypesFromConfig(
+		[]string{req.ReviewType}, repoCfg, cfg,
+	)
+	if err != nil {
+		return rawJSONOutput(
+			http.StatusBadRequest,
+			ErrorResponse{Error: err.Error()},
+		)
+	}
+	req.ReviewType = canonical[0]
 
 	currentBranch := metadata.CurrentBranch()
 	// A post-commit request's explicit branch names the branch being
@@ -2590,7 +2598,6 @@ func (s *Server) humaEnqueue(
 	}
 
 	workflow := workflowForJob(req.JobType, req.ReviewType)
-	cfg := s.configWatcher.Config()
 	resolutionPath := repoRoot
 	if worktreePath != "" {
 		resolutionPath = worktreePath
@@ -2703,7 +2710,9 @@ func (s *Server) humaEnqueue(
 	if workflow == "fix" {
 		reasoning, err = config.ResolveFixReasoningFromConfig(req.Reasoning, repoCfg, cfg)
 	} else {
-		reasoning, err = config.ResolveReviewReasoningFromConfig(req.Reasoning, repoCfg, cfg)
+		reasoning, err = config.ResolveReviewReasoningForTypeFromConfig(
+			req.Reasoning, repoCfg, cfg, req.ReviewType,
+		)
 	}
 	if err != nil {
 		return rawJSONOutput(http.StatusBadRequest, ErrorResponse{Error: err.Error()})

@@ -27,6 +27,26 @@ type SchemaAgent interface {
 	) (json.RawMessage, error)
 }
 
+// StructuredReviewAgent is an optional Agent capability for reviews whose
+// final result is constrained by a JSON Schema. Unlike SchemaAgent's
+// classification turn, this mode retains the normal read-only repository
+// tools needed to inspect code.
+type StructuredReviewAgent interface {
+	Agent
+
+	ReviewWithSchema(
+		ctx context.Context,
+		repoPath, gitRef, prompt string,
+		schema json.RawMessage,
+		out io.Writer,
+	) (json.RawMessage, error)
+}
+
+func IsStructuredReviewAgent(a Agent) bool {
+	_, ok := a.(StructuredReviewAgent)
+	return ok
+}
+
 // IsSchemaAgent reports whether a is a SchemaAgent.
 func IsSchemaAgent(a Agent) bool {
 	_, ok := a.(SchemaAgent)

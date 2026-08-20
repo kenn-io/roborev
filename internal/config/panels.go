@@ -42,10 +42,11 @@ type PanelSpec struct {
 // named subagent and panel maps. Present on both Config (global) and
 // RepoConfig (per-repo); MergeReviewConfig combines them.
 type ReviewConfig struct {
-	DefaultPanel string                  `toml:"default_panel"`
-	HookPanel    string                  `toml:"hook_review_panel"`
-	Subagents    map[string]SubagentSpec `toml:"subagents"`
-	Panels       map[string]PanelSpec    `toml:"panels"`
+	DefaultPanel string                    `toml:"default_panel"`
+	HookPanel    string                    `toml:"hook_review_panel"`
+	Types        map[string]ReviewTypeSpec `toml:"types"`
+	Subagents    map[string]SubagentSpec   `toml:"subagents"`
+	Panels       map[string]PanelSpec      `toml:"panels"`
 }
 
 // MergeReviewConfig returns the effective review config: the subagent and
@@ -55,8 +56,15 @@ func MergeReviewConfig(repo, global ReviewConfig) ReviewConfig {
 	merged := ReviewConfig{
 		DefaultPanel: resolve("", repo.DefaultPanel, global.DefaultPanel),
 		HookPanel:    resolve("", repo.HookPanel, global.HookPanel),
+		Types:        make(map[string]ReviewTypeSpec, len(global.Types)+len(repo.Types)),
 		Subagents:    make(map[string]SubagentSpec, len(global.Subagents)+len(repo.Subagents)),
 		Panels:       make(map[string]PanelSpec, len(global.Panels)+len(repo.Panels)),
+	}
+	for name, spec := range global.Types {
+		merged.Types[name] = spec.Clone()
+	}
+	for name, spec := range repo.Types {
+		merged.Types[name] = spec.Clone()
 	}
 	maps.Copy(merged.Subagents, global.Subagents)
 	maps.Copy(merged.Subagents, repo.Subagents)
@@ -332,11 +340,15 @@ func resolveMemberFromConfig(
 	repoCfg *RepoConfig,
 	globalCfg *Config,
 ) (ResolvedMember, error) {
-	reviewType, err := canonicalMemberReviewType(spec.ReviewType)
+	reviewType, err := canonicalMemberReviewType(
+		spec.ReviewType, repoCfg, globalCfg,
+	)
 	if err != nil {
 		return ResolvedMember{}, fmt.Errorf("subagent %q: %w", name, err)
 	}
-	reasoning, err := ResolveReviewReasoningFromConfig(spec.Reasoning, repoCfg, globalCfg)
+	reasoning, err := ResolveReviewReasoningForTypeFromConfig(
+		spec.Reasoning, repoCfg, globalCfg, reviewType,
+	)
 	if err != nil {
 		return ResolvedMember{}, fmt.Errorf("subagent %q: %w", name, err)
 	}
@@ -560,11 +572,17 @@ func globalPanelModelForWorkflow(
 
 // canonicalMemberReviewType canonicalizes a subagent's review_type, treating
 // empty as "default".
-func canonicalMemberReviewType(reviewType string) (string, error) {
+func canonicalMemberReviewType(
+	reviewType string,
+	repoCfg *RepoConfig,
+	globalCfg *Config,
+) (string, error) {
 	if reviewType == "" {
 		return ReviewTypeDefault, nil
 	}
-	canonical, err := ValidateReviewTypes([]string{reviewType})
+	canonical, err := ValidateReviewTypesFromConfig(
+		[]string{reviewType}, repoCfg, globalCfg,
+	)
 	if err != nil {
 		return "", err
 	}
