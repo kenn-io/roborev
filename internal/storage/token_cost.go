@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"errors"
 	"fmt"
+	"time"
 )
 
 // TokenCostCandidate is the minimal persisted state needed to recover a late
@@ -13,6 +14,14 @@ type TokenCostCandidate struct {
 	SessionID  string
 	Agent      string
 	TokenUsage string
+}
+
+// TokenUsageLogCandidate is the persisted state needed to recover a missing
+// session from a terminal job's JSONL log.
+type TokenUsageLogCandidate struct {
+	JobID      int64
+	TokenUsage string
+	StartedAt  time.Time
 }
 
 const tokenCostCandidatePredicate = costEligible + `
@@ -105,13 +114,12 @@ func (db *DB) GetTokenCostCandidate(jobID int64) (*TokenCostCandidate, error) {
 // and make them eligible for normal provider reconciliation.
 func (db *DB) ListTokenUsageLogCandidates(
 	afterJobID int64, limit int,
-) ([]TokenCostCandidate, error) {
+) ([]TokenUsageLogCandidate, error) {
 	if limit <= 0 {
 		return nil, nil
 	}
 	rows, err := db.Query(`
-		SELECT j.id, COALESCE(j.session_id, ''), j.agent,
-		       COALESCE(j.token_usage, '')
+		SELECT j.id, COALESCE(j.token_usage, ''), j.started_at
 		FROM review_jobs j
 		WHERE j.id > ?
 		  AND `+tokenUsageLogCandidatePredicate+`
@@ -122,17 +130,18 @@ func (db *DB) ListTokenUsageLogCandidates(
 	}
 	defer rows.Close()
 
-	var candidates []TokenCostCandidate
+	var candidates []TokenUsageLogCandidate
 	for rows.Next() {
-		var candidate TokenCostCandidate
+		var candidate TokenUsageLogCandidate
+		var startedAt string
 		if err := rows.Scan(
 			&candidate.JobID,
-			&candidate.SessionID,
-			&candidate.Agent,
 			&candidate.TokenUsage,
+			&startedAt,
 		); err != nil {
 			return nil, fmt.Errorf("scan token usage log candidate: %w", err)
 		}
+		candidate.StartedAt = parseSQLiteTime(startedAt)
 		candidates = append(candidates, candidate)
 	}
 	if err := rows.Err(); err != nil {

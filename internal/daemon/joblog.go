@@ -243,16 +243,22 @@ func readNormalizedJobOutput(jobID int64, agentName string) ([]OutputLine, error
 func readNormalizedJobOutputForAttempt(
 	jobID int64, agentName string, startedAt *time.Time,
 ) ([]OutputLine, error) {
-	if startedAt != nil {
-		info, err := os.Stat(JobLogPath(jobID))
-		if err != nil {
-			return nil, err
-		}
-		if info.ModTime().Before(*startedAt) {
-			return nil, nil
-		}
+	current, err := jobLogIsCurrentAttempt(jobID, startedAt)
+	if err != nil || !current {
+		return nil, err
 	}
 	return readNormalizedJobOutput(jobID, agentName)
+}
+
+func jobLogIsCurrentAttempt(jobID int64, startedAt *time.Time) (bool, error) {
+	if startedAt == nil {
+		return true, nil
+	}
+	info, err := os.Stat(JobLogPath(jobID))
+	if err != nil {
+		return false, err
+	}
+	return !info.ModTime().Before(*startedAt), nil
 }
 
 // JobLogExists reports whether a log file exists for the given job.

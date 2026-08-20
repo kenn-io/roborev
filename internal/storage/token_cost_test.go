@@ -150,6 +150,7 @@ func TestListTokenUsageLogCandidatesSelectsMissingSession(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, jobs[0].ID, got[0].JobID)
+	assert.False(t, got[0].StartedAt.IsZero())
 }
 
 func TestBackfillJobTokenUsageIfCurrentRejectsNewSessionReuse(t *testing.T) {

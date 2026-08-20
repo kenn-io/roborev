@@ -125,6 +125,36 @@ func TestTokenCostReconcilerRecoversSessionFromJobLogAtStartup(t *testing.T) {
 	}, time.Second, 5*time.Millisecond)
 }
 
+func TestTokenCostReconcilerRejectsJobLogFromPriorAttempt(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	tc := newWorkerTestContext(t, 1)
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
+	require.NoError(t, tc.DB.CompleteJob(
+		job.ID, "codex", "prompt", "Setup failed before agent invocation.",
+	))
+
+	completed, err := tc.DB.GetJobByID(job.ID)
+	require.NoError(t, err)
+	require.NotNil(t, completed.StartedAt)
+	logPath := JobLogPath(job.ID)
+	require.NoError(t, os.MkdirAll(filepath.Dir(logPath), 0o700))
+	require.NoError(t, os.WriteFile(logPath, []byte(
+		`{"type":"thread.started","thread_id":"prior-session"}`+"\n"+
+			`{"type":"turn.completed","usage":{"input_tokens":512,`+
+			`"output_tokens":32}}`+"\n",
+	), 0o600))
+	priorAttempt := completed.StartedAt.Add(-time.Minute)
+	require.NoError(t, os.Chtimes(logPath, priorAttempt, priorAttempt))
+
+	tc.Pool.recoverTokenUsageLogs(context.Background())
+
+	recovered, err := tc.DB.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Empty(t, recovered.SessionID)
+	assert.Empty(t, recovered.TokenUsage)
+}
+
 func TestTokenCostReconcilerAdvancesPastUnavailableCandidate(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	first := seedTokenCostCandidate(

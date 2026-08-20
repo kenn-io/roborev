@@ -4,6 +4,7 @@ import (
 	"context"
 	"errors"
 	"log"
+	"os"
 	"slices"
 	"time"
 
@@ -93,7 +94,15 @@ func (wp *WorkerPool) recoverTokenUsageLogs(ctx context.Context) {
 	}
 }
 
-func (wp *WorkerPool) recoverTokenUsageLog(candidate storage.TokenCostCandidate) {
+func (wp *WorkerPool) recoverTokenUsageLog(candidate storage.TokenUsageLogCandidate) {
+	current, err := jobLogIsCurrentAttempt(candidate.JobID, &candidate.StartedAt)
+	if errors.Is(err, os.ErrNotExist) || !current {
+		return
+	}
+	if err != nil {
+		log.Printf("token cost reconciliation: job %d log: %v", candidate.JobID, err)
+		return
+	}
 	existing := tokens.ParseJSON(candidate.TokenUsage)
 	logUsage, err := tokens.ParseCodexUsageFile(JobLogPath(candidate.JobID))
 	if err != nil {
