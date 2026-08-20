@@ -1665,9 +1665,23 @@ func (wp *WorkerPool) captureTokenUsageForSession(
 	if sessionID == "" {
 		return
 	}
-	_, _, err := backfill.StoreMergedTokenUsage(
-		wp.db, job.ID, sessionID, job.TokenUsage, usage, hasProviderUsage,
-	)
+	current, err := wp.db.GetJobByID(job.ID)
+	if err != nil {
+		log.Printf("[%s] Warning: reload job %d before saving token usage: %v",
+			workerID, job.ID, err)
+		return
+	}
+	if current.Status == storage.JobStatusRunning {
+		// Synthesis captures usage before committing its terminal transition.
+		// The persisted session scopes this write to the current attempt.
+		err = wp.db.SaveJobTokenUsage(job.ID, sessionID, tokens.ToJSON(usage))
+	} else {
+		// Ordinary jobs capture after completion. Use the atomic merge path so
+		// a concurrent late-price lookup cannot replace newer token counts.
+		_, _, err = backfill.StoreMergedTokenUsage(
+			wp.db, job.ID, sessionID, current.TokenUsage, usage, hasProviderUsage,
+		)
+	}
 	if err != nil {
 		log.Printf("[%s] Warning: save token usage for job %d: %v",
 			workerID, job.ID, err)
