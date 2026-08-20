@@ -968,9 +968,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		cfg,
 	)
 	if job.SessionID != "" {
-		if !agent.IsValidResumeSessionID(job.SessionID) {
-			log.Printf("[%s] Ignoring invalid session_id for job %d", workerID, job.ID)
-		} else if sa, ok := a.(agent.SessionAgent); ok {
+		if sa, ok := a.(agent.SessionAgent); ok {
 			a = sa.WithSessionID(job.SessionID)
 		}
 	}

@@ -275,7 +275,7 @@ func (a *PiAgent) Review(
 		return "", fmt.Errorf("close temp prompt file: %w", err)
 	}
 
-	sessionPath := resolvePiSessionPath(sanitizedResumeSessionID(a.SessionID))
+	sessionPath := resolvePiSessionPath(a.SessionID)
 	args := a.buildArgs(sessionPath)
 
 	// Add the prompt file as an input argument (prefixed with @)

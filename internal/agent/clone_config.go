@@ -50,6 +50,6 @@ func withClonedModel(model string) agentCloneOption {
 
 func withClonedSessionID(sessionID string) agentCloneOption {
 	return func(cfg *agentCloneConfig) {
-		cfg.SessionID = sanitizedResumeSessionID(sessionID)
+		cfg.SessionID = sessionID
 	}
 }

@@ -109,10 +109,10 @@ func TestClaudeBuildArgs(t *testing.T) {
 		assertContainsArg(t, args, "session-123")
 	})
 
-	t.Run("RejectInvalidResumeSession", func(t *testing.T) {
+	t.Run("ResumeOpaqueSession", func(t *testing.T) {
 		args := a.WithSessionID("-bad-session").(*ClaudeAgent).buildArgs(false, false)
-		assertNotContainsArg(t, args, "--resume")
-		assertNotContainsArg(t, args, "-bad-session")
+		assertContainsArg(t, args, "--resume")
+		assertContainsArg(t, args, "-bad-session")
 	})
 }
 

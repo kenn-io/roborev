@@ -13,7 +13,7 @@ import (
 type fixSessionTracker struct {
 	enabled bool        // --resume passed
 	base    agent.Agent // resolved once (already WithAgentic/WithReasoning/WithModel)
-	last    string      // most recent valid captured session ID
+	last    string      // most recent non-empty captured session ID
 	warned  bool        // emit "agent X doesn't support resume" only once
 	quiet   bool        // suppress warnings under --quiet
 	out     io.Writer   // where to write the unsupported-agent warning
@@ -52,14 +52,9 @@ func (t *fixSessionTracker) NextAgent() (agent.Agent, bool) {
 	return sa.WithSessionID(t.last), true
 }
 
-// Capture stores id only if it is non-empty AND passes the resume ID
-// validator. Empty/invalid IDs are silently dropped so the
-// "Resuming session ..." log can never lie.
+// Capture stores a non-empty provider session ID.
 func (t *fixSessionTracker) Capture(id string) {
 	if id == "" {
-		return
-	}
-	if !agent.IsValidResumeSessionID(id) {
 		return
 	}
 	t.last = id

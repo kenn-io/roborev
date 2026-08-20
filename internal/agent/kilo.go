@@ -96,10 +96,9 @@ func (a *KiloAgent) kiloVariant() string {
 }
 
 func (a *KiloAgent) buildArgs() []string {
-	sessionID := sanitizedResumeSessionID(a.SessionID)
 	args := []string{"run", "--format", "json"}
-	if sessionID != "" {
-		args = append(args, "--session", sessionID)
+	if a.SessionID != "" {
+		args = append(args, "--session", a.SessionID)
 	}
 	if a.Model != "" {
 		args = append(args, "--model", a.Model)

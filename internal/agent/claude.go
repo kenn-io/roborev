@@ -208,7 +208,6 @@ func isLoopbackHost(host string) bool {
 }
 
 func (a *ClaudeAgent) buildArgs(agenticMode, includeEffort bool) []string {
-	sessionID := sanitizedResumeSessionID(a.SessionID)
 	// Always use stdin piping + stream-json for non-interactive execution
 	// (following claude-code-action pattern from Anthropic)
 	args := []string{"-p", "--verbose", "--output-format", "stream-json"}
@@ -223,8 +222,8 @@ func (a *ClaudeAgent) buildArgs(agenticMode, includeEffort bool) []string {
 	if model != "" {
 		args = append(args, "--model", model)
 	}
-	if sessionID != "" {
-		args = append(args, "--resume", sessionID)
+	if a.SessionID != "" {
+		args = append(args, "--resume", a.SessionID)
 	}
 
 	if includeEffort {

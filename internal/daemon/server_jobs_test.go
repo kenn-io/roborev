@@ -1197,7 +1197,7 @@ func TestFindReusableSessionIDLookbackIgnoresUnusableRefs(t *testing.T) {
 	}
 }
 
-func TestFindReusableSessionIDSkipsInvalidStoredSessionID(t *testing.T) {
+func TestFindReusableSessionIDAcceptsOpaqueStoredSessionID(t *testing.T) {
 	server, db, tmpDir := newTestServer(t)
 
 	repoDir := filepath.Join(tmpDir, "testrepo")
@@ -1259,7 +1259,7 @@ func TestFindReusableSessionIDSkipsInvalidStoredSessionID(t *testing.T) {
 		}, "failed to seed valid session_id: %v", err)
 	}
 
-	invalidJob, err := db.EnqueueJob(storage.EnqueueOpts{
+	opaqueJob, err := db.EnqueueJob(storage.EnqueueOpts{
 		RepoID:     repo.ID,
 		CommitID:   commit.ID,
 		GitRef:     targetSHA,
@@ -1272,26 +1272,26 @@ func TestFindReusableSessionIDSkipsInvalidStoredSessionID(t *testing.T) {
 			return false
 		}, "EnqueueJob failed: %v", err)
 	}
-	if _, err := db.ClaimJob("worker-invalid"); err != nil {
+	if _, err := db.ClaimJob("worker-opaque"); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "ClaimJob failed: %v", err)
 	}
-	if err := db.CompleteJob(invalidJob.ID, "test", "prompt", "No issues found."); err != nil {
+	if err := db.CompleteJob(opaqueJob.ID, "test", "prompt", "No issues found."); err != nil {
 		require.Condition(t, func() bool {
 			return false
 		}, "CompleteJob failed: %v", err)
 	}
-	if _, err := db.Exec(`UPDATE review_jobs SET session_id = ?, finished_at = datetime('now') WHERE id = ?`, "-bad-session", invalidJob.ID); err != nil {
+	if _, err := db.Exec(`UPDATE review_jobs SET session_id = ?, finished_at = datetime('now') WHERE id = ?`, "-opaque-session", opaqueJob.ID); err != nil {
 		require.Condition(t, func() bool {
 			return false
-		}, "failed to seed invalid session_id: %v", err)
+		}, "failed to seed opaque session_id: %v", err)
 	}
 
-	if got := server.findReusableSessionID(t.Context(), repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, "", targetSHA); got != "session-valid" {
+	if got := server.findReusableSessionID(t.Context(), repoRoot, repo.ID, "feature/session", "test", config.ReviewTypeDefault, "", targetSHA); got != "-opaque-session" {
 		require.Condition(t, func() bool {
 			return false
-		}, "findReusableSessionID() with invalid stored session_id = %q, want %q", got, "session-valid")
+		}, "findReusableSessionID() with opaque stored session_id = %q, want %q", got, "-opaque-session")
 	}
 }
 

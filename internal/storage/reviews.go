@@ -7,8 +7,6 @@ import (
 	"sort"
 	"strings"
 	"time"
-
-	"go.kenn.io/roborev/internal/agent"
 )
 
 // GetReviewByJobID finds a review by its job ID
@@ -289,16 +287,16 @@ func (db *DB) FindCompatibleReusableSessionCandidates(q ReusableSessionQuery) ([
 	var jobs []ReviewJob
 	for rows.Next() {
 		var job ReviewJob
-		var sessionID sql.NullString
+		var sessionID string
 		var commitSHA string
 		if err := rows.Scan(&job.ID, &job.UUID, &job.GitRef, &sessionID, &commitSHA); err != nil {
 			return nil, err
 		}
 		target := reusableSessionCandidateTarget(job.GitRef, commitSHA)
-		if !sessionID.Valid || !agent.IsValidResumeSessionID(sessionID.String) || target == "" {
+		if target == "" {
 			continue
 		}
-		job.SessionID = sessionID.String
+		job.SessionID = sessionID
 		job.ReusableSessionTarget = target
 		jobs = append(jobs, job)
 	}
@@ -317,16 +315,16 @@ func (db *DB) scanReusableSessionCandidates(query string, args []any, remaining 
 	for rows.Next() {
 		scanned++
 		var job ReviewJob
-		var sessionID sql.NullString
+		var sessionID string
 		var commitSHA string
 		if err := rows.Scan(&job.ID, &job.GitRef, &sessionID, &commitSHA); err != nil {
 			return nil, 0, err
 		}
 		target := reusableSessionCandidateTarget(job.GitRef, commitSHA)
-		if !sessionID.Valid || !agent.IsValidResumeSessionID(sessionID.String) || target == "" {
+		if target == "" {
 			continue
 		}
-		job.SessionID = sessionID.String
+		job.SessionID = sessionID
 		job.ReusableSessionTarget = target
 		jobs = append(jobs, job)
 		if remaining > 0 && len(jobs) >= remaining {

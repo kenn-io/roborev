@@ -329,8 +329,8 @@ func (a *GrokAgent) buildArgs(agenticMode bool, promptFile string) []string {
 	if effort := a.grokReasoningEffort(); effort != "" {
 		args = append(args, "--reasoning-effort", effort)
 	}
-	if sessionID := sanitizedResumeSessionID(a.SessionID); sessionID != "" {
-		args = append(args, "--resume", sessionID)
+	if a.SessionID != "" {
+		args = append(args, "--resume", a.SessionID)
 	}
 
 	if agenticMode {

@@ -160,15 +160,15 @@ func TestCodexBuildArgsConfigOverridesPrecedeSafetyFlags(t *testing.T) {
 	assert.Less(t, userIdx, safetyIdx, "roborev safety -c flag must follow user override so roborev wins on conflict")
 }
 
-func TestCodexBuildArgsRejectsInvalidSessionResume(t *testing.T) {
+func TestCodexBuildArgsWithOpaqueSessionResume(t *testing.T) {
 	a := NewCodexAgent("codex").WithSessionID("-bad-session").(*CodexAgent)
 
 	args := a.buildArgs("/repo", false, true, false)
 
 	require.GreaterOrEqual(t, len(args), 2)
 	assert.Equal(t, "exec", args[0])
-	assert.NotEqual(t, "resume", args[1], "expected resume subcommand to be omitted for invalid session id, got %v", args)
-	assertNotContainsArg(t, args, "-bad-session")
+	assert.Equal(t, "resume", args[1])
+	assertContainsArg(t, args, "-bad-session")
 }
 
 func TestCodexCommandLineOmitsRuntimeOnlyArgs(t *testing.T) {

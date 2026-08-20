@@ -65,17 +65,21 @@ func TestFixSessionTracker_AfterCaptureReturnsResumedAgent(t *testing.T) {
 	assert.Equal(t, "test-session-1", resumed.SessionID)
 }
 
-func TestFixSessionTracker_InvalidIDsDropped(t *testing.T) {
+func TestFixSessionTracker_EmptyIDDroppedAndOpaqueIDCaptured(t *testing.T) {
 	base := agent.NewTestAgent()
 	tr := &fixSessionTracker{enabled: true, base: base, out: io.Discard}
 
 	tr.Capture("")
-	tr.Capture("contains spaces")
-	tr.Capture(strings.Repeat("x", 200)) // exceeds 128-char limit
-
 	a, resuming := tr.NextAgent()
 	assert.Same(t, agent.Agent(base), a)
 	assert.False(t, resuming)
+
+	tr.Capture("contains spaces")
+	a, resuming = tr.NextAgent()
+	require.True(t, resuming)
+	resumed, ok := a.(*agent.TestAgent)
+	require.True(t, ok)
+	assert.Equal(t, "contains spaces", resumed.SessionID)
 }
 
 func TestFixSessionTracker_ResetClearsLast(t *testing.T) {
