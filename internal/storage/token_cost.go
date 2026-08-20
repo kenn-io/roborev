@@ -24,6 +24,8 @@ const uniqueStartedSessionPredicate = `NOT EXISTS (
 		FROM review_jobs other
 		WHERE other.id != j.id
 		  AND other.started_at IS NOT NULL
+		  AND other.session_id IS NOT NULL
+		  AND other.session_id != ''
 		  AND other.session_id = j.session_id
 	)`
 
