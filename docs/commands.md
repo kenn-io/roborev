@@ -857,9 +857,9 @@ roborev uninstall-hook           # Remove hook
 
 `roborev daemon start`, `roborev daemon restart`, and `roborev daemon status`
 print the canonical browser URL. If the running daemon has no browser listener,
-they explain why when the daemon published a reason — `Web UI: disabled (this
-build has no embedded web assets; reinstall from an official release)` or
-`Web UI: disabled ([web] enabled = false)` — and print `Web UI: unavailable`
+they explain why when the daemon published a reason —
+`Web UI: disabled (this build has no embedded web assets; reinstall from an official release)`
+or `Web UI: disabled ([web] enabled = false)` — and print `Web UI: unavailable`
 otherwise, instead of silently omitting the application. The older
 `roborev status` command remains an alias with identical output.
 
