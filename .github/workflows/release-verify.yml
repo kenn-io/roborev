@@ -83,7 +83,8 @@ jobs:
           # can also delete assets from the release.
           while read -r _ name; do
             if [ ! -e "$name" ]; then
-              echo "FAIL $name: listed in SHA256SUMS but missing from the release"
+              echo "FAIL $name: listed in SHA256SUMS but not in the downloaded set" \
+                "(deleted from the release, or not matched by the download patterns above)"
               failed=1
             fi
           done < SHA256SUMS
