@@ -33,7 +33,10 @@ func (s *Server) startBrowserServer(web config.WebConfig) (*BrowserRuntimeInfo, 
 		return nil, err
 	}
 	if !endpoint.Enabled {
-		return &BrowserRuntimeInfo{DisabledReason: WebDisabledReasonConfig}, nil
+		// Unreachable: ResolveBrowserEndpoint only disables the endpoint for
+		// !web.Enabled, which is handled above. Fail loudly rather than
+		// publish a made-up disabled reason if that ever changes.
+		return nil, fmt.Errorf("browser endpoint disabled for an unknown reason")
 	}
 	fail := func(err error) (*BrowserRuntimeInfo, error) {
 		_ = endpoint.Listener.Close()

@@ -44,11 +44,22 @@ jobs:
           INPUT_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
-          TAG="${INPUT_TAG:-${EVENT_TAG:-}}"
-          case "$TAG" in
+          if [ -n "${INPUT_TAG:-}" ]; then
+            case "$INPUT_TAG" in
+              v[0-9]*) ;;
+              *)
+                echo "::error::tag input '$INPUT_TAG' does not look like a release tag (expected vMAJOR.MINOR.PATCH)"
+                exit 1
+                ;;
+            esac
+          fi
+          # head_branch is only a tag for tag-push runs; ignore other shapes.
+          EVENT="${EVENT_TAG:-}"
+          case "$EVENT" in
             v[0-9]*) ;;
-            *) TAG="" ;;
+            *) EVENT="" ;;
           esac
+          TAG="${INPUT_TAG:-$EVENT}"
           if [ -z "$TAG" ]; then
             TAG="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
           fi
@@ -111,7 +122,7 @@ jobs:
               *.deb) dpkg-deb -x "$asset" "$dir" ;;
               *.rpm) (cd "$dir" && rpm2cpio "../$asset" | cpio -idm --quiet) ;;
             esac
-            binary="$(find "$dir" -type f \( -name roborev -o -name roborev.exe \) | head -n 1)"
+            binary="$(find "$dir" -type f \( -name roborev -o -name roborev.exe \) -print -quit)"
             if [ ! -f "$binary" ]; then
               echo "FAIL $asset: no roborev binary in archive"
               failed=1

@@ -34,6 +34,11 @@ roborev version --json           # Show stable machine-readable version data
 
 ### Version JSON contract
 
+When the binary was built without the production web assets, the human-readable
+`roborev version` output appends
+`(web assets missing; this build cannot serve the browser UI)` to the version
+line.
+
 `roborev version --json` prints one JSON object and exits successfully without
 requiring a repository or a running daemon:
 
