@@ -3,6 +3,7 @@
 package review
 
 import (
+	"slices"
 	"strings"
 	"unicode/utf8"
 )
@@ -42,14 +43,15 @@ const noReviewOutputPlaceholder = "No review output generated"
 // they carry diagnostic text, and neither does the placeholder returned by
 // adapters when an agent completes without output.
 func HasSubstantiveOutput(results []ReviewResult) bool {
-	for _, result := range results {
-		output := strings.TrimSpace(result.Output)
-		if result.Status == ResultDone &&
-			output != "" && output != noReviewOutputPlaceholder {
-			return true
-		}
-	}
-	return false
+	return slices.ContainsFunc(results, IsSubstantiveOutput)
+}
+
+// IsSubstantiveOutput reports whether one completed review produced
+// agent-authored output.
+func IsSubstantiveOutput(result ReviewResult) bool {
+	output := strings.TrimSpace(result.Output)
+	return result.Status == ResultDone &&
+		output != "" && output != noReviewOutputPlaceholder
 }
 
 // MaxCommentLen is the maximum length for a GitHub PR comment.

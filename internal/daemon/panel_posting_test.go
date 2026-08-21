@@ -1161,7 +1161,7 @@ func TestPostPanelRunAllSkipPersistsNoReviewOutcome(t *testing.T) {
 	h.Poller.handleReviewFailed(ciEvent(synth.ID, "review.failed"))
 
 	require.Len(t, *comments, 1, "all-skip still posts the all-skipped summary")
-	assert.Contains((*comments)[0].Body, "## roborev: Combined Review", "all-skipped summary header")
+	assert.Contains((*comments)[0].Body, "## roborev: Review Skipped", "all-skipped summary header")
 	assert.NotEmpty(*statuses, "commit status set on all-skip")
 	assert.True(h.panelPostedAt(t, panel.ID), "all-skip finalizes the panel (posted_at set)")
 
@@ -1169,6 +1169,30 @@ func TestPostPanelRunAllSkipPersistsNoReviewOutcome(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, got.Outcome)
 	assert.Equal(storage.PanelOutcomeNoReviewPosted, *got.Outcome, "all-skip persists the no-review outcome")
+}
+
+func TestPostPanelRunPlaceholderOnlyUsesSkippedSummary(t *testing.T) {
+	assert := assert.New(t)
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	comments := h.CaptureComments()
+
+	const placeholder = "No review output generated"
+	panel, synth, _ := h.seedCIPanelRun(t, "acme/api", 88, "placeholder1234", "base..placeholder1234",
+		[]jobSpec{{Agent: "test", ReviewType: "review", Status: "done", Output: placeholder}})
+	h.completeSynthesisWithReview(t, synth.ID, placeholder)
+
+	h.Poller.handleReviewCompleted(ciEvent(synth.ID, "review.completed"))
+
+	require.Len(t, *comments, 1, "placeholder-only panel posts one operational summary")
+	assert.Contains((*comments)[0].Body, "## roborev: Review Skipped")
+	assert.NotContains((*comments)[0].Body, "## roborev: Combined Review")
+	assert.NotContains((*comments)[0].Body, placeholder)
+	assert.True(h.panelPostedAt(t, panel.ID), "placeholder-only panel is finalized")
+
+	got, err := h.DB.GetCIPanelByPRSHA("acme/api", 88, "placeholder1234")
+	require.NoError(t, err)
+	require.NotNil(t, got.Outcome)
+	assert.Equal(storage.PanelOutcomeNoReviewPosted, *got.Outcome)
 }
 
 // TestFinalizePanelRunBackfillsMissingAttemptRow covers upgrade-boundary panel

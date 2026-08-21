@@ -203,18 +203,30 @@ func FormatAllFailedComment(
 	quotaSkips := CountQuotaFailures(reviews)
 	timeoutSkips := CountTimeoutCancellations(reviews)
 	transientSkips := CountTransientFailures(reviews)
+	emptyOutputSkips := 0
+	for _, r := range reviews {
+		if r.Status == ResultDone && !IsSubstantiveOutput(r) {
+			emptyOutputSkips++
+		}
+	}
 	allSkipped := len(reviews) > 0 &&
-		quotaSkips+timeoutSkips+transientSkips == len(reviews)
+		quotaSkips+timeoutSkips+transientSkips+emptyOutputSkips == len(reviews)
 
 	var b strings.Builder
 	if allSkipped {
 		fmt.Fprintf(&b,
 			"## roborev: Review Skipped (`%s`)\n\n",
 			gitrepo.ShortSHA(headSHA))
-		b.WriteString(
-			"All review agents were skipped " +
-				"due to quota exhaustion, timeout, or provider " +
-				"unavailability.\n\n")
+		if emptyOutputSkips == 0 {
+			b.WriteString(
+				"All review agents were skipped " +
+					"due to quota exhaustion, timeout, or provider " +
+					"unavailability.\n\n")
+		} else {
+			b.WriteString(
+				"No review output was produced; every review was skipped " +
+					"or completed without output.\n\n")
+		}
 	} else {
 		fmt.Fprintf(&b,
 			"## roborev: Review Failed (`%s`)\n\n",
@@ -235,6 +247,10 @@ func FormatAllFailedComment(
 		} else if IsTransientFailure(r) {
 			fmt.Fprintf(&b,
 				"- Review %d: skipped (provider unavailable)\n",
+				i+1)
+		} else if r.Status == ResultDone && !IsSubstantiveOutput(r) {
+			fmt.Fprintf(&b,
+				"- Review %d: skipped (no output)\n",
 				i+1)
 		} else {
 			fmt.Fprintf(&b,

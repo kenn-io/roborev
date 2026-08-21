@@ -2257,8 +2257,12 @@ func (p *CIPoller) recordDeferral(
 // fallback, which already carries the header and renders row.HeadSHA. SHAs
 // always come from row.HeadSHA.
 func (p *CIPoller) panelCommentBody(row *storage.CIPanel, members []storage.BatchReviewResult) string {
+	results := toReviewResults(members)
+	if !reviewpkg.HasSubstantiveOutput(results) {
+		return reviewpkg.FormatAllFailedComment(results, row.HeadSHA)
+	}
 	raw := func() string {
-		return reviewpkg.FormatRawBatchComment(toReviewResults(members), row.HeadSHA)
+		return reviewpkg.FormatRawBatchComment(results, row.HeadSHA)
 	}
 	synth, err := p.db.GetSynthesisJob(row.PanelRunUUID)
 	if err != nil || synth == nil || synth.Status != storage.JobStatusDone {

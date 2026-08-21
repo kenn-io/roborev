@@ -140,11 +140,11 @@ func headOf(gitRef string) string {
 	return gitRef
 }
 
-// filterSucceeded keeps member results that completed with non-empty output.
+// filterSucceeded keeps member results that completed with substantive output.
 func filterSucceeded(results []reviewpkg.ReviewResult) []reviewpkg.ReviewResult {
 	out := make([]reviewpkg.ReviewResult, 0, len(results))
 	for _, r := range results {
-		if r.Status == reviewpkg.ResultDone && strings.TrimSpace(r.Output) != "" {
+		if reviewpkg.IsSubstantiveOutput(r) {
 			out = append(out, r)
 		}
 	}

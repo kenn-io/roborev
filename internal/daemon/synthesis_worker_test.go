@@ -107,6 +107,15 @@ func TestAllMembersPassedIgnoresAllowedFailure(t *testing.T) {
 	assert.True(t, allMembersPassed(results, succeeded))
 }
 
+func TestFilterSucceededRejectsEmptyOutputPlaceholder(t *testing.T) {
+	results := []reviewpkg.ReviewResult{
+		{Status: reviewpkg.ResultDone, Output: "No review output generated"},
+		{Status: reviewpkg.ResultDone, Output: "Finding A"},
+	}
+
+	assert.Equal(t, results[1:], filterSucceeded(results))
+}
+
 // jobAgentInvoked reads the raw agent_invoked cost-eligibility marker for a job.
 func jobAgentInvoked(t *testing.T, tc *workerTestContext, jobID int64) bool {
 	t.Helper()
