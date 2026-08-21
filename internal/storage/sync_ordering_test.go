@@ -175,6 +175,44 @@ func TestUpsertPulledReviewAppliesNewerGenerationWithinSameSecond(t *testing.T) 
 	assert.Equal(t, newer, review.CreatedAt)
 }
 
+func TestUpsertPulledReviewAppliesSameGenerationAfterPostgresRounding(t *testing.T) {
+	h := newSyncTestHelper(t)
+	job := h.createCompletedJob("rounded-review-generation-sha")
+	review, err := h.db.GetReviewByJobID(job.ID)
+	require.NoError(t, err)
+
+	localCreated := time.Date(
+		2026, 8, 21, 12, 0, 0, 123_456_789, time.UTC,
+	)
+	_, err = h.db.Exec(`
+		UPDATE reviews SET created_at = ?, updated_at = ?, closed = 0 WHERE id = ?`,
+		localCreated.Format(time.RFC3339Nano),
+		localCreated.Format(time.RFC3339Nano),
+		review.ID,
+	)
+	require.NoError(t, err)
+
+	postgresCreated := localCreated.Truncate(time.Microsecond)
+	postgresUpdated := postgresCreated.Add(time.Second)
+	err = h.db.UpsertPulledReview(PulledReview{
+		UUID:               review.UUID,
+		JobUUID:            job.UUID,
+		Agent:              review.Agent,
+		Prompt:             review.Prompt,
+		Output:             review.Output,
+		Closed:             true,
+		UpdatedByMachineID: GenerateUUID(),
+		CreatedAt:          postgresCreated,
+		UpdatedAt:          postgresUpdated,
+	})
+	require.NoError(t, err)
+
+	review, err = h.db.GetReviewByJobID(job.ID)
+	require.NoError(t, err)
+	assert.True(t, review.Closed)
+	assert.Equal(t, postgresCreated, review.CreatedAt)
+}
+
 // TestClearAllSyncedAt verifies that ClearAllSyncedAt clears synced_at
 // on all tables (jobs, reviews, responses).
 func TestClearAllSyncedAt(t *testing.T) {

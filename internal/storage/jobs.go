@@ -1366,11 +1366,11 @@ func (db *DB) ReenqueueJobWithRequest(
 // advance by one microsecond rather than one nanosecond to preserve strict
 // ordering after a sync round trip.
 func nextGenerationTimestamp(now time.Time, persisted ...string) time.Time {
-	next := now.UTC()
+	next := canonicalSyncTimestamp(now)
 	for _, raw := range persisted {
 		prior := parseSQLiteTime(raw)
 		if !prior.IsZero() && !next.After(prior) {
-			next = prior.UTC().Add(time.Microsecond)
+			next = canonicalSyncTimestamp(prior).Add(time.Microsecond)
 		}
 	}
 	return next

@@ -835,7 +835,7 @@ func (db *DB) MarkCommentsSynced(responseIDs []int64) error {
 // owned active attempt wins over pulled terminal state until its worker has
 // completed or fully released a cancellation.
 func (db *DB) UpsertPulledJob(j PulledJob, repoID int64, commitID *int64) error {
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := formatSyncTimestamp(time.Now())
 	dirtyFilesJSON, err := encodeDirtyFiles(j.DirtyFiles)
 	if err != nil {
 		return err
@@ -878,14 +878,20 @@ func (db *DB) UpsertPulledJob(j PulledJob, repoID int64, commitID *int64) error 
 			return commitNoop()
 		}
 
-		existingGeneration := parseSQLiteTime(existingEnqueuedAt)
-		if j.EnqueuedAt.Before(existingGeneration) {
+		existingGeneration := canonicalSyncTimestamp(
+			parseSQLiteTime(existingEnqueuedAt),
+		)
+		incomingGeneration := canonicalSyncTimestamp(j.EnqueuedAt)
+		if incomingGeneration.Before(existingGeneration) {
 			return commitNoop()
 		}
-		if j.EnqueuedAt.Equal(existingGeneration) {
+		if incomingGeneration.Equal(existingGeneration) {
 			preserveFinalization = true
-			existingUpdate := parseSQLiteTime(existingUpdatedAt)
-			if !existingUpdate.IsZero() && j.UpdatedAt.Before(existingUpdate) {
+			existingUpdate := canonicalSyncTimestamp(
+				parseSQLiteTime(existingUpdatedAt),
+			)
+			incomingUpdate := canonicalSyncTimestamp(j.UpdatedAt)
+			if !existingUpdate.IsZero() && incomingUpdate.Before(existingUpdate) {
 				return commitNoop()
 			}
 		}
@@ -941,12 +947,12 @@ func (db *DB) UpsertPulledJob(j PulledJob, repoID int64, commitID *int64) error 
 			updated_at = excluded.updated_at,
 			synced_at = ?
 	`, j.UUID, repoID, commitID, j.GitRef, nullStr(j.SessionID), j.Agent, nullStr(j.Model), nullStr(j.Provider), nullStr(j.RequestedModel), nullStr(j.RequestedProvider), j.Reasoning, j.JobType,
-		j.ReviewType, nullStr(j.PatchID), j.Status, j.Agentic, j.AgentInvoked, j.EnqueuedAt.UTC().Format(time.RFC3339Nano),
+		j.ReviewType, nullStr(j.PatchID), j.Status, j.Agentic, j.AgentInvoked, formatSyncTimestamp(j.EnqueuedAt),
 		nullTimeStr(j.StartedAt), nullTimeStr(j.FinishedAt),
 		nullStr(j.Prompt), j.DiffContent, nullStr(dirtyFilesJSON), nullStr(j.Error), nullStr(j.TokenUsage),
 		nullStr(j.WorktreePath), nullStr(j.Source), normalizeMinSeverityForWrite(j.MinSeverity), j.BackupAgent, j.BackupModel,
 		nullStr(j.PanelRunUUID), nullStr(j.PanelRole), nullStr(j.PanelName), nullStr(j.PanelMemberName), j.PanelMemberIndex, nullStr(j.PanelMemberConfigJSON),
-		j.SourceMachineID, j.UpdatedAt.UTC().Format(time.RFC3339Nano), now,
+		j.SourceMachineID, formatSyncTimestamp(j.UpdatedAt), now,
 		preserveFinalization, now)
 	if err != nil {
 		return err
@@ -991,13 +997,19 @@ func (db *DB) UpsertPulledReview(r PulledReview) error {
 		FROM reviews WHERE uuid = ?`, r.UUID,
 	).Scan(&existingCreatedAt, &existingUpdatedAt)
 	if err == nil {
-		existingGeneration := parseSQLiteTime(existingCreatedAt)
-		if r.CreatedAt.Before(existingGeneration) {
+		existingGeneration := canonicalSyncTimestamp(
+			parseSQLiteTime(existingCreatedAt),
+		)
+		incomingGeneration := canonicalSyncTimestamp(r.CreatedAt)
+		if incomingGeneration.Before(existingGeneration) {
 			return commitNoop()
 		}
-		if r.CreatedAt.Equal(existingGeneration) {
-			existingUpdate := parseSQLiteTime(existingUpdatedAt)
-			if !existingUpdate.IsZero() && !r.UpdatedAt.After(existingUpdate) {
+		if incomingGeneration.Equal(existingGeneration) {
+			existingUpdate := canonicalSyncTimestamp(
+				parseSQLiteTime(existingUpdatedAt),
+			)
+			incomingUpdate := canonicalSyncTimestamp(r.UpdatedAt)
+			if !existingUpdate.IsZero() && !incomingUpdate.After(existingUpdate) {
 				return commitNoop()
 			}
 		}
@@ -1005,7 +1017,7 @@ func (db *DB) UpsertPulledReview(r PulledReview) error {
 		return fmt.Errorf("query existing pulled review: %w", err)
 	}
 
-	now := time.Now().UTC().Format(time.RFC3339Nano)
+	now := formatSyncTimestamp(time.Now())
 	var verdictBool any
 	if r.Output != "" {
 		verdictBool = verdictToBool(ParseVerdict(r.Output))
@@ -1028,8 +1040,8 @@ func (db *DB) UpsertPulledReview(r PulledReview) error {
 	`, r.UUID, jobID, r.Agent, r.Prompt, r.Output, r.Closed,
 		verdictBool,
 		r.UpdatedByMachineID,
-		r.CreatedAt.UTC().Format(time.RFC3339Nano),
-		r.UpdatedAt.UTC().Format(time.RFC3339Nano), now, now)
+		formatSyncTimestamp(r.CreatedAt),
+		formatSyncTimestamp(r.UpdatedAt), now, now)
 	if err != nil {
 		return err
 	}
