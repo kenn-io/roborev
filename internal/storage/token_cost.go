@@ -29,6 +29,7 @@ type TokenUsageLogCandidate struct {
 const tokenCostCandidatePredicate = costEligible + `
 	AND NOT (` + hasCost + `)
 	AND ` + reconciliationAttemptReleased + `
+	AND COALESCE(j.session_resumed, 0) = 0
 	AND COALESCE(j.session_id, '') != ''`
 
 const tokenUsageLogCandidatePredicate = costTerminal + `

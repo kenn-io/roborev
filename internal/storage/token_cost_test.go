@@ -373,6 +373,58 @@ func TestTokenCostCandidateRejectsPrepopulatedSessionReusedByLaterAttempt(t *tes
 	assert.Empty(t, candidates)
 }
 
+func TestTokenCostCandidateRejectsSessionResumedFromImportedJob(t *testing.T) {
+	db := openTestDB(t)
+	t.Cleanup(func() { db.Close() })
+	repo := createRepo(t, db, "/tmp/token-cost-cross-machine-resume")
+	commit := createCommit(t, db, repo.ID, "cross-machine-resume-sha")
+
+	imported, err := db.EnqueueJob(EnqueueOpts{
+		RepoID:   repo.ID,
+		CommitID: commit.ID,
+		GitRef:   "imported-session-source",
+		Agent:    "codex",
+	})
+	require.NoError(t, err)
+	_, err = db.Exec(`
+		UPDATE review_jobs
+		SET status = 'done', started_at = datetime('now', '-2 minutes'),
+		    finished_at = datetime('now', '-1 minute'),
+		    session_id = 'cross-machine-session', agent_invoked = 1,
+		    source_machine_id = 'remote-machine'
+		WHERE id = ?`, imported.ID)
+	require.NoError(t, err)
+
+	resumed, err := db.EnqueueJob(EnqueueOpts{
+		RepoID:    repo.ID,
+		CommitID:  commit.ID,
+		GitRef:    "cross-machine-resume-sha",
+		Agent:     "codex",
+		SessionID: "cross-machine-session",
+	})
+	require.NoError(t, err)
+	claimed, err := db.ClaimJob("resumed-worker")
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	require.Equal(t, resumed.ID, claimed.ID)
+	require.NoError(t, db.MarkJobAgentInvoked(
+		resumed.ID, "resumed-worker", "codex review",
+	))
+	require.NoError(t, db.CompleteJob(
+		resumed.ID, "codex", "prompt", "No issues found.",
+	))
+
+	var sessionResumed int
+	require.NoError(t, db.QueryRow(
+		`SELECT session_resumed FROM review_jobs WHERE id = ?`, resumed.ID,
+	).Scan(&sessionResumed))
+	assert.Equal(t, 1, sessionResumed)
+
+	candidates, err := db.ListTokenCostCandidates(0, 100)
+	require.NoError(t, err)
+	assert.Empty(t, candidates)
+}
+
 func TestAutoDesignJobCapturesTokenUsageBeforeReopen(t *testing.T) {
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })

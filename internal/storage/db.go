@@ -43,6 +43,7 @@ CREATE TABLE IF NOT EXISTS review_jobs (
   branch TEXT,
   ci_base_branch TEXT,
   session_id TEXT,
+  session_resumed INTEGER NOT NULL DEFAULT 0,
   agent TEXT NOT NULL DEFAULT 'codex',
   model TEXT,
   requested_model TEXT,
@@ -1245,6 +1246,21 @@ func (db *DB) migrate() error {
 		return fmt.Errorf("create idx_review_jobs_started_session: %w", err)
 	}
 
+	// A session present at enqueue time is a resumed provider session. Provider
+	// usage for such sessions is cumulative, so late reconciliation must retain
+	// this attempt-scoped fact after completion instead of inferring it from
+	// session ownership. This marker remains SQLite-only because reconciliation
+	// only operates on locally owned jobs.
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'session_resumed'`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check session_resumed column: %w", err)
+	}
+	if count == 0 {
+		if _, err = db.Exec(`ALTER TABLE review_jobs ADD COLUMN session_resumed INTEGER NOT NULL DEFAULT 0`); err != nil {
+			return fmt.Errorf("add session_resumed column: %w", err)
+		}
+	}
+
 	// Keep a durable association for every started attempt that captured a
 	// session. Retry paths intentionally clear review_jobs.session_id, so the
 	// current row alone cannot prove that a cumulative provider session was
@@ -2072,7 +2088,8 @@ func (db *DB) ResetStaleJobs() error {
 	_, err := db.Exec(`
 		UPDATE review_jobs
 		SET status = 'queued', worker_id = NULL, started_at = NULL,
-		    session_id = NULL, token_usage = NULL, command_line = NULL, agent_invoked = 0, synced_at = NULL
+		    session_id = NULL, session_resumed = 0, token_usage = NULL,
+		    command_line = NULL, agent_invoked = 0, synced_at = NULL
 		WHERE status = 'running'
 	`)
 	return err

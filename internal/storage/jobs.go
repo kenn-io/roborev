@@ -256,15 +256,19 @@ func (db *DB) insertJobTx(ctx context.Context, exec execer, opts EnqueueOpts, ui
 	if opts.ClaimBlocked {
 		claimBlockedInt = 1
 	}
+	sessionResumedInt := 0
+	if opts.SessionID != "" {
+		sessionResumedInt = 1
+	}
 
 	result, err := exec.ExecContext(ctx, `
-		INSERT INTO review_jobs (repo_id, commit_id, git_ref, branch, ci_base_branch, session_id, agent, model, provider, requested_model, requested_provider, reasoning,
+		INSERT INTO review_jobs (repo_id, commit_id, git_ref, branch, ci_base_branch, session_id, session_resumed, agent, model, provider, requested_model, requested_provider, reasoning,
 			status, job_type, review_type, patch_id, diff_content, dirty_files, prompt, agentic, prompt_prebuilt, output_prefix,
 			parent_job_id, uuid, source_machine_id, updated_at, worktree_path, min_severity, backup_agent, backup_model,
 			panel_run_uuid, panel_role, panel_name, panel_member_name, panel_member_index, panel_member_config_json, claim_blocked, source)
-		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+		VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, 'queued', ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		opts.RepoID, commitIDParam, gitRef, nullString(opts.Branch), nullString(opts.CIBaseBranch), nullString(opts.SessionID),
-		opts.Agent, nullString(opts.Model), nullString(opts.Provider), nullString(opts.RequestedModel), nullString(opts.RequestedProvider), reasoning,
+		sessionResumedInt, opts.Agent, nullString(opts.Model), nullString(opts.Provider), nullString(opts.RequestedModel), nullString(opts.RequestedProvider), reasoning,
 		jobType, opts.ReviewType, nullString(opts.PatchID),
 		nullString(opts.DiffContent), nullString(dirtyFilesJSON), nullString(opts.Prompt), agenticInt, promptPrebuiltInt,
 		nullString(opts.OutputPrefix), parentJobIDParam,
@@ -656,6 +660,7 @@ func (db *DB) RequeueUpdateInterruptedJob(
 		    worker_id = NULL,
 		    started_at = NULL,
 		    session_id = NULL,
+		    session_resumed = 0,
 		    token_usage = NULL,
 		    command_line = NULL,
 		    agent_invoked = 0,
@@ -939,7 +944,6 @@ func (db *DB) BackfillJobTokenUsageIfCurrent(
 func (db *DB) CompleteFixJob(jobID int64, agent, prompt, output, patch string) error {
 	nowInstant := time.Now()
 	now := nowInstant.Format(time.RFC3339)
-	reviewTimestamp := nowInstant.UTC().Format(time.RFC3339Nano)
 	machineID, _ := db.GetMachineID()
 	reviewUUID := GenerateUUID()
 
@@ -962,12 +966,21 @@ func (db *DB) CompleteFixJob(jobID int64, agent, prompt, output, patch string) e
 		}
 	}()
 
-	// Fetch output_prefix from job (if any)
-	var outputPrefix sql.NullString
-	err = conn.QueryRowContext(ctx, `SELECT output_prefix FROM review_jobs WHERE id = ?`, jobID).Scan(&outputPrefix)
+	// Fetch output_prefix and the prior review generation (if any). Completion
+	// must advance the generation even when the job originated on a machine
+	// whose wall clock was ahead of this one.
+	var outputPrefix, priorReviewCreated sql.NullString
+	err = conn.QueryRowContext(ctx, `
+		SELECT j.output_prefix, r.created_at
+		FROM review_jobs j LEFT JOIN reviews r ON r.job_id = j.id
+		WHERE j.id = ?`, jobID,
+	).Scan(&outputPrefix, &priorReviewCreated)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
+	reviewTimestamp := nextGenerationTimestamp(
+		nowInstant, priorReviewCreated.String,
+	).Format(time.RFC3339Nano)
 
 	finalOutput := output
 	if outputPrefix.Valid && outputPrefix.String != "" {
@@ -977,7 +990,7 @@ func (db *DB) CompleteFixJob(jobID int64, agent, prompt, output, patch string) e
 	// Atomically set status=done AND patch in one UPDATE
 	result, err := conn.ExecContext(ctx,
 		`UPDATE review_jobs SET status = 'done', finished_at = ?, updated_at = ?, patch = ? WHERE id = ? AND status = 'running'`,
-		now, now, patch, jobID)
+		now, reviewTimestamp, patch, jobID)
 	if err != nil {
 		return err
 	}
@@ -1030,7 +1043,6 @@ func (db *DB) CompleteJob(jobID int64, agent, prompt, output string) error {
 	// to avoid potential lock conflicts with GetMachineID's writes
 	nowInstant := time.Now()
 	now := nowInstant.Format(time.RFC3339)
-	reviewTimestamp := nowInstant.UTC().Format(time.RFC3339Nano)
 	machineID, _ := db.GetMachineID()
 	reviewUUID := GenerateUUID()
 
@@ -1055,12 +1067,21 @@ func (db *DB) CompleteJob(jobID int64, agent, prompt, output string) error {
 		}
 	}()
 
-	// Fetch output_prefix from job (if any)
-	var outputPrefix sql.NullString
-	err = conn.QueryRowContext(ctx, `SELECT output_prefix FROM review_jobs WHERE id = ?`, jobID).Scan(&outputPrefix)
+	// Fetch output_prefix and the prior review generation (if any). Completion
+	// must advance the generation even when the job originated on a machine
+	// whose wall clock was ahead of this one.
+	var outputPrefix, priorReviewCreated sql.NullString
+	err = conn.QueryRowContext(ctx, `
+		SELECT j.output_prefix, r.created_at
+		FROM review_jobs j LEFT JOIN reviews r ON r.job_id = j.id
+		WHERE j.id = ?`, jobID,
+	).Scan(&outputPrefix, &priorReviewCreated)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
+	reviewTimestamp := nextGenerationTimestamp(
+		nowInstant, priorReviewCreated.String,
+	).Format(time.RFC3339Nano)
 
 	// Prepend output_prefix if present
 	finalOutput := output
@@ -1069,7 +1090,7 @@ func (db *DB) CompleteJob(jobID int64, agent, prompt, output string) error {
 	}
 
 	// Update job status only if still running (not canceled)
-	result, err := conn.ExecContext(ctx, `UPDATE review_jobs SET status = 'done', finished_at = ?, updated_at = ? WHERE id = ? AND status = 'running'`, now, now, jobID)
+	result, err := conn.ExecContext(ctx, `UPDATE review_jobs SET status = 'done', finished_at = ?, updated_at = ? WHERE id = ? AND status = 'running'`, now, reviewTimestamp, jobID)
 	if err != nil {
 		return err
 	}
@@ -1259,10 +1280,21 @@ func (db *DB) ReenqueueJobWithRequest(
 		}
 	}
 
-	now := time.Now()
-	enqueuedAt := now.UTC().Format(time.RFC3339Nano)
-	updatedAt := now.Format(time.RFC3339)
-	reviewGenerationAt := now.UTC().Format(time.RFC3339Nano)
+	var priorEnqueued string
+	var priorReviewCreated sql.NullString
+	if err := conn.QueryRowContext(ctx, `
+		SELECT j.enqueued_at, r.created_at
+		FROM review_jobs j LEFT JOIN reviews r ON r.job_id = j.id
+		WHERE j.id = ?`, jobID,
+	).Scan(&priorEnqueued, &priorReviewCreated); err != nil {
+		return 0, false, err
+	}
+	generationAt := nextGenerationTimestamp(
+		time.Now(), priorEnqueued, priorReviewCreated.String,
+	)
+	enqueuedAt := generationAt.Format(time.RFC3339Nano)
+	updatedAt := enqueuedAt
+	reviewGenerationAt := enqueuedAt
 
 	// Reset job status and replace effective execution settings with the
 	// newly resolved values for this rerun. Clear prompt_prebuilt and prompt
@@ -1283,7 +1315,7 @@ func (db *DB) ReenqueueJobWithRequest(
 	// the same reason.
 	result, err := conn.ExecContext(ctx, `
 		UPDATE review_jobs
-		SET status = 'queued', enqueued_at = ?, worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = 0, patch = NULL, session_id = NULL, token_usage = NULL, command_line = NULL, agent_invoked = 0, synced_at = NULL, source_machine_id = ?, model = ?, provider = ?,
+		SET status = 'queued', enqueued_at = ?, worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = 0, patch = NULL, session_id = NULL, session_resumed = 0, token_usage = NULL, command_line = NULL, agent_invoked = 0, synced_at = NULL, source_machine_id = ?, model = ?, provider = ?,
 		    prompt_prebuilt = 0,
 		    prompt = CASE WHEN job_type IN ('task', 'compact', 'fix', 'insights') THEN prompt ELSE NULL END,
 		    skip_reason = NULL,
@@ -1327,6 +1359,21 @@ func (db *DB) ReenqueueJobWithRequest(
 	}
 	committed = true
 	return jobID, false, nil
+}
+
+// nextGenerationTimestamp returns a timestamp strictly newer than every
+// persisted generation. PostgreSQL timestamps have microsecond precision, so
+// advance by one microsecond rather than one nanosecond to preserve strict
+// ordering after a sync round trip.
+func nextGenerationTimestamp(now time.Time, persisted ...string) time.Time {
+	next := now.UTC()
+	for _, raw := range persisted {
+		prior := parseSQLiteTime(raw)
+		if !prior.IsZero() && !next.After(prior) {
+			next = prior.UTC().Add(time.Microsecond)
+		}
+	}
+	return next
 }
 
 // ReleaseCanceledJob clears ownership only after the canceled worker has
@@ -1456,13 +1503,13 @@ func (db *DB) RetryJob(jobID int64, workerID string, maxRetries int, retryBackof
 	if workerID != "" {
 		result, err = db.Exec(`
 			UPDATE review_jobs
-			SET status = 'queued', worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = retry_count + 1, session_id = NULL, token_usage = NULL, command_line = NULL, agent_invoked = 0, synced_at = NULL, retry_not_before = ?
+			SET status = 'queued', worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = retry_count + 1, session_id = NULL, session_resumed = 0, token_usage = NULL, command_line = NULL, agent_invoked = 0, synced_at = NULL, retry_not_before = ?
 			WHERE id = ? AND retry_count < ? AND status = 'running' AND worker_id = ?
 		`, notBefore, jobID, maxRetries, workerID)
 	} else {
 		result, err = db.Exec(`
 			UPDATE review_jobs
-			SET status = 'queued', worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = retry_count + 1, session_id = NULL, token_usage = NULL, command_line = NULL, agent_invoked = 0, synced_at = NULL, retry_not_before = ?
+			SET status = 'queued', worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = retry_count + 1, session_id = NULL, session_resumed = 0, token_usage = NULL, command_line = NULL, agent_invoked = 0, synced_at = NULL, retry_not_before = ?
 			WHERE id = ? AND retry_count < ? AND status = 'running'
 		`, notBefore, jobID, maxRetries)
 	}
@@ -1499,6 +1546,7 @@ func (db *DB) FailoverJob(jobID int64, workerID, backupAgent, backupModel string
 		    finished_at = NULL,
 		    error = NULL,
 		    session_id = NULL,
+		    session_resumed = 0,
 		    token_usage = NULL,
 		    command_line = NULL,
 		    agent_invoked = 0,
@@ -2267,6 +2315,7 @@ func (db *DB) PromoteClassifyToDesignReview(classifyJobID int64, workerID, agent
 		    started_at = NULL,
 		    finished_at = NULL,
 		    session_id = NULL,
+		    session_resumed = 0,
 		    token_usage = NULL,
 		    command_line = NULL,
 		    agent_invoked = 0,
