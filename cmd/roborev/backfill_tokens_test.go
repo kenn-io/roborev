@@ -341,6 +341,46 @@ func TestBackfillTokensUsesCodexJobLogsWithoutAgentsviewEligibleSession(t *testi
 	assert.Equal(t, "missing-session-thread", updatedMissingSession.SessionID)
 }
 
+func TestBackfillTokensRejectsLogFromPriorCanceledAttempt(t *testing.T) {
+	dataDir := t.TempDir()
+	t.Setenv("ROBOREV_DATA_DIR", dataDir)
+	t.Setenv("PATH", t.TempDir())
+
+	db, err := storage.Open(storage.DefaultDBPath())
+	require.NoError(t, err)
+	defer db.Close()
+
+	repo, err := db.GetOrCreateRepo(filepath.Join(t.TempDir(), "repo"))
+	require.NoError(t, err)
+	commit, err := db.GetOrCreateCommit(
+		repo.ID, "abc123", "Author", "Subject", time.Now(),
+	)
+	require.NoError(t, err)
+	job := enqueueCompleteJob(t, db, repo.ID, commit.ID, "prior-session")
+	writeCodexUsageLog(t, job.ID, "prior-session", 1000, 100, 200)
+
+	require.NoError(t, db.ReenqueueJob(job.ID, storage.ReenqueueOpts{}))
+	claimed, err := db.ClaimJob("worker-2")
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	require.Equal(t, job.ID, claimed.ID)
+	require.NotNil(t, claimed.StartedAt)
+	require.NoError(t, db.CancelJob(job.ID))
+
+	logPath := daemon.JobLogPath(job.ID)
+	staleTime := claimed.StartedAt.Add(-time.Minute)
+	require.NoError(t, os.Chtimes(logPath, staleTime, staleTime))
+
+	cmd := backfillTokensCmd()
+	cmd.SetArgs(nil)
+	require.NoError(t, cmd.Execute())
+
+	updated, err := db.GetJobByID(job.ID)
+	require.NoError(t, err)
+	assert.Empty(t, updated.TokenUsage)
+	assert.Empty(t, updated.SessionID)
+}
+
 func enqueueCompleteJob(
 	t *testing.T, db *storage.DB, repoID, commitID int64, sessionID string,
 ) *storage.ReviewJob {

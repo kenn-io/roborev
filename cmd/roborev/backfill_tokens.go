@@ -69,9 +69,15 @@ will be skipped.`,
 			for _, job := range candidates {
 				total++
 
-				logUsage, logErr := tokens.ParseCodexUsageFile(
-					daemon.JobLogPath(job.ID),
+				var logUsage *tokens.Usage
+				currentLog, logErr := daemon.JobLogIsCurrentAttempt(
+					job.ID, job.StartedAt,
 				)
+				if logErr == nil && currentLog {
+					logUsage, logErr = tokens.ParseCodexUsageFile(
+						daemon.JobLogPath(job.ID),
+					)
+				}
 				if logErr != nil {
 					log.Printf(
 						"job %d: parse job log: %v", job.ID, logErr,

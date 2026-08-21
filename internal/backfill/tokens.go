@@ -59,13 +59,13 @@ func TokenCandidates(jobs []storage.ReviewJob) []storage.ReviewJob {
 	return out
 }
 
-// LogTokenCandidates filters jobs whose per-job logs may contain recoverable
-// token usage. This does not require a session ID or a unique session because
-// the usage event came from the individual job log.
+// LogTokenCandidates filters started jobs whose per-job logs may contain
+// recoverable token usage. This does not require a session ID or a unique
+// session because the usage event came from the individual job log.
 func LogTokenCandidates(jobs []storage.ReviewJob) []storage.ReviewJob {
 	var out []storage.ReviewJob
 	for _, job := range jobs {
-		if !hasTerminalStatus(job.Status) {
+		if !hasTerminalStatus(job.Status) || job.StartedAt == nil {
 			continue
 		}
 		if !NeedsTokenUsageBackfill(job.TokenUsage) {

@@ -243,14 +243,16 @@ func readNormalizedJobOutput(jobID int64, agentName string) ([]OutputLine, error
 func readNormalizedJobOutputForAttempt(
 	jobID int64, agentName string, startedAt *time.Time,
 ) ([]OutputLine, error) {
-	current, err := jobLogIsCurrentAttempt(jobID, startedAt)
+	current, err := JobLogIsCurrentAttempt(jobID, startedAt)
 	if err != nil || !current {
 		return nil, err
 	}
 	return readNormalizedJobOutput(jobID, agentName)
 }
 
-func jobLogIsCurrentAttempt(jobID int64, startedAt *time.Time) (bool, error) {
+// JobLogIsCurrentAttempt reports whether a job log was written during the
+// current attempt.
+func JobLogIsCurrentAttempt(jobID int64, startedAt *time.Time) (bool, error) {
 	if startedAt == nil {
 		return true, nil
 	}

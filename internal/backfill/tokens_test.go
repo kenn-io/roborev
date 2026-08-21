@@ -247,6 +247,15 @@ func TestBackfillCandidatesIncludeEveryTerminalStatus(t *testing.T) {
 	assert.Len(LogTokenCandidates(jobs), len(statuses))
 }
 
+func TestLogTokenCandidatesRequiresStartedAttempt(t *testing.T) {
+	job := storage.ReviewJob{
+		ID:     1,
+		Status: storage.JobStatusCanceled,
+	}
+
+	assert.Empty(t, LogTokenCandidates([]storage.ReviewJob{job}))
+}
+
 func TestMergeTokenUsageKeepsRecordedCostOverUnpricedFetch(t *testing.T) {
 	existing := `{"total_output_tokens":300,"has_cost":true,"cost_usd":1.23}`
 	fetched := &tokens.Usage{OutputTokens: 300, HasCost: true, CostUSD: 0}

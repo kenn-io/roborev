@@ -2,11 +2,51 @@ package storage
 
 import (
 	"database/sql"
+	"path/filepath"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
+
+func TestMigrationMakesLegacyLocalJobEligibleForTokenReconciliation(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "reviews.db")
+	db, err := Open(dbPath)
+	require.NoError(t, err)
+	_, jobs := seedJobs(t, db, filepath.Join(t.TempDir(), "repo"), 1)
+	_, err = db.Exec(`
+		UPDATE review_jobs
+		SET status = 'done', started_at = datetime('now'),
+		    finished_at = datetime('now'), session_id = 'legacy-session',
+		    agent_invoked = 1, token_usage = '', source_machine_id = NULL
+		WHERE id = ?`, jobs[0].ID)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	db, err = Open(dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+
+	machineID, err := db.GetMachineID()
+	require.NoError(t, err)
+	var sourceMachineID string
+	require.NoError(t, db.QueryRow(
+		`SELECT source_machine_id FROM review_jobs WHERE id = ?`, jobs[0].ID,
+	).Scan(&sourceMachineID))
+	assert.Equal(t, machineID, sourceMachineID)
+	var historyCount int
+	require.NoError(t, db.QueryRow(`
+		SELECT COUNT(*) FROM review_job_session_history
+		WHERE source_machine_id = ? AND session_id = 'legacy-session'`,
+		machineID,
+	).Scan(&historyCount))
+	assert.Equal(t, 1, historyCount)
+
+	candidates, err := db.ListTokenCostCandidates(0, 10)
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	assert.Equal(t, jobs[0].ID, candidates[0].JobID)
+}
 
 func TestListTokenCostCandidatesSelectsRecoverableTerminalJobs(t *testing.T) {
 	db := openTestDB(t)

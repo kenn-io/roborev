@@ -95,7 +95,7 @@ func (wp *WorkerPool) recoverTokenUsageLogs(ctx context.Context) {
 }
 
 func (wp *WorkerPool) recoverTokenUsageLog(candidate storage.TokenUsageLogCandidate) {
-	current, err := jobLogIsCurrentAttempt(candidate.JobID, &candidate.StartedAt)
+	current, err := JobLogIsCurrentAttempt(candidate.JobID, &candidate.StartedAt)
 	if errors.Is(err, os.ErrNotExist) {
 		return
 	}
