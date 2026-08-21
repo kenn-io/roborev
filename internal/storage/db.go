@@ -1259,6 +1259,20 @@ func (db *DB) migrate() error {
 		if _, err = db.Exec(`ALTER TABLE review_jobs ADD COLUMN session_resumed INTEGER NOT NULL DEFAULT 0`); err != nil {
 			return fmt.Errorf("add session_resumed column: %w", err)
 		}
+		// The old schema did not retain whether session_id was supplied at
+		// enqueue. Repeated IDs prove that at least one legacy attempt resumed
+		// cumulative provider usage, so conservatively exclude every matching
+		// attempt from delayed reconciliation rather than assigning the total to
+		// an arbitrary job.
+		if _, err = db.Exec(`UPDATE review_jobs AS job
+			SET session_resumed = 1
+			WHERE session_id IS NOT NULL AND session_id != ''
+			  AND EXISTS (
+				SELECT 1 FROM review_jobs AS other
+				WHERE other.id != job.id AND other.session_id = job.session_id
+			  )`); err != nil {
+			return fmt.Errorf("mark legacy reused sessions: %w", err)
+		}
 	}
 
 	// Keep a durable association for every started attempt that captured a

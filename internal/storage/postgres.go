@@ -774,7 +774,8 @@ func (p *PgPool) UpsertJob(ctx context.Context, j SyncableJob, pgRepoID int64, p
 			panel_member_index = EXCLUDED.panel_member_index,
 			panel_member_config_json = EXCLUDED.panel_member_config_json,
 			updated_at = clock_timestamp()
-		WHERE EXCLUDED.enqueued_at >= review_jobs.enqueued_at
+		WHERE (EXCLUDED.enqueued_at, EXCLUDED.source_machine_id) >=
+		      (review_jobs.enqueued_at, review_jobs.source_machine_id)
 	`, j.UUID, pgRepoID, pgCommitID, j.GitRef, nullString(j.SessionID), j.Agent, nullString(j.Model), nullString(j.Provider), nullString(j.RequestedModel), nullString(j.RequestedProvider), nullString(j.Reasoning),
 		defaultStr(j.JobType, "review"), j.ReviewType, nullString(j.PatchID), postgresSyncJobStatus(j.Status), j.Agentic, j.EnqueuedAt, j.StartedAt, j.FinishedAt,
 		nullString(j.Prompt), j.DiffContent, nullString(dirtyFilesJSON), nullString(j.Error), nullString(j.TokenUsage), nullString(j.WorktreePath), nullString(j.Source), normalizeMinSeverityForWrite(j.MinSeverity),
@@ -1344,7 +1345,8 @@ func queueJobUpsert(batch *pgx.Batch, jw JobWithPgIDs) error {
 				panel_member_index = EXCLUDED.panel_member_index,
 				panel_member_config_json = EXCLUDED.panel_member_config_json,
 				updated_at = clock_timestamp()
-			WHERE EXCLUDED.enqueued_at >= review_jobs.enqueued_at
+			WHERE (EXCLUDED.enqueued_at, EXCLUDED.source_machine_id) >=
+			      (review_jobs.enqueued_at, review_jobs.source_machine_id)
 		`, j.UUID, jw.PgRepoID, jw.PgCommitID, j.GitRef, nullString(j.SessionID), j.Agent, nullString(j.Model), nullString(j.Provider), nullString(j.RequestedModel), nullString(j.RequestedProvider), nullString(j.Reasoning),
 		defaultStr(j.JobType, "review"), j.ReviewType, nullString(j.PatchID), postgresSyncJobStatus(j.Status), j.Agentic, j.EnqueuedAt, j.StartedAt, j.FinishedAt,
 		nullString(sanitizePostgresText(j.Prompt)), sanitizePostgresTextPointer(j.DiffContent), nullString(dirtyFilesJSON), nullString(sanitizePostgresText(j.Error)), nullString(j.TokenUsage), nullString(j.WorktreePath), nullString(j.Source), normalizeMinSeverityForWrite(j.MinSeverity),

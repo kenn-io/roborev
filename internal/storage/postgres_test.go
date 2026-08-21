@@ -849,6 +849,48 @@ func TestIntegration_BatchUpsertJobs(t *testing.T) {
 		assert.Equal(t, newer.Job.SourceMachineID, owner)
 	})
 
+	t.Run("source machine deterministically breaks generation ties", func(t *testing.T) {
+		jobUUID := uuid.NewString()
+		commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{
+			RepoID: repoID, SHA: "batch-rerun-tie-" + jobUUID,
+		})
+		generation := time.Now().UTC().Truncate(time.Microsecond)
+		lower := JobWithPgIDs{
+			Job: SyncableJob{
+				UUID:            jobUUID,
+				GitRef:          "lower-ref",
+				Agent:           "test",
+				Status:          "done",
+				EnqueuedAt:      generation,
+				SourceMachineID: "00000000-0000-0000-0000-000000000001",
+			},
+			PgRepoID:   repoID,
+			PgCommitID: &commitID,
+		}
+		higher := lower
+		higher.Job.GitRef = "higher-ref"
+		higher.Job.SourceMachineID = "ffffffff-ffff-ffff-ffff-ffffffffffff"
+
+		success, err := pool.BatchUpsertJobs(ctx, []JobWithPgIDs{lower})
+		require.NoError(t, err)
+		require.Equal(t, 1, countSuccesses(success))
+		success, err = pool.BatchUpsertJobs(ctx, []JobWithPgIDs{higher})
+		require.NoError(t, err)
+		require.Equal(t, 1, countSuccesses(success))
+		success, err = pool.BatchUpsertJobs(ctx, []JobWithPgIDs{lower})
+		require.NoError(t, err)
+		require.Equal(t, 0, countSuccesses(success))
+
+		var gitRef, owner string
+		err = pool.pool.QueryRow(ctx, `
+			SELECT git_ref, source_machine_id
+			FROM review_jobs WHERE uuid = $1`, jobUUID,
+		).Scan(&gitRef, &owner)
+		require.NoError(t, err)
+		assert.Equal(t, higher.Job.GitRef, gitRef)
+		assert.Equal(t, higher.Job.SourceMachineID, owner)
+	})
+
 	t.Run("worktree_path round-trips through batch upsert and pull", func(t *testing.T) {
 		wtJobUUID := uuid.NewString()
 		// Use a distinct machine ID so we can exclude it when pulling

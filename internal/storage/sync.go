@@ -27,6 +27,23 @@ const (
 // is released.
 var ErrNewerPulledJobDeferred = errors.New("newer pulled job generation deferred")
 
+// compareJobGeneration orders attempts by their shared-precision timestamp and
+// then by source machine. The machine tie-break makes simultaneous reruns of an
+// imported generation converge instead of depending on sync arrival order.
+func compareJobGeneration(
+	leftAt time.Time, leftSource string, rightAt time.Time, rightSource string,
+) int {
+	leftAt = canonicalSyncTimestamp(leftAt)
+	rightAt = canonicalSyncTimestamp(rightAt)
+	if leftAt.Before(rightAt) {
+		return -1
+	}
+	if leftAt.After(rightAt) {
+		return 1
+	}
+	return strings.Compare(leftSource, rightSource)
+}
+
 // GetSyncState retrieves a value from the sync_state table.
 // Returns empty string if key doesn't exist.
 func (db *DB) GetSyncState(key string) (string, error) {
@@ -881,11 +898,15 @@ func (db *DB) UpsertPulledJob(j PulledJob, repoID int64, commitID *int64) error 
 			parseSQLiteTime(existingEnqueuedAt),
 		)
 		incomingGeneration := canonicalSyncTimestamp(j.EnqueuedAt)
+		generationOrder := compareJobGeneration(
+			incomingGeneration, j.SourceMachineID,
+			existingGeneration, existingSource,
+		)
 		locallyActive := existingSource == machineID && (existingStatus == string(JobStatusQueued) ||
 			existingStatus == string(JobStatusRunning) ||
 			(existingStatus == string(JobStatusCanceled) && existingWorkerID.Valid))
 		if locallyActive {
-			if incomingGeneration.After(existingGeneration) {
+			if generationOrder > 0 {
 				return fmt.Errorf(
 					"%w: local job %s", ErrNewerPulledJobDeferred, j.UUID,
 				)
@@ -893,10 +914,10 @@ func (db *DB) UpsertPulledJob(j PulledJob, repoID int64, commitID *int64) error 
 			return commitNoop()
 		}
 
-		if incomingGeneration.Before(existingGeneration) {
+		if generationOrder < 0 {
 			return commitNoop()
 		}
-		if incomingGeneration.Equal(existingGeneration) {
+		if generationOrder == 0 {
 			preserveFinalization = true
 			existingUpdate := canonicalSyncTimestamp(
 				parseSQLiteTime(existingUpdatedAt),

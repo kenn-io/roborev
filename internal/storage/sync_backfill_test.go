@@ -506,6 +506,43 @@ func TestUpsertPulledJobDefersNewerGenerationDuringLocalAttempt(t *testing.T) {
 	assert.Equal(t, newer.SourceMachineID, sourceMachineID)
 }
 
+func TestUpsertPulledJobBreaksGenerationTiesBySourceMachine(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	repo, err := db.GetOrCreateRepo("/test/repo-generation-tie")
+	require.NoError(t, err)
+	generation := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
+	lower := PulledJob{
+		UUID:            "generation-tie-uuid",
+		RepoIdentity:    "/test/repo-generation-tie",
+		GitRef:          "lower-ref",
+		Agent:           "codex",
+		Status:          string(JobStatusDone),
+		SourceMachineID: "00000000-0000-0000-0000-000000000001",
+		EnqueuedAt:      generation,
+		UpdatedAt:       generation.Add(time.Minute),
+	}
+	require.NoError(t, db.UpsertPulledJob(lower, repo.ID, nil))
+
+	higher := lower
+	higher.GitRef = "higher-ref"
+	higher.SourceMachineID = "ffffffff-ffff-ffff-ffff-ffffffffffff"
+	require.NoError(t, db.UpsertPulledJob(higher, repo.ID, nil))
+
+	// A later metadata timestamp cannot let the losing attempt replace the
+	// deterministic winner when both attempts have the same generation.
+	lower.UpdatedAt = higher.UpdatedAt.Add(time.Hour)
+	require.NoError(t, db.UpsertPulledJob(lower, repo.ID, nil))
+
+	var gitRef, owner string
+	require.NoError(t, db.QueryRow(`
+		SELECT git_ref, source_machine_id
+		FROM review_jobs WHERE uuid = ?`, lower.UUID,
+	).Scan(&gitRef, &owner))
+	assert.Equal(t, higher.GitRef, gitRef)
+	assert.Equal(t, higher.SourceMachineID, owner)
+}
+
 func TestUpsertPulledJobReplacesNewerAttemptTiming(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()

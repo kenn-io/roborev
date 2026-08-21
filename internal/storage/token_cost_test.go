@@ -425,6 +425,53 @@ func TestTokenCostCandidateRejectsSessionResumedFromImportedJob(t *testing.T) {
 	assert.Empty(t, candidates)
 }
 
+func TestSessionResumedMigrationMarksLegacyReusedSessions(t *testing.T) {
+	dbPath := filepath.Join(t.TempDir(), "legacy-sessions.db")
+	db, err := Open(dbPath)
+	require.NoError(t, err)
+	repo := createRepo(t, db, "/tmp/token-cost-legacy-session")
+	commit := createCommit(t, db, repo.ID, "legacy-session-sha")
+	first, err := db.EnqueueJob(EnqueueOpts{
+		RepoID: repo.ID, CommitID: commit.ID, GitRef: "first", Agent: "codex",
+	})
+	require.NoError(t, err)
+	second, err := db.EnqueueJob(EnqueueOpts{
+		RepoID: repo.ID, CommitID: commit.ID, GitRef: "second", Agent: "codex",
+	})
+	require.NoError(t, err)
+	_, err = db.Exec(`
+		UPDATE review_jobs
+		SET status = 'done', started_at = datetime('now', '-2 minutes'),
+		    finished_at = datetime('now', '-1 minute'), session_id = 'reused-session',
+		    source_machine_id = CASE WHEN id = ? THEN 'remote-machine' ELSE source_machine_id END
+		WHERE id IN (?, ?)`, first.ID, first.ID, second.ID)
+	require.NoError(t, err)
+	require.NoError(t, db.Close())
+
+	rawDB, err := openRawDB(dbPath)
+	require.NoError(t, err)
+	_, err = rawDB.Exec(`ALTER TABLE review_jobs DROP COLUMN session_resumed`)
+	require.NoError(t, err)
+	require.NoError(t, rawDB.Close())
+
+	db, err = Open(dbPath)
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	rows, err := db.Query(`
+		SELECT session_resumed FROM review_jobs
+		WHERE id IN (?, ?) ORDER BY id`, first.ID, second.ID)
+	require.NoError(t, err)
+	defer rows.Close()
+	var markers []int
+	for rows.Next() {
+		var marker int
+		require.NoError(t, rows.Scan(&marker))
+		markers = append(markers, marker)
+	}
+	require.NoError(t, rows.Err())
+	assert.Equal(t, []int{1, 1}, markers)
+}
+
 func TestAutoDesignJobCapturesTokenUsageBeforeReopen(t *testing.T) {
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
