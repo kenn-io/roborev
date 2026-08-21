@@ -5,6 +5,8 @@ import (
 	"strings"
 )
 
+const cliWaitErrorOutputLimit = 500
+
 type detailedCLIWaitErrorOptions struct {
 	AgentName      string
 	Stderr         string
@@ -43,8 +45,8 @@ func truncateCLIWaitErrorOutput(output string) string {
 	if output == "" {
 		return ""
 	}
-	if len(output) <= 500 {
+	if len(output) <= cliWaitErrorOutputLimit {
 		return output
 	}
-	return output[:500] + "..."
+	return output[:cliWaitErrorOutputLimit] + "..."
 }

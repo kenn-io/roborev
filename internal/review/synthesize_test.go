@@ -179,6 +179,62 @@ func TestSynthesize_Formatting(t *testing.T) {
 				"Review Skipped",
 			},
 		},
+		{
+			name: "EmptyOnly",
+			results: []ReviewResult{
+				{
+					Agent:      "codex",
+					ReviewType: "security",
+					Status:     ResultDone,
+					Output:     "No review output generated",
+				},
+			},
+			expectedTexts: []string{
+				"Review Skipped",
+			},
+		},
+		{
+			name: "PlaceholderAndFailure",
+			results: []ReviewResult{
+				{
+					Agent:      "codex",
+					ReviewType: "security",
+					Status:     ResultDone,
+					Output:     "No review output generated",
+				},
+				{
+					Agent:      "gemini",
+					ReviewType: "security",
+					Status:     ResultFailed,
+					Error:      "agent crashed",
+				},
+			},
+			expectedErr: ErrAllFailed,
+			expectedTexts: []string{
+				"Review Failed",
+			},
+		},
+		{
+			name: "WhitespaceAndFailure",
+			results: []ReviewResult{
+				{
+					Agent:      "codex",
+					ReviewType: "security",
+					Status:     ResultDone,
+					Output:     " \n\t",
+				},
+				{
+					Agent:      "gemini",
+					ReviewType: "security",
+					Status:     ResultFailed,
+					Error:      "agent crashed",
+				},
+			},
+			expectedErr: ErrAllFailed,
+			expectedTexts: []string{
+				"Review Failed",
+			},
+		},
 	}
 
 	for _, tt := range tests {

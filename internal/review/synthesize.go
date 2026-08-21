@@ -61,7 +61,7 @@ func Synthesize(
 ) (string, error) {
 	successCount := 0
 	for _, r := range results {
-		if r.Status == ResultDone {
+		if IsSubstantiveOutput(r) {
 			successCount++
 		}
 	}
@@ -70,9 +70,15 @@ func Synthesize(
 	if successCount == 0 {
 		comment := FormatAllFailedComment(
 			results, opts.HeadSHA)
-		// All-quota is not an error (nothing actionable).
-		quotaSkips := CountQuotaFailures(results)
-		if len(results) > 0 && quotaSkips == len(results) {
+		// Quota skips and completed reviews without output are not
+		// actionable. Preserve their successful no-output outcome.
+		nonActionable := CountQuotaFailures(results)
+		for _, r := range results {
+			if r.Status == ResultDone && !IsSubstantiveOutput(r) {
+				nonActionable++
+			}
+		}
+		if len(results) > 0 && nonActionable == len(results) {
 			return comment, nil
 		}
 		return comment, ErrAllFailed

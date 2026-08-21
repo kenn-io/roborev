@@ -371,34 +371,39 @@ func (a *CodexAgent) Review(ctx context.Context, repoPath, commitSHA, prompt str
 		log.Printf("codex: sandbox disabled via config, using %s", codexAutoApproveFlag)
 	}
 	args := runAgent.buildArgs(repoPath, agenticMode, autoApprove, sandboxBroken)
+	stdoutDiagnostics := newCodexDiagnosticCapture()
 
 	runResult, runErr := runStreamingCLI(ctx, streamingCLISpec{
-		Name:          "codex",
-		Command:       a.Command,
-		Args:          args,
-		Dir:           repoPath,
-		Stdin:         strings.NewReader(prompt),
-		Output:        output,
-		StreamStderr:  true,
-		CaptureStdout: true,
+		Name:         "codex",
+		Command:      a.Command,
+		Args:         args,
+		Dir:          repoPath,
+		Stdin:        strings.NewReader(prompt),
+		Output:       output,
+		StreamStderr: true,
 		Parse: func(r io.Reader, sw *syncWriter) (string, error) {
-			return a.parseStreamJSON(r, sw)
+			return a.parseStreamJSON(io.TeeReader(r, stdoutDiagnostics), sw)
 		},
 	})
+	runResult.Stdout = stdoutDiagnostics.String()
 	if runErr != nil {
 		return "", MarkUnavailable(runErr)
 	}
 
 	if runResult.WaitErr != nil {
 		if errors.Is(runResult.ParseErr, errNoCodexJSON) {
-			return "", MarkUnavailable(formatCodexNoJSONWaitError(runResult))
+			return "", markCodexNoJSONUnavailable(
+				formatCodexNoJSONWaitError(runResult), runResult.Stderr, stdoutDiagnostics,
+			)
 		}
 		return "", formatStreamingCLIWaitError("codex", runResult, runResult.Stderr)
 	}
 
 	if runResult.ParseErr != nil {
 		if errors.Is(runResult.ParseErr, errNoCodexJSON) {
-			return "", MarkUnavailable(formatCodexNoJSONError(runResult))
+			return "", markCodexNoJSONUnavailable(
+				formatCodexNoJSONError(runResult), runResult.Stderr, stdoutDiagnostics,
+			)
 		}
 		return "", runResult.ParseErr
 	}
@@ -408,6 +413,109 @@ func (a *CodexAgent) Review(ctx context.Context, repoPath, commitSHA, prompt str
 	}
 
 	return runResult.Result, nil
+}
+
+const codexDiagnosticClassificationChunk = 4096
+
+type codexDiagnosticCapture struct {
+	rendered       strings.Builder
+	tail           string
+	truncated      bool
+	classification LimitClassification
+}
+
+func newCodexDiagnosticCapture() *codexDiagnosticCapture {
+	return &codexDiagnosticCapture{}
+}
+
+func (c *codexDiagnosticCapture) Write(p []byte) (int, error) {
+	written := len(p)
+	captured := 0
+	if remaining := cliWaitErrorOutputLimit - c.rendered.Len(); remaining > 0 {
+		if len(p) < remaining {
+			remaining = len(p)
+		}
+		_, _ = c.rendered.Write(p[:remaining])
+		captured = remaining
+	}
+	if written > captured {
+		c.truncated = true
+	}
+
+	for len(p) > 0 {
+		chunkLen := min(len(p), codexDiagnosticClassificationChunk)
+		c.classifyChunk(string(p[:chunkLen]))
+		p = p[chunkLen:]
+	}
+	return written, nil
+}
+
+func (c *codexDiagnosticCapture) classifyChunk(chunk string) {
+	window := c.tail + chunk
+	c.classification = preferLimitClassification(
+		c.classification,
+		ClassifyLimit("codex", window),
+	)
+
+	overlap := maxLimitRuleSubstringLength("codex") - 1
+	if overlap <= 0 || len(window) <= overlap {
+		c.tail = window
+		return
+	}
+	c.tail = window[len(window)-overlap:]
+}
+
+func (c *codexDiagnosticCapture) String() string {
+	if c.truncated {
+		return c.rendered.String() + "..."
+	}
+	return c.rendered.String()
+}
+
+func (c *codexDiagnosticCapture) Classification() LimitClassification {
+	return c.classification
+}
+
+func markCodexNoJSONUnavailable(
+	err error,
+	stderr string,
+	stdoutDiagnostics *codexDiagnosticCapture,
+) error {
+	classification := preferLimitClassification(
+		stdoutDiagnostics.Classification(),
+		ClassifyLimit("codex", stderr),
+	)
+	return MarkUnavailable(WithLimitClassification(err, classification))
+}
+
+func maxLimitRuleSubstringLength(agentName string) int {
+	maxLength := 0
+	for _, rule := range defaultLimitRules {
+		if limitRuleAppliesToAgent(rule, agentName) && len(rule.Substring) > maxLength {
+			maxLength = len(rule.Substring)
+		}
+	}
+	return maxLength
+}
+
+func preferLimitClassification(current, candidate LimitClassification) LimitClassification {
+	priority := func(kind LimitKind) int {
+		switch kind {
+		case LimitKindQuota:
+			return 3
+		case LimitKindSession:
+			return 2
+		case LimitKindTransient:
+			return 1
+		default:
+			return 0
+		}
+	}
+	if priority(candidate.Kind) > priority(current.Kind) {
+		candidate.Message = ""
+		return candidate
+	}
+	return current
 }
 
 func formatCodexNoJSONWaitError(runResult streamingCLIResult) error {

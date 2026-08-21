@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"io"
 	"os"
@@ -93,6 +94,15 @@ func TestFormatBatchAgentError(t *testing.T) {
 			agentName: "codex",
 			err:       agent.MarkUnavailable(fmt.Errorf("you've hit your usage limit")),
 			want:      QuotaErrorPrefix + "agent review: you've hit your usage limit",
+		},
+		{
+			name:      "attached quota classification wins over bounded message",
+			agentName: "codex",
+			err: agent.MarkUnavailable(agent.WithLimitClassification(
+				errors.New("bounded diagnostics"),
+				agent.LimitClassification{Kind: agent.LimitKindQuota, Agent: "codex"},
+			)),
+			want: QuotaErrorPrefix + "agent review: bounded diagnostics",
 		},
 		{
 			name:      "session wins over unavailable",

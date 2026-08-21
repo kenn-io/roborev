@@ -614,6 +614,60 @@ func TestCodexReviewBoundsNoJSONStdoutDiagnostic(t *testing.T) {
 	assert.NotContains(t, err.Error(), omittedTail)
 }
 
+func TestCodexReviewClassifiesNoJSONSignalsBeyondRenderedDiagnostics(t *testing.T) {
+	tests := []struct {
+		name     string
+		opts     MockCLIOpts
+		wantKind LimitKind
+	}{
+		{
+			name: "stdout",
+			opts: MockCLIOpts{
+				HelpOutput:  "usage --sandbox",
+				ExitCode:    1,
+				StdoutLines: []string{strings.Repeat("launcher warning ", 80) + "503 Service Unavailable"},
+			},
+			wantKind: LimitKindTransient,
+		},
+		{
+			name: "stderr",
+			opts: MockCLIOpts{
+				HelpOutput:  "usage --sandbox",
+				ExitCode:    1,
+				StderrLines: []string{strings.Repeat("launcher warning ", 80) + "You've hit your usage limit"},
+			},
+			wantKind: LimitKindQuota,
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			a, _ := setupMockCodex(t, false, tt.opts)
+
+			_, err := a.Review(context.Background(), t.TempDir(), "deadbeef", "prompt", nil)
+			require.Error(t, err)
+			classification, ok := LimitClassificationFromError(err)
+			require.True(t, ok)
+			assert.Equal(t, tt.wantKind, classification.Kind)
+			assert.Equal(t, LimitKindNone, ClassifyLimit("codex", err.Error()).Kind)
+		})
+	}
+}
+
+func TestCodexDiagnosticCaptureIsBoundedAndClassifiesTail(t *testing.T) {
+	capture := newCodexDiagnosticCapture()
+
+	for range 100 {
+		_, err := capture.Write([]byte(strings.Repeat("x", 100)))
+		require.NoError(t, err)
+	}
+	_, err := capture.Write([]byte("503 Service Unavailable"))
+	require.NoError(t, err)
+
+	assert.LessOrEqual(t, len(capture.String()), cliWaitErrorOutputLimit+3)
+	assert.Equal(t, LimitKindTransient, capture.Classification().Kind)
+}
+
 func TestCodexReviewNonzeroAfterValidJSONIsNotUnavailable(t *testing.T) {
 	a, _ := setupMockCodex(t, false, MockCLIOpts{
 		HelpOutput: "usage --sandbox",

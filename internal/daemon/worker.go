@@ -1251,7 +1251,7 @@ func (wp *WorkerPool) failOrRetryContext(
 	_ context.Context, workerID string, job *storage.ReviewJob, agentName string, errorMsg string,
 ) {
 	wp.runAttemptTransition(workerID, job, func() {
-		wp.failOrRetryInnerLocked(workerID, job, agentName, errorMsg, false)
+		wp.failOrRetryInnerLocked(workerID, job, agentName, errorMsg, false, nil)
 	})
 }
 
@@ -1266,7 +1266,7 @@ func (wp *WorkerPool) failOrRetryAgentContext(
 	_ context.Context, workerID string, job *storage.ReviewJob, agentName string, errorMsg string,
 ) {
 	wp.runAttemptTransition(workerID, job, func() {
-		wp.failOrRetryInnerLocked(workerID, job, agentName, errorMsg, true)
+		wp.failOrRetryInnerLocked(workerID, job, agentName, errorMsg, true, nil)
 	})
 }
 
@@ -1283,14 +1283,24 @@ func (wp *WorkerPool) failOrRetryAgentExecutionContext(
 	executionErr error,
 ) {
 	errorMsg := fmt.Sprintf("agent: %v", executionErr)
-	classification := wp.classify(agent.CanonicalName(agentName), errorMsg)
+	classification, attached := agent.LimitClassificationFromError(executionErr)
+	if !attached {
+		classification = wp.classify(agent.CanonicalName(agentName), errorMsg)
+	}
 	if classification.Kind == agent.LimitKindNone && agent.IsUnavailable(executionErr) {
 		wp.failoverOrFailNonRetryableAgentContext(
 			ctx, workerID, job, agentName, review.UnavailableError(errorMsg),
 		)
 		return
 	}
-	wp.failOrRetryAgentContext(ctx, workerID, job, agentName, errorMsg)
+	if attached && classification.Kind == agent.LimitKindTransient {
+		errorMsg = review.OutageError(errorMsg)
+	}
+	wp.runAttemptTransition(workerID, job, func() {
+		wp.failOrRetryInnerLocked(
+			workerID, job, agentName, errorMsg, true, &classification,
+		)
+	})
 }
 
 // finalErrorMsg tags the stored error with review.OutageErrorPrefix when an
@@ -1311,7 +1321,7 @@ func (wp *WorkerPool) finalErrorMsg(agentName, errorMsg string, agentError bool)
 
 func (wp *WorkerPool) failOrRetryInner(workerID string, job *storage.ReviewJob, agentName string, errorMsg string, agentError bool) {
 	wp.runAttemptTransition(workerID, job, func() {
-		wp.failOrRetryInnerLocked(workerID, job, agentName, errorMsg, agentError)
+		wp.failOrRetryInnerLocked(workerID, job, agentName, errorMsg, agentError, nil)
 	})
 }
 
@@ -1321,6 +1331,7 @@ func (wp *WorkerPool) failOrRetryInnerLocked(
 	agentName string,
 	errorMsg string,
 	agentError bool,
+	classificationOverride *agent.LimitClassification,
 ) {
 	// Quota and session-limit errors skip retries entirely — cool down
 	// the agent and attempt failover or fail. Behavior matches the
@@ -1328,6 +1339,9 @@ func (wp *WorkerPool) failOrRetryInnerLocked(
 	// internal/agent (ClassifyLimit) so the CLI fix loop can share it.
 	if agentError {
 		cls := wp.classify(agent.CanonicalName(agentName), errorMsg)
+		if classificationOverride != nil {
+			cls = *classificationOverride
+		}
 		switch cls.Kind {
 		case agent.LimitKindQuota, agent.LimitKindSession:
 			dur := wp.agentQuotaCooldown()

@@ -1,6 +1,7 @@
 package agent
 
 import (
+	"errors"
 	"strings"
 	"time"
 )
@@ -28,6 +29,34 @@ type LimitClassification struct {
 // LimitClassifier is the function shape used by callers that want to inject
 // a stub in tests.
 type LimitClassifier func(agent, errMsg string) LimitClassification
+
+type limitClassifiedError struct {
+	cause          error
+	classification LimitClassification
+}
+
+func (e *limitClassifiedError) Error() string { return e.cause.Error() }
+func (e *limitClassifiedError) Unwrap() error { return e.cause }
+
+// WithLimitClassification attaches provider classification independently of
+// the rendered error text. This lets callers bound diagnostics without losing
+// retry and quota semantics.
+func WithLimitClassification(err error, classification LimitClassification) error {
+	if err == nil || classification.Kind == LimitKindNone {
+		return err
+	}
+	return &limitClassifiedError{cause: err, classification: classification}
+}
+
+// LimitClassificationFromError returns provider classification attached by an
+// agent adapter.
+func LimitClassificationFromError(err error) (LimitClassification, bool) {
+	var target *limitClassifiedError
+	if !errors.As(err, &target) {
+		return LimitClassification{}, false
+	}
+	return target.classification, true
+}
 
 // limitRule is one substring → kind mapping. The Agents slice restricts
 // the rule to specific canonical agent names; "*" applies to any agent.

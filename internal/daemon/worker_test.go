@@ -2906,6 +2906,24 @@ func TestUnavailableAgentErrorPreservesLimitClassification(t *testing.T) {
 	}
 }
 
+func TestUnavailableAgentErrorUsesAttachedLimitClassification(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	job := tc.createAndClaimJobWithAgent(t, "unavailable-attached-quota", testWorkerID, "codex")
+	job.RepoPath = tc.TmpDir
+
+	tc.Pool.failOrRetryAgentExecutionContext(
+		context.Background(), testWorkerID, job, "codex",
+		agent.MarkUnavailable(agent.WithLimitClassification(
+			errors.New("bounded diagnostics"),
+			agent.LimitClassification{Kind: agent.LimitKindQuota, Agent: "codex"},
+		)),
+	)
+
+	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusFailed)
+	assert.True(t, strings.HasPrefix(updated.Error, review.QuotaErrorPrefix))
+	assert.True(t, tc.Pool.isAgentCoolingDown("codex"))
+}
+
 func TestFailOrRetryInner_SetsRetryNotBefore(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)

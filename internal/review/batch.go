@@ -212,7 +212,10 @@ func runSingle(
 
 func formatBatchAgentError(agentName string, err error) string {
 	msg := fmt.Sprintf("agent review: %v", err)
-	classification := agent.ClassifyLimit(agent.CanonicalName(agentName), msg)
+	classification, ok := agent.LimitClassificationFromError(err)
+	if !ok {
+		classification = agent.ClassifyLimit(agent.CanonicalName(agentName), msg)
+	}
 	switch classification.Kind {
 	case agent.LimitKindQuota:
 		if strings.HasPrefix(msg, QuotaErrorPrefix) {
