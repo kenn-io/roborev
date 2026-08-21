@@ -415,6 +415,59 @@ func TestAutoDesignJobCapturesTokenUsageBeforeReopen(t *testing.T) {
 	assert.True(t, updated)
 }
 
+func TestLocallyRerunImportedJobCapturesAndSyncsTokenUsage(t *testing.T) {
+	db := openTestDB(t)
+	t.Cleanup(func() { db.Close() })
+	_, jobs := seedJobs(t, db, "/tmp/token-cost-imported-rerun", 1)
+	job := jobs[0]
+	_, err := db.Exec(`
+		UPDATE review_jobs
+		SET status = 'done', started_at = datetime('now'),
+		    finished_at = datetime('now'), source_machine_id = 'remote-machine',
+		    synced_at = datetime('now')
+		WHERE id = ?`, job.ID)
+	require.NoError(t, err)
+
+	require.NoError(t, db.ReenqueueJob(job.ID, ReenqueueOpts{}))
+	machineID, err := db.GetMachineID()
+	require.NoError(t, err)
+	var owner string
+	require.NoError(t, db.QueryRow(
+		`SELECT source_machine_id FROM review_jobs WHERE id = ?`, job.ID,
+	).Scan(&owner))
+	assert.Equal(t, machineID, owner)
+	rerun, err := db.ClaimJob("local-worker")
+	require.NoError(t, err)
+	require.NotNil(t, rerun)
+	require.Equal(t, job.ID, rerun.ID)
+	require.NoError(t, db.MarkJobAgentInvoked(
+		job.ID, "local-worker", "codex review",
+	))
+	require.NoError(t, db.SaveJobSessionID(
+		job.ID, "local-worker", "local-rerun-session",
+	))
+	require.NoError(t, db.CompleteJob(
+		job.ID, "codex", "prompt", "No issues found.",
+	))
+
+	updated, err := db.BackfillJobTokenUsageIfCurrent(
+		job.ID,
+		"local-rerun-session",
+		"",
+		`{"total_output_tokens":64,"has_cost":true,"cost_usd":0.02}`,
+		rerun.StartedAtRaw,
+		false,
+	)
+	require.NoError(t, err)
+	assert.True(t, updated)
+
+	toSync, err := db.GetJobsToSync(machineID, 10)
+	require.NoError(t, err)
+	require.Len(t, toSync, 1)
+	assert.Equal(t, job.ID, toSync[0].ID)
+	assert.Contains(t, toSync[0].TokenUsage, `"cost_usd":0.02`)
+}
+
 func TestBackfillJobTokenUsageIfCurrentRejectsReenqueuedJob(t *testing.T) {
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })

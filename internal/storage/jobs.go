@@ -1199,6 +1199,10 @@ func (db *DB) ReenqueueJob(jobID int64, opts ReenqueueOpts) error {
 func (db *DB) ReenqueueJobWithRequest(
 	jobID int64, opts ReenqueueOpts, requestID string,
 ) (resultJobID int64, replayed bool, err error) {
+	machineID, err := db.GetMachineID()
+	if err != nil {
+		return 0, false, fmt.Errorf("get machine ID: %w", err)
+	}
 	ctx := context.Background()
 	conn, err := db.Conn(ctx)
 	if err != nil {
@@ -1247,7 +1251,10 @@ func (db *DB) ReenqueueJobWithRequest(
 	// Stored-prompt jobs (task, compact, fix, insights) keep their prompt
 	// since the worker needs it and cannot regenerate it from git.
 	//
-	// synced_at is cleared because this attempt's cost metadata is cleared: if
+	// source_machine_id transfers to this machine because an explicit local
+	// rerun creates a new locally owned attempt, even when the original job was
+	// imported through sync. synced_at is cleared because this attempt's cost
+	// metadata is cleared: if
 	// the rerun completes unpriced in the same RFC3339 second as the prior
 	// sync, the second-precise updated_at vs synced_at comparison would compare
 	// equal and never re-push, leaving stale spend in PostgreSQL. A NULL
@@ -1257,7 +1264,7 @@ func (db *DB) ReenqueueJobWithRequest(
 	// the same reason.
 	result, err := conn.ExecContext(ctx, `
 		UPDATE review_jobs
-		SET status = 'queued', enqueued_at = ?, worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = 0, patch = NULL, session_id = NULL, token_usage = NULL, command_line = NULL, agent_invoked = 0, synced_at = NULL, model = ?, provider = ?,
+		SET status = 'queued', enqueued_at = ?, worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = 0, patch = NULL, session_id = NULL, token_usage = NULL, command_line = NULL, agent_invoked = 0, synced_at = NULL, source_machine_id = ?, model = ?, provider = ?,
 		    prompt_prebuilt = 0,
 		    prompt = CASE WHEN job_type IN ('task', 'compact', 'fix', 'insights') THEN prompt ELSE NULL END,
 		    skip_reason = NULL,
@@ -1267,7 +1274,7 @@ func (db *DB) ReenqueueJobWithRequest(
 		    status IN ('done', 'failed', 'skipped')
 		    OR (status = 'canceled' AND worker_id IS NULL)
 		  )
-	`, enqueuedAt, nullString(opts.Model), nullString(opts.Provider), updatedAt, jobID)
+	`, enqueuedAt, machineID, nullString(opts.Model), nullString(opts.Provider), updatedAt, jobID)
 	if err != nil {
 		return 0, false, err
 	}

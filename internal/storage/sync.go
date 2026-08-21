@@ -808,6 +808,7 @@ func (db *DB) UpsertPulledJob(j PulledJob, repoID int64, commitID *int64) error 
 			commit_id = excluded.commit_id,
 			patch_id = excluded.patch_id,
 			dirty_files = COALESCE(excluded.dirty_files, review_jobs.dirty_files),
+			source_machine_id = excluded.source_machine_id,
 			token_usage = CASE WHEN excluded.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased') THEN excluded.token_usage ELSE COALESCE(excluded.token_usage, review_jobs.token_usage) END,
 			agent_invoked = CASE WHEN excluded.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased') THEN excluded.agent_invoked ELSE (review_jobs.agent_invoked OR excluded.agent_invoked) END,
 			worktree_path = COALESCE(excluded.worktree_path, review_jobs.worktree_path),
