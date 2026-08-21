@@ -2,6 +2,7 @@ package storage
 
 import (
 	"context"
+	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -716,6 +717,7 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 	}
 	jobQueryCursor := rewindTimestampIDCursor(jobCursor, syncCursorLookback())
 	maxJobCursor := jobCursor
+	deferredJobCursor := ""
 
 	for {
 		jobs, newCursor, err := pool.PullJobs(ctx, machineID, jobQueryCursor, 100)
@@ -728,7 +730,16 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 
 		for _, j := range jobs {
 			if err := w.pullJob(j); err != nil {
-				// Don't advance cursor if any upsert fails - we'll retry next sync
+				if errors.Is(err, ErrNewerPulledJobDeferred) {
+					retryCursor := formatTimestampIDCursor(
+						j.UpdatedAt, j.CursorID-1,
+					)
+					deferredJobCursor = minTimestampIDCursor(
+						deferredJobCursor, retryCursor,
+					)
+					continue
+				}
+				// Other failures keep all cursors unchanged for a full retry.
 				return stats, fmt.Errorf("pull job %s: %w", j.UUID, err)
 			}
 			stats.Jobs++
@@ -736,12 +747,20 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 
 		jobQueryCursor = newCursor
 		maxJobCursor = maxTimestampIDCursor(maxJobCursor, newCursor)
-		if err := w.db.SetSyncState(SyncStateLastJobCursor, maxJobCursor); err != nil {
-			return stats, fmt.Errorf("save job cursor: %w", err)
-		}
 
 		if len(jobs) < 100 {
 			break
+		}
+	}
+	jobCursorToSave := maxJobCursor
+	if deferredJobCursor != "" {
+		jobCursorToSave = minTimestampIDCursor(
+			jobCursorToSave, deferredJobCursor,
+		)
+	}
+	if jobCursorToSave != jobCursor {
+		if err := w.db.SetSyncState(SyncStateLastJobCursor, jobCursorToSave); err != nil {
+			return stats, fmt.Errorf("save job cursor: %w", err)
 		}
 	}
 
@@ -909,6 +928,27 @@ func maxTimestampIDCursor(a, b string) string {
 		return a
 	}
 	if bTime.After(aTime) || (bTime.Equal(aTime) && bID > aID) {
+		return b
+	}
+	return a
+}
+
+func minTimestampIDCursor(a, b string) string {
+	if a == "" {
+		return b
+	}
+	if b == "" {
+		return a
+	}
+	aTime, aID, aOK := parseTimestampIDCursor(a)
+	bTime, bID, bOK := parseTimestampIDCursor(b)
+	if !aOK {
+		return b
+	}
+	if !bOK {
+		return a
+	}
+	if bTime.Before(aTime) || (bTime.Equal(aTime) && bID < aID) {
 		return b
 	}
 	return a

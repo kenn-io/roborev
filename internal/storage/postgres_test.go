@@ -1299,6 +1299,40 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) {
 		assert.WithinDuration(t, newer.CreatedAt, createdAt, time.Microsecond)
 	})
 
+	t.Run("updater deterministically breaks equal generation ties", func(t *testing.T) {
+		generation := time.Now().UTC().Add(2 * time.Hour).Truncate(time.Microsecond)
+		lower := reviews[0]
+		lower.CreatedAt = generation
+		lower.UpdatedAt = generation
+		lower.Output = "lower output"
+		lower.UpdatedByMachineID = "00000000-0000-0000-0000-000000000001"
+		higher := lower
+		higher.Output = "higher output"
+		higher.UpdatedByMachineID = "ffffffff-ffff-ffff-ffff-ffffffffffff"
+
+		success, err := pool.BatchUpsertReviews(ctx, []SyncableReview{lower})
+		require.NoError(t, err)
+		require.Equal(t, 1, countSuccesses(success))
+		success, err = pool.BatchUpsertReviews(ctx, []SyncableReview{higher})
+		require.NoError(t, err)
+		require.Equal(t, 1, countSuccesses(success))
+		success, err = pool.BatchUpsertReviews(ctx, []SyncableReview{lower})
+		require.NoError(t, err)
+		require.Equal(t, 0, countSuccesses(success))
+
+		var output, updater string
+		var sourceUpdatedAt, cursorUpdatedAt time.Time
+		err = pool.pool.QueryRow(ctx, `
+			SELECT output, updated_by_machine_id, source_updated_at, updated_at
+			FROM reviews WHERE job_uuid = $1`, lower.JobUUID,
+		).Scan(&output, &updater, &sourceUpdatedAt, &cursorUpdatedAt)
+		require.NoError(t, err)
+		assert.Equal(t, higher.Output, output)
+		assert.Equal(t, higher.UpdatedByMachineID, updater)
+		assert.WithinDuration(t, generation, sourceUpdatedAt, time.Microsecond)
+		assert.Equal(t, -1, cursorUpdatedAt.Compare(sourceUpdatedAt))
+	})
+
 	t.Run("newer review UUID replaces prior job review", func(t *testing.T) {
 		replacement := reviews[1]
 		replacement.UUID = uuid.NewString()

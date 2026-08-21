@@ -245,6 +245,47 @@ func TestUpsertPulledReviewConvergesDifferentUUIDForSameJob(t *testing.T) {
 	assert.Equal(t, 1, count)
 }
 
+func TestUpsertPulledReviewBreaksEqualGenerationTiesByUpdater(t *testing.T) {
+	h := newSyncTestHelper(t)
+	job := h.createCompletedJob("review-generation-tie-sha")
+	review, err := h.db.GetReviewByJobID(job.ID)
+	require.NoError(t, err)
+	generation := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
+	_, err = h.db.Exec(`
+		UPDATE reviews
+		SET output = 'lower output', created_at = ?, updated_at = ?,
+		    updated_by_machine_id = ?
+		WHERE id = ?`,
+		generation.Format(time.RFC3339Nano),
+		generation.Format(time.RFC3339Nano),
+		"00000000-0000-0000-0000-000000000001", review.ID,
+	)
+	require.NoError(t, err)
+
+	higher := PulledReview{
+		UUID:               review.UUID,
+		JobUUID:            job.UUID,
+		Agent:              review.Agent,
+		Prompt:             review.Prompt,
+		Output:             "higher output",
+		UpdatedByMachineID: "ffffffff-ffff-ffff-ffff-ffffffffffff",
+		CreatedAt:          generation,
+		UpdatedAt:          generation,
+	}
+	require.NoError(t, h.db.UpsertPulledReview(higher))
+	lower := higher
+	lower.Output = "stale lower output"
+	lower.UpdatedByMachineID = "00000000-0000-0000-0000-000000000001"
+	require.NoError(t, h.db.UpsertPulledReview(lower))
+
+	var output, updater string
+	require.NoError(t, h.db.QueryRow(`
+		SELECT output, updated_by_machine_id FROM reviews WHERE id = ?`, review.ID,
+	).Scan(&output, &updater))
+	assert.Equal(t, higher.Output, output)
+	assert.Equal(t, higher.UpdatedByMachineID, updater)
+}
+
 // TestClearAllSyncedAt verifies that ClearAllSyncedAt clears synced_at
 // on all tables (jobs, reviews, responses).
 func TestClearAllSyncedAt(t *testing.T) {

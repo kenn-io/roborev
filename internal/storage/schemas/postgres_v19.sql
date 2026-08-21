@@ -1,6 +1,6 @@
 -- PostgreSQL schema version 19
--- On top of v18 (response provenance), enforces one review per job after
--- retaining the newest historical rerun review.
+-- On top of v18 (response provenance), enforces one review per job and keeps
+-- source update ordering separate from the server-side pull cursor.
 -- Note: Version is managed by EnsureSchema(), not this file.
 
 CREATE SCHEMA IF NOT EXISTS roborev;
@@ -90,6 +90,7 @@ CREATE TABLE IF NOT EXISTS roborev.reviews (
   closed BOOLEAN NOT NULL DEFAULT FALSE,
   updated_by_machine_id UUID NOT NULL,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
+  source_updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()
 );
 

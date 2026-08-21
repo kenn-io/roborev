@@ -1023,11 +1023,12 @@ func (db *DB) UpsertPulledReview(r PulledReview) error {
 		return fmt.Errorf("find job for review: %w", err)
 	}
 
-	var existingCreatedAt, existingUpdatedAt string
+	var existingCreatedAt, existingUpdatedAt, existingUpdatedBy string
 	err = conn.QueryRowContext(ctx, `
-		SELECT created_at, COALESCE(updated_at, '')
+		SELECT created_at, COALESCE(updated_at, ''),
+		       COALESCE(updated_by_machine_id, '')
 		FROM reviews WHERE job_id = ?`, jobID,
-	).Scan(&existingCreatedAt, &existingUpdatedAt)
+	).Scan(&existingCreatedAt, &existingUpdatedAt, &existingUpdatedBy)
 	if err == nil {
 		existingGeneration := canonicalSyncTimestamp(
 			parseSQLiteTime(existingCreatedAt),
@@ -1041,8 +1042,14 @@ func (db *DB) UpsertPulledReview(r PulledReview) error {
 				parseSQLiteTime(existingUpdatedAt),
 			)
 			incomingUpdate := canonicalSyncTimestamp(r.UpdatedAt)
-			if !existingUpdate.IsZero() && !incomingUpdate.After(existingUpdate) {
-				return commitNoop()
+			if !existingUpdate.IsZero() {
+				if incomingUpdate.Before(existingUpdate) {
+					return commitNoop()
+				}
+				if incomingUpdate.Equal(existingUpdate) &&
+					strings.Compare(r.UpdatedByMachineID, existingUpdatedBy) <= 0 {
+					return commitNoop()
+				}
 			}
 		}
 	} else if !errors.Is(err, sql.ErrNoRows) {

@@ -1450,6 +1450,87 @@ func TestIntegration_MultiplayerOfflineReconnect(t *testing.T) {
 	t.Log("Offline/reconnect verified: reviews created offline sync correctly after reconnect")
 }
 
+func TestIntegration_DeferredJobDoesNotBlockUnrelatedPulls(t *testing.T) {
+	env := newIntegrationEnv(t, 30*time.Second)
+	db := env.openDB("deferred-pull.db")
+	repoIdentity := "example.com/test/deferred-pull.git"
+	repo, err := db.GetOrCreateRepo(
+		filepath.Join(env.TmpDir, "deferred-pull-repo"), repoIdentity,
+	)
+	require.NoError(t, err)
+	localJob, err := db.EnqueueJob(EnqueueOpts{
+		RepoID: repo.ID, GitRef: "local-active", Agent: "test",
+	})
+	require.NoError(t, err)
+	claimed, err := db.ClaimJob("local-worker")
+	require.NoError(t, err)
+	require.Equal(t, localJob.ID, claimed.ID)
+
+	pgRepoID, err := env.Pool.GetOrCreateRepo(env.Ctx, repoIdentity)
+	require.NoError(t, err)
+	remoteMachine := GenerateUUID()
+	deferredUpdatedAt := time.Now().UTC().Add(-time.Minute).Truncate(time.Microsecond)
+	var deferredID int64
+	err = env.Pool.pool.QueryRow(env.Ctx, `
+		INSERT INTO roborev.review_jobs
+		  (uuid, repo_id, git_ref, agent, status, enqueued_at,
+		   source_machine_id, updated_at)
+		VALUES ($1, $2, 'remote-newer', 'test', 'done', $3, $4, $5)
+		RETURNING id
+	`, localJob.UUID, pgRepoID, claimed.EnqueuedAt.Add(time.Hour),
+		remoteMachine, deferredUpdatedAt).Scan(&deferredID)
+	require.NoError(t, err)
+
+	unrelatedJobUUID := GenerateUUID()
+	unrelatedUpdatedAt := deferredUpdatedAt.Add(time.Second)
+	_, err = env.Pool.pool.Exec(env.Ctx, `
+		INSERT INTO roborev.review_jobs
+		  (uuid, repo_id, git_ref, agent, status, enqueued_at,
+		   source_machine_id, updated_at)
+		VALUES ($1, $2, 'unrelated', 'test', 'done', $3, $4, $5)
+	`, unrelatedJobUUID, pgRepoID, time.Now().UTC().Add(-time.Hour),
+		remoteMachine, unrelatedUpdatedAt)
+	require.NoError(t, err)
+	_, err = env.Pool.pool.Exec(env.Ctx, `
+		INSERT INTO roborev.reviews
+		  (uuid, job_uuid, agent, prompt, output, updated_by_machine_id,
+		   created_at, updated_at)
+		VALUES ($1, $2, 'test', 'prompt', 'output', $3, $4, $4)
+	`, GenerateUUID(), unrelatedJobUUID, remoteMachine, unrelatedUpdatedAt)
+	require.NoError(t, err)
+	_, err = env.Pool.pool.Exec(env.Ctx, `
+		INSERT INTO roborev.responses
+		  (uuid, job_uuid, responder, response, source, source_machine_id)
+		VALUES ($1, $2, 'reviewer', 'response', 'local', $3)
+	`, GenerateUUID(), unrelatedJobUUID, remoteMachine)
+	require.NoError(t, err)
+
+	worker := NewSyncWorker(db, config.SyncConfig{})
+	stats, err := worker.pullChangesWithStats(env.Ctx, env.Pool)
+	require.NoError(t, err)
+	assert.Equal(t, 1, stats.Jobs)
+	assert.Equal(t, 1, stats.Reviews)
+	assert.Equal(t, 1, stats.Responses)
+
+	var unrelatedLocalID int64
+	require.NoError(t, db.QueryRow(
+		`SELECT id FROM review_jobs WHERE uuid = ?`, unrelatedJobUUID,
+	).Scan(&unrelatedLocalID))
+	_, err = db.GetReviewByJobID(unrelatedLocalID)
+	require.NoError(t, err)
+	var responseCount int
+	require.NoError(t, db.QueryRow(
+		`SELECT COUNT(*) FROM responses WHERE job_id = ?`, unrelatedLocalID,
+	).Scan(&responseCount))
+	assert.Equal(t, 1, responseCount)
+
+	jobCursor, err := db.GetSyncState(SyncStateLastJobCursor)
+	require.NoError(t, err)
+	assert.Equal(t,
+		formatTimestampIDCursor(deferredUpdatedAt, deferredID-1), jobCursor,
+	)
+}
+
 func TestIntegration_SyncNowPushesAllBatches(t *testing.T) {
 	env := newIntegrationEnv(t, 60*time.Second)
 	db := env.openDB("test.db")

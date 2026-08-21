@@ -148,13 +148,15 @@ func TestPostgresMigration_DeduplicatesReviewsByJob(t *testing.T) {
 	pg := openTestPgPool(t)
 	defer pg.Close()
 
-	var count int
+	var count, sourceUpdateCount int
 	var output string
 	require.NoError(t, pgxPool(pg).QueryRow(ctx, `
-		SELECT COUNT(*), MAX(output) FROM roborev.reviews WHERE job_uuid = $1
-	`, jobUUID).Scan(&count, &output))
+		SELECT COUNT(*), MAX(output), COUNT(source_updated_at)
+		FROM roborev.reviews WHERE job_uuid = $1
+	`, jobUUID).Scan(&count, &output, &sourceUpdateCount))
 	assert.Equal(t, 1, count)
 	assert.Equal(t, "new output", output)
+	assert.Equal(t, 1, sourceUpdateCount)
 
 	_, err = pgxPool(pg).Exec(ctx, `
 		INSERT INTO roborev.reviews

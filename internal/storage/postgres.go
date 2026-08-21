@@ -406,12 +406,29 @@ func (p *PgPool) EnsureSchema(ctx context.Context) error {
 			// Reruns historically created a new review UUID for the same job.
 			// Retain the newest generation, then enforce the one-review-per-job
 			// identity now used by local reruns and PostgreSQL upserts.
+			if _, err = p.pool.Exec(ctx, `ALTER TABLE reviews ADD COLUMN IF NOT EXISTS source_updated_at TIMESTAMP WITH TIME ZONE`); err != nil {
+				return fmt.Errorf("v19 migration (add review source update time): %w", err)
+			}
+			if _, err = p.pool.Exec(ctx, `
+				UPDATE reviews
+				SET source_updated_at = COALESCE(updated_at, created_at, NOW())
+				WHERE source_updated_at IS NULL
+			`); err != nil {
+				return fmt.Errorf("v19 migration (backfill review source update time): %w", err)
+			}
+			if _, err = p.pool.Exec(ctx, `ALTER TABLE reviews ALTER COLUMN source_updated_at SET NOT NULL`); err != nil {
+				return fmt.Errorf("v19 migration (require review source update time): %w", err)
+			}
+			if _, err = p.pool.Exec(ctx, `ALTER TABLE reviews ALTER COLUMN source_updated_at SET DEFAULT NOW()`); err != nil {
+				return fmt.Errorf("v19 migration (default review source update time): %w", err)
+			}
 			if _, err = p.pool.Exec(ctx, `
 				WITH ranked AS (
 					SELECT id,
 					       ROW_NUMBER() OVER (
 						   PARTITION BY job_uuid
 						   ORDER BY created_at DESC NULLS LAST,
+						            source_updated_at DESC NULLS LAST,
 						            updated_at DESC NULLS LAST, id DESC
 					       ) AS generation_rank
 					FROM reviews
@@ -786,11 +803,15 @@ func (p *PgPool) UpsertJob(ctx context.Context, j SyncableJob, pgRepoID int64, p
 
 // UpsertReview inserts or updates a review in PostgreSQL
 func (p *PgPool) UpsertReview(ctx context.Context, r SyncableReview) error {
+	updatedAt := r.UpdatedAt
+	if updatedAt.IsZero() {
+		updatedAt = r.CreatedAt
+	}
 	_, err := p.pool.Exec(ctx, `
 		INSERT INTO reviews (
 			uuid, job_uuid, agent, prompt, output, closed,
-			updated_by_machine_id, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, clock_timestamp())
+			updated_by_machine_id, created_at, source_updated_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, clock_timestamp())
 		ON CONFLICT (job_uuid) DO UPDATE SET
 			uuid = EXCLUDED.uuid,
 			agent = EXCLUDED.agent,
@@ -799,10 +820,14 @@ func (p *PgPool) UpsertReview(ctx context.Context, r SyncableReview) error {
 			closed = EXCLUDED.closed,
 			updated_by_machine_id = EXCLUDED.updated_by_machine_id,
 			created_at = EXCLUDED.created_at,
+			source_updated_at = EXCLUDED.source_updated_at,
 			updated_at = clock_timestamp()
-		WHERE EXCLUDED.created_at >= reviews.created_at
+		WHERE EXCLUDED.created_at > reviews.created_at
+		   OR (EXCLUDED.created_at = reviews.created_at AND
+		       (EXCLUDED.source_updated_at, EXCLUDED.updated_by_machine_id) >=
+		       (reviews.source_updated_at, reviews.updated_by_machine_id))
 	`, r.UUID, r.JobUUID, r.Agent, r.Prompt, r.Output, r.Closed,
-		r.UpdatedByMachineID, r.CreatedAt)
+		r.UpdatedByMachineID, r.CreatedAt, updatedAt)
 	return err
 }
 
@@ -860,6 +885,7 @@ type PulledJob struct {
 	PanelMemberConfigJSON string
 	SourceMachineID       string
 	UpdatedAt             time.Time
+	CursorID              int64
 }
 
 // PullJobs fetches jobs from PostgreSQL updated after the given cursor.
@@ -915,7 +941,7 @@ func (p *PgPool) PullJobs(ctx context.Context, excludeMachineID string, cursor s
 			&j.Prompt, &diffContent, &dirtyFiles, &j.Error, &j.TokenUsage,
 			&j.WorktreePath, &j.Source, &j.MinSeverity, &j.BackupAgent, &j.BackupModel,
 			&j.PanelRunUUID, &j.PanelRole, &j.PanelName, &j.PanelMemberName, &j.PanelMemberIndex, &j.PanelMemberConfigJSON,
-			&j.SourceMachineID, &j.UpdatedAt, &lastID,
+			&j.SourceMachineID, &j.UpdatedAt, &j.CursorID,
 		)
 		if err != nil {
 			return nil, cursor, fmt.Errorf("scan job: %w", err)
@@ -926,6 +952,7 @@ func (p *PgPool) PullJobs(ctx context.Context, excludeMachineID string, cursor s
 			j.DirtyFiles = decodeDirtyFiles(*dirtyFiles)
 		}
 		lastUpdatedAt = j.UpdatedAt
+		lastID = j.CursorID
 		jobs = append(jobs, j)
 	}
 
@@ -977,7 +1004,8 @@ func (p *PgPool) PullReviews(ctx context.Context, excludeMachineID string, known
 	rows, err := p.pool.Query(ctx, `
 		SELECT
 			r.uuid, r.job_uuid, r.agent, r.prompt, r.output, r.closed,
-			r.updated_by_machine_id, r.created_at, r.updated_at, r.id
+			r.updated_by_machine_id, r.created_at, r.source_updated_at,
+			r.updated_at, r.id
 		FROM reviews r
 		WHERE (r.updated_by_machine_id IS NULL OR r.updated_by_machine_id != $1)
 		AND r.job_uuid = ANY($2)
@@ -999,13 +1027,13 @@ func (p *PgPool) PullReviews(ctx context.Context, excludeMachineID string, known
 
 		err := rows.Scan(
 			&r.UUID, &r.JobUUID, &r.Agent, &r.Prompt, &r.Output, &r.Closed,
-			&r.UpdatedByMachineID, &r.CreatedAt, &r.UpdatedAt, &lastID,
+			&r.UpdatedByMachineID, &r.CreatedAt, &r.UpdatedAt,
+			&lastUpdatedAt, &lastID,
 		)
 		if err != nil {
 			return nil, cursor, fmt.Errorf("scan review: %w", err)
 		}
 
-		lastUpdatedAt = r.UpdatedAt
 		reviews = append(reviews, r)
 	}
 
@@ -1138,11 +1166,15 @@ func (p *PgPool) BatchUpsertReviews(ctx context.Context, reviews []SyncableRevie
 
 	batch := &pgx.Batch{}
 	for _, r := range reviews {
+		updatedAt := r.UpdatedAt
+		if updatedAt.IsZero() {
+			updatedAt = r.CreatedAt
+		}
 		batch.Queue(`
 			INSERT INTO reviews (
 				uuid, job_uuid, agent, prompt, output, closed,
-				updated_by_machine_id, created_at, updated_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, clock_timestamp())
+				updated_by_machine_id, created_at, source_updated_at, updated_at
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, clock_timestamp())
 			ON CONFLICT (job_uuid) DO UPDATE SET
 				uuid = EXCLUDED.uuid,
 				agent = EXCLUDED.agent,
@@ -1151,10 +1183,14 @@ func (p *PgPool) BatchUpsertReviews(ctx context.Context, reviews []SyncableRevie
 				closed = EXCLUDED.closed,
 				updated_by_machine_id = EXCLUDED.updated_by_machine_id,
 				created_at = EXCLUDED.created_at,
+				source_updated_at = EXCLUDED.source_updated_at,
 				updated_at = clock_timestamp()
-			WHERE EXCLUDED.created_at >= reviews.created_at
+			WHERE EXCLUDED.created_at > reviews.created_at
+			   OR (EXCLUDED.created_at = reviews.created_at AND
+			       (EXCLUDED.source_updated_at, EXCLUDED.updated_by_machine_id) >=
+			       (reviews.source_updated_at, reviews.updated_by_machine_id))
 		`, r.UUID, r.JobUUID, r.Agent, r.Prompt, r.Output, r.Closed,
-			r.UpdatedByMachineID, r.CreatedAt)
+			r.UpdatedByMachineID, r.CreatedAt, updatedAt)
 	}
 
 	br := p.pool.SendBatch(ctx, batch)
