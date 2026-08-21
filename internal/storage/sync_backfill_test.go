@@ -452,6 +452,60 @@ func TestUpsertPulledJobDoesNotRevertLocallyOwnedActiveRerun(t *testing.T) {
 	assert.False(t, session.Valid)
 }
 
+func TestUpsertPulledJobDefersNewerGenerationDuringLocalAttempt(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	repo, err := db.GetOrCreateRepo("/test/repo-deferred-newer-generation")
+	require.NoError(t, err)
+	base := time.Now().UTC().Add(-time.Hour)
+	pulled := PulledJob{
+		UUID:            "deferred-newer-generation-uuid",
+		RepoIdentity:    "/test/repo-deferred-newer-generation",
+		GitRef:          "old-ref",
+		Agent:           "codex",
+		Status:          string(JobStatusDone),
+		SourceMachineID: "remote-owner",
+		EnqueuedAt:      base,
+		UpdatedAt:       base.Add(time.Minute),
+	}
+	require.NoError(t, db.UpsertPulledJob(pulled, repo.ID, nil))
+	var jobID int64
+	require.NoError(t, db.QueryRow(
+		`SELECT id FROM review_jobs WHERE uuid = ?`, pulled.UUID,
+	).Scan(&jobID))
+	require.NoError(t, db.ReenqueueJob(jobID, ReenqueueOpts{}))
+	claimed, err := db.ClaimJob("local-worker")
+	require.NoError(t, err)
+	require.Equal(t, jobID, claimed.ID)
+
+	newer := pulled
+	newer.GitRef = "newer-remote-ref"
+	newer.SourceMachineID = "newer-remote-owner"
+	newer.EnqueuedAt = claimed.EnqueuedAt.Add(time.Hour)
+	newer.UpdatedAt = newer.EnqueuedAt.Add(time.Minute)
+	err = db.UpsertPulledJob(newer, repo.ID, nil)
+	require.ErrorIs(t, err, ErrNewerPulledJobDeferred)
+
+	local, err := db.GetJobByID(jobID)
+	require.NoError(t, err)
+	assert.Equal(t, JobStatusRunning, local.Status)
+	assert.NotEqual(t, newer.GitRef, local.GitRef)
+
+	require.NoError(t, db.CompleteJob(
+		jobID, "codex", "local prompt", "local output",
+	))
+	require.NoError(t, db.UpsertPulledJob(newer, repo.ID, nil))
+	converged, err := db.GetJobByID(jobID)
+	require.NoError(t, err)
+	assert.Equal(t, JobStatusDone, converged.Status)
+	assert.Equal(t, newer.GitRef, converged.GitRef)
+	var sourceMachineID string
+	require.NoError(t, db.QueryRow(
+		`SELECT source_machine_id FROM review_jobs WHERE id = ?`, jobID,
+	).Scan(&sourceMachineID))
+	assert.Equal(t, newer.SourceMachineID, sourceMachineID)
+}
+
 func TestUpsertPulledJobReplacesNewerAttemptTiming(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()

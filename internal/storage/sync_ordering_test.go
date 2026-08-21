@@ -213,6 +213,38 @@ func TestUpsertPulledReviewAppliesSameGenerationAfterPostgresRounding(t *testing
 	assert.Equal(t, postgresCreated, review.CreatedAt)
 }
 
+func TestUpsertPulledReviewConvergesDifferentUUIDForSameJob(t *testing.T) {
+	h := newSyncTestHelper(t)
+	job := h.createCompletedJob("duplicate-review-job-sha")
+	local, err := h.db.GetReviewByJobID(job.ID)
+	require.NoError(t, err)
+
+	incomingUUID := GenerateUUID()
+	newer := local.CreatedAt.Add(time.Hour)
+	err = h.db.UpsertPulledReview(PulledReview{
+		UUID:               incomingUUID,
+		JobUUID:            job.UUID,
+		Agent:              "newer-agent",
+		Prompt:             "newer prompt",
+		Output:             "newer output",
+		UpdatedByMachineID: GenerateUUID(),
+		CreatedAt:          newer,
+		UpdatedAt:          newer,
+	})
+	require.NoError(t, err)
+
+	converged, err := h.db.GetReviewByJobID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, local.ID, converged.ID)
+	assert.Equal(t, incomingUUID, converged.UUID)
+	assert.Equal(t, "newer output", converged.Output)
+	var count int
+	require.NoError(t, h.db.QueryRow(
+		`SELECT COUNT(*) FROM reviews WHERE job_id = ?`, job.ID,
+	).Scan(&count))
+	assert.Equal(t, 1, count)
+}
+
 // TestClearAllSyncedAt verifies that ClearAllSyncedAt clears synced_at
 // on all tables (jobs, reviews, responses).
 func TestClearAllSyncedAt(t *testing.T) {

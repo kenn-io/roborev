@@ -15,12 +15,12 @@ import (
 )
 
 // PostgreSQL schema version - increment when schema changes
-const pgSchemaVersion = 18
+const pgSchemaVersion = 19
 
 // pgSchemaName is the PostgreSQL schema used to isolate roborev tables
 const pgSchemaName = "roborev"
 
-//go:embed schemas/postgres_v18.sql
+//go:embed schemas/postgres_v19.sql
 var pgSchemaSQL string
 
 // pgSchemaStatements returns the individual DDL statements for schema creation.
@@ -402,6 +402,29 @@ func (p *PgPool) EnsureSchema(ctx context.Context) error {
 				return fmt.Errorf("v18 migration (add response source): %w", err)
 			}
 		}
+		if currentVersion < 19 {
+			// Reruns historically created a new review UUID for the same job.
+			// Retain the newest generation, then enforce the one-review-per-job
+			// identity now used by local reruns and PostgreSQL upserts.
+			if _, err = p.pool.Exec(ctx, `
+				WITH ranked AS (
+					SELECT id,
+					       ROW_NUMBER() OVER (
+						   PARTITION BY job_uuid
+						   ORDER BY created_at DESC NULLS LAST,
+						            updated_at DESC NULLS LAST, id DESC
+					       ) AS generation_rank
+					FROM reviews
+				)
+				DELETE FROM reviews
+				WHERE id IN (SELECT id FROM ranked WHERE generation_rank > 1)
+			`); err != nil {
+				return fmt.Errorf("v19 migration (deduplicate reviews by job): %w", err)
+			}
+			if _, err = p.pool.Exec(ctx, `CREATE UNIQUE INDEX IF NOT EXISTS idx_reviews_job_uuid_unique ON reviews(job_uuid)`); err != nil {
+				return fmt.Errorf("v19 migration (add unique review job index): %w", err)
+			}
+		}
 		// Update version
 		_, err = p.pool.Exec(ctx, `INSERT INTO schema_version (version) VALUES ($1) ON CONFLICT (version) DO NOTHING`, pgSchemaVersion)
 		if err != nil {
@@ -767,7 +790,8 @@ func (p *PgPool) UpsertReview(ctx context.Context, r SyncableReview) error {
 			uuid, job_uuid, agent, prompt, output, closed,
 			updated_by_machine_id, created_at, updated_at
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, clock_timestamp())
-		ON CONFLICT (uuid) DO UPDATE SET
+		ON CONFLICT (job_uuid) DO UPDATE SET
+			uuid = EXCLUDED.uuid,
 			agent = EXCLUDED.agent,
 			prompt = EXCLUDED.prompt,
 			output = EXCLUDED.output,
@@ -1118,7 +1142,8 @@ func (p *PgPool) BatchUpsertReviews(ctx context.Context, reviews []SyncableRevie
 				uuid, job_uuid, agent, prompt, output, closed,
 				updated_by_machine_id, created_at, updated_at
 			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, clock_timestamp())
-			ON CONFLICT (uuid) DO UPDATE SET
+			ON CONFLICT (job_uuid) DO UPDATE SET
+				uuid = EXCLUDED.uuid,
 				agent = EXCLUDED.agent,
 				prompt = EXCLUDED.prompt,
 				output = EXCLUDED.output,
@@ -1137,14 +1162,14 @@ func (p *PgPool) BatchUpsertReviews(ctx context.Context, reviews []SyncableRevie
 	success := make([]bool, len(reviews))
 	var firstErr error
 	for i := range reviews {
-		_, err := br.Exec()
+		tag, err := br.Exec()
 		if err != nil {
 			if firstErr == nil {
 				firstErr = err
 			}
 			continue
 		}
-		success[i] = true
+		success[i] = tag.RowsAffected() > 0
 	}
 
 	return success, firstErr
@@ -1221,14 +1246,14 @@ func (p *PgPool) batchUpsertJobs(ctx context.Context, jobs []JobWithPgIDs) ([]bo
 	success := make([]bool, len(jobs))
 	var firstErr error
 	for i := range jobs {
-		_, err := br.Exec()
+		tag, err := br.Exec()
 		if err != nil {
 			if firstErr == nil {
 				firstErr = err
 			}
 			continue
 		}
-		success[i] = true
+		success[i] = tag.RowsAffected() > 0
 	}
 	if err := br.Close(); err != nil && firstErr == nil {
 		firstErr = err
@@ -1249,7 +1274,7 @@ func (p *PgPool) upsertJobsIndividually(ctx context.Context, jobs []JobWithPgIDs
 			continue
 		}
 		br := p.pool.SendBatch(ctx, batch)
-		_, execErr := br.Exec()
+		tag, execErr := br.Exec()
 		closeErr := br.Close()
 		if execErr != nil {
 			if firstErr == nil {
@@ -1263,7 +1288,7 @@ func (p *PgPool) upsertJobsIndividually(ctx context.Context, jobs []JobWithPgIDs
 			}
 			continue
 		}
-		success[i] = true
+		success[i] = tag.RowsAffected() > 0
 	}
 	return success, firstErr
 }

@@ -21,6 +21,12 @@ const (
 	SyncStateDatabaseID       = "database_id"        // Stable identity of this local SQLite database
 )
 
+// ErrNewerPulledJobDeferred means a remote generation cannot be applied while
+// the local row owns an active attempt. The sync worker must leave its pull
+// cursor unchanged so the remote generation is retried after local ownership
+// is released.
+var ErrNewerPulledJobDeferred = errors.New("newer pulled job generation deferred")
+
 // GetSyncState retrieves a value from the sync_state table.
 // Returns empty string if key doesn't exist.
 func (db *DB) GetSyncState(key string) (string, error) {
@@ -871,17 +877,22 @@ func (db *DB) UpsertPulledJob(j PulledJob, repoID int64, commitID *int64) error 
 		&existingEnqueuedAt, &existingUpdatedAt,
 	)
 	if err == nil {
-		locallyActive := existingSource == machineID && (existingStatus == string(JobStatusQueued) ||
-			existingStatus == string(JobStatusRunning) ||
-			(existingStatus == string(JobStatusCanceled) && existingWorkerID.Valid))
-		if locallyActive {
-			return commitNoop()
-		}
-
 		existingGeneration := canonicalSyncTimestamp(
 			parseSQLiteTime(existingEnqueuedAt),
 		)
 		incomingGeneration := canonicalSyncTimestamp(j.EnqueuedAt)
+		locallyActive := existingSource == machineID && (existingStatus == string(JobStatusQueued) ||
+			existingStatus == string(JobStatusRunning) ||
+			(existingStatus == string(JobStatusCanceled) && existingWorkerID.Valid))
+		if locallyActive {
+			if incomingGeneration.After(existingGeneration) {
+				return fmt.Errorf(
+					"%w: local job %s", ErrNewerPulledJobDeferred, j.UUID,
+				)
+			}
+			return commitNoop()
+		}
+
 		if incomingGeneration.Before(existingGeneration) {
 			return commitNoop()
 		}
@@ -994,7 +1005,7 @@ func (db *DB) UpsertPulledReview(r PulledReview) error {
 	var existingCreatedAt, existingUpdatedAt string
 	err = conn.QueryRowContext(ctx, `
 		SELECT created_at, COALESCE(updated_at, '')
-		FROM reviews WHERE uuid = ?`, r.UUID,
+		FROM reviews WHERE job_id = ?`, jobID,
 	).Scan(&existingCreatedAt, &existingUpdatedAt)
 	if err == nil {
 		existingGeneration := canonicalSyncTimestamp(
@@ -1027,7 +1038,8 @@ func (db *DB) UpsertPulledReview(r PulledReview) error {
 			uuid, job_id, agent, prompt, output, closed,
 			verdict_bool, updated_by_machine_id, created_at, updated_at, synced_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(uuid) DO UPDATE SET
+		ON CONFLICT(job_id) DO UPDATE SET
+			uuid = excluded.uuid,
 			agent = excluded.agent,
 			prompt = excluded.prompt,
 			output = excluded.output,

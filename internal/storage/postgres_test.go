@@ -832,7 +832,7 @@ func TestIntegration_BatchUpsertJobs(t *testing.T) {
 
 		success, err = pool.BatchUpsertJobs(ctx, []JobWithPgIDs{old})
 		require.NoError(t, err)
-		require.Equal(t, 1, countSuccesses(success))
+		require.Equal(t, 0, countSuccesses(success))
 
 		var enqueuedAt, startedAt time.Time
 		var gitRef, agent, prompt, owner string
@@ -1240,7 +1240,7 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) {
 		stale.Closed = true
 		success, err = pool.BatchUpsertReviews(ctx, []SyncableReview{stale})
 		require.NoError(t, err)
-		require.Equal(t, 1, countSuccesses(success))
+		require.Equal(t, 0, countSuccesses(success))
 
 		var agent, prompt, output string
 		var closed bool
@@ -1255,6 +1255,27 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) {
 		assert.Equal(t, "new output", output)
 		assert.False(t, closed)
 		assert.WithinDuration(t, newer.CreatedAt, createdAt, time.Microsecond)
+	})
+
+	t.Run("newer review UUID replaces prior job review", func(t *testing.T) {
+		replacement := reviews[1]
+		replacement.UUID = uuid.NewString()
+		replacement.CreatedAt = reviews[1].CreatedAt.Add(time.Hour)
+		replacement.Output = "replacement output"
+		replacement.UpdatedByMachineID = uuid.NewString()
+		success, err := pool.BatchUpsertReviews(ctx, []SyncableReview{replacement})
+		require.NoError(t, err)
+		require.Equal(t, 1, countSuccesses(success))
+
+		var count int
+		var storedUUID, output string
+		require.NoError(t, pool.pool.QueryRow(ctx, `
+			SELECT COUNT(*), MAX(uuid::text), MAX(output)
+			FROM reviews WHERE job_uuid = $1`, replacement.JobUUID,
+		).Scan(&count, &storedUUID, &output))
+		assert.Equal(t, 1, count)
+		assert.Equal(t, replacement.UUID, storedUUID)
+		assert.Equal(t, replacement.Output, output)
 	})
 
 	t.Run("empty batch is no-op", func(t *testing.T) {
