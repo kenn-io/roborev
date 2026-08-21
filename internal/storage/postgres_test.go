@@ -1300,8 +1300,17 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) {
 	})
 
 	t.Run("updater deterministically breaks equal generation ties", func(t *testing.T) {
+		tieJobUUID := uuid.NewString()
+		createTestJob(t, pool.pool, TestJobOpts{
+			UUID:            tieJobUUID,
+			RepoID:          repoID,
+			CommitID:        commitID,
+			SourceMachineID: defaultTestMachineID,
+		})
 		generation := time.Now().UTC().Add(2 * time.Hour).Truncate(time.Microsecond)
 		lower := reviews[0]
+		lower.UUID = uuid.NewString()
+		lower.JobUUID = tieJobUUID
 		lower.CreatedAt = generation
 		lower.UpdatedAt = generation
 		lower.Output = "lower output"
@@ -1361,11 +1370,18 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) {
 	})
 
 	t.Run("partial failure with invalid FK", func(t *testing.T) {
+		partialJobUUID := uuid.NewString()
+		createTestJob(t, pool.pool, TestJobOpts{
+			UUID:            partialJobUUID,
+			RepoID:          repoID,
+			CommitID:        commitID,
+			SourceMachineID: defaultTestMachineID,
+		})
 		validReviewUUID := uuid.NewString()
 		reviews := []SyncableReview{
 			{
 				UUID:               validReviewUUID,
-				JobUUID:            jobUUID, // Valid FK
+				JobUUID:            partialJobUUID,
 				Agent:              "test",
 				Prompt:             "valid review",
 				Output:             "output",
