@@ -625,6 +625,8 @@ type SyncableReview struct {
 	UpdatedByMachineID string
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
+	CreatedAtRaw       string
+	UpdatedAtRaw       string
 }
 
 // GetReviewsToSync returns reviews modified locally that need to be pushed.
@@ -666,6 +668,8 @@ func (db *DB) GetReviewsToSync(machineID string, limit int) ([]SyncableReview, e
 
 		r.CreatedAt = parseSQLiteTime(createdAt)
 		r.UpdatedAt = parseSQLiteTime(updatedAt)
+		r.CreatedAtRaw = createdAt
+		r.UpdatedAtRaw = updatedAt
 		reviews = append(reviews, r)
 	}
 	return reviews, rows.Err()
@@ -678,23 +682,67 @@ func (db *DB) MarkReviewSynced(reviewID int64) error {
 	return err
 }
 
-// MarkReviewsSynced updates the synced_at timestamp for multiple reviews
-func (db *DB) MarkReviewsSynced(reviewIDs []int64) error {
-	if len(reviewIDs) == 0 {
+// ReviewSyncMark identifies the exact review generation and content pushed.
+// MarkReviewsSynced only advances rows that still match this snapshot.
+type ReviewSyncMark struct {
+	ID                 int64
+	UUID               string
+	Agent              string
+	Prompt             string
+	Output             string
+	Closed             bool
+	UpdatedByMachineID string
+	CreatedAtRaw       string
+	UpdatedAtRaw       string
+}
+
+func NewReviewSyncMark(r SyncableReview) ReviewSyncMark {
+	return ReviewSyncMark{
+		ID:                 r.ID,
+		UUID:               r.UUID,
+		Agent:              r.Agent,
+		Prompt:             r.Prompt,
+		Output:             r.Output,
+		Closed:             r.Closed,
+		UpdatedByMachineID: r.UpdatedByMachineID,
+		CreatedAtRaw:       r.CreatedAtRaw,
+		UpdatedAtRaw:       r.UpdatedAtRaw,
+	}
+}
+
+// MarkReviewsSynced updates only reviews that still match the pushed snapshot.
+func (db *DB) MarkReviewsSynced(marks []ReviewSyncMark) error {
+	if len(marks) == 0 {
 		return nil
 	}
 	now := time.Now().UTC().Format(time.RFC3339)
-	placeholders := make([]string, len(reviewIDs))
-	args := make([]any, len(reviewIDs)+1)
-	args[0] = now
-	for i, id := range reviewIDs {
-		placeholders[i] = "?"
-		args[i+1] = id
+	tx, err := db.Begin()
+	if err != nil {
+		return fmt.Errorf("begin mark reviews synced: %w", err)
 	}
-	query := fmt.Sprintf(`UPDATE reviews SET synced_at = ? WHERE id IN (%s)`,
-		strings.Join(placeholders, ","))
-	_, err := db.Exec(query, args...)
-	return err
+	defer func() { _ = tx.Rollback() }()
+	stmt, err := tx.Prepare(`
+		UPDATE reviews SET synced_at = ?
+		WHERE id = ? AND uuid = ? AND agent = ? AND prompt = ? AND output = ?
+		  AND closed = ? AND updated_by_machine_id = ?
+		  AND created_at = ? AND updated_at = ?`)
+	if err != nil {
+		return fmt.Errorf("prepare mark reviews synced: %w", err)
+	}
+	defer stmt.Close()
+	for _, mark := range marks {
+		closed := 0
+		if mark.Closed {
+			closed = 1
+		}
+		if _, err := stmt.Exec(
+			now, mark.ID, mark.UUID, mark.Agent, mark.Prompt, mark.Output,
+			closed, mark.UpdatedByMachineID, mark.CreatedAtRaw, mark.UpdatedAtRaw,
+		); err != nil {
+			return fmt.Errorf("mark review %d synced: %w", mark.ID, err)
+		}
+	}
+	return tx.Commit()
 }
 
 // SyncableResponse contains response data needed for sync
@@ -782,12 +830,18 @@ func (db *DB) MarkCommentsSynced(responseIDs []int64) error {
 }
 
 // UpsertPulledJob inserts or updates a job from PostgreSQL into SQLite.
-// Sets synced_at to prevent re-pushing. Requires repo to exist.
+// Sets synced_at to prevent re-pushing. Requires repo to exist. A locally
+// owned active attempt wins over pulled terminal state until its worker has
+// completed or fully released a cancellation.
 func (db *DB) UpsertPulledJob(j PulledJob, repoID int64, commitID *int64) error {
 	now := time.Now().UTC().Format(time.RFC3339)
 	dirtyFilesJSON, err := encodeDirtyFiles(j.DirtyFiles)
 	if err != nil {
 		return err
+	}
+	machineID, err := db.GetMachineID()
+	if err != nil {
+		return fmt.Errorf("get machine ID: %w", err)
 	}
 	_, err = db.Exec(`
 		INSERT INTO review_jobs (
@@ -803,12 +857,19 @@ func (db *DB) UpsertPulledJob(j PulledJob, repoID int64, commitID *int64) error 
 				ELSE excluded.status
 			END,
 			finished_at = excluded.finished_at,
+			enqueued_at = excluded.enqueued_at,
+			started_at = excluded.started_at,
 			error = excluded.error,
+			agent = excluded.agent,
+			reasoning = excluded.reasoning,
+			agentic = excluded.agentic,
 			model = excluded.model,
 			provider = excluded.provider,
 			requested_model = excluded.requested_model,
 			requested_provider = excluded.requested_provider,
 			git_ref = excluded.git_ref,
+			prompt = excluded.prompt,
+			diff_content = excluded.diff_content,
 			session_id = CASE WHEN excluded.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased') THEN excluded.session_id ELSE COALESCE(excluded.session_id, review_jobs.session_id) END,
 			commit_id = excluded.commit_id,
 			patch_id = excluded.patch_id,
@@ -829,15 +890,23 @@ func (db *DB) UpsertPulledJob(j PulledJob, repoID int64, commitID *int64) error 
 			panel_member_config_json = excluded.panel_member_config_json,
 			updated_at = excluded.updated_at,
 			synced_at = ?
-			WHERE review_jobs.status NOT IN ('applied', 'rebased')
-			OR `+sqliteNormalizedTimestampExpr("review_jobs.updated_at")+` < `+sqliteNormalizedTimestampExpr("excluded.updated_at")+`
+			WHERE NOT (
+				review_jobs.source_machine_id = ?
+				AND (
+					review_jobs.status IN ('queued', 'running')
+					OR (review_jobs.status = 'canceled' AND review_jobs.worker_id IS NOT NULL)
+				)
+			) AND (
+				review_jobs.status NOT IN ('applied', 'rebased')
+				OR `+sqliteNormalizedTimestampExpr("review_jobs.updated_at")+` < `+sqliteNormalizedTimestampExpr("excluded.updated_at")+`
+			)
 	`, j.UUID, repoID, commitID, j.GitRef, nullStr(j.SessionID), j.Agent, nullStr(j.Model), nullStr(j.Provider), nullStr(j.RequestedModel), nullStr(j.RequestedProvider), j.Reasoning, j.JobType,
 		j.ReviewType, nullStr(j.PatchID), j.Status, j.Agentic, j.AgentInvoked, j.EnqueuedAt.Format(time.RFC3339),
 		nullTimeStr(j.StartedAt), nullTimeStr(j.FinishedAt),
 		nullStr(j.Prompt), j.DiffContent, nullStr(dirtyFilesJSON), nullStr(j.Error), nullStr(j.TokenUsage),
 		nullStr(j.WorktreePath), nullStr(j.Source), normalizeMinSeverityForWrite(j.MinSeverity), j.BackupAgent, j.BackupModel,
 		nullStr(j.PanelRunUUID), nullStr(j.PanelRole), nullStr(j.PanelName), nullStr(j.PanelMemberName), j.PanelMemberIndex, nullStr(j.PanelMemberConfigJSON),
-		j.SourceMachineID, j.UpdatedAt.Format(time.RFC3339), now, now)
+		j.SourceMachineID, j.UpdatedAt.Format(time.RFC3339), now, now, machineID)
 	return err
 }
 
@@ -874,7 +943,8 @@ func (db *DB) UpsertPulledReview(r PulledReview) error {
 			created_at = excluded.created_at,
 			updated_at = excluded.updated_at,
 			synced_at = ?
-			WHERE `+sqliteNormalizedTimestampExpr("reviews.updated_at")+` < `+sqliteNormalizedTimestampExpr("excluded.updated_at")+`
+			WHERE julianday(reviews.created_at) <= julianday(excluded.created_at)
+			  AND `+sqliteNormalizedTimestampExpr("reviews.updated_at")+` < `+sqliteNormalizedTimestampExpr("excluded.updated_at")+`
 	`, r.UUID, jobID, r.Agent, r.Prompt, r.Output, r.Closed,
 		verdictBool,
 		r.UpdatedByMachineID, r.CreatedAt.Format(time.RFC3339), r.UpdatedAt.Format(time.RFC3339), now, now)

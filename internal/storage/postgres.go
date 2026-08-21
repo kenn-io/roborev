@@ -716,13 +716,22 @@ func (p *PgPool) UpsertJob(ctx context.Context, j SyncableJob, pgRepoID int64, p
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, clock_timestamp())
 		ON CONFLICT (uuid) DO UPDATE SET
 			status = EXCLUDED.status,
+			enqueued_at = EXCLUDED.enqueued_at,
+			started_at = EXCLUDED.started_at,
 			finished_at = EXCLUDED.finished_at,
 			error = EXCLUDED.error,
+			agent = EXCLUDED.agent,
 			model = EXCLUDED.model,
 			provider = EXCLUDED.provider,
 			requested_model = EXCLUDED.requested_model,
 			requested_provider = EXCLUDED.requested_provider,
+			reasoning = EXCLUDED.reasoning,
+			job_type = EXCLUDED.job_type,
+			review_type = EXCLUDED.review_type,
+			agentic = EXCLUDED.agentic,
 			git_ref = EXCLUDED.git_ref,
+			prompt = EXCLUDED.prompt,
+			diff_content = EXCLUDED.diff_content,
 			session_id = CASE WHEN EXCLUDED.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased') THEN EXCLUDED.session_id ELSE COALESCE(EXCLUDED.session_id, review_jobs.session_id) END,
 			commit_id = EXCLUDED.commit_id,
 			patch_id = EXCLUDED.patch_id,
@@ -742,6 +751,7 @@ func (p *PgPool) UpsertJob(ctx context.Context, j SyncableJob, pgRepoID int64, p
 			panel_member_index = EXCLUDED.panel_member_index,
 			panel_member_config_json = EXCLUDED.panel_member_config_json,
 			updated_at = clock_timestamp()
+		WHERE EXCLUDED.enqueued_at >= review_jobs.enqueued_at
 	`, j.UUID, pgRepoID, pgCommitID, j.GitRef, nullString(j.SessionID), j.Agent, nullString(j.Model), nullString(j.Provider), nullString(j.RequestedModel), nullString(j.RequestedProvider), nullString(j.Reasoning),
 		defaultStr(j.JobType, "review"), j.ReviewType, nullString(j.PatchID), postgresSyncJobStatus(j.Status), j.Agentic, j.EnqueuedAt, j.StartedAt, j.FinishedAt,
 		nullString(j.Prompt), j.DiffContent, nullString(dirtyFilesJSON), nullString(j.Error), nullString(j.TokenUsage), nullString(j.WorktreePath), nullString(j.Source), normalizeMinSeverityForWrite(j.MinSeverity),
@@ -765,6 +775,7 @@ func (p *PgPool) UpsertReview(ctx context.Context, r SyncableReview) error {
 			updated_by_machine_id = EXCLUDED.updated_by_machine_id,
 			created_at = EXCLUDED.created_at,
 			updated_at = clock_timestamp()
+		WHERE EXCLUDED.created_at >= reviews.created_at
 	`, r.UUID, r.JobUUID, r.Agent, r.Prompt, r.Output, r.Closed,
 		r.UpdatedByMachineID, r.CreatedAt)
 	return err
@@ -1115,6 +1126,7 @@ func (p *PgPool) BatchUpsertReviews(ctx context.Context, reviews []SyncableRevie
 				updated_by_machine_id = EXCLUDED.updated_by_machine_id,
 				created_at = EXCLUDED.created_at,
 				updated_at = clock_timestamp()
+			WHERE EXCLUDED.created_at >= reviews.created_at
 		`, r.UUID, r.JobUUID, r.Agent, r.Prompt, r.Output, r.Closed,
 			r.UpdatedByMachineID, r.CreatedAt)
 	}
@@ -1272,13 +1284,22 @@ func queueJobUpsert(batch *pgx.Batch, jw JobWithPgIDs) error {
 			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17, $18, $19, $20, $21, $22, $23, $24, $25, $26, $27, $28, $29, $30, $31, $32, $33, $34, $35, $36, $37, clock_timestamp())
 			ON CONFLICT (uuid) DO UPDATE SET
 				status = EXCLUDED.status,
+				enqueued_at = EXCLUDED.enqueued_at,
+				started_at = EXCLUDED.started_at,
 				finished_at = EXCLUDED.finished_at,
 				error = EXCLUDED.error,
+				agent = EXCLUDED.agent,
 				model = EXCLUDED.model,
 				provider = EXCLUDED.provider,
 				requested_model = EXCLUDED.requested_model,
 				requested_provider = EXCLUDED.requested_provider,
+				reasoning = EXCLUDED.reasoning,
+				job_type = EXCLUDED.job_type,
+				review_type = EXCLUDED.review_type,
+				agentic = EXCLUDED.agentic,
 				git_ref = EXCLUDED.git_ref,
+				prompt = EXCLUDED.prompt,
+				diff_content = EXCLUDED.diff_content,
 				session_id = CASE WHEN EXCLUDED.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased') THEN EXCLUDED.session_id ELSE COALESCE(EXCLUDED.session_id, review_jobs.session_id) END,
 				commit_id = EXCLUDED.commit_id,
 				patch_id = EXCLUDED.patch_id,
@@ -1298,6 +1319,7 @@ func queueJobUpsert(batch *pgx.Batch, jw JobWithPgIDs) error {
 				panel_member_index = EXCLUDED.panel_member_index,
 				panel_member_config_json = EXCLUDED.panel_member_config_json,
 				updated_at = clock_timestamp()
+			WHERE EXCLUDED.enqueued_at >= review_jobs.enqueued_at
 		`, j.UUID, jw.PgRepoID, jw.PgCommitID, j.GitRef, nullString(j.SessionID), j.Agent, nullString(j.Model), nullString(j.Provider), nullString(j.RequestedModel), nullString(j.RequestedProvider), nullString(j.Reasoning),
 		defaultStr(j.JobType, "review"), j.ReviewType, nullString(j.PatchID), postgresSyncJobStatus(j.Status), j.Agentic, j.EnqueuedAt, j.StartedAt, j.FinishedAt,
 		nullString(sanitizePostgresText(j.Prompt)), sanitizePostgresTextPointer(j.DiffContent), nullString(dirtyFilesJSON), nullString(sanitizePostgresText(j.Error)), nullString(j.TokenUsage), nullString(j.WorktreePath), nullString(j.Source), normalizeMinSeverityForWrite(j.MinSeverity),

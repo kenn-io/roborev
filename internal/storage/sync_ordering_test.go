@@ -247,11 +247,11 @@ func TestBatchMarkSynced(t *testing.T) {
 		assert.Len(t, reviews, 3)
 
 		// Mark all 3 as synced
-		reviewIDs := make([]int64, len(reviews))
+		reviewMarks := make([]ReviewSyncMark, len(reviews))
 		for i, r := range reviews {
-			reviewIDs[i] = r.ID
+			reviewMarks[i] = NewReviewSyncMark(r)
 		}
-		if err := h.db.MarkReviewsSynced(reviewIDs); err != nil {
+		if err := h.db.MarkReviewsSynced(reviewMarks); err != nil {
 			require.NoError(t, err, "MarkReviewsSynced failed: %v")
 		}
 
@@ -290,7 +290,7 @@ func TestBatchMarkSynced(t *testing.T) {
 		if err := h.db.MarkJobsSynced([]JobSyncMark{}); err != nil {
 			require.NoError(t, err)
 		}
-		if err := h.db.MarkReviewsSynced([]int64{}); err != nil {
+		if err := h.db.MarkReviewsSynced([]ReviewSyncMark{}); err != nil {
 			require.NoError(t, err)
 		}
 		if err := h.db.MarkCommentsSynced([]int64{}); err != nil {
@@ -338,6 +338,24 @@ func TestMarkJobsSyncedSkipsRowsChangedSinceSnapshot(t *testing.T) {
 	done, err := h.db.GetJobsToSync(h.machineID, 100)
 	require.NoError(t, err)
 	assert.Empty(t, done, "job marked with the matching updated_at must be synced")
+}
+
+func TestMarkReviewsSyncedSkipsReviewChangedSinceSnapshot(t *testing.T) {
+	h := newSyncTestHelper(t)
+	job := h.createCompletedJob("review-mark-race-sha")
+	require.NoError(t, h.db.MarkJobSynced(job.ID))
+	snapshot, err := h.db.GetReviewsToSync(h.machineID, 10)
+	require.NoError(t, err)
+	require.Len(t, snapshot, 1)
+
+	require.NoError(t, h.db.ReenqueueJob(job.ID, ReenqueueOpts{}))
+	require.NoError(t, h.db.MarkReviewsSynced([]ReviewSyncMark{NewReviewSyncMark(snapshot[0])}))
+
+	var syncedAt sql.NullString
+	require.NoError(t, h.db.QueryRow(
+		`SELECT synced_at FROM reviews WHERE id = ?`, snapshot[0].ID,
+	).Scan(&syncedAt))
+	assert.False(t, syncedAt.Valid)
 }
 
 // TestMarkJobsSyncedSkipsCostWrittenInSameSecond covers the same-second case:

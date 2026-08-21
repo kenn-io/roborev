@@ -381,6 +381,88 @@ func TestUpsertPulledJobMergesNewerCostWithoutRevertingLocalFinalization(t *test
 	assert.Contains(t, tokenUsage, `"cost_usd":0.75`)
 }
 
+func TestUpsertPulledJobDoesNotRevertLocallyOwnedActiveRerun(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	repo, err := db.GetOrCreateRepo("/test/repo-active-rerun")
+	require.NoError(t, err)
+	base := time.Now().UTC().Add(-time.Hour)
+	pulled := PulledJob{
+		UUID:            "active-rerun-uuid",
+		RepoIdentity:    "/test/repo-active-rerun",
+		GitRef:          "HEAD",
+		SessionID:       "old-session",
+		Agent:           "codex",
+		Status:          string(JobStatusDone),
+		SourceMachineID: "remote-owner",
+		EnqueuedAt:      base,
+		StartedAt:       new(base.Add(time.Minute)),
+		FinishedAt:      new(base.Add(2 * time.Minute)),
+		UpdatedAt:       base.Add(2 * time.Minute),
+	}
+	require.NoError(t, db.UpsertPulledJob(pulled, repo.ID, nil))
+	var jobID int64
+	require.NoError(t, db.QueryRow(
+		`SELECT id FROM review_jobs WHERE uuid = ?`, pulled.UUID,
+	).Scan(&jobID))
+	require.NoError(t, db.ReenqueueJob(jobID, ReenqueueOpts{}))
+	claimed, err := db.ClaimJob("local-worker")
+	require.NoError(t, err)
+	require.Equal(t, jobID, claimed.ID)
+
+	pulled.UpdatedAt = time.Now().UTC().Add(time.Hour)
+	require.NoError(t, db.UpsertPulledJob(pulled, repo.ID, nil))
+
+	localMachineID, err := db.GetMachineID()
+	require.NoError(t, err)
+	var status, owner string
+	var session sql.NullString
+	require.NoError(t, db.QueryRow(`
+		SELECT status, source_machine_id, session_id
+		FROM review_jobs WHERE id = ?`, jobID,
+	).Scan(&status, &owner, &session))
+	assert.Equal(t, string(JobStatusRunning), status)
+	assert.Equal(t, localMachineID, owner)
+	assert.False(t, session.Valid)
+}
+
+func TestUpsertPulledJobReplacesNewerAttemptTiming(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+	repo, err := db.GetOrCreateRepo("/test/repo-attempt-timing")
+	require.NoError(t, err)
+	firstEnqueued := time.Now().UTC().Add(-2 * time.Hour).Truncate(time.Second)
+	firstStarted := firstEnqueued.Add(time.Minute)
+	pulled := PulledJob{
+		UUID:            "attempt-timing-uuid",
+		RepoIdentity:    "/test/repo-attempt-timing",
+		GitRef:          "HEAD",
+		Agent:           "codex",
+		Status:          string(JobStatusDone),
+		SourceMachineID: "owner-machine",
+		EnqueuedAt:      firstEnqueued,
+		StartedAt:       &firstStarted,
+		FinishedAt:      new(firstStarted.Add(time.Minute)),
+		UpdatedAt:       firstStarted.Add(time.Minute),
+	}
+	require.NoError(t, db.UpsertPulledJob(pulled, repo.ID, nil))
+
+	secondEnqueued := firstEnqueued.Add(time.Hour)
+	secondStarted := secondEnqueued.Add(2 * time.Minute)
+	pulled.EnqueuedAt = secondEnqueued
+	pulled.StartedAt = &secondStarted
+	pulled.FinishedAt = new(secondStarted.Add(time.Minute))
+	pulled.UpdatedAt = secondStarted.Add(time.Minute)
+	require.NoError(t, db.UpsertPulledJob(pulled, repo.ID, nil))
+
+	var enqueuedAt, startedAt string
+	require.NoError(t, db.QueryRow(`
+		SELECT enqueued_at, started_at FROM review_jobs WHERE uuid = ?`, pulled.UUID,
+	).Scan(&enqueuedAt, &startedAt))
+	assert.Equal(t, secondEnqueued, parseSQLiteTime(enqueuedAt))
+	assert.Equal(t, secondStarted, parseSQLiteTime(startedAt))
+}
+
 func TestUpsertPulledJob_PreservesWorktreePath(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()

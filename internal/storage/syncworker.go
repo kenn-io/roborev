@@ -650,15 +650,15 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 		}
 
 		// Only mark successfully synced reviews
-		var syncedReviewIDs []int64
+		var syncedReviewMarks []ReviewSyncMark
 		for i, ok := range success {
 			if ok {
-				syncedReviewIDs = append(syncedReviewIDs, reviews[i].ID)
+				syncedReviewMarks = append(syncedReviewMarks, NewReviewSyncMark(reviews[i]))
 				stats.Reviews++
 			}
 		}
-		if len(syncedReviewIDs) > 0 {
-			if err := w.db.MarkReviewsSynced(syncedReviewIDs); err != nil {
+		if len(syncedReviewMarks) > 0 {
+			if err := w.db.MarkReviewsSynced(syncedReviewMarks); err != nil {
 				log.Printf("Sync: failed to mark reviews synced: %v", err)
 			}
 		}

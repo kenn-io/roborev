@@ -937,7 +937,9 @@ func (db *DB) BackfillJobTokenUsageIfCurrent(
 // and persists the patch in a single transaction. This prevents invalid
 // states where a patch is written but the job isn't done, or vice versa.
 func (db *DB) CompleteFixJob(jobID int64, agent, prompt, output, patch string) error {
-	now := time.Now().Format(time.RFC3339)
+	nowInstant := time.Now()
+	now := nowInstant.Format(time.RFC3339)
+	reviewTimestamp := nowInstant.UTC().Format(time.RFC3339Nano)
 	machineID, _ := db.GetMachineID()
 	reviewUUID := GenerateUUID()
 
@@ -1007,7 +1009,7 @@ func (db *DB) CompleteFixJob(jobID int64, agent, prompt, output, patch string) e
 		   created_at = excluded.created_at,
 		   updated_at = excluded.updated_at,
 		   synced_at = NULL`,
-		jobID, agent, prompt, finalOutput, verdictBoolVal, reviewUUID, machineID, now, now)
+		jobID, agent, prompt, finalOutput, verdictBoolVal, reviewUUID, machineID, reviewTimestamp, reviewTimestamp)
 	if err != nil {
 		return err
 	}
@@ -1026,7 +1028,9 @@ func (db *DB) CompleteFixJob(jobID int64, agent, prompt, output, patch string) e
 func (db *DB) CompleteJob(jobID int64, agent, prompt, output string) error {
 	// Get machine ID and generate UUIDs before starting transaction
 	// to avoid potential lock conflicts with GetMachineID's writes
-	now := time.Now().Format(time.RFC3339)
+	nowInstant := time.Now()
+	now := nowInstant.Format(time.RFC3339)
+	reviewTimestamp := nowInstant.UTC().Format(time.RFC3339Nano)
 	machineID, _ := db.GetMachineID()
 	reviewUUID := GenerateUUID()
 
@@ -1096,7 +1100,7 @@ func (db *DB) CompleteJob(jobID int64, agent, prompt, output string) error {
 		  created_at = excluded.created_at,
 		  updated_at = excluded.updated_at,
 		  synced_at = NULL`,
-		jobID, agent, prompt, finalOutput, verdictBoolVal, reviewUUID, machineID, now, now)
+		jobID, agent, prompt, finalOutput, verdictBoolVal, reviewUUID, machineID, reviewTimestamp, reviewTimestamp)
 	if err != nil {
 		return err
 	}
@@ -1256,8 +1260,9 @@ func (db *DB) ReenqueueJobWithRequest(
 	}
 
 	now := time.Now()
-	enqueuedAt := formatSQLiteTimestamp(now)
+	enqueuedAt := now.UTC().Format(time.RFC3339Nano)
 	updatedAt := now.Format(time.RFC3339)
+	reviewGenerationAt := now.UTC().Format(time.RFC3339Nano)
 
 	// Reset job status and replace effective execution settings with the
 	// newly resolved values for this rerun. Clear prompt_prebuilt and prompt
@@ -1306,8 +1311,8 @@ func (db *DB) ReenqueueJobWithRequest(
 	if _, err := conn.ExecContext(ctx, `
 		UPDATE reviews
 		SET prompt = '', output = '', verdict_bool = NULL, closed = 0,
-		    updated_by_machine_id = ?, updated_at = ?, synced_at = NULL
-		WHERE job_id = ?`, machineID, updatedAt, jobID); err != nil {
+		    updated_by_machine_id = ?, created_at = ?, updated_at = ?, synced_at = NULL
+		WHERE job_id = ?`, machineID, reviewGenerationAt, reviewGenerationAt, jobID); err != nil {
 		return 0, false, err
 	}
 	if requestID != "" {
