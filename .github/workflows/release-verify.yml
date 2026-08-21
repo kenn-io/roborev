@@ -4,10 +4,17 @@ name: Verify release assets
 # rebuild bot) without firing any webhook event, so a scheduled re-check of
 # the latest release is the only way to catch a swap like the one that
 # shipped v0.65.0 binaries without the embedded web UI (#1081).
+#
+# The Release workflow creates the GitHub release before goreleaser uploads
+# the assets, so a `release: published` trigger would race the upload and
+# fail on every healthy release; trigger on the Release workflow finishing
+# instead.
 on:
-  release:
+  workflow_run:
+    workflows:
+      - Release
     types:
-      - published
+      - completed
   schedule:
     - cron: '17 6 * * *'
   workflow_dispatch:
@@ -22,6 +29,7 @@ permissions:
 
 jobs:
   verify:
+    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     env:
@@ -30,11 +38,17 @@ jobs:
       - name: Resolve release tag
         id: resolve
         env:
-          EVENT_TAG: ${{ github.event.release.tag_name }}
+          # For tag-push runs of the Release workflow, head_branch carries
+          # the tag name.
+          EVENT_TAG: ${{ github.event.workflow_run.head_branch }}
           INPUT_TAG: ${{ inputs.tag }}
         run: |
           set -euo pipefail
           TAG="${INPUT_TAG:-${EVENT_TAG:-}}"
+          case "$TAG" in
+            v[0-9]*) ;;
+            *) TAG="" ;;
+          esac
           if [ -z "$TAG" ]; then
             TAG="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
           fi
@@ -56,10 +70,15 @@ jobs:
         run: |
           set -euo pipefail
           cd assets
+          failed=0
           for asset in *.tar.gz *.zip *.deb *.rpm; do
             [ -e "$asset" ] || continue
-            grep " $asset\$" SHA256SUMS | sha256sum -c -
+            if ! grep " $asset\$" SHA256SUMS | sha256sum -c -; then
+              echo "FAIL $asset: checksum mismatch or not listed in SHA256SUMS"
+              failed=1
+            fi
           done
+          exit "$failed"
 
       - name: Verify embedded web assets
         run: |
