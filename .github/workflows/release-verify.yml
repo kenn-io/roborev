@@ -71,6 +71,7 @@ jobs:
           set -euo pipefail
           cd assets
           failed=0
+          # Every downloaded asset must be listed with a matching hash.
           for asset in *.tar.gz *.zip *.deb *.rpm; do
             [ -e "$asset" ] || continue
             if ! grep " $asset\$" SHA256SUMS | sha256sum -c -; then
@@ -78,6 +79,14 @@ jobs:
               failed=1
             fi
           done
+          # Every listed asset must still be present: a post-publication swap
+          # can also delete assets from the release.
+          while read -r _ name; do
+            if [ ! -e "$name" ]; then
+              echo "FAIL $name: listed in SHA256SUMS but missing from the release"
+              failed=1
+            fi
+          done < SHA256SUMS
           exit "$failed"
 
       - name: Verify embedded web assets
