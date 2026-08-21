@@ -37,7 +37,7 @@ func versionCmd() *cobra.Command {
 
 			suffix := ""
 			if !embedded {
-				suffix = " (no embedded web assets; the browser UI needs a release build or --web-dev-origin)"
+				suffix = " (no embedded web assets; reinstall from an official release or build with 'make build')"
 			}
 			_, err := fmt.Fprintf(cmd.OutOrStdout(), "roborev %s%s\n", version.Version, suffix)
 			return err

@@ -70,12 +70,13 @@ jobs:
           }
           # The browser UI (and its embedded-distribution marker) first
           # shipped in v0.65.0; earlier releases legitimately contain no web
-          # assets. The web_assets field in `version --json` exists since
-          # v0.66.0.
+          # assets. The web_assets field in `version --json` exists in every
+          # release after v0.65.0, so v0.65.1 is the first tag that can
+          # carry it.
           web_checks=false
           web_assets_field=false
           if version_at_least "$TAG" "v0.65.0"; then web_checks=true; fi
-          if version_at_least "$TAG" "v0.66.0"; then web_assets_field=true; fi
+          if version_at_least "$TAG" "v0.65.1"; then web_assets_field=true; fi
           echo "Verifying release $TAG (web checks: $web_checks)"
           {
             echo "tag=$TAG"
@@ -184,9 +185,9 @@ jobs:
           "$binary" version --json | tee version.json
           if [ "$WEB_ASSETS_FIELD" = "true" ]; then
             # The web_assets field is part of the version --json contract
-            # since v0.66.0; a missing field is a regression, not tolerance.
+            # after v0.65.0; a missing field is a regression, not tolerance.
             jq -e '.web_assets == true' version.json >/dev/null
           else
-            # v0.65.x predates the field; only reject an explicit false.
+            # v0.65.0 predates the field; only reject an explicit false.
             jq -e '(.web_assets == null) or (.web_assets == true)' version.json >/dev/null
           fi
