@@ -48,13 +48,15 @@ jobs:
           set -euo pipefail
           mkdir assets
           gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir assets \
-            --pattern '*.tar.gz' --pattern '*.zip' --pattern 'SHA256SUMS'
+            --pattern '*.tar.gz' --pattern '*.zip' \
+            --pattern '*.deb' --pattern '*.rpm' \
+            --pattern 'SHA256SUMS'
 
       - name: Verify checksums
         run: |
           set -euo pipefail
           cd assets
-          for asset in *.tar.gz *.zip; do
+          for asset in *.tar.gz *.zip *.deb *.rpm; do
             [ -e "$asset" ] || continue
             grep " $asset\$" SHA256SUMS | sha256sum -c -
           done
@@ -62,18 +64,25 @@ jobs:
       - name: Verify embedded web assets
         run: |
           set -euo pipefail
+          if ! command -v rpm2cpio >/dev/null 2>&1 || ! command -v cpio >/dev/null 2>&1; then
+            sudo apt-get update -q
+            sudo apt-get install -qy rpm cpio
+          fi
           cd assets
           failed=0
-          for asset in *.tar.gz *.zip; do
+          # Windows releases ship a .zip and a .tar.gz with the same stem, so
+          # the extraction dir must be derived from the full asset name.
+          for asset in *.tar.gz *.zip *.deb *.rpm; do
             [ -e "$asset" ] || continue
-            dir="${asset%.zip}"; dir="${dir%.tar.gz}"
+            dir="extract-$asset"
             mkdir "$dir"
             case "$asset" in
               *.tar.gz) tar -xzf "$asset" -C "$dir" ;;
               *.zip) unzip -q "$asset" -d "$dir" ;;
+              *.deb) dpkg-deb -x "$asset" "$dir" ;;
+              *.rpm) (cd "$dir" && rpm2cpio "../$asset" | cpio -idm --quiet) ;;
             esac
-            binary="$dir/roborev"
-            [ -f "$binary" ] || binary="$dir/roborev.exe"
+            binary="$(find "$dir" -type f \( -name roborev -o -name roborev.exe \) | head -n 1)"
             if [ ! -f "$binary" ]; then
               echo "FAIL $asset: no roborev binary in archive"
               failed=1
@@ -82,8 +91,10 @@ jobs:
             # The production index.html duplicates the marker string that
             # internal/web/assets.go compiles in, so a binary that embeds
             # the web distribution contains it at least twice; a binary
-            # built without web assets contains it exactly once.
-            occurrences="$(grep -aob 'roborev-web-distribution' "$binary" | wc -l)"
+            # built without web assets contains it at most once. grep exits
+            # non-zero on zero matches, so keep pipefail from aborting the
+            # loop before the FAIL diagnostic is emitted.
+            occurrences="$(grep -aob 'roborev-web-distribution' "$binary" | wc -l || true)"
             if [ "$occurrences" -lt 2 ]; then
               echo "FAIL $asset: binary does not embed the production web assets"
               failed=1
@@ -100,10 +111,10 @@ jobs:
           set -euo pipefail
           cd assets
           version="${TAG#v}"
-          binary="roborev_${version}_linux_amd64/roborev"
+          binary="extract-roborev_${version}_linux_amd64.tar.gz/roborev"
           if [ ! -f "$binary" ]; then
-            echo "linux_amd64 binary not found; skipping runtime check"
-            exit 0
+            echo "::error::expected linux_amd64 binary not found at $binary; update this workflow if the archive naming changed"
+            exit 1
           fi
           "$binary" version --json | tee version.json
           # web_assets exists since v0.66; require it to be true when present.

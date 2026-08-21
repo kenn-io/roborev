@@ -297,16 +297,19 @@ func TestRuntimeInfoRoundTripsWebDisabledReason(t *testing.T) {
 	}
 }
 
-func TestWriteRuntimeRejectsDisabledReasonWithOrigin(t *testing.T) {
+func TestWriteRuntimeRejectsDisabledReasonWithListenerFields(t *testing.T) {
 	testenv.SetDataDir(t)
-	err := WriteRuntime(
-		DaemonEndpoint{Network: "tcp", Address: defaultTestAddr}, nil, "test-version",
-		&BrowserRuntimeInfo{
-			Origin:         "http://127.0.0.1:7400",
-			DisabledReason: WebDisabledReasonMissingAssets,
-		},
-	)
-	require.ErrorContains(t, err, "disabled reason")
+	for _, browser := range []*BrowserRuntimeInfo{
+		{Origin: "http://127.0.0.1:7400", DisabledReason: WebDisabledReasonMissingAssets},
+		{Address: "127.0.0.1:7400", DisabledReason: WebDisabledReasonMissingAssets},
+		{WebBasePath: "/roborev-ci", DisabledReason: WebDisabledReasonMissingAssets},
+		{Capabilities: []string{"web-ui-v1"}, DisabledReason: WebDisabledReasonMissingAssets},
+	} {
+		err := WriteRuntime(
+			DaemonEndpoint{Network: "tcp", Address: defaultTestAddr}, nil, "test-version", browser,
+		)
+		require.ErrorContains(t, err, "disabled reason")
+	}
 }
 
 func TestRuntimeInfoIgnoresDisabledReasonAlongsideOrigin(t *testing.T) {

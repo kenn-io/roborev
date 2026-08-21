@@ -852,13 +852,16 @@ roborev uninstall-hook           # Remove hook
 
 | Flag | Description |
 |------|-------------|
-| `--json` | Emit daemon, web UI, and queue status as JSON. Includes the canonical browser origin as `web_url`, active snoozes under `daemon.active_snoozes`, and the active daemon endpoint as `network`, `address`, and `port` fields alongside queue counters and version fields |
+| `--json` | Emit daemon, web UI, and queue status as JSON. Includes the canonical browser origin as `web_url` (with `web_disabled_reason` set to `config` or `missing-web-assets` when the browser listener is not running), active snoozes under `daemon.active_snoozes`, and the active daemon endpoint as `network`, `address`, and `port` fields alongside queue counters and version fields |
 | `--force` | Overwrite an existing post-commit hook with a fresh one |
 
 `roborev daemon start`, `roborev daemon restart`, and `roborev daemon status`
 print the canonical browser URL. If the running daemon has no browser listener,
-they print `Web UI: unavailable` instead of silently omitting the application.
-The older `roborev status` command remains an alias with identical output.
+they explain why when the daemon published a reason — `Web UI: disabled (this
+build has no embedded web assets; reinstall from an official release)` or
+`Web UI: disabled ([web] enabled = false)` — and print `Web UI: unavailable`
+otherwise, instead of silently omitting the application. The older
+`roborev status` command remains an alias with identical output.
 
 When Agent Hook reminders are snoozed, `roborev daemon status` lists every
 active scope with its repository, exact worktree, branch, and local expiry time.

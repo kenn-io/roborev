@@ -72,6 +72,45 @@ func TestStatusCmdJSONIncludesEmptyWebUIURLWhenUnavailable(t *testing.T) {
 	assert.Empty(t, parsed["web_url"])
 }
 
+func TestStatusCmdExplainsWebDisabledReason(t *testing.T) {
+	md := NewMockDaemon(t, MockRefineHooks{})
+	defer md.Close()
+
+	withStatusWebRuntime(t, func() (*daemon.RuntimeInfo, error) {
+		return &daemon.RuntimeInfo{WebDisabledReason: daemon.WebDisabledReasonMissingAssets}, nil
+	})
+
+	output := captureStdout(t, func() {
+		require.NoError(t, statusCmd().Execute())
+	})
+
+	assert.Contains(t, output,
+		"Web UI: disabled (this build has no embedded web assets; reinstall from an official release)\n")
+}
+
+func TestStatusCmdJSONIncludesWebDisabledReason(t *testing.T) {
+	md := NewMockDaemon(t, MockRefineHooks{})
+	defer md.Close()
+
+	withStatusWebRuntime(t, func() (*daemon.RuntimeInfo, error) {
+		return &daemon.RuntimeInfo{WebDisabledReason: daemon.WebDisabledReasonConfig}, nil
+	})
+
+	output := captureStdout(t, func() {
+		cmd := statusCmd()
+		cmd.SetArgs([]string{"--json"})
+		require.NoError(t, cmd.Execute())
+	})
+
+	var parsed struct {
+		WebURL            string `json:"web_url"`
+		WebDisabledReason string `json:"web_disabled_reason"`
+	}
+	require.NoError(t, json.Unmarshal([]byte(output), &parsed))
+	assert.Empty(t, parsed.WebURL)
+	assert.Equal(t, daemon.WebDisabledReasonConfig, parsed.WebDisabledReason)
+}
+
 func TestStatusCmdJSONIncludesWebUIURL(t *testing.T) {
 	md := NewMockDaemon(t, MockRefineHooks{})
 	defer md.Close()

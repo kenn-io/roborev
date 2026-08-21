@@ -208,8 +208,9 @@ func WriteRuntime(primary DaemonEndpoint, alternate *DaemonEndpoint, version str
 		}
 	}
 	if browser != nil && browser.DisabledReason != "" {
-		if browser.Address != "" || browser.Origin != "" {
-			return fmt.Errorf("browser runtime cannot carry both an origin and a disabled reason")
+		if browser.Address != "" || browser.Origin != "" ||
+			browser.WebBasePath != "" || len(browser.Capabilities) > 0 {
+			return fmt.Errorf("browser runtime cannot carry both listener fields and a disabled reason")
 		}
 		rec.Metadata[runtimeWebDisabledReasonKey] = browser.DisabledReason
 	} else if browser != nil {
