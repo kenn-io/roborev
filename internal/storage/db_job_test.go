@@ -1533,17 +1533,18 @@ func TestEnqueueJobWithCIBaseBranch(t *testing.T) {
 		RepoID:       repo.ID,
 		CommitID:     commit.ID,
 		GitRef:       "abc123",
+		Branch:       "feat/x",
 		Agent:        "test",
 		CIBaseBranch: "main",
 	})
 	require.NoError(t, err)
 	assert.Equal(t, "main", job.CIBaseBranch)
-	assert.Empty(t, job.Branch, "CIBaseBranch must not populate Branch")
+	assert.Equal(t, "feat/x", job.Branch)
 
 	got, err := db.GetJobByID(job.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "main", got.CIBaseBranch)
-	assert.Empty(t, got.Branch)
+	assert.Equal(t, "feat/x", got.Branch)
 
 	claimed, err := db.ClaimJob("worker-1")
 	require.NoError(t, err)
@@ -1551,8 +1552,8 @@ func TestEnqueueJobWithCIBaseBranch(t *testing.T) {
 	assert.Equal(t, "main", claimed.CIBaseBranch, "ClaimJob must hydrate CIBaseBranch for event broadcasts")
 }
 
-func TestHookBranchPrefersLocalBranch(t *testing.T) {
-	assert.Equal(t, "feat/x", ReviewJob{Branch: "feat/x", CIBaseBranch: "main"}.HookBranch())
+func TestHookBranchPrefersCIBaseBranch(t *testing.T) {
+	assert.Equal(t, "main", ReviewJob{Branch: "feat/x", CIBaseBranch: "main"}.HookBranch())
 	assert.Equal(t, "main", ReviewJob{CIBaseBranch: "main"}.HookBranch())
 	assert.Empty(t, ReviewJob{}.HookBranch())
 }

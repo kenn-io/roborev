@@ -75,12 +75,11 @@ func TestPanelExperimentProjectsToEveryJob(t *testing.T) {
 		[]EnqueueOpts{{
 			RepoID: repo.ID, GitRef: "base..head", Agent: "codex",
 			PanelRunUUID: runUUID, PanelName: "quality", PanelMemberName: "bugs",
-			BranchSubjectHash: assignment.SubjectHash,
 		}},
 		EnqueueOpts{
 			RepoID: repo.ID, GitRef: "base..head", Agent: "codex",
 			PanelRunUUID: runUUID, PanelName: "quality",
-			BranchSubjectHash: assignment.SubjectHash, Experiment: assignment,
+			Experiment: assignment,
 		},
 	)
 	require.NoError(t, err)
@@ -121,7 +120,6 @@ func TestExportReviewIncludesExperimentAndResumeLineage(t *testing.T) {
 	}
 	job, err := db.EnqueueJob(EnqueueOpts{
 		RepoID: repo.ID, GitRef: "review-sha", Agent: "codex",
-		BranchSubjectHash:   assignment.SubjectHash,
 		ResumeSourceJobUUID: "source-job-uuid",
 		Experiment:          assignment,
 	})

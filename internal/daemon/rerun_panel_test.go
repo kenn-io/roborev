@@ -406,13 +406,13 @@ func TestRerunSynthesisCreatesNewRun(t *testing.T) {
 			RepoID:                repo.ID,
 			CommitID:              commit.ID,
 			GitRef:                "abc123",
+			Branch:                "feature/panel",
 			Agent:                 agent,
 			Model:                 model,
 			Provider:              provider,
 			Reasoning:             reasoning,
 			ReviewType:            reviewType,
 			JobType:               storage.JobTypeReview,
-			BranchSubjectHash:     subjectHash,
 			PanelRunUUID:          oldUUID,
 			PanelRole:             storage.PanelRoleMember,
 			PanelName:             "panel",
@@ -429,7 +429,7 @@ func TestRerunSynthesisCreatesNewRun(t *testing.T) {
 	srcMembers[0].BackupModel = "backup-model-a"
 	srcSynth := storage.EnqueueOpts{
 		RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123",
-		Agent: "synth-agent", BranchSubjectHash: subjectHash, PanelRunUUID: oldUUID,
+		Branch: "feature/panel", Agent: "synth-agent", PanelRunUUID: oldUUID,
 		PanelRole: storage.PanelRoleSynthesis, PanelName: "panel",
 		JobType: storage.JobTypeSynthesis,
 	}
@@ -481,7 +481,7 @@ func TestRerunSynthesisCreatesNewRun(t *testing.T) {
 		assert.Equal(frozen.BackupAgent, got.BackupAgent, "frozen backup agent restored")
 		assert.Equal(frozen.BackupModel, got.BackupModel, "frozen backup model restored")
 		assert.Equal(frozen.PanelMemberConfigJSON, got.PanelMemberConfigJSON, "frozen member config restored")
-		assert.Equal(old.BranchSubjectHash, got.BranchSubjectHash, "branch subject copied")
+		assert.Equal(old.Branch, got.Branch, "branch copied")
 		assert.Equal(old.Experiments, got.Experiments, "experiment assignment copied")
 		assert.Equal(storage.JobStatusQueued, got.Status, "rerun members start queued")
 	}
@@ -492,7 +492,7 @@ func TestRerunSynthesisCreatesNewRun(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(newSynth.IsSynthesisJob())
 	assert.True(newSynth.ClaimBlocked, "new synthesis re-blocked until members finish")
-	assert.Equal(oldSynthAfter.BranchSubjectHash, newSynth.BranchSubjectHash)
+	assert.Equal(oldSynthAfter.Branch, newSynth.Branch)
 	assert.Equal(oldSynthAfter.Experiments, newSynth.Experiments)
 }
 

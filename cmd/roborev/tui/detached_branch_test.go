@@ -82,11 +82,12 @@ func TestDetachedBranchLabel(t *testing.T) {
 			want: "",
 		},
 		{
-			name: "CI review deliberately leaves branch blank",
+			name: "CI review uses its stored branch",
 			job: storage.ReviewJob{
 				JobType:      storage.JobTypeReview,
 				GitRef:       "abc1234567",
 				CommitID:     &commitID,
+				Branch:       "feature/contributor",
 				Source:       storage.JobSourceCI,
 				CIBaseBranch: "main",
 			},

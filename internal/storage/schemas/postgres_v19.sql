@@ -42,7 +42,6 @@ CREATE TABLE IF NOT EXISTS roborev.review_jobs (
   git_ref TEXT NOT NULL,
   branch TEXT,
   session_id TEXT,
-  branch_subject_hash TEXT,
   resume_source_job_uuid TEXT,
   agent TEXT NOT NULL,
   model TEXT,

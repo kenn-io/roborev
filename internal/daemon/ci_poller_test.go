@@ -3362,7 +3362,7 @@ func TestCIExperimentModelsOverrideGlobalCIModel(t *testing.T) {
 	selection, err := config.SelectReviewExperiment(config.ExperimentSelectionInput{
 		Workflow: config.ExperimentWorkflowCI,
 		Subject: config.ExperimentSubject{
-			Repository: "acme/api", SourceRepo: "acme/api", Branch: "feature",
+			Repository: "acme/api", Branch: "feature",
 		},
 		Global: h.Cfg, Repo: &config.RepoConfig{}, RawRepo: map[string]any{},
 	})
@@ -3430,7 +3430,7 @@ func TestResolveCIMatrixMergesExperimentReviewsByAgent(t *testing.T) {
 	selection, err := config.SelectReviewExperiment(config.ExperimentSelectionInput{
 		Workflow: config.ExperimentWorkflowCI,
 		Subject: config.ExperimentSubject{
-			Repository: "acme/api", SourceRepo: "acme/api", Branch: "feature",
+			Repository: "acme/api", Branch: "feature",
 		},
 		Global: global,
 	})
@@ -3470,7 +3470,7 @@ func TestResolveCIMatrixExperimentFlatOverrideTakesPriorityOverRepoReviews(t *te
 	selection, err := config.SelectReviewExperiment(config.ExperimentSelectionInput{
 		Workflow: config.ExperimentWorkflowCI,
 		Subject: config.ExperimentSubject{
-			Repository: "acme/api", SourceRepo: "acme/api", Branch: "feature",
+			Repository: "acme/api", Branch: "feature",
 		},
 		Global: global, Repo: repo, RawRepo: rawRepo,
 	})
@@ -3685,7 +3685,7 @@ func TestCIPollerProcessPR_ExperimentValidationFailureSetsConfigurationStatus(t 
 
 	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
 		Number: 94, HeadRefOid: "head-sha-94", HeadRefName: "feature",
-		HeadRepo: "acme/api", BaseRefName: "main",
+		BaseRefName: "main",
 	}, h.Cfg)
 
 	require.ErrorContains(t, err, "ci.min_severity")
@@ -3719,7 +3719,7 @@ func TestCIPollerProcessPR_RepoExperimentValidationFailureSetsConfigurationStatu
 
 	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
 		Number: 95, HeadRefOid: "head-sha-95", HeadRefName: "feature",
-		HeadRepo: "acme/api", BaseRefName: "main",
+		BaseRefName: "main",
 	}, h.Cfg)
 
 	require.ErrorContains(t, err, "not_review_config")
@@ -4645,7 +4645,7 @@ func TestRetryDueReviewAttemptFetchesPRMissingFromOpenPage(t *testing.T) {
 	h.Poller.prPostTargetFn = func(_ context.Context, ghRepo string, prNumber int) (panelPostTarget, error) {
 		assert.Equal("acme/api", ghRepo)
 		lookedUp = append(lookedUp, prNumber)
-		return panelPostTarget{Open: true, HeadSHA: headSHA, BaseRefName: baseBranch}, nil
+		return panelPostTarget{Open: true, HeadSHA: headSHA, HeadRefName: "feature/retry", BaseRefName: baseBranch}, nil
 	}
 
 	h.Poller.retryDueReviewAttempts(context.Background(), "acme/api",
@@ -4666,16 +4666,14 @@ func TestRetryDueReviewAttemptFetchesPRMissingFromOpenPage(t *testing.T) {
 	for _, m := range members {
 		assert.Equal(baseBranch, m.CIBaseBranch,
 			"retry direct-lookup path must persist the PR base branch on member jobs for branch-filtered hooks")
-		assert.Empty(m.Branch,
-			"CI member jobs must not record a local branch (it would leak into fix/refine discovery)")
+		assert.Equal("feature/retry", m.Branch)
 	}
 	require.NotNil(t, panel.SynthesisJobID)
 	synth, err := h.DB.GetJobByID(*panel.SynthesisJobID)
 	require.NoError(t, err)
 	assert.Equal(baseBranch, synth.CIBaseBranch,
 		"retry direct-lookup path must persist the PR base branch on the synthesis job")
-	assert.Empty(synth.Branch,
-		"CI synthesis job must not record a local branch (it would leak into fix/refine discovery)")
+	assert.Equal("feature/retry", synth.Branch)
 }
 
 func TestRetryDueReviewAttemptSkipsConfiguredLabel(t *testing.T) {
@@ -4789,6 +4787,7 @@ func TestBuildPanelOpts_RecordsPRBranchOnJobs(t *testing.T) {
 		cfg:        config.DefaultConfig(),
 		ghRepo:     "kenn-io/roborev",
 		gitRef:     "base..head",
+		branch:     "feature/review",
 		baseBranch: "release/2.0",
 		prNumber:   42,
 		members:    []config.ResolvedMember{{Name: "m1", Agent: "codex"}},
@@ -4797,14 +4796,14 @@ func TestBuildPanelOpts_RecordsPRBranchOnJobs(t *testing.T) {
 	require.NoError(t, panelErr)
 
 	require.Len(t, memberOpts, 1)
+	assert.Equal(t, storage.JobSourceCI, memberOpts[0].Source)
 	assert.Equal(t, "release/2.0", memberOpts[0].CIBaseBranch,
 		"CI member jobs must record the PR base (target) branch so branch-filtered hooks fire")
-	assert.Empty(t, memberOpts[0].Branch,
-		"CI member jobs must not set Branch (it would leak into branch-scoped local flows)")
+	assert.Equal(t, "feature/review", memberOpts[0].Branch)
+	assert.Equal(t, storage.JobSourceCI, synthOpts.Source)
 	assert.Equal(t, "release/2.0", synthOpts.CIBaseBranch,
 		"CI synthesis job must record the PR base (target) branch so branch-filtered hooks fire")
-	assert.Empty(t, synthOpts.Branch,
-		"CI synthesis job must not set Branch (it would leak into branch-scoped local flows)")
+	assert.Equal(t, "feature/review", synthOpts.Branch)
 }
 
 func TestBuildPanelOptsSnapshotsEffectiveACPExecutionConfig(t *testing.T) {

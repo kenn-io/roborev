@@ -854,8 +854,6 @@ components:
           type: string
         branch:
           type: string
-        branch_subject_hash:
-          type: string
         claim_blocked:
           type: boolean
         closed:
@@ -1981,8 +1979,6 @@ components:
           type: string
         branch:
           type: string
-        branch_subject_hash:
-          type: string
         claim_blocked:
           type: boolean
         closed:
@@ -2563,8 +2559,6 @@ components:
         backup_model:
           type: string
         branch:
-          type: string
-        branch_subject_hash:
           type: string
         claim_blocked:
           type: boolean

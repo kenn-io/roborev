@@ -1288,12 +1288,13 @@ func TestProcessJob_BroadcastsCIBaseBranchOnLifecycleEvents(t *testing.T) {
 	})
 	t.Cleanup(func() { agent.Unregister(agentName) })
 
-	// CI jobs leave Branch empty (so they never look like local work on the
-	// base branch) and record the PR base branch separately for hooks.
+	// CI jobs record the PR head branch and keep the base branch separately for
+	// hooks.
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
 		RepoID:         tc.Repo.ID,
 		GitRef:         sha,
+		Branch:         "feature/contributor",
 		CIBaseBranch:   "main",
 		Agent:          agentName,
 		Prompt:         "review body\n",
@@ -1305,7 +1306,7 @@ func TestProcessJob_BroadcastsCIBaseBranchOnLifecycleEvents(t *testing.T) {
 	claimed, err := tc.DB.ClaimJob(testWorkerID)
 	require.NoError(t, err)
 	require.Equal(t, job.ID, claimed.ID)
-	require.Empty(t, claimed.Branch, "CI jobs must not record a local branch")
+	require.Equal(t, "feature/contributor", claimed.Branch)
 	require.Equal(t, "main", claimed.CIBaseBranch)
 
 	_, eventCh := tc.Broadcaster.Subscribe("")

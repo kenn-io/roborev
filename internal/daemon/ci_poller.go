@@ -61,7 +61,6 @@ type ghPR struct {
 	Number      int        `json:"number"`
 	HeadRefOid  string     `json:"headRefOid"`
 	HeadRefName string     `json:"headRefName"`
-	HeadRepo    string     `json:"headRepo"`
 	BaseRefName string     `json:"baseRefName"`
 	Title       string     `json:"title"`
 	Author      ghPRAuthor `json:"author"`
@@ -72,7 +71,6 @@ type panelPostTarget struct {
 	Open        bool
 	HeadSHA     string
 	HeadRefName string
-	HeadRepo    string
 	BaseRefName string
 	AuthorLogin string
 	Labels      []string
@@ -535,7 +533,6 @@ func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, 
 		Workflow: config.ExperimentWorkflowCI,
 		Subject: config.ExperimentSubject{
 			Repository: ghRepo,
-			SourceRepo: pr.HeadRepo,
 			Branch:     pr.HeadRefName,
 		},
 		Global:  cfg,
@@ -578,8 +575,7 @@ func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, 
 		ctx,
 		buildPanelOptsInput{
 			repo: repo, repoCfg: repoCfg, cfg: cfg, ghRepo: ghRepo, gitRef: gitRef,
-			// Gate hooks on the PR base (target) branch: it is maintainer-
-			// controlled, unlike the fork-author-controlled head ref.
+			branch:     pr.HeadRefName,
 			baseBranch: pr.BaseRefName,
 			prNumber:   pr.Number, panelName: ciPanelName(repoCfg, cfg),
 			prDiscussionContext: prDiscussionContext,
@@ -587,12 +583,6 @@ func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, 
 		})
 	if err != nil {
 		return err
-	}
-	if selection.SubjectHash != "" {
-		for i := range memberOpts {
-			memberOpts[i].BranchSubjectHash = selection.SubjectHash
-		}
-		synthOpts.BranchSubjectHash = selection.SubjectHash
 	}
 	if selection.Assignment != nil {
 		assignment, assignErr := storageAssignmentForExperiment(
@@ -1249,7 +1239,8 @@ type buildPanelOptsInput struct {
 	cfg                 *config.Config
 	ghRepo              string
 	gitRef              string
-	baseBranch          string // PR base (target) branch, recorded for hook branch matching only (never Branch)
+	branch              string // PR head branch under review
+	baseBranch          string // PR base branch used for event and hook matching
 	prNumber            int
 	panelName           string // config panel name ("" for the implicit matrix)
 	prDiscussionContext string
@@ -1303,6 +1294,7 @@ func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) (
 		memberOpts = append(memberOpts, storage.EnqueueOpts{
 			RepoID:                in.repo.ID,
 			GitRef:                in.gitRef,
+			Branch:                in.branch,
 			CIBaseBranch:          in.baseBranch,
 			Agent:                 m.Agent,
 			Model:                 m.Model,
@@ -1315,6 +1307,7 @@ func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) (
 			Prompt:                storedPrompt,
 			PromptPrebuilt:        storedPrompt != "",
 			JobType:               storage.JobTypeRange,
+			Source:                storage.JobSourceCI,
 			PanelRole:             storage.PanelRoleMember,
 			PanelName:             in.panelName,
 			PanelMemberName:       m.Name,
@@ -1344,6 +1337,7 @@ func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) (
 	synthOpts := storage.EnqueueOpts{
 		RepoID:                in.repo.ID,
 		GitRef:                in.gitRef,
+		Branch:                in.branch,
 		CIBaseBranch:          in.baseBranch,
 		Agent:                 synthAgent,
 		Model:                 in.synth.Model,
@@ -1352,6 +1346,7 @@ func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) (
 		BackupModel:           in.synth.BackupModel,
 		MinSeverity:           synthesisMinSeverity,
 		JobType:               storage.JobTypeSynthesis,
+		Source:                storage.JobSourceCI,
 		PanelRole:             storage.PanelRoleSynthesis,
 		PanelName:             in.panelName,
 		PanelMemberConfigJSON: string(synthSnapshot),
@@ -1898,7 +1893,6 @@ func (p *CIPoller) listOpenPRs(ctx context.Context, ghRepo string) ([]ghPR, erro
 			Number:      pr.Number,
 			HeadRefOid:  pr.HeadRefOID,
 			HeadRefName: pr.HeadRefName,
-			HeadRepo:    pr.HeadRepo,
 			BaseRefName: pr.BaseRefName,
 			Title:       pr.Title,
 			Author:      ghPRAuthor{Login: pr.AuthorLogin},
@@ -2797,7 +2791,6 @@ func (p *CIPoller) retryAttemptPR(
 		Number:      attempt.PRNumber,
 		HeadRefOid:  headSHA,
 		HeadRefName: target.HeadRefName,
-		HeadRepo:    target.HeadRepo,
 		BaseRefName: baseRefName,
 		Labels:      target.Labels,
 		// Preserve the author so kata trust gating in enqueuePanelRun does
@@ -3255,7 +3248,6 @@ func (p *CIPoller) panelPostTarget(
 		Open:        strings.EqualFold(pr.State, "open"),
 		HeadSHA:     pr.HeadRefOID,
 		HeadRefName: pr.HeadRefName,
-		HeadRepo:    pr.HeadRepo,
 		BaseRefName: pr.BaseRefName,
 		AuthorLogin: pr.AuthorLogin,
 		Labels:      pr.Labels,

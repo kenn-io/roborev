@@ -1018,7 +1018,7 @@ func findCompatibleReusableSession(
 	experiment *storage.ExperimentAssignmentInput,
 ) (string, string) {
 	if !config.ResolveReuseReviewSessionFromConfig(repoCfg, globalCfg) ||
-		opts.BranchSubjectHash == "" || targetSHA == "" ||
+		opts.Branch == "" || targetSHA == "" ||
 		opts.PanelRole == storage.PanelRoleSynthesis ||
 		!agent.SupportsSessionResume(opts.Agent) {
 		return "", ""
@@ -1029,7 +1029,8 @@ func findCompatibleReusableSession(
 	}
 	candidates, err := db.FindCompatibleReusableSessionCandidates(storage.ReusableSessionQuery{
 		RepoID:                opts.RepoID,
-		BranchSubjectHash:     opts.BranchSubjectHash,
+		Branch:                opts.Branch,
+		Source:                opts.Source,
 		Agent:                 opts.Agent,
 		Model:                 opts.Model,
 		Provider:              opts.Provider,
@@ -2685,7 +2686,6 @@ func (s *Server) humaEnqueue(
 			rawRepoCfg = selection.RawRepoConfig
 		}
 		experiment = selection.Assignment
-		descriptor.branchSubjectHash = selection.SubjectHash
 		if experiment != nil {
 			descriptor.minSeverity, selectErr = config.ResolveReviewMinSeverityFromConfig(
 				normalizedMinSev, repoCfg, cfg,

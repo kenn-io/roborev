@@ -43,11 +43,9 @@ type ExperimentDefinition struct {
 }
 
 // ExperimentSubject is the stable repository-scoped branch identity used for
-// assignment. SourceRepo is required for CI pull requests and empty for local
-// reviews.
+// assignment.
 type ExperimentSubject struct {
 	Repository string
-	SourceRepo string
 	Branch     string
 }
 
@@ -267,7 +265,7 @@ var reviewExperimentCIKeys = map[string]struct{}{
 // assigns the branch deterministically, and applies the experimental overlay.
 func SelectReviewExperiment(in ExperimentSelectionInput) (ExperimentSelection, error) {
 	result := ExperimentSelection{RepoConfig: in.Repo}
-	if !validExperimentSubject(in.Workflow, in.Subject) {
+	if !validExperimentSubject(in.Subject) {
 		return result, nil
 	}
 	result.SubjectHash = hashExperimentSubject(in.Subject)
@@ -471,17 +469,14 @@ func canonicalizeExperimentDefinition(definition ExperimentDefinition) ([]byte, 
 	return encoded, sha256Hex(encoded), nil
 }
 
-func validExperimentSubject(workflow ExperimentWorkflow, subject ExperimentSubject) bool {
-	if strings.TrimSpace(subject.Repository) == "" || strings.TrimSpace(subject.Branch) == "" {
-		return false
-	}
-	return workflow != ExperimentWorkflowCI || strings.TrimSpace(subject.SourceRepo) != ""
+func validExperimentSubject(subject ExperimentSubject) bool {
+	return strings.TrimSpace(subject.Repository) != "" && strings.TrimSpace(subject.Branch) != ""
 }
 
 func hashExperimentSubject(subject ExperimentSubject) string {
 	var encoded bytes.Buffer
 	encoded.WriteString("roborev-review-subject-v1")
-	for _, field := range []string{subject.Repository, subject.SourceRepo, subject.Branch} {
+	for _, field := range []string{subject.Repository, subject.Branch} {
 		_ = binary.Write(&encoded, binary.BigEndian, uint32(len(field)))
 		encoded.WriteString(field)
 	}

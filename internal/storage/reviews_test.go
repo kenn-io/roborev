@@ -857,6 +857,44 @@ func TestFindReusableSessionCandidatesIncludesDirtyReviewJobs(t *testing.T) {
 	assert.Equal("dirty", candidates[0].GitRef)
 }
 
+func TestFindCompatibleReusableSessionCandidatesMatchesBranchAndSource(t *testing.T) {
+	db, repo := setupDBAndRepo(t, "compatible-session-source")
+	machineID, err := db.GetMachineID()
+	require.NoError(t, err)
+
+	enqueueCompleted := func(source, sessionID string) ReviewJob {
+		job, enqueueErr := db.EnqueueJob(EnqueueOpts{
+			RepoID: repo.ID, GitRef: "abc123", Branch: "feature/session",
+			Agent: "test", Source: source,
+		})
+		require.NoError(t, enqueueErr)
+		claimed, claimErr := db.ClaimJob("session-worker")
+		require.NoError(t, claimErr)
+		require.Equal(t, job.ID, claimed.ID)
+		require.NoError(t, db.CompleteJob(job.ID, "test", "prompt", "No issues found."))
+		_, updateErr := db.Exec(`UPDATE review_jobs SET session_id = ? WHERE id = ?`, sessionID, job.ID)
+		require.NoError(t, updateErr)
+		return *job
+	}
+
+	local := enqueueCompleted("", "local-session")
+	query := ReusableSessionQuery{
+		RepoID: repo.ID, Branch: "feature/session", Source: JobSourceCI,
+		Agent: "test", Reasoning: "thorough", SourceMachineID: machineID,
+	}
+	candidates, err := db.FindCompatibleReusableSessionCandidates(query)
+	require.NoError(t, err)
+	assert.Empty(t, candidates)
+
+	ci := enqueueCompleted(JobSourceCI, "ci-session")
+	candidates, err = db.FindCompatibleReusableSessionCandidates(query)
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	assert.Equal(t, ci.ID, candidates[0].ID)
+	assert.NotEqual(t, local.ID, candidates[0].ID)
+	assert.Equal(t, "ci-session", candidates[0].SessionID)
+}
+
 func setJobSession(t *testing.T, db *DB, jobID int64, sessionID string) {
 	t.Helper()
 	_, err := db.Exec(`UPDATE review_jobs SET session_id = ? WHERE id = ?`, sessionID, jobID)

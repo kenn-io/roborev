@@ -1587,6 +1587,7 @@ func TestFilterFixCandidateJobsRequiresFailedActionableReviews(t *testing.T) {
 		{ID: 25, JobType: storage.JobTypeInsights, Verdict: &failed},
 		{ID: 26, JobType: storage.JobTypeClassify, Verdict: &failed},
 		{ID: 27, JobType: storage.JobTypeTask, GitRef: "refactor"},
+		{ID: 28, JobType: storage.JobTypeSynthesis, Source: storage.JobSourceCI, Verdict: &failed},
 	}
 
 	filtered := filterFixCandidateJobs(jobs)

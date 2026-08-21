@@ -81,20 +81,19 @@ reuse_review_session_lookback = 0
 	assert.True(t, IsKeyInTOMLFile(raw, "reuse_review_session_lookback"))
 }
 
-func TestSelectReviewExperimentNamespacesCISourceRepository(t *testing.T) {
+func TestSelectReviewExperimentUsesSameSubjectForReviewAndCI(t *testing.T) {
 	enabled := true
 	ratio := 1.0
 	input := ExperimentSelectionInput{
-		Workflow: ExperimentWorkflowCI,
+		Workflow: ExperimentWorkflowReview,
 		Subject: ExperimentSubject{
 			Repository: "github.com/example/project",
-			SourceRepo: "github.com/alice/project",
 			Branch:     "feature",
 		},
 		Global: &Config{Experiments: map[string]ExperimentDefinition{
 			"ci-v1": {
 				Enabled: &enabled, Ratio: &ratio,
-				Workflows: []ExperimentWorkflow{ExperimentWorkflowCI},
+				Workflows: []ExperimentWorkflow{ExperimentWorkflowReview, ExperimentWorkflowCI},
 				Config:    map[string]any{"reuse_review_session": true},
 			},
 		}},
@@ -103,11 +102,11 @@ func TestSelectReviewExperimentNamespacesCISourceRepository(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, first.Assignment)
 
-	input.Subject.SourceRepo = "github.com/bob/project"
+	input.Workflow = ExperimentWorkflowCI
 	second, err := SelectReviewExperiment(input)
 	require.NoError(t, err)
 	require.NotNil(t, second.Assignment)
-	assert.NotEqual(t, first.Assignment.SubjectHash, second.Assignment.SubjectHash)
+	assert.Equal(t, first.Assignment.SubjectHash, second.Assignment.SubjectHash)
 }
 
 func TestSelectReviewExperimentHonorsRatioBoundaries(t *testing.T) {
@@ -278,7 +277,6 @@ func TestSelectReviewExperimentExplicitEmptyValuesClearBaseSettings(t *testing.T
 		Workflow: ExperimentWorkflowCI,
 		Subject: ExperimentSubject{
 			Repository: "github.com/example/project",
-			SourceRepo: "github.com/example/project",
 			Branch:     "feature",
 		},
 		Global: global, Repo: &RepoConfig{}, RawRepo: map[string]any{},
@@ -309,7 +307,6 @@ func TestSelectReviewExperimentDefaultArmPreservesRepoCIReviewsReplacement(t *te
 		Workflow: ExperimentWorkflowCI,
 		Subject: ExperimentSubject{
 			Repository: "github.com/example/project",
-			SourceRepo: "github.com/example/project",
 			Branch:     "feature",
 		},
 		Global: &Config{

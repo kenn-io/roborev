@@ -546,24 +546,14 @@ func TestHandleEnqueueReusesPreviousBranchSessionWhenEnabled(t *testing.T) {
 			return false
 		}, "GetOrCreateCommit failed: %v", err)
 	}
-	selection, err := config.SelectReviewExperiment(config.ExperimentSelectionInput{
-		Workflow: config.ExperimentWorkflowReview,
-		Subject: config.ExperimentSubject{
-			Repository: repo.Identity,
-			Branch:     "feature/session",
-		},
-	})
-	require.NoError(t, err)
-
 	prevJob, err := db.EnqueueJob(storage.EnqueueOpts{
-		RepoID:            repo.ID,
-		CommitID:          commit.ID,
-		GitRef:            sha,
-		Branch:            "feature/session",
-		BranchSubjectHash: selection.SubjectHash,
-		Agent:             "test",
-		Reasoning:         "thorough",
-		ReviewType:        config.ReviewTypeDefault,
+		RepoID:     repo.ID,
+		CommitID:   commit.ID,
+		GitRef:     sha,
+		Branch:     "feature/session",
+		Agent:      "test",
+		Reasoning:  "thorough",
+		ReviewType: config.ReviewTypeDefault,
 	})
 	if err != nil {
 		require.Condition(t, func() bool {

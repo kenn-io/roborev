@@ -626,7 +626,6 @@ type EnqueueCreatedResponse struct {
 	BackupAgent           *string                `json:"backup_agent,omitempty"`
 	BackupModel           *string                `json:"backup_model,omitempty"`
 	Branch                *string                `json:"branch,omitempty"`
-	BranchSubjectHash     *string                `json:"branch_subject_hash,omitempty"`
 	ClaimBlocked          *bool                  `json:"claim_blocked,omitempty"`
 	Closed                *bool                  `json:"closed,omitempty"`
 	CommandLine           *string                `json:"command_line,omitempty"`
@@ -1593,7 +1592,6 @@ type PanelEnqueueResponse struct {
 	BackupAgent           *string                `json:"backup_agent,omitempty"`
 	BackupModel           *string                `json:"backup_model,omitempty"`
 	Branch                *string                `json:"branch,omitempty"`
-	BranchSubjectHash     *string                `json:"branch_subject_hash,omitempty"`
 	ClaimBlocked          *bool                  `json:"claim_blocked,omitempty"`
 	Closed                *bool                  `json:"closed,omitempty"`
 	CommandLine           *string                `json:"command_line,omitempty"`
@@ -1953,7 +1951,6 @@ type ReviewJob struct {
 	BackupAgent           *string                `json:"backup_agent,omitempty"`
 	BackupModel           *string                `json:"backup_model,omitempty"`
 	Branch                *string                `json:"branch,omitempty"`
-	BranchSubjectHash     *string                `json:"branch_subject_hash,omitempty"`
 	ClaimBlocked          *bool                  `json:"claim_blocked,omitempty"`
 	Closed                *bool                  `json:"closed,omitempty"`
 	CommandLine           *string                `json:"command_line,omitempty"`

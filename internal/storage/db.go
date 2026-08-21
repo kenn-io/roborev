@@ -44,7 +44,6 @@ CREATE TABLE IF NOT EXISTS review_jobs (
   ci_base_branch TEXT,
   session_id TEXT,
   session_resumed INTEGER NOT NULL DEFAULT 0,
-  branch_subject_hash TEXT,
   resume_source_job_uuid TEXT,
   agent TEXT NOT NULL DEFAULT 'codex',
   model TEXT,
@@ -1053,10 +1052,7 @@ func (db *DB) migrate() error {
 
 	// Migration: add ci_base_branch column to review_jobs if missing.
 	// CI reviews record the PR base (target) branch here for event/hook
-	// branch matching only. It is deliberately separate from branch, which
-	// stays empty for CI jobs so branch-scoped local flows (fix/refine
-	// discovery, fix-ref selection, session reuse) never treat a CI review
-	// as local work on the base branch.
+	// branch matching. The ordinary branch column records the PR head branch.
 	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'ci_base_branch'`).Scan(&count)
 	if err != nil {
 		return fmt.Errorf("check ci_base_branch column: %w", err)
@@ -1244,15 +1240,13 @@ func (db *DB) migrate() error {
 		return fmt.Errorf("migrate review_jobs constraints for auto design: %w", err)
 	}
 
-	// Review experiment attribution and session lineage. These columns stay
-	// separate from branch because CI jobs deliberately leave branch empty.
+	// Review experiment attribution and session lineage.
 	// The experiment tables below are introduced in their final shape; no
 	// released database contains an intermediate table without the frozen plan.
 	for _, col := range []struct {
 		name string
 		def  string
 	}{
-		{"branch_subject_hash", "TEXT"},
 		{"resume_source_job_uuid", "TEXT"},
 	} {
 		err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = ?`, col.name).Scan(&count)

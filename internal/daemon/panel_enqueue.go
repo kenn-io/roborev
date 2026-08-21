@@ -29,7 +29,6 @@ type targetDescriptor struct {
 	commitID          int64
 	gitRef            string // frozen SHA / <sha>..<sha> / "dirty"; "" for prompt
 	branch            string
-	branchSubjectHash string
 	sessionSHA        string // SHA to key session reuse on ("" for prompt jobs)
 	patchID           string
 	diffContent       string
@@ -54,8 +53,7 @@ type targetDescriptor struct {
 func (d targetDescriptor) baseOpts() storage.EnqueueOpts {
 	return storage.EnqueueOpts{
 		RepoID: d.repoID, CommitID: d.commitID, GitRef: d.gitRef, Branch: d.branch,
-		BranchSubjectHash: d.branchSubjectHash,
-		PatchID:           d.patchID, DiffContent: d.diffContent, DirtyFiles: d.dirtyFiles, MinSeverity: d.minSeverity,
+		PatchID: d.patchID, DiffContent: d.diffContent, DirtyFiles: d.dirtyFiles, MinSeverity: d.minSeverity,
 		WorktreePath: d.worktreePath, JobType: d.jobType, Prompt: d.prompt,
 		Source: d.source, PromptPrebuilt: d.promptPrebuilt, OutputPrefix: d.outputPrefix, Label: d.label,
 		Agentic: d.agentic, RequestedModel: d.requestedModel, RequestedProvider: d.requestedProvider,

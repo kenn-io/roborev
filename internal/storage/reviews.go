@@ -17,7 +17,7 @@ func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 	var jobFields reviewJobScanFields
 	err := db.QueryRow(`
 		SELECT rv.id, rv.job_id, rv.agent, rv.prompt, rv.output, rv.created_at, rv.closed, rv.uuid, rv.verdict_bool,
-		       j.id, COALESCE(j.uuid, ''), j.repo_id, j.commit_id, j.git_ref, j.branch, j.ci_base_branch, j.session_id, j.branch_subject_hash, j.resume_source_job_uuid, j.agent, j.reasoning, j.status, j.enqueued_at,
+		       j.id, COALESCE(j.uuid, ''), j.repo_id, j.commit_id, j.git_ref, j.branch, j.ci_base_branch, j.session_id, j.resume_source_job_uuid, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, j.model, j.provider, j.requested_model, j.requested_provider, j.job_type, j.review_type, j.patch_id,
 		       rp.root_path, rp.name, c.subject, j.token_usage, COALESCE(j.min_severity, ''), COALESCE(j.backup_agent, ''), COALESCE(j.backup_model, ''),
 		       COALESCE(j.panel_run_uuid, ''), COALESCE(j.panel_role, ''), COALESCE(j.panel_name, ''), COALESCE(j.panel_member_name, ''), j.panel_member_index, COALESCE(j.panel_member_config_json, ''), COALESCE(j.claim_blocked, 0)
@@ -27,7 +27,7 @@ func (db *DB) GetReviewByJobID(jobID int64) (*Review, error) {
 		LEFT JOIN commits c ON c.id = j.commit_id
 		WHERE rv.job_id = ?
 	`, jobID).Scan(&r.ID, &r.JobID, &r.Agent, &r.Prompt, &r.Output, &reviewFields.CreatedAt, &reviewFields.Closed, &reviewFields.UUID, &reviewFields.VerdictBool,
-		&job.ID, &job.UUID, &job.RepoID, &jobFields.CommitID, &job.GitRef, &jobFields.Branch, &jobFields.CIBaseBranch, &jobFields.SessionID, &jobFields.BranchSubjectHash, &jobFields.ResumeSourceUUID, &job.Agent, &job.Reasoning, &job.Status, &jobFields.EnqueuedAt,
+		&job.ID, &job.UUID, &job.RepoID, &jobFields.CommitID, &job.GitRef, &jobFields.Branch, &jobFields.CIBaseBranch, &jobFields.SessionID, &jobFields.ResumeSourceUUID, &job.Agent, &job.Reasoning, &job.Status, &jobFields.EnqueuedAt,
 		&jobFields.StartedAt, &jobFields.FinishedAt, &jobFields.WorkerID, &jobFields.Error, &jobFields.Model, &jobFields.Provider, &jobFields.RequestedModel, &jobFields.RequestedProvider, &jobFields.JobType, &jobFields.ReviewType, &jobFields.PatchID,
 		&job.RepoPath, &job.RepoName, &jobFields.CommitSubject, &jobFields.TokenUsage, &jobFields.MinSeverity, &jobFields.BackupAgent, &jobFields.BackupModel,
 		&jobFields.PanelRunUUID, &jobFields.PanelRole, &jobFields.PanelName, &jobFields.PanelMemberName, &jobFields.PanelMemberIndex, &jobFields.PanelMemberConfig, &jobFields.ClaimBlocked)
@@ -201,7 +201,8 @@ func (db *DB) FindReusableSessionCandidate(
 // review job. PanelMemberName is empty for standalone reviews.
 type ReusableSessionQuery struct {
 	RepoID                int64
-	BranchSubjectHash     string
+	Branch                string
+	Source                string
 	Agent                 string
 	Model                 string
 	Provider              string
@@ -219,7 +220,7 @@ type ReusableSessionQuery struct {
 // FindCompatibleReusableSessionCandidates returns successful prior reviews
 // whose resolved execution plan and experiment attribution match q.
 func (db *DB) FindCompatibleReusableSessionCandidates(q ReusableSessionQuery) ([]ReviewJob, error) {
-	if q.RepoID == 0 || q.BranchSubjectHash == "" || q.Agent == "" || q.SourceMachineID == "" {
+	if q.RepoID == 0 || q.Branch == "" || q.Agent == "" || q.SourceMachineID == "" {
 		return nil, nil
 	}
 	if q.ReviewType == "" {
@@ -236,7 +237,8 @@ func (db *DB) FindCompatibleReusableSessionCandidates(q ReusableSessionQuery) ([
 		)
 		LEFT JOIN experiment_definitions d ON d.experiment_id = a.experiment_id
 		WHERE j.repo_id = ?
-		  AND j.branch_subject_hash = ?
+		  AND j.branch = ?
+		  AND COALESCE(j.source, '') = ?
 		  AND j.agent = ?
 		  AND COALESCE(j.model, '') = ?
 		  AND COALESCE(j.provider, '') = ?
@@ -250,7 +252,7 @@ func (db *DB) FindCompatibleReusableSessionCandidates(q ReusableSessionQuery) ([
 		  AND j.session_id <> ''
 		  AND EXISTS (SELECT 1 FROM reviews rv WHERE rv.job_id = j.id)`
 	args := []any{
-		q.RepoID, q.BranchSubjectHash, q.Agent, q.Model, q.Provider,
+		q.RepoID, q.Branch, q.Source, q.Agent, q.Model, q.Provider,
 		q.Reasoning, q.ReviewType, q.WorktreePath, q.SourceMachineID,
 	}
 	if q.PanelMemberName == "" {
@@ -420,7 +422,7 @@ func (db *DB) GetJobsWithReviewsByIDs(jobIDs []int64) (map[int64]JobWithReview, 
 	// contains the integer IDs, which are passed to the DB driver for parameterization.
 	// This prevents user-controlled input from being part of the SQL query string itself.
 	jobQuery := fmt.Sprintf(`
-		SELECT j.id, COALESCE(j.uuid, ''), j.repo_id, j.commit_id, j.git_ref, j.branch, j.ci_base_branch, j.session_id, j.branch_subject_hash, j.resume_source_job_uuid, j.agent, j.reasoning, j.status, j.enqueued_at,
+		SELECT j.id, COALESCE(j.uuid, ''), j.repo_id, j.commit_id, j.git_ref, j.branch, j.ci_base_branch, j.session_id, j.resume_source_job_uuid, j.agent, j.reasoning, j.status, j.enqueued_at,
 		       j.started_at, j.finished_at, j.worker_id, j.error, COALESCE(j.agentic, 0),
 		       r.root_path, r.name, c.subject, j.model, j.job_type, j.review_type, COALESCE(j.min_severity, ''),
 		       COALESCE(j.backup_agent, ''), COALESCE(j.backup_model, ''),
@@ -442,7 +444,7 @@ func (db *DB) GetJobsWithReviewsByIDs(jobIDs []int64) (map[int64]JobWithReview, 
 		var j ReviewJob
 		var fields reviewJobScanFields
 
-		if err := rows.Scan(&j.ID, &j.UUID, &j.RepoID, &fields.CommitID, &j.GitRef, &fields.Branch, &fields.CIBaseBranch, &fields.SessionID, &fields.BranchSubjectHash, &fields.ResumeSourceUUID, &j.Agent, &j.Reasoning, &j.Status, &fields.EnqueuedAt,
+		if err := rows.Scan(&j.ID, &j.UUID, &j.RepoID, &fields.CommitID, &j.GitRef, &fields.Branch, &fields.CIBaseBranch, &fields.SessionID, &fields.ResumeSourceUUID, &j.Agent, &j.Reasoning, &j.Status, &fields.EnqueuedAt,
 			&fields.StartedAt, &fields.FinishedAt, &fields.WorkerID, &fields.Error, &fields.Agentic,
 			&j.RepoPath, &j.RepoName, &fields.CommitSubject, &fields.Model, &fields.JobType, &fields.ReviewType, &fields.MinSeverity,
 			&fields.BackupAgent, &fields.BackupModel,

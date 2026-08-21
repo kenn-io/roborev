@@ -838,6 +838,9 @@ func filterFixCandidateJobs(jobs []storage.ReviewJob) []storage.ReviewJob {
 }
 
 func isFixCandidateJob(job storage.ReviewJob) bool {
+	if job.IsCIReview() {
+		return false
+	}
 	verdict := ""
 	if job.Verdict != nil {
 		verdict = strings.TrimSpace(*job.Verdict)

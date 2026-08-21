@@ -55,14 +55,13 @@ standalone, daemon-free `roborev ci review` command is not part of this design.
 
 The existing `reuse_review_session` implementation only runs from the
 single-agent daemon enqueue path in `internal/daemon/server.go`. Its storage
-query deliberately excludes panel members. CI-poller jobs also leave
-`review_jobs.branch` empty, because that field identifies local work for
-branch-scoped fix and refine behavior.
+query deliberately excludes panel members. CI jobs already have a source marker
+that can keep them out of local fix and refine discovery when their head branch
+is stored on the job.
 
 The CI poller currently knows the PR head SHA and base branch but does not carry
-the source repository and head branch name through `ghPR`. Those fields must be
-added before the poller has the branch identity required for assignment and
-session reuse.
+the head branch name through `ghPR`. That field must be added before the poller
+has the branch identity required for assignment and session reuse.
 
 `review_jobs.session_id` does not say whether a job resumed. A fresh job stores
 the session ID captured from the agent, while a resumed job begins with an
@@ -200,7 +199,6 @@ const (
 
 type ExperimentSubject struct {
 	Repository string
-	SourceRepo string
 	Branch     string
 }
 
@@ -257,11 +255,9 @@ because doing so would discard the overlay.
 
 ## Subject and assignment algorithm
 
-The canonical subject tuple is:
-
-- ordinary review: canonical repository identity and local branch name;
-- CI poller: repository under review, PR source repository, and PR head branch
-    name.
+The canonical subject tuple is the canonical repository identity and branch
+name. Ordinary reviews use the local branch, and CI-poller reviews use the PR
+head branch.
 
 The local repository identity uses the stored canonical remote identity when
 available and the canonical repository root as a local fallback. Only the hash
@@ -343,8 +339,10 @@ The assignment, CI panel mapping, retry-attempt reservation, member jobs, and
 synthesis job are committed in the existing `CreateCIPanelRun` transaction. A
 concurrent loser creates none of them.
 
-`review_jobs.branch` remains empty for CI jobs. The branch subject hash is a new
-separate field and must not affect local branch-scoped fix or refine discovery.
+CI jobs store the PR head branch in `review_jobs.branch` and the target branch
+in `review_jobs.ci_base_branch`. Local fix and refine discovery excludes CI jobs
+using their existing source marker, while event and hook matching uses the CI
+base branch.
 
 ## Persistence
 
@@ -417,13 +415,8 @@ methods resolve the appropriate identifier.
 Add these nullable fields to `review_jobs`:
 
 ```sql
-branch_subject_hash TEXT,
 resume_source_job_uuid TEXT
 ```
-
-`branch_subject_hash` lets local and CI session lookup share one branch-scoped
-query without repurposing `review_jobs.branch`. All jobs in a panel receive the
-same value.
 
 `resume_source_job_uuid` identifies the prior job whose session ID was selected
 for this attempt. It is null for a fresh attempt. The existing `session_id`
@@ -460,7 +453,7 @@ A candidate must match:
 
 - repository;
 - source machine ID, because supported agent session state is local;
-- branch subject hash;
+- branch name and workflow source;
 - experiment assignment state: no assignment, or the same experiment ID, arm,
     and definition hash;
 - agent, model, provider, reasoning, and review type;
@@ -557,7 +550,7 @@ enqueue interfaces.
 ### Configuration and selection
 
 - The same experiment and branch subject produce the same arm.
-- Repository and source-repository namespacing separates equal branch names.
+- Repository namespacing separates equal branch names.
 - Ratios zero and one select the expected arms.
 - Missing branch identity produces no assignment.
 - Recursive table merge, scalar replacement, and array replacement produce the
@@ -608,7 +601,7 @@ flow and rendered projections that actually consume structured fields.
     job fields, and sync support.
 1. Integrate selection and atomic assignment persistence with ordinary single
     and panel enqueue paths.
-1. Carry GitHub head repository and branch identity into the CI poller, apply
+1. Carry GitHub head branch identity into the CI poller, apply
     selection before panel resolution, and persist it in `CreateCIPanelRun`.
 1. Generalize reusable-session lookup for single reviews and panel members,
     including assignment isolation and resume lineage.

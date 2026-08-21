@@ -73,7 +73,6 @@ type ReviewJob struct {
 	Branch              string     `json:"branch,omitempty"`     // Branch name at time of job creation
 	CIBaseBranch        string     `json:"-"`                    // PR base branch for CI jobs; daemon-internal, used only for event/hook branch matching
 	SessionID           string     `json:"session_id,omitempty"` // Reused prior session or captured current session ID
-	BranchSubjectHash   string     `json:"branch_subject_hash,omitempty"`
 	ResumeSourceJobUUID string     `json:"resume_source_job_uuid,omitempty"`
 	Agent               string     `json:"agent"`
 	Model               string     `json:"model,omitempty"`              // Effective model for this run (for opencode: provider/model format)
@@ -143,16 +142,13 @@ type ReviewJob struct {
 	ReusableSessionTarget string `json:"-"`
 }
 
-// HookBranch returns the branch used for event/hook branch matching: the
-// local branch the job was enqueued from, or the PR base (target) branch for
-// CI jobs. CI jobs deliberately leave Branch empty so branch-scoped local
-// flows (fix/refine discovery, fix-ref selection, session reuse) never treat
-// a CI review as local work on the base branch.
+// HookBranch returns the branch used for event and hook matching. CI jobs use
+// the PR base branch; other jobs use the branch under review.
 func (j ReviewJob) HookBranch() string {
-	if j.Branch != "" {
-		return j.Branch
+	if j.CIBaseBranch != "" {
+		return j.CIBaseBranch
 	}
-	return j.CIBaseBranch
+	return j.Branch
 }
 
 // IsCIReview returns true if this job was enqueued by the CI poller:

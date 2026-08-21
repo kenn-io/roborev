@@ -1169,7 +1169,6 @@ export interface components {
             backup_agent?: string;
             backup_model?: string;
             branch?: string;
-            branch_subject_hash?: string;
             claim_blocked?: boolean;
             closed?: boolean;
             command_line?: string;
@@ -1651,7 +1650,6 @@ export interface components {
             backup_agent?: string;
             backup_model?: string;
             branch?: string;
-            branch_subject_hash?: string;
             claim_blocked?: boolean;
             closed?: boolean;
             command_line?: string;
@@ -1946,7 +1944,6 @@ export interface components {
             backup_agent?: string;
             backup_model?: string;
             branch?: string;
-            branch_subject_hash?: string;
             claim_blocked?: boolean;
             closed?: boolean;
             command_line?: string;

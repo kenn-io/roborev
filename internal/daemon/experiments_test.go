@@ -44,7 +44,7 @@ func TestEnqueueSingleReviewPersistsExperiment(t *testing.T) {
 
 	var job storage.ReviewJob
 	testutil.DecodeJSON(t, recorder, &job)
-	assert.NotEmpty(t, job.BranchSubjectHash)
+	assert.Equal(t, "feature/experiment", job.Branch)
 	assert.Equal(t, "high", job.MinSeverity)
 	require.Len(t, job.Experiments, 1)
 	assert.Equal(t, "session-v1", job.Experiments[0].ID)
@@ -52,7 +52,7 @@ func TestEnqueueSingleReviewPersistsExperiment(t *testing.T) {
 
 	stored, err := db.GetJobByID(job.ID)
 	require.NoError(t, err)
-	assert.Equal(t, job.BranchSubjectHash, stored.BranchSubjectHash)
+	assert.Equal(t, job.Branch, stored.Branch)
 	assert.Equal(t, job.Experiments, stored.Experiments)
 
 	repo.CommitFile("review.go", "package review\n\nfunc changed() {}\n", "change review")
@@ -99,7 +99,7 @@ func TestEnqueuePanelPersistsOneExperimentForWholeRun(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, synthesis.Experiments, 1)
 	for _, member := range members {
-		assert.Equal(t, synthesis.BranchSubjectHash, member.BranchSubjectHash)
+		assert.Equal(t, synthesis.Branch, member.Branch)
 		assert.Equal(t, synthesis.Experiments, member.Experiments)
 	}
 
@@ -390,7 +390,6 @@ func TestCIPollerUsesSourceBranchExperimentIdentity(t *testing.T) {
 		Number:      41,
 		HeadRefOid:  head,
 		HeadRefName: "feature/ci-experiment",
-		HeadRepo:    "contributor/api",
 		BaseRefName: "main",
 	}, cfg)
 	require.NoError(t, err)
@@ -404,12 +403,10 @@ func TestCIPollerUsesSourceBranchExperimentIdentity(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, synthesis.Experiments, 1)
 	assert.Equal(t, "ci-session-v1", synthesis.Experiments[0].ID)
-	assert.NotEmpty(t, synthesis.BranchSubjectHash)
-	assert.Empty(t, synthesis.Branch)
+	assert.Equal(t, "feature/ci-experiment", synthesis.Branch)
 	for _, member := range members {
-		assert.Equal(t, synthesis.BranchSubjectHash, member.BranchSubjectHash)
 		assert.Equal(t, synthesis.Experiments, member.Experiments)
-		assert.Empty(t, member.Branch)
+		assert.Equal(t, "feature/ci-experiment", member.Branch)
 	}
 }
 
@@ -435,7 +432,6 @@ func TestCIPollerExperimentFreezesSynthesisSeverity(t *testing.T) {
 		Number:      42,
 		HeadRefOid:  head,
 		HeadRefName: "feature/ci-severity",
-		HeadRepo:    "contributor/api",
 		BaseRefName: "main",
 	}, cfg)
 	require.NoError(t, err)
