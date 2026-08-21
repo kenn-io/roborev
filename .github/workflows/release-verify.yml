@@ -63,8 +63,25 @@ jobs:
           if [ -z "$TAG" ]; then
             TAG="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
           fi
-          echo "Verifying release $TAG"
-          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+          # sed consumes all of sort's output, avoiding SIGPIPE under
+          # pipefail.
+          version_at_least() {
+            [ "$(printf '%s\n' "$2" "$1" | sort -V | sed -n '1p')" = "$2" ]
+          }
+          # The browser UI (and its embedded-distribution marker) first
+          # shipped in v0.65.0; earlier releases legitimately contain no web
+          # assets. The web_assets field in `version --json` exists since
+          # v0.66.0.
+          web_checks=false
+          web_assets_field=false
+          if version_at_least "$TAG" "v0.65.0"; then web_checks=true; fi
+          if version_at_least "$TAG" "v0.66.0"; then web_assets_field=true; fi
+          echo "Verifying release $TAG (web checks: $web_checks)"
+          {
+            echo "tag=$TAG"
+            echo "web_checks=$web_checks"
+            echo "web_assets_field=$web_assets_field"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Download release assets
         env:
@@ -102,37 +119,31 @@ jobs:
           exit "$failed"
 
       - name: Verify embedded web assets
-        env:
-          TAG: ${{ steps.resolve.outputs.tag }}
+        # Both web asset steps share this gate; resolve computes it once so
+        # they can never disagree about which releases predate the web UI.
+        if: steps.resolve.outputs.web_checks == 'true'
         run: |
           set -euo pipefail
-          # The browser UI (and its embedded-distribution marker) first
-          # shipped in v0.65.0; earlier releases legitimately contain no
-          # web assets. sed consumes all of sort's output, avoiding SIGPIPE
-          # under pipefail.
-          FIRST_WEB_TAG="v0.65.0"
-          lowest="$(printf '%s\n' "$FIRST_WEB_TAG" "$TAG" | sort -V | sed -n '1p')"
-          if [ "$lowest" != "$FIRST_WEB_TAG" ]; then
-            echo "::notice::skipping embedded web asset checks: $TAG predates the browser UI ($FIRST_WEB_TAG)"
-            exit 0
-          fi
           if ! command -v rpm2cpio >/dev/null 2>&1 || ! command -v cpio >/dev/null 2>&1; then
             sudo apt-get update -q
             sudo apt-get install -qy rpm cpio
           fi
+          # Extract outside assets/ so the extraction dirs can never match
+          # a later glob over the downloaded assets.
+          mkdir extracted
           cd assets
           failed=0
           # Windows releases ship a .zip and a .tar.gz with the same stem, so
           # the extraction dir must be derived from the full asset name.
           for asset in *.tar.gz *.zip *.deb *.rpm; do
             [ -e "$asset" ] || continue
-            dir="extract-$asset"
+            dir="../extracted/$asset"
             mkdir "$dir"
             case "$asset" in
               *.tar.gz) tar -xzf "$asset" -C "$dir" ;;
               *.zip) unzip -q "$asset" -d "$dir" ;;
               *.deb) dpkg-deb -x "$asset" "$dir" ;;
-              *.rpm) (cd "$dir" && rpm2cpio "../$asset" | cpio -idm --quiet) ;;
+              *.rpm) rpm2cpio "$asset" | (cd "$dir" && cpio -idm --quiet) ;;
             esac
             binary="$(find "$dir" -type f \( -name roborev -o -name roborev.exe \) -print -quit)"
             if [ ! -f "$binary" ]; then
@@ -157,23 +168,24 @@ jobs:
           exit "$failed"
 
       - name: Verify runtime web asset report
+        if: steps.resolve.outputs.web_checks == 'true'
         env:
           TAG: ${{ steps.resolve.outputs.tag }}
+          WEB_ASSETS_FIELD: ${{ steps.resolve.outputs.web_assets_field }}
         run: |
           set -euo pipefail
-          FIRST_WEB_TAG="v0.65.0"
-          lowest="$(printf '%s\n' "$FIRST_WEB_TAG" "$TAG" | sort -V | sed -n '1p')"
-          if [ "$lowest" != "$FIRST_WEB_TAG" ]; then
-            echo "::notice::skipping runtime web asset check: $TAG predates the browser UI ($FIRST_WEB_TAG)"
-            exit 0
-          fi
-          cd assets
           version="${TAG#v}"
-          binary="extract-roborev_${version}_linux_amd64.tar.gz/roborev"
+          binary="extracted/roborev_${version}_linux_amd64.tar.gz/roborev"
           if [ ! -f "$binary" ]; then
             echo "::error::expected linux_amd64 binary not found at $binary; update this workflow if the archive naming changed"
             exit 1
           fi
           "$binary" version --json | tee version.json
-          # web_assets exists since v0.66; require it to be true when present.
-          jq -e '(.web_assets == null) or (.web_assets == true)' version.json >/dev/null
+          if [ "$WEB_ASSETS_FIELD" = "true" ]; then
+            # The web_assets field is part of the version --json contract
+            # since v0.66.0; a missing field is a regression, not tolerance.
+            jq -e '.web_assets == true' version.json >/dev/null
+          else
+            # v0.65.x predates the field; only reject an explicit false.
+            jq -e '(.web_assets == null) or (.web_assets == true)' version.json >/dev/null
+          fi

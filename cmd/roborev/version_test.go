@@ -37,7 +37,7 @@ func TestVersionCmdHumanOutputFlagsMissingWebAssets(t *testing.T) {
 
 	require.NoError(t, cmd.Execute())
 	assert.Equal(t, fmt.Sprintf(
-		"roborev %s (web assets missing; this build cannot serve the browser UI)\n",
+		"roborev %s (no embedded web assets; the browser UI needs a release build or --web-dev-origin)\n",
 		version.Version,
 	), output.String())
 }
