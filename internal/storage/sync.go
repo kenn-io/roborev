@@ -647,8 +647,11 @@ type SyncableReview struct {
 	Output             string
 	Closed             bool
 	UpdatedByMachineID string
+	AttemptEnqueuedAt  time.Time
+	AttemptSourceID    string
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
+	AttemptEnqueuedRaw string
 	CreatedAtRaw       string
 	UpdatedAtRaw       string
 }
@@ -660,7 +663,8 @@ func (db *DB) GetReviewsToSync(machineID string, limit int) ([]SyncableReview, e
 		SELECT
 			r.id, r.uuid, r.job_id, j.uuid,
 			r.agent, r.prompt, r.output, r.closed,
-			r.updated_by_machine_id, r.created_at, r.updated_at
+			r.updated_by_machine_id, r.attempt_enqueued_at,
+			r.attempt_source_machine_id, r.created_at, r.updated_at
 		FROM reviews r
 		JOIN review_jobs j ON r.job_id = j.id
 		WHERE r.updated_by_machine_id = ?
@@ -679,19 +683,22 @@ func (db *DB) GetReviewsToSync(machineID string, limit int) ([]SyncableReview, e
 	var reviews []SyncableReview
 	for rows.Next() {
 		var r SyncableReview
-		var createdAt, updatedAt string
+		var attemptEnqueuedAt, createdAt, updatedAt string
 
 		err := rows.Scan(
 			&r.ID, &r.UUID, &r.JobID, &r.JobUUID,
 			&r.Agent, &r.Prompt, &r.Output, &r.Closed,
-			&r.UpdatedByMachineID, &createdAt, &updatedAt,
+			&r.UpdatedByMachineID, &attemptEnqueuedAt,
+			&r.AttemptSourceID, &createdAt, &updatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan review: %w", err)
 		}
 
+		r.AttemptEnqueuedAt = parseSQLiteTime(attemptEnqueuedAt)
 		r.CreatedAt = parseSQLiteTime(createdAt)
 		r.UpdatedAt = parseSQLiteTime(updatedAt)
+		r.AttemptEnqueuedRaw = attemptEnqueuedAt
 		r.CreatedAtRaw = createdAt
 		r.UpdatedAtRaw = updatedAt
 		reviews = append(reviews, r)
@@ -716,6 +723,8 @@ type ReviewSyncMark struct {
 	Output             string
 	Closed             bool
 	UpdatedByMachineID string
+	AttemptSourceID    string
+	AttemptEnqueuedRaw string
 	CreatedAtRaw       string
 	UpdatedAtRaw       string
 }
@@ -729,6 +738,8 @@ func NewReviewSyncMark(r SyncableReview) ReviewSyncMark {
 		Output:             r.Output,
 		Closed:             r.Closed,
 		UpdatedByMachineID: r.UpdatedByMachineID,
+		AttemptSourceID:    r.AttemptSourceID,
+		AttemptEnqueuedRaw: r.AttemptEnqueuedRaw,
 		CreatedAtRaw:       r.CreatedAtRaw,
 		UpdatedAtRaw:       r.UpdatedAtRaw,
 	}
@@ -749,6 +760,7 @@ func (db *DB) MarkReviewsSynced(marks []ReviewSyncMark) error {
 		UPDATE reviews SET synced_at = ?
 		WHERE id = ? AND uuid = ? AND agent = ? AND prompt = ? AND output = ?
 		  AND closed = ? AND updated_by_machine_id = ?
+		  AND attempt_enqueued_at = ? AND attempt_source_machine_id = ?
 		  AND created_at = ? AND updated_at = ?`)
 	if err != nil {
 		return fmt.Errorf("prepare mark reviews synced: %w", err)
@@ -761,7 +773,8 @@ func (db *DB) MarkReviewsSynced(marks []ReviewSyncMark) error {
 		}
 		if _, err := stmt.Exec(
 			now, mark.ID, mark.UUID, mark.Agent, mark.Prompt, mark.Output,
-			closed, mark.UpdatedByMachineID, mark.CreatedAtRaw, mark.UpdatedAtRaw,
+			closed, mark.UpdatedByMachineID, mark.AttemptEnqueuedRaw,
+			mark.AttemptSourceID, mark.CreatedAtRaw, mark.UpdatedAtRaw,
 		); err != nil {
 			return fmt.Errorf("mark review %d synced: %w", mark.ID, err)
 		}
@@ -1023,21 +1036,26 @@ func (db *DB) UpsertPulledReview(r PulledReview) error {
 		return fmt.Errorf("find job for review: %w", err)
 	}
 
-	var existingCreatedAt, existingUpdatedAt, existingUpdatedBy string
+	var existingAttemptAt, existingAttemptSource string
+	var existingUpdatedAt, existingUpdatedBy string
 	err = conn.QueryRowContext(ctx, `
-		SELECT created_at, COALESCE(updated_at, ''),
+		SELECT attempt_enqueued_at, attempt_source_machine_id,
+		       COALESCE(updated_at, ''),
 		       COALESCE(updated_by_machine_id, '')
 		FROM reviews WHERE job_id = ?`, jobID,
-	).Scan(&existingCreatedAt, &existingUpdatedAt, &existingUpdatedBy)
+	).Scan(
+		&existingAttemptAt, &existingAttemptSource,
+		&existingUpdatedAt, &existingUpdatedBy,
+	)
 	if err == nil {
-		existingGeneration := canonicalSyncTimestamp(
-			parseSQLiteTime(existingCreatedAt),
+		attemptOrder := compareJobGeneration(
+			r.AttemptEnqueuedAt, r.AttemptSourceID,
+			parseSQLiteTime(existingAttemptAt), existingAttemptSource,
 		)
-		incomingGeneration := canonicalSyncTimestamp(r.CreatedAt)
-		if incomingGeneration.Before(existingGeneration) {
+		if attemptOrder < 0 {
 			return commitNoop()
 		}
-		if incomingGeneration.Equal(existingGeneration) {
+		if attemptOrder == 0 {
 			existingUpdate := canonicalSyncTimestamp(
 				parseSQLiteTime(existingUpdatedAt),
 			)
@@ -1064,8 +1082,10 @@ func (db *DB) UpsertPulledReview(r PulledReview) error {
 	_, err = conn.ExecContext(ctx, `
 		INSERT INTO reviews (
 			uuid, job_id, agent, prompt, output, closed,
-			verdict_bool, updated_by_machine_id, created_at, updated_at, synced_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			verdict_bool, updated_by_machine_id,
+			attempt_enqueued_at, attempt_source_machine_id,
+			created_at, updated_at, synced_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(job_id) DO UPDATE SET
 			uuid = excluded.uuid,
 			agent = excluded.agent,
@@ -1074,12 +1094,16 @@ func (db *DB) UpsertPulledReview(r PulledReview) error {
 			closed = excluded.closed,
 			verdict_bool = excluded.verdict_bool,
 			updated_by_machine_id = excluded.updated_by_machine_id,
+			attempt_enqueued_at = excluded.attempt_enqueued_at,
+			attempt_source_machine_id = excluded.attempt_source_machine_id,
 			created_at = excluded.created_at,
 			updated_at = excluded.updated_at,
 			synced_at = ?
 	`, r.UUID, jobID, r.Agent, r.Prompt, r.Output, r.Closed,
 		verdictBool,
 		r.UpdatedByMachineID,
+		formatSyncTimestamp(r.AttemptEnqueuedAt),
+		r.AttemptSourceID,
 		formatSyncTimestamp(r.CreatedAt),
 		formatSyncTimestamp(r.UpdatedAt), now, now)
 	if err != nil {

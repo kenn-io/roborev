@@ -797,6 +797,8 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 				Output:             r.Output,
 				Closed:             r.Closed,
 				UpdatedByMachineID: r.UpdatedByMachineID,
+				AttemptEnqueuedAt:  r.AttemptEnqueuedAt,
+				AttemptSourceID:    r.AttemptSourceID,
 				CreatedAt:          r.CreatedAt,
 				UpdatedAt:          r.UpdatedAt,
 			}

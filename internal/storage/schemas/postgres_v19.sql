@@ -89,6 +89,8 @@ CREATE TABLE IF NOT EXISTS roborev.reviews (
   output TEXT NOT NULL,
   closed BOOLEAN NOT NULL DEFAULT FALSE,
   updated_by_machine_id UUID NOT NULL,
+  attempt_enqueued_at TIMESTAMP WITH TIME ZONE NOT NULL,
+  attempt_source_machine_id UUID NOT NULL,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   source_updated_at TIMESTAMP WITH TIME ZONE NOT NULL DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()

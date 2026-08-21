@@ -1494,8 +1494,9 @@ func TestIntegration_DeferredJobDoesNotBlockUnrelatedPulls(t *testing.T) {
 	_, err = env.Pool.pool.Exec(env.Ctx, `
 		INSERT INTO roborev.reviews
 		  (uuid, job_uuid, agent, prompt, output, updated_by_machine_id,
-		   created_at, updated_at)
-		VALUES ($1, $2, 'test', 'prompt', 'output', $3, $4, $4)
+		   attempt_enqueued_at, attempt_source_machine_id,
+		   created_at, source_updated_at, updated_at)
+		VALUES ($1, $2, 'test', 'prompt', 'output', $3, $4, $3, $4, $4, $4)
 	`, GenerateUUID(), unrelatedJobUUID, remoteMachine, unrelatedUpdatedAt)
 	require.NoError(t, err)
 	_, err = env.Pool.pool.Exec(env.Ctx, `

@@ -422,12 +422,36 @@ func (p *PgPool) EnsureSchema(ctx context.Context) error {
 			if _, err = p.pool.Exec(ctx, `ALTER TABLE reviews ALTER COLUMN source_updated_at SET DEFAULT NOW()`); err != nil {
 				return fmt.Errorf("v19 migration (default review source update time): %w", err)
 			}
+			if _, err = p.pool.Exec(ctx, `ALTER TABLE reviews ADD COLUMN IF NOT EXISTS attempt_enqueued_at TIMESTAMP WITH TIME ZONE`); err != nil {
+				return fmt.Errorf("v19 migration (add review attempt generation): %w", err)
+			}
+			if _, err = p.pool.Exec(ctx, `ALTER TABLE reviews ADD COLUMN IF NOT EXISTS attempt_source_machine_id UUID`); err != nil {
+				return fmt.Errorf("v19 migration (add review attempt source): %w", err)
+			}
+			if _, err = p.pool.Exec(ctx, `
+				UPDATE reviews AS review
+				SET attempt_enqueued_at = job.enqueued_at,
+				    attempt_source_machine_id = job.source_machine_id
+				FROM review_jobs AS job
+				WHERE review.job_uuid = job.uuid
+				  AND (review.attempt_enqueued_at IS NULL OR
+				       review.attempt_source_machine_id IS NULL)
+			`); err != nil {
+				return fmt.Errorf("v19 migration (backfill review attempt identity): %w", err)
+			}
+			if _, err = p.pool.Exec(ctx, `ALTER TABLE reviews ALTER COLUMN attempt_enqueued_at SET NOT NULL`); err != nil {
+				return fmt.Errorf("v19 migration (require review attempt generation): %w", err)
+			}
+			if _, err = p.pool.Exec(ctx, `ALTER TABLE reviews ALTER COLUMN attempt_source_machine_id SET NOT NULL`); err != nil {
+				return fmt.Errorf("v19 migration (require review attempt source): %w", err)
+			}
 			if _, err = p.pool.Exec(ctx, `
 				WITH ranked AS (
 					SELECT id,
 					       ROW_NUMBER() OVER (
 						   PARTITION BY job_uuid
-						   ORDER BY created_at DESC NULLS LAST,
+						   ORDER BY attempt_enqueued_at DESC NULLS LAST,
+						            attempt_source_machine_id DESC NULLS LAST,
 						            source_updated_at DESC NULLS LAST,
 						            updated_at DESC NULLS LAST, id DESC
 					       ) AS generation_rank
@@ -810,8 +834,9 @@ func (p *PgPool) UpsertReview(ctx context.Context, r SyncableReview) error {
 	_, err := p.pool.Exec(ctx, `
 		INSERT INTO reviews (
 			uuid, job_uuid, agent, prompt, output, closed,
-			updated_by_machine_id, created_at, source_updated_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, clock_timestamp())
+			updated_by_machine_id, attempt_enqueued_at,
+			attempt_source_machine_id, created_at, source_updated_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, clock_timestamp())
 		ON CONFLICT (job_uuid) DO UPDATE SET
 			uuid = EXCLUDED.uuid,
 			agent = EXCLUDED.agent,
@@ -819,15 +844,20 @@ func (p *PgPool) UpsertReview(ctx context.Context, r SyncableReview) error {
 			output = EXCLUDED.output,
 			closed = EXCLUDED.closed,
 			updated_by_machine_id = EXCLUDED.updated_by_machine_id,
+			attempt_enqueued_at = EXCLUDED.attempt_enqueued_at,
+			attempt_source_machine_id = EXCLUDED.attempt_source_machine_id,
 			created_at = EXCLUDED.created_at,
 			source_updated_at = EXCLUDED.source_updated_at,
 			updated_at = clock_timestamp()
-		WHERE EXCLUDED.created_at > reviews.created_at
-		   OR (EXCLUDED.created_at = reviews.created_at AND
+		WHERE (EXCLUDED.attempt_enqueued_at, EXCLUDED.attempt_source_machine_id) >
+		      (reviews.attempt_enqueued_at, reviews.attempt_source_machine_id)
+		   OR ((EXCLUDED.attempt_enqueued_at, EXCLUDED.attempt_source_machine_id) =
+		       (reviews.attempt_enqueued_at, reviews.attempt_source_machine_id) AND
 		       (EXCLUDED.source_updated_at, EXCLUDED.updated_by_machine_id) >=
 		       (reviews.source_updated_at, reviews.updated_by_machine_id))
 	`, r.UUID, r.JobUUID, r.Agent, r.Prompt, r.Output, r.Closed,
-		r.UpdatedByMachineID, r.CreatedAt, updatedAt)
+		r.UpdatedByMachineID, r.AttemptEnqueuedAt, r.AttemptSourceID,
+		r.CreatedAt, updatedAt)
 	return err
 }
 
@@ -978,6 +1008,8 @@ type PulledReview struct {
 	Output             string
 	Closed             bool
 	UpdatedByMachineID string
+	AttemptEnqueuedAt  time.Time
+	AttemptSourceID    string
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 }
@@ -1004,7 +1036,8 @@ func (p *PgPool) PullReviews(ctx context.Context, excludeMachineID string, known
 	rows, err := p.pool.Query(ctx, `
 		SELECT
 			r.uuid, r.job_uuid, r.agent, r.prompt, r.output, r.closed,
-			r.updated_by_machine_id, r.created_at, r.source_updated_at,
+			r.updated_by_machine_id, r.attempt_enqueued_at,
+			r.attempt_source_machine_id, r.created_at, r.source_updated_at,
 			r.updated_at, r.id
 		FROM reviews r
 		WHERE (r.updated_by_machine_id IS NULL OR r.updated_by_machine_id != $1)
@@ -1027,7 +1060,8 @@ func (p *PgPool) PullReviews(ctx context.Context, excludeMachineID string, known
 
 		err := rows.Scan(
 			&r.UUID, &r.JobUUID, &r.Agent, &r.Prompt, &r.Output, &r.Closed,
-			&r.UpdatedByMachineID, &r.CreatedAt, &r.UpdatedAt,
+			&r.UpdatedByMachineID, &r.AttemptEnqueuedAt, &r.AttemptSourceID,
+			&r.CreatedAt, &r.UpdatedAt,
 			&lastUpdatedAt, &lastID,
 		)
 		if err != nil {
@@ -1173,8 +1207,9 @@ func (p *PgPool) BatchUpsertReviews(ctx context.Context, reviews []SyncableRevie
 		batch.Queue(`
 			INSERT INTO reviews (
 				uuid, job_uuid, agent, prompt, output, closed,
-				updated_by_machine_id, created_at, source_updated_at, updated_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, clock_timestamp())
+				updated_by_machine_id, attempt_enqueued_at,
+				attempt_source_machine_id, created_at, source_updated_at, updated_at
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, clock_timestamp())
 			ON CONFLICT (job_uuid) DO UPDATE SET
 				uuid = EXCLUDED.uuid,
 				agent = EXCLUDED.agent,
@@ -1182,15 +1217,20 @@ func (p *PgPool) BatchUpsertReviews(ctx context.Context, reviews []SyncableRevie
 				output = EXCLUDED.output,
 				closed = EXCLUDED.closed,
 				updated_by_machine_id = EXCLUDED.updated_by_machine_id,
+				attempt_enqueued_at = EXCLUDED.attempt_enqueued_at,
+				attempt_source_machine_id = EXCLUDED.attempt_source_machine_id,
 				created_at = EXCLUDED.created_at,
 				source_updated_at = EXCLUDED.source_updated_at,
 				updated_at = clock_timestamp()
-			WHERE EXCLUDED.created_at > reviews.created_at
-			   OR (EXCLUDED.created_at = reviews.created_at AND
+			WHERE (EXCLUDED.attempt_enqueued_at, EXCLUDED.attempt_source_machine_id) >
+			      (reviews.attempt_enqueued_at, reviews.attempt_source_machine_id)
+			   OR ((EXCLUDED.attempt_enqueued_at, EXCLUDED.attempt_source_machine_id) =
+			       (reviews.attempt_enqueued_at, reviews.attempt_source_machine_id) AND
 			       (EXCLUDED.source_updated_at, EXCLUDED.updated_by_machine_id) >=
 			       (reviews.source_updated_at, reviews.updated_by_machine_id))
 		`, r.UUID, r.JobUUID, r.Agent, r.Prompt, r.Output, r.Closed,
-			r.UpdatedByMachineID, r.CreatedAt, updatedAt)
+			r.UpdatedByMachineID, r.AttemptEnqueuedAt, r.AttemptSourceID,
+			r.CreatedAt, updatedAt)
 	}
 
 	br := p.pool.SendBatch(ctx, batch)

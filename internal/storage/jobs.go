@@ -969,12 +969,17 @@ func (db *DB) CompleteFixJob(jobID int64, agent, prompt, output, patch string) e
 	// Fetch output_prefix and the prior review generation (if any). Completion
 	// must advance the generation even when the job originated on a machine
 	// whose wall clock was ahead of this one.
-	var outputPrefix, priorReviewCreated sql.NullString
+	var outputPrefix, priorReviewCreated, attemptSource sql.NullString
+	var attemptEnqueuedAt string
 	err = conn.QueryRowContext(ctx, `
-		SELECT j.output_prefix, r.created_at
+		SELECT j.output_prefix, r.created_at, j.enqueued_at,
+		       j.source_machine_id
 		FROM review_jobs j LEFT JOIN reviews r ON r.job_id = j.id
 		WHERE j.id = ?`, jobID,
-	).Scan(&outputPrefix, &priorReviewCreated)
+	).Scan(
+		&outputPrefix, &priorReviewCreated,
+		&attemptEnqueuedAt, &attemptSource,
+	)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
@@ -1011,7 +1016,7 @@ func (db *DB) CompleteFixJob(jobID int64, agent, prompt, output, patch string) e
 		verdictBoolVal = verdictToBool(ParseVerdict(finalOutput))
 	}
 	_, err = conn.ExecContext(ctx,
-		`INSERT INTO reviews (job_id, agent, prompt, output, verdict_bool, uuid, updated_by_machine_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO reviews (job_id, agent, prompt, output, verdict_bool, uuid, updated_by_machine_id, created_at, updated_at, attempt_enqueued_at, attempt_source_machine_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(job_id) DO UPDATE SET
 		   agent = excluded.agent,
 		   prompt = excluded.prompt,
@@ -1021,8 +1026,12 @@ func (db *DB) CompleteFixJob(jobID int64, agent, prompt, output, patch string) e
 		   updated_by_machine_id = excluded.updated_by_machine_id,
 		   created_at = excluded.created_at,
 		   updated_at = excluded.updated_at,
+		   attempt_enqueued_at = excluded.attempt_enqueued_at,
+		   attempt_source_machine_id = excluded.attempt_source_machine_id,
 		   synced_at = NULL`,
-		jobID, agent, prompt, finalOutput, verdictBoolVal, reviewUUID, machineID, reviewTimestamp, reviewTimestamp)
+		jobID, agent, prompt, finalOutput, verdictBoolVal, reviewUUID, machineID,
+		reviewTimestamp, reviewTimestamp, attemptEnqueuedAt,
+		defaultStr(attemptSource.String, machineID))
 	if err != nil {
 		return err
 	}
@@ -1070,12 +1079,17 @@ func (db *DB) CompleteJob(jobID int64, agent, prompt, output string) error {
 	// Fetch output_prefix and the prior review generation (if any). Completion
 	// must advance the generation even when the job originated on a machine
 	// whose wall clock was ahead of this one.
-	var outputPrefix, priorReviewCreated sql.NullString
+	var outputPrefix, priorReviewCreated, attemptSource sql.NullString
+	var attemptEnqueuedAt string
 	err = conn.QueryRowContext(ctx, `
-		SELECT j.output_prefix, r.created_at
+		SELECT j.output_prefix, r.created_at, j.enqueued_at,
+		       j.source_machine_id
 		FROM review_jobs j LEFT JOIN reviews r ON r.job_id = j.id
 		WHERE j.id = ?`, jobID,
-	).Scan(&outputPrefix, &priorReviewCreated)
+	).Scan(
+		&outputPrefix, &priorReviewCreated,
+		&attemptEnqueuedAt, &attemptSource,
+	)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
@@ -1110,7 +1124,7 @@ func (db *DB) CompleteJob(jobID int64, agent, prompt, output string) error {
 	if finalOutput != "" {
 		verdictBoolVal = verdictToBool(ParseVerdict(finalOutput))
 	}
-	_, err = conn.ExecContext(ctx, `INSERT INTO reviews (job_id, agent, prompt, output, verdict_bool, uuid, updated_by_machine_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+	_, err = conn.ExecContext(ctx, `INSERT INTO reviews (job_id, agent, prompt, output, verdict_bool, uuid, updated_by_machine_id, created_at, updated_at, attempt_enqueued_at, attempt_source_machine_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(job_id) DO UPDATE SET
 		  agent = excluded.agent,
 		  prompt = excluded.prompt,
@@ -1120,8 +1134,12 @@ func (db *DB) CompleteJob(jobID int64, agent, prompt, output string) error {
 		  updated_by_machine_id = excluded.updated_by_machine_id,
 		  created_at = excluded.created_at,
 		  updated_at = excluded.updated_at,
+		  attempt_enqueued_at = excluded.attempt_enqueued_at,
+		  attempt_source_machine_id = excluded.attempt_source_machine_id,
 		  synced_at = NULL`,
-		jobID, agent, prompt, finalOutput, verdictBoolVal, reviewUUID, machineID, reviewTimestamp, reviewTimestamp)
+		jobID, agent, prompt, finalOutput, verdictBoolVal, reviewUUID, machineID,
+		reviewTimestamp, reviewTimestamp, attemptEnqueuedAt,
+		defaultStr(attemptSource.String, machineID))
 	if err != nil {
 		return err
 	}
@@ -1343,8 +1361,11 @@ func (db *DB) ReenqueueJobWithRequest(
 	if _, err := conn.ExecContext(ctx, `
 		UPDATE reviews
 		SET prompt = '', output = '', verdict_bool = NULL, closed = 0,
-		    updated_by_machine_id = ?, created_at = ?, updated_at = ?, synced_at = NULL
-		WHERE job_id = ?`, machineID, reviewGenerationAt, reviewGenerationAt, jobID); err != nil {
+		    updated_by_machine_id = ?, created_at = ?, updated_at = ?,
+		    attempt_enqueued_at = ?, attempt_source_machine_id = ?,
+		    synced_at = NULL
+		WHERE job_id = ?`, machineID, reviewGenerationAt, reviewGenerationAt,
+		enqueuedAt, machineID, jobID); err != nil {
 		return 0, false, err
 	}
 	if requestID != "" {

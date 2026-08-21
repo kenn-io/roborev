@@ -1238,6 +1238,10 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) {
 		CommitID:        commitID,
 		SourceMachineID: defaultTestMachineID,
 	})
+	var jobAttemptAt time.Time
+	require.NoError(t, pool.pool.QueryRow(ctx,
+		`SELECT enqueued_at FROM review_jobs WHERE uuid = $1`, jobUUID,
+	).Scan(&jobAttemptAt))
 
 	reviews := []SyncableReview{
 		{
@@ -1248,6 +1252,8 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) {
 			Output:             "test output 1",
 			Closed:             false,
 			UpdatedByMachineID: defaultTestMachineID,
+			AttemptEnqueuedAt:  jobAttemptAt,
+			AttemptSourceID:    defaultTestMachineID,
 			CreatedAt:          time.Now(),
 		},
 		{
@@ -1258,6 +1264,8 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) {
 			Output:             "test output 2",
 			Closed:             true,
 			UpdatedByMachineID: defaultTestMachineID,
+			AttemptEnqueuedAt:  jobAttemptAt,
+			AttemptSourceID:    defaultTestMachineID,
 			CreatedAt:          time.Now(),
 		},
 	}
@@ -1307,17 +1315,29 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) {
 			CommitID:        commitID,
 			SourceMachineID: defaultTestMachineID,
 		})
-		generation := time.Now().UTC().Add(2 * time.Hour).Truncate(time.Microsecond)
+		generation := time.Now().UTC().Truncate(time.Microsecond)
+		lowerSource := "00000000-0000-0000-0000-000000000001"
+		higherSource := "ffffffff-ffff-ffff-ffff-ffffffffffff"
+		_, err := pool.pool.Exec(ctx, `
+			UPDATE review_jobs
+			SET enqueued_at = $1, source_machine_id = $2
+			WHERE uuid = $3`, generation, higherSource, tieJobUUID)
+		require.NoError(t, err)
 		lower := reviews[0]
 		lower.UUID = uuid.NewString()
 		lower.JobUUID = tieJobUUID
-		lower.CreatedAt = generation
-		lower.UpdatedAt = generation
+		lower.AttemptEnqueuedAt = generation
+		lower.AttemptSourceID = lowerSource
+		lower.CreatedAt = generation.Add(2 * time.Hour)
+		lower.UpdatedAt = lower.CreatedAt
 		lower.Output = "lower output"
-		lower.UpdatedByMachineID = "00000000-0000-0000-0000-000000000001"
+		lower.UpdatedByMachineID = lowerSource
 		higher := lower
+		higher.AttemptSourceID = higherSource
+		higher.CreatedAt = generation.Add(time.Hour)
+		higher.UpdatedAt = higher.CreatedAt
 		higher.Output = "higher output"
-		higher.UpdatedByMachineID = "ffffffff-ffff-ffff-ffff-ffffffffffff"
+		higher.UpdatedByMachineID = higherSource
 
 		success, err := pool.BatchUpsertReviews(ctx, []SyncableReview{lower})
 		require.NoError(t, err)
@@ -1338,7 +1358,7 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) {
 		require.NoError(t, err)
 		assert.Equal(t, higher.Output, output)
 		assert.Equal(t, higher.UpdatedByMachineID, updater)
-		assert.WithinDuration(t, generation, sourceUpdatedAt, time.Microsecond)
+		assert.WithinDuration(t, higher.UpdatedAt, sourceUpdatedAt, time.Microsecond)
 		assert.Equal(t, -1, cursorUpdatedAt.Compare(sourceUpdatedAt))
 	})
 
@@ -1377,6 +1397,10 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) {
 			CommitID:        commitID,
 			SourceMachineID: defaultTestMachineID,
 		})
+		var partialAttemptAt time.Time
+		require.NoError(t, pool.pool.QueryRow(ctx,
+			`SELECT enqueued_at FROM review_jobs WHERE uuid = $1`, partialJobUUID,
+		).Scan(&partialAttemptAt))
 		validReviewUUID := uuid.NewString()
 		reviews := []SyncableReview{
 			{
@@ -1386,6 +1410,8 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) {
 				Prompt:             "valid review",
 				Output:             "output",
 				UpdatedByMachineID: defaultTestMachineID,
+				AttemptEnqueuedAt:  partialAttemptAt,
+				AttemptSourceID:    defaultTestMachineID,
 				CreatedAt:          time.Now(),
 			},
 			{
@@ -1395,6 +1421,8 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) {
 				Prompt:             "invalid review",
 				Output:             "output",
 				UpdatedByMachineID: defaultTestMachineID,
+				AttemptEnqueuedAt:  partialAttemptAt,
+				AttemptSourceID:    defaultTestMachineID,
 				CreatedAt:          time.Now(),
 			},
 		}

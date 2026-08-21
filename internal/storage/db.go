@@ -1301,6 +1301,13 @@ func (db *DB) migrate() error {
 		WHERE source_machine_id IS NULL`, machineID); err != nil {
 		return fmt.Errorf("backfill legacy review job source machine: %w", err)
 	}
+	if _, err = db.Exec(`UPDATE reviews
+		SET attempt_source_machine_id = (
+			SELECT source_machine_id FROM review_jobs WHERE id = reviews.job_id
+		)
+		WHERE attempt_source_machine_id IS NULL`); err != nil {
+		return fmt.Errorf("backfill review attempt source machine: %w", err)
+	}
 	if _, err = db.Exec(`INSERT OR IGNORE INTO review_job_session_history
 		(source_machine_id, session_id, job_uuid, started_at)
 		SELECT source_machine_id, session_id, uuid, started_at
@@ -1637,6 +1644,8 @@ func (db *DB) migrateSyncColumns() error {
 		{"uuid", "TEXT"},
 		{"updated_at", "TEXT"},
 		{"updated_by_machine_id", "TEXT"},
+		{"attempt_enqueued_at", "TEXT"},
+		{"attempt_source_machine_id", "TEXT"},
 		{"synced_at", "TEXT"},
 	} {
 		has, err := hasColumn("reviews", col.name)
@@ -1661,6 +1670,15 @@ func (db *DB) migrateSyncColumns() error {
 	_, err = db.Exec(`UPDATE reviews SET updated_at = created_at WHERE updated_at IS NULL`)
 	if err != nil {
 		return fmt.Errorf("backfill reviews updated_at: %w", err)
+	}
+
+	_, err = db.Exec(`UPDATE reviews
+		SET attempt_enqueued_at = (
+			SELECT enqueued_at FROM review_jobs WHERE id = reviews.job_id
+		)
+		WHERE attempt_enqueued_at IS NULL`)
+	if err != nil {
+		return fmt.Errorf("backfill review attempt generation: %w", err)
 	}
 
 	// Create unique index on reviews.uuid
