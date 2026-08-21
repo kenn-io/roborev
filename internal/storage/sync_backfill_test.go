@@ -379,6 +379,21 @@ func TestUpsertPulledJobMergesNewerCostWithoutRevertingLocalFinalization(t *test
 	).Scan(&status, &tokenUsage))
 	assert.Equal(t, string(JobStatusApplied), status)
 	assert.Contains(t, tokenUsage, `"cost_usd":0.75`)
+
+	newerEnqueued := base.Add(2 * time.Hour)
+	newerStarted := newerEnqueued.Add(time.Minute)
+	pulled.EnqueuedAt = newerEnqueued
+	pulled.StartedAt = &newerStarted
+	pulled.FinishedAt = new(newerStarted.Add(time.Minute))
+	pulled.TokenUsage = `{"has_cost":true,"cost_usd":1.25}`
+	pulled.UpdatedAt = newerStarted.Add(time.Minute)
+	require.NoError(t, db.UpsertPulledJob(pulled, repo.ID, nil))
+	require.NoError(t, db.QueryRow(`
+		SELECT status, COALESCE(token_usage, '')
+		FROM review_jobs WHERE uuid = ?`, pulled.UUID,
+	).Scan(&status, &tokenUsage))
+	assert.Equal(t, string(JobStatusDone), status)
+	assert.Contains(t, tokenUsage, `"cost_usd":1.25`)
 }
 
 func TestUpsertPulledJobDoesNotRevertLocallyOwnedActiveRerun(t *testing.T) {
@@ -422,6 +437,17 @@ func TestUpsertPulledJobDoesNotRevertLocallyOwnedActiveRerun(t *testing.T) {
 		FROM review_jobs WHERE id = ?`, jobID,
 	).Scan(&status, &owner, &session))
 	assert.Equal(t, string(JobStatusRunning), status)
+	assert.Equal(t, localMachineID, owner)
+	assert.False(t, session.Valid)
+
+	require.NoError(t, db.CompleteJob(jobID, "codex", "new prompt", "new output"))
+	pulled.UpdatedAt = time.Now().UTC().Add(2 * time.Hour)
+	require.NoError(t, db.UpsertPulledJob(pulled, repo.ID, nil))
+	require.NoError(t, db.QueryRow(`
+		SELECT status, source_machine_id, session_id
+		FROM review_jobs WHERE id = ?`, jobID,
+	).Scan(&status, &owner, &session))
+	assert.Equal(t, string(JobStatusDone), status)
 	assert.Equal(t, localMachineID, owner)
 	assert.False(t, session.Valid)
 }

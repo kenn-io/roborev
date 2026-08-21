@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
 	"errors"
 	"fmt"
@@ -834,7 +835,7 @@ func (db *DB) MarkCommentsSynced(responseIDs []int64) error {
 // owned active attempt wins over pulled terminal state until its worker has
 // completed or fully released a cancellation.
 func (db *DB) UpsertPulledJob(j PulledJob, repoID int64, commitID *int64) error {
-	now := time.Now().UTC().Format(time.RFC3339)
+	now := time.Now().UTC().Format(time.RFC3339Nano)
 	dirtyFilesJSON, err := encodeDirtyFiles(j.DirtyFiles)
 	if err != nil {
 		return err
@@ -843,7 +844,56 @@ func (db *DB) UpsertPulledJob(j PulledJob, repoID int64, commitID *int64) error 
 	if err != nil {
 		return fmt.Errorf("get machine ID: %w", err)
 	}
-	_, err = db.Exec(`
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return err
+	}
+	defer func() { _, _ = conn.ExecContext(ctx, "ROLLBACK") }()
+	commitNoop := func() error {
+		_, err := conn.ExecContext(ctx, "COMMIT")
+		return err
+	}
+
+	preserveFinalization := false
+	var existingSource, existingStatus, existingEnqueuedAt, existingUpdatedAt string
+	var existingWorkerID sql.NullString
+	err = conn.QueryRowContext(ctx, `
+		SELECT COALESCE(source_machine_id, ''), status, worker_id, enqueued_at,
+		       COALESCE(updated_at, '')
+		FROM review_jobs WHERE uuid = ?`, j.UUID,
+	).Scan(
+		&existingSource, &existingStatus, &existingWorkerID,
+		&existingEnqueuedAt, &existingUpdatedAt,
+	)
+	if err == nil {
+		locallyActive := existingSource == machineID && (existingStatus == string(JobStatusQueued) ||
+			existingStatus == string(JobStatusRunning) ||
+			(existingStatus == string(JobStatusCanceled) && existingWorkerID.Valid))
+		if locallyActive {
+			return commitNoop()
+		}
+
+		existingGeneration := parseSQLiteTime(existingEnqueuedAt)
+		if j.EnqueuedAt.Before(existingGeneration) {
+			return commitNoop()
+		}
+		if j.EnqueuedAt.Equal(existingGeneration) {
+			preserveFinalization = true
+			existingUpdate := parseSQLiteTime(existingUpdatedAt)
+			if !existingUpdate.IsZero() && j.UpdatedAt.Before(existingUpdate) {
+				return commitNoop()
+			}
+		}
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("query existing pulled job: %w", err)
+	}
+
+	_, err = conn.ExecContext(ctx, `
 		INSERT INTO review_jobs (
 			uuid, repo_id, commit_id, git_ref, session_id, agent, model, provider, requested_model, requested_provider, reasoning, job_type, review_type, patch_id, status, agentic, agent_invoked,
 			enqueued_at, started_at, finished_at, prompt, diff_content, dirty_files, error, token_usage,
@@ -853,7 +903,7 @@ func (db *DB) UpsertPulledJob(j PulledJob, repoID int64, commitID *int64) error 
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(uuid) DO UPDATE SET
 			status = CASE
-				WHEN review_jobs.status IN ('applied', 'rebased') THEN review_jobs.status
+				WHEN ? = 1 AND review_jobs.status IN ('applied', 'rebased') THEN review_jobs.status
 				ELSE excluded.status
 			END,
 			finished_at = excluded.finished_at,
@@ -890,45 +940,77 @@ func (db *DB) UpsertPulledJob(j PulledJob, repoID int64, commitID *int64) error 
 			panel_member_config_json = excluded.panel_member_config_json,
 			updated_at = excluded.updated_at,
 			synced_at = ?
-			WHERE NOT (
-				review_jobs.source_machine_id = ?
-				AND (
-					review_jobs.status IN ('queued', 'running')
-					OR (review_jobs.status = 'canceled' AND review_jobs.worker_id IS NOT NULL)
-				)
-			) AND (
-				review_jobs.status NOT IN ('applied', 'rebased')
-				OR `+sqliteNormalizedTimestampExpr("review_jobs.updated_at")+` < `+sqliteNormalizedTimestampExpr("excluded.updated_at")+`
-			)
 	`, j.UUID, repoID, commitID, j.GitRef, nullStr(j.SessionID), j.Agent, nullStr(j.Model), nullStr(j.Provider), nullStr(j.RequestedModel), nullStr(j.RequestedProvider), j.Reasoning, j.JobType,
-		j.ReviewType, nullStr(j.PatchID), j.Status, j.Agentic, j.AgentInvoked, j.EnqueuedAt.Format(time.RFC3339),
+		j.ReviewType, nullStr(j.PatchID), j.Status, j.Agentic, j.AgentInvoked, j.EnqueuedAt.UTC().Format(time.RFC3339Nano),
 		nullTimeStr(j.StartedAt), nullTimeStr(j.FinishedAt),
 		nullStr(j.Prompt), j.DiffContent, nullStr(dirtyFilesJSON), nullStr(j.Error), nullStr(j.TokenUsage),
 		nullStr(j.WorktreePath), nullStr(j.Source), normalizeMinSeverityForWrite(j.MinSeverity), j.BackupAgent, j.BackupModel,
 		nullStr(j.PanelRunUUID), nullStr(j.PanelRole), nullStr(j.PanelName), nullStr(j.PanelMemberName), j.PanelMemberIndex, nullStr(j.PanelMemberConfigJSON),
-		j.SourceMachineID, j.UpdatedAt.Format(time.RFC3339), now, now, machineID)
+		j.SourceMachineID, j.UpdatedAt.UTC().Format(time.RFC3339Nano), now,
+		preserveFinalization, now)
+	if err != nil {
+		return err
+	}
+	_, err = conn.ExecContext(ctx, "COMMIT")
 	return err
 }
 
 // UpsertPulledReview inserts or updates a review from PostgreSQL into SQLite.
 func (db *DB) UpsertPulledReview(r PulledReview) error {
-	// First, find the job_id by uuid
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return err
+	}
+	defer func() { _, _ = conn.ExecContext(ctx, "ROLLBACK") }()
+	commitNoop := func() error {
+		_, err := conn.ExecContext(ctx, "COMMIT")
+		return err
+	}
+
+	// First, find the job_id by uuid.
 	var jobID int64
-	err := db.QueryRow(`SELECT id FROM review_jobs WHERE uuid = ?`, r.JobUUID).Scan(&jobID)
+	err = conn.QueryRowContext(ctx,
+		`SELECT id FROM review_jobs WHERE uuid = ?`, r.JobUUID,
+	).Scan(&jobID)
 	if errors.Is(err, sql.ErrNoRows) {
 		// Job doesn't exist locally - skip this review (orphaned)
-		return nil
+		return commitNoop()
 	}
 	if err != nil {
 		return fmt.Errorf("find job for review: %w", err)
 	}
 
-	now := time.Now().UTC().Format(time.RFC3339)
+	var existingCreatedAt, existingUpdatedAt string
+	err = conn.QueryRowContext(ctx, `
+		SELECT created_at, COALESCE(updated_at, '')
+		FROM reviews WHERE uuid = ?`, r.UUID,
+	).Scan(&existingCreatedAt, &existingUpdatedAt)
+	if err == nil {
+		existingGeneration := parseSQLiteTime(existingCreatedAt)
+		if r.CreatedAt.Before(existingGeneration) {
+			return commitNoop()
+		}
+		if r.CreatedAt.Equal(existingGeneration) {
+			existingUpdate := parseSQLiteTime(existingUpdatedAt)
+			if !existingUpdate.IsZero() && !r.UpdatedAt.After(existingUpdate) {
+				return commitNoop()
+			}
+		}
+	} else if !errors.Is(err, sql.ErrNoRows) {
+		return fmt.Errorf("query existing pulled review: %w", err)
+	}
+
+	now := time.Now().UTC().Format(time.RFC3339Nano)
 	var verdictBool any
 	if r.Output != "" {
 		verdictBool = verdictToBool(ParseVerdict(r.Output))
 	}
-	_, err = db.Exec(`
+	_, err = conn.ExecContext(ctx, `
 		INSERT INTO reviews (
 			uuid, job_id, agent, prompt, output, closed,
 			verdict_bool, updated_by_machine_id, created_at, updated_at, synced_at
@@ -943,11 +1025,15 @@ func (db *DB) UpsertPulledReview(r PulledReview) error {
 			created_at = excluded.created_at,
 			updated_at = excluded.updated_at,
 			synced_at = ?
-			WHERE julianday(reviews.created_at) <= julianday(excluded.created_at)
-			  AND `+sqliteNormalizedTimestampExpr("reviews.updated_at")+` < `+sqliteNormalizedTimestampExpr("excluded.updated_at")+`
 	`, r.UUID, jobID, r.Agent, r.Prompt, r.Output, r.Closed,
 		verdictBool,
-		r.UpdatedByMachineID, r.CreatedAt.Format(time.RFC3339), r.UpdatedAt.Format(time.RFC3339), now, now)
+		r.UpdatedByMachineID,
+		r.CreatedAt.UTC().Format(time.RFC3339Nano),
+		r.UpdatedAt.UTC().Format(time.RFC3339Nano), now, now)
+	if err != nil {
+		return err
+	}
+	_, err = conn.ExecContext(ctx, "COMMIT")
 	return err
 }
 
@@ -1128,5 +1214,5 @@ func nullTimeStr(t *time.Time) any {
 	if t == nil {
 		return nil
 	}
-	return t.Format(time.RFC3339)
+	return t.UTC().Format(time.RFC3339Nano)
 }

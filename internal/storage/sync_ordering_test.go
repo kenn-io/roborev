@@ -145,6 +145,36 @@ func TestUpsertPulledReviewAppliesNewerRerunContent(t *testing.T) {
 	assert.WithinDuration(t, newCompletion, review.CreatedAt, time.Second)
 }
 
+func TestUpsertPulledReviewAppliesNewerGenerationWithinSameSecond(t *testing.T) {
+	h := newSyncTestHelper(t)
+	job := h.createCompletedJob("same-second-rerun-review-sha")
+	review, err := h.db.GetReviewByJobID(job.ID)
+	require.NoError(t, err)
+	base := time.Date(2026, 8, 21, 12, 0, 0, 100_000_000, time.UTC)
+	_, err = h.db.Exec(`
+		UPDATE reviews SET created_at = ?, updated_at = ? WHERE id = ?`,
+		base.Format(time.RFC3339Nano), base.Format(time.RFC3339Nano), review.ID)
+	require.NoError(t, err)
+
+	newer := base.Add(200 * time.Millisecond)
+	err = h.db.UpsertPulledReview(PulledReview{
+		UUID:               review.UUID,
+		JobUUID:            job.UUID,
+		Agent:              "rerun-agent",
+		Prompt:             "rerun prompt",
+		Output:             "rerun output",
+		UpdatedByMachineID: GenerateUUID(),
+		CreatedAt:          newer,
+		UpdatedAt:          newer,
+	})
+	require.NoError(t, err)
+
+	review, err = h.db.GetReviewByJobID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, "rerun output", review.Output)
+	assert.Equal(t, newer, review.CreatedAt)
+}
+
 // TestClearAllSyncedAt verifies that ClearAllSyncedAt clears synced_at
 // on all tables (jobs, reviews, responses).
 func TestClearAllSyncedAt(t *testing.T) {
