@@ -1113,13 +1113,13 @@ The generated workflow triggers on `pull_request` events and:
 1. Checks out the PR branch with full history
 1. Downloads the pinned roborev binary and verifies its SHA256 checksum
 1. Runs `roborev ci review --comment` with the configured agents
-1. Posts a PR comment only when an agent produced review output
+1. Posts a PR comment only when an agent produced substantive review output
 
 In GitHub Actions, `ci review` reads `GITHUB_REPOSITORY`, `GITHUB_REF`, and
 `GITHUB_EVENT_PATH` automatically, so no flags are needed beyond `--comment`. An
-all-failed run leaves its diagnostics in the Actions log without making a GitHub
-comment request. It exits nonzero for actionable failures; an all-quota batch
-keeps its existing successful exit.
+all-failed or empty-output run leaves its diagnostics in the Actions log without
+making a GitHub comment request. It exits nonzero for actionable failures; an
+all-quota batch keeps its existing successful exit.
 
 ### Customizing via `.roborev.toml`
 

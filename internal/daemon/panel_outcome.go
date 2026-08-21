@@ -54,8 +54,8 @@ type PanelOutcome struct {
 //     it falls through to the member rules below, where a member with output
 //     still posts the raw fallback (retrying a deterministic error would not
 //     help).
-//  1. any done member with non-empty output -> OutcomePost (a partial review is
-//     better than nothing once any reviewer landed real output).
+//  1. any done member with substantive output -> OutcomePost (a partial review
+//     is better than nothing once any reviewer landed real output).
 //  2. else any transient-outage or quota/session failure ->
 //     OutcomeDeferTransient (wait for the real review rather than post a
 //     failed/partial result).

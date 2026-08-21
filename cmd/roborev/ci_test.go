@@ -1074,6 +1074,13 @@ func TestPostCIReviewComment(t *testing.T) {
 			name:   "completed whitespace",
 			result: review.ReviewResult{Status: review.ResultDone, Output: " \n\t"},
 		},
+		{
+			name: "completed empty-output placeholder",
+			result: review.ReviewResult{
+				Status: review.ResultDone,
+				Output: "No review output generated",
+			},
+		},
 	}
 
 	for _, tt := range zeroOutputCases {

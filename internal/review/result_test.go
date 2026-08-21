@@ -102,6 +102,13 @@ func TestHasSubstantiveOutput(t *testing.T) {
 			}},
 		},
 		{
+			name: "completed empty-output placeholder",
+			results: []ReviewResult{{
+				Status: ResultDone,
+				Output: "No review output generated",
+			}},
+		},
+		{
 			name: "failed output",
 			results: []ReviewResult{{
 				Status: ResultFailed,

@@ -35,12 +35,17 @@ const (
 	ResultSkipped = "skipped"
 )
 
-// HasSubstantiveOutput reports whether any completed review produced nonempty
+const noReviewOutputPlaceholder = "No review output generated"
+
+// HasSubstantiveOutput reports whether any completed review produced
 // agent-authored output. Failed and skipped results never qualify, even when
-// they carry diagnostic text.
+// they carry diagnostic text, and neither does the placeholder returned by
+// adapters when an agent completes without output.
 func HasSubstantiveOutput(results []ReviewResult) bool {
 	for _, result := range results {
-		if result.Status == ResultDone && strings.TrimSpace(result.Output) != "" {
+		output := strings.TrimSpace(result.Output)
+		if result.Status == ResultDone &&
+			output != "" && output != noReviewOutputPlaceholder {
 			return true
 		}
 	}
