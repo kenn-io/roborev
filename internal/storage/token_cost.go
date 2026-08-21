@@ -28,11 +28,17 @@ type TokenUsageLogCandidate struct {
 
 const tokenCostCandidatePredicate = costEligible + `
 	AND NOT (` + hasCost + `)
+	AND ` + reconciliationAttemptReleased + `
 	AND COALESCE(j.session_id, '') != ''`
 
 const tokenUsageLogCandidatePredicate = costTerminal + `
 	AND NOT (` + hasCost + `)
+	AND ` + reconciliationAttemptReleased + `
 	AND COALESCE(j.session_id, '') = ''`
+
+const reconciliationAttemptReleased = `(
+	j.status != 'canceled' OR COALESCE(j.worker_id, '') = ''
+)`
 
 const uniqueStartedSessionPredicate = `NOT EXISTS (
 		SELECT 1

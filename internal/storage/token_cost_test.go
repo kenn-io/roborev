@@ -194,6 +194,54 @@ func TestListTokenUsageLogCandidatesSelectsMissingSession(t *testing.T) {
 	assert.False(t, got[0].StartedAt.IsZero())
 }
 
+func TestTokenReconciliationWaitsForCanceledWorkerRelease(t *testing.T) {
+	db := openTestDB(t)
+	t.Cleanup(func() { db.Close() })
+	_, jobs := seedJobs(t, db, "/tmp/token-cost-canceled-release", 2)
+
+	costJob, err := db.ClaimJob("cost-worker")
+	require.NoError(t, err)
+	require.Equal(t, jobs[0].ID, costJob.ID)
+	require.NoError(t, db.MarkJobAgentInvoked(
+		costJob.ID, "cost-worker", "codex review",
+	))
+	require.NoError(t, db.SaveJobSessionID(
+		costJob.ID, "cost-worker", "canceled-cost-session",
+	))
+	require.NoError(t, db.CancelJob(costJob.ID))
+
+	logJob, err := db.ClaimJob("log-worker")
+	require.NoError(t, err)
+	require.Equal(t, jobs[1].ID, logJob.ID)
+	require.NoError(t, db.MarkJobAgentInvoked(
+		logJob.ID, "log-worker", "codex review",
+	))
+	require.NoError(t, db.CancelJob(logJob.ID))
+
+	costCandidates, err := db.ListTokenCostCandidates(0, 10)
+	require.NoError(t, err)
+	assert.Empty(t, costCandidates)
+	logCandidates, err := db.ListTokenUsageLogCandidates(0, 10)
+	require.NoError(t, err)
+	assert.Empty(t, logCandidates)
+
+	released, err := db.ReleaseCanceledJob(costJob.ID, "cost-worker")
+	require.NoError(t, err)
+	require.True(t, released)
+	released, err = db.ReleaseCanceledJob(logJob.ID, "log-worker")
+	require.NoError(t, err)
+	require.True(t, released)
+
+	costCandidates, err = db.ListTokenCostCandidates(0, 10)
+	require.NoError(t, err)
+	require.Len(t, costCandidates, 1)
+	assert.Equal(t, costJob.ID, costCandidates[0].JobID)
+	logCandidates, err = db.ListTokenUsageLogCandidates(0, 10)
+	require.NoError(t, err)
+	require.Len(t, logCandidates, 1)
+	assert.Equal(t, logJob.ID, logCandidates[0].JobID)
+}
+
 func TestTokenUsageCandidatesExcludeImportedJobs(t *testing.T) {
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
