@@ -82,6 +82,35 @@ func TestUICmdRequiresBrowserMetadata(t *testing.T) {
 	require.EqualError(t, err, "the daemon browser listener is disabled")
 }
 
+func TestUICmdExplainsPublishedDisabledReasons(t *testing.T) {
+	cases := []struct {
+		reason  string
+		message string
+	}{
+		{
+			reason: daemon.WebDisabledReasonMissingAssets,
+			message: "this roborev build has no embedded web assets; " +
+				"reinstall from an official release (or build with 'make build'), then run 'roborev daemon restart'",
+		},
+		{
+			reason: daemon.WebDisabledReasonConfig,
+			message: "the browser UI is disabled in config; " +
+				"set enabled = true under [web] and run 'roborev daemon restart'",
+		},
+	}
+	for _, testCase := range cases {
+		withUICommandDependencies(t,
+			func() error { return nil },
+			func() (*daemon.RuntimeInfo, error) {
+				return &daemon.RuntimeInfo{WebDisabledReason: testCase.reason}, nil
+			},
+			func(string) error { return nil },
+		)
+		cmd := uiCmd()
+		require.EqualError(t, cmd.Execute(), testCase.message)
+	}
+}
+
 func TestUICmdPreservesDiscoveryAccessDenial(t *testing.T) {
 	want := daemon.ErrDaemonAccessDenied
 	withUICommandDependencies(t,

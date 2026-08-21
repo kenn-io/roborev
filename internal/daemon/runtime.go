@@ -20,13 +20,24 @@ import (
 )
 
 const (
-	daemonServiceName          = "roborev"
-	runtimeAlternateNetworkKey = "alternate_network"
-	runtimeAlternateAddressKey = "alternate_address"
-	runtimeWebAddressKey       = "web_address"
-	runtimeWebOriginKey        = "web_origin"
-	runtimeWebBasePathKey      = "web_base_path"
-	runtimeWebCapabilitiesKey  = "web_capabilities"
+	daemonServiceName           = "roborev"
+	runtimeAlternateNetworkKey  = "alternate_network"
+	runtimeAlternateAddressKey  = "alternate_address"
+	runtimeWebAddressKey        = "web_address"
+	runtimeWebOriginKey         = "web_origin"
+	runtimeWebBasePathKey       = "web_base_path"
+	runtimeWebCapabilitiesKey   = "web_capabilities"
+	runtimeWebDisabledReasonKey = "web_disabled_reason"
+)
+
+// Reasons the daemon publishes when the browser listener is not running, so
+// CLI commands can tell users how to get the web UI back.
+const (
+	// WebDisabledReasonConfig means [web] enabled = false in the config.
+	WebDisabledReasonConfig = "config"
+	// WebDisabledReasonMissingAssets means this binary was built without the
+	// production web assets and cannot serve the browser application.
+	WebDisabledReasonMissingAssets = "missing-web-assets"
 )
 
 // ErrDaemonAccessDenied means a daemon runtime was found but local permissions
@@ -37,27 +48,31 @@ var probeRuntimeEndpoint = probeRuntimeRecord
 
 // RuntimeInfo stores daemon runtime state
 type RuntimeInfo struct {
-	PID              int      `json:"pid"`
-	Network          string   `json:"network,omitempty"`
-	Address          string   `json:"address"`
-	Service          string   `json:"service,omitempty"`
-	Version          string   `json:"version,omitempty"`
-	SourcePath       string   `json:"-"` // Path to the runtime file (not serialized, set by ListAllRuntimes)
-	AlternateNetwork string   `json:"-"`
-	AlternateAddress string   `json:"-"`
-	WebAddress       string   `json:"-"`
-	WebOrigin        string   `json:"-"`
-	WebBasePath      string   `json:"-"`
-	WebCapabilities  []string `json:"-"`
+	PID               int      `json:"pid"`
+	Network           string   `json:"network,omitempty"`
+	Address           string   `json:"address"`
+	Service           string   `json:"service,omitempty"`
+	Version           string   `json:"version,omitempty"`
+	SourcePath        string   `json:"-"` // Path to the runtime file (not serialized, set by ListAllRuntimes)
+	AlternateNetwork  string   `json:"-"`
+	AlternateAddress  string   `json:"-"`
+	WebAddress        string   `json:"-"`
+	WebOrigin         string   `json:"-"`
+	WebBasePath       string   `json:"-"`
+	WebCapabilities   []string `json:"-"`
+	WebDisabledReason string   `json:"-"`
 }
 
 // BrowserRuntimeInfo is the non-secret discovery information published for
-// the daemon's optional browser listener.
+// the daemon's optional browser listener. When the listener is not running,
+// DisabledReason carries the machine-readable cause and all other fields are
+// empty.
 type BrowserRuntimeInfo struct {
-	Address      string
-	Origin       string
-	WebBasePath  string
-	Capabilities []string
+	Address        string
+	Origin         string
+	WebBasePath    string
+	Capabilities   []string
+	DisabledReason string
 }
 
 // Endpoint returns a DaemonEndpoint for this runtime.
@@ -142,6 +157,10 @@ func runtimeInfoFromRecord(rec kitdaemon.RuntimeRecord) *RuntimeInfo {
 		WebOrigin:        rec.Metadata[runtimeWebOriginKey],
 		WebBasePath:      rec.Metadata[runtimeWebBasePathKey],
 	}
+	info.WebDisabledReason = rec.Metadata[runtimeWebDisabledReasonKey]
+	if info.WebOrigin != "" {
+		info.WebDisabledReason = ""
+	}
 	if raw := rec.Metadata[runtimeWebCapabilitiesKey]; raw != "" {
 		info.WebCapabilities = strings.Split(raw, ",")
 	}
@@ -188,7 +207,12 @@ func WriteRuntime(primary DaemonEndpoint, alternate *DaemonEndpoint, version str
 			rec.Metadata[runtimeAlternateAddressKey] = alternate.Address
 		}
 	}
-	if browser != nil {
+	if browser != nil && browser.DisabledReason != "" {
+		if browser.Address != "" || browser.Origin != "" {
+			return fmt.Errorf("browser runtime cannot carry both an origin and a disabled reason")
+		}
+		rec.Metadata[runtimeWebDisabledReasonKey] = browser.DisabledReason
+	} else if browser != nil {
 		if err := validateBrowserRuntime(*browser); err != nil {
 			return err
 		}

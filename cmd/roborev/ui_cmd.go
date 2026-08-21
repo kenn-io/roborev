@@ -35,7 +35,7 @@ func uiCmd() *cobra.Command {
 				return fmt.Errorf("discover daemon: %w", err)
 			}
 			if runtimeInfo.WebOrigin == "" {
-				return fmt.Errorf("the daemon browser listener is disabled")
+				return webUIDisabledError(runtimeInfo.WebDisabledReason)
 			}
 			target, err := uiURL(runtimeInfo.WebOrigin, runtimeInfo.WebBasePath, args)
 			if err != nil {
@@ -47,6 +47,18 @@ func uiCmd() *cobra.Command {
 			return nil
 		},
 	}
+}
+
+func webUIDisabledError(reason string) error {
+	switch reason {
+	case daemon.WebDisabledReasonMissingAssets:
+		return fmt.Errorf("this roborev build has no embedded web assets; " +
+			"reinstall from an official release (or build with 'make build'), then run 'roborev daemon restart'")
+	case daemon.WebDisabledReasonConfig:
+		return fmt.Errorf("the browser UI is disabled in config; " +
+			"set enabled = true under [web] and run 'roborev daemon restart'")
+	}
+	return fmt.Errorf("the daemon browser listener is disabled")
 }
 
 func ensureUIDaemon() error {

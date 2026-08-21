@@ -137,6 +137,39 @@ func TestDaemonRestartShowsUnavailableWhenBrowserIsDisabled(t *testing.T) {
 	assert.Equal(t, "Daemon restarted\nWeb UI: unavailable\n", output)
 }
 
+func TestDaemonRestartExplainsWebDisabledReason(t *testing.T) {
+	cases := []struct {
+		reason  string
+		display string
+	}{
+		{
+			reason:  daemon.WebDisabledReasonMissingAssets,
+			display: "disabled (this build has no embedded web assets; reinstall from an official release)",
+		},
+		{
+			reason:  daemon.WebDisabledReasonConfig,
+			display: "disabled ([web] enabled = false)",
+		},
+	}
+	for _, testCase := range cases {
+		withDaemonCommandDependencies(t,
+			func() error { return nil },
+			func() error { return nil },
+			func() (*daemon.RuntimeInfo, error) {
+				return &daemon.RuntimeInfo{WebDisabledReason: testCase.reason}, nil
+			},
+		)
+
+		output := captureStdout(t, func() {
+			cmd := daemonCmd()
+			cmd.SetArgs([]string{"restart"})
+			require.NoError(t, cmd.Execute())
+		})
+
+		assert.Equal(t, "Daemon restarted\nWeb UI: "+testCase.display+"\n", output)
+	}
+}
+
 func withDaemonCommandDependencies(
 	t *testing.T,
 	ensure func() error,

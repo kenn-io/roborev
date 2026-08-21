@@ -38,7 +38,7 @@ roborev version --json           # Show stable machine-readable version data
 requiring a repository or a running daemon:
 
 ```json
-{"name":"roborev","version":"v0.62.1"}
+{"name":"roborev","version":"v0.62.1","web_assets":true}
 ```
 
 The stable fields are:
@@ -47,6 +47,7 @@ The stable fields are:
 |-------|------|-------------|
 | `name` | string | Canonical tool name; always `roborev` |
 | `version` | string | Build version, using the release semantic version for release builds |
+| `web_assets` | bool | Whether this binary embeds the production web assets required to serve the [browser UI](/web-ui/) |
 
 Consumers should ignore additional fields so the contract can grow compatibly.
 

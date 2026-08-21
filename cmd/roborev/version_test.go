@@ -12,7 +12,15 @@ import (
 	"go.kenn.io/roborev/internal/version"
 )
 
+func stubWebAssetsEmbedded(t *testing.T, embedded bool) {
+	t.Helper()
+	original := webAssetsEmbedded
+	webAssetsEmbedded = func() bool { return embedded }
+	t.Cleanup(func() { webAssetsEmbedded = original })
+}
+
 func TestVersionCmdHumanOutput(t *testing.T) {
+	stubWebAssetsEmbedded(t, true)
 	var output bytes.Buffer
 	cmd := versionCmd()
 	cmd.SetOut(&output)
@@ -21,19 +29,37 @@ func TestVersionCmdHumanOutput(t *testing.T) {
 	assert.Equal(t, fmt.Sprintf("roborev %s\n", version.Version), output.String())
 }
 
-func TestVersionCmdJSONOutput(t *testing.T) {
+func TestVersionCmdHumanOutputFlagsMissingWebAssets(t *testing.T) {
+	stubWebAssetsEmbedded(t, false)
 	var output bytes.Buffer
 	cmd := versionCmd()
 	cmd.SetOut(&output)
-	cmd.SetArgs([]string{"--json"})
 
 	require.NoError(t, cmd.Execute())
+	assert.Equal(t, fmt.Sprintf(
+		"roborev %s (web assets missing; this build cannot serve the browser UI)\n",
+		version.Version,
+	), output.String())
+}
 
-	var got struct {
-		Name    string `json:"name"`
-		Version string `json:"version"`
+func TestVersionCmdJSONOutput(t *testing.T) {
+	for _, embedded := range []bool{true, false} {
+		stubWebAssetsEmbedded(t, embedded)
+		var output bytes.Buffer
+		cmd := versionCmd()
+		cmd.SetOut(&output)
+		cmd.SetArgs([]string{"--json"})
+
+		require.NoError(t, cmd.Execute())
+
+		var got struct {
+			Name      string `json:"name"`
+			Version   string `json:"version"`
+			WebAssets bool   `json:"web_assets"`
+		}
+		require.NoError(t, json.Unmarshal(output.Bytes(), &got))
+		assert.Equal(t, "roborev", got.Name)
+		assert.Equal(t, version.Version, got.Version)
+		assert.Equal(t, embedded, got.WebAssets)
 	}
-	require.NoError(t, json.Unmarshal(output.Bytes(), &got))
-	assert.Equal(t, "roborev", got.Name)
-	assert.Equal(t, version.Version, got.Version)
 }

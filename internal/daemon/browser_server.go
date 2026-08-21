@@ -18,11 +18,11 @@ var browserCapabilities = []string{"web-ui-v1", "web-session-v1", "analytics-v1"
 
 func (s *Server) startBrowserServer(web config.WebConfig) (*BrowserRuntimeInfo, error) {
 	if !web.Enabled {
-		return nil, nil
+		return &BrowserRuntimeInfo{DisabledReason: WebDisabledReasonConfig}, nil
 	}
 	if s.webDevOrigin == "" && !s.allowWebCompilationStub && !webassets.EmbeddedReleaseAvailable() {
-		log.Printf("Browser application disabled: this source build does not contain production web assets")
-		return nil, nil
+		log.Printf("Browser application disabled: this binary does not contain production web assets (reinstall from an official release, or build with 'make build')")
+		return &BrowserRuntimeInfo{DisabledReason: WebDisabledReasonMissingAssets}, nil
 	}
 	authToken, err := web.ResolveAuthToken()
 	if err != nil {
@@ -33,7 +33,7 @@ func (s *Server) startBrowserServer(web config.WebConfig) (*BrowserRuntimeInfo, 
 		return nil, err
 	}
 	if !endpoint.Enabled {
-		return nil, nil
+		return &BrowserRuntimeInfo{DisabledReason: WebDisabledReasonConfig}, nil
 	}
 	fail := func(err error) (*BrowserRuntimeInfo, error) {
 		_ = endpoint.Listener.Close()

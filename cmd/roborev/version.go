@@ -7,7 +7,12 @@ import (
 	"github.com/spf13/cobra"
 
 	"go.kenn.io/roborev/internal/version"
+	webassets "go.kenn.io/roborev/internal/web"
 )
+
+// webAssetsEmbedded reports whether this binary embeds the production web
+// distribution. Var so tests can pin both outcomes.
+var webAssetsEmbedded = webassets.EmbeddedReleaseAvailable
 
 func versionCmd() *cobra.Command {
 	var jsonOutput bool
@@ -17,17 +22,24 @@ func versionCmd() *cobra.Command {
 		Short: "Show roborev version",
 		Args:  cobra.NoArgs,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			embedded := webAssetsEmbedded()
 			if jsonOutput {
 				return json.NewEncoder(cmd.OutOrStdout()).Encode(struct {
-					Name    string `json:"name"`
-					Version string `json:"version"`
+					Name      string `json:"name"`
+					Version   string `json:"version"`
+					WebAssets bool   `json:"web_assets"`
 				}{
-					Name:    "roborev",
-					Version: version.Version,
+					Name:      "roborev",
+					Version:   version.Version,
+					WebAssets: embedded,
 				})
 			}
 
-			_, err := fmt.Fprintf(cmd.OutOrStdout(), "roborev %s\n", version.Version)
+			suffix := ""
+			if !embedded {
+				suffix = " (web assets missing; this build cannot serve the browser UI)"
+			}
+			_, err := fmt.Fprintf(cmd.OutOrStdout(), "roborev %s%s\n", version.Version, suffix)
 			return err
 		},
 	}

@@ -14,6 +14,7 @@ import (
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/testutil"
+	webassets "go.kenn.io/roborev/internal/web"
 )
 
 func TestBrowserServerStartsReadyAndKeepsShutdownPrivate(t *testing.T) {
@@ -106,11 +107,18 @@ func TestBrowserServerProxyAuthBootstrapsWithoutToken(t *testing.T) {
 }
 
 func TestBrowserServerSkipsCompilationStubOutsideDevelopment(t *testing.T) {
+	// Test builds embed the compilation stub, so without the stub override
+	// this is exactly the shipped-without-assets case.
+	if webassets.EmbeddedReleaseAvailable() {
+		t.Skip("production web assets are embedded in this build")
+	}
 	server, _, _ := newTestServer(t)
 	server.allowWebCompilationStub = false
 	runtime, err := server.startBrowserServer(config.DefaultConfig().Web)
 	require.NoError(t, err)
-	assert.Nil(t, runtime)
+	require.NotNil(t, runtime)
+	assert.Empty(t, runtime.Origin)
+	assert.Equal(t, WebDisabledReasonMissingAssets, runtime.DisabledReason)
 }
 
 func TestBrowserServerCannotStartAfterStop(t *testing.T) {
@@ -146,7 +154,9 @@ func TestBrowserServerDisabled(t *testing.T) {
 	server, _, _ := newTestServer(t)
 	runtime, err := server.startBrowserServer(config.WebConfig{Enabled: false})
 	require.NoError(t, err)
-	assert.Nil(t, runtime)
+	require.NotNil(t, runtime)
+	assert.Empty(t, runtime.Origin)
+	assert.Equal(t, WebDisabledReasonConfig, runtime.DisabledReason)
 }
 
 func TestBrowserDevelopmentOriginOption(t *testing.T) {
@@ -284,6 +294,7 @@ func TestServerDisabledBrowserOmitsRuntimeMetadata(t *testing.T) {
 	assert.Empty(t, runtime.WebAddress)
 	assert.Empty(t, runtime.WebOrigin)
 	assert.Empty(t, runtime.WebCapabilities)
+	assert.Equal(t, WebDisabledReasonConfig, runtime.WebDisabledReason)
 	stopTestServer(t, server, errCh)
 }
 

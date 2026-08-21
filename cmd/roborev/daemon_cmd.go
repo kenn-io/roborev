@@ -89,26 +89,42 @@ func daemonCmd() *cobra.Command {
 
 func writeDaemonLifecycleResult(message string) {
 	fmt.Println(message)
-	fmt.Printf("Web UI: %s\n", displayWebUIURL(discoverWebUIURL(daemonDiscover)))
+	fmt.Printf("Web UI: %s\n", displayWebUI(discoverWebUI(daemonDiscover)))
 }
 
-func discoverWebUIURL(discover func() (*daemon.RuntimeInfo, error)) string {
+// webUIStatus describes the daemon's browser UI: either a reachable URL, or
+// the daemon-published reason the listener is not running.
+type webUIStatus struct {
+	url            string
+	disabledReason string
+}
+
+func discoverWebUI(discover func() (*daemon.RuntimeInfo, error)) webUIStatus {
 	runtimeInfo, err := discover()
-	if err != nil || runtimeInfo == nil || runtimeInfo.WebOrigin == "" {
-		return ""
+	if err != nil || runtimeInfo == nil {
+		return webUIStatus{}
+	}
+	if runtimeInfo.WebOrigin == "" {
+		return webUIStatus{disabledReason: runtimeInfo.WebDisabledReason}
 	}
 	webURL, err := browserRootURL(runtimeInfo.WebOrigin, runtimeInfo.WebBasePath)
 	if err != nil {
-		return ""
+		return webUIStatus{}
 	}
-	return webURL
+	return webUIStatus{url: webURL}
 }
 
-func displayWebUIURL(webURL string) string {
-	if webURL == "" {
-		return "unavailable"
+func displayWebUI(status webUIStatus) string {
+	if status.url != "" {
+		return status.url
 	}
-	return webURL
+	switch status.disabledReason {
+	case daemon.WebDisabledReasonMissingAssets:
+		return "disabled (this build has no embedded web assets; reinstall from an official release)"
+	case daemon.WebDisabledReasonConfig:
+		return "disabled ([web] enabled = false)"
+	}
+	return "unavailable"
 }
 
 // daemonRunCmd runs the daemon in the foreground (used by "daemon start" internally)
