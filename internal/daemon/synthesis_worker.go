@@ -128,9 +128,8 @@ func (wp *WorkerPool) synthesizeSucceededResults(
 		// runSynthesisAgent already handled the failure/cancel.
 		return
 	}
-	wp.completeSynthesisContext(ctx, workerID, job, resolvedAgent, prompt, out)
-	wp.captureTokenUsageForSession(
-		context.Background(), workerID, job, capturedSession,
+	wp.completeAgentSynthesisContext(
+		ctx, workerID, job, resolvedAgent, prompt, out, capturedSession,
 	)
 }
 
@@ -214,15 +213,40 @@ func (wp *WorkerPool) completeSynthesisContext(
 	job *storage.ReviewJob,
 	agentName, prompt, output string,
 ) {
+	wp.completeSynthesisContextWithUsage(
+		workerID, job, agentName, prompt, output, "", false,
+	)
+}
+
+func (wp *WorkerPool) completeAgentSynthesisContext(
+	_ context.Context,
+	workerID string,
+	job *storage.ReviewJob,
+	agentName, prompt, output, capturedSession string,
+) {
+	wp.completeSynthesisContextWithUsage(
+		workerID, job, agentName, prompt, output, capturedSession, true,
+	)
+}
+
+func (wp *WorkerPool) completeSynthesisContextWithUsage(
+	workerID string,
+	job *storage.ReviewJob,
+	agentName, prompt, output, capturedSession string,
+	captureUsage bool,
+) {
 	wp.runAttemptTransition(workerID, job, func() {
-		wp.completeSynthesisLocked(workerID, job, agentName, prompt, output)
+		wp.completeSynthesisLocked(
+			workerID, job, agentName, prompt, output, capturedSession, captureUsage,
+		)
 	})
 }
 
 func (wp *WorkerPool) completeSynthesisLocked(
 	workerID string,
 	job *storage.ReviewJob,
-	agentName, prompt, output string,
+	agentName, prompt, output, capturedSession string,
+	captureUsage bool,
 ) {
 	if err := wp.db.CompleteJob(job.ID, agentName, prompt, output); err != nil {
 		log.Printf("[%s] Error storing synthesis review for job %d: %v", workerID, job.ID, err)
@@ -240,6 +264,11 @@ func (wp *WorkerPool) completeSynthesisLocked(
 		log.Printf("[%s] Synthesis job %d not completed (status=%s), skipping broadcast",
 			workerID, job.ID, j.Status)
 		return
+	}
+	if captureUsage {
+		wp.captureTokenUsageForSession(
+			context.Background(), workerID, job, capturedSession,
+		)
 	}
 	wp.autoClosePassingReview(workerID, job, output)
 

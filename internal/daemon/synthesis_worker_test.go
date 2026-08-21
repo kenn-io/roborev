@@ -24,6 +24,16 @@ import (
 	"go.kenn.io/roborev/internal/tokens"
 )
 
+type observingBroadcaster struct {
+	Broadcaster
+	observe func(Event)
+}
+
+func (b *observingBroadcaster) Broadcast(event Event) {
+	b.observe(event)
+	b.Broadcaster.Broadcast(event)
+}
+
 // markMemberRunning transitions a queued member job to running so that the
 // status-guarded CompleteJob/FailJob transitions take effect by ID.
 func markMemberRunning(t *testing.T, tc *workerTestContext, jobID int64) {
@@ -777,6 +787,18 @@ func TestSynthesisCapturesTokenUsage(t *testing.T) {
 		fetchedSession = sessionID
 		return &tokens.Usage{CostUSD: 0.03, HasCost: true}, nil
 	}
+	var usageAtCompletion string
+	tc.Pool.broadcaster = &observingBroadcaster{
+		Broadcaster: tc.Broadcaster,
+		observe: func(event Event) {
+			if event.Type != "review.completed" {
+				return
+			}
+			completed, err := tc.DB.GetJobByID(event.JobID)
+			require.NoError(t, err)
+			usageAtCompletion = completed.TokenUsage
+		},
+	}
 
 	runUUID, members, synth := enqueuePanelRun(t, tc, "synthesis-token-panel", []memberSpec{
 		{name: "m0", agent: memberAgent},
@@ -793,6 +815,7 @@ func TestSynthesisCapturesTokenUsage(t *testing.T) {
 	assert.Equal("synth-session-123", fetchedSession)
 	assert.Contains(updated.TokenUsage, `"cost_usd":0.03`)
 	assert.Contains(updated.TokenUsage, `"has_cost":true`)
+	assert.Contains(usageAtCompletion, `"cost_usd":0.03`)
 }
 
 func TestSynthesisRejectsProviderCostForReusedSession(t *testing.T) {
