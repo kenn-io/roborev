@@ -51,7 +51,7 @@ will be skipped.`,
 			agentsviewCandidates := make(map[int64]bool)
 			var candidateCursor int64
 			for {
-				page, err := db.ListTokenCostCandidates(candidateCursor, 1000)
+				page, err := db.ListTokenCostCandidates(candidateCursor, 1000, time.Time{})
 				if err != nil {
 					return fmt.Errorf("list cost candidates: %w", err)
 				}
@@ -127,10 +127,12 @@ will be skipped.`,
 				}
 				stored, saved, err := backfill.StoreCapturedTokenUsage(
 					db,
-					job.ID,
-					sessionID,
-					job.TokenUsage,
-					job.StartedAtRaw,
+					backfill.CapturedUsage{
+						JobID:             job.ID,
+						SessionID:         sessionID,
+						ExistingJSON:      job.TokenUsage,
+						ExpectedStartedAt: job.StartedAtRaw,
+					},
 					logUsage,
 					fetchedUsage,
 				)

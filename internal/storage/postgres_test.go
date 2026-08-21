@@ -29,24 +29,6 @@ func TestDefaultPgPoolConfig(t *testing.T) {
 	assert.Equal(t, 30*time.Minute, cfg.MaxConnIdleTime)
 }
 
-func TestPostgresSyncJobStatusKeepsFinalizationLocal(t *testing.T) {
-	tests := []struct {
-		local  JobStatus
-		remote JobStatus
-	}{
-		{JobStatusDone, JobStatusDone},
-		{JobStatusFailed, JobStatusFailed},
-		{JobStatusApplied, JobStatusDone},
-		{JobStatusRebased, JobStatusDone},
-	}
-
-	for _, tt := range tests {
-		t.Run(string(tt.local), func(t *testing.T) {
-			assert.Equal(t, string(tt.remote), postgresSyncJobStatus(string(tt.local)))
-		})
-	}
-}
-
 func TestPgSchemaStatementsContainsRequiredTables(t *testing.T) {
 	requiredStatements := []string{
 		"CREATE SCHEMA IF NOT EXISTS roborev",
@@ -789,108 +771,6 @@ func TestIntegration_BatchUpsertJobs(t *testing.T) {
 		assert.Nil(t, success)
 	})
 
-	t.Run("newer rerun replaces attempt fields and rejects stale attempt", func(t *testing.T) {
-		jobUUID := uuid.NewString()
-		commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{
-			RepoID: repoID, SHA: "batch-rerun-generation-" + jobUUID,
-		})
-		oldEnqueued := time.Now().UTC().Add(-time.Hour)
-		oldStarted := oldEnqueued.Add(time.Minute)
-		oldFinished := oldStarted.Add(time.Minute)
-		old := JobWithPgIDs{
-			Job: SyncableJob{
-				UUID:            jobUUID,
-				GitRef:          "old-ref",
-				Agent:           "old-agent",
-				Status:          "done",
-				EnqueuedAt:      oldEnqueued,
-				StartedAt:       &oldStarted,
-				FinishedAt:      &oldFinished,
-				Prompt:          "old prompt",
-				SourceMachineID: uuid.NewString(),
-			},
-			PgRepoID:   repoID,
-			PgCommitID: &commitID,
-		}
-		success, err := pool.BatchUpsertJobs(ctx, []JobWithPgIDs{old})
-		require.NoError(t, err)
-		require.Equal(t, 1, countSuccesses(success))
-
-		newer := old
-		newer.Job.EnqueuedAt = oldEnqueued.Add(30 * time.Minute)
-		newStarted := newer.Job.EnqueuedAt.Add(2 * time.Minute)
-		newFinished := newStarted.Add(3 * time.Minute)
-		newer.Job.StartedAt = &newStarted
-		newer.Job.FinishedAt = &newFinished
-		newer.Job.GitRef = "new-ref"
-		newer.Job.Agent = "new-agent"
-		newer.Job.Prompt = "new prompt"
-		newer.Job.SourceMachineID = uuid.NewString()
-		success, err = pool.BatchUpsertJobs(ctx, []JobWithPgIDs{newer})
-		require.NoError(t, err)
-		require.Equal(t, 1, countSuccesses(success))
-
-		success, err = pool.BatchUpsertJobs(ctx, []JobWithPgIDs{old})
-		require.NoError(t, err)
-		require.Equal(t, 0, countSuccesses(success))
-
-		var enqueuedAt, startedAt time.Time
-		var gitRef, agent, prompt, owner string
-		err = pool.pool.QueryRow(ctx, `
-			SELECT enqueued_at, started_at, git_ref, agent, prompt, source_machine_id
-			FROM review_jobs WHERE uuid = $1`, jobUUID,
-		).Scan(&enqueuedAt, &startedAt, &gitRef, &agent, &prompt, &owner)
-		require.NoError(t, err)
-		assert.WithinDuration(t, newer.Job.EnqueuedAt, enqueuedAt, time.Microsecond)
-		assert.WithinDuration(t, newStarted, startedAt, time.Microsecond)
-		assert.Equal(t, "new-ref", gitRef)
-		assert.Equal(t, "new-agent", agent)
-		assert.Equal(t, "new prompt", prompt)
-		assert.Equal(t, newer.Job.SourceMachineID, owner)
-	})
-
-	t.Run("source machine deterministically breaks generation ties", func(t *testing.T) {
-		jobUUID := uuid.NewString()
-		commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{
-			RepoID: repoID, SHA: "batch-rerun-tie-" + jobUUID,
-		})
-		generation := time.Now().UTC().Truncate(time.Microsecond)
-		lower := JobWithPgIDs{
-			Job: SyncableJob{
-				UUID:            jobUUID,
-				GitRef:          "lower-ref",
-				Agent:           "test",
-				Status:          "done",
-				EnqueuedAt:      generation,
-				SourceMachineID: "00000000-0000-0000-0000-000000000001",
-			},
-			PgRepoID:   repoID,
-			PgCommitID: &commitID,
-		}
-		higher := lower
-		higher.Job.GitRef = "higher-ref"
-		higher.Job.SourceMachineID = "ffffffff-ffff-ffff-ffff-ffffffffffff"
-
-		success, err := pool.BatchUpsertJobs(ctx, []JobWithPgIDs{lower})
-		require.NoError(t, err)
-		require.Equal(t, 1, countSuccesses(success))
-		success, err = pool.BatchUpsertJobs(ctx, []JobWithPgIDs{higher})
-		require.NoError(t, err)
-		require.Equal(t, 1, countSuccesses(success))
-		success, err = pool.BatchUpsertJobs(ctx, []JobWithPgIDs{lower})
-		require.NoError(t, err)
-		require.Equal(t, 0, countSuccesses(success))
-
-		var gitRef, owner string
-		err = pool.pool.QueryRow(ctx, `
-			SELECT git_ref, source_machine_id
-			FROM review_jobs WHERE uuid = $1`, jobUUID,
-		).Scan(&gitRef, &owner)
-		require.NoError(t, err)
-		assert.Equal(t, higher.Job.GitRef, gitRef)
-		assert.Equal(t, higher.Job.SourceMachineID, owner)
-	})
-
 	t.Run("worktree_path round-trips through batch upsert and pull", func(t *testing.T) {
 		wtJobUUID := uuid.NewString()
 		// Use a distinct machine ID so we can exclude it when pulling
@@ -1238,10 +1118,6 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) {
 		CommitID:        commitID,
 		SourceMachineID: defaultTestMachineID,
 	})
-	var jobAttemptAt time.Time
-	require.NoError(t, pool.pool.QueryRow(ctx,
-		`SELECT enqueued_at FROM review_jobs WHERE uuid = $1`, jobUUID,
-	).Scan(&jobAttemptAt))
 
 	reviews := []SyncableReview{
 		{
@@ -1252,8 +1128,6 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) {
 			Output:             "test output 1",
 			Closed:             false,
 			UpdatedByMachineID: defaultTestMachineID,
-			AttemptEnqueuedAt:  jobAttemptAt,
-			AttemptSourceID:    defaultTestMachineID,
 			CreatedAt:          time.Now(),
 		},
 		{
@@ -1264,8 +1138,6 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) {
 			Output:             "test output 2",
 			Closed:             true,
 			UpdatedByMachineID: defaultTestMachineID,
-			AttemptEnqueuedAt:  jobAttemptAt,
-			AttemptSourceID:    defaultTestMachineID,
 			CreatedAt:          time.Now(),
 		},
 	}
@@ -1275,114 +1147,6 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) {
 
 	assert.Equal(t, 2, countSuccesses(success))
 
-	t.Run("stale generation cannot overwrite rerun content", func(t *testing.T) {
-		newer := reviews[0]
-		newer.CreatedAt = reviews[0].CreatedAt.Add(time.Hour)
-		newer.Agent = "new-agent"
-		newer.Prompt = "new prompt"
-		newer.Output = "new output"
-		newer.UpdatedByMachineID = uuid.NewString()
-		success, err := pool.BatchUpsertReviews(ctx, []SyncableReview{newer})
-		require.NoError(t, err)
-		require.Equal(t, 1, countSuccesses(success))
-
-		stale := reviews[0]
-		stale.Closed = true
-		success, err = pool.BatchUpsertReviews(ctx, []SyncableReview{stale})
-		require.NoError(t, err)
-		require.Equal(t, 0, countSuccesses(success))
-
-		var agent, prompt, output string
-		var closed bool
-		var createdAt time.Time
-		err = pool.pool.QueryRow(ctx, `
-			SELECT agent, prompt, output, closed, created_at
-			FROM reviews WHERE uuid = $1`, newer.UUID,
-		).Scan(&agent, &prompt, &output, &closed, &createdAt)
-		require.NoError(t, err)
-		assert.Equal(t, "new-agent", agent)
-		assert.Equal(t, "new prompt", prompt)
-		assert.Equal(t, "new output", output)
-		assert.False(t, closed)
-		assert.WithinDuration(t, newer.CreatedAt, createdAt, time.Microsecond)
-	})
-
-	t.Run("updater deterministically breaks equal generation ties", func(t *testing.T) {
-		tieJobUUID := uuid.NewString()
-		createTestJob(t, pool.pool, TestJobOpts{
-			UUID:            tieJobUUID,
-			RepoID:          repoID,
-			CommitID:        commitID,
-			SourceMachineID: defaultTestMachineID,
-		})
-		generation := time.Now().UTC().Truncate(time.Microsecond)
-		lowerSource := "00000000-0000-0000-0000-000000000001"
-		higherSource := "ffffffff-ffff-ffff-ffff-ffffffffffff"
-		_, err := pool.pool.Exec(ctx, `
-			UPDATE review_jobs
-			SET enqueued_at = $1, source_machine_id = $2
-			WHERE uuid = $3`, generation, higherSource, tieJobUUID)
-		require.NoError(t, err)
-		lower := reviews[0]
-		lower.UUID = uuid.NewString()
-		lower.JobUUID = tieJobUUID
-		lower.AttemptEnqueuedAt = generation
-		lower.AttemptSourceID = lowerSource
-		lower.CreatedAt = generation.Add(2 * time.Hour)
-		lower.UpdatedAt = lower.CreatedAt
-		lower.Output = "lower output"
-		lower.UpdatedByMachineID = lowerSource
-		higher := lower
-		higher.AttemptSourceID = higherSource
-		higher.CreatedAt = generation.Add(time.Hour)
-		higher.UpdatedAt = higher.CreatedAt
-		higher.Output = "higher output"
-		higher.UpdatedByMachineID = higherSource
-
-		success, err := pool.BatchUpsertReviews(ctx, []SyncableReview{lower})
-		require.NoError(t, err)
-		require.Equal(t, 1, countSuccesses(success))
-		success, err = pool.BatchUpsertReviews(ctx, []SyncableReview{higher})
-		require.NoError(t, err)
-		require.Equal(t, 1, countSuccesses(success))
-		success, err = pool.BatchUpsertReviews(ctx, []SyncableReview{lower})
-		require.NoError(t, err)
-		require.Equal(t, 0, countSuccesses(success))
-
-		var output, updater string
-		var sourceUpdatedAt, cursorUpdatedAt time.Time
-		err = pool.pool.QueryRow(ctx, `
-			SELECT output, updated_by_machine_id, source_updated_at, updated_at
-			FROM reviews WHERE job_uuid = $1`, lower.JobUUID,
-		).Scan(&output, &updater, &sourceUpdatedAt, &cursorUpdatedAt)
-		require.NoError(t, err)
-		assert.Equal(t, higher.Output, output)
-		assert.Equal(t, higher.UpdatedByMachineID, updater)
-		assert.WithinDuration(t, higher.UpdatedAt, sourceUpdatedAt, time.Microsecond)
-		assert.Equal(t, -1, cursorUpdatedAt.Compare(sourceUpdatedAt))
-	})
-
-	t.Run("newer review UUID replaces prior job review", func(t *testing.T) {
-		replacement := reviews[1]
-		replacement.UUID = uuid.NewString()
-		replacement.CreatedAt = reviews[1].CreatedAt.Add(time.Hour)
-		replacement.Output = "replacement output"
-		replacement.UpdatedByMachineID = uuid.NewString()
-		success, err := pool.BatchUpsertReviews(ctx, []SyncableReview{replacement})
-		require.NoError(t, err)
-		require.Equal(t, 1, countSuccesses(success))
-
-		var count int
-		var storedUUID, output string
-		require.NoError(t, pool.pool.QueryRow(ctx, `
-			SELECT COUNT(*), MAX(uuid::text), MAX(output)
-			FROM reviews WHERE job_uuid = $1`, replacement.JobUUID,
-		).Scan(&count, &storedUUID, &output))
-		assert.Equal(t, 1, count)
-		assert.Equal(t, replacement.UUID, storedUUID)
-		assert.Equal(t, replacement.Output, output)
-	})
-
 	t.Run("empty batch is no-op", func(t *testing.T) {
 		success, err := pool.BatchUpsertReviews(ctx, []SyncableReview{})
 		require.NoError(t, err)
@@ -1390,28 +1154,15 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) {
 	})
 
 	t.Run("partial failure with invalid FK", func(t *testing.T) {
-		partialJobUUID := uuid.NewString()
-		createTestJob(t, pool.pool, TestJobOpts{
-			UUID:            partialJobUUID,
-			RepoID:          repoID,
-			CommitID:        commitID,
-			SourceMachineID: defaultTestMachineID,
-		})
-		var partialAttemptAt time.Time
-		require.NoError(t, pool.pool.QueryRow(ctx,
-			`SELECT enqueued_at FROM review_jobs WHERE uuid = $1`, partialJobUUID,
-		).Scan(&partialAttemptAt))
 		validReviewUUID := uuid.NewString()
 		reviews := []SyncableReview{
 			{
 				UUID:               validReviewUUID,
-				JobUUID:            partialJobUUID,
+				JobUUID:            jobUUID, // Valid FK
 				Agent:              "test",
 				Prompt:             "valid review",
 				Output:             "output",
 				UpdatedByMachineID: defaultTestMachineID,
-				AttemptEnqueuedAt:  partialAttemptAt,
-				AttemptSourceID:    defaultTestMachineID,
 				CreatedAt:          time.Now(),
 			},
 			{
@@ -1421,8 +1172,6 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) {
 				Prompt:             "invalid review",
 				Output:             "output",
 				UpdatedByMachineID: defaultTestMachineID,
-				AttemptEnqueuedAt:  partialAttemptAt,
-				AttemptSourceID:    defaultTestMachineID,
 				CreatedAt:          time.Now(),
 			},
 		}

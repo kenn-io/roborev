@@ -1,9 +1,10 @@
 package storage
 
 import (
-	"database/sql"
+	"fmt"
 	"path/filepath"
 	"testing"
+	"time"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -42,7 +43,7 @@ func TestMigrationMakesLegacyLocalJobEligibleForTokenReconciliation(t *testing.T
 	).Scan(&historyCount))
 	assert.Equal(t, 1, historyCount)
 
-	candidates, err := db.ListTokenCostCandidates(0, 10)
+	candidates, err := db.ListTokenCostCandidates(0, 10, time.Time{})
 	require.NoError(t, err)
 	require.Len(t, candidates, 1)
 	assert.Equal(t, jobs[0].ID, candidates[0].JobID)
@@ -89,7 +90,7 @@ func TestListTokenCostCandidatesSelectsRecoverableTerminalJobs(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	got, err := db.ListTokenCostCandidates(0, 100)
+	got, err := db.ListTokenCostCandidates(0, 100, time.Time{})
 	require.NoError(t, err)
 
 	assert := assert.New(t)
@@ -119,19 +120,19 @@ func TestListTokenCostCandidatesPagesByExclusiveJobID(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	first, err := db.ListTokenCostCandidates(0, 2)
+	first, err := db.ListTokenCostCandidates(0, 2, time.Time{})
 	require.NoError(t, err)
 	require.Len(t, first, 2)
 	assert.Equal(t, jobs[0].ID, first[0].JobID)
 	assert.Equal(t, jobs[1].ID, first[1].JobID)
 
-	second, err := db.ListTokenCostCandidates(first[1].JobID, 2)
+	second, err := db.ListTokenCostCandidates(first[1].JobID, 2, time.Time{})
 	require.NoError(t, err)
 	require.Len(t, second, 2)
 	assert.Equal(t, jobs[2].ID, second[0].JobID)
 	assert.Equal(t, jobs[3].ID, second[1].JobID)
 
-	last, err := db.ListTokenCostCandidates(second[1].JobID, 2)
+	last, err := db.ListTokenCostCandidates(second[1].JobID, 2, time.Time{})
 	require.NoError(t, err)
 	assert.Empty(t, last)
 
@@ -149,6 +150,35 @@ func TestListTokenCostCandidatesPagesByExclusiveJobID(t *testing.T) {
 	assert.Nil(t, got)
 }
 
+func TestListTokenCostCandidatesExcludesAttemptsBeforeCutoff(t *testing.T) {
+	db := openTestDB(t)
+	t.Cleanup(func() { db.Close() })
+	_, jobs := seedJobs(t, db, "/tmp/token-cost-cutoff", 2)
+	for i, startedAt := range []string{
+		"datetime('now', '-30 days')", "datetime('now', '-1 hour')",
+	} {
+		_, err := db.Exec(`
+			UPDATE review_jobs
+			SET status = 'done', started_at = `+startedAt+`,
+			    finished_at = datetime('now'), session_id = ?,
+			    agent_invoked = 1, token_usage = '{}'
+			WHERE id = ?`,
+			fmt.Sprintf("cutoff-session-%d", i), jobs[i].ID)
+		require.NoError(t, err)
+	}
+
+	bounded, err := db.ListTokenCostCandidates(
+		0, 100, time.Now().Add(-7*24*time.Hour),
+	)
+	require.NoError(t, err)
+	require.Len(t, bounded, 1)
+	assert.Equal(t, jobs[1].ID, bounded[0].JobID)
+
+	unbounded, err := db.ListTokenCostCandidates(0, 100, time.Time{})
+	require.NoError(t, err)
+	assert.Len(t, unbounded, 2)
+}
+
 func TestListTokenCostCandidatesIncludesSerializedUnpricedUsage(t *testing.T) {
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
@@ -162,7 +192,7 @@ func TestListTokenCostCandidatesIncludesSerializedUnpricedUsage(t *testing.T) {
 		WHERE id = ?`, jobs[0].ID)
 	require.NoError(t, err)
 
-	got, err := db.ListTokenCostCandidates(0, 100)
+	got, err := db.ListTokenCostCandidates(0, 100, time.Time{})
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, jobs[0].ID, got[0].JobID)
@@ -218,7 +248,7 @@ func TestTokenReconciliationWaitsForCanceledWorkerRelease(t *testing.T) {
 	))
 	require.NoError(t, db.CancelJob(logJob.ID))
 
-	costCandidates, err := db.ListTokenCostCandidates(0, 10)
+	costCandidates, err := db.ListTokenCostCandidates(0, 10, time.Time{})
 	require.NoError(t, err)
 	assert.Empty(t, costCandidates)
 	logCandidates, err := db.ListTokenUsageLogCandidates(0, 10)
@@ -232,7 +262,7 @@ func TestTokenReconciliationWaitsForCanceledWorkerRelease(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, released)
 
-	costCandidates, err = db.ListTokenCostCandidates(0, 10)
+	costCandidates, err = db.ListTokenCostCandidates(0, 10, time.Time{})
 	require.NoError(t, err)
 	require.Len(t, costCandidates, 1)
 	assert.Equal(t, costJob.ID, costCandidates[0].JobID)
@@ -267,7 +297,7 @@ func TestTokenUsageCandidatesExcludeImportedJobs(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	costCandidates, err := db.ListTokenCostCandidates(0, 100)
+	costCandidates, err := db.ListTokenCostCandidates(0, 100, time.Time{})
 	require.NoError(t, err)
 	require.Len(t, costCandidates, 1)
 	assert.Equal(t, jobs[0].ID, costCandidates[0].JobID)
@@ -276,26 +306,6 @@ func TestTokenUsageCandidatesExcludeImportedJobs(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, logCandidates, 1)
 	assert.Equal(t, jobs[2].ID, logCandidates[0].JobID)
-
-	updated, err := db.BackfillJobTokenUsageIfCurrent(
-		jobs[1].ID,
-		"remote-cost-session",
-		"",
-		`{"has_cost":true,"cost_usd":0.25}`,
-		"",
-		true,
-	)
-	require.NoError(t, err)
-	assert.False(t, updated)
-
-	remote, err := db.GetJobByID(jobs[1].ID)
-	require.NoError(t, err)
-	assert.Empty(t, remote.TokenUsage)
-	var syncedAt sql.NullString
-	require.NoError(t, db.QueryRow(
-		`SELECT synced_at FROM review_jobs WHERE id = ?`, jobs[1].ID,
-	).Scan(&syncedAt))
-	assert.True(t, syncedAt.Valid)
 }
 
 func TestTokenCostCandidateRejectsSessionReusedByPriorAttempt(t *testing.T) {
@@ -321,18 +331,17 @@ func TestTokenCostCandidateRejectsSessionReusedByPriorAttempt(t *testing.T) {
 		second.ID, "codex", "prompt", "No issues found.",
 	))
 
-	candidates, err := db.ListTokenCostCandidates(0, 100)
+	candidates, err := db.ListTokenCostCandidates(0, 100, time.Time{})
 	require.NoError(t, err)
 	assert.Empty(t, candidates)
 
-	updated, err := db.BackfillJobTokenUsageIfCurrent(
-		second.ID,
-		"reused-session",
-		"",
-		`{"has_cost":true,"cost_usd":0.25}`,
-		second.StartedAtRaw,
-		true,
-	)
+	updated, err := db.BackfillJobTokenUsageIfCurrent(TokenUsageWrite{
+		JobID:                second.ID,
+		SessionID:            "reused-session",
+		TokenUsageJSON:       `{"has_cost":true,"cost_usd":0.25}`,
+		ExpectedStartedAt:    second.StartedAtRaw,
+		RequireUniqueSession: true,
+	})
 	require.NoError(t, err)
 	assert.False(t, updated)
 }
@@ -368,7 +377,7 @@ func TestTokenCostCandidateRejectsPrepopulatedSessionReusedByLaterAttempt(t *tes
 		second.ID, "codex", "prompt", "No issues found.",
 	))
 
-	candidates, err := db.ListTokenCostCandidates(0, 100)
+	candidates, err := db.ListTokenCostCandidates(0, 100, time.Time{})
 	require.NoError(t, err)
 	assert.Empty(t, candidates)
 }
@@ -420,7 +429,7 @@ func TestTokenCostCandidateRejectsSessionResumedFromImportedJob(t *testing.T) {
 	).Scan(&sessionResumed))
 	assert.Equal(t, 1, sessionResumed)
 
-	candidates, err := db.ListTokenCostCandidates(0, 100)
+	candidates, err := db.ListTokenCostCandidates(0, 100, time.Time{})
 	require.NoError(t, err)
 	assert.Empty(t, candidates)
 }
@@ -502,19 +511,20 @@ func TestAutoDesignJobCapturesTokenUsageBeforeReopen(t *testing.T) {
 		jobID, "codex", "prompt", "No issues found.",
 	))
 
-	updated, err := db.BackfillJobTokenUsageIfCurrent(
-		jobID,
-		"auto-design-session",
-		"",
-		`{"total_output_tokens":32}`,
-		claimed.StartedAtRaw,
-		false,
-	)
+	updated, err := db.BackfillJobTokenUsageIfCurrent(TokenUsageWrite{
+		JobID:             jobID,
+		SessionID:         "auto-design-session",
+		TokenUsageJSON:    `{"total_output_tokens":32}`,
+		ExpectedStartedAt: claimed.StartedAtRaw,
+	})
 	require.NoError(t, err)
 	assert.True(t, updated)
 }
 
-func TestLocallyRerunImportedJobCapturesAndSyncsTokenUsage(t *testing.T) {
+// A local rerun of an imported job keeps the remote ownership, so background
+// reconciliation skips it, but the live worker's attempt-scoped capture must
+// still store the usage it observed.
+func TestLocallyRerunImportedJobCapturesTokenUsage(t *testing.T) {
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	_, jobs := seedJobs(t, db, "/tmp/token-cost-imported-rerun", 1)
@@ -528,13 +538,6 @@ func TestLocallyRerunImportedJobCapturesAndSyncsTokenUsage(t *testing.T) {
 	require.NoError(t, err)
 
 	require.NoError(t, db.ReenqueueJob(job.ID, ReenqueueOpts{}))
-	machineID, err := db.GetMachineID()
-	require.NoError(t, err)
-	var owner string
-	require.NoError(t, db.QueryRow(
-		`SELECT source_machine_id FROM review_jobs WHERE id = ?`, job.ID,
-	).Scan(&owner))
-	assert.Equal(t, machineID, owner)
 	rerun, err := db.ClaimJob("local-worker")
 	require.NoError(t, err)
 	require.NotNil(t, rerun)
@@ -549,22 +552,18 @@ func TestLocallyRerunImportedJobCapturesAndSyncsTokenUsage(t *testing.T) {
 		job.ID, "codex", "prompt", "No issues found.",
 	))
 
-	updated, err := db.BackfillJobTokenUsageIfCurrent(
-		job.ID,
-		"local-rerun-session",
-		"",
-		`{"total_output_tokens":64,"has_cost":true,"cost_usd":0.02}`,
-		rerun.StartedAtRaw,
-		false,
-	)
+	updated, err := db.BackfillJobTokenUsageIfCurrent(TokenUsageWrite{
+		JobID:             job.ID,
+		SessionID:         "local-rerun-session",
+		TokenUsageJSON:    `{"total_output_tokens":64,"has_cost":true,"cost_usd":0.02}`,
+		ExpectedStartedAt: rerun.StartedAtRaw,
+	})
 	require.NoError(t, err)
 	assert.True(t, updated)
 
-	toSync, err := db.GetJobsToSync(machineID, 10)
+	stored, err := db.GetJobByID(job.ID)
 	require.NoError(t, err)
-	require.Len(t, toSync, 1)
-	assert.Equal(t, job.ID, toSync[0].ID)
-	assert.Contains(t, toSync[0].TokenUsage, `"cost_usd":0.02`)
+	assert.Contains(t, stored.TokenUsage, `"cost_usd":0.02`)
 }
 
 func TestBackfillJobTokenUsageIfCurrentRejectsReenqueuedJob(t *testing.T) {
@@ -587,14 +586,13 @@ func TestBackfillJobTokenUsageIfCurrentRejectsReenqueuedJob(t *testing.T) {
 		    finished_at = '2026-08-20T16:00:02Z'
 		WHERE id = ?`, jobs[0].ID)
 	require.NoError(t, err)
-	updated, err := db.BackfillJobTokenUsageIfCurrent(
-		jobs[0].ID,
-		"prior-session",
-		candidates[0].TokenUsage,
-		`{"total_output_tokens":32,"thread_id":"prior-session"}`,
-		candidates[0].StartedAtRaw,
-		false,
-	)
+	updated, err := db.BackfillJobTokenUsageIfCurrent(TokenUsageWrite{
+		JobID:              jobs[0].ID,
+		SessionID:          "prior-session",
+		ExpectedTokenUsage: candidates[0].TokenUsage,
+		TokenUsageJSON:     `{"total_output_tokens":32,"thread_id":"prior-session"}`,
+		ExpectedStartedAt:  candidates[0].StartedAtRaw,
+	})
 	require.NoError(t, err)
 	assert.False(t, updated)
 
@@ -626,14 +624,13 @@ func TestBackfillJobTokenUsageIfCurrentRejectsNewSessionReuse(t *testing.T) {
 		WHERE id = ?`, jobs[1].ID)
 	require.NoError(t, err)
 
-	updated, err := db.BackfillJobTokenUsageIfCurrent(
-		jobs[0].ID,
-		candidate.SessionID,
-		candidate.TokenUsage,
-		`{"total_output_tokens":10,"has_cost":true,"cost_usd":0.25}`,
-		"",
-		true,
-	)
+	updated, err := db.BackfillJobTokenUsageIfCurrent(TokenUsageWrite{
+		JobID:                jobs[0].ID,
+		SessionID:            candidate.SessionID,
+		ExpectedTokenUsage:   candidate.TokenUsage,
+		TokenUsageJSON:       `{"total_output_tokens":10,"has_cost":true,"cost_usd":0.25}`,
+		RequireUniqueSession: true,
+	})
 	require.NoError(t, err)
 	assert.False(t, updated)
 
@@ -662,14 +659,13 @@ func TestBackfillJobTokenUsageIfCurrentRejectsStaleUsage(t *testing.T) {
 		jobs[0].ID,
 	)
 	require.NoError(t, err)
-	updated, err := db.BackfillJobTokenUsageIfCurrent(
-		jobs[0].ID,
-		candidate.SessionID,
-		candidate.TokenUsage,
-		`{"total_output_tokens":10,"has_cost":true,"cost_usd":0.25}`,
-		"",
-		true,
-	)
+	updated, err := db.BackfillJobTokenUsageIfCurrent(TokenUsageWrite{
+		JobID:                jobs[0].ID,
+		SessionID:            candidate.SessionID,
+		ExpectedTokenUsage:   candidate.TokenUsage,
+		TokenUsageJSON:       `{"total_output_tokens":10,"has_cost":true,"cost_usd":0.25}`,
+		RequireUniqueSession: true,
+	})
 	require.NoError(t, err)
 	assert.False(t, updated)
 }

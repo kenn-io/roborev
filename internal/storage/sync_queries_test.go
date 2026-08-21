@@ -784,25 +784,3 @@ func TestGetJobsToSync_IncludesSkipped(t *testing.T) {
 	}
 	assert.True(t, found, "expected skipped job to be syncable")
 }
-
-func TestGetJobsToSyncIncludesCostUpdatesForLocallyFinalizedFixes(t *testing.T) {
-	h := newSyncTestHelper(t)
-	applied := h.createCompletedJob("applied-cost-update")
-	rebased := h.createCompletedJob("rebased-cost-update")
-
-	_, err := h.db.Exec(`
-		UPDATE review_jobs
-		SET status = CASE id WHEN ? THEN 'applied' ELSE 'rebased' END,
-		    token_usage = '{"has_cost":true,"cost_usd":0.25}',
-		    synced_at = NULL
-		WHERE id IN (?, ?)`, applied.ID, applied.ID, rebased.ID)
-	require.NoError(t, err)
-
-	jobs, err := h.db.GetJobsToSync(h.machineID, 10)
-	require.NoError(t, err)
-	require.Len(t, jobs, 2)
-	assert.Equal(t, JobStatusApplied, JobStatus(jobs[0].Status))
-	assert.Equal(t, JobStatusRebased, JobStatus(jobs[1].Status))
-	assert.Contains(t, jobs[0].TokenUsage, `"cost_usd":0.25`)
-	assert.Contains(t, jobs[1].TokenUsage, `"cost_usd":0.25`)
-}

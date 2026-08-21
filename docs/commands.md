@@ -632,11 +632,11 @@ marks the value as a model-pricing estimate rather than a billed amount.
 
 Fresh agent sessions can finish before agentsview has indexed their final usage.
 roborev briefly retries a missing session lookup before storing the job-log
-token fallback. The daemon then continues reconciling unpriced jobs in the
-background, including after a restart, so a price that appears later is stored
-without an operator running a backfill. If the database missed the session ID,
-the daemon first recovers it from the per-job JSONL log when that log is still
-available.
+token fallback. The daemon then continues reconciling recent unpriced jobs (up
+to a week old) in the background, including after a restart, so a price that
+appears later is stored without an operator running a backfill. If the database
+missed the session ID, the daemon first recovers it from the per-job JSONL log
+when that log is still available.
 
 If you run a central usage service, configure `[cost] endpoint` to fetch usage
 over HTTP instead of through the local `agentsview` CLI. See

@@ -576,8 +576,6 @@ func TestUpsertPulledReviewWithEmptyOutputIsNotExportable(t *testing.T) {
 		Prompt:             "prompt",
 		Output:             "",
 		UpdatedByMachineID: "remote",
-		AttemptEnqueuedAt:  job.EnqueuedAt,
-		AttemptSourceID:    job.SourceMachineID,
 		CreatedAt:          time.Date(2026, 6, 29, 0, 0, 0, 0, time.UTC),
 		UpdatedAt:          time.Date(2026, 6, 29, 0, 0, 1, 0, time.UTC),
 	}))

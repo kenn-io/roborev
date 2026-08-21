@@ -7,7 +7,6 @@ import (
 	_ "embed"
 	"strings"
 	"testing"
-	"time"
 
 	"github.com/google/uuid"
 	"github.com/jackc/pgx/v5/pgxpool"
@@ -26,9 +25,6 @@ var postgresV14Schema string
 
 //go:embed schemas/postgres_v17.sql
 var postgresV17Schema string
-
-//go:embed schemas/postgres_v18.sql
-var postgresV18Schema string
 
 // openTestPgPoolRawAtVersion bootstraps a fresh Postgres test pool at the
 // given older schema version by running only the corresponding embedded
@@ -53,7 +49,6 @@ func openTestPgPoolRawAtVersion(t *testing.T, version int) *PgPool {
 		13: postgresV13Schema,
 		14: postgresV14Schema,
 		17: postgresV17Schema,
-		18: postgresV18Schema,
 	}
 	schemaSQL, ok := schemas[version]
 	require.Truef(t, ok, "openTestPgPoolRawAtVersion: no embedded schema for version %d", version)
@@ -116,60 +111,6 @@ func TestPostgresMigration_ResponseSource(t *testing.T) {
 		`SELECT source FROM roborev.responses WHERE uuid = $1`, responseUUID,
 	).Scan(&source))
 	assert.Equal(t, ResponseSourceLocal, source)
-}
-
-func TestPostgresMigration_DeduplicatesReviewsByJob(t *testing.T) {
-	oldPool := openTestPgPoolRawAtVersion(t, 18)
-	ctx := t.Context()
-
-	var repoID int
-	require.NoError(t, pgxPool(oldPool).QueryRow(ctx,
-		`INSERT INTO roborev.repos (identity) VALUES ($1) RETURNING id`,
-		"example.com/owner/review-dedup.git").Scan(&repoID))
-	jobUUID := uuid.New().String()
-	_, err := pgxPool(oldPool).Exec(ctx, `
-		INSERT INTO roborev.review_jobs
-		  (uuid, repo_id, git_ref, agent, status, enqueued_at, source_machine_id)
-		VALUES ($1, $2, 'abc', 'test', 'done', NOW(), $3)
-	`, jobUUID, repoID, uuid.New().String())
-	require.NoError(t, err)
-	olderCreated := time.Date(2026, 8, 21, 10, 0, 0, 0, time.UTC)
-	newerCreated := olderCreated.Add(time.Hour)
-	_, err = pgxPool(oldPool).Exec(ctx, `
-		INSERT INTO roborev.reviews
-		  (uuid, job_uuid, agent, prompt, output, updated_by_machine_id, created_at, updated_at)
-		VALUES
-		  ($1, $3, 'test', 'old prompt', 'old output', $4, $5, $5),
-		  ($2, $3, 'test', 'new prompt', 'new output', $4, $6, $6)
-	`, uuid.New().String(), uuid.New().String(), jobUUID,
-		uuid.New().String(), olderCreated, newerCreated)
-	require.NoError(t, err)
-
-	pg := openTestPgPool(t)
-	defer pg.Close()
-
-	var count, sourceUpdateCount, attemptGenerationCount, attemptSourceCount int
-	var output string
-	require.NoError(t, pgxPool(pg).QueryRow(ctx, `
-		SELECT COUNT(*), MAX(output), COUNT(source_updated_at),
-		       COUNT(attempt_enqueued_at), COUNT(attempt_source_machine_id)
-		FROM roborev.reviews WHERE job_uuid = $1
-	`, jobUUID).Scan(
-		&count, &output, &sourceUpdateCount,
-		&attemptGenerationCount, &attemptSourceCount,
-	))
-	assert.Equal(t, 1, count)
-	assert.Equal(t, "new output", output)
-	assert.Equal(t, 1, sourceUpdateCount)
-	assert.Equal(t, 1, attemptGenerationCount)
-	assert.Equal(t, 1, attemptSourceCount)
-
-	_, err = pgxPool(pg).Exec(ctx, `
-		INSERT INTO roborev.reviews
-		  (uuid, job_uuid, agent, prompt, output, updated_by_machine_id, created_at)
-		VALUES ($1, $2, 'test', 'duplicate', 'duplicate', $3, NOW())
-	`, uuid.New().String(), jobUUID, uuid.New().String())
-	require.Error(t, err)
 }
 
 // pgxPool returns the underlying pgxpool.Pool for low-level access in tests.

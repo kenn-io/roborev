@@ -591,7 +591,7 @@ func TestRetryJobBackoffDefersClaim(t *testing.T) {
 	// Once the gate is in the past, the same job is claimable. Set the
 	// column directly instead of sleeping a real backoff — we're testing
 	// the predicate, not the clock.
-	past := retryNotBeforeAt(time.Now().Add(-time.Minute))
+	past := preciseTimestampAt(time.Now().Add(-time.Minute))
 	_, err = db.Exec(`UPDATE review_jobs SET retry_not_before = ? WHERE id = ?`, past, job.ID)
 	require.NoError(t, err)
 
@@ -1125,7 +1125,8 @@ func TestReenqueueJob(t *testing.T) {
 			`SELECT enqueued_at FROM review_jobs WHERE id = ?`, job.ID,
 		).Scan(&storedEnqueuedAt)
 		require.NoError(t, err)
-		assert.False(t, parseSQLiteTime(storedEnqueuedAt).IsZero())
+		_, err = time.Parse("2006-01-02 15:04:05", storedEnqueuedAt)
+		assert.NoError(t, err)
 	})
 
 	t.Run("rerun queued job fails", func(t *testing.T) {
@@ -1236,25 +1237,14 @@ func TestReenqueueJob(t *testing.T) {
 		require.NoError(t, err, "GetReviewByJobID failed after first complete: %v")
 
 		assert.Equal(t, "first output", review1.Output)
-		const firstCompletion = "2020-01-02T03:04:05Z"
-		_, err = isolatedDB.Exec(
-			`UPDATE reviews SET created_at = ?, closed = 1 WHERE id = ?`,
-			firstCompletion, review1.ID,
-		)
-		require.NoError(t, err)
 
 		// Re-enqueue the done job
 		err = isolatedDB.ReenqueueJob(job.ID, ReenqueueOpts{})
 		require.NoError(t, err, "ReenqueueJob failed: %v")
 
-		// The review row remains so rerun output keeps the same sync identity.
-		pendingReview, err := isolatedDB.GetReviewByJobID(job.ID)
-		require.NoError(t, err)
-		assert.Equal(t, review1.UUID, pendingReview.UUID)
-		assert.Empty(t, pendingReview.Prompt)
-		assert.Empty(t, pendingReview.Output)
-		assert.Nil(t, pendingReview.VerdictBool)
-		assert.False(t, pendingReview.Closed)
+		// Verify review was deleted
+		_, err = isolatedDB.GetReviewByJobID(job.ID)
+		require.Error(t, err, "Expected GetReviewByJobID to fail after re-enqueue (review should be deleted)")
 
 		// Second completion cycle
 		claimed, _ = isolatedDB.ClaimJob("worker-1")
@@ -1262,70 +1252,11 @@ func TestReenqueueJob(t *testing.T) {
 		err = isolatedDB.CompleteJob(job.ID, "codex", "second prompt", "second output")
 		require.NoError(t, err, "Second CompleteJob failed: %v")
 
-		// Verify the same review identity now carries the new content.
+		// Verify second review exists with new content
 		review2, err := isolatedDB.GetReviewByJobID(job.ID)
 		require.NoError(t, err, "GetReviewByJobID failed after second complete: %v")
 
-		assert.Equal(t, review1.UUID, review2.UUID)
-		assert.Equal(t, "second prompt", review2.Prompt)
 		assert.Equal(t, "second output", review2.Output)
-		assert.Greater(t, review2.CreatedAt, time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC))
-	})
-
-	t.Run("rerun advances imported future generations", func(t *testing.T) {
-		isolatedDB := openTestDB(t)
-		defer isolatedDB.Close()
-
-		_, _, job := createJobChain(
-			t, isolatedDB, "/tmp/future-generation-repo", "future-generation-sha",
-		)
-		claimed, err := isolatedDB.ClaimJob("worker-1")
-		require.NoError(t, err)
-		require.Equal(t, job.ID, claimed.ID)
-		require.NoError(t, isolatedDB.CompleteJob(
-			job.ID, "codex", "first prompt", "first output",
-		))
-
-		futureJob := time.Now().UTC().Add(2 * time.Hour).Truncate(time.Microsecond)
-		futureReview := futureJob.Add(time.Hour)
-		_, err = isolatedDB.Exec(`
-			UPDATE review_jobs
-			SET enqueued_at = ?, updated_at = ?, source_machine_id = 'remote-machine'
-			WHERE id = ?`,
-			futureJob.Format(time.RFC3339Nano),
-			futureJob.Format(time.RFC3339Nano),
-			job.ID,
-		)
-		require.NoError(t, err)
-		_, err = isolatedDB.Exec(`
-			UPDATE reviews SET created_at = ?, updated_at = ? WHERE job_id = ?`,
-			futureReview.Format(time.RFC3339Nano),
-			futureReview.Format(time.RFC3339Nano),
-			job.ID,
-		)
-		require.NoError(t, err)
-
-		require.NoError(t, isolatedDB.ReenqueueJob(job.ID, ReenqueueOpts{}))
-		var rerunEnqueuedRaw, pendingCreatedRaw string
-		require.NoError(t, isolatedDB.QueryRow(`
-			SELECT j.enqueued_at, r.created_at
-			FROM review_jobs j JOIN reviews r ON r.job_id = j.id
-			WHERE j.id = ?`, job.ID,
-		).Scan(&rerunEnqueuedRaw, &pendingCreatedRaw))
-		rerunEnqueued := parseSQLiteTime(rerunEnqueuedRaw)
-		pendingCreated := parseSQLiteTime(pendingCreatedRaw)
-		assert.Equal(t, 1, rerunEnqueued.Compare(futureReview))
-		assert.Equal(t, rerunEnqueued, pendingCreated)
-
-		claimed, err = isolatedDB.ClaimJob("worker-2")
-		require.NoError(t, err)
-		require.Equal(t, job.ID, claimed.ID)
-		require.NoError(t, isolatedDB.CompleteJob(
-			job.ID, "codex", "second prompt", "second output",
-		))
-		completed, err := isolatedDB.GetReviewByJobID(job.ID)
-		require.NoError(t, err)
-		assert.Equal(t, 1, completed.CreatedAt.Compare(pendingCreated))
 	})
 }
 

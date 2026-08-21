@@ -77,10 +77,12 @@ func TestStoreCapturedTokenUsageRejectsReenqueuedJob(t *testing.T) {
 	require.NoError(t, err)
 	_, saved, err := StoreCapturedTokenUsage(
 		db,
-		job.ID,
-		"prior-session",
-		selected.TokenUsage,
-		selected.StartedAtRaw,
+		CapturedUsage{
+			JobID:             job.ID,
+			SessionID:         "prior-session",
+			ExistingJSON:      selected.TokenUsage,
+			ExpectedStartedAt: selected.StartedAtRaw,
+		},
 		&tokens.Usage{OutputTokens: 32, ThreadID: "prior-session"},
 		nil,
 	)
@@ -121,9 +123,13 @@ func TestStoreMergedTokenUsagePreservesNewerUsageAfterConflict(t *testing.T) {
 	))
 
 	oldUsage := `{"total_output_tokens":10,"peak_context_tokens":100}`
-	updated, err := db.BackfillJobTokenUsageIfCurrent(
-		job.ID, "usage-session", "", oldUsage, claimed.StartedAtRaw, true,
-	)
+	updated, err := db.BackfillJobTokenUsageIfCurrent(storage.TokenUsageWrite{
+		JobID:                job.ID,
+		SessionID:            "usage-session",
+		TokenUsageJSON:       oldUsage,
+		ExpectedStartedAt:    claimed.StartedAtRaw,
+		RequireUniqueSession: true,
+	})
 	require.NoError(t, err)
 	require.True(t, updated)
 	newerUsage := `{"total_output_tokens":20,"peak_context_tokens":200,"has_cost":true,"cost_usd":0.66}`
@@ -133,10 +139,12 @@ func TestStoreMergedTokenUsagePreservesNewerUsageAfterConflict(t *testing.T) {
 
 	_, saved, err := StoreMergedTokenUsage(
 		db,
-		job.ID,
-		"usage-session",
-		oldUsage,
-		claimed.StartedAtRaw,
+		CapturedUsage{
+			JobID:             job.ID,
+			SessionID:         "usage-session",
+			ExistingJSON:      oldUsage,
+			ExpectedStartedAt: claimed.StartedAtRaw,
+		},
 		&tokens.Usage{
 			OutputTokens:      10,
 			PeakContextTokens: 100,
@@ -195,8 +203,8 @@ func TestNeedsTokenUsageBackfill(t *testing.T) {
 }
 
 // The drifted rows are the whole point of the backfill, so they must survive
-// both candidate filters used by `roborev backfill-tokens`.
-func TestTokenCandidatesIncludesDriftedCostRow(t *testing.T) {
+// the log-candidate filter used by `roborev backfill-tokens`.
+func TestLogTokenCandidatesIncludesDriftedCostRow(t *testing.T) {
 	started := time.Now()
 	job := storage.ReviewJob{
 		ID:         5297,
@@ -206,11 +214,10 @@ func TestTokenCandidatesIncludesDriftedCostRow(t *testing.T) {
 		TokenUsage: driftedUsage,
 	}
 
-	require.Len(t, TokenCandidates([]storage.ReviewJob{job}), 1)
 	require.Len(t, LogTokenCandidates([]storage.ReviewJob{job}), 1)
 }
 
-func TestBackfillCandidatesIncludeEveryTerminalStatus(t *testing.T) {
+func TestLogTokenCandidatesIncludeEveryTerminalStatus(t *testing.T) {
 	started := time.Now()
 	statuses := []storage.JobStatus{
 		storage.JobStatusDone,
@@ -242,9 +249,7 @@ func TestBackfillCandidatesIncludeEveryTerminalStatus(t *testing.T) {
 		},
 	)
 
-	assert := assert.New(t)
-	assert.Len(TokenCandidates(jobs), len(statuses))
-	assert.Len(LogTokenCandidates(jobs), len(statuses))
+	assert.Len(t, LogTokenCandidates(jobs), len(statuses))
 }
 
 func TestLogTokenCandidatesRequiresStartedAttempt(t *testing.T) {

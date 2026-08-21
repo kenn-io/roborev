@@ -107,7 +107,7 @@ func TestTokenCostReconcilerRecoversSessionFromJobLogAtStartup(t *testing.T) {
 	recovered, err := tc.DB.GetJobByID(job.ID)
 	require.NoError(t, err)
 	assert.Equal(t, "recovered-session", recovered.SessionID)
-	candidates, err := tc.DB.ListTokenCostCandidates(0, 10)
+	candidates, err := tc.DB.ListTokenCostCandidates(0, 10, time.Time{})
 	require.NoError(t, err)
 	require.Len(t, candidates, 1)
 
@@ -297,9 +297,12 @@ func seedTokenCostCandidate(
 	require.NoError(t, tc.DB.SaveJobSessionID(job.ID, testWorkerID, sessionID))
 	require.NoError(t, tc.DB.CompleteJob(job.ID, "codex", "prompt", "No issues found."))
 	if tokenUsage != "" {
-		updated, err := tc.DB.BackfillJobTokenUsageIfCurrent(
-			job.ID, sessionID, "", tokenUsage, "", true,
-		)
+		updated, err := tc.DB.BackfillJobTokenUsageIfCurrent(storage.TokenUsageWrite{
+			JobID:                job.ID,
+			SessionID:            sessionID,
+			TokenUsageJSON:       tokenUsage,
+			RequireUniqueSession: true,
+		})
 		require.NoError(t, err)
 		require.True(t, updated)
 	}

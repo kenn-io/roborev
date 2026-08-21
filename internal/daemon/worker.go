@@ -93,6 +93,7 @@ type WorkerPool struct {
 	tokenCostPageSize            int
 	tokenCostImmediateAttempts   int
 	tokenCostPendingLimit        int
+	tokenCostMaxCandidateAge     time.Duration
 	tokenUsageLogScanInterval    time.Duration
 	tokenUsageLogPageSize        int
 
@@ -142,6 +143,7 @@ func NewWorkerPool(db *storage.DB, cfgGetter ConfigGetter, numWorkers int, broad
 		tokenCostPageSize:            tokenCostPageSize,
 		tokenCostImmediateAttempts:   tokenCostImmediateAttempts,
 		tokenCostPendingLimit:        tokenCostRetryBufferSize,
+		tokenCostMaxCandidateAge:     tokenCostMaxCandidateAge,
 		tokenUsageLogScanInterval:    tokenUsageLogScanInterval,
 		tokenUsageLogPageSize:        tokenUsageLogPageSize,
 	}
@@ -1675,10 +1677,12 @@ func (wp *WorkerPool) captureTokenUsageForSession(
 	}
 	_, _, err = backfill.StoreCapturedTokenUsage(
 		wp.db,
-		job.ID,
-		sessionID,
-		current.TokenUsage,
-		job.StartedAtRaw,
+		backfill.CapturedUsage{
+			JobID:             job.ID,
+			SessionID:         sessionID,
+			ExistingJSON:      current.TokenUsage,
+			ExpectedStartedAt: job.StartedAtRaw,
+		},
 		logUsage,
 		providerUsage,
 	)

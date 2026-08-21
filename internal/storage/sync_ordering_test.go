@@ -95,7 +95,6 @@ func TestUpsertPulledReviewSkipsStaleRemoteUpdate(t *testing.T) {
 	job := h.createCompletedJob("stale-review-sha")
 	review, err := h.db.GetReviewByJobID(job.ID)
 	require.NoError(t, err)
-	attemptAt, attemptSource := storedReviewAttempt(t, h.db, review.ID)
 
 	require.NoError(t, h.db.MarkReviewClosed(review.ID, true))
 
@@ -107,8 +106,6 @@ func TestUpsertPulledReviewSkipsStaleRemoteUpdate(t *testing.T) {
 		Output:             review.Output,
 		Closed:             false,
 		UpdatedByMachineID: GenerateUUID(),
-		AttemptEnqueuedAt:  attemptAt,
-		AttemptSourceID:    attemptSource,
 		CreatedAt:          review.CreatedAt,
 		UpdatedAt:          time.Now().Add(-time.Hour),
 	})
@@ -117,253 +114,6 @@ func TestUpsertPulledReviewSkipsStaleRemoteUpdate(t *testing.T) {
 	review, err = h.db.GetReviewByJobID(job.ID)
 	require.NoError(t, err)
 	assert.True(t, review.Closed)
-}
-
-func TestUpsertPulledReviewAppliesNewerRerunContent(t *testing.T) {
-	h := newSyncTestHelper(t)
-	job := h.createCompletedJob("newer-rerun-review-sha")
-	review, err := h.db.GetReviewByJobID(job.ID)
-	require.NoError(t, err)
-
-	newCompletion := time.Now().Add(time.Hour)
-	err = h.db.UpsertPulledReview(PulledReview{
-		UUID:               review.UUID,
-		JobUUID:            job.UUID,
-		Agent:              "new-agent",
-		Prompt:             "new prompt",
-		Output:             "new output",
-		Closed:             true,
-		UpdatedByMachineID: GenerateUUID(),
-		AttemptEnqueuedAt:  newCompletion,
-		AttemptSourceID:    GenerateUUID(),
-		CreatedAt:          newCompletion,
-		UpdatedAt:          newCompletion,
-	})
-	require.NoError(t, err)
-
-	review, err = h.db.GetReviewByJobID(job.ID)
-	require.NoError(t, err)
-	assert.Equal(t, "new-agent", review.Agent)
-	assert.Equal(t, "new prompt", review.Prompt)
-	assert.Equal(t, "new output", review.Output)
-	assert.True(t, review.Closed)
-	assert.WithinDuration(t, newCompletion, review.CreatedAt, time.Second)
-}
-
-func TestUpsertPulledReviewAppliesNewerGenerationWithinSameSecond(t *testing.T) {
-	h := newSyncTestHelper(t)
-	job := h.createCompletedJob("same-second-rerun-review-sha")
-	review, err := h.db.GetReviewByJobID(job.ID)
-	require.NoError(t, err)
-	base := time.Date(2026, 8, 21, 12, 0, 0, 100_000_000, time.UTC)
-	_, err = h.db.Exec(`
-		UPDATE reviews
-		SET attempt_enqueued_at = ?, created_at = ?, updated_at = ?
-		WHERE id = ?`,
-		base.Format(time.RFC3339Nano), base.Format(time.RFC3339Nano),
-		base.Format(time.RFC3339Nano), review.ID)
-	require.NoError(t, err)
-
-	newer := base.Add(200 * time.Millisecond)
-	err = h.db.UpsertPulledReview(PulledReview{
-		UUID:               review.UUID,
-		JobUUID:            job.UUID,
-		Agent:              "rerun-agent",
-		Prompt:             "rerun prompt",
-		Output:             "rerun output",
-		UpdatedByMachineID: GenerateUUID(),
-		AttemptEnqueuedAt:  newer,
-		AttemptSourceID:    GenerateUUID(),
-		CreatedAt:          newer,
-		UpdatedAt:          newer,
-	})
-	require.NoError(t, err)
-
-	review, err = h.db.GetReviewByJobID(job.ID)
-	require.NoError(t, err)
-	assert.Equal(t, "rerun output", review.Output)
-	assert.Equal(t, newer, review.CreatedAt)
-}
-
-func TestUpsertPulledReviewAppliesSameGenerationAfterPostgresRounding(t *testing.T) {
-	h := newSyncTestHelper(t)
-	job := h.createCompletedJob("rounded-review-generation-sha")
-	review, err := h.db.GetReviewByJobID(job.ID)
-	require.NoError(t, err)
-	attemptAt, attemptSource := storedReviewAttempt(t, h.db, review.ID)
-
-	localCreated := time.Date(
-		2026, 8, 21, 12, 0, 0, 123_456_789, time.UTC,
-	)
-	_, err = h.db.Exec(`
-		UPDATE reviews SET created_at = ?, updated_at = ?, closed = 0 WHERE id = ?`,
-		localCreated.Format(time.RFC3339Nano),
-		localCreated.Format(time.RFC3339Nano),
-		review.ID,
-	)
-	require.NoError(t, err)
-
-	postgresCreated := localCreated.Truncate(time.Microsecond)
-	postgresUpdated := postgresCreated.Add(time.Second)
-	err = h.db.UpsertPulledReview(PulledReview{
-		UUID:               review.UUID,
-		JobUUID:            job.UUID,
-		Agent:              review.Agent,
-		Prompt:             review.Prompt,
-		Output:             review.Output,
-		Closed:             true,
-		UpdatedByMachineID: GenerateUUID(),
-		AttemptEnqueuedAt:  attemptAt,
-		AttemptSourceID:    attemptSource,
-		CreatedAt:          postgresCreated,
-		UpdatedAt:          postgresUpdated,
-	})
-	require.NoError(t, err)
-
-	review, err = h.db.GetReviewByJobID(job.ID)
-	require.NoError(t, err)
-	assert.True(t, review.Closed)
-	assert.Equal(t, postgresCreated, review.CreatedAt)
-}
-
-func TestUpsertPulledReviewConvergesDifferentUUIDForSameJob(t *testing.T) {
-	h := newSyncTestHelper(t)
-	job := h.createCompletedJob("duplicate-review-job-sha")
-	local, err := h.db.GetReviewByJobID(job.ID)
-	require.NoError(t, err)
-
-	incomingUUID := GenerateUUID()
-	newer := local.CreatedAt.Add(time.Hour)
-	err = h.db.UpsertPulledReview(PulledReview{
-		UUID:               incomingUUID,
-		JobUUID:            job.UUID,
-		Agent:              "newer-agent",
-		Prompt:             "newer prompt",
-		Output:             "newer output",
-		UpdatedByMachineID: GenerateUUID(),
-		AttemptEnqueuedAt:  newer,
-		AttemptSourceID:    GenerateUUID(),
-		CreatedAt:          newer,
-		UpdatedAt:          newer,
-	})
-	require.NoError(t, err)
-
-	converged, err := h.db.GetReviewByJobID(job.ID)
-	require.NoError(t, err)
-	assert.Equal(t, local.ID, converged.ID)
-	assert.Equal(t, incomingUUID, converged.UUID)
-	assert.Equal(t, "newer output", converged.Output)
-	var count int
-	require.NoError(t, h.db.QueryRow(
-		`SELECT COUNT(*) FROM reviews WHERE job_id = ?`, job.ID,
-	).Scan(&count))
-	assert.Equal(t, 1, count)
-}
-
-func TestUpsertPulledReviewBreaksEqualGenerationTiesByUpdater(t *testing.T) {
-	h := newSyncTestHelper(t)
-	job := h.createCompletedJob("review-generation-tie-sha")
-	review, err := h.db.GetReviewByJobID(job.ID)
-	require.NoError(t, err)
-	attemptAt, _ := storedReviewAttempt(t, h.db, review.ID)
-	generation := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
-	_, err = h.db.Exec(`
-		UPDATE reviews
-		SET output = 'lower output', created_at = ?, updated_at = ?,
-		    updated_by_machine_id = ?
-		WHERE id = ?`,
-		generation.Format(time.RFC3339Nano),
-		generation.Format(time.RFC3339Nano),
-		"00000000-0000-0000-0000-000000000001", review.ID,
-	)
-	require.NoError(t, err)
-
-	higher := PulledReview{
-		UUID:               review.UUID,
-		JobUUID:            job.UUID,
-		Agent:              review.Agent,
-		Prompt:             review.Prompt,
-		Output:             "higher output",
-		UpdatedByMachineID: "ffffffff-ffff-ffff-ffff-ffffffffffff",
-		AttemptEnqueuedAt:  attemptAt,
-		AttemptSourceID:    "ffffffff-ffff-ffff-ffff-ffffffffffff",
-		CreatedAt:          generation,
-		UpdatedAt:          generation,
-	}
-	require.NoError(t, h.db.UpsertPulledReview(higher))
-	lower := higher
-	lower.Output = "stale lower output"
-	lower.UpdatedByMachineID = "00000000-0000-0000-0000-000000000001"
-	require.NoError(t, h.db.UpsertPulledReview(lower))
-
-	var output, updater string
-	require.NoError(t, h.db.QueryRow(`
-		SELECT output, updated_by_machine_id FROM reviews WHERE id = ?`, review.ID,
-	).Scan(&output, &updater))
-	assert.Equal(t, higher.Output, output)
-	assert.Equal(t, higher.UpdatedByMachineID, updater)
-}
-
-func TestUpsertPulledReviewOrdersParentAttemptBeforeCompletion(t *testing.T) {
-	h := newSyncTestHelper(t)
-	job := h.createCompletedJob("review-attempt-tie-sha")
-	review, err := h.db.GetReviewByJobID(job.ID)
-	require.NoError(t, err)
-	attemptAt := time.Now().UTC().Add(-time.Hour).Truncate(time.Microsecond)
-	lowerSource := "00000000-0000-0000-0000-000000000001"
-	higherSource := "ffffffff-ffff-ffff-ffff-ffffffffffff"
-	lowerCompletion := attemptAt.Add(2 * time.Hour)
-	higherCompletion := attemptAt.Add(time.Hour)
-	_, err = h.db.Exec(`
-		UPDATE reviews
-		SET output = 'lower output', attempt_enqueued_at = ?,
-		    attempt_source_machine_id = ?, created_at = ?, updated_at = ?,
-		    updated_by_machine_id = ?
-		WHERE id = ?`,
-		formatSyncTimestamp(attemptAt), lowerSource,
-		formatSyncTimestamp(lowerCompletion), formatSyncTimestamp(lowerCompletion),
-		lowerSource, review.ID,
-	)
-	require.NoError(t, err)
-
-	higher := PulledReview{
-		UUID:               review.UUID,
-		JobUUID:            job.UUID,
-		Agent:              review.Agent,
-		Prompt:             review.Prompt,
-		Output:             "higher output",
-		UpdatedByMachineID: higherSource,
-		AttemptEnqueuedAt:  attemptAt,
-		AttemptSourceID:    higherSource,
-		CreatedAt:          higherCompletion,
-		UpdatedAt:          higherCompletion,
-	}
-	require.NoError(t, h.db.UpsertPulledReview(higher))
-	lower := higher
-	lower.Output = "stale lower output"
-	lower.UpdatedByMachineID = lowerSource
-	lower.AttemptSourceID = lowerSource
-	lower.CreatedAt = lowerCompletion
-	lower.UpdatedAt = lowerCompletion
-	require.NoError(t, h.db.UpsertPulledReview(lower))
-
-	var output, attemptSource string
-	require.NoError(t, h.db.QueryRow(`
-		SELECT output, attempt_source_machine_id
-		FROM reviews WHERE id = ?`, review.ID,
-	).Scan(&output, &attemptSource))
-	assert.Equal(t, higher.Output, output)
-	assert.Equal(t, higherSource, attemptSource)
-}
-
-func storedReviewAttempt(t *testing.T, db *DB, reviewID int64) (time.Time, string) {
-	t.Helper()
-	var enqueuedAt, source string
-	require.NoError(t, db.QueryRow(`
-		SELECT attempt_enqueued_at, attempt_source_machine_id
-		FROM reviews WHERE id = ?`, reviewID,
-	).Scan(&enqueuedAt, &source))
-	return parseSQLiteTime(enqueuedAt), source
 }
 
 // TestClearAllSyncedAt verifies that ClearAllSyncedAt clears synced_at
@@ -468,11 +218,11 @@ func TestBatchMarkSynced(t *testing.T) {
 		assert.Len(t, reviews, 3)
 
 		// Mark all 3 as synced
-		reviewMarks := make([]ReviewSyncMark, len(reviews))
+		reviewIDs := make([]int64, len(reviews))
 		for i, r := range reviews {
-			reviewMarks[i] = NewReviewSyncMark(r)
+			reviewIDs[i] = r.ID
 		}
-		if err := h.db.MarkReviewsSynced(reviewMarks); err != nil {
+		if err := h.db.MarkReviewsSynced(reviewIDs); err != nil {
 			require.NoError(t, err, "MarkReviewsSynced failed: %v")
 		}
 
@@ -511,7 +261,7 @@ func TestBatchMarkSynced(t *testing.T) {
 		if err := h.db.MarkJobsSynced([]JobSyncMark{}); err != nil {
 			require.NoError(t, err)
 		}
-		if err := h.db.MarkReviewsSynced([]ReviewSyncMark{}); err != nil {
+		if err := h.db.MarkReviewsSynced([]int64{}); err != nil {
 			require.NoError(t, err)
 		}
 		if err := h.db.MarkCommentsSynced([]int64{}); err != nil {
@@ -559,24 +309,6 @@ func TestMarkJobsSyncedSkipsRowsChangedSinceSnapshot(t *testing.T) {
 	done, err := h.db.GetJobsToSync(h.machineID, 100)
 	require.NoError(t, err)
 	assert.Empty(t, done, "job marked with the matching updated_at must be synced")
-}
-
-func TestMarkReviewsSyncedSkipsReviewChangedSinceSnapshot(t *testing.T) {
-	h := newSyncTestHelper(t)
-	job := h.createCompletedJob("review-mark-race-sha")
-	require.NoError(t, h.db.MarkJobSynced(job.ID))
-	snapshot, err := h.db.GetReviewsToSync(h.machineID, 10)
-	require.NoError(t, err)
-	require.Len(t, snapshot, 1)
-
-	require.NoError(t, h.db.ReenqueueJob(job.ID, ReenqueueOpts{}))
-	require.NoError(t, h.db.MarkReviewsSynced([]ReviewSyncMark{NewReviewSyncMark(snapshot[0])}))
-
-	var syncedAt sql.NullString
-	require.NoError(t, h.db.QueryRow(
-		`SELECT synced_at FROM reviews WHERE id = ?`, snapshot[0].ID,
-	).Scan(&syncedAt))
-	assert.False(t, syncedAt.Valid)
 }
 
 // TestMarkJobsSyncedSkipsCostWrittenInSameSecond covers the same-second case:

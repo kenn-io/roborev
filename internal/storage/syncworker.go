@@ -2,7 +2,6 @@ package storage
 
 import (
 	"context"
-	"errors"
 	"fmt"
 	"log"
 	"os"
@@ -651,15 +650,15 @@ func (w *SyncWorker) pushChangesWithStats(ctx context.Context, pool *PgPool) (pu
 		}
 
 		// Only mark successfully synced reviews
-		var syncedReviewMarks []ReviewSyncMark
+		var syncedReviewIDs []int64
 		for i, ok := range success {
 			if ok {
-				syncedReviewMarks = append(syncedReviewMarks, NewReviewSyncMark(reviews[i]))
+				syncedReviewIDs = append(syncedReviewIDs, reviews[i].ID)
 				stats.Reviews++
 			}
 		}
-		if len(syncedReviewMarks) > 0 {
-			if err := w.db.MarkReviewsSynced(syncedReviewMarks); err != nil {
+		if len(syncedReviewIDs) > 0 {
+			if err := w.db.MarkReviewsSynced(syncedReviewIDs); err != nil {
 				log.Printf("Sync: failed to mark reviews synced: %v", err)
 			}
 		}
@@ -717,7 +716,6 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 	}
 	jobQueryCursor := rewindTimestampIDCursor(jobCursor, syncCursorLookback())
 	maxJobCursor := jobCursor
-	deferredJobCursor := ""
 
 	for {
 		jobs, newCursor, err := pool.PullJobs(ctx, machineID, jobQueryCursor, 100)
@@ -730,16 +728,7 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 
 		for _, j := range jobs {
 			if err := w.pullJob(j); err != nil {
-				if errors.Is(err, ErrNewerPulledJobDeferred) {
-					retryCursor := formatTimestampIDCursor(
-						j.UpdatedAt, j.CursorID-1,
-					)
-					deferredJobCursor = minTimestampIDCursor(
-						deferredJobCursor, retryCursor,
-					)
-					continue
-				}
-				// Other failures keep all cursors unchanged for a full retry.
+				// Don't advance cursor if any upsert fails - we'll retry next sync
 				return stats, fmt.Errorf("pull job %s: %w", j.UUID, err)
 			}
 			stats.Jobs++
@@ -747,20 +736,12 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 
 		jobQueryCursor = newCursor
 		maxJobCursor = maxTimestampIDCursor(maxJobCursor, newCursor)
+		if err := w.db.SetSyncState(SyncStateLastJobCursor, maxJobCursor); err != nil {
+			return stats, fmt.Errorf("save job cursor: %w", err)
+		}
 
 		if len(jobs) < 100 {
 			break
-		}
-	}
-	jobCursorToSave := maxJobCursor
-	if deferredJobCursor != "" {
-		jobCursorToSave = minTimestampIDCursor(
-			jobCursorToSave, deferredJobCursor,
-		)
-	}
-	if jobCursorToSave != jobCursor {
-		if err := w.db.SetSyncState(SyncStateLastJobCursor, jobCursorToSave); err != nil {
-			return stats, fmt.Errorf("save job cursor: %w", err)
 		}
 	}
 
@@ -797,8 +778,6 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 				Output:             r.Output,
 				Closed:             r.Closed,
 				UpdatedByMachineID: r.UpdatedByMachineID,
-				AttemptEnqueuedAt:  r.AttemptEnqueuedAt,
-				AttemptSourceID:    r.AttemptSourceID,
 				CreatedAt:          r.CreatedAt,
 				UpdatedAt:          r.UpdatedAt,
 			}
@@ -930,27 +909,6 @@ func maxTimestampIDCursor(a, b string) string {
 		return a
 	}
 	if bTime.After(aTime) || (bTime.Equal(aTime) && bID > aID) {
-		return b
-	}
-	return a
-}
-
-func minTimestampIDCursor(a, b string) string {
-	if a == "" {
-		return b
-	}
-	if b == "" {
-		return a
-	}
-	aTime, aID, aOK := parseTimestampIDCursor(a)
-	bTime, bID, bOK := parseTimestampIDCursor(b)
-	if !aOK {
-		return b
-	}
-	if !bOK {
-		return a
-	}
-	if bTime.Before(aTime) || (bTime.Equal(aTime) && bID < aID) {
 		return b
 	}
 	return a

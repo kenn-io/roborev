@@ -2,6 +2,7 @@ package backfill
 
 import (
 	"fmt"
+	"time"
 
 	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/tokens"
@@ -34,29 +35,6 @@ type TokenSummary struct {
 	Skipped int           `json:"skipped"`
 	Failed  int           `json:"failed"`
 	Results []TokenResult `json:"results"`
-}
-
-// TokenCandidates filters an already-loaded job set to terminal rows with a
-// unique started session and missing cost. Database-backed callers should use
-// storage.ListTokenCostCandidates so agent-run evidence is enforced in SQL.
-func TokenCandidates(jobs []storage.ReviewJob) []storage.ReviewJob {
-	sessionCount := make(map[string]int)
-	for _, job := range jobs {
-		if job.SessionID != "" && job.StartedAt != nil {
-			sessionCount[job.SessionID]++
-		}
-	}
-
-	var out []storage.ReviewJob
-	for _, job := range jobs {
-		if !hasTerminalStatus(job.Status) || job.StartedAt == nil ||
-			!NeedsTokenCostBackfill(job.TokenUsage) || job.SessionID == "" ||
-			sessionCount[job.SessionID] > 1 {
-			continue
-		}
-		out = append(out, job)
-	}
-	return out
 }
 
 // LogTokenCandidates filters started jobs whose per-job logs may contain
@@ -213,21 +191,29 @@ func NeedsTokenUsageBackfill(tokenUsage string) bool {
 	return !hasTokenCounts || !hasRecordedCost(tokenUsage)
 }
 
+// CapturedUsage identifies the job attempt a recovered usage payload belongs
+// to. ExistingJSON is the usage snapshot loaded before the recovery attempt;
+// a non-empty ExpectedStartedAt pins writes to that attempt.
+type CapturedUsage struct {
+	JobID             int64
+	SessionID         string
+	ExistingJSON      string
+	ExpectedStartedAt string
+}
+
 // StoreMergedTokenUsage atomically merges recovered usage into a terminal job.
 // If normal capture updates the row during a provider lookup, this reloads the
-// latest usage and retries rather than overwriting newer token counts. A
-// non-empty expectedStartedAt also prevents a delayed write from crossing into
-// a later attempt. Callers can require storage to reject a provider session
-// that another started job began using in the meantime; per-job log usage is
-// safe without that guard.
+// latest usage and retries rather than overwriting newer token counts. Callers
+// can require storage to reject a provider session that another started job
+// began using in the meantime; per-job log usage is safe without that guard.
 func StoreMergedTokenUsage(
 	db *storage.DB,
-	jobID int64,
-	sessionID, existingJSON, expectedStartedAt string,
+	captured CapturedUsage,
 	fetched *tokens.Usage,
 	requireUniqueSession bool,
 ) (*tokens.Usage, bool, error) {
 	var merged *tokens.Usage
+	existingJSON := captured.ExistingJSON
 	afterConflict := false
 	for range storeAttempts {
 		if afterConflict {
@@ -238,24 +224,24 @@ func StoreMergedTokenUsage(
 		if merged == nil {
 			return nil, false, nil
 		}
-		updated, err := db.BackfillJobTokenUsageIfCurrent(
-			jobID,
-			sessionID,
-			existingJSON,
-			tokens.ToJSON(merged),
-			expectedStartedAt,
-			requireUniqueSession,
-		)
+		updated, err := db.BackfillJobTokenUsageIfCurrent(storage.TokenUsageWrite{
+			JobID:                captured.JobID,
+			SessionID:            captured.SessionID,
+			ExpectedTokenUsage:   existingJSON,
+			TokenUsageJSON:       tokens.ToJSON(merged),
+			ExpectedStartedAt:    captured.ExpectedStartedAt,
+			RequireUniqueSession: requireUniqueSession,
+		})
 		if err != nil || updated {
 			return merged, updated, err
 		}
 
-		current, err := db.GetJobByID(jobID)
+		current, err := db.GetJobByID(captured.JobID)
 		if err != nil {
 			return merged, false, err
 		}
 		if current.TokenUsage == existingJSON ||
-			(current.SessionID != "" && current.SessionID != sessionID) {
+			(current.SessionID != "" && current.SessionID != captured.SessionID) {
 			return merged, false, nil
 		}
 		if hasRecordedCost(current.TokenUsage) {
@@ -273,30 +259,23 @@ func StoreMergedTokenUsage(
 // expected start time keeps both writes bound to the selected attempt.
 func StoreCapturedTokenUsage(
 	db *storage.DB,
-	jobID int64,
-	sessionID, existingJSON, expectedStartedAt string,
+	captured CapturedUsage,
 	logUsage, providerUsage *tokens.Usage,
 ) (*tokens.Usage, bool, error) {
 	var stored *tokens.Usage
 	anySaved := false
-	for _, captured := range []struct {
+	for _, source := range []struct {
 		usage                *tokens.Usage
 		requireUniqueSession bool
 	}{
 		{usage: logUsage},
 		{usage: providerUsage, requireUniqueSession: true},
 	} {
-		if captured.usage == nil {
+		if source.usage == nil {
 			continue
 		}
 		merged, saved, err := StoreMergedTokenUsage(
-			db,
-			jobID,
-			sessionID,
-			existingJSON,
-			expectedStartedAt,
-			captured.usage,
-			captured.requireUniqueSession,
+			db, captured, source.usage, source.requireUniqueSession,
 		)
 		if err != nil {
 			return stored, anySaved, err
@@ -306,7 +285,7 @@ func StoreCapturedTokenUsage(
 		}
 		stored = merged
 		anySaved = true
-		existingJSON = tokens.ToJSON(merged)
+		captured.ExistingJSON = tokens.ToJSON(merged)
 	}
 	return stored, anySaved, nil
 }
@@ -317,7 +296,7 @@ func ApplyTokenUsage(
 	candidates := make(map[string]storage.TokenCostCandidate)
 	var cursor int64
 	for {
-		page, err := db.ListTokenCostCandidates(cursor, 1000)
+		page, err := db.ListTokenCostCandidates(cursor, 1000, time.Time{})
 		if err != nil {
 			return TokenSummary{}, fmt.Errorf("list token cost candidates: %w", err)
 		}
@@ -368,8 +347,12 @@ func ApplyTokenUsage(
 			result.Summary = merged.FormatSummary()
 			if !dryRun {
 				stored, updated, err := StoreMergedTokenUsage(
-					db, job.JobID, job.SessionID, job.TokenUsage,
-					job.StartedAtRaw, session.Usage, true,
+					db, CapturedUsage{
+						JobID:             job.JobID,
+						SessionID:         job.SessionID,
+						ExistingJSON:      job.TokenUsage,
+						ExpectedStartedAt: job.StartedAtRaw,
+					}, session.Usage, true,
 				)
 				if err != nil {
 					result.Status = ResultFailed

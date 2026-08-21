@@ -60,9 +60,12 @@ const uniqueStartedSessionPredicate = `NOT EXISTS (
 
 // ListTokenCostCandidates returns a bounded page ordered by job ID. afterJobID
 // is exclusive, so callers can retain a cursor while successfully priced rows
-// disappear from the candidate set.
+// disappear from the candidate set. A non-zero startedAfter excludes attempts
+// that started earlier: the daemon's periodic reconciliation passes one so
+// permanently unpriceable history (deleted sessions) does not stay in the scan
+// forever, while the manual backfill passes zero to reach every job.
 func (db *DB) ListTokenCostCandidates(
-	afterJobID int64, limit int,
+	afterJobID int64, limit int, startedAfter time.Time,
 ) ([]TokenCostCandidate, error) {
 	if limit <= 0 {
 		return nil, nil
@@ -71,16 +74,21 @@ func (db *DB) ListTokenCostCandidates(
 	if err != nil {
 		return nil, fmt.Errorf("get machine ID: %w", err)
 	}
+	startedCutoff := ""
+	if !startedAfter.IsZero() {
+		startedCutoff = formatSQLiteTimestamp(startedAfter)
+	}
 	rows, err := db.Query(`
 		SELECT j.id, j.session_id, j.agent, COALESCE(j.token_usage, ''),
 		       j.started_at
 		FROM review_jobs j
 		WHERE j.id > ?
 		  AND j.source_machine_id = ?
+		  AND (? = '' OR `+sqliteNormalizedTimestampExpr("j.started_at")+` >= ?)
 		  AND `+tokenCostCandidatePredicate+`
 		  AND `+uniqueStartedSessionPredicate+`
 		ORDER BY j.id
-		LIMIT ?`, afterJobID, machineID, limit)
+		LIMIT ?`, afterJobID, machineID, startedCutoff, startedCutoff, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list token cost candidates: %w", err)
 	}

@@ -21,6 +21,12 @@ const (
 	tokenCostImmediateAttempts = 3
 	tokenUsageLogScanInterval  = 15 * time.Minute
 	tokenUsageLogPageSize      = 1000
+	// tokenCostMaxCandidateAge bounds the periodic scan: usage indexing lags
+	// by minutes, so a week-old miss means the session data is gone (deleted
+	// session, retired provider) and endless per-minute provider lookups would
+	// never resolve it. Older jobs remain reachable via `roborev
+	// backfill-tokens`, which scans without an age bound.
+	tokenCostMaxCandidateAge = 7 * 24 * time.Hour
 )
 
 type tokenCostRetryState struct {
@@ -129,10 +135,12 @@ func (wp *WorkerPool) recoverTokenUsageLog(candidate storage.TokenUsageLogCandid
 	}
 	_, _, err = backfill.StoreMergedTokenUsage(
 		wp.db,
-		candidate.JobID,
-		sessionID,
-		candidate.TokenUsage,
-		candidate.StartedAtRaw,
+		backfill.CapturedUsage{
+			JobID:             candidate.JobID,
+			SessionID:         sessionID,
+			ExistingJSON:      candidate.TokenUsage,
+			ExpectedStartedAt: candidate.StartedAtRaw,
+		},
 		usage,
 		false,
 	)
@@ -205,6 +213,7 @@ func (wp *WorkerPool) reconcileTokenCostPage(
 ) int64 {
 	candidates, err := wp.db.ListTokenCostCandidates(
 		afterJobID, wp.tokenCostPageSize,
+		time.Now().Add(-wp.tokenCostMaxCandidateAge),
 	)
 	if err != nil {
 		if !errors.Is(err, context.Canceled) {
@@ -266,10 +275,12 @@ func (wp *WorkerPool) reconcileTokenCostCandidate(
 	}
 	_, updated, err := backfill.StoreMergedTokenUsage(
 		wp.db,
-		candidate.JobID,
-		candidate.SessionID,
-		candidate.TokenUsage,
-		candidate.StartedAtRaw,
+		backfill.CapturedUsage{
+			JobID:             candidate.JobID,
+			SessionID:         candidate.SessionID,
+			ExistingJSON:      candidate.TokenUsage,
+			ExpectedStartedAt: candidate.StartedAtRaw,
+		},
 		fetched,
 		true,
 	)

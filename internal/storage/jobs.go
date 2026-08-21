@@ -12,27 +12,23 @@ import (
 	"unicode"
 )
 
-// retryNotBeforeLayout is a fixed-width timestamp layout used for the
-// retry_not_before column. Two reasons it differs from RFC3339Nano:
+// preciseTimestampLayout is a fixed-width timestamp layout used for the
+// retry_not_before column and attempt boundaries (started_at). Two reasons it
+// differs from RFC3339Nano:
 //   - The 9-digit padded fractional seconds avoid the RFC3339Nano quirk
 //     of stripping trailing zeros (".5" vs ".500000000"), which would
 //     break lexicographic SQL comparison around fractional widths.
-//   - Callers must format in UTC (see retryNotBeforeAt). Mixing local
+//   - Callers must format in UTC (see preciseTimestampAt). Mixing local
 //     offsets would break comparison during DST fall-back, where the
 //     same local clock time repeats with different UTC offsets.
-const retryNotBeforeLayout = "2006-01-02T15:04:05.000000000Z07:00"
+const preciseTimestampLayout = "2006-01-02T15:04:05.000000000Z07:00"
 
-// retryNotBeforeAt returns t formatted for the retry_not_before column.
-// Always normalizes to UTC so DST fall-back can't produce two ordered-
-// differently-but-equal local strings.
-func retryNotBeforeAt(t time.Time) string {
-	return preciseTimestampAt(t)
-}
-
-// preciseTimestampAt keeps attempt boundaries distinct even when retries start
-// within the same second.
+// preciseTimestampAt keeps retry boundaries ordered and attempt boundaries
+// distinct even when two attempts start within the same second. Always
+// normalizes to UTC so DST fall-back can't produce two ordered-differently-
+// but-equal local strings.
 func preciseTimestampAt(t time.Time) string {
-	return t.UTC().Format(retryNotBeforeLayout)
+	return t.UTC().Format(preciseTimestampLayout)
 }
 
 // parseSQLiteTime parses a time string from SQLite which may be in different formats.
@@ -508,9 +504,9 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 	now := time.Now()
 	nowStr := preciseTimestampAt(now)
 	// retry_not_before is stored UTC + fixed-width nano (see
-	// retryNotBeforeLayout) so the SQL comparison stays monotonic with
+	// preciseTimestampLayout) so the SQL comparison stays monotonic with
 	// time. Format the comparison value the same way.
-	nowNano := retryNotBeforeAt(now)
+	nowNano := preciseTimestampAt(now)
 
 	// Atomically claim a job by updating it in a single statement
 	// This prevents race conditions where two workers select the same job
@@ -831,25 +827,32 @@ func (db *DB) SaveJobTokenUsage(jobID int64, sessionID, tokenUsageJSON string) e
 	return err
 }
 
+// TokenUsageWrite describes a guarded token-usage write for one job attempt.
+// ExpectedTokenUsage is the usage snapshot the row must still hold (the
+// compare half of the compare-and-swap). ExpectedStartedAt, when non-empty,
+// pins the write to the attempt it was captured from. RequireUniqueSession
+// rejects the write when another started attempt is known to have used the
+// same provider session; cumulative provider usage needs it, per-job log
+// usage does not.
+type TokenUsageWrite struct {
+	JobID                int64
+	SessionID            string
+	ExpectedTokenUsage   string
+	TokenUsageJSON       string
+	ExpectedStartedAt    string
+	RequireUniqueSession bool
+}
+
 // BackfillJobTokenUsageIfCurrent stores recovered token usage only while the
 // terminal row still has the expected usage snapshot. The compare-and-swap
 // guard lets callers reload and re-merge when normal capture writes newer token
-// counts during a provider lookup. An expected start time also prevents a
-// recovered session from crossing into a later attempt. Provider-derived usage
-// can additionally require a unique started session, closing the same
-// lookup-to-write race when another job starts reusing that session. Per-job
-// log usage does not need that uniqueness guard.
-func (db *DB) BackfillJobTokenUsageIfCurrent(
-	jobID int64,
-	sessionID, expectedTokenUsage, tokenUsageJSON, expectedStartedAt string,
-	requireUniqueSession bool,
-) (bool, error) {
-	if tokenUsageJSON == "" {
+// counts during a provider lookup. The write is not restricted to locally
+// owned rows: a job that ran here may sit on an imported row (a local rerun of
+// a synced job), and the attempt guards scope the write regardless of
+// ownership. Background candidate discovery stays ownership-restricted.
+func (db *DB) BackfillJobTokenUsageIfCurrent(w TokenUsageWrite) (bool, error) {
+	if w.TokenUsageJSON == "" {
 		return false, nil
-	}
-	machineID, err := db.GetMachineID()
-	if err != nil {
-		return false, err
 	}
 	ctx := context.Background()
 	conn, err := db.Conn(ctx)
@@ -869,20 +872,20 @@ func (db *DB) BackfillJobTokenUsageIfCurrent(
 		}
 	}()
 
-	if sessionID != "" {
+	if w.SessionID != "" {
 		if _, err := conn.ExecContext(ctx, `
 			INSERT OR IGNORE INTO review_job_session_history
 				(source_machine_id, session_id, job_uuid, started_at)
 			SELECT source_machine_id, ?, uuid, started_at
 			FROM review_jobs
 			WHERE id = ?
-			  AND source_machine_id = ?
+			  AND source_machine_id IS NOT NULL AND source_machine_id != ''
 			  AND uuid IS NOT NULL AND uuid != ''
 			  AND started_at IS NOT NULL
 			  AND (session_id IS NULL OR session_id = '' OR session_id = ?)
 			  AND (? = '' OR started_at = ?)`,
-			sessionID, jobID, machineID, sessionID,
-			expectedStartedAt, expectedStartedAt,
+			w.SessionID, w.JobID, w.SessionID,
+			w.ExpectedStartedAt, w.ExpectedStartedAt,
 		); err != nil {
 			return false, err
 		}
@@ -899,7 +902,6 @@ func (db *DB) BackfillJobTokenUsageIfCurrent(
 		     updated_at = ?,
 		     synced_at = NULL
 		 WHERE id = ?
-		   AND source_machine_id = ?
 		   AND status IN ('done', 'applied', 'rebased', 'failed', 'canceled', 'skipped')
 		   AND (session_id IS NULL OR session_id = '' OR session_id = ?)
 		   AND COALESCE(token_usage, '') = ?
@@ -920,9 +922,9 @@ func (db *DB) BackfillJobTokenUsageIfCurrent(
 		       AND history.session_id = ?
 		       AND (history.job_uuid != review_jobs.uuid OR history.started_at != review_jobs.started_at)
 		   )))`,
-		tokenUsageJSON, sessionID, sessionID, now, jobID, machineID, sessionID,
-		expectedTokenUsage, expectedStartedAt, expectedStartedAt,
-		requireUniqueSession, sessionID, sessionID, sessionID,
+		w.TokenUsageJSON, w.SessionID, w.SessionID, now, w.JobID, w.SessionID,
+		w.ExpectedTokenUsage, w.ExpectedStartedAt, w.ExpectedStartedAt,
+		w.RequireUniqueSession, w.SessionID, w.SessionID, w.SessionID,
 	)
 	if err != nil {
 		return false, err
@@ -942,8 +944,7 @@ func (db *DB) BackfillJobTokenUsageIfCurrent(
 // and persists the patch in a single transaction. This prevents invalid
 // states where a patch is written but the job isn't done, or vice versa.
 func (db *DB) CompleteFixJob(jobID int64, agent, prompt, output, patch string) error {
-	nowInstant := time.Now()
-	now := nowInstant.Format(time.RFC3339)
+	now := time.Now().Format(time.RFC3339)
 	machineID, _ := db.GetMachineID()
 	reviewUUID := GenerateUUID()
 
@@ -966,26 +967,12 @@ func (db *DB) CompleteFixJob(jobID int64, agent, prompt, output, patch string) e
 		}
 	}()
 
-	// Fetch output_prefix and the prior review generation (if any). Completion
-	// must advance the generation even when the job originated on a machine
-	// whose wall clock was ahead of this one.
-	var outputPrefix, priorReviewCreated, attemptSource sql.NullString
-	var attemptEnqueuedAt string
-	err = conn.QueryRowContext(ctx, `
-		SELECT j.output_prefix, r.created_at, j.enqueued_at,
-		       j.source_machine_id
-		FROM review_jobs j LEFT JOIN reviews r ON r.job_id = j.id
-		WHERE j.id = ?`, jobID,
-	).Scan(
-		&outputPrefix, &priorReviewCreated,
-		&attemptEnqueuedAt, &attemptSource,
-	)
+	// Fetch output_prefix from job (if any)
+	var outputPrefix sql.NullString
+	err = conn.QueryRowContext(ctx, `SELECT output_prefix FROM review_jobs WHERE id = ?`, jobID).Scan(&outputPrefix)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	reviewTimestamp := nextGenerationTimestamp(
-		nowInstant, priorReviewCreated.String,
-	).Format(time.RFC3339Nano)
 
 	finalOutput := output
 	if outputPrefix.Valid && outputPrefix.String != "" {
@@ -995,7 +982,7 @@ func (db *DB) CompleteFixJob(jobID int64, agent, prompt, output, patch string) e
 	// Atomically set status=done AND patch in one UPDATE
 	result, err := conn.ExecContext(ctx,
 		`UPDATE review_jobs SET status = 'done', finished_at = ?, updated_at = ?, patch = ? WHERE id = ? AND status = 'running'`,
-		now, reviewTimestamp, patch, jobID)
+		now, now, patch, jobID)
 	if err != nil {
 		return err
 	}
@@ -1016,22 +1003,8 @@ func (db *DB) CompleteFixJob(jobID int64, agent, prompt, output, patch string) e
 		verdictBoolVal = verdictToBool(ParseVerdict(finalOutput))
 	}
 	_, err = conn.ExecContext(ctx,
-		`INSERT INTO reviews (job_id, agent, prompt, output, verdict_bool, uuid, updated_by_machine_id, created_at, updated_at, attempt_enqueued_at, attempt_source_machine_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		 ON CONFLICT(job_id) DO UPDATE SET
-		   agent = excluded.agent,
-		   prompt = excluded.prompt,
-		   output = excluded.output,
-		   verdict_bool = excluded.verdict_bool,
-		   closed = 0,
-		   updated_by_machine_id = excluded.updated_by_machine_id,
-		   created_at = excluded.created_at,
-		   updated_at = excluded.updated_at,
-		   attempt_enqueued_at = excluded.attempt_enqueued_at,
-		   attempt_source_machine_id = excluded.attempt_source_machine_id,
-		   synced_at = NULL`,
-		jobID, agent, prompt, finalOutput, verdictBoolVal, reviewUUID, machineID,
-		reviewTimestamp, reviewTimestamp, attemptEnqueuedAt,
-		defaultStr(attemptSource.String, machineID))
+		`INSERT INTO reviews (job_id, agent, prompt, output, verdict_bool, uuid, updated_by_machine_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		jobID, agent, prompt, finalOutput, verdictBoolVal, reviewUUID, machineID, now)
 	if err != nil {
 		return err
 	}
@@ -1050,8 +1023,7 @@ func (db *DB) CompleteFixJob(jobID int64, agent, prompt, output, patch string) e
 func (db *DB) CompleteJob(jobID int64, agent, prompt, output string) error {
 	// Get machine ID and generate UUIDs before starting transaction
 	// to avoid potential lock conflicts with GetMachineID's writes
-	nowInstant := time.Now()
-	now := nowInstant.Format(time.RFC3339)
+	now := time.Now().Format(time.RFC3339)
 	machineID, _ := db.GetMachineID()
 	reviewUUID := GenerateUUID()
 
@@ -1076,26 +1048,12 @@ func (db *DB) CompleteJob(jobID int64, agent, prompt, output string) error {
 		}
 	}()
 
-	// Fetch output_prefix and the prior review generation (if any). Completion
-	// must advance the generation even when the job originated on a machine
-	// whose wall clock was ahead of this one.
-	var outputPrefix, priorReviewCreated, attemptSource sql.NullString
-	var attemptEnqueuedAt string
-	err = conn.QueryRowContext(ctx, `
-		SELECT j.output_prefix, r.created_at, j.enqueued_at,
-		       j.source_machine_id
-		FROM review_jobs j LEFT JOIN reviews r ON r.job_id = j.id
-		WHERE j.id = ?`, jobID,
-	).Scan(
-		&outputPrefix, &priorReviewCreated,
-		&attemptEnqueuedAt, &attemptSource,
-	)
+	// Fetch output_prefix from job (if any)
+	var outputPrefix sql.NullString
+	err = conn.QueryRowContext(ctx, `SELECT output_prefix FROM review_jobs WHERE id = ?`, jobID).Scan(&outputPrefix)
 	if err != nil && !errors.Is(err, sql.ErrNoRows) {
 		return err
 	}
-	reviewTimestamp := nextGenerationTimestamp(
-		nowInstant, priorReviewCreated.String,
-	).Format(time.RFC3339Nano)
 
 	// Prepend output_prefix if present
 	finalOutput := output
@@ -1104,7 +1062,7 @@ func (db *DB) CompleteJob(jobID int64, agent, prompt, output string) error {
 	}
 
 	// Update job status only if still running (not canceled)
-	result, err := conn.ExecContext(ctx, `UPDATE review_jobs SET status = 'done', finished_at = ?, updated_at = ? WHERE id = ? AND status = 'running'`, now, reviewTimestamp, jobID)
+	result, err := conn.ExecContext(ctx, `UPDATE review_jobs SET status = 'done', finished_at = ?, updated_at = ? WHERE id = ? AND status = 'running'`, now, now, jobID)
 	if err != nil {
 		return err
 	}
@@ -1124,22 +1082,8 @@ func (db *DB) CompleteJob(jobID int64, agent, prompt, output string) error {
 	if finalOutput != "" {
 		verdictBoolVal = verdictToBool(ParseVerdict(finalOutput))
 	}
-	_, err = conn.ExecContext(ctx, `INSERT INTO reviews (job_id, agent, prompt, output, verdict_bool, uuid, updated_by_machine_id, created_at, updated_at, attempt_enqueued_at, attempt_source_machine_id) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-		ON CONFLICT(job_id) DO UPDATE SET
-		  agent = excluded.agent,
-		  prompt = excluded.prompt,
-		  output = excluded.output,
-		  verdict_bool = excluded.verdict_bool,
-		  closed = 0,
-		  updated_by_machine_id = excluded.updated_by_machine_id,
-		  created_at = excluded.created_at,
-		  updated_at = excluded.updated_at,
-		  attempt_enqueued_at = excluded.attempt_enqueued_at,
-		  attempt_source_machine_id = excluded.attempt_source_machine_id,
-		  synced_at = NULL`,
-		jobID, agent, prompt, finalOutput, verdictBoolVal, reviewUUID, machineID,
-		reviewTimestamp, reviewTimestamp, attemptEnqueuedAt,
-		defaultStr(attemptSource.String, machineID))
+	_, err = conn.ExecContext(ctx, `INSERT INTO reviews (job_id, agent, prompt, output, verdict_bool, uuid, updated_by_machine_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		jobID, agent, prompt, finalOutput, verdictBoolVal, reviewUUID, machineID, now)
 	if err != nil {
 		return err
 	}
@@ -1249,8 +1193,8 @@ type ReenqueueOpts struct {
 }
 
 // ReenqueueJob resets a completed, failed, or canceled job back to queued status.
-// This allows manual re-running of jobs to get a fresh review. A completed
-// rerun updates the existing review row so its sync identity remains stable.
+// This allows manual re-running of jobs to get a fresh review.
+// For done jobs, the existing review is deleted to avoid unique constraint violations.
 func (db *DB) ReenqueueJob(jobID int64, opts ReenqueueOpts) error {
 	_, _, err := db.ReenqueueJobWithRequest(jobID, opts, "")
 	return err
@@ -1262,10 +1206,6 @@ func (db *DB) ReenqueueJob(jobID int64, opts ReenqueueOpts) error {
 func (db *DB) ReenqueueJobWithRequest(
 	jobID int64, opts ReenqueueOpts, requestID string,
 ) (resultJobID int64, replayed bool, err error) {
-	machineID, err := db.GetMachineID()
-	if err != nil {
-		return 0, false, fmt.Errorf("get machine ID: %w", err)
-	}
 	ctx := context.Background()
 	conn, err := db.Conn(ctx)
 	if err != nil {
@@ -1298,21 +1238,15 @@ func (db *DB) ReenqueueJobWithRequest(
 		}
 	}
 
-	var priorEnqueued string
-	var priorReviewCreated sql.NullString
-	if err := conn.QueryRowContext(ctx, `
-		SELECT j.enqueued_at, r.created_at
-		FROM review_jobs j LEFT JOIN reviews r ON r.job_id = j.id
-		WHERE j.id = ?`, jobID,
-	).Scan(&priorEnqueued, &priorReviewCreated); err != nil {
+	// Delete any existing review for this job (for done jobs being rerun)
+	_, err = conn.ExecContext(ctx, `DELETE FROM reviews WHERE job_id = ?`, jobID)
+	if err != nil {
 		return 0, false, err
 	}
-	generationAt := nextGenerationTimestamp(
-		time.Now(), priorEnqueued, priorReviewCreated.String,
-	)
-	enqueuedAt := generationAt.Format(time.RFC3339Nano)
-	updatedAt := enqueuedAt
-	reviewGenerationAt := enqueuedAt
+
+	now := time.Now()
+	enqueuedAt := formatSQLiteTimestamp(now)
+	updatedAt := now.Format(time.RFC3339)
 
 	// Reset job status and replace effective execution settings with the
 	// newly resolved values for this rerun. Clear prompt_prebuilt and prompt
@@ -1320,10 +1254,7 @@ func (db *DB) ReenqueueJobWithRequest(
 	// Stored-prompt jobs (task, compact, fix, insights) keep their prompt
 	// since the worker needs it and cannot regenerate it from git.
 	//
-	// source_machine_id transfers to this machine because an explicit local
-	// rerun creates a new locally owned attempt, even when the original job was
-	// imported through sync. synced_at is cleared because this attempt's cost
-	// metadata is cleared: if
+	// synced_at is cleared because this attempt's cost metadata is cleared: if
 	// the rerun completes unpriced in the same RFC3339 second as the prior
 	// sync, the second-precise updated_at vs synced_at comparison would compare
 	// equal and never re-push, leaving stale spend in PostgreSQL. A NULL
@@ -1333,7 +1264,7 @@ func (db *DB) ReenqueueJobWithRequest(
 	// the same reason.
 	result, err := conn.ExecContext(ctx, `
 		UPDATE review_jobs
-		SET status = 'queued', enqueued_at = ?, worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = 0, patch = NULL, session_id = NULL, session_resumed = 0, token_usage = NULL, command_line = NULL, agent_invoked = 0, synced_at = NULL, source_machine_id = ?, model = ?, provider = ?,
+		SET status = 'queued', enqueued_at = ?, worker_id = NULL, started_at = NULL, finished_at = NULL, error = NULL, retry_count = 0, patch = NULL, session_id = NULL, session_resumed = 0, token_usage = NULL, command_line = NULL, agent_invoked = 0, synced_at = NULL, model = ?, provider = ?,
 		    prompt_prebuilt = 0,
 		    prompt = CASE WHEN job_type IN ('task', 'compact', 'fix', 'insights') THEN prompt ELSE NULL END,
 		    skip_reason = NULL,
@@ -1343,7 +1274,7 @@ func (db *DB) ReenqueueJobWithRequest(
 		    status IN ('done', 'failed', 'skipped')
 		    OR (status = 'canceled' AND worker_id IS NULL)
 		  )
-	`, enqueuedAt, machineID, nullString(opts.Model), nullString(opts.Provider), updatedAt, jobID)
+	`, enqueuedAt, nullString(opts.Model), nullString(opts.Provider), updatedAt, jobID)
 	if err != nil {
 		return 0, false, err
 	}
@@ -1353,20 +1284,6 @@ func (db *DB) ReenqueueJobWithRequest(
 	}
 	if rows == 0 {
 		return 0, false, sql.ErrNoRows
-	}
-	// Keep the review UUID stable for the next successful completion, but
-	// invalidate the prior attempt's result immediately. If this rerun fails or
-	// is canceled, neither local reads nor sync peers can mistake the old output
-	// for the current attempt's result.
-	if _, err := conn.ExecContext(ctx, `
-		UPDATE reviews
-		SET prompt = '', output = '', verdict_bool = NULL, closed = 0,
-		    updated_by_machine_id = ?, created_at = ?, updated_at = ?,
-		    attempt_enqueued_at = ?, attempt_source_machine_id = ?,
-		    synced_at = NULL
-		WHERE job_id = ?`, machineID, reviewGenerationAt, reviewGenerationAt,
-		enqueuedAt, machineID, jobID); err != nil {
-		return 0, false, err
 	}
 	if requestID != "" {
 		if err := recordRerunRequest(ctx, conn, requestID, jobID, jobID, ""); err != nil {
@@ -1380,21 +1297,6 @@ func (db *DB) ReenqueueJobWithRequest(
 	}
 	committed = true
 	return jobID, false, nil
-}
-
-// nextGenerationTimestamp returns a timestamp strictly newer than every
-// persisted generation. PostgreSQL timestamps have microsecond precision, so
-// advance by one microsecond rather than one nanosecond to preserve strict
-// ordering after a sync round trip.
-func nextGenerationTimestamp(now time.Time, persisted ...string) time.Time {
-	next := canonicalSyncTimestamp(now)
-	for _, raw := range persisted {
-		prior := parseSQLiteTime(raw)
-		if !prior.IsZero() && !next.After(prior) {
-			next = canonicalSyncTimestamp(prior).Add(time.Microsecond)
-		}
-	}
-	return next
 }
 
 // ReleaseCanceledJob clears ownership only after the canceled worker has
@@ -1516,7 +1418,7 @@ func (db *DB) getJobByIDTx(
 func (db *DB) RetryJob(jobID int64, workerID string, maxRetries int, retryBackoff time.Duration) (bool, error) {
 	var notBefore any
 	if retryBackoff > 0 {
-		notBefore = retryNotBeforeAt(time.Now().Add(retryBackoff))
+		notBefore = preciseTimestampAt(time.Now().Add(retryBackoff))
 	}
 
 	var result sql.Result
