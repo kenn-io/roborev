@@ -996,7 +996,7 @@ func (db *DB) CompleteFixJob(jobID int64, agent, prompt, output, patch string) e
 		verdictBoolVal = verdictToBool(ParseVerdict(finalOutput))
 	}
 	_, err = conn.ExecContext(ctx,
-		`INSERT INTO reviews (job_id, agent, prompt, output, verdict_bool, uuid, updated_by_machine_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		`INSERT INTO reviews (job_id, agent, prompt, output, verdict_bool, uuid, updated_by_machine_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		 ON CONFLICT(job_id) DO UPDATE SET
 		   agent = excluded.agent,
 		   prompt = excluded.prompt,
@@ -1004,9 +1004,10 @@ func (db *DB) CompleteFixJob(jobID int64, agent, prompt, output, patch string) e
 		   verdict_bool = excluded.verdict_bool,
 		   closed = 0,
 		   updated_by_machine_id = excluded.updated_by_machine_id,
+		   created_at = excluded.created_at,
 		   updated_at = excluded.updated_at,
 		   synced_at = NULL`,
-		jobID, agent, prompt, finalOutput, verdictBoolVal, reviewUUID, machineID, now)
+		jobID, agent, prompt, finalOutput, verdictBoolVal, reviewUUID, machineID, now, now)
 	if err != nil {
 		return err
 	}
@@ -1084,7 +1085,7 @@ func (db *DB) CompleteJob(jobID int64, agent, prompt, output string) error {
 	if finalOutput != "" {
 		verdictBoolVal = verdictToBool(ParseVerdict(finalOutput))
 	}
-	_, err = conn.ExecContext(ctx, `INSERT INTO reviews (job_id, agent, prompt, output, verdict_bool, uuid, updated_by_machine_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+	_, err = conn.ExecContext(ctx, `INSERT INTO reviews (job_id, agent, prompt, output, verdict_bool, uuid, updated_by_machine_id, created_at, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(job_id) DO UPDATE SET
 		  agent = excluded.agent,
 		  prompt = excluded.prompt,
@@ -1092,9 +1093,10 @@ func (db *DB) CompleteJob(jobID int64, agent, prompt, output string) error {
 		  verdict_bool = excluded.verdict_bool,
 		  closed = 0,
 		  updated_by_machine_id = excluded.updated_by_machine_id,
+		  created_at = excluded.created_at,
 		  updated_at = excluded.updated_at,
 		  synced_at = NULL`,
-		jobID, agent, prompt, finalOutput, verdictBoolVal, reviewUUID, machineID, now)
+		jobID, agent, prompt, finalOutput, verdictBoolVal, reviewUUID, machineID, now, now)
 	if err != nil {
 		return err
 	}
@@ -1296,6 +1298,17 @@ func (db *DB) ReenqueueJobWithRequest(
 	}
 	if rows == 0 {
 		return 0, false, sql.ErrNoRows
+	}
+	// Keep the review UUID stable for the next successful completion, but
+	// invalidate the prior attempt's result immediately. If this rerun fails or
+	// is canceled, neither local reads nor sync peers can mistake the old output
+	// for the current attempt's result.
+	if _, err := conn.ExecContext(ctx, `
+		UPDATE reviews
+		SET prompt = '', output = '', verdict_bool = NULL, closed = 0,
+		    updated_by_machine_id = ?, updated_at = ?, synced_at = NULL
+		WHERE job_id = ?`, machineID, updatedAt, jobID); err != nil {
+		return 0, false, err
 	}
 	if requestID != "" {
 		if err := recordRerunRequest(ctx, conn, requestID, jobID, jobID, ""); err != nil {

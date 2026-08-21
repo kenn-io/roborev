@@ -1237,6 +1237,12 @@ func TestReenqueueJob(t *testing.T) {
 		require.NoError(t, err, "GetReviewByJobID failed after first complete: %v")
 
 		assert.Equal(t, "first output", review1.Output)
+		const firstCompletion = "2020-01-02T03:04:05Z"
+		_, err = isolatedDB.Exec(
+			`UPDATE reviews SET created_at = ?, closed = 1 WHERE id = ?`,
+			firstCompletion, review1.ID,
+		)
+		require.NoError(t, err)
 
 		// Re-enqueue the done job
 		err = isolatedDB.ReenqueueJob(job.ID, ReenqueueOpts{})
@@ -1246,6 +1252,10 @@ func TestReenqueueJob(t *testing.T) {
 		pendingReview, err := isolatedDB.GetReviewByJobID(job.ID)
 		require.NoError(t, err)
 		assert.Equal(t, review1.UUID, pendingReview.UUID)
+		assert.Empty(t, pendingReview.Prompt)
+		assert.Empty(t, pendingReview.Output)
+		assert.Nil(t, pendingReview.VerdictBool)
+		assert.False(t, pendingReview.Closed)
 
 		// Second completion cycle
 		claimed, _ = isolatedDB.ClaimJob("worker-1")
@@ -1260,6 +1270,7 @@ func TestReenqueueJob(t *testing.T) {
 		assert.Equal(t, review1.UUID, review2.UUID)
 		assert.Equal(t, "second prompt", review2.Prompt)
 		assert.Equal(t, "second output", review2.Output)
+		assert.Greater(t, review2.CreatedAt, time.Date(2020, 1, 2, 3, 4, 5, 0, time.UTC))
 	})
 }
 

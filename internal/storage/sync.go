@@ -798,7 +798,10 @@ func (db *DB) UpsertPulledJob(j PulledJob, repoID int64, commitID *int64) error 
 			source_machine_id, updated_at, synced_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(uuid) DO UPDATE SET
-			status = excluded.status,
+			status = CASE
+				WHEN review_jobs.status IN ('applied', 'rebased') THEN review_jobs.status
+				ELSE excluded.status
+			END,
 			finished_at = excluded.finished_at,
 			error = excluded.error,
 			model = excluded.model,
@@ -868,6 +871,7 @@ func (db *DB) UpsertPulledReview(r PulledReview) error {
 			closed = excluded.closed,
 			verdict_bool = excluded.verdict_bool,
 			updated_by_machine_id = excluded.updated_by_machine_id,
+			created_at = excluded.created_at,
 			updated_at = excluded.updated_at,
 			synced_at = ?
 			WHERE `+sqliteNormalizedTimestampExpr("reviews.updated_at")+` < `+sqliteNormalizedTimestampExpr("excluded.updated_at")+`

@@ -763,6 +763,7 @@ func (p *PgPool) UpsertReview(ctx context.Context, r SyncableReview) error {
 			output = EXCLUDED.output,
 			closed = EXCLUDED.closed,
 			updated_by_machine_id = EXCLUDED.updated_by_machine_id,
+			created_at = EXCLUDED.created_at,
 			updated_at = clock_timestamp()
 	`, r.UUID, r.JobUUID, r.Agent, r.Prompt, r.Output, r.Closed,
 		r.UpdatedByMachineID, r.CreatedAt)
@@ -1112,6 +1113,7 @@ func (p *PgPool) BatchUpsertReviews(ctx context.Context, reviews []SyncableRevie
 				output = EXCLUDED.output,
 				closed = EXCLUDED.closed,
 				updated_by_machine_id = EXCLUDED.updated_by_machine_id,
+				created_at = EXCLUDED.created_at,
 				updated_at = clock_timestamp()
 		`, r.UUID, r.JobUUID, r.Agent, r.Prompt, r.Output, r.Closed,
 			r.UpdatedByMachineID, r.CreatedAt)

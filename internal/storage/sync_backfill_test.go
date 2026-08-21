@@ -347,6 +347,40 @@ func TestUpsertPulledJob_TerminalRerunClearsStaleCost(t *testing.T) {
 	assert.Empty(tokenUsage(), "terminal unpriced rerun pull clears the stale cost")
 }
 
+func TestUpsertPulledJobMergesNewerCostWithoutRevertingLocalFinalization(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo, err := db.GetOrCreateRepo("/test/repo-local-finalization")
+	require.NoError(t, err)
+	base := time.Now().UTC()
+	pulled := PulledJob{
+		UUID:            "local-finalization-cost-uuid",
+		RepoIdentity:    "/test/repo-local-finalization",
+		GitRef:          "HEAD",
+		Agent:           "codex",
+		Status:          string(JobStatusDone),
+		SourceMachineID: "owner-machine",
+		EnqueuedAt:      base,
+		UpdatedAt:       base,
+	}
+	require.NoError(t, db.UpsertPulledJob(pulled, repo.ID, nil))
+	_, err = db.Exec(`UPDATE review_jobs SET status = 'applied' WHERE uuid = ?`, pulled.UUID)
+	require.NoError(t, err)
+
+	pulled.TokenUsage = `{"has_cost":true,"cost_usd":0.75}`
+	pulled.UpdatedAt = base.Add(time.Minute)
+	require.NoError(t, db.UpsertPulledJob(pulled, repo.ID, nil))
+
+	var status, tokenUsage string
+	require.NoError(t, db.QueryRow(`
+		SELECT status, COALESCE(token_usage, '')
+		FROM review_jobs WHERE uuid = ?`, pulled.UUID,
+	).Scan(&status, &tokenUsage))
+	assert.Equal(t, string(JobStatusApplied), status)
+	assert.Contains(t, tokenUsage, `"cost_usd":0.75`)
+}
+
 func TestUpsertPulledJob_PreservesWorktreePath(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()

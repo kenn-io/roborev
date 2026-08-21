@@ -122,6 +122,7 @@ func TestUpsertPulledReviewAppliesNewerRerunContent(t *testing.T) {
 	review, err := h.db.GetReviewByJobID(job.ID)
 	require.NoError(t, err)
 
+	newCompletion := time.Now().Add(time.Hour)
 	err = h.db.UpsertPulledReview(PulledReview{
 		UUID:               review.UUID,
 		JobUUID:            job.UUID,
@@ -130,8 +131,8 @@ func TestUpsertPulledReviewAppliesNewerRerunContent(t *testing.T) {
 		Output:             "new output",
 		Closed:             true,
 		UpdatedByMachineID: GenerateUUID(),
-		CreatedAt:          review.CreatedAt,
-		UpdatedAt:          time.Now().Add(time.Hour),
+		CreatedAt:          newCompletion,
+		UpdatedAt:          newCompletion,
 	})
 	require.NoError(t, err)
 
@@ -141,6 +142,7 @@ func TestUpsertPulledReviewAppliesNewerRerunContent(t *testing.T) {
 	assert.Equal(t, "new prompt", review.Prompt)
 	assert.Equal(t, "new output", review.Output)
 	assert.True(t, review.Closed)
+	assert.WithinDuration(t, newCompletion, review.CreatedAt, time.Second)
 }
 
 // TestClearAllSyncedAt verifies that ClearAllSyncedAt clears synced_at
