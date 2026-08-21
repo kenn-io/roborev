@@ -29,6 +29,24 @@ func TestDefaultPgPoolConfig(t *testing.T) {
 	assert.Equal(t, 30*time.Minute, cfg.MaxConnIdleTime)
 }
 
+func TestPostgresSyncJobStatusKeepsFinalizationLocal(t *testing.T) {
+	tests := []struct {
+		local  JobStatus
+		remote JobStatus
+	}{
+		{JobStatusDone, JobStatusDone},
+		{JobStatusFailed, JobStatusFailed},
+		{JobStatusApplied, JobStatusDone},
+		{JobStatusRebased, JobStatusDone},
+	}
+
+	for _, tt := range tests {
+		t.Run(string(tt.local), func(t *testing.T) {
+			assert.Equal(t, string(tt.remote), postgresSyncJobStatus(string(tt.local)))
+		})
+	}
+}
+
 func TestPgSchemaStatementsContainsRequiredTables(t *testing.T) {
 	requiredStatements := []string{
 		"CREATE SCHEMA IF NOT EXISTS roborev",

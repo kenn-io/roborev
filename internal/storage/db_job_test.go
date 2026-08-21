@@ -1242,9 +1242,10 @@ func TestReenqueueJob(t *testing.T) {
 		err = isolatedDB.ReenqueueJob(job.ID, ReenqueueOpts{})
 		require.NoError(t, err, "ReenqueueJob failed: %v")
 
-		// Verify review was deleted
-		_, err = isolatedDB.GetReviewByJobID(job.ID)
-		require.Error(t, err, "Expected GetReviewByJobID to fail after re-enqueue (review should be deleted)")
+		// The review row remains so rerun output keeps the same sync identity.
+		pendingReview, err := isolatedDB.GetReviewByJobID(job.ID)
+		require.NoError(t, err)
+		assert.Equal(t, review1.UUID, pendingReview.UUID)
 
 		// Second completion cycle
 		claimed, _ = isolatedDB.ClaimJob("worker-1")
@@ -1252,10 +1253,12 @@ func TestReenqueueJob(t *testing.T) {
 		err = isolatedDB.CompleteJob(job.ID, "codex", "second prompt", "second output")
 		require.NoError(t, err, "Second CompleteJob failed: %v")
 
-		// Verify second review exists with new content
+		// Verify the same review identity now carries the new content.
 		review2, err := isolatedDB.GetReviewByJobID(job.ID)
 		require.NoError(t, err, "GetReviewByJobID failed after second complete: %v")
 
+		assert.Equal(t, review1.UUID, review2.UUID)
+		assert.Equal(t, "second prompt", review2.Prompt)
 		assert.Equal(t, "second output", review2.Output)
 	})
 }

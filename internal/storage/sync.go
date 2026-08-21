@@ -417,6 +417,8 @@ type SyncableJob struct {
 
 // GetJobsToSync returns terminal jobs that need to be pushed to PostgreSQL.
 // These are jobs created locally that haven't been synced or were updated since last sync.
+// Applied and rebased are local finalization states, but their delayed token
+// costs still need to sync; PostgreSQL maps those outgoing states back to done.
 func (db *DB) GetJobsToSync(machineID string, limit int) ([]SyncableJob, error) {
 	rows, err := db.Query(`
 		SELECT
@@ -431,7 +433,7 @@ func (db *DB) GetJobsToSync(machineID string, limit int) ([]SyncableJob, error) 
 		FROM review_jobs j
 		JOIN repos r ON j.repo_id = r.id
 		LEFT JOIN commits c ON j.commit_id = c.id
-		WHERE j.status IN ('done', 'failed', 'canceled', 'skipped')
+		WHERE j.status IN ('done', 'failed', 'canceled', 'skipped', 'applied', 'rebased')
 		AND j.source_machine_id = ?
 		AND j.uuid IS NOT NULL
 		AND (j.synced_at IS NULL OR `+sqliteNormalizedTimestampExpr("j.updated_at")+` > `+sqliteNormalizedTimestampExpr("j.synced_at")+`)
@@ -860,8 +862,11 @@ func (db *DB) UpsertPulledReview(r PulledReview) error {
 			verdict_bool, updated_by_machine_id, created_at, updated_at, synced_at
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(uuid) DO UPDATE SET
+			agent = excluded.agent,
+			prompt = excluded.prompt,
+			output = excluded.output,
 			closed = excluded.closed,
-			verdict_bool = COALESCE(reviews.verdict_bool, excluded.verdict_bool),
+			verdict_bool = excluded.verdict_bool,
 			updated_by_machine_id = excluded.updated_by_machine_id,
 			updated_at = excluded.updated_at,
 			synced_at = ?

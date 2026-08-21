@@ -996,7 +996,16 @@ func (db *DB) CompleteFixJob(jobID int64, agent, prompt, output, patch string) e
 		verdictBoolVal = verdictToBool(ParseVerdict(finalOutput))
 	}
 	_, err = conn.ExecContext(ctx,
-		`INSERT INTO reviews (job_id, agent, prompt, output, verdict_bool, uuid, updated_by_machine_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+		`INSERT INTO reviews (job_id, agent, prompt, output, verdict_bool, uuid, updated_by_machine_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		 ON CONFLICT(job_id) DO UPDATE SET
+		   agent = excluded.agent,
+		   prompt = excluded.prompt,
+		   output = excluded.output,
+		   verdict_bool = excluded.verdict_bool,
+		   closed = 0,
+		   updated_by_machine_id = excluded.updated_by_machine_id,
+		   updated_at = excluded.updated_at,
+		   synced_at = NULL`,
 		jobID, agent, prompt, finalOutput, verdictBoolVal, reviewUUID, machineID, now)
 	if err != nil {
 		return err
@@ -1075,7 +1084,16 @@ func (db *DB) CompleteJob(jobID int64, agent, prompt, output string) error {
 	if finalOutput != "" {
 		verdictBoolVal = verdictToBool(ParseVerdict(finalOutput))
 	}
-	_, err = conn.ExecContext(ctx, `INSERT INTO reviews (job_id, agent, prompt, output, verdict_bool, uuid, updated_by_machine_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
+	_, err = conn.ExecContext(ctx, `INSERT INTO reviews (job_id, agent, prompt, output, verdict_bool, uuid, updated_by_machine_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+		ON CONFLICT(job_id) DO UPDATE SET
+		  agent = excluded.agent,
+		  prompt = excluded.prompt,
+		  output = excluded.output,
+		  verdict_bool = excluded.verdict_bool,
+		  closed = 0,
+		  updated_by_machine_id = excluded.updated_by_machine_id,
+		  updated_at = excluded.updated_at,
+		  synced_at = NULL`,
 		jobID, agent, prompt, finalOutput, verdictBoolVal, reviewUUID, machineID, now)
 	if err != nil {
 		return err
@@ -1186,8 +1204,8 @@ type ReenqueueOpts struct {
 }
 
 // ReenqueueJob resets a completed, failed, or canceled job back to queued status.
-// This allows manual re-running of jobs to get a fresh review.
-// For done jobs, the existing review is deleted to avoid unique constraint violations.
+// This allows manual re-running of jobs to get a fresh review. A completed
+// rerun updates the existing review row so its sync identity remains stable.
 func (db *DB) ReenqueueJob(jobID int64, opts ReenqueueOpts) error {
 	_, _, err := db.ReenqueueJobWithRequest(jobID, opts, "")
 	return err
@@ -1233,12 +1251,6 @@ func (db *DB) ReenqueueJobWithRequest(
 			committed = true
 			return result.JobID, true, nil
 		}
-	}
-
-	// Delete any existing review for this job (for done jobs being rerun)
-	_, err = conn.ExecContext(ctx, `DELETE FROM reviews WHERE job_id = ?`, jobID)
-	if err != nil {
-		return 0, false, err
 	}
 
 	now := time.Now()

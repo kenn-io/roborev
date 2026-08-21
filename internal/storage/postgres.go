@@ -743,7 +743,7 @@ func (p *PgPool) UpsertJob(ctx context.Context, j SyncableJob, pgRepoID int64, p
 			panel_member_config_json = EXCLUDED.panel_member_config_json,
 			updated_at = clock_timestamp()
 	`, j.UUID, pgRepoID, pgCommitID, j.GitRef, nullString(j.SessionID), j.Agent, nullString(j.Model), nullString(j.Provider), nullString(j.RequestedModel), nullString(j.RequestedProvider), nullString(j.Reasoning),
-		defaultStr(j.JobType, "review"), j.ReviewType, nullString(j.PatchID), j.Status, j.Agentic, j.EnqueuedAt, j.StartedAt, j.FinishedAt,
+		defaultStr(j.JobType, "review"), j.ReviewType, nullString(j.PatchID), postgresSyncJobStatus(j.Status), j.Agentic, j.EnqueuedAt, j.StartedAt, j.FinishedAt,
 		nullString(j.Prompt), j.DiffContent, nullString(dirtyFilesJSON), nullString(j.Error), nullString(j.TokenUsage), nullString(j.WorktreePath), nullString(j.Source), normalizeMinSeverityForWrite(j.MinSeverity),
 		nullString(j.PanelRunUUID), nullString(j.PanelRole), nullString(j.PanelName), nullString(j.PanelMemberName), j.PanelMemberIndex, nullString(j.PanelMemberConfigJSON),
 		j.SourceMachineID, j.BackupAgent, j.BackupModel, j.AgentInvoked)
@@ -758,6 +758,9 @@ func (p *PgPool) UpsertReview(ctx context.Context, r SyncableReview) error {
 			updated_by_machine_id, created_at, updated_at
 		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, clock_timestamp())
 		ON CONFLICT (uuid) DO UPDATE SET
+			agent = EXCLUDED.agent,
+			prompt = EXCLUDED.prompt,
+			output = EXCLUDED.output,
 			closed = EXCLUDED.closed,
 			updated_by_machine_id = EXCLUDED.updated_by_machine_id,
 			updated_at = clock_timestamp()
@@ -1079,6 +1082,16 @@ func defaultStr(s, def string) string {
 	return s
 }
 
+// postgresSyncJobStatus keeps applied/rebased as local finalization states.
+// Their token usage still travels through normal job sync using the shared
+// terminal state that preceded local application or rebase handling.
+func postgresSyncJobStatus(status string) string {
+	if status == string(JobStatusApplied) || status == string(JobStatusRebased) {
+		return string(JobStatusDone)
+	}
+	return status
+}
+
 // BatchUpsertReviews inserts or updates multiple reviews in a single batch operation.
 // Returns a boolean slice indicating success/failure for each item at the corresponding index.
 func (p *PgPool) BatchUpsertReviews(ctx context.Context, reviews []SyncableReview) ([]bool, error) {
@@ -1094,6 +1107,9 @@ func (p *PgPool) BatchUpsertReviews(ctx context.Context, reviews []SyncableRevie
 				updated_by_machine_id, created_at, updated_at
 			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, clock_timestamp())
 			ON CONFLICT (uuid) DO UPDATE SET
+				agent = EXCLUDED.agent,
+				prompt = EXCLUDED.prompt,
+				output = EXCLUDED.output,
 				closed = EXCLUDED.closed,
 				updated_by_machine_id = EXCLUDED.updated_by_machine_id,
 				updated_at = clock_timestamp()
@@ -1281,7 +1297,7 @@ func queueJobUpsert(batch *pgx.Batch, jw JobWithPgIDs) error {
 				panel_member_config_json = EXCLUDED.panel_member_config_json,
 				updated_at = clock_timestamp()
 		`, j.UUID, jw.PgRepoID, jw.PgCommitID, j.GitRef, nullString(j.SessionID), j.Agent, nullString(j.Model), nullString(j.Provider), nullString(j.RequestedModel), nullString(j.RequestedProvider), nullString(j.Reasoning),
-		defaultStr(j.JobType, "review"), j.ReviewType, nullString(j.PatchID), j.Status, j.Agentic, j.EnqueuedAt, j.StartedAt, j.FinishedAt,
+		defaultStr(j.JobType, "review"), j.ReviewType, nullString(j.PatchID), postgresSyncJobStatus(j.Status), j.Agentic, j.EnqueuedAt, j.StartedAt, j.FinishedAt,
 		nullString(sanitizePostgresText(j.Prompt)), sanitizePostgresTextPointer(j.DiffContent), nullString(dirtyFilesJSON), nullString(sanitizePostgresText(j.Error)), nullString(j.TokenUsage), nullString(j.WorktreePath), nullString(j.Source), normalizeMinSeverityForWrite(j.MinSeverity),
 		nullString(j.PanelRunUUID), nullString(j.PanelRole), nullString(j.PanelName), nullString(j.PanelMemberName), j.PanelMemberIndex, nullString(j.PanelMemberConfigJSON),
 		j.SourceMachineID, j.BackupAgent, j.BackupModel, j.AgentInvoked)
