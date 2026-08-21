@@ -217,11 +217,39 @@ func TestListTokenUsageLogCandidatesSelectsMissingSession(t *testing.T) {
 		require.NoError(t, err)
 	}
 
-	got, err := db.ListTokenUsageLogCandidates(0, 100)
+	got, err := db.ListTokenUsageLogCandidates(0, 100, time.Time{})
 	require.NoError(t, err)
 	require.Len(t, got, 1)
 	assert.Equal(t, jobs[0].ID, got[0].JobID)
 	assert.False(t, got[0].StartedAt.IsZero())
+}
+
+func TestListTokenUsageLogCandidatesExcludesAttemptsBeforeCutoff(t *testing.T) {
+	db := openTestDB(t)
+	t.Cleanup(func() { db.Close() })
+	_, jobs := seedJobs(t, db, "/tmp/token-log-cutoff", 2)
+	for i, startedAt := range []string{
+		"datetime('now', '-30 days')", "datetime('now', '-1 hour')",
+	} {
+		_, err := db.Exec(`
+			UPDATE review_jobs
+			SET status = 'done', started_at = `+startedAt+`,
+			    finished_at = datetime('now'), session_id = '',
+			    agent_invoked = 1, token_usage = ''
+			WHERE id = ?`, jobs[i].ID)
+		require.NoError(t, err)
+	}
+
+	bounded, err := db.ListTokenUsageLogCandidates(
+		0, 100, time.Now().Add(-7*24*time.Hour),
+	)
+	require.NoError(t, err)
+	require.Len(t, bounded, 1)
+	assert.Equal(t, jobs[1].ID, bounded[0].JobID)
+
+	unbounded, err := db.ListTokenUsageLogCandidates(0, 100, time.Time{})
+	require.NoError(t, err)
+	assert.Len(t, unbounded, 2)
 }
 
 func TestTokenReconciliationWaitsForCanceledWorkerRelease(t *testing.T) {
@@ -251,7 +279,7 @@ func TestTokenReconciliationWaitsForCanceledWorkerRelease(t *testing.T) {
 	costCandidates, err := db.ListTokenCostCandidates(0, 10, time.Time{})
 	require.NoError(t, err)
 	assert.Empty(t, costCandidates)
-	logCandidates, err := db.ListTokenUsageLogCandidates(0, 10)
+	logCandidates, err := db.ListTokenUsageLogCandidates(0, 10, time.Time{})
 	require.NoError(t, err)
 	assert.Empty(t, logCandidates)
 
@@ -266,7 +294,7 @@ func TestTokenReconciliationWaitsForCanceledWorkerRelease(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, costCandidates, 1)
 	assert.Equal(t, costJob.ID, costCandidates[0].JobID)
-	logCandidates, err = db.ListTokenUsageLogCandidates(0, 10)
+	logCandidates, err = db.ListTokenUsageLogCandidates(0, 10, time.Time{})
 	require.NoError(t, err)
 	require.Len(t, logCandidates, 1)
 	assert.Equal(t, logJob.ID, logCandidates[0].JobID)
@@ -302,7 +330,7 @@ func TestTokenUsageCandidatesExcludeImportedJobs(t *testing.T) {
 	require.Len(t, costCandidates, 1)
 	assert.Equal(t, jobs[0].ID, costCandidates[0].JobID)
 
-	logCandidates, err := db.ListTokenUsageLogCandidates(0, 100)
+	logCandidates, err := db.ListTokenUsageLogCandidates(0, 100, time.Time{})
 	require.NoError(t, err)
 	require.Len(t, logCandidates, 1)
 	assert.Equal(t, jobs[2].ID, logCandidates[0].JobID)
@@ -576,7 +604,7 @@ func TestBackfillJobTokenUsageIfCurrentRejectsReenqueuedJob(t *testing.T) {
 		    finished_at = '2026-08-20T16:00:01Z', agent_invoked = 1
 		WHERE id = ?`, jobs[0].ID)
 	require.NoError(t, err)
-	candidates, err := db.ListTokenUsageLogCandidates(0, 10)
+	candidates, err := db.ListTokenUsageLogCandidates(0, 10, time.Time{})
 	require.NoError(t, err)
 	require.Len(t, candidates, 1)
 

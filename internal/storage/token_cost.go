@@ -149,9 +149,12 @@ func (db *DB) GetTokenCostCandidate(jobID int64) (*TokenCostCandidate, error) {
 
 // ListTokenUsageLogCandidates returns terminal missing-cost jobs whose session
 // ID was not persisted. Their per-job JSONL log may still recover the session
-// and make them eligible for normal provider reconciliation.
+// and make them eligible for normal provider reconciliation. A non-zero
+// startedAfter excludes attempts that started earlier, bounding the daemon's
+// periodic scan the same way ListTokenCostCandidates is bounded; pass zero to
+// reach every job.
 func (db *DB) ListTokenUsageLogCandidates(
-	afterJobID int64, limit int,
+	afterJobID int64, limit int, startedAfter time.Time,
 ) ([]TokenUsageLogCandidate, error) {
 	if limit <= 0 {
 		return nil, nil
@@ -160,14 +163,19 @@ func (db *DB) ListTokenUsageLogCandidates(
 	if err != nil {
 		return nil, fmt.Errorf("get machine ID: %w", err)
 	}
+	startedCutoff := ""
+	if !startedAfter.IsZero() {
+		startedCutoff = formatSQLiteTimestamp(startedAfter)
+	}
 	rows, err := db.Query(`
 		SELECT j.id, COALESCE(j.token_usage, ''), j.started_at
 		FROM review_jobs j
 		WHERE j.id > ?
 		  AND j.source_machine_id = ?
+		  AND (? = '' OR `+sqliteNormalizedTimestampExpr("j.started_at")+` >= ?)
 		  AND `+tokenUsageLogCandidatePredicate+`
 		ORDER BY j.id
-		LIMIT ?`, afterJobID, machineID, limit)
+		LIMIT ?`, afterJobID, machineID, startedCutoff, startedCutoff, limit)
 	if err != nil {
 		return nil, fmt.Errorf("list token usage log candidates: %w", err)
 	}

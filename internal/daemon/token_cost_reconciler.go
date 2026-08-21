@@ -21,11 +21,11 @@ const (
 	tokenCostImmediateAttempts = 3
 	tokenUsageLogScanInterval  = 15 * time.Minute
 	tokenUsageLogPageSize      = 1000
-	// tokenCostMaxCandidateAge bounds the periodic scan: usage indexing lags
-	// by minutes, so a week-old miss means the session data is gone (deleted
-	// session, retired provider) and endless per-minute provider lookups would
-	// never resolve it. Older jobs remain reachable via `roborev
-	// backfill-tokens`, which scans without an age bound.
+	// tokenCostMaxCandidateAge bounds both periodic scans: usage indexing lags
+	// by minutes, so a week-old miss means the data is gone (deleted session
+	// or job log, retired provider) and endlessly rescanning would never
+	// resolve it. Older jobs remain reachable via `roborev backfill-tokens`,
+	// which scans without an age bound.
 	tokenCostMaxCandidateAge = 7 * 24 * time.Hour
 )
 
@@ -83,6 +83,7 @@ func (wp *WorkerPool) recoverTokenUsageLogs(ctx context.Context) {
 		}
 		candidates, err := wp.db.ListTokenUsageLogCandidates(
 			cursor, wp.tokenUsageLogPageSize,
+			time.Now().Add(-wp.tokenCostMaxCandidateAge),
 		)
 		if err != nil {
 			if !errors.Is(err, context.Canceled) {
