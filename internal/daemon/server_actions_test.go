@@ -812,7 +812,7 @@ func TestResolveRerunModelProviderRejectsInvalidWorktreeWithRequestedOverrides(t
 	assert.Empty(t, provider)
 }
 
-func TestResolveRerunModelProviderPreservesRequestedOverridesOnParseableInvalidConfig(t *testing.T) {
+func TestResolveRerunModelProviderRejectsParseableInvalidConfigWithRequestedOverrides(t *testing.T) {
 	mainRepo := t.TempDir()
 
 	require.NoError(t, os.WriteFile(filepath.Join(mainRepo, ".roborev.toml"), []byte("review_reasoning = \"bogus\"\n"), 0o644))
@@ -830,9 +830,10 @@ func TestResolveRerunModelProviderPreservesRequestedOverridesOnParseableInvalidC
 	model, provider, err := resolveRerunModelProvider(
 		job, config.DefaultConfig(),
 	)
-	require.NoError(t, err)
-	assert.Equal(t, "requested-model", model)
-	assert.Equal(t, "anthropic", provider)
+	require.Error(t, err)
+	require.ErrorContains(t, err, "review_reasoning")
+	assert.Empty(t, model)
+	assert.Empty(t, provider)
 }
 
 func TestResolveRerunModelProviderRejectsMalformedConfigWithRequestedOverrides(t *testing.T) {

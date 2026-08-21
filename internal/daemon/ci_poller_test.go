@@ -1216,16 +1216,16 @@ func TestCIPollerProcessPR_InvalidReasoning(t *testing.T) {
 			return false
 		}, "write .roborev.toml: %v", err)
 	}
+	statuses := h.CaptureCommitStatuses()
 
 	err := h.Poller.processPR(context.Background(), "acme/api", ghPR{
 		Number: 51, HeadRefOid: "invalid-reasoning-sha", BaseRefName: "main",
 	}, h.Cfg)
-	require.NoError(t, err, "processPR")
-
-	members := h.panelMembers(t, "acme/api", 51, "invalid-reasoning-sha")
-	require.Len(t, members, 1)
-	assert.Equal(t, "thorough", members[0].Reasoning,
-		"invalid reasoning should fall back to default")
+	require.ErrorContains(t, err, "ci.reasoning")
+	assert.False(t, h.hasPanel(t, "acme/api", 51, "invalid-reasoning-sha"))
+	require.Len(t, *statuses, 1)
+	assert.Equal(t, "error", (*statuses)[0].State)
+	assert.Contains(t, (*statuses)[0].Desc, "roborev config validate")
 }
 
 func TestCIPollerProcessPR_IncludesHumanPRDiscussion(t *testing.T) {
@@ -4092,12 +4092,17 @@ func TestProcessPRSynthesisAndMembersUseSeparateMinSeverity(t *testing.T) {
 	}
 }
 
-func TestProcessPRMemberMinSeverityInvalidRepoFallsBackToGlobal(t *testing.T) {
-	assert := assert.New(t)
-	p, db, _, repo, cfg := newCIPanelGitHarness(t)
+func TestProcessPRMemberMinSeverityInvalidRepoReportsConfigurationError(t *testing.T) {
+	p, _, _, repo, cfg := newCIPanelGitHarness(t)
 	cfg.ReviewMinSeverity = "medium"
 	p.loadRepoConfigWithRawFn = func(string) (*config.RepoConfig, map[string]any, error) {
-		return &config.RepoConfig{ReviewMinSeverity: "not-a-severity"}, nil, nil
+		repoCfg := &config.RepoConfig{ReviewMinSeverity: "not-a-severity"}
+		return repoCfg, nil, repoCfg.Validate()
+	}
+	var statuses []capturedStatus
+	p.setCommitStatusFn = func(repo, sha, state, desc string) error {
+		statuses = append(statuses, capturedStatus{repo, sha, state, desc})
+		return nil
 	}
 
 	base := repo.HeadSHA()
@@ -4107,18 +4112,10 @@ func TestProcessPRMemberMinSeverityInvalidRepoFallsBackToGlobal(t *testing.T) {
 	err := p.processPR(context.Background(), "acme/api", ghPR{
 		Number: 13, HeadRefOid: head, BaseRefName: "main",
 	}, cfg)
-	require.NoError(t, err, "processPR")
-
-	panel, err := db.GetCIPanelByPRSHA("acme/api", 13, head)
-	require.NoError(t, err)
-	require.NotNil(t, panel)
-
-	members, err := db.GetPanelMembers(panel.PanelRunUUID)
-	require.NoError(t, err)
-	require.NotEmpty(t, members)
-	for _, m := range members {
-		assert.Equal("medium", m.MinSeverity, "member %d falls back to global review_min_severity", m.ID)
-	}
+	require.ErrorContains(t, err, "review_min_severity")
+	require.Len(t, statuses, 1)
+	assert.Equal(t, "error", statuses[0].State)
+	assert.Contains(t, statuses[0].Desc, "roborev config validate")
 }
 
 // TestProcessPRNamedPanelMembers verifies a configured [ci].panel resolves the

@@ -526,7 +526,7 @@ func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, 
 	// Load repo config off the PR's default branch (never the working tree, F1).
 	repoCfg, rawRepoCfg, err := p.loadCIRepoConfigFor(repo.RootPath, ghRepo)
 	if err != nil {
-		if config.IsExperimentConfigError(err) {
+		if config.IsExperimentConfigError(err) || config.IsConfigValidationError(err) {
 			return &ciConfigurationError{err: err}
 		}
 		return err
@@ -673,7 +673,7 @@ func (p *CIPoller) loadCIRepoConfigFor(repoPath, ghRepo string) (*config.RepoCon
 	}
 	repoCfg, rawRepoCfg, err := load(repoPath)
 	if err != nil {
-		if !config.IsConfigParseError(err) {
+		if config.IsConfigValidationError(err) || !config.IsConfigParseError(err) {
 			return nil, nil, fmt.Errorf("load repo config: %w", err)
 		}
 		log.Printf("CI poller: warning: failed to load repo config for %s: %v", ghRepo, err)

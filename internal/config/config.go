@@ -71,6 +71,27 @@ func markExperimentConfigError(err error) error {
 	return &experimentConfigError{err: err}
 }
 
+type configValidationError struct {
+	err error
+}
+
+func (e *configValidationError) Error() string { return e.err.Error() }
+func (e *configValidationError) Unwrap() error { return e.err }
+
+// IsConfigValidationError reports whether err came from Config.Validate or
+// RepoConfig.Validate rather than from parsing or reading a config file.
+func IsConfigValidationError(err error) bool {
+	var validationErr *configValidationError
+	return errors.As(err, &validationErr)
+}
+
+func markConfigValidationError(err error) error {
+	if err == nil || IsConfigValidationError(err) {
+		return err
+	}
+	return &configValidationError{err: err}
+}
+
 // HookConfig defines a hook that runs on review events
 type HookConfig struct {
 	Event    string   `toml:"event"`                // "review.failed", "review.completed", "review.*"
@@ -506,12 +527,50 @@ func validateConfig(cfg any, acp ACPAgentConfigs) error {
 	return validateAgentReferences(cfg)
 }
 
+type namedConfigValue struct {
+	key   string
+	value string
+}
+
+func validateReasoningValues(settings ...namedConfigValue) error {
+	return validateNamedConfigValues(NormalizeReasoning, settings...)
+}
+
+func validateMinSeverityValues(settings ...namedConfigValue) error {
+	return validateNamedConfigValues(NormalizeMinSeverity, settings...)
+}
+
+func validateNamedConfigValues(
+	normalize func(string) (string, error), settings ...namedConfigValue,
+) error {
+	for _, setting := range settings {
+		if _, err := normalize(setting.value); err != nil {
+			return fmt.Errorf("%s: %w", setting.key, err)
+		}
+	}
+	return nil
+}
+
+func analyzeReasoningValues(configs map[string]AnalyzeConfig) []namedConfigValue {
+	settings := make([]namedConfigValue, 0, len(configs))
+	for _, name := range slices.Sorted(maps.Keys(configs)) {
+		settings = append(settings, namedConfigValue{
+			key:   fmt.Sprintf("analyze.%s.reasoning", name),
+			value: configs[name].Reasoning,
+		})
+	}
+	return settings
+}
+
 // Validate checks global values that cannot be constrained by TOML decoding
 // alone, including the effective global review configuration.
-func (c *Config) Validate() error {
+func (c *Config) Validate() (err error) {
 	if c == nil {
 		return nil
 	}
+	defer func() {
+		err = markConfigValidationError(err)
+	}()
 	if err := validateExperimentEntries(c.Experiments, true); err != nil {
 		return markExperimentConfigError(err)
 	}
@@ -519,6 +578,24 @@ func (c *Config) Validate() error {
 		return err
 	}
 	if err := validateCIReviewTypes(c.CI.ReviewTypes, c.CI.Reviews); err != nil {
+		return err
+	}
+	reasoning := []namedConfigValue{
+		{key: "review_reasoning", value: c.ReviewReasoning},
+		{key: "refine_reasoning", value: c.RefineReasoning},
+		{key: "fix_reasoning", value: c.FixReasoning},
+		{key: "classify_reasoning", value: c.ClassifyReasoning},
+	}
+	reasoning = append(reasoning, analyzeReasoningValues(c.Analyze)...)
+	if err := validateReasoningValues(reasoning...); err != nil {
+		return err
+	}
+	if err := validateMinSeverityValues(
+		namedConfigValue{key: "review_min_severity", value: c.ReviewMinSeverity},
+		namedConfigValue{key: "refine_min_severity", value: c.RefineMinSeverity},
+		namedConfigValue{key: "fix_min_severity", value: c.FixMinSeverity},
+		namedConfigValue{key: "ci.min_severity", value: c.CI.MinSeverity},
+	); err != nil {
 		return err
 	}
 	return ValidateEffectiveReviewConfig(c, nil)
@@ -709,30 +786,36 @@ type RepoConfig struct {
 }
 
 // Validate checks values that cannot be constrained by TOML decoding alone.
-func (c *RepoConfig) Validate() error {
+func (c *RepoConfig) Validate() (err error) {
 	if c == nil {
 		return nil
 	}
+	defer func() {
+		err = markConfigValidationError(err)
+	}()
 	if err := validateConfig(c, c.ACP); err != nil {
 		return err
 	}
 	if err := validateCIReviewTypes(c.CI.ReviewTypes, c.CI.Reviews); err != nil {
 		return err
 	}
-	for _, setting := range []struct {
-		key   string
-		value string
-	}{
-		{key: "fix_min_severity", value: c.FixMinSeverity},
-		{key: "refine_min_severity", value: c.RefineMinSeverity},
-		{key: "review_min_severity", value: c.ReviewMinSeverity},
-		{key: "ci.min_severity", value: c.CI.MinSeverity},
-	} {
-		if _, err := NormalizeMinSeverity(setting.value); err != nil {
-			return fmt.Errorf("%s: %w", setting.key, err)
-		}
+	reasoning := []namedConfigValue{
+		{key: "review_reasoning", value: c.ReviewReasoning},
+		{key: "refine_reasoning", value: c.RefineReasoning},
+		{key: "fix_reasoning", value: c.FixReasoning},
+		{key: "classify_reasoning", value: c.ClassifyReasoning},
+		{key: "ci.reasoning", value: c.CI.Reasoning},
 	}
-	return nil
+	reasoning = append(reasoning, analyzeReasoningValues(c.Analyze)...)
+	if err := validateReasoningValues(reasoning...); err != nil {
+		return err
+	}
+	return validateMinSeverityValues(
+		namedConfigValue{key: "fix_min_severity", value: c.FixMinSeverity},
+		namedConfigValue{key: "refine_min_severity", value: c.RefineMinSeverity},
+		namedConfigValue{key: "review_min_severity", value: c.ReviewMinSeverity},
+		namedConfigValue{key: "ci.min_severity", value: c.CI.MinSeverity},
+	)
 }
 
 // UsesReviewMDFallback reports whether REVIEW.md may supply repo guidelines.

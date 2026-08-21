@@ -333,10 +333,12 @@ func validateRepoReasoningOverride(
 
 	repoCfg, err := LoadRepoConfig(repoPath)
 	// Entry points that must fail fast on malformed .roborev.toml call
-	// ValidateRepoConfig separately. Here we only want to catch a parseable
-	// but invalid workflow reasoning override before an explicit CLI value
-	// silently masks it.
+	// ValidateRepoConfig separately. An explicit CLI value may bypass malformed
+	// TOML, but it must not silently mask a parseable config validation error.
 	if err != nil {
+		if IsConfigValidationError(err) {
+			return err
+		}
 		return nil
 	}
 

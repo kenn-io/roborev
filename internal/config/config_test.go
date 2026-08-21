@@ -2958,6 +2958,67 @@ func TestRepoConfigValidateRejectsInvalidMinSeverity(t *testing.T) {
 	}
 }
 
+func TestConfigValidateRejectsInvalidReasoningAndSeverity(t *testing.T) {
+	tests := []struct {
+		name string
+		key  string
+		set  func(*Config)
+	}{
+		{name: "review reasoning", key: "review_reasoning", set: func(cfg *Config) { cfg.ReviewReasoning = "urgent" }},
+		{name: "refine reasoning", key: "refine_reasoning", set: func(cfg *Config) { cfg.RefineReasoning = "urgent" }},
+		{name: "fix reasoning", key: "fix_reasoning", set: func(cfg *Config) { cfg.FixReasoning = "urgent" }},
+		{name: "classify reasoning", key: "classify_reasoning", set: func(cfg *Config) { cfg.ClassifyReasoning = "urgent" }},
+		{name: "analyze reasoning", key: "analyze.refactor.reasoning", set: func(cfg *Config) {
+			cfg.Analyze = map[string]AnalyzeConfig{"refactor": {Reasoning: "urgent"}}
+		}},
+		{name: "review severity", key: "review_min_severity", set: func(cfg *Config) { cfg.ReviewMinSeverity = "urgent" }},
+		{name: "refine severity", key: "refine_min_severity", set: func(cfg *Config) { cfg.RefineMinSeverity = "urgent" }},
+		{name: "fix severity", key: "fix_min_severity", set: func(cfg *Config) { cfg.FixMinSeverity = "urgent" }},
+		{name: "ci severity", key: "ci.min_severity", set: func(cfg *Config) { cfg.CI.MinSeverity = "urgent" }},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &Config{}
+			tt.set(cfg)
+
+			err := cfg.Validate()
+
+			require.Error(t, err)
+			assert.ErrorContains(t, err, tt.key)
+		})
+	}
+}
+
+func TestRepoConfigValidateRejectsInvalidReasoning(t *testing.T) {
+	tests := []struct {
+		name string
+		key  string
+		set  func(*RepoConfig)
+	}{
+		{name: "review", key: "review_reasoning", set: func(cfg *RepoConfig) { cfg.ReviewReasoning = "urgent" }},
+		{name: "refine", key: "refine_reasoning", set: func(cfg *RepoConfig) { cfg.RefineReasoning = "urgent" }},
+		{name: "fix", key: "fix_reasoning", set: func(cfg *RepoConfig) { cfg.FixReasoning = "urgent" }},
+		{name: "classify", key: "classify_reasoning", set: func(cfg *RepoConfig) { cfg.ClassifyReasoning = "urgent" }},
+		{name: "ci", key: "ci.reasoning", set: func(cfg *RepoConfig) { cfg.CI.Reasoning = "urgent" }},
+		{name: "analyze", key: "analyze.refactor.reasoning", set: func(cfg *RepoConfig) {
+			cfg.Analyze = map[string]AnalyzeConfig{"refactor": {Reasoning: "urgent"}}
+		}},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			cfg := &RepoConfig{}
+			tt.set(cfg)
+
+			err := cfg.Validate()
+
+			require.Error(t, err)
+			assert.ErrorContains(t, err, tt.key)
+		})
+	}
+}
+
 func TestRepoCIConfig(t *testing.T) {
 	t.Run("parses agents and review_types", func(t *testing.T) {
 		tmpDir := newTempRepo(t, `

@@ -255,6 +255,33 @@ func TestValidateConfigForScopeRejectsInvalidBaseSettings(t *testing.T) {
 			want:      "invalid reasoning",
 		},
 		{
+			name:       "global fix reasoning",
+			globalTOML: `fix_reasoning = "urgent"`,
+			scope:      scopeGlobal,
+			want:       "fix_reasoning",
+		},
+		{
+			name:      "local refine reasoning",
+			localTOML: `refine_reasoning = "urgent"`,
+			scope:     scopeLocal,
+			want:      "refine_reasoning",
+		},
+		{
+			name:       "global review severity",
+			globalTOML: `review_min_severity = "urgent"`,
+			scope:      scopeGlobal,
+			want:       "review_min_severity",
+		},
+		{
+			name: "merged ci severity",
+			localTOML: `
+[ci]
+min_severity = "urgent"
+`,
+			scope: scopeMerged,
+			want:  "ci.min_severity",
+		},
+		{
 			name: "merged panel reference",
 			localTOML: `
 [review]
