@@ -1,0 +1,110 @@
+name: Verify release assets
+
+# Release assets can be replaced after publication (for example by a
+# rebuild bot) without firing any webhook event, so a scheduled re-check of
+# the latest release is the only way to catch a swap like the one that
+# shipped v0.65.0 binaries without the embedded web UI (#1081).
+on:
+  release:
+    types:
+      - published
+  schedule:
+    - cron: '17 6 * * *'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Release tag to verify (default: latest release)'
+        required: false
+        type: string
+
+permissions:
+  contents: read
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    env:
+      GH_TOKEN: ${{ github.token }}
+    steps:
+      - name: Resolve release tag
+        id: resolve
+        env:
+          EVENT_TAG: ${{ github.event.release.tag_name }}
+          INPUT_TAG: ${{ inputs.tag }}
+        run: |
+          set -euo pipefail
+          TAG="${INPUT_TAG:-${EVENT_TAG:-}}"
+          if [ -z "$TAG" ]; then
+            TAG="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
+          fi
+          echo "Verifying release $TAG"
+          echo "tag=$TAG" >> "$GITHUB_OUTPUT"
+
+      - name: Download release assets
+        env:
+          TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          mkdir assets
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --dir assets \
+            --pattern '*.tar.gz' --pattern '*.zip' --pattern 'SHA256SUMS'
+
+      - name: Verify checksums
+        run: |
+          set -euo pipefail
+          cd assets
+          for asset in *.tar.gz *.zip; do
+            [ -e "$asset" ] || continue
+            grep " $asset\$" SHA256SUMS | sha256sum -c -
+          done
+
+      - name: Verify embedded web assets
+        run: |
+          set -euo pipefail
+          cd assets
+          failed=0
+          for asset in *.tar.gz *.zip; do
+            [ -e "$asset" ] || continue
+            dir="${asset%.zip}"; dir="${dir%.tar.gz}"
+            mkdir "$dir"
+            case "$asset" in
+              *.tar.gz) tar -xzf "$asset" -C "$dir" ;;
+              *.zip) unzip -q "$asset" -d "$dir" ;;
+            esac
+            binary="$dir/roborev"
+            [ -f "$binary" ] || binary="$dir/roborev.exe"
+            if [ ! -f "$binary" ]; then
+              echo "FAIL $asset: no roborev binary in archive"
+              failed=1
+              continue
+            fi
+            # The production index.html duplicates the marker string that
+            # internal/web/assets.go compiles in, so a binary that embeds
+            # the web distribution contains it at least twice; a binary
+            # built without web assets contains it exactly once.
+            occurrences="$(grep -aob 'roborev-web-distribution' "$binary" | wc -l)"
+            if [ "$occurrences" -lt 2 ]; then
+              echo "FAIL $asset: binary does not embed the production web assets"
+              failed=1
+              continue
+            fi
+            echo "ok $asset"
+          done
+          exit "$failed"
+
+      - name: Verify runtime web asset report
+        env:
+          TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          cd assets
+          version="${TAG#v}"
+          binary="roborev_${version}_linux_amd64/roborev"
+          if [ ! -f "$binary" ]; then
+            echo "linux_amd64 binary not found; skipping runtime check"
+            exit 0
+          fi
+          "$binary" version --json | tee version.json
+          # web_assets exists since v0.66; require it to be true when present.
+          jq -e '(.web_assets == null) or (.web_assets == true)' version.json >/dev/null
