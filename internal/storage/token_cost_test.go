@@ -289,6 +289,84 @@ func TestTokenCostCandidateRejectsSessionReusedByPriorAttempt(t *testing.T) {
 	assert.False(t, updated)
 }
 
+func TestTokenCostCandidateRejectsPrepopulatedSessionReusedByLaterAttempt(t *testing.T) {
+	db := openTestDB(t)
+	t.Cleanup(func() { db.Close() })
+	repo := createRepo(t, db, "/tmp/token-cost-prepopulated-session")
+	commit := createCommit(t, db, repo.ID, "prepopulated-session-sha")
+	job, err := db.EnqueueJob(EnqueueOpts{
+		RepoID:    repo.ID,
+		CommitID:  commit.ID,
+		GitRef:    "prepopulated-session-sha",
+		Agent:     "codex",
+		SessionID: "reused-session",
+	})
+	require.NoError(t, err)
+
+	first, err := db.ClaimJob("first-worker")
+	require.NoError(t, err)
+	require.Equal(t, job.ID, first.ID)
+	require.NoError(t, db.MarkJobAgentInvoked(first.ID, "first-worker", "codex review"))
+	retried, err := db.RetryJob(first.ID, "first-worker", 3, 0)
+	require.NoError(t, err)
+	require.True(t, retried)
+
+	second, err := db.ClaimJob("second-worker")
+	require.NoError(t, err)
+	require.Equal(t, job.ID, second.ID)
+	require.NoError(t, db.MarkJobAgentInvoked(second.ID, "second-worker", "codex review"))
+	require.NoError(t, db.SaveJobSessionID(second.ID, "second-worker", "reused-session"))
+	require.NoError(t, db.CompleteJob(
+		second.ID, "codex", "prompt", "No issues found.",
+	))
+
+	candidates, err := db.ListTokenCostCandidates(0, 100)
+	require.NoError(t, err)
+	assert.Empty(t, candidates)
+}
+
+func TestAutoDesignJobCapturesTokenUsageBeforeReopen(t *testing.T) {
+	db := openTestDB(t)
+	t.Cleanup(func() { db.Close() })
+	repo := createRepo(t, db, "/tmp/token-cost-auto-design")
+	commit := createCommit(t, db, repo.ID, "auto-design-sha")
+	jobID, err := db.EnqueueAutoDesignJob(EnqueueOpts{
+		RepoID:     repo.ID,
+		CommitID:   commit.ID,
+		GitRef:     "auto-design-sha",
+		Agent:      "codex",
+		JobType:    JobTypeReview,
+		ReviewType: "design",
+	})
+	require.NoError(t, err)
+	require.NotZero(t, jobID)
+
+	claimed, err := db.ClaimJob("auto-design-worker")
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+	require.Equal(t, jobID, claimed.ID)
+	require.NoError(t, db.MarkJobAgentInvoked(
+		jobID, "auto-design-worker", "codex review",
+	))
+	require.NoError(t, db.SaveJobSessionID(
+		jobID, "auto-design-worker", "auto-design-session",
+	))
+	require.NoError(t, db.CompleteJob(
+		jobID, "codex", "prompt", "No issues found.",
+	))
+
+	updated, err := db.BackfillJobTokenUsageIfCurrent(
+		jobID,
+		"auto-design-session",
+		"",
+		`{"total_output_tokens":32}`,
+		claimed.StartedAtRaw,
+		false,
+	)
+	require.NoError(t, err)
+	assert.True(t, updated)
+}
+
 func TestBackfillJobTokenUsageIfCurrentRejectsReenqueuedJob(t *testing.T) {
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })

@@ -587,10 +587,60 @@ func (db *DB) SaveJobPrompt(jobID int64, prompt string) error {
 // marker onto a row a new attempt now owns — that would wrongly make the
 // terminal row cost-eligible. Mirrors SaveJobSessionID.
 func (db *DB) MarkJobAgentInvoked(jobID int64, workerID, cmdLine string) error {
-	_, err := db.Exec(
+	ctx := context.Background()
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			if _, err := conn.ExecContext(ctx, "ROLLBACK"); err != nil {
+				log.Printf("jobs MarkJobAgentInvoked: rollback failed: %v", err)
+			}
+		}
+	}()
+
+	result, err := conn.ExecContext(ctx,
 		`UPDATE review_jobs SET command_line = ?, agent_invoked = 1
 		 WHERE id = ? AND status = 'running' AND worker_id = ?`,
 		cmdLine, jobID, workerID)
+	if err != nil {
+		return err
+	}
+	rows, err := result.RowsAffected()
+	if err != nil {
+		return err
+	}
+	if rows > 0 {
+		if err := insertJobSessionHistory(ctx, conn, jobID); err != nil {
+			return err
+		}
+	}
+	if _, err := conn.ExecContext(ctx, "COMMIT"); err != nil {
+		return err
+	}
+	committed = true
+	return nil
+}
+
+func insertJobSessionHistory(
+	ctx context.Context, exec execer, jobID int64,
+) error {
+	_, err := exec.ExecContext(ctx, `
+		INSERT OR IGNORE INTO review_job_session_history
+			(source_machine_id, session_id, job_uuid, started_at)
+		SELECT source_machine_id, session_id, uuid, started_at
+		FROM review_jobs
+		WHERE id = ?
+		  AND source_machine_id IS NOT NULL AND source_machine_id != ''
+		  AND session_id IS NOT NULL AND session_id != ''
+		  AND uuid IS NOT NULL AND uuid != ''
+		  AND started_at IS NOT NULL`, jobID)
 	return err
 }
 
@@ -735,16 +785,7 @@ func (db *DB) SaveJobSessionID(
 		return err
 	}
 	if rows > 0 {
-		if _, err := conn.ExecContext(ctx, `
-			INSERT OR IGNORE INTO review_job_session_history
-				(source_machine_id, session_id, job_uuid, started_at)
-			SELECT source_machine_id, session_id, uuid, started_at
-			FROM review_jobs
-			WHERE id = ?
-			  AND source_machine_id IS NOT NULL AND source_machine_id != ''
-			  AND session_id IS NOT NULL AND session_id != ''
-			  AND uuid IS NOT NULL AND uuid != ''
-			  AND started_at IS NOT NULL`, jobID); err != nil {
+		if err := insertJobSessionHistory(ctx, conn, jobID); err != nil {
 			return err
 		}
 	}
@@ -2107,14 +2148,22 @@ func truncateSkipReasonRunes(s string, n int) string {
 // DO NOTHING makes this a no-op when another auto-design producer already
 // recorded the outcome.
 func (db *DB) InsertSkippedDesignJob(p InsertSkippedDesignJobParams) error {
+	machineID, err := db.GetMachineID()
+	if err != nil {
+		return fmt.Errorf("get machine ID: %w", err)
+	}
 	now := time.Now().Format(time.RFC3339)
-	_, err := db.ExecContext(context.Background(), `
+	_, err = db.ExecContext(context.Background(), `
 		INSERT INTO review_jobs
 		  (repo_id, commit_id, git_ref, branch, agent, status, review_type,
-		   skip_reason, job_type, source, enqueued_at, finished_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, 'skipped', 'design', ?, 'review', 'auto_design', ?, ?, ?)
+		   skip_reason, job_type, source, uuid, source_machine_id,
+		   enqueued_at, finished_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, 'skipped', 'design', ?, 'review', 'auto_design',
+		        ?, ?, ?, ?, ?)
 		ON CONFLICT DO NOTHING
-	`, p.RepoID, nullableCommitID(p.CommitID), p.GitRef, p.Branch, AutoDesignAgentSentinel, sanitizeSkipReason(p.SkipReason), now, now, now)
+	`, p.RepoID, nullableCommitID(p.CommitID), p.GitRef, p.Branch,
+		AutoDesignAgentSentinel, sanitizeSkipReason(p.SkipReason),
+		GenerateUUID(), machineID, now, now, now)
 	if err != nil {
 		return fmt.Errorf("insert skipped design row: %w", err)
 	}
@@ -2135,17 +2184,23 @@ func (db *DB) EnqueueAutoDesignJob(p EnqueueOpts) (int64, error) {
 	if agentName == "" {
 		agentName = AutoDesignAgentSentinel
 	}
+	machineID, err := db.GetMachineID()
+	if err != nil {
+		return 0, fmt.Errorf("get machine ID: %w", err)
+	}
 	now := time.Now().Format(time.RFC3339)
 	var id int64
-	err := db.QueryRow(`
+	err = db.QueryRow(`
 		INSERT INTO review_jobs
 		  (repo_id, commit_id, git_ref, branch, agent, model, status, job_type,
-		   review_type, source, enqueued_at, updated_at)
-		VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, 'auto_design', ?, ?)
+		   review_type, source, uuid, source_machine_id, enqueued_at, updated_at)
+		VALUES (?, ?, ?, ?, ?, ?, 'queued', ?, ?, 'auto_design', ?, ?, ?, ?)
 		ON CONFLICT DO NOTHING
 		RETURNING id
-	`, p.RepoID, nullableCommitID(p.CommitID), p.GitRef, p.Branch, agentName, nullString(p.Model), jobType, p.ReviewType, now, now).Scan(&id)
-	if err == sql.ErrNoRows {
+	`, p.RepoID, nullableCommitID(p.CommitID), p.GitRef, p.Branch,
+		agentName, nullString(p.Model), jobType, p.ReviewType,
+		GenerateUUID(), machineID, now, now).Scan(&id)
+	if errors.Is(err, sql.ErrNoRows) {
 		return 0, nil
 	}
 	return id, err
