@@ -95,6 +95,34 @@ jobs:
             --pattern '*.deb' --pattern '*.rpm' \
             --pattern 'SHA256SUMS'
 
+      - name: Verify required assets are present
+        env:
+          TAG: ${{ steps.resolve.outputs.tag }}
+        run: |
+          set -euo pipefail
+          cd assets
+          version="${TAG#v}"
+          failed=0
+          # Independent of SHA256SUMS on purpose: a rebuild that drops a
+          # target regenerates the manifest too (#1081), so the manifest
+          # cannot define the expected inventory. Mirrors the goreleaser
+          # archive/nfpm matrix; update both together.
+          for target in darwin_amd64 darwin_arm64 linux_amd64 linux_arm64 windows_amd64 windows_arm64; do
+            case "$target" in
+              linux_*)   exts="tar.gz deb rpm" ;;
+              windows_*) exts="tar.gz zip" ;;
+              *)         exts="tar.gz" ;;
+            esac
+            for ext in $exts; do
+              name="roborev_${version}_${target}.${ext}"
+              if [ ! -e "$name" ]; then
+                echo "FAIL $name: required release asset missing"
+                failed=1
+              fi
+            done
+          done
+          exit "$failed"
+
       - name: Verify checksums
         run: |
           set -euo pipefail
