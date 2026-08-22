@@ -215,6 +215,13 @@ jobs:
             echo "::error::expected linux_amd64 binary not found at $binary; update this workflow if the archive naming changed"
             exit 1
           fi
+          # verify-web-assets shipped in v0.65.0 alongside the web UI and
+          # runs the same validation the daemon uses to gate the browser
+          # listener (stub detection, marker, Vite manifest, referenced
+          # bundles) — strictly stronger than the marker count above, and
+          # the only structural check available for v0.65.0 itself, which
+          # predates the web_assets version field.
+          "$binary" verify-web-assets
           "$binary" version --json | tee version.json
           if [ "$WEB_ASSETS_FIELD" = "true" ]; then
             # The web_assets field is part of the version --json contract
