@@ -1012,6 +1012,7 @@ func TestServerStopKeepsCIEventListenerUntilWorkersFinish(t *testing.T) {
 	close(server.workerPool.readyCh)
 	go func() {
 		<-releaseWorker
+		server.Broadcaster().Broadcast(ciEvent(synth.ID, "review.completed"))
 		server.workerPool.wg.Done()
 	}()
 
@@ -1024,12 +1025,10 @@ func TestServerStopKeepsCIEventListenerUntilWorkersFinish(t *testing.T) {
 	assert.Equal(t, baseSubscribers+1, server.Broadcaster().SubscriberCount())
 	require.ErrorContains(t, h.Poller.Start(), "already running or stopping")
 
-	server.Broadcaster().Broadcast(ciEvent(synth.ID, "review.completed"))
-	require.Eventually(t, func() bool { return h.panelPostedAt(t, panel.ID) }, time.Second, time.Millisecond)
-	assert.Len(t, *comments, 1)
-
 	close(releaseWorker)
 	require.NoError(t, <-stopDone)
+	assert.Len(t, *comments, 1)
+	assert.True(t, h.panelPostedAt(t, panel.ID))
 	assert.Zero(t, server.Broadcaster().SubscriberCount())
 }
 
