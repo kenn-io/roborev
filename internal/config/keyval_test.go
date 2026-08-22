@@ -614,6 +614,7 @@ func TestIsValidKey(t *testing.T) {
 		{"ci.github_app_id", true},
 		{"ci.github_app_private_key", true},
 		{"hooks", true},
+		{"post_commit_batch_size", true},
 		{"acp.goose.command", true},
 		{"acp.goose.args", true},
 		{"acp.goose.unknown", false},
@@ -651,6 +652,7 @@ func TestIsGlobalKey(t *testing.T) {
 		{"sync.repo_names", true},
 		{"hooks", true},
 		{"agent", false},
+		{"post_commit_batch_size", false},
 		{"sync", false},
 		{"review_guidelines", true},
 		{"nonexistent", false},
@@ -681,6 +683,12 @@ func TestFixGuidelinesIsGlobalOnly(t *testing.T) {
 	assert.Equal(t, "Global policy", global.FixGuidelines)
 	assert.True(t, IsGlobalKey("fix_guidelines"))
 	assert.Error(t, SetConfigValue(&RepoConfig{}, "fix_guidelines", "Repo policy"))
+}
+
+func TestPostCommitBatchSizeValidInRepoConfig(t *testing.T) {
+	cfg := &RepoConfig{}
+	require.NoError(t, SetConfigValue(cfg, "post_commit_batch_size", "5"))
+	assert.Equal(t, 5, cfg.PostCommitBatchSize)
 }
 
 func TestListExplicitKeys(t *testing.T) {

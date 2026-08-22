@@ -28,6 +28,31 @@ roborev status        # daemon + queue
 roborev show HEAD     # print the latest commit's review in the terminal
 ```
 
+### Batch small commits
+
+If reviewing every commit creates too much noise, set a repository-local batch
+size in `.roborev.toml`:
+
+```toml
+post_commit_batch_size = 5
+```
+
+The post-commit hook then waits until five commits have accumulated and queues
+one review for the full range. Values below `2`, including the default of `1`,
+keep the usual one-review-per-commit behavior.
+
+Pending commits are tracked separately for each branch and shared across linked
+worktrees. A pre-push hook flushes a partial batch before those commits are
+pushed. After a rebase or amend, the next review covers everything since the
+last commit the rewritten branch still shares with its old history, so pending
+work is never skipped (rewritten commits may be re-reviewed). Run `roborev init`
+after upgrading roborev to install or update the pre-push hook.
+
+Batching changes review frequency, not review scope. With
+`post_commit_review = "commit"`, roborev reviews the accumulated commit range.
+With `post_commit_review = "branch"`, roborev still reviews the full branch, but
+only when the batch threshold is reached or pending work is flushed.
+
 Then act on the reviews in whichever way fits how you work:
 
 - **Copy-paste from the TUI.** `roborev tui` shows the review queue; open a

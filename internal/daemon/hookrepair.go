@@ -54,11 +54,14 @@ func repairRepoHooksAtStartup(ctx context.Context, root, binaryPath string) {
 	if githook.Missing(ctx, root, "post-rewrite") {
 		log.Printf("Warning: missing post-rewrite hook in %s -- run 'roborev init' to install", root)
 	}
+	if githook.Missing(ctx, root, "pre-push") {
+		log.Printf("Warning: missing pre-push hook in %s -- run 'roborev init' to install", root)
+	}
 }
 
 // readOnlyHookWarnings collects diagnostics for repos whose hooks directory
 // the daemon must not write: outdated version markers, hooks baked with a
-// binary other than binaryPath, and a missing post-rewrite hook.
+// binary other than binaryPath, and missing companion hooks.
 func readOnlyHookWarnings(ctx context.Context, root, binaryPath string) []string {
 	var warnings []string
 	if githook.NeedsUpgrade(ctx, root, "post-commit", githook.PostCommitVersionMarker) {
@@ -75,6 +78,14 @@ func readOnlyHookWarnings(ctx context.Context, root, binaryPath string) []string
 	} else if githook.HookBinaryStale(ctx, root, "post-rewrite", binaryPath) {
 		warnings = append(warnings,
 			fmt.Sprintf("Warning: post-rewrite hook in %s points at a stale roborev binary -- run 'roborev init' to update it", root))
+	}
+	if githook.NeedsUpgrade(ctx, root, "pre-push", githook.PrePushVersionMarker) ||
+		githook.Missing(ctx, root, "pre-push") {
+		warnings = append(warnings,
+			fmt.Sprintf("Warning: missing or outdated pre-push hook in %s -- run 'roborev init' to install", root))
+	} else if githook.HookBinaryStale(ctx, root, "pre-push", binaryPath) {
+		warnings = append(warnings,
+			fmt.Sprintf("Warning: pre-push hook in %s points at a stale roborev binary -- run 'roborev init' to update it", root))
 	}
 	return warnings
 }

@@ -24,7 +24,7 @@ func initCmd() *cobra.Command {
 		Long: `Initialize roborev with a single command:
   - Creates ~/.roborev/ global config directory
   - Creates .roborev.toml in repo (if --agent specified)
-  - Installs post-commit hook
+  - Installs Git hooks
   - Starts the daemon (unless --no-daemon)`,
 		RunE: func(cmd *cobra.Command, args []string) error {
 			ctx := cmd.Context()
@@ -73,7 +73,7 @@ func initCmd() *cobra.Command {
 				return fmt.Errorf("ensure snapshot dir gitignored: %w", err)
 			}
 
-			// 5. Install hooks (post-commit + post-rewrite)
+			// 5. Install hooks
 			if err := gitrepo.EnsureAbsoluteHooksPath(ctx, root); err != nil {
 				return fmt.Errorf("normalize hooks path: %w", err)
 			}

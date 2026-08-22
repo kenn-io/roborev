@@ -313,6 +313,75 @@ func TestHandleEnqueueExcludedBranch(t *testing.T) {
 	})
 }
 
+func TestHandleEnqueueUsesExplicitBranchForExclusion(t *testing.T) {
+	tests := []struct {
+		name          string
+		source        string
+		currentBranch string
+		targetBranch  string
+		wantSkipped   bool
+	}{
+		{
+			name:          "allows target when checkout is excluded",
+			source:        "post_commit",
+			currentBranch: "wip-feature",
+			targetBranch:  "feature-ok",
+		},
+		{
+			name:          "skips target when checkout is allowed",
+			source:        "post_commit",
+			currentBranch: "feature-ok",
+			targetBranch:  "wip-feature",
+			wantSkipped:   true,
+		},
+		{
+			// excluded_branches applies to automatic reviews only; a manual
+			// review may target an excluded branch explicitly.
+			name:          "manual review targets excluded branch",
+			currentBranch: "feature-ok",
+			targetBranch:  "wip-feature",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			server, db, tmpDir := newTestServer(t)
+			repoDir := filepath.Join(tmpDir, "testrepo")
+			repo := testutil.InitTestGitRepo(t, repoDir)
+			repo.CheckoutNewBranch(tt.currentBranch)
+			require.NoError(t, os.WriteFile(
+				filepath.Join(repoDir, ".roborev.toml"),
+				[]byte(`excluded_branches = ["wip-feature"]`), 0o644,
+			))
+
+			reqData := EnqueueRequest{
+				RepoPath: repoDir,
+				GitRef:   "HEAD",
+				Branch:   tt.targetBranch,
+				Agent:    "test",
+				Source:   tt.source,
+			}
+			req := testutil.MakeJSONRequest(
+				t, http.MethodPost, "/api/enqueue", reqData,
+			)
+			w := httptest.NewRecorder()
+			server.httpServer.Handler.ServeHTTP(w, req)
+
+			if tt.wantSkipped {
+				assert.Equal(t, http.StatusOK, w.Code)
+			} else {
+				assert.Equal(t, http.StatusCreated, w.Code)
+			}
+			queued, _, _, _, _, _, _, _, _ := db.GetJobCounts()
+			if tt.wantSkipped {
+				assert.Equal(t, 0, queued)
+			} else {
+				assert.Equal(t, 1, queued)
+			}
+		})
+	}
+}
+
 func TestBuildTargetDescriptorExcludedCommitPattern(t *testing.T) {
 	t.Parallel()
 	server, db, tmpDir := newTestServer(t)

@@ -75,6 +75,8 @@ func HasRealErrors(err error) bool {
 const (
 	PostCommitVersionMarker  = "post-commit hook v4"
 	PostRewriteVersionMarker = "post-rewrite hook v2"
+	PrePushVersionMarker     = "pre-push hook v3"
+	roborevHookEndMarker     = "# roborev hook end"
 )
 
 // VersionMarker returns the current version marker for a hook.
@@ -84,6 +86,8 @@ func VersionMarker(hookName string) string {
 		return PostCommitVersionMarker
 	case "post-rewrite":
 		return PostRewriteVersionMarker
+	case "pre-push":
+		return PrePushVersionMarker
 	default:
 		return ""
 	}
@@ -423,6 +427,25 @@ fi
 `, PostRewriteVersionMarker, roborevPath)
 }
 
+// GeneratePrePush returns a standalone pre-push hook that flushes a pending
+// post-commit batch before commits leave the local repository.
+func GeneratePrePush() string {
+	return GeneratePrePushWithBinary(resolveRoborevPath())
+}
+
+// GeneratePrePushWithBinary returns a pre-push hook using roborevPath.
+func GeneratePrePushWithBinary(roborevPath string) string {
+	return fmt.Sprintf(`#!/bin/sh
+# roborev %s - flushes pending post-commit batches before push
+ROBOREV=%q
+if [ ! -x "$ROBOREV" ]; then
+    ROBOREV=$(command -v roborev 2>/dev/null)
+    [ -z "$ROBOREV" ] || [ ! -x "$ROBOREV" ] && exit 0
+fi
+"$ROBOREV" post-commit --flush-push 2>/dev/null || true
+`, PrePushVersionMarker, roborevPath)
+}
+
 // generateEmbeddablePostCommit returns a function-wrapped
 // snippet without shebang, for embedding in existing hooks.
 // Uses return instead of exit so it doesn't terminate the
@@ -465,12 +488,33 @@ _roborev_remap
 `, PostRewriteVersionMarker, roborevPath)
 }
 
+func generateEmbeddablePrePushWithBinary(roborevPath string) string {
+	return fmt.Sprintf(`# roborev %s - flushes pending post-commit batches before push
+_roborev_flush() {
+ROBOREV=%q
+if [ ! -x "$ROBOREV" ]; then
+    ROBOREV=$(command -v roborev 2>/dev/null)
+    [ -z "$ROBOREV" ] || [ ! -x "$ROBOREV" ] && return 0
+fi
+_roborev_input=$(mktemp "${TMPDIR:-/tmp}/roborev-pre-push.XXXXXX") || return 0
+cat > "$_roborev_input"
+"$ROBOREV" post-commit --flush-push < "$_roborev_input" 2>/dev/null || true
+exec 0< "$_roborev_input"
+rm -f "$_roborev_input"
+}
+_roborev_flush
+%s
+`, PrePushVersionMarker, roborevPath, roborevHookEndMarker)
+}
+
 func generateContentWithBinary(hookName, roborevPath string) string {
 	switch hookName {
 	case "post-commit":
 		return GeneratePostCommitWithBinary(roborevPath)
 	case "post-rewrite":
 		return GeneratePostRewriteWithBinary(roborevPath)
+	case "pre-push":
+		return GeneratePrePushWithBinary(roborevPath)
 	default:
 		return ""
 	}
@@ -482,6 +526,8 @@ func generateEmbeddableWithBinary(hookName, roborevPath string) string {
 		return generateEmbeddablePostCommitWithBinary(roborevPath)
 	case "post-rewrite":
 		return generateEmbeddablePostRewriteWithBinary(roborevPath)
+	case "pre-push":
+		return generateEmbeddablePrePushWithBinary(roborevPath)
 	default:
 		return ""
 	}
@@ -616,7 +662,7 @@ func renderUpdatedHookContent(
 	return generateContentWithBinary(hookName, roborevPath), nil
 }
 
-// InstallAll installs both post-commit and post-rewrite hooks.
+// InstallAll installs all roborev hooks.
 // It attempts all hooks and returns a joined error if any fail.
 func InstallAll(hooksDir string, force bool) error {
 	return InstallAllWithOptions(hooksDir, InstallOptions{
@@ -624,11 +670,11 @@ func InstallAll(hooksDir string, force bool) error {
 	})
 }
 
-// InstallAllWithOptions installs both post-commit and post-rewrite hooks.
+// InstallAllWithOptions installs all roborev hooks.
 // It attempts all hooks and returns a joined error if any fail.
 func InstallAllWithOptions(hooksDir string, opts InstallOptions) error {
 	var errs []error
-	for _, name := range []string{"post-commit", "post-rewrite"} {
+	for _, name := range []string{"post-commit", "post-rewrite", "pre-push"} {
 		if err := InstallWithOptions(hooksDir, name, opts); err != nil {
 			errs = append(errs, err)
 		}
@@ -667,7 +713,18 @@ func Uninstall(hookPath string) error {
 		return nil
 	}
 
-	blockEnd := blockStart
+	blockEnd := -1
+	for i := blockStart + 1; i < len(lines); i++ {
+		if strings.TrimSpace(lines[i]) == roborevHookEndMarker {
+			blockEnd = i
+			break
+		}
+	}
+	if blockEnd >= 0 {
+		return removeRoborevHookBlock(hookPath, lines, blockStart, blockEnd)
+	}
+
+	blockEnd = blockStart
 	inIfBlock := false
 	inFuncBlock := false
 	for i := blockStart + 1; i < len(lines); i++ {
@@ -703,6 +760,12 @@ func Uninstall(hookPath string) error {
 		break
 	}
 
+	return removeRoborevHookBlock(hookPath, lines, blockStart, blockEnd)
+}
+
+func removeRoborevHookBlock(
+	hookPath string, lines []string, blockStart, blockEnd int,
+) error {
 	remaining := make([]string, 0, len(lines))
 	remaining = append(remaining, lines[:blockStart]...)
 	remaining = append(remaining, lines[blockEnd+1:]...)
@@ -761,6 +824,8 @@ func isRoborevMarker(line string) bool {
 		trimmed, "# roborev post-commit hook",
 	) || strings.HasPrefix(
 		trimmed, "# roborev post-rewrite hook",
+	) || strings.HasPrefix(
+		trimmed, "# roborev pre-push hook",
 	)
 }
 
@@ -798,9 +863,13 @@ func isRoborevSnippetLine(line string) bool {
 		hasCommandPrefix(
 			trimmed, "\"$ROBOREV\" remap --quiet",
 		) ||
+		hasCommandPrefix(
+			trimmed, "\"$ROBOREV\" post-commit --flush",
+		) ||
 		hasCommandPrefix(trimmed, "roborev post-commit") ||
 		hasCommandPrefix(trimmed, "roborev enqueue") ||
 		hasCommandPrefix(trimmed, "roborev remap") ||
+		hasCommandPrefix(trimmed, "roborev post-commit --flush") ||
 		strings.HasPrefix(
 			trimmed, "if [ ! -x \"$ROBOREV\"",
 		) ||
@@ -810,6 +879,11 @@ func isRoborevSnippetLine(line string) bool {
 		strings.HasPrefix(trimmed, "[ -z \"$ROBOREV\"") ||
 		strings.HasPrefix(trimmed, "[ ! -x \"$ROBOREV\"") ||
 		trimmed == "return 0" ||
+		strings.HasPrefix(trimmed, "_roborev_input=$(mktemp ") ||
+		trimmed == `cat > "$_roborev_input"` ||
+		trimmed == `exec 0< "$_roborev_input"` ||
+		trimmed == `rm -f "$_roborev_input"` ||
 		strings.HasPrefix(trimmed, "_roborev_hook") ||
-		strings.HasPrefix(trimmed, "_roborev_remap")
+		strings.HasPrefix(trimmed, "_roborev_remap") ||
+		strings.HasPrefix(trimmed, "_roborev_flush")
 }

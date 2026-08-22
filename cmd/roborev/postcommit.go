@@ -1,13 +1,17 @@
 package main
 
 import (
+	"bufio"
 	"bytes"
+	"context"
 	"encoding/json"
 	"fmt"
 	"io"
+	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
+	"strings"
 	"time"
 
 	"github.com/spf13/cobra"
@@ -30,10 +34,18 @@ var hookHTTPClient = func(timeout time.Duration) *http.Client {
 // hookLogPath can be overridden in tests.
 var hookLogPath = ""
 
+// testHookAfterBatchPlan runs after batch planning and before the enqueue
+// request is built. Tests use it to simulate concurrent git activity.
+var testHookAfterBatchPlan = func() {}
+
 func postCommitCmd() *cobra.Command {
 	var (
-		repoPath   string
-		baseBranch string
+		repoPath    string
+		baseBranch  string
+		flush       bool
+		flushPush   bool
+		flushBranch string
+		flushHead   string
 	)
 
 	cmd := &cobra.Command{
@@ -63,6 +75,10 @@ func postCommitCmd() *cobra.Command {
 				))
 				return nil
 			}
+			if flushPush {
+				flushPushedPostCommitBatches(ctx, root, os.Stdin)
+				return nil
+			}
 
 			if git.IsRebaseInProgress(root) {
 				hookLog(root, "skip", "rebase in progress")
@@ -72,6 +88,43 @@ func postCommitCmd() *cobra.Command {
 			// Migrate stale relative core.hooksPath to absolute
 			// so linked worktrees resolve hooks correctly.
 			_ = gitrepo.EnsureAbsoluteHooksPath(ctx, root)
+			unlock, err := acquirePostCommitBatchLock(ctx, root)
+			if err != nil {
+				hookLog(root, "fail", fmt.Sprintf(
+					"acquire post-commit lock: %v", err,
+				))
+				return nil
+			}
+			// Keep planning, enqueueing, and checkpoint advancement in one
+			// transaction. Releasing this lock before the daemon response would
+			// let a concurrent hook plan from stale batch state.
+			defer func() { _ = unlock() }()
+
+			batchSize, err := config.ResolvePostCommitBatchSizeWithError(root)
+			if err != nil {
+				hookLog(root, "fail", fmt.Sprintf("load batch config: %v", err))
+				return nil
+			}
+			var batch postCommitBatchDecision
+			if flushBranch != "" {
+				batch = planStoredPostCommitBatch(
+					ctx, root, batchSize, flushBranch, flushHead,
+				)
+			} else {
+				batch = planPostCommitBatch(ctx, root, batchSize)
+			}
+			testHookAfterBatchPlan()
+			if flush && !batch.Enabled {
+				hookLog(root, "skip", "batch flush disabled")
+				return nil
+			}
+			if batch.Enabled && !batch.Ready && (!flush || batch.Pending == 0) {
+				hookLog(root, "skip", fmt.Sprintf(
+					"batch pending branch=%s commits=%d threshold=%d",
+					batch.Branch, batch.Pending, batchSize,
+				))
+				return nil
+			}
 
 			if err := ensureDaemon(); err != nil {
 				hookLog(root, "fail", fmt.Sprintf(
@@ -80,14 +133,31 @@ func postCommitCmd() *cobra.Command {
 				return nil
 			}
 
-			var gitRef string
-			if ref, ok := tryBranchReview(ctx, root, baseBranch); ok {
-				gitRef = ref
-			} else {
-				gitRef = "HEAD"
+			gitRef := "HEAD"
+			if batch.Enabled {
+				gitRef = batch.AccumulatedRef()
 			}
-
+			// Enqueue the branch and head the plan captured under the batch
+			// lock. Re-reading live git state here would let a concurrent
+			// commit or checkout change what is reviewed while
+			// advancePostCommitBatch still advances the planned branch.
 			branchName := gitrepo.CurrentBranch(ctx, root)
+			headRef := "HEAD"
+			if flushBranch != "" {
+				branchName = flushBranch
+				headRef = "refs/heads/" + flushBranch
+			}
+			if batch.Branch != "" {
+				branchName = batch.Branch
+			}
+			if batch.Head != "" {
+				headRef = batch.Head
+			}
+			if ref, ok := tryBranchReviewForRef(
+				ctx, root, baseBranch, headRef, branchName,
+			); ok {
+				gitRef = ref
+			}
 
 			reqBody, _ := json.Marshal(daemon.EnqueueRequest{
 				RepoPath: root,
@@ -128,9 +198,20 @@ func postCommitCmd() *cobra.Command {
 				return nil
 			}
 
-			hookLog(root, "ok", fmt.Sprintf(
+			checkpointErr := advancePostCommitBatch(batch)
+			message := fmt.Sprintf(
 				"enqueued ref=%s branch=%s", gitRef, branchName,
-			))
+			)
+			if batch.Enabled {
+				message += fmt.Sprintf(" batch_commits=%d", batch.Pending)
+			}
+			if batch.Reason != "" {
+				message += " fallback=" + batch.Reason
+			}
+			if checkpointErr != nil {
+				message += " checkpoint_error=" + checkpointErr.Error()
+			}
+			hookLog(root, "ok", message)
 			return nil
 		},
 	}
@@ -139,6 +220,14 @@ func postCommitCmd() *cobra.Command {
 		&repoPath, "repo", "",
 		"path to git repository (default: current directory)",
 	)
+	cmd.Flags().BoolVar(&flush, "flush", false, "flush pending batched commits")
+	_ = cmd.Flags().MarkHidden("flush")
+	cmd.Flags().BoolVar(&flushPush, "flush-push", false, "flush pushed branches")
+	_ = cmd.Flags().MarkHidden("flush-push")
+	cmd.Flags().StringVar(&flushBranch, "flush-branch", "", "branch to flush")
+	_ = cmd.Flags().MarkHidden("flush-branch")
+	cmd.Flags().StringVar(&flushHead, "flush-head", "", "pushed commit to flush")
+	_ = cmd.Flags().MarkHidden("flush-head")
 	cmd.Flags().StringVar(
 		&baseBranch, "base", "",
 		"base branch for branch review comparison",
@@ -154,6 +243,46 @@ func postCommitCmd() *cobra.Command {
 	_ = cmd.Flags().MarkHidden("quiet")
 
 	return cmd
+}
+
+func flushPushedPostCommitBatches(
+	ctx context.Context, root string, input io.Reader,
+) {
+	branches := make(map[string]string)
+	scanner := bufio.NewScanner(input)
+	for scanner.Scan() {
+		fields := strings.Fields(scanner.Text())
+		if len(fields) < 2 {
+			continue
+		}
+		if strings.Trim(fields[1], "0") == "" {
+			continue
+		}
+		branch := strings.TrimPrefix(fields[0], "refs/heads/")
+		if branch == fields[0] {
+			if fields[0] != "HEAD" {
+				continue
+			}
+			branch = git.GetCurrentBranch(root)
+			if branch == "" {
+				continue
+			}
+		}
+		branches[branch] = fields[1]
+	}
+	// A push also carries any unpushed ancestor commits, so stored batch
+	// branches whose tips sit on a pushed head's chain flush too — otherwise
+	// a child branch pushes its parent's pending commits without a review.
+	maps.Copy(branches, pushedAncestorFlushBranches(ctx, root, branches))
+	for branch, head := range branches {
+		cmd := postCommitCmd()
+		cmd.SetContext(ctx)
+		cmd.SetArgs([]string{
+			"--repo", root, "--flush", "--flush-branch", branch,
+			"--flush-head", head,
+		})
+		_ = cmd.Execute()
+	}
 }
 
 // enqueueCmd returns a hidden backward-compatibility alias

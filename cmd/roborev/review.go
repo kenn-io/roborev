@@ -566,29 +566,34 @@ func findChildGitRepos(dir string) []string {
 	return repos
 }
 
-// tryBranchReview checks the repo config for post_commit_review = "branch".
-// When set, it returns a merge-base..HEAD range ref for the current branch.
-// Returns ("", false) silently on any error — hooks must never block commits.
-func tryBranchReview(ctx context.Context, root, baseBranchOverride string) (string, bool) {
+// tryBranchReviewForRef checks the repo config for
+// post_commit_review = "branch". When set, it returns a merge-base..head
+// range ref for the named branch. Returns ("", false) silently on any
+// error — hooks must never block commits.
+func tryBranchReviewForRef(
+	ctx context.Context,
+	root, baseBranchOverride, headRef, branchName string,
+) (string, bool) {
 	mode := config.ResolvePostCommitReview(root)
 	if mode != "branch" {
 		return "", false
 	}
 
 	base := baseBranchOverride
+	configRef := "refs/heads/" + branchName
 	if base == "" {
-		base = git.GetBranchBase(root, "HEAD")
+		base = git.GetBranchBase(root, configRef)
 	}
 	if base == "" {
 		// Prefer the branch's upstream tracking ref only when it resolves to
 		// trunk. Hooks must never block commits, but any GetUpstream failure
 		// (missing ref, corrupt config, subprocess error) means we cannot
 		// confidently pick a base — skip instead of falling back.
-		upstream, err := git.GetUpstream(root, "HEAD")
+		upstream, err := git.GetUpstream(root, configRef)
 		if err != nil {
 			return "", false
 		}
-		if upstream != "" && git.UpstreamIsTrunk(root, "HEAD") {
+		if upstream != "" && git.UpstreamIsTrunk(root, configRef) {
 			base = upstream
 		}
 	}
@@ -601,17 +606,16 @@ func tryBranchReview(ctx context.Context, root, baseBranchOverride string) (stri
 	}
 
 	// Don't branch-review in detached HEAD or on the base branch
-	current := gitrepo.CurrentBranch(ctx, root)
-	if current == "" || git.IsOnBaseBranch(root, current, base) {
+	if branchName == "" || git.IsOnBaseBranch(root, branchName, base) {
 		return "", false
 	}
 
-	mergeBase, err := git.GetMergeBase(root, base, "HEAD")
+	mergeBase, err := git.GetMergeBase(root, base, headRef)
 	if err != nil {
 		return "", false
 	}
 
-	rangeRef := mergeBase + "..HEAD"
+	rangeRef := mergeBase + ".." + headRef
 	commits, err := git.GetRangeCommits(root, rangeRef)
 	if err != nil || len(commits) == 0 {
 		return "", false

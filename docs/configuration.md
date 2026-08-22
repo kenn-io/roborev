@@ -134,6 +134,7 @@ max_chars = 50000
 | `excluded_commit_patterns` | array | Commit message substrings to skip reviews on (case-insensitive) |
 | `exclude_patterns` | array | Filenames or glob patterns to exclude from review diffs for this repo |
 | `post_commit_review` | string | Post-commit hook behavior: `"commit"` (default) or `"branch"` |
+| `post_commit_batch_size` | int | Number of commits to accumulate before an automatic post-commit review. Values below `2` review every commit |
 | `hook_timeout_seconds` | int | Override the post-commit hook request timeout for this repo, in seconds. Useful for large repos where the daemon's enqueue git calls are slow. Read filesystem-only from this checkout's `.roborev.toml` (a linked worktree without its own file does not inherit the main checkout's value). Zero or negative values inherit the global / platform default |
 | `auto_close_passing_reviews` | bool | Automatically close reviews that pass with no findings |
 | `review_reasoning` | string | Reasoning level for reviews. See [Reasoning Levels](#reasoning-levels) |
@@ -713,6 +714,30 @@ HEAD, or any error, the hook falls back to a single-commit review.
 
 This setting only affects the post-commit hook. `roborev review` is not changed
 by this option.
+
+### Post-Commit Review Batching
+
+By default, the post-commit hook queues a review after every commit. To combine
+several small commits into one automatic review, set a repository-local batch
+size:
+
+```toml
+post_commit_batch_size = 5
+```
+
+The hook returns without contacting the daemon until the configured number of
+commits has accumulated. It then queues one review over the accumulated range.
+Values below `2`, including the default of `1`, disable batching.
+
+Batch checkpoints are stored per branch in shared Git metadata, so linked
+worktrees use the same pending range. A partial batch is flushed by the pre-push
+hook before its branch is pushed. After a rebase or amend, the next review
+covers everything since the last commit still shared with the old history, so
+pending work is never skipped. Run `roborev init` after upgrading roborev to
+install or update the pre-push hook.
+
+When `post_commit_review = "branch"` is also set, the batch size controls when a
+review is queued, while the review still covers the entire branch.
 
 ### Auto-Close Passing Reviews
 

@@ -75,7 +75,7 @@ func uninstallHookCmd() *cobra.Command {
 			}
 
 			for _, hookName := range []string{
-				"post-commit", "post-rewrite",
+				"post-commit", "post-rewrite", "pre-push",
 			} {
 				if err := githook.Uninstall(
 					filepath.Join(hooksDir, hookName),

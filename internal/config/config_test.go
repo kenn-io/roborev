@@ -3890,6 +3890,30 @@ func TestResolvePostCommitReview(t *testing.T) {
 	}
 }
 
+func TestResolvePostCommitBatchSize(t *testing.T) {
+	tests := []struct {
+		name   string
+		config string
+		want   int
+	}{
+		{"no config file", "", 1},
+		{"field not set", `agent = "claude-code"`, 1},
+		{"one preserves current behavior", `post_commit_batch_size = 1`, 1},
+		{"five enables batching", `post_commit_batch_size = 5`, 5},
+		{"zero falls back", `post_commit_batch_size = 0`, 1},
+		{"negative falls back", `post_commit_batch_size = -3`, 1},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			dir := t.TempDir()
+			if tt.config != "" {
+				dir = newTempRepo(t, tt.config)
+			}
+			assert.Equal(t, tt.want, ResolvePostCommitBatchSize(dir))
+		})
+	}
+}
+
 func TestResolveReuseReviewSession(t *testing.T) {
 	boolTrue := true
 	boolFalse := false

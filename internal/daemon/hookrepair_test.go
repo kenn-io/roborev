@@ -135,20 +135,25 @@ func TestReadOnlyHookWarnings(t *testing.T) {
 		t.Parallel()
 		repo, hooksDir := setupWorktreeHooks(t)
 		oldBinary := writeFakeBinary(t, "roborev")
-		for _, name := range []string{"post-commit", "post-rewrite"} {
+		for _, name := range []string{"post-commit", "post-rewrite", "pre-push"} {
 			content := githook.GeneratePostCommitWithBinary(oldBinary)
-			if name == "post-rewrite" {
+			switch name {
+			case "post-rewrite":
 				content = githook.GeneratePostRewriteWithBinary(oldBinary)
+			case "pre-push":
+				content = githook.GeneratePrePushWithBinary(oldBinary)
 			}
 			require.NoError(t, os.WriteFile(filepath.Join(hooksDir, name), []byte(content), 0o755))
 		}
 
 		warnings := readOnlyHookWarnings(t.Context(), repo.Root, writeFakeBinary(t, "roborev"))
-		require.Len(t, warnings, 2)
+		require.Len(t, warnings, 3)
 		assert.Contains(t, warnings[0], "post-commit")
 		assert.Contains(t, warnings[0], "stale")
 		assert.Contains(t, warnings[1], "post-rewrite")
 		assert.Contains(t, warnings[1], "stale")
+		assert.Contains(t, warnings[2], "pre-push")
+		assert.Contains(t, warnings[2], "stale")
 	})
 
 	t.Run("current hooks produce no warnings", func(t *testing.T) {
@@ -161,6 +166,9 @@ func TestReadOnlyHookWarnings(t *testing.T) {
 		require.NoError(t, os.WriteFile(
 			filepath.Join(hooksDir, "post-rewrite"),
 			[]byte(githook.GeneratePostRewriteWithBinary(binary)), 0o755))
+		require.NoError(t, os.WriteFile(
+			filepath.Join(hooksDir, "pre-push"),
+			[]byte(githook.GeneratePrePushWithBinary(binary)), 0o755))
 
 		assert.Empty(t, readOnlyHookWarnings(t.Context(), repo.Root, binary))
 	})
@@ -189,6 +197,9 @@ func TestReadOnlyHookWarnings(t *testing.T) {
 		require.NoError(t, os.WriteFile(
 			filepath.Join(hooksDir, "post-commit"),
 			[]byte(githook.GeneratePostCommitWithBinary(binary)), 0o755))
+		require.NoError(t, os.WriteFile(
+			filepath.Join(hooksDir, "pre-push"),
+			[]byte(githook.GeneratePrePushWithBinary(binary)), 0o755))
 
 		warnings := readOnlyHookWarnings(t.Context(), repo.Root, binary)
 		require.Len(t, warnings, 1)

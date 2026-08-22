@@ -510,6 +510,7 @@ type RepoConfig struct {
 	ExcludePatterns                 []string `toml:"exclude_patterns" comment:"Filenames or glob patterns to exclude from review diffs for this repo."`
 	SnapshotDir                     string   `toml:"snapshot_dir" comment:"Repo-local directory for temporary oversized diff snapshots."`
 	PostCommitReview                string   `toml:"post_commit_review" comment:"Automatic post-commit review mode for this repo: commit or branch."` // "commit" (default) or "branch"
+	PostCommitBatchSize             int      `toml:"post_commit_batch_size" comment:"Enqueue one automatic post-commit review after this many commits. Values less than 2 review every commit."`
 	ReuseReviewSession              *bool    `toml:"reuse_review_session"`
 	ReuseReviewSessionLookback      int      `toml:"reuse_review_session_lookback"` // 0 means no candidate cap
 
@@ -1148,6 +1149,30 @@ func ResolvePostCommitReview(repoPath string) string {
 		return "branch"
 	}
 	return "commit"
+}
+
+// DefaultPostCommitBatchSize preserves the historical behavior of reviewing
+// every commit when post-commit batching is unset or disabled.
+const DefaultPostCommitBatchSize = 1
+
+// ResolvePostCommitBatchSize returns the number of commits to accumulate
+// before an automatic post-commit review. Values below 2 disable batching.
+func ResolvePostCommitBatchSize(repoPath string) int {
+	size, _ := ResolvePostCommitBatchSizeWithError(repoPath)
+	return size
+}
+
+// ResolvePostCommitBatchSizeWithError preserves config load errors so hooks do
+// not mistake a malformed batching config for an intentional disable.
+func ResolvePostCommitBatchSizeWithError(repoPath string) (int, error) {
+	cfg, err := LoadRepoConfig(repoPath)
+	if err != nil {
+		return DefaultPostCommitBatchSize, err
+	}
+	if cfg == nil || cfg.PostCommitBatchSize < 2 {
+		return DefaultPostCommitBatchSize, nil
+	}
+	return cfg.PostCommitBatchSize, nil
 }
 
 // ResolveReuseReviewSession returns whether reviews should try to resume a

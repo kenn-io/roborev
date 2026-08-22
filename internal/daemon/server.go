@@ -2448,8 +2448,16 @@ func (s *Server) humaEnqueue(
 	}
 
 	currentBranch := metadata.CurrentBranch()
+	// A post-commit request's explicit branch names the branch being
+	// reviewed, which can differ from the checkout's branch (for example a
+	// pre-push flush of another branch). Exclusion policy must follow the
+	// reviewed branch there, or a skip decided by the wrong branch silently
+	// drops the review. Manual reviews keep the checkout-branch check:
+	// excluded_branches applies to automatic reviews only.
 	branchToCheck := currentBranch
-	if req.JobType == storage.JobTypeInsights {
+	if req.Source == "post_commit" && req.Branch != "" {
+		branchToCheck = req.Branch
+	} else if req.JobType == storage.JobTypeInsights {
 		if req.Branch != "" {
 			branchToCheck = req.Branch
 		} else {

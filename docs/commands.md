@@ -940,7 +940,18 @@ When set to `"branch"`, each commit triggers a `merge-base..HEAD` range review.
 On the base branch itself, detached HEAD, or any error, it falls back to a
 single-commit review.
 
-See: [Configuration](/configuration/#post-commit-review-mode)
+To reduce review noise from small commits, set a repository-local batch size:
+
+```toml
+# .roborev.toml
+post_commit_batch_size = 5
+```
+
+The hook queues one review after five commits instead of one review per commit.
+A partial batch is flushed before push. Values below `2` disable batching.
+
+See: [Configuration](/configuration/#post-commit-review-mode) and
+[Post-Commit Review Batching](/configuration/#post-commit-review-batching)
 
 ## Agent Hook
 

@@ -401,6 +401,51 @@ func (r *TestRepo) InstallHook(name, script string) {
 	require.NoError(r.T, err)
 }
 
+func TestFirstParentDistance(t *testing.T) {
+	t.Run("counts linear commits", func(t *testing.T) {
+		repo := NewTestRepo(t)
+		repo.CommitFile("base.txt", "base", "base")
+		base := repo.HeadSHA()
+		repo.CommitFile("one.txt", "one", "one")
+		repo.CommitFile("two.txt", "two", "two")
+
+		distance, onChain, err := FirstParentDistance(
+			t.Context(), repo.Dir, base, "HEAD",
+		)
+		require.NoError(t, err)
+		assert.True(t, onChain)
+		assert.Equal(t, 2, distance)
+	})
+
+	t.Run("rejects second parent ancestry", func(t *testing.T) {
+		repo := NewTestRepo(t)
+		repo.CommitFile("base.txt", "base", "base")
+		defaultBranch := repo.Run("rev-parse", "--abbrev-ref", "HEAD")
+		repo.Run("checkout", "-b", "side")
+		repo.CommitFile("side.txt", "side", "side")
+		sideTip := repo.HeadSHA()
+		repo.Run("checkout", defaultBranch)
+		repo.CommitFile("main.txt", "main", "main")
+		repo.Run("merge", "--no-ff", "side", "-m", "merge side")
+
+		_, onChain, err := FirstParentDistance(
+			t.Context(), repo.Dir, sideTip, "HEAD",
+		)
+		require.NoError(t, err)
+		assert.False(t, onChain)
+	})
+
+	t.Run("returns invalid ref error", func(t *testing.T) {
+		repo := NewTestRepo(t)
+		repo.CommitFile("base.txt", "base", "base")
+
+		_, _, err := FirstParentDistance(
+			t.Context(), repo.Dir, "missing-ref", "HEAD",
+		)
+		require.Error(t, err)
+	})
+}
+
 const (
 	gitTransientRetries   = 4
 	gitTransientRetryWait = 250 * time.Millisecond
@@ -1339,6 +1384,23 @@ func TestGetUpstream(t *testing.T) {
 		upstream, err = GetUpstream(repo.Dir, "feature")
 		require.NoError(t, err)
 		assert.Empty(t, upstream)
+	})
+
+	t.Run("returns upstream for fully qualified branch ref", func(t *testing.T) {
+		repo := NewTestRepo(t)
+		repo.SetHeadBranch("main")
+		repo.CommitFile("file.txt", "content", "initial")
+		head := repo.HeadSHA()
+
+		repo.AddRemote("origin", "/dev/null")
+		repo.SetRef("refs/remotes/origin/main", head)
+		repo.SetBranchUpstream("main", "origin", "main")
+		repo.CheckoutNewBranch("feature")
+
+		upstream, err := GetUpstream(repo.Dir, "refs/heads/main")
+
+		require.NoError(t, err)
+		assert.Equal(t, "origin/main", upstream)
 	})
 
 	t.Run("empty ref defaults to HEAD", func(t *testing.T) {

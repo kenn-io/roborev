@@ -21,6 +21,7 @@ const (
 	shebang         = "#!/bin/sh\n"
 	hookPostCommit  = "post-commit"
 	hookPostRewrite = "post-rewrite"
+	hookPrePush     = "pre-push"
 )
 
 func TestGeneratePostCommit(t *testing.T) {
@@ -97,6 +98,103 @@ func TestGeneratePostRewrite(t *testing.T) {
 	assert.True(t, strings.HasPrefix(content, shebang), "hook should start with #!/bin/sh")
 	assert.Contains(t, content, PostRewriteVersionMarker, "hook should contain version marker")
 	assert.Contains(t, content, "remap --quiet", "hook should call remap --quiet")
+}
+
+func TestGeneratePrePush(t *testing.T) {
+	t.Parallel()
+	content := GeneratePrePush()
+	assert.True(t, strings.HasPrefix(content, shebang))
+	assert.Contains(t, content, PrePushVersionMarker)
+	assert.Contains(t, content, "post-commit --flush-push")
+}
+
+func TestEmbeddablePrePushReplaysStdinToExistingHook(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires a POSIX shell")
+	}
+
+	tmpDir := t.TempDir()
+	roborevCapture := filepath.Join(tmpDir, "roborev-input")
+	downstreamCapture := filepath.Join(tmpDir, "downstream-input")
+	fakeRoborev := filepath.Join(tmpDir, "roborev")
+	require.NoError(t, os.WriteFile(fakeRoborev, []byte(
+		"#!/bin/sh\ncat > \"$ROBOREV_CAPTURE\"\n",
+	), 0o755))
+
+	hook := embedSnippet(
+		"#!/bin/sh\ncat > \"$DOWNSTREAM_CAPTURE\"\n",
+		generateEmbeddablePrePushWithBinary(fakeRoborev),
+	)
+	hookPath := filepath.Join(tmpDir, "pre-push")
+	require.NoError(t, os.WriteFile(hookPath, []byte(hook), 0o755))
+
+	input := "refs/heads/feature abc refs/heads/feature def\n"
+	cmd := exec.Command("sh", hookPath)
+	cmd.Stdin = strings.NewReader(input)
+	cmd.Env = append(os.Environ(),
+		"ROBOREV_CAPTURE="+roborevCapture,
+		"DOWNSTREAM_CAPTURE="+downstreamCapture,
+	)
+	require.NoError(t, cmd.Run())
+
+	roborevInput, err := os.ReadFile(roborevCapture)
+	require.NoError(t, err)
+	downstreamInput, err := os.ReadFile(downstreamCapture)
+	require.NoError(t, err)
+	assert.Equal(t, input, string(roborevInput))
+	assert.Equal(t, input, string(downstreamInput))
+}
+
+func TestPrePushHookMasksFlushFailure(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires a POSIX shell")
+	}
+
+	tmpDir := t.TempDir()
+	fakeRoborev := filepath.Join(tmpDir, "roborev")
+	require.NoError(t, os.WriteFile(fakeRoborev, []byte(
+		"#!/bin/sh\nexit 7\n",
+	), 0o755))
+	hookPath := filepath.Join(tmpDir, "pre-push")
+	require.NoError(t, os.WriteFile(
+		hookPath, []byte(GeneratePrePushWithBinary(fakeRoborev)), 0o755,
+	))
+
+	cmd := exec.Command("sh", hookPath)
+	cmd.Stdin = strings.NewReader(
+		"refs/heads/feature abc refs/heads/feature def\n",
+	)
+	assert.NoError(t, cmd.Run(),
+		"a failing roborev binary must not abort the push")
+}
+
+func TestEmbeddablePrePushMasksFlushFailureUnderSetE(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("requires a POSIX shell")
+	}
+
+	tmpDir := t.TempDir()
+	fakeRoborev := filepath.Join(tmpDir, "roborev")
+	require.NoError(t, os.WriteFile(fakeRoborev, []byte(
+		"#!/bin/sh\nexit 7\n",
+	), 0o755))
+	downstreamCapture := filepath.Join(tmpDir, "downstream-ran")
+	hook := embedSnippet(
+		"#!/bin/sh\nset -e\ntouch \"$DOWNSTREAM_CAPTURE\"\n",
+		generateEmbeddablePrePushWithBinary(fakeRoborev),
+	)
+	hookPath := filepath.Join(tmpDir, "pre-push")
+	require.NoError(t, os.WriteFile(hookPath, []byte(hook), 0o755))
+
+	cmd := exec.Command("sh", hookPath)
+	cmd.Stdin = strings.NewReader(
+		"refs/heads/feature abc refs/heads/feature def\n",
+	)
+	cmd.Env = append(os.Environ(), "DOWNSTREAM_CAPTURE="+downstreamCapture)
+	require.NoError(t, cmd.Run(),
+		"a failing roborev binary must not abort a set -e host hook")
+	assert.FileExists(t, downstreamCapture,
+		"the host hook must still run after a flush failure")
 }
 
 func TestResolveRoborevPathPrefersVersionManagerShim(t *testing.T) {
@@ -869,6 +967,33 @@ func TestInstallWithOptionsUpdatesCurrentHookBinary(t *testing.T) {
 		)
 		assertFileNotContains(t, hookPath, `ROBOREV="/old/roborev"`)
 	})
+
+	t.Run("embedded pre-push hook replaces the complete block", func(t *testing.T) {
+		t.Parallel()
+		repo := setupHooksRepo(t)
+		hookPath := filepath.Join(repo.HooksDir, hookPrePush)
+		require.NoError(t, os.WriteFile(
+			hookPath,
+			[]byte(shebang+
+				generateEmbeddablePrePushWithBinary("/old/roborev")+
+				"cat > downstream-input\n"),
+			0o755,
+		))
+
+		err := InstallWithOptions(repo.HooksDir, hookPrePush, InstallOptions{
+			BinaryPath: newBinary,
+		})
+		require.NoError(t, err)
+
+		content, err := os.ReadFile(hookPath)
+		require.NoError(t, err)
+		assert.Equal(t, 1, strings.Count(
+			string(content), "_roborev_input=$(mktemp",
+		))
+		assert.Contains(t, string(content), "cat > downstream-input")
+		cmd := exec.Command("sh", "-n", hookPath)
+		assert.NoError(t, cmd.Run())
+	})
 }
 
 func assertInstallResult(t *testing.T, hookPath string, tc installTestCase) {
@@ -944,7 +1069,7 @@ func TestInstallAll(t *testing.T) {
 		}, "InstallAll: %v", err)
 	}
 
-	for _, name := range []string{hookPostCommit, hookPostRewrite} {
+	for _, name := range []string{hookPostCommit, hookPostRewrite, hookPrePush} {
 		path := filepath.Join(repo.HooksDir, name)
 		content, err := os.ReadFile(path)
 		if err != nil {
@@ -1005,6 +1130,23 @@ func TestUninstall(t *testing.T) {
 				"echo 'before'\necho 'after'\n",
 			expectContent: []string{"echo 'before'", "echo 'after'"},
 			expectMissing: []string{"roborev"},
+		},
+		{
+			name:     "embedded pre-push block removed cleanly",
+			hookName: hookPrePush,
+			initialContent: shebang +
+				generateEmbeddablePrePushWithBinary("/old/roborev") +
+				"cat > downstream-input\n",
+			expectExact: shebang + "cat > downstream-input\n",
+		},
+		{
+			name:     "unmarked pre-push v1 block removed cleanly",
+			hookName: hookPrePush,
+			initialContent: shebang + strings.Replace(
+				generateEmbeddablePrePushWithBinary("/old/roborev"),
+				roborevHookEndMarker+"\n", "", 1,
+			) + "cat > downstream-input\n",
+			expectExact: shebang + "cat > downstream-input\n",
 		},
 		{
 			name:           "v0 hook removed",

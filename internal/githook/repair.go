@@ -34,7 +34,7 @@ func RepairRepoHooks(ctx context.Context, repoPath, binaryPath string) (bool, er
 
 	var found bool
 	var errs []error
-	for _, hookName := range []string{"post-commit", "post-rewrite"} {
+	for _, hookName := range []string{"post-commit", "post-rewrite", "pre-push"} {
 		managed, err := hookFileHasRoborevMarker(filepath.Join(hooksDir, hookName), hookName)
 		if err != nil {
 			errs = append(errs, fmt.Errorf("%s hook: %w", hookName, err))

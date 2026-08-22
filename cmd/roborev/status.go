@@ -258,6 +258,11 @@ func statusCmd() *cobra.Command {
 					fmt.Println()
 					fmt.Println("Warning: post-rewrite hook is missing or outdated -- run 'roborev init' to install")
 				}
+				if githook.NeedsUpgrade(cmd.Context(), root, "pre-push", githook.PrePushVersionMarker) ||
+					githook.Missing(cmd.Context(), root, "pre-push") {
+					fmt.Println()
+					fmt.Println("Warning: pre-push hook is missing or outdated -- run 'roborev init' to install")
+				}
 			}
 
 			return nil

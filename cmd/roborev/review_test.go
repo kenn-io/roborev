@@ -2,6 +2,7 @@ package main
 
 import (
 	"bytes"
+	"context"
 	"encoding/json"
 	"net/http"
 	"os"
@@ -11,9 +12,22 @@ import (
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
+	gitrepo "go.kenn.io/kit/git/repo"
 
 	"go.kenn.io/roborev/internal/storage"
 )
+
+// tryBranchReview exercises tryBranchReviewForRef against the current
+// checkout, the shape production used before batching pinned the planned
+// branch and head.
+func tryBranchReview(
+	ctx context.Context, root, baseBranchOverride string,
+) (string, bool) {
+	current := gitrepo.CurrentBranch(ctx, root)
+	return tryBranchReviewForRef(
+		ctx, root, baseBranchOverride, "HEAD", current,
+	)
+}
 
 func respondJSON(
 	w http.ResponseWriter, status int, payload any,
@@ -682,6 +696,25 @@ func TestTryBranchReview(t *testing.T) {
 		ref, ok := tryBranchReview(t.Context(), repo.Dir, "")
 		require.True(t, ok, "expected branch base config to enable branch review")
 		assert.Equal(t, mainSHA+"..HEAD", ref)
+	})
+
+	t.Run("uses pushed branch config with immutable head", func(t *testing.T) {
+		repo := newTestGitRepo(t)
+		repo.CommitFile("main.txt", "main", "main")
+		repo.CheckoutNewBranch("develop")
+		developHead := repo.CommitFile("develop.txt", "develop", "develop")
+		repo.CheckoutNewBranch("feature")
+		pushedHead := repo.CommitFile("feature.txt", "feature", "feature")
+		repo.SetBranchConfig("feature", "base", "develop")
+		repo.Run("checkout", "main")
+		writeRoborevConfig(t, repo, `post_commit_review = "branch"`)
+
+		ref, ok := tryBranchReviewForRef(
+			t.Context(), repo.Dir, "", pushedHead, "feature",
+		)
+
+		require.True(t, ok)
+		assert.Equal(t, developHead+".."+pushedHead, ref)
 	})
 
 	t.Run("returns false on detached HEAD", func(t *testing.T) {

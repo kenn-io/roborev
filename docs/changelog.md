@@ -7,6 +7,13 @@ All notable changes to roborev, grouped by minor release.
 
 ## Unreleased
 
+**New features**
+
+- Repository-local `post_commit_batch_size` can combine several automatic
+    post-commit reviews into one accumulated-range review. Pending batches are
+    tracked per branch across linked worktrees and flushed before push. See
+    [Post-Commit Reviews](/automation/post-commit-reviews/#batch-small-commits).
+
 **Improvements**
 
 - Default Agent Hook autofix reminders now keep the user's current task as an

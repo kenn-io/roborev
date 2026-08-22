@@ -116,7 +116,7 @@ func resolveReasoningWithFast(reasoning string, fast bool, reasoningExplicitlySe
 }
 
 // autoInstallHooks upgrades outdated hooks and installs
-// companion hooks (e.g. post-rewrite when post-commit
+// companion hooks (e.g. post-rewrite and pre-push when post-commit
 // exists). It does NOT install hooks from scratch so that
 // explicit uninstall-hook is respected.
 func autoInstallHooks(ctx context.Context, repoPath string) {
@@ -124,7 +124,7 @@ func autoInstallHooks(ctx context.Context, repoPath string) {
 	if err != nil {
 		return
 	}
-	for _, name := range []string{"post-commit", "post-rewrite"} {
+	for _, name := range []string{"post-commit", "post-rewrite", "pre-push"} {
 		marker := githook.VersionMarker(name)
 		if githook.NeedsUpgradeInDir(hooksDir, name, marker) ||
 			githook.MissingInDir(hooksDir, name) {
