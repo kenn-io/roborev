@@ -52,6 +52,16 @@ func TestViewContentDispatchesToSplit(t *testing.T) {
 	assert.NotContains(t, m.viewContent(), "first finding")
 }
 
+func TestSplitViewMouseCaptureFollowsFocusedPane(t *testing.T) {
+	m := splitModel(withReview(splitTestReview()))
+
+	assert.Equal(t, tea.MouseModeCellMotion, m.View().MouseMode)
+
+	m.currentView = viewReview
+	m.focus = focusDetail
+	assert.Equal(t, tea.MouseModeNone, m.View().MouseMode)
+}
+
 func TestDetailPaneStates(t *testing.T) {
 	assert := assert.New(t)
 

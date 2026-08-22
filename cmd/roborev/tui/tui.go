@@ -1414,11 +1414,7 @@ func (m model) viewContent() string {
 func (m model) View() tea.View {
 	v := tea.NewView(m.viewContent())
 	v.AltScreen = true
-	if m.splitActive() {
-		if m.mouseEnabled {
-			v.MouseMode = tea.MouseModeCellMotion
-		}
-	} else if mouseCaptureEnabled(m.currentView, m.mouseEnabled) {
+	if mouseCaptureEnabled(m.currentView, m.mouseEnabled) {
 		v.MouseMode = tea.MouseModeCellMotion
 	}
 	return v
