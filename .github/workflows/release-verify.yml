@@ -96,6 +96,11 @@ jobs:
             --pattern 'SHA256SUMS'
 
       - name: Verify required assets are present
+        # Older releases legitimately shipped other artifact sets (v0.57.0
+        # had no Windows tar.gz, early releases no deb/rpm), so the matrix
+        # below is only asserted from the same v0.65.0 floor as the web
+        # checks; older tags still get checksum verification.
+        if: steps.resolve.outputs.web_checks == 'true'
         env:
           TAG: ${{ steps.resolve.outputs.tag }}
         run: |
