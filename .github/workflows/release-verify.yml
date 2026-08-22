@@ -158,9 +158,14 @@ jobs:
         if: steps.resolve.outputs.web_checks == 'true'
         run: |
           set -euo pipefail
-          if ! command -v rpm2cpio >/dev/null 2>&1 || ! command -v cpio >/dev/null 2>&1; then
+          # bsdtar extracts rpm payloads directly and relative to -C.
+          # Ubuntu's rpm2cpio exits 1 on nfpm-built rpms while still
+          # emitting the full payload, and GNU cpio extracts the payload's
+          # absolute paths (/usr/bin/roborev) onto the real filesystem, so
+          # the classic rpm2cpio | cpio pipeline fails here both ways.
+          if ! command -v bsdtar >/dev/null 2>&1; then
             sudo apt-get update -q
-            sudo apt-get install -qy rpm cpio
+            sudo apt-get install -qy libarchive-tools
           fi
           # Extract outside assets/ so the extraction dirs can never match
           # a later glob over the downloaded assets.
@@ -177,10 +182,7 @@ jobs:
               *.tar.gz) tar -xzf "$asset" -C "$dir" ;;
               *.zip) unzip -q "$asset" -d "$dir" ;;
               *.deb) dpkg-deb -x "$asset" "$dir" ;;
-              # nfpm rpm payloads store absolute paths (/usr/bin/roborev);
-              # without --no-absolute-filenames cpio extracts onto the
-              # runner's real filesystem and dies with Permission denied.
-              *.rpm) rpm2cpio "$asset" | (cd "$dir" && cpio -idm --quiet --no-absolute-filenames) ;;
+              *.rpm) bsdtar -xf "$asset" -C "$dir" ;;
             esac
             binary="$(find "$dir" -type f \( -name roborev -o -name roborev.exe \) -print -quit)"
             if [ ! -f "$binary" ]; then
