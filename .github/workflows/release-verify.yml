@@ -177,7 +177,10 @@ jobs:
               *.tar.gz) tar -xzf "$asset" -C "$dir" ;;
               *.zip) unzip -q "$asset" -d "$dir" ;;
               *.deb) dpkg-deb -x "$asset" "$dir" ;;
-              *.rpm) rpm2cpio "$asset" | (cd "$dir" && cpio -idm --quiet) ;;
+              # nfpm rpm payloads store absolute paths (/usr/bin/roborev);
+              # without --no-absolute-filenames cpio extracts onto the
+              # runner's real filesystem and dies with Permission denied.
+              *.rpm) rpm2cpio "$asset" | (cd "$dir" && cpio -idm --quiet --no-absolute-filenames) ;;
             esac
             binary="$(find "$dir" -type f \( -name roborev -o -name roborev.exe \) -print -quit)"
             if [ ! -f "$binary" ]; then
