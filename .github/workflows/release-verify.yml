@@ -32,8 +32,6 @@ jobs:
     if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 15
-    env:
-      GH_TOKEN: ${{ github.token }}
     steps:
       - name: Resolve release tag
         id: resolve
@@ -42,6 +40,7 @@ jobs:
           # the tag name.
           EVENT_TAG: ${{ github.event.workflow_run.head_branch }}
           INPUT_TAG: ${{ inputs.tag }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           # head_branch is only a tag for tag-push runs; ignore other shapes.
@@ -56,13 +55,10 @@ jobs:
           fi
           # Validate whatever won: a tag of an unexpected shape would sort
           # below v0.65.0 and silently disable the web asset checks below.
-          case "$TAG" in
-            v[0-9]*) ;;
-            *)
-              echo "::error::resolved tag '$TAG' does not look like a release tag (expected vMAJOR.MINOR.PATCH)"
-              exit 1
-              ;;
-          esac
+          if ! [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+$ ]]; then
+            echo "::error::resolved tag '$TAG' does not look like a release tag (expected vMAJOR.MINOR.PATCH)"
+            exit 1
+          fi
           # sed consumes all of sort's output, avoiding SIGPIPE under
           # pipefail.
           version_at_least() {
@@ -85,8 +81,12 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Download release assets
+        # GH_TOKEN is scoped to the steps that call gh, not the job: later
+        # steps execute the downloaded (post-publication, hence swappable)
+        # binary and must hold no credential when they do.
         env:
           TAG: ${{ steps.resolve.outputs.tag }}
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           mkdir assets
