@@ -2970,13 +2970,13 @@ reasoning = "standard"
 
 func TestInstallationIDForOwner(t *testing.T) {
 	t.Run("map lookup", func(t *testing.T) {
-		ci := CIConfig{GitHubAppConfig: GitHubAppConfig{
+		ci := CIConfig{
 			GitHubAppInstallations: map[string]int64{
 				"wesm":        111111,
 				"roborev-dev": 222222,
 			},
 			GitHubAppInstallationID: 999999,
-		}}
+		}
 		if got := ci.InstallationIDForOwner("wesm"); got != 111111 {
 			assert.Condition(t, func() bool {
 				return false
@@ -2990,10 +2990,10 @@ func TestInstallationIDForOwner(t *testing.T) {
 	})
 
 	t.Run("falls back to singular", func(t *testing.T) {
-		ci := CIConfig{GitHubAppConfig: GitHubAppConfig{
+		ci := CIConfig{
 			GitHubAppInstallations:  map[string]int64{"wesm": 111111},
 			GitHubAppInstallationID: 999999,
-		}}
+		}
 		if got := ci.InstallationIDForOwner("unknown-org"); got != 999999 {
 			assert.Condition(t, func() bool {
 				return false
@@ -3011,10 +3011,10 @@ func TestInstallationIDForOwner(t *testing.T) {
 	})
 
 	t.Run("zero mapped value falls back to singular", func(t *testing.T) {
-		ci := CIConfig{GitHubAppConfig: GitHubAppConfig{
+		ci := CIConfig{
 			GitHubAppInstallations:  map[string]int64{"wesm": 0},
 			GitHubAppInstallationID: 999999,
-		}}
+		}
 		if got := ci.InstallationIDForOwner("wesm"); got != 999999 {
 			assert.Condition(t, func() bool {
 				return false
@@ -3023,9 +3023,9 @@ func TestInstallationIDForOwner(t *testing.T) {
 	})
 
 	t.Run("case-insensitive lookup after normalization", func(t *testing.T) {
-		ci := CIConfig{GitHubAppConfig: GitHubAppConfig{
+		ci := CIConfig{
 			GitHubAppInstallations: map[string]int64{"Wesm": 111111, "RoboRev-Dev": 222222},
-		}}
+		}
 		if err := ci.NormalizeInstallations(); err != nil {
 			require.Condition(t, func() bool {
 				return false
@@ -3051,9 +3051,9 @@ func TestInstallationIDForOwner(t *testing.T) {
 
 func TestNormalizeInstallations(t *testing.T) {
 	t.Run("lowercases keys", func(t *testing.T) {
-		ci := CIConfig{GitHubAppConfig: GitHubAppConfig{
+		ci := CIConfig{
 			GitHubAppInstallations: map[string]int64{"Wesm": 111111, "RoboRev-Dev": 222222},
-		}}
+		}
 		if err := ci.NormalizeInstallations(); err != nil {
 			require.Condition(t, func() bool {
 				return false
@@ -3086,9 +3086,9 @@ func TestNormalizeInstallations(t *testing.T) {
 	})
 
 	t.Run("case-colliding keys returns error", func(t *testing.T) {
-		ci := CIConfig{GitHubAppConfig: GitHubAppConfig{
+		ci := CIConfig{
 			GitHubAppInstallations: map[string]int64{"wesm": 111111, "Wesm": 222222},
-		}}
+		}
 		err := ci.NormalizeInstallations()
 		if err == nil {
 			require.Condition(t, func() bool {
@@ -3143,11 +3143,11 @@ RoboRev-Dev = 222222
 
 func TestGitHubAppConfigured_MultiInstall(t *testing.T) {
 	t.Run("configured with map only", func(t *testing.T) {
-		ci := CIConfig{GitHubAppConfig: GitHubAppConfig{
+		ci := CIConfig{
 			GitHubAppID:            12345,
 			GitHubAppPrivateKey:    "~/.roborev/app.pem",
 			GitHubAppInstallations: map[string]int64{"wesm": 111111},
-		}}
+		}
 		if !ci.GitHubAppConfigured() {
 			assert.Condition(t, func() bool {
 				return false
@@ -3156,11 +3156,11 @@ func TestGitHubAppConfigured_MultiInstall(t *testing.T) {
 	})
 
 	t.Run("configured with singular only", func(t *testing.T) {
-		ci := CIConfig{GitHubAppConfig: GitHubAppConfig{
+		ci := CIConfig{
 			GitHubAppID:             12345,
 			GitHubAppPrivateKey:     "~/.roborev/app.pem",
 			GitHubAppInstallationID: 111111,
-		}}
+		}
 		if !ci.GitHubAppConfigured() {
 			assert.Condition(t, func() bool {
 				return false
@@ -3169,10 +3169,10 @@ func TestGitHubAppConfigured_MultiInstall(t *testing.T) {
 	})
 
 	t.Run("not configured without any installation", func(t *testing.T) {
-		ci := CIConfig{GitHubAppConfig: GitHubAppConfig{
+		ci := CIConfig{
 			GitHubAppID:         12345,
 			GitHubAppPrivateKey: "~/.roborev/app.pem",
-		}}
+		}
 		if ci.GitHubAppConfigured() {
 			assert.Condition(t, func() bool {
 				return false
@@ -3181,10 +3181,10 @@ func TestGitHubAppConfigured_MultiInstall(t *testing.T) {
 	})
 
 	t.Run("not configured without private key", func(t *testing.T) {
-		ci := CIConfig{GitHubAppConfig: GitHubAppConfig{
+		ci := CIConfig{
 			GitHubAppID:             12345,
 			GitHubAppInstallationID: 111111,
-		}}
+		}
 		if ci.GitHubAppConfigured() {
 			assert.Condition(t, func() bool {
 				return false
@@ -3206,7 +3206,7 @@ func TestGitHubAppPrivateKeyResolved_TildeExpansion(t *testing.T) {
 	}
 
 	t.Run("inline PEM returned directly", func(t *testing.T) {
-		ci := CIConfig{GitHubAppConfig: GitHubAppConfig{GitHubAppPrivateKey: pemContent}}
+		ci := CIConfig{GitHubAppPrivateKey: pemContent}
 		got, err := ci.GitHubAppPrivateKeyResolved()
 		if err != nil {
 			require.Condition(t, func() bool {
@@ -3221,7 +3221,7 @@ func TestGitHubAppPrivateKeyResolved_TildeExpansion(t *testing.T) {
 	})
 
 	t.Run("absolute path reads file", func(t *testing.T) {
-		ci := CIConfig{GitHubAppConfig: GitHubAppConfig{GitHubAppPrivateKey: pemFile}}
+		ci := CIConfig{GitHubAppPrivateKey: pemFile}
 		got, err := ci.GitHubAppPrivateKeyResolved()
 		if err != nil {
 			require.Condition(t, func() bool {
@@ -3253,7 +3253,7 @@ func TestGitHubAppPrivateKeyResolved_TildeExpansion(t *testing.T) {
 			}, err)
 		}
 
-		ci := CIConfig{GitHubAppConfig: GitHubAppConfig{GitHubAppPrivateKey: "~/.roborev/test.pem"}}
+		ci := CIConfig{GitHubAppPrivateKey: "~/.roborev/test.pem"}
 		got, err := ci.GitHubAppPrivateKeyResolved()
 		if err != nil {
 			require.Condition(t, func() bool {
@@ -3268,7 +3268,7 @@ func TestGitHubAppPrivateKeyResolved_TildeExpansion(t *testing.T) {
 	})
 
 	t.Run("empty after expansion returns error", func(t *testing.T) {
-		ci := CIConfig{GitHubAppConfig: GitHubAppConfig{GitHubAppPrivateKey: ""}}
+		ci := CIConfig{GitHubAppPrivateKey: ""}
 		_, err := ci.GitHubAppPrivateKeyResolved()
 		if err == nil {
 			assert.Condition(t, func() bool {

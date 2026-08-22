@@ -27,7 +27,7 @@ flake="$PWD/flake.nix"
 fake_hash="sha256-AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA="
 expected_hash="sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB="
 
-if ! grep -q 'version = "1.26.6";' "$flake"; then
+if ! grep -q 'version = "1.27.0";' "$flake"; then
     echo "Go toolchain version changed unexpectedly" >&2
     exit 1
 fi
@@ -66,7 +66,7 @@ echo "https://example.invalid/pull/1"
 	updatedFlake := gitOutput(t, repo, "show", "release/v0.65.0-nix-update:flake.nix")
 	assert := assert.New(t)
 	assert.Contains(string(output), "Release cancelled.")
-	assert.Contains(updatedFlake, `version = "1.26.6";`)
+	assert.Contains(updatedFlake, `version = "1.27.0";`)
 	assert.Contains(updatedFlake, `version = "0.65.0";`)
 	assert.Contains(updatedFlake, `vendorHash = "sha256-BBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBBB=";`)
 }
@@ -86,7 +86,7 @@ echo "Synthetic changelog"
 	flake := `{
   outputs = { self }: {
     goPinned = {
-      version = "1.26.6";
+      version = "1.27.0";
       url = "https://go.dev/dl/go${version}.src.tar.gz";
     };
     packages.default = {

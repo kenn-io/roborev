@@ -28,9 +28,7 @@ func (c *Client) FindExistingComment(ctx context.Context, ghRepo string, prNumbe
 	opts := &googlegithub.IssueListCommentsOptions{
 		Sort:      ptr("created"),
 		Direction: ptr("asc"),
-		ListOptions: googlegithub.ListOptions{
-			PerPage: 100,
-		},
+		PerPage:   100,
 	}
 
 	var lastID int64

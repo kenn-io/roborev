@@ -39,9 +39,7 @@ func (c *Client) ListPRDiscussionComments(ctx context.Context, ghRepo string, pr
 	issueOpts := &googlegithub.IssueListCommentsOptions{
 		Sort:      ptr("created"),
 		Direction: ptr("asc"),
-		ListOptions: googlegithub.ListOptions{
-			PerPage: 100,
-		},
+		PerPage:   100,
 	}
 	for {
 		issueComments, resp, err := c.api.Issues.ListComments(ctx, owner, repo, prNumber, issueOpts)
@@ -91,9 +89,7 @@ func (c *Client) ListPRDiscussionComments(ctx context.Context, ghRepo string, pr
 	inlineOpts := &googlegithub.PullRequestListCommentsOptions{
 		Sort:      "created",
 		Direction: "asc",
-		ListOptions: googlegithub.ListOptions{
-			PerPage: 100,
-		},
+		PerPage:   100,
 	}
 	for {
 		inlineComments, resp, err := c.api.PullRequests.ListComments(ctx, owner, repo, prNumber, inlineOpts)
@@ -142,7 +138,7 @@ func (c *Client) ListTrustedRepoCollaborators(ctx context.Context, ghRepo string
 
 	opts := &googlegithub.ListCollaboratorsOptions{
 		Affiliation: "all",
-		ListOptions: googlegithub.ListOptions{PerPage: 100},
+		PerPage:     100,
 	}
 	trusted := make(map[string]struct{})
 	for {

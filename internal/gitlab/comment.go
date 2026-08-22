@@ -98,9 +98,7 @@ func (c *Client) eachMRNote(
 	opts := &gogitlab.ListMergeRequestNotesOptions{
 		OrderBy: ptr("created_at"),
 		Sort:    ptr("asc"),
-		ListOptions: gogitlab.ListOptions{
-			PerPage: 100,
-		},
+		PerPage: 100,
 	}
 
 	for {

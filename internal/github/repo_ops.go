@@ -40,10 +40,8 @@ func (c *Client) ListOpenPullRequests(ctx context.Context, ghRepo string, limit 
 	}
 
 	opts := &googlegithub.PullRequestListOptions{
-		State: "open",
-		ListOptions: googlegithub.ListOptions{
-			PerPage: limit,
-		},
+		State:   "open",
+		PerPage: limit,
 	}
 
 	prs, _, err := c.api.PullRequests.List(ctx, owner, repo, opts)
@@ -260,10 +258,8 @@ func splitGitConfigEnv(baseEnv []string) ([]string, []gitConfigEntry) {
 
 func (c *Client) listOrgRepos(ctx context.Context, owner string, limit int) ([]string, error) {
 	opts := &googlegithub.RepositoryListByOrgOptions{
-		Type: "all",
-		ListOptions: googlegithub.ListOptions{
-			PerPage: min(limit, 100),
-		},
+		Type:    "all",
+		PerPage: min(limit, 100),
 	}
 	return c.collectRepos(ctx, limit, func() ([]*googlegithub.Repository, *googlegithub.Response, error) {
 		return c.api.Repositories.ListByOrg(ctx, owner, opts)
@@ -277,10 +273,8 @@ func (c *Client) listUserRepos(ctx context.Context, owner string, limit int) ([]
 	var repos []string
 
 	userOpts := &googlegithub.RepositoryListByUserOptions{
-		Type: "owner",
-		ListOptions: googlegithub.ListOptions{
-			PerPage: min(limit, 100),
-		},
+		Type:    "owner",
+		PerPage: min(limit, 100),
 	}
 	pageRepos, err := c.collectRepos(ctx, limit, func() ([]*googlegithub.Repository, *googlegithub.Response, error) {
 		return c.api.Repositories.ListByUser(ctx, owner, userOpts)
@@ -301,9 +295,7 @@ func (c *Client) listUserRepos(ctx context.Context, owner string, limit int) ([]
 	authOpts := &googlegithub.RepositoryListByAuthenticatedUserOptions{
 		Affiliation: "owner,collaborator",
 		Visibility:  "all",
-		ListOptions: googlegithub.ListOptions{
-			PerPage: min(limit, 100),
-		},
+		PerPage:     min(limit, 100),
 	}
 	for {
 		authPage, resp, err := c.api.Repositories.ListByAuthenticatedUser(ctx, authOpts)

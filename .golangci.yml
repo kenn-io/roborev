@@ -1,6 +1,7 @@
 version: "2"
 run:
   tests: true
+  go: "1.27"
 linters:
   default: none
   enable:

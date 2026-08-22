@@ -21,11 +21,11 @@
         system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
-          goPinned = pkgs.go_1_26.overrideAttrs (_: rec {
-            version = "1.26.6";
+          goPinned = pkgs.go_1_27.overrideAttrs (_: rec {
+            version = "1.27.0";
             src = pkgs.fetchurl {
               url = "https://go.dev/dl/go${version}.src.tar.gz";
-              hash = "sha256-oHIcVMaIkBRI13rZs+x+p8R0cwdV/4kTgukuy5P/LLE=";
+              hash = "sha256-cAJAPXzERSnvbSb2mkSBgmM5Xq18FsBaWAiuBH6+sOU=";
             };
           });
           buildGoModule = pkgs.buildGoModule.override { go = goPinned; };
@@ -73,11 +73,11 @@
         system:
         let
           pkgs = nixpkgs.legacyPackages.${system};
-          goPinned = pkgs.go_1_26.overrideAttrs (_: rec {
-            version = "1.26.6";
+          goPinned = pkgs.go_1_27.overrideAttrs (_: rec {
+            version = "1.27.0";
             src = pkgs.fetchurl {
               url = "https://go.dev/dl/go${version}.src.tar.gz";
-              hash = "sha256-oHIcVMaIkBRI13rZs+x+p8R0cwdV/4kTgukuy5P/LLE=";
+              hash = "sha256-cAJAPXzERSnvbSb2mkSBgmM5Xq18FsBaWAiuBH6+sOU=";
             };
           });
         in

@@ -2568,9 +2568,7 @@ func TestCIMemberFailoverUsesSnapshottedACPBackup(t *testing.T) {
 	require.NoError(t, os.WriteFile(filepath.Join(tc.TmpDir, ".roborev.toml"),
 		fmt.Appendf(nil, "[acp.goose]\ncommand = %q\n", liveCommand), 0o644))
 	snapshot, err := json.Marshal(ciPanelMemberConfig{
-		ResolvedMember: config.ResolvedMember{
-			Agent: "test", BackupAgent: "acp.goose", BackupModel: "backup-model",
-		},
+		Agent: "test", BackupAgent: "acp.goose", BackupModel: "backup-model",
 		ACP: config.ACPAgentConfigs{"goose": {Command: frozenCommand}},
 	})
 	require.NoError(t, err)
