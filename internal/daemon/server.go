@@ -910,8 +910,7 @@ func resolveRerunModelProvider(job *storage.ReviewJob, cfg *config.Config) (stri
 func validateRerunAgent(repoPath string, agentName string, backupAgent string, cfg *config.Config) error {
 	_, err := agent.GetPreferredOrBackupWithConfig(repoPath, agentName, cfg, backupAgent)
 	if err != nil {
-		var unknownErr *agent.UnknownAgentError
-		if errors.As(err, &unknownErr) {
+		if _, ok := errors.AsType[*agent.UnknownAgentError](err); ok {
 			return fmt.Errorf("invalid agent: %w", err)
 		}
 		return fmt.Errorf("no agent available: %w", err)
@@ -2649,8 +2648,7 @@ func (s *Server) resolveSingleAgent(
 		repoCfg, agentName, in.cfg, resolution.BackupAgent,
 	)
 	if err != nil {
-		var unknownErr *agent.UnknownAgentError
-		if errors.As(err, &unknownErr) {
+		if _, ok := errors.AsType[*agent.UnknownAgentError](err); ok {
 			out, _ := rawJSONOutput(
 				http.StatusBadRequest,
 				ErrorResponse{Error: fmt.Sprintf("invalid agent: %v", err)},
@@ -3110,8 +3108,7 @@ func (s *Server) humaFixJob(
 	if resolved, err := agent.GetPreferredOrBackupWithConfig(
 		resolutionPath, agentName, cfg, resolution.BackupAgent,
 	); err != nil {
-		var unknownErr *agent.UnknownAgentError
-		if errors.As(err, &unknownErr) {
+		if _, ok := errors.AsType[*agent.UnknownAgentError](err); ok {
 			return rawJSONOutput(
 				http.StatusBadRequest,
 				ErrorResponse{Error: fmt.Sprintf("invalid agent: %v", err)},

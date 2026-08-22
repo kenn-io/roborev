@@ -43,8 +43,7 @@ func (e *ConfigParseError) Unwrap() error { return e.Err }
 // IsConfigParseError reports whether err (or any error in its chain)
 // is a ConfigParseError.
 func IsConfigParseError(err error) bool {
-	var pe *ConfigParseError
-	if errors.As(err, &pe) {
+	if _, ok := errors.AsType[*ConfigParseError](err); ok {
 		return true
 	}
 	var syntaxErr toml.ParseError
@@ -428,7 +427,7 @@ func walkAgentReferences(value reflect.Value, path string) error {
 	typeOfValue := value.Type()
 	for i := range value.NumField() {
 		fieldType := typeOfValue.Field(i)
-		tag := strings.Split(fieldType.Tag.Get("toml"), ",")[0]
+		tag, _, _ := strings.Cut(fieldType.Tag.Get("toml"), ",")
 		if tag == "" || tag == "-" {
 			continue
 		}

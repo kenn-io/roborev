@@ -434,8 +434,7 @@ func (m model) checkApplyCommitPatch(ctx context.Context, jobID int64, jobDetail
 
 	// Dry-run check — only trigger rebase on actual merge conflicts
 	if err := gitworktree.CheckPatch(ctx, targetDir, patch); err != nil {
-		var conflictErr *gitworktree.PatchConflictError
-		if errors.As(err, &conflictErr) {
+		if _, ok := errors.AsType[*gitworktree.PatchConflictError](err); ok {
 			return applyPatchResultMsg{jobID: jobID, rebase: true, err: err}
 		}
 		return applyPatchResultMsg{jobID: jobID, err: err}

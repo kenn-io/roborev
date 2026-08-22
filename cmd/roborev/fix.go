@@ -548,8 +548,7 @@ func runFixWithSeen(cmd *cobra.Command, jobIDs []int64, opts fixOptions, seen ma
 			// discovery mode — otherwise the re-query loop keeps
 			// invoking the exhausted agent until every queued job is
 			// burned through with the same error.
-			var lim *agentLimitError
-			if errors.As(err, &lim) {
+			if _, ok := errors.AsType[*agentLimitError](err); ok {
 				return err
 			}
 			// In discovery mode (seen != nil), log a warning and
@@ -989,8 +988,7 @@ func isConnectionError(err error) bool {
 	if err == nil {
 		return false
 	}
-	var urlErr *url.Error
-	if errors.As(err, &urlErr) {
+	if _, ok := errors.AsType[*url.Error](err); ok {
 		return true
 	}
 	var netErr net.Error
@@ -1160,8 +1158,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		// fixJobDirect already returns *agentLimitError for retry-path
 		// quota/session aborts; preserve it instead of re-classifying
 		// its user-facing message string.
-		var lim *agentLimitError
-		if errors.As(err, &lim) {
+		if _, ok := errors.AsType[*agentLimitError](err); ok {
 			return err
 		}
 		cls := opts.classify(agent.CanonicalName(currentAgent.Name()), err.Error())
@@ -1468,8 +1465,7 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 			tracker.Reset()
 			// Preserve a retry-path agentLimitError without
 			// re-classifying its user-facing message string.
-			var lim *agentLimitError
-			if errors.As(err, &lim) {
+			if _, ok := errors.AsType[*agentLimitError](err); ok {
 				return err
 			}
 			cls := opts.classify(agent.CanonicalName(currentAgent.Name()), err.Error())

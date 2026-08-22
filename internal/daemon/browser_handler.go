@@ -413,8 +413,7 @@ func handleBrowserSession(w http.ResponseWriter, request *http.Request, policy B
 		}
 		credentials, err := sessions.Login(login.Token)
 		if err != nil {
-			var limited *WebLoginRateLimitError
-			if errors.As(err, &limited) {
+			if limited, ok := errors.AsType[*WebLoginRateLimitError](err); ok {
 				seconds := max(1, int((limited.RetryAfter+time.Second-1)/time.Second))
 				w.Header().Set("Retry-After", strconv.Itoa(seconds))
 				writeBrowserError(w, http.StatusTooManyRequests, "login_rate_limited")

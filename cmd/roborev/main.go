@@ -90,8 +90,7 @@ func main() {
 	if err := rootCmd.Execute(); err != nil {
 		// exitError carries a specific exit code; the RunE that returned
 		// it has already silenced cobra's error printing via silentExit.
-		var exitErr *exitError
-		if errors.As(err, &exitErr) {
+		if exitErr, ok := errors.AsType[*exitError](err); ok {
 			os.Exit(exitErr.code)
 		}
 		// All other errors: cobra already printed them.

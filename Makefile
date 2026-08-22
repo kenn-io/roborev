@@ -14,7 +14,7 @@ CODEX_SKILL_EVAL_MODELS ?= gpt-5.6-sol
 # `make print-golangci-lint-version` (see .github/workflows/ci.yml), and
 # `make lint`/`make lint-ci` refuse to run unless the local binary matches.
 # A mismatched version can silently apply different formatting/fixes.
-GOLANGCI_LINT_VERSION := 2.12.2
+GOLANGCI_LINT_VERSION := 2.13.1
 
 # Keep the golangci-lint cache per-checkout. The default user-global cache
 # stores raw linter findings keyed by package content with absolute file

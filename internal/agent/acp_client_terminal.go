@@ -189,15 +189,13 @@ func getTerminalExitStatus(processState *os.ProcessState) *acp.TerminalExitStatu
 	var signal *string
 
 	// Check if process was terminated by a signal
-	if exited := processState.Sys(); exited != nil {
-		// For Unix systems, check for signal termination
-		if ws, ok := exited.(syscall.WaitStatus); ok {
-			if ws.Signaled() {
-				signalName := ws.Signal().String()
-				signal = &signalName
-				// Per ACP spec, exitCode should be nil when terminated by signal
-				exitCode = nil
-			}
+	// For Unix systems, check for signal termination
+	if ws, ok := processState.Sys().(syscall.WaitStatus); ok {
+		if ws.Signaled() {
+			signalName := ws.Signal().String()
+			signal = &signalName
+			// Per ACP spec, exitCode should be nil when terminated by signal
+			exitCode = nil
 		}
 	}
 

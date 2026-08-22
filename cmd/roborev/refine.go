@@ -291,8 +291,7 @@ func validateRefineContext(
 			// upstream/main in a fork). A branch tracking its own remote
 			// counterpart is not trunk — use GetDefaultBranch instead.
 			upstream, uerr := git.GetUpstream(repoPath, "HEAD")
-			var missing *git.UpstreamMissingError
-			if errors.As(uerr, &missing) {
+			if missing, ok := errors.AsType[*git.UpstreamMissingError](uerr); ok {
 				return "", "", "", "",
 					fmt.Errorf(
 						"%w (run 'git fetch' or pass --since)", missing,
@@ -1513,8 +1512,7 @@ func isInitializedRefineSubmodule(ctx context.Context, repoPath, path string) (b
 	cmd := refineGitCmd(ctx, "-C", submodulePath, "rev-parse", "--show-toplevel")
 	out, err := cmd.CombinedOutput()
 	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
+		if _, ok := errors.AsType[*exec.ExitError](err); ok {
 			return false, nil
 		}
 		return false, fmt.Errorf(

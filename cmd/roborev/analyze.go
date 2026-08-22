@@ -1040,8 +1040,7 @@ func getBranchFiles(ctx context.Context, cmd *cobra.Command, repoRoot string, op
 		// already-pushed feature commits, contradicting "--branch analyzes
 		// all commits since trunk".
 		upstream, uerr := git.GetUpstream(repoRoot, targetRef)
-		var missing *git.UpstreamMissingError
-		if errors.As(uerr, &missing) {
+		if missing, ok := errors.AsType[*git.UpstreamMissingError](uerr); ok {
 			return nil, fmt.Errorf("%w (or pass --base <ref>)", missing)
 		}
 		if uerr != nil {

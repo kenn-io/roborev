@@ -191,8 +191,7 @@ func parseErrIndicatesClosedPipe(err error) bool {
 }
 
 func processErrIndicatesContextTermination(err error) bool {
-	var exitErr *exec.ExitError
-	if !errors.As(err, &exitErr) {
+	if _, ok := errors.AsType[*exec.ExitError](err); !ok {
 		return false
 	}
 	msg := err.Error()

@@ -72,8 +72,7 @@ func realRun(ctx context.Context, c *CLIClient, args []string, stdin io.Reader) 
 		if ctxErr := ctx.Err(); ctxErr != nil {
 			return nil, fmt.Errorf("kata %s: %w", verb, ctxErr)
 		}
-		var ee *exec.ExitError
-		if errors.As(err, &ee) {
+		if ee, ok := errors.AsType[*exec.ExitError](err); ok {
 			return nil, fmt.Errorf("kata %s: exit %d: %s", verb, ee.ExitCode(), strings.TrimSpace(string(ee.Stderr)))
 		}
 		return nil, fmt.Errorf("kata %s: %w", verb, err)

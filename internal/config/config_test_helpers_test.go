@@ -55,8 +55,7 @@ func execGit(t *testing.T, dir string, args ...string) string {
 	cmd.Dir = dir
 	out, err := cmd.Output()
 	if err != nil {
-		var exitError *exec.ExitError
-		if errors.As(err, &exitError) {
+		if exitError, ok := errors.AsType[*exec.ExitError](err); ok {
 			require.NoError(t, err, "git %v failed\nstderr: %s", args, exitError.Stderr)
 		}
 		require.NoError(t, err, "git %v failed", args)

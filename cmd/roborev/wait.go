@@ -294,8 +294,7 @@ func waitMultiple(
 				if r.err == nil {
 					continue
 				}
-				var exitErr *exitError
-				if !errors.As(r.err, &exitErr) {
+				if _, ok := errors.AsType[*exitError](r.err); !ok {
 					return r.err
 				}
 			}
@@ -308,8 +307,7 @@ func waitMultiple(
 
 // isExitCode reports whether err is an *exitError with the given code.
 func isExitCode(err error, code int) bool {
-	var e *exitError
-	if errors.As(err, &e) {
+	if e, ok := errors.AsType[*exitError](err); ok {
 		return e.code == code
 	}
 	return false

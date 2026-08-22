@@ -195,8 +195,7 @@ func isTransportError(err error) bool {
 		return false
 	}
 	// Check if the underlying error is a net-level transport failure
-	var opErr *net.OpError
-	if errors.As(urlErr.Err, &opErr) {
+	if _, ok := errors.AsType[*net.OpError](urlErr.Err); ok {
 		return true
 	}
 	// Also catch net.Error (timeout interface) that isn't wrapped in OpError

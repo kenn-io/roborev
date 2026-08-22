@@ -200,8 +200,7 @@ Examples:
 					// would skip already-pushed feature commits, contradicting
 					// "--branch reviews all commits since trunk".
 					upstream, uerr := git.GetUpstream(root, targetRef)
-					var missing *git.UpstreamMissingError
-					if errors.As(uerr, &missing) {
+					if missing, ok := errors.AsType[*git.UpstreamMissingError](uerr); ok {
 						return fmt.Errorf("%w (or pass --base <ref>)", missing)
 					}
 					if uerr != nil {

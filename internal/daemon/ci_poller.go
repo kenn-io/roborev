@@ -1457,8 +1457,7 @@ func cloneRemoteMatches(path, ghRepo, rawBaseURL string) (bool, error) {
 	cfgCmd.Env = append(os.Environ(), "LC_ALL=C")
 	cfgOut, err := cfgCmd.CombinedOutput()
 	if err != nil {
-		var exitErr *exec.ExitError
-		if errors.As(err, &exitErr) {
+		if exitErr, ok := errors.AsType[*exec.ExitError](err); ok {
 			code := exitErr.ExitCode()
 			// Exit 1 = key not found in config.
 			if code == 1 {

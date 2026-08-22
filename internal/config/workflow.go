@@ -744,7 +744,7 @@ func workflowHasPrimaryConfigField(t reflect.Type, workflow string) bool {
 	modelPrefix := workflow + "_model"
 	for field := range t.Fields() {
 		tag := field.Tag.Get("toml")
-		key := strings.Split(tag, ",")[0]
+		key, _, _ := strings.Cut(tag, ",")
 		if key == agentPrefix || key == modelPrefix ||
 			strings.HasPrefix(key, agentPrefix+"_") ||
 			strings.HasPrefix(key, modelPrefix+"_") {

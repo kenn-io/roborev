@@ -852,8 +852,7 @@ func isConnectionError(err error) bool {
 		return false
 	}
 	// Check for url.Error (wraps network errors from http.Client)
-	var urlErr *neturl.Error
-	if errors.As(err, &urlErr) {
+	if _, ok := errors.AsType[*neturl.Error](err); ok {
 		return true
 	}
 	// Check for net.Error (timeout, connection refused, etc.)

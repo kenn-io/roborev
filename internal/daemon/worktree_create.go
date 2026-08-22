@@ -251,8 +251,7 @@ func gitOutput(ctx context.Context, repoPath string, args ...string) ([]byte, er
 }
 
 func isGitExitCode(err error, code int) bool {
-	var gitErr *gitcmd.GitError
-	if errors.As(err, &gitErr) {
+	if gitErr, ok := errors.AsType[*gitcmd.GitError](err); ok {
 		err = gitErr.Err
 	}
 	var exitErr *exec.ExitError
