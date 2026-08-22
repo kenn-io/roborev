@@ -5,6 +5,112 @@ description: Release history for roborev
 
 All notable changes to roborev, grouped by minor release.
 
+## Unreleased
+
+**Improvements**
+
+- Default Agent Hook autofix reminders now keep the user's current task as an
+    immutable scope boundary, name exact review job IDs, and invoke only the
+    bundled `roborev-fix` skill. They never run `roborev fix --open` or discover
+    additional reviews. Custom instructions remain complete overrides.
+- The bundled `roborev-fix` skills now require agents to prove every finding
+    against current code before editing. Invalid reviews are documented and
+    closed without code changes; valid out-of-scope findings remain open for
+    user direction.
+- `roborev agent-hook install` now installs or updates bundled skills
+    automatically for Claude Code, Codex, Factory Droid, and Grok Build.
+
+**Bug fixes**
+
+- Agent Hook remembers delivered review IDs per agent session and repository
+    lineage, preventing repeated reminders for the same reviews while allowing
+    newly created reviews to trigger. Deferred reminders acknowledge IDs only
+    when they are delivered.
+
+______________________________________________________________________
+
+## 0.66.0
+
+<small>2026-08-22</small>
+
+**New features**
+
+- Trusted-proxy authentication lets private-network deployments delegate browser
+    admission to an external HTTPS proxy. Set `web.auth_mode = "proxy"` to
+    create restricted remote sessions without a Roborev token after the daemon
+    validates the request origin and forwarding shape. Existing local and token
+    authentication remain unchanged. See
+    [Proxy Authentication](/web-ui/#proxy-authentication).
+- Set `web.base_path` to host the browser application below a URL path prefix.
+    Roborev applies the prefix to server routes, browser navigation, assets,
+    deep links, API calls, event streams, and session cookies. The prefix
+    provides routing, not same-origin isolation. See
+    [Private Network Access](/web-ui/#private-network-access).
+- Global autofix guidelines. Set `fix_guidelines` in `~/.roborev/config.toml` to
+    give every Agent Hook profile and foreground `roborev fix` agent policy for
+    evaluating review findings, including when a suggestion should be verified
+    or intentionally not applied. Existing automatic behavior remains unchanged
+    when the setting is empty. See
+    [Fix Guidelines](/configuration/#fix-guidelines).
+- Agent Hook now uses the regular Roborev daemon for event handling, session
+    inspection, and resets. The daemon reuses existing counters from
+    `${ROBOREV_DATA_DIR:-~/.roborev}/agent-hook/state.json`; no second daemon is
+    started. Before upgrading from a release with the auxiliary daemon, stop it
+    with that release's `roborev agent-hook daemon stop` command. See
+    [Upgrading existing hooks](/agent-hook/#upgrading-existing-hooks).
+
+**Improvements**
+
+- `roborev update` now coordinates daemon replacement with active reviews.
+    Choose whether to wait, requeue interrupted attempts, or abort; new jobs
+    remain queued until the replacement daemon is responsive and reports the
+    installed version. See [Update](/commands/#update).
+- The daemon retries fresh token-cost misses and periodically revisits eligible
+    terminal jobs from the previous week that still lack pricing. Missing prices
+    remain durable retry work across daemon restarts, while older jobs remain
+    available to `roborev backfill-tokens`. See
+    [Cost Usage Endpoint](/configuration/#cost-usage-endpoint).
+- Daemon status, restart, UI, and version commands now explain whether the
+    browser UI was disabled by configuration or omitted from the build. Release
+    verification also checks published archives for the embedded production web
+    application. See [Open the Application](/web-ui/#open-the-application).
+- Security reviews now exclude established low-value finding classes, state a
+    precision-first posture, and compare changed code with the codebase's
+    established secure pattern before reporting a deviation.
+- Development, CI, release, screenshot, Nix, and CodeQL builds now use Go 1.27.
+    Published binaries remain self-contained. See
+    [Build from Source](/installation/#build-from-source).
+- Go dependencies were refreshed. The indirect `grpc-go` dependency was upgraded
+    to 1.82.1, outside the range affected by `GHSA-hrxh-6v49-42gf`.
+
+**Bug fixes**
+
+- Daemon-free CI posts forge comments only when a completed agent run produced
+    nonempty review output. Agent startup and installation errors stay local
+    instead of becoming erroneous pull or merge request comments.
+- Jobs fail promptly when the direct agent process exits with an error, even if
+    a descendant still holds an output descriptor open. Successful output
+    remains complete, and unread buffered output is bounded.
+- Streamed Grok `thought` and `reasoning` fragments are assembled into complete
+    reasoning blocks instead of rendering each fragment as a separate terminal
+    row.
+
+**Acknowledgements**
+
+- Thanks to [Wes McKinney](https://github.com/wesm) for trusted-proxy browser
+    authentication, browser base paths, coordinated self-updates, delayed price
+    recovery, safe zero-output CI handling, and the `grpc-go` security upgrade.
+- Thanks to [Phillip Cloud](https://github.com/cpcloud) for global autofix
+    guidelines, promptly failing jobs after agent-process errors, and correctly
+    assembled Grok reasoning output.
+- Thanks to [Marius van Niekerk](https://github.com/mariusvniekerk) for moving
+    Agent Hook onto the regular daemon, calibrating security reviews, and the Go
+    1.27 migration.
+- Thanks to [Nico Albers](https://github.com/nicoa) for actionable browser UI
+    availability diagnostics and published release-asset verification.
+
+______________________________________________________________________
+
 ## 0.65.0
 
 <small>2026-08-16</small>
@@ -28,12 +134,6 @@ All notable changes to roborev, grouped by minor release.
     forwards them unchanged to agents that support each tier. The legacy `fast`,
     `standard`, `thorough`, and `maximum` presets remain compatible. See
     [Reasoning Levels](/configuration/#reasoning-levels).
-- Global autofix guidelines. Set `fix_guidelines` in `~/.roborev/config.toml` to
-    give every Agent Hook profile and foreground `roborev fix` agent policy for
-    evaluating review findings, including when a suggestion should be verified
-    or intentionally not applied. Existing automatic behavior remains unchanged
-    when the setting is empty. See
-    [Fix Guidelines](/configuration/#fix-guidelines).
 - Pi agents accept global `[agent.pi] launch_args`, passed as tokenized
     arguments to every Pi invocation before roborev-managed workflow and safety
     options. This allows isolated classifier jobs to load extension-defined
@@ -52,22 +152,6 @@ All notable changes to roborev, grouped by minor release.
     explicit unavailable state when browser serving is disabled. The existing
     `roborev status` form remains available with identical output, and JSON
     status includes the additive `web_url` field.
-- Agent Hook now uses the regular roborev daemon for event handling, session
-    inspection, and resets. The daemon reuses existing counters from
-    `${ROBOREV_DATA_DIR:-~/.roborev}/agent-hook/state.json`; no second daemon is
-    started. Before upgrading from a release with the auxiliary daemon, stop it
-    with that release's `roborev agent-hook daemon stop` command. See
-    [Agent Hook](/agent-hook/#upgrading-existing-hooks).
-- Default Agent Hook autofix reminders now keep the user's current task as an
-    immutable scope boundary, name exact review job IDs, and invoke only the
-    bundled `roborev-fix` skill. They never run `roborev fix --open` or discover
-    additional reviews. Custom instructions remain complete overrides.
-- The bundled `roborev-fix` skills now require agents to prove every finding
-    against current code before editing. Invalid reviews are documented and
-    closed without code changes; valid out-of-scope findings remain open for
-    user direction.
-- `roborev agent-hook install` now installs or updates bundled skills
-    automatically for Claude Code, Codex, Factory Droid, and Grok Build.
 - `roborev status` now lists active Agent Hook snoozes with their exact
     repository, worktree, branch, and expiry, while the TUI shows a contextual
     snooze badge for an exactly filtered checkout. See
@@ -107,10 +191,6 @@ All notable changes to roborev, grouped by minor release.
 - Fresh agent sessions now receive a short, bounded agentsview usage-indexing
     retry before Roborev falls back to job-log token data, reducing permanently
     missing cost estimates. See [Token Usage](/commands/#token-usage).
-- Agent Hook remembers delivered review IDs per agent session and repository
-    lineage, preventing repeated reminders for the same reviews while allowing
-    newly created reviews to trigger. Deferred reminders acknowledge IDs only
-    when they are delivered.
 - The Codex `maximum` preset now requests literal `max` for explicit GPT-5.6
     `sol`, `terra`, and `luna` models. Older, default, and unknown models retain
     the compatible `xhigh` mapping, while exact `xhigh` remains distinct.
