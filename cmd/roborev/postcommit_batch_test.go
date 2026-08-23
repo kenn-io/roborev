@@ -239,6 +239,34 @@ func TestPlanPostCommitBatchReconcilesRenameOntoStaleBranchName(t *testing.T) {
 	assert.Equal(base, state.Branches["feature"])
 }
 
+func TestPlanPostCommitBatchReconcilesOnChainCheckpointAfterRename(t *testing.T) {
+	repo := newTestGitRepo(t)
+	base := repo.CommitFile("base.txt", "base", "base")
+	repo.CheckoutNewBranch("work")
+	repo.CommitFile("w1.txt", "w1", "w1")
+	stale := repo.CommitFile("w2.txt", "w2", "w2")
+	statePath, err := postCommitBatchStatePath(repo.Dir)
+	require.NoError(t, err)
+	require.NoError(t, savePostCommitBatchState(statePath, postCommitBatchState{
+		Version:  postCommitBatchStateVersion,
+		Branches: map[string]string{"work": base, "feature": stale},
+	}))
+	repo.Run("branch", "-m", "work", "feature")
+	head := repo.CommitFile("w3.txt", "w3", "w3")
+
+	decision := planPostCommitBatch(t.Context(), repo.Dir, 5)
+
+	assert := assert.New(t)
+	assert.Equal(base, decision.Checkpoint)
+	assert.Equal(3, decision.Pending)
+	assert.Equal(base+".."+head, decision.AccumulatedRef())
+	state, exists, err := loadPostCommitBatchState(statePath)
+	require.NoError(t, err)
+	require.True(t, exists)
+	assert.NotContains(state.Branches, "work")
+	assert.Equal(base, state.Branches["feature"])
+}
+
 func TestPlanPostCommitBatchIgnoresStaleCheckpointWithoutRename(t *testing.T) {
 	repo := newTestGitRepo(t)
 	base := repo.CommitFile("base.txt", "base", "base")
@@ -451,6 +479,35 @@ func TestPlanPostCommitBatchRecoversOffChainCheckpoint(t *testing.T) {
 	assert.False(t, rewritten.PreserveCheckpoint)
 	assert.Equal(t, base+".."+head, rewritten.AccumulatedRef())
 	assert.Contains(t, rewritten.Reason, "first-parent")
+}
+
+func TestPlanPostCommitBatchRecoversUnrelatedHistoryFromEmptyTree(t *testing.T) {
+	repo := newTestGitRepo(t)
+	base := repo.CommitFile("base.txt", "base", "base")
+	repo.CheckoutNewBranch("feature")
+	repo.CommitFile("old.txt", "old", "old")
+	initial := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	require.Equal(t, base, initial.Checkpoint)
+
+	repo.Run("checkout", "--orphan", "rewritten")
+	root := repo.CommitFile("new-root.txt", "root", "new root")
+	head := repo.CommitFile("new-head.txt", "head", "new head")
+	repo.Run("branch", "-D", "feature")
+	repo.Run("branch", "-m", "feature")
+
+	decision := planPostCommitBatch(t.Context(), repo.Dir, 5)
+
+	assert := assert.New(t)
+	assert.True(decision.Ready)
+	assert.False(decision.PreserveCheckpoint)
+	assert.Equal(2, decision.Pending)
+	assert.Equal(root+"^", decision.Checkpoint)
+	assert.Equal(root+"^.."+head, decision.AccumulatedRef())
+	require.NoError(t, advancePostCommitBatch(decision))
+	state, exists, err := loadPostCommitBatchState(decision.statePath)
+	require.NoError(t, err)
+	require.True(t, exists)
+	assert.Equal(head, state.Branches["feature"])
 }
 
 func TestPlanStoredPostCommitBatchCorruptStateFailsOpen(t *testing.T) {

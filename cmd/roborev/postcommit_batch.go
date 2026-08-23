@@ -194,22 +194,27 @@ func planPostCommitBatch(
 			branch, head, statePath, "load batch state: "+err.Error(),
 		)
 	}
-	checkpoint, hasCheckpoint := state.Branches[branch]
+	checkpoint, migrated := migrateRenamedPostCommitCheckpoint(
+		ctx, root, branch, &state,
+	)
+	hasCheckpoint := migrated
+	if !migrated {
+		checkpoint, hasCheckpoint = state.Branches[branch]
+	}
+	stateChanged := migrated
 	if !hasCheckpoint || checkpoint == "" {
-		checkpoint, hasCheckpoint = migrateRenamedPostCommitCheckpoint(
-			ctx, root, branch, &state,
-		)
-		if !hasCheckpoint {
-			checkpoint, err = git.ResolveSHACtx(ctx, root, "HEAD^1")
-			if err != nil {
-				return failOpenPostCommitBatchWithState(
-					branch, head, statePath,
-					"resolve initial checkpoint: "+err.Error(),
-					state,
-				)
-			}
-			state.Branches[branch] = checkpoint
+		checkpoint, err = git.ResolveSHACtx(ctx, root, "HEAD^1")
+		if err != nil {
+			return failOpenPostCommitBatchWithState(
+				branch, head, statePath,
+				"resolve initial checkpoint: "+err.Error(),
+				state,
+			)
 		}
+		state.Branches[branch] = checkpoint
+		stateChanged = true
+	}
+	if stateChanged {
 		if err := savePostCommitBatchState(statePath, state); err != nil {
 			return failOpenPostCommitBatchWithState(
 				branch, head, statePath, "update batch state: "+err.Error(), state,
@@ -221,6 +226,14 @@ func planPostCommitBatch(
 		ctx, root, checkpoint, head,
 	)
 	if err != nil {
+		if _, resolveErr := git.ResolveSHACtx(
+			ctx, root, checkpoint+"^{commit}",
+		); resolveErr == nil {
+			return recoverOffChainPostCommitBatch(
+				root, branch, head, checkpoint, statePath,
+				"count first-parent commits: "+err.Error(), state,
+			)
+		}
 		return failOpenPostCommitBatchWithState(
 			branch, head, statePath, "count first-parent commits: "+err.Error(),
 			state,
@@ -317,16 +330,20 @@ func planDisabledPostCommitBatch(
 	if err != nil {
 		return decision
 	}
-	checkpoint, hasCheckpoint := state.Branches[branch]
+	// A rename before batching was disabled leaves the pending range under the
+	// old branch name. Prefer that rename evidence even when the destination
+	// name already has a stale checkpoint on the current branch's history.
+	checkpoint, migrated := migrateRenamedPostCommitCheckpoint(
+		ctx, root, branch, &state,
+	)
+	hasCheckpoint := migrated
+	if !migrated {
+		checkpoint, hasCheckpoint = state.Branches[branch]
+	}
 	if !hasCheckpoint {
-		// A rename before batching was disabled leaves the pending range
-		// under the old branch name; migrate it so the drain still covers it.
-		checkpoint, hasCheckpoint = migrateRenamedPostCommitCheckpoint(
-			ctx, root, branch, &state,
-		)
-		if !hasCheckpoint {
-			return decision
-		}
+		return decision
+	}
+	if migrated {
 		if err := savePostCommitBatchState(statePath, state); err != nil {
 			return decision
 		}
@@ -406,14 +423,17 @@ func planStoredPostCommitBatch(
 		return decision
 	}
 	decision.state = state
-	checkpoint, hasCheckpoint := state.Branches[branch]
+	checkpoint, migrated := migrateRenamedPostCommitCheckpoint(
+		ctx, root, branch, &state,
+	)
+	hasCheckpoint := migrated
+	if !migrated {
+		checkpoint, hasCheckpoint = state.Branches[branch]
+	}
 	if !hasCheckpoint || checkpoint == "" {
-		checkpoint, hasCheckpoint = migrateRenamedPostCommitCheckpoint(
-			ctx, root, branch, &state,
-		)
-		if !hasCheckpoint {
-			return decision
-		}
+		return decision
+	}
+	if migrated {
 		if err := savePostCommitBatchState(statePath, state); err != nil {
 			return failOpenPostCommitBatchWithState(
 				branch, head, statePath,
@@ -424,6 +444,14 @@ func planStoredPostCommitBatch(
 	}
 	pending, onChain, err := git.FirstParentDistance(ctx, root, checkpoint, head)
 	if err != nil {
+		if _, resolveErr := git.ResolveSHACtx(
+			ctx, root, checkpoint+"^{commit}",
+		); resolveErr == nil {
+			return recoverOffChainPostCommitBatch(
+				root, branch, head, checkpoint, statePath,
+				"count first-parent commits: "+err.Error(), state,
+			)
+		}
 		return failOpenPostCommitBatchWithState(
 			branch, head, statePath,
 			"count first-parent commits: "+err.Error(), state,
@@ -568,13 +596,16 @@ func recoverOffChainPostCommitBatch(
 	state postCommitBatchState,
 ) postCommitBatchDecision {
 	mergeBase, err := git.GetMergeBase(root, checkpoint, head)
+	var commits []string
 	if err != nil {
-		return failOpenPostCommitBatchWithState(
-			branch, head, statePath,
-			reason+"; find recovery boundary: "+err.Error(), state,
-		)
+		commits, err = git.GetRangeCommits(root, head)
+		if err == nil && len(commits) > 0 {
+			mergeBase = commits[0] + "^"
+			reason += "; merge-base unavailable, recovering from root"
+		}
+	} else {
+		commits, err = git.GetRangeCommits(root, mergeBase+".."+head)
 	}
-	commits, err := git.GetRangeCommits(root, mergeBase+".."+head)
 	if err != nil || len(commits) == 0 {
 		if err == nil {
 			err = fmt.Errorf("recovery range contains no commits")
