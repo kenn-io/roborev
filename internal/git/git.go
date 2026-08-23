@@ -366,21 +366,47 @@ func GetCurrentBranch(repoPath string) string {
 func LocalBranchSet(
 	ctx context.Context, repoPath string,
 ) (map[string]struct{}, error) {
-	cmd := newGitCmdContext(
-		ctx, "for-each-ref", "--format=%(refname)", "refs/heads",
-	)
+	names, err := localBranchNames(ctx, repoPath, "")
+	if err != nil {
+		return nil, err
+	}
+	branches := make(map[string]struct{}, len(names))
+	for _, name := range names {
+		branches[name] = struct{}{}
+	}
+	return branches, nil
+}
+
+// BranchesContaining returns the names of local branches whose history
+// contains sha, sorted by name.
+func BranchesContaining(
+	ctx context.Context, repoPath, sha string,
+) ([]string, error) {
+	return localBranchNames(ctx, repoPath, sha)
+}
+
+func localBranchNames(
+	ctx context.Context, repoPath, containsSHA string,
+) ([]string, error) {
+	args := []string{"for-each-ref", "--format=%(refname)"}
+	if containsSHA != "" {
+		args = append(args, "--contains="+containsSHA)
+	}
+	args = append(args, "refs/heads")
+	cmd := newGitCmdContext(ctx, args...)
 	cmd.Dir = repoPath
 	out, err := cmd.Output()
 	if err != nil {
 		return nil, fmt.Errorf("list local branches: %w", err)
 	}
-	branches := make(map[string]struct{})
+	var branches []string
 	for line := range strings.SplitSeq(string(out), "\n") {
 		branch := strings.TrimPrefix(strings.TrimSpace(line), "refs/heads/")
 		if branch != "" {
-			branches[branch] = struct{}{}
+			branches = append(branches, branch)
 		}
 	}
+	sort.Strings(branches)
 	return branches, nil
 }
 

@@ -80,7 +80,11 @@ func postCommitCmd() *cobra.Command {
 				return nil
 			}
 
-			if git.IsRebaseInProgress(root) {
+			// The rebase guard suppresses per-commit enqueues while a rebase
+			// replays commits. Pre-push flushes carry an explicit branch and
+			// pushed SHA that a rebase in this worktree cannot corrupt, and
+			// skipping them would push pending commits unreviewed.
+			if flushBranch == "" && git.IsRebaseInProgress(root) {
 				hookLog(root, "skip", "rebase in progress")
 				return nil
 			}

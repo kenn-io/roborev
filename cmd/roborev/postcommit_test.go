@@ -350,7 +350,38 @@ func TestPostCommitBatchFlushPushFlushesBranchWithoutWorktree(t *testing.T) {
 	state, exists, err := loadPostCommitBatchState(statePath)
 	require.NoError(t, err)
 	require.True(t, exists)
-	assert.Equal(t, head, state.Branches["feature"])
+	assert.Equal(t, head, state.Branches["feature"].Checkpoint)
+}
+
+func TestPostCommitBatchFlushBranchIgnoresRebaseInProgress(t *testing.T) {
+	repo, mux := setupTestEnvironment(t)
+	reqCh := mockEnqueueCapture(t, mux)
+	writeRoborevConfig(t, repo, `post_commit_batch_size = 5`)
+	base := repo.CommitFile("base.txt", "base", "base")
+	repo.Run("checkout", "-b", "feature")
+	head := repo.CommitFile("feature.txt", "feature", "feature")
+	_, _, err := executePostCommitCmd("--repo", repo.Dir)
+	require.NoError(t, err)
+
+	// A rebase in the worktree handling the flush must not drop it: the
+	// flush carries an explicit branch and pushed SHA, and skipping it would
+	// let pending commits be pushed unreviewed.
+	gitDir := strings.TrimSpace(repo.Run("rev-parse", "--git-dir"))
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(repo.Dir, gitDir)
+	}
+	require.NoError(t, os.MkdirAll(filepath.Join(gitDir, "rebase-merge"), 0o755))
+
+	_, _, err = executePostCommitCmd(
+		"--repo", repo.Dir, "--flush",
+		"--flush-branch", "feature", "--flush-head", head,
+	)
+	require.NoError(t, err)
+
+	require.Len(t, reqCh, 1)
+	req := <-reqCh
+	assert.Equal(t, "feature", req.Branch)
+	assert.Equal(t, base+".."+head, req.GitRef)
 }
 
 func TestPostCommitBatchFlushPushCorruptStateFailsOpen(t *testing.T) {
@@ -378,7 +409,7 @@ func TestPostCommitBatchFlushPushCorruptStateFailsOpen(t *testing.T) {
 	state, exists, err := loadPostCommitBatchState(statePath)
 	require.NoError(t, err)
 	require.True(t, exists)
-	assert.Equal(t, head, state.Branches["feature"])
+	assert.Equal(t, head, state.Branches["feature"].Checkpoint)
 }
 
 func TestPostCommitBatchFlushPushRecoversOffChainCheckpoint(t *testing.T) {
@@ -395,8 +426,10 @@ func TestPostCommitBatchFlushPushRecoversOffChainCheckpoint(t *testing.T) {
 	statePath, err := postCommitBatchStatePath(repo.Dir)
 	require.NoError(t, err)
 	require.NoError(t, savePostCommitBatchState(statePath, postCommitBatchState{
-		Version:  postCommitBatchStateVersion,
-		Branches: map[string]string{"feature": side},
+		Version: postCommitBatchStateVersion,
+		Branches: map[string]postCommitBatchEntry{
+			"feature": {Checkpoint: side},
+		},
 	}))
 	input := strings.NewReader(fmt.Sprintf(
 		"refs/heads/feature %s refs/heads/feature %s\n",
@@ -412,7 +445,7 @@ func TestPostCommitBatchFlushPushRecoversOffChainCheckpoint(t *testing.T) {
 	state, exists, err := loadPostCommitBatchState(statePath)
 	require.NoError(t, err)
 	require.True(t, exists)
-	assert.Equal(t, head, state.Branches["feature"])
+	assert.Equal(t, head, state.Branches["feature"].Checkpoint)
 }
 
 func TestPostCommitBatchFlushPushUsesExactPushedSHA(t *testing.T) {
@@ -422,12 +455,16 @@ func TestPostCommitBatchFlushPushUsesExactPushedSHA(t *testing.T) {
 	base := repo.CommitFile("base.txt", "base", "base")
 	repo.Run("checkout", "-b", "feature")
 	pushedHead := repo.CommitFile("pushed.txt", "pushed", "pushed")
-	repo.CommitFile("later.txt", "later", "later")
+	later := repo.CommitFile("later.txt", "later", "later")
 	statePath, err := postCommitBatchStatePath(repo.Dir)
 	require.NoError(t, err)
+	// The recorded tip is ahead of the pushed SHA; planning at the older
+	// boundary must not treat the range as having left the branch.
 	require.NoError(t, savePostCommitBatchState(statePath, postCommitBatchState{
-		Version:  postCommitBatchStateVersion,
-		Branches: map[string]string{"feature": base},
+		Version: postCommitBatchStateVersion,
+		Branches: map[string]postCommitBatchEntry{
+			"feature": {Checkpoint: base, Tip: later},
+		},
 	}))
 	input := strings.NewReader(fmt.Sprintf(
 		"refs/heads/feature %s refs/heads/feature %s\n",
@@ -443,7 +480,7 @@ func TestPostCommitBatchFlushPushUsesExactPushedSHA(t *testing.T) {
 	state, exists, err := loadPostCommitBatchState(statePath)
 	require.NoError(t, err)
 	require.True(t, exists)
-	assert.Equal(t, pushedHead, state.Branches["feature"])
+	assert.Equal(t, pushedHead, state.Branches["feature"].Checkpoint)
 }
 
 func TestPostCommitBatchFlushPushKeepsBranchReviewRange(t *testing.T) {
@@ -550,7 +587,7 @@ func TestPostCommitBatchFlushPushMigratesRenamedBranch(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, exists)
 	assert.NotContains(t, state.Branches, "old-name")
-	assert.Equal(t, head, state.Branches["new-name"])
+	assert.Equal(t, head, state.Branches["new-name"].Checkpoint)
 }
 
 func TestPostCommitBatchFlushPushFlushesAncestorBranchRanges(t *testing.T) {
@@ -645,7 +682,7 @@ func TestPostCommitBatchFlushPushFlushesPartiallyCarriedParentRange(
 	state, exists, err := loadPostCommitBatchState(statePath)
 	require.NoError(t, err)
 	require.True(t, exists)
-	assert.Equal(t, pOne, state.Branches["parent"])
+	assert.Equal(t, pOne, state.Branches["parent"].Checkpoint)
 }
 
 func TestPostCommitBatchDisableDrainsRenamedBranchRange(t *testing.T) {

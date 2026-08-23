@@ -21,8 +21,33 @@ const (
 )
 
 type postCommitBatchState struct {
-	Version  int               `json:"version"`
-	Branches map[string]string `json:"branches"`
+	Version  int                             `json:"version"`
+	Branches map[string]postCommitBatchEntry `json:"branches"`
+}
+
+// postCommitBatchEntry records a branch's pending review range: Checkpoint is
+// the last reviewed boundary and Tip the branch head last observed by a state
+// write. The tip identifies which history the range belongs to, so a branch
+// name reused after a rename can neither hide nor steal another history's
+// pending commits.
+type postCommitBatchEntry struct {
+	Checkpoint string `json:"checkpoint"`
+	Tip        string `json:"tip,omitempty"`
+}
+
+// UnmarshalJSON accepts the earlier bare-checkpoint string form so state
+// files written before tips were recorded keep their pending ranges.
+func (e *postCommitBatchEntry) UnmarshalJSON(data []byte) error {
+	if len(data) > 0 && data[0] == '"' {
+		return json.Unmarshal(data, &e.Checkpoint)
+	}
+	type entryAlias postCommitBatchEntry
+	var alias entryAlias
+	if err := json.Unmarshal(data, &alias); err != nil {
+		return err
+	}
+	*e = postCommitBatchEntry(alias)
+	return nil
 }
 
 type postCommitBatchDecision struct {
@@ -53,7 +78,7 @@ func (d postCommitBatchDecision) AccumulatedRef() string {
 func newPostCommitBatchState() postCommitBatchState {
 	return postCommitBatchState{
 		Version:  postCommitBatchStateVersion,
-		Branches: make(map[string]string),
+		Branches: make(map[string]postCommitBatchEntry),
 	}
 }
 
@@ -119,14 +144,14 @@ func loadPostCommitBatchState(
 		)
 	}
 	if state.Branches == nil {
-		state.Branches = make(map[string]string)
+		state.Branches = make(map[string]postCommitBatchEntry)
 	}
 	return state, true, nil
 }
 
 func savePostCommitBatchState(path string, state postCommitBatchState) error {
 	if state.Branches == nil {
-		state.Branches = make(map[string]string)
+		state.Branches = make(map[string]postCommitBatchEntry)
 	}
 	state.Version = postCommitBatchStateVersion
 	if err := os.MkdirAll(filepath.Dir(path), 0o700); err != nil {
@@ -210,7 +235,9 @@ func planPostCommitBatch(
 				state,
 			)
 		}
-		state.Branches[branch] = checkpoint
+		state.Branches[branch] = postCommitBatchEntry{
+			Checkpoint: checkpoint, Tip: head,
+		}
 		stateChanged = true
 	}
 	if stateChanged {
@@ -257,58 +284,170 @@ func planPostCommitBatch(
 // resolvePostCommitCheckpoint returns the branch's checkpoint, adopting
 // orphaned state entries when that widens the pending range. An orphaned
 // entry — a stored branch name that no longer resolves, typically left by a
-// branch rename or deletion — whose checkpoint sits on this branch's
+// branch rename or deletion — whose recorded range lies on this branch's
 // first-parent chain marks commits that were counted as pending but never
 // reviewed. Adoption is deliberately evidence-free: a wrong adoption costs at
 // most a redundant review, while discarding a checkpoint can silently skip
-// commits. On-chain orphans that don't widen the range are dropped because
-// the branch's own pending range already covers them.
+// commits. Adopted-or-covered orphans are dropped; entries whose range
+// belongs to another history are left for a branch on that history.
 func resolvePostCommitCheckpoint(
 	ctx context.Context,
 	root, branch, head string,
 	state *postCommitBatchState,
 ) (checkpoint string, hasCheckpoint, stateChanged bool) {
+	changed := propagateEscapedPostCommitRange(ctx, root, branch, head, state)
 	own, hasOwn := state.Branches[branch]
 	if len(state.Branches) == 0 ||
 		(len(state.Branches) == 1 && hasOwn) {
-		return own, hasOwn, false
+		return own.Checkpoint, hasOwn, changed
 	}
-	baseline, ok := postCommitCheckpointBaseline(ctx, root, own, head)
+	baseline, ok := postCommitCheckpointBaseline(ctx, root, own.Checkpoint, head)
 	if !ok {
-		return own, hasOwn, false
+		return own.Checkpoint, hasOwn, changed
 	}
 	live, err := git.LocalBranchSet(ctx, root)
 	if err != nil {
-		return own, hasOwn, false
+		return own.Checkpoint, hasOwn, changed
 	}
 	adopted := ""
 	adoptedPending := baseline
-	changed := false
-	for name, candidate := range state.Branches {
-		if name == branch || candidate == "" {
+	for name, entry := range state.Branches {
+		if name == branch || entry.Checkpoint == "" {
 			continue
 		}
 		if _, exists := live[name]; exists {
 			continue
 		}
 		pending, onChain, err := git.FirstParentDistance(
-			ctx, root, candidate, head,
+			ctx, root, entry.Checkpoint, head,
 		)
 		if err != nil || !onChain {
 			continue
 		}
+		// The recorded tip decides which history the range belongs to: a tip
+		// off this chain means the checkpoint is merely a shared ancestor and
+		// the pending commits live on some other branch.
+		if entry.Tip != "" && entry.Tip != head {
+			_, tipOnChain, err := git.FirstParentDistance(
+				ctx, root, entry.Tip, head,
+			)
+			if err != nil || !tipOnChain {
+				continue
+			}
+		}
 		delete(state.Branches, name)
 		changed = true
 		if pending >= adoptedPending {
-			adopted = candidate
+			adopted = entry.Checkpoint
 			adoptedPending = pending
 		}
 	}
 	if adopted == "" {
-		return own, hasOwn, changed
+		return own.Checkpoint, hasOwn, changed
 	}
-	state.Branches[branch] = adopted
+	state.Branches[branch] = postCommitBatchEntry{Checkpoint: adopted, Tip: head}
 	return adopted, true, true
+}
+
+// propagateEscapedPostCommitRange handles an entry whose recorded tip is no
+// longer on its own branch's first-parent chain because the name was reused:
+// renamed away and recreated, leaving the recorded pending range on another
+// branch's history. The range is copied to the live branch whose first-parent
+// chain holds the tip — widening that branch's checkpoint when it already has
+// an entry — and this branch's tip is then refreshed so the hand-off runs
+// once. The branch's own checkpoint is never touched, which keeps merge-base
+// recovery for plain rewrites (rebase, amend — no live branch holds the old
+// tip) exactly as before.
+func propagateEscapedPostCommitRange(
+	ctx context.Context,
+	root, branch, head string,
+	state *postCommitBatchState,
+) bool {
+	own, hasOwn := state.Branches[branch]
+	if !hasOwn || own.Checkpoint == "" || own.Tip == "" || own.Tip == head {
+		return false
+	}
+	_, onChain, err := git.FirstParentDistance(ctx, root, own.Tip, head)
+	if err == nil && onChain {
+		return false
+	}
+	if err != nil {
+		if _, rerr := git.ResolveSHACtx(
+			ctx, root, own.Tip+"^{commit}",
+		); rerr != nil {
+			// The recorded tip no longer resolves: its commits are pruned and
+			// nothing remains to hand off.
+			state.Branches[branch] = postCommitBatchEntry{
+				Checkpoint: own.Checkpoint, Tip: head,
+			}
+			return true
+		}
+	} else if _, behind, rerr := git.FirstParentDistance(
+		ctx, root, head, own.Tip,
+	); rerr == nil && behind {
+		// head is an ancestor of the recorded tip (for example a pre-push
+		// flush of an already-superseded SHA): the range is still this
+		// branch's, just planned at an older boundary.
+		return false
+	}
+	handOffPostCommitRange(ctx, root, branch, own, state)
+	state.Branches[branch] = postCommitBatchEntry{
+		Checkpoint: own.Checkpoint, Tip: head,
+	}
+	return true
+}
+
+// handOffPostCommitRange copies an escaped pending range to the live branch
+// whose first-parent chain contains its tip. When that branch already tracks
+// a range, the checkpoint is widened only if it extends the pending distance;
+// otherwise the escaped range is already covered. With no first-parent holder
+// the range's content is only merge-reachable and will appear in the holder's
+// endpoint diffs, so nothing is copied.
+func handOffPostCommitRange(
+	ctx context.Context,
+	root, branch string,
+	own postCommitBatchEntry,
+	state *postCommitBatchState,
+) {
+	holders, err := git.BranchesContaining(ctx, root, own.Tip)
+	if err != nil {
+		return
+	}
+	for _, holder := range holders {
+		if holder == branch {
+			continue
+		}
+		holderHead, err := git.ResolveSHACtx(ctx, root, "refs/heads/"+holder)
+		if err != nil {
+			continue
+		}
+		if _, onChain, err := git.FirstParentDistance(
+			ctx, root, own.Tip, holderHead,
+		); err != nil || !onChain {
+			continue
+		}
+		entry, exists := state.Branches[holder]
+		if !exists {
+			state.Branches[holder] = postCommitBatchEntry{
+				Checkpoint: own.Checkpoint, Tip: own.Tip,
+			}
+			return
+		}
+		ourPending, ourOnChain, ourErr := git.FirstParentDistance(
+			ctx, root, own.Checkpoint, holderHead,
+		)
+		if ourErr != nil || !ourOnChain {
+			return
+		}
+		theirPending, theirOnChain, theirErr := git.FirstParentDistance(
+			ctx, root, entry.Checkpoint, holderHead,
+		)
+		if theirErr != nil || !theirOnChain || ourPending > theirPending {
+			entry.Checkpoint = own.Checkpoint
+			state.Branches[holder] = entry
+		}
+		return
+	}
 }
 
 // postCommitCheckpointBaseline returns the pending distance the branch
@@ -524,7 +663,8 @@ func pushedAncestorFlushBranches(
 		return nil
 	}
 	ancestors := make(map[string]string)
-	for savedBranch, checkpoint := range state.Branches {
+	for savedBranch, entry := range state.Branches {
+		checkpoint := entry.Checkpoint
 		if checkpoint == "" {
 			continue
 		}
@@ -581,7 +721,7 @@ func failOpenPostCommitBatchWithState(
 	state postCommitBatchState,
 ) postCommitBatchDecision {
 	decision := failOpenPostCommitBatchAt(branch, head, statePath, reason)
-	decision.PreserveCheckpoint = state.Branches[branch] != ""
+	decision.PreserveCheckpoint = state.Branches[branch].Checkpoint != ""
 	decision.state = state
 	return decision
 }
@@ -631,12 +771,14 @@ func advancePostCommitBatch(decision postCommitBatchDecision) error {
 	}
 	state := decision.state
 	if state.Branches == nil {
-		state.Branches = make(map[string]string)
+		state.Branches = make(map[string]postCommitBatchEntry)
 	}
 	if decision.ClearCheckpoint {
 		delete(state.Branches, decision.Branch)
 		return savePostCommitBatchState(decision.statePath, state)
 	}
-	state.Branches[decision.Branch] = decision.Head
+	state.Branches[decision.Branch] = postCommitBatchEntry{
+		Checkpoint: decision.Head, Tip: decision.Head,
+	}
 	return savePostCommitBatchState(decision.statePath, state)
 }

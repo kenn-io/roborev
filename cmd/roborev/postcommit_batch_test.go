@@ -2,6 +2,7 @@ package main
 
 import (
 	"context"
+	"fmt"
 	"os"
 	"os/exec"
 	"path/filepath"
@@ -62,8 +63,10 @@ func TestPostCommitBatchStateRoundTrip(t *testing.T) {
 	path, err := postCommitBatchStatePath(repo.Dir)
 	require.NoError(t, err)
 	want := postCommitBatchState{
-		Version:  postCommitBatchStateVersion,
-		Branches: map[string]string{"feature/example": strings.Repeat("a", 40)},
+		Version: postCommitBatchStateVersion,
+		Branches: map[string]postCommitBatchEntry{
+			"feature/example": {Checkpoint: strings.Repeat("a", 40)},
+		},
 	}
 
 	require.NoError(t, savePostCommitBatchState(path, want))
@@ -79,6 +82,22 @@ func TestPostCommitBatchStateRoundTrip(t *testing.T) {
 	}
 }
 
+func TestPostCommitBatchStateReadsLegacyBareCheckpoints(t *testing.T) {
+	repo := newTestGitRepo(t)
+	path, err := postCommitBatchStatePath(repo.Dir)
+	require.NoError(t, err)
+	sha := strings.Repeat("a", 40)
+	require.NoError(t, os.MkdirAll(filepath.Dir(path), 0o700))
+	require.NoError(t, os.WriteFile(path, fmt.Appendf(nil,
+		`{"version":1,"branches":{"feature":%q}}`, sha), 0o600))
+
+	state, exists, err := loadPostCommitBatchState(path)
+
+	require.NoError(t, err)
+	require.True(t, exists)
+	assert.Equal(t, postCommitBatchEntry{Checkpoint: sha}, state.Branches["feature"])
+}
+
 func TestPostCommitBatchStateIsSharedAcrossWorktrees(t *testing.T) {
 	mainRepo := newTestGitRepo(t)
 	mainRepo.CommitFile("base.txt", "base", "base")
@@ -92,13 +111,15 @@ func TestPostCommitBatchStateIsSharedAcrossWorktrees(t *testing.T) {
 	assert.Equal(t, mainPath, worktreePath)
 
 	require.NoError(t, savePostCommitBatchState(mainPath, postCommitBatchState{
-		Version:  postCommitBatchStateVersion,
-		Branches: map[string]string{"main": mainRepo.HeadSHA()},
+		Version: postCommitBatchStateVersion,
+		Branches: map[string]postCommitBatchEntry{
+			"main": {Checkpoint: mainRepo.HeadSHA()},
+		},
 	}))
 	state, exists, err := loadPostCommitBatchState(worktreePath)
 	require.NoError(t, err)
 	assert.True(t, exists)
-	assert.Equal(t, mainRepo.HeadSHA(), state.Branches["main"])
+	assert.Equal(t, mainRepo.HeadSHA(), state.Branches["main"].Checkpoint)
 }
 
 func TestPostCommitBatchStateKeepsBranchesSeparate(t *testing.T) {
@@ -117,8 +138,8 @@ func TestPostCommitBatchStateKeepsBranchesSeparate(t *testing.T) {
 	state, exists, err := loadPostCommitBatchState(two.statePath)
 	require.NoError(t, err)
 	require.True(t, exists)
-	assert.Equal(t, base, state.Branches["feature-one"])
-	assert.Equal(t, base, state.Branches["feature-two"])
+	assert.Equal(t, base, state.Branches["feature-one"].Checkpoint)
+	assert.Equal(t, base, state.Branches["feature-two"].Checkpoint)
 }
 
 func TestPlanPostCommitBatchMigratesCheckpointAfterBranchRename(t *testing.T) {
@@ -145,7 +166,7 @@ func TestPlanPostCommitBatchMigratesCheckpointAfterBranchRename(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, exists)
 	assert.NotContains(t, state.Branches, "old-name")
-	assert.Equal(t, base, state.Branches["new-name"])
+	assert.Equal(t, base, state.Branches["new-name"].Checkpoint)
 }
 
 func TestPlanPostCommitBatchMigratesRenamedBranchWithoutReflog(t *testing.T) {
@@ -161,8 +182,8 @@ func TestPlanPostCommitBatchMigratesRenamedBranchWithoutReflog(t *testing.T) {
 		gitDir = filepath.Join(repo.Dir, gitDir)
 	}
 	// Expired or pruned reflogs must not cost the renamed branch its pending
-	// range: migration relies only on the orphaned entry's checkpoint being
-	// on this branch's first-parent chain.
+	// range: migration relies only on the orphaned entry's recorded range
+	// lying on this branch's first-parent chain.
 	require.NoError(t, os.RemoveAll(filepath.Join(gitDir, "logs")))
 	head := repo.CommitFile("two.txt", "two", "two")
 
@@ -175,7 +196,7 @@ func TestPlanPostCommitBatchMigratesRenamedBranchWithoutReflog(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, exists)
 	assert.NotContains(t, state.Branches, "old-name")
-	assert.Equal(t, base, state.Branches["new-name"])
+	assert.Equal(t, base, state.Branches["new-name"].Checkpoint)
 }
 
 func TestPlanPostCommitBatchMigratesAcrossConsecutiveRenames(t *testing.T) {
@@ -199,20 +220,21 @@ func TestPlanPostCommitBatchMigratesAcrossConsecutiveRenames(t *testing.T) {
 	require.True(t, exists)
 	assert.NotContains(t, state.Branches, "old")
 	assert.NotContains(t, state.Branches, "middle")
-	assert.Equal(t, base, state.Branches["new"])
+	assert.Equal(t, base, state.Branches["new"].Checkpoint)
 }
 
-func TestPlanPostCommitBatchMigrationSkipsRecreatedSourceBranch(t *testing.T) {
+func TestPlanPostCommitBatchRecreatedSourceKeepsPendingRange(t *testing.T) {
 	repo := newTestGitRepo(t)
 	base := repo.CommitFile("base.txt", "base", "base")
 	repo.CheckoutNewBranch("old")
-	oOne := repo.CommitFile("o1.txt", "o1", "o1")
+	repo.CommitFile("o1.txt", "o1", "o1")
 	first := planPostCommitBatch(t.Context(), repo.Dir, 5)
 	require.Equal(t, base, first.Checkpoint)
 	repo.Run("branch", "-m", "old", "new")
 
-	// "old" is recreated and accumulates its own batch before the renamed
-	// branch's first hook run; migration must not steal its live entry.
+	// "old" is recreated and runs its hook before the renamed branch's first
+	// run. Its recorded tip escaped to "new", so the pending range must be
+	// handed off there while the recreated branch tracks only its own commit.
 	repo.Run("checkout", "-b", "old", base)
 	repo.CommitFile("r1.txt", "r1", "r1")
 	recreated := planPostCommitBatch(t.Context(), repo.Dir, 5)
@@ -224,16 +246,51 @@ func TestPlanPostCommitBatchMigrationSkipsRecreatedSourceBranch(t *testing.T) {
 	renamed := planPostCommitBatch(t.Context(), repo.Dir, 5)
 
 	assert := assert.New(t)
-	assert.Equal(oOne, renamed.Checkpoint,
-		"the renamed branch must seed fresh instead of stealing the entry")
-	assert.Equal(1, renamed.Pending)
-	assert.Equal(oOne+".."+head, renamed.AccumulatedRef())
+	assert.Equal(base, renamed.Checkpoint,
+		"the renamed branch must inherit the handed-off pre-rename range")
+	assert.Equal(2, renamed.Pending)
+	assert.Equal(base+".."+head, renamed.AccumulatedRef())
 	state, exists, err := loadPostCommitBatchState(renamed.statePath)
 	require.NoError(t, err)
 	require.True(t, exists)
-	assert.Equal(base, state.Branches["old"],
-		"the recreated branch's live checkpoint must be preserved")
-	assert.Equal(oOne, state.Branches["new"])
+	assert.Equal(base, state.Branches["old"].Checkpoint,
+		"the recreated branch keeps tracking its own commits")
+	assert.Equal(base, state.Branches["new"].Checkpoint)
+}
+
+func TestPlanPostCommitBatchParentDoesNotStealRenamedBranchRange(t *testing.T) {
+	repo := newTestGitRepo(t)
+	repo.CommitFile("base.txt", "base", "base")
+	mainBranch := repo.Run("branch", "--show-current")
+	baseTwo := repo.CommitFile("b2.txt", "b2", "b2")
+	mainPlan := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	require.True(t, mainPlan.Track)
+	repo.CheckoutNewBranch("work")
+	repo.CommitFile("x1.txt", "x1", "x1")
+	workPlan := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	require.Equal(t, baseTwo, workPlan.Checkpoint)
+	repo.Run("branch", "-m", "work", "renamed")
+
+	// The orphaned entry's checkpoint sits on the parent's chain too, but its
+	// recorded tip does not: the pending commit belongs to the renamed
+	// branch, and the parent adopting (and deleting) the entry would strand it.
+	repo.Run("checkout", mainBranch)
+	repo.CommitFile("m1.txt", "m1", "m1")
+	parent := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	require.Equal(t, mainPlan.Checkpoint, parent.Checkpoint)
+	state, exists, err := loadPostCommitBatchState(parent.statePath)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, baseTwo, state.Branches["work"].Checkpoint,
+		"the parent must leave the renamed branch's pending range alone")
+
+	repo.Run("checkout", "renamed")
+	head := repo.CommitFile("y1.txt", "y1", "y1")
+	renamed := planPostCommitBatch(t.Context(), repo.Dir, 5)
+
+	assert.Equal(t, baseTwo, renamed.Checkpoint)
+	assert.Equal(t, 2, renamed.Pending)
+	assert.Equal(t, baseTwo+".."+head, renamed.AccumulatedRef())
 }
 
 func TestPlanPostCommitBatchDoesNotAdoptRecreatedRenameSource(t *testing.T) {
@@ -393,8 +450,10 @@ func TestPlanPostCommitBatchReconcilesRenameOntoStaleBranchName(t *testing.T) {
 	// off-chain checkpoint would make merge-base recovery drain from w1,
 	// permanently skipping base..w1 pending under the renamed branch.
 	require.NoError(t, savePostCommitBatchState(statePath, postCommitBatchState{
-		Version:  postCommitBatchStateVersion,
-		Branches: map[string]string{"work": base, "feature": stale},
+		Version: postCommitBatchStateVersion,
+		Branches: map[string]postCommitBatchEntry{
+			"work": {Checkpoint: base}, "feature": {Checkpoint: stale},
+		},
 	}))
 	repo.Run("branch", "-m", "work", "feature")
 
@@ -409,7 +468,7 @@ func TestPlanPostCommitBatchReconcilesRenameOntoStaleBranchName(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, exists)
 	assert.NotContains(state.Branches, "work")
-	assert.Equal(base, state.Branches["feature"])
+	assert.Equal(base, state.Branches["feature"].Checkpoint)
 }
 
 func TestPlanPostCommitBatchReconcilesOnChainCheckpointAfterRename(t *testing.T) {
@@ -421,8 +480,10 @@ func TestPlanPostCommitBatchReconcilesOnChainCheckpointAfterRename(t *testing.T)
 	statePath, err := postCommitBatchStatePath(repo.Dir)
 	require.NoError(t, err)
 	require.NoError(t, savePostCommitBatchState(statePath, postCommitBatchState{
-		Version:  postCommitBatchStateVersion,
-		Branches: map[string]string{"work": base, "feature": stale},
+		Version: postCommitBatchStateVersion,
+		Branches: map[string]postCommitBatchEntry{
+			"work": {Checkpoint: base}, "feature": {Checkpoint: stale},
+		},
 	}))
 	repo.Run("branch", "-m", "work", "feature")
 	head := repo.CommitFile("w3.txt", "w3", "w3")
@@ -437,7 +498,7 @@ func TestPlanPostCommitBatchReconcilesOnChainCheckpointAfterRename(t *testing.T)
 	require.NoError(t, err)
 	require.True(t, exists)
 	assert.NotContains(state.Branches, "work")
-	assert.Equal(base, state.Branches["feature"])
+	assert.Equal(base, state.Branches["feature"].Checkpoint)
 }
 
 func TestPlanPostCommitBatchAdoptsOrphanedOnChainCheckpoint(t *testing.T) {
@@ -453,8 +514,10 @@ func TestPlanPostCommitBatchAdoptsOrphanedOnChainCheckpoint(t *testing.T) {
 	// reviewed. Adopting it costs at most a redundant review; discarding it
 	// could skip those commits.
 	require.NoError(t, savePostCommitBatchState(statePath, postCommitBatchState{
-		Version:  postCommitBatchStateVersion,
-		Branches: map[string]string{"deleted-branch": base},
+		Version: postCommitBatchStateVersion,
+		Branches: map[string]postCommitBatchEntry{
+			"deleted-branch": {Checkpoint: base},
+		},
 	}))
 
 	decision := planPostCommitBatch(t.Context(), repo.Dir, 5)
@@ -468,7 +531,7 @@ func TestPlanPostCommitBatchAdoptsOrphanedOnChainCheckpoint(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, exists)
 	assert.NotContains(state.Branches, "deleted-branch")
-	assert.Equal(base, state.Branches["feature"])
+	assert.Equal(base, state.Branches["feature"].Checkpoint)
 }
 
 func TestPlanPostCommitBatchKeepsOffChainOrphanForItsOwnHistory(t *testing.T) {
@@ -484,8 +547,10 @@ func TestPlanPostCommitBatchKeepsOffChainOrphanForItsOwnHistory(t *testing.T) {
 	// first-parent chain, so feature must neither adopt nor delete it — a
 	// branch on that history may still cover it later.
 	require.NoError(t, savePostCommitBatchState(statePath, postCommitBatchState{
-		Version:  postCommitBatchStateVersion,
-		Branches: map[string]string{"gone": sideTip},
+		Version: postCommitBatchStateVersion,
+		Branches: map[string]postCommitBatchEntry{
+			"gone": {Checkpoint: sideTip},
+		},
 	}))
 
 	decision := planPostCommitBatch(t.Context(), repo.Dir, 5)
@@ -496,8 +561,8 @@ func TestPlanPostCommitBatchKeepsOffChainOrphanForItsOwnHistory(t *testing.T) {
 	state, exists, err := loadPostCommitBatchState(statePath)
 	require.NoError(t, err)
 	require.True(t, exists)
-	assert.Equal(t, sideTip, state.Branches["gone"])
-	assert.Equal(t, base, state.Branches["feature"])
+	assert.Equal(t, sideTip, state.Branches["gone"].Checkpoint)
+	assert.Equal(t, base, state.Branches["feature"].Checkpoint)
 }
 
 func TestPlanPostCommitBatchTracksWindows(t *testing.T) {
@@ -586,7 +651,7 @@ func TestPlanPostCommitBatchDisabledDrainsOffChainCheckpoint(t *testing.T) {
 	state, exists, err := loadPostCommitBatchState(first.statePath)
 	require.NoError(t, err)
 	require.True(t, exists)
-	state.Branches["feature"] = side
+	state.Branches["feature"] = postCommitBatchEntry{Checkpoint: side}
 	require.NoError(t, savePostCommitBatchState(first.statePath, state))
 
 	disabled := planPostCommitBatch(t.Context(), repo.Dir, 1)
@@ -610,8 +675,10 @@ func TestPlanPostCommitBatchDisabledPreservesUnreadableCheckpoint(t *testing.T) 
 	require.NoError(t, err)
 	badCheckpoint := strings.Repeat("f", 40)
 	require.NoError(t, savePostCommitBatchState(statePath, postCommitBatchState{
-		Version:  postCommitBatchStateVersion,
-		Branches: map[string]string{"feature": badCheckpoint},
+		Version: postCommitBatchStateVersion,
+		Branches: map[string]postCommitBatchEntry{
+			"feature": {Checkpoint: badCheckpoint},
+		},
 	}))
 
 	disabled := planPostCommitBatch(t.Context(), repo.Dir, 1)
@@ -623,7 +690,7 @@ func TestPlanPostCommitBatchDisabledPreservesUnreadableCheckpoint(t *testing.T) 
 	state, exists, err := loadPostCommitBatchState(statePath)
 	require.NoError(t, err)
 	require.True(t, exists)
-	assert.Equal(t, badCheckpoint, state.Branches["feature"])
+	assert.Equal(t, badCheckpoint, state.Branches["feature"].Checkpoint)
 }
 
 func TestPlanPostCommitBatchRootCommitFailsOpen(t *testing.T) {
@@ -640,7 +707,7 @@ func TestPlanPostCommitBatchRootCommitFailsOpen(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, exists)
 	branch := repo.Run("branch", "--show-current")
-	assert.Equal(t, head, state.Branches[branch])
+	assert.Equal(t, head, state.Branches[branch].Checkpoint)
 }
 
 func TestPlanPostCommitBatchCorruptStateFailsOpen(t *testing.T) {
@@ -659,7 +726,7 @@ func TestPlanPostCommitBatchCorruptStateFailsOpen(t *testing.T) {
 	state, exists, err := loadPostCommitBatchState(path)
 	require.NoError(t, err)
 	require.True(t, exists)
-	assert.Equal(t, decision.Head, state.Branches[decision.Branch])
+	assert.Equal(t, decision.Head, state.Branches[decision.Branch].Checkpoint)
 }
 
 func TestPlanPostCommitBatchRecoversOffChainCheckpoint(t *testing.T) {
@@ -675,7 +742,7 @@ func TestPlanPostCommitBatchRecoversOffChainCheckpoint(t *testing.T) {
 	state, exists, err := loadPostCommitBatchState(decision.statePath)
 	require.NoError(t, err)
 	require.True(t, exists)
-	state.Branches["feature"] = side
+	state.Branches["feature"] = postCommitBatchEntry{Checkpoint: side}
 	require.NoError(t, savePostCommitBatchState(decision.statePath, state))
 
 	rewritten := planPostCommitBatch(t.Context(), repo.Dir, 5)
@@ -712,7 +779,7 @@ func TestPlanPostCommitBatchRecoversUnrelatedHistoryFromEmptyTree(t *testing.T) 
 	state, exists, err := loadPostCommitBatchState(decision.statePath)
 	require.NoError(t, err)
 	require.True(t, exists)
-	assert.Equal(head, state.Branches["feature"])
+	assert.Equal(head, state.Branches["feature"].Checkpoint)
 }
 
 func TestPlanStoredPostCommitBatchCorruptStateFailsOpen(t *testing.T) {
@@ -739,7 +806,7 @@ func TestPlanStoredPostCommitBatchCorruptStateFailsOpen(t *testing.T) {
 	state, exists, err := loadPostCommitBatchState(statePath)
 	require.NoError(t, err)
 	require.True(t, exists)
-	assert.Equal(head, state.Branches["feature"])
+	assert.Equal(head, state.Branches["feature"].Checkpoint)
 }
 
 func TestPlanStoredPostCommitBatchRecoversOffChainCheckpoint(t *testing.T) {
@@ -752,8 +819,10 @@ func TestPlanStoredPostCommitBatchRecoversOffChainCheckpoint(t *testing.T) {
 	statePath, err := postCommitBatchStatePath(repo.Dir)
 	require.NoError(t, err)
 	require.NoError(t, savePostCommitBatchState(statePath, postCommitBatchState{
-		Version:  postCommitBatchStateVersion,
-		Branches: map[string]string{"feature": side, "side": base},
+		Version: postCommitBatchStateVersion,
+		Branches: map[string]postCommitBatchEntry{
+			"feature": {Checkpoint: side}, "side": {Checkpoint: base},
+		},
 	}))
 
 	decision := planStoredPostCommitBatch(
@@ -769,8 +838,8 @@ func TestPlanStoredPostCommitBatchRecoversOffChainCheckpoint(t *testing.T) {
 	state, exists, err := loadPostCommitBatchState(statePath)
 	require.NoError(t, err)
 	require.True(t, exists)
-	assert.Equal(head, state.Branches["feature"])
-	assert.Equal(base, state.Branches["side"])
+	assert.Equal(head, state.Branches["feature"].Checkpoint)
+	assert.Equal(base, state.Branches["side"].Checkpoint)
 }
 
 func TestPlanStoredPostCommitBatchInvalidCheckpointFailsOpen(t *testing.T) {
@@ -782,8 +851,8 @@ func TestPlanStoredPostCommitBatchInvalidCheckpointFailsOpen(t *testing.T) {
 	require.NoError(t, err)
 	require.NoError(t, savePostCommitBatchState(statePath, postCommitBatchState{
 		Version: postCommitBatchStateVersion,
-		Branches: map[string]string{
-			"feature": strings.Repeat("f", 40),
+		Branches: map[string]postCommitBatchEntry{
+			"feature": {Checkpoint: strings.Repeat("f", 40)},
 		},
 	}))
 
@@ -800,7 +869,7 @@ func TestPlanStoredPostCommitBatchInvalidCheckpointFailsOpen(t *testing.T) {
 	state, exists, err := loadPostCommitBatchState(statePath)
 	require.NoError(t, err)
 	require.True(t, exists)
-	assert.Equal(strings.Repeat("f", 40), state.Branches["feature"])
+	assert.Equal(strings.Repeat("f", 40), state.Branches["feature"].Checkpoint)
 }
 
 func TestAdvancePostCommitBatchRepairPreservesOtherBranches(t *testing.T) {
@@ -820,7 +889,7 @@ func TestAdvancePostCommitBatchRepairPreservesOtherBranches(t *testing.T) {
 	state, exists, err := loadPostCommitBatchState(one.statePath)
 	require.NoError(t, err)
 	require.True(t, exists)
-	state.Branches["feature-one"] = side
+	state.Branches["feature-one"] = postCommitBatchEntry{Checkpoint: side}
 	require.NoError(t, savePostCommitBatchState(one.statePath, state))
 
 	repair := planPostCommitBatch(t.Context(), repo.Dir, 5)
@@ -830,6 +899,6 @@ func TestAdvancePostCommitBatchRepairPreservesOtherBranches(t *testing.T) {
 	state, exists, err = loadPostCommitBatchState(repair.statePath)
 	require.NoError(t, err)
 	require.True(t, exists)
-	assert.Equal(t, repair.Head, state.Branches["feature-one"])
-	assert.Equal(t, two.Checkpoint, state.Branches["feature-two"])
+	assert.Equal(t, repair.Head, state.Branches["feature-one"].Checkpoint)
+	assert.Equal(t, two.Checkpoint, state.Branches["feature-two"].Checkpoint)
 }

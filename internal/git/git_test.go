@@ -9,6 +9,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
+	"sort"
 	"strings"
 	"sync"
 	"testing"
@@ -3060,6 +3061,34 @@ func TestLocalBranchSet(t *testing.T) {
 		_, err := LocalBranchSet(context.Background(), t.TempDir())
 		assert.Error(t, err)
 	})
+}
+
+func TestBranchesContaining(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found")
+	}
+
+	repo := NewTestRepoWithCommit(t)
+	current := repo.Run("branch", "--show-current")
+	shared := repo.Run("rev-parse", "HEAD")
+	repo.CheckoutNewBranch("feature")
+	repo.CommitFile("feature.txt", "feature", "feature commit")
+	featureOnly := repo.Run("rev-parse", "HEAD")
+
+	want := []string{current, "feature"}
+	sort.Strings(want)
+	got, err := BranchesContaining(context.Background(), repo.Dir, shared)
+	require.NoError(t, err)
+	assert.Equal(t, want, got)
+
+	got, err = BranchesContaining(context.Background(), repo.Dir, featureOnly)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"feature"}, got)
+
+	_, err = BranchesContaining(
+		context.Background(), repo.Dir, strings.Repeat("f", 40),
+	)
+	assert.Error(t, err, "an unresolvable SHA must not report zero branches")
 }
 
 func TestWorktreePathForBranch(t *testing.T) {
