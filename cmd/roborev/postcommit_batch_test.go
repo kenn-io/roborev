@@ -3,6 +3,7 @@ package main
 import (
 	"context"
 	"os"
+	"os/exec"
 	"path/filepath"
 	"runtime"
 	"strings"
@@ -203,6 +204,69 @@ func TestPlanPostCommitBatchMigrationSkipsRecreatedSourceBranch(t *testing.T) {
 	assert.Equal(base, state.Branches["old"],
 		"the recreated branch's live checkpoint must be preserved")
 	assert.Equal(oOne, state.Branches["new"])
+}
+
+func TestPlanPostCommitBatchDoesNotReuseConsumedRename(t *testing.T) {
+	repo := newTestGitRepo(t)
+	base := repo.CommitFile("base.txt", "base", "base")
+	repo.CheckoutNewBranch("old")
+	firstHead := repo.CommitFile("one.txt", "one", "one")
+	first := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	require.Equal(t, base, first.Checkpoint)
+	repo.Run("branch", "-m", "old", "new")
+	renamed := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	require.Equal(t, base, renamed.Checkpoint)
+
+	repo.Run("checkout", "-b", "old", firstHead)
+	repo.CommitFile("recreated.txt", "recreated", "recreated")
+	recreated := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	require.Equal(t, firstHead, recreated.Checkpoint)
+	repo.Run("checkout", "new")
+	repo.Run("branch", "-D", "old")
+	head := repo.CommitFile("two.txt", "two", "two")
+
+	decision := planPostCommitBatch(t.Context(), repo.Dir, 5)
+
+	assert := assert.New(t)
+	assert.Equal(base, decision.Checkpoint)
+	assert.Equal(2, decision.Pending)
+	assert.Equal(base+".."+head, decision.AccumulatedRef())
+}
+
+func TestPlanPostCommitBatchKeepsBranchAndHeadConsistentDuringCheckout(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("test uses a POSIX git wrapper")
+	}
+	repo := newTestGitRepo(t)
+	base := repo.CommitFile("base.txt", "base", "base")
+	repo.CheckoutNewBranch("feature")
+	featureHead := repo.CommitFile("feature.txt", "feature", "feature")
+	initial := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	require.Equal(t, base, initial.Checkpoint)
+	repo.Run("checkout", "-b", "other", base)
+	repo.CommitFile("other.txt", "other", "other")
+	repo.Run("checkout", "feature")
+
+	realGit, err := exec.LookPath("git")
+	require.NoError(t, err)
+	binDir := t.TempDir()
+	require.NoError(t, os.WriteFile(filepath.Join(binDir, "git"), []byte(`#!/bin/sh
+if [ "$1" = "symbolic-ref" ] && [ "$2" = "HEAD" ]; then
+  "$REAL_GIT" "$@"
+  "$REAL_GIT" checkout other >/dev/null 2>&1
+  exit
+fi
+exec "$REAL_GIT" "$@"
+`), 0o755))
+	t.Setenv("REAL_GIT", realGit)
+	t.Setenv("PATH", binDir+string(os.PathListSeparator)+os.Getenv("PATH"))
+
+	decision := planPostCommitBatch(t.Context(), repo.Dir, 5)
+
+	assert := assert.New(t)
+	assert.Equal("feature", decision.Branch)
+	assert.Equal(featureHead, decision.Head)
+	assert.Equal(base+".."+featureHead, decision.AccumulatedRef())
 }
 
 func TestPlanPostCommitBatchReconcilesRenameOntoStaleBranchName(t *testing.T) {
