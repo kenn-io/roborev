@@ -8,7 +8,6 @@ import (
 	"io"
 	"os"
 	"path/filepath"
-	"slices"
 	"time"
 
 	"github.com/gofrs/flock"
@@ -22,9 +21,9 @@ const (
 )
 
 type postCommitBatchState struct {
-	Version         int                 `json:"version"`
-	Branches        map[string]string   `json:"branches"`
-	ConsumedRenames map[string][]string `json:"consumed_renames,omitempty"`
+	Version   int               `json:"version"`
+	Branches  map[string]string `json:"branches"`
+	RefStates map[string]string `json:"ref_states,omitempty"`
 }
 
 type postCommitBatchDecision struct {
@@ -54,9 +53,9 @@ func (d postCommitBatchDecision) AccumulatedRef() string {
 
 func newPostCommitBatchState() postCommitBatchState {
 	return postCommitBatchState{
-		Version:         postCommitBatchStateVersion,
-		Branches:        make(map[string]string),
-		ConsumedRenames: make(map[string][]string),
+		Version:   postCommitBatchStateVersion,
+		Branches:  make(map[string]string),
+		RefStates: make(map[string]string),
 	}
 }
 
@@ -201,14 +200,9 @@ func planPostCommitBatch(
 			branch, head, statePath, "load batch state: "+err.Error(),
 		)
 	}
-	checkpoint, migrated, renameStateChanged := migrateRenamedPostCommitCheckpoint(
+	checkpoint, hasCheckpoint, stateChanged := resolvePostCommitBranchState(
 		ctx, root, branch, &state,
 	)
-	hasCheckpoint := migrated
-	if !migrated {
-		checkpoint, hasCheckpoint = state.Branches[branch]
-	}
-	stateChanged := renameStateChanged
 	if !hasCheckpoint || checkpoint == "" {
 		checkpoint, err = git.ResolveSHACtx(ctx, root, head+"^1")
 		if err != nil {
@@ -277,23 +271,19 @@ func planPostCommitBatch(
 // ref, so the renamed branch would re-seed at HEAD^1 and permanently skip the
 // pending pre-rename commits. The rename entries git records in the new
 // branch's reflog name the prior branches (consecutive renames leave a
-// chain), so migration follows that evidence alone. Each source is consumed
-// once so a later branch that reuses the source name cannot be mistaken for
-// the original renamed branch.
+// chain), so migration follows that evidence alone. The stored reflog state
+// prevents later branches that reuse a source name from being adopted.
 func migrateRenamedPostCommitCheckpoint(
 	ctx context.Context,
 	root, branch string,
 	state *postCommitBatchState,
 ) (string, bool, bool) {
 	migrated := ""
-	consumed := state.ConsumedRenames[branch]
 	stateChanged := false
 	for _, source := range git.BranchRenameSources(ctx, root, branch) {
-		if source == branch || slices.Contains(consumed, source) {
+		if source == branch {
 			continue
 		}
-		consumed = append(consumed, source)
-		stateChanged = true
 		// A source name that resolves again was recreated as a live branch;
 		// its entry now tracks that branch's own batch and must be neither
 		// adopted nor deleted. The renamed branch then seeds fresh, the
@@ -303,22 +293,65 @@ func migrateRenamedPostCommitCheckpoint(
 		); err == nil {
 			continue
 		}
+		candidate, hasCandidate := state.Branches[source]
+		candidateRefState, hasRefState := state.RefStates[source]
+		if !hasCandidate && !hasRefState {
+			continue
+		}
+		if candidate != "" && candidateRefState != "" {
+			_, matches, err := git.BranchReflogState(
+				ctx, root, branch, candidateRefState,
+			)
+			if err != nil {
+				continue
+			}
+			if !matches {
+				candidate = ""
+			}
+		}
 		if migrated == "" {
-			migrated = state.Branches[source]
+			migrated = candidate
 		}
 		delete(state.Branches, source)
-	}
-	if stateChanged {
-		if state.ConsumedRenames == nil {
-			state.ConsumedRenames = make(map[string][]string)
-		}
-		state.ConsumedRenames[branch] = consumed
+		delete(state.RefStates, source)
+		stateChanged = true
 	}
 	if migrated == "" {
 		return "", false, stateChanged
 	}
 	state.Branches[branch] = migrated
 	return migrated, true, true
+}
+
+func resolvePostCommitBranchState(
+	ctx context.Context,
+	root, branch string,
+	state *postCommitBatchState,
+) (string, bool, bool) {
+	previousRefState := state.RefStates[branch]
+	refState, sameIncarnation, reflogErr := git.BranchReflogState(
+		ctx, root, branch, previousRefState,
+	)
+	checkpoint, migrated, stateChanged := migrateRenamedPostCommitCheckpoint(
+		ctx, root, branch, state,
+	)
+	hasCheckpoint := migrated
+	if !migrated {
+		checkpoint, hasCheckpoint = state.Branches[branch]
+		if hasCheckpoint && previousRefState != "" && reflogErr == nil &&
+			!sameIncarnation {
+			delete(state.Branches, branch)
+			checkpoint, hasCheckpoint, stateChanged = "", false, true
+		}
+	}
+	if reflogErr == nil && refState != previousRefState {
+		if state.RefStates == nil {
+			state.RefStates = make(map[string]string)
+		}
+		state.RefStates[branch] = refState
+		stateChanged = true
+	}
+	return checkpoint, hasCheckpoint, stateChanged
 }
 
 func planDisabledPostCommitBatch(
@@ -348,14 +381,10 @@ func planDisabledPostCommitBatch(
 	// A rename before batching was disabled leaves the pending range under the
 	// old branch name. Prefer that rename evidence even when the destination
 	// name already has a stale checkpoint on the current branch's history.
-	checkpoint, migrated, renameStateChanged := migrateRenamedPostCommitCheckpoint(
+	checkpoint, hasCheckpoint, stateChanged := resolvePostCommitBranchState(
 		ctx, root, branch, &state,
 	)
-	hasCheckpoint := migrated
-	if !migrated {
-		checkpoint, hasCheckpoint = state.Branches[branch]
-	}
-	if renameStateChanged {
+	if stateChanged {
 		if err := savePostCommitBatchState(statePath, state); err != nil {
 			return decision
 		}
@@ -438,14 +467,10 @@ func planStoredPostCommitBatch(
 		return decision
 	}
 	decision.state = state
-	checkpoint, migrated, renameStateChanged := migrateRenamedPostCommitCheckpoint(
+	checkpoint, hasCheckpoint, stateChanged := resolvePostCommitBranchState(
 		ctx, root, branch, &state,
 	)
-	hasCheckpoint := migrated
-	if !migrated {
-		checkpoint, hasCheckpoint = state.Branches[branch]
-	}
-	if renameStateChanged {
+	if stateChanged {
 		if err := savePostCommitBatchState(statePath, state); err != nil {
 			return failOpenPostCommitBatchWithState(
 				branch, head, statePath,
@@ -503,7 +528,10 @@ func planStoredPostCommitBatch(
 // returned branch is re-planned under the batch lock by its own flush
 // invocation, which no-ops when nothing is pending.
 func pushedAncestorFlushBranches(
-	ctx context.Context, root string, pushed map[string]string,
+	ctx context.Context,
+	root string,
+	pushedBranches map[string]string,
+	pushedHeads map[string]struct{},
 ) map[string]string {
 	statePath, err := postCommitBatchStatePath(root)
 	if err != nil {
@@ -518,7 +546,7 @@ func pushedAncestorFlushBranches(
 		if checkpoint == "" {
 			continue
 		}
-		if _, isPushed := pushed[savedBranch]; isPushed {
+		if _, isPushed := pushedBranches[savedBranch]; isPushed {
 			continue
 		}
 		tip, err := git.ResolveSHACtx(ctx, root, "refs/heads/"+savedBranch)
@@ -527,7 +555,7 @@ func pushedAncestorFlushBranches(
 		}
 		carried := ""
 		carriedPending := 0
-		for _, head := range pushed {
+		for head := range pushedHeads {
 			boundary, err := git.GetMergeBase(root, tip, head)
 			if err != nil || boundary == "" {
 				continue
@@ -655,6 +683,7 @@ func advancePostCommitBatch(decision postCommitBatchDecision) error {
 	}
 	if decision.ClearCheckpoint {
 		delete(state.Branches, decision.Branch)
+		delete(state.RefStates, decision.Branch)
 		return savePostCommitBatchState(decision.statePath, state)
 	}
 	state.Branches[decision.Branch] = decision.Head

@@ -400,6 +400,42 @@ func BranchRenameSources(ctx context.Context, repoPath, branch string) []string 
 	return sources
 }
 
+// BranchReflogState returns an opaque identity for the branch's latest reflog
+// entry and reports whether a previously observed identity still belongs to
+// the same reflog. Renames preserve the reflog; deletion and recreation do not.
+func BranchReflogState(
+	ctx context.Context, repoPath, branch, previous string,
+) (current string, containsPrevious bool, err error) {
+	cmd := newGitCmdContext(
+		ctx, "log", "-g", "--date=raw", "--format=%H%x00%gD%x00%gs",
+		"refs/heads/"+branch,
+	)
+	cmd.Dir = repoPath
+	out, err := cmd.Output()
+	if err != nil {
+		return "", false, fmt.Errorf("read branch reflog: %w", err)
+	}
+	for line := range strings.SplitSeq(string(out), "\n") {
+		parts := strings.SplitN(line, "\x00", 3)
+		if len(parts) != 3 {
+			continue
+		}
+		_, selector, ok := strings.Cut(parts[1], "@{")
+		if !ok {
+			continue
+		}
+		entry := parts[0] + "\x00@{" + selector + "\x00" + parts[2]
+		if current == "" {
+			current = entry
+		}
+		containsPrevious = containsPrevious || entry == previous
+	}
+	if current == "" {
+		return "", false, fmt.Errorf("branch reflog is empty")
+	}
+	return current, containsPrevious, nil
+}
+
 // inferBranchMaxCandidates bounds how many non-exact ancestor branches
 // InferBranchForCommit will rank by distance. Above this it fails closed:
 // committer-date or listing order does not bound distance, so ranking a

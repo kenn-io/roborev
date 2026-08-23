@@ -249,6 +249,7 @@ func flushPushedPostCommitBatches(
 	ctx context.Context, root string, input io.Reader,
 ) {
 	branches := make(map[string]string)
+	pushedHeads := make(map[string]struct{})
 	scanner := bufio.NewScanner(input)
 	for scanner.Scan() {
 		fields := strings.Fields(scanner.Text())
@@ -258,6 +259,11 @@ func flushPushedPostCommitBatches(
 		if strings.Trim(fields[1], "0") == "" {
 			continue
 		}
+		head, err := git.ResolveSHACtx(ctx, root, fields[1]+"^{commit}")
+		if err != nil {
+			continue
+		}
+		pushedHeads[head] = struct{}{}
 		branch := strings.TrimPrefix(fields[0], "refs/heads/")
 		if branch == fields[0] {
 			if fields[0] != "HEAD" {
@@ -268,12 +274,14 @@ func flushPushedPostCommitBatches(
 				continue
 			}
 		}
-		branches[branch] = fields[1]
+		branches[branch] = head
 	}
 	// A push also carries any unpushed ancestor commits, so stored batch
 	// branches whose tips sit on a pushed head's chain flush too — otherwise
 	// a child branch pushes its parent's pending commits without a review.
-	maps.Copy(branches, pushedAncestorFlushBranches(ctx, root, branches))
+	maps.Copy(branches, pushedAncestorFlushBranches(
+		ctx, root, branches, pushedHeads,
+	))
 	for branch, head := range branches {
 		cmd := postCommitCmd()
 		cmd.SetContext(ctx)

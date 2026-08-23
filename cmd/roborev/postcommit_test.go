@@ -483,6 +483,28 @@ func TestPostCommitBatchFlushPushResolvesHEADSource(t *testing.T) {
 	assert.Equal(t, base+".."+head, req.GitRef)
 }
 
+func TestPostCommitBatchFlushPushUsesNonBranchSourceAsAncestor(t *testing.T) {
+	repo, mux := setupTestEnvironment(t)
+	reqCh := mockEnqueueCapture(t, mux)
+	writeRoborevConfig(t, repo, `post_commit_batch_size = 5`)
+	base := repo.CommitFile("base.txt", "base", "base")
+	repo.Run("checkout", "-b", "feature")
+	head := repo.CommitFile("one.txt", "one", "one")
+	_, _, err := executePostCommitCmd("--repo", repo.Dir)
+	require.NoError(t, err)
+
+	input := strings.NewReader(fmt.Sprintf(
+		"HEAD~0 %s refs/heads/published %s\n",
+		head, strings.Repeat("0", 40),
+	))
+	flushPushedPostCommitBatches(t.Context(), repo.Dir, input)
+
+	require.Len(t, reqCh, 1)
+	req := <-reqCh
+	assert.Equal(t, "feature", req.Branch)
+	assert.Equal(t, base+".."+head, req.GitRef)
+}
+
 func TestPostCommitBatchFlushPushMigratesRenamedBranch(t *testing.T) {
 	repo, mux := setupTestEnvironment(t)
 	reqCh := mockEnqueueCapture(t, mux)

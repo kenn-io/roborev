@@ -206,7 +206,7 @@ func TestPlanPostCommitBatchMigrationSkipsRecreatedSourceBranch(t *testing.T) {
 	assert.Equal(oOne, state.Branches["new"])
 }
 
-func TestPlanPostCommitBatchDoesNotReuseConsumedRename(t *testing.T) {
+func TestPlanPostCommitBatchDoesNotAdoptRecreatedRenameSource(t *testing.T) {
 	repo := newTestGitRepo(t)
 	base := repo.CommitFile("base.txt", "base", "base")
 	repo.CheckoutNewBranch("old")
@@ -267,6 +267,52 @@ exec "$REAL_GIT" "$@"
 	assert.Equal("feature", decision.Branch)
 	assert.Equal(featureHead, decision.Head)
 	assert.Equal(base+".."+featureHead, decision.AccumulatedRef())
+}
+
+func TestPlanPostCommitBatchSeedsRecreatedBranchName(t *testing.T) {
+	for _, tc := range []struct {
+		name      string
+		divergent bool
+	}{
+		{name: "related history"},
+		{name: "divergent history", divergent: true},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			repo := newTestGitRepo(t)
+			repo.CommitFile("base.txt", "base", "base")
+			mainBranch := repo.Run("branch", "--show-current")
+			repo.CheckoutNewBranch("feature")
+			oldOne := repo.CommitFile("old-one.txt", "one", "old one")
+			oldTwo := repo.CommitFile("old-two.txt", "two", "old two")
+			repo.Run("update-ref", "--create-reflog", "-m", "rewind",
+				"refs/heads/feature", oldOne, oldTwo)
+			repo.Run("update-ref", "-m", "commit: old two",
+				"refs/heads/feature", oldTwo, oldOne)
+			initial := planPostCommitBatch(t.Context(), repo.Dir, 5)
+			require.Equal(t, oldOne, initial.Checkpoint)
+
+			var checkpoint string
+			if tc.divergent {
+				repo.Run("checkout", "--orphan", "replacement")
+				checkpoint = repo.CommitFile("new-root.txt", "root", "new root")
+				repo.Run("branch", "-D", "feature")
+				repo.Run("branch", "-m", "feature")
+			} else {
+				repo.Run("checkout", mainBranch)
+				repo.Run("branch", "-D", "feature")
+				repo.Run("checkout", "-b", "feature", oldTwo)
+				checkpoint = oldTwo
+			}
+			head := repo.CommitFile("new.txt", "new", "new")
+
+			decision := planPostCommitBatch(t.Context(), repo.Dir, 5)
+
+			assert := assert.New(t)
+			assert.Equal(checkpoint, decision.Checkpoint)
+			assert.Equal(1, decision.Pending)
+			assert.Equal(checkpoint+".."+head, decision.AccumulatedRef())
+		})
+	}
 }
 
 func TestPlanPostCommitBatchReconcilesRenameOntoStaleBranchName(t *testing.T) {
