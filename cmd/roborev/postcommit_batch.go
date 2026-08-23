@@ -703,6 +703,16 @@ func pushedAncestorFlushBranches(
 			if err != nil || boundary == "" {
 				continue
 			}
+			// A merge base reachable from the tip only through a second
+			// parent is side history a merge brought in, not part of this
+			// branch's pending range. Flushing there would advance the
+			// checkpoint off the first-parent chain and strand the merge
+			// commit once the branch name goes away.
+			if _, onTipChain, err := git.FirstParentDistance(
+				ctx, root, boundary, tip,
+			); err != nil || !onTipChain {
+				continue
+			}
 			pending, onChain, err := git.FirstParentDistance(
 				ctx, root, checkpoint, boundary,
 			)

@@ -570,6 +570,64 @@ func TestPostCommitBatchPartialFlushKeepsRemainderFlushable(t *testing.T) {
 	assert.Equal(t, pOne+".."+pTwo, req.GitRef)
 }
 
+func TestPostCommitBatchFlushPushSideBranchDoesNotCorruptParent(t *testing.T) {
+	repo, mux := setupTestEnvironment(t)
+	requests := make(chan daemon.EnqueueRequest, 3)
+	mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
+		var req daemon.EnqueueRequest
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		requests <- req
+		w.WriteHeader(http.StatusCreated)
+	})
+	base := repo.CommitFile(
+		".roborev.toml", "post_commit_batch_size = 5\n", "config",
+	)
+	repo.Run("checkout", "-b", "side")
+	sideHead := repo.CommitFile("s1.txt", "s1", "s1")
+	_, _, err := executePostCommitCmd("--repo", repo.Dir)
+	require.NoError(t, err)
+	repo.Run("checkout", "-b", "parent", base)
+	repo.Run("merge", "--no-ff", "-m", "merge side", "side")
+	mergeHead := repo.Run("rev-parse", "HEAD")
+	_, _, err = executePostCommitCmd("--repo", repo.Dir)
+	require.NoError(t, err)
+
+	// The merge base of the parent tip and the pushed side head is side
+	// history, reachable from the parent only through the merge's second
+	// parent. Flushing the parent there would advance its checkpoint off its
+	// first-parent chain, stranding the merge commit once the branch is
+	// renamed.
+	input := strings.NewReader(fmt.Sprintf(
+		"refs/heads/side %s refs/heads/side %s\n",
+		sideHead, strings.Repeat("0", 40),
+	))
+	flushPushedPostCommitBatches(t.Context(), repo.Dir, input)
+	require.Len(t, requests, 1)
+	req := <-requests
+	require.Equal(t, "side", req.Branch)
+	require.Equal(t, base+".."+sideHead, req.GitRef)
+	statePath, err := postCommitBatchStatePath(repo.Dir)
+	require.NoError(t, err)
+	state, exists, err := loadPostCommitBatchState(statePath)
+	require.NoError(t, err)
+	require.True(t, exists)
+	require.Equal(t, base, state.Branches["parent"].Checkpoint,
+		"a side-branch push must not move the parent's checkpoint")
+
+	repo.Run("branch", "-m", "parent", "moved")
+	input = strings.NewReader(fmt.Sprintf(
+		"refs/heads/moved %s refs/heads/moved %s\n",
+		mergeHead, strings.Repeat("0", 40),
+	))
+	flushPushedPostCommitBatches(t.Context(), repo.Dir, input)
+
+	require.Len(t, requests, 1)
+	req = <-requests
+	assert.Equal(t, "moved", req.Branch)
+	assert.Equal(t, base+".."+mergeHead, req.GitRef,
+		"the renamed branch must still flush the merge commit")
+}
+
 func TestPostCommitBatchFlushPushKeepsBranchReviewRange(t *testing.T) {
 	repo, mux := setupTestEnvironment(t)
 	reqCh := mockEnqueueCapture(t, mux)
