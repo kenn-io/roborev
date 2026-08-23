@@ -202,7 +202,7 @@ func postCommitCmd() *cobra.Command {
 				return nil
 			}
 
-			checkpointErr := advancePostCommitBatch(batch)
+			checkpointErr := advancePostCommitBatch(ctx, root, batch)
 			message := fmt.Sprintf(
 				"enqueued ref=%s branch=%s", gitRef, branchName,
 			)

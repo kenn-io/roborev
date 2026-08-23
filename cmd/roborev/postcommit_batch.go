@@ -796,7 +796,9 @@ func recoverOffChainPostCommitBatch(
 	return decision
 }
 
-func advancePostCommitBatch(decision postCommitBatchDecision) error {
+func advancePostCommitBatch(
+	ctx context.Context, root string, decision postCommitBatchDecision,
+) error {
 	if !decision.Track || decision.Branch == "" ||
 		decision.Head == "" || decision.statePath == "" {
 		return nil
@@ -812,8 +814,21 @@ func advancePostCommitBatch(decision postCommitBatchDecision) error {
 		delete(state.Branches, decision.Branch)
 		return savePostCommitBatchState(decision.statePath, state)
 	}
-	state.Branches[decision.Branch] = postCommitBatchEntry{
+	entry := postCommitBatchEntry{
 		Checkpoint: decision.Head, Tip: decision.Head,
 	}
+	// A flush at an older boundary reviews only part of the range. Keep a
+	// recorded tip that is still ahead of the new checkpoint, so the
+	// remainder stays flushable — a tag or SHA push of the original tip must
+	// still see it pending.
+	if prior := state.Branches[decision.Branch]; prior.Tip != "" &&
+		prior.Tip != decision.Head {
+		if _, behind, err := git.FirstParentDistance(
+			ctx, root, decision.Head, prior.Tip,
+		); err == nil && behind {
+			entry.Tip = prior.Tip
+		}
+	}
+	state.Branches[decision.Branch] = entry
 	return savePostCommitBatchState(decision.statePath, state)
 }

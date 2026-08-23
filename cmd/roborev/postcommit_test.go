@@ -513,6 +513,63 @@ func TestPostCommitBatchFlushPushTagCarriesRenamedBranchRange(t *testing.T) {
 	assert.Equal(t, base+".."+head, req.GitRef)
 }
 
+func TestPostCommitBatchPartialFlushKeepsRemainderFlushable(t *testing.T) {
+	repo, mux := setupTestEnvironment(t)
+	requests := make(chan daemon.EnqueueRequest, 3)
+	mux.HandleFunc("/api/enqueue", func(w http.ResponseWriter, r *http.Request) {
+		var req daemon.EnqueueRequest
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&req))
+		requests <- req
+		w.WriteHeader(http.StatusCreated)
+	})
+	base := repo.CommitFile(
+		".roborev.toml", "post_commit_batch_size = 5\n", "config",
+	)
+	repo.Run("checkout", "-b", "parent")
+	pOne := repo.CommitFile("p1.txt", "p1", "p1")
+	_, _, err := executePostCommitCmd("--repo", repo.Dir)
+	require.NoError(t, err)
+	pTwo := repo.CommitFile("p2.txt", "p2", "p2")
+	_, _, err = executePostCommitCmd("--repo", repo.Dir)
+	require.NoError(t, err)
+	repo.Run("checkout", "-b", "child", pOne)
+	childHead := repo.CommitFile("c1.txt", "c1", "c1")
+	_, _, err = executePostCommitCmd("--repo", repo.Dir)
+	require.NoError(t, err)
+	repo.Run("branch", "-m", "parent", "moved")
+
+	// The child push flushes the orphaned range only through the fork point;
+	// the flush must keep the recorded tip so the remainder stays pending.
+	input := strings.NewReader(fmt.Sprintf(
+		"refs/heads/child %s refs/heads/child %s\n",
+		childHead, strings.Repeat("0", 40),
+	))
+	flushPushedPostCommitBatches(t.Context(), repo.Dir, input)
+	require.Len(t, requests, 2)
+	got := map[string]string{}
+	for range 2 {
+		req := <-requests
+		got[req.Branch] = req.GitRef
+	}
+	require.Equal(t, map[string]string{
+		"child":  pOne + ".." + childHead,
+		"parent": base + ".." + pOne,
+	}, got)
+
+	// A tag push at the original tip carries the unreviewed remainder.
+	repo.Run("tag", "v1", pTwo)
+	input = strings.NewReader(fmt.Sprintf(
+		"refs/tags/v1 %s refs/tags/v1 %s\n",
+		pTwo, strings.Repeat("0", 40),
+	))
+	flushPushedPostCommitBatches(t.Context(), repo.Dir, input)
+
+	require.Len(t, requests, 1)
+	req := <-requests
+	assert.Equal(t, "parent", req.Branch)
+	assert.Equal(t, pOne+".."+pTwo, req.GitRef)
+}
+
 func TestPostCommitBatchFlushPushKeepsBranchReviewRange(t *testing.T) {
 	repo, mux := setupTestEnvironment(t)
 	reqCh := mockEnqueueCapture(t, mux)
