@@ -8,7 +8,9 @@ import (
 	"slices"
 	"strings"
 	"testing"
+	"time"
 
+	"github.com/gofrs/flock"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -93,27 +95,29 @@ func TestGeminiAntigravityBuildArgs(t *testing.T) {
 	tests := []struct {
 		name         string
 		agentic      bool
-		wantFlag     string
+		wantFlags    []string
 		unwantedArgs []string
 	}{
 		{
-			name:     "ReviewMode",
-			agentic:  false,
-			wantFlag: "--sandbox",
+			name:    "ReviewMode",
+			agentic: false,
+			// Print-mode reviews omit --sandbox so `pwd` is not gated, and
+			// still omit --dangerously-skip-permissions (agentic-only).
 			unwantedArgs: []string{
 				"--output-format",
 				"--approval-mode",
 				"-m",
 				"--dangerously-skip-permissions",
+				"--sandbox",
 				// A bare --print would swallow --print-timeout as the
 				// prompt; the prompt is passed via --prompt at run time.
 				"--print",
 			},
 		},
 		{
-			name:     "AgenticMode",
-			agentic:  true,
-			wantFlag: "--dangerously-skip-permissions",
+			name:      "AgenticMode",
+			agentic:   true,
+			wantFlags: []string{"--dangerously-skip-permissions"},
 			unwantedArgs: []string{
 				"--output-format",
 				"--approval-mode",
@@ -130,12 +134,108 @@ func TestGeminiAntigravityBuildArgs(t *testing.T) {
 			args := a.buildArgs(tc.agentic)
 
 			assertFlagValue(t, args, "--print-timeout", "30m")
-			assert.Contains(t, args, tc.wantFlag)
+			for _, flag := range tc.wantFlags {
+				assert.Contains(t, args, flag)
+			}
 			for _, unwanted := range tc.unwantedArgs {
 				assert.NotContains(t, args, unwanted)
 			}
 		})
 	}
+}
+
+func TestGeminiAntigravityReviewMergesSettingsAndOmitsYolo(t *testing.T) {
+	skipIfWindows(t)
+
+	settingsPath := filepath.Join(t.TempDir(), "settings.json")
+	writeSettings(t, settingsPath, map[string]any{
+		"model": "keep-me",
+		"permissions": map[string]any{
+			"allow": []any{"command(git)"},
+			"deny":  []any{"command(rm -rf)"},
+		},
+	})
+	prev := antigravitySettingsPathForTest
+	antigravitySettingsPathForTest = func() string { return settingsPath }
+	t.Cleanup(func() { antigravitySettingsPathForTest = prev })
+
+	scriptPath := writeTempCommand(t, `#!/bin/sh
+if [ "$1" = "--version" ]; then echo "1.1.1"; exit 0; fi
+printf '%s\n' "$@" > "$ARGS_FILE"
+echo "Review after settings merge"
+`)
+	argsFile := filepath.Join(t.TempDir(), "args")
+	t.Setenv("ARGS_FILE", argsFile)
+	a := NewGeminiAgent(scriptPath)
+	a.Command = filepath.Join(filepath.Dir(scriptPath), "agy")
+	require.NoError(t, os.Rename(scriptPath, a.Command))
+
+	res, err := a.Review(context.Background(), t.TempDir(), "sha", "prompt", &bytes.Buffer{})
+	require.NoError(t, err)
+	assert.Equal(t, "Review after settings merge", res)
+
+	assertSettingsAllow(t, settingsPath, "read_file(*)", "command(wc)", "command(pwd)", "command(git)")
+	doc := readSettings(t, settingsPath)
+	assert.Equal(t, "keep-me", doc["model"])
+	permissions := doc["permissions"].(map[string]any)
+	assert.Equal(t, []any{"command(rm -rf)"}, permissions["deny"])
+
+	argsBytes, readErr := os.ReadFile(argsFile)
+	require.NoError(t, readErr)
+	argsOut := string(argsBytes)
+	assert.NotContains(t, argsOut, "--sandbox\n")
+	assert.NotContains(t, argsOut, "--dangerously-skip-permissions\n")
+}
+
+func TestGeminiAntigravityReviewStopsWhenSettingsLockCanceled(t *testing.T) {
+	skipIfWindows(t)
+
+	settingsPath := filepath.Join(t.TempDir(), "settings.json")
+	writeSettings(t, settingsPath, map[string]any{
+		"permissions": map[string]any{"allow": []any{}},
+	})
+	prev := antigravitySettingsPathForTest
+	antigravitySettingsPathForTest = func() string { return settingsPath }
+	t.Cleanup(func() { antigravitySettingsPathForTest = prev })
+
+	lock := flock.New(settingsPath+".lock", flock.SetPermissions(0o600))
+	require.NoError(t, lock.Lock())
+	t.Cleanup(func() {
+		_ = lock.Unlock()
+		require.NoError(t, lock.Close())
+	})
+
+	invokedPath := filepath.Join(t.TempDir(), "invoked")
+	t.Setenv("INVOKED_PATH", invokedPath)
+	scriptPath := writeTempCommand(t, `#!/bin/sh
+case "$1" in *etxtbsy*) exit 0;; esac
+touch "$INVOKED_PATH"
+exit 0
+`)
+	commandPath := filepath.Join(filepath.Dir(scriptPath), "agy")
+	require.NoError(t, os.Rename(scriptPath, commandPath))
+
+	ctx, cancel := context.WithTimeout(context.Background(), 50*time.Millisecond)
+	defer cancel()
+	done := make(chan error, 1)
+	go func() {
+		_, err := NewGeminiAgent(commandPath).Review(ctx, t.TempDir(), "sha", "prompt", &bytes.Buffer{})
+		done <- err
+	}()
+
+	var reviewErr error
+	require.Eventually(t, func() bool {
+		select {
+		case reviewErr = <-done:
+			return true
+		default:
+			return false
+		}
+	}, time.Second, 10*time.Millisecond)
+	require.ErrorIs(t, reviewErr, context.DeadlineExceeded)
+
+	_, err := os.Stat(invokedPath)
+	assert.ErrorIs(t, err, os.ErrNotExist)
 }
 
 func TestGeminiDetectsAntigravityCommandNames(t *testing.T) {
@@ -340,6 +440,8 @@ echo "No issues found."
 	argsOut := string(argsBytes)
 	assert.Contains(t, argsOut, "--prompt\nprompt\n")
 	assert.NotContains(t, argsOut, "--print\n")
+	assert.NotContains(t, argsOut, "--sandbox\n")
+	assert.NotContains(t, argsOut, "--dangerously-skip-permissions\n")
 }
 
 func TestGeminiAntigravityLegacyStdinContract(t *testing.T) {
@@ -471,20 +573,42 @@ func TestUTF16CodeUnits(t *testing.T) {
 func TestGeminiAntigravityPromptTooLargeForArgv(t *testing.T) {
 	skipIfWindows(t)
 
-	// New-contract (flag) path bounds the argv-passed prompt with a clear error.
+	// Overflowing the platform argv cap must not error. New agy (>= 1.1.1)
+	// still reads the prompt from non-TTY stdin when no --prompt/--print/-p
+	// flag is passed (google-antigravity/antigravity-cli#582).
 	scriptPath := writeTempCommand(t, `#!/bin/sh
 if [ "$1" = "--version" ]; then echo "1.1.1"; exit 0; fi
-echo "should not run the review"
+cat > "$STDIN_FILE"
+printf '%s\n' "$@" > "$ARGS_FILE"
+echo "Large prompt review output"
+echo "No issues found."
 `)
+	stdinFile := filepath.Join(t.TempDir(), "stdin")
+	argsFile := filepath.Join(t.TempDir(), "args")
+	t.Setenv("STDIN_FILE", stdinFile)
+	t.Setenv("ARGS_FILE", argsFile)
 	a := NewGeminiAgent(scriptPath)
 	a.Command = filepath.Join(filepath.Dir(scriptPath), "agy")
 	require.NoError(t, os.Rename(scriptPath, a.Command))
 
 	big := strings.Repeat("x", antigravityMaxPromptArgLen()+1)
-	_, err := a.Review(context.Background(), t.TempDir(), "sha", big, &bytes.Buffer{})
+	res, err := a.Review(context.Background(), t.TempDir(), "sha", big, &bytes.Buffer{})
 
-	require.Error(t, err)
-	assert.Contains(t, err.Error(), "too large for antigravity argv")
+	require.NoError(t, err)
+	assert.Equal(t, "Large prompt review output\nNo issues found.", res)
+
+	stdinBytes, readErr := os.ReadFile(stdinFile)
+	require.NoError(t, readErr)
+	assert.Equal(t, big+"\n", string(stdinBytes))
+
+	argsBytes, readErr := os.ReadFile(argsFile)
+	require.NoError(t, readErr)
+	argsOut := string(argsBytes)
+	assert.Contains(t, argsOut, "--print-timeout\n")
+	assert.NotContains(t, argsOut, "--prompt\n")
+	assert.NotContains(t, argsOut, "--print\n")
+	assert.NotContains(t, argsOut, "-p\n")
+	assert.NotContains(t, argsOut, "--sandbox\n")
 }
 
 func TestGeminiAntigravityVersionProbeFailureDefaultsToPromptFlag(t *testing.T) {

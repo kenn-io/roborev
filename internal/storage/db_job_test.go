@@ -1,7 +1,9 @@
 package storage
 
 import (
+	"context"
 	"database/sql"
+	"sync"
 	"testing"
 	"time"
 
@@ -93,6 +95,103 @@ func TestClaimJobPersistsPreciseAttemptStart(t *testing.T) {
 	).Scan(&startedAt))
 
 	assert.Regexp(t, `\.\d{9}Z$`, startedAt)
+}
+
+func TestClaimJobRollsBackWhenHydrationFails(t *testing.T) {
+	env := setupJobEnv(t, "/tmp/claim-hydration-rollback", "claim-hydration-rollback")
+	_, err := env.db.Exec(`UPDATE review_jobs SET panel_member_index = ? WHERE id = ?`, "invalid", env.job.ID)
+	require.NoError(t, err)
+
+	claimed, err := env.db.ClaimJob("worker-hydration-rollback")
+	require.Error(t, err)
+	assert.Nil(t, claimed)
+
+	var status string
+	require.NoError(t, env.db.QueryRow(`SELECT status FROM review_jobs WHERE id = ?`, env.job.ID).Scan(&status))
+	assert.Equal(t, string(JobStatusQueued), status)
+}
+
+func TestClaimJobCancellationBeforeCommitRollsBack(t *testing.T) {
+	env := setupJobEnv(t, "/tmp/claim-cancel-before-commit", "claim-cancel-before-commit")
+	ctx, cancel := context.WithCancel(context.Background())
+	defer cancel()
+	commitStarted := make(chan struct{})
+	releaseCommit := make(chan struct{})
+	var releaseOnce sync.Once
+	release := func() {
+		releaseOnce.Do(func() { close(releaseCommit) })
+	}
+	previousHook := claimJobBeforeCommitForTest
+	claimJobBeforeCommitForTest = func() {
+		close(commitStarted)
+		<-releaseCommit
+	}
+	t.Cleanup(func() {
+		release()
+		claimJobBeforeCommitForTest = previousHook
+	})
+
+	resultCh := make(chan struct {
+		job *ReviewJob
+		err error
+	}, 1)
+	go func() {
+		job, err := env.db.ClaimJobContext(ctx, "worker-cancel-before-commit")
+		resultCh <- struct {
+			job *ReviewJob
+			err error
+		}{job: job, err: err}
+	}()
+
+	<-commitStarted
+	cancel()
+	release()
+	result := <-resultCh
+
+	require.ErrorIs(t, result.err, context.Canceled)
+	assert.Nil(t, result.job)
+	var status string
+	require.NoError(t, env.db.QueryRow(
+		`SELECT status FROM review_jobs WHERE id = ?`, env.job.ID,
+	).Scan(&status))
+	assert.Equal(t, string(JobStatusQueued), status)
+}
+
+func TestClaimJobRetriesAfterBusyTransactionTimeout(t *testing.T) {
+	env := setupJobEnv(t, "/tmp/claim-busy-retry", "claim-busy-retry")
+	lockConn, err := env.db.Conn(t.Context())
+	require.NoError(t, err)
+	t.Cleanup(func() { require.NoError(t, lockConn.Close()) })
+	_, err = lockConn.ExecContext(t.Context(), "BEGIN IMMEDIATE")
+	require.NoError(t, err)
+
+	ctx, cancel := context.WithTimeout(context.Background(), 20*time.Second)
+	defer cancel()
+	resultCh := make(chan struct {
+		job *ReviewJob
+		err error
+	}, 1)
+	go func() {
+		job, err := env.db.ClaimJobContext(ctx, "worker-busy-retry")
+		resultCh <- struct {
+			job *ReviewJob
+			err error
+		}{job: job, err: err}
+	}()
+
+	time.Sleep(claimJobBusyAttemptTimeout + 100*time.Millisecond)
+	var status string
+	require.NoError(t, env.db.QueryRow(
+		`SELECT status FROM review_jobs WHERE id = ?`, env.job.ID,
+	).Scan(&status))
+	assert.Equal(t, string(JobStatusQueued), status)
+	_, err = lockConn.ExecContext(t.Context(), "COMMIT")
+	require.NoError(t, err)
+	result := <-resultCh
+
+	require.NoError(t, result.err)
+	require.NotNil(t, result.job)
+	assert.Equal(t, env.job.ID, result.job.ID)
 }
 
 func TestJobFailure(t *testing.T) {

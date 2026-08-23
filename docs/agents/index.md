@@ -182,17 +182,21 @@ npm install -g @google/gemini-cli
 
 Antigravity runs in print mode — the prompt is passed via `--prompt` on `agy` >=
 1.1.1 and piped over stdin with a bare `--print` on older versions (roborev
-probes `agy --version` to pick the contract). Review jobs get `--sandbox`;
-agentic jobs get `--dangerously-skip-permissions`.
+probes `agy --version` to pick the contract). Review jobs omit both `--sandbox`
+and `--dangerously-skip-permissions`; agentic jobs use
+`--dangerously-skip-permissions`. Omitting `--sandbox` is intentional because
+agy's print-mode sandbox can deny the read-only workspace probes that reviews
+need.
 
 Since
 [agy 1.1.3](https://github.com/google-antigravity/antigravity-cli/releases/tag/1.1.3),
 print mode soft-denies tool calls that would need a permission confirmation
-instead of silently auto-approving them. Sandboxed review jobs hit this on the
-model's first tool call — typically a file read or a terminal command: agy exits
-cleanly having produced no review, and roborev fails the job (retrying, then
-failing over to a configured backup agent when one is available). To unblock
-reviews, add allow-rules to `~/.gemini/antigravity-cli/settings.json`:
+instead of silently auto-approving them. Reviews can hit this on the model's
+first tool call — typically a file read or a terminal command: agy exits cleanly
+having produced no review, and roborev fails the job (retrying, then failing
+over to a configured backup agent when one is available). Before each
+non-agentic review, roborev automatically merges the required allow-rules into
+`~/.gemini/antigravity-cli/settings.json`:
 
 ```json
 {
@@ -200,17 +204,22 @@ reviews, add allow-rules to `~/.gemini/antigravity-cli/settings.json`:
     "allow": [
       "read_file(*)",
       "command(pwd)",
-      "command(ls)"
+      "command(wc)",
+      "command(ls)",
+      "command(cat)",
+      "command(head)",
+      "command(tail)",
+      "command(stat)",
+      "command(file)"
     ]
   }
 }
 ```
 
-`read_file(*)` is the rule that matters: agy's native read tools (view file,
-search, list directory) do the real work of a review once file reads are
-allowed. The `command` rules only keep a stray `pwd` or `ls` from aborting the
-run — under `--sandbox`, shell commands are confined to agy's scratch directory
-anyway.
+Roborev preserves existing settings and allow entries, appending only missing
+rules. `read_file(*)` is the rule that matters: agy's native read tools (view
+file, search, list directory) do the real work of a review once file reads are
+allowed. The `command` rules keep inspect commands from aborting the run.
 
 These rules are global to every agy session, and command targets are prefix
 matchers (see the
@@ -218,10 +227,16 @@ matchers (see the
 treat any `command(...)` rule as broad shell authority rather than a read-only
 grant. The same global scope applies to `read_file(*)`, which auto-approves
 reads of any path on the system — narrow its target to your source roots if that
-is broader than you want. If a review still aborts on a `command` denial, allow
-that specific command; avoid `command(*)`, and do not add `unsandboxed(*)` — it
-lifts the sandbox confinement for every agy use. Agentic jobs are unaffected:
+is broader than you want. Review jobs run without agy's OS-level `--sandbox`, so
+these command permissions are not confined to agy's scratch directory. Avoid
+`command(*)` and `unsandboxed(*)`, which broaden permission scope further.
+Agentic jobs are unaffected by this merge because
 `--dangerously-skip-permissions` auto-approves all tools.
+
+Roborev does not currently provide an opt-out for the automatic settings merge
+when using `agy`. To avoid Antigravity's global settings and unsandboxed review
+path, pin the legacy CLI with `gemini_cmd = "gemini"` in your config, or choose
+another agent.
 
 Antigravity does not currently accept a `--model` flag, so an explicit `--model`
 returns an error whenever the Gemini agent resolves to `agy` — even when the

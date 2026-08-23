@@ -496,11 +496,61 @@ func (db *DB) enqueuePanelRunTx(ctx context.Context, exec execer, members []Enqu
 	return memberJobs, synthJob, nil
 }
 
+// claimJobBusyAttempts / claimJobBusyAttemptTimeout / claimJobBusyBackoff
+// keep each SQLite claim attempt below the 30s busy_timeout while leaving
+// enough room for all attempts and backoffs inside claimJobRetryWindow.
+const (
+	claimJobBusyAttempts       = 4
+	claimJobBusyAttemptTimeout = 7 * time.Second
+	claimJobBusyBackoff        = 50 * time.Millisecond
+	claimJobRetryWindow        = 30 * time.Second
+)
+
+// claimJobBeforeCommitForTest coordinates cancellation-boundary coverage.
+var claimJobBeforeCommitForTest func()
+
 // ClaimJob atomically claims the next queued job for a worker.
 // Jobs whose retry_not_before is in the future are skipped so the retry
 // backoff applies regardless of which worker happened to fail the prior
 // attempt.
 func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
+	return db.ClaimJobContext(context.Background(), workerID)
+}
+
+// ClaimJobContext is ClaimJob with caller-controlled cancellation. The
+// caller's context and the claim retry window both bound the operation. The
+// retry boundary owns a fresh connection and BEGIN IMMEDIATE transaction so
+// an interrupted SQLite statement cannot be retried on an invalid transaction.
+func (db *DB) ClaimJobContext(ctx context.Context, workerID string) (*ReviewJob, error) {
+	deadline := time.Now().Add(claimJobRetryWindow)
+	operationCtx, cancelOperation := context.WithDeadline(ctx, deadline)
+	defer cancelOperation()
+
+	return retryOnSQLiteBusy(operationCtx, claimJobBusyAttempts, claimJobBusyAttemptTimeout, claimJobBusyBackoff, nil, func(attemptCtx context.Context) (*ReviewJob, error) {
+		return db.claimJobAttempt(attemptCtx, operationCtx, workerID)
+	})
+}
+
+func (db *DB) claimJobAttempt(
+	ctx context.Context, commitCtx context.Context, workerID string,
+) (*ReviewJob, error) {
+	conn, err := db.Conn(ctx)
+	if err != nil {
+		return nil, err
+	}
+	defer conn.Close()
+	if _, err := conn.ExecContext(ctx, "BEGIN IMMEDIATE"); err != nil {
+		return nil, err
+	}
+	committed := false
+	defer func() {
+		if !committed {
+			if _, err := conn.ExecContext(context.Background(), "ROLLBACK"); err != nil {
+				log.Printf("jobs ClaimJob: rollback failed: %v", err)
+			}
+		}
+	}()
+
 	now := time.Now()
 	nowStr := preciseTimestampAt(now)
 	// retry_not_before is stored UTC + fixed-width nano (see
@@ -510,7 +560,7 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 
 	// Atomically claim a job by updating it in a single statement
 	// This prevents race conditions where two workers select the same job
-	result, err := db.Exec(`
+	result, err := conn.ExecContext(ctx, `
 		UPDATE review_jobs
 		SET status = 'running', worker_id = ?, started_at = ?, updated_at = ?
 		WHERE id = (
@@ -542,7 +592,7 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 	// Now fetch the job we just claimed
 	var job ReviewJob
 	var fields reviewJobScanFields
-	err = db.QueryRow(`
+	err = conn.QueryRowContext(ctx, `
 		SELECT j.id, j.repo_id, j.commit_id, j.git_ref, j.branch, j.ci_base_branch, j.session_id, j.agent, j.model, j.provider, j.requested_model, j.requested_provider, j.reasoning, j.status, j.enqueued_at,
 		       r.root_path, r.name, c.subject, j.diff_content, j.dirty_files, j.prompt, COALESCE(j.agentic, 0), COALESCE(j.prompt_prebuilt, 0), j.job_type, j.review_type,
 		       j.output_prefix, j.patch_id, j.parent_job_id, COALESCE(j.worktree_path, ''), j.command_line, COALESCE(j.min_severity, ''), COALESCE(j.backup_agent, ''), COALESCE(j.backup_model, ''),
@@ -565,6 +615,13 @@ func (db *DB) ClaimJob(workerID string) (*ReviewJob, error) {
 	job.WorkerID = workerID
 	job.StartedAt = &now
 	job.StartedAtRaw = nowStr
+	if claimJobBeforeCommitForTest != nil {
+		claimJobBeforeCommitForTest()
+	}
+	if _, err := conn.ExecContext(commitCtx, "COMMIT"); err != nil {
+		return nil, err
+	}
+	committed = true
 	return &job, nil
 }
 

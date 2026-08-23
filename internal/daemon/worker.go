@@ -666,12 +666,9 @@ func (wp *WorkerPool) worker(id int) {
 		}
 
 		// Try to claim a job
-		job, err := wp.db.ClaimJob(workerID)
+		job, err := wp.db.ClaimJobContext(wp.stopCtx, workerID)
 		if err != nil {
-			log.Printf("[%s] Error claiming job: %v", workerID, err)
-			if wp.errorLog != nil {
-				wp.errorLog.LogError("worker", fmt.Sprintf("claim job: %v", err), 0)
-			}
+			wp.noteClaimError(workerID, err)
 			select {
 			case <-wp.stopCh:
 				log.Printf("[%s] Shutting down", workerID)
@@ -711,6 +708,21 @@ func reviewTypeTag(rt string) string {
 		return ""
 	}
 	return rt + " "
+}
+
+// noteClaimError records a ClaimJob failure. SQLITE_BUSY / "database is
+// locked" is lock contention: retry/backoff already happened inside
+// ClaimJob, so do not spam the daemon error log. Empty-queue is silent
+// (nil job, nil error). Real claim failures stay errors.
+func (wp *WorkerPool) noteClaimError(workerID string, err error) {
+	if storage.IsSQLiteBusy(err) {
+		log.Printf("[%s] Claim job deferred (database busy): %v", workerID, err)
+		return
+	}
+	log.Printf("[%s] Error claiming job: %v", workerID, err)
+	if wp.errorLog != nil {
+		wp.errorLog.LogError("worker", fmt.Sprintf("claim job: %v", err), 0)
+	}
 }
 
 func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {

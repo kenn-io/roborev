@@ -20,7 +20,17 @@ import (
 )
 
 func TestMain(m *testing.M) {
-	os.Exit(testenv.RunIsolatedMain(m))
+	dir, err := os.MkdirTemp("", "roborev-agy-settings-*")
+	if err == nil {
+		antigravitySettingsPathForTest = func() string {
+			return filepath.Join(dir, ".gemini", "antigravity-cli", "settings.json")
+		}
+	}
+	code := testenv.RunIsolatedMain(m)
+	if dir != "" {
+		_ = os.RemoveAll(dir)
+	}
+	os.Exit(code)
 }
 
 func TestAgentRegistry(t *testing.T) {
