@@ -293,6 +293,50 @@ func TestPlanPostCommitBatchParentDoesNotStealRenamedBranchRange(t *testing.T) {
 	assert.Equal(t, baseTwo+".."+head, renamed.AccumulatedRef())
 }
 
+func TestPlanPostCommitBatchForkAtEarlierTipDoesNotEatLaterCommits(
+	t *testing.T,
+) {
+	repo := newTestGitRepo(t)
+	base := repo.CommitFile("base.txt", "base", "base")
+	repo.CheckoutNewBranch("work")
+	wOne := repo.CommitFile("w1.txt", "w1", "w1")
+	plan := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	require.Equal(t, base, plan.Checkpoint)
+	repo.CommitFile("w2.txt", "w2", "w2")
+	plan = planPostCommitBatch(t.Context(), repo.Dir, 5)
+	require.Equal(t, 2, plan.Pending)
+	wThree := repo.CommitFile("w3.txt", "w3", "w3")
+	plan = planPostCommitBatch(t.Context(), repo.Dir, 5)
+	require.Equal(t, 3, plan.Pending)
+
+	// A branch forked at an earlier pending commit sees the orphan's
+	// checkpoint on its own chain after the rename, but the range's recorded
+	// end is not. The fork must neither adopt nor delete the entry — doing
+	// so would silently drop w2 and w3 from batch state.
+	repo.Run("branch", "fork", wOne)
+	repo.Run("branch", "-m", "work", "renamed")
+	repo.Run("checkout", "fork")
+	repo.CommitFile("f1.txt", "f1", "f1")
+	fork := planPostCommitBatch(t.Context(), repo.Dir, 5)
+
+	assert := assert.New(t)
+	assert.Equal(wOne, fork.Checkpoint)
+	assert.Equal(1, fork.Pending)
+	state, exists, err := loadPostCommitBatchState(fork.statePath)
+	require.NoError(t, err)
+	require.True(t, exists)
+	assert.Equal(base, state.Branches["work"].Checkpoint)
+	assert.Equal(wThree, state.Branches["work"].Tip,
+		"the recorded tip must track every pending commit")
+
+	repo.Run("checkout", "renamed")
+	head := repo.CommitFile("r1.txt", "r1", "r1")
+	renamed := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	assert.Equal(base, renamed.Checkpoint)
+	assert.Equal(4, renamed.Pending)
+	assert.Equal(base+".."+head, renamed.AccumulatedRef())
+}
+
 func TestPlanPostCommitBatchDoesNotAdoptRecreatedRenameSource(t *testing.T) {
 	repo := newTestGitRepo(t)
 	base := repo.CommitFile("base.txt", "base", "base")

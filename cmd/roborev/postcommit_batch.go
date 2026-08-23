@@ -235,9 +235,13 @@ func planPostCommitBatch(
 				state,
 			)
 		}
-		state.Branches[branch] = postCommitBatchEntry{
-			Checkpoint: checkpoint, Tip: head,
-		}
+	}
+	// The tip names the observed end of the pending range, so it must track
+	// every new commit: a stale tip understates the range and would let
+	// another branch adopt and delete pending commits it doesn't cover.
+	entry := postCommitBatchEntry{Checkpoint: checkpoint, Tip: head}
+	if state.Branches[branch] != entry {
+		state.Branches[branch] = entry
 		stateChanged = true
 	}
 	if stateChanged {
@@ -645,7 +649,9 @@ func planStoredPostCommitBatch(
 // a branch created from a parent mid-batch (even partway into the pending
 // range) pushes those inherited commits although only the child ref is
 // updated; the parent's range must flush through the shared boundary, with
-// later parent commits staying pending. The state read is lock-free: each
+// later parent commits staying pending. Entries whose branch name no longer
+// resolves fall back to their recorded tip, so a tag or SHA push carrying a
+// renamed branch's pending commits still flushes them. The state read is lock-free: each
 // returned branch is re-planned under the batch lock by its own flush
 // invocation, which no-ops when nothing is pending.
 func pushedAncestorFlushBranches(
@@ -673,7 +679,22 @@ func pushedAncestorFlushBranches(
 		}
 		tip, err := git.ResolveSHACtx(ctx, root, "refs/heads/"+savedBranch)
 		if err != nil {
-			continue
+			// A renamed or deleted name keeps its recorded range, and a tag,
+			// SHA, or child push can still carry those pending commits out.
+			tip = entry.Tip
+			if tip == "" {
+				continue
+			}
+			if _, err := git.ResolveSHACtx(
+				ctx, root, tip+"^{commit}",
+			); err != nil {
+				continue
+			}
+			// A pushed branch whose first-parent chain holds the tip adopts
+			// this range during its own flush; defer to that attribution.
+			if postCommitTipOnAnyChain(ctx, root, tip, pushedBranches) {
+				continue
+			}
 		}
 		carried := ""
 		carriedPending := 0
@@ -696,6 +717,20 @@ func pushedAncestorFlushBranches(
 		}
 	}
 	return ancestors
+}
+
+func postCommitTipOnAnyChain(
+	ctx context.Context,
+	root, tip string,
+	heads map[string]string,
+) bool {
+	for _, head := range heads {
+		_, onChain, err := git.FirstParentDistance(ctx, root, tip, head)
+		if err == nil && onChain {
+			return true
+		}
+	}
+	return false
 }
 
 func failOpenPostCommitBatch(branch, head, reason string) postCommitBatchDecision {

@@ -483,6 +483,36 @@ func TestPostCommitBatchFlushPushUsesExactPushedSHA(t *testing.T) {
 	assert.Equal(t, pushedHead, state.Branches["feature"].Checkpoint)
 }
 
+func TestPostCommitBatchFlushPushTagCarriesRenamedBranchRange(t *testing.T) {
+	repo, mux := setupTestEnvironment(t)
+	reqCh := mockEnqueueCapture(t, mux)
+	writeRoborevConfig(t, repo, `post_commit_batch_size = 5`)
+	base := repo.CommitFile("base.txt", "base", "base")
+	repo.Run("checkout", "-b", "work")
+	repo.CommitFile("one.txt", "one", "one")
+	_, _, err := executePostCommitCmd("--repo", repo.Dir)
+	require.NoError(t, err)
+	head := repo.CommitFile("two.txt", "two", "two")
+	_, _, err = executePostCommitCmd("--repo", repo.Dir)
+	require.NoError(t, err)
+	repo.Run("branch", "-m", "work", "renamed")
+
+	// Pushing a tag at the old tip carries the renamed branch's pending
+	// commits even though no refs/heads ref is updated; the orphaned entry's
+	// recorded range must still flush them before they leave the machine.
+	repo.Run("tag", "v1", head)
+	input := strings.NewReader(fmt.Sprintf(
+		"refs/tags/v1 %s refs/tags/v1 %s\n",
+		head, strings.Repeat("0", 40),
+	))
+	flushPushedPostCommitBatches(t.Context(), repo.Dir, input)
+
+	require.Len(t, reqCh, 1)
+	req := <-reqCh
+	assert.Equal(t, "work", req.Branch)
+	assert.Equal(t, base+".."+head, req.GitRef)
+}
+
 func TestPostCommitBatchFlushPushKeepsBranchReviewRange(t *testing.T) {
 	repo, mux := setupTestEnvironment(t)
 	reqCh := mockEnqueueCapture(t, mux)
