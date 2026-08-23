@@ -148,6 +148,36 @@ func TestPlanPostCommitBatchMigratesCheckpointAfterBranchRename(t *testing.T) {
 	assert.Equal(t, base, state.Branches["new-name"])
 }
 
+func TestPlanPostCommitBatchMigratesRenamedBranchWithoutReflog(t *testing.T) {
+	repo := newTestGitRepo(t)
+	base := repo.CommitFile("base.txt", "base", "base")
+	repo.CheckoutNewBranch("old-name")
+	repo.CommitFile("one.txt", "one", "one")
+	first := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	require.Equal(t, base, first.Checkpoint)
+	repo.Run("branch", "-m", "new-name")
+	gitDir := repo.Run("rev-parse", "--git-dir")
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(repo.Dir, gitDir)
+	}
+	// Expired or pruned reflogs must not cost the renamed branch its pending
+	// range: migration relies only on the orphaned entry's checkpoint being
+	// on this branch's first-parent chain.
+	require.NoError(t, os.RemoveAll(filepath.Join(gitDir, "logs")))
+	head := repo.CommitFile("two.txt", "two", "two")
+
+	renamed := planPostCommitBatch(t.Context(), repo.Dir, 5)
+
+	assert.Equal(t, base, renamed.Checkpoint)
+	assert.Equal(t, 2, renamed.Pending)
+	assert.Equal(t, base+".."+head, renamed.AccumulatedRef())
+	state, exists, err := loadPostCommitBatchState(renamed.statePath)
+	require.NoError(t, err)
+	require.True(t, exists)
+	assert.NotContains(t, state.Branches, "old-name")
+	assert.Equal(t, base, state.Branches["new-name"])
+}
+
 func TestPlanPostCommitBatchMigratesAcrossConsecutiveRenames(t *testing.T) {
 	repo := newTestGitRepo(t)
 	base := repo.CommitFile("base.txt", "base", "base")
@@ -410,17 +440,18 @@ func TestPlanPostCommitBatchReconcilesOnChainCheckpointAfterRename(t *testing.T)
 	assert.Equal(base, state.Branches["feature"])
 }
 
-func TestPlanPostCommitBatchIgnoresStaleCheckpointWithoutRename(t *testing.T) {
+func TestPlanPostCommitBatchAdoptsOrphanedOnChainCheckpoint(t *testing.T) {
 	repo := newTestGitRepo(t)
 	base := repo.CommitFile("base.txt", "base", "base")
 	repo.CheckoutNewBranch("feature")
-	one := repo.CommitFile("one.txt", "one", "one")
-	repo.CommitFile("two.txt", "two", "two")
+	repo.CommitFile("one.txt", "one", "one")
+	head := repo.CommitFile("two.txt", "two", "two")
 	statePath, err := postCommitBatchStatePath(repo.Dir)
 	require.NoError(t, err)
-	// A deleted branch's entry lingers with a checkpoint on feature's
-	// first-parent chain. Without reflog rename evidence, a new branch must
-	// not adopt it and review a historical range it never accumulated.
+	// A gone branch's entry lingers with a checkpoint on feature's
+	// first-parent chain: commits that were counted as pending but never
+	// reviewed. Adopting it costs at most a redundant review; discarding it
+	// could skip those commits.
 	require.NoError(t, savePostCommitBatchState(statePath, postCommitBatchState{
 		Version:  postCommitBatchStateVersion,
 		Branches: map[string]string{"deleted-branch": base},
@@ -428,14 +459,45 @@ func TestPlanPostCommitBatchIgnoresStaleCheckpointWithoutRename(t *testing.T) {
 
 	decision := planPostCommitBatch(t.Context(), repo.Dir, 5)
 
-	assert.Equal(t, one, decision.Checkpoint,
-		"stale checkpoints without rename evidence must seed at HEAD^1")
+	assert := assert.New(t)
+	assert.Equal(base, decision.Checkpoint,
+		"orphaned on-chain checkpoints must be adopted, not discarded")
+	assert.Equal(2, decision.Pending)
+	assert.Equal(base+".."+head, decision.AccumulatedRef())
+	state, exists, err := loadPostCommitBatchState(statePath)
+	require.NoError(t, err)
+	require.True(t, exists)
+	assert.NotContains(state.Branches, "deleted-branch")
+	assert.Equal(base, state.Branches["feature"])
+}
+
+func TestPlanPostCommitBatchKeepsOffChainOrphanForItsOwnHistory(t *testing.T) {
+	repo := newTestGitRepo(t)
+	base := repo.CommitFile("base.txt", "base", "base")
+	repo.CheckoutNewBranch("side")
+	sideTip := repo.CommitFile("side.txt", "side", "side")
+	repo.Run("checkout", "-b", "feature", base)
+	repo.CommitFile("one.txt", "one", "one")
+	statePath, err := postCommitBatchStatePath(repo.Dir)
+	require.NoError(t, err)
+	// "gone" tracked side history; its checkpoint is not on feature's
+	// first-parent chain, so feature must neither adopt nor delete it — a
+	// branch on that history may still cover it later.
+	require.NoError(t, savePostCommitBatchState(statePath, postCommitBatchState{
+		Version:  postCommitBatchStateVersion,
+		Branches: map[string]string{"gone": sideTip},
+	}))
+
+	decision := planPostCommitBatch(t.Context(), repo.Dir, 5)
+
+	assert.Equal(t, base, decision.Checkpoint,
+		"feature must seed at HEAD^1 and leave the off-chain orphan alone")
 	assert.Equal(t, 1, decision.Pending)
 	state, exists, err := loadPostCommitBatchState(statePath)
 	require.NoError(t, err)
 	require.True(t, exists)
-	assert.Equal(t, base, state.Branches["deleted-branch"])
-	assert.Equal(t, one, state.Branches["feature"])
+	assert.Equal(t, sideTip, state.Branches["gone"])
+	assert.Equal(t, base, state.Branches["feature"])
 }
 
 func TestPlanPostCommitBatchTracksWindows(t *testing.T) {

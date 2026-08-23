@@ -3036,6 +3036,32 @@ func TestShortSHA(t *testing.T) {
 	}
 }
 
+func TestLocalBranchSet(t *testing.T) {
+	if _, err := exec.LookPath("git"); err != nil {
+		t.Skip("git not found")
+	}
+
+	t.Run("lists all local branches", func(t *testing.T) {
+		repo := NewTestRepoWithCommit(t)
+		current := repo.Run("branch", "--show-current")
+		repo.CheckoutNewBranch("feature/nested-name")
+		repo.CheckoutNewBranch("other")
+
+		got, err := LocalBranchSet(context.Background(), repo.Dir)
+		require.NoError(t, err)
+		assert.Equal(t, map[string]struct{}{
+			current:               {},
+			"feature/nested-name": {},
+			"other":               {},
+		}, got)
+	})
+
+	t.Run("errors outside a repository", func(t *testing.T) {
+		_, err := LocalBranchSet(context.Background(), t.TempDir())
+		assert.Error(t, err)
+	})
+}
+
 func TestWorktreePathForBranch(t *testing.T) {
 	if _, err := exec.LookPath("git"); err != nil {
 		t.Skip("git not found")

@@ -318,7 +318,7 @@ func TestPostCommitBatchFlushPushUsesTargetBranchWorktree(t *testing.T) {
 	assert.Equal(t, base+".."+head, req.GitRef)
 }
 
-func TestPostCommitBatchFlushPushDefersBranchWithoutWorktree(t *testing.T) {
+func TestPostCommitBatchFlushPushFlushesBranchWithoutWorktree(t *testing.T) {
 	repo, mux := setupTestEnvironment(t)
 	reqCh := mockEnqueueCapture(t, mux)
 	base := repo.CommitFile(
@@ -331,19 +331,26 @@ func TestPostCommitBatchFlushPushDefersBranchWithoutWorktree(t *testing.T) {
 	require.NoError(t, err)
 	repo.Run("checkout", mainBranch)
 
+	// Pushing a branch no worktree has checked out must still flush its
+	// pending range (from the pushing worktree), or its commits leave the
+	// machine unreviewed with no later event to catch them.
 	input := strings.NewReader(fmt.Sprintf(
 		"refs/heads/feature %s refs/heads/feature %s\n",
 		head, strings.Repeat("0", 40),
 	))
 	flushPushedPostCommitBatches(t.Context(), repo.Dir, input)
 
-	assert.Empty(t, reqCh)
+	require.Len(t, reqCh, 1)
+	req := <-reqCh
+	assert.Equal(t, "feature", req.Branch)
+	assert.Equal(t, base+".."+head, req.GitRef)
+	assert.Equal(t, repo.Dir, req.RepoPath)
 	statePath, err := postCommitBatchStatePath(repo.Dir)
 	require.NoError(t, err)
 	state, exists, err := loadPostCommitBatchState(statePath)
 	require.NoError(t, err)
 	require.True(t, exists)
-	assert.Equal(t, base, state.Branches["feature"])
+	assert.Equal(t, head, state.Branches["feature"])
 }
 
 func TestPostCommitBatchFlushPushCorruptStateFailsOpen(t *testing.T) {

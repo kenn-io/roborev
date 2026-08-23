@@ -285,14 +285,13 @@ func flushPushedPostCommitBatches(
 	for branch, head := range branches {
 		branchRoot, checkedOut, err := git.WorktreePathForBranch(root, branch)
 		if err != nil || !checkedOut {
-			reason := "branch has no checked-out worktree"
-			if err != nil {
-				reason = "resolve branch worktree: " + err.Error()
-			}
-			hookLog(root, "skip", fmt.Sprintf(
-				"batch flush deferred branch=%s: %s", branch, reason,
+			// No checkout holds this branch. Flush from the pushing worktree
+			// anyway: its config may differ from the branch's own, but pushed
+			// commits must never leave the machine unreviewed.
+			hookLog(root, "ok", fmt.Sprintf(
+				"batch flush using pushing worktree for branch=%s", branch,
 			))
-			continue
+			branchRoot = root
 		}
 		cmd := postCommitCmd()
 		cmd.SetContext(ctx)

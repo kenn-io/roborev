@@ -21,9 +21,8 @@ const (
 )
 
 type postCommitBatchState struct {
-	Version   int               `json:"version"`
-	Branches  map[string]string `json:"branches"`
-	RefStates map[string]string `json:"ref_states,omitempty"`
+	Version  int               `json:"version"`
+	Branches map[string]string `json:"branches"`
 }
 
 type postCommitBatchDecision struct {
@@ -53,9 +52,8 @@ func (d postCommitBatchDecision) AccumulatedRef() string {
 
 func newPostCommitBatchState() postCommitBatchState {
 	return postCommitBatchState{
-		Version:   postCommitBatchStateVersion,
-		Branches:  make(map[string]string),
-		RefStates: make(map[string]string),
+		Version:  postCommitBatchStateVersion,
+		Branches: make(map[string]string),
 	}
 }
 
@@ -200,8 +198,8 @@ func planPostCommitBatch(
 			branch, head, statePath, "load batch state: "+err.Error(),
 		)
 	}
-	checkpoint, hasCheckpoint, stateChanged := resolvePostCommitBranchState(
-		ctx, root, branch, &state,
+	checkpoint, hasCheckpoint, stateChanged := resolvePostCommitCheckpoint(
+		ctx, root, branch, head, &state,
 	)
 	if !hasCheckpoint || checkpoint == "" {
 		checkpoint, err = git.ResolveSHACtx(ctx, root, head+"^1")
@@ -241,16 +239,6 @@ func planPostCommitBatch(
 		)
 	}
 	if !onChain {
-		// An off-chain checkpoint can be a stale entry left by a deleted
-		// branch whose name this branch was renamed onto, hiding the rename
-		// migration. Reconcile from rename evidence before merge-base
-		// recovery, or the renamed branch's earlier pending commits are
-		// permanently skipped while its old entry strands.
-		checkpoint, pending, onChain = reconcileOffChainPostCommitCheckpoint(
-			ctx, root, branch, head, statePath, checkpoint, &state,
-		)
-	}
-	if !onChain {
 		return recoverOffChainPostCommitBatch(
 			root, branch, head, checkpoint, statePath,
 			"checkpoint is not on HEAD first-parent chain", state,
@@ -266,89 +254,93 @@ func planPostCommitBatch(
 	return decision
 }
 
-// migrateRenamedPostCommitCheckpoint recovers a checkpoint stranded by a
-// branch rename: the old name keeps its state entry but no longer exists as a
-// ref, so the renamed branch would re-seed at HEAD^1 and permanently skip the
-// pending pre-rename commits. The rename entries git records in the new
-// branch's reflog name the prior branches (consecutive renames leave a
-// chain), so migration follows that evidence alone. The stored reflog state
-// prevents later branches that reuse a source name from being adopted.
-func migrateRenamedPostCommitCheckpoint(
+// resolvePostCommitCheckpoint returns the branch's checkpoint, adopting
+// orphaned state entries when that widens the pending range. An orphaned
+// entry — a stored branch name that no longer resolves, typically left by a
+// branch rename or deletion — whose checkpoint sits on this branch's
+// first-parent chain marks commits that were counted as pending but never
+// reviewed. Adoption is deliberately evidence-free: a wrong adoption costs at
+// most a redundant review, while discarding a checkpoint can silently skip
+// commits. On-chain orphans that don't widen the range are dropped because
+// the branch's own pending range already covers them.
+func resolvePostCommitCheckpoint(
 	ctx context.Context,
-	root, branch string,
+	root, branch, head string,
 	state *postCommitBatchState,
-) (string, bool, bool) {
-	migrated := ""
-	stateChanged := false
-	for _, source := range git.BranchRenameSources(ctx, root, branch) {
-		if source == branch {
-			continue
-		}
-		// A source name that resolves again was recreated as a live branch;
-		// its entry now tracks that branch's own batch and must be neither
-		// adopted nor deleted. The renamed branch then seeds fresh, the
-		// documented fail-open behavior when no usable evidence remains.
-		if _, err := git.ResolveSHACtx(
-			ctx, root, "refs/heads/"+source,
-		); err == nil {
-			continue
-		}
-		candidate, hasCandidate := state.Branches[source]
-		candidateRefState, hasRefState := state.RefStates[source]
-		if !hasCandidate && !hasRefState {
-			continue
-		}
-		if candidate != "" && candidateRefState != "" {
-			_, matches, err := git.BranchReflogState(
-				ctx, root, branch, candidateRefState,
-			)
-			if err != nil {
-				continue
-			}
-			if !matches {
-				candidate = ""
-			}
-		}
-		if migrated == "" {
-			migrated = candidate
-		}
-		delete(state.Branches, source)
-		delete(state.RefStates, source)
-		stateChanged = true
+) (checkpoint string, hasCheckpoint, stateChanged bool) {
+	own, hasOwn := state.Branches[branch]
+	if len(state.Branches) == 0 ||
+		(len(state.Branches) == 1 && hasOwn) {
+		return own, hasOwn, false
 	}
-	if migrated == "" {
-		return "", false, stateChanged
+	baseline, ok := postCommitCheckpointBaseline(ctx, root, own, head)
+	if !ok {
+		return own, hasOwn, false
 	}
-	state.Branches[branch] = migrated
-	return migrated, true, true
+	live, err := git.LocalBranchSet(ctx, root)
+	if err != nil {
+		return own, hasOwn, false
+	}
+	adopted := ""
+	adoptedPending := baseline
+	changed := false
+	for name, candidate := range state.Branches {
+		if name == branch || candidate == "" {
+			continue
+		}
+		if _, exists := live[name]; exists {
+			continue
+		}
+		pending, onChain, err := git.FirstParentDistance(
+			ctx, root, candidate, head,
+		)
+		if err != nil || !onChain {
+			continue
+		}
+		delete(state.Branches, name)
+		changed = true
+		if pending >= adoptedPending {
+			adopted = candidate
+			adoptedPending = pending
+		}
+	}
+	if adopted == "" {
+		return own, hasOwn, changed
+	}
+	state.Branches[branch] = adopted
+	return adopted, true, true
 }
 
-func resolvePostCommitBranchState(
-	ctx context.Context,
-	root, branch string,
-	state *postCommitBatchState,
-) (string, bool, bool) {
-	previousRefState := state.RefStates[branch]
-	refState, _, reflogErr := git.BranchReflogState(
-		ctx, root, branch, previousRefState,
-	)
-	checkpoint, migrated, stateChanged := migrateRenamedPostCommitCheckpoint(
-		ctx, root, branch, state,
-	)
-	hasCheckpoint := migrated
-	if !migrated {
-		// A missing prior reflog entry is inconclusive because reflogs expire.
-		// Keep the checkpoint and accept a possible wider repeat review.
-		checkpoint, hasCheckpoint = state.Branches[branch]
+// postCommitCheckpointBaseline returns the pending distance the branch
+// already covers without adoption: its own on-chain checkpoint, the
+// merge-base recovery boundary when that checkpoint is off-chain, or the
+// HEAD^1 seed when it has no checkpoint. ok is false when no baseline can be
+// established (unresolvable checkpoint, unrelated history); adoption is
+// skipped then, because replacing the checkpoint could shrink what the
+// existing recovery paths would review.
+func postCommitCheckpointBaseline(
+	ctx context.Context, root, own, head string,
+) (int, bool) {
+	if own == "" {
+		// Seeding at HEAD^1 leaves exactly the new commit pending.
+		return 1, true
 	}
-	if reflogErr == nil && refState != previousRefState {
-		if state.RefStates == nil {
-			state.RefStates = make(map[string]string)
-		}
-		state.RefStates[branch] = refState
-		stateChanged = true
+	pending, onChain, err := git.FirstParentDistance(ctx, root, own, head)
+	if err != nil {
+		return 0, false
 	}
-	return checkpoint, hasCheckpoint, stateChanged
+	if onChain {
+		return pending, true
+	}
+	mergeBase, err := git.GetMergeBase(root, own, head)
+	if err != nil {
+		return 0, false
+	}
+	pending, onChain, err = git.FirstParentDistance(ctx, root, mergeBase, head)
+	if err != nil || !onChain {
+		return 0, false
+	}
+	return pending, true
 }
 
 func planDisabledPostCommitBatch(
@@ -375,11 +367,10 @@ func planDisabledPostCommitBatch(
 	if err != nil {
 		return decision
 	}
-	// A rename before batching was disabled leaves the pending range under the
-	// old branch name. Prefer that rename evidence even when the destination
-	// name already has a stale checkpoint on the current branch's history.
-	checkpoint, hasCheckpoint, stateChanged := resolvePostCommitBranchState(
-		ctx, root, branch, &state,
+	// A rename before batching was disabled leaves the pending range under
+	// the old branch name; adoption moves it here so the drain covers it.
+	checkpoint, hasCheckpoint, stateChanged := resolvePostCommitCheckpoint(
+		ctx, root, branch, head, &state,
 	)
 	if stateChanged {
 		if err := savePostCommitBatchState(statePath, state); err != nil {
@@ -464,8 +455,8 @@ func planStoredPostCommitBatch(
 		return decision
 	}
 	decision.state = state
-	checkpoint, hasCheckpoint, stateChanged := resolvePostCommitBranchState(
-		ctx, root, branch, &state,
+	checkpoint, hasCheckpoint, stateChanged := resolvePostCommitCheckpoint(
+		ctx, root, branch, head, &state,
 	)
 	if stateChanged {
 		if err := savePostCommitBatchState(statePath, state); err != nil {
@@ -493,12 +484,6 @@ func planStoredPostCommitBatch(
 			branch, head, statePath,
 			"count first-parent commits: "+err.Error(), state,
 		)
-	}
-	if !onChain {
-		checkpoint, pending, onChain = reconcileOffChainPostCommitCheckpoint(
-			ctx, root, branch, head, statePath, checkpoint, &state,
-		)
-		decision.state = state
 	}
 	if !onChain {
 		return recoverOffChainPostCommitBatch(
@@ -571,36 +556,6 @@ func pushedAncestorFlushBranches(
 		}
 	}
 	return ancestors
-}
-
-// reconcileOffChainPostCommitCheckpoint retries an off-chain checkpoint
-// against rename evidence: when the branch was renamed onto a name whose
-// stale entry shadowed the migration, the source branch's checkpoint replaces
-// it and the pending count is recomputed. It returns the original checkpoint
-// with onChain false when there is no rename evidence, nothing changes, or
-// the migrated checkpoint is still off-chain — callers then fall back to
-// merge-base recovery as before.
-func reconcileOffChainPostCommitCheckpoint(
-	ctx context.Context,
-	root, branch, head, statePath, checkpoint string,
-	state *postCommitBatchState,
-) (string, int, bool) {
-	migrated, ok, stateChanged := migrateRenamedPostCommitCheckpoint(
-		ctx, root, branch, state,
-	)
-	if stateChanged {
-		if err := savePostCommitBatchState(statePath, *state); err != nil {
-			return checkpoint, 0, false
-		}
-	}
-	if !ok || migrated == checkpoint {
-		return checkpoint, 0, false
-	}
-	pending, onChain, err := git.FirstParentDistance(ctx, root, migrated, head)
-	if err != nil || !onChain {
-		return migrated, 0, false
-	}
-	return migrated, pending, true
 }
 
 func failOpenPostCommitBatch(branch, head, reason string) postCommitBatchDecision {
@@ -680,7 +635,6 @@ func advancePostCommitBatch(decision postCommitBatchDecision) error {
 	}
 	if decision.ClearCheckpoint {
 		delete(state.Branches, decision.Branch)
-		delete(state.RefStates, decision.Branch)
 		return savePostCommitBatchState(decision.statePath, state)
 	}
 	state.Branches[decision.Branch] = decision.Head

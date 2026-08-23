@@ -362,78 +362,26 @@ func GetCurrentBranch(repoPath string) string {
 	return strings.TrimPrefix(ref, "refs/heads/")
 }
 
-// BranchRenameSources returns the prior names of a renamed branch, most
-// recent first, using the rename entries `git branch -m` accumulates in the
-// new branch's reflog. Consecutive renames each leave an entry, so
-// old->middle->new yields ["middle", "old"]. It returns nil when the branch
-// was not created by a rename, when the reflog is unavailable, or on any
-// error — callers treat nil as "no rename evidence".
-func BranchRenameSources(ctx context.Context, repoPath, branch string) []string {
-	if branch == "" {
-		return nil
-	}
+// LocalBranchSet returns the names of all local branches.
+func LocalBranchSet(
+	ctx context.Context, repoPath string,
+) (map[string]struct{}, error) {
 	cmd := newGitCmdContext(
-		ctx, "log", "-g", "--format=%gs", "refs/heads/"+branch,
+		ctx, "for-each-ref", "--format=%(refname)", "refs/heads",
 	)
 	cmd.Dir = repoPath
 	out, err := cmd.Output()
 	if err != nil {
-		return nil
+		return nil, fmt.Errorf("list local branches: %w", err)
 	}
-	// Entries are newest first, so each rename into the current name is
-	// followed (later in the output) by the rename that produced its source.
-	// A single forward pass therefore walks the chain and cannot loop.
-	var sources []string
-	current := branch
+	branches := make(map[string]struct{})
 	for line := range strings.SplitSeq(string(out), "\n") {
-		source, ok := strings.CutPrefix(line, "Branch: renamed refs/heads/")
-		if !ok {
-			continue
+		branch := strings.TrimPrefix(strings.TrimSpace(line), "refs/heads/")
+		if branch != "" {
+			branches[branch] = struct{}{}
 		}
-		source, ok = strings.CutSuffix(source, " to refs/heads/"+current)
-		if !ok || source == "" {
-			continue
-		}
-		sources = append(sources, source)
-		current = source
 	}
-	return sources
-}
-
-// BranchReflogState returns an opaque identity for the branch's latest reflog
-// entry and reports whether a previously observed identity still belongs to
-// the same reflog. Renames preserve the reflog; deletion and recreation do not.
-func BranchReflogState(
-	ctx context.Context, repoPath, branch, previous string,
-) (current string, containsPrevious bool, err error) {
-	cmd := newGitCmdContext(
-		ctx, "log", "-g", "--date=raw", "--format=%H%x00%gD%x00%gs",
-		"refs/heads/"+branch,
-	)
-	cmd.Dir = repoPath
-	out, err := cmd.Output()
-	if err != nil {
-		return "", false, fmt.Errorf("read branch reflog: %w", err)
-	}
-	for line := range strings.SplitSeq(string(out), "\n") {
-		parts := strings.SplitN(line, "\x00", 3)
-		if len(parts) != 3 {
-			continue
-		}
-		_, selector, ok := strings.Cut(parts[1], "@{")
-		if !ok {
-			continue
-		}
-		entry := parts[0] + "\x00@{" + selector + "\x00" + parts[2]
-		if current == "" {
-			current = entry
-		}
-		containsPrevious = containsPrevious || entry == previous
-	}
-	if current == "" {
-		return "", false, fmt.Errorf("branch reflog is empty")
-	}
-	return current, containsPrevious, nil
+	return branches, nil
 }
 
 // inferBranchMaxCandidates bounds how many non-exact ancestor branches
