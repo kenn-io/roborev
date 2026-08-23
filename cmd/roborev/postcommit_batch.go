@@ -329,7 +329,7 @@ func resolvePostCommitBranchState(
 	state *postCommitBatchState,
 ) (string, bool, bool) {
 	previousRefState := state.RefStates[branch]
-	refState, sameIncarnation, reflogErr := git.BranchReflogState(
+	refState, _, reflogErr := git.BranchReflogState(
 		ctx, root, branch, previousRefState,
 	)
 	checkpoint, migrated, stateChanged := migrateRenamedPostCommitCheckpoint(
@@ -337,12 +337,9 @@ func resolvePostCommitBranchState(
 	)
 	hasCheckpoint := migrated
 	if !migrated {
+		// A missing prior reflog entry is inconclusive because reflogs expire.
+		// Keep the checkpoint and accept a possible wider repeat review.
 		checkpoint, hasCheckpoint = state.Branches[branch]
-		if hasCheckpoint && previousRefState != "" && reflogErr == nil &&
-			!sameIncarnation {
-			delete(state.Branches, branch)
-			checkpoint, hasCheckpoint, stateChanged = "", false, true
-		}
 	}
 	if reflogErr == nil && refState != previousRefState {
 		if state.RefStates == nil {

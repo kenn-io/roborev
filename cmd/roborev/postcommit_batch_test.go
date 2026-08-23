@@ -269,7 +269,9 @@ exec "$REAL_GIT" "$@"
 	assert.Equal(base+".."+featureHead, decision.AccumulatedRef())
 }
 
-func TestPlanPostCommitBatchSeedsRecreatedBranchName(t *testing.T) {
+func TestPlanPostCommitBatchRecoversWhenBranchRecreationIsInconclusive(
+	t *testing.T,
+) {
 	for _, tc := range []struct {
 		name      string
 		divergent bool
@@ -291,28 +293,59 @@ func TestPlanPostCommitBatchSeedsRecreatedBranchName(t *testing.T) {
 			initial := planPostCommitBatch(t.Context(), repo.Dir, 5)
 			require.Equal(t, oldOne, initial.Checkpoint)
 
-			var checkpoint string
+			expectedCheckpoint := oldOne
 			if tc.divergent {
 				repo.Run("checkout", "--orphan", "replacement")
-				checkpoint = repo.CommitFile("new-root.txt", "root", "new root")
+				newRoot := repo.CommitFile("new-root.txt", "root", "new root")
+				expectedCheckpoint = newRoot + "^"
 				repo.Run("branch", "-D", "feature")
 				repo.Run("branch", "-m", "feature")
 			} else {
 				repo.Run("checkout", mainBranch)
 				repo.Run("branch", "-D", "feature")
 				repo.Run("checkout", "-b", "feature", oldTwo)
-				checkpoint = oldTwo
 			}
 			head := repo.CommitFile("new.txt", "new", "new")
 
 			decision := planPostCommitBatch(t.Context(), repo.Dir, 5)
 
 			assert := assert.New(t)
-			assert.Equal(checkpoint, decision.Checkpoint)
-			assert.Equal(1, decision.Pending)
-			assert.Equal(checkpoint+".."+head, decision.AccumulatedRef())
+			assert.Equal(expectedCheckpoint, decision.Checkpoint)
+			assert.Equal(2, decision.Pending)
+			assert.Equal(expectedCheckpoint+".."+head, decision.AccumulatedRef())
 		})
 	}
+}
+
+func TestPlanPostCommitBatchPreservesCheckpointAfterReflogPruning(t *testing.T) {
+	repo := newTestGitRepo(t)
+	base := repo.CommitFile("base.txt", "base", "base")
+	repo.CheckoutNewBranch("feature")
+	one := repo.CommitFile("one.txt", "one", "one")
+	repo.Run("update-ref", "--create-reflog", "-m", "rewind",
+		"refs/heads/feature", base, one)
+	repo.Run("update-ref", "-m", "restore",
+		"refs/heads/feature", one, base)
+	initial := planPostCommitBatch(t.Context(), repo.Dir, 5)
+	require.Equal(t, base, initial.Checkpoint)
+
+	gitDir := repo.Run("rev-parse", "--git-dir")
+	if !filepath.IsAbs(gitDir) {
+		gitDir = filepath.Join(repo.Dir, gitDir)
+	}
+	require.NoError(t, os.Remove(filepath.Join(
+		gitDir, "logs", "refs", "heads", "feature",
+	)))
+	head := repo.CommitFile("two.txt", "two", "two")
+	repo.Run("update-ref", "--create-reflog", "-m", "rewind",
+		"refs/heads/feature", one, head)
+	repo.Run("update-ref", "-m", "restore",
+		"refs/heads/feature", head, one)
+	decision := planPostCommitBatch(t.Context(), repo.Dir, 5)
+
+	assert.Equal(t, base, decision.Checkpoint)
+	assert.Equal(t, 2, decision.Pending)
+	assert.Equal(t, base+".."+head, decision.AccumulatedRef())
 }
 
 func TestPlanPostCommitBatchReconcilesRenameOntoStaleBranchName(t *testing.T) {

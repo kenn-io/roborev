@@ -283,10 +283,21 @@ func flushPushedPostCommitBatches(
 		ctx, root, branches, pushedHeads,
 	))
 	for branch, head := range branches {
+		branchRoot, checkedOut, err := git.WorktreePathForBranch(root, branch)
+		if err != nil || !checkedOut {
+			reason := "branch has no checked-out worktree"
+			if err != nil {
+				reason = "resolve branch worktree: " + err.Error()
+			}
+			hookLog(root, "skip", fmt.Sprintf(
+				"batch flush deferred branch=%s: %s", branch, reason,
+			))
+			continue
+		}
 		cmd := postCommitCmd()
 		cmd.SetContext(ctx)
 		cmd.SetArgs([]string{
-			"--repo", root, "--flush", "--flush-branch", branch,
+			"--repo", branchRoot, "--flush", "--flush-branch", branch,
 			"--flush-head", head,
 		})
 		_ = cmd.Execute()
