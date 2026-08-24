@@ -20,6 +20,12 @@ const (
 	postCommitBatchLockRetryInterval = 10 * time.Millisecond
 )
 
+// postCommitBatchLockTimeout bounds how long a hook waits for a concurrent
+// hook's batch lock. A stuck or suspended holder must never block the user's
+// later commits: the waiter logs and bails, and because its checkpoint is
+// unchanged, the next hook run retries the same range. Tests shorten it.
+var postCommitBatchLockTimeout = 10 * time.Second
+
 type postCommitBatchState struct {
 	Version  int                             `json:"version"`
 	Branches map[string]postCommitBatchEntry `json:"branches"`
@@ -102,8 +108,11 @@ func acquirePostCommitBatchLock(
 	}
 	lock := flock.New(filepath.Join(filepath.Dir(statePath), "post-commit.lock"))
 	// TryLockContext retries at this interval until it acquires the lock or
-	// ctx is canceled. The interval is not a lock timeout.
-	locked, err := lock.TryLockContext(ctx, postCommitBatchLockRetryInterval)
+	// the bounded context expires; the context governs only acquisition, not
+	// how long the lock is held.
+	lockCtx, cancel := context.WithTimeout(ctx, postCommitBatchLockTimeout)
+	defer cancel()
+	locked, err := lock.TryLockContext(lockCtx, postCommitBatchLockRetryInterval)
 	if err != nil {
 		return nil, err
 	}
@@ -674,59 +683,83 @@ func pushedAncestorFlushBranches(
 		if checkpoint == "" {
 			continue
 		}
-		if _, isPushed := pushedBranches[savedBranch]; isPushed {
-			continue
-		}
-		tip, err := git.ResolveSHACtx(ctx, root, "refs/heads/"+savedBranch)
-		if err != nil {
-			// A renamed or deleted name keeps its recorded range, and a tag,
-			// SHA, or child push can still carry those pending commits out.
-			tip = entry.Tip
-			if tip == "" {
-				continue
-			}
-			if _, err := git.ResolveSHACtx(
-				ctx, root, tip+"^{commit}",
-			); err != nil {
-				continue
-			}
-			// A pushed branch whose first-parent chain holds the tip adopts
-			// this range during its own flush; defer to that attribution.
-			if postCommitTipOnAnyChain(ctx, root, tip, pushedBranches) {
-				continue
-			}
-		}
+		tips := flushCandidateTips(ctx, root, savedBranch, entry, pushedBranches)
 		carried := ""
 		carriedPending := 0
-		for head := range pushedHeads {
-			boundary, err := git.GetMergeBase(root, tip, head)
-			if err != nil || boundary == "" {
-				continue
+		for _, tip := range tips {
+			for head := range pushedHeads {
+				boundary, err := git.GetMergeBase(root, tip, head)
+				if err != nil || boundary == "" {
+					continue
+				}
+				// A merge base reachable from the tip only through a second
+				// parent is side history a merge brought in, not part of this
+				// branch's pending range. Flushing there would advance the
+				// checkpoint off the first-parent chain and strand the merge
+				// commit once the branch name goes away.
+				if _, onTipChain, err := git.FirstParentDistance(
+					ctx, root, boundary, tip,
+				); err != nil || !onTipChain {
+					continue
+				}
+				pending, onChain, err := git.FirstParentDistance(
+					ctx, root, checkpoint, boundary,
+				)
+				if err != nil || !onChain || pending <= carriedPending {
+					continue
+				}
+				carried = boundary
+				carriedPending = pending
 			}
-			// A merge base reachable from the tip only through a second
-			// parent is side history a merge brought in, not part of this
-			// branch's pending range. Flushing there would advance the
-			// checkpoint off the first-parent chain and strand the merge
-			// commit once the branch name goes away.
-			if _, onTipChain, err := git.FirstParentDistance(
-				ctx, root, boundary, tip,
-			); err != nil || !onTipChain {
-				continue
-			}
-			pending, onChain, err := git.FirstParentDistance(
-				ctx, root, checkpoint, boundary,
-			)
-			if err != nil || !onChain || pending <= carriedPending {
-				continue
-			}
-			carried = boundary
-			carriedPending = pending
 		}
 		if carried != "" {
 			ancestors[savedBranch] = carried
 		}
 	}
 	return ancestors
+}
+
+// flushCandidateTips returns the range ends a saved entry can flush through.
+// A live branch contributes its ref tip (unless the push already flushes it
+// by name) plus its recorded tip when that sits on abandoned history — a
+// branch reset or recreated onto divergent history keeps its pending range
+// only in the entry, and a tag, SHA, or child push can still carry those
+// commits out. A gone name contributes its recorded tip, unless a pushed
+// branch's own flush will adopt the range and keep live-branch attribution.
+func flushCandidateTips(
+	ctx context.Context,
+	root, savedBranch string,
+	entry postCommitBatchEntry,
+	pushedBranches map[string]string,
+) []string {
+	_, isPushed := pushedBranches[savedBranch]
+	liveTip, err := git.ResolveSHACtx(ctx, root, "refs/heads/"+savedBranch)
+	if err != nil {
+		if entry.Tip == "" {
+			return nil
+		}
+		if _, err := git.ResolveSHACtx(
+			ctx, root, entry.Tip+"^{commit}",
+		); err != nil {
+			return nil
+		}
+		if postCommitTipOnAnyChain(ctx, root, entry.Tip, pushedBranches) {
+			return nil
+		}
+		return []string{entry.Tip}
+	}
+	var tips []string
+	if !isPushed {
+		tips = append(tips, liveTip)
+	}
+	if entry.Tip != "" && entry.Tip != liveTip {
+		if _, onChain, err := git.FirstParentDistance(
+			ctx, root, entry.Tip, liveTip,
+		); err == nil && !onChain {
+			tips = append(tips, entry.Tip)
+		}
+	}
+	return tips
 }
 
 func postCommitTipOnAnyChain(

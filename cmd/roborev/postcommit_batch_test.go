@@ -58,6 +58,27 @@ func TestAcquirePostCommitBatchLockWaitsForHolder(t *testing.T) {
 	require.NoError(t, second.unlock())
 }
 
+func TestAcquirePostCommitBatchLockTimesOutOnStuckHolder(t *testing.T) {
+	repo := newTestGitRepo(t)
+	unlock, err := acquirePostCommitBatchLock(t.Context(), repo.Dir)
+	require.NoError(t, err)
+	defer func() { _ = unlock() }()
+	old := postCommitBatchLockTimeout
+	postCommitBatchLockTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { postCommitBatchLockTimeout = old })
+
+	// A stuck or suspended holder must not block later hooks (and with them
+	// the user's commits) indefinitely: the waiter bails, its checkpoint
+	// stays unchanged, and the next hook run retries the same range.
+	start := time.Now()
+	second, err := acquirePostCommitBatchLock(t.Context(), repo.Dir)
+	if second != nil {
+		defer func() { _ = second() }()
+	}
+	require.Error(t, err)
+	assert.Less(t, time.Since(start), 5*time.Second)
+}
+
 func TestPostCommitBatchStateRoundTrip(t *testing.T) {
 	repo := newTestGitRepo(t)
 	path, err := postCommitBatchStatePath(repo.Dir)

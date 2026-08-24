@@ -628,6 +628,39 @@ func TestPostCommitBatchFlushPushSideBranchDoesNotCorruptParent(t *testing.T) {
 		"the renamed branch must still flush the merge commit")
 }
 
+func TestPostCommitBatchFlushPushTagCarriesDivergedRecordedRange(t *testing.T) {
+	repo, mux := setupTestEnvironment(t)
+	reqCh := mockEnqueueCapture(t, mux)
+	writeRoborevConfig(t, repo, `post_commit_batch_size = 5`)
+	base := repo.CommitFile("base.txt", "base", "base")
+	repo.Run("checkout", "-b", "work")
+	repo.CommitFile("one.txt", "one", "one")
+	_, _, err := executePostCommitCmd("--repo", repo.Dir)
+	require.NoError(t, err)
+	oldTip := repo.CommitFile("two.txt", "two", "two")
+	_, _, err = executePostCommitCmd("--repo", repo.Dir)
+	require.NoError(t, err)
+
+	// The branch is force-moved onto divergent history while its recorded
+	// range is still pending. Pushing a tag at the old tip carries those
+	// commits; the flush must consult the recorded range, not just the live
+	// ref, or they leave the machine unreviewed.
+	repo.Run("checkout", "-b", "other", base)
+	otherHead := repo.CommitFile("other.txt", "other", "other")
+	repo.Run("branch", "-f", "work", otherHead)
+	repo.Run("tag", "v1", oldTip)
+	input := strings.NewReader(fmt.Sprintf(
+		"refs/tags/v1 %s refs/tags/v1 %s\n",
+		oldTip, strings.Repeat("0", 40),
+	))
+	flushPushedPostCommitBatches(t.Context(), repo.Dir, input)
+
+	require.Len(t, reqCh, 1)
+	req := <-reqCh
+	assert.Equal(t, "work", req.Branch)
+	assert.Equal(t, base+".."+oldTip, req.GitRef)
+}
+
 func TestPostCommitBatchFlushPushKeepsBranchReviewRange(t *testing.T) {
 	repo, mux := setupTestEnvironment(t)
 	reqCh := mockEnqueueCapture(t, mux)

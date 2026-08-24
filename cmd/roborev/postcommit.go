@@ -7,7 +7,6 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
-	"maps"
 	"net/http"
 	"os"
 	"path/filepath"
@@ -281,30 +280,37 @@ func flushPushedPostCommitBatches(
 		branches[branch] = head
 	}
 	// A push also carries any unpushed ancestor commits, so stored batch
-	// branches whose tips sit on a pushed head's chain flush too — otherwise
-	// a child branch pushes its parent's pending commits without a review.
-	maps.Copy(branches, pushedAncestorFlushBranches(
-		ctx, root, branches, pushedHeads,
-	))
+	// branches whose ranges sit on a pushed head's chain flush too —
+	// otherwise a child branch pushes its parent's pending commits without a
+	// review. Ancestor flushes run as separate invocations so a branch pushed
+	// by name can additionally flush a recorded range on abandoned history.
+	ancestors := pushedAncestorFlushBranches(ctx, root, branches, pushedHeads)
 	for branch, head := range branches {
-		branchRoot, checkedOut, err := git.WorktreePathForBranch(root, branch)
-		if err != nil || !checkedOut {
-			// No checkout holds this branch. Flush from the pushing worktree
-			// anyway: its config may differ from the branch's own, but pushed
-			// commits must never leave the machine unreviewed.
-			hookLog(root, "ok", fmt.Sprintf(
-				"batch flush using pushing worktree for branch=%s", branch,
-			))
-			branchRoot = root
-		}
-		cmd := postCommitCmd()
-		cmd.SetContext(ctx)
-		cmd.SetArgs([]string{
-			"--repo", branchRoot, "--flush", "--flush-branch", branch,
-			"--flush-head", head,
-		})
-		_ = cmd.Execute()
+		flushPushedBranch(ctx, root, branch, head)
 	}
+	for branch, head := range ancestors {
+		flushPushedBranch(ctx, root, branch, head)
+	}
+}
+
+func flushPushedBranch(ctx context.Context, root, branch, head string) {
+	branchRoot, checkedOut, err := git.WorktreePathForBranch(root, branch)
+	if err != nil || !checkedOut {
+		// No checkout holds this branch. Flush from the pushing worktree
+		// anyway: its config may differ from the branch's own, but pushed
+		// commits must never leave the machine unreviewed.
+		hookLog(root, "ok", fmt.Sprintf(
+			"batch flush using pushing worktree for branch=%s", branch,
+		))
+		branchRoot = root
+	}
+	cmd := postCommitCmd()
+	cmd.SetContext(ctx)
+	cmd.SetArgs([]string{
+		"--repo", branchRoot, "--flush", "--flush-branch", branch,
+		"--flush-head", head,
+	})
+	_ = cmd.Execute()
 }
 
 // enqueueCmd returns a hidden backward-compatibility alias
