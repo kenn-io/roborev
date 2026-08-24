@@ -113,13 +113,11 @@ func TestCIReviewCmd_Validation(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
+			// Review type validation may need repository configuration, so every
+			// case runs in an explicit test repository. Build sandboxes copy the
+			// source without its .git directory.
+			t.Chdir(testutil.InitTestRepo(t).Root)
 			if tt.clearEnv {
-				// Ref auto-detection runs after the repo-root check, so
-				// reaching it needs a git repo as the working directory.
-				// Without one the command fails earlier with "not a git
-				// repository" — which is what happens in a build sandbox
-				// that copies the source without .git.
-				t.Chdir(testutil.InitTestRepo(t).Root)
 				clearForgeCIEnv(t)
 			}
 			cmd := ciCmd()
