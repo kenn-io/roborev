@@ -545,13 +545,29 @@ func HasWorkflowAgentOverrideFromConfig(
 		return value != ""
 	}
 	allowAnalyzeFallback := workflowAllowsAnalyzeFallback(workflow)
+	repoCustomDefined := false
+	globalCustomDefined := false
+	if repoCfg != nil {
+		_, repoCustomDefined = repoCfg.Review.Types[workflow]
+	}
+	if globalCfg != nil {
+		_, globalCustomDefined = globalCfg.Review.Types[workflow]
+	}
+	customDefined := repoCustomDefined || globalCustomDefined
 	if repoCfg != nil {
 		if repoWorkflowField(repoCfg, workflow, level, true) != "" ||
 			repoWorkflowField(repoCfg, workflow, "", true) != "" {
 			return true
 		}
-		if allowAnalyzeFallback && analyzeField(repoCfg.Analyze, workflow, true) != "" {
-			return true
+		if allowAnalyzeFallback {
+			if repoCustomDefined {
+				return customReviewTypeField(
+					repoCfg.Review.Types, workflow, true,
+				) != ""
+			}
+			if !customDefined && analyzeField(repoCfg.Analyze, workflow, true) != "" {
+				return true
+			}
 		}
 		if strings.TrimSpace(repoCfg.Agent) != "" {
 			return false
@@ -562,8 +578,15 @@ func HasWorkflowAgentOverrideFromConfig(
 			globalWorkflowField(globalCfg, workflow, "", true) != "" {
 			return true
 		}
-		if allowAnalyzeFallback && analyzeField(globalCfg.Analyze, workflow, true) != "" {
-			return true
+		if allowAnalyzeFallback {
+			if globalCustomDefined {
+				return customReviewTypeField(
+					globalCfg.Review.Types, workflow, true,
+				) != ""
+			}
+			if !customDefined && analyzeField(globalCfg.Analyze, workflow, true) != "" {
+				return true
+			}
 		}
 	}
 	return false
@@ -615,6 +638,15 @@ func ResolveWorkflowModelFromConfig(
 		return s
 	}
 	allowAnalyzeFallback := workflowAllowsAnalyzeFallback(workflow)
+	repoCustomDefined := false
+	globalCustomDefined := false
+	if repoCfg != nil {
+		_, repoCustomDefined = repoCfg.Review.Types[workflow]
+	}
+	if globalCfg != nil {
+		_, globalCustomDefined = globalCfg.Review.Types[workflow]
+	}
+	customDefined := repoCustomDefined || globalCustomDefined
 	if repoCfg != nil {
 		if s := repoWorkflowField(repoCfg, workflow, level, false); s != "" {
 			return s
@@ -623,8 +655,15 @@ func ResolveWorkflowModelFromConfig(
 			return s
 		}
 		if allowAnalyzeFallback {
-			if s := analyzeField(repoCfg.Analyze, workflow, false); s != "" {
-				return s
+			if repoCustomDefined {
+				return customReviewTypeField(
+					repoCfg.Review.Types, workflow, false,
+				)
+			}
+			if !customDefined {
+				if s := analyzeField(repoCfg.Analyze, workflow, false); s != "" {
+					return s
+				}
 			}
 		}
 	}
@@ -636,8 +675,15 @@ func ResolveWorkflowModelFromConfig(
 			return s
 		}
 		if allowAnalyzeFallback {
-			if s := analyzeField(globalCfg.Analyze, workflow, false); s != "" {
-				return s
+			if globalCustomDefined {
+				return customReviewTypeField(
+					globalCfg.Review.Types, workflow, false,
+				)
+			}
+			if !customDefined {
+				if s := analyzeField(globalCfg.Analyze, workflow, false); s != "" {
+					return s
+				}
 			}
 		}
 	}

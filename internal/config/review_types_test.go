@@ -113,3 +113,37 @@ func TestResolveCIReviewReasoningForType(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(t, "fast", got)
 }
+
+func TestCustomReviewTypeWorkflowOverrides(t *testing.T) {
+	globalCfg := &Config{Review: ReviewConfig{Types: map[string]ReviewTypeSpec{
+		"thermonuclear": {
+			Template: "global.tmpl",
+			Agent:    "global-agent",
+			Model:    "global-model",
+		},
+	}}}
+	repoCfg := &RepoConfig{Review: ReviewConfig{Types: map[string]ReviewTypeSpec{
+		"thermonuclear": {
+			Template: "repo.tmpl",
+			Agent:    "repo-agent",
+			Model:    "repo-model",
+		},
+	}}}
+
+	assert.True(t, HasWorkflowAgentOverrideFromConfig(
+		repoCfg, globalCfg, "thermonuclear", "thorough",
+	))
+	assert.Equal(t, "repo-model", ResolveWorkflowModelFromConfig(
+		repoCfg, globalCfg, "thermonuclear", "thorough",
+	))
+
+	repoCfg.Review.Types["thermonuclear"] = ReviewTypeSpec{
+		Template: "repo.tmpl",
+	}
+	assert.False(t, HasWorkflowAgentOverrideFromConfig(
+		repoCfg, globalCfg, "thermonuclear", "thorough",
+	))
+	assert.Empty(t, ResolveWorkflowModelFromConfig(
+		repoCfg, globalCfg, "thermonuclear", "thorough",
+	))
+}
