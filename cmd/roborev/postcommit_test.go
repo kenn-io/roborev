@@ -272,6 +272,33 @@ func TestPostCommitBatchSerializesConcurrentHooks(t *testing.T) {
 	assert.Equal(t, int32(1), requests.Load())
 }
 
+func TestPostCommitLockTimeoutFailsOpenToImmediateReview(t *testing.T) {
+	repo, mux := setupTestEnvironment(t)
+	reqCh := mockEnqueueCapture(t, mux)
+	repo.CommitFile("file.txt", "content", "initial")
+	unlock, err := acquirePostCommitBatchLock(t.Context(), repo.Dir)
+	require.NoError(t, err)
+	defer func() { _ = unlock() }()
+	old := postCommitBatchLockTimeout
+	postCommitBatchLockTimeout = 50 * time.Millisecond
+	t.Cleanup(func() { postCommitBatchLockTimeout = old })
+
+	// In immediate mode nothing retries a skipped commit, so a lock timeout
+	// must fail open to a single-commit review instead of dropping it. No
+	// batch state is read or written without the lock.
+	_, _, err = executePostCommitCmd("--repo", repo.Dir)
+	require.NoError(t, err)
+
+	require.Len(t, reqCh, 1)
+	req := <-reqCh
+	assert.Equal(t, "HEAD", req.GitRef)
+	statePath, err := postCommitBatchStatePath(repo.Dir)
+	require.NoError(t, err)
+	_, err = os.Stat(statePath)
+	assert.ErrorIs(t, err, os.ErrNotExist,
+		"the lockless fallback must not touch batch state")
+}
+
 func TestPostCommitBatchFlushesPendingCommits(t *testing.T) {
 	repo, mux := setupTestEnvironment(t)
 	reqCh := mockEnqueue(t, mux)

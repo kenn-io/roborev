@@ -91,30 +91,46 @@ func postCommitCmd() *cobra.Command {
 			// Migrate stale relative core.hooksPath to absolute
 			// so linked worktrees resolve hooks correctly.
 			_ = gitrepo.EnsureAbsoluteHooksPath(ctx, root)
+			var batch postCommitBatchDecision
+			batchSize := 0
 			unlock, err := acquirePostCommitBatchLock(ctx, root)
-			if err != nil {
+			switch {
+			case err != nil && (flush || flushBranch != ""):
+				// A flush can wait: its pending range is recorded, so a
+				// later commit or push retries it.
 				hookLog(root, "fail", fmt.Sprintf(
 					"acquire post-commit lock: %v", err,
 				))
 				return nil
-			}
-			// Keep planning, enqueueing, and checkpoint advancement in one
-			// transaction. Releasing this lock before the daemon response would
-			// let a concurrent hook plan from stale batch state.
-			defer func() { _ = unlock() }()
-
-			batchSize, err := config.ResolvePostCommitBatchSizeWithError(root)
-			if err != nil {
-				hookLog(root, "fail", fmt.Sprintf("load batch config: %v", err))
-				return nil
-			}
-			var batch postCommitBatchDecision
-			if flushBranch != "" {
-				batch = planStoredPostCommitBatch(
-					ctx, root, batchSize, flushBranch, flushHead,
-				)
-			} else {
-				batch = planPostCommitBatch(ctx, root, batchSize)
+			case err != nil:
+				// Fail open like every other error: an immediate
+				// single-commit review that reads and writes no batch state.
+				// In immediate mode nothing would retry a dropped commit.
+				batch = postCommitBatchDecision{
+					Ready:  true,
+					Reason: "acquire post-commit lock: " + err.Error(),
+				}
+			default:
+				// Keep planning, enqueueing, and checkpoint advancement in
+				// one transaction. Releasing this lock before the daemon
+				// response would let a concurrent hook plan from stale batch
+				// state.
+				defer func() { _ = unlock() }()
+				var err error
+				batchSize, err = config.ResolvePostCommitBatchSizeWithError(root)
+				if err != nil {
+					hookLog(root, "fail", fmt.Sprintf(
+						"load batch config: %v", err,
+					))
+					return nil
+				}
+				if flushBranch != "" {
+					batch = planStoredPostCommitBatch(
+						ctx, root, batchSize, flushBranch, flushHead,
+					)
+				} else {
+					batch = planPostCommitBatch(ctx, root, batchSize)
+				}
 			}
 			testHookAfterBatchPlan()
 			if flush && !batch.Enabled {
