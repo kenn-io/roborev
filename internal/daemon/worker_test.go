@@ -368,6 +368,49 @@ func TestWorkerStoresFilteredStructuredCustomReview(t *testing.T) {
 	assert.Equal(t, 0, *stored.VerdictBool)
 }
 
+func TestWorkerUsesConfiguredSeverityForStructuredVerdict(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	agentName := "structured-review-config-severity-test"
+	agent.Register(&structuredWorkerTestAgent{
+		name: agentName,
+		result: json.RawMessage(`{
+  "summary":"Review complete.",
+  "findings":[
+    {"severity":"low","problem":"Name is vague.","fix":"Rename it."}
+  ]
+}`),
+	})
+	t.Cleanup(func() { agent.Unregister(agentName) })
+	require.NoError(t, os.WriteFile(
+		filepath.Join(tc.TmpDir, "custom-review.md"),
+		[]byte("Review state ownership."), 0o644,
+	))
+	cfg := config.DefaultConfig()
+	cfg.ReviewMinSeverity = "high"
+	cfg.Review.Types = map[string]config.ReviewTypeSpec{
+		"custom-state": {Template: "custom-review.md"},
+	}
+	tc.Pool.cfgGetter = NewStaticConfig(cfg)
+
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+	job := tc.createJobWithAgent(t, sha, agentName)
+	_, err := tc.DB.Exec(
+		`UPDATE review_jobs SET review_type = ? WHERE id = ?`,
+		"custom-state", job.ID,
+	)
+	require.NoError(t, err)
+	claimed, err := tc.DB.ClaimJob(testWorkerID)
+	require.NoError(t, err)
+	require.NotNil(t, claimed)
+
+	tc.Pool.processJob(testWorkerID, claimed)
+
+	stored, err := tc.DB.GetReviewByJobID(job.ID)
+	require.NoError(t, err)
+	require.NotNil(t, stored.VerdictBool)
+	assert.Equal(t, 1, *stored.VerdictBool)
+}
+
 func TestCanceledJobCannotRerunUntilBlockedAgentExits(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	started := make(chan struct{})

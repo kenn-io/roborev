@@ -854,6 +854,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	}
 	var reviewPrompt string
 	var promptToPersist string
+	effectiveMinSeverity := job.MinSeverity
 	storedPromptValue := job.Prompt
 	if job.PromptPrebuilt && storedPromptValue != "" {
 		// CI-enqueued review with prebuilt prompt (includes PR
@@ -893,15 +894,14 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	} else {
 		// Attributed jobs use the frozen plan verbatim, including an explicit
 		// empty value. Ordinary jobs keep the legacy config cascade.
-		minSev := job.MinSeverity
-		if minSev == "" && job.FrozenExperimentPlan == nil {
+		if effectiveMinSeverity == "" && job.FrozenExperimentPlan == nil {
 			resolved, resErr := config.ResolveReviewMinSeverity("", checkout.promptRepoPath, cfg)
 			if resErr != nil {
 				log.Printf("[%s] Error resolving min-severity: %v", workerID, resErr)
 				wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("resolve min-severity: %v", resErr))
 				return
 			}
-			minSev = resolved
+			effectiveMinSeverity = resolved
 		}
 
 		if job.IsDirtyJob() {
@@ -911,7 +911,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 				diffContent = *job.DiffContent
 			}
 			dirtyResult, dirtyErr := pb.BuildDirtyWithSnapshotTargetAndFiles(
-				diffContent, job.DirtyFiles, cfg.ReviewContextCount, job.Agent, job.ReviewType, minSev,
+				diffContent, job.DirtyFiles, cfg.ReviewContextCount, job.Agent, job.ReviewType, effectiveMinSeverity,
 				checkout.snapshotTarget,
 			)
 			if dirtyResult.Cleanup != nil {
@@ -927,7 +927,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			)
 			snapResult, snapErr := pb.BuildWithSnapshotTarget(
 				job.GitRef, cfg.ReviewContextCount, job.Agent,
-				job.ReviewType, minSev, excludes, checkout.snapshotTarget,
+				job.ReviewType, effectiveMinSeverity, excludes, checkout.snapshotTarget,
 			)
 			if snapResult.Cleanup != nil {
 				defer snapResult.Cleanup()
@@ -1116,7 +1116,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			if decodeErr != nil {
 				err = decodeErr
 			} else {
-				structured = structured.Filter(job.MinSeverity)
+				structured = structured.Filter(effectiveMinSeverity)
 				output = structured.Markdown()
 				passed := structured.Passed()
 				explicitPassed = &passed
