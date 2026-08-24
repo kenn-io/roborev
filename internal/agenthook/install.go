@@ -152,6 +152,8 @@ func installAgentHookSkills(agent kitagenthook.Agent, configPath string) error {
 		skillAgent = skills.AgentClaude
 	case kitagenthook.AgentCodex:
 		skillAgent = skills.AgentCodex
+	case kitagenthook.AgentOpenCode:
+		skillAgent = skills.AgentClaude
 	case kitagenthook.AgentDroid:
 		skillAgent = skills.AgentDroid
 	case AgentGrok:
@@ -162,6 +164,9 @@ func installAgentHookSkills(agent kitagenthook.Agent, configPath string) error {
 
 	configDir := filepath.Dir(configPath)
 	if agent == AgentGrok && strings.EqualFold(filepath.Base(configDir), "hooks") {
+		configDir = filepath.Dir(configDir)
+	}
+	if agent == kitagenthook.AgentOpenCode && strings.EqualFold(filepath.Base(configDir), "plugins") {
 		configDir = filepath.Dir(configDir)
 	}
 	if _, err := skills.InstallToPath(skillAgent, filepath.Join(configDir, "skills")); err != nil {
@@ -204,16 +209,20 @@ func kitInstallOptions(agent kitagenthook.Agent, opts InstallOptions) kitagentho
 	if command != "" {
 		command += " " + agentHookMarker
 	}
+	hooks := []kitagenthook.Hook{
+		{Event: kitagenthook.EventPreToolUse, Matcher: kitagenthook.ToolBash, Timeout: opts.Timeout},
+		{Event: kitagenthook.EventPostToolUse, Matcher: kitagenthook.ToolBash, Timeout: opts.Timeout},
+		{Event: kitagenthook.EventStop, Timeout: opts.Timeout},
+	}
+	if agent == kitagenthook.AgentOpenCode {
+		hooks[2] = kitagenthook.Hook{Event: kitagenthook.EventUserPromptSubmit, Timeout: opts.Timeout}
+	}
 	kitOpts := kitagenthook.InstallOptions{
 		ConfigPath: opts.ConfigPath,
 		Executable: opts.Executable,
 		Command:    command,
 		Marker:     agentHookMarker,
-		Hooks: []kitagenthook.Hook{
-			{Event: kitagenthook.EventPreToolUse, Matcher: kitagenthook.ToolBash, Timeout: opts.Timeout},
-			{Event: kitagenthook.EventPostToolUse, Matcher: kitagenthook.ToolBash, Timeout: opts.Timeout},
-			{Event: kitagenthook.EventStop, Timeout: opts.Timeout},
-		},
+		Hooks:      hooks,
 	}
 	if opts.Command == "" {
 		kitOpts.Arguments = []string{

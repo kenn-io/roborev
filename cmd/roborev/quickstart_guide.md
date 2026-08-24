@@ -14,7 +14,8 @@ The agent hook watches your coding-agent session (turns, commits, failed
 reviews). When review work piles up, it returns a self-contained fix instruction
 before the session goes cold - so the write -> review -> fix loop closes without
 you asking. `roborev agent-hook install` auto-detects Claude Code, Codex,
-Copilot CLI, Cursor, Factory Droid, Gemini CLI, Hermes, Qwen, and Grok Build.
+Copilot CLI, Cursor, Factory Droid, Gemini CLI, Hermes, OpenCode, Qwen, and Grok
+Build.
 Bundled skills provide the richest path where available; every reminder-capable
 profile also gets a CLI fallback. Claude Desktop does not expose harness hooks,
 so only Layer 1 runs there.

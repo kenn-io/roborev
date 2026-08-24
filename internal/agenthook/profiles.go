@@ -15,15 +15,16 @@ import (
 const AgentGrok kitagenthook.Agent = "grok"
 
 var profileExecutables = map[kitagenthook.Agent][]string{
-	kitagenthook.AgentClaude:  {"claude"},
-	kitagenthook.AgentCodex:   {"codex"},
-	kitagenthook.AgentCopilot: {"copilot"},
-	kitagenthook.AgentCursor:  {"agent"},
-	kitagenthook.AgentDroid:   {"droid"},
-	kitagenthook.AgentGemini:  {"gemini"},
-	kitagenthook.AgentHermes:  {"hermes"},
-	kitagenthook.AgentQwen:    {"qwen"},
-	AgentGrok:                 {"grok"},
+	kitagenthook.AgentClaude:   {"claude"},
+	kitagenthook.AgentCodex:    {"codex"},
+	kitagenthook.AgentOpenCode: {"opencode"},
+	kitagenthook.AgentCopilot:  {"copilot"},
+	kitagenthook.AgentCursor:   {"agent"},
+	kitagenthook.AgentDroid:    {"droid"},
+	kitagenthook.AgentGemini:   {"gemini"},
+	kitagenthook.AgentHermes:   {"hermes"},
+	kitagenthook.AgentQwen:     {"qwen"},
+	AgentGrok:                  {"grok"},
 }
 
 func SelectProfiles(raw string) ([]kitagenthook.Agent, error) {

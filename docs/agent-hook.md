@@ -4,8 +4,9 @@ description: Bring background roborev findings back into active coding-agent ses
 ---
 
 `roborev agent-hook` connects roborev's asynchronous reviews to coding-agent
-harness hooks. It records shell-tool and stop events, checks for open failed
-reviews, and reminds the active agent to fix them before the session goes cold.
+harness hooks. It records shell-tool and turn-boundary events, checks for open
+failed reviews, and reminds the active agent to fix them before the session goes
+cold.
 
 The integration supports every profile in
 [`go.kenn.io/kit/agenthook`](https://pkg.go.dev/go.kenn.io/kit/agenthook):
@@ -17,6 +18,7 @@ The integration supports every profile in
 - Factory Droid
 - Gemini CLI
 - Hermes Agent
+- OpenCode
 - Qwen Code
 
 Kit owns each harness's native config format, event names, command quoting,
@@ -33,7 +35,8 @@ selection, reminder policy, and local session state.
 
 Agent Hook tracks three signals per session:
 
-- **Turns:** `Stop` events, for periodic repair during long sessions.
+- **Turns:** `Stop` events, or OpenCode's next `chat.message`, for periodic
+    repair during long sessions.
 - **Commits:** normalized shell `PreToolUse` and `PostToolUse` events. Kit maps
     each harness's native shell tool to the common `Bash` vocabulary.
 - **Failed reviews:** open, non-closed roborev reviews with a failed verdict.
@@ -67,9 +70,9 @@ roborev agent-hook install
 
 An agent is detected when its executable is on `PATH` or its config directory
 already exists. The executable candidates are `claude`, `codex`, `copilot`,
-`agent` (Cursor), `droid`, `gemini`, `hermes`, `qwen`, and `grok`.
+`agent` (Cursor), `droid`, `gemini`, `hermes`, `opencode`, `qwen`, and `grok`.
 
-Select one profile or deliberately install all nine integrations (the eight kit
+Select one profile or deliberately install all ten integrations (the nine kit
 profiles plus Grok Build):
 
 ```bash
@@ -87,10 +90,11 @@ Automatic and `all` installs attempt every selected profile and report all
 errors after preserving successful installs. `--dry-run` plans the same changes
 without writing.
 
-For Claude Code, Codex, Factory Droid, and Grok Build, installation also creates
-or updates that profile's bundled roborev skills before activating the hook.
-Other hook profiles do not currently have bundled skill variants and receive no
-CLI fallback.
+For Claude Code, Codex, Factory Droid, OpenCode, and Grok Build, installation
+also creates or updates that profile's bundled roborev skills before activating
+the hook. OpenCode receives the Claude-compatible skill files. Other hook
+profiles do not currently have bundled skill variants and receive no CLI
+fallback.
 
 Factory Droid remains user-scoped. Roborev rejects project `.factory/hooks.json`
 paths because they are executable repository-local configuration.
@@ -152,9 +156,10 @@ roborev agent-hook dump --agent qwen
 roborev agent-hook dump --agent hermes
 ```
 
-JSON-backed harnesses produce JSON. Hermes produces YAML. Use `--config` to
-merge an existing file into the plan. Binary-resolution diagnostics stay on
-stderr so stdout remains safe to pipe into declarative configuration tooling.
+JSON-backed harnesses produce JSON, Hermes produces YAML, and OpenCode produces
+an ES module plugin. Use `--config` to merge an existing file into the plan.
+Binary-resolution diagnostics stay on stderr so stdout remains safe to pipe into
+declarative configuration tooling.
 
 ## Runtime Model
 
@@ -188,6 +193,18 @@ Persisting reminder state is the at-most-once delivery boundary. Cancellation
 observed before that commit leaves a reminder queued; a disconnect after the
 commit can consume it because coding-agent hook protocols do not acknowledge
 receipt.
+
+### OpenCode
+
+OpenCode's generated global plugin runs shell checks at
+`tool.execute.before`/`tool.execute.after`. Post-tool reminders are appended to
+the current tool result. Because OpenCode has no controllable `Stop` hook, the
+plugin checks the same turn cadence at `chat.message` and appends any reminder
+to the next real user prompt. It passes OpenCode's session, call, directory, and
+worktree identifiers directly; it does not poll or guess an active session. The
+same global plugin runs in the interactive TUI and `opencode run`. Neither mode
+is woken while idle; a late reminder is surfaced when the user or caller submits
+the next prompt.
 
 ### Hermes
 

@@ -10,7 +10,8 @@ roborev skills install
 
 Skills are updated automatically when you run `roborev update`.
 `roborev agent-hook install` also installs or updates the matching bundled
-skills for Claude Code, Codex, Factory Droid, and Grok Build.
+skills for Claude Code, Codex, Factory Droid, OpenCode, and Grok Build. OpenCode
+uses the Claude-compatible skill files.
 
 ## Skills
 

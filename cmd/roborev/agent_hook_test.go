@@ -238,6 +238,36 @@ func TestRunAgentHookEncodesKitStopResponse(t *testing.T) {
 	assert.Equal(t, "resolve reviews", output["reason"])
 }
 
+func TestRunAgentHookInjectsOpenCodePromptContext(t *testing.T) {
+	oldPost := postAgentHook
+	var got agenthook.Request
+	postAgentHook = func(_ context.Context, _ string, req agenthook.Request) (agenthook.Response, error) {
+		got = req
+		return agenthook.Response{Triggered: true, Reason: "resolve reviews"}, nil
+	}
+	t.Cleanup(func() { postAgentHook = oldPost })
+
+	var stdout bytes.Buffer
+	err := runAgentHook(
+		kitagenthook.AgentOpenCode,
+		agenthook.DefaultOptions(),
+		strings.NewReader(`{
+  "session_id":"session-1",
+  "hook_event_name":"chat.message",
+  "turn_id":"message-1",
+  "cwd":"/tmp/worktree",
+  "prompt":"continue"
+}`),
+		&stdout,
+		io.Discard,
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, "Stop", got.Event.HookEventName)
+	assert.Equal(t, "session-1", got.Event.SessionID)
+	assert.JSONEq(t, `{"additionalContext":"resolve reviews"}`, stdout.String())
+}
+
 // If kit-backed profiles omit policy composition, most supported hooks keep
 // applying review findings without the user's evaluation policy.
 func TestRunAgentHookAppendsFixGuidelinesToKitOutput(t *testing.T) {

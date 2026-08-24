@@ -85,9 +85,9 @@ See [Agent Hook](../agent-hook.md) for thresholds and configuration.
 ### Why CLI, not Desktop?
 
 The agent hook relies on harness lifecycle hooks supplied by Claude Code, Codex,
-Copilot CLI, Cursor, Factory Droid, Gemini CLI, Hermes, and Qwen. Claude Desktop
-does not expose these hooks, so Layer 2 does not run there. Layer 1 (post-commit
-reviews) works regardless of which agent or app you use.
+Copilot CLI, Cursor, Factory Droid, Gemini CLI, Hermes, OpenCode, and Qwen.
+Claude Desktop does not expose these hooks, so Layer 2 does not run there. Layer
+1 (post-commit reviews) works regardless of which agent or app you use.
 
 ## Let an agent finish setup
 

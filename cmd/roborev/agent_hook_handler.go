@@ -79,6 +79,28 @@ func (h roborevAgentHookHandler) PreToolUse(
 	return kitagenthook.PreToolUseOutput{}, nil
 }
 
+func (h roborevAgentHookHandler) UserPromptSubmit(
+	ctx context.Context,
+	input kitagenthook.UserPromptSubmitInput,
+) (kitagenthook.UserPromptSubmitOutput, error) {
+	req, err := h.request(input.CommonInput, "", nil)
+	if err != nil {
+		return kitagenthook.UserPromptSubmitOutput{}, err
+	}
+	// OpenCode has no controllable Stop hook. Its mutable chat.message hook runs
+	// once at the start of each real user turn, so use the existing Stop cadence.
+	req.Event.HookEventName = string(kitagenthook.EventStop)
+	resp, ok := h.post(ctx, req)
+	if !ok || !resp.Triggered {
+		return kitagenthook.UserPromptSubmitOutput{}, nil
+	}
+	return kitagenthook.UserPromptSubmitOutput{
+		AdditionalContext: agenthook.StopReasonWithFixGuidelines(
+			resp.Reason, h.opts.FixGuidelines,
+		),
+	}, nil
+}
+
 func (h roborevAgentHookHandler) PostToolUse(
 	ctx context.Context,
 	input kitagenthook.PostToolUseInput,

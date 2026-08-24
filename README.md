@@ -66,8 +66,8 @@ You can also choose the exact binary path with
 - **Auto-Fix** - `roborev fix` feeds review findings to an agent that
   applies fixes and commits. `roborev refine` iterates until reviews pass.
 - **Agent Hook** - Optional hooks for Claude Code, Codex, Copilot CLI, Cursor,
-  Factory Droid, Gemini CLI, Hermes, and Qwen bring open findings back into the
-  active agent session.
+  Factory Droid, Gemini CLI, Hermes, OpenCode, and Qwen bring open findings back
+  into the active agent session.
 - **Code Analysis** - Built-in analysis types (duplication, complexity,
   refactoring, test fixtures, dead code, security) that agents can fix
   automatically.
@@ -100,9 +100,9 @@ changes and commits. The new commit gets reviewed automatically,
 closing the loop.
 
 `roborev agent-hook install` auto-detects installed Claude Code, Codex, Copilot
-CLI, Cursor, Factory Droid, Gemini CLI, Hermes, Qwen, and Grok Build harnesses
-and adds optional hooks after configured turn, commit, or failed-review
-thresholds are met. Reminders name exact review IDs, invoke the bundled
+CLI, Cursor, Factory Droid, Gemini CLI, Hermes, OpenCode, Qwen, and Grok Build
+harnesses and adds optional hooks after configured turn, commit, or
+failed-review thresholds are met. Reminders name exact review IDs, invoke the bundled
 `roborev-fix` skill, and include a complete CLI fallback when no roborev skill is
 installed; they do not run `roborev fix --open`. Supported profiles get current
 bundled skills during hook installation. Hermes delivers queued post-tool
@@ -211,7 +211,7 @@ leaving Markdown tables unchanged. Use `make check-renovate-config` to validate
 | `roborev refine` | Auto-fix loop: fix, re-review, repeat |
 | `roborev analyze <type>` | Run code analysis with optional auto-fix |
 | `roborev agent-hook install` | Install hooks for detected coding agents |
-| `roborev agent-hook install --agent all` | Install all nine supported integrations |
+| `roborev agent-hook install --agent all` | Install all ten supported integrations |
 | `roborev snooze` | Silence Agent Hook reminders in the current worktree and branch |
 | `roborev snooze off` | Resume Agent Hook reminders in the current worktree and branch |
 | `roborev compact` | Verify and consolidate open review findings |

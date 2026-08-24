@@ -28,6 +28,7 @@ func TestSelectProfilesAutoDetectsExecutableOrConfigDirectory(t *testing.T) {
 		"GEMINI_CLI_HOME":   "gemini",
 		"HERMES_HOME":       "hermes",
 		"QWEN_HOME":         "qwen",
+		"XDG_CONFIG_HOME":   "opencode",
 	} {
 		t.Setenv(name, filepath.Join(root, "agent-homes", dir))
 	}
@@ -56,6 +57,7 @@ func TestSelectProfilesAllUsesKitOrderThenGrok(t *testing.T) {
 	assert.Equal(t, []kitagenthook.Agent{
 		kitagenthook.AgentClaude,
 		kitagenthook.AgentCodex,
+		kitagenthook.AgentOpenCode,
 		kitagenthook.AgentCopilot,
 		kitagenthook.AgentCursor,
 		kitagenthook.AgentDroid,
@@ -80,6 +82,7 @@ func TestSelectProfilesDoesNotTreatGrokAgentAliasAsCursor(t *testing.T) {
 	for _, name := range []string{
 		"CODEX_HOME", "CLAUDE_CONFIG_DIR", "COPILOT_HOME",
 		"GEMINI_CLI_HOME", "HERMES_HOME", "QWEN_HOME",
+		"XDG_CONFIG_HOME",
 	} {
 		t.Setenv(name, filepath.Join(root, "agent-homes", name))
 	}

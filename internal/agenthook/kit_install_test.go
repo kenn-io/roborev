@@ -94,6 +94,7 @@ func TestRunInstallInstallsAndUpdatesBundledSkillsForSupportedProfiles(t *testin
 	}{
 		{agent: "claude", configName: "settings.json"},
 		{agent: "codex", configName: "hooks.json"},
+		{agent: "opencode", configName: filepath.Join("plugins", "roborev-agent-hook.js")},
 		{agent: "droid", configName: "hooks.json"},
 		{agent: "grok", configName: filepath.Join("hooks", "roborev.json")},
 	}

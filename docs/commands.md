@@ -957,11 +957,12 @@ See: [Configuration](/configuration/#post-commit-review-mode) and
 
 ```bash
 roborev agent-hook install              # Install profiles for detected agents
-roborev agent-hook install --agent all  # Install all nine integrations
+roborev agent-hook install --agent all  # Install all ten integrations
 roborev agent-hook install --agent hermes --config ~/.hermes/config.yaml
 roborev agent-hook install --binary ~/.local/bin/roborev
 roborev agent-hook dump --agent qwen    # Native JSON config on stdout
 roborev agent-hook dump --agent hermes  # Native YAML config on stdout
+roborev agent-hook dump --agent opencode # Native JavaScript plugin on stdout
 roborev agent-hook run --agent cursor   # Harness runtime; --agent is required
 roborev agent-hook status               # Tracked session counters as JSON
 roborev agent-hook reset <session-id>   # Reset one session (or --all)
