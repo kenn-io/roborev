@@ -688,6 +688,39 @@ func TestPostCommitBatchFlushPushTagCarriesDivergedRecordedRange(t *testing.T) {
 	assert.Equal(t, base+".."+oldTip, req.GitRef)
 }
 
+func TestPostCommitBatchFlushPushTagCarriesOrphanHistoryRange(t *testing.T) {
+	repo, mux := setupTestEnvironment(t)
+	reqCh := mockEnqueueCapture(t, mux)
+	writeRoborevConfig(t, repo, `post_commit_batch_size = 5`)
+	base := repo.CommitFile("base.txt", "base", "base")
+	repo.Run("checkout", "-b", "work")
+	repo.CommitFile("one.txt", "one", "one")
+	_, _, err := executePostCommitCmd("--repo", repo.Dir)
+	require.NoError(t, err)
+	oldTip := repo.CommitFile("two.txt", "two", "two")
+	_, _, err = executePostCommitCmd("--repo", repo.Dir)
+	require.NoError(t, err)
+
+	// The branch is force-moved onto an unrelated root. Unlike related
+	// divergence, first-parent distance to the live tip errors instead of
+	// answering off-chain; the recorded range is abandoned history either
+	// way and a tag push of its tip must still flush it.
+	repo.Run("checkout", "--orphan", "fresh")
+	freshHead := repo.CommitFile("fresh.txt", "fresh", "fresh")
+	repo.Run("branch", "-f", "work", freshHead)
+	repo.Run("tag", "v1", oldTip)
+	input := strings.NewReader(fmt.Sprintf(
+		"refs/tags/v1 %s refs/tags/v1 %s\n",
+		oldTip, strings.Repeat("0", 40),
+	))
+	flushPushedPostCommitBatches(t.Context(), repo.Dir, input)
+
+	require.Len(t, reqCh, 1)
+	req := <-reqCh
+	assert.Equal(t, "work", req.Branch)
+	assert.Equal(t, base+".."+oldTip, req.GitRef)
+}
+
 func TestPostCommitBatchFlushPushKeepsBranchReviewRange(t *testing.T) {
 	repo, mux := setupTestEnvironment(t)
 	reqCh := mockEnqueueCapture(t, mux)

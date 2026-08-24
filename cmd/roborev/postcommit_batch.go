@@ -753,9 +753,16 @@ func flushCandidateTips(
 		tips = append(tips, liveTip)
 	}
 	if entry.Tip != "" && entry.Tip != liveTip {
-		if _, onChain, err := git.FirstParentDistance(
-			ctx, root, entry.Tip, liveTip,
-		); err == nil && !onChain {
+		_, onChain, err := git.FirstParentDistance(ctx, root, entry.Tip, liveTip)
+		abandoned := err == nil && !onChain
+		if err != nil {
+			// Unrelated histories make the distance check fail rather than
+			// answer off-chain. A tip that still resolves is a recorded
+			// range on abandoned history, same as related divergence.
+			_, rerr := git.ResolveSHACtx(ctx, root, entry.Tip+"^{commit}")
+			abandoned = rerr == nil
+		}
+		if abandoned {
 			tips = append(tips, entry.Tip)
 		}
 	}
