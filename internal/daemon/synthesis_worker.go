@@ -266,7 +266,8 @@ func (wp *WorkerPool) completeSynthesisLocked(
 			context.Background(), workerID, job, res.capturedSession,
 		)
 	}
-	wp.autoClosePassingReview(workerID, job, output)
+	verdict := storage.ParseVerdict(output)
+	wp.autoClosePassingReview(workerID, job, verdict)
 
 	log.Printf("[%s] Completed synthesis job %d %s panel=%s",
 		workerID, job.ID, job.RepoName, job.PanelName)
@@ -281,7 +282,7 @@ func (wp *WorkerPool) completeSynthesisLocked(
 		SHA:      job.GitRef,
 		Branch:   job.HookBranch(),
 		Agent:    agentName,
-		Verdict:  storage.ParseVerdict(output),
+		Verdict:  verdict,
 		Findings: output,
 	})
 }

@@ -1248,7 +1248,14 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			}
 		}
 
-		wp.autoClosePassingReview(workerID, job, output)
+		verdict := storage.ParseVerdict(output)
+		if explicitPassed != nil {
+			verdict = "F"
+			if *explicitPassed {
+				verdict = "P"
+			}
+		}
+		wp.autoClosePassingReview(workerID, job, verdict)
 
 		wp.captureTokenUsageForSession(context.Background(), workerID, job, sessionWriter.SessionID())
 
@@ -1272,7 +1279,6 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		}
 
 		// Broadcast completion event
-		verdict := storage.ParseVerdict(output)
 		wp.broadcaster.Broadcast(Event{
 			Type:         "review.completed",
 			TS:           time.Now(),
@@ -1300,11 +1306,11 @@ func (wp *WorkerPool) finishRunningJob(workerID string, jobID int64) {
 	}
 }
 
-func (wp *WorkerPool) autoClosePassingReview(workerID string, job *storage.ReviewJob, output string) {
+func (wp *WorkerPool) autoClosePassingReview(workerID string, job *storage.ReviewJob, verdict string) {
 	if !job.IsReviewJob() && !job.IsSynthesisJob() {
 		return
 	}
-	if storage.ParseVerdict(output) != "P" {
+	if verdict != "P" {
 		return
 	}
 	cfg := wp.cfgGetter.Config()

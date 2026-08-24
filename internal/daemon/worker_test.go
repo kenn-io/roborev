@@ -374,7 +374,7 @@ func TestWorkerUsesConfiguredSeverityForStructuredVerdict(t *testing.T) {
 	agent.Register(&structuredWorkerTestAgent{
 		name: agentName,
 		result: json.RawMessage(`{
-  "summary":"Review complete.",
+  "summary":"High: no actionable findings.",
   "findings":[
     {"severity":"low","problem":"Name is vague.","fix":"Rename it."}
   ]
@@ -387,10 +387,12 @@ func TestWorkerUsesConfiguredSeverityForStructuredVerdict(t *testing.T) {
 	))
 	cfg := config.DefaultConfig()
 	cfg.ReviewMinSeverity = "high"
+	cfg.AutoClosePassingReviews = true
 	cfg.Review.Types = map[string]config.ReviewTypeSpec{
 		"custom-state": {Template: "custom-review.md"},
 	}
 	tc.Pool.cfgGetter = NewStaticConfig(cfg)
+	_, eventCh := tc.Broadcaster.Subscribe("")
 
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 	job := tc.createJobWithAgent(t, sha, agentName)
@@ -409,6 +411,13 @@ func TestWorkerUsesConfiguredSeverityForStructuredVerdict(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, stored.VerdictBool)
 	assert.Equal(t, 1, *stored.VerdictBool)
+	assert.True(t, stored.Closed)
+
+	_, ok := waitForEvent(t, eventCh, time.Second)
+	require.True(t, ok, "expected review.started event")
+	completed, ok := waitForEvent(t, eventCh, time.Second)
+	require.True(t, ok, "expected review.completed event")
+	assert.Equal(t, "P", completed.Verdict)
 }
 
 func TestCanceledJobCannotRerunUntilBlockedAgentExits(t *testing.T) {
