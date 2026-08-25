@@ -135,6 +135,9 @@ type ReviewJob struct {
 	// non-panel jobs and member rows.
 	PanelSummary *PanelSummary          `json:"panel_summary,omitempty"`
 	Experiments  []ExperimentAssignment `json:"experiments,omitempty"`
+	// FrozenExperimentPlan is loaded only while a worker executes this job.
+	// The assignment JSON remains the persisted source of truth.
+	FrozenExperimentPlan *ExperimentAssignmentInput `json:"-"`
 
 	// ReusableSessionTarget is a joined, non-serialized SHA used only by
 	// session-reuse candidate validation. Dirty jobs keep GitRef="dirty" and

@@ -111,6 +111,43 @@ func TestEnqueuePanelPersistsOneExperimentForWholeRun(t *testing.T) {
 	assert.Equal(t, 1, assignmentCount)
 }
 
+func TestFrozenExperimentPlanSelectsPanelMember(t *testing.T) {
+	members := []storage.EnqueueOpts{
+		{
+			Agent: "first", JobType: storage.JobTypeReview,
+			PanelName: "review", PanelMemberName: "first", PanelMemberIndex: 0,
+			MinSeverity: "high", BackupAgent: "test",
+		},
+		{
+			Agent: "second", JobType: storage.JobTypeReview,
+			PanelName: "review", PanelMemberName: "second", PanelMemberIndex: 1,
+			MinSeverity: "", BackupAgent: "", BackupModel: "",
+		},
+	}
+	synthesis := storage.EnqueueOpts{
+		Agent: "test", JobType: storage.JobTypeSynthesis,
+		PanelName: "review", PanelRole: storage.PanelRoleSynthesis,
+	}
+	assignment, err := storageAssignmentForExperiment(&config.ExperimentAssignment{
+		ID: "panel-clear-v1", DefinitionHash: "definition-hash",
+		DefinitionJSON: `{"ratio":1}`, Arm: config.ExperimentArmExperimental,
+		SubjectHash: "subject-hash",
+	}, experimentPlanForPanel(members, synthesis))
+	require.NoError(t, err)
+
+	job := &storage.ReviewJob{
+		Agent:        "current-attempt-agent",
+		PanelRunUUID: "run", PanelRole: storage.PanelRoleMember,
+		PanelName: "review", PanelMemberName: "second", PanelMemberIndex: 1,
+		MinSeverity: "critical", BackupAgent: "claude-code", BackupModel: "stale",
+	}
+	require.NoError(t, applyFrozenExperimentSettings(job, assignment))
+	assert.Equal(t, "current-attempt-agent", job.Agent)
+	assert.Empty(t, job.MinSeverity)
+	assert.Empty(t, job.BackupAgent)
+	assert.Empty(t, job.BackupModel)
+}
+
 func TestExperimentPanelRerunPreservesNormalTargetType(t *testing.T) {
 	tests := []struct {
 		name    string

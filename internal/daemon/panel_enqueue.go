@@ -3,6 +3,7 @@ package daemon
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"log"
 	"net/http"
@@ -462,6 +463,62 @@ func experimentPlanForPanel(
 		plan.Members[i] = experimentPlanForJob(members[i])
 	}
 	return plan
+}
+
+func applyFrozenExperimentSettings(
+	job *storage.ReviewJob,
+	assignment *storage.ExperimentAssignmentInput,
+) error {
+	if assignment == nil {
+		return nil
+	}
+	var plan experimentJobPlan
+	if job.PanelRunUUID == "" {
+		if err := json.Unmarshal([]byte(assignment.EffectiveConfigJSON), &plan); err != nil {
+			return fmt.Errorf("decode frozen experiment plan: %w", err)
+		}
+		planHash, err := config.FingerprintExperimentConfig(plan)
+		if err != nil {
+			return fmt.Errorf("fingerprint frozen experiment plan: %w", err)
+		}
+		if planHash != assignment.EffectiveConfigHash {
+			return errors.New("frozen experiment plan does not match its attribution")
+		}
+	} else {
+		var panel experimentReviewPlan
+		if err := json.Unmarshal([]byte(assignment.EffectiveConfigJSON), &panel); err != nil {
+			return fmt.Errorf("decode frozen experiment panel plan: %w", err)
+		}
+		planHash, err := config.FingerprintExperimentConfig(panel)
+		if err != nil {
+			return fmt.Errorf("fingerprint frozen experiment panel plan: %w", err)
+		}
+		if planHash != assignment.EffectiveConfigHash {
+			return errors.New("frozen experiment panel plan does not match its attribution")
+		}
+		if job.PanelRole == storage.PanelRoleSynthesis {
+			plan = panel.Synthesis
+		} else {
+			found := false
+			for _, member := range panel.Members {
+				if member.PanelMemberName == job.PanelMemberName &&
+					member.PanelMemberIndex == job.PanelMemberIndex {
+					plan = member
+					found = true
+					break
+				}
+			}
+			if !found {
+				return fmt.Errorf("frozen experiment panel plan is missing member %q at index %d",
+					job.PanelMemberName, job.PanelMemberIndex)
+			}
+		}
+	}
+
+	job.MinSeverity = plan.MinSeverity
+	job.BackupAgent = plan.BackupAgent
+	job.BackupModel = plan.BackupModel
+	return nil
 }
 
 func storageAssignmentForExperiment(

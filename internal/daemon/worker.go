@@ -764,6 +764,21 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// fail before an agent starts and synthesis paths that do not invoke one.
 	defer wp.outputBuffers.CloseJob(job.ID)
 
+	assignment, err := wp.db.GetExperimentAssignmentInputForJobUUID(job.UUID)
+	if err != nil {
+		wp.failOrRetryContext(ctx, workerID, job, job.Agent,
+			fmt.Sprintf("load frozen experiment plan: %v", err))
+		return
+	}
+	if assignment != nil {
+		if err := applyFrozenExperimentSettings(job, assignment); err != nil {
+			wp.failOrRetryContext(ctx, workerID, job, job.Agent,
+				fmt.Sprintf("load frozen experiment plan: %v", err))
+			return
+		}
+		job.FrozenExperimentPlan = assignment
+	}
+
 	// Synthesis jobs route to their own handler before the cooldown gate: the
 	// all-failed and passthrough branches call no agent, so a synthesis-agent
 	// quota cooldown must not skip or fail them. Placing this after
@@ -876,9 +891,10 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		// of trying to build a prompt from a non-git label.
 		err = fmt.Errorf("%s job %d has no stored prompt (git_ref=%q); restart the daemon with 'roborev daemon restart'", job.JobType, job.ID, job.GitRef)
 	} else {
-		// Resolve effective min-severity: job-level override wins, then cascade.
+		// Attributed jobs use the frozen plan verbatim, including an explicit
+		// empty value. Ordinary jobs keep the legacy config cascade.
 		minSev := job.MinSeverity
-		if minSev == "" {
+		if minSev == "" && job.FrozenExperimentPlan == nil {
 			resolved, resErr := config.ResolveReviewMinSeverity("", checkout.promptRepoPath, cfg)
 			if resErr != nil {
 				log.Printf("[%s] Error resolving min-severity: %v", workerID, resErr)
@@ -1520,19 +1536,19 @@ func failoverWorkflow(job *storage.ReviewJob) string {
 	return config.WorkflowForReviewType(job.ReviewType)
 }
 
-// resolveBackupAgent determines the backup agent for a job. An explicit
-// per-job backup (job.BackupAgent) is preferred and returned canonicalized.
-// Otherwise it falls back to the workflow config, returning the canonicalized
-// backup agent name, or "" if none is available or it's the same as the job's
-// current agent.
+// resolveBackupAgent determines the backup agent for a job. A frozen
+// experiment plan is authoritative, including an explicit empty backup.
+// Ordinary jobs retain the workflow-config fallback.
 func (wp *WorkerPool) resolveBackupAgent(job *storage.ReviewJob) string {
 	// An explicit per-job backup wins, for reliability: the enqueuer (e.g. a CI
 	// panel synthesis) chose this failover deliberately. Canonicalize the alias
 	// (e.g. "claude" -> "claude-code") via the registry; fall back to the raw
 	// value if the name is unknown so the override is never silently dropped.
-	// Gate on PRESENCE only (job.BackupAgent != "") so resolveBackupModel agrees
-	// on whether the stored backup is in play. Note: agent.Get resolves from the
-	// registry, not PATH, so this does not require local installation.
+	// Note: agent.Get resolves from the registry, not PATH, so this does not
+	// require local installation.
+	if job.FrozenExperimentPlan != nil && job.BackupAgent == "" {
+		return ""
+	}
 	if job.BackupAgent != "" {
 		if resolved, err := agent.Get(job.BackupAgent); err == nil {
 			return resolved.Name()
@@ -1566,13 +1582,15 @@ func (wp *WorkerPool) resolveBackupAgent(job *storage.ReviewJob) string {
 	return resolved.Name()
 }
 
-// resolveBackupModel determines the backup model for a job from config.
-// Returns the configured backup model, or "" if none is set.
+// resolveBackupModel returns the frozen experiment value when present.
+// Ordinary jobs retain the workflow-config fallback.
 func (wp *WorkerPool) resolveBackupModel(job *storage.ReviewJob) string {
 	// Stored backup agent present => use the stored model, even if empty. Never
 	// fall through to the workflow backup model, which is resolved for a
-	// different agent (the user's F7 guardrail). Same presence gate as
-	// resolveBackupAgent so the two never disagree.
+	// different agent (the user's F7 guardrail).
+	if job.FrozenExperimentPlan != nil {
+		return job.BackupModel
+	}
 	if job.BackupAgent != "" {
 		return job.BackupModel
 	}
