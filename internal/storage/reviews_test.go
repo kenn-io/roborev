@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"encoding/json"
 	"testing"
 
 	"github.com/stretchr/testify/assert"
@@ -542,6 +543,83 @@ func TestGetReviewByCommitSHAUsesStoredVerdict(t *testing.T) {
 
 	assert.False(t, review.VerdictBool == nil || *review.VerdictBool != 0)
 	assert.False(t, review.Job == nil || review.Job.Verdict == nil || *review.Job.Verdict != "F")
+}
+
+func TestReviewLoadersUseStoredStructuredVerdict(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, "/tmp/structured-verdict-read-test")
+	job, err := db.EnqueueJob(EnqueueOpts{
+		RepoID:      repo.ID,
+		GitRef:      "structured-verdict-ref",
+		Agent:       "test",
+		ReviewType:  "custom-review",
+		MinSeverity: "high",
+	})
+	require.NoError(t, err)
+	claimed, err := db.ClaimJob("test-worker")
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+	require.NoError(t, db.CompleteJobResult(
+		job.ID,
+		"test",
+		"prompt",
+		ReviewCompletion{
+			Output: "## Summary\n\nHigh: no actionable findings.\n\n" +
+				"No findings at or above the configured severity threshold.\n",
+			Verdict: VerdictPass,
+			StructuredOutput: json.RawMessage(`{
+  "summary":"High: no actionable findings.",
+  "findings":[
+    {"severity":"low","problem":"Name is vague.","fix":"Rename it."}
+  ]
+}`),
+		},
+	))
+	canonical, err := db.GetReviewByJobID(job.ID)
+	require.NoError(t, err)
+
+	loaders := []struct {
+		name string
+		load func(*testing.T) *Review
+	}{
+		{
+			name: "by ID",
+			load: func(t *testing.T) *Review {
+				review, err := db.GetReviewByID(canonical.ID)
+				require.NoError(t, err)
+				return review
+			},
+		},
+		{
+			name: "all for ref",
+			load: func(t *testing.T) *Review {
+				reviews, err := db.GetAllReviewsForGitRef(job.GitRef)
+				require.NoError(t, err)
+				require.Len(t, reviews, 1)
+				return &reviews[0]
+			},
+		},
+		{
+			name: "recent for repo",
+			load: func(t *testing.T) *Review {
+				reviews, err := db.GetRecentReviewsForRepo(repo.ID, 1)
+				require.NoError(t, err)
+				require.Len(t, reviews, 1)
+				return &reviews[0]
+			},
+		},
+	}
+	for _, tc := range loaders {
+		t.Run(tc.name, func(t *testing.T) {
+			review := tc.load(t)
+			assert := assert.New(t)
+			assert.Equal(VerdictPass, review.Verdict())
+			assert.NotNil(review.VerdictBool)
+			assert.NotEmpty(review.StructuredOutput)
+		})
+	}
 }
 
 // createCompletedJobWithOptions helper creates a job, claims it, and completes it.

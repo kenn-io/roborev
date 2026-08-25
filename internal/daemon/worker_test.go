@@ -1324,6 +1324,59 @@ func TestProcessJob_UsesStoredReviewPromptOverride(t *testing.T) {
 	assert.Equal(t, job.Prompt, updated.Prompt)
 }
 
+func TestProcessJob_CIPromptFallbackUsesBaseReviewTypeConfig(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	agentName := "ci-custom-review-config-test"
+	agent.Register(&structuredWorkerTestAgent{
+		name: agentName,
+		result: json.RawMessage(`{
+  "summary":"Base review instructions loaded.",
+  "findings":[]
+}`),
+	})
+	t.Cleanup(func() { agent.Unregister(agentName) })
+
+	sha := tc.GitRepo.CommitFiles(map[string]string{
+		".roborev.toml": `[review.types.base-review]
+template = "base-review.md"
+`,
+		"base-review.md": "Review the base branch contract.\n",
+	}, "add base review type")
+	tc.GitRepo.Run("update-ref", "refs/remotes/origin/main", sha)
+	tc.GitRepo.Run(
+		"symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main",
+	)
+	require.NoError(t, os.Remove(filepath.Join(tc.TmpDir, ".roborev.toml")))
+	require.NoError(t, os.Remove(filepath.Join(tc.TmpDir, "base-review.md")))
+
+	commit, err := tc.DB.GetOrCreateCommit(
+		tc.Repo.ID, sha, "Author", "Subject", time.Now(),
+	)
+	require.NoError(t, err)
+	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
+		RepoID:       tc.Repo.ID,
+		CommitID:     commit.ID,
+		GitRef:       sha,
+		CIBaseBranch: "main",
+		Agent:        agentName,
+		ReviewType:   "base-review",
+		JobType:      storage.JobTypeReview,
+		Source:       storage.JobSourceCI,
+	})
+	require.NoError(t, err)
+	claimed, err := tc.DB.ClaimJob(testWorkerID)
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+
+	tc.Pool.processJob(testWorkerID, claimed)
+
+	tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
+	stored, err := tc.DB.GetReviewByJobID(job.ID)
+	require.NoError(t, err)
+	assert.Contains(t, stored.Prompt, "Review the base branch contract.")
+	assert.Contains(t, stored.Output, "Base review instructions loaded.")
+}
+
 func TestProcessJob_BuildsDirtyPromptFromPersistedDirtyFiles(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 

@@ -555,6 +555,37 @@ func (wp *WorkerPool) prepareJobCheckout(
 	}, nil
 }
 
+func (wp *WorkerPool) promptBuilderForJob(
+	ctx context.Context,
+	checkout preparedJobCheckout,
+	job *storage.ReviewJob,
+	cfg *config.Config,
+) (*prompt.Builder, error) {
+	builder := prompt.NewBuilderWithConfig(wp.db, cfg).
+		WithContext(ctx).
+		ForRepo(checkout.promptRepoPath, job.RepoID)
+	if job.IsCIReview() && strings.TrimSpace(job.CIBaseBranch) != "" {
+		repoCfg, err := loadCIRepoConfig(checkout.promptRepoPath)
+		if err != nil {
+			if !config.IsConfigParseError(err) {
+				return nil, fmt.Errorf("load CI review config: %w", err)
+			}
+			log.Printf("worker: warning: failed to load CI review config: %v", err)
+			repoCfg = nil
+		}
+		builder = builder.WithRepoConfig(
+			repoCfg,
+			"origin/"+strings.TrimSpace(job.CIBaseBranch),
+		)
+	}
+	if !job.IsCIReview() {
+		builder = builder.WithKataClient(
+			kata.NewCLIClient(checkout.promptRepoPath),
+		)
+	}
+	return builder, nil
+}
+
 // markAgentInvoked records that an agent is being invoked for this attempt. Call
 // it only after all pre-agent gates pass, immediately before the agent runs, so
 // a job that fails a gate is never counted as an agent run. This is the synced
@@ -839,15 +870,13 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	}
 
 	// Build the prompt (or use pre-stored prompt for task/compact jobs).
-	// Create a per-job builder with the snapshotted config so exclude
-	// patterns are resolved consistently.
-	pb := prompt.NewBuilderWithConfig(wp.db, cfg).WithContext(ctx).ForRepo(checkout.promptRepoPath, job.RepoID)
-	// CI jobs normally carry a prebuilt prompt whose kata context was gated
-	// on PR author trust by the poller. This rebuild fallback has no author
-	// information, so it must not resolve kata refs from fork-controlled
-	// commit messages (or leak backlog content) — skip kata context entirely.
-	if !job.IsCIReview() {
-		pb = pb.WithKataClient(kata.NewCLIClient(checkout.promptRepoPath))
+	// CI rebuilds use the same default-branch config and base-ref template
+	// files as enqueue-time prompt construction.
+	pb, err := wp.promptBuilderForJob(ctx, checkout, job, cfg)
+	if err != nil {
+		log.Printf("[%s] Error configuring prompt builder: %v", workerID, err)
+		wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("configure prompt builder: %v", err))
+		return
 	}
 	if err := pb.CleanupStaleSnapshots(prompt.DefaultStaleSnapshotAge); err != nil {
 		log.Printf("[%s] Warning: cleanup stale snapshots for job %d: %v", workerID, job.ID, err)
