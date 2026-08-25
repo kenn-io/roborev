@@ -47,6 +47,54 @@ func IsStructuredReviewAgent(a Agent) bool {
 	return ok
 }
 
+// ValidateStructuredReviewSelection rejects a resolved agent that cannot run
+// a schema-constrained custom review. Built-in review types use prose output
+// and accept every Agent implementation.
+func ValidateStructuredReviewSelection(reviewType string, a Agent) error {
+	if config.IsBuiltInReviewType(reviewType) || IsStructuredReviewAgent(a) {
+		return nil
+	}
+	return fmt.Errorf(
+		"agent %q does not support schema-constrained reviews", a.Name(),
+	)
+}
+
+// ValidateStructuredReviewBackup rejects a distinct configured backup that
+// cannot run a schema-constrained custom review. Availability is deliberately
+// not checked: workers resolve workflow backups again at failover time, so a
+// configured backup that is unavailable during enqueue may still be selected
+// later.
+func ValidateStructuredReviewBackup(
+	reviewType string,
+	resolution WorkflowConfig,
+	selectedAgent string,
+) error {
+	backupName := strings.TrimSpace(resolution.BackupAgent)
+	if config.IsBuiltInReviewType(reviewType) || backupName == "" ||
+		resolution.AgentMatches(selectedAgent, backupName) {
+		return nil
+	}
+
+	var backup Agent
+	var err error
+	if isConfiguredACPAgentNameFromConfig(
+		backupName, resolution.GlobalConfig, resolution.RepoConfig,
+	) {
+		backup, err = configuredACPAgentFromConfig(
+			backupName, resolution.RepoConfig, resolution.GlobalConfig,
+		)
+	} else {
+		backup, err = Get(backupName)
+	}
+	if err != nil {
+		return fmt.Errorf("resolve backup agent %q: %w", backupName, err)
+	}
+	if err := ValidateStructuredReviewSelection(reviewType, backup); err != nil {
+		return fmt.Errorf("invalid backup agent: %w", err)
+	}
+	return nil
+}
+
 // IsSchemaAgent reports whether a is a SchemaAgent.
 func IsSchemaAgent(a Agent) bool {
 	_, ok := a.(SchemaAgent)

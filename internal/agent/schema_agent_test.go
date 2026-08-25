@@ -62,6 +62,37 @@ func TestIsSchemaAgent(t *testing.T) {
 	assert.True(t, IsSchemaAgent(s))
 }
 
+func TestValidateStructuredReviewSelection(t *testing.T) {
+	require.NoError(t, ValidateStructuredReviewSelection("default", NewTestAgent()))
+
+	err := ValidateStructuredReviewSelection("custom", NewTestAgent())
+	require.ErrorContains(t, err, "does not support schema-constrained reviews")
+
+	require.NoError(t, ValidateStructuredReviewSelection(
+		"custom", NewClaudeAgent("claude"),
+	))
+}
+
+func TestValidateStructuredReviewBackup(t *testing.T) {
+	resolution := WorkflowConfig{
+		RepoConfig:     &config.RepoConfig{},
+		GlobalConfig:   config.DefaultConfig(),
+		PreferredAgent: "claude-code",
+		BackupAgent:    "test",
+	}
+
+	err := ValidateStructuredReviewBackup("custom", resolution, "claude-code")
+	require.ErrorContains(t, err, "invalid backup agent")
+	require.ErrorContains(t, err, "does not support schema-constrained reviews")
+
+	require.NoError(t, ValidateStructuredReviewBackup(
+		"default", resolution, "claude-code",
+	))
+	require.NoError(t, ValidateStructuredReviewBackup(
+		"custom", resolution, "test",
+	))
+}
+
 func TestValidateClassifyAgent_NotRegistered(t *testing.T) {
 	err := ValidateClassifyAgent("no-such-agent")
 	require.Error(t, err)

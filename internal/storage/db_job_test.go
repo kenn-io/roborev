@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	"database/sql"
+	"encoding/json"
 	"sync"
 	"testing"
 	"time"
@@ -66,7 +67,7 @@ func TestCompleteJobResultStoresCanonicalReview(t *testing.T) {
 	claimed := claimJob(t, env.db, "worker-1")
 	require.NotNil(t, claimed)
 
-	structured := []byte(`{"summary":"Misleading summary.","findings":[]}`)
+	structured := []byte(`{"schema_version":1,"summary":"Misleading summary.","findings":[]}`)
 	require.NoError(t, env.db.CompleteJobResult(
 		env.job.ID, "codex", "prompt", ReviewCompletion{
 			Output:           "No issues found.",
@@ -81,6 +82,38 @@ func TestCompleteJobResultStoresCanonicalReview(t *testing.T) {
 	).Scan(&verdict, &storedStructured))
 	assert.Equal(t, sql.NullInt64{Int64: 0, Valid: true}, verdict)
 	assert.JSONEq(t, string(structured), storedStructured)
+}
+
+func TestCompleteJobResultRejectsInvalidStructuredOutput(t *testing.T) {
+	tests := []struct {
+		name string
+		raw  json.RawMessage
+	}{
+		{name: "malformed JSON", raw: json.RawMessage(`{"schema_version":1`)},
+		{name: "missing version", raw: json.RawMessage(`{"summary":"Done.","findings":[]}`)},
+		{name: "unsupported version", raw: json.RawMessage(`{"schema_version":2,"summary":"Done.","findings":[]}`)},
+		{name: "missing findings", raw: json.RawMessage(`{"schema_version":1,"summary":"Done."}`)},
+		{name: "missing required location", raw: json.RawMessage(`{"schema_version":1,"summary":"Done.","findings":[{"severity":"low","problem":"Problem.","fix":"Fix."}]}`)},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			env := setupJobEnv(t, "/tmp/invalid-structured-output", "structured-invalid")
+			claimed := claimJob(t, env.db, "worker-1")
+			require.NotNil(t, claimed)
+
+			err := env.db.CompleteJobResult(
+				env.job.ID, "codex", "prompt", ReviewCompletion{
+					Output:           "No issues found.",
+					StructuredOutput: tt.raw,
+				},
+			)
+			require.ErrorContains(t, err, "validate structured review output")
+
+			updatedJob, err := env.db.GetJobByID(env.job.ID)
+			require.NoError(t, err)
+			assert.Equal(t, JobStatusRunning, updatedJob.Status)
+		})
+	}
 }
 
 func TestClaimJobOrdersMixedEnqueueTimestampFormats(t *testing.T) {

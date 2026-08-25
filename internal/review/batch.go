@@ -154,6 +154,12 @@ func runSingle(
 			resolvedName, err)
 		return result
 	}
+	result.Agent = resolvedAgent.Name()
+	if err := agent.ValidateStructuredReviewSelection(reviewType, resolvedAgent); err != nil {
+		result.Status = ResultFailed
+		result.Error = fmt.Sprintf("resolve agent %q: %v", resolvedName, err)
+		return result
+	}
 
 	// Apply model override
 	if model != "" {

@@ -522,6 +522,9 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent string, di
 			a = pa.WithProvider(provider)
 		}
 	}
+	if err := agent.ValidateStructuredReviewSelection(reviewType, a); err != nil {
+		return fmt.Errorf("invalid agent: %w", err)
+	}
 
 	// Use consistent output writer, respecting --quiet
 	out := cmd.OutOrStdout()

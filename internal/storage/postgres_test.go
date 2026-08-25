@@ -1128,7 +1128,7 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) {
 			Output:             "test output 1",
 			Closed:             false,
 			VerdictBool:        new(true),
-			StructuredOutput:   []byte(`{"summary":"Clean.","findings":[]}`),
+			StructuredOutput:   []byte(`{"schema_version":1,"summary":"Clean.","findings":[]}`),
 			UpdatedByMachineID: defaultTestMachineID,
 			CreatedAt:          time.Now(),
 		},

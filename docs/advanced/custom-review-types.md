@@ -112,8 +112,9 @@ configuration error; Roborev never substitutes the generic review prompt.
 
 Custom types require an agent with native JSON Schema output support. Roborev
 currently supports custom reviews with `codex`, `claude-code`, `pi`, and `grok`.
-If the selected agent lacks that capability, the job fails instead of falling
-back to unconstrained prose.
+If the resolved agent lacks that capability, Roborev rejects the review before
+enqueue instead of storing a job that can only fail or falling back to
+unconstrained prose.
 
 Roborev does not impose one shared minimum version across those independent
 CLIs. The installed command must support the schema mechanism used by its
@@ -126,6 +127,7 @@ The schema is fixed by roborev. The agent must return:
 
 ```json
 {
+  "schema_version": 1,
   "summary": "Overall assessment",
   "findings": [
     {
@@ -138,10 +140,10 @@ The schema is fixed by roborev. The agent must return:
 }
 ```
 
-`summary` and `findings` are required. Every finding requires `severity`,
-`problem`, and `fix`; `location` is optional. Native strict schemas represent a
-missing location as `null`. Severity must be one of `critical`, `high`,
-`medium`, or `low`.
+`schema_version`, `summary`, and `findings` are required. The current schema
+version is `1`; Roborev rejects missing or unsupported versions. Every finding
+requires `severity`, `problem`, `fix`, and `location`; use `null` when a finding
+has no location. Severity must be one of `critical`, `high`, `medium`, or `low`.
 
 Roborev removes findings below `review_min_severity` or `--min-severity`. The
 review passes when no findings remain, and fails otherwise. Built-in review

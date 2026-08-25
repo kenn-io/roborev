@@ -16,7 +16,8 @@ func TestRunAgentReviewKeepsCustomVerdictWithRenderedOutput(t *testing.T) {
 	a := &structuredBatchAgent{
 		name: "structured",
 		result: json.RawMessage(`{
-  "summary": "High: no actionable findings remain.",
+	  "schema_version": 1,
+	  "summary": "High: no actionable findings remain.",
   "findings": [
     {"severity":"low","problem":"Vague name.","fix":"Rename it.","location":null}
   ]

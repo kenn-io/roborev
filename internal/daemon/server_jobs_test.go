@@ -17,6 +17,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
 	daemonclient "go.kenn.io/roborev/internal/daemon_client"
 	gitpkg "go.kenn.io/roborev/internal/git"
@@ -2589,6 +2590,65 @@ func TestHandleEnqueueCompactReasoning(t *testing.T) {
 		}, "compact job reasoning = %q, want %q (fix default)",
 			job.Reasoning, "standard")
 	}
+}
+
+func TestHandleEnqueueRejectsCustomReviewWithUnsupportedAgent(t *testing.T) {
+	repoDir := t.TempDir()
+	testutil.InitTestGitRepo(t, repoDir)
+	require.NoError(t, os.WriteFile(
+		filepath.Join(repoDir, ".roborev.toml"),
+		[]byte("[review.types.custom]\ntemplate = \"custom.tmpl\"\n"),
+		0o644,
+	))
+
+	db, _ := testutil.OpenTestDBWithDir(t)
+	server := NewServer(db, config.DefaultConfig(), "")
+	req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", EnqueueRequest{
+		RepoPath:   repoDir,
+		GitRef:     "HEAD",
+		Agent:      "test",
+		ReviewType: "custom",
+	})
+	w := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), "does not support schema-constrained reviews")
+	queued, _, _, _, _, _, _, _, _ := db.GetJobCounts()
+	assert.Zero(t, queued)
+}
+
+func TestHandleEnqueueRejectsCustomReviewWithUnsupportedBackupAgent(t *testing.T) {
+	const primaryName = "structured-enqueue-primary"
+	agent.Register(&structuredWorkerTestAgent{name: primaryName})
+	t.Cleanup(func() { agent.Unregister(primaryName) })
+
+	repoDir := t.TempDir()
+	testutil.InitTestGitRepo(t, repoDir)
+	require.NoError(t, os.WriteFile(
+		filepath.Join(repoDir, ".roborev.toml"),
+		[]byte("[review.types.custom]\ntemplate = \"custom.tmpl\"\n"),
+		0o644,
+	))
+
+	db, _ := testutil.OpenTestDBWithDir(t)
+	cfg := config.DefaultConfig()
+	cfg.ReviewAgent = primaryName
+	cfg.DefaultBackupAgent = "test"
+	server := NewServer(db, cfg, "")
+	req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", EnqueueRequest{
+		RepoPath:   repoDir,
+		GitRef:     "HEAD",
+		Agent:      primaryName,
+		ReviewType: "custom",
+	})
+	w := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(w, req)
+
+	require.Equal(t, http.StatusBadRequest, w.Code, w.Body.String())
+	assert.Contains(t, w.Body.String(), "invalid backup agent")
+	queued, _, _, _, _, _, _, _, _ := db.GetJobCounts()
+	assert.Zero(t, queued)
 }
 
 func TestHandleEnqueueUsesConfiguredReviewReasoning(t *testing.T) {

@@ -423,7 +423,8 @@ func TestSynthesize_UsesSynthesisEntrypoint(t *testing.T) {
 
 func TestSynthesizeFiltersStructuredResultWithoutReparsingSummary(t *testing.T) {
 	structured := StructuredReview{
-		Summary: "High: no actionable findings.",
+		SchemaVersion: storage.StructuredReviewSchemaVersion,
+		Summary:       "High: no actionable findings.",
 		Findings: []StructuredFinding{{
 			Severity: "low",
 			Problem:  "Name is vague.",

@@ -6,6 +6,8 @@ import (
 
 	"github.com/danielgtaylor/huma/v2"
 	gitrepo "go.kenn.io/kit/git/repo"
+
+	"go.kenn.io/roborev/internal/structuredreview"
 )
 
 type Repo struct {
@@ -288,6 +290,10 @@ type JobWithReview struct {
 // review. Its schema keeps arbitrary nested values available to generated API
 // clients instead of reducing them to empty structs.
 type StructuredOutput map[string]any
+
+// StructuredReviewSchemaVersion is the version stored in schema-constrained
+// review documents. Writers reject documents with any other version.
+const StructuredReviewSchemaVersion = structuredreview.SchemaVersion
 
 func (StructuredOutput) Schema(huma.Registry) *huma.Schema {
 	return &huma.Schema{

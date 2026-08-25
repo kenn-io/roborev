@@ -929,22 +929,35 @@ func (p *CIPoller) resolveCIPanelMemberExecution(
 			return "", "", "", "", fmt.Errorf("%w for type=%s: %w", errNoCIAgent, member.ReviewType, err)
 		}
 		resolvedAgent = name
-	} else if !strictWorkflowAgent {
-		resolved, err := agent.GetAvailableWithConfigFromConfig(
-			repoCfg, resolvedAgent, cfg, resolution.BackupAgent,
-		)
+	} else {
+		var selected agent.Agent
+		if !strictWorkflowAgent {
+			selected, err = agent.GetAvailableWithConfigFromConfig(
+				repoCfg, resolvedAgent, cfg, resolution.BackupAgent,
+			)
+		} else {
+			selected, err = agent.GetPreferredOrBackupWithConfigFromConfig(
+				repoCfg, resolvedAgent, cfg, resolution.BackupAgent,
+			)
+		}
 		if err != nil {
 			return "", "", "", "", fmt.Errorf("%w for type=%s: %w", errNoCIAgent, member.ReviewType, err)
 		}
-		resolvedAgent = resolved.Name()
-	} else if resolved, err := agent.GetPreferredOrBackupWithConfigFromConfig(
-		repoCfg, resolvedAgent, cfg, resolution.BackupAgent,
-	); err != nil {
-		return "", "", "", "", fmt.Errorf("%w for type=%s: %w", errNoCIAgent, member.ReviewType, err)
-	} else {
-		resolvedAgent = resolved.Name()
+		if err := agent.ValidateStructuredReviewSelection(
+			member.ReviewType, selected,
+		); err != nil {
+			return "", "", "", "", fmt.Errorf("%w for type=%s: %w", errNoCIAgent, member.ReviewType, err)
+		}
+		resolvedAgent = selected.Name()
 	}
 	resolvedAgent = agent.StorageNameFromConfig(resolvedAgent, repoCfg, cfg)
+	if err := agent.ValidateStructuredReviewBackup(
+		member.ReviewType, resolution, resolvedAgent,
+	); err != nil {
+		return "", "", "", "", fmt.Errorf(
+			"%w for type=%s: %w", errNoCIAgent, member.ReviewType, err,
+		)
+	}
 	model := member.Model
 	if !member.ModelExplicit || !resolution.AgentMatches(resolvedAgent, member.Agent) {
 		model = resolution.ModelForSelectedAgent(resolvedAgent, "")
@@ -994,22 +1007,35 @@ func (p *CIPoller) resolveMatrixMemberAgent(
 			return "", "", "", "", fmt.Errorf("%w for type=%s: %w", errNoCIAgent, entry.ReviewType, err)
 		}
 		resolvedAgent = name
-	} else if autoDetectAgent {
-		resolved, err := agent.GetAvailableWithConfigFromConfig(
-			repoCfg, resolvedAgent, cfg, resolution.BackupAgent,
-		)
+	} else {
+		var selected agent.Agent
+		if autoDetectAgent {
+			selected, err = agent.GetAvailableWithConfigFromConfig(
+				repoCfg, resolvedAgent, cfg, resolution.BackupAgent,
+			)
+		} else {
+			selected, err = agent.GetPreferredOrBackupWithConfigFromConfig(
+				repoCfg, resolvedAgent, cfg, resolution.BackupAgent,
+			)
+		}
 		if err != nil {
 			return "", "", "", "", fmt.Errorf("%w for type=%s: %w", errNoCIAgent, entry.ReviewType, err)
 		}
-		resolvedAgent = resolved.Name()
-	} else if resolved, err := agent.GetPreferredOrBackupWithConfigFromConfig(
-		repoCfg, resolvedAgent, cfg, resolution.BackupAgent,
-	); err != nil {
-		return "", "", "", "", fmt.Errorf("%w for type=%s: %w", errNoCIAgent, entry.ReviewType, err)
-	} else {
-		resolvedAgent = resolved.Name()
+		if err := agent.ValidateStructuredReviewSelection(
+			entry.ReviewType, selected,
+		); err != nil {
+			return "", "", "", "", fmt.Errorf("%w for type=%s: %w", errNoCIAgent, entry.ReviewType, err)
+		}
+		resolvedAgent = selected.Name()
 	}
 	resolvedAgent = agent.StorageNameFromConfig(resolvedAgent, repoCfg, cfg)
+	if err := agent.ValidateStructuredReviewBackup(
+		entry.ReviewType, resolution, resolvedAgent,
+	); err != nil {
+		return "", "", "", "", fmt.Errorf(
+			"%w for type=%s: %w", errNoCIAgent, entry.ReviewType, err,
+		)
+	}
 	backupAgent, backupModel := backupExecutionForSelectedAgent(
 		resolution, resolvedAgent, repoCfg, cfg,
 	)

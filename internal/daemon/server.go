@@ -2816,7 +2816,25 @@ func (s *Server) resolveSingleAgent(
 		)
 		return resolvedSingleAgent{}, out
 	}
+	if err := agent.ValidateStructuredReviewSelection(
+		in.req.ReviewType, resolved,
+	); err != nil {
+		out, _ := rawJSONOutput(
+			http.StatusBadRequest,
+			ErrorResponse{Error: fmt.Sprintf("invalid agent: %v", err)},
+		)
+		return resolvedSingleAgent{}, out
+	}
 	agentName = resolved.Name()
+	if err := agent.ValidateStructuredReviewBackup(
+		in.req.ReviewType, resolution, agentName,
+	); err != nil {
+		out, _ := rawJSONOutput(
+			http.StatusBadRequest,
+			ErrorResponse{Error: fmt.Sprintf("invalid agent: %v", err)},
+		)
+		return resolvedSingleAgent{}, out
+	}
 	backupAgent, backupModel := backupExecutionForSelectedAgent(
 		resolution, agentName, in.repoCfg, in.cfg,
 	)

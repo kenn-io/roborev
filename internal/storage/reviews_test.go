@@ -570,9 +570,10 @@ func TestReviewLoadersUseStoredStructuredVerdict(t *testing.T) {
 				"No findings at or above the configured severity threshold.\n",
 			Verdict: VerdictPass,
 			StructuredOutput: json.RawMessage(`{
-  "summary":"High: no actionable findings.",
+	  "schema_version":1,
+	  "summary":"High: no actionable findings.",
   "findings":[
-    {"severity":"low","problem":"Name is vague.","fix":"Rename it."}
+    {"severity":"low","problem":"Name is vague.","fix":"Rename it.","location":null}
   ]
 }`),
 		},

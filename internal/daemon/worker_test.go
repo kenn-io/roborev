@@ -329,10 +329,11 @@ func TestWorkerStoresFilteredStructuredCustomReview(t *testing.T) {
 	agent.Register(&structuredWorkerTestAgent{
 		name: agentName,
 		result: json.RawMessage(`{
+  "schema_version":1,
   "summary":"Review complete.",
   "findings":[
-    {"severity":"high","problem":"State diverges.","fix":"Use one owner."},
-    {"severity":"low","problem":"Name is vague.","fix":"Rename it."}
+    {"severity":"high","problem":"State diverges.","fix":"Use one owner.","location":null},
+    {"severity":"low","problem":"Name is vague.","fix":"Rename it.","location":null}
   ]
 }`),
 	})
@@ -374,9 +375,10 @@ func TestWorkerUsesConfiguredSeverityForStructuredVerdict(t *testing.T) {
 	agent.Register(&structuredWorkerTestAgent{
 		name: agentName,
 		result: json.RawMessage(`{
-  "summary":"High: no actionable findings.",
+	  "schema_version":1,
+	  "summary":"High: no actionable findings.",
   "findings":[
-    {"severity":"low","problem":"Name is vague.","fix":"Rename it."}
+    {"severity":"low","problem":"Name is vague.","fix":"Rename it.","location":null}
   ]
 }`),
 	})
@@ -1332,6 +1334,7 @@ func TestProcessJob_CIPromptFallbackUsesDefaultBranchReviewTypeConfig(t *testing
 	agent.Register(&structuredWorkerTestAgent{
 		name: agentName,
 		result: json.RawMessage(`{
+  "schema_version":1,
   "summary":"Default-branch review instructions loaded.",
   "findings":[]
 }`),
@@ -1387,6 +1390,7 @@ func TestProcessJob_CIPromptFallbackKeepsDefaultRefAfterConfigParseError(t *test
 	agent.Register(&structuredWorkerTestAgent{
 		name: agentName,
 		result: json.RawMessage(`{
+  "schema_version":1,
   "summary":"Global review instructions loaded from the default branch.",
   "findings":[]
 }`),

@@ -557,7 +557,13 @@ func (s *Server) enqueuePanelRun(ctx context.Context, in panelRunInputs) (*RawJS
 	}
 
 	runUUID := uuid.NewString()
-	memberOpts := panelMemberOpts(in.descriptor, in.panelName, runUUID, members, in.repoCfg, in.cfg)
+	memberOpts, err := panelMemberOpts(
+		in.descriptor, in.panelName, runUUID, members,
+		in.repoCfg, in.cfg,
+	)
+	if err != nil {
+		return rawJSONOutput(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
+	}
 	synthOpts := panelSynthesisOpts(
 		in.descriptor, in.panelName, runUUID, synth, in.repoCfg, in.cfg,
 	)
@@ -657,14 +663,18 @@ func panelHasDesignMember(members []config.ResolvedMember) bool {
 func panelMemberOpts(
 	descriptor targetDescriptor, panelName, runUUID string, members []config.ResolvedMember,
 	repoCfg *config.RepoConfig, cfg *config.Config,
-) []storage.EnqueueOpts {
+) ([]storage.EnqueueOpts, error) {
 	out := make([]storage.EnqueueOpts, len(members))
 	for i, m := range members {
 		o := descriptor.baseOpts()
 		cfgJSON, _ := json.Marshal(m)
-		o.Agent, o.Model, o.BackupAgent, o.BackupModel = resolvePanelMemberExecution(
+		var err error
+		o.Agent, o.Model, o.BackupAgent, o.BackupModel, err = resolvePanelMemberExecution(
 			m, descriptor, repoCfg, cfg,
 		)
+		if err != nil {
+			return nil, fmt.Errorf("panel member %q: %w", m.Name, err)
+		}
 		o.Provider = m.Provider
 		o.Reasoning, o.ReviewType = m.Reasoning, m.ReviewType
 		o.PanelRunUUID, o.PanelRole = runUUID, storage.PanelRoleMember
@@ -672,19 +682,18 @@ func panelMemberOpts(
 		o.PanelMemberConfigJSON = string(cfgJSON)
 		out[i] = o
 	}
-	return out
+	return out, nil
 }
 
 func resolvePanelMemberExecution(
 	m config.ResolvedMember, descriptor targetDescriptor, repoCfg *config.RepoConfig, cfg *config.Config,
-) (string, string, string, string) {
-	agentName := agent.StorageNameFromConfig(m.Agent, repoCfg, cfg)
+) (string, string, string, string, error) {
 	model := m.Model
 	resolution, err := agent.ResolveWorkflowConfigFromConfig(
 		m.Agent, repoCfg, cfg, workflowForPanelReviewType(m.ReviewType), m.Reasoning,
 	)
 	if err != nil {
-		return agentName, model, "", ""
+		return "", "", "", "", err
 	}
 	strictWorkflowAgent := m.AgentExplicit ||
 		config.HasWorkflowAgentOverrideFromConfig(
@@ -702,16 +711,24 @@ func resolvePanelMemberExecution(
 		)
 	}
 	if err != nil {
-		return agentName, model, "", ""
+		return "", "", "", "", err
+	}
+	if err := agent.ValidateStructuredReviewSelection(m.ReviewType, selected); err != nil {
+		return "", "", "", "", err
 	}
 	selectedName := agent.StorageNameFromConfig(selected.Name(), repoCfg, cfg)
+	if err := agent.ValidateStructuredReviewBackup(
+		m.ReviewType, resolution, selectedName,
+	); err != nil {
+		return "", "", "", "", err
+	}
 	if !m.ModelExplicit || !resolution.AgentMatches(selectedName, m.Agent) {
 		model = resolution.ModelForSelectedAgent(selectedName, "")
 	}
 	backupAgent, backupModel := backupExecutionForSelectedAgent(
 		resolution, selectedName, repoCfg, cfg,
 	)
-	return selectedName, model, backupAgent, backupModel
+	return selectedName, model, backupAgent, backupModel, nil
 }
 
 func workflowForPanelReviewType(reviewType string) string {

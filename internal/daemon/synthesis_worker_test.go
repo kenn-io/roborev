@@ -672,6 +672,7 @@ func TestSynthesisSinglePassingSuccessWithMinSeverityPassthrough(t *testing.T) {
 	require.NoError(t, err)
 	const memberOutput = "## Review Findings\n\nThe summary claims a high issue.\n\n### 1. Low\n\n**Problem:** low-only\n\n**Fix:** low fix"
 	structured := json.RawMessage(`{
+  "schema_version": 1,
   "summary": "The summary claims a high issue.",
   "findings": [
     {"severity":"low","problem":"low-only","fix":"low fix","location":null}

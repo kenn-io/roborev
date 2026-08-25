@@ -390,7 +390,8 @@ func TestRunBatchPreservesStructuredVerdict(t *testing.T) {
 	structuredAgent := &structuredBatchAgent{
 		name: "structured-batch",
 		result: json.RawMessage(`{
-  "summary":"High: no actionable findings.",
+	  "schema_version":1,
+	  "summary":"High: no actionable findings.",
   "findings":[
     {"severity":"low","problem":"Name is vague.","fix":"Rename it.","location":null}
   ]

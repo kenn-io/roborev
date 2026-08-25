@@ -10,10 +10,11 @@ import (
 
 func TestStructuredReviewFiltersAndRenders(t *testing.T) {
 	raw := json.RawMessage(`{
+  "schema_version": 1,
   "summary": "Two maintainability risks found.",
   "findings": [
     {"severity":"high","problem":"State can diverge.","fix":"Use one owner.","location":"state.go:20"},
-    {"severity":"low","problem":"Name is vague.","fix":"Rename it."}
+    {"severity":"low","problem":"Name is vague.","fix":"Rename it.","location":null}
   ]
 }`)
 
@@ -30,7 +31,7 @@ func TestStructuredReviewFiltersAndRenders(t *testing.T) {
 
 func TestStructuredReviewPassesAfterSeverityFiltering(t *testing.T) {
 	decoded, err := DecodeStructuredReview(json.RawMessage(
-		`{"summary":"Minor issue.","findings":[{"severity":"low","problem":"Vague name.","fix":"Rename it.","location":null}]}`,
+		`{"schema_version":1,"summary":"Minor issue.","findings":[{"severity":"low","problem":"Vague name.","fix":"Rename it.","location":null}]}`,
 	))
 	require.NoError(t, err)
 	filtered := decoded.Filter("high")
@@ -40,9 +41,16 @@ func TestStructuredReviewPassesAfterSeverityFiltering(t *testing.T) {
 
 func TestStructuredReviewRejectsUnknownFields(t *testing.T) {
 	_, err := DecodeStructuredReview(json.RawMessage(
-		`{"summary":"Done.","findings":[],"verdict":"pass"}`,
+		`{"schema_version":1,"summary":"Done.","findings":[],"verdict":"pass"}`,
 	))
 	require.ErrorContains(t, err, "unknown field")
+}
+
+func TestStructuredReviewRequiresCurrentSchemaVersion(t *testing.T) {
+	_, err := DecodeStructuredReview(json.RawMessage(
+		`{"schema_version":2,"summary":"Done.","findings":[]}`,
+	))
+	require.ErrorContains(t, err, "unsupported structured review schema_version 2")
 }
 
 func TestStricterMinSeverity(t *testing.T) {

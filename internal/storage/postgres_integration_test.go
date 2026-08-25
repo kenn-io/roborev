@@ -924,7 +924,7 @@ func TestIntegration_Multiplayer(t *testing.T) {
 		 SET verdict_bool = 0, structured_output = ?, synced_at = NULL,
 		     updated_at = datetime('now')
 		 WHERE id = ?`,
-		`{"summary":"Canonical remote result.","findings":[]}`,
+		`{"schema_version":1,"summary":"Canonical remote result.","findings":[]}`,
 		reviewB.ID,
 	)
 	require.NoError(t, err)

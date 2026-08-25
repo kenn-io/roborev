@@ -10,6 +10,8 @@ import (
 	"strings"
 	"time"
 	"unicode"
+
+	"go.kenn.io/roborev/internal/structuredreview"
 )
 
 // preciseTimestampLayout is a fixed-width timestamp layout used for the
@@ -1152,6 +1154,9 @@ func (db *DB) completeJob(
 	agent, prompt string,
 	completion ReviewCompletion,
 ) error {
+	if err := validateStructuredOutputForWrite(completion.StructuredOutput); err != nil {
+		return err
+	}
 	// Get machine ID and generate UUIDs before starting transaction
 	// to avoid potential lock conflicts with GetMachineID's writes
 	now := time.Now().Format(time.RFC3339)
@@ -1232,6 +1237,16 @@ func (db *DB) completeJob(
 		return err
 	}
 	committed = true
+	return nil
+}
+
+func validateStructuredOutputForWrite(raw json.RawMessage) error {
+	if len(raw) == 0 {
+		return nil
+	}
+	if _, err := structuredreview.Decode(raw); err != nil {
+		return fmt.Errorf("validate structured review output: %w", err)
+	}
 	return nil
 }
 
