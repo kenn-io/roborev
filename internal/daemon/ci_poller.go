@@ -595,7 +595,7 @@ func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, 
 	for i := range memberOpts {
 		memberOpts[i].SessionID, memberOpts[i].ResumeSourceJobUUID = findCompatibleReusableSession(
 			ctx, p.db, repo.RootPath, pr.HeadRefOid, memberOpts[i],
-			repoCfg, rawRepoCfg, cfg, synthOpts.Experiment,
+			repoCfg, rawRepoCfg, cfg, synthOpts.Experiment, pr.Number,
 		)
 	}
 

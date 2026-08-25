@@ -1016,6 +1016,7 @@ func findCompatibleReusableSession(
 	rawRepoCfg map[string]any,
 	globalCfg *config.Config,
 	experiment *storage.ExperimentAssignmentInput,
+	ciPRNumber int,
 ) (string, string) {
 	if !config.ResolveReuseReviewSessionFromConfig(repoCfg, globalCfg) ||
 		opts.Branch == "" || targetSHA == "" ||
@@ -1041,6 +1042,7 @@ func findCompatibleReusableSession(
 		PanelMemberName:       opts.PanelMemberName,
 		PanelMemberConfigJSON: opts.PanelMemberConfigJSON,
 		SourceMachineID:       machineID,
+		CIPRNumber:            ciPRNumber,
 		Experiment:            experiment,
 		Limit: config.ResolveReuseReviewSessionLookbackFromConfig(
 			repoCfg, rawRepoCfg, globalCfg,
@@ -2849,7 +2851,7 @@ func (s *Server) enqueueSingleAgent(
 	}
 	o.SessionID, o.ResumeSourceJobUUID = findCompatibleReusableSession(
 		ctx, s.db, in.checkoutRoot, in.descriptor.sessionSHA, o,
-		in.repoCfg, in.rawRepoCfg, in.cfg, o.Experiment,
+		in.repoCfg, in.rawRepoCfg, in.cfg, o.Experiment, 0,
 	)
 
 	var job *storage.ReviewJob

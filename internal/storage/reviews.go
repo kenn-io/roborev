@@ -213,6 +213,7 @@ type ReusableSessionQuery struct {
 	PanelMemberName       string
 	PanelMemberConfigJSON string
 	SourceMachineID       string
+	CIPRNumber            int
 	Experiment            *ExperimentAssignmentInput
 	Limit                 int
 }
@@ -264,6 +265,15 @@ func (db *DB) FindCompatibleReusableSessionCandidates(q ReusableSessionQuery) ([
 		  AND COALESCE(j.panel_member_name, '') = ?
 		  AND COALESCE(j.panel_member_config_json, '') = ?`
 		args = append(args, q.PanelName, q.PanelMemberName, q.PanelMemberConfigJSON)
+	}
+	if q.CIPRNumber > 0 {
+		query += `
+		  AND EXISTS (
+		      SELECT 1 FROM ci_pr_panels cp
+		      WHERE cp.panel_run_uuid = j.panel_run_uuid
+		        AND cp.pr_number = ?
+		  )`
+		args = append(args, q.CIPRNumber)
 	}
 	if q.Experiment == nil {
 		query += ` AND a.experiment_id IS NULL`

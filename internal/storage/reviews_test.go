@@ -895,6 +895,47 @@ func TestFindCompatibleReusableSessionCandidatesMatchesBranchAndSource(t *testin
 	assert.Equal(t, "ci-session", candidates[0].SessionID)
 }
 
+func TestFindCompatibleReusableSessionCandidatesMatchesCIPRNumber(t *testing.T) {
+	db, repo := setupDBAndRepo(t, "compatible-session-ci-pr")
+	machineID, err := db.GetMachineID()
+	require.NoError(t, err)
+
+	const prNumber = 42
+	created, members, _, err := db.CreateCIPanelRun(
+		"owner/repo", prNumber, "abc123",
+		[]EnqueueOpts{{
+			RepoID: repo.ID, GitRef: "abc123", Branch: "feature/session",
+			Agent: "test", PanelName: "ci", PanelMemberName: "reviewer",
+		}},
+		EnqueueOpts{RepoID: repo.ID, GitRef: "abc123", Branch: "feature/session", Agent: "test"},
+	)
+	require.NoError(t, err)
+	require.True(t, created)
+	require.Len(t, members, 1)
+
+	claimed, err := db.ClaimJob("session-worker")
+	require.NoError(t, err)
+	require.Equal(t, members[0].ID, claimed.ID)
+	require.NoError(t, db.CompleteJob(claimed.ID, "test", "prompt", "No issues found."))
+	setJobSession(t, db, claimed.ID, "ci-session")
+
+	query := ReusableSessionQuery{
+		RepoID: repo.ID, Branch: "feature/session", Source: JobSourceCI,
+		Agent: "test", Reasoning: "thorough", PanelName: "ci",
+		PanelMemberName: "reviewer", SourceMachineID: machineID,
+		CIPRNumber: prNumber,
+	}
+	candidates, err := db.FindCompatibleReusableSessionCandidates(query)
+	require.NoError(t, err)
+	require.Len(t, candidates, 1)
+	assert.Equal(t, claimed.ID, candidates[0].ID)
+
+	query.CIPRNumber = prNumber + 1
+	candidates, err = db.FindCompatibleReusableSessionCandidates(query)
+	require.NoError(t, err)
+	assert.Empty(t, candidates)
+}
+
 func setJobSession(t *testing.T, db *DB, jobID int64, sessionID string) {
 	t.Helper()
 	_, err := db.Exec(`UPDATE review_jobs SET session_id = ? WHERE id = ?`, sessionID, jobID)
