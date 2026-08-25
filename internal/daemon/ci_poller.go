@@ -459,8 +459,7 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 	}
 
 	if err := p.enqueuePanelRun(ctx, ghRepo, pr, cfg); err != nil {
-		var configErr *ciConfigurationError
-		if errors.As(err, &configErr) {
+		if _, ok := errors.AsType[*ciConfigurationError](err); ok {
 			if statusErr := p.callSetCommitStatus(
 				ghRepo, pr.HeadRefOid, "error",
 				"Review could not be queued; run roborev config validate",
