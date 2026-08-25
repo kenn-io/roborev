@@ -72,7 +72,7 @@ func validateCustomReviewTypes(types map[string]ReviewTypeSpec) error {
 				"review type name %q must match %s",
 				name, customReviewTypeNamePattern,
 			))
-		case IsBuiltInReviewType(name) || name == "general" || name == "review":
+		case isReservedCustomReviewTypeName(name):
 			errs = append(errs, fmt.Errorf(
 				"review type name %q is reserved", name,
 			))
@@ -81,6 +81,12 @@ func validateCustomReviewTypes(types map[string]ReviewTypeSpec) error {
 		}
 	}
 	return errors.Join(errs...)
+}
+
+func isReservedCustomReviewTypeName(name string) bool {
+	return IsBuiltInReviewType(name) || slices.Contains(
+		[]string{"general", "review", "fix", "refine", "classify"}, name,
+	)
 }
 
 // ResolvedReviewType identifies the effective custom definition and whether it

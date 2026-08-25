@@ -58,24 +58,31 @@ func (wp *WorkerPool) processSynthesisJob(
 		// label the review with that member's agent when no panel-level severity
 		// filter needs to be applied, or when the member already passed and
 		// there are no findings to filter.
-		if config.IsMarkerOnlyOutput(succeeded[0].Output) {
+		if config.IsMarkerOnlyOutput(succeeded[0].Output) &&
+			succeeded[0].Passed() {
 			wp.completeSynthesisContext(workerID, job, synthesisResult{
-				agentName: succeeded[0].Agent, output: "No issues found.",
+				agentName: succeeded[0].Agent,
+				output:    "No issues found.",
+				passed:    succeeded[0].Verdict,
 			})
 			return
 		}
 		if !singleSuccessCanPassthrough(job.MinSeverity) &&
-			storage.ParseVerdict(succeeded[0].Output) != "P" {
+			!succeeded[0].Passed() {
 			wp.synthesizeSucceededResults(ctx, workerID, job, succeeded)
 			return
 		}
 		wp.completeSynthesisContext(workerID, job, synthesisResult{
-			agentName: succeeded[0].Agent, output: succeeded[0].Output,
+			agentName: succeeded[0].Agent,
+			output:    succeeded[0].Output,
+			passed:    succeeded[0].Verdict,
 		})
 	default:
 		if allMembersPassed(results, succeeded) {
 			wp.completeSynthesisContext(workerID, job, synthesisResult{
-				agentName: job.Agent, output: "No issues found.",
+				agentName: job.Agent,
+				output:    "No issues found.",
+				passed:    new(true),
 			})
 			return
 		}
@@ -178,7 +185,7 @@ func allMembersPassed(
 		return false
 	}
 	for _, r := range succeeded {
-		if storage.ParseVerdict(r.Output) != "P" {
+		if !r.Passed() {
 			return false
 		}
 	}
@@ -225,6 +232,7 @@ type synthesisResult struct {
 	agentName       string
 	prompt          string
 	output          string
+	passed          *bool
 	capturedSession string
 	captureUsage    bool
 }
@@ -244,8 +252,16 @@ func (wp *WorkerPool) completeSynthesisLocked(
 	workerID string, job *storage.ReviewJob, res synthesisResult,
 ) {
 	agentName, prompt, output := res.agentName, res.prompt, res.output
-	if err := wp.db.CompleteJob(job.ID, agentName, prompt, output); err != nil {
-		log.Printf("[%s] Error storing synthesis review for job %d: %v", workerID, job.ID, err)
+	var completeErr error
+	if res.passed != nil {
+		completeErr = wp.db.CompleteJobWithVerdict(
+			job.ID, agentName, prompt, output, *res.passed,
+		)
+	} else {
+		completeErr = wp.db.CompleteJob(job.ID, agentName, prompt, output)
+	}
+	if completeErr != nil {
+		log.Printf("[%s] Error storing synthesis review for job %d: %v", workerID, job.ID, completeErr)
 		return
 	}
 
@@ -267,6 +283,12 @@ func (wp *WorkerPool) completeSynthesisLocked(
 		)
 	}
 	verdict := storage.ParseVerdict(output)
+	if res.passed != nil {
+		verdict = "F"
+		if *res.passed {
+			verdict = "P"
+		}
+	}
 	wp.autoClosePassingReview(workerID, job, verdict)
 
 	log.Printf("[%s] Completed synthesis job %d %s panel=%s",

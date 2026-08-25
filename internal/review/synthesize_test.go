@@ -135,6 +135,40 @@ func TestSynthesize_Formatting(t *testing.T) {
 			},
 		},
 		{
+			name: "SingleStructuredSuccess",
+			results: []ReviewResult{
+				{
+					Agent:      "codex",
+					ReviewType: "custom",
+					Status:     "done",
+					Output:     "High: no actionable findings.",
+					Verdict:    new(true),
+				},
+			},
+			expectedErr: nil,
+			expectedTexts: []string{
+				"Review Passed",
+				"High: no actionable findings.",
+			},
+		},
+		{
+			name: "SingleStructuredFailure",
+			results: []ReviewResult{
+				{
+					Agent:      "codex",
+					ReviewType: "custom",
+					Status:     "done",
+					Output:     "No issues found.",
+					Verdict:    new(false),
+				},
+			},
+			expectedErr: nil,
+			expectedTexts: []string{
+				"Review Complete",
+				"No issues found.",
+			},
+		},
+		{
 			name: "SingleSeverityThresholdMet",
 			results: []ReviewResult{
 				{

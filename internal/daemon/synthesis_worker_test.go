@@ -109,7 +109,11 @@ func registerNeverCalledAgent(t *testing.T, name string, called *bool) {
 
 func TestAllMembersPassedIgnoresAllowedFailure(t *testing.T) {
 	results := []reviewpkg.ReviewResult{
-		{Status: reviewpkg.ResultDone, Output: "No issues found."},
+		{
+			Status:  reviewpkg.ResultDone,
+			Output:  "High: no actionable findings.",
+			Verdict: new(true),
+		},
 		{Status: reviewpkg.ResultFailed, Error: "pi host disappeared", AllowFailure: true},
 	}
 	succeeded := filterSucceeded(results)
@@ -666,8 +670,11 @@ func TestSynthesisSinglePassingSuccessWithMinSeverityPassthrough(t *testing.T) {
 		"medium", synthJob.ID,
 	)
 	require.NoError(t, err)
-	const memberOutput = "## Review\n\nNo issues found."
-	completeMember(t, tc, members[0].ID, memberAgent, memberOutput)
+	const memberOutput = "High: no actionable findings."
+	markMemberRunning(t, tc, members[0].ID)
+	require.NoError(t, tc.DB.CompleteJobWithVerdict(
+		members[0].ID, memberAgent, "", memberOutput, true,
+	))
 	failMember(t, tc, members[1].ID)
 
 	synth := releaseAndClaimSynthesis(t, tc, runUUID)
@@ -677,6 +684,8 @@ func TestSynthesisSinglePassingSuccessWithMinSeverityPassthrough(t *testing.T) {
 	review, err := tc.DB.GetReviewByJobID(synth.ID)
 	require.NoError(t, err)
 	assert.Equal(memberOutput, review.Output, "passing single-success output needs no severity filter")
+	require.NotNil(t, review.VerdictBool)
+	assert.Equal(1, *review.VerdictBool, "passthrough must preserve the structured verdict")
 	assert.Equal(memberAgent, review.Agent, "passthrough remains labeled with the surviving member")
 	assert.False(synthCalled, "passing single-success min-severity panel must not invoke synthesis")
 }

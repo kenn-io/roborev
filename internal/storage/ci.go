@@ -30,6 +30,7 @@ type BatchReviewResult struct {
 	ReviewType            string `json:"review_type"`
 	PanelMemberName       string `json:"panel_member_name,omitempty"`
 	Output                string `json:"output"`
+	VerdictBool           *int   `json:"verdict_bool,omitempty"`
 	Status                string `json:"status"` // "done", "failed", "skipped", etc.
 	Error                 string `json:"error"`
 	SkipReason            string `json:"skip_reason,omitempty"`

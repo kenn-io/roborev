@@ -6,6 +6,8 @@ import (
 	"slices"
 	"strings"
 	"unicode/utf8"
+
+	"go.kenn.io/roborev/internal/storage"
 )
 
 // ReviewResult holds the outcome of a single review in a batch.
@@ -16,6 +18,10 @@ type ReviewResult struct {
 	Output     string
 	Status     string // ResultDone, ResultFailed, or ResultSkipped
 	Error      string
+	// Verdict is the canonical pass/fail result when the review provider
+	// returned structured output. Prose reviews leave it nil and use the
+	// existing deterministic Markdown parser.
+	Verdict *bool
 
 	// Skipped/SkipReason are populated for skipped (auto-design) rows so
 	// synthesis can render them as a distinct short section instead of
@@ -27,6 +33,15 @@ type ReviewResult struct {
 	// otherwise successful panel fail. It is set from the resolved member config
 	// stored with the job, not from live config.
 	AllowFailure bool
+}
+
+// Passed returns the canonical review verdict when one is available, falling
+// back to Markdown parsing for prose reviews.
+func (r ReviewResult) Passed() bool {
+	if r.Verdict != nil {
+		return *r.Verdict
+	}
+	return storage.ParseVerdict(r.Output) == "P"
 }
 
 // Result status values for ReviewResult.Status.

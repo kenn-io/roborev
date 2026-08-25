@@ -241,7 +241,10 @@ func runSingle(
 			if decodeErr != nil {
 				err = decodeErr
 			} else {
-				output = structured.Filter(cfg.MinSeverity).Markdown()
+				filtered := structured.Filter(cfg.MinSeverity)
+				passed := filtered.Passed()
+				result.Verdict = &passed
+				output = filtered.Markdown()
 			}
 		}
 	} else {

@@ -3488,10 +3488,16 @@ func toReviewResult(
 	if br.PanelMemberConfigJSON != "" {
 		_ = json.Unmarshal([]byte(br.PanelMemberConfigJSON), &member)
 	}
+	var verdict *bool
+	if br.VerdictBool != nil {
+		passed := *br.VerdictBool != 0
+		verdict = &passed
+	}
 	return reviewpkg.ReviewResult{
 		Agent:        br.Agent,
 		ReviewType:   br.ReviewType,
 		Output:       br.Output,
+		Verdict:      verdict,
 		Status:       br.Status,
 		Error:        br.Error,
 		Skipped:      br.Status == string(storage.JobStatusSkipped),

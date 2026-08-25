@@ -11,7 +11,6 @@ import (
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
-	"go.kenn.io/roborev/internal/storage"
 )
 
 // ErrAllFailed is returned by Synthesize when every review job
@@ -109,9 +108,13 @@ func formatSingleResult(
 	r ReviewResult,
 	headSHA string,
 ) string {
+	passed := r.Passed()
+	if r.Verdict == nil &&
+		(r.Output == "" || r.Output == "No issues found.") {
+		passed = true
+	}
 	var header string
-	if r.Output == "" || r.Output == "No issues found." ||
-		storage.ParseVerdict(r.Output) == "P" {
+	if passed {
 		header = fmt.Sprintf(
 			"## roborev: Review Passed (`%s`)\n\n",
 			gitrepo.ShortSHA(headSHA))

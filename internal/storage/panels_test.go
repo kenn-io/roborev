@@ -670,7 +670,9 @@ func TestGetPanelMemberReviews(t *testing.T) {
 	m0 := byIndex[0]
 	_, err = db.Exec(`UPDATE review_jobs SET status='running', worker_id='w1' WHERE id=?`, m0.ID)
 	require.NoError(t, err)
-	require.NoError(t, db.CompleteJob(m0.ID, "test", "prompt", "No issues found."))
+	require.NoError(t, db.CompleteJobWithVerdict(
+		m0.ID, "test", "prompt", "High: no actionable findings.", true,
+	))
 
 	got, err := db.GetPanelMemberReviews("run-1")
 	require.NoError(t, err)
@@ -686,7 +688,9 @@ func TestGetPanelMemberReviews(t *testing.T) {
 
 	// The completed member surfaces its review output and done status.
 	assert.Equal("done", got[0].Status)
-	assert.Equal("No issues found.", got[0].Output)
+	assert.Equal("High: no actionable findings.", got[0].Output)
+	require.NotNil(t, got[0].VerdictBool)
+	assert.Equal(1, *got[0].VerdictBool)
 	// A member without a review has an empty output but its own status.
 	assert.Empty(got[1].Output)
 

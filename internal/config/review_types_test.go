@@ -40,6 +40,27 @@ func TestReviewTypeDefinitionsValidateNamesAndTemplates(t *testing.T) {
 			wantErr: "reserved",
 		},
 		{
+			name: "fix workflow reserved",
+			types: map[string]ReviewTypeSpec{
+				"fix": {Template: "review.tmpl"},
+			},
+			wantErr: "reserved",
+		},
+		{
+			name: "refine workflow reserved",
+			types: map[string]ReviewTypeSpec{
+				"refine": {Template: "review.tmpl"},
+			},
+			wantErr: "reserved",
+		},
+		{
+			name: "classify workflow reserved",
+			types: map[string]ReviewTypeSpec{
+				"classify": {Template: "review.tmpl"},
+			},
+			wantErr: "reserved",
+		},
+		{
 			name: "missing template",
 			types: map[string]ReviewTypeSpec{
 				"api-contract": {},
