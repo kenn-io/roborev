@@ -2518,6 +2518,7 @@ components:
           type: string
         prompt:
           type: string
+        structured_output: {}
         synced_at:
           format: date-time
           type: string

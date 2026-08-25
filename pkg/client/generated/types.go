@@ -1909,6 +1909,7 @@ type Review struct {
 	JobID              int64      `json:"job_id"`
 	Output             string     `json:"output" validate:"required"`
 	Prompt             string     `json:"prompt" validate:"required"`
+	StructuredOutput   *struct{}  `json:"structured_output,omitempty"`
 	SyncedAt           *time.Time `json:"synced_at,omitempty"`
 	UpdatedAt          *time.Time `json:"updated_at,omitempty"`
 	UpdatedByMachineID *string    `json:"updated_by_machine_id,omitempty"`
