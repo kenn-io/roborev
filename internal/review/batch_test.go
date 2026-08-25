@@ -356,6 +356,23 @@ func TestRunBatchUsesPassedRepoConfigForCustomAgent(t *testing.T) {
 	assert.Equal(t, "base-agent", results[0].Agent)
 }
 
+func TestRunBatchUsesPassedRepoConfigForNamedACPExecution(t *testing.T) {
+	cfg := BatchConfig{
+		RepoPath:    t.TempDir(),
+		GitRef:      "abc..def",
+		Agents:      []string{"acp.trusted"},
+		ReviewTypes: []string{"default"},
+		RepoConfig: &config.RepoConfig{ACP: config.ACPAgentConfigs{
+			"trusted": {Command: "go"},
+		}},
+	}
+
+	results := RunBatch(context.Background(), cfg)
+	require.Len(t, results, 1)
+	assert.Equal(t, ResultFailed, results[0].Status)
+	assert.Contains(t, results[0].Error, "build prompt")
+}
+
 func TestRunBatchPreservesStructuredVerdict(t *testing.T) {
 	repo := testutil.NewTestRepoWithCommit(t)
 	require.NoError(t, os.WriteFile(

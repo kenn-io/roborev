@@ -134,11 +134,11 @@ func runSingle(
 			err = fmt.Errorf("no agents available (mock registry)")
 		}
 	} else if autoDetectAgent {
-		resolvedAgent, err = agent.GetAvailableWithConfig(
-			cfg.RepoPath, resolvedName, cfg.GlobalConfig, backupAgent)
+		resolvedAgent, err = agent.GetAvailableWithConfigFromConfig(
+			cfg.RepoConfig, resolvedName, cfg.GlobalConfig, backupAgent)
 	} else {
-		resolvedAgent, err = agent.GetPreferredOrBackupWithConfig(
-			cfg.RepoPath, resolvedName, cfg.GlobalConfig, backupAgent)
+		resolvedAgent, err = agent.GetPreferredOrBackupWithConfigFromConfig(
+			cfg.RepoConfig, resolvedName, cfg.GlobalConfig, backupAgent)
 	}
 
 	if err == nil && hasConfig {

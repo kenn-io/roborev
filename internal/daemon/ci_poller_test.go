@@ -3240,6 +3240,33 @@ func TestResolveCIMatrixMembersUsesCustomTypeReasoning(t *testing.T) {
 	assert.Equal(t, "maximum", members[0].Reasoning)
 }
 
+func TestResolveCIMatrixMembersInvalidCIReasoningUsesFallback(t *testing.T) {
+	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
+	h.Poller.agentResolverFn = func(name string) (string, error) {
+		return name, nil
+	}
+	repoCfg := &config.RepoConfig{
+		Review: config.ReviewConfig{Types: map[string]config.ReviewTypeSpec{
+			"thermonuclear": {
+				Template:  "review.tmpl",
+				Reasoning: "maximum",
+			},
+		}},
+		CI: config.RepoCIConfig{
+			Agents:      []string{"codex"},
+			ReviewTypes: []string{"thermonuclear"},
+			Reasoning:   "invalid",
+		},
+	}
+
+	members, _, err := h.Poller.resolveCIMatrixMembers(
+		h.Repo, repoCfg, h.Cfg, "acme/api",
+	)
+	require.NoError(t, err)
+	require.Len(t, members, 1)
+	assert.Equal(t, "thorough", members[0].Reasoning)
+}
+
 func TestResolveMatrixMemberAgentBlankAgentAutoDetectsAvailableAgent(t *testing.T) {
 	h := newCIPollerHarness(t, "git@github.com:acme/api.git")
 	t.Setenv("PATH", "")
