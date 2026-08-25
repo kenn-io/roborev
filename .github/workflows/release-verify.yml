@@ -5,6 +5,8 @@ name: Verify release assets
 # the latest release is the only way to catch a swap like the one that
 # shipped v0.65.0 binaries without the embedded web UI (#1081).
 on:
+  release:
+    types: [published]
   schedule:
     - cron: '17 6 * * *'
   workflow_dispatch:
@@ -25,11 +27,12 @@ jobs:
       - name: Resolve release tag
         id: resolve
         env:
+          EVENT_TAG: ${{ github.event.release.tag_name }}
           INPUT_TAG: ${{ inputs.tag }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          TAG="${INPUT_TAG:-}"
+          TAG="${INPUT_TAG:-$EVENT_TAG}"
           if [ -z "$TAG" ]; then
             TAG="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
           fi
