@@ -761,6 +761,7 @@ func (db *DB) RequeueUpdateInterruptedJob(
 		    started_at = NULL,
 		    session_id = NULL,
 		    session_resumed = 0,
+		    resume_source_job_uuid = NULL,
 		    token_usage = NULL,
 		    command_line = NULL,
 		    agent_invoked = 0,

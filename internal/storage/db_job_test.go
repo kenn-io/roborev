@@ -277,6 +277,11 @@ func TestRequeueUpdateInterruptedJobResetsAttemptWithoutRetry(t *testing.T) {
 	require.NoError(t, env.db.SaveJobSessionID(
 		env.job.ID, "worker-A", "session-1",
 	))
+	_, err = env.db.Exec(
+		`UPDATE review_jobs SET resume_source_job_uuid = ? WHERE id = ?`,
+		"source-job-uuid", env.job.ID,
+	)
+	require.NoError(t, err)
 	require.NoError(t, env.db.SaveJobTokenUsage(
 		env.job.ID,
 		"session-1",
@@ -296,6 +301,7 @@ func TestRequeueUpdateInterruptedJobResetsAttemptWithoutRetry(t *testing.T) {
 	assert.Empty(t, got.WorkerID)
 	assert.Nil(t, got.StartedAt)
 	assert.Empty(t, got.SessionID)
+	assert.Empty(t, got.ResumeSourceJobUUID)
 	assert.Empty(t, got.TokenUsage)
 	assert.Empty(t, got.CommandLine)
 	assert.False(t, getJobAgentInvoked(t, env.db, env.job.ID))
