@@ -545,7 +545,7 @@ func inRangeReviewViews(contexts []HistoricalReviewContext) []InRangeReviewTempl
 			continue
 		}
 		verdictLabel := "unknown"
-		switch storage.ParseVerdict(ctx.Review.Output) {
+		switch ctx.Review.Verdict() {
 		case "P":
 			verdictLabel = "passed"
 		case "F":

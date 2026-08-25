@@ -618,6 +618,21 @@ func TestPanelWrapperNoDoubleHeader(t *testing.T) {
 		assert.Contains(t, body, "- Medium finding")
 	})
 
+	t.Run("stored verdict controls plain output", func(t *testing.T) {
+		h.Cfg.CI.IncludeCosts = false
+		comments := h.CaptureComments()
+		_, synth, _ := h.seedCIPanelRun(t, "acme/api", 24, "headsha999", "base..headsha999",
+			[]jobSpec{{Agent: "test", ReviewType: "review", Status: "done", Output: "x"}})
+		h.completeSynthesisWithReview(t, synth.ID, "No issues found in the summary.\n\n- High finding")
+		_, err := h.DB.Exec(`UPDATE reviews SET verdict_bool = 0 WHERE job_id = ?`, synth.ID)
+		require.NoError(t, err)
+
+		h.Poller.handleReviewCompleted(ciEvent(synth.ID, "review.completed"))
+
+		require.Len(t, *comments, 1)
+		assert.Contains(t, (*comments)[0].Body, "- High finding")
+	})
+
 	t.Run("plain output footer includes reviewer summary", func(t *testing.T) {
 		h.Cfg.CI.IncludeCosts = false
 		comments := h.CaptureComments()

@@ -2397,10 +2397,7 @@ func (p *CIPoller) panelCommentBody(row *storage.CIPanel, members []storage.Batc
 	if strings.HasPrefix(strings.TrimSpace(rev.Output), "## roborev:") {
 		return appendPanelPRFooter(rev.Output, rev, members, includeCosts)
 	}
-	verdict := storage.ParseVerdict(rev.Output)
-	if rev.Job != nil && rev.Job.Verdict != nil {
-		verdict = *rev.Job.Verdict
-	}
+	verdict := rev.Verdict()
 	return formatPanelPRCommentWithHead(rev, verdict, members, includeCosts, row.HeadSHA)
 }
 

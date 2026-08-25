@@ -349,6 +349,20 @@ func TestHistoricalReviewContextPreviousReviewViewsPreserveChronologicalOrder(t 
 	assert.Equal(t, "aaaaaaa", views[1].Commit)
 }
 
+func TestInRangeReviewViewsUsesStoredVerdict(t *testing.T) {
+	failed := 0
+	views := inRangeReviewViews([]HistoricalReviewContext{{
+		SHA: "aaaaaaa",
+		Review: &storage.Review{
+			Output:      "No issues found in the summary.",
+			VerdictBool: &failed,
+		},
+	}})
+
+	require.Len(t, views, 1)
+	assert.Equal(t, "failed", views[0].Verdict)
+}
+
 func TestRenderPreviousReviewsFromContexts(t *testing.T) {
 	body, err := renderPreviousReviewsFromContexts([]HistoricalReviewContext{
 		{
