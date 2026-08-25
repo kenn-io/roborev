@@ -1184,8 +1184,12 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			}
 		} else if job.IsReviewJob() &&
 			agentReview.Verdict != storage.VerdictUnknown {
-			if err := wp.db.CompleteJobWithVerdict(
-				job.ID, agentName, reviewPrompt, output, agentReview.Verdict,
+			if err := wp.db.CompleteJobResult(
+				job.ID, agentName, reviewPrompt, storage.ReviewCompletion{
+					Output:           output,
+					Verdict:          agentReview.Verdict,
+					StructuredOutput: agentReview.StructuredOutput,
+				},
 			); err != nil {
 				log.Printf("[%s] Error storing review verdict: %v", workerID, err)
 				return

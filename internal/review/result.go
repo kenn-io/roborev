@@ -3,6 +3,7 @@
 package review
 
 import (
+	"encoding/json"
 	"slices"
 	"strings"
 	"unicode/utf8"
@@ -26,6 +27,13 @@ type ReviewResult struct {
 	// applied without reparsing or asking a synthesis agent to infer findings
 	// from rendered Markdown.
 	Structured *StructuredReview
+	// StructuredOutput is the unfiltered JSON returned by the agent. Queued
+	// reviews persist it so a later panel threshold can use the same findings.
+	StructuredOutput json.RawMessage
+	// StructuredMinSeverity is the threshold already applied to Output and
+	// Verdict. Later consumers combine it with their own threshold instead of
+	// accidentally restoring findings that were already excluded.
+	StructuredMinSeverity string
 
 	// Skipped/SkipReason are populated for skipped (auto-design) rows so
 	// synthesis can render them as a distinct short section instead of
@@ -54,8 +62,12 @@ func (r ReviewResult) FilterStructured(minSeverity string) ReviewResult {
 	if r.Structured == nil {
 		return r
 	}
-	filtered := r.Structured.Filter(minSeverity)
+	effectiveMinSeverity := stricterMinSeverity(
+		r.StructuredMinSeverity, minSeverity,
+	)
+	filtered := r.Structured.Filter(effectiveMinSeverity)
 	r.Structured = &filtered
+	r.StructuredMinSeverity = effectiveMinSeverity
 	r.Verdict = storage.VerdictFromPassed(filtered.Passed())
 	r.Output = filtered.Markdown()
 	return r

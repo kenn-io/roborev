@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"strings"
@@ -629,6 +630,7 @@ type SyncableReview struct {
 	Output             string
 	Closed             bool
 	VerdictBool        *bool
+	StructuredOutput   json.RawMessage
 	UpdatedByMachineID string
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
@@ -641,7 +643,7 @@ func (db *DB) GetReviewsToSync(machineID string, limit int) ([]SyncableReview, e
 		SELECT
 			r.id, r.uuid, r.job_id, j.uuid,
 			r.agent, r.prompt, r.output, r.closed,
-			r.verdict_bool, r.updated_by_machine_id, r.created_at, r.updated_at
+			r.verdict_bool, r.structured_output, r.updated_by_machine_id, r.created_at, r.updated_at
 		FROM reviews r
 		JOIN review_jobs j ON r.job_id = j.id
 		WHERE r.updated_by_machine_id = ?
@@ -662,11 +664,12 @@ func (db *DB) GetReviewsToSync(machineID string, limit int) ([]SyncableReview, e
 		var r SyncableReview
 		var createdAt, updatedAt string
 		var verdictBool sql.NullBool
+		var structuredOutput sql.NullString
 
 		err := rows.Scan(
 			&r.ID, &r.UUID, &r.JobID, &r.JobUUID,
 			&r.Agent, &r.Prompt, &r.Output, &r.Closed,
-			&verdictBool, &r.UpdatedByMachineID, &createdAt, &updatedAt,
+			&verdictBool, &structuredOutput, &r.UpdatedByMachineID, &createdAt, &updatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan review: %w", err)
@@ -676,6 +679,9 @@ func (db *DB) GetReviewsToSync(machineID string, limit int) ([]SyncableReview, e
 		r.UpdatedAt = parseSQLiteTime(updatedAt)
 		if verdictBool.Valid {
 			r.VerdictBool = new(verdictBool.Bool)
+		}
+		if structuredOutput.Valid {
+			r.StructuredOutput = json.RawMessage(structuredOutput.String)
 		}
 		reviews = append(reviews, r)
 	}
@@ -875,17 +881,18 @@ func (db *DB) UpsertPulledReview(r PulledReview) error {
 	_, err = db.Exec(`
 		INSERT INTO reviews (
 			uuid, job_id, agent, prompt, output, closed,
-			verdict_bool, updated_by_machine_id, created_at, updated_at, synced_at
-		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+			verdict_bool, structured_output, updated_by_machine_id, created_at, updated_at, synced_at
+		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(uuid) DO UPDATE SET
 			closed = excluded.closed,
 			verdict_bool = COALESCE(excluded.verdict_bool, reviews.verdict_bool),
+			structured_output = COALESCE(excluded.structured_output, reviews.structured_output),
 			updated_by_machine_id = excluded.updated_by_machine_id,
 			updated_at = excluded.updated_at,
 			synced_at = ?
 			WHERE `+sqliteNormalizedTimestampExpr("reviews.updated_at")+` < `+sqliteNormalizedTimestampExpr("excluded.updated_at")+`
 	`, r.UUID, jobID, r.Agent, r.Prompt, r.Output, r.Closed,
-		verdictBool,
+		verdictBool, nullStr(string(r.StructuredOutput)),
 		r.UpdatedByMachineID, r.CreatedAt.Format(time.RFC3339), r.UpdatedAt.Format(time.RFC3339), now, now)
 	return err
 }

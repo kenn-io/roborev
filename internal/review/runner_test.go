@@ -30,7 +30,11 @@ func TestRunAgentReviewKeepsCustomVerdictWithRenderedOutput(t *testing.T) {
 	)
 	require.NoError(t, err)
 	require.NotNil(t, got.Structured)
-	assert.Empty(t, got.Structured.Findings)
+	require.Len(t, got.Structured.Findings, 1)
+	assert.Equal(t, "low", got.Structured.Findings[0].Severity)
+	assert.JSONEq(t, string(a.result), string(got.StructuredOutput))
+	assert.Equal(t, "medium", got.StructuredMinSeverity)
+	assert.NotContains(t, got.Output, "Vague name")
 	assert.Equal(t, storage.VerdictPass, got.Verdict)
 	assert.Equal(t, got.Output+"\n", streamed.String())
 	assert.Equal(t, storage.VerdictFail, storage.ParseVerdict(got.Output),

@@ -118,6 +118,15 @@ func (r StructuredReview) Filter(minSeverity string) StructuredReview {
 	return filtered
 }
 
+func stricterMinSeverity(first, second string) string {
+	first = strings.ToLower(strings.TrimSpace(first))
+	second = strings.ToLower(strings.TrimSpace(second))
+	if severityRank(first) >= severityRank(second) {
+		return first
+	}
+	return second
+}
+
 func (r StructuredReview) Passed() bool {
 	return len(r.Findings) == 0
 }

@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"encoding/json"
 	"strings"
 	"time"
 
@@ -299,7 +300,8 @@ type Review struct {
 	SyncedAt           *time.Time `json:"synced_at,omitempty"`             // Last sync time
 
 	// Stored verdict: 1=pass, 0=fail, NULL=legacy (not yet backfilled)
-	VerdictBool *int `json:"verdict_bool,omitempty"`
+	VerdictBool      *int            `json:"verdict_bool,omitempty"`
+	StructuredOutput json.RawMessage `json:"structured_output,omitempty"`
 
 	// Joined fields
 	Job *ReviewJob `json:"job,omitempty"`

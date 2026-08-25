@@ -229,6 +229,8 @@ func runSingle(
 	result.Status = ResultDone
 	result.Output = agentReview.Output
 	result.Structured = agentReview.Structured
+	result.StructuredOutput = agentReview.StructuredOutput
+	result.StructuredMinSeverity = agentReview.StructuredMinSeverity
 	result.Verdict = agentReview.Verdict
 	return result
 }

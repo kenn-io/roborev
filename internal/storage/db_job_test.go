@@ -61,19 +61,26 @@ func TestJobLifecycle(t *testing.T) {
 	assert.Equal(t, JobStatusDone, updatedJob.Status)
 }
 
-func TestCompleteJobWithVerdictUsesExplicitVerdict(t *testing.T) {
+func TestCompleteJobResultStoresCanonicalReview(t *testing.T) {
 	env := setupJobEnv(t, "/tmp/structured-verdict", "structured123")
 	claimed := claimJob(t, env.db, "worker-1")
 	require.NotNil(t, claimed)
 
-	require.NoError(t, env.db.CompleteJobWithVerdict(
-		env.job.ID, "codex", "prompt", "No issues found.", VerdictFail,
+	structured := []byte(`{"summary":"Misleading summary.","findings":[]}`)
+	require.NoError(t, env.db.CompleteJobResult(
+		env.job.ID, "codex", "prompt", ReviewCompletion{
+			Output:           "No issues found.",
+			Verdict:          VerdictFail,
+			StructuredOutput: structured,
+		},
 	))
 	var verdict sql.NullInt64
+	var storedStructured string
 	require.NoError(t, env.db.QueryRow(
-		`SELECT verdict_bool FROM reviews WHERE job_id = ?`, env.job.ID,
-	).Scan(&verdict))
+		`SELECT verdict_bool, structured_output FROM reviews WHERE job_id = ?`, env.job.ID,
+	).Scan(&verdict, &storedStructured))
 	assert.Equal(t, sql.NullInt64{Int64: 0, Valid: true}, verdict)
+	assert.JSONEq(t, string(structured), storedStructured)
 }
 
 func TestClaimJobOrdersMixedEnqueueTimestampFormats(t *testing.T) {

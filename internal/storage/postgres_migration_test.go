@@ -84,23 +84,21 @@ func openTestPgPoolRawAtVersion(t *testing.T, version int) *PgPool {
 	return pool
 }
 
-func TestPostgresMigration_ReviewVerdict(t *testing.T) {
+func TestPostgresMigration_CanonicalReview(t *testing.T) {
 	openTestPgPoolRawAtVersion(t, 18)
 	ctx := t.Context()
 
 	pg := openTestPgPool(t)
 	defer pg.Close()
 
-	var exists bool
+	var count int
 	require.NoError(t, pgxPool(pg).QueryRow(ctx, `
-		SELECT EXISTS (
-			SELECT 1 FROM information_schema.columns
-			WHERE table_schema = 'roborev'
-			  AND table_name = 'reviews'
-			  AND column_name = 'verdict_bool'
-		)
-	`).Scan(&exists))
-	assert.True(t, exists)
+		SELECT COUNT(*) FROM information_schema.columns
+		WHERE table_schema = 'roborev'
+		  AND table_name = 'reviews'
+		  AND column_name IN ('verdict_bool', 'structured_output')
+	`).Scan(&count))
+	assert.Equal(t, 2, count)
 }
 
 func TestPostgresMigration_ResponseSource(t *testing.T) {

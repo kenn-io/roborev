@@ -666,14 +666,24 @@ func TestSynthesisSinglePassingSuccessWithMinSeverityPassthrough(t *testing.T) {
 	})
 	setSynthesisAgent(t, tc, runUUID, synthAgent)
 	_, err := tc.DB.Exec(
-		"UPDATE review_jobs SET min_severity = ? WHERE id = ?",
-		"medium", synthJob.ID,
+		"UPDATE review_jobs SET min_severity = CASE WHEN id = ? THEN 'low' ELSE 'medium' END WHERE id IN (?, ?)",
+		members[0].ID, members[0].ID, synthJob.ID,
 	)
 	require.NoError(t, err)
-	const memberOutput = "High: no actionable findings."
+	const memberOutput = "## Review Findings\n\nThe summary claims a high issue.\n\n### 1. Low\n\n**Problem:** low-only\n\n**Fix:** low fix"
+	structured := json.RawMessage(`{
+  "summary": "The summary claims a high issue.",
+  "findings": [
+    {"severity":"low","problem":"low-only","fix":"low fix","location":null}
+  ]
+}`)
 	markMemberRunning(t, tc, members[0].ID)
-	require.NoError(t, tc.DB.CompleteJobWithVerdict(
-		members[0].ID, memberAgent, "", memberOutput, storage.VerdictPass,
+	require.NoError(t, tc.DB.CompleteJobResult(
+		members[0].ID, memberAgent, "", storage.ReviewCompletion{
+			Output:           memberOutput,
+			Verdict:          storage.VerdictFail,
+			StructuredOutput: structured,
+		},
 	))
 	failMember(t, tc, members[1].ID)
 
@@ -683,11 +693,15 @@ func TestSynthesisSinglePassingSuccessWithMinSeverityPassthrough(t *testing.T) {
 	tc.assertJobStatus(t, synth.ID, storage.JobStatusDone)
 	review, err := tc.DB.GetReviewByJobID(synth.ID)
 	require.NoError(t, err)
-	assert.Equal(memberOutput, review.Output, "passing single-success output needs no severity filter")
+	assert.Contains(review.Output, "No findings at or above the configured severity threshold.")
+	assert.NotContains(review.Output, "low-only")
 	require.NotNil(t, review.VerdictBool)
-	assert.Equal(1, *review.VerdictBool, "passthrough must preserve the structured verdict")
+	assert.Equal(1, *review.VerdictBool, "panel threshold must use the structured findings")
 	assert.Equal(memberAgent, review.Agent, "passthrough remains labeled with the surviving member")
 	assert.False(synthCalled, "passing single-success min-severity panel must not invoke synthesis")
+	memberReview, err := tc.DB.GetReviewByJobID(members[0].ID)
+	require.NoError(t, err)
+	assert.JSONEq(string(structured), string(memberReview.StructuredOutput))
 }
 
 func TestSynthesisSingleMarkerOnlySuccessWithMinSeverityNormalizesOutput(t *testing.T) {

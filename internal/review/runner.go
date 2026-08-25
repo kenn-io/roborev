@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 
@@ -9,15 +10,6 @@ import (
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
 )
-
-// AgentReview is the canonical result of one agent review. Output and Verdict
-// are resolved together so callers do not reinterpret rendered review text.
-// Structured is populated for schema-constrained custom reviews.
-type AgentReview struct {
-	Output     string
-	Verdict    storage.Verdict
-	Structured *StructuredReview
-}
 
 // RunAgentReview owns the built-in versus custom review execution contract.
 // Built-in reviews derive their verdict once from prose. Custom reviews derive
@@ -27,13 +19,13 @@ func RunAgentReview(
 	a agent.Agent,
 	repoPath, gitRef, reviewPrompt, reviewType, minSeverity string,
 	out io.Writer,
-) (AgentReview, error) {
+) (ReviewResult, error) {
 	if config.IsBuiltInReviewType(reviewType) {
 		output, err := a.Review(ctx, repoPath, gitRef, reviewPrompt, out)
 		if err != nil {
-			return AgentReview{}, err
+			return ReviewResult{}, err
 		}
-		result := AgentReview{Output: output}
+		result := ReviewResult{Output: output}
 		if output != "" {
 			result.Verdict = storage.ParseVerdict(output)
 		}
@@ -42,7 +34,7 @@ func RunAgentReview(
 
 	structuredAgent, ok := a.(agent.StructuredReviewAgent)
 	if !ok {
-		return AgentReview{}, fmt.Errorf(
+		return ReviewResult{}, fmt.Errorf(
 			"agent %q does not support schema-constrained reviews", a.Name(),
 		)
 	}
@@ -50,20 +42,22 @@ func RunAgentReview(
 		ctx, repoPath, gitRef, reviewPrompt, CustomReviewSchema, out,
 	)
 	if err != nil {
-		return AgentReview{}, err
+		return ReviewResult{}, err
 	}
 	structured, err := DecodeStructuredReview(raw)
 	if err != nil {
-		return AgentReview{}, err
+		return ReviewResult{}, err
 	}
-	structured = structured.Filter(minSeverity)
-	output := structured.Markdown()
+	filtered := structured.Filter(minSeverity)
+	output := filtered.Markdown()
 	if out != nil {
 		_, _ = fmt.Fprintln(out, output)
 	}
-	return AgentReview{
-		Output:     output,
-		Verdict:    storage.VerdictFromPassed(structured.Passed()),
-		Structured: &structured,
+	return ReviewResult{
+		Output:                output,
+		Verdict:               storage.VerdictFromPassed(filtered.Passed()),
+		Structured:            &structured,
+		StructuredOutput:      append(json.RawMessage(nil), raw...),
+		StructuredMinSeverity: minSeverity,
 	}, nil
 }

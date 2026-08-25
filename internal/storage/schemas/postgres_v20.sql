@@ -1,6 +1,6 @@
 -- PostgreSQL schema version 20
 -- On top of v19 (review experiments), preserves the canonical stored verdict
--- when reviews synchronize between machines.
+-- and schema-constrained output when reviews synchronize between machines.
 -- Note: Version is managed by EnsureSchema(), not this file.
 
 CREATE SCHEMA IF NOT EXISTS roborev;
@@ -90,6 +90,7 @@ CREATE TABLE IF NOT EXISTS roborev.reviews (
   output TEXT NOT NULL,
   closed BOOLEAN NOT NULL DEFAULT FALSE,
   verdict_bool BOOLEAN,
+  structured_output JSONB,
   updated_by_machine_id UUID NOT NULL,
   created_at TIMESTAMP WITH TIME ZONE DEFAULT NOW(),
   updated_at TIMESTAMP WITH TIME ZONE DEFAULT NOW()

@@ -2,6 +2,7 @@ package storage
 
 import (
 	"database/sql"
+	"encoding/json"
 	"time"
 )
 
@@ -25,19 +26,21 @@ func (db *DB) RecordCIReview(githubRepo string, prNumber int, headSHA string, jo
 
 // BatchReviewResult holds the output of a single review job within a panel run.
 type BatchReviewResult struct {
-	JobID                 int64  `json:"job_id"`
-	Agent                 string `json:"agent"`
-	ReviewType            string `json:"review_type"`
-	PanelMemberName       string `json:"panel_member_name,omitempty"`
-	Output                string `json:"output"`
-	VerdictBool           *int   `json:"verdict_bool,omitempty"`
-	Status                string `json:"status"` // "done", "failed", "skipped", etc.
-	Error                 string `json:"error"`
-	SkipReason            string `json:"skip_reason,omitempty"`
-	PanelMemberConfigJSON string `json:"panel_member_config_json,omitempty"`
-	StartedAt             string `json:"started_at,omitempty"`
-	FinishedAt            string `json:"finished_at,omitempty"`
-	TokenUsage            string `json:"token_usage,omitempty"`
+	JobID                 int64           `json:"job_id"`
+	Agent                 string          `json:"agent"`
+	ReviewType            string          `json:"review_type"`
+	PanelMemberName       string          `json:"panel_member_name,omitempty"`
+	Output                string          `json:"output"`
+	VerdictBool           *int            `json:"verdict_bool,omitempty"`
+	StructuredOutput      json.RawMessage `json:"structured_output,omitempty"`
+	MinSeverity           string          `json:"min_severity,omitempty"`
+	Status                string          `json:"status"` // "done", "failed", "skipped", etc.
+	Error                 string          `json:"error"`
+	SkipReason            string          `json:"skip_reason,omitempty"`
+	PanelMemberConfigJSON string          `json:"panel_member_config_json,omitempty"`
+	StartedAt             string          `json:"started_at,omitempty"`
+	FinishedAt            string          `json:"finished_at,omitempty"`
+	TokenUsage            string          `json:"token_usage,omitempty"`
 }
 
 // CancelJobWithError cancels a queued or running job and sets an error

@@ -3,6 +3,7 @@ package storage
 import (
 	"context"
 	_ "embed"
+	"encoding/json"
 	"errors"
 	"fmt"
 	"log"
@@ -444,6 +445,9 @@ func (p *PgPool) EnsureSchema(ctx context.Context) error {
 			if _, err = p.pool.Exec(ctx, `ALTER TABLE reviews ADD COLUMN IF NOT EXISTS verdict_bool BOOLEAN`); err != nil {
 				return fmt.Errorf("v20 migration (add review verdict): %w", err)
 			}
+			if _, err = p.pool.Exec(ctx, `ALTER TABLE reviews ADD COLUMN IF NOT EXISTS structured_output JSONB`); err != nil {
+				return fmt.Errorf("v20 migration (add structured review output): %w", err)
+			}
 		}
 		// Update version
 		_, err = p.pool.Exec(ctx, `INSERT INTO schema_version (version) VALUES ($1) ON CONFLICT (version) DO NOTHING`, pgSchemaVersion)
@@ -797,15 +801,16 @@ func (p *PgPool) UpsertReview(ctx context.Context, r SyncableReview) error {
 	_, err := p.pool.Exec(ctx, `
 		INSERT INTO reviews (
 			uuid, job_uuid, agent, prompt, output, closed,
-			verdict_bool, updated_by_machine_id, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, clock_timestamp())
+			verdict_bool, structured_output, updated_by_machine_id, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, clock_timestamp())
 		ON CONFLICT (uuid) DO UPDATE SET
 			closed = EXCLUDED.closed,
 			verdict_bool = COALESCE(EXCLUDED.verdict_bool, reviews.verdict_bool),
+			structured_output = COALESCE(EXCLUDED.structured_output, reviews.structured_output),
 			updated_by_machine_id = EXCLUDED.updated_by_machine_id,
 			updated_at = clock_timestamp()
 	`, r.UUID, r.JobUUID, r.Agent, r.Prompt, r.Output, r.Closed,
-		r.VerdictBool, r.UpdatedByMachineID, r.CreatedAt)
+		r.VerdictBool, nullJSON(r.StructuredOutput), r.UpdatedByMachineID, r.CreatedAt)
 	return err
 }
 
@@ -1110,6 +1115,7 @@ type PulledReview struct {
 	Output             string
 	Closed             bool
 	VerdictBool        *bool
+	StructuredOutput   json.RawMessage
 	UpdatedByMachineID string
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
@@ -1137,7 +1143,7 @@ func (p *PgPool) PullReviews(ctx context.Context, excludeMachineID string, known
 	rows, err := p.pool.Query(ctx, `
 		SELECT
 			r.uuid, r.job_uuid, r.agent, r.prompt, r.output, r.closed,
-			r.verdict_bool, r.updated_by_machine_id, r.created_at, r.updated_at, r.id
+			r.verdict_bool, r.structured_output, r.updated_by_machine_id, r.created_at, r.updated_at, r.id
 		FROM reviews r
 		WHERE (r.updated_by_machine_id IS NULL OR r.updated_by_machine_id != $1)
 		AND r.job_uuid = ANY($2)
@@ -1156,16 +1162,18 @@ func (p *PgPool) PullReviews(ctx context.Context, excludeMachineID string, known
 
 	for rows.Next() {
 		var r PulledReview
+		var structuredOutput []byte
 
 		err := rows.Scan(
 			&r.UUID, &r.JobUUID, &r.Agent, &r.Prompt, &r.Output, &r.Closed,
-			&r.VerdictBool, &r.UpdatedByMachineID, &r.CreatedAt, &r.UpdatedAt, &lastID,
+			&r.VerdictBool, &structuredOutput, &r.UpdatedByMachineID, &r.CreatedAt, &r.UpdatedAt, &lastID,
 		)
 		if err != nil {
 			return nil, cursor, fmt.Errorf("scan review: %w", err)
 		}
 
 		lastUpdatedAt = r.UpdatedAt
+		r.StructuredOutput = append(json.RawMessage(nil), structuredOutput...)
 		reviews = append(reviews, r)
 	}
 
@@ -1258,6 +1266,13 @@ func nullString(s string) any {
 	return s
 }
 
+func nullJSON(raw json.RawMessage) any {
+	if len(raw) == 0 {
+		return nil
+	}
+	return raw
+}
+
 func sanitizePostgresText(s string) string {
 	return strings.ReplaceAll(strings.ToValidUTF8(s, "\uFFFD"), "\x00", "\uFFFD")
 }
@@ -1291,15 +1306,16 @@ func (p *PgPool) BatchUpsertReviews(ctx context.Context, reviews []SyncableRevie
 		batch.Queue(`
 			INSERT INTO reviews (
 				uuid, job_uuid, agent, prompt, output, closed,
-				verdict_bool, updated_by_machine_id, created_at, updated_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, clock_timestamp())
+				verdict_bool, structured_output, updated_by_machine_id, created_at, updated_at
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10, clock_timestamp())
 			ON CONFLICT (uuid) DO UPDATE SET
 				closed = EXCLUDED.closed,
 				verdict_bool = COALESCE(EXCLUDED.verdict_bool, reviews.verdict_bool),
+				structured_output = COALESCE(EXCLUDED.structured_output, reviews.structured_output),
 				updated_by_machine_id = EXCLUDED.updated_by_machine_id,
 				updated_at = clock_timestamp()
 		`, r.UUID, r.JobUUID, r.Agent, r.Prompt, r.Output, r.Closed,
-			r.VerdictBool, r.UpdatedByMachineID, r.CreatedAt)
+			r.VerdictBool, nullJSON(r.StructuredOutput), r.UpdatedByMachineID, r.CreatedAt)
 	}
 
 	br := p.pool.SendBatch(ctx, batch)

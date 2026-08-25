@@ -864,6 +864,18 @@ func (db *DB) migrate() error {
 		}
 	}
 
+	// Migration: preserve schema-constrained review output for later severity
+	// filtering by panel synthesis.
+	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('reviews') WHERE name = 'structured_output'`).Scan(&count)
+	if err != nil {
+		return fmt.Errorf("check structured_output column: %w", err)
+	}
+	if count == 0 {
+		if _, err = db.Exec(`ALTER TABLE reviews ADD COLUMN structured_output TEXT`); err != nil {
+			return fmt.Errorf("add structured_output column: %w", err)
+		}
+	}
+
 	// Migration: add provider column to review_jobs if missing
 	err = db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('review_jobs') WHERE name = 'provider'`).Scan(&count)
 	if err != nil {

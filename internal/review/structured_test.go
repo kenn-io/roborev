@@ -44,3 +44,8 @@ func TestStructuredReviewRejectsUnknownFields(t *testing.T) {
 	))
 	require.ErrorContains(t, err, "unknown field")
 }
+
+func TestStricterMinSeverity(t *testing.T) {
+	assert.Equal(t, "high", stricterMinSeverity("low", "high"))
+	assert.Equal(t, "high", stricterMinSeverity("high", "low"))
+}

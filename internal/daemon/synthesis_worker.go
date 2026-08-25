@@ -38,6 +38,9 @@ func (wp *WorkerPool) processSynthesisJob(
 		return
 	}
 	results := toReviewResults(rows)
+	for i := range results {
+		results[i] = results[i].FilterStructured(job.MinSeverity)
+	}
 	succeeded := filterSucceeded(results)
 
 	switch len(succeeded) {
@@ -254,8 +257,10 @@ func (wp *WorkerPool) completeSynthesisLocked(
 	agentName, prompt, output := res.agentName, res.prompt, res.output
 	var completeErr error
 	if res.verdict != storage.VerdictUnknown {
-		completeErr = wp.db.CompleteJobWithVerdict(
-			job.ID, agentName, prompt, output, res.verdict,
+		completeErr = wp.db.CompleteJobResult(
+			job.ID, agentName, prompt, storage.ReviewCompletion{
+				Output: output, Verdict: res.verdict,
+			},
 		)
 	} else {
 		completeErr = wp.db.CompleteJob(job.ID, agentName, prompt, output)

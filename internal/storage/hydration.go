@@ -179,10 +179,11 @@ func applyReviewJobScan(job *ReviewJob, fields reviewJobScanFields) {
 }
 
 type reviewScanFields struct {
-	CreatedAt   string
-	Closed      int
-	UUID        sql.NullString
-	VerdictBool sql.NullInt64
+	CreatedAt        string
+	Closed           int
+	UUID             sql.NullString
+	VerdictBool      sql.NullInt64
+	StructuredOutput sql.NullString
 }
 
 func applyReviewScan(review *Review, fields reviewScanFields) {
@@ -190,6 +191,9 @@ func applyReviewScan(review *Review, fields reviewScanFields) {
 	review.Closed = fields.Closed != 0
 	if fields.UUID.Valid {
 		review.UUID = fields.UUID.String
+	}
+	if fields.StructuredOutput.Valid {
+		review.StructuredOutput = []byte(fields.StructuredOutput.String)
 	}
 	applyReviewVerdict(review, fields.VerdictBool)
 }

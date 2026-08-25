@@ -3491,17 +3491,25 @@ func toReviewResult(
 	if br.VerdictBool != nil {
 		verdict = storage.VerdictFromPassed(*br.VerdictBool != 0)
 	}
-	return reviewpkg.ReviewResult{
-		Agent:        br.Agent,
-		ReviewType:   br.ReviewType,
-		Output:       br.Output,
-		Verdict:      verdict,
-		Status:       br.Status,
-		Error:        br.Error,
-		Skipped:      br.Status == string(storage.JobStatusSkipped),
-		SkipReason:   br.SkipReason,
-		AllowFailure: member.AllowFailure,
+	result := reviewpkg.ReviewResult{
+		Agent:            br.Agent,
+		ReviewType:       br.ReviewType,
+		Output:           br.Output,
+		Verdict:          verdict,
+		StructuredOutput: append(json.RawMessage(nil), br.StructuredOutput...),
+		Status:           br.Status,
+		Error:            br.Error,
+		Skipped:          br.Status == string(storage.JobStatusSkipped),
+		SkipReason:       br.SkipReason,
+		AllowFailure:     member.AllowFailure,
 	}
+	if len(br.StructuredOutput) != 0 {
+		if structured, err := reviewpkg.DecodeStructuredReview(br.StructuredOutput); err == nil {
+			result.Structured = &structured
+			result.StructuredMinSeverity = br.MinSeverity
+		}
+	}
+	return result
 }
 
 func formatPanelPRComment(review *storage.Review, verdict string, members []storage.BatchReviewResult, includeCosts bool) string {

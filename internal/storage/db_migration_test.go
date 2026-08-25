@@ -496,37 +496,21 @@ func TestMigrationNormalizesWindowsRepoRootPathConflicts(t *testing.T) {
 	assert.Equal(t, targetCommitID, responseCommitID)
 }
 
-func TestMigrationAddsVerdictBoolColumn(t *testing.T) {
+func TestMigrationAddsCanonicalReviewColumns(t *testing.T) {
 	db := openTestDB(t)
 	defer db.Close()
 
-	// Verify verdict_bool column exists
 	var count int
-	err := db.QueryRow(`SELECT COUNT(*) FROM pragma_table_info('reviews') WHERE name = 'verdict_bool'`).Scan(&count)
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "Failed to check verdict_bool column: %v", err)
-	}
-	if count != 1 {
-		require.Condition(t, func() bool {
-			return false
-		}, "verdict_bool column not found in reviews table")
-	}
+	require.NoError(t, db.QueryRow(`
+		SELECT COUNT(*) FROM pragma_table_info('reviews')
+		WHERE name IN ('verdict_bool', 'structured_output')
+	`).Scan(&count))
+	assert.Equal(t, 2, count)
 
 	// Verify the index exists
 	var indexCount int
-	err = db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_reviews_verdict_bool'`).Scan(&indexCount)
-	if err != nil {
-		require.Condition(t, func() bool {
-			return false
-		}, "Failed to check verdict_bool index: %v", err)
-	}
-	if indexCount != 1 {
-		require.Condition(t, func() bool {
-			return false
-		}, "idx_reviews_verdict_bool index not found")
-	}
+	require.NoError(t, db.QueryRow(`SELECT COUNT(*) FROM sqlite_master WHERE type='index' AND name='idx_reviews_verdict_bool'`).Scan(&indexCount))
+	assert.Equal(t, 1, indexCount)
 }
 
 func TestMigrationAddsSessionIDColumn(t *testing.T) {
