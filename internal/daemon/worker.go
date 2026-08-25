@@ -565,17 +565,17 @@ func (wp *WorkerPool) promptBuilderForJob(
 		WithContext(ctx).
 		ForRepo(checkout.promptRepoPath, job.RepoID)
 	if job.IsCIReview() && strings.TrimSpace(job.CIBaseBranch) != "" {
-		repoCfg, err := loadCIRepoConfig(checkout.promptRepoPath)
+		repoConfig, err := loadCIRepoConfig(checkout.promptRepoPath)
 		if err != nil {
 			if !config.IsConfigParseError(err) {
 				return nil, fmt.Errorf("load CI review config: %w", err)
 			}
 			log.Printf("worker: warning: failed to load CI review config: %v", err)
-			repoCfg = nil
+			repoConfig = ciRepoConfigSource{}
 		}
 		builder = builder.WithRepoConfig(
-			repoCfg,
-			"origin/"+strings.TrimSpace(job.CIBaseBranch),
+			repoConfig.Config,
+			repoConfig.Ref,
 		)
 	}
 	if !job.IsCIReview() {
@@ -870,7 +870,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	}
 
 	// Build the prompt (or use pre-stored prompt for task/compact jobs).
-	// CI rebuilds use the same default-branch config and base-ref template
+	// CI rebuilds use the same default-branch config and template
 	// files as enqueue-time prompt construction.
 	pb, err := wp.promptBuilderForJob(ctx, checkout, job, cfg)
 	if err != nil {

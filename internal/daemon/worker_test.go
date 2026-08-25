@@ -1324,30 +1324,32 @@ func TestProcessJob_UsesStoredReviewPromptOverride(t *testing.T) {
 	assert.Equal(t, job.Prompt, updated.Prompt)
 }
 
-func TestProcessJob_CIPromptFallbackUsesBaseReviewTypeConfig(t *testing.T) {
+func TestProcessJob_CIPromptFallbackUsesDefaultBranchReviewTypeConfig(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
-	agentName := "ci-custom-review-config-test"
+	agentName := "ci-custom-review-default-config-test"
 	agent.Register(&structuredWorkerTestAgent{
 		name: agentName,
 		result: json.RawMessage(`{
-  "summary":"Base review instructions loaded.",
+  "summary":"Default-branch review instructions loaded.",
   "findings":[]
 }`),
 	})
 	t.Cleanup(func() { agent.Unregister(agentName) })
 
+	releaseSHA := testutil.GetHeadSHA(t, tc.TmpDir)
 	sha := tc.GitRepo.CommitFiles(map[string]string{
-		".roborev.toml": `[review.types.base-review]
-template = "base-review.md"
+		".roborev.toml": `[review.types.default-review]
+template = "default-review.md"
 `,
-		"base-review.md": "Review the base branch contract.\n",
+		"default-review.md": "Review the default branch contract.\n",
 	}, "add base review type")
 	tc.GitRepo.Run("update-ref", "refs/remotes/origin/main", sha)
+	tc.GitRepo.Run("update-ref", "refs/remotes/origin/release/2.0", releaseSHA)
 	tc.GitRepo.Run(
 		"symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main",
 	)
 	require.NoError(t, os.Remove(filepath.Join(tc.TmpDir, ".roborev.toml")))
-	require.NoError(t, os.Remove(filepath.Join(tc.TmpDir, "base-review.md")))
+	require.NoError(t, os.Remove(filepath.Join(tc.TmpDir, "default-review.md")))
 
 	commit, err := tc.DB.GetOrCreateCommit(
 		tc.Repo.ID, sha, "Author", "Subject", time.Now(),
@@ -1357,9 +1359,9 @@ template = "base-review.md"
 		RepoID:       tc.Repo.ID,
 		CommitID:     commit.ID,
 		GitRef:       sha,
-		CIBaseBranch: "main",
+		CIBaseBranch: "release/2.0",
 		Agent:        agentName,
-		ReviewType:   "base-review",
+		ReviewType:   "default-review",
 		JobType:      storage.JobTypeReview,
 		Source:       storage.JobSourceCI,
 	})
@@ -1373,8 +1375,8 @@ template = "base-review.md"
 	tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
 	stored, err := tc.DB.GetReviewByJobID(job.ID)
 	require.NoError(t, err)
-	assert.Contains(t, stored.Prompt, "Review the base branch contract.")
-	assert.Contains(t, stored.Output, "Base review instructions loaded.")
+	assert.Contains(t, stored.Prompt, "Review the default branch contract.")
+	assert.Contains(t, stored.Output, "Default-branch review instructions loaded.")
 }
 
 func TestProcessJob_BuildsDirtyPromptFromPersistedDirtyFiles(t *testing.T) {

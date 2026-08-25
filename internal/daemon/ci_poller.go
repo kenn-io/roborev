@@ -94,22 +94,22 @@ type CIPoller struct {
 
 	// Test seams for mocking side effects (gh/git/LLM) in unit tests.
 	// Nil means use the real implementation.
-	listOpenPRsFn           func(context.Context, string) ([]ghPR, error)
-	listTrustedActorsFn     func(context.Context, string) (map[string]struct{}, error)
-	listPRDiscussionFn      func(context.Context, string, int) ([]ghpkg.PRDiscussionComment, error)
-	gitFetchFn              func(context.Context, string, []string) error
-	gitFetchPRHeadFn        func(context.Context, string, int, []string) error
-	gitCloneFn              func(ctx context.Context, ghRepo, targetPath string, env []string) error
-	mergeBaseFn             func(string, string, string) (string, error)
-	loadRepoConfigWithRawFn func(string) (*config.RepoConfig, map[string]any, error)
-	buildReviewPromptFn     func(context.Context, string, string, int64, int, string, string, string, string, *config.RepoConfig, string, *config.Config) (string, error)
-	postPRCommentFn         func(string, int, string) error
-	setCommitStatusFn       func(ghRepo, sha, state, description string) error
-	setSkippedCheckFn       func(ghRepo, sha, summary string) error
-	agentResolverFn         func(name string) (string, error)      // returns resolved agent name
-	jobCancelFn             func(jobID int64)                      // kills running worker process (optional)
-	isPROpenFn              func(ghRepo string, prNumber int) bool // checks if a PR is still open
-	prPostTargetFn          func(context.Context, string, int) (panelPostTarget, error)
+	listOpenPRsFn       func(context.Context, string) ([]ghPR, error)
+	listTrustedActorsFn func(context.Context, string) (map[string]struct{}, error)
+	listPRDiscussionFn  func(context.Context, string, int) ([]ghpkg.PRDiscussionComment, error)
+	gitFetchFn          func(context.Context, string, []string) error
+	gitFetchPRHeadFn    func(context.Context, string, int, []string) error
+	gitCloneFn          func(ctx context.Context, ghRepo, targetPath string, env []string) error
+	mergeBaseFn         func(string, string, string) (string, error)
+	loadRepoConfigFn    func(string) (ciRepoConfigSource, error)
+	buildReviewPromptFn func(context.Context, string, string, int64, int, string, string, string, string, *config.RepoConfig, string, *config.Config) (string, error)
+	postPRCommentFn     func(string, int, string) error
+	setCommitStatusFn   func(ghRepo, sha, state, description string) error
+	setSkippedCheckFn   func(ghRepo, sha, summary string) error
+	agentResolverFn     func(name string) (string, error)      // returns resolved agent name
+	jobCancelFn         func(jobID int64)                      // kills running worker process (optional)
+	isPROpenFn          func(ghRepo string, prNumber int) bool // checks if a PR is still open
+	prPostTargetFn      func(context.Context, string, int) (panelPostTarget, error)
 
 	repoResolver *RepoResolver
 
@@ -137,6 +137,12 @@ type CIPoller struct {
 	eventsStopping bool
 }
 
+type ciRepoConfigSource struct {
+	Config *config.RepoConfig
+	Raw    map[string]any
+	Ref    string
+}
+
 // NewCIPoller creates a new CI poller.
 // If GitHub App is configured, it initializes a token provider so gh commands
 // authenticate as the app bot instead of the user's personal account.
@@ -155,7 +161,7 @@ func NewCIPoller(db *storage.DB, cfgGetter ConfigGetter, broadcaster Broadcaster
 	p.gitFetchFn = gitFetchCtx
 	p.gitFetchPRHeadFn = gitFetchPRHead
 	p.mergeBaseFn = gitpkg.GetMergeBase
-	p.loadRepoConfigWithRawFn = loadCIRepoConfigWithRaw
+	p.loadRepoConfigFn = loadCIRepoConfig
 	// CI prompts deliberately carry no kata context. PR-creator trust does
 	// not extend to whoever controls the reviewed head SHA (any write
 	// collaborator can push to a same-repo PR branch), and GitHub's polling
@@ -524,13 +530,15 @@ func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, 
 	}
 
 	// Load repo config off the PR's default branch (never the working tree, F1).
-	repoCfg, rawRepoCfg, err := p.loadCIRepoConfigFor(repo.RootPath, ghRepo)
+	repoConfig, err := p.loadCIRepoConfigFor(repo.RootPath, ghRepo)
 	if err != nil {
 		if config.IsExperimentConfigError(err) || config.IsConfigValidationError(err) {
 			return &ciConfigurationError{err: err}
 		}
 		return err
 	}
+	repoCfg := repoConfig.Config
+	rawRepoCfg := repoConfig.Raw
 	selection, err := config.SelectReviewExperiment(config.ExperimentSelectionInput{
 		Workflow: config.ExperimentWorkflowCI,
 		Subject: config.ExperimentSubject{
@@ -576,8 +584,11 @@ func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, 
 	memberOpts, synthOpts, err := p.buildPanelOpts(
 		ctx,
 		buildPanelOptsInput{
-			repo: repo, repoCfg: repoCfg, cfg: cfg, ghRepo: ghRepo, gitRef: gitRef,
-			branch:     pr.HeadRefName,
+			repo: repo, repoCfg: repoCfg, repoCfgRef: repoConfig.Ref,
+			cfg: cfg, ghRepo: ghRepo, gitRef: gitRef,
+			branch: pr.HeadRefName,
+			// Gate hooks on the PR base (target) branch: it is maintainer-
+			// controlled, unlike the fork-author-controlled head ref.
 			baseBranch: pr.BaseRefName,
 			prNumber:   pr.Number, panelName: ciPanelName(repoCfg, cfg),
 			prDiscussionContext: prDiscussionContext,
@@ -658,20 +669,20 @@ func matchingCISkipLabel(prLabels, skipLabels []string) (string, bool) {
 // parse error is non-fatal — CI review falls back to global/default settings so
 // a broken repo override does not disable PR review entirely — but experiment
 // validation and other load failures are returned.
-func (p *CIPoller) loadCIRepoConfigFor(repoPath, ghRepo string) (*config.RepoConfig, map[string]any, error) {
-	load := p.loadRepoConfigWithRawFn
-	if load == nil {
-		load = loadCIRepoConfigWithRaw
+func (p *CIPoller) loadCIRepoConfigFor(repoPath, ghRepo string) (ciRepoConfigSource, error) {
+	loadRepoConfig := p.loadRepoConfigFn
+	if loadRepoConfig == nil {
+		loadRepoConfig = loadCIRepoConfig
 	}
-	repoCfg, rawRepoCfg, err := load(repoPath)
+	repoConfig, err := loadRepoConfig(repoPath)
 	if err != nil {
 		if config.IsConfigValidationError(err) || !config.IsConfigParseError(err) {
-			return nil, nil, fmt.Errorf("load repo config: %w", err)
+			return ciRepoConfigSource{}, fmt.Errorf("load repo config: %w", err)
 		}
 		log.Printf("CI poller: warning: failed to load repo config for %s: %v", ghRepo, err)
-		return nil, nil, nil
+		return ciRepoConfigSource{}, nil
 	}
-	return repoCfg, rawRepoCfg, nil
+	return repoConfig, nil
 }
 
 // alreadyReviewedPR reports whether this PR HEAD already has an in-flight,
@@ -1256,6 +1267,7 @@ func (p *CIPoller) commitWarrantsDesign(
 type buildPanelOptsInput struct {
 	repo                *storage.Repo
 	repoCfg             *config.RepoConfig
+	repoCfgRef          string
 	cfg                 *config.Config
 	ghRepo              string
 	gitRef              string
@@ -1283,7 +1295,7 @@ func (p *CIPoller) buildPanelOpts(ctx context.Context, in buildPanelOptsInput) (
 		storedPrompt, err := p.callBuildReviewPrompt(
 			ctx, in.repo.RootPath, in.gitRef, in.repo.ID, in.cfg.ReviewContextCount,
 			m.Agent, m.ReviewType, reviewMinSeverity, in.prDiscussionContext,
-			in.repoCfg, "origin/"+in.baseBranch, in.cfg,
+			in.repoCfg, in.repoCfgRef, in.cfg,
 		)
 		if err != nil {
 			// A canceled poller (Stop or shutdown) must abort the whole run
@@ -3052,30 +3064,27 @@ func isPermanentGitHubAccessError(err error) bool {
 	}
 }
 
-func loadCIRepoConfig(repoPath string) (*config.RepoConfig, error) {
-	cfg, _, err := loadCIRepoConfigWithRaw(repoPath)
-	return cfg, err
-}
-
-func loadCIRepoConfigWithRaw(repoPath string) (*config.RepoConfig, map[string]any, error) {
+func loadCIRepoConfig(repoPath string) (ciRepoConfigSource, error) {
 	defaultBranch, err := gitpkg.GetDefaultBranch(repoPath)
 	if err != nil {
 		// Can't determine default branch (no origin, bare repo, etc.)
 		// — fall back to filesystem.
-		return config.LoadRepoConfigWithRaw(repoPath)
+		cfg, raw, loadErr := config.LoadRepoConfigWithRaw(repoPath)
+		return ciRepoConfigSource{Config: cfg, Raw: raw}, loadErr
 	}
 
 	cfg, raw, err := config.LoadRepoConfigFromRefWithRaw(repoPath, defaultBranch)
 	if err != nil {
 		// Config exists but is invalid — surface the error, don't
 		// silently fall back to a stale working-tree copy.
-		return nil, nil, err
+		return ciRepoConfigSource{}, err
 	}
 	if cfg != nil {
-		return cfg, raw, nil
+		return ciRepoConfigSource{Config: cfg, Raw: raw, Ref: defaultBranch}, nil
 	}
 	// No .roborev.toml on the default branch — fall back to filesystem.
-	return config.LoadRepoConfigWithRaw(repoPath)
+	cfg, raw, err = config.LoadRepoConfigWithRaw(repoPath)
+	return ciRepoConfigSource{Config: cfg, Raw: raw}, err
 }
 
 // resolveCISynthesisMinSeverity resolves synthesis severity from the already
@@ -3795,10 +3804,10 @@ func (p *CIPoller) postPRComment(ghRepo string, prNumber int, body string) error
 func (p *CIPoller) resolveUpsertComments(ghRepo string) bool {
 	repo, err := p.findLocalRepo(ghRepo)
 	if err == nil && repo != nil {
-		repoCfg, err := loadCIRepoConfig(repo.RootPath)
-		if err == nil && repoCfg != nil &&
-			repoCfg.CI.UpsertComments != nil {
-			return *repoCfg.CI.UpsertComments
+		repoConfig, err := loadCIRepoConfig(repo.RootPath)
+		if err == nil && repoConfig.Config != nil &&
+			repoConfig.Config.CI.UpsertComments != nil {
+			return *repoConfig.Config.CI.UpsertComments
 		}
 	}
 	return p.cfgGetter.Config().CI.UpsertComments
@@ -3811,7 +3820,7 @@ func (p *CIPoller) resolveIncludeCosts(ghRepo string) bool {
 	repo, err := p.findLocalRepo(ghRepo)
 	if err == nil && repo != nil {
 		if loaded, loadErr := loadCIRepoConfig(repo.RootPath); loadErr == nil {
-			repoCfg = loaded
+			repoCfg = loaded.Config
 		}
 	}
 	return config.ResolveCIIncludeCosts(repoCfg, p.cfgGetter.Config())
