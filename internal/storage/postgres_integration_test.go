@@ -919,6 +919,15 @@ func TestIntegration_Multiplayer(t *testing.T) {
 
 	jobA, reviewA := createCompletedReview(t, dbA, nodeA.Repo.ID, "aaaa1111", "Alice", "Feature A", "prompt A", "Review from Machine A")
 	jobB, reviewB := createCompletedReview(t, dbB, nodeB.Repo.ID, "bbbb2222", "Bob", "Feature B", "prompt B", "Review from Machine B")
+	_, err := dbB.Exec(
+		`UPDATE reviews
+		 SET verdict_bool = 0, structured_output = ?, synced_at = NULL,
+		     updated_at = datetime('now')
+		 WHERE id = ?`,
+		`{"summary":"Canonical remote result.","findings":[]}`,
+		reviewB.ID,
+	)
+	require.NoError(t, err)
 
 	// Sync to push, then sync again to pull each other's data
 	if _, err := workerA.SyncNow(); err != nil {
@@ -1012,6 +1021,9 @@ func TestIntegration_Multiplayer(t *testing.T) {
 			return false
 		}, "Machine A: pulled review UUID mismatch: got %s, want %s", reviewBinA.UUID, reviewB.UUID)
 	}
+	require.NotNil(t, reviewBinA.VerdictBool)
+	assert.Equal(t, 0, *reviewBinA.VerdictBool)
+	assert.Equal(t, "Canonical remote result.", reviewBinA.StructuredOutput["summary"])
 
 	reviewAinB, err := dbB.GetReviewByCommitSHA("aaaa1111")
 	if err != nil {

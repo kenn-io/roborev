@@ -152,22 +152,48 @@ func (b *Builder) readCustomReviewRefFile(
 		}
 		seen[filePath] = struct{}{}
 
-		entry, err := git.ReadRefFile(b.repoPath, b.repoCfgRef, filePath)
-		if err != nil {
-			return nil, err
-		}
-		if !entry.Symlink {
-			return enforceCustomFileLimit(entry.Data, limit)
+		parts := strings.Split(filePath, "/")
+		var entry git.RefFile
+		var linkPath string
+		var remaining string
+		for i := range parts {
+			candidate := path.Join(parts[:i+1]...)
+			candidateEntry, err := git.ReadRefFile(
+				b.repoPath, b.repoCfgRef, candidate,
+			)
+			if err != nil {
+				if i == len(parts)-1 {
+					return nil, err
+				}
+				continue
+			}
+			if !candidateEntry.Symlink {
+				if i != len(parts)-1 {
+					return nil, fmt.Errorf(
+						"git path %s:%s is not a directory",
+						b.repoCfgRef, candidate,
+					)
+				}
+				return enforceCustomFileLimit(candidateEntry.Data, limit)
+			}
+			entry = candidateEntry
+			linkPath = candidate
+			remaining = path.Join(parts[i+1:]...)
+			break
 		}
 
 		linkTarget := string(entry.Data)
 		if path.IsAbs(filepath.ToSlash(linkTarget)) || filepath.IsAbs(linkTarget) {
-			return readCustomReviewFilesystemFile(linkTarget, limit)
+			return readCustomReviewFilesystemFile(
+				filepath.Join(linkTarget, filepath.FromSlash(remaining)),
+				limit,
+			)
 		}
 		filesystemTarget := filepath.Clean(filepath.Join(
 			b.repoPath,
-			filepath.FromSlash(path.Dir(filePath)),
+			filepath.FromSlash(path.Dir(linkPath)),
 			linkTarget,
+			filepath.FromSlash(remaining),
 		))
 		relativeTarget, relErr := filepath.Rel(b.repoPath, filesystemTarget)
 		if relErr != nil || relativeTarget == ".." ||

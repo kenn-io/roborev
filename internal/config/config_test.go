@@ -3736,6 +3736,35 @@ func TestLoadRepoConfigFromRef(t *testing.T) {
 	})
 }
 
+func TestLoadRepoConfigWithFallback(t *testing.T) {
+	dir := t.TempDir()
+	execGit(t, dir, "init")
+	execGit(t, dir, "config", "user.email", "test@example.com")
+	execGit(t, dir, "config", "user.name", "Test")
+	writeTestFile(t, dir, "README.md", "test\n")
+	execGit(t, dir, "add", "README.md")
+	execGit(t, dir, "commit", "-m", "initial")
+	refWithoutConfig := execGit(t, dir, "rev-parse", "HEAD")
+
+	writeTestFile(t, dir, ".roborev.toml", `review_guidelines = "Filesystem"`+"\n")
+	source, err := LoadRepoConfigWithFallback(dir, refWithoutConfig)
+	require.NoError(t, err)
+	require.NotNil(t, source.Config)
+	assert.Equal(t, "Filesystem", source.Config.ReviewGuidelines)
+	assert.Empty(t, source.Ref)
+
+	writeTestFile(t, dir, ".roborev.toml", "invalid = [\n")
+	execGit(t, dir, "add", ".roborev.toml")
+	execGit(t, dir, "commit", "-m", "add invalid config")
+	invalidRef := execGit(t, dir, "rev-parse", "HEAD")
+
+	source, err = LoadRepoConfigWithFallback(dir, invalidRef)
+	require.Error(t, err)
+	assert.True(t, IsConfigParseError(err))
+	assert.Nil(t, source.Config)
+	assert.Equal(t, invalidRef, source.Ref)
+}
+
 func TestValidateReviewTypes(t *testing.T) {
 	tests := []struct {
 		name    string

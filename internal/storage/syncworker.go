@@ -845,18 +845,7 @@ func (w *SyncWorker) pullChangesWithStats(ctx context.Context, pool *PgPool) (pu
 		}
 
 		for _, r := range reviews {
-			pr := PulledReview{
-				UUID:               r.UUID,
-				JobUUID:            r.JobUUID,
-				Agent:              r.Agent,
-				Prompt:             r.Prompt,
-				Output:             r.Output,
-				Closed:             r.Closed,
-				UpdatedByMachineID: r.UpdatedByMachineID,
-				CreatedAt:          r.CreatedAt,
-				UpdatedAt:          r.UpdatedAt,
-			}
-			if err := w.db.UpsertPulledReview(pr); err != nil {
+			if err := w.db.UpsertPulledReview(r); err != nil {
 				// Don't advance cursor if any upsert fails - we'll retry next sync
 				return stats, fmt.Errorf("pull review %s: %w", r.UUID, err)
 			}

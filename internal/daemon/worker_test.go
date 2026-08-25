@@ -1284,9 +1284,10 @@ func TestCaptureTokenUsageForSessionStopsRetryingAtContextDeadline(t *testing.T)
 	assert.False(t, usage.HasCost)
 }
 
-func TestProcessJob_UsesStoredReviewPromptOverride(t *testing.T) {
+func TestProcessJob_CIPrebuiltPromptDoesNotLoadRepoConfig(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+	require.NoError(t, os.Mkdir(filepath.Join(tc.TmpDir, ".roborev.toml"), 0o755))
 
 	commit, err := tc.DB.GetOrCreateCommit(tc.Repo.ID, sha, "Author", "Subject", time.Now())
 	require.NoError(t, err)
@@ -1306,6 +1307,7 @@ func TestProcessJob_UsesStoredReviewPromptOverride(t *testing.T) {
 		RepoID:         tc.Repo.ID,
 		CommitID:       commit.ID,
 		GitRef:         sha,
+		CIBaseBranch:   "main",
 		Agent:          agentName,
 		Prompt:         "review body\n<untrusted-pr-discussion>\n<comment>latest</comment>\n</untrusted-pr-discussion>\n",
 		PromptPrebuilt: true,
@@ -1377,6 +1379,63 @@ template = "default-review.md"
 	require.NoError(t, err)
 	assert.Contains(t, stored.Prompt, "Review the default branch contract.")
 	assert.Contains(t, stored.Output, "Default-branch review instructions loaded.")
+}
+
+func TestProcessJob_CIPromptFallbackKeepsDefaultRefAfterConfigParseError(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+	agentName := "ci-custom-review-invalid-config-test"
+	agent.Register(&structuredWorkerTestAgent{
+		name: agentName,
+		result: json.RawMessage(`{
+  "summary":"Global review instructions loaded from the default branch.",
+  "findings":[]
+}`),
+	})
+	t.Cleanup(func() { agent.Unregister(agentName) })
+
+	sha := tc.GitRepo.CommitFiles(map[string]string{
+		".roborev.toml":    "invalid = [\n",
+		"global-review.md": "Review the default branch global contract.\n",
+	}, "add invalid config and global review template")
+	tc.GitRepo.Run("update-ref", "refs/remotes/origin/main", sha)
+	tc.GitRepo.Run(
+		"symbolic-ref", "refs/remotes/origin/HEAD", "refs/remotes/origin/main",
+	)
+	require.NoError(t, os.Remove(filepath.Join(tc.TmpDir, ".roborev.toml")))
+	require.NoError(t, os.Remove(filepath.Join(tc.TmpDir, "global-review.md")))
+
+	cfg := config.DefaultConfig()
+	cfg.Review.Types = map[string]config.ReviewTypeSpec{
+		"global-review": {Template: "global-review.md"},
+	}
+	tc.reconfigurePool(cfg)
+
+	commit, err := tc.DB.GetOrCreateCommit(
+		tc.Repo.ID, sha, "Author", "Subject", time.Now(),
+	)
+	require.NoError(t, err)
+	job, err := tc.DB.EnqueueJob(storage.EnqueueOpts{
+		RepoID:       tc.Repo.ID,
+		CommitID:     commit.ID,
+		GitRef:       sha,
+		CIBaseBranch: "main",
+		Agent:        agentName,
+		ReviewType:   "global-review",
+		JobType:      storage.JobTypeReview,
+		Source:       storage.JobSourceCI,
+	})
+	require.NoError(t, err)
+	claimed, err := tc.DB.ClaimJob(testWorkerID)
+	require.NoError(t, err)
+	require.Equal(t, job.ID, claimed.ID)
+
+	tc.Pool.processJob(testWorkerID, claimed)
+
+	tc.assertJobStatus(t, job.ID, storage.JobStatusDone)
+	stored, err := tc.DB.GetReviewByJobID(job.ID)
+	require.NoError(t, err)
+	assert.Contains(t, stored.Prompt, "Review the default branch global contract.")
+	assert.Contains(t, stored.Output, "Global review instructions loaded from the default branch.")
 }
 
 func TestProcessJob_BuildsDirtyPromptFromPersistedDirtyFiles(t *testing.T) {

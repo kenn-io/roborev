@@ -247,12 +247,14 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 		}
 		return fmt.Errorf("resolve trusted CI config ref: %w", refErr)
 	}
-	repoCfg, err := config.LoadRepoConfigFromRef(root, repoCfgRef)
+	repoConfig, err := config.LoadRepoConfigWithFallback(root, repoCfgRef)
 	if err != nil {
 		log.Printf(
 			"ci review: load repo config from %s: %v "+
 				"(using defaults)", repoCfgRef, err)
 	}
+	repoCfg := repoConfig.Config
+	repoCfgRef = repoConfig.Ref
 
 	// The Claude adapter strips ANTHROPIC_API_KEY from the inherited
 	// environment and re-injects only the key roborev was given, so hand

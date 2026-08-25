@@ -575,8 +575,8 @@ func (a *GrokAgent) ReviewWithSchema(
 	if effort := a.grokReasoningEffort(); effort != "" {
 		args = append(args, "--reasoning-effort", effort)
 	}
-	if sessionID := sanitizedResumeSessionID(a.SessionID); sessionID != "" {
-		args = append(args, "--resume", sessionID)
+	if a.SessionID != "" {
+		args = append(args, "--resume", a.SessionID)
 	}
 	if a.Agentic || AllowUnsafeAgents() {
 		args = append(args, "--always-approve")

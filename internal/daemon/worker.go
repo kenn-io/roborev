@@ -561,9 +561,7 @@ func (wp *WorkerPool) promptBuilderForJob(
 	job *storage.ReviewJob,
 	cfg *config.Config,
 ) (*prompt.Builder, error) {
-	builder := prompt.NewBuilderWithConfig(wp.db, cfg).
-		WithContext(ctx).
-		ForRepo(checkout.promptRepoPath, job.RepoID)
+	builder := wp.basePromptBuilderForJob(ctx, checkout, job, cfg)
 	if job.IsCIReview() && strings.TrimSpace(job.CIBaseBranch) != "" {
 		repoConfig, err := loadCIRepoConfig(checkout.promptRepoPath)
 		if err != nil {
@@ -571,19 +569,31 @@ func (wp *WorkerPool) promptBuilderForJob(
 				return nil, fmt.Errorf("load CI review config: %w", err)
 			}
 			log.Printf("worker: warning: failed to load CI review config: %v", err)
-			repoConfig = ciRepoConfigSource{}
+			repoConfig.Config = nil
 		}
 		builder = builder.WithRepoConfig(
 			repoConfig.Config,
 			repoConfig.Ref,
 		)
 	}
+	return builder, nil
+}
+
+func (wp *WorkerPool) basePromptBuilderForJob(
+	ctx context.Context,
+	checkout preparedJobCheckout,
+	job *storage.ReviewJob,
+	cfg *config.Config,
+) *prompt.Builder {
+	builder := prompt.NewBuilderWithConfig(wp.db, cfg).
+		WithContext(ctx).
+		ForRepo(checkout.promptRepoPath, job.RepoID)
 	if !job.IsCIReview() {
 		builder = builder.WithKataClient(
 			kata.NewCLIClient(checkout.promptRepoPath),
 		)
 	}
-	return builder, nil
+	return builder
 }
 
 // markAgentInvoked records that an agent is being invoked for this attempt. Call
@@ -869,15 +879,9 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		return
 	}
 
-	// Build the prompt (or use pre-stored prompt for task/compact jobs).
-	// CI rebuilds use the same default-branch config and template
-	// files as enqueue-time prompt construction.
-	pb, err := wp.promptBuilderForJob(ctx, checkout, job, cfg)
-	if err != nil {
-		log.Printf("[%s] Error configuring prompt builder: %v", workerID, err)
-		wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("configure prompt builder: %v", err))
-		return
-	}
+	// Prompt-independent cleanup must not force a prebuilt CI job to reload
+	// repository review configuration that it no longer needs.
+	pb := wp.basePromptBuilderForJob(ctx, checkout, job, cfg)
 	if err := pb.CleanupStaleSnapshots(prompt.DefaultStaleSnapshotAge); err != nil {
 		log.Printf("[%s] Warning: cleanup stale snapshots for job %d: %v", workerID, job.ID, err)
 	}
@@ -921,6 +925,15 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 		// of trying to build a prompt from a non-git label.
 		err = fmt.Errorf("%s job %d has no stored prompt (git_ref=%q); restart the daemon with 'roborev daemon restart'", job.JobType, job.ID, job.GitRef)
 	} else {
+		// CI rebuilds use the same default-branch config and template files as
+		// enqueue-time prompt construction.
+		pb, err = wp.promptBuilderForJob(ctx, checkout, job, cfg)
+		if err != nil {
+			log.Printf("[%s] Error configuring prompt builder: %v", workerID, err)
+			wp.failOrRetryContext(ctx, workerID, job, job.Agent, fmt.Sprintf("configure prompt builder: %v", err))
+			return
+		}
+
 		// Attributed jobs use the frozen plan verbatim, including an explicit
 		// empty value. Ordinary jobs keep the legacy config cascade.
 		if effectiveMinSeverity == "" && job.FrozenExperimentPlan == nil {

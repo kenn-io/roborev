@@ -137,11 +137,7 @@ type CIPoller struct {
 	eventsStopping bool
 }
 
-type ciRepoConfigSource struct {
-	Config *config.RepoConfig
-	Raw    map[string]any
-	Ref    string
-}
+type ciRepoConfigSource = config.RepoConfigSource
 
 // NewCIPoller creates a new CI poller.
 // If GitHub App is configured, it initializes a token provider so gh commands
@@ -3069,22 +3065,9 @@ func loadCIRepoConfig(repoPath string) (ciRepoConfigSource, error) {
 	if err != nil {
 		// Can't determine default branch (no origin, bare repo, etc.)
 		// — fall back to filesystem.
-		cfg, raw, loadErr := config.LoadRepoConfigWithRaw(repoPath)
-		return ciRepoConfigSource{Config: cfg, Raw: raw}, loadErr
+		return config.LoadRepoConfigWithFallback(repoPath, "")
 	}
-
-	cfg, raw, err := config.LoadRepoConfigFromRefWithRaw(repoPath, defaultBranch)
-	if err != nil {
-		// Config exists but is invalid — surface the error, don't
-		// silently fall back to a stale working-tree copy.
-		return ciRepoConfigSource{}, err
-	}
-	if cfg != nil {
-		return ciRepoConfigSource{Config: cfg, Raw: raw, Ref: defaultBranch}, nil
-	}
-	// No .roborev.toml on the default branch — fall back to filesystem.
-	cfg, raw, err = config.LoadRepoConfigWithRaw(repoPath)
-	return ciRepoConfigSource{Config: cfg, Raw: raw}, err
+	return config.LoadRepoConfigWithFallback(repoPath, defaultBranch)
 }
 
 // resolveCISynthesisMinSeverity resolves synthesis severity from the already

@@ -2697,6 +2697,8 @@ func TestLoadCIRepoConfig_PropagatesParseError(t *testing.T) {
 			return false
 		}, "expected ConfigParseError, got: %v", err)
 	}
+	assert.Nil(t, repoConfig.Config)
+	assert.Equal(t, "origin/main", repoConfig.Ref)
 }
 
 func TestCIPollerProcessPR_SetsPendingCommitStatus(t *testing.T) {
@@ -3235,7 +3237,7 @@ func TestResolveCIMatrixMembersUsesCustomTypeReasoning(t *testing.T) {
 	}
 
 	members, _, err := h.Poller.resolveCIMatrixMembers(
-		h.Repo, repoCfg, h.Cfg, "acme/api",
+		h.Repo, repoCfg, nil, h.Cfg, "acme/api",
 	)
 	require.NoError(t, err)
 	require.Len(t, members, 1)
@@ -3262,7 +3264,7 @@ func TestResolveCIMatrixMembersInvalidCIReasoningUsesFallback(t *testing.T) {
 	}
 
 	members, _, err := h.Poller.resolveCIMatrixMembers(
-		h.Repo, repoCfg, h.Cfg, "acme/api",
+		h.Repo, repoCfg, nil, h.Cfg, "acme/api",
 	)
 	require.NoError(t, err)
 	require.Len(t, members, 1)

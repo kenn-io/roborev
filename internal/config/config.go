@@ -1471,6 +1471,36 @@ func LoadRepoConfigFromRefWithRaw(repoPath, ref string) (*RepoConfig, map[string
 	return &cfg, raw, nil
 }
 
+// RepoConfigSource keeps repository configuration paired with the location
+// used to load its relative files. An empty Ref means Config came from the
+// filesystem.
+type RepoConfigSource struct {
+	Config *RepoConfig
+	Raw    map[string]any
+	Ref    string
+}
+
+// LoadRepoConfigWithFallback loads repository configuration from ref, then
+// falls back to the filesystem only when the ref has no .roborev.toml. Parse
+// and Git errors retain ref so callers that continue with global settings read
+// their relative custom-review files from the same trusted revision.
+func LoadRepoConfigWithFallback(
+	repoPath, ref string,
+) (RepoConfigSource, error) {
+	ref = strings.TrimSpace(ref)
+	if ref != "" {
+		cfg, raw, err := LoadRepoConfigFromRefWithRaw(repoPath, ref)
+		if err != nil {
+			return RepoConfigSource{Ref: ref}, err
+		}
+		if cfg != nil {
+			return RepoConfigSource{Config: cfg, Raw: raw, Ref: ref}, nil
+		}
+	}
+	cfg, raw, err := LoadRepoConfigWithRaw(repoPath)
+	return RepoConfigSource{Config: cfg, Raw: raw}, err
+}
+
 // resolve returns the first non-zero value from the candidates, or defaultVal
 // if all candidates are zero. This encapsulates the standard precedence logic
 // (explicit > repo > global > default) used throughout config resolution.

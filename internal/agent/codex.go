@@ -205,9 +205,8 @@ type codexArgOptions struct {
 }
 
 func (a *CodexAgent) commandArgs(opts codexArgOptions) []string {
-	sessionID := sanitizedResumeSessionID(a.SessionID)
 	args := []string{"exec"}
-	if sessionID != "" {
+	if a.SessionID != "" {
 		args = append(args, "resume")
 	}
 	args = append(args, "--json")
@@ -227,13 +226,13 @@ func (a *CodexAgent) commandArgs(opts codexArgOptions) []string {
 			// --full-auto still uses bwrap internally, so we
 			// need the full bypass flag on broken systems.
 			args = append(args, codexDangerousFlag)
-		} else if sessionID != "" {
+		} else if a.SessionID != "" {
 			args = append(args, "-c", codexReadOnlySandboxConfig)
 		} else {
 			args = append(args, "--sandbox", "read-only")
 		}
 	}
-	if sessionID == "" && !opts.preview {
+	if a.SessionID == "" && !opts.preview {
 		args = append(args, "-C", opts.repoPath)
 	}
 	if a.Model != "" {
@@ -248,8 +247,8 @@ func (a *CodexAgent) commandArgs(opts codexArgOptions) []string {
 	if opts.schemaPath != "" {
 		args = append(args, "--output-schema", opts.schemaPath)
 	}
-	if sessionID != "" {
-		args = append(args, sessionID)
+	if a.SessionID != "" {
+		args = append(args, a.SessionID)
 	}
 	if !opts.preview {
 		// "-" must come after all flags to read prompt from stdin

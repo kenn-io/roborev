@@ -136,6 +136,34 @@ func TestCustomReviewReadsExternalSymlinkFromConfiguredRef(t *testing.T) {
 	assert.NotContains(t, got, linkTarget)
 }
 
+func TestCustomReviewReadsThroughDirectorySymlinkFromConfiguredRef(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation is not reliably available on Windows")
+	}
+	repo := newTestRepo(t)
+	require.NoError(t, os.Mkdir(filepath.Join(repo.dir, "shared"), 0o755))
+	repo.writeFile("shared/review.tmpl", "Trusted directory-link rubric.")
+	require.NoError(t, os.Symlink("shared", filepath.Join(repo.dir, "reviews")))
+	repo.git("add", "shared/review.tmpl", "reviews")
+	repo.git("commit", "-m", "add linked review directory")
+	baseRef := repo.git("rev-parse", "HEAD")
+	repo.writeFile("shared/review.tmpl", "Working-tree directory-link rubric.")
+	repoCfg := &config.RepoConfig{Review: config.ReviewConfig{
+		Types: map[string]config.ReviewTypeSpec{
+			"custom": {Template: "reviews/review.tmpl"},
+		},
+	}}
+
+	got, custom, err := NewBuilder(nil).
+		ForRepo(repo.dir, 0).
+		WithRepoConfig(repoCfg, baseRef).
+		resolveSystemPrompt("codex", "custom", "custom", MaxPromptSize)
+	require.NoError(t, err)
+	assert.True(t, custom)
+	assert.Contains(t, got, "Trusted directory-link rubric.")
+	assert.NotContains(t, got, "Working-tree directory-link rubric.")
+}
+
 func TestCustomReviewUsesExplicitNilRepoConfig(t *testing.T) {
 	repo := newTestRepo(t)
 	baseRef := repo.fastCommitFiles(map[string]string{

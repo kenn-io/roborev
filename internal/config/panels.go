@@ -118,7 +118,9 @@ func (rc ReviewConfig) Validate() error {
 	var errs []error
 	for _, name := range slices.Sorted(maps.Keys(rc.Subagents)) {
 		spec := rc.Subagents[name]
-		if _, err := canonicalMemberReviewType(spec.ReviewType); err != nil {
+		if _, err := canonicalMemberReviewType(
+			spec.ReviewType, &RepoConfig{Review: rc}, nil,
+		); err != nil {
 			errs = append(errs, fmt.Errorf("subagent %q: %w", name, err))
 		}
 		if _, err := NormalizeReasoning(spec.Reasoning); err != nil {
