@@ -43,19 +43,22 @@ func TestCustomReviewTemplateRendersNamedIncludes(t *testing.T) {
 	assert.NotContains(t, got, "SEVERITY_THRESHOLD_MET")
 }
 
-func TestCustomReviewRejectsAbsoluteRepoPath(t *testing.T) {
+func TestCustomReviewReadsAbsoluteRepoConfiguredPath(t *testing.T) {
 	repoPath := t.TempDir()
+	templatePath := filepath.Join(t.TempDir(), "review.tmpl")
+	require.NoError(t, os.WriteFile(templatePath, []byte("External rubric."), 0o644))
 	repoCfg := &config.RepoConfig{Review: config.ReviewConfig{
 		Types: map[string]config.ReviewTypeSpec{
-			"custom": {Template: filepath.Join(repoPath, "review.tmpl")},
+			"custom": {Template: templatePath},
 		},
 	}}
 
-	_, err := NewBuilder(nil).
+	got, err := NewBuilder(nil).
 		ForRepo(repoPath, 0).
 		WithRepoConfig(repoCfg, "").
 		BuildDirty("diff", 0, "codex", "custom", "")
-	require.ErrorContains(t, err, "must be relative to the repository root")
+	require.NoError(t, err)
+	assert.Contains(t, got, "External rubric.")
 }
 
 func TestCustomReviewReadsRepoFilesFromConfiguredRef(t *testing.T) {
@@ -131,7 +134,7 @@ func TestCustomReviewMissingDefinitionFails(t *testing.T) {
 	require.ErrorContains(t, err, `custom review type "removed-type" is not configured`)
 }
 
-func TestCustomReviewReservesPromptSpaceForReviewContext(t *testing.T) {
+func TestCustomReviewFilesUsePromptLimit(t *testing.T) {
 	repoPath := t.TempDir()
 	require.NoError(t, os.WriteFile(
 		filepath.Join(repoPath, "review.tmpl"),
@@ -147,7 +150,7 @@ func TestCustomReviewReservesPromptSpaceForReviewContext(t *testing.T) {
 		ForRepo(repoPath, 0).
 		WithRepoConfig(repoCfg, "").
 		resolveSystemPrompt(
-			"codex", "custom", "custom", customReviewContextReserve+512,
+			"codex", "custom", "custom", 512,
 		)
-	require.ErrorContains(t, err, "review context")
+	require.ErrorContains(t, err, "prompt limit")
 }

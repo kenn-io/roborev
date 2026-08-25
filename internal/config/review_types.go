@@ -89,13 +89,11 @@ func isReservedCustomReviewTypeName(name string) bool {
 	)
 }
 
-// ResolvedReviewType identifies the effective custom definition and whether it
-// came from repository config. A repository definition replaces the complete
-// same-name global definition.
+// ResolvedReviewType identifies the effective custom definition. A repository
+// definition replaces the complete same-name global definition.
 type ResolvedReviewType struct {
-	Name        string
-	Spec        ReviewTypeSpec
-	RepoDefined bool
+	Name string
+	Spec ReviewTypeSpec
 }
 
 func ResolveCustomReviewTypeFromConfig(
@@ -106,9 +104,7 @@ func ResolveCustomReviewTypeFromConfig(
 	name = strings.TrimSpace(name)
 	if repoCfg != nil {
 		if spec, ok := repoCfg.Review.Types[name]; ok {
-			return ResolvedReviewType{
-				Name: name, Spec: spec.Clone(), RepoDefined: true,
-			}, true
+			return ResolvedReviewType{Name: name, Spec: spec.Clone()}, true
 		}
 	}
 	if globalCfg != nil {

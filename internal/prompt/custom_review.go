@@ -23,11 +23,6 @@ these severity values: critical, high, medium, or low. Do not omit a real
 finding because of the configured severity threshold; Roborev applies that
 threshold after receiving the structured result.`
 
-// customReviewContextReserve guarantees that custom rubrics cannot consume the
-// entire prompt and leave no room for commit/range metadata plus the reviewed
-// diff or its snapshot reference.
-const customReviewContextReserve = 16 * 1024
-
 type customReviewTemplateData struct {
 	ReviewType string
 	Includes   map[string]string
@@ -52,19 +47,9 @@ func (b *Builder) resolveSystemPrompt(
 			"custom review type %q is not configured", reviewType,
 		)
 	}
-	customLimit := limit - customReviewContextReserve
-	if customLimit <= 0 {
-		return "", true, fmt.Errorf(
-			"custom review prompt limit is %d bytes; at least %d bytes must be reserved for review context",
-			limit, customReviewContextReserve,
-		)
-	}
-
-	remaining := customLimit
+	remaining := limit
 	read := func(filePath string) (string, error) {
-		data, readErr := b.readCustomReviewFile(
-			filePath, resolved.RepoDefined, remaining,
-		)
+		data, readErr := b.readCustomReviewFile(filePath, remaining)
 		if readErr != nil {
 			return "", readErr
 		}
@@ -75,8 +60,7 @@ func (b *Builder) resolveSystemPrompt(
 	templateText, err := read(resolved.Spec.Template)
 	if err != nil {
 		return "", true, fmt.Errorf(
-			"review type %q template after reserving %d bytes for review context: %w",
-			reviewType, customReviewContextReserve, err,
+			"review type %q template: %w", reviewType, err,
 		)
 	}
 	includes := make(map[string]string, len(resolved.Spec.Includes))
@@ -84,8 +68,8 @@ func (b *Builder) resolveSystemPrompt(
 		contents, includeErr := read(filePath)
 		if includeErr != nil {
 			return "", true, fmt.Errorf(
-				"review type %q include %q after reserving %d bytes for review context: %w",
-				reviewType, name, customReviewContextReserve, includeErr,
+				"review type %q include %q: %w",
+				reviewType, name, includeErr,
 			)
 		}
 		includes[name] = contents
@@ -110,11 +94,10 @@ func (b *Builder) resolveSystemPrompt(
 	}
 	result := strings.TrimSpace(rendered.String()) +
 		customReviewOutputInstruction
-	if len(result)+1 > customLimit {
+	if len(result)+1 > limit {
 		return "", true, fmt.Errorf(
-			"review type %q rendered prompt is %d bytes but only %d bytes are available after reserving %d bytes for review context",
-			reviewType, len(result)+1, customLimit,
-			customReviewContextReserve,
+			"review type %q rendered prompt is %d bytes but prompt limit is %d bytes",
+			reviewType, len(result)+1, limit,
 		)
 	}
 	return result, true, nil
@@ -132,49 +115,12 @@ func (b *Builder) resolveRepoConfig() (*config.RepoConfig, error) {
 
 func (b *Builder) readCustomReviewFile(
 	filePath string,
-	repoDefined bool,
 	limit int,
 ) ([]byte, error) {
 	filePath = strings.TrimSpace(filePath)
 	if limit <= 0 {
 		return nil, fmt.Errorf("custom review files exceed prompt limit")
 	}
-	if repoDefined {
-		if filepath.IsAbs(filePath) || filePath == "~" ||
-			strings.HasPrefix(filePath, "~/") ||
-			strings.HasPrefix(filePath, `~\`) {
-			return nil, fmt.Errorf(
-				"repository-defined path %q must be relative to the repository root",
-				filePath,
-			)
-		}
-		clean := path.Clean(filepath.ToSlash(filePath))
-		if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
-			return nil, fmt.Errorf(
-				"repository-defined path %q escapes the repository root",
-				filePath,
-			)
-		}
-		if b.repoCfgRef != "" {
-			data, err := git.ReadFile(b.repoPath, b.repoCfgRef, clean)
-			if err != nil {
-				return nil, err
-			}
-			return enforceCustomFileLimit(data, limit)
-		}
-		root, err := os.OpenRoot(b.repoPath)
-		if err != nil {
-			return nil, err
-		}
-		defer root.Close()
-		file, err := root.Open(filepath.FromSlash(clean))
-		if err != nil {
-			return nil, err
-		}
-		defer file.Close()
-		return readCustomFile(file, limit)
-	}
-
 	resolvedPath := filePath
 	if filePath == "~" || strings.HasPrefix(filePath, "~/") ||
 		strings.HasPrefix(filePath, `~\`) {
@@ -185,17 +131,14 @@ func (b *Builder) readCustomReviewFile(
 		resolvedPath = filepath.Join(home, strings.TrimLeft(filePath[1:], `/\`))
 	} else if !filepath.IsAbs(filePath) && b.repoCfgRef != "" {
 		clean := path.Clean(filepath.ToSlash(filePath))
-		if clean == "." || clean == ".." || strings.HasPrefix(clean, "../") {
-			return nil, fmt.Errorf(
-				"global repository-relative path %q escapes the repository root",
-				filePath,
-			)
+		if clean != "." && clean != ".." && !strings.HasPrefix(clean, "../") {
+			data, err := git.ReadFile(b.repoPath, b.repoCfgRef, clean)
+			if err != nil {
+				return nil, err
+			}
+			return enforceCustomFileLimit(data, limit)
 		}
-		data, err := git.ReadFile(b.repoPath, b.repoCfgRef, clean)
-		if err != nil {
-			return nil, err
-		}
-		return enforceCustomFileLimit(data, limit)
+		resolvedPath = filepath.Join(b.repoPath, filePath)
 	} else if !filepath.IsAbs(filePath) {
 		resolvedPath = filepath.Join(b.repoPath, filePath)
 	}

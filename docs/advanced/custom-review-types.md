@@ -49,17 +49,17 @@ fields are not merged individually.
 
 ## Paths and includes
 
-Repository configuration accepts only paths relative to the repository root.
-Absolute paths, home-relative paths, and paths that escape the repository are
-rejected. This keeps a checked-in configuration self-contained. CI reads both
-the configuration and its files from the trusted pull-request base branch.
-
-Global configuration accepts:
+Repository and global configuration accept:
 
 - Repository-relative paths, resolved separately for the repository being
     reviewed.
 - Absolute paths.
 - Home-relative paths beginning with `~/`.
+
+Paths containing `..` and symlinks may also point outside the repository.
+Roborev treats these paths as user-selected files, not as a security boundary.
+In CI, repository-relative files that remain inside the repository are read from
+the configured base ref. External paths are read from the filesystem.
 
 Roborev does not fetch URLs while running a review. Download or vendor remote
 rubrics first so reviews remain reproducible and do not depend on the network.
@@ -98,11 +98,8 @@ Templates use Go's `text/template` syntax and receive these values:
 | `.Includes` | map | Contents of every configured named include |
 
 Invalid template syntax and execution errors fail prompt construction with a
-configuration error. Template and include contents count toward the configured
-`max_prompt_size` budget. Roborev always reserves 16 KiB of that budget for the
-review target, diff, or oversized-diff snapshot reference. A custom rubric that
-would consume the remainder is rejected instead of running without the code it
-is meant to review.
+configuration error. Template and include contents use the same configured
+`max_prompt_size` budget as the rest of the review prompt.
 
 Do not put diff placeholders in the custom template. Roborev appends the review
 target and diff context after rendering it.
