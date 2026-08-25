@@ -4,17 +4,7 @@ name: Verify release assets
 # rebuild bot) without firing any webhook event, so a scheduled re-check of
 # the latest release is the only way to catch a swap like the one that
 # shipped v0.65.0 binaries without the embedded web UI (#1081).
-#
-# The Release workflow creates the GitHub release before goreleaser uploads
-# the assets, so a `release: published` trigger would race the upload and
-# fail on every healthy release; trigger on the Release workflow finishing
-# instead.
 on:
-  workflow_run:
-    workflows:
-      - Release
-    types:
-      - completed
   schedule:
     - cron: '17 6 * * *'
   workflow_dispatch:
@@ -29,27 +19,17 @@ permissions:
 
 jobs:
   verify:
-    if: github.event_name != 'workflow_run' || github.event.workflow_run.conclusion == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
       - name: Resolve release tag
         id: resolve
         env:
-          # For tag-push runs of the Release workflow, head_branch carries
-          # the tag name.
-          EVENT_TAG: ${{ github.event.workflow_run.head_branch }}
           INPUT_TAG: ${{ inputs.tag }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          # head_branch is only a tag for tag-push runs; ignore other shapes.
-          EVENT="${EVENT_TAG:-}"
-          case "$EVENT" in
-            v[0-9]*) ;;
-            *) EVENT="" ;;
-          esac
-          TAG="${INPUT_TAG:-$EVENT}"
+          TAG="${INPUT_TAG:-}"
           if [ -z "$TAG" ]; then
             TAG="$(gh release view --repo "$GITHUB_REPOSITORY" --json tagName --jq .tagName)"
           fi

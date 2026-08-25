@@ -64,7 +64,6 @@ jobs:
               - 'Makefile'
               - '.goreleaser.yaml'
               - '.github/workflows/ci.yml'
-              - '.github/workflows/release.yml'
 
   api:
     needs: go-changes
