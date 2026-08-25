@@ -112,7 +112,7 @@ func TestAllMembersPassedIgnoresAllowedFailure(t *testing.T) {
 		{
 			Status:  reviewpkg.ResultDone,
 			Output:  "High: no actionable findings.",
-			Verdict: new(true),
+			Verdict: storage.VerdictPass,
 		},
 		{Status: reviewpkg.ResultFailed, Error: "pi host disappeared", AllowFailure: true},
 	}
@@ -599,7 +599,7 @@ func TestSynthesisSingleSuccessPassthrough(t *testing.T) {
 	review, err := tc.DB.GetReviewByJobID(synth.ID)
 	require.NoError(t, err)
 	assert.Equal(memberAOutput, review.Output, "passthrough must emit member output verbatim")
-	assert.Equal("P", storage.ParseVerdict(review.Output), "verdict carried from member output")
+	assert.Equal(storage.VerdictPass, storage.ParseVerdict(review.Output), "verdict carried from member output")
 	assert.Equal(memberAgent, review.Agent, "review labeled with the surviving member's agent")
 	assert.False(synthCalled, "passthrough must not invoke an agent")
 }
@@ -673,7 +673,7 @@ func TestSynthesisSinglePassingSuccessWithMinSeverityPassthrough(t *testing.T) {
 	const memberOutput = "High: no actionable findings."
 	markMemberRunning(t, tc, members[0].ID)
 	require.NoError(t, tc.DB.CompleteJobWithVerdict(
-		members[0].ID, memberAgent, "", memberOutput, true,
+		members[0].ID, memberAgent, "", memberOutput, storage.VerdictPass,
 	))
 	failMember(t, tc, members[1].ID)
 
@@ -751,7 +751,7 @@ func TestSynthesisAllPassingSkipsAgent(t *testing.T) {
 	review, err := tc.DB.GetReviewByJobID(synth.ID)
 	require.NoError(t, err)
 	assert.Equal("No issues found.", review.Output, "stored synthesis output is body content; renderers add headers and footers")
-	assert.Equal("P", storage.ParseVerdict(review.Output))
+	assert.Equal(storage.VerdictPass, storage.ParseVerdict(review.Output))
 	assert.False(synthCalled, "clean panels must not invoke an extra synthesis agent")
 }
 

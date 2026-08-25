@@ -7,15 +7,34 @@ import (
 	"go.kenn.io/roborev/internal/config"
 )
 
+// Verdict is the canonical pass/fail result of a completed review. The empty
+// value means no verdict is available, for example when a review produced no
+// output.
+type Verdict string
+
 const (
-	verdictPass = "P"
-	verdictFail = "F"
+	VerdictUnknown Verdict = ""
+	VerdictPass    Verdict = "P"
+	VerdictFail    Verdict = "F"
 )
+
+// VerdictFromPassed converts a structured pass/fail result into a Verdict.
+func VerdictFromPassed(passed bool) Verdict {
+	if passed {
+		return VerdictPass
+	}
+	return VerdictFail
+}
+
+// Passed reports whether the verdict is an explicit pass.
+func (v Verdict) Passed() bool {
+	return v == VerdictPass
+}
 
 // verdictToBool converts a ParseVerdict result ("P"/"F") to an integer
 // for storage in the verdict_bool column (1=pass, 0=fail).
-func verdictToBool(verdict string) int {
-	if verdict == verdictPass {
+func verdictToBool(verdict Verdict) int {
+	if verdict == VerdictPass {
 		return 1
 	}
 	return 0
@@ -23,12 +42,12 @@ func verdictToBool(verdict string) int {
 
 // verdictFromBoolOrParse returns the verdict string from a stored verdict_bool
 // value. If the value is NULL (legacy row), falls back to ParseVerdict(output).
-func verdictFromBoolOrParse(vb sql.NullInt64, output string) string {
+func verdictFromBoolOrParse(vb sql.NullInt64, output string) Verdict {
 	if vb.Valid {
 		if vb.Int64 == 1 {
-			return verdictPass
+			return VerdictPass
 		}
-		return verdictFail
+		return VerdictFail
 	}
 	return ParseVerdict(output)
 }
@@ -42,12 +61,12 @@ func applyReviewVerdict(review *Review, verdictBool sql.NullInt64) {
 
 // Verdict returns the review's stored pass/fail result. Reviews created before
 // verdict_bool was populated retain the existing Markdown fallback.
-func (r Review) Verdict() string {
+func (r Review) Verdict() Verdict {
 	if r.VerdictBool != nil {
 		if *r.VerdictBool == 1 {
-			return verdictPass
+			return VerdictPass
 		}
-		return verdictFail
+		return VerdictFail
 	}
 	return ParseVerdict(r.Output)
 }
@@ -61,7 +80,8 @@ func applyJobVerdict(job *ReviewJob, verdictBool sql.NullInt64, output string, h
 		return
 	}
 	verdict := verdictFromBoolOrParse(verdictBool, output)
-	job.Verdict = &verdict
+	value := string(verdict)
+	job.Verdict = &value
 }
 
 // ParseVerdict extracts P (pass) or F (fail) from review output.
@@ -71,11 +91,11 @@ func applyJobVerdict(job *ReviewJob, verdictBool sql.NullInt64, output string, h
 // that quickly turns into a brittle natural-language parser. If agent output is
 // too chatty or mixes process narration with findings, that should be fixed in
 // the review prompt rather than by adding more verdict heuristics here.
-func ParseVerdict(output string) string {
+func ParseVerdict(output string) Verdict {
 	// First check for severity labels which indicate actual findings
 	// These appear as "- Medium —", "* Low:", "Critical -", etc.
 	if hasSeverityLabel(output) {
-		return verdictFail
+		return VerdictFail
 	}
 
 	// Marker signals pass ONLY when it stands alone. A loose
@@ -83,7 +103,7 @@ func ParseVerdict(output string) string {
 	// labels (e.g. "the auth module leaks tokens") flip to pass
 	// just because the agent echoed the marker in narration.
 	if config.IsMarkerOnlyOutput(output) {
-		return verdictPass
+		return VerdictPass
 	}
 
 	for line := range strings.SplitSeq(output, "\n") {
@@ -92,17 +112,17 @@ func ParseVerdict(output string) string {
 		// before a later "No issues found." summary. Preserve the existing rule
 		// that a later clear pass phrase wins over contradictory narration.
 		if isExplicitVerdictValue(normalized, "pass") {
-			return verdictPass
+			return VerdictPass
 		}
 		if isNoFindingVerdictLine(normalized) {
-			return verdictPass
+			return VerdictPass
 		}
 		if !hasPassPrefix(normalized) {
 			continue
 		}
-		return verdictPass
+		return VerdictPass
 	}
-	return verdictFail
+	return VerdictFail
 }
 
 func normalizeVerdictLine(line string) string {

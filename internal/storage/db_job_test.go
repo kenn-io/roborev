@@ -67,7 +67,7 @@ func TestCompleteJobWithVerdictUsesExplicitVerdict(t *testing.T) {
 	require.NotNil(t, claimed)
 
 	require.NoError(t, env.db.CompleteJobWithVerdict(
-		env.job.ID, "codex", "prompt", "No issues found.", false,
+		env.job.ID, "codex", "prompt", "No issues found.", VerdictFail,
 	))
 	var verdict sql.NullInt64
 	require.NoError(t, env.db.QueryRow(

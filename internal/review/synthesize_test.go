@@ -11,6 +11,7 @@ import (
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/storage"
 )
 
 func assertContains(t *testing.T, s, substr string) {
@@ -142,7 +143,7 @@ func TestSynthesize_Formatting(t *testing.T) {
 					ReviewType: "custom",
 					Status:     "done",
 					Output:     "High: no actionable findings.",
-					Verdict:    new(true),
+					Verdict:    storage.VerdictPass,
 				},
 			},
 			expectedErr: nil,
@@ -159,7 +160,7 @@ func TestSynthesize_Formatting(t *testing.T) {
 					ReviewType: "custom",
 					Status:     "done",
 					Output:     "No issues found.",
-					Verdict:    new(false),
+					Verdict:    storage.VerdictFail,
 				},
 			},
 			expectedErr: nil,

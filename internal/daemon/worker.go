@@ -1091,42 +1091,11 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// Run the review
 	log.Printf("[%s] Running %s %sreview (job %d)...",
 		workerID, agentName, rtTag, job.ID)
-	customReview := !config.IsBuiltInReviewType(job.ReviewType)
-	var output string
-	var explicitPassed *bool
-	if customReview {
-		structuredAgent, ok := a.(agent.StructuredReviewAgent)
-		if !ok {
-			wp.failOrRetryAgentContext(
-				ctx, workerID, job, agentName,
-				fmt.Sprintf(
-					"agent %q does not support schema-constrained reviews",
-					agentName,
-				),
-			)
-			return
-		}
-		rawResult, reviewErr := structuredAgent.ReviewWithSchema(
-			ctx, reviewRepoPath, job.GitRef, reviewPrompt,
-			review.CustomReviewSchema, agentOutput,
-		)
-		err = reviewErr
-		if err == nil {
-			structured, decodeErr := review.DecodeStructuredReview(rawResult)
-			if decodeErr != nil {
-				err = decodeErr
-			} else {
-				structured = structured.Filter(effectiveMinSeverity)
-				output = structured.Markdown()
-				passed := structured.Passed()
-				explicitPassed = &passed
-			}
-		}
-	} else {
-		output, err = a.Review(
-			ctx, reviewRepoPath, job.GitRef, reviewPrompt, agentOutput,
-		)
-	}
+	agentReview, err := review.RunAgentReview(
+		ctx, a, reviewRepoPath, job.GitRef, reviewPrompt, job.ReviewType,
+		effectiveMinSeverity, agentOutput,
+	)
+	output := agentReview.Output
 	sessionWriter.Flush()
 	if sessionID := sessionWriter.SessionID(); sessionID != "" {
 		if saveErr := wp.db.SaveJobSessionID(job.ID, workerID, sessionID); saveErr != nil {
@@ -1213,11 +1182,12 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 				log.Printf("[%s] Error storing fix review: %v", workerID, err)
 				return
 			}
-		} else if explicitPassed != nil {
+		} else if job.IsReviewJob() &&
+			agentReview.Verdict != storage.VerdictUnknown {
 			if err := wp.db.CompleteJobWithVerdict(
-				job.ID, agentName, reviewPrompt, output, *explicitPassed,
+				job.ID, agentName, reviewPrompt, output, agentReview.Verdict,
 			); err != nil {
-				log.Printf("[%s] Error storing structured review: %v", workerID, err)
+				log.Printf("[%s] Error storing review verdict: %v", workerID, err)
 				return
 			}
 		} else if err := wp.db.CompleteJob(job.ID, agentName, reviewPrompt, output); err != nil {
@@ -1248,12 +1218,9 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			}
 		}
 
-		verdict := storage.ParseVerdict(output)
-		if explicitPassed != nil {
-			verdict = "F"
-			if *explicitPassed {
-				verdict = "P"
-			}
+		verdict := agentReview.Verdict
+		if verdict == storage.VerdictUnknown {
+			verdict = storage.ParseVerdict(output)
 		}
 		wp.autoClosePassingReview(workerID, job, verdict)
 
@@ -1289,7 +1256,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 			SHA:          job.GitRef,
 			Branch:       job.HookBranch(),
 			Agent:        agentName,
-			Verdict:      verdict,
+			Verdict:      string(verdict),
 			Findings:     output,
 			WorktreePath: eventWorktreePath,
 		})
@@ -1306,7 +1273,9 @@ func (wp *WorkerPool) finishRunningJob(workerID string, jobID int64) {
 	}
 }
 
-func (wp *WorkerPool) autoClosePassingReview(workerID string, job *storage.ReviewJob, verdict string) {
+func (wp *WorkerPool) autoClosePassingReview(
+	workerID string, job *storage.ReviewJob, verdict storage.Verdict,
+) {
 	if !job.IsReviewJob() && !job.IsSynthesisJob() {
 		return
 	}

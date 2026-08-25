@@ -63,7 +63,7 @@ func (wp *WorkerPool) processSynthesisJob(
 			wp.completeSynthesisContext(workerID, job, synthesisResult{
 				agentName: succeeded[0].Agent,
 				output:    "No issues found.",
-				passed:    succeeded[0].Verdict,
+				verdict:   succeeded[0].Verdict,
 			})
 			return
 		}
@@ -75,14 +75,14 @@ func (wp *WorkerPool) processSynthesisJob(
 		wp.completeSynthesisContext(workerID, job, synthesisResult{
 			agentName: succeeded[0].Agent,
 			output:    succeeded[0].Output,
-			passed:    succeeded[0].Verdict,
+			verdict:   succeeded[0].Verdict,
 		})
 	default:
 		if allMembersPassed(results, succeeded) {
 			wp.completeSynthesisContext(workerID, job, synthesisResult{
 				agentName: job.Agent,
 				output:    "No issues found.",
-				passed:    new(true),
+				verdict:   storage.VerdictPass,
 			})
 			return
 		}
@@ -232,7 +232,7 @@ type synthesisResult struct {
 	agentName       string
 	prompt          string
 	output          string
-	passed          *bool
+	verdict         storage.Verdict
 	capturedSession string
 	captureUsage    bool
 }
@@ -253,9 +253,9 @@ func (wp *WorkerPool) completeSynthesisLocked(
 ) {
 	agentName, prompt, output := res.agentName, res.prompt, res.output
 	var completeErr error
-	if res.passed != nil {
+	if res.verdict != storage.VerdictUnknown {
 		completeErr = wp.db.CompleteJobWithVerdict(
-			job.ID, agentName, prompt, output, *res.passed,
+			job.ID, agentName, prompt, output, res.verdict,
 		)
 	} else {
 		completeErr = wp.db.CompleteJob(job.ID, agentName, prompt, output)
@@ -282,12 +282,9 @@ func (wp *WorkerPool) completeSynthesisLocked(
 			context.Background(), workerID, job, res.capturedSession,
 		)
 	}
-	verdict := storage.ParseVerdict(output)
-	if res.passed != nil {
-		verdict = "F"
-		if *res.passed {
-			verdict = "P"
-		}
+	verdict := res.verdict
+	if verdict == storage.VerdictUnknown {
+		verdict = storage.ParseVerdict(output)
 	}
 	wp.autoClosePassingReview(workerID, job, verdict)
 
@@ -304,7 +301,7 @@ func (wp *WorkerPool) completeSynthesisLocked(
 		SHA:      job.GitRef,
 		Branch:   job.HookBranch(),
 		Agent:    agentName,
-		Verdict:  verdict,
+		Verdict:  string(verdict),
 		Findings: output,
 	})
 }

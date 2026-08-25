@@ -232,7 +232,7 @@ func TestCleanCompactOutputsParseAsPassVerdicts(t *testing.T) {
 	for _, output := range outputs {
 		t.Run(output, func(t *testing.T) {
 			require.True(t, IsValidCompactOutput(output))
-			assert.Equal(t, "P", storage.ParseVerdict(output))
+			assert.Equal(t, storage.VerdictPass, storage.ParseVerdict(output))
 		})
 	}
 }

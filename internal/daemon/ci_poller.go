@@ -2398,7 +2398,9 @@ func (p *CIPoller) panelCommentBody(row *storage.CIPanel, members []storage.Batc
 		return appendPanelPRFooter(rev.Output, rev, members, includeCosts)
 	}
 	verdict := rev.Verdict()
-	return formatPanelPRCommentWithHead(rev, verdict, members, includeCosts, row.HeadSHA)
+	return formatPanelPRCommentWithHead(
+		rev, string(verdict), members, includeCosts, row.HeadSHA,
+	)
 }
 
 // handlePanelPostError resolves a failed comment post: a permanent GitHub access
@@ -3485,10 +3487,9 @@ func toReviewResult(
 	if br.PanelMemberConfigJSON != "" {
 		_ = json.Unmarshal([]byte(br.PanelMemberConfigJSON), &member)
 	}
-	var verdict *bool
+	verdict := storage.VerdictUnknown
 	if br.VerdictBool != nil {
-		passed := *br.VerdictBool != 0
-		verdict = &passed
+		verdict = storage.VerdictFromPassed(*br.VerdictBool != 0)
 	}
 	return reviewpkg.ReviewResult{
 		Agent:        br.Agent,

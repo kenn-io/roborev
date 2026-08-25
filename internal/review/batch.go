@@ -216,37 +216,10 @@ func runSingle(
 		"ci review: running agent=%s type=%s ref=%s",
 		resolvedAgent.Name(), reviewType, cfg.GitRef)
 
-	var output string
-	if !config.IsBuiltInReviewType(reviewType) {
-		structuredAgent, ok := resolvedAgent.(agent.StructuredReviewAgent)
-		if !ok {
-			result.Status = ResultFailed
-			result.Error = fmt.Sprintf(
-				"agent %q does not support schema-constrained reviews",
-				resolvedAgent.Name(),
-			)
-			return result
-		}
-		raw, reviewErr := structuredAgent.ReviewWithSchema(
-			ctx, cfg.RepoPath, cfg.GitRef, reviewPrompt,
-			CustomReviewSchema, nil,
-		)
-		err = reviewErr
-		if err == nil {
-			structured, decodeErr := DecodeStructuredReview(raw)
-			if decodeErr != nil {
-				err = decodeErr
-			} else {
-				result.Structured = &structured
-				result = result.FilterStructured(cfg.MinSeverity)
-				output = result.Output
-			}
-		}
-	} else {
-		output, err = resolvedAgent.Review(
-			ctx, cfg.RepoPath, cfg.GitRef, reviewPrompt, nil,
-		)
-	}
+	agentReview, err := RunAgentReview(
+		ctx, resolvedAgent, cfg.RepoPath, cfg.GitRef, reviewPrompt,
+		reviewType, cfg.MinSeverity, nil,
+	)
 	if err != nil {
 		result.Status = ResultFailed
 		result.Error = formatBatchAgentError(resolvedAgent.Name(), err)
@@ -254,7 +227,9 @@ func runSingle(
 	}
 
 	result.Status = ResultDone
-	result.Output = output
+	result.Output = agentReview.Output
+	result.Structured = agentReview.Structured
+	result.Verdict = agentReview.Verdict
 	return result
 }
 

@@ -6,15 +6,10 @@ import (
 	"github.com/stretchr/testify/assert"
 )
 
-const (
-	VerdictPass = "P"
-	VerdictFail = "F"
-)
-
 type verdictTestCase struct {
 	name   string
 	output string
-	want   string
+	want   Verdict
 }
 
 func runVerdictTests(t *testing.T, tests []verdictTestCase) {

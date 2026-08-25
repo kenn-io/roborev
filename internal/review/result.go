@@ -18,10 +18,10 @@ type ReviewResult struct {
 	Output     string
 	Status     string // ResultDone, ResultFailed, or ResultSkipped
 	Error      string
-	// Verdict is the canonical pass/fail result when the review provider
-	// returned structured output. Prose reviews leave it nil and use the
-	// existing deterministic Markdown parser.
-	Verdict *bool
+	// Verdict is the canonical pass/fail result. The runner derives prose
+	// verdicts once and takes custom-review verdicts from structured output.
+	// The empty value is reserved for historical or manually assembled results.
+	Verdict storage.Verdict
 	// Structured retains schema output so later severity thresholds can be
 	// applied without reparsing or asking a synthesis agent to infer findings
 	// from rendered Markdown.
@@ -42,10 +42,10 @@ type ReviewResult struct {
 // Passed returns the canonical review verdict when one is available, falling
 // back to Markdown parsing for prose reviews.
 func (r ReviewResult) Passed() bool {
-	if r.Verdict != nil {
-		return *r.Verdict
+	if r.Verdict != storage.VerdictUnknown {
+		return r.Verdict.Passed()
 	}
-	return storage.ParseVerdict(r.Output) == "P"
+	return storage.ParseVerdict(r.Output) == storage.VerdictPass
 }
 
 // FilterStructured applies minSeverity to schema-backed output and updates the
@@ -56,7 +56,7 @@ func (r ReviewResult) FilterStructured(minSeverity string) ReviewResult {
 	}
 	filtered := r.Structured.Filter(minSeverity)
 	r.Structured = &filtered
-	r.Verdict = new(filtered.Passed())
+	r.Verdict = storage.VerdictFromPassed(filtered.Passed())
 	r.Output = filtered.Markdown()
 	return r
 }

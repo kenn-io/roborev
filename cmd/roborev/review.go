@@ -561,32 +561,10 @@ func runLocalReview(cmd *cobra.Command, repoPath, gitRef, diffContent string, di
 		return fmt.Errorf("build prompt: %w", err)
 	}
 
-	// Run review with output writer. Custom types use the native schema path,
-	// then render Roborev's canonical review text.
-	if !config.IsBuiltInReviewType(reviewType) {
-		structuredAgent, ok := a.(agent.StructuredReviewAgent)
-		if !ok {
-			return fmt.Errorf(
-				"agent %q does not support schema-constrained reviews", a.Name(),
-			)
-		}
-		raw, reviewErr := structuredAgent.ReviewWithSchema(
-			cmd.Context(), repoPath, gitRef, reviewPrompt,
-			reviewpkg.CustomReviewSchema, out,
-		)
-		if reviewErr != nil {
-			return fmt.Errorf("review failed: %w", reviewErr)
-		}
-		structured, decodeErr := reviewpkg.DecodeStructuredReview(raw)
-		if decodeErr != nil {
-			return fmt.Errorf("review failed: %w", decodeErr)
-		}
-		if !quiet {
-			fmt.Fprintln(out, structured.Filter(resolvedMinSev).Markdown())
-		}
-	} else {
-		_, err = a.Review(cmd.Context(), repoPath, gitRef, reviewPrompt, out)
-	}
+	_, err = reviewpkg.RunAgentReview(
+		cmd.Context(), a, repoPath, gitRef, reviewPrompt, reviewType,
+		resolvedMinSev, out,
+	)
 	if err != nil {
 		return fmt.Errorf("review failed: %w", err)
 	}

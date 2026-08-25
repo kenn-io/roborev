@@ -671,7 +671,7 @@ func TestGetPanelMemberReviews(t *testing.T) {
 	_, err = db.Exec(`UPDATE review_jobs SET status='running', worker_id='w1' WHERE id=?`, m0.ID)
 	require.NoError(t, err)
 	require.NoError(t, db.CompleteJobWithVerdict(
-		m0.ID, "test", "prompt", "High: no actionable findings.", true,
+		m0.ID, "test", "prompt", "High: no actionable findings.", VerdictPass,
 	))
 
 	got, err := db.GetPanelMemberReviews("run-1")
