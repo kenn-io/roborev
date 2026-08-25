@@ -112,6 +112,10 @@ type CIConfig struct {
 	// Applies to both exact entries and wildcard-expanded entries.
 	ExcludeRepos []string `toml:"exclude_repos"`
 
+	// SkipLabels is a list of GitHub PR labels that prevent CI reviews.
+	// Label matching is case-insensitive.
+	SkipLabels []string `toml:"skip_labels"`
+
 	// MaxRepos is a safety cap on the total number of expanded repos. Default: 100.
 	MaxRepos int `toml:"max_repos"`
 

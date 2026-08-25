@@ -2821,6 +2821,18 @@ max_repos = 50
 	})
 }
 
+func TestCIConfigSkipLabels(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(configPath, []byte(`
+[ci]
+skip_labels = ["skip-review", "dependencies"]
+`), 0o644))
+
+	cfg, err := LoadGlobalFrom(configPath)
+	require.NoError(t, err)
+	assert.Equal(t, []string{"skip-review", "dependencies"}, cfg.CI.SkipLabels)
+}
+
 func TestCIConfigDiscordWebhookURL(t *testing.T) {
 	t.Parallel()
 

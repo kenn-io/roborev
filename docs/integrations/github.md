@@ -227,6 +227,7 @@ poll_interval = "5m"
 repos = ["myorg/myrepo"]
 agents = ["codex"]
 review_types = ["security"]
+skip_labels = ["skip-review"]
 
 # GitHub App authentication
 github_app_id = 123456
@@ -310,6 +311,11 @@ CI poller: GitHub App authentication enabled (app_id=123456)
 ```
 
 PR comments will now appear as **`your-app-name[bot]`**.
+
+When an open PR has a label listed in `skip_labels`, the CI poller does not
+create a review. It sets the roborev commit status to success with a message
+that names the matching label. Label matching is case-insensitive. Removing the
+label lets the poller review the current PR head on its next pass.
 
 ## Setup with Personal Auth
 
@@ -731,6 +737,7 @@ set, it takes priority over the matrix fields for that repo.
 | `poll_interval` | string | `"5m"` | How often to check for PRs (minimum 30s, invalid values default to 5m) |
 | `repos` | array | `[]` | GitHub repos to poll in `"owner/repo"` format. Supports glob patterns (e.g. `"myorg/*"`, `"myorg/api-*"`). |
 | `exclude_repos` | array | `[]` | Glob patterns to exclude from the resolved repo list |
+| `skip_labels` | array | `[]` | GitHub PR labels that skip CI reviews (case-insensitive) |
 | `max_repos` | int | `100` | Safety cap on total expanded repos (explicit repos have priority over wildcard-expanded ones) |
 | `panel` | string | | Named `[review.panels.<name>]` panel for CI reviews. When set, overrides `agents`, `review_types`, and `reviews`. |
 | `review_types` | array | `["security"]` | Review types to run for each PR: `security`, `design`, `lookahead`, or `default`. `"review"` and `"general"` are accepted as aliases for `"default"`. |

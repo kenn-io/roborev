@@ -56,6 +56,7 @@ type ghPR struct {
 	BaseRefName string     `json:"baseRefName"`
 	Title       string     `json:"title"`
 	Author      ghPRAuthor `json:"author"`
+	Labels      []string   `json:"labels"`
 }
 
 type panelPostTarget struct {
@@ -63,6 +64,7 @@ type panelPostTarget struct {
 	HeadSHA     string
 	BaseRefName string
 	AuthorLogin string
+	Labels      []string
 }
 
 const (
@@ -413,6 +415,10 @@ func (p *CIPoller) processPR(ctx context.Context, ghRepo string, pr ghPR, cfg *c
 	if reviewed {
 		return nil
 	}
+	if label, skip := matchingCISkipLabel(pr.Labels, cfg.CI.SkipLabels); skip {
+		p.skipLabeledPR(ghRepo, pr, label)
+		return nil
+	}
 
 	// Throttle: skip if this PR was reviewed recently (any SHA).
 	dec, err := p.throttlePR(ghRepo, pr, cfg)
@@ -562,6 +568,29 @@ func (p *CIPoller) setNoAgentStatus(ghRepo string, pr ghPR) {
 	); err != nil {
 		log.Printf("CI poller: failed to set error status for %s#%d: %v", ghRepo, pr.Number, err)
 	}
+}
+
+func (p *CIPoller) skipLabeledPR(ghRepo string, pr ghPR, label string) {
+	description := fmt.Sprintf("Review skipped: label %s", label)
+	log.Printf("CI poller: skipping %s#%d because it has label %q", ghRepo, pr.Number, label)
+	if err := p.callSetCommitStatus(
+		ghRepo, pr.HeadRefOid, "success", description,
+	); err != nil {
+		log.Printf("CI poller: failed to set skipped status for %s#%d: %v", ghRepo, pr.Number, err)
+	}
+}
+
+func matchingCISkipLabel(prLabels, skipLabels []string) (string, bool) {
+	for _, label := range prLabels {
+		label = strings.TrimSpace(label)
+		for _, configured := range skipLabels {
+			configured = strings.TrimSpace(configured)
+			if configured != "" && strings.EqualFold(label, configured) {
+				return label, true
+			}
+		}
+	}
+	return "", false
 }
 
 // loadCIRepoConfigFor loads the repo's config via the configured loader (the
@@ -1792,6 +1821,7 @@ func (p *CIPoller) listOpenPRs(ctx context.Context, ghRepo string) ([]ghPR, erro
 			BaseRefName: pr.BaseRefName,
 			Title:       pr.Title,
 			Author:      ghPRAuthor{Login: pr.AuthorLogin},
+			Labels:      pr.Labels,
 		})
 	}
 	return prs, nil
@@ -2612,6 +2642,15 @@ func (p *CIPoller) retryDueReviewAttempt(
 		}
 		return false // PR advanced; the new HEAD already has its own attempt
 	}
+	if label, skip := matchingCISkipLabel(pr.Labels, cfg.CI.SkipLabels); skip {
+		if err := p.db.DeleteReviewAttempt(ghRepo, attempt.PRNumber, attempt.HeadSHA); err != nil {
+			log.Printf("CI poller: error deleting deferred attempt skipped by label for %s#%d@%s: %v",
+				ghRepo, attempt.PRNumber, gitpkg.ShortSHA(attempt.HeadSHA), err)
+			return false
+		}
+		p.skipLabeledPR(ghRepo, pr, label)
+		return false
+	}
 	claimed, attemptNumber, firstAttemptAt, err := p.db.ClaimDueReviewAttempt(ghRepo, attempt.PRNumber, attempt.HeadSHA, now)
 	if err != nil {
 		log.Printf("CI poller: error claiming due review attempt for %s#%d@%s: %v",
@@ -2677,6 +2716,7 @@ func (p *CIPoller) retryAttemptPR(
 		Number:      attempt.PRNumber,
 		HeadRefOid:  headSHA,
 		BaseRefName: baseRefName,
+		Labels:      target.Labels,
 		// Preserve the author so kata trust gating in enqueuePanelRun does
 		// not fail closed for trusted authors on the retry path.
 		Author: ghPRAuthor{Login: target.AuthorLogin},
@@ -3142,6 +3182,7 @@ func (p *CIPoller) panelPostTarget(
 		HeadSHA:     pr.HeadRefOID,
 		BaseRefName: pr.BaseRefName,
 		AuthorLogin: pr.AuthorLogin,
+		Labels:      pr.Labels,
 	}, nil
 }
 

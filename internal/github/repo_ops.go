@@ -17,6 +17,7 @@ type OpenPullRequest struct {
 	BaseRefName string
 	Title       string
 	AuthorLogin string
+	Labels      []string
 }
 
 type PullRequestInfo struct {
@@ -25,6 +26,7 @@ type PullRequestInfo struct {
 	HeadRefOID  string
 	BaseRefName string
 	AuthorLogin string
+	Labels      []string
 }
 
 func (c *Client) ListOpenPullRequests(ctx context.Context, ghRepo string, limit int) ([]OpenPullRequest, error) {
@@ -57,6 +59,7 @@ func (c *Client) ListOpenPullRequests(ctx context.Context, ghRepo string, limit 
 			BaseRefName: pr.GetBase().GetRef(),
 			Title:       pr.GetTitle(),
 			AuthorLogin: pr.GetUser().GetLogin(),
+			Labels:      pullRequestLabelNames(pr.GetLabels()),
 		})
 	}
 	return result, nil
@@ -86,7 +89,18 @@ func (c *Client) GetPullRequest(ctx context.Context, ghRepo string, prNumber int
 		HeadRefOID:  pr.GetHead().GetSHA(),
 		BaseRefName: pr.GetBase().GetRef(),
 		AuthorLogin: pr.GetUser().GetLogin(),
+		Labels:      pullRequestLabelNames(pr.GetLabels()),
 	}, nil
+}
+
+func pullRequestLabelNames(labels []*googlegithub.Label) []string {
+	names := make([]string, 0, len(labels))
+	for _, label := range labels {
+		if name := strings.TrimSpace(label.GetName()); name != "" {
+			names = append(names, name)
+		}
+	}
+	return names
 }
 
 func (c *Client) ListOwnerRepos(ctx context.Context, owner string, limit int) ([]string, error) {

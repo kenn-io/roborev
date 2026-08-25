@@ -597,6 +597,7 @@ func TestGitHubClientForRepo_UsesEnterpriseBaseURL(t *testing.T) {
 		headRef := "feature"
 		baseRef := "main"
 		login := "alice"
+		label := "skip-review"
 
 		assert.NoError(t, json.NewEncoder(w).Encode([]*googlegithub.PullRequest{
 			{
@@ -613,6 +614,7 @@ func TestGitHubClientForRepo_UsesEnterpriseBaseURL(t *testing.T) {
 				User: &googlegithub.User{
 					Login: &login,
 				},
+				Labels: []*googlegithub.Label{{Name: label}},
 			},
 		}))
 	}))
@@ -634,6 +636,7 @@ func TestGitHubClientForRepo_UsesEnterpriseBaseURL(t *testing.T) {
 	assert.Equal(t, "Bearer ghs_enterprise_token", authHeader)
 	assert.Equal(t, 42, prs[0].Number)
 	assert.Equal(t, "head-sha", prs[0].HeadRefOid)
+	assert.Equal(t, []string{"skip-review"}, prs[0].Labels)
 }
 
 func TestFormatRawBatchComment_Truncation(t *testing.T) {
@@ -784,6 +787,35 @@ func TestCIPollerPollRepo_UsesPRListAndProcessesEach(t *testing.T) {
 
 	assert.True(t, h.hasPanel(t, "acme/api", 7, "11111111aaaaaaaa"), "expected panel for PR 7")
 	assert.True(t, h.hasPanel(t, "acme/api", 8, "22222222bbbbbbbb"), "expected panel for PR 8")
+}
+
+func TestCIPollerProcessPR_SkipsConfiguredLabel(t *testing.T) {
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	h.Cfg.CI.SkipLabels = []string{"  do not review  "}
+	h.Cfg.CI.ReviewTypes = []string{"security"}
+	h.Cfg.CI.Agents = []string{"codex"}
+	h.stubProcessPRGit()
+	statuses := h.CaptureCommitStatuses()
+
+	pr := ghPR{
+		Number:      9,
+		HeadRefOid:  "skipped-head-sha",
+		BaseRefName: "main",
+		Labels:      []string{"Do Not Review"},
+	}
+	err := h.Poller.processPR(context.Background(), "acme/api", pr, h.Cfg)
+	require.NoError(t, err)
+
+	assert.False(t, h.hasPanel(t, "acme/api", 9, "skipped-head-sha"))
+	assert.Equal(t, []capturedStatus{{
+		Repo: "acme/api", SHA: "skipped-head-sha", State: "success",
+		Desc: "Review skipped: label Do Not Review",
+	}}, *statuses)
+
+	pr.Labels = nil
+	require.NoError(t, h.Poller.processPR(
+		context.Background(), "acme/api", pr, h.Cfg))
+	assert.True(t, h.hasPanel(t, "acme/api", 9, "skipped-head-sha"))
 }
 
 // drivePanelOutcome resolves the panel run for a PR HEAD and drives every
@@ -4405,6 +4437,43 @@ func TestRetryDueReviewAttemptFetchesPRMissingFromOpenPage(t *testing.T) {
 		"retry direct-lookup path must persist the PR base branch on the synthesis job")
 	assert.Empty(synth.Branch,
 		"CI synthesis job must not record a local branch (it would leak into fix/refine discovery)")
+}
+
+func TestRetryDueReviewAttemptSkipsConfiguredLabel(t *testing.T) {
+	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
+	h.Cfg.CI.SkipLabels = []string{"skip-review"}
+	statuses := h.CaptureCommitStatuses()
+
+	const headSHA = "labeleddeferred01"
+	const prNum = 133
+	now := time.Now()
+	created, err := h.DB.ReserveReviewAttempt(
+		"acme/api", prNum, headSHA, now.Add(-time.Hour))
+	require.NoError(t, err)
+	require.True(t, created)
+	require.NoError(t, h.DB.DeferReviewAttempt(
+		"acme/api", prNum, headSHA, "transient", "provider unavailable",
+		"old-run", now.Add(-time.Minute), false))
+
+	h.Poller.prPostTargetFn = func(
+		context.Context, string, int,
+	) (panelPostTarget, error) {
+		return panelPostTarget{
+			Open: true, HeadSHA: headSHA, BaseRefName: "main",
+			Labels: []string{"Skip-Review"},
+		}, nil
+	}
+	h.Poller.retryDueReviewAttempts(
+		context.Background(), "acme/api", nil, h.Cfg)
+
+	attempt, err := h.DB.GetReviewAttempt("acme/api", prNum, headSHA)
+	require.NoError(t, err)
+	assert.Nil(t, attempt)
+	assert.False(t, h.hasPanel(t, "acme/api", prNum, headSHA))
+	assert.Equal(t, []capturedStatus{{
+		Repo: "acme/api", SHA: headSHA, State: "success",
+		Desc: "Review skipped: label Skip-Review",
+	}}, *statuses)
 }
 
 // TestReconcileStuckAttempt covers the crash/stuck reconcile: a pending attempt
