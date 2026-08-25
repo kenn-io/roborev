@@ -121,7 +121,7 @@ func (b *Builder) resolveSystemPrompt(
 }
 
 func (b *Builder) resolveRepoConfig() (*config.RepoConfig, error) {
-	if b.repoCfg != nil {
+	if b.repoCfgSet {
 		return b.repoCfg, nil
 	}
 	if b.repoCfgRef != "" {

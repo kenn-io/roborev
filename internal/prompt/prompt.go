@@ -91,6 +91,7 @@ type Builder struct {
 	db         *storage.DB
 	globalCfg  *config.Config // optional global config for exclude patterns
 	repoCfg    *config.RepoConfig
+	repoCfgSet bool
 	repoCfgRef string
 	ctx        context.Context
 	repoPath   string
@@ -163,6 +164,7 @@ func (b *Builder) WithRepoConfig(
 ) *Builder {
 	next := *b
 	next.repoCfg = repoCfg
+	next.repoCfgSet = true
 	next.repoCfgRef = strings.TrimSpace(ref)
 	return &next
 }

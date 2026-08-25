@@ -102,6 +102,27 @@ func TestCustomReviewReadsGlobalRelativeFilesFromConfiguredRef(t *testing.T) {
 	assert.NotContains(t, got, "Untrusted working-tree rubric.")
 }
 
+func TestCustomReviewUsesExplicitNilRepoConfig(t *testing.T) {
+	repo := newTestRepo(t)
+	baseRef := repo.fastCommitFiles(map[string]string{
+		".roborev.toml": "invalid = [",
+		"review.tmpl":   "Trusted global rubric.",
+	}, "add global rubric")
+	globalCfg := &config.Config{Review: config.ReviewConfig{
+		Types: map[string]config.ReviewTypeSpec{
+			"custom": {Template: "review.tmpl"},
+		},
+	}}
+
+	got, custom, err := NewBuilderWithConfig(nil, globalCfg).
+		ForRepo(repo.dir, 0).
+		WithRepoConfig(nil, baseRef).
+		resolveSystemPrompt("codex", "custom", "custom", MaxPromptSize)
+	require.NoError(t, err)
+	assert.True(t, custom)
+	assert.Contains(t, got, "Trusted global rubric.")
+}
+
 func TestCustomReviewMissingDefinitionFails(t *testing.T) {
 	_, _, err := NewBuilder(nil).
 		ForRepo(t.TempDir(), 0).
