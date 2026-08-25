@@ -371,15 +371,18 @@ func TestPanelExperimentResumesCompatibleMemberSession(t *testing.T) {
 	assert.Empty(t, synthesis.ResumeSourceJobUUID)
 }
 
-func TestCIPollerUsesSourceBranchExperimentIdentity(t *testing.T) {
-	poller, db, _, repo, cfg := newCIPanelGitHarness(t)
+func TestCIPollerUsesStoredRepoAndSourceBranchExperimentIdentity(t *testing.T) {
+	poller, db, storedRepo, repo, cfg := newCIPanelGitHarness(t)
 	enabled := true
 	ratio := 1.0
 	cfg.Experiments = map[string]config.ExperimentDefinition{
 		"ci-session-v1": {
 			Enabled: &enabled, Ratio: &ratio,
-			Workflows: []config.ExperimentWorkflow{config.ExperimentWorkflowCI},
-			Config:    map[string]any{"reuse_review_session": true},
+			Workflows: []config.ExperimentWorkflow{
+				config.ExperimentWorkflowReview,
+				config.ExperimentWorkflowCI,
+			},
+			Config: map[string]any{"reuse_review_session": true},
 		},
 	}
 
@@ -404,6 +407,17 @@ func TestCIPollerUsesSourceBranchExperimentIdentity(t *testing.T) {
 	require.Len(t, synthesis.Experiments, 1)
 	assert.Equal(t, "ci-session-v1", synthesis.Experiments[0].ID)
 	assert.Equal(t, "feature/ci-experiment", synthesis.Branch)
+	expected, err := config.SelectReviewExperiment(config.ExperimentSelectionInput{
+		Workflow: config.ExperimentWorkflowReview,
+		Subject: config.ExperimentSubject{
+			Repository: storedRepo.Identity,
+			Branch:     "feature/ci-experiment",
+		},
+		Global: cfg,
+	})
+	require.NoError(t, err)
+	require.NotNil(t, expected.Assignment)
+	assert.Equal(t, expected.Assignment.SubjectHash, synthesis.Experiments[0].SubjectHash)
 	for _, member := range members {
 		assert.Equal(t, synthesis.Experiments, member.Experiments)
 		assert.Equal(t, "feature/ci-experiment", member.Branch)

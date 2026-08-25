@@ -531,7 +531,7 @@ func (p *CIPoller) enqueuePanelRun(ctx context.Context, ghRepo string, pr ghPR, 
 	selection, err := config.SelectReviewExperiment(config.ExperimentSelectionInput{
 		Workflow: config.ExperimentWorkflowCI,
 		Subject: config.ExperimentSubject{
-			Repository: ghRepo,
+			Repository: repo.Identity,
 			Branch:     pr.HeadRefName,
 		},
 		Global:  cfg,
