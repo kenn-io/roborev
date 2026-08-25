@@ -2826,53 +2826,6 @@ func TestResolveCurrentBranchFilter(t *testing.T) {
 	})
 }
 
-func TestJobVerdict(t *testing.T) {
-	pass := "P"
-	fail := "F"
-	empty := ""
-
-	tests := []struct {
-		name    string
-		verdict *string
-		output  string
-		want    string
-	}{
-		{
-			name:    "stored PASS verdict",
-			verdict: &pass,
-			output:  "some output",
-			want:    "P",
-		},
-		{
-			name:    "stored FAIL verdict",
-			verdict: &fail,
-			output:  "No issues found.",
-			want:    "F",
-		},
-		{
-			name:    "nil verdict falls back to parse",
-			verdict: nil,
-			output:  "No issues found.",
-			want:    "P",
-		},
-		{
-			name:    "empty verdict falls back to parse",
-			verdict: &empty,
-			output:  "## Issues\n- Bug in foo.go",
-			want:    "F",
-		},
-	}
-
-	for _, tt := range tests {
-		t.Run(tt.name, func(t *testing.T) {
-			job := &storage.ReviewJob{Verdict: tt.verdict}
-			review := &storage.Review{Output: tt.output}
-			got := jobVerdict(job, review)
-			assert.Equal(t, tt.want, got)
-		})
-	}
-}
-
 func TestFixSingleJobSkipsPassVerdict(t *testing.T) {
 	repo := createTestRepo(t, map[string]string{
 		"main.go": "package main\n",

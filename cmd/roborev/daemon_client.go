@@ -118,7 +118,7 @@ func showReview(cmd *cobra.Command, ep daemon.DaemonEndpoint, jobID int64, quiet
 	}
 
 	// Return exit code based on verdict
-	verdict := storage.ParseVerdict(review.Output)
+	verdict := review.Verdict()
 	if verdict == "F" {
 		return &exitError{code: 1}
 	}

@@ -141,7 +141,7 @@ func handleJobsDone(
 }
 
 func mockWaitableReview(
-	t *testing.T, mux *http.ServeMux, output string,
+	t *testing.T, mux *http.ServeMux, output string, verdict int,
 ) {
 	t.Helper()
 	mockEnqueueQueued(mux, "abc123")
@@ -155,6 +155,7 @@ func mockWaitableReview(
 	) {
 		respondJSON(w, http.StatusOK, storage.Review{
 			ID: 1, JobID: 1, Agent: "test", Output: output,
+			VerdictBool: new(verdict),
 		})
 	})
 }
@@ -253,7 +254,7 @@ func TestWaitQuietVerdictExitCode(t *testing.T) {
 	t.Run("passing review exits 0 with no output", func(t *testing.T) {
 		repo, mux := setupTestEnvironment(t)
 		repo.CommitFile("file.txt", "content", "initial commit")
-		mockWaitableReview(t, mux, "No issues found.")
+		mockWaitableReview(t, mux, "No issues found.", 1)
 
 		stdout, stderr, err := executeReviewCmd("--repo", repo.Dir, "--wait", "--quiet")
 
@@ -267,6 +268,7 @@ func TestWaitQuietVerdictExitCode(t *testing.T) {
 		repo.CommitFile("file.txt", "content", "initial commit")
 		mockWaitableReview(t, mux,
 			"Found 2 issues:\n1. Bug in foo.go\n2. Missing error handling",
+			0,
 		)
 
 		stdout, stderr, err := executeReviewCmd("--repo", repo.Dir, "--wait", "--quiet")
@@ -277,6 +279,18 @@ func TestWaitQuietVerdictExitCode(t *testing.T) {
 		require.Equal(t, 1, exitErr.code, "expected exit code 1")
 		assert.Empty(t, stdout)
 		assert.Empty(t, stderr)
+	})
+
+	t.Run("stored verdict overrides rendered review text", func(t *testing.T) {
+		repo, mux := setupTestEnvironment(t)
+		repo.CommitFile("file.txt", "content", "initial commit")
+		mockWaitableReview(t, mux, "No issues found.", 0)
+
+		_, _, err := executeReviewCmd("--repo", repo.Dir, "--wait", "--quiet")
+
+		var exitErr *exitError
+		require.ErrorAs(t, err, &exitErr)
+		assert.Equal(t, 1, exitErr.code)
 	})
 }
 

@@ -1025,15 +1025,6 @@ func firstLine(s string) string {
 	return truncateString(s, 80)
 }
 
-// jobVerdict returns the verdict for a job. Uses the stored verdict
-// if available, otherwise parses from the review output.
-func jobVerdict(job *storage.ReviewJob, review *storage.Review) string {
-	if job.Verdict != nil && *job.Verdict != "" {
-		return *job.Verdict
-	}
-	return storage.ParseVerdict(review.Output)
-}
-
 func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOptions, tracker *fixSessionTracker) error {
 	if opts.classify == nil {
 		opts.classify = agent.ClassifyLimit
@@ -1065,7 +1056,7 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 	}
 
 	// Skip reviews that passed — no findings to fix
-	if jobVerdict(job, review) == "P" {
+	if review.Verdict() == "P" {
 		if !opts.quiet {
 			cmd.Printf("Job %d: review passed, skipping fix\n", jobID)
 		}
@@ -1343,7 +1334,7 @@ func processFixBatch(ctx context.Context, cmd *cobra.Command, roots currentRepoR
 			}
 			continue
 		}
-		if jobVerdict(job, review) == "P" {
+		if review.Verdict() == "P" {
 			if !opts.quiet {
 				cmd.Printf("Skipping job %d (review passed)\n", id)
 			}

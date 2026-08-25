@@ -26,6 +26,9 @@ var postgresV14Schema string
 //go:embed schemas/postgres_v17.sql
 var postgresV17Schema string
 
+//go:embed schemas/postgres_v18.sql
+var postgresV18Schema string
+
 // openTestPgPoolRawAtVersion bootstraps a fresh Postgres test pool at the
 // given older schema version by running only the corresponding embedded
 // schema file and seeding schema_version. It deliberately does NOT call
@@ -49,6 +52,7 @@ func openTestPgPoolRawAtVersion(t *testing.T, version int) *PgPool {
 		13: postgresV13Schema,
 		14: postgresV14Schema,
 		17: postgresV17Schema,
+		18: postgresV18Schema,
 	}
 	schemaSQL, ok := schemas[version]
 	require.Truef(t, ok, "openTestPgPoolRawAtVersion: no embedded schema for version %d", version)
@@ -78,6 +82,25 @@ func openTestPgPoolRawAtVersion(t *testing.T, version int) *PgPool {
 	require.NoError(t, err, "seed schema_version")
 
 	return pool
+}
+
+func TestPostgresMigration_ReviewVerdict(t *testing.T) {
+	openTestPgPoolRawAtVersion(t, 18)
+	ctx := t.Context()
+
+	pg := openTestPgPool(t)
+	defer pg.Close()
+
+	var exists bool
+	require.NoError(t, pgxPool(pg).QueryRow(ctx, `
+		SELECT EXISTS (
+			SELECT 1 FROM information_schema.columns
+			WHERE table_schema = 'roborev'
+			  AND table_name = 'reviews'
+			  AND column_name = 'verdict_bool'
+		)
+	`).Scan(&exists))
+	assert.True(t, exists)
 }
 
 func TestPostgresMigration_ResponseSource(t *testing.T) {

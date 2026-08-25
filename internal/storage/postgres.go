@@ -15,12 +15,12 @@ import (
 )
 
 // PostgreSQL schema version - increment when schema changes
-const pgSchemaVersion = 19
+const pgSchemaVersion = 20
 
 // pgSchemaName is the PostgreSQL schema used to isolate roborev tables
 const pgSchemaName = "roborev"
 
-//go:embed schemas/postgres_v19.sql
+//go:embed schemas/postgres_v20.sql
 var pgSchemaSQL string
 
 // pgSchemaStatements returns the individual DDL statements for schema creation.
@@ -440,6 +440,11 @@ func (p *PgPool) EnsureSchema(ctx context.Context) error {
 				}
 			}
 		}
+		if currentVersion < 20 {
+			if _, err = p.pool.Exec(ctx, `ALTER TABLE reviews ADD COLUMN IF NOT EXISTS verdict_bool BOOLEAN`); err != nil {
+				return fmt.Errorf("v20 migration (add review verdict): %w", err)
+			}
+		}
 		// Update version
 		_, err = p.pool.Exec(ctx, `INSERT INTO schema_version (version) VALUES ($1) ON CONFLICT (version) DO NOTHING`, pgSchemaVersion)
 		if err != nil {
@@ -792,14 +797,15 @@ func (p *PgPool) UpsertReview(ctx context.Context, r SyncableReview) error {
 	_, err := p.pool.Exec(ctx, `
 		INSERT INTO reviews (
 			uuid, job_uuid, agent, prompt, output, closed,
-			updated_by_machine_id, created_at, updated_at
-		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, clock_timestamp())
+			verdict_bool, updated_by_machine_id, created_at, updated_at
+		) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, clock_timestamp())
 		ON CONFLICT (uuid) DO UPDATE SET
 			closed = EXCLUDED.closed,
+			verdict_bool = COALESCE(EXCLUDED.verdict_bool, reviews.verdict_bool),
 			updated_by_machine_id = EXCLUDED.updated_by_machine_id,
 			updated_at = clock_timestamp()
 	`, r.UUID, r.JobUUID, r.Agent, r.Prompt, r.Output, r.Closed,
-		r.UpdatedByMachineID, r.CreatedAt)
+		r.VerdictBool, r.UpdatedByMachineID, r.CreatedAt)
 	return err
 }
 
@@ -1103,6 +1109,7 @@ type PulledReview struct {
 	Prompt             string
 	Output             string
 	Closed             bool
+	VerdictBool        *bool
 	UpdatedByMachineID string
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
@@ -1130,7 +1137,7 @@ func (p *PgPool) PullReviews(ctx context.Context, excludeMachineID string, known
 	rows, err := p.pool.Query(ctx, `
 		SELECT
 			r.uuid, r.job_uuid, r.agent, r.prompt, r.output, r.closed,
-			r.updated_by_machine_id, r.created_at, r.updated_at, r.id
+			r.verdict_bool, r.updated_by_machine_id, r.created_at, r.updated_at, r.id
 		FROM reviews r
 		WHERE (r.updated_by_machine_id IS NULL OR r.updated_by_machine_id != $1)
 		AND r.job_uuid = ANY($2)
@@ -1152,7 +1159,7 @@ func (p *PgPool) PullReviews(ctx context.Context, excludeMachineID string, known
 
 		err := rows.Scan(
 			&r.UUID, &r.JobUUID, &r.Agent, &r.Prompt, &r.Output, &r.Closed,
-			&r.UpdatedByMachineID, &r.CreatedAt, &r.UpdatedAt, &lastID,
+			&r.VerdictBool, &r.UpdatedByMachineID, &r.CreatedAt, &r.UpdatedAt, &lastID,
 		)
 		if err != nil {
 			return nil, cursor, fmt.Errorf("scan review: %w", err)
@@ -1284,14 +1291,15 @@ func (p *PgPool) BatchUpsertReviews(ctx context.Context, reviews []SyncableRevie
 		batch.Queue(`
 			INSERT INTO reviews (
 				uuid, job_uuid, agent, prompt, output, closed,
-				updated_by_machine_id, created_at, updated_at
-			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, clock_timestamp())
+				verdict_bool, updated_by_machine_id, created_at, updated_at
+			) VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, clock_timestamp())
 			ON CONFLICT (uuid) DO UPDATE SET
 				closed = EXCLUDED.closed,
+				verdict_bool = COALESCE(EXCLUDED.verdict_bool, reviews.verdict_bool),
 				updated_by_machine_id = EXCLUDED.updated_by_machine_id,
 				updated_at = clock_timestamp()
 		`, r.UUID, r.JobUUID, r.Agent, r.Prompt, r.Output, r.Closed,
-			r.UpdatedByMachineID, r.CreatedAt)
+			r.VerdictBool, r.UpdatedByMachineID, r.CreatedAt)
 	}
 
 	br := p.pool.SendBatch(ctx, batch)

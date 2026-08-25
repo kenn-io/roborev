@@ -58,6 +58,10 @@ func Synthesize(
 	results []ReviewResult,
 	opts SynthesizeOpts,
 ) (string, error) {
+	for i := range results {
+		results[i] = results[i].FilterStructured(opts.MinSeverity)
+	}
+
 	successCount := 0
 	for _, r := range results {
 		if IsSubstantiveOutput(r) {
@@ -87,7 +91,8 @@ func Synthesize(
 	// filtering is needed (synthesis applies the filter).
 	// "low" means no filtering, so treat same as empty.
 	if len(results) == 1 && successCount == 1 &&
-		(opts.MinSeverity == "" || opts.MinSeverity == "low") {
+		(opts.MinSeverity == "" || opts.MinSeverity == "low" ||
+			results[0].Structured != nil) {
 		return formatSingleResult(
 			results[0], opts.HeadSHA), nil
 	}

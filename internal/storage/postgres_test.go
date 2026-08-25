@@ -1127,6 +1127,7 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) {
 			Prompt:             "test prompt 1",
 			Output:             "test output 1",
 			Closed:             false,
+			VerdictBool:        new(true),
 			UpdatedByMachineID: defaultTestMachineID,
 			CreatedAt:          time.Now(),
 		},
@@ -1146,6 +1147,12 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) {
 	require.NoError(t, err, "BatchUpsertReviews failed: %v")
 
 	assert.Equal(t, 2, countSuccesses(success))
+
+	var verdict bool
+	require.NoError(t, pool.pool.QueryRow(ctx,
+		`SELECT verdict_bool FROM reviews WHERE uuid = $1`, reviews[0].UUID,
+	).Scan(&verdict))
+	assert.True(t, verdict)
 
 	t.Run("empty batch is no-op", func(t *testing.T) {
 		success, err := pool.BatchUpsertReviews(ctx, []SyncableReview{})

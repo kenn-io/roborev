@@ -570,6 +570,29 @@ func TestGetReviewsToSync_RequiresJobSynced(t *testing.T) {
 	require.NoError(t, err, "GetReviewsToSync failed: %v")
 
 	assert.Len(t, reviews, 1)
+	require.NotNil(t, reviews[0].VerdictBool)
+	assert.False(t, *reviews[0].VerdictBool)
+}
+
+func TestUpsertPulledReviewUsesStoredVerdict(t *testing.T) {
+	h := newSyncTestHelper(t)
+	job := h.createPendingJob("stored-review-verdict")
+
+	require.NoError(t, h.db.UpsertPulledReview(PulledReview{
+		UUID:               GenerateUUID(),
+		JobUUID:            job.UUID,
+		Agent:              "test",
+		Prompt:             "prompt",
+		Output:             "No issues found.",
+		VerdictBool:        new(false),
+		UpdatedByMachineID: GenerateUUID(),
+		CreatedAt:          time.Now(),
+		UpdatedAt:          time.Now(),
+	}))
+
+	review, err := h.db.GetReviewByJobID(job.ID)
+	require.NoError(t, err)
+	assert.Equal(t, VerdictFail, review.Verdict())
 }
 
 // TestGetCommentsToSync_RequiresJobSynced verifies that responses are only

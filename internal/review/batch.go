@@ -93,17 +93,13 @@ func runSingle(
 	// Map review type to workflow name for config
 	// resolution (same mapping as CI poller).
 	workflow := config.WorkflowForReviewType(reviewType)
-	reasoning := cfg.Reasoning
-	var err error
-	if cfg.GlobalConfig != nil || cfg.RepoConfig != nil {
-		reasoning, err = config.ResolveCIReviewReasoningForType(
-			cfg.Reasoning, cfg.RepoConfig, cfg.GlobalConfig, reviewType,
-		)
-		if err != nil {
-			result.Status = ResultFailed
-			result.Error = fmt.Sprintf("resolve reasoning: %v", err)
-			return result
-		}
+	reasoning, err := config.ResolveCIReviewReasoningForType(
+		cfg.Reasoning, cfg.RepoConfig, cfg.GlobalConfig, reviewType,
+	)
+	if err != nil {
+		result.Status = ResultFailed
+		result.Error = fmt.Sprintf("resolve reasoning: %v", err)
+		return result
 	}
 
 	// Workflow-aware agent/model resolution when config
@@ -241,10 +237,9 @@ func runSingle(
 			if decodeErr != nil {
 				err = decodeErr
 			} else {
-				filtered := structured.Filter(cfg.MinSeverity)
-				passed := filtered.Passed()
-				result.Verdict = &passed
-				output = filtered.Markdown()
+				result.Structured = &structured
+				result = result.FilterStructured(cfg.MinSeverity)
+				output = result.Output
 			}
 		}
 	} else {

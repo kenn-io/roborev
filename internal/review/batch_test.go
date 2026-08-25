@@ -393,6 +393,7 @@ func TestRunBatchPreservesStructuredVerdict(t *testing.T) {
 	require.Len(t, results, 1)
 	require.Equal(t, ResultDone, results[0].Status, results[0].Error)
 	require.NotNil(t, results[0].Verdict)
+	require.NotNil(t, results[0].Structured)
 	assert.True(t, results[0].Passed())
 	assert.Contains(t, results[0].Output, "High: no actionable findings.")
 }

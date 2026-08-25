@@ -29,6 +29,17 @@ func runVerdictTests(t *testing.T, tests []verdictTestCase) {
 	}
 }
 
+func TestReviewVerdictUsesStoredValue(t *testing.T) {
+	assert.Equal(t, VerdictFail, (Review{
+		Output:      "No issues found.",
+		VerdictBool: new(0),
+	}).Verdict())
+	assert.Equal(t, VerdictPass, (Review{
+		Output:      "High: broken behavior",
+		VerdictBool: new(1),
+	}).Verdict())
+}
+
 var verdictTests = []verdictTestCase{
 	// --- SimplePass: basic "no issues found" phrasing ---
 	{

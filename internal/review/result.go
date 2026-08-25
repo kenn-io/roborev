@@ -22,6 +22,10 @@ type ReviewResult struct {
 	// returned structured output. Prose reviews leave it nil and use the
 	// existing deterministic Markdown parser.
 	Verdict *bool
+	// Structured retains schema output so later severity thresholds can be
+	// applied without reparsing or asking a synthesis agent to infer findings
+	// from rendered Markdown.
+	Structured *StructuredReview
 
 	// Skipped/SkipReason are populated for skipped (auto-design) rows so
 	// synthesis can render them as a distinct short section instead of
@@ -42,6 +46,19 @@ func (r ReviewResult) Passed() bool {
 		return *r.Verdict
 	}
 	return storage.ParseVerdict(r.Output) == "P"
+}
+
+// FilterStructured applies minSeverity to schema-backed output and updates the
+// rendered text and verdict together. Prose review results are unchanged.
+func (r ReviewResult) FilterStructured(minSeverity string) ReviewResult {
+	if r.Structured == nil {
+		return r
+	}
+	filtered := r.Structured.Filter(minSeverity)
+	r.Structured = &filtered
+	r.Verdict = new(filtered.Passed())
+	r.Output = filtered.Markdown()
+	return r
 }
 
 // Result status values for ReviewResult.Status.

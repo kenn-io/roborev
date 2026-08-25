@@ -40,6 +40,18 @@ func applyReviewVerdict(review *Review, verdictBool sql.NullInt64) {
 	}
 }
 
+// Verdict returns the review's stored pass/fail result. Reviews created before
+// verdict_bool was populated retain the existing Markdown fallback.
+func (r Review) Verdict() string {
+	if r.VerdictBool != nil {
+		if *r.VerdictBool == 1 {
+			return verdictPass
+		}
+		return verdictFail
+	}
+	return ParseVerdict(r.Output)
+}
+
 // applyJobVerdict derives the job's verdict from the stored verdict_bool,
 // falling back to parsing the review output. hasReview reports whether a
 // non-empty review output exists; callers that skip hydrating the output for

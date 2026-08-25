@@ -294,6 +294,15 @@ func TestFindFailedReviewForBranch(t *testing.T) {
 			wantClosedIDs: []int64{100},
 		},
 		{
+			name: "stored verdict overrides rendered review text",
+			setup: func(c *mockDaemonClient) {
+				c.WithReview("commit1", 100, "No issues found.", false)
+				c.reviews["commit1"].VerdictBool = new(0)
+			},
+			commits:   []string{"commit1"},
+			wantJobID: 100,
+		},
+		{
 			name: "skips closed",
 			setup: func(c *mockDaemonClient) {
 				c.WithReview("commit1", 100, "Bug found.", false).

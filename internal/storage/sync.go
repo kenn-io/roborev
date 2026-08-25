@@ -628,6 +628,7 @@ type SyncableReview struct {
 	Prompt             string
 	Output             string
 	Closed             bool
+	VerdictBool        *bool
 	UpdatedByMachineID string
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
@@ -640,7 +641,7 @@ func (db *DB) GetReviewsToSync(machineID string, limit int) ([]SyncableReview, e
 		SELECT
 			r.id, r.uuid, r.job_id, j.uuid,
 			r.agent, r.prompt, r.output, r.closed,
-			r.updated_by_machine_id, r.created_at, r.updated_at
+			r.verdict_bool, r.updated_by_machine_id, r.created_at, r.updated_at
 		FROM reviews r
 		JOIN review_jobs j ON r.job_id = j.id
 		WHERE r.updated_by_machine_id = ?
@@ -660,11 +661,12 @@ func (db *DB) GetReviewsToSync(machineID string, limit int) ([]SyncableReview, e
 	for rows.Next() {
 		var r SyncableReview
 		var createdAt, updatedAt string
+		var verdictBool sql.NullBool
 
 		err := rows.Scan(
 			&r.ID, &r.UUID, &r.JobID, &r.JobUUID,
 			&r.Agent, &r.Prompt, &r.Output, &r.Closed,
-			&r.UpdatedByMachineID, &createdAt, &updatedAt,
+			&verdictBool, &r.UpdatedByMachineID, &createdAt, &updatedAt,
 		)
 		if err != nil {
 			return nil, fmt.Errorf("scan review: %w", err)
@@ -672,6 +674,9 @@ func (db *DB) GetReviewsToSync(machineID string, limit int) ([]SyncableReview, e
 
 		r.CreatedAt = parseSQLiteTime(createdAt)
 		r.UpdatedAt = parseSQLiteTime(updatedAt)
+		if verdictBool.Valid {
+			r.VerdictBool = new(verdictBool.Bool)
+		}
 		reviews = append(reviews, r)
 	}
 	return reviews, rows.Err()
@@ -859,7 +864,12 @@ func (db *DB) UpsertPulledReview(r PulledReview) error {
 
 	now := time.Now().UTC().Format(time.RFC3339)
 	var verdictBool any
-	if r.Output != "" {
+	if r.VerdictBool != nil {
+		verdictBool = 0
+		if *r.VerdictBool {
+			verdictBool = 1
+		}
+	} else if r.Output != "" {
 		verdictBool = verdictToBool(ParseVerdict(r.Output))
 	}
 	_, err = db.Exec(`
@@ -869,7 +879,7 @@ func (db *DB) UpsertPulledReview(r PulledReview) error {
 		) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 		ON CONFLICT(uuid) DO UPDATE SET
 			closed = excluded.closed,
-			verdict_bool = COALESCE(reviews.verdict_bool, excluded.verdict_bool),
+			verdict_bool = COALESCE(excluded.verdict_bool, reviews.verdict_bool),
 			updated_by_machine_id = excluded.updated_by_machine_id,
 			updated_at = excluded.updated_at,
 			synced_at = ?

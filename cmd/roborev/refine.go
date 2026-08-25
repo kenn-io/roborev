@@ -493,7 +493,7 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 					fmt.Printf("Warning: review failed: %v\n", err)
 					continue // Loop back, will re-check
 				}
-				verdict := storage.ParseVerdict(review.Output)
+				verdict := review.Verdict()
 				if verdict == "F" && !review.Closed {
 					currentFailedReview = review
 				} else if verdict == "P" {
@@ -546,7 +546,7 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 					return fmt.Errorf("branch review failed: %w", err)
 				}
 
-				verdict := storage.ParseVerdict(review.Output)
+				verdict := review.Verdict()
 				if verdict == "P" {
 					fmt.Println("\nAll reviews passed! Branch is ready.")
 					return nil
@@ -791,7 +791,7 @@ func runRefine(runCtx RunContext, opts refineOptions) error {
 			continue
 		}
 
-		verdict := storage.ParseVerdict(review.Output)
+		verdict := review.Verdict()
 		if verdict == "P" {
 			fmt.Println("New commit passed review!")
 			if err := client.MarkReviewClosed(review.JobID); err != nil {
@@ -1131,7 +1131,7 @@ func findFailedReviewForBranch(client daemon.Client, commits []string, skip map[
 			continue
 		}
 
-		verdict := storage.ParseVerdict(review.Output)
+		verdict := review.Verdict()
 		if verdict == "F" {
 			return review, nil
 		}

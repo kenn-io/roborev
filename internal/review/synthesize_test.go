@@ -420,6 +420,33 @@ func TestSynthesize_UsesSynthesisEntrypoint(t *testing.T) {
 	assert.NotContains(t, synth.synthPrompt, "Review the code changes in commit")
 }
 
+func TestSynthesizeFiltersStructuredResultWithoutReparsingSummary(t *testing.T) {
+	structured := StructuredReview{
+		Summary: "High: no actionable findings.",
+		Findings: []StructuredFinding{{
+			Severity: "low",
+			Problem:  "Name is vague.",
+			Fix:      "Rename it.",
+		}},
+	}
+	result := ReviewResult{
+		Agent:      "codex",
+		ReviewType: "custom",
+		Status:     ResultDone,
+		Structured: &structured,
+	}.FilterStructured("low")
+
+	comment, err := Synthesize(context.Background(), []ReviewResult{result}, SynthesizeOpts{
+		MinSeverity: "high",
+		HeadSHA:     "abc123",
+	})
+
+	require.NoError(t, err)
+	assert.Contains(t, comment, "Review Passed")
+	assert.Contains(t, comment, "No findings at or above")
+	assert.NotContains(t, comment, "Name is vague")
+}
+
 func TestSynthesize_EmptyAgentAutoSelectsAvailableAgent(t *testing.T) {
 	t.Setenv("PATH", "")
 
