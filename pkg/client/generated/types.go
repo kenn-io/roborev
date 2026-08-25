@@ -1900,21 +1900,21 @@ func (r Response) Validate() error {
 
 type Review struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema             *string    `json:"$schema,omitempty"`
-	Agent              string     `json:"agent" validate:"required"`
-	Closed             bool       `json:"closed"`
-	CreatedAt          time.Time  `json:"created_at" validate:"required"`
-	ID                 int64      `json:"id"`
-	Job                *ReviewJob `json:"job,omitempty"`
-	JobID              int64      `json:"job_id"`
-	Output             string     `json:"output" validate:"required"`
-	Prompt             string     `json:"prompt" validate:"required"`
-	StructuredOutput   *struct{}  `json:"structured_output,omitempty"`
-	SyncedAt           *time.Time `json:"synced_at,omitempty"`
-	UpdatedAt          *time.Time `json:"updated_at,omitempty"`
-	UpdatedByMachineID *string    `json:"updated_by_machine_id,omitempty"`
-	UUID               *string    `json:"uuid,omitempty"`
-	VerdictBool        *int64     `json:"verdict_bool,omitempty"`
+	Schema             *string        `json:"$schema,omitempty"`
+	Agent              string         `json:"agent" validate:"required"`
+	Closed             bool           `json:"closed"`
+	CreatedAt          time.Time      `json:"created_at" validate:"required"`
+	ID                 int64          `json:"id"`
+	Job                *ReviewJob     `json:"job,omitempty"`
+	JobID              int64          `json:"job_id"`
+	Output             string         `json:"output" validate:"required"`
+	Prompt             string         `json:"prompt" validate:"required"`
+	StructuredOutput   map[string]any `json:"structured_output,omitempty"`
+	SyncedAt           *time.Time     `json:"synced_at,omitempty"`
+	UpdatedAt          *time.Time     `json:"updated_at,omitempty"`
+	UpdatedByMachineID *string        `json:"updated_by_machine_id,omitempty"`
+	UUID               *string        `json:"uuid,omitempty"`
+	VerdictBool        *int64         `json:"verdict_bool,omitempty"`
 }
 
 func (r Review) Validate() error {

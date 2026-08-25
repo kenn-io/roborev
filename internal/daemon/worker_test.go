@@ -412,6 +412,7 @@ func TestWorkerUsesConfiguredSeverityForStructuredVerdict(t *testing.T) {
 	require.NotNil(t, stored.VerdictBool)
 	assert.Equal(t, 1, *stored.VerdictBool)
 	assert.True(t, stored.Closed)
+	assert.Equal(t, "high", stored.Job.MinSeverity)
 
 	_, ok := waitForEvent(t, eventCh, time.Second)
 	require.True(t, ok, "expected review.started event")

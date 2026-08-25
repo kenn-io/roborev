@@ -1308,6 +1308,53 @@ func ReadFile(repoPath, sha, filePath string) ([]byte, error) {
 	return stdout.Bytes(), nil
 }
 
+// RefFile is a blob read from a commit. Symlink is true when the tree entry
+// stores a link target instead of regular file contents.
+type RefFile struct {
+	Data    []byte
+	Symlink bool
+}
+
+// ReadRefFile reads a file and its tree mode at a specific commit.
+func ReadRefFile(repoPath, sha, filePath string) (RefFile, error) {
+	cmd := newGitCmd("ls-tree", "-z", sha, "--", filePath)
+	cmd.Dir = repoPath
+	var stdout, stderr bytes.Buffer
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return RefFile{}, fmt.Errorf(
+			"git ls-tree %s:%s: %s", sha, filePath, stderr.String(),
+		)
+	}
+	entry := bytes.TrimSuffix(stdout.Bytes(), []byte{0})
+	metadata, entryPath, ok := bytes.Cut(entry, []byte{'\t'})
+	fields := bytes.Fields(metadata)
+	if !ok || len(fields) != 3 || string(entryPath) != filePath ||
+		string(fields[1]) != "blob" {
+		return RefFile{}, fmt.Errorf(
+			"git path %s:%s is not a file", sha, filePath,
+		)
+	}
+	symlink := string(fields[0]) == "120000"
+
+	cmd = newGitCmd("cat-file", "blob", string(fields[2]))
+	cmd.Dir = repoPath
+	stdout.Reset()
+	stderr.Reset()
+	cmd.Stdout = &stdout
+	cmd.Stderr = &stderr
+	if err := cmd.Run(); err != nil {
+		return RefFile{}, fmt.Errorf(
+			"git cat-file %s:%s: %s", sha, filePath, stderr.String(),
+		)
+	}
+	return RefFile{
+		Data:    append([]byte(nil), stdout.Bytes()...),
+		Symlink: symlink,
+	}, nil
+}
+
 // IsMissingPathError reports whether a ReadFile error means the path is
 // absent at that ref rather than a git failure. git show emits these two
 // messages for a missing path:

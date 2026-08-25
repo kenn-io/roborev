@@ -3,6 +3,7 @@ package prompt
 import (
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"testing"
 
@@ -103,6 +104,36 @@ func TestCustomReviewReadsGlobalRelativeFilesFromConfiguredRef(t *testing.T) {
 	assert.True(t, custom)
 	assert.Contains(t, got, "Trusted global rubric.")
 	assert.NotContains(t, got, "Untrusted working-tree rubric.")
+}
+
+func TestCustomReviewReadsExternalSymlinkFromConfiguredRef(t *testing.T) {
+	if runtime.GOOS == "windows" {
+		t.Skip("symlink creation is not reliably available on Windows")
+	}
+	repo := newTestRepo(t)
+	externalPath := filepath.Join(t.TempDir(), "review.tmpl")
+	require.NoError(t, os.WriteFile(externalPath, []byte("External rubric."), 0o644))
+	linkPath := filepath.Join(repo.dir, "review.tmpl")
+	linkTarget, err := filepath.Rel(filepath.Dir(linkPath), externalPath)
+	require.NoError(t, err)
+	require.NoError(t, os.Symlink(linkTarget, linkPath))
+	repo.git("add", "review.tmpl")
+	repo.git("commit", "-m", "add external rubric link")
+	baseRef := repo.git("rev-parse", "HEAD")
+	repoCfg := &config.RepoConfig{Review: config.ReviewConfig{
+		Types: map[string]config.ReviewTypeSpec{
+			"custom": {Template: "review.tmpl"},
+		},
+	}}
+
+	got, custom, err := NewBuilder(nil).
+		ForRepo(repo.dir, 0).
+		WithRepoConfig(repoCfg, baseRef).
+		resolveSystemPrompt("codex", "custom", "custom", MaxPromptSize)
+	require.NoError(t, err)
+	assert.True(t, custom)
+	assert.Contains(t, got, "External rubric.")
+	assert.NotContains(t, got, linkTarget)
 }
 
 func TestCustomReviewUsesExplicitNilRepoConfig(t *testing.T) {

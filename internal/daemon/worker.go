@@ -1189,6 +1189,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 					Output:           output,
 					Verdict:          agentReview.Verdict,
 					StructuredOutput: agentReview.StructuredOutput,
+					MinSeverity:      effectiveMinSeverity,
 				},
 			); err != nil {
 				log.Printf("[%s] Error storing review verdict: %v", workerID, err)

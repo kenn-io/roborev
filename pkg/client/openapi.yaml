@@ -2518,7 +2518,9 @@ components:
           type: string
         prompt:
           type: string
-        structured_output: {}
+        structured_output:
+          additionalProperties: true
+          type: object
         synced_at:
           format: date-time
           type: string

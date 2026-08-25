@@ -1,6 +1,9 @@
 package storage
 
-import "database/sql"
+import (
+	"database/sql"
+	"encoding/json"
+)
 
 type sqlScanner interface {
 	Scan(dest ...any) error
@@ -193,7 +196,10 @@ func applyReviewScan(review *Review, fields reviewScanFields) {
 		review.UUID = fields.UUID.String
 	}
 	if fields.StructuredOutput.Valid {
-		review.StructuredOutput = []byte(fields.StructuredOutput.String)
+		_ = json.Unmarshal(
+			[]byte(fields.StructuredOutput.String),
+			&review.StructuredOutput,
+		)
 	}
 	applyReviewVerdict(review, fields.VerdictBool)
 }

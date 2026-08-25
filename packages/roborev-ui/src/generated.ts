@@ -1923,7 +1923,9 @@ export interface components {
             job_id: number;
             output: string;
             prompt: string;
-            structured_output?: unknown;
+            structured_output?: {
+                [key: string]: unknown;
+            };
             /** Format: date-time */
             synced_at?: string;
             /** Format: date-time */

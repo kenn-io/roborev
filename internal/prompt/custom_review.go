@@ -132,17 +132,54 @@ func (b *Builder) readCustomReviewFile(
 	} else if !filepath.IsAbs(filePath) && b.repoCfgRef != "" {
 		clean := path.Clean(filepath.ToSlash(filePath))
 		if clean != "." && clean != ".." && !strings.HasPrefix(clean, "../") {
-			data, err := git.ReadFile(b.repoPath, b.repoCfgRef, clean)
-			if err != nil {
-				return nil, err
-			}
-			return enforceCustomFileLimit(data, limit)
+			return b.readCustomReviewRefFile(clean, limit)
 		}
 		resolvedPath = filepath.Join(b.repoPath, filePath)
 	} else if !filepath.IsAbs(filePath) {
 		resolvedPath = filepath.Join(b.repoPath, filePath)
 	}
-	file, err := os.Open(resolvedPath)
+	return readCustomReviewFilesystemFile(resolvedPath, limit)
+}
+
+func (b *Builder) readCustomReviewRefFile(
+	filePath string,
+	limit int,
+) ([]byte, error) {
+	seen := make(map[string]struct{})
+	for {
+		if _, ok := seen[filePath]; ok {
+			return nil, fmt.Errorf("custom review file symlink cycle at %q", filePath)
+		}
+		seen[filePath] = struct{}{}
+
+		entry, err := git.ReadRefFile(b.repoPath, b.repoCfgRef, filePath)
+		if err != nil {
+			return nil, err
+		}
+		if !entry.Symlink {
+			return enforceCustomFileLimit(entry.Data, limit)
+		}
+
+		linkTarget := string(entry.Data)
+		if path.IsAbs(filepath.ToSlash(linkTarget)) || filepath.IsAbs(linkTarget) {
+			return readCustomReviewFilesystemFile(linkTarget, limit)
+		}
+		filesystemTarget := filepath.Clean(filepath.Join(
+			b.repoPath,
+			filepath.FromSlash(path.Dir(filePath)),
+			linkTarget,
+		))
+		relativeTarget, relErr := filepath.Rel(b.repoPath, filesystemTarget)
+		if relErr != nil || relativeTarget == ".." ||
+			strings.HasPrefix(relativeTarget, ".."+string(filepath.Separator)) {
+			return readCustomReviewFilesystemFile(filesystemTarget, limit)
+		}
+		filePath = filepath.ToSlash(relativeTarget)
+	}
+}
+
+func readCustomReviewFilesystemFile(filePath string, limit int) ([]byte, error) {
+	file, err := os.Open(filePath)
 	if err != nil {
 		return nil, err
 	}

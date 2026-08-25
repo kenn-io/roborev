@@ -1134,6 +1134,7 @@ type ReviewCompletion struct {
 	Output           string
 	Verdict          Verdict
 	StructuredOutput json.RawMessage
+	MinSeverity      string
 }
 
 // CompleteJobResult marks a job done and stores the result produced by the
@@ -1192,7 +1193,12 @@ func (db *DB) completeJob(
 	}
 
 	// Update job status only if still running (not canceled)
-	result, err := conn.ExecContext(ctx, `UPDATE review_jobs SET status = 'done', finished_at = ?, updated_at = ? WHERE id = ? AND status = 'running'`, now, now, jobID)
+	result, err := conn.ExecContext(ctx, `
+		UPDATE review_jobs
+		SET status = 'done', finished_at = ?, updated_at = ?,
+		    min_severity = COALESCE(NULLIF(?, ''), min_severity)
+		WHERE id = ? AND status = 'running'
+	`, now, now, normalizeMinSeverityForWrite(completion.MinSeverity), jobID)
 	if err != nil {
 		return err
 	}

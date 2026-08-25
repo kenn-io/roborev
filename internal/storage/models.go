@@ -1,10 +1,10 @@
 package storage
 
 import (
-	"encoding/json"
 	"strings"
 	"time"
 
+	"github.com/danielgtaylor/huma/v2"
 	gitrepo "go.kenn.io/kit/git/repo"
 )
 
@@ -284,6 +284,18 @@ type JobWithReview struct {
 	Review *Review   `json:"review,omitempty"`
 }
 
+// StructuredOutput is the schema-constrained JSON object returned by a custom
+// review. Its schema keeps arbitrary nested values available to generated API
+// clients instead of reducing them to empty structs.
+type StructuredOutput map[string]any
+
+func (StructuredOutput) Schema(huma.Registry) *huma.Schema {
+	return &huma.Schema{
+		Type:                 huma.TypeObject,
+		AdditionalProperties: true,
+	}
+}
+
 type Review struct {
 	ID        int64     `json:"id"`
 	JobID     int64     `json:"job_id"`
@@ -300,8 +312,8 @@ type Review struct {
 	SyncedAt           *time.Time `json:"synced_at,omitempty"`             // Last sync time
 
 	// Stored verdict: 1=pass, 0=fail, NULL=legacy (not yet backfilled)
-	VerdictBool      *int            `json:"verdict_bool,omitempty"`
-	StructuredOutput json.RawMessage `json:"structured_output,omitempty"`
+	VerdictBool      *int             `json:"verdict_bool,omitempty"`
+	StructuredOutput StructuredOutput `json:"structured_output,omitempty"`
 
 	// Joined fields
 	Job *ReviewJob `json:"job,omitempty"`

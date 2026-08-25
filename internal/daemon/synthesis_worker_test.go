@@ -701,7 +701,7 @@ func TestSynthesisSinglePassingSuccessWithMinSeverityPassthrough(t *testing.T) {
 	assert.False(synthCalled, "passing single-success min-severity panel must not invoke synthesis")
 	memberReview, err := tc.DB.GetReviewByJobID(members[0].ID)
 	require.NoError(t, err)
-	assert.JSONEq(string(structured), string(memberReview.StructuredOutput))
+	assert.Equal("The summary claims a high issue.", memberReview.StructuredOutput["summary"])
 }
 
 func TestSynthesisSingleMarkerOnlySuccessWithMinSeverityNormalizesOutput(t *testing.T) {
