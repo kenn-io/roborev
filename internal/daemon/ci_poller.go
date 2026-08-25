@@ -96,6 +96,7 @@ type CIPoller struct {
 	buildReviewPromptFn func(context.Context, string, string, int64, int, string, string, string, string, *config.Config) (string, error)
 	postPRCommentFn     func(string, int, string) error
 	setCommitStatusFn   func(ghRepo, sha, state, description string) error
+	setSkippedCheckFn   func(ghRepo, sha, summary string) error
 	agentResolverFn     func(name string) (string, error)      // returns resolved agent name
 	jobCancelFn         func(jobID int64)                      // kills running worker process (optional)
 	isPROpenFn          func(ghRepo string, prNumber int) bool // checks if a PR is still open
@@ -573,10 +574,8 @@ func (p *CIPoller) setNoAgentStatus(ghRepo string, pr ghPR) {
 func (p *CIPoller) skipLabeledPR(ghRepo string, pr ghPR, label string) {
 	description := fmt.Sprintf("Review skipped: label %s", label)
 	log.Printf("CI poller: skipping %s#%d because it has label %q", ghRepo, pr.Number, label)
-	if err := p.callSetCommitStatus(
-		ghRepo, pr.HeadRefOid, "success", description,
-	); err != nil {
-		log.Printf("CI poller: failed to set skipped status for %s#%d: %v", ghRepo, pr.Number, err)
+	if err := p.callSetSkippedCheck(ghRepo, pr.HeadRefOid, description); err != nil {
+		log.Printf("CI poller: failed to set skipped check for %s#%d: %v", ghRepo, pr.Number, err)
 	}
 }
 
@@ -3107,6 +3106,13 @@ func (p *CIPoller) callSetCommitStatus(ghRepo, sha, state, description string) e
 	return p.setCommitStatus(ghRepo, sha, state, description)
 }
 
+func (p *CIPoller) callSetSkippedCheck(ghRepo, sha, summary string) error {
+	if p.setSkippedCheckFn != nil {
+		return p.setSkippedCheckFn(ghRepo, sha, summary)
+	}
+	return p.setSkippedCheck(ghRepo, sha, summary)
+}
+
 // callIsPROpen checks whether a PR is still open. Uses the test seam
 // if set, otherwise calls isPROpen.
 func (p *CIPoller) callIsPROpen(
@@ -3362,6 +3368,20 @@ func (p *CIPoller) setCommitStatus(ghRepo, sha, state, description string) error
 		return err
 	}
 	return client.SetCommitStatus(context.Background(), ghRepo, sha, state, description)
+}
+
+// setSkippedCheck publishes a real skipped conclusion through GitHub's Checks
+// API. GitHub only grants write access to this API to GitHub Apps, so personal
+// authentication still suppresses the review but cannot publish the check.
+func (p *CIPoller) setSkippedCheck(ghRepo, sha, summary string) error {
+	if p.tokenProvider == nil {
+		return nil
+	}
+	client, err := p.githubClientForRepo(ghRepo)
+	if err != nil {
+		return err
+	}
+	return client.EnsureSkippedCheckRun(context.Background(), ghRepo, sha, summary)
 }
 
 // toReviewResults converts storage batch results to the

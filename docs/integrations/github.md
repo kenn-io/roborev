@@ -159,6 +159,7 @@ Under **Repository permissions**, set:
 - **Pull requests**: Read & write
 - **Contents**: Read-only
 - **Commit statuses**: Read & write
+- **Checks**: Read & write
 
 Leave everything else as "No access". Click **Create GitHub App**.
 
@@ -168,7 +169,8 @@ Leave everything else as "No access". Click **Create GitHub App**.
 
     1. Open app settings and go to **Permissions & events**.
     1. Set **Pull requests** to **Read and write**, **Contents** to **Read-only**,
-        and **Commit statuses** to **Read and write**.
+        **Commit statuses** to **Read and write**, and **Checks** to **Read and
+        write**.
     1. Save the app settings.
     1. For each existing installation, open installation settings and **accept the
         updated permissions**.
@@ -313,9 +315,12 @@ CI poller: GitHub App authentication enabled (app_id=123456)
 PR comments will now appear as **`your-app-name[bot]`**.
 
 When an open PR has a label listed in `skip_labels`, the CI poller does not
-create a review. It sets the roborev commit status to success with a message
-that names the matching label. Label matching is case-insensitive. Removing the
-label lets the poller review the current PR head on its next pass.
+create a review. With GitHub App authentication, it creates a roborev check with
+a `skipped` conclusion and a message that names the matching label. Label
+matching is case-insensitive. Removing the label lets the poller review the
+current PR head on its next pass. GitHub does not allow personal authentication
+to create check runs, so personal-auth setups suppress the review without
+publishing the skipped check.
 
 ## Setup with Personal Auth
 
@@ -392,13 +397,17 @@ The status context is `roborev` and progresses through these states:
 | `failure` | At least one member failed to run for a genuine reason while another member still produced usable review output |
 | `error` | No reviewer produced usable output because of no available agent, repeated genuine failures, or all member jobs failing |
 
-Status checks require the **Commit statuses: Read and write** permission on your
-GitHub App. The setup guide above already includes it. If your app predates that
-permission, add it:
+Label-based bypasses use a GitHub check run instead of a commit status because
+commit statuses do not have a skipped state. The roborev check run completes
+with a `skipped` conclusion.
+
+Status checks require **Commit statuses: Read and write**. Label-based skipped
+checks also require **Checks: Read and write**. The setup guide above includes
+both permissions. If your app predates either permission, add them:
 
 1. Open your GitHub App settings and go to **Permissions & events**
-1. Under **Repository permissions**, set **Commit statuses** to **Read and
-    write**
+1. Under **Repository permissions**, set **Commit statuses** and **Checks** to
+    **Read and write**
 1. Save and accept the updated permissions on each installation
 
 If no GitHub App is configured, or the app lacks the commit statuses permission,

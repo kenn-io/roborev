@@ -108,6 +108,9 @@ func stubCIPollerGitHubSideEffects(p *CIPoller) {
 	p.setCommitStatusFn = func(string, string, string, string) error {
 		return nil
 	}
+	p.setSkippedCheckFn = func(string, string, string) error {
+		return nil
+	}
 }
 
 func TestCIPollerHarnessProcessPRGitStubsGitHubSideEffects(t *testing.T) {
@@ -198,6 +201,19 @@ func (h *ciPollerHarness) CaptureCommitStatuses() *[]capturedStatus {
 	var captured []capturedStatus
 	h.Poller.setCommitStatusFn = func(repo, sha, state, desc string) error {
 		captured = append(captured, capturedStatus{repo, sha, state, desc})
+		return nil
+	}
+	return &captured
+}
+
+type capturedSkippedCheck struct {
+	Repo, SHA, Summary string
+}
+
+func (h *ciPollerHarness) CaptureSkippedChecks() *[]capturedSkippedCheck {
+	var captured []capturedSkippedCheck
+	h.Poller.setSkippedCheckFn = func(repo, sha, summary string) error {
+		captured = append(captured, capturedSkippedCheck{repo, sha, summary})
 		return nil
 	}
 	return &captured
@@ -796,6 +812,7 @@ func TestCIPollerProcessPR_SkipsConfiguredLabel(t *testing.T) {
 	h.Cfg.CI.Agents = []string{"codex"}
 	h.stubProcessPRGit()
 	statuses := h.CaptureCommitStatuses()
+	skippedChecks := h.CaptureSkippedChecks()
 
 	pr := ghPR{
 		Number:      9,
@@ -807,10 +824,11 @@ func TestCIPollerProcessPR_SkipsConfiguredLabel(t *testing.T) {
 	require.NoError(t, err)
 
 	assert.False(t, h.hasPanel(t, "acme/api", 9, "skipped-head-sha"))
-	assert.Equal(t, []capturedStatus{{
-		Repo: "acme/api", SHA: "skipped-head-sha", State: "success",
-		Desc: "Review skipped: label Do Not Review",
-	}}, *statuses)
+	assert.Empty(t, *statuses)
+	assert.Equal(t, []capturedSkippedCheck{{
+		Repo: "acme/api", SHA: "skipped-head-sha",
+		Summary: "Review skipped: label Do Not Review",
+	}}, *skippedChecks)
 
 	pr.Labels = nil
 	require.NoError(t, h.Poller.processPR(
@@ -4443,6 +4461,7 @@ func TestRetryDueReviewAttemptSkipsConfiguredLabel(t *testing.T) {
 	h := newCIPollerHarness(t, "https://github.com/acme/api.git")
 	h.Cfg.CI.SkipLabels = []string{"skip-review"}
 	statuses := h.CaptureCommitStatuses()
+	skippedChecks := h.CaptureSkippedChecks()
 
 	const headSHA = "labeleddeferred01"
 	const prNum = 133
@@ -4470,10 +4489,11 @@ func TestRetryDueReviewAttemptSkipsConfiguredLabel(t *testing.T) {
 	require.NoError(t, err)
 	assert.Nil(t, attempt)
 	assert.False(t, h.hasPanel(t, "acme/api", prNum, headSHA))
-	assert.Equal(t, []capturedStatus{{
-		Repo: "acme/api", SHA: headSHA, State: "success",
-		Desc: "Review skipped: label Skip-Review",
-	}}, *statuses)
+	assert.Empty(t, *statuses)
+	assert.Equal(t, []capturedSkippedCheck{{
+		Repo: "acme/api", SHA: headSHA,
+		Summary: "Review skipped: label Skip-Review",
+	}}, *skippedChecks)
 }
 
 // TestReconcileStuckAttempt covers the crash/stuck reconcile: a pending attempt

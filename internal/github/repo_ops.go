@@ -7,6 +7,7 @@ import (
 	"slices"
 	"strconv"
 	"strings"
+	"time"
 
 	googlegithub "github.com/google/go-github/v90/github"
 )
@@ -152,6 +153,54 @@ func (c *Client) SetCommitStatus(ctx context.Context, ghRepo, sha, state, descri
 	})
 	if err != nil {
 		return fmt.Errorf("create commit status: %w", err)
+	}
+	return nil
+}
+
+// EnsureSkippedCheckRun creates a completed roborev check run with a skipped
+// conclusion unless an equivalent check already exists for the commit.
+func (c *Client) EnsureSkippedCheckRun(ctx context.Context, ghRepo, sha, summary string) error {
+	owner, repo, err := parseRepo(ghRepo)
+	if err != nil {
+		return err
+	}
+
+	const checkName = "roborev"
+	runs, _, err := c.api.Checks.ListCheckRunsForRef(
+		ctx, owner, repo, sha,
+		&googlegithub.ListCheckRunsOptions{
+			CheckName: ptr(checkName),
+			Status:    ptr("completed"),
+			Filter:    ptr("latest"),
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("list roborev check runs: %w", err)
+	}
+	for _, run := range runs.CheckRuns {
+		if run.GetConclusion() == "skipped" &&
+			run.GetOutput().GetSummary() == summary {
+			return nil
+		}
+	}
+
+	completedAt := &googlegithub.Timestamp{Time: time.Now().UTC()}
+	_, _, err = c.api.Checks.CreateCheckRun(
+		ctx, owner, repo,
+		googlegithub.CreateCheckRunOptions{
+			Name:        checkName,
+			HeadSHA:     sha,
+			Status:      ptr("completed"),
+			Conclusion:  ptr("skipped"),
+			CompletedAt: completedAt,
+			Output: &googlegithub.CheckRunOutput{
+				Title:   ptr("Review skipped"),
+				Summary: ptr(summary),
+			},
+		},
+	)
+	if err != nil {
+		return fmt.Errorf("create skipped check run: %w", err)
 	}
 	return nil
 }

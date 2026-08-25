@@ -116,6 +116,63 @@ func TestListOwnerRepos_KeepsPublicReposWhenAuthenticatedListingFails(t *testing
 	assert.Equal(t, []string{"jane/app"}, repos)
 }
 
+func TestEnsureSkippedCheckRunCreatesSkippedConclusionOnce(t *testing.T) {
+	var created []googlegithub.CreateCheckRunOptions
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		switch {
+		case r.Method == http.MethodGet && r.URL.Path == "/api/v3/repos/acme/api/commits/head-sha/check-runs":
+			assert.Equal(t, "roborev", r.URL.Query().Get("check_name"))
+			assert.Equal(t, "completed", r.URL.Query().Get("status"))
+			assert.Equal(t, "latest", r.URL.Query().Get("filter"))
+			if len(created) == 0 {
+				assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+					"total_count": 0,
+					"check_runs":  []any{},
+				}))
+				return
+			}
+			assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				"total_count": 1,
+				"check_runs": []any{map[string]any{
+					"name":       "roborev",
+					"conclusion": "skipped",
+					"output": map[string]any{
+						"summary": "Review skipped: label do-not-review",
+					},
+				}},
+			}))
+		case r.Method == http.MethodPost && r.URL.Path == "/api/v3/repos/acme/api/check-runs":
+			var opts googlegithub.CreateCheckRunOptions
+			assert.NoError(t, json.NewDecoder(r.Body).Decode(&opts))
+			created = append(created, opts)
+			w.WriteHeader(http.StatusCreated)
+			assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"id": 1}))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer server.Close()
+
+	client, err := NewClient("token", WithBaseURL(server.URL+"/"))
+	require.NoError(t, err)
+	for range 2 {
+		require.NoError(t, client.EnsureSkippedCheckRun(
+			context.Background(), "acme/api", "head-sha",
+			"Review skipped: label do-not-review",
+		))
+	}
+
+	require.Len(t, created, 1)
+	assert.Equal(t, "roborev", created[0].Name)
+	assert.Equal(t, "head-sha", created[0].HeadSHA)
+	assert.Equal(t, "completed", created[0].GetStatus())
+	assert.Equal(t, "skipped", created[0].GetConclusion())
+	require.NotNil(t, created[0].CompletedAt)
+	assert.Equal(t, "Review skipped", created[0].Output.GetTitle())
+	assert.Equal(t, "Review skipped: label do-not-review", created[0].Output.GetSummary())
+}
+
 func TestNewClient_DefaultHTTPTimeout(t *testing.T) {
 	client, err := NewClient("")
 	require.NoError(t, err)
