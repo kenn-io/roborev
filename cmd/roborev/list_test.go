@@ -162,6 +162,18 @@ func TestListCommand(t *testing.T) {
 			wantQuery: []string{"branch="},
 		},
 		{
+			name:         "--all-branches omits branch filter",
+			args:         []string{"--all-branches"},
+			handler:      jobsHandler([]storage.ReviewJob{}, false),
+			notWantQuery: []string{"branch="},
+		},
+		{
+			name:      "--all-branches and --branch conflict",
+			args:      []string{"--all-branches", "--branch", "main"},
+			handler:   jobsHandler([]storage.ReviewJob{}, false),
+			wantError: "--branch and --all-branches are mutually exclusive",
+		},
+		{
 			name: "worktree sends main repo path as repo param",
 			repoSetup: func(t *testing.T) repoSetupResult {
 				repo := newTestGitRepo(t)

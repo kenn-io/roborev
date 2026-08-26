@@ -21,13 +21,14 @@ import (
 
 func listCmd() *cobra.Command {
 	var (
-		branch     string
-		repoPath   string
-		limit      int
-		status     string
-		jsonOutput bool
-		closed     bool
-		open       bool
+		branch      string
+		allBranches bool
+		repoPath    string
+		limit       int
+		status      string
+		jsonOutput  bool
+		closed      bool
+		open        bool
 	)
 
 	cmd := &cobra.Command{
@@ -41,11 +42,16 @@ Examples:
   roborev list                        # Jobs for current repo/branch
   roborev list --json                 # Output as JSON
   roborev list --branch main          # Jobs for main branch
+  roborev list --all-branches         # Jobs across all branches
   roborev list --status done          # Only completed jobs
   roborev list --open                 # Only open (unresolved) reviews
   roborev list --closed               # Only closed reviews
   roborev list --limit 5              # Show at most 5 jobs`,
 		RunE: func(cmd *cobra.Command, args []string) error {
+			if branch != "" && allBranches {
+				return usageErr(cmd, fmt.Errorf("--branch and --all-branches are mutually exclusive"))
+			}
+
 			ctx := cmd.Context()
 			if err := ensureDaemon(); err != nil {
 				return fmt.Errorf("daemon not running: %w", err)
@@ -75,7 +81,7 @@ Examples:
 				}
 			}
 			// Auto-resolve branch from the target repo when not specified.
-			if branch == "" && localRepoPath != "" {
+			if branch == "" && !allBranches && localRepoPath != "" {
 				branch = gitrepo.CurrentBranch(ctx, localRepoPath)
 			}
 
@@ -164,6 +170,7 @@ Examples:
 	}
 
 	cmd.Flags().StringVar(&branch, "branch", "", "filter by branch (default: current branch)")
+	cmd.Flags().BoolVar(&allBranches, "all-branches", false, "include jobs from all branches")
 	cmd.Flags().StringVar(&repoPath, "repo", "", "filter by repo path (default: current repo)")
 	cmd.Flags().IntVar(&limit, "limit", 50, "max number of jobs to return")
 	cmd.Flags().StringVar(&status, "status", "", "filter by status (queued, running, done, failed)")

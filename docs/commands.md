@@ -138,6 +138,7 @@ roborev show <job_id>            # Show review by job ID
 roborev show --job <id>          # Force interpretation as job ID
 roborev show --prompt <job_id>   # Show the prompt sent to the agent
 roborev list                     # List jobs for current repo/branch
+roborev list --all-branches      # List jobs for every branch in the current repo
 roborev list --open              # List only open reviews
 roborev list --closed            # List only closed reviews
 roborev tui                      # Interactive terminal UI
@@ -152,6 +153,9 @@ roborev log <job_id>             # View job log
 | `--job` | Force interpretation as job ID |
 | `--prompt` | Show the prompt sent to the agent instead of the review output |
 | `--json` | Output as JSON for machine-readable workflows |
+
+`roborev list` filters to the current branch by default. Use `--all-branches` to
+omit the branch filter. `--all-branches` and `--branch` cannot be combined.
 
 When the argument is a numeric job ID, `--prompt` can display the stored prompt
 while the job is queued or running; review output does not exist until the job
