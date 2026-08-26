@@ -564,7 +564,8 @@ enabled = false
 At most one enabled experiment may apply to a workflow. Disabled experiments do
 not record assignments.
 
-Review, CI metrics, and CI cost exports include an `experiments` array. Each
+Review, CI metrics, and CI cost exports include an `experiments` field. It is an
+array of assignments when an experiment applies and `null` otherwise. Each
 assignment records the experiment ID, arm, subject hash, definition hash, and
 effective configuration hash. Use these fields to group outcomes by experiment
 and arm. See [Exporting Reviews](/commands/#exporting-reviews),

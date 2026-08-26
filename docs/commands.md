@@ -223,8 +223,9 @@ The default `content` profile includes the raw review output text exactly as
 stored, subject to a large size cap. The `metadata` profile keeps the same
 review metadata but sets `content` fields to `null`.
 
-Each top-level review includes an `experiments` array. Every assignment contains
-the experiment `id`, `arm`, `subject_hash`, `definition_hash`, and
+Each top-level review has an `experiments` field. It is an array of assignments
+when an experiment applies and `null` otherwise. Every assignment contains the
+experiment `id`, `arm`, `subject_hash`, `definition_hash`, and
 `effective_config_hash`.
 
 Only finished review jobs with a verdict are exported. Task, fix, insights,
@@ -295,8 +296,8 @@ roborev export ci-metrics --legacy
 panel runs for external turnaround-time analysis. Each panel records its GitHub
 repository, pull request, head SHA, timestamps, attempt count, terminal outcome,
 and synthesis agent and model. It also includes retained member and synthesis
-jobs with their timing and model metadata. The panel's `experiments` array
-records its experiment assignments.
+jobs with their timing and model metadata. The panel's `experiments` field is an
+array of assignments when an experiment applies and `null` otherwise.
 
 Terminal outcomes distinguish `review_posted`, `no_review_posted`,
 `giveup_posted`, and `abandoned`. roborev backfills metrics for older finalized
@@ -340,7 +341,8 @@ roborev export ci-costs --legacy
 records for CI review work. Eligible terminal attempts are included even when a
 later retry replaced them in a panel. Skipped, passthrough, pre-agent, and
 manual jobs are excluded. Each row contains `job_uuid`, `finished_at`, `agent`,
-`role`, `status`, `cost_usd`, and its `experiments` assignments.
+`role`, `status`, and `cost_usd`. Its `experiments` field is an array of
+assignments when an experiment applies and `null` otherwise.
 
 Cost is approximate and can be partial. A job whose agent ran but whose usage
 cannot be priced remains in the export with `cost_usd: null`. A known zero-cost
