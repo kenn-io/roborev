@@ -5,10 +5,23 @@ description: Release history for roborev
 
 All notable changes to roborev, grouped by minor release.
 
-## Unreleased
+## 0.67.0
+
+<small>2026-08-26</small>
 
 **New features**
 
+- Named review configuration experiments can assign a source branch to a stable
+    default or experimental arm for daemon-backed reviews and CI poller reviews.
+    Experimental settings merge into the frozen review plan, while explicit
+    request values still take precedence. Use `roborev config validate` to check
+    definitions without starting a review. See
+    [Review Configuration Experiments](/configuration/#review-configuration-experiments).
+- CI poller operators can list pull request labels in `[ci].skip_labels` to
+    suppress reviews. GitHub App installations publish a check with a `skipped`
+    conclusion; personal authentication suppresses the review without creating a
+    check. Removing the label makes the current head eligible again. See
+    [GitHub Integration](/integrations/github/#setup-with-github-app-recommended).
 - Repository-local `post_commit_batch_size` can combine several automatic
     post-commit reviews into one accumulated-range review. Pending batches are
     tracked per branch across linked worktrees and flushed before push. See
@@ -29,10 +42,26 @@ All notable changes to roborev, grouped by minor release.
 
 **Bug fixes**
 
+- Antigravity review jobs now pass oversized prompts through standard input and
+    allow the workspace inspection commands needed by non-agentic reviews. See
+    [Gemini: Antigravity vs Legacy CLI](/agents/#gemini-antigravity-vs-legacy-cli).
+- Split-screen TUI review details now release mouse capture while focused, so
+    terminal drag selection works without changing queue mouse controls. See
+    [Split-Screen Review](/integrations/tui/#split-screen-review).
 - Agent Hook remembers delivered review IDs per agent session and repository
     lineage, preventing repeated reminders for the same reviews while allowing
     newly created reviews to trigger. Deferred reminders acknowledge IDs only
     when they are delivered.
+
+**Acknowledgements**
+
+- Thanks to [Marius van Niekerk](https://github.com/mariusvniekerk) for review
+    configuration experiments, label-based CI review skips, and the Agent Hook
+    reminder changes.
+- Thanks to [Wes McKinney](https://github.com/wesm) for automatic post-commit
+    review batching and restored TUI text selection.
+- Thanks to [Shun Kakinoki](https://github.com/shunkakinoki) for reliable large
+    Antigravity prompts and workspace inspection.
 
 ______________________________________________________________________
 
