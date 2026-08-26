@@ -657,7 +657,7 @@ members = ["only"]
 	assert.Equal(t, "goose-model", synth.Model)
 }
 
-func TestEnqueuePanelUnavailableNamedACPStoresNamespacedIdentity(t *testing.T) {
+func TestEnqueuePanelRejectsUnavailableNamedACPMember(t *testing.T) {
 	server, db, _ := newTestServer(t)
 	repo := testutil.NewGitRepo(t)
 	repo.WriteFile(".roborev.toml", `
@@ -677,13 +677,16 @@ synthesis_agent = "test"
 `)
 	repo.CommitFile("a.txt", "a", "add a")
 
-	resp := enqueuePanelViaHTTP(t, server, EnqueueRequest{
+	req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/enqueue", EnqueueRequest{
 		RepoPath: repo.Path(), GitRef: "HEAD", Agent: "test",
 	})
-	members, err := db.GetPanelMembers(resp.PanelRunUUID)
+	w := httptest.NewRecorder()
+	server.httpServer.Handler.ServeHTTP(w, req)
+
+	assert.Equal(t, http.StatusBadRequest, w.Code)
+	jobs, err := db.ListJobs("", "", 0, 0)
 	require.NoError(t, err)
-	require.Len(t, members, 1)
-	assert.Equal(t, "acp.goose", members[0].Agent)
+	assert.Empty(t, jobs)
 }
 
 func TestEnqueuePanelNamedACPMemberPreservesExplicitModel(t *testing.T) {

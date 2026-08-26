@@ -108,6 +108,7 @@ func TestCIReviewCmd_Validation(t *testing.T) {
 		{"InvalidReviewType", []string{"review", "--ref", "abc", "--review-types", "bogus"}, "invalid review_type", false},
 		{"InvalidReasoning", []string{"review", "--ref", "abc", "--reasoning", "bogus"}, "invalid reasoning", false},
 		{"InvalidMinSeverity", []string{"review", "--ref", "abc", "--min-severity", "bogus"}, "invalid min_severity", false},
+		{"OptionLikeRef", []string{"review", "--ref=--format=%H"}, "--ref must not start with '-'", false},
 		{"RequiresRef", []string{"review"}, "auto-detection", true},
 	}
 

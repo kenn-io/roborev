@@ -209,6 +209,9 @@ func runCIReview(ctx context.Context, opts ciReviewOpts) error {
 		}
 		gitRef = detected
 	}
+	if strings.HasPrefix(gitRef, "-") {
+		return fmt.Errorf("--ref must not start with '-' (got %q)", gitRef)
+	}
 
 	// Bind the range to the merge request before spending the review matrix
 	// on it. Posting checks again afterwards, to catch a force push that
