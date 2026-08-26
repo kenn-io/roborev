@@ -512,7 +512,7 @@ Global and repo panel maps are merged by name, with repo entries overriding
 global entries. See [Subagent Review Panels](/advanced/subagent-review-panels/)
 for the full reference.
 
-### Review Configuration Experiments
+### Review configuration experiments
 
 Use a named experiment to compare the normal review configuration with one
 configuration overlay. Roborev deterministically assigns a repository-scoped
@@ -563,6 +563,13 @@ enabled = false
 
 At most one enabled experiment may apply to a workflow. Disabled experiments do
 not record assignments.
+
+Review, CI metrics, and CI cost exports include an `experiments` array. Each
+assignment records the experiment ID, arm, subject hash, definition hash, and
+effective configuration hash. Use these fields to group outcomes by experiment
+and arm. See [Exporting Reviews](/commands/#exporting-reviews),
+[Exporting CI Metrics](/commands/#exporting-ci-metrics), and
+[Exporting CI Costs](/commands/#exporting-ci-costs).
 
 ### Backup Agents
 
@@ -782,7 +789,7 @@ HEAD, or any error, the hook falls back to a single-commit review.
 This setting only affects the post-commit hook. `roborev review` is not changed
 by this option.
 
-### Post-Commit Review Batching
+### Post-commit review batching
 
 By default, the post-commit hook queues a review after every commit. To combine
 several small commits into one automatic review, set a repository-local batch
@@ -797,10 +804,11 @@ commits has accumulated. It then queues one review over the accumulated range.
 Values below `2`, including the default of `1`, disable batching.
 
 Batch checkpoints are stored per branch in shared Git metadata, so linked
-worktrees use the same pending range. A partial batch is flushed by the pre-push
-hook before its branch is pushed. After a rebase or amend, the next review
-covers everything since the last commit still shared with the old history, so
-pending work is never skipped. Run `roborev init` after upgrading roborev to
+worktrees use the same pending range. The pre-push hook attempts to queue a
+partial batch before its branch is pushed. It does not block the push if
+queueing fails, and the checkpoint remains pending for a later hook. After a
+rebase or amend, the next review covers everything since the last commit still
+shared with the old history. Run `roborev init` after upgrading roborev to
 install or update the pre-push hook.
 
 When `post_commit_review = "branch"` is also set, the batch size controls when a

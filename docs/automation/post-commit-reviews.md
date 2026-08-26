@@ -42,10 +42,11 @@ one review for the full range. Values below `2`, including the default of `1`,
 keep the usual one-review-per-commit behavior.
 
 Pending commits are tracked separately for each branch and shared across linked
-worktrees. A pre-push hook flushes a partial batch before those commits are
-pushed. After a rebase or amend, the next review covers everything since the
-last commit the rewritten branch still shares with its old history, so pending
-work is never skipped (rewritten commits may be re-reviewed). Run `roborev init`
+worktrees. The pre-push hook attempts to queue a partial batch before those
+commits are pushed. It does not block the push if queueing fails, and the batch
+remains pending for a later hook. After a rebase or amend, the next review
+covers everything since the last commit the rewritten branch still shares with
+its old history. Rewritten commits may be reviewed again. Run `roborev init`
 after upgrading roborev to install or update the pre-push hook.
 
 Batching changes review frequency, not review scope. With

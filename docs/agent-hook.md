@@ -45,9 +45,9 @@ tracked git repository the hook returns an empty native response.
 The default instruction names the exact review job IDs and invokes the
 `roborev-fix` skill for only those jobs. It never runs `roborev fix --open` or
 discovers additional reviews. The skill treats every finding as an unverified
-claim: invalid findings are documented and closed without code changes, valid
-in-scope findings are fixed and verified, and valid out-of-scope or unclear
-findings remain open until the user gives direction.
+claim. It documents and closes invalid findings without changing code. It fixes
+and verifies valid findings that fall within the current task. It leaves valid
+out-of-scope or unclear findings open until the user gives direction.
 
 Delivered review IDs are acknowledged in the Agent Hook daemon's session state,
 scoped to the repository lineage. They do not trigger another reminder in that

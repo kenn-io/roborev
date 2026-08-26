@@ -12,12 +12,12 @@ and the daemon API.
 **Layer 2 - Agent hook (CLI harnesses, optional).**
 The agent hook watches your coding-agent session (turns, commits, failed
 reviews). When review work piles up, it returns a self-contained fix instruction
-before the session goes cold - so the write -> review -> fix loop closes without
-you asking. `roborev agent-hook install` auto-detects Claude Code, Codex,
+before the session goes cold. The write -> review -> fix loop closes without you
+asking. `roborev agent-hook install` auto-detects Claude Code, Codex,
 Copilot CLI, Cursor, Factory Droid, Gemini CLI, Hermes, Qwen, and Grok Build.
-Bundled skills provide the richest path where available; every reminder-capable
-profile also gets a CLI fallback. Claude Desktop does not expose harness hooks,
-so only Layer 1 runs there.
+Hook installation updates bundled skills for Claude Code, Codex, Factory Droid,
+and Grok Build. Other profiles receive no CLI fallback. Claude Desktop does not
+expose harness hooks, so only Layer 1 runs there.
 
 Quickstart health checks cover Claude Code, Codex, and Grok Build. Use
 `roborev agent-hook install` and agent-native config inspection to manage the
@@ -35,9 +35,9 @@ Code and Codex as commands (Claude Code invokes them with `/`, Codex with `$`):
 - `/roborev-respond` - comment on a review and close it
 - `/roborev-design-review` - run a design-focused review (`/roborev-design-review-branch` for the branch)
 
-Invoke these directly whenever you want a review or a fix - they do not require
-the agent hook. Layer 2 uses `roborev-fix` when available and otherwise supplies
-the equivalent CLI workflow once findings pile up.
+Invoke these directly whenever you want a review or a fix. They do not require
+the agent hook. Layer 2 invokes `roborev-fix` with the exact review job IDs. It
+does not substitute a CLI workflow when the skill is unavailable.
 
 ### Finalize a branch with the refine loop
 

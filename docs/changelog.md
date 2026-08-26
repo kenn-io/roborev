@@ -24,7 +24,8 @@ All notable changes to roborev, grouped by minor release.
     [GitHub Integration](/integrations/github/#setup-with-github-app-recommended).
 - Repository-local `post_commit_batch_size` can combine several automatic
     post-commit reviews into one accumulated-range review. Pending batches are
-    tracked per branch across linked worktrees and flushed before push. See
+    tracked per branch across linked worktrees, and the pre-push hook attempts
+    to queue partial batches before push. See
     [Post-Commit Reviews](/automation/post-commit-reviews/#batch-small-commits).
 
 **Improvements**

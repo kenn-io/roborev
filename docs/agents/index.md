@@ -193,10 +193,10 @@ need.
 Since
 [agy 1.1.3](https://github.com/google-antigravity/antigravity-cli/releases/tag/1.1.3),
 print mode soft-denies tool calls that would need a permission confirmation
-instead of silently auto-approving them. Reviews can hit this on the model's
-first tool call — typically a file read or a terminal command: agy exits cleanly
-having produced no review, and roborev fails the job (retrying, then failing
-over to a configured backup agent when one is available). Before each
+instead of silently auto-approving them. A review can hit this on the model's
+first tool call, usually a file read or terminal command. In that case, `agy`
+exits successfully without producing a review. Roborev marks the job failed,
+retries it, then uses a configured backup agent if one is available. Before each
 non-agentic review, roborev automatically merges the required allow-rules into
 `~/.gemini/antigravity-cli/settings.json`:
 
@@ -223,17 +223,17 @@ rules. `read_file(*)` is the rule that matters: agy's native read tools (view
 file, search, list directory) do the real work of a review once file reads are
 allowed. The `command` rules keep inspect commands from aborting the run.
 
-These rules are global to every agy session, and command targets are prefix
-matchers (see the
-[agy permissions docs](https://antigravity.google/docs/cli-permissions)), so
-treat any `command(...)` rule as broad shell authority rather than a read-only
-grant. The same global scope applies to `read_file(*)`, which auto-approves
-reads of any path on the system — narrow its target to your source roots if that
-is broader than you want. Review jobs run without agy's OS-level `--sandbox`, so
-these command permissions are not confined to agy's scratch directory. Avoid
-`command(*)` and `unsandboxed(*)`, which broaden permission scope further.
-Agentic jobs are unaffected by this merge because
-`--dangerously-skip-permissions` auto-approves all tools.
+These rules apply to every `agy` session. Command targets use prefix matching,
+as described in the
+[agy permissions docs](https://antigravity.google/docs/cli-permissions). Treat
+any `command(...)` rule as broad shell authority rather than a read-only grant.
+The `read_file(*)` rule also applies globally and auto-approves reads of any
+path on the system. Narrow its target to your source roots if necessary. Review
+jobs run without agy's OS-level `--sandbox`, so these command permissions are
+not confined to agy's scratch directory. Avoid `command(*)` and
+`unsandboxed(*)`, which broaden permission scope further. Agentic jobs are
+unaffected by this merge because `--dangerously-skip-permissions` auto-approves
+all tools.
 
 Roborev does not currently provide an opt-out for the automatic settings merge
 when using `agy`. To avoid Antigravity's global settings and unsandboxed review
