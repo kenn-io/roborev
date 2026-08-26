@@ -3237,7 +3237,11 @@ func TestResolveCIMatrixMembersUsesCustomTypeReasoning(t *testing.T) {
 	}
 
 	members, _, err := h.Poller.resolveCIMatrixMembers(
-		h.Repo, repoCfg, nil, h.Cfg, "acme/api",
+		h.Repo, repoCfg, map[string]any{
+			"ci": map[string]any{
+				"agents": []any{""}, "review_types": []any{"thermonuclear"},
+			},
+		}, h.Cfg, "acme/api",
 	)
 	require.NoError(t, err)
 	require.Len(t, members, 1)
@@ -3264,7 +3268,11 @@ func TestResolveCIMatrixMembersInvalidCIReasoningUsesFallback(t *testing.T) {
 	}
 
 	members, _, err := h.Poller.resolveCIMatrixMembers(
-		h.Repo, repoCfg, nil, h.Cfg, "acme/api",
+		h.Repo, repoCfg, map[string]any{
+			"ci": map[string]any{
+				"agents": []any{"codex"}, "review_types": []any{"thermonuclear"},
+			},
+		}, h.Cfg, "acme/api",
 	)
 	require.NoError(t, err)
 	require.Len(t, members, 1)
