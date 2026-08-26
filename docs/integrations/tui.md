@@ -89,8 +89,10 @@ review automatically.
 Press `Tab` to focus the detail pane and `Esc` to return to the queue. Review
 actions and scrolling work in the focused detail pane. `Enter` is intentionally
 a no-op while the split queue is focused because the detail already follows the
-selection. Mouse clicks focus either pane, and the wheel scrolls the pane below
-the pointer.
+selection. While the queue has focus, mouse clicks focus either pane and the
+wheel scrolls the pane below the pointer. When the detail pane has focus,
+Roborev releases terminal mouse capture so you can drag to select review text.
+Press `Esc` to restore the queue's mouse controls.
 
 Press `L` to lock the stacked or split preference for the TUI session. A split
 preference falls back to stacked when the terminal is too small and returns when

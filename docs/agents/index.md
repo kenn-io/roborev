@@ -180,13 +180,17 @@ curl -fsSL https://antigravity.google/cli/install.sh | bash
 npm install -g @google/gemini-cli
 ```
 
-Antigravity runs in print mode — the prompt is passed via `--prompt` on `agy` >=
-1.1.1 and piped over stdin with a bare `--print` on older versions (roborev
-probes `agy --version` to pick the contract). Review jobs omit both `--sandbox`
-and `--dangerously-skip-permissions`; agentic jobs use
-`--dangerously-skip-permissions`. Omitting `--sandbox` is intentional because
-agy's print-mode sandbox can deny the read-only workspace probes that reviews
-need.
+Antigravity runs in print mode. Roborev probes `agy --version` to choose how to
+send the prompt. Version 1.1.1 and newer receive prompts through `--prompt` when
+the text fits within the platform's command-line size limit. Older versions read
+the prompt from standard input with a bare `--print`. On newer versions, Roborev
+sends an oversized prompt through standard input without a prompt flag. This
+prevents the operating system from rejecting the process before `agy` starts.
+
+Review jobs omit both `--sandbox` and `--dangerously-skip-permissions`; agentic
+jobs use `--dangerously-skip-permissions`. Omitting `--sandbox` is intentional
+because agy's print-mode sandbox can deny the read-only workspace probes that
+reviews need.
 
 Since
 [agy 1.1.3](https://github.com/google-antigravity/antigravity-cli/releases/tag/1.1.3),
