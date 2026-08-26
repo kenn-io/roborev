@@ -1674,6 +1674,18 @@ func TestRecordPostToolUseDetachedFailedReviewDedupeScopesByDetachedHead(t *test
 	assert.Equal("failed_reviews", second.TriggeredBy)
 }
 
+func TestCurrentGitScopeDoesNotRequireGitExecutable(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	head := repo.CommitFile("main.go", "package main\n", "initial")
+	t.Setenv("PATH", t.TempDir())
+
+	scope, ok := currentGitScopeContext(t.Context(), repo.Path())
+
+	require.True(t, ok)
+	assert.Equal(t, repo.Path(), scope.WorktreeRoot)
+	assert.Equal(t, head, scope.Head)
+}
+
 func TestRecordPostToolUseCountsCommitInOtherRepoViaDashC(t *testing.T) {
 	assert := assert.New(t)
 	outer := testutil.NewGitRepo(t)

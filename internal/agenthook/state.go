@@ -1328,6 +1328,19 @@ func currentGitScopeContext(parent context.Context, cwd string) (gitScope, bool)
 	if cwd == "" {
 		return gitScope{}, false
 	}
+	if metadata, err := roborevgit.ReadCheckoutMetadata(cwd); err == nil {
+		return gitScope{
+			WorktreeRoot: metadata.WorktreeRoot,
+			GitDir:       metadata.GitDir,
+			CommonDir:    metadata.CommonDir,
+			Head:         metadata.Head,
+			Branch:       metadata.Branch,
+		}, true
+	}
+	return currentGitScopeSubprocess(parent, cwd)
+}
+
+func currentGitScopeSubprocess(parent context.Context, cwd string) (gitScope, bool) {
 	ctx, cancel := context.WithTimeout(parent, 2*time.Second)
 	defer cancel()
 	out, err := agentHookGit.Output(ctx, cwd,
