@@ -33,7 +33,7 @@
         {
           default = buildGoModule {
             pname = "roborev";
-            version = "0.66.0";
+            version = "0.67.0";
 
             src = ./.;
 
