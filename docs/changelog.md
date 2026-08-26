@@ -43,8 +43,7 @@ All notable changes to roborev, grouped by minor release.
 **Bug fixes**
 
 - Antigravity review jobs now pass oversized prompts through standard input and
-    allow the workspace inspection commands needed by non-agentic reviews. See
-    [Gemini: Antigravity vs Legacy CLI](/agents/#gemini-antigravity-vs-legacy-cli).
+    allow the workspace inspection commands needed by non-agentic reviews.
 - Split-screen TUI review details now release mouse capture while focused, so
     terminal drag selection works without changing queue mouse controls. See
     [Split-Screen Review](/integrations/tui/#split-screen-review).
