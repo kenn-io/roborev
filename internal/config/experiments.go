@@ -154,6 +154,20 @@ func ValidateEffectiveReviewConfig(global *Config, effective *RepoConfig) error 
 	if err := effective.Validate(); err != nil {
 		return err
 	}
+	if global != nil {
+		if err := validateCIReviewTypes(
+			global.CI.ReviewTypes, global.CI.Reviews, nil, global,
+		); err != nil {
+			return err
+		}
+	}
+	if effective != nil {
+		if err := validateCIReviewTypes(
+			effective.CI.ReviewTypes, effective.CI.Reviews, effective, global,
+		); err != nil {
+			return err
+		}
+	}
 	if _, err := ResolveReviewReasoningFromConfig("", effective, global); err != nil {
 		return fmt.Errorf("review_reasoning: %w", err)
 	}

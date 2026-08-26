@@ -587,9 +587,6 @@ func (c *Config) Validate() (err error) {
 	if err := validateConfig(c, c.ACP); err != nil {
 		return err
 	}
-	if err := validateCIReviewTypes(c.CI.ReviewTypes, c.CI.Reviews); err != nil {
-		return err
-	}
 	reasoning := []namedConfigValue{
 		{key: "review_reasoning", value: c.ReviewReasoning},
 		{key: "refine_reasoning", value: c.RefineReasoning},
@@ -804,9 +801,6 @@ func (c *RepoConfig) Validate() (err error) {
 		err = markConfigValidationError(err)
 	}()
 	if err := validateConfig(c, c.ACP); err != nil {
-		return err
-	}
-	if err := validateCIReviewTypes(c.CI.ReviewTypes, c.CI.Reviews); err != nil {
 		return err
 	}
 	reasoning := []namedConfigValue{

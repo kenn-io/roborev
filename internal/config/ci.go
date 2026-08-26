@@ -482,9 +482,16 @@ type RepoCIConfig struct {
 	IncludeCosts *bool `toml:"include_costs" comment:"Override whether CI PR comments include token cost estimates."`
 }
 
-func validateCIReviewTypes(reviewTypes []string, reviews map[string][]string) error {
+func validateCIReviewTypes(
+	reviewTypes []string,
+	reviews map[string][]string,
+	repoCfg *RepoConfig,
+	globalCfg *Config,
+) error {
 	if len(reviewTypes) > 0 {
-		if _, err := ValidateReviewTypes(reviewTypes); err != nil {
+		if _, err := ValidateReviewTypesFromConfig(
+			reviewTypes, repoCfg, globalCfg,
+		); err != nil {
 			return fmt.Errorf("ci.review_types: %w", err)
 		}
 	}
@@ -492,7 +499,9 @@ func validateCIReviewTypes(reviewTypes []string, reviews map[string][]string) er
 		if len(reviews[agentName]) == 0 {
 			continue
 		}
-		if _, err := ValidateReviewTypes(reviews[agentName]); err != nil {
+		if _, err := ValidateReviewTypesFromConfig(
+			reviews[agentName], repoCfg, globalCfg,
+		); err != nil {
 			return fmt.Errorf("ci.reviews.%s: %w", agentName, err)
 		}
 	}

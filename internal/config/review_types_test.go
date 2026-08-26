@@ -20,6 +20,69 @@ func TestValidateReviewTypesFromConfig(t *testing.T) {
 	assert.Equal(t, []string{"default", "thermonuclear"}, got)
 }
 
+func TestConfigValidateAllowsGlobalCustomCIReviewTypes(t *testing.T) {
+	globalCfg := &Config{
+		Review: ReviewConfig{Types: map[string]ReviewTypeSpec{
+			"thermonuclear": {Template: "review.tmpl"},
+		}},
+		CI: CIConfig{
+			ReviewTypes: []string{"thermonuclear"},
+			Reviews: map[string][]string{
+				"codex": {"thermonuclear"},
+			},
+		},
+	}
+
+	require.NoError(t, globalCfg.Validate())
+}
+
+func TestEffectiveConfigAllowsRepoCIToUseGlobalCustomReviewType(t *testing.T) {
+	globalCfg := &Config{Review: ReviewConfig{Types: map[string]ReviewTypeSpec{
+		"thermonuclear": {Template: "review.tmpl"},
+	}}}
+	repoCfg := &RepoConfig{CI: RepoCIConfig{
+		ReviewTypes: []string{"thermonuclear"},
+		Reviews: map[string][]string{
+			"codex": {"thermonuclear"},
+		},
+	}}
+
+	require.NoError(t, repoCfg.Validate())
+	require.NoError(t, ValidateEffectiveReviewConfig(globalCfg, repoCfg))
+}
+
+func TestEffectiveConfigRejectsUnknownRepoCIReviewTypes(t *testing.T) {
+	tests := []struct {
+		name    string
+		ci      RepoCIConfig
+		wantErr string
+	}{
+		{
+			name:    "flat list",
+			ci:      RepoCIConfig{ReviewTypes: []string{"mystery"}},
+			wantErr: "ci.review_types",
+		},
+		{
+			name: "matrix",
+			ci: RepoCIConfig{Reviews: map[string][]string{
+				"codex": {"mystery"},
+			}},
+			wantErr: "ci.reviews.codex",
+		},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			repoCfg := &RepoConfig{CI: tt.ci}
+
+			require.NoError(t, repoCfg.Validate())
+			err := ValidateEffectiveReviewConfig(nil, repoCfg)
+			require.Error(t, err)
+			assert.ErrorContains(t, err, tt.wantErr)
+		})
+	}
+}
+
 func TestReviewTypeDefinitionsValidateNamesAndTemplates(t *testing.T) {
 	tests := []struct {
 		name    string
