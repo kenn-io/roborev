@@ -224,10 +224,16 @@ func TestCustomReviewTypeWorkflowOverrides(t *testing.T) {
 	repoCfg.Review.Types["thermonuclear"] = ReviewTypeSpec{
 		Template: "repo.tmpl",
 	}
-	assert.False(t, HasWorkflowAgentOverrideFromConfig(
+	assert.True(t, HasWorkflowAgentOverrideFromConfig(
 		repoCfg, globalCfg, "thermonuclear", "thorough",
 	))
-	assert.Empty(t, ResolveWorkflowModelFromConfig(
+	assert.Equal(t, "global-model", ResolveWorkflowModelFromConfig(
 		repoCfg, globalCfg, "thermonuclear", "thorough",
+	))
+	assert.Equal(t, "global-agent", ResolveAgentForWorkflowFromConfig(
+		"", repoCfg, globalCfg, "thermonuclear", "thorough",
+	))
+	assert.Equal(t, "global-model", ResolveModelForWorkflowFromConfig(
+		"", repoCfg, globalCfg, "thermonuclear", "thorough",
 	))
 }
