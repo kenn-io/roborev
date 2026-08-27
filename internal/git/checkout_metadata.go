@@ -5,6 +5,9 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+
+	gogit "github.com/go-git/go-git/v5"
+	"github.com/go-git/go-git/v5/plumbing"
 )
 
 // CheckoutMetadata describes the repository state needed to identify a
@@ -21,17 +24,15 @@ type CheckoutMetadata struct {
 // repositories and linked worktrees, including their separate git and common
 // directories.
 func ReadCheckoutMetadata(repoPath string) (metadata CheckoutMetadata, err error) {
-	repo, err := openGoGitRepository(repoPath)
+	// Open linked worktree and common-dir storage separately. go-git's
+	// EnableDotGitCommonDir path leaves the commondir file locked on Windows.
+	repo, err := gogit.PlainOpenWithOptions(repoPath, &gogit.PlainOpenOptions{
+		DetectDotGit: true,
+	})
 	if err != nil {
 		return CheckoutMetadata{}, fmt.Errorf("open repository: %w", err)
 	}
-	if closer, ok := repo.Storer.(interface{ Close() error }); ok {
-		defer func() {
-			if closeErr := closer.Close(); closeErr != nil && err == nil {
-				err = fmt.Errorf("close repository: %w", closeErr)
-			}
-		}()
-	}
+	defer closeCheckoutRepository(repo, &err)
 	worktree, err := repo.Worktree()
 	if err != nil {
 		return CheckoutMetadata{}, fmt.Errorf("open worktree: %w", err)
@@ -41,13 +42,27 @@ func ReadCheckoutMetadata(repoPath string) (metadata CheckoutMetadata, err error
 	if err != nil {
 		return CheckoutMetadata{}, err
 	}
-	head, err := repo.Head()
+	head, err := repo.Reference(plumbing.HEAD, false)
 	if err != nil {
 		return CheckoutMetadata{}, fmt.Errorf("read HEAD: %w", err)
 	}
 	branch := ""
-	if head.Name().IsBranch() {
-		branch = head.Name().Short()
+	if head.Type() == plumbing.SymbolicReference {
+		if head.Target().IsBranch() {
+			branch = head.Target().Short()
+		}
+		refRepo := repo
+		if gitDir != commonDir {
+			refRepo, err = gogit.PlainOpen(commonDir)
+			if err != nil {
+				return CheckoutMetadata{}, fmt.Errorf("open common repository: %w", err)
+			}
+			defer closeCheckoutRepository(refRepo, &err)
+		}
+		head, err = refRepo.Reference(head.Target(), true)
+		if err != nil {
+			return CheckoutMetadata{}, fmt.Errorf("resolve HEAD: %w", err)
+		}
 	}
 	return CheckoutMetadata{
 		WorktreeRoot: root,
@@ -56,6 +71,16 @@ func ReadCheckoutMetadata(repoPath string) (metadata CheckoutMetadata, err error
 		Head:         head.Hash().String(),
 		Branch:       branch,
 	}, nil
+}
+
+func closeCheckoutRepository(repo *gogit.Repository, readErr *error) {
+	closer, ok := repo.Storer.(interface{ Close() error })
+	if !ok {
+		return
+	}
+	if err := closer.Close(); err != nil && *readErr == nil {
+		*readErr = fmt.Errorf("close repository: %w", err)
+	}
 }
 
 func checkoutGitDirs(worktreeRoot string) (string, string, error) {
