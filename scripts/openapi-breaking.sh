@@ -7,7 +7,6 @@
 set -euo pipefail
 
 base_ref="${1:-origin/main}"
-oasdiff="github.com/oasdiff/oasdiff@v1.29.1"
 specs=(
     pkg/client/openapi.yaml
 )
@@ -24,6 +23,6 @@ for spec in "${specs[@]}"; do
     base_copy="$tmp/${spec//\//_}"
     git show "$base_ref:$spec" >"$base_copy"
     echo "openapi-breaking: checking $spec against $base_ref"
-    go run "$oasdiff" breaking "$base_copy" "$spec" --fail-on ERR || status=1
+    go tool oasdiff breaking "$base_copy" "$spec" --fail-on ERR || status=1
 done
 exit $status
