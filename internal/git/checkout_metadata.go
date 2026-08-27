@@ -20,10 +20,17 @@ type CheckoutMetadata struct {
 // ReadCheckoutMetadata reads checkout identity with go-git. It supports plain
 // repositories and linked worktrees, including their separate git and common
 // directories.
-func ReadCheckoutMetadata(repoPath string) (CheckoutMetadata, error) {
+func ReadCheckoutMetadata(repoPath string) (metadata CheckoutMetadata, err error) {
 	repo, err := openGoGitRepository(repoPath)
 	if err != nil {
 		return CheckoutMetadata{}, fmt.Errorf("open repository: %w", err)
+	}
+	if closer, ok := repo.Storer.(interface{ Close() error }); ok {
+		defer func() {
+			if closeErr := closer.Close(); closeErr != nil && err == nil {
+				err = fmt.Errorf("close repository: %w", closeErr)
+			}
+		}()
 	}
 	worktree, err := repo.Worktree()
 	if err != nil {
