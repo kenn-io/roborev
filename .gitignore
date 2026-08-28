@@ -83,3 +83,4 @@ docs/.env*.local
 
 # roborev snapshots
 /.roborev/
+.env*

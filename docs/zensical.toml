@@ -14,6 +14,7 @@ use_directory_urls = true
 nav = [
   {"Quick Start" = "quickstart.md"},
   {"Installation" = "installation.md"},
+  {"Changelog" = "changelog.md"},
   {"Automation" = [
     {"Post-Commit Reviews" = "automation/post-commit-reviews.md"},
     {"Agent Hook"          = "agent-hook.md"},
@@ -49,7 +50,6 @@ nav = [
   ]},
   {"Troubleshooting" = "guides/troubleshooting.md"},
   {"Development" = "development.md"},
-  {"Changelog" = "changelog.md"},
 ]
 
 [project.extra]
