@@ -22,6 +22,7 @@ export interface ReviewStoreOptions {
   navigate: (jobId?: number) => void;
   getCapabilities: () => SessionCapabilities;
   onError?: (message: string) => void;
+  daemonInitiallyAvailable?: boolean;
 }
 
 export function createReviewStores(options: ReviewStoreOptions): ReviewStores {
@@ -34,6 +35,7 @@ export function createReviewStores(options: ReviewStoreOptions): ReviewStores {
   const roborevDaemon = createDaemonStore({
     client: options.client,
     runtime: options.runtime,
+    initiallyAvailable: options.daemonInitiallyAvailable,
   });
   const roborevJobs = createJobsStore({
     client: options.client,

@@ -14,10 +14,11 @@ type DaemonStatus = components["schemas"]["DaemonStatus"];
 export interface DaemonStoreOptions {
   client: RoborevClient;
   runtime: AppRuntime;
+  initiallyAvailable?: boolean;
 }
 
 export function createDaemonStore(opts: DaemonStoreOptions) {
-  let available = $state(false);
+  let available = $state(opts.initiallyAvailable ?? false);
   let wasEverAvailable = $state(false);
   let version = $state("");
   let endpoint = $state("");

@@ -121,6 +121,36 @@ describe("App", () => {
     expect(JSON.stringify(fetchMock.mock.calls)).toContain("one-time-secret");
   });
 
+  test("starts loading review jobs before the first daemon status response", async () => {
+    let resolveStatus: ((value: Response) => void) | undefined;
+    const paths: string[] = [];
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = new URL(
+        input instanceof Request ? input.url : input,
+        location.origin,
+      );
+      paths.push(url.pathname);
+      if (url.pathname === "/api/ui/session/bootstrap") {
+        return Promise.resolve(response(200, credentials));
+      }
+      if (url.pathname === "/api/status") {
+        return new Promise<Response>((resolve) => {
+          resolveStatus = resolve;
+        });
+      }
+      return Promise.resolve(applicationResponse(input));
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    render(App);
+
+    await vi.waitFor(() => expect(paths).toContain("/api/status"));
+    await vi.waitFor(() => expect(paths).toContain("/api/jobs"), {
+      timeout: 250,
+    });
+    resolveStatus?.(response(200, status));
+  });
+
   test("uses the configured prefix for the application shell and navigation", async () => {
     const meta = document.createElement("meta");
     meta.name = "roborev-base-path";

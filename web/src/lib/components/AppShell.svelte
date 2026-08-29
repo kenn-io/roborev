@@ -33,6 +33,7 @@
     client,
     navigate: router.navigateToReview,
     getCapabilities: () => capabilities,
+    daemonInitiallyAvailable: true,
     onError: (message) => {
       actionError = message;
     },

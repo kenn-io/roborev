@@ -16,6 +16,18 @@ afterEach(async () => {
 });
 
 describe("native daemon store", () => {
+  it("can begin provisionally available without recording a successful status", () => {
+    runtime = makeTestAppRuntime();
+    const store = createDaemonStore({
+      client: { GET: vi.fn() } as never,
+      runtime,
+      initiallyAvailable: true,
+    });
+
+    expect(store.isAvailable()).toBe(true);
+    expect(store.getWasEverAvailable()).toBe(false);
+  });
+
   it("publishes direct daemon status as one authority", async () => {
     runtime = makeTestAppRuntime();
     const get = vi.fn().mockResolvedValue({

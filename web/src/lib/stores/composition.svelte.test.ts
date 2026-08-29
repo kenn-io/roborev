@@ -14,6 +14,25 @@ afterEach(async () => {
 });
 
 describe("review store composition", () => {
+  test("passes provisional daemon availability through composition", () => {
+    runtime = makeAppRuntime();
+    const stores = createReviewStores({
+      runtime,
+      client: {} as never,
+      navigate: vi.fn(),
+      getCapabilities: () => ({
+        cancelAnyJob: true,
+        cancelReviewJob: true,
+        rerunJob: true,
+      }),
+      daemonInitiallyAvailable: true,
+    });
+
+    expect(stores.roborevDaemon.isAvailable()).toBe(true);
+    expect(stores.roborevDaemon.getWasEverAvailable()).toBe(false);
+    stores.roborevJobs.dispose();
+  });
+
   test("routes job selection through the native navigation adapter", () => {
     runtime = makeAppRuntime();
     const navigate = vi.fn();
