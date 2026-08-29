@@ -28,6 +28,22 @@ describe("native daemon store", () => {
     expect(store.getWasEverAvailable()).toBe(false);
   });
 
+  it("revokes provisional availability when the first status request fails", async () => {
+    runtime = makeTestAppRuntime();
+    const store = createDaemonStore({
+      client: {
+        GET: vi.fn().mockRejectedValue(new TypeError("offline")),
+      } as never,
+      runtime,
+      initiallyAvailable: true,
+    });
+
+    store.checkHealth();
+
+    await vi.waitFor(() => expect(store.isAvailable()).toBe(false));
+    expect(store.getWasEverAvailable()).toBe(false);
+  });
+
   it("publishes direct daemon status as one authority", async () => {
     runtime = makeTestAppRuntime();
     const get = vi.fn().mockResolvedValue({

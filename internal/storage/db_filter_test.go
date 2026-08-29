@@ -1215,33 +1215,61 @@ func TestListJobsWithBeforeCursor(t *testing.T) {
 }
 
 func TestListJobsFirstPageUsesPositionIndex(t *testing.T) {
-	db := openTestDB(t)
-	t.Cleanup(func() { require.NoError(t, db.Close()) })
+	for _, test := range []struct {
+		name string
+		open func(*testing.T) *DB
+	}{
+		{
+			name: "fresh schema",
+			open: func(t *testing.T) *DB {
+				db := openTestDB(t)
+				t.Cleanup(func() { require.NoError(t, db.Close()) })
+				return db
+			},
+		},
+		{
+			name: "migrated legacy schema",
+			open: func(t *testing.T) *DB {
+				return prepareMigratedDB(
+					t, "position-plan-legacy.db",
+					legacyReviewJobSchema, legacyReviewJobSeed,
+				)
+			},
+		},
+	} {
+		t.Run(test.name, func(t *testing.T) {
+			db := test.open(t)
+			rows, err := db.Query(`
+				EXPLAIN QUERY PLAN
+				SELECT j.id, r.name, c.subject, rv.closed
+				FROM review_jobs j
+				JOIN repos r ON r.id = j.repo_id
+				LEFT JOIN commits c ON c.id = j.commit_id
+				LEFT JOIN reviews rv ON rv.job_id = j.id
+				WHERE NOT (
+					COALESCE(j.source, '') = 'auto_design'
+					AND (j.job_type = ? OR j.status = ?)
+				)
+				AND COALESCE(j.panel_role, '') != ?
+				ORDER BY `+sqliteNormalizedTimestampExpr("j.enqueued_at")+` DESC, j.id DESC
+				LIMIT 51
+			`, JobTypeClassify, string(JobStatusSkipped), PanelRoleMember)
+			require.NoError(t, err)
+			defer rows.Close()
 
-	rows, err := db.Query(`
-		EXPLAIN QUERY PLAN
-		SELECT j.id, r.name, c.subject, rv.closed
-		FROM review_jobs j
-		JOIN repos r ON r.id = j.repo_id
-		LEFT JOIN commits c ON c.id = j.commit_id
-		LEFT JOIN reviews rv ON rv.job_id = j.id
-		ORDER BY ` + sqliteNormalizedTimestampExpr("j.enqueued_at") + ` DESC, j.id DESC
-		LIMIT 50
-	`)
-	require.NoError(t, err)
-	defer rows.Close()
-
-	var details []string
-	for rows.Next() {
-		var id, parent, unused int
-		var detail string
-		require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
-		details = append(details, detail)
+			var details []string
+			for rows.Next() {
+				var id, parent, unused int
+				var detail string
+				require.NoError(t, rows.Scan(&id, &parent, &unused, &detail))
+				details = append(details, detail)
+			}
+			require.NoError(t, rows.Err())
+			plan := strings.Join(details, "\n")
+			assert.Contains(t, plan, "USING INDEX idx_review_jobs_enqueued_position")
+			assert.NotContains(t, plan, "USE TEMP B-TREE FOR ORDER BY")
+		})
 	}
-	require.NoError(t, rows.Err())
-	plan := strings.Join(details, "\n")
-	assert.Contains(t, plan, "USING INDEX idx_review_jobs_enqueued_position")
-	assert.NotContains(t, plan, "USE TEMP B-TREE FOR ORDER BY")
 }
 
 func TestListJobsPaginatesRerunsByEnqueueTime(t *testing.T) {
