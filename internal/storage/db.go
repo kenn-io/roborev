@@ -1306,6 +1306,16 @@ func (db *DB) migrate() error {
 		return fmt.Errorf("create idx_review_jobs_panel: %w", err)
 	}
 
+	// ListJobs reads newest jobs first using the normalized enqueue timestamp
+	// and ID as a stable tie-breaker. Keep that first page from sorting the
+	// entire job history. This is created after the legacy table rebuild so the
+	// rebuilt table cannot drop it during the same migration run.
+	jobListPositionExpr := sqliteNormalizedTimestampExpr("enqueued_at")
+	if _, err = db.Exec(`CREATE INDEX IF NOT EXISTS idx_review_jobs_enqueued_position
+		ON review_jobs (` + jobListPositionExpr + ` DESC, id DESC)`); err != nil {
+		return fmt.Errorf("create idx_review_jobs_enqueued_position: %w", err)
+	}
+
 	// Partial index for the safety sweep: locate stuck synthesis rows (still
 	// claim_blocked) cheaply. claim_blocked is local-only, so this index is
 	// SQLite-only. Created here, after the legacy rebuild, for the same reason

@@ -416,6 +416,31 @@ func TestMigrationFromOldSchema(t *testing.T) {
 	}
 }
 
+func TestReviewJobPositionIndexExistsOnFreshSchema(t *testing.T) {
+	db := openTestDB(t)
+	t.Cleanup(func() { require.NoError(t, db.Close()) })
+
+	assertReviewJobPositionIndexExists(t, db)
+}
+
+func TestReviewJobPositionIndexSurvivesLegacyRebuild(t *testing.T) {
+	db := prepareMigratedDB(
+		t, "position-index-legacy.db", legacyReviewJobSchema, legacyReviewJobSeed,
+	)
+
+	assertReviewJobPositionIndexExists(t, db)
+}
+
+func assertReviewJobPositionIndexExists(t *testing.T, db *DB) {
+	t.Helper()
+	var count int
+	require.NoError(t, db.QueryRow(`
+		SELECT COUNT(*) FROM sqlite_master
+		WHERE type = 'index' AND name = 'idx_review_jobs_enqueued_position'
+	`).Scan(&count))
+	assert.Equal(t, 1, count)
+}
+
 func TestMigrationNormalizesWindowsRepoRootPathConflicts(t *testing.T) {
 	dbPath := filepath.Join(t.TempDir(), "paths.db")
 	db, err := Open(dbPath)
