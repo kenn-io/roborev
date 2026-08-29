@@ -8,6 +8,7 @@ const state = vi.hoisted(() => ({
   loading: false,
   notFound: false,
   status: "done",
+  error: "",
 }));
 
 vi.mock("../../stores/context", () => ({
@@ -16,7 +17,7 @@ vi.mock("../../stores/context", () => ({
       getOutput: () => state.output,
       isLoading: () => state.loading,
       isReviewNotFound: () => state.notFound,
-      getSelectedJob: () => ({ status: state.status }),
+      getSelectedJob: () => ({ status: state.status, error: state.error }),
     },
   }),
 }));
@@ -31,6 +32,7 @@ afterEach(() => {
   state.loading = false;
   state.notFound = false;
   state.status = "done";
+  state.error = "";
 });
 
 describe("ReviewContent", () => {
@@ -44,14 +46,31 @@ describe("ReviewContent", () => {
     expect(await screen.findByRole("alert")).toBeInTheDocument();
   });
 
-  it("does not call a terminal job with no review in progress", async () => {
+  it("shows why a failed review produced no output", () => {
+    state.output = "";
+    state.notFound = true;
+    state.status = "failed";
+    state.error = "agent process exited with status 1";
+
+    render(ReviewContent);
+
+    expect(screen.getByRole("alert")).toHaveTextContent("Review failed");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "agent process exited with status 1",
+    );
+    expect(screen.queryByText("Review in progress…")).toBeNull();
+  });
+
+  it("explains a failed review even when no reason was recorded", () => {
     state.output = "";
     state.notFound = true;
     state.status = "failed";
 
     render(ReviewContent);
 
-    expect(screen.getByText("No review output available.")).toBeInTheDocument();
-    expect(screen.queryByText("Review in progress…")).toBeNull();
+    expect(screen.getByRole("alert")).toHaveTextContent("Review failed");
+    expect(screen.getByRole("alert")).toHaveTextContent(
+      "The review agent failed before producing output.",
+    );
   });
 });

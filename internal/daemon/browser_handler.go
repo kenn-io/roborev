@@ -175,6 +175,8 @@ func browserStreamContext(
 // resolved panel configuration, worker ownership, and checkout paths. Those
 // fields are useful to the loopback CLI API but must never cross the browser
 // listener boundary merely because a field was added to storage.ReviewJob.
+// Error is an explicit exception for authenticated browser sessions and is
+// populated only for failed jobs so the Review tab can explain missing output.
 type browserReviewJob struct {
 	ID               int64                 `json:"id"`
 	RepoID           int64                 `json:"repo_id"`
@@ -187,6 +189,7 @@ type browserReviewJob struct {
 	Reasoning        string                `json:"reasoning,omitempty"`
 	JobType          string                `json:"job_type"`
 	Status           storage.JobStatus     `json:"status"`
+	Error            string                `json:"error,omitempty"`
 	EnqueuedAt       time.Time             `json:"enqueued_at"`
 	StartedAt        *time.Time            `json:"started_at,omitempty"`
 	FinishedAt       *time.Time            `json:"finished_at,omitempty"`
@@ -250,12 +253,17 @@ type browserReviewResponse struct {
 }
 
 func projectBrowserReviewJob(job storage.ReviewJob) browserReviewJob {
+	errorMessage := ""
+	if job.Status == storage.JobStatusFailed {
+		errorMessage = job.Error
+	}
 	return browserReviewJob{
 		ID: job.ID, RepoID: job.RepoID, CommitID: job.CommitID,
 		GitRef: job.GitRef, Branch: job.Branch, Agent: job.Agent,
 		Model: job.Model, Provider: job.Provider, Reasoning: job.Reasoning,
-		JobType: job.JobType, Status: job.Status, EnqueuedAt: job.EnqueuedAt,
-		StartedAt: job.StartedAt, FinishedAt: job.FinishedAt, Prompt: job.Prompt,
+		JobType: job.JobType, Status: job.Status, Error: errorMessage,
+		EnqueuedAt: job.EnqueuedAt,
+		StartedAt:  job.StartedAt, FinishedAt: job.FinishedAt, Prompt: job.Prompt,
 		RetryCount: job.RetryCount, Agentic: job.Agentic,
 		PromptPrebuilt: job.PromptPrebuilt, ReviewType: job.ReviewType,
 		PatchID: job.PatchID, OutputPrefix: job.OutputPrefix,

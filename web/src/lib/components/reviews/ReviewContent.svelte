@@ -11,9 +11,15 @@
 
   const stores = getReviewStores();
   const output = $derived(stores.roborevReview?.getOutput() ?? "");
+  const selectedJob = $derived(stores.roborevReview?.getSelectedJob());
+  const failed = $derived(selectedJob?.status === "failed");
+  const failureReason = $derived(
+    selectedJob?.error?.trim() ||
+      "The review agent failed before producing output.",
+  );
   const pending = $derived.by(() => {
     if (!stores.roborevReview?.isReviewNotFound()) return false;
-    const status = stores.roborevReview.getSelectedJob()?.status;
+    const status = selectedJob?.status;
     return status === "queued" || status === "running";
   });
   let RichReviewContent = $state<RichReviewContentComponent>();
@@ -55,7 +61,14 @@
   });
 </script>
 
-{#if RichReviewContent}
+{#if stores.roborevReview?.isLoading()}
+  <div class="review-state">Loading review…</div>
+{:else if failed}
+  <div class="review-state review-failure" role="alert">
+    <strong>Review failed</strong>
+    <p>{failureReason}</p>
+  </div>
+{:else if RichReviewContent}
   <RichReviewContent
     {output}
     loading={stores.roborevReview?.isLoading() ?? false}
@@ -68,8 +81,6 @@
       Retry
     </button>
   </div>
-{:else if stores.roborevReview?.isLoading()}
-  <div class="review-state">Loading review…</div>
 {:else if pending}
   <div class="review-state">Review in progress…</div>
 {:else if output}
@@ -88,6 +99,12 @@
 
   .review-state p {
     margin: 0 0 var(--space-3);
+  }
+
+  .review-failure p {
+    margin: var(--space-2) 0 0;
+    white-space: pre-wrap;
+    overflow-wrap: anywhere;
   }
 
   .review-state button {

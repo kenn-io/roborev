@@ -368,6 +368,44 @@ func TestBrowserHandlerOmitsInternalJobMetadata(t *testing.T) {
 	}
 }
 
+func TestBrowserHandlerProjectsFailureReasonOnlyForFailedJobs(t *testing.T) {
+	const failureReason = "agent process exited with status 1"
+	core := http.HandlerFunc(func(w http.ResponseWriter, _ *http.Request) {
+		w.Header().Set("Content-Type", "application/json")
+		assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+			"jobs": []map[string]any{
+				{
+					"id": 7, "repo_id": 2, "git_ref": "HEAD", "agent": "test",
+					"job_type": "review", "status": "failed", "error": failureReason,
+					"enqueued_at": "2026-01-02T03:04:05Z", "retry_count": 0,
+					"agentic": false, "prompt_prebuilt": false,
+				},
+				{
+					"id": 8, "repo_id": 2, "git_ref": "HEAD", "agent": "test",
+					"job_type": "review", "status": "done", "error": "stale internal error",
+					"enqueued_at": "2026-01-02T03:05:05Z", "retry_count": 0,
+					"agentic": false, "prompt_prebuilt": false,
+				},
+			},
+			"has_more": false, "next_cursor": nil,
+		}))
+	})
+	handler, sessions := newBrowserHandlerFixtureWithCore(t, testBrowserAuthToken, core)
+	request := authenticatedBrowserRequest(t, sessions, http.MethodGet, "/api/jobs")
+	recorder := httptest.NewRecorder()
+
+	handler.ServeHTTP(recorder, request)
+
+	require.Equal(t, http.StatusOK, recorder.Code)
+	var response struct {
+		Jobs []map[string]any `json:"jobs"`
+	}
+	require.NoError(t, json.Unmarshal(recorder.Body.Bytes(), &response))
+	require.Len(t, response.Jobs, 2)
+	assert.Equal(t, failureReason, response.Jobs[0]["error"])
+	assert.NotContains(t, response.Jobs[1], "error")
+}
+
 func TestBrowserHandlerRejectsRawJobLogs(t *testing.T) {
 	const secret = "SENTINEL_RAW_LOG_SESSION"
 	coreCalled := false

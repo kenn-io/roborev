@@ -193,6 +193,15 @@ test.describe.serial("native review workspace", () => {
     await expect(page.locator(".response-item")).toHaveCount(2);
   });
 
+  test("shows why a failed review produced no output", async ({ page }) => {
+    await openReview(page, 48);
+
+    await expect(page.getByRole("alert")).toContainText("Review failed");
+    await expect(page.getByRole("alert")).toContainText(
+      "fixture agent exited before producing a review",
+    );
+  });
+
   test("renders compact output, persisted logs, and the review prompt", async ({
     page,
   }) => {

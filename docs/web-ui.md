@@ -61,6 +61,10 @@ provides:
 - close or reopen, rerun, and eligible cancellation actions; and
 - review-output copying and a comment form.
 
+When a review agent fails before producing output, the **Review** tab shows the
+recorded failure reason so the problem can be diagnosed without leaving the
+browser application.
+
 Available actions depend on both the job and the browser session. For example, a
 running review can be canceled but has no completed output to close, while
 remote sessions have the narrower mutation policy described under
