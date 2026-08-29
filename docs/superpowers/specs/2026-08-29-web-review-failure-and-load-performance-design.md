@@ -3,10 +3,10 @@
 ## Context
 
 The browser review drawer currently shows `No review output available.` when a
-review job fails before it creates a review. The job record already contains
-the agent or process failure in its `error` field, but the Review tab does not
-render that field. Users must open the log or switch to the terminal UI to learn
-why the review failed.
+review job fails before it creates a review. The stored job contains the agent
+or process failure in its `error` field, but the explicit browser job projection
+omits that field and the Review tab has no failed-job state. Users must switch
+to the terminal UI to learn why the review failed.
 
 The initial browser review list also waits longer than necessary. After browser
 session bootstrap succeeds, the application waits for `/api/status` before it
@@ -34,16 +34,26 @@ scan and sort the full job history before returning the first page.
 
 ### Failed review state
 
-`ReviewContent` will derive the selected job in addition to the completed review
-output. When the selected job has status `failed`, no review output exists, and
-the job has a non-empty `error`, the Review tab will show a clear `Review
-failed` heading followed by the persisted error text. The text will preserve
-line breaks and wrap long lines. Svelte will render it as text so provider or
-process output cannot inject markup.
+The browser job allowlist and its projection will include the stored `error`
+only when a job has status `failed`. This is an intentional expansion of the
+authenticated browser presentation boundary: failure text can contain provider
+or process details, including local paths or invocation context, but explaining
+why the review failed requires showing that text to the authenticated user who
+can inspect that review. Non-failed rows will continue to omit the field, and no
+new route or unauthenticated capability will be added.
 
-Loading, in-progress, completed-output, and renderer-error states keep their
-current precedence. A failed job with no recorded error will use an explicit
-failed-without-reason fallback instead of the unrelated no-output message.
+`ReviewContent` will derive the selected job in addition to the completed review
+output. After loading finishes, a selected job with status `failed` will render
+a clear `Review failed` heading followed by its persisted error text. This
+failed state will be checked before the idle-loaded rich review component, so
+that component cannot replace the reason with its empty-output state. The text
+will preserve line breaks and wrap long lines. Svelte will render it as text so
+provider or process output is not treated as markup.
+
+Loading remains the highest-priority state. Completed output continues through
+the rich renderer, and queued or running jobs keep the in-progress state. A
+failed job with no recorded error will use an explicit failed-without-reason
+fallback instead of the unrelated no-output message.
 
 ### First-page query
 
@@ -55,7 +65,10 @@ databases finish with the same schema.
 
 The query and cursor format will not change. SQLite can walk the new index to
 return the newest page without building a temporary sort over the full review
-history.
+history. The request will still aggregate job statistics over the active scope,
+so total request cost is not constant with history size. Splitting or caching
+those statistics remains outside this change; the performance claim is limited
+to removing the full-history sort and the serialized startup round trip.
 
 ### Browser startup
 
@@ -63,7 +76,9 @@ history.
 daemon that serves the authenticated jobs and status routes. The daemon store
 will therefore begin in a provisionally available state. Its existing polling
 effect will still request `/api/status` immediately and replace that provisional
-state with the observed result.
+state with the observed result. `wasEverAvailable` will remain false until a
+status request succeeds, so an initial status failure still reaches the current
+daemon-unavailable state.
 
 This lets the review list request and event stream start at the same time as the
 first status request instead of waiting behind it. If the status request fails,
@@ -71,8 +86,8 @@ the existing unavailable and retry behavior remains authoritative.
 
 ## Error handling
 
-- Failure reasons come only from the selected job returned by the authenticated
-  browser projection.
+- Failure reasons come only from failed jobs returned by the authenticated
+  browser projection. Other job statuses continue to omit stored errors.
 - Empty failure reasons produce a specific fallback message.
 - A failed initial status request clears provisional availability through the
   current daemon-store failure path.
@@ -84,8 +99,12 @@ the existing unavailable and retry behavior remains authoritative.
 ## Verification
 
 - A component test will prove that a failed selected job shows its persisted
-  reason in the Review tab and does not show the generic no-output state.
+  reason in the Review tab, including after the rich renderer loads, and does
+  not show the generic no-output state.
 - A component test will cover the failed-without-reason fallback.
+- An authenticated browser-boundary test will prove that a failed job's error
+  crosses the explicit job projection. It will also prove that non-failed rows
+  continue to omit stored errors.
 - An application test will hold `/api/status` pending and prove that
   `/api/jobs` starts without waiting for it.
 - Storage migration coverage will open both fresh and prior-schema databases
