@@ -18,6 +18,7 @@ import (
 	kitagenthook "go.kenn.io/kit/agenthook"
 
 	"go.kenn.io/roborev/internal/agenthook"
+	"go.kenn.io/roborev/internal/skills"
 )
 
 func TestAgentHookInstallSupportsExplicitQwenProfile(t *testing.T) {
@@ -236,6 +237,72 @@ func TestRunAgentHookEncodesKitStopResponse(t *testing.T) {
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &output))
 	assert.Equal(t, "block", output["decision"])
 	assert.Equal(t, "resolve reviews", output["reason"])
+}
+
+func TestRunAgentHookReportsCodexFixSkillStateInTriggeredReminder(t *testing.T) {
+	for _, tc := range []struct {
+		name        string
+		install     func(*testing.T, string)
+		wantWarning string
+	}{
+		{name: "missing", wantWarning: "roborev-fix skill is missing"},
+		{
+			name: "outdated",
+			install: func(t *testing.T, skillsDir string) {
+				skillDir := filepath.Join(skillsDir, "roborev-fix")
+				require.NoError(t, os.MkdirAll(skillDir, 0o755))
+				require.NoError(t, os.WriteFile(filepath.Join(skillDir, "SKILL.md"), []byte("stale skill"), 0o644))
+			},
+			wantWarning: "installed roborev-fix skill is outdated",
+		},
+		{
+			name: "current",
+			install: func(t *testing.T, skillsDir string) {
+				_, err := skills.InstallToPath(skills.AgentCodex, skillsDir)
+				require.NoError(t, err)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			codexHome := t.TempDir()
+			t.Setenv("CODEX_HOME", codexHome)
+			skillsDir := filepath.Join(codexHome, "skills")
+			if tc.install != nil {
+				tc.install(t, skillsDir)
+			}
+
+			oldPost := postAgentHook
+			postAgentHook = func(context.Context, string, agenthook.Request) (agenthook.Response, error) {
+				return agenthook.Response{
+					Triggered: true,
+					Reason:    "Invoke $roborev-fix for review jobs 17 and 23.",
+				}, nil
+			}
+			t.Cleanup(func() { postAgentHook = oldPost })
+
+			var stdout bytes.Buffer
+			err := runAgentHook(
+				kitagenthook.AgentCodex,
+				agenthook.DefaultOptions(),
+				strings.NewReader(`{"session_id":"s1","hook_event_name":"Stop"}`),
+				&stdout,
+				io.Discard,
+			)
+			require.NoError(t, err)
+
+			var output map[string]any
+			require.NoError(t, json.Unmarshal(stdout.Bytes(), &output))
+			reason, ok := output["reason"].(string)
+			require.True(t, ok)
+			assert.Contains(t, reason, "Invoke $roborev-fix for review jobs 17 and 23.")
+			if tc.wantWarning == "" {
+				assert.NotContains(t, reason, agentHookSkillInstallCommand)
+				return
+			}
+			assert.Contains(t, reason, tc.wantWarning)
+			assert.Contains(t, reason, agentHookSkillInstallCommand)
+		})
+	}
 }
 
 // If kit-backed profiles omit policy composition, most supported hooks keep

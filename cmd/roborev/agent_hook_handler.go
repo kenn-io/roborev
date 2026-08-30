@@ -9,7 +9,10 @@ import (
 	kitagenthook "go.kenn.io/kit/agenthook"
 
 	"go.kenn.io/roborev/internal/agenthook"
+	"go.kenn.io/roborev/internal/skills"
 )
+
+const agentHookSkillInstallCommand = "roborev skills install"
 
 type roborevAgentHookHandler struct {
 	kitagenthook.NoopHandler
@@ -94,8 +97,9 @@ func (h roborevAgentHookHandler) PostToolUse(
 		return kitagenthook.PostToolUseOutput{}, nil
 	}
 	return kitagenthook.PostToolUseOutput{
-		AdditionalContext: agenthook.PostToolUseAdditionalContextWithFixGuidelines(
-			resp.Reason, h.opts.FixGuidelines,
+		AdditionalContext: prependAgentHookFixSkillWarning(
+			h.agent,
+			agenthook.PostToolUseAdditionalContextWithFixGuidelines(resp.Reason, h.opts.FixGuidelines),
 		),
 	}, nil
 }
@@ -116,6 +120,54 @@ func (h roborevAgentHookHandler) Stop(
 	}
 	return kitagenthook.StopOutput{
 		Decision: kitagenthook.DecisionBlock,
-		Reason:   agenthook.StopReasonWithFixGuidelines(resp.Reason, h.opts.FixGuidelines),
+		Reason: prependAgentHookFixSkillWarning(
+			h.agent,
+			agenthook.StopReasonWithFixGuidelines(resp.Reason, h.opts.FixGuidelines),
+		),
 	}, nil
+}
+
+func prependAgentHookFixSkillWarning(agent kitagenthook.Agent, instruction string) string {
+	skillAgent, supported := mapAgentHookSkillAgent(agent)
+	if !supported {
+		return instruction
+	}
+
+	status, found := skills.StatusForAgent(skillAgent)
+	if !found {
+		return instruction
+	}
+	state, installed := status.Skills["roborev-fix"]
+	if !installed {
+		state = skills.SkillMissing
+	}
+	switch state {
+	case skills.SkillMissing:
+		return fmt.Sprintf(
+			"Warning: the roborev-fix skill is missing. Run '%s' before following this reminder.\n\n%s",
+			agentHookSkillInstallCommand, instruction,
+		)
+	case skills.SkillOutdated:
+		return fmt.Sprintf(
+			"Warning: the installed roborev-fix skill is outdated. Run '%s' before following this reminder.\n\n%s",
+			agentHookSkillInstallCommand, instruction,
+		)
+	default:
+		return instruction
+	}
+}
+
+func mapAgentHookSkillAgent(agent kitagenthook.Agent) (skills.Agent, bool) {
+	switch agent {
+	case kitagenthook.AgentClaude:
+		return skills.AgentClaude, true
+	case kitagenthook.AgentCodex:
+		return skills.AgentCodex, true
+	case kitagenthook.AgentDroid:
+		return skills.AgentDroid, true
+	case kitagenthook.Agent("grok"):
+		return skills.AgentGrok, true
+	default:
+		return "", false
+	}
 }

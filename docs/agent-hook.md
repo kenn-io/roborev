@@ -57,6 +57,13 @@ their IDs only when delivered.
 `instruction` is a complete override. Custom instructions are emitted without
 the built-in scope or continuation guidance.
 
+When a reminder triggers for Claude Code, Codex, Factory Droid, or Grok Build,
+the hook compares that agent's installed `roborev-fix` skill with the version
+embedded in the running roborev binary. If the skill is missing or outdated, the
+reminder begins with a warning to run `roborev skills install`. The original
+instruction and its exact review job IDs are still delivered. The hook never
+updates skills automatically.
+
 ## Install
 
 Install hooks for every locally detected coding agent:

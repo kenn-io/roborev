@@ -95,6 +95,13 @@ func runGrokAgentHook(opts agenthook.Options, stdin io.Reader, stdout, stderr io
 		fmt.Fprintf(stderr, "roborev Grok Build: %v\n", err)
 		return json.NewEncoder(stdout).Encode(map[string]any{})
 	}
+	if resp.Triggered {
+		resp.Reason = prependAgentHookFixSkillWarning(
+			kitagenthook.Agent("grok"),
+			agenthook.StopReasonWithFixGuidelines(resp.Reason, opts.FixGuidelines),
+		)
+		return json.NewEncoder(stdout).Encode(agenthook.BuildOutput(input, resp))
+	}
 	return json.NewEncoder(stdout).Encode(agenthook.BuildOutputWithFixGuidelines(input, resp, opts.FixGuidelines))
 }
 

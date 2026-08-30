@@ -414,58 +414,73 @@ func ListSkills() ([]SkillInfo, error) {
 
 // Status returns per-agent, per-skill installation state.
 func Status() []AgentStatus {
-	var out []AgentStatus
+	out := make([]AgentStatus, 0, len(supportedAgents))
 	for _, spec := range supportedAgents {
 		home, err := homeDirForAgent(spec)
 		if err != nil {
 			return nil
 		}
-		status := AgentStatus{
-			Agent:  spec.agent,
-			Skills: make(map[string]SkillState),
-		}
+		out = append(out, statusForAgent(spec, home))
+	}
+	return out
+}
 
-		configDir := agentConfigDir(home, spec)
-		if _, err := os.Stat(configDir); err != nil {
-			out = append(out, status)
-			continue
-		}
-		status.Available = true
+// StatusForAgent returns one agent's embedded skill installation state.
+func StatusForAgent(agent Agent) (AgentStatus, bool) {
+	spec, ok := lookupAgent(agent)
+	if !ok {
+		return AgentStatus{}, false
+	}
+	home, err := homeDirForAgent(spec)
+	if err != nil {
+		return AgentStatus{}, false
+	}
+	return statusForAgent(spec, home), true
+}
 
-		skills, err := embeddedSkillsForAgent(spec)
+func statusForAgent(spec agentSpec, home string) AgentStatus {
+	status := AgentStatus{
+		Agent:  spec.agent,
+		Skills: make(map[string]SkillState),
+	}
+
+	configDir := agentConfigDir(home, spec)
+	if _, err := os.Stat(configDir); err != nil {
+		return status
+	}
+	status.Available = true
+
+	embedded, err := embeddedSkillsForAgent(spec)
+	if err != nil {
+		return status
+	}
+
+	skillsDir := agentSkillsDir(home, spec)
+	for _, skill := range embedded {
+		installedPath := skillInstallPath(skillsDir, skill.DirName)
+
+		installedContent, err := os.ReadFile(installedPath)
 		if err != nil {
-			out = append(out, status)
+			status.Skills[skill.DirName] = SkillMissing
 			continue
 		}
 
-		skillsDir := agentSkillsDir(home, spec)
-		for _, skill := range skills {
-			installedPath := skillInstallPath(skillsDir, skill.DirName)
+		if !bytes.Equal(installedContent, skill.Content) {
+			status.Skills[skill.DirName] = SkillOutdated
+			continue
+		}
 
-			installedContent, err := os.ReadFile(installedPath)
-			if err != nil {
-				status.Skills[skill.DirName] = SkillMissing
-				continue
-			}
-
-			if !bytes.Equal(installedContent, skill.Content) {
+		if skill.OpenAIYAML != nil {
+			installedPolicy, err := os.ReadFile(filepath.Join(skillsDir, skill.DirName, "agents", "openai.yaml"))
+			if err != nil || !bytes.Equal(installedPolicy, skill.OpenAIYAML) {
 				status.Skills[skill.DirName] = SkillOutdated
 				continue
 			}
-
-			if skill.OpenAIYAML != nil {
-				installedPolicy, err := os.ReadFile(filepath.Join(skillsDir, skill.DirName, "agents", "openai.yaml"))
-				if err != nil || !bytes.Equal(installedPolicy, skill.OpenAIYAML) {
-					status.Skills[skill.DirName] = SkillOutdated
-					continue
-				}
-			}
-			status.Skills[skill.DirName] = SkillCurrent
 		}
-
-		out = append(out, status)
+		status.Skills[skill.DirName] = SkillCurrent
 	}
-	return out
+
+	return status
 }
 
 // parseFrontmatter extracts name and description from YAML frontmatter.
