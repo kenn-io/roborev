@@ -144,7 +144,13 @@ func TestAgentHookRunSupportsLegacyProfilelessRegistration(t *testing.T) {
 
 	require.NoError(t, cmd.Execute())
 	assert.Equal(t, "legacy-1", got.Event.SessionID)
-	assert.JSONEq(t, `{"decision":"block","reason":"resolve reviews"}`, stdout.String())
+	var output map[string]any
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &output))
+	reason, ok := output["reason"].(string)
+	require.True(t, ok)
+	assert.Contains(t, reason, "legacy Agent Hook cannot verify the installed roborev-fix skill")
+	assert.Contains(t, reason, "roborev agent-hook install")
+	assert.Contains(t, reason, "resolve reviews")
 }
 
 // If a legacy or Grok encoder bypasses policy-aware output, users get different

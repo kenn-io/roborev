@@ -129,6 +129,15 @@ func runLegacyAgentHook(
 		fmt.Fprintf(stderr, "roborev agent-hook: %v\n", err)
 		return json.NewEncoder(stdout).Encode(map[string]any{})
 	}
+	if resp.Triggered {
+		instruction := agenthook.StopReasonWithFixGuidelines(resp.Reason, opts.FixGuidelines)
+		resp.Reason = fmt.Sprintf(
+			"Warning: this legacy Agent Hook cannot verify the installed roborev-fix skill. "+
+				"Run 'roborev agent-hook install' before following this reminder.\n\n%s",
+			instruction,
+		)
+		return json.NewEncoder(stdout).Encode(agenthook.BuildOutput(input, resp))
+	}
 	return json.NewEncoder(stdout).Encode(agenthook.BuildOutputWithFixGuidelines(input, resp, opts.FixGuidelines))
 }
 

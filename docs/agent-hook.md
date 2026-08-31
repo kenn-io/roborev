@@ -143,6 +143,12 @@ The CLI flag migration is:
 
 Removed flags are not retained as aliases.
 
+Until it is replaced, a profile-less legacy hook cannot identify whether Claude
+Code or Codex invoked it and therefore cannot verify that profile's
+`roborev-fix` skill. Triggered reminders from that hook warn you to run
+`roborev agent-hook install`, which replaces the registration and updates its
+skills.
+
 Persisted session state is also read forward during this window. A legacy
 session-wide Stop count moves to its single identifiable recent workspace;
 ambiguous multi-workspace progress resets instead of being assigned to the wrong
