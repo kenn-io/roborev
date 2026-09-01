@@ -216,12 +216,25 @@ func TestAgentHookInstallRejectsBinaryWithCommand(t *testing.T) {
 
 func TestAgentHookRunRequiresProfile(t *testing.T) {
 	cmd := agentHookCmd()
-	cmd.SetArgs([]string{"run"})
+	cmd.SetArgs([]string{"run", "--source=roborev-agent-hook"})
 
 	err := cmd.Execute()
 
 	require.Error(t, err)
 	assert.ErrorContains(t, err, "--agent is required")
+}
+
+func TestAgentHookRunRejectsOutdatedRegistration(t *testing.T) {
+	cmd := agentHookCmd()
+	cmd.SetArgs([]string{"run", "--agent", "grok"})
+
+	err := cmd.Execute()
+
+	require.EqualError(
+		t,
+		err,
+		"agent hook registration is outdated; run 'roborev agent-hook install'",
+	)
 }
 
 func TestGrokAgentHookAppendsFixGuidelines(t *testing.T) {

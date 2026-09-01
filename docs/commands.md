@@ -978,7 +978,7 @@ roborev agent-hook install --agent hermes --config ~/.hermes/config.yaml
 roborev agent-hook install --binary ~/.local/bin/roborev
 roborev agent-hook dump --agent qwen    # Native JSON config on stdout
 roborev agent-hook dump --agent hermes  # Native YAML config on stdout
-roborev agent-hook run --agent cursor   # Harness runtime; --agent is required
+roborev agent-hook run ...              # Internal harness runtime installed by agent-hook install
 roborev agent-hook status               # Tracked session counters as JSON
 roborev agent-hook reset <session-id>   # Reset one session (or --all)
 ```

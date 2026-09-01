@@ -15,8 +15,9 @@ import (
 )
 
 const (
-	agentHookRunner = "agent-hook run"
-	agentHookMarker = "--source=roborev-agent-hook"
+	agentHookRunner    = "agent-hook run"
+	RegistrationSource = "roborev-agent-hook"
+	agentHookMarker    = "--source=" + RegistrationSource
 )
 
 type InstallOptions struct {

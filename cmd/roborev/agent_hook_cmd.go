@@ -77,6 +77,11 @@ func agentHookRunCmd() *cobra.Command {
 		Args:                  cobra.NoArgs,
 		DisableFlagsInUseLine: true,
 		RunE: func(cmd *cobra.Command, _ []string) error {
+			if source != agenthook.RegistrationSource {
+				return fmt.Errorf(
+					"agent hook registration is outdated; run 'roborev agent-hook install'",
+				)
+			}
 			rawAgent := strings.ToLower(strings.TrimSpace(agent))
 			if rawAgent == "" {
 				return fmt.Errorf("--agent is required")

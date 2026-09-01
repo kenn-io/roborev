@@ -167,15 +167,19 @@ stderr so stdout remains safe to pipe into declarative configuration tooling.
 
 ## Runtime Model
 
-Installed commands always identify their profile:
+Installed commands identify their profile and carry an internal ownership
+marker:
 
 ```bash
 roborev agent-hook run --agent <profile>
 ```
 
-`run` requires `--agent`, reads one finite native hook payload from stdin,
-passes it through kit's typed dispatcher, posts a normalized request to the
-regular roborev daemon, and lets kit encode the native response.
+`run` rejects commands without the installed ownership marker and tells the user
+to rerun `roborev agent-hook install`. This stops obsolete registrations instead
+of continuing to support their runtime behavior. Current commands require
+`--agent`, read one finite native hook payload from stdin, pass it through kit's
+typed dispatcher, post a normalized request to the regular roborev daemon, and
+let kit encode the native response.
 
 The regular daemon loads and persists session accounting and delivered review
 IDs at:
