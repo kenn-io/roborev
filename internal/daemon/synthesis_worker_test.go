@@ -180,7 +180,13 @@ func TestRunSynthesisAgentMarksInvokedOnlyWhenAgentRuns(t *testing.T) {
 	t.Run("successful synthesis run is counted", func(t *testing.T) {
 		tc := newWorkerTestContext(t, 1)
 		const synthAgent = "synth-runs-ok"
-		registerPassingAgent(t, synthAgent)
+		agent.Register(&agent.FakeAgent{
+			NameStr: synthAgent,
+			ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
+				return `{"schema_version":1,"verdict":"pass","markdown":"No issues found."}`, nil
+			},
+		})
+		t.Cleanup(func() { agent.Unregister(synthAgent) })
 
 		_, _, synth := enqueuePanelRun(t, tc, "runs-ok-panel", []memberSpec{
 			{name: "m0", agent: "test"},
@@ -216,17 +222,17 @@ func (a *synthesisEntrypointTestAgent) Review(context.Context, string, string, s
 	return "", fmt.Errorf("review entrypoint should not be used for synthesis")
 }
 
-func (a *synthesisEntrypointTestAgent) Synthesize(ctx context.Context, prompt string, output io.Writer) (string, error) {
+func (a *synthesisEntrypointTestAgent) Synthesize(ctx context.Context, prompt string, output io.Writer) (json.RawMessage, error) {
 	a.synthPrompt = prompt
 	if output != nil && a.streamLine != "" {
 		if _, err := io.WriteString(output, a.streamLine+"\n"); err != nil {
-			return "", err
+			return nil, err
 		}
 	}
 	if a.result != "" {
-		return a.result, nil
+		return json.RawMessage(a.result), nil
 	}
-	return "## Review Findings\n\n- **Severity**: Medium\n- **Location**: file.go:1\n- **Problem**: combined\n- **Fix**: fix", nil
+	return json.RawMessage(`{"schema_version":1,"verdict":"fail","markdown":"## Review Findings\n\n- **Severity**: Medium\n- **Location**: file.go:1\n- **Problem**: combined\n- **Fix**: fix"}`), nil
 }
 
 func (a *synthesisEntrypointTestAgent) WithReasoning(agent.ReasoningLevel) agent.Agent { return a }
@@ -613,7 +619,7 @@ func TestSynthesisSingleSuccessWithMinSeverityUsesFilterPrompt(t *testing.T) {
 
 	synthAgent := &synthesisEntrypointTestAgent{
 		name:   "panel-single-minsev-synth",
-		result: "No Medium, High, or Critical findings remain.",
+		result: `{"schema_version":1,"verdict":"pass","markdown":"No Medium, High, or Critical findings remain."}`,
 	}
 	agent.Register(synthAgent)
 	t.Cleanup(func() { agent.Unregister(synthAgent.name) })
@@ -796,9 +802,39 @@ func TestSynthesisUsesSynthesisEntrypoint(t *testing.T) {
 	review, err := tc.DB.GetReviewByJobID(synth.ID)
 	require.NoError(t, err)
 	assert.Contains(review.Output, "combined")
+	require.NotNil(t, review.VerdictBool)
+	assert.Equal(0, *review.VerdictBool)
 	assert.False(synthAgent.reviewCalled, "synthesis must not use the code-review entrypoint")
 	assert.Contains(synthAgent.synthPrompt, "Review #1")
 	assert.NotContains(synthAgent.synthPrompt, "Review the code changes in commit")
+}
+
+func TestSynthesisInvalidJSONRetriesWithoutStoringReview(t *testing.T) {
+	tc := newWorkerTestContext(t, 1)
+
+	const memberAgent = "panel-invalid-json-member"
+	registerPassingAgent(t, memberAgent)
+	synthAgent := &synthesisEntrypointTestAgent{
+		name:   "panel-invalid-json-synth",
+		result: "Markdown without structured synthesis JSON.",
+	}
+	agent.Register(synthAgent)
+	t.Cleanup(func() { agent.Unregister(synthAgent.name) })
+
+	runUUID, members, synth := enqueuePanelRun(t, tc, "invalid-json-panel", []memberSpec{
+		{name: "m0", agent: memberAgent},
+		{name: "m1", agent: memberAgent},
+	})
+	setSynthesisAgent(t, tc, runUUID, synthAgent.name)
+	completeMember(t, tc, members[0].ID, memberAgent, "**Verdict**: FAIL\n\nFinding A")
+	completeMember(t, tc, members[1].ID, memberAgent, "**Verdict**: FAIL\n\nFinding B")
+
+	claimed := releaseAndClaimSynthesis(t, tc, runUUID)
+	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, claimed)
+
+	tc.assertJobStatus(t, synth.ID, storage.JobStatusQueued)
+	_, err := tc.DB.GetReviewByJobID(synth.ID)
+	require.Error(t, err)
 }
 
 func TestSynthesisCapturesTokenUsage(t *testing.T) {
@@ -935,7 +971,7 @@ func TestSynthesisMultiVerifyDedupe(t *testing.T) {
 		NameStr: synthAgent,
 		ReviewFn: func(_ context.Context, _, _, prompt string, _ io.Writer) (string, error) {
 			captured = prompt
-			return "## Combined\nConsolidated finding.", nil
+			return `{"schema_version":1,"verdict":"fail","markdown":"## Combined\nConsolidated finding."}`, nil
 		},
 	})
 	t.Cleanup(func() { agent.Unregister(synthAgent) })
@@ -1142,7 +1178,7 @@ func TestSynthesisRunsAgainstWorktree(t *testing.T) {
 		NameStr: synthAgent,
 		ReviewFn: func(_ context.Context, repoPath, _, _ string, _ io.Writer) (string, error) {
 			capturedPath = repoPath
-			return "## Combined\nDone.", nil
+			return `{"schema_version":1,"verdict":"pass","markdown":"## Combined\nDone."}`, nil
 		},
 	})
 	t.Cleanup(func() { agent.Unregister(synthAgent) })

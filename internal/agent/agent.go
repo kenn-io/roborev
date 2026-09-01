@@ -2,6 +2,7 @@ package agent
 
 import (
 	"context"
+	"encoding/json"
 	"fmt"
 	"io"
 	"sort"
@@ -136,9 +137,10 @@ func SupportsSessionResume(name string) bool {
 }
 
 // SynthesisAgent is implemented by agents that can combine review outputs
-// without wrapping the prompt as a code-review request.
+// without wrapping the prompt as a code-review request. The result is one JSON
+// document matching the synthesis schema supplied in the prompt.
 type SynthesisAgent interface {
-	Synthesize(ctx context.Context, prompt string, output io.Writer) (result string, err error)
+	Synthesize(ctx context.Context, prompt string, output io.Writer) (json.RawMessage, error)
 }
 
 // Registry holds available agents

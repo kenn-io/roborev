@@ -93,6 +93,21 @@ func TestCompleteJobResultStoresCanonicalReview(t *testing.T) {
 	assert.JSONEq(t, string(structured), storedStructured)
 }
 
+func TestCompleteJobUnknownOutputLeavesVerdictNull(t *testing.T) {
+	env := setupJobEnv(t, "/tmp/unknown-verdict", "unknown123")
+	claimJob(t, env.db, "worker-1")
+
+	require.NoError(t, env.db.CompleteJob(
+		env.job.ID, "codex", "prompt", "Task completed successfully.",
+	))
+
+	var verdict sql.NullInt64
+	require.NoError(t, env.db.QueryRow(
+		`SELECT verdict_bool FROM reviews WHERE job_id = ?`, env.job.ID,
+	).Scan(&verdict))
+	assert.False(t, verdict.Valid)
+}
+
 func TestCompleteJobResultRejectsInvalidStructuredOutput(t *testing.T) {
 	tests := []struct {
 		name string
@@ -2472,4 +2487,24 @@ func TestCompleteFixJobEmptyOutputLeavesVerdictNull(t *testing.T) {
 	var vb sql.NullInt64
 	require.NoError(t, db.QueryRow(`SELECT verdict_bool FROM reviews WHERE job_id = ?`, job.ID).Scan(&vb))
 	assert.False(t, vb.Valid, "empty output must not store a verdict")
+}
+
+func TestCompleteFixJobUnknownOutputLeavesVerdictNull(t *testing.T) {
+	db := openTestDB(t)
+	defer db.Close()
+
+	repo := createRepo(t, db, "/tmp/fix-unknown-output-repo")
+	commit := createCommit(t, db, repo.ID, "fix456")
+	job := enqueueJob(t, db, repo.ID, commit.ID, "fix456")
+	claimJob(t, db, "w1")
+
+	require.NoError(t, db.CompleteFixJob(
+		job.ID, "codex", "p", "Applied the requested change.", "patch content",
+	))
+
+	var verdict sql.NullInt64
+	require.NoError(t, db.QueryRow(
+		`SELECT verdict_bool FROM reviews WHERE job_id = ?`, job.ID,
+	).Scan(&verdict))
+	assert.False(t, verdict.Valid)
 }

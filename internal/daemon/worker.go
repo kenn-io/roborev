@@ -1135,13 +1135,22 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// (prompt size, worktree creation) have passed.
 	wp.markAgentInvoked(workerID, job, a)
 
-	// Run the review
+	// Run the agent. Tasks, insights, and fixes are free-form work rather than
+	// reviews, so their output does not need a pass/fail verdict. Actual reviews
+	// and compact jobs keep the verdict-bearing review contract.
 	log.Printf("[%s] Running %s %sreview (job %d)...",
 		workerID, agentName, rtTag, job.ID)
-	agentReview, err := review.RunAgentReview(
-		ctx, a, reviewRepoPath, job.GitRef, reviewPrompt, job.ReviewType,
-		effectiveMinSeverity, agentOutput,
-	)
+	var agentReview review.ReviewResult
+	if job.IsTaskJob() || job.IsFixJob() {
+		agentReview.Output, err = a.Review(
+			ctx, reviewRepoPath, job.GitRef, reviewPrompt, agentOutput,
+		)
+	} else {
+		agentReview, err = review.RunAgentReview(
+			ctx, a, reviewRepoPath, job.GitRef, reviewPrompt, job.ReviewType,
+			effectiveMinSeverity, agentOutput,
+		)
+	}
 	output := agentReview.Output
 	sessionWriter.Flush()
 	if sessionID := sessionWriter.SessionID(); sessionID != "" {

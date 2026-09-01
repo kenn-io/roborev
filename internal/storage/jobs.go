@@ -1108,7 +1108,9 @@ func (db *DB) CompleteFixJob(jobID int64, agent, prompt, output, patch string) e
 	// review output exists and skip reading the output column.
 	var verdictBoolVal any
 	if finalOutput != "" {
-		verdictBoolVal = verdictToBool(ParseVerdict(finalOutput))
+		if verdict := ParseVerdict(finalOutput); verdict != VerdictUnknown {
+			verdictBoolVal = verdictToBool(verdict)
+		}
 	}
 	_, err = conn.ExecContext(ctx,
 		`INSERT INTO reviews (job_id, agent, prompt, output, verdict_bool, uuid, updated_by_machine_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
@@ -1224,7 +1226,9 @@ func (db *DB) completeJob(
 	if completion.Verdict != VerdictUnknown {
 		verdictBoolVal = verdictToBool(completion.Verdict)
 	} else if finalOutput != "" {
-		verdictBoolVal = verdictToBool(ParseVerdict(finalOutput))
+		if verdict := ParseVerdict(finalOutput); verdict != VerdictUnknown {
+			verdictBoolVal = verdictToBool(verdict)
+		}
 	}
 	_, err = conn.ExecContext(ctx, `INSERT INTO reviews (job_id, agent, prompt, output, verdict_bool, structured_output, uuid, updated_by_machine_id, updated_at) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)`,
 		jobID, agent, prompt, finalOutput, verdictBoolVal,
