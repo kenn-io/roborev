@@ -93,7 +93,7 @@
 
   function openReleaseNotes(): void {
     releaseNotesOpen = true;
-    if (releaseNotes.length === 0 && !releaseNotesLoading) loadReleaseNotes();
+    if (!releaseNotesLoading) loadReleaseNotes();
   }
 
   function loadReleaseNotes(): void {
