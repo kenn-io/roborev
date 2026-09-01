@@ -51,7 +51,7 @@ func agentHookFixDoneCmd() *cobra.Command {
 }
 
 func runAgentHookFixDone(ctx context.Context, rawID, serverAddr string, stdout io.Writer) error {
-	fixSessionID, err := uuid.Parse(rawID)
+	fixSessionID, err := uuid.Parse(rawID) //nolint:forbidigo // Agent Hook fix session ID CLI text boundary.
 	if err != nil {
 		return fmt.Errorf("parse fix session ID: %w", err)
 	}
