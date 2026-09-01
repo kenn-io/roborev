@@ -101,7 +101,7 @@ func (h roborevAgentHookHandler) PostToolUse(
 		AdditionalContext: prependAgentHookFixSkillWarning(
 			h.agent,
 			agenthook.PostToolUseAdditionalContextWithFixGuidelines(
-				agenthook.InstructionWithFixSessionCompletion(resp), h.opts.FixGuidelines,
+				resp.Reason, h.opts.FixGuidelines,
 			),
 		),
 	}, nil
@@ -132,7 +132,7 @@ func (h roborevAgentHookHandler) Stop(
 		Reason: prependAgentHookFixSkillWarning(
 			h.agent,
 			agenthook.StopReasonWithFixGuidelines(
-				agenthook.InstructionWithFixSessionCompletion(resp), h.opts.FixGuidelines,
+				resp.Reason, h.opts.FixGuidelines,
 			),
 		),
 	}, nil

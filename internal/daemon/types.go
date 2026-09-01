@@ -409,8 +409,7 @@ type AgentHookSessionsInput struct{}
 
 type AgentHookSessionsOutput struct {
 	Body struct {
-		Sessions    map[string]agenthook.SessionState `json:"sessions"`
-		FixSessions map[string]agenthook.FixSession   `json:"fix_sessions"`
+		Sessions map[string]agenthook.SessionState `json:"sessions"`
 	}
 }
 

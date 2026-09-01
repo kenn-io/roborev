@@ -60,7 +60,7 @@ func runAgentHookFixDone(ctx context.Context, rawID, serverAddr string, stdout i
 			return err
 		}
 	}
-	fixSession, err := postAgentHookFixDone(ctx, serverAddr, fixSessionID)
+	fixSession, err := postAgentHookFixDoneRequest(ctx, serverAddr, fixSessionID)
 	if err != nil {
 		return err
 	}
@@ -137,7 +137,6 @@ func runGrokAgentHook(opts agenthook.Options, stdin io.Reader, stdout, stderr io
 		if resp.TriggeredBy == "fix_session" {
 			return json.NewEncoder(stdout).Encode(agenthook.BuildOutput(input, resp))
 		}
-		resp.Reason = agenthook.InstructionWithFixSessionCompletion(resp)
 		resp.Reason = prependAgentHookFixSkillWarning(
 			kitagenthook.Agent("grok"),
 			agenthook.StopReasonWithFixGuidelines(resp.Reason, opts.FixGuidelines),
@@ -177,7 +176,7 @@ func runLegacyAgentHook(
 			return json.NewEncoder(stdout).Encode(agenthook.BuildOutput(input, resp))
 		}
 		instruction := agenthook.StopReasonWithFixGuidelines(
-			agenthook.InstructionWithFixSessionCompletion(resp), opts.FixGuidelines,
+			resp.Reason, opts.FixGuidelines,
 		)
 		resp.Reason = fmt.Sprintf(
 			"Warning: this legacy Agent Hook cannot verify the installed roborev-fix skill. "+

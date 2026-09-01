@@ -61,11 +61,10 @@ instruction.
 
 ### Coordinating hook-triggered fixes
 
-Agent Hook allows one active fix session for each repository lineage. The daemon
+Agent Hook allows one active fix session for each physical worktree. The daemon
 records the owner as the agent profile and harness session ID when it delivers a
 reminder. Other sessions receive no duplicate fix instruction while that owner
-remains active. Different branches and worktrees can still have independent
-owners when they belong to different lineages.
+remains active. Separate worktrees remain independent.
 
 Each delivered instruction includes its exact completion command:
 
@@ -346,8 +345,7 @@ override in their `fix-done` command.
 
 ## Inspecting Sessions
 
-Status includes counters, queued Hermes reminders, and the latest fix session
-for each repository lineage:
+Status includes counters and queued Hermes reminders for every profile:
 
 ```bash
 roborev agent-hook status

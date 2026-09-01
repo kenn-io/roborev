@@ -21,13 +21,9 @@ import (
 func TestAgentHookSessionsLoadsExistingSnapshot(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	require.NoError(t, os.MkdirAll(filepath.Dir(agenthook.StatePath()), 0o700))
-	fixSessionID := uuid.MustParse("00000000-0000-4000-8000-000000000001")
 	body, err := json.Marshal(agenthook.Snapshot{
 		Sessions: map[string]agenthook.SessionState{
 			"session-1": {Count: 7, ReminderPromptCount: 2},
-		},
-		FixSessions: map[string]agenthook.FixSession{
-			"/repo\x00main": {ID: fixSessionID, Agent: "claude", SessionID: "session-1"},
 		},
 	})
 	require.NoError(t, err)
@@ -41,7 +37,6 @@ func TestAgentHookSessionsLoadsExistingSnapshot(t *testing.T) {
 	require.NoError(t, json.Unmarshal(got.Body.Bytes(), &output.Body))
 	assert.Equal(t, 7, output.Body.Sessions["session-1"].Count)
 	assert.Equal(t, 2, output.Body.Sessions["session-1"].ReminderPromptCount)
-	assert.Equal(t, fixSessionID, output.Body.FixSessions["/repo\x00main"].ID)
 }
 
 func TestAgentHookFixDoneCompletesAndRepeatsFixSession(t *testing.T) {

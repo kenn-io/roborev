@@ -17,7 +17,6 @@ import (
 
 var (
 	postAgentHook         = postAgentHookRequest
-	postAgentHookFixDone  = postAgentHookFixDoneRequest
 	agentHookEnsureDaemon = ensureDaemon
 )
 
@@ -41,7 +40,13 @@ func postAgentHookRequest(
 		return agenthook.Response{}, err
 	}
 	if out.FixSessionID != nil {
-		out.FixDoneCommand = agentHookFixDoneCommand(*out.FixSessionID, addr)
+		bareCommand := agentHookFixDoneCommand(*out.FixSessionID, "")
+		command := agentHookFixDoneCommand(*out.FixSessionID, addr)
+		if strings.Contains(out.Reason, bareCommand) {
+			out.Reason = strings.Replace(out.Reason, bareCommand, command, 1)
+		} else {
+			out.Reason += "\n\nAfter completing this Agent Hook fix, run `" + command + "`."
+		}
 	}
 	return out, nil
 }

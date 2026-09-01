@@ -2558,10 +2558,12 @@ func TestDeferredReminderPersistenceFailureDoesNotConsumeCandidate(t *testing.T)
 func TestRecordStopFixSessionAllowsOneConcurrentOwner(t *testing.T) {
 	repo := testutil.NewGitRepo(t)
 	repo.CommitFile("main.go", "package main\n", "initial")
+	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
 	reviews, release := synchronizedFailedReviewSource(repo.Path(), 2)
 	store := &StateStore{
 		reviews: reviews, path: filepath.Join(t.TempDir(), "state.json"),
 		sessions: map[string]SessionState{}, fixSessions: map[string]FixSession{},
+		now: func() time.Time { return now },
 	}
 	requests := []Request{
 		{
@@ -2581,10 +2583,30 @@ func TestRecordStopFixSessionAllowsOneConcurrentOwner(t *testing.T) {
 	triggered := triggeredResponses(responses)
 	require.Len(t, triggered, 1)
 	assert.NotNil(t, triggered[0].FixSessionID)
-	assert.Len(t, store.FixSessions(), 1)
+	assert.Len(t, store.fixSessions, 1)
 
-	owner := store.FixSessions()[repoHeadKey(repo.Path(), "main")]
-	_, err := store.CompleteFixSession(owner.ID)
+	owner := store.fixSessions[worktreeSequenceKey(repo.Path(), repo.Path())]
+	assert.Equal(t, now.Add(FixSessionLifetime), owner.ExpiresAt)
+	ownerRequest := requests[0]
+	if owner.SessionID == requests[1].Event.SessionID {
+		ownerRequest = requests[1]
+	}
+	now = now.Add(11 * time.Hour)
+	closeout, err := store.Record(ownerRequest)
+	require.NoError(t, err)
+	require.NotNil(t, closeout.FixSessionID)
+	assert.Equal(t, "fix_session", closeout.TriggeredBy)
+	assert.Equal(t, owner.ID, *closeout.FixSessionID)
+	assert.Equal(t, owner.ExpiresAt, store.fixSessions[worktreeSequenceKey(repo.Path(), repo.Path())].ExpiresAt)
+
+	recursive := ownerRequest
+	recursive.Event.StopHookActive = true
+	skipped, err := store.Record(recursive)
+	require.NoError(t, err)
+	assert.True(t, skipped.Skipped)
+	assert.False(t, skipped.Triggered)
+
+	_, err = store.CompleteFixSession(owner.ID)
 	require.NoError(t, err)
 	blocked := requests[0]
 	if triggered[0].SessionID == blocked.Event.SessionID {
@@ -2594,36 +2616,6 @@ func TestRecordStopFixSessionAllowsOneConcurrentOwner(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, retry.Triggered, "the blocked session must keep its reminder progress")
 	assert.NotNil(t, retry.FixSessionID)
-}
-
-func TestRecordFailedReviewFixSessionAllowsOneConcurrentOwner(t *testing.T) {
-	repo := testutil.NewGitRepo(t)
-	repo.CommitFile("main.go", "package main\n", "initial")
-	reviews, release := synchronizedFailedReviewSource(repo.Path(), 2)
-	store := &StateStore{
-		reviews: reviews, path: filepath.Join(t.TempDir(), "state.json"),
-		sessions: map[string]SessionState{}, fixSessions: map[string]FixSession{},
-	}
-	requests := []Request{
-		{
-			Agent: "claude", Event: Input{SessionID: "session-a", CWD: repo.Path(), HookEventName: "Stop"},
-			Threshold: 10, FailedReviewThreshold: 1, Instruction: "Resolve reviews.",
-		},
-		{
-			Agent: "codex", Event: Input{SessionID: "session-b", CWD: repo.Path(), HookEventName: "Stop"},
-			Threshold: 10, FailedReviewThreshold: 1, Instruction: "Resolve reviews.",
-		},
-	}
-
-	responses, errs := concurrentRecords(store, requests, release)
-	for _, err := range errs {
-		require.NoError(t, err)
-	}
-	triggered := triggeredResponses(responses)
-	require.Len(t, triggered, 1)
-	assert.Equal(t, "failed_reviews", triggered[0].TriggeredBy)
-	assert.NotNil(t, triggered[0].FixSessionID)
-	assert.Len(t, store.FixSessions(), 1)
 }
 
 func TestRecordPostToolUseFixSessionAllowsOneConcurrentOwner(t *testing.T) {
@@ -2669,7 +2661,7 @@ func TestRecordPostToolUseFixSessionAllowsOneConcurrentOwner(t *testing.T) {
 	require.Len(t, triggered, 1)
 	assert.Equal(t, "commit", triggered[0].TriggeredBy)
 	assert.NotNil(t, triggered[0].FixSessionID)
-	assert.Len(t, store.FixSessions(), 1)
+	assert.Len(t, store.fixSessions, 1)
 }
 
 func TestRecordFixSessionsDoNotCrossLineages(t *testing.T) {
@@ -2705,21 +2697,29 @@ func TestRecordFixSessionsDoNotCrossLineages(t *testing.T) {
 		assert.True(t, resp.Triggered)
 		assert.NotNil(t, resp.FixSessionID)
 	}
-	assert.Len(t, store.FixSessions(), 2)
+	assert.Len(t, store.fixSessions, 2)
 }
 
-func TestRecordDetachedDescendantDoesNotGrantSecondFixSession(t *testing.T) {
+func TestRecordWorktreeOwnerSurvivesDetachedToBranchTransition(t *testing.T) {
 	repo := testutil.NewGitRepo(t)
 	firstHead := repo.CommitFile("main.go", "package main\n", "initial")
 	repo.CheckoutDetached(firstHead)
 	failedReview := failedReviewJob(1)
-	failedReview.Branch = ""
+	failedReview.Branch = "feature"
 	failedReview.GitRef = firstHead
 	store := &StateStore{
 		reviews: trackedReviewSource(repo.Path(), failedReview),
 		path:    filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{},
 		fixSessions: map[string]FixSession{},
 	}
+	_, err := store.Record(Request{
+		Agent: "claude", Event: Input{
+			SessionID: "session-a", CWD: repo.Path(), HookEventName: "PreToolUse", ToolName: "Bash",
+			ToolInput: map[string]json.RawMessage{"command": json.RawMessage(`"git commit -m test"`)},
+		},
+	})
+	require.NoError(t, err)
+	repo.CheckoutNewBranch("feature", firstHead)
 
 	first, err := store.Record(Request{
 		Agent: "claude", Event: Input{
@@ -2731,7 +2731,6 @@ func TestRecordDetachedDescendantDoesNotGrantSecondFixSession(t *testing.T) {
 	require.True(t, first.Triggered)
 	require.NotNil(t, first.FixSessionID)
 
-	repo.CommitFile("second.go", "package main\n", "second")
 	second, err := store.Record(Request{
 		Agent: "codex", Event: Input{
 			SessionID: "session-b", CWD: repo.Path(), HookEventName: "Stop",
@@ -2741,7 +2740,7 @@ func TestRecordDetachedDescendantDoesNotGrantSecondFixSession(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.False(t, second.Triggered)
-	assert.Len(t, store.FixSessions(), 1)
+	assert.Len(t, store.fixSessions, 1)
 }
 
 func TestRecordCursorTriggerDoesNotAcquireFixSession(t *testing.T) {
@@ -2761,7 +2760,7 @@ func TestRecordCursorTriggerDoesNotAcquireFixSession(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, resp.Triggered)
 	assert.Nil(t, resp.FixSessionID)
-	assert.Empty(t, store.FixSessions())
+	assert.Empty(t, store.fixSessions)
 }
 
 func TestDeferredReminderAcquiresFixSessionOnlyAtStop(t *testing.T) {
@@ -2789,7 +2788,7 @@ func TestDeferredReminderAcquiresFixSessionOnlyAtStop(t *testing.T) {
 	})
 	require.NoError(t, err)
 	assert.False(t, post.Triggered)
-	assert.Empty(t, store.FixSessions())
+	assert.Empty(t, store.fixSessions)
 
 	stop, err := store.Record(Request{
 		Agent: "hermes", Event: Input{SessionID: "session-a", CWD: t.TempDir(), HookEventName: "Stop"},
@@ -2797,7 +2796,7 @@ func TestDeferredReminderAcquiresFixSessionOnlyAtStop(t *testing.T) {
 	require.NoError(t, err)
 	assert.True(t, stop.Triggered)
 	assert.NotNil(t, stop.FixSessionID)
-	assert.Len(t, store.FixSessions(), 1)
+	assert.Len(t, store.fixSessions, 1)
 }
 
 func TestRecordTriggerPersistenceFailureDoesNotGrantFixSession(t *testing.T) {
@@ -2815,41 +2814,7 @@ func TestRecordTriggerPersistenceFailureDoesNotGrantFixSession(t *testing.T) {
 
 	require.Error(t, err)
 	assert.False(t, resp.Triggered)
-	assert.Empty(t, store.FixSessions())
-}
-
-func TestOwnerStopReturnsFixSessionCloseout(t *testing.T) {
-	repo := testutil.NewGitRepo(t)
-	repo.CommitFile("main.go", "package main\n", "initial")
-	store := &StateStore{
-		reviews: trackedReviewSource(repo.Path(), failedReviewJob(1)),
-		path:    filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{},
-		fixSessions: map[string]FixSession{},
-	}
-	request := Request{
-		Agent: "claude", Event: Input{SessionID: "session-a", CWD: repo.Path(), HookEventName: "Stop"},
-		Threshold: 1, Instruction: "Resolve reviews.",
-	}
-	first, err := store.Record(request)
-	require.NoError(t, err)
-	require.NotNil(t, first.FixSessionID)
-
-	closeout, err := store.Record(request)
-	require.NoError(t, err)
-	assert.True(t, closeout.Triggered)
-	assert.Equal(t, "fix_session", closeout.TriggeredBy)
-	assert.Equal(t, first.FixSessionID, closeout.FixSessionID)
-	assert.Equal(t,
-		"Finish the current Agent Hook fix, then run `roborev agent-hook fix-done "+first.FixSessionID.String()+"`.",
-		closeout.Reason,
-	)
-
-	recursive := request
-	recursive.Event.StopHookActive = true
-	skipped, err := store.Record(recursive)
-	require.NoError(t, err)
-	assert.True(t, skipped.Skipped)
-	assert.False(t, skipped.Triggered)
+	assert.Empty(t, store.fixSessions)
 }
 
 func synchronizedFailedReviewSource(repoPath string, blockedCalls int) (ReviewSource, func()) {

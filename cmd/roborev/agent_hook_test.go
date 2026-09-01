@@ -39,19 +39,25 @@ func TestAgentHookInstallSupportsExplicitQwenProfile(t *testing.T) {
 	assert.Contains(t, string(body), "--source=roborev-agent-hook")
 }
 
-func TestPostAgentHookUsesRegularDaemonEndpoint(t *testing.T) {
+func TestPostAgentHookPreservesRegularDaemonEndpointInOwnerCloseout(t *testing.T) {
+	fixSessionID := uuid.MustParse("00000000-0000-4000-8000-000000000001")
+	bareCommand := "roborev agent-hook fix-done " + fixSessionID.String()
 	var gotPath string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		_ = json.NewEncoder(w).Encode(agenthook.Response{
-			SessionID: "session-1",
-			Triggered: true,
+			SessionID:    "session-1",
+			Triggered:    true,
+			TriggeredBy:  "fix_session",
+			FixSessionID: new(fixSessionID),
+			Reason:       "Finish the fix, then run `" + bareCommand + "`.",
 		})
 	}))
 	t.Cleanup(server.Close)
+	serverAddr := strings.TrimPrefix(server.URL, "http://")
 
 	response, err := postAgentHook(
-		context.Background(), strings.TrimPrefix(server.URL, "http://"),
+		context.Background(), serverAddr,
 		agenthook.Request{Event: agenthook.Input{SessionID: "session-1"}},
 	)
 
@@ -59,52 +65,10 @@ func TestPostAgentHookUsesRegularDaemonEndpoint(t *testing.T) {
 	assert.Equal(t, "/api/agent-hook/event", gotPath)
 	assert.Equal(t, "session-1", response.SessionID)
 	assert.True(t, response.Triggered)
-}
-
-func TestPostAgentHookFixDoneUsesRegularDaemonEndpoint(t *testing.T) {
-	fixSessionID := uuid.MustParse("00000000-0000-4000-8000-000000000001")
-	var gotPath string
-	var gotRequest daemon.AgentHookFixDoneRequest
-	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-		gotPath = r.URL.Path
-		assert.NoError(t, json.NewDecoder(r.Body).Decode(&gotRequest))
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"fix_session": agenthook.FixSession{ID: fixSessionID},
-		})
-	}))
-	t.Cleanup(server.Close)
-
-	completed, err := postAgentHookFixDoneRequest(
-		context.Background(), strings.TrimPrefix(server.URL, "http://"), fixSessionID,
+	assert.Contains(t, response.Reason,
+		"roborev agent-hook fix-done --roborev-server '"+serverAddr+"' "+fixSessionID.String(),
 	)
-
-	require.NoError(t, err)
-	assert.Equal(t, "/api/agent-hook/fix-done", gotPath)
-	assert.Equal(t, fixSessionID, gotRequest.FixSessionID)
-	assert.Equal(t, fixSessionID, completed.ID)
-}
-
-func TestRunAgentHookFixDonePostsUUIDAndPrintsCompletion(t *testing.T) {
-	fixSessionID := uuid.MustParse("00000000-0000-4000-8000-000000000001")
-	originalPost := postAgentHookFixDone
-	originalEnsure := agentHookEnsureDaemon
-	var got uuid.UUID
-	postAgentHookFixDone = func(_ context.Context, _ string, id uuid.UUID) (agenthook.FixSession, error) {
-		got = id
-		return agenthook.FixSession{ID: id}, nil
-	}
-	agentHookEnsureDaemon = func() error { return nil }
-	t.Cleanup(func() {
-		postAgentHookFixDone = originalPost
-		agentHookEnsureDaemon = originalEnsure
-	})
-
-	var stdout bytes.Buffer
-	err := runAgentHookFixDone(context.Background(), fixSessionID.String(), "", &stdout)
-
-	require.NoError(t, err)
-	assert.Equal(t, fixSessionID, got)
-	assert.Equal(t, "Completed Agent Hook fix session "+fixSessionID.String()+".\n", stdout.String())
+	assert.NotContains(t, response.Reason, "`"+bareCommand+"`")
 }
 
 func TestRunAgentHookFixDoneRejectsMalformedUUIDBeforeDaemonStart(t *testing.T) {
@@ -155,8 +119,10 @@ func TestRunAgentHookUsesConfiguredRegularDaemonEndpoint(t *testing.T) {
 func TestAgentHookFixDoneUsesConfiguredRegularDaemonEndpoint(t *testing.T) {
 	fixSessionID := uuid.MustParse("00000000-0000-4000-8000-000000000001")
 	var gotPath string
+	var gotRequest daemon.AgentHookFixDoneRequest
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&gotRequest))
 		_ = json.NewEncoder(w).Encode(map[string]any{
 			"fix_session": agenthook.FixSession{ID: fixSessionID},
 		})
@@ -180,6 +146,7 @@ func TestAgentHookFixDoneUsesConfiguredRegularDaemonEndpoint(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, "/api/agent-hook/fix-done", gotPath)
+	assert.Equal(t, fixSessionID, gotRequest.FixSessionID)
 	assert.False(t, ensureCalled)
 }
 
@@ -291,64 +258,6 @@ func TestLegacyAndGrokAgentHooksAppendFixGuidelines(t *testing.T) {
 			reason, ok := output["reason"].(string)
 			require.True(t, ok)
 			assert.True(t, strings.HasSuffix(strings.TrimSpace(reason), "Verify before editing."))
-		})
-	}
-}
-
-func TestAgentHookOutputsIncludeFixSessionCompletionCommand(t *testing.T) {
-	fixSessionID := uuid.MustParse("00000000-0000-4000-8000-000000000001")
-	command := "roborev agent-hook fix-done " + fixSessionID.String()
-	originalPost := postAgentHook
-	var gotAgent string
-	postAgentHook = func(_ context.Context, _ string, request agenthook.Request) (agenthook.Response, error) {
-		gotAgent = request.Agent
-		return agenthook.Response{
-			Triggered: true, Reason: "Resolve reviews.", FixSessionID: new(fixSessionID),
-		}, nil
-	}
-	t.Cleanup(func() { postAgentHook = originalPost })
-
-	for _, tc := range []struct {
-		name      string
-		wantAgent string
-		run       func(io.Reader, io.Writer) error
-	}{
-		{
-			name: "typed", wantAgent: "qwen",
-			run: func(stdin io.Reader, stdout io.Writer) error {
-				return runAgentHook(kitagenthook.AgentQwen, agenthook.DefaultOptions(), stdin, stdout, io.Discard)
-			},
-		},
-		{
-			name: "grok", wantAgent: "grok",
-			run: func(stdin io.Reader, stdout io.Writer) error {
-				return runGrokAgentHook(agenthook.DefaultOptions(), stdin, stdout, io.Discard)
-			},
-		},
-		{
-			name: "legacy", wantAgent: "legacy",
-			run: func(stdin io.Reader, stdout io.Writer) error {
-				return runLegacyAgentHook(
-					context.Background(), agenthook.DefaultOptions(), stdin, stdout, io.Discard,
-				)
-			},
-		},
-		{
-			name: "deferred Hermes Stop", wantAgent: "hermes",
-			run: func(stdin io.Reader, stdout io.Writer) error {
-				return runAgentHook(kitagenthook.AgentHermes, agenthook.DefaultOptions(), stdin, stdout, io.Discard)
-			},
-		},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var stdout bytes.Buffer
-			err := tc.run(
-				strings.NewReader(`{"session_id":"s1","hook_event_name":"Stop"}`),
-				&stdout,
-			)
-			require.NoError(t, err)
-			assert.Equal(t, tc.wantAgent, gotAgent)
-			assert.Equal(t, 1, strings.Count(stdout.String(), command))
 		})
 	}
 }

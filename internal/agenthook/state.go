@@ -326,7 +326,7 @@ func (s *StateStore) recordStop(ctx context.Context, req Request) (Response, err
 	if promptTriggered {
 		var deliveryAllowed bool
 		fixSessions, fixSession, deliveryAllowed = s.prepareFixSessionGrantLocked(
-			req, scope, lineageKey, now,
+			req, scope.WorktreeKey, now,
 		)
 		if !deliveryAllowed {
 			promptTriggered = false
@@ -589,7 +589,7 @@ func (s *StateStore) recordPostToolUse(ctx context.Context, req Request) (Respon
 	if promptTriggered && !req.DeferPostToolReminder {
 		var deliveryAllowed bool
 		fixSessions, fixSession, deliveryAllowed = s.prepareFixSessionGrantLocked(
-			req, scope, lineageKey, now,
+			req, scope.WorktreeKey, now,
 		)
 		if !deliveryAllowed {
 			promptTriggered = false
@@ -904,8 +904,7 @@ func (s *StateStore) deliverPendingReminder(
 		}
 		fixSessions, fixSession, deliveryAllowed := s.prepareFixSessionGrantLocked(
 			req,
-			hookScope{WorktreeRoot: pending.WorktreeRoot, Branch: pending.Branch},
-			dedupeKey,
+			worktreeSequenceKey(pending.TrackedRepoRoot, pending.WorktreeRoot),
 			s.currentTime(),
 		)
 		if !deliveryAllowed {

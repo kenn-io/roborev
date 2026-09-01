@@ -1,13 +1,10 @@
 package agenthook
 
 import (
-	"encoding/json"
 	"strings"
 	"testing"
-	"uuid"
 
 	"github.com/stretchr/testify/assert"
-	"github.com/stretchr/testify/require"
 )
 
 func TestPostToolUseAdditionalContextPreservesResolvedInstruction(t *testing.T) {
@@ -43,41 +40,4 @@ func TestBuildOutputWithFixGuidelinesPreservesEmptyPolicyOutput(t *testing.T) {
 	input := Input{HookEventName: "PostToolUse"}
 	resp := Response{Triggered: true, Reason: "Resolve reviews."}
 	assert.Equal(t, BuildOutput(input, resp), BuildOutputWithFixGuidelines(input, resp, ""))
-}
-
-func TestBuildOutputAppendsMatchingFixSessionCompletionCommand(t *testing.T) {
-	fixSessionID := uuid.MustParse("00000000-0000-4000-8000-000000000001")
-	command := "roborev agent-hook fix-done " + fixSessionID.String()
-
-	for _, event := range []string{"Stop", "PostToolUse"} {
-		t.Run(event, func(t *testing.T) {
-			output := BuildOutputWithFixGuidelines(
-				Input{HookEventName: event},
-				Response{Triggered: true, Reason: "Resolve reviews.", FixSessionID: new(fixSessionID)},
-				"Verify before editing.",
-			)
-			encoded, err := json.Marshal(output)
-			require.NoError(t, err)
-			text := string(encoded)
-			assert.Equal(t, 1, strings.Count(text, command))
-			assert.Less(t, strings.Index(text, command), strings.Index(text, "Verify before editing."))
-		})
-	}
-}
-
-func TestBuildOutputOwnerCloseoutSkipsGuidelinesAndDuplicateCommand(t *testing.T) {
-	fixSessionID := uuid.MustParse("00000000-0000-4000-8000-000000000001")
-	command := "roborev agent-hook fix-done " + fixSessionID.String()
-	reason := "Finish the current Agent Hook fix, then run `" + command + "`."
-
-	output := BuildOutputWithFixGuidelines(
-		Input{HookEventName: "Stop"},
-		Response{
-			Triggered: true, TriggeredBy: "fix_session", Reason: reason,
-			FixSessionID: new(fixSessionID),
-		},
-		"Verify before editing.",
-	)
-
-	assert.Equal(t, map[string]any{"decision": "block", "reason": reason}, output)
 }

@@ -125,7 +125,6 @@ func (s *Server) humaAgentHookSessions(
 	}
 	resp := &AgentHookSessionsOutput{}
 	resp.Body.Sessions = state.Sessions()
-	resp.Body.FixSessions = state.FixSessions()
 	return resp, nil
 }
 
