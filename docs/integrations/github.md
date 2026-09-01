@@ -264,7 +264,8 @@ For GitHub Enterprise Server, set `github_api_url` to the instance's REST API
 base URL, including `/api/v3`. The poller uses this URL for GitHub App token
 exchange, repository lookup, PR polling, clone authentication, comments, and
 commit status checks. If `github_api_url` is unset, roborev checks
-`GITHUB_API_URL`, then `GH_HOST`, and finally uses public GitHub.
+`GITHUB_API_URL`, then `GH_HOST`, and finally uses public GitHub. Restart the
+daemon after changing `github_api_url`.
 
 ```toml
 [ci]
@@ -796,7 +797,7 @@ Set under `[ci.quiet_hours]` (global config only). See
 
 | Option | Type | Description |
 |--------|------|-------------|
-| `github_api_url` | string | GitHub Enterprise REST API base URL, such as `https://github.example.com/api/v3` |
+| `github_api_url` | string | GitHub Enterprise REST API base URL, such as `https://github.example.com/api/v3`; requires a daemon restart after changes |
 | `github_app_id` | integer | App ID from the app settings page |
 | `github_app_private_key` | string | Path to PEM file, `${ENV_VAR}`, or inline PEM |
 | `github_app_installation_id` | integer | Installation ID (fallback for owners not in the installations map) |

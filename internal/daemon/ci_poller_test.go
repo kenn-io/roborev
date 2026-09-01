@@ -13,6 +13,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"testing"
 	"time"
 	"unicode/utf8"
@@ -645,7 +646,11 @@ func TestGitHubClientForRepo_UsesEnterpriseBaseURL(t *testing.T) {
 	}
 	cfg := config.DefaultConfig()
 	cfg.CI.GitHubAppInstallationID = 111111
-	p := &CIPoller{tokenProvider: provider, cfgGetter: NewStaticConfig(cfg)}
+	p := &CIPoller{
+		tokenProvider: provider,
+		cfgGetter:     NewStaticConfig(cfg),
+		githubAPIURL:  provider.baseURL,
+	}
 
 	prs, err := p.listOpenPRs(context.Background(), "acme/api")
 	require.NoError(t, err)
@@ -684,10 +689,18 @@ func TestNewCIPoller_GitHubAppUsesConfiguredEnterpriseAPIURL(t *testing.T) {
 	cfg.CI.GitHubAppPrivateKey = pemData
 	cfg.CI.GitHubAppInstallationID = 111111
 	p := NewCIPoller(nil, NewStaticConfig(cfg), nil)
+	var reloadedRequests atomic.Int32
+	reloadedSrv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		reloadedRequests.Add(1)
+		http.Error(w, "unexpected request", http.StatusInternalServerError)
+	}))
+	defer reloadedSrv.Close()
+	cfg.CI.GitHubAPIURL = reloadedSrv.URL + "/api/v3"
 
 	prs, err := p.listOpenPRs(context.Background(), "acme/api")
 	require.NoError(t, err)
 	assert.Empty(t, prs)
+	assert.Zero(t, reloadedRequests.Load())
 	assert.Equal(t, []string{
 		"/api/v3/app/installations/111111/access_tokens",
 		"/api/v3/repos/acme/api/pulls",

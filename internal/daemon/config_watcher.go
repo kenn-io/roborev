@@ -40,7 +40,8 @@ func (sc *StaticConfig) Config() *config.Config {
 // agent_quota_cooldown, allow_unsafe_agents, anthropic_api_key,
 // review_context_count.
 //
-// Settings requiring restart: server_addr, max_workers, [web], [sync] section.
+// Settings requiring restart: server_addr, max_workers, ci.github_api_url,
+// [web], [sync] section.
 // These are read at startup and the running values are preserved even if the
 // config file changes. CLI flag overrides (--addr, --workers) only apply to
 // restart-required settings, so they remain in effect for the daemon's lifetime.
@@ -263,5 +264,8 @@ func logConfigChanges(old, new *config.Config) {
 	}
 	if old.ServerAddr != new.ServerAddr {
 		log.Printf("Config change: server_addr %q -> %q (requires daemon restart to take effect)", old.ServerAddr, new.ServerAddr)
+	}
+	if old.CI.GitHubAPIURL != new.CI.GitHubAPIURL {
+		log.Printf("Config change: ci.github_api_url %q -> %q (requires daemon restart to take effect)", old.CI.GitHubAPIURL, new.CI.GitHubAPIURL)
 	}
 }
