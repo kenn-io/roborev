@@ -64,7 +64,8 @@ instruction.
 Agent Hook allows one active fix session for each physical worktree. The daemon
 records the owner as the agent profile and harness session ID when it delivers a
 reminder. Other sessions receive no duplicate fix instruction while that owner
-remains active. Separate worktrees remain independent.
+remains active. The ownership follows that worktree across branch switches and
+detached HEAD transitions. Separate worktrees remain independent.
 
 Each delivered instruction includes its exact completion command:
 

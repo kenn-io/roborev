@@ -151,6 +151,10 @@ func TestStateStoreResetPersistsSelectedSession(t *testing.T) {
 			"session-1": {Count: 1},
 			"session-2": {Count: 2},
 		},
+		fixSessions: map[string]FixSession{
+			"worktree-1": {SessionID: "session-1"},
+			"worktree-2": {SessionID: "session-2"},
+		},
 	}
 
 	require.NoError(t, store.Reset("session-1", false))
@@ -161,6 +165,8 @@ func TestStateStoreResetPersistsSelectedSession(t *testing.T) {
 	require.NoError(t, json.Unmarshal(body, &snapshot))
 	assert.NotContains(t, snapshot.Sessions, "session-1")
 	assert.Contains(t, snapshot.Sessions, "session-2")
+	assert.NotContains(t, snapshot.FixSessions, "worktree-1")
+	assert.Contains(t, snapshot.FixSessions, "worktree-2")
 }
 
 func TestStateStoreResetRollsBackWhenSaveFails(t *testing.T) {
@@ -2700,26 +2706,21 @@ func TestRecordFixSessionsDoNotCrossLineages(t *testing.T) {
 	assert.Len(t, store.fixSessions, 2)
 }
 
-func TestRecordWorktreeOwnerSurvivesDetachedToBranchTransition(t *testing.T) {
+func TestRecordWorktreeOwnerSurvivesReloadAndBranchTransitionUntilExpiry(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	repo := testutil.NewGitRepo(t)
 	firstHead := repo.CommitFile("main.go", "package main\n", "initial")
 	repo.CheckoutDetached(firstHead)
 	failedReview := failedReviewJob(1)
 	failedReview.Branch = "feature"
 	failedReview.GitRef = firstHead
+	reviews := trackedReviewSource(repo.Path(), failedReview)
+	now := time.Date(2026, 8, 31, 12, 0, 0, 0, time.UTC)
 	store := &StateStore{
-		reviews: trackedReviewSource(repo.Path(), failedReview),
-		path:    filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{},
+		reviews: reviews, path: StatePath(), sessions: map[string]SessionState{},
 		fixSessions: map[string]FixSession{},
+		now:         func() time.Time { return now },
 	}
-	_, err := store.Record(Request{
-		Agent: "claude", Event: Input{
-			SessionID: "session-a", CWD: repo.Path(), HookEventName: "PreToolUse", ToolName: "Bash",
-			ToolInput: map[string]json.RawMessage{"command": json.RawMessage(`"git commit -m test"`)},
-		},
-	})
-	require.NoError(t, err)
-	repo.CheckoutNewBranch("feature", firstHead)
 
 	first, err := store.Record(Request{
 		Agent: "claude", Event: Input{
@@ -2730,17 +2731,29 @@ func TestRecordWorktreeOwnerSurvivesDetachedToBranchTransition(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, first.Triggered)
 	require.NotNil(t, first.FixSessionID)
+	reloaded, err := LoadState(reviews)
+	require.NoError(t, err)
+	reloaded.now = func() time.Time { return now }
+	repo.CheckoutNewBranch("feature", firstHead)
 
-	second, err := store.Record(Request{
+	secondRequest := Request{
 		Agent: "codex", Event: Input{
 			SessionID: "session-b", CWD: repo.Path(), HookEventName: "Stop",
 		},
 		Threshold: 1, Instruction: "Resolve reviews.",
-	})
+	}
+	second, err := reloaded.Record(secondRequest)
 
 	require.NoError(t, err)
 	assert.False(t, second.Triggered)
-	assert.Len(t, store.fixSessions, 1)
+	assert.Len(t, reloaded.fixSessions, 1)
+
+	now = now.Add(FixSessionLifetime)
+	replacement, err := reloaded.Record(secondRequest)
+	require.NoError(t, err)
+	require.NotNil(t, replacement.FixSessionID)
+	assert.True(t, replacement.Triggered)
+	assert.NotEqual(t, *first.FixSessionID, *replacement.FixSessionID)
 }
 
 func TestRecordCursorTriggerDoesNotAcquireFixSession(t *testing.T) {
