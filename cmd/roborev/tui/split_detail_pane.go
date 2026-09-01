@@ -35,7 +35,9 @@ func (m model) reviewPaneHeaderLines(innerW int) []string {
 		formatAgentLabel(review.Agent, review.Job.Model))
 	out = append(out, xansi.Truncate(titleStyle.Render(title), innerW, ""))
 
-	var verdictParts []string
+	verdictParts := []string{
+		statusStyle.Render("Review type: " + displayReviewType(review.Job.ReviewType)),
+	}
 	if review.Job.Verdict != nil && *review.Job.Verdict != "" && !review.Job.IsFixJob() {
 		if *review.Job.Verdict == "P" {
 			verdictParts = append(verdictParts, passStyle.Render("Verdict: Pass"))
@@ -312,6 +314,7 @@ func (m model) renderJobStatusCard(job storage.ReviewJob, innerW int) []string {
 	add("Ref", shortJobRef(job))
 	add("Branch", m.getBranchForJob(job))
 	add("Agent", formatAgentLabel(job.Agent, job.Model))
+	add("Review type", displayReviewType(job.ReviewType))
 	if job.StartedAt != nil {
 		add("Elapsed", m.jobElapsedCell(job))
 	} else if !job.EnqueuedAt.IsZero() {

@@ -108,37 +108,33 @@ func (m model) renderReviewView() string {
 		b.WriteString(statusStyle.Render(locationLine))
 		b.WriteString("\x1b[K") // Clear to end of line
 
-		// Show verdict, closed status, and token usage on next line (skip verdict for fix jobs)
+		// Show review type, verdict, closed status, and token usage on next line
+		// (skip verdict for fix jobs).
 		hasVerdict := review.Job.Verdict != nil && *review.Job.Verdict != "" && !review.Job.IsFixJob()
 		tokenSummary := ""
 		if tu := tokens.ParseJSON(review.Job.TokenUsage); tu != nil {
 			tokenSummary = tu.FormatSummary()
 		}
-		if hasVerdict || review.Closed || tokenSummary != "" {
-			b.WriteString("\n")
-			if hasVerdict {
-				v := *review.Job.Verdict
-				if v == "P" {
-					b.WriteString(passStyle.Render("Verdict: Pass"))
-				} else {
-					b.WriteString(failStyle.Render("Verdict: Fail"))
-				}
+		b.WriteString("\n")
+		b.WriteString(statusStyle.Render("Review type: " + displayReviewType(review.Job.ReviewType)))
+		if hasVerdict {
+			b.WriteString(" ")
+			v := *review.Job.Verdict
+			if v == "P" {
+				b.WriteString(passStyle.Render("Verdict: Pass"))
+			} else {
+				b.WriteString(failStyle.Render("Verdict: Fail"))
 			}
-			// Show [CLOSED] with distinct color (after verdict if present)
-			if review.Closed {
-				if hasVerdict {
-					b.WriteString(" ")
-				}
-				b.WriteString(closedStyle.Render("[CLOSED]"))
-			}
-			if tokenSummary != "" {
-				if hasVerdict || review.Closed {
-					b.WriteString(" ")
-				}
-				b.WriteString(statusStyle.Render("[" + tokenSummary + "]"))
-			}
-			b.WriteString("\x1b[K") // Clear to end of line
 		}
+		if review.Closed {
+			b.WriteString(" ")
+			b.WriteString(closedStyle.Render("[CLOSED]"))
+		}
+		if tokenSummary != "" {
+			b.WriteString(" ")
+			b.WriteString(statusStyle.Render("[" + tokenSummary + "]"))
+		}
+		b.WriteString("\x1b[K") // Clear to end of line
 		b.WriteString("\n")
 	} else {
 		title = "Review"
@@ -184,12 +180,10 @@ func (m model) renderReviewView() string {
 		}
 	}
 
-	// Reserve title, location, footer status, help, and optional verdict.
+	// Reserve title, location, review metadata, footer status, and help.
 	headerHeight := titleLines + locationLines + 1 + helpLines
-	hasVerdict := review.Job != nil && review.Job.Verdict != nil && *review.Job.Verdict != "" && !review.Job.IsFixJob()
-	hasTokens := review.Job != nil && tokens.ParseJSON(review.Job.TokenUsage) != nil
-	if hasVerdict || review.Closed || hasTokens {
-		headerHeight++ // Add 1 for verdict/closed/tokens line
+	if review.Job != nil {
+		headerHeight++ // Review type/verdict/closed/tokens line
 	}
 	panelReserve := 0
 	if m.reviewFixPanelOpen {

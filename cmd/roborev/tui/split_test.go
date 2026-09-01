@@ -74,9 +74,11 @@ func TestDetailPaneStates(t *testing.T) {
 	// Running job: status card.
 	m = splitModel(withSelection(0, 3))
 	m.currentReview = nil
-	lines = strings.Join(m.renderDetailPane(88, 25), "\n")
+	m.jobs[0].ReviewType = "security"
+	lines = stripANSI(strings.Join(m.renderDetailPane(88, 25), "\n"))
 	assert.Contains(lines, "running")
 	assert.Contains(lines, "codex")
+	assert.Contains(lines, "Review type: security")
 
 	// Done job, review not yet fetched: loading placeholder.
 	m = splitModel(withSelection(1, 2))
@@ -942,6 +944,7 @@ func TestRenderReviewPaneBody(t *testing.T) {
 	assert.Len(lines, 25)
 	joined := strings.Join(lines, "\n")
 	assert.Contains(joined, "Review #2")
+	assert.Contains(joined, "Review type: default")
 	assert.Contains(joined, "Verdict: Pass")
 	assert.Contains(joined, "first finding")
 	assert.NotContains(joined, "\x1b[K")

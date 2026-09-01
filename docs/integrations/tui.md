@@ -210,10 +210,14 @@ there you can reorder columns or toggle their visibility.
 Custom column order is saved to `column_order` (queue) and `task_column_order`
 (tasks) in `~/.roborev/config.toml`. Hidden columns are saved to
 `hidden_columns`, which accepts these names: `ref`, `branch`, `repo`, `agent`,
-`queued`, `elapsed`, `status`, `pf`, `closed`, `session_id`, `requested_model`,
-`requested_provider`, `cost`. When `hidden_columns` is not set, the Session, Req
-Model, and Req Provider columns are hidden by default. To show separator lines
-between columns, set `column_borders = true`.
+`review_type`, `queued`, `elapsed`, `status`, `pf`, `closed`, `session_id`,
+`requested_model`, `requested_provider`, `cost`. When `hidden_columns` is not
+set, the Session, Req Model, and Req Provider columns are hidden by default. To
+show separator lines between columns, set `column_borders = true`.
+
+The Review Type column identifies standard reviews as `default` and shows the
+configured name for specialized or custom reviews. The review detail view shows
+the same value in its metadata header.
 
 The queue displays two separate status columns:
 

@@ -232,6 +232,7 @@ const (
 	colBranch                   // Branch name
 	colRepo                     // Repository display name
 	colAgent                    // Agent name
+	colReviewType               // Review type (default, design, security, or custom)
 	colQueued                   // Enqueue timestamp
 	colElapsed                  // Elapsed time
 	colStatus                   // Job status
@@ -646,7 +647,7 @@ func (m model) renderQueueView() string {
 // so the cached map stays a superset that any pane-specific column subset
 // can safely index into.
 func (m model) queueContentWidths(rows []queueRow, visCols []int, hasAnyPanel, treeColor bool) map[int]int {
-	allHeaders := [colCount]string{"", "JobID", "Ref", "Branch", "Repo", "Agent", "Queued", "Elapsed", "Status", "P/F", "Closed", "Session", "Req Model", "Req Provider", "Cost"}
+	allHeaders := [colCount]string{"", "JobID", "Ref", "Branch", "Repo", "Agent", "Review Type", "Queued", "Elapsed", "Status", "P/F", "Closed", "Session", "Req Model", "Req Provider", "Cost"}
 	var contentWidth map[int]int
 	if m.queueColCache.gen == m.queueColGen {
 		contentWidth = m.queueColCache.contentWidths
@@ -677,7 +678,7 @@ func (m model) renderQueueTable(rows []queueRow, width, visibleRows int, visCols
 	compact := m.queueCompact()
 	hasAnyPanel := anyPanelRow(rows)
 	treeColor := queueColorEnabled()
-	allHeaders := [colCount]string{"", "JobID", "Ref", "Branch", "Repo", "Agent", "Queued", "Elapsed", "Status", "P/F", "Closed", "Session", "Req Model", "Req Provider", "Cost"}
+	allHeaders := [colCount]string{"", "JobID", "Ref", "Branch", "Repo", "Agent", "Review Type", "Queued", "Elapsed", "Status", "P/F", "Closed", "Session", "Req Model", "Req Provider", "Cost"}
 
 	visibleSelectedIdx := visibleSelectedRowIndex(rows, m.selectedJobID)
 	start, end := queueWindowStart(len(rows), visibleSelectedIdx, visibleRows)
@@ -709,6 +710,7 @@ func (m model) renderQueueTable(rows []queueRow, width, visibleRows int, visCols
 		colPF:                3,                                                    // "P/F" header = 3
 		colHandled:           max(contentWidth[colHandled], 6),                     // "Closed" header = 6
 		colAgent:             min(max(contentWidth[colAgent], 5), 12),              // "Agent" header = 5, cap at 12
+		colReviewType:        min(max(contentWidth[colReviewType], 11), 20),        // "Review Type" header = 11, cap at 20
 		colSessionID:         min(max(contentWidth[colSessionID], 7), 12),          // "Session" header = 7, cap at 12
 		colRequestedModel:    min(max(contentWidth[colRequestedModel], 9), 24),     // "Req Model" header = 9
 		colRequestedProvider: min(max(contentWidth[colRequestedProvider], 12), 24), // "Req Provider" header = 12
@@ -975,13 +977,10 @@ func (m model) renderQueueTable(rows []queueRow, width, visibleRows int, visCols
 }
 
 // jobCells returns plain text cell values for a job row.
-// Order: ref, branch, repo, agent, queued, elapsed, status, pf, handled,
-// session, requested model, requested provider, cost.
+// Order: ref, branch, repo, agent, review type, queued, elapsed, status, pf,
+// handled, session, requested model, requested provider, cost.
 func (m model) jobCells(job storage.ReviewJob) []string {
 	ref := shortJobRef(job)
-	if !config.IsDefaultReviewType(job.ReviewType) {
-		ref = ref + " [" + job.ReviewType + "]"
-	}
 
 	branch := m.getBranchForJob(job)
 
@@ -994,6 +993,7 @@ func (m model) jobCells(job storage.ReviewJob) []string {
 	if agentName == "claude-code" {
 		agentName = "claude"
 	}
+	reviewType := displayReviewType(job.ReviewType)
 
 	enqueued := job.EnqueuedAt.Local().Format("Jan 02 15:04")
 
@@ -1025,7 +1025,16 @@ func (m model) jobCells(job storage.ReviewJob) []string {
 
 	cost := m.jobCostCell(job)
 
-	return []string{ref, branch, repo, agentName, enqueued, elapsed, status, verdict, handled, sessionID, requestedModel, requestedProvider, cost}
+	return []string{ref, branch, repo, agentName, reviewType, enqueued, elapsed, status, verdict, handled, sessionID, requestedModel, requestedProvider, cost}
+}
+
+// displayReviewType returns the canonical label shown in the TUI. Legacy
+// aliases and older jobs with no stored value are standard reviews.
+func displayReviewType(reviewType string) string {
+	if config.IsDefaultReviewType(reviewType) {
+		return config.ReviewTypeDefault
+	}
+	return stripControlChars(reviewType)
 }
 
 func (m model) jobElapsedCell(job storage.ReviewJob) string {
@@ -1290,7 +1299,7 @@ func migrateColumnConfig(cfg *config.Config) bool {
 
 // toggleableColumns is the ordered list of columns the user can show/hide.
 // colSel and colJobID are always visible and not included here.
-var toggleableColumns = []int{colRef, colBranch, colRepo, colAgent, colQueued, colElapsed, colStatus, colPF, colHandled, colCost, colSessionID, colRequestedModel, colRequestedProvider}
+var toggleableColumns = []int{colRef, colBranch, colRepo, colAgent, colReviewType, colQueued, colElapsed, colStatus, colPF, colHandled, colCost, colSessionID, colRequestedModel, colRequestedProvider}
 
 // columnNames maps column constants to display names.
 var columnNames = map[int]string{
@@ -1298,6 +1307,7 @@ var columnNames = map[int]string{
 	colBranch:            "Branch",
 	colRepo:              "Repo",
 	colAgent:             "Agent",
+	colReviewType:        "Review Type",
 	colStatus:            "Status",
 	colQueued:            "Queued",
 	colElapsed:           "Elapsed",
@@ -1315,6 +1325,7 @@ var columnConfigNames = map[int]string{
 	colBranch:            "branch",
 	colRepo:              "repo",
 	colAgent:             "agent",
+	colReviewType:        "review_type",
 	colStatus:            "status",
 	colQueued:            "queued",
 	colElapsed:           "elapsed",
