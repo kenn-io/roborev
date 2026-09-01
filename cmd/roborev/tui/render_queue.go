@@ -981,6 +981,9 @@ func (m model) renderQueueTable(rows []queueRow, width, visibleRows int, visCols
 // handled, session, requested model, requested provider, cost.
 func (m model) jobCells(job storage.ReviewJob) []string {
 	ref := shortJobRef(job)
+	if !config.IsDefaultReviewType(job.ReviewType) {
+		ref = ref + " [" + job.ReviewType + "]"
+	}
 
 	branch := m.getBranchForJob(job)
 

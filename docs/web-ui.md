@@ -51,7 +51,9 @@ The Reviews workspace follows the daemon's queue in real time. Use the
 repository and branch picker, status filter, ref search, and closed-review
 toggle to narrow the list. Columns can be sorted after all matching rows are
 loaded. Panel reviews appear as a synthesis row that can be expanded to show its
-individual reviewers.
+individual reviewers. The Review Type column identifies standard reviews as
+`default` and shows the configured name for specialized or custom reviews. The
+detail drawer repeats that value in its header.
 
 Select a row to open its detail drawer without leaving the queue. The drawer
 provides:

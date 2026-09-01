@@ -653,22 +653,23 @@ func TestTUIJobCellsReviewTypeColumn(t *testing.T) {
 
 	tests := []struct {
 		reviewType string
+		wantRef    string
 		want       string
 	}{
-		{"", "default"},
-		{"default", "default"},
-		{"general", "default"},
-		{"review", "default"},
-		{"security", "security"},
-		{"design", "design"},
-		{"project-conventions", "project-conventions"},
+		{"", "abc1234", "default"},
+		{"default", "abc1234", "default"},
+		{"general", "abc1234", "default"},
+		{"review", "abc1234", "default"},
+		{"security", "abc1234 [security]", "security"},
+		{"design", "abc1234 [design]", "design"},
+		{"project-conventions", "abc1234 [project-conventions]", "project-conventions"},
 	}
 
 	for _, tc := range tests {
 		t.Run(tc.reviewType, func(t *testing.T) {
 			job := makeJob(1, withRef("abc1234"), withReviewType(tc.reviewType))
 			cells := m.jobCells(job)
-			assert.Equal(t, "abc1234", cells[0])
+			assert.Equal(t, tc.wantRef, cells[0])
 			assert.Equal(t, tc.want, cells[colReviewType-colRef])
 		})
 	}
@@ -751,7 +752,7 @@ func TestTUIQueueShowsReviewTypeColumnByDefault(t *testing.T) {
 	assert.Contains(t, out, "Review Type")
 	assert.Contains(t, out, "project-conventions")
 	assert.Contains(t, out, "default")
-	assert.NotContains(t, out, "def5678 [project-conventions]")
+	assert.Contains(t, out, "def5678 [project-conventions]")
 }
 
 func TestTUIQueuePanelParentRendersPanelElapsedTime(t *testing.T) {

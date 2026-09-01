@@ -12,6 +12,7 @@
     | "status"
     | "verdict"
     | "agent"
+    | "review_type"
     | "elapsed"
     | "cost"
     | "job_type"
@@ -31,6 +32,7 @@
       sortable: false,
     },
     { key: "agent", label: "Agent", sortable: true },
+    { key: "review_type", label: "Review Type", sortable: true },
     { key: "status", label: "Status", sortable: true },
     { key: "verdict", label: "Verdict", sortable: true },
     {
@@ -45,7 +47,7 @@
     },
     {
       key: "job_type",
-      label: "Type",
+      label: "Job Type",
       sortable: true,
     },
     {

@@ -24,6 +24,7 @@ const state = vi.hoisted(() => ({
   copyOutput: vi.fn(),
   jobStatus: "done",
   jobType: "review",
+  reviewType: undefined as string | undefined,
   agentic: false,
   promptPrebuilt: false,
   panelRole: undefined as string | undefined,
@@ -68,6 +69,7 @@ vi.mock("../../stores/context", () => ({
           ...job,
           status: state.jobStatus,
           job_type: state.jobType,
+          review_type: state.reviewType,
           agentic: state.agentic,
           prompt_prebuilt: state.promptPrebuilt,
           panel_role: state.panelRole,
@@ -113,6 +115,7 @@ describe("ReviewDrawer", () => {
     state.copyOutput.mockReset();
     state.jobStatus = "done";
     state.jobType = "review";
+    state.reviewType = undefined;
     state.agentic = false;
     state.promptPrebuilt = false;
     state.panelRole = undefined;
@@ -186,6 +189,18 @@ describe("ReviewDrawer", () => {
     expect(usage?.getAttribute("title")).toBe(
       "input 231,582 · cached input 189,952 · output 2,542 · peak context 47,248 · cost $0.347212",
     );
+  });
+
+  it("always labels the selected job's review type", () => {
+    const standard = render(ReviewDrawer);
+    expect(screen.getByText("Review type: default")).toBeInTheDocument();
+    standard.unmount();
+
+    state.reviewType = "project-conventions";
+    render(ReviewDrawer);
+    expect(
+      screen.getByText("Review type: project-conventions"),
+    ).toBeInTheDocument();
   });
 
   it("groups the footer actions as sibling shared buttons", () => {

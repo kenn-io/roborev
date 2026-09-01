@@ -11,6 +11,7 @@ import {
   panelCostUsd,
   panelElapsedStart,
 } from "../../utils/roborev-panel";
+import { reviewTypeLabel } from "../../utils/roborev-review-type";
 import {
   makeRoborevOwner,
   RoborevMutationError,
@@ -56,6 +57,7 @@ type SortColumn =
   | "status"
   | "verdict"
   | "agent"
+  | "review_type"
   | "elapsed"
   | "cost"
   | "job_type"
@@ -269,6 +271,8 @@ export function createJobsStore(opts: JobsStoreOptions) {
         return job.verdict ?? "";
       case "agent":
         return job.agent;
+      case "review_type":
+        return reviewTypeLabel(job.review_type);
       case "elapsed":
         return getElapsedSeconds(job);
       case "cost":

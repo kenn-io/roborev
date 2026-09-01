@@ -6,6 +6,7 @@
     panelElapsedStart,
     panelStatusLabel,
   } from "../../utils/roborev-panel";
+  import { reviewTypeLabel } from "../../utils/roborev-review-type";
   import { formatRelativeTime } from "@kenn-io/kit-ui";
   import StatusBadge from "./StatusBadge.svelte";
   import VerdictBadge from "./VerdictBadge.svelte";
@@ -36,6 +37,7 @@
   }: Props = $props();
 
   const panelStatus = $derived(panelStatusLabel(job));
+  const reviewType = $derived(reviewTypeLabel(job.review_type));
 
   function formatElapsed(j: ReviewJob): string {
     const startedAt = panelElapsedStart(j, members);
@@ -126,6 +128,7 @@
     </span>
   </td>
   <td class="col-agent">{job.agent}</td>
+  <td class="col-review-type" title={reviewType}>{reviewType}</td>
   <td class="col-status">
     <StatusBadge status={job.status} />
   </td>
@@ -296,6 +299,14 @@
     max-width: 100px;
     overflow: hidden;
     text-overflow: ellipsis;
+  }
+
+  .col-review-type {
+    width: 110px;
+    max-width: 160px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    color: var(--text-secondary);
   }
 
   .col-status {
