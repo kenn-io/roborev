@@ -28,7 +28,7 @@ func TestRunRefineAgentErrorRetriesWithoutApplyingChanges(t *testing.T) {
 	defer md.Close()
 
 	md.State.reviews[headSHA] = &storage.Review{
-		ID: 1, JobID: 7, Output: "**Bug found**: fail", Closed: false,
+		ID: 1, JobID: 7, Output: "**Bug found**: fail", VerdictBool: new(0), Closed: false,
 	}
 
 	// Use 2 iterations so we can verify retry behavior
