@@ -14,6 +14,9 @@ import (
 // GitHubAppConfig holds GitHub App authentication settings.
 // Extracted from CIConfig for cohesion; embedded so TOML keys remain flat under [ci].
 type GitHubAppConfig struct {
+	// GitHubAPIURL is the REST API base URL. GitHub Enterprise Server uses
+	// https://HOST/api/v3. Empty uses GITHUB_API_URL, GH_HOST, or public GitHub.
+	GitHubAPIURL            string `toml:"github_api_url"`
 	GitHubAppID             int64  `toml:"github_app_id"`
 	GitHubAppPrivateKey     string `toml:"github_app_private_key" sensitive:"true"` // PEM file path or inline; supports ${ENV_VAR}
 	GitHubAppInstallationID int64  `toml:"github_app_installation_id"`

@@ -655,6 +655,44 @@ func TestGitHubClientForRepo_UsesEnterpriseBaseURL(t *testing.T) {
 	assert.Equal(t, []string{"skip-review"}, prs[0].Labels)
 }
 
+func TestNewCIPoller_GitHubAppUsesConfiguredEnterpriseAPIURL(t *testing.T) {
+	_, pemData := testKey(t)
+	var paths []string
+	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		paths = append(paths, r.URL.Path)
+		switch r.URL.Path {
+		case "/api/v3/app/installations/111111/access_tokens":
+			assert.Contains(t, r.Header.Get("Authorization"), "Bearer ")
+			w.WriteHeader(http.StatusCreated)
+			assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{
+				"token":      "ghs_enterprise_token",
+				"expires_at": time.Now().Add(time.Hour),
+			}))
+		case "/api/v3/repos/acme/api/pulls":
+			assert.Equal(t, "Bearer ghs_enterprise_token", r.Header.Get("Authorization"))
+			assert.NoError(t, json.NewEncoder(w).Encode([]any{}))
+		default:
+			http.NotFound(w, r)
+		}
+	}))
+	defer srv.Close()
+
+	cfg := config.DefaultConfig()
+	cfg.CI.GitHubAPIURL = srv.URL + "/api/v3"
+	cfg.CI.GitHubAppID = testAppID
+	cfg.CI.GitHubAppPrivateKey = pemData
+	cfg.CI.GitHubAppInstallationID = 111111
+	p := NewCIPoller(nil, NewStaticConfig(cfg), nil)
+
+	prs, err := p.listOpenPRs(context.Background(), "acme/api")
+	require.NoError(t, err)
+	assert.Empty(t, prs)
+	assert.Equal(t, []string{
+		"/api/v3/app/installations/111111/access_tokens",
+		"/api/v3/repos/acme/api/pulls",
+	}, paths)
+}
+
 func TestFormatRawBatchComment_Truncation(t *testing.T) {
 	reviews := []review.ReviewResult{
 		{Agent: "codex", ReviewType: "security", Output: strings.Repeat("x", 20000), Status: "done"},

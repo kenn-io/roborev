@@ -3251,6 +3251,18 @@ RoboRev-Dev = 222222
 	}
 }
 
+func TestLoadGlobalFrom_GitHubEnterpriseAPIURL(t *testing.T) {
+	configPath := filepath.Join(t.TempDir(), "config.toml")
+	require.NoError(t, os.WriteFile(configPath, []byte(`
+[ci]
+github_api_url = "https://github.example.com/api/v3"
+`), 0o600))
+
+	cfg, err := LoadGlobalFrom(configPath)
+	require.NoError(t, err)
+	assert.Equal(t, "https://github.example.com/api/v3", cfg.CI.GitHubAPIURL)
+}
+
 func TestGitHubAppConfigured_MultiInstall(t *testing.T) {
 	t.Run("configured with map only", func(t *testing.T) {
 		ci := CIConfig{

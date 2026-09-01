@@ -86,6 +86,7 @@ func newComplexTestConfig() *Config {
 		CI: CIConfig{
 			PollInterval: "10m",
 			GitHubAppConfig: GitHubAppConfig{
+				GitHubAPIURL:        "https://github.example.com/api/v3",
 				GitHubAppID:         12345,
 				GitHubAppPrivateKey: "test-private-key",
 			},
@@ -106,6 +107,7 @@ func TestGetConfigValue(t *testing.T) {
 		{"sync.enabled", "true"},
 		{"sync.postgres_url", "postgres://localhost/test"},
 		{"ci.poll_interval", "10m"},
+		{"ci.github_api_url", "https://github.example.com/api/v3"},
 		{"ci.github_app_id", "12345"},
 		{"ci.github_app_private_key", "test-private-key"},
 	}
@@ -157,6 +159,14 @@ func TestSetConfigValue(t *testing.T) {
 			val:  "true",
 			verify: func(t *testing.T, c *Config) {
 				assert.True(t, c.Sync.Enabled)
+			},
+		},
+		{
+			name: "set GitHub API URL",
+			key:  "ci.github_api_url",
+			val:  "https://github.example.com/api/v3",
+			verify: func(t *testing.T, c *Config) {
+				assert.Equal(t, "https://github.example.com/api/v3", c.CI.GitHubAPIURL)
 			},
 		},
 		{
@@ -612,6 +622,7 @@ func TestIsValidKey(t *testing.T) {
 		{"sync.enabled", true},
 		{"sync.repo_names", true},
 		{"ci.github_app_id", true},
+		{"ci.github_api_url", true},
 		{"ci.github_app_private_key", true},
 		{"hooks", true},
 		{"post_commit_batch_size", true},

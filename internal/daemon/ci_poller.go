@@ -189,6 +189,13 @@ func NewCIPoller(db *storage.DB, cfgGetter ConfigGetter, broadcaster Broadcaster
 			log.Printf("CI poller: failed to load GitHub App private key: %v", err)
 		} else {
 			tp, err := NewGitHubAppTokenProvider(cfg.CI.GitHubAppID, pemData)
+			if err == nil {
+				var apiBaseURL string
+				apiBaseURL, err = ghpkg.GitHubAPIBaseURL(p.githubAPIBaseURL())
+				if err == nil {
+					tp.baseURL = strings.TrimRight(apiBaseURL, "/")
+				}
+			}
 			if err != nil {
 				log.Printf("CI poller: failed to create GitHub App token provider: %v", err)
 			} else {
@@ -1926,6 +1933,14 @@ func (p *CIPoller) githubClientForRepo(ghRepo string) (*ghpkg.Client, error) {
 }
 
 func (p *CIPoller) githubAPIBaseURL() string {
+	if p.cfgGetter != nil {
+		if configured := strings.TrimSpace(p.cfgGetter.Config().CI.GitHubAPIURL); configured != "" {
+			return configured
+		}
+	}
+	if configured := strings.TrimSpace(os.Getenv("GITHUB_API_URL")); configured != "" {
+		return configured
+	}
 	if p.tokenProvider != nil {
 		return strings.TrimSpace(p.tokenProvider.baseURL)
 	}
