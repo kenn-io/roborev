@@ -123,7 +123,11 @@ func TestRunAgentHookUsesConfiguredRegularDaemonEndpoint(t *testing.T) {
 		fixSessionID.String(),
 	)
 	require.NoError(t, err)
-	assert.Contains(t, stdout.String(), commands.Native)
+	var output struct {
+		Reason string `json:"reason"`
+	}
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &output))
+	assert.Contains(t, output.Reason, commands.Native)
 }
 
 func TestAgentHookFixDoneUsesConfiguredRegularDaemonEndpoint(t *testing.T) {
