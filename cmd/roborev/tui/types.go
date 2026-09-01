@@ -30,6 +30,7 @@ const (
 	viewKindWorktreeConfirm // Confirm creating a worktree to apply patch
 	viewPatch               // Patch viewer for fix jobs
 	viewColumnOptions       // Column toggle modal
+	viewReleaseNotes        // Recent Roborev release notes
 )
 
 // queuePrefetchBuffer is the number of extra rows to fetch beyond what's visible,
@@ -362,6 +363,13 @@ type updateCheckMsg struct {
 	version    string // Latest version if available, empty if up to date
 	isDevBuild bool   // True if running a dev build
 }
+type releaseNotesMsg struct {
+	releases []storage.ReleaseNote
+	stale    bool
+}
+
+type releaseNotesErrMsg struct{ err error }
+
 type reposMsg struct {
 	repos          []repoFilterItem
 	identities     map[string][]string

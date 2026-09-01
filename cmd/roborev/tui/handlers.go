@@ -34,6 +34,8 @@ func (m model) handleKeyMsg(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handlePatchKey(msg)
 	case viewColumnOptions:
 		return m.handleColumnOptionsInput(msg)
+	case viewReleaseNotes:
+		return m.handleReleaseNotesKey(msg)
 	}
 
 	// Review-scoped actions must not fire against a review the detail pane
@@ -228,6 +230,13 @@ func (m model) handleGlobalKey(msg tea.KeyMsg) (tea.Model, tea.Cmd) {
 		return m.handleBranchFilterOpenKey()
 	case "h":
 		return m.handleHideClosedKey()
+	case "u":
+		m.releaseNotesFromView = m.currentView
+		m.currentView = viewReleaseNotes
+		m.releaseNotesScroll = 0
+		m.releaseNotesLoading = true
+		m.releaseNotesErr = nil
+		return m, m.fetchReleaseNotes()
 	case "s":
 		return m.handleToggleClassifyKey()
 	case "c":

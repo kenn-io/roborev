@@ -191,6 +191,10 @@ type UnpauseQueueResponse = QueuePauseOutputBody
 
 type UnpauseQueueErrorResponse = ErrorModel
 
+type ListReleasesResponse = ReleaseNotesResponse
+
+type ListReleasesErrorResponse = ErrorModel
+
 type RemapJobsResponse = RemapResult
 
 type RemapJobsErrorResponse = ErrorModel
@@ -475,6 +479,13 @@ type UnpauseQueueResp struct {
 	Body         []byte
 	StatusCode   int
 	JSON200      *UnpauseQueueResponse
+}
+
+type ListReleasesResp struct {
+	HTTPResponse *http.Response
+	Body         []byte
+	StatusCode   int
+	JSON200      *ListReleasesResponse
 }
 
 type RemapJobsResp struct {

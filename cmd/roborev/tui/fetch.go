@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"io"
 	"net/http"
 	neturl "net/url"
 	"os"
@@ -381,6 +382,32 @@ func (m model) checkForUpdate() tea.Cmd {
 			return updateCheckMsg{} // No update or error
 		}
 		return updateCheckMsg{version: info.LatestVersion, isDevBuild: info.IsDevBuild}
+	}
+}
+
+func (m model) fetchReleaseNotes() tea.Cmd {
+	return func() tea.Msg {
+		req, err := http.NewRequestWithContext(
+			m.apiContext(), http.MethodGet, m.endpoint.BaseURL()+"/api/releases", nil,
+		)
+		if err != nil {
+			return releaseNotesErrMsg{err: err}
+		}
+		resp, err := m.client.Do(req)
+		if err != nil {
+			return releaseNotesErrMsg{err: err}
+		}
+		defer resp.Body.Close()
+		if resp.StatusCode != http.StatusOK {
+			return releaseNotesErrMsg{err: fmt.Errorf(
+				"fetch release notes: %s", readErrorBody(resp.Body, resp.Status),
+			)}
+		}
+		var result daemon.ReleaseNotesResponse
+		if err := json.NewDecoder(io.LimitReader(resp.Body, 2<<20)).Decode(&result); err != nil {
+			return releaseNotesErrMsg{err: fmt.Errorf("decode release notes: %w", err)}
+		}
+		return releaseNotesMsg{releases: result.Releases, stale: result.Stale}
 	}
 }
 

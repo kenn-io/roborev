@@ -179,6 +179,13 @@ func (s *Server) registerHumaAPI(mux *http.ServeMux) huma.API {
 			o.Tags = []string{"daemon"}
 		})
 
+	huma.Get(api, "/api/releases", s.humaListReleases,
+		func(o *huma.Operation) {
+			o.OperationID = "list-releases"
+			o.Summary = "List recent Roborev release notes"
+			o.Tags = []string{"daemon"}
+		})
+
 	huma.Post(api, "/api/queue/pause", s.humaPauseQueue,
 		func(o *huma.Operation) {
 			o.OperationID = "pause-queue"

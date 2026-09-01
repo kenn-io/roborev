@@ -60,6 +60,7 @@ branch.
 | `f` | Open filter (repo/branch tree) |
 | `b` | Open filter with branches expanded |
 | `h` | Toggle hide closed/failed/canceled |
+| `u` | View recent Roborev release notes |
 | `L` | Toggle split-screen or stacked layout |
 | `D` | Toggle distraction-free mode |
 | `P` | Pause or resume queue processing |
@@ -73,6 +74,13 @@ Panel reviews appear as one synthesis parent row by default. The parent row
 shows live progress while member reviewers run and a compact member summary
 after completion. Expand the row to inspect individual member jobs. Close,
 cancel, rerun, or fix the panel from the parent row, not from a member row.
+
+When a newer Roborev version is available, the queue banner points to the
+release-notes viewer. Press `u` at any time to open it. The viewer renders the
+recent GitHub release notes and supports `j`/`k`, page scrolling, and `u` to
+refresh. Roborev caches the notes in its local SQLite database. It checks GitHub
+again after one hour and uses GitHub's cache validator so edited notes replace
+the saved copy.
 
 ## Split-Screen Review
 

@@ -2241,6 +2241,60 @@ components:
       required:
         - repo_path
       type: object
+    ReleaseNote:
+      additionalProperties: false
+      properties:
+        body:
+          type: string
+        html_url:
+          type: string
+        name:
+          type: string
+        prerelease:
+          type: boolean
+        published_at:
+          format: date-time
+          type: string
+        tag_name:
+          type: string
+        updated_at:
+          format: date-time
+          type: string
+      required:
+        - tag_name
+        - name
+        - body
+        - html_url
+        - published_at
+        - updated_at
+        - prerelease
+      type: object
+    ReleaseNotesResponse:
+      additionalProperties: false
+      properties:
+        $schema:
+          description: A URL to the JSON Schema for this object.
+          examples:
+            - https://example.com/ReleaseNotesResponse.json
+          format: uri
+          readOnly: true
+          type: string
+        fetched_at:
+          format: date-time
+          type: string
+        releases:
+          items:
+            $ref: "#/components/schemas/ReleaseNote"
+          type:
+            - array
+            - "null"
+        stale:
+          type: boolean
+      required:
+        - releases
+        - fetched_at
+        - stale
+      type: object
     ReleaseUpdateOutputBody:
       additionalProperties: false
       properties:
@@ -4319,6 +4373,25 @@ paths:
                 $ref: "#/components/schemas/ErrorModel"
           description: Error
       summary: Resume queue processing
+      tags:
+        - daemon
+  /api/releases:
+    get:
+      operationId: list-releases
+      responses:
+        "200":
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ReleaseNotesResponse"
+          description: OK
+        default:
+          content:
+            application/problem+json:
+              schema:
+                $ref: "#/components/schemas/ErrorModel"
+          description: Error
+      summary: List recent Roborev release notes
       tags:
         - daemon
   /api/remap:

@@ -1864,6 +1864,46 @@ func (r RegisterRepoRequest) Validate() error {
 	return runtime.ConvertValidatorError(typesValidator.Struct(r))
 }
 
+type ReleaseNote struct {
+	Body        string    `json:"body" validate:"required"`
+	HTMLURL     string    `json:"html_url" validate:"required"`
+	Name        string    `json:"name" validate:"required"`
+	Prerelease  bool      `json:"prerelease"`
+	PublishedAt time.Time `json:"published_at" validate:"required"`
+	TagName     string    `json:"tag_name" validate:"required"`
+	UpdatedAt   time.Time `json:"updated_at" validate:"required"`
+}
+
+func (r ReleaseNote) Validate() error {
+	return runtime.ConvertValidatorError(typesValidator.Struct(r))
+}
+
+type ReleaseNotesResponse struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema    *string       `json:"$schema,omitempty"`
+	FetchedAt time.Time     `json:"fetched_at" validate:"required"`
+	Releases  []ReleaseNote `json:"releases,omitempty" validate:"required"`
+	Stale     bool          `json:"stale"`
+}
+
+func (r ReleaseNotesResponse) Validate() error {
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(r.FetchedAt, "required"); err != nil {
+		errors = errors.Append("FetchedAt", err)
+	}
+	for i, item := range r.Releases {
+		if v, ok := any(item).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append(fmt.Sprintf("Releases[%d]", i), err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
+}
+
 type ReleaseUpdateOutputBody struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema   *string `json:"$schema,omitempty"`

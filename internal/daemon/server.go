@@ -21,7 +21,9 @@ import (
 	"github.com/coreos/go-systemd/v22/activation"
 	"github.com/coreos/go-systemd/v22/daemon"
 	"github.com/danielgtaylor/huma/v2"
+	"github.com/google/go-github/v90/github"
 	gitrepo "go.kenn.io/kit/git/repo"
+	"go.kenn.io/kit/selfupdate"
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/agenthook"
@@ -54,6 +56,8 @@ type Server struct {
 	hookRunner              *HookRunner
 	errorLog                *ErrorLog
 	activityLog             *ActivityLog
+	releaseNotesClient      *github.Client
+	releaseNotesNow         func() time.Time
 	telemetry               telemetry.Client
 	telemetryOnce           sync.Once
 	telemetryStop           chan struct{}
@@ -149,17 +153,30 @@ func newServerWithLogs(
 	// Create hook runner to fire hooks on review events
 	hookRunner := NewHookRunner(configWatcher, broadcaster, log.Default())
 
+	releaseNotesOptions := []github.ClientOptionsFunc{
+		github.WithHTTPClient(&http.Client{Timeout: 10 * time.Second}),
+	}
+	if token := selfupdate.EnvironmentGitHubToken(); token != "" {
+		releaseNotesOptions = append(releaseNotesOptions, github.WithAuthToken(token))
+	}
+	releaseNotesClient, err := github.NewClient(releaseNotesOptions...)
+	if err != nil {
+		panic(fmt.Sprintf("create GitHub client for release notes: %v", err))
+	}
+
 	s := &Server{
-		db:            db,
-		configWatcher: configWatcher,
-		broadcaster:   broadcaster,
-		workerPool:    NewWorkerPool(db, configWatcher, cfg.MaxWorkers, broadcaster, errorLog, activityLog),
-		hookRunner:    hookRunner,
-		errorLog:      errorLog,
-		activityLog:   activityLog,
-		telemetryStop: make(chan struct{}),
-		startTime:     time.Now(),
-		shutdownCh:    make(chan struct{}),
+		db:                 db,
+		configWatcher:      configWatcher,
+		broadcaster:        broadcaster,
+		workerPool:         NewWorkerPool(db, configWatcher, cfg.MaxWorkers, broadcaster, errorLog, activityLog),
+		hookRunner:         hookRunner,
+		errorLog:           errorLog,
+		activityLog:        activityLog,
+		releaseNotesClient: releaseNotesClient,
+		releaseNotesNow:    time.Now,
+		telemetryStop:      make(chan struct{}),
+		startTime:          time.Now(),
+		shutdownCh:         make(chan struct{}),
 	}
 	s.updateCoordinator = &updateDrainCoordinator{server: s, now: time.Now}
 	s.agentHookState, s.agentHookStateErr = agenthook.LoadState(

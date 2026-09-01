@@ -40,6 +40,13 @@ The application has two workspaces:
 - **Analytics** summarizes cost, latency, failures, outcomes, and agent attempts
     from the daemon's SQLite history.
 
+Use the book icon in the application header to read recent Roborev release
+notes. Select a version from the list to view its rendered Markdown without
+leaving the application. The daemon shares the same SQLite-backed release-note
+cache with the terminal UI and refreshes it from GitHub after one hour. If
+GitHub is temporarily unavailable, the viewer labels and displays the saved
+copy.
+
 The Go module source archive does not contain the generated application assets.
 An installation made with `go install` still provides the CLI and terminal UI,
 but the native browser application requires a release package or a source build

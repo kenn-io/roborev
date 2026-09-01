@@ -166,6 +166,15 @@ CREATE TABLE IF NOT EXISTS daemon_state (
   updated_at TEXT NOT NULL DEFAULT (datetime('now'))
 );
 
+-- release_notes_cache is local-only presentation data fetched from GitHub.
+-- It is deliberately not synced to PostgreSQL.
+CREATE TABLE IF NOT EXISTS release_notes_cache (
+  id INTEGER PRIMARY KEY CHECK (id = 1),
+  etag TEXT NOT NULL DEFAULT '',
+  releases_json TEXT NOT NULL,
+  fetched_at TEXT NOT NULL
+);
+
 -- agent_hook_snoozes is local-only workspace state. It is deliberately not
 -- synced to PostgreSQL because worktree paths and snooze intent are specific to
 -- this machine.

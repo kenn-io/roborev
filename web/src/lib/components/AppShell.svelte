@@ -1,10 +1,12 @@
 <script lang="ts">
-  import { TopBar, type TopBarTab } from "@kenn-io/kit-ui";
+  import { IconButton, TopBar, type TopBarTab } from "@kenn-io/kit-ui";
+  import BookOpenIcon from "@lucide/svelte/icons/book-open";
   import { Effect } from "effect";
   import { onDestroy } from "svelte";
 
   import { appPath } from "../base-path";
-  import { createRoborevClient } from "../api/client";
+  import { createRoborevClient, executeRoborevRequest } from "../api/client";
+  import type { components } from "../api/generated";
   import type { SessionCapabilities } from "../api/session";
   import { createRouter } from "../router/router.svelte";
   import { setAppRuntime, setRoborevClient } from "../runtime/context";
@@ -13,6 +15,9 @@
   import { provideReviewStores } from "../stores/context";
   import AnalyticsView from "../views/AnalyticsView.svelte";
   import ReviewsView from "../views/ReviewsView.svelte";
+  import ReleaseNotesModal from "./ReleaseNotesModal.svelte";
+
+  type ReleaseNote = components["schemas"]["ReleaseNote"];
 
   interface Props {
     capabilities: SessionCapabilities;
@@ -28,6 +33,12 @@
     { id: "analytics", label: "Analytics" },
   ];
   let actionError = $state<string | null>(null);
+  let releaseNotesOpen = $state(false);
+  let releaseNotes = $state<ReadonlyArray<ReleaseNote>>([]);
+  let releaseNotesLoading = $state(false);
+  let releaseNotesStale = $state(false);
+  let releaseNotesError = $state<string | null>(null);
+  let releaseNotesRequest: ReturnType<typeof runtime.runCommand> | undefined;
   const stores = createReviewStores({
     runtime,
     client,
@@ -50,6 +61,7 @@
 
   onDestroy(() => {
     polling.interrupt();
+    releaseNotesRequest?.interrupt();
     stores.roborevJobs.dispose();
     router.dispose();
     void Effect.runPromise(runtime.disposeEffect);
@@ -78,6 +90,45 @@
       !event.altKey
     );
   }
+
+  function openReleaseNotes(): void {
+    releaseNotesOpen = true;
+    if (releaseNotes.length === 0 && !releaseNotesLoading) loadReleaseNotes();
+  }
+
+  function loadReleaseNotes(): void {
+    releaseNotesRequest?.interrupt();
+    releaseNotesLoading = true;
+    releaseNotesError = null;
+    releaseNotesRequest = runtime.runCommand(
+      executeRoborevRequest("list Roborev releases", (signal) =>
+        client.GET("/api/releases", { signal }),
+      ).pipe(
+        Effect.tap((result) =>
+          Effect.sync(() => {
+            if (result.data) {
+              releaseNotes = result.data.releases ?? [];
+              releaseNotesStale = result.data.stale;
+              return;
+            }
+            releaseNotesError = "The daemon could not retrieve release notes.";
+          }),
+        ),
+        Effect.ensuring(
+          Effect.sync(() => {
+            releaseNotesLoading = false;
+          }),
+        ),
+      ),
+      {
+        operation: "list Roborev releases",
+        safeContext: {},
+        onFailure: () => {
+          releaseNotesError = "The daemon could not retrieve release notes.";
+        },
+      },
+    );
+  }
 </script>
 
 <div class="app-shell">
@@ -92,6 +143,11 @@
       <a class="brand" href={appPath("/reviews")} onclick={navigateReviews}
         >Roborev</a
       >
+    {/snippet}
+    {#snippet right()}
+      <IconButton ariaLabel="Release notes" onclick={openReleaseNotes}>
+        <BookOpenIcon size="16" strokeWidth="2" aria-hidden="true" />
+      </IconButton>
     {/snippet}
   </TopBar>
 
@@ -112,6 +168,15 @@
       >
     </div>
   {/if}
+  <ReleaseNotesModal
+    open={releaseNotesOpen}
+    releases={releaseNotes}
+    loading={releaseNotesLoading}
+    stale={releaseNotesStale}
+    error={releaseNotesError}
+    onclose={() => (releaseNotesOpen = false)}
+    onretry={loadReleaseNotes}
+  />
 </div>
 
 <style>

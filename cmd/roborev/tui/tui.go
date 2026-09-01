@@ -258,33 +258,39 @@ func sanitizeForDisplay(s string) string {
 }
 
 type model struct {
-	endpoint         daemon.DaemonEndpoint
-	daemonVersion    string
-	client           *http.Client
-	api              *roborevclient.Client
-	glamourStyle     gansi.StyleConfig // detected once at init
-	jobs             []storage.ReviewJob
-	jobStats         storage.JobStats       // aggregate done/closed/open from server
-	cost             *storage.CostAggregate // approx agent spend for the active filter scope; nil = hidden
-	costSeq          int                    // fetchSeq of the stored cost; segment hides until it matches m.fetchSeq
-	status           storage.DaemonStatus
-	selectedIdx      int
-	selectedJobID    int64                             // Track selected job by ID to maintain position on refresh
-	expandedPanels   map[uuid.UUID]bool                // panel_run_uuid -> expanded
-	panelMembers     map[uuid.UUID][]storage.ReviewJob // panel_run_uuid -> side-fetched members
-	currentView      viewKind
-	currentReview    *storage.Review
-	currentResponses []storage.Response // Responses for current review (fetched with review)
-	currentBranch    string             // Cached branch name for current review (computed on load)
-	reviewScroll     int
-	promptScroll     int
-	promptFromQueue  bool // true if prompt view was entered from queue (not review)
-	width            int
-	height           int
-	err              error
-	updateAvailable  string // Latest version if update available, empty if up to date
-	updateIsDevBuild bool   // True if running a dev build
-	versionMismatch  bool   // True if daemon version doesn't match TUI version
+	endpoint             daemon.DaemonEndpoint
+	daemonVersion        string
+	client               *http.Client
+	api                  *roborevclient.Client
+	glamourStyle         gansi.StyleConfig // detected once at init
+	jobs                 []storage.ReviewJob
+	jobStats             storage.JobStats       // aggregate done/closed/open from server
+	cost                 *storage.CostAggregate // approx agent spend for the active filter scope; nil = hidden
+	costSeq              int                    // fetchSeq of the stored cost; segment hides until it matches m.fetchSeq
+	status               storage.DaemonStatus
+	selectedIdx          int
+	selectedJobID        int64                             // Track selected job by ID to maintain position on refresh
+	expandedPanels       map[uuid.UUID]bool                // panel_run_uuid -> expanded
+	panelMembers         map[uuid.UUID][]storage.ReviewJob // panel_run_uuid -> side-fetched members
+	currentView          viewKind
+	currentReview        *storage.Review
+	currentResponses     []storage.Response // Responses for current review (fetched with review)
+	currentBranch        string             // Cached branch name for current review (computed on load)
+	reviewScroll         int
+	promptScroll         int
+	promptFromQueue      bool // true if prompt view was entered from queue (not review)
+	width                int
+	height               int
+	err                  error
+	updateAvailable      string // Latest version if update available, empty if up to date
+	updateIsDevBuild     bool   // True if running a dev build
+	versionMismatch      bool   // True if daemon version doesn't match TUI version
+	releaseNotes         []storage.ReleaseNote
+	releaseNotesErr      error
+	releaseNotesStale    bool
+	releaseNotesLoading  bool
+	releaseNotesScroll   int
+	releaseNotesFromView viewKind
 
 	// CLI-locked filters: set via --repo/--branch flags, cannot be cleared by the user
 	lockedRepoFilter   bool // true if repo filter was set via --repo flag
@@ -1216,7 +1222,7 @@ func (m *model) getBranchForJob(job storage.ReviewJob) string {
 // released to allow native terminal text selection (copy/paste).
 func mouseDisabledView(v viewKind) bool {
 	switch v {
-	case viewLog, viewReview, viewKindPrompt, viewPatch, viewCommitMsg:
+	case viewLog, viewReview, viewKindPrompt, viewPatch, viewCommitMsg, viewReleaseNotes:
 		return true
 	}
 	return false
@@ -1264,6 +1270,16 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 		result, cmd = m.handleCostMsg(msg)
 	case updateCheckMsg:
 		result, cmd = m.handleUpdateCheckMsg(msg)
+	case releaseNotesMsg:
+		m.releaseNotes = msg.releases
+		m.releaseNotesStale = msg.stale
+		m.releaseNotesLoading = false
+		m.releaseNotesErr = nil
+		result = m
+	case releaseNotesErrMsg:
+		m.releaseNotesLoading = false
+		m.releaseNotesErr = msg.err
+		result = m
 	case reviewMsg:
 		result, cmd = m.handleReviewMsg(msg)
 	case reviewErrMsg:
@@ -1373,6 +1389,9 @@ func (m model) Update(msg tea.Msg) (tea.Model, tea.Cmd) {
 }
 
 func (m model) viewContent() string {
+	if m.currentView == viewReleaseNotes {
+		return m.renderReleaseNotesView()
+	}
 	if m.currentView == viewKindComment {
 		return m.renderRespondView()
 	}

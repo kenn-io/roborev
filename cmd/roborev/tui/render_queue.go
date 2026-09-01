@@ -520,7 +520,7 @@ func (m model) renderQueueView() string {
 			if m.updateIsDevBuild {
 				updateMsg = fmt.Sprintf("Dev build - latest release: %s - run 'roborev update --force'", m.updateAvailable)
 			} else {
-				updateMsg = fmt.Sprintf("Update available: %s - run 'roborev update'", m.updateAvailable)
+				updateMsg = fmt.Sprintf("Update available: %s - press u for notes or run 'roborev update'", m.updateAvailable)
 			}
 			b.WriteString(updateStyle.Render(updateMsg))
 		}

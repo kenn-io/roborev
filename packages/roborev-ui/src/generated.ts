@@ -429,6 +429,23 @@ export interface paths {
         patch?: never;
         trace?: never;
     };
+    "/api/releases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        /** List recent Roborev release notes */
+        get: operations["list-releases"];
+        put?: never;
+        post?: never;
+        delete?: never;
+        options?: never;
+        head?: never;
+        patch?: never;
+        trace?: never;
+    };
     "/api/remap": {
         parameters: {
             query?: never;
@@ -1794,6 +1811,29 @@ export interface components {
              */
             readonly $schema?: string;
             repo_path: string;
+        };
+        ReleaseNote: {
+            body: string;
+            html_url: string;
+            name: string;
+            prerelease: boolean;
+            /** Format: date-time */
+            published_at: string;
+            tag_name: string;
+            /** Format: date-time */
+            updated_at: string;
+        };
+        ReleaseNotesResponse: {
+            /**
+             * Format: uri
+             * @description A URL to the JSON Schema for this object.
+             * @example https://example.com/ReleaseNotesResponse.json
+             */
+            readonly $schema?: string;
+            /** Format: date-time */
+            fetched_at: string;
+            releases: components["schemas"]["ReleaseNote"][] | null;
+            stale: boolean;
         };
         ReleaseUpdateOutputBody: {
             /**
@@ -3277,6 +3317,35 @@ export interface operations {
                 };
                 content: {
                     "application/json": components["schemas"]["QueuePauseOutputBody"];
+                };
+            };
+            /** @description Error */
+            default: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/problem+json": components["schemas"]["ErrorModel"];
+                };
+            };
+        };
+    };
+    "list-releases": {
+        parameters: {
+            query?: never;
+            header?: never;
+            path?: never;
+            cookie?: never;
+        };
+        requestBody?: never;
+        responses: {
+            /** @description OK */
+            200: {
+                headers: {
+                    [name: string]: unknown;
+                };
+                content: {
+                    "application/json": components["schemas"]["ReleaseNotesResponse"];
                 };
             };
             /** @description Error */
