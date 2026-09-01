@@ -1,5 +1,6 @@
 <script lang="ts">
   import { EmptyState } from "@kenn-io/kit-ui";
+  import { getStackDepth } from "../keyboard/modal-stack.svelte";
   import { getAppRuntime } from "../runtime/context";
   import { getReviewStores } from "../stores/context";
   import FilterBar from "../components/reviews/FilterBar.svelte";
@@ -66,6 +67,8 @@
       }
       return;
     }
+
+    if (getStackDepth() > 0) return;
 
     const drawerOpen = stores.roborevJobs?.getSelectedJobId() !== undefined;
 

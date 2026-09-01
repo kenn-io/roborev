@@ -461,6 +461,15 @@ test.describe.serial("native review workspace", () => {
     const id = (
       await highlighted.locator(".col-id .mono").textContent()
     )?.trim();
+
+    await page.getByRole("button", { name: "Release notes" }).click();
+    await expect(
+      page.getByText("Roborev release notes", { exact: true }),
+    ).toBeVisible();
+    await page.keyboard.press("j");
+    await expect(highlighted.locator(".col-id .mono")).toHaveText(id ?? "");
+    await page.keyboard.press("Escape");
+
     await page.keyboard.press("Enter");
     await expect(page).toHaveURL(new RegExp(`/reviews/${id}$`));
     await page.keyboard.press("Escape");
