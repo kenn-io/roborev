@@ -235,6 +235,14 @@ Verify that each resolved or invalid review reports `closed=true` and each
 review deferred for user direction reports `closed=false`. Do not rely on
 `roborev list --open`; unrelated reviews can obscure the original set.
 
+### Complete an Agent Hook fix session
+
+When the current invocation came directly from Agent Hook and its instruction
+contains an exact `roborev agent-hook fix-done <fix-session-id>` command, run
+that exact command after the original review audit. Run it even when no code
+changed or a valid out-of-scope finding remains open. Do not invent or discover
+a fix-session ID. Skip this step for direct user invocations.
+
 ## Examples
 
 **Pasted findings in the prompt:**
