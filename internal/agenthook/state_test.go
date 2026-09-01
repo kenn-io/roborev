@@ -2670,7 +2670,7 @@ func TestRecordPostToolUseFixSessionAllowsOneConcurrentOwner(t *testing.T) {
 	assert.Len(t, store.fixSessions, 1)
 }
 
-func TestRecordFixSessionsDoNotCrossLineages(t *testing.T) {
+func TestRecordFixSessionsDoNotCrossWorktrees(t *testing.T) {
 	repoA := testutil.NewGitRepo(t)
 	repoA.CommitFile("a.go", "package main\n", "initial")
 	repoB := testutil.NewGitRepo(t)

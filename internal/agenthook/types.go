@@ -8,6 +8,8 @@ import (
 	"sync"
 	"time"
 	"uuid"
+
+	kitagenthook "go.kenn.io/kit/agenthook"
 )
 
 type Input struct {
@@ -121,13 +123,13 @@ func (i Input) Command() string {
 }
 
 type Request struct {
-	Agent                 string `json:"agent"`
-	Event                 Input  `json:"event"`
-	Threshold             int    `json:"threshold"`
-	CommitThreshold       int    `json:"commit_threshold"`
-	FailedReviewThreshold int    `json:"failed_review_threshold"`
-	Instruction           string `json:"instruction"`
-	DeferPostToolReminder bool   `json:"defer_post_tool_reminder,omitempty"`
+	Agent                 kitagenthook.Agent `json:"agent"`
+	Event                 Input              `json:"event"`
+	Threshold             int                `json:"threshold"`
+	CommitThreshold       int                `json:"commit_threshold"`
+	FailedReviewThreshold int                `json:"failed_review_threshold"`
+	Instruction           string             `json:"instruction"`
+	DeferPostToolReminder bool               `json:"defer_post_tool_reminder,omitempty"`
 }
 
 type Response struct {

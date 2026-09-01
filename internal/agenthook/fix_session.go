@@ -6,6 +6,8 @@ import (
 	"maps"
 	"time"
 	"uuid"
+
+	kitagenthook "go.kenn.io/kit/agenthook"
 )
 
 const FixSessionLifetime = 12 * time.Hour
@@ -13,12 +15,12 @@ const FixSessionLifetime = 12 * time.Hour
 var ErrFixSessionNotFound = errors.New("agent hook fix session not found")
 
 type FixSession struct {
-	ID          uuid.UUID `json:"id"`
-	Agent       string    `json:"agent"`
-	SessionID   string    `json:"session_id"`
-	StartedAt   time.Time `json:"started_at"`
-	ExpiresAt   time.Time `json:"expires_at"`
-	CompletedAt time.Time `json:"completed_at,omitzero"`
+	ID          uuid.UUID          `json:"id"`
+	Agent       kitagenthook.Agent `json:"agent"`
+	SessionID   string             `json:"session_id"`
+	StartedAt   time.Time          `json:"started_at"`
+	ExpiresAt   time.Time          `json:"expires_at"`
+	CompletedAt time.Time          `json:"completed_at,omitzero"`
 }
 
 func (f FixSession) Active(now time.Time) bool {
@@ -63,7 +65,7 @@ func (s *StateStore) prepareFixSessionGrantLocked(
 	key string,
 	now time.Time,
 ) (map[string]FixSession, *FixSession, bool) {
-	if req.Agent == "" || req.Agent == "cursor" {
+	if req.Agent == "" || req.Agent == kitagenthook.AgentCursor {
 		return s.fixSessions, nil, true
 	}
 	fixSessions := cloneFixSessions(s.fixSessions)
@@ -81,7 +83,7 @@ func (s *StateStore) activeOwnerFixSessionLocked(
 	scope hookScope,
 	now time.Time,
 ) (FixSession, bool) {
-	if req.Agent == "" || req.Agent == "cursor" {
+	if req.Agent == "" || req.Agent == kitagenthook.AgentCursor {
 		return FixSession{}, false
 	}
 	fixSession, ok := s.fixSessions[scope.WorktreeKey]
@@ -102,7 +104,7 @@ func (s *StateStore) CompleteFixSession(id uuid.UUID) (FixSession, error) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	for lineage, fixSession := range s.fixSessions {
+	for worktreeKey, fixSession := range s.fixSessions {
 		if fixSession.ID != id {
 			continue
 		}
@@ -112,7 +114,7 @@ func (s *StateStore) CompleteFixSession(id uuid.UUID) (FixSession, error) {
 		previous := s.fixSessions
 		s.fixSessions = maps.Clone(s.fixSessions)
 		fixSession.CompletedAt = s.currentTime()
-		s.fixSessions[lineage] = fixSession
+		s.fixSessions[worktreeKey] = fixSession
 		if err := s.saveLocked(); err != nil {
 			s.fixSessions = previous
 			return FixSession{}, err

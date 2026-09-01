@@ -12,7 +12,10 @@ import (
 	reviewagent "go.kenn.io/roborev/internal/agent"
 )
 
-const AgentGrok kitagenthook.Agent = "grok"
+const (
+	AgentGrok   kitagenthook.Agent = "grok"
+	AgentLegacy kitagenthook.Agent = "legacy"
+)
 
 var profileExecutables = map[kitagenthook.Agent][]string{
 	kitagenthook.AgentClaude:  {"claude"},

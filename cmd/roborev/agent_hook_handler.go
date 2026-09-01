@@ -48,7 +48,7 @@ func (h roborevAgentHookHandler) request(
 		}
 	}
 	return agenthook.Request{
-		Agent:                 string(h.agent),
+		Agent:                 h.agent,
 		Event:                 input,
 		Threshold:             h.opts.TurnThreshold,
 		CommitThreshold:       h.opts.CommitThreshold,

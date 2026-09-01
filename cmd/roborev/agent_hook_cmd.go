@@ -122,7 +122,7 @@ func runGrokAgentHook(opts agenthook.Options, stdin io.Reader, stdout, stderr io
 		return fmt.Errorf("decode Grok Build input: missing session_id")
 	}
 	resp, err := postAgentHook(context.Background(), opts.RoborevServerAddr, agenthook.Request{
-		Agent:                 string(agenthook.AgentGrok),
+		Agent:                 agenthook.AgentGrok,
 		Event:                 input,
 		Threshold:             opts.TurnThreshold,
 		CommitThreshold:       opts.CommitThreshold,
@@ -138,7 +138,7 @@ func runGrokAgentHook(opts agenthook.Options, stdin io.Reader, stdout, stderr io
 			return json.NewEncoder(stdout).Encode(agenthook.BuildOutput(input, resp))
 		}
 		resp.Reason = prependAgentHookFixSkillWarning(
-			kitagenthook.Agent("grok"),
+			agenthook.AgentGrok,
 			agenthook.StopReasonWithFixGuidelines(resp.Reason, opts.FixGuidelines),
 		)
 		return json.NewEncoder(stdout).Encode(agenthook.BuildOutput(input, resp))
@@ -160,7 +160,7 @@ func runLegacyAgentHook(
 		return fmt.Errorf("agent-hook input missing session_id")
 	}
 	resp, err := postAgentHook(ctx, opts.RoborevServerAddr, agenthook.Request{
-		Agent:                 "legacy",
+		Agent:                 agenthook.AgentLegacy,
 		Event:                 input,
 		Threshold:             opts.TurnThreshold,
 		CommitThreshold:       opts.CommitThreshold,

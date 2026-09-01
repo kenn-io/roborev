@@ -130,7 +130,7 @@ func (s *StateStore) saveSessionLocked(sessionID string, state SessionState) err
 	return s.saveSessionAndFixSessionsLocked(sessionID, state, s.fixSessions)
 }
 
-// saveSessionAndFixSessionsLocked publishes session and lineage ownership
+// saveSessionAndFixSessionsLocked publishes session and worktree ownership
 // together only when the state-file replacement succeeds. Callers must hold s.mu.
 func (s *StateStore) saveSessionAndFixSessionsLocked(
 	sessionID string,
@@ -180,9 +180,9 @@ func (s *StateStore) Reset(sessionID string, all bool) error {
 		s.sessions = maps.Clone(s.sessions)
 		delete(s.sessions, sessionID)
 		s.fixSessions = maps.Clone(s.fixSessions)
-		for lineage, fixSession := range s.fixSessions {
+		for worktreeKey, fixSession := range s.fixSessions {
 			if fixSession.SessionID == sessionID {
-				delete(s.fixSessions, lineage)
+				delete(s.fixSessions, worktreeKey)
 			}
 		}
 	}

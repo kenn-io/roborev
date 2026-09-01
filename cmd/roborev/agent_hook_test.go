@@ -218,7 +218,7 @@ func TestAgentHookRunSupportsLegacyProfilelessRegistration(t *testing.T) {
 
 	require.NoError(t, cmd.Execute())
 	assert.Equal(t, "legacy-1", got.Event.SessionID)
-	assert.Equal(t, "legacy", got.Agent)
+	assert.Equal(t, agenthook.AgentLegacy, got.Agent)
 	var output map[string]any
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &output))
 	reason, ok := output["reason"].(string)
@@ -500,7 +500,7 @@ func TestRunAgentHookCursorSuppressesUnsupportedControlOutput(t *testing.T) {
 	assert.Equal(t, agenthook.DefaultTurnThreshold, got.Threshold)
 	assert.Equal(t, agenthook.DefaultCommitThreshold, got.CommitThreshold)
 	assert.Equal(t, agenthook.DefaultFailedReviewThreshold, got.FailedReviewThreshold)
-	assert.Equal(t, "cursor", got.Agent)
+	assert.Equal(t, kitagenthook.AgentCursor, got.Agent)
 }
 
 func TestRunAgentHookHermesDefersPostToolReminder(t *testing.T) {
@@ -529,7 +529,7 @@ func TestRunAgentHookHermesDefersPostToolReminder(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.True(t, got.DeferPostToolReminder)
-	assert.Equal(t, "hermes", got.Agent)
+	assert.Equal(t, kitagenthook.AgentHermes, got.Agent)
 	assert.JSONEq(t, `{}`, stdout.String())
 }
 
@@ -589,7 +589,7 @@ func TestRunAgentHookPreservesNormalizedEventFields(t *testing.T) {
 
 			require.NoError(t, err)
 			assert.Equal(t, "/repo", got.Event.CWD)
-			assert.Equal(t, "claude", got.Agent)
+			assert.Equal(t, kitagenthook.AgentClaude, got.Agent)
 			tt.check(t, got.Event)
 		})
 	}
