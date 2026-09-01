@@ -12,12 +12,14 @@ import (
 	"path/filepath"
 	"strings"
 	"testing"
+	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 	kitagenthook "go.kenn.io/kit/agenthook"
 
 	"go.kenn.io/roborev/internal/agenthook"
+	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/skills"
 )
 
@@ -59,6 +61,67 @@ func TestPostAgentHookUsesRegularDaemonEndpoint(t *testing.T) {
 	assert.True(t, response.Triggered)
 }
 
+func TestPostAgentHookFixDoneUsesRegularDaemonEndpoint(t *testing.T) {
+	fixSessionID := uuid.MustParse("00000000-0000-4000-8000-000000000001")
+	var gotPath string
+	var gotRequest daemon.AgentHookFixDoneRequest
+	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		gotPath = r.URL.Path
+		assert.NoError(t, json.NewDecoder(r.Body).Decode(&gotRequest))
+		_ = json.NewEncoder(w).Encode(map[string]any{
+			"fix_session": agenthook.FixSession{ID: fixSessionID},
+		})
+	}))
+	t.Cleanup(server.Close)
+
+	completed, err := postAgentHookFixDoneRequest(
+		context.Background(), strings.TrimPrefix(server.URL, "http://"), fixSessionID,
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, "/api/agent-hook/fix-done", gotPath)
+	assert.Equal(t, fixSessionID, gotRequest.FixSessionID)
+	assert.Equal(t, fixSessionID, completed.ID)
+}
+
+func TestRunAgentHookFixDonePostsUUIDAndPrintsCompletion(t *testing.T) {
+	fixSessionID := uuid.MustParse("00000000-0000-4000-8000-000000000001")
+	originalPost := postAgentHookFixDone
+	originalEnsure := agentHookEnsureDaemon
+	var got uuid.UUID
+	postAgentHookFixDone = func(_ context.Context, _ string, id uuid.UUID) (agenthook.FixSession, error) {
+		got = id
+		return agenthook.FixSession{ID: id}, nil
+	}
+	agentHookEnsureDaemon = func() error { return nil }
+	t.Cleanup(func() {
+		postAgentHookFixDone = originalPost
+		agentHookEnsureDaemon = originalEnsure
+	})
+
+	var stdout bytes.Buffer
+	err := runAgentHookFixDone(context.Background(), fixSessionID.String(), &stdout)
+
+	require.NoError(t, err)
+	assert.Equal(t, fixSessionID, got)
+	assert.Equal(t, "Completed Agent Hook fix session "+fixSessionID.String()+".\n", stdout.String())
+}
+
+func TestRunAgentHookFixDoneRejectsMalformedUUIDBeforeDaemonStart(t *testing.T) {
+	originalEnsure := agentHookEnsureDaemon
+	ensureCalled := false
+	agentHookEnsureDaemon = func() error {
+		ensureCalled = true
+		return nil
+	}
+	t.Cleanup(func() { agentHookEnsureDaemon = originalEnsure })
+
+	err := runAgentHookFixDone(context.Background(), "not-a-uuid", io.Discard)
+
+	require.ErrorContains(t, err, "parse fix session ID")
+	assert.False(t, ensureCalled)
+}
+
 func TestRunAgentHookUsesConfiguredRegularDaemonEndpoint(t *testing.T) {
 	var gotPath string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
@@ -94,6 +157,11 @@ func TestManualAgentHookCommandsEnsureDaemon(t *testing.T) {
 		{name: "status", run: func() error { return runAgentHookStatus(io.Discard) }},
 		{name: "reset", run: func() error {
 			return runAgentHookReset(agenthook.ResetOptions{All: true}, "", io.Discard)
+		}},
+		{name: "fix done", run: func() error {
+			return runAgentHookFixDone(
+				context.Background(), "00000000-0000-4000-8000-000000000001", io.Discard,
+			)
 		}},
 	}
 	for _, tt := range tests {
@@ -144,6 +212,7 @@ func TestAgentHookRunSupportsLegacyProfilelessRegistration(t *testing.T) {
 
 	require.NoError(t, cmd.Execute())
 	assert.Equal(t, "legacy-1", got.Event.SessionID)
+	assert.Equal(t, "legacy", got.Agent)
 	var output map[string]any
 	require.NoError(t, json.Unmarshal(stdout.Bytes(), &output))
 	reason, ok := output["reason"].(string)
@@ -185,6 +254,93 @@ func TestLegacyAndGrokAgentHooksAppendFixGuidelines(t *testing.T) {
 			assert.True(t, strings.HasSuffix(strings.TrimSpace(reason), "Verify before editing."))
 		})
 	}
+}
+
+func TestAgentHookOutputsIncludeFixSessionCompletionCommand(t *testing.T) {
+	fixSessionID := uuid.MustParse("00000000-0000-4000-8000-000000000001")
+	command := "roborev agent-hook fix-done " + fixSessionID.String()
+	originalPost := postAgentHook
+	var gotAgent string
+	postAgentHook = func(_ context.Context, _ string, request agenthook.Request) (agenthook.Response, error) {
+		gotAgent = request.Agent
+		return agenthook.Response{
+			Triggered: true, Reason: "Resolve reviews.", FixSessionID: new(fixSessionID),
+		}, nil
+	}
+	t.Cleanup(func() { postAgentHook = originalPost })
+
+	for _, tc := range []struct {
+		name      string
+		wantAgent string
+		run       func(io.Reader, io.Writer) error
+	}{
+		{
+			name: "typed", wantAgent: "qwen",
+			run: func(stdin io.Reader, stdout io.Writer) error {
+				return runAgentHook(kitagenthook.AgentQwen, agenthook.DefaultOptions(), stdin, stdout, io.Discard)
+			},
+		},
+		{
+			name: "grok", wantAgent: "grok",
+			run: func(stdin io.Reader, stdout io.Writer) error {
+				return runGrokAgentHook(agenthook.DefaultOptions(), stdin, stdout, io.Discard)
+			},
+		},
+		{
+			name: "legacy", wantAgent: "legacy",
+			run: func(stdin io.Reader, stdout io.Writer) error {
+				return runLegacyAgentHook(
+					context.Background(), agenthook.DefaultOptions(), stdin, stdout, io.Discard,
+				)
+			},
+		},
+		{
+			name: "deferred Hermes Stop", wantAgent: "hermes",
+			run: func(stdin io.Reader, stdout io.Writer) error {
+				return runAgentHook(kitagenthook.AgentHermes, agenthook.DefaultOptions(), stdin, stdout, io.Discard)
+			},
+		},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			var stdout bytes.Buffer
+			err := tc.run(
+				strings.NewReader(`{"session_id":"s1","hook_event_name":"Stop"}`),
+				&stdout,
+			)
+			require.NoError(t, err)
+			assert.Equal(t, tc.wantAgent, gotAgent)
+			assert.Equal(t, 1, strings.Count(stdout.String(), command))
+		})
+	}
+}
+
+func TestOwnerStopOutputSkipsGuidelinesAndSkillWarnings(t *testing.T) {
+	t.Setenv("CODEX_HOME", t.TempDir())
+	fixSessionID := uuid.MustParse("00000000-0000-4000-8000-000000000001")
+	command := "roborev agent-hook fix-done " + fixSessionID.String()
+	originalPost := postAgentHook
+	postAgentHook = func(context.Context, string, agenthook.Request) (agenthook.Response, error) {
+		return agenthook.Response{
+			Triggered: true, TriggeredBy: "fix_session",
+			Reason:       "Finish the current Agent Hook fix, then run `" + command + "`.",
+			FixSessionID: new(fixSessionID),
+		}, nil
+	}
+	t.Cleanup(func() { postAgentHook = originalPost })
+	opts := agenthook.DefaultOptions()
+	opts.FixGuidelines = "Verify before editing."
+
+	var stdout bytes.Buffer
+	err := runAgentHook(
+		kitagenthook.AgentCodex, opts,
+		strings.NewReader(`{"session_id":"s1","hook_event_name":"Stop"}`),
+		&stdout, io.Discard,
+	)
+
+	require.NoError(t, err)
+	assert.Equal(t, 1, strings.Count(stdout.String(), command))
+	assert.NotContains(t, stdout.String(), "Verify before editing.")
+	assert.NotContains(t, stdout.String(), "Warning:")
 }
 
 func TestAgentHookRemovedFlagsAreRejected(t *testing.T) {
@@ -396,6 +552,7 @@ func TestRunAgentHookCursorSuppressesUnsupportedControlOutput(t *testing.T) {
 	assert.Equal(t, agenthook.DefaultTurnThreshold, got.Threshold)
 	assert.Equal(t, agenthook.DefaultCommitThreshold, got.CommitThreshold)
 	assert.Equal(t, agenthook.DefaultFailedReviewThreshold, got.FailedReviewThreshold)
+	assert.Equal(t, "cursor", got.Agent)
 }
 
 func TestRunAgentHookHermesDefersPostToolReminder(t *testing.T) {
@@ -424,6 +581,7 @@ func TestRunAgentHookHermesDefersPostToolReminder(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.True(t, got.DeferPostToolReminder)
+	assert.Equal(t, "hermes", got.Agent)
 	assert.JSONEq(t, `{}`, stdout.String())
 }
 
@@ -483,6 +641,7 @@ func TestRunAgentHookPreservesNormalizedEventFields(t *testing.T) {
 
 			require.NoError(t, err)
 			assert.Equal(t, "/repo", got.Event.CWD)
+			assert.Equal(t, "claude", got.Agent)
 			tt.check(t, got.Event)
 		})
 	}

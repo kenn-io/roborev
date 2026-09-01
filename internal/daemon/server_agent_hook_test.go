@@ -8,6 +8,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -20,9 +21,15 @@ import (
 func TestAgentHookSessionsLoadsExistingSnapshot(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	require.NoError(t, os.MkdirAll(filepath.Dir(agenthook.StatePath()), 0o700))
-	body, err := json.Marshal(agenthook.Snapshot{Sessions: map[string]agenthook.SessionState{
-		"session-1": {Count: 7, ReminderPromptCount: 2},
-	}})
+	fixSessionID := uuid.MustParse("00000000-0000-4000-8000-000000000001")
+	body, err := json.Marshal(agenthook.Snapshot{
+		Sessions: map[string]agenthook.SessionState{
+			"session-1": {Count: 7, ReminderPromptCount: 2},
+		},
+		FixSessions: map[string]agenthook.FixSession{
+			"/repo\x00main": {ID: fixSessionID, Agent: "claude", SessionID: "session-1"},
+		},
+	})
 	require.NoError(t, err)
 	require.NoError(t, os.WriteFile(agenthook.StatePath(), body, 0o600))
 	server, _, _ := newTestServer(t)
@@ -34,6 +41,61 @@ func TestAgentHookSessionsLoadsExistingSnapshot(t *testing.T) {
 	require.NoError(t, json.Unmarshal(got.Body.Bytes(), &output.Body))
 	assert.Equal(t, 7, output.Body.Sessions["session-1"].Count)
 	assert.Equal(t, 2, output.Body.Sessions["session-1"].ReminderPromptCount)
+	assert.Equal(t, fixSessionID, output.Body.FixSessions["/repo\x00main"].ID)
+}
+
+func TestAgentHookFixDoneCompletesAndRepeatsFixSession(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	require.NoError(t, os.MkdirAll(filepath.Dir(agenthook.StatePath()), 0o700))
+	fixSessionID := uuid.MustParse("00000000-0000-4000-8000-000000000001")
+	body, err := json.Marshal(agenthook.Snapshot{
+		Sessions: map[string]agenthook.SessionState{},
+		FixSessions: map[string]agenthook.FixSession{
+			"/repo\x00main": {
+				ID: fixSessionID, Agent: "claude", SessionID: "session-1",
+				StartedAt: time.Now().Add(-time.Hour), ExpiresAt: time.Now().Add(11 * time.Hour),
+			},
+		},
+	})
+	require.NoError(t, err)
+	require.NoError(t, os.WriteFile(agenthook.StatePath(), body, 0o600))
+	server, _, _ := newTestServer(t)
+	requestBody, err := json.Marshal(AgentHookFixDoneRequest{FixSessionID: fixSessionID})
+	require.NoError(t, err)
+
+	first := serveHuma(t, server, http.MethodPost, "/api/agent-hook/fix-done", requestBody)
+	require.Equal(t, http.StatusOK, first.Code, first.Body.String())
+	var firstOutput AgentHookFixDoneOutput
+	require.NoError(t, json.Unmarshal(first.Body.Bytes(), &firstOutput.Body))
+	assert.Equal(t, fixSessionID, firstOutput.Body.FixSession.ID)
+	assert.NotZero(t, firstOutput.Body.FixSession.CompletedAt)
+
+	repeated := serveHuma(t, server, http.MethodPost, "/api/agent-hook/fix-done", requestBody)
+	require.Equal(t, http.StatusOK, repeated.Code, repeated.Body.String())
+	var repeatedOutput AgentHookFixDoneOutput
+	require.NoError(t, json.Unmarshal(repeated.Body.Bytes(), &repeatedOutput.Body))
+	assert.Equal(t, firstOutput.Body.FixSession.CompletedAt, repeatedOutput.Body.FixSession.CompletedAt)
+}
+
+func TestAgentHookFixDoneRejectsUnknownAndZeroIDs(t *testing.T) {
+	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
+	server, _, _ := newTestServer(t)
+
+	for _, tc := range []struct {
+		name string
+		id   uuid.UUID
+		want int
+	}{
+		{name: "zero", id: uuid.Nil(), want: http.StatusBadRequest},
+		{name: "unknown", id: uuid.MustParse("00000000-0000-4000-8000-000000000009"), want: http.StatusNotFound},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			body, err := json.Marshal(AgentHookFixDoneRequest{FixSessionID: tc.id})
+			require.NoError(t, err)
+			response := serveHuma(t, server, http.MethodPost, "/api/agent-hook/fix-done", body)
+			assert.Equal(t, tc.want, response.Code, response.Body.String())
+		})
+	}
 }
 
 func TestAgentHookEventUsesDatabaseReviewState(t *testing.T) {

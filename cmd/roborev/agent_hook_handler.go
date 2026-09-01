@@ -48,6 +48,7 @@ func (h roborevAgentHookHandler) request(
 		}
 	}
 	return agenthook.Request{
+		Agent:                 string(h.agent),
 		Event:                 input,
 		Threshold:             h.opts.TurnThreshold,
 		CommitThreshold:       h.opts.CommitThreshold,
@@ -99,7 +100,9 @@ func (h roborevAgentHookHandler) PostToolUse(
 	return kitagenthook.PostToolUseOutput{
 		AdditionalContext: prependAgentHookFixSkillWarning(
 			h.agent,
-			agenthook.PostToolUseAdditionalContextWithFixGuidelines(resp.Reason, h.opts.FixGuidelines),
+			agenthook.PostToolUseAdditionalContextWithFixGuidelines(
+				agenthook.InstructionWithFixSessionCompletion(resp), h.opts.FixGuidelines,
+			),
 		),
 	}, nil
 }
@@ -118,11 +121,19 @@ func (h roborevAgentHookHandler) Stop(
 	if !ok || !resp.Triggered || h.agent == kitagenthook.AgentCursor {
 		return kitagenthook.StopOutput{}, nil
 	}
+	if resp.TriggeredBy == "fix_session" {
+		return kitagenthook.StopOutput{
+			Decision: kitagenthook.DecisionBlock,
+			Reason:   agenthook.StopReason(resp.Reason),
+		}, nil
+	}
 	return kitagenthook.StopOutput{
 		Decision: kitagenthook.DecisionBlock,
 		Reason: prependAgentHookFixSkillWarning(
 			h.agent,
-			agenthook.StopReasonWithFixGuidelines(resp.Reason, h.opts.FixGuidelines),
+			agenthook.StopReasonWithFixGuidelines(
+				agenthook.InstructionWithFixSessionCompletion(resp), h.opts.FixGuidelines,
+			),
 		),
 	}, nil
 }

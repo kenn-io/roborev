@@ -457,6 +457,7 @@ func (s *Server) registerAgentHookRoutes(mux *http.ServeMux) {
 			o.MaxBodyBytes = -1
 		})
 	huma.Post(api, "/api/agent-hook/reset", s.humaAgentHookReset)
+	huma.Post(api, "/api/agent-hook/fix-done", s.humaAgentHookFixDone)
 }
 
 // OpenAPISpec returns the daemon OpenAPI document generated from the Huma

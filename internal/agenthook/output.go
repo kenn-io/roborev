@@ -30,29 +30,48 @@ func BuildOutput(input Input, resp Response) map[string]any {
 		return map[string]any{
 			"hookSpecificOutput": map[string]any{
 				"hookEventName":     "PostToolUse",
-				"additionalContext": PostToolUseAdditionalContext(resp.Reason),
+				"additionalContext": PostToolUseAdditionalContext(InstructionWithFixSessionCompletion(resp)),
 			},
 		}
 	}
-	return map[string]any{"decision": "block", "reason": StopReason(resp.Reason)}
+	return map[string]any{
+		"decision": "block",
+		"reason":   StopReason(InstructionWithFixSessionCompletion(resp)),
+	}
 }
 
 func BuildOutputWithFixGuidelines(input Input, resp Response, guidelines string) map[string]any {
 	if !resp.Triggered {
 		return BuildOutput(input, resp)
 	}
+	if resp.TriggeredBy == "fix_session" {
+		return BuildOutput(input, resp)
+	}
+	instruction := InstructionWithFixSessionCompletion(resp)
 	if input.HookEventName == "PostToolUse" {
 		return map[string]any{
 			"hookSpecificOutput": map[string]any{
 				"hookEventName":     "PostToolUse",
-				"additionalContext": PostToolUseAdditionalContextWithFixGuidelines(resp.Reason, guidelines),
+				"additionalContext": PostToolUseAdditionalContextWithFixGuidelines(instruction, guidelines),
 			},
 		}
 	}
 	return map[string]any{
 		"decision": "block",
-		"reason":   StopReasonWithFixGuidelines(resp.Reason, guidelines),
+		"reason":   StopReasonWithFixGuidelines(instruction, guidelines),
 	}
+}
+
+func InstructionWithFixSessionCompletion(resp Response) string {
+	instruction := resolvedInstruction(resp.Reason)
+	if resp.FixSessionID == nil || resp.TriggeredBy == "fix_session" {
+		return instruction
+	}
+	command := "roborev agent-hook fix-done " + resp.FixSessionID.String()
+	if strings.Contains(instruction, command) {
+		return instruction
+	}
+	return instruction + "\n\nAfter completing this Agent Hook fix, run `" + command + "`."
 }
 
 func resolvedInstruction(reason string) string {

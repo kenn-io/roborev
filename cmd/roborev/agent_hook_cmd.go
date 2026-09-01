@@ -8,6 +8,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/spf13/cobra"
 	kitagenthook "go.kenn.io/kit/agenthook"
@@ -27,8 +28,37 @@ func agentHookCmd() *cobra.Command {
 		agentHookDumpCmd(),
 		agentHookStatusCmd(),
 		agentHookResetCmd(),
+		agentHookFixDoneCmd(),
 	)
 	return cmd
+}
+
+func agentHookFixDoneCmd() *cobra.Command {
+	return &cobra.Command{
+		Use:                   "fix-done <fix-session-id>",
+		Short:                 "Complete an Agent Hook fix session",
+		Args:                  cobra.ExactArgs(1),
+		DisableFlagsInUseLine: true,
+		RunE: func(cmd *cobra.Command, args []string) error {
+			return runAgentHookFixDone(cmd.Context(), args[0], cmd.OutOrStdout())
+		},
+	}
+}
+
+func runAgentHookFixDone(ctx context.Context, rawID string, stdout io.Writer) error {
+	fixSessionID, err := uuid.Parse(rawID)
+	if err != nil {
+		return fmt.Errorf("parse fix session ID: %w", err)
+	}
+	if err := agentHookEnsureDaemon(); err != nil {
+		return err
+	}
+	fixSession, err := postAgentHookFixDone(ctx, "", fixSessionID)
+	if err != nil {
+		return err
+	}
+	_, err = fmt.Fprintf(stdout, "Completed Agent Hook fix session %s.\n", fixSession.ID)
+	return err
 }
 
 func agentHookRunCmd() *cobra.Command {
@@ -85,6 +115,7 @@ func runGrokAgentHook(opts agenthook.Options, stdin io.Reader, stdout, stderr io
 		return fmt.Errorf("decode Grok Build input: missing session_id")
 	}
 	resp, err := postAgentHook(context.Background(), opts.RoborevServerAddr, agenthook.Request{
+		Agent:                 string(agenthook.AgentGrok),
 		Event:                 input,
 		Threshold:             opts.TurnThreshold,
 		CommitThreshold:       opts.CommitThreshold,
@@ -96,6 +127,10 @@ func runGrokAgentHook(opts agenthook.Options, stdin io.Reader, stdout, stderr io
 		return json.NewEncoder(stdout).Encode(map[string]any{})
 	}
 	if resp.Triggered {
+		if resp.TriggeredBy == "fix_session" {
+			return json.NewEncoder(stdout).Encode(agenthook.BuildOutput(input, resp))
+		}
+		resp.Reason = agenthook.InstructionWithFixSessionCompletion(resp)
 		resp.Reason = prependAgentHookFixSkillWarning(
 			kitagenthook.Agent("grok"),
 			agenthook.StopReasonWithFixGuidelines(resp.Reason, opts.FixGuidelines),
@@ -119,6 +154,7 @@ func runLegacyAgentHook(
 		return fmt.Errorf("agent-hook input missing session_id")
 	}
 	resp, err := postAgentHook(ctx, opts.RoborevServerAddr, agenthook.Request{
+		Agent:                 "legacy",
 		Event:                 input,
 		Threshold:             opts.TurnThreshold,
 		CommitThreshold:       opts.CommitThreshold,
@@ -130,7 +166,12 @@ func runLegacyAgentHook(
 		return json.NewEncoder(stdout).Encode(map[string]any{})
 	}
 	if resp.Triggered {
-		instruction := agenthook.StopReasonWithFixGuidelines(resp.Reason, opts.FixGuidelines)
+		if resp.TriggeredBy == "fix_session" {
+			return json.NewEncoder(stdout).Encode(agenthook.BuildOutput(input, resp))
+		}
+		instruction := agenthook.StopReasonWithFixGuidelines(
+			agenthook.InstructionWithFixSessionCompletion(resp), opts.FixGuidelines,
+		)
 		resp.Reason = fmt.Sprintf(
 			"Warning: this legacy Agent Hook cannot verify the installed roborev-fix skill. "+
 				"Run 'roborev agent-hook install' before following this reminder.\n\n%s",

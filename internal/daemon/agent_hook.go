@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/danielgtaylor/huma/v2"
 	gitrepo "go.kenn.io/kit/git/repo"
@@ -124,7 +125,32 @@ func (s *Server) humaAgentHookSessions(
 	}
 	resp := &AgentHookSessionsOutput{}
 	resp.Body.Sessions = state.Sessions()
+	resp.Body.FixSessions = state.FixSessions()
 	return resp, nil
+}
+
+func (s *Server) humaAgentHookFixDone(
+	_ context.Context, input *AgentHookFixDoneInput,
+) (*AgentHookFixDoneOutput, error) {
+	state, err := s.agentHookStore()
+	if err != nil {
+		return nil, err
+	}
+	if input.Body.FixSessionID == uuid.Nil() {
+		return nil, huma.Error400BadRequest("fix_session_id is required")
+	}
+	fixSession, err := state.CompleteFixSession(input.Body.FixSessionID)
+	if errors.Is(err, agenthook.ErrFixSessionNotFound) {
+		return nil, huma.Error404NotFound("Agent Hook fix session not found")
+	}
+	if err != nil {
+		return nil, huma.Error500InternalServerError(
+			fmt.Sprintf("complete Agent Hook fix session: %v", err),
+		)
+	}
+	response := &AgentHookFixDoneOutput{}
+	response.Body.FixSession = fixSession
+	return response, nil
 }
 
 func (s *Server) humaAgentHookReset(

@@ -9,6 +9,7 @@ import (
 	"net/http"
 	"strings"
 	"time"
+	"uuid"
 
 	"go.kenn.io/roborev/internal/agenthook"
 	"go.kenn.io/roborev/internal/daemon"
@@ -16,6 +17,7 @@ import (
 
 var (
 	postAgentHook         = postAgentHookRequest
+	postAgentHookFixDone  = postAgentHookFixDoneRequest
 	agentHookEnsureDaemon = ensureDaemon
 )
 
@@ -39,6 +41,29 @@ func postAgentHookRequest(
 		return agenthook.Response{}, err
 	}
 	return out, nil
+}
+
+func postAgentHookFixDoneRequest(
+	ctx context.Context,
+	addr string,
+	fixSessionID uuid.UUID,
+) (agenthook.FixSession, error) {
+	ep, err := agentHookEndpoint(addr)
+	if err != nil {
+		return agenthook.FixSession{}, err
+	}
+	body, err := doAgentHookRequest(
+		ctx, ep, http.MethodPost, "/api/agent-hook/fix-done",
+		daemon.AgentHookFixDoneRequest{FixSessionID: fixSessionID},
+	)
+	if err != nil {
+		return agenthook.FixSession{}, err
+	}
+	var output daemon.AgentHookFixDoneOutput
+	if err := json.Unmarshal(body, &output.Body); err != nil {
+		return agenthook.FixSession{}, err
+	}
+	return output.Body.FixSession, nil
 }
 
 func runAgentHookStatus(stdout io.Writer) error {
