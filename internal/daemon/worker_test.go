@@ -369,6 +369,29 @@ func TestWorkerStoresFilteredStructuredCustomReview(t *testing.T) {
 	assert.Equal(t, 0, *stored.VerdictBool)
 }
 
+func TestWorkerDoesNotCompleteReviewWithoutVerdict(t *testing.T) {
+	const agentName = "unreadable-diff-test"
+	agent.Register(&agent.FakeAgent{
+		NameStr: agentName,
+		ReviewFn: func(context.Context, string, string, string, io.Writer) (string, error) {
+			return "I am unable to read the diff file because it is ignored by configured ignore patterns.", nil
+		},
+	})
+	t.Cleanup(func() { agent.Unregister(agentName) })
+
+	tc := newWorkerTestContext(t, 1)
+	sha := testutil.GetHeadSHA(t, tc.TmpDir)
+	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, agentName)
+	job = tc.exhaustRetries(t, job, testWorkerID, agentName)
+
+	tc.Pool.processJob(testWorkerID, job)
+
+	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusFailed)
+	assert.Contains(t, updated.Error, "review produced no recognizable verdict")
+	_, err := tc.DB.GetReviewByJobID(job.ID)
+	require.ErrorIs(t, err, sql.ErrNoRows)
+}
+
 func TestWorkerUsesConfiguredSeverityForStructuredVerdict(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	agentName := "structured-review-config-severity-test"

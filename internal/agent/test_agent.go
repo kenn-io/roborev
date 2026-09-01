@@ -44,7 +44,7 @@ type testAgentState struct {
 // NewTestAgent creates a new test agent with its own per-instance counter.
 func NewTestAgent() *TestAgent {
 	return &TestAgent{
-		Output:    "Test review output: This commit looks good. No issues found.",
+		Output:    "No issues found. Test review output: this commit looks good.",
 		Reasoning: ReasoningStandard,
 		state:     &testAgentState{},
 	}

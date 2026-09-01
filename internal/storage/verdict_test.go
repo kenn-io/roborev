@@ -608,26 +608,40 @@ var verdictTests = []verdictTestCase{
 		want: VerdictPass,
 	},
 
-	// Failures should come from clear structured findings or from the absence of a
-	// clear pass phrase. We intentionally avoid sentence-level caveat parsing.
+	// Output without a clear pass or fail signal did not produce a review verdict.
 	{
-		name:   "FailFallback/empty output",
+		name:   "Unknown/empty output",
 		output: "",
-		want:   VerdictFail,
+		want:   VerdictUnknown,
 	},
 	{
-		name:   "FailFallback/ambiguous language",
+		name:   "Unknown/ambiguous language",
 		output: "The commit looks mostly fine but could use some cleanup.",
-		want:   VerdictFail,
+		want:   VerdictUnknown,
 	},
 	{
-		name:   "FailFallback/narrative front matter without final verdict defaults to fail",
+		name:   "Unknown/narrative front matter without final verdict",
 		output: "Reviewing the diff in context first. I'm opening the touched storage parsing code and adjacent tests to check for regressions.",
+		want:   VerdictUnknown,
+	},
+	{
+		name:   "Unknown/unstructured issue statement",
+		output: "The code has issues.",
+		want:   VerdictUnknown,
+	},
+	{
+		name:   "Unknown/diff could not be read",
+		output: "I am unable to read the diff file because it is ignored by configured ignore patterns.",
+		want:   VerdictUnknown,
+	},
+	{
+		name:   "ExplicitFail/plain verdict",
+		output: "Verdict: FAIL",
 		want:   VerdictFail,
 	},
 	{
-		name:   "FailFallback/unstructured issue statement defaults to fail",
-		output: "The code has issues.",
+		name:   "ExplicitFail/markdown verdict",
+		output: "## Verdict: Fail",
 		want:   VerdictFail,
 	},
 

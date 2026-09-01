@@ -210,7 +210,7 @@ func TestWait_Scenarios(t *testing.T) {
 			args: []string{"--sha", "HEAD", "--quiet"},
 			mock: mockConfig{
 				Jobs:   []storage.ReviewJob{{ID: 1, Agent: "test", Status: "done"}},
-				Review: &storage.Review{ID: 1, JobID: 1, Agent: "test", Output: "Found 2 issues:\n1. Bug\n2. Missing check"},
+				Review: &storage.Review{ID: 1, JobID: 1, Agent: "test", Output: "Found 2 issues:\n1. Bug\n2. Missing check", VerdictBool: new(0)},
 			},
 			expectErr:     true,
 			expectErrCode: 1,
@@ -312,7 +312,7 @@ func TestWaitMultipleJobIDsOneFails(t *testing.T) {
 		},
 		20: {
 			job:    storage.ReviewJob{ID: 20, Agent: "test", Status: "done"},
-			review: &storage.Review{ID: 2, JobID: 20, Agent: "test", Output: "Found 1 issue:\n1. Bug"},
+			review: &storage.Review{ID: 2, JobID: 20, Agent: "test", Output: "Found 1 issue:\n1. Bug", VerdictBool: new(0)},
 		},
 	})
 	newWaitEnv(t, handler)
@@ -333,7 +333,7 @@ func TestWaitMultipleJobIDsOneFailsReportsOutput(t *testing.T) {
 		},
 		20: {
 			job:    storage.ReviewJob{ID: 20, Agent: "test", Status: "done"},
-			review: &storage.Review{ID: 2, JobID: 20, Agent: "test", Output: "Found 1 issue:\n1. Bug"},
+			review: &storage.Review{ID: 2, JobID: 20, Agent: "test", Output: "Found 1 issue:\n1. Bug", VerdictBool: new(0)},
 		},
 	})
 	newWaitEnv(t, handler)

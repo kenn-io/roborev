@@ -180,7 +180,7 @@ func TestRunBatch(t *testing.T) {
 			agents:      []string{"test"},
 			reviewTypes: []string{"security"},
 			registry: map[string]agent.Agent{
-				"test": &mockAgent{name: "test", output: "looks good"},
+				"test": &mockAgent{name: "test", output: "No issues found. looks good."},
 			},
 			checks: []resultCheck{
 				{agent: "test", reviewType: "security", status: ResultDone, outContain: "looks good"},
@@ -191,7 +191,7 @@ func TestRunBatch(t *testing.T) {
 			agents:      []string{"test"},
 			reviewTypes: []string{"security", "default"},
 			registry: map[string]agent.Agent{
-				"test": &mockAgent{name: "test", output: "ok"},
+				"test": &mockAgent{name: "test", output: "No issues found."},
 			},
 			checks: []resultCheck{
 				{agent: "test", reviewType: "security", status: ResultDone},
@@ -518,7 +518,7 @@ func TestRunBatch_WorkflowModelResolution(t *testing.T) {
 		AgentRegistry: map[string]agent.Agent{
 			"model-test-agent": &mockAgent{
 				name:   "model-test-agent",
-				output: "ok",
+				output: "No issues found.",
 			},
 		},
 	}
@@ -624,7 +624,7 @@ func writeFakeCodex(t *testing.T) (cmdPath string, argsPath string) {
 		"#!/bin/sh",
 		"case \"$*\" in *--help*) echo 'usage --sandbox --ignore-user-config'; exit 0;; esac",
 		fmt.Sprintf("echo \"$@\" > %q", argsPath),
-		"echo '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"ok\"}}'",
+		"echo '{\"type\":\"item.completed\",\"item\":{\"type\":\"agent_message\",\"text\":\"No issues found.\"}}'",
 	}, "\n") + "\n"
 
 	cmdPath = filepath.Join(dir, "codex")
@@ -643,7 +643,7 @@ func (p *promptCapture) Review(
 	_ context.Context, _, _, prompt string, _ io.Writer,
 ) (string, error) {
 	p.lastPrompt = prompt
-	return "ok", nil
+	return "No issues found.", nil
 }
 
 func (p *promptCapture) WithReasoning(
@@ -680,7 +680,7 @@ func TestRunBatch_BackupKeepsOwnModelWhenBackupModelUnset(t *testing.T) {
 			// the configured preferred agent name distinct.
 			"primary-agent": &mockAgent{
 				name:   "backup-agent",
-				output: "ok",
+				output: "No issues found.",
 			},
 		},
 	}
@@ -714,7 +714,7 @@ func TestRunBatchIgnoresMalformedRepoConfig(t *testing.T) {
 		AgentRegistry: map[string]agent.Agent{
 			"batch-agent": &mockAgent{
 				name:   "batch-agent",
-				output: "ok",
+				output: "No issues found.",
 			},
 		},
 	}

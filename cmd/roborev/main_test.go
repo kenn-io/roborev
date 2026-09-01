@@ -212,7 +212,7 @@ func TestRunRefineSurfacesResponseErrors(t *testing.T) {
 	md := NewMockDaemon(t, MockRefineHooks{
 		OnReview: func(w http.ResponseWriter, r *http.Request, state *mockRefineState) bool {
 			json.NewEncoder(w).Encode(storage.Review{
-				ID: 1, JobID: 1, Output: "**Bug found**: fail", Closed: false,
+				ID: 1, JobID: 1, Output: "**Bug found**: fail", VerdictBool: new(0), Closed: false,
 			})
 			return true
 		},
@@ -301,7 +301,7 @@ func TestRunRefineQuietNonTTYTimerOutput(t *testing.T) {
 	defer md.Close()
 
 	md.State.reviews[headSHA] = &storage.Review{
-		ID: 1, JobID: 42, Output: "**Bug found**: fail", Closed: false,
+		ID: 1, JobID: 42, Output: "**Bug found**: fail", VerdictBool: new(0), Closed: false,
 	}
 
 	origIsTerminal := isTerminal
@@ -326,7 +326,7 @@ func TestRunRefineStopsLiveTimerOnAgentError(t *testing.T) {
 	defer md.Close()
 
 	md.State.reviews[headSHA] = &storage.Review{
-		ID: 1, JobID: 7, Output: "**Bug found**: fail", Closed: false,
+		ID: 1, JobID: 7, Output: "**Bug found**: fail", VerdictBool: new(0), Closed: false,
 	}
 
 	origIsTerminal := isTerminal
@@ -364,7 +364,7 @@ func TestRefineLoopFindFailedReviewPath(t *testing.T) {
 			ID: 1, JobID: 1, Output: "No issues found. LGTM!",
 		}
 		client.reviews["commit2sha"] = &storage.Review{
-			ID: 2, JobID: 2, Output: "**Bug**: Missing error handling in foo.go:42",
+			ID: 2, JobID: 2, Output: "**Bug**: Missing error handling in foo.go:42", VerdictBool: new(0),
 		}
 
 		commits := []string{"commit1sha", "commit2sha", "commit3sha"}
@@ -381,7 +381,7 @@ func TestRefineLoopFindFailedReviewPath(t *testing.T) {
 		client := newMockDaemonClient()
 		// Failed but already closed
 		client.reviews["commit1sha"] = &storage.Review{
-			ID: 1, JobID: 1, Output: "**Bug**: error", Closed: true,
+			ID: 1, JobID: 1, Output: "**Bug**: error", VerdictBool: new(0), Closed: true,
 		}
 
 		commits := []string{"commit1sha"}
