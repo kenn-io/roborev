@@ -233,7 +233,7 @@ func TestAgentHookRunRejectsOutdatedRegistration(t *testing.T) {
 	require.EqualError(
 		t,
 		err,
-		"agent hook registration is outdated; run 'roborev agent-hook install'",
+		"agent hook registration is outdated; remove this hook from your agent config, then run 'roborev agent-hook install'",
 	)
 }
 

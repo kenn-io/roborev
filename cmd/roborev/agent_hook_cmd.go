@@ -79,7 +79,7 @@ func agentHookRunCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			if source != agenthook.RegistrationSource {
 				return fmt.Errorf(
-					"agent hook registration is outdated; run 'roborev agent-hook install'",
+					"agent hook registration is outdated; remove this hook from your agent config, then run 'roborev agent-hook install'",
 				)
 			}
 			rawAgent := strings.ToLower(strings.TrimSpace(agent))

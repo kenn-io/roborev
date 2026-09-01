@@ -174,12 +174,15 @@ marker:
 roborev agent-hook run --agent <profile>
 ```
 
-`run` rejects commands without the installed ownership marker and tells the user
-to rerun `roborev agent-hook install`. This stops obsolete registrations instead
-of continuing to support their runtime behavior. Current commands require
-`--agent`, read one finite native hook payload from stdin, pass it through kit's
-typed dispatcher, post a normalized request to the regular roborev daemon, and
-let kit encode the native response.
+`run` rejects commands without the installed ownership marker. If this happens,
+edit the agent's hook config and remove the `roborev agent-hook run` command
+that does not contain `--source=roborev-agent-hook`. Then run
+`roborev agent-hook install`. The installer does not keep rules for recognizing
+or removing old registrations.
+
+Current commands require `--agent`, read one finite native hook payload from
+stdin, pass it through kit's typed dispatcher, post a normalized request to the
+regular roborev daemon, and let kit encode the native response.
 
 The regular daemon loads and persists session accounting and delivered review
 IDs at:
