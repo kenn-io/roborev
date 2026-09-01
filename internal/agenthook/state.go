@@ -56,9 +56,11 @@ type gitScope struct {
 func LoadState(reviews ReviewSource) (*StateStore, error) {
 	path := StatePath()
 	s := &StateStore{
-		path:     path,
-		sessions: map[string]SessionState{},
-		reviews:  reviews,
+		path:        path,
+		sessions:    map[string]SessionState{},
+		fixSessions: map[string]FixSession{},
+		reviews:     reviews,
+		now:         time.Now,
 	}
 	file, err := os.Open(path)
 	if errors.Is(err, os.ErrNotExist) {
@@ -75,6 +77,9 @@ func LoadState(reviews ReviewSource) (*StateStore, error) {
 	}
 	if snap.Sessions != nil {
 		s.sessions = snap.Sessions
+	}
+	if snap.FixSessions != nil {
+		s.fixSessions = snap.FixSessions
 	}
 	return s, nil
 }
@@ -101,7 +106,7 @@ func (s *StateStore) saveLocked() error {
 
 	enc := json.NewEncoder(tmp)
 	enc.SetIndent("", "  ")
-	if err := enc.Encode(Snapshot{Sessions: s.sessions}); err != nil {
+	if err := enc.Encode(Snapshot{Sessions: s.sessions, FixSessions: s.fixSessions}); err != nil {
 		_ = tmp.Close()
 		return fmt.Errorf("encode agent hook state: %w", err)
 	}
@@ -122,14 +127,24 @@ func (s *StateStore) saveLocked() error {
 // saveSessionLocked publishes a cloned session only when its atomic state-file
 // replacement succeeds. Callers must hold s.mu.
 func (s *StateStore) saveSessionLocked(sessionID string, state SessionState) error {
-	previous, existed := s.sessions[sessionID]
+	return s.saveSessionAndFixSessionsLocked(sessionID, state, s.fixSessions)
+}
+
+// saveSessionAndFixSessionsLocked publishes session and lineage ownership
+// together only when the state-file replacement succeeds. Callers must hold s.mu.
+func (s *StateStore) saveSessionAndFixSessionsLocked(
+	sessionID string,
+	state SessionState,
+	fixSessions map[string]FixSession,
+) error {
+	previousSessions := s.sessions
+	previousFixSessions := s.fixSessions
+	s.sessions = maps.Clone(s.sessions)
 	s.sessions[sessionID] = state
+	s.fixSessions = fixSessions
 	if err := s.saveLocked(); err != nil {
-		if existed {
-			s.sessions[sessionID] = previous
-		} else {
-			delete(s.sessions, sessionID)
-		}
+		s.sessions = previousSessions
+		s.fixSessions = previousFixSessions
 		return err
 	}
 	return nil
@@ -156,15 +171,24 @@ func (s *StateStore) Reset(sessionID string, all bool) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
-	previous := s.sessions
+	previousSessions := s.sessions
+	previousFixSessions := s.fixSessions
 	if all {
 		s.sessions = map[string]SessionState{}
+		s.fixSessions = map[string]FixSession{}
 	} else {
 		s.sessions = maps.Clone(s.sessions)
 		delete(s.sessions, sessionID)
+		s.fixSessions = maps.Clone(s.fixSessions)
+		for lineage, fixSession := range s.fixSessions {
+			if fixSession.SessionID == sessionID {
+				delete(s.fixSessions, lineage)
+			}
+		}
 	}
 	if err := s.saveLocked(); err != nil {
-		s.sessions = previous
+		s.sessions = previousSessions
+		s.fixSessions = previousFixSessions
 		return err
 	}
 	return nil

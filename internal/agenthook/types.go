@@ -7,6 +7,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"uuid"
 )
 
 type Input struct {
@@ -120,6 +121,7 @@ func (i Input) Command() string {
 }
 
 type Request struct {
+	Agent                 string `json:"agent"`
 	Event                 Input  `json:"event"`
 	Threshold             int    `json:"threshold"`
 	CommitThreshold       int    `json:"commit_threshold"`
@@ -129,18 +131,19 @@ type Request struct {
 }
 
 type Response struct {
-	SessionID             string `json:"session_id"`
-	Count                 int    `json:"count"`
-	Threshold             int    `json:"threshold"`
-	CommitCount           int    `json:"commit_count,omitempty"`
-	CommitThreshold       int    `json:"commit_threshold,omitempty"`
-	FailedReviewCount     int    `json:"failed_review_count,omitempty"`
-	FailedReviewThreshold int    `json:"failed_review_threshold,omitempty"`
-	ReminderPromptCount   int    `json:"remind_count,omitempty"`
-	Triggered             bool   `json:"triggered"`
-	TriggeredBy           string `json:"triggered_by,omitempty"`
-	Reason                string `json:"reason,omitempty"`
-	Skipped               bool   `json:"skipped,omitempty"`
+	SessionID             string     `json:"session_id"`
+	Count                 int        `json:"count"`
+	Threshold             int        `json:"threshold"`
+	CommitCount           int        `json:"commit_count,omitempty"`
+	CommitThreshold       int        `json:"commit_threshold,omitempty"`
+	FailedReviewCount     int        `json:"failed_review_count,omitempty"`
+	FailedReviewThreshold int        `json:"failed_review_threshold,omitempty"`
+	ReminderPromptCount   int        `json:"remind_count,omitempty"`
+	Triggered             bool       `json:"triggered"`
+	TriggeredBy           string     `json:"triggered_by,omitempty"`
+	Reason                string     `json:"reason,omitempty"`
+	Skipped               bool       `json:"skipped,omitempty"`
+	FixSessionID          *uuid.UUID `json:"fix_session_id,omitempty"`
 }
 
 type reviewIDSet map[int64]struct{}
@@ -235,14 +238,17 @@ type PendingReminder struct {
 }
 
 type Snapshot struct {
-	Sessions map[string]SessionState `json:"sessions"`
+	Sessions    map[string]SessionState `json:"sessions"`
+	FixSessions map[string]FixSession   `json:"fix_sessions,omitempty"`
 }
 
 type StateStore struct {
-	mu       sync.Mutex
-	path     string
-	sessions map[string]SessionState
-	reviews  ReviewSource
+	mu          sync.Mutex
+	path        string
+	sessions    map[string]SessionState
+	fixSessions map[string]FixSession
+	reviews     ReviewSource
+	now         func() time.Time
 }
 
 type ResetOptions struct {
