@@ -53,7 +53,8 @@ toggle to narrow the list. Columns can be sorted after all matching rows are
 loaded. Panel reviews appear as a synthesis row that can be expanded to show its
 individual reviewers. The Review Type column identifies standard reviews as
 `default` and shows the configured name for specialized or custom reviews. The
-detail drawer repeats that value in its header.
+detail drawer repeats that value in its header. Panel synthesis rows show
+`panel`, while expanded panel members show their configured review types.
 
 Select a row to open its detail drawer without leaving the queue. The drawer
 provides:

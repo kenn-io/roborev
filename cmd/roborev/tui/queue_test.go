@@ -673,6 +673,9 @@ func TestTUIJobCellsReviewTypeColumn(t *testing.T) {
 			assert.Equal(t, tc.want, cells[colReviewType-colRef])
 		})
 	}
+
+	panel := makeJob(2, withSynthesis("run-2", storage.PanelSummary{MembersTotal: 2}))
+	assert.Equal(t, "panel", m.jobCells(panel)[colReviewType-colRef])
 }
 
 func TestTUIJobCellsCost(t *testing.T) {
@@ -753,6 +756,30 @@ func TestTUIQueueShowsReviewTypeColumnByDefault(t *testing.T) {
 	assert.Contains(t, out, "project-conventions")
 	assert.Contains(t, out, "default")
 	assert.Contains(t, out, "def5678 [project-conventions]")
+}
+
+func TestTUIQueueKeepsIdentifyingColumnsAt80Characters(t *testing.T) {
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	m.width = 80
+	m.height = 30
+	m.jobs = []storage.ReviewJob{
+		makeJob(1,
+			withRef("abc1234"),
+			withBranch("feature"),
+			withRepoName("myrepo"),
+			withReviewType("security"),
+		),
+	}
+	m.selectedIdx = 0
+	m.selectedJobID = 1
+
+	out := stripTestANSI(m.renderQueueView())
+
+	assert.Contains(t, out, "Review Type")
+	assert.Contains(t, out, "abc1234")
+	assert.Contains(t, out, "feature")
+	assert.Contains(t, out, "myrepo")
+	assert.Contains(t, out, "security")
 }
 
 func TestTUIQueuePanelParentRendersPanelElapsedTime(t *testing.T) {

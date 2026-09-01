@@ -272,7 +272,7 @@ export function createJobsStore(opts: JobsStoreOptions) {
       case "agent":
         return job.agent;
       case "review_type":
-        return reviewTypeLabel(job.review_type);
+        return reviewTypeLabel(job.review_type, job.panel_role);
       case "elapsed":
         return getElapsedSeconds(job);
       case "cost":

@@ -187,7 +187,10 @@
             {/if}
           </span>
           <span class="review-type">
-            Review type: {reviewTypeLabel(selectedJob.review_type)}
+            Review type: {reviewTypeLabel(
+              selectedJob.review_type,
+              selectedJob.panel_role,
+            )}
           </span>
           {#if selectedJob.source === "auto_design"}
             <span class="review-type"> auto-design </span>

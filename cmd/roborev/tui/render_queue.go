@@ -571,11 +571,14 @@ func (m model) renderQueueView() string {
 		// Determine which jobs to show, keeping selected item visible.
 		start, end = queueWindowStart(len(rows), visibleSelectedIdx, visibleRows)
 
-		// Determine visible columns (respects hidden columns)
+		// Determine visible columns (respects hidden columns).
 		visCols := m.visibleColumns()
 
 		// Compute per-column max content widths, using cache when data hasn't changed.
 		contentWidth := m.queueContentWidths(rows, visCols, hasAnyPanel, treeColor)
+		// At narrower widths, drop lower-priority columns before the identifying
+		// Ref, Branch, and Repo columns are reduced to unusable fragments.
+		visCols = m.queuePaneColumns(m.width, contentWidth)
 
 		tableLines := m.renderQueueTable(rows, m.width, visibleRows, visCols, contentWidth)
 		for _, line := range tableLines {
@@ -996,7 +999,7 @@ func (m model) jobCells(job storage.ReviewJob) []string {
 	if agentName == "claude-code" {
 		agentName = "claude"
 	}
-	reviewType := displayReviewType(job.ReviewType)
+	reviewType := displayReviewType(job.ReviewType, job.PanelRole)
 
 	enqueued := job.EnqueuedAt.Local().Format("Jan 02 15:04")
 
@@ -1031,9 +1034,13 @@ func (m model) jobCells(job storage.ReviewJob) []string {
 	return []string{ref, branch, repo, agentName, reviewType, enqueued, elapsed, status, verdict, handled, sessionID, requestedModel, requestedProvider, cost}
 }
 
-// displayReviewType returns the canonical label shown in the TUI. Legacy
-// aliases and older jobs with no stored value are standard reviews.
-func displayReviewType(reviewType string) string {
+// displayReviewType returns the canonical label shown in the TUI. Synthesis
+// rows identify the panel, while legacy aliases and older ordinary jobs with
+// no stored value are standard reviews.
+func displayReviewType(reviewType, panelRole string) string {
+	if panelRole == storage.PanelRoleSynthesis {
+		return "panel"
+	}
 	if config.IsDefaultReviewType(reviewType) {
 		return config.ReviewTypeDefault
 	}

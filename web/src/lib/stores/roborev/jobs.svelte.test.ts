@@ -337,6 +337,35 @@ describe("createJobsStore cost sorting", () => {
   });
 });
 
+describe("createJobsStore review type sorting", () => {
+  it("sorts synthesis jobs as panels", async () => {
+    const jobs: ReviewJob[] = [
+      { ...makeJob(1), review_type: "security" },
+      { ...makeJob(2), job_type: "synthesis", panel_role: "synthesis" },
+      makeJob(3),
+    ];
+    const client = {
+      GET: vi.fn().mockResolvedValue({
+        data: {
+          jobs,
+          has_more: false,
+          stats: { done: 3, closed: 0, open: 0 },
+        },
+        error: undefined,
+      }),
+    };
+    const store = createJobsStore({
+      client: client as never,
+      navigate: vi.fn(),
+    });
+
+    await loadJobs(store);
+    store.setSortColumn("review_type");
+
+    expect(store.getJobs().map((job) => job.id)).toEqual([3, 2, 1]);
+  });
+});
+
 describe("createJobsStore elapsed sorting", () => {
   beforeEach(() => {
     vi.useFakeTimers();

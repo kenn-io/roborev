@@ -114,6 +114,9 @@ describe("JobRow", () => {
 
       expect(screen.getByText("2 ok · 1 failed")).toBeTruthy();
       expect(screen.getByText("~$0.35")).toBeTruthy();
+      expect(document.querySelector(".col-review-type")).toHaveTextContent(
+        "panel",
+      );
       expect(
         screen.getByRole("button", { name: /expand panel/i }),
       ).toBeTruthy();

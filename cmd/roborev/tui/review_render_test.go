@@ -5,6 +5,7 @@ import (
 	"strings"
 	"testing"
 
+	"charm.land/lipgloss/v2"
 	"github.com/stretchr/testify/assert"
 
 	"go.kenn.io/roborev/internal/storage"
@@ -441,4 +442,27 @@ func TestRenderReviewShowsReviewType(t *testing.T) {
 	out := stripANSI(m.renderReviewView())
 
 	assert.Contains(t, out, "Review type: project-conventions")
+}
+
+func TestRenderReviewMetadataFitsTerminalWidth(t *testing.T) {
+	reviewType := strings.Repeat("a", 64)
+	verdict := "P"
+	job := makeJob(42, withReviewType(reviewType))
+	job.Verdict = &verdict
+	review := makeReview(1, &job, withReviewOutput("Review output"))
+	m := newModel(localhostEndpoint, withExternalIODisabled())
+	m.width, m.height = 80, 30
+	m.currentReview = review
+
+	out := m.renderReviewView()
+	metadataLine := ""
+	for line := range strings.SplitSeq(out, "\n") {
+		if strings.Contains(stripANSI(line), "Review type:") {
+			metadataLine = line
+			break
+		}
+	}
+	assert.NotEmpty(t, metadataLine)
+	assert.LessOrEqual(t, lipgloss.Width(strings.ReplaceAll(metadataLine, "\x1b[K", "")), m.width)
+	assert.Contains(t, stripANSI(metadataLine), reviewType)
 }

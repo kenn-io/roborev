@@ -115,25 +115,31 @@ func (m model) renderReviewView() string {
 		if tu := tokens.ParseJSON(review.Job.TokenUsage); tu != nil {
 			tokenSummary = tu.FormatSummary()
 		}
-		b.WriteString("\n")
-		b.WriteString(statusStyle.Render("Review type: " + displayReviewType(review.Job.ReviewType)))
+		var metadata strings.Builder
+		metadata.WriteString(statusStyle.Render("Review type: " + displayReviewType(review.Job.ReviewType, review.Job.PanelRole)))
 		if hasVerdict {
-			b.WriteString(" ")
+			metadata.WriteString(" ")
 			v := *review.Job.Verdict
 			if v == "P" {
-				b.WriteString(passStyle.Render("Verdict: Pass"))
+				metadata.WriteString(passStyle.Render("Verdict: Pass"))
 			} else {
-				b.WriteString(failStyle.Render("Verdict: Fail"))
+				metadata.WriteString(failStyle.Render("Verdict: Fail"))
 			}
 		}
 		if review.Closed {
-			b.WriteString(" ")
-			b.WriteString(closedStyle.Render("[CLOSED]"))
+			metadata.WriteString(" ")
+			metadata.WriteString(closedStyle.Render("[CLOSED]"))
 		}
 		if tokenSummary != "" {
-			b.WriteString(" ")
-			b.WriteString(statusStyle.Render("[" + tokenSummary + "]"))
+			metadata.WriteString(" ")
+			metadata.WriteString(statusStyle.Render("[" + tokenSummary + "]"))
 		}
+		metadataLine := metadata.String()
+		if m.width > 0 {
+			metadataLine = xansi.Truncate(metadataLine, m.width, "")
+		}
+		b.WriteString("\n")
+		b.WriteString(metadataLine)
 		b.WriteString("\x1b[K") // Clear to end of line
 		b.WriteString("\n")
 	} else {

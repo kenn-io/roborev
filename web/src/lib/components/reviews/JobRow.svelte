@@ -37,7 +37,7 @@
   }: Props = $props();
 
   const panelStatus = $derived(panelStatusLabel(job));
-  const reviewType = $derived(reviewTypeLabel(job.review_type));
+  const reviewType = $derived(reviewTypeLabel(job.review_type, job.panel_role));
 
   function formatElapsed(j: ReviewJob): string {
     const startedAt = panelElapsedStart(j, members);

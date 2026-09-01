@@ -1,4 +1,8 @@
-export function reviewTypeLabel(reviewType: string | undefined): string {
+export function reviewTypeLabel(
+  reviewType: string | undefined,
+  panelRole?: string,
+): string {
+  if (panelRole === "synthesis") return "panel";
   if (
     reviewType === undefined ||
     reviewType === "" ||

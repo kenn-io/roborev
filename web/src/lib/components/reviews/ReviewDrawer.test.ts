@@ -197,10 +197,16 @@ describe("ReviewDrawer", () => {
     standard.unmount();
 
     state.reviewType = "project-conventions";
-    render(ReviewDrawer);
+    const custom = render(ReviewDrawer);
     expect(
       screen.getByText("Review type: project-conventions"),
     ).toBeInTheDocument();
+    custom.unmount();
+
+    state.reviewType = undefined;
+    state.panelRole = "synthesis";
+    render(ReviewDrawer);
+    expect(screen.getByText("Review type: panel")).toBeInTheDocument();
   });
 
   it("groups the footer actions as sibling shared buttons", () => {
