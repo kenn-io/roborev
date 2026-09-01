@@ -1977,9 +1977,7 @@ func (wp *WorkerPool) failCooldownOrFailoverContext(
 	wp.failoverOrFailWithPrefixContext(workerID, job, agentName, errorMsg, review.QuotaErrorPrefix, "quota")
 }
 
-// failoverOrFail attempts failover to a backup agent for non-CI jobs. CI
-// reviews must preserve their configured panel member and let the CI retry
-// schedule handle quota/session availability failures.
+// failoverOrFail attempts failover to a configured backup agent.
 func (wp *WorkerPool) failoverOrFail(
 	workerID string, job *storage.ReviewJob,
 	agentName, errorMsg string,
@@ -2000,10 +1998,7 @@ func (wp *WorkerPool) failoverOrFailWithPrefixLocked(
 	workerID string, job *storage.ReviewJob,
 	agentName, errorMsg, prefix, label string,
 ) {
-	backupAgent := ""
-	if !job.IsCIReview() {
-		backupAgent = wp.resolveBackupAgent(job)
-	}
+	backupAgent := wp.resolveBackupAgent(job)
 	if backupAgent != "" && !wp.isAgentCoolingDown(backupAgent) {
 		backupModel := wp.resolveBackupModel(job)
 		failedOver, err := wp.db.FailoverJob(

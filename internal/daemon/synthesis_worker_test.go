@@ -9,7 +9,6 @@ import (
 	"os/exec"
 	"path/filepath"
 	"runtime"
-	"strings"
 	"testing"
 	"time"
 
@@ -1084,7 +1083,7 @@ func TestSynthesisMultiSuccessRespectsCooldown(t *testing.T) {
 		"cooldown must divert before completing the synthesis")
 }
 
-func TestSynthesisCIReviewCooldownDoesNotFailOverToBackup(t *testing.T) {
+func TestSynthesisCIReviewCooldownFailsOverToBackup(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 
 	const memberAgent = "panel-ci-cd-member"
@@ -1115,10 +1114,9 @@ func TestSynthesisCIReviewCooldownDoesNotFailOverToBackup(t *testing.T) {
 	tc.Pool.processSynthesisJob(context.Background(), testWorkerID, synth)
 
 	assert.False(t, called, "CI synthesis must not invoke an agent in cooldown")
-	got := tc.assertJobStatus(t, synth.ID, storage.JobStatusFailed)
-	assert.Equal(t, synthAgent, got.Agent, "CI synthesis cooldown must not fail over to backup")
-	assert.True(t, strings.HasPrefix(got.Error, reviewpkg.QuotaErrorPrefix),
-		"cooldown failure should be a retryable quota skip, got %q", got.Error)
+	got := tc.assertJobStatus(t, synth.ID, storage.JobStatusQueued)
+	assert.Equal(t, "test", got.Agent)
+	assert.Empty(t, got.Error)
 }
 
 // TestSynthesisRunsAgainstWorktree verifies the synthesis agent runs against the

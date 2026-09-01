@@ -2456,7 +2456,7 @@ func TestProcessJob_CooldownResolvesAlias(t *testing.T) {
 	tc.assertJobStatus(t, job.ID, storage.JobStatusFailed)
 }
 
-func TestProcessJob_CIReviewCooldownDoesNotFailOverToBackup(t *testing.T) {
+func TestProcessJob_CIReviewCooldownFailsOverToBackup(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 
@@ -2471,32 +2471,35 @@ func TestProcessJob_CIReviewCooldownDoesNotFailOverToBackup(t *testing.T) {
 
 	tc.Pool.processJob(testWorkerID, claimed)
 
-	updated := tc.assertJobStatus(t, claimed.ID, storage.JobStatusFailed)
+	updated := tc.assertJobStatus(t, claimed.ID, storage.JobStatusQueued)
 	assert := assert.New(t)
-	assert.Equal("codex", updated.Agent, "CI cooldown must not fail over to backup")
-	assert.True(strings.HasPrefix(updated.Error, review.QuotaErrorPrefix),
-		"cooldown failure should be a retryable quota skip, got %q", updated.Error)
+	assert.Equal("test", updated.Agent)
+	assert.Empty(updated.Error)
 }
 
-func TestFailOrRetryInner_CIQuotaDoesNotFailOverToBackup(t *testing.T) {
+func TestFailOrRetryInner_CIQuotaFailsOverToBackup(t *testing.T) {
 	tc := newWorkerTestContext(t, 1)
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 
-	cfg := config.DefaultConfig()
-	cfg.DefaultBackupAgent = "test"
-	tc.reconfigurePool(cfg)
-
-	job := tc.createAndClaimJobWithAgent(t, sha, testWorkerID, "codex")
-	job.Source = storage.JobSourceCI
-	job.CIBaseBranch = "main"
+	job := tc.createJobWithAgent(t, sha, "codex")
+	_, err := tc.DB.Exec(
+		`UPDATE review_jobs
+		 SET source = ?, ci_base_branch = ?, backup_agent = ?, backup_model = ?
+		 WHERE id = ?`,
+		storage.JobSourceCI, "main", "test", "ci-backup-model", job.ID,
+	)
+	require.NoError(t, err)
+	job, err = tc.DB.ClaimJob(testWorkerID)
+	require.NoError(t, err)
+	require.NotNil(t, job)
 
 	tc.Pool.failOrRetryAgent(testWorkerID, job, "codex", "resource exhausted: reset after 1h")
 
-	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusFailed)
+	updated := tc.assertJobStatus(t, job.ID, storage.JobStatusQueued)
 	assert := assert.New(t)
-	assert.Equal("codex", updated.Agent, "CI quota must not fail over to backup")
-	assert.True(strings.HasPrefix(updated.Error, review.QuotaErrorPrefix),
-		"quota failure should be a retryable quota skip, got %q", updated.Error)
+	assert.Equal("test", updated.Agent)
+	assert.Equal("ci-backup-model", updated.Model)
+	assert.Empty(updated.Error)
 	assert.True(tc.Pool.isAgentCoolingDown("codex"), "quota should cool down the configured agent")
 }
 
