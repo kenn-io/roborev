@@ -57,14 +57,14 @@ func openTestPgPoolRawAtVersion(t *testing.T, version int) *PgPool {
 	schemaSQL, ok := schemas[version]
 	require.Truef(t, ok, "openTestPgPoolRawAtVersion: no embedded schema for version %d", version)
 
-	for _, stmt := range strings.Split(schemaSQL, ";") {
+	for stmt := range strings.SplitSeq(schemaSQL, ";") {
 		s := strings.TrimSpace(stmt)
 		if s == "" {
 			continue
 		}
 		// Skip pure comment-only statements
 		isComment := true
-		for _, line := range strings.Split(s, "\n") {
+		for line := range strings.SplitSeq(s, "\n") {
 			if line = strings.TrimSpace(line); line != "" && !strings.HasPrefix(line, "--") {
 				isComment = false
 				break

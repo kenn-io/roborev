@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"uuid"
 
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -34,7 +35,7 @@ type fixtureJob struct {
 	panelRole   string
 	panelMember string
 	panelIndex  *int
-	panelRun    string
+	panelRun    *uuid.UUID
 	closed      bool
 	verdict     *bool
 	output      string
@@ -313,20 +314,21 @@ func fixtureJobs() []fixtureJob {
 	passVerdict := true
 	memberZero := 0
 	memberOne := 1
+	panelRun := uuid.UUID{0x30, 0, 0, 0, 0, 0, 0x40, 0, 0x80, 0, 0, 0, 0, 0, 0, 1}
 	jobs = append(jobs,
 		fixtureJob{id: 50, repoID: 1, status: storage.JobStatusQueued, jobType: storage.JobTypeReview, agent: "codex", model: "fixture-large", branch: "main"},
 		fixtureJob{id: 51, repoID: 1, status: storage.JobStatusDone, jobType: storage.JobTypeReview, agent: "claude", model: "fixture-medium", branch: "feature/parser", verdict: &failedVerdict},
 		fixtureJob{id: 52, repoID: 1, status: storage.JobStatusDone, jobType: storage.JobTypeReview, agent: "gemini", model: "fixture-fast", branch: "fix/streaming", verdict: &failedVerdict, output: richFindingOutput()},
 		fixtureJob{id: 53, repoID: 2, status: storage.JobStatusDone, jobType: storage.JobTypeCompact, agent: "codex", model: "fixture-large", branch: "main", verdict: &passVerdict, output: "No issues found after consolidated review."},
-		fixtureJob{id: 54, repoID: 1, status: storage.JobStatusDone, jobType: storage.JobTypeReview, agent: "codex", model: "fixture-large", branch: "main", panelRole: storage.PanelRoleMember, panelMember: "correctness", panelIndex: &memberZero, panelRun: "fixture-panel-run", verdict: &failedVerdict},
-		fixtureJob{id: 55, repoID: 1, status: storage.JobStatusFailed, jobType: storage.JobTypeReview, agent: "claude", model: "fixture-medium", branch: "main", panelRole: storage.PanelRoleMember, panelMember: "security", panelIndex: &memberOne, panelRun: "fixture-panel-run"},
-		fixtureJob{id: 56, repoID: 1, status: storage.JobStatusDone, jobType: storage.JobTypeSynthesis, agent: "codex", model: "fixture-large", branch: "main", panelRole: storage.PanelRoleSynthesis, panelRun: "fixture-panel-run", verdict: &failedVerdict, output: "## Panel synthesis\n\nThe panel found one error-handling issue."},
+		fixtureJob{id: 54, repoID: 1, status: storage.JobStatusDone, jobType: storage.JobTypeReview, agent: "codex", model: "fixture-large", branch: "main", panelRole: storage.PanelRoleMember, panelMember: "correctness", panelIndex: &memberZero, panelRun: &panelRun, verdict: &failedVerdict},
+		fixtureJob{id: 55, repoID: 1, status: storage.JobStatusFailed, jobType: storage.JobTypeReview, agent: "claude", model: "fixture-medium", branch: "main", panelRole: storage.PanelRoleMember, panelMember: "security", panelIndex: &memberOne, panelRun: &panelRun},
+		fixtureJob{id: 56, repoID: 1, status: storage.JobStatusDone, jobType: storage.JobTypeSynthesis, agent: "codex", model: "fixture-large", branch: "main", panelRole: storage.PanelRoleSynthesis, panelRun: &panelRun, verdict: &failedVerdict, output: "## Panel synthesis\n\nThe panel found one error-handling issue."},
 	)
 	return jobs
 }
 
 func jobRef(job fixtureJob) string {
-	if job.panelRun != "" {
+	if job.panelRun != nil {
 		return "panel-fixture-ref"
 	}
 	if job.jobType == storage.JobTypeRange {
@@ -339,7 +341,7 @@ func jobRef(job fixtureJob) string {
 }
 
 func panelName(job fixtureJob) any {
-	if job.panelRun == "" {
+	if job.panelRun == nil {
 		return nil
 	}
 	return "fixture panel"

@@ -56,7 +56,7 @@ func TestPostgresPanelColumnRoundTrip(t *testing.T) {
 	assert.Equal("branch_final", found.PanelName)
 	assert.Equal("security", found.PanelMemberName)
 	assert.Equal(2, found.PanelMemberIndex)
-	assert.Equal(`{"agent":"test","review_type":"security"}`, found.PanelMemberConfigJSON)
+	assert.JSONEq(`{"agent":"test","review_type":"security"}`, found.PanelMemberConfigJSON)
 }
 
 func TestPostgresBackupColumnRoundTrip(t *testing.T) {

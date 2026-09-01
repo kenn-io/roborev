@@ -643,11 +643,11 @@ func TestIntegration_GetDatabaseID_GeneratesAndPersists(t *testing.T) {
 	assert.Equal(t, dbID2, dbID1)
 
 	// Verify it's stored in sync_metadata
-	var storedID string
-	err = pool.pool.QueryRow(ctx, `SELECT value FROM sync_metadata WHERE key = 'database_id'`).Scan(&storedID)
+	var storedID uuid.UUID
+	err = pool.pool.QueryRow(ctx, `SELECT value::uuid FROM sync_metadata WHERE key = 'database_id'`).Scan(&storedID)
 	require.NoError(t, err, "Failed to query sync_metadata: %v")
 
-	assert.Equal(t, storedID, dbID1)
+	assert.Equal(t, dbID1, storedID)
 
 	t.Logf("Database ID: %s", dbID1)
 }
@@ -725,7 +725,7 @@ func TestIntegration_NewDatabaseClearsSyncedAt(t *testing.T) {
 
 	// Verify sync target was updated
 	newTargetID, _ := sqliteDB.GetSyncState(SyncStateSyncTargetID)
-	assert.Equal(t, newTargetID, dbID)
+	assert.Equal(t, dbIDText, newTargetID)
 }
 
 func TestIntegration_BatchUpsertJobs(t *testing.T) {

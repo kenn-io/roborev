@@ -1,0 +1,2 @@
+# The rerun idempotency key is a UUID in the server and generated clients.
+POST /api/job/rerun the `request_id` request property `format` changed from `none` to `uuid`

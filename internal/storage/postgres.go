@@ -942,7 +942,7 @@ func (p *PgPool) PullExperimentAssignments(
 		cursorTime, cursorID, _ = parseTimestampIDCursor(cursor)
 	}
 	rows, err := p.pool.Query(ctx, `
-		SELECT review_unit_kind, review_unit_uuid, experiment_id, arm, subject_hash,
+		SELECT review_unit_kind, review_unit_uuid::uuid, experiment_id, arm, subject_hash,
 		       effective_config_hash, effective_config_json, assigned_at, source_machine_id,
 		       inserted_at, id
 		FROM experiment_assignments
