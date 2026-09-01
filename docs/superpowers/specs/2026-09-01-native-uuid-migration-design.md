@@ -41,6 +41,20 @@ Go 1.27 `database/sql` scans string and byte values into `uuid.UUID`, converts
 `uuid.UUID` query arguments to strings, and supports `sql.Null[uuid.UUID]`.
 SQLite code uses those standard paths.
 
+Empty text is never scanned or parsed as a UUID. Queries for nullable UUID
+columns stop using `COALESCE(column, '')` and preserve SQL `NULL`, using
+`NULLIF(column, '')` where existing rows may contain an empty sentinel. The
+`ci_pr_review_attempts.last_panel_run_uuid` column keeps its current
+`TEXT NOT NULL DEFAULT ''` schema, but its Go model uses `*uuid.UUID`; reads
+normalize the empty sentinel to SQL `NULL`, and writes encode nil as the
+column's required empty sentinel at that database boundary.
+
+The generic `sync_state.value` column remains a text boundary. `GetMachineID`
+continues to treat an empty stored value as missing and regenerate it; a
+non-empty value is parsed once before returning `uuid.UUID`. These conversions
+preserve current storage semantics without introducing a second Go
+representation.
+
 PostgreSQL code uses pgx directly. UUID columns pass native UUID values where
 pgx supports them. Existing text columns convert only at the query boundary.
 Each necessary `.String()` or `uuid.Parse` call carries a `forbidigo` nolint
@@ -87,6 +101,8 @@ Roborev source and generated source must not import it.
 Tests exercise behavior owned by Roborev:
 
 - storage writes and reads preserve required, optional, and nullable UUIDs;
+- non-panel jobs and empty `last_panel_run_uuid` values hydrate as absent UUIDs,
+  and an empty stored machine ID still regenerates;
 - API handlers accept valid UUIDs, reject invalid UUID text where UUID input is
   required, and keep the existing JSON string representation;
 - OpenAPI generation emits UUID formats and both generated Go clients compile
