@@ -60,11 +60,10 @@ func runAgentHookFixDone(ctx context.Context, rawID, serverAddr string, stdout i
 			return err
 		}
 	}
-	fixSession, err := postAgentHookFixDoneRequest(ctx, serverAddr, fixSessionID)
-	if err != nil {
+	if err := postAgentHookFixDoneRequest(ctx, serverAddr, fixSessionID); err != nil {
 		return err
 	}
-	_, err = fmt.Fprintf(stdout, "Completed Agent Hook fix session %s.\n", fixSession.ID)
+	_, err = fmt.Fprintf(stdout, "Completed Agent Hook fix session %s.\n", fixSessionID)
 	return err
 }
 

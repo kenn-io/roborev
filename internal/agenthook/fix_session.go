@@ -1,8 +1,6 @@
 package agenthook
 
 import (
-	"errors"
-	"fmt"
 	"maps"
 	"time"
 	"uuid"
@@ -12,48 +10,15 @@ import (
 
 const FixSessionLifetime = 12 * time.Hour
 
-var ErrFixSessionNotFound = errors.New("agent hook fix session not found")
-
 type FixSession struct {
-	ID          uuid.UUID          `json:"id"`
-	Agent       kitagenthook.Agent `json:"agent"`
-	SessionID   string             `json:"session_id"`
-	StartedAt   time.Time          `json:"started_at"`
-	ExpiresAt   time.Time          `json:"expires_at"`
-	CompletedAt time.Time          `json:"completed_at,omitzero"`
+	ID        uuid.UUID          `json:"id"`
+	Agent     kitagenthook.Agent `json:"agent"`
+	SessionID string             `json:"session_id"`
+	ExpiresAt time.Time          `json:"expires_at"`
 }
 
 func (f FixSession) Active(now time.Time) bool {
-	return f.CompletedAt.IsZero() && now.Before(f.ExpiresAt)
-}
-
-func tryGrantFixSession(
-	fixSessions map[string]FixSession,
-	req Request,
-	key string,
-	now time.Time,
-	id uuid.UUID,
-) (FixSession, bool) {
-	if current, ok := fixSessions[key]; ok && current.Active(now) {
-		return FixSession{}, false
-	}
-	fixSession := FixSession{
-		ID:        id,
-		Agent:     req.Agent,
-		SessionID: req.Event.SessionID,
-		StartedAt: now,
-		ExpiresAt: now.Add(FixSessionLifetime),
-	}
-	fixSessions[key] = fixSession
-	return fixSession, true
-}
-
-func cloneFixSessions(fixSessions map[string]FixSession) map[string]FixSession {
-	cloned := maps.Clone(fixSessions)
-	if cloned == nil {
-		cloned = map[string]FixSession{}
-	}
-	return cloned
+	return now.Before(f.ExpiresAt)
 }
 
 // prepareFixSessionGrantLocked returns whether the reminder may be delivered.
@@ -68,13 +33,23 @@ func (s *StateStore) prepareFixSessionGrantLocked(
 	if req.Agent == "" || req.Agent == kitagenthook.AgentCursor {
 		return s.fixSessions, nil, true
 	}
-	fixSessions := cloneFixSessions(s.fixSessions)
-	fixSession, granted := tryGrantFixSession(
-		fixSessions, req, key, now, uuid.New(),
-	)
-	if !granted {
+	fixSessions := maps.Clone(s.fixSessions)
+	if fixSessions == nil {
+		fixSessions = map[string]FixSession{}
+	}
+	for worktreeKey, fixSession := range fixSessions {
+		if !fixSession.Active(now) {
+			delete(fixSessions, worktreeKey)
+		}
+	}
+	if _, exists := fixSessions[key]; exists {
 		return s.fixSessions, nil, false
 	}
+	fixSession := FixSession{
+		ID: uuid.New(), Agent: req.Agent, SessionID: req.Event.SessionID,
+		ExpiresAt: now.Add(FixSessionLifetime),
+	}
+	fixSessions[key] = fixSession
 	return fixSessions, new(fixSession), true
 }
 
@@ -93,14 +68,7 @@ func (s *StateStore) activeOwnerFixSessionLocked(
 	return fixSession, fixSession.Agent == req.Agent && fixSession.SessionID == req.Event.SessionID
 }
 
-func ownerStopReason(fixSession FixSession) string {
-	return fmt.Sprintf(
-		"Finish the current Agent Hook fix, then run `roborev agent-hook fix-done %s`.",
-		fixSession.ID,
-	)
-}
-
-func (s *StateStore) CompleteFixSession(id uuid.UUID) (FixSession, error) {
+func (s *StateStore) CompleteFixSession(id uuid.UUID) error {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 
@@ -108,20 +76,16 @@ func (s *StateStore) CompleteFixSession(id uuid.UUID) (FixSession, error) {
 		if fixSession.ID != id {
 			continue
 		}
-		if !fixSession.CompletedAt.IsZero() {
-			return fixSession, nil
-		}
 		previous := s.fixSessions
 		s.fixSessions = maps.Clone(s.fixSessions)
-		fixSession.CompletedAt = s.currentTime()
-		s.fixSessions[worktreeKey] = fixSession
+		delete(s.fixSessions, worktreeKey)
 		if err := s.saveLocked(); err != nil {
 			s.fixSessions = previous
-			return FixSession{}, err
+			return err
 		}
-		return fixSession, nil
+		return nil
 	}
-	return FixSession{}, ErrFixSessionNotFound
+	return nil
 }
 
 func (s *StateStore) currentTime() time.Time {

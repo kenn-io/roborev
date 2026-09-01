@@ -3,13 +3,18 @@ package main
 import (
 	"bytes"
 	"context"
+	_ "embed"
 	"encoding/json"
 	"fmt"
 	"io"
 	"net/http"
+	"os"
 	"strings"
+	"text/template"
 	"time"
 	"uuid"
+
+	kitagenthook "go.kenn.io/kit/agenthook"
 
 	"go.kenn.io/roborev/internal/agenthook"
 	"go.kenn.io/roborev/internal/daemon"
@@ -18,6 +23,13 @@ import (
 var (
 	postAgentHook         = postAgentHookRequest
 	agentHookEnsureDaemon = ensureDaemon
+)
+
+//go:embed agent_hook_fix_reason.md.gotmpl
+var agentHookFixReasonText string
+
+var agentHookFixReasonTemplate = template.Must(
+	template.New("agent-hook-fix-reason").Parse(agentHookFixReasonText),
 )
 
 func postAgentHookRequest(
@@ -40,46 +52,45 @@ func postAgentHookRequest(
 		return agenthook.Response{}, err
 	}
 	if out.FixSessionID != nil {
-		bareCommand := agentHookFixDoneCommand(*out.FixSessionID, "")
-		command := agentHookFixDoneCommand(*out.FixSessionID, addr)
-		if strings.Contains(out.Reason, bareCommand) {
-			out.Reason = strings.Replace(out.Reason, bareCommand, command, 1)
-		} else {
-			out.Reason += "\n\nAfter completing this Agent Hook fix, run `" + command + "`."
+		executable, err := os.Executable()
+		if err != nil {
+			return agenthook.Response{}, fmt.Errorf("resolve roborev executable: %w", err)
 		}
+		args := []string{"agent-hook", "fix-done"}
+		if addr != "" {
+			args = append(args, "--roborev-server", addr)
+		}
+		args = append(args, out.FixSessionID.String())
+		commands, err := kitagenthook.BuildCommand(executable, args...)
+		if err != nil {
+			return agenthook.Response{}, fmt.Errorf("build fix completion command: %w", err)
+		}
+		var rendered strings.Builder
+		if err := agentHookFixReasonTemplate.Execute(&rendered, struct {
+			Reason  string
+			Command string
+		}{strings.TrimSpace(out.Reason), commands.Native}); err != nil {
+			return agenthook.Response{}, fmt.Errorf("render fix completion instruction: %w", err)
+		}
+		out.Reason = strings.TrimSpace(rendered.String())
 	}
 	return out, nil
-}
-
-func agentHookFixDoneCommand(fixSessionID uuid.UUID, addr string) string {
-	command := "roborev agent-hook fix-done"
-	if addr != "" {
-		command += " --roborev-server '" + strings.ReplaceAll(addr, "'", `'\''`) + "'"
-	}
-	return command + " " + fixSessionID.String()
 }
 
 func postAgentHookFixDoneRequest(
 	ctx context.Context,
 	addr string,
 	fixSessionID uuid.UUID,
-) (agenthook.FixSession, error) {
+) error {
 	ep, err := agentHookEndpoint(addr)
 	if err != nil {
-		return agenthook.FixSession{}, err
+		return err
 	}
-	body, err := doAgentHookRequest(
+	_, err = doAgentHookRequest(
 		ctx, ep, http.MethodPost, "/api/agent-hook/fix-done",
 		daemon.AgentHookFixDoneRequest{FixSessionID: fixSessionID},
 	)
-	if err != nil {
-		return agenthook.FixSession{}, err
-	}
-	var output daemon.AgentHookFixDoneOutput
-	if err := json.Unmarshal(body, &output.Body); err != nil {
-		return agenthook.FixSession{}, err
-	}
-	return output.Body.FixSession, nil
+	return err
 }
 
 func runAgentHookStatus(stdout io.Writer) error {

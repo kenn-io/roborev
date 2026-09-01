@@ -39,7 +39,7 @@ func TestAgentHookSessionsLoadsExistingSnapshot(t *testing.T) {
 	assert.Equal(t, 2, output.Body.Sessions["session-1"].ReminderPromptCount)
 }
 
-func TestAgentHookFixDoneCompletesAndRepeatsFixSession(t *testing.T) {
+func TestAgentHookFixDoneRemovesFixSession(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	require.NoError(t, os.MkdirAll(filepath.Dir(agenthook.StatePath()), 0o700))
 	fixSessionID := uuid.MustParse("00000000-0000-4000-8000-000000000001")
@@ -48,7 +48,7 @@ func TestAgentHookFixDoneCompletesAndRepeatsFixSession(t *testing.T) {
 		FixSessions: map[string]agenthook.FixSession{
 			"/repo\x00main": {
 				ID: fixSessionID, Agent: "claude", SessionID: "session-1",
-				StartedAt: time.Now().Add(-time.Hour), ExpiresAt: time.Now().Add(11 * time.Hour),
+				ExpiresAt: time.Now().Add(11 * time.Hour),
 			},
 		},
 	})
@@ -62,17 +62,13 @@ func TestAgentHookFixDoneCompletesAndRepeatsFixSession(t *testing.T) {
 	require.Equal(t, http.StatusOK, first.Code, first.Body.String())
 	var firstOutput AgentHookFixDoneOutput
 	require.NoError(t, json.Unmarshal(first.Body.Bytes(), &firstOutput.Body))
-	assert.Equal(t, fixSessionID, firstOutput.Body.FixSession.ID)
-	assert.NotZero(t, firstOutput.Body.FixSession.CompletedAt)
+	assert.True(t, firstOutput.Body.OK)
 
 	repeated := serveHuma(t, server, http.MethodPost, "/api/agent-hook/fix-done", requestBody)
-	require.Equal(t, http.StatusOK, repeated.Code, repeated.Body.String())
-	var repeatedOutput AgentHookFixDoneOutput
-	require.NoError(t, json.Unmarshal(repeated.Body.Bytes(), &repeatedOutput.Body))
-	assert.Equal(t, firstOutput.Body.FixSession.CompletedAt, repeatedOutput.Body.FixSession.CompletedAt)
+	assert.Equal(t, http.StatusOK, repeated.Code, repeated.Body.String())
 }
 
-func TestAgentHookFixDoneRejectsUnknownAndZeroIDs(t *testing.T) {
+func TestAgentHookFixDoneRejectsZeroAndAcceptsUnknownIDs(t *testing.T) {
 	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
 	server, _, _ := newTestServer(t)
 
@@ -82,7 +78,7 @@ func TestAgentHookFixDoneRejectsUnknownAndZeroIDs(t *testing.T) {
 		want int
 	}{
 		{name: "zero", id: uuid.Nil(), want: http.StatusBadRequest},
-		{name: "unknown", id: uuid.MustParse("00000000-0000-4000-8000-000000000009"), want: http.StatusNotFound},
+		{name: "unknown", id: uuid.MustParse("00000000-0000-4000-8000-000000000009"), want: http.StatusOK},
 	} {
 		t.Run(tc.name, func(t *testing.T) {
 			body, err := json.Marshal(AgentHookFixDoneRequest{FixSessionID: tc.id})

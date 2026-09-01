@@ -138,17 +138,14 @@ func (s *Server) humaAgentHookFixDone(
 	if input.Body.FixSessionID == uuid.Nil() {
 		return nil, huma.Error400BadRequest("fix_session_id is required")
 	}
-	fixSession, err := state.CompleteFixSession(input.Body.FixSessionID)
-	if errors.Is(err, agenthook.ErrFixSessionNotFound) {
-		return nil, huma.Error404NotFound("Agent Hook fix session not found")
-	}
+	err = state.CompleteFixSession(input.Body.FixSessionID)
 	if err != nil {
 		return nil, huma.Error500InternalServerError(
 			fmt.Sprintf("complete Agent Hook fix session: %v", err),
 		)
 	}
 	response := &AgentHookFixDoneOutput{}
-	response.Body.FixSession = fixSession
+	response.Body.OK = true
 	return response, nil
 }
 

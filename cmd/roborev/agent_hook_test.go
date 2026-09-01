@@ -41,7 +41,6 @@ func TestAgentHookInstallSupportsExplicitQwenProfile(t *testing.T) {
 
 func TestPostAgentHookPreservesRegularDaemonEndpointInOwnerCloseout(t *testing.T) {
 	fixSessionID := uuid.MustParse("00000000-0000-4000-8000-000000000001")
-	bareCommand := "roborev agent-hook fix-done " + fixSessionID.String()
 	var gotPath string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
@@ -50,7 +49,7 @@ func TestPostAgentHookPreservesRegularDaemonEndpointInOwnerCloseout(t *testing.T
 			Triggered:    true,
 			TriggeredBy:  "fix_session",
 			FixSessionID: new(fixSessionID),
-			Reason:       "Finish the fix, then run `" + bareCommand + "`.",
+			Reason:       "Finish the fix.",
 		})
 	}))
 	t.Cleanup(server.Close)
@@ -65,10 +64,16 @@ func TestPostAgentHookPreservesRegularDaemonEndpointInOwnerCloseout(t *testing.T
 	assert.Equal(t, "/api/agent-hook/event", gotPath)
 	assert.Equal(t, "session-1", response.SessionID)
 	assert.True(t, response.Triggered)
-	assert.Contains(t, response.Reason,
-		"roborev agent-hook fix-done --roborev-server '"+serverAddr+"' "+fixSessionID.String(),
+	executable, err := os.Executable()
+	require.NoError(t, err)
+	commands, err := kitagenthook.BuildCommand(
+		executable, "agent-hook", "fix-done", "--roborev-server", serverAddr, fixSessionID.String(),
 	)
-	assert.NotContains(t, response.Reason, "`"+bareCommand+"`")
+	require.NoError(t, err)
+	assert.Equal(t,
+		"Finish the fix.\n\nAfter completing this Agent Hook fix, run `"+commands.Native+"`.",
+		response.Reason,
+	)
 }
 
 func TestRunAgentHookFixDoneRejectsMalformedUUIDBeforeDaemonStart(t *testing.T) {
@@ -111,9 +116,14 @@ func TestRunAgentHookUsesConfiguredRegularDaemonEndpoint(t *testing.T) {
 
 	require.NoError(t, err)
 	assert.Equal(t, "/api/agent-hook/event", gotPath)
-	assert.Contains(t, stdout.String(),
-		"roborev agent-hook fix-done --roborev-server '"+opts.RoborevServerAddr+"' "+fixSessionID.String(),
+	executable, err := os.Executable()
+	require.NoError(t, err)
+	commands, err := kitagenthook.BuildCommand(
+		executable, "agent-hook", "fix-done", "--roborev-server", opts.RoborevServerAddr,
+		fixSessionID.String(),
 	)
+	require.NoError(t, err)
+	assert.Contains(t, stdout.String(), commands.Native)
 }
 
 func TestAgentHookFixDoneUsesConfiguredRegularDaemonEndpoint(t *testing.T) {
@@ -123,9 +133,7 @@ func TestAgentHookFixDoneUsesConfiguredRegularDaemonEndpoint(t *testing.T) {
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		gotPath = r.URL.Path
 		assert.NoError(t, json.NewDecoder(r.Body).Decode(&gotRequest))
-		_ = json.NewEncoder(w).Encode(map[string]any{
-			"fix_session": agenthook.FixSession{ID: fixSessionID},
-		})
+		_ = json.NewEncoder(w).Encode(map[string]any{"ok": true})
 	}))
 	t.Cleanup(server.Close)
 	serverAddr := strings.TrimPrefix(server.URL, "http://")
@@ -137,7 +145,8 @@ func TestAgentHookFixDoneUsesConfiguredRegularDaemonEndpoint(t *testing.T) {
 	}
 	t.Cleanup(func() { agentHookEnsureDaemon = originalEnsure })
 	cmd := agentHookCmd()
-	cmd.SetOut(io.Discard)
+	var stdout bytes.Buffer
+	cmd.SetOut(&stdout)
 	cmd.SetArgs([]string{
 		"fix-done", "--roborev-server", serverAddr, fixSessionID.String(),
 	})
@@ -148,6 +157,7 @@ func TestAgentHookFixDoneUsesConfiguredRegularDaemonEndpoint(t *testing.T) {
 	assert.Equal(t, "/api/agent-hook/fix-done", gotPath)
 	assert.Equal(t, fixSessionID, gotRequest.FixSessionID)
 	assert.False(t, ensureCalled)
+	assert.Equal(t, "Completed Agent Hook fix session "+fixSessionID.String()+".\n", stdout.String())
 }
 
 func TestManualAgentHookCommandsEnsureDaemon(t *testing.T) {

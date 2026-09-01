@@ -127,7 +127,17 @@ func (s *StateStore) saveLocked() error {
 // saveSessionLocked publishes a cloned session only when its atomic state-file
 // replacement succeeds. Callers must hold s.mu.
 func (s *StateStore) saveSessionLocked(sessionID string, state SessionState) error {
-	return s.saveSessionAndFixSessionsLocked(sessionID, state, s.fixSessions)
+	previous, existed := s.sessions[sessionID]
+	s.sessions[sessionID] = state
+	if err := s.saveLocked(); err != nil {
+		if existed {
+			s.sessions[sessionID] = previous
+		} else {
+			delete(s.sessions, sessionID)
+		}
+		return err
+	}
+	return nil
 }
 
 // saveSessionAndFixSessionsLocked publishes session and worktree ownership
@@ -137,13 +147,16 @@ func (s *StateStore) saveSessionAndFixSessionsLocked(
 	state SessionState,
 	fixSessions map[string]FixSession,
 ) error {
-	previousSessions := s.sessions
+	previous, existed := s.sessions[sessionID]
 	previousFixSessions := s.fixSessions
-	s.sessions = maps.Clone(s.sessions)
 	s.sessions[sessionID] = state
 	s.fixSessions = fixSessions
 	if err := s.saveLocked(); err != nil {
-		s.sessions = previousSessions
+		if existed {
+			s.sessions[sessionID] = previous
+		} else {
+			delete(s.sessions, sessionID)
+		}
 		s.fixSessions = previousFixSessions
 		return err
 	}
@@ -254,7 +267,7 @@ func (s *StateStore) recordStop(ctx context.Context, req Request) (Response, err
 				Triggered:    true,
 				TriggeredBy:  "fix_session",
 				FixSessionID: new(fixSession.ID),
-				Reason:       ownerStopReason(fixSession),
+				Reason:       "Finish the current Agent Hook fix.",
 			}, nil
 		}
 	}

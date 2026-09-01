@@ -423,7 +423,7 @@ type AgentHookFixDoneInput struct {
 
 type AgentHookFixDoneOutput struct {
 	Body struct {
-		FixSession agenthook.FixSession `json:"fix_session"`
+		OK bool `json:"ok"`
 	}
 }
 
