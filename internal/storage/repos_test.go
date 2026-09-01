@@ -569,6 +569,19 @@ func TestGetRepoStats(t *testing.T) {
 		assert.Equal(t, 2, stats.OpenReviews)
 	})
 
+	t.Run("unknown verdict is not counted as failed", func(t *testing.T) {
+		db, repo := setupDBAndRepo(t, "stats-unknown-verdict")
+		commit := createCommit(t, db, repo.ID, "stats-unknown-sha")
+		job := enqueueJob(t, db, repo.ID, commit.ID, commit.SHA)
+		completeTestJob(t, db, job.ID, "Review completed without a verdict.")
+
+		stats, err := db.GetRepoStats(repo.ID)
+		require.NoError(t, err)
+		assert.Equal(t, 0, stats.PassedReviews)
+		assert.Equal(t, 0, stats.FailedReviews)
+		assert.Equal(t, 1, stats.OpenReviews)
+	})
+
 	t.Run("closed reviews counted", func(t *testing.T) {
 		db, repo := setupDBAndRepo(t, "stats-addressed-test")
 		commit1 := createCommit(t, db, repo.ID, "stats-sha1")

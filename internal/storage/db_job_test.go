@@ -106,6 +106,9 @@ func TestCompleteJobUnknownOutputLeavesVerdictNull(t *testing.T) {
 		`SELECT verdict_bool FROM reviews WHERE job_id = ?`, env.job.ID,
 	).Scan(&verdict))
 	assert.False(t, verdict.Valid)
+	reviewRow, err := env.db.GetReviewByJobID(env.job.ID)
+	require.NoError(t, err)
+	assert.Nil(t, reviewRow.Job.Verdict)
 }
 
 func TestCompleteJobResultRejectsInvalidStructuredOutput(t *testing.T) {
