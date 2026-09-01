@@ -601,6 +601,7 @@ func TestGitHubTokenForRepo_CaseInsensitiveOwner(t *testing.T) {
 }
 
 func TestGitHubClientForRepo_UsesEnterpriseBaseURL(t *testing.T) {
+	t.Setenv("GITHUB_API_URL", "")
 	var authHeader string
 	srv := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		authHeader = r.Header.Get("Authorization")
