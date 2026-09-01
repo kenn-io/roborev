@@ -64,12 +64,16 @@ func BuildOutputWithFixGuidelines(input Input, resp Response, guidelines string)
 
 func InstructionWithFixSessionCompletion(resp Response) string {
 	instruction := resolvedInstruction(resp.Reason)
-	if resp.FixSessionID == nil || resp.TriggeredBy == "fix_session" {
+	if resp.FixSessionID == nil {
 		return instruction
 	}
-	command := "roborev agent-hook fix-done " + resp.FixSessionID.String()
-	if strings.Contains(instruction, command) {
-		return instruction
+	bareCommand := "roborev agent-hook fix-done " + resp.FixSessionID.String()
+	command := resp.FixDoneCommand
+	if command == "" {
+		command = bareCommand
+	}
+	if strings.Contains(instruction, bareCommand) {
+		return strings.Replace(instruction, bareCommand, command, 1)
 	}
 	return instruction + "\n\nAfter completing this Agent Hook fix, run `" + command + "`."
 }

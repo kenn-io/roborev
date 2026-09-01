@@ -34,26 +34,33 @@ func agentHookCmd() *cobra.Command {
 }
 
 func agentHookFixDoneCmd() *cobra.Command {
-	return &cobra.Command{
+	serverAddr := ""
+	cmd := &cobra.Command{
 		Use:                   "fix-done <fix-session-id>",
 		Short:                 "Complete an Agent Hook fix session",
 		Args:                  cobra.ExactArgs(1),
 		DisableFlagsInUseLine: true,
 		RunE: func(cmd *cobra.Command, args []string) error {
-			return runAgentHookFixDone(cmd.Context(), args[0], cmd.OutOrStdout())
+			return runAgentHookFixDone(cmd.Context(), args[0], serverAddr, cmd.OutOrStdout())
 		},
 	}
+	cmd.Flags().StringVar(
+		&serverAddr, "roborev-server", "", "roborev daemon address; defaults to runtime discovery",
+	)
+	return cmd
 }
 
-func runAgentHookFixDone(ctx context.Context, rawID string, stdout io.Writer) error {
+func runAgentHookFixDone(ctx context.Context, rawID, serverAddr string, stdout io.Writer) error {
 	fixSessionID, err := uuid.Parse(rawID)
 	if err != nil {
 		return fmt.Errorf("parse fix session ID: %w", err)
 	}
-	if err := agentHookEnsureDaemon(); err != nil {
-		return err
+	if serverAddr == "" {
+		if err := agentHookEnsureDaemon(); err != nil {
+			return err
+		}
 	}
-	fixSession, err := postAgentHookFixDone(ctx, "", fixSessionID)
+	fixSession, err := postAgentHookFixDone(ctx, serverAddr, fixSessionID)
 	if err != nil {
 		return err
 	}

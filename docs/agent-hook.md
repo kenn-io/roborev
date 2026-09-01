@@ -70,8 +70,13 @@ owners when they belong to different lineages.
 Each delivered instruction includes its exact completion command:
 
 ```bash
-roborev agent-hook fix-done <fix-session-id>
+roborev agent-hook fix-done [--roborev-server <address>] <fix-session-id>
 ```
+
+When the hook uses `--roborev-server` or `ROBOREV_AGENT_HOOK_ROBOREV_ADDR`, the
+emitted command includes the resolved address. Completion therefore reaches the
+daemon that granted ownership rather than the daemon found through runtime
+discovery.
 
 The bundled `roborev-fix` skill runs that command after its final review audit,
 including when no code changed or an out-of-scope finding remains open. The
@@ -336,7 +341,8 @@ run flags > environment variables > profile config section > defaults
 
 `--roborev-server` and `ROBOREV_AGENT_HOOK_ROBOREV_ADDR` select the regular
 roborev daemon used by the hook callback. Address overrides are operational and
-are not persisted in TOML.
+are not persisted in TOML. Fix-session instructions preserve the resolved
+override in their `fix-done` command.
 
 ## Inspecting Sessions
 

@@ -213,8 +213,10 @@ candidate. Skip grants for `Request.Agent == "cursor"`.
 
 - [ ] **Step 5: Add owner Stop closeout**
 
-After the recursive Stop guard and scope resolution, return this shape for the
-active matching `{agent, session_id}` owner without changing expiry:
+After the recursive Stop guard and scope resolution, use the resolved lineage to
+return this shape for the active matching `{agent, session_id}` owner without
+changing expiry. This keeps one harness session's owners distinct when it works
+in multiple repositories:
 
 ```go
 Response{
@@ -283,7 +285,9 @@ type AgentHookFixDoneOutput struct {
 Assert `runAgentHookFixDone` posts the typed UUID and prints one completion
 line. Reject malformed UUIDs before HTTP. Assert normal typed output, Grok,
 legacy, and deferred Hermes output contain exactly the matching command. Assert
-owner closeout contains it once without guidelines or skill warnings.
+owner closeout contains it once without guidelines or skill warnings. Cover a
+hook configured with an explicit daemon address and verify both the emitted
+command and completion request preserve that address.
 
 - [ ] **Step 3: Run tests and confirm missing routes fail**
 
@@ -312,12 +316,14 @@ Add:
 
 ```go
 func agentHookFixDoneCmd() *cobra.Command
-func runAgentHookFixDone(ctx context.Context, rawID string, stdout io.Writer) error
+func runAgentHookFixDone(ctx context.Context, rawID, serverAddr string, stdout io.Writer) error
 ```
 
-Parse with `uuid.Parse`, ensure the regular daemon, post the typed request, and
-print the completed UUID. Take exactly one argument and do not inspect the
-current repository.
+Parse with `uuid.Parse`, ensure the runtime-discovered daemon when no address is
+specified, post the typed request, and print the completed UUID. Accept
+`--roborev-server` so an emitted completion command can target the same daemon
+as the triggering hook. Take exactly one argument and do not inspect the current
+repository.
 
 - [ ] **Step 7: Run focused tests**
 

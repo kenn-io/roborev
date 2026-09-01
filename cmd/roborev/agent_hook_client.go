@@ -40,7 +40,18 @@ func postAgentHookRequest(
 	if err := json.Unmarshal(body, &out); err != nil {
 		return agenthook.Response{}, err
 	}
+	if out.FixSessionID != nil {
+		out.FixDoneCommand = agentHookFixDoneCommand(*out.FixSessionID, addr)
+	}
 	return out, nil
+}
+
+func agentHookFixDoneCommand(fixSessionID uuid.UUID, addr string) string {
+	command := "roborev agent-hook fix-done"
+	if addr != "" {
+		command += " --roborev-server '" + strings.ReplaceAll(addr, "'", `'\''`) + "'"
+	}
+	return command + " " + fixSessionID.String()
 }
 
 func postAgentHookFixDoneRequest(

@@ -238,7 +238,8 @@ review deferred for user direction reports `closed=false`. Do not rely on
 ### Complete an Agent Hook fix session
 
 When the current invocation came directly from Agent Hook and its instruction
-contains an exact `roborev agent-hook fix-done <fix-session-id>` command, run
+contains an exact `roborev agent-hook fix-done` command with a fix-session ID
+and any emitted `--roborev-server` option, run
 that exact command after the original review audit. Run it even when no code
 changed or a valid out-of-scope finding remains open. Do not invent or discover
 a fix-session ID. Skip this step for direct user invocations.

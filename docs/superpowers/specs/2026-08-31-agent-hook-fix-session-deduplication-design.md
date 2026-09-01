@@ -43,7 +43,7 @@ repository lineage key. Each entry stores:
 
 - an opaque fix-session ID;
 - the agent profile and harness session ID;
-- the worktree and branch used for the reminder;
+- the worktree, branch, and HEAD used for the reminder;
 - the start and expiry times;
 - an optional completion time.
 
@@ -52,6 +52,11 @@ Ordinary PreToolUse, PostToolUse, and Stop events do not move that expiry.
 Completion releases the lineage immediately while retaining the latest
 completion state for status output. A later grant for the same lineage replaces
 that completed entry.
+
+Detached lineage keys include the HEAD that first established the lineage. To
+preserve ownership across harness sessions after the owner commits, grant and
+owner lookup also match an active detached entry for the same worktree when its
+recorded HEAD is reachable from the current HEAD.
 
 The event request gains the agent profile. Proper profile-specific hook
 registrations always provide it. The temporary profile-less legacy path records
@@ -64,8 +69,10 @@ locked grant operation immediately before they persist a delivered reminder.
 The operation follows these rules:
 
 1. Treat an incomplete entry as inactive when its 12-hour expiry has passed.
-2. If another agent/session owns the lineage, emit no fix instruction. Keep the
-   candidate session's counters and review IDs eligible for a later event.
+2. If any agent/session already owns the lineage, including the current owner,
+   emit no ordinary fix instruction. Keep the candidate session's counters and
+   review IDs eligible for a later event. The owner Stop closeout below is the
+   only special response.
 3. If no active owner exists, create a fix-session ID and persist the session
    counter changes and ownership in the same snapshot replacement.
 4. Return the fix-session ID with the triggered response only after persistence
@@ -74,13 +81,20 @@ The operation follows these rules:
 If persistence fails, the store restores both the session state and fix-session
 state. The hook fails open and no instruction is emitted.
 
+Profiles that cannot deliver control output do not mutate grant state. Cursor
+still records ordinary event accounting, but cannot acquire ownership while the
+installed kit emits empty Cursor responses.
+
 The completion command is appended outside the configured `instruction`. This
 keeps custom instructions as full workflow overrides without allowing them to
 remove the ownership protocol:
 
 ```text
-roborev agent-hook fix-done <fix-session-id>
+roborev agent-hook fix-done [--roborev-server <address>] <fix-session-id>
 ```
+
+When the triggering hook resolves an explicit daemon address, the emitted
+command includes that address and `fix-done` posts completion directly to it.
 
 The bundled `roborev-fix` skills run the exact command from a direct Agent Hook
 instruction after their final audit. They run it when the hook-triggered work
@@ -114,7 +128,7 @@ superseded ID returns an error and cannot release a newer owner.
 The CLI exposes the endpoint as:
 
 ```text
-roborev agent-hook fix-done <fix-session-id>
+roborev agent-hook fix-done [--roborev-server <address>] <fix-session-id>
 ```
 
 `roborev agent-hook status` adds fix-session state to its existing JSON output.
@@ -130,7 +144,12 @@ State-store and daemon tests cover observable behavior:
 - simultaneous failed-review triggers on one lineage grant exactly one fix
   session;
 - different lineages can each grant one fix session;
+- a detached owner remains authoritative when another session joins after the
+  owner advances HEAD;
+- a same-owner trigger preserves the original fix-session ID;
+- Cursor delivery does not acquire fix-session ownership;
 - owner Stop returns the closeout reminder and recursive Stop is skipped;
+- completion uses the same explicit daemon address as the triggering hook;
 - completion releases immediately and repeated completion is idempotent;
 - an old fix-session ID cannot release a newer owner;
 - ordinary hook activity does not move the 12-hour expiry;

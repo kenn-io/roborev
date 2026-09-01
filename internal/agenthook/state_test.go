@@ -2708,6 +2708,42 @@ func TestRecordFixSessionsDoNotCrossLineages(t *testing.T) {
 	assert.Len(t, store.FixSessions(), 2)
 }
 
+func TestRecordDetachedDescendantDoesNotGrantSecondFixSession(t *testing.T) {
+	repo := testutil.NewGitRepo(t)
+	firstHead := repo.CommitFile("main.go", "package main\n", "initial")
+	repo.CheckoutDetached(firstHead)
+	failedReview := failedReviewJob(1)
+	failedReview.Branch = ""
+	failedReview.GitRef = firstHead
+	store := &StateStore{
+		reviews: trackedReviewSource(repo.Path(), failedReview),
+		path:    filepath.Join(t.TempDir(), "state.json"), sessions: map[string]SessionState{},
+		fixSessions: map[string]FixSession{},
+	}
+
+	first, err := store.Record(Request{
+		Agent: "claude", Event: Input{
+			SessionID: "session-a", CWD: repo.Path(), HookEventName: "Stop",
+		},
+		Threshold: 1, Instruction: "Resolve reviews.",
+	})
+	require.NoError(t, err)
+	require.True(t, first.Triggered)
+	require.NotNil(t, first.FixSessionID)
+
+	repo.CommitFile("second.go", "package main\n", "second")
+	second, err := store.Record(Request{
+		Agent: "codex", Event: Input{
+			SessionID: "session-b", CWD: repo.Path(), HookEventName: "Stop",
+		},
+		Threshold: 1, Instruction: "Resolve reviews.",
+	})
+
+	require.NoError(t, err)
+	assert.False(t, second.Triggered)
+	assert.Len(t, store.FixSessions(), 1)
+}
+
 func TestRecordCursorTriggerDoesNotAcquireFixSession(t *testing.T) {
 	repo := testutil.NewGitRepo(t)
 	repo.CommitFile("main.go", "package main\n", "initial")

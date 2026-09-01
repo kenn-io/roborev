@@ -144,6 +144,7 @@ type Response struct {
 	Reason                string     `json:"reason,omitempty"`
 	Skipped               bool       `json:"skipped,omitempty"`
 	FixSessionID          *uuid.UUID `json:"fix_session_id,omitempty"`
+	FixDoneCommand        string     `json:"-"`
 }
 
 type reviewIDSet map[int64]struct{}

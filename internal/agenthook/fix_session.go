@@ -18,6 +18,7 @@ type FixSession struct {
 	SessionID    string    `json:"session_id"`
 	WorktreeRoot string    `json:"worktree_root"`
 	Branch       string    `json:"branch,omitempty"`
+	Head         string    `json:"head,omitempty"`
 	StartedAt    time.Time `json:"started_at"`
 	ExpiresAt    time.Time `json:"expires_at"`
 	CompletedAt  time.Time `json:"completed_at,omitzero"`
@@ -44,6 +45,7 @@ func tryGrantFixSession(
 		SessionID:    req.Event.SessionID,
 		WorktreeRoot: scope.WorktreeRoot,
 		Branch:       scope.Branch,
+		Head:         scope.Head,
 		StartedAt:    now,
 		ExpiresAt:    now.Add(FixSessionLifetime),
 	}
@@ -59,6 +61,29 @@ func cloneFixSessions(fixSessions map[string]FixSession) map[string]FixSession {
 	return cloned
 }
 
+func activeFixSessionLineage(
+	fixSessions map[string]FixSession,
+	scope hookScope,
+	lineage string,
+	now time.Time,
+) string {
+	if current, ok := fixSessions[lineage]; ok && current.Active(now) {
+		return lineage
+	}
+	for candidate, current := range fixSessions {
+		if !current.Active(now) || current.Branch != "" || current.Head == "" {
+			continue
+		}
+		if current.WorktreeRoot != scope.WorktreeRoot {
+			continue
+		}
+		if refReachableFromHead(scope.WorktreeRoot, current.Head, scope.Head) {
+			return candidate
+		}
+	}
+	return lineage
+}
+
 // prepareFixSessionGrantLocked returns whether the reminder may be delivered.
 // Unprofiled requests cannot form an owner identity. All hook entry points
 // assign a profile before recording. Cursor cannot receive the control output,
@@ -72,6 +97,7 @@ func (s *StateStore) prepareFixSessionGrantLocked(
 	if req.Agent == "" || req.Agent == "cursor" {
 		return s.fixSessions, nil, true
 	}
+	lineage = activeFixSessionLineage(s.fixSessions, scope, lineage, now)
 	fixSessions := cloneFixSessions(s.fixSessions)
 	fixSession, granted := tryGrantFixSession(
 		fixSessions, req, scope, lineage, now, uuid.New(),
@@ -92,6 +118,7 @@ func (s *StateStore) activeOwnerFixSessionLocked(
 	}
 	state := cloneSessionState(s.sessions[req.Event.SessionID])
 	lineage := ensureLineageKey(&state, scope)
+	lineage = activeFixSessionLineage(s.fixSessions, scope, lineage, now)
 	fixSession, ok := s.fixSessions[lineage]
 	if !ok || !fixSession.Active(now) {
 		return FixSession{}, false
