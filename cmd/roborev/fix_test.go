@@ -96,6 +96,24 @@ func TestBuildGenericFixPrompt(t *testing.T) {
 	assert.Contains(t, prompt, "git commit")
 }
 
+func TestBuildGenericFixPromptIncludesRestorationHistoryGuidance(t *testing.T) {
+	prompt := buildGenericFixPrompt("Restore the removed constraint", "", nil)
+
+	assert.Contains(t, prompt, "inspect the relevant repository history")
+	assert.Contains(t, prompt, "Preserve established identifiers")
+	assert.NotContains(t, prompt, "Reviewed git ref:")
+}
+
+func TestBuildGenericFixPromptIncludesReviewedRef(t *testing.T) {
+	prompt := buildGenericFixPromptWithMetadataForRef(
+		"Restore the removed constraint", "", nil,
+		config.FixCommitMetadata{}, "", "abc123def456",
+	)
+
+	assert.Contains(t, prompt, "Reviewed git ref: \"abc123def456\".")
+	assert.Contains(t, prompt, "apply the fix to the current checkout")
+}
+
 func TestBuildGenericFixPromptWithComments(t *testing.T) {
 	comments := []storage.Response{
 		{Responder: "dev", Response: "Don't touch the helper function", CreatedAt: time.Date(2026, 3, 15, 10, 0, 0, 0, time.UTC)},
@@ -732,6 +750,35 @@ func TestFixSingleJobPassesGlobalFixGuidelinesToAgent(t *testing.T) {
 	calls := tester.Calls()
 	require.NotEmpty(t, calls)
 	assert.Contains(t, calls[0].Prompt, "Direct policy sentinel")
+}
+
+func TestFixSingleJobPassesReviewedRefToAgent(t *testing.T) {
+	repo := createTestRepo(t, map[string]string{"main.go": "package main\n"})
+	ts, _ := newMockServer(t, MockServerOpts{
+		ReviewOutput: "## Issues\n- Restore removed behavior",
+		OnJobs: func(w http.ResponseWriter, _ *http.Request) {
+			writeJSON(w, map[string]any{"jobs": []storage.ReviewJob{{
+				ID:      99,
+				Status:  storage.JobStatusDone,
+				Agent:   "test",
+				JobType: storage.JobTypeReview,
+				GitRef:  "abc123def456",
+			}}})
+		},
+	})
+	patchServerAddr(t, ts.URL)
+
+	tester := agent.NewTestAgent()
+	tracker := &fixSessionTracker{base: tester, out: io.Discard}
+	cmd, _ := newTestCmd(t)
+	require.NoError(t, fixSingleJob(
+		cmd, repo.Dir, 99,
+		fixOptions{agentName: "test", reasoning: "fast"}, tracker,
+	))
+
+	calls := tester.Calls()
+	require.NotEmpty(t, calls)
+	assert.Contains(t, calls[0].Prompt, "Reviewed git ref: \"abc123def456\".")
 }
 
 // If the batch production path omits policy routing, batch fixes behave
@@ -2020,12 +2067,12 @@ func TestBuildBatchFixPrompt(t *testing.T) {
 	entries := []batchEntry{
 		{
 			jobID:  123,
-			job:    &storage.ReviewJob{GitRef: "abc123def456"},
+			job:    &storage.ReviewJob{GitRef: "abc123def456", JobType: storage.JobTypeReview},
 			review: &storage.Review{Output: "Found bug in foo.go"},
 		},
 		{
 			jobID:  456,
-			job:    &storage.ReviewJob{GitRef: "deadbeef1234"},
+			job:    &storage.ReviewJob{GitRef: "deadbeef1234", JobType: storage.JobTypeReview},
 			review: &storage.Review{Output: "Missing error check in bar.go"},
 		},
 	}
@@ -2038,9 +2085,12 @@ func TestBuildBatchFixPrompt(t *testing.T) {
 
 	// Per-review sections with numbered headers
 	assert.Contains(t, prompt, "## Review 1 (Job 123 — abc123d)")
+	assert.Contains(t, prompt, "Reviewed git ref: \"abc123def456\".")
 	assert.Contains(t, prompt, "Found bug in foo.go")
 	assert.Contains(t, prompt, "## Review 2 (Job 456 — deadbee)")
+	assert.Contains(t, prompt, "Reviewed git ref: \"deadbeef1234\".")
 	assert.Contains(t, prompt, "Missing error check in bar.go")
+	assert.Contains(t, prompt, "inspect the relevant repository history")
 
 	// Instructions footer
 	assert.Contains(t, prompt, "## Instructions")

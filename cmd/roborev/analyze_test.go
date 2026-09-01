@@ -213,6 +213,8 @@ func TestBuildFixPrompt(t *testing.T) {
 	assertContains(t, prompt, "apply the suggested changes", "prompt should include fix instructions")
 	assertContains(t, prompt, "compiles", "prompt should mention verification steps")
 	assertContains(t, prompt, "tests", "prompt should mention verification steps")
+	assertContains(t, prompt, "inspect the relevant repository history", "prompt should include restoration guidance")
+	assertContains(t, prompt, "schema object names", "prompt should preserve established identities")
 }
 
 func TestBuildFixPromptWithCommitMetadata(t *testing.T) {

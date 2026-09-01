@@ -30,6 +30,11 @@ The agent reads the review, applies changes, commits, and closes the review.
 This is a one-shot fix. For an iterative loop with re-review, see
 [Auto-Fix with Refine](/guides/auto-fixing/).
 
+When a finding asks to restore prior behavior, the fix prompt directs the agent
+to inspect relevant repository history before editing. The reviewed git ref is
+included when available so established identifiers, schema object names, public
+APIs, paths, and migration semantics can be preserved when still compatible.
+
 ## Copying Reviews
 
 Press `y` in the TUI to copy the full review content to your clipboard,

@@ -18,6 +18,7 @@ import (
 	gitrepo "go.kenn.io/kit/git/repo"
 
 	"go.kenn.io/roborev/internal/agent"
+	"go.kenn.io/roborev/internal/autofix"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/git"
@@ -760,6 +761,8 @@ func buildFixPromptWithMetadata(
 	fmt.Fprintf(&sb, "An analysis of type **%s** was performed and produced the following findings:\n\n", analysisType.Name)
 	sb.WriteString("## Analysis Findings\n\n")
 	sb.WriteString(analysisOutput)
+	sb.WriteString("\n\n## Restoration History\n\n")
+	sb.WriteString(autofix.RestorationHistoryGuidance)
 	sb.WriteString("\n\n## Instructions\n\n")
 	sb.WriteString("Please apply the suggested changes from the analysis above. ")
 	sb.WriteString("Make the necessary edits to address each finding. ")

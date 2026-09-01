@@ -24,6 +24,7 @@ import (
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/agenthook"
+	"go.kenn.io/roborev/internal/autofix"
 	"go.kenn.io/roborev/internal/backfill"
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/git"
@@ -1175,7 +1176,7 @@ func parseDuration(s string) (time.Duration, error) {
 // buildFixPromptWithInstructions constructs a fix prompt that includes the review
 // findings, optional user-provided instructions, and any comments/responses
 // (split into tool attempts and user comments for proper framing).
-func buildFixPromptWithInstructions(reviewOutput, userInstructions, minSeverity string, responses []storage.Response) string {
+func buildFixPromptWithInstructions(reviewOutput, userInstructions, minSeverity string, responses []storage.Response, reviewedRef string) string {
 	toolAttempts, userComments := prompt.SplitResponses(responses)
 	p := "# Fix Request\n\n" +
 		"An analysis was performed and produced the following findings:\n\n"
@@ -1186,6 +1187,9 @@ func buildFixPromptWithInstructions(reviewOutput, userInstructions, minSeverity 
 		reviewOutput + "\n\n"
 	p += prompt.FormatToolAttempts(toolAttempts)
 	p += prompt.FormatUserComments(userComments)
+	p += "## Restoration History\n\n" +
+		autofix.RestorationHistoryGuidance + "\n\n" +
+		autofix.FormatReviewedRef(reviewedRef)
 	if userInstructions != "" {
 		p += "## Additional Instructions\n\n" +
 			userInstructions + "\n\n"
@@ -3252,8 +3256,12 @@ func (s *Server) humaFixJob(
 				req.ParentJobID, commentsErr,
 			)
 		}
+		reviewedRef := ""
+		if parentJob.IsReviewJob() && !parentJob.IsDirtyJob() {
+			reviewedRef = parentJob.GitRef
+		}
 		fixPrompt = buildFixPromptWithInstructions(
-			review.Output, req.Prompt, fixMinSev, comments,
+			review.Output, req.Prompt, fixMinSev, comments, reviewedRef,
 		)
 	}
 

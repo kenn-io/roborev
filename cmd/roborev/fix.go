@@ -1141,7 +1141,10 @@ func fixSingleJob(cmd *cobra.Command, repoRoot string, jobID int64, opts fixOpti
 		Metadata:      metadata,
 		FixGuidelines: fixCfg.FixGuidelines,
 		Classify:      opts.classify,
-	}, buildGenericFixPromptWithMetadata(review.Output, minSev, comments, metadata, fixCfg.FixGuidelines))
+	}, buildGenericFixPromptWithMetadataForRef(
+		review.Output, minSev, comments, metadata, fixCfg.FixGuidelines,
+		reviewedRefForFix(job),
+	))
 	// Flush capture FIRST so session extraction completes before reading SessionID.
 	capture.Flush()
 	if fmtr != nil {
@@ -1528,10 +1531,11 @@ const (
 )
 
 func buildBatchPromptHeader(fixGuidelines string) string {
+	header := batchPromptHeaderWithGuidelines
 	if strings.TrimSpace(fixGuidelines) == "" {
-		return batchPromptHeader
+		header = batchPromptHeader
 	}
-	return batchPromptHeaderWithGuidelines
+	return header + autofix.RestorationHistoryGuidance + "\n\n"
 }
 
 func batchPromptOverhead(metadata config.FixCommitMetadata, fixGuidelines string) int {
@@ -1551,6 +1555,7 @@ func buildBatchPromptFooter(metadata config.FixCommitMetadata, fixGuidelines str
 func batchEntrySize(index int, e batchEntry) int {
 	toolAttempts, userComments := prompt.SplitResponses(e.comments)
 	size := len(fmt.Sprintf("## Review %d (Job %d — %s)\n\n%s\n\n", index, e.jobID, gitrepo.ShortSHA(e.job.GitRef), e.review.Output))
+	size += len(autofix.FormatReviewedRef(reviewedRefForFix(e.job)))
 	size += len(prompt.FormatToolAttempts(toolAttempts))
 	size += len(prompt.FormatUserComments(userComments))
 	return size
@@ -1629,6 +1634,7 @@ func buildBatchFixPromptWithMetadata(
 	for i, e := range entries {
 		toolAttempts, userComments := prompt.SplitResponses(e.comments)
 		fmt.Fprintf(&sb, "## Review %d (Job %d — %s)\n\n", i+1, e.jobID, gitrepo.ShortSHA(e.job.GitRef))
+		sb.WriteString(autofix.FormatReviewedRef(reviewedRefForFix(e.job)))
 		sb.WriteString(e.review.Output)
 		sb.WriteString("\n\n")
 		sb.WriteString(prompt.FormatToolAttempts(toolAttempts))
@@ -1803,6 +1809,17 @@ func buildGenericFixPromptWithMetadata(
 	metadata config.FixCommitMetadata,
 	fixGuidelines string,
 ) string {
+	return buildGenericFixPromptWithMetadataForRef(
+		analysisOutput, minSeverity, responses, metadata, fixGuidelines, "",
+	)
+}
+
+func buildGenericFixPromptWithMetadataForRef(
+	analysisOutput, minSeverity string,
+	responses []storage.Response,
+	metadata config.FixCommitMetadata,
+	fixGuidelines, reviewedRef string,
+) string {
 	toolAttempts, userComments := prompt.SplitResponses(responses)
 	var sb strings.Builder
 	sb.WriteString("# Fix Request\n\n")
@@ -1816,6 +1833,10 @@ func buildGenericFixPromptWithMetadata(
 	sb.WriteString("\n\n")
 	sb.WriteString(prompt.FormatToolAttempts(toolAttempts))
 	sb.WriteString(prompt.FormatUserComments(userComments))
+	sb.WriteString("## Restoration History\n\n")
+	sb.WriteString(autofix.RestorationHistoryGuidance)
+	sb.WriteString("\n\n")
+	sb.WriteString(autofix.FormatReviewedRef(reviewedRef))
 	sb.WriteString("## Instructions\n\n")
 	if strings.TrimSpace(fixGuidelines) == "" {
 		sb.WriteString("Please apply the suggested changes from the analysis above. ")
@@ -1831,6 +1852,13 @@ func buildGenericFixPromptWithMetadata(
 	sb.WriteString("3. Create a git commit with a descriptive message summarizing the changes\n")
 	sb.WriteString(formatFixCommitMetadataInstructions(metadata))
 	return autofix.AppendGuidelines(sb.String(), fixGuidelines)
+}
+
+func reviewedRefForFix(job *storage.ReviewJob) string {
+	if job == nil || !job.IsReviewJob() || job.IsDirtyJob() {
+		return ""
+	}
+	return strings.TrimSpace(job.GitRef)
 }
 
 // buildGenericCommitPrompt creates a prompt to commit uncommitted changes
