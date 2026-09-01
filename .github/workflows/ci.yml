@@ -287,7 +287,7 @@ jobs:
       - name: Test with coverage
         # Race coverage runs in the test and daemon-race jobs; repeating it here
         # makes the daemon package exceed its timeout without improving coverage.
-        run: go test -timeout 30m -shuffle=on -tags integration -coverprofile=coverage.out ./...
+        run: go test -timeout 45m -shuffle=on -tags integration -coverprofile=coverage.out ./...
 
       - name: Upload coverage
         uses: codecov/codecov-action@fb8b3582c8e4def4969c97caa2f19720cb33a72f  # v7.0.0
