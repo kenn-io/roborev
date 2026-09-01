@@ -948,7 +948,7 @@ type ExportCICostJob struct {
 	JobUUID             uuid.UUID              `json:"job_uuid" validate:"required"`
 	Model               *string                `json:"model,omitempty" validate:"required"`
 	Provider            *string                `json:"provider,omitempty" validate:"required"`
-	ResumeSourceJobUUID uuid.UUID              `json:"resume_source_job_uuid" validate:"required"`
+	ResumeSourceJobUUID *uuid.UUID             `json:"resume_source_job_uuid,omitempty" validate:"required"`
 	Role                string                 `json:"role" validate:"required"`
 	Status              string                 `json:"status" validate:"required"`
 }
@@ -983,9 +983,11 @@ func (e ExportCICostJob) Validate() error {
 			errors = errors.Append("Provider", err)
 		}
 	}
-	if v, ok := any(e.ResumeSourceJobUUID).(runtime.Validator); ok {
-		if err := v.Validate(); err != nil {
-			errors = errors.Append("ResumeSourceJobUUID", err)
+	if e.ResumeSourceJobUUID != nil {
+		if v, ok := any(e.ResumeSourceJobUUID).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("ResumeSourceJobUUID", err)
+			}
 		}
 	}
 	if err := typesValidator.Var(e.Role, "required"); err != nil {
@@ -1127,15 +1129,15 @@ func (e ExportCIPanel) Validate() error {
 }
 
 type ExportCIPanelJob struct {
-	Agent               string    `json:"agent" validate:"required"`
-	FinishedAt          *string   `json:"finished_at,omitempty" validate:"required"`
-	JobUUID             uuid.UUID `json:"job_uuid" validate:"required"`
-	Model               *string   `json:"model,omitempty" validate:"required"`
-	Provider            *string   `json:"provider,omitempty" validate:"required"`
-	ResumeSourceJobUUID uuid.UUID `json:"resume_source_job_uuid" validate:"required"`
-	Role                string    `json:"role" validate:"required"`
-	StartedAt           *string   `json:"started_at,omitempty" validate:"required"`
-	Status              string    `json:"status" validate:"required"`
+	Agent               string     `json:"agent" validate:"required"`
+	FinishedAt          *string    `json:"finished_at,omitempty" validate:"required"`
+	JobUUID             uuid.UUID  `json:"job_uuid" validate:"required"`
+	Model               *string    `json:"model,omitempty" validate:"required"`
+	Provider            *string    `json:"provider,omitempty" validate:"required"`
+	ResumeSourceJobUUID *uuid.UUID `json:"resume_source_job_uuid,omitempty" validate:"required"`
+	Role                string     `json:"role" validate:"required"`
+	StartedAt           *string    `json:"started_at,omitempty" validate:"required"`
+	Status              string     `json:"status" validate:"required"`
 }
 
 func (e ExportCIPanelJob) Validate() error {
@@ -1163,9 +1165,11 @@ func (e ExportCIPanelJob) Validate() error {
 			errors = errors.Append("Provider", err)
 		}
 	}
-	if v, ok := any(e.ResumeSourceJobUUID).(runtime.Validator); ok {
-		if err := v.Validate(); err != nil {
-			errors = errors.Append("ResumeSourceJobUUID", err)
+	if e.ResumeSourceJobUUID != nil {
+		if v, ok := any(e.ResumeSourceJobUUID).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("ResumeSourceJobUUID", err)
+			}
 		}
 	}
 	if err := typesValidator.Var(e.Role, "required"); err != nil {
@@ -1200,7 +1204,7 @@ type ExportReview struct {
 	PrURL               *string                `json:"pr_url,omitempty" validate:"required"`
 	Project             string                 `json:"project" validate:"required"`
 	Repo                string                 `json:"repo" validate:"required"`
-	ResumeSourceJobUUID uuid.UUID              `json:"resume_source_job_uuid" validate:"required"`
+	ResumeSourceJobUUID *uuid.UUID             `json:"resume_source_job_uuid,omitempty" validate:"required"`
 	ReviewID            uuid.UUID              `json:"review_id" validate:"required"`
 	Status              string                 `json:"status" validate:"required"`
 	Subagents           []ExportSubagent       `json:"subagents,omitempty" validate:"required"`
@@ -1261,9 +1265,11 @@ func (e ExportReview) Validate() error {
 	if err := typesValidator.Var(e.Repo, "required"); err != nil {
 		errors = errors.Append("Repo", err)
 	}
-	if v, ok := any(e.ResumeSourceJobUUID).(runtime.Validator); ok {
-		if err := v.Validate(); err != nil {
-			errors = errors.Append("ResumeSourceJobUUID", err)
+	if e.ResumeSourceJobUUID != nil {
+		if v, ok := any(e.ResumeSourceJobUUID).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("ResumeSourceJobUUID", err)
+			}
 		}
 	}
 	if v, ok := any(e.ReviewID).(runtime.Validator); ok {
@@ -1377,7 +1383,7 @@ type ExportSubagent struct {
 	DurationMs          *int64           `json:"duration_ms,omitempty"`
 	Model               *string          `json:"model,omitempty" validate:"required"`
 	Name                string           `json:"name" validate:"required"`
-	ResumeSourceJobUUID uuid.UUID        `json:"resume_source_job_uuid" validate:"required"`
+	ResumeSourceJobUUID *uuid.UUID       `json:"resume_source_job_uuid,omitempty" validate:"required"`
 	ReviewID            uuid.UUID        `json:"review_id" validate:"required"`
 	ReviewType          *string          `json:"review_type,omitempty" validate:"required"`
 	Verdict             string           `json:"verdict" validate:"required"`
@@ -1409,9 +1415,11 @@ func (e ExportSubagent) Validate() error {
 	if err := typesValidator.Var(e.Name, "required"); err != nil {
 		errors = errors.Append("Name", err)
 	}
-	if v, ok := any(e.ResumeSourceJobUUID).(runtime.Validator); ok {
-		if err := v.Validate(); err != nil {
-			errors = errors.Append("ResumeSourceJobUUID", err)
+	if e.ResumeSourceJobUUID != nil {
+		if v, ok := any(e.ResumeSourceJobUUID).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("ResumeSourceJobUUID", err)
+			}
 		}
 	}
 	if v, ok := any(e.ReviewID).(runtime.Validator); ok {

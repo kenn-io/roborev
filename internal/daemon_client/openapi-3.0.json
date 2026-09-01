@@ -1643,6 +1643,7 @@
           },
           "resume_source_job_uuid": {
             "format": "uuid",
+            "nullable": true,
             "type": "string"
           },
           "role": {
@@ -1821,6 +1822,7 @@
           },
           "resume_source_job_uuid": {
             "format": "uuid",
+            "nullable": true,
             "type": "string"
           },
           "role": {
@@ -1907,6 +1909,7 @@
           },
           "resume_source_job_uuid": {
             "format": "uuid",
+            "nullable": true,
             "type": "string"
           },
           "review_id": {
@@ -2093,6 +2096,7 @@
           },
           "resume_source_job_uuid": {
             "format": "uuid",
+            "nullable": true,
             "type": "string"
           },
           "review_id": {

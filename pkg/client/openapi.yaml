@@ -1260,7 +1260,9 @@ components:
             - "null"
         resume_source_job_uuid:
           format: uuid
-          type: string
+          type:
+            - string
+            - "null"
         role:
           type: string
         status:
@@ -1408,7 +1410,9 @@ components:
             - "null"
         resume_source_job_uuid:
           format: uuid
-          type: string
+          type:
+            - string
+            - "null"
         role:
           type: string
         started_at:
@@ -1481,7 +1485,9 @@ components:
           type: string
         resume_source_job_uuid:
           format: uuid
-          type: string
+          type:
+            - string
+            - "null"
         review_id:
           format: uuid
           type: string
@@ -1636,7 +1642,9 @@ components:
           type: string
         resume_source_job_uuid:
           format: uuid
-          type: string
+          type:
+            - string
+            - "null"
         review_id:
           format: uuid
           type: string

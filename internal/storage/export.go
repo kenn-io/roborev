@@ -71,7 +71,7 @@ type ExportReview struct {
 	Content             *string                `json:"content"`
 	Subagents           []ExportSubagent       `json:"subagents"`
 	Experiments         []ExperimentAssignment `json:"experiments"`
-	ResumeSourceJobUUID *uuid.UUID             `json:"resume_source_job_uuid" format:"uuid"`
+	ResumeSourceJobUUID *uuid.UUID             `json:"resume_source_job_uuid" format:"uuid" nullable:"true"`
 }
 
 type ExportSubagent struct {
@@ -85,7 +85,7 @@ type ExportSubagent struct {
 	DurationMS          *int64           `json:"duration_ms"`
 	Cost                ExportReviewCost `json:"cost"`
 	Content             *string          `json:"content"`
-	ResumeSourceJobUUID *uuid.UUID       `json:"resume_source_job_uuid" format:"uuid"`
+	ResumeSourceJobUUID *uuid.UUID       `json:"resume_source_job_uuid" format:"uuid" nullable:"true"`
 }
 
 type ExportReviewCost struct {

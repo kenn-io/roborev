@@ -1377,7 +1377,7 @@ export interface components {
             model: string | null;
             provider: string | null;
             /** Format: uuid */
-            resume_source_job_uuid: string;
+            resume_source_job_uuid: string | null;
             role: string;
             status: string;
         };
@@ -1429,7 +1429,7 @@ export interface components {
             model: string | null;
             provider: string | null;
             /** Format: uuid */
-            resume_source_job_uuid: string;
+            resume_source_job_uuid: string | null;
             role: string;
             started_at: string | null;
             status: string;
@@ -1452,7 +1452,7 @@ export interface components {
             project: string;
             repo: string;
             /** Format: uuid */
-            resume_source_job_uuid: string;
+            resume_source_job_uuid: string | null;
             /** Format: uuid */
             review_id: string;
             status: string;
@@ -1507,7 +1507,7 @@ export interface components {
             model: string | null;
             name: string;
             /** Format: uuid */
-            resume_source_job_uuid: string;
+            resume_source_job_uuid: string | null;
             /** Format: uuid */
             review_id: string;
             review_type: string | null;

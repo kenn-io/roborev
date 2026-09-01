@@ -48,7 +48,7 @@ type ExportCICostJob struct {
 	Status              string                 `json:"status"`
 	CostUSD             *float64               `json:"cost_usd"`
 	Experiments         []ExperimentAssignment `json:"experiments"`
-	ResumeSourceJobUUID *uuid.UUID             `json:"resume_source_job_uuid" format:"uuid"`
+	ResumeSourceJobUUID *uuid.UUID             `json:"resume_source_job_uuid" format:"uuid" nullable:"true"`
 }
 
 type ciCostCursor struct {

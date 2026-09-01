@@ -697,7 +697,7 @@ type ExportCICostJob struct {
 	JobUuid             uuid.UUID               `json:"job_uuid"`
 	Model               *string                 `json:"model"`
 	Provider            *string                 `json:"provider"`
-	ResumeSourceJobUuid uuid.UUID               `json:"resume_source_job_uuid"`
+	ResumeSourceJobUuid *uuid.UUID              `json:"resume_source_job_uuid"`
 	Role                string                  `json:"role"`
 	Status              string                  `json:"status"`
 }
@@ -741,15 +741,15 @@ type ExportCIPanel struct {
 
 // ExportCIPanelJob defines model for ExportCIPanelJob.
 type ExportCIPanelJob struct {
-	Agent               string    `json:"agent"`
-	FinishedAt          *string   `json:"finished_at"`
-	JobUuid             uuid.UUID `json:"job_uuid"`
-	Model               *string   `json:"model"`
-	Provider            *string   `json:"provider"`
-	ResumeSourceJobUuid uuid.UUID `json:"resume_source_job_uuid"`
-	Role                string    `json:"role"`
-	StartedAt           *string   `json:"started_at"`
-	Status              string    `json:"status"`
+	Agent               string     `json:"agent"`
+	FinishedAt          *string    `json:"finished_at"`
+	JobUuid             uuid.UUID  `json:"job_uuid"`
+	Model               *string    `json:"model"`
+	Provider            *string    `json:"provider"`
+	ResumeSourceJobUuid *uuid.UUID `json:"resume_source_job_uuid"`
+	Role                string     `json:"role"`
+	StartedAt           *string    `json:"started_at"`
+	Status              string     `json:"status"`
 }
 
 // ExportReview defines model for ExportReview.
@@ -768,7 +768,7 @@ type ExportReview struct {
 	PrUrl               *string                 `json:"pr_url"`
 	Project             string                  `json:"project"`
 	Repo                string                  `json:"repo"`
-	ResumeSourceJobUuid uuid.UUID               `json:"resume_source_job_uuid"`
+	ResumeSourceJobUuid *uuid.UUID              `json:"resume_source_job_uuid"`
 	ReviewId            uuid.UUID               `json:"review_id"`
 	Status              string                  `json:"status"`
 	Subagents           *[]ExportSubagent       `json:"subagents"`
@@ -820,7 +820,7 @@ type ExportSubagent struct {
 	DurationMs          *int64           `json:"duration_ms"`
 	Model               *string          `json:"model"`
 	Name                string           `json:"name"`
-	ResumeSourceJobUuid uuid.UUID        `json:"resume_source_job_uuid"`
+	ResumeSourceJobUuid *uuid.UUID       `json:"resume_source_job_uuid"`
 	ReviewId            uuid.UUID        `json:"review_id"`
 	ReviewType          *string          `json:"review_type"`
 	Verdict             string           `json:"verdict"`

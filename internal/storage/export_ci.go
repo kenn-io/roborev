@@ -80,7 +80,7 @@ type ExportCIPanelJob struct {
 	Status              string     `json:"status"`
 	StartedAt           *string    `json:"started_at"`
 	FinishedAt          *string    `json:"finished_at"`
-	ResumeSourceJobUUID *uuid.UUID `json:"resume_source_job_uuid" format:"uuid"`
+	ResumeSourceJobUUID *uuid.UUID `json:"resume_source_job_uuid" format:"uuid" nullable:"true"`
 }
 
 type ciMetricsCursor struct {
