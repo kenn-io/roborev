@@ -5,6 +5,7 @@ import (
 	"errors"
 	"io"
 	"time"
+	"uuid"
 
 	"github.com/atotto/clipboard"
 	osc52 "github.com/aymanbagabas/go-osc52/v2"
@@ -463,7 +464,7 @@ type patchMsg struct {
 // error. On error the handler leaves the panel uncached so a later expand
 // retries.
 type panelMembersMsg struct {
-	runUUID string
+	runUUID uuid.UUID
 	members []storage.ReviewJob
 	err     error
 }

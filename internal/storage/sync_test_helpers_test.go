@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/stretchr/testify/require"
 	_ "modernc.org/sqlite"
@@ -13,7 +14,7 @@ import (
 type syncTestHelper struct {
 	t         *testing.T
 	db        *DB
-	machineID string
+	machineID uuid.UUID
 	repo      *Repo
 }
 

@@ -417,6 +417,7 @@ func (w *SyncWorker) connect(timeout time.Duration) (bool, error) {
 		pool.Close()
 		return false, fmt.Errorf("get database ID: %w", err)
 	}
+	dbIDText := dbID.String() //nolint:forbidigo // sync_state TEXT value boundary.
 
 	lastTargetID, err := w.db.GetSyncState(SyncStateSyncTargetID)
 	if err != nil {
@@ -424,9 +425,9 @@ func (w *SyncWorker) connect(timeout time.Duration) (bool, error) {
 		return false, fmt.Errorf("get sync target ID: %w", err)
 	}
 
-	if lastTargetID != "" && lastTargetID != dbID {
+	if lastTargetID != "" && lastTargetID != dbIDText {
 		// Different database - clear all synced_at and pull cursors for full re-sync
-		oldID, newID := lastTargetID, dbID
+		oldID, newID := lastTargetID, dbIDText
 		if len(oldID) > 8 {
 			oldID = oldID[:8]
 		}
@@ -453,7 +454,7 @@ func (w *SyncWorker) connect(timeout time.Duration) (bool, error) {
 	}
 
 	// Update the sync target ID
-	if err := w.db.SetSyncState(SyncStateSyncTargetID, dbID); err != nil {
+	if err := w.db.SetSyncState(SyncStateSyncTargetID, dbIDText); err != nil {
 		pool.Close()
 		return false, fmt.Errorf("set sync target ID: %w", err)
 	}

@@ -7,3 +7,8 @@ generate:
   client: true
   client-with-response: true
   models: true
+overlay:
+  sources:
+    - native_uuid_overlay.yaml
+user-templates:
+  header.tmpl: native_uuid_header.tmpl

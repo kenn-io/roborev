@@ -16,6 +16,7 @@ import (
 	"strings"
 	"sync"
 	"time"
+	"uuid"
 
 	"github.com/coreos/go-systemd/v22/activation"
 	"github.com/coreos/go-systemd/v22/daemon"
@@ -76,7 +77,7 @@ type Server struct {
 
 	// Cached machine ID to avoid INSERT on every status request
 	machineIDMu sync.Mutex
-	machineID   string
+	machineID   uuid.UUID
 }
 
 const dailyTelemetryInterval = 24 * time.Hour
@@ -1017,16 +1018,16 @@ func findCompatibleReusableSession(
 	globalCfg *config.Config,
 	experiment *storage.ExperimentAssignmentInput,
 	ciPRNumber int,
-) (string, string) {
+) (string, *uuid.UUID) {
 	if !config.ResolveReuseReviewSessionFromConfig(repoCfg, globalCfg) ||
 		opts.Branch == "" || targetSHA == "" ||
 		opts.PanelRole == storage.PanelRoleSynthesis ||
 		!agent.SupportsSessionResume(opts.Agent) {
-		return "", ""
+		return "", nil
 	}
 	machineID, err := db.GetMachineID()
-	if err != nil || machineID == "" {
-		return "", ""
+	if err != nil || machineID == uuid.Nil() {
+		return "", nil
 	}
 	candidates, err := db.FindCompatibleReusableSessionCandidates(storage.ReusableSessionQuery{
 		RepoID:                opts.RepoID,
@@ -1050,7 +1051,7 @@ func findCompatibleReusableSession(
 	})
 	if err != nil {
 		log.Printf("enqueue: lookup compatible reusable session failed for repo=%d agent=%q: %v", opts.RepoID, opts.Agent, err)
-		return "", ""
+		return "", nil
 	}
 	const maxSessionReuseDistance = 50
 	for _, candidate := range candidates {
@@ -1068,7 +1069,7 @@ func findCompatibleReusableSession(
 		}
 		return candidate.SessionID, candidate.UUID
 	}
-	return "", ""
+	return "", nil
 }
 
 func reusableSessionTarget(gitRef string) string {
@@ -1084,18 +1085,21 @@ func reusableSessionTarget(gitRef string) string {
 
 // getMachineID returns the cached machine ID, fetching it on first successful call.
 // Retries on each call until successful to handle transient DB errors.
-func (s *Server) getMachineID() string {
+func (s *Server) getMachineID() *uuid.UUID {
 	s.machineIDMu.Lock()
 	defer s.machineIDMu.Unlock()
 
-	if s.machineID != "" {
-		return s.machineID
+	if s.machineID != uuid.Nil() {
+		return &s.machineID
 	}
 
-	if id, err := s.db.GetMachineID(); err == nil && id != "" {
+	if id, err := s.db.GetMachineID(); err == nil && id != uuid.Nil() {
 		s.machineID = id
 	}
-	return s.machineID
+	if s.machineID == uuid.Nil() {
+		return nil
+	}
+	return &s.machineID
 }
 
 func jobLogSafeEnd(f *os.File, fileSize int64) int64 {
@@ -1333,7 +1337,7 @@ func (s *Server) humaListJobs(
 	// A panel_run expansion returns the full run (members + synthesis). Without
 	// an explicit caller limit, default to unlimited so a run with >=50 rows is
 	// not silently truncated. An explicit limit is still honored.
-	if input.PanelRun != "" && input.Limit == limitNotProvided {
+	if input.PanelRun != uuid.Nil() && input.Limit == limitNotProvided {
 		limit = 0
 	}
 
@@ -1420,7 +1424,7 @@ func (s *Server) humaListJobs(
 	// excluded so list/wait/fix-discovery resolve to the synthesis parent,
 	// never an individual reviewer — the same caller-driven exclusion
 	// mechanism that fix jobs use via exclude_job_type.
-	if input.PanelRun != "" {
+	if input.PanelRun != uuid.Nil() {
 		listOpts = append(listOpts, storage.WithPanelRun(input.PanelRun))
 	} else {
 		listOpts = append(
@@ -2247,8 +2251,10 @@ func (s *Server) humaRerunJob(
 			"remote browser sessions cannot rerun jobs",
 		)
 	}
-	if input.Body.RequestID != "" {
-		result, found, err := s.db.GetRerunRequest(input.Body.RequestID, input.Body.JobID)
+	requestID := uuid.Nil()
+	if input.Body.RequestID != nil {
+		requestID = *input.Body.RequestID
+		result, found, err := s.db.GetRerunRequest(requestID, input.Body.JobID)
 		if err != nil {
 			return nil, huma.Error500InternalServerError(
 				fmt.Sprintf("load rerun request: %v", err),
@@ -2258,7 +2264,7 @@ func (s *Server) humaRerunJob(
 			resp := &RerunJobOutput{}
 			resp.Body.Success = true
 			resp.Body.JobID = result.JobID
-			resp.Body.RequestID = input.Body.RequestID
+			resp.Body.RequestID = requestID
 			resp.Body.RunUUID = result.PanelRunUUID
 			return resp, nil
 		}
@@ -2272,7 +2278,7 @@ func (s *Server) humaRerunJob(
 	// place, so the new run gets fresh member reviews to synthesize.
 	// rerunPanelRun enforces the terminal-state guard.
 	if job.IsSynthesisJob() {
-		return s.rerunPanelRun(job, input.Body.RequestID)
+		return s.rerunPanelRun(job, requestID)
 	}
 	if job.PanelRole == storage.PanelRoleMember {
 		return nil, huma.Error400BadRequest(
@@ -2280,7 +2286,11 @@ func (s *Server) humaRerunJob(
 		)
 	}
 
-	assignment, err := s.db.GetExperimentAssignmentInputForJobUUID(job.UUID)
+	jobUUID := uuid.Nil()
+	if job.UUID != nil {
+		jobUUID = *job.UUID
+	}
+	assignment, err := s.db.GetExperimentAssignmentInputForJobUUID(jobUUID)
 	if err != nil {
 		return nil, huma.Error500InternalServerError(
 			fmt.Sprintf("load experiment assignment: %v", err),
@@ -2292,7 +2302,7 @@ func (s *Server) humaRerunJob(
 	}
 
 	resultJobID, replayed, err := s.db.ReenqueueJobWithRequest(
-		input.Body.JobID, rerunOpts, input.Body.RequestID,
+		input.Body.JobID, rerunOpts, requestID,
 	)
 	if err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
@@ -2311,12 +2321,12 @@ func (s *Server) humaRerunJob(
 	resp := &RerunJobOutput{}
 	resp.Body.Success = true
 	resp.Body.JobID = resultJobID
-	resp.Body.RequestID = input.Body.RequestID
+	resp.Body.RequestID = requestID
 	return resp, nil
 }
 
 func (s *Server) broadcastRerunEnqueued(
-	jobID int64, jobUUID string, source *storage.ReviewJob,
+	jobID int64, jobUUID *uuid.UUID, source *storage.ReviewJob,
 ) {
 	s.broadcaster.Broadcast(Event{
 		Type:     "job.enqueued",
@@ -2907,7 +2917,7 @@ func (s *Server) enqueueSingleAgent(
 	s.finishSingleEnqueue(ctx, job, execution.Agent, in)
 	return rawJSONOutput(http.StatusCreated, EnqueueCreatedResponse{
 		ReviewJob: job,
-		UUID:      job.UUID,
+		UUID:      *job.UUID,
 	})
 }
 

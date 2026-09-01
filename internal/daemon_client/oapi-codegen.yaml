@@ -3,3 +3,6 @@ generate:
   models: true
   client: true
 output: client.gen.go
+output-options:
+  overlay:
+    path: ../../pkg/client/generated/native_uuid_overlay.yaml

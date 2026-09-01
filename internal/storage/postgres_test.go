@@ -1,6 +1,7 @@
 package storage
 
 import (
+	"crypto/rand"
 	_ "embed"
 	"fmt"
 	"os"
@@ -8,8 +9,8 @@ import (
 	"testing"
 	"time"
 	"unicode/utf8"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 )
@@ -17,7 +18,7 @@ import (
 //go:embed schemas/postgres_v1.sql
 var postgresV1Schema string
 
-const defaultTestMachineID = "11111111-1111-1111-1111-111111111111"
+var defaultTestMachineID = uuid.MustParse("11111111-1111-1111-1111-111111111111")
 
 func TestDefaultPgPoolConfig(t *testing.T) {
 	cfg := DefaultPgPoolConfig()
@@ -119,16 +120,16 @@ func TestIntegration_PullReviewsFiltersByKnownJobs(t *testing.T) {
 	ctx := t.Context()
 
 	// Clean up test data - use valid UUIDs
-	machineID := uuid.NewString()
-	otherMachineID := uuid.NewString()
-	jobUUID1 := uuid.NewString()
-	jobUUID2 := uuid.NewString()
-	reviewUUID1 := uuid.NewString()
-	reviewUUID2 := uuid.NewString()
+	machineID := uuid.New()
+	otherMachineID := uuid.New()
+	jobUUID1 := uuid.New()
+	jobUUID2 := uuid.New()
+	reviewUUID1 := uuid.New()
+	reviewUUID2 := uuid.New()
 
 	var repoIDs []int64
 	defer func() {
-		cleanupTestData(t, pool, machineID, otherMachineID, repoIDs, []string{jobUUID1, jobUUID2})
+		cleanupTestData(t, pool, machineID, otherMachineID, repoIDs, []uuid.UUID{jobUUID1, jobUUID2})
 	}()
 
 	// Register both machines
@@ -180,7 +181,7 @@ func TestIntegration_PullReviewsFiltersByKnownJobs(t *testing.T) {
 	})
 
 	t.Run("empty knownJobUUIDs returns empty and preserves cursor", func(t *testing.T) {
-		reviews, newCursor, err := pool.PullReviews(ctx, machineID, []string{}, "", 100)
+		reviews, newCursor, err := pool.PullReviews(ctx, machineID, []uuid.UUID{}, "", 100)
 		require.NoError(t, err, "PullReviews failed: %v")
 
 		assert.Empty(t, reviews)
@@ -189,7 +190,7 @@ func TestIntegration_PullReviewsFiltersByKnownJobs(t *testing.T) {
 
 	t.Run("filters to only known job UUIDs", func(t *testing.T) {
 		// Only request reviews for job1
-		reviews, _, err := pool.PullReviews(ctx, machineID, []string{jobUUID1}, "", 100)
+		reviews, _, err := pool.PullReviews(ctx, machineID, []uuid.UUID{jobUUID1}, "", 100)
 		require.NoError(t, err, "PullReviews failed: %v")
 
 		assert.Len(t, reviews, 1)
@@ -198,14 +199,14 @@ func TestIntegration_PullReviewsFiltersByKnownJobs(t *testing.T) {
 
 	t.Run("cursor does not skip reviews for later-known jobs", func(t *testing.T) {
 		// First pull with only job1 known - gets review1, advances cursor
-		reviews1, cursor1, err := pool.PullReviews(ctx, machineID, []string{jobUUID1}, "", 100)
+		reviews1, cursor1, err := pool.PullReviews(ctx, machineID, []uuid.UUID{jobUUID1}, "", 100)
 		require.NoError(t, err, "First PullReviews failed: %v")
 
 		assert.Len(t, reviews1, 1)
 
 		// Second pull with both jobs known - should still get review2
 		// even though cursor advanced past review1's timestamp
-		reviews2, _, err := pool.PullReviews(ctx, machineID, []string{jobUUID1, jobUUID2}, cursor1, 100)
+		reviews2, _, err := pool.PullReviews(ctx, machineID, []uuid.UUID{jobUUID1, jobUUID2}, cursor1, 100)
 		require.NoError(t, err, "Second PullReviews failed: %v")
 
 		assert.Len(t, reviews2, 1)
@@ -248,7 +249,7 @@ func openTestPgPool(t *testing.T) *PgPool {
 	return pool
 }
 
-func cleanupTestData(t *testing.T, pool *PgPool, machineID, otherMachineID string, repoIDs []int64, jobUUIDs []string) {
+func cleanupTestData(t *testing.T, pool *PgPool, machineID, otherMachineID uuid.UUID, repoIDs []int64, jobUUIDs []uuid.UUID) {
 	t.Helper()
 	ctx := t.Context()
 	// Clean up in reverse dependency order using tracked UUIDs
@@ -690,7 +691,7 @@ func TestIntegration_NewDatabaseClearsSyncedAt(t *testing.T) {
 	require.NoError(t, err, "MarkReviewSynced failed: %v")
 
 	// Set a fake old sync target ID (simulating we synced to a different database before)
-	oldTargetID := "old-database-" + uuid.NewString()
+	oldTargetID := "old-database-" + rand.Text()
 	err = sqliteDB.SetSyncState(SyncStateSyncTargetID, oldTargetID)
 	require.NoError(t, err, "SetSyncState failed: %v")
 
@@ -702,17 +703,18 @@ func TestIntegration_NewDatabaseClearsSyncedAt(t *testing.T) {
 	// Now get the database ID from the actual Postgres (which is different from oldTargetID)
 	dbID, err := pool.GetDatabaseID(ctx)
 	require.NoError(t, err, "GetDatabaseID failed: %v")
+	dbIDText := dbID.String() //nolint:forbidigo // Generic SQLite sync_state TEXT boundary.
 
 	// Simulate what connect() does: detect new database and clear synced_at
 	lastTargetID, _ := sqliteDB.GetSyncState(SyncStateSyncTargetID)
-	if lastTargetID != "" && lastTargetID != dbID {
+	if lastTargetID != "" && lastTargetID != dbIDText {
 		// This is what the sync worker does
-		t.Logf("Detected new database (was %s..., now %s...), clearing synced_at", lastTargetID[:8], dbID[:8])
+		t.Logf("Detected new database (was %s..., now %s...), clearing synced_at", lastTargetID[:8], dbIDText[:8])
 		err = sqliteDB.ClearAllSyncedAt()
 		require.NoError(t, err, "ClearAllSyncedAt failed: %v")
 
 	}
-	err = sqliteDB.SetSyncState(SyncStateSyncTargetID, dbID)
+	err = sqliteDB.SetSyncState(SyncStateSyncTargetID, dbIDText)
 	require.NoError(t, err, "SetSyncState (new target) failed: %v")
 
 	// Now the job should be returned for sync again
@@ -739,7 +741,7 @@ func TestIntegration_BatchUpsertJobs(t *testing.T) {
 		commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{RepoID: repoID, SHA: fmt.Sprintf("batch-jobs-sha-%d", i)})
 		jobs = append(jobs, JobWithPgIDs{
 			Job: SyncableJob{
-				UUID:            uuid.NewString(),
+				UUID:            uuid.New(),
 				RepoIdentity:    "https://github.com/test/batch-jobs-test.git",
 				CommitSHA:       fmt.Sprintf("batch-jobs-sha-%d", i),
 				GitRef:          "test-ref",
@@ -772,9 +774,9 @@ func TestIntegration_BatchUpsertJobs(t *testing.T) {
 	})
 
 	t.Run("worktree_path round-trips through batch upsert and pull", func(t *testing.T) {
-		wtJobUUID := uuid.NewString()
+		wtJobUUID := uuid.New()
 		// Use a distinct machine ID so we can exclude it when pulling
-		wtMachineID := uuid.NewString()
+		wtMachineID := uuid.New()
 		commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{
 			RepoID: repoID, SHA: "batch-wt-sha",
 		})
@@ -818,7 +820,7 @@ func TestIntegration_BatchUpsertJobs(t *testing.T) {
 		require.NoError(t, err)
 		pulledCursor = fmt.Sprintf("%s %d", updatedAt.Format(time.RFC3339Nano), rowID-1)
 
-		otherMachine := uuid.NewString()
+		otherMachine := uuid.New()
 		pulled, _, err := pool.PullJobs(ctx, otherMachine, pulledCursor, 100)
 		require.NoError(t, err)
 
@@ -834,9 +836,9 @@ func TestIntegration_BatchUpsertJobs(t *testing.T) {
 	})
 
 	t.Run("source round-trips through batch upsert and pull", func(t *testing.T) {
-		jobUUID := uuid.NewString()
-		machineID := uuid.NewString()
-		commitSHA := "batch-source-sha-" + jobUUID
+		jobUUID := uuid.New()
+		machineID := uuid.New()
+		commitSHA := fmt.Sprintf("batch-source-sha-%s", jobUUID)
 		commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{
 			RepoID: repoID, SHA: commitSHA,
 		})
@@ -876,7 +878,7 @@ func TestIntegration_BatchUpsertJobs(t *testing.T) {
 		require.NoError(t, err)
 		cursor := fmt.Sprintf("%s %d", updatedAt.Format(time.RFC3339Nano), rowID-1)
 
-		pulled, _, err := pool.PullJobs(ctx, uuid.NewString(), cursor, 100)
+		pulled, _, err := pool.PullJobs(ctx, uuid.New(), cursor, 100)
 		require.NoError(t, err)
 		var found *PulledJob
 		for i := range pulled {
@@ -890,8 +892,8 @@ func TestIntegration_BatchUpsertJobs(t *testing.T) {
 	})
 
 	t.Run("model provider fields round-trip through batch upsert and pull", func(t *testing.T) {
-		jobUUID := uuid.NewString()
-		machineID := uuid.NewString()
+		jobUUID := uuid.New()
+		machineID := uuid.New()
 		commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{
 			RepoID: repoID, SHA: "batch-model-provider-sha",
 		})
@@ -909,7 +911,7 @@ func TestIntegration_BatchUpsertJobs(t *testing.T) {
 				Status:                "done",
 				JobType:               JobTypeReview,
 				ReviewType:            "security",
-				PanelRunUUID:          "run-model-provider",
+				PanelRunUUID:          testUUIDPtr("run-model-provider"),
 				PanelRole:             PanelRoleMember,
 				PanelMemberName:       "security",
 				PanelMemberIndex:      0,
@@ -947,7 +949,7 @@ func TestIntegration_BatchUpsertJobs(t *testing.T) {
 		require.NoError(t, err)
 		cursor := fmt.Sprintf("%s %d", updatedAt.Format(time.RFC3339Nano), rowID-1)
 
-		pulled, _, err := pool.PullJobs(ctx, uuid.NewString(), cursor, 100)
+		pulled, _, err := pool.PullJobs(ctx, uuid.New(), cursor, 100)
 		require.NoError(t, err)
 		var found *PulledJob
 		for i := range pulled {
@@ -964,9 +966,9 @@ func TestIntegration_BatchUpsertJobs(t *testing.T) {
 	})
 
 	t.Run("invalid utf8 text fields are sanitized", func(t *testing.T) {
-		jobUUID := uuid.NewString()
-		machineID := uuid.NewString()
-		commitSHA := "batch-invalid-utf8-sha-" + jobUUID
+		jobUUID := uuid.New()
+		machineID := uuid.New()
+		commitSHA := fmt.Sprintf("batch-invalid-utf8-sha-%s", jobUUID)
 		commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{
 			RepoID: repoID, SHA: commitSHA,
 		})
@@ -1009,9 +1011,9 @@ func TestIntegration_BatchUpsertJobs(t *testing.T) {
 	})
 
 	t.Run("nul text fields are sanitized", func(t *testing.T) {
-		jobUUID := uuid.NewString()
-		machineID := uuid.NewString()
-		commitSHA := "batch-nul-text-sha-" + jobUUID
+		jobUUID := uuid.New()
+		machineID := uuid.New()
+		commitSHA := fmt.Sprintf("batch-nul-text-sha-%s", jobUUID)
 		commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{
 			RepoID: repoID, SHA: commitSHA,
 		})
@@ -1054,10 +1056,10 @@ func TestIntegration_BatchUpsertJobs(t *testing.T) {
 	})
 
 	t.Run("valid sibling persists when one job row fails", func(t *testing.T) {
-		validJobUUID := uuid.NewString()
-		invalidJobUUID := uuid.NewString()
-		machineID := uuid.NewString()
-		commitSHA := "batch-partial-job-sha-" + validJobUUID
+		validJobUUID := uuid.New()
+		invalidJobUUID := uuid.New()
+		machineID := uuid.New()
+		commitSHA := fmt.Sprintf("batch-partial-job-sha-%s", validJobUUID)
 		commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{
 			RepoID: repoID, SHA: commitSHA,
 		})
@@ -1110,7 +1112,7 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) {
 
 	repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{Identity: "https://github.com/test/batch-reviews-test.git"})
 	commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{RepoID: repoID, SHA: "batch-reviews-sha"})
-	jobUUID := uuid.NewString()
+	jobUUID := uuid.New()
 
 	createTestJob(t, pool.pool, TestJobOpts{
 		UUID:            jobUUID,
@@ -1121,7 +1123,7 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) {
 
 	reviews := []SyncableReview{
 		{
-			UUID:               uuid.NewString(),
+			UUID:               uuid.New(),
 			JobUUID:            jobUUID,
 			Agent:              "test",
 			Prompt:             "test prompt 1",
@@ -1133,7 +1135,7 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) {
 			CreatedAt:          time.Now(),
 		},
 		{
-			UUID:               uuid.NewString(),
+			UUID:               uuid.New(),
 			JobUUID:            jobUUID,
 			Agent:              "test",
 			Prompt:             "test prompt 2",
@@ -1164,7 +1166,7 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) {
 	})
 
 	t.Run("partial failure with invalid FK", func(t *testing.T) {
-		validReviewUUID := uuid.NewString()
+		validReviewUUID := uuid.New()
 		reviews := []SyncableReview{
 			{
 				UUID:               validReviewUUID,
@@ -1176,8 +1178,8 @@ func TestIntegration_BatchUpsertReviews(t *testing.T) {
 				CreatedAt:          time.Now(),
 			},
 			{
-				UUID:               uuid.NewString(),
-				JobUUID:            "00000000-0000-0000-0000-000000000000", // Invalid FK - will fail
+				UUID:               uuid.New(),
+				JobUUID:            uuid.Nil(), // Invalid FK - will fail
 				Agent:              "test",
 				Prompt:             "invalid review",
 				Output:             "output",
@@ -1207,7 +1209,7 @@ func TestIntegration_BatchInsertResponses(t *testing.T) {
 
 	repoID := createTestRepo(t, pool.Pool(), TestRepoOpts{Identity: "https://github.com/test/batch-responses-test.git"})
 	commitID := createTestCommit(t, pool.Pool(), TestCommitOpts{RepoID: repoID, SHA: "batch-responses-sha"})
-	jobUUID := uuid.NewString()
+	jobUUID := uuid.New()
 
 	createTestJob(t, pool.pool, TestJobOpts{
 		UUID:            jobUUID,
@@ -1218,7 +1220,7 @@ func TestIntegration_BatchInsertResponses(t *testing.T) {
 
 	responses := []SyncableResponse{
 		{
-			UUID:            uuid.NewString(),
+			UUID:            uuid.New(),
 			JobUUID:         jobUUID,
 			Responder:       "user1",
 			Response:        "response 1",
@@ -1226,7 +1228,7 @@ func TestIntegration_BatchInsertResponses(t *testing.T) {
 			CreatedAt:       time.Now(),
 		},
 		{
-			UUID:            uuid.NewString(),
+			UUID:            uuid.New(),
 			JobUUID:         jobUUID,
 			Responder:       "user2",
 			Response:        "response 2",
@@ -1234,7 +1236,7 @@ func TestIntegration_BatchInsertResponses(t *testing.T) {
 			CreatedAt:       time.Now(),
 		},
 		{
-			UUID:            uuid.NewString(),
+			UUID:            uuid.New(),
 			JobUUID:         jobUUID,
 			Responder:       "agent",
 			Response:        "response 3",
@@ -1257,7 +1259,7 @@ func TestIntegration_BatchInsertResponses(t *testing.T) {
 	t.Run("partial failure with invalid FK", func(t *testing.T) {
 		responses := []SyncableResponse{
 			{
-				UUID:            uuid.NewString(),
+				UUID:            uuid.New(),
 				JobUUID:         jobUUID, // Valid FK
 				Responder:       "user",
 				Response:        "valid response",
@@ -1265,8 +1267,8 @@ func TestIntegration_BatchInsertResponses(t *testing.T) {
 				CreatedAt:       time.Now(),
 			},
 			{
-				UUID:            uuid.NewString(),
-				JobUUID:         "00000000-0000-0000-0000-000000000000", // Invalid FK
+				UUID:            uuid.New(),
+				JobUUID:         uuid.Nil(), // Invalid FK
 				Responder:       "user",
 				Response:        "invalid response",
 				SourceMachineID: defaultTestMachineID,
@@ -1301,7 +1303,7 @@ func TestIntegration_EnsureSchema_MigratesV1ToV2(t *testing.T) {
 	}
 
 	// Insert a test job to verify data survives migration
-	testJobUUID := uuid.NewString()
+	testJobUUID := uuid.New()
 	var repoID int64
 	err := env.QueryRow(`
 		INSERT INTO roborev.repos (identity) VALUES ('test-repo-v1-migration') RETURNING id
@@ -1360,8 +1362,8 @@ func TestIntegration_UpsertJob_BackfillsModel(t *testing.T) {
 	ctx := t.Context()
 
 	// Create test data
-	machineID := uuid.NewString()
-	jobUUID := uuid.NewString()
+	machineID := uuid.New()
+	jobUUID := uuid.New()
 	repoIdentity := "test-repo-backfill-" + time.Now().Format("20060102150405")
 
 	defer func() {
@@ -1440,8 +1442,8 @@ func TestIntegration_UpsertJob_PreservesSource(t *testing.T) {
 	pool := openTestPgPool(t)
 	ctx := t.Context()
 
-	machineID := uuid.NewString()
-	jobUUID := uuid.NewString()
+	machineID := uuid.New()
+	jobUUID := uuid.New()
 	repoIdentity := "test-repo-source-" + time.Now().Format("20060102150405")
 
 	defer func() {

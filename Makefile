@@ -119,12 +119,15 @@ api-check:
 	@set -e; tmp="$$(mktemp -d)"; trap 'chmod -R u+w "$$tmp"; rm -rf "$$tmp"' EXIT; \
 		mkdir -p "$$tmp/pkg/client/generated"; \
 		cp pkg/client/generated/config.yaml "$$tmp/pkg/client/generated/config.yaml"; \
+		cp pkg/client/generated/native_uuid_overlay.yaml "$$tmp/pkg/client/generated/native_uuid_overlay.yaml"; \
+		cp pkg/client/generated/native_uuid_header.tmpl "$$tmp/pkg/client/generated/native_uuid_header.tmpl"; \
 		go run ./internal/daemon_client/openapi_generate -format yaml -o "$$tmp/pkg/client/openapi.yaml"; \
 		(cd "$$tmp/pkg/client/generated" && \
 			go run github.com/doordash-oss/oapi-codegen-dd/v3/cmd/oapi-codegen@v3.75.5 \
 				-config config.yaml ../openapi.yaml); \
 		diff -u pkg/client/openapi.yaml "$$tmp/pkg/client/openapi.yaml"; \
-		diff -ru --exclude=config.yaml --exclude=generate.go \
+		diff -ru --exclude=config.yaml --exclude=generate.go --exclude=native_uuid_overlay.yaml \
+			--exclude=native_uuid_header.tmpl \
 			pkg/client/generated "$$tmp/pkg/client/generated"
 	cd web && bun run generate:check
 

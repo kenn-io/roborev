@@ -225,7 +225,7 @@ func withSynthesis(runUUID string, summary storage.PanelSummary) func(*storage.R
 	return func(j *storage.ReviewJob) {
 		j.JobType = storage.JobTypeSynthesis
 		j.PanelRole = storage.PanelRoleSynthesis
-		j.PanelRunUUID = runUUID
+		j.PanelRunUUID = testUUIDPtr(runUUID)
 		s := summary
 		j.PanelSummary = &s
 	}
@@ -234,7 +234,7 @@ func withSynthesis(runUUID string, summary storage.PanelSummary) func(*storage.R
 func withPanelMember(runUUID, memberName string, index int) func(*storage.ReviewJob) {
 	return func(j *storage.ReviewJob) {
 		j.PanelRole = storage.PanelRoleMember
-		j.PanelRunUUID = runUUID
+		j.PanelRunUUID = testUUIDPtr(runUUID)
 		j.PanelMemberName = memberName
 		j.PanelMemberIndex = index
 	}

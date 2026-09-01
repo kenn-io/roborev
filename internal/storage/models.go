@@ -3,6 +3,7 @@ package storage
 import (
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/danielgtaylor/huma/v2"
 	gitrepo "go.kenn.io/kit/git/repo"
@@ -76,7 +77,7 @@ type ReviewJob struct {
 	Branch              string     `json:"branch,omitempty"`     // Branch name at time of job creation
 	CIBaseBranch        string     `json:"-"`                    // PR base branch for CI jobs; daemon-internal, used only for event/hook branch matching
 	SessionID           string     `json:"session_id,omitempty"` // Reused prior session or captured current session ID
-	ResumeSourceJobUUID string     `json:"resume_source_job_uuid,omitempty"`
+	ResumeSourceJobUUID *uuid.UUID `json:"resume_source_job_uuid,omitempty" format:"uuid"`
 	Agent               string     `json:"agent"`
 	Model               string     `json:"model,omitempty"`              // Effective model for this run (for opencode: provider/model format)
 	Provider            string     `json:"provider,omitempty"`           // Effective provider for this run (e.g., anthropic, openai)
@@ -113,19 +114,19 @@ type ReviewJob struct {
 	BackupModel string `json:"backup_model,omitempty"`
 	// Panel relation (subagent review panels). Synced columns group member
 	// + synthesis jobs of one panel run; ClaimBlocked is local-only.
-	PanelRunUUID          string `json:"panel_run_uuid,omitempty"`
-	PanelRole             string `json:"panel_role,omitempty"` // "" (non-panel), "member", or "synthesis"
-	PanelName             string `json:"panel_name,omitempty"`
-	PanelMemberName       string `json:"panel_member_name,omitempty"`
-	PanelMemberIndex      int    `json:"panel_member_index,omitempty"`
-	PanelMemberConfigJSON string `json:"panel_member_config_json,omitempty"`
-	ClaimBlocked          bool   `json:"claim_blocked,omitempty"` // local-only scheduling gate
-	TokenUsage            string `json:"token_usage,omitempty"`   // JSON blob from agentsview (token consumption)
+	PanelRunUUID          *uuid.UUID `json:"panel_run_uuid,omitempty" format:"uuid"`
+	PanelRole             string     `json:"panel_role,omitempty"` // "" (non-panel), "member", or "synthesis"
+	PanelName             string     `json:"panel_name,omitempty"`
+	PanelMemberName       string     `json:"panel_member_name,omitempty"`
+	PanelMemberIndex      int        `json:"panel_member_index,omitempty"`
+	PanelMemberConfigJSON string     `json:"panel_member_config_json,omitempty"`
+	ClaimBlocked          bool       `json:"claim_blocked,omitempty"` // local-only scheduling gate
+	TokenUsage            string     `json:"token_usage,omitempty"`   // JSON blob from agentsview (token consumption)
 	// Sync fields
-	UUID            string     `json:"uuid,omitempty"`              // Globally unique identifier for sync
-	SourceMachineID string     `json:"source_machine_id,omitempty"` // Machine that created this job
-	UpdatedAt       *time.Time `json:"updated_at,omitempty"`        // Last modification time
-	SyncedAt        *time.Time `json:"synced_at,omitempty"`         // Last sync time
+	UUID            *uuid.UUID `json:"uuid,omitempty" format:"uuid"`              // Globally unique identifier for sync
+	SourceMachineID *uuid.UUID `json:"source_machine_id,omitempty" format:"uuid"` // Machine that created this job
+	UpdatedAt       *time.Time `json:"updated_at,omitempty"`                      // Last modification time
+	SyncedAt        *time.Time `json:"synced_at,omitempty"`                       // Last sync time
 
 	// Joined fields for convenience
 	RepoPath      string  `json:"repo_path,omitempty"`
@@ -312,10 +313,10 @@ type Review struct {
 	Closed    bool      `json:"closed"`
 
 	// Sync fields
-	UUID               string     `json:"uuid,omitempty"`                  // Globally unique identifier for sync
-	UpdatedAt          *time.Time `json:"updated_at,omitempty"`            // Last modification time
-	UpdatedByMachineID string     `json:"updated_by_machine_id,omitempty"` // Machine that last modified this review
-	SyncedAt           *time.Time `json:"synced_at,omitempty"`             // Last sync time
+	UUID               *uuid.UUID `json:"uuid,omitempty" format:"uuid"`                  // Globally unique identifier for sync
+	UpdatedAt          *time.Time `json:"updated_at,omitempty"`                          // Last modification time
+	UpdatedByMachineID *uuid.UUID `json:"updated_by_machine_id,omitempty" format:"uuid"` // Machine that last modified this review
+	SyncedAt           *time.Time `json:"synced_at,omitempty"`                           // Last sync time
 
 	// Stored verdict: 1=pass, 0=fail, NULL=legacy (not yet backfilled)
 	VerdictBool      *int             `json:"verdict_bool,omitempty"`
@@ -335,9 +336,9 @@ type Response struct {
 	CreatedAt time.Time `json:"created_at"`
 
 	// Sync fields
-	UUID            string     `json:"uuid,omitempty"`              // Globally unique identifier for sync
-	SourceMachineID string     `json:"source_machine_id,omitempty"` // Machine that created this response
-	SyncedAt        *time.Time `json:"synced_at,omitempty"`         // Last sync time
+	UUID            *uuid.UUID `json:"uuid,omitempty" format:"uuid"`              // Globally unique identifier for sync
+	SourceMachineID *uuid.UUID `json:"source_machine_id,omitempty" format:"uuid"` // Machine that created this response
+	SyncedAt        *time.Time `json:"synced_at,omitempty"`                       // Last sync time
 }
 
 // AutoDesignStatus carries per-outcome counters for the automatic
@@ -372,9 +373,9 @@ type DaemonStatus struct {
 	Network              string            `json:"network,omitempty"`
 	Address              string            `json:"address,omitempty"`
 	Port                 int               `json:"port,omitempty"`
-	MachineID            string            `json:"machine_id,omitempty"`            // Local machine ID for remote job detection
-	ConfigReloadedAt     string            `json:"config_reloaded_at,omitempty"`    // Last config reload timestamp (RFC3339Nano)
-	ConfigReloadCounter  uint64            `json:"config_reload_counter,omitempty"` // Monotonic reload counter (for sub-second detection)
+	MachineID            *uuid.UUID        `json:"machine_id,omitempty" format:"uuid"` // Local machine ID for remote job detection
+	ConfigReloadedAt     string            `json:"config_reloaded_at,omitempty"`       // Last config reload timestamp (RFC3339Nano)
+	ConfigReloadCounter  uint64            `json:"config_reload_counter,omitempty"`    // Monotonic reload counter (for sub-second detection)
 	WebCapabilities      []string          `json:"web_capabilities"`
 
 	AutoDesign *AutoDesignStatus `json:"auto_design,omitempty"` // Auto design review counters; nil when disabled everywhere

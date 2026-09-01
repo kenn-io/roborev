@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -30,7 +31,7 @@ func TestMigrationMakesLegacyLocalJobEligibleForTokenReconciliation(t *testing.T
 
 	machineID, err := db.GetMachineID()
 	require.NoError(t, err)
-	var sourceMachineID string
+	var sourceMachineID uuid.UUID
 	require.NoError(t, db.QueryRow(
 		`SELECT source_machine_id FROM review_jobs WHERE id = ?`, jobs[0].ID,
 	).Scan(&sourceMachineID))
@@ -309,12 +310,12 @@ func TestTokenUsageCandidatesExcludeImportedJobs(t *testing.T) {
 
 	for i, seed := range []struct {
 		sessionID       string
-		sourceMachineID string
+		sourceMachineID uuid.UUID
 	}{
 		{sessionID: "local-cost-session", sourceMachineID: machineID},
-		{sessionID: "remote-cost-session", sourceMachineID: "remote-machine"},
+		{sessionID: "remote-cost-session", sourceMachineID: testUUID("remote-machine")},
 		{sourceMachineID: machineID},
-		{sourceMachineID: "remote-machine"},
+		{sourceMachineID: testUUID("remote-machine")},
 	} {
 		_, err := db.Exec(`
 			UPDATE review_jobs

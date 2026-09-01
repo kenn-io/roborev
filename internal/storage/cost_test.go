@@ -167,11 +167,12 @@ func TestGetCostAggregateIncludesPanelMembers(t *testing.T) {
 
 	repo := createRepo(t, db, "/tmp/cost-panel")
 	commit := createCommit(t, db, repo.ID, "panel-sha")
+	runUUID := testUUID("run-1")
 
 	mkPanelJob := func(role string, costJSON string) *ReviewJob {
 		job, err := db.EnqueueJob(EnqueueOpts{
 			RepoID: repo.ID, CommitID: commit.ID, GitRef: "panel-sha", Agent: "test",
-			PanelRunUUID: "run-1", PanelRole: role,
+			PanelRunUUID: &runUUID, PanelRole: role,
 		})
 		require.NoError(t, err)
 		setJobStatus(t, db, job.ID, JobStatusDone)
@@ -459,7 +460,7 @@ func TestGetCostAggregateCountsPulledUnpricedJob(t *testing.T) {
 	// A terminal row pulled from another machine that ran an agent but reported
 	// no cost. UpsertPulledJob writes the synced agent_invoked marker.
 	invoked := PulledJob{
-		UUID:            "pulled-invoked-uuid",
+		UUID:            testUUID("pulled-invoked-uuid"),
 		RepoIdentity:    "/test/repo-pulled-unpriced",
 		GitRef:          "HEAD",
 		Agent:           "codex",
@@ -467,7 +468,7 @@ func TestGetCostAggregateCountsPulledUnpricedJob(t *testing.T) {
 		AgentInvoked:    true,
 		StartedAt:       &ran,
 		FinishedAt:      &ran,
-		SourceMachineID: "machine-a",
+		SourceMachineID: testUUID("machine-a"),
 		EnqueuedAt:      ran,
 		UpdatedAt:       ran,
 	}
@@ -476,7 +477,7 @@ func TestGetCostAggregateCountsPulledUnpricedJob(t *testing.T) {
 	// A terminal row that never ran an agent (no marker, no usage) stays out of
 	// the denominator even though it synced from the same machine.
 	noAgent := invoked
-	noAgent.UUID = "pulled-no-agent-uuid"
+	noAgent.UUID = testUUID("pulled-no-agent-uuid")
 	noAgent.AgentInvoked = false
 	require.NoError(t, db.UpsertPulledJob(noAgent, repo.ID, nil))
 

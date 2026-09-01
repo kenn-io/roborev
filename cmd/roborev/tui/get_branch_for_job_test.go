@@ -68,40 +68,40 @@ func TestBackfillBranchValue(t *testing.T) {
 
 	t.Run("detached review left unbackfilled", func(t *testing.T) {
 		job := storage.ReviewJob{JobType: storage.JobTypeReview, GitRef: detachedSHA, RepoPath: repo.Path(), CommitID: &commitID}
-		_, ok := backfillBranchValue(job, "")
+		_, ok := backfillBranchValue(job, nil)
 		assert.False(t, ok)
 	})
 
 	t.Run("detached panel synthesis row left unbackfilled", func(t *testing.T) {
 		job := storage.ReviewJob{JobType: storage.JobTypeSynthesis, GitRef: detachedSHA, RepoPath: repo.Path(), CommitID: &commitID}
-		_, ok := backfillBranchValue(job, "")
+		_, ok := backfillBranchValue(job, nil)
 		assert.False(t, ok)
 	})
 
 	t.Run("reachable commit persists its branch", func(t *testing.T) {
 		job := storage.ReviewJob{JobType: storage.JobTypeReview, GitRef: reachableSHA, RepoPath: repo.Path(), CommitID: &commitID}
-		branch, ok := backfillBranchValue(job, "")
+		branch, ok := backfillBranchValue(job, nil)
 		assert.True(t, ok)
 		assert.Equal(t, "feature-x", branch)
 	})
 
 	t.Run("task job persists sentinel", func(t *testing.T) {
 		job := storage.ReviewJob{JobType: storage.JobTypeTask, GitRef: "analyze"}
-		branch, ok := backfillBranchValue(job, "")
+		branch, ok := backfillBranchValue(job, nil)
 		assert.True(t, ok)
 		assert.Equal(t, branchNone, branch)
 	})
 
 	t.Run("locally missing repo persists sentinel instead of stranding the row", func(t *testing.T) {
 		job := storage.ReviewJob{JobType: storage.JobTypeReview, GitRef: detachedSHA, RepoPath: "/nonexistent/repo", CommitID: &commitID}
-		branch, ok := backfillBranchValue(job, "")
+		branch, ok := backfillBranchValue(job, nil)
 		assert.True(t, ok)
 		assert.Equal(t, branchNone, branch)
 	})
 
 	t.Run("remote job persists sentinel without lookup", func(t *testing.T) {
-		job := storage.ReviewJob{JobType: storage.JobTypeReview, GitRef: detachedSHA, RepoPath: repo.Path(), CommitID: &commitID, SourceMachineID: "machine-b"}
-		branch, ok := backfillBranchValue(job, "machine-a")
+		job := storage.ReviewJob{JobType: storage.JobTypeReview, GitRef: detachedSHA, RepoPath: repo.Path(), CommitID: &commitID, SourceMachineID: testUUIDPtr("machine-b")}
+		branch, ok := backfillBranchValue(job, testUUIDPtr("machine-a"))
 		assert.True(t, ok)
 		assert.Equal(t, branchNone, branch)
 	})

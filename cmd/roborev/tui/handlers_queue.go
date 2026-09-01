@@ -3,6 +3,7 @@ package tui
 import (
 	"fmt"
 	"time"
+	"uuid"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -180,8 +181,8 @@ func (m model) flashNoReviewYet(job storage.ReviewJob) model {
 // m.reviewFetchSeq's doc comment, tui.go).
 func (m *model) enterReviewCmd(job storage.ReviewJob) tea.Cmd {
 	cmd := m.dispatchReviewFetch(job.ID)
-	if job.IsSynthesisJob() && m.panelMembersNeedFetch(job.PanelRunUUID) {
-		return tea.Batch(cmd, m.fetchPanelMembers(job.PanelRunUUID))
+	if job.IsSynthesisJob() && job.PanelRunUUID != nil && m.panelMembersNeedFetch(*job.PanelRunUUID) {
+		return tea.Batch(cmd, m.fetchPanelMembers(*job.PanelRunUUID))
 	}
 	return cmd
 }
@@ -190,7 +191,7 @@ func (m *model) enterReviewCmd(job storage.ReviewJob) tea.Cmd {
 // (re)fetched before showing its review header: either not cached yet, or
 // cached with a non-terminal (queued/running) row whose status may be stale.
 // Mirrors the non-terminal predicate in staleExpandedPanelRuns.
-func (m model) panelMembersNeedFetch(runUUID string) bool {
+func (m model) panelMembersNeedFetch(runUUID uuid.UUID) bool {
 	members, ok := m.panelMembers[runUUID]
 	if !ok {
 		return true

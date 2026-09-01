@@ -11,6 +11,7 @@ import (
 	"sync/atomic"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -86,7 +87,7 @@ func newRunTestServer(t *testing.T, cfg mockServerConfig) *httptest.Server {
 				}
 				job := storage.ReviewJob{
 					ID:     1,
-					UUID:   "00000000-0000-4000-8000-000000000001",
+					UUID:   testUUIDPtr("run-job-1"),
 					Agent:  "test",
 					GitRef: req.GitRef,
 					Status: storage.JobStatusQueued,
@@ -134,13 +135,13 @@ func TestRunLaunchReceiptOutput(t *testing.T) {
 		require.NoError(t, cmd.Execute())
 		var receipt struct {
 			JobID   int64             `json:"job_id"`
-			JobUUID string            `json:"job_uuid"`
+			JobUUID uuid.UUID         `json:"job_uuid"`
 			GitRef  string            `json:"git_ref"`
 			Status  storage.JobStatus `json:"status"`
 		}
 		require.NoError(t, json.Unmarshal([]byte(out.String()), &receipt), out.String())
 		assert.Equal(t, int64(1), receipt.JobID)
-		assert.Equal(t, "00000000-0000-4000-8000-000000000001", receipt.JobUUID)
+		assert.Equal(t, testUUID("run-job-1"), receipt.JobUUID)
 		assert.Equal(t, fullRef, receipt.GitRef)
 		assert.Equal(t, storage.JobStatusQueued, receipt.Status)
 		assert.Equal(t, 1, strings.Count(strings.TrimSpace(out.String()), "{"),
@@ -252,7 +253,7 @@ func TestRunLaunchReceiptOutput(t *testing.T) {
 		fullRef := "refs/heads/feature/requery"
 		job := storage.ReviewJob{
 			ID:     42,
-			UUID:   "00000000-0000-4000-8000-000000000042",
+			UUID:   testUUIDPtr("run-job-42"),
 			Agent:  "test",
 			GitRef: fullRef,
 			Status: storage.JobStatusQueued,
@@ -271,15 +272,15 @@ func TestRunLaunchReceiptOutput(t *testing.T) {
 		require.NoError(t, cmd.Execute())
 
 		var receipt struct {
-			JobID   int64  `json:"job_id"`
-			JobUUID string `json:"job_uuid"`
+			JobID   int64     `json:"job_id"`
+			JobUUID uuid.UUID `json:"job_uuid"`
 		}
 		require.NoError(t, json.Unmarshal([]byte(out.String()), &receipt))
 		assert.Equal(t, int64(42), receipt.JobID)
 		api := newDaemonReviewAPI(server.URL, server.Client())
 		queried, err := api.getJob(t.Context(), receipt.JobID)
 		require.NoError(t, err)
-		assert.Equal(t, receipt.JobUUID, queried.UUID)
+		assert.Equal(t, &receipt.JobUUID, queried.UUID)
 		assert.Equal(t, fullRef, queried.GitRef)
 		assert.Equal(t, storage.JobStatusQueued, queried.Status)
 	})

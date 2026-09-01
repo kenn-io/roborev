@@ -11,6 +11,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
 	tea "charm.land/bubbletea/v2"
 	"charm.land/lipgloss/v2"
@@ -618,7 +619,7 @@ func TestTUIJobCellsContent(t *testing.T) {
 			withPanelMember("R", "security", 1),
 			withStartedAt(firstMemberStarted.Add(2*time.Minute)),
 		)
-		m.panelMembers = map[string][]storage.ReviewJob{"R": {memberA, memberB}}
+		m.panelMembers = map[uuid.UUID][]storage.ReviewJob{testUUID("R"): {memberA, memberB}}
 
 		cells := m.jobCells(parent)
 
@@ -709,7 +710,7 @@ func TestTUIJobCellsCost(t *testing.T) {
 		memberA.TokenUsage = `{"cost_usd":0.10,"has_cost":true}`
 		memberB := makeJob(12, withPanelMember("R", "security", 1))
 		memberB.TokenUsage = `{"cost_usd":0.25,"has_cost":true}`
-		m.panelMembers = map[string][]storage.ReviewJob{"R": {memberA, memberB}}
+		m.panelMembers = map[uuid.UUID][]storage.ReviewJob{testUUID("R"): {memberA, memberB}}
 
 		cells := m.jobCells(parent)
 		assert.Equal(t, "~$0.35", cells[costIdx])
@@ -853,12 +854,12 @@ func TestTUIQueueCollapsedPanelShowsAggregatedMemberCost(t *testing.T) {
 	m.width = 200
 	m.height = 30
 	m.jobs = []storage.ReviewJob{parent}
-	m.panelMembers = map[string][]storage.ReviewJob{"R": {memberA, memberB}}
+	m.panelMembers = map[uuid.UUID][]storage.ReviewJob{testUUID("R"): {memberA, memberB}}
 	m.selectedIdx = 0
 	m.selectedJobID = parent.ID
 
 	out := stripTestANSI(m.renderQueueView())
-	assert.False(t, m.expandedPanels["R"], "panel remains collapsed")
+	assert.False(t, m.expandedPanels[testUUID("R")], "panel remains collapsed")
 	assert.Contains(t, out, "~$0.35", "collapsed parent row shows summed member costs")
 }
 
@@ -893,12 +894,12 @@ func TestTUIQueueCollapsedPanelShowsSummaryCostBeforeExpansion(t *testing.T) {
 	m.width = 200
 	m.height = 30
 	m.jobs = []storage.ReviewJob{parent}
-	m.panelMembers = map[string][]storage.ReviewJob{}
+	m.panelMembers = map[uuid.UUID][]storage.ReviewJob{}
 	m.selectedIdx = 0
 	m.selectedJobID = parent.ID
 
 	out := stripTestANSI(m.renderQueueView())
-	assert.False(t, m.expandedPanels["R"], "panel remains collapsed")
+	assert.False(t, m.expandedPanels[testUUID("R")], "panel remains collapsed")
 	assert.Contains(t, out, "~$0.40", "collapsed parent row uses panel_summary cost before member fetch")
 }
 
@@ -917,12 +918,12 @@ func TestTUIQueueCollapsedPanelShowsPartialSummaryCostBeforeExpansion(t *testing
 	m.width = 200
 	m.height = 30
 	m.jobs = []storage.ReviewJob{parent}
-	m.panelMembers = map[string][]storage.ReviewJob{}
+	m.panelMembers = map[uuid.UUID][]storage.ReviewJob{}
 	m.selectedIdx = 0
 	m.selectedJobID = parent.ID
 
 	out := stripTestANSI(m.renderQueueView())
-	assert.False(t, m.expandedPanels["R"], "panel remains collapsed")
+	assert.False(t, m.expandedPanels[testUUID("R")], "panel remains collapsed")
 	assert.Contains(t, out, "~$0.35", "collapsed parent row shows known member costs even when partial")
 }
 
@@ -943,12 +944,12 @@ func TestTUIQueueCollapsedPanelUsesSummaryCostWhenMemberCacheStale(t *testing.T)
 	m.width = 200
 	m.height = 30
 	m.jobs = []storage.ReviewJob{parent}
-	m.panelMembers = map[string][]storage.ReviewJob{"R": {memberA, memberB}}
+	m.panelMembers = map[uuid.UUID][]storage.ReviewJob{testUUID("R"): {memberA, memberB}}
 	m.selectedIdx = 0
 	m.selectedJobID = parent.ID
 
 	out := stripTestANSI(m.renderQueueView())
-	assert.False(t, m.expandedPanels["R"], "panel remains collapsed")
+	assert.False(t, m.expandedPanels[testUUID("R")], "panel remains collapsed")
 	assert.Contains(t, out, "~$0.40", "complete panel_summary cost wins over stale cached members")
 }
 
@@ -964,12 +965,12 @@ func TestTUIQueueCollapsedPanelShowsPartialCachedMemberCost(t *testing.T) {
 	m.width = 200
 	m.height = 30
 	m.jobs = []storage.ReviewJob{parent}
-	m.panelMembers = map[string][]storage.ReviewJob{"R": {memberA, memberB}}
+	m.panelMembers = map[uuid.UUID][]storage.ReviewJob{testUUID("R"): {memberA, memberB}}
 	m.selectedIdx = 0
 	m.selectedJobID = parent.ID
 
 	out := stripTestANSI(m.renderQueueView())
-	assert.False(t, m.expandedPanels["R"], "panel remains collapsed")
+	assert.False(t, m.expandedPanels[testUUID("R")], "panel remains collapsed")
 	assert.Contains(t, out, "~$0.10", "collapsed parent row shows known cached member costs even when partial")
 }
 
@@ -2942,7 +2943,7 @@ func seededPanelModel(t *testing.T) model {
 	m := newModel(localhostEndpoint, withExternalIODisabled())
 	m.width, m.height = 120, 30
 	m.jobs = []storage.ReviewJob{top, parent} // newest-first: 20 then 10
-	m.panelMembers = map[string][]storage.ReviewJob{"R": {
+	m.panelMembers = map[uuid.UUID][]storage.ReviewJob{testUUID("R"): {
 		makeJob(11, withRef("m0"), withPanelMember("R", "default", 0), withStatus(storage.JobStatusDone)),
 		makeJob(12, withRef("m1"), withPanelMember("R", "security", 1), withStatus(storage.JobStatusDone)),
 	}}
@@ -2952,7 +2953,7 @@ func seededPanelModel(t *testing.T) model {
 
 func TestSelectedJobResolvesMember(t *testing.T) {
 	m := seededPanelModel(t)
-	m.expandedPanels["R"] = true
+	m.expandedPanels[testUUID("R")] = true
 	m.selectedJobID = 12 // a member, not in m.jobs
 	job, ok := m.selectedJob()
 	assert.True(t, ok, "selectedJob resolves a member by id")
@@ -2970,7 +2971,7 @@ func TestNavSkipsCollapsedMembers(t *testing.T) {
 func TestNavWalksExpandedMembers(t *testing.T) {
 	assert := assert.New(t)
 	m := seededPanelModel(t)
-	m.expandedPanels["R"] = true // visible rows = [20, 10, 11, 12]
+	m.expandedPanels[testUUID("R")] = true // visible rows = [20, 10, 11, 12]
 	m.selectedJobID, m.selectedIdx = 10, 1
 	m, _ = pressSpecial(m, tea.KeyDown)
 	assert.Equal(int64(11), m.selectedJobID, "down steps into first member")
@@ -2982,7 +2983,7 @@ func TestNavWalksExpandedMembers(t *testing.T) {
 
 func TestPrevNextKeysWalkFlattenedRows(t *testing.T) {
 	m := seededPanelModel(t)
-	m.expandedPanels["R"] = true
+	m.expandedPanels[testUUID("R")] = true
 	m.selectedJobID, m.selectedIdx = 10, 1
 	m, _ = pressKey(m, 'j') // prev == down
 	assert.Equal(t, int64(11), m.selectedJobID)
@@ -2992,7 +2993,7 @@ func TestPrevNextKeysWalkFlattenedRows(t *testing.T) {
 
 func TestSelectionRestoredByIDAfterRefresh(t *testing.T) {
 	m := seededPanelModel(t)
-	m.expandedPanels["R"] = true
+	m.expandedPanels[testUUID("R")] = true
 	m.selectedJobID = 12 // a member is selected
 	reordered := []storage.ReviewJob{m.jobs[1], m.jobs[0]}
 	m2, _ := m.Update(jobsMsg{jobs: reordered, append: false, seq: m.fetchSeq})
@@ -3002,7 +3003,7 @@ func TestSelectionRestoredByIDAfterRefresh(t *testing.T) {
 func TestMutatingActionsBlockedOnMember(t *testing.T) {
 	for _, key := range []rune{'r', 'a', 'x'} {
 		m := seededPanelModel(t)
-		m.expandedPanels["R"] = true
+		m.expandedPanels[testUUID("R")] = true
 		m.selectedJobID = 11 // a member
 		m2, cmd := pressKey(m, key)
 		assert.Nil(t, cmd, "key %q must not act on a member", string(key))
@@ -3013,11 +3014,11 @@ func TestMutatingActionsBlockedOnMember(t *testing.T) {
 func TestMemberCloseDoesNotTouchParentStatsOrSelection(t *testing.T) {
 	assert := assert.New(t)
 	m := seededPanelModel(t)
-	m.expandedPanels["R"] = true
+	m.expandedPanels[testUUID("R")] = true
 	m.hideClosed = true
 	m.jobStats = storage.JobStats{Open: 5, Closed: 2}
 	closed := false
-	m.panelMembers["R"][0].Closed = &closed // member 11 is closable
+	m.panelMembers[testUUID("R")][0].Closed = &closed // member 11 is closable
 	m.selectedJobID = 11
 	before := m.jobStats
 	m2, _ := pressKey(m, 'a') // close
@@ -3030,7 +3031,7 @@ func TestBoundaryFlashWithExpandedPanel(t *testing.T) {
 	assert := assert.New(t)
 	// rows when expanded: [20 (top), 10 (parent), 11, 12 (last member)]
 	m := seededPanelModel(t)
-	m.expandedPanels["R"] = true
+	m.expandedPanels[testUUID("R")] = true
 
 	// Up at the very top (row 20) is a no-op that re-flashes the top boundary.
 	m.selectedJobID, m.selectedIdx = 20, 0
@@ -3050,9 +3051,9 @@ func TestSpaceTogglesPanelParent(t *testing.T) {
 	m := seededPanelModel(t)
 	m.selectedJobID, m.selectedIdx = 10, 1 // the synthesis parent
 	m, _ = pressKey(m, ' ')
-	assert.True(t, m.expandedPanels["R"], "space expands a panel parent")
+	assert.True(t, m.expandedPanels[testUUID("R")], "space expands a panel parent")
 	m, _ = pressKey(m, ' ')
-	assert.False(t, m.expandedPanels["R"], "space again collapses")
+	assert.False(t, m.expandedPanels[testUUID("R")], "space again collapses")
 }
 
 func TestRightArrowExpandsPanelParent(t *testing.T) {
@@ -3061,29 +3062,29 @@ func TestRightArrowExpandsPanelParent(t *testing.T) {
 
 	m, _ = pressSpecial(m, tea.KeyRight)
 
-	assert.True(t, m.expandedPanels["R"], "right arrow expands a collapsed panel parent")
+	assert.True(t, m.expandedPanels[testUUID("R")], "right arrow expands a collapsed panel parent")
 	assert.Equal(t, int64(10), m.selectedJobID, "expanding keeps the parent selected")
 }
 
 func TestLeftArrowCollapsesExpandedPanelParent(t *testing.T) {
 	m := seededPanelModel(t)
-	m.expandedPanels["R"] = true
+	m.expandedPanels[testUUID("R")] = true
 	m.selectedJobID, m.selectedIdx = 10, 1 // the synthesis parent
 
 	m, _ = pressSpecial(m, tea.KeyLeft)
 
-	assert.False(t, m.expandedPanels["R"], "left arrow collapses an expanded panel parent")
+	assert.False(t, m.expandedPanels[testUUID("R")], "left arrow collapses an expanded panel parent")
 	assert.Equal(t, int64(10), m.selectedJobID, "collapsing keeps the parent selected")
 }
 
 func TestLeftArrowOnPanelMemberCollapsesParent(t *testing.T) {
 	m := seededPanelModel(t)
-	m.expandedPanels["R"] = true
+	m.expandedPanels[testUUID("R")] = true
 	m.selectedJobID, m.selectedIdx = 11, -1 // first member
 
 	m, _ = pressSpecial(m, tea.KeyLeft)
 
-	assert.False(t, m.expandedPanels["R"], "left arrow on a member collapses its panel")
+	assert.False(t, m.expandedPanels[testUUID("R")], "left arrow on a member collapses its panel")
 	assert.Equal(t, int64(10), m.selectedJobID, "left arrow on a member selects the parent")
 }
 
@@ -3117,10 +3118,10 @@ func TestSpaceNoOpOnNonParent(t *testing.T) {
 
 func TestExpandFetchesMembersWhenUncached(t *testing.T) {
 	m := seededPanelModel(t)
-	delete(m.panelMembers, "R") // not yet fetched
+	delete(m.panelMembers, testUUID("R")) // not yet fetched
 	m.selectedJobID, m.selectedIdx = 10, 1
 	m, cmd := pressKey(m, ' ')
-	assert.True(t, m.expandedPanels["R"])
+	assert.True(t, m.expandedPanels[testUUID("R")])
 	assert.NotNil(t, cmd, "expanding an unfetched panel dispatches a member fetch")
 }
 
@@ -3133,32 +3134,32 @@ func TestExpandUsesCacheWhenPresent(t *testing.T) {
 
 func TestPanelMembersMsgSuccessCaches(t *testing.T) {
 	m := seededPanelModel(t)
-	delete(m.panelMembers, "R")
+	delete(m.panelMembers, testUUID("R"))
 	fetched := []storage.ReviewJob{
 		makeJob(11, withPanelMember("R", "default", 0)),
 		makeJob(12, withPanelMember("R", "security", 1)),
 	}
-	updated, _ := m.Update(panelMembersMsg{runUUID: "R", members: fetched})
+	updated, _ := m.Update(panelMembersMsg{runUUID: testUUID("R"), members: fetched})
 	m2 := updated.(model)
-	assert.Len(t, m2.panelMembers["R"], 2)
+	assert.Len(t, m2.panelMembers[testUUID("R")], 2)
 }
 
 func TestPanelMembersMsgErrorDoesNotCache(t *testing.T) {
 	m := seededPanelModel(t)
-	delete(m.panelMembers, "R")
-	updated, _ := m.Update(panelMembersMsg{runUUID: "R", err: assert.AnError})
+	delete(m.panelMembers, testUUID("R"))
+	updated, _ := m.Update(panelMembersMsg{runUUID: testUUID("R"), err: assert.AnError})
 	m2 := updated.(model)
-	_, cached := m2.panelMembers["R"]
+	_, cached := m2.panelMembers[testUUID("R")]
 	assert.False(t, cached, "a failed fetch is not cached, so a later expand refetches")
 	assert.NotEmpty(t, m2.flashMessage, "fetch failure is surfaced via flash")
 }
 
 func TestCollapseKeepsParentSelected(t *testing.T) {
 	m := seededPanelModel(t)
-	m.expandedPanels["R"] = true           // members 11,12 visible
+	m.expandedPanels[testUUID("R")] = true // members 11,12 visible
 	m.selectedJobID, m.selectedIdx = 10, 1 // the parent is selected
 	m, _ = pressKey(m, ' ')                // collapse
-	assert.False(t, m.expandedPanels["R"])
+	assert.False(t, m.expandedPanels[testUUID("R")])
 	assert.Equal(t, int64(10), m.selectedJobID, "collapsing keeps the parent row selected")
 }
 
@@ -3169,7 +3170,7 @@ func TestFetchPanelMembersFiltersAndSorts(t *testing.T) {
 	// row and sort the survivors by member index.
 	_, m := mockServerModel(t, func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/jobs", r.URL.Path)
-		assert.Equal("R", r.URL.Query().Get("panel_run"))
+		assert.Equal(testUUID("R").String(), r.URL.Query().Get("panel_run")) //nolint:forbidigo // HTTP query text boundary.
 		jobs := []storage.ReviewJob{
 			makeJob(10, withSynthesis("R", storage.PanelSummary{MembersTotal: 2})),
 			makeJob(12, withPanelMember("R", "security", 1)),
@@ -3178,10 +3179,10 @@ func TestFetchPanelMembersFiltersAndSorts(t *testing.T) {
 		assert.NoError(json.NewEncoder(w).Encode(map[string]any{"jobs": jobs}))
 	})
 
-	msg, ok := m.fetchPanelMembers("R")().(panelMembersMsg)
+	msg, ok := m.fetchPanelMembers(testUUID("R"))().(panelMembersMsg)
 	require.True(t, ok)
 	require.NoError(t, msg.err)
-	assert.Equal("R", msg.runUUID)
+	assert.Equal(testUUID("R"), msg.runUUID)
 	require.Len(t, msg.members, 2) // synthesis row filtered out; gates the indexing below
 	assert.Equal(0, msg.members[0].PanelMemberIndex)
 	assert.Equal(1, msg.members[1].PanelMemberIndex)
@@ -3196,7 +3197,7 @@ func TestFetchPanelMembersServerError(t *testing.T) {
 		w.WriteHeader(http.StatusInternalServerError)
 	})
 
-	msg, ok := m.fetchPanelMembers("R")().(panelMembersMsg)
+	msg, ok := m.fetchPanelMembers(testUUID("R"))().(panelMembersMsg)
 	require.True(t, ok)
 	require.ErrorContains(t, msg.err, "list panel members:")
 	assert.Empty(t, msg.members)
@@ -3212,7 +3213,7 @@ func TestFetchPanelMembersEmptyRun(t *testing.T) {
 		assert.NoError(t, json.NewEncoder(w).Encode(map[string]any{"jobs": jobs}))
 	})
 
-	msg, ok := m.fetchPanelMembers("R")().(panelMembersMsg)
+	msg, ok := m.fetchPanelMembers(testUUID("R"))().(panelMembersMsg)
 	require.True(t, ok)
 	require.NoError(t, msg.err)
 	assert.Empty(t, msg.members)
@@ -3230,7 +3231,7 @@ func withTestColor(t *testing.T) {
 func TestRenderShowsDisclosureAndConnectorsWhenExpanded(t *testing.T) {
 	withTestColor(t)
 	m := seededPanelModel(t)
-	m.expandedPanels["R"] = true
+	m.expandedPanels[testUUID("R")] = true
 	out := stripTestANSI(m.renderQueueView())
 	assert.Contains(t, out, "▾", "expanded parent shows the open disclosure")
 	assert.Contains(t, out, "└─", "last member shows the └─ connector")
@@ -3337,14 +3338,14 @@ func TestEnterOnFailedParentOpensError(t *testing.T) {
 func TestPanelMembersNeedFetch(t *testing.T) {
 	assert := assert.New(t)
 	m := newModel(localhostEndpoint, withExternalIODisabled())
-	assert.True(m.panelMembersNeedFetch("R"), "uncached run needs a fetch")
-	m.panelMembers = map[string][]storage.ReviewJob{"R": {
+	assert.True(m.panelMembersNeedFetch(testUUID("R")), "uncached run needs a fetch")
+	m.panelMembers = map[uuid.UUID][]storage.ReviewJob{testUUID("R"): {
 		makeJob(11, withPanelMember("R", "default", 0), withStatus(storage.JobStatusDone)),
 		makeJob(12, withPanelMember("R", "security", 1), withStatus(storage.JobStatusDone)),
 	}}
-	assert.False(m.panelMembersNeedFetch("R"), "all-terminal cache is fresh, no refetch")
-	m.panelMembers["R"][1].Status = storage.JobStatusRunning
-	assert.True(m.panelMembersNeedFetch("R"), "non-terminal cached member triggers a refetch")
+	assert.False(m.panelMembersNeedFetch(testUUID("R")), "all-terminal cache is fresh, no refetch")
+	m.panelMembers[testUUID("R")][1].Status = storage.JobStatusRunning
+	assert.True(m.panelMembersNeedFetch(testUUID("R")), "non-terminal cached member triggers a refetch")
 }
 
 func TestEnterOnDoneParentFetchesSynthesisReview(t *testing.T) {
@@ -3359,7 +3360,7 @@ func TestEnterOnDoneParentFetchesSynthesisReview(t *testing.T) {
 
 func TestEnterOnMemberFetchesMemberReview(t *testing.T) {
 	m := seededPanelModel(t) // members 11,12 done
-	m.expandedPanels["R"] = true
+	m.expandedPanels[testUUID("R")] = true
 	m.selectedJobID = 11 // a member row
 	_, cmd := pressSpecial(m, tea.KeyEnter)
 	assert.NotNil(t, cmd, "enter on a done member opens that member's review")
@@ -3367,29 +3368,29 @@ func TestEnterOnMemberFetchesMemberReview(t *testing.T) {
 
 func TestStaleExpandedPanelRunsTriggersOnNonTerminal(t *testing.T) {
 	m := seededPanelModel(t)
-	m.expandedPanels["R"] = true
-	m.panelMembers["R"][0].Status = storage.JobStatusRunning // one member still running
+	m.expandedPanels[testUUID("R")] = true
+	m.panelMembers[testUUID("R")][0].Status = storage.JobStatusRunning // one member still running
 	runs := m.staleExpandedPanelRuns()
-	assert.Equal(t, []string{"R"}, runs, "expanded panel with a running member is stale")
+	assert.Equal(t, []uuid.UUID{testUUID("R")}, runs, "expanded panel with a running member is stale")
 }
 
 func TestStaleExpandedPanelRunsSkipsAllTerminal(t *testing.T) {
 	m := seededPanelModel(t) // members 11,12 both Done
-	m.expandedPanels["R"] = true
+	m.expandedPanels[testUUID("R")] = true
 	assert.Empty(t, m.staleExpandedPanelRuns(), "all-terminal panel does not refetch")
 }
 
 func TestStaleExpandedPanelRunsSkipsCollapsed(t *testing.T) {
 	m := seededPanelModel(t)
-	m.panelMembers["R"][0].Status = storage.JobStatusRunning
+	m.panelMembers[testUUID("R")][0].Status = storage.JobStatusRunning
 	// R is NOT expanded
 	assert.Empty(t, m.staleExpandedPanelRuns(), "collapsed panel does not refetch")
 }
 
 func TestJobsRefreshRefetchesStalePanel(t *testing.T) {
 	m := seededPanelModel(t)
-	m.expandedPanels["R"] = true
-	m.panelMembers["R"][0].Status = storage.JobStatusRunning
+	m.expandedPanels[testUUID("R")] = true
+	m.panelMembers[testUUID("R")][0].Status = storage.JobStatusRunning
 	updated, cmd := m.Update(jobsMsg{jobs: m.jobs, append: false, seq: m.fetchSeq})
 	_ = updated
 	assert.NotNil(t, cmd, "refresh dispatches a member refetch for the stale expanded panel")
@@ -3397,13 +3398,13 @@ func TestJobsRefreshRefetchesStalePanel(t *testing.T) {
 
 func TestRefreshedMembersKeepSelection(t *testing.T) {
 	m := seededPanelModel(t)
-	m.expandedPanels["R"] = true
+	m.expandedPanels[testUUID("R")] = true
 	m.selectedJobID = 12 // a member selected
 	fresh := []storage.ReviewJob{
 		makeJob(11, withPanelMember("R", "default", 0), withStatus(storage.JobStatusDone)),
 		makeJob(12, withPanelMember("R", "security", 1), withStatus(storage.JobStatusDone)),
 	}
-	updated, _ := m.Update(panelMembersMsg{runUUID: "R", members: fresh})
+	updated, _ := m.Update(panelMembersMsg{runUUID: testUUID("R"), members: fresh})
 	assert.Equal(t, int64(12), updated.(model).selectedJobID, "refreshed members keep the selected id")
 }
 
@@ -3416,20 +3417,20 @@ func TestStaleExpandedPanelRunsSortsMultipleRuns(t *testing.T) {
 		makeJob(20, withRef("synZ"), withStatus(storage.JobStatusRunning), withSynthesis("Z", summary)),
 		makeJob(10, withRef("synA"), withStatus(storage.JobStatusRunning), withSynthesis("A", summary)),
 	}
-	m.panelMembers = map[string][]storage.ReviewJob{
-		"A": {makeJob(11, withPanelMember("A", "default", 0), withStatus(storage.JobStatusRunning))},
-		"Z": {makeJob(21, withPanelMember("Z", "default", 0), withStatus(storage.JobStatusRunning))},
+	m.panelMembers = map[uuid.UUID][]storage.ReviewJob{
+		testUUID("A"): {makeJob(11, withPanelMember("A", "default", 0), withStatus(storage.JobStatusRunning))},
+		testUUID("Z"): {makeJob(21, withPanelMember("Z", "default", 0), withStatus(storage.JobStatusRunning))},
 	}
-	m.expandedPanels["Z"] = true
-	m.expandedPanels["A"] = true
-	assert.Equal(t, []string{"A", "Z"}, m.staleExpandedPanelRuns(),
+	m.expandedPanels[testUUID("Z")] = true
+	m.expandedPanels[testUUID("A")] = true
+	assert.Equal(t, []uuid.UUID{testUUID("A"), testUUID("Z")}, m.staleExpandedPanelRuns(),
 		"multiple stale runs are returned in sorted order")
 }
 
 func TestContentNavWalksFlattenedRowsFromMember(t *testing.T) {
 	assert := assert.New(t)
 	m := seededPanelModel(t)                // jobs [20,10]; members 11,12 (all Done)
-	m.expandedPanels["R"] = true            // flattened: [20, 10, 11, 12]
+	m.expandedPanels[testUUID("R")] = true  // flattened: [20, 10, 11, 12]
 	m.selectedJobID, m.selectedIdx = 11, -1 // viewing member 11's review
 	m.currentView = viewReview
 	m, _ = pressKey(m, 'j') // prev/older → steps to 12 (next member)
@@ -3449,7 +3450,7 @@ func TestContentNavWalksFlattenedRowsFromMember(t *testing.T) {
 func TestMemberAtBoundaryDoesNotPaginate(t *testing.T) {
 	assert := assert.New(t)
 	m := seededPanelModel(t)
-	m.expandedPanels["R"] = true            // flattened: [20, 10, 11, 12]
+	m.expandedPanels[testUUID("R")] = true  // flattened: [20, 10, 11, 12]
 	m.hasMore = true                        // canPaginate() would be satisfiable for a parent
 	m.loadingJobs = false                   // seeded model marks the initial fetch in-flight
 	m.selectedJobID, m.selectedIdx = 12, -1 // last member, bottom row (no eligible row below)
@@ -3465,8 +3466,8 @@ func TestContentNavFromMemberSkipsIneligible(t *testing.T) {
 	// In log view a queued member is ineligible (log predicate = not queued).
 	// Log view binds j/k to scrolling; ←/→ are its prev/next (handlers_modal.go).
 	m := seededPanelModel(t)
-	m.panelMembers["R"][1].Status = storage.JobStatusQueued // member 12 queued
-	m.expandedPanels["R"] = true
+	m.panelMembers[testUUID("R")][1].Status = storage.JobStatusQueued // member 12 queued
+	m.expandedPanels[testUUID("R")] = true
 	m.selectedJobID, m.selectedIdx = 11, -1
 	m.currentView = viewLog
 	m.logFromView = viewQueue
@@ -3481,7 +3482,7 @@ func TestContentNavSelectionGoneFlashesStable(t *testing.T) {
 	m := seededPanelModel(t)
 	m.selectedJobID, m.selectedIdx = 11, -1 // member, but R is NOT expanded → 11 not in rows
 	m.currentView = viewReview
-	member := m.panelMembers["R"][0] // job 11
+	member := m.panelMembers[testUUID("R")][0] // job 11
 	m.currentReview = &storage.Review{JobID: member.ID, Job: &member}
 	before := m.currentReview
 	m, _ = pressKey(m, 'k')
@@ -3511,7 +3512,7 @@ func TestContentNavParentOnlyUnchanged(t *testing.T) {
 
 func TestPageKeysStillScrollInReview(t *testing.T) {
 	m := seededPanelModel(t)
-	m.expandedPanels["R"] = true
+	m.expandedPanels[testUUID("R")] = true
 	m.selectedJobID, m.selectedIdx = 11, -1
 	m.currentView = viewReview
 	m.reviewScroll = 5
@@ -3579,7 +3580,7 @@ func TestContentNavHiddenMemberFlashesStable(t *testing.T) {
 	m := seededPanelModel(t)                // members 11,12 in panelMembers, not m.jobs
 	m.selectedJobID, m.selectedIdx = 11, -1 // member, but R is NOT expanded → 11 absent from rows
 	m.currentView = viewReview
-	member := m.panelMembers["R"][0] // job 11
+	member := m.panelMembers[testUUID("R")][0] // job 11
 	m.currentReview = &storage.Review{JobID: member.ID, Job: &member}
 	before := m.currentReview
 

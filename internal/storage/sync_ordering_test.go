@@ -17,13 +17,13 @@ func TestUpsertPulledResponse_MissingParentJob(t *testing.T) {
 	defer db.Close()
 
 	// Try to upsert a response for a job that doesn't exist
-	nonexistentJobUUID := GenerateUUID()
+	nonexistentJobUUID := testUUID("missing-parent-job")
 	response := PulledResponse{
-		UUID:            GenerateUUID(),
+		UUID:            testUUID("missing-parent-response"),
 		JobUUID:         nonexistentJobUUID,
 		Responder:       "human",
 		Response:        "Test response for missing job",
-		SourceMachineID: GenerateUUID(),
+		SourceMachineID: testUUID("missing-parent-machine"),
 		CreatedAt:       time.Now(),
 	}
 
@@ -45,12 +45,12 @@ func TestUpsertPulledResponse_WithParentJob(t *testing.T) {
 
 	// Upsert a response for the existing job
 	response := PulledResponse{
-		UUID:            GenerateUUID(),
-		JobUUID:         job.UUID,
+		UUID:            testUUID("existing-parent-response"),
+		JobUUID:         *job.UUID,
 		Responder:       "human",
 		Response:        "Test response for existing job",
 		Source:          ResponseSourceRemoteBrowser,
-		SourceMachineID: GenerateUUID(),
+		SourceMachineID: testUUID("existing-parent-machine"),
 		CreatedAt:       time.Now(),
 	}
 
@@ -99,13 +99,13 @@ func TestUpsertPulledReviewSkipsStaleRemoteUpdate(t *testing.T) {
 	require.NoError(t, h.db.MarkReviewClosed(review.ID, true))
 
 	err = h.db.UpsertPulledReview(PulledReview{
-		UUID:               review.UUID,
-		JobUUID:            job.UUID,
+		UUID:               *review.UUID,
+		JobUUID:            *job.UUID,
 		Agent:              review.Agent,
 		Prompt:             review.Prompt,
 		Output:             review.Output,
 		Closed:             false,
-		UpdatedByMachineID: GenerateUUID(),
+		UpdatedByMachineID: testUUID("stale-review-machine"),
 		CreatedAt:          review.CreatedAt,
 		UpdatedAt:          time.Now().Add(-time.Hour),
 	})
@@ -579,13 +579,13 @@ func TestUpsertPulledReviewUsesStoredVerdict(t *testing.T) {
 	job := h.createPendingJob("stored-review-verdict")
 
 	require.NoError(t, h.db.UpsertPulledReview(PulledReview{
-		UUID:               GenerateUUID(),
-		JobUUID:            job.UUID,
+		UUID:               testUUID("stored-review-verdict"),
+		JobUUID:            *job.UUID,
 		Agent:              "test",
 		Prompt:             "prompt",
 		Output:             "No issues found.",
 		VerdictBool:        new(false),
-		UpdatedByMachineID: GenerateUUID(),
+		UpdatedByMachineID: testUUID("stored-review-machine"),
 		CreatedAt:          time.Now(),
 		UpdatedAt:          time.Now(),
 	}))

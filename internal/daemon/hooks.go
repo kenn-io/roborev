@@ -445,7 +445,7 @@ func kataCreateRequest(hook config.HookConfig, event Event) (kata.CreateReq, boo
 	}
 
 	idempotencyKey := fmt.Sprintf("roborev:%d:%s:%s", event.JobID, event.Type, event.SHA)
-	if event.JobUUID != "" {
+	if event.JobUUID != nil {
 		idempotencyKey = fmt.Sprintf("roborev:job:%s:%s", event.JobUUID, event.Type)
 	}
 

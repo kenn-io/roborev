@@ -17,6 +17,11 @@ import (
 	"go.kenn.io/roborev/internal/config"
 )
 
+// sqliteUUIDExpr generates UUID v4 text while backfilling legacy rows.
+const sqliteUUIDExpr = `lower(hex(randomblob(4)) || '-' || hex(randomblob(2)) || '-4' ||
+  substr(hex(randomblob(2)),2) || '-' || substr('89ab',abs(random()) % 4 + 1, 1) ||
+  substr(hex(randomblob(2)),2) || '-' || hex(randomblob(6)))`
+
 const schema = `
 CREATE TABLE IF NOT EXISTS repos (
   id INTEGER PRIMARY KEY,

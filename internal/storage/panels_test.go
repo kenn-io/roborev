@@ -7,6 +7,7 @@ import (
 	"errors"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -74,6 +75,7 @@ func TestPanelColumnsRoundTrip(t *testing.T) {
 
 	repo := createRepo(t, db, "/tmp/panel-rt")
 	commit := createCommit(t, db, repo.ID, "abc123")
+	runUUID := testUUID("run-1")
 
 	member, err := db.EnqueueJob(EnqueueOpts{
 		RepoID:                repo.ID,
@@ -82,7 +84,7 @@ func TestPanelColumnsRoundTrip(t *testing.T) {
 		Agent:                 "test",
 		JobType:               JobTypeReview,
 		ReviewType:            "security",
-		PanelRunUUID:          "run-1",
+		PanelRunUUID:          &runUUID,
 		PanelRole:             "member",
 		PanelName:             "branch_final",
 		PanelMemberName:       "security",
@@ -90,7 +92,7 @@ func TestPanelColumnsRoundTrip(t *testing.T) {
 		PanelMemberConfigJSON: `{"agent":"test","review_type":"security"}`,
 	})
 	require.NoError(t, err)
-	assert.Equal("run-1", member.PanelRunUUID)
+	assert.Equal(&runUUID, member.PanelRunUUID)
 	assert.Equal("member", member.PanelRole)
 	assert.Equal("branch_final", member.PanelName)
 	assert.Equal("security", member.PanelMemberName)
@@ -101,7 +103,7 @@ func TestPanelColumnsRoundTrip(t *testing.T) {
 	// GetJobByID round-trips.
 	got, err := db.GetJobByID(member.ID)
 	require.NoError(t, err)
-	assert.Equal("run-1", got.PanelRunUUID)
+	assert.Equal(&runUUID, got.PanelRunUUID)
 	assert.Equal("member", got.PanelRole)
 	assert.Equal(1, got.PanelMemberIndex)
 	assert.JSONEq(`{"agent":"test","review_type":"security"}`, got.PanelMemberConfigJSON)
@@ -111,7 +113,7 @@ func TestPanelColumnsRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, jobs, 1)
 	assert.Equal("member", jobs[0].PanelRole)
-	assert.Equal("run-1", jobs[0].PanelRunUUID)
+	assert.Equal(&runUUID, jobs[0].PanelRunUUID)
 }
 
 func TestJobTypeHelpersForSynthesis(t *testing.T) {
@@ -141,17 +143,18 @@ func TestClaimJobSkipsClaimBlocked(t *testing.T) {
 
 	repo := createRepo(t, db, "/tmp/panel-gate")
 	commit := createCommit(t, db, repo.ID, "abc123")
+	runUUID := testUUID("run-1")
 
 	// A gated synthesis job (claim_blocked=1) plus a claimable member.
 	_, err := db.EnqueueJob(EnqueueOpts{
 		RepoID: repo.ID, GitRef: "abc123..abc123", Agent: "test",
-		JobType: JobTypeSynthesis, PanelRunUUID: "run-1", PanelRole: "synthesis",
+		JobType: JobTypeSynthesis, PanelRunUUID: &runUUID, PanelRole: "synthesis",
 		ClaimBlocked: true,
 	})
 	require.NoError(t, err)
 	member, err := db.EnqueueJob(EnqueueOpts{
 		RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123", Agent: "test",
-		JobType: JobTypeReview, PanelRunUUID: "run-1", PanelRole: "member", PanelMemberIndex: 0,
+		JobType: JobTypeReview, PanelRunUUID: &runUUID, PanelRole: "member", PanelMemberIndex: 0,
 	})
 	require.NoError(t, err)
 
@@ -171,9 +174,10 @@ func TestClaimJobSkipsClaimBlocked(t *testing.T) {
 // for a run, returning the synthesis job and the member jobs.
 func enqueuePanelRun(t *testing.T, db *DB, repoID int64, runUUID string, n int) (*ReviewJob, []*ReviewJob) {
 	t.Helper()
+	runID := testUUID(runUUID)
 	synth, err := db.EnqueueJob(EnqueueOpts{
 		RepoID: repoID, GitRef: "base..head", Agent: "test",
-		JobType: JobTypeSynthesis, PanelRunUUID: runUUID, PanelRole: "synthesis",
+		JobType: JobTypeSynthesis, PanelRunUUID: &runID, PanelRole: "synthesis",
 		PanelName: "branch_final", ClaimBlocked: true,
 	})
 	require.NoError(t, err)
@@ -181,7 +185,7 @@ func enqueuePanelRun(t *testing.T, db *DB, repoID int64, runUUID string, n int) 
 	for i := range n {
 		m, err := db.EnqueueJob(EnqueueOpts{
 			RepoID: repoID, GitRef: "base..head", Agent: "test",
-			JobType: JobTypeRange, PanelRunUUID: runUUID, PanelRole: "member",
+			JobType: JobTypeRange, PanelRunUUID: &runID, PanelRole: "member",
 			PanelMemberName: "m", PanelMemberIndex: i,
 		})
 		require.NoError(t, err)
@@ -235,7 +239,7 @@ func TestMaybeReleasePanelSynthesis(t *testing.T) {
 				setStatus(t, db, members[i].ID, st)
 			}
 
-			require.NoError(t, db.MaybeReleasePanelSynthesis("run-"+tt.name))
+			require.NoError(t, db.MaybeReleasePanelSynthesis(testUUID("run-"+tt.name)))
 
 			assert.Equal(t, !tt.wantClear, claimBlockedOf(t, db, synth.ID),
 				"claim_blocked after release")
@@ -252,9 +256,9 @@ func TestMaybeReleasePanelSynthesisIdempotent(t *testing.T) {
 	setStatus(t, db, members[1].ID, JobStatusDone)
 
 	// Calling repeatedly is a no-op after the first release.
-	require.NoError(t, db.MaybeReleasePanelSynthesis("run-idem"))
-	require.NoError(t, db.MaybeReleasePanelSynthesis("run-idem"))
-	require.NoError(t, db.MaybeReleasePanelSynthesis("run-idem"))
+	require.NoError(t, db.MaybeReleasePanelSynthesis(testUUID("run-idem")))
+	require.NoError(t, db.MaybeReleasePanelSynthesis(testUUID("run-idem")))
+	require.NoError(t, db.MaybeReleasePanelSynthesis(testUUID("run-idem")))
 	assert.False(t, claimBlockedOf(t, db, synth.ID))
 }
 
@@ -262,7 +266,7 @@ func TestMaybeReleasePanelSynthesisUnknownRun(t *testing.T) {
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	// No rows for this run — must be a clean no-op.
-	require.NoError(t, db.MaybeReleasePanelSynthesis("does-not-exist"))
+	require.NoError(t, db.MaybeReleasePanelSynthesis(testUUID("does-not-exist")))
 }
 
 func TestApplyJobVerdictForSynthesis(t *testing.T) {
@@ -271,9 +275,10 @@ func TestApplyJobVerdictForSynthesis(t *testing.T) {
 	t.Cleanup(func() { db.Close() })
 
 	repo := createRepo(t, db, "/tmp/panel-verdict")
+	runUUID := testUUID("run-1")
 	synth, err := db.EnqueueJob(EnqueueOpts{
 		RepoID: repo.ID, GitRef: "abc123..abc123", Agent: "test",
-		JobType: JobTypeSynthesis, PanelRunUUID: "run-1", PanelRole: "synthesis",
+		JobType: JobTypeSynthesis, PanelRunUUID: &runUUID, PanelRole: "synthesis",
 	})
 	require.NoError(t, err)
 
@@ -317,11 +322,11 @@ func TestWithPanelRunAndExcludeMembers(t *testing.T) {
 	assert.False(ids[members[1].ID], "member 1 excluded")
 
 	// WithPanelRun returns exactly the run's members + synthesis.
-	runJobs, err := db.ListJobs("", "", 0, 0, WithPanelRun("run-1"))
+	runJobs, err := db.ListJobs("", "", 0, 0, WithPanelRun(testUUID("run-1")))
 	require.NoError(t, err)
 	assert.Len(runJobs, 3) // 2 members + synthesis
 	for _, j := range runJobs {
-		assert.Equal("run-1", j.PanelRunUUID)
+		assert.Equal(testUUIDPtr("run-1"), j.PanelRunUUID)
 	}
 }
 
@@ -332,7 +337,7 @@ func TestGetPanelMembersOrdered(t *testing.T) {
 	repo := createRepo(t, db, "/tmp/panel-members")
 	enqueuePanelRun(t, db, repo.ID, "run-1", 3)
 
-	got, err := db.GetPanelMembers("run-1")
+	got, err := db.GetPanelMembers(testUUID("run-1"))
 	require.NoError(t, err)
 	require.Len(t, got, 3)
 	assert.Equal(0, got[0].PanelMemberIndex)
@@ -343,7 +348,7 @@ func TestGetPanelMembersOrdered(t *testing.T) {
 	}
 
 	// Unknown run returns empty (synthesis row is not a member).
-	none, err := db.GetPanelMembers("no-such-run")
+	none, err := db.GetPanelMembers(testUUID("no-such-run"))
 	require.NoError(t, err)
 	assert.Empty(none)
 }
@@ -377,10 +382,11 @@ func TestReviewHydrationIncludesPanelFields(t *testing.T) {
 	t.Cleanup(func() { db.Close() })
 	repo := createRepo(t, db, "/tmp/panel-review-hydrate")
 	commit := createCommit(t, db, repo.ID, "abc123")
+	runUUID := testUUID("run-1")
 
 	member, err := db.EnqueueJob(EnqueueOpts{
 		RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123", Agent: "test",
-		JobType: JobTypeReview, PanelRunUUID: "run-1", PanelRole: "member",
+		JobType: JobTypeReview, PanelRunUUID: &runUUID, PanelRole: "member",
 		PanelName: "branch_final", PanelMemberName: "security", PanelMemberIndex: 3,
 		PanelMemberConfigJSON: `{"agent":"test"}`,
 	})
@@ -393,7 +399,7 @@ func TestReviewHydrationIncludesPanelFields(t *testing.T) {
 	// panel fields.
 	assertMember := func(name string, job *ReviewJob) {
 		require.NotNil(t, job, name)
-		assert.Equal("run-1", job.PanelRunUUID, name)
+		assert.Equal(&runUUID, job.PanelRunUUID, name)
 		assert.Equal("member", job.PanelRole, name)
 		assert.Equal("branch_final", job.PanelName, name)
 		assert.Equal("security", job.PanelMemberName, name)
@@ -415,7 +421,7 @@ func TestReviewHydrationIncludesPanelFields(t *testing.T) {
 	// and must hydrate the synthesis panel fields.
 	synth, err := db.EnqueueJob(EnqueueOpts{
 		RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123", Agent: "test",
-		JobType: JobTypeSynthesis, PanelRunUUID: "run-1", PanelRole: "synthesis",
+		JobType: JobTypeSynthesis, PanelRunUUID: &runUUID, PanelRole: "synthesis",
 		PanelName: "branch_final",
 	})
 	require.NoError(t, err)
@@ -427,7 +433,7 @@ func TestReviewHydrationIncludesPanelFields(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, bySHA.Job)
 	assert.Equal(synth.ID, bySHA.Job.ID, "SHA resolves to the synthesis, not a member")
-	assert.Equal("run-1", bySHA.Job.PanelRunUUID)
+	assert.Equal(&runUUID, bySHA.Job.PanelRunUUID)
 	assert.Equal("synthesis", bySHA.Job.PanelRole)
 	assert.Equal("branch_final", bySHA.Job.PanelName)
 }
@@ -448,10 +454,10 @@ func TestGetPanelSummariesExcludesMembersWithNoCostAmount(t *testing.T) {
 	seedCost(t, db, members[0].ID, `{"cost_usd":0.30,"has_cost":true}`)
 	seedCost(t, db, members[1].ID, `{"peak_context_tokens":100,"has_cost":true}`)
 
-	got, err := db.GetPanelSummaries([]string{"run-drift"})
+	got, err := db.GetPanelSummaries([]uuid.UUID{testUUID("run-drift")})
 	require.NoError(t, err)
 
-	sum := got["run-drift"]
+	sum := got[testUUID("run-drift")]
 	assert.Equal(2, sum.MembersTotal)
 	assert.Equal(1, sum.MembersWithCost, "a flag with no amount is not priced")
 	assert.InDelta(0.30, sum.MembersCostUSD, 0.000001)
@@ -490,10 +496,12 @@ func TestGetPanelSummaries(t *testing.T) {
 	setStatus(t, db, c[1].ID, JobStatusRunning)
 
 	// run-D has no members enqueued, so it must be absent from the result.
-	got, err := db.GetPanelSummaries([]string{"run-A", "run-B", "run-C", "run-D"})
+	got, err := db.GetPanelSummaries([]uuid.UUID{
+		testUUID("run-A"), testUUID("run-B"), testUUID("run-C"), testUUID("run-D"),
+	})
 	require.NoError(t, err)
 
-	sumA := got["run-A"]
+	sumA := got[testUUID("run-A")]
 	assert.Equal(3, sumA.MembersTotal)
 	assert.Equal(3, sumA.MembersTerminal)
 	assert.Equal(1, sumA.MembersSucceeded)
@@ -509,7 +517,7 @@ func TestGetPanelSummaries(t *testing.T) {
 	require.NoError(t, json.Unmarshal(sumAJSON, &sumAMap))
 	assert.Equal(firstAStarted.Format(time.RFC3339), sumAMap["first_started_at"])
 
-	sumB := got["run-B"]
+	sumB := got[testUUID("run-B")]
 	assert.Equal(2, sumB.MembersTotal)
 	assert.Equal(2, sumB.MembersTerminal)
 	assert.Equal(1, sumB.MembersSucceeded)
@@ -520,7 +528,7 @@ func TestGetPanelSummaries(t *testing.T) {
 	assert.False(sumB.MembersCostComplete, "partial member cost is not complete")
 	assert.InDelta(0.20, sumB.MembersCostUSD, 0.000001)
 
-	sumC := got["run-C"]
+	sumC := got[testUUID("run-C")]
 	assert.Equal(2, sumC.MembersTotal)
 	assert.Equal(1, sumC.MembersTerminal) // running is not terminal
 	assert.Equal(1, sumC.MembersSucceeded)
@@ -531,7 +539,7 @@ func TestGetPanelSummaries(t *testing.T) {
 	assert.False(sumC.MembersCostComplete)
 
 	// A run with no member rows is absent from the map (not a zero-value entry).
-	_, hasD := got["run-D"]
+	_, hasD := got[testUUID("run-D")]
 	assert.False(hasD, "run-D has no members and must be absent")
 
 	// Empty input is a clean no-op.
@@ -549,9 +557,10 @@ func TestGetJobsToSyncIncludesPanelColumns(t *testing.T) {
 
 	repo := createRepo(t, db, "/tmp/panel-sync")
 	commit := createCommit(t, db, repo.ID, "abc123")
+	runUUID := testUUID("run-1")
 	member, err := db.EnqueueJob(EnqueueOpts{
 		RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123", Agent: "test",
-		JobType: JobTypeReview, PanelRunUUID: "run-1", PanelRole: "member",
+		JobType: JobTypeReview, PanelRunUUID: &runUUID, PanelRole: "member",
 		PanelName: "branch_final", PanelMemberName: "security", PanelMemberIndex: 2,
 		PanelMemberConfigJSON: `{"agent":"test"}`,
 	})
@@ -563,7 +572,7 @@ func TestGetJobsToSyncIncludesPanelColumns(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, jobs, 1)
 	s := jobs[0]
-	assert.Equal("run-1", s.PanelRunUUID)
+	assert.Equal(&runUUID, s.PanelRunUUID)
 	assert.Equal("member", s.PanelRole)
 	assert.Equal("branch_final", s.PanelName)
 	assert.Equal("security", s.PanelMemberName)
@@ -578,7 +587,7 @@ func TestUpsertPulledJobRoundTripsPanelColumns(t *testing.T) {
 	repo := createRepo(t, db, "/tmp/panel-pull")
 
 	pulled := PulledJob{
-		UUID:                  "uuid-1",
+		UUID:                  testUUID("uuid-1"),
 		GitRef:                "abc123",
 		Agent:                 "test",
 		Reasoning:             "thorough",
@@ -586,8 +595,8 @@ func TestUpsertPulledJobRoundTripsPanelColumns(t *testing.T) {
 		Status:                "done",
 		EnqueuedAt:            time.Now(),
 		UpdatedAt:             time.Now(),
-		SourceMachineID:       "remote-machine",
-		PanelRunUUID:          "run-9",
+		SourceMachineID:       testUUID("remote-machine"),
+		PanelRunUUID:          testUUIDPtr("run-9"),
 		PanelRole:             "member",
 		PanelName:             "branch_final",
 		PanelMemberName:       "design",
@@ -602,11 +611,11 @@ func TestUpsertPulledJobRoundTripsPanelColumns(t *testing.T) {
 		SELECT COALESCE(panel_run_uuid,''), COALESCE(panel_role,''), COALESCE(panel_name,''),
 		       COALESCE(panel_member_name,''), panel_member_index, COALESCE(panel_member_config_json,''),
 		       COALESCE(claim_blocked,0)
-		FROM review_jobs WHERE uuid = 'uuid-1'
-	`)
+		FROM review_jobs WHERE uuid = ?
+	`, pulled.UUID)
 	require.NoError(t, row.Scan(&got.PanelRunUUID, &got.PanelRole, &got.PanelName,
 		&got.PanelMemberName, &got.PanelMemberIndex, &got.PanelMemberConfigJSON, &cb))
-	assert.Equal("run-9", got.PanelRunUUID)
+	assert.Equal(testUUIDPtr("run-9"), got.PanelRunUUID)
 	assert.Equal("member", got.PanelRole)
 	assert.Equal("design", got.PanelMemberName)
 	assert.Equal(4, got.PanelMemberIndex)
@@ -622,20 +631,20 @@ func TestGetSynthesisJob(t *testing.T) {
 	repo := createRepo(t, db, "/tmp/panel-get-synth")
 	synth, _ := enqueuePanelRun(t, db, repo.ID, "run-1", 2)
 
-	got, err := db.GetSynthesisJob("run-1")
+	got, err := db.GetSynthesisJob(testUUID("run-1"))
 	require.NoError(t, err)
 	require.NotNil(t, got)
 	assert.Equal(synth.ID, got.ID)
 	assert.Equal(PanelRoleSynthesis, got.PanelRole)
-	assert.Equal("run-1", got.PanelRunUUID)
+	assert.Equal(testUUIDPtr("run-1"), got.PanelRunUUID)
 
 	// Empty uuid is a clean (nil, nil).
-	none, err := db.GetSynthesisJob("")
+	none, err := db.GetSynthesisJob(uuid.Nil())
 	require.NoError(t, err)
 	assert.Nil(none)
 
 	// Unknown uuid is a clean (nil, nil).
-	none, err = db.GetSynthesisJob("no-such-run")
+	none, err = db.GetSynthesisJob(testUUID("no-such-run"))
 	require.NoError(t, err)
 	assert.Nil(none)
 }
@@ -645,10 +654,11 @@ func TestGetPanelMemberReviews(t *testing.T) {
 	db := openTestDB(t)
 	t.Cleanup(func() { db.Close() })
 	repo := createRepo(t, db, "/tmp/panel-member-reviews")
+	runUUID := testUUID("run-1")
 
 	synth, err := db.EnqueueJob(EnqueueOpts{
 		RepoID: repo.ID, GitRef: "base..head", Agent: "test",
-		JobType: JobTypeSynthesis, PanelRunUUID: "run-1", PanelRole: PanelRoleSynthesis,
+		JobType: JobTypeSynthesis, PanelRunUUID: &runUUID, PanelRole: PanelRoleSynthesis,
 		ClaimBlocked: true,
 	})
 	require.NoError(t, err)
@@ -659,7 +669,7 @@ func TestGetPanelMemberReviews(t *testing.T) {
 	for _, idx := range indices {
 		m, err := db.EnqueueJob(EnqueueOpts{
 			RepoID: repo.ID, GitRef: "base..head", Agent: "test",
-			JobType: JobTypeReview, PanelRunUUID: "run-1", PanelRole: PanelRoleMember,
+			JobType: JobTypeReview, PanelRunUUID: &runUUID, PanelRole: PanelRoleMember,
 			PanelMemberName: "m", PanelMemberIndex: idx,
 		})
 		require.NoError(t, err)
@@ -677,7 +687,7 @@ func TestGetPanelMemberReviews(t *testing.T) {
 		},
 	))
 
-	got, err := db.GetPanelMemberReviews("run-1")
+	got, err := db.GetPanelMemberReviews(runUUID)
 	require.NoError(t, err)
 	require.Len(t, got, 3)
 
@@ -698,7 +708,7 @@ func TestGetPanelMemberReviews(t *testing.T) {
 	assert.Empty(got[1].Output)
 
 	// Empty uuid is a clean (nil, nil).
-	none, err := db.GetPanelMemberReviews("")
+	none, err := db.GetPanelMemberReviews(uuid.Nil())
 	require.NoError(t, err)
 	assert.Nil(none)
 }
@@ -724,12 +734,12 @@ func TestListStuckPanelRuns(t *testing.T) {
 	relSynth, relMembers := enqueuePanelRun(t, db, repo.ID, "run-released", 2)
 	setStatus(t, db, relMembers[0].ID, JobStatusDone)
 	setStatus(t, db, relMembers[1].ID, JobStatusDone)
-	require.NoError(t, db.MaybeReleasePanelSynthesis("run-released"))
+	require.NoError(t, db.MaybeReleasePanelSynthesis(testUUID("run-released")))
 	require.False(t, claimBlockedOf(t, db, relSynth.ID))
 
 	got, err := db.ListStuckPanelRuns()
 	require.NoError(t, err)
-	assert.Equal([]string{"run-stuck"}, got)
+	assert.Equal([]uuid.UUID{testUUID("run-stuck")}, got)
 }
 
 func TestEnqueuePanelRunAtomic(t *testing.T) {
@@ -739,17 +749,18 @@ func TestEnqueuePanelRunAtomic(t *testing.T) {
 	repo := createRepo(t, db, "/tmp/panel-enqueue-atomic")
 
 	const n = 3
+	runUUID := testUUID("run-1")
 	members := make([]EnqueueOpts, n)
 	for i := range n {
 		members[i] = EnqueueOpts{
 			RepoID: repo.ID, GitRef: "base..head", Agent: "test",
-			JobType: JobTypeRange, PanelRunUUID: "run-1", PanelRole: PanelRoleMember,
+			JobType: JobTypeRange, PanelRunUUID: &runUUID, PanelRole: PanelRoleMember,
 			PanelMemberName: "m", PanelMemberIndex: i,
 		}
 	}
 	synthesis := EnqueueOpts{
 		RepoID: repo.ID, GitRef: "base..head", Agent: "test",
-		JobType: JobTypeSynthesis, PanelRunUUID: "run-1", PanelRole: PanelRoleSynthesis,
+		JobType: JobTypeSynthesis, PanelRunUUID: &runUUID, PanelRole: PanelRoleSynthesis,
 		PanelName: "branch_final", ClaimBlocked: true,
 	}
 
@@ -760,25 +771,25 @@ func TestEnqueuePanelRunAtomic(t *testing.T) {
 
 	// All rows share the panel_run_uuid.
 	for i, m := range gotMembers {
-		assert.Equal("run-1", m.PanelRunUUID)
+		assert.Equal(&runUUID, m.PanelRunUUID)
 		assert.Equal(PanelRoleMember, m.PanelRole)
 		assert.Equal(i, m.PanelMemberIndex, "member order preserved")
 	}
-	assert.Equal("run-1", gotSynth.PanelRunUUID)
+	assert.Equal(&runUUID, gotSynth.PanelRunUUID)
 	assert.Equal(PanelRoleSynthesis, gotSynth.PanelRole)
 
 	// The synthesis row is gated in the DB.
 	assert.True(claimBlockedOf(t, db, gotSynth.ID), "synthesis must be claim_blocked")
 
 	// GetPanelMembers returns exactly n.
-	persisted, err := db.GetPanelMembers("run-1")
+	persisted, err := db.GetPanelMembers(runUUID)
 	require.NoError(t, err)
 	assert.Len(persisted, n)
 
 	// Total rows for the run is n+1.
 	var count int
 	require.NoError(t, db.QueryRow(
-		`SELECT COUNT(*) FROM review_jobs WHERE panel_run_uuid = ?`, "run-1").Scan(&count))
+		`SELECT COUNT(*) FROM review_jobs WHERE panel_run_uuid = ?`, runUUID).Scan(&count))
 	assert.Equal(n+1, count)
 }
 
@@ -795,13 +806,14 @@ func TestEnqueuePanelRunEnforcesSynthesisGate(t *testing.T) {
 
 	// Caller "forgets" the gate: synthesis omits ClaimBlocked/JobType/PanelRole,
 	// member omits PanelRole.
+	runUUID := testUUID("run-gate")
 	members := []EnqueueOpts{{
 		RepoID: repo.ID, GitRef: "base..head", Agent: "test",
-		JobType: JobTypeRange, PanelRunUUID: "run-gate", PanelMemberIndex: 0,
+		JobType: JobTypeRange, PanelRunUUID: &runUUID, PanelMemberIndex: 0,
 	}}
 	synthesis := EnqueueOpts{
 		RepoID: repo.ID, GitRef: "base..head", Agent: "test",
-		PanelRunUUID: "run-gate", PanelName: "p",
+		PanelRunUUID: &runUUID, PanelName: "p",
 	}
 
 	gotMembers, gotSynth, err := db.EnqueuePanelRun(members, synthesis)
@@ -854,17 +866,18 @@ func TestEnqueuePanelRunRollback(t *testing.T) {
 	repo := createRepo(t, db, "/tmp/panel-enqueue-rollback")
 
 	const n = 2
+	runUUID := testUUID("run-roll")
 	members := make([]EnqueueOpts, n)
 	for i := range n {
 		members[i] = EnqueueOpts{
 			RepoID: repo.ID, GitRef: "base..head", Agent: "test",
-			JobType: JobTypeRange, PanelRunUUID: "run-roll", PanelRole: PanelRoleMember,
+			JobType: JobTypeRange, PanelRunUUID: &runUUID, PanelRole: PanelRoleMember,
 			PanelMemberName: "m", PanelMemberIndex: i,
 		}
 	}
 	synthesis := EnqueueOpts{
 		RepoID: repo.ID, GitRef: "base..head", Agent: "test",
-		JobType: JobTypeSynthesis, PanelRunUUID: "run-roll", PanelRole: PanelRoleSynthesis,
+		JobType: JobTypeSynthesis, PanelRunUUID: &runUUID, PanelRole: PanelRoleSynthesis,
 		ClaimBlocked: true,
 	}
 
@@ -892,7 +905,7 @@ func TestEnqueuePanelRunRollback(t *testing.T) {
 	// The members inserted in calls 1..n are rolled back with the synthesis.
 	var count int
 	require.NoError(t, db.QueryRow(
-		`SELECT COUNT(*) FROM review_jobs WHERE panel_run_uuid = ?`, "run-roll").Scan(&count))
+		`SELECT COUNT(*) FROM review_jobs WHERE panel_run_uuid = ?`, runUUID).Scan(&count))
 	assert.Equal(t, 0, count, "rolled-back run must leave zero rows")
 }
 
@@ -971,7 +984,7 @@ func TestGetReviewByCommitSHAPendingSynthesisHidesStaleReview(t *testing.T) {
 	// (left queued); members complete but must not surface for the SHA.
 	synth, members := enqueuePanelRun(t, db, repo.ID, "run-pending", 2)
 	// Pin the panel rows to the same git_ref as the standalone review.
-	_, err = db.Exec(`UPDATE review_jobs SET git_ref = 'abc123' WHERE panel_run_uuid = 'run-pending'`)
+	_, err = db.Exec(`UPDATE review_jobs SET git_ref = 'abc123' WHERE panel_run_uuid = ?`, testUUID("run-pending"))
 	require.NoError(t, err)
 	complete := func(jobID int64, output string) {
 		setStatus(t, db, jobID, JobStatusRunning)
@@ -993,21 +1006,22 @@ func TestEnqueuePostCommitPanelRunDeduplicatesTarget(t *testing.T) {
 	repo := createRepo(t, db, "/tmp/post-commit-panel")
 
 	panelOpts := func(runUUID string) ([]EnqueueOpts, EnqueueOpts) {
+		runID := testUUID(runUUID)
 		members := []EnqueueOpts{
 			{
 				RepoID: repo.ID, GitRef: "base..head", Agent: "test",
-				JobType: JobTypeRange, PanelRunUUID: runUUID,
+				JobType: JobTypeRange, PanelRunUUID: &runID,
 				PanelMemberName: "default", PanelMemberIndex: 0,
 			},
 			{
 				RepoID: repo.ID, GitRef: "base..head", Agent: "test",
-				JobType: JobTypeRange, PanelRunUUID: runUUID,
+				JobType: JobTypeRange, PanelRunUUID: &runID,
 				PanelMemberName: "security", PanelMemberIndex: 1,
 			},
 		}
 		synthesis := EnqueueOpts{
 			RepoID: repo.ID, GitRef: "base..head", Agent: "test",
-			JobType: JobTypeSynthesis, PanelRunUUID: runUUID,
+			JobType: JobTypeSynthesis, PanelRunUUID: &runID,
 			PanelName: "branch_final",
 		}
 		return members, synthesis

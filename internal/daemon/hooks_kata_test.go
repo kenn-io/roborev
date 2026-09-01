@@ -33,10 +33,11 @@ func TestKataCreateRequestFailed(t *testing.T) {
 
 func TestKataCreateRequestPrefersUUID(t *testing.T) {
 	hook := config.HookConfig{Type: "kata"}
-	event := Event{Type: "review.failed", JobID: 7, JobUUID: "uuid-abc", SHA: "deadbeef"}
+	jobUUID := testUUID("uuid-abc")
+	event := Event{Type: "review.failed", JobID: 7, JobUUID: &jobUUID, SHA: "deadbeef"}
 	req, ok := kataCreateRequest(hook, event)
 	require.True(t, ok)
-	assert.Equal(t, "roborev:job:uuid-abc:review.failed", req.IdempotencyKey)
+	assert.Equal(t, "roborev:job:"+jobUUID.String()+":review.failed", req.IdempotencyKey) //nolint:forbidigo // Kata idempotency key text boundary.
 }
 
 func TestKataCreateRequestFindings(t *testing.T) {

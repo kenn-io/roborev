@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"testing"
+	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -31,7 +32,7 @@ func listJobsViaHTTP(t *testing.T, server *Server, query string) []storage.Revie
 
 // enqueueTrioPanel sets up a repo with the trio panel and enqueues one run,
 // returning the run uuid, synthesis (parent) job id, and the frozen git ref.
-func enqueueTrioPanel(t *testing.T, server *Server) (runUUID string, synthID int64, frozenRef string) {
+func enqueueTrioPanel(t *testing.T, server *Server) (runUUID uuid.UUID, synthID int64, frozenRef string) {
 	t.Helper()
 	repo := testutil.NewGitRepo(t)
 	repo.WriteFile(".roborev.toml", panelTOML)
@@ -75,12 +76,12 @@ func TestListJobsPanelRunReturnsMembers(t *testing.T) {
 
 	runUUID, synthID, _ := enqueueTrioPanel(t, server)
 
-	jobs := listJobsViaHTTP(t, server, "?panel_run="+runUUID)
+	jobs := listJobsViaHTTP(t, server, "?panel_run="+runUUID.String()) //nolint:forbidigo // HTTP query text boundary.
 
 	var members int
 	var sawSynth bool
 	for _, j := range jobs {
-		assert.Equal(runUUID, j.PanelRunUUID)
+		assert.Equal(&runUUID, j.PanelRunUUID)
 		switch j.PanelRole {
 		case storage.PanelRoleMember:
 			members++

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -26,10 +27,11 @@ type ciCostJobSeed struct {
 
 func seedExportCICostJob(t *testing.T, db *DB, repoID int64, seed ciCostJobSeed) *ReviewJob {
 	t.Helper()
+	runUUID := testUUID("run-" + seed.gitRef)
 	job, err := db.EnqueueJob(EnqueueOpts{
 		RepoID: repoID, GitRef: seed.gitRef, Agent: "test-agent",
 		Model: seed.model, Provider: seed.provider, Source: seed.source,
-		PanelRunUUID: "run-" + seed.gitRef, PanelRole: seed.role,
+		PanelRunUUID: &runUUID, PanelRole: seed.role,
 	})
 	require.NoError(t, err)
 	_, err = db.Exec(`UPDATE review_jobs
@@ -52,34 +54,34 @@ func TestExportCICostsIncludesMappedPanelJobWithoutSource(t *testing.T) {
 	})
 	_, err := db.Exec(`INSERT INTO ci_pr_panels
 		(github_repo, pr_number, head_sha, panel_run_uuid, created_at)
-		VALUES ('owner/project', 1, 'head', ?, '2026-08-01 00:00:00')`, "run-mapped-panel")
+		VALUES ('owner/project', 1, 'head', ?, '2026-08-01 00:00:00')`, testUUID("run-mapped-panel"))
 	require.NoError(t, err)
 	require.NoError(t, insertExperimentAssignmentTx(
-		context.Background(), db, ReviewUnitPanel, "run-mapped-panel",
+		context.Background(), db, ReviewUnitPanel, testUUID("run-mapped-panel"),
 		&ExperimentAssignmentInput{
 			ExperimentID: "ci-v1", DefinitionHash: "definition-hash",
 			DefinitionJSON: `{"ratio":1}`, Arm: "experiment",
 			SubjectHash: "subject-hash", EffectiveConfigHash: "config-hash",
 			EffectiveConfigJSON: `{"members":[]}`,
 		},
-		"test-machine", time.Now(),
+		testUUID("test-machine"), time.Now(),
 	))
 	_, err = db.Exec(`UPDATE review_jobs SET resume_source_job_uuid = ? WHERE id = ?`,
-		"source-job-uuid", job.ID)
+		testUUID("source-job-uuid"), job.ID)
 	require.NoError(t, err)
 
 	page, err := db.ExportCICosts(ExportCICostOptions{})
 	require.NoError(t, err)
-	assert.Equal(t, []string{job.UUID}, costJobUUIDs(page.Jobs))
+	assert.Equal(t, reviewJobUUIDs(job), costJobUUIDs(page.Jobs))
 	require.Len(t, page.Jobs[0].Experiments, 1)
 	assert.Equal(t, "ci-v1", page.Jobs[0].Experiments[0].ID)
 	require.NotNil(t, page.Jobs[0].ResumeSourceJobUUID)
-	assert.Equal(t, "source-job-uuid", *page.Jobs[0].ResumeSourceJobUUID)
+	assert.Equal(t, testUUID("source-job-uuid"), *page.Jobs[0].ResumeSourceJobUUID)
 
-	require.NoError(t, db.DeleteCIPanelByRun("run-mapped-panel"))
+	require.NoError(t, db.DeleteCIPanelByRun(testUUID("run-mapped-panel")))
 	page, err = db.ExportCICosts(ExportCICostOptions{})
 	require.NoError(t, err)
-	assert.Equal(t, []string{job.UUID}, costJobUUIDs(page.Jobs))
+	assert.Equal(t, reviewJobUUIDs(job), costJobUUIDs(page.Jobs))
 }
 
 func TestExportCICostsLatePricingAppearsOnFreshRescan(t *testing.T) {
@@ -99,7 +101,7 @@ func TestExportCICostsLatePricingAppearsOnFreshRescan(t *testing.T) {
 
 	first, err := db.ExportCICosts(ExportCICostOptions{Limit: 1})
 	require.NoError(t, err)
-	assert.Equal(t, []string{firstJob.UUID}, costJobUUIDs(first.Jobs))
+	assert.Equal(t, reviewJobUUIDs(firstJob), costJobUUIDs(first.Jobs))
 	require.NotNil(t, first.NextCursor)
 
 	_, err = db.Exec(`UPDATE review_jobs
@@ -110,11 +112,11 @@ func TestExportCICostsLatePricingAppearsOnFreshRescan(t *testing.T) {
 
 	resumed, err := db.ExportCICosts(ExportCICostOptions{Cursor: *first.NextCursor, Limit: 10})
 	require.NoError(t, err)
-	assert.Equal(t, []string{secondJob.UUID}, costJobUUIDs(resumed.Jobs))
+	assert.Equal(t, reviewJobUUIDs(secondJob), costJobUUIDs(resumed.Jobs))
 
 	rescanned, err := db.ExportCICosts(ExportCICostOptions{})
 	require.NoError(t, err)
-	assert.Equal(t, []string{firstJob.UUID, secondJob.UUID}, costJobUUIDs(rescanned.Jobs))
+	assert.Equal(t, reviewJobUUIDs(firstJob, secondJob), costJobUUIDs(rescanned.Jobs))
 	require.NotNil(t, rescanned.Jobs[0].CostUSD)
 	assert.InDelta(t, 0.75, *rescanned.Jobs[0].CostUSD, 1e-12)
 }
@@ -148,7 +150,7 @@ func TestExportCICostsCursorPreservesWindow(t *testing.T) {
 
 	first, err := db.ExportCICosts(ExportCICostOptions{Since: since, Until: until, Limit: 1})
 	require.NoError(t, err)
-	assert.Equal(t, []string{firstJob.UUID}, costJobUUIDs(first.Jobs))
+	assert.Equal(t, reviewJobUUIDs(firstJob), costJobUUIDs(first.Jobs))
 	require.NotNil(t, first.NextCursor)
 
 	_, err = db.Exec(`UPDATE review_jobs
@@ -160,25 +162,33 @@ func TestExportCICostsCursorPreservesWindow(t *testing.T) {
 		Cursor: *first.NextCursor, Limit: 10,
 	})
 	require.NoError(t, err)
-	assert.Equal(t, []string{secondJob.UUID}, costJobUUIDs(second.Jobs))
+	assert.Equal(t, reviewJobUUIDs(secondJob), costJobUUIDs(second.Jobs))
 	assert.NotContains(t, costJobUUIDs(second.Jobs), oldJob.UUID)
 	assert.NotContains(t, costJobUUIDs(second.Jobs), afterWindow.UUID)
 	assert.Equal(t, since, second.EffectiveSince)
 	assert.Equal(t, until, second.EffectiveUntil)
 }
 
-func costJobsByUUID(jobs []ExportCICostJob) map[string]ExportCICostJob {
-	out := make(map[string]ExportCICostJob, len(jobs))
+func costJobsByUUID(jobs []ExportCICostJob) map[uuid.UUID]ExportCICostJob {
+	out := make(map[uuid.UUID]ExportCICostJob, len(jobs))
 	for _, job := range jobs {
 		out[job.JobUUID] = job
 	}
 	return out
 }
 
-func costJobUUIDs(jobs []ExportCICostJob) []string {
-	out := make([]string, len(jobs))
+func costJobUUIDs(jobs []ExportCICostJob) []uuid.UUID {
+	out := make([]uuid.UUID, len(jobs))
 	for i, job := range jobs {
 		out[i] = job.JobUUID
+	}
+	return out
+}
+
+func reviewJobUUIDs(jobs ...*ReviewJob) []uuid.UUID {
+	out := make([]uuid.UUID, len(jobs))
+	for i, job := range jobs {
+		out[i] = *job.UUID
 	}
 	return out
 }
@@ -238,9 +248,9 @@ func TestExportCICostsRegularEligibilityAndPricing(t *testing.T) {
 	require.NotNil(t, page.NextCursor)
 
 	byUUID := costJobsByUUID(page.Jobs)
-	assert.Equal(t, []string{priced.UUID, unpriced.UUID, zero.UUID, usageProof.UUID, malformedCost.UUID, skipped.UUID}, costJobUUIDs(page.Jobs))
+	assert.Equal(t, reviewJobUUIDs(priced, unpriced, zero, usageProof, malformedCost, skipped), costJobUUIDs(page.Jobs))
 
-	got := byUUID[priced.UUID]
+	got := byUUID[*priced.UUID]
 	assert.Equal(t, "2026-08-01T01:00:00Z", got.FinishedAt)
 	assert.Equal(t, "test-agent", got.Agent)
 	assert.Equal(t, PanelRoleMember, got.Role)
@@ -252,16 +262,16 @@ func TestExportCICostsRegularEligibilityAndPricing(t *testing.T) {
 	require.NotNil(t, got.CostUSD)
 	assert.InDelta(t, 0.125, *got.CostUSD, 1e-12)
 
-	assert.Equal(t, PanelRoleSynthesis, byUUID[unpriced.UUID].Role)
-	assert.Nil(t, byUUID[unpriced.UUID].Model)
-	assert.Nil(t, byUUID[unpriced.UUID].Provider)
-	assert.Nil(t, byUUID[unpriced.UUID].CostUSD)
-	require.NotNil(t, byUUID[zero.UUID].CostUSD)
-	assert.Zero(t, *byUUID[zero.UUID].CostUSD)
-	assert.Nil(t, byUUID[usageProof.UUID].CostUSD)
-	assert.Nil(t, byUUID[malformedCost.UUID].CostUSD)
-	require.NotNil(t, byUUID[skipped.UUID].CostUSD)
-	assert.InDelta(t, 1, *byUUID[skipped.UUID].CostUSD, 1e-12)
+	assert.Equal(t, PanelRoleSynthesis, byUUID[*unpriced.UUID].Role)
+	assert.Nil(t, byUUID[*unpriced.UUID].Model)
+	assert.Nil(t, byUUID[*unpriced.UUID].Provider)
+	assert.Nil(t, byUUID[*unpriced.UUID].CostUSD)
+	require.NotNil(t, byUUID[*zero.UUID].CostUSD)
+	assert.Zero(t, *byUUID[*zero.UUID].CostUSD)
+	assert.Nil(t, byUUID[*usageProof.UUID].CostUSD)
+	assert.Nil(t, byUUID[*malformedCost.UUID].CostUSD)
+	require.NotNil(t, byUUID[*skipped.UUID].CostUSD)
+	assert.InDelta(t, 1, *byUUID[*skipped.UUID].CostUSD, 1e-12)
 }
 
 func TestExportCICostsOrderingAndBounds(t *testing.T) {
@@ -281,7 +291,7 @@ func TestExportCICostsOrderingAndBounds(t *testing.T) {
 		Until: time.Date(2026, 8, 2, 0, 0, 0, 0, time.UTC),
 	})
 	require.NoError(t, err)
-	assert.Equal(t, []string{atSince.UUID, sameTimeA.UUID, sameTimeB.UUID, beforeUntil.UUID}, costJobUUIDs(page.Jobs))
+	assert.Equal(t, reviewJobUUIDs(atSince, sameTimeA, sameTimeB, beforeUntil), costJobUUIDs(page.Jobs))
 	assert.NotContains(t, costJobUUIDs(page.Jobs), before.UUID)
 	assert.NotContains(t, costJobUUIDs(page.Jobs), atUntil.UUID)
 }
@@ -296,14 +306,14 @@ func TestExportCICostsPaginationAndCursorSafety(t *testing.T) {
 
 	first, err := db.ExportCICosts(ExportCICostOptions{Limit: 2})
 	require.NoError(t, err)
-	assert.Equal(t, []string{firstJob.UUID, secondJob.UUID}, costJobUUIDs(first.Jobs))
+	assert.Equal(t, reviewJobUUIDs(firstJob, secondJob), costJobUUIDs(first.Jobs))
 	assert.True(t, first.Truncated)
 	require.NotNil(t, first.NextCursor)
 	assert.Regexp(t, `^[A-Za-z0-9_-]+$`, *first.NextCursor)
 
 	second, err := db.ExportCICosts(ExportCICostOptions{Cursor: *first.NextCursor, Limit: 2})
 	require.NoError(t, err)
-	assert.Equal(t, []string{thirdJob.UUID}, costJobUUIDs(second.Jobs))
+	assert.Equal(t, reviewJobUUIDs(thirdJob), costJobUUIDs(second.Jobs))
 	assert.False(t, second.Truncated)
 	require.NotNil(t, second.NextCursor)
 
@@ -311,7 +321,7 @@ func TestExportCICostsPaginationAndCursorSafety(t *testing.T) {
 	require.ErrorIs(t, err, ErrExportCICostCursorModeMismatch)
 
 	foreign, err := json.Marshal(ciCostCursor{
-		Version: ciCostCursorVersion, DatabaseID: "foreign-database",
+		Version: ciCostCursorVersion, DatabaseID: testUUID("foreign-database"),
 		FinishedAt: "2026-08-01T02:00:00Z", JobID: secondJob.ID,
 	})
 	require.NoError(t, err)
@@ -356,7 +366,7 @@ func TestExportCICostsIncludesRetiredRetryJobs(t *testing.T) {
 
 	page, err := db.ExportCICosts(ExportCICostOptions{})
 	require.NoError(t, err)
-	assert.Equal(t, []string{firstMembers[0].UUID, replacementMembers[0].UUID}, costJobUUIDs(page.Jobs))
+	assert.Equal(t, reviewJobUUIDs(firstMembers[0], replacementMembers[0]), costJobUUIDs(page.Jobs))
 }
 
 func seedLegacyCICostJob(t *testing.T, db *DB, repoID int64, gitRef, agent, enqueued, finished, usage string) *ReviewJob {
@@ -384,7 +394,7 @@ func TestExportCICostsLegacyInfersDoneJobInvocation(t *testing.T) {
 
 	page, err := db.ExportCICosts(ExportCICostOptions{Legacy: true})
 	require.NoError(t, err)
-	assert.Equal(t, []string{doneA.UUID, doneB.UUID}, costJobUUIDs(page.Jobs))
+	assert.Equal(t, reviewJobUUIDs(doneA, doneB), costJobUUIDs(page.Jobs))
 	require.Len(t, page.Jobs, 2)
 	assert.Nil(t, page.Jobs[0].CostUSD)
 	assert.Nil(t, page.Jobs[1].CostUSD)
@@ -409,7 +419,7 @@ func TestExportCICostsLegacyReconstructionAndPagination(t *testing.T) {
 
 	first, err := db.ExportCICosts(ExportCICostOptions{Legacy: true, Limit: 2})
 	require.NoError(t, err)
-	assert.Equal(t, []string{jobA.UUID, jobB.UUID}, costJobUUIDs(first.Jobs))
+	assert.Equal(t, reviewJobUUIDs(jobA, jobB), costJobUUIDs(first.Jobs))
 	assert.True(t, first.Truncated)
 	require.NotNil(t, first.NextCursor)
 	assert.Regexp(t, `^[A-Za-z0-9_-]+$`, *first.NextCursor)
@@ -422,7 +432,7 @@ func TestExportCICostsLegacyReconstructionAndPagination(t *testing.T) {
 
 	second, err := db.ExportCICosts(ExportCICostOptions{Legacy: true, Cursor: *first.NextCursor, Limit: 2})
 	require.NoError(t, err)
-	assert.Equal(t, []string{jobC.UUID, jobD.UUID}, costJobUUIDs(second.Jobs))
+	assert.Equal(t, reviewJobUUIDs(jobC, jobD), costJobUUIDs(second.Jobs))
 	assert.False(t, second.Truncated)
 	require.NotNil(t, second.Jobs[0].CostUSD)
 	assert.Zero(t, *second.Jobs[0].CostUSD)

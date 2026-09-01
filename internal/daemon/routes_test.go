@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -63,7 +64,7 @@ func seedHumaExportReviews(t *testing.T, db *storage.DB, repoID int64, count int
 			`INSERT INTO review_jobs
 			 (repo_id, commit_id, uuid, git_ref, agent, status, enqueued_at, started_at, finished_at, job_type)
 			 VALUES (?, ?, ?, ?, 'test-agent', 'done', ?, ?, ?, 'review')`,
-			repoID, commitID, "job-"+sha, sha, createdAt, createdAt, createdAt,
+			repoID, commitID, testUUID("job-"+sha), sha, createdAt, createdAt, createdAt,
 		)
 		require.NoError(t, err)
 		jobID, err := res.LastInsertId()
@@ -72,7 +73,7 @@ func seedHumaExportReviews(t *testing.T, db *storage.DB, repoID int64, count int
 			`INSERT INTO reviews
 			 (job_id, uuid, agent, prompt, output, created_at, updated_at, verdict_bool)
 			 VALUES (?, ?, 'test-agent', 'prompt', 'No issues found.', ?, ?, 1)`,
-			jobID, "review-"+sha, createdAt, createdAt,
+			jobID, testUUID("review-"+sha), createdAt, createdAt,
 		)
 		require.NoError(t, err)
 	}
@@ -112,6 +113,13 @@ func TestHumaListJobs(t *testing.T) {
 		require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &body))
 		assert.Len(t, body.Jobs, 3)
 		assert.True(t, body.HasMore)
+	})
+
+	t.Run("rejects invalid panel run UUID", func(t *testing.T) {
+		rr := serveHuma(
+			t, srv, http.MethodGet, "/api/jobs?panel_run=not-a-uuid", nil,
+		)
+		assert.Equal(t, http.StatusUnprocessableEntity, rr.Code)
 	})
 }
 
@@ -291,7 +299,7 @@ func TestHumaExportReviews(t *testing.T) {
 		Tool          string                 `json:"tool"`
 		ToolVersion   string                 `json:"tool_version"`
 		GeneratedAt   string                 `json:"generated_at"`
-		DatabaseID    string                 `json:"database_id"`
+		DatabaseID    uuid.UUID              `json:"database_id"`
 		Profile       string                 `json:"profile"`
 		Window        map[string]*string     `json:"window"`
 		Truncated     bool                   `json:"truncated"`
@@ -324,7 +332,7 @@ func TestHumaExportReviews(t *testing.T) {
 		"/api/export/reviews?profile=content&cursor="+*body.NextCursor+"&limit=10", nil)
 	require.Equal(t, http.StatusOK, rr2.Code, rr2.Body.String())
 	var page2 struct {
-		DatabaseID string                 `json:"database_id"`
+		DatabaseID uuid.UUID              `json:"database_id"`
 		Truncated  bool                   `json:"truncated"`
 		NextCursor *string                `json:"next_cursor"`
 		Reviews    []storage.ExportReview `json:"reviews"`
@@ -514,7 +522,7 @@ func TestHumaExportCIMetrics(t *testing.T) {
 
 	// Cursor from a different database → 409.
 	foreign, err := json.Marshal(map[string]any{
-		"version": 1, "database_id": "other",
+		"version": 1, "database_id": testUUID("other-database"),
 		"posted_at": "2026-07-01T00:00:00Z", "panel_id": 1,
 	})
 	require.NoError(t, err)
@@ -569,7 +577,7 @@ func TestHumaExportCIMetricsLegacy(t *testing.T) {
 	assert.Empty(t, doc.Panels)
 }
 
-func encodeExportCursorForRouteTest(t *testing.T, databaseID, completedAt, reviewID string) string {
+func encodeExportCursorForRouteTest(t *testing.T, databaseID, completedAt string, reviewID *uuid.UUID) string {
 	t.Helper()
 	data, err := json.Marshal(map[string]any{
 		"version":      1,
@@ -961,6 +969,14 @@ func TestHumaOpenAPISpec(t *testing.T) {
 	require.True(t, ok, "ReviewJob must declare required fields")
 	assert.NotContains(t, reviewJobRequired, "uuid",
 		"general ReviewJob must preserve optional UUID compatibility")
+	reviewJobProperties, ok := reviewJob["properties"].(map[string]any)
+	require.True(t, ok, "ReviewJob must declare properties")
+	jobUUID, ok := reviewJobProperties["uuid"].(map[string]any)
+	require.True(t, ok, "ReviewJob must include uuid")
+	assert.Equal(t, "uuid", jobUUID["format"])
+	panelRunUUID, ok := reviewJobProperties["panel_run_uuid"].(map[string]any)
+	require.True(t, ok, "ReviewJob must include panel_run_uuid")
+	assert.Equal(t, "uuid", panelRunUUID["format"])
 
 	enqueueCreated, ok := schemas["EnqueueCreatedResponse"].(map[string]any)
 	require.True(t, ok, "schemas must include a dedicated enqueue response")

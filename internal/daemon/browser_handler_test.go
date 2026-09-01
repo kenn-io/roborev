@@ -771,7 +771,7 @@ func TestBrowserHandlerRemoteSessionRestrictsPrivilegedJobMutations(t *testing.T
 			)
 			body := map[string]any{"job_id": job.ID}
 			if tt.path == "/api/job/rerun" {
-				body["request_id"] = "browser-request"
+				body["request_id"] = "11111111-1111-4111-8111-111111111111"
 			}
 			request := authenticatedBrowserMutationRequest(t, sessions, tt.path, body)
 			recorder := httptest.NewRecorder()
@@ -792,17 +792,17 @@ func TestBrowserHandlerRemoteSessionRejectsPanelCancellation(t *testing.T) {
 			server, db, tempDir := newTestServer(t)
 			repo, err := db.GetOrCreateRepo(tempDir)
 			require.NoError(t, err)
-			const runUUID = "remote-safe-panel-run"
+			runUUID := testUUID("remote-safe-panel-run")
 			members, synth, err := db.EnqueuePanelRun(
 				[]storage.EnqueueOpts{{
 					RepoID: repo.ID, GitRef: "base..head", Agent: "test",
-					JobType: storage.JobTypeRange, PanelRunUUID: runUUID,
+					JobType: storage.JobTypeRange, PanelRunUUID: &runUUID,
 					PanelRole: storage.PanelRoleMember, PanelName: "review",
 					PanelMemberName: "default",
 				}},
 				storage.EnqueueOpts{
 					RepoID: repo.ID, GitRef: "base..head", Agent: "test",
-					PanelRunUUID: runUUID, PanelRole: storage.PanelRoleSynthesis,
+					PanelRunUUID: &runUUID, PanelRole: storage.PanelRoleSynthesis,
 					PanelName: "review",
 				},
 			)
@@ -919,17 +919,17 @@ func TestBrowserHandlerRemoteSessionRejectsPrivilegedPanelMembers(t *testing.T) 
 			server, db, tempDir := newTestServer(t)
 			repo, err := db.GetOrCreateRepo(tempDir)
 			require.NoError(t, err)
-			const runUUID = "remote-panel-run"
+			runUUID := testUUID("remote-panel-run")
 			members, synth, err := db.EnqueuePanelRun(
 				[]storage.EnqueueOpts{{
 					RepoID: repo.ID, GitRef: "base..head", Agent: "test",
 					JobType: storage.JobTypeRange, Agentic: true,
-					PanelRunUUID: runUUID, PanelRole: storage.PanelRoleMember,
+					PanelRunUUID: &runUUID, PanelRole: storage.PanelRoleMember,
 					PanelName: "review", PanelMemberName: "security",
 				}},
 				storage.EnqueueOpts{
 					RepoID: repo.ID, GitRef: "base..head", Agent: "test",
-					PanelRunUUID: runUUID, PanelRole: storage.PanelRoleSynthesis,
+					PanelRunUUID: &runUUID, PanelRole: storage.PanelRoleSynthesis,
 					PanelName: "review",
 				},
 			)
@@ -945,7 +945,7 @@ func TestBrowserHandlerRemoteSessionRejectsPrivilegedPanelMembers(t *testing.T) 
 			)
 			body := map[string]any{"job_id": synth.ID}
 			if path == "/api/job/rerun" {
-				body["request_id"] = "panel-browser-request"
+				body["request_id"] = "22222222-2222-4222-8222-222222222222"
 			}
 			request := authenticatedBrowserMutationRequest(t, sessions, path, body)
 			recorder := httptest.NewRecorder()

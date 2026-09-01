@@ -431,7 +431,7 @@ func TestHandleRerunJob(t *testing.T) {
 		require.NoError(t, err)
 		require.NoError(t, db.CancelJob(job.ID))
 
-		body := RerunJobRequest{JobID: job.ID, RequestID: "request-one"}
+		body := RerunJobRequest{JobID: job.ID, RequestID: testUUIDPtr("request-one")}
 		var responses []RerunJobOutput
 		for range 2 {
 			req := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", body)
@@ -445,7 +445,7 @@ func TestHandleRerunJob(t *testing.T) {
 
 		assert.Equal(t, responses[0].Body, responses[1].Body)
 		assert.Equal(t, job.ID, responses[0].Body.JobID)
-		assert.Equal(t, "request-one", responses[0].Body.RequestID)
+		assert.Equal(t, *body.RequestID, responses[0].Body.RequestID)
 	})
 
 	t.Run("rerun canceled job", func(t *testing.T) {
@@ -699,7 +699,7 @@ func TestRerunJobBroadcastsOnlyAcceptedRequest(t *testing.T) {
 
 	subscriberID, events := server.broadcaster.Subscribe("")
 	defer server.broadcaster.Unsubscribe(subscriberID)
-	body := RerunJobRequest{JobID: job.ID, RequestID: "rerun-broadcast-request"}
+	body := RerunJobRequest{JobID: job.ID, RequestID: testUUIDPtr("rerun-broadcast-request")}
 
 	first := testutil.MakeJSONRequest(t, http.MethodPost, "/api/job/rerun", body)
 	firstResponse := httptest.NewRecorder()

@@ -5,6 +5,7 @@ package storage
 import (
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -17,9 +18,10 @@ func TestPostgresPanelColumnRoundTrip(t *testing.T) {
 
 	repoID, err := pool.GetOrCreateRepo(ctx, "panel-sync-test-identity")
 	require.NoError(t, err)
+	panelRunUUID := uuid.New()
 
 	job := SyncableJob{
-		UUID:                  GenerateUUID(),
+		UUID:                  uuid.New(),
 		Agent:                 "test",
 		Reasoning:             "thorough",
 		JobType:               JobTypeReview,
@@ -28,8 +30,8 @@ func TestPostgresPanelColumnRoundTrip(t *testing.T) {
 		EnqueuedAt:            time.Now(),
 		UpdatedAt:             time.Now(),
 		GitRef:                "abc..def",
-		SourceMachineID:       GenerateUUID(),
-		PanelRunUUID:          "pg-run-1",
+		SourceMachineID:       uuid.New(),
+		PanelRunUUID:          &panelRunUUID,
 		PanelRole:             "member",
 		PanelName:             "branch_final",
 		PanelMemberName:       "security",
@@ -39,7 +41,7 @@ func TestPostgresPanelColumnRoundTrip(t *testing.T) {
 	require.NoError(t, pool.UpsertJob(ctx, job, repoID, nil))
 
 	// Pull it back from a different machine ID to bypass the echo filter.
-	pulled, _, err := pool.PullJobs(ctx, GenerateUUID(), "", 100)
+	pulled, _, err := pool.PullJobs(ctx, uuid.New(), "", 100)
 	require.NoError(t, err)
 	var found *PulledJob
 	for i := range pulled {
@@ -49,7 +51,7 @@ func TestPostgresPanelColumnRoundTrip(t *testing.T) {
 		}
 	}
 	require.NotNil(t, found, "job not pulled back")
-	assert.Equal("pg-run-1", found.PanelRunUUID)
+	assert.Equal(&panelRunUUID, found.PanelRunUUID)
 	assert.Equal("member", found.PanelRole)
 	assert.Equal("branch_final", found.PanelName)
 	assert.Equal("security", found.PanelMemberName)
@@ -66,7 +68,7 @@ func TestPostgresBackupColumnRoundTrip(t *testing.T) {
 	require.NoError(t, err)
 
 	job := SyncableJob{
-		UUID:            GenerateUUID(),
+		UUID:            uuid.New(),
 		Agent:           "test",
 		Reasoning:       "thorough",
 		JobType:         JobTypeReview,
@@ -74,14 +76,14 @@ func TestPostgresBackupColumnRoundTrip(t *testing.T) {
 		EnqueuedAt:      time.Now(),
 		UpdatedAt:       time.Now(),
 		GitRef:          "abc..def",
-		SourceMachineID: GenerateUUID(),
+		SourceMachineID: uuid.New(),
 		BackupAgent:     "claude-code",
 		BackupModel:     "opus",
 	}
 	require.NoError(t, pool.UpsertJob(ctx, job, repoID, nil))
 
 	// Pull it back from a different machine ID to bypass the echo filter.
-	pulled, _, err := pool.PullJobs(ctx, GenerateUUID(), "", 100)
+	pulled, _, err := pool.PullJobs(ctx, uuid.New(), "", 100)
 	require.NoError(t, err)
 	var found *PulledJob
 	for i := range pulled {

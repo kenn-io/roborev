@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"strings"
 	"time"
+	"uuid"
 
 	"go.kenn.io/roborev/internal/config"
 )
@@ -103,44 +104,52 @@ func (db *DB) GetOrCreateSyncStateValue(key string, create func() (string, error
 // GetMachineID returns this machine's unique identifier, creating one if it doesn't exist.
 // Uses INSERT OR IGNORE + SELECT to ensure concurrency-safe behavior.
 // Treats empty values as missing and regenerates.
-func (db *DB) GetMachineID() (string, error) {
+func (db *DB) GetMachineID() (uuid.UUID, error) {
 	// Try to insert a new ID, ignoring if one already exists
-	newID := GenerateUUID()
+	newID := uuid.New()
 	_, err := db.Exec(`
 		INSERT OR IGNORE INTO sync_state (key, value) VALUES (?, ?)
 	`, SyncStateMachineID, newID)
 	if err != nil {
-		return "", fmt.Errorf("insert machine ID: %w", err)
+		return uuid.Nil(), fmt.Errorf("insert machine ID: %w", err)
 	}
 
 	// Always select the stored value (either ours or a concurrent caller's)
 	var id string
 	err = db.QueryRow(`SELECT value FROM sync_state WHERE key = ?`, SyncStateMachineID).Scan(&id)
 	if err != nil {
-		return "", fmt.Errorf("get machine ID: %w", err)
+		return uuid.Nil(), fmt.Errorf("get machine ID: %w", err)
 	}
 
 	// Treat empty value as missing (could happen from manual edits or past bugs)
 	if id == "" {
 		_, err = db.Exec(`UPDATE sync_state SET value = ? WHERE key = ?`, newID, SyncStateMachineID)
 		if err != nil {
-			return "", fmt.Errorf("update empty machine ID: %w", err)
+			return uuid.Nil(), fmt.Errorf("update empty machine ID: %w", err)
 		}
 		return newID, nil
 	}
-	return id, nil
+	parsed, err := uuid.Parse(id) //nolint:forbidigo // sync_state TEXT value boundary.
+	if err != nil {
+		return uuid.Nil(), fmt.Errorf("parse machine ID: %w", err)
+	}
+	return parsed, nil
 }
 
 // GetDatabaseID returns this local database's unique identifier, creating one
 // if it doesn't exist. It changes only when the SQLite database is recreated.
-func (db *DB) GetDatabaseID() (string, error) {
+func (db *DB) GetDatabaseID() (uuid.UUID, error) {
 	id, err := db.GetOrCreateSyncStateValue(SyncStateDatabaseID, func() (string, error) {
-		return GenerateUUID(), nil
+		return uuid.New().String(), nil //nolint:forbidigo // sync_state TEXT value boundary.
 	})
 	if err != nil {
-		return "", fmt.Errorf("get database ID: %w", err)
+		return uuid.Nil(), fmt.Errorf("get database ID: %w", err)
 	}
-	return id, nil
+	parsed, err := uuid.Parse(id) //nolint:forbidigo // sync_state TEXT value boundary.
+	if err != nil {
+		return uuid.Nil(), fmt.Errorf("parse database ID: %w", err)
+	}
+	return parsed, nil
 }
 
 // BackfillSourceMachineID sets source_machine_id on existing rows that don't have one.
@@ -375,7 +384,7 @@ func PreferAutoClone(repos []Repo) *Repo {
 // SyncableJob contains job data needed for sync
 type SyncableJob struct {
 	ID                    int64
-	UUID                  string
+	UUID                  uuid.UUID
 	RepoID                int64
 	RepoIdentity          string
 	CommitID              *int64
@@ -385,7 +394,7 @@ type SyncableJob struct {
 	CommitTimestamp       time.Time
 	GitRef                string
 	SessionID             string
-	ResumeSourceJobUUID   string
+	ResumeSourceJobUUID   *uuid.UUID
 	Agent                 string
 	Model                 string
 	Provider              string
@@ -411,13 +420,13 @@ type SyncableJob struct {
 	MinSeverity           string
 	BackupAgent           string
 	BackupModel           string
-	PanelRunUUID          string
+	PanelRunUUID          *uuid.UUID
 	PanelRole             string
 	PanelName             string
 	PanelMemberName       string
 	PanelMemberIndex      int
 	PanelMemberConfigJSON string
-	SourceMachineID       string
+	SourceMachineID       uuid.UUID
 	UpdatedAt             time.Time
 	UpdatedAtRaw          string
 	StartedAtRaw          string
@@ -426,16 +435,16 @@ type SyncableJob struct {
 
 // GetJobsToSync returns terminal jobs that need to be pushed to PostgreSQL.
 // These are jobs created locally that haven't been synced or were updated since last sync.
-func (db *DB) GetJobsToSync(machineID string, limit int) ([]SyncableJob, error) {
+func (db *DB) GetJobsToSync(machineID uuid.UUID, limit int) ([]SyncableJob, error) {
 	rows, err := db.Query(`
 		SELECT
 			j.id, j.uuid, j.repo_id, COALESCE(r.identity, ''),
 			j.commit_id, COALESCE(c.sha, ''), COALESCE(c.author, ''), COALESCE(c.subject, ''), COALESCE(c.timestamp, ''),
-			j.git_ref, COALESCE(j.session_id, ''), COALESCE(j.resume_source_job_uuid, ''), j.agent, COALESCE(j.model, ''), COALESCE(j.provider, ''), COALESCE(j.requested_model, ''), COALESCE(j.requested_provider, ''), COALESCE(j.reasoning, ''), COALESCE(j.job_type, 'review'), COALESCE(j.review_type, ''), COALESCE(j.patch_id, ''), j.status, j.agentic, j.agent_invoked,
+			j.git_ref, COALESCE(j.session_id, ''), NULLIF(j.resume_source_job_uuid, ''), j.agent, COALESCE(j.model, ''), COALESCE(j.provider, ''), COALESCE(j.requested_model, ''), COALESCE(j.requested_provider, ''), COALESCE(j.reasoning, ''), COALESCE(j.job_type, 'review'), COALESCE(j.review_type, ''), COALESCE(j.patch_id, ''), j.status, j.agentic, j.agent_invoked,
 			j.enqueued_at, COALESCE(j.started_at, ''), COALESCE(j.finished_at, ''),
 			COALESCE(j.prompt, ''), j.diff_content, j.dirty_files, COALESCE(j.error, ''), COALESCE(j.token_usage, ''),
 			COALESCE(j.worktree_path, ''), COALESCE(j.source, ''), COALESCE(j.min_severity, ''), COALESCE(j.backup_agent, ''), COALESCE(j.backup_model, ''),
-			COALESCE(j.panel_run_uuid, ''), COALESCE(j.panel_role, ''), COALESCE(j.panel_name, ''), COALESCE(j.panel_member_name, ''), COALESCE(j.panel_member_index, 0), COALESCE(j.panel_member_config_json, ''),
+			NULLIF(j.panel_run_uuid, ''), COALESCE(j.panel_role, ''), COALESCE(j.panel_name, ''), COALESCE(j.panel_member_name, ''), COALESCE(j.panel_member_index, 0), COALESCE(j.panel_member_config_json, ''),
 			j.source_machine_id, j.updated_at
 		FROM review_jobs j
 		JOIN repos r ON j.repo_id = r.id
@@ -622,23 +631,23 @@ func (db *DB) MarkJobsSynced(marks []JobSyncMark) error {
 // SyncableReview contains review data needed for sync
 type SyncableReview struct {
 	ID                 int64
-	UUID               string
+	UUID               uuid.UUID
 	JobID              int64
-	JobUUID            string
+	JobUUID            uuid.UUID
 	Agent              string
 	Prompt             string
 	Output             string
 	Closed             bool
 	VerdictBool        *bool
 	StructuredOutput   json.RawMessage
-	UpdatedByMachineID string
+	UpdatedByMachineID uuid.UUID
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 }
 
 // GetReviewsToSync returns reviews modified locally that need to be pushed.
 // Only returns reviews whose parent job has already been synced.
-func (db *DB) GetReviewsToSync(machineID string, limit int) ([]SyncableReview, error) {
+func (db *DB) GetReviewsToSync(machineID uuid.UUID, limit int) ([]SyncableReview, error) {
 	rows, err := db.Query(`
 		SELECT
 			r.id, r.uuid, r.job_id, j.uuid,
@@ -717,19 +726,19 @@ func (db *DB) MarkReviewsSynced(reviewIDs []int64) error {
 // SyncableResponse contains response data needed for sync
 type SyncableResponse struct {
 	ID              int64
-	UUID            string
+	UUID            uuid.UUID
 	JobID           int64
-	JobUUID         string
+	JobUUID         uuid.UUID
 	Responder       string
 	Response        string
 	Source          string
-	SourceMachineID string
+	SourceMachineID uuid.UUID
 	CreatedAt       time.Time
 }
 
 // GetCommentsToSync returns comments created locally that need to be pushed.
 // Only returns comments whose parent job has already been synced.
-func (db *DB) GetCommentsToSync(machineID string, limit int) ([]SyncableResponse, error) {
+func (db *DB) GetCommentsToSync(machineID uuid.UUID, limit int) ([]SyncableResponse, error) {
 	rows, err := db.Query(`
 		SELECT
 			r.id, r.uuid, r.job_id, j.uuid,
@@ -845,12 +854,12 @@ func (db *DB) UpsertPulledJob(j PulledJob, repoID int64, commitID *int64) error 
 			synced_at = ?
 			WHERE review_jobs.status NOT IN ('applied', 'rebased')
 			OR `+sqliteNormalizedTimestampExpr("review_jobs.updated_at")+` < `+sqliteNormalizedTimestampExpr("excluded.updated_at")+`
-	`, j.UUID, repoID, commitID, j.GitRef, nullStr(j.SessionID), nullStr(j.ResumeSourceJobUUID), j.Agent, nullStr(j.Model), nullStr(j.Provider), nullStr(j.RequestedModel), nullStr(j.RequestedProvider), j.Reasoning, j.JobType,
+	`, j.UUID, repoID, commitID, j.GitRef, nullStr(j.SessionID), j.ResumeSourceJobUUID, j.Agent, nullStr(j.Model), nullStr(j.Provider), nullStr(j.RequestedModel), nullStr(j.RequestedProvider), j.Reasoning, j.JobType,
 		j.ReviewType, nullStr(j.PatchID), j.Status, j.Agentic, j.AgentInvoked, j.EnqueuedAt.Format(time.RFC3339),
 		nullTimeStr(j.StartedAt), nullTimeStr(j.FinishedAt),
 		nullStr(j.Prompt), j.DiffContent, nullStr(dirtyFilesJSON), nullStr(j.Error), nullStr(j.TokenUsage),
 		nullStr(j.WorktreePath), nullStr(j.Source), normalizeMinSeverityForWrite(j.MinSeverity), j.BackupAgent, j.BackupModel,
-		nullStr(j.PanelRunUUID), nullStr(j.PanelRole), nullStr(j.PanelName), nullStr(j.PanelMemberName), j.PanelMemberIndex, nullStr(j.PanelMemberConfigJSON),
+		j.PanelRunUUID, nullStr(j.PanelRole), nullStr(j.PanelName), nullStr(j.PanelMemberName), j.PanelMemberIndex, nullStr(j.PanelMemberConfigJSON),
 		j.SourceMachineID, j.UpdatedAt.Format(time.RFC3339), now, now)
 	return err
 }
@@ -922,20 +931,20 @@ func (db *DB) UpsertPulledResponse(r PulledResponse) error {
 
 // GetKnownJobUUIDs returns UUIDs of all jobs that have a UUID.
 // Used to filter reviews when pulling from PostgreSQL.
-func (db *DB) GetKnownJobUUIDs() ([]string, error) {
+func (db *DB) GetKnownJobUUIDs() ([]uuid.UUID, error) {
 	rows, err := db.Query(`SELECT uuid FROM review_jobs WHERE uuid IS NOT NULL`)
 	if err != nil {
 		return nil, fmt.Errorf("query job UUIDs: %w", err)
 	}
 	defer rows.Close()
 
-	var uuids []string
+	var uuids []uuid.UUID
 	for rows.Next() {
-		var uuid string
-		if err := rows.Scan(&uuid); err != nil {
+		var id uuid.UUID
+		if err := rows.Scan(&id); err != nil {
 			return nil, fmt.Errorf("scan UUID: %w", err)
 		}
-		uuids = append(uuids, uuid)
+		uuids = append(uuids, id)
 	}
 	return uuids, rows.Err()
 }

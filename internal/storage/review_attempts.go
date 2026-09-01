@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"time"
+	"uuid"
 )
 
 // ReviewAttempt is the local CI-poller retry state for a single reviewed HEAD,
@@ -26,7 +27,7 @@ type ReviewAttempt struct {
 	LastErrorClass             string     `json:"last_error_class"`
 	ConsecutiveGenuineAttempts int        `json:"consecutive_genuine_attempts"`
 	LastErrorExcerpt           string     `json:"last_error_excerpt"`
-	LastPanelRunUUID           string     `json:"last_panel_run_uuid"`
+	LastPanelRunUUID           *uuid.UUID `json:"last_panel_run_uuid,omitempty" format:"uuid"`
 	State                      string     `json:"state"`
 	UpdatedAt                  time.Time  `json:"updated_at"`
 }
@@ -36,7 +37,7 @@ type ReviewAttempt struct {
 // stay in lockstep.
 const reviewAttemptColumns = `id, github_repo, pr_number, head_sha, attempt,
 	first_attempt_at, next_attempt_at, last_error_class,
-	consecutive_genuine_attempts, last_error_excerpt, last_panel_run_uuid,
+	consecutive_genuine_attempts, last_error_excerpt, NULLIF(last_panel_run_uuid, ''),
 	state, updated_at`
 
 // scanReviewAttempt hydrates a ReviewAttempt from a row selecting
@@ -48,10 +49,11 @@ func scanReviewAttempt(row sqlScanner) (*ReviewAttempt, error) {
 	var firstAttemptAt sql.NullString
 	var nextAttemptAt sql.NullString
 	var updatedAt sql.NullString
+	var lastPanelRunUUID sql.Null[uuid.UUID]
 	if err := row.Scan(
 		&a.ID, &a.GithubRepo, &a.PRNumber, &a.HeadSHA, &a.Attempt,
 		&firstAttemptAt, &nextAttemptAt, &a.LastErrorClass,
-		&a.ConsecutiveGenuineAttempts, &a.LastErrorExcerpt, &a.LastPanelRunUUID,
+		&a.ConsecutiveGenuineAttempts, &a.LastErrorExcerpt, &lastPanelRunUUID,
 		&a.State, &updatedAt,
 	); err != nil {
 		return nil, err
@@ -65,6 +67,9 @@ func scanReviewAttempt(row sqlScanner) (*ReviewAttempt, error) {
 	}
 	if updatedAt.Valid {
 		a.UpdatedAt = parseSQLiteTime(updatedAt.String)
+	}
+	if lastPanelRunUUID.Valid {
+		a.LastPanelRunUUID = &lastPanelRunUUID.V
 	}
 	return &a, nil
 }
@@ -141,7 +146,7 @@ func (db *DB) GetReviewAttempt(repo string, pr int, sha string) (*ReviewAttempt,
 // on it. bumpGenuine increments consecutive_genuine_attempts (a genuine
 // failure that recurs) or resets it to zero (a transient outage), matching the
 // give-up threshold semantics.
-func (db *DB) DeferReviewAttempt(repo string, pr int, sha, errClass, excerpt, lastRunUUID string,
+func (db *DB) DeferReviewAttempt(repo string, pr int, sha, errClass, excerpt string, lastRunUUID *uuid.UUID,
 	nextAttemptAt time.Time, bumpGenuine bool,
 ) error {
 	_, err := db.Exec(`
@@ -150,7 +155,7 @@ func (db *DB) DeferReviewAttempt(repo string, pr int, sha, errClass, excerpt, la
 		    next_attempt_at = ?,
 		    last_error_class = ?,
 		    last_error_excerpt = ?,
-		    last_panel_run_uuid = ?,
+		    last_panel_run_uuid = COALESCE(?, ''),
 		    consecutive_genuine_attempts =
 		        CASE WHEN ? THEN consecutive_genuine_attempts + 1 ELSE 0 END,
 		    updated_at = ?

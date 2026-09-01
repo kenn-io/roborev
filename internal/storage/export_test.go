@@ -5,9 +5,11 @@ import (
 	"encoding/json"
 	"fmt"
 	"path/filepath"
+	"slices"
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -161,12 +163,14 @@ func TestExportReviewsFiltersAndOrdering(t *testing.T) {
 	})
 	require.NoError(t, err)
 	require.Len(t, page.Reviews, 2)
-	assert.Equal([]string{includedA.UUID, includedB.UUID}, []string{page.Reviews[0].ReviewID, page.Reviews[1].ReviewID})
+	wantIDs := []uuid.UUID{*includedA.UUID, *includedB.UUID}
+	slices.SortFunc(wantIDs, uuid.UUID.Compare)
+	assert.Equal(wantIDs, []uuid.UUID{page.Reviews[0].ReviewID, page.Reviews[1].ReviewID})
 
 	closedOnly, err := db.ExportReviews(ExportReviewsOptions{Profile: ExportProfileContent, ClosedOnly: true, Limit: 10})
 	require.NoError(t, err)
 	require.Len(t, closedOnly.Reviews, 1)
-	assert.Equal(includedB.UUID, closedOnly.Reviews[0].ReviewID)
+	assert.Equal(*includedB.UUID, closedOnly.Reviews[0].ReviewID)
 }
 
 func TestExportReviewsPagination(t *testing.T) {
@@ -184,14 +188,14 @@ func TestExportReviewsPagination(t *testing.T) {
 	require.Len(t, page1.Reviews, 2)
 	assert.True(page1.Truncated)
 	require.NotNil(t, page1.NextCursor)
-	assert.Equal([]string{first.UUID, second.UUID}, []string{page1.Reviews[0].ReviewID, page1.Reviews[1].ReviewID})
+	assert.Equal([]uuid.UUID{*first.UUID, *second.UUID}, []uuid.UUID{page1.Reviews[0].ReviewID, page1.Reviews[1].ReviewID})
 
 	page2, err := db.ExportReviews(ExportReviewsOptions{Profile: ExportProfileContent, Cursor: *page1.NextCursor, Limit: 2})
 	require.NoError(t, err)
 	require.Len(t, page2.Reviews, 1)
 	assert.False(page2.Truncated)
 	require.NotNil(t, page2.NextCursor)
-	assert.Equal(third.UUID, page2.Reviews[0].ReviewID)
+	assert.Equal(*third.UUID, page2.Reviews[0].ReviewID)
 
 	page3, err := db.ExportReviews(ExportReviewsOptions{Profile: ExportProfileContent, Cursor: *page2.NextCursor, Limit: 2})
 	require.NoError(t, err)
@@ -217,7 +221,7 @@ func TestExportReviewsCursorRoundTripAcrossPagesMatchesUnpaginated(t *testing.T)
 	require.Len(t, full.Reviews, 5)
 
 	var cursor string
-	var pagedIDs []string
+	var pagedIDs []uuid.UUID
 	for {
 		page, err := db.ExportReviews(ExportReviewsOptions{
 			Profile: ExportProfileMetadata,
@@ -234,12 +238,12 @@ func TestExportReviewsCursorRoundTripAcrossPagesMatchesUnpaginated(t *testing.T)
 		cursor = *page.NextCursor
 	}
 
-	fullIDs := make([]string, 0, len(full.Reviews))
+	fullIDs := make([]uuid.UUID, 0, len(full.Reviews))
 	for _, review := range full.Reviews {
 		fullIDs = append(fullIDs, review.ReviewID)
 	}
 	assert.Equal(t, fullIDs, pagedIDs)
-	assert.Len(t, uniqueStrings(pagedIDs), len(pagedIDs), "paged export must not duplicate reviews")
+	assert.Len(t, uniqueValues(pagedIDs), len(pagedIDs), "paged export must not duplicate reviews")
 }
 
 func TestExportReviewsCursorPaginatesSameCompletedTimestamp(t *testing.T) {
@@ -254,12 +258,12 @@ func TestExportReviewsCursorPaginatesSameCompletedTimestamp(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, page1.Reviews, 1)
 	require.NotNil(t, page1.NextCursor)
-	assert.Equal(t, first.UUID, page1.Reviews[0].ReviewID)
+	assert.Equal(t, *first.UUID, page1.Reviews[0].ReviewID)
 
 	page2, err := db.ExportReviews(ExportReviewsOptions{Profile: ExportProfileContent, Cursor: *page1.NextCursor, Limit: 1})
 	require.NoError(t, err)
 	require.Len(t, page2.Reviews, 1)
-	assert.Equal(t, second.UUID, page2.Reviews[0].ReviewID)
+	assert.Equal(t, *second.UUID, page2.Reviews[0].ReviewID)
 	assert.NotNil(t, page2.NextCursor)
 }
 
@@ -268,17 +272,18 @@ func TestExportReviewsCursorPaginatesSameCompletedTimestampPileup(t *testing.T) 
 	defer db.Close()
 
 	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
-	wantIDs := make([]string, 0, 5)
+	wantIDs := make([]uuid.UUID, 0, 5)
 	for i := range 5 {
 		review := seedCompletedExportReview(
 			t, db, repo.ID, fmt.Sprintf("%040x", i+1),
 			"2026-06-29 00:00:00", false,
 		)
-		wantIDs = append(wantIDs, review.UUID)
+		wantIDs = append(wantIDs, *review.UUID)
 	}
+	slices.SortFunc(wantIDs, uuid.UUID.Compare)
 
 	var cursor string
-	var gotIDs []string
+	var gotIDs []uuid.UUID
 	for {
 		page, err := db.ExportReviews(ExportReviewsOptions{
 			Profile: ExportProfileContent,
@@ -296,7 +301,7 @@ func TestExportReviewsCursorPaginatesSameCompletedTimestampPileup(t *testing.T) 
 	}
 
 	assert.Equal(t, wantIDs, gotIDs)
-	assert.Len(t, uniqueStrings(gotIDs), len(gotIDs), "same-timestamp pagination must not duplicate reviews")
+	assert.Len(t, uniqueValues(gotIDs), len(gotIDs), "same-timestamp pagination must not duplicate reviews")
 }
 
 func TestExportReviewsDefaultLimitIsBounded(t *testing.T) {
@@ -341,7 +346,7 @@ func TestExportReviewsNonTruncatedPageIncludesResumeCursor(t *testing.T) {
 	require.Len(t, page.Reviews, 1)
 	assert.False(t, page.Truncated)
 	require.NotNil(t, page.NextCursor)
-	assert.Equal(t, first.UUID, page.Reviews[0].ReviewID)
+	assert.Equal(t, *first.UUID, page.Reviews[0].ReviewID)
 
 	resumed, err := db.ExportReviews(ExportReviewsOptions{
 		Profile: ExportProfileMetadata,
@@ -360,7 +365,7 @@ func TestExportReviewsRejectsInvalidCursorTimestamp(t *testing.T) {
 
 	databaseID, err := db.GetDatabaseID()
 	require.NoError(t, err)
-	cursor := encodeExportCursorForTest(t, databaseID, "not-a-time", "r1")
+	cursor := encodeExportCursorForTest(t, databaseID, "not-a-time", testUUID("r1"))
 
 	_, err = db.ExportReviews(ExportReviewsOptions{Profile: ExportProfileContent, Cursor: cursor, Limit: 10})
 	require.Error(t, err)
@@ -386,7 +391,7 @@ func TestExportReviewsRejectsCursorFromDifferentDatabaseID(t *testing.T) {
 
 	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
 	first := seedCompletedExportReview(t, db, repo.ID, "1111111111111111111111111111111111111111", "2026-06-29 00:00:00", false)
-	cursor := encodeExportCursorForTest(t, "00000000-0000-4000-8000-000000000000", formatExportTime(first.CreatedAt), first.UUID)
+	cursor := encodeExportCursorForTest(t, testUUID("other-database"), formatExportTime(first.CreatedAt), *first.UUID)
 
 	_, err := db.ExportReviews(ExportReviewsOptions{Profile: ExportProfileMetadata, Cursor: cursor, Limit: 10})
 	require.Error(t, err)
@@ -400,7 +405,7 @@ func TestExportReviewsRejectsNoLongerResolvableCursor(t *testing.T) {
 
 	databaseID, err := db.GetDatabaseID()
 	require.NoError(t, err)
-	cursor := encodeExportCursorForTest(t, databaseID, "2026-06-29T00:00:00Z", "missing-review")
+	cursor := encodeExportCursorForTest(t, databaseID, "2026-06-29T00:00:00Z", testUUID("missing-review"))
 
 	_, err = db.ExportReviews(ExportReviewsOptions{Profile: ExportProfileMetadata, Cursor: cursor, Limit: 10})
 	require.Error(t, err)
@@ -414,7 +419,7 @@ func TestExportReviewsPanelSubagents(t *testing.T) {
 	assert := assert.New(t)
 
 	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
-	panelRun := "panel-run-1"
+	panelRun := testUUID("panel-run-1")
 	memberA := seedPanelExportJob(t, db, repo.ID, panelRun, "member", "security", 0, "codex", "security", "2026-06-29 00:00:01", "- High — issue")
 	memberB := seedPanelExportJob(t, db, repo.ID, panelRun, "member", "style", 1, "claude", "style", "2026-06-29 00:00:02", "No issues found.")
 	synthesis := seedPanelExportJob(t, db, repo.ID, panelRun, "synthesis", "", 0, "codex", "", "2026-06-29 00:00:03", "- Medium — synthesized")
@@ -427,7 +432,7 @@ func TestExportReviewsPanelSubagents(t *testing.T) {
 		RepoID:           repo.ID,
 		GitRef:           "aaaa..dddd",
 		Agent:            "codex",
-		PanelRunUUID:     panelRun,
+		PanelRunUUID:     &panelRun,
 		PanelRole:        PanelRoleMember,
 		PanelMemberName:  "queued",
 		PanelMemberIndex: 2,
@@ -445,12 +450,12 @@ func TestExportReviewsPanelSubagents(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, page.Reviews, 1)
 	got := page.Reviews[0]
-	assert.Equal(synthesis.UUID, got.ReviewID)
+	assert.Equal(*synthesis.UUID, got.ReviewID)
 	assert.Equal("dddddddddddddddddddddddddddddddddddddddd", derefString(got.CommitSHA))
 	assert.Nil(got.PRNumber)
 	assert.Nil(got.PRURL)
 	require.Len(t, got.Subagents, 2)
-	assert.Equal(memberA.UUID, got.Subagents[0].ReviewID)
+	assert.Equal(*memberA.UUID, got.Subagents[0].ReviewID)
 	assert.Equal("security", got.Subagents[0].Name)
 	assert.Equal("fail", got.Subagents[0].Verdict)
 	assert.Equal("security", derefString(got.Subagents[0].ReviewType))
@@ -458,7 +463,7 @@ func TestExportReviewsPanelSubagents(t *testing.T) {
 	assert.Equal(int64(7), derefInt64(got.Subagents[0].Cost.TokensIn))
 	assert.Equal(int64(9), derefInt64(got.Subagents[0].Cost.TokensOut))
 	assert.InDelta(0.12, derefFloat64(got.Subagents[0].Cost.USD), 1e-9)
-	assert.Equal(memberB.UUID, got.Subagents[1].ReviewID)
+	assert.Equal(*memberB.UUID, got.Subagents[1].ReviewID)
 	assert.Equal("style", got.Subagents[1].Name)
 	assert.Equal("pass", got.Subagents[1].Verdict)
 
@@ -475,12 +480,12 @@ func TestExportReviewsSynthesisWithoutMembersUsesEmptySubagentsArray(t *testing.
 	defer db.Close()
 
 	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
-	synthesis := seedPanelExportJob(t, db, repo.ID, "panel-run-empty", "synthesis", "", 0, "codex", "", "2026-06-29 00:00:03", "No issues found.")
+	synthesis := seedPanelExportJob(t, db, repo.ID, testUUID("panel-run-empty"), "synthesis", "", 0, "codex", "", "2026-06-29 00:00:03", "No issues found.")
 
 	page, err := db.ExportReviews(ExportReviewsOptions{Profile: ExportProfileContent, Limit: 10})
 	require.NoError(t, err)
 	require.Len(t, page.Reviews, 1)
-	assert.Equal(t, synthesis.UUID, page.Reviews[0].ReviewID)
+	assert.Equal(t, *synthesis.UUID, page.Reviews[0].ReviewID)
 	assert.NotNil(t, page.Reviews[0].Subagents)
 
 	encoded, err := json.Marshal(page)
@@ -494,7 +499,7 @@ func TestExportReviewsCISynthesisFields(t *testing.T) {
 	defer db.Close()
 
 	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
-	panelRun := "ci-panel-run"
+	panelRun := testUUID("ci-panel-run")
 	synthesis := seedPanelExportJob(t, db, repo.ID, panelRun, "synthesis", "", 0, "codex", "", "2026-06-29 00:00:03", "- Medium — synthesized")
 	_, err := db.Exec(`
 		UPDATE review_jobs
@@ -570,12 +575,12 @@ func TestUpsertPulledReviewWithEmptyOutputIsNotExportable(t *testing.T) {
 	_, err := db.Exec(`UPDATE review_jobs SET status = 'done' WHERE id = ?`, job.ID)
 	require.NoError(t, err)
 	require.NoError(t, db.UpsertPulledReview(PulledReview{
-		UUID:               "pulled-review",
-		JobUUID:            job.UUID,
+		UUID:               testUUID("pulled-review"),
+		JobUUID:            *job.UUID,
 		Agent:              "codex",
 		Prompt:             "prompt",
 		Output:             "",
-		UpdatedByMachineID: "remote",
+		UpdatedByMachineID: testUUID("remote"),
 		CreatedAt:          time.Date(2026, 6, 29, 0, 0, 0, 0, time.UTC),
 		UpdatedAt:          time.Date(2026, 6, 29, 0, 0, 1, 0, time.UTC),
 	}))
@@ -591,20 +596,20 @@ func seedCompletedExportReview(t *testing.T, db *DB, repoID int64, sha, complete
 	job := enqueueJob(t, db, repoID, commit.ID, sha)
 	markExportJobRunning(t, db, job.ID)
 	require.NoError(t, db.CompleteJob(job.ID, "codex", "prompt", "No issues found."))
-	_, err := db.Exec(`UPDATE reviews SET uuid = ?, created_at = ?, closed = ? WHERE job_id = ?`, "review-"+sha, completedAt, boolInt(closed), job.ID)
+	_, err := db.Exec(`UPDATE reviews SET uuid = ?, created_at = ?, closed = ? WHERE job_id = ?`, testUUID("review-"+sha), completedAt, boolInt(closed), job.ID)
 	require.NoError(t, err)
 	review, err := db.GetReviewByJobID(job.ID)
 	require.NoError(t, err)
 	return review
 }
 
-func seedPanelMemberWithoutExportableReview(t *testing.T, db *DB, repoID int64, panelRun, memberName string, memberIndex int, status JobStatus) {
+func seedPanelMemberWithoutExportableReview(t *testing.T, db *DB, repoID int64, panelRun uuid.UUID, memberName string, memberIndex int, status JobStatus) {
 	t.Helper()
 	job, err := db.EnqueueJob(EnqueueOpts{
 		RepoID:           repoID,
 		GitRef:           "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa..dddddddddddddddddddddddddddddddddddddddd",
 		Agent:            "codex",
-		PanelRunUUID:     panelRun,
+		PanelRunUUID:     &panelRun,
 		PanelRole:        PanelRoleMember,
 		PanelMemberName:  memberName,
 		PanelMemberIndex: memberIndex,
@@ -618,7 +623,7 @@ func seedPanelExportJob(
 	t *testing.T,
 	db *DB,
 	repoID int64,
-	panelRun string,
+	panelRun uuid.UUID,
 	role string,
 	memberName string,
 	memberIndex int,
@@ -633,7 +638,7 @@ func seedPanelExportJob(
 		GitRef:           "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa..dddddddddddddddddddddddddddddddddddddddd",
 		Agent:            agentName,
 		ReviewType:       reviewType,
-		PanelRunUUID:     panelRun,
+		PanelRunUUID:     &panelRun,
 		PanelRole:        role,
 		PanelMemberName:  memberName,
 		PanelMemberIndex: memberIndex,
@@ -691,7 +696,7 @@ func derefFloat64(v *float64) float64 {
 	return *v
 }
 
-func encodeExportCursorForTest(t *testing.T, databaseID, completedAt, reviewID string) string {
+func encodeExportCursorForTest(t *testing.T, databaseID uuid.UUID, completedAt string, reviewID uuid.UUID) string {
 	t.Helper()
 	data, err := json.Marshal(map[string]any{
 		"version":      1,
@@ -703,8 +708,8 @@ func encodeExportCursorForTest(t *testing.T, databaseID, completedAt, reviewID s
 	return base64.RawURLEncoding.EncodeToString(data)
 }
 
-func uniqueStrings(values []string) map[string]struct{} {
-	out := make(map[string]struct{}, len(values))
+func uniqueValues[T comparable](values []T) map[T]struct{} {
+	out := make(map[T]struct{}, len(values))
 	for _, value := range values {
 		out[value] = struct{}{}
 	}

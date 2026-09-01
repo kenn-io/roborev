@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"time"
+	"uuid"
 
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -13,10 +14,10 @@ import (
 const jobListCursorVersion = 1
 
 type jobListCursor struct {
-	Version    int    `json:"version"`
-	DatabaseID string `json:"database_id"`
-	EnqueuedAt string `json:"enqueued_at"`
-	JobID      int64  `json:"job_id"`
+	Version    int       `json:"version"`
+	DatabaseID uuid.UUID `json:"database_id"`
+	EnqueuedAt string    `json:"enqueued_at"`
+	JobID      int64     `json:"job_id"`
 }
 
 func (s *Server) encodeJobListCursor(job storage.ReviewJob) (string, error) {
@@ -56,7 +57,7 @@ func (s *Server) decodeJobListCursor(value string) (*jobListCursor, time.Time, e
 			"invalid jobs cursor: unsupported version %d", cursor.Version,
 		)
 	}
-	if cursor.DatabaseID == "" || cursor.EnqueuedAt == "" || cursor.JobID <= 0 {
+	if cursor.DatabaseID == uuid.Nil() || cursor.EnqueuedAt == "" || cursor.JobID <= 0 {
 		return nil, time.Time{}, errors.New("invalid jobs cursor: missing fields")
 	}
 	enqueuedAt, err := time.Parse(time.RFC3339Nano, cursor.EnqueuedAt)

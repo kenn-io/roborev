@@ -5,6 +5,7 @@ import (
 	"path/filepath"
 	"regexp"
 	"testing"
+	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -100,7 +101,7 @@ func TestGetMachineID_EmptyValueRegeneration(t *testing.T) {
 	a.NotEmpty(id, "Expected non-empty machine ID after regeneration")
 
 	// Verify it's now stored
-	var stored string
+	var stored uuid.UUID
 	err = db.QueryRow(`SELECT value FROM sync_state WHERE key = ?`, SyncStateMachineID).Scan(&stored)
 	r.NoError(err, "Failed to query stored ID: %v", err)
 	a.Equal(id, stored, "Stored ID %q doesn't match returned ID %q", stored, id)

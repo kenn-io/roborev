@@ -10,6 +10,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/spf13/cobra"
 	gitrepo "go.kenn.io/kit/git/repo"
@@ -31,7 +32,7 @@ type showPanelMember struct {
 // showPanelBlock is the additive "panel" object on show --json for a synthesis
 // (parent) review: the run handle plus its member reviewers.
 type showPanelBlock struct {
-	RunUUID        string            `json:"run_uuid"`
+	RunUUID        uuid.UUID         `json:"run_uuid"`
 	Name           string            `json:"name"`
 	SynthesisJobID int64             `json:"synthesis_job_id"`
 	Members        []showPanelMember `json:"members"`
@@ -39,7 +40,7 @@ type showPanelBlock struct {
 
 // buildShowPanelBlock maps a run's member jobs to the panel block. Members are
 // assumed already ordered by panel_member_index.
-func buildShowPanelBlock(synthesisJobID int64, runUUID, name string, members []storage.ReviewJob) showPanelBlock {
+func buildShowPanelBlock(synthesisJobID int64, runUUID uuid.UUID, name string, members []storage.ReviewJob) showPanelBlock {
 	block := showPanelBlock{RunUUID: runUUID, Name: name, SynthesisJobID: synthesisJobID}
 	for _, m := range members {
 		member := showPanelMember{
@@ -200,9 +201,9 @@ Examples:
 				}
 				out := reviewWithComments{Review: review}
 				out.Comments = fetchShowComments(client, addr, review)
-				if review.Job != nil && review.Job.IsSynthesisJob() && review.Job.PanelRunUUID != "" {
-					if members, err := fetchPanelMembers(client, addr, review.Job.PanelRunUUID); err == nil && len(members) > 0 {
-						block := buildShowPanelBlock(review.JobID, review.Job.PanelRunUUID, review.Job.PanelName, members)
+				if review.Job != nil && review.Job.IsSynthesisJob() && review.Job.PanelRunUUID != nil {
+					if members, err := fetchPanelMembers(client, addr, *review.Job.PanelRunUUID); err == nil && len(members) > 0 {
+						block := buildShowPanelBlock(review.JobID, *review.Job.PanelRunUUID, review.Job.PanelName, members)
 						out.Panel = &block
 					}
 				}
@@ -222,8 +223,8 @@ Examples:
 					fmt.Printf("Tokens: %s\n", tu.FormatSummary())
 				}
 			}
-			if review.Job != nil && review.Job.IsSynthesisJob() && review.Job.PanelRunUUID != "" {
-				if members, err := fetchPanelMembers(client, addr, review.Job.PanelRunUUID); err == nil && len(members) > 0 {
+			if review.Job != nil && review.Job.IsSynthesisJob() && review.Job.PanelRunUUID != nil {
+				if members, err := fetchPanelMembers(client, addr, *review.Job.PanelRunUUID); err == nil && len(members) > 0 {
 					fmt.Println(formatReviewersSummary(members))
 				}
 			}
@@ -304,8 +305,9 @@ func fetchQueuedJobPromptReview(client *http.Client, addr string, jobID int64, o
 // synthesis row; this keeps only members. limit=0 requests the full run so a
 // panel with >=50 rows is not truncated (the synthesis row also counts toward
 // the default cap).
-func fetchPanelMembers(client *http.Client, addr, runUUID string) ([]storage.ReviewJob, error) {
-	u := addr + "/api/jobs?panel_run=" + url.QueryEscape(runUUID) + "&limit=0"
+func fetchPanelMembers(client *http.Client, addr string, runUUID uuid.UUID) ([]storage.ReviewJob, error) {
+	u := addr + "/api/jobs?panel_run=" +
+		url.QueryEscape(runUUID.String()) + "&limit=0" //nolint:forbidigo // HTTP query parameter boundary.
 	resp, err := client.Get(u)
 	if err != nil {
 		return nil, err

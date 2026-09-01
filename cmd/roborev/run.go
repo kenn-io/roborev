@@ -12,6 +12,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/spf13/cobra"
 	gitrepo "go.kenn.io/kit/git/repo"
@@ -127,7 +128,7 @@ type runOptions struct {
 
 type runLaunchReceipt struct {
 	JobID   int64             `json:"job_id"`
-	JobUUID string            `json:"job_uuid"`
+	JobUUID uuid.UUID         `json:"job_uuid"`
 	GitRef  string            `json:"git_ref"`
 	Status  storage.JobStatus `json:"status"`
 }
@@ -136,14 +137,14 @@ type runLaunchReceipt struct {
 // uuid atomically at insert, so a missing uuid means the daemon predates
 // launch receipts (reachable only with ROBOREV_SKIP_VERSION_CHECK=1).
 func newRunLaunchReceipt(job storage.ReviewJob) (runLaunchReceipt, error) {
-	if job.UUID == "" {
+	if job.UUID == nil {
 		return runLaunchReceipt{}, fmt.Errorf(
 			"task %d was enqueued, but the daemon response is missing its uuid; "+
 				"the daemon is likely older than this CLI - restart or update it",
 			job.ID)
 	}
 	return runLaunchReceipt{
-		JobID: job.ID, JobUUID: job.UUID, GitRef: job.GitRef, Status: job.Status,
+		JobID: job.ID, JobUUID: *job.UUID, GitRef: job.GitRef, Status: job.Status,
 	}, nil
 }
 

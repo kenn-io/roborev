@@ -137,7 +137,7 @@ func TestFrozenExperimentPlanSelectsPanelMember(t *testing.T) {
 
 	job := &storage.ReviewJob{
 		Agent:        "current-attempt-agent",
-		PanelRunUUID: "run", PanelRole: storage.PanelRoleMember,
+		PanelRunUUID: testUUIDPtr("run"), PanelRole: storage.PanelRoleMember,
 		PanelName: "review", PanelMemberName: "second", PanelMemberIndex: 1,
 		MinSeverity: "critical", BackupAgent: "claude-code", BackupModel: "stale",
 	}
@@ -368,7 +368,7 @@ func TestPanelExperimentResumesCompatibleMemberSession(t *testing.T) {
 	})
 	claimed, err := db.ClaimJob("experiment-worker")
 	require.NoError(t, err)
-	require.Equal(t, first.PanelRunUUID, claimed.PanelRunUUID)
+	require.Equal(t, &first.PanelRunUUID, claimed.PanelRunUUID)
 	require.Equal(t, "bug", claimed.PanelMemberName)
 	require.NoError(t, db.CompleteJob(
 		claimed.ID, "test", "prompt", "No issues found.",
@@ -516,10 +516,10 @@ func TestExperimentSessionReuseStaysOnSourceMachine(t *testing.T) {
 	})
 	claimed, err := db.ClaimJob("experiment-worker")
 	require.NoError(t, err)
-	require.Equal(t, first.PanelRunUUID, claimed.PanelRunUUID)
+	require.Equal(t, &first.PanelRunUUID, claimed.PanelRunUUID)
 	require.NoError(t, db.CompleteJob(claimed.ID, "test", "prompt", "No issues found."))
 	_, err = db.Exec(`UPDATE review_jobs SET session_id = ?, source_machine_id = ? WHERE id = ?`,
-		"foreign-session", "foreign-machine", claimed.ID)
+		"foreign-session", testUUID("foreign-machine"), claimed.ID)
 	require.NoError(t, err)
 
 	repo.CommitFile("review.go", "package review\n\nfunc changed() {}\n", "second review")

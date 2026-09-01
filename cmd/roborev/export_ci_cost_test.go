@@ -2,6 +2,7 @@ package main
 
 import (
 	"encoding/json"
+	"fmt"
 	"net/http"
 	"path/filepath"
 	"testing"
@@ -21,7 +22,7 @@ func writeCICostTestPage(t *testing.T, w http.ResponseWriter, truncated bool, ne
 		"tool":           "roborev",
 		"tool_version":   "test",
 		"generated_at":   "2026-08-06T12:00:00Z",
-		"database_id":    "database-1",
+		"database_id":    testUUID("cost-database"),
 		"legacy":         false,
 		"window":         map[string]any{"field": "finished_at", "since": nil, "until": nil},
 		"truncated":      truncated,
@@ -49,14 +50,14 @@ func TestExportCICostCmdFollowsCursors(t *testing.T) {
 				assert.Equal("2026-08-07", r.URL.Query().Get("until"))
 				assert.Empty(r.URL.Query().Get("cursor"))
 				writeCICostTestPage(t, w, true, new("cursor-1"), []map[string]any{
-					{"job_uuid": "job-1", "finished_at": "2026-08-01T01:00:00Z", "agent": "agent-a", "role": "member", "status": "done", "cost_usd": 0.25},
+					{"job_uuid": testUUID("cost-job-1"), "finished_at": "2026-08-01T01:00:00Z", "agent": "agent-a", "role": "member", "status": "done", "cost_usd": 0.25},
 				})
 			case 2:
 				assert.Empty(r.URL.Query().Get("since"))
 				assert.Empty(r.URL.Query().Get("until"))
 				assert.Equal("cursor-1", r.URL.Query().Get("cursor"))
 				writeCICostTestPage(t, w, false, new("cursor-2"), []map[string]any{
-					{"job_uuid": "job-2", "finished_at": "2026-08-01T02:00:00Z", "agent": "agent-b", "role": "synthesis", "status": "failed", "cost_usd": nil},
+					{"job_uuid": testUUID("cost-job-2"), "finished_at": "2026-08-01T02:00:00Z", "agent": "agent-b", "role": "synthesis", "status": "failed", "cost_usd": nil},
 				})
 			default:
 				http.Error(w, "too many calls", http.StatusInternalServerError)
@@ -77,8 +78,8 @@ func TestExportCICostCmdFollowsCursors(t *testing.T) {
 	require.NotNil(t, doc.NextCursor)
 	assert.Equal("cursor-2", *doc.NextCursor)
 	require.Len(t, doc.Jobs, 2)
-	assert.Equal("job-1", doc.Jobs[0]["job_uuid"])
-	assert.Equal("job-2", doc.Jobs[1]["job_uuid"])
+	assert.Equal(testUUIDText("cost-job-1"), doc.Jobs[0]["job_uuid"])
+	assert.Equal(testUUIDText("cost-job-2"), doc.Jobs[1]["job_uuid"])
 }
 
 func TestExportCICostCmdAutoPaginationPreservesSince(t *testing.T) {
@@ -88,10 +89,11 @@ func TestExportCICostCmdAutoPaginationPreservesSince(t *testing.T) {
 	repo, err := db.GetOrCreateRepo(filepath.Join(t.TempDir(), "repo"))
 	require.NoError(t, err)
 	seed := func(gitRef, finishedAt string) *storage.ReviewJob {
+		panelRunUUID := testUUID("run-" + gitRef)
 		job, enqueueErr := db.EnqueueJob(storage.EnqueueOpts{
 			RepoID: repo.ID, GitRef: gitRef, Agent: "test-agent",
 			Source: storage.JobSourceCI, PanelRole: storage.PanelRoleMember,
-			PanelRunUUID: "run-" + gitRef,
+			PanelRunUUID: &panelRunUUID,
 		})
 		require.NoError(t, enqueueErr)
 		_, updateErr := db.Exec(`UPDATE review_jobs
@@ -158,8 +160,8 @@ func TestExportCICostCmdAutoPaginationPreservesSince(t *testing.T) {
 	require.NotNil(t, doc.Window.Since)
 	assert.Equal(t, sinceText, *doc.Window.Since)
 	require.Len(t, doc.Jobs, 2)
-	assert.Equal(t, firstJob.UUID, doc.Jobs[0].JobUUID)
-	assert.Equal(t, secondJob.UUID, doc.Jobs[1].JobUUID)
+	assert.Equal(t, *firstJob.UUID, doc.Jobs[0].JobUUID)
+	assert.Equal(t, *secondJob.UUID, doc.Jobs[1].JobUUID)
 }
 
 func TestExportCICostCmdPropagatesLimitAndLegacy(t *testing.T) {
@@ -176,7 +178,7 @@ func TestExportCICostCmdPropagatesLimitAndLegacy(t *testing.T) {
 			jobs := make([]map[string]any, 1000)
 			for i := range jobs {
 				jobs[i] = map[string]any{
-					"job_uuid": "job", "finished_at": "2026-08-01T01:00:00Z",
+					"job_uuid": testUUID(fmt.Sprintf("cost-job-%d", i)), "finished_at": "2026-08-01T01:00:00Z",
 					"agent": "agent-a", "role": "review", "status": "done", "cost_usd": 0,
 				}
 			}
@@ -214,7 +216,7 @@ func TestExportCICostCmdRejectsInvalidPagination(t *testing.T) {
 		next *string
 		jobs []map[string]any
 	}{
-		{name: "missing cursor", jobs: []map[string]any{{"job_uuid": "job-1"}}},
+		{name: "missing cursor", jobs: []map[string]any{{"job_uuid": testUUID("cost-job-1")}}},
 		{name: "empty page", next: new("cursor-1"), jobs: []map[string]any{}},
 	} {
 		t.Run(tc.name, func(t *testing.T) {

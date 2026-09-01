@@ -3,6 +3,7 @@ package storage
 import (
 	"database/sql"
 	"encoding/json"
+	"uuid"
 )
 
 type sqlScanner interface {
@@ -16,8 +17,8 @@ type reviewJobScanFields struct {
 	WorkerID          sql.NullString
 	Error             sql.NullString
 	Prompt            sql.NullString
-	SourceMachineID   sql.NullString
-	UUID              sql.NullString
+	SourceMachineID   sql.Null[uuid.UUID]
+	UUID              sql.Null[uuid.UUID]
 	Model             sql.NullString
 	Provider          sql.NullString
 	RequestedModel    sql.NullString
@@ -25,7 +26,7 @@ type reviewJobScanFields struct {
 	Branch            sql.NullString
 	CIBaseBranch      sql.NullString
 	SessionID         sql.NullString
-	ResumeSourceUUID  sql.NullString
+	ResumeSourceUUID  sql.Null[uuid.UUID]
 	CommitID          sql.NullInt64
 	CommitSubject     sql.NullString
 	JobType           sql.NullString
@@ -45,7 +46,7 @@ type reviewJobScanFields struct {
 	MinSeverity       string
 	BackupAgent       string
 	BackupModel       string
-	PanelRunUUID      sql.NullString
+	PanelRunUUID      sql.Null[uuid.UUID]
 	PanelRole         sql.NullString
 	PanelName         sql.NullString
 	PanelMemberName   sql.NullString
@@ -73,7 +74,7 @@ func applyReviewJobScan(job *ReviewJob, fields reviewJobScanFields) {
 		job.SessionID = fields.SessionID.String
 	}
 	if fields.ResumeSourceUUID.Valid {
-		job.ResumeSourceJobUUID = fields.ResumeSourceUUID.String
+		job.ResumeSourceJobUUID = &fields.ResumeSourceUUID.V
 	}
 	if fields.Model.Valid {
 		job.Model = fields.Model.String
@@ -121,10 +122,10 @@ func applyReviewJobScan(job *ReviewJob, fields reviewJobScanFields) {
 		job.Error = fields.Error.String
 	}
 	if fields.SourceMachineID.Valid {
-		job.SourceMachineID = fields.SourceMachineID.String
+		job.SourceMachineID = &fields.SourceMachineID.V
 	}
 	if fields.UUID.Valid {
-		job.UUID = fields.UUID.String
+		job.UUID = &fields.UUID.V
 	}
 	if fields.CommandLine.Valid {
 		job.CommandLine = fields.CommandLine.String
@@ -155,7 +156,7 @@ func applyReviewJobScan(job *ReviewJob, fields reviewJobScanFields) {
 	job.BackupAgent = fields.BackupAgent
 	job.BackupModel = fields.BackupModel
 	if fields.PanelRunUUID.Valid {
-		job.PanelRunUUID = fields.PanelRunUUID.String
+		job.PanelRunUUID = &fields.PanelRunUUID.V
 	}
 	if fields.PanelRole.Valid {
 		job.PanelRole = fields.PanelRole.String
@@ -184,7 +185,7 @@ func applyReviewJobScan(job *ReviewJob, fields reviewJobScanFields) {
 type reviewScanFields struct {
 	CreatedAt        string
 	Closed           int
-	UUID             sql.NullString
+	UUID             sql.Null[uuid.UUID]
 	VerdictBool      sql.NullInt64
 	StructuredOutput sql.NullString
 }
@@ -232,7 +233,7 @@ func applyReviewScan(review *Review, fields reviewScanFields) {
 	review.CreatedAt = parseSQLiteTime(fields.CreatedAt)
 	review.Closed = fields.Closed != 0
 	if fields.UUID.Valid {
-		review.UUID = fields.UUID.String
+		review.UUID = &fields.UUID.V
 	}
 	if fields.StructuredOutput.Valid {
 		_ = json.Unmarshal(

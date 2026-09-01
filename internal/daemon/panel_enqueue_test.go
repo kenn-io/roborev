@@ -105,7 +105,7 @@ func TestEnqueuePanelFanout(t *testing.T) {
 	reviewTypes := make([]string, len(members))
 	for i, m := range members {
 		assert.Equal(i, m.PanelMemberIndex, "members ordered by index")
-		assert.Equal(resp.PanelRunUUID, m.PanelRunUUID)
+		assert.Equal(&resp.PanelRunUUID, m.PanelRunUUID)
 		assert.Equal(storage.PanelRoleMember, m.PanelRole)
 		reviewTypes[i] = m.ReviewType
 	}
@@ -116,7 +116,7 @@ func TestEnqueuePanelFanout(t *testing.T) {
 	require.NoError(t, err)
 	assert.Equal(storage.JobTypeSynthesis, synth.JobType)
 	assert.Equal(storage.PanelRoleSynthesis, synth.PanelRole)
-	assert.Equal(resp.PanelRunUUID, synth.PanelRunUUID)
+	assert.Equal(&resp.PanelRunUUID, synth.PanelRunUUID)
 	assert.True(synth.ClaimBlocked, "synthesis must be claim-blocked")
 	// Resolved fix reasoning (SynthesisSpec.Reasoning); the test config omits an
 	// explicit reasoning so it falls back to the standard fix default.

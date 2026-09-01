@@ -1089,7 +1089,7 @@ func TestCIPollerStartMakesTransientAttemptsDue(t *testing.T) {
 	created, err := db.ReserveReviewAttempt("acme/api", 42, "head-startup", now)
 	require.NoError(t, err)
 	require.True(t, created)
-	require.NoError(t, db.DeferReviewAttempt("acme/api", 42, "head-startup", "transient", "quota", "run",
+	require.NoError(t, db.DeferReviewAttempt("acme/api", 42, "head-startup", "transient", "quota", testUUIDPtr("run"),
 		now.Add(time.Hour), false))
 
 	cfg := config.DefaultConfig()
@@ -4679,7 +4679,7 @@ func TestRetryDueReviewAttemptDeletesAdvancedHead(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, created, "attempt row reserved")
 	require.NoError(t, h.DB.DeferReviewAttempt("acme/api", prNum, oldSHA,
-		"transient", "provider unavailable", "old-run", now.Add(-time.Minute), false))
+		"transient", "provider unavailable", testUUIDPtr("old-run"), now.Add(-time.Minute), false))
 
 	h.Poller.retryDueReviewAttempts(context.Background(), "acme/api",
 		[]ghPR{{Number: prNum, HeadRefOid: newSHA, BaseRefName: "main"}}, h.Cfg)
@@ -4705,7 +4705,7 @@ func TestRetryDueReviewAttemptFetchesPRMissingFromOpenPage(t *testing.T) {
 	require.NoError(t, err)
 	require.True(t, created, "attempt row reserved")
 	require.NoError(t, h.DB.DeferReviewAttempt("acme/api", prNum, headSHA,
-		"transient", "provider unavailable", "old-run", now.Add(-time.Minute), false))
+		"transient", "provider unavailable", testUUIDPtr("old-run"), now.Add(-time.Minute), false))
 
 	var lookedUp []int
 	h.Poller.prPostTargetFn = func(_ context.Context, ghRepo string, prNumber int) (panelPostTarget, error) {
@@ -4757,7 +4757,7 @@ func TestRetryDueReviewAttemptSkipsConfiguredLabel(t *testing.T) {
 	require.True(t, created)
 	require.NoError(t, h.DB.DeferReviewAttempt(
 		"acme/api", prNum, headSHA, "transient", "provider unavailable",
-		"old-run", now.Add(-time.Minute), false))
+		testUUIDPtr("old-run"), now.Add(-time.Minute), false))
 
 	h.Poller.prPostTargetFn = func(
 		context.Context, string, int,

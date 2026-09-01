@@ -7,6 +7,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -18,7 +19,7 @@ func TestBackfillSourceMachineID(t *testing.T) {
 	job := h.createPendingJob("abc123")
 
 	// Verify source_machine_id is initially NULL (simulating legacy data)
-	var sourceMachineID *string
+	var sourceMachineID sql.Null[uuid.UUID]
 	err := h.db.QueryRow(`SELECT source_machine_id FROM review_jobs WHERE id = ?`, job.ID).Scan(&sourceMachineID)
 	require.NoError(t, err, "Query failed")
 	// After migration, backfill runs automatically, so it may already have a value
@@ -30,7 +31,7 @@ func TestBackfillSourceMachineID(t *testing.T) {
 	require.NoError(t, err, "BackfillSourceMachineID failed")
 
 	// Verify source_machine_id is now set
-	var newSourceMachineID string
+	var newSourceMachineID uuid.UUID
 	err = h.db.QueryRow(`SELECT source_machine_id FROM review_jobs WHERE id = ?`, job.ID).Scan(&newSourceMachineID)
 	require.NoError(t, err, "Query after backfill failed")
 
@@ -170,7 +171,7 @@ func TestUpsertPulledJob_BackfillsModel(t *testing.T) {
 
 	// Insert a job with NULL model using EnqueueJob (which sets model to empty string by default)
 	// We need to directly insert with NULL model to test the COALESCE behavior
-	jobUUID := "test-uuid-backfill-" + time.Now().Format("20060102150405")
+	jobUUID := testUUID("test-uuid-backfill-" + time.Now().Format("20060102150405"))
 	_, err = db.Exec(`
 		INSERT INTO review_jobs (uuid, repo_id, git_ref, agent, status, enqueued_at)
 		VALUES (?, ?, 'HEAD', 'test-agent', 'done', datetime('now'))
@@ -192,7 +193,7 @@ func TestUpsertPulledJob_BackfillsModel(t *testing.T) {
 		Agent:           "test-agent",
 		Model:           "gpt-4", // Now providing a model
 		Status:          "done",
-		SourceMachineID: "test-machine",
+		SourceMachineID: testUUID("test-machine"),
 		EnqueuedAt:      time.Now(),
 		UpdatedAt:       time.Now(),
 	}
@@ -250,7 +251,7 @@ func TestGetJobsToSync_IncludesWorktreePath(t *testing.T) {
 
 	var found *SyncableJob
 	for i := range jobs {
-		if jobs[i].UUID == job.UUID {
+		if job.UUID != nil && jobs[i].UUID == *job.UUID {
 			found = &jobs[i]
 			break
 		}
@@ -284,7 +285,7 @@ func TestGetJobsToSync_IncludesSource(t *testing.T) {
 
 	var found *SyncableJob
 	for i := range jobs {
-		if jobs[i].UUID == job.UUID {
+		if job.UUID != nil && jobs[i].UUID == *job.UUID {
 			found = &jobs[i]
 			break
 		}
@@ -308,15 +309,15 @@ func TestUpsertPulledJob_TerminalRerunClearsStaleCost(t *testing.T) {
 	require.NoError(t, err)
 
 	base := time.Now().UTC()
-	uuid := "cost-sync-rerun-uuid"
+	jobUUID := testUUID("cost-sync-rerun")
 	priced := PulledJob{
-		UUID:            uuid,
+		UUID:            jobUUID,
 		RepoIdentity:    "/test/repo-cost-sync",
 		GitRef:          "HEAD",
 		Agent:           "codex",
 		Status:          string(JobStatusDone),
 		TokenUsage:      `{"cost_usd":2.50,"has_cost":true}`,
-		SourceMachineID: "machine-a",
+		SourceMachineID: testUUID("machine-a"),
 		EnqueuedAt:      base,
 		UpdatedAt:       base,
 	}
@@ -325,7 +326,7 @@ func TestUpsertPulledJob_TerminalRerunClearsStaleCost(t *testing.T) {
 	tokenUsage := func() string {
 		var tu string
 		require.NoError(t, db.QueryRow(
-			`SELECT COALESCE(token_usage, '') FROM review_jobs WHERE uuid = ?`, uuid).Scan(&tu))
+			`SELECT COALESCE(token_usage, '') FROM review_jobs WHERE uuid = ?`, jobUUID).Scan(&tu))
 		return tu
 	}
 	require.Contains(t, tokenUsage(), "2.50", "priced cost stored on first pull")
@@ -354,7 +355,7 @@ func TestUpsertPulledJob_PreservesWorktreePath(t *testing.T) {
 	repo, err := db.GetOrCreateRepo("/test/repo-wt-sync")
 	require.NoError(t, err)
 
-	jobUUID := "test-uuid-wt-" + time.Now().Format("20060102150405")
+	jobUUID := testUUID("test-uuid-wt-" + time.Now().Format("20060102150405"))
 
 	pulledJob := PulledJob{
 		UUID:            jobUUID,
@@ -363,7 +364,7 @@ func TestUpsertPulledJob_PreservesWorktreePath(t *testing.T) {
 		Agent:           "test-agent",
 		Status:          "done",
 		WorktreePath:    "/worktrees/my-branch",
-		SourceMachineID: "test-machine",
+		SourceMachineID: testUUID("test-machine"),
 		EnqueuedAt:      time.Now(),
 		UpdatedAt:       time.Now(),
 	}
@@ -397,7 +398,7 @@ func TestUpsertPulledJob_PreservesSource(t *testing.T) {
 	repo, err := db.GetOrCreateRepo("/test/repo-source-sync")
 	require.NoError(t, err)
 
-	jobUUID := "test-uuid-source-" + time.Now().Format("20060102150405")
+	jobUUID := testUUID("test-uuid-source-" + time.Now().Format("20060102150405"))
 	pulledJob := PulledJob{
 		UUID:            jobUUID,
 		RepoIdentity:    "/test/repo-source-sync",
@@ -405,7 +406,7 @@ func TestUpsertPulledJob_PreservesSource(t *testing.T) {
 		Agent:           "test-agent",
 		Status:          "done",
 		Source:          JobSourceCI,
-		SourceMachineID: "test-machine",
+		SourceMachineID: testUUID("test-machine"),
 		EnqueuedAt:      time.Now(),
 		UpdatedAt:       time.Now(),
 	}
@@ -432,7 +433,7 @@ func TestUpsertPulledJob_ClearsModelAndProviderFields(t *testing.T) {
 	repo, err := db.GetOrCreateRepo("/test/repo-sync-clear")
 	require.NoError(t, err)
 
-	jobUUID := "test-uuid-clear-" + time.Now().Format("20060102150405")
+	jobUUID := testUUID("test-uuid-clear-" + time.Now().Format("20060102150405"))
 	pulledJob := PulledJob{
 		UUID:              jobUUID,
 		RepoIdentity:      "/test/repo-sync-clear",
@@ -443,7 +444,7 @@ func TestUpsertPulledJob_ClearsModelAndProviderFields(t *testing.T) {
 		RequestedModel:    "gpt-4",
 		RequestedProvider: "openai",
 		Status:            "done",
-		SourceMachineID:   "test-machine",
+		SourceMachineID:   testUUID("test-machine"),
 		EnqueuedAt:        time.Now(),
 		UpdatedAt:         time.Now(),
 	}

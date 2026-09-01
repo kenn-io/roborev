@@ -25,7 +25,7 @@ func browserCancellationAllowsReview(job *storage.ReviewJob) bool {
 		job.IsReviewJob() &&
 		!job.IsCIReview() &&
 		job.PanelRole == "" &&
-		job.PanelRunUUID == "" &&
+		job.PanelRunUUID == nil &&
 		!job.Agentic &&
 		!job.PromptPrebuilt &&
 		!job.UsesStoredPrompt()

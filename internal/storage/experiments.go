@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"time"
+	"uuid"
 )
 
 const (
@@ -40,19 +41,19 @@ type SyncableExperimentDefinition struct {
 	DefinitionHash  string
 	DefinitionJSON  string
 	FirstSeenAt     time.Time
-	SourceMachineID string
+	SourceMachineID uuid.UUID
 }
 
 type SyncableExperimentAssignment struct {
 	ReviewUnitKind      string
-	ReviewUnitUUID      string
+	ReviewUnitUUID      uuid.UUID
 	ExperimentID        string
 	Arm                 string
 	SubjectHash         string
 	EffectiveConfigHash string
 	EffectiveConfigJSON string
 	AssignedAt          time.Time
-	SourceMachineID     string
+	SourceMachineID     uuid.UUID
 }
 
 type experimentStore interface {
@@ -61,13 +62,13 @@ type experimentStore interface {
 }
 
 func validateExperimentAssignment(
-	kind, unitUUID, experimentID, arm, subjectHash, effectiveConfigHash,
-	effectiveConfigJSON string,
+	kind string, unitUUID uuid.UUID, experimentID, arm, subjectHash,
+	effectiveConfigHash, effectiveConfigJSON string,
 ) error {
 	if kind != ReviewUnitJob && kind != ReviewUnitPanel {
 		return fmt.Errorf("invalid experiment review unit kind %q", kind)
 	}
-	if unitUUID == "" || experimentID == "" || subjectHash == "" ||
+	if unitUUID == uuid.Nil() || experimentID == "" || subjectHash == "" ||
 		effectiveConfigHash == "" || effectiveConfigJSON == "" {
 		return errors.New("incomplete experiment assignment")
 	}
@@ -80,9 +81,10 @@ func validateExperimentAssignment(
 func insertExperimentAssignmentTx(
 	ctx context.Context,
 	exec experimentStore,
-	kind, unitUUID string,
+	kind string,
+	unitUUID uuid.UUID,
 	assignment *ExperimentAssignmentInput,
-	machineID string,
+	machineID uuid.UUID,
 	now time.Time,
 ) error {
 	if assignment == nil {
@@ -152,8 +154,8 @@ func insertExperimentAssignmentTx(
 }
 
 // GetExperimentAssignments returns immutable attribution for one review unit.
-func (db *DB) GetExperimentAssignments(kind, unitUUID string) ([]ExperimentAssignment, error) {
-	if unitUUID == "" {
+func (db *DB) GetExperimentAssignments(kind string, unitUUID uuid.UUID) ([]ExperimentAssignment, error) {
+	if unitUUID == uuid.Nil() {
 		return nil, nil
 	}
 	rows, err := db.Query(`
@@ -181,17 +183,17 @@ func (db *DB) GetExperimentAssignments(kind, unitUUID string) ([]ExperimentAssig
 	return assignments, rows.Err()
 }
 
-func (db *DB) GetExperimentAssignmentsForJobUUID(jobUUID string) ([]ExperimentAssignment, error) {
-	if jobUUID == "" {
+func (db *DB) GetExperimentAssignmentsForJobUUID(jobUUID uuid.UUID) ([]ExperimentAssignment, error) {
+	if jobUUID == uuid.Nil() {
 		return nil, nil
 	}
-	var panelRunUUID string
-	if err := db.QueryRow(`SELECT COALESCE(panel_run_uuid, '') FROM review_jobs WHERE uuid = ?`,
+	var panelRunUUID sql.Null[uuid.UUID]
+	if err := db.QueryRow(`SELECT NULLIF(panel_run_uuid, '') FROM review_jobs WHERE uuid = ?`,
 		jobUUID).Scan(&panelRunUUID); err != nil {
 		return nil, err
 	}
-	if panelRunUUID != "" {
-		return db.GetExperimentAssignments(ReviewUnitPanel, panelRunUUID)
+	if panelRunUUID.Valid {
+		return db.GetExperimentAssignments(ReviewUnitPanel, panelRunUUID.V)
 	}
 	return db.GetExperimentAssignments(ReviewUnitJob, jobUUID)
 }
@@ -199,18 +201,18 @@ func (db *DB) GetExperimentAssignmentsForJobUUID(jobUUID string) ([]ExperimentAs
 // GetExperimentAssignmentInputForJobUUID returns the persisted assignment and
 // immutable definition needed when the same review is re-enqueued. Nil means
 // the review was not enrolled.
-func (db *DB) GetExperimentAssignmentInputForJobUUID(jobUUID string) (*ExperimentAssignmentInput, error) {
-	if jobUUID == "" {
+func (db *DB) GetExperimentAssignmentInputForJobUUID(jobUUID uuid.UUID) (*ExperimentAssignmentInput, error) {
+	if jobUUID == uuid.Nil() {
 		return nil, nil
 	}
-	var panelRunUUID string
-	if err := db.QueryRow(`SELECT COALESCE(panel_run_uuid, '') FROM review_jobs WHERE uuid = ?`,
+	var panelRunUUID sql.Null[uuid.UUID]
+	if err := db.QueryRow(`SELECT NULLIF(panel_run_uuid, '') FROM review_jobs WHERE uuid = ?`,
 		jobUUID).Scan(&panelRunUUID); err != nil {
 		return nil, err
 	}
 	kind, unitUUID := ReviewUnitJob, jobUUID
-	if panelRunUUID != "" {
-		kind, unitUUID = ReviewUnitPanel, panelRunUUID
+	if panelRunUUID.Valid {
+		kind, unitUUID = ReviewUnitPanel, panelRunUUID.V
 	}
 	var assignment ExperimentAssignmentInput
 	err := db.QueryRow(`
@@ -238,9 +240,12 @@ func (db *DB) attachExperimentAssignments(job *ReviewJob) error {
 	if job == nil {
 		return nil
 	}
-	kind, unitUUID := ReviewUnitJob, job.UUID
-	if job.PanelRunUUID != "" {
-		kind, unitUUID = ReviewUnitPanel, job.PanelRunUUID
+	if job.UUID == nil {
+		return nil
+	}
+	kind, unitUUID := ReviewUnitJob, *job.UUID
+	if job.PanelRunUUID != nil {
+		kind, unitUUID = ReviewUnitPanel, *job.PanelRunUUID
 	}
 	assignments, err := db.GetExperimentAssignments(kind, unitUUID)
 	if err != nil {
@@ -251,10 +256,10 @@ func (db *DB) attachExperimentAssignments(job *ReviewJob) error {
 }
 
 func (db *DB) attachPanelExperimentAssignments(members []*ReviewJob, synthesis *ReviewJob) error {
-	if synthesis == nil || synthesis.PanelRunUUID == "" {
+	if synthesis == nil || synthesis.PanelRunUUID == nil {
 		return nil
 	}
-	assignments, err := db.GetExperimentAssignments(ReviewUnitPanel, synthesis.PanelRunUUID)
+	assignments, err := db.GetExperimentAssignments(ReviewUnitPanel, *synthesis.PanelRunUUID)
 	if err != nil {
 		return err
 	}
@@ -266,13 +271,20 @@ func (db *DB) attachPanelExperimentAssignments(members []*ReviewJob, synthesis *
 }
 
 func (db *DB) attachExperimentAssignmentsToJobs(jobs []ReviewJob) error {
-	cache := make(map[string][]ExperimentAssignment)
+	type cacheKey struct {
+		kind string
+		uuid uuid.UUID
+	}
+	cache := make(map[cacheKey][]ExperimentAssignment)
 	for i := range jobs {
-		kind, unitUUID := ReviewUnitJob, jobs[i].UUID
-		if jobs[i].PanelRunUUID != "" {
-			kind, unitUUID = ReviewUnitPanel, jobs[i].PanelRunUUID
+		if jobs[i].UUID == nil {
+			continue
 		}
-		key := kind + "\x00" + unitUUID
+		kind, unitUUID := ReviewUnitJob, *jobs[i].UUID
+		if jobs[i].PanelRunUUID != nil {
+			kind, unitUUID = ReviewUnitPanel, *jobs[i].PanelRunUUID
+		}
+		key := cacheKey{kind: kind, uuid: unitUUID}
 		assignments, ok := cache[key]
 		if !ok {
 			var err error
@@ -287,7 +299,7 @@ func (db *DB) attachExperimentAssignmentsToJobs(jobs []ReviewJob) error {
 	return nil
 }
 
-func (db *DB) GetExperimentDefinitionsToSync(machineID string) ([]SyncableExperimentDefinition, error) {
+func (db *DB) GetExperimentDefinitionsToSync(machineID uuid.UUID) ([]SyncableExperimentDefinition, error) {
 	rows, err := db.Query(`
 		SELECT d.experiment_id, d.definition_hash, d.definition_json,
 		       d.first_seen_at, d.source_machine_id
@@ -319,7 +331,7 @@ func (db *DB) GetExperimentDefinitionsToSync(machineID string) ([]SyncableExperi
 	return definitions, rows.Err()
 }
 
-func (db *DB) GetExperimentAssignmentsToSync(machineID string) ([]SyncableExperimentAssignment, error) {
+func (db *DB) GetExperimentAssignmentsToSync(machineID uuid.UUID) ([]SyncableExperimentAssignment, error) {
 	rows, err := db.Query(`
 		SELECT review_unit_kind, review_unit_uuid, experiment_id, arm, subject_hash,
 		       effective_config_hash, effective_config_json, assigned_at, source_machine_id

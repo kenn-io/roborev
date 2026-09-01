@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"log"
 	"time"
+	"uuid"
 )
 
 // Panel terminal outcomes, persisted once at finalization. A NULL outcome
@@ -36,7 +37,7 @@ type CIPanel struct {
 	GithubRepo       string     `json:"github_repo"`
 	PRNumber         int        `json:"pr_number"`
 	HeadSHA          string     `json:"head_sha"`
-	PanelRunUUID     string     `json:"panel_run_uuid"`
+	PanelRunUUID     uuid.UUID  `json:"panel_run_uuid" format:"uuid"`
 	SynthesisJobID   *int64     `json:"synthesis_job_id,omitempty"`
 	CreatedAt        time.Time  `json:"created_at"`
 	PostingClaimedAt *time.Time `json:"posting_claimed_at,omitempty"`
@@ -156,7 +157,7 @@ func (db *DB) GetCIPanelBySynthesisJobID(jobID int64) (*CIPanel, error) {
 
 // GetCIPanelByRunUUID returns the CI panel mapping for a panel run UUID.
 // Returns sql.ErrNoRows when the panel run is not CI-owned.
-func (db *DB) GetCIPanelByRunUUID(panelRunUUID string) (*CIPanel, error) {
+func (db *DB) GetCIPanelByRunUUID(panelRunUUID uuid.UUID) (*CIPanel, error) {
 	row := db.QueryRow(`SELECT `+ciPanelColumns+`
 		FROM ci_pr_panels
 		WHERE panel_run_uuid = ?`, panelRunUUID)
@@ -214,9 +215,9 @@ func (db *DB) CreateCIPanelRun(githubRepo string, prNumber int, headSHA string,
 // ROLLBACK) exactly like enqueuePanelRunTx. Returns created=false (no rows
 // inserted) when the INSERT OR IGNORE reservation loses to a concurrent caller.
 func (db *DB) createCIPanelRunTx(ctx context.Context, exec execer, githubRepo string, prNumber int, headSHA string,
-	members []EnqueueOpts, synthesis EnqueueOpts, machineID string, now time.Time,
+	members []EnqueueOpts, synthesis EnqueueOpts, machineID uuid.UUID, now time.Time,
 ) (bool, []*ReviewJob, *ReviewJob, error) {
-	runUUID := GenerateUUID()
+	runUUID := uuid.New()
 
 	// Rows created before source was persisted are CI-owned only through this
 	// mapping. Preserve that ownership before replacing a retired same-HEAD
@@ -267,10 +268,10 @@ func (db *DB) createCIPanelRunTx(ctx context.Context, exec execer, githubRepo st
 	// F9: stamp the run uuid onto every job before enqueuePanelRunTx, which
 	// enforces role/gate but NOT the run uuid.
 	for i := range members {
-		members[i].PanelRunUUID = runUUID
+		members[i].PanelRunUUID = &runUUID
 		members[i].Source = JobSourceCI
 	}
-	synthesis.PanelRunUUID = runUUID
+	synthesis.PanelRunUUID = &runUUID
 	synthesis.Source = JobSourceCI
 
 	mems, syn, err := db.enqueuePanelRunTx(ctx, exec, members, synthesis, machineID, now)
@@ -593,7 +594,7 @@ func (db *DB) DeleteCIPanel(id int64) error {
 
 // DeleteCIPanelByRun removes the mapping row for a panel run uuid, preserving
 // CI ownership on source-less historical jobs before the mapping is removed.
-func (db *DB) DeleteCIPanelByRun(panelRunUUID string) error {
+func (db *DB) DeleteCIPanelByRun(panelRunUUID uuid.UUID) error {
 	tx, err := db.Begin()
 	if err != nil {
 		return err

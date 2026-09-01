@@ -6,6 +6,8 @@ import (
 	"fmt"
 	"time"
 
+	"uuid"
+
 	"github.com/doordash-oss/oapi-codegen-dd/v3/pkg/runtime"
 )
 
@@ -562,7 +564,7 @@ type DaemonStatus struct {
 	ConfigReloadCounter  *int64            `json:"config_reload_counter,omitempty" validate:"omitempty,gte=0"`
 	ConfigReloadedAt     *string           `json:"config_reloaded_at,omitempty"`
 	FailedJobs           int64             `json:"failed_jobs"`
-	MachineID            *string           `json:"machine_id,omitempty"`
+	MachineID            *uuid.UUID        `json:"machine_id,omitempty"`
 	MaxWorkers           int64             `json:"max_workers"`
 	Network              *string           `json:"network,omitempty"`
 	Port                 *int64            `json:"port,omitempty"`
@@ -597,6 +599,13 @@ func (d DaemonStatus) Validate() error {
 	if d.ConfigReloadCounter != nil {
 		if err := typesValidator.Var(d.ConfigReloadCounter, "omitempty,gte=0"); err != nil {
 			errors = errors.Append("ConfigReloadCounter", err)
+		}
+	}
+	if d.MachineID != nil {
+		if v, ok := any(d.MachineID).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("MachineID", err)
+			}
 		}
 	}
 	if err := typesValidator.Var(d.Version, "required"); err != nil {
@@ -648,7 +657,7 @@ type EnqueueCreatedResponse struct {
 	PanelMemberName       *string                `json:"panel_member_name,omitempty"`
 	PanelName             *string                `json:"panel_name,omitempty"`
 	PanelRole             *string                `json:"panel_role,omitempty"`
-	PanelRunUUID          *string                `json:"panel_run_uuid,omitempty"`
+	PanelRunUUID          *uuid.UUID             `json:"panel_run_uuid,omitempty"`
 	PanelSummary          *PanelSummary          `json:"panel_summary,omitempty"`
 	ParentJobID           *int64                 `json:"parent_job_id,omitempty"`
 	Patch                 *string                `json:"patch,omitempty"`
@@ -662,19 +671,19 @@ type EnqueueCreatedResponse struct {
 	RepoPath              *string                `json:"repo_path,omitempty"`
 	RequestedModel        *string                `json:"requested_model,omitempty"`
 	RequestedProvider     *string                `json:"requested_provider,omitempty"`
-	ResumeSourceJobUUID   *string                `json:"resume_source_job_uuid,omitempty"`
+	ResumeSourceJobUUID   *uuid.UUID             `json:"resume_source_job_uuid,omitempty"`
 	RetryCount            int64                  `json:"retry_count"`
 	ReviewType            *string                `json:"review_type,omitempty"`
 	SessionID             *string                `json:"session_id,omitempty"`
 	SkipReason            *string                `json:"skip_reason,omitempty"`
 	Source                *string                `json:"source,omitempty"`
-	SourceMachineID       *string                `json:"source_machine_id,omitempty"`
+	SourceMachineID       *uuid.UUID             `json:"source_machine_id,omitempty"`
 	StartedAt             *time.Time             `json:"started_at,omitempty"`
 	Status                string                 `json:"status" validate:"required"`
 	SyncedAt              *time.Time             `json:"synced_at,omitempty"`
 	TokenUsage            *string                `json:"token_usage,omitempty"`
 	UpdatedAt             *time.Time             `json:"updated_at,omitempty"`
-	UUID                  string                 `json:"uuid" validate:"required"`
+	UUID                  uuid.UUID              `json:"uuid" validate:"required"`
 	Verdict               *string                `json:"verdict,omitempty"`
 	WorkerID              *string                `json:"worker_id,omitempty"`
 	WorktreePath          *string                `json:"worktree_path,omitempty"`
@@ -701,6 +710,13 @@ func (e EnqueueCreatedResponse) Validate() error {
 	if err := typesValidator.Var(e.JobType, "required"); err != nil {
 		errors = errors.Append("JobType", err)
 	}
+	if e.PanelRunUUID != nil {
+		if v, ok := any(e.PanelRunUUID).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("PanelRunUUID", err)
+			}
+		}
+	}
 	if e.PanelSummary != nil {
 		if v, ok := any(e.PanelSummary).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -708,11 +724,27 @@ func (e EnqueueCreatedResponse) Validate() error {
 			}
 		}
 	}
+	if e.ResumeSourceJobUUID != nil {
+		if v, ok := any(e.ResumeSourceJobUUID).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("ResumeSourceJobUUID", err)
+			}
+		}
+	}
+	if e.SourceMachineID != nil {
+		if v, ok := any(e.SourceMachineID).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("SourceMachineID", err)
+			}
+		}
+	}
 	if err := typesValidator.Var(e.Status, "required"); err != nil {
 		errors = errors.Append("Status", err)
 	}
-	if err := typesValidator.Var(e.UUID, "required"); err != nil {
-		errors = errors.Append("UUID", err)
+	if v, ok := any(e.UUID).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("UUID", err)
+		}
 	}
 	if len(errors) == 0 {
 		return nil
@@ -853,7 +885,7 @@ type ExportCICostDocument struct {
 	Schema *string `json:"$schema,omitempty"`
 
 	// DatabaseID Stable identity for the local review database; changes when the database is recreated.
-	DatabaseID  string            `json:"database_id" validate:"required"`
+	DatabaseID  uuid.UUID         `json:"database_id" validate:"required"`
 	GeneratedAt string            `json:"generated_at" validate:"required"`
 	Jobs        []ExportCICostJob `json:"jobs,omitempty" validate:"required"`
 	Legacy      bool              `json:"legacy"`
@@ -871,8 +903,10 @@ type ExportCICostDocument struct {
 
 func (e ExportCICostDocument) Validate() error {
 	var errors runtime.ValidationErrors
-	if err := typesValidator.Var(e.DatabaseID, "required"); err != nil {
-		errors = errors.Append("DatabaseID", err)
+	if v, ok := any(e.DatabaseID).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("DatabaseID", err)
+		}
 	}
 	if err := typesValidator.Var(e.GeneratedAt, "required"); err != nil {
 		errors = errors.Append("GeneratedAt", err)
@@ -911,10 +945,10 @@ type ExportCICostJob struct {
 	CostUsd             *float64               `json:"cost_usd,omitempty"`
 	Experiments         []ExperimentAssignment `json:"experiments,omitempty" validate:"required"`
 	FinishedAt          string                 `json:"finished_at" validate:"required"`
-	JobUUID             string                 `json:"job_uuid" validate:"required"`
+	JobUUID             uuid.UUID              `json:"job_uuid" validate:"required"`
 	Model               *string                `json:"model,omitempty" validate:"required"`
 	Provider            *string                `json:"provider,omitempty" validate:"required"`
-	ResumeSourceJobUUID *string                `json:"resume_source_job_uuid,omitempty" validate:"required"`
+	ResumeSourceJobUUID uuid.UUID              `json:"resume_source_job_uuid" validate:"required"`
 	Role                string                 `json:"role" validate:"required"`
 	Status              string                 `json:"status" validate:"required"`
 }
@@ -934,8 +968,10 @@ func (e ExportCICostJob) Validate() error {
 	if err := typesValidator.Var(e.FinishedAt, "required"); err != nil {
 		errors = errors.Append("FinishedAt", err)
 	}
-	if err := typesValidator.Var(e.JobUUID, "required"); err != nil {
-		errors = errors.Append("JobUUID", err)
+	if v, ok := any(e.JobUUID).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("JobUUID", err)
+		}
 	}
 	if e.Model != nil {
 		if err := typesValidator.Var(e.Model, "required"); err != nil {
@@ -947,8 +983,8 @@ func (e ExportCICostJob) Validate() error {
 			errors = errors.Append("Provider", err)
 		}
 	}
-	if e.ResumeSourceJobUUID != nil {
-		if err := typesValidator.Var(e.ResumeSourceJobUUID, "required"); err != nil {
+	if v, ok := any(e.ResumeSourceJobUUID).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
 			errors = errors.Append("ResumeSourceJobUUID", err)
 		}
 	}
@@ -969,8 +1005,8 @@ type ExportCIMetricsDocument struct {
 	Schema *string `json:"$schema,omitempty"`
 
 	// DatabaseID Stable identity for the local review database; changes when the database is recreated.
-	DatabaseID  string `json:"database_id" validate:"required"`
-	GeneratedAt string `json:"generated_at" validate:"required"`
+	DatabaseID  uuid.UUID `json:"database_id" validate:"required"`
+	GeneratedAt string    `json:"generated_at" validate:"required"`
 
 	// NextCursor Opaque resume cursor emitted when panels is non-empty.
 	NextCursor    *string         `json:"next_cursor,omitempty" validate:"required"`
@@ -986,8 +1022,10 @@ type ExportCIMetricsDocument struct {
 
 func (e ExportCIMetricsDocument) Validate() error {
 	var errors runtime.ValidationErrors
-	if err := typesValidator.Var(e.DatabaseID, "required"); err != nil {
-		errors = errors.Append("DatabaseID", err)
+	if v, ok := any(e.DatabaseID).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("DatabaseID", err)
+		}
 	}
 	if err := typesValidator.Var(e.GeneratedAt, "required"); err != nil {
 		errors = errors.Append("GeneratedAt", err)
@@ -1089,19 +1127,62 @@ func (e ExportCIPanel) Validate() error {
 }
 
 type ExportCIPanelJob struct {
-	Agent               string  `json:"agent" validate:"required"`
-	FinishedAt          *string `json:"finished_at,omitempty" validate:"required"`
-	JobUUID             string  `json:"job_uuid" validate:"required"`
-	Model               *string `json:"model,omitempty" validate:"required"`
-	Provider            *string `json:"provider,omitempty" validate:"required"`
-	ResumeSourceJobUUID *string `json:"resume_source_job_uuid,omitempty" validate:"required"`
-	Role                string  `json:"role" validate:"required"`
-	StartedAt           *string `json:"started_at,omitempty" validate:"required"`
-	Status              string  `json:"status" validate:"required"`
+	Agent               string    `json:"agent" validate:"required"`
+	FinishedAt          *string   `json:"finished_at,omitempty" validate:"required"`
+	JobUUID             uuid.UUID `json:"job_uuid" validate:"required"`
+	Model               *string   `json:"model,omitempty" validate:"required"`
+	Provider            *string   `json:"provider,omitempty" validate:"required"`
+	ResumeSourceJobUUID uuid.UUID `json:"resume_source_job_uuid" validate:"required"`
+	Role                string    `json:"role" validate:"required"`
+	StartedAt           *string   `json:"started_at,omitempty" validate:"required"`
+	Status              string    `json:"status" validate:"required"`
 }
 
 func (e ExportCIPanelJob) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(e))
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(e.Agent, "required"); err != nil {
+		errors = errors.Append("Agent", err)
+	}
+	if e.FinishedAt != nil {
+		if err := typesValidator.Var(e.FinishedAt, "required"); err != nil {
+			errors = errors.Append("FinishedAt", err)
+		}
+	}
+	if v, ok := any(e.JobUUID).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("JobUUID", err)
+		}
+	}
+	if e.Model != nil {
+		if err := typesValidator.Var(e.Model, "required"); err != nil {
+			errors = errors.Append("Model", err)
+		}
+	}
+	if e.Provider != nil {
+		if err := typesValidator.Var(e.Provider, "required"); err != nil {
+			errors = errors.Append("Provider", err)
+		}
+	}
+	if v, ok := any(e.ResumeSourceJobUUID).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ResumeSourceJobUUID", err)
+		}
+	}
+	if err := typesValidator.Var(e.Role, "required"); err != nil {
+		errors = errors.Append("Role", err)
+	}
+	if e.StartedAt != nil {
+		if err := typesValidator.Var(e.StartedAt, "required"); err != nil {
+			errors = errors.Append("StartedAt", err)
+		}
+	}
+	if err := typesValidator.Var(e.Status, "required"); err != nil {
+		errors = errors.Append("Status", err)
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type ExportReview struct {
@@ -1119,8 +1200,8 @@ type ExportReview struct {
 	PrURL               *string                `json:"pr_url,omitempty" validate:"required"`
 	Project             string                 `json:"project" validate:"required"`
 	Repo                string                 `json:"repo" validate:"required"`
-	ResumeSourceJobUUID *string                `json:"resume_source_job_uuid,omitempty" validate:"required"`
-	ReviewID            string                 `json:"review_id" validate:"required"`
+	ResumeSourceJobUUID uuid.UUID              `json:"resume_source_job_uuid" validate:"required"`
+	ReviewID            uuid.UUID              `json:"review_id" validate:"required"`
 	Status              string                 `json:"status" validate:"required"`
 	Subagents           []ExportSubagent       `json:"subagents,omitempty" validate:"required"`
 	Verdict             string                 `json:"verdict" validate:"required"`
@@ -1180,13 +1261,15 @@ func (e ExportReview) Validate() error {
 	if err := typesValidator.Var(e.Repo, "required"); err != nil {
 		errors = errors.Append("Repo", err)
 	}
-	if e.ResumeSourceJobUUID != nil {
-		if err := typesValidator.Var(e.ResumeSourceJobUUID, "required"); err != nil {
+	if v, ok := any(e.ResumeSourceJobUUID).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
 			errors = errors.Append("ResumeSourceJobUUID", err)
 		}
 	}
-	if err := typesValidator.Var(e.ReviewID, "required"); err != nil {
-		errors = errors.Append("ReviewID", err)
+	if v, ok := any(e.ReviewID).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ReviewID", err)
+		}
 	}
 	if err := typesValidator.Var(e.Status, "required"); err != nil {
 		errors = errors.Append("Status", err)
@@ -1218,8 +1301,8 @@ type ExportReviewsDocument struct {
 	Schema *string `json:"$schema,omitempty"`
 
 	// DatabaseID Stable identity for the local review database; changes when the database is recreated.
-	DatabaseID  string `json:"database_id" validate:"required"`
-	GeneratedAt string `json:"generated_at" validate:"required"`
+	DatabaseID  uuid.UUID `json:"database_id" validate:"required"`
+	GeneratedAt string    `json:"generated_at" validate:"required"`
 
 	// NextCursor Opaque resume cursor emitted when reviews is non-empty; pass as cursor to resume after the last returned review.
 	NextCursor    *string        `json:"next_cursor,omitempty" validate:"required"`
@@ -1236,8 +1319,10 @@ type ExportReviewsDocument struct {
 
 func (e ExportReviewsDocument) Validate() error {
 	var errors runtime.ValidationErrors
-	if err := typesValidator.Var(e.DatabaseID, "required"); err != nil {
-		errors = errors.Append("DatabaseID", err)
+	if v, ok := any(e.DatabaseID).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("DatabaseID", err)
+		}
 	}
 	if err := typesValidator.Var(e.GeneratedAt, "required"); err != nil {
 		errors = errors.Append("GeneratedAt", err)
@@ -1292,8 +1377,8 @@ type ExportSubagent struct {
 	DurationMs          *int64           `json:"duration_ms,omitempty"`
 	Model               *string          `json:"model,omitempty" validate:"required"`
 	Name                string           `json:"name" validate:"required"`
-	ResumeSourceJobUUID *string          `json:"resume_source_job_uuid,omitempty" validate:"required"`
-	ReviewID            string           `json:"review_id" validate:"required"`
+	ResumeSourceJobUUID uuid.UUID        `json:"resume_source_job_uuid" validate:"required"`
+	ReviewID            uuid.UUID        `json:"review_id" validate:"required"`
 	ReviewType          *string          `json:"review_type,omitempty" validate:"required"`
 	Verdict             string           `json:"verdict" validate:"required"`
 }
@@ -1324,13 +1409,15 @@ func (e ExportSubagent) Validate() error {
 	if err := typesValidator.Var(e.Name, "required"); err != nil {
 		errors = errors.Append("Name", err)
 	}
-	if e.ResumeSourceJobUUID != nil {
-		if err := typesValidator.Var(e.ResumeSourceJobUUID, "required"); err != nil {
+	if v, ok := any(e.ResumeSourceJobUUID).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
 			errors = errors.Append("ResumeSourceJobUUID", err)
 		}
 	}
-	if err := typesValidator.Var(e.ReviewID, "required"); err != nil {
-		errors = errors.Append("ReviewID", err)
+	if v, ok := any(e.ReviewID).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("ReviewID", err)
+		}
 	}
 	if e.ReviewType != nil {
 		if err := typesValidator.Var(e.ReviewType, "required"); err != nil {
@@ -1615,7 +1702,7 @@ type PanelEnqueueResponse struct {
 	PanelMemberName       *string                `json:"panel_member_name,omitempty"`
 	PanelName             *string                `json:"panel_name,omitempty"`
 	PanelRole             *string                `json:"panel_role,omitempty"`
-	PanelRunUUID          string                 `json:"panel_run_uuid" validate:"required"`
+	PanelRunUUID          uuid.UUID              `json:"panel_run_uuid" validate:"required"`
 	PanelSummary          *PanelSummary          `json:"panel_summary,omitempty"`
 	ParentJobID           *int64                 `json:"parent_job_id,omitempty"`
 	Patch                 *string                `json:"patch,omitempty"`
@@ -1629,19 +1716,19 @@ type PanelEnqueueResponse struct {
 	RepoPath              *string                `json:"repo_path,omitempty"`
 	RequestedModel        *string                `json:"requested_model,omitempty"`
 	RequestedProvider     *string                `json:"requested_provider,omitempty"`
-	ResumeSourceJobUUID   *string                `json:"resume_source_job_uuid,omitempty"`
+	ResumeSourceJobUUID   *uuid.UUID             `json:"resume_source_job_uuid,omitempty"`
 	RetryCount            int64                  `json:"retry_count"`
 	ReviewType            *string                `json:"review_type,omitempty"`
 	SessionID             *string                `json:"session_id,omitempty"`
 	SkipReason            *string                `json:"skip_reason,omitempty"`
 	Source                *string                `json:"source,omitempty"`
-	SourceMachineID       *string                `json:"source_machine_id,omitempty"`
+	SourceMachineID       *uuid.UUID             `json:"source_machine_id,omitempty"`
 	StartedAt             *time.Time             `json:"started_at,omitempty"`
 	Status                string                 `json:"status" validate:"required"`
 	SyncedAt              *time.Time             `json:"synced_at,omitempty"`
 	TokenUsage            *string                `json:"token_usage,omitempty"`
 	UpdatedAt             *time.Time             `json:"updated_at,omitempty"`
-	UUID                  *string                `json:"uuid,omitempty"`
+	UUID                  *uuid.UUID             `json:"uuid,omitempty"`
 	Verdict               *string                `json:"verdict,omitempty"`
 	WorkerID              *string                `json:"worker_id,omitempty"`
 	WorktreePath          *string                `json:"worktree_path,omitempty"`
@@ -1671,8 +1758,10 @@ func (p PanelEnqueueResponse) Validate() error {
 	if err := typesValidator.Var(p.MemberJobIds, "required"); err != nil {
 		errors = errors.Append("MemberJobIds", err)
 	}
-	if err := typesValidator.Var(p.PanelRunUUID, "required"); err != nil {
-		errors = errors.Append("PanelRunUUID", err)
+	if v, ok := any(p.PanelRunUUID).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("PanelRunUUID", err)
+		}
 	}
 	if p.PanelSummary != nil {
 		if v, ok := any(p.PanelSummary).(runtime.Validator); ok {
@@ -1681,8 +1770,29 @@ func (p PanelEnqueueResponse) Validate() error {
 			}
 		}
 	}
+	if p.ResumeSourceJobUUID != nil {
+		if v, ok := any(p.ResumeSourceJobUUID).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("ResumeSourceJobUUID", err)
+			}
+		}
+	}
+	if p.SourceMachineID != nil {
+		if v, ok := any(p.SourceMachineID).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("SourceMachineID", err)
+			}
+		}
+	}
 	if err := typesValidator.Var(p.Status, "required"); err != nil {
 		errors = errors.Append("Status", err)
+	}
+	if p.UUID != nil {
+		if v, ok := any(p.UUID).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("UUID", err)
+			}
+		}
 	}
 	if len(errors) == 0 {
 		return nil
@@ -1701,11 +1811,20 @@ type PanelSummary struct {
 	MembersTerminal     int64      `json:"members_terminal"`
 	MembersTotal        int64      `json:"members_total"`
 	MembersWithCost     *int64     `json:"members_with_cost,omitempty"`
-	PanelRunUUID        string     `json:"panel_run_uuid" validate:"required"`
+	PanelRunUUID        uuid.UUID  `json:"panel_run_uuid" validate:"required"`
 }
 
 func (p PanelSummary) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(p))
+	var errors runtime.ValidationErrors
+	if v, ok := any(p.PanelRunUUID).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("PanelRunUUID", err)
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type PingInfo struct {
@@ -1828,22 +1947,53 @@ func (r RepoWithCount) Validate() error {
 
 type RerunJobOutputBody struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema    *string `json:"$schema,omitempty"`
-	JobID     int64   `json:"job_id"`
-	RequestID string  `json:"request_id" validate:"required"`
-	RunUUID   *string `json:"run_uuid,omitempty"`
-	Success   bool    `json:"success"`
+	Schema    *string    `json:"$schema,omitempty"`
+	JobID     int64      `json:"job_id"`
+	RequestID uuid.UUID  `json:"request_id" validate:"required"`
+	RunUUID   *uuid.UUID `json:"run_uuid,omitempty"`
+	Success   bool       `json:"success"`
 }
 
 func (r RerunJobOutputBody) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(r))
+	var errors runtime.ValidationErrors
+	if v, ok := any(r.RequestID).(runtime.Validator); ok {
+		if err := v.Validate(); err != nil {
+			errors = errors.Append("RequestID", err)
+		}
+	}
+	if r.RunUUID != nil {
+		if v, ok := any(r.RunUUID).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("RunUUID", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type RerunJobRequest struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema    *string `json:"$schema,omitempty"`
-	JobID     int64   `json:"job_id"`
-	RequestID *string `json:"request_id,omitempty"`
+	Schema    *string    `json:"$schema,omitempty"`
+	JobID     int64      `json:"job_id"`
+	RequestID *uuid.UUID `json:"request_id,omitempty"`
+}
+
+func (r RerunJobRequest) Validate() error {
+	var errors runtime.ValidationErrors
+	if r.RequestID != nil {
+		if v, ok := any(r.RequestID).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("RequestID", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type ResolveRepoOutputBody struct {
@@ -1889,13 +2039,40 @@ type Response struct {
 	Responder       string     `json:"responder" validate:"required"`
 	Response        string     `json:"response" validate:"required"`
 	Source          *string    `json:"source,omitempty"`
-	SourceMachineID *string    `json:"source_machine_id,omitempty"`
+	SourceMachineID *uuid.UUID `json:"source_machine_id,omitempty"`
 	SyncedAt        *time.Time `json:"synced_at,omitempty"`
-	UUID            *string    `json:"uuid,omitempty"`
+	UUID            *uuid.UUID `json:"uuid,omitempty"`
 }
 
 func (r Response) Validate() error {
-	return runtime.ConvertValidatorError(typesValidator.Struct(r))
+	var errors runtime.ValidationErrors
+	if err := typesValidator.Var(r.CreatedAt, "required"); err != nil {
+		errors = errors.Append("CreatedAt", err)
+	}
+	if err := typesValidator.Var(r.Responder, "required"); err != nil {
+		errors = errors.Append("Responder", err)
+	}
+	if err := typesValidator.Var(r.Response, "required"); err != nil {
+		errors = errors.Append("Response", err)
+	}
+	if r.SourceMachineID != nil {
+		if v, ok := any(r.SourceMachineID).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("SourceMachineID", err)
+			}
+		}
+	}
+	if r.UUID != nil {
+		if v, ok := any(r.UUID).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("UUID", err)
+			}
+		}
+	}
+	if len(errors) == 0 {
+		return nil
+	}
+	return errors
 }
 
 type Review struct {
@@ -1912,8 +2089,8 @@ type Review struct {
 	StructuredOutput   map[string]any `json:"structured_output,omitempty"`
 	SyncedAt           *time.Time     `json:"synced_at,omitempty"`
 	UpdatedAt          *time.Time     `json:"updated_at,omitempty"`
-	UpdatedByMachineID *string        `json:"updated_by_machine_id,omitempty"`
-	UUID               *string        `json:"uuid,omitempty"`
+	UpdatedByMachineID *uuid.UUID     `json:"updated_by_machine_id,omitempty"`
+	UUID               *uuid.UUID     `json:"uuid,omitempty"`
 	VerdictBool        *int64         `json:"verdict_bool,omitempty"`
 }
 
@@ -1937,6 +2114,20 @@ func (r Review) Validate() error {
 	}
 	if err := typesValidator.Var(r.Prompt, "required"); err != nil {
 		errors = errors.Append("Prompt", err)
+	}
+	if r.UpdatedByMachineID != nil {
+		if v, ok := any(r.UpdatedByMachineID).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("UpdatedByMachineID", err)
+			}
+		}
+	}
+	if r.UUID != nil {
+		if v, ok := any(r.UUID).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("UUID", err)
+			}
+		}
 	}
 	if len(errors) == 0 {
 		return nil
@@ -1974,7 +2165,7 @@ type ReviewJob struct {
 	PanelMemberName       *string                `json:"panel_member_name,omitempty"`
 	PanelName             *string                `json:"panel_name,omitempty"`
 	PanelRole             *string                `json:"panel_role,omitempty"`
-	PanelRunUUID          *string                `json:"panel_run_uuid,omitempty"`
+	PanelRunUUID          *uuid.UUID             `json:"panel_run_uuid,omitempty"`
 	PanelSummary          *PanelSummary          `json:"panel_summary,omitempty"`
 	ParentJobID           *int64                 `json:"parent_job_id,omitempty"`
 	Patch                 *string                `json:"patch,omitempty"`
@@ -1988,19 +2179,19 @@ type ReviewJob struct {
 	RepoPath              *string                `json:"repo_path,omitempty"`
 	RequestedModel        *string                `json:"requested_model,omitempty"`
 	RequestedProvider     *string                `json:"requested_provider,omitempty"`
-	ResumeSourceJobUUID   *string                `json:"resume_source_job_uuid,omitempty"`
+	ResumeSourceJobUUID   *uuid.UUID             `json:"resume_source_job_uuid,omitempty"`
 	RetryCount            int64                  `json:"retry_count"`
 	ReviewType            *string                `json:"review_type,omitempty"`
 	SessionID             *string                `json:"session_id,omitempty"`
 	SkipReason            *string                `json:"skip_reason,omitempty"`
 	Source                *string                `json:"source,omitempty"`
-	SourceMachineID       *string                `json:"source_machine_id,omitempty"`
+	SourceMachineID       *uuid.UUID             `json:"source_machine_id,omitempty"`
 	StartedAt             *time.Time             `json:"started_at,omitempty"`
 	Status                string                 `json:"status" validate:"required"`
 	SyncedAt              *time.Time             `json:"synced_at,omitempty"`
 	TokenUsage            *string                `json:"token_usage,omitempty"`
 	UpdatedAt             *time.Time             `json:"updated_at,omitempty"`
-	UUID                  *string                `json:"uuid,omitempty"`
+	UUID                  *uuid.UUID             `json:"uuid,omitempty"`
 	Verdict               *string                `json:"verdict,omitempty"`
 	WorkerID              *string                `json:"worker_id,omitempty"`
 	WorktreePath          *string                `json:"worktree_path,omitempty"`
@@ -2027,6 +2218,13 @@ func (r ReviewJob) Validate() error {
 	if err := typesValidator.Var(r.JobType, "required"); err != nil {
 		errors = errors.Append("JobType", err)
 	}
+	if r.PanelRunUUID != nil {
+		if v, ok := any(r.PanelRunUUID).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("PanelRunUUID", err)
+			}
+		}
+	}
 	if r.PanelSummary != nil {
 		if v, ok := any(r.PanelSummary).(runtime.Validator); ok {
 			if err := v.Validate(); err != nil {
@@ -2034,8 +2232,29 @@ func (r ReviewJob) Validate() error {
 			}
 		}
 	}
+	if r.ResumeSourceJobUUID != nil {
+		if v, ok := any(r.ResumeSourceJobUUID).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("ResumeSourceJobUUID", err)
+			}
+		}
+	}
+	if r.SourceMachineID != nil {
+		if v, ok := any(r.SourceMachineID).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("SourceMachineID", err)
+			}
+		}
+	}
 	if err := typesValidator.Var(r.Status, "required"); err != nil {
 		errors = errors.Append("Status", err)
+	}
+	if r.UUID != nil {
+		if v, ok := any(r.UUID).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("UUID", err)
+			}
+		}
 	}
 	if len(errors) == 0 {
 		return nil
@@ -2105,7 +2324,7 @@ type ReviewProjectionJob struct {
 	Source          *string       `json:"source,omitempty"`
 	StartedAt       *time.Time    `json:"started_at,omitempty"`
 	Status          string        `json:"status" validate:"required"`
-	UUID            *string       `json:"uuid,omitempty"`
+	UUID            *uuid.UUID    `json:"uuid,omitempty"`
 	Verdict         *string       `json:"verdict,omitempty"`
 }
 
@@ -2132,6 +2351,13 @@ func (r ReviewProjectionJob) Validate() error {
 	}
 	if err := typesValidator.Var(r.Status, "required"); err != nil {
 		errors = errors.Append("Status", err)
+	}
+	if r.UUID != nil {
+		if v, ok := any(r.UUID).(runtime.Validator); ok {
+			if err := v.Validate(); err != nil {
+				errors = errors.Append("UUID", err)
+			}
+		}
 	}
 	if len(errors) == 0 {
 		return nil

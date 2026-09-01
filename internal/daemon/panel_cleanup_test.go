@@ -5,6 +5,7 @@ import (
 	"database/sql"
 	"strings"
 	"testing"
+	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -65,9 +66,10 @@ func (h *ciPollerHarness) jobStatus(t *testing.T, jobID int64) storage.JobStatus
 }
 
 // synthBlocked reports whether the synthesis for a run is still claim-blocked.
-func (h *ciPollerHarness) synthBlocked(t *testing.T, runUUID string) bool {
+func (h *ciPollerHarness) synthBlocked(t *testing.T, runUUID *uuid.UUID) bool {
 	t.Helper()
-	synth, err := h.DB.GetSynthesisJob(runUUID)
+	require.NotNil(t, runUUID)
+	synth, err := h.DB.GetSynthesisJob(*runUUID)
 	require.NoError(t, err)
 	require.NotNil(t, synth)
 	return synth.ClaimBlocked
@@ -237,7 +239,8 @@ func TestExpireTimedOutPanels(t *testing.T) {
 	assert.False(h.synthBlocked(t, synth.PanelRunUUID), "synthesis released after members terminal")
 
 	// The member breakdown yields success (timeout = skip, not failure/error).
-	reviews, err := h.DB.GetPanelMemberReviews(synth.PanelRunUUID)
+	require.NotNil(t, synth.PanelRunUUID)
+	reviews, err := h.DB.GetPanelMemberReviews(*synth.PanelRunUUID)
 	require.NoError(t, err)
 	state, _ := panelCommitStatus(reviews)
 	assert.Equal("success", state, "timeout skip keeps success, never failure")
@@ -312,7 +315,8 @@ func TestExpireTimedOutPanelsMeaningfulDoneRunning(t *testing.T) {
 	assert.NotEqual(storage.JobStatusCanceled, h.jobStatus(t, synth.ID), "synthesis not canceled")
 	assert.False(h.synthBlocked(t, synth.PanelRunUUID), "synthesis released on partial results")
 
-	reviews, err := h.DB.GetPanelMemberReviews(synth.PanelRunUUID)
+	require.NotNil(t, synth.PanelRunUUID)
+	reviews, err := h.DB.GetPanelMemberReviews(*synth.PanelRunUUID)
 	require.NoError(t, err)
 	state, _ := panelCommitStatus(reviews)
 	assert.Equal("success", state, "timeout skip keeps success, never failure")

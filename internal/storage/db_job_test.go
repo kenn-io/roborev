@@ -62,6 +62,15 @@ func TestJobLifecycle(t *testing.T) {
 	assert.Equal(t, JobStatusDone, updatedJob.Status)
 }
 
+func TestGetJobByIDRejectsInvalidUUID(t *testing.T) {
+	env := setupJobEnv(t, "/tmp/invalid-job-uuid", "invalid-uuid")
+	_, err := env.db.Exec(`UPDATE review_jobs SET uuid = 'not-a-uuid' WHERE id = ?`, env.job.ID)
+	require.NoError(t, err)
+
+	_, err = env.db.GetJobByID(env.job.ID)
+	require.Error(t, err)
+}
+
 func TestCompleteJobResultStoresCanonicalReview(t *testing.T) {
 	env := setupJobEnv(t, "/tmp/structured-verdict", "structured123")
 	claimed := claimJob(t, env.db, "worker-1")
@@ -2343,7 +2352,7 @@ func TestUpsertPulledJobRoundTripsBackupColumns(t *testing.T) {
 	repo := createRepo(t, db, "/tmp/backup-pull")
 
 	pulled := PulledJob{
-		UUID:            "backup-uuid-1",
+		UUID:            testUUID("backup-uuid-1"),
 		GitRef:          "abc123",
 		Agent:           "test",
 		Reasoning:       "thorough",
@@ -2351,7 +2360,7 @@ func TestUpsertPulledJobRoundTripsBackupColumns(t *testing.T) {
 		Status:          "done",
 		EnqueuedAt:      time.Now(),
 		UpdatedAt:       time.Now(),
-		SourceMachineID: "remote-machine",
+		SourceMachineID: testUUID("remote-machine"),
 		BackupAgent:     "copilot",
 		BackupModel:     "gpt-5",
 	}
@@ -2359,7 +2368,7 @@ func TestUpsertPulledJobRoundTripsBackupColumns(t *testing.T) {
 
 	var ba, bm string
 	row := db.QueryRow(
-		`SELECT COALESCE(backup_agent,''), COALESCE(backup_model,'') FROM review_jobs WHERE uuid = 'backup-uuid-1'`,
+		`SELECT COALESCE(backup_agent,''), COALESCE(backup_model,'') FROM review_jobs WHERE uuid = ?`, pulled.UUID,
 	)
 	require.NoError(t, row.Scan(&ba, &bm))
 	assert.Equal("copilot", ba)

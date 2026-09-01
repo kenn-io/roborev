@@ -6,8 +6,8 @@ import (
 	"io"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -31,13 +31,13 @@ type memberSpec struct {
 // member jobs, and the synthesis job.
 func enqueuePanelRun(
 	t *testing.T, tc *workerTestContext, panelName string, members []memberSpec,
-) (string, []*storage.ReviewJob, *storage.ReviewJob) {
+) (uuid.UUID, []*storage.ReviewJob, *storage.ReviewJob) {
 	t.Helper()
 	sha := testutil.GetHeadSHA(t, tc.TmpDir)
 	commit, err := tc.DB.GetOrCreateCommit(tc.Repo.ID, sha, "Author", "Subject", time.Now())
 	require.NoError(t, err)
 
-	runUUID := uuid.NewString()
+	runUUID := uuid.New()
 	opts := make([]storage.EnqueueOpts, 0, len(members))
 	for i, m := range members {
 		cfgJSON, err := json.Marshal(config.ResolvedMember{
@@ -54,7 +54,7 @@ func enqueuePanelRun(
 			GitRef:                sha,
 			Agent:                 m.agent,
 			JobType:               storage.JobTypeReview,
-			PanelRunUUID:          runUUID,
+			PanelRunUUID:          &runUUID,
 			PanelRole:             storage.PanelRoleMember,
 			PanelName:             panelName,
 			PanelMemberName:       m.name,
@@ -67,7 +67,7 @@ func enqueuePanelRun(
 		CommitID:     commit.ID,
 		GitRef:       sha,
 		Agent:        "test",
-		PanelRunUUID: runUUID,
+		PanelRunUUID: &runUUID,
 		PanelRole:    storage.PanelRoleSynthesis,
 		PanelName:    panelName,
 	}

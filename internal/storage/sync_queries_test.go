@@ -29,13 +29,8 @@ func TestGetKnownJobUUIDs(t *testing.T) {
 
 		assert.Len(t, uuids, 2)
 
-		uuidMap := make(map[string]bool)
-		for _, u := range uuids {
-			uuidMap[u] = true
-		}
-
-		assert.True(t, uuidMap[job1.UUID])
-		assert.True(t, uuidMap[job2.UUID])
+		assert.Contains(t, uuids, *job1.UUID)
+		assert.Contains(t, uuids, *job2.UUID)
 	})
 }
 
@@ -458,15 +453,16 @@ func TestUpsertPulledJob_SessionTerminalOverwrite(t *testing.T) {
 	t1 := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC)
 
-	pull := func(uuid, sessionID, status string, updatedAt time.Time) {
+	pull := func(label, sessionID, status string, updatedAt time.Time) {
+		jobUUID := testUUID(label)
 		started := updatedAt.Add(-time.Minute)
 		var finished *time.Time
 		if status != "running" && status != "queued" {
 			finished = &updatedAt
 		}
 		pj := PulledJob{
-			UUID:            uuid,
-			GitRef:          "ref-" + uuid,
+			UUID:            jobUUID,
+			GitRef:          "ref-" + label,
 			SessionID:       sessionID,
 			Agent:           "test",
 			JobType:         "review",
@@ -474,17 +470,17 @@ func TestUpsertPulledJob_SessionTerminalOverwrite(t *testing.T) {
 			EnqueuedAt:      t1,
 			StartedAt:       &started,
 			FinishedAt:      finished,
-			SourceMachineID: "remote-machine",
+			SourceMachineID: testUUID("remote-machine"),
 			UpdatedAt:       updatedAt,
 		}
 		require.NoError(t, dst.db.UpsertPulledJob(pj, dst.repo.ID, nil),
-			"UpsertPulledJob(%s, status=%s)", uuid, status)
+			"UpsertPulledJob(%s, status=%s)", label, status)
 	}
 
-	sessionOf := func(uuid string) string {
+	sessionOf := func(label string) string {
 		var s sql.NullString
 		require.NoError(t, dst.db.QueryRow(
-			`SELECT session_id FROM review_jobs WHERE uuid = ?`, uuid).Scan(&s))
+			`SELECT session_id FROM review_jobs WHERE uuid = ?`, testUUID(label)).Scan(&s))
 		return s.String
 	}
 
@@ -514,11 +510,11 @@ func TestUpsertPulledJob_SkippedRerunOverwritesStaleMarkers(t *testing.T) {
 	t1 := time.Date(2024, 1, 1, 0, 0, 0, 0, time.UTC)
 	t2 := time.Date(2024, 1, 2, 0, 0, 0, 0, time.UTC)
 	started := t1.Add(-time.Minute)
-	const uuid = "skip-rerun-uuid"
+	jobUUID := testUUID("skip-rerun")
 
 	// Attempt 1: a priced agent run synced as done.
 	require.NoError(t, dst.db.UpsertPulledJob(PulledJob{
-		UUID:            uuid,
+		UUID:            jobUUID,
 		GitRef:          "ref",
 		SessionID:       "session-1",
 		Agent:           "test",
@@ -529,13 +525,13 @@ func TestUpsertPulledJob_SkippedRerunOverwritesStaleMarkers(t *testing.T) {
 		EnqueuedAt:      t1,
 		StartedAt:       &started,
 		FinishedAt:      &t1,
-		SourceMachineID: "remote-machine",
+		SourceMachineID: testUUID("remote-machine"),
 		UpdatedAt:       t1,
 	}, dst.repo.ID, nil), "UpsertPulledJob (done)")
 
 	// Attempt 2: a rerun that ends in skip, with the markers cleared at source.
 	require.NoError(t, dst.db.UpsertPulledJob(PulledJob{
-		UUID:            uuid,
+		UUID:            jobUUID,
 		GitRef:          "ref",
 		SessionID:       "",
 		Agent:           "test",
@@ -545,7 +541,7 @@ func TestUpsertPulledJob_SkippedRerunOverwritesStaleMarkers(t *testing.T) {
 		TokenUsage:      "",
 		EnqueuedAt:      t1,
 		FinishedAt:      &t2,
-		SourceMachineID: "remote-machine",
+		SourceMachineID: testUUID("remote-machine"),
 		UpdatedAt:       t2,
 	}, dst.repo.ID, nil), "UpsertPulledJob (skipped)")
 
@@ -553,7 +549,7 @@ func TestUpsertPulledJob_SkippedRerunOverwritesStaleMarkers(t *testing.T) {
 	var invoked int
 	require.NoError(t, dst.db.QueryRow(
 		`SELECT session_id, token_usage, agent_invoked FROM review_jobs WHERE uuid = ?`,
-		uuid).Scan(&session, &tokenUsage, &invoked))
+		jobUUID).Scan(&session, &tokenUsage, &invoked))
 
 	assert.Empty(session.String, "skipped rerun clears the stale session id")
 	assert.Empty(tokenUsage.String, "skipped rerun clears the stale token usage")
@@ -736,7 +732,7 @@ func TestGetCommentsToSync_LegacyCommentsExcluded(t *testing.T) {
 	result, err := h.db.Exec(`
 		INSERT INTO responses (commit_id, responder, response, uuid, source_machine_id, created_at)
 		VALUES (?, 'human', 'This is a legacy response', ?, ?, datetime('now'))
-	`, commit.ID, GenerateUUID(), h.machineID)
+	`, commit.ID, testUUID("legacy-response"), h.machineID)
 	require.NoError(t, err, "Failed to insert legacy response: %v")
 
 	legacyRespID, _ := result.LastInsertId()
@@ -766,18 +762,20 @@ func TestGetJobsToSync_IncludesSkipped(t *testing.T) {
 
 	repoID := createRepo(t, db, "/tmp/repo-sync-skipped").ID
 	commitID := createCommit(t, db, repoID, "deadf00d").ID
+	jobUUID := testUUID("sync-skipped-job")
+	machineID := testUUID("sync-skipped-machine")
 	_, err := db.Exec(`
 		INSERT INTO review_jobs
 		  (repo_id, commit_id, git_ref, status, review_type, uuid, source_machine_id, updated_at)
-		VALUES (?, ?, 'deadf00d', 'skipped', 'design', 'test-uuid-1', 'test-machine', datetime('now'))
-	`, repoID, commitID)
+		VALUES (?, ?, 'deadf00d', 'skipped', 'design', ?, ?, datetime('now'))
+	`, repoID, commitID, jobUUID, machineID)
 	require.NoError(t, err)
 
-	jobs, err := db.GetJobsToSync("test-machine", 100)
+	jobs, err := db.GetJobsToSync(machineID, 100)
 	require.NoError(t, err)
 	found := false
 	for _, j := range jobs {
-		if j.UUID == "test-uuid-1" {
+		if j.UUID == jobUUID {
 			found = true
 			assert.Equal(t, "skipped", j.Status)
 		}

@@ -986,7 +986,7 @@ func (m model) jobCells(job storage.ReviewJob) []string {
 	branch := m.getBranchForJob(job)
 
 	repo := m.getDisplayName(job.RepoPath, job.RepoName)
-	if m.status.MachineID != "" && job.SourceMachineID != "" && job.SourceMachineID != m.status.MachineID {
+	if m.status.MachineID != nil && job.SourceMachineID != nil && *job.SourceMachineID != *m.status.MachineID {
 		repo += " [R]"
 	}
 
@@ -1047,7 +1047,7 @@ func (m model) jobElapsedStart(job storage.ReviewJob) (time.Time, bool) {
 		hasStartedAt = true
 	}
 
-	if !job.IsSynthesisJob() || job.PanelRunUUID == "" {
+	if !job.IsSynthesisJob() || job.PanelRunUUID == nil {
 		return startedAt, hasStartedAt
 	}
 
@@ -1055,7 +1055,7 @@ func (m model) jobElapsedStart(job storage.ReviewJob) (time.Time, bool) {
 		startedAt = *job.PanelSummary.FirstStartedAt
 		hasStartedAt = true
 	}
-	for _, member := range m.panelMembers[job.PanelRunUUID] {
+	for _, member := range m.panelMembers[*job.PanelRunUUID] {
 		if member.StartedAt == nil {
 			continue
 		}
@@ -1078,14 +1078,14 @@ func (m model) jobCostCell(job storage.ReviewJob) string {
 		hasCost = true
 	}
 
-	if !job.IsSynthesisJob() || job.PanelRunUUID == "" {
+	if !job.IsSynthesisJob() || job.PanelRunUUID == nil {
 		if !hasCost {
 			return ""
 		}
 		return tokens.Usage{CostUSD: total, HasCost: true}.FormatCost()
 	}
 
-	members := m.panelMembers[job.PanelRunUUID]
+	members := m.panelMembers[*job.PanelRunUUID]
 	if len(members) == 0 {
 		if job.PanelSummary != nil &&
 			(job.PanelSummary.MembersCostComplete || job.PanelSummary.MembersWithCost > 0) {

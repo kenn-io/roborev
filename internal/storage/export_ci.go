@@ -9,6 +9,7 @@ import (
 	"log"
 	"strings"
 	"time"
+	"uuid"
 )
 
 const (
@@ -71,22 +72,22 @@ type ExportCIPanel struct {
 
 // ExportCIPanelJob is one member or synthesis job of an exported panel.
 type ExportCIPanelJob struct {
-	JobUUID             string  `json:"job_uuid"`
-	Role                string  `json:"role"`
-	Agent               string  `json:"agent"`
-	Model               *string `json:"model"`
-	Provider            *string `json:"provider"`
-	Status              string  `json:"status"`
-	StartedAt           *string `json:"started_at"`
-	FinishedAt          *string `json:"finished_at"`
-	ResumeSourceJobUUID *string `json:"resume_source_job_uuid"`
+	JobUUID             uuid.UUID  `json:"job_uuid" format:"uuid"`
+	Role                string     `json:"role"`
+	Agent               string     `json:"agent"`
+	Model               *string    `json:"model"`
+	Provider            *string    `json:"provider"`
+	Status              string     `json:"status"`
+	StartedAt           *string    `json:"started_at"`
+	FinishedAt          *string    `json:"finished_at"`
+	ResumeSourceJobUUID *uuid.UUID `json:"resume_source_job_uuid" format:"uuid"`
 }
 
 type ciMetricsCursor struct {
-	Version    int    `json:"version"`
-	DatabaseID string `json:"database_id"`
-	PostedAt   string `json:"posted_at"`
-	PanelID    int64  `json:"panel_id"`
+	Version    int       `json:"version"`
+	DatabaseID uuid.UUID `json:"database_id"`
+	PostedAt   string    `json:"posted_at"`
+	PanelID    int64     `json:"panel_id"`
 	// Legacy namespaces the cursor to ExportCIMetricsOptions.Legacy so a
 	// panel-era cursor can never be replayed against the legacy export (or
 	// vice versa): the two eras page over different tables and ids, and
@@ -164,7 +165,7 @@ func (db *DB) exportCIMetricsPanels(opts ExportCIMetricsOptions, cursor *ciMetri
 	var lastPosted string
 	type pendingPanel struct {
 		panel   ExportCIPanel
-		runUUID string
+		runUUID uuid.UUID
 	}
 	var pending []pendingPanel
 	for rows.Next() {
@@ -503,7 +504,7 @@ func (db *DB) legacyUnitJobs(repoID int64, gitRef, eraEnd string) ([]ExportCIPan
 // SQL columns onto an ExportCIPanel. It returns the panel's database id and
 // panel_run_uuid alongside the populated panel so the caller can page and
 // join review_jobs without re-touching sql.Null* locals.
-func scanCIMetricsRow(rows *sql.Rows) (int64, ExportCIPanel, string, error) {
+func scanCIMetricsRow(rows *sql.Rows) (int64, ExportCIPanel, uuid.UUID, error) {
 	var (
 		id             int64
 		panel          ExportCIPanel
@@ -511,14 +512,14 @@ func scanCIMetricsRow(rows *sql.Rows) (int64, ExportCIPanel, string, error) {
 		postedAt       sql.NullString
 		firstAttemptAt sql.NullString
 		attemptCount   sql.NullInt64
-		runUUID        string
+		runUUID        uuid.UUID
 		synthAgent     sql.NullString
 		synthModel     sql.NullString
 	)
 	if err := rows.Scan(&id, &panel.GithubRepo, &panel.PRNumber, &panel.HeadSHA,
 		&createdAt, &postedAt, &firstAttemptAt, &attemptCount, &panel.Outcome,
 		&runUUID, &synthAgent, &synthModel); err != nil {
-		return 0, ExportCIPanel{}, "", fmt.Errorf("scan ci metrics row: %w", err)
+		return 0, ExportCIPanel{}, uuid.Nil(), fmt.Errorf("scan ci metrics row: %w", err)
 	}
 	if createdAt.Valid {
 		panel.PanelCreatedAt = formatExportTime(parseSQLiteTime(createdAt.String))
@@ -542,7 +543,7 @@ func scanCIMetricsRow(rows *sql.Rows) (int64, ExportCIPanel, string, error) {
 	return id, panel, runUUID, nil
 }
 
-func (db *DB) exportCIPanelJobs(panelRunUUID string) ([]ExportCIPanelJob, error) {
+func (db *DB) exportCIPanelJobs(panelRunUUID uuid.UUID) ([]ExportCIPanelJob, error) {
 	rows, err := db.Query(`
 		SELECT j.uuid, COALESCE(j.panel_role, ''), j.agent, j.model,
 		       j.provider, j.status, j.started_at, j.finished_at, j.resume_source_job_uuid
@@ -563,7 +564,7 @@ func (db *DB) exportCIPanelJobs(panelRunUUID string) ([]ExportCIPanelJob, error)
 			provider     sql.NullString
 			startedAt    sql.NullString
 			finishedAt   sql.NullString
-			resumeSource sql.NullString
+			resumeSource sql.Null[uuid.UUID]
 		)
 		if err := rows.Scan(&job.JobUUID, &job.Role, &job.Agent, &model,
 			&provider, &job.Status, &startedAt, &finishedAt, &resumeSource); err != nil {
@@ -583,16 +584,16 @@ func (db *DB) exportCIPanelJobs(panelRunUUID string) ([]ExportCIPanelJob, error)
 			v := formatExportTime(parseSQLiteTime(finishedAt.String))
 			job.FinishedAt = &v
 		}
-		if resumeSource.Valid && resumeSource.String != "" {
-			job.ResumeSourceJobUUID = &resumeSource.String
+		if resumeSource.Valid {
+			job.ResumeSourceJobUUID = &resumeSource.V
 		}
 		jobs = append(jobs, job)
 	}
 	return jobs, rows.Err()
 }
 
-func encodeCIMetricsCursor(databaseID, postedAt string, panelID int64, legacy bool) string {
-	if databaseID == "" || postedAt == "" || panelID <= 0 {
+func encodeCIMetricsCursor(databaseID uuid.UUID, postedAt string, panelID int64, legacy bool) string {
+	if databaseID == uuid.Nil() || postedAt == "" || panelID <= 0 {
 		return ""
 	}
 	data, err := json.Marshal(ciMetricsCursor{
@@ -629,7 +630,7 @@ func (db *DB) resolveCIMetricsCursor(cursor string, legacy bool) (*ciMetricsCurs
 	if decoded.Version != ciMetricsCursorVersion {
 		return nil, fmt.Errorf("invalid ci metrics cursor: unsupported version %d", decoded.Version)
 	}
-	if decoded.DatabaseID == "" || decoded.PostedAt == "" || decoded.PanelID <= 0 {
+	if decoded.DatabaseID == uuid.Nil() || decoded.PostedAt == "" || decoded.PanelID <= 0 {
 		return nil, errors.New("invalid ci metrics cursor: missing fields")
 	}
 	if decoded.Legacy != legacy {

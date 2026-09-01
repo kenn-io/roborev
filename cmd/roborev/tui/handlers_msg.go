@@ -9,6 +9,7 @@ import (
 	"sort"
 	"strings"
 	"time"
+	"uuid"
 
 	tea "charm.land/bubbletea/v2"
 
@@ -368,29 +369,29 @@ func (m model) handleJobsMsg(msg jobsMsg) (tea.Model, tea.Cmd) {
 // synthesis parent is still in m.jobs and whose cached members include at least
 // one non-terminal (queued/running) row, so the cache should be refreshed.
 // Collapsed and all-terminal panels are skipped; nil when nothing is expanded.
-func (m model) staleExpandedPanelRuns() []string {
+func (m model) staleExpandedPanelRuns() []uuid.UUID {
 	if len(m.expandedPanels) == 0 {
 		return nil
 	}
-	visible := make(map[string]bool, len(m.jobs))
+	visible := make(map[uuid.UUID]bool, len(m.jobs))
 	for i := range m.jobs {
-		if u := m.jobs[i].PanelRunUUID; u != "" && m.jobs[i].IsSynthesisJob() {
-			visible[u] = true
+		if u := m.jobs[i].PanelRunUUID; u != nil && m.jobs[i].IsSynthesisJob() {
+			visible[*u] = true
 		}
 	}
-	var runs []string
-	for uuid := range m.expandedPanels {
-		if !visible[uuid] {
+	var runs []uuid.UUID
+	for runUUID := range m.expandedPanels {
+		if !visible[runUUID] {
 			continue
 		}
-		for _, mem := range m.panelMembers[uuid] {
+		for _, mem := range m.panelMembers[runUUID] {
 			if mem.Status == storage.JobStatusQueued || mem.Status == storage.JobStatusRunning {
-				runs = append(runs, uuid)
+				runs = append(runs, runUUID)
 				break
 			}
 		}
 	}
-	sort.Strings(runs)
+	sort.Slice(runs, func(i, j int) bool { return runs[i].Compare(runs[j]) < 0 })
 	return runs
 }
 
@@ -412,7 +413,7 @@ func (m model) handlePanelMembersMsg(msg panelMembersMsg) (tea.Model, tea.Cmd) {
 	// the detail pane stalled (no log tail, no review fetch) until an
 	// unrelated SSE event or the fallback poll. Safe for a selected
 	// synthesis PARENT too: reconcile is idempotent against m.jobs state.
-	if job, ok := m.selectedJob(); ok && job.PanelRunUUID == msg.runUUID {
+	if job, ok := m.selectedJob(); ok && job.PanelRunUUID != nil && *job.PanelRunUUID == msg.runUUID {
 		return m.splitReconcileDetail()
 	}
 	return m, nil

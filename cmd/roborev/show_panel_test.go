@@ -16,6 +16,7 @@ import (
 // synthesis row is filtered out of the returned members.
 func TestFetchPanelMembersRequestsFullRun(t *testing.T) {
 	assert := assert.New(t)
+	runUUID := testUUID("run-uuid-1")
 	var gotLimit, gotPanelRun string
 	server := httptest.NewServer(http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		assert.Equal("/api/jobs", r.URL.Path)
@@ -29,11 +30,11 @@ func TestFetchPanelMembersRequestsFullRun(t *testing.T) {
 	}))
 	defer server.Close()
 
-	members, err := fetchPanelMembers(server.Client(), server.URL, "run-uuid-1")
+	members, err := fetchPanelMembers(server.Client(), server.URL, runUUID)
 	require.NoError(t, err)
 
 	assert.Equal("0", gotLimit, "show must request the full run (limit=0)")
-	assert.Equal("run-uuid-1", gotPanelRun)
+	assert.Equal(runUUID.String(), gotPanelRun) //nolint:forbidigo // HTTP query text boundary.
 	// Synthesis row excluded; members ordered by panel_member_index.
 	require.Len(t, members, 2)
 	assert.Equal(int64(40), members[0].ID)
@@ -51,9 +52,10 @@ func sampleMembers() []storage.ReviewJob {
 func TestBuildShowPanelBlock(t *testing.T) {
 	assert := assert.New(t)
 
-	block := buildShowPanelBlock(99, "run-uuid-1", "branch_final", sampleMembers())
+	runUUID := testUUID("run-uuid-1")
+	block := buildShowPanelBlock(99, runUUID, "branch_final", sampleMembers())
 
-	assert.Equal("run-uuid-1", block.RunUUID)
+	assert.Equal(runUUID, block.RunUUID)
 	assert.Equal("branch_final", block.Name)
 	assert.Equal(int64(99), block.SynthesisJobID)
 	assert.Len(block.Members, 3)

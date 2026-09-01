@@ -42,7 +42,11 @@ func panelReviewHeader(job storage.ReviewJob, members []storage.ReviewJob) strin
 func (m model) reviewContentString(review *storage.Review) string {
 	var content strings.Builder
 	if review.Job != nil && review.Job.IsSynthesisJob() {
-		if header := panelReviewHeader(*review.Job, m.panelMembers[review.Job.PanelRunUUID]); header != "" {
+		var members []storage.ReviewJob
+		if review.Job.PanelRunUUID != nil {
+			members = m.panelMembers[*review.Job.PanelRunUUID]
+		}
+		if header := panelReviewHeader(*review.Job, members); header != "" {
 			content.WriteString(sanitizeForDisplay(header))
 			content.WriteString("\n\n")
 		}

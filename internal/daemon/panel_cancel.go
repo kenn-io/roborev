@@ -24,7 +24,7 @@ func (s *Server) cascadeCancelPanelMembers(
 // ci_pr_panels mapping and are ignored. This covers queued/API cancellations
 // that do not produce a worker review.canceled event.
 func (s *Server) retireCIPanelForCanceledSynthesis(job *storage.ReviewJob) {
-	if job == nil || job.PanelRole != storage.PanelRoleSynthesis || job.PanelRunUUID == "" {
+	if job == nil || job.PanelRole != storage.PanelRoleSynthesis || job.PanelRunUUID == nil {
 		return
 	}
 	panel, err := s.db.GetCIPanelBySynthesisJobID(job.ID)
@@ -55,10 +55,10 @@ func (s *Server) retireCIPanelForCanceledSynthesis(job *storage.ReviewJob) {
 func cascadePanelMembers(
 	db *storage.DB, killWorker func(int64), job *storage.ReviewJob,
 ) []storage.ReviewJob {
-	if job == nil || job.PanelRole != storage.PanelRoleSynthesis || job.PanelRunUUID == "" {
+	if job == nil || job.PanelRole != storage.PanelRoleSynthesis || job.PanelRunUUID == nil {
 		return nil
 	}
-	members, err := db.GetPanelMembers(job.PanelRunUUID)
+	members, err := db.GetPanelMembers(*job.PanelRunUUID)
 	if err != nil {
 		log.Printf("cancel cascade: list members for %s: %v", job.PanelRunUUID, err)
 		return nil
@@ -121,10 +121,10 @@ func cancelPanelRunParentFirst(
 // synthesis blocked until the safety sweep. MaybeReleasePanelSynthesis is
 // idempotent and only releases once every member is terminal.
 func (s *Server) releaseSynthesisIfCanceledMember(job *storage.ReviewJob) {
-	if job == nil || job.PanelRole != storage.PanelRoleMember || job.PanelRunUUID == "" {
+	if job == nil || job.PanelRole != storage.PanelRoleMember || job.PanelRunUUID == nil {
 		return
 	}
-	if err := s.db.MaybeReleasePanelSynthesis(job.PanelRunUUID); err != nil {
+	if err := s.db.MaybeReleasePanelSynthesis(*job.PanelRunUUID); err != nil {
 		log.Printf("cancel cascade: release synthesis for %s: %v", job.PanelRunUUID, err)
 	}
 }

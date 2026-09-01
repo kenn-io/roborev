@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"log"
+	"uuid"
 
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -12,10 +13,10 @@ import (
 // mutates jobs in place. Failures are logged and non-fatal — the listing still
 // returns, just without summaries.
 func attachPanelSummaries(db *storage.DB, jobs []storage.ReviewJob) {
-	var runUUIDs []string
+	var runUUIDs []uuid.UUID
 	for i := range jobs {
-		if jobs[i].PanelRole == storage.PanelRoleSynthesis && jobs[i].PanelRunUUID != "" {
-			runUUIDs = append(runUUIDs, jobs[i].PanelRunUUID)
+		if jobs[i].PanelRole == storage.PanelRoleSynthesis && jobs[i].PanelRunUUID != nil {
+			runUUIDs = append(runUUIDs, *jobs[i].PanelRunUUID)
 		}
 	}
 	if len(runUUIDs) == 0 {
@@ -32,7 +33,10 @@ func attachPanelSummaries(db *storage.DB, jobs []storage.ReviewJob) {
 		if jobs[i].PanelRole != storage.PanelRoleSynthesis {
 			continue
 		}
-		if summary, ok := summaries[jobs[i].PanelRunUUID]; ok {
+		if jobs[i].PanelRunUUID == nil {
+			continue
+		}
+		if summary, ok := summaries[*jobs[i].PanelRunUUID]; ok {
 			s := summary
 			jobs[i].PanelSummary = &s
 		}

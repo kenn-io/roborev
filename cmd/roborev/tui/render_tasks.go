@@ -131,7 +131,7 @@ func (m model) taskCells(job storage.ReviewJob) []string {
 		defaultRepoName = filepath.Base(job.RepoPath)
 	}
 	repo := m.getDisplayName(job.RepoPath, defaultRepoName)
-	if m.status.MachineID != "" && job.SourceMachineID != "" && job.SourceMachineID != m.status.MachineID {
+	if m.status.MachineID != nil && job.SourceMachineID != nil && *job.SourceMachineID != *m.status.MachineID {
 		repo += " [R]"
 	}
 

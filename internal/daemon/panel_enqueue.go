@@ -10,8 +10,7 @@ import (
 	"slices"
 	"strings"
 	"time"
-
-	"github.com/google/uuid"
+	"uuid"
 
 	"go.kenn.io/roborev/internal/agent"
 	"go.kenn.io/roborev/internal/config"
@@ -473,7 +472,7 @@ func applyFrozenExperimentSettings(
 		return nil
 	}
 	var plan experimentJobPlan
-	if job.PanelRunUUID == "" {
+	if job.PanelRunUUID == nil {
 		if err := json.Unmarshal([]byte(assignment.EffectiveConfigJSON), &plan); err != nil {
 			return fmt.Errorf("decode frozen experiment plan: %w", err)
 		}
@@ -556,7 +555,7 @@ func (s *Server) enqueuePanelRun(ctx context.Context, in panelRunInputs) (*RawJS
 		return rawJSONOutput(http.StatusBadRequest, ErrorResponse{Error: err.Error()})
 	}
 
-	runUUID := uuid.NewString()
+	runUUID := uuid.New()
 	memberOpts, err := panelMemberOpts(
 		in.descriptor, in.panelName, runUUID, members,
 		in.repoCfg, in.cfg,
@@ -661,7 +660,7 @@ func panelHasDesignMember(members []config.ResolvedMember) bool {
 // panelMemberOpts overlays each resolved member's agent/model/provider/reasoning
 // /review_type and panel fields onto the frozen base opts.
 func panelMemberOpts(
-	descriptor targetDescriptor, panelName, runUUID string, members []config.ResolvedMember,
+	descriptor targetDescriptor, panelName string, runUUID uuid.UUID, members []config.ResolvedMember,
 	repoCfg *config.RepoConfig, cfg *config.Config,
 ) ([]storage.EnqueueOpts, error) {
 	out := make([]storage.EnqueueOpts, len(members))
@@ -677,7 +676,7 @@ func panelMemberOpts(
 		}
 		o.Provider = m.Provider
 		o.Reasoning, o.ReviewType = m.Reasoning, m.ReviewType
-		o.PanelRunUUID, o.PanelRole = runUUID, storage.PanelRoleMember
+		o.PanelRunUUID, o.PanelRole = &runUUID, storage.PanelRoleMember
 		o.PanelName, o.PanelMemberName, o.PanelMemberIndex = panelName, m.Name, m.Index
 		o.PanelMemberConfigJSON = string(cfgJSON)
 		out[i] = o
@@ -741,7 +740,7 @@ func workflowForPanelReviewType(reviewType string) string {
 // EnqueuePanelRun enforces JobTypeSynthesis/PanelRoleSynthesis/ClaimBlocked, but
 // they are set here too so the opts are self-describing.
 func panelSynthesisOpts(
-	descriptor targetDescriptor, panelName, runUUID string,
+	descriptor targetDescriptor, panelName string, runUUID uuid.UUID,
 	synth config.SynthesisSpec,
 	repoCfg *config.RepoConfig, cfg *config.Config,
 ) storage.EnqueueOpts {
@@ -751,7 +750,7 @@ func panelSynthesisOpts(
 	o.Model, o.Reasoning = synth.Model, synth.Reasoning
 	o.BackupAgent = agent.StorageNameFromConfig(synth.BackupAgent, repoCfg, cfg)
 	o.BackupModel = synth.BackupModel
-	o.PanelRunUUID, o.PanelRole = runUUID, storage.PanelRoleSynthesis
+	o.PanelRunUUID, o.PanelRole = &runUUID, storage.PanelRoleSynthesis
 	o.PanelName, o.ClaimBlocked = panelName, true
 	return o
 }

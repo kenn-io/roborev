@@ -4,6 +4,7 @@ import (
 	"database/sql"
 	"encoding/json"
 	"testing"
+	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -144,14 +145,14 @@ func TestGetAllCommentsForJob(t *testing.T) {
 	_, err := db.Exec(
 		`INSERT INTO responses (job_id, responder, response, uuid, source_machine_id, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?)`,
-		job.ID, "alice", "Job-based comment", GenerateUUID(), machineID, t1,
+		job.ID, "alice", "Job-based comment", uuid.New(), machineID, t1,
 	)
 	require.NoError(t, err)
 
 	_, err = db.Exec(
 		`INSERT INTO responses (commit_id, responder, response, uuid, source_machine_id, created_at)
 		 VALUES (?, ?, ?, ?, ?, ?)`,
-		commit.ID, "bob", "Legacy commit comment", GenerateUUID(), machineID, t2,
+		commit.ID, "bob", "Legacy commit comment", uuid.New(), machineID, t2,
 	)
 	require.NoError(t, err)
 
@@ -192,7 +193,7 @@ func TestGetAllCommentsForJob(t *testing.T) {
 		_, err = db.Exec(
 			`INSERT INTO responses (job_id, responder, response, uuid, source_machine_id, created_at)
 			 VALUES (?, ?, ?, ?, ?, ?)`,
-			dirtyJob.ID, "dana", "Dirty job comment", GenerateUUID(), machineID, t3,
+			dirtyJob.ID, "dana", "Dirty job comment", uuid.New(), machineID, t3,
 		)
 		require.NoError(t, err)
 
@@ -217,7 +218,7 @@ func TestGetAllCommentsForJob(t *testing.T) {
 			`INSERT INTO responses (job_id, commit_id, responder, response, uuid, source_machine_id, created_at)
 			 VALUES (?, ?, ?, ?, ?, ?, ?)`,
 			job.ID, commit.ID, "charlie", "Dual-linked comment",
-			GenerateUUID(), machineID, t3,
+			uuid.New(), machineID, t3,
 		)
 		require.NoError(t, err)
 
@@ -748,14 +749,14 @@ func TestGetReviewByCommitSHAResolvesSynthesisOverMember(t *testing.T) {
 	defer db.Close()
 
 	repo := createRepo(t, db, "/tmp/synthesis-canonical")
-	runUUID := GenerateUUID()
+	runUUID := uuid.New()
 
 	member := createCompletedJobWithOptions(t, db, EnqueueOpts{
 		RepoID:       repo.ID,
 		GitRef:       "synth123",
 		Agent:        "codex",
 		JobType:      JobTypeReview,
-		PanelRunUUID: runUUID,
+		PanelRunUUID: &runUUID,
 		PanelRole:    PanelRoleMember,
 	}, "member output")
 
@@ -764,7 +765,7 @@ func TestGetReviewByCommitSHAResolvesSynthesisOverMember(t *testing.T) {
 		GitRef:       "synth123",
 		Agent:        "codex",
 		JobType:      JobTypeSynthesis,
-		PanelRunUUID: runUUID,
+		PanelRunUUID: &runUUID,
 		PanelRole:    PanelRoleSynthesis,
 	}, "synthesis output")
 	assert.Greater(synth.ID, member.ID, "synthesis is newer than the member")
@@ -780,14 +781,14 @@ func TestGetAllReviewsForGitRefExcludesPanelMembers(t *testing.T) {
 	defer db.Close()
 
 	repo := createRepo(t, db, "/tmp/panel-previous-attempts")
-	runUUID := GenerateUUID()
+	runUUID := uuid.New()
 
 	member := createCompletedJobWithOptions(t, db, EnqueueOpts{
 		RepoID:       repo.ID,
 		GitRef:       "panel-ref",
 		Agent:        "codex",
 		JobType:      JobTypeReview,
-		PanelRunUUID: runUUID,
+		PanelRunUUID: &runUUID,
 		PanelRole:    PanelRoleMember,
 	}, "member output")
 	synth := createCompletedJobWithOptions(t, db, EnqueueOpts{
@@ -795,7 +796,7 @@ func TestGetAllReviewsForGitRefExcludesPanelMembers(t *testing.T) {
 		GitRef:       "panel-ref",
 		Agent:        "codex",
 		JobType:      JobTypeSynthesis,
-		PanelRunUUID: runUUID,
+		PanelRunUUID: &runUUID,
 		PanelRole:    PanelRoleSynthesis,
 	}, "synthesis output")
 
@@ -814,7 +815,7 @@ func TestFindReusableSessionCandidatesExcludesPanelAndNonReviewJobs(t *testing.T
 
 	repo := createRepo(t, db, "/tmp/session-candidates")
 	branch := "feature/session"
-	runUUID := GenerateUUID()
+	runUUID := uuid.New()
 
 	normalCommit := createCommit(t, db, repo.ID, "session-normal")
 	normal := createCompletedJobWithOptions(t, db, EnqueueOpts{
@@ -835,7 +836,7 @@ func TestFindReusableSessionCandidatesExcludesPanelAndNonReviewJobs(t *testing.T
 		Agent:        "codex",
 		ReviewType:   "default",
 		JobType:      JobTypeReview,
-		PanelRunUUID: runUUID,
+		PanelRunUUID: &runUUID,
 		PanelRole:    PanelRoleMember,
 	}, "member output")
 	setJobSession(t, db, member.ID, "session-member")
@@ -847,7 +848,7 @@ func TestFindReusableSessionCandidatesExcludesPanelAndNonReviewJobs(t *testing.T
 		Agent:        "codex",
 		ReviewType:   "default",
 		JobType:      JobTypeSynthesis,
-		PanelRunUUID: runUUID,
+		PanelRunUUID: &runUUID,
 		PanelRole:    PanelRoleSynthesis,
 	}, "synthesis output")
 	setJobSession(t, db, synth.ID, "session-synthesis")

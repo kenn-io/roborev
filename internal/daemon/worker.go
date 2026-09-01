@@ -14,6 +14,7 @@ import (
 	"sync"
 	"sync/atomic"
 	"time"
+	"uuid"
 
 	gitworktree "go.kenn.io/kit/git/worktree"
 
@@ -608,7 +609,7 @@ func (wp *WorkerPool) markAgentInvoked(workerID string, job *storage.ReviewJob, 
 }
 
 func (wp *WorkerPool) jobRequiresCIExactCheckout(job *storage.ReviewJob) (bool, error) {
-	if job == nil || job.PanelRunUUID == "" || job.IsFixJob() {
+	if job == nil || job.PanelRunUUID == nil || job.IsFixJob() {
 		return false, nil
 	}
 	if job.Source == storage.JobSourceCI {
@@ -617,7 +618,7 @@ func (wp *WorkerPool) jobRequiresCIExactCheckout(job *storage.ReviewJob) (bool, 
 	if wp.db == nil {
 		return false, nil
 	}
-	if _, err := wp.db.GetCIPanelByRunUUID(job.PanelRunUUID); err != nil {
+	if _, err := wp.db.GetCIPanelByRunUUID(*job.PanelRunUUID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return false, nil
 		}
@@ -805,7 +806,11 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// fail before an agent starts and synthesis paths that do not invoke one.
 	defer wp.outputBuffers.CloseJob(job.ID)
 
-	assignment, err := wp.db.GetExperimentAssignmentInputForJobUUID(job.UUID)
+	jobUUID := uuid.Nil()
+	if job.UUID != nil {
+		jobUUID = *job.UUID
+	}
+	assignment, err := wp.db.GetExperimentAssignmentInputForJobUUID(jobUUID)
 	if err != nil {
 		wp.failOrRetryContext(ctx, workerID, job, job.Agent,
 			fmt.Sprintf("load frozen experiment plan: %v", err))
@@ -1745,8 +1750,8 @@ func resolveJobTimeoutDuration(job *storage.ReviewJob, defaultMinutes int) time.
 // only releases once every member is terminal, so calling it on each member's
 // terminal transition is safe; the Task 7 sweep is the backstop.
 func (wp *WorkerPool) releaseIfPanelMember(job *storage.ReviewJob) {
-	if job.PanelRole == storage.PanelRoleMember && job.PanelRunUUID != "" {
-		if err := wp.db.MaybeReleasePanelSynthesis(job.PanelRunUUID); err != nil {
+	if job.PanelRole == storage.PanelRoleMember && job.PanelRunUUID != nil {
+		if err := wp.db.MaybeReleasePanelSynthesis(*job.PanelRunUUID); err != nil {
 			log.Printf("panel %s: release synthesis: %v", job.PanelRunUUID, err)
 		}
 	}

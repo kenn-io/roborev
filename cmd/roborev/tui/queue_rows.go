@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"sort"
 	"strings"
+	"uuid"
 
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -31,19 +32,19 @@ func panelHasChildren(j *storage.ReviewJob) bool {
 // simplified to one level.
 func flattenQueueRows(
 	parents []storage.ReviewJob,
-	expanded map[string]bool,
-	members map[string][]storage.ReviewJob,
+	expanded map[uuid.UUID]bool,
+	members map[uuid.UUID][]storage.ReviewJob,
 ) []queueRow {
 	rows := make([]queueRow, 0, len(parents))
 	for i := range parents {
 		p := &parents[i]
 		hasKids := panelHasChildren(p)
-		isOpen := hasKids && expanded[p.PanelRunUUID]
+		isOpen := hasKids && p.PanelRunUUID != nil && expanded[*p.PanelRunUUID]
 		rows = append(rows, queueRow{job: p, depth: 0, hasChildren: hasKids, expanded: isOpen})
 		if !isOpen {
 			continue
 		}
-		kids := append([]storage.ReviewJob(nil), members[p.PanelRunUUID]...)
+		kids := append([]storage.ReviewJob(nil), members[*p.PanelRunUUID]...)
 		sort.SliceStable(kids, func(i, j int) bool {
 			return kids[i].PanelMemberIndex < kids[j].PanelMemberIndex
 		})

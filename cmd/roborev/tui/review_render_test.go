@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"strings"
 	"testing"
+	"uuid"
 
 	"github.com/stretchr/testify/assert"
 
@@ -421,7 +422,7 @@ func TestRenderReviewPrefixesPanelHeader(t *testing.T) {
 	m.width, m.height = 120, 30
 	m.currentView = viewReview
 	m.currentReview = review
-	m.panelMembers = map[string][]storage.ReviewJob{"R": {
+	m.panelMembers = map[uuid.UUID][]storage.ReviewJob{testUUID("R"): {
 		makeJob(11, withPanelMember("R", "default", 0), withVerdict("P")),
 		makeJob(12, withPanelMember("R", "security", 1), withVerdict("F")),
 	}}

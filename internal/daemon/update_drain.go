@@ -2,6 +2,7 @@ package daemon
 
 import (
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"log"
@@ -9,8 +10,6 @@ import (
 	"time"
 
 	"github.com/danielgtaylor/huma/v2"
-
-	"go.kenn.io/roborev/internal/storage"
 )
 
 const (
@@ -107,7 +106,7 @@ func (c *updateDrainCoordinator) prepare(ownerID, policy string) (UpdateDrainSta
 
 	lease := &updateDrainLease{
 		ownerID:   ownerID,
-		token:     storage.GenerateUUID(),
+		token:     rand.Text(),
 		policy:    policy,
 		expiresAt: now.Add(updateLeaseDuration),
 		targeted:  append([]int64(nil), ids...),
@@ -234,7 +233,7 @@ func (c *updateDrainCoordinator) rollbackPreparationLocked(
 	} else {
 		lease := &updateDrainLease{
 			ownerID:    ownerID,
-			token:      storage.GenerateUUID(),
+			token:      rand.Text(),
 			policy:     policy,
 			expiresAt:  c.now(),
 			recovering: true,

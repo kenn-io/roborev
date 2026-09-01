@@ -55,7 +55,7 @@ func TestReviewAttemptLifecycle(t *testing.T) {
 	assert.False(created2)
 
 	// Defer (transient) resets genuine streak.
-	require.NoError(t, db.DeferReviewAttempt("o/r", 7, "sha1", "transient", "429", "uuid1",
+	require.NoError(t, db.DeferReviewAttempt("o/r", 7, "sha1", "transient", "429", testUUIDPtr("uuid1"),
 		now.Add(-time.Minute), false))
 	a, err := db.GetReviewAttempt("o/r", 7, "sha1")
 	require.NoError(t, err)
@@ -72,7 +72,7 @@ func TestReviewAttemptLifecycle(t *testing.T) {
 	assert.False(claimedAgain) // now 'pending', not 'deferred'
 
 	// Genuine defer bumps the streak.
-	require.NoError(t, db.DeferReviewAttempt("o/r", 7, "sha1", "genuine", "bad model", "uuid2",
+	require.NoError(t, db.DeferReviewAttempt("o/r", 7, "sha1", "genuine", "bad model", testUUIDPtr("uuid2"),
 		now.Add(-time.Minute), true))
 	a, _ = db.GetReviewAttempt("o/r", 7, "sha1")
 	assert.Equal(1, a.ConsecutiveGenuineAttempts)
@@ -95,14 +95,14 @@ func TestGetDueReviewAttempts(t *testing.T) {
 	created, err := db.ReserveReviewAttempt("o/r", 1, "a", now)
 	require.NoError(t, err)
 	require.True(t, created)
-	require.NoError(t, db.DeferReviewAttempt("o/r", 1, "a", "transient", "e", "u",
+	require.NoError(t, db.DeferReviewAttempt("o/r", 1, "a", "transient", "e", testUUIDPtr("u"),
 		now.Add(-time.Minute), false))
 
 	// Row B: deferred in the future -> not yet due (guards the <= comparison).
 	created, err = db.ReserveReviewAttempt("o/r", 2, "b", now)
 	require.NoError(t, err)
 	require.True(t, created)
-	require.NoError(t, db.DeferReviewAttempt("o/r", 2, "b", "transient", "e", "u",
+	require.NoError(t, db.DeferReviewAttempt("o/r", 2, "b", "transient", "e", testUUIDPtr("u"),
 		now.Add(time.Hour), false))
 
 	// Row C: pending only, next_attempt_at NULL -> excluded (guards state and
@@ -121,7 +121,7 @@ func TestGetDueReviewAttempts(t *testing.T) {
 	created, err = db.ReserveReviewAttempt("o/r2", 1, "a", now)
 	require.NoError(t, err)
 	require.True(t, created)
-	require.NoError(t, db.DeferReviewAttempt("o/r2", 1, "a", "transient", "e", "u",
+	require.NoError(t, db.DeferReviewAttempt("o/r2", 1, "a", "transient", "e", testUUIDPtr("u"),
 		now.Add(-time.Minute), false))
 
 	due, err := db.GetDueReviewAttempts("o/r", now)
@@ -139,19 +139,19 @@ func TestMakeTransientReviewAttemptsDue(t *testing.T) {
 	created, err := db.ReserveReviewAttempt("o/r", 1, "transient-future", now)
 	require.NoError(t, err)
 	require.True(t, created)
-	require.NoError(t, db.DeferReviewAttempt("o/r", 1, "transient-future", "transient", "quota", "u",
+	require.NoError(t, db.DeferReviewAttempt("o/r", 1, "transient-future", "transient", "quota", testUUIDPtr("u"),
 		now.Add(time.Hour), false))
 
 	created, err = db.ReserveReviewAttempt("o/r", 2, "genuine-future", now)
 	require.NoError(t, err)
 	require.True(t, created)
-	require.NoError(t, db.DeferReviewAttempt("o/r", 2, "genuine-future", "genuine", "bad config", "u",
+	require.NoError(t, db.DeferReviewAttempt("o/r", 2, "genuine-future", "genuine", "bad config", testUUIDPtr("u"),
 		now.Add(time.Hour), true))
 
 	created, err = db.ReserveReviewAttempt("o/r", 3, "transient-past", now)
 	require.NoError(t, err)
 	require.True(t, created)
-	require.NoError(t, db.DeferReviewAttempt("o/r", 3, "transient-past", "transient", "outage", "u",
+	require.NoError(t, db.DeferReviewAttempt("o/r", 3, "transient-past", "transient", "outage", testUUIDPtr("u"),
 		now.Add(-time.Minute), false))
 
 	updated, err := db.MakeTransientReviewAttemptsDue(now)
@@ -182,7 +182,7 @@ func TestGetNonTerminalAttemptPRs(t *testing.T) {
 	created, err = db.ReserveReviewAttempt("o/r", 1, "b", now)
 	require.NoError(t, err)
 	require.True(t, created)
-	require.NoError(t, db.DeferReviewAttempt("o/r", 1, "b", "transient", "e", "u",
+	require.NoError(t, db.DeferReviewAttempt("o/r", 1, "b", "transient", "e", testUUIDPtr("u"),
 		now.Add(-time.Minute), false))
 
 	// PR 2 is done -> terminal, excluded.
@@ -195,7 +195,7 @@ func TestGetNonTerminalAttemptPRs(t *testing.T) {
 	created, err = db.ReserveReviewAttempt("o/r", 3, "d", now)
 	require.NoError(t, err)
 	require.True(t, created)
-	require.NoError(t, db.DeferReviewAttempt("o/r", 3, "d", "transient", "e", "u",
+	require.NoError(t, db.DeferReviewAttempt("o/r", 3, "d", "transient", "e", testUUIDPtr("u"),
 		now.Add(-time.Minute), false))
 
 	refs, err := db.GetNonTerminalAttemptPRs("o/r")
@@ -220,7 +220,7 @@ func TestGetPendingReviewAttempts(t *testing.T) {
 	created, err = db.ReserveReviewAttempt("o/r", 2, "b", now)
 	require.NoError(t, err)
 	require.True(t, created)
-	require.NoError(t, db.DeferReviewAttempt("o/r", 2, "b", "transient", "e", "u",
+	require.NoError(t, db.DeferReviewAttempt("o/r", 2, "b", "transient", "e", testUUIDPtr("u"),
 		now.Add(-time.Minute), false))
 
 	// PR 3: done -> excluded (terminal).
@@ -274,9 +274,9 @@ func TestRearmStuckReviewAttempt(t *testing.T) {
 	created, err := db.ReserveReviewAttempt("o/r", 1, "a", now)
 	require.NoError(t, err)
 	require.True(t, created)
-	require.NoError(t, db.DeferReviewAttempt("o/r", 1, "a", "genuine", "bad model", "uuid1",
+	require.NoError(t, db.DeferReviewAttempt("o/r", 1, "a", "genuine", "bad model", testUUIDPtr("uuid1"),
 		now.Add(-time.Minute), true))
-	require.NoError(t, db.DeferReviewAttempt("o/r", 1, "a", "genuine", "bad model", "uuid1",
+	require.NoError(t, db.DeferReviewAttempt("o/r", 1, "a", "genuine", "bad model", testUUIDPtr("uuid1"),
 		now.Add(-time.Minute), true))
 	claimed, _, _, err := db.ClaimDueReviewAttempt("o/r", 1, "a", now)
 	require.NoError(t, err)
@@ -313,7 +313,7 @@ func TestClaimDueReviewAttemptIsExclusive(t *testing.T) {
 	created, err := db.ReserveReviewAttempt("o/r", 9, "s", now)
 	require.NoError(t, err)
 	require.True(t, created)
-	require.NoError(t, db.DeferReviewAttempt("o/r", 9, "s", "transient", "x", "u",
+	require.NoError(t, db.DeferReviewAttempt("o/r", 9, "s", "transient", "x", testUUIDPtr("u"),
 		now.Add(-time.Minute), false))
 	var wins atomic.Int32
 	var wg sync.WaitGroup

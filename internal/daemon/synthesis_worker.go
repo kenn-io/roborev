@@ -28,7 +28,11 @@ var errSynthesisCanceled = errors.New("synthesis canceled")
 func (wp *WorkerPool) processSynthesisJob(
 	ctx context.Context, workerID string, job *storage.ReviewJob,
 ) {
-	rows, err := wp.db.GetPanelMemberReviews(job.PanelRunUUID)
+	if job.PanelRunUUID == nil {
+		wp.failOrRetryContext(ctx, workerID, job, job.Agent, "synthesis job has no panel run UUID")
+		return
+	}
+	rows, err := wp.db.GetPanelMemberReviews(*job.PanelRunUUID)
 	if err != nil {
 		// A storage error must NOT masquerade as an all-failed synthesized
 		// review. Use the non-agent retry/fail path: a DB read failure is not an

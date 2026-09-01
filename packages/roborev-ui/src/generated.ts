@@ -1128,6 +1128,7 @@ export interface components {
             config_reloaded_at?: string;
             /** Format: int64 */
             failed_jobs: number;
+            /** Format: uuid */
             machine_id?: string;
             /** Format: int64 */
             max_workers: number;
@@ -1196,6 +1197,7 @@ export interface components {
             panel_member_name?: string;
             panel_name?: string;
             panel_role?: string;
+            /** Format: uuid */
             panel_run_uuid?: string;
             panel_summary?: components["schemas"]["PanelSummary"];
             /** Format: int64 */
@@ -1212,6 +1214,7 @@ export interface components {
             repo_path?: string;
             requested_model?: string;
             requested_provider?: string;
+            /** Format: uuid */
             resume_source_job_uuid?: string;
             /** Format: int64 */
             retry_count: number;
@@ -1219,6 +1222,7 @@ export interface components {
             session_id?: string;
             skip_reason?: string;
             source?: string;
+            /** Format: uuid */
             source_machine_id?: string;
             /** Format: date-time */
             started_at?: string;
@@ -1228,6 +1232,7 @@ export interface components {
             token_usage?: string;
             /** Format: date-time */
             updated_at?: string;
+            /** Format: uuid */
             uuid: string;
             verdict?: string;
             worker_id?: string;
@@ -1343,7 +1348,10 @@ export interface components {
              * @example https://example.com/ExportCICostDocument.json
              */
             readonly $schema?: string;
-            /** @description Stable identity for the local review database; changes when the database is recreated. */
+            /**
+             * Format: uuid
+             * @description Stable identity for the local review database; changes when the database is recreated.
+             */
             database_id: string;
             generated_at: string;
             jobs: components["schemas"]["ExportCICostJob"][] | null;
@@ -1364,10 +1372,12 @@ export interface components {
             cost_usd: number | null;
             experiments: components["schemas"]["ExperimentAssignment"][] | null;
             finished_at: string;
+            /** Format: uuid */
             job_uuid: string;
             model: string | null;
             provider: string | null;
-            resume_source_job_uuid: string | null;
+            /** Format: uuid */
+            resume_source_job_uuid: string;
             role: string;
             status: string;
         };
@@ -1378,7 +1388,10 @@ export interface components {
              * @example https://example.com/ExportCIMetricsDocument.json
              */
             readonly $schema?: string;
-            /** @description Stable identity for the local review database; changes when the database is recreated. */
+            /**
+             * Format: uuid
+             * @description Stable identity for the local review database; changes when the database is recreated.
+             */
             database_id: string;
             generated_at: string;
             /** @description Opaque resume cursor emitted when panels is non-empty. */
@@ -1411,10 +1424,12 @@ export interface components {
         ExportCIPanelJob: {
             agent: string;
             finished_at: string | null;
+            /** Format: uuid */
             job_uuid: string;
             model: string | null;
             provider: string | null;
-            resume_source_job_uuid: string | null;
+            /** Format: uuid */
+            resume_source_job_uuid: string;
             role: string;
             started_at: string | null;
             status: string;
@@ -1436,7 +1451,9 @@ export interface components {
             pr_url: string | null;
             project: string;
             repo: string;
-            resume_source_job_uuid: string | null;
+            /** Format: uuid */
+            resume_source_job_uuid: string;
+            /** Format: uuid */
             review_id: string;
             status: string;
             subagents: components["schemas"]["ExportSubagent"][] | null;
@@ -1457,7 +1474,10 @@ export interface components {
              * @example https://example.com/ExportReviewsDocument.json
              */
             readonly $schema?: string;
-            /** @description Stable identity for the local review database; changes when the database is recreated. */
+            /**
+             * Format: uuid
+             * @description Stable identity for the local review database; changes when the database is recreated.
+             */
             database_id: string;
             generated_at: string;
             /** @description Opaque resume cursor emitted when reviews is non-empty; pass as cursor to resume after the last returned review. */
@@ -1486,7 +1506,9 @@ export interface components {
             duration_ms: number | null;
             model: string | null;
             name: string;
-            resume_source_job_uuid: string | null;
+            /** Format: uuid */
+            resume_source_job_uuid: string;
+            /** Format: uuid */
             review_id: string;
             review_type: string | null;
             verdict: string;
@@ -1678,6 +1700,7 @@ export interface components {
             panel_member_name?: string;
             panel_name?: string;
             panel_role?: string;
+            /** Format: uuid */
             panel_run_uuid: string;
             panel_summary?: components["schemas"]["PanelSummary"];
             /** Format: int64 */
@@ -1694,6 +1717,7 @@ export interface components {
             repo_path?: string;
             requested_model?: string;
             requested_provider?: string;
+            /** Format: uuid */
             resume_source_job_uuid?: string;
             /** Format: int64 */
             retry_count: number;
@@ -1701,6 +1725,7 @@ export interface components {
             session_id?: string;
             skip_reason?: string;
             source?: string;
+            /** Format: uuid */
             source_machine_id?: string;
             /** Format: date-time */
             started_at?: string;
@@ -1710,6 +1735,7 @@ export interface components {
             token_usage?: string;
             /** Format: date-time */
             updated_at?: string;
+            /** Format: uuid */
             uuid?: string;
             verdict?: string;
             worker_id?: string;
@@ -1735,6 +1761,7 @@ export interface components {
             members_total: number;
             /** Format: int64 */
             members_with_cost?: number;
+            /** Format: uuid */
             panel_run_uuid: string;
         };
         PingInfo: {
@@ -1850,7 +1877,9 @@ export interface components {
             readonly $schema?: string;
             /** Format: int64 */
             job_id: number;
+            /** Format: uuid */
             request_id: string;
+            /** Format: uuid */
             run_uuid?: string;
             success: boolean;
         };
@@ -1863,6 +1892,7 @@ export interface components {
             readonly $schema?: string;
             /** Format: int64 */
             job_id: number;
+            /** Format: uuid */
             request_id?: string;
         };
         ResolveRepoOutputBody: {
@@ -1900,9 +1930,11 @@ export interface components {
             responder: string;
             response: string;
             source?: string;
+            /** Format: uuid */
             source_machine_id?: string;
             /** Format: date-time */
             synced_at?: string;
+            /** Format: uuid */
             uuid?: string;
         };
         Review: {
@@ -1930,7 +1962,9 @@ export interface components {
             synced_at?: string;
             /** Format: date-time */
             updated_at?: string;
+            /** Format: uuid */
             updated_by_machine_id?: string;
+            /** Format: uuid */
             uuid?: string;
             /** Format: int64 */
             verdict_bool?: number;
@@ -1974,6 +2008,7 @@ export interface components {
             panel_member_name?: string;
             panel_name?: string;
             panel_role?: string;
+            /** Format: uuid */
             panel_run_uuid?: string;
             panel_summary?: components["schemas"]["PanelSummary"];
             /** Format: int64 */
@@ -1990,6 +2025,7 @@ export interface components {
             repo_path?: string;
             requested_model?: string;
             requested_provider?: string;
+            /** Format: uuid */
             resume_source_job_uuid?: string;
             /** Format: int64 */
             retry_count: number;
@@ -1997,6 +2033,7 @@ export interface components {
             session_id?: string;
             skip_reason?: string;
             source?: string;
+            /** Format: uuid */
             source_machine_id?: string;
             /** Format: date-time */
             started_at?: string;
@@ -2006,6 +2043,7 @@ export interface components {
             token_usage?: string;
             /** Format: date-time */
             updated_at?: string;
+            /** Format: uuid */
             uuid?: string;
             verdict?: string;
             worker_id?: string;
@@ -2047,6 +2085,7 @@ export interface components {
             /** Format: date-time */
             started_at?: string;
             status: string;
+            /** Format: uuid */
             uuid?: string;
             verdict?: string;
         };

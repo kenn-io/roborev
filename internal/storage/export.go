@@ -10,6 +10,7 @@ import (
 	"strings"
 	"time"
 	"unicode/utf8"
+	"uuid"
 )
 
 type ExportProfile string
@@ -52,7 +53,7 @@ type ExportReviewsPage struct {
 }
 
 type ExportReview struct {
-	ReviewID            string                 `json:"review_id"`
+	ReviewID            uuid.UUID              `json:"review_id" format:"uuid"`
 	Status              string                 `json:"status"`
 	Verdict             string                 `json:"verdict"`
 	CreatedAt           string                 `json:"created_at"`
@@ -70,11 +71,11 @@ type ExportReview struct {
 	Content             *string                `json:"content"`
 	Subagents           []ExportSubagent       `json:"subagents"`
 	Experiments         []ExperimentAssignment `json:"experiments"`
-	ResumeSourceJobUUID *string                `json:"resume_source_job_uuid"`
+	ResumeSourceJobUUID *uuid.UUID             `json:"resume_source_job_uuid" format:"uuid"`
 }
 
 type ExportSubagent struct {
-	ReviewID            string           `json:"review_id"`
+	ReviewID            uuid.UUID        `json:"review_id" format:"uuid"`
 	Name                string           `json:"name"`
 	Agent               string           `json:"agent"`
 	Model               *string          `json:"model"`
@@ -84,7 +85,7 @@ type ExportSubagent struct {
 	DurationMS          *int64           `json:"duration_ms"`
 	Cost                ExportReviewCost `json:"cost"`
 	Content             *string          `json:"content"`
-	ResumeSourceJobUUID *string          `json:"resume_source_job_uuid"`
+	ResumeSourceJobUUID *uuid.UUID       `json:"resume_source_job_uuid" format:"uuid"`
 }
 
 type ExportReviewCost struct {
@@ -94,15 +95,15 @@ type ExportReviewCost struct {
 }
 
 type exportCursor struct {
-	Version     int    `json:"version"`
-	DatabaseID  string `json:"database_id"`
-	CompletedAt string `json:"completed_at"`
-	ReviewID    string `json:"review_id"`
+	Version     int       `json:"version"`
+	DatabaseID  uuid.UUID `json:"database_id"`
+	CompletedAt string    `json:"completed_at"`
+	ReviewID    uuid.UUID `json:"review_id"`
 }
 
 type exportReviewRow struct {
-	reviewID            string
-	jobUUID             string
+	reviewID            uuid.UUID
+	jobUUID             uuid.UUID
 	verdictBool         int64
 	reviewCreated       string
 	output              sql.NullString
@@ -116,7 +117,7 @@ type exportReviewRow struct {
 	jobType             string
 	branch              sql.NullString
 	ciBaseBranch        sql.NullString
-	panelRunUUID        sql.NullString
+	panelRunUUID        sql.Null[uuid.UUID]
 	panelRole           sql.NullString
 	tokenUsage          sql.NullString
 	project             string
@@ -125,7 +126,7 @@ type exportReviewRow struct {
 	ciGitHubRepo        sql.NullString
 	ciPRNumber          sql.NullInt64
 	ciHeadSHA           sql.NullString
-	resumeSourceJobUUID sql.NullString
+	resumeSourceJobUUID sql.Null[uuid.UUID]
 }
 
 // ExportReviews returns one bounded page of completed review export rows.
@@ -170,8 +171,8 @@ func (db *DB) ExportReviews(opts ExportReviewsOptions) (ExportReviewsPage, error
 		if err != nil {
 			return ExportReviewsPage{}, err
 		}
-		if row.panelRole.String == PanelRoleSynthesis && row.panelRunUUID.String != "" {
-			review.Subagents, err = db.exportSubagents(row.panelRunUUID.String, opts.Profile)
+		if row.panelRole.String == PanelRoleSynthesis && row.panelRunUUID.Valid {
+			review.Subagents, err = db.exportSubagents(row.panelRunUUID.V, opts.Profile)
 			if err != nil {
 				return ExportReviewsPage{}, err
 			}
@@ -295,7 +296,7 @@ func (row exportReviewRow) toExportReview(profile ExportProfile) ExportReview {
 		repo = row.repoIdentity.String
 	}
 	review := ExportReview{
-		ReviewID:            capExportString(row.reviewID),
+		ReviewID:            row.reviewID,
 		Status:              capExportString(row.status),
 		Verdict:             exportVerdict(row.verdictBool),
 		CreatedAt:           formatExportTime(parseSQLiteTime(row.enqueuedAt)),
@@ -311,7 +312,10 @@ func (row exportReviewRow) toExportReview(profile ExportProfile) ExportReview {
 		Cost:                parseExportCost(row.tokenUsage),
 		Subagents:           []ExportSubagent{},
 		Experiments:         []ExperimentAssignment{},
-		ResumeSourceJobUUID: stringPtrNonEmpty(nullStringValue(row.resumeSourceJobUUID)),
+		ResumeSourceJobUUID: nil,
+	}
+	if row.resumeSourceJobUUID.Valid {
+		review.ResumeSourceJobUUID = &row.resumeSourceJobUUID.V
 	}
 	if review.PRNumber != nil && row.ciGitHubRepo.Valid && row.ciGitHubRepo.String != "" {
 		review.PRURL = stringPtrNonEmpty("https://github.com/" + capExportString(row.ciGitHubRepo.String) + "/pull/" + fmt.Sprint(*review.PRNumber))
@@ -341,7 +345,7 @@ func (row exportReviewRow) exportCommitSHA() string {
 	}
 }
 
-func (db *DB) exportSubagents(panelRunUUID string, profile ExportProfile) ([]ExportSubagent, error) {
+func (db *DB) exportSubagents(panelRunUUID uuid.UUID, profile ExportProfile) ([]ExportSubagent, error) {
 	outputExpr := "NULL"
 	if profile == ExportProfileContent {
 		outputExpr = "rv.output"
@@ -365,7 +369,7 @@ func (db *DB) exportSubagents(panelRunUUID string, profile ExportProfile) ([]Exp
 
 	out := []ExportSubagent{}
 	for rows.Next() {
-		var reviewID string
+		var reviewID uuid.UUID
 		var verdictBool int64
 		var completedAt string
 		var output sql.NullString
@@ -376,7 +380,7 @@ func (db *DB) exportSubagents(panelRunUUID string, profile ExportProfile) ([]Exp
 		var startedAt sql.NullString
 		var finishedAt sql.NullString
 		var tokenUsage sql.NullString
-		var resumeSource sql.NullString
+		var resumeSource sql.Null[uuid.UUID]
 		if err := rows.Scan(&reviewID, &verdictBool, &completedAt, &output,
 			&agentName, &model, &reviewType, &memberName, &startedAt,
 			&finishedAt, &tokenUsage, &resumeSource); err != nil {
@@ -387,7 +391,7 @@ func (db *DB) exportSubagents(panelRunUUID string, profile ExportProfile) ([]Exp
 			name = agentName
 		}
 		sub := ExportSubagent{
-			ReviewID:    capExportString(reviewID),
+			ReviewID:    reviewID,
 			Name:        capExportString(name),
 			Agent:       capExportString(agentName),
 			Model:       stringPtrNonEmpty(nullStringValue(model)),
@@ -396,9 +400,9 @@ func (db *DB) exportSubagents(panelRunUUID string, profile ExportProfile) ([]Exp
 			CompletedAt: formatExportTime(parseSQLiteTime(completedAt)),
 			DurationMS:  exportDurationMS(startedAt, finishedAt),
 			Cost:        parseExportCost(tokenUsage),
-			ResumeSourceJobUUID: stringPtrNonEmpty(
-				nullStringValue(resumeSource),
-			),
+		}
+		if resumeSource.Valid {
+			sub.ResumeSourceJobUUID = &resumeSource.V
 		}
 		if profile == ExportProfileContent && output.Valid {
 			sub.Content = exportContentPtr(output.String)
@@ -579,8 +583,8 @@ func isSHALike(s string) bool {
 	return true
 }
 
-func encodeExportCursor(databaseID, completedAt, reviewID string) string {
-	if databaseID == "" || completedAt == "" || reviewID == "" {
+func encodeExportCursor(databaseID uuid.UUID, completedAt string, reviewID uuid.UUID) string {
+	if databaseID == uuid.Nil() || completedAt == "" || reviewID == uuid.Nil() {
 		return ""
 	}
 	data, err := json.Marshal(exportCursor{
@@ -639,7 +643,7 @@ func decodeExportCursor(cursor string) (*exportCursor, error) {
 	if decoded.Version != exportCursorVersion {
 		return nil, fmt.Errorf("invalid export cursor: unsupported version %d", decoded.Version)
 	}
-	if decoded.DatabaseID == "" || decoded.CompletedAt == "" || decoded.ReviewID == "" {
+	if decoded.DatabaseID == uuid.Nil() || decoded.CompletedAt == "" || decoded.ReviewID == uuid.Nil() {
 		return nil, errors.New("invalid export cursor: missing fields")
 	}
 	t, err := time.Parse(time.RFC3339Nano, decoded.CompletedAt)

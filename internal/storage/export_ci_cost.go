@@ -9,6 +9,7 @@ import (
 	"log"
 	"strings"
 	"time"
+	"uuid"
 )
 
 const (
@@ -38,7 +39,7 @@ type ExportCICostPage struct {
 // ExportCICostJob is one CI job where an agent ran. CostUSD is nil when the
 // job has no usable recorded price; a pointer to zero is a priced free run.
 type ExportCICostJob struct {
-	JobUUID             string                 `json:"job_uuid"`
+	JobUUID             uuid.UUID              `json:"job_uuid" format:"uuid"`
 	FinishedAt          string                 `json:"finished_at"`
 	Agent               string                 `json:"agent"`
 	Model               *string                `json:"model"`
@@ -47,12 +48,12 @@ type ExportCICostJob struct {
 	Status              string                 `json:"status"`
 	CostUSD             *float64               `json:"cost_usd"`
 	Experiments         []ExperimentAssignment `json:"experiments"`
-	ResumeSourceJobUUID *string                `json:"resume_source_job_uuid"`
+	ResumeSourceJobUUID *uuid.UUID             `json:"resume_source_job_uuid" format:"uuid"`
 }
 
 type ciCostCursor struct {
 	Version    int        `json:"version"`
-	DatabaseID string     `json:"database_id"`
+	DatabaseID uuid.UUID  `json:"database_id"`
 	FinishedAt string     `json:"finished_at"`
 	JobID      int64      `json:"job_id"`
 	Legacy     bool       `json:"legacy,omitempty"`
@@ -255,7 +256,7 @@ func scanCICostRow(rows *sql.Rows) (int64, string, ExportCICostJob, error) {
 		model        sql.NullString
 		provider     sql.NullString
 		tokenUsage   sql.NullString
-		resumeSource sql.NullString
+		resumeSource sql.Null[uuid.UUID]
 	)
 	if err := rows.Scan(&id, &finishedAt, &job.JobUUID, &job.Agent, &model,
 		&provider, &job.Role, &job.Status, &tokenUsage, &resumeSource); err != nil {
@@ -272,16 +273,16 @@ func scanCICostRow(rows *sql.Rows) (int64, string, ExportCICostJob, error) {
 	}
 	job.CostUSD = parseExportCost(tokenUsage).USD
 	job.Experiments = []ExperimentAssignment{}
-	if resumeSource.Valid && resumeSource.String != "" {
-		job.ResumeSourceJobUUID = &resumeSource.String
+	if resumeSource.Valid {
+		job.ResumeSourceJobUUID = &resumeSource.V
 	}
 	return id, job.FinishedAt, job, nil
 }
 
 func encodeCICostCursor(
-	databaseID, finishedAt string, jobID int64, legacy bool, since, until time.Time,
+	databaseID uuid.UUID, finishedAt string, jobID int64, legacy bool, since, until time.Time,
 ) string {
-	if databaseID == "" || finishedAt == "" || jobID <= 0 {
+	if databaseID == uuid.Nil() || finishedAt == "" || jobID <= 0 {
 		return ""
 	}
 	var normalizedSince *time.Time
@@ -321,7 +322,7 @@ func (db *DB) resolveCICostCursor(cursor string, legacy bool) (*ciCostCursor, er
 	if decoded.Version != ciCostCursorVersion {
 		return nil, fmt.Errorf("invalid ci cost cursor: unsupported version %d", decoded.Version)
 	}
-	if decoded.DatabaseID == "" || decoded.FinishedAt == "" || decoded.JobID <= 0 {
+	if decoded.DatabaseID == uuid.Nil() || decoded.FinishedAt == "" || decoded.JobID <= 0 {
 		return nil, errors.New("invalid ci cost cursor: missing fields")
 	}
 	if decoded.Legacy != legacy {

@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"context"
+	"crypto/rand"
 	"errors"
 	"fmt"
 	"io"
@@ -19,7 +20,6 @@ import (
 
 	"go.kenn.io/roborev/internal/daemon"
 	"go.kenn.io/roborev/internal/skills"
-	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/update"
 	"go.kenn.io/roborev/internal/version"
 )
@@ -575,7 +575,7 @@ func runControlledUpdate(
 		prepared, err := prepareUpdateDaemonForCommand(
 			operationCtx,
 			info.Endpoint(),
-			storage.GenerateUUID(),
+			rand.Text(),
 			policy,
 			out,
 		)

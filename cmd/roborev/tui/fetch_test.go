@@ -116,7 +116,7 @@ func TestListFetchesRequestMetadataOnlyRows(t *testing.T) {
 	m.jobs = []storage.ReviewJob{{ID: 1}}
 	m.fetchMoreJobs()()
 	m.fetchFixJobs()()
-	m.fetchPanelMembers("panel-run-uuid")()
+	m.fetchPanelMembers(testUUID("panel-run-uuid"))()
 
 	mu.Lock()
 	defer mu.Unlock()

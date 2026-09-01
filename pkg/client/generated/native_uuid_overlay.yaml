@@ -1,0 +1,11 @@
+overlay: 1.0.0
+info:
+  title: Use Go 1.27 native UUIDs
+  version: 1.0.0
+actions:
+  - target: '$..[?(@.format == "uuid")]'
+    update:
+      format: go-native-uuid
+      x-go-type: uuid.UUID
+      x-go-type-import:
+        path: uuid

@@ -6,6 +6,7 @@ import (
 	"errors"
 	"fmt"
 	"time"
+	"uuid"
 
 	"github.com/danielgtaylor/huma/v2"
 
@@ -22,7 +23,7 @@ type ReviewProjectionInput struct {
 
 type ReviewProjectionJob struct {
 	ID              int64                 `json:"id"`
-	UUID            string                `json:"uuid,omitempty"`
+	UUID            *uuid.UUID            `json:"uuid,omitempty" format:"uuid"`
 	Project         string                `json:"project"`
 	GitRef          string                `json:"git_ref"`
 	Branch          string                `json:"branch,omitempty"`
@@ -120,8 +121,8 @@ func (s *Server) humaGetReviewProjection(
 			Response: response.Response, CreatedAt: response.CreatedAt,
 		})
 	}
-	if job.PanelRunUUID != "" {
-		members, membersErr := s.db.GetPanelMembers(job.PanelRunUUID)
+	if job.PanelRunUUID != nil {
+		members, membersErr := s.db.GetPanelMembers(*job.PanelRunUUID)
 		if membersErr != nil {
 			return nil, huma.Error500InternalServerError(fmt.Sprintf("get panel members: %v", membersErr))
 		}

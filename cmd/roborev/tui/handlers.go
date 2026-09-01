@@ -410,15 +410,18 @@ func (m model) handleToggleExpand() (tea.Model, tea.Cmd) {
 	if idx < 0 || !rows[idx].hasChildren {
 		return m, nil
 	}
-	uuid := rows[idx].job.PanelRunUUID
-	m.queueColGen++
-	if m.expandedPanels[uuid] {
-		delete(m.expandedPanels, uuid)
+	runUUID := rows[idx].job.PanelRunUUID
+	if runUUID == nil {
 		return m, nil
 	}
-	m.expandedPanels[uuid] = true
-	if _, ok := m.panelMembers[uuid]; !ok {
-		return m, m.fetchPanelMembers(uuid)
+	m.queueColGen++
+	if m.expandedPanels[*runUUID] {
+		delete(m.expandedPanels, *runUUID)
+		return m, nil
+	}
+	m.expandedPanels[*runUUID] = true
+	if _, ok := m.panelMembers[*runUUID]; !ok {
+		return m, m.fetchPanelMembers(*runUUID)
 	}
 	return m, nil
 }
@@ -432,14 +435,17 @@ func (m model) handleRightKey() (tea.Model, tea.Cmd) {
 	if idx < 0 || !rows[idx].hasChildren {
 		return m.handleNextKey()
 	}
-	uuid := rows[idx].job.PanelRunUUID
-	if m.expandedPanels[uuid] {
+	runUUID := rows[idx].job.PanelRunUUID
+	if runUUID == nil {
+		return m, nil
+	}
+	if m.expandedPanels[*runUUID] {
 		return m, nil
 	}
 	m.queueColGen++
-	m.expandedPanels[uuid] = true
-	if _, ok := m.panelMembers[uuid]; !ok {
-		return m, m.fetchPanelMembers(uuid)
+	m.expandedPanels[*runUUID] = true
+	if _, ok := m.panelMembers[*runUUID]; !ok {
+		return m, m.fetchPanelMembers(*runUUID)
 	}
 	return m, nil
 }
@@ -454,19 +460,19 @@ func (m model) handleLeftKey() (tea.Model, tea.Cmd) {
 		return m.handlePrevKey()
 	}
 	row := rows[idx]
-	if row.hasChildren {
-		if m.expandedPanels[row.job.PanelRunUUID] {
+	if row.hasChildren && row.job.PanelRunUUID != nil {
+		if m.expandedPanels[*row.job.PanelRunUUID] {
 			m.queueColGen++
-			delete(m.expandedPanels, row.job.PanelRunUUID)
+			delete(m.expandedPanels, *row.job.PanelRunUUID)
 		}
 		return m, nil
 	}
-	if row.depth == 1 && row.job.PanelRunUUID != "" {
+	if row.depth == 1 && row.job.PanelRunUUID != nil {
 		for i := idx - 1; i >= 0; i-- {
 			parent := rows[i]
-			if parent.depth == 0 && parent.job.PanelRunUUID == row.job.PanelRunUUID {
+			if parent.depth == 0 && parent.job.PanelRunUUID != nil && *parent.job.PanelRunUUID == *row.job.PanelRunUUID {
 				m.queueColGen++
-				delete(m.expandedPanels, row.job.PanelRunUUID)
+				delete(m.expandedPanels, *row.job.PanelRunUUID)
 				m = m.moveSelectionToJobID(parent.job.ID)
 				return m, nil
 			}

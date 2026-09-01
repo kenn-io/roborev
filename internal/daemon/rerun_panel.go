@@ -5,9 +5,9 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"uuid"
 
 	"github.com/danielgtaylor/huma/v2"
-	"github.com/google/uuid"
 
 	"go.kenn.io/roborev/internal/config"
 	"go.kenn.io/roborev/internal/storage"
@@ -111,7 +111,7 @@ func isRerunnableStatus(status storage.JobStatus) bool {
 // the synthesis row into fresh queued jobs under a new panel_run_uuid, leaving
 // the original run intact as history. EnqueuePanelRun re-blocks the new
 // synthesis until the new members finish.
-func (s *Server) rerunPanelRun(job *storage.ReviewJob, requestID string) (*RerunJobOutput, error) {
+func (s *Server) rerunPanelRun(job *storage.ReviewJob, requestID uuid.UUID) (*RerunJobOutput, error) {
 	// Require the same terminal states as ReenqueueJob so a queued/running
 	// synthesis cannot be rerun into a second active run alongside the original.
 	if !isRerunnableStatus(job.Status) {
@@ -122,7 +122,10 @@ func (s *Server) rerunPanelRun(job *storage.ReviewJob, requestID string) (*Rerun
 			"panel rerun worktree path is stale or invalid",
 		)
 	}
-	members, err := s.db.GetPanelMembers(job.PanelRunUUID)
+	if job.PanelRunUUID == nil {
+		return nil, huma.Error400BadRequest("job is not part of a panel run")
+	}
+	members, err := s.db.GetPanelMembers(*job.PanelRunUUID)
 	if err != nil {
 		return nil, huma.Error500InternalServerError(
 			fmt.Sprintf("load panel members: %v", err))
@@ -153,7 +156,7 @@ func (s *Server) rerunPanelRun(job *storage.ReviewJob, requestID string) (*Rerun
 			fmt.Sprintf("resolve panel rerun source: %v", err))
 	}
 
-	runUUID := uuid.NewString()
+	runUUID := uuid.New()
 	memberOpts := make([]storage.EnqueueOpts, len(members))
 	for i := range members {
 		diff, diffErr := s.db.GetJobDiffContent(members[i].ID)
@@ -180,7 +183,11 @@ func (s *Server) rerunPanelRun(job *storage.ReviewJob, requestID string) (*Rerun
 			fmt.Sprintf("load synthesis dirty files: %v", err))
 	}
 	synthOpts := panelRerunSynthesisOpts(job, runUUID, synthDiff, synthDirtyFiles, source)
-	synthOpts.Experiment, err = s.db.GetExperimentAssignmentInputForJobUUID(job.UUID)
+	jobUUID := uuid.Nil()
+	if job.UUID != nil {
+		jobUUID = *job.UUID
+	}
+	synthOpts.Experiment, err = s.db.GetExperimentAssignmentInputForJobUUID(jobUUID)
 	if err != nil {
 		return nil, huma.Error500InternalServerError(
 			fmt.Sprintf("load panel experiment assignment: %v", err))
@@ -216,7 +223,10 @@ func (s *Server) panelRerunSource(job *storage.ReviewJob) (string, error) {
 	if job.Source != "" {
 		return job.Source, nil
 	}
-	if _, err := s.db.GetCIPanelByRunUUID(job.PanelRunUUID); err != nil {
+	if job.PanelRunUUID == nil {
+		return "", nil
+	}
+	if _, err := s.db.GetCIPanelByRunUUID(*job.PanelRunUUID); err != nil {
 		if errors.Is(err, sql.ErrNoRows) {
 			return "", nil
 		}
@@ -232,7 +242,7 @@ func (s *Server) panelRerunSource(job *storage.ReviewJob) (string, error) {
 // (name/index/config), reassigning only the run UUID. Review/range/dirty prompts
 // are rebuilt by the worker so reruns do not reuse stale prebuilt prompts. diff
 // is the member's stored dirty diff (empty for commit/range targets).
-func panelRerunMemberOpts(m storage.ReviewJob, runUUID, diff string, dirtyFiles []string, source string) storage.EnqueueOpts {
+func panelRerunMemberOpts(m storage.ReviewJob, runUUID uuid.UUID, diff string, dirtyFiles []string, source string) storage.EnqueueOpts {
 	prompt := ""
 	if m.UsesStoredPrompt() {
 		prompt = m.Prompt
@@ -263,7 +273,7 @@ func panelRerunMemberOpts(m storage.ReviewJob, runUUID, diff string, dirtyFiles 
 		MinSeverity:           m.MinSeverity,
 		BackupAgent:           m.BackupAgent,
 		BackupModel:           m.BackupModel,
-		PanelRunUUID:          runUUID,
+		PanelRunUUID:          &runUUID,
 		PanelRole:             storage.PanelRoleMember,
 		PanelName:             m.PanelName,
 		PanelMemberName:       m.PanelMemberName,
@@ -275,7 +285,7 @@ func panelRerunMemberOpts(m storage.ReviewJob, runUUID, diff string, dirtyFiles 
 // panelRerunSynthesisOpts clones the synthesis parent into fresh EnqueueOpts for
 // a new run. EnqueuePanelRun re-enforces JobType=synthesis, role=synthesis, and
 // ClaimBlocked, but they are set here too so the opts are self-describing.
-func panelRerunSynthesisOpts(job *storage.ReviewJob, runUUID, diff string, dirtyFiles []string, source string) storage.EnqueueOpts {
+func panelRerunSynthesisOpts(job *storage.ReviewJob, runUUID uuid.UUID, diff string, dirtyFiles []string, source string) storage.EnqueueOpts {
 	return storage.EnqueueOpts{
 		RepoID:                job.RepoID,
 		CommitID:              job.CommitIDValue(),
@@ -300,7 +310,7 @@ func panelRerunSynthesisOpts(job *storage.ReviewJob, runUUID, diff string, dirty
 		MinSeverity:           job.MinSeverity,
 		BackupAgent:           job.BackupAgent,
 		BackupModel:           job.BackupModel,
-		PanelRunUUID:          runUUID,
+		PanelRunUUID:          &runUUID,
 		PanelRole:             storage.PanelRoleSynthesis,
 		PanelName:             job.PanelName,
 		PanelMemberConfigJSON: job.PanelMemberConfigJSON,

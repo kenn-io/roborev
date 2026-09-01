@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -185,7 +186,7 @@ func TestMigrationBackfillsSynthesisSnapshotSurvivesCascade(t *testing.T) {
 }
 
 // panelMemberID returns the id of a panel run's single seeded member job.
-func panelMemberID(t *testing.T, db *DB, runUUID string) int64 {
+func panelMemberID(t *testing.T, db *DB, runUUID uuid.UUID) int64 {
 	t.Helper()
 	var id int64
 	require.NoError(t, db.QueryRow(`SELECT id FROM review_jobs
@@ -196,7 +197,7 @@ func panelMemberID(t *testing.T, db *DB, runUUID string) int64 {
 // completeMemberWithOutput marks a panel run's member job done and stores a
 // review row with the given output — the evidence the outcome backfill keys
 // on.
-func completeMemberWithOutput(t *testing.T, db *DB, runUUID, output string) {
+func completeMemberWithOutput(t *testing.T, db *DB, runUUID uuid.UUID, output string) {
 	t.Helper()
 	id := panelMemberID(t, db, runUUID)
 	setStatus(t, db, id, JobStatusDone)
@@ -232,13 +233,13 @@ func TestExportCIMetricsIncludesOnlyPostedPanels(t *testing.T) {
 	}
 	require.NoError(t, insertExperimentAssignmentTx(
 		context.Background(), db, ReviewUnitPanel, posted.PanelRunUUID,
-		assignment, "test-machine", time.Now(),
+		assignment, testUUID("test-machine"), time.Now(),
 	))
 	members, err := db.GetPanelMembers(posted.PanelRunUUID)
 	require.NoError(t, err)
 	require.NotEmpty(t, members)
 	_, err = db.Exec(`UPDATE review_jobs SET resume_source_job_uuid = ? WHERE id = ?`,
-		"source-job-uuid", members[0].ID)
+		testUUID("source-job"), members[0].ID)
 	require.NoError(t, err)
 	// An unposted panel must not export.
 	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo2"))
@@ -267,7 +268,7 @@ func TestExportCIMetricsIncludesOnlyPostedPanels(t *testing.T) {
 		assert.NotEmpty(t, j.Agent)
 		assert.NotEmpty(t, j.Status)
 		if j.ResumeSourceJobUUID != nil {
-			assert.Equal(t, "source-job-uuid", *j.ResumeSourceJobUUID)
+			assert.Equal(t, testUUID("source-job"), *j.ResumeSourceJobUUID)
 			lineageFound = true
 		}
 	}
@@ -363,7 +364,7 @@ func TestExportCIMetricsRejectsCursorFromDifferentDatabase(t *testing.T) {
 	seedPostedPanel(t, db, 20, "sha-c", PanelOutcomeReviewPosted)
 	raw, err := json.Marshal(ciMetricsCursor{
 		Version:    ciMetricsCursorVersion,
-		DatabaseID: "some-other-database",
+		DatabaseID: testUUID("some-other-database"),
 		PostedAt:   "2026-07-01T00:00:00Z",
 		PanelID:    1,
 	})
@@ -446,9 +447,9 @@ func TestExportCIMetricsLegacyCombinesPseudopanel(t *testing.T) {
 	assert.Nil(t, p.SynthesisModel, "pseudopanels had no synthesis")
 
 	require.Len(t, p.Jobs, 3)
-	assert.Equal(t, jobA.UUID, p.Jobs[0].JobUUID)
-	assert.Equal(t, jobB.UUID, p.Jobs[1].JobUUID)
-	assert.Equal(t, failed.UUID, p.Jobs[2].JobUUID)
+	assert.Equal(t, *jobA.UUID, p.Jobs[0].JobUUID)
+	assert.Equal(t, *jobB.UUID, p.Jobs[1].JobUUID)
+	assert.Equal(t, *failed.UUID, p.Jobs[2].JobUUID)
 	assert.Equal(t, string(JobStatusDone), p.Jobs[0].Status)
 	assert.Equal(t, string(JobStatusDone), p.Jobs[1].Status)
 	assert.Equal(t, string(JobStatusFailed), p.Jobs[2].Status)

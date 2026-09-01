@@ -238,7 +238,7 @@ func statusCmd() *cobra.Command {
 					}
 					// Show [remote] indicator for jobs from other machines
 					repoDisplay := j.RepoName
-					if status.MachineID != "" && j.SourceMachineID != "" && j.SourceMachineID != status.MachineID {
+					if status.MachineID != nil && j.SourceMachineID != nil && *j.SourceMachineID != *status.MachineID {
 						repoDisplay += " [remote]"
 					}
 					fmt.Fprintf(w, "  %d\t%s\t%s\t%s\t%s\t%s\n",

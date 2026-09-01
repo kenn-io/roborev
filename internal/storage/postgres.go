@@ -9,6 +9,7 @@ import (
 	"log"
 	"strings"
 	"time"
+	"uuid"
 
 	"github.com/jackc/pgx/v5"
 	"github.com/jackc/pgx/v5/pgconn"
@@ -513,32 +514,40 @@ func (p *PgPool) EnsureSchema(ctx context.Context) error {
 // GetDatabaseID returns the unique ID for this Postgres database.
 // Creates one if it doesn't exist. This ID is used to detect when
 // a client is syncing to a different database than before.
-func (p *PgPool) GetDatabaseID(ctx context.Context) (string, error) {
+func (p *PgPool) GetDatabaseID(ctx context.Context) (uuid.UUID, error) {
 	var id string
 	err := p.pool.QueryRow(ctx, `SELECT value FROM sync_metadata WHERE key = 'database_id'`).Scan(&id)
 	if err == nil {
-		return id, nil
+		parsed, parseErr := uuid.Parse(id) //nolint:forbidigo // sync_metadata TEXT value boundary.
+		if parseErr != nil {
+			return uuid.Nil(), fmt.Errorf("parse database_id: %w", parseErr)
+		}
+		return parsed, nil
 	}
 	if !errors.Is(err, pgx.ErrNoRows) {
-		return "", fmt.Errorf("query database_id: %w", err)
+		return uuid.Nil(), fmt.Errorf("query database_id: %w", err)
 	}
 
 	// Generate new ID - use ON CONFLICT to handle concurrent creation
-	newID := GenerateUUID()
+	newID := uuid.New()
 	_, err = p.pool.Exec(ctx, `
 		INSERT INTO sync_metadata (key, value) VALUES ('database_id', $1)
 		ON CONFLICT (key) DO NOTHING
 	`, newID)
 	if err != nil {
-		return "", fmt.Errorf("insert database_id: %w", err)
+		return uuid.Nil(), fmt.Errorf("insert database_id: %w", err)
 	}
 
 	// Re-read in case another process inserted first
 	err = p.pool.QueryRow(ctx, `SELECT value FROM sync_metadata WHERE key = 'database_id'`).Scan(&id)
 	if err != nil {
-		return "", fmt.Errorf("re-read database_id: %w", err)
+		return uuid.Nil(), fmt.Errorf("re-read database_id: %w", err)
 	}
-	return id, nil
+	parsed, err := uuid.Parse(id) //nolint:forbidigo // sync_metadata TEXT value boundary.
+	if err != nil {
+		return uuid.Nil(), fmt.Errorf("parse database_id: %w", err)
+	}
+	return parsed, nil
 }
 
 // pgLegacyTables lists tables that may exist in public schema from older installations
@@ -683,7 +692,7 @@ func (p *PgPool) Ping(ctx context.Context) error {
 }
 
 // RegisterMachine registers or updates this machine in the machines table
-func (p *PgPool) RegisterMachine(ctx context.Context, machineID, name string) error {
+func (p *PgPool) RegisterMachine(ctx context.Context, machineID uuid.UUID, name string) error {
 	_, err := p.pool.Exec(ctx, `
 		INSERT INTO machines (machine_id, name, last_seen_at)
 		VALUES ($1, $2, NOW())
@@ -788,10 +797,10 @@ func (p *PgPool) UpsertJob(ctx context.Context, j SyncableJob, pgRepoID int64, p
 			panel_member_index = EXCLUDED.panel_member_index,
 			panel_member_config_json = EXCLUDED.panel_member_config_json,
 			updated_at = clock_timestamp()
-	`, j.UUID, pgRepoID, pgCommitID, j.GitRef, nullString(j.SessionID), nullString(j.ResumeSourceJobUUID), j.Agent, nullString(j.Model), nullString(j.Provider), nullString(j.RequestedModel), nullString(j.RequestedProvider), nullString(j.Reasoning),
+	`, j.UUID, pgRepoID, pgCommitID, j.GitRef, nullString(j.SessionID), j.ResumeSourceJobUUID, j.Agent, nullString(j.Model), nullString(j.Provider), nullString(j.RequestedModel), nullString(j.RequestedProvider), nullString(j.Reasoning),
 		defaultStr(j.JobType, "review"), j.ReviewType, nullString(j.PatchID), j.Status, j.Agentic, j.EnqueuedAt, j.StartedAt, j.FinishedAt,
 		nullString(j.Prompt), j.DiffContent, nullString(dirtyFilesJSON), nullString(j.Error), nullString(j.TokenUsage), nullString(j.WorktreePath), nullString(j.Source), normalizeMinSeverityForWrite(j.MinSeverity),
-		nullString(j.PanelRunUUID), nullString(j.PanelRole), nullString(j.PanelName), nullString(j.PanelMemberName), j.PanelMemberIndex, nullString(j.PanelMemberConfigJSON),
+		j.PanelRunUUID, nullString(j.PanelRole), nullString(j.PanelName), nullString(j.PanelMemberName), j.PanelMemberIndex, nullString(j.PanelMemberConfigJSON),
 		j.SourceMachineID, j.BackupAgent, j.BackupModel, j.AgentInvoked)
 	return err
 }
@@ -849,7 +858,7 @@ func (p *PgPool) UpsertExperimentAssignment(ctx context.Context, assignment Sync
 		// unit for a future active/passive design. Serialize today's
 		// one-experiment policy in application code so concurrent sync workers
 		// cannot both pass the read-before-insert validation.
-		lockKey := assignment.ReviewUnitKind + ":" + assignment.ReviewUnitUUID
+		lockKey := fmt.Sprintf("%s:%s", assignment.ReviewUnitKind, assignment.ReviewUnitUUID)
 		if _, err := tx.Exec(ctx,
 			`SELECT pg_advisory_xact_lock(hashtextextended($1, 0))`, lockKey,
 		); err != nil {
@@ -901,7 +910,7 @@ func (p *PgPool) UpsertExperimentAssignment(ctx context.Context, assignment Sync
 	})
 }
 
-func (p *PgPool) PullExperimentDefinitions(ctx context.Context, excludeMachineID string) ([]SyncableExperimentDefinition, error) {
+func (p *PgPool) PullExperimentDefinitions(ctx context.Context, excludeMachineID uuid.UUID) ([]SyncableExperimentDefinition, error) {
 	rows, err := p.pool.Query(ctx, `
 		SELECT experiment_id, definition_hash, definition_json, first_seen_at, source_machine_id
 		FROM experiment_definitions
@@ -925,7 +934,7 @@ func (p *PgPool) PullExperimentDefinitions(ctx context.Context, excludeMachineID
 }
 
 func (p *PgPool) PullExperimentAssignments(
-	ctx context.Context, excludeMachineID, cursor string, limit int,
+	ctx context.Context, excludeMachineID uuid.UUID, cursor string, limit int,
 ) ([]SyncableExperimentAssignment, string, error) {
 	var cursorTime time.Time
 	var cursorID int64
@@ -982,7 +991,7 @@ func (p *PgPool) InsertResponse(ctx context.Context, r SyncableResponse) error {
 
 // PulledJob represents a job pulled from PostgreSQL
 type PulledJob struct {
-	UUID                  string
+	UUID                  uuid.UUID
 	RepoIdentity          string
 	CommitSHA             string
 	CommitAuthor          string
@@ -990,7 +999,7 @@ type PulledJob struct {
 	CommitTimestamp       time.Time
 	GitRef                string
 	SessionID             string
-	ResumeSourceJobUUID   string
+	ResumeSourceJobUUID   *uuid.UUID
 	Agent                 string
 	Model                 string
 	Provider              string
@@ -1016,20 +1025,20 @@ type PulledJob struct {
 	MinSeverity           string
 	BackupAgent           string
 	BackupModel           string
-	PanelRunUUID          string
+	PanelRunUUID          *uuid.UUID
 	PanelRole             string
 	PanelName             string
 	PanelMemberName       string
 	PanelMemberIndex      int
 	PanelMemberConfigJSON string
-	SourceMachineID       string
+	SourceMachineID       uuid.UUID
 	UpdatedAt             time.Time
 }
 
 // PullJobs fetches jobs from PostgreSQL updated after the given cursor.
 // Cursor format: "updated_at id" (space-separated) or empty for first pull.
 // Returns jobs not from the given machineID (to avoid echo).
-func (p *PgPool) PullJobs(ctx context.Context, excludeMachineID string, cursor string, limit int) ([]PulledJob, string, error) {
+func (p *PgPool) PullJobs(ctx context.Context, excludeMachineID uuid.UUID, cursor string, limit int) ([]PulledJob, string, error) {
 	var cursorTime time.Time
 	var cursorID int64
 
@@ -1044,11 +1053,11 @@ func (p *PgPool) PullJobs(ctx context.Context, excludeMachineID string, cursor s
 	rows, err := p.pool.Query(ctx, `
 		SELECT
 			j.uuid, r.identity, COALESCE(c.sha, ''), COALESCE(c.author, ''), COALESCE(c.subject, ''), COALESCE(c.timestamp, '1970-01-01'::timestamptz),
-			j.git_ref, COALESCE(j.session_id, ''), COALESCE(j.resume_source_job_uuid, ''), j.agent, COALESCE(j.model, ''), COALESCE(j.provider, ''), COALESCE(j.requested_model, ''), COALESCE(j.requested_provider, ''), COALESCE(j.reasoning, ''), COALESCE(j.job_type, 'review'), COALESCE(j.review_type, ''), COALESCE(j.patch_id, ''), j.status, j.agentic, COALESCE(j.agent_invoked, FALSE),
+			j.git_ref, COALESCE(j.session_id, ''), NULLIF(j.resume_source_job_uuid, '')::uuid, j.agent, COALESCE(j.model, ''), COALESCE(j.provider, ''), COALESCE(j.requested_model, ''), COALESCE(j.requested_provider, ''), COALESCE(j.reasoning, ''), COALESCE(j.job_type, 'review'), COALESCE(j.review_type, ''), COALESCE(j.patch_id, ''), j.status, j.agentic, COALESCE(j.agent_invoked, FALSE),
 			j.enqueued_at, j.started_at, j.finished_at,
 			COALESCE(j.prompt, ''), j.diff_content, j.dirty_files, COALESCE(j.error, ''), COALESCE(j.token_usage, ''),
 			COALESCE(j.worktree_path, ''), COALESCE(j.source, ''), COALESCE(j.min_severity, ''), COALESCE(j.backup_agent, ''), COALESCE(j.backup_model, ''),
-			COALESCE(j.panel_run_uuid, ''), COALESCE(j.panel_role, ''), COALESCE(j.panel_name, ''), COALESCE(j.panel_member_name, ''), COALESCE(j.panel_member_index, 0), COALESCE(j.panel_member_config_json, ''),
+			NULLIF(j.panel_run_uuid, '')::uuid, COALESCE(j.panel_role, ''), COALESCE(j.panel_name, ''), COALESCE(j.panel_member_name, ''), COALESCE(j.panel_member_index, 0), COALESCE(j.panel_member_config_json, ''),
 			j.source_machine_id, j.updated_at, j.id
 		FROM review_jobs j
 		JOIN repos r ON j.repo_id = r.id
@@ -1108,22 +1117,22 @@ func (p *PgPool) PullJobs(ctx context.Context, excludeMachineID string, cursor s
 
 // PulledReview represents a review pulled from PostgreSQL
 type PulledReview struct {
-	UUID               string
-	JobUUID            string
+	UUID               uuid.UUID
+	JobUUID            uuid.UUID
 	Agent              string
 	Prompt             string
 	Output             string
 	Closed             bool
 	VerdictBool        *bool
 	StructuredOutput   json.RawMessage
-	UpdatedByMachineID string
+	UpdatedByMachineID uuid.UUID
 	CreatedAt          time.Time
 	UpdatedAt          time.Time
 }
 
 // PullReviews fetches reviews from PostgreSQL updated after the given cursor.
 // Only fetches reviews for jobs in knownJobUUIDs to avoid cursor advancement past unknown jobs.
-func (p *PgPool) PullReviews(ctx context.Context, excludeMachineID string, knownJobUUIDs []string, cursor string, limit int) ([]PulledReview, string, error) {
+func (p *PgPool) PullReviews(ctx context.Context, excludeMachineID uuid.UUID, knownJobUUIDs []uuid.UUID, cursor string, limit int) ([]PulledReview, string, error) {
 	var cursorTime time.Time
 	var cursorID int64
 
@@ -1191,19 +1200,19 @@ func (p *PgPool) PullReviews(ctx context.Context, excludeMachineID string, known
 
 // PulledResponse represents a response pulled from PostgreSQL
 type PulledResponse struct {
-	UUID            string
-	JobUUID         string
+	UUID            uuid.UUID
+	JobUUID         uuid.UUID
 	Responder       string
 	Response        string
 	Source          string
-	SourceMachineID string
+	SourceMachineID uuid.UUID
 	CreatedAt       time.Time
 	InsertedAt      time.Time
 }
 
 // PullResponses fetches responses from PostgreSQL inserted after the given cursor.
 // Cursor format: "inserted_at id" (space-separated) or empty for first pull.
-func (p *PgPool) PullResponses(ctx context.Context, excludeMachineID string, cursor string, limit int) ([]PulledResponse, string, error) {
+func (p *PgPool) PullResponses(ctx context.Context, excludeMachineID uuid.UUID, cursor string, limit int) ([]PulledResponse, string, error) {
 	var cursorTime time.Time
 	var cursorID int64
 	if cursor != "" {
@@ -1497,10 +1506,10 @@ func queueJobUpsert(batch *pgx.Batch, jw JobWithPgIDs) error {
 				panel_member_index = EXCLUDED.panel_member_index,
 				panel_member_config_json = EXCLUDED.panel_member_config_json,
 				updated_at = clock_timestamp()
-		`, j.UUID, jw.PgRepoID, jw.PgCommitID, j.GitRef, nullString(j.SessionID), nullString(j.ResumeSourceJobUUID), j.Agent, nullString(j.Model), nullString(j.Provider), nullString(j.RequestedModel), nullString(j.RequestedProvider), nullString(j.Reasoning),
+		`, j.UUID, jw.PgRepoID, jw.PgCommitID, j.GitRef, nullString(j.SessionID), j.ResumeSourceJobUUID, j.Agent, nullString(j.Model), nullString(j.Provider), nullString(j.RequestedModel), nullString(j.RequestedProvider), nullString(j.Reasoning),
 		defaultStr(j.JobType, "review"), j.ReviewType, nullString(j.PatchID), j.Status, j.Agentic, j.EnqueuedAt, j.StartedAt, j.FinishedAt,
 		nullString(sanitizePostgresText(j.Prompt)), sanitizePostgresTextPointer(j.DiffContent), nullString(dirtyFilesJSON), nullString(sanitizePostgresText(j.Error)), nullString(j.TokenUsage), nullString(j.WorktreePath), nullString(j.Source), normalizeMinSeverityForWrite(j.MinSeverity),
-		nullString(j.PanelRunUUID), nullString(j.PanelRole), nullString(j.PanelName), nullString(j.PanelMemberName), j.PanelMemberIndex, nullString(j.PanelMemberConfigJSON),
+		j.PanelRunUUID, nullString(j.PanelRole), nullString(j.PanelName), nullString(j.PanelMemberName), j.PanelMemberIndex, nullString(j.PanelMemberConfigJSON),
 		j.SourceMachineID, j.BackupAgent, j.BackupModel, j.AgentInvoked)
 	return nil
 }

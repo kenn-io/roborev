@@ -8,6 +8,7 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -48,7 +49,7 @@ func countCIPanels(t *testing.T, db *DB, githubRepo string, prNumber int) int {
 // insertTestCIPanel inserts a ci_pr_panels row via raw SQL and returns its id.
 // Production creation is owned by CreateCIPanelRun (task A3); this helper only
 // seeds rows so the read queries can be exercised in isolation.
-func insertTestCIPanel(t *testing.T, db *DB, githubRepo string, prNumber int, headSHA, panelRunUUID string, synthesisJobID int64) int64 {
+func insertTestCIPanel(t *testing.T, db *DB, githubRepo string, prNumber int, headSHA string, panelRunUUID uuid.UUID, synthesisJobID int64) int64 {
 	t.Helper()
 	res, err := db.Exec(
 		`INSERT INTO ci_pr_panels (github_repo, pr_number, head_sha, panel_run_uuid, synthesis_job_id) VALUES (?,?,?,?,?)`,
@@ -64,7 +65,7 @@ func insertTestCIPanel(t *testing.T, db *DB, githubRepo string, prNumber int, he
 func seedPanelRow(t *testing.T, db *DB, githubRepo string, pr int, headSHA string) int64 {
 	t.Helper()
 	res, err := db.Exec(`INSERT INTO ci_pr_panels (github_repo, pr_number, head_sha, panel_run_uuid, created_at)
-		VALUES (?, ?, ?, ?, datetime('now'))`, githubRepo, pr, headSHA, "run-"+headSHA)
+		VALUES (?, ?, ?, ?, datetime('now'))`, githubRepo, pr, headSHA, testUUID("run-"+headSHA))
 	require.NoError(t, err)
 	id, err := res.LastInsertId()
 	require.NoError(t, err)
@@ -212,7 +213,7 @@ func TestGetActivePanelsForPR(t *testing.T) {
 	require.NoError(t, err)
 	require.Len(t, rows, 1, "only the pending row for o/r#7")
 	assert.Equal("pending", rows[0].HeadSHA)
-	assert.Equal("run-pending", rows[0].PanelRunUUID)
+	assert.Equal(testUUID("run-pending"), rows[0].PanelRunUUID)
 }
 
 // TestGetTimedOutPanels covers the timeout sweep selection: only un-posted runs
@@ -318,7 +319,7 @@ func TestDeleteCIPanelByRun(t *testing.T) {
 
 	seedPanelRow(t, db, "o/r", 4, "runsha")
 
-	require.NoError(t, db.DeleteCIPanelByRun("run-runsha"))
+	require.NoError(t, db.DeleteCIPanelByRun(testUUID("run-runsha")))
 
 	_, err := db.GetCIPanelByPRSHA("o/r", 4, "runsha")
 	require.ErrorIs(t, err, sql.ErrNoRows, "row gone after delete by run uuid")
@@ -330,11 +331,11 @@ func TestDeleteCIPanelByRunDoesNotClaimUnmappedPanel(t *testing.T) {
 	repo := createRepo(t, db, filepath.Join(t.TempDir(), "repo"))
 	job, err := db.EnqueueJob(EnqueueOpts{
 		RepoID: repo.ID, GitRef: "manual", Agent: "test",
-		PanelRunUUID: "manual-run", PanelRole: PanelRoleMember,
+		PanelRunUUID: testUUIDPtr("manual-run"), PanelRole: PanelRoleMember,
 	})
 	require.NoError(t, err)
 
-	require.NoError(t, db.DeleteCIPanelByRun("manual-run"))
+	require.NoError(t, db.DeleteCIPanelByRun(testUUID("manual-run")))
 	var source sql.NullString
 	require.NoError(t, db.QueryRow(`SELECT source FROM review_jobs WHERE id = ?`, job.ID).Scan(&source))
 	assert.False(t, source.Valid, "an unmapped user panel must remain non-CI")
@@ -348,24 +349,25 @@ func TestGetCIPanelByPRSHAAndSynthesisJobID(t *testing.T) {
 	repo := createRepo(t, db, "/tmp/ci-panels-lookup")
 
 	// Seed a real panel run so synthesis_job_id references a real job.
+	runUUID := testUUID("run-1")
 	members := []EnqueueOpts{{
 		RepoID: repo.ID, GitRef: "b..h", Agent: "test",
-		PanelRunUUID: "run-1", PanelMemberIndex: 0,
+		PanelRunUUID: &runUUID, PanelMemberIndex: 0,
 	}}
 	synthesis := EnqueueOpts{
-		RepoID: repo.ID, GitRef: "b..h", Agent: "test", PanelRunUUID: "run-1",
+		RepoID: repo.ID, GitRef: "b..h", Agent: "test", PanelRunUUID: &runUUID,
 	}
 	_, synthJob, err := db.EnqueuePanelRun(members, synthesis)
 	require.NoError(t, err)
 	require.NotNil(t, synthJob)
 
-	insertTestCIPanel(t, db, "o/r", 7, "headsha", "run-1", synthJob.ID)
+	insertTestCIPanel(t, db, "o/r", 7, "headsha", runUUID, synthJob.ID)
 
 	// Lookup by (github_repo, pr_number, head_sha).
 	byPR, err := db.GetCIPanelByPRSHA("o/r", 7, "headsha")
 	require.NoError(t, err)
 	require.NotNil(t, byPR)
-	assert.Equal("run-1", byPR.PanelRunUUID)
+	assert.Equal(runUUID, byPR.PanelRunUUID)
 	assert.Equal("o/r", byPR.GithubRepo)
 	assert.Equal(7, byPR.PRNumber)
 	assert.Equal("headsha", byPR.HeadSHA)
@@ -377,7 +379,7 @@ func TestGetCIPanelByPRSHAAndSynthesisJobID(t *testing.T) {
 	require.NoError(t, err)
 	require.NotNil(t, byJob)
 	assert.Equal("headsha", byJob.HeadSHA)
-	assert.Equal("run-1", byJob.PanelRunUUID)
+	assert.Equal(runUUID, byJob.PanelRunUUID)
 }
 
 func TestGetCIPanelByPRSHANotFound(t *testing.T) {
@@ -497,7 +499,7 @@ func TestGetUnpostedTerminalPanels(t *testing.T) {
 	rows, err := db.GetUnpostedTerminalPanels("o/r")
 	require.NoError(t, err)
 
-	got := make(map[string]bool, len(rows))
+	got := make(map[uuid.UUID]bool, len(rows))
 	for _, r := range rows {
 		got[r.PanelRunUUID] = true
 	}
@@ -537,10 +539,12 @@ func TestCreateCIPanelRunHappyPath(t *testing.T) {
 
 	// F9: every job shares the mapping's run uuid.
 	for i, m := range mems {
-		assert.Equal(panel.PanelRunUUID, m.PanelRunUUID, "member %d run uuid", i)
+		require.NotNil(t, m.PanelRunUUID)
+		assert.Equal(panel.PanelRunUUID, *m.PanelRunUUID, "member %d run uuid", i)
 		assert.Equal(PanelRoleMember, m.PanelRole, "member %d role", i)
 	}
-	assert.Equal(panel.PanelRunUUID, syn.PanelRunUUID, "synthesis run uuid")
+	require.NotNil(t, syn.PanelRunUUID)
+	assert.Equal(panel.PanelRunUUID, *syn.PanelRunUUID, "synthesis run uuid")
 	assert.Equal(PanelRoleSynthesis, syn.PanelRole, "synthesis role")
 	assert.True(syn.ClaimBlocked, "synthesis gated until members finish")
 }

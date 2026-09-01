@@ -17,10 +17,11 @@ import (
 
 func seedRouteCICostJob(t *testing.T, db *storage.DB, repoID int64, gitRef, finishedAt string) *storage.ReviewJob {
 	t.Helper()
+	panelRunUUID := testUUID("run-" + gitRef)
 	job, err := db.EnqueueJob(storage.EnqueueOpts{
 		RepoID: repoID, GitRef: gitRef, Agent: "test-agent",
 		Model: "test-model", Provider: "test-provider",
-		PanelRunUUID: "run-" + gitRef, PanelRole: storage.PanelRoleMember,
+		PanelRunUUID: &panelRunUUID, PanelRole: storage.PanelRoleMember,
 		Source: storage.JobSourceCI,
 	})
 	require.NoError(t, err)
@@ -55,7 +56,7 @@ func TestHumaExportCICosts(t *testing.T) {
 	require.NotNil(t, doc.Window.Until)
 	assert.Equal(t, "2026-08-04T00:00:00Z", *doc.Window.Until)
 	require.Len(t, doc.Jobs, 1)
-	assert.Equal(t, job.UUID, doc.Jobs[0].JobUUID)
+	assert.Equal(t, *job.UUID, doc.Jobs[0].JobUUID)
 	assert.False(t, doc.Truncated)
 	require.NotNil(t, doc.NextCursor)
 }
@@ -111,7 +112,7 @@ func TestHumaExportCICostsValidation(t *testing.T) {
 	}
 
 	foreign, err := json.Marshal(map[string]any{
-		"version": 1, "database_id": "foreign-database",
+		"version": 1, "database_id": testUUID("foreign-database"),
 		"finished_at": "2026-08-02T12:00:00Z", "job_id": 1,
 	})
 	require.NoError(t, err)
@@ -146,7 +147,7 @@ func TestHumaExportCICostsCursorPreservesSince(t *testing.T) {
 	var first ExportCICostDocument
 	require.NoError(t, json.Unmarshal(rr.Body.Bytes(), &first))
 	require.Len(t, first.Jobs, 1)
-	assert.Equal(t, firstJob.UUID, first.Jobs[0].JobUUID)
+	assert.Equal(t, *firstJob.UUID, first.Jobs[0].JobUUID)
 	require.NotNil(t, first.NextCursor)
 
 	_, err := db.Exec(`UPDATE review_jobs
@@ -162,5 +163,5 @@ func TestHumaExportCICostsCursorPreservesSince(t *testing.T) {
 	require.NotNil(t, resumed.Window.Since)
 	assert.Equal(t, "2026-08-01T00:00:00Z", *resumed.Window.Since)
 	require.Len(t, resumed.Jobs, 1)
-	assert.Equal(t, secondJob.UUID, resumed.Jobs[0].JobUUID)
+	assert.Equal(t, *secondJob.UUID, resumed.Jobs[0].JobUUID)
 }

@@ -14,12 +14,36 @@ import (
 	"strings"
 	"time"
 
+	"uuid"
+
 	"github.com/oapi-codegen/runtime"
 )
+
+// Defines values for UpdateDrainRequestBodyPolicy.
+const (
+	Abort     UpdateDrainRequestBodyPolicy = "abort"
+	Interrupt UpdateDrainRequestBodyPolicy = "interrupt"
+	Wait      UpdateDrainRequestBodyPolicy = "wait"
+)
+
+// Valid indicates whether the value is a known member of the UpdateDrainRequestBodyPolicy enum.
+func (e UpdateDrainRequestBodyPolicy) Valid() bool {
+	switch e {
+	case Abort:
+		return true
+	case Interrupt:
+		return true
+	case Wait:
+		return true
+	default:
+		return false
+	}
+}
 
 // Defines values for WebSessionStatusAuthentication.
 const (
 	Local WebSessionStatusAuthentication = "local"
+	Proxy WebSessionStatusAuthentication = "proxy"
 	Token WebSessionStatusAuthentication = "token"
 )
 
@@ -27,6 +51,8 @@ const (
 func (e WebSessionStatusAuthentication) Valid() bool {
 	switch e {
 	case Local:
+		return true
+	case Proxy:
 		return true
 	case Token:
 		return true
@@ -450,28 +476,31 @@ type CostEnvelope struct {
 // DaemonStatus defines model for DaemonStatus.
 type DaemonStatus struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema              *string            `json:"$schema,omitempty"`
-	ActiveSnoozes       *[]AgentHookSnooze `json:"active_snoozes"`
-	ActiveWorkers       int64              `json:"active_workers"`
-	Address             *string            `json:"address,omitempty"`
-	AppliedJobs         int64              `json:"applied_jobs"`
-	AutoDesign          *AutoDesignStatus  `json:"auto_design,omitempty"`
-	CanceledJobs        int64              `json:"canceled_jobs"`
-	CompletedJobs       int64              `json:"completed_jobs"`
-	ConfigReloadCounter *int64             `json:"config_reload_counter,omitempty"`
-	ConfigReloadedAt    *string            `json:"config_reloaded_at,omitempty"`
-	FailedJobs          int64              `json:"failed_jobs"`
-	MachineId           *string            `json:"machine_id,omitempty"`
-	MaxWorkers          int64              `json:"max_workers"`
-	Network             *string            `json:"network,omitempty"`
-	Port                *int64             `json:"port,omitempty"`
-	QueuePaused         bool               `json:"queue_paused"`
-	QueuedJobs          int64              `json:"queued_jobs"`
-	RebasedJobs         int64              `json:"rebased_jobs"`
-	RunningJobs         int64              `json:"running_jobs"`
-	SkippedJobs         int64              `json:"skipped_jobs"`
-	Version             string             `json:"version"`
-	WebCapabilities     *[]string          `json:"web_capabilities"`
+	Schema               *string            `json:"$schema,omitempty"`
+	ActiveSnoozes        *[]AgentHookSnooze `json:"active_snoozes"`
+	ActiveWorkers        int64              `json:"active_workers"`
+	Address              *string            `json:"address,omitempty"`
+	AppliedJobs          int64              `json:"applied_jobs"`
+	AutoDesign           *AutoDesignStatus  `json:"auto_design,omitempty"`
+	CanceledJobs         int64              `json:"canceled_jobs"`
+	CompletedJobs        int64              `json:"completed_jobs"`
+	ConfigReloadCounter  *int64             `json:"config_reload_counter,omitempty"`
+	ConfigReloadedAt     *string            `json:"config_reloaded_at,omitempty"`
+	FailedJobs           int64              `json:"failed_jobs"`
+	MachineId            *uuid.UUID         `json:"machine_id,omitempty"`
+	MaxWorkers           int64              `json:"max_workers"`
+	Network              *string            `json:"network,omitempty"`
+	Port                 *int64             `json:"port,omitempty"`
+	QueuePaused          bool               `json:"queue_paused"`
+	QueuedJobs           int64              `json:"queued_jobs"`
+	RebasedJobs          int64              `json:"rebased_jobs"`
+	RunningJobs          int64              `json:"running_jobs"`
+	SkippedJobs          int64              `json:"skipped_jobs"`
+	UpdateDrainExpiresAt *string            `json:"update_drain_expires_at,omitempty"`
+	UpdateDrainPolicy    *string            `json:"update_drain_policy,omitempty"`
+	UpdateDraining       bool               `json:"update_draining"`
+	Version              string             `json:"version"`
+	WebCapabilities      *[]string          `json:"web_capabilities"`
 }
 
 // DurationStats defines model for DurationStats.
@@ -486,61 +515,63 @@ type DurationStats struct {
 
 // EnqueueCreatedResponse defines model for EnqueueCreatedResponse.
 type EnqueueCreatedResponse struct {
-	Agent                 string        `json:"agent"`
-	Agentic               bool          `json:"agentic"`
-	BackupAgent           *string       `json:"backup_agent,omitempty"`
-	BackupModel           *string       `json:"backup_model,omitempty"`
-	Branch                *string       `json:"branch,omitempty"`
-	ClaimBlocked          *bool         `json:"claim_blocked,omitempty"`
-	Closed                *bool         `json:"closed,omitempty"`
-	CommandLine           *string       `json:"command_line,omitempty"`
-	CommitId              *int64        `json:"commit_id,omitempty"`
-	CommitSubject         *string       `json:"commit_subject,omitempty"`
-	DiffContent           *string       `json:"diff_content,omitempty"`
-	DirtyFiles            *[]string     `json:"dirty_files,omitempty"`
-	EnqueuedAt            time.Time     `json:"enqueued_at"`
-	Error                 *string       `json:"error,omitempty"`
-	FinishedAt            *time.Time    `json:"finished_at,omitempty"`
-	GitRef                string        `json:"git_ref"`
-	Id                    int64         `json:"id"`
-	JobType               string        `json:"job_type"`
-	MinSeverity           *string       `json:"min_severity,omitempty"`
-	Model                 *string       `json:"model,omitempty"`
-	OutputPrefix          *string       `json:"output_prefix,omitempty"`
-	PanelMemberConfigJson *string       `json:"panel_member_config_json,omitempty"`
-	PanelMemberIndex      *int64        `json:"panel_member_index,omitempty"`
-	PanelMemberName       *string       `json:"panel_member_name,omitempty"`
-	PanelName             *string       `json:"panel_name,omitempty"`
-	PanelRole             *string       `json:"panel_role,omitempty"`
-	PanelRunUuid          *string       `json:"panel_run_uuid,omitempty"`
-	PanelSummary          *PanelSummary `json:"panel_summary,omitempty"`
-	ParentJobId           *int64        `json:"parent_job_id,omitempty"`
-	Patch                 *string       `json:"patch,omitempty"`
-	PatchId               *string       `json:"patch_id,omitempty"`
-	Prompt                *string       `json:"prompt,omitempty"`
-	PromptPrebuilt        bool          `json:"prompt_prebuilt"`
-	Provider              *string       `json:"provider,omitempty"`
-	Reasoning             *string       `json:"reasoning,omitempty"`
-	RepoId                int64         `json:"repo_id"`
-	RepoName              *string       `json:"repo_name,omitempty"`
-	RepoPath              *string       `json:"repo_path,omitempty"`
-	RequestedModel        *string       `json:"requested_model,omitempty"`
-	RequestedProvider     *string       `json:"requested_provider,omitempty"`
-	RetryCount            int64         `json:"retry_count"`
-	ReviewType            *string       `json:"review_type,omitempty"`
-	SessionId             *string       `json:"session_id,omitempty"`
-	SkipReason            *string       `json:"skip_reason,omitempty"`
-	Source                *string       `json:"source,omitempty"`
-	SourceMachineId       *string       `json:"source_machine_id,omitempty"`
-	StartedAt             *time.Time    `json:"started_at,omitempty"`
-	Status                string        `json:"status"`
-	SyncedAt              *time.Time    `json:"synced_at,omitempty"`
-	TokenUsage            *string       `json:"token_usage,omitempty"`
-	UpdatedAt             *time.Time    `json:"updated_at,omitempty"`
-	Uuid                  string        `json:"uuid"`
-	Verdict               *string       `json:"verdict,omitempty"`
-	WorkerId              *string       `json:"worker_id,omitempty"`
-	WorktreePath          *string       `json:"worktree_path,omitempty"`
+	Agent                 string                  `json:"agent"`
+	Agentic               bool                    `json:"agentic"`
+	BackupAgent           *string                 `json:"backup_agent,omitempty"`
+	BackupModel           *string                 `json:"backup_model,omitempty"`
+	Branch                *string                 `json:"branch,omitempty"`
+	ClaimBlocked          *bool                   `json:"claim_blocked,omitempty"`
+	Closed                *bool                   `json:"closed,omitempty"`
+	CommandLine           *string                 `json:"command_line,omitempty"`
+	CommitId              *int64                  `json:"commit_id,omitempty"`
+	CommitSubject         *string                 `json:"commit_subject,omitempty"`
+	DiffContent           *string                 `json:"diff_content,omitempty"`
+	DirtyFiles            *[]string               `json:"dirty_files,omitempty"`
+	EnqueuedAt            time.Time               `json:"enqueued_at"`
+	Error                 *string                 `json:"error,omitempty"`
+	Experiments           *[]ExperimentAssignment `json:"experiments,omitempty"`
+	FinishedAt            *time.Time              `json:"finished_at,omitempty"`
+	GitRef                string                  `json:"git_ref"`
+	Id                    int64                   `json:"id"`
+	JobType               string                  `json:"job_type"`
+	MinSeverity           *string                 `json:"min_severity,omitempty"`
+	Model                 *string                 `json:"model,omitempty"`
+	OutputPrefix          *string                 `json:"output_prefix,omitempty"`
+	PanelMemberConfigJson *string                 `json:"panel_member_config_json,omitempty"`
+	PanelMemberIndex      *int64                  `json:"panel_member_index,omitempty"`
+	PanelMemberName       *string                 `json:"panel_member_name,omitempty"`
+	PanelName             *string                 `json:"panel_name,omitempty"`
+	PanelRole             *string                 `json:"panel_role,omitempty"`
+	PanelRunUuid          *uuid.UUID              `json:"panel_run_uuid,omitempty"`
+	PanelSummary          *PanelSummary           `json:"panel_summary,omitempty"`
+	ParentJobId           *int64                  `json:"parent_job_id,omitempty"`
+	Patch                 *string                 `json:"patch,omitempty"`
+	PatchId               *string                 `json:"patch_id,omitempty"`
+	Prompt                *string                 `json:"prompt,omitempty"`
+	PromptPrebuilt        bool                    `json:"prompt_prebuilt"`
+	Provider              *string                 `json:"provider,omitempty"`
+	Reasoning             *string                 `json:"reasoning,omitempty"`
+	RepoId                int64                   `json:"repo_id"`
+	RepoName              *string                 `json:"repo_name,omitempty"`
+	RepoPath              *string                 `json:"repo_path,omitempty"`
+	RequestedModel        *string                 `json:"requested_model,omitempty"`
+	RequestedProvider     *string                 `json:"requested_provider,omitempty"`
+	ResumeSourceJobUuid   *uuid.UUID              `json:"resume_source_job_uuid,omitempty"`
+	RetryCount            int64                   `json:"retry_count"`
+	ReviewType            *string                 `json:"review_type,omitempty"`
+	SessionId             *string                 `json:"session_id,omitempty"`
+	SkipReason            *string                 `json:"skip_reason,omitempty"`
+	Source                *string                 `json:"source,omitempty"`
+	SourceMachineId       *uuid.UUID              `json:"source_machine_id,omitempty"`
+	StartedAt             *time.Time              `json:"started_at,omitempty"`
+	Status                string                  `json:"status"`
+	SyncedAt              *time.Time              `json:"synced_at,omitempty"`
+	TokenUsage            *string                 `json:"token_usage,omitempty"`
+	UpdatedAt             *time.Time              `json:"updated_at,omitempty"`
+	Uuid                  uuid.UUID               `json:"uuid"`
+	Verdict               *string                 `json:"verdict,omitempty"`
+	WorkerId              *string                 `json:"worker_id,omitempty"`
+	WorktreePath          *string                 `json:"worktree_path,omitempty"`
 }
 
 // EnqueueRequest defines model for EnqueueRequest.
@@ -626,13 +657,22 @@ type ErrorResponse struct {
 	Error  string  `json:"error"`
 }
 
+// ExperimentAssignment defines model for ExperimentAssignment.
+type ExperimentAssignment struct {
+	Arm                 string `json:"arm"`
+	DefinitionHash      string `json:"definition_hash"`
+	EffectiveConfigHash string `json:"effective_config_hash"`
+	Id                  string `json:"id"`
+	SubjectHash         string `json:"subject_hash"`
+}
+
 // ExportCICostDocument defines model for ExportCICostDocument.
 type ExportCICostDocument struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema *string `json:"$schema,omitempty"`
 
 	// DatabaseId Stable identity for the local review database; changes when the database is recreated.
-	DatabaseId  string             `json:"database_id"`
+	DatabaseId  uuid.UUID          `json:"database_id"`
 	GeneratedAt string             `json:"generated_at"`
 	Jobs        *[]ExportCICostJob `json:"jobs"`
 	Legacy      bool               `json:"legacy"`
@@ -650,14 +690,16 @@ type ExportCICostDocument struct {
 
 // ExportCICostJob defines model for ExportCICostJob.
 type ExportCICostJob struct {
-	Agent      string   `json:"agent"`
-	CostUsd    *float64 `json:"cost_usd"`
-	FinishedAt string   `json:"finished_at"`
-	JobUuid    string   `json:"job_uuid"`
-	Model      *string  `json:"model"`
-	Provider   *string  `json:"provider"`
-	Role       string   `json:"role"`
-	Status     string   `json:"status"`
+	Agent               string                  `json:"agent"`
+	CostUsd             *float64                `json:"cost_usd"`
+	Experiments         *[]ExperimentAssignment `json:"experiments"`
+	FinishedAt          string                  `json:"finished_at"`
+	JobUuid             uuid.UUID               `json:"job_uuid"`
+	Model               *string                 `json:"model"`
+	Provider            *string                 `json:"provider"`
+	ResumeSourceJobUuid uuid.UUID               `json:"resume_source_job_uuid"`
+	Role                string                  `json:"role"`
+	Status              string                  `json:"status"`
 }
 
 // ExportCIMetricsDocument defines model for ExportCIMetricsDocument.
@@ -666,8 +708,8 @@ type ExportCIMetricsDocument struct {
 	Schema *string `json:"$schema,omitempty"`
 
 	// DatabaseId Stable identity for the local review database; changes when the database is recreated.
-	DatabaseId  string `json:"database_id"`
-	GeneratedAt string `json:"generated_at"`
+	DatabaseId  uuid.UUID `json:"database_id"`
+	GeneratedAt string    `json:"generated_at"`
 
 	// NextCursor Opaque resume cursor emitted when panels is non-empty.
 	NextCursor    *string          `json:"next_cursor"`
@@ -683,50 +725,54 @@ type ExportCIMetricsDocument struct {
 
 // ExportCIPanel defines model for ExportCIPanel.
 type ExportCIPanel struct {
-	AttemptCount   *int64              `json:"attempt_count"`
-	FirstAttemptAt *string             `json:"first_attempt_at"`
-	GithubRepo     string              `json:"github_repo"`
-	HeadSha        string              `json:"head_sha"`
-	Jobs           *[]ExportCIPanelJob `json:"jobs"`
-	Outcome        string              `json:"outcome"`
-	PanelCreatedAt string              `json:"panel_created_at"`
-	PostedAt       string              `json:"posted_at"`
-	PrNumber       int64               `json:"pr_number"`
-	SynthesisAgent *string             `json:"synthesis_agent"`
-	SynthesisModel *string             `json:"synthesis_model"`
+	AttemptCount   *int64                  `json:"attempt_count"`
+	Experiments    *[]ExperimentAssignment `json:"experiments"`
+	FirstAttemptAt *string                 `json:"first_attempt_at"`
+	GithubRepo     string                  `json:"github_repo"`
+	HeadSha        string                  `json:"head_sha"`
+	Jobs           *[]ExportCIPanelJob     `json:"jobs"`
+	Outcome        string                  `json:"outcome"`
+	PanelCreatedAt string                  `json:"panel_created_at"`
+	PostedAt       string                  `json:"posted_at"`
+	PrNumber       int64                   `json:"pr_number"`
+	SynthesisAgent *string                 `json:"synthesis_agent"`
+	SynthesisModel *string                 `json:"synthesis_model"`
 }
 
 // ExportCIPanelJob defines model for ExportCIPanelJob.
 type ExportCIPanelJob struct {
-	Agent      string  `json:"agent"`
-	FinishedAt *string `json:"finished_at"`
-	JobUuid    string  `json:"job_uuid"`
-	Model      *string `json:"model"`
-	Provider   *string `json:"provider"`
-	Role       string  `json:"role"`
-	StartedAt  *string `json:"started_at"`
-	Status     string  `json:"status"`
+	Agent               string    `json:"agent"`
+	FinishedAt          *string   `json:"finished_at"`
+	JobUuid             uuid.UUID `json:"job_uuid"`
+	Model               *string   `json:"model"`
+	Provider            *string   `json:"provider"`
+	ResumeSourceJobUuid uuid.UUID `json:"resume_source_job_uuid"`
+	Role                string    `json:"role"`
+	StartedAt           *string   `json:"started_at"`
+	Status              string    `json:"status"`
 }
 
 // ExportReview defines model for ExportReview.
 type ExportReview struct {
-	Agent       string            `json:"agent"`
-	Branch      *string           `json:"branch"`
-	CommitSha   *string           `json:"commit_sha"`
-	CompletedAt string            `json:"completed_at"`
-	Content     *string           `json:"content"`
-	Cost        ExportReviewCost  `json:"cost"`
-	CreatedAt   string            `json:"created_at"`
-	DurationMs  *int64            `json:"duration_ms"`
-	Model       *string           `json:"model"`
-	PrNumber    *int64            `json:"pr_number"`
-	PrUrl       *string           `json:"pr_url"`
-	Project     string            `json:"project"`
-	Repo        string            `json:"repo"`
-	ReviewId    string            `json:"review_id"`
-	Status      string            `json:"status"`
-	Subagents   *[]ExportSubagent `json:"subagents"`
-	Verdict     string            `json:"verdict"`
+	Agent               string                  `json:"agent"`
+	Branch              *string                 `json:"branch"`
+	CommitSha           *string                 `json:"commit_sha"`
+	CompletedAt         string                  `json:"completed_at"`
+	Content             *string                 `json:"content"`
+	Cost                ExportReviewCost        `json:"cost"`
+	CreatedAt           string                  `json:"created_at"`
+	DurationMs          *int64                  `json:"duration_ms"`
+	Experiments         *[]ExperimentAssignment `json:"experiments"`
+	Model               *string                 `json:"model"`
+	PrNumber            *int64                  `json:"pr_number"`
+	PrUrl               *string                 `json:"pr_url"`
+	Project             string                  `json:"project"`
+	Repo                string                  `json:"repo"`
+	ResumeSourceJobUuid uuid.UUID               `json:"resume_source_job_uuid"`
+	ReviewId            uuid.UUID               `json:"review_id"`
+	Status              string                  `json:"status"`
+	Subagents           *[]ExportSubagent       `json:"subagents"`
+	Verdict             string                  `json:"verdict"`
 }
 
 // ExportReviewCost defines model for ExportReviewCost.
@@ -742,8 +788,8 @@ type ExportReviewsDocument struct {
 	Schema *string `json:"$schema,omitempty"`
 
 	// DatabaseId Stable identity for the local review database; changes when the database is recreated.
-	DatabaseId  string `json:"database_id"`
-	GeneratedAt string `json:"generated_at"`
+	DatabaseId  uuid.UUID `json:"database_id"`
+	GeneratedAt string    `json:"generated_at"`
 
 	// NextCursor Opaque resume cursor emitted when reviews is non-empty; pass as cursor to resume after the last returned review.
 	NextCursor    *string         `json:"next_cursor"`
@@ -767,16 +813,17 @@ type ExportReviewsWindow struct {
 
 // ExportSubagent defines model for ExportSubagent.
 type ExportSubagent struct {
-	Agent       string           `json:"agent"`
-	CompletedAt string           `json:"completed_at"`
-	Content     *string          `json:"content"`
-	Cost        ExportReviewCost `json:"cost"`
-	DurationMs  *int64           `json:"duration_ms"`
-	Model       *string          `json:"model"`
-	Name        string           `json:"name"`
-	ReviewId    string           `json:"review_id"`
-	ReviewType  *string          `json:"review_type"`
-	Verdict     string           `json:"verdict"`
+	Agent               string           `json:"agent"`
+	CompletedAt         string           `json:"completed_at"`
+	Content             *string          `json:"content"`
+	Cost                ExportReviewCost `json:"cost"`
+	DurationMs          *int64           `json:"duration_ms"`
+	Model               *string          `json:"model"`
+	Name                string           `json:"name"`
+	ResumeSourceJobUuid uuid.UUID        `json:"resume_source_job_uuid"`
+	ReviewId            uuid.UUID        `json:"review_id"`
+	ReviewType          *string          `json:"review_type"`
+	Verdict             string           `json:"verdict"`
 }
 
 // FailureStats defines model for FailureStats.
@@ -899,62 +946,64 @@ type OverviewStats struct {
 
 // PanelEnqueueResponse defines model for PanelEnqueueResponse.
 type PanelEnqueueResponse struct {
-	Agent                 string        `json:"agent"`
-	Agentic               bool          `json:"agentic"`
-	BackupAgent           *string       `json:"backup_agent,omitempty"`
-	BackupModel           *string       `json:"backup_model,omitempty"`
-	Branch                *string       `json:"branch,omitempty"`
-	ClaimBlocked          *bool         `json:"claim_blocked,omitempty"`
-	Closed                *bool         `json:"closed,omitempty"`
-	CommandLine           *string       `json:"command_line,omitempty"`
-	CommitId              *int64        `json:"commit_id,omitempty"`
-	CommitSubject         *string       `json:"commit_subject,omitempty"`
-	DiffContent           *string       `json:"diff_content,omitempty"`
-	DirtyFiles            *[]string     `json:"dirty_files,omitempty"`
-	EnqueuedAt            time.Time     `json:"enqueued_at"`
-	Error                 *string       `json:"error,omitempty"`
-	FinishedAt            *time.Time    `json:"finished_at,omitempty"`
-	GitRef                string        `json:"git_ref"`
-	Id                    int64         `json:"id"`
-	JobType               string        `json:"job_type"`
-	MemberJobIds          *[]int64      `json:"member_job_ids"`
-	MinSeverity           *string       `json:"min_severity,omitempty"`
-	Model                 *string       `json:"model,omitempty"`
-	OutputPrefix          *string       `json:"output_prefix,omitempty"`
-	PanelMemberConfigJson *string       `json:"panel_member_config_json,omitempty"`
-	PanelMemberIndex      *int64        `json:"panel_member_index,omitempty"`
-	PanelMemberName       *string       `json:"panel_member_name,omitempty"`
-	PanelName             *string       `json:"panel_name,omitempty"`
-	PanelRole             *string       `json:"panel_role,omitempty"`
-	PanelRunUuid          string        `json:"panel_run_uuid"`
-	PanelSummary          *PanelSummary `json:"panel_summary,omitempty"`
-	ParentJobId           *int64        `json:"parent_job_id,omitempty"`
-	Patch                 *string       `json:"patch,omitempty"`
-	PatchId               *string       `json:"patch_id,omitempty"`
-	Prompt                *string       `json:"prompt,omitempty"`
-	PromptPrebuilt        bool          `json:"prompt_prebuilt"`
-	Provider              *string       `json:"provider,omitempty"`
-	Reasoning             *string       `json:"reasoning,omitempty"`
-	RepoId                int64         `json:"repo_id"`
-	RepoName              *string       `json:"repo_name,omitempty"`
-	RepoPath              *string       `json:"repo_path,omitempty"`
-	RequestedModel        *string       `json:"requested_model,omitempty"`
-	RequestedProvider     *string       `json:"requested_provider,omitempty"`
-	RetryCount            int64         `json:"retry_count"`
-	ReviewType            *string       `json:"review_type,omitempty"`
-	SessionId             *string       `json:"session_id,omitempty"`
-	SkipReason            *string       `json:"skip_reason,omitempty"`
-	Source                *string       `json:"source,omitempty"`
-	SourceMachineId       *string       `json:"source_machine_id,omitempty"`
-	StartedAt             *time.Time    `json:"started_at,omitempty"`
-	Status                string        `json:"status"`
-	SyncedAt              *time.Time    `json:"synced_at,omitempty"`
-	TokenUsage            *string       `json:"token_usage,omitempty"`
-	UpdatedAt             *time.Time    `json:"updated_at,omitempty"`
-	Uuid                  *string       `json:"uuid,omitempty"`
-	Verdict               *string       `json:"verdict,omitempty"`
-	WorkerId              *string       `json:"worker_id,omitempty"`
-	WorktreePath          *string       `json:"worktree_path,omitempty"`
+	Agent                 string                  `json:"agent"`
+	Agentic               bool                    `json:"agentic"`
+	BackupAgent           *string                 `json:"backup_agent,omitempty"`
+	BackupModel           *string                 `json:"backup_model,omitempty"`
+	Branch                *string                 `json:"branch,omitempty"`
+	ClaimBlocked          *bool                   `json:"claim_blocked,omitempty"`
+	Closed                *bool                   `json:"closed,omitempty"`
+	CommandLine           *string                 `json:"command_line,omitempty"`
+	CommitId              *int64                  `json:"commit_id,omitempty"`
+	CommitSubject         *string                 `json:"commit_subject,omitempty"`
+	DiffContent           *string                 `json:"diff_content,omitempty"`
+	DirtyFiles            *[]string               `json:"dirty_files,omitempty"`
+	EnqueuedAt            time.Time               `json:"enqueued_at"`
+	Error                 *string                 `json:"error,omitempty"`
+	Experiments           *[]ExperimentAssignment `json:"experiments,omitempty"`
+	FinishedAt            *time.Time              `json:"finished_at,omitempty"`
+	GitRef                string                  `json:"git_ref"`
+	Id                    int64                   `json:"id"`
+	JobType               string                  `json:"job_type"`
+	MemberJobIds          *[]int64                `json:"member_job_ids"`
+	MinSeverity           *string                 `json:"min_severity,omitempty"`
+	Model                 *string                 `json:"model,omitempty"`
+	OutputPrefix          *string                 `json:"output_prefix,omitempty"`
+	PanelMemberConfigJson *string                 `json:"panel_member_config_json,omitempty"`
+	PanelMemberIndex      *int64                  `json:"panel_member_index,omitempty"`
+	PanelMemberName       *string                 `json:"panel_member_name,omitempty"`
+	PanelName             *string                 `json:"panel_name,omitempty"`
+	PanelRole             *string                 `json:"panel_role,omitempty"`
+	PanelRunUuid          uuid.UUID               `json:"panel_run_uuid"`
+	PanelSummary          *PanelSummary           `json:"panel_summary,omitempty"`
+	ParentJobId           *int64                  `json:"parent_job_id,omitempty"`
+	Patch                 *string                 `json:"patch,omitempty"`
+	PatchId               *string                 `json:"patch_id,omitempty"`
+	Prompt                *string                 `json:"prompt,omitempty"`
+	PromptPrebuilt        bool                    `json:"prompt_prebuilt"`
+	Provider              *string                 `json:"provider,omitempty"`
+	Reasoning             *string                 `json:"reasoning,omitempty"`
+	RepoId                int64                   `json:"repo_id"`
+	RepoName              *string                 `json:"repo_name,omitempty"`
+	RepoPath              *string                 `json:"repo_path,omitempty"`
+	RequestedModel        *string                 `json:"requested_model,omitempty"`
+	RequestedProvider     *string                 `json:"requested_provider,omitempty"`
+	ResumeSourceJobUuid   *uuid.UUID              `json:"resume_source_job_uuid,omitempty"`
+	RetryCount            int64                   `json:"retry_count"`
+	ReviewType            *string                 `json:"review_type,omitempty"`
+	SessionId             *string                 `json:"session_id,omitempty"`
+	SkipReason            *string                 `json:"skip_reason,omitempty"`
+	Source                *string                 `json:"source,omitempty"`
+	SourceMachineId       *uuid.UUID              `json:"source_machine_id,omitempty"`
+	StartedAt             *time.Time              `json:"started_at,omitempty"`
+	Status                string                  `json:"status"`
+	SyncedAt              *time.Time              `json:"synced_at,omitempty"`
+	TokenUsage            *string                 `json:"token_usage,omitempty"`
+	UpdatedAt             *time.Time              `json:"updated_at,omitempty"`
+	Uuid                  *uuid.UUID              `json:"uuid,omitempty"`
+	Verdict               *string                 `json:"verdict,omitempty"`
+	WorkerId              *string                 `json:"worker_id,omitempty"`
+	WorktreePath          *string                 `json:"worktree_path,omitempty"`
 }
 
 // PanelSummary defines model for PanelSummary.
@@ -969,7 +1018,7 @@ type PanelSummary struct {
 	MembersTerminal     int64      `json:"members_terminal"`
 	MembersTotal        int64      `json:"members_total"`
 	MembersWithCost     *int64     `json:"members_with_cost,omitempty"`
-	PanelRunUuid        string     `json:"panel_run_uuid"`
+	PanelRunUuid        uuid.UUID  `json:"panel_run_uuid"`
 }
 
 // PingInfo defines model for PingInfo.
@@ -994,6 +1043,13 @@ type RegisterRepoRequest struct {
 	// Schema A URL to the JSON Schema for this object.
 	Schema   *string `json:"$schema,omitempty"`
 	RepoPath string  `json:"repo_path"`
+}
+
+// ReleaseUpdateOutputBody defines model for ReleaseUpdateOutputBody.
+type ReleaseUpdateOutputBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema   *string `json:"$schema,omitempty"`
+	Released bool    `json:"released"`
 }
 
 // RemapMapping defines model for RemapMapping.
@@ -1054,19 +1110,19 @@ type RepoWithCount struct {
 // RerunJobOutputBody defines model for RerunJobOutputBody.
 type RerunJobOutputBody struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema    *string `json:"$schema,omitempty"`
-	JobId     int64   `json:"job_id"`
-	RequestId string  `json:"request_id"`
-	RunUuid   *string `json:"run_uuid,omitempty"`
-	Success   bool    `json:"success"`
+	Schema    *string    `json:"$schema,omitempty"`
+	JobId     int64      `json:"job_id"`
+	RequestId uuid.UUID  `json:"request_id"`
+	RunUuid   *uuid.UUID `json:"run_uuid,omitempty"`
+	Success   bool       `json:"success"`
 }
 
 // RerunJobRequest defines model for RerunJobRequest.
 type RerunJobRequest struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema    *string `json:"$schema,omitempty"`
-	JobId     int64   `json:"job_id"`
-	RequestId *string `json:"request_id,omitempty"`
+	Schema    *string    `json:"$schema,omitempty"`
+	JobId     int64      `json:"job_id"`
+	RequestId *uuid.UUID `json:"request_id,omitempty"`
 }
 
 // ResolveRepoOutputBody defines model for ResolveRepoOutputBody.
@@ -1096,89 +1152,92 @@ type Response struct {
 	Responder       string     `json:"responder"`
 	Response        string     `json:"response"`
 	Source          *string    `json:"source,omitempty"`
-	SourceMachineId *string    `json:"source_machine_id,omitempty"`
+	SourceMachineId *uuid.UUID `json:"source_machine_id,omitempty"`
 	SyncedAt        *time.Time `json:"synced_at,omitempty"`
-	Uuid            *string    `json:"uuid,omitempty"`
+	Uuid            *uuid.UUID `json:"uuid,omitempty"`
 }
 
 // Review defines model for Review.
 type Review struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema             *string    `json:"$schema,omitempty"`
-	Agent              string     `json:"agent"`
-	Closed             bool       `json:"closed"`
-	CreatedAt          time.Time  `json:"created_at"`
-	Id                 int64      `json:"id"`
-	Job                *ReviewJob `json:"job,omitempty"`
-	JobId              int64      `json:"job_id"`
-	Output             string     `json:"output"`
-	Prompt             string     `json:"prompt"`
-	SyncedAt           *time.Time `json:"synced_at,omitempty"`
-	UpdatedAt          *time.Time `json:"updated_at,omitempty"`
-	UpdatedByMachineId *string    `json:"updated_by_machine_id,omitempty"`
-	Uuid               *string    `json:"uuid,omitempty"`
-	VerdictBool        *int64     `json:"verdict_bool,omitempty"`
+	Schema             *string                 `json:"$schema,omitempty"`
+	Agent              string                  `json:"agent"`
+	Closed             bool                    `json:"closed"`
+	CreatedAt          time.Time               `json:"created_at"`
+	Id                 int64                   `json:"id"`
+	Job                *ReviewJob              `json:"job,omitempty"`
+	JobId              int64                   `json:"job_id"`
+	Output             string                  `json:"output"`
+	Prompt             string                  `json:"prompt"`
+	StructuredOutput   *map[string]interface{} `json:"structured_output,omitempty"`
+	SyncedAt           *time.Time              `json:"synced_at,omitempty"`
+	UpdatedAt          *time.Time              `json:"updated_at,omitempty"`
+	UpdatedByMachineId *uuid.UUID              `json:"updated_by_machine_id,omitempty"`
+	Uuid               *uuid.UUID              `json:"uuid,omitempty"`
+	VerdictBool        *int64                  `json:"verdict_bool,omitempty"`
 }
 
 // ReviewJob defines model for ReviewJob.
 type ReviewJob struct {
 	// Schema A URL to the JSON Schema for this object.
-	Schema                *string       `json:"$schema,omitempty"`
-	Agent                 string        `json:"agent"`
-	Agentic               bool          `json:"agentic"`
-	BackupAgent           *string       `json:"backup_agent,omitempty"`
-	BackupModel           *string       `json:"backup_model,omitempty"`
-	Branch                *string       `json:"branch,omitempty"`
-	ClaimBlocked          *bool         `json:"claim_blocked,omitempty"`
-	Closed                *bool         `json:"closed,omitempty"`
-	CommandLine           *string       `json:"command_line,omitempty"`
-	CommitId              *int64        `json:"commit_id,omitempty"`
-	CommitSubject         *string       `json:"commit_subject,omitempty"`
-	DiffContent           *string       `json:"diff_content,omitempty"`
-	DirtyFiles            *[]string     `json:"dirty_files,omitempty"`
-	EnqueuedAt            time.Time     `json:"enqueued_at"`
-	Error                 *string       `json:"error,omitempty"`
-	FinishedAt            *time.Time    `json:"finished_at,omitempty"`
-	GitRef                string        `json:"git_ref"`
-	Id                    int64         `json:"id"`
-	JobType               string        `json:"job_type"`
-	MinSeverity           *string       `json:"min_severity,omitempty"`
-	Model                 *string       `json:"model,omitempty"`
-	OutputPrefix          *string       `json:"output_prefix,omitempty"`
-	PanelMemberConfigJson *string       `json:"panel_member_config_json,omitempty"`
-	PanelMemberIndex      *int64        `json:"panel_member_index,omitempty"`
-	PanelMemberName       *string       `json:"panel_member_name,omitempty"`
-	PanelName             *string       `json:"panel_name,omitempty"`
-	PanelRole             *string       `json:"panel_role,omitempty"`
-	PanelRunUuid          *string       `json:"panel_run_uuid,omitempty"`
-	PanelSummary          *PanelSummary `json:"panel_summary,omitempty"`
-	ParentJobId           *int64        `json:"parent_job_id,omitempty"`
-	Patch                 *string       `json:"patch,omitempty"`
-	PatchId               *string       `json:"patch_id,omitempty"`
-	Prompt                *string       `json:"prompt,omitempty"`
-	PromptPrebuilt        bool          `json:"prompt_prebuilt"`
-	Provider              *string       `json:"provider,omitempty"`
-	Reasoning             *string       `json:"reasoning,omitempty"`
-	RepoId                int64         `json:"repo_id"`
-	RepoName              *string       `json:"repo_name,omitempty"`
-	RepoPath              *string       `json:"repo_path,omitempty"`
-	RequestedModel        *string       `json:"requested_model,omitempty"`
-	RequestedProvider     *string       `json:"requested_provider,omitempty"`
-	RetryCount            int64         `json:"retry_count"`
-	ReviewType            *string       `json:"review_type,omitempty"`
-	SessionId             *string       `json:"session_id,omitempty"`
-	SkipReason            *string       `json:"skip_reason,omitempty"`
-	Source                *string       `json:"source,omitempty"`
-	SourceMachineId       *string       `json:"source_machine_id,omitempty"`
-	StartedAt             *time.Time    `json:"started_at,omitempty"`
-	Status                string        `json:"status"`
-	SyncedAt              *time.Time    `json:"synced_at,omitempty"`
-	TokenUsage            *string       `json:"token_usage,omitempty"`
-	UpdatedAt             *time.Time    `json:"updated_at,omitempty"`
-	Uuid                  *string       `json:"uuid,omitempty"`
-	Verdict               *string       `json:"verdict,omitempty"`
-	WorkerId              *string       `json:"worker_id,omitempty"`
-	WorktreePath          *string       `json:"worktree_path,omitempty"`
+	Schema                *string                 `json:"$schema,omitempty"`
+	Agent                 string                  `json:"agent"`
+	Agentic               bool                    `json:"agentic"`
+	BackupAgent           *string                 `json:"backup_agent,omitempty"`
+	BackupModel           *string                 `json:"backup_model,omitempty"`
+	Branch                *string                 `json:"branch,omitempty"`
+	ClaimBlocked          *bool                   `json:"claim_blocked,omitempty"`
+	Closed                *bool                   `json:"closed,omitempty"`
+	CommandLine           *string                 `json:"command_line,omitempty"`
+	CommitId              *int64                  `json:"commit_id,omitempty"`
+	CommitSubject         *string                 `json:"commit_subject,omitempty"`
+	DiffContent           *string                 `json:"diff_content,omitempty"`
+	DirtyFiles            *[]string               `json:"dirty_files,omitempty"`
+	EnqueuedAt            time.Time               `json:"enqueued_at"`
+	Error                 *string                 `json:"error,omitempty"`
+	Experiments           *[]ExperimentAssignment `json:"experiments,omitempty"`
+	FinishedAt            *time.Time              `json:"finished_at,omitempty"`
+	GitRef                string                  `json:"git_ref"`
+	Id                    int64                   `json:"id"`
+	JobType               string                  `json:"job_type"`
+	MinSeverity           *string                 `json:"min_severity,omitempty"`
+	Model                 *string                 `json:"model,omitempty"`
+	OutputPrefix          *string                 `json:"output_prefix,omitempty"`
+	PanelMemberConfigJson *string                 `json:"panel_member_config_json,omitempty"`
+	PanelMemberIndex      *int64                  `json:"panel_member_index,omitempty"`
+	PanelMemberName       *string                 `json:"panel_member_name,omitempty"`
+	PanelName             *string                 `json:"panel_name,omitempty"`
+	PanelRole             *string                 `json:"panel_role,omitempty"`
+	PanelRunUuid          *uuid.UUID              `json:"panel_run_uuid,omitempty"`
+	PanelSummary          *PanelSummary           `json:"panel_summary,omitempty"`
+	ParentJobId           *int64                  `json:"parent_job_id,omitempty"`
+	Patch                 *string                 `json:"patch,omitempty"`
+	PatchId               *string                 `json:"patch_id,omitempty"`
+	Prompt                *string                 `json:"prompt,omitempty"`
+	PromptPrebuilt        bool                    `json:"prompt_prebuilt"`
+	Provider              *string                 `json:"provider,omitempty"`
+	Reasoning             *string                 `json:"reasoning,omitempty"`
+	RepoId                int64                   `json:"repo_id"`
+	RepoName              *string                 `json:"repo_name,omitempty"`
+	RepoPath              *string                 `json:"repo_path,omitempty"`
+	RequestedModel        *string                 `json:"requested_model,omitempty"`
+	RequestedProvider     *string                 `json:"requested_provider,omitempty"`
+	ResumeSourceJobUuid   *uuid.UUID              `json:"resume_source_job_uuid,omitempty"`
+	RetryCount            int64                   `json:"retry_count"`
+	ReviewType            *string                 `json:"review_type,omitempty"`
+	SessionId             *string                 `json:"session_id,omitempty"`
+	SkipReason            *string                 `json:"skip_reason,omitempty"`
+	Source                *string                 `json:"source,omitempty"`
+	SourceMachineId       *uuid.UUID              `json:"source_machine_id,omitempty"`
+	StartedAt             *time.Time              `json:"started_at,omitempty"`
+	Status                string                  `json:"status"`
+	SyncedAt              *time.Time              `json:"synced_at,omitempty"`
+	TokenUsage            *string                 `json:"token_usage,omitempty"`
+	UpdatedAt             *time.Time              `json:"updated_at,omitempty"`
+	Uuid                  *uuid.UUID              `json:"uuid,omitempty"`
+	Verdict               *string                 `json:"verdict,omitempty"`
+	WorkerId              *string                 `json:"worker_id,omitempty"`
+	WorktreePath          *string                 `json:"worktree_path,omitempty"`
 }
 
 // ReviewProjection defines model for ReviewProjection.
@@ -1211,7 +1270,7 @@ type ReviewProjectionJob struct {
 	Source          *string       `json:"source,omitempty"`
 	StartedAt       *time.Time    `json:"started_at,omitempty"`
 	Status          string        `json:"status"`
-	Uuid            *string       `json:"uuid,omitempty"`
+	Uuid            *uuid.UUID    `json:"uuid,omitempty"`
 	Verdict         *string       `json:"verdict,omitempty"`
 }
 
@@ -1300,6 +1359,30 @@ type TokenSummary struct {
 	Updated int64          `json:"updated"`
 }
 
+// UpdateDrainRequestBody defines model for UpdateDrainRequestBody.
+type UpdateDrainRequestBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema  *string                      `json:"$schema,omitempty"`
+	OwnerId string                       `json:"owner_id"`
+	Policy  UpdateDrainRequestBodyPolicy `json:"policy"`
+}
+
+// UpdateDrainRequestBodyPolicy defines model for UpdateDrainRequestBody.Policy.
+type UpdateDrainRequestBodyPolicy string
+
+// UpdateDrainStatus defines model for UpdateDrainStatus.
+type UpdateDrainStatus struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema              *string   `json:"$schema,omitempty"`
+	ActiveWorkers       int64     `json:"active_workers"`
+	ExpiresAt           time.Time `json:"expires_at"`
+	LeaseToken          *string   `json:"lease_token,omitempty"`
+	Policy              string    `json:"policy"`
+	Recovering          bool      `json:"recovering"`
+	RunningJobs         int64     `json:"running_jobs"`
+	TargetedRunningJobs int64     `json:"targeted_running_jobs"`
+}
+
 // UpdateJobBranchOutputBody defines model for UpdateJobBranchOutputBody.
 type UpdateJobBranchOutputBody struct {
 	// Schema A URL to the JSON Schema for this object.
@@ -1314,6 +1397,13 @@ type UpdateJobBranchRequest struct {
 	Schema *string `json:"$schema,omitempty"`
 	Branch string  `json:"branch"`
 	JobId  int64   `json:"job_id"`
+}
+
+// UpdateLeaseRequestBody defines model for UpdateLeaseRequestBody.
+type UpdateLeaseRequestBody struct {
+	// Schema A URL to the JSON Schema for this object.
+	Schema     *string `json:"$schema,omitempty"`
+	LeaseToken string  `json:"lease_token"`
 }
 
 // VerdictStats defines model for VerdictStats.
@@ -1497,6 +1587,9 @@ type GetJobLogParams struct {
 
 	// Offset Byte offset into the log file
 	Offset *string `form:"offset,omitempty" json:"offset,omitempty"`
+
+	// XJobAgent Agent identity used for the previous log chunk
+	XJobAgent *string `json:"X-Job-Agent,omitempty"`
 }
 
 // GetJobOutputParams defines parameters for GetJobOutput.
@@ -1726,6 +1819,15 @@ type BootstrapWebSessionJSONRequestBody = WebBootstrapInputBody
 
 // LoginWebSessionJSONRequestBody defines body for LoginWebSession for application/json ContentType.
 type LoginWebSessionJSONRequestBody = WebLoginRequest
+
+// PrepareUpdateJSONRequestBody defines body for PrepareUpdate for application/json ContentType.
+type PrepareUpdateJSONRequestBody = UpdateDrainRequestBody
+
+// ReleaseUpdateJSONRequestBody defines body for ReleaseUpdate for application/json ContentType.
+type ReleaseUpdateJSONRequestBody = UpdateLeaseRequestBody
+
+// RenewUpdateJSONRequestBody defines body for RenewUpdate for application/json ContentType.
+type RenewUpdateJSONRequestBody = UpdateLeaseRequestBody
 
 // RequestEditorFn  is the function signature for the RequestEditor callback function
 type RequestEditorFn func(ctx context.Context, req *http.Request) error
@@ -1963,6 +2065,21 @@ type ClientInterface interface {
 	LoginWebSessionWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
 
 	LoginWebSession(ctx context.Context, body LoginWebSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// PrepareUpdateWithBody request with any body
+	PrepareUpdateWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	PrepareUpdate(ctx context.Context, body PrepareUpdateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// ReleaseUpdateWithBody request with any body
+	ReleaseUpdateWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	ReleaseUpdate(ctx context.Context, body ReleaseUpdateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	// RenewUpdateWithBody request with any body
+	RenewUpdateWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error)
+
+	RenewUpdate(ctx context.Context, body RenewUpdateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error)
 }
 
 func (c *Client) ListActivity(ctx context.Context, params *ListActivityParams, reqEditors ...RequestEditorFn) (*http.Response, error) {
@@ -2675,6 +2792,78 @@ func (c *Client) LoginWebSessionWithBody(ctx context.Context, contentType string
 
 func (c *Client) LoginWebSession(ctx context.Context, body LoginWebSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
 	req, err := NewLoginWebSessionRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PrepareUpdateWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPrepareUpdateRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) PrepareUpdate(ctx context.Context, body PrepareUpdateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewPrepareUpdateRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ReleaseUpdateWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReleaseUpdateRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) ReleaseUpdate(ctx context.Context, body ReleaseUpdateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewReleaseUpdateRequest(c.Server, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) RenewUpdateWithBody(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRenewUpdateRequestWithBody(c.Server, contentType, body)
+	if err != nil {
+		return nil, err
+	}
+	req = req.WithContext(ctx)
+	if err := c.applyEditors(ctx, req, reqEditors); err != nil {
+		return nil, err
+	}
+	return c.Client.Do(req)
+}
+
+func (c *Client) RenewUpdate(ctx context.Context, body RenewUpdateJSONRequestBody, reqEditors ...RequestEditorFn) (*http.Response, error) {
+	req, err := NewRenewUpdateRequest(c.Server, body)
 	if err != nil {
 		return nil, err
 	}
@@ -3723,6 +3912,21 @@ func NewGetJobLogRequest(server string, params *GetJobLogParams) (*http.Request,
 	req, err := http.NewRequest("GET", queryURL.String(), nil)
 	if err != nil {
 		return nil, err
+	}
+
+	if params != nil {
+
+		if params.XJobAgent != nil {
+			var headerParam0 string
+
+			headerParam0, err = runtime.StyleParamWithOptions("simple", false, "X-Job-Agent", *params.XJobAgent, runtime.StyleParamOptions{ParamLocation: runtime.ParamLocationHeader, Type: "string", Format: ""})
+			if err != nil {
+				return nil, err
+			}
+
+			req.Header.Set("X-Job-Agent", headerParam0)
+		}
+
 	}
 
 	return req, nil
@@ -5395,6 +5599,126 @@ func NewLoginWebSessionRequestWithBody(server string, contentType string, body i
 	return req, nil
 }
 
+// NewPrepareUpdateRequest calls the generic PrepareUpdate builder with application/json body
+func NewPrepareUpdateRequest(server string, body PrepareUpdateJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewPrepareUpdateRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewPrepareUpdateRequestWithBody generates requests for PrepareUpdate with any type of body
+func NewPrepareUpdateRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/update/prepare")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewReleaseUpdateRequest calls the generic ReleaseUpdate builder with application/json body
+func NewReleaseUpdateRequest(server string, body ReleaseUpdateJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewReleaseUpdateRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewReleaseUpdateRequestWithBody generates requests for ReleaseUpdate with any type of body
+func NewReleaseUpdateRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/update/release")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
+// NewRenewUpdateRequest calls the generic RenewUpdate builder with application/json body
+func NewRenewUpdateRequest(server string, body RenewUpdateJSONRequestBody) (*http.Request, error) {
+	var bodyReader io.Reader
+	buf, err := json.Marshal(body)
+	if err != nil {
+		return nil, err
+	}
+	bodyReader = bytes.NewReader(buf)
+	return NewRenewUpdateRequestWithBody(server, "application/json", bodyReader)
+}
+
+// NewRenewUpdateRequestWithBody generates requests for RenewUpdate with any type of body
+func NewRenewUpdateRequestWithBody(server string, contentType string, body io.Reader) (*http.Request, error) {
+	var err error
+
+	serverURL, err := url.Parse(server)
+	if err != nil {
+		return nil, err
+	}
+
+	operationPath := fmt.Sprintf("/api/update/renew")
+	if operationPath[0] == '/' {
+		operationPath = "." + operationPath
+	}
+
+	queryURL, err := serverURL.Parse(operationPath)
+	if err != nil {
+		return nil, err
+	}
+
+	req, err := http.NewRequest("POST", queryURL.String(), body)
+	if err != nil {
+		return nil, err
+	}
+
+	req.Header.Add("Content-Type", contentType)
+
+	return req, nil
+}
+
 func (c *Client) applyEditors(ctx context.Context, req *http.Request, additionalEditors []RequestEditorFn) error {
 	for _, r := range c.RequestEditors {
 		if err := r(ctx, req); err != nil {
@@ -5601,6 +5925,21 @@ type ClientWithResponsesInterface interface {
 	LoginWebSessionWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*LoginWebSessionResponse, error)
 
 	LoginWebSessionWithResponse(ctx context.Context, body LoginWebSessionJSONRequestBody, reqEditors ...RequestEditorFn) (*LoginWebSessionResponse, error)
+
+	// PrepareUpdateWithBodyWithResponse request with any body
+	PrepareUpdateWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PrepareUpdateResponse, error)
+
+	PrepareUpdateWithResponse(ctx context.Context, body PrepareUpdateJSONRequestBody, reqEditors ...RequestEditorFn) (*PrepareUpdateResponse, error)
+
+	// ReleaseUpdateWithBodyWithResponse request with any body
+	ReleaseUpdateWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReleaseUpdateResponse, error)
+
+	ReleaseUpdateWithResponse(ctx context.Context, body ReleaseUpdateJSONRequestBody, reqEditors ...RequestEditorFn) (*ReleaseUpdateResponse, error)
+
+	// RenewUpdateWithBodyWithResponse request with any body
+	RenewUpdateWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenewUpdateResponse, error)
+
+	RenewUpdateWithResponse(ctx context.Context, body RenewUpdateJSONRequestBody, reqEditors ...RequestEditorFn) (*RenewUpdateResponse, error)
 }
 
 type ListActivityResponse struct {
@@ -6633,6 +6972,75 @@ func (r LoginWebSessionResponse) StatusCode() int {
 	return 0
 }
 
+type PrepareUpdateResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *UpdateDrainStatus
+	ApplicationproblemJSON409 *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r PrepareUpdateResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r PrepareUpdateResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type ReleaseUpdateResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *ReleaseUpdateOutputBody
+	ApplicationproblemJSON409 *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r ReleaseUpdateResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r ReleaseUpdateResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
+type RenewUpdateResponse struct {
+	Body                      []byte
+	HTTPResponse              *http.Response
+	JSON200                   *UpdateDrainStatus
+	ApplicationproblemJSON409 *ErrorModel
+}
+
+// Status returns HTTPResponse.Status
+func (r RenewUpdateResponse) Status() string {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.Status
+	}
+	return http.StatusText(0)
+}
+
+// StatusCode returns HTTPResponse.StatusCode
+func (r RenewUpdateResponse) StatusCode() int {
+	if r.HTTPResponse != nil {
+		return r.HTTPResponse.StatusCode
+	}
+	return 0
+}
+
 // ListActivityWithResponse request returning *ListActivityResponse
 func (c *ClientWithResponses) ListActivityWithResponse(ctx context.Context, params *ListActivityParams, reqEditors ...RequestEditorFn) (*ListActivityResponse, error) {
 	rsp, err := c.ListActivity(ctx, params, reqEditors...)
@@ -7155,6 +7563,57 @@ func (c *ClientWithResponses) LoginWebSessionWithResponse(ctx context.Context, b
 		return nil, err
 	}
 	return ParseLoginWebSessionResponse(rsp)
+}
+
+// PrepareUpdateWithBodyWithResponse request with arbitrary body returning *PrepareUpdateResponse
+func (c *ClientWithResponses) PrepareUpdateWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*PrepareUpdateResponse, error) {
+	rsp, err := c.PrepareUpdateWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePrepareUpdateResponse(rsp)
+}
+
+func (c *ClientWithResponses) PrepareUpdateWithResponse(ctx context.Context, body PrepareUpdateJSONRequestBody, reqEditors ...RequestEditorFn) (*PrepareUpdateResponse, error) {
+	rsp, err := c.PrepareUpdate(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParsePrepareUpdateResponse(rsp)
+}
+
+// ReleaseUpdateWithBodyWithResponse request with arbitrary body returning *ReleaseUpdateResponse
+func (c *ClientWithResponses) ReleaseUpdateWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*ReleaseUpdateResponse, error) {
+	rsp, err := c.ReleaseUpdateWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReleaseUpdateResponse(rsp)
+}
+
+func (c *ClientWithResponses) ReleaseUpdateWithResponse(ctx context.Context, body ReleaseUpdateJSONRequestBody, reqEditors ...RequestEditorFn) (*ReleaseUpdateResponse, error) {
+	rsp, err := c.ReleaseUpdate(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseReleaseUpdateResponse(rsp)
+}
+
+// RenewUpdateWithBodyWithResponse request with arbitrary body returning *RenewUpdateResponse
+func (c *ClientWithResponses) RenewUpdateWithBodyWithResponse(ctx context.Context, contentType string, body io.Reader, reqEditors ...RequestEditorFn) (*RenewUpdateResponse, error) {
+	rsp, err := c.RenewUpdateWithBody(ctx, contentType, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRenewUpdateResponse(rsp)
+}
+
+func (c *ClientWithResponses) RenewUpdateWithResponse(ctx context.Context, body RenewUpdateJSONRequestBody, reqEditors ...RequestEditorFn) (*RenewUpdateResponse, error) {
+	rsp, err := c.RenewUpdate(ctx, body, reqEditors...)
+	if err != nil {
+		return nil, err
+	}
+	return ParseRenewUpdateResponse(rsp)
 }
 
 // ParseListActivityResponse parses an HTTP response from a ListActivityWithResponse call
@@ -8705,6 +9164,105 @@ func ParseLoginWebSessionResponse(rsp *http.Response) (*LoginWebSessionResponse,
 			return nil, err
 		}
 		response.JSON429 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParsePrepareUpdateResponse parses an HTTP response from a PrepareUpdateWithResponse call
+func ParsePrepareUpdateResponse(rsp *http.Response) (*PrepareUpdateResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &PrepareUpdateResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest UpdateDrainStatus
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseReleaseUpdateResponse parses an HTTP response from a ReleaseUpdateWithResponse call
+func ParseReleaseUpdateResponse(rsp *http.Response) (*ReleaseUpdateResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &ReleaseUpdateResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest ReleaseUpdateOutputBody
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
+
+	}
+
+	return response, nil
+}
+
+// ParseRenewUpdateResponse parses an HTTP response from a RenewUpdateWithResponse call
+func ParseRenewUpdateResponse(rsp *http.Response) (*RenewUpdateResponse, error) {
+	bodyBytes, err := io.ReadAll(rsp.Body)
+	defer func() { _ = rsp.Body.Close() }()
+	if err != nil {
+		return nil, err
+	}
+
+	response := &RenewUpdateResponse{
+		Body:         bodyBytes,
+		HTTPResponse: rsp,
+	}
+
+	switch {
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 200:
+		var dest UpdateDrainStatus
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.JSON200 = &dest
+
+	case strings.Contains(rsp.Header.Get("Content-Type"), "json") && rsp.StatusCode == 409:
+		var dest ErrorModel
+		if err := json.Unmarshal(bodyBytes, &dest); err != nil {
+			return nil, err
+		}
+		response.ApplicationproblemJSON409 = &dest
 
 	}
 

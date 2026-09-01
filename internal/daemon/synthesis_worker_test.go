@@ -12,6 +12,7 @@ import (
 	"strings"
 	"testing"
 	"time"
+	"uuid"
 
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
@@ -69,7 +70,7 @@ func failMemberWithError(t *testing.T, tc *workerTestContext, jobID int64, errMs
 // setSynthesisAgent points the run's synthesis job at a specific agent so tests
 // can attach a uniquely-named FakeAgent without clobbering the global "test"
 // agent that the rest of the package relies on.
-func setSynthesisAgent(t *testing.T, tc *workerTestContext, runUUID, agentName string) {
+func setSynthesisAgent(t *testing.T, tc *workerTestContext, runUUID uuid.UUID, agentName string) {
 	t.Helper()
 	_, err := tc.DB.Exec(
 		"UPDATE review_jobs SET agent = ? WHERE panel_run_uuid = ? AND panel_role = 'synthesis'",
@@ -81,7 +82,7 @@ func setSynthesisAgent(t *testing.T, tc *workerTestContext, runUUID, agentName s
 // releaseAndClaimSynthesis releases the gated synthesis job for the run and
 // claims it, asserting the claimed job is the synthesis row.
 func releaseAndClaimSynthesis(
-	t *testing.T, tc *workerTestContext, runUUID string,
+	t *testing.T, tc *workerTestContext, runUUID uuid.UUID,
 ) *storage.ReviewJob {
 	t.Helper()
 	require.NoError(t, tc.DB.MaybeReleasePanelSynthesis(runUUID))

@@ -61,7 +61,7 @@ func TestEnqueueJobStoresExperimentAtomically(t *testing.T) {
 
 func TestPanelExperimentProjectsToEveryJob(t *testing.T) {
 	db, repo := setupDBAndRepo(t, "experiment-panel")
-	const runUUID = "panel-run-one"
+	runUUID := testUUID("panel-run-one")
 	assignment := &ExperimentAssignmentInput{
 		ExperimentID:        "panel-v1",
 		DefinitionHash:      "panel-definition",
@@ -74,11 +74,11 @@ func TestPanelExperimentProjectsToEveryJob(t *testing.T) {
 	members, synthesis, err := db.EnqueuePanelRun(
 		[]EnqueueOpts{{
 			RepoID: repo.ID, GitRef: "base..head", Agent: "codex",
-			PanelRunUUID: runUUID, PanelName: "quality", PanelMemberName: "bugs",
+			PanelRunUUID: &runUUID, PanelName: "quality", PanelMemberName: "bugs",
 		}},
 		EnqueueOpts{
 			RepoID: repo.ID, GitRef: "base..head", Agent: "codex",
-			PanelRunUUID: runUUID, PanelName: "quality",
+			PanelRunUUID: &runUUID, PanelName: "quality",
 			Experiment: assignment,
 		},
 	)
@@ -98,7 +98,7 @@ func TestPanelExperimentProjectsToEveryJob(t *testing.T) {
 		projected[synthesis.ID].Job.Experiments,
 	)
 
-	stored, err := db.GetExperimentAssignmentInputForJobUUID(members[0].UUID)
+	stored, err := db.GetExperimentAssignmentInputForJobUUID(*members[0].UUID)
 	require.NoError(t, err)
 	assert.Equal(t, assignment, stored)
 
@@ -120,7 +120,7 @@ func TestExportReviewIncludesExperimentAndResumeLineage(t *testing.T) {
 	}
 	job, err := db.EnqueueJob(EnqueueOpts{
 		RepoID: repo.ID, GitRef: "review-sha", Agent: "codex",
-		ResumeSourceJobUUID: "source-job-uuid",
+		ResumeSourceJobUUID: testUUIDPtr("source-job-uuid"),
 		Experiment:          assignment,
 	})
 	require.NoError(t, err)
@@ -137,7 +137,7 @@ func TestExportReviewIncludesExperimentAndResumeLineage(t *testing.T) {
 	require.Len(t, page.Reviews[0].Experiments, 1)
 	assert.Equal(t, job.Experiments, page.Reviews[0].Experiments)
 	require.NotNil(t, page.Reviews[0].ResumeSourceJobUUID)
-	assert.Equal(t, "source-job-uuid", *page.Reviews[0].ResumeSourceJobUUID)
+	assert.Equal(t, testUUID("source-job-uuid"), *page.Reviews[0].ResumeSourceJobUUID)
 }
 
 func TestUpsertPulledExperimentAssignmentConflictLeavesOriginalRow(t *testing.T) {
@@ -147,23 +147,23 @@ func TestUpsertPulledExperimentAssignmentConflictLeavesOriginalRow(t *testing.T)
 		{
 			ExperimentID: "session-v1", DefinitionHash: "definition-a",
 			DefinitionJSON: `{"ratio":0.5}`, FirstSeenAt: assignedAt,
-			SourceMachineID: "machine-a",
+			SourceMachineID: testUUID("machine-a"),
 		},
 		{
 			ExperimentID: "model-v1", DefinitionHash: "definition-b",
 			DefinitionJSON: `{"ratio":0.5}`, FirstSeenAt: assignedAt,
-			SourceMachineID: "machine-a",
+			SourceMachineID: testUUID("machine-a"),
 		},
 	} {
 		require.NoError(t, db.UpsertPulledExperimentDefinition(definition))
 	}
 
 	original := SyncableExperimentAssignment{
-		ReviewUnitKind: ReviewUnitJob, ReviewUnitUUID: "job-unit-1",
+		ReviewUnitKind: ReviewUnitJob, ReviewUnitUUID: testUUID("job-unit-1"),
 		ExperimentID: "session-v1", Arm: "experiment",
 		SubjectHash: "subject-a", EffectiveConfigHash: "config-a",
 		EffectiveConfigJSON: `{"agent":"codex"}`,
-		AssignedAt:          assignedAt, SourceMachineID: "machine-a",
+		AssignedAt:          assignedAt, SourceMachineID: testUUID("machine-a"),
 	}
 	require.NoError(t, db.UpsertPulledExperimentAssignment(original))
 	require.NoError(t, db.UpsertPulledExperimentAssignment(original))
@@ -191,7 +191,7 @@ func TestGetExperimentDefinitionsToSyncIncludesForeignDefinitionForLocalAssignme
 		ExperimentID: "session-v1", DefinitionHash: "definition-a",
 		DefinitionJSON:  `{"ratio":0.5}`,
 		FirstSeenAt:     time.Date(2026, 8, 19, 12, 0, 0, 0, time.UTC),
-		SourceMachineID: "machine-a",
+		SourceMachineID: testUUID("machine-a"),
 	}
 	require.NoError(t, db.UpsertPulledExperimentDefinition(definition))
 

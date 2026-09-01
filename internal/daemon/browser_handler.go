@@ -9,6 +9,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"uuid"
 
 	"go.kenn.io/roborev/internal/storage"
 )
@@ -204,13 +205,13 @@ type browserReviewJob struct {
 	Source           string                `json:"source,omitempty"`
 	ParentJobID      *int64                `json:"parent_job_id,omitempty"`
 	MinSeverity      string                `json:"min_severity,omitempty"`
-	PanelRunUUID     string                `json:"panel_run_uuid,omitempty"`
+	PanelRunUUID     *uuid.UUID            `json:"panel_run_uuid,omitempty" format:"uuid"`
 	PanelRole        string                `json:"panel_role,omitempty"`
 	PanelName        string                `json:"panel_name,omitempty"`
 	PanelMemberName  string                `json:"panel_member_name,omitempty"`
 	PanelMemberIndex int                   `json:"panel_member_index,omitempty"`
 	TokenUsage       string                `json:"token_usage,omitempty"`
-	UUID             string                `json:"uuid,omitempty"`
+	UUID             *uuid.UUID            `json:"uuid,omitempty" format:"uuid"`
 	RepoPath         string                `json:"repo_path,omitempty"`
 	RepoName         string                `json:"repo_name,omitempty"`
 	CommitSubject    string                `json:"commit_subject,omitempty"`

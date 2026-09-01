@@ -12,6 +12,7 @@ import (
 	"strconv"
 	"strings"
 	"time"
+	"uuid"
 
 	tea "charm.land/bubbletea/v2"
 	gansi "charm.land/glamour/v2/ansi"
@@ -510,13 +511,13 @@ func (m model) fetchBranchesForRepo(
 // persisting the branchNone sentinel would freeze the row at "(none)"
 // Backfill runs once per TUI session (branchBackfillDone), so the
 // repeated lookup cost for skipped rows is bounded.
-func backfillBranchValue(job storage.ReviewJob, machineID string) (string, bool) {
+func backfillBranchValue(job storage.ReviewJob, machineID *uuid.UUID) (string, bool) {
 	// Mark task jobs (run, analyze, custom) or dirty jobs with no-branch sentinel
 	if job.IsTaskJob() || job.IsDirtyJob() {
 		return branchNone, true
 	}
 	// Mark remote jobs with no-branch sentinel (can't look up)
-	if job.RepoPath == "" || (machineID != "" && job.SourceMachineID != "" && job.SourceMachineID != machineID) {
+	if job.RepoPath == "" || (machineID != nil && job.SourceMachineID != nil && *job.SourceMachineID != *machineID) {
 		return branchNone, true
 	}
 
@@ -965,11 +966,12 @@ func (m model) fetchReviewForPrompt(jobID int64, promptSeq uint64) tea.Cmd {
 // run (members + synthesis); keep only members, sorted by member index. On error
 // the msg carries err and the handler leaves the panel uncached so a later
 // expand retries.
-func (m model) fetchPanelMembers(runUUID string) tea.Cmd {
+func (m model) fetchPanelMembers(runUUID uuid.UUID) tea.Cmd {
 	baseURL := m.endpoint.BaseURL()
 	client := m.client
 	return func() tea.Msg {
-		url := fmt.Sprintf("%s/api/jobs?panel_run=%s&limit=0&omit_prompt=true", baseURL, neturl.QueryEscape(runUUID))
+		url := fmt.Sprintf("%s/api/jobs?panel_run=%s&limit=0&omit_prompt=true", baseURL,
+			neturl.QueryEscape(runUUID.String())) //nolint:forbidigo // HTTP query parameter boundary.
 		resp, err := client.Get(url)
 		if err != nil {
 			return panelMembersMsg{runUUID: runUUID, err: err}

@@ -2392,7 +2392,7 @@ func (p *CIPoller) recordDeferral(
 ) {
 	nextAt := now.Add(reviewpkg.DefaultRetrySchedule.NextDelay(attempt.Attempt))
 	if err := p.db.DeferReviewAttempt(row.GithubRepo, row.PRNumber, row.HeadSHA,
-		errClass, excerpt, row.PanelRunUUID, nextAt, bumpGenuine); err != nil {
+		errClass, excerpt, &row.PanelRunUUID, nextAt, bumpGenuine); err != nil {
 		log.Printf("CI poller: error deferring %s attempt for %s#%d@%s: %v",
 			errClass, row.GithubRepo, row.PRNumber, gitpkg.ShortSHA(row.HeadSHA), err)
 	}

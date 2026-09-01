@@ -10,8 +10,8 @@ import (
 	"sync"
 	"testing"
 	"time"
+	"uuid"
 
-	"github.com/google/uuid"
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
@@ -24,7 +24,7 @@ import (
 // findOtherPanelRunUUID returns the single panel_run_uuid present in the DB that
 // is not exclude, failing if there is not exactly one. Used to locate the new
 // run a rerun creates.
-func findOtherPanelRunUUID(t *testing.T, db *storage.DB, exclude string) string {
+func findOtherPanelRunUUID(t *testing.T, db *storage.DB, exclude uuid.UUID) uuid.UUID {
 	t.Helper()
 	rows, err := db.Query(
 		"SELECT DISTINCT panel_run_uuid FROM review_jobs WHERE panel_run_uuid != '' AND panel_run_uuid != ?",
@@ -32,9 +32,9 @@ func findOtherPanelRunUUID(t *testing.T, db *storage.DB, exclude string) string 
 	)
 	require.NoError(t, err)
 	defer rows.Close()
-	var uuids []string
+	var uuids []uuid.UUID
 	for rows.Next() {
-		var u string
+		var u uuid.UUID
 		require.NoError(t, rows.Scan(&u))
 		uuids = append(uuids, u)
 	}
@@ -52,7 +52,7 @@ func markJobStatus(t *testing.T, db *storage.DB, jobID int64, status storage.Job
 }
 
 func markPanelMembersStatus(
-	t *testing.T, db *storage.DB, runUUID string, status storage.JobStatus,
+	t *testing.T, db *storage.DB, runUUID uuid.UUID, status storage.JobStatus,
 ) {
 	t.Helper()
 	members, err := db.GetPanelMembers(runUUID)
@@ -65,8 +65,8 @@ func markPanelMembersStatus(
 // rerunAndLoadNewRun marks the source members and synthesis job done, reruns
 // the panel, locates the single new run, and returns its UUID and members.
 func rerunAndLoadNewRun(
-	t *testing.T, server *Server, db *storage.DB, oldUUID string, synthID int64,
-) (string, []storage.ReviewJob) {
+	t *testing.T, server *Server, db *storage.DB, oldUUID uuid.UUID, synthID int64,
+) (uuid.UUID, []storage.ReviewJob) {
 	t.Helper()
 	markPanelMembersStatus(t, db, oldUUID, storage.JobStatusDone)
 	markJobStatus(t, db, synthID, storage.JobStatusDone)
@@ -182,8 +182,9 @@ func TestRerunPanelRequestIsIdempotent(t *testing.T) {
 	require.NoError(t, err)
 	subscriberID, events := server.broadcaster.Subscribe("")
 	defer server.broadcaster.Unsubscribe(subscriberID)
+	requestID := testUUID("panel-request-one")
 	input := &RerunJobInput{Body: RerunJobRequest{
-		JobID: synth.ID, RequestID: "panel-request-one",
+		JobID: synth.ID, RequestID: &requestID,
 	}}
 
 	first, err := server.humaRerunJob(context.Background(), input)
@@ -202,7 +203,7 @@ func TestRerunPanelRequestIsIdempotent(t *testing.T) {
 
 	assert.Equal(t, first.Body, second.Body)
 	assert.NotEqual(t, synth.ID, first.Body.JobID)
-	assert.Equal(t, "panel-request-one", first.Body.RequestID)
+	assert.Equal(t, requestID, first.Body.RequestID)
 	var runCount int
 	require.NoError(t, db.QueryRow(
 		"SELECT COUNT(DISTINCT panel_run_uuid) FROM review_jobs WHERE panel_run_uuid != ''",
@@ -221,11 +222,11 @@ func TestRerunPanelConcurrentRequestsShareSuccessor(t *testing.T) {
 	outputs := make(chan *RerunJobOutput, 2)
 	errors := make(chan error, 2)
 	var workers sync.WaitGroup
-	for _, requestID := range []string{"panel-request-one", "panel-request-two"} {
+	for _, requestID := range []uuid.UUID{testUUID("panel-request-one"), testUUID("panel-request-two")} {
 		workers.Go(func() {
 			<-start
 			output, err := server.humaRerunJob(context.Background(), &RerunJobInput{
-				Body: RerunJobRequest{JobID: synth.ID, RequestID: requestID},
+				Body: RerunJobRequest{JobID: synth.ID, RequestID: &requestID},
 			})
 			outputs <- output
 			errors <- err
@@ -262,18 +263,19 @@ func TestRerunPanelCoalescedRequestRemainsIdempotent(t *testing.T) {
 	markJobStatus(t, db, synth.ID, storage.JobStatusDone)
 
 	first, err := server.humaRerunJob(context.Background(), &RerunJobInput{
-		Body: RerunJobRequest{JobID: synth.ID, RequestID: "panel-request-one"},
+		Body: RerunJobRequest{JobID: synth.ID, RequestID: testUUIDPtr("panel-request-one")},
 	})
 	require.NoError(t, err)
 	coalescedInput := &RerunJobInput{Body: RerunJobRequest{
-		JobID: synth.ID, RequestID: "panel-request-two",
+		JobID: synth.ID, RequestID: testUUIDPtr("panel-request-two"),
 	}}
 	coalesced, err := server.humaRerunJob(context.Background(), coalescedInput)
 	require.NoError(t, err)
 	require.Equal(t, first.Body.JobID, coalesced.Body.JobID)
 	require.Equal(t, first.Body.RunUUID, coalesced.Body.RunUUID)
 
-	markPanelMembersStatus(t, db, first.Body.RunUUID, storage.JobStatusDone)
+	require.NotNil(t, first.Body.RunUUID)
+	markPanelMembersStatus(t, db, *first.Body.RunUUID, storage.JobStatusDone)
 	markJobStatus(t, db, first.Body.JobID, storage.JobStatusDone)
 	replayed, err := server.humaRerunJob(context.Background(), coalescedInput)
 	require.NoError(t, err)
@@ -293,15 +295,16 @@ func TestRerunPanelCompletedSuccessorAllowsFreshRequest(t *testing.T) {
 	markJobStatus(t, db, synth.ID, storage.JobStatusDone)
 
 	firstInput := &RerunJobInput{Body: RerunJobRequest{
-		JobID: synth.ID, RequestID: "panel-request-one",
+		JobID: synth.ID, RequestID: testUUIDPtr("panel-request-one"),
 	}}
 	first, err := server.humaRerunJob(context.Background(), firstInput)
 	require.NoError(t, err)
-	markPanelMembersStatus(t, db, first.Body.RunUUID, storage.JobStatusDone)
+	require.NotNil(t, first.Body.RunUUID)
+	markPanelMembersStatus(t, db, *first.Body.RunUUID, storage.JobStatusDone)
 	markJobStatus(t, db, first.Body.JobID, storage.JobStatusDone)
 
 	second, err := server.humaRerunJob(context.Background(), &RerunJobInput{
-		Body: RerunJobRequest{JobID: synth.ID, RequestID: "panel-request-two"},
+		Body: RerunJobRequest{JobID: synth.ID, RequestID: testUUIDPtr("panel-request-two")},
 	})
 	require.NoError(t, err)
 	assert.NotEqual(t, first.Body.JobID, second.Body.JobID)
@@ -350,15 +353,15 @@ func TestRerunPanelRejectsStaleWorktrees(t *testing.T) {
 			require.NoError(t, err)
 
 			stalePath := filepath.Join(tempDir, "removed-worktree")
-			runUUID := uuid.NewString()
+			runUUID := uuid.New()
 			member := storage.EnqueueOpts{
 				RepoID: repo.ID, GitRef: "HEAD", Agent: "test",
-				PanelRunUUID: runUUID, PanelRole: storage.PanelRoleMember,
+				PanelRunUUID: &runUUID, PanelRole: storage.PanelRoleMember,
 				PanelName: "panel", PanelMemberName: "member",
 			}
 			synthesis := storage.EnqueueOpts{
 				RepoID: repo.ID, GitRef: "HEAD", Agent: "test",
-				PanelRunUUID: runUUID, PanelRole: storage.PanelRoleSynthesis,
+				PanelRunUUID: &runUUID, PanelRole: storage.PanelRoleSynthesis,
 				PanelName: "panel",
 			}
 			if target == "member" {
@@ -399,7 +402,7 @@ func TestRerunSynthesisCreatesNewRun(t *testing.T) {
 	// Distinct resolved fields per member so the clone assertions below would
 	// fail if panelRerunMemberOpts dropped any of agent/model/provider/
 	// reasoning/review_type/config.
-	oldUUID := uuid.NewString()
+	oldUUID := uuid.New()
 	const subjectHash = "panel-subject-hash"
 	mkMember := func(name string, idx int, agent, model, provider, reasoning, reviewType string) storage.EnqueueOpts {
 		return storage.EnqueueOpts{
@@ -413,7 +416,7 @@ func TestRerunSynthesisCreatesNewRun(t *testing.T) {
 			Reasoning:             reasoning,
 			ReviewType:            reviewType,
 			JobType:               storage.JobTypeReview,
-			PanelRunUUID:          oldUUID,
+			PanelRunUUID:          &oldUUID,
 			PanelRole:             storage.PanelRoleMember,
 			PanelName:             "panel",
 			PanelMemberName:       name,
@@ -429,7 +432,7 @@ func TestRerunSynthesisCreatesNewRun(t *testing.T) {
 	srcMembers[0].BackupModel = "backup-model-a"
 	srcSynth := storage.EnqueueOpts{
 		RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123",
-		Branch: "feature/panel", Agent: "synth-agent", PanelRunUUID: oldUUID,
+		Branch: "feature/panel", Agent: "synth-agent", PanelRunUUID: &oldUUID,
 		PanelRole: storage.PanelRoleSynthesis, PanelName: "panel",
 		JobType: storage.JobTypeSynthesis,
 	}
@@ -552,7 +555,7 @@ func TestRerunPanelPreservesStoredPrompt(t *testing.T) {
 	// fans the prompt out onto each member. The worker hard-fails a stored-prompt
 	// job whose prompt is empty, so the rerun must carry the prompt across.
 	const prompt = "Custom task: analyze the migration plan."
-	runUUID := uuid.NewString()
+	runUUID := uuid.New()
 	mkMember := func(name string, idx int) storage.EnqueueOpts {
 		return storage.EnqueueOpts{
 			RepoID:           repo.ID,
@@ -560,7 +563,7 @@ func TestRerunPanelPreservesStoredPrompt(t *testing.T) {
 			JobType:          storage.JobTypeTask,
 			Prompt:           prompt,
 			Agent:            "test",
-			PanelRunUUID:     runUUID,
+			PanelRunUUID:     &runUUID,
 			PanelRole:        storage.PanelRoleMember,
 			PanelName:        "p",
 			PanelMemberName:  name,
@@ -570,7 +573,7 @@ func TestRerunPanelPreservesStoredPrompt(t *testing.T) {
 	members := []storage.EnqueueOpts{mkMember("m0", 0), mkMember("m1", 1)}
 	synth := storage.EnqueueOpts{
 		RepoID: repo.ID, GitRef: "task", JobType: storage.JobTypeTask,
-		Prompt: prompt, Agent: "test", PanelRunUUID: runUUID,
+		Prompt: prompt, Agent: "test", PanelRunUUID: &runUUID,
 		PanelRole: storage.PanelRoleSynthesis, PanelName: "p",
 	}
 	_, synthJob, err := db.EnqueuePanelRun(members, synth)
@@ -591,18 +594,18 @@ func TestRerunPanelClearsPrebuiltReviewPrompt(t *testing.T) {
 	require.NoError(t, err)
 
 	const prompt = "prebuilt CI prompt with PR context"
-	runUUID := uuid.NewString()
+	runUUID := uuid.New()
 	members := []storage.EnqueueOpts{
 		{
 			RepoID: repo.ID, GitRef: "base..head", JobType: storage.JobTypeRange,
 			Prompt: prompt, PromptPrebuilt: true, Agent: "test",
-			PanelRunUUID: runUUID, PanelRole: storage.PanelRoleMember,
+			PanelRunUUID: &runUUID, PanelRole: storage.PanelRoleMember,
 			PanelName: "ci", PanelMemberName: "bug", PanelMemberIndex: 0,
 		},
 	}
 	synth := storage.EnqueueOpts{
 		RepoID: repo.ID, GitRef: "base..head", Agent: "test",
-		PanelRunUUID: runUUID, PanelRole: storage.PanelRoleSynthesis, PanelName: "ci",
+		PanelRunUUID: &runUUID, PanelRole: storage.PanelRoleSynthesis, PanelName: "ci",
 	}
 	_, synthJob, err := db.EnqueuePanelRun(members, synth)
 	require.NoError(t, err)
@@ -619,11 +622,11 @@ func TestRerunPanelPreservesSynthesisBackup(t *testing.T) {
 	repo, err := db.GetOrCreateRepo(t.TempDir())
 	require.NoError(t, err)
 
-	runUUID := uuid.NewString()
+	runUUID := uuid.New()
 	members := []storage.EnqueueOpts{
 		{
 			RepoID: repo.ID, GitRef: "abc123", Agent: "test",
-			PanelRunUUID: runUUID, PanelRole: storage.PanelRoleMember,
+			PanelRunUUID: &runUUID, PanelRole: storage.PanelRoleMember,
 			PanelName: "p", PanelMemberName: "m0", PanelMemberIndex: 0,
 		},
 	}
@@ -631,7 +634,7 @@ func TestRerunPanelPreservesSynthesisBackup(t *testing.T) {
 		RepoID: repo.ID, GitRef: "abc123", Agent: "primary",
 		BackupAgent: "backup", BackupModel: "backup-model",
 		PanelMemberConfigJSON: `{"acp":{"primary":{"command":"frozen-primary"}}}`,
-		PanelRunUUID:          runUUID, PanelRole: storage.PanelRoleSynthesis, PanelName: "p",
+		PanelRunUUID:          &runUUID, PanelRole: storage.PanelRoleSynthesis, PanelName: "p",
 	}
 	_, synthJob, err := db.EnqueuePanelRun(members, synth)
 	require.NoError(t, err)
@@ -667,16 +670,16 @@ func TestRerunCIPanelPreservesSynthesisACPSnapshot(t *testing.T) {
 	}})
 	require.NoError(t, err)
 
-	runUUID := uuid.NewString()
+	runUUID := uuid.New()
 	members := []storage.EnqueueOpts{{
 		RepoID: repo.ID, GitRef: "base..head", Agent: "test",
-		PanelRunUUID: runUUID, PanelRole: storage.PanelRoleMember,
+		PanelRunUUID: &runUUID, PanelRole: storage.PanelRoleMember,
 		PanelName: "ci", PanelMemberName: "m0",
 	}}
 	synth := storage.EnqueueOpts{
 		RepoID: repo.ID, GitRef: "base..head", Agent: "acp.goose",
 		Source: storage.JobSourceCI, PanelMemberConfigJSON: string(snapshot),
-		PanelRunUUID: runUUID, PanelRole: storage.PanelRoleSynthesis, PanelName: "ci",
+		PanelRunUUID: &runUUID, PanelRole: storage.PanelRoleSynthesis, PanelName: "ci",
 	}
 	_, synthJob, err := db.EnqueuePanelRun(members, synth)
 	require.NoError(t, err)
@@ -707,12 +710,12 @@ func TestRerunPanelPreservesOutputPrefix(t *testing.T) {
 
 	const memberPrefix = "Member context header\n\n"
 	const synthPrefix = "Synthesis context header\n\n"
-	runUUID := uuid.NewString()
+	runUUID := uuid.New()
 	mkMember := func(name string, idx int) storage.EnqueueOpts {
 		return storage.EnqueueOpts{
 			RepoID: repo.ID, GitRef: "task", JobType: storage.JobTypeTask,
 			Prompt: "p", OutputPrefix: memberPrefix, Agent: "test",
-			PanelRunUUID: runUUID, PanelRole: storage.PanelRoleMember,
+			PanelRunUUID: &runUUID, PanelRole: storage.PanelRoleMember,
 			PanelName: "p", PanelMemberName: name, PanelMemberIndex: idx,
 		}
 	}
@@ -720,7 +723,7 @@ func TestRerunPanelPreservesOutputPrefix(t *testing.T) {
 	synth := storage.EnqueueOpts{
 		RepoID: repo.ID, GitRef: "task", JobType: storage.JobTypeTask,
 		Prompt: "p", OutputPrefix: synthPrefix, Agent: "test",
-		PanelRunUUID: runUUID, PanelRole: storage.PanelRoleSynthesis, PanelName: "p",
+		PanelRunUUID: &runUUID, PanelRole: storage.PanelRoleSynthesis, PanelName: "p",
 	}
 	_, synthJob, err := db.EnqueuePanelRun(members, synth)
 	require.NoError(t, err)
@@ -743,11 +746,11 @@ func TestRerunPanelPreservesTarget(t *testing.T) {
 		require.NoError(t, err)
 
 		const diff = "diff --git a/x b/x\n+dirty change\n"
-		runUUID := uuid.NewString()
+		runUUID := uuid.New()
 		mkMember := func(name string, idx int) storage.EnqueueOpts {
 			return storage.EnqueueOpts{
 				RepoID: repo.ID, GitRef: "dirty", JobType: storage.JobTypeDirty,
-				DiffContent: diff, Agent: "test", PanelRunUUID: runUUID,
+				DiffContent: diff, Agent: "test", PanelRunUUID: &runUUID,
 				PanelRole: storage.PanelRoleMember, PanelName: "p",
 				PanelMemberName: name, PanelMemberIndex: idx,
 			}
@@ -755,7 +758,7 @@ func TestRerunPanelPreservesTarget(t *testing.T) {
 		members := []storage.EnqueueOpts{mkMember("m0", 0), mkMember("m1", 1)}
 		synth := storage.EnqueueOpts{
 			RepoID: repo.ID, GitRef: "dirty", JobType: storage.JobTypeDirty,
-			DiffContent: diff, Agent: "test", PanelRunUUID: runUUID,
+			DiffContent: diff, Agent: "test", PanelRunUUID: &runUUID,
 			PanelRole: storage.PanelRoleSynthesis, PanelName: "p",
 		}
 		_, synthJob, err := db.EnqueuePanelRun(members, synth)
@@ -785,19 +788,19 @@ func TestRerunPanelPreservesTarget(t *testing.T) {
 		require.NoError(t, err)
 
 		const patchID = "patch-abc"
-		runUUID := uuid.NewString()
+		runUUID := uuid.New()
 		mkMember := func(name string, idx int) storage.EnqueueOpts {
 			return storage.EnqueueOpts{
 				RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123",
 				PatchID: patchID, JobType: storage.JobTypeReview, Agent: "test",
-				PanelRunUUID: runUUID, PanelRole: storage.PanelRoleMember,
+				PanelRunUUID: &runUUID, PanelRole: storage.PanelRoleMember,
 				PanelName: "p", PanelMemberName: name, PanelMemberIndex: idx,
 			}
 		}
 		members := []storage.EnqueueOpts{mkMember("m0", 0), mkMember("m1", 1)}
 		synth := storage.EnqueueOpts{
 			RepoID: repo.ID, CommitID: commit.ID, GitRef: "abc123", PatchID: patchID,
-			Agent: "test", PanelRunUUID: runUUID, PanelRole: storage.PanelRoleSynthesis,
+			Agent: "test", PanelRunUUID: &runUUID, PanelRole: storage.PanelRoleSynthesis,
 			PanelName: "p",
 		}
 		_, synthJob, err := db.EnqueuePanelRun(members, synth)

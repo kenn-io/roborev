@@ -6,7 +6,9 @@ linters:
   default: none
   enable:
     - errcheck
+    - depguard
     - errorlint
+    - forbidigo
     - govet
     - ineffassign
     - modernize
@@ -17,6 +19,19 @@ linters:
     errcheck:
       check-type-assertions: false
       check-blank: false
+    forbidigo:
+      analyze-types: true
+      forbid:
+        - pattern: '^\(uuid\.UUID\)\.String$'
+          msg: keep uuid.UUID until a foreign text boundary; name that boundary in the nolint comment
+        - pattern: '^uuid\.Parse$'
+          msg: keep uuid.UUID until a foreign text boundary; name that boundary in the nolint comment
+    depguard:
+      rules:
+        main:
+          deny:
+            - pkg: github.com/google/uuid
+              desc: use Go 1.27's uuid package
   exclusions:
     generated: lax
     presets:

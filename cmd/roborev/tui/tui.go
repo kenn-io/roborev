@@ -13,6 +13,7 @@ import (
 	"strings"
 	"time"
 	"unicode"
+	"uuid"
 
 	tea "charm.land/bubbletea/v2"
 	gansi "charm.land/glamour/v2/ansi"
@@ -268,9 +269,9 @@ type model struct {
 	costSeq          int                    // fetchSeq of the stored cost; segment hides until it matches m.fetchSeq
 	status           storage.DaemonStatus
 	selectedIdx      int
-	selectedJobID    int64                          // Track selected job by ID to maintain position on refresh
-	expandedPanels   map[string]bool                // panel_run_uuid -> expanded
-	panelMembers     map[string][]storage.ReviewJob // panel_run_uuid -> side-fetched members
+	selectedJobID    int64                             // Track selected job by ID to maintain position on refresh
+	expandedPanels   map[uuid.UUID]bool                // panel_run_uuid -> expanded
+	panelMembers     map[uuid.UUID][]storage.ReviewJob // panel_run_uuid -> side-fetched members
 	currentView      viewKind
 	currentReview    *storage.Review
 	currentResponses []storage.Response // Responses for current review (fetched with review)
@@ -1038,8 +1039,8 @@ func newModel(ep daemon.DaemonEndpoint, opts ...option) model {
 		taskColumnOrder:     taskColOrder,
 		queueColCache:       &colWidthCache{gen: -1},
 		taskColCache:        &colWidthCache{gen: -1},
-		expandedPanels:      map[string]bool{},
-		panelMembers:        map[string][]storage.ReviewJob{},
+		expandedPanels:      map[uuid.UUID]bool{},
+		panelMembers:        map[uuid.UUID][]storage.ReviewJob{},
 		promptCmdExpanded:   true,
 	}
 	// Seed the cached classify-visibility decision once so render and
@@ -1177,7 +1178,7 @@ func (m *model) getBranchForJob(job storage.ReviewJob) string {
 
 	// Fall back to git lookup if repo path exists locally and we have a SHA
 	// Only try if repo path is set and is not from a remote machine
-	if job.RepoPath == "" || (m.status.MachineID != "" && job.SourceMachineID != "" && job.SourceMachineID != m.status.MachineID) {
+	if job.RepoPath == "" || (m.status.MachineID != nil && job.SourceMachineID != nil && *job.SourceMachineID != *m.status.MachineID) {
 		// Don't cache - repo might become available later
 		return ""
 	}
