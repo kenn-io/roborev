@@ -925,26 +925,19 @@ func (s *StateStore) deliverPendingReminder(
 			continue
 		}
 		pending.FailedReviewCount = len(actionableReviewIDs)
-		// Releases before v0.64 persisted only Reason. Preserve that custom
-		// instruction instead of rebuilding with the current default. Remove
-		// this fallback after v0.66 ships with the hook migration. See #1012.
-		if pending.Instruction != "" {
-			reasonReq := req
-			reasonReq.Instruction = pending.Instruction
-			switch pending.TriggeredBy {
-			case "failed_reviews":
-				pending.Reason = deferredReminderReason(buildFailedReviewReason(reasonReq, SessionState{
-					FailedReviewCount:      len(actionableReviewIDs),
-					LastFailedReviewRepo:   pending.TrackedRepoRoot,
-					LastFailedReviewBranch: pending.Branch,
-				}, actionableReviewIDs), pending.WorktreeRoot)
-			case "commit":
-				pending.Reason = deferredReminderReason(buildCommitReason(
-					reasonReq, pending.CommitCount, pending.TrackedRepoRoot, actionableReviewIDs,
-				), pending.WorktreeRoot)
-			}
-		} else {
-			pending.Reason += formatReviewJobIDs(actionableReviewIDs)
+		reasonReq := req
+		reasonReq.Instruction = pending.Instruction
+		switch pending.TriggeredBy {
+		case "failed_reviews":
+			pending.Reason = deferredReminderReason(buildFailedReviewReason(reasonReq, SessionState{
+				FailedReviewCount:      len(actionableReviewIDs),
+				LastFailedReviewRepo:   pending.TrackedRepoRoot,
+				LastFailedReviewBranch: pending.Branch,
+			}, actionableReviewIDs), pending.WorktreeRoot)
+		case "commit":
+			pending.Reason = deferredReminderReason(buildCommitReason(
+				reasonReq, pending.CommitCount, pending.TrackedRepoRoot, actionableReviewIDs,
+			), pending.WorktreeRoot)
 		}
 		delete(st.PendingReminders, candidate.key)
 		acknowledgeReviewIDs(&st, dedupeKey, actionableReviewIDs)

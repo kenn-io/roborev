@@ -13,8 +13,7 @@ import (
 )
 
 const (
-	AgentGrok   kitagenthook.Agent = "grok"
-	AgentLegacy kitagenthook.Agent = "legacy"
+	AgentGrok kitagenthook.Agent = "grok"
 )
 
 var profileExecutables = map[kitagenthook.Agent][]string{

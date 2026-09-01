@@ -214,66 +214,39 @@ func TestAgentHookInstallRejectsBinaryWithCommand(t *testing.T) {
 	assert.ErrorContains(t, err, "--binary and --command cannot be used together")
 }
 
-func TestAgentHookRunSupportsLegacyProfilelessRegistration(t *testing.T) {
-	t.Setenv("ROBOREV_DATA_DIR", t.TempDir())
-	oldPost := postAgentHook
-	var got agenthook.Request
-	postAgentHook = func(_ context.Context, _ string, req agenthook.Request) (agenthook.Response, error) {
-		got = req
-		return agenthook.Response{Triggered: true, Reason: "resolve reviews"}, nil
-	}
-	t.Cleanup(func() { postAgentHook = oldPost })
-
-	var stdout bytes.Buffer
+func TestAgentHookRunRequiresProfile(t *testing.T) {
 	cmd := agentHookCmd()
-	cmd.SetIn(strings.NewReader(`{"session_id":"legacy-1","hook_event_name":"Stop"}`))
-	cmd.SetOut(&stdout)
 	cmd.SetArgs([]string{"run"})
 
-	require.NoError(t, cmd.Execute())
-	assert.Equal(t, "legacy-1", got.Event.SessionID)
-	assert.Equal(t, agenthook.AgentLegacy, got.Agent)
-	var output map[string]any
-	require.NoError(t, json.Unmarshal(stdout.Bytes(), &output))
-	reason, ok := output["reason"].(string)
-	require.True(t, ok)
-	assert.Contains(t, reason, "legacy Agent Hook cannot verify the installed roborev-fix skill")
-	assert.Contains(t, reason, "roborev agent-hook install")
-	assert.Contains(t, reason, "resolve reviews")
+	err := cmd.Execute()
+
+	require.Error(t, err)
+	assert.ErrorContains(t, err, "--agent is required")
 }
 
-// If a legacy or Grok encoder bypasses policy-aware output, users get different
-// review handling depending on which supported hook registration they use.
-func TestLegacyAndGrokAgentHooksAppendFixGuidelines(t *testing.T) {
+func TestGrokAgentHookAppendsFixGuidelines(t *testing.T) {
 	oldPost := postAgentHook
 	postAgentHook = func(context.Context, string, agenthook.Request) (agenthook.Response, error) {
 		return agenthook.Response{Triggered: true, Reason: "resolve reviews"}, nil
 	}
 	t.Cleanup(func() { postAgentHook = oldPost })
 
-	for _, tc := range []struct {
-		name string
-		run  func(agenthook.Options, io.Reader, io.Writer, io.Writer) error
-	}{
-		{name: "legacy", run: func(opts agenthook.Options, in io.Reader, out, errOut io.Writer) error {
-			return runLegacyAgentHook(context.Background(), opts, in, out, errOut)
-		}},
-		{name: "grok", run: runGrokAgentHook},
-	} {
-		t.Run(tc.name, func(t *testing.T) {
-			var stdout bytes.Buffer
-			opts := agenthook.DefaultOptions()
-			opts.FixGuidelines = "Verify before editing."
-			err := tc.run(opts, strings.NewReader(`{"session_id":"s1","hook_event_name":"Stop"}`), &stdout, io.Discard)
-			require.NoError(t, err)
+	var stdout bytes.Buffer
+	opts := agenthook.DefaultOptions()
+	opts.FixGuidelines = "Verify before editing."
+	err := runGrokAgentHook(
+		opts,
+		strings.NewReader(`{"session_id":"s1","hook_event_name":"Stop"}`),
+		&stdout,
+		io.Discard,
+	)
+	require.NoError(t, err)
 
-			var output map[string]any
-			require.NoError(t, json.Unmarshal(stdout.Bytes(), &output))
-			reason, ok := output["reason"].(string)
-			require.True(t, ok)
-			assert.True(t, strings.HasSuffix(strings.TrimSpace(reason), "Verify before editing."))
-		})
-	}
+	var output map[string]any
+	require.NoError(t, json.Unmarshal(stdout.Bytes(), &output))
+	reason, ok := output["reason"].(string)
+	require.True(t, ok)
+	assert.Contains(t, reason, "Verify before editing.")
 }
 
 func TestOwnerStopOutputSkipsGuidelinesAndSkillWarnings(t *testing.T) {

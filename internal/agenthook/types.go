@@ -175,55 +175,6 @@ type SessionState struct {
 	PendingReminders            map[string]PendingReminder `json:"pending_reminders,omitempty"`
 }
 
-func (s *SessionState) UnmarshalJSON(body []byte) error {
-	type persistedSessionState SessionState
-	var current persistedSessionState
-	if err := json.Unmarshal(body, &current); err != nil {
-		return err
-	}
-	// Releases before v0.64 stored one session-wide Stop counter. Carry it to
-	// the only identifiable recent lineage, then let the next save remove the
-	// old field. Ambiguous multi-workspace state safely resets. Remove this
-	// migration after v0.66 ships. See #1012.
-	var legacy struct {
-		StopCountSincePrompt int `json:"stop_count_since_prompt,omitempty"`
-	}
-	if err := json.Unmarshal(body, &legacy); err != nil {
-		return err
-	}
-	state := SessionState(current)
-	if legacy.StopCountSincePrompt > 0 && len(state.StopCountsSincePrompt) == 0 {
-		if key := legacyStopCountLineage(state); key != "" {
-			state.StopCountsSincePrompt = map[string]int{key: legacy.StopCountSincePrompt}
-		}
-	}
-	*s = state
-	return nil
-}
-
-func legacyStopCountLineage(state SessionState) string {
-	if len(state.WorktreeLineageKeys) > 1 {
-		return ""
-	}
-	if len(state.WorktreeLineageKeys) == 1 {
-		for _, lineage := range state.WorktreeLineageKeys {
-			return lineage
-		}
-	}
-	if len(state.RepoHeads) > 1 {
-		return ""
-	}
-	if len(state.RepoHeads) == 1 {
-		for key := range state.RepoHeads {
-			return key
-		}
-	}
-	if state.LastFailedReviewRepo != "" {
-		return repoHeadKey(state.LastFailedReviewRepo, state.LastFailedReviewBranch)
-	}
-	return ""
-}
-
 type PendingReminder struct {
 	TriggeredBy         string    `json:"triggered_by"`
 	Reason              string    `json:"reason"`

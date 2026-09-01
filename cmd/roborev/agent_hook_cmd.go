@@ -79,17 +79,7 @@ func agentHookRunCmd() *cobra.Command {
 		RunE: func(cmd *cobra.Command, _ []string) error {
 			rawAgent := strings.ToLower(strings.TrimSpace(agent))
 			if rawAgent == "" {
-				// Releases before v0.64 installed profile-less Codex and Claude
-				// commands. Keep that dispatcher through v0.66 so existing hooks
-				// continue working until the bounded migration in #1012 replaces
-				// them with profile-specific kit registrations.
-				resolved, err := agenthook.ResolveOptionsForAgent("", opts, agentHookFlagChanges(cmd))
-				if err != nil {
-					return err
-				}
-				return runLegacyAgentHook(
-					cmd.Context(), resolved, cmd.InOrStdin(), cmd.OutOrStdout(), cmd.ErrOrStderr(),
-				)
+				return fmt.Errorf("--agent is required")
 			}
 			resolved, err := agenthook.ResolveOptionsForAgent(rawAgent, opts, agentHookFlagChanges(cmd))
 			if err != nil {
@@ -139,48 +129,6 @@ func runGrokAgentHook(opts agenthook.Options, stdin io.Reader, stdout, stderr io
 		resp.Reason = prependAgentHookFixSkillWarning(
 			agenthook.AgentGrok,
 			agenthook.StopReasonWithFixGuidelines(resp.Reason, opts.FixGuidelines),
-		)
-		return json.NewEncoder(stdout).Encode(agenthook.BuildOutput(input, resp))
-	}
-	return json.NewEncoder(stdout).Encode(agenthook.BuildOutputWithFixGuidelines(input, resp, opts.FixGuidelines))
-}
-
-func runLegacyAgentHook(
-	ctx context.Context,
-	opts agenthook.Options,
-	stdin io.Reader,
-	stdout, stderr io.Writer,
-) error {
-	input, err := agenthook.DecodeInput(stdin)
-	if err != nil {
-		return fmt.Errorf("decode agent-hook input: %w", err)
-	}
-	if input.SessionID == "" {
-		return fmt.Errorf("agent-hook input missing session_id")
-	}
-	resp, err := postAgentHook(ctx, opts.RoborevServerAddr, agenthook.Request{
-		Agent:                 agenthook.AgentLegacy,
-		Event:                 input,
-		Threshold:             opts.TurnThreshold,
-		CommitThreshold:       opts.CommitThreshold,
-		FailedReviewThreshold: opts.FailedReviewThreshold,
-		Instruction:           opts.Instruction,
-	})
-	if err != nil {
-		fmt.Fprintf(stderr, "roborev agent-hook: %v\n", err)
-		return json.NewEncoder(stdout).Encode(map[string]any{})
-	}
-	if resp.Triggered {
-		if resp.TriggeredBy == "fix_session" {
-			return json.NewEncoder(stdout).Encode(agenthook.BuildOutput(input, resp))
-		}
-		instruction := agenthook.StopReasonWithFixGuidelines(
-			resp.Reason, opts.FixGuidelines,
-		)
-		resp.Reason = fmt.Sprintf(
-			"Warning: this legacy Agent Hook cannot verify the installed roborev-fix skill. "+
-				"Run 'roborev agent-hook install' before following this reminder.\n\n%s",
-			instruction,
 		)
 		return json.NewEncoder(stdout).Encode(agenthook.BuildOutput(input, resp))
 	}

@@ -2221,7 +2221,7 @@ func TestDeferredReminderDoesNotEscapeSnoozedWorkspace(t *testing.T) {
 		LineageKey: "repo-a", CreatedAt: createdAt,
 	}
 	actionable := PendingReminder{
-		TriggeredBy: "commit", Reason: "Actionable.",
+		TriggeredBy: "commit", Reason: "Actionable.", Instruction: "Actionable.",
 		TrackedRepoRoot: repoB.Path(), WorktreeRoot: repoB.Path(), Branch: "main",
 		LineageKey: "repo-b", CreatedAt: createdAt.Add(time.Second),
 	}
@@ -2392,43 +2392,6 @@ func TestDeferredCommitReminderIsDiscardedAfterReviewsResolve(t *testing.T) {
 	assert.False(t, response.Triggered)
 	assert.Empty(t, store.sessions["session-1"].PendingReminders)
 	assert.Zero(t, store.sessions["session-1"].ReminderPromptCount)
-}
-
-func TestDeferredReminderPreservesLegacyInstruction(t *testing.T) {
-	repo := testutil.NewGitRepo(t)
-	repo.CommitFile("main.go", "package main\n", "initial")
-	failedReviewCount := 2
-	reviews := newDeferredReminderSource(repo.Path(), &failedReviewCount)
-	legacyReason := "Use the custom legacy workflow."
-	pending := PendingReminder{
-		TriggeredBy: "failed_reviews", Reason: legacyReason,
-		TrackedRepoRoot: repo.Path(), WorktreeRoot: repo.Path(), Branch: "main",
-		LineageKey: "repo", FailedReviewCount: 1, CreatedAt: time.Now().UTC(),
-	}
-	store := &StateStore{
-		reviews: reviews,
-		path:    filepath.Join(t.TempDir(), "state.json"),
-		sessions: map[string]SessionState{
-			"session-1": {PendingReminders: map[string]PendingReminder{pendingReminderKey(pending): pending}},
-		},
-	}
-
-	response, err := store.Record(Request{
-		Event:       Input{SessionID: "session-1", CWD: t.TempDir(), HookEventName: "Stop"},
-		Instruction: "Use the new default workflow.",
-	})
-
-	require.NoError(t, err)
-	assert.True(t, response.Triggered)
-	assert.Contains(t, response.Reason, legacyReason)
-	assert.Contains(t, response.Reason, "1")
-	assert.Contains(t, response.Reason, "2")
-	assert.Equal(t, 2, response.FailedReviewCount)
-	state := store.sessions["session-1"]
-	assert.Equal(t, 2, state.FailedReviewCount)
-	assert.NotContains(t, state.FailedReviewTriggeredCounts, "repo")
-	assert.Equal(t, repo.Path(), state.LastFailedReviewRepo)
-	assert.Equal(t, "main", state.LastFailedReviewBranch)
 }
 
 func TestDeferredReminderCancellationDoesNotConsumeCandidate(t *testing.T) {
@@ -2653,7 +2616,7 @@ func TestDeferredReminderContinuesAfterEarlierLookupFailure(t *testing.T) {
 		Branch: "main", LineageKey: "first", CreatedAt: createdAt,
 	}
 	second := PendingReminder{
-		TriggeredBy: "commit", Reason: "Second.",
+		TriggeredBy: "commit", Reason: "Second.", Instruction: "Second.",
 		TrackedRepoRoot: available.Path(), WorktreeRoot: available.Path(),
 		Branch: "main", Head: availableHead,
 		LineageKey: "second", CreatedAt: createdAt.Add(time.Second),
