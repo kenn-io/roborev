@@ -84,7 +84,8 @@ func applyJobVerdict(job *ReviewJob, verdictBool sql.NullInt64, output string, h
 	job.Verdict = &value
 }
 
-// ParseVerdict extracts P (pass) or F (fail) from review output.
+// ParseVerdict extracts P (pass) or F (fail) from review output. Output without
+// a clear verdict signal returns VerdictUnknown.
 // It intentionally uses a small set of deterministic signals:
 // clear severity/findings markers mean fail, and clear pass phrases mean pass.
 // We do not try to interpret narrative caveats after "No issues found." because
@@ -106,6 +107,7 @@ func ParseVerdict(output string) Verdict {
 		return VerdictPass
 	}
 
+	sawFail := strings.Contains(output, config.SeverityThresholdMarker)
 	for line := range strings.SplitSeq(output, "\n") {
 		normalized := normalizeVerdictLine(line)
 		// Historical reviews sometimes include a stale "Verdict: Fail" header
@@ -117,12 +119,17 @@ func ParseVerdict(output string) Verdict {
 		if isNoFindingVerdictLine(normalized) {
 			return VerdictPass
 		}
-		if !hasPassPrefix(normalized) {
-			continue
+		if hasPassPrefix(normalized) {
+			return VerdictPass
 		}
-		return VerdictPass
+		if isExplicitVerdictValue(normalized, "fail") {
+			sawFail = true
+		}
 	}
-	return VerdictFail
+	if sawFail {
+		return VerdictFail
+	}
+	return VerdictUnknown
 }
 
 func normalizeVerdictLine(line string) string {

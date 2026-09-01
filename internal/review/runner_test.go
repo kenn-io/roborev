@@ -54,3 +54,16 @@ func TestRunAgentReviewDerivesBuiltInVerdict(t *testing.T) {
 	assert.Equal(t, "No issues found.", got.Output)
 	assert.Equal(t, storage.VerdictPass, got.Verdict)
 }
+
+func TestRunAgentReviewRejectsOutputWithoutVerdict(t *testing.T) {
+	const output = "I am unable to read the diff file because it is ignored by configured ignore patterns."
+	a := &mockAgent{name: "prose", output: output}
+
+	got, err := RunAgentReview(
+		context.Background(), a, t.TempDir(), "HEAD", "prompt",
+		"default", "", nil,
+	)
+	require.EqualError(t, err, "review produced no recognizable verdict")
+	assert.Equal(t, output, got.Output)
+	assert.Equal(t, storage.VerdictUnknown, got.Verdict)
+}
