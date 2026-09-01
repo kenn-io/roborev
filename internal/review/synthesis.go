@@ -1,11 +1,90 @@
 package review
 
 import (
+	"bytes"
+	"encoding/json"
 	"fmt"
+	"io"
 	"strings"
 
 	gitrepo "go.kenn.io/kit/git/repo"
+
+	"go.kenn.io/roborev/internal/storage"
 )
+
+const SynthesisSchemaVersion = 1
+
+var SynthesisSchema = json.RawMessage(`{
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["schema_version", "verdict", "markdown"],
+  "properties": {
+    "schema_version": {"type": "integer", "const": 1},
+    "verdict": {"type": "string", "enum": ["pass", "fail"]},
+    "markdown": {"type": "string", "minLength": 1}
+  }
+}`)
+
+// SynthesisDocument is the structured result returned by a synthesis agent.
+// Markdown remains the user-facing comment body while Verdict is carried as
+// data instead of being inferred from prose.
+type SynthesisDocument struct {
+	SchemaVersion int             `json:"schema_version"`
+	Verdict       storage.Verdict `json:"verdict"`
+	Markdown      string          `json:"markdown"`
+}
+
+// DecodeSynthesisDocument validates one complete synthesis JSON document.
+func DecodeSynthesisDocument(raw json.RawMessage) (SynthesisDocument, error) {
+	var wire struct {
+		SchemaVersion int    `json:"schema_version"`
+		Verdict       string `json:"verdict"`
+		Markdown      string `json:"markdown"`
+	}
+	dec := json.NewDecoder(bytes.NewReader(raw))
+	dec.DisallowUnknownFields()
+	if err := dec.Decode(&wire); err != nil {
+		return SynthesisDocument{}, fmt.Errorf("decode synthesis output: %w", err)
+	}
+	if err := ensureJSONEOF(dec); err != nil {
+		return SynthesisDocument{}, err
+	}
+	if wire.SchemaVersion != SynthesisSchemaVersion {
+		return SynthesisDocument{}, fmt.Errorf(
+			"unsupported synthesis schema version %d", wire.SchemaVersion,
+		)
+	}
+	var verdict storage.Verdict
+	switch wire.Verdict {
+	case "pass":
+		verdict = storage.VerdictPass
+	case "fail":
+		verdict = storage.VerdictFail
+	default:
+		return SynthesisDocument{}, fmt.Errorf(
+			"invalid synthesis verdict %q", wire.Verdict,
+		)
+	}
+	if strings.TrimSpace(wire.Markdown) == "" {
+		return SynthesisDocument{}, fmt.Errorf("synthesis markdown is empty")
+	}
+	return SynthesisDocument{
+		SchemaVersion: wire.SchemaVersion,
+		Verdict:       verdict,
+		Markdown:      wire.Markdown,
+	}, nil
+}
+
+func ensureJSONEOF(dec *json.Decoder) error {
+	var extra any
+	if err := dec.Decode(&extra); err != io.EOF {
+		if err == nil {
+			return fmt.Errorf("decode synthesis output: multiple JSON values")
+		}
+		return fmt.Errorf("decode synthesis output: %w", err)
+	}
+	return nil
+}
 
 // severityAbove maps a minimum severity to the instruction
 // describing which levels to include in synthesis output.
@@ -48,15 +127,20 @@ func BuildSynthesisPrompt(
 	var b strings.Builder
 	b.WriteString(
 		"You are combining multiple code review outputs " +
-			"into a single GitHub PR comment.\nRules:\n" +
+			"into a single GitHub PR comment.\n" +
+			"Return exactly one JSON object with this shape and no code fence: " +
+			`{"schema_version":1,"verdict":"pass|fail","markdown":"..."}` + "\n" +
+			"Put the complete GitHub-flavored Markdown comment body in `markdown`. " +
+			"Set `verdict` to `fail` if the included findings require changes, " +
+			"otherwise set it to `pass`.\nRules:\n" +
 			"- Do not call tools or run commands\n" +
 			"- Only combine the input review results according to these rules\n" +
 			"- Deduplicate findings reported by multiple reviewers\n" +
 			"- Organize by severity (Critical > High > Medium > Low)\n" +
 			"- Preserve file/line references\n" +
 			"- If all reviewers agree code is clean, say so concisely\n" +
-			"- Start with a one-line summary verdict\n" +
-			"- Use markdown formatting\n" +
+			"- Start the `markdown` value with a one-line summary\n" +
+			"- Use markdown formatting inside `markdown`\n" +
 			"- No preamble about yourself\n")
 
 	if instruction, ok := severityAbove[minSeverity]; ok {

@@ -2,6 +2,7 @@ package review
 
 import (
 	"context"
+	"encoding/json"
 	"errors"
 	"io"
 	"testing"
@@ -65,7 +66,7 @@ func (a *capturingAgent) Review(
 	_ context.Context, _, gitRef, _ string, _ io.Writer,
 ) (string, error) {
 	a.capturedGitRef = gitRef
-	return "synthesized output", nil
+	return `{"schema_version":1,"verdict":"fail","markdown":"synthesized output"}`, nil
 }
 func (a *capturingAgent) CommandLine() string { return "capture" }
 
@@ -91,11 +92,29 @@ func (a *synthesisEntrypointAgent) Review(
 
 func (a *synthesisEntrypointAgent) Synthesize(
 	_ context.Context, prompt string, _ io.Writer,
-) (string, error) {
+) (json.RawMessage, error) {
 	a.synthPrompt = prompt
-	return "synthesized output", nil
+	return json.RawMessage(`{"schema_version":1,"verdict":"fail","markdown":"synthesized output"}`), nil
 }
 func (a *synthesisEntrypointAgent) CommandLine() string { return "synthesis-entrypoint" }
+
+type invalidSynthesisAgent struct {
+	commonMockAgent
+}
+
+func newInvalidSynthesisAgent() *invalidSynthesisAgent {
+	a := &invalidSynthesisAgent{}
+	a.self = a
+	return a
+}
+
+func (a *invalidSynthesisAgent) Name() string { return "invalid-synthesis" }
+func (a *invalidSynthesisAgent) Review(
+	context.Context, string, string, string, io.Writer,
+) (string, error) {
+	return "Markdown without structured synthesis JSON.", nil
+}
+func (a *invalidSynthesisAgent) CommandLine() string { return a.Name() }
 
 func TestSynthesize_Formatting(t *testing.T) {
 	tests := []struct {
@@ -329,6 +348,24 @@ func TestSynthesize_MultipleResults_FallsBackToRaw(t *testing.T) {
 	assert.NotContains(t, comment, "codex —")
 	assert.NotContains(t, comment, "security")
 	assert.NotContains(t, comment, "design")
+}
+
+func TestSynthesize_InvalidJSONFallsBackToRaw(t *testing.T) {
+	ag := newInvalidSynthesisAgent()
+	agent.Register(ag)
+	t.Cleanup(func() { agent.Unregister(ag.Name()) })
+
+	results := []ReviewResult{
+		{Status: ResultDone, Output: "Finding A"},
+		{Status: ResultDone, Output: "Finding B"},
+	}
+	comment, err := Synthesize(context.Background(), results, SynthesizeOpts{
+		Agent: ag.Name(), HeadSHA: "def456789012",
+	})
+	require.NoError(t, err)
+	assert.Contains(t, comment, "Synthesis unavailable")
+	assert.Contains(t, comment, "Finding A")
+	assert.Contains(t, comment, "Finding B")
 }
 
 func TestSynthesize_MixedSuccessAndFailure(t *testing.T) {

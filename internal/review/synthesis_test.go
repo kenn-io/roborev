@@ -1,6 +1,7 @@
 package review
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"strings"
@@ -10,6 +11,7 @@ import (
 	"github.com/stretchr/testify/assert"
 	"github.com/stretchr/testify/require"
 
+	"go.kenn.io/roborev/internal/storage"
 	"go.kenn.io/roborev/internal/testenv"
 )
 
@@ -146,6 +148,7 @@ func TestBuildSynthesisPrompt_Basic(t *testing.T) {
 
 	assertContainsAll(t, prompt, []string{
 		"combining multiple code review outputs",
+		`{"schema_version":1,"verdict":"pass|fail","markdown":"..."}`,
 		"Do not call tools or run commands",
 		"Only combine the input review results according to these rules",
 		"### Review 1",
@@ -157,6 +160,32 @@ func TestBuildSynthesisPrompt_Basic(t *testing.T) {
 	assert.NotContains(t, prompt, "Type=")
 	assert.NotContains(t, prompt, "Verify each finding")
 	assert.NotContains(t, prompt, "current codebase")
+}
+
+func TestDecodeSynthesisDocument(t *testing.T) {
+	doc, err := DecodeSynthesisDocument(json.RawMessage(
+		`{"schema_version":1,"verdict":"fail","markdown":"Finding"}`,
+	))
+	require.NoError(t, err)
+	assert.Equal(t, storage.VerdictFail, doc.Verdict)
+	assert.Equal(t, "Finding", doc.Markdown)
+
+	tests := []struct {
+		name string
+		raw  string
+	}{
+		{name: "malformed", raw: `not json`},
+		{name: "unknown verdict", raw: `{"schema_version":1,"verdict":"unknown","markdown":"Finding"}`},
+		{name: "empty markdown", raw: `{"schema_version":1,"verdict":"pass","markdown":" "}`},
+		{name: "unknown field", raw: `{"schema_version":1,"verdict":"pass","markdown":"Clean","extra":true}`},
+		{name: "multiple values", raw: `{"schema_version":1,"verdict":"pass","markdown":"Clean"} {}`},
+	}
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			_, err := DecodeSynthesisDocument(json.RawMessage(tt.raw))
+			require.Error(t, err)
+		})
+	}
 }
 
 func TestBuildSynthesisPrompt_UsesNeutralReviewerLabels(t *testing.T) {
