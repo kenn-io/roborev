@@ -80,6 +80,9 @@ func applyJobVerdict(job *ReviewJob, verdictBool sql.NullInt64, output string, h
 		return
 	}
 	verdict := verdictFromBoolOrParse(verdictBool, output)
+	if verdict == VerdictUnknown {
+		return
+	}
 	value := string(verdict)
 	job.Verdict = &value
 }
