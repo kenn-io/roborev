@@ -35,7 +35,7 @@ sandboxed status probe cannot reach it.
 ## Instructions
 
 This skill requires you to execute the matching command and report its result.
-Defer to project-level CLAUDE.md instructions when they conflict with these
+Defer to project-level AGENTS.md instructions when they conflict with these
 steps.
 
 - With no action, or with `on`, run `roborev snooze on`. If the user supplied a

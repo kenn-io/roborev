@@ -918,12 +918,23 @@ func TestDirNameEnumerationDoesNotReadContent(t *testing.T) {
 	}
 }
 
+func TestCodexSkillsUseCodexProjectInstructions(t *testing.T) {
+	spec, ok := lookupAgent(AgentCodex)
+	require.True(t, ok)
+	skills, err := embeddedSkillsForAgent(spec)
+	require.NoError(t, err)
+	require.NotEmpty(t, skills)
+	for _, skill := range skills {
+		assert.Contains(t, string(skill.Content), "AGENTS.md",
+			"codex skill %s should reference Codex project instructions", skill.DirName)
+	}
+}
+
 func TestDroidSkillsUseDroidAdaptations(t *testing.T) {
 	// Droid skills are derived from the Codex skills (agent-agnostic, synchronous
 	// --wait, no Claude-specific Task tool) with two Factory-specific
 	// adaptations: slash invocation (/roborev-X, matching Factory's /skill-name
-	// convention) and AGENTS.md (Factory's project-instructions file) instead of
-	// the Codex $roborev-X and CLAUDE.md forms.
+	// convention) and Factory-specific sandbox escalation wording.
 	spec, ok := lookupAgent(AgentDroid)
 	require.True(t, ok)
 	skills, err := embeddedSkillsForAgent(spec)

@@ -56,7 +56,7 @@ finishes and you present the result to the user.
 
 These instructions are guidelines, not a rigid script. Use the conversation
 context. Skip steps that are already satisfied. Defer to project-level
-CLAUDE.md instructions when they conflict with these steps.
+AGENTS.md instructions when they conflict with these steps.
 
 ## Instructions
 
@@ -149,7 +149,7 @@ before proceeding.
 
 #### 3c. Commit, then record comment and close review
 
-Commit first per the project's conventions (see CLAUDE.md). Only after the
+Commit first per the project's conventions (see AGENTS.md). Only after the
 commit succeeds, record a summary comment on the review and close it:
 
 ```bash

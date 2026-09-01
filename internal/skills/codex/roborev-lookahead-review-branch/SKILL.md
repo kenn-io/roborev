@@ -42,7 +42,7 @@ This skill requires you to **execute bash commands** to validate inputs and run 
 
 These instructions are guidelines, not a rigid script. Use the conversation
 context. Skip steps that are already satisfied. Defer to project-level
-CLAUDE.md instructions when they conflict with these steps.
+AGENTS.md instructions when they conflict with these steps.
 
 ## Instructions
 

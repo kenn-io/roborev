@@ -63,7 +63,7 @@ An Agent Hook invocation does not broaden the user's current task:
 
 ## IMPORTANT
 
-You must **execute bash commands** to complete this task. Skip steps already satisfied by conversation context. Defer to CLAUDE.md when it conflicts.
+You must **execute bash commands** to complete this task. Skip steps already satisfied by conversation context. Defer to AGENTS.md when it conflicts.
 
 ## Instructions
 

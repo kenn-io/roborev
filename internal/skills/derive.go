@@ -70,7 +70,6 @@ func skillDerivations() []skillDerivation {
 				New: ", or structured\nFactory skill selection",
 			},
 			{Old: "$roborev", New: "/roborev"},
-			{Old: "CLAUDE.md", New: "AGENTS.md"},
 			{
 				Old: "`sandbox_permissions: \"require_escalated\"`",
 				New: "the runtime's supported sandbox escalation mechanism",
@@ -95,6 +94,7 @@ func skillDerivations() []skillDerivation {
 				New: ", or structured\nClaude Code skill selection",
 			},
 			{Old: "$roborev", New: "/roborev"},
+			{Old: "AGENTS.md", New: "CLAUDE.md"},
 			{Old: "Retry the same command with", New: "Retry the same Bash command with"},
 			{
 				Old: "`sandbox_permissions: \"require_escalated\"`",
@@ -125,8 +125,6 @@ func skillDerivations() []skillDerivation {
 				New: ", or structured\nGrok Build skill selection",
 			},
 			{Old: "$roborev", New: "/roborev"},
-			// Grok project rules use AGENTS.md (CLAUDE.md is a compatibility alias).
-			{Old: "CLAUDE.md", New: "AGENTS.md"},
 			{
 				Old: "`sandbox_permissions: \"require_escalated\"`",
 				New: "the runtime's supported sandbox escalation mechanism",
