@@ -84,7 +84,11 @@ func compactVerdict(output string) storage.Verdict {
 	if !IsValidCompactOutput(output) {
 		return storage.VerdictUnknown
 	}
-	if reportsNoRemainingFindings(strings.ToLower(output)) {
+	lower := strings.ToLower(output)
+	if hasActionableCompactFinding(output, lower) {
+		return storage.VerdictFail
+	}
+	if reportsNoRemainingFindings(lower) {
 		return storage.VerdictPass
 	}
 	return storage.VerdictFail
