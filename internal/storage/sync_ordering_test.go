@@ -595,6 +595,28 @@ func TestUpsertPulledReviewUsesStoredVerdict(t *testing.T) {
 	assert.Equal(t, VerdictFail, review.Verdict())
 }
 
+func TestUpsertPulledReviewLeavesUnknownVerdictUnset(t *testing.T) {
+	h := newSyncTestHelper(t)
+	job := h.createPendingJob("unknown-review-verdict")
+
+	require.NoError(t, h.db.UpsertPulledReview(PulledReview{
+		UUID:               testUUID("unknown-review-verdict"),
+		JobUUID:            *job.UUID,
+		Agent:              "test",
+		Prompt:             "prompt",
+		Output:             "Review completed without a verdict.",
+		UpdatedByMachineID: testUUID("unknown-review-machine"),
+		CreatedAt:          time.Now(),
+		UpdatedAt:          time.Now(),
+	}))
+
+	var verdict sql.NullInt64
+	require.NoError(t, h.db.QueryRow(
+		`SELECT verdict_bool FROM reviews WHERE job_id = ?`, job.ID,
+	).Scan(&verdict))
+	assert.False(t, verdict.Valid, "unknown verdict must remain NULL")
+}
+
 // TestGetCommentsToSync_RequiresJobSynced verifies that responses are only
 // returned when their parent job has been synced (j.synced_at IS NOT NULL).
 func TestGetCommentsToSync_RequiresJobSynced(t *testing.T) {

@@ -440,6 +440,10 @@ func TestBackfillVerdictBool(t *testing.T) {
 	claimJob(t, db, "w1")
 	require.NoError(t, db.CompleteJob(j2.ID, "codex", "p", "- High — Bug"))
 
+	j3 := enqueueJob(t, db, repo.ID, commit.ID, "abc123")
+	claimJob(t, db, "w1")
+	require.NoError(t, db.CompleteJob(j3.ID, "codex", "p", "Review completed without a verdict."))
+
 	// Simulate legacy rows by nullifying verdict_bool
 	_, err := db.Exec(`UPDATE reviews SET verdict_bool = NULL`)
 	require.NoError(t, err)
@@ -460,6 +464,12 @@ func TestBackfillVerdictBool(t *testing.T) {
 	assert.Equal(t, 2, s.Verdicts.Total)
 	assert.Equal(t, 1, s.Verdicts.Passed)
 	assert.Equal(t, 1, s.Verdicts.Failed)
+
+	var unknownVerdict sql.NullInt64
+	require.NoError(t, db.QueryRow(
+		`SELECT verdict_bool FROM reviews WHERE job_id = ?`, j3.ID,
+	).Scan(&unknownVerdict))
+	assert.False(t, unknownVerdict.Valid, "unknown verdict must remain NULL")
 
 	// Running again is a no-op
 	count, err = db.BackfillVerdictBool()
