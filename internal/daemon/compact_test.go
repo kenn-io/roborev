@@ -254,6 +254,17 @@ func TestCompactVerdict(t *testing.T) {
 			want:   storage.VerdictFail,
 		},
 		{
+			name: "listed finding overrides clean statement",
+			output: `No findings remain.
+
+## Review Findings
+
+### High
+
+1. SQL injection in main.go:42`,
+			want: storage.VerdictFail,
+		},
+		{
 			name:   "invalid",
 			output: "Error: failed to read review output",
 			want:   storage.VerdictUnknown,
