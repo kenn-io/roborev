@@ -530,9 +530,13 @@ func (db *DB) BackfillVerdictBool() (int, error) {
 		if err := rows.Scan(&id, &output); err != nil {
 			return 0, err
 		}
+		verdict := ParseVerdict(output)
+		if verdict == VerdictUnknown {
+			continue
+		}
 		updates = append(updates, pending{
 			id:      id,
-			verdict: verdictToBool(ParseVerdict(output)),
+			verdict: verdictToBool(verdict),
 		})
 	}
 	if err := rows.Err(); err != nil {
