@@ -1232,6 +1232,21 @@ func TestFollowTickSynthesizesFailedReview(t *testing.T) {
 	assert.Contains(t, got.currentReview.Output, "boom")
 }
 
+func TestFailedReviewDoesNotChangeColourAfterDetailFollow(t *testing.T) {
+	m := splitModel(withSelection(2, 1)) // job 1: failed
+	m.currentReview = nil
+
+	before := strings.Join(m.renderDetailPane(88, 25), "\n")
+	assert.Contains(t, before, "boom")
+	assert.NotContains(t, before, failStyle.Render("boom"))
+
+	m.detailFollowGen = 1
+	res, _ := m.handleDetailFollowTick(detailFollowTickMsg{gen: 1})
+	after := strings.Join(res.(model).renderDetailPane(88, 25), "\n")
+	assert.Contains(t, after, "boom")
+	assert.NotContains(t, after, failStyle.Render("boom"))
+}
+
 func TestFollowReviewMsgKeepsListFocus(t *testing.T) {
 	assert := assert.New(t)
 	m := splitModel(withSelection(1, 2))
@@ -3418,7 +3433,7 @@ func TestDetailPaneFailedJobSanitizesError(t *testing.T) {
 	joined := strings.Join(lines, "\n")
 	assert.Contains(joined, "boom")
 	assert.Contains(joined, "moretexthere")
-	// The pane's own chrome (titleStyle, failStyle, ...) legitimately emits
+	// The pane's own chrome (titleStyle, statusStyle, ...) legitimately emits
 	// SGR color codes, so assert on the malicious payload specifically
 	// rather than banning \x1b outright: no OSC/CSI injection sequences,
 	// and no raw \r/\x08 survive anywhere in the rendered output.

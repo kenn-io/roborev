@@ -266,7 +266,7 @@ func (m model) renderDetailPane(innerW, innerH int) []string {
 		// so it can't inject terminal escapes (cursor moves, OSC clipboard
 		// writes, \r/\b overwrites) while this direct render is showing.
 		for _, l := range wrapText("Job failed:\n\n"+sanitizeForDisplay(job.Error), max(innerW-2, 20)) {
-			card = append(card, xansi.Truncate(failStyle.Render(l), innerW, ""))
+			card = append(card, xansi.Truncate(l, innerW, ""))
 		}
 		return pad(card)
 	case storage.JobStatusRunning:
