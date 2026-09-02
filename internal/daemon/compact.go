@@ -97,7 +97,6 @@ func compactVerdict(output string) storage.Verdict {
 var (
 	compactFileLinePattern        = regexp.MustCompile(`(?i)\b[\w./-]+\.(go|py|js|ts|tsx|jsx|java|rb|rs|c|cc|cpp|h|hpp|cs|php|swift|kt|m|mm|sql|yaml|yml|json|toml|md):\d+\b`)
 	compactPositiveRemainingCount = regexp.MustCompile(`\b[1-9]\d* (?:verified )?findings? remains?\b`)
-	compactFindingHeadingPattern  = regexp.MustCompile(`(?im)^#{1,6}\s*(review findings|verified findings|findings)\b`)
 	compactSeverityHeadingPattern = regexp.MustCompile(`(?im)^#{1,6}\s*(?:\*\*)?\s*(critical|high|medium|low)\b`)
 )
 
@@ -183,8 +182,7 @@ func hasActionableCompactFinding(output, lower string) bool {
 		return true
 	}
 
-	return compactFindingHeadingPattern.MatchString(output) &&
-		compactSeverityHeadingPattern.MatchString(output) &&
+	return compactSeverityHeadingPattern.MatchString(output) &&
 		compactFileLinePattern.MatchString(output)
 }
 
