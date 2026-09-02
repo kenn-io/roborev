@@ -133,7 +133,6 @@
 
 <div class="app-shell">
   <TopBar
-    class="app-header"
     tabs={navigationTabs}
     active={route.page}
     onchange={navigatePage}
@@ -189,10 +188,6 @@
     flex-direction: column;
     background: var(--bg-primary);
     color: var(--text-primary);
-  }
-
-  :global(.app-header) {
-    --header-height: 48px;
   }
 
   .brand {
