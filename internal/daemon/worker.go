@@ -1135,16 +1135,19 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 	// (prompt size, worktree creation) have passed.
 	wp.markAgentInvoked(workerID, job, a)
 
-	// Run the agent. Tasks, insights, and fixes are free-form work rather than
-	// reviews, so their output does not need a pass/fail verdict. Actual reviews
-	// and compact jobs keep the verdict-bearing review contract.
+	// Run the agent. Tasks, insights, fixes, and compact jobs use their stored
+	// prompts directly. Compact derives its verdict from the compact response
+	// contract instead of the ordinary review-text parser.
 	log.Printf("[%s] Running %s %sreview (job %d)...",
 		workerID, agentName, rtTag, job.ID)
 	var agentReview review.ReviewResult
-	if job.IsTaskJob() || job.IsFixJob() {
+	if job.IsTaskJob() || job.IsFixJob() || job.JobType == storage.JobTypeCompact {
 		agentReview.Output, err = a.Review(
 			ctx, reviewRepoPath, job.GitRef, reviewPrompt, agentOutput,
 		)
+		if job.JobType == storage.JobTypeCompact {
+			agentReview.Verdict = compactVerdict(agentReview.Output)
+		}
 	} else {
 		agentReview, err = review.RunAgentReview(
 			ctx, a, reviewRepoPath, job.GitRef, reviewPrompt, job.ReviewType,
@@ -1238,7 +1241,7 @@ func (wp *WorkerPool) processJob(workerID string, job *storage.ReviewJob) {
 				log.Printf("[%s] Error storing fix review: %v", workerID, err)
 				return
 			}
-		} else if job.IsReviewJob() &&
+		} else if (job.IsReviewJob() || job.JobType == storage.JobTypeCompact) &&
 			agentReview.Verdict != storage.VerdictUnknown {
 			if err := wp.db.CompleteJobResult(
 				job.ID, agentName, reviewPrompt, storage.ReviewCompletion{

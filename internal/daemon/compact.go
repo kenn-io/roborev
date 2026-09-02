@@ -13,6 +13,7 @@ import (
 	"strings"
 
 	"go.kenn.io/roborev/internal/config"
+	"go.kenn.io/roborev/internal/storage"
 )
 
 // CompactMetadata stores source job IDs for a compact job
@@ -77,6 +78,16 @@ func IsValidCompactOutput(output string) bool {
 	}
 
 	return !reportsRemainingFindingsWithoutDetails(output)
+}
+
+func compactVerdict(output string) storage.Verdict {
+	if !IsValidCompactOutput(output) {
+		return storage.VerdictUnknown
+	}
+	if reportsNoRemainingFindings(strings.ToLower(output)) {
+		return storage.VerdictPass
+	}
+	return storage.VerdictFail
 }
 
 var (
