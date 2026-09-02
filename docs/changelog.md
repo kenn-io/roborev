@@ -46,6 +46,9 @@ All notable changes to roborev, grouped by minor release.
 
 **Bug fixes**
 
+- Non-agentic Pi reviews can no longer run commands or change files. They use
+    Pi's read-only repository tools, while agentic jobs keep the default tool
+    set. Structured reviews also retain their required JSON output tool.
 - Large Antigravity reviews no longer fail when the prompt exceeds the operating
     system's command-line limit. Non-agentic reviews can also run the workspace
     inspection commands they need.

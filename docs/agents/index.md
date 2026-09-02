@@ -300,11 +300,28 @@ and commands):
 | Droid | Full (runs autonomously) |
 | Kilo | Full (runs autonomously) |
 | Kiro | Full (uses `--trust-all-tools`) |
-| Pi | Full (tools execute without confirmation) |
+| Pi | Full (agentic runs use Pi's default tools) |
 | Grok Build | Full (uses `--always-approve` in agentic mode; review uses layered read-only safety — see below) |
 
 See [Custom Tasks & Agentic Mode](/advanced/custom-tasks/) for details on review
 vs agentic modes.
+
+## Pi
+
+Non-agentic Pi reviews use a positive read-only tool allowlist:
+
+```bash
+pi -p --mode json --tools read,grep,find,ls
+```
+
+Structured reviews also allow the `json_output` tool registered by the
+configured JSON schema extension. They cannot run commands or change files.
+Agentic jobs and runs with `allow_unsafe_agents = true` omit the allowlist and
+use Pi's default tools, including `bash`, `edit`, and `write`.
+
+Roborev appends the managed allowlist after `[agent.pi].launch_args`, so a
+duplicate `--tools` option in global configuration does not replace the review
+restriction.
 
 ## Grok Build
 

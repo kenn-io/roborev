@@ -16,7 +16,11 @@ import (
 	"go.kenn.io/roborev/internal/config"
 )
 
-const piJSONSchemaInstallCommand = "pi install npm:@nqbao/pi-json-schema"
+const (
+	piJSONSchemaInstallCommand      = "pi install npm:@nqbao/pi-json-schema"
+	piReadOnlyTools                 = "read,grep,find,ls"
+	piStructuredReviewReadOnlyTools = piReadOnlyTools + ",json_output"
+)
 
 // PiAgent runs code reviews using the pi CLI
 type PiAgent struct {
@@ -105,13 +109,16 @@ func (a *PiAgent) CommandName() string {
 }
 
 func (a *PiAgent) CommandLine() string {
-	args := a.buildArgs("")
+	args := a.buildArgs("", a.Agentic || AllowUnsafeAgents())
 	return a.Command + " " + strings.Join(args, " ")
 }
 
-func (a *PiAgent) buildArgs(sessionPath string) []string {
+func (a *PiAgent) buildArgs(sessionPath string, agenticMode bool) []string {
 	args := slices.Clone(a.LaunchArgs)
 	args = append(args, "-p", "--mode", "json")
+	if !agenticMode {
+		args = append(args, "--tools", piReadOnlyTools)
+	}
 	if sessionPath != "" {
 		args = append(args, "--session", sessionPath)
 	}
@@ -125,6 +132,38 @@ func (a *PiAgent) buildArgs(sessionPath string) []string {
 		args = append(args, "--thinking", level)
 	}
 	return args
+}
+
+func (a *PiAgent) structuredReviewArgs(
+	promptPath, outputPath string,
+	schema json.RawMessage,
+	agenticMode bool,
+) []string {
+	args := slices.Clone(a.LaunchArgs)
+	args = append(args,
+		"--no-session",
+		"--extension", a.jsonSchemaExtension(),
+		"--json-schema", string(schema),
+		"--json-output", outputPath,
+		"--json-fallback", "none",
+		"-p",
+	)
+	if !agenticMode {
+		args = append(args, "--tools", piStructuredReviewReadOnlyTools)
+	}
+	if a.Provider != "" {
+		args = append(args, "--provider", a.Provider)
+	}
+	if a.Model != "" {
+		args = append(args, "--model", a.Model)
+	}
+	if level := a.thinkingLevel(); level != "" {
+		args = append(args, "--thinking", level)
+	}
+	return append(args,
+		"@"+promptPath,
+		"Review the repository according to the attached instructions and write the result with the structured JSON output tool.",
+	)
 }
 
 func (a *PiAgent) thinkingLevel() string {
@@ -259,28 +298,8 @@ func (a *PiAgent) ReviewWithSchema(
 		return nil, fmt.Errorf("write structured review prompt: %w", err)
 	}
 	outputPath := filepath.Join(tmpDir, "result.json")
-	args := slices.Clone(a.LaunchArgs)
-	args = append(args,
-		"--no-session",
-		"--extension", a.jsonSchemaExtension(),
-		"--json-schema", string(schema),
-		"--json-output", outputPath,
-		"--json-fallback", "none",
-		"-p",
-	)
-	if a.Provider != "" {
-		args = append(args, "--provider", a.Provider)
-	}
-	if a.Model != "" {
-		args = append(args, "--model", a.Model)
-	}
-	if level := a.thinkingLevel(); level != "" {
-		args = append(args, "--thinking", level)
-	}
-	args = append(args,
-		"@"+promptPath,
-		"Review the repository according to the attached instructions and write the result with the structured JSON output tool.",
-	)
+	agenticMode := a.Agentic || AllowUnsafeAgents()
+	args := a.structuredReviewArgs(promptPath, outputPath, schema, agenticMode)
 
 	cmd := exec.CommandContext(ctx, a.Command, args...)
 	cmd.Dir = repoPath
@@ -355,7 +374,8 @@ func (a *PiAgent) Review(
 	}
 
 	sessionPath := resolvePiSessionPath(a.SessionID)
-	args := a.buildArgs(sessionPath)
+	agenticMode := a.Agentic || AllowUnsafeAgents()
+	args := a.buildArgs(sessionPath, agenticMode)
 
 	// Add the prompt file as an input argument (prefixed with @)
 	// Pi treats @files as context/input.

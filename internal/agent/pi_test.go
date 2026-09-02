@@ -127,15 +127,28 @@ func TestPiLaunchArgsPrecedeManagedArgsForEveryInvocation(t *testing.T) {
 	}{
 		{
 			name:          "review",
-			withoutLaunch: base.buildArgs(""),
-			withLaunch:    configured.buildArgs(""),
-			managed:       []string{"-p", "--mode", "json", "--provider", "cpa", "--model", "gpt-test", "--thinking", "low"},
+			withoutLaunch: base.buildArgs("", false),
+			withLaunch:    configured.buildArgs("", false),
+			managed:       []string{"-p", "--mode", "json", "--tools", piReadOnlyTools, "--provider", "cpa", "--model", "gpt-test", "--thinking", "low"},
 		},
 		{
 			name:          "resumed review",
-			withoutLaunch: base.buildArgs("/tmp/pi-session.jsonl"),
-			withLaunch:    configured.buildArgs("/tmp/pi-session.jsonl"),
-			managed:       []string{"-p", "--mode", "json", "--session", "/tmp/pi-session.jsonl", "--provider", "cpa", "--model", "gpt-test", "--thinking", "low"},
+			withoutLaunch: base.buildArgs("/tmp/pi-session.jsonl", false),
+			withLaunch:    configured.buildArgs("/tmp/pi-session.jsonl", false),
+			managed:       []string{"-p", "--mode", "json", "--tools", piReadOnlyTools, "--session", "/tmp/pi-session.jsonl", "--provider", "cpa", "--model", "gpt-test", "--thinking", "low"},
+		},
+		{
+			name:          "structured review",
+			withoutLaunch: base.structuredReviewArgs("prompt.md", "result.json", schema, false),
+			withLaunch:    configured.structuredReviewArgs("prompt.md", "result.json", schema, false),
+			managed: []string{
+				"--no-session", "--extension", config.DefaultPiJSONSchemaExtension,
+				"--json-schema", string(schema), "--json-output", "result.json",
+				"--json-fallback", "none", "-p", "--tools",
+				piStructuredReviewReadOnlyTools, "--provider", "cpa",
+				"--model", "gpt-test", "--thinking", "low", "@prompt.md",
+				"Review the repository according to the attached instructions and write the result with the structured JSON output tool.",
+			},
 		},
 		{
 			name:          "classifier",
@@ -157,6 +170,63 @@ func TestPiLaunchArgsPrecedeManagedArgsForEveryInvocation(t *testing.T) {
 			assert.Equal(t, tt.managed, tt.withoutLaunch)
 			wantConfigured := append(slices.Clone(wantPrefix), tt.managed...)
 			assert.Equal(t, wantConfigured, tt.withLaunch)
+		})
+	}
+}
+
+func TestPiReviewToolPermissions(t *testing.T) {
+	skipIfWindows(t)
+
+	tests := []struct {
+		name      string
+		agentic   bool
+		unsafe    bool
+		wantTools string
+	}{
+		{name: "non-agentic review", wantTools: piReadOnlyTools},
+		{name: "agentic review", agentic: true},
+		{name: "unsafe override", unsafe: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			withUnsafeAgents(t, tt.unsafe)
+			mock := mockAgentCLI(t, MockCLIOpts{
+				CaptureArgs: true,
+				StdoutLines: []string{
+					`{"type":"message_end","message":{"role":"assistant","content":[{"type":"text","text":"ok"}]}}`,
+				},
+			})
+
+			a := NewPiAgent(mock.CmdPath).WithAgentic(tt.agentic)
+			_, err := a.Review(context.Background(), t.TempDir(), "HEAD", "prompt", nil)
+			require.NoError(t, err)
+
+			args := readMockArgs(t, mock.ArgsFile)
+			assert.Equal(t, tt.wantTools, argAfter(args, "--tools"))
+		})
+	}
+}
+
+func TestPiStructuredReviewToolPermissions(t *testing.T) {
+	tests := []struct {
+		name        string
+		agenticMode bool
+		wantTools   string
+	}{
+		{name: "non-agentic review", wantTools: piStructuredReviewReadOnlyTools},
+		{name: "agentic review", agenticMode: true},
+	}
+
+	for _, tt := range tests {
+		t.Run(tt.name, func(t *testing.T) {
+			args := NewPiAgent("pi").structuredReviewArgs(
+				"prompt.md",
+				"result.json",
+				jsonRaw(`{"type":"object"}`),
+				tt.agenticMode,
+			)
+			assert.Equal(t, tt.wantTools, argAfter(args, "--tools"))
 		})
 	}
 }
