@@ -257,9 +257,7 @@ func TestCompactVerdict(t *testing.T) {
 			name: "listed finding overrides clean statement",
 			output: `No findings remain.
 
-## Review Findings
-
-### High
+## Critical Issues
 
 1. SQL injection in main.go:42`,
 			want: storage.VerdictFail,
